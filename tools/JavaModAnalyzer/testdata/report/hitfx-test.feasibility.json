@@ -1,0 +1,74 @@
+{
+  "jar": "hitfx-test.jar",
+  "meta": {
+    "loader": "fabric",
+    "id": "hitfx",
+    "name": "HitFX (synthetic test mod)",
+    "version": "0.0.1",
+    "environment": "client",
+    "license": "CC0-1.0",
+    "depends": {
+      "fabricloader": ">=0.16",
+      "fabric-api": "*",
+      "minecraft": "1.21.x"
+    },
+    "entrypoints": {
+      "client": [
+        "com.example.hitfx.HitFx"
+      ]
+    },
+    "mixin_configs": [
+      "hitfx.mixins.json"
+    ],
+    "access_widener": null
+  },
+  "classes": 3,
+  "mixins": [
+    {
+      "config": "hitfx.mixins.json",
+      "side": "client",
+      "class": "com.example.hitfx.mixin.LivingEntityMixin",
+      "targets": [
+        "net/minecraft/entity/LivingEntity"
+      ]
+    }
+  ],
+  "buckets": {
+    "Rendering (Blaze3D/GL)": {
+      "refs": 2,
+      "status": "native-only: needs RenderingAPI (not built yet)",
+      "examples": [
+        "com.mojang.blaze3d.systems.RenderSystem"
+      ]
+    },
+    "Keybinds": {
+      "refs": 2,
+      "status": "supported: bf::input::bindKey",
+      "examples": [
+        "net.fabricmc.fabric.api.client.keybinding.KeyBindingHelper",
+        "net.minecraft.client.option.KeyBinding"
+      ]
+    },
+    "Entities": {
+      "refs": 1,
+      "status": "pack: custom entities (behavior + resource pack)",
+      "examples": [
+        "net.minecraft.entity.LivingEntity"
+      ]
+    },
+    "UI / HUD / screens": {
+      "refs": 1,
+      "status": "partial: bf::hud (v0) covers HUD text/boxes",
+      "examples": [
+        "net.minecraft.client.gui.DrawContext"
+      ]
+    }
+  },
+  "assets": {
+    "assets/hitfx/sounds (.ogg)": 1,
+    "assets/hitfx/lang (.json)": 1,
+    "assets/hitfx/textures (.png)": 1
+  },
+  "score": 0.6,
+  "verdict": "Portable with native work"
+}
