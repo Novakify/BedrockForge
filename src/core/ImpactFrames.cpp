@@ -135,6 +135,13 @@ void install(bf::events::Subscriptions& subs, ll::mod::NativeMod& mod, Settings 
             Rgb const  bg     = swap ? s.foreground : s.background;
             Rgb const  fg     = swap ? s.background : s.foreground;
             bf::hud::fillBox(ctx, 0, 0, w, h, {bg.r, bg.g, bg.b, k});
+            if (s.useFrameTextures && s.frameTextures > 0) {
+                // Burst animation runs across the whole sequence; square texture covers the screen.
+                int const   tex  = std::min(s.frameTextures - 1, static_cast<int>(t * s.frameTextures / length));
+                float const side = std::max(w, h) * 1.15f;
+                bf::hud::drawTexture(ctx, s.framePath + std::to_string(tex), (w - side) * 0.5f, (h - side) * 0.5f, side,
+                                     side, {fg.r, fg.g, fg.b, k});
+            }
             drawSpeedLines(ctx, w, h, lines, seq + idx * 7u, fg, 0.95f * k);
         } else if (s.fadeMs > 0) {
             float fade = 1.0f - float(t - length) / float(s.fadeMs);

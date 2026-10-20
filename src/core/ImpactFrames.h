@@ -41,6 +41,11 @@ struct Settings {
     bool        alternate        = true;   // swap bg/fg on odd frames
     Rgb         background       = {0, 0, 0};
     Rgb         foreground       = {1, 1, 1};
+    // Animated burst frames from a resource pack (ships as packs/BedrockForgeImpact).
+    // Swap in any pack that provides <framePath>0..N-1 to change the look.
+    bool        useFrameTextures = true;
+    std::string framePath        = "textures/bedrock_forge/impact/frame_";
+    int         frameTextures    = 5;
     bool        speedLines       = true;
     int         lines            = 28;
     int         fadeMs           = 140;    // after-glow (vignette + fading lines); 0 = hard cut
