@@ -5,7 +5,15 @@ add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
 -- Bedrock Forge targets the CLIENT build of LeviLamina only (for now).
 -- Pinned to the 26.51 line = Minecraft Bedrock 1.26.51.01. Don't bump without
 -- updating docs/COMPATIBILITY_MATRIX.md.
-add_requires("levilamina 26.51.x", {configs = {target_type = "client"}})
+-- levibuildscript's modpacker reads target_type to fill "platform" in manifest.json;
+-- without it the manifest says ${modPlatform} and LeviLamina refuses to load the mod.
+option("target_type")
+    set_default("client")
+    set_showmenu(true)
+    set_values("client")
+option_end()
+
+add_requires("levilamina 26.51.x", {configs = {target_type = get_config("target_type")}})
 add_requires("levibuildscript")
 
 if not has_config("vs_runtime") then
@@ -13,6 +21,7 @@ if not has_config("vs_runtime") then
 end
 
 target("BedrockForgeCore")
+    set_version("0.1.0")
     add_rules("@levibuildscript/linkrule")
     add_rules("@levibuildscript/modpacker")
     add_defines("NOMINMAX", "UNICODE", "_HAS_CXX23=1")

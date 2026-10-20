@@ -28,7 +28,7 @@ jobs:
           llvm-version: 22
 
       - run: xmake repo -u
-      - run: xmake f -a x64 -m release -p windows -v -y
+      - run: xmake f -a x64 -m release -p windows -v -y --target_type=client
       - run: xmake -v -y
 
       - uses: actions/upload-artifact@v4
@@ -40,6 +40,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: bash
         run: |
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; cat bin/BedrockForgeCore/manifest.json; exit 1; }
           mkdir -p out && cp -r bin/* out/ && cp -r packs out/packs
           cd out
           git init -q -b builds
