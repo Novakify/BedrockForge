@@ -44,11 +44,12 @@ struct Settings {
     // Animated burst frames from a resource pack (ships as packs/BedrockForgeImpact).
     // Swap in any pack that provides <framePath>0..N-1 to change the look.
     bool        useFrameTextures = true;
+    // Built-in styles: impact/ (star), impact_ring/, impact_ink/
     std::string framePath        = "textures/bedrock_forge/impact/frame_";
     int         frameTextures    = 5;
-    bool        speedLines       = true;
+    bool        speedLines       = false;   // off by default: clean frames read better
     int         lines            = 28;
-    int         fadeMs           = 140;    // after-glow (vignette + fading lines); 0 = hard cut
+    int         fadeMs           = 60;    // after-glow (vignette + fading lines); 0 = hard cut
     float       intensity        = 1.0f;   // 0..1 opacity multiplier for everything
     // --- sound (vanilla id; custom needs a resource pack) ---
     std::string sound            = "random.anvil_land";
