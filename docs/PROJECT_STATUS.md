@@ -1,6 +1,6 @@
 # Project Status - 2026-10-20 (evening)
 
-**Current phase:** Phase 1/2 code written. Waiting on: GitHub repo (cloud build) + you at the PC (installs, in-game test).
+**Current phase:** P1-P3 compile on CI. Built mod + resource pack published to the `builds` branch. Waiting on: you at the PC (installs, in-game test).
 
 **Completed**
 - Upstream research: 6 repos, licenses, version support (docs/RESEARCH_INDEX.md)
@@ -15,7 +15,7 @@
 | Target versions, APIs used (KeyRegistry, UIRenderEvent, Client*Event) | Verified in source |
 | JavaModAnalyzer on synthetic Fabric jar | Verified by execution |
 | LeviLauncher installer SHA-256 matches GitHub digest | Verified |
-| BedrockForgeCore compiles | **Not yet** (needs CI or local build) |
+| BedrockForgeCore compiles (P1+P2+P3, clang-cl, LeviLamina 26.51.x client) | **Verified by compilation** (CI runs 39502065693, 39505591749) |
 | Anything in Minecraft | **Not yet** |
 
 **Problems**
