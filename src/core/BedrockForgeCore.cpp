@@ -1,5 +1,7 @@
 #include "core/BedrockForgeCore.h"
 
+#include "mc/world/actor/player/Player.h"
+
 #include <atomic>
 #include <chrono>
 #include <format>
@@ -57,13 +59,15 @@ bool Core::enable() {
     auto& log = getSelf().getLogger();
 
     // ---- Prototype 1: event callbacks ----
-    mSubs.on<ll::event::ClientJoinLevelEvent>([this](ll::event::ClientJoinLevelEvent&) {
+    mSubs.on<ll::event::ClientJoinLevelEvent>([this](ll::event::ClientJoinLevelEvent& ev) {
+        impact::setLocalPlayerId(ev.player().getOrCreateUniqueID().rawID);
         gInWorld = true;
         gTicks   = 0;
         getSelf().getLogger().info("[BF] Joined a world - event bridge is alive.");
     });
     mSubs.on<ll::event::ClientExitLevelEvent>([this](ll::event::ClientExitLevelEvent&) {
         gInWorld = false;
+        impact::setLocalPlayerId(0);
         getSelf().getLogger().info("[BF] Left the world after {} client ticks.", gTicks.load());
     });
     mSubs.on<ll::event::ClientLevelTickEvent>([this](ll::event::ClientLevelTickEvent&) {
@@ -89,7 +93,14 @@ bool Core::enable() {
                            {1.f, 1.f, 1.f, 0.9f});
     });
 
-    log.info("Bedrock Forge Core enabled with {} listeners. Press J in a world to toggle the HUD.", mSubs.size());
+    // ---- Prototype 3: cinematic impact frames (installed last so it draws over the HUD) ----
+    impact::install(mSubs, getSelf(), mConfig.impact);
+    bf::input::bindKey("bedrock_forge.toggle_impact", bf::input::vk::K, [this] {
+        mConfig.impact.enabled = !mConfig.impact.enabled;
+        getSelf().getLogger().info("[BF] Impact frames {}", mConfig.impact.enabled ? "on" : "off");
+    });
+
+    log.info("Bedrock Forge Core enabled with {} listeners. J = HUD, K = impact frames.", mSubs.size());
     return true;
 }
 

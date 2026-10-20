@@ -9,6 +9,7 @@ A Fabric/Forge-style modding framework for Minecraft Bedrock Edition, built on [
 |---|---|---|
 | 1 | Startup log, join/exit/tick event callbacks, clean disable | Code written; not yet verified in game |
 | 2 | Custom HUD box (title, FPS, tick count), toggled with **J** (rebindable in Controls) | Code written; not yet verified in game |
+| 3 | Impact frames when YOU hit a mob: white flash → ink frame + speed lines → vignette fade + impact sound. **K** toggles. Tunable in config.json | Code written; not yet verified in game |
 
 SDK v0 (`src/bf/`): `Events.h` (RAII listeners), `Input.h` (keybinds), `Config.h` (JSON config), `Hud.h` (HUD drawing).
 

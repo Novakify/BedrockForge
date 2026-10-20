@@ -3,6 +3,7 @@
 #include "ll/api/mod/NativeMod.h"
 
 #include "bf/Events.h"
+#include "core/ImpactFrames.h"
 
 namespace bedrock_forge {
 
@@ -13,6 +14,7 @@ struct Config {
     bool logTickHeartbeat = true;  // log a line every 600 client ticks (~30s) to prove ticks arrive
     int  hudX            = 4;
     int  hudY            = 4;
+    impact::Settings impact;       // Prototype 3
 };
 
 class Core {
