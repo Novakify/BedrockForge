@@ -94,6 +94,7 @@ BUCKETS = [
     ("net/minecraft/item", "Items", "pack: custom items"),
     ("net/minecraft/world/level/levelgen", "World generation", "pack: features/biomes (limited)"),
     ("net/minecraft/world/gen", "World generation", "pack: features/biomes (limited)"),
+    ("net/minecraft/network/chat", "Text components", "supported: plain/formatted strings"),
     ("net/minecraft/network", "Networking", "hard: Bedrock protocol differs; local worlds only"),
     ("net/fabricmc/fabric/api/networking", "Networking", "hard: Bedrock protocol differs"),
     ("net/minecraftforge/network", "Networking", "hard: Bedrock protocol differs"),

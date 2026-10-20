@@ -9,6 +9,7 @@
 | Amethyst | Apache-2.0 (open parts); 1.26.x partly closed | e9179a6 | Reuse open code with attribution + NOTICE | Closed parts: no reuse |
 | BetterRenderDragon | AGPL-3.0 | fc4e663 | Read for concepts | Any copied code forces AGPL on the whole distributed work — don't copy |
 | levilamina-mod-template | CC0-1.0 | 3df96f2 | Anything | Replace LICENSE for our mods |
+| Impact frames (TheFoxThatHates) 1.2.1.5 | **ARR** per fabric.mod.json (a stray CC0 file in the jar doesn't override it) | — | Study behaviour/settings only | No code, shaders, frame PNGs or impact.ogg reused. Our version uses original visuals + vanilla sound |
 | Blueberry Client | Proprietary | — | Public docs only | No RE, no extraction |
 
 **Our own license:** not yet chosen. Recommendation to decide later: LGPL-3.0 or MIT for the SDK. Needs your call before anything is published.
