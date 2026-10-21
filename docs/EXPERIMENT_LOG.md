@@ -20,3 +20,15 @@ E-015 | 2026-10-21 | - | user PC | Tried to drive the game with computer use | I
 E-016 | 2026-10-21 | 3387e03 | CI | Client batch 2: fullbright (lightmap), hit colour, no hurt cam, no view bobbing, time changer (render-thread only) | CI green, installed | Verified by compilation
 E-017 | 2026-10-21 | ec95b5f | cloud | ShaderForge: lazurite 1.26 buffer-layout shim (byte-identical round trip on Sky/RenderChunk/ColorPostProcessing), dxc 1.8, build.py generates per-variant input structs and only accepts signature-identical blobs | Anime pack: Sky 4/4, RenderChunk 48/60 (Seasons variants vanilla), bindings identical to vanilla | Verified by disassembly (not in game)
 E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block variants (63 vanilla blocks), acid blob + 4 soul bolts (vanilla projectile component), spine spikes, floor soul spears, Angel of Reaping + Sculk Enderman attack kits | validator 0 errors (39 entities, 48 blocks), tsc clean | Verified by validation + type-check (not in game)
+
+## E-019 - 2026-10-21 in-game test pass (b6-b8)
+- ClickGUI: Right Shift opens; left click toggles (Speed Display, Fullbright verified); categories switch; modules.json persists.
+- Bug fixed (b7): after closing, the panel kept drawing over the HUD (another non-HUD layer kept "dialog seen" fresh). Esc / x now reset the menu directly.
+- Bug found in b7 (latching the first non-HUD view drew the native dialog over our menu) -> b8 covers every non-HUD view again and logs screen names in diag.txt.
+- Quick Right Shift taps missed (async key state already released) -> GetKeyState check added (b8).
+- Shaderpacks: Actor, RenderChunk AND Sky load from the pack (Sky loads at world join; the first report was written too early). 56 material opens, all CreateFileW.
+- Fullbright: createBaseLightTextureData is hooked and brightened (829 calls), but no visible effect on 1.26. buildImage ran only twice, so the terrain lightmap is
+  produced elsewhere (GPU pass?). Next: find the 1.26 lightmap path, or push a brightness term through the Anime RenderChunk shader.
+- New: mods/BedrockForgeCore/logs/diag.txt (hook counters, enabled modules, screens) and logs/shaderpacks.txt (every material path), rewritten every ~10 s.
+- BetterRenderDragon 1.4.4 review (reference only, AGPL, 1.20/1.21 signatures): ideas to rebuild originally - hot shader reload (discard frame + free compiled
+  shader blobs), material.bin from resource packs, deferred / Vibrant Visuals unlock. Planned as Bedrock Forge "ForgeRender".
