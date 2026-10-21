@@ -3,7 +3,6 @@
 #include "ll/api/mod/NativeMod.h"
 
 #include "bf/Events.h"
-#include "core/ClientModules.h"
 #include "core/ImpactFrames.h"
 
 namespace bedrock_forge {
@@ -16,7 +15,6 @@ struct Config {
     int  hudX            = 4;
     int  hudY            = 4;
     impact::Settings impact;       // Prototype 3
-    modules::Settings modules;     // client HUD modules (FPS, CPS, keystrokes, coords...)
 };
 
 class Core {

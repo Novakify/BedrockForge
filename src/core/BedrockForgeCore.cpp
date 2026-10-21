@@ -15,6 +15,8 @@
 #include "bf/Config.h"
 #include "bf/Hud.h"
 #include "bf/Input.h"
+#include "client/Menu.h"
+#include "client/Module.h"
 
 namespace bedrock_forge {
 
@@ -93,8 +95,11 @@ bool Core::enable() {
                            {1.f, 1.f, 1.f, 0.9f});
     });
 
-    // ---- Client HUD modules (H toggles) ----
-    modules::install(mSubs, getSelf(), mConfig.modules);
+    // ---- Client: module framework + ClickGUI (Right Shift) ----
+    client::registerBuiltins();
+    client::Registry::get().load((getSelf().getConfigDir() / "modules.json").string());
+    client::installRuntime();
+    client::menu::install();
 
     // ---- Prototype 3: cinematic impact frames (installed last so it draws over the HUD) ----
     impact::install(mSubs, getSelf(), mConfig.impact);
@@ -103,11 +108,14 @@ bool Core::enable() {
         getSelf().getLogger().info("[BF] Impact frames {}", mConfig.impact.enabled ? "on" : "off");
     });
 
-    log.info("Bedrock Forge Core enabled with {} listeners. J = HUD, H = modules, K = impact frames.", mSubs.size());
+    log.info("Bedrock Forge Core enabled with {} listeners. Right Shift = menu, J = HUD, K = impact frames, C = zoom.", mSubs.size());
     return true;
 }
 
 bool Core::disable() {
+    client::menu::uninstall();
+    client::uninstallRuntime();
+    client::Registry::get().save();
     mSubs.clear();
     mConfig.hudEnabled = gHudVisible;
     bf::config::save(getSelf(), mConfig);
