@@ -1,6 +1,6 @@
 // Bedrock Forge Impact - behavior pack script (official Script API, no native code needed)
 //
-// When a player melee-hits a mob, their OWN view is posterized for ~150ms using per-player
+// When a player lands a critical hit on a mob (any melee hit if critOnly is off), their OWN view is posterized for ~150ms using per-player
 // Vibrant Visuals colour grading (@minecraft/server-graphics), then restored:
 //   tick 0 : saturation 0 + max contrast  -> near black/white world (silhouettes)
 //   tick 1 : blown-out white flash         -> the "inverted" beat
@@ -18,6 +18,7 @@ import { ModalFormData, FormCancelationReason } from "@minecraft/server-ui";
 
 const DEFAULTS = {
   enabled: true,
+  critOnly: true,    // only critical hits (falling, not on ground / in water / climbing / riding, no blindness)
   posterize: true,   // black/white world (Vibrant Visuals)
   flash: true,       // white beat in the middle
   sound: true,
@@ -46,6 +47,7 @@ async function openSettings(player, attempt = 0) {
   const form = new ModalFormData()
     .title("Bedrock Forge - Impact Frames")
     .toggle("Impact frames on", { defaultValue: s.enabled })
+    .toggle("Critical hits only", { defaultValue: s.critOnly })
     .toggle("Black/white world (needs Vibrant Visuals)", { defaultValue: s.posterize })
     .toggle("White flash beat", { defaultValue: s.flash })
     .toggle("Impact sound", { defaultValue: s.sound })
@@ -61,8 +63,8 @@ async function openSettings(player, attempt = 0) {
     }
     return;
   }
-  const [enabled, posterize, flash, sound, shake10, minDamage, cooldownTicks] = res.formValues ?? [];
-  save(player, { enabled: !!enabled, posterize: !!posterize, flash: !!flash, sound: !!sound,
+  const [enabled, critOnly, posterize, flash, sound, shake10, minDamage, cooldownTicks] = res.formValues ?? [];
+  save(player, { enabled: !!enabled, critOnly: !!critOnly, posterize: !!posterize, flash: !!flash, sound: !!sound,
                  shake: Number(shake10) / 10, minDamage: Number(minDamage), cooldownTicks: Number(cooldownTicks) });
   player.sendMessage("§b[Bedrock Forge]§r impact settings saved.");
 }
@@ -133,12 +135,24 @@ function impact(player, s) {
   system.runTimeout(() => { try { reset(g); } catch {} }, sequence.length);
 }
 
+// Same conditions the game uses for a melee crit. Checked right after the hit, so the attacker state still matches.
+/** @param {Player} p */
+function isCrit(p) {
+  try {
+    if (p.isOnGround || p.isInWater || p.isClimbing || !p.isFalling) return false;
+    if (p.getComponent("minecraft:riding")) return false;
+    if (p.getEffect("blindness")) return false;
+    return true;
+  } catch { return false; }
+}
+
 world.afterEvents.entityHurt.subscribe((ev) => {
   const attacker = ev.damageSource?.damagingEntity;
   if (!(attacker instanceof Player)) return;
   if (ev.hurtEntity?.id === attacker.id) return;
   const s = load(attacker);
   if (!s.enabled || (ev.damage ?? 0) < s.minDamage) return;
+  if (s.critOnly && !isCrit(attacker)) return;
   impact(attacker, s);
 });
 

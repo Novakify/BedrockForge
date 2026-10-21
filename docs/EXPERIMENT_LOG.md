@@ -59,3 +59,4 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
   signatures target 1.19.80-1.20.50 and its reload offsets are version-specific, so none of it runs on 1.26 as-is. Ideas noted for
   1.26: do the material reload between frames (endFrame/discardFrame, both virtuals in LL's FrameBuilder.h) and serve
   material.bin through ResourcePackManager::load instead of a cache.
+- BP script: same crit-only rule (critOnly setting, default on; isFalling && !isOnGround/isInWater/isClimbing/riding/blindness). tsc --checkJs clean vs @minecraft/server 2.3.0.
