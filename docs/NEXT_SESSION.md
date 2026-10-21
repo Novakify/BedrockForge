@@ -17,6 +17,13 @@ Renderer Foundation (separate AGPL-3.0 project, Fernando's call: private fork, k
 - Test: overlay shows (D3D12 + GPU name), shaderpack combo serves Anime, "Served materials" window, resource-pack shader,
   Reload shaders, Vibrant Visuals toggle. Never copy RF code into Bedrock Forge (licence) - only coexist.
 
+Shine 3.0 -> Bedrock conversion (tapeQ's mod, Fernando has permission; credit tapeQ, nothing is ours, keep private):
+- Branch `shine-bedrock` (worktree /home/claude/shine): README, PERMISSION.md, CONVERSION.md (133 features -> routes),
+  tools/convert_assets.py (jar -> Bedrock RP: 81 particles, 49 sound events, 34 textures; output in build/, gitignored).
+- Jar: CurseForge file 8659331 (curseforge/forgecdn domains now allowed in the cloud). Decompiling was blocked by the
+  session classifier -> waiting for tapeQ's 3.0 source (Fernando asked on Discord). Then: particle motion/spawn rules,
+  shaders (bloom/rim/no-shading/post first), config -> RF overlay.
+
 Priority order:
 1. Test Fullbright v3 (tessellator light floor + relightAllRenderChunkGeometry). Enable at night / in a cave; diag.txt should show
    "tessellator light" climbing and "relights" > 0. If terrain doesn't change: the 1.26 tessellator may not use BlockTessellatorCache
