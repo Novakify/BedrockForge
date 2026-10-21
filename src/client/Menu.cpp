@@ -1,6 +1,7 @@
 #include "client/Menu.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <atomic>
 #include <functional>
@@ -54,9 +55,12 @@ constexpr Rgba kBack{0.04f, 0.05f, 0.07f, 0.92f}, kSide{0.07f, 0.09f, 0.12f, 1},
     kCardHover{0.17f, 0.2f, 0.26f, 1}, kAccent{0.25f, 0.78f, 0.95f, 1}, kText{0.93f, 0.95f, 0.98f, 1},
     kDim{0.55f, 0.6f, 0.68f, 1}, kOn{0.2f, 0.85f, 0.55f, 1}, kOff{0.35f, 0.38f, 0.44f, 1}, kSoon{0.85f, 0.65f, 0.25f, 1};
 
+// 1.26 doesn't hand back the scene we pushed from getTopScene(), so "is our dialog up" is judged by what renders:
+// while our scene is open, a non-HUD screen rendering = our dialog.
+std::chrono::steady_clock::time_point gOpenedAt{}, gDialogSeen{};
 bool ownsTop() {
     if (!gClient || !gScene) return false;
-    return gClient->getSceneFactory().getCurrentSceneStack()->getTopScene() == gScene.get();
+    return std::chrono::steady_clock::now() - gDialogSeen < std::chrono::milliseconds(250);
 }
 bool inside(float px, float py, float x, float y, float w, float h) { return px >= x && px < x + w && py >= y && py < y + h; }
 float tw(std::string const& s) { return 6.0f * float(s.size()); }
@@ -228,6 +232,8 @@ void open(IClientInstance& client) {
     gScene      = scene;
     gClient     = &client;
     gGoneFrames = 0;
+    gOpenedAt   = std::chrono::steady_clock::now();
+    gDialogSeen = {};
     gClicks.clear();
     gWheel.clear();
     client.getSceneFactory().getCurrentSceneStack()->pushScreen(scene, false);
@@ -272,13 +278,18 @@ void install() {
     gSubs.on<ll::event::BeforeUIRenderEvent>([](ll::event::BeforeUIRenderEvent& ev) {
         std::lock_guard lock(gMutex);
         if (!gScene) return;
-        if (!ownsTop()) {
-            if (++gGoneFrames > 4) { gScene.reset(); gSelected.clear(); }
+        auto const now = std::chrono::steady_clock::now();
+        if (bf::hud::isHudScreen(ev.screenView())) {
+            // only the HUD is rendering: once the dialog has been gone a while (Esc / OK), forget the menu
+            if (now - gOpenedAt > std::chrono::milliseconds(800) && now - gDialogSeen > std::chrono::milliseconds(400)) {
+                gScene.reset();
+                gSelected.clear();
+                gSearch.clear();
+            }
             return;
         }
-        gGoneFrames = 0;
-        if (bf::hud::isHudScreen(ev.screenView())) return; // the game behind our dialog
-        ev.cancel();                                        // replace the empty dialog with our menu
+        gDialogSeen = now;
+        ev.cancel(); // replace the empty dialog with our menu
         try { render(ev.uiRenderContext(), ev.screenView()); } catch (...) {}
     });
 
