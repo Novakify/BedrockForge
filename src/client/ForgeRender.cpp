@@ -204,6 +204,10 @@ void uninstall() {
 void tick() {
     auto* m = mod();
     if (!m) return;
+    if (shaderpacks::yieldToRendererFoundation()) {
+        m->description = "Shaders are handled by Renderer Foundation (press F6 for its overlay).";
+        return;
+    }
     // shaderpack
     int pack = m->enabled ? int(m->num("pack", 0) + 0.5f) : 0;
     if (pack != gAppliedPack) {

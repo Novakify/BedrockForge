@@ -60,3 +60,15 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
   1.26: do the material reload between frames (endFrame/discardFrame, both virtuals in LL's FrameBuilder.h) and serve
   material.bin through ResourcePackManager::load instead of a cache.
 - BP script: same crit-only rule (critOnly setting, default on; isFalling && !isOnGround/isInWater/isClimbing/riding/blindness). tsc --checkJs clean vs @minecraft/server 2.3.0.
+
+## E-021 - 2026-10-21 Renderer Foundation (separate AGPL project)
+- Second zip "Renderer_Foundation" = upstream BetterRenderDragon v1.4.4 (identical to ddf8196/BetterRenderDragon main, AGPL-3.0)
+  plus a permission notice that says it doesn't override existing licences. Fernando chose: private AGPL fork, kept separate.
+- Fork lives on the orphan-history branch `renderer-foundation` of this repo (upstream history kept, NOTICE.md, LICENSE),
+  worktree /home/claude/rf in the cloud. CI builds RendererFoundation.dll to branch `rf-builds`. Move it to its own repo
+  (Novakify/RendererFoundation) when Fernando creates one - the integration can't create repos (403).
+- 2.0.0-alpha: LeviLamina client mod; MaterialBinLoader via file-open redirect + ResourcePackManager::load; shaderpack
+  folders; reload via cleanReloadMaterials; Vibrant Visuals toggle; ImGui overlay (D3D12 probe, Present/Present1,
+  ExecuteCommandLists queue capture, Win32 WndProc input, F6).
+- Bedrock Forge side: if RendererFoundation.dll is loaded, ForgeRender's material redirect yields to it (no code shared;
+  the two DLLs only coexist).

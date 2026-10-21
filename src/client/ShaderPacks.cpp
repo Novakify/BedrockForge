@@ -9,6 +9,9 @@
 #include <mutex>
 #include <vector>
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
 
@@ -58,7 +61,10 @@ bool tryCandidate(std::wstring const& cand, wchar_t* out, unsigned long outLen) 
     return true;
 }
 
+std::atomic<bool> gYield{false}; // Renderer Foundation is loaded: it owns material redirection
+
 bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) {
+    if (gYield.load(std::memory_order_relaxed)) return false;
     std::wstring_view p(path);
     if (!endsWithI(p, L".material.bin")) return false;
     auto st = gState.load();
@@ -102,6 +108,11 @@ std::vector<std::string> listPacks() {
 }
 
 std::string activePack() { return gActiveName; }
+
+bool yieldToRendererFoundation() {
+    if (!gYield && GetModuleHandleW(L"RendererFoundation.dll")) gYield = true;
+    return gYield;
+}
 
 bool setActivePack(std::string const& name) {
     std::error_code ec;

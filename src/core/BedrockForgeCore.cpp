@@ -56,6 +56,7 @@ bool Core::load() {
     bf::config::loadOrCreate(getSelf(), mConfig);
     // Shaderpacks must hook file opens before the renderer loads its materials.
     client::forgerender::install(getSelf().getModDir());
+    if (client::shaderpacks::yieldToRendererFoundation()) log.info("[BF] Renderer Foundation present: it handles shaders");
     gHudVisible = mConfig.hudEnabled;
     log.info("Config loaded: hud={} heartbeat={}", mConfig.hudEnabled, mConfig.logTickHeartbeat);
     return true;
@@ -63,6 +64,7 @@ bool Core::load() {
 
 bool Core::enable() {
     auto& log = getSelf().getLogger();
+    if (client::shaderpacks::yieldToRendererFoundation()) log.info("[BF] Renderer Foundation present: it handles shaders");
 
     // ---- Prototype 1: event callbacks ----
     mSubs.on<ll::event::ClientJoinLevelEvent>([this](ll::event::ClientJoinLevelEvent& ev) {

@@ -24,6 +24,8 @@ std::string              activePack(); // "off" when none
 bool setActivePack(std::string const& name);
 /// Folder with material.bin files extracted from the active resource packs; they win over the shaderpack. "" = off.
 void setResourcePackCache(std::filesystem::path const& dir);
+/// If the Renderer Foundation mod is loaded, stop redirecting materials (it owns that job). Returns true when yielding.
+bool yieldToRendererFoundation();
 /// Log what the hooks saw so far (once; call from a normal thread after startup, e.g. on joining a world).
 void reportOnce();
 /// Rewrite mods/BedrockForgeCore/logs/shaderpacks.txt (counts + every material path seen).
