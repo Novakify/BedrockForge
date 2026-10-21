@@ -66,7 +66,7 @@ void Registry::setEnabled(Module& m, bool on) {
 
 void Registry::load(std::string const& path) {
     mPath = path;
-    std::ifstream in(std::filesystem::path(path));
+    std::ifstream in{std::filesystem::path{path}};
     if (!in) { save(); return; }
     nlohmann::json j = nlohmann::json::parse(in, nullptr, false);
     if (j.is_discarded() || !j.is_object()) return;
@@ -98,7 +98,7 @@ void Registry::save() const {
     }
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(mPath).parent_path(), ec);
-    std::ofstream out(std::filesystem::path(mPath));
+    std::ofstream out{std::filesystem::path{mPath}};
     out << j.dump(2);
 }
 
