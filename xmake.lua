@@ -23,7 +23,7 @@ end
 target("BedrockForgeCore")
     set_version("0.1.0")
     add_rules("@levibuildscript/linkrule")
-    add_rules("@levibuildscript/modpacker")
+    add_rules("@levibuildscript/modpacker", {modVersion = "0.2.0", modPlatform = "client"})
     add_defines("NOMINMAX", "UNICODE", "_HAS_CXX23=1")
     set_exceptions("none") -- avoid conflicts with /EHa
     add_cxflags("/EHa", "/utf-8", "/W4", "/w44265", "/w44289", "/w44296", "/w45263", "/w44738", "/w45204")

@@ -54,12 +54,22 @@ def spark(scale, hollow=0.0):
     if hollow: d.polygon(poly(scale*hollow), fill=0)
     return finish(img, 0.5)
 
+def cross(scale, ring=0.0):
+    """Thin needle cross with a small ring at the centre (opening beat of the sparkle sequence)."""
+    img = canvas(); d = ImageDraw.Draw(img); rnd = random.Random(9); cx, cy = W*SS/2, H*SS/2
+    for a, ln in ((0, W*SS*0.5*scale), (math.pi, W*SS*0.5*scale), (math.pi/2, H*SS*0.62*scale), (-math.pi/2, H*SS*0.62*scale)):
+        rough_wedge(d, cx, cy, a, 0, ln, 0.006, rnd)
+    if ring:
+        r = ring*H*SS; t = r*0.35
+        d.ellipse([cx-r, cy-r*0.8, cx+r, cy+r*0.8], fill=255); d.ellipse([cx-r+t, cy-(r-t)*0.8, cx+r-t, cy+(r-t)*0.8], fill=0)
+    return finish(img, 0.4)
+
 if __name__ == "__main__":
     out = sys.argv[1]
     for name, frames in {
         "lines": [lines(1, .6, .30), lines(2, 1.0, .20), lines(3, 1.2, .14)],
         "flare": [flare(.35, 5), flare(.7, 6), flare(1.0, 7)],
-        "spark": [spark(.35), spark(.9), spark(1.6, .55), spark(2.4, .8), spark(3.2, .9)],
+        "spark": [cross(.7, .03), spark(.9), spark(1.6, .55), spark(2.4, .8), spark(3.2, .9)],
     }.items():
         os.makedirs(f"{out}/{name}", exist_ok=True)
         for i, f in enumerate(frames): f.save(f"{out}/{name}/frame_{i}.png")

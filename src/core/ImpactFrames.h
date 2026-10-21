@@ -36,15 +36,16 @@ struct Settings {
     int         chanceRecoverMs  = 2000;   // no hits for this long -> chance resets
     int         cooldownMs       = 0;      // minimum gap between impact frames
     // --- the frames ---
-    int         lengthMs         = 100;    // whole frame sequence
+    int         lengthMs         = 150;    // whole frame sequence (BP posterize runs 3 ticks = 150ms)
     int         frameCount       = 2;
     bool        alternate        = true;   // swap bg/fg on odd frames
     Rgb         background       = {0, 0, 0};
     Rgb         foreground       = {1, 1, 1};
+    float       backgroundAlpha  = 0.0f;   // 0 = keep the (posterized) world visible behind the mask
     // Animated burst frames from a resource pack (ships as packs/BedrockForgeImpact).
     // Swap in any pack that provides <framePath>0..N-1 to change the look.
     bool        useFrameTextures = true;
-    // Built-in styles: impact/ (star), impact_ring/, impact_ink/
+    // Built-in masks (tools/gen_impact_v2.py): impact/ = sparkle (5 frames), impact_lines/ = focus lines (3 frames)
     std::string framePath        = "textures/bedrock_forge/impact/frame_";
     int         frameTextures    = 5;
     bool        speedLines       = false;   // off by default: clean frames read better

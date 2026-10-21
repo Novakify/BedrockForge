@@ -1,0 +1,49 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Bedrock Forge Impact (Behavior)",
+    "description": "Posterizes your view (Vibrant Visuals) for impact frames when you hit a mob",
+    "uuid": "235c4086-d2ca-4557-bbea-ad0c4c72b22b",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      90
+    ]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "e829ff42-e178-4358-b22b-7cd50f9f6c40",
+      "entry": "scripts/main.js",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.3.0"
+    },
+    {
+      "module_name": "@minecraft/server-graphics",
+      "version": "1.0.0"
+    },
+    {
+      "uuid": "a782a9da-2b55-42e7-83f0-ceec81b5b0f6",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ]
+}
