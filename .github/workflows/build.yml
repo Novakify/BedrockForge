@@ -34,7 +34,20 @@ jobs:
 
       - run: xmake repo -u
       - run: xmake f -a x64 -m release -p windows -v -y --target_type=client
-      - run: xmake -v -y
+      - name: Build
+        shell: pwsh
+        run: |
+          xmake -v -y 2>&1 | Tee-Object -FilePath build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # surface compiler errors as annotations (readable without downloading logs)
+            Select-String -Path build.log -Pattern 'error' | Select-Object -First 25 | ForEach-Object {
+              $m = $_.Line -replace '%','%25' -replace "`r",'' -replace "`n",' '
+              if ($m.Length -gt 900) { $m = $m.Substring(0, 900) }
+              Write-Output "::error::$m"
+            }
+            exit $code
+          }
 
       - name: Syntax-check PowerShell scripts
         shell: pwsh
