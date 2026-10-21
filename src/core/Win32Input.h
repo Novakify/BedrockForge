@@ -16,3 +16,21 @@ inline constexpr int W = 0x57, A = 0x41, S = 0x53, D = 0x44;
 } // namespace vk
 
 } // namespace bedrock_forge::win32
+
+namespace bedrock_forge::win32::files {
+
+/// Rewrites a path the game is about to open. Return true and fill `out` to open that file instead.
+using RedirectFn = bool (*)(wchar_t const* path, wchar_t* out, unsigned long outLen);
+
+struct HookSite {
+    char const* name;
+    void*       target;   // the KernelBase export
+    void*       detour;   // our replacement
+    void**      original; // trampoline slot filled by the hook engine
+};
+
+/// CreateFileW / CreateFile2 hook sites (targets resolved from KernelBase.dll). Returns how many are valid.
+int  hookSites(HookSite* out, int max);
+void setRedirect(RedirectFn fn);
+
+} // namespace bedrock_forge::win32::files

@@ -178,7 +178,9 @@ LL_TYPE_INSTANCE_HOOK(BfSurvivalAttackHook, ll::memory::HookPriority::Normal, Su
 // ============================================================================ modules
 void registerBuiltins() {
     auto& r = Registry::get();
-    if (!r.all().empty()) return;
+    static bool done = false;
+    if (done) return;
+    done = true;
 
     // ---------------- HUD
     r.add("fps", "FPS", Category::Hud, "Frames per second", true).hud = [](Frame& f) {
@@ -270,8 +272,8 @@ void registerBuiltins() {
         if (!f.player) return;
         std::vector<std::string> lines;
         for (auto const& e : f.player->getAllEffects()) {
-            int ticks = *e.mDuration->mValue, secs = ticks / 20;
-            lines.push_back(std::format("{} {} {}:{:02}", e.getDisplayName(), roman(*e.mAmplifier + 1), secs / 60, secs % 60));
+            int ticks = e.mDuration->mValue, secs = ticks / 20;
+            lines.push_back(std::format("{} {} {}:{:02}", e.getDisplayName(), roman(e.mAmplifier + 1), secs / 60, secs % 60));
         }
         panel(f.ctx, 4, f.height / 2 - 10, lines, 0.35f, {0.85f, 0.9f, 1, 1});
     };

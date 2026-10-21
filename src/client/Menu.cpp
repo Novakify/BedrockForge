@@ -231,7 +231,7 @@ void install() {
         char const  a = ev.actionButtonId();
         schar const d = ev.buttonData();
         if (a == MouseAction::ActionMove || a == MouseAction::ActionMoveRelative) return;
-        float inv = *gClient->getGuiData()->mInvGuiScale;
+        float inv = gClient->getGuiData()->mInvGuiScale;
         if (a == MouseAction::ActionWheel) {
             if (d != 0) gWheel.push_back(d > 0 ? -1 : 1);
             ev.cancel();
