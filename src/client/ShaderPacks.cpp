@@ -115,6 +115,14 @@ void reportOnce() {
     std::string names;
     for (auto& n : gNames) names += fs::path(n).string() + " ";
     log.info("[BF] shaderpacks: loaded from pack: {}", names.empty() ? "(none)" : names);
+    // also write a small report file right away (the game log is buffered and lost if the process is killed)
+    std::error_code ec;
+    auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
+    fs::create_directories(dir, ec);
+    if (std::ofstream out{dir / "shaderpacks.txt"}; out) {
+        for (int i = 0; i < 4; ++i) out << api[i] << ": saw " << gSeen[i].load() << " material opens, redirected " << gRedirected[i].load() << "\n";
+        out << "loaded from pack: " << (names.empty() ? "(none)" : names) << "\n";
+    }
 }
 
 void uninstall() {
