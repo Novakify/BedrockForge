@@ -46,6 +46,7 @@ struct Module {
     bool        enabled  = false;
     bool        planned  = false; // roadmap entry, not implemented yet
     int         key      = 0;     // Windows VK toggle key, 0 = none
+    bool        favorite = false; // pinned to the top of its list (middle click in the menu)
     std::vector<Setting>          settings;
     std::function<void(Frame&)>   hud;      // called every HUD frame while enabled
     std::function<void(bool)>     onToggle; // called after enabled changes

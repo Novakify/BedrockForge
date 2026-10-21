@@ -1,6 +1,7 @@
 #include "client/Menu.h"
 
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <functional>
 #include <format>
@@ -10,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "ll/api/event/input/KeyInputEvent.h"
 #include "ll/api/event/input/MouseInputEvent.h"
 #include "ll/api/event/render/UIRenderEvent.h"
 #include "ll/api/input/KeyRegistry.h"
@@ -36,7 +38,9 @@ int                            gGoneFrames = 0;
 Category                       gCategory = Category::Hud;
 std::string                    gSelected; // module whose settings are shown
 float                          gScroll = 0;
-struct Click { float x, y; bool right; };
+struct Click { float x, y; bool right; bool middle = false; };
+std::string gSearch; // typed while the menu is open
+bool        gMiddle = false; // the click being handled is a middle click
 std::vector<Click> gClicks;
 std::vector<int>   gWheel;
 glm::vec2          gActionPos{0, 0}; // where the click being handled landed (sliders use it)
@@ -73,6 +77,13 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
     for (auto& m : reg.all()) { planned += m->planned; active += (m->enabled && !m->planned); }
     std::string stats = std::format("{} modules | {} on | {} planned", reg.all().size() - planned, active, planned);
     bf::hud::drawLabel(ctx, mx + 90, my + 4, stats, kDim);
+    // search field (just type; Backspace deletes)
+    {
+        float sx = mx + mw - 120, sw = 100;
+        bf::hud::fillBox(ctx, sx, my + 2, sw, 12, kCard);
+        std::string shown = gSearch.empty() ? "type to search" : gSearch + "_";
+        bf::hud::drawLabel(ctx, sx + 4, my + 4, shown, gSearch.empty() ? kDim : kText, 0.8f);
+    }
     hits.push_back({mx + mw - 14, my + 2, 12, 12, [](bool) {
         if (gClient) gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
     }});
@@ -97,7 +108,15 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
     float const gx = mx + cw + 6, gw = mw - cw - 12 - (sel ? settingsW + 6 : 0);
     float const colW = (gw - 4) / 2, rowH = 24;
     std::vector<Module*> list;
-    for (auto& m : reg.all()) if (m->category == gCategory) list.push_back(m.get());
+    auto lower = [](std::string s) { for (auto& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch))); return s; };
+    std::string const q = lower(gSearch);
+    for (auto& m : reg.all())
+        if (q.empty() ? m->category == gCategory : (lower(m->name).find(q) != std::string::npos || lower(m->description).find(q) != std::string::npos))
+            list.push_back(m.get());
+    std::stable_sort(list.begin(), list.end(), [](Module* a, Module* b) {
+        if (a->favorite != b->favorite) return a->favorite;
+        return !a->planned && b->planned;
+    });
     float const viewH = mh - 24;
     float const contentH = float((list.size() + 1) / 2) * (rowH + 4);
     gScroll = std::clamp(gScroll, 0.0f, std::max(0.0f, contentH - viewH));
@@ -112,11 +131,13 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
         bf::hud::fillBox(ctx, x, y, 2, rowH, pill);
         std::string name = m->name.size() > size_t(colW / 6 - 6) ? m->name.substr(0, size_t(colW / 6 - 7)) + "." : m->name;
         bf::hud::drawLabel(ctx, x + 6, y + 3, name, m->planned ? kDim : kText);
+        if (m->favorite) bf::hud::drawLabel(ctx, x + colW - tw(m->planned ? "SOON" : m->enabled ? "ON" : "OFF") - 12, y + 3, "*", kSoon);
         std::string state = m->planned ? "SOON" : m->enabled ? "ON" : "OFF";
         bf::hud::drawLabel(ctx, x + colW - tw(state) - 4, y + 3, state, pill);
         std::string desc = m->description.size() > size_t(colW / 5 - 2) ? m->description.substr(0, size_t(colW / 5 - 3)) + "." : m->description;
         bf::hud::drawLabel(ctx, x + 6, y + 13, desc, kDim, 0.8f);
         hits.push_back({x, y, colW, rowH, [m](bool right) {
+            if (gMiddle) { m->favorite = !m->favorite; Registry::get().save(); return; }
             if (right || m->planned) { gSelected = (gSelected == m->id) ? "" : m->id; return; }
             Registry::get().setEnabled(*m, !m->enabled);
         }});
@@ -174,7 +195,7 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
             }
         }
     }
-    bf::hud::drawLabel(ctx, mx + cw + 6, my + mh - 10, "L-click toggle | R-click settings | wheel scroll | Esc close", kDim, 0.7f);
+    bf::hud::drawLabel(ctx, mx + cw + 6, my + mh - 10, "L toggle | R settings | Mid favourite | type to search | Esc close", kDim, 0.7f);
 
     // apply input collected since the last frame
     for (int d : gWheel) gScroll += float(d) * 16.0f;
@@ -183,6 +204,7 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
         for (auto it = hits.rbegin(); it != hits.rend(); ++it)
             if (inside(c.x, c.y, it->x, it->y, it->w, it->h)) {
                 gActionPos = {c.x, c.y}; // sliders use the click position, not the hover pointer
+                gMiddle    = c.middle;
                 it->action(c.right);
                 break;
             }
@@ -225,6 +247,19 @@ void install() {
         try { render(ev.uiRenderContext(), ev.screenView()); } catch (...) {}
     });
 
+    gSubs.on<ll::event::KeyInputEvent>([](ll::event::KeyInputEvent& ev) {
+        std::lock_guard lock(gMutex);
+        if (!gScene || !ownsTop()) return;
+        int const k = ev.keyCode();
+        if (k == 0x1B) { gSearch.clear(); return; }       // Esc closes the dialog natively
+        if (k == 0xA1 || k == 0xA0 || k == 0x10) return;  // shifts
+        ev.cancel();                                       // the menu owns the keyboard while open
+        if (!ev.isDown()) return;
+        if (k == 0x08) { if (!gSearch.empty()) gSearch.pop_back(); gScroll = 0; return; }
+        if (gSearch.size() >= 20) return;
+        if ((k >= 0x41 && k <= 0x5A) || (k >= 0x30 && k <= 0x39)) { gSearch += char(std::tolower(k)); gScroll = 0; }
+        else if (k == 0x20) gSearch += ' ';
+    });
     gSubs.on<ll::event::MouseInputEvent>([](ll::event::MouseInputEvent& ev) {
         std::lock_guard lock(gMutex);
         if (!gScene || !ownsTop()) return;
@@ -237,8 +272,8 @@ void install() {
             ev.cancel();
             return;
         }
-        if ((a == MouseAction::ActionLeft || a == MouseAction::ActionRight) && d == MouseAction::DataDown)
-            gClicks.push_back({float(ev.x()) * inv, float(ev.y()) * inv, a == MouseAction::ActionRight});
+        if ((a == MouseAction::ActionLeft || a == MouseAction::ActionRight || a == MouseAction::ActionMiddle) && d == MouseAction::DataDown)
+            gClicks.push_back({float(ev.x()) * inv, float(ev.y()) * inv, a == MouseAction::ActionRight, a == MouseAction::ActionMiddle});
         if (d == MouseAction::DataDown) ev.cancel();
     });
 }

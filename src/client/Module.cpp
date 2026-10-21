@@ -75,6 +75,7 @@ void Registry::load(std::string const& path) {
         if (it == j.end() || !it->is_object()) continue;
         if (auto e = it->find("enabled"); e != it->end() && e->is_boolean() && !m->planned) m->enabled = e->get<bool>();
         if (auto k = it->find("key"); k != it->end() && k->is_number_integer()) m->key = k->get<int>();
+        if (auto f = it->find("favorite"); f != it->end() && f->is_boolean()) m->favorite = f->get<bool>();
         if (auto s = it->find("settings"); s != it->end() && s->is_object())
             for (auto& st : m->settings) {
                 auto v = s->find(st.id);
@@ -94,7 +95,7 @@ void Registry::save() const {
             if (st.kind == Setting::Kind::Toggle) s[st.id] = st.on;
             else s[st.id] = st.value;
         }
-        j[m->id] = {{"enabled", m->enabled}, {"key", m->key}, {"settings", s}};
+        j[m->id] = {{"enabled", m->enabled}, {"key", m->key}, {"favorite", m->favorite}, {"settings", s}};
     }
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(mPath).parent_path(), ec);
