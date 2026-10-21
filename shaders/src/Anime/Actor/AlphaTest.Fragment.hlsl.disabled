@@ -14,10 +14,13 @@ float4 main(PSIn i) : SV_Target {
     float4 t     = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0) * MatColor;
     float  alpha = lerp(t.a, t.a * OverlayColor.a, TintedAlphaTestEnabled.x);
     bool   kill  = alpha < 0.5;
+    // E-020: dither fade compiled out until mobs are confirmed visible (suspected cause of the invisible-mob bug)
+#if defined(BF_ACTOR_DITHER)
     if (DitheringEnabledToggle.x != 0.0) {
         float3 cam = float3(u_invView[0][3], u_invView[1][3], u_invView[2][3]);
         kill = kill || bfDitherKill(i.texcoord3, cam, u_view[2].xyz, i.color1, DitherParams2[0], DitherParams);
     }
+#endif
     if (kill) discard;
     float3 c = t.rgb * ((i.color0.rgb - 1.0) * ColorBased.x + 1.0);
     c  = lerp(c, OverlayColor.rgb, OverlayColor.a);

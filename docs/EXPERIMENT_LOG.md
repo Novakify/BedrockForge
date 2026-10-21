@@ -32,3 +32,24 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
 - New: mods/BedrockForgeCore/logs/diag.txt (hook counters, enabled modules, screens) and logs/shaderpacks.txt (every material path), rewritten every ~10 s.
 - BetterRenderDragon 1.4.4 review (reference only, AGPL, 1.20/1.21 signatures): ideas to rebuild originally - hot shader reload (discard frame + free compiled
   shader blobs), material.bin from resource packs, deferred / Vibrant Visuals unlock. Planned as Bedrock Forge "ForgeRender".
+
+## E-020 - 2026-10-21 (unattended cloud session, no PC access: folder prompt not yet approved)
+- Fullbright v3 (compiles: CI #39 green; not tested in game): LightTexture::refresh/getColorForUV are MCNAPI (no symbol) so they can't be hooked.
+  New path: hook BlockTessellatorCache::getLightColor (client-only chunk tessellator) to floor sky+block light at strength*15, and
+  call RenderChunkCoordinator::relightAllRenderChunkGeometry() on every coordinator when the module/strength changes (HUD tick).
+  Also LevelRendererCamera::getAmbientBrightness -> 1. diag.txt: "tessellator light N (relights M)". Mobs/particles not covered yet
+  (Actor::getBrightness is shared with gameplay; only hook it render-thread-only if needed).
+- ForgeRender v1 (ShaderPacks.cpp + ForgeRender.cpp, original code): module id stays "shaderpacks", shown as "ForgeRender".
+  * Shaderpack slider (0 = vanilla, 1..N = folders in shaderpacks/), label shows the name; writes config/shaderpack.txt; redirect
+    state swapped atomically so files opened after the switch come from the new pack.
+  * Resource-pack shaders: hook MinecraftGame::onActiveResourcePacksChanged -> iteratePacks -> PackInstance::getResource(
+    renderer/materials/<every vanilla material name>) -> cache/packshaders/. Redirect priority: resource pack > shaderpack > vanilla.
+    shaderpacks.txt lists the stack order and which pack served each material.
+  * Reload: MinecraftGame::cleanReloadMaterials() on the client thread (menu toggle "Reload materials now", or auto on change).
+    UNKNOWN whether it re-opens material.bin files: compare "saw N material opens" in shaderpacks.txt before/after.
+  * Vibrant Visuals toggle: TextureGroup::mAdvancedGraphicsOptions -> setGraphicsMode(Advanced/Fancy), only if
+    isVibrantVisualsAllowed() && canSwitchGraphicsModeInGame() (server force-disable is respected). Assumes Advanced == VV.
+- Actor AlphaTest (not built: vanilla materials are on the PC). Hypotheses for "invisible mobs": (a) bfDitherKill discards when
+  fade <= t, so fade = 0 near the camera kills every pixel if DitheringEnabledToggle is on for all actors; (b) camera-relative
+  world position minus u_invView translation; (c) TintedAlphaTestEnabled with OverlayColor.a = 0. Next build: variant without
+  dither first, then re-add.
