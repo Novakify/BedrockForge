@@ -1,0 +1,14 @@
+SHINE 3.0 — NOVAK PRIVATE CONVERSION PERMISSION
+Date: October 21, 2026
+
+Permission statement (provided for project records based on Novak's account of the author's permission):
+
+tapeQ has given Novak permission to access, study, use, and modify Shine 3.0 source code and assets for the purpose of privately adapting and converting the project from Minecraft Java Edition to Minecraft Bedrock Edition, including educational development and compatibility testing.
+
+This permission is PRIVATE-USE ONLY. It does not authorize Novak to publish, upload, distribute, sell, or otherwise publicly release the original code or assets, a port, or a modified version. Novak must contact tapeQ and obtain fresh, explicit permission before any public release or sharing beyond the authorized private work.
+
+This statement documents the permission Novak reports receiving. It is not an independently authenticated signature or a substitute for tapeQ's original written approval. Keep the original written approval alongside project records. This statement does not supersede licenses or notices governing third-party components.
+
+Named authorized developer: Novak
+Original author identified by requester: tapeQ
+Intended conversion direction: Minecraft Java Edition -> Minecraft Bedrock Edition

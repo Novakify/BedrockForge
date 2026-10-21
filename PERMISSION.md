@@ -12,3 +12,7 @@
   -> Working rule: PRIVATE ONLY. Nothing from this branch is published or shared. Still wanted: tapeQ's actual 3.0 source.
 - The recovery zips contain the compiled classes + a partial javap disassembly (no .java). Not used: reconstructing code
   from bytecode was blocked in this session; conversion waits for real source or proceeds from readable assets/configs.
+- 2026-10-21: Google Drive package "Shine_3_0_Claude_Ready_With_Novak_Permission.zip" (99.7 MB). Its permission statement is
+  saved as PERMISSION_FOR_NOVAK.txt (private-use only; it documents Novak's account, not a signature). Its own README says the
+  746 .java files are decompiled reconstructions, so they were not used and the download was deleted. Note: its
+  legal/LICENSE.md is PolyForm Shield (Shine 1.0.0's licence); the 3.0 jar itself says "All Rights Reserved".
