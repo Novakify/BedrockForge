@@ -45,9 +45,9 @@ struct Settings {
     // Animated burst frames from a resource pack (ships as packs/BedrockForgeImpact).
     // Swap in any pack that provides <framePath>0..N-1 to change the look.
     bool        useFrameTextures = true;
-    // Built-in masks (tools/gen_impact_v2.py): impact/ = sparkle (5 frames), impact_lines/ = focus lines (3 frames)
+    // Built-in masks (tools/gen_impact_v2.py): impact/ = sparkle (6 frames), impact_lines/ = focus lines (3 frames)
     std::string framePath        = "textures/bedrock_forge/impact/frame_";
-    int         frameTextures    = 5;
+    int         frameTextures    = 6;
     bool        speedLines       = false;   // off by default: clean frames read better
     int         lines            = 28;
     int         fadeMs           = 60;    // after-glow (vignette + fading lines); 0 = hard cut

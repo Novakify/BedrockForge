@@ -64,12 +64,66 @@ def cross(scale, ring=0.0):
         d.ellipse([cx-r, cy-r*0.8, cx+r, cy+r*0.8], fill=255); d.ellipse([cx-r+t, cy-(r-t)*0.8, cx+r-t, cy+(r-t)*0.8], fill=0)
     return finish(img, 0.4)
 
+# ---------------------------------------------------------------- v3: hand-drawn anime sparkle
+def _noise1d(seed, octaves=((3, .55), (7, .3), (19, .15))):
+    rnd = random.Random(seed); ph = [(f, a, rnd.uniform(0, 6.283)) for f, a in octaves]
+    return lambda a: sum(amp * math.sin(f * a + p) for f, amp, p in ph)
+
+def sparkle_poly(cx, cy, rx, ry, p=0.34, rot=0.0, wobble=0.03, seed=1, tip_bias=(1.0, 1.12)):
+    """4-point concave sparkle with needle tips. wobble = hand-drawn edge waviness."""
+    n = _noise1d(seed); pts = []
+    for i in range(1800):
+        a = 2*math.pi*i/1800; c, s_ = math.cos(a), math.sin(a)
+        r = (abs(c)**p + abs(s_)**p) ** (-1/p)
+        r *= 1 + wobble * n(a)
+        x, y = r*c*rx*tip_bias[0], r*s_*ry*tip_bias[1]
+        xr, yr = x*math.cos(rot) - y*math.sin(rot), x*math.sin(rot) + y*math.cos(rot)
+        pts.append((cx + xr, cy + yr))
+    return pts
+
+def ink_breaks(d, cx, cy, rmin, rmax, count, seed, width=0.012):
+    """Dry-brush gaps: thin dark wedges cut through an outline so it reads hand-inked."""
+    rnd = random.Random(seed)
+    for _ in range(count):
+        a = rnd.uniform(0, 2*math.pi); w = rnd.uniform(.3, 1) * width
+        d.polygon([(cx + rmin*math.cos(a-w), cy + rmin*math.sin(a-w)), (cx + rmax*math.cos(a), cy + rmax*math.sin(a)),
+                   (cx + rmin*math.cos(a+w), cy + rmin*math.sin(a+w))], fill=0)
+
+def sparkle_v3(i):
+    img = canvas(); d = ImageDraw.Draw(img); cx, cy = W*SS/2, H*SS/2; U = H*SS/2; rnd = random.Random(40 + i)
+    rot = math.radians([0, 1.5, 3, 4, 5, 6][i])
+    if i == 0:   # needle cross + tiny ring: the "tink" before the hit lands
+        for a, ln in ((0, W*SS*.48), (math.pi, W*SS*.48), (math.pi/2, H*SS*.58), (-math.pi/2, H*SS*.58)):
+            rough_wedge(d, cx, cy, a + rot, 0, ln, 0.005, rnd)
+        r = .028*U*2; t = r*.38
+        d.ellipse([cx-r, cy-r*.78, cx+r, cy+r*.78], fill=255); d.ellipse([cx-r+t, cy-(r-t)*.78, cx+r-t, cy+(r-t)*.78], fill=0)
+    elif i == 1: # compact bright sparkle, needle tips reaching out
+        d.polygon(sparkle_poly(cx, cy, U*.55, U*.62, p=.30, rot=rot, seed=11), fill=255)
+        for a in (0, math.pi, math.pi/2, -math.pi/2):
+            rough_wedge(d, cx, cy, a + rot, U*.4, U*1.25 if a in (0, math.pi) else U*1.0, 0.004, rnd)
+    elif i == 2: # full sparkle, small hollow core = the impact point
+        d.polygon(sparkle_poly(cx, cy, U*1.25, U*1.05, p=.33, rot=rot, seed=12), fill=255)
+        d.polygon(sparkle_poly(cx, cy, U*.10, U*.09, p=.45, rot=rot, seed=13, wobble=0.06), fill=0)
+    elif i == 3: # sparkle hollowing out: thick inked outline
+        d.polygon(sparkle_poly(cx, cy, U*2.0, U*1.6, p=.36, rot=rot, seed=14), fill=255)
+        d.polygon(sparkle_poly(cx, cy, U*1.45, U*1.15, p=.36, rot=rot, seed=15, wobble=.05), fill=0)
+        ink_breaks(d, cx, cy, U*.9, U*2.4, 7, 16)
+    elif i == 4: # diamond shockwave, outline thinning
+        d.polygon(sparkle_poly(cx, cy, U*2.9, U*2.3, p=.42, rot=rot, seed=17), fill=255)
+        d.polygon(sparkle_poly(cx, cy, U*2.55, U*2.05, p=.42, rot=rot, seed=18, wobble=.04), fill=0)
+        ink_breaks(d, cx, cy, U*1.4, U*3.4, 12, 19, .02)
+    else:        # breaking apart at the screen edges
+        d.polygon(sparkle_poly(cx, cy, U*3.7, U*2.9, p=.48, rot=rot, seed=20), fill=255)
+        d.polygon(sparkle_poly(cx, cy, U*3.5, U*2.78, p=.48, rot=rot, seed=21, wobble=.05), fill=0)
+        ink_breaks(d, cx, cy, U*1.8, U*4.5, 26, 22, .035)
+    return finish(img, 0.45)
+
 if __name__ == "__main__":
     out = sys.argv[1]
     for name, frames in {
         "lines": [lines(1, .6, .30), lines(2, 1.0, .20), lines(3, 1.2, .14)],
         "flare": [flare(.35, 5), flare(.7, 6), flare(1.0, 7)],
-        "spark": [cross(.7, .03), spark(.9), spark(1.6, .55), spark(2.4, .8), spark(3.2, .9)],
+        "spark": [sparkle_v3(i) for i in range(6)],
     }.items():
         os.makedirs(f"{out}/{name}", exist_ok=True)
         for i, f in enumerate(frames): f.save(f"{out}/{name}/frame_{i}.png")
