@@ -6,6 +6,7 @@
 //   frame B (tick 1)  : blown-out white flash         -> the "inverted" beat
 //   frame C (tick 2)  : back to frame A
 //   tick 3            : reset to whatever the resource packs define
+// Also plays the impact SFX and a short vanilla /camerashake.
 // The burst mask (sparkle / focus lines) is drawn by the BedrockForgeCore native mod on top.
 //
 // Needs: Vibrant Visuals enabled. On Fancy graphics colour grading does nothing (harmless).
@@ -17,6 +18,8 @@ const CONFIG = {
   minDamage: 1,      // ignore tiny hits
   cooldownTicks: 4,  // at most one impact per 4 ticks (200ms)
   sequence: ["poster", "white", "poster"], // one entry per tick (50ms each)
+  sound: "bf.impact",           // original SFX in the resource pack ("" = off)
+  shake: { intensity: 0.35, seconds: 0.18, type: "rotational" }, // vanilla /camerashake (null = off)
 };
 
 const V = (x) => ({ x, y: x, z: x });
@@ -57,6 +60,12 @@ function impact(player) {
   const now = system.currentTick;
   if ((busy.get(player.id) ?? 0) > now) return;
   busy.set(player.id, now + CONFIG.cooldownTicks);
+
+  if (CONFIG.sound) { try { player.playSound(CONFIG.sound, { volume: 1, pitch: 0.95 + Math.random() * 0.1 }); } catch {} }
+  if (CONFIG.shake) {
+    const k = CONFIG.shake;
+    try { player.runCommand(`camerashake add @s ${k.intensity} ${k.seconds} ${k.type}`); } catch (e) { console.warn(`[BF] camerashake failed: ${e}`); }
+  }
 
   let g;
   try { g = gradingFor(player); } catch (e) { console.warn(`[BF] colour grading unavailable: ${e}`); return; }

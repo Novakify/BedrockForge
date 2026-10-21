@@ -1,0 +1,13 @@
+{
+  "format_version": "1.20.20",
+  "sound_definitions": {
+    "bf.impact": {
+      "category": "player",
+      "sounds": [
+        { "name": "sounds/bedrock_forge/impact_0", "volume": 1.0 },
+        { "name": "sounds/bedrock_forge/impact_1", "volume": 1.0 },
+        { "name": "sounds/bedrock_forge/impact_2", "volume": 1.0 }
+      ]
+    }
+  }
+}

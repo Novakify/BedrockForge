@@ -52,10 +52,11 @@ struct Settings {
     int         lines            = 28;
     int         fadeMs           = 60;    // after-glow (vignette + fading lines); 0 = hard cut
     float       intensity        = 1.0f;   // 0..1 opacity multiplier for everything
-    // --- sound (vanilla id; custom needs a resource pack) ---
-    std::string sound            = "random.anvil_land";
-    float       volume           = 0.6f;
-    float       pitch            = 1.6f;   // 0 = no sound
+    // --- sound: the behavior pack plays "bf.impact" + camera shake, so the native mod stays quiet by default.
+    // Set pitch > 0 to play `sound` from here instead (e.g. when running without the behavior pack).
+    std::string sound            = "bf.impact";
+    float       volume           = 1.0f;
+    float       pitch            = 0.0f;   // 0 = no sound from the native side
 };
 
 /// Wire listeners into `subs`. `settings` must outlive the subscriptions.
