@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+# A newer push cancels an older running build, so `builds` never gets overwritten by a stale one.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-latest
