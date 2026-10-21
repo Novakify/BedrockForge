@@ -33,7 +33,7 @@ Analysis was static (PE headers, version resources, import tables, readable stri
 
 ## Feature roadmap (what a Blueberry-class client offers → our version)
 
-Display-only and quality-of-life features. **Bold = shipped in Bedrock Forge.**
+Display-only and quality-of-life features. **Bold = shipped in Bedrock Forge** (all 50+ entries, shipped or planned, are listed in the in-game menu).
 
 | Module | Our plan | Status |
 |---|---|---|
@@ -45,13 +45,15 @@ Display-only and quality-of-life features. **Bold = shipped in Bedrock Forge.**
 | Player list ("names of every user on the server") | client player list from the Level | next |
 | Armor / item HUD | local player's equipment + durability | next |
 | Potion effects HUD | local player's MobEffect list | next |
-| Zoom | hook the camera FOV (needs a LeviLamina hook) | planned |
+| **Zoom** | `LevelRendererPlayer::getFov` hook, hold C, smooth, slower turning | **v1** |
 | Freelook | detach camera yaw/pitch from the player | planned |
-| Fullbright / gamma | gamma option override | planned |
+| **Fullbright** | lightmap builder hook (overworld + nether) | **v1** |
 | Toggle sprint / sneak | input mapping | planned |
-| Hit colour / block outline colour | RenderDragon uniform hook (RENDERING_PLAN R-series) | planned |
+| **Hit colour** | `ActorShaderManager::_getOverlayColor` hook | **v1** |
+| Block outline colour | material / uniform hook | planned |
 | Chunk borders, waypoints | world-space lines (render hook) | planned |
-| Module menu (search + favourites) | our own UI screen | planned |
+| **Module menu** | Right Shift; native dialog for cursor + our own drawing, settings sliders/toggles | **v1** (search/favourites next) |
+| **FOV changer, sensitivity, no hurt cam, no view bobbing, time changer, CPS cap, scroll disabler, reach, combo, armor/potion/XP/item HUD, player list, crosshair, F3 debug** | hooks + HUD | **v1** |
 | Cosmetics (capes) | client-side skin geometry | later |
 | Discord rich presence | LeviLauncher already has Discord RPC | skip |
 
