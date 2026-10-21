@@ -39,6 +39,7 @@
 #include "bf/Events.h"
 #include "bf/Hud.h"
 #include "client/Menu.h"
+#include "client/ShaderPacks.h"
 #include "core/Win32Input.h"
 
 namespace bedrock_forge::client {
@@ -440,6 +441,7 @@ void installRuntime() {
         }
         gFps.frame();
         noteRenderThread();
+        if (gFps.frames == 120) shaderpacks::reportOnce(); // ~2 s into the first world
         auto& ctx    = ev.uiRenderContext();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));

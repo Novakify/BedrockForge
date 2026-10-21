@@ -251,8 +251,22 @@ void install() {
         if (!client->getLocalPlayer()) return; // only in a world
         open(*client);
     });
+    // Polling fallback: some builds never deliver Shift through the key event, so also watch the physical key
+    // state once per HUD frame (edge-triggered).
     gSubs.on<ll::event::AfterUIRenderEvent>([](ll::event::AfterUIRenderEvent& ev) {
-        gLastClient = &ev.uiRenderContext().mClient;
+        static bool wasDown = false;
+        auto& client = ev.uiRenderContext().mClient;
+        gLastClient  = &client;
+        if (!bf::hud::isHudScreen(ev.screenView())) return;
+        bool down = win32::gameFocused() && (win32::keyDown(0xA1) || win32::keyDown(0x2D));
+        bool edge = down && !wasDown;
+        wasDown   = down;
+        if (!edge || !client.getLocalPlayer()) return;
+        {
+            std::lock_guard lock(gMutex);
+            if (gScene) return;
+        }
+        open(client);
     });
 
     gSubs.on<ll::event::BeforeUIRenderEvent>([](ll::event::BeforeUIRenderEvent& ev) {
