@@ -19,8 +19,7 @@
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
 
-#include "ll/api/memory/Hook.h"
-#include "ll/api/mod/NativeMod.h"
+#include "LLShim.h"
 
 #include "GUI.h"
 #include "Options.h"
@@ -224,11 +223,11 @@ void onPresent(IDXGISwapChain* sc) {
         bool ok = gIs12 ? d3d12::init(sc) : d3d11::init(sc);
         if (!ok) {
             gFailed = true;
-            ll::mod::NativeMod::current()->getLogger().error("[RF] overlay init failed ({})", gIs12 ? "D3D12" : "D3D11");
+            ll_shim::error(std::string("[RF] overlay init failed (") + (gIs12 ? "D3D12" : "D3D11") + ")");
             return;
         }
         gInitialized = true;
-        ll::mod::NativeMod::current()->getLogger().info("[RF] overlay ready on {} ({})", gRendererType, gGpuName);
+        ll_shim::info("[RF] overlay ready on " + gRendererType + " (" + gGpuName + ")");
     }
     ComPtr<IDXGISwapChain3> sc3;
     if (gIs12) {
@@ -313,9 +312,8 @@ bool findTargets() {
 } // namespace
 
 bool install() {
-    auto& log = ll::mod::NativeMod::current()->getLogger();
     if (!findTargets()) {
-        log.warn("[RF] overlay: could not probe D3D12/DXGI, overlay disabled (shader features still work)");
+        ll_shim::warn("[RF] overlay: could not probe D3D12/DXGI, overlay disabled (shader features still work)");
         return false;
     }
     gDetours[0]    = reinterpret_cast<void*>(&presentHook);
@@ -324,15 +322,15 @@ bool install() {
     gDetours[3]    = reinterpret_cast<void*>(&executeHook);
     void** orig[4] = {&gOrigPresent, &gOrigPresent1, &gOrigResize, &gOrigExecute};
     for (int i = 0; i < 4; ++i) {
-        int rc = ll::memory::hook(gTargets[i], gDetours[i], orig[i], ll::memory::HookPriority::Normal);
-        if (rc != 0) log.warn("[RF] overlay hook {} failed (rc {})", i, rc);
+        int rc = ll_shim::hook(gTargets[i], gDetours[i], orig[i]);
+        if (rc != 0) ll_shim::warn("[RF] overlay hook " + std::to_string(i) + " failed (rc " + std::to_string(rc) + ")");
     }
     return true;
 }
 
 void uninstall() {
     for (int i = 0; i < 4; ++i)
-        if (gTargets[i]) ll::memory::unhook(gTargets[i], gDetours[i]);
+        if (gTargets[i]) ll_shim::unhook(gTargets[i], gDetours[i]);
     if (gWindow && gOrigProc) SetWindowLongPtrW(gWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(gOrigProc));
 }
 
