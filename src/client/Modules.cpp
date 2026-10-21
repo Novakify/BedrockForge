@@ -18,6 +18,7 @@
 #include <format>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "ll/api/event/entity/ActorHurtEvent.h"
 #include "ll/api/event/input/MouseInputEvent.h"
@@ -190,6 +191,14 @@ LL_TYPE_INSTANCE_HOOK(BfSurvivalAttackHook, ll::memory::HookPriority::Normal, Su
 
 // ============================================================================ modules
 namespace diag {
+namespace {
+std::mutex               gScreensMutex;
+std::vector<std::string> gScreens;
+} // namespace
+void noteScreen(std::string const& name) {
+    std::lock_guard lock(gScreensMutex);
+    if (gScreens.size() < 24 && std::find(gScreens.begin(), gScreens.end(), name) == gScreens.end()) gScreens.push_back(name);
+}
 void write() {
     std::error_code ec;
     auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
@@ -202,6 +211,9 @@ void write() {
         << "\nmenu opens " << menuOpens.load() << "\nmodules on:";
     for (auto& m : Registry::get().all())
         if (m->enabled && !m->planned) out << " " << m->id;
+    out << "\nscreens under the menu:";
+    std::lock_guard lock(gScreensMutex);
+    for (auto& n : gScreens) out << " " << n;
     out << "\n";
 }
 } // namespace diag
@@ -466,7 +478,7 @@ void installRuntime() {
         noteRenderThread();
         static int hudFrames = 0;
         if (++hudFrames == 120) shaderpacks::reportOnce(); // ~2 s into the first world
-        if (hudFrames % 600 == 0) diag::write();
+        if (hudFrames % 600 == 0) { diag::write(); shaderpacks::writeReport(); }
         auto& ctx    = ev.uiRenderContext();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));

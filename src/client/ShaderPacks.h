@@ -17,5 +17,7 @@ void install(std::filesystem::path const& modDir);
 void uninstall();
 /// Log what the hooks saw so far (once; call from a normal thread after startup, e.g. on joining a world).
 void reportOnce();
+/// Rewrite mods/BedrockForgeCore/logs/shaderpacks.txt (counts + every material path seen).
+void writeReport();
 
 } // namespace bedrock_forge::client::shaderpacks

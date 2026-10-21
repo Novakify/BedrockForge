@@ -6,6 +6,7 @@
 namespace bedrock_forge::win32 {
 
 bool keyDown(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+bool keyDownSync(int vk) { return (GetKeyState(vk) & 0x8000) != 0; }
 
 bool gameFocused() {
     DWORD pid = 0;

@@ -5,6 +5,8 @@ namespace bedrock_forge::win32 {
 
 /// True while the key / mouse button (Windows virtual-key code) is held.
 bool keyDown(int vk);
+/// Key state as of the input message being processed on this thread (GetKeyState): catches quick taps.
+bool keyDownSync(int vk);
 /// True when the game window has keyboard focus (we don't count keys typed into other apps).
 bool gameFocused();
 /// Local wall-clock time as "HH:MM".

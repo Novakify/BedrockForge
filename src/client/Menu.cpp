@@ -256,7 +256,8 @@ void install() {
     gSubs.on<ll::event::KeyInputEvent>([](ll::event::KeyInputEvent& ev) {
         if (!ev.isDown()) return;
         int const k = ev.keyCode();
-        bool const rshift = (k == 0x10 || k == 0xA1) && win32::keyDown(0xA1) && !win32::keyDown(0xA0);
+        bool const rshift = (k == 0x10 || k == 0xA1) && (win32::keyDown(0xA1) || win32::keyDownSync(0xA1)) &&
+                            !win32::keyDown(0xA0) && !win32::keyDownSync(0xA0);
         if (!rshift && k != 0x2D) return;
         IClientInstance* client = gLastClient.load();
         if (!client) return;
@@ -301,11 +302,9 @@ void install() {
         }
         // Other non-HUD layers (toasts, overlays) also render; only draw over the dialog we pushed, which is the
         // first non-HUD view to render after open.
-        if (!gView) {
-            if (now - gOpenedAt > std::chrono::milliseconds(1500)) return;
-            gView = &ev.screenView();
-        }
-        if (&ev.screenView() != gView) return;
+        // (Every non-HUD view is covered while the menu is open: the dialog can render through more than one view,
+        // and Esc / x reset the menu directly, so stray overlays can't keep it alive.) Record the names for diag.
+        if (auto const& tree = ev.screenView().mVisualTree; tree) diag::noteScreen(*tree->mRootControlName);
         gDialogSeen = now;
         ev.cancel(); // replace the empty dialog with our menu
         try { render(ev.uiRenderContext(), ev.screenView()); } catch (...) {}
