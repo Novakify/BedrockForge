@@ -441,7 +441,8 @@ void installRuntime() {
         }
         gFps.frame();
         noteRenderThread();
-        if (gFps.frames == 120) shaderpacks::reportOnce(); // ~2 s into the first world
+        static int hudFrames = 0;
+        if (++hudFrames == 120) shaderpacks::reportOnce(); // ~2 s into the first world
         auto& ctx    = ev.uiRenderContext();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
