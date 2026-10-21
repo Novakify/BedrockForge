@@ -228,8 +228,32 @@ def analyze(jar: Path) -> dict:
                "Portable with native work" if score >= 0.35 else
                "Hard: needs systems Bedrock Forge doesn't have yet")
 
+    # Datapack-driven logic (mcfunction/advancements/predicates) - Bedrock has functions too.
+    datapack = {"functions": 0, "commands": Counter(), "advancements": 0, "predicates": 0, "structures": 0}
+    with zipfile.ZipFile(jar) as z:
+        for n in z.namelist():
+            if n.endswith(".mcfunction"):
+                datapack["functions"] += 1
+                for line in z.read(n).decode("utf-8", "replace").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        datapack["commands"][line.split()[0]] += 1
+            elif n.startswith("data/") and "/advancements/" in n: datapack["advancements"] += 1
+            elif n.startswith("data/") and "/predicates/" in n: datapack["predicates"] += 1
+            elif n.endswith(".nbt"): datapack["structures"] += 1
+        geo = sum(1 for n in z.namelist() if n.endswith(".geo.json"))
+        anim = sum(1 for n in z.namelist() if n.endswith(".animation.json"))
+    if datapack["functions"] and n_classes < 20:
+        # mostly datapack: score on command portability instead of Java API surface
+        java_only = {"data", "item", "attribute", "advancement", "forceload", "team", "loot"}
+        cmds = datapack["commands"]; tot = sum(cmds.values()) or 1
+        score = 1 - 0.6 * sum(v for k, v in cmds.items() if k in java_only) / tot - 0.25  # -0.25: syntax differs everywhere
+        verdict = "Datapack mod: port by translating functions to Bedrock commands/Script API"
+    datapack["commands"] = dict(datapack["commands"].most_common(15))
+
     return {
         "jar": jar.name, "meta": meta, "classes": n_classes, "mixins": mixins,
+        "datapack": datapack, "geckolib_models": geo, "geckolib_animations": anim,
         "buckets": {k: {**v, "examples": sorted(v["examples"])} for k, v in
                     sorted(buckets.items(), key=lambda kv: -kv[1]["refs"])},
         "assets": dict(assets.most_common(20)),
@@ -251,6 +275,12 @@ def to_markdown(r: dict) -> str:
     L += ["", "## What it touches → Bedrock Forge mapping", "", "| Area | Refs | Bedrock path | Examples |", "|---|---|---|---|"]
     for k, v in r["buckets"].items():
         L.append(f"| {k} | {v['refs']} | {v['status']} | {', '.join('`'+e.split('.')[-1]+'`' for e in v['examples'])} |")
+    dp = r.get("datapack") or {}
+    if dp.get("functions"):
+        L += ["", "## Datapack logic", "", f"- {dp['functions']} functions, {dp['advancements']} advancements, {dp['predicates']} predicates, {dp['structures']} structures",
+              "- top commands: " + ", ".join(f"`{k}` x{v}" for k, v in dp["commands"].items())]
+    if r.get("geckolib_models"):
+        L += ["", "## GeckoLib", "", f"- {r['geckolib_models']} .geo.json models, {r['geckolib_animations']} .animation.json files: already Bedrock format, convert near 1:1"]
     L += ["", "## Mixins (engine patches: each one needs a native hook or a redesign)", ""]
     if not r["mixins"]:
         L.append("None. That's a good sign for porting.")

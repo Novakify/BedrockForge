@@ -549,3 +549,9 @@ fabric.properties
 # Project specific ignores
 /.idea/
 /bin/
+
+# ModPorter outputs contain third-party assets: never commit
+/Ports/
+**/build/*RP/
+**/build/*BP/
+*.mcaddon
