@@ -9,6 +9,14 @@ First thing next session:
 0. Get folder access to the instance folder (one prompt), back up BedrockForgeCore.dll (rename to .b8.bak), install the ec1ab0a+ DLL
    from the `builds` branch (unique staged filename), launch once from LeviLauncher.
 
+Renderer Foundation (separate AGPL-3.0 project, Fernando's call: private fork, kept separate from Bedrock Forge):
+- Branch `renderer-foundation` of this repo (upstream BetterRenderDragon history kept), built DLL -> branch `rf-builds`.
+  Cloud worktree: /home/claude/rf (git worktree of this clone). Move to Novakify/RendererFoundation once Fernando creates it.
+- Install: copy rf-builds/RendererFoundation into <instance>/mods/ next to BedrockForgeCore. Bedrock Forge's ForgeRender then
+  stops redirecting materials (it detects RendererFoundation.dll). F6 = overlay (free the mouse first with Esc).
+- Test: overlay shows (D3D12 + GPU name), shaderpack combo serves Anime, "Served materials" window, resource-pack shader,
+  Reload shaders, Vibrant Visuals toggle. Never copy RF code into Bedrock Forge (licence) - only coexist.
+
 Priority order:
 1. Test Fullbright v3 (tessellator light floor + relightAllRenderChunkGeometry). Enable at night / in a cave; diag.txt should show
    "tessellator light" climbing and "relights" > 0. If terrain doesn't change: the 1.26 tessellator may not use BlockTessellatorCache
