@@ -8,5 +8,140 @@
  },
  "sculkhorde:sculk_ancient_node": {
   "sound": "sculk_catalyst"
+ },
+ "sculkhorde:infested_stone": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_cobblestone": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_andesite": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_diorite": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_granite": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_tuff": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_calcite": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_gravel": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_clay": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_mud": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_packed_mud": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_mud_bricks": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_moss": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_netherrack": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_endstone": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_smooth_basalt": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_stone_bricks": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_cobbled_deepslate": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_sand": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_snow": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_crying_obsidian": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_deepslate": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_sandstone": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_basalt_side": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_blackstone_side": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_blackstone_bricks": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_white_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_orange_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_magenta_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_light_blue_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_yellow_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_lime_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_pink_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_gray_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_light_gray_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_cyan_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_purple_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_blue_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_brown_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_green_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_red_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_black_terracotta": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_log": {
+  "sound": "sculk"
+ },
+ "sculkhorde:infested_wood": {
+  "sound": "sculk"
  }
 }

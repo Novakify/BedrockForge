@@ -15,6 +15,156 @@
   },
   "sculkhorde_sculk_ancient_node_defeated": {
    "textures": "textures/blocks/sculkhorde/sculk_ancient_node_defeated"
+  },
+  "sculkhorde_infested_stone": {
+   "textures": "textures/blocks/sculkhorde/infested_stone"
+  },
+  "sculkhorde_infested_cobblestone": {
+   "textures": "textures/blocks/sculkhorde/infested_cobblestone"
+  },
+  "sculkhorde_infested_andesite": {
+   "textures": "textures/blocks/sculkhorde/infested_andesite"
+  },
+  "sculkhorde_infested_diorite": {
+   "textures": "textures/blocks/sculkhorde/infested_diorite"
+  },
+  "sculkhorde_infested_granite": {
+   "textures": "textures/blocks/sculkhorde/infested_granite"
+  },
+  "sculkhorde_infested_tuff": {
+   "textures": "textures/blocks/sculkhorde/infested_tuff"
+  },
+  "sculkhorde_infested_calcite": {
+   "textures": "textures/blocks/sculkhorde/infested_calcite"
+  },
+  "sculkhorde_infested_gravel": {
+   "textures": "textures/blocks/sculkhorde/infested_gravel"
+  },
+  "sculkhorde_infested_clay": {
+   "textures": "textures/blocks/sculkhorde/infested_clay"
+  },
+  "sculkhorde_infested_mud": {
+   "textures": "textures/blocks/sculkhorde/infested_mud"
+  },
+  "sculkhorde_infested_packed_mud": {
+   "textures": "textures/blocks/sculkhorde/infested_packed_mud"
+  },
+  "sculkhorde_infested_mud_bricks": {
+   "textures": "textures/blocks/sculkhorde/infested_mud_bricks"
+  },
+  "sculkhorde_infested_moss": {
+   "textures": "textures/blocks/sculkhorde/infested_moss"
+  },
+  "sculkhorde_infested_netherrack": {
+   "textures": "textures/blocks/sculkhorde/infested_netherrack"
+  },
+  "sculkhorde_infested_endstone": {
+   "textures": "textures/blocks/sculkhorde/infested_endstone"
+  },
+  "sculkhorde_infested_smooth_basalt": {
+   "textures": "textures/blocks/sculkhorde/infested_smooth_basalt"
+  },
+  "sculkhorde_infested_stone_bricks": {
+   "textures": "textures/blocks/sculkhorde/infested_stone_bricks"
+  },
+  "sculkhorde_infested_cobbled_deepslate": {
+   "textures": "textures/blocks/sculkhorde/infested_cobbled_deepslate"
+  },
+  "sculkhorde_infested_sand": {
+   "textures": "textures/blocks/sculkhorde/infested_sand"
+  },
+  "sculkhorde_infested_snow": {
+   "textures": "textures/blocks/sculkhorde/infested_snow"
+  },
+  "sculkhorde_infested_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_terracotta"
+  },
+  "sculkhorde_infested_crying_obsidian": {
+   "textures": "textures/blocks/sculkhorde/infested_crying_obsidian"
+  },
+  "sculkhorde_infested_deepslate": {
+   "textures": "textures/blocks/sculkhorde/infested_deepslate"
+  },
+  "sculkhorde_infested_deepslate_top": {
+   "textures": "textures/blocks/sculkhorde/infested_deepslate_top"
+  },
+  "sculkhorde_infested_sandstone": {
+   "textures": "textures/blocks/sculkhorde/infested_sandstone"
+  },
+  "sculkhorde_infested_sandstone_top": {
+   "textures": "textures/blocks/sculkhorde/infested_sandstone_top"
+  },
+  "sculkhorde_infested_sandstone_bottom": {
+   "textures": "textures/blocks/sculkhorde/infested_sandstone_bottom"
+  },
+  "sculkhorde_infested_basalt_side": {
+   "textures": "textures/blocks/sculkhorde/infested_basalt_side"
+  },
+  "sculkhorde_infested_basalt_top": {
+   "textures": "textures/blocks/sculkhorde/infested_basalt_top"
+  },
+  "sculkhorde_infested_blackstone_side": {
+   "textures": "textures/blocks/sculkhorde/infested_blackstone_side"
+  },
+  "sculkhorde_infested_blackstone_top": {
+   "textures": "textures/blocks/sculkhorde/infested_blackstone_top"
+  },
+  "sculkhorde_infested_blackstone_bricks": {
+   "textures": "textures/blocks/sculkhorde/infested_blackstone_bricks"
+  },
+  "sculkhorde_infested_white_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_white_terracotta"
+  },
+  "sculkhorde_infested_orange_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_orange_terracotta"
+  },
+  "sculkhorde_infested_magenta_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_magenta_terracotta"
+  },
+  "sculkhorde_infested_light_blue_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_light_blue_terracotta"
+  },
+  "sculkhorde_infested_yellow_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_yellow_terracotta"
+  },
+  "sculkhorde_infested_lime_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_lime_terracotta"
+  },
+  "sculkhorde_infested_pink_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_pink_terracotta"
+  },
+  "sculkhorde_infested_gray_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_gray_terracotta"
+  },
+  "sculkhorde_infested_light_gray_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_light_gray_terracotta"
+  },
+  "sculkhorde_infested_cyan_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_cyan_terracotta"
+  },
+  "sculkhorde_infested_purple_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_purple_terracotta"
+  },
+  "sculkhorde_infested_blue_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_blue_terracotta"
+  },
+  "sculkhorde_infested_brown_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_brown_terracotta"
+  },
+  "sculkhorde_infested_green_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_green_terracotta"
+  },
+  "sculkhorde_infested_red_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_red_terracotta"
+  },
+  "sculkhorde_infested_black_terracotta": {
+   "textures": "textures/blocks/sculkhorde/infested_black_terracotta"
+  },
+  "sculkhorde_infested_log_side": {
+   "textures": "textures/blocks/sculkhorde/infested_log_side"
+  },
+  "sculkhorde_infested_log": {
+   "textures": "textures/blocks/sculkhorde/infested_log"
   }
  }
 }

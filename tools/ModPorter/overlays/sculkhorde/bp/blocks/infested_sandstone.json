@@ -1,0 +1,35 @@
+{
+ "format_version": "1.21.40",
+ "minecraft:block": {
+  "description": {
+   "identifier": "sculkhorde:infested_sandstone",
+   "menu_category": {
+    "category": "nature"
+   }
+  },
+  "components": {
+   "minecraft:destructible_by_mining": {
+    "seconds_to_destroy": 1.2
+   },
+   "minecraft:destructible_by_explosion": {
+    "explosion_resistance": 6
+   },
+   "minecraft:map_color": "#0b3a40",
+   "minecraft:material_instances": {
+    "*": {
+     "texture": "sculkhorde_infested_sandstone",
+     "render_method": "opaque"
+    },
+    "up": {
+     "texture": "sculkhorde_infested_sandstone_top",
+     "render_method": "opaque"
+    },
+    "down": {
+     "texture": "sculkhorde_infested_sandstone_bottom",
+     "render_method": "opaque"
+    }
+   },
+   "minecraft:loot": "loot_tables/empty.json"
+  }
+ }
+}

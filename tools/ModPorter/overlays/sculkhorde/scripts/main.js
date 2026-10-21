@@ -14,6 +14,7 @@
 // Debug: /sh:status  /sh:start  /sh:stop  /sh:mass <amount>  /sh:node  /sh:infect  /sh:budget <blocks_per_tick>  /sh:clear
 
 import { world, system, Player, GameMode, EntityDamageCause, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
+import { INFESTED } from "./infested_map.js";
 
 const NS = "sculkhorde";
 const CFG = {
@@ -96,7 +97,8 @@ function addCursor(dimId, p, steps) {
 }
 function exposed(d, p) { for (const [x, y, z] of NB) { const b = block(d, { x: p.x + x, y: p.y + y, z: p.z + z }); if (b && (b.isAir || CLEARABLE.test(b.typeId))) return true; } return false; }
 function infect(d, b) {
-  b.setType("minecraft:sculk");
+  // the mod turns each block into its own infested variant; anything without one becomes vanilla sculk
+  try { b.setType(INFESTED[b.typeId] ?? "minecraft:sculk"); } catch { b.setType("minecraft:sculk"); }
   const up = block(d, { x: b.location.x, y: b.location.y + 1, z: b.location.z });
   if (up && CLEARABLE.test(up.typeId)) up.setType("minecraft:air");
   if (up && up.isAir) {
@@ -110,7 +112,7 @@ function stepCursor(c) {
   for (const [x, y, z] of NB) {
     const p = { x: c.x + x, y: c.y + y, z: c.z + z }, b = block(d, p);
     if (b === undefined) { c.left = 0; return; }          // unloaded chunk: the cursor dies
-    if (INFECTABLE.test(b.typeId) && exposed(d, p)) opts.push(b);
+    if ((INFECTABLE.test(b.typeId) || b.typeId in INFESTED) && exposed(d, p)) opts.push(b);
   }
   if (!opts.length) {                                      // jump a little to find more surface
     c.x += Math.round(rnd(-3, 3)); c.y += Math.round(rnd(-2, 2)); c.z += Math.round(rnd(-3, 3)); c.left -= 2; return;
@@ -252,7 +254,60 @@ world.afterEvents.entityHurt.subscribe(({ hurtEntity, damageSource }) => {
   if (BURROWERS.has(t)) burrow(hurtEntity);
   if (t === `${NS}:sculk_mite`) { burrow(hurtEntity); try { src.remove(); } catch {} }   // mites infect and die
 });
+// ---------------------------------------------------------------- projectiles + ground attacks
+function shoot(from, id, start, target, speed = 1.2, spread = 0) {
+  const v = { x: target.x - start.x, y: target.y - start.y, z: target.z - start.z }, l = Math.hypot(v.x, v.y, v.z) || 1;
+  const off = { x: start.x + v.x / l, y: start.y + v.y / l, z: start.z + v.z / l };
+  try {
+    const p = from.dimension.spawnEntity(id, off);
+    const c = p.getComponent("minecraft:projectile");
+    if (c) { c.owner = from; c.shoot({ x: v.x / l * speed, y: v.y / l * speed + l * 0.004, z: v.z / l * speed }, { uncertainty: spread }); }
+    return p;
+  } catch { return undefined; }
+}
+const pending = [];   // delayed ground attacks: { at, d, loc, dmg, src, ent }
+function groundAttack(src, id, loc, delay, dmg, snd) {
+  const d = src.dimension, g = groundAbove(d, { x: loc.x, y: loc.y - 1, z: loc.z }, 3) ?? loc;
+  let ent; try { ent = d.spawnEntity(id, g); } catch {}
+  for (let i = 0; i < 8; i++) particle(d, "minecraft:sculk_charge_pop_particle", { x: g.x + rnd(-1, 1), y: g.y + 0.1, z: g.z + rnd(-1, 1) });
+  pending.push({ at: system.currentTick + delay, d: d.id, loc: g, dmg, src, ent, snd, until: system.currentTick + delay + 30 });
+}
+system.runInterval(() => {
+  const now = system.currentTick;
+  for (const a of [...pending]) {
+    if (!a.hit && now >= a.at) {
+      a.hit = true;
+      const d = dim(a.d);
+      sound(d, a.snd, a.loc);
+      for (const t of d.getEntities({ location: a.loc, maxDistance: 1.8 })) {
+        if (HORDE.has(t.typeId) || t.typeId.startsWith(`${NS}:`)) continue;
+        try { t.applyDamage(a.dmg, alive(a.src) ? { cause: EntityDamageCause.entityAttack, damagingEntity: a.src } : { cause: EntityDamageCause.magic });
+              t.applyKnockback({ x: 0, z: 0 }, 0.9); } catch {}
+      }
+    }
+    if (now >= a.until) { try { a.ent?.remove(); } catch {} pending.splice(pending.indexOf(a), 1); }
+  }
+}, 1);
+const BOLTS = ["soul_fire_bolt", "soul_poison_bolt", "soul_ice_bolt", "soul_breeze_bolt"];
+
 const ABILITIES = {
+  angel_of_reaping(e, st) {
+    const p = nearestPlayer(e, 32); if (!p) return;
+    if ((st.bolt = (st.bolt ?? 40) - 5) <= 0) {                       // elemental bolts, a volley of 3
+      st.bolt = 60;
+      const kind = pick(BOLTS), eye = { x: e.location.x, y: e.location.y + 1.7, z: e.location.z };
+      for (let i = 0; i < 3; i++) system.runTimeout(() => { if (alive(e) && alive(p)) shoot(e, `${NS}:${kind}`, eye, p.getHeadLocation(), 1.3, 1.5); }, i * 6);
+      sound(e.dimension, "mob.evocation_illager.cast_spell", e.location);
+    }
+    if ((st.spears = (st.spears ?? 100) - 5) <= 0) {                  // soul spears erupt under the target
+      st.spears = 140;
+      for (let i = 0; i < 3; i++) groundAttack(e, `${NS}:floor_soul_spears`, { x: p.location.x + rnd(-2, 2), y: p.location.y, z: p.location.z + rnd(-2, 2) }, 20 + i * 5, 7, "mob.evocation_fangs.attack");
+    }
+    if ((st.summon = (st.summon ?? 300) - 5) <= 0 && hordeNear(e.dimension, e.location, 24) < 6) {
+      st.summon = 600;                                                 // living armor guards
+      for (let i = 0; i < 2; i++) spawn(e.dimension, `${NS}:living_armor`, { x: e.location.x + rnd(-3, 3), y: e.location.y, z: e.location.z + rnd(-3, 3) });
+    }
+  },
   sculk_creeper(e, st) {
     const p = nearestPlayer(e, 3);
     st.fuse = p ? (st.fuse ?? 0) + 5 : 0;
@@ -268,9 +323,7 @@ const ABILITIES = {
     const eye = { x: e.location.x, y: e.location.y + 1.6, z: e.location.z }, tgt = p.getHeadLocation();
     if (!los(e.dimension, eye, tgt)) return;
     st.cd = 40;
-    for (let i = 1; i < 10; i++) particle(e.dimension, "minecraft:sculk_soul_particle",
-      { x: eye.x + (tgt.x - eye.x) * i / 10, y: eye.y + (tgt.y - eye.y) * i / 10, z: eye.z + (tgt.z - eye.z) * i / 10 });
-    try { p.applyDamage(4, { cause: EntityDamageCause.projectile, damagingEntity: e }); p.addEffect("poison", 60); } catch {}
+    shoot(e, `${NS}:acid_blob`, eye, tgt, 1.1, 2);
     sound(e.dimension, "mob.llama.spit", e.location);
   },
   sculk_hatcher(e, st) {
@@ -302,6 +355,10 @@ const ABILITIES = {
     particle(e.dimension, "minecraft:splash_spell_emitter", p.location); sound(e.dimension, "mob.witch.throw", e.location);
   },
   sculk_enderman(e, st) {
+    if ((st.spike = (st.spike ?? 60) - 5) <= 0) {
+      const t = nearestPlayer(e, 20);
+      if (t) { st.spike = 120; groundAttack(e, `${NS}:spine_spike`, t.location, 15, 8, "mob.warden.attack_impact"); }
+    }
     if ((st.cd = (st.cd ?? 0) - 5) > 0) return;
     const p = nearestPlayer(e, 32, 7); if (!p) return;
     const g = groundAbove(e.dimension, { x: p.location.x + rnd(-3, 3), y: p.location.y - 1, z: p.location.z + rnd(-3, 3) }, 4); if (!g) return;

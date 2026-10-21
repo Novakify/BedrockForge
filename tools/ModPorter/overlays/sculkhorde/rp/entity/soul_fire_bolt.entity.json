@@ -1,0 +1,23 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:client_entity": {
+  "description": {
+   "identifier": "sculkhorde:soul_fire_bolt",
+   "materials": {
+    "default": "entity_alphatest",
+    "glow": "entity_emissive_alpha"
+   },
+   "textures": {
+    "default": "textures/entity/sculkhorde/soul_fire_projectile",
+    "glow": "textures/entity/sculkhorde/soul_fire_projectile_glowmask"
+   },
+   "geometry": {
+    "default": "geometry.sculkhorde.soul_fire_projectile"
+   },
+   "render_controllers": [
+    "controller.render.default",
+    "controller.render.sculkhorde.glow"
+   ]
+  }
+ }
+}
