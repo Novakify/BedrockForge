@@ -4,6 +4,10 @@
 // that vanilla doesn't (no reach/aim/velocity changes).
 
 #include "client/Module.h"
+#include "client/Diag.h"
+#include <filesystem>
+#include <fstream>
+#include "ll/api/mod/NativeMod.h"
 
 #include <algorithm>
 #include <array>
@@ -131,6 +135,7 @@ bool hudInputAllowed() { return w32::gameFocused() && nowMs() - gLastNonHudFrame
 // ============================================================================ hooks
 LL_TYPE_INSTANCE_HOOK(BfFovHook, ll::memory::HookPriority::Normal, LevelRendererPlayer, &LevelRendererPlayer::getFov, float,
                       float alpha, bool variable) {
+    ++diag::fovHook;
     float fov = origin(alpha, variable);
     auto& reg = Registry::get();
     if (auto* m = reg.find("fov_changer"); m && m->enabled) fov *= m->num("scale", 1.0f);
@@ -173,6 +178,7 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
 
 LL_TYPE_INSTANCE_HOOK(BfAttackHook, ll::memory::HookPriority::Normal, GameMode, &GameMode::$attack, bool, Actor& entity,
                       Vec3 const& hitPosition) {
+    ++diag::attackHook;
     onLocalAttack(mPlayer, entity, hitPosition);
     return origin(entity, hitPosition);
 }
@@ -183,6 +189,23 @@ LL_TYPE_INSTANCE_HOOK(BfSurvivalAttackHook, ll::memory::HookPriority::Normal, Su
 }
 
 // ============================================================================ modules
+namespace diag {
+void write() {
+    std::error_code ec;
+    auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream out{dir / "diag.txt"};
+    if (!out) return;
+    out << "light hook " << lightHook.load() << " (brightened " << lightBrightened.load() << ")\n"
+        << "overlay hook " << overlayHook.load() << "\nbob hook " << bobHook.load() << "\ntime hook " << timeHook.load()
+        << "\nfov hook " << fovHook.load() << "\nattack hook " << attackHook.load() << "\nchat hook " << chatHook.load()
+        << "\nmenu opens " << menuOpens.load() << "\nmodules on:";
+    for (auto& m : Registry::get().all())
+        if (m->enabled && !m->planned) out << " " << m->id;
+    out << "\n";
+}
+} // namespace diag
+
 void registerBuiltins() {
     auto& r = Registry::get();
     static bool done = false;
@@ -443,6 +466,7 @@ void installRuntime() {
         noteRenderThread();
         static int hudFrames = 0;
         if (++hudFrames == 120) shaderpacks::reportOnce(); // ~2 s into the first world
+        if (hudFrames % 600 == 0) diag::write();
         auto& ctx    = ev.uiRenderContext();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));

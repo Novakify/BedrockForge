@@ -9,6 +9,7 @@
 #include "mc/client/gui/GuiMessage.h"
 
 #include "client/Module.h"
+#include "client/Diag.h"
 
 namespace bedrock_forge::client {
 
@@ -20,6 +21,7 @@ std::chrono::steady_clock::time_point gLastAt{};
 
 LL_TYPE_INSTANCE_HOOK(BfChatHook, ll::memory::HookPriority::Normal, GuiData, &GuiData::_addMessage, void,
                       GuiData::MessageConfig config, ProfanityFilterContext context) {
+    ++diag::chatHook;
     if (!Registry::get().on("chat_compact")) return origin(std::move(config), context);
     std::string key = *config.username + "\x1f" + *config.message;
     auto        now = std::chrono::steady_clock::now();

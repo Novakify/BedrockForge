@@ -1,4 +1,5 @@
 #include "client/Menu.h"
+#include "client/Diag.h"
 
 #include <algorithm>
 #include <chrono>
@@ -58,6 +59,15 @@ constexpr Rgba kBack{0.04f, 0.05f, 0.07f, 0.92f}, kSide{0.07f, 0.09f, 0.12f, 1},
 // 1.26 doesn't hand back the scene we pushed from getTopScene(), so "is our dialog up" is judged by what renders:
 // while our scene is open, a non-HUD screen rendering = our dialog.
 std::chrono::steady_clock::time_point gOpenedAt{}, gDialogSeen{};
+ScreenView const* gView = nullptr; // the dialog's view, latched on its first render after open
+// Pop our dialog and forget the menu right away (caller holds gMutex).
+void closeMenu() {
+    if (gClient && gScene) gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
+    gScene.reset();
+    gView = nullptr;
+    gSelected.clear();
+    gSearch.clear();
+}
 bool ownsTop() {
     if (!gClient || !gScene) return false;
     return std::chrono::steady_clock::now() - gDialogSeen < std::chrono::milliseconds(250);
@@ -91,9 +101,7 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
         std::string shown = gSearch.empty() ? "type to search" : gSearch + "_";
         bf::hud::drawLabel(ctx, sx + 4, my + 4, shown, gSearch.empty() ? kDim : kText, 0.8f);
     }
-    hits.push_back({mx + mw - 14, my + 2, 12, 12, [](bool) {
-        if (gClient) gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
-    }});
+    hits.push_back({mx + mw - 14, my + 2, 12, 12, [](bool) { closeMenu(); }});
     bf::hud::drawLabel(ctx, mx + mw - 11, my + 4, "x", inside(ptr.x, ptr.y, mx + mw - 14, my + 2, 12, 12) ? kAccent : kDim);
 
     // category column
@@ -234,6 +242,8 @@ void open(IClientInstance& client) {
     gGoneFrames = 0;
     gOpenedAt   = std::chrono::steady_clock::now();
     gDialogSeen = {};
+    gView       = nullptr;
+    ++diag::menuOpens;
     gClicks.clear();
     gWheel.clear();
     client.getSceneFactory().getCurrentSceneStack()->pushScreen(scene, false);
@@ -283,11 +293,19 @@ void install() {
             // only the HUD is rendering: once the dialog has been gone a while (Esc / OK), forget the menu
             if (now - gOpenedAt > std::chrono::milliseconds(800) && now - gDialogSeen > std::chrono::milliseconds(400)) {
                 gScene.reset();
+                gView = nullptr;
                 gSelected.clear();
                 gSearch.clear();
             }
             return;
         }
+        // Other non-HUD layers (toasts, overlays) also render; only draw over the dialog we pushed, which is the
+        // first non-HUD view to render after open.
+        if (!gView) {
+            if (now - gOpenedAt > std::chrono::milliseconds(1500)) return;
+            gView = &ev.screenView();
+        }
+        if (&ev.screenView() != gView) return;
         gDialogSeen = now;
         ev.cancel(); // replace the empty dialog with our menu
         try { render(ev.uiRenderContext(), ev.screenView()); } catch (...) {}
@@ -297,7 +315,13 @@ void install() {
         std::lock_guard lock(gMutex);
         if (!gScene || !ownsTop()) return;
         int const k = ev.keyCode();
-        if (k == 0x1B) { gSearch.clear(); return; }       // Esc closes the dialog natively
+        if (k == 0x1B) {                                   // Esc: clear the search first, then close
+            ev.cancel();
+            if (!ev.isDown()) return;
+            if (!gSearch.empty()) gSearch.clear();
+            else closeMenu();
+            return;
+        }
         if (k == 0xA1 || k == 0xA0 || k == 0x10) return;  // shifts
         ev.cancel();                                       // the menu owns the keyboard while open
         if (!ev.isDown()) return;
