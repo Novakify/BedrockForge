@@ -42,10 +42,16 @@ const BURROWERS = new Set(["sculk_zombie", "sculk_mite", "sculk_vindicator", "sc
 
 // ---------------------------------------------------------------- persistent horde state
 let S = { active: false, mass: 0, stage: 0, nodes: [], masses: [], lastNode: -1e9, budget: CFG.blockBudget };
-let dirty = false;
-try { const raw = world.getDynamicProperty("sh:state"); if (typeof raw === "string") S = { ...S, ...JSON.parse(raw) }; } catch {}
+let dirty = false, loaded = false;
+// World state isn't readable while the script first runs (early execution), so load on the first tick and never
+// save before that - otherwise the defaults would overwrite the saved horde.
+function loadState() {
+  if (loaded) return;
+  try { const raw = world.getDynamicProperty("sh:state"); if (typeof raw === "string") S = { ...S, ...JSON.parse(raw) }; loaded = true; } catch {}
+}
+system.run(loadState);
 const save = () => { dirty = true; };
-system.runInterval(() => { if (dirty) { dirty = false; try { world.setDynamicProperty("sh:state", JSON.stringify(S)); } catch {} } }, 100);
+system.runInterval(() => { loadState(); if (loaded && dirty) { dirty = false; try { world.setDynamicProperty("sh:state", JSON.stringify(S)); } catch {} } }, 100);
 
 function addMass(n) {
   S.mass = Math.max(0, Math.round(S.mass + n));
