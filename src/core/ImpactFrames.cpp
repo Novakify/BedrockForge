@@ -9,9 +9,12 @@
 
 #include "ll/api/event/entity/ActorHurtEvent.h"
 #include "ll/api/event/render/UIRenderEvent.h"
+#include "ll/api/memory/Hook.h"
 
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/ActorDamageSource.h"
+#include "mc/world/actor/player/Player.h"
+#include "mc/client/player/LocalPlayer.h"
 
 #include "bf/Hud.h"
 
@@ -34,6 +37,7 @@ std::mt19937 gRand{std::random_device{}()};
 int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(clock::now().time_since_epoch()).count();
 }
+Settings const* gSettings = nullptr;
 
 bool passesRules(Settings const& s, float damage) {
     if (damage < s.minDamage) return false;
@@ -45,6 +49,21 @@ bool passesRules(Settings const& s, float damage) {
     if (std::uniform_real_distribution<float>(0.0f, 1.0f)(gRand) >= gChance) return false;
     gChance = std::max(0.0f, gChance - s.chanceDecay);
     return true;
+}
+
+void fire(float damage) {
+    gImpactDamage = damage;
+    gImpactAtMs   = nowMs();
+    ++gImpactSeq;
+}
+
+// A crit can be reported twice in single-player (server Player + client LocalPlayer): 1 trigger per 100 ms.
+void onCrit(char const*) {
+    auto const* s = gSettings;
+    if (!s || !s->enabled || !s->critOnly) return;
+    if (nowMs() - gImpactAtMs.load() < 100) return;
+    if (!passesRules(*s, s->minDamage)) return; // crits always count as a "full" hit; chance/cooldown still apply
+    fire(6.0f);
 }
 
 // Tiny deterministic RNG so each impact keeps the same line pattern for its whole duration.
@@ -87,19 +106,37 @@ void drawVignette(MinecraftUIRenderContext& ctx, float w, float h, float alpha) 
 }
 } // namespace
 
+LL_TYPE_INSTANCE_HOOK(BfCritHook, ll::memory::HookPriority::Normal, Player, &Player::$emitCriticalHitParticles, void,
+                      Actor const& target, int particleCount) {
+    origin(target, particleCount);
+    if (gLocalPlayer != 0 && getOrCreateUniqueID().rawID == gLocalPlayer) onCrit("player");
+}
+LL_TYPE_INSTANCE_HOOK(BfLocalCritHook, ll::memory::HookPriority::Normal, LocalPlayer, &LocalPlayer::$emitCriticalHitParticles, void,
+                      Actor const& target, int particleCount) {
+    origin(target, particleCount);
+    onCrit("local");
+}
+
 void setLocalPlayerId(long long rawId) { gLocalPlayer = rawId; }
 
+void uninstall() {
+    BfCritHook::unhook();
+    BfLocalCritHook::unhook();
+    gSettings = nullptr;
+}
+
 void install(bf::events::Subscriptions& subs, ll::mod::NativeMod& mod, Settings const& s) {
+    gSettings = &s;
+    BfCritHook::hook();
+    BfLocalCritHook::hook();
     // Integrated-server thread in single-player. Only atomics / the rule mutex are touched here.
     subs.on<ll::event::ActorHurtEvent>([&s](ll::event::ActorHurtEvent& ev) {
-        if (!s.enabled || gLocalPlayer == 0) return;
+        if (!s.enabled || s.critOnly || gLocalPlayer == 0) return;
         auto const& src = ev.source();
         if (!src.isEntitySource()) return;
         if (src.getDamagingEntityUniqueID().rawID != gLocalPlayer) return;
         if (!passesRules(s, ev.damage())) return;
-        gImpactDamage = ev.damage();
-        gImpactAtMs   = nowMs();
-        ++gImpactSeq;
+        fire(ev.damage());
     });
 
     // Client render thread: draw the frames and play the sound.

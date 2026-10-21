@@ -5,6 +5,7 @@
 // NO code, shaders, textures or sounds reused - concept only, see docs/LICENSE_AUDIT.md).
 //
 // When the LOCAL player hits an entity in a single-player / locally hosted world:
+// Trigger: critical hits only by default (Settings::critOnly); otherwise any hit that passes the rules.
 //   [0, lengthMs)            `frameCount` full-screen frames, alternating bg/fg colour (manga flash)
 //                            with speed lines in the opposite colour. Frames are opaque, so they
 //                            also cover the HUD ("cinematic" by default).
@@ -29,6 +30,9 @@ struct Rgb {
 
 struct Settings {
     bool        enabled          = true;
+    // Only critical hits trigger (the game's own crit: falling + not on ground etc.). Detected by hooking
+    // Player/LocalPlayer::emitCriticalHitParticles, so it also works on servers (crit animate packet).
+    bool        critOnly         = true;
     // --- trigger rules ---
     float       minDamage        = 1.0f;   // ignore tiny hits (proxy for "full hit")
     float       chance           = 1.0f;   // 0..1 chance per qualifying hit
@@ -61,6 +65,7 @@ struct Settings {
 
 /// Wire listeners into `subs`. `settings` must outlive the subscriptions.
 void install(bf::events::Subscriptions& subs, ll::mod::NativeMod& mod, Settings const& settings);
+void uninstall();
 
 /// Remember who the local player is (called on ClientJoinLevelEvent; 0 on exit).
 void setLocalPlayerId(long long rawId);

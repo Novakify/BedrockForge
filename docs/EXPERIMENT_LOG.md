@@ -53,3 +53,9 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
   fade <= t, so fade = 0 near the camera kills every pixel if DitheringEnabledToggle is on for all actors; (b) camera-relative
   world position minus u_invView translation; (c) TintedAlphaTestEnabled with OverlayColor.a = 0. Next build: variant without
   dither first, then re-add.
+- Impact frames now trigger on critical hits only (Settings::critOnly, default true): hooks Player::emitCriticalHitParticles
+  (attacker = local player, single-player) + LocalPlayer::emitCriticalHitParticles (servers), 100 ms de-dup. Compile-only.
+- User-supplied "Renderer Foundation" zip = BetterRenderDragon v1.4.4 source with the licence file removed. Not copied: its
+  signatures target 1.19.80-1.20.50 and its reload offsets are version-specific, so none of it runs on 1.26 as-is. Ideas noted for
+  1.26: do the material reload between frames (endFrame/discardFrame, both virtuals in LL's FrameBuilder.h) and serve
+  material.bin through ResourcePackManager::load instead of a cache.

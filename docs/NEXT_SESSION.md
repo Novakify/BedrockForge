@@ -22,7 +22,7 @@ Priority order:
    c. Vibrant Visuals toggle (assumes GraphicsMode::Advanced == VV); status text in the module description says why if refused.
 3. Actor AlphaTest: source now compiles the dither fade out (BF_ACTOR_DITHER). Rebuild Anime with ShaderForge using the PC's
    vanilla materials, rename .hlsl.disabled -> .hlsl, test mobs visible; then re-add dither.
-4. Untested: zoom (hold C), hit colour, impact frames (K + hit a mob), chat compact, The Dweller (/ib:spawn), Angel of Reaping.
+4. Untested: zoom (hold C), hit colour, impact frames (NOW CRIT-ONLY: jump + hit a mob while falling; plain hits must NOT flash), chat compact, The Dweller (/ib:spawn), Angel of Reaping.
    Aim with `/tp @s ~ ~ ~ facing @e[type=pig,c=1]`; attack with left_mouse_down/up (plain clicks don't register).
 5. Remaining modules: freelook, block outline, nametags, hitboxes, pack switcher, movable HUD. (Toggle sprint/sneak exist as vanilla
    options in 1.26 - low priority.)

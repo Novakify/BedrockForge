@@ -120,6 +120,7 @@ bool Core::enable() {
 bool Core::disable() {
     client::menu::uninstall();
     client::forgerender::uninstall();
+    impact::uninstall();
     client::uninstallRuntime();
     client::Registry::get().save();
     mSubs.clear();
