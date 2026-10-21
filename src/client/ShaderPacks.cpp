@@ -6,6 +6,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <mutex>
 #include <vector>
 
 #include "ll/api/memory/Hook.h"
@@ -20,6 +21,10 @@ namespace {
 namespace fs = std::filesystem;
 std::wstring           gActiveDir; // lower-case not required; compared case-insensitively
 std::atomic<int>       gRedirects{0};
+std::atomic<int>       gSeen[4]{}, gRedirected[4]{};
+// first few redirected names, logged later from a safe place (never log inside a file hook)
+std::mutex             gNamesMutex;
+std::vector<std::wstring> gNames;
 std::vector<win32::files::HookSite> gSites;
 
 bool endsWithI(std::wstring_view s, std::wstring_view suffix) {
@@ -34,10 +39,11 @@ bool containsI(std::wstring_view s, std::wstring_view needle) {
     return it != s.end();
 }
 
-bool redirect(wchar_t const* path, wchar_t* out, unsigned long outLen) {
+bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) {
     if (gActiveDir.empty()) return false;
     std::wstring_view p(path);
     if (!endsWithI(p, L".material.bin")) return false;
+    if (api >= 0 && api < 4) ++gSeen[api];
     if (containsI(p, gActiveDir)) return false; // already ours
     if (!containsI(p, L"renderer\\materials\\") && !containsI(p, L"renderer/materials/")) return false;
     auto slash = p.find_last_of(L"\\/");
@@ -48,6 +54,11 @@ bool redirect(wchar_t const* path, wchar_t* out, unsigned long outLen) {
             std::copy(cand.begin(), cand.end(), out);
             out[cand.size()] = 0;
             ++gRedirects;
+            if (api >= 0 && api < 4) ++gRedirected[api];
+            {
+                std::lock_guard lock(gNamesMutex);
+                if (gNames.size() < 40) gNames.push_back(name);
+            }
             return true;
         }
     }
@@ -83,13 +94,27 @@ void install(fs::path const& modDir) {
     }
     gActiveDir = (packs / active).wstring();
     win32::files::setRedirect(&redirect);
-    win32::files::HookSite sites[4];
-    int n = win32::files::hookSites(sites, 4);
+    win32::files::HookSite sites[6];
+    int n = win32::files::hookSites(sites, 6);
     for (int i = 0; i < n; ++i) {
         int rc = ll::memory::hook(sites[i].target, sites[i].detour, sites[i].original, ll::memory::HookPriority::Normal);
         log.info("[BF] shaderpacks: hooked {} (rc {})", sites[i].name, rc);
         if (rc == 0) gSites.push_back(sites[i]);
     }
+}
+
+void reportOnce() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    auto& log = ll::mod::NativeMod::current()->getLogger();
+    static char const* api[4] = {"CreateFileW", "CreateFile2", "NtCreateFile", "NtOpenFile"};
+    for (int i = 0; i < 4; ++i)
+        log.info("[BF] shaderpacks: {} saw {} material opens, redirected {}", api[i], gSeen[i].load(), gRedirected[i].load());
+    std::lock_guard lock(gNamesMutex);
+    std::string names;
+    for (auto& n : gNames) names += fs::path(n).string() + " ";
+    log.info("[BF] shaderpacks: loaded from pack: {}", names.empty() ? "(none)" : names);
 }
 
 void uninstall() {

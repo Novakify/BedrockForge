@@ -25,6 +25,8 @@
 #include "bf/Events.h"
 #include "bf/Hud.h"
 #include "client/Module.h"
+#include "core/Win32Input.h"
+#include "mc/client/player/LocalPlayer.h"
 
 namespace bedrock_forge::client::menu {
 
@@ -45,6 +47,7 @@ std::vector<Click> gClicks;
 std::vector<int>   gWheel;
 glm::vec2          gActionPos{0, 0}; // where the click being handled landed (sliders use it)
 bf::events::Subscriptions gSubs;
+std::atomic<IClientInstance*> gLastClient{nullptr};
 
 // palette
 constexpr Rgba kBack{0.04f, 0.05f, 0.07f, 0.92f}, kSide{0.07f, 0.09f, 0.12f, 1}, kCard{0.12f, 0.14f, 0.18f, 1},
@@ -231,8 +234,26 @@ void open(IClientInstance& client) {
 }
 
 void install() {
-    auto& key = ll::input::KeyRegistry::getInstance().getOrCreateKey("bedrock_forge.menu", {0xA1 /* Right Shift */}, true);
-    key.registerButtonDownHandler([](::FocusImpact, ::IClientInstance& client) { open(client); }, true);
+    // The game reports both Shift keys as VK_SHIFT (0x10), so a key binding can't tell Right Shift apart.
+    // Watch raw key events instead and check the physical right Shift with GetAsyncKeyState.
+    // Insert (0x2D) also opens the menu, as a fallback for keyboards without a right Shift.
+    gSubs.on<ll::event::KeyInputEvent>([](ll::event::KeyInputEvent& ev) {
+        if (!ev.isDown()) return;
+        int const k = ev.keyCode();
+        bool const rshift = (k == 0x10 || k == 0xA1) && win32::keyDown(0xA1) && !win32::keyDown(0xA0);
+        if (!rshift && k != 0x2D) return;
+        IClientInstance* client = gLastClient.load();
+        if (!client) return;
+        {
+            std::lock_guard lock(gMutex);
+            if (gScene) return;
+        }
+        if (!client->getLocalPlayer()) return; // only in a world
+        open(*client);
+    });
+    gSubs.on<ll::event::AfterUIRenderEvent>([](ll::event::AfterUIRenderEvent& ev) {
+        gLastClient = &ev.uiRenderContext().mClient;
+    });
 
     gSubs.on<ll::event::BeforeUIRenderEvent>([](ll::event::BeforeUIRenderEvent& ev) {
         std::lock_guard lock(gMutex);

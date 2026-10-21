@@ -15,5 +15,7 @@ namespace bedrock_forge::client::shaderpacks {
 /// Install the file hooks (call from Core::load so it's in place before the renderer loads materials).
 void install(std::filesystem::path const& modDir);
 void uninstall();
+/// Log what the hooks saw so far (once; call from a normal thread after startup, e.g. on joining a world).
+void reportOnce();
 
 } // namespace bedrock_forge::client::shaderpacks

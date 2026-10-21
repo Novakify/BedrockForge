@@ -392,7 +392,7 @@ void registerBuiltins() {
     r.add("chat_compact", "Chat Compact", Category::Misc, "Stack repeated chat messages as (x3)", true);
     r.add("hud_layout", "HUD Layout", Category::Misc, "Where the info panel sits and how dark it is", true)
         .slider("x", "Info panel X (negative = from right)", 4, -400, 400, 2)
-        .slider("y", "Info panel Y (negative = from bottom)", 32, -300, 300, 2)
+        .slider("y", "Info panel Y (negative = from bottom)", 96, -300, 300, 2)
         .slider("opacity", "Background opacity", 0.42f, 0, 1, 0.05f);
     r.plan("movable_hud", "Movable HUD", Category::Misc, "Drag scoreboard, boss bar, chat, paper doll");
     r.plan("cosmetics", "Cosmetics", Category::Misc, "Client-side capes and cloaks");
@@ -452,7 +452,7 @@ void installRuntime() {
                 try { m->hud(f); } catch (...) {}
             }
         auto* lay = Registry::get().find("hud_layout");
-        float ix = lay ? lay->num("x", 4) : 4, iy = lay ? lay->num("y", 32) : 32;
+        float ix = lay ? lay->num("x", 4) : 4, iy = lay ? lay->num("y", 96) : 96;
         if (ix < 0) ix += view.mSize->x - 100;
         if (iy < 0) iy += view.mSize->y;
         panel(ctx, ix, iy, info, lay ? lay->num("opacity", 0.42f) : 0.42f, {1, 1, 1, 1});
