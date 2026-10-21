@@ -43,6 +43,7 @@ def anim_controller(ns, key, anims):
 def main(argv=None):
     ap = argparse.ArgumentParser(); ap.add_argument("jar", type=Path); ap.add_argument("entities", type=Path)
     ap.add_argument("-o", "--out", type=Path, default=Path("build")); ap.add_argument("--ns"); ap.add_argument("--private", action="store_true")
+    ap.add_argument("--overlay", type=Path, help="behaviour overlay dir (overlay.json + scripts/), see overlays/")
     a = ap.parse_args(argv)
     data = json.loads(a.entities.read_text()); z = zipfile.ZipFile(a.jar); names = set(z.namelist())
     modid = data["mod_id"]; ns = a.ns or modid
@@ -192,9 +193,50 @@ def main(argv=None):
     if f"logo.png" in names:
         for d in (rp, bp): (d / "pack_icon.png").write_bytes(z.read("logo.png"))
 
+    # ---- behaviour overlay (our own code: scripts, entity overrides, items, recipes) ----
+    ov_dir = a.overlay or (Path(__file__).parent / "overlays" / modid)
+    if ov_dir.exists() and (ov_dir / "overlay.json").exists():
+        ov = json.loads((ov_dir / "overlay.json").read_text())
+        if (ov_dir / "scripts").exists():
+            shutil.copytree(ov_dir / "scripts", bp / "scripts", dirs_exist_ok=True)
+            bpm["modules"].append({"type": "script", "language": "javascript", "uuid": str(uuid.uuid4()), "entry": "scripts/main.js", "version": [1, 0, 0]})
+            bpm["dependencies"] += ov.get("script_deps", [])
+        for key, change in (ov.get("entity_overrides") or {}).items():
+            targets = [f for f in (bp / "entities").glob("*.json") if (f.stem.startswith(key[1:]) if key.startswith("*") else f.stem == key)]
+            for f in targets:
+                d = json.loads(f.read_text()); c = d["minecraft:entity"]["components"]
+                for k in change.get("remove", []): c.pop(k, None)
+                c.update(change.get("set", {})); f.write_text(json.dumps(d, indent=1))
+            if not targets: report["warnings"].append(f"overlay override '{key}' matched no entity")
+        item_tex = {}
+        for it in ov.get("items", []):
+            iid = f"{ns}:{it['id']}"
+            comps = {"minecraft:icon": it["id"], "minecraft:display_name": {"value": it.get("name", it["id"])},
+                     "minecraft:max_stack_size": 1 if it.get("durability") else it.get("max_stack", 64)}
+            if it.get("durability"): comps["minecraft:durability"] = {"max_durability": it["durability"]}
+            (bp / "items").mkdir(exist_ok=True)
+            (bp / "items" / f"{it['id']}.json").write_text(json.dumps({"format_version": "1.21.0", "minecraft:item": {
+                "description": {"identifier": iid, "menu_category": {"category": "equipment"}}, "components": comps}}, indent=1))
+            if it.get("texture") in names:
+                dst = rp / "textures/items" / ns / f"{it['id']}.png"; dst.parent.mkdir(parents=True, exist_ok=True); dst.write_bytes(z.read(it["texture"]))
+                item_tex[it["id"]] = {"textures": f"textures/items/{ns}/{it['id']}"}
+            if it.get("recipe"):
+                r = it["recipe"]; (bp / "recipes").mkdir(exist_ok=True)
+                (bp / "recipes" / f"{it['id']}.json").write_text(json.dumps({"format_version": "1.20.10", "minecraft:recipe_shaped": {
+                    "description": {"identifier": f"{iid}_recipe"}, "tags": ["crafting_table"], "pattern": r["pattern"],
+                    "key": {k: {"item": v} for k, v in r["key"].items()}, "unlock": [{"item": next(iter(r["key"].values()))}],
+                    "result": {"item": iid, "count": 1}}}, indent=1))
+            lang.append(f"item.{iid}={it.get('name', it['id'])}")
+        if item_tex:
+            (rp / "textures/item_texture.json").write_text(json.dumps({"resource_pack_name": title, "texture_name": "atlas.items", "texture_data": item_tex}, indent=1))
+            (rp / "texts" / "en_US.lang").write_text("\n".join(sorted(set(lang))) + "\n")
+        (bp / "manifest.json").write_text(json.dumps(bpm, indent=2))
+        report["overlay"] = str(ov_dir.name)
+
     # ---- report ----
     L = [f"# ModPorter report: {data['jar']}", "", f"- entities: {len(report['generated'])}, geometry files: {len(geo_ids)}, animation files: {len(anim_maps)}, sounds: {len(defs)}",
-         f"- procedures (behaviour not auto-ported): {data.get('procedure_count')}", "",
+         f"- procedures (behaviour not auto-ported): {data.get('procedure_count')}",
+         f"- behaviour overlay: {report.get('overlay', 'none')}", "",
          "## Fallbacks", *([f"- {x}" for x in report["fallbacks"]] or ["- none"]), "", "## Warnings", *([f"- {x}" for x in report["warnings"]] or ["- none"]), "",
          "## Entities", "", "| id | hp | speed | dmg | anims | procedure events |", "|---|---|---|---|---|---|"]
     for g in report["generated"]:

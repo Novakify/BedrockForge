@@ -8,7 +8,7 @@ It reads the jar's **bytecode with `javap`** and never runs the mod.
 | `extract.py` | per entity: registry id, size, attributes (SRG-mapped), AI goals, sounds, procedure→event map, model/texture/animation paths | Working on From The Caves (49/50 auto-mapped) |
 | `generate.py` | GeckoLib geo + animations (renamed per file to avoid `geometry.unknown` / `animation.model.*` collisions), textures, client entities with idle/walk/attack controllers, spawn eggs, sounds, names; BP entities with the real stats + a generic hostile AI | Working |
 | `validate.py` | JSON, geometry/texture/animation references, animated bones vs geometry, UV vs texture aspect, BP/RP id match | 0 errors on From The Caves |
-| behaviour | MCreator procedures (Forge events) → Script API | Manual, guided by the procedure map |
+| `overlays/<modid>/` | our own Script API code for the mod's mechanics + entity overrides + items/recipes, merged automatically | From The Caves v0: phases, Behind, Front, possession, Wooden Cross |
 
 Java-code models: `HumanoidModel`/`PlayerModel` map to Bedrock's built-in `geometry.humanoid.custom`.
 Other hand-written Java models aren't converted yet (they fall back to the mod's first GeckoLib model).
