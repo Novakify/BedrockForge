@@ -6,7 +6,7 @@
     "uuid": "235c4086-d2ca-4557-bbea-ad0c4c72b22b",
     "version": [
       1,
-      0,
+      1,
       0
     ],
     "min_engine_version": [
@@ -23,7 +23,7 @@
       "entry": "scripts/main.js",
       "version": [
         1,
-        0,
+        1,
         0
       ]
     }
@@ -36,6 +36,10 @@
     {
       "module_name": "@minecraft/server-graphics",
       "version": "1.0.0"
+    },
+    {
+      "module_name": "@minecraft/server-ui",
+      "version": "2.0.0"
     },
     {
       "uuid": "a782a9da-2b55-42e7-83f0-ceec81b5b0f6",
