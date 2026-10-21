@@ -12,6 +12,7 @@
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
 
+#include "client/ForgeRender.h"
 #include "client/Module.h"
 #include "core/Win32Input.h"
 
@@ -19,9 +20,17 @@ namespace bedrock_forge::client::shaderpacks {
 
 namespace {
 namespace fs = std::filesystem;
-std::wstring           gActiveDir; // lower-case not required; compared case-insensitively
-std::atomic<int>       gRedirects{0};
-std::atomic<int>       gSeen[4]{}, gRedirected[4]{};
+
+// What the file hooks redirect to. Swapped atomically so the menu can change it while the renderer opens files.
+struct State {
+    std::wstring packDir;  // active shaderpack folder ("" = none)
+    std::wstring rpDir;    // cache of material.bin files taken from the active resource packs ("" = off)
+};
+std::atomic<std::shared_ptr<State const>> gState{std::make_shared<State const>()};
+fs::path                gPacksDir, gCfg;
+std::string             gActiveName;
+std::atomic<int>        gRedirects{0}, gRpRedirects{0};
+std::atomic<int>        gSeen[4]{}, gRedirected[4]{};
 // first few redirected names, logged later from a safe place (never log inside a file hook)
 std::mutex             gNamesMutex;
 std::vector<std::wstring> gNames;
@@ -35,69 +44,96 @@ bool endsWithI(std::wstring_view s, std::wstring_view suffix) {
     return true;
 }
 bool containsI(std::wstring_view s, std::wstring_view needle) {
+    if (needle.empty()) return false;
     auto it = std::search(s.begin(), s.end(), needle.begin(), needle.end(),
                           [](wchar_t a, wchar_t b) { return std::towlower(a) == std::towlower(b); });
     return it != s.end();
 }
 
+bool tryCandidate(std::wstring const& cand, wchar_t* out, unsigned long outLen) {
+    std::error_code ec;
+    if (cand.size() + 1 >= outLen || !fs::is_regular_file(fs::path(cand), ec)) return false;
+    std::copy(cand.begin(), cand.end(), out);
+    out[cand.size()] = 0;
+    return true;
+}
+
 bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) {
-    if (gActiveDir.empty()) return false;
     std::wstring_view p(path);
     if (!endsWithI(p, L".material.bin")) return false;
+    auto st = gState.load();
+    if (st->packDir.empty() && st->rpDir.empty()) return false;
     if (api >= 0 && api < 4) ++gSeen[api];
     {
         std::lock_guard lock(gNamesMutex);
         if (gSeenPaths.size() < 200) gSeenPaths.push_back(std::to_wstring(api) + L" " + std::wstring(p));
     }
-    if (containsI(p, gActiveDir)) return false; // already ours
+    if (containsI(p, st->packDir) || containsI(p, st->rpDir)) return false; // already ours
     if (!containsI(p, L"renderer\\materials\\") && !containsI(p, L"renderer/materials/")) return false;
     auto slash = p.find_last_of(L"\\/");
     std::wstring name(slash == std::wstring_view::npos ? p : p.substr(slash + 1));
-    for (std::wstring cand : {gActiveDir + L"\\renderer\\materials\\" + name, gActiveDir + L"\\" + name}) {
-        std::error_code ec;
-        if (cand.size() + 1 < outLen && fs::is_regular_file(fs::path(cand), ec)) {
-            std::copy(cand.begin(), cand.end(), out);
-            out[cand.size()] = 0;
-            ++gRedirects;
-            if (api >= 0 && api < 4) ++gRedirected[api];
-            {
-                std::lock_guard lock(gNamesMutex);
-                if (gNames.size() < 40) gNames.push_back(name);
-            }
-            return true;
-        }
-    }
-    return false;
+    // priority: active resource packs (ForgeRender pack shaders) > shaderpack folder > vanilla
+    bool hit = false, fromRp = false;
+    if (!st->rpDir.empty() && tryCandidate(st->rpDir + L"\\" + name, out, outLen)) hit = fromRp = true;
+    if (!hit && !st->packDir.empty())
+        hit = tryCandidate(st->packDir + L"\\renderer\\materials\\" + name, out, outLen)
+           || tryCandidate(st->packDir + L"\\" + name, out, outLen);
+    if (!hit) return false;
+    ++gRedirects;
+    if (fromRp) ++gRpRedirects;
+    if (api >= 0 && api < 4) ++gRedirected[api];
+    std::lock_guard lock(gNamesMutex);
+    if (gNames.size() < 60) gNames.push_back((fromRp ? L"rp:" : L"") + name);
+    return true;
+}
+
+void publish(std::wstring packDir, std::wstring rpDir) {
+    gState.store(std::make_shared<State const>(State{std::move(packDir), std::move(rpDir)}));
 }
 } // namespace
 
+std::vector<std::string> listPacks() {
+    std::vector<std::string> found;
+    std::error_code ec;
+    for (auto& e : fs::directory_iterator(gPacksDir, ec))
+        if (e.is_directory()) found.push_back(e.path().filename().string());
+    std::sort(found.begin(), found.end());
+    return found;
+}
+
+std::string activePack() { return gActiveName; }
+
+bool setActivePack(std::string const& name) {
+    std::error_code ec;
+    std::string use = name;
+    if (use.empty() || use == "off" || !fs::is_directory(gPacksDir / use, ec)) use = "off";
+    gActiveName = use;
+    std::ofstream{gCfg} << use << "\n";
+    auto st = gState.load();
+    publish(use == "off" ? std::wstring{} : (gPacksDir / use).wstring(), st->rpDir);
+    return use != "off";
+}
+
+void setResourcePackCache(fs::path const& dir) {
+    auto st = gState.load();
+    publish(st->packDir, dir.empty() ? std::wstring{} : dir.wstring());
+}
+
 void install(fs::path const& modDir) {
     auto& log = ll::mod::NativeMod::current()->getLogger();
-    fs::path packs = modDir / "shaderpacks", cfg = modDir / "config" / "shaderpack.txt";
+    gPacksDir = modDir / "shaderpacks";
+    gCfg      = modDir / "config" / "shaderpack.txt";
     std::error_code ec;
-    fs::create_directories(packs, ec);
-    fs::create_directories(cfg.parent_path(), ec);
+    fs::create_directories(gPacksDir, ec);
+    fs::create_directories(gCfg.parent_path(), ec);
     std::string active = "Anime";
-    if (std::ifstream in{cfg}; in) std::getline(in, active);
-    else std::ofstream{cfg} << active << "\n";
+    if (std::ifstream in{gCfg}; in) std::getline(in, active);
     while (!active.empty() && (active.back() == '\r' || active.back() == ' ')) active.pop_back();
+    bool on = setActivePack(active);
+    log.info("[BF] shaderpacks: {} found, active = '{}'", listPacks().size(), gActiveName);
+    if (!on && active != "off") log.warn("[BF] shaderpack '{}' not found in {}", active, gPacksDir.string());
 
-    std::vector<std::string> found;
-    for (auto& e : fs::directory_iterator(packs, ec))
-        if (e.is_directory()) found.push_back(e.path().filename().string());
-    log.info("[BF] shaderpacks: {} found, active = '{}'", found.size(), active);
-
-    auto& m = Registry::get().add("shaderpacks", "Shaderpacks", Category::Visual,
-                                  "Load custom RenderDragon shaders from mods/BedrockForgeCore/shaderpacks (restart to apply)", true);
-    m.onToggle = [cfg](bool on) {
-        if (!on) std::ofstream{cfg} << "off\n";
-    };
-    if (active == "off" || active.empty()) { m.enabled = false; return; }
-    if (!fs::is_directory(packs / active, ec)) {
-        log.warn("[BF] shaderpack '{}' not found in {}", active, packs.string());
-        return;
-    }
-    gActiveDir = (packs / active).wstring();
+    // Hooks go in even with no pack active: ForgeRender can switch packs and enable resource-pack shaders later.
     win32::files::setRedirect(&redirect);
     win32::files::HookSite sites[6];
     int n = win32::files::hookSites(sites, 6);
@@ -117,9 +153,13 @@ void writeReport() {
     std::ofstream out{dir / "shaderpacks.txt"};
     if (!out) return;
     for (int i = 0; i < 4; ++i) out << api[i] << ": saw " << gSeen[i].load() << " material opens, redirected " << gRedirected[i].load() << "\n";
-    out << "loaded from pack:";
+    auto st = gState.load();
+    out << "active shaderpack: " << gActiveName << "\nresource-pack shaders: " << (st->rpDir.empty() ? "off" : fs::path(st->rpDir).string())
+        << " (" << gRpRedirects.load() << " opens served)\nloaded from pack:";
     for (auto& n : gNames) out << " " << fs::path(n).string();
-    out << "\nall material opens (api path):\n";
+    out << "\n";
+    forgerender::writeReport(out);
+    out << "all material opens (api path):\n";
     for (auto& n : gSeenPaths) out << "  " << fs::path(n).string() << "\n";
 }
 

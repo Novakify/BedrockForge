@@ -10,7 +10,13 @@
 
 #include "ll/api/memory/Hook.h"
 
+#include "mc/client/game/IClientInstance.h"
 #include "mc/client/renderer/ActorShaderManager.h"
+#include "mc/client/renderer/block/BlockTessellatorCache.h"
+#include "mc/client/renderer/chunks/RenderChunkCoordinator.h"
+#include "mc/client/renderer/game/LevelRenderer.h"
+#include "mc/client/renderer/game/LevelRendererCamera.h"
+#include "mc/world/level/block/BrightnessPair.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/client/renderer/ptexture/BaseLightData.h"
 #include "mc/client/renderer/ptexture/BaseLightTextureImageBuilder.h"
@@ -65,6 +71,54 @@ void brightenImage(mce::Image* img) {
 }
 
 void noteRenderThread() { gRenderThread = std::this_thread::get_id(); }
+
+// ---- Fullbright v3: light baked into terrain vertices -------------------------------------------------------------
+// E-019 showed the 1.26 light texture ignores BaseLightData + pixel edits, so v3 lifts the per-vertex light the chunk
+// tessellator bakes (BlockTessellatorCache::getLightColor -> lightmap UV) and asks every RenderChunkCoordinator to
+// relight its geometry when fullbright changes. Client-only path: the integrated server never touches it.
+namespace {
+std::atomic<int>  gFbLevel{-1};       // 0..15 block/sky light floor while on, -1 = off (read on chunk-build workers)
+std::atomic<int>  gFbApplied{-1};     // level the loaded chunks were last lit with
+std::atomic<long> gFbRelights{0};
+int fullbrightLevel() {
+    auto* m = Registry::get().find("fullbright");
+    if (!m || !m->enabled) return -1;
+    return std::clamp(int(m->num("strength", 1.0f) * 15.0f + 0.5f), 0, 15);
+}
+} // namespace
+
+LL_TYPE_INSTANCE_HOOK(BfTessLightHook, ll::memory::HookPriority::Normal, BlockTessellatorCache, &BlockTessellatorCache::getLightColor,
+                      BrightnessPair, BlockPos const& p, Block const* blockHint) {
+    diag::tessLight.fetch_add(1, std::memory_order_relaxed);
+    BrightnessPair r = origin(p, blockHint);
+    int lv = gFbLevel.load(std::memory_order_relaxed);
+    if (lv >= 0) {
+        if (r.sky->mValue < lv) r.sky->mValue = uchar(lv);
+        if (r.block->mValue < lv) r.block->mValue = uchar(lv);
+    }
+    return r;
+}
+
+LL_TYPE_INSTANCE_HOOK(BfAmbientHook, ll::memory::HookPriority::Normal, LevelRendererCamera, &LevelRendererCamera::$getAmbientBrightness,
+                      float) {
+    float v = origin();
+    return gFbLevel.load(std::memory_order_relaxed) >= 0 ? std::max(v, 1.0f) : v;
+}
+
+// Called every HUD frame (client thread). Relights loaded chunks when the module or its strength changed.
+void fullbrightTick(IClientInstance& client) {
+    int want = fullbrightLevel();
+    gFbLevel = want;
+    if (want == gFbApplied.load()) return;
+    auto* lr = client.getLevelRenderer();
+    if (!lr) return;
+    gFbApplied = want;
+    for (auto& [dim, coord] : lr->mRenderChunkCoordinators.get()) {
+        (void)dim;
+        if (coord) { coord->relightAllRenderChunkGeometry(); ++gFbRelights; }
+    }
+    diag::fbRelights = gFbRelights.load();
+}
 
 LL_TYPE_INSTANCE_HOOK(BfLightHook, ll::memory::HookPriority::Normal, BaseLightTextureImageBuilder,
                       &BaseLightTextureImageBuilder::$createBaseLightTextureData, std::unique_ptr<BaseLightData>,
@@ -131,6 +185,8 @@ LL_TYPE_INSTANCE_HOOK(BfLightImageSplitHook, ll::memory::HookPriority::Normal, B
 }
 
 void installVisualHooks() {
+    BfTessLightHook::hook();
+    BfAmbientHook::hook();
     BfLightImageHook::hook();
     BfLightImageSplitHook::hook();
     BfLightHook::hook();
@@ -141,6 +197,8 @@ void installVisualHooks() {
     BfTimeHook::hook();
 }
 void uninstallVisualHooks() {
+    BfTessLightHook::unhook();
+    BfAmbientHook::unhook();
     BfLightImageHook::unhook();
     BfLightImageSplitHook::unhook();
     BfLightHook::unhook();

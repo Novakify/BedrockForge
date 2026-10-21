@@ -17,6 +17,7 @@
 #include "bf/Input.h"
 #include "client/Menu.h"
 #include "client/Module.h"
+#include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
 
 namespace bedrock_forge {
@@ -54,7 +55,7 @@ bool Core::load() {
     log.info("Bedrock Forge Core loading (target MC 1.26.51 / LeviLamina 26.51.x)");
     bf::config::loadOrCreate(getSelf(), mConfig);
     // Shaderpacks must hook file opens before the renderer loads its materials.
-    client::shaderpacks::install(getSelf().getModDir());
+    client::forgerender::install(getSelf().getModDir());
     gHudVisible = mConfig.hudEnabled;
     log.info("Config loaded: hud={} heartbeat={}", mConfig.hudEnabled, mConfig.logTickHeartbeat);
     return true;
@@ -118,7 +119,7 @@ bool Core::enable() {
 
 bool Core::disable() {
     client::menu::uninstall();
-    client::shaderpacks::uninstall();
+    client::forgerender::uninstall();
     client::uninstallRuntime();
     client::Registry::get().save();
     mSubs.clear();

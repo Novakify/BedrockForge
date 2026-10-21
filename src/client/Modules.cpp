@@ -44,6 +44,7 @@
 #include "bf/Events.h"
 #include "bf/Hud.h"
 #include "client/Menu.h"
+#include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
 #include "core/Win32Input.h"
 
@@ -54,6 +55,7 @@ void installChatHooks();
 void uninstallChatHooks();
 void uninstallVisualHooks();
 void noteRenderThread();
+void fullbrightTick(IClientInstance& client);
 
 namespace {
 using Clock = std::chrono::steady_clock;
@@ -208,7 +210,8 @@ void write() {
     out << "light hook " << lightHook.load() << " (brightened " << lightBrightened.load() << ", image " << lightImage.load() << ")\n"
         << "overlay hook " << overlayHook.load() << "\nbob hook " << bobHook.load() << "\ntime hook " << timeHook.load()
         << "\nfov hook " << fovHook.load() << "\nattack hook " << attackHook.load() << "\nchat hook " << chatHook.load()
-        << "\nmenu opens " << menuOpens.load() << "\nmodules on:";
+        << "\nmenu opens " << menuOpens.load() << "\ntessellator light " << tessLight.load() << " (relights " << fbRelights.load()
+        << ")\npack shaders cached " << packShaders.load() << "\nmodules on:";
     for (auto& m : Registry::get().all())
         if (m->enabled && !m->planned) out << " " << m->id;
     out << "\nscreens under the menu:";
@@ -393,7 +396,7 @@ void registerBuiltins() {
     r.plan("motion_blur", "Motion Blur", Category::Camera, "Frame blending (shader pipeline)");
 
     // ---------------- Visual
-    r.add("fullbright", "Fullbright", Category::Visual, "See in the dark (local lightmap, like night vision)")
+    r.add("fullbright", "Fullbright", Category::Visual, "See in the dark: lifts the light baked into nearby terrain (client-side, relights chunks on toggle)")
         .slider("strength", "Strength", 1.0f, 0.1f, 1.0f, 0.05f);
     r.add("time_changer", "Time Changer", Category::Visual, "Client-side time of day (rendering only)")
         .slider("time", "Time of day (0-1)", 0.0f, 0, 1, 0.01f);
@@ -480,6 +483,8 @@ void installRuntime() {
         if (++hudFrames == 120) shaderpacks::reportOnce(); // ~2 s into the first world
         if (hudFrames % 600 == 0) { diag::write(); shaderpacks::writeReport(); }
         auto& ctx    = ev.uiRenderContext();
+        fullbrightTick(ctx.mClient);
+        forgerender::tick();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
