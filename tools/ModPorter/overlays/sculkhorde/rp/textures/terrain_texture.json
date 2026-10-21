@@ -1,0 +1,20 @@
+{
+ "resource_pack_name": "Sculk Horde",
+ "texture_name": "atlas.terrain",
+ "padding": 8,
+ "num_mip_levels": 4,
+ "texture_data": {
+  "sculkhorde_sculk_mass": {
+   "textures": "textures/blocks/sculkhorde/sculk_mass"
+  },
+  "sculkhorde_sculk_node": {
+   "textures": "textures/blocks/sculkhorde/sculk_node"
+  },
+  "sculkhorde_sculk_ancient_node": {
+   "textures": "textures/blocks/sculkhorde/sculk_ancient_node"
+  },
+  "sculkhorde_sculk_ancient_node_defeated": {
+   "textures": "textures/blocks/sculkhorde/sculk_ancient_node_defeated"
+  }
+ }
+}

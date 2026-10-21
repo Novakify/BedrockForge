@@ -1,0 +1,28 @@
+{
+ "format_version": "1.21.40",
+ "minecraft:block": {
+  "description": {
+   "identifier": "sculkhorde:sculk_ancient_node",
+   "menu_category": {
+    "category": "nature"
+   }
+  },
+  "components": {
+   "minecraft:destructible_by_mining": {
+    "seconds_to_destroy": 60
+   },
+   "minecraft:destructible_by_explosion": {
+    "explosion_resistance": 3600
+   },
+   "minecraft:light_emission": 10,
+   "minecraft:map_color": "#0b3a40",
+   "minecraft:geometry": "minecraft:geometry.full_block",
+   "minecraft:material_instances": {
+    "*": {
+     "texture": "sculkhorde_sculk_ancient_node",
+     "render_method": "opaque"
+    }
+   }
+  }
+ }
+}

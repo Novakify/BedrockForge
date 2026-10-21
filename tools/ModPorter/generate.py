@@ -27,6 +27,20 @@ def manifest(name, desc, kind, deps, version=(1, 0, 0)):
             "modules": [{"type": kind, "uuid": str(uuid.uuid4()), "version": list(version)}],
             "dependencies": deps}
 
+def pick_anims(anims):
+    """Map a mod's animation names onto idle / walk / attack / living (always-on loop)."""
+    def find(*keys, avoid=()):
+        for k in keys:
+            for a in anims:
+                if k in a.split(".") or a.endswith(k):
+                    if not any(x in a for x in avoid): return a
+        for k in keys:
+            for a in anims:
+                if k in a and not any(x in a for x in avoid): return a
+        return None
+    return {r: v for r, v in {"idle": find("idle", avoid=("aggro", "twitch")), "walk": find("walk", "swim", "fly", "move", "run"),
+            "attack": find("attack", "melee", "attack1", avoid=("cancel", "charge")), "living": find("living")}.items() if v}
+
 def anim_controller(ns, key, anims):
     has = {a.split(".")[-1] for a in anims}
     states = {"default": {"animations": ["idle"] if "idle" in has else [], "transitions": []}}
@@ -81,17 +95,24 @@ def main(argv=None):
     for src in sorted(n for n in names if n.endswith(".animation.json")):
         stem = Path(src).name[:-15]; an = jload(z.read(src)); mp = {}
         new = {}
+        keys = list((an.get("animations") or {}))
+        lasts = [k.split(".")[-1].lower() for k in keys]
         for k, v in (an.get("animations") or {}).items():
-            short = k.split(".")[-1]; nk = f"animation.{ns}.{stem}.{short}"; new[nk] = v; mp[k] = (short, nk)
+            short = k.split(".")[-1]
+            if lasts.count(short.lower()) > 1:   # collision -> keep more of the name
+                short = re.sub(r"^animation\.(model\.|%s\.)?" % re.escape(stem), "", k).replace(".", "_").strip("_") or short
+            nk = f"animation.{ns}.{stem}.{short.lower()}"; new[nk] = v; mp[k] = (short, nk)
         an["animations"] = new
         (rp / "animations").mkdir(parents=True, exist_ok=True)
         (rp / "animations" / f"{stem}.animation.json").write_text(json.dumps(an, indent=1))
         anim_maps[src] = mp
 
     # ---- per entity ----
-    sound_defs = {}
+    sound_defs = {}; glow_used = False
     fallback_geo = next((v for k, v in geo_ids.items() if "phase1" in k), next(iter(geo_ids.values()), None))
-    for e in data["entities"]:
+    skipped = [e["id"] for e in data["entities"] if e.get("is_mob") is False]
+    if skipped: report["warnings"].append(f"{len(skipped)} non-mob entity types skipped (projectiles/effects/cursors): {', '.join(skipped)}")
+    for e in [e for e in data["entities"] if e.get("is_mob") is not False]:
         eid = e["id"] or (modid if e["class"].lower().startswith(modid.replace("_", "")) else e["class"][:-6].lower())
         full = f"{ns}:{eid}"
         tex = e.get("texture")
@@ -119,14 +140,23 @@ def main(argv=None):
             "render_controllers": ["controller.render.default"],
             "spawn_egg": {"base_color": "#1b1b1b", "overlay_color": "#8b0000"}}}}
         desc = client["minecraft:client_entity"]["description"]
+        if e.get("glowmask") and e["glowmask"] in names:
+            gk = f"textures/entity/{ns}/{Path(e['glowmask']).stem}"
+            (rp / f"{gk}.png").write_bytes(z.read(e["glowmask"]))
+            desc["materials"]["glow"] = "entity_emissive_alpha"; desc["textures"]["glow"] = gk
+            desc["render_controllers"].append(f"controller.render.{ns}.glow")
+            glow_used = True
+        roles = pick_anims(list(anims))
+        for r, v in roles.items():   # fill missing idle/walk/attack roles from the mod's own names (move.run, head.attack, ...)
+            if r != "living" and r not in anims: anims[r] = anims[v]
         if anims:
             desc["animations"] = dict(anims)
-            ctrl = anim_controller(ns, ckey, list(anims))
+            ctrl = anim_controller(ns, ckey, [r for r in ("idle", "walk", "attack") if r in anims])
             cname = next(iter(ctrl))
             (rp / "animation_controllers").mkdir(parents=True, exist_ok=True)
             (rp / "animation_controllers" / f"{ckey}.ac.json").write_text(json.dumps({"format_version": "1.10.0", "animation_controllers": ctrl}, indent=1))
             desc["animations"]["move"] = cname
-            desc["scripts"] = {"animate": ["move"]}
+            desc["scripts"] = {"animate": ["move"] + (["living"] if "living" in roles else [])}
         (rp / "entity").mkdir(parents=True, exist_ok=True)
         (rp / "entity" / f"{eid}.entity.json").write_text(json.dumps(client, indent=1))
 
@@ -155,20 +185,44 @@ def main(argv=None):
             "minecraft:despawn": {"despawn_from_distance": {}},
         }
         if e.get("mob_type") == "undead": comps["minecraft:type_family"]["family"].append("undead")
+        mv = e.get("movement", "walk")
+        if mv == "fly":
+            for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll"): comps.pop(k)
+            comps.update({"minecraft:can_fly": {}, "minecraft:flying_speed": {"value": round(min(at.get("flying_speed", 0.6), 1.0) * 0.25, 3)},
+                "minecraft:physics": {"has_gravity": False}, "minecraft:movement.hover": {},
+                "minecraft:navigation.hover": {"can_path_over_water": True, "can_sink": False, "can_pass_doors": True, "can_path_from_air": True, "avoid_damage_blocks": True},
+                "minecraft:behavior.random_hover": {"priority": 6, "xz_dist": 8, "y_dist": 4, "y_offset": -1, "interval": 1, "hover_height": [1, 4]}})
+        elif mv == "swim":
+            for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll", "minecraft:behavior.float"): comps.pop(k)
+            comps.update({"minecraft:breathable": {"breathes_water": True, "breathes_air": False, "suffocate_time": 0},
+                "minecraft:underwater_movement": {"value": round(min(at.get("movement_speed", 0.2), 0.5) * 0.3, 3) or 0.06},
+                "minecraft:navigation.generic": {"is_amphibious": False, "can_path_over_water": False, "can_swim": True, "can_walk": False, "can_breach": False},
+                "minecraft:movement.sway": {"sway_amplitude": 0}, "minecraft:behavior.swim_wander": {"priority": 6, "speed_multiplier": 1.0, "look_ahead": 2, "wander_time": 5}})
+        if "movement_speed" in at and at["movement_speed"] == 0:   # stationary (pods, spewers, corpses, nodes)
+            for k in [k for k in comps if k.startswith(("minecraft:navigation", "minecraft:movement", "minecraft:behavior.random", "minecraft:behavior.melee", "minecraft:jump"))]: comps.pop(k)
+            comps["minecraft:knockback_resistance"] = {"value": 1.0}
+            comps["minecraft:pushable"] = {"is_pushable": False, "is_pushable_by_piston": False}
+        if "attack_damage" in at and not at["attack_damage"]:   # explicitly harmless (nodes, pods), not just unknown
+            for k in ("minecraft:behavior.melee_attack", "minecraft:behavior.nearest_attackable_target", "minecraft:attack"): comps.pop(k, None)
         beh = {"format_version": "1.21.0", "minecraft:entity": {
             "description": {"identifier": full, "is_spawnable": True, "is_summonable": True, "is_experimental": False},
             "components": comps}}
         (bp / "entities").mkdir(parents=True, exist_ok=True)
         (bp / "entities" / f"{eid}.json").write_text(json.dumps(beh, indent=1))
 
-        # sounds: map mod sound ids -> RP sound definitions where the .ogg is in the jar
+        # sounds: the mod's own ambient/hurt/death/step events -> RP entity_sounds (an overlay can override)
         for kind, sid in (e.get("sounds") or {}).items():
-            if ":" in sid and sid.split(":")[0] == modid: sound_defs.setdefault(sid, kind)
+            if ":" in sid and sid.split(":")[0] == modid: sound_defs.setdefault(full, {})[kind] = f"{ns}.{sid.split(':')[1]}"
         nice = jlang.get(f"entity.{modid}.{eid}") or e["class"][:-6]
         lang += [f"entity.{full}.name={nice}", f"item.spawn_egg.entity.{full}.name=Spawn {nice} ({eid})"]
         report["generated"].append({"id": full, "geo": gid, "texture": tex_key, "anims": sorted(anims),
                                     "health": at.get("max_health"), "speed": at.get("movement_speed"), "damage": at.get("attack_damage"),
                                     "events": sorted((e.get("events") or {}).keys())})
+
+    if glow_used:
+        (rp / "render_controllers").mkdir(parents=True, exist_ok=True)
+        (rp / "render_controllers" / f"{ns}_glow.render_controllers.json").write_text(json.dumps({"format_version": "1.8.0", "render_controllers": {
+            f"controller.render.{ns}.glow": {"geometry": "Geometry.default", "materials": [{"*": "Material.glow"}], "textures": ["Texture.glow"], "ignore_lighting": True}}}, indent=1))
 
     # ---- every entity texture (layers like glowing eyes are referenced by overlays) ----
     for n in names:
@@ -190,6 +244,12 @@ def main(argv=None):
                     dst = rp / "sounds" / ns / f"{nm.split(':')[-1]}.ogg"; dst.parent.mkdir(parents=True, exist_ok=True); dst.write_bytes(z.read(src))
                     files.append({"name": f"sounds/{ns}/{nm.split(':')[-1]}"})
             if files: defs[f"{ns}.{ev}"] = {"category": spec.get("category", "hostile"), "sounds": files}
+    ent_sounds = {eid_: {"volume": 1.0, "pitch": [0.9, 1.1], "events": {k: v for k, v in evs.items() if v in defs}}
+                  for eid_, evs in sound_defs.items()}
+    ent_sounds = {k: v for k, v in ent_sounds.items() if v["events"]}
+    if ent_sounds:
+        (rp / "sounds.json").write_text(json.dumps({"entity_sounds": {"entities": ent_sounds}}, indent=1))
+        report["generated_sounds"] = len(ent_sounds)
     if defs:
         (rp / "sounds").mkdir(exist_ok=True)
         (rp / "sounds" / "sound_definitions.json").write_text(json.dumps({"format_version": "1.20.20", "sound_definitions": defs}, indent=1))
@@ -210,9 +270,10 @@ def main(argv=None):
             bpm["modules"].append({"type": "script", "language": "javascript", "uuid": str(uuid.uuid4()), "entry": "scripts/main.js", "version": [1, 0, 0]})
             bpm["dependencies"] += ov.get("script_deps", [])
         for key, change in (ov.get("entity_overrides") or {}).items():
-            targets = [f for f in (bp / "entities").glob("*.json") if (f.stem.startswith(key[1:]) if key.startswith("*") else f.stem == key)]
+            targets = [f for f in (bp / "entities").glob("*.json") if (key == "*" or (f.stem.startswith(key[1:].split("#")[0]) if key.startswith("*") else f.stem == key.split("#")[0]))]
             for f in targets:
                 d = json.loads(f.read_text()); c = d["minecraft:entity"]["components"]
+                if f.stem in change.get("except", []) or (change.get("if_has") and change["if_has"] not in c): continue
                 for k in change.get("remove", []): c.pop(k, None)
                 c.update(change.get("set", {})); f.write_text(json.dumps(d, indent=1))
             if not targets: report["warnings"].append(f"overlay override '{key}' matched no entity")

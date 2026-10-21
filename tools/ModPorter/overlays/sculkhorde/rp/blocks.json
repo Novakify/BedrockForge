@@ -1,0 +1,12 @@
+{
+ "format_version": "1.21.40",
+ "sculkhorde:sculk_mass": {
+  "sound": "sculk"
+ },
+ "sculkhorde:sculk_node": {
+  "sound": "sculk_catalyst"
+ },
+ "sculkhorde:sculk_ancient_node": {
+  "sound": "sculk_catalyst"
+ }
+}

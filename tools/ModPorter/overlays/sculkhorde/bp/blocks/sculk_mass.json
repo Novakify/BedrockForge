@@ -1,0 +1,50 @@
+{
+ "format_version": "1.21.40",
+ "minecraft:block": {
+  "description": {
+   "identifier": "sculkhorde:sculk_mass",
+   "menu_category": {
+    "category": "nature"
+   }
+  },
+  "components": {
+   "minecraft:destructible_by_mining": {
+    "seconds_to_destroy": 0.6
+   },
+   "minecraft:light_dampening": 0,
+   "minecraft:collision_box": {
+    "origin": [
+     -7,
+     0,
+     -7
+    ],
+    "size": [
+     14,
+     3,
+     14
+    ]
+   },
+   "minecraft:selection_box": {
+    "origin": [
+     -7,
+     0,
+     -7
+    ],
+    "size": [
+     14,
+     3,
+     14
+    ]
+   },
+   "minecraft:geometry": "geometry.sculkhorde.sculk_mass",
+   "minecraft:map_color": "#0b3a40",
+   "minecraft:material_instances": {
+    "*": {
+     "texture": "sculkhorde_sculk_mass",
+     "render_method": "alpha_test",
+     "ambient_occlusion": false
+    }
+   }
+  }
+ }
+}
