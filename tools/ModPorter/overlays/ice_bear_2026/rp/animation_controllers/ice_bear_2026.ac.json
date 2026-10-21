@@ -1,0 +1,329 @@
+{
+ "format_version": "1.10.0",
+ "animation_controllers": {
+  "controller.animation.ice_bear_2026.pose": {
+   "initial_state": "default",
+   "states": {
+    "s0": {
+     "animations": [
+      "crawl"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s7": "v.anim == 7"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    },
+    "s1": {
+     "animations": [
+      "crouch_run_new"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s7": "v.anim == 7"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    },
+    "s2": {
+     "animations": [
+      "crouch_idle"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s7": "v.anim == 7"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    },
+    "s3": {
+     "animations": [
+      "new_run"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s7": "v.anim == 7"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    },
+    "s4": {
+     "animations": [
+      "run_idle"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s7": "v.anim == 7"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    },
+    "s5": {
+     "animations": [
+      "flee"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s7": "v.anim == 7"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    },
+    "s6": {
+     "animations": [
+      "spotted"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s7": "v.anim == 7"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    },
+    "s7": {
+     "animations": [
+      "calm_move"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    },
+    "s8": {
+     "animations": [
+      "calm_idle"
+     ],
+     "blend_transition": 0.15,
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s7": "v.anim == 7"
+      }
+     ]
+    },
+    "default": {
+     "transitions": [
+      {
+       "s0": "v.anim == 0"
+      },
+      {
+       "s1": "v.anim == 1"
+      },
+      {
+       "s2": "v.anim == 2"
+      },
+      {
+       "s3": "v.anim == 3"
+      },
+      {
+       "s4": "v.anim == 4"
+      },
+      {
+       "s5": "v.anim == 5"
+      },
+      {
+       "s6": "v.anim == 6"
+      },
+      {
+       "s7": "v.anim == 7"
+      },
+      {
+       "s8": "v.anim == 8"
+      }
+     ]
+    }
+   }
+  }
+ }
+}

@@ -49,10 +49,17 @@ def consts(line: str):
     return None
 
 def parse_attributes(ins: list[str]) -> dict:
-    attrs, pending = {}, None
+    """Follows constants directly or through local variables (dstore_N / dload_N)."""
+    attrs, pending, locals_, last = {}, None, {}, None
     for l in ins:
-        if (m := re.search(r"Attributes\.(f_\d+_)", l)): pending = ATTR.get(m.group(1), m.group(1))
-        elif pending and (v := consts(l)) is not None: attrs[pending] = v; pending = None
+        if (m := re.search(r"\b[df]store(?:_|\s+)(\d+)", l)) and last is not None: locals_[m.group(1)] = last; last = None; continue
+        if (m := re.search(r"Attributes\.(f_\d+_)", l)): pending = ATTR.get(m.group(1), m.group(1)); continue
+        if (v := consts(l)) is not None:
+            if pending: attrs[pending] = v; pending = None
+            else: last = v
+            continue
+        if pending and (m := re.search(r"\b[df]load(?:_|\s+)(\d+)", l)) and m.group(1) in locals_:
+            attrs[pending] = locals_[m.group(1)]; pending = None
     return attrs
 
 def parse_goals(ins: list[str]) -> list[dict]:
@@ -85,18 +92,20 @@ def main(argv=None):
     modid = next((p.split("/")[1] for p in names if p.startswith("assets/") and p.count("/") > 2 and p.split("/")[1] != "minecraft"), "?")
 
     # registry: string id + size from the ModEntities init class
-    reg_cls = next((n for n in names if re.search(r"/init/\w*ModEntities\.class$", n)), None)
+    reg_cls = next((n for n in names if re.search(r"/(init|registry|registries)/\w*(ModEntities|ModEntityTypes|EntityTypes|Entities)\.class$", n)), None)
     registry, sizes = {}, {}
     if reg_cls:
         ins = sum(methods(javap(tmp, reg_cls[:-6].replace("/", "."))).values(), [])
         last_id, fl, ids = None, [], []
         for l in ins:
-            if (m := re.search(r"// String ([a-z0-9_]+)$", l)) and m.group(1) != modid: last_id, fl = m.group(1), []; ids.append(last_id)
+            if (m := re.search(r"// String ([a-z0-9_]+)$", l)) and (m.group(1) != modid or "register" in l or True):
+                if m.group(1) not in ids or m.group(1) != modid: last_id, fl = m.group(1), []
+                ids.append(m.group(1))
             elif (v := consts(l)) is not None: fl.append(v)
             elif "m_20699_" in l and last_id and len(fl) >= 2: sizes[last_id] = fl[-2:]
         def id_for(cls):
             base = cls[:-6] if cls.endswith("Entity") else cls
-            cands = {base.lower(),
+            cands = {base.lower(), re.sub(r"(?<=[A-Za-z])(?=\d)", "_", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", base)).lower(),
                      re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", base).lower(),
                      re.sub(r"(\d+)", r"_\1_", base.lower()).strip("_").replace("__", "_")}
             for c in cands:
@@ -109,14 +118,15 @@ def main(argv=None):
     def pkg_of(p): return p.rsplit(".", 1)[0]
     entities = []
     for n in sorted(names):
-        if not re.search(r"/entity/[A-Za-z0-9]+Entity\.class$", n): continue
+        if not re.search(r"/entit(y|ies)/[A-Za-z0-9]+Entity\.class$", n): continue
         cls = n[:-6].replace("/", "."); entity_pkg = cls.rsplit(".", 1)[0]; dis = javap(tmp, cls); ms = methods(dis)
         sup = re.search(r"extends ([\w.$]+)", dis); impl = re.search(r"implements ([\w.$, ]+)", dis)
         e = {"class": cls.split(".")[-1], "extends": sup.group(1).split(".")[-1] if sup else None,
              "geckolib": bool(impl and "GeoEntity" in impl.group(1))}
         e["id"] = id_for(e["class"]) if reg_cls else None
         e["size"] = sizes.get(e["id"])
-        e["attributes"] = parse_attributes(ms.get("createAttributes", []))
+        attr_m = next((k for k in ms if k in ("createAttributes", "getAttributeBuilder", "createMobAttributes", "registerAttributes")), "createAttributes")
+        e["attributes"] = parse_attributes(ms.get(attr_m, []))
         e["goals"] = parse_goals(ms.get("m_8099_", []))
         e["sounds"] = {}
         for srg, kind in SOUND_METHODS.items():
@@ -130,7 +140,9 @@ def main(argv=None):
     tex_names = {Path(n).stem: n for n in names if n.startswith(f"assets/{modid}/textures/entities/") and n.endswith(".png")}
     for e in entities:
         if not e["geckolib"]: continue
-        mcls = f"{pkg_of(entity_pkg)}.entity.model.{e['class'][:-6]}Model"
+        base = e['class'][:-6]
+        cand = [n for n in names if n.endswith(f"/{base}Model.class")]
+        mcls = cand[0][:-6].replace("/", ".") if cand else f"{pkg_of(entity_pkg)}.entity.model.{base}Model"
         mdis = javap(tmp, mcls)
         g = re.search(r"// String (geo/[\w/.-]+\.geo\.json)", mdis); an = re.search(r"// String (animations/[\w/.-]+\.animation\.json)", mdis)
         e["geo"] = f"assets/{modid}/{g.group(1)}" if g else None
@@ -138,10 +150,17 @@ def main(argv=None):
         ms = methods(javap(tmp, f"{entity_pkg}.{e['class']}"))
         strs = [m.group(1) for l in ms.get("m_8097_", []) if (m := re.search(r"// String ([\w-]+)$", l))]
         e["texture"] = next((tex_names[x] for x in strs if x in tex_names), None)
+        if not e["texture"]:   # hand-written mods: texture path is a literal in the model or renderer
+            for cn in [n for n in names if re.search(rf"/{base}(Model|Renderer)\.class$", n)]:
+                t = re.search(r"// String (textures/[\w/.-]+?)(\.png)?$", javap(tmp, cn[:-6].replace("/", ".")), re.M)
+                if t:
+                    path = f"assets/{modid}/{t.group(1)}" + ("" if t.group(1).endswith(".png") else ".png")
+                    if path in names: e["texture"] = path; break
         anims = set()
         for k, v in ms.items():
             if "Predicate" in k or k == "registerControllers":
                 anims |= {m.group(1) for l in v if (m := re.search(r"// String (animation\.[\w.]+)", l))}
+        anims |= {m.group(1) for v in ms.values() for l in v if (m := re.search(r"// String (animation\.[\w.]+)", l))}  # RawAnimation fields
         e["controller_animations"] = sorted(anims)
 
     # renderer -> texture + model per entity (non-GeckoLib / fallback)
@@ -157,6 +176,13 @@ def main(argv=None):
                 e["texture"] = t
                 e["model_class"] = model.group(1) if model else None
 
+    # single-entity mods: if paths are built at runtime (string concat), use the only geo/texture in the jar
+    ent_tex = [n for n in names if n.startswith(f"assets/{modid}/textures/entit") and n.endswith(".png")]
+    if len(entities) == 1:
+        e = entities[0]
+        if not e.get("geo") and len(geo) == 1: e["geo"] = next(iter(geo.values()))
+        if not e.get("texture") and ent_tex: e["texture"] = max(ent_tex, key=lambda n: zipfile.ZipFile(a.jar).getinfo(n).file_size)
+        if not e.get("id") and modid in (registry.values() or [modid]): e["id"] = modid
     out = {"mod_id": modid, "jar": a.jar.name, "entity_count": len(entities), "geo_files": geo, "animation_files": anim,
            "procedure_count": sum(1 for n in names if n.endswith("Procedure.class")), "entities": entities}
     a.out.mkdir(parents=True, exist_ok=True)

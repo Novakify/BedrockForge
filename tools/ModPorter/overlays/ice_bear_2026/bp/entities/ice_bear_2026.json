@@ -1,0 +1,461 @@
+{
+ "format_version": "1.21.0",
+ "minecraft:entity": {
+  "description": {
+   "identifier": "ice_bear_2026:ice_bear_2026",
+   "is_spawnable": true,
+   "is_summonable": true,
+   "is_experimental": false,
+   "properties": {
+    "ice_bear_2026:state": {
+     "type": "enum",
+     "values": [
+      "calm",
+      "stare",
+      "chase",
+      "flee"
+     ],
+     "default": "calm",
+     "client_sync": true
+    },
+    "ice_bear_2026:pose": {
+     "type": "enum",
+     "values": [
+      "stand",
+      "crouch",
+      "crawl"
+     ],
+     "default": "stand",
+     "client_sync": true
+    },
+    "ice_bear_2026:spotted": {
+     "type": "bool",
+     "default": false,
+     "client_sync": true
+    },
+    "ice_bear_2026:frozen": {
+     "type": "bool",
+     "default": false,
+     "client_sync": true
+    }
+   }
+  },
+  "component_groups": {
+   "state_calm": {
+    "minecraft:navigation.walk": {
+     "can_path_over_water": true,
+     "avoid_water": true,
+     "can_break_doors": true,
+     "can_pass_doors": true,
+     "can_open_doors": false,
+     "avoid_damage_blocks": true
+    },
+    "minecraft:behavior.random_stroll": {
+     "priority": 6,
+     "speed_multiplier": 0.35
+    },
+    "minecraft:behavior.random_look_around": {
+     "priority": 8
+    }
+   },
+   "state_stare": {
+    "minecraft:navigation.walk": {
+     "can_path_over_water": true,
+     "avoid_water": true,
+     "can_break_doors": true,
+     "can_pass_doors": true,
+     "can_open_doors": false,
+     "avoid_damage_blocks": true
+    },
+    "minecraft:behavior.nearest_attackable_target": {
+     "priority": 1,
+     "must_see": false,
+     "reselect_targets": true,
+     "within_radius": 128,
+     "entity_types": [
+      {
+       "filters": {
+        "all_of": [
+         {
+          "test": "is_family",
+          "subject": "other",
+          "value": "player"
+         },
+         {
+          "test": "has_ability",
+          "subject": "other",
+          "value": "instabuild",
+          "operator": "!="
+         }
+        ]
+       },
+       "max_dist": 128
+      }
+     ]
+    },
+    "minecraft:behavior.move_towards_target": {
+     "priority": 2,
+     "speed_multiplier": 1.0,
+     "within_radius": 128
+    },
+    "minecraft:behavior.look_at_target": {
+     "priority": 1
+    }
+   },
+   "state_chase": {
+    "minecraft:navigation.climb": {
+     "can_path_over_water": true,
+     "avoid_water": true,
+     "can_break_doors": true,
+     "can_pass_doors": true,
+     "can_open_doors": false,
+     "avoid_damage_blocks": true
+    },
+    "minecraft:can_climb": {},
+    "minecraft:behavior.nearest_attackable_target": {
+     "priority": 1,
+     "must_see": false,
+     "reselect_targets": true,
+     "within_radius": 128,
+     "entity_types": [
+      {
+       "filters": {
+        "all_of": [
+         {
+          "test": "is_family",
+          "subject": "other",
+          "value": "player"
+         },
+         {
+          "test": "has_ability",
+          "subject": "other",
+          "value": "instabuild",
+          "operator": "!="
+         }
+        ]
+       },
+       "max_dist": 128
+      }
+     ]
+    },
+    "minecraft:behavior.melee_attack": {
+     "priority": 1,
+     "speed_multiplier": 0.85,
+     "track_target": true,
+     "require_complete_path": false,
+     "cooldown_time": 1.0
+    },
+    "minecraft:behavior.break_door": {
+     "priority": 2,
+     "duration": 1
+    },
+    "minecraft:annotation.break_door": {
+     "break_time": 1,
+     "min_difficulty": "peaceful"
+    }
+   },
+   "state_flee": {
+    "minecraft:navigation.walk": {
+     "can_path_over_water": true,
+     "avoid_water": true,
+     "can_break_doors": true,
+     "can_pass_doors": true,
+     "can_open_doors": false,
+     "avoid_damage_blocks": true
+    },
+    "minecraft:behavior.avoid_mob_type": {
+     "priority": 1,
+     "remove_target": true,
+     "probability_per_strength": 1,
+     "check_if_outnumbered": false,
+     "entity_types": [
+      {
+       "filters": {
+        "test": "is_family",
+        "subject": "other",
+        "value": "player"
+       },
+       "max_dist": 32,
+       "walk_speed_multiplier": 1.0,
+       "sprint_speed_multiplier": 1.3
+      }
+     ]
+    }
+   },
+   "pose_stand": {
+    "minecraft:collision_box": {
+     "width": 0.5,
+     "height": 2.7
+    },
+    "minecraft:movement": {
+     "value": 0.5
+    }
+   },
+   "pose_crouch": {
+    "minecraft:collision_box": {
+     "width": 0.5,
+     "height": 1.7
+    },
+    "minecraft:movement": {
+     "value": 0.35
+    }
+   },
+   "pose_crawl": {
+    "minecraft:collision_box": {
+     "width": 0.5,
+     "height": 0.5
+    },
+    "minecraft:movement": {
+     "value": 0.21
+    }
+   },
+   "pose_frozen": {
+    "minecraft:collision_box": {
+     "width": 0.5,
+     "height": 2.7
+    },
+    "minecraft:movement": {
+     "value": 0
+    }
+   }
+  },
+  "components": {
+   "minecraft:type_family": {
+    "family": [
+     "monster",
+     "mob",
+     "dweller",
+     "ice_bear_2026"
+    ]
+   },
+   "minecraft:health": {
+    "value": 300,
+    "max": 300
+   },
+   "minecraft:attack": {
+    "damage": 5.5
+   },
+   "minecraft:follow_range": {
+    "value": 100,
+    "max": 128
+   },
+   "minecraft:knockback_resistance": {
+    "value": 0.6
+   },
+   "minecraft:collision_box": {
+    "width": 0.5,
+    "height": 2.7
+   },
+   "minecraft:movement": {
+    "value": 0.5
+   },
+   "minecraft:physics": {},
+   "minecraft:pushable": {
+    "is_pushable": false,
+    "is_pushable_by_piston": true
+   },
+   "minecraft:jump.static": {},
+   "minecraft:movement.basic": {},
+   "minecraft:can_climb": {},
+   "minecraft:underwater_movement": {
+    "value": 0.25
+   },
+   "minecraft:behavior.float": {
+    "priority": 0
+   },
+   "minecraft:behavior.hurt_by_target": {
+    "priority": 0
+   },
+   "minecraft:fire_immune": {},
+   "minecraft:damage_sensor": {
+    "triggers": [
+     {
+      "cause": "suffocation",
+      "deals_damage": false
+     },
+     {
+      "cause": "entity_cramming",
+      "deals_damage": false
+     },
+     {
+      "cause": "drowning",
+      "deals_damage": false
+     },
+     {
+      "cause": "fall",
+      "deals_damage": false
+     },
+     {
+      "cause": "fire",
+      "deals_damage": false
+     },
+     {
+      "cause": "fire_tick",
+      "deals_damage": false
+     },
+     {
+      "cause": "lava",
+      "deals_damage": false
+     }
+    ]
+   },
+   "minecraft:breathable": {
+    "total_supply": 15,
+    "suffocate_time": 0,
+    "breathes_water": true
+   },
+   "minecraft:nameable": {},
+   "minecraft:conditional_bandwidth_optimization": {}
+  },
+  "events": {
+   "minecraft:entity_spawned": {
+    "add": {
+     "component_groups": [
+      "state_calm",
+      "pose_stand"
+     ]
+    }
+   },
+   "ice_bear_2026:state_calm": {
+    "remove": {
+     "component_groups": [
+      "state_stare",
+      "state_chase",
+      "state_flee"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "state_calm"
+     ]
+    },
+    "set_property": {
+     "ice_bear_2026:state": "calm"
+    }
+   },
+   "ice_bear_2026:state_stare": {
+    "remove": {
+     "component_groups": [
+      "state_calm",
+      "state_chase",
+      "state_flee"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "state_stare"
+     ]
+    },
+    "set_property": {
+     "ice_bear_2026:state": "stare"
+    }
+   },
+   "ice_bear_2026:state_chase": {
+    "remove": {
+     "component_groups": [
+      "state_calm",
+      "state_stare",
+      "state_flee"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "state_chase"
+     ]
+    },
+    "set_property": {
+     "ice_bear_2026:state": "chase"
+    }
+   },
+   "ice_bear_2026:state_flee": {
+    "remove": {
+     "component_groups": [
+      "state_calm",
+      "state_stare",
+      "state_chase"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "state_flee"
+     ]
+    },
+    "set_property": {
+     "ice_bear_2026:state": "flee"
+    }
+   },
+   "ice_bear_2026:pose_stand": {
+    "remove": {
+     "component_groups": [
+      "pose_crouch",
+      "pose_crawl",
+      "pose_frozen"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "pose_stand"
+     ]
+    },
+    "set_property": {
+     "ice_bear_2026:pose": "stand",
+     "ice_bear_2026:frozen": false
+    }
+   },
+   "ice_bear_2026:pose_crouch": {
+    "remove": {
+     "component_groups": [
+      "pose_stand",
+      "pose_crawl",
+      "pose_frozen"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "pose_crouch"
+     ]
+    },
+    "set_property": {
+     "ice_bear_2026:pose": "crouch",
+     "ice_bear_2026:frozen": false
+    }
+   },
+   "ice_bear_2026:pose_crawl": {
+    "remove": {
+     "component_groups": [
+      "pose_stand",
+      "pose_crouch",
+      "pose_frozen"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "pose_crawl"
+     ]
+    },
+    "set_property": {
+     "ice_bear_2026:pose": "crawl",
+     "ice_bear_2026:frozen": false
+    }
+   },
+   "ice_bear_2026:pose_frozen": {
+    "remove": {
+     "component_groups": [
+      "pose_stand",
+      "pose_crouch",
+      "pose_crawl"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "pose_frozen"
+     ]
+    },
+    "set_property": {
+     "ice_bear_2026:pose": "stand",
+     "ice_bear_2026:frozen": true
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,50 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:client_entity": {
+  "description": {
+   "identifier": "ice_bear_2026:ice_bear_2026",
+   "materials": {
+    "default": "entity_alphatest",
+    "eyes": "entity_emissive_alpha"
+   },
+   "textures": {
+    "default": "textures/entity/ice_bear_2026/ice_bear_2026_texture",
+    "eyes": "textures/entity/ice_bear_2026/ice_bear_2026_eyes_texture"
+   },
+   "geometry": {
+    "default": "geometry.ice_bear_2026.ice_bear_2026"
+   },
+   "render_controllers": [
+    "controller.render.default",
+    "controller.render.ice_bear_2026.eyes"
+   ],
+   "animations": {
+    "crawl": "animation.ice_bear_2026.ice_bear_2026.crawl",
+    "crouch_run_new": "animation.ice_bear_2026.ice_bear_2026.crouch_run_new",
+    "crouch_idle": "animation.ice_bear_2026.ice_bear_2026.crouch_idle",
+    "new_run": "animation.ice_bear_2026.ice_bear_2026.new_run",
+    "run_idle": "animation.ice_bear_2026.ice_bear_2026.run_idle",
+    "flee": "animation.ice_bear_2026.ice_bear_2026.flee",
+    "spotted": "animation.ice_bear_2026.ice_bear_2026.spotted",
+    "calm_move": "animation.ice_bear_2026.ice_bear_2026.calm_move",
+    "calm_idle": "animation.ice_bear_2026.ice_bear_2026.calm_idle",
+    "pose": "controller.animation.ice_bear_2026.pose"
+   },
+   "scripts": {
+    "scale": "1.3",
+    "animate": [
+     "pose"
+    ],
+    "pre_animation": [
+     "v.moving = q.modified_move_speed > 0.03;",
+     "v.pose = q.property('ice_bear_2026:pose'); v.state = q.property('ice_bear_2026:state');",
+     "v.anim = v.pose == 'crawl' ? 0 : (v.pose == 'crouch' ? (v.moving ? 1 : 2) : (v.state == 'chase' ? (v.moving ? 3 : 4) : (v.state == 'flee' ? (v.moving ? 5 : 4) : (((q.property('ice_bear_2026:frozen') || q.property('ice_bear_2026:spotted')) && !v.moving) ? 6 : (v.moving ? 7 : 8)))));"
+    ]
+   },
+   "spawn_egg": {
+    "base_color": "#0b0b0b",
+    "overlay_color": "#e8e8e8"
+   }
+  }
+ }
+}

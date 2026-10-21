@@ -48,6 +48,8 @@ def main(argv=None):
     data = json.loads(a.entities.read_text()); z = zipfile.ZipFile(a.jar); names = set(z.namelist())
     modid = data["mod_id"]; ns = a.ns or modid
     title = modid.replace("_", " ").title()
+    _ov = (a.overlay or (Path(__file__).parent / "overlays" / modid)) / "overlay.json"
+    if _ov.exists(): title = json.loads(_ov.read_text()).get("pack_name", title)
     rp, bp = a.out / f"{title} RP", a.out / f"{title} BP"
     shutil.rmtree(a.out, ignore_errors=True)
     for d in (rp, bp): d.mkdir(parents=True)
@@ -168,6 +170,12 @@ def main(argv=None):
                                     "health": at.get("max_health"), "speed": at.get("movement_speed"), "damage": at.get("attack_damage"),
                                     "events": sorted((e.get("events") or {}).keys())})
 
+    # ---- every entity texture (layers like glowing eyes are referenced by overlays) ----
+    for n in names:
+        if n.startswith(f"assets/{modid}/textures/entit") and n.endswith(".png"):
+            dst = rp / "textures/entity" / ns / Path(n).name
+            if not dst.exists(): dst.parent.mkdir(parents=True, exist_ok=True); dst.write_bytes(z.read(n))
+
     # ---- sounds: copy every .ogg, register the mod's sounds.json events ----
     sj = f"assets/{modid}/sounds.json"
     defs = {}
@@ -230,6 +238,35 @@ def main(argv=None):
         if item_tex:
             (rp / "textures/item_texture.json").write_text(json.dumps({"resource_pack_name": title, "texture_name": "atlas.items", "texture_data": item_tex}, indent=1))
             (rp / "texts" / "en_US.lang").write_text("\n".join(sorted(set(lang))) + "\n")
+        # random sound groups ("hurt" -> pick one of hurt_1..4), entity sound events, name overrides
+        sd_path = rp / "sounds" / "sound_definitions.json"
+        sdefs = json.loads(sd_path.read_text())["sound_definitions"] if sd_path.exists() else {}
+        for g, evs in (ov.get("sound_groups") or {}).items():
+            files = [f for ev in evs for f in sdefs.get(f"{ns}.{ev}", {}).get("sounds", [])]
+            if files: sdefs[f"{ns}.{g}"] = {"category": "hostile", "sounds": files}
+            else: report["warnings"].append(f"sound group {g}: none of {evs} found")
+        if sdefs:
+            sd_path.parent.mkdir(exist_ok=True)
+            sd_path.write_text(json.dumps({"format_version": "1.20.20", "sound_definitions": sdefs}, indent=1))
+        if ov.get("entity_sounds"):
+            es = {"entity_sounds": {"entities": {f"{ns}:{e['id']}": {"volume": 1.0, "pitch": [0.9, 1.1],
+                  "events": {k: f"{ns}.{v}" for k, v in ov["entity_sounds"].items()}} for e in data["entities"] if e.get("id")}}}
+            (rp / "sounds.json").write_text(json.dumps(es, indent=1))
+        if ov.get("lang"):
+            kv = dict(l.split("=", 1) for l in lang if "=" in l); kv.update(ov["lang"])
+            lang = [f"{k}={v}" for k, v in kv.items()]
+            (rp / "texts" / "en_US.lang").write_text("\n".join(sorted(lang)) + "\n")
+
+        # hand-authored files win over generated ones (custom AI entities, render controllers, ...)
+        for side, root in (("rp", rp), ("bp", bp)):
+            if (ov_dir / side).exists():
+                shutil.copytree(ov_dir / side, root, dirs_exist_ok=True)
+                report["warnings"] += [f"overlay replaced {side}/{f.relative_to(ov_dir / side)}" for f in (ov_dir / side).rglob("*") if f.is_file()]
+        if ov.get("credits"):
+            for m in (rpm, bpm): m["header"]["description"] += " | " + ov["credits"]
+            (rp / "manifest.json").write_text(json.dumps(rpm, indent=2))
+            if ov.get("license_file") and (ov_dir / ov["license_file"]).exists():
+                for root in (rp, bp): shutil.copy(ov_dir / ov["license_file"], root / "LICENSE_original_mod.txt")
         (bp / "manifest.json").write_text(json.dumps(bpm, indent=2))
         report["overlay"] = str(ov_dir.name)
 

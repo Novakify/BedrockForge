@@ -1,0 +1,51 @@
+{
+  "about": "Bedrock Forge behaviour overlay for The Dweller (ice_bear_2026, MIT, by Cadentem). Original Script API implementation of its AI.",
+  "credits": "Original mod: The Dweller / ice_bear_2026 by Cadentem (MIT). Bedrock port: Bedrock Forge ModPorter.",
+  "license_file": "LICENSE_original_mod.txt",
+  "script_deps": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.3.0"
+    }
+  ],
+  "sound_groups": {
+    "dweller_hurt": [
+      "dweller_hurt_1",
+      "dweller_hurt_2",
+      "dweller_hurt_3",
+      "dweller_hurt_4"
+    ],
+    "chase_step": [
+      "chase_step_1",
+      "chase_step_2",
+      "chase_step_3",
+      "chase_step_4"
+    ],
+    "chase": [
+      "chase_1",
+      "chase_2",
+      "chase_3",
+      "chase_4"
+    ],
+    "flee": [
+      "flee_1",
+      "flee_2"
+    ],
+    "cavenoise": [
+      "cavenoise_1",
+      "cavenoise_2",
+      "cavenoise_3",
+      "cavenoise_4"
+    ]
+  },
+  "entity_sounds": {
+    "hurt": "dweller_hurt",
+    "death": "dweller_death",
+    "step": "chase_step"
+  },
+  "lang": {
+    "entity.ice_bear_2026:ice_bear_2026.name": "The Dweller",
+    "item.spawn_egg.entity.ice_bear_2026:ice_bear_2026.name": "Spawn The Dweller"
+  },
+  "pack_name": "The Dweller"
+}

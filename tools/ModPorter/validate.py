@@ -10,6 +10,11 @@ def load(p):
     try: return json.loads(p.read_text())
     except Exception as e: errs.append(f"{p.relative_to(root)}: bad JSON {e}"); return {}
 for p in list(rp.rglob("*.json")) + list(bp.rglob("*.json")): load(p)
+rcs = {"controller.render.default"}
+for p in (rp / "render_controllers").glob("*.json") if (rp / "render_controllers").exists() else []: rcs |= set(load(p).get("render_controllers", {}))
+bp_manifest = load(bp / "manifest.json")
+for mod in bp_manifest.get("modules", []):
+    if mod.get("type") == "script" and not (bp / mod.get("entry", "")).exists(): errs.append(f"BP script entry {mod.get('entry')} missing")
 geos = {}
 for p in (rp / "models/entity").glob("*.json"):
     for g in load(p).get("minecraft:geometry", []):
@@ -23,10 +28,17 @@ for p in (rp / "animation_controllers").glob("*.json"): ctrls |= set(load(p).get
 rp_ids = set()
 for p in (rp / "entity").glob("*.json"):
     d = load(p)["minecraft:client_entity"]["description"]; rp_ids.add(d["identifier"])
+    for rc in d.get("render_controllers", []):
+        rcn = rc if isinstance(rc, str) else next(iter(rc))
+        if rcn not in rcs: errs.append(f"{p.name}: render controller {rcn} missing")
     gid = d["geometry"]["default"]
     if gid != "geometry.humanoid.custom" and gid not in geos: errs.append(f"{p.name}: geometry {gid} missing")
+    for k, t in d["textures"].items():
+        if not (rp / (t + ".png")).exists(): errs.append(f"{p.name}: texture '{k}' {t} missing")
+    for k, m in d.get("materials", {}).items():
+        if not isinstance(m, str): errs.append(f"{p.name}: material {k} not a string")
     tex = rp / (d["textures"]["default"] + ".png")
-    if not tex.exists(): errs.append(f"{p.name}: texture {tex.name} missing")
+    if not tex.exists(): pass
     elif gid in geos:
         tw, th, bones, gname = geos[gid]; im = Image.open(tex)
         if im.size[0] * th != im.size[1] * tw: warns.append(f"{p.name}: texture {im.size} aspect differs from geo {tw}x{th}")
