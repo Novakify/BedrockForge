@@ -1,0 +1,2 @@
+RenderChunk: 48 fragment blobs replaced, 12 kept vanilla
+Sky: 4 fragment blobs replaced, 0 kept vanilla
