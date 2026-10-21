@@ -205,7 +205,7 @@ void write() {
     std::filesystem::create_directories(dir, ec);
     std::ofstream out{dir / "diag.txt"};
     if (!out) return;
-    out << "light hook " << lightHook.load() << " (brightened " << lightBrightened.load() << ")\n"
+    out << "light hook " << lightHook.load() << " (brightened " << lightBrightened.load() << ", image " << lightImage.load() << ")\n"
         << "overlay hook " << overlayHook.load() << "\nbob hook " << bobHook.load() << "\ntime hook " << timeHook.load()
         << "\nfov hook " << fovHook.load() << "\nattack hook " << attackHook.load() << "\nchat hook " << chatHook.load()
         << "\nmenu opens " << menuOpens.load() << "\nmodules on:";

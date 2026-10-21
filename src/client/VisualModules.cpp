@@ -15,6 +15,8 @@
 #include "mc/client/renderer/ptexture/BaseLightData.h"
 #include "mc/client/renderer/ptexture/BaseLightTextureImageBuilder.h"
 #include "mc/client/world/level/dimension/NetherLightTextureImageBuilder.h"
+#include "mc/deps/core/container/Blob.h"
+#include "mc/deps/core/image/Image.h"
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/level/dimension/Dimension.h"
@@ -39,6 +41,28 @@ void brighten(std::unique_ptr<BaseLightData>& data) {
     if (data->mGamma < k) data->mGamma = k;
 }
 } // namespace
+
+// The finished light texture: in 1.26 the BaseLightData night-vision fields don't reach the image, so fullbright
+// also lifts the built pixels toward white. Blob's members are private; mirror them (same types -> same layout).
+struct BlobMirror {
+    std::unique_ptr<mce::Blob::value_type[], mce::Blob::Deleter> blob;
+    std::size_t                                                  size;
+};
+static_assert(sizeof(BlobMirror) == sizeof(mce::Blob));
+void brightenImage(mce::Image* img) {
+    auto* m = Registry::get().find("fullbright");
+    if (!img || !m || !m->enabled) return;
+    int bpp = img->imageFormat == mce::ImageFormat::RGBA8Unorm ? 4 : img->imageFormat == mce::ImageFormat::RGB8Unorm ? 3 : 0;
+    if (!bpp) return;
+    auto&       b    = reinterpret_cast<BlobMirror&>(img->mImageBytes);
+    std::size_t need = std::size_t(img->mWidth) * img->mHeight * std::max<uint32_t>(img->mDepth, 1) * bpp;
+    if (!b.blob || need == 0 || need > b.size || need > (1u << 20)) return;
+    float k = std::clamp(m->num("strength", 1.0f), 0.0f, 1.0f);
+    auto* px = b.blob.get();
+    for (std::size_t i = 0; i < need; i += bpp)
+        for (int c = 0; c < 3; ++c) px[i + c] = (unsigned char)(px[i + c] + (255 - px[i + c]) * k);
+    ++diag::lightImage;
+}
 
 void noteRenderThread() { gRenderThread = std::this_thread::get_id(); }
 
@@ -91,7 +115,24 @@ LL_TYPE_INSTANCE_HOOK(BfTimeHook, ll::memory::HookPriority::Normal, Dimension, &
     return origin(a);
 }
 
+LL_TYPE_INSTANCE_HOOK(BfLightImageHook, ll::memory::HookPriority::Normal, BaseLightTextureImageBuilder,
+                      &BaseLightTextureImageBuilder::$buildImage, bool, BaseLightData const& lightData, mce::Image* targetImage,
+                      uint imageLength, float a, float ambientBoost, bool clampToMinimum) {
+    bool r = origin(lightData, targetImage, imageLength, a, ambientBoost, clampToMinimum);
+    brightenImage(targetImage);
+    return r;
+}
+LL_TYPE_INSTANCE_HOOK(BfLightImageSplitHook, ll::memory::HookPriority::Normal, BaseLightTextureImageBuilder,
+                      &BaseLightTextureImageBuilder::$buildImageSplit, bool, BaseLightData const& lightData,
+                      mce::Image* targetImage, uint imageLength, float a, bool clampToMinimum) {
+    bool r = origin(lightData, targetImage, imageLength, a, clampToMinimum);
+    brightenImage(targetImage);
+    return r;
+}
+
 void installVisualHooks() {
+    BfLightImageHook::hook();
+    BfLightImageSplitHook::hook();
     BfLightHook::hook();
     BfNetherLightHook::hook();
     BfOverlayHook::hook();
@@ -100,6 +141,8 @@ void installVisualHooks() {
     BfTimeHook::hook();
 }
 void uninstallVisualHooks() {
+    BfLightImageHook::unhook();
+    BfLightImageSplitHook::unhook();
     BfLightHook::unhook();
     BfNetherLightHook::unhook();
     BfOverlayHook::unhook();
