@@ -93,6 +93,9 @@ bool Core::enable() {
                            {1.f, 1.f, 1.f, 0.9f});
     });
 
+    // ---- Client HUD modules (H toggles) ----
+    modules::install(mSubs, getSelf(), mConfig.modules);
+
     // ---- Prototype 3: cinematic impact frames (installed last so it draws over the HUD) ----
     impact::install(mSubs, getSelf(), mConfig.impact);
     bf::input::bindKey("bedrock_forge.toggle_impact", bf::input::vk::K, [this] {
@@ -100,7 +103,7 @@ bool Core::enable() {
         getSelf().getLogger().info("[BF] Impact frames {}", mConfig.impact.enabled ? "on" : "off");
     });
 
-    log.info("Bedrock Forge Core enabled with {} listeners. J = HUD, K = impact frames.", mSubs.size());
+    log.info("Bedrock Forge Core enabled with {} listeners. J = HUD, H = modules, K = impact frames.", mSubs.size());
     return true;
 }
 
