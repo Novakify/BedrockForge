@@ -1,45 +1,69 @@
-name: Build BetterRenderDragon
+name: build
 
 on:
   push:
-    branches:
-      - main
-
-env:
-  SOLUTION_FILE_PATH: .
-  BUILD_CONFIGURATION: Release
-  GITHUB_WORKSPACE: .
+  pull_request:
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+# A newer push cancels an older running build, so `builds` never gets overwritten by a stale one.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: windows-2022
-    strategy:
-        fail-fast: false
-        matrix:
-          abi: ["x64"]
- 
+    runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
-      
+      - uses: xmake-io/github-action-setup-xmake@v1
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/.xmake
+          key: xmake-${{ hashFiles('xmake.lua') }}
+          restore-keys: xmake-
+
+      - name: Setup LLVM
+        uses: ZhongRuoyu/setup-llvm@v0
+        with:
+          llvm-version: 22
+
+      - run: xmake repo -u
+      - run: xmake f -a x64 -m release -p windows -v -y --target_type=client
       - name: Build
-        working-directory: ${{env.GITHUB_WORKSPACE}}
-        run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=${{ matrix.abi }} ${{env.SOLUTION_FILE_PATH}}
-      
-      - name: Upload dll
-        uses: actions/upload-artifact@v4
-        with:
-          name: BetterRenderDragon.dll
-          path: ./build/BetterRenderDragon.dll
+        shell: pwsh
+        run: |
+          xmake -v -y 2>&1 | Tee-Object -FilePath build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # surface compiler errors as annotations (readable without downloading logs)
+            Select-String -Path build.log -Pattern 'error' | Select-Object -First 25 | ForEach-Object {
+              $m = $_.Line -replace '%','%25' -replace "`r",'' -replace "`n",' '
+              if ($m.Length -gt 900) { $m = $m.Substring(0, 900) }
+              Write-Output "::error::$m"
+            }
+            exit $code
+          }
 
-      - name: Upload pdb
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: BetterRenderDragon.pdb
-          path: ./build/BetterRenderDragon.pdb
+          name: RendererFoundation-client-windows-x64-${{ github.sha }}
+          path: bin/
+
+      - name: Publish build to the builds branch
+        if: github.ref == 'refs/heads/renderer-foundation' && github.event_name == 'push'
+        shell: bash
+        run: |
+          grep -q '"platform": "client"' bin/RendererFoundation/manifest.json || { echo 'manifest platform not client'; cat bin/RendererFoundation/manifest.json; exit 1; }
+          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/
+          cd out
+          git init -q -b rf-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
+          git add -A && git commit -qm "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" rf-builds
