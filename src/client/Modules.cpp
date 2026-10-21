@@ -43,6 +43,10 @@
 
 namespace bedrock_forge::client {
 
+void installVisualHooks();
+void uninstallVisualHooks();
+void noteRenderThread();
+
 namespace {
 using Clock = std::chrono::steady_clock;
 using bf::hud::Rgba;
@@ -330,7 +334,8 @@ void registerBuiltins() {
     };
     r.add("cps_cap", "CPS Cap", Category::Combat, "Drop clicks above a limit (for servers with CPS rules)")
         .slider("limit", "Max CPS", 15, 5, 30, 1);
-    r.plan("hit_color", "Hit Color", Category::Combat, "Tint mobs you hit");
+    r.add("hit_color", "Hit Color", Category::Combat, "Recolour the red flash on hurt mobs")
+        .slider("r", "Red", 0.2f, 0, 1, 0.05f).slider("g", "Green", 0.6f, 0, 1, 0.05f).slider("b", "Blue", 1.0f, 0, 1, 0.05f);
     r.plan("hit_particles", "Hit Particles", Category::Combat, "Extra crit / sharpness particles on every hit");
     r.plan("hitboxes", "Hitboxes", Category::Combat, "Entity bounding boxes (Lamium has this today)");
 
@@ -344,14 +349,16 @@ void registerBuiltins() {
         .slider("multiplier", "Multiplier", 1.0f, 0.1f, 4.0f, 0.05f);
     r.plan("freelook", "Freelook", Category::Camera, "Look around without turning (Lamium has this today)");
     r.plan("snap_look", "Snap Look", Category::Camera, "Hold a key for third-person front view");
-    r.plan("view_bobbing", "Minimal View Bobbing", Category::Camera, "Keep walking bob but drop the camera roll");
+    r.add("view_bobbing", "No View Bobbing", Category::Camera, "Turn off the walking camera bob");
     r.plan("view_model", "View Model", Category::Camera, "Move / scale the held item");
-    r.plan("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera shake when you take damage");
+    r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
     r.plan("motion_blur", "Motion Blur", Category::Camera, "Frame blending (shader pipeline)");
 
     // ---------------- Visual
-    r.plan("fullbright", "Fullbright", Category::Visual, "See in the dark (lightmap override)");
-    r.plan("time_changer", "Time Changer", Category::Visual, "Client-side time of day");
+    r.add("fullbright", "Fullbright", Category::Visual, "See in the dark (local lightmap, like night vision)")
+        .slider("strength", "Strength", 1.0f, 0.1f, 1.0f, 0.05f);
+    r.add("time_changer", "Time Changer", Category::Visual, "Client-side time of day (rendering only)")
+        .slider("time", "Time of day (0-1)", 0.0f, 0, 1, 0.01f);
     r.plan("fog", "Fog", Category::Visual, "Remove or recolour fog");
     r.plan("low_fire", "Low Fire", Category::Visual, "Smaller first-person fire overlay");
     r.plan("block_outline", "Block Outline", Category::Visual, "Custom selection outline colour / width");
@@ -389,6 +396,7 @@ void registerBuiltins() {
 
 // ============================================================================ runtime
 void installRuntime() {
+    installVisualHooks();
     BfFovHook::hook();
     BfTurnHook::hook();
     BfAttackHook::hook();
@@ -424,6 +432,7 @@ void installRuntime() {
             return;
         }
         gFps.frame();
+        noteRenderThread();
         auto& ctx    = ev.uiRenderContext();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
@@ -440,6 +449,7 @@ void installRuntime() {
 }
 
 void uninstallRuntime() {
+    uninstallVisualHooks();
     gSubs.clear();
     BfFovHook::unhook();
     BfTurnHook::unhook();
