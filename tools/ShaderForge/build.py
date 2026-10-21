@@ -55,6 +55,20 @@ def struct_for(rows, interp, order):
     return "struct PSIn {\n" + "\n".join(fields) + "\n};\n"
 
 
+def layout(blob: bytes):
+    """cbuffer members (name, offset) and resource bindings (name, register) from the reflection dump."""
+    with tempfile.NamedTemporaryFile(suffix=".dxil", delete=False) as f:
+        f.write(blob); path = f.name
+    out = subprocess.run([DXC, "-dumpbin", path], capture_output=True, text=True).stdout
+    members, binds = set(), set()
+    for line in out.splitlines():
+        m = re.match(r";\s+(?:column_major\s+)?[\w]+\s+(\w+)(?:\[\d+\])?;\s*;\s*Offset:\s*(\d+)", line)
+        if m: members.add((m[1], int(m[2])))
+        b = re.match(r";\s+(\w+)\s+(cbuffer|sampler|texture|UAV)\s+\S+\s+\S+\s+\S+\s+(\w+)\s+\d+", line)
+        if b: binds.add((b[1], b[3]))
+    return members, binds
+
+
 def element_order(blob: bytes):
     # element (= loadInput id) order comes from the second, interpolation-mode table
     with tempfile.NamedTemporaryFile(suffix=".dxil", delete=False) as f:
@@ -69,7 +83,7 @@ def element_order(blob: bytes):
     return order
 
 
-def compile_variant(body: str, rows, interp, order, profile, defines, workdir: Path):
+def compile_variant(body: str, rows, interp, order, profile, defines, workdir: Path, vanilla_layout=None):
     src = struct_for(rows, interp, order) + body
     have = {f"{n}{i}" for n, i, *_ in rows}
     defs = [f"-D{d}" for d in defines] + [f"-DHAS_{h}=1" for h in have]
@@ -82,6 +96,11 @@ def compile_variant(body: str, rows, interp, order, profile, defines, workdir: P
             return None, r.stderr[-600:]
         got, _, _ = signature(out.read_bytes())
         if [(n, i, m, g) for n, i, m, g, _ in got] == [(n, i, m, g) for n, i, m, g, _ in rows]:
+            if vanilla_layout is not None:
+                mem, bind = layout(out.read_bytes())
+                vm, vb = vanilla_layout
+                if not mem <= vm: return None, f"cbuffer layout differs: {sorted(mem - vm)[:3]}"
+                if not bind <= vb: return None, f"bindings differ: {sorted(bind - vb)[:3]}"
             return out.read_bytes(), None
     return None, "signature mismatch"
 
@@ -104,17 +123,20 @@ def main(argv=None):
                 src = mat_dir / f"{p.name}.Fragment.hlsl"
                 if not src.exists(): src = mat_dir / "Fragment.hlsl"
                 if not src.exists(): continue
-                body = common + src.read_text()
+                text = src.read_text()
+                only = dict(m.split("=", 1) for m in re.findall(r"//\s*@only\s+(\S+=\S+)", text))
+                body = common + text
                 for v in p.variants:
                     flags = getattr(v, "flags", {}) or {}
                     if flags.get("Seasons") == "On": kept += 1; continue  # different code path, keep vanilla
+                    if any(str(flags.get(k)) != v for k, v in only.items()): kept += 1; continue
                     defines = [f"PASS_{p.name.upper()}=1"] + [f"FLAG_{k.upper()}_{str(val).upper()}=1" for k, val in flags.items()]
                     for s in v.shaders:
                         if s.stage.name != "Fragment" or s.platform.name not in PROFILES: continue
                         blob = s.bgfx_shader.shader_bytes
                         rows, interp, sm = signature(blob)
                         order = element_order(blob)
-                        new, err = compile_variant(body, rows, interp, order, f"ps_{sm}" if sm else PROFILES[s.platform.name], defines, Path(td))
+                        new, err = compile_variant(body, rows, interp, order, f"ps_{sm}" if sm else PROFILES[s.platform.name], defines, Path(td), layout(blob))
                         if new is None:
                             kept += 1
                             report.append(f"{name}/{p.name} {flags} {s.platform.name}: kept vanilla ({err.strip().splitlines()[-1] if err else ''})")

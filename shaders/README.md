@@ -13,4 +13,5 @@ Sky, RenderChunk, ColorPostProcessing) + Microsoft dxc for SM6.0 / SM6.5 blobs. 
 | Pack | Material | Effect | Status |
 |---|---|---|---|
 | Anime | Sky | cel-banded sky gradient + horizon glow | 4/4 SM6 blobs, signature + bindings match vanilla |
-| Anime | RenderChunk | cel (banded) lighting with cool shadows, +15% saturation; Opaque / AlphaTest / Transparent | 48/60 blobs (Seasons variants stay vanilla) |
+| Anime | RenderChunk | cel (banded) lighting with cool shadows, +15% saturation; Opaque / AlphaTest / Transparent incl. distance-dither variants | 48/60 blobs (Seasons variants stay vanilla) |
+| Anime | Actor | cel lighting for mobs + players (Opaque + AlphaTest with the vanilla dither fade), plain variants | 16/152 blobs (Change_Color / Emissive / MaskedMultitexture stay vanilla) |

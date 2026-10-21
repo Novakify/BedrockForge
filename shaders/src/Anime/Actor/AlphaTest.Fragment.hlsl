@@ -1,0 +1,28 @@
+// Mobs / players (Actor) alpha-tested (most mobs + player skins), plain variants only.
+// Vanilla: texture * MatColor, alpha test, optional distance-dither fade, tint, hurt overlay, light, fog.
+// @only Change_Color=Off
+// @only Emissive=Off
+// @only MaskedMultitexture=Off
+Texture2D    s_MatTextureTexture : register(t0);
+SamplerState s_MatTextureSampler : register(s0);
+cbuffer FragmentUniforms : register(b1) {
+    float4 UseAlphaRewrite; float4x4 u_view; float4x4 u_invView; float4 OverlayColor; float4 ColorBased;
+    float4 DitherParams2[3]; float4 DitherParams; float4 DitheringEnabledToggle; float4 MatColor; float4 TintedAlphaTestEnabled;
+};
+
+float4 main(PSIn i) : SV_Target {
+    float4 t     = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0) * MatColor;
+    float  alpha = lerp(t.a, t.a * OverlayColor.a, TintedAlphaTestEnabled.x);
+    bool   kill  = alpha < 0.5;
+    if (DitheringEnabledToggle.x != 0.0) {
+        float3 cam = float3(u_invView[0][3], u_invView[1][3], u_invView[2][3]);
+        kill = kill || bfDitherKill(i.texcoord3, cam, u_view[2].xyz, i.color1, DitherParams2[0], DitherParams);
+    }
+    if (kill) discard;
+    float3 c = t.rgb * ((i.color0.rgb - 1.0) * ColorBased.x + 1.0);
+    c  = lerp(c, OverlayColor.rgb, OverlayColor.a);
+    c *= toonLight(i.color3.rgb);
+    c  = saturateColor(c, 1.12);
+    c  = lerp(c, i.color2.rgb, i.color2.a);
+    return float4(c, max(UseAlphaRewrite.x, t.a));
+}

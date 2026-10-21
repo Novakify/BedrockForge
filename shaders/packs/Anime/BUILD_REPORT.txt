@@ -1,2 +1,3 @@
+Actor: 16 fragment blobs replaced, 136 kept vanilla
 RenderChunk: 48 fragment blobs replaced, 12 kept vanilla
 Sky: 4 fragment blobs replaced, 0 kept vanilla
