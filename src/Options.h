@@ -6,18 +6,18 @@
 #include <filesystem>
 #include <string>
 
-class IOption {
+class IRfOption {
 public:
-    virtual ~IOption()       = default;
+    virtual ~IRfOption()       = default;
     virtual void record()    = 0;
     virtual bool isChanged() = 0;
 };
 
 template <typename T>
-class Option : public IOption {
+class RfOption : public IRfOption {
 public:
-    Option() = default;
-    Option(T const& value) : value(value), prevValue(value) {}
+    RfOption() = default;
+    RfOption(T const& value) : value(value), prevValue(value) {}
     void     record() override { prevValue = value; }
     bool     isChanged() override { return value != prevValue; }
     T&       get() { return value; }
@@ -25,7 +25,7 @@ public:
     void     set(T const& v) { value = v; }
     T*       ptr() { return &value; }
     operator T() const { return value; }
-    Option&  operator=(T const& v) {
+    RfOption& operator=(T const& v) {
         value = v;
         return *this;
     }
@@ -35,23 +35,23 @@ private:
     T prevValue{};
 };
 
-namespace Options {
+namespace RfOptions {
 // overlay
-extern Option<bool> showImGui;
-extern Option<int>  uiKey;            // Win32 virtual-key code (default F6)
-extern Option<int>  reloadShadersKey; // 0 = none
-extern Option<bool> performanceEnabled;
+extern RfOption<bool> showImGui;
+extern RfOption<int>  uiKey;            // Win32 virtual-key code (default F6)
+extern RfOption<int>  reloadShadersKey; // 0 = none
+extern RfOption<bool> performanceEnabled;
 
 // shaders (MaterialBinLoader in upstream)
-extern Option<bool>        materialBinLoaderEnabled;
-extern Option<bool>        redirectShaders;        // material.bin from the active resource packs
-extern Option<std::string> shaderPack;             // folder under <mod>/shaderpacks, "" = none
-extern Option<bool>        autoReloadOnPackChange; // experimental
+extern RfOption<bool>        materialBinLoaderEnabled;
+extern RfOption<bool>        redirectShaders;        // material.bin from the active resource packs
+extern RfOption<std::string> shaderPack;             // folder under <mod>/shaderpacks, "" = none
+extern RfOption<bool>        autoReloadOnPackChange; // experimental
 extern bool                reloadShadersAvailable;
 extern std::atomic_bool    reloadShaders;          // request, consumed on the client thread
 
 // graphics (replaces upstream Vanilla2Deferred: on 1.26 Vibrant Visuals is a real graphics mode)
-extern Option<bool>     vibrantVisualsEnabled;
+extern RfOption<bool>     vibrantVisualsEnabled;
 extern bool             vibrantVisualsAllowed;   // refreshed from the game
 extern std::atomic_bool applyGraphicsMode;       // request, consumed on the client thread
 
@@ -62,4 +62,4 @@ bool load();
 bool save();
 void record();
 bool isDirty();
-} // namespace Options
+} // namespace RfOptions

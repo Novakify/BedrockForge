@@ -9,40 +9,40 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-namespace Options {
-Option<bool> showImGui          = true;
-Option<int>  uiKey              = VK_F6;
-Option<int>  reloadShadersKey   = 0;
-Option<bool> performanceEnabled = true;
+namespace RfOptions {
+RfOption<bool> showImGui          = true;
+RfOption<int>  uiKey              = VK_F6;
+RfOption<int>  reloadShadersKey   = 0;
+RfOption<bool> performanceEnabled = true;
 
-Option<bool>        materialBinLoaderEnabled = true;
-Option<bool>        redirectShaders          = true;
-Option<std::string> shaderPack               = std::string{};
-Option<bool>        autoReloadOnPackChange   = false;
+RfOption<bool>        materialBinLoaderEnabled = true;
+RfOption<bool>        redirectShaders          = true;
+RfOption<std::string> shaderPack               = std::string{};
+RfOption<bool>        autoReloadOnPackChange   = false;
 bool                reloadShadersAvailable   = false;
 std::atomic_bool    reloadShaders            = false;
 
-Option<bool>     vibrantVisualsEnabled = false;
+RfOption<bool>     vibrantVisualsEnabled = false;
 bool             vibrantVisualsAllowed = false;
 std::atomic_bool applyGraphicsMode     = false;
 
 std::filesystem::path optionsFile;
-} // namespace Options
+} // namespace RfOptions
 
 using nlohmann::json;
 
 namespace {
-std::vector<IOption*> gOptions;
+std::vector<IRfOption*> gOptions;
 
 template <class T>
-void read(json const& j, char const* key, Option<T>& opt) {
+void read(json const& j, char const* key, RfOption<T>& opt) {
     if (auto it = j.find(key); it != j.end()) try {
             opt.set(it->template get<T>());
         } catch (...) {}
 }
 } // namespace
 
-bool Options::init(std::filesystem::path const& configDir) {
+bool RfOptions::init(std::filesystem::path const& configDir) {
     gOptions = {&showImGui,       &uiKey,      &reloadShadersKey,       &performanceEnabled,   &materialBinLoaderEnabled,
                 &redirectShaders, &shaderPack, &autoReloadOnPackChange, &vibrantVisualsEnabled};
     std::error_code ec;
@@ -51,7 +51,7 @@ bool Options::init(std::filesystem::path const& configDir) {
     return true;
 }
 
-bool Options::load() {
+bool RfOptions::load() {
     std::ifstream in(optionsFile);
     if (!in) return save();
     json j;
@@ -73,7 +73,7 @@ bool Options::load() {
     return true;
 }
 
-bool Options::save() {
+bool RfOptions::save() {
     json j;
     j["showImGui"]                = showImGui.get();
     j["uiKey"]                    = uiKey.get();
@@ -90,11 +90,11 @@ bool Options::save() {
     return true;
 }
 
-void Options::record() {
+void RfOptions::record() {
     for (auto* o : gOptions) o->record();
 }
 
-bool Options::isDirty() {
+bool RfOptions::isDirty() {
     for (auto* o : gOptions)
         if (o->isChanged()) return true;
     return false;

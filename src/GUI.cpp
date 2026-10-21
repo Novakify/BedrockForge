@@ -23,31 +23,31 @@ void runOnClientThread() {
 
 void updateOptions() {
     static float saveTimer = 0.0f;
-    if (Options::isDirty()) saveTimer = 3.0f; // upstream: save 3 s after the last change
-    Options::record();
+    if (RfOptions::isDirty()) saveTimer = 3.0f; // upstream: save 3 s after the last change
+    RfOptions::record();
     if (saveTimer > 0.0f) {
         saveTimer -= ImGui::GetIO().DeltaTime;
-        if (saveTimer <= 0.0f) Options::save();
+        if (saveTimer <= 0.0f) RfOptions::save();
     }
 }
 
 void shadersSection() {
-    if (!Options::materialBinLoaderEnabled || !ImGui::CollapsingHeader("Shaders", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    if (!RfOptions::materialBinLoaderEnabled || !ImGui::CollapsingHeader("Shaders", ImGuiTreeNodeFlags_DefaultOpen)) return;
     ImGui::Indent();
-    ImGui::Checkbox("Load shaders from resource packs", Options::redirectShaders.ptr());
+    ImGui::Checkbox("Load shaders from resource packs", RfOptions::redirectShaders.ptr());
     ImGui::SetItemTooltip("renderer/materials/*.material.bin inside your active resource packs replace the game's shaders.\n"
                           "Converted Java packs that ship Bedrock shaders work this way.");
 
     static std::vector<std::string> packs = rf::materials::listShaderpacks();
-    std::string current = Options::shaderPack.get().empty() ? "(none)" : Options::shaderPack.get();
+    std::string current = RfOptions::shaderPack.get().empty() ? "(none)" : RfOptions::shaderPack.get();
     if (ImGui::BeginCombo("Shaderpack", current.c_str())) {
-        if (ImGui::Selectable("(none)", Options::shaderPack.get().empty())) {
-            Options::shaderPack = std::string{};
+        if (ImGui::Selectable("(none)", RfOptions::shaderPack.get().empty())) {
+            RfOptions::shaderPack = std::string{};
             rf::materials::setShaderpack("");
         }
         for (auto& p : packs)
-            if (ImGui::Selectable(p.c_str(), p == Options::shaderPack.get())) {
-                Options::shaderPack = p;
+            if (ImGui::Selectable(p.c_str(), p == RfOptions::shaderPack.get())) {
+                RfOptions::shaderPack = p;
                 rf::materials::setShaderpack(p);
             }
         ImGui::EndCombo();
@@ -55,18 +55,18 @@ void shadersSection() {
     ImGui::SameLine();
     if (ImGui::SmallButton("Rescan")) packs = rf::materials::listShaderpacks();
 
-    if (Options::reloadShadersAvailable) {
-        bool busy = Options::reloadShaders;
+    if (RfOptions::reloadShadersAvailable) {
+        bool busy = RfOptions::reloadShaders;
         if (busy) ImGui::BeginDisabled();
         if (ImGui::Button("Reload shaders")) {
-            Options::reloadShaders = true;
+            RfOptions::reloadShaders = true;
             runOnClientThread();
         }
         if (busy) ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::TextDisabled("(experimental on 1.26)");
     }
-    ImGui::Checkbox("Reload automatically when resource packs change", Options::autoReloadOnPackChange.ptr());
+    ImGui::Checkbox("Reload automatically when resource packs change", RfOptions::autoReloadOnPackChange.ptr());
 
     auto s = rf::materials::stats();
     ImGui::Text("Materials opened: %ld   from packs: %ld   from shaderpack: %ld", s.seen, s.fromPacks, s.fromShaderpack);
@@ -76,11 +76,11 @@ void shadersSection() {
 void graphicsSection() {
     if (!ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) return;
     ImGui::Indent();
-    if (ImGui::Checkbox("Vibrant Visuals", Options::vibrantVisualsEnabled.ptr())) {
-        Options::applyGraphicsMode = true;
+    if (ImGui::Checkbox("Vibrant Visuals", RfOptions::vibrantVisualsEnabled.ptr())) {
+        RfOptions::applyGraphicsMode = true;
         runOnClientThread();
     }
-    if (!Options::vibrantVisualsAllowed) {
+    if (!RfOptions::vibrantVisualsAllowed) {
         ImGui::SameLine();
         ImGui::TextDisabled("(not allowed on this device/server)");
     }
@@ -100,18 +100,18 @@ void updateImGui() {
     static bool showAbout = false, showLog = false;
     static int  frame     = 0;
     if (++frame % 120 == 0) runOnClientThread(); // refresh "Vibrant Visuals allowed" and pending requests
-    if (Options::reloadShaders) runOnClientThread();
+    if (RfOptions::reloadShaders) runOnClientThread();
 
     updateOptions();
     ImGui::NewFrame();
-    if (Options::showImGui) {
+    if (RfOptions::showImGui) {
         auto& io = ImGui::GetIO();
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin(RF_NAME, Options::showImGui.ptr(), ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (ImGui::Begin(RF_NAME, RfOptions::showImGui.ptr(), ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_AlwaysAutoResize)) {
             if (ImGui::BeginMenuBar()) {
                 if (ImGui::BeginMenu("View")) {
-                    ImGui::MenuItem("Performance", nullptr, Options::performanceEnabled.ptr());
-                    ImGui::MenuItem("Shaders", nullptr, Options::materialBinLoaderEnabled.ptr());
+                    ImGui::MenuItem("Performance", nullptr, RfOptions::performanceEnabled.ptr());
+                    ImGui::MenuItem("Shaders", nullptr, RfOptions::materialBinLoaderEnabled.ptr());
                     ImGui::MenuItem("Recently served materials", nullptr, &showLog);
                     ImGui::EndMenu();
                 }
@@ -125,7 +125,7 @@ void updateImGui() {
             ImGui::TextDisabled("%s  %s", rf::overlay::rendererType().c_str(), rf::overlay::gpuName().c_str());
             ImGui::Separator();
 
-            if (Options::performanceEnabled && ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (RfOptions::performanceEnabled && ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
                 static float fps = io.Framerate, dt = io.DeltaTime, timer = 0.5f;
                 if ((timer -= io.DeltaTime) <= 0) {
                     fps   = io.Framerate;

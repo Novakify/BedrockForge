@@ -61,7 +61,7 @@ bool copyOut(std::wstring const& path, wchar_t* out, size_t outLen) {
 
 // Ask the resource pack stack for renderer/materials/<name>; write it to the cache and return its path.
 bool fromResourcePacks(State const& st, std::wstring const& name, wchar_t* out, size_t outLen) {
-    if (!Options::redirectShaders || st.cacheDir.empty()) return false;
+    if (!RfOptions::redirectShaders || st.cacheDir.empty()) return false;
     auto ci = ll::service::getClientInstance();
     if (!ci) return false; // too early in boot: the stack isn't there yet
     std::string bytes;
@@ -97,7 +97,7 @@ bool fromShaderpack(State const& st, std::wstring const& name, wchar_t* out, siz
 }
 
 bool redirect(wchar_t const* path, wchar_t* out, size_t outLen) {
-    if (tInHook || !Options::materialBinLoaderEnabled) return false;
+    if (tInHook || !RfOptions::materialBinLoaderEnabled) return false;
     std::wstring_view p(path);
     if (p.size() < 14 || _wcsnicmp(p.data() + p.size() - 13, L".material.bin", 13) != 0) return false;
     auto st = gState.load();
@@ -204,7 +204,7 @@ void install(fs::path const& modDir) {
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring data = lower((fs::path(exe).parent_path() / "data" / "renderer" / "materials").wstring()) + L"\\";
     gState.store(std::make_shared<State const>(State{data, {}, (modDir / "cache" / "rp").wstring()}));
-    setShaderpack(Options::shaderPack.get());
+    setShaderpack(RfOptions::shaderPack.get());
 
     auto& log = ll::mod::NativeMod::current()->getLogger();
     if (HMODULE kb = GetModuleHandleW(L"KernelBase.dll")) {

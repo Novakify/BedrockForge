@@ -37,11 +37,11 @@ IAdvancedGraphicsOptions* advancedOptions(ClientInstance& ci) {
 LL_TYPE_INSTANCE_HOOK(RfPacksChangedHook, ll::memory::HookPriority::Normal, MinecraftGame,
                       &MinecraftGame::$onActiveResourcePacksChanged, void, ResourcePackManager& mgr) {
     origin(mgr);
-    if (Options::autoReloadOnPackChange && Options::redirectShaders) Options::reloadShaders = true;
+    if (RfOptions::autoReloadOnPackChange && RfOptions::redirectShaders) RfOptions::reloadShaders = true;
 }
 
 void install() {
-    Options::reloadShadersAvailable = true;
+    RfOptions::reloadShadersAvailable = true;
     RfPacksChangedHook::hook();
 }
 void uninstall() { RfPacksChangedHook::unhook(); }
@@ -49,16 +49,16 @@ void uninstall() { RfPacksChangedHook::unhook(); }
 void tick() {
     auto ci = ll::service::getClientInstance();
     if (!ci) return;
-    if (auto* o = advancedOptions(*ci)) Options::vibrantVisualsAllowed = o->isVibrantVisualsAllowed();
+    if (auto* o = advancedOptions(*ci)) RfOptions::vibrantVisualsAllowed = o->isVibrantVisualsAllowed();
 
-    if (Options::reloadShaders.exchange(false)) {
+    if (RfOptions::reloadShaders.exchange(false)) {
         static_cast<MinecraftGame&>(ci->getMinecraftGame()).cleanReloadMaterials();
         ++gReloads;
         setStatus(std::format("shaders reloaded ({})", gReloads.load()));
     }
-    if (Options::applyGraphicsMode.exchange(false)) {
+    if (RfOptions::applyGraphicsMode.exchange(false)) {
         auto* o  = advancedOptions(*ci);
-        bool  on = Options::vibrantVisualsEnabled;
+        bool  on = RfOptions::vibrantVisualsEnabled;
         if (!o) setStatus("graphics options not available yet");
         else if (on && !o->isVibrantVisualsAllowed()) setStatus("Vibrant Visuals is not allowed here (device or server)");
         else if (!o->canSwitchGraphicsModeInGame()) setStatus("graphics mode can't be switched right now");

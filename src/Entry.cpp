@@ -22,8 +22,8 @@ public:
     bool load() {
         auto& log = mSelf.getLogger();
         log.info("{} {} (fork of {}) for MC {} - AGPL-3.0, source: see README", RF_NAME, RF_VERSION, RF_BASED_ON, RF_TARGET_VERSION);
-        Options::init(mSelf.getConfigDir());
-        Options::load();
+        RfOptions::init(mSelf.getConfigDir());
+        RfOptions::load();
         materials::install(mSelf.getModDir()); // before the renderer opens its materials
         overlay::install();
         return true;
@@ -36,7 +36,7 @@ public:
         graphics::uninstall();
         overlay::uninstall();
         materials::uninstall();
-        Options::save();
+        RfOptions::save();
         return true;
     }
 

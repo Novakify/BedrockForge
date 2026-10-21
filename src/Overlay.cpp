@@ -64,15 +64,15 @@ void captureGpuName(IDXGISwapChain* sc) {
 // ---------------------------------------------------------------- input
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_KEYDOWN && !(lp & (1 << 30))) {
-        if (int(wp) == Options::uiKey.get()) Options::showImGui = !Options::showImGui;
-        else if (Options::reloadShadersKey.get() != 0 && int(wp) == Options::reloadShadersKey.get()) Options::reloadShaders = true;
+        if (int(wp) == RfOptions::uiKey.get()) RfOptions::showImGui = !RfOptions::showImGui;
+        else if (RfOptions::reloadShadersKey.get() != 0 && int(wp) == RfOptions::reloadShadersKey.get()) RfOptions::reloadShaders = true;
     }
-    if (gInitialized && Options::showImGui) {
+    if (gInitialized && RfOptions::showImGui) {
         std::lock_guard l(gImGuiMutex);
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
         auto& io = ImGui::GetIO();
         bool  mouseMsg = msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST;
-        bool  keyMsg   = (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) && int(wp) != Options::uiKey.get();
+        bool  keyMsg   = (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) && int(wp) != RfOptions::uiKey.get();
         if ((mouseMsg && io.WantCaptureMouse) || (keyMsg && io.WantCaptureKeyboard)) return 0;
     }
     return CallWindowProcW(gOrigProc, hwnd, msg, wp, lp);
