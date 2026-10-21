@@ -31,6 +31,16 @@ jobs:
       - run: xmake f -a x64 -m release -p windows -v -y --target_type=client
       - run: xmake -v -y
 
+      - name: Syntax-check PowerShell scripts
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem -Recurse -Include *.ps1 tools, docs) {
+            $errs = $null; [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs) | Out-Null
+            if ($errs) { $bad++; $errs | ForEach-Object { Write-Host "$($f.Name): $($_.Message) (line $($_.Extent.StartLineNumber))" } }
+          }
+          if ($bad) { exit 1 } else { Write-Host "PowerShell scripts OK" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: BedrockForgeCore-client-windows-x64-${{ github.sha }}
@@ -41,7 +51,7 @@ jobs:
         shell: bash
         run: |
           grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; cat bin/BedrockForgeCore/manifest.json; exit 1; }
-          mkdir -p out && cp -r bin/* out/ && cp -r packs out/packs
+          mkdir -p out && cp -r bin/* out/ && cp -r packs out/packs && cp tools/Install-BedrockForge.ps1 out/
           cd out
           git init -q -b builds
           git config user.name "github-actions"
