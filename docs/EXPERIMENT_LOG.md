@@ -109,3 +109,16 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
   843e0cf logs the failing step + retries 3x. Note: the LeviLamina log stops mid-line after that error (buffered).
 - Dweller "stiff": keyframes were all linear, crouch_idle didn't loop (froze), 0.15 s blends -> catmull-rom on constant
   channels, looping idles, 0.3 s blends, flee speed-scaled (overlay "smooth_anims": true).
+
+## E-025 (2026-10-22 17:45 UTC) - Cursed Fog port runs on Fancy; file switch works; reload doesn't re-read files
+- CursedFog (port of Cursed Fog V1.0.10, LoLip_p, CC BY 4.0) loaded with no crash: Actor, RenderChunk, Sky served;
+  black side stripes, CRT/VHS pattern, near-black night visible in My World. So ShaderForge's extra uniforms
+  (ViewPositionAndTime, FogAndDistanceControl, LightWorldSpaceDirection, u_viewRect appended to the bgfx uniform table)
+  are accepted by the game, and u_viewRect is filled (stripes at the right place).
+- File switch: writing shaderpack.txt in a running game switched the pack in <12 s and ran cleanReloadMaterials, but the
+  reload re-opened 0 material files -> materials are cached; a pack change still needs a restart. Next: find the real
+  reload path (BetterRenderDragon frees the compiled shader cache).
+- Crash guard was too strict: force-closing a hung game counted as a crash twice (CursedFog -> Dread -> off). Now it only
+  falls back when CrashLogger wrote a new report in <game>/logs/crash after the marker.
+- The game process often lingers after the window is closed (mods disabled cleanly, window stays). LeviLauncher's
+  "Force Launch" starts a fresh instance.

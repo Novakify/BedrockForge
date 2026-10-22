@@ -156,7 +156,18 @@ void install(fs::path const& modDir) {
     if (fs::exists(running, ec)) {
         std::string crashed;
         if (std::ifstream in{running}; in) std::getline(in, crashed);
-        if (!crashed.empty() && crashed == active && active != "off") {
+        // Only a real crash counts: CrashLogger wrote a report into <game>/logs/crash after the marker was written.
+        // (A force-closed / hung game also leaves the marker but no report - keep the pack then.)
+        bool realCrash = false;
+        {
+            wchar_t exe[MAX_PATH]{};
+            GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            auto since = fs::last_write_time(running, ec);
+            for (auto& e : fs::directory_iterator(fs::path(exe).parent_path() / "logs" / "crash", ec))
+                if (e.is_regular_file(ec) && e.last_write_time(ec) > since) realCrash = true;
+        }
+        if (!realCrash) log.info("[BF] shaderpacks: last run ended without a clean shutdown but no crash report -> keeping '{}'", active);
+        if (realCrash && !crashed.empty() && crashed == active && active != "off") {
             std::string fb = "off";
             if (std::ifstream in{gCfg.parent_path() / "shaderpack.fallback"}; in) std::getline(in, fb);
             while (!fb.empty() && (fb.back() == '\r' || fb.back() == ' ')) fb.pop_back();
