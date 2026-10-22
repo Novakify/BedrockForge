@@ -167,7 +167,6 @@
      "priority": 1,
      "remove_target": true,
      "probability_per_strength": 1,
-     "check_if_outnumbered": false,
      "entity_types": [
       {
        "filters": {
@@ -271,10 +270,6 @@
     "triggers": [
      {
       "cause": "suffocation",
-      "deals_damage": false
-     },
-     {
-      "cause": "entity_cramming",
       "deals_damage": false
      },
      {

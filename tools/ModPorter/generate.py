@@ -15,6 +15,36 @@ from __future__ import annotations
 import argparse, json, re, shutil, uuid, zipfile
 from pathlib import Path
 
+
+_SMOOTH_EASINGS = {"easeInOutSine", "easeInSine", "easeOutSine", "easeInOutQuad", "easeInQuad", "easeOutQuad",
+                   "easeInOutCubic", "catmullrom"}
+
+
+def bedrock_anim(anim: dict) -> dict:
+    """GeckoLib keyframes ({"vector": [...], "easing": ...}) -> Bedrock keyframes; drop GeckoLib timeline
+    instructions (e.g. "DoDamageInstruction;") that Bedrock Molang rejects. Found in game content logs (E-022)."""
+    for bone in (anim.get("bones") or {}).values():
+        for ch in ("rotation", "position", "scale"):
+            v = bone.get(ch)
+            if not isinstance(v, dict):
+                continue
+            for t, val in list(v.items()):
+                if isinstance(val, dict) and "vector" in val:
+                    smooth = val.get("easing", "linear") in _SMOOTH_EASINGS
+                    v[t] = {"post": val["vector"], "lerp_mode": "catmullrom"} if smooth else val["vector"]
+    tl = anim.get("timeline")
+    if isinstance(tl, dict):
+        for t, val in list(tl.items()):
+            vals = val if isinstance(val, list) else [val]
+            keep = [x for x in vals if not re.fullmatch(r"\s*[A-Za-z]+Instruction;?\s*", str(x))]
+            if keep:
+                tl[t] = keep if isinstance(val, list) else keep[0]
+            else:
+                del tl[t]
+        if not tl:
+            del anim["timeline"]
+    return anim
+
 def jload(b: bytes):
     # MCreator/GeckoLib JSON sometimes has comments or trailing commas
     t = re.sub(r"//[^\n]*", "", b.decode("utf-8", "replace"))
@@ -102,7 +132,7 @@ def main(argv=None):
             if lasts.count(short.lower()) > 1:   # collision -> keep more of the name
                 short = re.sub(r"^animation\.(model\.|%s\.)?" % re.escape(stem), "", k).replace(".", "_").strip("_") or short
             nk = f"animation.{ns}.{stem}.{short.lower()}"; new[nk] = v; mp[k] = (short, nk)
-        an["animations"] = new
+        an["animations"] = {k: bedrock_anim(v) for k, v in new.items()}
         (rp / "animations").mkdir(parents=True, exist_ok=True)
         (rp / "animations" / f"{stem}.animation.json").write_text(json.dumps(an, indent=1))
         anim_maps[src] = mp

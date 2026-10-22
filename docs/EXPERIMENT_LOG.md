@@ -82,3 +82,11 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
   (copy of My World, only FTF BP/RP, level.dat LevelName patched). Pack stack log shows the BP loads. content_log_file turned on.
 - Renderer Foundation: LeviLamina refused it ("isn't using the unified memory allocation operator") -> added MemoryOperators.cpp
   (4e519cb). Closing the game: alt+F4 works after clicking the title bar first.
+- Content log (content_log_file now on) from a My World session: all three script packs load (Dweller, Sculk Horde, Impact) with
+  no script errors. Found + fixed: ModPorter wrote GeckoLib keyframes ({"vector","easing"}) and GeckoLib timeline
+  instructions into Bedrock animations (~21k content-log errors, Sculk Horde animations broken) -> generate.py bedrock_anim();
+  the installed SculkHordeRP was patched in place (6367 keyframes, 39 files; originals in SculkHordeRP/_backup_anim_prefix).
+  Dweller overlay: removed invalid `entity_cramming` damage cause + `check_if_outnumbered` (installed copy patched, backup kept).
+- RF 4e519cb loads ("2 mod(s) loaded") but the D3D12 probe failed at load -> 33f2ec1 logs HRESULTs, adds a D3D11 probe fallback
+  and retries on enable. RF config set to shaderPack=Dread (Dread copied to mods/RendererFoundation/shaderpacks) because
+  Bedrock Forge yields material redirection to RF.
