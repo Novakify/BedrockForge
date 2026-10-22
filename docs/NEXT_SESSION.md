@@ -1,3 +1,18 @@
+# Next session handoff (updated 2026-10-22 14:40 UTC)
+STATE ON THE PC (1.26.51.01 instance; folder access granted):
+- BedrockForgeCore b9 (abd455a). Dread shaderpack v2 active (BF serves it: mods/BedrockForgeCore/shaderpacks/Dread, shaderpack.txt=Dread).
+- Renderer Foundation: DLL 0b01034 installed but DISABLED (manifest.json renamed manifest.json.disabled) because 33f2ec1 crashed the
+  game in ImGui_ImplDX12_CreateDeviceObjects (legacy init had no command queue). 0b01034 takes the queue from the swapchain, uses
+  ImGui 1.91 InitInfo, and wraps the overlay in an SEH guard. To test: rename manifest.json.disabled -> manifest.json, launch, check
+  logs/latest.log for "[RF] overlay ready" and logs/crash/. RF config shaderPack=Dread (copy in mods/RendererFoundation/shaderpacks).
+- Animations: installed SculkHordeRP fixed in place (GeckoLib keyframe objects + channel-level {"vector"} values -> Bedrock; timeline
+  instructions dropped; walk/run anims sped up with movement). generate.py does the same for future ports. NOT YET VERIFIED IN GAME:
+  enter My World, then grep the newest Minecraft Bedrock/logs/ContentLog*.txt for "[Animation][error]" (expect 0).
+- Dweller faster: movement 0.6/0.45/0.35 (stand/crouch/crawl), chase melee speed x1.35 (installed BP + overlay in repo).
+- From The Fog (Bedrock) v1 installed; world "From The Fog Test". content_log_file=1 in options.txt (backup options.txt.bak-contentlog).
+- Computer use: the game window is "Minecraft.windows" (minecraft.windows.exe, resolve only while running). Grants expire after 30 min
+  idle and a re-request BLOCKS until someone approves -> overnight runs lost 8 h waiting. Don't re-request unattended.
+
 # Next session handoff (written 2026-10-21 ~20:30 UTC)
 State: all work committed + pushed to github.com/Novakify/BedrockForge (main). CI build #39 (commit ec1ab0a) green -> DLL on `builds`.
 PC instance: C:\Users\Fazzman175\AppData\Roaming\levilauncher.exe\versions\1.26.51.01\mods\BedrockForgeCore
