@@ -1,8 +1,8 @@
 # Next session handoff (written 2026-10-21 ~20:30 UTC)
 State: all work committed + pushed to github.com/Novakify/BedrockForge (main). CI build #39 (commit ec1ab0a) green -> DLL on `builds`.
 PC instance: C:\Users\Fazzman175\AppData\Roaming\levilauncher.exe\versions\1.26.51.01\mods\BedrockForgeCore
-(installed is still b8 / commit cd1133c). Logs: mods/BedrockForgeCore/logs/diag.txt + shaderpacks.txt (rewritten every ~10 s).
-This session ran unattended with NO PC access (folder-access prompt not yet approved) -> nothing new was installed or tested.
+(installed = b9 / commit abd455a, md5 1f9783e6..., backup BedrockForgeCore.b8.dll). Logs: mods/BedrockForgeCore/logs/diag.txt + shaderpacks.txt (rewritten every ~10 s).
+Folder access to the instance is now granted (persists for later runs).
 See docs/EXPERIMENT_LOG.md E-020.
 
 First thing next session:
