@@ -43,6 +43,59 @@ def signature(blob: bytes):
     return rows, interp, shader_model and f"{shader_model[1]}_{shader_model[2]}"
 
 
+def vsignature(blob: bytes):
+    """Vertex stage: (input rows, output rows, output interp modes, output element order, shader model)."""
+    with tempfile.NamedTemporaryFile(suffix=".dxil", delete=False) as f:
+        f.write(blob); path = f.name
+    out = subprocess.run([DXC, "-dumpbin", path], capture_output=True, text=True).stdout
+    ins, outs, interp, order, sec = [], [], {}, [], 0
+    for line in out.splitlines():
+        if line.startswith("; Input signature:"): sec += 1; part = "in"
+        elif line.startswith("; Output signature:"): part = "out"
+        elif line.startswith("; Buffer Definitions") or line.startswith("; Pipeline Runtime"): part = None
+        else:
+            m = re.match(r";\s+(\w+)\s+(\d+)\s+(\w+)\s+(\d+)\s+(\w+)\s+(\w+)", line)
+            if m and sec == 1: (ins if part == "in" else outs).append((m[1], int(m[2]), m[3], int(m[4]), m[5]))
+            m2 = re.match(r";\s+(\w+)\s+(\d+)\s+([a-z]+(?:\s[a-z]+)?)?\s*$", line)
+            if m2 and sec == 2 and part == "out" and m2[1] not in ("Name",):
+                order.append((m2[1], int(m2[2]))); interp[(m2[1], int(m2[2]))] = m2[3] or "linear"
+    sm = re.search(r'!"vs", i32 (\d), i32 (\d)', out)
+    return ins, outs, interp, order, sm and f"{sm[1]}_{sm[2]}"
+
+
+def vstructs(ins, outs, interp, order):
+    fi = [f"    float{WIDTH.get(m, 4) if WIDTH.get(m, 4) > 1 else ''} {n.lower()}{i} : {n}{i};" for n, i, m, _r, _s in ins]
+    fo = []
+    for n, i, m, _r, _s in sorted(outs, key=lambda r: order.index((r[0], r[1]))):
+        if n == "SV_Position": fo.append("    float4 position : SV_Position;"); continue
+        q = {"centroid": "centroid ", "nointerpolation": "nointerpolation ", "noperspective": "noperspective "}.get(interp.get((n, i), "linear"), "")
+        w = WIDTH.get(m, 4)
+        fo.append(f"    {q}float{w if w > 1 else ''} {n.lower()}{i} : {n}{i};")
+    return "struct VSIn {\n" + "\n".join(fi) + "\n};\nstruct VSOut {\n" + "\n".join(fo) + "\n};\n"
+
+
+def compile_vertex(body, blob, profile, defines, workdir: Path):
+    ins, outs, interp, order, _ = vsignature(blob)
+    src = vstructs(ins, outs, interp, order) + body
+    defs = [f"-D{d}" for d in defines] + [f"-DHAS_OUT_{n}{i}=1" for n, i, *_ in outs] + [f"-DHAS_IN_{n}{i}=1" for n, i, *_ in ins]
+    vm, vb = layout(blob)
+    for packing in ([], ["-pack-optimized"]):
+        hl = workdir / "vv.hlsl"; hl.write_text(src)
+        out = workdir / "vv.dxil"
+        r = subprocess.run([DXC, "-T", profile, "-E", "main", "-O3", *packing, *defs, "-Fo", str(out), str(hl)], capture_output=True, text=True)
+        if r.returncode != 0: return None, r.stderr[-600:]
+        gi, go, _, _, _ = vsignature(out.read_bytes())
+        if [(a, b, c, d) for a, b, c, d, _ in gi] == [(a, b, c, d) for a, b, c, d, _ in ins] and \
+           [(a, b, c, d) for a, b, c, d, _ in go] == [(a, b, c, d) for a, b, c, d, _ in outs]:
+            mem, bind = layout(out.read_bytes())
+            vn = {n: o for n, o in vm}
+            bad = {(n, o) for n, o in mem if vn.get(n) != o}
+            if bad: return None, f"vertex cbuffer layout differs: {sorted(bad)[:3]}"
+            if not bind <= vb: return None, f"vertex bindings differ: {sorted(bind - vb)[:3]}"
+            return out.read_bytes(), None
+    return None, "vertex signature mismatch"
+
+
 def struct_for(rows, interp, order):
     fields = []
     for name, idx, mask, _reg, sysv in sorted(rows, key=lambda r: order.index((r[0], r[1]))):
@@ -152,21 +205,37 @@ def main(argv=None):
         vanilla = a.materials / f"{name}.material.bin"
         if not vanilla.exists(): report.append(f"{name}: no vanilla material"); continue
         mat = lz.load(str(vanilla))
-        replaced = kept = 0
+        replaced = kept = vreplaced = 0
         with tempfile.TemporaryDirectory() as td:
             for p in mat.passes:
                 src = mat_dir / f"{p.name}.Fragment.hlsl"
                 if not src.exists(): src = mat_dir / "Fragment.hlsl"
-                if not src.exists(): continue
-                text = src.read_text()
+                has_frag = src.exists()
+                text = src.read_text() if has_frag else "// @only __no_fragment__=1"
                 # `// @include <file>` pastes another file from the material folder (shared bodies for per-pass files)
                 text = re.sub(r"//\s*@include\s+(\S+)", lambda m: (mat_dir / m[1]).read_text(), text)
                 only = dict(m.split("=", 1) for m in re.findall(r"//\s*@only\s+(\S+=\S+)", text))
                 extra = dict(re.findall(r"//\s*@uniform\s+(\w+)\s+(vec4|mat4)", common + text))
                 body = common + text
+                vsrc = mat_dir / f"{p.name}.Vertex.hlsl"
+                if not vsrc.exists(): vsrc = mat_dir / "Vertex.hlsl"
+                vtext = None
+                if vsrc.exists():
+                    vtext = re.sub(r"//\s*@include\s+(\S+)", lambda m: (mat_dir / m[1]).read_text(), vsrc.read_text())
+                    vonly = dict(m.split("=", 1) for m in re.findall(r"//\s*@only\s+(\S+=\S+)", vtext))
                 for v in p.variants:
                     flags = getattr(v, "flags", {}) or {}
-                    if flags.get("Seasons") == "On": kept += 1; continue  # different code path, keep vanilla
+                    if vtext is not None and all(str(flags.get(k)) == val for k, val in vonly.items()):
+                        vdefs = [f"PASS_{p.name.upper()}=1"] + [f"FLAG_{k.upper()}_{str(val).upper()}=1" for k, val in flags.items()]
+                        for s in v.shaders:
+                            if s.stage.name != "Vertex" or s.platform.name not in PROFILES: continue
+                            vblob = s.bgfx_shader.shader_bytes
+                            vsm = vsignature(vblob)[4]
+                            vnew, verr = compile_vertex(common + vtext, vblob, f"vs_{vsm}" if vsm else "vs_6_0", vdefs, Path(td))
+                            if vnew is None:
+                                report.append(f"{name}/{p.name} {flags} {s.platform.name} VERTEX: kept vanilla ({verr.strip().splitlines()[-1] if verr else ''})")
+                            else:
+                                s.bgfx_shader.shader_bytes = vnew; vreplaced += 1
                     if any(str(flags.get(k)) != v for k, v in only.items()): kept += 1; continue
                     defines = [f"PASS_{p.name.upper()}=1"] + [f"FLAG_{k.upper()}_{str(val).upper()}=1" for k, val in flags.items()]
                     for s in v.shaders:
@@ -183,7 +252,7 @@ def main(argv=None):
                         add_extra_uniforms(s.bgfx_shader, new, extra)
                         replaced += 1
         lz.save(mat, str(outdir / f"{name}.material.bin"))
-        report.append(f"{name}: {replaced} fragment blobs replaced, {kept} kept vanilla")
+        report.append(f"{name}: {replaced} fragment blobs replaced, {kept} kept vanilla" + (f", {vreplaced} vertex blobs replaced" if vreplaced else ""))
     (a.out / "BUILD_REPORT.txt").write_text("\n".join(report) + "\n")
     print("\n".join(r for r in report if "kept vanilla (" not in r))
     bad = [r for r in report if "kept vanilla (" in r]

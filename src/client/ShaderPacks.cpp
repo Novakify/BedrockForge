@@ -12,6 +12,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include "client/PostFx.h"
+
 #include "ll/api/memory/Hook.h"
 #include "ll/api/mod/NativeMod.h"
 
@@ -180,6 +182,7 @@ void install(fs::path const& modDir) {
     bool on = setActivePack(active);
     std::ofstream{running} << gActiveName << "\n";
     log.info("[BF] shaderpacks: {} found, active = '{}'", listPacks().size(), gActiveName);
+    postfx::load(gPacksDir, gActiveName);
     if (!on && active != "off") log.warn("[BF] shaderpack '{}' not found in {}", active, gPacksDir.string());
 
     // Hooks go in even with no pack active: ForgeRender can switch packs and enable resource-pack shaders later.

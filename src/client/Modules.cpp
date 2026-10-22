@@ -46,6 +46,7 @@
 #include "client/Menu.h"
 #include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
+#include "client/PostFx.h"
 #include "core/Win32Input.h"
 
 namespace bedrock_forge::client {
@@ -150,6 +151,7 @@ LL_TYPE_INSTANCE_HOOK(BfFovHook, ll::memory::HookPriority::Normal, LevelRenderer
     now += (target - now) * lerp;
     if (std::abs(now - target) < 0.01f) now = target;
     gZoomNow = now;
+    postfx::noteFov(fov / now);
     return fov / now;
 }
 
@@ -488,6 +490,7 @@ void installRuntime() {
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
+        if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
 
         std::vector<std::string> info;
         Frame f{ctx, view, ctx.mClient, player, view.mSize->x, view.mSize->y, info};

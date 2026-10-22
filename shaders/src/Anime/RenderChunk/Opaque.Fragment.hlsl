@@ -1,4 +1,5 @@
 // Terrain (RenderChunk) - same inputs and bindings as vanilla; vanilla math + cel lighting + a little saturation.
+// @only Seasons=Off
 // PASS_ALPHATEST / PASS_TRANSPARENT are defined by ShaderForge per pass.
 Texture2D    s_LightMapTextureTexture : register(t0);
 SamplerState s_LightMapTextureSampler : register(s0);

@@ -4,6 +4,16 @@ Texture2D    s_LightMapTextureTexture : register(t0);
 SamplerState s_LightMapTextureSampler : register(s0);
 Texture2D    s_MatTextureTexture      : register(t1);
 SamplerState s_MatTextureSampler      : register(s1);
+#if defined(FLAG_SEASONS_ON) && !defined(PASS_TRANSPARENT)
+// leaves: vanilla tint = colour.a * lerp(1, seasons(colour.xy) * 2, colour.b)  (decoded from the Seasons variant)
+Texture2D    s_SeasonsTextureTexture  : register(t2);
+SamplerState s_SeasonsTextureSampler  : register(s2);
+#define BF_TINT(c) ((c).a * (((s_SeasonsTextureTexture.Sample(s_SeasonsTextureSampler, (c).xy).rgb * 2.0 - 1.0) * (c).b) + 1.0))
+#define BF_SEASONS 1
+#else
+#define BF_TINT(c) ((c).rgb)
+#define BF_SEASONS 0
+#endif
 #if (defined(PASS_ALPHATEST) || defined(PASS_TRANSPARENT)) && defined(FLAG_DITHERING_ON)
 // vanilla layout of the dithered variants, then the extra uniforms
 cbuffer FragmentUniforms : register(b1) {
@@ -26,12 +36,12 @@ float4 main(PSIn i) : SV_Target {
 #if defined(PASS_ALPHATEST)
     if (d.a < 0.5) discard;
 #endif
-    float3 albedo = d.rgb * i.color0.rgb; // foliageColor = gl_Color.rgb (NEW_LIGHTING 1)
+    float3 albedo = d.rgb * BF_TINT(i.color0); // foliageColor = gl_Color.rgb (NEW_LIGHTING 1)
     float  a      = 1.0;
 #if defined(PASS_TRANSPARENT)
     a = d.a * i.color0.a;
 #elif !defined(PASS_ALPHATEST)
-    if (i.texcoord2.y > 0.5) albedo = lerp(d.rgb, albedo, d.a) * i.color0.a; // vanilla tint mask
+    if (!BF_SEASONS && i.texcoord2.y > 0.5) albedo = lerp(d.rgb, albedo, d.a) * i.color0.a; // vanilla tint mask
 #endif
     float t     = ViewPositionAndTime.w;
     float state = cfStateFromSkyLight(s_LightMapTextureTexture.Sample(s_LightMapTextureSampler, float2(0.0, 1.0)).rgb);
