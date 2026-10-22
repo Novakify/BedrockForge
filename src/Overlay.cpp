@@ -21,6 +21,7 @@
 #include <imgui_impl_win32.h>
 
 #include "LLShim.h"
+#include "PostFx.h"
 
 #include "GUI.h"
 #include "Options.h"
@@ -123,6 +124,7 @@ void createRT(IDXGISwapChain* sc) {
     }
 }
 void releaseRT() {
+    rf::postfx::release();
     for (UINT i = 0; i < count; ++i) buffers[i].resource.Reset();
 }
 
@@ -195,7 +197,8 @@ void render(IDXGISwapChain3* sc) {
     barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
     ID3D12DescriptorHeap* heaps[]  = {srvHeap.Get()};
     bb.list->Reset(bb.allocator.Get(), nullptr);
-    bb.list->ResourceBarrier(1, &barrier);
+    // full-screen post effects first (they leave the back buffer in RENDER_TARGET), then ImGui on top
+    if (!rf::postfx::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv)) bb.list->ResourceBarrier(1, &barrier);
     bb.list->OMSetRenderTargets(1, &bb.rtv, FALSE, nullptr);
     bb.list->SetDescriptorHeaps(1, heaps);
     ImGui::Render();
@@ -205,6 +208,7 @@ void render(IDXGISwapChain3* sc) {
     bb.list->Close();
     ID3D12CommandList* lists[] = {bb.list.Get()};
     q->ExecuteCommandLists(1, lists);
+    rf::postfx::submitted(q);
 }
 } // namespace d3d12
 
