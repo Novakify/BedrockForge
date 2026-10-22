@@ -1,0 +1,5 @@
+Cursed Fog - shaderpack by LoLip_p (https://modrinth.com/shader/cursed-fog)
+Licensed under Creative Commons Attribution 4.0 International (CC BY 4.0):
+https://creativecommons.org/licenses/by/4.0/
+This Bedrock version is a port made with Bedrock Forge; changes are described in PORTING.md.
+It is not endorsed by LoLip_p.

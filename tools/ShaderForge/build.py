@@ -83,7 +83,38 @@ def element_order(blob: bytes):
     return order
 
 
-def compile_variant(body: str, rows, interp, order, profile, defines, workdir: Path, vanilla_layout=None):
+EXTRA_TYPES = {"vec4": (18, 1), "mat4": (20, 4)}  # bgfx type_bits (|0x10 = fragment) and register count
+
+
+def cbuffer_size(blob: bytes) -> int:
+    with tempfile.NamedTemporaryFile(suffix=".dxil", delete=False) as f:
+        f.write(blob); path = f.name
+    out = subprocess.run([DXC, "-dumpbin", path], capture_output=True, text=True).stdout
+    m = re.search(r"\}\s*FragmentUniforms;\s*;\s*Offset:\s*\d+\s+Size:\s*(\d+)", out)
+    return int(m[1]) if m else 0
+
+
+def add_extra_uniforms(bgfx, blob: bytes, extra: dict) -> list:
+    """Uniforms the pack asked for with `// @uniform <Name> vec4|mat4` (material uniforms such as ViewPositionAndTime,
+    or bgfx predefined ones such as u_viewTexel / u_invView): bgfx fills any uniform a shader's table lists, so the
+    compiled cbuffer members are appended to the fragment shader's uniform table (E-025)."""
+    if not extra: return []
+    import lazurite.material.shader_pass.bgfx_shader as bs
+    mem, _ = layout(blob)
+    have = {u.name for u in bgfx.uniforms}
+    added = []
+    for name, off in sorted(mem, key=lambda x: x[1]):
+        if name in extra and name not in have:
+            tb, rc = EXTRA_TYPES[extra[name]]
+            u = bs.BgfxUniform(); u.name, u.type_bits, u.count, u.reg_index, u.reg_count = name, tb, 0, off, rc
+            # samplers must stay last in the table; insert before the first sampler
+            idx = next((i for i, x in enumerate(bgfx.uniforms) if x.type_bits & 0x20), len(bgfx.uniforms))
+            bgfx.uniforms.insert(idx, u); added.append(name)
+    bgfx.size = max(bgfx.size, cbuffer_size(blob))
+    return added
+
+
+def compile_variant(body: str, rows, interp, order, profile, defines, workdir: Path, vanilla_layout=None, extra=None):
     src = struct_for(rows, interp, order) + body
     have = {f"{n}{i}" for n, i, *_ in rows}
     defs = [f"-D{d}" for d in defines] + [f"-DHAS_{h}=1" for h in have]
@@ -99,8 +130,12 @@ def compile_variant(body: str, rows, interp, order, profile, defines, workdir: P
             if vanilla_layout is not None:
                 mem, bind = layout(out.read_bytes())
                 vm, vb = vanilla_layout
-                if not mem <= vm: return None, f"cbuffer layout differs: {sorted(mem - vm)[:3]}"
-                if not bind <= vb: return None, f"bindings differ: {sorted(bind - vb)[:3]}"
+                extra = extra or {}
+                vnames = {n: o for n, o in vm}
+                bad = {(n, o) for n, o in mem if n not in extra and vnames.get(n) != o}
+                if bad: return None, f"cbuffer layout differs: {sorted(bad)[:3]}"
+                okb = vb | ({("FragmentUniforms", "cb1")} if extra else set())
+                if not bind <= okb: return None, f"bindings differ: {sorted(bind - okb)[:3]}"
             return out.read_bytes(), None
     return None, "signature mismatch"
 
@@ -124,7 +159,10 @@ def main(argv=None):
                 if not src.exists(): src = mat_dir / "Fragment.hlsl"
                 if not src.exists(): continue
                 text = src.read_text()
+                # `// @include <file>` pastes another file from the material folder (shared bodies for per-pass files)
+                text = re.sub(r"//\s*@include\s+(\S+)", lambda m: (mat_dir / m[1]).read_text(), text)
                 only = dict(m.split("=", 1) for m in re.findall(r"//\s*@only\s+(\S+=\S+)", text))
+                extra = dict(re.findall(r"//\s*@uniform\s+(\w+)\s+(vec4|mat4)", common + text))
                 body = common + text
                 for v in p.variants:
                     flags = getattr(v, "flags", {}) or {}
@@ -136,12 +174,13 @@ def main(argv=None):
                         blob = s.bgfx_shader.shader_bytes
                         rows, interp, sm = signature(blob)
                         order = element_order(blob)
-                        new, err = compile_variant(body, rows, interp, order, f"ps_{sm}" if sm else PROFILES[s.platform.name], defines, Path(td), layout(blob))
+                        new, err = compile_variant(body, rows, interp, order, f"ps_{sm}" if sm else PROFILES[s.platform.name], defines, Path(td), layout(blob), extra)
                         if new is None:
                             kept += 1
                             report.append(f"{name}/{p.name} {flags} {s.platform.name}: kept vanilla ({err.strip().splitlines()[-1] if err else ''})")
                             continue
                         s.bgfx_shader.shader_bytes = new
+                        add_extra_uniforms(s.bgfx_shader, new, extra)
                         replaced += 1
         lz.save(mat, str(outdir / f"{name}.material.bin"))
         report.append(f"{name}: {replaced} fragment blobs replaced, {kept} kept vanilla")

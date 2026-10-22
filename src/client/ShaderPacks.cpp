@@ -129,6 +129,7 @@ bool setActivePack(std::string const& name) {
     if (use.empty() || use == "off" || !fs::is_directory(gPacksDir / use, ec)) use = "off";
     gActiveName = use;
     std::ofstream{gCfg} << use << "\n";
+    if (!gCfg.empty()) std::ofstream{gCfg.parent_path() / "shaderpack.running"} << use << "\n";
     auto st = gState.load();
     publish(use == "off" ? std::wstring{} : (gPacksDir / use).wstring(), st->rpDir);
     return use != "off";
@@ -149,7 +150,24 @@ void install(fs::path const& modDir) {
     std::string active = "Anime";
     if (std::ifstream in{gCfg}; in) std::getline(in, active);
     while (!active.empty() && (active.back() == '\r' || active.back() == ' ')) active.pop_back();
+    // Crash guard: shaderpack.running exists while the game runs with a pack and is removed on a clean shutdown.
+    // Still there at startup = the last run crashed with that pack -> fall back (config/shaderpack.fallback, else off).
+    auto running = gCfg.parent_path() / "shaderpack.running";
+    if (fs::exists(running, ec)) {
+        std::string crashed;
+        if (std::ifstream in{running}; in) std::getline(in, crashed);
+        if (!crashed.empty() && crashed == active && active != "off") {
+            std::string fb = "off";
+            if (std::ifstream in{gCfg.parent_path() / "shaderpack.fallback"}; in) std::getline(in, fb);
+            while (!fb.empty() && (fb.back() == '\r' || fb.back() == ' ')) fb.pop_back();
+            if (fb == active) fb = "off";
+            log.warn("[BF] shaderpacks: the last run crashed while '{}' was active -> using '{}' (see logs/crash)", active, fb);
+            std::ofstream{gCfg.parent_path() / "shaderpack.crashed"} << active << "\n";
+            active = fb;
+        }
+    }
     bool on = setActivePack(active);
+    std::ofstream{running} << gActiveName << "\n";
     log.info("[BF] shaderpacks: {} found, active = '{}'", listPacks().size(), gActiveName);
     if (!on && active != "off") log.warn("[BF] shaderpack '{}' not found in {}", active, gPacksDir.string());
 
@@ -193,6 +211,8 @@ void reportOnce() {
 }
 
 void uninstall() {
+    std::error_code ec;
+    fs::remove(gCfg.parent_path() / "shaderpack.running", ec); // clean shutdown
     win32::files::setRedirect(nullptr);
     for (auto& s : gSites) ll::memory::unhook(s.target, s.detour);
     gSites.clear();
