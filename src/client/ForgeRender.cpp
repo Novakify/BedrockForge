@@ -62,8 +62,26 @@ std::string status() { std::lock_guard l(gStatusMutex); return gStatusText; }
 int  gAppliedPack  = -2;
 int  gAppliedRp    = -1;
 int  gAppliedVivid = -1;
+bool gFileSwitch   = false;
 
 Module* mod() { return Registry::get().find("shaderpacks"); }
+
+// ---- file-driven control (works while nobody can touch the game: edit files in mods/BedrockForgeCore/config) ----
+//   shaderpack.txt  <pack name> | off   -> switch pack (slider follows) and reload materials
+//   command.txt     reload | vibrant on | vibrant off | rescan   -> executed once, then renamed to command.done.txt
+fs::file_time_type gCfgSeen{};
+unsigned long long gNextPoll = 0;
+std::string readTrim(fs::path const& p) {
+    std::string s;
+    if (std::ifstream in{p}; in) std::getline(in, s);
+    while (!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '\n')) s.pop_back();
+    return s;
+}
+int packIndex(std::string const& name) {
+    for (size_t i = 0; i < gPacks.size(); ++i)
+        if (gPacks[i] == name) return int(i + 1);
+    return 0;
+}
 
 std::vector<std::wstring> vanillaMaterialNames() {
     std::vector<std::wstring> names;
@@ -208,6 +226,43 @@ void tick() {
         m->description = "Shaders are handled by Renderer Foundation (press F6 for its overlay).";
         return;
     }
+    // file switch: shaderpack.txt is authoritative at startup (the slider stores a position, which shifts when packs are
+    // added) and whenever something else rewrites it.
+    if (unsigned long long t = GetTickCount64(); gAppliedPack == -2 || t >= gNextPoll) {
+        gNextPoll = t + 1500;
+        std::error_code ec;
+        auto cfg = shaderpacks::configFile();
+        auto mt  = fs::last_write_time(cfg, ec);
+        if (!ec && (gAppliedPack == -2 || mt != gCfgSeen)) {
+            gCfgSeen         = mt;
+            std::string want = readTrim(cfg);
+            if (want != "off" && !packIndex(want)) gPacks = shaderpacks::listPacks(); // folder added since startup
+            int idx = want == "off" ? 0 : packIndex(want);
+            bool known = idx > 0 || want == "off";
+            int  cur   = int(m->num("pack", 0) + 0.5f);
+            if (known && (cur != idx || !m->enabled)) {
+                if (auto* st = m->setting("pack")) {
+                    st->max   = float(std::max<size_t>(gPacks.size(), 1));
+                    st->value = float(idx);
+                }
+                if (!m->enabled && idx > 0) Registry::get().setEnabled(*m, true);
+                if (gAppliedPack != -2) gFileSwitch = true;
+                Registry::get().save();
+            }
+        }
+        auto cmdf = cfg.parent_path() / "command.txt";
+        if (fs::exists(cmdf, ec)) {
+            std::string c = readTrim(cmdf);
+            fs::remove(cfg.parent_path() / "command.done.txt", ec);
+            fs::rename(cmdf, cfg.parent_path() / "command.done.txt", ec);
+            if (c == "reload") requestReload("command.txt");
+            else if (c == "vibrant on" || c == "vibrant off") {
+                if (auto* st = m->setting("vibrant")) st->on = c == "vibrant on";
+                Registry::get().save();
+            } else if (c == "rescan") gPacks = shaderpacks::listPacks();
+            setStatus("command: " + c);
+        }
+    }
     // shaderpack
     int pack = m->enabled ? int(m->num("pack", 0) + 0.5f) : 0;
     if (pack != gAppliedPack) {
@@ -218,7 +273,8 @@ void tick() {
         if (!first || shaderpacks::activePack() != name) {
             shaderpacks::setActivePack(name);
             setStatus("shaderpack -> " + name + (m->flag("auto_reload") ? "" : " (Reload or restart to apply)"));
-            if (!first && m->flag("auto_reload")) requestReload("shaderpack switched");
+            if (!first && (m->flag("auto_reload") || gFileSwitch)) requestReload(gFileSwitch ? "shaderpack.txt changed" : "shaderpack switched");
+            gFileSwitch = false;
         }
     }
     // resource-pack shaders

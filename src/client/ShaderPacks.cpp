@@ -109,10 +109,19 @@ std::vector<std::string> listPacks() {
 
 std::string activePack() { return gActiveName; }
 
+// E-024: with Renderer Foundation loaded, BF stopped redirecting and RF's own loader served nothing (vanilla terrain on
+// Fancy). BF's loader is the proven one, so it keeps serving; it only yields if config/yield_to_rf exists.
 bool yieldToRendererFoundation() {
-    if (!gYield && GetModuleHandleW(L"RendererFoundation.dll")) gYield = true;
+    static int decided = -1;
+    if (decided < 0) {
+        std::error_code ec;
+        decided = GetModuleHandleW(L"RendererFoundation.dll") && fs::exists(gCfg.parent_path() / "yield_to_rf", ec) ? 1 : 0;
+        gYield  = decided == 1;
+    }
     return gYield;
 }
+
+std::filesystem::path configFile() { return gCfg; }
 
 bool setActivePack(std::string const& name) {
     std::error_code ec;

@@ -26,6 +26,8 @@ bool setActivePack(std::string const& name);
 void setResourcePackCache(std::filesystem::path const& dir);
 /// If the Renderer Foundation mod is loaded, stop redirecting materials (it owns that job). Returns true when yielding.
 bool yieldToRendererFoundation();
+/// config/shaderpack.txt (the file switch: write a pack name into it and ForgeRender switches + reloads).
+std::filesystem::path configFile();
 /// Log what the hooks saw so far (once; call from a normal thread after startup, e.g. on joining a world).
 void reportOnce();
 /// Rewrite mods/BedrockForgeCore/logs/shaderpacks.txt (counts + every material path seen).
