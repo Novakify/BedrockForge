@@ -38,10 +38,62 @@ def bedrock_anim(anim: dict) -> dict:
     return anim
 
 
+_NUM_PAIR = re.compile(r"(\d(?:\.\d+)?)\s+(-?)\s*(\d)")
+
+
+def _fix_molang(v):
+    """GeckoLib exports sometimes lose the operator between two numbers ("q.anim_time * 10 5"); Bedrock then drops
+    the WHOLE animation ("can't find animation living", E-023). Restore it as + / -."""
+    if isinstance(v, str):
+        return _NUM_PAIR.sub(lambda m: f"{m.group(1)} {'-' if m.group(2) else '+'} {m.group(3)}", v)
+    if isinstance(v, list):
+        return [_fix_molang(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _fix_molang(x) for k, x in v.items()}
+    return v
+
+
+def _has_molang(v):
+    if isinstance(v, str): return True
+    if isinstance(v, list): return any(_has_molang(x) for x in v)
+    if isinstance(v, dict): return any(_has_molang(x) for k, x in v.items() if k != "lerp_mode")
+    return False
+
+
+def bedrock_anim_fixups(anim: dict) -> dict:
+    """Molang operator repair + no catmullrom on channels with Molang keys ("Precomputed cubic interpolation
+    requires keyframes have constant data")."""
+    for bone in (anim.get("bones") or {}).values():
+        for ch in ("rotation", "position", "scale"):
+            if ch not in bone: continue
+            bone[ch] = _fix_molang(bone[ch])
+            v = bone[ch]
+            if isinstance(v, dict) and _has_molang(v):
+                for kf in v.values():
+                    if isinstance(kf, dict) and kf.get("lerp_mode") == "catmullrom":
+                        del kf["lerp_mode"]
+    return anim
+
+
+def smooth_anim(name: str, anim: dict, blend_idle_loop=True) -> dict:
+    """Optional (overlay "smooth_anims": true): catmull-rom between constant keyframes on channels with 3+ keys,
+    loop idle cycles (a non-looping idle freezes on its last frame) - used for The Dweller (E-023 "stiff")."""
+    short = name.rsplit(".", 1)[-1].lower()
+    if blend_idle_loop and "idle" in short: anim["loop"] = True
+    for bone in (anim.get("bones") or {}).values():
+        for ch in ("rotation", "position", "scale"):
+            x = bone.get(ch)
+            if isinstance(x, dict) and len(x) >= 3 and not _has_molang(x):
+                for t, kf in list(x.items()):
+                    if isinstance(kf, list): x[t] = {"post": kf, "lerp_mode": "catmullrom"}
+                    elif isinstance(kf, dict) and "pre" not in kf: kf.setdefault("lerp_mode", "catmullrom")
+    return anim
+
+
 def bedrock_anim_name_tweaks(name: str, anim: dict) -> dict:
     """Locomotion cycles play faster when the mob moves faster (GeckoLib scales them by limb swing)."""
     short = name.rsplit(".", 1)[-1].lower()
-    if re.search(r"(walk|run|crawl|chase|sprint|move)", short) and "anim_time_update" not in anim:
+    if re.search(r"(walk|run|crawl|chase|sprint|move|flee)", short) and "anim_time_update" not in anim:
         anim["anim_time_update"] = "q.anim_time + q.delta_time * math.clamp(q.modified_move_speed * 3.0, 0.75, 2.5)"
     return anim
 
@@ -88,7 +140,8 @@ def pick_anims(anims):
 
 def anim_controller(ns, key, anims):
     has = {a.split(".")[-1] for a in anims}
-    states = {"default": {"animations": ["idle"] if "idle" in has else [], "transitions": []}}
+    states = {"default": {"transitions": []}}
+    if "idle" in has: states["default"]["animations"] = ["idle"]  # an empty list is a content error
     if "walk" in has:
         states["walking"] = {"animations": ["walk"], "transitions": [{"default": "q.modified_move_speed < 0.05"}], "blend_transition": 0.2}
         states["default"]["transitions"].append({"walking": "q.modified_move_speed > 0.05"})
@@ -96,7 +149,7 @@ def anim_controller(ns, key, anims):
     if "attack" in has:
         states["attacking"] = {"animations": ["attack"], "transitions": [{"default": "q.all_animations_finished"}]}
         for st in states.values():
-            if st is not states.get("attacking"): st["transitions"].insert(0, {"attacking": "v.attack_time > 0"})
+            if st is not states.get("attacking"): st["transitions"].insert(0, {"attacking": "v.attack_time > 0 || q.is_delayed_attacking"})
     return {f"controller.animation.{ns}.{key}.move": {"initial_state": "default", "states": states}}
 
 def main(argv=None):
@@ -108,7 +161,9 @@ def main(argv=None):
     modid = data["mod_id"]; ns = a.ns or modid
     title = modid.replace("_", " ").title()
     _ov = (a.overlay or (Path(__file__).parent / "overlays" / modid)) / "overlay.json"
-    if _ov.exists(): title = json.loads(_ov.read_text()).get("pack_name", title)
+    _ovj = json.loads(_ov.read_text()) if _ov.exists() else {}
+    title = _ovj.get("pack_name", title)
+    smooth = bool(_ovj.get("smooth_anims"))
     rp, bp = a.out / f"{title} RP", a.out / f"{title} BP"
     shutil.rmtree(a.out, ignore_errors=True)
     for d in (rp, bp): d.mkdir(parents=True)
@@ -147,7 +202,9 @@ def main(argv=None):
             if lasts.count(short.lower()) > 1:   # collision -> keep more of the name
                 short = re.sub(r"^animation\.(model\.|%s\.)?" % re.escape(stem), "", k).replace(".", "_").strip("_") or short
             nk = f"animation.{ns}.{stem}.{short.lower()}"; new[nk] = v; mp[k] = (short, nk)
-        an["animations"] = {k: bedrock_anim_name_tweaks(k, _strip_timeline(bedrock_anim(v))) for k, v in new.items()}
+        an["animations"] = {k: bedrock_anim_name_tweaks(k, bedrock_anim_fixups(_strip_timeline(bedrock_anim(v)))) for k, v in new.items()}
+        if smooth: an["animations"] = {k: smooth_anim(k, v) for k, v in an["animations"].items()}
+        an.pop("geckolib_format_version", None)  # "child 'geckolib_format_version' not valid here"
         (rp / "animations").mkdir(parents=True, exist_ok=True)
         (rp / "animations" / f"{stem}.animation.json").write_text(json.dumps(an, indent=1))
         anim_maps[src] = mp

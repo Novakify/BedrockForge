@@ -47,5 +47,6 @@
     "entity.ice_bear_2026:ice_bear_2026.name": "The Dweller",
     "item.spawn_egg.entity.ice_bear_2026:ice_bear_2026.name": "Spawn The Dweller"
   },
-  "pack_name": "The Dweller"
+  "pack_name": "The Dweller",
+  "smooth_anims": true
 }

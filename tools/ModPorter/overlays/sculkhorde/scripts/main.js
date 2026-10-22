@@ -13,7 +13,7 @@
 //     spore spewers spread spores, pods metamorphose, witches throw sickness, the enderman teleports onto targets.
 // Debug: /sh:status  /sh:start  /sh:stop  /sh:mass <amount>  /sh:node  /sh:infect  /sh:budget <blocks_per_tick>  /sh:clear
 
-import { world, system, Player, GameMode, EntityDamageCause, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
+import { world, system, MolangVariableMap, Player, GameMode, EntityDamageCause, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
 import { INFESTED } from "./infested_map.js";
 
 const NS = "sculkhorde";
@@ -69,7 +69,9 @@ const alive = (e) => { try { return !!e && e.isValid; } catch { return false; } 
 const survival = (p) => { try { const g = p.getGameMode(); return g !== GameMode.Creative && g !== GameMode.Spectator; } catch { return false; } };
 const dim = (id) => world.getDimension(id);
 function block(d, p) { try { return d.getBlock({ x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) }); } catch { return undefined; } }
-function particle(d, id, p) { try { d.spawnParticle(id, p); } catch {} }
+// vanilla sculk_soul / sculk_charge_pop particles read variable.direction (content-log errors without it)
+let _pv;
+function particle(d, id, p) { try { if (!_pv) { _pv = new MolangVariableMap(); _pv.setVector3("variable.direction", { x: 0, y: 1, z: 0 }); } d.spawnParticle(id, p, _pv); } catch {} }
 function sound(d, id, p) { try { d.playSound(id, p); } catch {} }
 function los(d, from, to) {
   const v = { x: to.x - from.x, y: to.y - from.y, z: to.z - from.z }, l = Math.hypot(v.x, v.y, v.z) || 1;

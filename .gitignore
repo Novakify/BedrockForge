@@ -555,3 +555,7 @@ fabric.properties
 **/build/*RP/
 **/build/*BP/
 *.mcaddon
+
+# Dread Atmosphere is generated from the game install (tools/DreadAtmos/build.py), not committed
+packs/DreadAtmosphereRP/
+packs/DreadAtmosphereBP/

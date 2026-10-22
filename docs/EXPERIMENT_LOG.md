@@ -90,3 +90,22 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
 - RF 4e519cb loads ("2 mod(s) loaded") but the D3D12 probe failed at load -> 33f2ec1 logs HRESULTs, adds a D3D11 probe fallback
   and retries on enable. RF config set to shaderPack=Dread (Dread copied to mods/RendererFoundation/shaderpacks) because
   Bedrock Forge yields material redirection to RF.
+
+## E-023 (2026-10-22, Fernando at the PC) - animations verified, Vibrant Visuals explains "can't see shaders"
+- Content log after the E-022 animation fixes: ~21k errors -> ~430. Remaining causes, all fixed in the installed packs and in
+  ModPorter: GeckoLib Molang with a lost operator ("q.anim_time * 10 5") makes Bedrock drop the WHOLE animation (that was the
+  "can't find animation idle/walk/attack/living" every 5 s); empty "animations": [] in controller states; geckolib_format_version
+  key; catmullrom on Molang keyframes (sculk_witch throwpotion); vanilla sculk particles need variable.direction
+  (MolangVariableMap - must be created lazily, "Native constructor ... cannot be used in early execution").
+  Attack state now also enters on q.is_delayed_attacking. Result: My World + From The Fog Test load with ZERO content errors.
+- Why the shaders looked vanilla: options.txt graphics_mode:2 = Vibrant Visuals (deferred). Dread's RenderChunk/Sky/Actor
+  forward shaders don't run there. New: Dread Atmosphere (tools/DreadAtmos/build.py) = VV colour grading / atmospherics /
+  lighting derived from the vanilla settings (desat 0.42, contrast 1.32, sun x0.45, grey cold skies) + a Dread fog
+  (distance fog for Fancy, volumetric for VV) pushed by a tiny BP (/fog push). Verified in both worlds (screenshots).
+- Adding packs to a world by editing world_*_packs.json: also add world_*_pack_history.json entries, and do it while the
+  game is CLOSED for a world that was already opened in this game session (the game rewrites the list from its cache on load).
+- New dev packs are only discovered at game start (PackManifestFactoryCache).
+- Renderer Foundation 0b01034: no crash any more (SEH guard + swapchain queue); overlay init still fails ->
+  843e0cf logs the failing step + retries 3x. Note: the LeviLamina log stops mid-line after that error (buffered).
+- Dweller "stiff": keyframes were all linear, crouch_idle didn't loop (froze), 0.15 s blends -> catmull-rom on constant
+  channels, looping idles, 0.3 s blends, flee speed-scaled (overlay "smooth_anims": true).

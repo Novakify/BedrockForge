@@ -8,7 +8,7 @@
      "animations": [
       "crawl"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s1": "v.anim == 1"
@@ -40,7 +40,7 @@
      "animations": [
       "crouch_run_new"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s0": "v.anim == 0"
@@ -72,7 +72,7 @@
      "animations": [
       "crouch_idle"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s0": "v.anim == 0"
@@ -104,7 +104,7 @@
      "animations": [
       "new_run"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s0": "v.anim == 0"
@@ -136,7 +136,7 @@
      "animations": [
       "run_idle"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s0": "v.anim == 0"
@@ -168,7 +168,7 @@
      "animations": [
       "flee"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s0": "v.anim == 0"
@@ -200,7 +200,7 @@
      "animations": [
       "spotted"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s0": "v.anim == 0"
@@ -232,7 +232,7 @@
      "animations": [
       "calm_move"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s0": "v.anim == 0"
@@ -264,7 +264,7 @@
      "animations": [
       "calm_idle"
      ],
-     "blend_transition": 0.15,
+     "blend_transition": 0.3,
      "transitions": [
       {
        "s0": "v.anim == 0"
