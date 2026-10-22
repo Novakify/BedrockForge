@@ -134,24 +134,30 @@ void srvAlloc(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_
 }
 void srvFree(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_GPU_DESCRIPTOR_HANDLE) {}
 
+std::string gWhy;
+#define RF_FAIL(what, hr) do { gWhy = std::string(what) + " hr=0x" + hex32(uint32_t(hr)); return false; } while (0)
+std::string hex32(uint32_t v) { char b[16]; snprintf(b, sizeof b, "%08X", v); return b; }
 bool init(IDXGISwapChain* sc) {
-    if (!queueRef || FAILED(queueRef->GetDevice(IID_PPV_ARGS(&device)))) return false;
+    if (!queueRef) { gWhy = "no command queue from swapchain"; return false; }
+    if (HRESULT hr = queueRef->GetDevice(IID_PPV_ARGS(&device)); FAILED(hr)) RF_FAIL("queue->GetDevice", hr);
     queue = queueRef.Get();
     DXGI_SWAP_CHAIN_DESC desc{};
     sc->GetDesc(&desc);
     count   = desc.BufferCount;
     buffers = std::make_unique<BackBuffer[]>(count);
     for (UINT i = 0; i < count; ++i) {
-        if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&buffers[i].allocator)))) return false;
-        if (FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, buffers[i].allocator.Get(), nullptr,
-                                             IID_PPV_ARGS(&buffers[i].list)))
-            || FAILED(buffers[i].list->Close()))
-            return false;
+        if (HRESULT hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&buffers[i].allocator)); FAILED(hr))
+            RF_FAIL("CreateCommandAllocator", hr);
+        if (HRESULT hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, buffers[i].allocator.Get(), nullptr,
+                                                   IID_PPV_ARGS(&buffers[i].list));
+            FAILED(hr))
+            RF_FAIL("CreateCommandList", hr);
+        if (HRESULT hr = buffers[i].list->Close(); FAILED(hr)) RF_FAIL("CommandList::Close", hr);
     }
     D3D12_DESCRIPTOR_HEAP_DESC srv{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, count, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
-    if (FAILED(device->CreateDescriptorHeap(&srv, IID_PPV_ARGS(&srvHeap))) || FAILED(device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&rtvHeap))))
-        return false;
+    if (HRESULT hr = device->CreateDescriptorHeap(&srv, IID_PPV_ARGS(&srvHeap)); FAILED(hr)) RF_FAIL("CreateDescriptorHeap(SRV)", hr);
+    if (HRESULT hr = device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&rtvHeap)); FAILED(hr)) RF_FAIL("CreateDescriptorHeap(RTV)", hr);
     createRT(sc);
     createContext();
     gRendererType = "Direct3D 12";
@@ -164,7 +170,8 @@ bool init(IDXGISwapChain* sc) {
     info.SrvDescriptorHeap    = srvHeap.Get();
     info.SrvDescriptorAllocFn = &srvAlloc;
     info.SrvDescriptorFreeFn  = &srvFree;
-    return ImGui_ImplDX12_Init(&info);
+    if (!ImGui_ImplDX12_Init(&info)) { gWhy = "ImGui_ImplDX12_Init returned false"; return false; }
+    return true;
 }
 
 void render(IDXGISwapChain3* sc) {
@@ -208,9 +215,9 @@ void createRT(IDXGISwapChain* sc) {
     if (SUCCEEDED(sc->GetBuffer(0, IID_PPV_ARGS(&bb)))) device->CreateRenderTargetView(bb.Get(), nullptr, &rtv);
 }
 bool init(IDXGISwapChain* sc) {
-    if (FAILED(sc->GetDevice(IID_PPV_ARGS(&device)))) return false;
+    if (HRESULT hr = sc->GetDevice(IID_PPV_ARGS(&device)); FAILED(hr)) { d3d12::gWhy = "D3D11 GetDevice hr=0x" + d3d12::hex32(uint32_t(hr)); return false; }
     device->GetImmediateContext(&context);
-    if (!context) return false;
+    if (!context) { d3d12::gWhy = "no D3D11 immediate context"; return false; }
     createRT(sc);
     createContext();
     gRendererType = "Direct3D 11";
@@ -228,6 +235,7 @@ void render() {
 } // namespace d3d11
 
 bool gIs12 = false;
+int  gInitTries = 0;
 
 void onPresent(IDXGISwapChain* sc) {
     if (gFailed) return;
@@ -238,10 +246,19 @@ void onPresent(IDXGISwapChain* sc) {
         attachWindow(sc);
         if (!gWindow) return;
         captureGpuName(sc);
+        if (ImGui::GetCurrentContext() == nullptr) d3d12::gWhy.clear();
         bool ok = gIs12 ? d3d12::init(sc) : d3d11::init(sc);
         if (!ok) {
-            gFailed = true;
-            ll_shim::error(std::string("[RF] overlay init failed (") + (gIs12 ? "D3D12" : "D3D11") + ")");
+            ++gInitTries;
+            std::string why = d3d12::gWhy.empty() ? std::string("unknown") : d3d12::gWhy;
+            ll_shim::error("[RF] overlay init failed on " + std::string(gIs12 ? "D3D12" : "D3D11") + ": " + why + " (try "
+                           + std::to_string(gInitTries) + "/3)");
+            // tear down the partial context so a later frame can try again from scratch
+            if (ImGui::GetCurrentContext()) {
+                ImGui_ImplWin32_Shutdown();
+                ImGui::DestroyContext();
+            }
+            if (gInitTries >= 3) gFailed = true;
             return;
         }
         gInitialized = true;
