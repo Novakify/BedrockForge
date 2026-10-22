@@ -126,8 +126,17 @@ void releaseRT() {
     for (UINT i = 0; i < count; ++i) buffers[i].resource.Reset();
 }
 
+ComPtr<ID3D12CommandQueue> queueRef; // the swapchain's own queue (D3D12 swapchains report it from GetDevice)
+
+void srvAlloc(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_GPU_DESCRIPTOR_HANDLE* gpu) {
+    *cpu = srvHeap->GetCPUDescriptorHandleForHeapStart(); // ImGui only needs one SRV (the font atlas)
+    *gpu = srvHeap->GetGPUDescriptorHandleForHeapStart();
+}
+void srvFree(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_GPU_DESCRIPTOR_HANDLE) {}
+
 bool init(IDXGISwapChain* sc) {
-    if (FAILED(sc->GetDevice(IID_PPV_ARGS(&device)))) return false;
+    if (!queueRef || FAILED(queueRef->GetDevice(IID_PPV_ARGS(&device)))) return false;
+    queue = queueRef.Get();
     DXGI_SWAP_CHAIN_DESC desc{};
     sc->GetDesc(&desc);
     count   = desc.BufferCount;
@@ -146,8 +155,16 @@ bool init(IDXGISwapChain* sc) {
     createRT(sc);
     createContext();
     gRendererType = "Direct3D 12";
-    return ImGui_ImplDX12_Init(device.Get(), int(count), desc.BufferDesc.Format, srvHeap.Get(),
-                               srvHeap->GetCPUDescriptorHandleForHeapStart(), srvHeap->GetGPUDescriptorHandleForHeapStart());
+    ImGui_ImplDX12_InitInfo info{};
+    info.Device               = device.Get();
+    info.CommandQueue         = queueRef.Get(); // 1.91.x uploads the font atlas through this queue
+    info.NumFramesInFlight    = int(count);
+    info.RTVFormat            = desc.BufferDesc.Format;
+    info.DSVFormat            = DXGI_FORMAT_UNKNOWN;
+    info.SrvDescriptorHeap    = srvHeap.Get();
+    info.SrvDescriptorAllocFn = &srvAlloc;
+    info.SrvDescriptorFreeFn  = &srvFree;
+    return ImGui_ImplDX12_Init(&info);
 }
 
 void render(IDXGISwapChain3* sc) {
@@ -193,6 +210,7 @@ void createRT(IDXGISwapChain* sc) {
 bool init(IDXGISwapChain* sc) {
     if (FAILED(sc->GetDevice(IID_PPV_ARGS(&device)))) return false;
     device->GetImmediateContext(&context);
+    if (!context) return false;
     createRT(sc);
     createContext();
     gRendererType = "Direct3D 11";
@@ -215,9 +233,8 @@ void onPresent(IDXGISwapChain* sc) {
     if (gFailed) return;
     std::lock_guard l(gImGuiMutex);
     if (!gInitialized) {
-        ComPtr<ID3D12Device> d12;
-        gIs12 = SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&d12)));
-        if (gIs12 && !d3d12::queue.load()) return; // wait until the game's direct queue has been seen
+        // D3D12 swapchains return their command queue from GetDevice; D3D11 ones return the device.
+        gIs12 = SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&d3d12::queueRef)));
         attachWindow(sc);
         if (!gWindow) return;
         captureGpuName(sc);
@@ -236,6 +253,17 @@ void onPresent(IDXGISwapChain* sc) {
     } else d3d11::render();
 }
 
+// A crash inside the overlay must never take the game down: on any SEH fault, turn the overlay off for this run.
+std::atomic_bool gFaulted{false};
+void safePresent(IDXGISwapChain* sc) {
+    __try {
+        onPresent(sc);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        gFailed  = true;
+        gFaulted = true;
+    }
+}
+
 // ---------------------------------------------------------------- hooks
 using Present_t       = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 using Present1_t      = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain1*, UINT, UINT, DXGI_PRESENT_PARAMETERS const*);
@@ -249,11 +277,11 @@ void* gTargets[4]{};
 void* gDetours[4]{};
 
 HRESULT STDMETHODCALLTYPE presentHook(IDXGISwapChain* sc, UINT sync, UINT flags) {
-    if (!(flags & DXGI_PRESENT_TEST)) onPresent(sc);
+    if (!(flags & DXGI_PRESENT_TEST)) safePresent(sc);
     return reinterpret_cast<Present_t>(gOrigPresent)(sc, sync, flags);
 }
 HRESULT STDMETHODCALLTYPE present1Hook(IDXGISwapChain1* sc, UINT sync, UINT flags, DXGI_PRESENT_PARAMETERS const* p) {
-    if (!(flags & DXGI_PRESENT_TEST)) onPresent(sc);
+    if (!(flags & DXGI_PRESENT_TEST)) safePresent(sc);
     return reinterpret_cast<Present1_t>(gOrigPresent1)(sc, sync, flags, p);
 }
 HRESULT STDMETHODCALLTYPE resizeHook(IDXGISwapChain* sc, UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT fl) {
@@ -273,7 +301,7 @@ HRESULT STDMETHODCALLTYPE resizeHook(IDXGISwapChain* sc, UINT n, UINT w, UINT h,
     return hr;
 }
 void STDMETHODCALLTYPE executeHook(ID3D12CommandQueue* q, UINT n, ID3D12CommandList* const* lists) {
-    if (!d3d12::queue.load() && q->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) d3d12::queue = q;
+    (void)q; // queue now comes from the swapchain; hook kept only as a fallback probe target
     reinterpret_cast<Execute_t>(gOrigExecute)(q, n, lists);
 }
 
