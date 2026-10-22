@@ -1,3 +1,21 @@
+# Next session handoff (updated 2026-10-22 17:00 UTC)
+INSTALLED, NOT YET SEEN IN GAME (needs one launch from LeviLauncher):
+- BedrockForgeCore 2a13305 (prev: .29f18fc.dll, .b9.dll). New: shaderpack.txt authoritative + watched (live switch),
+  config/command.txt (reload | vibrant on|off | rescan), BF keeps serving when RF loaded, CRASH GUARD
+  (config/shaderpack.running; if the last run crashed with pack X -> config/shaderpack.fallback = Dread; writes shaderpack.crashed).
+- Active pack: CursedFog (shaders/src/CursedFog = port of Cursed Fog V1.0.10, LoLip_p, CC BY 4.0; see PORTING.md).
+  Uses ShaderForge's new // @uniform (ViewPositionAndTime, FogAndDistanceControl, LightWorldSpaceDirection, u_viewRect
+  appended to the fragment uniform tables). FIRST THING: launch -> My World -> screenshot; check logs/shaderpacks.txt and
+  logs/crash. If u_viewRect isn't filled, stripes/CRT use 1920x1080 fallback (would look offset at other sizes).
+  Verify: day red tint + desat 45%, black side stripes, CRT/vignette, grain, exp2 fog, no clouds; night very dark/purple.
+- Dread Atmosphere BP now CLEARS the Dread fog (Cursed reads the real fog colour). RP stays (VV grade).
+- Fancy graphics (graphics_mode:1), fullbright off. RF disabled; its config materialBinLoaderEnabled=false.
+CURSED FOG TODO: SunMoon/Stars materials (stage them), water waves (gbuffers_water), Nether/End (world-1/world1),
+entity variants with Change_Color/Emissive, chromatic aberration + interlace + motion blur -> RF full-screen pass.
+MORE HORROR PACKS (Modrinth, licence checked): Hysteria (3.7M dl, AGNYA: private mods allowed, public needs permission;
+Photon-based, 18k lines), Insanity (8M, AGNYA, 11k lines), Somber (MIT, 660 lines), Lost Signal VHS (MIT, ~2k lines),
+Ancient Dream (GPL-2.0), Optimism (MIT), HyShaders Horror (MIT). Downloads in /tmp/claude-0/dl/others (cloud, temporary).
+
 # Next session handoff (updated 2026-10-22 16:00 UTC)
 STATE ON THE PC (1.26.51.01 instance):
 - options.txt graphics_mode:1 (FANCY; was 2 = Vibrant Visuals, backup options.txt.bak-vv). Fullbright module OFF (backup modules.json.bak-fb).
