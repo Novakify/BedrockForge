@@ -1,3 +1,18 @@
+# Next session handoff (updated 2026-10-22 20:05 UTC)
+VERIFIED IN GAME TODAY: CursedFog, Insanity, Hysteria, Dread shaderpacks on Fancy (previews in chat); Dread Atmosphere on
+VV; mob animations (0 content errors; Dweller walks/stalks/attacks); BF+RF coexistence; crash guard.
+INSTALLED: BedrockForgeCore d3a2759 (prev .2a13305.dll). Active pack: Hysteria. RF disabled (manifest.json.disabled),
+RF DLL 843e0cf; build e2757eb (Present logging) is on rf-builds - install + enable to find why the overlay never inits.
+PRIVATE PORTS: Insanity / Hysteria sources only on the PC (shaderpacks/<Pack>/src) + /home/claude/private_ports (cloud,
+temporary). Never commit them (AGNYA licence). Cursed Fog is CC BY 4.0 -> in repo (shaders/src/CursedFog).
+Switching packs: write mods/BedrockForgeCore/config/shaderpack.txt then RESTART (live reload doesn't re-read materials).
+Computer use: chat commands can be typed (/ then type + Return). Close: Save&Quit, title-bar X, then LeviLauncher
+Launch -> "Force Launch" (old process lingers). Approvals expire after 30 min idle; ask the user in chat first.
+OPEN: real time-of-day/sun direction for shaders; RF overlay; full-screen pass (bloom, chromatic aberration, motion blur,
+CAS); Hysteria clouds; Nether/End variants; FPS of Hysteria (~40); live material reload; Fullbright v3 / zoom / hit
+colour / impact crit-only / Angel of Reaping still untested by hand; remaining client modules (freelook, block outline,
+nametags, hitboxes); leftover .tar files in mods/BedrockForgeCore (need delete permission).
+
 # Next session handoff (updated 2026-10-22 17:00 UTC)
 INSTALLED, NOT YET SEEN IN GAME (needs one launch from LeviLauncher):
 - BedrockForgeCore 2a13305 (prev: .29f18fc.dll, .b9.dll). New: shaderpack.txt authoritative + watched (live switch),

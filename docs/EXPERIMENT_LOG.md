@@ -122,3 +122,18 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
   falls back when CrashLogger wrote a new report in <game>/logs/crash after the marker.
 - The game process often lingers after the window is closed (mods disabled cleanly, window stays). LeviLauncher's
   "Force Launch" starts a fresh instance.
+
+## E-026 (2026-10-22 20:00 UTC) - Insanity + Hysteria ports, all packs verified in game, mobs verified
+- Ports (PRIVATE, AGNYA licence: private modifications only; source lives only in <PC>/mods/BedrockForgeCore/shaderpacks/
+  <Pack>/src, never committed): Insanity v1.650 (BSL forward lighting, desaturation, fog, BSL tonemap/saturation) and
+  Hysteria v1.2.1 (Photon diffuse model, analytic single-scattering atmosphere in place of the LUT, raymarched air fog
+  with fogginess 4.5, grade_input/Lottes/grade_output in Rec.2020). Built with ShaderForge (48 terrain + 16 actor + sky).
+- Same spot in My World (rain): Hysteria 37-42 fps, Insanity 59, Cursed Fog 56, Dread 66 (vanilla ~66). Previews sent.
+- DebugSun: LightWorldSpaceDirection is ZERO in RenderChunk on Fancy (magenta). Sun direction / time of day therefore
+  come from the lightmap sky level (afternoon assumed). TODO: real time of day -> needs a channel from BF.
+- Typing chat commands via computer use WORKS (/summon, /gamemode). Spawned Dweller + sculk zombie/witch/sheep/
+  vindicator: Dweller animates (crawl/stalk poses change frame to frame), charges and attacks (hit for 4 hearts, then
+  killed the player). Content log after spawning: 0 errors.
+- With Renderer Foundation loaded, BF still serves Hysteria (yield fix verified). RF overlay: hooks install but no
+  Present ever reached init on 1.26.51 (F6 does nothing). e2757eb logs Present/Present1 calls -> next test.
+- Crash guard d3a2759 verified: after a force-close it logged "no crash report -> keeping 'Hysteria'".
