@@ -1,3 +1,24 @@
+# Next session handoff (updated 2026-10-22 16:00 UTC)
+STATE ON THE PC (1.26.51.01 instance):
+- options.txt graphics_mode:1 (FANCY; was 2 = Vibrant Visuals, backup options.txt.bak-vv). Fullbright module OFF (backup modules.json.bak-fb).
+- Custom shaders DO run on Fancy: proven with the DebugRed pack (all terrain red). Dread's blobs replace the same slots.
+- Why Dread looked vanilla: (1) the ForgeRender "pack" slider is an INDEX saved in modules.json and wins over shaderpack.txt;
+  adding DebugRed shifted Dread 2->3 so slot 2 = DebugRed; (2) with Renderer Foundation loaded BF stopped redirecting
+  (yield) and RF's loader served nothing. 9461ee7 fixes both: shaderpack.txt is authoritative + WATCHED (write a name into
+  it -> switch + reload), config/command.txt = reload | vibrant on|off | rescan, BF keeps serving with RF loaded.
+- Game left RUNNING in My World with DebugRed (red terrain) when Fernando left; screen locked -> computer use blocked
+  ("desktop shell is frontmost"). Don't call request_access unattended.
+- To finish: install the 9461ee7+ DLL (rename the loaded DLL first - renaming works while the game runs), shaderpack.txt=Dread,
+  next launch -> verify Dread on Fancy, then test live switching by writing shaderpack.txt / command.txt=reload and reading
+  logs/shaderpacks.txt ("cleanReloadMaterials ran", material open counts).
+- Dread Atmosphere RP+BP (VV grade + fog) on in My World + From The Fog Test. Content logs: ZERO errors in both worlds.
+- Renderer Foundation: manifest.json.disabled; DLL = 843e0cf (init step logging). Overlay init failed on 0b01034 (reason
+  truncated in log). Keep disabled until the overlay works.
+GOAL (Fernando): shaders must look 1:1 like the Java shaderpack, not similar. Assumed Cursed Fog (LoLip_p, CC-BY-4.0, Modrinth);
+asked him to confirm + allow modrinth.com / api.modrinth.com / cdn.modrinth.com (blocked in cloud AND on the PC sandbox).
+Port plan: gbuffers_* -> RenderDragon materials (RenderChunk/Actor/Sky/Clouds/Weather...), composite/final -> needs a
+post-process pass (Fancy has none: inject a full-screen pass at Present or use VV's ColorPostProcessing material).
+
 # Next session handoff (updated 2026-10-22 14:40 UTC)
 STATE ON THE PC (1.26.51.01 instance; folder access granted):
 - BedrockForgeCore b9 (abd455a). Dread shaderpack v2 active (BF serves it: mods/BedrockForgeCore/shaderpacks/Dread, shaderpack.txt=Dread).
