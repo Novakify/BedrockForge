@@ -15,3 +15,4 @@ Sky, RenderChunk, ColorPostProcessing) + Microsoft dxc for SM6.0 / SM6.5 blobs. 
 | Anime | Sky | cel-banded sky gradient + horizon glow | 4/4 SM6 blobs, signature + bindings match vanilla |
 | Anime | RenderChunk | cel (banded) lighting with cool shadows, +15% saturation; Opaque / AlphaTest / Transparent incl. distance-dither variants | 48/60 blobs (Seasons variants stay vanilla) |
 | Anime | Actor | cel lighting for mobs + players (Opaque + AlphaTest with the vanilla dither fade), plain variants | 16/152 blobs (Change_Color / Emissive / MaskedMultitexture stay vanilla) |
+| Dread | RenderChunk / Actor / Sky / Clouds | horror atmosphere: crushed dark light with cold shadows, weak warm torchlight, 38% desaturation, heavy grey fog curve, faint film grain; drained sky with grey horizon haze | 48/60 RenderChunk, 8 Actor, 4/4 Sky, 4/4 Clouds |

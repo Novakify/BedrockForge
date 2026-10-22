@@ -72,3 +72,13 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
   ExecuteCommandLists queue capture, Win32 WndProc input, F6).
 - Bedrock Forge side: if RendererFoundation.dll is loaded, ForgeRender's material redirect yields to it (no code shared;
   the two DLLs only coexist).
+
+## E-022 - 2026-10-22 (Fernando away 2 h; PC folder access + computer use granted)
+- Installed b9 (abd455a) + crit-only impact BP script; built + installed "Dread" horror shaderpack (ShaderForge against the PC's
+  vanilla 1.26 materials; active via shaderpack.txt = Dread). Launched the instance via computer use: title screen + world join OK,
+  BF log "shaderpacks: 2 found, active = 'Dread'", Actor + RenderChunk served from Dread at boot; the world behind the pause menu
+  looks desaturated/grey-fogged (screenshot). Game input still ignored (Resume click did nothing) -> gameplay tests need Fernando.
+- From The Fog (Bedrock) v1 packs (branch ftf-bedrock 8950b88) installed as dev packs; new world "From The Fog Test"
+  (copy of My World, only FTF BP/RP, level.dat LevelName patched). Pack stack log shows the BP loads. content_log_file turned on.
+- Renderer Foundation: LeviLamina refused it ("isn't using the unified memory allocation operator") -> added MemoryOperators.cpp
+  (4e519cb). Closing the game: alt+F4 works after clicking the title bar first.
