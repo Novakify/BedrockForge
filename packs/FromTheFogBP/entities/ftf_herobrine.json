@@ -6,40 +6,172 @@
    "is_spawnable": true,
    "is_summonable": true,
    "properties": {
-    "ftf:skin": {"type": "int", "range": [0, 61], "default": 0, "client_sync": true},
-    "ftf:anim": {"type": "enum", "values": ["idle", "walk", "punch"], "default": "idle", "client_sync": true},
-    "ftf:holding": {"type": "bool", "default": false, "client_sync": true},
-    "ftf:tilt": {"type": "bool", "default": false, "client_sync": true},
-    "ftf:emissive": {"type": "bool", "default": true, "client_sync": true},
-    "ftf:hide_arms": {"type": "bool", "default": false, "client_sync": true},
-    "ftf:hide_legs": {"type": "bool", "default": false, "client_sync": true},
-    "ftf:hide_body": {"type": "bool", "default": false, "client_sync": true}
+    "ftf:skin": {
+     "type": "int",
+     "range": [
+      0,
+      61
+     ],
+     "default": 0,
+     "client_sync": true
+    },
+    "ftf:anim": {
+     "type": "enum",
+     "values": [
+      "idle",
+      "walk",
+      "punch"
+     ],
+     "default": "idle",
+     "client_sync": true
+    },
+    "ftf:holding": {
+     "type": "bool",
+     "default": false,
+     "client_sync": true
+    },
+    "ftf:tilt": {
+     "type": "bool",
+     "default": false,
+     "client_sync": true
+    },
+    "ftf:emissive": {
+     "type": "bool",
+     "default": true,
+     "client_sync": true
+    },
+    "ftf:hide_arms": {
+     "type": "bool",
+     "default": false,
+     "client_sync": true
+    },
+    "ftf:hide_legs": {
+     "type": "bool",
+     "default": false,
+     "client_sync": true
+    },
+    "ftf:hide_body": {
+     "type": "bool",
+     "default": false,
+     "client_sync": true
+    },
+    "ftf:hide_head": {
+     "type": "bool",
+     "default": false,
+     "client_sync": true
+    }
    }
   },
   "component_groups": {
-   "ftf:no_sleep": {"minecraft:type_family": {"family": ["herobrine", "monster", "mob"]}},
-   "ftf:sleep_ok": {"minecraft:type_family": {"family": ["herobrine", "inanimate"]}}
+   "ftf:no_sleep": {
+    "minecraft:type_family": {
+     "family": [
+      "herobrine",
+      "monster",
+      "mob"
+     ]
+    }
+   },
+   "ftf:sleep_ok": {
+    "minecraft:type_family": {
+     "family": [
+      "herobrine",
+      "inanimate"
+     ]
+    }
+   }
   },
   "components": {
-   "minecraft:type_family": {"family": ["herobrine", "monster", "mob"]},
-   "minecraft:collision_box": {"width": 0.6, "height": 1.8},
-   "minecraft:health": {"value": 20, "max": 20},
-   "minecraft:damage_sensor": {"triggers": [{"cause": "all", "deals_damage": "no"}]},
-   "minecraft:knockback_resistance": {"value": 1.0},
-   "minecraft:pushable": {"is_pushable": false, "is_pushable_by_piston": false},
-   "minecraft:physics": {"has_gravity": false, "has_collision": false},
-   "minecraft:push_through": {"value": 1},
-   "minecraft:movement": {"value": 0},
-   "minecraft:nameable": {"always_show": false, "allow_name_tag_renaming": false},
+   "minecraft:type_family": {
+    "family": [
+     "herobrine",
+     "monster",
+     "mob"
+    ]
+   },
+   "minecraft:collision_box": {
+    "width": 0.6,
+    "height": 1.8
+   },
+   "minecraft:health": {
+    "value": 20,
+    "max": 20
+   },
+   "minecraft:damage_sensor": {
+    "triggers": [
+     {
+      "cause": "all",
+      "deals_damage": "no"
+     }
+    ]
+   },
+   "minecraft:knockback_resistance": {
+    "value": 1.0
+   },
+   "minecraft:pushable": {
+    "is_pushable": false,
+    "is_pushable_by_piston": false
+   },
+   "minecraft:physics": {
+    "has_gravity": false,
+    "has_collision": false
+   },
+   "minecraft:push_through": {
+    "value": 1
+   },
+   "minecraft:movement": {
+    "value": 0
+   },
+   "minecraft:nameable": {
+    "always_show": false,
+    "allow_name_tag_renaming": false
+   },
    "minecraft:fire_immune": {},
-   "minecraft:breathable": {"breathes_water": true, "breathes_air": true, "suffocate_time": 0, "total_supply": 15},
-   "minecraft:equipment": {"slot_drop_chance": [{"slot": "slot.weapon.mainhand", "drop_chance": 0}]},
-   "minecraft:loot": {"table": "loot_tables/empty.json"},
+   "minecraft:breathable": {
+    "breathes_water": true,
+    "breathes_air": true,
+    "suffocate_time": 0,
+    "total_supply": 15
+   },
+   "minecraft:equipment": {
+    "table": "loot_tables/empty.json",
+    "slot_drop_chance": [
+     {
+      "slot": "slot.weapon.mainhand",
+      "drop_chance": 0
+     }
+    ]
+   },
+   "minecraft:loot": {
+    "table": "loot_tables/empty.json"
+   },
    "minecraft:conditional_bandwidth_optimization": {}
   },
   "events": {
-   "ftf:no_sleep_on": {"remove": {"component_groups": ["ftf:sleep_ok"]}, "add": {"component_groups": ["ftf:no_sleep"]}},
-   "ftf:no_sleep_off": {"remove": {"component_groups": ["ftf:no_sleep"]}, "add": {"component_groups": ["ftf:sleep_ok"]}}
+   "ftf:no_sleep_on": {
+    "remove": {
+     "component_groups": [
+      "ftf:sleep_ok"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "ftf:no_sleep"
+     ]
+    }
+   },
+   "ftf:no_sleep_off": {
+    "remove": {
+     "component_groups": [
+      "ftf:no_sleep"
+     ]
+    },
+    "add": {
+     "component_groups": [
+      "ftf:sleep_ok"
+     ]
+    }
+   }
   }
  }
 }

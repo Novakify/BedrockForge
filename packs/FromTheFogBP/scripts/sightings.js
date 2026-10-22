@@ -220,6 +220,7 @@ function chooseSkin() {
  * @param {any} [at] explicit position for "still" sightings
  */
 export function sighting(preset, player, at) {
+  if (cur) { for (const h of cur.runs) system.clearRun(h); if (cur.glassRemove !== undefined) system.clearRun(cur.glassRemove); cur = undefined; }
   removeHerobrine(false);
   if (retryCount >= 5) { retryCount = 0; cleanup(); debug("sighting gave up after 5 retries", false); return undefined; }
   const pos = position(preset, player, at);
@@ -243,6 +244,7 @@ export function sighting(preset, player, at) {
   entity.setProperty("ftf:hide_arms", pants || !skin.arms);
   entity.setProperty("ftf:hide_legs", !skin.legs);
   entity.setProperty("ftf:hide_body", pants || !skin.body);
+  entity.setProperty("ftf:hide_head", pants);
   entity.triggerEvent(opt("no_sleep") === true ? "ftf:no_sleep_on" : "ftf:no_sleep_off");
   const nt = String(opt("nametag"));
   if (nt === "dynamic") entity.nameTag = skin.name;

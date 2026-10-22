@@ -66,7 +66,8 @@ world.afterEvents.playerInteractWithBlock.subscribe((ev) => {
   const b = ev.block;
   if (item === "minecraft:flint_and_steel" || item === "minecraft:fire_charge") {
     const dim = b.dimension;
-    const tryAt = [b.location, { x: b.location.x, y: b.location.y + 1, z: b.location.z }];
+    const off = { Up: [0, 1, 0], Down: [0, -1, 0], North: [0, 0, -1], South: [0, 0, 1], East: [1, 0, 0], West: [-1, 0, 0] }[String(ev.blockFace)] ?? [0, 1, 0];
+    const tryAt = [{ x: b.location.x + off[0], y: b.location.y + off[1], z: b.location.z + off[2] }, b.location];
     system.runTimeout(() => {
       for (const l of tryAt) { const f = dim.getBlock(l); if (f?.typeId === "minecraft:fire") { onFirePlaced(ev.player, dim, floorV(l)); break; } }
     }, 1);

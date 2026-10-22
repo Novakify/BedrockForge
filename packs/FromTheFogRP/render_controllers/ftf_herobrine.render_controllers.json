@@ -163,6 +163,9 @@
     },
     {
      "body": "!q.property('ftf:hide_body')"
+    },
+    {
+     "head": "!q.property('ftf:hide_head')"
     }
    ]
   },
@@ -329,6 +332,9 @@
     },
     {
      "body": "!q.property('ftf:hide_body')"
+    },
+    {
+     "head": "!q.property('ftf:hide_head')"
     }
    ]
   }
