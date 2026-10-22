@@ -140,7 +140,7 @@
     },
     "minecraft:behavior.melee_attack": {
      "priority": 1,
-     "speed_multiplier": 0.85,
+     "speed_multiplier": 1.35,
      "track_target": true,
      "require_complete_path": false,
      "cooldown_time": 1.0
@@ -187,7 +187,7 @@
      "height": 2.7
     },
     "minecraft:movement": {
-     "value": 0.5
+     "value": 0.6
     }
    },
    "pose_crouch": {
@@ -196,7 +196,7 @@
      "height": 1.7
     },
     "minecraft:movement": {
-     "value": 0.35
+     "value": 0.45
     }
    },
    "pose_crawl": {
@@ -205,7 +205,7 @@
      "height": 0.5
     },
     "minecraft:movement": {
-     "value": 0.21
+     "value": 0.35
     }
    },
    "pose_frozen": {
@@ -246,7 +246,7 @@
     "height": 2.7
    },
    "minecraft:movement": {
-    "value": 0.5
+    "value": 0.6
    },
    "minecraft:physics": {},
    "minecraft:pushable": {

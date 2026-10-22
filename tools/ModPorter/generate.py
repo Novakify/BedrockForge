@@ -28,10 +28,25 @@ def bedrock_anim(anim: dict) -> dict:
             v = bone.get(ch)
             if not isinstance(v, dict):
                 continue
+            if "vector" in v:  # whole channel is a single GeckoLib value (often Molang driven)
+                bone[ch] = v["vector"]
+                continue
             for t, val in list(v.items()):
                 if isinstance(val, dict) and "vector" in val:
                     smooth = val.get("easing", "linear") in _SMOOTH_EASINGS
                     v[t] = {"post": val["vector"], "lerp_mode": "catmullrom"} if smooth else val["vector"]
+    return anim
+
+
+def bedrock_anim_name_tweaks(name: str, anim: dict) -> dict:
+    """Locomotion cycles play faster when the mob moves faster (GeckoLib scales them by limb swing)."""
+    short = name.rsplit(".", 1)[-1].lower()
+    if re.search(r"(walk|run|crawl|chase|sprint|move)", short) and "anim_time_update" not in anim:
+        anim["anim_time_update"] = "q.anim_time + q.delta_time * math.clamp(q.modified_move_speed * 3.0, 0.75, 2.5)"
+    return anim
+
+
+def _strip_timeline(anim: dict) -> dict:
     tl = anim.get("timeline")
     if isinstance(tl, dict):
         for t, val in list(tl.items()):
@@ -132,7 +147,7 @@ def main(argv=None):
             if lasts.count(short.lower()) > 1:   # collision -> keep more of the name
                 short = re.sub(r"^animation\.(model\.|%s\.)?" % re.escape(stem), "", k).replace(".", "_").strip("_") or short
             nk = f"animation.{ns}.{stem}.{short.lower()}"; new[nk] = v; mp[k] = (short, nk)
-        an["animations"] = {k: bedrock_anim(v) for k, v in new.items()}
+        an["animations"] = {k: bedrock_anim_name_tweaks(k, _strip_timeline(bedrock_anim(v))) for k, v in new.items()}
         (rp / "animations").mkdir(parents=True, exist_ok=True)
         (rp / "animations" / f"{stem}.animation.json").write_text(json.dumps(an, indent=1))
         anim_maps[src] = mp

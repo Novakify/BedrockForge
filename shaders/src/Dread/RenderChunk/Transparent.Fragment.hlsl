@@ -38,7 +38,7 @@ float4 main(PSIn i) : SV_Target {
 #endif
     float3 light = s_LightMapTextureTexture.Sample(s_LightMapTextureSampler, i.texcoord1).rgb;
     c *= dreadLight(light, i.texcoord1);
-    c  = desat(c, 0.62);
+    c  = desat(c, 0.5);
     c  = dreadFog(c, FogColor.rgb, i.color2.w);
     c  = dreadGrain(c, i.position.xy);
     return float4(c, a);

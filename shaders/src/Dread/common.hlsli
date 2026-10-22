@@ -4,13 +4,13 @@ float luma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 float3 desat(float3 c, float keep) { float l = luma(c); return lerp(float3(l, l, l), c, keep); }
 float dreadHash(float2 p) { float3 p3 = frac(p.xyx * float3(0.1031, 0.1030, 0.0973)); p3 += dot(p3, p3.yzx + 33.33); return frac((p3.x + p3.y) * p3.z); }
 // film grain from the screen position (static per pixel; subtle)
-float3 dreadGrain(float3 c, float2 px) { return c + (dreadHash(floor(px)) - 0.5) * 0.035 * (1.0 - luma(c) * 0.6); }
+float3 dreadGrain(float3 c, float2 px) { return c + (dreadHash(floor(px)) - 0.5) * 0.05 * (1.0 - luma(c) * 0.5); }
 
 // Lightmap -> horror light: crush low light toward black, cold blue in the dark, keep torch warmth but weaker.
 // uv.x = block light, uv.y = sky light (vanilla lightmap layout)
 float3 dreadLight(float3 light, float2 uv) {
     float  L     = max(max(light.r, light.g), light.b);
-    float  crush = pow(saturate(L), 1.65);
+    float  crush = pow(saturate(L), 1.9);
     float3 cold  = lerp(float3(0.42, 0.50, 0.70), float3(1.0, 1.0, 1.0), saturate(crush * 1.6));
     float  torch = smoothstep(0.55, 1.0, uv.x) * (1.0 - smoothstep(0.6, 1.0, uv.y) * 0.5);
     float3 warm  = lerp(float3(1.0, 1.0, 1.0), float3(1.08, 0.82, 0.58), torch);
@@ -19,8 +19,8 @@ float3 dreadLight(float3 light, float2 uv) {
 
 // Thicker fog: vanilla fog factor curved up + extra low-lying mist, tinted toward a dark desaturated grey.
 float3 dreadFog(float3 c, float3 fogColor, float fog) {
-    float  f  = saturate(pow(saturate(fog), 0.45) * 1.1 + 0.04);
-    float3 fc = desat(fogColor, 0.35) * 0.78 + float3(0.02, 0.025, 0.03);
+    float  f  = saturate(pow(saturate(fog), 0.33) * 1.15 + 0.10);
+    float3 fc = desat(fogColor, 0.25) * 0.62 + float3(0.03, 0.035, 0.04);
     return lerp(c, fc, f);
 }
 // Vanilla distance-dither fade (matches RenderDragon's Actor/RenderChunk alpha-test code): true = discard this pixel.
