@@ -33,7 +33,9 @@ namespace rf::overlay {
 namespace {
 using Microsoft::WRL::ComPtr;
 
-std::mutex       gImGuiMutex; // window thread (input) vs render thread (frames)
+// recursive: ImGui_ImplWin32_WndProcHandler calls SetCapture/ReleaseCapture on clicks, which re-enter wndProc on the
+// same thread with WM_CAPTURECHANGED (a plain std::mutex threw "resource deadlock" there and crashed the game).
+std::recursive_mutex gImGuiMutex; // window thread (input) vs render thread (frames)
 std::atomic_bool gInitialized{false}, gFailed{false};
 std::string      gGpuName, gRendererType = "unknown";
 HWND             gWindow   = nullptr;
