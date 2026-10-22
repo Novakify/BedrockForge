@@ -126,7 +126,8 @@ void releaseRT() {
     for (UINT i = 0; i < count; ++i) buffers[i].resource.Reset();
 }
 
-ComPtr<ID3D12CommandQueue> queueRef; // the swapchain's own queue (D3D12 swapchains report it from GetDevice)
+ComPtr<ID3D12CommandQueue> queueRef; // the game's DIRECT queue, captured in ExecuteCommandLists (see executeHook)
+std::mutex                 queueMutex;
 
 void srvAlloc(ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_GPU_DESCRIPTOR_HANDLE* gpu) {
     *cpu = srvHeap->GetCPUDescriptorHandleForHeapStart(); // ImGui only needs one SRV (the font atlas)
@@ -138,8 +139,11 @@ std::string gWhy;
 #define RF_FAIL(what, hr) do { gWhy = std::string(what) + " hr=0x" + hex32(uint32_t(hr)); return false; } while (0)
 std::string hex32(uint32_t v) { char b[16]; snprintf(b, sizeof b, "%08X", v); return b; }
 bool init(IDXGISwapChain* sc) {
-    if (!queueRef) { gWhy = "no command queue from swapchain"; return false; }
-    if (HRESULT hr = queueRef->GetDevice(IID_PPV_ARGS(&device)); FAILED(hr)) RF_FAIL("queue->GetDevice", hr);
+    if (HRESULT hr = sc->GetDevice(IID_PPV_ARGS(&device)); FAILED(hr)) RF_FAIL("swapchain->GetDevice(D3D12)", hr);
+    {
+        std::lock_guard l(queueMutex);
+        if (!queueRef) { gWhy = "no D3D12 command queue captured yet"; return false; }
+    }
     queue = queueRef.Get();
     DXGI_SWAP_CHAIN_DESC desc{};
     sc->GetDesc(&desc);
@@ -242,7 +246,15 @@ void onPresent(IDXGISwapChain* sc) {
     std::lock_guard l(gImGuiMutex);
     if (!gInitialized) {
         // D3D12 swapchains return their command queue from GetDevice; D3D11 ones return the device.
-        gIs12 = SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&d3d12::queueRef)));
+        // D3D12 swapchains answer GetDevice(ID3D12Device); D3D11 ones GetDevice(ID3D11Device).
+        {
+            ComPtr<ID3D12Device> d12;
+            gIs12 = SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&d12)));
+        }
+        if (gIs12) {
+            std::lock_guard l(d3d12::queueMutex);
+            if (!d3d12::queueRef) return; // wait until the game has submitted on its direct queue
+        }
         attachWindow(sc);
         if (!gWindow) {
             static bool once = false;
@@ -301,8 +313,8 @@ std::atomic<long> gPresentCalls{0}, gPresent1Calls{0};
 void notePresent(char const* which, std::atomic<long>& n, IDXGISwapChain* sc) {
     long c = ++n;
     if (c == 1 || c == 600) {
-        ComPtr<ID3D12CommandQueue> q;
-        ComPtr<ID3D11Device>       d;
+        ComPtr<ID3D12Device> q;
+        ComPtr<ID3D11Device> d;
         bool is12 = SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&q)));
         bool is11 = !is12 && SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&d)));
         ll_shim::info(std::string("[RF] ") + which + " call #" + std::to_string(c) + " swapchain " +
@@ -336,7 +348,14 @@ HRESULT STDMETHODCALLTYPE resizeHook(IDXGISwapChain* sc, UINT n, UINT w, UINT h,
     return hr;
 }
 void STDMETHODCALLTYPE executeHook(ID3D12CommandQueue* q, UINT n, ID3D12CommandList* const* lists) {
-    (void)q; // queue now comes from the swapchain; hook kept only as a fallback probe target
+    // Keep the game's DIRECT queue: D3D12 swapchains present through it and ImGui must submit on it.
+    if (q && !d3d12::queueRef) {
+        D3D12_COMMAND_QUEUE_DESC d = q->GetDesc();
+        if (d.Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+            std::lock_guard l(d3d12::queueMutex);
+            if (!d3d12::queueRef) d3d12::queueRef = q;
+        }
+    }
     reinterpret_cast<Execute_t>(gOrigExecute)(q, n, lists);
 }
 
