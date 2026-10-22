@@ -1,0 +1,12 @@
+{
+ "format_version": "1.21.90",
+ "minecraft:item": {
+  "description": {"identifier": "ftf:fog_journal", "menu_category": {"category": "items"}},
+  "components": {
+   "minecraft:icon": "ftf_fog_journal",
+   "minecraft:display_name": {"value": "item.ftf:fog_journal"},
+   "minecraft:max_stack_size": 1,
+   "minecraft:use_modifiers": {"use_duration": 0.1, "movement_modifier": 1.0}
+  }
+ }
+}

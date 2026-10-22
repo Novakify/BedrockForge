@@ -1,0 +1,36 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "From The Fog (Bedrock)",
+    "description": "From The Fog by LunarEclipseStudios - CC BY-NC-SA 4.0. Unofficial non-commercial Bedrock adaptation; skins by their credited authors.",
+    "uuid": "6c27bd48-6473-4d25-af8d-5370fc15b5ae",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      90
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "298fc939-4127-4eaf-b456-c7efc9365c24",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "metadata": {
+    "authors": [
+      "LunarEclipseStudios (original)",
+      "Novak (Bedrock adaptation)"
+    ],
+    "license": "CC BY-NC-SA 4.0"
+  }
+}

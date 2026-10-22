@@ -1,0 +1,24 @@
+{
+ "format_version": "1.21.90",
+ "minecraft:entity": {
+  "description": {"identifier": "ftf:door_ghost", "is_spawnable": false, "is_summonable": true},
+  "components": {
+   "minecraft:type_family": {"family": ["ftf_door_ghost", "inanimate"]},
+   "minecraft:collision_box": {"width": 0.2, "height": 0.4},
+   "minecraft:health": {"value": 20, "max": 20},
+   "minecraft:damage_sensor": {"triggers": [{"cause": "all", "deals_damage": "no"}]},
+   "minecraft:pushable": {"is_pushable": false, "is_pushable_by_piston": false},
+   "minecraft:physics": {},
+   "minecraft:movement": {"value": 0.3},
+   "minecraft:movement.basic": {},
+   "minecraft:jump.static": {},
+   "minecraft:navigation.walk": {"can_open_doors": true, "can_pass_doors": true, "avoid_water": true, "can_path_over_water": false},
+   "minecraft:annotation.open_door": {},
+   "minecraft:behavior.open_door": {"priority": 1, "close_door_after": true},
+   "minecraft:behavior.move_indoors": {"priority": 2, "speed_multiplier": 1.0},
+   "minecraft:behavior.random_stroll": {"priority": 3, "speed_multiplier": 1.0, "interval": 10, "xz_dist": 6},
+   "minecraft:nameable": {"always_show": false},
+   "minecraft:loot": {"table": "loot_tables/empty.json"}
+  }
+ }
+}

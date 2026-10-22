@@ -1,0 +1,18 @@
+{
+ "resource_pack_name": "ftf",
+ "texture_name": "atlas.items",
+ "texture_data": {
+  "ftf_fog_journal": {
+   "textures": "textures/items/ftf_fog_journal"
+  },
+  "ftf_disc_deathbed": {
+   "textures": "textures/items/ftf_disc_deathbed"
+  },
+  "ftf_disc_herobrine_lullaby": {
+   "textures": "textures/items/ftf_disc_herobrine_lullaby"
+  },
+  "ftf_disc_hes_from_the_fog": {
+   "textures": "textures/items/ftf_disc_hes_from_the_fog"
+  }
+ }
+}

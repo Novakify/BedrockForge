@@ -1,0 +1,13 @@
+{
+ "format_version": "1.21.90",
+ "minecraft:item": {
+  "description": {"identifier": "ftf:disc_herobrine_lullaby", "menu_category": {"category": "items"}},
+  "components": {
+   "minecraft:icon": "ftf_disc_herobrine_lullaby",
+   "minecraft:display_name": {"value": "item.ftf:disc_herobrine_lullaby"},
+   "minecraft:max_stack_size": 1,
+   "minecraft:rarity": "rare",
+   "minecraft:tags": {"tags": ["ftf:disc"]}
+  }
+ }
+}

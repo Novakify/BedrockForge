@@ -1,0 +1,10 @@
+## From The Fog (Bedrock) - adaptation of From The Fog by LunarEclipseStudios (CC BY-NC-SA 4.0)
+pack.name=From The Fog (Bedrock)
+pack.description=From The Fog by LunarEclipseStudios - CC BY-NC-SA 4.0
+entity.ftf:herobrine.name=Herobrine
+entity.ftf:door_ghost.name=???
+item.spawn_egg.entity.ftf:herobrine.name=Spawn Herobrine
+item.ftf:fog_journal=Fog Journal
+item.ftf:disc_herobrine_lullaby=Music Disc
+item.ftf:disc_deathbed=Music Disc
+item.ftf:disc_hes_from_the_fog=Music Disc

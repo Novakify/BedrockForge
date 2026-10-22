@@ -1,0 +1,336 @@
+{
+ "format_version": "1.10.0",
+ "render_controllers": {
+  "controller.render.ftf.herobrine": {
+   "arrays": {
+    "textures": {
+     "Array.skins": [
+      "Texture.s0",
+      "Texture.s1",
+      "Texture.s2",
+      "Texture.s3",
+      "Texture.s4",
+      "Texture.s5",
+      "Texture.s6",
+      "Texture.s7",
+      "Texture.s8",
+      "Texture.s9",
+      "Texture.s10",
+      "Texture.s11",
+      "Texture.s12",
+      "Texture.s13",
+      "Texture.s14",
+      "Texture.s15",
+      "Texture.s16",
+      "Texture.s17",
+      "Texture.s18",
+      "Texture.s19",
+      "Texture.s20",
+      "Texture.s21",
+      "Texture.s22",
+      "Texture.s23",
+      "Texture.s24",
+      "Texture.s25",
+      "Texture.s26",
+      "Texture.s27",
+      "Texture.s28",
+      "Texture.s29",
+      "Texture.s30",
+      "Texture.s31",
+      "Texture.s32",
+      "Texture.s33",
+      "Texture.s34",
+      "Texture.s35",
+      "Texture.s36",
+      "Texture.s37",
+      "Texture.s38",
+      "Texture.s39",
+      "Texture.s40",
+      "Texture.s41",
+      "Texture.s42",
+      "Texture.s43",
+      "Texture.s44",
+      "Texture.s45",
+      "Texture.s46",
+      "Texture.s47",
+      "Texture.s48",
+      "Texture.s49",
+      "Texture.s50",
+      "Texture.s51",
+      "Texture.s52",
+      "Texture.s53",
+      "Texture.s54",
+      "Texture.s55",
+      "Texture.s56",
+      "Texture.s57",
+      "Texture.s58",
+      "Texture.s59",
+      "Texture.s60",
+      "Texture.s61"
+     ]
+    },
+    "geometries": {
+     "Array.geos": [
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.slim",
+      "Geometry.slim",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.slim",
+      "Geometry.slim",
+      "Geometry.slim",
+      "Geometry.slim",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.slim",
+      "Geometry.default"
+     ]
+    }
+   },
+   "geometry": "Array.geos[q.property('ftf:skin')]",
+   "materials": [
+    {
+     "*": "Material.default"
+    }
+   ],
+   "textures": [
+    "Array.skins[q.property('ftf:skin')]"
+   ],
+   "part_visibility": [
+    {
+     "*": true
+    },
+    {
+     "leftArm": "!q.property('ftf:hide_arms')"
+    },
+    {
+     "rightArm": "!q.property('ftf:hide_arms')"
+    },
+    {
+     "leftLeg": "!q.property('ftf:hide_legs')"
+    },
+    {
+     "rightLeg": "!q.property('ftf:hide_legs')"
+    },
+    {
+     "body": "!q.property('ftf:hide_body')"
+    }
+   ]
+  },
+  "controller.render.ftf.herobrine_emissive": {
+   "arrays": {
+    "textures": {
+     "Array.emissive": [
+      "Texture.e0",
+      "Texture.e1",
+      "Texture.e2",
+      "Texture.e3",
+      "Texture.e4",
+      "Texture.e5",
+      "Texture.e6",
+      "Texture.e7",
+      "Texture.e8",
+      "Texture.e9",
+      "Texture.e10",
+      "Texture.e11",
+      "Texture.e12",
+      "Texture.e13",
+      "Texture.e14",
+      "Texture.e15",
+      "Texture.e16",
+      "Texture.e17",
+      "Texture.e18",
+      "Texture.e19",
+      "Texture.e20",
+      "Texture.e21",
+      "Texture.e22",
+      "Texture.e23",
+      "Texture.e24",
+      "Texture.e25",
+      "Texture.e26",
+      "Texture.e27",
+      "Texture.e28",
+      "Texture.e29",
+      "Texture.e30",
+      "Texture.e31",
+      "Texture.e32",
+      "Texture.e33",
+      "Texture.e34",
+      "Texture.e35",
+      "Texture.e36",
+      "Texture.e37",
+      "Texture.e38",
+      "Texture.e39",
+      "Texture.e40",
+      "Texture.e41",
+      "Texture.e42",
+      "Texture.e43",
+      "Texture.e44",
+      "Texture.e45",
+      "Texture.e46",
+      "Texture.e47",
+      "Texture.e48",
+      "Texture.e49",
+      "Texture.e50",
+      "Texture.e51",
+      "Texture.e52",
+      "Texture.e53",
+      "Texture.e54",
+      "Texture.e55",
+      "Texture.e56",
+      "Texture.e57",
+      "Texture.e58",
+      "Texture.e59",
+      "Texture.e60",
+      "Texture.e61"
+     ]
+    },
+    "geometries": {
+     "Array.geos": [
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.slim",
+      "Geometry.slim",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.slim",
+      "Geometry.slim",
+      "Geometry.slim",
+      "Geometry.slim",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.default",
+      "Geometry.slim",
+      "Geometry.default"
+     ]
+    }
+   },
+   "geometry": "Array.geos[q.property('ftf:skin')]",
+   "materials": [
+    {
+     "*": "Material.emissive"
+    }
+   ],
+   "textures": [
+    "Array.emissive[q.property('ftf:skin')]"
+   ],
+   "ignore_lighting": true,
+   "part_visibility": [
+    {
+     "*": true
+    },
+    {
+     "leftArm": "!q.property('ftf:hide_arms')"
+    },
+    {
+     "rightArm": "!q.property('ftf:hide_arms')"
+    },
+    {
+     "leftLeg": "!q.property('ftf:hide_legs')"
+    },
+    {
+     "rightLeg": "!q.property('ftf:hide_legs')"
+    },
+    {
+     "body": "!q.property('ftf:hide_body')"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,789 @@
+{
+ "format_version": "1.20.20",
+ "sound_definitions": {
+  "ftf.event.caution_caption.local.message.1": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/caution_caption"
+    }
+   ]
+  },
+  "ftf.event.caution_caption.local.message.2": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/caution_caption"
+    }
+   ]
+  },
+  "ftf.event.caution_caption.local.message.3": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/caution_caption"
+    }
+   ]
+  },
+  "ftf.event.caution_caption.local.message.4": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/caution_caption"
+    }
+   ]
+  },
+  "ftf.event.caution_caption.swedish.message.1": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/caution_caption"
+    }
+   ]
+  },
+  "ftf.event.caution_caption.swedish.message.2": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/caution_caption"
+    }
+   ]
+  },
+  "ftf.event.caution_caption.swedish.message.3": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/caution_caption"
+    }
+   ]
+  },
+  "ftf.event.caution_caption.swedish.message.4": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/caution_caption"
+    }
+   ]
+  },
+  "ftf.events.sudden_scare.jumpscare": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/sudden_scare/jumpscare1"
+    },
+    {
+     "name": "sounds/ftf/events/sudden_scare/jumpscare2"
+    },
+    {
+     "name": "sounds/ftf/events/sudden_scare/jumpscare3"
+    },
+    {
+     "name": "sounds/ftf/events/sudden_scare/jumpscare4"
+    },
+    {
+     "name": "sounds/ftf/events/sudden_scare/jumpscare5"
+    }
+   ]
+  },
+  "ftf.events.suspenseful_sighting.default": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/suspenseful_sighting/default"
+    }
+   ]
+  },
+  "ftf.events.suspenseful_sighting.slenderman": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/suspenseful_sighting/slenderman"
+    }
+   ]
+  },
+  "ftf.events.suspenseful_sighting.werewolf": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/suspenseful_sighting/werewolf"
+    }
+   ]
+  },
+  "ftf.events.sudden_scare.crash": {
+   "category": "hostile",
+   "sounds": [
+    {
+     "name": "sounds/ftf/events/sudden_scare/crash"
+    }
+   ]
+  },
+  "ftf.config.setting.creeping_sighting.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected",
+     "pitch": 0.1
+    }
+   ]
+  },
+  "ftf.config.setting.creeping_sighting.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected"
+    }
+   ]
+  },
+  "ftf.config.setting.dwelling_sighting.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected",
+     "pitch": 0.1
+    }
+   ]
+  },
+  "ftf.config.setting.dwelling_sighting.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected"
+    }
+   ]
+  },
+  "ftf.config.setting.stalking_sighting.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected",
+     "pitch": 0.1
+    }
+   ]
+  },
+  "ftf.config.setting.stalking_sighting.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected"
+    }
+   ]
+  },
+  "ftf.config.setting.lurking_sighting.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected",
+     "pitch": 0.1
+    }
+   ]
+  },
+  "ftf.config.setting.lurking_sighting.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected"
+    }
+   ]
+  },
+  "ftf.config.setting.nightmare_sighting.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected",
+     "pitch": 0.1
+    }
+   ]
+  },
+  "ftf.config.setting.nightmare_sighting.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sightings_selected"
+    }
+   ]
+  },
+  "ftf.config.setting.burning_base.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/burning_base_true"
+    }
+   ]
+  },
+  "ftf.config.setting.burning_base.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/burning_base_false",
+     "pitch": 1.5
+    }
+   ]
+  },
+  "ftf.config.setting.disappearing_torches.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/disappearing_torches_true"
+    }
+   ]
+  },
+  "ftf.config.setting.disappearing_torches.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/disappearing_torches_false"
+    }
+   ]
+  },
+  "ftf.config.setting.malicious_malfunction.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/malicious_malfunction_true"
+    }
+   ]
+  },
+  "ftf.config.setting.malicious_malfunction.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sudden_scare.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sudden_scare_true"
+    }
+   ]
+  },
+  "ftf.config.setting.sudden_scare.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/sudden_scare_false"
+    }
+   ]
+  },
+  "ftf.config.setting.rekindling_shrine.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.rekindling_shrine.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.shrine_surprise.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.shrine_surprise.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.shrine_strike.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/shrine_strike_true"
+    }
+   ]
+  },
+  "ftf.config.setting.shrine_strike.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.dreadful_donation.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/dreadful_donation_true"
+    }
+   ]
+  },
+  "ftf.config.setting.dreadful_donation.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/dreadful_donation_false"
+    }
+   ]
+  },
+  "ftf.config.setting.haunted_heirlooms.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.haunted_heirlooms.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sighting_noise.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sighting_noise.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.no_sleep.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.no_sleep.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.hoebrine_returns.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/hoebrine_returns_true"
+    }
+   ]
+  },
+  "ftf.config.setting.hoebrine_returns.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.give_him_control.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.ghost_doors.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/ghost_doors_true"
+    }
+   ]
+  },
+  "ftf.config.setting.ghost_doors.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.dwelling_shadow.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.dwelling_shadow.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.window_watcher.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.window_watcher.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sneaky_strike.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sneaky_strike.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.emissive_layers.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.emissive_layers.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sighting_sense.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sighting_sense.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.eerie_entrance.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.eerie_entrance.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.caution_caption.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.caution_caption.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.leafless_grove.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.leafless_grove.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.from_the_pants.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.from_the_pants.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.chilled_candles.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.chilled_candles.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.crimson_curse.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.crimson_curse.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.soul_shift.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.soul_shift.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sinister_signs.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.sinister_signs.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.biome_boards.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.biome_boards.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.ghost_miner.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.ghost_miner.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.advancements.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.advancements.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.fearful_footsteps.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.fearful_footsteps.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.haunted_herd.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.haunted_herd.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.twisted_tapestries.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.twisted_tapestries.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.vanilla_sightings.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.vanilla_sightings.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.flickering_flashlight.true": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.config.setting.flickering_flashlight.false": {
+   "category": "ui",
+   "sounds": [
+    {
+     "name": "sounds/ftf/config/default"
+    }
+   ]
+  },
+  "ftf.music_disc.herobrine_lullaby": {
+   "category": "record",
+   "sounds": [
+    {
+     "name": "sounds/ftf/music_disc/herobrine_lullaby",
+     "stream": true
+    }
+   ],
+   "max_distance": 64
+  },
+  "ftf.music_disc.deathbed": {
+   "category": "record",
+   "sounds": [
+    {
+     "name": "sounds/ftf/music_disc/deathbed",
+     "stream": true
+    }
+   ],
+   "max_distance": 64
+  },
+  "ftf.music_disc.hes_from_the_fog": {
+   "category": "record",
+   "sounds": [
+    {
+     "name": "sounds/ftf/music_disc/hes_from_the_fog",
+     "stream": true
+    }
+   ],
+   "max_distance": 64
+  }
+ }
+}

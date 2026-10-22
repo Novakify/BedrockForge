@@ -1,0 +1,33 @@
+{
+ "format_version": "1.10.0",
+ "animation_controllers": {
+  "controller.animation.ftf.herobrine": {
+   "initial_state": "idle",
+   "states": {
+    "idle": {
+     "animations": ["breathe"],
+     "blend_transition": 0.1,
+     "transitions": [
+      {"walk": "q.property('ftf:anim') == 'walk'"},
+      {"punch": "q.property('ftf:anim') == 'punch'"}
+     ]
+    },
+    "walk": {
+     "animations": ["walk"],
+     "blend_transition": 0.1,
+     "transitions": [
+      {"idle": "q.property('ftf:anim') == 'idle'"},
+      {"punch": "q.property('ftf:anim') == 'punch'"}
+     ]
+    },
+    "punch": {
+     "animations": ["punch"],
+     "transitions": [
+      {"idle": "q.all_animations_finished || q.property('ftf:anim') == 'idle'"},
+      {"walk": "q.property('ftf:anim') == 'walk'"}
+     ]
+    }
+   }
+  }
+ }
+}

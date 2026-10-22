@@ -1,0 +1,12 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:client_entity": {
+  "description": {
+   "identifier": "ftf:door_ghost",
+   "materials": {"default": "entity_alphatest"},
+   "textures": {"default": "textures/entity/ftf/skins/default/skin_emissive"},
+   "geometry": {"default": "geometry.ftf.humanoid"},
+   "render_controllers": [{"controller.render.default": "false"}]
+  }
+ }
+}
