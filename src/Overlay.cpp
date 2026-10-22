@@ -2,6 +2,7 @@
 #include "Overlay.h"
 
 #include <atomic>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -276,55 +277,89 @@ void STDMETHODCALLTYPE executeHook(ID3D12CommandQueue* q, UINT n, ID3D12CommandL
     reinterpret_cast<Execute_t>(gOrigExecute)(q, n, lists);
 }
 
-// Throw-away device + swapchain: only used to read the dxgi / d3d12 vtables.
+// Throw-away devices: only used to read the dxgi / d3d12 vtables. D3D12 swapchain first; if that fails (e.g. too early
+// in startup), a D3D11 swapchain gives the same dxgi Present/ResizeBuffers code and a bare D3D12 queue gives
+// ExecuteCommandLists.
+std::string gProbeLog;
+void probeNote(char const* what, HRESULT hr) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%s=0x%08lX ", what, static_cast<unsigned long>(hr));
+    gProbeLog += buf;
+}
+
 bool findTargets() {
+    gProbeLog.clear();
     WNDCLASSEXW wc{sizeof(wc)};
     wc.lpfnWndProc   = DefWindowProcW;
     wc.hInstance     = GetModuleHandleW(nullptr);
     wc.lpszClassName = L"RendererFoundationProbe";
     RegisterClassExW(&wc);
     HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"", WS_OVERLAPPEDWINDOW, 0, 0, 64, 64, nullptr, nullptr, wc.hInstance, nullptr);
-    if (!hwnd) return false;
-    bool ok = false;
+    if (!hwnd) { gProbeLog += "CreateWindow failed "; return false; }
+    HRESULT hr;
     ComPtr<ID3D12Device>       dev;
     ComPtr<ID3D12CommandQueue> q;
-    ComPtr<IDXGIFactory4>      f;
-    ComPtr<IDXGISwapChain1>    sc;
     D3D12_COMMAND_QUEUE_DESC   qd{};
-    DXGI_SWAP_CHAIN_DESC1      sd{};
-    sd.Width = 64; sd.Height = 64; sd.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sd.SampleDesc.Count = 1;
-    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.BufferCount = 2; sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    if (SUCCEEDED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev))) && SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q)))
-        && SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && SUCCEEDED(f->CreateSwapChainForHwnd(q.Get(), hwnd, &sd, nullptr, nullptr, &sc))) {
-        void** scv  = *reinterpret_cast<void***>(sc.Get());
-        void** qv   = *reinterpret_cast<void***>(q.Get());
-        gTargets[0] = scv[8];  // IDXGISwapChain::Present
-        gTargets[1] = scv[22]; // IDXGISwapChain1::Present1
-        gTargets[2] = scv[13]; // IDXGISwapChain::ResizeBuffers
-        gTargets[3] = qv[10];  // ID3D12CommandQueue::ExecuteCommandLists
-        ok = true;
+    if (FAILED(hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) probeNote("D3D12CreateDevice", hr);
+    else if (FAILED(hr = dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q)))) probeNote("CreateCommandQueue", hr);
+    if (q) gTargets[3] = (*reinterpret_cast<void***>(q.Get()))[10]; // ID3D12CommandQueue::ExecuteCommandLists
+
+    if (q) {
+        ComPtr<IDXGIFactory4>   f;
+        ComPtr<IDXGISwapChain1> sc;
+        DXGI_SWAP_CHAIN_DESC1   sd{};
+        sd.Width = 64; sd.Height = 64; sd.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sd.SampleDesc.Count = 1;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.BufferCount = 2; sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        if (FAILED(hr = CreateDXGIFactory1(IID_PPV_ARGS(&f)))) probeNote("CreateDXGIFactory1", hr);
+        else if (FAILED(hr = f->CreateSwapChainForHwnd(q.Get(), hwnd, &sd, nullptr, nullptr, &sc))) probeNote("CreateSwapChainForHwnd(12)", hr);
+        else {
+            void** v   = *reinterpret_cast<void***>(sc.Get());
+            gTargets[0] = v[8]; gTargets[1] = v[22]; gTargets[2] = v[13];
+        }
     }
-    sc.Reset(); q.Reset(); dev.Reset(); f.Reset();
+    if (!gTargets[0]) { // D3D11 fallback for the dxgi swapchain functions
+        DXGI_SWAP_CHAIN_DESC sd{};
+        sd.BufferCount = 2; sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        sd.OutputWindow = hwnd; sd.SampleDesc.Count = 1; sd.Windowed = TRUE; sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        ComPtr<IDXGISwapChain>      sc;
+        ComPtr<ID3D11Device>        d11;
+        ComPtr<ID3D11DeviceContext> ctx;
+        if (FAILED(hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &sd, &sc, &d11, nullptr, &ctx)))
+            probeNote("D3D11CreateDeviceAndSwapChain", hr);
+        else {
+            void** v = *reinterpret_cast<void***>(sc.Get());
+            gTargets[0] = v[8]; gTargets[2] = v[13];
+            ComPtr<IDXGISwapChain1> sc1;
+            if (SUCCEEDED(sc.As(&sc1))) gTargets[1] = (*reinterpret_cast<void***>(sc1.Get()))[22];
+        }
+    }
     DestroyWindow(hwnd);
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
-    return ok;
+    return gTargets[0] != nullptr;
 }
 } // namespace
 
+bool gHooked = false;
+
 bool install() {
+    if (gHooked) return true;
     if (!findTargets()) {
-        ll_shim::warn("[RF] overlay: could not probe D3D12/DXGI, overlay disabled (shader features still work)");
+        ll_shim::warn("[RF] overlay: could not probe D3D12/DXGI (" + gProbeLog + "), will retry when the mod is enabled");
         return false;
     }
+    if (!gProbeLog.empty()) ll_shim::info("[RF] overlay probe notes: " + gProbeLog);
     gDetours[0]    = reinterpret_cast<void*>(&presentHook);
     gDetours[1]    = reinterpret_cast<void*>(&present1Hook);
     gDetours[2]    = reinterpret_cast<void*>(&resizeHook);
     gDetours[3]    = reinterpret_cast<void*>(&executeHook);
     void** orig[4] = {&gOrigPresent, &gOrigPresent1, &gOrigResize, &gOrigExecute};
     for (int i = 0; i < 4; ++i) {
+        if (!gTargets[i]) continue;
         int rc = ll_shim::hook(gTargets[i], gDetours[i], orig[i]);
         if (rc != 0) ll_shim::warn("[RF] overlay hook " + std::to_string(i) + " failed (rc " + std::to_string(rc) + ")");
     }
+    gHooked = true;
+    ll_shim::info("[RF] overlay hooks installed");
     return true;
 }
 

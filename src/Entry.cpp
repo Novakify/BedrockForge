@@ -29,6 +29,7 @@ public:
         return true;
     }
     bool enable() {
+        overlay::install(); // retry if the load-time probe failed
         graphics::install();
         return true;
     }
