@@ -244,7 +244,11 @@ void onPresent(IDXGISwapChain* sc) {
         // D3D12 swapchains return their command queue from GetDevice; D3D11 ones return the device.
         gIs12 = SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&d3d12::queueRef)));
         attachWindow(sc);
-        if (!gWindow) return;
+        if (!gWindow) {
+            static bool once = false;
+            if (!once) { once = true; ll_shim::warn("[RF] overlay: swapchain has no window (composition swapchain?)"); }
+            return;
+        }
         captureGpuName(sc);
         if (ImGui::GetCurrentContext() == nullptr) d3d12::gWhy.clear();
         bool ok = gIs12 ? d3d12::init(sc) : d3d11::init(sc);
@@ -293,11 +297,25 @@ void* gOrigExecute    = nullptr;
 void* gTargets[4]{};
 void* gDetours[4]{};
 
+std::atomic<long> gPresentCalls{0}, gPresent1Calls{0};
+void notePresent(char const* which, std::atomic<long>& n, IDXGISwapChain* sc) {
+    long c = ++n;
+    if (c == 1 || c == 600) {
+        ComPtr<ID3D12CommandQueue> q;
+        ComPtr<ID3D11Device>       d;
+        bool is12 = SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&q)));
+        bool is11 = !is12 && SUCCEEDED(sc->GetDevice(IID_PPV_ARGS(&d)));
+        ll_shim::info(std::string("[RF] ") + which + " call #" + std::to_string(c) + " swapchain " +
+                      (is12 ? "D3D12" : is11 ? "D3D11" : "unknown device") + (gWindow ? "" : ", no window yet"));
+    }
+}
 HRESULT STDMETHODCALLTYPE presentHook(IDXGISwapChain* sc, UINT sync, UINT flags) {
+    notePresent("Present", gPresentCalls, sc);
     if (!(flags & DXGI_PRESENT_TEST)) safePresent(sc);
     return reinterpret_cast<Present_t>(gOrigPresent)(sc, sync, flags);
 }
 HRESULT STDMETHODCALLTYPE present1Hook(IDXGISwapChain1* sc, UINT sync, UINT flags, DXGI_PRESENT_PARAMETERS const* p) {
+    notePresent("Present1", gPresent1Calls, sc);
     if (!(flags & DXGI_PRESENT_TEST)) safePresent(sc);
     return reinterpret_cast<Present1_t>(gOrigPresent1)(sc, sync, flags, p);
 }
