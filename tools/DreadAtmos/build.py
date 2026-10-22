@@ -91,10 +91,14 @@ FOG = {
     },
 }
 
-BP_SCRIPT = """// Dread Atmosphere - pushes the Dread fog onto every player (original, MIT).
+BP_SCRIPT = """// Dread Atmosphere - fog control (original, MIT). Default: CLEAR the Dread fog so shaderpacks such as Cursed Fog
+// see the game's real fog colour. To use the Dread fog, set PUSH = true.
 import { world, system } from "@minecraft/server";
-const ID = "bedrock_forge:dread_fog", TAG = "bf_dread";
-function apply(p) { try { p.runCommand(`fog @s remove ${TAG}`); p.runCommand(`fog @s push ${ID} ${TAG}`); } catch {} }
+const ID = "bedrock_forge:dread_fog", TAG = "bf_dread", PUSH = false;
+function apply(p) {
+  try { p.runCommand(`fog @s remove ${TAG}`); } catch {}
+  if (PUSH) { try { p.runCommand(`fog @s push ${ID} ${TAG}`); } catch {} }
+}
 world.afterEvents.playerSpawn.subscribe((e) => apply(e.player));
 system.runTimeout(() => { for (const p of world.getAllPlayers()) apply(p); }, 40);
 """
