@@ -137,3 +137,23 @@ E-018 | 2026-10-21 | 3387e03 | cloud | Sculk Horde pass 2: 45 infested block var
 - With Renderer Foundation loaded, BF still serves Hysteria (yield fix verified). RF overlay: hooks install but no
   Present ever reached init on 1.26.51 (F6 does nothing). e2757eb logs Present/Present1 calls -> next test.
 - Crash guard d3a2759 verified: after a force-close it logged "no crash report -> keeping 'Hysteria'".
+
+## E-027 (2026-10-22 21:00 UTC) - RF overlay works; why leaves looked vanilla; real waving; clouds fixed; post effects
+- RF ec06850: F6 opens on Direct3D 12 (RTX 4060, ~260 fps title). Fix was capturing the game's DIRECT queue in
+  ExecuteCommandLists (swapchain GetDevice never returns a queue).
+- WHY FOLIAGE LOOKED VANILLA: Fancy leaves draw with RenderChunk's Seasons=On variants, and ShaderForge skipped those
+  (fragment kept vanilla, vertex had @only Seasons=Off). Decoded the Seasons fragment: tint = colour.a *
+  lerp(1, seasons(colour.xy)*2, colour.b), fog as usual; the Seasons vertex shader is byte-identical to the normal one.
+  Packs now replace Seasons variants too (72 terrain fragment blobs, 40 vertex blobs per pack).
+- The Cursed Fog sway moves a vertex ~0.02 block = invisible. Per-pack wind now: Hysteria get_wind_displacement (gust from
+  a value noise matched to noise.png .y: mean .43, sd .14, ~8 px features; wobble; strength sky^2*0.25, leaves x0.5),
+  Insanity CalcMove (plants 1.35/1.0/(.25,.06), leaves .25/1.0/(.28,.18)), Cursed Fog unchanged. Verified moving in game.
+- Hysteria cloud streaks: radial smears toward the zenith = coverage/shape noise ~16x too fine (noisetex is smooth:
+  autocorrelation fitted -> x: 16 px value noise, sd .118; w: 3 octaves ~20 px, mean .535 sd .086) + float hash broke at
+  planet-radius coordinates (pcg3d integer hash, noise in a ground-level frame). Fixed; fewer cloud/air-fog steps
+  (fps 30 -> ~42 looking up). Hysteria's sky is grey by design: WEATHER_D*_FOGGINESS = 4.5 every day.
+- Post effects: RF records bloom (Hysteria 6-tile average, mix .12), chromatic aberration (Cursed Fog / Insanity styles),
+  CAS (Hysteria .5) and Cursed Fog motion blur (camera ROTATION only, no depth at Present) on the swapchain image before
+  ImGui. BF exports BF_GetPostFx() (pack postfx.json, in-world flag, yaw/pitch/FOV). Effects also touch the HUD.
+- Ambient particles in Dread Atmosphere: bedrock_forge:falling_leaf (from leaf blocks with air below, tinted per leaf
+  type) and bedrock_forge:dust_mote (BP script, every 4 ticks, 14-block radius).

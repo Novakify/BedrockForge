@@ -1,3 +1,15 @@
+# Next session handoff (updated 2026-10-23, stopped early: user near weekly usage limit)
+INSTALLED + VERIFIED IN GAME: BF 361836d (prev .d3a2759.dll), RF 5246159 (prev .a0f4909 / .ec06850). Active pack Hysteria.
+- RF F6 overlay works (D3D12). Clicking it crashed the game once (std::mutex re-entered via SetCapture) -> fixed in 5246159.
+- Post effects run (F6 "Post effects": bloom/CA/CAS/motion blur, from shaderpacks/<Pack>/postfx.json via BF_GetPostFx).
+  CA + bloom seen in game. Motion blur (camera rotation only) NOT visually checked (could not turn the camera by script).
+- Leaves now get the packs' shading + wind (Seasons variants). Hysteria clouds fixed (no streaks), ~42-47 fps.
+- Ambient falling leaves + dust: Dread Atmosphere BP/RP (gitignored packs/). Works ("/scriptevent bf:amb x" prints
+  counters); My World's trees are mostly non-leaf blocks so few leaves fall there. Debug counters still in main.js.
+- Effects run on the swapchain image, so they also touch the HUD; they pause in menus.
+TODO: real shadows (Hysteria-VV mode: VV JSON + ColorPostProcessing replacement); verify motion blur; Insanity/CursedFog
+  postfx in game; tidy dust density; remove debug counters; FPS of Hysteria; earlier OPEN list below still stands.
+
 # Next session handoff (updated 2026-10-22 20:05 UTC)
 VERIFIED IN GAME TODAY: CursedFog, Insanity, Hysteria, Dread shaderpacks on Fancy (previews in chat); Dread Atmosphere on
 VV; mob animations (0 content errors; Dweller walks/stalks/attacks); BF+RF coexistence; crash guard.
