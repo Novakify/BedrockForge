@@ -23,3 +23,13 @@ One mod per session. Every session starts by reading docs/NEXT_SESSION.md and th
 ## Milestones per mod
 M1 prototype of the single most visible feature -> M2 remaining features -> M3 polish/config menu -> M4 docs.
 Commit + push after each milestone; update NEXT_SESSION.md before stopping.
+
+## Research notes (2026-10-23, pages only, nothing downloaded)
+- Spatial GUI: MIT licence, source github.com/tastytrash/Spatial-GUI, client-only (Fabric/Forge/NeoForge, needs YACL).
+  Shows inventory/container screens as a 3D panel (1st/3rd person, curved screen, blur, open animation, FOV override).
+  Port is allowed (keep MIT notice + credit). Bedrock route: BF reads the open container screen + camera, RF draws a
+  3D panel (D3D12 overlay with BF camera matrices), input routed back. Realistic: medium-hard; full parity uncertain
+  because Bedrock menus are JSON UI - we must either re-draw them ourselves or capture them to a texture.
+- "Cinematic Interactions": exact mod NOT identified (similar names: Cinematic Events - MIT, Forge 1.20.1;
+  Ji AFK Cinematic - custom "Ji Mods Source License", read before porting; Cinematography modpack - ARR).
+  Need the user's link. Camera work is the easier side on Bedrock (/camera ease + BF camera hooks).
