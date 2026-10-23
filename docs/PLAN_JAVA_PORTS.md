@@ -30,6 +30,14 @@ Commit + push after each milestone; update NEXT_SESSION.md before stopping.
   Port is allowed (keep MIT notice + credit). Bedrock route: BF reads the open container screen + camera, RF draws a
   3D panel (D3D12 overlay with BF camera matrices), input routed back. Realistic: medium-hard; full parity uncertain
   because Bedrock menus are JSON UI - we must either re-draw them ourselves or capture them to a texture.
-- "Cinematic Interactions": exact mod NOT identified (similar names: Cinematic Events - MIT, Forge 1.20.1;
-  Ji AFK Cinematic - custom "Ji Mods Source License", read before porting; Cinematography modpack - ARR).
-  Need the user's link. Camera work is the easier side on Bedrock (/camera ease + BF camera hooks).
+- Cinematic Interactions (curseforge.com/minecraft/mc-mods/cinematic-interactions, by Southware): MIT code, source
+  github.com/dcvke/CinematicInteractions; bundled "Just a Hammer" model by RDiamonds is CC BY 4.0 (credit it).
+  Client+server mod. Workstations become animated 1st-person scenes with skin arms: crafting table 3x3 workspace
+  (recipe guide, missing-ingredient highlight, auto lay-out), furnace/smoker/blast, crafter, anvil, grindstone,
+  smithing, stonecutter, enchanting, brewing, loom, cartography, lectern, chiseled bookshelf, jukebox, campfires,
+  beacon. Smooth camera between stations, inventory panel, Left Alt = 3rd person, settings (lean, zoom, bars, shake).
+  Bedrock route: camera = /camera ease or BF camera hook (easy); first-person arm animations = RP player animations
+  (medium); the in-world interactive workspace replacing each vanilla screen = biggest job (same problem as Spatial
+  GUI: draw our own UI + route clicks, and server-side item moves via script API / BF). Do Spatial GUI first: its
+  3D-panel + input layer is reused here. Realistic: camera + animations very likely; all 19 stations at full
+  parity = long project, do 2-3 stations first (crafting table, furnace, anvil).
