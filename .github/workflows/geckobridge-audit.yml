@@ -1,0 +1,32 @@
+name: GeckoBridge static analyzer tests
+on:
+  push:
+    branches:
+      - 'geckobridge/**'
+    paths:
+      - 'tools/geckobridge_*.py'
+      - 'tests/test_geckobridge_report.py'
+      - '.github/workflows/geckobridge-audit.yml'
+  workflow_dispatch:
+jobs:
+  python-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p 'test_geckobridge_report.py' -v
+  java-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/java-inspector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: gradle compileJava
