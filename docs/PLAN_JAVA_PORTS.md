@@ -41,3 +41,15 @@ Commit + push after each milestone; update NEXT_SESSION.md before stopping.
   GUI: draw our own UI + route clicks, and server-side item moves via script API / BF). Do Spatial GUI first: its
   3D-panel + input layer is reused here. Realistic: camera + animations very likely; all 19 stations at full
   parity = long project, do 2-3 stations first (crafting table, furnace, anvil).
+- Cinematic Interactions source check (2026-10-27, web pages only): Java/Gradle; reference impl NeoForge 1.21.1 in
+  src/main/java/dev/dyslexic/cinematic/, Fabric ports in fabric/ (1.21-1.21.11, 26.2, 26.3). Packages: client scene
+  (approach -> active work -> exit), station sessions (each station = layout + camera pose + controls + timeline),
+  "vanilla menu actions" (it drives the normal container menus underneath = item moves stay vanilla/server-valid),
+  network packets, mixins. Credits: CREDITS.md (Just a Hammer, RDiamonds, CC BY 4.0). Small repo (6 commits).
+  Start of the port session: read docs/wiki/Development.md, then the client scene + one station (crafting table).
+  Key Bedrock idea to test first: keep the vanilla Bedrock container screen open but hidden, and drive it from
+  our 3D workspace (same trick the Java mod uses with vanilla menu actions) -> no custom server logic needed.
+
+## HOW TO START NEXT SESSION (copy-paste)
+"New session. Read docs/NEXT_SESSION.md and docs/PLAN_JAVA_PORTS.md. Goal: <one item>. Stop when done."
+Polish list first (shadows, motion blur check, cleanup), then Spatial GUI research -> M1, then Cinematic Interactions.
