@@ -1,3 +1,15 @@
+# Next session handoff (updated 2026-10-27, cloud-only session - PC was not connected)
+DONE + PUSHED: docs/PORT_SPATIALGUI.md (goal 3), docs/PORT_CINEMATIC.md (goal 4), docs/PC_RUNBOOK.md (exact steps
+for everything that needs the PC). Nothing installed, no DLL/pack change, PC state same as 2026-10-23 below.
+NOT DONE (needs PC): goal 1 Hysteria-VV shadows, goal 2 motion blur check + Dread Atmosphere debug counters,
+sky bug. Follow docs/PC_RUNBOOK.md sections 0 -> 4. Start with section 0 (verify PC paths - never confirmed live).
+FERNANDO'S TEST 2026-10-27: mob animations good; FPS 15-18 (was 42-47); SKY BROKEN in both shader skies (upper half
+shader but stationary, lower half vanilla). His rule: get this mod perfect before starting any other mod port.
+Cloud findings: only Sky (+Clouds) material replaced -> sun/moon/stars/lower sky vanilla; no sun-dir/time uniform.
+Motion blur: RF math OK; only CursedFog's postfx.json enables it (1.25) -> likely why it was never seen.
+Dread Atmosphere: leaves/dust/counters script exists only on the PC (repo builder still fog-only) -> sync back.
+GeckoBridge: deferred by Fernando; branch geckobridge/compat-audit-20261025, do not merge, test JARs off GitHub.
+
 # Next session handoff (updated 2026-10-23, stopped early: user near weekly usage limit)
 INSTALLED + VERIFIED IN GAME: BF 361836d (prev .d3a2759.dll), RF 5246159 (prev .a0f4909 / .ec06850). Active pack Hysteria.
 - RF F6 overlay works (D3D12). Clicking it crashed the game once (std::mutex re-entered via SetCapture) -> fixed in 5246159.

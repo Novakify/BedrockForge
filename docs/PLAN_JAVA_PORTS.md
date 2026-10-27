@@ -13,6 +13,8 @@ One mod per session. Every session starts by reading docs/NEXT_SESSION.md and th
   d. RenderDragon materials via ShaderForge (custom shaders)
 - Output: docs/PORT_<MOD>.md with the table + milestone list. No code that session.
 
+## Step 0 done (2026-10-27): see docs/PORT_SPATIALGUI.md and docs/PORT_CINEMATIC.md
+
 ## Expected shape (to confirm in step 0)
 - Spatial GUI: menus/inventory shown in 3D space. Likely needs (b)+(c): read the open screen/inventory from the
   client, render it ourselves as a 3D-projected panel (RF overlay with camera matrices from BF), route input back.
