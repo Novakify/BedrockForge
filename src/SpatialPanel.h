@@ -35,6 +35,8 @@ void toggle();
 bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv);
 /// wndProc: rewrite mouse message coordinates through the panel (ray-pick). Returns true if lp was changed.
 bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp);
+/// wndProc: true = drop this message (raw mouse input while the panel is up, experiment).
+bool swallow(UINT msg, LPARAM lp);
 /// F6 section.
 void drawUi();
 

@@ -82,7 +82,10 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         bool  keyMsg   = (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) && int(wp) != RfOptions::uiKey.get();
         if ((mouseMsg && io.WantCaptureMouse) || (keyMsg && io.WantCaptureKeyboard)) return 0;
     }
-    if (RfOptions::uiCaptureSpike) rf::panel::remapMouse(hwnd, msg, lp); // Spatial GUI M1: ray-pick through the panel
+    if (RfOptions::uiCaptureSpike) {
+        if (rf::panel::swallow(msg, lp)) return DefWindowProcW(hwnd, msg, wp, lp); // WM_INPUT must still reach DefWindowProc
+        rf::panel::remapMouse(hwnd, msg, lp); // Spatial GUI M1: ray-pick through the panel
+    }
     return CallWindowProcW(gOrigProc, hwnd, msg, wp, lp);
 }
 

@@ -36,6 +36,7 @@ struct Settings {
     float dim      = 0.30f; // world dim at full open
     float seconds  = 0.22f; // open/close animation
     bool  alphaBoost = true;
+    bool  eatRaw     = true; // experiment: hide raw mouse input from the game while the panel is up
     bool  remap      = true;
 } gS;
 
@@ -330,7 +331,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
 
 // ---------------------------------------------------------------- input
 std::atomic<HWND> gHwnd{nullptr};
-std::atomic<long> gGcpCalls{0}, gGcpRemapped{0}, gGcpInClient{0}, gWmRemapped{0}, gWmSeen{0};
+std::atomic<long> gGcpCalls{0}, gGcpRemapped{0}, gGcpInClient{0}, gWmRemapped{0}, gWmSeen{0}, gRawSeen{0}, gRawEaten{0};
 std::string       gHookNote = "not installed";
 
 // client pixel -> client pixel the game should see (ray-pick through the panel)
@@ -407,10 +408,22 @@ void writeDiag() {
     char b[512];
     snprintf(b, sizeof b,
              "Spatial GUI panel diag\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
-             "Mouse WM_* seen while on: %ld, remapped: %ld\nstatus: %s\n",
+             "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\nstatus: %s\n",
              gHookNote.c_str(), gGcpCalls.load(), gGcpInClient.load(), gGcpRemapped.load(), gWmSeen.load(), gWmRemapped.load(),
-             gStatus.c_str());
+             gRawSeen.load(), gRawEaten.load(), gStatus.c_str());
     uicapture::writeText("panel_diag.txt", b);
+}
+
+bool swallow(UINT msg, LPARAM lp) {
+    if (msg != WM_INPUT || !gEnabled.load(std::memory_order_relaxed) || gAnim.load() < 0.5f || RfOptions::showImGui) return false;
+    RAWINPUTHEADER hdr{};
+    UINT           sz = sizeof hdr;
+    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lp), RID_HEADER, &hdr, &sz, sizeof(RAWINPUTHEADER)) == UINT(-1)) return false;
+    if (hdr.dwType != RIM_TYPEMOUSE) return false;
+    ++gRawSeen;
+    if (!gS.eatRaw) return false;
+    ++gRawEaten;
+    return true;
 }
 
 bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
@@ -453,6 +466,7 @@ void drawUi() {
         ImGui::Checkbox("Alpha boost", &gS.alphaBoost);
         ImGui::SameLine();
         ImGui::Checkbox("Remap mouse (ray-pick)", &gS.remap);
+        ImGui::Checkbox("Hide raw mouse input from the game (experiment)", &gS.eatRaw);
         ImGui::TextWrapped("M1 prototype: everything the UI draws (HUD included) goes onto the panel while it is on.");
     }
     ImGui::Unindent();
