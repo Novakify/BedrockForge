@@ -78,6 +78,7 @@ std::atomic<UINT> gRtvInc{0};
 std::unordered_map<SIZE_T, long> gFrameUnknownUi; // this frame: unknown RT0 handle -> UI draws
 long                             gFrameUiDraws = 0, gLearned = 0;
 int                              gTrackFrames  = 0;
+thread_local bool                gInSnapshot   = false; // our own barriers/copies inside snapshot() must not re-enter the hooks (gMutex is held)
 std::vector<std::string>         gLearnLog;
 
 enum State : int { Idle = 0, Tracking = 1, Capturing = 2 };
@@ -181,7 +182,7 @@ void snapshot(ID3D12GraphicsCommandList* list, ID3D12Resource* rt) {
 }
 
 // A fault here must not take the game down: give up on this capture instead.
-bool safeSnapshot(ID3D12GraphicsCommandList* list, ID3D12Resource* rt) {
+bool safeSnapshotInner(ID3D12GraphicsCommandList* list, ID3D12Resource* rt) {
     __try {
         snapshot(list, rt);
         return true;
@@ -189,6 +190,12 @@ bool safeSnapshot(ID3D12GraphicsCommandList* list, ID3D12Resource* rt) {
         gTookA = true;
         return false;
     }
+}
+bool safeSnapshot(ID3D12GraphicsCommandList* list, ID3D12Resource* rt) {
+    gInSnapshot = true;
+    bool ok     = safeSnapshotInner(list, rt);
+    gInSnapshot = false;
+    return ok;
 }
 
 void onDraw(ID3D12GraphicsCommandList* list) {
@@ -317,11 +324,11 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
     } else gListRt0.erase(list);
 }
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
-    if (gState.load(std::memory_order_relaxed) != Idle) onDraw(list);
+    if (!gInSnapshot && gState.load(std::memory_order_relaxed) != Idle) onDraw(list);
     reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
 }
 void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
-    if (gState.load(std::memory_order_relaxed) != Idle) onDraw(list);
+    if (!gInSnapshot && gState.load(std::memory_order_relaxed) != Idle) onDraw(list);
     reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
 }
 
@@ -393,7 +400,7 @@ void STDMETHODCALLTYPE copySimpleHook(ID3D12Device* d, UINT n, D3D12_CPU_DESCRIP
 }
 void STDMETHODCALLTYPE barrierHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_RESOURCE_BARRIER const* b) {
     reinterpret_cast<Barrier_t>(gOrig[10])(list, n, b);
-    if (gState.load(std::memory_order_relaxed) == Idle || !b) return;
+    if (gInSnapshot || gState.load(std::memory_order_relaxed) == Idle || !b) return;
     std::lock_guard l(gMutex);
     auto& st = gListResState[list];
     for (UINT i = 0; i < n; ++i) {
