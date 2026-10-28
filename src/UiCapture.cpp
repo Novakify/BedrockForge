@@ -73,6 +73,12 @@ std::unordered_map<ID3D12GraphicsCommandList*, ID3D12Resource*>  gListLastRt; //
 std::unordered_map<ID3D12GraphicsCommandList*, std::unordered_map<ID3D12Resource*, UINT>> gListResState; // while watching: last StateAfter per resource
 std::atomic<long> gRtvCreated{0}, gRtvCopied{0}, gCopyCalls{0}, gHeapsRtv{0};
 std::atomic<UINT> gRtvInc{0};
+// M0.5b: handles made before RF hooked (the swap-chain RTVs) are learned at Present: during the tracking frames, a frame
+// whose UI draws all used ONE unknown handle maps that handle to the back buffer presented at the end of that frame.
+std::unordered_map<SIZE_T, long> gFrameUnknownUi; // this frame: unknown RT0 handle -> UI draws
+long                             gFrameUiDraws = 0, gLearned = 0;
+int                              gTrackFrames  = 0;
+std::vector<std::string>         gLearnLog;
 
 enum State : int { Idle = 0, Tracking = 1, Capturing = 2 };
 std::atomic<int>  gState{Idle};
@@ -191,6 +197,11 @@ void onDraw(ID3D12GraphicsCommandList* list) {
     if (p == gListPso.end()) return;
     auto u = gUiPso.find(p->second);
     if (u == gUiPso.end()) return;
+    if (gState.load(std::memory_order_relaxed) == Tracking) {
+        ++gFrameUiDraws;
+        if (auto lt = gListRt0.find(list); lt != gListRt0.end() && !gRtvRes.count(lt->second)) ++gFrameUnknownUi[lt->second];
+        return;
+    }
     ++gRes.uiDraws;
     ID3D12Resource* rt = nullptr;
     char const*     how = "created";
@@ -207,6 +218,13 @@ void onDraw(ID3D12GraphicsCommandList* list) {
                     ++gRes.uiDrawsGuessed;
                 }
         }
+    }
+    if (rt && std::string(how) == "barrier guess") { // report only: the M0.5 run showed guesses pick the wrong target
+        if (std::find(gRes.uiTargets.begin(), gRes.uiTargets.end(), rt) == gRes.uiTargets.end()) {
+            gRes.uiTargets.push_back(rt);
+            gRes.uiTargetDescs.push_back(descStr(rt->GetDesc()) + "  first UI material: " + *u->second + "  (barrier GUESS, not copied)");
+        }
+        rt = nullptr;
     }
     if (!rt) {
         ++gRes.uiDrawsNoTarget;
@@ -299,11 +317,11 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
     } else gListRt0.erase(list);
 }
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
-    if (gState.load(std::memory_order_relaxed) == Capturing) onDraw(list);
+    if (gState.load(std::memory_order_relaxed) != Idle) onDraw(list);
     reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
 }
 void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
-    if (gState.load(std::memory_order_relaxed) == Capturing) onDraw(list);
+    if (gState.load(std::memory_order_relaxed) != Idle) onDraw(list);
     reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
 }
 
@@ -540,6 +558,7 @@ void finish(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
         << ", created via pipeline-state stream (not inspected): " << gPsoStream.load() << "\n"
         << "RTVs tracked: " << gRtvRes.size() << " (CreateRenderTargetView calls " << gRtvCreated.load() << ", copied via CopyDescriptors* "
         << gRtvCopied.load() << " in " << gCopyCalls.load() << " RTV copy calls, barrier guesses " << gRtvGuess.size() << ")\n"
+        << "Learned at Present (pre-hook handles -> back buffer): " << gLearned << "\n"
         << "Descriptor heaps seen: " << gHeaps.size() << " (RTV heaps created: " << gHeapsRtv.load() << ")\n"
         << "Frames watched: " << gCaptureFrames << "\n"
         << "UI draws seen: " << gRes.uiDraws << " (render target unknown for " << gRes.uiDrawsNoTarget << ", resolved by barrier guess "
@@ -556,6 +575,8 @@ void finish(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
         rep << "Unknown UI render-target handles (first = FIRST UNKNOWN):\n";
         for (auto& [h, n] : gRes.unknown) rep << "  0x" << hex64(h) << "  UI draws " << n << "  " << (h ? heapOf(h) : "no RT bound") << "\n";
     }
+    rep << "Tracking frames:\n";
+    for (auto& ln : gLearnLog) rep << "  " << ln << "\n";
     rep << "RTV heaps:\n";
     for (auto const& hi : gHeaps)
         if (hi.type == D3D12_DESCRIPTOR_HEAP_TYPE_RTV)
@@ -674,10 +695,14 @@ void resetResult() {
     gListLastRt.clear();
     gListResState.clear();
     gRtvGuess.clear();
+    gFrameUnknownUi.clear();
+    gFrameUiDraws = 0;
+    gTrackFrames  = 0;
+    gLearnLog.clear();
     gTookA         = false;
     gCaptureFrames = 0;
     gVerdict.clear();
-    gStatus = "watching render targets (1 frame)";
+    gStatus = "learning render targets (up to 12 frames)";
 }
 } // namespace
 
@@ -743,9 +768,24 @@ void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resour
         return;
     }
     if (s == Tracking) {
-        gState = Capturing;
         std::lock_guard l(gMutex);
-        gStatus = "capturing";
+        ++gTrackFrames;
+        std::string line = "frame " + std::to_string(gTrackFrames) + ": UI draws " + std::to_string(gFrameUiDraws) + ", unknown handles " +
+                           std::to_string(gFrameUnknownUi.size());
+        if (gFrameUnknownUi.size() == 1) {
+            SIZE_T h   = gFrameUnknownUi.begin()->first;
+            gRtvRes[h] = bb;
+            ++gLearned;
+            line += " -> learned 0x" + hex64(h) + " = back buffer " + descStr(bb->GetDesc());
+        }
+        if (gLearnLog.size() < 16) gLearnLog.push_back(line);
+        bool clean = gFrameUiDraws > 0 && gFrameUnknownUi.empty();
+        gFrameUnknownUi.clear();
+        gFrameUiDraws = 0;
+        if ((clean && gTrackFrames >= 2) || gTrackFrames >= 12) {
+            gState  = Capturing;
+            gStatus = "capturing";
+        }
         return;
     }
     // Capturing: the frame that just ended was watched
