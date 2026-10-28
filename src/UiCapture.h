@@ -25,6 +25,11 @@ struct Targets {
     void* omSetRts          = nullptr; // ID3D12GraphicsCommandList::OMSetRenderTargets (vtable 46)
     void* drawInstanced     = nullptr; // ID3D12GraphicsCommandList::DrawInstanced (vtable 12)
     void* drawIndexed       = nullptr; // ID3D12GraphicsCommandList::DrawIndexedInstanced (vtable 13)
+    // M0.5: resolve RTV handles that were never seen at CreateRenderTargetView
+    void* createHeap        = nullptr; // ID3D12Device::CreateDescriptorHeap (vtable 14)
+    void* copyDescs         = nullptr; // ID3D12Device::CopyDescriptors (vtable 23)
+    void* copyDescsSimple   = nullptr; // ID3D12Device::CopyDescriptorsSimple (vtable 24)
+    void* resourceBarrier   = nullptr; // ID3D12GraphicsCommandList::ResourceBarrier (vtable 26)
 };
 
 /// Load config/ui_shaders.txt; output goes under outDir.

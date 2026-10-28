@@ -60,6 +60,20 @@ std::unordered_map<ID3D12GraphicsCommandList*, SIZE_T>              gListRt0; //
 std::unordered_map<ID3D12GraphicsCommandList*, ID3D12PipelineState*> gListPso; // while watching: list -> current PSO
 std::atomic<long> gPsoCreated{0}, gPsoUi{0}, gPsoStream{0};
 
+// M0.5: RTV handle resolution beyond CreateRenderTargetView
+struct HeapInfo {
+    ID3D12DescriptorHeap*      heap = nullptr; // not owned
+    D3D12_DESCRIPTOR_HEAP_TYPE type{};
+    SIZE_T                     start = 0;
+    UINT                       count = 0, inc = 0, flags = 0, order = 0;
+};
+std::vector<HeapInfo>                                            gHeaps;      // every heap created while hooked
+std::unordered_map<SIZE_T, ID3D12Resource*>                      gRtvGuess;   // handle -> resource guessed from barriers
+std::unordered_map<ID3D12GraphicsCommandList*, ID3D12Resource*>  gListLastRt; // while watching: last resource barriered INTO render-target state
+std::unordered_map<ID3D12GraphicsCommandList*, std::unordered_map<ID3D12Resource*, UINT>> gListResState; // while watching: last StateAfter per resource
+std::atomic<long> gRtvCreated{0}, gRtvCopied{0}, gCopyCalls{0}, gHeapsRtv{0};
+std::atomic<UINT> gRtvInc{0};
+
 enum State : int { Idle = 0, Tracking = 1, Capturing = 2 };
 std::atomic<int>  gState{Idle};
 std::atomic_bool  gRequest{false}, gTookA{false};
@@ -75,7 +89,24 @@ struct Result {
     ID3D12Resource*              srcA = nullptr;      // not owned, only compared
     D3D12_RESOURCE_DESC          descA{};
     std::string                  noteA;
+    std::string                  srcAHow;            // "created" / "copied" / "barrier guess"
+    long                         uiDrawsGuessed = 0; // UI draws resolved via the barrier guess
+    std::vector<std::pair<SIZE_T, long>> unknown;    // distinct unknown RT0 handles -> UI draws
 } gRes;
+
+// "heap #3 RTV non-shader-visible start 0x.. count 64, slot 5" or why not
+std::string heapOf(SIZE_T h) {
+    for (auto const& hi : gHeaps)
+        if (hi.inc && h >= hi.start && h < hi.start + SIZE_T(hi.count) * hi.inc) {
+            static char const* kT[] = {"CBV_SRV_UAV", "SAMPLER", "RTV", "DSV"};
+            SIZE_T off = h - hi.start;
+            return "heap #" + std::to_string(hi.order) + " " + (int(hi.type) < 4 ? kT[hi.type] : "type?") +
+                   ((hi.flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) ? " shader-visible" : "") + " start 0x" +
+                   hex64(hi.start) + " count " + std::to_string(hi.count) + " inc " + std::to_string(hi.inc) + ", slot " +
+                   std::to_string(off / hi.inc) + (off % hi.inc ? " (MISALIGNED +" + std::to_string(off % hi.inc) + ")" : "");
+        }
+    return "NOT in any heap created while hooked (heap made before RF's hooks?)";
+}
 std::string gStatus = "idle", gVerdict;
 
 std::string fmtName(DXGI_FORMAT f) {
@@ -162,15 +193,36 @@ void onDraw(ID3D12GraphicsCommandList* list) {
     if (u == gUiPso.end()) return;
     ++gRes.uiDraws;
     ID3D12Resource* rt = nullptr;
-    if (auto lt = gListRt0.find(list); lt != gListRt0.end())
+    char const*     how = "created";
+    auto            lt  = gListRt0.find(list);
+    if (lt != gListRt0.end()) {
         if (auto r = gRtvRes.find(lt->second); r != gRtvRes.end()) rt = r->second;
-    if (!rt) { ++gRes.uiDrawsNoTarget; return; }
+        else if (auto g = gRtvGuess.find(lt->second); g != gRtvGuess.end()) {
+            // only trust the guess while this list's last barrier left it in RENDER_TARGET state (snapshot relies on it)
+            auto ls = gListResState.find(list);
+            if (ls != gListResState.end())
+                if (auto st = ls->second.find(g->second); st != ls->second.end() && (st->second & D3D12_RESOURCE_STATE_RENDER_TARGET)) {
+                    rt  = g->second;
+                    how = "barrier guess";
+                    ++gRes.uiDrawsGuessed;
+                }
+        }
+    }
+    if (!rt) {
+        ++gRes.uiDrawsNoTarget;
+        SIZE_T h  = lt != gListRt0.end() ? lt->second : 0;
+        auto   it = std::find_if(gRes.unknown.begin(), gRes.unknown.end(), [&](auto& e) { return e.first == h; });
+        if (it != gRes.unknown.end()) ++it->second;
+        else if (gRes.unknown.size() < 16) gRes.unknown.push_back({h, 1});
+        return;
+    }
     if (std::find(gRes.uiTargets.begin(), gRes.uiTargets.end(), rt) == gRes.uiTargets.end()) {
         gRes.uiTargets.push_back(rt);
-        gRes.uiTargetDescs.push_back(descStr(rt->GetDesc()) + "  first UI material: " + *u->second);
+        gRes.uiTargetDescs.push_back(descStr(rt->GetDesc()) + "  first UI material: " + *u->second + "  (resolved: " + how + ")");
     }
     if (gTookA) return;
     gRes.firstUi = *u->second;
+    gRes.srcAHow = how;
     if (!safeSnapshot(list, rt)) gRes.noteA = "fault while copying (SEH), capture abandoned";
 }
 
@@ -183,7 +235,13 @@ using OmSet_t      = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, 
                                           D3D12_CPU_DESCRIPTOR_HANDLE const*);
 using Draw_t       = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, UINT, UINT);
 using DrawIdx_t    = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, UINT, INT, UINT);
-constexpr int kHooks = 7;
+using CreateHeap_t = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, D3D12_DESCRIPTOR_HEAP_DESC const*, REFIID, void**);
+using CopyDescs_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, D3D12_CPU_DESCRIPTOR_HANDLE const*, UINT const*, UINT,
+                                             D3D12_CPU_DESCRIPTOR_HANDLE const*, UINT const*, D3D12_DESCRIPTOR_HEAP_TYPE);
+using CopySimple_t = void(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_CPU_DESCRIPTOR_HANDLE,
+                                             D3D12_DESCRIPTOR_HEAP_TYPE);
+using Barrier_t    = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_RESOURCE_BARRIER const*);
+constexpr int kHooks = 11;
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
@@ -217,8 +275,10 @@ void STDMETHODCALLTYPE createRtvHook(ID3D12Device* d, ID3D12Resource* res, D3D12
                                      D3D12_CPU_DESCRIPTOR_HANDLE h) {
     reinterpret_cast<CreateRtv_t>(gOrig[2])(d, res, desc, h);
     std::lock_guard l(gMutex);
+    ++gRtvCreated;
     if (res) gRtvRes[h.ptr] = res;
     else gRtvRes.erase(h.ptr);
+    gRtvGuess.erase(h.ptr);
 }
 void STDMETHODCALLTYPE setPsoHook(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
     reinterpret_cast<SetPso_t>(gOrig[3])(list, pso);
@@ -231,8 +291,12 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
     reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds);
     if (gState.load(std::memory_order_relaxed) == Idle) return;
     std::lock_guard l(gMutex);
-    if (n > 0 && rts) gListRt0[list] = rts[0].ptr; // with single == TRUE rts[0] is still RT0
-    else gListRt0.erase(list);
+    if (n > 0 && rts) {
+        SIZE_T h       = rts[0].ptr; // with single == TRUE rts[0] is still RT0
+        gListRt0[list] = h;
+        if (!gRtvRes.count(h))
+            if (auto lr = gListLastRt.find(list); lr != gListLastRt.end() && lr->second) gRtvGuess[h] = lr->second;
+    } else gListRt0.erase(list);
 }
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
     if (gState.load(std::memory_order_relaxed) == Capturing) onDraw(list);
@@ -241,6 +305,85 @@ void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b,
 void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
     if (gState.load(std::memory_order_relaxed) == Capturing) onDraw(list);
     reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
+}
+
+HRESULT STDMETHODCALLTYPE createHeapHook(ID3D12Device* d, D3D12_DESCRIPTOR_HEAP_DESC const* desc, REFIID riid, void** out) {
+    HRESULT hr = reinterpret_cast<CreateHeap_t>(gOrig[7])(d, desc, riid, out);
+    if (SUCCEEDED(hr) && desc && out && *out) {
+        ID3D12DescriptorHeap* heap = nullptr;
+        if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&heap))) && heap) {
+            HeapInfo hi;
+            hi.heap  = heap;
+            hi.type  = desc->Type;
+            hi.start = heap->GetCPUDescriptorHandleForHeapStart().ptr;
+            hi.count = desc->NumDescriptors;
+            hi.inc   = d->GetDescriptorHandleIncrementSize(desc->Type);
+            hi.flags = UINT(desc->Flags);
+            heap->Release(); // only described
+            if (desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_RTV) ++gHeapsRtv;
+            std::lock_guard l(gMutex);
+            hi.order = UINT(gHeaps.size());
+            // a new heap can reuse an old heap's address range: drop overlapping old entries
+            gHeaps.erase(std::remove_if(gHeaps.begin(), gHeaps.end(), [&](HeapInfo const& o) {
+                return o.inc && hi.inc && o.start < hi.start + SIZE_T(hi.count) * hi.inc && hi.start < o.start + SIZE_T(o.count) * o.inc;
+            }), gHeaps.end());
+            if (gHeaps.size() < 4096) gHeaps.push_back(hi);
+        }
+    }
+    return hr;
+}
+
+// copy dst[i] <- src[i] in the handle -> resource maps (caller holds gMutex)
+void propagate(SIZE_T dst, SIZE_T src) {
+    if (auto r = gRtvRes.find(src); r != gRtvRes.end()) { gRtvRes[dst] = r->second; ++gRtvCopied; }
+    else gRtvRes.erase(dst);
+    gRtvGuess.erase(dst);
+}
+UINT rtvInc(ID3D12Device* d) {
+    UINT v = gRtvInc.load(std::memory_order_relaxed);
+    if (!v) gRtvInc = v = d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    return v;
+}
+
+void STDMETHODCALLTYPE copyDescsHook(ID3D12Device* d, UINT nDst, D3D12_CPU_DESCRIPTOR_HANDLE const* dst, UINT const* dstSz,
+                                     UINT nSrc, D3D12_CPU_DESCRIPTOR_HANDLE const* src, UINT const* srcSz,
+                                     D3D12_DESCRIPTOR_HEAP_TYPE type) {
+    reinterpret_cast<CopyDescs_t>(gOrig[8])(d, nDst, dst, dstSz, nSrc, src, srcSz, type);
+    if (type != D3D12_DESCRIPTOR_HEAP_TYPE_RTV || !dst || !src) return;
+    ++gCopyCalls;
+    UINT inc = rtvInc(d);
+    std::lock_guard l(gMutex);
+    // walk both range lists in lockstep (a null size array means ranges of 1)
+    UINT di = 0, dOff = 0, si = 0, sOff = 0;
+    while (di < nDst && si < nSrc) {
+        UINT dN = dstSz ? dstSz[di] : 1, sN = srcSz ? srcSz[si] : 1;
+        if (dOff >= dN) { ++di; dOff = 0; continue; }
+        if (sOff >= sN) { ++si; sOff = 0; continue; }
+        propagate(dst[di].ptr + SIZE_T(dOff) * inc, src[si].ptr + SIZE_T(sOff) * inc);
+        ++dOff;
+        ++sOff;
+    }
+}
+void STDMETHODCALLTYPE copySimpleHook(ID3D12Device* d, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE dst, D3D12_CPU_DESCRIPTOR_HANDLE src,
+                                      D3D12_DESCRIPTOR_HEAP_TYPE type) {
+    reinterpret_cast<CopySimple_t>(gOrig[9])(d, n, dst, src, type);
+    if (type != D3D12_DESCRIPTOR_HEAP_TYPE_RTV) return;
+    ++gCopyCalls;
+    UINT inc = rtvInc(d);
+    std::lock_guard l(gMutex);
+    for (UINT i = 0; i < n; ++i) propagate(dst.ptr + SIZE_T(i) * inc, src.ptr + SIZE_T(i) * inc);
+}
+void STDMETHODCALLTYPE barrierHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_RESOURCE_BARRIER const* b) {
+    reinterpret_cast<Barrier_t>(gOrig[10])(list, n, b);
+    if (gState.load(std::memory_order_relaxed) == Idle || !b) return;
+    std::lock_guard l(gMutex);
+    auto& st = gListResState[list];
+    for (UINT i = 0; i < n; ++i) {
+        if (b[i].Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || !b[i].Transition.pResource) continue;
+        UINT after                        = UINT(b[i].Transition.StateAfter);
+        st[b[i].Transition.pResource]     = after;
+        if (after & D3D12_RESOURCE_STATE_RENDER_TARGET) gListLastRt[list] = b[i].Transition.pResource;
+    }
 }
 
 // ---------------------------------------------------------------- readback + files (render thread, at Present)
@@ -395,9 +538,12 @@ void finish(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
         << "UI shader hashes loaded: " << gUiHashes.size() << "\n"
         << "PSOs created (graphics desc): " << gPsoCreated.load() << ", tagged UI: " << gPsoUi.load()
         << ", created via pipeline-state stream (not inspected): " << gPsoStream.load() << "\n"
-        << "RTVs tracked: " << gRtvRes.size() << "\n"
+        << "RTVs tracked: " << gRtvRes.size() << " (CreateRenderTargetView calls " << gRtvCreated.load() << ", copied via CopyDescriptors* "
+        << gRtvCopied.load() << " in " << gCopyCalls.load() << " RTV copy calls, barrier guesses " << gRtvGuess.size() << ")\n"
+        << "Descriptor heaps seen: " << gHeaps.size() << " (RTV heaps created: " << gHeapsRtv.load() << ")\n"
         << "Frames watched: " << gCaptureFrames << "\n"
-        << "UI draws seen: " << gRes.uiDraws << " (render target unknown for " << gRes.uiDrawsNoTarget << ")\n"
+        << "UI draws seen: " << gRes.uiDraws << " (render target unknown for " << gRes.uiDrawsNoTarget << ", resolved by barrier guess "
+        << gRes.uiDrawsGuessed << ")\n"
         << "First UI draw material: " << (gRes.firstUi.empty() ? "-" : gRes.firstUi) << "\n"
         << "Distinct UI render targets: " << gRes.uiTargets.size() << "\n";
     bool anyBb = false;
@@ -406,6 +552,15 @@ void finish(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
         anyBb |= isBb;
         rep << "  [" << i << "] " << gRes.uiTargetDescs[i] << (isBb ? "  <- current BACK BUFFER" : "") << "\n";
     }
+    if (!gRes.unknown.empty()) {
+        rep << "Unknown UI render-target handles (first = FIRST UNKNOWN):\n";
+        for (auto& [h, n] : gRes.unknown) rep << "  0x" << hex64(h) << "  UI draws " << n << "  " << (h ? heapOf(h) : "no RT bound") << "\n";
+    }
+    rep << "RTV heaps:\n";
+    for (auto const& hi : gHeaps)
+        if (hi.type == D3D12_DESCRIPTOR_HEAP_TYPE_RTV)
+            rep << "  #" << hi.order << " start 0x" << hex64(hi.start) << " count " << hi.count << " inc " << hi.inc << "\n";
+    if (!gRes.srcAHow.empty()) rep << "Snapshot A target resolved by: " << gRes.srcAHow << "\n";
     rep << "Snapshot A (before first UI draw): " << (gRes.noteA.empty() ? "not taken" : gRes.noteA)
         << (gRes.srcA ? "  " + descStr(gRes.descA) + (gRes.srcA == bb ? " (back buffer)" : " (intermediate target)") : "") << "\n";
 
@@ -516,6 +671,9 @@ void resetResult() {
     gRes = Result{};
     gListRt0.clear();
     gListPso.clear();
+    gListLastRt.clear();
+    gListResState.clear();
+    gRtvGuess.clear();
     gTookA         = false;
     gCaptureFrames = 0;
     gVerdict.clear();
@@ -541,11 +699,14 @@ void init(fs::path const& configDir, fs::path const& outDir) {
 
 bool install(Targets const& t) {
     if (gInstalled) return true;
-    void* tg[kHooks]  = {t.createGraphicsPso, t.createStreamPso, t.createRtv, t.setPso, t.omSetRts, t.drawInstanced, t.drawIndexed};
+    void* tg[kHooks]  = {t.createGraphicsPso, t.createStreamPso, t.createRtv,  t.setPso,          t.omSetRts,     t.drawInstanced,
+                         t.drawIndexed,       t.createHeap,      t.copyDescs, t.copyDescsSimple, t.resourceBarrier};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
-                         reinterpret_cast<void*>(&drawIdxHook)};
+                         reinterpret_cast<void*>(&drawIdxHook),   reinterpret_cast<void*>(&createHeapHook),
+                         reinterpret_cast<void*>(&copyDescsHook), reinterpret_cast<void*>(&copySimpleHook),
+                         reinterpret_cast<void*>(&barrierHook)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;
