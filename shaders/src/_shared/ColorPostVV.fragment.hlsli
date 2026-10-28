@@ -91,8 +91,9 @@ float4 main(PSIn i) : SV_Target {
     if (ColorGrading_Gain_Midtones.x > 1.6 && ColorGrading_Gain_Midtones.z > 1.6 && ColorGrading_Gain_Midtones.y < 0.8) {
         // Hurt overlay: tools/HurtColorGen makes it opaque red; VV still blends it ~50% into the albedo, so the hit
         // entity is clearly red-dominant before grading. Strongly red natural blocks (red wool, redstone) match too.
-        float3 h = raw / (raw + 1.0);
-        bool hurt = h.r > 0.02 && h.r > VV_HURT_RATIO * max(h.g, h.b);
+        // Ratio on the linear scene: independent of the pack's VV_EXPOSURE_BIAS (a low bias, e.g. Insanity 0.12, pushed
+        // the old h.r > 0.02 floor above the pig's red). Tiny floor only rejects black pixels.
+        bool hurt = raw.r > 0.002 && raw.r > VV_HURT_RATIO * max(raw.g, raw.b);
         o = hurt ? float3(0.0, 0.0, 0.0) : float3(1.0, 1.0, 1.0);
     }
 #endif

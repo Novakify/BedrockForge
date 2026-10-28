@@ -20,3 +20,8 @@ python3 build.py <instance dir> <development_resource_packs dir> Hysteria Insani
   Check `<instance>/Minecraft Bedrock/logs/ContentLog*.txt` for `[Rendering][error]` lines after each rejoin.
 - Each pack is a separate RP (HysteriaVVRP, InsanityVVRP, ...). Activate the one matching shaderpack.txt in the world's resource packs.
 - Supersedes tools/HysteriaVV (lighting + shadows only); HysteriaVVRP keeps its UUID so worlds that have it stay linked.
+- NEVER set a VV RP as a GLOBAL resource pack: global packs sit above the world's packs and broke the Fancy impact frame
+  (2026-10-28). Activate it per world, with "Bedrock Forge Impact" listed first (above it).
+- The look also needs the shader side: each pack's `ColorPostProcessing/Fragment.hlsl` sets `VV_EXPOSURE_BIAS` (+ `VV_DEHAZE`,
+  `VV_SATURATION`, `VV_WHITE_BALANCE`). At the default 1.0 every pack blew out to near-white on VV. Current: Hysteria 0.32,
+  Insanity 0.12, Anime 0.15, Dread 0.2, CursedFog 0.16.

@@ -1,3 +1,44 @@
+# Next session handoff (updated 2026-10-28 ~17:00 local, PC session, computer use) - READ FIRST
+- GOAL 1 DONE - FANCY IMPACT FRAME FIXED + VERIFIED (Hysteria, Fancy): white world, hurt pig black (bfisky + bfion + punch).
+  ROOT CAUSE: "Hysteria VV" had been set as a GLOBAL resource pack (minecraftpe\global_resource_packs.json, 10:26 local).
+  Global packs apply to every world and sat ABOVE "Bedrock Forge Impact" in the stack -> the bf:impact fog push no longer
+  reached FogColor the same way (symptoms in the block below). Fix: global_resource_packs.json = [] (backup
+  .bak-hysvv-global). As a WORLD pack (Impact listed first = above it) Hysteria VV is fine on Fancy - verified.
+  RULE: never make a VV RP global; in each world put Bedrock Forge Impact ABOVE the VV RP.
+  No shader change was needed for Fancy.
+- GOAL 2 DONE - ALL 4 VV PACKS CHECKED IN GAME (world Jtr3 "My World", bfiref camera, Fancy vs VV):
+  Every pack's VV pass blew the scene out to near-white: VV auto exposure + the pack's own tonemap. Fix = per-pack
+  VV_EXPOSURE_BIAS (+ dehaze/saturation/white balance) in ColorPostProcessing/Fragment.hlsl:
+    Insanity (private src) bias 0.12, dehaze 0.35, sat 0.75, WB (1.03,0.97,1.06) + profiles.json: greyer lavender sky, fog 0.05.
+      Now close to Fancy (lavender-grey overcast, haze, muted greens). Content log 0 errors.
+    Anime bias 0.15 dehaze 0.15 - matches Fancy (vivid blue sky, saturated greens). 4 legacy BiomeRegistry errors only.
+    Dread bias 0.2 dehaze 0.2 - same dark grey mood; VV slightly lighter + water paler than Fancy's teal (tune later).
+    CursedFog bias 0.16 dehaze 0.2 sat 0.45 WB warm + warmer fog scatter - functional, but still NEUTRAL GREY and lighter
+      than Fancy's warm sepia (warmth comes from Fancy's fog colour; cfFinal desaturates any pre-grade tint) -> needs a
+      post-grade tint knob in ColorPostVV (e.g. VV_POST_TINT applied after packGradeVV). TODO.
+    Hysteria unchanged look; rebuilt with the new hurt test.
+  VV IMPACT FRAME on all 5 packs: white world + black pig VERIFIED (bfisky + bfivv). Needed a shared fix: the hurt test
+  used h = raw/(raw+1), h.r > 0.02 - with a low exposure bias the pig fell under the floor (only edges went black).
+  Now a linear ratio: raw.r > 0.002 && raw.r > VV_HURT_RATIO * max(raw.g, raw.b) (shaders/src/_shared/ColorPostVV).
+  All 5 packs' ColorPostProcessing rebuilt + installed (backups *.pre-vvtune / .pre-rawfix / .pre-vvtrim).
+- GOAL 3 M0 SPIKE RUN - RESULT: "UI draws seen but their render target is unknown".
+  2 captures (in world + pause menu): PSOs 1377, UI-tagged 68 (ui_shaders.txt hashes DO match), UI draws 840, RTVs tracked
+  70, but none of the RTV handles bound at OMSetRenderTargets were seen at CreateRenderTargetView -> no snapshot A.
+  So tagging works; RT lookup needs a fix before method 1 can be judged (see PORT_SPATIALGUI.md "M0 result").
+  Artifact download is blocked on both networks (Azure blob), so spatialgui-m0 CI now ALSO publishes to branch
+  spatialgui-m0-builds (commit a0cd009). Installed DLL was restored afterwards: RendererFoundation.dll = 5246159 (stable),
+  spike kept as RendererFoundation.sgm0-a0cd009.dll, uiCaptureSpike false. Reports in RF logs\uicapture\20261028-1655*.
+  Inventory key on this profile is NOT E (options keyboard_type_0_key.inventory:-94) - computer use couldn't open it.
+- NOT STARTED: Cinematic Interactions (blocked on Spatial GUI M1), GeckoBridge (last).
+- PC STATE: shaderpack.txt = Hysteria; graphics = VIBRANT VISUALS; "In-game graphics mode switching" turned ON (so Fancy<->VV
+  flips work inside a world: Esc > Settings > Video > Mode). World Jtr3 packs = [Bedrock Forge Impact, Hysteria VV]
+  (original; backup .bak-vvcheck). Device-shell helpers (lost with the VM): ~/cpp.sh (private pack VV rebuild),
+  ~/cpp2.sh (public pack VV rebuild from Downloads copy), ~/setvv.sh, ~/vvgen.
+- BUG: BF config\command.txt "vibrant on/off" stores the setting but never switched the graphics mode in game
+  (status stayed "command: vibrant on"; first try said "not allowed" because in-game switching was off). Use the settings UI.
+- New test function: /function bfisky = noon, sky platform at y200, slowed pig 3 ahead (clean impact-frame view).
+- Leftover legacy client-biome files in the VV RPs (mega_spruce_taiga...) still log 4 harmless errors (need delete permission).
+
 # Next session handoff (updated 2026-10-28 ~15:00 local) - READ FIRST
 - REGRESSION: FANCY IMPACT FRAME NOT WORKING (Hysteria, both "My World"s). Verified 01:55 today, broken now.
   Symptoms (fog pushed with /function bfion, held 3+ s): noon = screen unchanged, night = screen goes DARK; WHITE appears

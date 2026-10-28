@@ -85,6 +85,21 @@ coordinates from the ray-pick (exactly what the Java mod does).
 - Known spike limits: one attempt per capture; assumes the UI target is in RENDER_TARGET state at the draw; MSAA targets
   are reported but not copied; images are .bmp (no PNG encoder needed).
 
+## M0 result (2026-10-28 evening, run in game on the PC)
+- Build: branch `spatialgui-m0` a0cd009 (cb579bb + CI step publishing the DLL to branch `spatialgui-m0-builds`, because
+  Actions artifact downloads (Azure blob) are blocked from both the cloud session and the PC). Installed for the test only;
+  stable RF 5246159 restored afterwards, spike kept as `RendererFoundation.sgm0-a0cd009.dll`.
+- Two captures (in world, and with the pause menu open; the inventory key on this profile is not E so it wasn't opened):
+  `PSOs created 1377, tagged UI 68` (ui_shaders.txt matches the game's DXIL - tagging WORKS), `UI draws seen 840`,
+  `RTVs tracked 70`, but `render target unknown for 840`, `Distinct UI render targets: 0`, no snapshot A.
+  VERDICT line: "UI draws seen but their render target is unknown (RTVs copied, not created?)".
+- Meaning: the CPU descriptor handles passed to OMSetRenderTargets are not the ones seen in CreateRenderTargetView.
+  Likely bgfx copies RTV descriptors (CopyDescriptors/CopyDescriptorsSimple) or binds handles from a heap created before
+  RF's hooks were installed.
+- NEXT (M0.5, code only, then rerun): hook CreateDescriptorHeap (record heap CPU start + increment + count), CopyDescriptors
+  and CopyDescriptorsSimple (propagate handle -> resource), and in OMSetRenderTargets fall back to "which heap/slot is this
+  handle" to find the resource. Also log the first unknown handle + its heap in the report. Then rerun inventory + chest.
+
 ## Milestones
 - **M0 spike (1 session, PC needed):** RF logs PSO creation for UI materials; try method 1 on the inventory screen;
   dump one captured frame to a PNG in RF's log folder. Exit: "capture works / doesn't" + which method.

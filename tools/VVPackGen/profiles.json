@@ -61,32 +61,32 @@
     "rp_dir": "InsanityVVRP",
     "name": "Insanity VV",
     "atmos": {
-      "rayleigh": 0.6,
+      "rayleigh": 0.45,
       "sun_mie": 0.7,
       "glare": 1.0,
       "zenith": {
-        "sat": 1.2,
-        "val": 0.7
+        "sat": 0.45,
+        "val": 0.55
       },
       "horizon": {
-        "sat": 1.0,
-        "val": 0.78
+        "sat": 0.4,
+        "val": 0.62
       }
     },
     "fog": {
       "air": {
-        "max_density": 0.015,
+        "max_density": 0.05,
         "max_density_height": 62,
-        "zero_density_height": 120,
+        "zero_density_height": 180,
         "scattering": [
-          0.025,
-          0.026,
-          0.03
+          0.04,
+          0.038,
+          0.045
         ],
         "absorption": [
-          0.004,
-          0.004,
-          0.004
+          0.012,
+          0.012,
+          0.01
         ],
         "g": 0.7
       },
@@ -98,9 +98,10 @@
     },
     "lighting": {
       "orbital_offset_degrees": 40.0,
-      "sky_intensity": 0.75,
+      "sky_intensity": 0.6,
       "ambient": 0.02
-    }
+    },
+    "_reference": "Fancy look (2026-10-28 bfiref noon): lavender-grey overcast sky, soft haze toward horizon, deep desaturated greens, blue-grey water"
   },
   "Anime": {
     "rp_dir": "AnimeVVRP",
@@ -205,12 +206,12 @@
       "sun_mie": 0.5,
       "glare": 0.5,
       "zenith": {
-        "sat": 0.45,
-        "val": 0.55
+        "sat": 0.3,
+        "val": 0.5
       },
       "horizon": {
-        "sat": 0.4,
-        "val": 0.6
+        "sat": 0.3,
+        "val": 0.55
       }
     },
     "fog": {
@@ -218,9 +219,9 @@
         "max_density": 0.12,
         "uniform": true,
         "scattering": [
-          0.06,
-          0.058,
-          0.058
+          0.062,
+          0.056,
+          0.046
         ],
         "absorption": [
           0.02,
@@ -240,6 +241,7 @@
       "ambient": 0.01,
       "sun_scale": 0.7,
       "moon_illuminance": 0.2
-    }
+    },
+    "_reference": "Fancy look (2026-10-28 bfiref noon): warm sepia/brown-grey fog, dark brown terrain, side bars + chromatic fringe from cfFinal"
   }
 }
