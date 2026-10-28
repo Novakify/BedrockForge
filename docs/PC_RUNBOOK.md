@@ -109,6 +109,11 @@ Steps:
 **What Fernando checks:** turning left/right and up/down quickly gives streaks in the turn direction; standing still
 or walking straight = sharp image; no streaks in menus; note if the hotbar smears.
 
+**Status 2026-10-28:** motion blur is OFF on purpose - Fernando asked for 0 (felt laggy) in the "PC runbook section 0" chat;
+every PC postfx.json has `"motion_blur": 0` (backups `postfx.json.pre-noblur`), repo CursedFog too. RF's F6 override
+sliders are memory-only (ImGui ini off) and default to 0, so nothing can turn it back on. Don't re-enable unless he asks.
+Still open if blur ever comes back: yaw source per tick vs per frame (step 3), HUD smear (step 4).
+
 ### 3b. Remove debug counters from Dread Atmosphere
 - The ambient leaves + dust script with the counters exists ONLY on the PC (the repo builder
   `tools/DreadAtmos/build.py` still has the old fog-only BP_SCRIPT). So:
@@ -120,6 +125,11 @@ or walking straight = sharp image; no streaks in menus; note if the hotbar smear
 3. Put the cleaned script into `tools/DreadAtmos/build.py` as BP_SCRIPT (it's original MIT code -> OK to commit) and
    bump the pack version so the game reloads it. Commit + push.
 4. Copy the cleaned main.js over the live one (rename the old to `main.js.debug-bak` first).
+**Done 2026-10-28:** live BP = `Users\Shared\games\com.mojang\development_behavior_packs\DreadAtmosphereBP` (old script kept as
+`main.js.debug-bak`). Counters + `bf:amb` handler removed, tuning constants at the top (DUST_PER_RUN = density). Builder now
+writes the same script + the particles/textures (byte-identical to the live pack). Versions stay 1.0.0 on purpose: three
+worlds pin [1,0,0] and development packs are re-read every world load. Note: the BP is in My World `AWJgm+UJIEM=`,
+From The Fog Test and "test" - NOT in the My World played on 10-28 (`+A1sY8g-qtk=`).
 **What Fernando checks:** leaves + dust still fall; `/scriptevent bf:amb x` no longer prints; ContentLog 0 errors.
 
 ## 4. Sky bug from Fernando's 2026-10-27 test (top priority per his note: "perfect before any other mod")
