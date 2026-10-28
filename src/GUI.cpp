@@ -16,6 +16,7 @@
 #include "Options.h"
 #include "Overlay.h"
 #include "PostFx.h"
+#include "SpatialPanel.h"
 #include "UiCapture.h"
 
 namespace {
@@ -142,6 +143,7 @@ void updateImGui() {
             graphicsSection();
             rf::postfx::drawUi();
             rf::uicapture::drawUi();
+            rf::panel::drawUi();
         }
         ImGui::End();
 

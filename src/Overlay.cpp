@@ -22,6 +22,7 @@
 
 #include "LLShim.h"
 #include "PostFx.h"
+#include "SpatialPanel.h"
 #include "UiCapture.h"
 
 #include "GUI.h"
@@ -71,6 +72,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (int(wp) == RfOptions::uiKey.get()) RfOptions::showImGui = !RfOptions::showImGui;
         else if (RfOptions::reloadShadersKey.get() != 0 && int(wp) == RfOptions::reloadShadersKey.get()) RfOptions::reloadShaders = true;
         else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiCaptureKey.get()) rf::uicapture::request();
+        else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiPanelKey.get()) rf::panel::toggle();
     }
     if (gInitialized && RfOptions::showImGui) {
         std::lock_guard l(gImGuiMutex);
@@ -80,6 +82,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         bool  keyMsg   = (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) && int(wp) != RfOptions::uiKey.get();
         if ((mouseMsg && io.WantCaptureMouse) || (keyMsg && io.WantCaptureKeyboard)) return 0;
     }
+    if (RfOptions::uiCaptureSpike) rf::panel::remapMouse(hwnd, msg, lp); // Spatial GUI M1: ray-pick through the panel
     return CallWindowProcW(gOrigProc, hwnd, msg, wp, lp);
 }
 
@@ -203,7 +206,10 @@ void render(IDXGISwapChain3* sc) {
     ID3D12DescriptorHeap* heaps[]  = {srvHeap.Get()};
     bb.list->Reset(bb.allocator.Get(), nullptr);
     // full-screen post effects first (they leave the back buffer in RENDER_TARGET), then ImGui on top
-    if (!rf::postfx::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv)) bb.list->ResourceBarrier(1, &barrier);
+    // Spatial GUI M1 panel replaces the post pass while it is shown (both read the back buffer as their source)
+    if (!rf::panel::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv)
+        && !rf::postfx::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv))
+        bb.list->ResourceBarrier(1, &barrier);
     bb.list->OMSetRenderTargets(1, &bb.rtv, FALSE, nullptr);
     bb.list->SetDescriptorHeaps(1, heaps);
     ImGui::Render();

@@ -14,6 +14,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #define WIN32_LEAN_AND_MEAN
@@ -26,6 +27,7 @@
 
 #include "LLShim.h"
 #include "Options.h"
+#include "SpatialPanel.h"
 
 namespace rf::uicapture {
 namespace {
@@ -80,6 +82,12 @@ long                             gFrameUiDraws = 0, gLearned = 0;
 int                              gTrackFrames  = 0;
 thread_local bool                gInSnapshot   = false; // our own barriers/copies inside snapshot() must not re-enter the hooks (gMutex is held)
 std::vector<std::string>         gLearnLog;
+// M1 panel redirect
+std::unordered_set<SIZE_T>                                   gBbHandles;   // RTV handles known to be swap-chain buffers
+std::unordered_map<ID3D12GraphicsCommandList*, SIZE_T>       gListDsv;     // list -> bound DSV (0 = none)
+std::unordered_set<ID3D12GraphicsCommandList*>               gListOnPanel; // lists currently bound to the panel target
+std::atomic_bool                                             gFrameRedirect{false}, gLearnOnly{false};
+bool tracking() { return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled(); }
 
 enum State : int { Idle = 0, Tracking = 1, Capturing = 2 };
 std::atomic<int>  gState{Idle};
@@ -204,6 +212,21 @@ void onDraw(ID3D12GraphicsCommandList* list) {
     if (p == gListPso.end()) return;
     auto u = gUiPso.find(p->second);
     if (u == gUiPso.end()) return;
+    // M1 panel: first UI draw on a back buffer -> clear the panel target and bind it for the rest of the frame
+    if (rf::panel::wantRedirect() && !gListOnPanel.count(list))
+        if (auto lt = gListRt0.find(list); lt != gListRt0.end() && gBbHandles.count(lt->second)) {
+            D3D12_CPU_DESCRIPTOR_HANDLE h{rf::panel::targetRtv()};
+            if (!gFrameRedirect.exchange(true)) {
+                float const clear[4] = {0, 0, 0, 0};
+                list->ClearRenderTargetView(h, clear, 0, nullptr);
+            }
+            auto                        ds = gListDsv.find(list);
+            D3D12_CPU_DESCRIPTOR_HANDLE d{ds != gListDsv.end() ? ds->second : 0};
+            reinterpret_cast<OmSet_t>(gOrig[4])(list, 1, &h, FALSE, d.ptr ? &d : nullptr);
+            gListOnPanel.insert(list);
+        }
+    if (gListOnPanel.count(list)) rf::panel::noteRedirected();
+    if (gState.load(std::memory_order_relaxed) == Idle) return;
     if (gState.load(std::memory_order_relaxed) == Tracking) {
         ++gFrameUiDraws;
         if (auto lt = gListRt0.find(list); lt != gListRt0.end() && !gRtvRes.count(lt->second)) ++gFrameUnknownUi[lt->second];
@@ -307,15 +330,25 @@ void STDMETHODCALLTYPE createRtvHook(ID3D12Device* d, ID3D12Resource* res, D3D12
 }
 void STDMETHODCALLTYPE setPsoHook(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
     reinterpret_cast<SetPso_t>(gOrig[3])(list, pso);
-    if (gState.load(std::memory_order_relaxed) == Idle) return;
+    if (gInSnapshot || !tracking()) return;
     std::lock_guard l(gMutex);
     gListPso[list] = pso;
 }
 void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                                  D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
-    reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds);
-    if (gState.load(std::memory_order_relaxed) == Idle) return;
+    if (gInSnapshot || !tracking()) { reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds); return; }
     std::lock_guard l(gMutex);
+    gListDsv[list] = ds ? ds->ptr : 0;
+    // M1: once the frame's UI pass started, binds of a back buffer go to the panel target instead
+    bool toPanel = n > 0 && rts && gFrameRedirect.load(std::memory_order_relaxed) && rf::panel::wantRedirect() && gBbHandles.count(rts[0].ptr);
+    if (toPanel) {
+        D3D12_CPU_DESCRIPTOR_HANDLE h{rf::panel::targetRtv()};
+        reinterpret_cast<OmSet_t>(gOrig[4])(list, 1, &h, FALSE, ds);
+        gListOnPanel.insert(list);
+    } else {
+        reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds);
+        gListOnPanel.erase(list);
+    }
     if (n > 0 && rts) {
         SIZE_T h       = rts[0].ptr; // with single == TRUE rts[0] is still RT0
         gListRt0[list] = h;
@@ -324,11 +357,11 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
     } else gListRt0.erase(list);
 }
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
-    if (!gInSnapshot && gState.load(std::memory_order_relaxed) != Idle) onDraw(list);
+    if (!gInSnapshot && tracking()) onDraw(list);
     reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
 }
 void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
-    if (!gInSnapshot && gState.load(std::memory_order_relaxed) != Idle) onDraw(list);
+    if (!gInSnapshot && tracking()) onDraw(list);
     reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
 }
 
@@ -764,8 +797,23 @@ void request() {
     if (gInstalled) gRequest = true;
 }
 
+void requestLearn() {
+    if (!gInstalled) return;
+    {
+        std::lock_guard l(gMutex);
+        if (!gBbHandles.empty()) return;
+    }
+    gLearnOnly = true;
+    gRequest   = true;
+}
+
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb) {
     if (!gInstalled || !device || !queue || !bb) return;
+    gFrameRedirect = false;
+    {
+        std::lock_guard l(gMutex);
+        gListOnPanel.clear(); // the game re-binds its targets every frame
+    }
     int s = gState.load();
     if (s == Idle) {
         if (gRequest.exchange(false)) {
@@ -782,6 +830,7 @@ void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resour
         if (gFrameUnknownUi.size() == 1) {
             SIZE_T h   = gFrameUnknownUi.begin()->first;
             gRtvRes[h] = bb;
+            gBbHandles.insert(h);
             ++gLearned;
             line += " -> learned 0x" + hex64(h) + " = back buffer " + descStr(bb->GetDesc());
         }
@@ -790,8 +839,13 @@ void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resour
         gFrameUnknownUi.clear();
         gFrameUiDraws = 0;
         if ((clean && gTrackFrames >= 2) || gTrackFrames >= 12) {
-            gState  = Capturing;
-            gStatus = "capturing";
+            if (gLearnOnly.exchange(false)) {
+                gState  = Idle;
+                gStatus = "learned " + std::to_string(gBbHandles.size()) + " back-buffer RTVs (panel)";
+            } else {
+                gState  = Capturing;
+                gStatus = "capturing";
+            }
         }
         return;
     }

@@ -58,6 +58,7 @@ extern std::atomic_bool applyGraphicsMode;       // request, consumed on the cli
 // Spatial GUI M0 capture spike (UiCapture.h): off = its hooks are not installed at all
 extern RfOption<bool> uiCaptureSpike;
 extern RfOption<int>  uiCaptureKey; // Win32 virtual-key code (default F7)
+extern RfOption<int>  uiPanelKey;   // Spatial GUI M1 panel toggle (default F8), needs uiCaptureSpike
 
 extern std::filesystem::path optionsFile;
 
