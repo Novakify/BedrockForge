@@ -240,8 +240,10 @@ bool   wantRedirect() { return enabled() && gReady.load(std::memory_order_relaxe
 size_t targetRtv() { return gRtv.load(std::memory_order_relaxed); }
 void   noteRedirected() { gRedirected.store(true, std::memory_order_relaxed); }
 
+void installCursorHook();
 void toggle() {
     bool on = !gEnabled.load();
+    if (on) installCursorHook();
     gEnabled = on;
     if (on) uicapture::requestLearn(); // make sure the back-buffer RTV handles are known
     ll_shim::info(std::string("[RF] spatial panel ") + (on ? "on" : "off"));
@@ -325,16 +327,11 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
 }
 
 // ---------------------------------------------------------------- input
-bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
-    switch (msg) {
-    case WM_MOUSEMOVE:
-    case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
-    case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
-    case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK:
-    case WM_XBUTTONDOWN: case WM_XBUTTONUP: case WM_XBUTTONDBLCLK: break;
-    default: return false;
-    }
-    if (!gS.remap || !gEnabled || gAnim.load() < 0.5f) return false;
+std::atomic<HWND> gHwnd{nullptr};
+
+// client pixel -> client pixel the game should see (ray-pick through the panel)
+bool remapClient(HWND hwnd, int& ix, int& iy) {
+    if (!gS.remap || !gEnabled || gAnim.load() < 0.5f || RfOptions::showImGui) return false;
     Geom g;
     {
         std::lock_guard l(gGeomMutex);
@@ -345,7 +342,7 @@ bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
     if (!GetClientRect(hwnd, &rc)) return false;
     float W = float(rc.right - rc.left), H = float(rc.bottom - rc.top);
     if (W < 1 || H < 1) return false;
-    float px = float(short(LOWORD(lp))), py = float(short(HIWORD(lp)));
+    float px = float(ix), py = float(iy);
     // ray through the pixel (view space, z forward)
     float d[3] = {(2.0f * (px + 0.5f) / W - 1.0f) * g.tanHalf * g.aspect, (1.0f - 2.0f * (py + 0.5f) / H) * g.tanHalf, 1.0f};
     float c[3] = {g.cx, g.cy, g.cz};
@@ -357,8 +354,55 @@ bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
     float ly = h[0] * g.ey[0] + h[1] * g.ey[1] + h[2] * g.ey[2];
     float u  = std::clamp((lx / g.hw + 1.0f) * 0.5f, 0.0f, 1.0f);
     float v  = std::clamp((1.0f - ly / g.hh) * 0.5f, 0.0f, 1.0f);
-    int   nx = std::min(int(u * W), int(W) - 1), ny = std::min(int(v * H), int(H) - 1);
-    lp       = MAKELPARAM(nx, ny);
+    ix = std::min(int(u * W), int(W) - 1);
+    iy = std::min(int(v * H), int(H) - 1);
+    return true;
+}
+
+// In-world screens read the cursor with GetCursorPos (the title screen uses the WM_* coordinates): remap both.
+using GetCursorPos_t = BOOL(WINAPI*)(LPPOINT);
+void* gGcpTarget = nullptr;
+void* gGcpOrig   = nullptr;
+BOOL WINAPI getCursorPosHook(LPPOINT p) {
+    BOOL r = reinterpret_cast<GetCursorPos_t>(gGcpOrig)(p);
+    HWND h = gHwnd.load(std::memory_order_relaxed);
+    if (r && p && h && gEnabled.load(std::memory_order_relaxed)) {
+        POINT c = *p;
+        if (ScreenToClient(h, &c)) {
+            int  x = c.x, y = c.y;
+            RECT rc;
+            if (GetClientRect(h, &rc) && x >= 0 && y >= 0 && x < rc.right && y < rc.bottom && remapClient(h, x, y)) {
+                c = {x, y};
+                if (ClientToScreen(h, &c)) *p = c;
+            }
+        }
+    }
+    return r;
+}
+void installCursorHook() {
+    if (gGcpTarget) return;
+    HMODULE u = GetModuleHandleW(L"user32.dll");
+    void*   t = u ? reinterpret_cast<void*>(GetProcAddress(u, "GetCursorPos")) : nullptr;
+    if (!t) return;
+    if (ll_shim::hook(t, reinterpret_cast<void*>(&getCursorPosHook), &gGcpOrig) == 0) {
+        gGcpTarget = t;
+        ll_shim::info("[RF] spatial panel: GetCursorPos hooked");
+    } else ll_shim::warn("[RF] spatial panel: GetCursorPos hook failed");
+}
+
+bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
+    gHwnd = hwnd;
+    switch (msg) {
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK:
+    case WM_XBUTTONDOWN: case WM_XBUTTONUP: case WM_XBUTTONDBLCLK: break;
+    default: return false;
+    }
+    int x = short(LOWORD(lp)), y = short(HIWORD(lp));
+    if (!remapClient(hwnd, x, y)) return false;
+    lp = MAKELPARAM(x, y);
     return true;
 }
 
