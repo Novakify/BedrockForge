@@ -100,6 +100,52 @@ coordinates from the ray-pick (exactly what the Java mod does).
   and CopyDescriptorsSimple (propagate handle -> resource), and in OMSetRenderTargets fall back to "which heap/slot is this
   handle" to find the resource. Also log the first unknown handle + its heap in the report. Then rerun inventory + chest.
 
+## M0.5 result (2026-10-28 ~17:40 local, cloud session + PC computer use) - VERDICT: METHOD 1 VIABLE
+- RF `spatialgui-m0` b4d9037 (M0.5: CreateDescriptorHeap / CopyDescriptors / CopyDescriptorsSimple / ResourceBarrier
+  hooks + unknown-handle report) -> 5401c4b (M0.5b) -> 2d5ac7a (M0.5c). Reports: RF `logs\uicapture\20261028-172009`,
+  `-173145`, `-173940` (+ `_previews\a/b/diff.png`).
+- Findings: 0 RTV descriptor copies. The 3 unknown UI handles sat one slot apart, rotated per frame, and were in no heap
+  created after RF hooked = the **3 swap-chain back-buffer RTVs, created before the hooks**. M0.5b learns them at
+  Present (a tracking frame whose UI draws used exactly one unknown handle -> that frame's back buffer): 3 learned,
+  0 unknown, every UI draw resolved, target = 3840x2054 R8G8B8A8_UNORM back buffer.
+- Snapshot A "faulted" in M0.5/M0.5b because snapshot() called the now-hooked ResourceBarrier -> re-locked gMutex ->
+  std::mutex threw inside __try (own bug, fixed by a thread_local guard in M0.5c). The barrier-guess fallback picked the
+  wrong target (2626x1404 R11G11B10 world RT) - kept as report-only.
+- M0.5c pause menu: A = world only, B = world + menu, diff = UI layer (+ the menu's full-screen dim) ->
+  **"METHOD 1 VIABLE: UI draws straight into the back buffer"**. First UI draw: `jsonui UIBlit/Transparent`, ~26-28 UI
+  draws per frame. Game stable on all 3 runs.
+- Not captured yet: inventory + chest. Computer use can't open them: inventory is on a mouse side button (-94) and
+  injected right clicks never reach the game (CPS counter stays R0). Adding keyboard binds in options.txt
+  (`inventory:-94,69` / `use:-98,85`, either order) did NOT work - the game kept them in the file but ignored them.
+  Fernando has to add E in Settings > Keyboard & Mouse (or open the chest himself).
+- Decision for M1: build on the known back-buffer handles with **method 2 (redirect)** rather than diffing - clean
+  alpha, and the flat 2D screen disappears from the back buffer for free.
+
+## M1 v0 (2026-10-28 ~18:00-18:30 local, RF `spatialgui-m0` b55aae5 -> 4d7df40) - TESTED ON THE PC
+- `src/SpatialPanel.{h,cpp}` + `shaders/panel.hlsl` (-> `src/PanelShaders.h` via `tools/gen_panel.py`, dxc 1.8.2505.1).
+- F8 (`uiPanelKey`) or F6 > "Spatial GUI panel (M1)". Needs `uiCaptureSpike: true` (redirect lives in the UiCapture hooks).
+- Redirect: first UI-PSO draw on a back-buffer RTV -> clear + bind our transparent target; later binds of a back-buffer
+  RTV in that frame -> our target. Present: world copy zoomed (FOV lerp) + dimmed, UI target drawn as a perspective
+  quad (size/tilt/yaw/offset sliders, eased open/close, thin frame), mouse ray-picked through the quad.
+- WORKS (verified in game): title screen + in-world pause menu render on the tilted 3D panel over the zoomed/dimmed world,
+  F8 toggles cleanly back to normal, no crashes in ~6 launches. **Title screen input works through the panel**: hover
+  follows the panel position and clicking "Settings" at its panel position opened Settings (WM_* coordinate remap).
+- OPEN 1 - in-world input: the pause menu in a world ignores the remap - its hover follows the REAL cursor.
+  v0.2/v0.3 diag (`logs\uicapture\panel_diag.txt`, written on F8 off): GetCursorPos ~1 call/frame (= RF's own ImGui
+  poll, not the game), only 3 WM_MOUSEMOVE for 3 moves (all remapped), **0 mouse WM_INPUT**. The exe imports
+  `GameInputCreate` -> in-world menus read the mouse through **GameInput**. NEXT: hook GameInputCreate ->
+  IGameInput::GetCurrentReading / IGameInputReading::GetMouseState and remap there (positionX/Y are accumulated
+  deltas, so remap = offset between real and ray-picked position), or find the screen-space cursor the game keeps
+  and patch it via BF.
+- OPEN 2 - Settings (OreUI/Gameface) renders flat, not on the panel (different path) - out of M1 scope (inventory and
+  containers are JSON UI).
+- OPEN 3 - colours on the panel look slightly washed (UI blended onto transparent black; alpha mode guess). Tune
+  `Alpha boost` / try sqrt alpha once the inventory is visible.
+- Known v0 limits: HUD goes onto the panel too (needs BF screen detection: export the current screen name so the panel
+  only opens for inventory/containers); bloom/post FX skipped while the panel is shown.
+- Inventory/chest still not opened by computer use (see M0.5 result) - Fernando should bind E (Settings > Keyboard &
+  Mouse) so a session can test the real target screens.
+
 ## Milestones
 - **M0 spike (1 session, PC needed):** RF logs PSO creation for UI materials; try method 1 on the inventory screen;
   dump one captured frame to a PNG in RF's log folder. Exit: "capture works / doesn't" + which method.

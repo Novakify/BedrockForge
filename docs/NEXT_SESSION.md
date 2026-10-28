@@ -1,3 +1,27 @@
+# Next session handoff (updated 2026-10-28 ~18:35 local, cloud session + PC computer use, Fernando away) - READ FIRST
+- GOAL 1 DONE - Spatial GUI M0.5 -> **VERDICT: METHOD 1 VIABLE**. UI draws straight into the swap-chain back buffer.
+  The "unknown" RTV handles were the 3 swap-chain RTVs created before RF hooked; M0.5b learns them at Present. Details:
+  PORT_SPATIALGUI.md "M0.5 result". RF branch `spatialgui-m0` b4d9037 -> 2d5ac7a.
+- GOAL 2 PARTLY - capture ran on the PAUSE MENU (a.bmp world / b.bmp world+menu / diff = UI). Inventory + chest NOT
+  captured: computer use can't open them (inventory = mouse side button -94; injected right clicks never reach the game;
+  extra keyboard binds added to options.txt were ignored - options.txt restored from .bak-keybinds). Chest is placed by
+  the new /function bfch (BedrockForgeImpactBP, world Jtr3 "My World", sky platform). ASK FERNANDO to add E as inventory
+  key in Settings > Keyboard & Mouse (and a keyboard "use" key) before the next capture/M1 test.
+- GOAL 3 STARTED - Spatial GUI M1 v0 (RF `spatialgui-m0` 4d7df40): F8 puts the UI on a tilted 3D panel over the
+  zoomed/dimmed world (method 2 redirect). Verified: title + pause menu on the panel, title-screen hover/click through the
+  panel works. OPEN: in-world menus read the mouse via GameInput (diag: 0 WM_INPUT, GetCursorPos only from RF ImGui) ->
+  next step = GameInput hook. Then screen detection (BF) so HUD stays off the panel. See PORT_SPATIALGUI.md "M1 v0".
+- NOT STARTED: Cinematic Interactions (waits for M1 input), GeckoBridge (last).
+- PC STATE: STABLE RF restored (RendererFoundation.dll = 5246159, `uiCaptureSpike: false`). Kept builds in
+  mods\RendererFoundation: .sgm0-a0cd009, .sgm05-b4d9037, .sgm05b-5401c4b, .sgm05c-2d5ac7a, .sgm1-3fe8db8, .sgm1-1a877a6,
+  .sgm1-1f6d707, .sgm1-4d7df40 (latest M1). To test M1: copy .sgm1-4d7df40 over RendererFoundation.dll, set
+  uiCaptureSpike true, restart, F8. Captures in logs\uicapture\20261028-17* (+ _previews\a/b/diff.png, panel_diag.txt).
+  options.txt = original (backup .bak-keybinds). Game closed.
+- Build pipeline used: push RF branch spatialgui-m0 -> CI publishes DLL to `spatialgui-m0-builds` -> cloud clone ->
+  device_commit_files into mods\RendererFoundation (PC device shell can't clone: no GitHub auth there).
+- Computer use notes: the Claude desktop chat panel pops over the game and steals key focus -> click the game's TITLE
+  BAR (y~6) before keys (in-world left click = attack). `/` via key "slash", then type "function " + name in chunks.
+
 # Next session handoff (updated 2026-10-28 ~17:00 local, PC session, computer use) - READ FIRST
 - GOAL 1 DONE - FANCY IMPACT FRAME FIXED + VERIFIED (Hysteria, Fancy): white world, hurt pig black (bfisky + bfion + punch).
   ROOT CAUSE: "Hysteria VV" had been set as a GLOBAL resource pack (minecraftpe\global_resource_packs.json, 10:26 local).
