@@ -87,7 +87,9 @@ std::unordered_set<SIZE_T>                                   gBbHandles;   // RT
 std::unordered_map<ID3D12GraphicsCommandList*, SIZE_T>       gListDsv;     // list -> bound DSV (0 = none)
 std::unordered_set<ID3D12GraphicsCommandList*>               gListOnPanel; // lists currently bound to the panel target
 std::atomic_bool                                             gFrameRedirect{false}, gLearnOnly{false};
-bool tracking() { return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled(); }
+bool tracking();
+void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
+               D3D12_CPU_DESCRIPTOR_HANDLE const* ds);
 
 enum State : int { Idle = 0, Tracking = 1, Capturing = 2 };
 std::atomic<int>  gState{Idle};
@@ -222,7 +224,7 @@ void onDraw(ID3D12GraphicsCommandList* list) {
             }
             auto                        ds = gListDsv.find(list);
             D3D12_CPU_DESCRIPTOR_HANDLE d{ds != gListDsv.end() ? ds->second : 0};
-            reinterpret_cast<OmSet_t>(gOrig[4])(list, 1, &h, FALSE, d.ptr ? &d : nullptr);
+            callOmSet(list, 1, &h, FALSE, d.ptr ? &d : nullptr);
             gListOnPanel.insert(list);
         }
     if (gListOnPanel.count(list)) rf::panel::noteRedirected();
@@ -294,6 +296,12 @@ void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
 bool          gInstalled = false;
+
+bool tracking() { return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled(); }
+void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
+               D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
+    reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds);
+}
 
 HRESULT STDMETHODCALLTYPE createGpsHook(ID3D12Device* d, D3D12_GRAPHICS_PIPELINE_STATE_DESC const* desc, REFIID riid, void** out) {
     HRESULT hr = reinterpret_cast<CreateGps_t>(gOrig[0])(d, desc, riid, out);
