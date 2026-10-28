@@ -1,3 +1,25 @@
+# Next session handoff (updated 2026-10-28 ~07:45 UTC, PC connected, Fernando away - nothing tested in game)
+TOMORROW'S CHECKLIST (one at a time, in this order; each line says how to undo it):
+1. Hysteria VV (runbook section 2, installed): launch -> settings say Vibrant Visuals; soft sun shadows that move;
+   Hysteria colours; amber moon; UI not graded; switch back to Fancy/Hysteria without crash; F3 FPS.
+   Logs: shaderpacks.txt "ColorPostProcessing <- HysteriaVV". Undo: shaderpack.txt = Hysteria, options graphics_mode:1,
+   modules.json vibrant false (all have .bak-20261028).
+2. Dread Atmosphere script (runbook 3b, installed): only in worlds My World AWJgm+UJIEM= / From The Fog Test / test.
+   Leaves + dust still fall; /scriptevent bf:amb x prints nothing; ContentLog 0 errors. Undo: rename main.js.debug-bak back.
+3. Motion blur (runbook 3a): nothing changed on the PC - stays OFF as Fernando asked (all postfx.json 0). Repo CursedFog 0 too.
+4. Spatial GUI M0 spike (RF branch spatialgui-m0, commit cb579bb, CI run 40648827763 green, artifact
+   RendererFoundation-client-windows-x64-cb579bb... kept until 2027-01-26). NOT installed: this session had no way to
+   copy a DLL to the PC. Install = rename RendererFoundation.dll -> RendererFoundation.5246159.dll, copy the artifact's
+   RendererFoundation.dll in, set "uiCaptureSpike": true in RendererFoundation.json, inventory open + F7.
+   Steps + how to read report.txt: docs/PORT_SPATIALGUI.md "M0 status". ui_shaders.txt already on the PC.
+   Undo: rename the 5246159 DLL back (uiCaptureSpike false also makes the new DLL behave like the old one).
+5. ZIP-copy sync (from the "PC runbook section 0" chat): Downloads\BedrockForge-main holds VERIFIED sky fix v2
+   (shaders/src/_shared/SkyFull.vertex.hlsli) + ShaderForge --impact + Anime/Dread Actor+Sky + Dread/CursedFog Clouds
+   (FogColor) - never committed. Folder access was refused while Fernando was away -> approve access to
+   ~\Downloads\BedrockForge-main next session, then diff those files against main and commit.
+6. Cinematic Interactions M1: BLOCKED - needs Spatial GUI M1, which needs the M0 result (item 4). Not started.
+Other: impact-frame white/black work from the section-0 chat is still open (DebugFog pack installed for it).
+
 # Next session handoff (updated 2026-10-28 ~07:10 UTC, PC connected)
 INSTALLED, NOT YET SEEN IN GAME: GOAL 1 Hysteria-VV real shadows (runbook section 2, findings written there).
 - shaderpacks\HysteriaVV\ (renderer/materials/ColorPostProcessing.material.bin, postfx.json = Hysteria's bloom+CAS, src\ PRIVATE).

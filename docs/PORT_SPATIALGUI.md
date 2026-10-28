@@ -64,6 +64,27 @@ Bedrock has no "draw this screen into my texture" API. Candidate capture methods
 Input works the same for all four: keep the vanilla screen open as the input target and feed it remapped cursor
 coordinates from the ray-pick (exactly what the Java mod does).
 
+## M0 status (2026-10-28): code done, NOT yet run in game
+- Branch `spatialgui-m0` (RF, from `renderer-foundation` 5246159), commit cb579bb: `src/UiCapture.{h,cpp}` + wiring.
+  Pushed to its own branch so `rf-builds` (the installed RF) is untouched; CI builds it as an Actions artifact only.
+- Inert unless `"uiCaptureSpike": true` in `mods\RendererFoundation\config\RendererFoundation.json` (then 7 extra D3D12
+  hooks: CreateGraphicsPipelineState, CreatePipelineState (counted only), CreateRenderTargetView, SetPipelineState,
+  OMSetRenderTargets, DrawInstanced, DrawIndexedInstanced; all pass straight through unless a capture is running).
+- UI shader list: `mods\RendererFoundation\config\ui_shaders.txt` is ALREADY on the PC (54 hashes: 36 JSON UI, 18 OreUI,
+  made by `tools/gen_ui_shaders.py` from the 1.26.51.01 materials).
+- How it works: F7 (or F6 -> "Spatial GUI spike (M0)" -> Capture) -> 1 frame learns RTVs/bindings -> next frames (max 30):
+  before the first draw with a UI pipeline the bound RT is copied (A); at Present the back buffer is copied (B, before
+  RF's post-FX/ImGui). Output `mods\RendererFoundation\logs\uicapture\<time>\`: a.bmp, b.bmp, diff.bmp, report.txt,
+  seen_ps_hashes.txt. The report ends with a VERDICT line.
+- Test (needs the game): install the CI artifact DLL as RendererFoundation.dll (rename the current one to
+  RendererFoundation.5246159.dll first), set uiCaptureSpike true, launch, enter a world, press E (inventory), press F7,
+  wait 1 s, close. Repeat once with a chest. Read report.txt.
+- Reading the verdict: "METHOD 1 VIABLE" -> M1 can use diff.bmp-style capture. "INTERMEDIATE target" -> UI draws to an
+  offscreen RT first (then method 2 on that RT is actually easier: copy that RT at Present). "NO UI PIPELINES TAGGED" ->
+  compare seen_ps_hashes.txt with ui_shaders.txt (bgfx may alter the DXIL) or the PSOs come from pipeline streams.
+- Known spike limits: one attempt per capture; assumes the UI target is in RENDER_TARGET state at the draw; MSAA targets
+  are reported but not copied; images are .bmp (no PNG encoder needed).
+
 ## Milestones
 - **M0 spike (1 session, PC needed):** RF logs PSO creation for UI materials; try method 1 on the inventory screen;
   dump one captured frame to a PNG in RF's log folder. Exit: "capture works / doesn't" + which method.
