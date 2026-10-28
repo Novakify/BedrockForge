@@ -2,9 +2,10 @@
 // @only Change_Color=Off
 // @only Emissive=Off
 // @only MaskedMultitexture=Off
+// @uniform FogColor vec4
 Texture2D    s_MatTextureTexture : register(t0);
 SamplerState s_MatTextureSampler : register(s0);
-cbuffer FragmentUniforms : register(b1) { float4 OverlayColor; float4 ColorBased; float4 MatColor; };
+cbuffer FragmentUniforms : register(b1) { float4 OverlayColor; float4 ColorBased; float4 MatColor; float4 FogColor; };
 
 float4 main(PSIn i) : SV_Target {
     float3 c = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0).rgb * MatColor.rgb;

@@ -9,20 +9,26 @@ Run once at the start of every PC session (device shell), and fix this table if 
 dir "C:\Users\Fazzman175\AppData\Roaming\levilauncher.exe\versions\1.26.51.01\mods"
 dir "C:\BedrockModding" /s /b /ad | findstr /i "BedrockForge Renderer ShaderForge shaderpacks Hysteria Insanity Dread"
 ```
-| What | Expected location | In GitHub? |
+VERIFIED LIVE 2026-10-27 (session with device shell; `<instance>` = `C:\Users\Fazzman175\AppData\Roaming\levilauncher.exe\versions\1.26.51.01`):
+| What | Location (verified) | In GitHub? |
 |---|---|---|
-| Game instance (1.26.51.01) | `C:\Users\Fazzman175\AppData\Roaming\levilauncher.exe\versions\1.26.51.01` | no |
-| BF client DLL | `<instance>\mods\BedrockForgeCore\BedrockForgeCore.dll` (+ old `.xxxxxxx.dll` backups) | source: `main`, DLL: `builds` |
-| BF config | `<instance>\mods\BedrockForgeCore\config\` shaderpack.txt, command.txt, shaderpack.running/.crashed/.fallback | no |
-| BF logs | `<instance>\mods\BedrockForgeCore\logs\` diag.txt, shaderpacks.txt (rewritten ~10 s) + `<instance>\logs\` latest.log, crash\ | no |
-| Shaderpacks served by BF | `<instance>\mods\BedrockForgeCore\shaderpacks\<Pack>\renderer\materials\*.material.bin` + postfx.json | Dread/Anime/CursedFog yes |
-| Private shader sources | `...\shaderpacks\Hysteria\src`, `...\shaderpacks\Insanity\src` (AGNYA licence: NEVER commit) | **no** |
-| Renderer Foundation | `<instance>\mods\RendererFoundation\` (RendererFoundation.dll, manifest.json, config, shaderpacks\) | source: `renderer-foundation`, DLL: `rf-builds` |
-| Vanilla materials (ShaderForge input) | `<instance>\data\renderer\materials\` (VERIFY - may be under the game package folder instead) | no (Mojang files) |
-| Vanilla VV settings (brarchives) | game `data\resource_packs\vanilla\...` lighting/atmospherics/color_grading (+ shadows if present) (VERIFY) | no |
-| Dread Atmosphere BP/RP (live, edited) | world behavior/resource packs of "My World" + `development_*_packs` (VERIFY); repo builder: `tools/DreadAtmos/build.py` | builder only |
-| Repo checkout on PC | `C:\BedrockModding\Source\BedrockForge` (VERIFY) | = GitHub |
+| Game instance (1.26.51.01) | `<instance>` OK | no |
+| BF client DLL | `<instance>\mods\BedrockForgeCore\BedrockForgeCore.dll` OK (2026-10-22 21:05) + backups `.prev .b2-.b9 .29f18fc .2a13305 .d3a2759` | source: `main`, DLL: `builds` |
+| BF config | `...\config\` OK: shaderpack.txt = Hysteria, shaderpack.crashed = Dread (stale, 2026-10-22), shaderpack.fallback = Dread, no .running | no |
+| BF logs | `...\BedrockForgeCore\logs\` diag.txt + shaderpacks.txt OK; `<instance>\logs\latest.log` + `crash\` (3 minidumps, 2026-10-22) | no |
+| Shaderpacks served by BF | `...\shaderpacks\` Anime, CursedFog, DebugRed, DebugSun, Dread, Hysteria, Insanity (postfx.json in CursedFog/Dread/Hysteria/Insanity) | Dread/Anime/CursedFog yes |
+| Private shader sources | `...\shaderpacks\Hysteria\src`, `...\Insanity\src` OK (AGNYA: NEVER commit) | **no** |
+| Renderer Foundation | `<instance>\mods\RendererFoundation\` OK - DLL + manifest.json ENABLED, config\RendererFoundation.json, shaderpacks\Dread | source: `renderer-foundation`, DLL: `rf-builds` |
+| Vanilla materials (ShaderForge input) | `<instance>\data\renderer\materials\` OK (158 files incl. Sky, SunMoon, Stars, Clouds, Cubemap, LegacyCubemap, EndSky) | no (Mojang files) |
+| Vanilla VV settings | packed in `<instance>\data\resource_packs\vanilla\__brarchive` (no loose lighting/atmospherics folders) | no |
+| **Game data (worlds, dev packs, content logs)** | **`<instance>\Minecraft Bedrock\Users\...`** - LeviLauncher keeps its OWN copy; `%APPDATA%\Minecraft Bedrock` is the Store game's, not this instance's | no |
+| Dread Atmosphere BP (live, edited) | `<instance>\Minecraft Bedrock\Users\Shared\games\com.mojang\development_behavior_packs\DreadAtmosphereBP\scripts\main.js` (has the `bf:amb` handler) | builder only |
+| Repo checkout on PC | **NONE.** `C:\BedrockModding\Source\BedrockForge` is an empty skeleton (Examples/SDK/Tools). git not installed. 2026-10-27 used a GitHub ZIP at `C:\Users\Fazzman175\Downloads\BedrockForge-main\BedrockForge-main` (no .git) | = GitHub |
 | GeckoBridge research | branch `geckobridge/compat-audit-20261025` (deferred, do not merge; test JARs stay off GitHub) | yes |
+
+Device-shell toolchain (Linux sandbox on the PC, rebuilt each session): `pip3 install lazurite`; dxc **v1.8.2505.1** linux tarball
+from GitHub releases (v1.9 needs glibc 2.38, sandbox has older); point `tools/ShaderForge/build.py` DXC + LD_LIBRARY_PATH at it.
+Leftover `.tar` files in `mods\BedrockForgeCore` still there (no delete permission asked).
 
 ## 1. Standard change workflow (every DLL / pack change)
 1. Code in the cloud clone -> commit -> push to `main` (BF) or `renderer-foundation` (RF).
@@ -148,4 +154,25 @@ Steps:
 4. Give the sky a real sun direction: `// @uniform` for the sun vector if the material has one; otherwise a BF
    uniform override (setUniform hook, RENDERING_PLAN R4) fed from `Dimension::getTimeOfDay`.
 5. Test per pack: flat world, fly to y 200, look at the horizon, straight up, straight down; noon, sunset, night.
+### 2026-10-27 findings + what was installed (sky fix v1)
+- Vanilla 1.26 Sky.Vertex decoded: `worldPos = u_model*pos`, `clip = u_viewProj*worldPos`, `colour = lerp(SkyColor, FogColor, COLOR.x)`,
+  TEXCOORD3 = worldPos. Vanilla Sky.Fragment = colour only. Sky uniforms: u_viewProj, u_model, FogColor, SkyColor - nothing else.
+  So `normalize(texcoord3)` IS a usable direction (step 2 answered) - not the bug.
+- LOWER HALF: the sky mesh is a plane ABOVE the camera (COLOR.x 0 zenith .. 1 rim), so pack sky shaders only ever drew the upper
+  half; below the horizon is the vanilla clear colour. FIX: `shaders/src/_shared/SkyFull.vertex.hlsli` (exact vanilla rebuild +
+  fold: keep each vertex's distance, elevation goes +90 deg -> -60 deg (`SKY_FOLD_BELOW`) with COLOR.x; planes with y<=0 untouched;
+  TEXCOORD3 = rotation/scale of u_model applied, translation dropped). Every pack has `Sky/Vertex.hlsl` including it.
+- "STATIONARY": Hysteria's sky clouds animate from ViewPositionAndTime.w, which is 0 on sky draws (E-025/E-026), so they freeze.
+  LightWorldSpaceDirection is 0 on Fancy. No time/sun uniform exists for Sky -> steps 4 needs RENDERING_PLAN R4 (native
+  setUniform hook fed from Dimension::getTimeOfDay). NOT DONE (needs C++ + CI build + push).
+- SunMoon (texture*SunMoonColor) and Stars (COLOR.rgb*COLOR.a*StarsColor) decoded; SunMoon TEXCOORD3 = the sun/moon quad's world
+  position (= sun direction, but only inside that draw). Every pack now has SunMoon/Stars fragments = vanilla math + the pack's
+  colour grade (Anime saturate, Dread desat, CursedFog desat+red, Hysteria/Insanity tonemap+grade). Instancing=On kept vanilla.
+- Built with ShaderForge on the device shell (only Sky/SunMoon/Stars - other materials untouched), all variants replaced
+  (no "kept vanilla" except the skipped instanced ones). Installed into all 5 BF packs; old Sky kept as
+  `renderer\materials\Sky.material.bin.pre-skyfix` (SunMoon/Stars had no pack version = vanilla). Report: `<Pack>\BUILD_REPORT.skyfix.txt`.
+- Rollback per pack: copy `Sky.material.bin.pre-skyfix` over `Sky.material.bin` and move SunMoon/Stars .bin into `_to_delete\`.
+- RISKS to check in game: if terrain below the horizon disappears/gets covered (sky writes depth at the folded distance) or the
+  lower sky has visible seams (coarse sky mesh), lower SKY_FOLD_BELOW (e.g. 20) or make the fold depth-safe.
+
 **What Fernando checks:** no vanilla half; sky colour changes with time; sun/moon/stars match the pack.

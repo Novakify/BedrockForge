@@ -1,0 +1,245 @@
+{
+  "_doc": "Per-shaderpack Vibrant Visuals looks. Multipliers apply to vanilla 1.21.90 VV JSON pulled from the game. See README.md.",
+  "Hysteria": {
+    "rp_dir": "HysteriaVVRP",
+    "name": "Hysteria VV",
+    "uuid": [
+      "09d44b3b-062e-5670-ba7b-d44f8e449bda",
+      "7eabd268-8267-52fa-baaa-d73645855985"
+    ],
+    "atmos": {
+      "rayleigh": 0.5,
+      "sun_mie": 1.2,
+      "glare": 1.3,
+      "zenith": {
+        "sat": 0.22,
+        "val": 0.55
+      },
+      "horizon": {
+        "sat": 0.18,
+        "val": 0.62
+      }
+    },
+    "fog": {
+      "air": {
+        "max_density": 0.35,
+        "max_density_height": 62,
+        "zero_density_height": 260,
+        "scattering": [
+          0.05,
+          0.051,
+          0.053
+        ],
+        "absorption": [
+          0.03,
+          0.03,
+          0.029
+        ],
+        "g": 0.7
+      },
+      "weather": {
+        "max_density": 0.15,
+        "uniform": true
+      },
+      "biome_tint": 0.4
+    },
+    "lighting": {
+      "orbital_offset_degrees": 40.0,
+      "sky_intensity": 0.5,
+      "ambient": 0.012,
+      "moon_color": [
+        255,
+        183,
+        73
+      ],
+      "moon_illuminance": 2.2185,
+      "sun_scale": 0.4
+    },
+    "_reference": "Fancy look (2026-10-28, noon, savanna/beach): grey overcast sky, soft bright sun glow, heavy grey fog over distance, dark desaturated greens"
+  },
+  "Insanity": {
+    "rp_dir": "InsanityVVRP",
+    "name": "Insanity VV",
+    "atmos": {
+      "rayleigh": 0.6,
+      "sun_mie": 0.7,
+      "glare": 1.0,
+      "zenith": {
+        "sat": 1.2,
+        "val": 0.7
+      },
+      "horizon": {
+        "sat": 1.0,
+        "val": 0.78
+      }
+    },
+    "fog": {
+      "air": {
+        "max_density": 0.015,
+        "max_density_height": 62,
+        "zero_density_height": 120,
+        "scattering": [
+          0.025,
+          0.026,
+          0.03
+        ],
+        "absorption": [
+          0.004,
+          0.004,
+          0.004
+        ],
+        "g": 0.7
+      },
+      "weather": {
+        "max_density": 0.1,
+        "uniform": true
+      },
+      "biome_tint": 0.4
+    },
+    "lighting": {
+      "orbital_offset_degrees": 40.0,
+      "sky_intensity": 0.75,
+      "ambient": 0.02
+    }
+  },
+  "Anime": {
+    "rp_dir": "AnimeVVRP",
+    "name": "Anime VV",
+    "atmos": {
+      "rayleigh": 0.7,
+      "sun_mie": 0.5,
+      "glare": 0.6,
+      "zenith": {
+        "sat": 1.5,
+        "val": 0.85
+      },
+      "horizon": {
+        "sat": 1.3,
+        "val": 0.9
+      }
+    },
+    "fog": {
+      "air": {
+        "max_density": 0.006,
+        "max_density_height": 62,
+        "zero_density_height": 110,
+        "scattering": [
+          0.02,
+          0.022,
+          0.028
+        ],
+        "absorption": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "g": 0.6
+      },
+      "weather": {
+        "max_density": 0.06,
+        "uniform": true
+      },
+      "biome_tint": 0.2
+    },
+    "lighting": {
+      "sky_intensity": 0.9,
+      "ambient": 0.03
+    }
+  },
+  "Dread": {
+    "rp_dir": "DreadVVRP",
+    "name": "Dread VV",
+    "atmos": {
+      "rayleigh": 0.35,
+      "sun_mie": 0.4,
+      "glare": 0.5,
+      "zenith": {
+        "sat": 0.35,
+        "val": 0.45
+      },
+      "horizon": {
+        "sat": 0.3,
+        "val": 0.5
+      }
+    },
+    "fog": {
+      "air": {
+        "max_density": 0.09,
+        "max_density_height": 60,
+        "zero_density_height": 95,
+        "scattering": [
+          0.05,
+          0.052,
+          0.056
+        ],
+        "absorption": [
+          0.02,
+          0.02,
+          0.018
+        ],
+        "g": 0.45
+      },
+      "weather": {
+        "max_density": 0.18,
+        "uniform": true
+      },
+      "biome_tint": 0.2
+    },
+    "lighting": {
+      "sky_intensity": 0.5,
+      "ambient": 0.008,
+      "sun_scale": 0.6,
+      "moon_color": [
+        150,
+        165,
+        200
+      ],
+      "moon_illuminance": 0.15
+    }
+  },
+  "CursedFog": {
+    "rp_dir": "CursedFogVVRP",
+    "name": "Cursed Fog VV",
+    "atmos": {
+      "rayleigh": 0.4,
+      "sun_mie": 0.5,
+      "glare": 0.5,
+      "zenith": {
+        "sat": 0.45,
+        "val": 0.55
+      },
+      "horizon": {
+        "sat": 0.4,
+        "val": 0.6
+      }
+    },
+    "fog": {
+      "air": {
+        "max_density": 0.12,
+        "uniform": true,
+        "scattering": [
+          0.06,
+          0.058,
+          0.058
+        ],
+        "absorption": [
+          0.02,
+          0.024,
+          0.024
+        ],
+        "g": 0.4
+      },
+      "weather": {
+        "max_density": 0.2,
+        "uniform": true
+      },
+      "biome_tint": 0.15
+    },
+    "lighting": {
+      "sky_intensity": 0.55,
+      "ambient": 0.01,
+      "sun_scale": 0.7,
+      "moon_illuminance": 0.2
+    }
+  }
+}

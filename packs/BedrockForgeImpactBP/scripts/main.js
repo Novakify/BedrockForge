@@ -25,6 +25,7 @@ const DEFAULTS = {
   shake: 0.35,       // /camerashake intensity, 0 = off
   minDamage: 1,      // ignore tiny hits
   cooldownTicks: 4,  // at most one impact per 4 ticks (200ms)
+  vvShader: true,    // a Bedrock Forge shaderpack draws the VV impact frame (marker below); off = old posterize grading
 };
 const PROP = "bf:impact_settings";
 const SOUND = "bf.impact";
@@ -112,7 +113,36 @@ function reset(g) {
   }
 }
 
-function impact(player, s) {
+// Fancy graphics impact frame: the Bedrock Forge shaderpacks turn the whole world white and the mob/player that was
+// just hit (red hurt overlay) black while the "bf:impact" fog (magenta, BedrockForgeImpact RP) is on the stack.
+const WHITE_FRAME_TICKS = 4; // fog fades in ~0.3 s; shaders react at ~40% -> ~0.3 s white
+const fogEnd = new Map(); // player id -> tick the current white frame ends
+// Vibrant Visuals: fog colour doesn't reach VV's final pass, so the BP also sets the player's VV colour-grading
+// midtones gain to this marker for the same window; the shaderpacks' ColorPostProcessing (shaders/src/_shared/
+// ColorPostVV.fragment.hlsli) detects it (vanilla gains are always 1). Without a BF shaderpack: turn vvShader off.
+const VV_MARK = { x: 4, y: 0.05, z: 4 };
+function vvMark(player, on) {
+  try { const g = gradingFor(player); if (on) g.setMidtonesGain(VV_MARK); else g.resetMidtonesGain(); }
+  catch (e) { if (on) console.warn(`[BF] VV impact marker failed: ${e}`); }
+}
+function whiteFrame(player, s, ticks = WHITE_FRAME_TICKS) {
+  const now = system.currentTick;
+  if ((fogEnd.get(player.id) ?? 0) > now) { fogEnd.set(player.id, now + ticks); return; } // already white: extend
+  fogEnd.set(player.id, now + ticks);
+  try { player.runCommand("fog @s push bf:impact bf_impact"); }
+  catch (e) { console.warn(`[BF] impact fog failed: ${e}`); }
+  const vv = s.vvShader;
+  if (vv) vvMark(player, true);
+  const tick = () => {
+    if (!player.isValid) return;
+    if (system.currentTick < (fogEnd.get(player.id) ?? 0)) { if (vv) vvMark(player, true); system.runTimeout(tick, 1); return; }
+    try { player.runCommand("fog @s remove bf_impact"); } catch {}
+    if (vv) vvMark(player, false);
+  };
+  system.runTimeout(tick, 1);
+}
+
+function impact(player, s, ticks = WHITE_FRAME_TICKS) {
   const now = system.currentTick;
   if ((busy.get(player.id) ?? 0) > now) return;
   busy.set(player.id, now + s.cooldownTicks);
@@ -122,7 +152,8 @@ function impact(player, s) {
     try { player.runCommand(`camerashake add @s ${s.shake.toFixed(2)} 0.18 rotational`); }
     catch (e) { console.warn(`[BF] camerashake failed: ${e}`); }
   }
-  if (!s.posterize) return;
+  whiteFrame(player, s, ticks);
+  if (!s.posterize || s.vvShader) return;
 
   let g;
   try { g = gradingFor(player); } catch (e) { console.warn(`[BF] colour grading unavailable: ${e}`); return; }
@@ -156,7 +187,21 @@ world.afterEvents.entityHurt.subscribe((ev) => {
   impact(attacker, s);
 });
 
+// Test hook: /scriptevent bf:impacttest [ticks]  (functions/bfivv) = one impact frame for the player who runs it
+// (optional hold length, e.g. 60 = 3 s, to inspect it).
+system.afterEvents.scriptEventReceive.subscribe((ev) => {
+  if (!(ev.sourceEntity instanceof Player)) return;
+  if (ev.id === "bf:vvmark") {
+    const on = ev.message !== "off"; vvMark(ev.sourceEntity, on); return;
+  }   // debug: hold the VV marker on/off
+  if (ev.id !== "bf:impacttest") return;
+  busy.delete(ev.sourceEntity.id);
+  impact(ev.sourceEntity, { ...load(ev.sourceEntity), sound: false, shake: 0 }, Math.max(1, parseInt(ev.message) || WHITE_FRAME_TICKS));
+});
+
 // Clean up if a player leaves mid-impact.
 world.afterEvents.playerLeave.subscribe((ev) => busy.delete(ev.playerId));
+// Never leave a player stuck in the impact fog (e.g. world closed mid-frame).
+world.afterEvents.playerSpawn.subscribe((ev) => { try { ev.player.runCommand("fog @s remove bf_impact"); } catch {} vvMark(ev.player, false); });
 
 console.warn("[BF] Bedrock Forge Impact behavior pack loaded (/bf:impact for settings)");

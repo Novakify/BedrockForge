@@ -1,3 +1,42 @@
+# Next session handoff (updated 2026-10-28 ~12:10 local, PC session, computer use)
+- VV LOOK PER PACK: tools/VVPackGen (NEW, see its README) builds a VV resource pack per shaderpack from the game's own
+  vanilla VV JSON (brarchive) + profiles.json: atmospherics, volumetric fog, lighting, client biomes, shadows.
+  Installed in development_resource_packs: HysteriaVVRP (regenerated, same UUID, active in the beach "My World"),
+  InsanityVVRP, AnimeVVRP, DreadVVRP, CursedFogVVRP (built, NOT yet activated in any world / not seen in game).
+  Old HysteriaVVRP backed up to com.mojang/_bf_backups/HysteriaVVRP.pre-vvgen.
+  Hysteria VERIFIED in game: Fancy reference = grey overcast, sun glow, heavy grey fog, dark greens. VV now matches the mood
+  (fog max_density 0.35 to y260, desaturated grey sky, sun x0.4, sky light 0.5) + VV_EXPOSURE_BIAS 0.55 -> 0.42 (private src).
+  Still a bit brighter than Fancy; tune profiles.json -> build -> rejoin. Gotchas: fog ids can't be minecraft:*,
+  "weather" only under volumetric.density.
+- IMPACT FRAMES ON VV: WHITE WORLD WORKS (verified). FogColor never reaches VV's post pass, so the BP now sets the player's
+  VV colour grading midtones GAIN to (4, 0.05, 4) for the frame (vanilla gains are always 1; the game blends overrides in, so
+  ColorPostVV tests thresholds x,z > 1.6 & y < 0.8). Tiny midtones OFFSET markers did NOT survive (don't retry that).
+  Setting vvShader (default true) skips the old posterize grading. All 5 packs' ColorPostProcessing rebuilt + installed
+  (backups *.pre-vvimpact). Test: /function bfitest (pig 3 ahead, camera down), /function bfivv (impact, 3 s hold).
+- BLACK TARGET ON VV: NOT DONE. VV shows NO red hurt overlay on the pig (checked frame by frame), so the post pass can't find
+  the target. NEXT options: (a) ActorPrepass replacement: when FogColor is magenta and OverlayColor red -> write black albedo,
+  post then keeps near-black pixels black (needs the GeometryPrepass MRT output decoded); (b) RP render controller override
+  making is_hurt_color black (but Fancy's detection keys on red OverlayColor - would need both changed).
+- Shaders only reload on a GAME RESTART (VV<->Fancy flip reloaded ColorPostProcessing once, then cached). Restart = Save &
+  Quit, window X (closes fully now), then open the instance's Minecraft.windows.exe app (~40 s to menu).
+- Debug: #define BF_DEBUG_GRADING in a pack's ColorPostProcessing/Fragment.hlsl draws the grading uniforms as top bars.
+- Git: the PC device shell (Linux VM) has git; the cloud session pushed via add_repo. Windows Git installer still in
+  Downloads\BedrockForge-Installers (only needed for pushing from Windows).
+- Untouched leftovers in the instance BP functions (unregistered, safe to delete): bfivvlong, bfmon, bfmoff.
+
+# Next session handoff (updated 2026-10-28 ~10:50 local)
+- VV SHADERS: HOOK PROVEN. Packs can replace VV's final pass (ColorPostProcessing): DebugVV pack turned the world red
+  on VV (UI untouched). shaders/src/_shared/ColorPostVV.fragment.hlsli = vanilla exposure path + raster/UI composite
+  (decoded 1.26 DXIL) + per-pack packGradeVV(). Installed in ALL 5 packs (Anime ACES+sat, Dread ACES+desat+grain,
+  CursedFog cfFinal, Hysteria hysFinal(rec709->2020) bias 0.55, Insanity insFinal). Verified Hysteria on VV in game:
+  60 fps, Hysteria grade active, but the scene is too bright/hazy = VV's own atmosphere/fog. NEXT: per-pack VV RP with
+  atmospherics + fog (+ lighting) tuned to each pack (HysteriaVVRP from another session has lighting+shadows only,
+  and is active in the newest "My World"). Then impact frames on VV (white world possible in ColorPostProcessing via
+  @uniform FogColor if bgfx keeps it set; black target needs the Actor*Prepass/ForwardPBR materials).
+- Another session made shaderpacks/HysteriaVV (same idea, ColorPostProcessing only) - superseded by Hysteria's own VV pass;
+  shaderpack.txt is now "Hysteria" (works on Fancy AND VV). DebugVV + DebugFog are debug packs only.
+
+> (Merged 2026-10-28: the two UTC blocks below came from the cloud/GitHub side; items 1 and 5 of that checklist are done - see the blocks above.)
 # Next session handoff (updated 2026-10-28 ~07:45 UTC, PC connected, Fernando away - nothing tested in game)
 TOMORROW'S CHECKLIST (one at a time, in this order; each line says how to undo it):
 1. Hysteria VV (runbook section 2, installed): launch -> settings say Vibrant Visuals; soft sun shadows that move;
@@ -35,6 +74,61 @@ INSTALLED, NOT YET SEEN IN GAME: GOAL 1 Hysteria-VV real shadows (runbook sectio
   _shared/SkyFull.vertex.hlsli; Sky.material.bin.pre-skyfix kept; BUILD_REPORT.skyfix.txt). Its source is only on the PC.
 - ShaderForge works on the PC shell too (lazurite + dxc installed in the device VM; copy of tools/ShaderForge md5-verified).
 STILL OPEN: runbook section 3 (motion blur, Dread counters), section 4 sky (check if the 10-28 sky fix solved it).
+
+# Next session handoff (updated 2026-10-28 ~01:55 local) - SUPERSEDES the impact/VV lines of the block below
+- IMPACT FRAMES ON FANCY: WORKING, verified in game (Hysteria): whole world white, hurt pig black.
+  Why v1 failed: the game FADES fog colour (~0.3 s in, ~0.5 s out; measured with the DebugFog pack), so pure magenta
+  was never reached. Detection now = fog heading to magenta: min(r,b) - g > 0.3*max(r,b) (ShaderForge --impact).
+  BP: fog held WHITE_FRAME_TICKS=4, overlapping crits extend the same frame (no double push); bfioff removes x3.
+  All 5 packs rebuilt + installed. Particles (vanilla Particle material) stay as is (grey specks) - optional later.
+  Shaderpack "DebugFog" left installed (debug only; never set it as active for play).
+- SHADERS ON VIBRANT VISUALS: NOT DONE - needs its own session. Findings: VV draws with *Prepass (G-buffer),
+  Deferred*, *ForwardPBR, then ColorPostProcessing (tonemap + VV colour grading; 24 uniforms, s_ColorTexture,
+  s_RasterizedColor, s_AverageLuminance...). Options: (a) port each pack's final grade into a ColorPostProcessing
+  replacement (decode vanilla tonemap first - big), (b) grade pass in Renderer Foundation's post-FX at Present (C++/CI,
+  works in every mode), (c) per-pack VV resource pack (color_grading/atmospherics/fog JSON) for the look + VV shadows.
+  Impact frames on VV still use the old BP posterize (grading API); white/black on VV needs (a) or (b).
+- Game left on FANCY graphics (VV -> Fancy for testing). My World.
+
+# Next session handoff (updated 2026-10-28 ~01:35 local, PC session, computer use)
+Fernando's 2026-10-28 report -> status:
+- SKY half missing / grey / no clouds: CAUSE = sky fix v1 folded LOCAL space (sky plane local y=0, height is in u_model)
+  -> fold never ran + vertical direction lost. FIXED v2 (_shared/SkyFull.vertex.hlsli folds world space). VERIFIED in game
+  (Hysteria, Fancy, y200: one continuous shader sky to the horizon, Hysteria clouds visible, sun drawn).
+- Motion blur: "motion_blur": 0 in every postfx.json (backups postfx.json.pre-noblur). Only CursedFog had it on.
+- Mob speed: Dweller BP movement 0.53/0.4/0.27 (was 0.6/0.45/0.35, original 0.5/0.35/0.21), chase x1.05 (was 1.35);
+  knockback_resistance kept 0.6. Sculk Horde + Dweller RP walk/run anim_time clamp(speed*1.6, 0.6, 1.2) (was *3.0, 0.75..2.5
+  -> legs ran up to 2.5x = "too fast"). Boss movement values were never changed. Backups: _backup_animspeed/, ice_bear_2026.json.fast.bak.
+- Impact frames checkerboard on Fancy: native overlay texture failed to load -> config.json impact.useFrameTextures=false.
+  The B/W part only ever worked on VV because the BP uses VV colour grading.
+- NEW white-world / black-target impact frame for Fancy (UNVERIFIED - first in-game test showed NO white):
+  BP pushes fog "bf:impact" (#FF00FF, RP fogs/bf_impact.json) for 3 ticks; ShaderForge --impact wraps every fragment that
+  sees FogColor: white, actors with red OverlayColor (hurt) black. All 5 packs rebuilt with it (backups renderer_backup_pre_impact/).
+  The shader did NOT react -> FogColor uniform is not the raw fog_color (blended/dimmed/transitioned?). NEXT: shaderpack
+  "DebugFog" (installed: left half terrain = FogColor, right half = FogAndDistanceControl) -> shaderpack.txt=DebugFog, restart,
+  /function bfion vs bfioff, read the colours, then pick the detection (colour ratio or fog distances). If neither is usable:
+  native path (RENDERING_PLAN R4: BF sets a uniform from ImpactFrames.cpp) - needs C++ + CI.
+  Test helpers in BedrockForgeImpactBP/functions: bfitest (creative/noon/clear/pig), bfihit (damage pig + push fog), bfion, bfioff.
+- Shaders on Vibrant Visuals: NOT DONE. BF packs only replace Fancy materials; VV draws with *ForwardPBR / deferred
+  materials, so on VV nothing of the pack applies (confirmed: only SunMoonForwardPBR/ActorForwardPBR etc. opened).
+  = runbook section 2 (Hysteria-VV mode), a project of its own.
+- Computer use notes: typing ":" "@" "~" goes via clipboard and pastes the USER's clipboard -> put commands in .mcfunction
+  files and run /function <name>. Game X button closes the window but the process lingers; LeviLauncher then ignores
+  Launch (stuck "waiting for game window") - Fernando must end Minecraft.Windows.exe in Task Manager.
+Repo copy (Downloads ZIP, no git): tools/ShaderForge/build.py (--impact), shaders/src/_shared/SkyFull.vertex.hlsli v2,
+  Anime/Dread Actor+Sky, Dread/CursedFog Clouds (FogColor), postfx.json motion_blur 0. Commit these.
+
+# Next session handoff (updated 2026-10-27 evening, PC session via device shell)
+DONE: PC_RUNBOOK section 0 verified live (table rewritten - NOTE game data lives in <instance>\Minecraft Bedrock, no repo checkout
+on the PC, RF is ENABLED). Section 4 sky fix v1 INSTALLED in all 5 BF packs (Anime, Dread, CursedFog, Hysteria, Insanity):
+Sky vertex fold (shader sky now covers below the horizon) + per-pack SunMoon/Stars. Details + rollback: PC_RUNBOOK section 4.
+NOT PUSHED: this session had no git access. Changed repo files (in Downloads\BedrockForge-main ZIP copy):
+  docs/PC_RUNBOOK.md, docs/NEXT_SESSION.md, shaders/src/_shared/SkyFull.vertex.hlsli,
+  shaders/src/{Anime,Dread,CursedFog}/{Sky/Vertex.hlsl, SunMoon/Fragment.hlsl, Stars/Fragment.hlsl}  -> commit these.
+  Private (never commit): shaderpacks/{Hysteria,Insanity}/src/{_shared/SkyFull.vertex.hlsli, Sky/Vertex.hlsl, SunMoon/, Stars/}.
+NOT DONE: real sun direction / time of day + moving sky clouds -> needs R4 native uniform hook (C++, CI). Untested in game.
+FERNANDO TO TEST: restart game, flat world, y 200: horizon / up / down at noon, sunset, night, per pack. Report seams,
+  missing terrain below the horizon, or any vanilla band.
 
 # Next session handoff (updated 2026-10-27, cloud-only session - PC was not connected)
 DONE + PUSHED: docs/PORT_SPATIALGUI.md (goal 3), docs/PORT_CINEMATIC.md (goal 4), docs/PC_RUNBOOK.md (exact steps

@@ -14,13 +14,13 @@ The HLSL body is written against semantic names (see shaders/src/README.md); Sha
 SM4.0 / SM5.0 (D3D11) blobs are left vanilla.
 """
 from __future__ import annotations
-import argparse, re, subprocess, sys, tempfile
+import argparse, os, re, subprocess, sys, tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import lz  # noqa: E402
 
-DXC = "/opt/dxc/bin/dxc"
+DXC = os.environ.get("DXC", "/opt/dxc/bin/dxc")  # PC device shell: DXC=~/dxc/bin/dxc LD_LIBRARY_PATH=~/dxc/lib
 PROFILES = {"Direct3D_SM60": "ps_6_3", "Direct3D_SM65": "ps_6_5"}
 WIDTH = {"x": 1, "xy": 2, "xyz": 3, "xyzw": 4, "y": 1, "z": 1, "w": 1, "yz": 2, "zw": 2, "yzw": 3}
 
@@ -193,9 +193,39 @@ def compile_variant(body: str, rows, interp, order, profile, defines, workdir: P
     return None, "signature mismatch"
 
 
+
+# ---- Bedrock Forge impact frames (Fancy): the BedrockForgeImpact BP pushes the "bf:impact" fog (#FF00FF) for the
+# length of the frame; every fragment that can see FogColor turns white, actors showing the red hurt overlay turn
+# black. Ratio test (g ~ 0, r ~ b) so the game's day/night dimming of the fog colour doesn't matter.
+IMPACT_WRAP = """
+// The game fades fog colours over ~0.5 s, so detect the fog HEADING to magenta: red and blue both clearly above green.
+// Normal fog never has that (sky blue: g > r; sunset: b < g; rain grey: r~g~b; End #0B080C: ratio 0.26 < 0.3).
+bool bfImpactOn(float3 f) { float hi = max(f.r, f.b); return hi > 0.005 && (min(f.r, f.b) - f.g) > 0.3 * hi; }
+float4 main(PSIn i) : SV_Target {
+    float4 c = bf_pack_main(i);
+    if (bfImpactOn(FogColor.rgb)) {
+#ifdef BF_IMPACT_ACTOR
+        bool hurt = OverlayColor.a > 0.05 && OverlayColor.r > 0.4 && OverlayColor.g < 0.35 && OverlayColor.b < 0.35;
+        c.rgb = hurt ? float3(0.0, 0.0, 0.0) : float3(1.0, 1.0, 1.0);
+#else
+        c.rgb = float3(1.0, 1.0, 1.0);
+#endif
+    }
+    return c;
+}
+"""
+
+
+def impact_wrap(text: str, material: str) -> str:
+    if not re.search(r"\bFogColor\s*;", text): return text
+    if material.startswith("Actor") and not re.search(r"\bOverlayColor\s*;", text): return text
+    text = re.sub(r"\bfloat4\s+main\s*\(", "float4 bf_pack_main(", text, count=1)
+    return ("#define BF_IMPACT_ACTOR 1\n" if material.startswith("Actor") else "") + text + IMPACT_WRAP
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("materials", type=Path); ap.add_argument("pack", type=Path); ap.add_argument("-o", "--out", type=Path, required=True)
+    ap.add_argument("--impact", action="store_true"); ap.add_argument("materials", type=Path); ap.add_argument("pack", type=Path); ap.add_argument("-o", "--out", type=Path, required=True)
     a = ap.parse_args(argv)
     outdir = a.out / "renderer" / "materials"; outdir.mkdir(parents=True, exist_ok=True)
     common = (a.pack / "common.hlsli").read_text() if (a.pack / "common.hlsli").exists() else ""
@@ -217,6 +247,7 @@ def main(argv=None):
                 only = dict(m.split("=", 1) for m in re.findall(r"//\s*@only\s+(\S+=\S+)", text))
                 extra = dict(re.findall(r"//\s*@uniform\s+(\w+)\s+(vec4|mat4)", common + text))
                 body = common + text
+                if a.impact and has_frag: body = impact_wrap(body, name)
                 vsrc = mat_dir / f"{p.name}.Vertex.hlsl"
                 if not vsrc.exists(): vsrc = mat_dir / "Vertex.hlsl"
                 vtext = None

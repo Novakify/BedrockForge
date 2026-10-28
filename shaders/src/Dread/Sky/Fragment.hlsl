@@ -1,4 +1,6 @@
 // Sky - Dread: drained, darker dome that sinks into a grey horizon haze.
+// @uniform FogColor vec4
+cbuffer FragmentUniforms : register(b1) { float4 FogColor; };
 float4 main(PSIn i) : SV_Target {
     float3 dir     = normalize(i.texcoord3 + float3(0.0, 1e-4, 0.0));
     float3 c       = desat(i.color0.rgb, 0.2) * 0.55;
