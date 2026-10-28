@@ -1,3 +1,23 @@
+# Next session handoff (updated 2026-10-28 ~15:00 local) - READ FIRST
+- REGRESSION: FANCY IMPACT FRAME NOT WORKING (Hysteria, both "My World"s). Verified 01:55 today, broken now.
+  Symptoms (fog pushed with /function bfion, held 3+ s): noon = screen unchanged, night = screen goes DARK; WHITE appears
+  only ~1 s AFTER /function bfioff (during the fog fade-out) - world thumbnails saved right after bfioff are pure white.
+  Hurt pig shows solid red (new opaque hurt colour) instead of black.
+  Ruled out: VV RP fogs/biomes (moved out -> same), VV post pass (Fancy never loads ColorPostProcessing - shaderpacks.txt),
+  modules.json vibrant=false, Hysteria Fancy materials ARE the impact build (06:44 UTC, served per shaderpacks.txt).
+  DebugFog (shaderpack.txt=DebugFog, restart): magenta appears in ~0.5 s and stays - but only on SOME fragments (sky
+  through leaves / far), near terrain stayed green -> suspicion: RenderChunk/Actor FogColor != the pushed fog colour
+  (or is dimmed to ~0 at full fog, failing bfImpactOn's hi > 0.005), while mid-fade values pass the ratio test.
+  NEXT: DebugFog with bfion at noon, sample terrain vs sky pixels; log FogColor + FogAndDistanceControl per material;
+  check whether the opaque red is_hurt_color (BedrockForgeImpact/render_controllers, HurtColorGen) changed anything
+  (move render_controllers out, rejoin, retest). Then re-verify Fancy white world + black pig.
+- NOT DONE: turning on Insanity/Anime/Dread/CursedFog VV RPs in a world (built + installed, never seen in game).
+- Game left on FANCY, shaderpack.txt = Hysteria, in the "other" My World (+A1sY8g), fog removed.
+- Typing via computer use: commands longer than ~16 chars go through the clipboard and paste the user's clipboard ->
+  keep function names short (bfion, bfioff, bfivv, bfitest, bfiref). New .mcfunction files only register on world load.
+- Port order decided with Fernando (after the regression + VV pack check): 1 Spatial GUI (M0 spike: install + test),
+  2 Cinematic Interactions (blocked on Spatial GUI M1), 3 GeckoBridge (research branch, last).
+
 # Next session handoff (updated 2026-10-28 ~13:00 local, PC session, computer use)
 - VV IMPACT FRAME COMPLETE + VERIFIED (Hysteria, VV, real 4-tick crit timing): whole world white, hit pig black.
   Black target = tools/HurtColorGen (NEW): copies the 211 vanilla render controllers that leave is_hurt_color unset with
