@@ -67,3 +67,18 @@ jobs:
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" rf-builds
+
+      # Spatial GUI M0 spike: publish to its own branch (artifact downloads are blocked from the PC's network;
+      # git works). rf-builds stays the installed RF.
+      - name: Publish spike build to spatialgui-m0-builds
+        if: github.ref == 'refs/heads/spatialgui-m0' && github.event_name == 'push'
+        shell: bash
+        run: |
+          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/
+          cd out
+          git init -q -b spatialgui-m0-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
+          git add -A && git commit -qm "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" spatialgui-m0-builds
