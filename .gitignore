@@ -563,3 +563,6 @@ packs/DreadAtmosphereBP/
 # Hysteria VV: the ColorPostProcessing grade is a port of Hysteria (AGNYA licence) -> private, never commit
 shaders/src/HysteriaVV/
 packs/HysteriaVV*/
+
+# generated from Mojang files by tools/HurtColorGen (regenerate, never commit)
+packs/BedrockForgeImpact/render_controllers/

@@ -42,6 +42,18 @@ Texture2D s_CustomExposureCompensationTexture : register(t2);
 Texture2D s_PreExposureLuminanceTexture       : register(t3);
 Texture2D s_RasterizedColorTexture            : register(t5);
 
+#ifndef VV_DEHAZE
+#define VV_DEHAZE 0.0      // per-pack: remove a grey veil of VV_DEHAZE x mid-grey (VV's fog/sky scattering reads milky)
+#endif
+#ifndef VV_WHITE_BALANCE
+#define VV_WHITE_BALANCE float3(1.0, 1.0, 1.0)   // per-pack tint correction (VV's sky/fog scatter reads cyan)
+#endif
+#ifndef VV_SATURATION
+#define VV_SATURATION 1.0   // per-pack: VV's PBR albedo reads more saturated than the pack's Fancy lighting
+#endif
+#ifndef VV_HURT_RATIO
+#define VV_HURT_RATIO 1.8   // impact frame: red / max(green, blue) above this = the hit entity (black)
+#endif
 #ifndef VV_EXPOSURE_BIAS
 #define VV_EXPOSURE_BIAS 1.0   // per-pack brightness trim on top of VV's auto exposure
 #endif
@@ -64,6 +76,11 @@ float4 main(PSIn i) : SV_Target {
         key = s_CustomExposureCompensationTexture.Sample(s_CustomExposureCompensationSampler, float2(t, 0.5)).r;
     }
     float3 scene = max(c, 0.0) * (key / max(avg, 1e-5)) * VV_EXPOSURE_BIAS;
+    float3 raw = scene;      // before the pack's VV corrections: the impact test reads the hurt overlay here
+    scene *= VV_WHITE_BALANCE;
+    { float l = dot(scene, float3(0.2126, 0.7152, 0.0722)); scene = max(lerp(l.xxx, scene, VV_SATURATION), 0.0); }
+    if (VV_DEHAZE > 0.0)      // subtract a grey veil (black-point move); auto exposure can't undo it because it runs after
+        scene = max(scene - VV_DEHAZE * 0.18 * VV_EXPOSURE_BIAS, 0.0);
     float2 dims; s_ColorTextureTexture.GetDimensions(dims.x, dims.y);
     float3 o = saturate(packGradeVV(scene, uv, uv * dims, dims));
 #ifndef BF_NO_IMPACT_VV
@@ -72,8 +89,10 @@ float4 main(PSIn i) : SV_Target {
     // frames (measured ~50% after 0.5 s), so test thresholds, not the exact value. Whole world white, the entity that
     // was hit (red hurt overlay) black. Red-dominant pixels = hurt overlay (red blocks go black too).
     if (ColorGrading_Gain_Midtones.x > 1.6 && ColorGrading_Gain_Midtones.z > 1.6 && ColorGrading_Gain_Midtones.y < 0.8) {
-        float3 h = scene / (scene + 1.0);
-        bool hurt = h.r > 0.03 && h.r > 1.9 * max(h.g, h.b);
+        // Hurt overlay: tools/HurtColorGen makes it opaque red; VV still blends it ~50% into the albedo, so the hit
+        // entity is clearly red-dominant before grading. Strongly red natural blocks (red wool, redstone) match too.
+        float3 h = raw / (raw + 1.0);
+        bool hurt = h.r > 0.02 && h.r > VV_HURT_RATIO * max(h.g, h.b);
         o = hurt ? float3(0.0, 0.0, 0.0) : float3(1.0, 1.0, 1.0);
     }
 #endif

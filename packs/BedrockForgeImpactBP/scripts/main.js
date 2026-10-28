@@ -117,26 +117,36 @@ function reset(g) {
 // just hit (red hurt overlay) black while the "bf:impact" fog (magenta, BedrockForgeImpact RP) is on the stack.
 const WHITE_FRAME_TICKS = 4; // fog fades in ~0.3 s; shaders react at ~40% -> ~0.3 s white
 const fogEnd = new Map(); // player id -> tick the current white frame ends
+const fogOff = new Set(); // players whose impact fog was already removed this frame
+const active = new Set(); // players with a white frame (incl. its VV tail) running
 // Vibrant Visuals: fog colour doesn't reach VV's final pass, so the BP also sets the player's VV colour-grading
 // midtones gain to this marker for the same window; the shaderpacks' ColorPostProcessing (shaders/src/_shared/
 // ColorPostVV.fragment.hlsli) detects it (vanilla gains are always 1). Without a BF shaderpack: turn vvShader off.
 const VV_MARK = { x: 4, y: 0.05, z: 4 };
+const VV_EXTRA_TICKS = 4; // the game fades grading overrides in over a few frames; keep the marker a bit past the fog
 function vvMark(player, on) {
   try { const g = gradingFor(player); if (on) g.setMidtonesGain(VV_MARK); else g.resetMidtonesGain(); }
   catch (e) { if (on) console.warn(`[BF] VV impact marker failed: ${e}`); }
 }
 function whiteFrame(player, s, ticks = WHITE_FRAME_TICKS) {
   const now = system.currentTick;
-  if ((fogEnd.get(player.id) ?? 0) > now) { fogEnd.set(player.id, now + ticks); return; } // already white: extend
+  if (active.has(player.id)) {   // frame (or its VV tail) still running: extend it, re-push the fog if it was removed
+    fogEnd.set(player.id, now + ticks);
+    if (fogOff.delete(player.id)) { try { player.runCommand("fog @s push bf:impact bf_impact"); } catch {} }
+    return;
+  }
+  active.add(player.id);
   fogEnd.set(player.id, now + ticks);
   try { player.runCommand("fog @s push bf:impact bf_impact"); }
   catch (e) { console.warn(`[BF] impact fog failed: ${e}`); }
   const vv = s.vvShader;
   if (vv) vvMark(player, true);
   const tick = () => {
-    if (!player.isValid) return;
-    if (system.currentTick < (fogEnd.get(player.id) ?? 0)) { if (vv) vvMark(player, true); system.runTimeout(tick, 1); return; }
-    try { player.runCommand("fog @s remove bf_impact"); } catch {}
+    if (!player.isValid) { active.delete(player.id); return; }
+    const end = fogEnd.get(player.id) ?? 0, now2 = system.currentTick;
+    if (now2 >= end && !fogOff.has(player.id)) { fogOff.add(player.id); try { player.runCommand("fog @s remove bf_impact"); } catch {} }
+    if (now2 < end + (vv ? VV_EXTRA_TICKS : 0)) { if (vv && now2 < end + VV_EXTRA_TICKS) vvMark(player, true); system.runTimeout(tick, 1); return; }
+    fogOff.delete(player.id); active.delete(player.id);
     if (vv) vvMark(player, false);
   };
   system.runTimeout(tick, 1);

@@ -1,3 +1,24 @@
+# Next session handoff (updated 2026-10-28 ~13:00 local, PC session, computer use)
+- VV IMPACT FRAME COMPLETE + VERIFIED (Hysteria, VV, real 4-tick crit timing): whole world white, hit pig black.
+  Black target = tools/HurtColorGen (NEW): copies the 211 vanilla render controllers that leave is_hurt_color unset with
+  is_hurt_color = opaque red (alpha is clamped to 1; VV's ActorPrepass blends it ~50%: lerp(albedo, OverlayColor.rgb,
+  OverlayColor.a), decoded from DXIL) into dev RP BedrockForgeImpact/render_controllers (generated, gitignored).
+  ColorPostVV tests the RAW scene (before pack corrections): red > VV_HURT_RATIO (1.8) x max(green, blue) -> black.
+  Known: strongly red blocks (red wool, redstone) also go black in the frame; custom-entity RPs (Dweller, Sculk Horde)
+  keep their own controllers -> run HurtColorGen-style patch on them if their mobs don't go black. Hurt flash on Fancy is
+  now opaque red too (Fancy detection still keys on red OverlayColor - unchanged, but re-verify on Fancy).
+  BP: VV marker held 4 ticks past the fog (VV_EXTRA_TICKS; grading overrides fade in) + no double loops on repeat hits.
+  Robust alternative if false positives annoy: replace ActorPrepass GeometryPrepass (3 MRT outputs, 36 variants/pass).
+- HYSTERIA VV SKY (Fernando: "still milky"): measured Fancy sky 90-125 grey vs VV 120-160 cyan. Cause = VV auto exposure
+  re-brightening + cyan scatter. Fixed in the VV post pass (new per-pack knobs in ColorPostVV: VV_WHITE_BALANCE,
+  VV_SATURATION, VV_DEHAZE; Hysteria: bias 0.32, dehaze 0.45, sat 0.7, WB 1.06/1/0.90) + grey atmosphere (sat 0).
+  Now VV sky ~100-130 neutral grey. NOT POSSIBLE with settings: Hysteria's own clouds + sun glow on VV - tested: VV does
+  not draw the Sky material on screen (red test sky invisible), and post has no sky mask (scene alpha = 1 everywhere).
+  Would need replacing VV's deferred lighting materials (DeferredMixedResolution*) - parked, ask Fernando first.
+- /function bfiref = noon, clear, fixed camera (6.35 72 -199.87, yaw 161, pitch 8) for Fancy-vs-VV comparison shots.
+- Leftover client-biome files for legacy names in the 5 VV RPs (mega_spruce_taiga, mesa_mutated...) log harmless
+  BiomeRegistry errors; VVPackGen no longer writes them - delete them when delete permission is granted.
+
 # Next session handoff (updated 2026-10-28 ~12:10 local, PC session, computer use)
 - VV LOOK PER PACK: tools/VVPackGen (NEW, see its README) builds a VV resource pack per shaderpack from the game's own
   vanilla VV JSON (brarchive) + profiles.json: atmospherics, volumetric fog, lighting, client biomes, shadows.

@@ -84,10 +84,7 @@ def main():
     for p in sorted(glob.glob(os.path.join(rp, 'vanilla*', '__brarchive', 'biomes.brarchive')), key=vkey):
         for k, v in brarchive(p).items():
             if k.endswith('.client_biome.json'): B[k.split(':')[-1]] = v
-    for k in json.loads(re.sub(r'/\*.*?\*/', '', open(os.path.join(rp, 'vanilla', 'biomes_client.json')).read(), flags=re.S))['biomes']:
-        b = k.split(':')[-1]
-        if b != 'default' and b + '.client_biome.json' not in B:
-            B[b + '.client_biome.json'] = {'format_version': '1.21.70', 'minecraft:client_biome': {'description': {'identifier': b}, 'components': {}}}
+    # only biomes the game ships client_biome files for (legacy biomes_client.json names log 'no biome with that name')
     for name in packs:
         P = prof[name]; d = os.path.join(out, P['rp_dir'])
         u = P.get('uuid') or [str(uuid.uuid5(uuid.NAMESPACE_URL, 'bedrockforge/vv/' + name + s)) for s in ('/h', '/m')]
