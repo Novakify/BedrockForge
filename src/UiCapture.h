@@ -45,5 +45,7 @@ void requestLearn();
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb);
 /// F6 section.
 void drawUi();
+/// Write a small text file into the capture output folder (diagnostics).
+void writeText(char const* name, char const* text);
 
 } // namespace rf::uicapture

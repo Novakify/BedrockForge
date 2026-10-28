@@ -241,9 +241,11 @@ size_t targetRtv() { return gRtv.load(std::memory_order_relaxed); }
 void   noteRedirected() { gRedirected.store(true, std::memory_order_relaxed); }
 
 void installCursorHook();
+void writeDiag();
 void toggle() {
     bool on = !gEnabled.load();
     if (on) installCursorHook();
+    else writeDiag();
     gEnabled = on;
     if (on) uicapture::requestLearn(); // make sure the back-buffer RTV handles are known
     ll_shim::info(std::string("[RF] spatial panel ") + (on ? "on" : "off"));
@@ -328,6 +330,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
 
 // ---------------------------------------------------------------- input
 std::atomic<HWND> gHwnd{nullptr};
+std::atomic<long> gGcpCalls{0}, gGcpRemapped{0}, gGcpInClient{0}, gWmRemapped{0}, gWmSeen{0};
+std::string       gHookNote = "not installed";
 
 // client pixel -> client pixel the game should see (ray-pick through the panel)
 bool remapClient(HWND hwnd, int& ix, int& iy) {
@@ -367,13 +371,17 @@ BOOL WINAPI getCursorPosHook(LPPOINT p) {
     BOOL r = reinterpret_cast<GetCursorPos_t>(gGcpOrig)(p);
     HWND h = gHwnd.load(std::memory_order_relaxed);
     if (r && p && h && gEnabled.load(std::memory_order_relaxed)) {
+        ++gGcpCalls;
         POINT c = *p;
         if (ScreenToClient(h, &c)) {
             int  x = c.x, y = c.y;
             RECT rc;
-            if (GetClientRect(h, &rc) && x >= 0 && y >= 0 && x < rc.right && y < rc.bottom && remapClient(h, x, y)) {
-                c = {x, y};
-                if (ClientToScreen(h, &c)) *p = c;
+            if (GetClientRect(h, &rc) && x >= 0 && y >= 0 && x < rc.right && y < rc.bottom) {
+                ++gGcpInClient;
+                if (remapClient(h, x, y)) {
+                    c = {x, y};
+                    if (ClientToScreen(h, &c)) { *p = c; ++gGcpRemapped; }
+                }
             }
         }
     }
@@ -384,10 +392,25 @@ void installCursorHook() {
     HMODULE u = GetModuleHandleW(L"user32.dll");
     void*   t = u ? reinterpret_cast<void*>(GetProcAddress(u, "GetCursorPos")) : nullptr;
     if (!t) return;
-    if (ll_shim::hook(t, reinterpret_cast<void*>(&getCursorPosHook), &gGcpOrig) == 0) {
+    int rc = ll_shim::hook(t, reinterpret_cast<void*>(&getCursorPosHook), &gGcpOrig);
+    if (rc == 0) {
         gGcpTarget = t;
+        gHookNote  = "GetCursorPos hooked";
         ll_shim::info("[RF] spatial panel: GetCursorPos hooked");
-    } else ll_shim::warn("[RF] spatial panel: GetCursorPos hook failed");
+    } else {
+        gHookNote = "GetCursorPos hook failed rc " + std::to_string(rc);
+        ll_shim::warn("[RF] spatial panel: " + gHookNote);
+    }
+}
+
+void writeDiag() {
+    char b[512];
+    snprintf(b, sizeof b,
+             "Spatial GUI panel diag\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
+             "Mouse WM_* seen while on: %ld, remapped: %ld\nstatus: %s\n",
+             gHookNote.c_str(), gGcpCalls.load(), gGcpInClient.load(), gGcpRemapped.load(), gWmSeen.load(), gWmRemapped.load(),
+             gStatus.c_str());
+    uicapture::writeText("panel_diag.txt", b);
 }
 
 bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
@@ -400,8 +423,10 @@ bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
     case WM_XBUTTONDOWN: case WM_XBUTTONUP: case WM_XBUTTONDBLCLK: break;
     default: return false;
     }
+    if (gEnabled.load(std::memory_order_relaxed)) ++gWmSeen;
     int x = short(LOWORD(lp)), y = short(HIWORD(lp));
     if (!remapClient(hwnd, x, y)) return false;
+    ++gWmRemapped;
     lp = MAKELPARAM(x, y);
     return true;
 }

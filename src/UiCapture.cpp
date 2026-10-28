@@ -805,6 +805,12 @@ void request() {
     if (gInstalled) gRequest = true;
 }
 
+void writeText(char const* name, char const* text) {
+    std::error_code ec;
+    fs::create_directories(gOutDir, ec);
+    std::ofstream(gOutDir / name) << text;
+}
+
 void requestLearn() {
     if (!gInstalled) return;
     {
