@@ -22,6 +22,7 @@
 
 #include "LLShim.h"
 #include "PostFx.h"
+#include "UiCapture.h"
 
 #include "GUI.h"
 #include "Options.h"
@@ -69,6 +70,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_KEYDOWN && !(lp & (1 << 30))) {
         if (int(wp) == RfOptions::uiKey.get()) RfOptions::showImGui = !RfOptions::showImGui;
         else if (RfOptions::reloadShadersKey.get() != 0 && int(wp) == RfOptions::reloadShadersKey.get()) RfOptions::reloadShaders = true;
+        else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiCaptureKey.get()) rf::uicapture::request();
     }
     if (gInitialized && RfOptions::showImGui) {
         std::lock_guard l(gImGuiMutex);
@@ -190,6 +192,7 @@ void render(IDXGISwapChain3* sc) {
     updateImGui();
     auto& bb = buffers[sc->GetCurrentBackBufferIndex()];
     if (!bb.resource) return;
+    rf::uicapture::beforeOverlay(device.Get(), q, bb.resource.Get()); // Spatial GUI M0: copies the frame before RF draws
     bb.allocator->Reset();
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -314,6 +317,7 @@ void* gOrigResize     = nullptr;
 void* gOrigExecute    = nullptr;
 void* gTargets[4]{};
 void* gDetours[4]{};
+rf::uicapture::Targets gUiTargets; // device / command-list functions for the Spatial GUI M0 spike
 
 std::atomic<long> gPresentCalls{0}, gPresent1Calls{0};
 void notePresent(char const* which, std::atomic<long>& n, IDXGISwapChain* sc) {
@@ -391,6 +395,29 @@ bool findTargets() {
     if (FAILED(hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) probeNote("D3D12CreateDevice", hr);
     else if (FAILED(hr = dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q)))) probeNote("CreateCommandQueue", hr);
     if (q) gTargets[3] = (*reinterpret_cast<void***>(q.Get()))[10]; // ID3D12CommandQueue::ExecuteCommandLists
+    if (dev) { // Spatial GUI M0 spike targets (hooked only when uiCaptureSpike is on)
+        void** dv = *reinterpret_cast<void***>(dev.Get());
+        gUiTargets.createGraphicsPso = dv[10]; // CreateGraphicsPipelineState
+        gUiTargets.createRtv         = dv[20]; // CreateRenderTargetView
+        // ID3D12Device2 by IID (30baa41e-b15b-475c-a0bb-1af5c5b64328): no dependency on the SDK header version
+        static const GUID kIidDevice2 = {0x30baa41e, 0xb15b, 0x475c, {0xa0, 0xbb, 0x1a, 0xf5, 0xc5, 0xb6, 0x43, 0x28}};
+        IUnknown*         dev2        = nullptr;
+        if (SUCCEEDED(dev->QueryInterface(kIidDevice2, reinterpret_cast<void**>(&dev2))) && dev2) {
+            gUiTargets.createStreamPso = (*reinterpret_cast<void***>(dev2))[47]; // ID3D12Device2::CreatePipelineState
+            dev2->Release();
+        }
+        ComPtr<ID3D12CommandAllocator>    al;
+        ComPtr<ID3D12GraphicsCommandList> cl;
+        if (SUCCEEDED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&al)))
+            && SUCCEEDED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, al.Get(), nullptr, IID_PPV_ARGS(&cl)))) {
+            void** lv = *reinterpret_cast<void***>(cl.Get());
+            gUiTargets.drawInstanced = lv[12];
+            gUiTargets.drawIndexed   = lv[13];
+            gUiTargets.setPso        = lv[25];
+            gUiTargets.omSetRts      = lv[46];
+            cl->Close();
+        }
+    }
 
     if (q) {
         ComPtr<IDXGIFactory4>   f;
@@ -448,10 +475,12 @@ bool install() {
     }
     gHooked = true;
     ll_shim::info("[RF] overlay hooks installed");
+    if (RfOptions::uiCaptureSpike) rf::uicapture::install(gUiTargets);
     return true;
 }
 
 void uninstall() {
+    rf::uicapture::uninstall();
     for (int i = 0; i < 4; ++i)
         if (gTargets[i]) ll_shim::unhook(gTargets[i], gDetours[i]);
     if (gWindow && gOrigProc) SetWindowLongPtrW(gWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(gOrigProc));

@@ -55,6 +55,10 @@ extern RfOption<bool>     vibrantVisualsEnabled;
 extern bool             vibrantVisualsAllowed;   // refreshed from the game
 extern std::atomic_bool applyGraphicsMode;       // request, consumed on the client thread
 
+// Spatial GUI M0 capture spike (UiCapture.h): off = its hooks are not installed at all
+extern RfOption<bool> uiCaptureSpike;
+extern RfOption<int>  uiCaptureKey; // Win32 virtual-key code (default F7)
+
 extern std::filesystem::path optionsFile;
 
 bool init(std::filesystem::path const& configDir);

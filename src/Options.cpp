@@ -26,6 +26,9 @@ RfOption<bool>     vibrantVisualsEnabled = false;
 bool             vibrantVisualsAllowed = false;
 std::atomic_bool applyGraphicsMode     = false;
 
+RfOption<bool> uiCaptureSpike = false;
+RfOption<int>  uiCaptureKey   = VK_F7;
+
 std::filesystem::path optionsFile;
 } // namespace RfOptions
 
@@ -44,7 +47,8 @@ void read(json const& j, char const* key, RfOption<T>& opt) {
 
 bool RfOptions::init(std::filesystem::path const& configDir) {
     gOptions = {&showImGui,       &uiKey,      &reloadShadersKey,       &performanceEnabled,   &materialBinLoaderEnabled,
-                &redirectShaders, &shaderPack, &autoReloadOnPackChange, &vibrantVisualsEnabled};
+                &redirectShaders, &shaderPack, &autoReloadOnPackChange, &vibrantVisualsEnabled, &uiCaptureSpike,
+                &uiCaptureKey};
     std::error_code ec;
     std::filesystem::create_directories(configDir, ec);
     optionsFile = configDir / "RendererFoundation.json";
@@ -69,6 +73,8 @@ bool RfOptions::load() {
     read(j, "shaderPack", shaderPack);
     read(j, "autoReloadOnPackChange", autoReloadOnPackChange);
     read(j, "vibrantVisualsEnabled", vibrantVisualsEnabled);
+    read(j, "uiCaptureSpike", uiCaptureSpike);
+    read(j, "uiCaptureKey", uiCaptureKey);
     record();
     return true;
 }
@@ -84,6 +90,8 @@ bool RfOptions::save() {
     j["shaderPack"]               = shaderPack.get();
     j["autoReloadOnPackChange"]   = autoReloadOnPackChange.get();
     j["vibrantVisualsEnabled"]    = vibrantVisualsEnabled.get();
+    j["uiCaptureSpike"]           = uiCaptureSpike.get();
+    j["uiCaptureKey"]             = uiCaptureKey.get();
     std::ofstream out(optionsFile, std::ios::trunc);
     if (!out) return false;
     out << j.dump(4);

@@ -7,6 +7,7 @@
 #include "Notice.h"
 #include "Options.h"
 #include "Overlay.h"
+#include "UiCapture.h"
 
 namespace rf {
 
@@ -25,6 +26,7 @@ public:
         RfOptions::init(mSelf.getConfigDir());
         RfOptions::load();
         materials::install(mSelf.getModDir()); // before the renderer opens its materials
+        uicapture::init(mSelf.getConfigDir(), mSelf.getModDir() / "logs" / "uicapture");
         overlay::install();
         return true;
     }

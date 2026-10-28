@@ -16,6 +16,7 @@
 #include "Options.h"
 #include "Overlay.h"
 #include "PostFx.h"
+#include "UiCapture.h"
 
 namespace {
 void runOnClientThread() {
@@ -140,6 +141,7 @@ void updateImGui() {
             shadersSection();
             graphicsSection();
             rf::postfx::drawUi();
+            rf::uicapture::drawUi();
         }
         ImGui::End();
 
