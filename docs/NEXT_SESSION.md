@@ -1,3 +1,19 @@
+# Next session handoff (updated 2026-10-28 ~07:10 UTC, PC connected)
+INSTALLED, NOT YET SEEN IN GAME: GOAL 1 Hysteria-VV real shadows (runbook section 2, findings written there).
+- shaderpacks\HysteriaVV\ (renderer/materials/ColorPostProcessing.material.bin, postfx.json = Hysteria's bloom+CAS, src\ PRIVATE).
+  Build report: ColorPostProcessing 2 fragment blobs replaced, 0 kept vanilla.
+- RP "Hysteria VV" (uuid 09d44b3b..., from tools/HysteriaVV/build.py) in development_resource_packs\HysteriaVVRP, added at the TOP
+  of My World (+A1sY8g-qtk=, the one played 10-28) world_resource_packs.json (backup .bak-20261028).
+- config\shaderpack.txt = HysteriaVV (old: shaderpack.txt.hysteria.bak). modules.json shaderpacks.settings.vibrant = true
+  (backup .bak-20261028). options.txt graphics_mode:2 = Vibrant Visuals (backup options.txt.bak-20261028).
+- Rollback: shaderpack.txt = Hysteria, options graphics_mode:1, vibrant false (or restore the .bak-20261028 files).
+- FIRST THING after Fernando's test: logs\shaderpacks.txt must list "ColorPostProcessing <- HysteriaVV"; ContentLog 0 errors for
+  Hysteria VV; check config\shaderpack.crashed (crash guard). Tunables: orbital_offset_degrees sign (40) and moon brightness.
+- Not in repo/handoff before: someone installed a Hysteria SKY FIX on 2026-10-28 02:38 UTC (src Sky/Vertex.hlsl, Stars, SunMoon,
+  _shared/SkyFull.vertex.hlsli; Sky.material.bin.pre-skyfix kept; BUILD_REPORT.skyfix.txt). Its source is only on the PC.
+- ShaderForge works on the PC shell too (lazurite + dxc installed in the device VM; copy of tools/ShaderForge md5-verified).
+STILL OPEN: runbook section 3 (motion blur, Dread counters), section 4 sky (check if the 10-28 sky fix solved it).
+
 # Next session handoff (updated 2026-10-27, cloud-only session - PC was not connected)
 DONE + PUSHED: docs/PORT_SPATIALGUI.md (goal 3), docs/PORT_CINEMATIC.md (goal 4), docs/PC_RUNBOOK.md (exact steps
 for everything that needs the PC). Nothing installed, no DLL/pack change, PC state same as 2026-10-23 below.

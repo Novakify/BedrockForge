@@ -559,3 +559,7 @@ fabric.properties
 # Dread Atmosphere is generated from the game install (tools/DreadAtmos/build.py), not committed
 packs/DreadAtmosphereRP/
 packs/DreadAtmosphereBP/
+
+# Hysteria VV: the ColorPostProcessing grade is a port of Hysteria (AGNYA licence) -> private, never commit
+shaders/src/HysteriaVV/
+packs/HysteriaVV*/

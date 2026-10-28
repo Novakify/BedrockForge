@@ -66,6 +66,24 @@ Steps:
 6. Install: `shaderpacks\HysteriaVV\` next to Hysteria; RP "Hysteria VV" into My World; `config\shaderpack.txt` =
    HysteriaVV; `config\command.txt` = `vibrant on`. Restart.
 7. Logs: shaderpacks.txt must show `ColorPostProcessing <- HysteriaVV` served; ContentLog 0 errors for the RP.
+**Done 2026-10-28 (installed, not yet seen in game).** Findings:
+- Vanilla `data\renderer\materials\` holds ColorPostProcessing; VV settings live in `data\resource_packs\vanilla_1.21.90\__brarchive\`
+  (color_grading, lighting, atmospherics, pbr, shadows, water). `shadows` = `minecraft:shadow_settings`
+  {shadow_style blocky_shadows|soft_shadows, texel_size} -> RP file `shadows/global.json` (MS docs confirm).
+- ColorPostProcessing (1.26.51): 1 pass `ColorPostProcess`, 1 variant (no flags). Fragment in: SV_Position + TEXCOORD0.xy.
+  Textures t0 AverageLuminance, t1 ColorTexture (HDR scene, linear 709), t2 CustomExposureCompensation (curve),
+  t3 PreExposureLuminance, t5 RasterizedColor (UI layer, premultiplied). cbuffer = 24 vec4 (VV grading + tonemap). No depth.
+  Decoded vanilla flow: if TonemapParams0.z>0 undo pre-exposure (c /= 0.18/preExp + 1e-4); avg = ExposureCompensation.z>0.5 ?
+  clamp(AverageLuminance, LumMinMax.x, .y) : 0.18; comp = ExposureCompensation.y, or mode(.x)==1: 1.03-2/(log10(avg+1)+2),
+  mode>1: curve texture at normalized log2(avg); white balance; per-zone grading; c *= 0.18/avg*comp; tonemapper
+  TonemapParams0.x (1 = extended Reinhard, 2-5 others) if .y>=0.5; per-zone gamma; sRGB; saturate; UI over it; alpha 1.
+- HysteriaVV fragment keeps the exposure path exactly and replaces grading + tonemap with Hysteria's `hysFinal`
+  (Rec.2020 in). So VV color_grading JSON no longer reaches the screen; exposure settings still do.
+- Build: SM6.0 + SM6.5 replaced, 0 kept vanilla. RP: `tools/HysteriaVV/build.py` (soft shadows, sun tilt 40,
+  Hysteria noon/moon tints, moon:sun = 0.132:5.95). Atmospherics untouched.
+- Startup gotcha: `command.txt = vibrant on` is only applied on a change after BF's first tick, so it can do nothing
+  at launch. Instead set options.txt `graphics_mode:2` (CRLF file!) + modules.json `shaderpacks.settings.vibrant = true`.
+
 **What Fernando checks:** settings say Vibrant Visuals; trees/players cast sun shadows that move with the time of day;
 colours look like Hysteria (not plain VV); no crash when switching back (`vibrant off` + shaderpack Hysteria);
 FPS with F3 vs Fancy Hysteria (~42-47 before / 15-18 in the last test).
