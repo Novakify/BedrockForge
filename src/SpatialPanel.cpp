@@ -634,6 +634,7 @@ BOOL WINAPI getCursorPosHook(LPPOINT p) {
     return r;
 }
 // Real cursor (not remapped) in [-1, 1] over the client area, y down - parallax for the Java camera (SpatialCamera.cpp).
+std::atomic<unsigned long long> gCrosshairFrame{0};
 bool cursorNdc(float& x, float& y) {
     HWND h = gHwnd.load(std::memory_order_relaxed);
     if (!h) return false;
@@ -644,6 +645,25 @@ bool cursorNdc(float& x, float& y) {
     if (!ScreenToClient(h, &p) || !GetClientRect(h, &rc) || rc.right < 1 || rc.bottom < 1) return false;
     x = 2.0f * float(p.x) / float(rc.right) - 1.0f;
     y = 2.0f * float(p.y) / float(rc.bottom) - 1.0f;
+    return true;
+}
+// Java crosshair mode (useCrosshairForFirstPerson): the mouse is grabbed at the window centre, its motion turns the
+// camera and the crosshair is the pointer. Returns the motion since the last call (client pixels) and re-centres.
+bool grabCursorDelta(float& dx, float& dy, bool reset) {
+    dx = dy = 0.0f;
+    HWND h = gHwnd.load(std::memory_order_relaxed);
+    if (!h || GetForegroundWindow() != h) return false;
+    RECT rc;
+    if (!GetClientRect(h, &rc) || rc.right < 2 || rc.bottom < 2) return false;
+    POINT c{rc.right / 2, rc.bottom / 2};
+    POINT p{};
+    if (gGcpOrig) reinterpret_cast<GetCursorPos_t>(gGcpOrig)(&p);
+    else GetCursorPos(&p);
+    POINT cs = c;
+    ClientToScreen(h, &cs);
+    if (!reset) { dx = float(p.x - cs.x); dy = float(p.y - cs.y); }
+    if (p.x != cs.x || p.y != cs.y) SetCursorPos(cs.x, cs.y);
+    gCrosshairFrame = GetTickCount64();
     return true;
 }
 // v0.4 diagnostics: which mouse source the in-world menus actually read.
@@ -1309,6 +1329,18 @@ void drawJavaConfig() {
     ImGui::SameLine();
     if (ImGui::Button("Reset to defaults")) spatialcam::resetConfig();
     ImGui::TreePop();
+}
+
+void drawOverlay() {
+    // crosshair while Java crosshair mode drives the first person camera (Bedrock hides its own under screens)
+    if (GetTickCount64() - gCrosshairFrame.load() > 200) return;
+    auto*  dl = ImGui::GetForegroundDrawList();
+    ImVec2 d  = ImGui::GetIO().DisplaySize;
+    float  cx = d.x * 0.5f, cy = d.y * 0.5f, r = std::max(6.0f, d.y / 90.0f), w = std::max(2.0f, d.y / 540.0f);
+    dl->AddLine(ImVec2(cx - r, cy), ImVec2(cx + r, cy), IM_COL32(0, 0, 0, 120), w + 2.0f);
+    dl->AddLine(ImVec2(cx, cy - r), ImVec2(cx, cy + r), IM_COL32(0, 0, 0, 120), w + 2.0f);
+    dl->AddLine(ImVec2(cx - r, cy), ImVec2(cx + r, cy), IM_COL32(235, 235, 235, 230), w);
+    dl->AddLine(ImVec2(cx, cy - r), ImVec2(cx, cy + r), IM_COL32(235, 235, 235, 230), w);
 }
 
 void drawUi() {

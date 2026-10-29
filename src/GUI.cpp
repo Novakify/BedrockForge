@@ -107,6 +107,7 @@ void updateImGui() {
 
     updateOptions();
     ImGui::NewFrame();
+    rf::panel::drawOverlay();
     if (RfOptions::showImGui) {
         auto& io = ImGui::GetIO();
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);

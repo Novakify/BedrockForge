@@ -50,6 +50,7 @@
 #include "mc/world/level/block/CachedComponentData.h"
 
 namespace rf::panel {
+bool grabCursorDelta(float& dx, float& dy, bool reset); // SpatialPanel.cpp: crosshair mode mouse grab
 bool cursorNdc(float& x, float& y); // SpatialPanel.cpp: real cursor in [-1, 1] over the client area (y down)
 }
 
@@ -63,6 +64,7 @@ std::atomic_bool  gFirstPerson{false};
 float             gBaseXRot = 0.0f;
 bool              gInstalled = false;
 int               gSavedPerspective = -1;
+int               gSavedHideHand    = -1;
 Clock::time_point gOpen{};
 
 std::mutex gMutex; // gView + diag
@@ -95,6 +97,10 @@ struct Avatar {
     float sYaw = 0, sPitch = 0;
 };
 Avatar gAvatar;
+float  gFreeYaw = 0.0f, gFreePitch = 0.0f;        // CameraMixin.freeLookYaw / freeLookPitch (crosshair mode)
+bool   gGrabReset = true;
+float  gLastCamYaw = 0.0f, gLastCamPitch = 0.0f;  // last applied camera angle (keepFirstPersonCameraAngle)
+std::atomic_bool gPendingSnap{false};
 std::atomic_bool gForcedFp{false}; // CameraUtil.checkBlockCollision switched this screen to first person
 long  gAvatarWrites = 0;
 
@@ -292,6 +298,15 @@ void applyComponent() {
     float yawP = rot.y, pitchP = rot.x;
     if (!gActive.load()) {
         avatarApply(actor, yawP, 0, 0, false);
+        if (gPendingSnap.exchange(false)) { // SpatialGUIRenderer.applyCameraSnap: keep looking where the camera looked
+            if (auto rc = actor.getEntityContext().tryGetComponent<ActorRotationComponent>()) {
+                (*rc->mRot).x = gLastCamPitch; (*rc->mRot).y = gLastCamYaw;
+                (*rc->mRotPrev).x = gLastCamPitch; (*rc->mRotPrev).y = gLastCamYaw;
+            }
+            if (auto hr = actor.getEntityContext().tryGetComponent<ActorHeadRotationComponent>()) { (*hr->mYHeadRot) = gLastCamYaw; (*hr->mYHeadRotO) = gLastCamYaw; }
+            gHaveStart = false;
+            return;
+        }
         // first person: the camera looks exactly where the player looks -> learn the quaternion convention
         if (glm::length(pos - eye) < 0.3f) learnConvention(q, yawP, pitchP);
         gHaveStart = false;
@@ -305,6 +320,8 @@ void applyComponent() {
         gStartPitch = pitchP;
         float clampP = float(cfg().fpPitchClamp);
         gBaseXRot   = std::clamp(pitchP, -clampP, clampP); // CameraMixin: baseXRot
+        gFreeYaw = gFreePitch = 0.0f;
+        gGrabReset = true;
     }
     Config const& c  = cfg();
     bool          fp = gFirstPerson.load();
@@ -318,7 +335,18 @@ void applyComponent() {
     float     elapsed = std::chrono::duration<float, std::milli>(Clock::now() - gOpen).count();
     glm::vec3 target;
     float     targetYaw, targetPitch;
-    if (fp) {
+    bool crosshair = fp && c.crosshairFp;
+    if (crosshair) {
+        // crosshair mode: grabbed mouse = free look (yaw +-90 around the open yaw, pitch within +-90 absolute)
+        float dx = 0.0f, dy = 0.0f;
+        if (rf::panel::grabCursorDelta(dx, dy, gGrabReset)) gGrabReset = false;
+        const float sens = 0.15f; // CameraUtil.calculateMouseSensitivity at the default sensitivity, degrees per pixel
+        gFreeYaw   = std::clamp(gFreeYaw + dx * sens, -90.0f, 90.0f);
+        gFreePitch = std::clamp(gFreePitch + dy * sens, -90.0f - pitchP, 90.0f - pitchP);
+        targetYaw   = yawP + gFreeYaw;
+        targetPitch = pitchP + gFreePitch;
+        target      = eye;
+    } else if (fp) {
         // CameraMixin.calculateCameraTransform(firstPerson): camera stays at the eyes and turns with the mouse
         float blend = std::min(1.0f, elapsed / 150.0f);
         float yawOff = c.fpParallaxOff ? 0.0f : mx * 90.0f * c.fpSensYaw * blend;
@@ -353,6 +381,7 @@ void applyComponent() {
     }
     ++gCompWrites;
     ++gOverrides;
+    gLastCamYaw = camYaw; gLastCamPitch = camPitch;
     gLastCam[0] = camPos.x; gLastCam[1] = camPos.y; gLastCam[2] = camPos.z;
     gLastTarget[0] = target.x; gLastTarget[1] = target.y; gLastTarget[2] = target.z;
     gLastT = t;
@@ -479,6 +508,12 @@ void setActive(bool on, bool inventory) {
         }
         gFirstPerson = fp;
         gSavedPerspective = -1;
+        gSavedHideHand    = -1;
+        if (ci && fp && (cfg().hideHandsFp || cfg().hideShieldFp)) { // Java: hide hands / shield in first person
+            auto& o        = ci->getOptions();
+            gSavedHideHand = o.getHideItemInHand() ? 1 : 0;
+            if (cfg().hideHandsFp) o.setHideItemInHand(true);
+        }
         if (ci && !fp) {
             auto& o           = ci->getOptions();
             gSavedPerspective = o.getPlayerViewPerspective();
@@ -492,8 +527,11 @@ void setActive(bool on, bool inventory) {
         gActive = true;
     } else if (!on && gActive.load()) {
         gActive = false;
+        if (gFirstPerson.load() && cfg().keepFpAngle) gPendingSnap = true;
         if (ci && gSavedPerspective >= 0) ci->getOptions().setPlayerViewPerspective(gSavedPerspective);
+        if (ci && gSavedHideHand >= 0) ci->getOptions().setHideItemInHand(gSavedHideHand == 1);
         gSavedPerspective = -1;
+        gSavedHideHand    = -1;
     }
 }
 bool active() { return gActive.load(); }
