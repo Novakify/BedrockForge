@@ -1300,7 +1300,13 @@ void loomAction(int t, unsigned bit, bool shift) {
 }
 
 /// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
+std::string gActionNote = "-";
 void stationAction(int t, unsigned bit, bool shift) {
+    {
+        char b[96];
+        snprintf(b, sizeof b, "action %d button %u shift %d at %.2f", t, bit, shift, gS.clock);
+        gActionNote = b;
+    }
     if (gS.st.kind == Kind::Anvil && t == 100) {
         if (bit == 1 && gS.resultFull3()) {
             // AnvilStation.forge: three blows; the first one takes the result (the server checks the cost)
@@ -1342,7 +1348,8 @@ void stoneAction(int t, unsigned bit, bool shift) {
     if (t == 103) { inject(0, bit); gS.tapAt = gS.clock; return; } // the stone: take it (slotClick(0, button, shift))
     if (t < 200) return;
     int k = t - 200, button = shapeButton(k);
-    if (bit != 1 || button < 0) return; // only the left button cuts (deny)
+    if (bit != 1 || button < 0) { gActionNote += " - no cut (button " + std::to_string(button) + ")"; return; } // only the left button cuts (deny)
+    gActionNote += " - cut shape " + std::to_string(k) + " button " + std::to_string(button);
     // StonecutterStation.cut: pick the recipe as the window does, then the move takes the piece when the blade bites
     if (gS.selectedShape != k) inject(300 + button, 1);
     gS.selectedShape = k;
@@ -4287,9 +4294,9 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
 // ================================================================ ImGui: hint line, F6
 namespace {
 // lang/en_us.json of the Java mod
-char const* kZoneName[3][3] = {{"Upper opening \xE2\x80\x94 to smelt", "Fire box \xE2\x80\x94 fuel", "Done"},
-                               {"Window \xE2\x80\x94 to cook", "Behind the grate \xE2\x80\x94 fuel", "Ready"},
-                               {"Charging from the top \xE2\x80\x94 ore", "Front grate \xE2\x80\x94 fuel", "Sill \xE2\x80\x94 finished ingots"}};
+char const* kZoneName[3][3] = {{"Upper opening - to smelt", "Fire box - fuel", "Done"},
+                               {"Window - to cook", "Behind the grate - fuel", "Ready"},
+                               {"Charging from the top - ore", "Front grate - fuel", "Sill - finished ingots"}};
 char const* kZoneEmpty[3][3] = {{"Put in what you want smelted", "Put coal, wood or other fuel here", "Smelted items come out here"},
                                 {"Put in raw food", "Put coal, wood or other fuel behind the grate", "Cooked food comes out here"},
                                 {"Load ore and metal gear here", "Put coal or other fuel behind the grate", "Ingots come out on this sill"}};
@@ -4302,12 +4309,12 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Furnace: return std::string("Fuel goes in below, things to smelt above") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
-    case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them \xE2\x80\x94 forge" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
-    case Kind::Loom: return std::string("Banner on the warp, dye right, pattern left") + dot + "pick a pattern on the board \xE2\x80\x94 weave" + dot + "Esc \xE2\x80\x94 step away";
-    case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map \xE2\x80\x94 work it" + dot + "Esc \xE2\x80\x94 step away";
-    case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear \xE2\x80\x94 smith" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
-    case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade \xE2\x80\x94 cut one" + dot + "Shift \xE2\x80\x94 cut the stack" + dot + "Esc \xE2\x80\x94 step away";
-    case Kind::Grindstone: return std::string("Lay the item on the wheel") + dot + "LMB on it \xE2\x80\x94 grind (enchantments come off)" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
+    case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them - forge" + dot + "RMB - take" + dot + "Esc - step away";
+    case Kind::Loom: return std::string("Banner on the warp, dye right, pattern left") + dot + "pick a pattern on the board - weave" + dot + "Esc - step away";
+    case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map - work it" + dot + "Esc - step away";
+    case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear - smith" + dot + "RMB - take" + dot + "Esc - step away";
+    case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade - cut one" + dot + "Shift - cut the stack" + dot + "Esc - step away";
+    case Kind::Grindstone: return std::string("Lay the item on the wheel") + dot + "LMB on it - grind (enchantments come off)" + dot + "RMB - take" + dot + "Esc - step away";
     default: return "Esc step back";
     }
 }
@@ -4337,15 +4344,15 @@ void drawOverlay() {
                 bool strips = (gS.cellFull[0] && gS.cellGlint[0]) || (gS.cellFull[1] && gS.cellGlint[1]);
                 bool merges = gS.cellFull[0] && gS.cellFull[1];
                 tipTitle = strips ? "Enchantments come off (curses stay), a little experience returns" : merges ? "The two are ground into one" : "Grind";
-                tipLine  = "LMB \xE2\x80\x94 grind  \xC2\xB7  RMB \xE2\x80\x94 take  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
+                tipLine  = "LMB - grind  \xC2\xB7  RMB - take  \xC2\xB7  Shift - straight into the inventory";
             } else {
-                tipTitle = "Click \xE2\x80\x94 take";
+                tipTitle = "Click - take";
             }
         }
         if (gS.st.kind == Kind::Loom && !moving()) { // LoomStation.tooltip (without the item's own lines)
-            if (gS.loomTarget == LPattern) tipTitle = "LMB \xE2\x80\x94 weave  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
+            if (gS.loomTarget == LPattern) tipTitle = "LMB - weave  \xC2\xB7  Shift - straight into the inventory";
             else if (gS.loomTarget == LItem) {
-                tipTitle = "Click \xE2\x80\x94 take";
+                tipTitle = "Click - take";
                 if (gS.loomHover == 0 && !gS.cellFull[1]) tipLine = "Lay a dye and the patterns appear";
             }
         }
@@ -4355,9 +4362,9 @@ void drawOverlay() {
                 if (gS.cellFull[2] && gS.cartHover == 0) {
                     int w    = cartWorkOf();
                     tipTitle = w == CZoom ? "Paper: the map will cover more land" : w == CLock ? "Glass: the map is locked and won't change" : "Empty map: makes a copy";
-                    tipLine  = "LMB \xE2\x80\x94 work it  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
+                    tipLine  = "LMB - work it  \xC2\xB7  Shift - straight into the inventory";
                 } else {
-                    tipTitle = "Click \xE2\x80\x94 take";
+                    tipTitle = "Click - take";
                     if (gS.cartHover == 0 && !gS.cellFull[1]) tipLine = "Lay paper, glass or an empty map on the right";
                     else if (gS.cellFull[1] && !gS.cellFull[2] && gS.cellFull[0]) tipLine = "This map can't take that";
                 }
@@ -4368,17 +4375,17 @@ void drawOverlay() {
             char const* missing[3] = {"A template is missing", "The gear is missing", "A material is missing"};
             if (gS.smithTarget == SmPlace && gS.smithPlace >= 0) tipTitle = names[gS.smithPlace];
             else if (gS.smithTarget == SmItem) {
-                if (gS.cellFull[3]) { tipTitle = "LMB \xE2\x80\x94 smith  \xC2\xB7  RMB \xE2\x80\x94 take  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory"; }
+                if (gS.cellFull[3]) { tipTitle = "LMB - smith  \xC2\xB7  RMB - take  \xC2\xB7  Shift - straight into the inventory"; }
                 else {
-                    tipTitle = "Click \xE2\x80\x94 take";
+                    tipTitle = "Click - take";
                     for (int i = 0; i < 3; ++i) if (!gS.cellFull[i]) { tipLine = missing[i]; break; }
                 }
             }
         }
         if (gS.st.kind == Kind::Stonecutter && !moving()) { // StonecutterStation.tooltip (without the item's own lines)
-            if (gS.stoneTarget == SShape) tipTitle = "LMB \xE2\x80\x94 cut one  \xC2\xB7  Shift \xE2\x80\x94 cut the whole stack";
+            if (gS.stoneTarget == SShape) tipTitle = "LMB - cut one  \xC2\xB7  Shift - cut the whole stack";
             else if (gS.stoneTarget == SStack) {
-                tipTitle = "Click \xE2\x80\x94 take";
+                tipTitle = "Click - take";
                 if (shapeCount() == 0) tipLine = "This can't be cut";
             }
         }
@@ -4495,9 +4502,11 @@ void appendDiag(char* b, unsigned long long cap) {
                          gS.last.yaw, gS.last.pitch, gS.last.roll, gS.tanHalf, gS.aspect, gS.fovY, gS.vanillaFovY, gG.status.c_str());
     len += std::snprintf(b + len, cap - len, "  block states: %s; lit %d; aimTop %d\n", gS.states.c_str(), gS.st.lit, gS.aimTop);
     if (len < cap)
-        len += std::snprintf(b + len, cap - len, "  side %d; wheel %.3f %.3f %.3f; grind target %d hover %d place %d; glint %d%d%d; spin %.2f; props: %s; keep copies %ld checked %ld\n", int(gS.st.side),
+        len += std::snprintf(b + len, cap - len, "  side %d; wheel %.3f %.3f %.3f; grind target %d hover %d place %d; glint %d%d%d; spin %.2f; props: %s; keep copies %ld checked %ld\n"
+                             "  move on %d at %.2f (clock %.2f) length %.2f beat %.2f done %d; %s; buttons %d\n", int(gS.st.side),
                              gS.st.wheel.x, gS.st.wheel.y, gS.st.wheel.z, gS.grindTarget, gS.grindHover, gS.grindPlace, gS.cellGlint[0], gS.cellGlint[1],
-                             gS.cellGlint[2], gS.spin, gPropNote.c_str(), gKeepCopies.load(), gKeepChecked);
+                             gS.cellGlint[2], gS.spin, gPropNote.c_str(), gKeepCopies.load(), gKeepChecked, gS.moveOn, gS.moveAt, gS.clock,
+                             gS.moveLength, gS.moveBeat, gS.moveBeatDone, gActionNote.c_str(), gLayout.nButtons);
     for (int i = 0; i < 12 && len < cap; ++i) {
         auto const& e = gPressLog[(gPressLogN + i) % 12];
         if (!e.empty()) len += std::snprintf(b + len, cap - len, "  press: %s\n", e.c_str());
