@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -454,7 +455,7 @@ void installCursorHook() {
 }
 
 void writeDiag() {
-    char b[1600];
+    char b[3000];
     snprintf(b, sizeof b,
              "Spatial GUI panel diag v0.4\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
@@ -478,6 +479,33 @@ void writeDiag() {
                  return out;
              }().c_str(),
              gStatus.c_str());
+    // v0.5: project the four drawn panel corners to client pixels and run them through the ray-pick.
+    // A correct remap sends each corner to the matching client corner (0,0), (W,0), (0,H), (W,H).
+    {
+        HWND h = gHwnd.load();
+        Geom g;
+        {
+            std::lock_guard l(gGeomMutex);
+            g = gGeom;
+        }
+        RECT rc{};
+        size_t len = strlen(b);
+        if (h && g.valid && GetClientRect(h, &rc)) {
+            float W = float(rc.right - rc.left), H = float(rc.bottom - rc.top);
+            float cs[4][2] = {{-g.hw, g.hh}, {g.hw, g.hh}, {-g.hw, -g.hh}, {g.hw, -g.hh}};
+            const char* nm[4] = {"TL", "TR", "BL", "BR"};
+            len += snprintf(b + len, sizeof b - len, "client %gx%g  panel hw %.3f hh %.3f cz %.2f  tanHalf %.3f aspect %.3f\n", W, H, g.hw, g.hh, g.cz, g.tanHalf, g.aspect);
+            for (int k = 0; k < 4; ++k) {
+                float c4[4];
+                toClip(g, cs[k][0], cs[k][1], c4);
+                float nx = c4[0] / c4[3], ny = c4[1] / c4[3];
+                int px = int((nx + 1.0f) * 0.5f * W), py = int((1.0f - ny) * 0.5f * H);
+                int rx = px, ry = py;
+                bool ok = remapClient(h, rx, ry);
+                len += snprintf(b + len, sizeof b - len, "corner %s: drawn %d,%d -> remap %d,%d (%s)\n", nm[k], px, py, rx, ry, ok ? "ok" : "no");
+            }
+        }
+    }
     uicapture::writeText("panel_diag.txt", b);
 }
 
