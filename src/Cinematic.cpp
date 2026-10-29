@@ -112,7 +112,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing; }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -157,7 +157,7 @@ struct Station {
     bool lit = false;             // a lit furnace (block name lit_*)
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
     V3 center() const {
-        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
+        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
     }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
@@ -210,6 +210,7 @@ struct Station {
         // TableStation.lean; SmithingStation.lean is the same with its own numbers (LEAN_BACK 0.7, LEAN_UP 0.62, look 0.04 beyond)
         double LEAN_BACK = 0.86, LEAN_UP = 0.72, LOOK_BACK = -0.04;
         if (kind == Kind::Smithing) { LEAN_BACK = 0.7; LEAN_UP = 0.62; LOOK_BACK = -0.04; }
+        if (kind == Kind::Cartography) { LEAN_BACK = 0.7; LEAN_UP = 0.64; LOOK_BACK = -0.02; }
         JPose p;
         p.pos   = top + sideV() * LEAN_BACK + V3{0, LEAN_UP, 0};
         p.pitch = float(std::atan2(LEAN_UP, LEAN_BACK - LOOK_BACK) / kDeg);
@@ -354,6 +355,9 @@ struct Scene {
     int    smithTarget = 0, smithHover = -1, smithPlace = -1, smithFx = 0;
     bool   wasFull[4] = {}, wasBlock[4] = {};
     float  molten[3] = {1, 0.5f, 0.16f};
+    // CartographyStation
+    int    cartTarget = 0, cartHover = -1, cartPlace = -1, cartWork = 0;
+    bool   gleamed = false;
     double grindPrevT = -1;
     bool   resultFull3() const { return cellFull[2]; } // the menu's result slot (anvil, grindstone, cartography: slot 2)
     std::string lastRoute = "-";
@@ -830,6 +834,7 @@ double sinceBlow(double t) {
 double grindKick(double t);
 double smithKick(double t);
 void   smithAction(int t, unsigned bit, bool shift);
+void   cartAction(int t, unsigned bit, bool shift);
 double stoneKick(double t);
 /// ClientStation.cameraKick: 0..1 how hard the camera is shaken right now
 double cameraKick() {
@@ -1135,6 +1140,70 @@ void smithAction(int t, unsigned bit, bool shift) {
     gS.tapAt = gS.clock;
 }
 
+// ---------------------------------------------------------------- CartographyStation (vanilla geometry)
+constexpr double CT_LAYOUT[2][2] = {{-0.04, 0.04}, {0.34, -0.1}}; // the map in the middle, what goes into it on the right
+constexpr double MAP_SIZE = 0.5, ADDITION_SIZE = 0.24, WORK_LENGTH = 2.1, CT_BEAT = 1.55;
+enum CartWork { CZoom, CLock, CCopy };
+enum CartTarget { CtNone, CtPlace, CtItem };
+V3 cartPoint(int slot) { return gS.st.top + gS.st.right() * CT_LAYOUT[slot][0] + gS.st.sideV() * CT_LAYOUT[slot][1]; }
+double cartAdditionYaw(double t) { (void)t; return 0; } // turned from its own rotation to the map's (both 0 here)
+V3 cartAdditionPos(double t) {
+    V3 from = cartPoint(1), to;
+    switch (gS.cartWork) {
+    case CZoom: to = cartPoint(0) + V3{0, -0.002, 0}; break;
+    case CLock: to = cartPoint(0) + V3{0, 0.012, 0}; break;
+    default: to = cartPoint(0) + gS.st.right() * -0.02 + gS.st.sideV() * 0.02; break;
+    }
+    double k = inOutCubic(window(t, 0.1, 0.55));
+    return lerp(from, to, k) + V3{0, (gS.cartWork == CLock ? 0.16 : 0.07) * hump(k), 0};
+}
+int cartCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
+    gS.cartTarget = CtNone;
+    gS.cartHover = gS.cartPlace = -1;
+    if (moving()) return -1;
+    if (!gS.carrying) {
+        for (int i = 1; i >= 0; --i)
+            if (gS.cellFull[i] && underCursor(b, mx, my, cartPoint(i), i == 0 ? 0.2 : 0.1)) {
+                gS.cartTarget = CtItem;
+                gS.cartHover  = i;
+                gS.haveAim    = true;
+                gS.aim        = cartPoint(i);
+                return 101 + i;
+            }
+        return -1;
+    }
+    V3 hit;
+    if (!onPlaneY(o, d, gS.st.top.y, hit) || std::fabs(hit.x - gS.st.top.x) > 0.52 || std::fabs(hit.z - gS.st.top.z) > 0.52) return -1;
+    int nearest = (hit - cartPoint(0)).len() < (hit - cartPoint(1)).len() ? 0 : 1;
+    gS.cartTarget = CtPlace;
+    gS.cartPlace  = nearest;
+    gS.haveAim    = true;
+    gS.aim        = cartPoint(nearest);
+    return nearest;
+}
+/// what the addition is, from its icon: glass (light, blue-tinged) locks, an empty map (warm parchment) copies,
+/// paper (white) zooms out
+int cartWorkOf() {
+    float* c = gS.iconRgb[1];
+    if (c[2] > c[0] + 0.03f) return CLock;
+    if (c[0] - c[2] > 0.12f) return CCopy;
+    return CZoom;
+}
+void cartAction(int t, unsigned bit, bool shift) {
+    if (t < 101 || t > 102) return;
+    int i = t - 101;
+    if (bit == 1 && i == 0 && gS.cellFull[2]) {
+        gS.cartWork = cartWorkOf();
+        gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = WORK_LENGTH; gS.moveBeat = CT_BEAT; gS.moveBeatDone = false;
+        gS.moveToInv = shift;
+        gS.gleamed   = false;
+        for (int k = 0; k < 4; ++k) { gS.wasFull[k] = gS.cellFull[k]; gS.wasBlock[k] = gS.cellBlock[k]; }
+        std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+        gSnapRequest = true;
+    } else inject(i, 1);
+    gS.tapAt = gS.clock;
+}
+
 /// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
 void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Anvil && t == 100) {
@@ -1153,6 +1222,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     }
     if (gS.st.kind == Kind::Stonecutter) { stoneAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Smithing) { smithAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Cartography) { cartAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -1202,6 +1272,9 @@ void moveFrame() {
         } else if (gS.phase == Phase::Active && gS.st.kind == Kind::Smithing) {
             if (gS.cellFull[3]) inject(3, 1);
             else gS.moveOn = false;
+        } else if (gS.phase == Phase::Active && gS.st.kind == Kind::Cartography) {
+            if (gS.cellFull[2]) inject(2, 1);
+            else gS.moveOn = false;
         } else if (gS.phase == Phase::Active && (gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone)) {
             if (gS.resultFull3()) inject(2, 1);
             else gS.moveOn = false; // nothing to take any more: the move stops (cancelMove)
@@ -1249,6 +1322,11 @@ int currentTarget(float mx, float my) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
         return smithCursor(b, mx, my, o, d);
+    }
+    if (gS.st.kind == Kind::Cartography) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return cartCursor(b, mx, my, o, d);
     }
     if (isFurnace(gS.st.kind)) {
         // FurnaceStation.updateCursor (vanilla geometry): the front face, and the top where a zone lies there
@@ -2605,6 +2683,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Cartography) // CartographyStation.rest
+        return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.26 : -0.26) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Smithing) // SmithingStation.rest
         return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Stonecutter) // StonecutterStation.rest
@@ -2762,6 +2842,27 @@ void smithHands(V3& r, V3& l) {
     }
 }
 
+/// CartographyStation.handsOverride: the right hand brings the addition over, the left holds the map down by its corner
+void cartHands(V3& right, V3& left) {
+    double t = moveTime();
+    V3     rg = gS.st.right(), sv = gS.st.sideV();
+    double carry = inOutCubic(window(t, 0, 0.12)) * (1 - inOutCubic(window(t, 0.6, 0.85)));
+    right = lerp(restOf(true), cartAdditionPos(t) + sv * ITEM_REACH + V3{0, HAND_Y + 0.02, 0}, carry);
+    V3     corner = cartPoint(0) + rg * (-MAP_SIZE * 0.4) + sv * (MAP_SIZE * 0.35) + V3{0, HAND_Y + 0.01, 0};
+    double hold   = inOutCubic(window(t, 0.05, 0.3)) * (1 - inOutCubic(window(t, CT_BEAT - 0.1, CT_BEAT + 0.1)));
+    left = lerp(restOf(false), corner, hold);
+    if (t > 0.85 && t < CT_BEAT) { // smoothing the sheet flat across, or tracing the land with a fingertip
+        double s     = window(t, 0.85, CT_BEAT - 0.05);
+        V3     sweep = cartPoint(0) + rg * (-0.15 + 0.3 * s) + sv * (0.08 * std::sin(s * kPi * 3)) + V3{0, HAND_Y + 0.02, 0};
+        right = lerp(restOf(true), sweep, hump(s) * 0.9 + 0.1);
+    }
+    if (t >= CT_BEAT - 0.1) {
+        V3 grab = cartPoint(0) + sv * 0.18 + V3{0, HAND_Y + 0.03, 0};
+        right = lerp(lerp(right, grab, inOutCubic(window(t, CT_BEAT - 0.1, CT_BEAT + 0.05))), restOf(true) + V3{0, gS.moveToInv ? 0 : 0.05, 0},
+                     inOutCubic(window(t, CT_BEAT + 0.05, WORK_LENGTH)));
+    }
+}
+
 void updateHands(JPose const& cam, double dt) {
     V3    cp = cam.pos;
     float cy = cam.yaw;
@@ -2790,11 +2891,13 @@ void updateHands(JPose const& cam, double dt) {
         break;
     }
     case Phase::Active: {
-        if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter || gS.st.kind == Kind::Smithing) && moving()) { // handsOverride, springs at 55
+        if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter || gS.st.kind == Kind::Smithing ||
+             gS.st.kind == Kind::Cartography) && moving()) { // handsOverride, springs at 55
             V3 r, l;
             if (gS.st.kind == Kind::Anvil) anvilHands(cam, r, l);
             else if (gS.st.kind == Kind::Stonecutter) stoneHands(r, l);
             else if (gS.st.kind == Kind::Smithing) smithHands(r, l);
+            else if (gS.st.kind == Kind::Cartography) cartHands(r, l);
             else grindHands(cam, r, l);
             gRight.update(r, 55, dt);
             gLeft.update(l, 55, dt);
@@ -3534,6 +3637,74 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 }
             }
         }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Cartography) {
+            // CartographyStation.frame / renderScene / renderWorld (the map is drawn as its item: the map's own
+            // picture is not reachable here)
+            V3     rgt = gS.st.right(), out = gS.st.sideV();
+            double t   = moveTime();
+            auto drawMap = [&](IconSrc const& is, V3 at, double yaw, double size, float opacity) {
+                orientedItem(cam, b, L, is, false, at + V3{0, 0.004, 0}, rgt, out, size, 0, opacity, yaw);
+            };
+            auto laidAddition = [&](IconSrc const& is, bool block, double scale, float opacity) { // SmithingStation.drawLaid(slot 2)
+                double size = (block ? 0.13 : 0.2) * scale * ADDITION_SIZE / 0.2;
+                orientedItem(cam, b, L, is, block, cartPoint(1) + V3{0, block ? size / 2 : 0.004, 0}, rgt, out, size, 0, opacity, 18);
+            };
+            if (t < 0) {
+                if (gS.cellFull[0]) drawMap(src(L.grid[0], 0), cartPoint(0), 0, MAP_SIZE * (gS.cartHover == 0 ? 1.03 : 1.0), tableAlpha);
+                if (gS.cellFull[1]) laidAddition(src(L.grid[1], 1), gS.cellBlock[1], gS.cartHover == 1 ? 1.08 : 1.0, tableAlpha);
+                if (gS.phase == Phase::Active && gS.cartTarget == CtPlace && gS.haveAim) {
+                    float p = float(0.18 + 0.06 * std::sin(clock * 5));
+                    glowDisc(cam, b, gS.aim + V3{0, 0.004, 0}, gS.cartPlace == 0 ? 0.26 : 0.12, p, p * 0.8f, p * 0.6f);
+                }
+            } else {
+                IconSrc mapBefore = src(L.grid[0], -1), addition = src(L.grid[1], -1);
+                std::memcpy(mapBefore.box, gS.snapBox[0], sizeof mapBefore.box);
+                std::memcpy(addition.box, gS.snapBox[1], sizeof addition.box);
+                mapBefore.snap = addition.snap = gG.snapValid;
+                V3 map = cartPoint(0) + V3{0, 0.02, 0};
+                if (gS.cartWork == CCopy && t > 0.6 && t < CT_BEAT && rnd() < handsDt * 30) motes(map, MAP_SIZE * 0.3, 1, 0.35f, 0.3f, 0.25f, 0.08);
+                if (!gS.gleamed && t > 0.9) {
+                    gS.gleamed = true;
+                    if (gS.cartWork == CLock) motes(map, MAP_SIZE * 0.4, 12, 0.8f, 0.9f, 1.0f, 0.15);
+                }
+                // what is left of the addition stack once one is used (live)
+                if (t >= CT_BEAT && gS.cellFull[1]) laidAddition(src(L.grid[1], 1), gS.cellBlock[1], 1.0, 1);
+                if (t < CT_BEAT) { // drawWorking
+                    V3     mp = cartPoint(0), add = cartAdditionPos(t);
+                    double settle = inOutCubic(window(t, 0.55, 1.25));
+                    if (gS.cartWork == CZoom) { // the paper grows into the larger sheet, the old map shrinks to its middle
+                        orientedItem(cam, b, L, addition, false, add + V3{0, 0.002, 0}, rgt, out, ADDITION_SIZE + (MAP_SIZE * 1.04 - ADDITION_SIZE) * settle, 0, 1, 0);
+                        drawMap(mapBefore, mp + V3{0, 0.006, 0}, 0, MAP_SIZE * (1 - 0.5 * settle), 1);
+                    } else if (gS.cartWork == CLock) { // the pane is turned over and laid on it, a gleam runs across
+                        drawMap(mapBefore, mp, 0, MAP_SIZE, 1);
+                        double flip = 180 * inOutCubic(window(t, 0.15, 0.5));
+                        orientedItem(cam, b, L, addition, false, add + V3{0, 0.006, 0}, rgt, out, ADDITION_SIZE + (MAP_SIZE * 1.02 - ADDITION_SIZE) * settle,
+                                     float(flip), 1, 0);
+                        if (t > 0.9) {
+                            double g  = window(t, 0.9, 1.4);
+                            float  bb = float(0.4 * hump(g));
+                            V3 at = mp + rgt * (-MAP_SIZE / 2 + MAP_SIZE * g) + out * (MAP_SIZE * (0.5 - g) * 0.6) + V3{0, 0.02, 0};
+                            glowBillboard(cam, b, at, 0.08, bb, bb, bb);
+                        }
+                    } else { // the empty map turns into the copy as the land is traced onto it
+                        drawMap(mapBefore, mp + rgt * (-0.06 * settle), -6 * settle, MAP_SIZE, 1);
+                        V3     copy   = add + rgt * (0.08 * settle) + out * (-0.02 * settle) + V3{0, 0.004, 0};
+                        double traced = smoother(window(t, 0.85, CT_BEAT - 0.05));
+                        if (traced < 0.5) orientedItem(cam, b, L, addition, false, copy, rgt, out, ADDITION_SIZE + (MAP_SIZE - ADDITION_SIZE) * settle, 0, 1, 6);
+                        else drawMap(mapBefore, copy, 6, MAP_SIZE, 1);
+                        if (t > 0.85) {
+                            float bb = float(0.3 * hump(traced));
+                            glowBillboard(cam, b, lerp(mp, copy, traced) + V3{0, 0.03, 0}, 0.07, bb, bb * 0.9f, bb * 0.7f);
+                        }
+                    }
+                } else { // to the hand (or the bag)
+                    double k    = inOutCubic(window(t, CT_BEAT, WORK_LENGTH));
+                    V3     dest = gS.moveToInv ? cam.pos + V3{0, 0.5, 0} + yawForward(cam.yaw) * 0.6 : heldItemPoint(gRight.x, shoulderOf(true, cam.pos, cam.yaw));
+                    V3     at   = lerp(cartPoint(0) + V3{0, 0.1 * hump(k), 0}, dest, inCubic(k));
+                    drawMap(mapBefore, at, 0, MAP_SIZE * (1 - 0.7 * k), 1);
+                }
+            }
+        }
         if (haveCam) drawSparks(cam, b, clock, handsDt);
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
             V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
@@ -3734,6 +3905,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them \xE2\x80\x94 forge" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
+    case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map \xE2\x80\x94 work it" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear \xE2\x80\x94 smith" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade \xE2\x80\x94 cut one" + dot + "Shift \xE2\x80\x94 cut the stack" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Grindstone: return std::string("Lay the item on the wheel") + dot + "LMB on it \xE2\x80\x94 grind (enchantments come off)" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
@@ -3767,6 +3939,20 @@ void drawOverlay() {
                 tipLine  = "LMB \xE2\x80\x94 grind  \xC2\xB7  RMB \xE2\x80\x94 take  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
             } else {
                 tipTitle = "Click \xE2\x80\x94 take";
+            }
+        }
+        if (gS.st.kind == Kind::Cartography && !moving()) { // CartographyStation.tooltip (without the item's own lines)
+            if (gS.cartTarget == CtPlace && gS.cartPlace >= 0) tipTitle = gS.cartPlace == 0 ? "A filled map goes here" : "Paper, glass or an empty map goes here";
+            else if (gS.cartTarget == CtItem) {
+                if (gS.cellFull[2] && gS.cartHover == 0) {
+                    int w    = cartWorkOf();
+                    tipTitle = w == CZoom ? "Paper: the map will cover more land" : w == CLock ? "Glass: the map is locked and won't change" : "Empty map: makes a copy";
+                    tipLine  = "LMB \xE2\x80\x94 work it  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
+                } else {
+                    tipTitle = "Click \xE2\x80\x94 take";
+                    if (gS.cartHover == 0 && !gS.cellFull[1]) tipLine = "Lay paper, glass or an empty map on the right";
+                    else if (gS.cellFull[1] && !gS.cellFull[2] && gS.cellFull[0]) tipLine = "This map can't take that";
+                }
             }
         }
         if (gS.st.kind == Kind::Smithing && !moving()) { // SmithingStation.tooltip (without the item's own lines)
