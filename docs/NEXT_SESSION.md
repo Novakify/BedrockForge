@@ -1,3 +1,30 @@
+# Next session handoff (updated 2026-10-29 ~15:50 UTC) - READ FIRST
+- CINEMATIC INTERACTIONS PORT in progress: RF branch `cinematic` (builds -> branch `cinematic-builds`, fetch with
+  `git fetch origin +cinematic-builds:refs/remotes/origin/cinematic-builds`; the artifact zip host is blocked here).
+  **CI BLOCKED since 15:44 UTC: GitHub Actions refuses to start ("recent account payments have failed or your
+  spending limit needs to be increased") - Fernando has to raise the limit / fix payment / make the repo public.**
+  Local syntax check without CI: `x86_64-w64-mingw32-g++ -std=c++20 -fsyntax-only -I. -I<imgui> -I<dir with
+  nlohmann> -DNOMINMAX Cinematic.cpp` (works for Cinematic.cpp and SpatialPanel.cpp; no LL headers there).
+- Done (code): crafting table (M1, tested), furnace / smoker / blast furnace, anvil (hammer CC BY, 3 blows), grindstone
+  (wheel spin with the game's own grindstone_round.tga read from data/resource_packs/vanilla/__brarchive/textures/
+  blocks.brarchive, grind move, sparks, enchant flakes). Java Fx sparks ported (hot streaks, motes, flakes, billboards).
+  ItemPlacer yaw sign fixed (positive = counter-clockwise from above, like Axis.YP).
+- Click path findings (tested 15:20-15:45 UTC): the game polls GetMouseState in two alternating streams (with and
+  without absolute position) -> buttons merged; other cursor queries (GetCursorPos hook, WM_*, the diag's corner
+  test) reset the target -> only the live GameInput reading moves it; on a click the game WARPS the real cursor to
+  the point we fed it (neutral corner) -> SetCursorPos/SetPhysicalCursorPos dropped during scenes (commit 4aeb184,
+  NOT BUILT YET because of CI). Flicker Fernando saw at the crafting table: keep copy now made in the game's own list
+  right before the next frame's UI clear (rf::panel::beforeUiClear) = always a whole frame (also 4aeb184).
+- Installed on the PC: RendererFoundation.dll = 106701a (grindstone + stream merge, without the cursor-warp fix).
+  Test world "My World": furnace (south) at 102 200 -106 (was the crafting table: /setblock it back), chest west.
+  uiDebugUseKey = 120 (F9) in mods/RendererFoundation/config/RendererFoundation.json - SET BACK TO 0 when done.
+  CinematicInteractions.json: hoverTargets false, dumpUi false.
+- Testing: F9 only works while the game reads the mouse (after the world loads, or in screens); 4aeb184 latches it
+  0.4 s so a 1 px mouse nudge after the tap opens the block. Aim with /tp @s 102.5 200 -104.5 180 45. Never click the
+  title bar in a world (attack). Use NEW staged file names for device_commit_files (re-using a name wrote 0 bytes).
+- Next: stonecutter (needs the Bedrock stonecutter screen dump: dumpUi true), smithing, cartography, loom,
+  enchanting, board panels, credits (README/NOTICE), then the GeckoBridge prompt (research branch only).
+
 # Next session handoff (updated 2026-10-29 ~07:00 UTC) - READ FIRST
 - SPATIAL GUI DONE (RF branch spatialgui-m0, installed v0.15 `c0c6d24`, CI builds -> branch spatialgui-m0-builds).
   Everything in the Java mod's config screen is in F6 > Spatial GUI panel > Spatial GUI config, saved to
