@@ -1,5 +1,22 @@
 # Port plan: Cinematic Interactions (Java) -> Bedrock Forge
 
+## STATUS (2026-10-29, RF branch `cinematic`) - how it was actually built
+Not the add-on route below: everything is in RF (one mod with Spatial GUI). `src/Cinematic.cpp` (scene, camera,
+picking, slot detection, rendering), `src/CinematicGame.cpp` (LL queries), `src/SpatialPanel.cpp` (screen routing,
+UI redirect, GameInput remap), `src/SpatialCamera.cpp` (CameraComponent write before LevelRendererCamera::preRenderUpdate).
+- Hidden vanilla screen: the UI pass is redirected into our target; slots are found by reading it back (dark bevel
+  lines of the slot squares); item icons on the block are crops of that image (keyed background), block items are
+  unwrapped onto cubes from their isometric icon; enchant glint / mean colour are read from the crops.
+- Clicks: the hidden screen's cursor is parked in an empty corner and moved onto the target slot for a press
+  (hover 45 ms, then down); own clicks (a move's beat, a take) are injected the same way.
+- Stations with scenes (Java timelines ported 1:1): crafting table, furnace, smoker, blast furnace, anvil (hammer,
+  3 blows), grindstone, stonecutter (dial of shapes from the recipe buttons), smithing, cartography.
+  To do: loom (board of pattern buttons, cloth), enchanting (runes from the 3 option buttons) - need screen dumps
+  (`dumpUi` + `devScenes` in config/CinematicInteractions.json).
+- Not portable 1:1: real 3D item models (icons/cubes instead), map pictures (map item icon), banner layers, sounds,
+  the Left Alt orbit, mouse-wheel scrolling of the dial/board, other players' views.
+
+
 Step 0 research (2026-10-27). Source + docs read, no code written. Do Spatial GUI M0-M1 first (shared layer).
 
 ## Source + licence
