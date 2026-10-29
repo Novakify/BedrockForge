@@ -342,6 +342,8 @@ struct Scene {
     bool    carriedBlock = false;
     // the hidden slots' icons (readback): block items stand as cubes; bounding box of the icon inside its slot
     bool    cellBlock[9] = {};
+    bool    hasCount[9] = {};      // the slot prints a stack count; its digits' box in 0..1 of the slot inside
+    float   countBox[9][4] = {};
     bool    resultBlock = false;
     float   iconBox[kSampledN][4] = {};
     float   iconRgb[kSampledN][3] = {}; // mean colour of the icon (stone dust)
@@ -2982,14 +2984,15 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
         void*       p = nullptr;
         D3D12_RANGE rr{0, SIZE_T(gG.srStride * kSampled)};
         if (SUCCEEDED(gG.sr[i]->Map(0, &rr, &p)) && p) {
-            bool  full[kSampled] = {}, block[kSampled] = {}, glint[kSampled] = {};
+            bool  full[kSampled] = {}, block[kSampled] = {}, glint[kSampled] = {}, cnt[9] = {};
+            float cbox[9][4] = {};
             float box[kSampled][4] = {}, rgb[kSampled][3] = {}, refs[kSampled][3] = {};
             float tol  = 10.0f / 255.0f;
             bool  bgra = gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM || gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
             int   n    = int(cell);
             std::vector<uint8_t> mask(size_t(n) * n);
             for (int s = 0; s < kSampled; ++s) {
-                int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1, violet = 0;
+                int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1, violet = 0, cx0 = n, cy0 = n, cx1 = -1, cy1 = -1;
                 double sr = 0, sgc = 0, sb = 0;
                 float  ref[3] = {0, 0, 0}; // a button's own ground: its inside corner
                 if (s == 11 + kButtons) { ref[0] = ref[1] = ref[2] = 73 / 255.0f; }
@@ -3024,12 +3027,20 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             }
                             if (item) { sr += r; sgc += g; sb += b; }
                             if (item && b > g + 0.12f && r > g + 0.04f) ++violet; // the enchantment glint's violet
+                            // the stack count (white digits in the lower right)
+                            if (s < 9 && a > 0.5f && r > 0.96f && g > 0.96f && b > 0.96f && x > n * 0.42f && y > n / 2) {
+                                cx0 = std::min(cx0, x); cy0 = std::min(cy0, y); cx1 = std::max(cx1, x); cy1 = std::max(cy1, y);
+                            }
                         }
                         mask[size_t(y) * n + x] = item;
                         ++total;
                         if (item) { ++other; x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
                     }
                 full[s] = other * 50 > total;
+                if (s < 9) {
+                    cnt[s] = cx1 >= cx0 && cy1 - cy0 >= n / 5;
+                    if (cnt[s]) { cbox[s][0] = float(cx0) / n; cbox[s][1] = float(cy0) / n; cbox[s][2] = float(cx1 + 1) / n; cbox[s][3] = float(cy1 + 1) / n; }
+                }
                 if (other > 0) { rgb[s][0] = float(sr / other); rgb[s][1] = float(sgc / other); rgb[s][2] = float(sb / other); }
                 if (full[s]) {
                     box[s][0] = float(x0) / n; box[s][1] = float(y0) / n; box[s][2] = float(x1 + 1) / n; box[s][3] = float(y1 + 1) / n;
@@ -3044,6 +3055,8 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
             static double glintAt[9] = {-10, -10, -10, -10, -10, -10, -10, -10, -10};
             for (int s = 0; s < 9; ++s) {
                 gS.cellFull[s] = full[s]; gS.cellBlock[s] = block[s];
+                gS.hasCount[s] = cnt[s];
+                std::memcpy(gS.countBox[s], cbox[s], sizeof cbox[s]);
                 if (glint[s]) glintAt[s] = gS.clock; // the glint sweeps: an enchanted icon is violet in some frames only
                 gS.cellGlint[s] = full[s] && gS.clock - glintAt[s] < 1.5;
             }
@@ -4808,7 +4821,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 q.key1[0] = satMax; q.key1[1] = satMin; q.key1[2] = minValue; q.key0[3] = flat ? 1.0f : 0.0f;
                 gQuads.push_back(q);
             };
-            bool hasCount = gS.cellFull[1] && gS.iconBox[1][2] > 0.9f && gS.iconBox[1][3] > 0.9f; // the slot prints a count (2 or more)
+            bool hasCount = gS.cellFull[1] && gS.hasCount[1]; // the slot prints a count (2 or more)
             if (gS.cellFull[1] && fade > 0.01) { // EnchantStation.drawLapis: a few lying copies by the count
                 int    copies = hasCount ? 2 : 1;
                 double yaws[3] = {35, -20, 60};
@@ -4817,10 +4830,27 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                     orientedItem(cam, b, L, lapisSrc, gS.cellBlock[1], p + V3{0, 0.004, 0}, rgt, out, 0.2 * 0.8 * fade, 0, 1, yaws[i]);
                 }
                 // drawLapisCount: the slot's own count digits, in the socket's blue, over it
-                if (hasCount) {
-                    Rect sl = lapisSrc.inside;
-                    Rect cr{sl.x + sl.w * 0.42f, sl.y + sl.h * 0.5f, sl.w * 0.58f, sl.h * 0.5f};
-                    glyphs(cr, nullptr, false, true, corner + V3{0, 0.115, 0}, 0.0045, 0x9CC8FF, float(230 / 255.0 * presence));
+                if (hasCount) { // "x" + the count, centred, with a shadow (font scale 0.0045 per pixel)
+                    Rect   sl = lapisSrc.inside;
+                    float* cb = gS.countBox[1];
+                    Rect   cr{sl.x + sl.w * cb[0], sl.y + sl.h * cb[1], sl.w * (cb[2] - cb[0]) + guiPx, sl.h * (cb[3] - cb[1]) + guiPx}; // + the shadow
+                    double px = 0.0045, digitsW = cr.w / guiPx * px, crossW = 6 * px, total = crossW + digitsW;
+                    V3     at = corner + V3{0, 0.115, 0};
+                    float  al = float(230 / 255.0 * presence);
+                    glyphs(cr, nullptr, false, true, at + b.r * (-total / 2 + crossW + digitsW / 2), px, 0x9CC8FF, al);
+                    // the "x": two 5 px strokes, the font's shadow (a quarter of the colour) one pixel down-right
+                    V3 xc = at + b.r * (-total / 2 + 2.5 * px);
+                    for (int sh = 1; sh >= 0; --sh) {
+                        V3   o = (b.r - b.u) * (sh * px);
+                        float k = sh ? 0.25f : 1.0f;
+                        for (int d = 0; d < 2; ++d) {
+                            V3   ax = (d ? b.r + b.u : b.r - b.u) * (2.5 * px), ay = (d ? b.u - b.r : b.r + b.u) * (0.5 * px);
+                            Quad q;
+                            if (!worldQuad(cam, b, xc + o + V3{0, -0.5 * px, 0}, ax, ay, q)) continue;
+                            q.color[0] = 0x9C / 255.0f * k; q.color[1] = 0xC8 / 255.0f * k; q.color[2] = k; q.color[3] = al;
+                            gQuads.push_back(q);
+                        }
+                    }
                 }
             }
             if (t >= 0) { // the shaft of light from the burst on
