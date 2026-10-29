@@ -957,6 +957,7 @@ void writeDiag() {
             for (auto& n : gScreensSeen) len += snprintf(b + len, sizeof b - len, " %s%s", n.c_str(), isPanelScreen(n) ? "*" : "");
             len += snprintf(b + len, sizeof b - len, "\n");
         }
+        len += snprintf(b + len, sizeof b - len, "UI pipelines with alpha fixed: %ld\n", uicapture::uiAlphaFixedCount());
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n", gGiNote.c_str());
 #if RF_HAVE_GAMEINPUT
         for (auto& m : gGiMods) len += snprintf(b + len, sizeof b - len, "  %-30s %s\n", m.label, m.note.c_str());

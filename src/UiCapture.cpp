@@ -303,7 +303,40 @@ void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HAN
     reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds);
 }
 
+// Spatial GUI M1 v0.12: UI pipelines blend colour with SRC_ALPHA / INV_SRC_ALPHA but leave the alpha channel to
+// whatever the game set; drawn into the panel's transparent target that loses coverage (dark UI pixels end up nearly
+// transparent and the world shows through: washed-out panel). Make UI pipelines accumulate alpha as "over"
+// (ONE / INV_SRC_ALPHA) so the target holds proper premultiplied colour + coverage. The swap chain ignores alpha,
+// so the flat UI looks the same.
+std::atomic<long> gUiAlphaFixed{0};
 HRESULT STDMETHODCALLTYPE createGpsHook(ID3D12Device* d, D3D12_GRAPHICS_PIPELINE_STATE_DESC const* desc, REFIID riid, void** out) {
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC patched;
+    if (desc && desc->PS.pShaderBytecode && desc->PS.BytecodeLength) {
+        uint64_t h    = fnv1a(desc->PS.pShaderBytecode, desc->PS.BytecodeLength);
+        bool     isUi = false;
+        {
+            std::lock_guard l(gMutex);
+            isUi = gUiHashes.count(h) != 0;
+        }
+        if (isUi) {
+            patched     = *desc;
+            bool change = false;
+            UINT n      = patched.BlendState.IndependentBlendEnable ? 8u : 1u;
+            for (UINT i = 0; i < n; ++i) {
+                auto& rt = patched.BlendState.RenderTarget[i];
+                if (!rt.BlendEnable || rt.LogicOpEnable) continue;
+                rt.SrcBlendAlpha  = D3D12_BLEND_ONE;
+                rt.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+                rt.BlendOpAlpha   = D3D12_BLEND_OP_ADD;
+                rt.RenderTargetWriteMask |= D3D12_COLOR_WRITE_ENABLE_ALPHA;
+                change = true;
+            }
+            if (change) {
+                desc = &patched;
+                ++gUiAlphaFixed;
+            }
+        }
+    }
     HRESULT hr = reinterpret_cast<CreateGps_t>(gOrig[0])(d, desc, riid, out);
     if (SUCCEEDED(hr) && desc && out && *out && desc->PS.pShaderBytecode && desc->PS.BytecodeLength) {
         ++gPsoCreated;
@@ -602,6 +635,7 @@ void finish(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     fs::create_directories(dir, ec);
     rep << "Renderer Foundation - Spatial GUI M0 capture spike\n"
         << "UI shader hashes loaded: " << gUiHashes.size() << "\n"
+        << "UI pipelines with alpha fixed (v0.12): " << gUiAlphaFixed.load() << "\n"
         << "PSOs created (graphics desc): " << gPsoCreated.load() << ", tagged UI: " << gPsoUi.load()
         << ", created via pipeline-state stream (not inspected): " << gPsoStream.load() << "\n"
         << "RTVs tracked: " << gRtvRes.size() << " (CreateRenderTargetView calls " << gRtvCreated.load() << ", copied via CopyDescriptors* "
@@ -811,6 +845,7 @@ void writeText(char const* name, char const* text) {
     std::ofstream(gOutDir / name) << text;
 }
 
+long uiAlphaFixedCount() { return gUiAlphaFixed.load(); }
 void requestLearn() {
     if (!gInstalled) return;
     {

@@ -40,6 +40,8 @@ void uninstall();
 /// Capture the next frame (F7 / F6 button).
 void request();
 /// Learn the back-buffer RTV handles (tracking frames only, no capture/report) - used by the M1 panel.
+/// Spatial GUI: UI pipelines whose alpha blending was switched to "over" at creation (v0.12).
+long uiAlphaFixedCount();
 void requestLearn();
 /// Called by the overlay at Present before it records anything; `bb` is the current back buffer (PRESENT state).
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb);
