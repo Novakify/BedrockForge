@@ -596,11 +596,18 @@ std::string       gHookNote = "not installed";
 
 // client pixel -> client pixel the game should see (ray-pick through the panel)
 thread_local bool tLiveMouse = false; // set while the game's own mouse reading (GameInput) is remapped
+POINT realCursor();
 bool remapClient(HWND hwnd, int& ix, int& iy) {
     if (gCineScreen.load(std::memory_order_relaxed) && cine::active()) {
         if (!gEnabled || RfOptions::showImGui) return false;
         RECT rc;
         if (!GetClientRect(hwnd, &rc) || rc.right < 1 || rc.bottom < 1) return false;
+        if (tLiveMouse) {
+            // the scene follows the real cursor: after a click GameInput's absolute position repeats the point we gave
+            // the hidden screen (not where the pointer is)
+            POINT p = realCursor();
+            if (ScreenToClient(hwnd, &p)) { ix = p.x; iy = p.y; }
+        }
         return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, tLiveMouse);
     }
     if (!gS.remap || !gEnabled || gAnim.load() < 0.5f || RfOptions::showImGui) return false;
