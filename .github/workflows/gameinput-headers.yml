@@ -25,7 +25,7 @@ jobs:
           for v in $vers; do
             curl -fsSL -o p.zip "https://api.nuget.org/v3-flatcontainer/microsoft.gameinput/$v/microsoft.gameinput.$v.nupkg" || continue
             mkdir -p "$v" && unzip -q -o p.zip -d "x$v"
-            find "x$v" -iname '*.h' -exec cp {} "$v/" \;
+            (cd "x$v" && find . -iname '*.h' -o -iname '*.cpp' | while read f; do mkdir -p "../$v/$(dirname "$f")"; cp "$f" "../$v/$f"; done)
             find "x$v" -type f | sed "s|^x$v/||" > "$v/FILES.txt"
             rm -rf "x$v" p.zip
           done
