@@ -272,6 +272,8 @@ struct Layout {
     Rect  buttons[kButtons];         // the option buttons themselves, reading order
     int   nButtons = 0;
     bool  hasBoard = false;
+    Rect  preview;                   // the loom's banner preview (inside its black frame), right of the result
+    bool  hasPreview = false;
     int   kind = 0;                  // Kind the layout was found for
     Rect  panel;                    // container panel (inventory rows' width)
     // a frame of the hidden screen counts when these hold: the top bevel of hotbar[0] / inv[0] is the dark line seen
@@ -2376,7 +2378,7 @@ void detect(Img im, bool dump, int kindI) {
             std::vector<Sq> own, buttons;
             for (auto& q : st) {
                 int  pitch  = q.s + q.s / 17;
-                bool inGrid = (kind == Kind::Stonecutter || kind == Kind::Loom) && ((nearSq(q, -pitch, 0) && nearSq(q, pitch, 0)) || (nearSq(q, pitch, 0) && nearSq(q, 2 * pitch, 0) && nearSq(q, 3 * pitch, 0)) ||
+                bool inGrid = false && ((nearSq(q, -pitch, 0) && nearSq(q, pitch, 0)) || (nearSq(q, pitch, 0) && nearSq(q, 2 * pitch, 0) && nearSq(q, 3 * pitch, 0)) ||
                               (nearSq(q, -pitch, 0) && nearSq(q, -2 * pitch, 0) && nearSq(q, -3 * pitch, 0)));
                 if (!inGrid && (q.s < best * 0.85f || q.x + q.s > px1 + s * 0.25f)) continue; // fragments, the window's close button
                 (inGrid ? buttons : own).push_back(q);
@@ -2450,6 +2452,25 @@ void detect(Img im, bool dump, int kindI) {
                 L.grid[n++] = {float(q.x), float(q.y), float(q.s) + unit, float(q.s) + unit};
             }
             if (hasRes && res.s > 0) L.grid[n++] = {float(res.x), float(res.y), float(res.s) + unit, float(res.s) + unit};
+            if (kind == Kind::Loom && res.s > 0) {
+                // the banner preview: a black-framed tall box right of the result
+                auto black = [&](int x, int y) {
+                    int r, g, b, a;
+                    im.get(std::clamp(x, 0, im.W - 1), std::clamp(y, 0, im.H - 1), r, g, b, a);
+                    return r < 16 && g < 16 && b < 16 && a > 200;
+                };
+                int cy = res.y + res.s / 2, x0 = -1, x1 = -1;
+                for (int x = res.x + res.s + 2; x < std::min(im.W, int(px1 + 2 * s)); ++x)
+                    if (black(x, cy)) { if (x0 < 0) x0 = x; else if (x - x0 > s / 2) { x1 = x; break; } }
+                if (x0 >= 0 && x1 > x0) {
+                    int mx = (x0 + x1) / 2, y0 = cy, y1 = cy;
+                    while (y0 > 0 && !black(mx, y0)) --y0;
+                    while (y1 < im.H - 1 && !black(mx, y1)) ++y1;
+                    float in = s / 18.0f; // one GUI pixel inside the frame
+                    L.preview    = {float(x0) + in, float(y0) + in, float(x1 - x0) - 2 * in, float(y1 - y0) - 2 * in};
+                    L.hasPreview = y1 - y0 > s && L.preview.w > 4;
+                }
+            }
             L.nRoles  = n;
             L.hasGrid = n == expect;
             if (kind == Kind::Enchanting && n == 2) {
@@ -4013,7 +4034,16 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             };
             V3 farV = out * -1.0, up{0, 1, 0};
             if (t < 0) {
-                if (gS.cellFull[0]) cloth(src(L.grid[0], 0), loomPoint(0) + V3{0, 0.003, 0}, farV, rgt, CLOTH_WIDTH, CLOTH_LENGTH, 0, 1, tableAlpha);
+                if (gS.cellFull[0]) {
+                    // Bedrock's own preview of the banner (with the pattern under the cursor), as the Java cloth shows it
+                    if (L.hasPreview) {
+                        IconSrc pv{L.preview, {0, 0, 1, 1}};
+                        float   ground[3] = {73 / 255.0f, 73 / 255.0f, 73 / 255.0f};
+                        gKeyOv = ground;
+                        cloth(pv, loomPoint(0) + V3{0, 0.003, 0}, farV, rgt, CLOTH_WIDTH, CLOTH_LENGTH, 0, 1, tableAlpha);
+                        gKeyOv = nullptr;
+                    } else cloth(src(L.grid[0], 0), loomPoint(0) + V3{0, 0.003, 0}, farV, rgt, CLOTH_WIDTH, CLOTH_LENGTH, 0, 1, tableAlpha);
+                }
                 for (int i = 1; i < 3; ++i)
                     if (gS.cellFull[i]) laid(src(L.grid[i], i), gS.cellBlock[i], i, i == gS.loomHover ? 1.08 : 0.95, tableAlpha);
                 if (gS.phase == Phase::Active && gS.loomTarget == LPlace && gS.haveAim) {
