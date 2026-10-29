@@ -1814,13 +1814,14 @@ Texture2D    tSkin : register(t1);
 Texture2D    tProp : register(t2);
 Texture2D    tSnap : register(t3);
 SamplerState sP    : register(s0);
-struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; float2 local : TEXCOORD1; };
 V2P VS(uint id : SV_VertexID) {
     static const uint idx[6] = {0, 1, 2, 2, 1, 3};
     uint k = idx[id];
     V2P o;
     o.pos = corner[k];
     o.uv  = k == 0 ? uv01.xy : k == 1 ? uv01.zw : k == 2 ? uv23.xy : uv23.zw;
+    o.local = float2(k == 1 || k == 3 ? 1 : 0, k >= 2 ? 1 : 0);
     return o;
 }
 float4 PS(V2P i) : SV_Target {
@@ -1839,6 +1840,9 @@ float4 PS(V2P i) : SV_Target {
     if (mode.y > 0.5 && u.a > 0.0) {
         float3 c = u.rgb / max(u.a, 1e-3);
         if (all(abs(c - key0.rgb) < mode.z) || all(abs(c - key1.rgb) < mode.z)) u = 0;
+        // the stack count the slot prints in its lower right corner (white digits, #3F3F3F shadow) is not the item
+        float lx = key1.w > 0.5 ? 1 - i.local.x : i.local.x;
+        if (key0.w > 0.5 && lx > 0.42 && i.local.y > 0.5 && (all(c > 0.96) || all(abs(c - 0.247) < 0.03))) u = 0;
     }
     return float4(u.rgb * color.rgb, u.a) * color.a * mode.w;
 }
@@ -2734,8 +2738,11 @@ void placeItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const&
     V3     c  = base + V3{0, 0.004 + std::sin(t) * flatSize * 0.5, 0};
     Quad   q;
     if (!worldQuad(cam, b, c, right * (flatSize / 2), up * (flatSize / 2), q)) return;
-    setRect(q.uv, src.inside.x / L.W, src.inside.y / L.H, (src.inside.x + src.inside.w) / L.W, (src.inside.y + src.inside.h) / L.H);
+    // ItemDisplayContext.FIXED turns the model half round: lying flat, the sprite is seen from its back (mirrored)
+    setRect(q.uv, (src.inside.x + src.inside.w) / L.W, src.inside.y / L.H, src.inside.x / L.W, (src.inside.y + src.inside.h) / L.H);
     keyed(q, L, opacity, src.snap);
+    q.key0[3] = 1; // hide the stack count
+    q.key1[3] = 1; // the quad's left is the icon's right
     gQuads.push_back(q);
 }
 
@@ -2761,6 +2768,7 @@ void cardItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
     if (!worldQuad(cam, b, center, h * (size / 2), V3{0, size / 2, 0}, q)) return;
     setRect(q.uv, src.inside.x / L.W, src.inside.y / L.H, (src.inside.x + src.inside.w) / L.W, (src.inside.y + src.inside.h) / L.H);
     keyed(q, L, opacity, src.snap);
+    q.key0[3] = 1; // hide the stack count
     gQuads.push_back(q);
 }
 
