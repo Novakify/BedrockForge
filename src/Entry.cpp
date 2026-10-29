@@ -2,6 +2,7 @@
 #include "ll/api/mod/NativeMod.h"
 #include "ll/api/mod/RegisterHelper.h"
 
+#include "Cinematic.h"
 #include "Graphics.h"
 #include "MaterialLoader.h"
 #include "Notice.h"
@@ -31,6 +32,7 @@ public:
         materials::install(mSelf.getModDir()); // before the renderer opens its materials
         uicapture::init(mSelf.getConfigDir(), mSelf.getModDir() / "logs" / "uicapture");
         spatialcam::loadConfig(mSelf.getConfigDir()); // Spatial GUI (Java mod options)
+        cine::loadConfig(mSelf.getConfigDir());       // Cinematic Interactions (per-station mode + Java settings)
         rf::panel::installEarly(); // v0.8: catch the game's own GameInput before it creates its mouse readings
         overlay::install();
         return true;
@@ -49,6 +51,7 @@ public:
         overlay::uninstall();
         materials::uninstall();
         RfOptions::save();
+        cine::saveConfig();
         return true;
     }
 

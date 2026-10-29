@@ -28,6 +28,7 @@
 #define RF_HAVE_GAMEINPUT 0
 #endif
 
+#include "Cinematic.h"
 #include "LLShim.h"
 #include "Options.h"
 #include "PanelShaders.h"
@@ -386,6 +387,18 @@ bool isPanelScreen(std::string const& n) {
     return false;
 }
 
+// Cinematic Interactions stations (Cinematic.h): these screens are offered to the scene first
+bool isStationScreen(std::string const& n) {
+    std::string l = n;
+    for (auto& ch : l) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    for (char const* k : {"crafting", "furnace", "smoker", "anvil", "grindstone", "smithing", "stonecutter", "loom", "cartography", "enchant"})
+        if (l.find(k) != std::string::npos && l.find("crafter") == std::string::npos) return true;
+    return false;
+}
+std::string     gLastCont;
+cine::Route     gRoute = cine::Route::None;
+std::atomic_bool gCineScreen{false}; // the open container screen is shown as a Cinematic scene
+
 void applyWanted() {
     int w = gWanted.exchange(-1);
     if (w < 0 || !RfOptions::uiCaptureSpike || !gS.autoPanel) return;
@@ -403,11 +416,22 @@ void noteScreen(void const* stack, std::string const& name) {
         gStackTops.push_back({stack, {}});
         st = &gStackTops.back();
     }
-    if (st->name == name) return;
+    if (st->name == name) { cine::tick(); return; }
     st->name = name;
     if (gScreensSeen.size() < 40 && std::find(gScreensSeen.begin(), gScreensSeen.end(), name) == gScreensSeen.end()) gScreensSeen.push_back(name);
-    bool want = false;
-    for (auto& t : gStackTops) want = want || isPanelScreen(t.name);
+    // the container screen on top (if any) decides: Cinematic scene, Spatial GUI screen or vanilla
+    std::string cont;
+    for (auto& t : gStackTops)
+        if (cont.empty() && (isStationScreen(t.name) || isPanelScreen(t.name))) cont = t.name;
+    if (cont != gLastCont) {
+        gLastCont = cont;
+        gRoute    = RfOptions::uiCaptureSpike && gS.autoPanel ? cine::onScreen(cont) : cine::Route::Spatial;
+    }
+    bool cineOn = gRoute == cine::Route::Cinematic;
+    gCineScreen = cineOn;
+    bool want   = cineOn;
+    if (gRoute != cine::Route::Vanilla)
+        for (auto& t : gStackTops) want = want || isPanelScreen(t.name);
     if (want != gLastWant) {
         gLastWant = want;
         gWanted   = want ? 1 : 0;
@@ -420,7 +444,7 @@ void noteScreen(void const* stack, std::string const& name) {
         }
         gRecipeBook = book;
         spatialcam::setWideScreen(book);
-        if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want, inv); // client thread
+        if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want && !cineOn, inv); // client thread
     }
 }
 
@@ -443,6 +467,24 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     else gT = gT < target ? std::min(target, gT + step) : std::max(target, gT - step);
     float e      = gS.javaStyle ? gT : ease(gT);
     gAnim        = e;
+    if (cine::active() && RfOptions::uiCaptureSpike && !gBroken) {
+        // Cinematic scene: the hidden screen is never drawn as a panel; the scene draws over the world instead
+        bool redirected = gRedirected.exchange(false);
+        gAnim           = gEnabled ? 1.0f : 0.0f;
+        if (!gRoot && !createStatic(device)) return false;
+        D3D12_RESOURCE_DESC bd = bb->GetDesc();
+        if (!ensureSized(bd)) return false;
+        {
+            std::lock_guard l(gGeomMutex);
+            gGeom.valid = false;
+        }
+        barrier(list, bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        cine::record(device, list, gUi.Get(), redirected && gEnabled.load(), unsigned(bd.Width), bd.Height, bbRtv);
+        barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        gStatus = gEnabled ? "cinematic scene" : "cinematic scene (closing shot)";
+        return true;
+    }
     bool redirected = gRedirected.exchange(false);
     if (gBroken || !RfOptions::uiCaptureSpike) { gAnim = 0; return false; }
     if (!gEnabled && gT <= 0.0f) {
@@ -551,6 +593,12 @@ std::string       gHookNote = "not installed";
 
 // client pixel -> client pixel the game should see (ray-pick through the panel)
 bool remapClient(HWND hwnd, int& ix, int& iy) {
+    if (gCineScreen.load(std::memory_order_relaxed) && cine::active()) {
+        if (!gEnabled || RfOptions::showImGui) return false;
+        RECT rc;
+        if (!GetClientRect(hwnd, &rc) || rc.right < 1 || rc.bottom < 1) return false;
+        return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy);
+    }
     if (!gS.remap || !gEnabled || gAnim.load() < 0.5f || RfOptions::showImGui) return false;
     Geom g;
     {
@@ -965,6 +1013,8 @@ void onMouse(gi::GameInputMouseState* st, bool game) {
         ++gMsAbs;
         if (gS.remap && remapAbs(st->absolutePositionX, st->absolutePositionY)) ++gMsRemapped;
     }
+    if (gCineScreen.load(std::memory_order_relaxed) && cine::active())
+        st->buttons = gi::GameInputMouseButtons(cine::filterButtons(unsigned(st->buttons)));
     gMsOutX = st->absolutePositionX;
     gMsOutY = st->absolutePositionY;
     MsLog e{unsigned(st->buttons), unsigned(st->positions), inX, inY, st->absolutePositionX, st->absolutePositionY, seq};
@@ -1092,7 +1142,7 @@ void tryGameMouse() { gGiNote = "built without the GameInput v2 header"; }
 void installEarly() { initGameMod(); }
 
 void writeDiag() {
-    char b[12000];
+    char b[16000];
     snprintf(b, sizeof b,
              "Spatial GUI panel diag v0.13\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
@@ -1165,6 +1215,7 @@ void writeDiag() {
         len += snprintf(b + len, sizeof b - len, "UI pipelines with alpha fixed: %ld\n", uicapture::uiAlphaFixedCount());
         len += snprintf(b + len, sizeof b - len, "GUI magnification (java auto scale / bedrock gui scale): %.3f; drawn fraction %.3f x %.3f\n", gGuiMag, gDrawFrac[0], gDrawFrac[1]);
         spatialcam::appendDiag(b, sizeof b);
+        cine::appendDiag(b, sizeof b);
         len = strlen(b);
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n", gGiNote.c_str());
 #if RF_HAVE_GAMEINPUT
@@ -1347,6 +1398,7 @@ void drawJavaConfig() {
 }
 
 void drawOverlay() {
+    cine::drawOverlay();
     // crosshair while Java crosshair mode drives the first person camera (Bedrock hides its own under screens)
     if (GetTickCount64() - gCrosshairFrame.load() > 200) return;
     auto*  dl = ImGui::GetForegroundDrawList();
@@ -1384,6 +1436,7 @@ void drawUi() {
         ImGui::Checkbox("Auto: panel for inventory / chest / crafting screens", &gS.autoPanel);
         ImGui::Checkbox("Java Spatial GUI look (third-person camera, world screen)", &gS.javaStyle);
         drawJavaConfig();
+        cine::drawUi();
         ImGui::TextWrapped("M1 prototype: everything the UI draws (HUD included) goes onto the panel while it is on.");
     }
     ImGui::Unindent();

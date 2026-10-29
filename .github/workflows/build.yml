@@ -94,3 +94,17 @@ jobs:
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" spatialgui-m0-builds
+
+      # Cinematic Interactions (merged into the Spatial GUI mod): its own builds branch
+      - name: Publish cinematic build to cinematic-builds
+        if: github.ref == 'refs/heads/cinematic' && github.event_name == 'push'
+        shell: bash
+        run: |
+          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/
+          cd out
+          git init -q -b cinematic-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
+          git add -A && git commit -qm "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" cinematic-builds
