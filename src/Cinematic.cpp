@@ -2566,7 +2566,8 @@ void writeBmp(std::filesystem::path const& p, Img const& im) {
 
 // the item tooltip probe (record -> detect): which slot, where the hidden cursor rests (px); what was found
 std::atomic<int>   gProbeSlot{-1};
-std::atomic<float> gProbeX{0}, gProbeY{0};
+std::atomic<float> gProbeX{0}, gProbeY{0}, gProbeUnit{4};
+std::atomic<int>   gProbeLooks{0}, gProbeHits{0};
 std::mutex         gTipM;
 int                gTipFoundSlot = -1;
 Rect               gTipFoundRect;
@@ -2631,6 +2632,19 @@ void detect(Img im, bool dump, int kindI) {
             bool dup = false;
             for (auto& q : sq) if (std::abs(q.x - x0) <= 3 && std::abs(q.y - y) <= 3) dup = true;
             if (!dup) sq.push_back({x0, y, S});
+        }
+    }
+    { // the tooltip probe first: its box may cover slots, so the layout of this frame may well fail
+        int ps = gProbeSlot.load();
+        Rect tr;
+        if (ps >= 0) {
+            ++gProbeLooks;
+            if (findTooltip(im, int(gProbeX.load()), int(gProbeY.load()), gProbeUnit.load(), tr)) {
+                ++gProbeHits;
+                std::lock_guard tl(gTipM);
+                gTipFoundSlot = ps;
+                gTipFoundRect = tr;
+            }
         }
     }
     Layout L;
@@ -2920,15 +2934,6 @@ void detect(Img im, bool dump, int kindI) {
             }
         }
         L.valid = true;
-        {
-            int ps = gProbeSlot.load();
-            Rect tr;
-            if (ps >= 0 && findTooltip(im, int(gProbeX.load()), int(gProbeY.load()), unit, tr)) {
-                std::lock_guard tl(gTipM);
-                gTipFoundSlot = ps;
-                gTipFoundRect = tr;
-            }
-        }
         snprintf(note, sizeof note, "%s: squares %zu, slot %d px, rows of 9: %zu, station squares %zu, slots %s (%d), result %s (%.0f px), board %s",
                  kNames[kindI], sq.size(), best, nine.size(), st.size(), L.hasGrid ? "yes" : "no", kind == Kind::Table ? (L.hasGrid ? 9 : 0) : L.nRoles,
                  L.hasResult ? "yes" : "no", L.hasResult ? L.result.w : 0.0f, L.hasBoard ? "yes" : "no");
@@ -4215,7 +4220,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 if (targetRect(L, gS.tipSlot, r)) {
                     gS.probe = gS.tipSlot; gS.probeAt = clock; gS.probeForced = false;
                     sigOf(gS.probe, gS.tipCache[gS.probe].sig);
-                    gProbeX = r.cx(); gProbeY = r.cy(); gProbeSlot = gS.probe;
+                    gProbeX = r.cx(); gProbeY = r.cy(); gProbeUnit = std::max(1.0f, L.slot / 18.0f); gProbeSlot = gS.probe;
                     std::lock_guard tl(gTipM);
                     gTipFoundSlot = -1;
                 }
@@ -5610,6 +5615,14 @@ void appendDiag(char* b, unsigned long long cap) {
     for (int i = 0; i < 12 && len < cap; ++i) {
         auto const& e = gPressLog[(gPressLogN + i) % 12];
         if (!e.empty()) len += std::snprintf(b + len, cap - len, "  press: %s\n", e.c_str());
+    }
+    if (len < cap) {
+        int ok = 0, tried = 0;
+        for (auto const& c : gS.tipCache) { ok += c.ok; tried += c.tried; }
+        auto const& c = gS.tipCache[std::max(0, gS.tipSlot)];
+        len += std::snprintf(b + len, cap - len, "  item tooltip: slot %d (%.2f s) probe %d at %.0f,%.0f unit %.1f; looks %d hits %d; cached ok %d tried %d; this one ok %d text %.0f,%.0f %.0fx%.0f\n",
+                             gS.tipSlot, gS.clock - gS.tipSince, gS.probe, gProbeX.load(), gProbeY.load(), gProbeUnit.load(), gProbeLooks.load(), gProbeHits.load(),
+                             ok, tried, c.ok, c.text.x, c.text.y, c.text.w, c.text.h);
     }
     if (gLayout.valid)
         len += std::snprintf(b + len, cap - len, "  hotbar[0] %.0f,%.0f  inv[0] %.0f,%.0f  grid[0] %.0f,%.0f grid[8] %.0f,%.0f  result %.0f,%.0f %.0f\n",
