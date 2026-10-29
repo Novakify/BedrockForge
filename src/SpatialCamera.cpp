@@ -41,6 +41,13 @@
 #include "mc/deps/renderer/Camera.h"
 #include "mc/deps/renderer/MatrixStack.h"
 #include "mc/world/actor/Actor.h"
+#include "mc/entity/components/ActorHeadRotationComponent.h"
+#include "mc/entity/components/ActorRotationComponent.h"
+#include "mc/entity/components/MobBodyRotationComponent.h"
+#include "mc/world/level/BlockPos.h"
+#include "mc/world/level/BlockSource.h"
+#include "mc/world/level/block/Block.h"
+#include "mc/world/level/block/CachedComponentData.h"
 
 namespace rf::panel {
 bool cursorNdc(float& x, float& y); // SpatialPanel.cpp: real cursor in [-1, 1] over the client area (y down)
@@ -80,6 +87,82 @@ struct EntSeen { int kind; bool hasComp, active; float pos[3]; };
 EntSeen gEnt[24]{};
 int     gEntN = 0;
 char    gNote[160] = "hook not installed";
+
+// AvatarRendererMixin: the player model turns its head (and body) toward the floating screen
+struct Avatar {
+    bool  saved = false, smoothInit = false;
+    float headYaw = 0, headYawO = 0, bodyYaw = 0, bodyYawO = 0, pitch = 0, pitchO = 0; // originals, restored on close
+    float sYaw = 0, sPitch = 0;
+};
+Avatar gAvatar;
+std::atomic_bool gForcedFp{false}; // CameraUtil.checkBlockCollision switched this screen to first person
+long  gAvatarWrites = 0;
+
+float wrapDeg(float a) {
+    a = std::fmod(a, 360.0f);
+    if (a >= 180.0f) a -= 360.0f;
+    if (a < -180.0f) a += 360.0f;
+    return a;
+}
+float rotLerp(float t, float a, float b) { return a + t * wrapDeg(b - a); } // Mth.rotLerp
+
+void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
+    auto& ec   = actor.getEntityContext();
+    auto  head = ec.tryGetComponent<ActorHeadRotationComponent>();
+    auto  body = ec.tryGetComponent<MobBodyRotationComponent>();
+    auto  rot  = ec.tryGetComponent<ActorRotationComponent>();
+    if (!head || !body || !rot) return;
+    if (!on) {
+        if (gAvatar.saved) {
+            (*head->mYHeadRot) = gAvatar.headYaw; (*head->mYHeadRotO) = gAvatar.headYawO;
+            (*body->mYBodyRot) = gAvatar.bodyYaw; (*body->mYBodyRotO) = gAvatar.bodyYawO;
+            (*rot->mRot).x    = gAvatar.pitch;   (*rot->mRotPrev).x = gAvatar.pitchO;
+            gAvatar.saved   = false;
+        }
+        gAvatar.smoothInit = false;
+        return;
+    }
+    if (!gAvatar.saved) {
+        gAvatar.saved   = true;
+        gAvatar.headYaw = (*head->mYHeadRot); gAvatar.headYawO = (*head->mYHeadRotO);
+        gAvatar.bodyYaw = (*body->mYBodyRot); gAvatar.bodyYawO = (*body->mYBodyRotO);
+        gAvatar.pitch   = (*rot->mRot).x;    gAvatar.pitchO   = (*rot->mRotPrev).x;
+    }
+    Config const& c   = cfg();
+    float         sgn = c.mirrorThirdPerson ? -1.0f : 1.0f;
+    float bodyRot = yawP + c.avatarBodyRot * sgn;
+    float yaw     = mx * 40.0f + c.avatarBaseYaw * sgn;
+    float pitch   = std::clamp(my * 25.0f, -60.0f, 60.0f);
+    if (!gAvatar.smoothInit) { gAvatar.smoothInit = true; gAvatar.sYaw = yaw; gAvatar.sPitch = pitch; }
+    else {
+        gAvatar.sYaw   = rotLerp(0.15f, gAvatar.sYaw, yaw);
+        gAvatar.sPitch = gAvatar.sPitch + 0.15f * (pitch - gAvatar.sPitch);
+    }
+    // Java render state: bodyRot absolute, yRot = head yaw relative to the body, xRot = head pitch
+    (*body->mYBodyRot) = bodyRot; (*body->mYBodyRotO) = bodyRot;
+    (*head->mYHeadRot) = bodyRot + gAvatar.sYaw; (*head->mYHeadRotO) = (*head->mYHeadRot);
+    (*rot->mRot).x    = gAvatar.sPitch; (*rot->mRotPrev).x = gAvatar.sPitch;
+    ++gAvatarWrites;
+}
+
+// CameraUtil.checkBlockCollision: is the third person camera spot inside a block, or a block between the eyes and it?
+bool tpSpotBlocked(Actor& actor) {
+    Config const& c    = cfg();
+    Vec3          f    = actor.getFeetPos();
+    float         r    = actor.getRotation().y * kDeg;
+    float         side = c.mirrorThirdPerson ? -c.camSide : c.camSide;
+    glm::vec3 a(f.x, f.y + 1.62f, f.z);
+    glm::vec3 b(f.x + std::sin(r) * c.camDistance + std::cos(r) * side, f.y + c.camHeight,
+                f.z - std::cos(r) * c.camDistance + std::sin(r) * side);
+    auto& bs = actor.getDimensionBlockSource();
+    for (int i = 1; i <= 24; ++i) {
+        glm::vec3 p = a + (b - a) * (float(i) / 24.0f);
+        BlockPos  bp(int(std::floor(p.x)), int(std::floor(p.y)), int(std::floor(p.z)));
+        Block const& blk = bs.getBlock(bp);
+        if (!blk.isAir() && *blk.mCachedComponentData->mIsSolid) return true;
+    }
+    return false;
+}
 
 float easeInOutSine(float t) { return float(-(std::cos(3.14159265358979 * double(t)) - 1.0) / 2.0); }
 
@@ -208,6 +291,7 @@ void applyComponent() {
     gLastRot[0]  = rot.x;  gLastRot[1]  = rot.y;
     float yawP = rot.y, pitchP = rot.x;
     if (!gActive.load()) {
+        avatarApply(actor, yawP, 0, 0, false);
         // first person: the camera looks exactly where the player looks -> learn the quaternion convention
         if (glm::length(pos - eye) < 0.3f) learnConvention(q, yawP, pitchP);
         gHaveStart = false;
@@ -279,6 +363,7 @@ void applyComponent() {
     gView.fpYaw0      = yawP;
     gView.fpPitch0    = gBaseXRot;
     gView.playerYaw   = yawP;
+    avatarApply(actor, yawP, mx, my, !fp);
 }
 } // namespace
 } // namespace rf::spatialcam
@@ -334,7 +419,12 @@ float applyEasing(Easing e, float t) { // AnimationUtil
     X(fpPitch) X(fpScale) X(camDistance) X(camSide) X(camHeight) X(camPitch) X(transitionMs) X(transitionSkipPct)           \
     X(tpSensYaw) X(tpSensPitch) X(tpParallaxOff) X(lerpXRot) X(fpSensYaw) X(fpSensPitch) X(fpParallaxOff) X(fpPitchClamp)   \
     X(fade) X(fadeMs) X(scaleAnim) X(openMs) X(startScalePct) X(baselineFov) X(screenPower) X(sideMult) X(distMult)         \
-    X(tpScreenMult)
+    X(tpScreenMult) X(autoGuiScale) X(guiScale) X(hideHotbar) X(allScreens) X(pauseScreen) X(mostContainers) X(books)     \
+    X(crafting) X(furnaces) X(anvils) X(enchanting) X(beacons) X(brewing) X(villagerTrading) X(chests) X(shulkerBoxes)      \
+    X(hoppers) X(dispensers) X(grindstone) X(smithing) X(cartography) X(loom) X(stonecutter) X(lectern) X(inventory)        \
+    X(creativeInventory) X(renderScalePct) X(linearFiltering) X(anisotropicFiltering) X(recipeBookShrink) X(hideHandsFp)    \
+    X(hideShieldFp) X(swingArmFp) X(curvedScreen) X(curvedArc) X(avatarBaseYaw) X(avatarBodyRot) X(crosshairFp)            \
+    X(keepFpAngle) X(inheritOrigin)
 
 void loadConfig(std::filesystem::path const& configDir) {
     gCfgFile = configDir / "SpatialGUI.json";
@@ -381,6 +471,12 @@ void setActive(bool on, bool inventory) {
     if (on && !gActive.load()) {
         if (!cfg().enabled) return;
         bool fp = inventory ? cfg().fpInventory : cfg().fpContainers;
+        gForcedFp = false;
+        if (!fp && ci) {
+            if (auto* lp = ci->getLocalPlayer()) {
+                if (tpSpotBlocked(*lp)) { fp = true; gForcedFp = true; } // Java: switchedToFirstPersonDueToBlock
+            }
+        }
         gFirstPerson = fp;
         gSavedPerspective = -1;
         if (ci && !fp) {
@@ -411,7 +507,7 @@ void appendDiag(char* b, unsigned long long cap) {
     std::lock_guard l(gMutex);
     size_t len = std::strlen(b);
     len += std::snprintf(b + len, cap - len,
-                         "camera (v0.13b): %s; active %d; calls %ld, perspective %ld, world %ld, component writes %ld\n"
+                         "camera (v0.15): %s; active %d; calls %ld, perspective %ld, world %ld, component writes %ld\n"
                          "  player feet %.2f,%.2f,%.2f rot pitch %.1f yaw %.1f; cam %.2f,%.2f,%.2f target %.2f,%.2f,%.2f t %.2f\n"
                          "  view: valid %d overridden %d fovY %.1f aspect %.3f yawRel %.1f pitch %.1f guiScale %.2f\n",
                          gNote, gActive.load() ? 1 : 0, gCalls, gPersp, gChosen, gOverrides, gLastFeet[0], gLastFeet[1], gLastFeet[2],
@@ -419,6 +515,8 @@ void appendDiag(char* b, unsigned long long cap) {
                          gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch, gView.guiScale);
     len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",
                          gConv, gConvTries, gCompMiss, gLastM[0], gLastM[3], gLastM[6], gLastM[1], gLastM[4], gLastM[7], gLastM[2], gLastM[5], gLastM[8]);
+    len += std::snprintf(b + len, cap - len, "  avatar writes %ld saved %d smoothed yaw %.1f pitch %.1f; first person %d (forced by block %d)\n",
+                         gAvatarWrites, gAvatar.saved ? 1 : 0, gAvatar.sYaw, gAvatar.sPitch, gFirstPerson.load() ? 1 : 0, gForcedFp.load() ? 1 : 0);
     for (int i = 0; i < gEntN && len < cap; ++i)
         len += std::snprintf(b + len, cap - len, "  entity %s comp %d active %d pos %.2f,%.2f,%.2f\n", gEnt[i].kind == 0 ? "GAME" : "preset", gEnt[i].hasComp,
                              gEnt[i].active, gEnt[i].pos[0], gEnt[i].pos[1], gEnt[i].pos[2]);

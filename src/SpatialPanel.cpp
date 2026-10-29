@@ -349,15 +349,40 @@ std::vector<std::string> gScreensSeen;
 std::atomic<int>         gWanted{-1};
 bool                     gLastWant = false;
 
+// SpatialGUIClient.shouldHookScreen, mapped onto Bedrock screen names
 bool isPanelScreen(std::string const& n) {
-    static const char* keys[] = {"inventory", "chest", "crafting", "crafter", "furnace", "smoker", "barrel", "shulker", "dispenser",
-                                 "dropper", "hopper", "anvil", "enchant", "brewing", "loom", "grindstone", "stonecutter",
-                                 "cartography", "smithing", "beacon", "horse", "container"};
     std::string l = n;
-    for (auto& c : l) c = char(std::tolower(static_cast<unsigned char>(c)));
-    if (l.find("hud") != std::string::npos || l.find("pause") != std::string::npos || l.find("setting") != std::string::npos) return false;
-    for (auto k : keys)
-        if (l.find(k) != std::string::npos) return true;
+    for (auto& ch : l) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    auto has = [&](char const* k) { return l.find(k) != std::string::npos; };
+    auto const& c = spatialcam::cfg();
+    if (!c.enabled || l.empty()) return false;
+    // never: title / loading / chat / the HUD layers
+    if (has("start_screen") || has("loading") || has("progress") || has("chat") || has("hud") || has("toast") ||
+        has("hbui") || has("ui://"))
+        return false;
+    if (c.allScreens) return true;
+    if (has("book") || has("lectern")) return has("lectern") ? c.lectern : c.books;
+    if (has("pause")) return c.pauseScreen;
+    if (has("setting")) return false;
+    if (has("crafting") || has("crafter")) return c.crafting;
+    if (has("furnace") || has("smoker")) return c.furnaces;
+    if (has("anvil")) return c.anvils;
+    if (has("enchant")) return c.enchanting;
+    if (has("beacon")) return c.beacons;
+    if (has("brewing")) return c.brewing;
+    if (has("trade") || has("villager")) return c.villagerTrading;
+    if (has("shulker")) return c.shulkerBoxes;
+    if (has("chest") || has("barrel")) return c.chests;
+    if (has("hopper")) return c.hoppers;
+    if (has("dispenser") || has("dropper")) return c.dispensers;
+    if (has("grindstone")) return c.grindstone;
+    if (has("smithing")) return c.smithing;
+    if (has("cartography")) return c.cartography;
+    if (has("loom")) return c.loom;
+    if (has("stonecutter")) return c.stonecutter;
+    if (has("creative")) return c.creativeInventory;
+    if (has("inventory")) return c.inventory;
+    if (has("horse") || has("container") || has("chest_boat") || has("minecart")) return c.mostContainers;
     return false;
 }
 
@@ -433,7 +458,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         // The Java mod renders the screen at its own auto GUI scale (>= 320 x 240 units); Bedrock's UI is smaller in
         // the window, so magnify the texture by java/bedrock scale to give the GUI the same world size.
         spatialcam::View v = spatialcam::view();
-        float mag = v.guiScale > 0.5f ? float(spatialcam::javaAutoGuiScale(int(bd.Width), int(bd.Height))) / v.guiScale : 1.0f;
+        float jgs = spatialcam::cfg().autoGuiScale ? float(spatialcam::javaAutoGuiScale(int(bd.Width), int(bd.Height))) : float(std::clamp(spatialcam::cfg().guiScale, 1, 6));
+        float mag = v.guiScale > 0.5f ? jgs / v.guiScale : 1.0f;
         gGuiMag   = mag;
         g         = computeGeomJava(v, aspect, scale, mag);
     } else {
@@ -1173,10 +1199,46 @@ void drawJavaConfig() {
         ImGui::Checkbox("First Person Mode (Other)", &c.fpContainers);
         ImGui::Checkbox("Auto Scale by FOV", &c.autoScaleByFov);
         ImGui::Checkbox("Mirror Third Person", &c.mirrorThirdPerson);
+        ImGui::Checkbox("Auto Calculate GUI Scale", &c.autoGuiScale);
+        if (!c.autoGuiScale) ImGui::SliderInt("GUI Scale", &c.guiScale, 1, 6);
+        ImGui::Checkbox("Hide Hotbar", &c.hideHotbar);
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("Screens")) {
+        ImGui::Checkbox("Pause Screen", &c.pauseScreen);
+        ImGui::Checkbox("All Screens", &c.allScreens);
+        ImGui::Checkbox("Most Containers", &c.mostContainers);
+        ImGui::Checkbox("Books", &c.books);
+        ImGui::Checkbox("Crafting", &c.crafting);
+        ImGui::Checkbox("Furnaces", &c.furnaces);
+        ImGui::Checkbox("Anvils", &c.anvils);
+        ImGui::Checkbox("Enchanting", &c.enchanting);
+        ImGui::Checkbox("Beacons", &c.beacons);
+        ImGui::Checkbox("Brewing", &c.brewing);
+        ImGui::Checkbox("Villager Trading", &c.villagerTrading);
+        ImGui::Checkbox("Chests", &c.chests);
+        ImGui::Checkbox("Shulker Boxes", &c.shulkerBoxes);
+        ImGui::Checkbox("Hoppers", &c.hoppers);
+        ImGui::Checkbox("Dispensers", &c.dispensers);
+        ImGui::Checkbox("Grindstone", &c.grindstone);
+        ImGui::Checkbox("Smithing", &c.smithing);
+        ImGui::Checkbox("Cartography", &c.cartography);
+        ImGui::Checkbox("Loom", &c.loom);
+        ImGui::Checkbox("Stonecutter", &c.stonecutter);
+        ImGui::Checkbox("Lectern", &c.lectern);
+        ImGui::Checkbox("Inventory", &c.inventory);
+        ImGui::Checkbox("Creative Inventory", &c.creativeInventory);
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("Rendering")) {
         ImGui::SliderInt("Screen Alpha", &c.screenAlpha, 0, 255);
+        ImGui::SliderInt("Render Scale (%)", &c.renderScalePct, 25, 200);
+        ImGui::Checkbox("Use Linear Filtering", &c.linearFiltering);
+        ImGui::Checkbox("Use Anisotropic Filtering", &c.anisotropicFiltering);
+        ImGui::SliderFloat("Recipe Book Shrink Factor", &c.recipeBookShrink, 1.0f, 3.0f, "%.2f");
+        ImGui::Checkbox("Hide Hands in First Person", &c.hideHandsFp);
+        ImGui::Checkbox("Hide Shield in First Person", &c.hideShieldFp);
+        ImGui::Checkbox("Swing Arm on First Person Click", &c.swingArmFp);
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("TP Screen")) {
@@ -1195,6 +1257,8 @@ void drawJavaConfig() {
         ImGui::SliderFloat("Screen Yaw Offset##fp", &c.fpYaw, 0.0f, 360.0f, "%.1f");
         ImGui::SliderFloat("Screen Pitch Offset##fp", &c.fpPitch, -90.0f, 90.0f, "%.1f");
         ImGui::SliderFloat("Screen Scale##fp", &c.fpScale, 0.3f, 6.0f, "%.2f");
+        ImGui::Checkbox("Curved Screen", &c.curvedScreen);
+        if (c.curvedScreen) ImGui::SliderInt("Curved Screen Arc (degrees)", &c.curvedArc, 0, 180);
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("TP Camera")) {
@@ -1208,6 +1272,8 @@ void drawJavaConfig() {
         ImGui::SliderFloat("Mouse Sensitivity Pitch", &c.tpSensPitch, 0.0f, 1.0f, "%.3f");
         ImGui::Checkbox("Disable Parallax", &c.tpParallaxOff);
         ImGui::Checkbox("Lerp X Rotation", &c.lerpXRot);
+        ImGui::SliderFloat("Avatar Base Yaw Offset", &c.avatarBaseYaw, -180.0f, 180.0f, "%.1f");
+        ImGui::SliderFloat("Avatar Body Rotation Offset", &c.avatarBodyRot, -180.0f, 180.0f, "%.1f");
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("FP Camera")) {
@@ -1215,6 +1281,9 @@ void drawJavaConfig() {
         ImGui::SliderFloat("Mouse Sensitivity Pitch##fp", &c.fpSensPitch, 0.0f, 1.0f, "%.3f");
         ImGui::Checkbox("Disable Parallax##fp", &c.fpParallaxOff);
         ImGui::SliderInt("First Person Pitch Clamp", &c.fpPitchClamp, 0, 90);
+        ImGui::Checkbox("Use Crosshair for First Person", &c.crosshairFp);
+        ImGui::Checkbox("Keep First Person Camera Angle", &c.keepFpAngle);
+        ImGui::Checkbox("Inherit Screen Origin on Swap", &c.inheritOrigin);
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("Animations")) {
