@@ -278,6 +278,12 @@ struct FovMem { void const* comp = nullptr; float base = 0, written = 0; };
 FovMem gFov[24];
 int    gFovN = 0;
 long   gCineWrites = 0;
+// The world is drawn relative to LevelRendererCamera::mCameraPos (the mce::Camera sits at 0,0,0): in first person that
+// origin follows the player's eyes, not the camera component, so the scene's position goes there too (pose of the frame)
+bool   gCineHavePos = false;
+glm::vec3 gCinePos{};
+float  gRcBefore[3] = {}, gRcAfter[3] = {}, gRcTarget[3] = {};
+long   gRcWrites = 0;
 float  gCineFovRaw = 0, gCineFovScale = 1;
 void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::vec3 const& eye, float yawP, float pitchP) {
     float           e[3] = {eye.x, eye.y, eye.z};
@@ -296,6 +302,7 @@ void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::ve
         m->written = f;
         if (i == 0) { gCineFovRaw = m->base; gCineFovScale = fovScale; }
     }
+    if (!on) gCineHavePos = false;
     if (!on || !gConv) return;
     glm::mat3 O = orient(p.yaw, p.pitch);
     float     r = p.roll * kDeg, c = std::cos(r), s = std::sin(r);
@@ -308,6 +315,8 @@ void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::ve
         *comps[i]->mOrientation = qn;
         *comps[i]->mPosition    = pos;
     }
+    gCinePos     = pos;
+    gCineHavePos = true;
     ++gCineWrites;
 }
 
@@ -466,6 +475,8 @@ void applyComponent() {
 } // namespace
 } // namespace rf::spatialcam
 
+namespace rf::spatialcam { void afterPreRender(Vec3* cameraPos, Vec3* targetPos); }
+
 LL_TYPE_INSTANCE_HOOK(RfCameraUpdateHook, ll::memory::HookPriority::Normal, mce::Camera, &mce::Camera::updateViewMatrixDependencies,
                       void) {
     origin();
@@ -477,9 +488,23 @@ LL_TYPE_INSTANCE_HOOK(RfLevelCameraPreRenderHook, ll::memory::HookPriority::Norm
                       LevelRenderPreRenderUpdateParameters& params) {
     rf::spatialcam::applyComponent();
     origin(screenContext, params);
+    rf::spatialcam::afterPreRender(&*this->mCameraPos, &*this->mCameraTargetPos);
 }
 
 namespace rf::spatialcam {
+/// after preRenderUpdate: the render origin (and the point it looks at) follow the scene camera
+void afterPreRender(Vec3* cameraPos, Vec3* targetPos) {
+    std::lock_guard l(gMutex);
+    if (!cameraPos) return;
+    gRcBefore[0] = cameraPos->x; gRcBefore[1] = cameraPos->y; gRcBefore[2] = cameraPos->z;
+    if (targetPos) { gRcTarget[0] = targetPos->x; gRcTarget[1] = targetPos->y; gRcTarget[2] = targetPos->z; }
+    if (!gCineHavePos || !rf::cine::active()) return;
+    Vec3 d{gCinePos.x - cameraPos->x, gCinePos.y - cameraPos->y, gCinePos.z - cameraPos->z};
+    cameraPos->x = gCinePos.x; cameraPos->y = gCinePos.y; cameraPos->z = gCinePos.z;
+    if (targetPos) { targetPos->x += d.x; targetPos->y += d.y; targetPos->z += d.z; }
+    gRcAfter[0] = cameraPos->x; gRcAfter[1] = cameraPos->y; gRcAfter[2] = cameraPos->z;
+    ++gRcWrites;
+}
 namespace {
 Config                gCfg;
 std::filesystem::path gCfgFile;
@@ -622,6 +647,8 @@ void appendDiag(char* b, unsigned long long cap) {
                          gLastRot[0], gLastRot[1], gLastCam[0], gLastCam[1], gLastCam[2], gLastTarget[0], gLastTarget[1],
                          gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch, gView.guiScale);
     len += std::snprintf(b + len, cap - len, "  cinematic camera writes %ld, fov field %.4f x %.3f\n", gCineWrites, gCineFovRaw, gCineFovScale);
+    len += std::snprintf(b + len, cap - len, "  render origin (LevelRendererCamera::mCameraPos) %.2f,%.2f,%.2f -> %.2f,%.2f,%.2f (writes %ld), target %.2f,%.2f,%.2f\n",
+                         gRcBefore[0], gRcBefore[1], gRcBefore[2], gRcAfter[0], gRcAfter[1], gRcAfter[2], gRcWrites, gRcTarget[0], gRcTarget[1], gRcTarget[2]);
     len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",
                          gConv, gConvTries, gCompMiss, gLastM[0], gLastM[3], gLastM[6], gLastM[1], gLastM[4], gLastM[7], gLastM[2], gLastM[5], gLastM[8]);
     len += std::snprintf(b + len, cap - len, "  avatar writes %ld saved %d smoothed yaw %.1f pitch %.1f; orig head %.1f body %.1f pitch %.1f; last read head %.1f body %.1f pitch %.1f; first person %d (forced by block %d)\n",
