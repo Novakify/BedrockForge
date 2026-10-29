@@ -4245,6 +4245,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                         list->CopyTextureRegion(&dst, bx.left, bx.top, 0, &srcl, &bx);
                         barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                         barrier(list, gG.tip.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                        for (auto& o : gS.tipCache) // one copy texture: what this one covers is gone for the others
+                            if (o.ok && &o != &c && o.text.x < found.x + found.w && found.x < o.text.x + o.text.w && o.text.y < found.y + found.h && found.y < o.text.y + o.text.h) { o.ok = false; o.tried = false; }
                         c.ok = true; c.tried = true; c.at = clock; c.text = found;
                     }
                     gS.probe = -1; gProbeSlot = -1; gS.holdUntil = clock + 0.3;
@@ -5414,7 +5416,7 @@ void drawOverlay() {
             std::lock_guard ll3(gLayoutMutex);
             clueGui = gLayout.slot / 18.0f; layW = float(gLayout.W); layH = float(gLayout.H);
         }
-        if (gS.tipSlot >= 0 && gS.tipCache[gS.tipSlot].ok && gS.probe != gS.tipSlot && !gS.overPanel && gG.kw > 0) {
+        if (gS.tipSlot >= 0 && gS.tipCache[gS.tipSlot].ok && gG.kw > 0) {
             itemTip  = true;
             itemText = gS.tipCache[gS.tipSlot].text;
             tipW = float(gG.kw); tipH = float(gG.kh);
