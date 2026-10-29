@@ -29,6 +29,8 @@
 #include "mc/deps/ecs/WeakEntityRef.h"
 #include "mc/deps/ecs/gamerefs_entity/EntityContext.h"
 #include "mc/deps/ecs/gamerefs_entity/StackResultStorageEntity.h"
+#include "mc/deps/minecraft_camera/CameraRegistry.h"
+#include "mc/deps/minecraft_camera/components/ActiveCameraComponent.h"
 #include "mc/deps/minecraft_camera/components/CameraComponent.h"
 #include "mc/client/options/IOptionRegistry.h"
 #include "mc/client/player/LocalPlayer.h"
@@ -69,6 +71,9 @@ int     gSeenN = 0;
 long    gCalls = 0, gPersp = 0, gChosen = 0, gOverrides = 0;
 float   gLastFeet[3]{}, gLastRot[2]{}, gLastCam[3]{}, gLastTarget[3]{};
 float   gLastT = 0.0f;
+struct EntSeen { int kind; bool hasComp, active; float pos[3]; };
+EntSeen gEnt[24]{};
+int     gEntN = 0;
 char    gNote[160] = "hook not installed";
 
 float easeInOutSine(float t) { return float(-(std::cos(3.14159265358979 * double(t)) - 1.0) / 2.0); }
@@ -161,10 +166,32 @@ void applyComponent() {
     auto* lp = ci->getLocalPlayer();
     if (!lp) return;
     Actor& actor = *lp;
-    auto   res   = ci->getCameraEntity().lock();
-    if (!res.has_value()) { ++gCompMiss; return; }
-    auto cc = res->tryGetComponent<MinecraftCamera::CameraComponent>();
-    if (!cc) { ++gCompMiss; return; }
+    // camera entities: CameraRegistry::mGameCamera (what the renderer follows) + the preset cameras
+    auto reg = ci->getCameraRegistry();
+    if (!reg) { ++gCompMiss; return; }
+    MinecraftCamera::CameraComponent* comps[24]{};
+    int nComp = 0;
+    {
+        std::lock_guard dl(gMutex);
+        gEntN = 0;
+        auto consider = [&](OwnerPtr<EntityId>& o, int kind) {
+            if (!o.has_value()) return;
+            auto cc     = o->tryGetComponent<MinecraftCamera::CameraComponent>();
+            bool active = o->hasComponent<MinecraftCamera::ActiveCameraComponent>();
+            if (gEntN < 24) {
+                auto& e  = gEnt[gEntN++];
+                e.kind   = kind;
+                e.hasComp = bool(cc);
+                e.active = active;
+                if (cc) { glm::vec3 p = *cc->mPosition; e.pos[0] = p.x; e.pos[1] = p.y; e.pos[2] = p.z; }
+            }
+            if (cc && (kind == 0 || active) && nComp < 24) comps[nComp++] = &*cc;
+        };
+        consider(*reg->mGameCamera, 0);
+        for (auto& o : *reg->mCameraEntities) consider(o, 1);
+    }
+    if (!nComp) { ++gCompMiss; return; }
+    MinecraftCamera::CameraComponent* cc = comps[0];
     std::lock_guard l(gMutex);
     Vec3      feetV = actor.getFeetPos();
     Vec2      rot   = actor.getRotation(); // x = pitch, y = yaw (degrees)
@@ -212,8 +239,11 @@ void applyComponent() {
 
     glm::mat3 R = orient(camYaw, camPitch) * gC;
     if (gConv == 2) R = glm::transpose(R);
-    q   = glm::quat_cast(R);
-    pos = camPos;
+    glm::quat qn = glm::quat_cast(R);
+    for (int i = 0; i < nComp; ++i) {
+        *comps[i]->mOrientation = qn;
+        *comps[i]->mPosition    = camPos;
+    }
     ++gCompWrites;
     ++gOverrides;
     gLastCam[0] = camPos.x; gLastCam[1] = camPos.y; gLastCam[2] = camPos.z;
@@ -293,6 +323,9 @@ void appendDiag(char* b, unsigned long long cap) {
                          gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch, gView.guiScale);
     len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",
                          gConv, gConvTries, gCompMiss, gLastM[0], gLastM[3], gLastM[6], gLastM[1], gLastM[4], gLastM[7], gLastM[2], gLastM[5], gLastM[8]);
+    for (int i = 0; i < gEntN && len < cap; ++i)
+        len += std::snprintf(b + len, cap - len, "  entity %s comp %d active %d pos %.2f,%.2f,%.2f\n", gEnt[i].kind == 0 ? "GAME" : "preset", gEnt[i].hasComp,
+                             gEnt[i].active, gEnt[i].pos[0], gEnt[i].pos[1], gEnt[i].pos[2]);
     for (int i = 0; i < gSeenN && len < cap; ++i)
         len += std::snprintf(b + len, cap - len, "  cam %p pos %.2f,%.2f,%.2f dist-to-eye %.2f p11 %.3f %s\n", gSeen[i].cam, gSeen[i].pos[0],
                              gSeen[i].pos[1], gSeen[i].pos[2], gSeen[i].dist, gSeen[i].p11, gSeen[i].chosen ? "WORLD" : "");
