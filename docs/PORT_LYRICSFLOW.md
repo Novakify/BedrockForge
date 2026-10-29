@@ -7,6 +7,9 @@ Research only. Nothing built or installed. This is the starting point for the ki
   plus Yellowtail and DejaVu-Arabic with their own licence files), 63 GUI textures, 14 UI sounds.
   The jar contains `NOVAK_PERMISSION.txt`: the *supplier* says 374m authorized Novak to port it and that the earlier ARR
   metadata was applied without the creator's consent.
+  **FOUNDATION UPDATED 2026-10-29: use `LyricsFlow_Update.jar` v2.0 (374m, MIT, still MC 1.21.11 / Fabric) as the base,
+  not the v1.19 jar. Fernando sent a couple of interim update jars the same day — ignore those, v2.0 is the one.** The
+  v1.19 analysis below still holds for the core; v2.0 adds a lot on top (see "What's new in v2.0").
   **PERMISSION (Fernando, 2026-10-29): 374m gave the OK to modify LyricsFlow for PERSONAL USE ONLY. This build is for
   Fernando alone and will NOT be distributed.** LyricsFlow is the foundation; we build our own Bedrock version on top of
   it. Scope rule for the whole project: private/personal, no public release of this port. Keep the MIT notice and the
@@ -22,7 +25,7 @@ Research only. Nothing built or installed. This is the starting point for the ki
 | Media detection | `SmtcBackend`: Windows Global System Media Transport Controls (WinRT) called raw through JNA/COM. Reads title, artist, album, duration, position, sample time, playing, source app. Play/pause/next/prev/seek. Source filter SPOTIFY / YOUTUBE (browsers: chrome, edge, brave, arc, opera(gx), firefox, vivaldi, zen, librewolf, waterfox) / ANY | **Easy.** C++/WinRT does this natively in BF, with less code than the JNA version |
 | Clock sync | `Track.positionNow()` extrapolates from the sample time. `MediaManager` re-syncs when Windows' position drifts (seek detection, "stable" heuristics). `syncOffsetMs` lets you adjust timing by hand | Easy (pure logic) |
 | Lyrics | `LyricsFetcher`: LRCLIB `/api/get` (exact match by duration) + `/api/search`, NetEase `music.163.com/api/search/get` + `/api/song/lyric`. Parallel candidates, first synced result wins, duration scaling for sped-up/slowed versions. `TitleCleaner` strips "Official Video", feat., remix/nightcore and so on | Easy (WinHTTP + JSON) |
-| Word timing | `Lyrics$Line.splitWords` **spreads a line's time evenly across its words**. Enhanced LRC `<mm:ss.xx>` word tags are parsed when present. So "word-by-word" is mostly interpolated | Easy. True word sync is a data problem (see below) |
+| Word timing | v1.19: `splitWords` spreads a line's time evenly across its words (interpolated). **v2.0 adds real word timing** (see below) | Easy to port the logic |
 | Placement modes | `LyricsStyle` = SKY, FLOATING, SCREEN, WALL, plus `followView`, `viewLock`, `randomPosition`, `arcLayout`, `varySizes`, `maxLines`, `sentenceMode`. `WorldLyrics` raycasts the world (ClipContext) to: fit text onto wall surfaces (`wallPlace`, `fitToSurface`, surface normal quaternion); keep clearance from terrain and clouds; avoid HUD areas (`avoidBoxes`); avoid crowded spots (`crowd`); fade when blocked (`occl`, every few ticks) or when you look away | **Medium.** Needs client-side block queries (LeviLamina) and a port of the placement maths |
 | Text drawing | Vanilla MC font renderer with TTF providers loaded from a runtime resource pack (`CustomFonts`, which also imports user TTFs from a folder). `FontTextureMixin` switches glyph textures to linear filtering. "NEON" style = layered glow passes (`neon3d`) | Hard to copy 1:1, but there's a better route (MSDF, below) |
 | Shader fallback | `lateForShaders()`: when Iris shaders are on, every style except WALL is drawn in **2D at the screen-projected world position** (`Proj.project`, `drawScreen`) instead of as real 3D geometry. **The Java mod already uses the same approach we'd use on Bedrock** | Validates the plan |
@@ -30,6 +33,20 @@ Research only. Nothing built or installed. This is the starting point for the ki
 | Looks | 23 themes (aurora, black_white, blood_moon, candy, enchant, fire, galaxy, gold, ice_blue, lavender, matrix, midnight, minecraft(_gold), neon_pink, nether, ocean, sakura, sunset, toxic, vaporwave, custom). Single colour, two-colour, glow, opacity, shadow | Easy on the GPU text shader |
 | Extras | Sky FX (stars, motes, streaks) + 24 sky presets + `SkyTint` (tints sky/fog/clouds/stars), `Chroma` (screen tint), `TopBar` karaoke/now-playing bar, `HotbarStyle`, `PlayerScreen` music player, cover art, per-app volume (`AppVolume`, Windows audio sessions), media keys, HUD editor, config profiles, hide in screenshots, music notes for instrumental parts | Mixed. Sky tint fits our ShaderForge `@uniform` / VV colour grading path. The rest is ImGui/2D |
 | Not in LyricsFlow | **Falling-letter physics.** Nothing like it in either mod. New work | Medium (see below) |
+
+## What's new in v2.0 (the new foundation)
+Version jumped 1.19 -> 2.0, +18 classes, jar 4.5MB -> 9.3MB. Removed: `Presence` (Discord rich presence), `PlayerTabOverlayMixin`. Added:
+
+| New in v2.0 | What it does | Port note / priority |
+|---|---|---|
+| **Real word-by-word sync** | `LyricsFetcher` now pulls **Musixmatch richsync** (`apic-desktop.musixmatch.com` token + `track.richsync.get`, `parseRichsync`) and **NetEase YRC** (`/api/song/lyric/v1`, `parseYrc`, `YRC_WORD`/`YRC_LINE`). These carry per-word timestamps | **This fixes the biggest limitation in the v1.19 analysis.** Word sync is no longer just interpolation. Port note: Musixmatch's desktop API is unofficial/token-gated — keep it as one source with LRCLIB/NetEase fallback, and treat its ToS with caution (fine for a personal build) |
+| **AudioSync (WASAPI loopback)** | `AudioSync` captures the system audio output (COM: AudioClient + CaptureClient, loopback, "LyricsFlow voice") and measures it to refine the sync offset per song; stores a `k` scale + per-song offsets (`songOffsets` map) | Sync-accuracy polish. C++/WASAPI does this natively. **Phase 4 option**, not core. Pairs with the `syncOffsetMs` + per-song-offset config |
+| **Big sky system** | New sky textures: auroras (front/back + custom), milkyway, blackhole, synth sun/grad, caustics, layered clouds/wisps, and a `ring_*` texture per sky preset (aurora, blood_moon, cherry_blossom, galaxy, golden_hour, neon_city, northern_lights, thunderstorm, violet_aurora...). Config: `customAurora/Moon/Stars/Shooting`, `skyWords`, `plainSkyColor`, `customHorizon/Top` | Reinforces that **sky presets are core to the look** (matches reference video B). Our shader-uniform / VV route handles the tint; the textured sky layers are extra draws in RF |
+| **Weather-reactive FX** | `LevelRainMixin` + `WeatherKindMixin` + `Rain`/`Embers`/`Petals` classes; config `weatherRain/weatherSnow/weatherEmbers`, `petal.png` | Eye-candy that reacts to in-world weather. Nice-to-have, phase 4 |
+| **Cosmetics (shared)** | `Cosmetics`/`CosmeticLayer`/`HelmetLayer` render player-worn cosmetics (axolotl, astronaut/knight helmet, buddy skin, petals, embers). `CosmeticSync` **broadcasts/reads them over a public `ntfy.sh` topic** (`ntfy.sh/lyricsflow-cosmetics-v1-...`) + Mojang profile lookups, so other LyricsFlow users see each other's cosmetics | **Lowest priority / likely skip for a personal build.** It's a cross-player social feature that needs other people running the mod, and it posts to a *public* ntfy topic (privacy note). None of the reference videos use it. Not worth porting unless Fernando wants it |
+| Other config | `allCaps`, `floatHeight`, `twoColorStrength`/`twoColorColor`, hotbar bar color, `skyColor`/`plainSkyColor` | Trivial, fold into our config |
+
+Net effect on the plan: **word sync moves from "data-limited" to "likely to work"** (v2.0 ships the sources), and the sky work is bigger than first thought. Cosmetics are the one chunk we can safely drop for a personal build.
 
 ### What LyricsPlus adds (secondary reference)
 - GSMTC through a PowerShell child process (slower, so LyricsFlow's native route is better).
@@ -75,7 +92,7 @@ BF (LeviLamina C++)                          RF (D3D12 @ Present)
 | Apple Music | **Likely, needs testing.** The Microsoft Store Apple Music app reports to Windows media controls; iTunes is unreliable |
 | Downloaded music | **Works for any player that reports to Windows media controls** (Windows Media Player, MusicBee, foobar2000 with a component, AIMP). Lyrics from LRCLIB, or a user .lrc folder matched by artist/title (Windows doesn't give the file path) |
 | Line-synced lyrics | **Likely.** LRCLIB has good coverage of popular songs |
-| True word-by-word sync | **Data-limited.** Most LRCLIB entries are line-level, so word timing gets interpolated like LyricsFlow does. Real word timing exists in NetEase "yrc", Apple TTML and Musixmatch/Spotify "richsync", but those are unofficial or account-locked APIs. Phase 4 option, licence/ToS caution |
+| True word-by-word sync | **Likely to work (upgraded by v2.0).** v2.0 already fetches Musixmatch richsync + NetEase YRC, which carry per-word timing, falling back to interpolated LRCLIB when a song has none. Port those sources; Musixmatch's desktop API is unofficial/token-gated, so keep it as one source of several and mind its ToS (fine for a personal build). Coverage still varies by song |
 | World-space 3D text (sky, floating, wall), perspective, depth feel | **Likely, needs a lot of testing.** It depends on S1-S3. RF already draws a perspective quad |
 | Player-following mode | **Likely.** It's simpler than world mode |
 | All 22 fonts + custom font import | **Likely.** MSDF atlases, prebuilt offline. Runtime import through msdfgen |
