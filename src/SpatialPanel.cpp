@@ -245,10 +245,11 @@ void   noteRedirected() { gRedirected.store(true, std::memory_order_relaxed); }
 
 void installCursorHook();
 void installGameInputHook();
+void tryGameMouse();
 void writeDiag();
 void toggle() {
     bool on = !gEnabled.load();
-    if (on) { installCursorHook(); installGameInputHook(); }
+    if (on) { installCursorHook(); installGameInputHook(); tryGameMouse(); }
     else writeDiag();
     gEnabled = on;
     if (on) uicapture::requestLearn(); // make sure the back-buffer RTV handles are known
@@ -526,10 +527,16 @@ std::atomic<long> gGicCalls{0}, gGcurCalls{0};
 bool              gGotMouseHook = false;
 std::string       gEarlyNote = "not installed";
 
+void*             gGameInput = nullptr; // the game's IGameInput (caught at creation)
+uint32_t          gLastKind  = 0;
+bool              gLastOk    = false;
+
 // IGameInput::GetCurrentReading(kind, device, reading) -> bool. Mouse reading seen -> hook its GetMouseState.
 bool WINAPI gcurHook(void* self, uint32_t kind, void* device, void** reading) {
     bool r = reinterpret_cast<GiGetCur_t>(gGcurOrig)(self, kind, device, reading);
     ++gGcurCalls;
+    gLastKind = kind;
+    gLastOk   = r;
     if (r && reading && *reading && (kind & 0x20) && !gGotMouseHook) {
         void** rv = *reinterpret_cast<void***>(*reading);
         if (ll_shim::hook(rv[7], reinterpret_cast<void*>(&giMouseHook), &gGiOrig) == 0) {
@@ -546,6 +553,7 @@ bool WINAPI gcurHook(void* self, uint32_t kind, void* device, void** reading) {
 long WINAPI gicHook(void** out) {
     long hr = reinterpret_cast<GiCreate_t>(gGicOrig)(out);
     ++gGicCalls;
+    if (hr >= 0 && out && *out && !gGameInput) gGameInput = *out;
     if (hr >= 0 && out && *out && !gGcurOrig) {
         void** vt = *reinterpret_cast<void***>(*out);
         if (ll_shim::hook(vt[3], reinterpret_cast<void*>(&gcurHook), &gGcurOrig) == 0) gEarlyNote = "game IGameInput caught";
@@ -561,6 +569,25 @@ void installEarly() {
     if (!create) { gEarlyNote = "GameInputCreate missing"; return; }
     if (ll_shim::hook(create, reinterpret_cast<void*>(&gicHook), &gGicOrig) == 0) gEarlyNote = "GameInputCreate hooked (waiting for the game)";
     else gEarlyNote = "GameInputCreate hook failed";
+}
+
+// Ask the game's own IGameInput for a mouse reading (the game rarely calls GetCurrentReading itself), then hook
+// that reading's GetMouseState. Runs on panel toggle.
+void tryGameMouse() {
+    if (gGotMouseHook || !gGameInput || !gGcurOrig) return;
+    void* rd = nullptr;
+    bool  ok = reinterpret_cast<GiGetCur_t>(gGcurOrig)(gGameInput, 0x20, nullptr, &rd);
+    gLastKind = 0x20;
+    gLastOk   = ok;
+    if (!ok || !rd) { gEarlyNote = "game GetCurrentReading(mouse) gave no reading (retry on next toggle)"; return; }
+    void** rv = *reinterpret_cast<void***>(rd);
+    if (ll_shim::hook(rv[7], reinterpret_cast<void*>(&giMouseHook), &gGiOrig) == 0) {
+        gGotMouseHook = true;
+        gGiTarget     = rv[7];
+        gEarlyNote    = "game GameInput GetMouseState hooked";
+    } else {
+        gEarlyNote = "GetMouseState hook failed";
+    }
 }
 
 void writeDiag() {
@@ -619,8 +646,8 @@ void writeDiag() {
         size_t len = strlen(b);
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n  mouse reads %ld, remapped %ld, skipped (no GetCursorPos match) %ld\n  last state: buttons %u pos %d,%d abs %d,%d\n",
                         gGiNote.c_str(), gGiReads.load(), gGiRemapped.load(), gGiSkipped.load(), gGiLast.buttons, gGiLast.posX, gGiLast.posY, gGiLast.absX, gGiLast.absY);
-        len += snprintf(b + len, sizeof b - len, "GameInput early: %s\n  GameInputCreate calls %ld, GetCurrentReading calls %ld, game mouse hook %s\n",
-                        gEarlyNote.c_str(), gGicCalls.load(), gGcurCalls.load(), gGotMouseHook ? "yes" : "no");
+        len += snprintf(b + len, sizeof b - len, "GameInput early: %s\n  GameInputCreate calls %ld, GetCurrentReading calls %ld (last kind 0x%x ok %d), game mouse hook %s\n",
+                        gEarlyNote.c_str(), gGicCalls.load(), gGcurCalls.load(), gLastKind, gLastOk ? 1 : 0, gGotMouseHook ? "yes" : "no");
         (void)len;
     }
     uicapture::writeText("panel_diag.txt", b);
