@@ -40,6 +40,7 @@ struct Config {
     float camDistance = 1.7f, camSide = -1.2f, camHeight = 1.5f, camPitch = 10.0f;
     int   transitionMs = 300, transitionSkipPct = 15;
     float avatarBaseYaw = 30.0f, avatarBodyRot = 20.0f; // avatarBaseYawOffset / avatarBodyRotationOffset
+    float wideScreenShift = 0.6f; // Bedrock addition: wide screens (recipe book) slide the camera so the player moves left
     float tpSensYaw = 0.1f, tpSensPitch = 0.03f;
     bool  tpParallaxOff = false, lerpXRot = false;
     // FP Camera
@@ -93,6 +94,8 @@ void uninstall();
 /// switches the game to third person and starts the glide; first person mode keeps the view and only turns it.
 void setActive(bool on, bool inventory = false);
 bool active();
+/// The open screen is wide (recipe book shown): the third person camera eases sideways (wideScreenShift).
+void setWideScreen(bool wide);
 View view();
 /// Diagnostics text (panel_diag.txt).
 void appendDiag(char* buf, unsigned long long cap);

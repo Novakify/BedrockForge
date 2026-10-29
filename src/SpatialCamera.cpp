@@ -101,6 +101,9 @@ float  gFreeYaw = 0.0f, gFreePitch = 0.0f;        // CameraMixin.freeLookYaw / f
 bool   gGrabReset = true;
 float  gLastCamYaw = 0.0f, gLastCamPitch = 0.0f;  // last applied camera angle (keepFirstPersonCameraAngle)
 std::atomic_bool gPendingSnap{false};
+std::atomic_bool gWide{false};
+float            gWideT = 0.0f; // eased 0..1
+Clock::time_point gWideLast{};
 std::atomic_bool gForcedFp{false}; // CameraUtil.checkBlockCollision switched this screen to first person
 long  gAvatarWrites = 0;
 float gReadHead = 0, gReadBody = 0;
@@ -324,6 +327,7 @@ void applyComponent() {
         gBaseXRot   = std::clamp(pitchP, -clampP, clampP); // CameraMixin: baseXRot
         gFreeYaw = gFreePitch = 0.0f;
         gGrabReset = true;
+        gWideT     = gWide.load() ? 1.0f : 0.0f; // opened wide: the glide goes straight to the shifted spot
     }
     Config const& c  = cfg();
     bool          fp = gFirstPerson.load();
@@ -360,6 +364,15 @@ void applyComponent() {
         // CameraUtil.calculateAutoFovDistance / calculateAutoFovSideOffset
         float d    = c.autoScaleByFov ? std::clamp(c.camDistance * (1.0f + inv * c.distMult), -4.0f, 4.0f) : c.camDistance;
         float side = c.autoScaleByFov ? std::clamp(c.camSide * (1.0f + inv * c.sideMult), -4.0f, 4.0f) : c.camSide;
+        {   // ease the extra sideways slide in/out (same ease as the camera glide)
+            auto  nowT = Clock::now();
+            float dtMs = gWideLast.time_since_epoch().count() ? std::chrono::duration<float, std::milli>(nowT - gWideLast).count() : 0.0f;
+            gWideLast  = nowT;
+            float step = dtMs / float(std::max(1, c.transitionMs));
+            gWideT     = gWide.load() ? std::min(1.0f, gWideT + step) : std::max(0.0f, gWideT - step);
+            float sgn  = side < 0.0f ? -1.0f : 1.0f;
+            side += sgn * c.wideScreenShift * easeInOutSine(gWideT);
+        }
         if (c.mirrorThirdPerson) side = -side;
         float h     = std::clamp(c.camHeight, -4.0f, 4.0f);
         targetYaw   = yawP + (c.tpParallaxOff ? 0.0f : mx * 90.0f * c.tpSensYaw);
@@ -455,7 +468,7 @@ float applyEasing(Easing e, float t) { // AnimationUtil
     X(hoppers) X(dispensers) X(grindstone) X(smithing) X(cartography) X(loom) X(stonecutter) X(lectern) X(inventory)        \
     X(creativeInventory) X(renderScalePct) X(linearFiltering) X(anisotropicFiltering) X(recipeBookShrink) X(hideHandsFp)    \
     X(hideShieldFp) X(swingArmFp) X(curvedScreen) X(curvedArc) X(avatarBaseYaw) X(avatarBodyRot) X(crosshairFp)            \
-    X(keepFpAngle) X(inheritOrigin)
+    X(keepFpAngle) X(inheritOrigin) X(wideScreenShift)
 
 void loadConfig(std::filesystem::path const& configDir) {
     gCfgFile = configDir / "SpatialGUI.json";
@@ -537,6 +550,7 @@ void setActive(bool on, bool inventory) {
     }
 }
 bool active() { return gActive.load(); }
+void setWideScreen(bool wide) { gWide = wide; }
 
 View view() {
     std::lock_guard l(gMutex);

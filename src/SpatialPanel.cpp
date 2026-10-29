@@ -419,6 +419,7 @@ void noteScreen(void const* stack, std::string const& name) {
                 book = book || t.name.find(k) != std::string::npos;
         }
         gRecipeBook = book;
+        spatialcam::setWideScreen(book);
         if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want, inv); // client thread
     }
 }
@@ -1307,6 +1308,7 @@ void drawJavaConfig() {
         ImGui::Checkbox("Lerp X Rotation", &c.lerpXRot);
         ImGui::SliderFloat("Avatar Base Yaw Offset", &c.avatarBaseYaw, -180.0f, 180.0f, "%.1f");
         ImGui::SliderFloat("Avatar Body Rotation Offset", &c.avatarBodyRot, -180.0f, 180.0f, "%.1f");
+        ImGui::SliderFloat("Wide Screen Player Shift (Bedrock)", &c.wideScreenShift, 0.0f, 2.0f, "%.2f");
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("FP Camera")) {
