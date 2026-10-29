@@ -274,6 +274,11 @@ struct Layout {
     bool  hasBoard = false;
     int   kind = 0;                  // Kind the layout was found for
     Rect  panel;                    // container panel (inventory rows' width)
+    // a frame of the hidden screen counts when these hold: the top bevel of hotbar[0] / inv[0] is the dark line seen
+    // at detection, and the panel just above it its colour (frames with the screen not drawn yet are left out)
+    float probe[2][4] = {};         // per slot: line x, y, above x, y (pixels)
+    float probeLine[3] = {}, probeAbove[3] = {};
+    bool  hasProbe = false;
     float bg[3] = {0.545f, 0.545f, 0.545f}; // slot background (#8B8B8B)
     float hi[3] = {0.78f, 0.78f, 0.78f};    // hovered slot background
     int   found = 0;                // squares found
@@ -1790,6 +1795,10 @@ struct Gfx {
     ComPtr<ID3D12Resource>       skinTex, skinUp;
     ComPtr<ID3D12Resource>       propTex, propUp; // the hammer atlas (HammerModel.h)
     ComPtr<ID3D12Resource>       snap;            // the hidden screen when a move began (what lay on the block)
+    ComPtr<ID3D12Resource>       cand;            // the game thread's copy of the last whole UI frame, before it is checked
+    ComPtr<ID3D12DescriptorHeap> rtvHeap;         // keep as a render target (the checked copy is drawn into it)
+    ComPtr<ID3D12PipelineState>  psoCopy;         // no blending: cand -> keep
+    DXGI_FORMAT                  copyFmt = DXGI_FORMAT_UNKNOWN;
     bool                         snapValid = false;
     long                         skinSerial = -1;
     bool                         skinValid = false;
@@ -1813,6 +1822,7 @@ Texture2D    tUi   : register(t0);
 Texture2D    tSkin : register(t1);
 Texture2D    tProp : register(t2);
 Texture2D    tSnap : register(t3);
+Texture2D    tCand : register(t4);
 SamplerState sP    : register(s0);
 struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; float2 local : TEXCOORD1; };
 V2P VS(uint id : SV_VertexID) {
@@ -1824,7 +1834,21 @@ V2P VS(uint id : SV_VertexID) {
     o.local = float2(k == 1 || k == 3 ? 1 : 0, k >= 2 ? 1 : 0);
     return o;
 }
+bool near3(float4 p, float3 c) { float3 q = p.rgb / max(p.a, 1e-3); return p.a > 0.9 && all(abs(q - c) < 0.07); }
 float4 PS(V2P i) : SV_Target {
+    if (mode.x > 5.5) { // 6: the kept screen, copied only from a frame that has the screen drawn (probes)
+        if (mode.y > 0.5) {
+            bool ok = false;
+            for (int k = 0; k < 2; ++k) {
+                float4 pr = k == 0 ? key0 : key1;
+                bool line = near3(tCand.Load(int3(pr.xy, 0)), color.rgb) || near3(tCand.Load(int3(pr.xy + float2(0, 1), 0)), color.rgb) ||
+                            near3(tCand.Load(int3(pr.xy - float2(0, 1), 0)), color.rgb);
+                ok = ok || (line && near3(tCand.Load(int3(pr.zw, 0)), uv01.xyz));
+            }
+            if (!ok) discard;
+        }
+        return tCand.Load(int3(i.pos.xy, 0));
+    }
     if (mode.x < 0.5) return (mode.y > 0.5 ? float4(color.rgb * color.a, 0) : float4(color.rgb * color.a, color.a)) * mode.w; // y: additive light
     if (mode.x > 4.5) { // 5: a soft round glow (sparks, the anvil's surface disc), added light
         float2 c = i.uv * 2 - 1;
@@ -1857,11 +1881,13 @@ bool fail(std::string const& what, HRESULT hr) {
     return false;
 }
 
+D3D12_GRAPHICS_PIPELINE_STATE_DESC gPsoDesc{};
+ComPtr<ID3DBlob> gVs, gPs;
 bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
     if (gG.pso && gG.fmt == fmt) return true;
     gG.dev = dev;
     if (!gG.root) {
-        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0};
+        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0, 0, 0};
         D3D12_ROOT_PARAMETER   p[2]{};
         p[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         p[0].Constants        = {0, 0, 40};
@@ -1880,7 +1906,7 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
         if (FAILED(hr)) return fail("D3D12SerializeRootSignature", hr);
         if (FAILED(hr = dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gG.root))))
             return fail("CreateRootSignature", hr);
-        D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+        D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
         if (FAILED(hr = dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gG.srvHeap)))) return fail("CreateDescriptorHeap", hr);
         gG.srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
@@ -1915,6 +1941,21 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
     gG.pso.Reset();
     if (FAILED(hr = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&gG.pso)))) return fail("CreateGraphicsPipelineState", hr);
     gG.fmt = fmt;
+    gPsoDesc = d; // kept (with the shaders) for the copy pipeline
+    gVs = vs; gPs = ps;
+    gG.psoCopy.Reset();
+    return true;
+}
+/// the pipeline that draws the checked copy into keep (format of the hidden screen, no blending)
+bool ensureCopyPso(ID3D12Device* dev, DXGI_FORMAT fmt) {
+    if (gG.psoCopy && gG.copyFmt == fmt) return true;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d = gPsoDesc;
+    d.BlendState.RenderTarget[0].BlendEnable = FALSE;
+    d.RTVFormats[0] = fmt;
+    gG.psoCopy.Reset();
+    HRESULT hr = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&gG.psoCopy));
+    if (FAILED(hr)) return fail("CreateGraphicsPipelineState(copy)", hr);
+    gG.copyFmt = fmt;
     return true;
 }
 
@@ -1931,6 +1972,7 @@ void barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STA
 std::mutex       gKeepM;          // gG.keep / snap (re)creation vs the game thread's copy
 std::atomic_bool gKeepFresh{false}; // the game thread copied a whole frame's UI into keep
 std::atomic<long> gKeepCopies{0};
+long gKeepChecked = 0;
 bool ensureKeep(ID3D12Device* dev, D3D12_RESOURCE_DESC const& ud) {
     std::lock_guard kl(gKeepM);
     if (gG.keep && gG.kw == UINT(ud.Width) && gG.kh == ud.Height && gG.kfmt == ud.Format) return true;
@@ -1939,7 +1981,9 @@ bool ensureKeep(ID3D12Device* dev, D3D12_RESOURCE_DESC const& ud) {
     d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     d.Width = ud.Width; d.Height = ud.Height; d.DepthOrArraySize = 1; d.MipLevels = 1; d.Format = ud.Format; d.SampleDesc.Count = 1;
     ComPtr<ID3D12Resource> k;
-    HRESULT hr = dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&k));
+    D3D12_RESOURCE_DESC    kd = d;
+    kd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    HRESULT hr = dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &kd, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&k));
     if (FAILED(hr)) return fail("CreateCommittedResource(keep)", hr);
     static std::vector<ComPtr<ID3D12Resource>> graveyard; // may still be in flight
     if (gG.keep) graveyard.push_back(gG.keep);
@@ -1952,6 +1996,21 @@ bool ensureKeep(ID3D12Device* dev, D3D12_RESOURCE_DESC const& ud) {
     s.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     s.Texture2D.MipLevels = 1;
     dev->CreateShaderResourceView(gG.keep.Get(), &s, gG.srvHeap->GetCPUDescriptorHandleForHeapStart());
+    {
+        if (!gG.rtvHeap) {
+            D3D12_DESCRIPTOR_HEAP_DESC rd{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+            if (FAILED(dev->CreateDescriptorHeap(&rd, IID_PPV_ARGS(&gG.rtvHeap)))) return fail("CreateDescriptorHeap(rtv)", E_FAIL);
+        }
+        dev->CreateRenderTargetView(gG.keep.Get(), nullptr, gG.rtvHeap->GetCPUDescriptorHandleForHeapStart());
+        ComPtr<ID3D12Resource> cd;
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&cd))))
+            return fail("CreateCommittedResource(candidate)", E_FAIL);
+        if (gG.cand) graveyard.push_back(gG.cand);
+        gG.cand = cd;
+        auto h4 = gG.srvHeap->GetCPUDescriptorHandleForHeapStart();
+        h4.ptr += SIZE_T(4) * gG.srvInc;
+        dev->CreateShaderResourceView(gG.cand.Get(), &s, h4);
+    }
     {
         ComPtr<ID3D12Resource> sn;
         HRESULT hs = dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&sn));
@@ -2278,6 +2337,19 @@ void detect(Img im, bool dump, int kindI) {
         L.slot  = s;
         float px0 = L.inv[0].x, px1 = L.inv[8].x + s, invTop = L.inv[0].y;
         L.panel = {px0 - 0.5f * s, 0, px1 - px0 + s, invTop};
+        {
+            Rect const* ps[2] = {&L.hotbar[0], &L.inv[0]};
+            for (int k = 0; k < 2; ++k) {
+                L.probe[k][0] = ps[k]->x + ps[k]->w * 0.5f; L.probe[k][1] = ps[k]->y + 1;
+                L.probe[k][2] = ps[k]->x + ps[k]->w * 0.5f; L.probe[k][3] = std::max(0.0f, ps[k]->y - 3);
+            }
+            int rr, gg, bb, aa;
+            im.get(int(L.probe[0][0]), int(L.probe[0][1]), rr, gg, bb, aa);
+            L.probeLine[0] = rr / 255.0f; L.probeLine[1] = gg / 255.0f; L.probeLine[2] = bb / 255.0f;
+            im.get(int(L.probe[0][2]), int(L.probe[0][3]), rr, gg, bb, aa);
+            L.probeAbove[0] = rr / 255.0f; L.probeAbove[1] = gg / 255.0f; L.probeAbove[2] = bb / 255.0f;
+            L.hasProbe = true;
+        }
         // station slots: above the inventory, within the panel's width
         std::vector<Sq> st;
         for (auto& q : sq) {
@@ -2428,16 +2500,15 @@ void beforeUiClear(ID3D12GraphicsCommandList* list, ID3D12Resource* ui) {
         if (gS.phase != Phase::Intro && gS.phase != Phase::Active) return; // the closing shot keeps the last screen
     }
     std::lock_guard kl(gKeepM);
-    if (!gG.keep || gG.broken) return;
+    if (!gG.cand || gG.broken) return;
     D3D12_RESOURCE_DESC d = ui->GetDesc();
     if (gG.kw != UINT(d.Width) || gG.kh != d.Height || gG.kfmt != d.Format) return;
-    barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    barrier(list, gG.cand.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     barrier(list, ui, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    list->CopyResource(gG.keep.Get(), ui);
+    list->CopyResource(gG.cand.Get(), ui);
     barrier(list, ui, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    gG.keepValid = true;
-    gKeepFresh   = true;
+    barrier(list, gG.cand.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    gKeepFresh = true;
     ++gKeepCopies;
 }
 namespace {
@@ -3339,6 +3410,38 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         gG.keepValid = true;
         fresh        = true;
+    }
+    if (fresh && gG.keep && gG.cand && gG.rtvHeap && !(ui && uiFresh && gG.keepValid == false) && ensureCopyPso(device, gG.kfmt)) {
+        // cand -> keep, only when the probes say the screen is in it (else keep stays as it was)
+        Layout P;
+        {
+            std::lock_guard l(gLayoutMutex);
+            P = gLayout;
+        }
+        Quad q;
+        pixelQuad(0, 0, float(gG.kw), float(gG.kh), int(gG.kw), int(gG.kh), q);
+        q.mode[0] = 6;
+        q.mode[1] = P.valid && P.hasProbe && P.W == int(gG.kw) ? 1.0f : 0.0f;
+        for (int i = 0; i < 4; ++i) { q.key0[i] = P.probe[0][i]; q.key1[i] = P.probe[1][i]; }
+        for (int i = 0; i < 3; ++i) { q.color[i] = P.probeLine[i]; q.uv[i] = P.probeAbove[i]; }
+        barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        ID3D12DescriptorHeap* heaps[] = {gG.srvHeap.Get()};
+        list->SetDescriptorHeaps(1, heaps);
+        list->SetGraphicsRootSignature(gG.root.Get());
+        list->SetPipelineState(gG.psoCopy.Get());
+        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        D3D12_VIEWPORT vp{0, 0, float(gG.kw), float(gG.kh), 0, 1};
+        D3D12_RECT     sc{0, 0, LONG(gG.kw), LONG(gG.kh)};
+        auto           rtv = gG.rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        list->RSSetViewports(1, &vp);
+        list->RSSetScissorRects(1, &sc);
+        list->SetGraphicsRootDescriptorTable(1, gG.srvHeap->GetGPUDescriptorHandleForHeapStart());
+        list->SetGraphicsRoot32BitConstants(0, 40, &q, 0);
+        list->DrawInstanced(6, 1, 0, 0);
+        barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr); // the caller's target again
+        ++gKeepChecked;
     }
     if (fresh && gG.keep) {
         ui = gG.keep.Get(); // read the slots from the kept image (PIXEL_SHADER_RESOURCE, as `ui` was)
@@ -4361,9 +4464,9 @@ void appendDiag(char* b, unsigned long long cap) {
                          gS.last.yaw, gS.last.pitch, gS.last.roll, gS.tanHalf, gS.aspect, gS.fovY, gS.vanillaFovY, gG.status.c_str());
     len += std::snprintf(b + len, cap - len, "  block states: %s; lit %d; aimTop %d\n", gS.states.c_str(), gS.st.lit, gS.aimTop);
     if (len < cap)
-        len += std::snprintf(b + len, cap - len, "  side %d; wheel %.3f %.3f %.3f; grind target %d hover %d place %d; glint %d%d%d; spin %.2f; props: %s\n", int(gS.st.side),
+        len += std::snprintf(b + len, cap - len, "  side %d; wheel %.3f %.3f %.3f; grind target %d hover %d place %d; glint %d%d%d; spin %.2f; props: %s; keep copies %ld checked %ld\n", int(gS.st.side),
                              gS.st.wheel.x, gS.st.wheel.y, gS.st.wheel.z, gS.grindTarget, gS.grindHover, gS.grindPlace, gS.cellGlint[0], gS.cellGlint[1],
-                             gS.cellGlint[2], gS.spin, gPropNote.c_str());
+                             gS.cellGlint[2], gS.spin, gPropNote.c_str(), gKeepCopies.load(), gKeepChecked);
     for (int i = 0; i < 12 && len < cap; ++i) {
         auto const& e = gPressLog[(gPressLogN + i) % 12];
         if (!e.empty()) len += std::snprintf(b + len, cap - len, "  press: %s\n", e.c_str());
