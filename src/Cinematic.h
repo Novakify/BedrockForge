@@ -84,6 +84,9 @@ void noteProjection(float tanHalf, float aspect, float fovYDeg);
 /// `uiFresh` = it holds this frame's screen. Returns false when nothing was drawn.
 bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* ui, bool uiFresh, unsigned w, unsigned h,
             D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv);
+/// Game's render thread, in its own list, just before the frame's first UI draw clears our UI target: the target still
+/// holds the whole previous frame's UI (state RENDER_TARGET) - kept for the scene, never a half-drawn one.
+void beforeUiClear(ID3D12GraphicsCommandList* list, ID3D12Resource* ui);
 /// ImGui frame: hint line etc.
 void drawOverlay();
 /// F6 section.

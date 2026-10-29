@@ -219,6 +219,7 @@ void onDraw(ID3D12GraphicsCommandList* list) {
         if (auto lt = gListRt0.find(list); lt != gListRt0.end() && gBbHandles.count(lt->second)) {
             D3D12_CPU_DESCRIPTOR_HANDLE h{rf::panel::targetRtv()};
             if (!gFrameRedirect.exchange(true)) {
+                rf::panel::beforeUiClear(list);
                 float const clear[4] = {0, 0, 0, 0};
                 list->ClearRenderTargetView(h, clear, 0, nullptr);
             }

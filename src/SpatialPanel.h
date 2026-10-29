@@ -26,6 +26,8 @@ bool   wantRedirect();
 size_t targetRtv();
 /// A UI draw was redirected this frame.
 void   noteRedirected();
+/// The frame's UI pass begins on `list` and is about to clear our UI target.
+void   beforeUiClear(ID3D12GraphicsCommandList* list);
 /// Hooks should keep tracking lists/PSOs even when no capture runs.
 bool   enabled();
 

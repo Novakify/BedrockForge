@@ -320,6 +320,9 @@ bool   enabled() { return gEnabled.load(std::memory_order_relaxed) || gAnim.load
 bool   wantRedirect() { return enabled() && gReady.load(std::memory_order_relaxed); }
 size_t targetRtv() { return gRtv.load(std::memory_order_relaxed); }
 void   noteRedirected() { gRedirected.store(true, std::memory_order_relaxed); }
+void   beforeUiClear(ID3D12GraphicsCommandList* list) {
+    if (gUi && cine::active()) cine::beforeUiClear(list, gUi.Get());
+}
 
 void installCursorHook();
 void installSourceHooks();
@@ -756,6 +759,24 @@ UINT WINAPI rawInputHook(HRAWINPUT h, UINT cmd, LPVOID data, PUINT size, UINT hd
     return r;
 }
 
+// The game moves the cursor itself on a click (to where it believes the pointer is: the hidden screen's point we gave
+// it), which would throw the real cursor to that corner; during a cinematic scene those moves are dropped.
+using SetCursorPos_t = BOOL(WINAPI*)(int, int);
+void* gScpOrig = nullptr;
+void* gSpcpOrig = nullptr;
+std::atomic<long> gScpBlocked{0}, gScpCalls{0};
+bool cineHoldsCursor() { return gCineScreen.load(std::memory_order_relaxed) && cine::wantsRedirect(); }
+BOOL WINAPI setCursorPosHook(int x, int y) {
+    ++gScpCalls;
+    if (cineHoldsCursor()) { ++gScpBlocked; return TRUE; }
+    return reinterpret_cast<SetCursorPos_t>(gScpOrig)(x, y);
+}
+BOOL WINAPI setPhysicalCursorPosHook(int x, int y) {
+    ++gScpCalls;
+    if (cineHoldsCursor()) { ++gScpBlocked; return TRUE; }
+    return reinterpret_cast<SetCursorPos_t>(gSpcpOrig)(x, y);
+}
+
 BOOL WINAPI clipCursorHook(const RECT* r) {
     if (gEnabled.load(std::memory_order_relaxed)) {
         ++gClipCalls;
@@ -781,6 +802,12 @@ void installCursorHook() {
     if (!gRawTarget && u) {
         void* rt = reinterpret_cast<void*>(GetProcAddress(u, "GetRawInputData"));
         if (rt && ll_shim::hook(rt, reinterpret_cast<void*>(&rawInputHook), &gRawOrig) == 0) gRawTarget = rt;
+    }
+    if (!gScpOrig && u) {
+        void* st = reinterpret_cast<void*>(GetProcAddress(u, "SetCursorPos"));
+        if (st) ll_shim::hook(st, reinterpret_cast<void*>(&setCursorPosHook), &gScpOrig);
+        void* sp = reinterpret_cast<void*>(GetProcAddress(u, "SetPhysicalCursorPos"));
+        if (sp) ll_shim::hook(sp, reinterpret_cast<void*>(&setPhysicalCursorPosHook), &gSpcpOrig);
     }
     if (!gClipTarget && u) {
         void* ct = reinterpret_cast<void*>(GetProcAddress(u, "ClipCursor"));
@@ -1039,7 +1066,12 @@ template <class T> void onMouse(T, bool) {}
 // misses because it samples GameInput state. While the key is held the game's mouse reading reports the right button.
 void debugUse(gi::GameInputMouseState* st) {
     int k = RfOptions::uiDebugUseKey.get();
-    if (st && k > 0 && k < 256 && (GetAsyncKeyState(k) & 0x8000)) st->buttons = st->buttons | gi::GameInputMouseRightButton;
+    if (!st || k <= 0 || k >= 256) return;
+    // held, and for 0.4 s after: in the world the game only reads the mouse when it moves
+    static ULONGLONG until = 0;
+    ULONGLONG        now   = GetTickCount64();
+    if (GetAsyncKeyState(k) & 0x8000) until = now + 400;
+    if (now < until) st->buttons = st->buttons | gi::GameInputMouseRightButton;
 }
 template <class T> void debugUse(T) {}
 
@@ -1157,12 +1189,13 @@ void writeDiag() {
              "Spatial GUI panel diag v0.13\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
              "GetRawInputData reads: %ld, mouse: %ld (last dx %ld dy %ld buttons 0x%x) hook %s\n"
+             "SetCursorPos calls %ld, dropped in scenes %ld\n"
              "ClipCursor calls: %ld (last rect %ld,%ld-%ld,%ld) hook %s\n"
              "last GetCursorPos in->out (oldest->newest):\n%s"
              "status: %s\n",
              gHookNote.c_str(), gGcpCalls.load(), gGcpInClient.load(), gGcpRemapped.load(), gWmSeen.load(), gWmRemapped.load(),
              gRawSeen.load(), gRawEaten.load(), gRawReads.load(), gRawMouseReads.load(), gRawDx.load(), gRawDy.load(),
-             gRawBtn.load(), gRawTarget ? "on" : "off", gClipCalls.load(), gLastClip.left, gLastClip.top, gLastClip.right,
+             gRawBtn.load(), gRawTarget ? "on" : "off", gScpCalls.load(), gScpBlocked.load(), gClipCalls.load(), gLastClip.left, gLastClip.top, gLastClip.right,
              gLastClip.bottom, gClipTarget ? "on" : "off",
              [] {
                  static char s[4][80];

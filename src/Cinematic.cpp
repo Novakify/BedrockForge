@@ -1020,7 +1020,7 @@ int currentTarget(float mx, float my) {
             gS.haveAim = true;
             gS.aim     = gS.st.fpoint(onTop, std::clamp(u, 0.08, 0.92), std::clamp(v, 0.05, 0.95), 0);
         };
-        V3     face = gS.st.center(), n = gS.st.sideV();
+        V3     n = gS.st.sideV(), face = gS.st.center() + n * 0.5; // the front face
         double dn   = d.dot(n);
         if (std::fabs(dn) > 1e-9) {
             double t = (face - o).dot(n) / dn;
@@ -1486,7 +1486,11 @@ void barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STA
     l->ResourceBarrier(1, &x);
 }
 
+std::mutex       gKeepM;          // gG.keep / snap (re)creation vs the game thread's copy
+std::atomic_bool gKeepFresh{false}; // the game thread copied a whole frame's UI into keep
+std::atomic<long> gKeepCopies{0};
 bool ensureKeep(ID3D12Device* dev, D3D12_RESOURCE_DESC const& ud) {
+    std::lock_guard kl(gKeepM);
     if (gG.keep && gG.kw == UINT(ud.Width) && gG.kh == ud.Height && gG.kfmt == ud.Format) return true;
     D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
     D3D12_RESOURCE_DESC   d{};
@@ -1967,6 +1971,27 @@ void requestReadback(ID3D12GraphicsCommandList* list, ID3D12Resource* ui) {
     barrier(list, ui, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     gG.rbFrame = gG.frameNo;
 }
+} // namespace
+void beforeUiClear(ID3D12GraphicsCommandList* list, ID3D12Resource* ui) {
+    if (!list || !ui) return;
+    {
+        std::lock_guard l(gM);
+        if (gS.phase != Phase::Intro && gS.phase != Phase::Active) return; // the closing shot keeps the last screen
+    }
+    std::lock_guard kl(gKeepM);
+    if (!gG.keep || gG.broken) return;
+    D3D12_RESOURCE_DESC d = ui->GetDesc();
+    if (gG.kw != UINT(d.Width) || gG.kh != d.Height || gG.kfmt != d.Format) return;
+    barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    barrier(list, ui, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    list->CopyResource(gG.keep.Get(), ui);
+    barrier(list, ui, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    gG.keepValid = true;
+    gKeepFresh   = true;
+    ++gKeepCopies;
+}
+namespace {
 void pollReadback() {
     if (gG.rbFrame < 0 || gG.frameNo - gG.rbFrame < 4) return; // 3 frames in flight: the copy has run by now
     gG.rbFrame = -1;
@@ -2708,14 +2733,19 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         barrier(list, gG.snap.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         gG.snapValid = true;
     }
-    // keep this frame's hidden screen
-    if (ui && uiFresh) {
+    // the hidden screen: the game thread keeps each whole frame of it (beforeUiClear); until it has, this frame's
+    bool fresh = gKeepFresh.exchange(false);
+    if (ui && uiFresh && !gG.keepValid) {
         barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
         barrier(list, ui, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
         list->CopyResource(gG.keep.Get(), ui);
         barrier(list, ui, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         gG.keepValid = true;
+        fresh        = true;
+    }
+    if (fresh && gG.keep) {
+        ui = gG.keep.Get(); // read the slots from the kept image (PIXEL_SHADER_RESOURCE, as `ui` was)
         pollReadback();
         ULONGLONG now = GetTickCount64();
         bool      haveLayout;
