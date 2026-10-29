@@ -1,10 +1,12 @@
 // Renderer Foundation - Spatial GUI third-person camera (see SpatialCamera.h). Original code for Renderer Foundation;
 // the camera math follows the Java mod Spatial GUI (tastytrash) CameraMixin with its default config.
 //
-// Bedrock side: every mce::Camera rebuilds its derived data in updateViewMatrixDependencies(). For the world camera
-// (perspective, within a few blocks of the player's eyes) we replace the view matrix with the Java pose and rebuild
-// again, so frustum/culling match. While a container screen is open the game is put in third person (so the player
-// model renders) and restored afterwards.
+// Bedrock side (v0.13b): the renderer takes the camera from the camera entity's MinecraftCamera::CameraComponent
+// (position + orientation quaternion), which LevelRendererCamera::preRenderUpdate turns into ViewRenderData /
+// mce::Camera. Right before preRenderUpdate we write the Java pose into that component. The quaternion convention is
+// learned from the game's own first-person camera (orientation = the player's yaw/pitch) while no screen is open.
+// The world camera's projection (FOV) is read in mce::Camera::updateViewMatrixDependencies. While a container screen
+// is open the game is put in third person (so the player model renders) and restored afterwards.
 #include "SpatialCamera.h"
 
 #include <algorithm>
@@ -15,10 +17,18 @@
 #include <cstring>
 #include <mutex>
 
+#include <glm/gtc/quaternion.hpp>
+#include <glm/mat3x3.hpp>
+
 #include "ll/api/memory/Hook.h"
 #include "ll/api/service/Bedrock.h"
 
 #include "mc/client/game/ClientInstance.h"
+#include "mc/client/renderer/game/LevelRendererCamera.h"
+#include "mc/deps/ecs/WeakEntityRef.h"
+#include "mc/deps/ecs/gamerefs_entity/EntityContext.h"
+#include "mc/deps/ecs/gamerefs_entity/StackResultStorageEntity.h"
+#include "mc/deps/minecraft_camera/components/CameraComponent.h"
 #include "mc/client/options/IOptionRegistry.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/deps/core/math/Matrix.h"
@@ -80,46 +90,96 @@ void noteSeen(void const* cam, glm::vec3 const& pos, float dist, float p11, bool
     if (gSeenN < 8) gSeen[gSeenN++] = {cam, {pos.x, pos.y, pos.z}, dist, p11, chosen};
 }
 
-// true = the view matrix was replaced (caller rebuilds the dependencies again)
-bool onCamera(mce::Camera& cam) {
+// mce::Camera: read the world camera's projection (FOV/aspect) for the panel. Never modifies the camera.
+void onCamera(mce::Camera& cam) {
     std::lock_guard l(gMutex);
     ++gCalls;
     glm::mat4 const& P = *cam.projectionMatrixStack->top()._m;
     bool persp = std::fabs(P[3][3]) < 1e-4f && std::fabs(P[2][3]) > 0.5f && P[1][1] > 0.05f;
-    if (!persp) return false;
+    if (!persp) return;
     ++gPersp;
     auto ci = ll::service::getClientInstance();
-    if (!ci) return false;
+    if (!ci) return;
     auto* lp = ci->getLocalPlayer();
-    if (!lp) return false;
+    if (!lp) return;
     Actor&    actor = *lp;
+    Vec3      feetV = actor.getFeetPos();
+    glm::vec3 eye(feetV.x, feetV.y + 1.62f, feetV.z);
+    glm::vec3 pos   = *cam.mPosition;
+    float     dist  = glm::length(pos - eye);
+    bool      world = dist < 8.0f;
+    noteSeen(&cam, pos, dist, P[1][1], world);
+    if (!world) return;
+    ++gChosen;
+    gView.valid   = true;
+    gView.tanHalf = 1.0f / P[1][1];
+    gView.aspect  = P[1][1] / P[0][0];
+    gView.fovYDeg = 2.0f * std::atan(gView.tanHalf) / kDeg;
+    if (!gActive.load()) {
+        gView.yawRel     = 0.0f;
+        gView.pitch      = actor.getRotation().x;
+        gView.overridden = false;
+    }
+}
+
+// quaternion convention: game camera rotation = O(yaw, pitch) * C (local->world) or its transpose (world->local)
+int       gConv = 0; // 0 unknown, 1 local->world, 2 world->local
+glm::mat3 gC(1.0f);
+long      gConvTries = 0, gCompWrites = 0, gCompMiss = 0;
+float     gLastM[9]{};
+
+bool signedPerm(glm::mat3 const& m) {
+    for (int r = 0; r < 3; ++r) {
+        int big = 0;
+        for (int c = 0; c < 3; ++c) {
+            float v = std::fabs(m[c][r]);
+            if (v > 0.97f) ++big;
+            else if (v > 0.06f) return false;
+        }
+        if (big != 1) return false;
+    }
+    return true;
+}
+
+void learnConvention(glm::quat const& q, float yawP, float pitchP) {
+    ++gConvTries;
+    glm::mat3 O0 = orient(yawP, pitchP);
+    glm::mat3 Rq = glm::mat3_cast(q);
+    glm::mat3 M1 = glm::transpose(O0) * Rq;
+    for (int i = 0; i < 9; ++i) gLastM[i] = M1[i / 3][i % 3];
+    if (signedPerm(M1)) { gConv = 1; gC = M1; return; }
+    glm::mat3 M2 = glm::transpose(O0) * glm::transpose(Rq);
+    if (signedPerm(M2)) { gConv = 2; gC = M2; return; }
+}
+
+// called right before LevelRendererCamera::preRenderUpdate (main/render-prep thread)
+void applyComponent() {
+    auto ci = ll::service::getClientInstance();
+    if (!ci) return;
+    auto* lp = ci->getLocalPlayer();
+    if (!lp) return;
+    Actor& actor = *lp;
+    auto   res   = ci->getCameraEntity().lock();
+    if (!res.has_value()) { ++gCompMiss; return; }
+    auto cc = res->tryGetComponent<MinecraftCamera::CameraComponent>();
+    if (!cc) { ++gCompMiss; return; }
+    std::lock_guard l(gMutex);
     Vec3      feetV = actor.getFeetPos();
     Vec2      rot   = actor.getRotation(); // x = pitch, y = yaw (degrees)
     glm::vec3 feet(feetV.x, feetV.y, feetV.z);
     glm::vec3 eye  = feet + glm::vec3(0.0f, 1.62f, 0.0f);
-    glm::vec3 pos  = *cam.mPosition;
-    float     dist = glm::length(pos - eye);
-    bool      world = dist < 8.0f;
-    noteSeen(&cam, pos, dist, P[1][1], world);
-    if (!world) return false;
-    ++gChosen;
+    glm::quat& q   = *cc->mOrientation;
+    glm::vec3& pos = *cc->mPosition;
     gLastFeet[0] = feet.x; gLastFeet[1] = feet.y; gLastFeet[2] = feet.z;
     gLastRot[0]  = rot.x;  gLastRot[1]  = rot.y;
-
-    View v;
-    v.valid   = true;
-    v.tanHalf = 1.0f / P[1][1];
-    v.aspect  = P[1][1] / P[0][0];
-    v.fovYDeg = 2.0f * std::atan(v.tanHalf) / kDeg;
-    v.yawRel  = 0.0f;
-    v.pitch   = rot.x;
-    if (!gActive.load()) {
-        gHaveStart = false;
-        gView      = v;
-        return false;
-    }
-
     float yawP = rot.y, pitchP = rot.x;
+    if (!gActive.load()) {
+        // first person: the camera looks exactly where the player looks -> learn the quaternion convention
+        if (glm::length(pos - eye) < 0.3f) learnConvention(q, yawP, pitchP);
+        gHaveStart = false;
+        return;
+    }
+    if (!gConv) return;
     if (!gHaveStart) {
         gHaveStart  = true;
         gStartPos   = eye; // Java: the camera position when the screen opened (first person eyes)
@@ -127,47 +187,39 @@ bool onCamera(mce::Camera& cam) {
         gStartPitch = pitchP;
     }
     // CameraUtil.calculateAutoFovDistance / calculateAutoFovSideOffset
-    float fm   = v.fovYDeg / kBaselineFov;
+    float fovY = gView.valid ? gView.fovYDeg : kBaselineFov;
+    float fm   = fovY / kBaselineFov;
     float inv  = 1.0f / fm - 1.0f;
     float d    = std::clamp(kCamDistance * (1.0f + inv * kDistMult), -4.0f, 4.0f);
     float side = std::clamp(kCamSide * (1.0f + inv * kSideMult), -4.0f, 4.0f);
     float h    = std::clamp(kCamHeight, -4.0f, 4.0f);
-    // parallax (third person): mouse position in [-1, 1]
-    float mx = 0.0f, my = 0.0f;
+    float mx = 0.0f, my = 0.0f; // parallax (third person): mouse position in [-1, 1]
     rf::panel::cursorNdc(mx, my);
     mx = std::clamp(mx, -1.0f, 1.0f);
     my = std::clamp(my, -1.0f, 1.0f);
-    float targetYaw   = yawP + mx * 90.0f * kParallaxYaw;
-    float targetPitch = kCamPitch + my * 180.0f * kParallaxPitch;
-    float r           = yawP * kDeg;
-    glm::vec3 target  = feet + glm::vec3(std::sin(r) * d + std::cos(r) * side, h, -std::cos(r) * d + std::sin(r) * side);
-    // applyCameraUpdate: eased glide from the start pose
-    float elapsed = std::chrono::duration<float, std::milli>(Clock::now() - gOpen).count();
-    float t       = std::min(1.0f, (elapsed + kTransitionSkip * kTransitionMs) / kTransitionMs);
-    float e       = easeInOutSine(t);
-    glm::vec3 camPos = t >= 1.0f ? target : gStartPos + (target - gStartPos) * e;
-    float camYaw     = t >= 1.0f ? targetYaw : gStartYaw + (targetYaw - gStartYaw) * e;
-    float camPitch   = t >= 1.0f ? targetPitch : gStartPitch + (targetPitch - gStartPitch) * e;
+    float     targetYaw   = yawP + mx * 90.0f * kParallaxYaw;
+    float     targetPitch = kCamPitch + my * 180.0f * kParallaxPitch;
+    float     r           = yawP * kDeg;
+    glm::vec3 target      = feet + glm::vec3(std::sin(r) * d + std::cos(r) * side, h, -std::cos(r) * d + std::sin(r) * side);
+    float     elapsed     = std::chrono::duration<float, std::milli>(Clock::now() - gOpen).count();
+    float     t           = std::min(1.0f, (elapsed + kTransitionSkip * kTransitionMs) / kTransitionMs);
+    float     e           = easeInOutSine(t);
+    glm::vec3 camPos      = t >= 1.0f ? target : gStartPos + (target - gStartPos) * e;
+    float     camYaw      = t >= 1.0f ? targetYaw : gStartYaw + (targetYaw - gStartYaw) * e;
+    float     camPitch    = t >= 1.0f ? targetPitch : gStartPitch + (targetPitch - gStartPitch) * e;
 
-    // new view matrix in the game's own convention: R' = R * O0 * O'^T (R = current rotation part, O0 its orientation)
-    glm::mat4& V  = *cam.viewMatrixStack->getTop()._m;
-    glm::mat3  R  = glm::mat3(V);
-    glm::mat3  O0 = orient(yawP, pitchP); // first person and third-person-back cameras look where the player looks
-    glm::mat3  R2 = R * O0 * glm::transpose(orient(camYaw, camPitch));
-    glm::vec3  t2 = -(R2 * camPos);
-    glm::mat4  V2(R2);
-    V2[3] = glm::vec4(t2, 1.0f);
-    V     = V2;
+    glm::mat3 R = orient(camYaw, camPitch) * gC;
+    if (gConv == 2) R = glm::transpose(R);
+    q   = glm::quat_cast(R);
+    pos = camPos;
+    ++gCompWrites;
     ++gOverrides;
     gLastCam[0] = camPos.x; gLastCam[1] = camPos.y; gLastCam[2] = camPos.z;
     gLastTarget[0] = target.x; gLastTarget[1] = target.y; gLastTarget[2] = target.z;
     gLastT = t;
-
-    v.yawRel     = camYaw - yawP;
-    v.pitch      = camPitch;
-    v.overridden = true;
-    gView        = v;
-    return true;
+    gView.yawRel     = camYaw - yawP;
+    gView.pitch      = camPitch;
+    gView.overridden = true;
 }
 } // namespace
 } // namespace rf::spatialcam
@@ -175,19 +227,28 @@ bool onCamera(mce::Camera& cam) {
 LL_TYPE_INSTANCE_HOOK(RfCameraUpdateHook, ll::memory::HookPriority::Normal, mce::Camera, &mce::Camera::updateViewMatrixDependencies,
                       void) {
     origin();
-    if (rf::spatialcam::onCamera(*this)) origin();
+    rf::spatialcam::onCamera(*this);
+}
+
+LL_TYPE_INSTANCE_HOOK(RfLevelCameraPreRenderHook, ll::memory::HookPriority::Normal, LevelRendererCamera,
+                      &LevelRendererCamera::$preRenderUpdate, void, ScreenContext& screenContext,
+                      LevelRenderPreRenderUpdateParameters& params) {
+    rf::spatialcam::applyComponent();
+    origin(screenContext, params);
 }
 
 namespace rf::spatialcam {
 void install() {
     if (gInstalled) return;
     RfCameraUpdateHook::hook();
+    RfLevelCameraPreRenderHook::hook();
     gInstalled = true;
-    std::snprintf(gNote, sizeof gNote, "mce::Camera::updateViewMatrixDependencies hooked");
+    std::snprintf(gNote, sizeof gNote, "camera hooks installed (CameraComponent before preRenderUpdate)");
 }
 void uninstall() {
     if (!gInstalled) return;
     RfCameraUpdateHook::unhook();
+    RfLevelCameraPreRenderHook::unhook();
     gInstalled = false;
 }
 
@@ -222,12 +283,14 @@ void appendDiag(char* b, unsigned long long cap) {
     std::lock_guard l(gMutex);
     size_t len = std::strlen(b);
     len += std::snprintf(b + len, cap - len,
-                         "camera (v0.13): %s; active %d; calls %ld, perspective %ld, world %ld, overrides %ld\n"
+                         "camera (v0.13b): %s; active %d; calls %ld, perspective %ld, world %ld, component writes %ld\n"
                          "  player feet %.2f,%.2f,%.2f rot pitch %.1f yaw %.1f; cam %.2f,%.2f,%.2f target %.2f,%.2f,%.2f t %.2f\n"
                          "  view: valid %d overridden %d fovY %.1f aspect %.3f yawRel %.1f pitch %.1f\n",
                          gNote, gActive.load() ? 1 : 0, gCalls, gPersp, gChosen, gOverrides, gLastFeet[0], gLastFeet[1], gLastFeet[2],
                          gLastRot[0], gLastRot[1], gLastCam[0], gLastCam[1], gLastCam[2], gLastTarget[0], gLastTarget[1],
                          gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch);
+    len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",
+                         gConv, gConvTries, gCompMiss, gLastM[0], gLastM[3], gLastM[6], gLastM[1], gLastM[4], gLastM[7], gLastM[2], gLastM[5], gLastM[8]);
     for (int i = 0; i < gSeenN && len < cap; ++i)
         len += std::snprintf(b + len, cap - len, "  cam %p pos %.2f,%.2f,%.2f dist-to-eye %.2f p11 %.3f %s\n", gSeen[i].cam, gSeen[i].pos[0],
                              gSeen[i].pos[1], gSeen[i].pos[2], gSeen[i].dist, gSeen[i].p11, gSeen[i].chosen ? "WORLD" : "");
