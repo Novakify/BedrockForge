@@ -16,6 +16,7 @@
 #include "Options.h"
 #include "Overlay.h"
 #include "PostFx.h"
+#include "LyricsPass.h"
 #include "SpatialPanel.h"
 #include "UiCapture.h"
 
@@ -145,6 +146,7 @@ void updateImGui() {
             rf::postfx::drawUi();
             rf::uicapture::drawUi();
             rf::panel::drawUi();
+            rf::lyrics::drawUi();
         }
         ImGui::End();
 

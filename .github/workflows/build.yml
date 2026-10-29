@@ -44,6 +44,23 @@ jobs:
           Copy-Item gameinput-pkg/native/include/GameInput.h deps/gameinput-v2/GameInput.h
           Select-String -Path deps/gameinput-v2/GameInput.h -Pattern 'GAMEINPUT_API_VERSION 2' | Select-Object -First 1
 
+      # LyricsFlow port: compile shaders/glyph.hlsl with the Windows SDK's dxc (signs via dxil.dll) -> src/GlyphShaders.h.
+      # Proves the shader compiles on every push; the header is uploaded so it can be committed for dxc-less PC builds.
+      - name: Compile glyph shader (dxc)
+        shell: pwsh
+        run: |
+          $dxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter dxc.exe -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $dxc) { Write-Output "::error::dxc.exe not found in the Windows SDK"; exit 1 }
+          Write-Output "dxc: $($dxc.FullName)"
+          python tools/gen_glyph.py "$($dxc.FullName)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlyphShaders-${{ github.sha }}
+          path: src/GlyphShaders.h
+
       - run: xmake repo -u
       - run: xmake f -a x64 -m release -p windows -v -y --target_type=client
       - name: Build

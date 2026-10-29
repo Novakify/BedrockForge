@@ -27,6 +27,7 @@
 
 #include "LLShim.h"
 #include "Options.h"
+#include "LyricsPass.h"
 #include "SpatialPanel.h"
 
 namespace rf::uicapture {
@@ -88,6 +89,14 @@ std::unordered_map<ID3D12GraphicsCommandList*, SIZE_T>       gListDsv;     // li
 std::unordered_set<ID3D12GraphicsCommandList*>               gListOnPanel; // lists currently bound to the panel target
 std::atomic_bool                                             gFrameRedirect{false}, gLearnOnly{false};
 bool tracking();
+// Who receives the redirected UI this frame: the Spatial GUI panel (M1) or, when it isn't up, the LyricsFlow
+// "under the HUD" pass (spike S2). Same mechanism, different target.
+bool   redirectWanted() { return rf::panel::wantRedirect() || rf::lyrics::wantRedirect(); }
+size_t redirectRtv() { return rf::panel::wantRedirect() ? rf::panel::targetRtv() : rf::lyrics::targetRtv(); }
+void   redirectNoted() {
+    if (rf::panel::wantRedirect()) rf::panel::noteRedirected();
+    else rf::lyrics::noteRedirected();
+}
 void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                D3D12_CPU_DESCRIPTOR_HANDLE const* ds);
 
@@ -215,9 +224,9 @@ void onDraw(ID3D12GraphicsCommandList* list) {
     auto u = gUiPso.find(p->second);
     if (u == gUiPso.end()) return;
     // M1 panel: first UI draw on a back buffer -> clear the panel target and bind it for the rest of the frame
-    if (rf::panel::wantRedirect() && !gListOnPanel.count(list))
+    if (redirectWanted() && !gListOnPanel.count(list))
         if (auto lt = gListRt0.find(list); lt != gListRt0.end() && gBbHandles.count(lt->second)) {
-            D3D12_CPU_DESCRIPTOR_HANDLE h{rf::panel::targetRtv()};
+            D3D12_CPU_DESCRIPTOR_HANDLE h{redirectRtv()};
             if (!gFrameRedirect.exchange(true)) {
                 float const clear[4] = {0, 0, 0, 0};
                 list->ClearRenderTargetView(h, clear, 0, nullptr);
@@ -227,7 +236,7 @@ void onDraw(ID3D12GraphicsCommandList* list) {
             callOmSet(list, 1, &h, FALSE, d.ptr ? &d : nullptr);
             gListOnPanel.insert(list);
         }
-    if (gListOnPanel.count(list)) rf::panel::noteRedirected();
+    if (gListOnPanel.count(list)) redirectNoted();
     if (gState.load(std::memory_order_relaxed) == Idle) return;
     if (gState.load(std::memory_order_relaxed) == Tracking) {
         ++gFrameUiDraws;
@@ -297,7 +306,7 @@ void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
 bool          gInstalled = false;
 
-bool tracking() { return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled(); }
+bool tracking() { return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled() || rf::lyrics::tracking(); }
 void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
     reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds);
@@ -381,9 +390,9 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
     std::lock_guard l(gMutex);
     gListDsv[list] = ds ? ds->ptr : 0;
     // M1: once the frame's UI pass started, binds of a back buffer go to the panel target instead
-    bool toPanel = n > 0 && rts && gFrameRedirect.load(std::memory_order_relaxed) && rf::panel::wantRedirect() && gBbHandles.count(rts[0].ptr);
+    bool toPanel = n > 0 && rts && gFrameRedirect.load(std::memory_order_relaxed) && redirectWanted() && gBbHandles.count(rts[0].ptr);
     if (toPanel) {
-        D3D12_CPU_DESCRIPTOR_HANDLE h{rf::panel::targetRtv()};
+        D3D12_CPU_DESCRIPTOR_HANDLE h{redirectRtv()};
         reinterpret_cast<OmSet_t>(gOrig[4])(list, 1, &h, FALSE, ds);
         gListOnPanel.insert(list);
     } else {

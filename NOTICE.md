@@ -25,3 +25,9 @@ you must also offer its complete source code under the same licence.
   hooks, D3D12 queue captured from `ExecuteCommandLists`, Win32 input instead of WinRT. Options live in the mod's
   config folder (`config/RendererFoundation.json`).
 - Removed bundled Detours / ImGui / GSL copies (xmake packages instead).
+
+## LyricsFlow (world-space lyrics) - personal-use port
+`src/LyricsPass.*`, `src/LyricsCamera.*`, `shaders/glyph.hlsl` draw the lyric text Bedrock Forge builds from its port of
+**LyricsFlow v2.0 by 374m** (MIT; modification permitted for Fernando's personal use only, not distributed). The RF
+code here is original; see Bedrock Forge `third_party/lyricsflow/NOTICE.md` for the full credit and licences.
+
