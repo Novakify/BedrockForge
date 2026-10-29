@@ -57,6 +57,7 @@ double inOutCubic(double t) { t = clamp01(t); return t < 0.5 ? 4 * t * t * t : 1
 double inOutSine(double t) { return -(std::cos(kPi * clamp01(t)) - 1) / 2; }
 double outCubic(double t) { t = clamp01(t); return 1 - std::pow(1 - t, 3); }
 double outBack(double t, double o) { t = clamp01(t); double c3 = o + 1; return 1 + c3 * std::pow(t - 1, 3) + o * std::pow(t - 1, 2); }
+double inCubic3(double t) { t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * t; }
 double hump(double t) { return std::sin(kPi * clamp01(t)); }
 double approach(double cur, double target, double rate, double dt) { return target + (cur - target) * std::exp(-rate * dt); }
 float  wrapDeg(float a) { a = std::fmod(a, 360.0f); if (a >= 180.0f) a -= 360.0f; if (a < -180.0f) a += 360.0f; return a; }
@@ -111,7 +112,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter; }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -156,7 +157,7 @@ struct Station {
     bool lit = false;             // a lit furnace (block name lit_*)
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
     V3 center() const {
-        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
+        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
     }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
@@ -206,7 +207,9 @@ struct Station {
             lookAngles(top + sideV() * -0.06 + V3{0, 0.12, 0} - eye, p.yaw, p.pitch);
             return p;
         }
-        constexpr double LEAN_BACK = 0.86, LEAN_UP = 0.72, LOOK_BACK = -0.04;
+        // TableStation.lean; SmithingStation.lean is the same with its own numbers (LEAN_BACK 0.7, LEAN_UP 0.62, look 0.04 beyond)
+        double LEAN_BACK = 0.86, LEAN_UP = 0.72, LOOK_BACK = -0.04;
+        if (kind == Kind::Smithing) { LEAN_BACK = 0.7; LEAN_UP = 0.62; LOOK_BACK = -0.04; }
         JPose p;
         p.pos   = top + sideV() * LEAN_BACK + V3{0, LEAN_UP, 0};
         p.pitch = float(std::atan2(LEAN_UP, LEAN_BACK - LOOK_BACK) / kDeg);
@@ -347,6 +350,10 @@ struct Scene {
     double scroll = 0, shapesAt = -10, fitAt = -10, cutLength = 1.05;
     bool   cutAll = false, btnBlock[kButtons] = {};
     float  btnRef[kButtons][3] = {}; // each button's own ground colour (keyed away like a slot's)
+    // SmithingStation
+    int    smithTarget = 0, smithHover = -1, smithPlace = -1, smithFx = 0;
+    bool   wasFull[4] = {}, wasBlock[4] = {};
+    float  molten[3] = {1, 0.5f, 0.16f};
     double grindPrevT = -1;
     bool   resultFull3() const { return cellFull[2]; } // the menu's result slot (anvil, grindstone, cartography: slot 2)
     std::string lastRoute = "-";
@@ -821,6 +828,8 @@ double sinceBlow(double t) {
     return since;
 }
 double grindKick(double t);
+double smithKick(double t);
+void   smithAction(int t, unsigned bit, bool shift);
 double stoneKick(double t);
 /// ClientStation.cameraKick: 0..1 how hard the camera is shaken right now
 double cameraKick() {
@@ -829,12 +838,14 @@ double cameraKick() {
     if (gS.st.kind == Kind::Anvil) return 0.5 * std::exp(-sinceBlow(t) * 13);
     if (gS.st.kind == Kind::Grindstone) return grindKick(t);
     if (gS.st.kind == Kind::Stonecutter) return stoneKick(t);
+    if (gS.st.kind == Kind::Smithing) return smithKick(t);
     return 0;
 }
 double stationFlash(float rgb[3]) {
     double t = moveTime();
     if (t < 0) return 0;
     if (gS.st.kind == Kind::Anvil) { rgb[0] = 1; rgb[1] = 0xE6 / 255.0f; rgb[2] = 0xB8 / 255.0f; return 0.11 * std::exp(-sinceBlow(t) * 16); }
+    if (gS.st.kind == Kind::Smithing) { rgb[0] = 1; rgb[1] = 0xE8 / 255.0f; rgb[2] = 0xC8 / 255.0f; return t < 1.35 ? 0 : 0.2 * std::exp(-(t - 1.35) * 7); }
     return 0;
 }
 
@@ -1045,6 +1056,85 @@ V3     stoneCatch() { return gS.st.top + gS.st.right() * 0.34 + gS.st.sideV() * 
 double stoneKick(double t) { return stoneCutting(t) ? 0.12 : 0; }
 
 void stoneAction(int t, unsigned bit, bool shift);
+// ---------------------------------------------------------------- SmithingStation (vanilla geometry)
+// Template, gear and material across the plate, the gear in front in the middle (r right, d towards the player)
+constexpr double SM_LAYOUT[3][2] = {{-0.26, -0.12}, {0.0, 0.06}, {0.27, -0.12}};
+constexpr double SM_SIZES[3] = {0.22, 0.34, 0.2};
+constexpr double SMITH_LENGTH = 2.6, TEMPLATE_DOWN = 0.38, MATERIAL_UP = 0.5, MATERIAL_DOWN = 0.76, SM_PRESS = 0.95, SM_PEAK = 1.35,
+                 SM_COOLED = 2.15, ON_GEAR = 0.025, ON_TEMPLATE = 0.041;
+enum SmithTarget { SmNone, SmPlace, SmItem };
+V3 smithPoint(int slot) { return gS.st.top + gS.st.right() * SM_LAYOUT[slot][0] + gS.st.sideV() * SM_LAYOUT[slot][1]; }
+double smithFuse(double t) { return smoother(window(t, SM_PRESS + 0.05, SM_PEAK - 0.03)); }
+V3 templatePos(double t) {
+    V3 from = smithPoint(0) + V3{0, 0.004, 0}, over = smithPoint(1) + V3{0, 0.14, 0}, on = smithPoint(1) + V3{0, ON_GEAR, 0};
+    V3 at = lerp(from, from + V3{0, 0.1, 0}, inOutCubic(window(t, 0.06, 0.24)));
+    at    = lerp(at, over, inOutCubic(window(t, 0.14, 0.3)));
+    at    = lerp(at, on, inCubic3(window(t, 0.28, TEMPLATE_DOWN)));
+    return at - V3{0, (ON_GEAR - 0.006) * smithFuse(t) + 0.004 * hump(window(t, SM_PRESS, SM_PRESS + 0.12)), 0};
+}
+V3 materialPos(double t) {
+    V3 from = smithPoint(2) + V3{0, 0.004, 0};
+    V3 over = smithPoint(1) + V3{0, 0.17, 0} + gS.st.right() * 0.012, on = smithPoint(1) + V3{0, ON_TEMPLATE, 0} + gS.st.right() * 0.012;
+    V3 at = lerp(from, from + V3{0, 0.1, 0}, inOutCubic(window(t, MATERIAL_UP - 0.04, MATERIAL_UP + 0.08)));
+    at    = lerp(at, over, inOutCubic(window(t, MATERIAL_UP + 0.02, MATERIAL_DOWN - 0.06)));
+    at    = lerp(at, on, inCubic3(window(t, MATERIAL_DOWN - 0.09, MATERIAL_DOWN)));
+    return at - V3{0, (ON_TEMPLATE - 0.008) * smithFuse(t) + 0.006 * hump(window(t, SM_PRESS, SM_PRESS + 0.12)), 0};
+}
+/// the turn of an item lying flat: from how it lay on the plate to square on the gear
+double smithTurn(double t, double laid, double stack, double from, double to) { return laid + (stack - laid) * inOutCubic(window(t, from, to)); }
+double smithHeat(double t) { return smoother(window(t, MATERIAL_DOWN, SM_PEAK)) * (1 - smoother(window(t, SM_PEAK, SM_COOLED))); }
+double smithKick(double t) {
+    return (t >= SM_PRESS ? 0.35 * std::exp(-(t - SM_PRESS) * 14) : 0) + (t >= SM_PEAK ? 0.3 * std::exp(-(t - SM_PEAK) * 9) : 0);
+}
+/// SmithingStation.updateCursor; 101+i an item lying there, 0..2 the spot the carried item goes to
+int smithCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
+    gS.smithTarget = SmNone;
+    gS.smithHover = gS.smithPlace = -1;
+    if (moving()) return -1;
+    if (!gS.carrying) {
+        for (int i = 0; i < 3; ++i)
+            if (gS.cellFull[i] && underCursor(b, mx, my, smithPoint(i), SM_SIZES[i] * 0.42)) {
+                gS.smithTarget = SmItem;
+                gS.smithHover  = i;
+                gS.haveAim     = true;
+                gS.aim         = smithPoint(i);
+                return 101 + i;
+            }
+        return -1;
+    }
+    V3 hit;
+    if (!onPlaneY(o, d, gS.st.top.y, hit)) return -1;
+    V3 rel = hit - gS.st.top;
+    if (std::fabs(rel.x) > 0.52 || std::fabs(rel.z) > 0.52) return -1;
+    int nearest = 0;
+    for (int i = 1; i < 3; ++i)
+        if ((hit - smithPoint(i)).len() < (hit - smithPoint(nearest)).len()) nearest = i;
+    gS.smithTarget = SmPlace;
+    gS.smithPlace  = nearest;
+    gS.haveAim     = true;
+    gS.aim         = smithPoint(nearest);
+    return nearest;
+}
+void smithAction(int t, unsigned bit, bool shift) {
+    if (t < 101 || t > 103) return;
+    int i = t - 101;
+    if (bit == 1 && gS.cellFull[3]) {
+        // SmithingStation.smith: the server smiths at white heat (PEAK)
+        gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = SMITH_LENGTH; gS.moveBeat = SM_PEAK; gS.moveBeatDone = false;
+        gS.moveToInv = shift;
+        for (int k = 0; k < 4; ++k) { gS.wasFull[k] = gS.cellFull[k]; gS.wasBlock[k] = gS.cellBlock[k]; }
+        // SmithingStation.moltenColor: a trim runs in its material's colour, the netherite upgrade like molten metal
+        float* c  = gS.iconRgb[2];
+        float  mx = std::max(c[0], std::max(c[1], c[2]));
+        if (mx > 0.4f) { gS.molten[0] = c[0] / mx; gS.molten[1] = c[1] / mx; gS.molten[2] = c[2] / mx; }
+        else { gS.molten[0] = 1; gS.molten[1] = 0.5f; gS.molten[2] = 0.16f; }
+        gS.smithFx = 0;
+        std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+        gSnapRequest = true;
+    } else inject(i, 1); // take it
+    gS.tapAt = gS.clock;
+}
+
 /// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
 void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Anvil && t == 100) {
@@ -1062,6 +1152,7 @@ void stationAction(int t, unsigned bit, bool shift) {
         gS.tapAt = gS.clock;
     }
     if (gS.st.kind == Kind::Stonecutter) { stoneAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Smithing) { smithAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -1108,6 +1199,9 @@ void moveFrame() {
         gS.moveBeatDone = true;
         if (gS.phase == Phase::Active && gS.st.kind == Kind::Stonecutter) {
             inject(1, 1); // the piece (the result can still be on its way from the server: no check)
+        } else if (gS.phase == Phase::Active && gS.st.kind == Kind::Smithing) {
+            if (gS.cellFull[3]) inject(3, 1);
+            else gS.moveOn = false;
         } else if (gS.phase == Phase::Active && (gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone)) {
             if (gS.resultFull3()) inject(2, 1);
             else gS.moveOn = false; // nothing to take any more: the move stops (cancelMove)
@@ -1150,6 +1244,11 @@ int currentTarget(float mx, float my) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
         return stoneCursor(b, mx, my, o, d);
+    }
+    if (gS.st.kind == Kind::Smithing) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return smithCursor(b, mx, my, o, d);
     }
     if (isFurnace(gS.st.kind)) {
         // FurnaceStation.updateCursor (vanilla geometry): the front face, and the top where a zone lies there
@@ -2506,6 +2605,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Smithing) // SmithingStation.rest
+        return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Stonecutter) // StonecutterStation.rest
         return gS.st.top + gS.st.sideV() * 0.36 + gS.st.right() * (right ? 0.26 : -0.38) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Grindstone) // GrindstoneStation.rest: on the frame, on top of the axle posts either side of the wheel
@@ -2629,6 +2730,38 @@ void stoneHands(V3& right, V3& left) {
     right      = lerp(waiting, end, inOutCubic(window(t, out, length)));
 }
 
+/// SmithingStation.handsOverride
+void smithHands(V3& r, V3& l) {
+    double t  = moveTime();
+    V3     rg = gS.st.right(), sv = gS.st.sideV();
+    r = restOf(true);
+    l = restOf(false);
+    // both hands carry the template over and lay it on the gear
+    double carry    = inOutCubic(window(t, 0, 0.12)) * (1 - inOutCubic(window(t, TEMPLATE_DOWN, TEMPLATE_DOWN + 0.1)));
+    V3     template_ = templatePos(std::max(t, 0.06));
+    r = lerp(r, template_ + rg * 0.09 + sv * 0.04 + V3{0, HAND_Y, 0}, carry);
+    l = lerp(l, template_ + rg * -0.09 + sv * 0.04 + V3{0, HAND_Y, 0}, carry);
+    // the right hand fetches the material and lays it on top, while the left keeps the template in place
+    double fetch = inOutCubic(window(t, TEMPLATE_DOWN + 0.02, MATERIAL_UP - 0.03)) * (1 - inOutCubic(window(t, MATERIAL_DOWN, MATERIAL_DOWN + 0.08)));
+    r = lerp(r, materialPos(t) + sv * ITEM_REACH + V3{0, HAND_Y, 0}, fetch);
+    double steady = inOutCubic(window(t, TEMPLATE_DOWN, TEMPLATE_DOWN + 0.12)) * (1 - inOutCubic(window(t, MATERIAL_DOWN, SM_PRESS - 0.05)));
+    l = lerp(l, smithPoint(1) + rg * -0.14 + sv * 0.05 + V3{0, HAND_Y + 0.012, 0}, steady);
+    // both hands press the stack together, then back away from the heat
+    double press = inOutCubic(window(t, MATERIAL_DOWN + 0.02, SM_PRESS - 0.03)) * (1 - inOutCubic(window(t, SM_PRESS + 0.16, SM_PRESS + 0.34)));
+    V3     stack = smithPoint(1) + sv * 0.03 + V3{0, HAND_Y + 0.05 - 0.03 * hump(window(t, SM_PRESS - 0.07, SM_PRESS + 0.15)), 0};
+    r = lerp(r, stack + rg * 0.07, press);
+    l = lerp(l, stack + rg * -0.07, press);
+    double away = hump(window(t, SM_PRESS + 0.25, SM_COOLED - 0.1));
+    r = r + sv * (0.06 * away) + V3{0, 0.04 * away, 0};
+    l = l + sv * (0.06 * away) + V3{0, 0.04 * away, 0};
+    if (t > SM_COOLED - 0.1) { // the right hand takes the new piece
+        V3     grab = smithPoint(1) + V3{0, HAND_Y + 0.02, 0} + sv * ITEM_REACH;
+        double take = inOutCubic(window(t, SM_COOLED - 0.1, SM_COOLED + 0.12));
+        V3     end  = restOf(true) + V3{0, gS.moveToInv ? 0 : 0.05, 0};
+        r = lerp(lerp(r, grab, take), end, inOutCubic(window(t, SM_COOLED + 0.12, SMITH_LENGTH)));
+    }
+}
+
 void updateHands(JPose const& cam, double dt) {
     V3    cp = cam.pos;
     float cy = cam.yaw;
@@ -2657,10 +2790,11 @@ void updateHands(JPose const& cam, double dt) {
         break;
     }
     case Phase::Active: {
-        if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter) && moving()) { // handsOverride, springs at 55
+        if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter || gS.st.kind == Kind::Smithing) && moving()) { // handsOverride, springs at 55
             V3 r, l;
             if (gS.st.kind == Kind::Anvil) anvilHands(cam, r, l);
             else if (gS.st.kind == Kind::Stonecutter) stoneHands(r, l);
+            else if (gS.st.kind == Kind::Smithing) smithHands(r, l);
             else grindHands(cam, r, l);
             gRight.update(r, 55, dt);
             gLeft.update(l, 55, dt);
@@ -2851,6 +2985,13 @@ void motes(V3 at, double radius, int count, float r, float g, float b, double ri
     for (int i = 0; i < count; ++i)
         spark(at + V3{spread(radius), spread(radius * 0.3), spread(radius)}, V3{spread(0.04), rise * (0.6 + rnd() * 0.6), spread(0.04)},
               0.6 + rnd() * 0.6, float(0.008 + rnd() * 0.01), r, g, b, 0, 0);
+}
+void steam(V3 at, double radius, int count) { // Fx.steam: faint grey wisps of light rising and spreading
+    for (int i = 0; i < count; ++i) {
+        float k = float(0.16 + rnd() * 0.1);
+        spark(at + V3{spread(radius), 0, spread(radius)}, V3{spread(0.06), 0.18 + rnd() * 0.16, spread(0.06)}, 0.9 + rnd() * 0.6,
+              float(0.028 + rnd() * 0.025), k, k, k * 1.05f, -0.05, 0);
+    }
 }
 /// EnchantFx.billboard: a soft glow facing the camera (added light)
 void glowBillboard(JPose const& cam, Basis const& b, V3 at, double radius, float r, float g, float bl) {
@@ -3301,6 +3442,98 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 gKeyOv = nullptr;
             }
         }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Smithing) {
+            // SmithingStation.frame / renderScene / renderWorld
+            V3     rgt = gS.st.right(), out = gS.st.sideV();
+            double t   = moveTime();
+            auto laid = [&](IconSrc const& is, bool block, int slot, double scale, float opacity) { // drawLaid
+                double size = (block ? 0.13 : SM_SIZES[slot]) * scale;
+                double yaw  = slot == 0 ? -12 : slot == 2 ? 18 : 0;
+                orientedItem(cam, b, L, is, block, smithPoint(slot) + V3{0, block ? size / 2 : 0.004, 0}, rgt, out, size, 0, opacity, yaw);
+            };
+            if (t < 0) {
+                for (int i = 0; i < 3; ++i)
+                    if (gS.cellFull[i]) laid(src(L.grid[i], i), gS.cellBlock[i], i, i == gS.smithHover ? 1.06 : 1.0, tableAlpha);
+                if (gS.phase == Phase::Active && gS.smithTarget == SmPlace) {
+                    // where things go: the spot the carried item would take glows, the other empty ones show faintly
+                    for (int i = 0; i < 3; ++i) {
+                        bool dest = i == gS.smithPlace;
+                        if (!dest && gS.cellFull[i]) continue;
+                        float p = dest ? float(0.2 + 0.07 * std::sin(clock * 5)) : 0.05f;
+                        glowDisc(cam, b, smithPoint(i) + V3{0, 0.003, 0}, SM_SIZES[i] * 0.55, p, p * 0.8f, p * 0.6f);
+                    }
+                }
+            } else {
+                // frame: the sparks, motes and steam of the moment
+                V3 gear = smithPoint(1);
+                float* m = gS.molten;
+                if (gS.smithFx < 1 && t >= SM_PRESS) { gS.smithFx = 1; motes(gear + V3{0, 0.05, 0}, 0.08, 10, 0.6f, 0.85f, 1.0f, 0.1); }
+                if (t >= SM_PRESS && t < SM_PEAK && handsDt > 0) {
+                    int drops = int(std::lround(handsDt * 40 + rnd())); // molten metal trickles down the stack's sides
+                    for (int i = 0; i < drops; ++i) {
+                        double a = rnd() * 6.283185307179586;
+                        float  k = float(0.9 + 0.1 * rnd());
+                        spark(gear + V3{std::cos(a) * 0.1, 0.04, std::sin(a) * 0.1}, V3{std::cos(a) * 0.25, 0.1, std::sin(a) * 0.25}, 0.18 + rnd() * 0.08, 0.009f,
+                              m[0] * k, m[1] * k, m[2] * k, 2.4, 0.04);
+                    }
+                    if (rnd() < handsDt * 24) motes(gear + V3{0, 0.05, 0}, 0.08, 1, 1.0f, 0.55f, 0.2f, 0.25); // embers
+                } else if (t >= MATERIAL_DOWN && t < SM_PRESS && rnd() < handsDt * 14)
+                    motes(gear + V3{0, 0.05, 0}, 0.07, 1, m[0], m[1] * 0.7f, m[2] * 0.4f, 0.15);
+                if (gS.smithFx < 2 && t >= SM_PEAK) {
+                    gS.smithFx = 2;
+                    motes(gear + V3{0, 0.04, 0}, 0.1, 18, m[0], m[1], m[2], 0.25);
+                    blowSparks(gear + V3{0, 0.03, 0}, 10, 1.4);
+                }
+                if (t >= SM_PEAK + 0.05 && t < SM_COOLED - 0.2 && handsDt > 0) // quenching: steam off the hot metal
+                    steam(gear + V3{0, 0.03, 0}, 0.07, int(std::lround(handsDt * 70 * (1 - window(t, SM_PEAK, SM_COOLED - 0.2)) + rnd())));
+                // what stays behind of the template and material stacks once one of each is used
+                if (t >= SM_PEAK)
+                    for (int i : {0, 2})
+                        if (gS.cellFull[i]) laid(src(L.grid[i], i), gS.cellBlock[i], i, 1.0, 1);
+                IconSrc sn[4];
+                for (int i = 0; i < 4; ++i) {
+                    sn[i] = src(L.grid[i], -1);
+                    std::memcpy(sn[i].box, gS.snapBox[i], sizeof sn[i].box);
+                    sn[i].snap = gG.snapValid;
+                }
+                // the gear, then the new piece, white-hot at first
+                V3 at;
+                if (t < SM_PEAK) at = smithPoint(1) + V3{0, 0.004, 0};
+                else if (gS.moveToInv) at = lerp(smithPoint(1), cam.pos + V3{0, 0.55, 0} + yawForward(cam.yaw) * 0.6, inCubic(window(t, SM_COOLED + 0.05, SMITH_LENGTH))) + V3{0, 0.004, 0};
+                else at = lerp(smithPoint(1), heldItemPoint(gRight.x, shoulderOf(true, cam.pos, cam.yaw)), inOutCubic(window(t, SM_COOLED + 0.12, SMITH_LENGTH))) + V3{0, 0.004, 0};
+                double size = t < SM_COOLED || gS.moveToInv ? SM_SIZES[1] : SM_SIZES[1] + (0.205 - SM_SIZES[1]) * window(t, SM_COOLED + 0.1, SMITH_LENGTH);
+                if (gS.moveToInv) size *= 1 - 0.85 * inCubic(window(t, SM_COOLED + 0.05, SMITH_LENGTH));
+                float tilt = float(25 * window(t, SM_COOLED, SMITH_LENGTH));
+                bool  gearIsNew = t >= SM_PEAK;
+                orientedItem(cam, b, L, gearIsNew ? sn[3] : sn[1], gearIsNew ? gS.wasBlock[3] : gS.wasBlock[1], at, rgt, out, size, tilt, 1, 0);
+                // the template on it and the material on top, sinking into it as they are pressed together
+                double left = 1 - smithFuse(t);
+                if (left > 0.02 && t < SM_PEAK) {
+                    if (gS.wasFull[0])
+                        orientedItem(cam, b, L, sn[0], gS.wasBlock[0], templatePos(t), rgt, out, SM_SIZES[0] * (0.55 + 0.45 * left), 0, 1,
+                                     smithTurn(t, -12, 0, 0.14, TEMPLATE_DOWN));
+                    if (gS.wasFull[2])
+                        orientedItem(cam, b, L, sn[2], gS.wasBlock[2], materialPos(t), rgt, out, SM_SIZES[2] * (0.5 + 0.5 * left), 0, 1,
+                                     smithTurn(t, 18, 8, MATERIAL_UP, MATERIAL_DOWN));
+                    float glow = float(smoother(window(t, MATERIAL_DOWN - 0.1, SM_PRESS)) * left);
+                    if (glow > 0.01) { // the material on top glows in its molten colour as it is pressed in
+                        float k = glow * float(0.85 + 0.15 * std::sin(clock * 13));
+                        glowBillboard(cam, b, materialPos(t) + V3{0, 0.02, 0}, 0.12, m[0] * k, m[1] * 0.75f * k, m[2] * 0.55f * k);
+                    }
+                }
+                double heat = smithHeat(t);
+                if (heat > 0.01) { // red, then orange, then white heat round the stack, cooling back after the quench
+                    float h = float(heat), white = float(smoother(window(t, SM_PRESS, SM_PEAK))), fl = float(0.92 + 0.08 * std::sin(clock * 17));
+                    float r = h * fl, g = (0.3f + 0.6f * white) * h * fl, bl = (0.08f + 0.6f * white * white) * h * fl;
+                    glowBillboard(cam, b, smithPoint(1) + V3{0, 0.05, 0}, 0.17 + 0.08 * h, r, g, bl);
+                    glowDisc(cam, b, smithPoint(1) + V3{0, 0.003, 0}, 0.2, r * 0.7f, g * 0.7f, bl * 0.7f);
+                }
+                if (t >= SM_PRESS - 0.02 && t < SM_PRESS + 0.4) { // the press lights up the plate under the stack
+                    float k = float(std::exp(-(t - SM_PRESS) * 7) * 0.6);
+                    glowDisc(cam, b, smithPoint(1) + V3{0, 0.004, 0}, 0.2, 0.6f * k, 0.85f * k, k);
+                }
+            }
+        }
         if (haveCam) drawSparks(cam, b, clock, handsDt);
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
             V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
@@ -3501,6 +3734,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them \xE2\x80\x94 forge" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
+    case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear \xE2\x80\x94 smith" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade \xE2\x80\x94 cut one" + dot + "Shift \xE2\x80\x94 cut the stack" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Grindstone: return std::string("Lay the item on the wheel") + dot + "LMB on it \xE2\x80\x94 grind (enchantments come off)" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
     default: return "Esc step back";
@@ -3533,6 +3767,18 @@ void drawOverlay() {
                 tipLine  = "LMB \xE2\x80\x94 grind  \xC2\xB7  RMB \xE2\x80\x94 take  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
             } else {
                 tipTitle = "Click \xE2\x80\x94 take";
+            }
+        }
+        if (gS.st.kind == Kind::Smithing && !moving()) { // SmithingStation.tooltip (without the item's own lines)
+            char const* names[3] = {"Smithing template", "Gear: armour, a weapon or a tool", "Material: an ingot or a mineral"};
+            char const* missing[3] = {"A template is missing", "The gear is missing", "A material is missing"};
+            if (gS.smithTarget == SmPlace && gS.smithPlace >= 0) tipTitle = names[gS.smithPlace];
+            else if (gS.smithTarget == SmItem) {
+                if (gS.cellFull[3]) { tipTitle = "LMB \xE2\x80\x94 smith  \xC2\xB7  RMB \xE2\x80\x94 take  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory"; }
+                else {
+                    tipTitle = "Click \xE2\x80\x94 take";
+                    for (int i = 0; i < 3; ++i) if (!gS.cellFull[i]) { tipLine = missing[i]; break; }
+                }
             }
         }
         if (gS.st.kind == Kind::Stonecutter && !moving()) { // StonecutterStation.tooltip (without the item's own lines)
