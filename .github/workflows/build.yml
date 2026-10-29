@@ -32,6 +32,18 @@ jobs:
         with:
           llvm-version: 22
 
+      # GameInput API v2 header (the game uses GameInput v2); Microsoft.GameInput 2.2.26100.6114 from nuget.org,
+      # not vendored in the repo. deps/ is git-ignored.
+      - name: Fetch GameInput v2 header
+        shell: pwsh
+        run: |
+          $u = "https://api.nuget.org/v3-flatcontainer/microsoft.gameinput/2.2.26100.6114/microsoft.gameinput.2.2.26100.6114.nupkg"
+          Invoke-WebRequest -Uri $u -OutFile gameinput.zip
+          Expand-Archive gameinput.zip -DestinationPath gameinput-pkg -Force
+          New-Item -ItemType Directory -Force deps/gameinput-v2 | Out-Null
+          Copy-Item gameinput-pkg/native/include/GameInput.h deps/gameinput-v2/GameInput.h
+          Select-String -Path deps/gameinput-v2/GameInput.h -Pattern 'GAMEINPUT_API_VERSION 2' | Select-Object -First 1
+
       - run: xmake repo -u
       - run: xmake f -a x64 -m release -p windows -v -y --target_type=client
       - name: Build

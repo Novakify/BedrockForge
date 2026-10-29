@@ -555,3 +555,4 @@ fabric.properties
 **/build/*RP/
 **/build/*BP/
 *.mcaddon
+deps/

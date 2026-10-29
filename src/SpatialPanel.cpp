@@ -19,8 +19,9 @@
 
 #include <imgui.h>
 
-#if __has_include(<GameInput.h>)
-#include <GameInput.h>
+// GameInput API v2 header: fetched from the Microsoft.GameInput NuGet package by CI into deps/ (not vendored)
+#if __has_include("gameinput-v2/GameInput.h")
+#include "gameinput-v2/GameInput.h"
 #define RF_HAVE_GAMEINPUT 1
 #else
 #define RF_HAVE_GAMEINPUT 0
@@ -535,8 +536,10 @@ BOOL WINAPI getPhysicalCursorPosHook(LPPOINT p) {
     BOOL r = reinterpret_cast<GetPhysicalCursorPos_t>(gPhysOrig)(p);
     if (r && p && gEnabled.load(std::memory_order_relaxed)) {
         ++gStPhys.calls;
-        if (fromGame(__builtin_return_address(0))) ++gStPhys.game;
-        if (remapScreen(*p)) ++gStPhys.remapped;
+        if (fromGame(__builtin_return_address(0))) {
+            ++gStPhys.game;
+            if (remapScreen(*p)) ++gStPhys.remapped;
+        }
     }
     return r;
 }
@@ -623,13 +626,19 @@ void installSourceHooks() {
     hookExport(u, "GetMessageW", reinterpret_cast<void*>(&getMessageWHook), &gGetMsgOrig);
 }
 
-// ---------------------------------------------------------------- GameInput (v0 header)
-std::string gGiNote = "not installed";
-void*       gGicOrig   = nullptr;
-std::atomic<long> gGicCalls{0};
-void*       gGameInput = nullptr; // the game's IGameInput
+// ---------------------------------------------------------------- GameInput v2 (v0.11)
+// The game talks to GameInput API v2 (its binary carries the v2 IGameInput IID). Microsoft's loader picks
+// System32\GameInput.dll or GameInputRedist.dll (System32, or RedistDir from HKLM\SOFTWARE\Microsoft\GameInput),
+// whichever is newer, and calls GameInputInitialize(IID_IGameInput). JSON UI screens (inventory, chest, crafting)
+// take the menu cursor from the mouse reading's absolutePositionX/Y.
+// We create our own v2 IGameInput from every candidate module at panel toggle: COM vtables are per class, so detouring
+// IGameInputReading::GetMouseState through our own reading also catches the game's readings. The absolute position is
+// then ray-picked through the panel like the WM_* coordinates.
+std::string gGiNote = "not tried yet";
 
 #if RF_HAVE_GAMEINPUT
+namespace gi = GameInput::v2;
+
 // vtable slot of a virtual method, read from the header: call the method on a fake object whose vtable records
 // which slot was used.
 int gVtIdx = -1;
@@ -650,189 +659,184 @@ template <class C, class R, bool NE, class... A> struct MemFn<R (C::*)(A...) noe
         return gVtIdx;
     }
 };
-template <class C, class R, bool NE, class... A> struct MemFn<R (C::*)(A...) const noexcept(NE)> {
-    static int index(R (C::*m)(A...) const noexcept(NE)) {
-        struct Fake { void* const* vt; } f{slotTable()};
-        gVtIdx = -1;
-        (reinterpret_cast<const C*>(&f)->*m)(A{}...);
-        return gVtIdx;
-    }
-};
 template <class M> int vindex(M m) { return MemFn<M>::index(m); }
 
-int  gIdxCur = -1, gIdxNext = -1, gIdxPrev = -1, gIdxReg = -1, gIdxMouse = -1;
-bool gMouseHooked = false;
-std::string gMouseNote = "no reading seen yet";
+// mouse readings seen while the panel is on
+std::atomic<long> gMsCalls{0}, gMsGame{0}, gMsAbs{0}, gMsRemapped{0}, gMsMismatch{0};
+int       gMsSpace = 0; // absolute position space: 0 unknown, 1 screen, 2 client
+long      gMatchScreen = 0, gMatchClient = 0;
+unsigned  gMsButtons = 0, gMsPositions = 0;
+long long gMsAbsX = 0, gMsAbsY = 0, gMsOutX = 0, gMsOutY = 0, gMsRelX = 0, gMsRelY = 0;
+POINT     gMsCursor{}, gMsClient{};
 
-// mouse state seen by the game
-std::atomic<long> gMsCalls{0}, gMsGame{0}, gMsRemapped{0};
-long long gMsPosX = 0, gMsPosY = 0, gMsWheel = 0;
-unsigned  gMsButtons = 0;
-POINT     gMsCursor{}; // real cursor at the same moment
-bool      gMsHasAbs = false;
-double    gMsAbsX = 0, gMsAbsY = 0;
+POINT realCursor() {
+    POINT p{};
+    if (gGcpOrig) reinterpret_cast<GetCursorPos_t>(gGcpOrig)(&p);
+    else GetCursorPos(&p);
+    return p;
+}
 
-template <class S> void recordMouse(S* st) {
+bool remapAbs(int64_t& ax, int64_t& ay) {
+    HWND h = gHwnd.load(std::memory_order_relaxed);
+    if (!h) return false;
+    if (gMsSpace == 0) {
+        // learn which space absolutePosition is in by comparing it with the real cursor
+        POINT cur = realCursor(), cl = cur;
+        ScreenToClient(h, &cl);
+        gMsCursor = cur;
+        gMsClient = cl;
+        bool same = cur.x == cl.x && cur.y == cl.y;
+        if (std::llabs(ax - cl.x) <= 2 && std::llabs(ay - cl.y) <= 2) ++gMatchClient;
+        else if (!same && std::llabs(ax - cur.x) <= 2 && std::llabs(ay - cur.y) <= 2) ++gMatchScreen;
+        else ++gMsMismatch;
+        if (gMatchClient >= 3) gMsSpace = 2;
+        else if (gMatchScreen >= 3) gMsSpace = 1;
+        if (gMsSpace == 0) return false;
+    }
+    if (gMsSpace == 2) {
+        RECT rc;
+        if (!GetClientRect(h, &rc) || ax < 0 || ay < 0 || ax >= rc.right || ay >= rc.bottom) return false;
+        int x = int(ax), y = int(ay);
+        if (!remapClient(h, x, y)) return false;
+        ax = x;
+        ay = y;
+        return true;
+    }
+    POINT p{LONG(ax), LONG(ay)};
+    if (!remapScreen(p)) return false;
+    ax = p.x;
+    ay = p.y;
+    return true;
+}
+
+void onMouse(gi::GameInputMouseState* st, bool game) {
     if (!st) return;
-    if constexpr (requires { st->buttons; }) gMsButtons = unsigned(st->buttons);
-    if constexpr (requires { st->positionX; }) { gMsPosX = (long long)st->positionX; gMsPosY = (long long)st->positionY; }
-    if constexpr (requires { st->wheelY; }) gMsWheel = (long long)st->wheelY;
-    if constexpr (requires { st->absolutePositionX; }) {
-        gMsHasAbs = true;
-        gMsAbsX   = double(st->absolutePositionX);
-        gMsAbsY   = double(st->absolutePositionY);
+    ++gMsCalls;
+    if (game) ++gMsGame;
+    gMsButtons   = unsigned(st->buttons);
+    gMsPositions = unsigned(st->positions);
+    gMsRelX      = st->positionX;
+    gMsRelY      = st->positionY;
+    gMsAbsX      = st->absolutePositionX;
+    gMsAbsY      = st->absolutePositionY;
+    if (gMsPositions & unsigned(gi::GameInputMouseAbsolutePosition)) {
+        ++gMsAbs;
+        if (gS.remap && remapAbs(st->absolutePositionX, st->absolutePositionY)) ++gMsRemapped;
     }
-    if (gGcpOrig) reinterpret_cast<GetCursorPos_t>(gGcpOrig)(&gMsCursor);
-    else GetCursorPos(&gMsCursor);
+    gMsOutX = st->absolutePositionX;
+    gMsOutY = st->absolutePositionY;
 }
+template <class T> void onMouse(T, bool) {}
 
-template <class M> struct MouseHook;
-template <class C, class R, bool NE, class... A> struct MouseHook<R (C::*)(A...) noexcept(NE)> {
+template <int Id, class M> struct MouseHook;
+template <int Id, class C, class R, bool NE, class... A> struct MouseHook<Id, R (C::*)(A...) noexcept(NE)> {
     static inline void* orig = nullptr;
     static R STDMETHODCALLTYPE fn(C* self, A... a) {
         R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
-        if (gEnabled.load(std::memory_order_relaxed)) {
-            ++gMsCalls;
-            if (fromGame(__builtin_return_address(0))) ++gMsGame;
-            (recordMouse(a), ...);
+        if (r && gEnabled.load(std::memory_order_relaxed)) {
+            bool game = fromGame(__builtin_return_address(0));
+            (onMouse(a, game), ...);
         }
         return r;
     }
 };
-template <class C, class R, bool NE, class... A> struct MouseHook<R (C::*)(A...) const noexcept(NE)> {
-    static inline void* orig = nullptr;
-    static R STDMETHODCALLTYPE fn(const C* self, A... a) {
-        R r = reinterpret_cast<R (*)(const C*, A...)>(orig)(self, a...);
-        if (gEnabled.load(std::memory_order_relaxed)) {
-            ++gMsCalls;
-            if (fromGame(__builtin_return_address(0))) ++gMsGame;
-            (recordMouse(a), ...);
-        }
-        return r;
+using MouseM = decltype(&gi::IGameInputReading::GetMouseState);
+
+struct GiMod {
+    const char*       label;
+    std::wstring      path;
+    HMODULE           mod   = nullptr;
+    gi::IGameInput*   input = nullptr;
+    bool              hooked = false;
+    std::string       note  = "not tried";
+};
+GiMod gGiMods[3] = {{"System32 GameInput.dll"}, {"System32 GameInputRedist.dll"}, {"RedistDir GameInputRedist.dll"}};
+bool  gGiPathsDone = false;
+
+void giPaths() {
+    if (gGiPathsDone) return;
+    gGiPathsDone = true;
+    wchar_t sys[MAX_PATH]{};
+    UINT    n = GetSystemDirectoryW(sys, MAX_PATH);
+    if (n && n < MAX_PATH) {
+        gGiMods[0].path = std::wstring(sys) + L"\\GameInput.dll";
+        gGiMods[1].path = std::wstring(sys) + L"\\GameInputRedist.dll";
     }
-};
-using MouseM = decltype(&IGameInputReading::GetMouseState);
-
-void noteReading(IGameInputReading* rd) {
-    if (gMouseHooked || !rd) return;
-    gMouseHooked = true;
-    gIdxMouse    = vindex(&IGameInputReading::GetMouseState);
-    void** vt    = *reinterpret_cast<void***>(rd);
-    if (gIdxMouse < 0) { gMouseNote = "GetMouseState slot not found"; return; }
-    if (ll_shim::hook(vt[gIdxMouse], reinterpret_cast<void*>(&MouseHook<MouseM>::fn), &MouseHook<MouseM>::orig) == 0)
-        gMouseNote = "GetMouseState hooked (slot " + std::to_string(gIdxMouse) + ")";
-    else gMouseNote = "GetMouseState hook failed";
-}
-
-// counters per IGameInput method, keyed by Id
-struct GiStat {
-    std::atomic<long> calls{0}, game{0}, ok{0};
-    std::atomic<uint32_t> kinds{0}; // OR of the kinds asked for
-};
-GiStat gGiStat[4];
-const char* gGiName[4] = {"GetCurrentReading", "GetNextReading", "GetPreviousReading", "RegisterReadingCallback"};
-
-inline void scanArg(uint32_t& kind, IGameInputReading**&, GameInputKind k) { kind |= uint32_t(k); }
-inline void scanArg(uint32_t&, IGameInputReading**& out, IGameInputReading** r) { out = r; }
-template <class T> void scanArg(uint32_t&, IGameInputReading**&, T) {}
-
-template <int Id, class M> struct GiHook;
-template <int Id, class C, class R, bool NE, class... A> struct GiHook<Id, R (C::*)(A...) noexcept(NE)> {
-    static inline void* orig = nullptr;
-    static R STDMETHODCALLTYPE fn(C* self, A... a) {
-        R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
-        auto& st = gGiStat[Id];
-        ++st.calls;
-        if (fromGame(__builtin_return_address(0))) ++st.game;
-        uint32_t kind = 0;
-        IGameInputReading** out = nullptr;
-        (scanArg(kind, out, a), ...);
-        st.kinds.fetch_or(kind);
-        bool ok;
-        if constexpr (std::is_same_v<R, bool>) ok = r;
-        else ok = SUCCEEDED(r);
-        if (ok) ++st.ok;
-        if (ok && out && *out) noteReading(*out);
-        return r;
+    wchar_t dir[MAX_PATH]{};
+    DWORD   sz = sizeof dir;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\GameInput", L"RedistDir", RRF_RT_REG_SZ, nullptr, dir, &sz) == ERROR_SUCCESS) {
+        std::wstring d = dir;
+        if (!d.empty() && d.back() != L'\\') d += L'\\';
+        gGiMods[2].path = d + L"GameInputRedist.dll";
     }
-};
-using CurM  = decltype(&IGameInput::GetCurrentReading);
-using NextM = decltype(&IGameInput::GetNextReading);
-using PrevM = decltype(&IGameInput::GetPreviousReading);
-using RegM  = decltype(&IGameInput::RegisterReadingCallback);
-
-template <int Id, class M> void hookSlot(void** vt, int idx) {
-    if (idx < 0) return;
-    if (ll_shim::hook(vt[idx], reinterpret_cast<void*>(&GiHook<Id, M>::fn), &GiHook<Id, M>::orig) != 0) GiHook<Id, M>::orig = nullptr;
 }
 
-void hookGameInput(IGameInput* gi) {
-    initGameMod();
-    gIdxCur  = vindex(&IGameInput::GetCurrentReading);
-    gIdxNext = vindex(&IGameInput::GetNextReading);
-    gIdxPrev = vindex(&IGameInput::GetPreviousReading);
-    gIdxReg  = vindex(&IGameInput::RegisterReadingCallback);
-    void** vt = *reinterpret_cast<void***>(gi);
-    hookSlot<0, CurM>(vt, gIdxCur);
-    hookSlot<1, NextM>(vt, gIdxNext);
-    hookSlot<2, PrevM>(vt, gIdxPrev);
-    hookSlot<3, RegM>(vt, gIdxReg);
-    gGiNote = "game IGameInput hooked (slots cur " + std::to_string(gIdxCur) + " next " + std::to_string(gIdxNext) + " prev " +
-              std::to_string(gIdxPrev) + " reg " + std::to_string(gIdxReg) + ")";
+template <int Id> bool hookMouse(void* fn) {
+    return ll_shim::hook(fn, reinterpret_cast<void*>(&MouseHook<Id, MouseM>::fn), &MouseHook<Id, MouseM>::orig) == 0;
 }
 
-// The game may only use callbacks: ask its IGameInput for one reading so the reading vtable gets hooked.
-void tryGameMouse() {
-    if (gMouseHooked || !gGameInput || !GiHook<0, CurM>::orig) return;
-    auto cur = reinterpret_cast<HRESULT (*)(IGameInput*, GameInputKind, IGameInputDevice*, IGameInputReading**)>(GiHook<0, CurM>::orig);
-    for (GameInputKind k : {GameInputKindMouse, GameInputKindKeyboard}) {
-        IGameInputReading* rd = nullptr;
-        HRESULT hr = cur(static_cast<IGameInput*>(gGameInput), k, nullptr, &rd);
-        if (SUCCEEDED(hr) && rd) {
-            noteReading(rd);
-            rd->Release();
+void tryModule(int i) {
+    GiMod& m = gGiMods[i];
+    if (m.hooked) return;
+    if (m.path.empty()) { m.note = "no path"; return; }
+    if (!m.mod) {
+        if (GetFileAttributesW(m.path.c_str()) == INVALID_FILE_ATTRIBUTES) { m.note = "not installed"; return; }
+        m.mod = LoadLibraryW(m.path.c_str());
+        if (!m.mod) { m.note = "LoadLibrary failed " + std::to_string(GetLastError()); return; }
+    }
+    if (!m.input) {
+        using InitFn = HRESULT(WINAPI*)(REFIID, void**);
+        auto init = reinterpret_cast<InitFn>(GetProcAddress(m.mod, "GameInputInitialize"));
+        if (!init) { m.note = "no GameInputInitialize export"; return; }
+        HRESULT hr = init(gi::IID_IGameInput, reinterpret_cast<void**>(&m.input));
+        if (FAILED(hr) || !m.input) {
+            char b[80];
+            snprintf(b, sizeof b, "GameInputInitialize(v2) hr 0x%08lX", long(hr));
+            m.note = b;
+            m.input = nullptr;
             return;
         }
-        char b[96];
-        snprintf(b, sizeof b, "own GetCurrentReading(kind 0x%x) hr 0x%08lX", unsigned(k), long(hr));
-        gMouseNote = b;
     }
-}
-#else
-void hookGameInput(void*) { gGiNote = "built without GameInput.h"; }
-void tryGameMouse() {}
-#endif
-
-using GiCreate_t = HRESULT(WINAPI*)(void**);
-HRESULT WINAPI gicHook(void** out) {
-    HRESULT hr = reinterpret_cast<GiCreate_t>(gGicOrig)(out);
-    ++gGicCalls;
-    if (SUCCEEDED(hr) && out && *out && !gGameInput) {
-        gGameInput = *out;
-#if RF_HAVE_GAMEINPUT
-        hookGameInput(static_cast<IGameInput*>(gGameInput));
-#else
-        hookGameInput(gGameInput);
-#endif
+    gi::IGameInputReading* rd = nullptr;
+    HRESULT hr = m.input->GetCurrentReading(gi::GameInputKindMouse, nullptr, &rd);
+    if (FAILED(hr) || !rd) hr = m.input->GetCurrentReading(gi::GameInputKindKeyboard, nullptr, &rd);
+    if (FAILED(hr) || !rd) {
+        char b[80];
+        snprintf(b, sizeof b, "no reading yet (hr 0x%08lX), retry next toggle", long(hr));
+        m.note = b;
+        return;
     }
-    return hr;
+    void** vt  = *reinterpret_cast<void***>(rd);
+    int    idx = vindex(&gi::IGameInputReading::GetMouseState);
+    bool   ok  = false;
+    if (idx >= 0) {
+        switch (i) {
+        case 0: ok = hookMouse<0>(vt[idx]); break;
+        case 1: ok = hookMouse<1>(vt[idx]); break;
+        default: ok = hookMouse<2>(vt[idx]); break;
+        }
+    }
+    rd->Release();
+    m.hooked = ok;
+    m.note   = ok ? "GetMouseState hooked (slot " + std::to_string(idx) + ")" : "GetMouseState hook failed (slot " + std::to_string(idx) + ")";
 }
 
-void installEarly() {
-    if (gGicOrig) return;
+void tryGameMouse() {
     initGameMod();
-    HMODULE gi = LoadLibraryW(L"GameInput.dll");
-    if (!gi) { gGiNote = "GameInput.dll not loadable"; return; }
-    void* create = reinterpret_cast<void*>(GetProcAddress(gi, "GameInputCreate"));
-    if (!create) { gGiNote = "GameInputCreate missing"; return; }
-    if (ll_shim::hook(create, reinterpret_cast<void*>(&gicHook), &gGicOrig) == 0) gGiNote = "GameInputCreate hooked (waiting for the game)";
-    else gGiNote = "GameInputCreate hook failed";
+    giPaths();
+    for (int i = 0; i < 3; ++i) tryModule(i);
+    gGiNote = "v2";
 }
+#else
+void tryGameMouse() { gGiNote = "built without the GameInput v2 header"; }
+#endif
+
+void installEarly() { initGameMod(); }
 
 void writeDiag() {
     char b[6000];
     snprintf(b, sizeof b,
-             "Spatial GUI panel diag v0.10\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
+             "Spatial GUI panel diag v0.11\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
              "GetRawInputData reads: %ld, mouse: %ld (last dx %ld dy %ld buttons 0x%x) hook %s\n"
              "ClipCursor calls: %ld (last rect %ld,%ld-%ld,%ld) hook %s\n"
@@ -892,14 +896,16 @@ void writeDiag() {
         line("GetMessagePos", gStMsgPos);
         line("pump mouse MSG", gStPump);
         len += snprintf(b + len, sizeof b - len, "  wndproc skipped (already remapped in pump) %ld; pump remap %s\n", gPumpSkippedWnd.load(), gS.pumpRemap ? "on" : "off");
-        len += snprintf(b + len, sizeof b - len, "GameInput: %s (GameInputCreate calls %ld)\n", gGiNote.c_str(), gGicCalls.load());
+        len += snprintf(b + len, sizeof b - len, "GameInput: %s\n", gGiNote.c_str());
 #if RF_HAVE_GAMEINPUT
-        for (int k = 0; k < 4; ++k)
-            len += snprintf(b + len, sizeof b - len, "  %-24s calls %ld, from game %ld, ok %ld, kinds 0x%x\n", gGiName[k], gGiStat[k].calls.load(), gGiStat[k].game.load(),
-                            gGiStat[k].ok.load(), unsigned(gGiStat[k].kinds.load()));
-        len += snprintf(b + len, sizeof b - len, "  mouse: %s; GetMouseState calls %ld, from game %ld\n  last: buttons 0x%x pos %lld,%lld wheel %lld abs %s %.1f,%.1f  cursor %ld,%ld\n",
-                        gMouseNote.c_str(), gMsCalls.load(), gMsGame.load(), gMsButtons, gMsPosX, gMsPosY, gMsWheel, gMsHasAbs ? "yes" : "no", gMsAbsX, gMsAbsY,
-                        gMsCursor.x, gMsCursor.y);
+        for (auto& m : gGiMods) len += snprintf(b + len, sizeof b - len, "  %-30s %s\n", m.label, m.note.c_str());
+        len += snprintf(b + len, sizeof b - len,
+                        "  GetMouseState calls %ld (from game %ld), with absolute position %ld, remapped %ld\n"
+                        "  absolute space: %s (matches client %ld, screen %ld, mismatched %ld)\n"
+                        "  last: buttons 0x%x positions 0x%x abs %lld,%lld -> %lld,%lld rel %lld,%lld  cursor screen %ld,%ld client %ld,%ld\n",
+                        gMsCalls.load(), gMsGame.load(), gMsAbs.load(), gMsRemapped.load(), gMsSpace == 2 ? "client" : gMsSpace == 1 ? "screen" : "unknown",
+                        gMatchClient, gMatchScreen, gMsMismatch.load(), gMsButtons, gMsPositions, gMsAbsX, gMsAbsY, gMsOutX, gMsOutY, gMsRelX, gMsRelY,
+                        gMsCursor.x, gMsCursor.y, gMsClient.x, gMsClient.y);
 #endif
         (void)len;
     }
