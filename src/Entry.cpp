@@ -7,6 +7,7 @@
 #include "Notice.h"
 #include "Options.h"
 #include "Overlay.h"
+#include "SpatialPanel.h"
 #include "UiCapture.h"
 
 namespace rf {
@@ -27,6 +28,7 @@ public:
         RfOptions::load();
         materials::install(mSelf.getModDir()); // before the renderer opens its materials
         uicapture::init(mSelf.getConfigDir(), mSelf.getModDir() / "logs" / "uicapture");
+        rf::panel::installEarly(); // v0.8: catch the game's own GameInput before it creates its mouse readings
         overlay::install();
         return true;
     }

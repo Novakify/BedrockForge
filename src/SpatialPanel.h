@@ -39,5 +39,7 @@ bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp);
 bool swallow(UINT msg, LPARAM lp);
 /// F6 section.
 void drawUi();
+/// Mod load: hook GameInputCreate so the game's own GameInput mouse readings can be remapped (v0.8).
+void installEarly();
 
 } // namespace rf::panel

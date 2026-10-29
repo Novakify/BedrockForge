@@ -518,6 +518,51 @@ void installGameInputHook() {
     }
 }
 
+// v0.8: catch the game's own GameInput. At mod load, hook GameInputCreate; the game's IGameInput gets its
+// GetCurrentReading hooked; the first mouse reading it returns gets its GetMouseState hooked (giMouseHook).
+void*             gGicOrig = nullptr;
+void*             gGcurOrig = nullptr;
+std::atomic<long> gGicCalls{0}, gGcurCalls{0};
+bool              gGotMouseHook = false;
+std::string       gEarlyNote = "not installed";
+
+// IGameInput::GetCurrentReading(kind, device, reading) -> bool. Mouse reading seen -> hook its GetMouseState.
+bool WINAPI gcurHook(void* self, uint32_t kind, void* device, void** reading) {
+    bool r = reinterpret_cast<GiGetCur_t>(gGcurOrig)(self, kind, device, reading);
+    ++gGcurCalls;
+    if (r && reading && *reading && (kind & 0x20) && !gGotMouseHook) {
+        void** rv = *reinterpret_cast<void***>(*reading);
+        if (ll_shim::hook(rv[7], reinterpret_cast<void*>(&giMouseHook), &gGiOrig) == 0) {
+            gGotMouseHook = true;
+            gGiTarget     = rv[7];
+            gEarlyNote    = "game GameInput GetMouseState hooked";
+        } else {
+            gEarlyNote = "GetMouseState hook failed";
+        }
+    }
+    return r;
+}
+
+long WINAPI gicHook(void** out) {
+    long hr = reinterpret_cast<GiCreate_t>(gGicOrig)(out);
+    ++gGicCalls;
+    if (hr >= 0 && out && *out && !gGcurOrig) {
+        void** vt = *reinterpret_cast<void***>(*out);
+        if (ll_shim::hook(vt[3], reinterpret_cast<void*>(&gcurHook), &gGcurOrig) == 0) gEarlyNote = "game IGameInput caught";
+    }
+    return hr;
+}
+
+void installEarly() {
+    if (gGicOrig) return;
+    HMODULE gi = LoadLibraryW(L"GameInput.dll");
+    if (!gi) { gEarlyNote = "GameInput.dll not loadable"; return; }
+    void* create = reinterpret_cast<void*>(GetProcAddress(gi, "GameInputCreate"));
+    if (!create) { gEarlyNote = "GameInputCreate missing"; return; }
+    if (ll_shim::hook(create, reinterpret_cast<void*>(&gicHook), &gGicOrig) == 0) gEarlyNote = "GameInputCreate hooked (waiting for the game)";
+    else gEarlyNote = "GameInputCreate hook failed";
+}
+
 void writeDiag() {
     char b[3000];
     snprintf(b, sizeof b,
@@ -574,6 +619,8 @@ void writeDiag() {
         size_t len = strlen(b);
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n  mouse reads %ld, remapped %ld, skipped (no GetCursorPos match) %ld\n  last state: buttons %u pos %d,%d abs %d,%d\n",
                         gGiNote.c_str(), gGiReads.load(), gGiRemapped.load(), gGiSkipped.load(), gGiLast.buttons, gGiLast.posX, gGiLast.posY, gGiLast.absX, gGiLast.absY);
+        len += snprintf(b + len, sizeof b - len, "GameInput early: %s\n  GameInputCreate calls %ld, GetCurrentReading calls %ld, game mouse hook %s\n",
+                        gEarlyNote.c_str(), gGicCalls.load(), gGcurCalls.load(), gGotMouseHook ? "yes" : "no");
         (void)len;
     }
     uicapture::writeText("panel_diag.txt", b);
