@@ -309,6 +309,7 @@ void tryGameMouse();
 void writeDiag();
 LARGE_INTEGER gOpenQpc{};
 float         gGuiMag = 1.0f;
+float         gDrawFrac[2] = {1.0f, 1.0f};
 void toggle() {
     bool on = !gEnabled.load();
     if (on) QueryPerformanceCounter(&gOpenQpc);
@@ -429,17 +430,32 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     barrier(list, bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
     barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
+    // v0.13e: only draw the part of the (huge, magnified) quad that lies well in front of the camera - a triangle
+    // crossing the camera plane gets wrong texture mapping. a/b = drawn fraction of the half-width/half-height; the
+    // GUI sits in the middle of the texture. The ray-pick still uses the full plane.
+    float a = 1.0f, bb2 = 1.0f;
+    auto  zAt = [&](float lx, float ly) { return g.cz + g.ex[2] * lx + g.ey[2] * ly; };
+    for (int it = 0; it < 60; ++it) {
+        float zmin = std::min(std::min(zAt(-a * g.hw, bb2 * g.hh), zAt(a * g.hw, bb2 * g.hh)), std::min(zAt(-a * g.hw, -bb2 * g.hh), zAt(a * g.hw, -bb2 * g.hh)));
+        if (zmin >= 0.3f) break;
+        a *= 0.92f;
+        bb2 *= 0.92f;
+    }
+    gDrawFrac[0] = a;
+    gDrawFrac[1] = bb2;
     float c[32]{};
-    toClip(g, -g.hw, g.hh, c + 0);   // TL
-    toClip(g, g.hw, g.hh, c + 4);    // TR
-    toClip(g, -g.hw, -g.hh, c + 8);  // BL
-    toClip(g, g.hw, -g.hh, c + 12);  // BR
+    toClip(g, -a * g.hw, bb2 * g.hh, c + 0);   // TL
+    toClip(g, a * g.hw, bb2 * g.hh, c + 4);    // TR
+    toClip(g, -a * g.hw, -bb2 * g.hh, c + 8);  // BL
+    toClip(g, a * g.hw, -bb2 * g.hh, c + 12);  // BR
     c[16] = gS.javaStyle ? 1.0f : 1.0f + gS.zoom * e;
     c[17] = fade;
     c[18] = gS.javaStyle ? 0.0f : gS.dim * e;
     c[19] = gS.alphaBoost ? 1.0f : 0.0f;
     c[20] = gS.javaStyle ? 0.0f : 1.0f; // panel frame line
     c[21] = gS.javaStyle ? 1.0f : 0.0f; // drop the dim background
+    c[22] = a;                          // drawn uv fraction (VSPanel)
+    c[23] = bb2;
 
     ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
     list->SetDescriptorHeaps(1, heaps);
@@ -1066,7 +1082,7 @@ void writeDiag() {
             len += snprintf(b + len, sizeof b - len, "\n");
         }
         len += snprintf(b + len, sizeof b - len, "UI pipelines with alpha fixed: %ld\n", uicapture::uiAlphaFixedCount());
-        len += snprintf(b + len, sizeof b - len, "GUI magnification (java auto scale / bedrock gui scale): %.3f\n", gGuiMag);
+        len += snprintf(b + len, sizeof b - len, "GUI magnification (java auto scale / bedrock gui scale): %.3f; drawn fraction %.3f x %.3f\n", gGuiMag, gDrawFrac[0], gDrawFrac[1]);
         spatialcam::appendDiag(b, sizeof b);
         len = strlen(b);
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n", gGiNote.c_str());

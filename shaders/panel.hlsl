@@ -2,7 +2,7 @@
 // Root constants (b0, 32 floats):
 //   c0  = 4 panel corners in clip space (TL, TR, BL, BR), float4 each
 //   c4  = x: world zoom (>= 1, "FOV lerp"), y: panel opacity, z: world dim, w: alpha mode (0 raw, 1 boost)
-//   c5  = x: frame line strength (0 = no frame, Java look), y: 1 = drop the dim background layer
+//   c5  = x: frame line strength (0 = no frame, Java look), y: 1 = drop the dim background layer, zw: drawn uv fraction
 // t0 = world (back buffer copy, UI already redirected away), t1 = UI target (premultiplied-ish, transparent clear)
 cbuffer Params : register(b0) {
     float4 corner[4];
@@ -37,7 +37,7 @@ V2P VSPanel(uint id : SV_VertexID) {
     uint k = idx[id];
     V2P  o;
     o.pos = corner[k];
-    o.uv  = uvs[k];
+    o.uv  = 0.5 + (uvs[k] - 0.5) * max(pad[0].zw, 1e-3); // c5.zw: drawn fraction of the texture (centred)
     return o;
 }
 
