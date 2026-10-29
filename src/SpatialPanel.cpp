@@ -29,6 +29,7 @@
 #endif
 
 #include "Cinematic.h"
+#include "CinematicGame.h"
 #include "LLShim.h"
 #include "Options.h"
 #include "PanelShaders.h"
@@ -410,6 +411,13 @@ void applyWanted() {
 
 std::atomic_bool gRecipeBook{false};
 void noteScreen(void const* stack, std::string const& name) {
+    {   // testing aid (uiDebugUseKey): the key uses the block looked at, on the client thread
+        static bool was = false;
+        int         k   = RfOptions::uiDebugUseKey.get();
+        bool        now = k > 0 && k < 256 && (GetAsyncKeyState(k) & 0x8000) != 0;
+        if (now && !was && name.find("hud_screen") != std::string::npos) cine::game::useHitBlock();
+        was = now;
+    }
     std::lock_guard l(gScreenMutex);
     StackTop* st = nullptr;
     for (auto& t : gStackTops)
@@ -1074,6 +1082,8 @@ template <class T> void onMouse(T, bool) {}
 void debugUse(gi::GameInputMouseState* st) {
     int k = RfOptions::uiDebugUseKey.get();
     if (!st || k <= 0 || k >= 256) return;
+    return; // the key now uses the block directly (noteScreen); the old way (right button in the mouse reading) only
+            // worked while the game happened to read the mouse
     // held, and for 0.4 s after: in the world the game only reads the mouse when it moves
     static ULONGLONG until = 0;
     ULONGLONG        now   = GetTickCount64();

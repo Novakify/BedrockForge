@@ -13,6 +13,8 @@ std::string blockName(int x, int y, int z);
 int         facing(int x, int y, int z);
 /// A block's states as SNBT (diagnostics).
 std::string blockStates(int x, int y, int z);
+/// Testing aid: use (right-click) the block the player looks at, as the game's own "use" does. false = nothing hit.
+bool        useHitBlock();
 /// A solid block (collider) at x,y,z.
 bool        solid(int x, int y, int z);
 /// Hide the vanilla first-person hand (Options "hide hand"); saved = previous value, -1 = not changed by us.

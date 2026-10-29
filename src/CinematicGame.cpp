@@ -25,6 +25,8 @@
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/CachedComponentData.h"
 #include "mc/world/phys/HitResult.h"
+#include "mc/world/gamemode/GameMode.h"
+#include "mc/world/item/HandSlot.h"
 
 namespace rf::cine::game {
 namespace {
@@ -64,6 +66,18 @@ bool hitBlock(int& x, int& y, int& z, std::string& typeName) {
     y        = hit.mBlock.y;
     z        = hit.mBlock.z;
     typeName = a->getDimensionBlockSource().getBlock(hit.mBlock).getTypeName();
+    return true;
+}
+
+bool useHitBlock() {
+    Actor* a = player();
+    if (!a) return false;
+    HitResult& hit = a->getLevel().getHitResult();
+    if (hit.mType != HitResultType::Tile) return false;
+    Player& p = *static_cast<Player*>(a);
+    auto&   gm = *p.mGameMode;
+    if (!gm) return false;
+    gm->buildBlock(hit.mBlock, hit.mFacing, HandSlot::Mainhand, false);
     return true;
 }
 
