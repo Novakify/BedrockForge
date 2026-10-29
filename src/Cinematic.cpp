@@ -23,6 +23,7 @@
 #include <d3dcompiler.h>
 #include <wincodec.h>
 #pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 #include <wrl/client.h>
 
