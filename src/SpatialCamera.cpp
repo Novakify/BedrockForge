@@ -116,7 +116,7 @@ void onCamera(mce::Camera& cam) {
     gView.tanHalf = 1.0f / P[1][1];
     gView.aspect  = P[1][1] / P[0][0];
     gView.fovYDeg = 2.0f * std::atan(gView.tanHalf) / kDeg;
-    gView.guiScale = *ci->getGuiData()->mGuiScale;
+    gView.guiScale = ci->getGuiData()->mGuiScale;
     if (!gActive.load()) {
         gView.yawRel     = 0.0f;
         gView.pitch      = actor.getRotation().x;
