@@ -107,7 +107,42 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     if (is("minecraft:enchanting_table")) { k = Kind::Enchanting; return true; }
     return false;
 }
-bool sceneAvailable(Kind k) { return k == Kind::Table; }
+bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k); }
+
+// ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
+// Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
+struct FZone { bool top; double u0, u1, v0, v1; double hl[4]; };
+struct FBed  { bool top; double u0, u1, floor, depth; int maxCopies; float tilt; };
+struct FGlow { bool top; double u0, u1, v0, v1; bool fire; };
+struct FLayout { FZone zone[3]; FBed bed[3]; FGlow glow[2]; double cookGauge[4], burnGauge[4]; };
+constexpr double px16(double p) { return p / 16.0; }
+const FLayout kFurnaceL = {
+    {{false, 0.11, 0.5, 0.5, 0.92, {px16(3), 0.5, px16(9), px16(13)}},
+     {false, 0.11, 0.89, 0.0, 0.39, {px16(3), px16(13), px16(1), px16(5)}},
+     {false, 0.5, 0.89, 0.5, 0.92, {0.5, px16(13), px16(9), px16(13)}}},
+    {{false, 0.22, 0.47, px16(9), 0.035, 3, 0}, {false, 0.26, 0.74, px16(1), 0.035, 4, 0}, {false, 0.53, 0.78, px16(9), 0.035, 3, 0}},
+    {{false, px16(3), px16(13), px16(1), px16(5), true}, {false, px16(3), px16(13), px16(9), px16(13), false}},
+    {px16(3), px16(13), 0.405, 0.43}, {px16(3), px16(13), 0.012, 0.037}};
+const FLayout kSmokerL = {
+    {{false, 0.1, 0.47, 0.46, 0.86, {px16(3), px16(7.5), px16(8), px16(12)}},
+     {false, 0.08, 0.92, 0.0, 0.46, {px16(2), px16(14), px16(1), px16(7)}},
+     {false, 0.47, 0.84, 0.46, 0.86, {px16(7.5), px16(12), px16(8), px16(12)}}},
+    {{false, 0.24, 0.43, px16(8), 0.035, 3, 0}, {false, 0.22, 0.78, px16(1), 0.035, 4, 0}, {false, 0.5, 0.7, px16(8), 0.035, 3, 0}},
+    {{false, px16(2), px16(14), px16(1), px16(7), true}, {false, px16(3), px16(12), px16(8), px16(12), false}},
+    {px16(3), px16(13), 0.452, 0.482}, {px16(3), px16(13), 0.012, 0.037}};
+const FLayout kBlastL = {
+    {{true, 0.06, 0.94, 0.12, 0.94, {0.22, 0.78, 0.3, 0.86}},
+     {false, 0.12, 0.88, 0.16, 0.52, {px16(4), px16(12), px16(5), px16(8)}},
+     {false, 0.12, 0.88, 0.52, 0.86, {px16(3), px16(13), px16(9), px16(10.5)}}},
+    {{true, 0.32, 0.68, 0.58, 0.045, 3, 62}, {false, 0.32, 0.68, px16(5), 0.035, 3, 0}, {false, 0.3, 0.7, px16(9), 0.035, 3, 0}},
+    {{false, px16(4), px16(12), px16(5), px16(8), true}, {true, 0.26, 0.74, 0.34, 0.82, false}},
+    {px16(4), px16(12), 0.24, 0.265}, {px16(4), px16(12), 0.012, 0.037}};
+FLayout const& furnaceLayout(Kind k) { return k == Kind::Smoker ? kSmokerL : k == Kind::BlastFurnace ? kBlastL : kFurnaceL; }
+/// FurnaceStation.Staging: how the player and camera settle (LOW: crouched at a furnace or smoker, TALL: the blast furnace)
+struct Staging { bool crouch; double out, up, side, lookV; float roll, bodyPitch; bool restTop; double restU, restV, restOut; };
+const Staging kLow  = {true, 0.9, 0.5, 0.1, 0.44, -3.5f, 32.0f, false, 0.2, 0.09, 0.36};
+const Staging kTall = {false, 0.7, 1.15, 0.08, 0.97, -2.0f, 45.0f, true, 0.15, 0.13, 0.06};
 
 /// A station of the scene (ClientStation + the subclass numbers).
 struct Station {
@@ -115,15 +150,33 @@ struct Station {
     int  bx = 0, by = 0, bz = 0; // block
     Dir  side = South;            // side worked from (from the block towards the player)
     V3   top;                     // TableStation.top
+    bool lit = false;             // a lit furnace (block name lit_*)
     V3 center() const { return kind == Kind::Table ? top : V3{bx + 0.5, by + 0.5, bz + 0.5}; }
+    /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
+    /// (u left->right, v front edge -> back edge, out = up)
+    V3 fpoint(bool onTop, double u, double v, double out) const {
+        V3 f = sideV(), r = right();
+        if (!onTop) return {bx + 0.5 + f.x * (0.5 + out) + r.x * (u - 0.5), by + v, bz + 0.5 + f.z * (0.5 + out) + r.z * (u - 0.5)};
+        return {bx + 0.5 + f.x * (0.5 - v) + r.x * (u - 0.5), by + 1.0 + out, bz + 0.5 + f.z * (0.5 - v) + r.z * (u - 0.5)};
+    }
+    Staging const& staging() const { return kind == Kind::BlastFurnace ? kTall : kLow; }
     V3 sideV() const { return dirVec(side); }
     V3 forward() const { return dirVec(opposite(side)); }
     V3 right() const { return dirVec(clockWise(opposite(side))); }
     V3 workPoint() const { return center(); }
-    bool workOnTop() const { return true; }
+    bool workOnTop() const { return !isFurnace(kind); }
     double leanFov() const { return 66; }
-    // TableStation.lean
+    // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
+        if (isFurnace(kind)) {
+            Staging const& sg = staging();
+            V3    eye = center() + sideV() * sg.out + V3{0, sg.up, 0} + right() * sg.side;
+            JPose p;
+            p.pos = eye;
+            lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
+            p.roll = sg.roll;
+            return p;
+        }
         constexpr double LEAN_BACK = 0.86, LEAN_UP = 0.72, LOOK_BACK = -0.04;
         JPose p;
         p.pos   = top + sideV() * LEAN_BACK + V3{0, LEAN_UP, 0};
@@ -134,6 +187,10 @@ struct Station {
     JPose view() const { return lean(); } // swing is always 0 in client-only mode (the player is not moved)
     std::vector<V3> workSamples() const {
         V3 work = workPoint();
+        if (!workOnTop()) { // ClientStation.workSamples: just out of the work face
+            V3 o = sideV() * 0.04, a = right() * 0.3, b{0, 0.3, 0};
+            return {work + o, work + a + o, work - a + o, work + b + o, work - b + o};
+        }
         V3 lift{0, 0.04, 0}, a = right() * 0.3, b = sideV() * 0.3;
         return {work + lift, work + a + lift, work - a + lift, work + b + lift, work - b + lift};
     }
@@ -168,6 +225,10 @@ struct Layout {
     Rect  grid[9];                  // crafting grid, recipe order (row-major from the top)
     Rect  result;                   // crafting result
     bool  hasGrid = false, hasResult = false;
+    int   nRoles = 0;                // non-table stations: grid[0..nRoles) = the menu's slots in Java order
+    Rect  board;                     // option buttons (stonecutter recipes, loom patterns, enchantments), when found
+    bool  hasBoard = false;
+    int   kind = 0;                  // Kind the layout was found for
     Rect  panel;                    // container panel (inventory rows' width)
     float bg[3] = {0.545f, 0.545f, 0.545f}; // slot background (#8B8B8B)
     float hi[3] = {0.78f, 0.78f, 0.78f};    // hovered slot background
@@ -230,6 +291,8 @@ struct Scene {
     long    skinSerial = 0;
     int     savedHideHand = -1;
     std::string refused;
+    std::string states;
+    bool        aimTop = false;  // FurnaceStation.aimFace == TOP
     std::string lastRoute = "-";
     long    scenes = 0;
 } gS;
@@ -338,6 +401,13 @@ bool begin(Kind kind, int bx, int by, int bz) {
     st.bx = bx; st.by = by; st.bz = bz;
     st.top = {bx + 0.5, by + 1.0, bz + 0.5};
     st.side = freeSide(st, feet);
+    if (isFurnace(kind)) {
+        // a furnace is always worked from its front (FurnaceStation(pos, FACING))
+        int f = game::facing(bx, by, bz);
+        if (f >= 0) st.side = Dir(f);
+        gS.states = game::blockStates(bx, by, bz);
+        st.lit = game::blockName(bx, by, bz).rfind("minecraft:lit_", 0) == 0;
+    }
     std::string why;
     if (!planHere(st, feet, eye, why)) {
         gS.refused = why;
@@ -650,6 +720,41 @@ int currentTarget(float mx, float my) {
     }
     Basis b  = basisOf(gS.last);
     float nx = 2 * mx / gW - 1, ny = 1 - 2 * my / gH;
+    if (isFurnace(gS.st.kind)) {
+        // FurnaceStation.updateCursor (vanilla geometry): the front face, and the top where a zone lies there
+        FLayout const& fl = furnaceLayout(gS.st.kind);
+        V3 o, d, hit;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        double best = 1e18;
+        int    zone = -1;
+        auto pick = [&](bool onTop, double u, double v) {
+            gS.aimTop = onTop;
+            zone      = -1;
+            for (int z = 0; z < 3; ++z)
+                if (fl.zone[z].top == onTop && u >= fl.zone[z].u0 && u <= fl.zone[z].u1 && v >= fl.zone[z].v0 && v <= fl.zone[z].v1) { zone = z; break; }
+            gS.haveAim = true;
+            gS.aim     = gS.st.fpoint(onTop, std::clamp(u, 0.08, 0.92), std::clamp(v, 0.05, 0.95), 0);
+        };
+        V3     face = gS.st.center(), n = gS.st.sideV();
+        double dn   = d.dot(n);
+        if (std::fabs(dn) > 1e-9) {
+            double t = (face - o).dot(n) / dn;
+            if (t > 0) {
+                V3     h = o + d * t;
+                double u = (h - face).dot(gS.st.right()) + 0.5, v = h.y - gS.st.by;
+                if (u > -0.08 && u < 1.08 && v > -0.08 && v < 1.08) { best = t; pick(false, u, v); }
+            }
+        }
+        bool usesTop = fl.zone[0].top || fl.zone[1].top || fl.zone[2].top;
+        if (usesTop && onPlaneY(o, d, gS.st.by + 1.0, hit) && (hit - o).len() < best) {
+            V3     tc  = gS.st.fpoint(true, 0.5, 0.5, 0);
+            V3     rel = hit - tc;
+            double u = rel.dot(gS.st.right()) + 0.5, v = 0.5 - rel.dot(gS.st.sideV());
+            if (u > -0.05 && u < 1.05 && v > -0.05 && v < 1.05) pick(true, u, v);
+        }
+        gS.hoverCell = zone;
+        return zone;
+    }
     // the floating result (TableStation.updateCursor: a disc of resultRadiusGui around it)
     if (gS.resultFull) {
         V3    at = gS.st.resultPosition(gS.clock);
@@ -679,7 +784,7 @@ int currentTarget(float mx, float my) {
 }
 
 bool targetRect(Layout const& L, int t, Rect& r) {
-    if (t >= 0 && t < 9 && L.hasGrid) { r = L.grid[t]; return true; }
+    if (t >= 0 && t < 9 && L.hasGrid && (L.kind == int(Kind::Table) || t < L.nRoles)) { r = L.grid[t]; return true; }
     if (t == 9 && L.hasResult) { r = L.result; return true; }
     if (t >= 10 && t < 19) { r = L.hotbar[t - 10]; return true; }
     if (t >= 19 && t < 46) { r = L.inv[t - 19]; return true; }
@@ -772,8 +877,10 @@ void tick() {
     if (!alive) { finish(); return; }
     V3     c  = gS.st.center();
     double d2 = (f[0] - c.x) * (f[0] - c.x) + (f[1] - c.y) * (f[1] - c.y) + (f[2] - c.z) * (f[2] - c.z);
-    Kind   k;
-    if (d2 > 49 || !kindOfBlock(game::blockName(gS.st.bx, gS.st.by, gS.st.bz), k) || k != gS.st.kind) leave();
+    Kind        k;
+    std::string name = game::blockName(gS.st.bx, gS.st.by, gS.st.bz);
+    gS.st.lit        = name.rfind("minecraft:lit_", 0) == 0;
+    if (d2 > 49 || !kindOfBlock(name, k) || k != gS.st.kind) leave();
 }
 
 bool active() { std::lock_guard l(gM); return gS.phase != Phase::None; }
@@ -834,7 +941,7 @@ bool mapClient(int w, int h, int& x, int& y) {
     if (gPress.state == PressState::Down && t >= 0) gPress.target = t;
     Rect r;
     float fx, fy;
-    if (L.valid && mapToTarget && targetRect(L, use, r)) { fx = r.cx(); fy = r.cy(); }
+    if (L.valid && L.kind == int(gS.st.kind) && mapToTarget && targetRect(L, use, r)) { fx = r.cx(); fy = r.cy(); }
     else if (L.valid) neutralPoint(L, fx, fy);
     else { fx = float(w) - 100.0f; fy = 60.0f; }
     x = int(fx);
@@ -957,7 +1064,7 @@ V2P VS(uint id : SV_VertexID) {
     return o;
 }
 float4 PS(V2P i) : SV_Target {
-    if (mode.x < 0.5) return float4(color.rgb * color.a, color.a) * mode.w;
+    if (mode.x < 0.5) return (mode.y > 0.5 ? float4(color.rgb * color.a, 0) : float4(color.rgb * color.a, color.a)) * mode.w; // y: additive light
     if (mode.x > 1.5) {
         float4 k = tSkin.SampleLevel(sP, i.uv, 0);
         if (k.a < 0.1) discard;
@@ -1218,7 +1325,8 @@ void writeBmp(std::filesystem::path const& p, Img const& im) {
     }
 }
 
-void detect(Img im, bool dump) {
+void detect(Img im, bool dump, int kindI) {
+    Kind kind = Kind(kindI);
     struct Sq { int x, y, s; };
     std::vector<Sq> sq;
     int W = im.W, H = im.H;
@@ -1313,9 +1421,66 @@ void detect(Img im, bool dump) {
             if (q.x < px0 - s || q.x + q.s > px1 + s) continue;
             st.push_back(q);
         }
+        L.kind = kindI;
+        if (kind != Kind::Table) {
+            // the menu's own slots: the right-most square is the result; grids of option buttons (stonecutter, loom)
+            // are left out (a square with neighbours at slot spacing on both sides, or in a row of 4 or more)
+            auto nearSq = [&](Sq const& a, int dx, int dy) {
+                for (auto& q : st)
+                    if (std::abs(q.x - (a.x + dx)) <= best / 6 && std::abs(q.y - (a.y + dy)) <= best / 6) return true;
+                return false;
+            };
+            std::vector<Sq> own, buttons;
+            for (auto& q : st) {
+                int  pitch  = q.s + q.s / 17;
+                bool inGrid = (nearSq(q, -pitch, 0) && nearSq(q, pitch, 0)) || (nearSq(q, pitch, 0) && nearSq(q, 2 * pitch, 0) && nearSq(q, 3 * pitch, 0)) ||
+                              (nearSq(q, -pitch, 0) && nearSq(q, -2 * pitch, 0) && nearSq(q, -3 * pitch, 0));
+                (inGrid ? buttons : own).push_back(q);
+            }
+            if (!buttons.empty()) {
+                int bx0 = 1 << 30, by0 = 1 << 30, bx1 = -1, by1 = -1;
+                for (auto& q : buttons) { bx0 = std::min(bx0, q.x); by0 = std::min(by0, q.y); bx1 = std::max(bx1, q.x + q.s); by1 = std::max(by1, q.y + q.s); }
+                L.board = {float(bx0), float(by0), float(bx1 - bx0), float(by1 - by0)};
+                L.hasBoard = true;
+            }
+            int expect = isFurnace(kind) ? 3 : kind == Kind::Smithing || kind == Kind::Loom ? 4 : kind == Kind::Stonecutter || kind == Kind::Enchanting ? 2 : 3;
+            bool hasRes = kind != Kind::Enchanting;
+            std::vector<Sq> rest = own;
+            Sq res{};
+            if (hasRes && !rest.empty()) {
+                size_t ri = 0;
+                for (size_t i = 1; i < rest.size(); ++i)
+                    if (rest[i].x > rest[ri].x + 2 || (std::abs(rest[i].x - rest[ri].x) <= 2 && rest[i].s > rest[ri].s)) ri = i;
+                res = rest[ri];
+                rest.erase(rest.begin() + long(ri));
+            }
+            auto byY = [](Sq const& a, Sq const& b) { return a.y != b.y ? a.y < b.y : a.x < b.x; };
+            auto byX = [](Sq const& a, Sq const& b) { return a.x != b.x ? a.x < b.x : a.y < b.y; };
+            // furnace: input above fuel; grindstone: input above the additional slot; cartography: map above paper
+            if (isFurnace(kind) || kind == Kind::Grindstone || kind == Kind::Cartography) std::sort(rest.begin(), rest.end(), byY);
+            else if (kind == Kind::Loom) {
+                // banner and dye in the first row (left, right), the pattern below
+                std::sort(rest.begin(), rest.end(), byY);
+                if (rest.size() >= 2 && std::abs(rest[0].y - rest[1].y) <= best / 4 && rest[1].x < rest[0].x) std::swap(rest[0], rest[1]);
+            } else std::sort(rest.begin(), rest.end(), byX); // anvil, smithing (template, base, addition), stonecutter, enchanting
+            int n = 0;
+            for (auto& q : rest) {
+                if (n >= (hasRes ? expect - 1 : expect)) break;
+                L.grid[n++] = {float(q.x), float(q.y), float(q.s) + unit, float(q.s) + unit};
+            }
+            if (hasRes && res.s > 0) L.grid[n++] = {float(res.x), float(res.y), float(res.s) + unit, float(res.s) + unit};
+            L.nRoles  = n;
+            L.hasGrid = n == expect;
+            if (kind == Kind::Enchanting && n == 2) {
+                // the three enchantment buttons fill the panel right of the lapis slot
+                float x0 = std::max(L.grid[0].x, L.grid[1].x) + L.grid[1].w + unit * 4, y0 = L.grid[0].y - 3.0f * s;
+                L.board  = {x0, std::max(0.0f, y0 - s * 0.4f), px1 - x0, 3.6f * s};
+                L.hasBoard = true;
+            }
+        }
         // crafting grid: 3 x 3 normal slots
         std::vector<Sq> nm;
-        for (auto& q : st) if (normal(q)) nm.push_back(q);
+        if (kind == Kind::Table) for (auto& q : st) if (normal(q)) nm.push_back(q);
         for (auto& a : nm) {
             int got = 0;
             Sq  g[9];
@@ -1331,7 +1496,7 @@ void detect(Img im, bool dump) {
         }
         // result: the biggest square right of the grid (else the biggest one)
         int bi = -1;
-        for (size_t i = 0; i < st.size(); ++i) {
+        for (size_t i = 0; kind == Kind::Table && i < st.size(); ++i) {
             if (L.hasGrid && st[i].x < L.grid[2].x + s) continue;
             if (bi < 0 || st[i].s > st[bi].s) bi = int(i);
         }
@@ -1347,14 +1512,15 @@ void detect(Img im, bool dump) {
             }
         }
         L.valid = true;
-        snprintf(note, sizeof note, "squares %zu, slot %d px, rows of 9: %zu, station squares %zu, grid %s, result %s (%.0f px)", sq.size(),
-                 best, nine.size(), st.size(), L.hasGrid ? "yes" : "no", L.hasResult ? "yes" : "no", L.hasResult ? L.result.w : 0.0f);
+        snprintf(note, sizeof note, "%s: squares %zu, slot %d px, rows of 9: %zu, station squares %zu, slots %s (%d), result %s (%.0f px), board %s",
+                 kNames[kindI], sq.size(), best, nine.size(), st.size(), L.hasGrid ? "yes" : "no", kind == Kind::Table ? (L.hasGrid ? 9 : 0) : L.nRoles,
+                 L.hasResult ? "yes" : "no", L.hasResult ? L.result.w : 0.0f, L.hasBoard ? "yes" : "no");
         L.note = note;
     }
     {
         std::lock_guard l(gLayoutMutex);
         L.serial = gLayout.serial + 1;
-        bool keepOld = !L.valid && gLayout.valid && gLayout.W == L.W;
+        bool keepOld = !L.valid && gLayout.valid && gLayout.W == L.W && gLayout.kind == kindI;
         if (keepOld) { gLayout.note = L.note + " (kept the previous layout)"; }
         else gLayout = L;
     }
@@ -1400,7 +1566,12 @@ void pollReadback() {
     gG.rb->Unmap(0, &none);
     gDetectBusy = true;
     bool dump = gCfg.dumpUi;
-    std::thread(detect, std::move(im), dump).detach();
+    int kindNow;
+    {
+        std::lock_guard l(gM);
+        kindNow = int(gS.st.kind);
+    }
+    std::thread(detect, std::move(im), dump, kindNow).detach();
 }
 
 // ---------------------------------------------------------------- per-frame slot contents (small ring readback)
@@ -1427,11 +1598,12 @@ bool ensureRing(ID3D12Device* dev, UINT cell) {
 }
 /// Rect of sampled slot s in the hidden screen (the inside of the slot, where the icon is drawn).
 bool sampledRect(Layout const& L, int s, Rect& r) {
-    if (s < 9) { if (!L.hasGrid) return false; r = L.grid[s]; }
+    if (s < 9) { if (!L.hasGrid || (L.kind != int(Kind::Table) && s >= L.nRoles)) return false; r = L.grid[s]; }
     else if (s == 9) { if (!L.hasResult) return false; r = L.result; }
     else { float x, y; neutralPoint(L, x, y); r = {x - L.slot * 0.5f, y - L.slot * 0.5f, L.slot, L.slot}; return true; }
-    float i = r.w / 18.0f;
-    r = {r.x + i, r.y + i, r.w - 2 * i, r.h - 2 * i};
+    // the 16 px icon sits in the middle of the slot (a big result slot too)
+    float in = L.slot * 16.0f / 18.0f;
+    r = {r.cx() - in * 0.5f, r.cy() - in * 0.5f, in, in};
     return true;
 }
 /// Is this icon an isometric block (a full cube seen from above: a hexagon filling its box, empty corners)?
@@ -1676,17 +1848,40 @@ V3 shoulderOf(bool right, V3 camera, float camYaw) {
     return camera + rv * (right ? 0.38 : -0.38) + V3{0, -0.46, 0} + f * 0.08;
 }
 V3 hiddenOf(bool right, V3 camera, float camYaw) { return shoulderOf(right, camera, camYaw) + yawForward(camYaw) * 0.1 + V3{0, -0.05, 0}; }
-V3 restOf(bool right) { // TableStation.rest
+V3 restOf(bool right) {
+    if (isFurnace(gS.st.kind)) { // FurnaceStation.rest: low in front of the furnace, or on the blast furnace's top
+        Staging const& sg = gS.st.staging();
+        double         u  = right ? 1 - sg.restU : sg.restU;
+        V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
+        return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
+    }
+    // TableStation.rest
     return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.24 : -0.24) + V3{0, HAND_Y, 0};
 }
-V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) { // TableStation.handTarget
+V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
+    if (isFurnace(gS.st.kind)) { // FurnaceStation.handTarget
+        if (gS.aimTop) {
+            V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
+            double hover = carrying ? 0.075 : 0.045;
+            return aim + V3{0, HAND_Y + hover - 0.07 * tap, 0} - reach * 0.07;
+        }
+        V3     reach = (aim - shoulder).norm();
+        double hover = carrying ? 0.11 : 0.075;
+        // a tap pushes the fist past the face, into the opening
+        return aim + gS.st.sideV() * (hover - 0.18 * tap) - reach * 0.07 + V3{0, 0.035, 0};
+    }
+    // TableStation.handTarget
     V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
     double hover = carrying ? 0.075 : 0.045;
     return V3{aim.x, gS.st.by + 1.0 + HAND_Y + hover - 0.06 * tap, aim.z} - reach * ITEM_REACH;
 }
 V3 heldItemPoint(V3 hand, V3 shoulder) {
+    if (isFurnace(gS.st.kind) && !gS.aimTop) { // FurnaceStation.heldItemPoint on the front
+        V3 reach = (hand - shoulder).norm();
+        return hand + reach * 0.07 + V3{0, -0.045, 0};
+    }
     V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
-    return hand + reach * ITEM_REACH + V3{0, -HAND_Y + 0.012, 0};
+    return hand + reach * (isFurnace(gS.st.kind) ? 0.07 : ITEM_REACH) + V3{0, -HAND_Y + 0.012, 0};
 }
 double craftProgress() { double t = (gS.clock - gS.craftAt) / 0.5; return t >= 0 && t <= 1 ? t : -1; }
 
@@ -1862,7 +2057,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         bool      haveLayout;
         {
             std::lock_guard l(gLayoutMutex);
-            haveLayout = gLayout.valid && gLayout.W == int(W);
+            haveLayout = gLayout.valid && gLayout.W == int(W) && gLayout.kind == int(gS.st.kind);
         }
         // find the slots ~0.15 s after the screen opened, then again every second (layout can change: recipe book)
         if (now - gG.lastDetect > (haveLayout ? 1000u : 150u)) {
@@ -1890,11 +2085,11 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         JPose cam = gS.last;
         Basis b   = basisOf(cam);
         double clock = gS.clock;
-        bool layoutOk = L.valid && L.W == int(W) && gG.keepValid;
+        bool layoutOk = L.valid && L.W == int(W) && gG.keepValid && L.kind == int(gS.st.kind);
         float tableAlpha = gS.phase == Phase::Active ? float(smoother(gS.time / 0.4)) : gS.phase == Phase::Outro ? float(1 - smoother(gS.time / 0.3)) : float(smoother(gS.time / gS.leanLength));
         auto src = [&](Rect r, int sampled) {
-            float i = r.w / 18.0f;
-            IconSrc o{{r.x + i, r.y + i, r.w - 2 * i, r.h - 2 * i}, {0, 0, 1, 1}};
+            float   in = L.slot * 16.0f / 18.0f;
+            IconSrc o{{r.cx() - in * 0.5f, r.cy() - in * 0.5f, in, in}, {0, 0, 1, 1}};
             if (sampled >= 0) std::memcpy(o.box, gS.iconBox[sampled], sizeof o.box);
             return o;
         };
@@ -1903,7 +2098,40 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         double handsDt = lastHands < 0 ? 0 : std::clamp(clock - lastHands, 0.0, 0.1);
         lastHands = clock;
         if (haveCam) updateHands(cam, handsDt);
-        if (haveCam && layoutOk && L.hasGrid) {
+        if (haveCam && layoutOk && L.hasGrid && isFurnace(gS.st.kind)) {
+            // FurnaceStation.renderWorld + FurnaceRenderer: the fire's light in the openings, the hovered zone's glow,
+            // and what lies in each opening (beds: flat on the floor of the opening, charged from the top half-sunk)
+            FLayout const& fl  = furnaceLayout(gS.st.kind);
+            V3             rgt = gS.st.right(), out = gS.st.sideV();
+            auto faceQuad = [&](bool onTop, double u0, double u1, double v0, double v1, double o, float r, float g, float bl, float a, bool add) {
+                V3   p4[4] = {gS.st.fpoint(onTop, u0, v1, o), gS.st.fpoint(onTop, u1, v1, o), gS.st.fpoint(onTop, u0, v0, o), gS.st.fpoint(onTop, u1, v0, o)};
+                Quad q;
+                if (!worldQuad4(cam, b, p4, q)) return;
+                q.color[0] = r; q.color[1] = g; q.color[2] = bl; q.color[3] = a;
+                q.mode[1] = add ? 1.0f : 0.0f;
+                gQuads.push_back(q);
+            };
+            if (gS.st.lit) {
+                double t       = clock;
+                double flicker = 0.82 + 0.1 * std::sin(t * 11.3) + 0.08 * std::sin(t * 23.1 + 1.3);
+                for (auto const& g : fl.glow) {
+                    float k = float(g.fire ? 0.55 * flicker : 0.22 * (0.9 + 0.1 * std::sin(t * 9.0)));
+                    faceQuad(g.top, g.u0, g.u1, g.v0, g.v1, 0.003, 1.0f, g.fire ? 0.55f : 0.66f, g.fire ? 0.18f : 0.3f, k * tableAlpha, true);
+                }
+            }
+            if (gS.hoverCell >= 0 && gS.phase == Phase::Active) {
+                FZone const& z = fl.zone[gS.hoverCell];
+                faceQuad(z.top, z.hl[0], z.hl[1], z.hl[2], z.hl[3], 0.004, 1.0f, 236 / 255.0f, 200 / 255.0f, 44 / 255.0f, false);
+            }
+            for (int slot = 0; slot < 3; ++slot) {
+                if (!gS.cellFull[slot]) continue;
+                FBed const& bd = fl.bed[slot];
+                double      u  = (bd.u0 + bd.u1) / 2;
+                V3 base = bd.top ? gS.st.fpoint(true, u, bd.floor, -bd.depth) : gS.st.fpoint(false, u, bd.floor + 0.002, -bd.depth);
+                placeItem(cam, b, L, src(L.grid[slot], slot), gS.cellBlock[slot], base, rgt, out, 0.205 * 0.95, 0.15 * 0.95, bd.tilt, tableAlpha);
+            }
+        }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
             V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
             double craft = craftProgress();
             // hover glow under the items (TableStation.drawHighlight: one even warm glow, rim 150/255)
@@ -2078,16 +2306,46 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
 }
 
 // ================================================================ ImGui: hint line, F6
+namespace {
+// lang/en_us.json of the Java mod
+char const* kZoneName[3][3] = {{"Upper opening \xE2\x80\x94 to smelt", "Fire box \xE2\x80\x94 fuel", "Done"},
+                               {"Window \xE2\x80\x94 to cook", "Behind the grate \xE2\x80\x94 fuel", "Ready"},
+                               {"Charging from the top \xE2\x80\x94 ore", "Front grate \xE2\x80\x94 fuel", "Sill \xE2\x80\x94 finished ingots"}};
+char const* kZoneEmpty[3][3] = {{"Put in what you want smelted", "Put coal, wood or other fuel here", "Smelted items come out here"},
+                                {"Put in raw food", "Put coal, wood or other fuel behind the grate", "Cooked food comes out here"},
+                                {"Load ore and metal gear here", "Put coal or other fuel behind the grate", "Ingots come out on this sill"}};
+std::string stationHint(Kind k, bool overResult) {
+    char const* dot = "  \xC2\xB7  ";
+    switch (k) {
+    case Kind::Table:
+        return overResult ? std::string("Click to craft") + dot + "Shift-click to craft all"
+                          : std::string("LMB take / put down (drag to share)") + dot + "RMB one at a time (drag to spread)" + dot + "Shift quick" + dot + "Esc step back";
+    case Kind::Furnace: return std::string("Fuel goes in below, things to smelt above") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
+    case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
+    case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
+    default: return "Esc step back";
+    }
+}
+} // namespace
+
 void drawOverlay() {
-    std::string hint;
-    float       a = 0;
+    std::string hint, tipTitle, tipLine;
+    float       a = 0, mx = 0, my = 0;
     {
         std::lock_guard l(gM);
         if (gS.phase != Phase::Active || !gCfg.controlHints) return;
         double fade = 1 - 0.55 * smoother((gS.time - 7) / 2);
         a    = float(smoother(gS.time / 0.4) * fade);
-        hint = gS.hoverResult ? "Click to craft  \xC2\xB7  Shift-click to craft all"
-                              : "LMB take / put down (drag to share)  \xC2\xB7  RMB one at a time (drag to spread)  \xC2\xB7  Shift quick  \xC2\xB7  Esc step back";
+        hint = stationHint(gS.st.kind, gS.hoverResult);
+        tipTitle.clear();
+        tipLine.clear();
+        if (isFurnace(gS.st.kind) && gS.hoverCell >= 0 && !gS.carrying) {
+            int z   = gS.hoverCell, k = gS.st.kind == Kind::Smoker ? 1 : gS.st.kind == Kind::BlastFurnace ? 2 : 0;
+            tipTitle = kZoneName[k][z];
+            tipLine  = gS.cellFull[z] ? (z == 2 ? "Click to take \xC2\xB7 Shift-click to inventory" : "") : kZoneEmpty[k][z];
+        }
+        mx = (gCursorNdcX + 1) * 0.5f;
+        my = (1 - gCursorNdcY) * 0.5f;
     }
     if (a < 0.03f) return;
     auto*  dl = ImGui::GetForegroundDrawList();
@@ -2098,6 +2356,19 @@ void drawOverlay() {
     float  x = (d.x - ts.x) * 0.5f, y = d.y - fs * 2.2f;
     dl->AddRectFilled(ImVec2(x - fs * 0.5f, y - fs * 0.3f), ImVec2(x + ts.x + fs * 0.5f, y + ts.y + fs * 0.3f), IM_COL32(0, 0, 0, int(a * 200 * 0.45f)));
     dl->AddText(font, fs, ImVec2(x, y), IM_COL32(0xF2, 0xEA, 0xD8, int(a * 200)), hint.c_str());
+    // the station's tooltip, vanilla style (dark violet box, gold title)
+    if (!tipTitle.empty()) {
+        float  ts2 = std::max(14.0f, d.y / 54.0f), pad = ts2 * 0.35f;
+        ImVec2 t1  = font->CalcTextSizeA(ts2, FLT_MAX, 0, tipTitle.c_str());
+        ImVec2 t2  = tipLine.empty() ? ImVec2(0, 0) : font->CalcTextSizeA(ts2, FLT_MAX, 0, tipLine.c_str());
+        float  w = std::max(t1.x, t2.x) + pad * 2, h = t1.y + (tipLine.empty() ? 0 : t2.y + pad * 0.4f) + pad * 2;
+        float  tx = std::min(mx * d.x + ts2, d.x - w - 4), ty = std::min(my * d.y + ts2 * 0.6f, d.y - h - 4);
+        dl->AddRectFilled(ImVec2(tx, ty), ImVec2(tx + w, ty + h), IM_COL32(16, 0, 16, 240), 0);
+        dl->AddRectFilledMultiColor(ImVec2(tx + 1, ty + 1), ImVec2(tx + w - 1, ty + 3), IM_COL32(80, 0, 255, 120), IM_COL32(80, 0, 255, 120), IM_COL32(40, 0, 127, 120), IM_COL32(40, 0, 127, 120));
+        dl->AddRect(ImVec2(tx + 1, ty + 1), ImVec2(tx + w - 1, ty + h - 1), IM_COL32(80, 0, 255, 90), 0, 0, 2.0f);
+        dl->AddText(font, ts2, ImVec2(tx + pad, ty + pad), IM_COL32(255, 170, 0, 255), tipTitle.c_str());
+        if (!tipLine.empty()) dl->AddText(font, ts2, ImVec2(tx + pad, ty + pad + t1.y + pad * 0.4f), IM_COL32(170, 170, 170, 255), tipLine.c_str());
+    }
 }
 
 void drawUi() {
@@ -2174,6 +2445,7 @@ void appendDiag(char* b, unsigned long long cap) {
                          gS.hoverResult, gS.hoverDrawer, gHeld.load(), gS.cellFull[0], gS.cellFull[1], gS.cellFull[2], gS.cellFull[3], gS.cellFull[4],
                          gS.cellFull[5], gS.cellFull[6], gS.cellFull[7], gS.cellFull[8], gS.resultFull, gS.last.pos.x, gS.last.pos.y, gS.last.pos.z,
                          gS.last.yaw, gS.last.pitch, gS.last.roll, gS.tanHalf, gS.aspect, gS.fovY, gS.vanillaFovY, gG.status.c_str());
+    len += std::snprintf(b + len, cap - len, "  block states: %s; lit %d; aimTop %d\n", gS.states.c_str(), gS.st.lit, gS.aimTop);
     for (int i = 0; i < 12 && len < cap; ++i) {
         auto const& e = gPressLog[(gPressLogN + i) % 12];
         if (!e.empty()) len += std::snprintf(b + len, cap - len, "  press: %s\n", e.c_str());

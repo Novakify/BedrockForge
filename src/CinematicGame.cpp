@@ -3,6 +3,8 @@
 #include "CinematicGame.h"
 
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
 
 #include "ll/api/service/Bedrock.h"
@@ -10,6 +12,7 @@
 #include "mc/client/game/ClientInstance.h"
 #include "mc/client/options/IOptionRegistry.h"
 #include "mc/client/player/LocalPlayer.h"
+#include "mc/deps/nbt/CompoundTag.h"
 #include "mc/deps/core/image/Image.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/player/Player.h"
@@ -68,6 +71,35 @@ std::string blockName(int x, int y, int z) {
     Actor* a = player();
     if (!a) return {};
     return a->getDimensionBlockSource().getBlock(BlockPos(x, y, z)).getTypeName();
+}
+
+int facing(int x, int y, int z) {
+    Actor* a = player();
+    if (!a) return -1;
+    Block const& b = a->getDimensionBlockSource().getBlock(BlockPos(x, y, z));
+    std::string snbt = b.mSerializationId->toSnbt(SnbtFormat::ForceQuote, 0);
+    for (char const* key : {"minecraft:cardinal_direction", "direction", "facing_direction"}) {
+        auto at = snbt.find(std::string("\"") + key + "\"");
+        if (at == std::string::npos) continue;
+        auto colon = snbt.find(':', at + std::strlen(key) + 2);
+        if (colon == std::string::npos) continue;
+        std::string v = snbt.substr(colon + 1, 12);
+        if (v.find("north") != std::string::npos) return 0;
+        if (v.find("east") != std::string::npos) return 1;
+        if (v.find("south") != std::string::npos) return 2;
+        if (v.find("west") != std::string::npos) return 3;
+        // numeric: facing_direction 2 north 3 south 4 west 5 east; direction 0 south 1 west 2 north 3 east
+        int n = std::atoi(v.c_str() + (v[0] == ' ' ? 1 : 0));
+        if (std::string(key) == "facing_direction") return n == 2 ? 0 : n == 3 ? 2 : n == 4 ? 3 : n == 5 ? 1 : -1;
+        if (std::string(key) == "direction") return n == 0 ? 2 : n == 1 ? 3 : n == 2 ? 0 : 1;
+    }
+    return -1;
+}
+
+std::string blockStates(int x, int y, int z) {
+    Actor* a = player();
+    if (!a) return {};
+    return a->getDimensionBlockSource().getBlock(BlockPos(x, y, z)).mSerializationId->toSnbt(SnbtFormat::ForceQuote, 0);
 }
 
 bool solid(int x, int y, int z) {
