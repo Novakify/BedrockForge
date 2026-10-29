@@ -14,6 +14,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -110,7 +111,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil; }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -153,7 +154,8 @@ struct Station {
     Dir  side = South;            // side worked from (from the block towards the player)
     V3   top;                     // TableStation.top
     bool lit = false;             // a lit furnace (block name lit_*)
-    V3 center() const { return kind == Kind::Table || kind == Kind::Anvil ? top : V3{bx + 0.5, by + 0.5, bz + 0.5}; }
+    V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
+    V3 center() const { return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone ? top : V3{bx + 0.5, by + 0.5, bz + 0.5}; }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
     V3 fpoint(bool onTop, double u, double v, double out) const {
@@ -167,7 +169,7 @@ struct Station {
     V3 right() const { return dirVec(clockWise(opposite(side))); }
     V3 workPoint() const { return center(); }
     bool workOnTop() const { return !isFurnace(kind); }
-    double leanFov() const { return 66; }
+    double leanFov() const { return kind == Kind::Grindstone ? 64 : 66; }
     // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
         if (isFurnace(kind)) {
@@ -177,6 +179,14 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Grindstone) { // GrindstoneStation.lean
+            V3    eye = wheel + sideV() * 0.95 + V3{0, 1.0, 0};
+            JPose p;
+            p.pos = eye;
+            lookAngles(wheel + V3{0, 0.32, 0} - eye, p.yaw, p.pitch);
+            p.roll = -1.5f;
             return p;
         }
         if (kind == Kind::Anvil) { // AnvilStation.lean
@@ -309,6 +319,14 @@ struct Scene {
     bool   mainWasFull = false, addWasFull = false, mainWasBlock = false, addWasBlock = false;
     float  snapBox[11][4] = {};
     int    anvilTarget = 0;
+    // GrindstoneStation
+    int    grindTarget = 0, grindHover = -1, grindPlace = -1;
+    bool   stripping = false;
+    double spin = 0, run = 0;
+    bool   cellGlint[9] = {};   // the slot's icon shimmers violet (enchanted)
+    bool   glintWas[2] = {};
+    bool   resultWasBlock = false;
+    double grindPrevT = -1;
     bool   resultFull3() const { return cellFull[2]; } // the menu's result slot (anvil, grindstone, cartography: slot 2)
     std::string lastRoute = "-";
     long    scenes = 0;
@@ -429,6 +447,15 @@ bool begin(Kind kind, int bx, int by, int bz) {
         else if (kind == Kind::Loom) allowed = 1u << facing;
     }
     st.side = freeSide(st, feet, allowed);
+    if (kind == Kind::Grindstone) {
+        // GrindstoneStation.wheelCenter: between its posts on the floor, from a wall (pushed out from it) or under a ceiling
+        std::string sn = game::blockStates(bx, by, bz);
+        V3          c{bx + 0.5, by + 0.5, bz + 0.5};
+        if (sn.find("hanging") != std::string::npos) st.wheel = c + V3{0, -2 / 16.0, 0};
+        else if (sn.find("\"side\"") != std::string::npos && facing >= 0) st.wheel = c + dirVec(Dir(facing)) * (2 / 16.0);
+        else st.wheel = c + V3{0, 2 / 16.0, 0};
+        st.top = st.wheel + V3{0, 6 / 16.0, 0};
+    }
     gS.states = game::blockStates(bx, by, bz);
     if (isFurnace(kind)) {
         // a furnace is always worked from its front (FurnaceStation(pos, FACING))
@@ -771,11 +798,13 @@ double sinceBlow(double t) {
     for (double b : BLOWS) if (t >= b) since = t - b;
     return since;
 }
+double grindKick(double t);
 /// ClientStation.cameraKick: 0..1 how hard the camera is shaken right now
 double cameraKick() {
     double t = moveTime();
     if (t < 0) return 0;
     if (gS.st.kind == Kind::Anvil) return 0.5 * std::exp(-sinceBlow(t) * 13);
+    if (gS.st.kind == Kind::Grindstone) return grindKick(t);
     return 0;
 }
 double stationFlash(float rgb[3]) {
@@ -821,6 +850,82 @@ int anvilCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
     }
     return -1;
 }
+// ---------------------------------------------------------------- GrindstoneStation (vanilla geometry)
+constexpr double G_HALF = 6 / 16.0, G_WIDTH = 4 / 16.0, G_SLOT_SIDE = 0.1, G_ITEM_SIZE = 0.3, G_TOOL_TURN = -45, G_SLANT = 25;
+constexpr double GRIND_LENGTH = 2.4, G_CONTACT = 0.6, G_STROKE = 0.433, G_CLEAN_AT = 1.5, G_LET_GO = 1.9;
+enum GrindTarget { GNone, GPlace, GItem };
+V3 grindRest(int slot) { return gS.st.top + gS.st.right() * (slot == 0 ? G_SLOT_SIDE : -G_SLOT_SIDE); } // restPoint: first right, second left
+V3 grindPoint2() { return gS.st.top + gS.st.sideV() * 0.04 + V3{0, 0.03, 0}; }                       // where the blade is ground
+double grindStroke(double t) {
+    double s    = window(t, G_CONTACT, G_LET_GO);
+    double fade = smoother(s * 8) * smoother((1 - s) * 8);
+    return 0.075 * std::sin(3.14159265358979 * (t - G_CONTACT) / G_STROKE) * fade;
+}
+/// unit vector from the handle to the tip of item k (0 right hand, 1 left) while it is ground
+V3 grindBlade(int k) {
+    double a = G_SLANT * kDeg;
+    return gS.st.sideV() * -std::cos(a) + gS.st.right() * (k == 0 ? -std::sin(a) : std::sin(a));
+}
+V3 grindHeldPos(int k, double t) {
+    double sideways = (k == 0 ? 0.08 : -0.08) + grindStroke(t) * (k == 0 ? 1 : -1);
+    V3     grinding = grindPoint2() + gS.st.right() * sideways;
+    V3     lying    = grindRest(k) + V3{0, 0.008, 0};
+    double lift     = inOutCubic(window(t, 0.28, G_CONTACT));
+    V3     at       = lerp(lying, grinding, lift) + V3{0, 0.09 * hump(lift), 0};
+    return at - V3{0, 0.008 * std::fabs(std::sin(3.14159265358979 * (t - G_CONTACT) / G_STROKE)) * window(t, G_CONTACT, G_CONTACT + 0.1), 0};
+}
+/// yaw from "pointing away" (ItemPlacer.awayYaw): from lying straight on the wheel to the slant it is ground at
+double grindHeldYaw(int k, double t) {
+    double lift = inOutCubic(window(t, 0.28, G_CONTACT));
+    double lying = k == 0 ? -8 : 8, slant = k == 0 ? G_SLANT : -G_SLANT;
+    return G_TOOL_TURN + lying + (slant - lying) * lift;
+}
+float grindHeldTilt(double t) { return float(-9 * inOutCubic(window(t, 0.28, G_CONTACT))); }
+V3    grindBite(int k, double t) { V3 at = grindHeldPos(k, t) + grindBlade(k) * 0.07; return {at.x, grindPoint2().y - 0.026, at.z}; }
+V3    grindHandle(int k, V3 item) { return item - grindBlade(k) * 0.13 + V3{0, 0.062 * 0.6, 0}; }
+V3    grindLifted() { return gS.st.top + gS.st.sideV() * 0.3 + gS.st.right() * 0.06 + V3{0, 0.25, 0}; }
+/// GrindstoneStation.overWheel: the cursor on the wheel's top or on the running face towards the player
+bool overWheel(V3 o, V3 d) {
+    V3 hit;
+    if (onPlaneY(o, d, gS.st.top.y, hit)) {
+        V3 rel = hit - gS.st.top;
+        if (std::fabs(rel.dot(gS.st.right())) < G_WIDTH + 0.08 && std::fabs(rel.dot(gS.st.sideV())) < G_HALF + 0.06) return true;
+    }
+    V3     front = gS.st.wheel + gS.st.sideV() * G_HALF, n = gS.st.sideV();
+    double dn    = d.dot(n);
+    if (std::fabs(dn) < 1e-9) return false;
+    double t = (front - o).dot(n) / dn;
+    if (t <= 0) return false;
+    V3 h = o + d * t;
+    return std::fabs((h - front).dot(gS.st.right())) < G_WIDTH + 0.08 && std::fabs(h.y - gS.st.wheel.y) < G_HALF;
+}
+/// GrindstoneStation.updateCursor; slot ids 0/1 to lay a carried item down, 101/102 the item lying there
+int grindCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
+    gS.grindTarget = GNone;
+    gS.grindHover = gS.grindPlace = -1;
+    if (moving()) return -1;
+    if (!gS.carrying) {
+        for (int i = 0; i < 2; ++i)
+            if (gS.cellFull[i] && underCursor(b, mx, my, grindRest(i), 0.13)) {
+                gS.grindTarget = GItem;
+                gS.grindHover  = i;
+                gS.haveAim     = true;
+                gS.aim         = grindRest(i);
+                return 101 + i;
+            }
+        return -1;
+    }
+    if (overWheel(o, d)) {
+        gS.grindTarget = GPlace;
+        gS.grindPlace  = !gS.cellFull[0] || gS.cellFull[1] ? 0 : 1;
+        gS.haveAim     = true;
+        gS.aim         = grindRest(gS.grindPlace);
+        return gS.grindPlace;
+    }
+    return -1;
+}
+double grindKick(double t) { return 0.13 * window(t, G_CONTACT - 0.05, G_CONTACT + 0.15) * (1 - window(t, G_LET_GO - 0.15, G_LET_GO + 0.1)); }
+
 /// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
 void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Anvil && t == 100) {
@@ -837,6 +942,24 @@ void stationAction(int t, unsigned bit, bool shift) {
         }
         gS.tapAt = gS.clock;
     }
+    if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
+        if (bit == 1 && gS.resultFull3()) {
+            // GrindstoneStation.grind: the result is taken when the blade first touches the stone
+            gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = GRIND_LENGTH; gS.moveBeat = G_CONTACT; gS.moveBeatDone = false;
+            gS.moveToInv = shift;
+            gS.mainWasFull = gS.cellFull[0]; gS.addWasFull = gS.cellFull[1];
+            gS.mainWasBlock = gS.cellBlock[0]; gS.addWasBlock = gS.cellBlock[1];
+            gS.glintWas[0] = gS.cellGlint[0]; gS.glintWas[1] = gS.cellGlint[1];
+            gS.resultWasBlock = gS.cellBlock[2];
+            gS.grindPrevT = -1;
+            gS.stripping = (gS.cellFull[0] && gS.cellGlint[0]) || (gS.cellFull[1] && gS.cellGlint[1]);
+            std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+            gSnapRequest = true;
+        } else {
+            inject(t - 101, 1); // take it (slotClick(hoverSlot, 0))
+        }
+        gS.tapAt = gS.clock;
+    }
 }
 /// Every frame: the move's beat lands on time (MenuStation.frame).
 void moveFrame() {
@@ -844,7 +967,7 @@ void moveFrame() {
     double t = gS.clock - gS.moveAt;
     if (!gS.moveBeatDone && t >= gS.moveBeat) {
         gS.moveBeatDone = true;
-        if (gS.phase == Phase::Active && gS.st.kind == Kind::Anvil) {
+        if (gS.phase == Phase::Active && (gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone)) {
             if (gS.resultFull3()) inject(2, 1);
             else gS.moveOn = false; // nothing to take any more: the move stops (cancelMove)
         }
@@ -876,6 +999,11 @@ int currentTarget(float mx, float my) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
         return anvilCursor(b, mx, my, o, d);
+    }
+    if (gS.st.kind == Kind::Grindstone) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return grindCursor(b, mx, my, o, d);
     }
     if (isFurnace(gS.st.kind)) {
         // FurnaceStation.updateCursor (vanilla geometry): the front face, and the top where a zone lies there
@@ -1457,9 +1585,79 @@ bool uploadTexture(ID3D12Device* dev, ID3D12GraphicsCommandList* list, unsigned 
     dev->CreateShaderResourceView(tex.Get(), &sv, hc);
     return true;
 }
+// ---- the prop atlas (t2, 128 x 64): the hammer (HammerModel.h) on the left, block textures of the game itself on
+// the right, read from the game's own resource pack (data/resource_packs/vanilla/__brarchive/textures/blocks.brarchive:
+// a table of 256-byte entries {name length, name, offset, size} after a 16-byte header, then the files)
+constexpr int PROP_W = 128, PROP_H = 64;
+struct PropSlot { char const* file; int x, y, w, h; };
+const PropSlot kPropSlots[] = {
+    {"grindstone_round.tga", 64, 0, 16, 16},     // GrindstoneStation.drawRim
+    {"stonecutter2_saw.tga", 80, 0, 16, 48},     // the stonecutter's blade (animated strip)
+};
+std::string gPropNote = "-";
+bool readBrarchive(std::filesystem::path const& file, char const* name, std::vector<uint8_t>& out) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return false;
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (d.size() < 16) return false;
+    uint32_t n = 0;
+    std::memcpy(&n, d.data() + 8, 4);
+    size_t base = 16 + size_t(n) * 256;
+    if (base > d.size()) return false;
+    for (uint32_t i = 0; i < n; ++i) {
+        uint8_t const* e = d.data() + 16 + size_t(i) * 256;
+        std::string    nm(reinterpret_cast<char const*>(e + 1), std::min<size_t>(e[0], 247));
+        if (nm != name) continue;
+        uint32_t off = 0, sz = 0;
+        std::memcpy(&off, e + 248, 4);
+        std::memcpy(&sz, e + 252, 4);
+        if (base + off + sz > d.size()) return false;
+        out.assign(d.begin() + long(base + off), d.begin() + long(base + off + sz));
+        return true;
+    }
+    return false;
+}
+/// uncompressed 24/32-bit TGA -> RGBA8, top row first
+bool decodeTga(std::vector<uint8_t> const& f, std::vector<uint8_t>& rgba, int& w, int& h) {
+    if (f.size() < 18 || f[2] != 2) return false;
+    w = f[12] | (f[13] << 8);
+    h = f[14] | (f[15] << 8);
+    int bpp = f[16] / 8;
+    if (bpp < 3 || w <= 0 || h <= 0) return false;
+    size_t at = 18 + f[0];
+    if (at + size_t(w) * h * bpp > f.size()) return false;
+    bool top = (f[17] & 0x20) != 0;
+    rgba.assign(size_t(w) * h * 4, 255);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            uint8_t const* p = f.data() + at + (size_t(y) * w + x) * bpp;
+            int            row = top ? y : h - 1 - y;
+            uint8_t*       q = &rgba[(size_t(row) * w + x) * 4];
+            q[0] = p[2]; q[1] = p[1]; q[2] = p[0]; q[3] = bpp == 4 ? p[3] : 255;
+        }
+    return true;
+}
+bool gPropHas[8] = {};
 bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     if (gG.propTex) return true;
-    return uploadTexture(dev, list, hammer::kAtlas, 64, 64, gG.propTex, gG.propUp, 2);
+    std::vector<uint8_t> atlas(size_t(PROP_W) * PROP_H * 4, 0);
+    for (int y = 0; y < 64; ++y) std::memcpy(&atlas[size_t(y) * PROP_W * 4], hammer::kAtlas + size_t(y) * 64 * 4, 64 * 4);
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    auto arch = std::filesystem::path(exe).parent_path() / "data" / "resource_packs" / "vanilla" / "__brarchive" / "textures" / "blocks.brarchive";
+    gPropNote.clear();
+    for (size_t i = 0; i < std::size(kPropSlots); ++i) {
+        auto const&          ps = kPropSlots[i];
+        std::vector<uint8_t> file, px;
+        int                  w = 0, h = 0;
+        if (!readBrarchive(arch, ps.file, file) || !decodeTga(file, px, w, h)) { gPropNote += std::string(ps.file) + " missing; "; continue; }
+        for (int y = 0; y < std::min(h, ps.h); ++y)
+            for (int x = 0; x < std::min(w, ps.w); ++x)
+                std::memcpy(&atlas[(size_t(ps.y + y) * PROP_W + ps.x + x) * 4], &px[(size_t(y) * w + x) * 4], 4);
+        gPropHas[i] = true;
+        gPropNote += std::string(ps.file) + " ok; ";
+    }
+    return uploadTexture(dev, list, atlas.data(), PROP_W, PROP_H, gG.propTex, gG.propUp, 2);
 }
 bool uploadSkin(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     std::vector<unsigned char> px;
@@ -1843,14 +2041,14 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
         void*       p = nullptr;
         D3D12_RANGE rr{0, SIZE_T(gG.srStride * kSampled)};
         if (SUCCEEDED(gG.sr[i]->Map(0, &rr, &p)) && p) {
-            bool  full[kSampled] = {}, block[kSampled] = {};
+            bool  full[kSampled] = {}, block[kSampled] = {}, glint[kSampled] = {};
             float box[kSampled][4] = {};
             float tol  = 10.0f / 255.0f;
             bool  bgra = gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM || gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
             int   n    = int(cell);
             std::vector<uint8_t> mask(size_t(n) * n);
             for (int s = 0; s < kSampled; ++s) {
-                int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1;
+                int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1, violet = 0;
                 for (int y = 0; y < n; ++y)
                     for (int x = 0; x < n; ++x) {
                         uint8_t const* q = static_cast<uint8_t*>(p) + size_t(s) * gG.srStride + size_t(y) * gG.srPitch + size_t(x) * 4;
@@ -1863,6 +2061,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             bool bg   = std::fabs(r - L.bg[0]) < tol && std::fabs(g - L.bg[1]) < tol && std::fabs(b - L.bg[2]) < tol;
                             bool hi   = std::fabs(r - L.hi[0]) < tol && std::fabs(g - L.hi[1]) < tol && std::fabs(b - L.hi[2]) < tol;
                             item = a > 0.5f && !bg && !hi;
+                            if (item && b > g + 0.12f && r > g + 0.04f) ++violet; // the enchantment glint's violet
                         }
                         mask[size_t(y) * n + x] = item;
                         ++total;
@@ -1872,13 +2071,19 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                 if (full[s]) {
                     box[s][0] = float(x0) / n; box[s][1] = float(y0) / n; box[s][2] = float(x1 + 1) / n; box[s][3] = float(y1 + 1) / n;
                     block[s] = isoBlock(mask, n, box[s]);
+                    glint[s] = violet * 12 > other;
                 }
             }
             D3D12_RANGE none{0, 0};
             gG.sr[i]->Unmap(0, &none);
             std::lock_guard l(gM);
             bool before = gS.resultFull;
-            for (int s = 0; s < 9; ++s) { gS.cellFull[s] = full[s]; gS.cellBlock[s] = block[s]; }
+            static double glintAt[9] = {-10, -10, -10, -10, -10, -10, -10, -10, -10};
+            for (int s = 0; s < 9; ++s) {
+                gS.cellFull[s] = full[s]; gS.cellBlock[s] = block[s];
+                if (glint[s]) glintAt[s] = gS.clock; // the glint sweeps: an enchanted icon is violet in some frames only
+                gS.cellGlint[s] = full[s] && gS.clock - glintAt[s] < 1.5;
+            }
             gS.resultFull  = L.hasResult && full[9];
             gS.resultBlock = block[9];
             gS.carrying     = full[10];
@@ -2019,7 +2224,9 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
 V3 turnY(V3 v, double deg) { double t = deg * kDeg; return {v.x * std::cos(t) - v.z * std::sin(t), v.y, v.x * std::sin(t) + v.z * std::cos(t)}; }
 void placeItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& src, bool block, V3 base, V3 right, V3 out,
                double flatSize, double blockSize, float tiltDeg, float opacity, double turnDeg = 0) {
-    if (turnDeg != 0) { right = turnY(right, turnDeg); out = turnY(out, turnDeg); }
+    // turnDeg as ItemPlacer.lying's yaw (Axis.YP: counter-clockwise seen from above), from the yaw that points the
+    // icon's top away from the player
+    if (turnDeg != 0) { right = turnY(right, -turnDeg); out = turnY(out, -turnDeg); }
     if (block && gCfg.cubeItems) {
         iconCube(cam, b, L, src, base, right, out, blockSize, opacity);
         return;
@@ -2033,6 +2240,17 @@ void placeItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const&
     setRect(q.uv, src.inside.x / L.W, src.inside.y / L.H, (src.inside.x + src.inside.w) / L.W, (src.inside.y + src.inside.h) / L.H);
     keyed(q, L, opacity, src.snap);
     gQuads.push_back(q);
+}
+
+/// ItemPlacer.drawOriented(lying(awayYaw + yaw, tilt)) round a centre: a flat item `size` across, a block a cube of `size`.
+void orientedItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& src, bool block, V3 center, V3 right, V3 out, double size,
+                  float tiltDeg, float opacity, double yawDeg) {
+    if (block && gCfg.cubeItems) {
+        placeItem(cam, b, L, src, true, center - V3{0, size / 2, 0}, right, out, size, size, 0, opacity, yawDeg);
+        return;
+    }
+    double t = tiltDeg * kDeg;
+    placeItem(cam, b, L, src, false, center - V3{0, 0.004 + std::sin(t) * size * 0.5, 0}, right, out, size, size, tiltDeg, opacity, yawDeg);
 }
 
 // ---------------------------------------------------------------- Hands + ArmMesh (the player's own arms)
@@ -2068,6 +2286,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Grindstone) // GrindstoneStation.rest: on the frame, on top of the axle posts either side of the wheel
+        return gS.st.wheel + gS.st.right() * (right ? 0.31 : -0.31) + gS.st.sideV() * 0.1 + V3{0, 3 / 16.0 + HAND_Y, 0};
     if (gS.st.kind == Kind::Anvil) // AnvilStation.rest: on the near edge of the face, either side of the work
         return gS.st.top + gS.st.sideV() * 0.24 + gS.st.right() * (right ? 0.3 : -0.3) + V3{0, HAND_Y, 0};
     // TableStation.rest
@@ -2089,7 +2309,7 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
     V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
     double hover = carrying ? 0.075 : 0.045;
     double y     = gS.st.kind == Kind::Table ? gS.st.by + 1.0 : aim.y;
-    return V3{aim.x, y + HAND_Y + hover - 0.06 * tap, aim.z} - reach * ITEM_REACH;
+    return V3{aim.x, y + HAND_Y + hover - 0.06 * tap, aim.z} - reach * (gS.st.kind == Kind::Grindstone ? 0.07 : ITEM_REACH);
 }
 V3 heldItemPoint(V3 hand, V3 shoulder) {
     if (isFurnace(gS.st.kind) && !gS.aimTop) { // FurnaceStation.heldItemPoint on the front
@@ -2097,7 +2317,7 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
         return hand + reach * 0.07 + V3{0, -0.045, 0};
     }
     V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
-    return hand + reach * (isFurnace(gS.st.kind) ? 0.07 : ITEM_REACH) + V3{0, -HAND_Y + 0.012, 0};
+    return hand + reach * (isFurnace(gS.st.kind) || gS.st.kind == Kind::Grindstone ? 0.07 : ITEM_REACH) + V3{0, -HAND_Y + 0.012, 0};
 }
 double craftProgress() { double t = (gS.clock - gS.craftAt) / 0.5; return t >= 0 && t <= 1 ? t : -1; }
 
@@ -2145,6 +2365,29 @@ void anvilHands(JPose const& cam, V3& right, V3& left) {
     left          = lerp(restOf(false), steady, hold);
 }
 
+/// GrindstoneStation.handsOverride
+void grindHands(JPose const& cam, V3& right, V3& left) {
+    double t = moveTime();
+    if (t < G_LET_GO) right = lerp(restOf(true), grindHandle(0, grindHeldPos(0, t)), inOutCubic(window(t, 0, 0.28)));
+    else {
+        V3 up  = lerp(grindHandle(0, grindHeldPos(0, G_LET_GO)), grindLifted() + gS.st.sideV() * 0.1 + V3{0, HAND_Y * 0.6, 0},
+                      inOutCubic(window(t, G_LET_GO, G_LET_GO + 0.3)));
+        V3 end = restOf(true) + V3{0, gS.moveToInv ? 0 : 0.05, 0};
+        right  = lerp(up, end, inOutCubic(window(t, G_LET_GO + 0.3, GRIND_LENGTH)));
+    }
+    (void)cam;
+    if (gS.addWasFull) {
+        // the second item is ground with the other hand, mirrored
+        double hold = inOutCubic(window(t, 0.05, 0.33)) * (1 - inOutCubic(window(t, G_CLEAN_AT, G_CLEAN_AT + 0.3)));
+        left        = lerp(restOf(false), grindHandle(1, grindHeldPos(1, std::min(t, G_CLEAN_AT))), hold);
+    } else {
+        // the other hand braces the frame, bearing down with every stroke
+        double bear = std::fabs(std::sin(3.14159265358979 * (t - G_CONTACT) / G_STROKE)) * window(t, G_CONTACT, G_CONTACT + 0.1) *
+                      (1 - window(t, G_LET_GO - 0.1, G_LET_GO));
+        left = restOf(false) + V3{0, -0.008 * bear, 0} + gS.st.sideV() * (-0.02 * window(t, 0.1, 0.4));
+    }
+}
+
 void updateHands(JPose const& cam, double dt) {
     V3    cp = cam.pos;
     float cy = cam.yaw;
@@ -2173,9 +2416,10 @@ void updateHands(JPose const& cam, double dt) {
         break;
     }
     case Phase::Active: {
-        if (gS.st.kind == Kind::Anvil && moving()) { // AnvilStation.handsOverride, springs at 55
+        if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone) && moving()) { // handsOverride, springs at 55
             V3 r, l;
-            anvilHands(cam, r, l);
+            if (gS.st.kind == Kind::Anvil) anvilHands(cam, r, l);
+            else grindHands(cam, r, l);
             gRight.update(r, 55, dt);
             gLeft.update(l, 55, dt);
             break;
@@ -2313,7 +2557,7 @@ void drawHammer(JPose const& cam, Basis const& b, V3 grip, V3 along, V3 head) {
             for (int k = 0; k < 4; ++k) p4[k] = wp(P[f][k][0], P[f][k][1], P[f][k][2]);
             if (!worldQuad4(cam, b, p4, q)) continue;
             auto const& fc = e.face[f];
-            float u0 = fc.u0 / 64, v0 = fc.v0 / 64, u1 = fc.u1 / 64, v1 = fc.v1 / 64;
+            float u0 = fc.u0 / PROP_W, v0 = fc.v0 / PROP_H, u1 = fc.u1 / PROP_W, v1 = fc.v1 / PROP_H;
             if (fc.rot == 180) { std::swap(u0, u1); std::swap(v0, v1); }
             setRect(q.uv, u0, v0, u1, v1);
             float sh = faceShade(N[f].norm());
@@ -2324,36 +2568,92 @@ void drawHammer(JPose const& cam, Basis const& b, V3 grip, V3 along, V3 head) {
     }
 }
 
-// ---- Fx: sparks (blowSparks / hotSparks), simple ballistic points of light
-struct Spark { V3 p, v; double born, life; float size, r, g, bl; };
+// ---- Fx: sparks (Fx.spark / hotSparks / blowSparks / fountain / flakes / motes), points and streaks of light
+struct Spark { V3 p, v; double age, life; float size, r, g, bl; double gravity, streak; int phase; };
 std::vector<Spark> gSparks;
 uint32_t gRng = 0x9E3779B9u;
 double rnd() { gRng ^= gRng << 13; gRng ^= gRng >> 17; gRng ^= gRng << 5; return (gRng & 0xFFFFFF) / double(0x1000000); }
 double gauss() { double u = std::max(1e-6, rnd()), v = rnd(); return std::sqrt(-2 * std::log(u)) * std::cos(6.2831853 * v); }
-void sparks(V3 at, int n, double speed, V3 bias, double clock) {
-    for (int i = 0; i < n; ++i) {
-        V3 v{gauss() * 0.5, 0.6 + rnd() * 0.8, gauss() * 0.5};
-        v = (v + bias).norm() * (speed * (0.35 + rnd() * 0.65));
-        gSparks.push_back({at, v, clock, 0.22 + rnd() * 0.35, float(0.008 + rnd() * 0.01), 1.0f, float(0.65 + rnd() * 0.3), float(0.25 + rnd() * 0.25)});
+double spread(double amount) { return (rnd() - 0.5) * 2 * amount; }
+void spark(V3 at, V3 v, double life, float size, float r, float g, float b, double gravity, double streak) {
+    if (gSparks.size() >= 900) return; // MAX_SPARKS
+    gSparks.push_back({at, v, 0, life, size, r, g, b, gravity, streak, int(gSparks.size())});
+}
+void hotSparks(V3 at, V3 direction, double spreadAmount, int count, double speed) {
+    for (int i = 0; i < count; ++i) {
+        V3     dir  = (direction + V3{spread(spreadAmount), spread(spreadAmount), spread(spreadAmount)}).norm();
+        double v    = speed * (0.55 + rnd() * 0.7);
+        float  warm = float(rnd());
+        spark(at + V3{spread(0.012), spread(0.012), spread(0.012)}, dir * v, 0.2 + rnd() * 0.35, float(0.0075 + rnd() * 0.006), 1.0f,
+              0.78f + 0.2f * warm, 0.45f + 0.4f * warm, 4.5, 0.045);
     }
 }
-void drawSparks(JPose const& cam, Basis const& b, double clock, double dt) {
-    for (size_t i = 0; i < gSparks.size();) {
+void blowSparks(V3 at, int count, double speed) {
+    for (int i = 0; i < count; ++i) {
+        double a = rnd() * 6.283185307179586;
+        hotSparks(at, V3{std::cos(a), 0.35 + rnd() * 0.9, std::sin(a)}, 0.15, 1, speed);
+    }
+}
+void fountain(V3 at, V3 lean, V3 across, int count, double speed) {
+    for (int i = 0; i < count; ++i) hotSparks(at, V3{0, 1, 0} + lean + across * spread(0.75), 0.18, 1, speed);
+}
+void flakes(V3 at, double radius, int count) { // the enchantment leaving an item: violet motes falling away
+    for (int i = 0; i < count; ++i) {
+        V3    from = at + V3{spread(radius), spread(radius * 0.4), spread(radius)};
+        V3    v{spread(0.25), 0.1 + rnd() * 0.2, spread(0.25)};
+        float pick = float(rnd());
+        spark(from, v, 0.9 + rnd() * 0.7, float(0.014 + rnd() * 0.014), 0.75f + 0.25f * pick, 0.4f + 0.3f * pick, 1.0f, 0.5, 0);
+    }
+}
+void motes(V3 at, double radius, int count, float r, float g, float b, double rise) {
+    for (int i = 0; i < count; ++i)
+        spark(at + V3{spread(radius), spread(radius * 0.3), spread(radius)}, V3{spread(0.04), rise * (0.6 + rnd() * 0.6), spread(0.04)},
+              0.6 + rnd() * 0.6, float(0.008 + rnd() * 0.01), r, g, b, 0, 0);
+}
+/// EnchantFx.billboard: a soft glow facing the camera (added light)
+void glowBillboard(JPose const& cam, Basis const& b, V3 at, double radius, float r, float g, float bl) {
+    Quad q;
+    if (!worldQuad(cam, b, at, b.r * radius, b.u * radius, q)) return;
+    setRect(q.uv, 0, 0, 1, 1);
+    q.color[0] = r; q.color[1] = g; q.color[2] = bl; q.color[3] = 1;
+    q.mode[0] = 5;
+    gQuads.push_back(q);
+}
+void drawSparks(JPose const& cam, Basis const& b, double clock, double dt) { // Fx.renderSparks
+    (void)clock;
+    for (size_t i = gSparks.size(); i-- > 0;) {
         Spark& s = gSparks[i];
-        double age = clock - s.born;
-        if (age > s.life) { gSparks[i] = gSparks.back(); gSparks.pop_back(); continue; }
-        s.v.y -= 6.0 * dt;
-        s.v = s.v * std::exp(-1.5 * dt);
+        s.age += dt;
+        if (s.age >= s.life) { gSparks[i] = gSparks.back(); gSparks.pop_back(); continue; }
+        double drag = std::exp((s.streak > 0 ? -0.9 : -2.2) * dt);
+        s.v.x *= drag;
+        s.v.y = s.v.y * drag - s.gravity * dt;
+        s.v.z *= drag;
         s.p = s.p + s.v * dt;
-        double k = 1 - age / s.life;
-        Quad   q;
-        if (worldQuad(cam, b, s.p, b.r * s.size, b.u * s.size, q)) {
+        if (s.streak > 0) {
+            // a hot spark is brightest when struck and cools as it flies (Fx.streak)
+            float k    = float(std::pow(1 - s.age / s.life, 1.4));
+            V3    head = s.p, tail = s.p - s.v * s.streak;
+            V3    along = head - tail;
+            if (along.len() < 1e-4) along = {0, 1e-4, 0};
+            V3 toCam = head - cam.pos;
+            V3 cr{along.y * toCam.z - along.z * toCam.y, along.z * toCam.x - along.x * toCam.z, along.x * toCam.y - along.y * toCam.x};
+            if (cr.len() < 1e-9) continue;
+            V3   across = cr.norm() * s.size, ext = along.norm() * (s.size * 0.8);
+            V3   h = head + ext, t = tail - ext;
+            V3   p4[4] = {t + across, h + across, t - across, h - across};
+            Quad q;
+            if (!worldQuad4(cam, b, p4, q)) continue;
             setRect(q.uv, 0, 0, 1, 1);
-            q.color[0] = s.r; q.color[1] = s.g; q.color[2] = s.bl; q.color[3] = float(1.6 * k);
+            q.color[0] = s.r * k; q.color[1] = s.g * k * k; q.color[2] = s.bl * k * k * k; q.color[3] = 1;
             q.mode[0] = 5;
             gQuads.push_back(q);
+        } else {
+            float fade    = float(std::sin(3.14159265 * s.age / s.life));
+            float twinkle = 0.75f + 0.25f * float(std::sin(s.age * 23 + s.phase));
+            float k       = fade * twinkle;
+            glowBillboard(cam, b, s.p, s.size * (0.6 + 0.4 * fade), s.r * k, s.g * k, s.bl * k);
         }
-        ++i;
     }
 }
 void glowDisc(JPose const& cam, Basis const& b, V3 at, double radius, float r, float g, float bl) {
@@ -2520,7 +2820,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                     for (double bl : BLOWS) sunk += smoother(window(t, bl, bl + 0.07)) / 3;
                     pile(gS.mainWasFull, gS.mainWasBlock, gS.addWasFull, gS.addWasBlock, m0, a0, 1 - sunk);
                     double heat = sunk + 0.25 * std::exp(-sinceBlow(t) * 10);
-                    if (gS.addWasFull && heat > 0.02) glowDisc(cam, b, anvilPoint() + V3{0, 0.03, 0}, 0.16 + 0.05 * heat, float(0.22 * heat), float(0.13 * heat), float(0.05 * heat));
+                    if (gS.addWasFull && heat > 0.02) glowBillboard(cam, b, anvilPoint() + V3{0, 0.03, 0}, 0.16 + 0.05 * heat, float(0.22 * heat), float(0.6 * 0.22 * heat), float(0.25 * 0.22 * heat));
                 } else {
                     // the new item rises off the anvil, turned over, then goes to the hand (it is in the cursor now)
                     V3 lifted = anvilMain() + V3{0, 0.13, 0};
@@ -2537,17 +2837,129 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                     std::memcpy(cs.box, gS.iconBox[10], sizeof cs.box);
                     if (gS.carrying) placeItem(cam, b, L, cs, gS.carriedBlock, at, rgt, out, size, std::min(size, 0.2), tilt, 1, MAIN_TURN + turn);
                     double glow = 1 - window(t, BLOWS[2], PUT_AWAY + 0.2);
-                    if (glow > 0.01) glowDisc(cam, b, at, 0.2, float(0.4 * glow), float(0.32 * glow), float(0.2 * glow));
+                    if (glow > 0.01) glowBillboard(cam, b, at, 0.2, float(0.4 * glow), float(0.32 * glow), float(0.2 * glow));
                 }
                 // blows: sparks off the anvil, and after the last the new item's glow
                 while (gS.blowsDone < 3 && t >= BLOWS[gS.blowsDone]) {
+                    // AnvilStation.blow
                     V3 sp = anvilPoint() + V3{0, 0.03, 0};
-                    sparks(sp, 34, 2.4, V3{}, clock);
-                    sparks(sp, 12, 2.6, out * -1.0 + V3{0, 0.7, 0}, clock);
+                    blowSparks(sp, 34, 2.4);
+                    hotSparks(sp, out * -1.0 + V3{0, 0.7, 0}, 0.5, 12, 2.6);
+                    if (gS.blowsDone == 2) motes(anvilMain() + V3{0, 0.05, 0}, 0.1, 10, 1.0f, 0.75f, 0.4f, 0.2);
                     ++gS.blowsDone;
                 }
                 Swing sw;
                 if (hammerAt(t, cam, sw)) drawHammer(cam, b, gRight.x, handleDirection(sw.angle), headAxis(sw.angle));
+            }
+        }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Grindstone) {
+            // GrindstoneStation.frame / renderScene / renderWorld
+            V3     rgt = gS.st.right(), out = gS.st.sideV();
+            double t   = moveTime();
+            bool   driven = t >= 0 && t < G_LET_GO + 0.1;
+            gS.spin = driven ? approach(gS.spin, 1, 5, handsDt) : approach(gS.spin, 0, 1.3, handsDt);
+            gS.run -= gS.spin * 70 * handsDt; // the top runs away from the player
+            if (t >= 0 && t >= G_CONTACT && t < G_LET_GO && handsDt > 0) { // grindFx
+                int count = int(std::lround(handsDt * 160 + rnd()));
+                V3  lean  = out * -0.55;
+                fountain(grindBite(0, t), lean, rgt, count, 2.2);
+                if (gS.addWasFull && t < G_CLEAN_AT) fountain(grindBite(1, t), lean, rgt, count, 2.2);
+                if (gS.stripping && t < G_CLEAN_AT + 0.1)
+                    flakes(grindHeldPos(0, t) + grindBlade(0) * 0.04 + V3{0, 0.02, 0}, 0.06, int(std::lround(handsDt * 34 + rnd() * 0.6)));
+                if (gS.stripping && gS.grindPrevT < G_CLEAN_AT && t >= G_CLEAN_AT) {
+                    V3 at = grindHeldPos(0, t);
+                    flakes(at, 0.1, 30);
+                    motes(at, 0.06, 12, 0.85f, 0.55f, 1.0f, 0.2);
+                }
+            }
+            gS.grindPrevT = t;
+            // drawRim: the running faces of the wheel with their texture rolling round (the game's grindstone_round)
+            if (gS.spin > 0.01 && gPropHas[0]) {
+                double h = G_HALF + 0.0025;
+                V3     up{0, 1, 0}, across = rgt * G_WIDTH, w = gS.st.wheel;
+                V3     faces[4][3] = {{w + up * h - out * G_HALF, out, up},
+                                      {w + out * h + up * G_HALF, up * -1.0, out},
+                                      {w - up * h + out * G_HALF, out * -1.0, up * -1.0},
+                                      {w - out * h - up * G_HALF, up, out * -1.0}};
+                double offset = std::fmod(std::fmod(gS.run, 12.0) + 12.0, 12.0);
+                auto rimQuad = [&](V3 start, V3 run, V3 normal, double from, double to, double v0, double v1) {
+                    if (to - from < 1e-4) return;
+                    V3   a = start + run * from, c = start + run * to;
+                    V3   p4[4] = {a - across, a + across, c - across, c + across};
+                    Quad q;
+                    if (!worldQuad4(cam, b, p4, q)) return;
+                    setRect(q.uv, 64.0f / PROP_W, float(v0 / PROP_H), 72.0f / PROP_W, float(v1 / PROP_H));
+                    float sh = faceShade(normal);
+                    q.color[0] = q.color[1] = q.color[2] = sh;
+                    q.mode[0] = 3; q.mode[3] = tableAlpha;
+                    gQuads.push_back(q);
+                };
+                for (auto& f : faces) {
+                    V3 mid = f[0] + f[1] * G_HALF;
+                    if (f[2].dot(cam.pos - mid) <= 0) continue; // turned away (no depth test here)
+                    double split = (12 - offset) / 12 * (2 * G_HALF);
+                    rimQuad(f[0], f[1], f[2], 0, split, offset, 12);
+                    rimQuad(f[0], f[1], f[2], split, 2 * G_HALF, 0, offset);
+                }
+            }
+            auto drawLying = [&](IconSrc const& is, bool block, V3 at, int slot, double scale) {
+                double size   = (block ? 0.16 : G_ITEM_SIZE) * scale;
+                V3     center = at + V3{0, block ? size / 2 : 0.004 + slot * 0.003, 0};
+                orientedItem(cam, b, L, is, block, center, rgt, out, size, 0, tableAlpha, G_TOOL_TURN + (slot == 0 ? -8 : 8));
+            };
+            if (t < 0) {
+                if (gS.phase == Phase::Active && gS.grindTarget == GPlace && gS.haveAim) {
+                    float p = float(0.18 + 0.06 * std::sin(clock * 5));
+                    glowDisc(cam, b, gS.aim + V3{0, 0.004, 0}, 0.12, p, p * 0.8f, p * 0.55f);
+                }
+                for (int i = 0; i < 2; ++i)
+                    if (gS.cellFull[i]) drawLying(src(L.grid[i], i), gS.cellBlock[i], grindRest(i), i, i == gS.grindHover ? 1.08 : 1.0);
+            } else {
+                // what lay on the wheel when the move began, and the result (the snapshot)
+                IconSrc first = src(L.grid[0], -1), second = src(L.grid[1], -1), after = src(L.grid[2], -1);
+                std::memcpy(first.box, gS.snapBox[0], sizeof first.box);
+                std::memcpy(second.box, gS.snapBox[1], sizeof second.box);
+                std::memcpy(after.box, gS.snapBox[2], sizeof after.box);
+                first.snap = second.snap = after.snap = gG.snapValid;
+                if (t < G_LET_GO) { // drawGrinding
+                    bool    clean = !gS.stripping || t >= G_CLEAN_AT;
+                    bool    showAfter = clean || (gS.addWasFull && t >= G_CLEAN_AT);
+                    V3      at = grindHeldPos(0, t);
+                    orientedItem(cam, b, L, showAfter ? after : first, showAfter ? gS.resultWasBlock : gS.mainWasBlock, at, rgt, out, G_ITEM_SIZE,
+                                 grindHeldTilt(t), 1, grindHeldYaw(0, t));
+                    if (gS.stripping && t >= G_CONTACT - 0.1 && t < G_CLEAN_AT + 0.05) {
+                        float g = float(0.35 * (1 - window(t, G_CONTACT, G_CLEAN_AT))); // the enchantment's glow draining out
+                        glowBillboard(cam, b, at + V3{0, 0.02, 0}, 0.17, 0.65f * g, 0.35f * g, g);
+                    }
+                    if (gS.addWasFull && t < G_CLEAN_AT)
+                        orientedItem(cam, b, L, second, gS.addWasBlock, grindHeldPos(1, t), rgt, out, G_ITEM_SIZE, grindHeldTilt(t), 1, grindHeldYaw(1, t));
+                    else if (gS.addWasFull && t < G_CLEAN_AT + 0.25) {
+                        double k = inCubic(window(t, G_CLEAN_AT, G_CLEAN_AT + 0.25));
+                        orientedItem(cam, b, L, second, gS.addWasBlock, lerp(grindHeldPos(1, G_CLEAN_AT), grindHeldPos(0, t), k), rgt, out,
+                                     G_ITEM_SIZE * (1 - k), grindHeldTilt(t), 1, grindHeldYaw(1, t));
+                    }
+                    if (t >= G_CONTACT) { // the bright line where steel meets stone
+                        float bb = float(0.55 + 0.25 * std::sin(clock * 40));
+                        glowBillboard(cam, b, grindBite(0, t) + V3{0, 0.008, 0}, 0.05, bb, bb * 0.6f, bb * 0.25f);
+                    }
+                } else { // lifted up to the eye: the clean steel catches the light, then it is held (or slips into the bag)
+                    double k    = window(t, G_LET_GO, GRIND_LENGTH);
+                    double size = gS.moveToInv ? G_ITEM_SIZE * (1 - 0.8 * inCubic(window(k, 0.4, 1))) : G_ITEM_SIZE + (0.205 - G_ITEM_SIZE) * window(k, 0.6, 1);
+                    double upK  = inOutCubic(window(t, G_LET_GO, G_LET_GO + 0.3));
+                    V3     at   = lerp(grindHeldPos(0, G_LET_GO), grindLifted(), upK);
+                    if (gS.moveToInv) {
+                        V3 drawer = cam.pos + V3{0, 0.55, 0} + yawForward(cam.yaw) * 0.6;
+                        at        = lerp(at, drawer, inCubic(window(t, G_LET_GO + 0.22, GRIND_LENGTH)));
+                    } else {
+                        V3 held = heldItemPoint(gRight.x, shoulderOf(true, cam.pos, cam.yaw));
+                        at      = lerp(at, held, inOutCubic(window(t, G_LET_GO + 0.3, GRIND_LENGTH)));
+                    }
+                    float  tilt0 = grindHeldTilt(G_LET_GO);
+                    float  tilt  = float(tilt0 + (60 - tilt0) * hump(std::min(1.0, k * 1.25)) + 18 * window(k, 0.8, 1));
+                    double from  = grindHeldYaw(0, G_LET_GO);
+                    double turn  = from + (0 - from) * inOutCubic(window(k, 0.5, 1)) + 25 * std::sin(k * 3.14159265358979);
+                    orientedItem(cam, b, L, after, gS.resultWasBlock, at, rgt, out, size, tilt, 1, turn);
+                }
             }
         }
         if (haveCam) drawSparks(cam, b, clock, handsDt);
@@ -2750,6 +3162,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them \xE2\x80\x94 forge" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
+    case Kind::Grindstone: return std::string("Lay the item on the wheel") + dot + "LMB on it \xE2\x80\x94 grind (enchantments come off)" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
     default: return "Esc step back";
     }
 }
@@ -2770,6 +3183,17 @@ void drawOverlay() {
             int z   = gS.hoverCell, k = gS.st.kind == Kind::Smoker ? 1 : gS.st.kind == Kind::BlastFurnace ? 2 : 0;
             tipTitle = kZoneName[k][z];
             tipLine  = gS.cellFull[z] ? (z == 2 ? "Click to take \xC2\xB7 Shift-click to inventory" : "") : kZoneEmpty[k][z];
+        }
+        if (gS.st.kind == Kind::Grindstone && gS.grindTarget == GItem && !gS.carrying && !moving()) {
+            // GrindstoneStation.tooltip (the item's own lines are the hidden screen's: not shown here)
+            if (gS.resultFull3()) {
+                bool strips = (gS.cellFull[0] && gS.cellGlint[0]) || (gS.cellFull[1] && gS.cellGlint[1]);
+                bool merges = gS.cellFull[0] && gS.cellFull[1];
+                tipTitle = strips ? "Enchantments come off (curses stay), a little experience returns" : merges ? "The two are ground into one" : "Grind";
+                tipLine  = "LMB \xE2\x80\x94 grind  \xC2\xB7  RMB \xE2\x80\x94 take  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
+            } else {
+                tipTitle = "Click \xE2\x80\x94 take";
+            }
         }
         mx = (gCursorNdcX + 1) * 0.5f;
         my = (1 - gCursorNdcY) * 0.5f;
@@ -2873,6 +3297,10 @@ void appendDiag(char* b, unsigned long long cap) {
                          gS.cellFull[5], gS.cellFull[6], gS.cellFull[7], gS.cellFull[8], gS.resultFull, gS.last.pos.x, gS.last.pos.y, gS.last.pos.z,
                          gS.last.yaw, gS.last.pitch, gS.last.roll, gS.tanHalf, gS.aspect, gS.fovY, gS.vanillaFovY, gG.status.c_str());
     len += std::snprintf(b + len, cap - len, "  block states: %s; lit %d; aimTop %d\n", gS.states.c_str(), gS.st.lit, gS.aimTop);
+    if (len < cap)
+        len += std::snprintf(b + len, cap - len, "  side %d; wheel %.3f %.3f %.3f; grind target %d hover %d place %d; glint %d%d%d; spin %.2f; props: %s\n", int(gS.st.side),
+                             gS.st.wheel.x, gS.st.wheel.y, gS.st.wheel.z, gS.grindTarget, gS.grindHover, gS.grindPlace, gS.cellGlint[0], gS.cellGlint[1],
+                             gS.cellGlint[2], gS.spin, gPropNote.c_str());
     for (int i = 0; i < 12 && len < cap; ++i) {
         auto const& e = gPressLog[(gPressLogN + i) % 12];
         if (!e.empty()) len += std::snprintf(b + len, cap - len, "  press: %s\n", e.c_str());
