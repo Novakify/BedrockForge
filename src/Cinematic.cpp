@@ -1841,7 +1841,11 @@ bool mapClient(int w, int h, int& x, int& y, int liveIn) {
     if (gPress.state == PressState::Down && t >= 0) gPress.target = t;
     Rect r;
     float fx, fy;
+    // an enchantment offer under the cursor: the hidden screen's cursor rests on its button (nothing is clicked there:
+    // presses on offers are the scene's), so the window shows the offer's clue as its tooltip
+    bool clueHover = !mapToTarget && gS.st.kind == Kind::Enchanting && t >= 200 && t <= 202 && gPress.state == PressState::Idle;
     if (L.valid && L.kind == int(gS.st.kind) && mapToTarget && targetRect(L, use, r)) { fx = r.cx(); fy = r.cy(); }
+    else if (L.valid && L.kind == int(gS.st.kind) && clueHover && L.nButtons >= 3) { fx = L.buttons[t - 200].cx(); fy = L.buttons[t - 200].cy(); }
     else if (L.valid) neutralPoint(L, fx, fy);
     else { fx = float(w) - 100.0f; fy = 60.0f; }
     x = int(fx);
@@ -2409,6 +2413,8 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
         if (readBrarchive(arch.parent_path() / "particle.brarchive", "particles.png", file) && decodePng(file, px, w, h) && w >= 128 && h >= 128) {
             for (int y = 0; y < 16; ++y)
                 std::memcpy(&atlas[(size_t(FX_GLYPHS_Y + y) * PROP_W + FX_GLYPHS_X) * 4], &px[(size_t(h - 16 + y) * w) * 4], 128 * 4);
+            for (int y = 0; y < 8; ++y) // generic_0..7 (the portal particles' sprites): its top row
+                std::memcpy(&atlas[(size_t(FX_GLYPHS_Y + 16 + y) * PROP_W + FX_GLYPHS_X) * 4], &px[(size_t(y) * w) * 4], 64 * 4);
             gPropNote += "particles.png ok; ";
             gPropHas[7] = true;
         } else gPropNote += "particles.png missing; ";
@@ -3836,7 +3842,7 @@ void fxBeam(JPose const& cam, Basis const& b, V3 base, double height, double wid
 }
 // vanilla's EnchantmentTableParticle (EnchantFx.stream): spawned at `to` with an offset, it starts at to + offset and
 // converges on to, falling 1.2 at the very end; a glyph of light (its colour 0.9f, 0.9f, f)
-struct Glyph { V3 to, d; double age, life; float size, f; int sprite; };
+struct Glyph { V3 to, d; double age, life; float size, f; int sprite; bool portal = false; };
 std::vector<Glyph> gGlyphs;
 void glyphStream(V3 from, V3 to, int count) {
     for (int i = 0; i < count && gGlyphs.size() < 600; ++i) {
@@ -3850,6 +3856,22 @@ void drawGlyphs(JPose const& cam, Basis const& b, double dt) {
         g.age += dt;
         if (g.age >= g.life) { gGlyphs[i] = gGlyphs.back(); gGlyphs.pop_back(); continue; }
         double a = g.age / g.life, f = 1 - a, f1 = a * a * a * a;
+        if (g.portal) { // per tick: position += speed * age / lifetime (the speed is per tick); quad shrinks
+            double ticks = g.age * 20, life = g.life * 20;
+            V3     p = g.to + g.d * (ticks * (ticks + 1) / 2 / life);
+            double sz = g.size * (1 - ticks / (life * 1.5));
+            float  k  = float(std::min(1.0, 0.35 + std::pow(a, 4) * 0.65));
+            Quad   q;
+            if (!worldQuad(cam, b, p, b.r * sz, b.u * sz, q)) continue;
+            if (gPropHas[7]) {
+                float u0 = float(FX_GLYPHS_X + (16 + g.sprite) * 8 % 128), v0 = float(FX_GLYPHS_Y + 16); // generic_0..7, copied below the glyphs
+                setRect(q.uv, u0 / PROP_W, v0 / PROP_H, (u0 + 8) / PROP_W, (v0 + 8) / PROP_H);
+                q.mode[0] = 3;
+            } else { setRect(q.uv, 0, 0, 1, 1); q.mode[0] = 5; }
+            q.color[0] = 0.9f * g.f * k; q.color[1] = 0.3f * g.f * k; q.color[2] = g.f * k; q.color[3] = 1;
+            gQuads.push_back(q);
+            continue;
+        }
         V3     p = g.to + g.d * f - V3{0, f1 * 1.2, 0};
         // getLightColor: lit up towards the end (a^4 of full bright over the world's light; the night here)
         float k = float(std::min(1.0, 0.35 + std::pow(a, 4) * 0.65));
@@ -3880,9 +3902,13 @@ void eBurst(V3 at, double strength) { // the moment of enchantment: motes flung 
         V3 dir = V3{gauss(), gauss() * 0.7 + 0.25, gauss()}.norm();
         eSpark(at, dir * (0.35 + rnd() * 1.0), 0.6 + rnd() * 0.8, float(0.018 + rnd() * 0.03));
     }
-    for (int i = 0; i < int(8 * strength); ++i) // REVERSE_PORTAL: a little purple haze
-        spark(at + V3{(rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3}, V3{(rnd() - 0.5) * 1.0, rnd() * 0.8, (rnd() - 0.5) * 1.0},
-              0.8 + rnd() * 0.6, float(0.03 + rnd() * 0.02), 0.55f, 0.2f, 0.8f, -0.3, 0);
+    for (int i = 0; i < int(8 * strength) && gGlyphs.size() < 600; ++i) { // REVERSE_PORTAL: a little purple haze
+        // ReversePortalParticle: PortalParticle (quadSize 0.1 (0.5..0.7), colour f (0.9, 0.3, 1), a generic sprite)
+        // x 1.5, 60..61 ticks, moving by its speed x age / lifetime each tick, shrinking to 1/3
+        Glyph g{at + V3{(rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3}, V3{(rnd() - 0.5) * 0.05, rnd() * 0.04, (rnd() - 0.5) * 0.05},
+                0, (60 + std::floor(rnd() * 2)) / 20.0, float(0.1 * (rnd() * 0.2 + 0.5) * 1.5), float(rnd() * 0.6 + 0.4), int(rnd() * 8) % 8, true};
+        gGlyphs.push_back(g);
+    }
     for (int i = 0; i < int(30 * strength); ++i) glyphStream(at + V3{gauss(), gauss(), gauss()}.norm() * (1.1 + rnd() * 0.6), at, 1);
 }
 void eSparkle(V3 at, double radius) {
