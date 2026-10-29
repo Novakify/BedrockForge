@@ -4935,7 +4935,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         // ---- the inventory drawer (SceneScreen.drawPanel)
         if (layoutOk && (gS.phase == Phase::Active || gS.phase == Phase::Outro)) {
             bool  over = gS.phase == Phase::Active && gS.overPanel;
-            gS.expand  = approach(gS.expand, over ? 1 : 0, 13, gS.frameDt);
+            gS.expand  = approach(gS.expand, over ? 1 : 0, 13, handsDt); // this frame's time (the camera is asked several times a frame)
             DrawerGeom g = drawerGeom(int(W), int(H));
             float alpha = gS.phase == Phase::Active ? float(smoother(gS.time / 0.4)) : float(1 - inOutSine(gS.time / 0.22));
             float px = g.slotPx / 18.0f; // one GUI pixel of the drawer
