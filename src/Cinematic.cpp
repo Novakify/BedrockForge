@@ -391,7 +391,7 @@ struct Scene {
     double grindPrevT = -1;
     // EnchantStation
     int    enchTarget = 0, hoverOffer = -1, ritualOffer = 0, ritualLapis = 0, denyOffer = -1, lastHoverOffer = -1;
-    bool   aimAir = false, burstDone = false, offerAff[3] = {}, ritualAff = true;
+    bool   aimAir = false, burstDone = false, wasRune[18] = {};
     double offersAt = -10, burstAt = -10, denyAt = -10, glow = 0, lapisFocus = 0, enchTick = 0;
     long   offersPrint = -1;
     V3     ritualFrom;
@@ -880,6 +880,8 @@ constexpr double OFFER_HIGH = 0.92, OFFER_LOW = 0.74, OFFER_FAR = -0.12, OFFER_N
 constexpr double RITUAL_LENGTH = 1.5, RITUAL_PEAK = 0.5, E_ITEM_SIZE = 0.34, LAPIS_RADIUS = 0.115;
 constexpr double LAPIS_RIGHT = 0.44, LAPIS_NEAR = 0.18, LAPIS_LIFT = 0.27;
 constexpr double OUTER_LIFT = 0.012, INNER_LIFT = 0.02, HINT_LIFT = 0.028, SOCKET_LIFT = 0.016;
+// the book's outline over the table (blocks): half its width, how far it reaches towards / away from the player, its height there
+constexpr double BOOK_LIFT = 0.1, BOOK_HALF_W = 0.36, BOOK_NEAR = 0.2, BOOK_FAR = 0.3, BOOK_NEAR_H = 0.12, BOOK_FAR_H = 0.42;
 bool   moving() { return moveTime() >= 0; }
 double sinceBlow(double t) {
     double since = 1e9;
@@ -1429,6 +1431,7 @@ void enchAction(int t, unsigned bit, bool shift) {
     gS.ritualLapis = k + 1;
     gS.burstDone   = false;
     inject(300 + k, 1);
+    for (int j = 0; j < 18; ++j) gS.wasRune[j] = gS.btnFull[6 + j];
     gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = RITUAL_LENGTH; gS.moveBeat = 1e9; gS.moveBeatDone = false;
     gS.moveToInv = false;
     for (int i = 0; i < 4; ++i) { gS.wasFull[i] = gS.cellFull[i]; gS.wasBlock[i] = gS.cellBlock[i]; }
@@ -1967,6 +1970,8 @@ cbuffer C : register(b0) {
     float4 mode;   // x: 0 solid, 1 hidden screen, 2 skin; y: key on; z: key tolerance; w: opacity
     float4 key0;   // slot background
     float4 key1;   // hovered slot background
+    float4 hull[4]; // a convex polygon (pixels, in order) the quad is hidden behind: what stands in front of it in the world
+    float4 occl;    // x: the polygon's corner count (0: none)
 };
 Texture2D    tUi   : register(t0);
 Texture2D    tSkin : register(t1);
@@ -1984,6 +1989,20 @@ V2P VS(uint id : SV_VertexID) {
     o.local = float2(k == 1 || k == 3 ? 1 : 0, k >= 2 ? 1 : 0);
     return o;
 }
+bool behind(float2 p) {
+    int n = int(occl.x + 0.5);
+    if (n < 3) return false;
+    float sgn = 0;
+    for (int k = 0; k < 8; ++k) {
+        if (k >= n) break;
+        float4 A = hull[k / 2], B = hull[((k + 1) % n) / 2];
+        float2 a = (k % 2) == 0 ? A.xy : A.zw, b = (((k + 1) % n) % 2) == 0 ? B.xy : B.zw;
+        float  c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+        if (sgn == 0) sgn = sign(c);
+        else if (c * sgn < 0) return false;
+    }
+    return true;
+}
 bool near3(float4 p, float3 c) { float3 q = p.rgb / max(p.a, 1e-3); return p.a > 0.9 && all(abs(q - c) < 0.07); }
 float4 PS(V2P i) : SV_Target {
     if (mode.x > 5.5 && mode.x < 6.5) { // 6: the kept screen, copied only from a frame that has the screen drawn (probes)
@@ -1999,6 +2018,7 @@ float4 PS(V2P i) : SV_Target {
         }
         return tCand.Load(int3(i.pos.xy, 0));
     }
+    if (behind(i.pos.xy)) discard;
     if (mode.x < 0.5) return (mode.y > 0.5 ? float4(color.rgb * color.a, 0) : float4(color.rgb * color.a, color.a)) * mode.w; // y: additive light
     if (mode.x > 6.5 && mode.x < 7.5) { // 7: a light texture of the atlas (RenderType.eyes: added light)
         float4 k = tProp.SampleLevel(sP, i.uv, 0);
@@ -2013,9 +2033,11 @@ float4 PS(V2P i) : SV_Target {
         float4 u = mode.y > 0.5 ? tSnap.SampleLevel(sP, i.uv, 0) : tUi.SampleLevel(sP, i.uv, 0);
         float3 c = u.rgb / max(u.a, 1e-3);
         if (u.a < 0.5 || all(abs(c - key0.rgb) < mode.z)) discard;
-        // key1.w: only a slot's count digits (white, #3F3F3F shadow)
+        // key1.w: only a slot's count digits (white, #3F3F3F shadow); key1.x / y: the most / least saturation kept
         if (key1.w > 0.5 && !(all(c > 0.96) || all(abs(c - 0.247) < 0.03))) discard;
-        float  v = max(c.r, max(c.g, c.b));
+        float  sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+        if ((key1.x > 0 && sat > key1.x) || sat < key1.y) discard;
+        float  v = key0.w > 0.5 ? 1 : max(c.r, max(c.g, c.b)); // key0.w: one flat colour
         float  a = color.a * mode.w;
         return float4(color.rgb * v * a, a);
     }
@@ -2059,7 +2081,7 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
         D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0, 0, 0};
         D3D12_ROOT_PARAMETER   p[2]{};
         p[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        p[0].Constants        = {0, 0, 40};
+        p[0].Constants        = {0, 0, 60};
         p[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         p[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         p[1].DescriptorTable  = {1, &range};
@@ -2642,39 +2664,35 @@ void detect(Img im, bool dump, int kindI) {
             L.nRoles  = n;
             L.hasGrid = n == expect;
             if (kind == Kind::Enchanting && n == 2) {
-                // the three enchantment buttons: a dark panel right of the lapis slot, the buttons lighter rows in it
-                // (separators and frame dark). Left edge on a line through the panel above the slots, the rows down
-                // the buttons' left margin (no writing there), the right edge along the top margin of the first row.
-                auto px3  = [&](int x, int y, int& r, int& g, int& b) { int a; im.get(std::clamp(x, 0, im.W - 1), std::clamp(y, 0, im.H - 1), r, g, b, a); };
-                auto dark = [&](int x, int y) { int r, g, b; px3(x, y, r, g, b); return std::max(r, std::max(g, b)) < 62; };
-                auto lite = [&](int x, int y) { int r, g, b; px3(x, y, r, g, b); return std::min(r, std::min(g, b)) > 150; };
+                // the three enchantment buttons fill a panel right of the lapis slot: its frame (#373737, one GUI px)
+                // is found on a line through it above the slots, its height down the frame's left column, its width
+                // along the frame's top line; the buttons are its thirds (a light bevel on top, a dark line below)
+                auto px3   = [&](int x, int y, int& r, int& g, int& b) { int a; im.get(std::clamp(x, 0, im.W - 1), std::clamp(y, 0, im.H - 1), r, g, b, a); };
+                auto frame = [&](int x, int y) { int r, g, b; px3(x, y, r, g, b); return std::abs(r - 55) <= 3 && std::abs(g - 55) <= 3 && std::abs(b - 55) <= 3; };
                 Rect const& lap = L.grid[1].x > L.grid[0].x ? L.grid[1] : L.grid[0];
                 int  y = int(lap.y - 1.5f * s), x = int(lap.x + lap.w + unit), xEnd = int(px1 + s);
-                while (x < xEnd && !dark(x, y)) ++x;                // the panel's frame
-                while (x < xEnd && dark(x, y)) ++x;                 // .. to the first button
-                int x0 = x;
-                if (x0 < xEnd - 2 * s) {
-                    int cx = x0 + std::max(2, int(unit)), yy = y;
-                    while (yy > 0 && !lite(cx, yy)) --yy;           // up to the window above the panel
-                    struct Run { int a, b; };
-                    std::vector<Run> rows;
-                    for (int y2 = yy + 1, a = -1; y2 < im.H && !lite(cx, y2); ++y2) {
-                        bool on = !dark(cx, y2);
-                        if (on && a < 0) a = y2;
-                        if (!on && a >= 0) { if (y2 - a > s * 0.6f) rows.push_back({a, y2}); a = -1; }
-                    }
-                    if (rows.size() >= 3) {
-                        int x1 = x0;
-                        while (x1 < xEnd && !dark(x1, rows[0].a + std::max(2, int(unit)))) ++x1;
+                while (x < xEnd && !frame(x, y)) ++x;
+                int fx = x;
+                while (x < xEnd && frame(x, y)) ++x;
+                int x0 = x, th = x0 - fx;
+                if (fx < xEnd && th > 0 && th < s / 4) {
+                    int yt = y, yb = y;
+                    while (yt > 0 && frame(fx, yt - 1)) --yt;
+                    while (yb < im.H - 1 && frame(fx, yb + 1)) ++yb;
+                    int x1 = fx;
+                    while (x1 < im.W - 1 && frame(x1 + 1, yt)) ++x1;
+                    float top = float(yt + th), bottom = float(yb + 1), right = float(x1 + 1), h = (bottom - top) / 3;
+                    if (h > s * 0.8f && right - x0 > 4 * s) {
+                        float in = L.slot * 16.0f / 18.0f;
                         for (int k = 0; k < 3; ++k) {
-                            float h = float(rows[k].b - rows[k].a), top = float(rows[k].a), cell = L.slot;
-                            L.buttons[k]     = {float(x0), top, float(x1 - x0), h};
-                            L.buttons[3 + k] = {float(x1) - cell - unit, top + h / 2 - cell / 2, cell, cell};         // the level cost
-                            L.buttons[6 + k] = {float(x0) + unit, top + h / 2 - cell / 2, cell, cell};                 // the left end
-                            L.buttons[9 + k] = {float(x0 + x1) / 2 - cell / 2, top + h / 2 - cell / 2, cell, cell};     // the runes
+                            float ty = top + k * h, mid = ty + h / 2;
+                            L.buttons[k]     = {float(x0), ty, right - x0, h};
+                            L.buttons[3 + k] = {right - unit - in, mid - in / 2, in, in}; // the level cost (right, green while it can be paid)
+                            for (int j = 0; j < 6; ++j)                                     // the runes, along the middle
+                                L.buttons[6 + k * 6 + j] = {float(x0) + 16 * unit + j * in, mid - in / 2, in, in};
                         }
-                        L.nButtons = 12;
-                        L.board    = {float(x0), float(rows[0].a), float(x1 - x0), float(rows[2].b - rows[0].a)};
+                        L.nButtons = 24;
+                        L.board    = {float(x0), top, right - x0, bottom - top};
                         L.hasBoard = true;
                     }
                 }
@@ -2893,6 +2911,11 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             bool ghost = std::fabs(r - 74 / 255.0f) < 0.025f && std::fabs(g - 73 / 255.0f) < 0.025f && std::fabs(b - 76 / 255.0f) < 0.025f;
                             item = a > 0.5f && !bg && !hi && !ghost;
                             if (s >= 11) item = a > 0.5f && (std::fabs(r - ref[0]) > 0.12f || std::fabs(g - ref[1]) > 0.12f || std::fabs(b - ref[2]) > 0.12f);
+                            if (s >= 11 + 3 && s < 11 + 24 && L.kind == int(Kind::Enchanting)) {
+                                // the enchanting buttons: the cost is printed in colour (green / red), the runes in grey-brown
+                                float sat = std::max(r, std::max(g, b)) - std::min(r, std::min(g, b));
+                                item      = item && (s < 11 + 6 ? sat > 0.2f : sat < 0.2f);
+                            }
                             if (item) { sr += r; sgc += g; sb += b; }
                             if (item && b > g + 0.12f && r > g + 0.04f) ++violet; // the enchantment glint's violet
                         }
@@ -2958,7 +2981,10 @@ struct Quad {
     float mode[4] = {0, 0, 0, 1};
     float key0[4] = {0, 0, 0, 0};
     float key1[4] = {0, 0, 0, 0};
+    float hull[8][2] = {};
+    float occl[4] = {0, 0, 0, 0};
 };
+static_assert(sizeof(Quad) == 60 * 4, "root constants");
 std::vector<Quad> gQuads;
 
 void pixelQuad(float x0, float y0, float x1, float y1, int W, int H, Quad& q) {
@@ -3673,12 +3699,39 @@ void circleQuad(Quad& q, CirclePalette const& pal, float brightness) {
     for (int i = 0; i < 3; ++i) { q.color[i] = pal.top[i]; q.key0[i] = pal.bottom[i]; }
     q.color[3] = alpha;
 }
+// What stands in front of a quad in the world (we draw over the finished frame, without its depth): a convex
+// polygon on screen the quad is cut away inside. The enchanting table's open book over the circles.
+int   gOcclN = 0;
+float gOccl[8][2];
+void setOccluder(JPose const& cam, Basis const& b, V3 const* pts, int n) {
+    std::vector<std::pair<float, float>> p;
+    for (int i = 0; i < n; ++i) {
+        float x, y;
+        if (!toPixel(cam, b, pts[i], gW, gH, x, y)) { gOcclN = 0; return; }
+        p.push_back({x, y});
+    }
+    std::sort(p.begin(), p.end());
+    std::vector<std::pair<float, float>> h(2 * p.size());
+    auto cross = [](auto o, auto a, auto c) { return (a.first - o.first) * (c.second - o.second) - (a.second - o.second) * (c.first - o.first); };
+    size_t k = 0;
+    for (size_t i = 0; i < p.size(); ++i) { while (k >= 2 && cross(h[k - 2], h[k - 1], p[i]) <= 0) --k; h[k++] = p[i]; }
+    for (size_t i = p.size() - 1, t = k + 1; i-- > 0;) { while (k >= t && cross(h[k - 2], h[k - 1], p[i]) <= 0) --k; h[k++] = p[i]; }
+    k = k > 0 ? k - 1 : 0;
+    if (k > 8) k = 8; // a box seen from anywhere has at most 6 corners on its outline
+    gOcclN = int(k);
+    for (size_t i = 0; i < k; ++i) { gOccl[i][0] = h[i].first; gOccl[i][1] = h[i].second; }
+}
+void applyOccluder(Quad& q) {
+    q.occl[0] = float(gOcclN);
+    std::memcpy(q.hull, gOccl, sizeof q.hull);
+}
 /// EnchantFx.circle: lying on a surface
 void fxCircle(JPose const& cam, Basis const& b, V3 center, double radius, double angle, CirclePalette const& pal, float brightness) {
     if (brightness <= 0.001f) return;
     Quad q;
     if (!turnedSquare(cam, b, center, V3{1, 0, 0}, V3{0, 0, 1}, radius, angle, q)) return;
     circleQuad(q, pal, brightness);
+    applyOccluder(q);
     gQuads.push_back(q);
 }
 /// EnchantFx.circleBillboard: facing the camera (camera left / up as Java's)
@@ -3842,7 +3895,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         list->RSSetViewports(1, &vp);
         list->RSSetScissorRects(1, &sc);
         list->SetGraphicsRootDescriptorTable(1, gG.srvHeap->GetGPUDescriptorHandleForHeapStart());
-        list->SetGraphicsRoot32BitConstants(0, 40, &q, 0);
+        list->SetGraphicsRoot32BitConstants(0, 60, &q, 0);
         list->DrawInstanced(6, 1, 0, 0);
         barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr); // the caller's target again
@@ -4520,6 +4573,18 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 gS.burstAt   = clock;
                 eBurst(enchItemPos(), 1.4);
             }
+            // the open book (EnchantTableRenderer: 0.1 over the top, turned to the player, leaning back) hides the
+            // circles under it
+            {
+                V3 c = gS.st.top + V3{0, BOOK_LIFT, 0};
+                V3 pts[8];
+                for (int i = 0; i < 8; ++i) {
+                    double ax = (i & 1) ? BOOK_HALF_W : -BOOK_HALF_W, az = (i & 2) ? BOOK_NEAR : -BOOK_FAR;
+                    double ay = (i & 4) ? ((i & 2) ? BOOK_NEAR_H : BOOK_FAR_H) : -BOOK_LIFT + 0.002;
+                    pts[i] = c + rgt * ax + out * az + V3{0, ay, 0};
+                }
+                setOccluder(cam, b, pts, 8);
+            }
             // ---- renderScene
             double introP = clamp01(gS.time / gS.leanLength);
             double target = gS.phase == Phase::Intro ? 0.5 * smoother(window(introP, 0.45, 1.0))
@@ -4560,10 +4625,13 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             V3 corner = lapisCorner();
             if (presence > 0.01) {
                 bool wrong = active && gS.enchTarget == ELapis && gS.carrying && !carryingLapis();
+                int keepN = gOcclN;
+                gOcclN    = 0; // the socket floats beside the book, in front of it
                 fxCircle(cam, b, corner + V3{0, SOCKET_LIFT, 0}, 0.10, clock * 0.3, wrong ? RED : LAPIS, float((0.50 + 0.42 * gS.lapisFocus) * presence));
+                gOcclN = keepN;
             }
             // the cost digits / runes / a count of the hidden screen, in another colour, facing the camera
-            auto glyphs = [&](Rect r, float const* key, bool snap, bool countOnly, V3 c, double perPx, unsigned rgb, float alpha) {
+            auto glyphs = [&](Rect r, float const* key, bool snap, bool countOnly, V3 c, double perPx, unsigned rgb, float alpha, float satMax = 0, float satMin = 0, bool flat = false) {
                 if (r.w <= 0 || alpha < 0.03f) return;
                 double hw = r.w / guiPx * perPx / 2, hh = r.h / guiPx * perPx / 2;
                 Quad   q;
@@ -4573,6 +4641,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 q.color[0] = ((rgb >> 16) & 255) / 255.0f; q.color[1] = ((rgb >> 8) & 255) / 255.0f; q.color[2] = (rgb & 255) / 255.0f; q.color[3] = alpha;
                 for (int i = 0; i < 3; ++i) q.key0[i] = key ? key[i] : L.bg[i];
                 q.key1[3] = countOnly ? 1.0f : 0.0f;
+                q.key1[0] = satMax; q.key1[1] = satMin; q.key0[3] = flat ? 1.0f : 0.0f;
                 gQuads.push_back(q);
             };
             bool hasCount = gS.cellFull[1] && gS.iconBox[1][2] > 0.9f && gS.iconBox[1][3] > 0.9f; // the slot prints a count (2 or more)
@@ -4614,10 +4683,24 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 float const* bx = snap ? gS.snapBox[14 + k] : gS.iconBox[14 + k];
                 Rect   num{cell.x + cell.w * bx[0], cell.y + cell.h * bx[1], cell.w * (bx[2] - bx[0]), cell.h * (bx[3] - bx[1])};
                 float  a = std::min(1.0f, appear);
-                glyphs(num, gS.btnRef[3 + k], snap, false, c, s, aff ? 0xF4EEFF : 0xFF6B6B, a);
-                Rect bt = L.buttons[k], le = L.buttons[6 + k];
-                Rect rune{le.x + le.w, bt.y + guiPx * 2, cc.x - (le.x + le.w), bt.h - guiPx * 4};
-                glyphs(rune, gS.btnRef[9 + k], snap, false, c - b.u * ((26 + 4) * 0.55 * s), s * 0.55, aff ? 0xB9A6FF : 0x7A4A55, a);
+                glyphs(num, gS.btnRef[3 + k], snap, false, c, s, aff ? 0xF4EEFF : 0xFF6B6B, a, 0, 0.2f);
+                // the runes: what the six cells along the button hold (their extent), one flat colour, under the cost
+                float rx0 = 1e9f, rx1 = -1, ry0 = 1e9f, ry1 = -1;
+                for (int j = 0; j < 6; ++j) {
+                    int c6 = 6 + k * 6 + j;
+                    bool full = snap ? gS.wasRune[k * 6 + j] : gS.btnFull[c6];
+                    if (!full) continue;
+                    float const* rb = snap ? gS.snapBox[11 + c6] : gS.iconBox[11 + c6];
+                    Rect  rc = L.buttons[c6];
+                    Rect  ic{rc.cx() - in / 2, rc.cy() - in / 2, in, in};
+                    rx0 = std::min(rx0, ic.x + ic.w * rb[0]); rx1 = std::max(rx1, ic.x + ic.w * rb[2]);
+                    ry0 = std::min(ry0, ic.y + ic.h * rb[1]); ry1 = std::max(ry1, ic.y + ic.h * rb[3]);
+                }
+                if (rx1 > rx0) {
+                    Rect   rune{rx0, ry0, rx1 - rx0, ry1 - ry0};
+                    double hh = rune.h / guiPx * s * 0.55 / 2;
+                    glyphs(rune, gS.btnRef[6 + k * 6], snap, false, c - b.u * (26 * 0.55 * s + hh), s * 0.55, aff ? 0xB9A6FF : 0x7A4A55, a, 0.2f, 0, true);
+                }
                 for (int i = 0; i <= k; ++i) { // "◆" x (k + 1)
                     V3   gc = c - b.u * ((37 + 3.5) * 0.55 * s) + b.r * ((i - k / 2.0) * 7 * 0.55 * s);
                     double h = 3.0 * 0.55 * s;
@@ -4657,6 +4740,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 }
             }
             drawGlyphs(cam, b, handsDt);
+            gOcclN = 0;
         }
         if (haveCam) drawSparks(cam, b, clock, handsDt);
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
@@ -4832,7 +4916,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     list->RSSetScissorRects(1, &sc);
     list->SetGraphicsRootDescriptorTable(1, gG.srvHeap->GetGPUDescriptorHandleForHeapStart());
     for (auto& q : gQuads) {
-        list->SetGraphicsRoot32BitConstants(0, 40, &q, 0);
+        list->SetGraphicsRoot32BitConstants(0, 60, &q, 0);
         list->DrawInstanced(6, 1, 0, 0);
     }
     gG.status = "drawing " + std::to_string(gQuads.size()) + " quads";
