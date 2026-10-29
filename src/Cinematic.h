@@ -23,6 +23,7 @@ struct ID3D12Device;
 struct ID3D12GraphicsCommandList;
 struct ID3D12Resource;
 struct D3D12_CPU_DESCRIPTOR_HANDLE;
+struct ID3D12DescriptorHeap;
 
 namespace rf::cine {
 
@@ -90,6 +91,9 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
 void beforeUiClear(ID3D12GraphicsCommandList* list, ID3D12Resource* ui);
 /// ImGui frame: hint line etc.
 void drawOverlay();
+/// The command list and SRV heap ImGui draws with this frame (D3D12): our own quads can be drawn inside ImGui's order
+/// (a draw callback), e.g. the hidden screen's tooltip text in a tooltip of the scene.
+void setImGuiTarget(ID3D12GraphicsCommandList* list, ID3D12DescriptorHeap* imguiHeap, unsigned W, unsigned H);
 /// F6 section.
 void drawUi();
 

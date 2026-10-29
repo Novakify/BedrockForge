@@ -286,6 +286,8 @@ struct Layout {
     bool  hasBoard = false;
     Rect  preview;                   // the loom's banner preview (inside its black frame), right of the result
     bool  hasPreview = false;
+    Rect  clue[3];                   // the enchanting window's clue tooltip text ("Sharpness I . . . ?"), when one shows
+    bool  hasClue[3] = {};
     int   kind = 0;                  // Kind the layout was found for
     Rect  panel;                    // container panel (inventory rows' width)
     // a frame of the hidden screen counts when these hold: the top bevel of hotbar[0] / inv[0] is the dark line seen
@@ -395,6 +397,14 @@ struct Scene {
     // EnchantStation
     int    enchTarget = 0, hoverOffer = -1, ritualOffer = 0, ritualLapis = 0, denyOffer = -1, lastHoverOffer = -1;
     bool   aimAir = false, burstDone = false, wasRune[18] = {};
+    // the offers as they were before the hidden cursor rested on one (its button turns pink, its clue covers the cost):
+    // copied (with the snapshot texture) whenever no offer is hovered; used while one is and through the rite
+    bool   cleanOk = false, useClean = false, cleanFull[3] = {};
+    float  cleanRgb[3][3] = {}, cleanRef[kButtons][3] = {};
+    double cleanAt = -10, dirtyUntil = -10, hoverSince = -10, clueForced = -10;
+    Rect   clueRect[3];
+    bool   clueOk[3] = {};
+    int    clueHover = -1;
     double offersAt = -10, burstAt = -10, denyAt = -10, glow = 0, lapisFocus = 0, enchTick = 0;
     long   offersPrint = -1;
     V3     ritualFrom;
@@ -1376,11 +1386,11 @@ V3 sigilPos(int k) {
     return at;
 }
 bool enchItem() { return gS.cellFull[0]; }
-bool offered(int k) { return k >= 0 && k < 3 && gS.btnFull[3 + k] && enchItem(); } // an offer prints its level cost
+bool offered(int k) { return k >= 0 && k < 3 && (gS.useClean ? gS.cleanFull[k] : gS.btnFull[3 + k]) && enchItem(); } // an offer prints its level cost
 /// Bedrock prints an offer's level cost green while the player can pay for it (red / dark when not)
 bool affordable(int k) {
     if (!offered(k)) return false;
-    float const* c = gS.iconRgb[11 + 3 + k];
+    float const* c = gS.useClean ? gS.cleanRgb[k] : gS.iconRgb[11 + 3 + k];
     return c[1] > c[0] + 0.12f && c[1] > c[2] + 0.12f;
 }
 /// the carried stack is lapis (its icon blue)
@@ -1434,12 +1444,10 @@ void enchAction(int t, unsigned bit, bool shift) {
     gS.ritualLapis = k + 1;
     gS.burstDone   = false;
     inject(300 + k, 1);
-    for (int j = 0; j < 18; ++j) gS.wasRune[j] = gS.btnFull[6 + j];
     gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = RITUAL_LENGTH; gS.moveBeat = 1e9; gS.moveBeatDone = false;
     gS.moveToInv = false;
     for (int i = 0; i < 4; ++i) { gS.wasFull[i] = gS.cellFull[i]; gS.wasBlock[i] = gS.cellBlock[i]; }
-    std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
-    gSnapRequest = true;
+    // the snapshot (texture, boxes, runes) is the clean one from before the offer was hovered
 }
 
 /// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
@@ -2763,6 +2771,32 @@ void detect(Img im, bool dump, int kindI) {
                         L.nButtons = 24;
                         L.board    = {float(x0), top, right - x0, bottom - top};
                         L.hasBoard = true;
+                        // the clue the window shows beside the button the cursor rests on: a dark violet box (half
+                        // transparent: lighter over the transparent ground) with a violet border, white writing
+                        auto tip = [&](int x2, int y2) {
+                            int r, g, b;
+                            px3(x2, y2, r, g, b);
+                            return (g <= 18 && std::abs(r - b) < 14 && r >= 18 && r <= 205) || (b > r + 30 && g < 16);
+                        };
+                        auto white = [&](int x2, int y2) { int r, g, b; px3(x2, y2, r, g, b); return r > 235 && g > 235 && b > 235; };
+                        for (int k = 0; k < 3; ++k) {
+                            int cx = int(L.buttons[k].cx()), cy = int(L.buttons[k].cy()), yr = cy - int(9 * unit), bx0 = -1;
+                            for (int x2 = cx + int(2 * unit); x2 < cx + int(24 * unit) && bx0 < 0; ++x2) if (tip(x2, yr) && tip(x2 + 1, yr)) bx0 = x2;
+                            if (bx0 < 0) continue;
+                            int bx1 = bx0, miss = 0;
+                            for (int x2 = bx0; x2 < im.W && miss < int(2 * unit); ++x2) { if (tip(x2, yr) || white(x2, yr)) { bx1 = x2; miss = 0; } else ++miss; }
+                            int xs = bx0 + int(3 * unit), by0 = yr, by1 = yr;
+                            while (by0 > 0 && tip(xs, by0 - 1)) --by0;
+                            while (by1 < im.H - 1 && (tip(xs, by1 + 1) || white(xs, by1 + 1))) ++by1;
+                            int tx0 = 1 << 30, ty0 = 1 << 30, tx1 = -1, ty1 = -1;
+                            for (int y2 = by0; y2 <= by1; ++y2)
+                                for (int x2 = bx0; x2 <= bx1; ++x2)
+                                    if (white(x2, y2)) { tx0 = std::min(tx0, x2); ty0 = std::min(ty0, y2); tx1 = std::max(tx1, x2); ty1 = std::max(ty1, y2); }
+                            if (tx1 > tx0 && ty1 > ty0 && bx1 - bx0 > 8 * unit) {
+                                L.clue[k]    = {float(tx0), float(ty0), float(tx1 + 1 - tx0), float(ty1 + 1 - ty0)};
+                                L.hasClue[k] = true;
+                            }
+                        }
                     }
                 }
             }
@@ -3860,7 +3894,7 @@ void drawGlyphs(JPose const& cam, Basis const& b, double dt) {
             double ticks = g.age * 20, life = g.life * 20;
             V3     p = g.to + g.d * (ticks * (ticks + 1) / 2 / life);
             double sz = g.size * (1 - ticks / (life * 1.5));
-            float  k  = float(std::min(1.0, 0.35 + std::pow(a, 4) * 0.65));
+            float  k  = 1;
             Quad   q;
             if (!worldQuad(cam, b, p, b.r * sz, b.u * sz, q)) continue;
             if (gPropHas[7]) {
@@ -3874,7 +3908,7 @@ void drawGlyphs(JPose const& cam, Basis const& b, double dt) {
         }
         V3     p = g.to + g.d * f - V3{0, f1 * 1.2, 0};
         // getLightColor: lit up towards the end (a^4 of full bright over the world's light; the night here)
-        float k = float(std::min(1.0, 0.35 + std::pow(a, 4) * 0.65));
+        float k = 1; // getLightColor: the world's light brightened towards the end; at a table in daylight that is full
         Quad  q;
         // SingleQuadParticle: a camera-facing square of +-quadSize, the glyph sprite, opaque (PARTICLE_SHEET_OPAQUE)
         if (!worldQuad(cam, b, p, b.r * g.size, b.u * g.size, q)) continue;
@@ -4649,10 +4683,35 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             double t = ritualTime(), rt = t >= 0 ? t * RITUAL_LENGTH : -1;
             bool   active = gS.phase == Phase::Active;
             float  guiPx  = L.slot / 18.0f; // one GUI pixel of the hidden screen
+            {
+                if (gS.hoverOffer >= 0) gS.dirtyUntil = clock + 0.3; // and a moment after (the screen catches up)
+                bool dirty = gS.hoverOffer >= 0 || t >= 0 || clock < gS.dirtyUntil;
+                if (!dirty && active && clock - gS.cleanAt > 0.2 && gG.keepValid) {
+                    gSnapRequest = true;
+                    std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+                    for (int j = 0; j < 18; ++j) gS.wasRune[j] = gS.btnFull[6 + j];
+                    for (int k = 0; k < 3; ++k) { gS.cleanFull[k] = gS.btnFull[3 + k]; std::memcpy(gS.cleanRgb[k], gS.iconRgb[14 + k], sizeof gS.cleanRgb[k]); }
+                    std::memcpy(gS.cleanRef, gS.btnRef, sizeof gS.cleanRef);
+                    gS.cleanAt = clock;
+                    gS.cleanOk = true;
+                }
+                gS.useClean = dirty && gS.cleanOk;
+                // the clue tooltips the window showed (found by the slot detection on its next look)
+                for (int k = 0; k < 3; ++k)
+                    if (L.hasClue[k]) { gS.clueRect[k] = L.clue[k]; gS.clueOk[k] = true; }
+                if (gS.hoverOffer != gS.clueHover) { gS.clueHover = gS.hoverOffer; gS.hoverSince = clock; }
+                if (gS.hoverOffer >= 0 && !gS.clueOk[gS.hoverOffer] && clock - gS.hoverSince > 0.12 && clock - gS.clueForced > 0.25) {
+                    gS.clueForced = clock;
+                    gG.lastDetect = 0; // look at the whole screen again now
+                }
+            }
             // the offers change (an item laid, taken, enchanted): they pop up again
             long print = 1;
-            for (int k = 0; k < 3; ++k) print = print * 37 + (offered(k) ? 1 + int(16 * (gS.iconBox[14 + k][2] - gS.iconBox[14 + k][0])) : 0);
-            if (print != gS.offersPrint) { gS.offersPrint = print; gS.offersAt = clock; }
+            for (int k = 0; k < 3; ++k) {
+                float const* bx = gS.useClean ? gS.snapBox[14 + k] : gS.iconBox[14 + k];
+                print = print * 37 + (offered(k) ? 1 + int(16 * (bx[2] - bx[0])) : 0);
+            }
+            if (print != gS.offersPrint) { gS.offersPrint = print; gS.offersAt = clock; for (bool& c : gS.clueOk) c = false; }
             if (gS.hoverOffer != gS.lastHoverOffer) gS.lastHoverOffer = gS.hoverOffer;
             // per tick (20 a second)
             static int tickNo = 0;
@@ -4785,7 +4844,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 float const* bx = snap ? gS.snapBox[14 + k] : gS.iconBox[14 + k];
                 Rect   num{cell.x + cell.w * bx[0], cell.y + cell.h * bx[1], cell.w * (bx[2] - bx[0]), cell.h * (bx[3] - bx[1])};
                 float  a = std::min(1.0f, appear);
-                glyphs(num, gS.btnRef[3 + k], snap, false, c, s, aff ? 0xF4EEFF : 0xFF6B6B, a, 0, 0.2f, true, 0.5f); // no shadow (0.18.3)
+                auto ref = [&](int b2) { return snap ? gS.cleanRef[b2] : gS.btnRef[b2]; };
+                glyphs(num, ref(3 + k), snap, false, c, s, aff ? 0xF4EEFF : 0xFF6B6B, a, 0, 0.2f, true, 0.5f); // no shadow (0.18.3)
                 // the runes: what the six cells along the button hold (their extent), one flat colour, under the cost
                 float rx0 = 1e9f, rx1 = -1, ry0 = 1e9f, ry1 = -1;
                 for (int j = 0; j < 6; ++j) {
@@ -4801,7 +4861,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 if (rx1 > rx0) {
                     Rect   rune{rx0, ry0, rx1 - rx0, ry1 - ry0};
                     double hh = rune.h / guiPx * s * 0.55 / 2;
-                    glyphs(rune, gS.btnRef[6 + k * 6], snap, false, c - b.u * (26 * 0.55 * s + hh), s * 0.55, aff ? 0xB9A6FF : 0x7A4A55, a, 0.2f, 0, true);
+                    glyphs(rune, ref(6 + k * 6), snap, false, c - b.u * (26 * 0.55 * s + hh), s * 0.55, aff ? 0xB9A6FF : 0x7A4A55, a, 0.2f, 0, true);
                 }
                 for (int i = 0; i <= k; ++i) { // "◆" x (k + 1)
                     V3   gc = c - b.u * ((37 + 3.5) * 0.55 * s) + b.r * ((i - k / 2.0) * 7 * 0.55 * s);
@@ -4817,7 +4877,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 double appear = outBack(window(clock - gS.offersAt, 0, 0.45), 1.6);
                 for (int k = 0; k < 3; ++k) {
                     if (!offered(k) || (t >= 0 && k == gS.ritualOffer)) continue;
-                    drawSigil(k, sigilPos(k), float(appear), k == gS.hoverOffer, affordable(k), t >= 0 ? 0.4f : 1.0f, false);
+                    drawSigil(k, sigilPos(k), float(appear), k == gS.hoverOffer, affordable(k), t >= 0 ? 0.4f : 1.0f, gS.useClean && gG.snapValid);
                 }
                 if (t >= 0) {
                     double flight = inOutCubic(window(rt, 0, RITUAL_PEAK - 0.05));
@@ -5055,9 +5115,39 @@ std::string stationHint(Kind k, bool overResult) {
 }
 } // namespace
 
+ID3D12GraphicsCommandList* gImList = nullptr;
+ID3D12DescriptorHeap*      gImHeap = nullptr;
+unsigned                   gImW = 0, gImH = 0;
+std::vector<Quad>          gOverlayQuads; // drawn inside ImGui's order (overlayQuadCb)
+void setImGuiTarget(ID3D12GraphicsCommandList* list, ID3D12DescriptorHeap* heap, unsigned W, unsigned H) {
+    gImList = list; gImHeap = heap; gImW = W; gImH = H;
+}
+static void overlayQuadCb(ImDrawList const*, ImDrawCmd const* cmd) {
+    size_t i = size_t(reinterpret_cast<uintptr_t>(cmd->UserCallbackData));
+    if (!gImList || i >= gOverlayQuads.size() || !gG.root || !gG.pso || !gG.srvHeap) return;
+    ID3D12DescriptorHeap* heaps[] = {gG.srvHeap.Get()};
+    gImList->SetDescriptorHeaps(1, heaps);
+    gImList->SetGraphicsRootSignature(gG.root.Get());
+    gImList->SetPipelineState(gG.pso.Get());
+    gImList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    D3D12_VIEWPORT vp{0, 0, float(gImW), float(gImH), 0, 1};
+    D3D12_RECT     sc{0, 0, LONG(gImW), LONG(gImH)};
+    gImList->RSSetViewports(1, &vp);
+    gImList->RSSetScissorRects(1, &sc);
+    gImList->SetGraphicsRootDescriptorTable(1, gG.srvHeap->GetGPUDescriptorHandleForHeapStart());
+    gImList->SetGraphicsRoot32BitConstants(0, 60, &gOverlayQuads[i], 0);
+    gImList->DrawInstanced(6, 1, 0, 0);
+    if (gImHeap) { ID3D12DescriptorHeap* back[] = {gImHeap}; gImList->SetDescriptorHeaps(1, back); }
+}
+
 void drawOverlay() {
     std::string hint, tipTitle, tipLine;
     std::vector<std::pair<std::string, ImU32>> tipLines; // a tooltip of coloured lines (as the Java one) instead of title + line
+    bool        clueLine = false; // tipLines[0] is the hidden screen's clue text (`clue`, its pixels)
+    Rect        clue;
+    float       clueGui = 1, layW = 1, layH = 1;
+    static bool creativeNow = false;
+    static double creativeAt = -10;
     bool        boardLabel = false;
     float       boardAt[4] = {}, boardA = 0, boardG = 1;
     float       a = 0, mx = 0, my = 0;
@@ -5118,15 +5208,25 @@ void drawOverlay() {
                 }
             }
         }
+        if (gS.st.kind == Kind::Enchanting && gS.clock - creativeAt > 1) { creativeAt = gS.clock; creativeNow = game::creative(); }
+        {
+            std::lock_guard ll3(gLayoutMutex);
+            clueGui = gLayout.slot / 18.0f; layW = float(gLayout.W); layH = float(gLayout.H);
+        }
         if (gS.st.kind == Kind::Enchanting && !moving() && !gS.overPanel) { // EnchantStation.tooltip (the clue and the item's own lines are the hidden screen's)
-            if (gS.enchTarget == EOffer && gS.hoverOffer >= 0) { // offerTooltip: what it costs (the clue is the server's)
-                int  need = gS.hoverOffer + 1;
-                bool aff  = affordable(gS.hoverOffer);
+            if (gS.enchTarget == EOffer && gS.hoverOffer >= 0) { // offerTooltip: the window's own clue, then what it costs
+                int  h    = gS.hoverOffer, need = h + 1;
+                bool aff  = affordable(h);
                 ImU32 gray = IM_COL32(170, 170, 170, 255), red = IM_COL32(255, 85, 85, 255);
-                if (!aff) tipLines.push_back({"Not enough experience or lapis", red});
-                tipLines.push_back({need == 1 ? "1 Lapis Lazuli" : std::to_string(need) + " Lapis Lazuli", aff || gS.cellFull[1] ? gray : red});
-                tipLines.push_back({need == 1 ? "1 Enchantment Level" : std::to_string(need) + " Enchantment Levels", gray});
-                if (aff) tipLines.push_back({"Touch the rune to enchant", IM_COL32(255, 85, 255, 255)});
+                if (gS.clueOk[h]) { clueLine = true; clue = gS.clueRect[h]; }
+                tipLines.push_back({"", IM_COL32(255, 255, 255, 255)}); // the clue (drawn from the hidden screen)
+                if (!creativeNow) {
+                    tipLines.push_back({"", gray});
+                    if (!aff) tipLines.push_back({"Not enough experience or lapis", red});
+                    tipLines.push_back({need == 1 ? "1 Lapis Lazuli" : std::to_string(need) + " Lapis Lazuli", aff || gS.cellFull[1] ? gray : red});
+                    tipLines.push_back({need == 1 ? "1 Enchantment Level" : std::to_string(need) + " Enchantment Levels", gray});
+                }
+                if (aff && !creativeNow) tipLines.push_back({"Touch the rune to enchant", IM_COL32(255, 85, 255, 255)});
             } else if (gS.enchTarget == EItem && !gS.carrying) tipTitle = "Click to take it back";
             else if (gS.enchTarget == ESurface && !gS.carrying && !enchItem()) tipTitle = "Lay here what you want to enchant";
             else if (gS.enchTarget == ELapis) {
@@ -5164,15 +5264,34 @@ void drawOverlay() {
         dl->AddText(font, 9.0f * boardG, ImVec2(boardAt[0] + L_PAD * boardG, boardAt[1] + (L_PAD - 1) * boardG),
                     IM_COL32(242, 234, 216, int(0.75f * boardA * 255)), "Patterns");
     // the station's tooltip, vanilla style (dark violet box, gold title)
+    gOverlayQuads.clear();
     if (!tipLines.empty()) {
         float ts2 = std::max(14.0f, d.y / 54.0f), pad = ts2 * 0.35f, w = 0, h = pad * 2, lh = ts2 * 1.15f;
+        // the clue: Bedrock's writing at the tooltip's text size (its 7 px capitals as tall as ours)
+        float cs = clueGui > 0 ? ts2 * 0.72f / (7 * clueGui) : 1, cw = clueLine ? clue.w * cs : 0, ch = clueLine ? clue.h * cs : 0;
         for (auto& l : tipLines) w = std::max(w, font->CalcTextSizeA(ts2, FLT_MAX, 0, l.first.c_str()).x);
+        w = std::max(w, cw);
         w += pad * 2;
         h += lh * tipLines.size();
         float tx = std::min(mx * d.x + ts2, d.x - w - 4), ty = std::min(my * d.y - ts2 * 0.6f, d.y - h - 4);
         dl->AddRectFilled(ImVec2(tx, ty), ImVec2(tx + w, ty + h), IM_COL32(16, 0, 16, 240), 0);
         dl->AddRect(ImVec2(tx + 1, ty + 1), ImVec2(tx + w - 1, ty + h - 1), IM_COL32(80, 0, 255, 90), 0, 0, 2.0f);
         for (size_t i = 0; i < tipLines.size(); ++i) dl->AddText(font, ts2, ImVec2(tx + pad, ty + pad + lh * i), tipLines[i].second, tipLines[i].first.c_str());
+        if (clueLine && gImList && gImW > 0) {
+            // the window's clue, its white writing only, drawn in ImGui's order (over the tooltip box)
+            float sx = float(gImW) / std::max(1.0f, d.x), sy = float(gImH) / std::max(1.0f, d.y);
+            float x0 = (tx + pad) * sx, y0 = (ty + pad + (lh - ch) * 0.5f) * sy;
+            Quad  q;
+            pixelQuad(x0, y0, x0 + cw * sx, y0 + ch * sy, int(gImW), int(gImH), q);
+            setRect(q.uv, clue.x / layW, clue.y / layH, (clue.x + clue.w) / layW, (clue.y + clue.h) / layH);
+            q.mode[0] = 9; q.mode[1] = 0; q.mode[2] = 0.08f; q.mode[3] = 1;
+            q.color[0] = q.color[1] = q.color[2] = 1; q.color[3] = 1;
+            q.key0[0] = 27 / 255.0f; q.key0[1] = 12 / 255.0f; q.key0[2] = 27 / 255.0f; q.key0[3] = 1; // flat white
+            q.key1[2] = 0.9f;                                                                         // the writing only
+            gOverlayQuads.push_back(q);
+            dl->AddCallback(overlayQuadCb, reinterpret_cast<void*>(uintptr_t(gOverlayQuads.size() - 1)));
+            dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+        }
     } else if (!tipTitle.empty()) {
         float  ts2 = std::max(14.0f, d.y / 54.0f), pad = ts2 * 0.35f;
         ImVec2 t1  = font->CalcTextSizeA(ts2, FLT_MAX, 0, tipTitle.c_str());

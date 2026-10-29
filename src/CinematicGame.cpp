@@ -57,6 +57,11 @@ bool playerState(double feet[3], float& yaw, float& pitch, bool& alive) {
     return true;
 }
 
+bool creative() {
+    Actor* a = player();
+    return a && a->isCreative();
+}
+
 bool hitBlock(int& x, int& y, int& z, std::string& typeName) {
     Actor* a = player();
     if (!a) return false;

@@ -20,6 +20,7 @@
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
 
+#include "Cinematic.h"
 #include "LLShim.h"
 #include "PostFx.h"
 #include "SpatialPanel.h"
@@ -215,6 +216,10 @@ void render(IDXGISwapChain3* sc) {
         bb.list->ResourceBarrier(1, &barrier);
     bb.list->OMSetRenderTargets(1, &bb.rtv, FALSE, nullptr);
     bb.list->SetDescriptorHeaps(1, heaps);
+    {
+        D3D12_RESOURCE_DESC bd = bb.resource->GetDesc();
+        rf::cine::setImGuiTarget(bb.list.Get(), srvHeap.Get(), unsigned(bd.Width), unsigned(bd.Height));
+    }
     ImGui::Render();
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), bb.list.Get());
     std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
