@@ -1,0 +1,30 @@
+{
+  "name": "Ground Drop",
+  "video": "A (@nia_teppelin, falling letters)",
+  "description": "Minecraft pixel font, white with a drop shadow. Words pop up near you, then every letter drops and lies flat on the blocks below, following the terrain, and fades after a while.",
+  "settings": {
+    "lyricsStyle": "FLOATING",
+    "font": "minecraft",
+    "theme": "minecraft",
+    "textStyle": "CLEAN",
+    "textShadow": 1,
+    "twoColor": false,
+    "glow": false,
+    "varySizes": false,
+    "arcLayout": false,
+    "enterAnim": "WORD",
+    "exitAnim": "FADE",
+    "lyricsScale": 0.8,
+    "maxLines": 1,
+    "fallingLetters": true,
+    "letterLand": "FLAT",
+    "fallDelayMs": 250,
+    "gravity": 18,
+    "bounce": 0.15,
+    "friction": 0.7,
+    "spin": 0.6,
+    "letterLifetimeMs": 7000,
+    "letterFadeMs": 1500,
+    "maxLetters": 400
+  }
+}

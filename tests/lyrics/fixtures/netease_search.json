@@ -1,0 +1,1 @@
+{"result": {"songs": [{"id": 111, "name": "Test Song", "duration": 260000, "artists": [{"name": "Test Artist"}]}, {"id": 222, "name": "Test Song", "duration": 200400, "artists": [{"name": "Test Artist"}]}, {"id": 333, "name": "Test Song Remix", "duration": 200000, "artists": [{"name": "DJ Other"}]}]}, "code": 200}

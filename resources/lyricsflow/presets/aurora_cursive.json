@@ -1,0 +1,27 @@
+{
+  "name": "Aurora Cursive",
+  "video": "B (@neonlyricsmod, cursive sky)",
+  "description": "SKY mode at night: thin white cursive in two-line pairs, mixed word sizes, gentle word-by-word fade-in, soft glow, aurora/star sky.",
+  "settings": {
+    "lyricsStyle": "SKY",
+    "skyWords": false,
+    "font": "greatvibes",
+    "theme": "aurora",
+    "singleColor": "#FFFFFFFF",
+    "textStyle": "NEON",
+    "twoColor": false,
+    "textShadow": 0,
+    "glow": true,
+    "glowStrength": 0.45,
+    "glowWidth": 0.3,
+    "varySizes": true,
+    "arcLayout": true,
+    "enterAnim": "FADE",
+    "exitAnim": "FADE",
+    "skyPreset": "northern_lights",
+    "stars": true,
+    "streaks": false,
+    "maxLines": 2,
+    "showTopBar": true
+  }
+}

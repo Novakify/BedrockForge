@@ -1,0 +1,27 @@
+{
+  "name": "Neon Arena",
+  "video": "C (@neonlyricsmod, big neon)",
+  "description": "Bold brush italic, white core with pink/blue offset glow, huge and small words scattered at different depths, sky streaks.",
+  "settings": {
+    "lyricsStyle": "FLOATING",
+    "font": "kaushan",
+    "theme": "neon_pink",
+    "textStyle": "NEON",
+    "twoColor": true,
+    "twoColorStrength": 0.85,
+    "textShadow": 0,
+    "glow": true,
+    "glowStrength": 0.8,
+    "glowWidth": 0.35,
+    "varySizes": true,
+    "arcLayout": true,
+    "randomPosition": true,
+    "lyricsScale": 1.35,
+    "lyricsDistance": 1.4,
+    "maxLines": 3,
+    "enterAnim": "WORD",
+    "exitAnim": "FLOAT_UP",
+    "streaks": true,
+    "streakDensity": 0.6
+  }
+}

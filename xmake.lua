@@ -13,13 +13,17 @@ option("target_type")
     set_values("client")
 option_end()
 
-add_requires("levilamina 26.51.x", {configs = {target_type = get_config("target_type")}})
-add_requires("levibuildscript")
+-- The game mod only builds for Windows; the LyricsFlow core unit tests (target LyricsCoreTests) also build on Linux.
+if is_plat("windows") then
+    add_requires("levilamina 26.51.x", {configs = {target_type = get_config("target_type")}})
+    add_requires("levibuildscript")
+end
 
-if not has_config("vs_runtime") then
+if is_plat("windows") and not has_config("vs_runtime") then
     set_runtimes("MD")
 end
 
+if is_plat("windows") then
 target("BedrockForgeCore")
     set_version("0.1.0")
     add_rules("@levibuildscript/linkrule")
@@ -42,10 +46,30 @@ target("BedrockForgeCore")
     )
     set_toolchains("clang-cl")
     add_packages("levilamina")
-    add_syslinks("user32")
+    add_syslinks("user32", "winhttp", "windowsapp") -- winhttp + windowsapp: LyricsFlow port (lyric search, media session)
     set_kind("shared")
     set_languages("c++20")
     set_symbols("debug")
     add_headerfiles("src/**.h")
     add_files("src/**.cpp")
     add_includedirs("src")
+target_end()
+end
+
+-- LyricsFlow port: unit tests for the pure core (src/lyrics/core). No game, no network (fixtures).
+--   xmake build LyricsCoreTests && xmake run LyricsCoreTests
+target("LyricsCoreTests")
+    set_kind("binary")
+    set_default(false)
+    set_languages("c++20")
+    add_includedirs("src")
+    add_files("src/lyrics/core/*.cpp", "tests/lyrics/LyricsTests.cpp")
+    set_rundir("$(projectdir)")
+    add_runenvs("LYRICS_FIXTURES", "tests/lyrics/fixtures")
+    if is_plat("windows") then
+        set_toolchains("clang-cl")
+        add_cxflags("/EHsc", "/utf-8", {tools = {"clang_cl", "cl"}})
+    else
+        add_syslinks("pthread")
+    end
+target_end()

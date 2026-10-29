@@ -49,6 +49,14 @@ jobs:
             exit $code
           }
 
+      - name: LyricsFlow core unit tests (clang-cl)
+        shell: pwsh
+        run: |
+          xmake build -v -y LyricsCoreTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          xmake run LyricsCoreTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Syntax-check PowerShell scripts
         shell: pwsh
         run: |
@@ -77,3 +85,17 @@ jobs:
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" builds
+
+  # LyricsFlow port: the pure core (src/lyrics/core) + its tests also build and run on Linux (gcc), so parser/placement
+  # regressions show up even when the Windows/LeviLamina build is busy or broken for unrelated reasons.
+  lyrics-core-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+      - name: Build + run LyricsCoreTests
+        run: |
+          xmake f -p linux -m debug -y
+          xmake build -v -y LyricsCoreTests
+          xmake run LyricsCoreTests
+

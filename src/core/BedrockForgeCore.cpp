@@ -19,6 +19,7 @@
 #include "client/Module.h"
 #include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
+#include "lyrics/win/Win.h"
 
 namespace bedrock_forge {
 
@@ -104,6 +105,7 @@ bool Core::enable() {
 
     // ---- Client: module framework + ClickGUI (Right Shift) ----
     client::registerBuiltins();
+    ::bf::lyrics::win::install(getSelf().getModDir(), getSelf().getConfigDir()); // LyricsFlow port (module off by default)
     client::Registry::get().load((getSelf().getConfigDir() / "modules.json").string());
     client::installRuntime();
     client::menu::install();
@@ -124,6 +126,7 @@ bool Core::disable() {
     client::forgerender::uninstall();
     impact::uninstall();
     client::uninstallRuntime();
+    ::bf::lyrics::win::uninstall();
     client::Registry::get().save();
     mSubs.clear();
     mConfig.hudEnabled = gHudVisible;
