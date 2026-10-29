@@ -59,6 +59,7 @@ extern std::atomic_bool applyGraphicsMode;       // request, consumed on the cli
 extern RfOption<bool> uiCaptureSpike;
 extern RfOption<int>  uiCaptureKey; // Win32 virtual-key code (default F7)
 extern RfOption<int>  uiPanelKey;   // Spatial GUI M1 panel toggle (default F8), needs uiCaptureSpike
+extern RfOption<int>  uiDebugUseKey; // Spatial GUI testing: while held, the game sees the right mouse button (0 = off)
 
 extern std::filesystem::path optionsFile;
 

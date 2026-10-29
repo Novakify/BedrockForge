@@ -29,6 +29,7 @@ std::atomic_bool applyGraphicsMode     = false;
 RfOption<bool> uiCaptureSpike = false;
 RfOption<int>  uiCaptureKey   = VK_F7;
 RfOption<int>  uiPanelKey     = VK_F8;
+RfOption<int>  uiDebugUseKey  = 0;
 
 std::filesystem::path optionsFile;
 } // namespace RfOptions
@@ -49,7 +50,7 @@ void read(json const& j, char const* key, RfOption<T>& opt) {
 bool RfOptions::init(std::filesystem::path const& configDir) {
     gOptions = {&showImGui,       &uiKey,      &reloadShadersKey,       &performanceEnabled,   &materialBinLoaderEnabled,
                 &redirectShaders, &shaderPack, &autoReloadOnPackChange, &vibrantVisualsEnabled, &uiCaptureSpike,
-                &uiCaptureKey, &uiPanelKey};
+                &uiCaptureKey, &uiPanelKey, &uiDebugUseKey};
     std::error_code ec;
     std::filesystem::create_directories(configDir, ec);
     optionsFile = configDir / "RendererFoundation.json";
@@ -77,6 +78,7 @@ bool RfOptions::load() {
     read(j, "uiCaptureSpike", uiCaptureSpike);
     read(j, "uiCaptureKey", uiCaptureKey);
     read(j, "uiPanelKey", uiPanelKey);
+    read(j, "uiDebugUseKey", uiDebugUseKey);
     record();
     return true;
 }
@@ -95,6 +97,7 @@ bool RfOptions::save() {
     j["uiCaptureSpike"]           = uiCaptureSpike.get();
     j["uiCaptureKey"]             = uiCaptureKey.get();
     j["uiPanelKey"]               = uiPanelKey.get();
+    j["uiDebugUseKey"]            = uiDebugUseKey.get();
     std::ofstream out(optionsFile, std::ios::trunc);
     if (!out) return false;
     out << j.dump(4);

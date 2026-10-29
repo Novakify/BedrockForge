@@ -780,15 +780,25 @@ void onMouse(gi::GameInputMouseState* st, bool game) {
     gMsOutY = st->absolutePositionY;
 }
 template <class T> void onMouse(T, bool) {}
+// Testing aid (uiDebugUseKey, off by default): remote input tools can only send instant right clicks, which the game
+// misses because it samples GameInput state. While the key is held the game's mouse reading reports the right button.
+void debugUse(gi::GameInputMouseState* st) {
+    int k = RfOptions::uiDebugUseKey.get();
+    if (st && k > 0 && k < 256 && (GetAsyncKeyState(k) & 0x8000)) st->buttons = st->buttons | gi::GameInputMouseRightButton;
+}
+template <class T> void debugUse(T) {}
 
 template <int Id, class M> struct MouseHook;
 template <int Id, class C, class R, bool NE, class... A> struct MouseHook<Id, R (C::*)(A...) noexcept(NE)> {
     static inline void* orig = nullptr;
     static R STDMETHODCALLTYPE fn(C* self, A... a) {
         R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
-        if (r && gEnabled.load(std::memory_order_relaxed)) {
-            bool game = fromGame(__builtin_return_address(0));
-            (onMouse(a, game), ...);
+        if (r) {
+            (debugUse(a), ...);
+            if (gEnabled.load(std::memory_order_relaxed)) {
+                bool game = fromGame(__builtin_return_address(0));
+                (onMouse(a, game), ...);
+            }
         }
         return r;
     }
