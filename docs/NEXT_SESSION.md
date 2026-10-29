@@ -374,3 +374,11 @@ Priority order:
    options in 1.26 - low priority.)
 Computer-use notes: close the game with alt+F4 (its X can be under Task Manager); launch ONCE from LeviLauncher; Play -> click + Enter;
 world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game input from computer use is ignored (E-015).
+
+## Status update (2026-10-29, remote run)
+- RF branch spatialgui-m0 HEAD 9f16d83 (M1 v0.4 diagnostics), CI success. Builds branch has RendererFoundation.dll (sha e2b858cd…).
+- PC: v0.4 DLL installed as mods\RendererFoundation\RendererFoundation.dll, uiCaptureSpike true. Stable backup RendererFoundation.5246159.dll and config backup RendererFoundation.json.bak-stable exist.
+- options.txt: inventory rebound -94 -> 73 (I). Backup options.txt.bak-before-I-20261028.
+- Game launched via LeviLauncher (Launch on 1.26.51.01). The game window never came forward: the desktop shell and taskbar block clicks, and alt+tab needs systemKeyCombos. The DLL is locked while the game runs, so the stable restore failed.
+- NOT DONE: in-world mouse test (panel_diag.txt still shows last session's data), screen detection, inventory/chest/crafting capture.
+- Next run: close the game (or have Fernando close it), restore the stable DLL and uiCaptureSpike false if needed, then relaunch and read logs\uicapture\panel_diag.txt.
