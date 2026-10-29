@@ -1,0 +1,36 @@
+name: gameinput-headers
+
+# Fetch every Microsoft.GameInput NuGet version's headers and publish them to the gameinput-headers branch
+# (nuget.org is not reachable from the dev container; the spatial GUI needs the exact GameInput API the game uses).
+on:
+  workflow_dispatch:
+  push:
+    branches: [spatialgui-m0]
+    paths: ['.github/workflows/gameinput-headers.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download headers
+        shell: bash
+        run: |
+          set -e
+          mkdir -p out && cd out
+          vers=$(curl -fsSL https://api.nuget.org/v3-flatcontainer/microsoft.gameinput/index.json | python3 -c 'import json,sys;print(" ".join(json.load(sys.stdin)["versions"]))')
+          echo "versions: $vers" | tee VERSIONS.txt
+          for v in $vers; do
+            curl -fsSL -o p.zip "https://api.nuget.org/v3-flatcontainer/microsoft.gameinput/$v/microsoft.gameinput.$v.nupkg" || continue
+            mkdir -p "$v" && unzip -q -o p.zip -d "x$v"
+            find "x$v" -iname '*.h' -exec cp {} "$v/" \;
+            find "x$v" -type f | sed "s|^x$v/||" > "$v/FILES.txt"
+            rm -rf "x$v" p.zip
+          done
+          git init -q -b gameinput-headers
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A && git commit -qm "GameInput headers"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" gameinput-headers
