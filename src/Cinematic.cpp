@@ -2371,6 +2371,7 @@ void detect(Img im, bool dump, int kindI) {
                 int  pitch  = q.s + q.s / 17;
                 bool inGrid = (nearSq(q, -pitch, 0) && nearSq(q, pitch, 0)) || (nearSq(q, pitch, 0) && nearSq(q, 2 * pitch, 0) && nearSq(q, 3 * pitch, 0)) ||
                               (nearSq(q, -pitch, 0) && nearSq(q, -2 * pitch, 0) && nearSq(q, -3 * pitch, 0));
+                if (!inGrid && (q.s < best * 0.85f || q.x + q.s > px1 + s * 0.25f)) continue; // fragments, the window's close button
                 (inGrid ? buttons : own).push_back(q);
             }
             {
@@ -2379,6 +2380,36 @@ void detect(Img im, bool dump, int kindI) {
                 L.nButtons = 0;
                 for (auto& q : bs)
                     if (L.nButtons < kButtons) L.buttons[L.nButtons++] = {float(q.x), float(q.y), float(q.s) + unit, float(q.s) + unit};
+            }
+            if ((kind == Kind::Stonecutter || kind == Kind::Loom) && L.nButtons == 0) {
+                // Bedrock lists the recipes / patterns in a dark side panel left of the window (rows of buttons at slot
+                // pitch on a #5D5D5D ground): find the panel, the first button's corner, then the grid while cells hold one
+                auto px3 = [&](int x, int y, int& r, int& g, int& b) { int a; im.get(std::clamp(x, 0, im.W - 1), std::clamp(y, 0, im.H - 1), r, g, b, a); };
+                auto ground = [&](int x, int y) { int r, g, b; px3(x, y, r, g, b); return std::abs(r - 93) <= 4 && std::abs(g - 93) <= 4 && std::abs(b - 93) <= 4; };
+                int  gx0 = 1 << 30, gy0 = 1 << 30, gx1 = -1, gy1 = -1, xr = int(px0 - 1.5f * s);
+                for (int y = 0; y < im.H; y += 4)
+                    for (int x = 0; x < xr; x += 4)
+                        if (ground(x, y)) { gx0 = std::min(gx0, x); gy0 = std::min(gy0, y); gx1 = std::max(gx1, x); gy1 = std::max(gy1, y); }
+                if (gx1 - gx0 > 2 * s && gy1 - gy0 > 2 * s) {
+                    int y = gy0 + int(s / 2), bx = -1, by = -1;
+                    for (int x = gx0; x < gx1 && bx < 0; ++x) if (!ground(x, y) && !ground(x + 1, y)) bx = x;
+                    if (bx >= 0)
+                        for (int yy = gy0; yy < gy1 && by < 0; ++yy) if (!ground(bx + int(s / 2), yy) && !ground(bx + int(s / 2), yy + 1)) by = yy;
+                    if (bx >= 0 && by >= 0) {
+                        int pitch = int(s + 0.5f), cols = std::max(1, (gx1 - bx + pitch / 2) / pitch);
+                        for (int r = 0; L.nButtons < kButtons; ++r) {
+                            int got = 0;
+                            for (int c = 0; c < cols && L.nButtons < kButtons; ++c) {
+                                int cx = bx + c * pitch + pitch / 2, cy = by + r * pitch + pitch / 2;
+                                if (cy >= gy1 || ground(cx, cy)) continue;
+                                L.buttons[L.nButtons++] = {float(bx + c * pitch), float(by + r * pitch), float(pitch), float(pitch)};
+                                ++got;
+                            }
+                            if (!got) break;
+                        }
+                    }
+                }
+                if (L.nButtons) { L.board = {L.buttons[0].x, L.buttons[0].y, L.buttons[L.nButtons - 1].x + L.buttons[0].w - L.buttons[0].x, L.buttons[L.nButtons - 1].y + L.buttons[0].h - L.buttons[0].y}; L.hasBoard = true; }
             }
             if (!buttons.empty()) {
                 int bx0 = 1 << 30, by0 = 1 << 30, bx1 = -1, by1 = -1;
