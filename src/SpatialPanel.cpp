@@ -31,6 +31,7 @@
 #include "LLShim.h"
 #include "Options.h"
 #include "PanelShaders.h"
+#include "SpatialCamera.h"
 #include "UiCapture.h"
 
 namespace rf::panel {
@@ -53,6 +54,7 @@ struct Settings {
     bool  remap      = true;
     bool  pumpRemap  = true; // v0.10: remap mouse MSGs as the game pulls them from the queue
     bool  autoPanel  = true; // v0.12: panel up automatically for container screens only
+    bool  javaStyle  = true; // v0.13: Spatial GUI (Java) look: third-person camera, world-placed screen, pop-in
 } gS;
 
 std::atomic_bool   gEnabled{false};
@@ -248,6 +250,51 @@ void toClip(Geom const& g, float lx, float ly, float out[4]) {
     out[2]  = 0.5f * z;
     out[3]  = z;
 }
+
+// v0.13: the Java mod's screen placement (RenderUtil.applyScreenTransform, third person, default config), expressed in
+// view space. The screen hangs off the CAMERA in the player's yaw frame: kScreenDistance forward, -kScreenSide to the
+// right, kScreenHeight up, turned (180 - kScreenYaw) degrees so its right edge comes toward the player; height
+// kScreenScale (x FOV factor) for the full-window GUI texture, width = window aspect.
+float easeOutBack(float t) {
+    const float c1 = 1.70158f, c3 = c1 + 1.0f;
+    float x = t - 1.0f;
+    return 1.0f + c3 * x * x * x + c1 * x * x;
+}
+Geom computeGeomJava(spatialcam::View const& v, float uiAspect, float anim) {
+    using namespace spatialcam;
+    constexpr float kD = 0.017453292f;
+    Geom g{};
+    g.valid   = true;
+    g.tanHalf = v.valid ? v.tanHalf : std::tan(35.0f * kD);
+    g.aspect  = v.valid ? v.aspect : uiAspect;
+    float fm       = (v.valid ? v.fovYDeg : kBaselineFov) / kBaselineFov;
+    float fovScale = std::pow(fm, kScreenPower);
+    float tpMult   = 1.0f + (fovScale - 1.0f) * kTpScreenMult;
+    float scale    = kScreenScale * tpMult * anim;
+    g.hh = 0.5f * scale;
+    g.hw = g.hh * uiAspect;
+    float a = (180.0f - kScreenYaw) * kD;
+    float P[3]  = {-kScreenSide, kScreenHeight, kScreenDistance};
+    float EX[3] = {std::cos(a), 0.0f, -std::sin(a)};
+    float EY[3] = {0.0f, 1.0f, 0.0f};
+    float yr = v.yawRel * kD, pt = (v.valid ? v.pitch : kCamPitch) * kD;
+    auto toView = [&](float const* q, float* o) {
+        float x1 = q[0] * std::cos(yr) - q[2] * std::sin(yr);
+        float z1 = q[0] * std::sin(yr) + q[2] * std::cos(yr);
+        o[0]     = x1;
+        o[1]     = q[1] * std::cos(pt) + z1 * std::sin(pt);
+        o[2]     = z1 * std::cos(pt) - q[1] * std::sin(pt);
+    };
+    float c[3];
+    toView(P, c);
+    g.cx = c[0]; g.cy = c[1]; g.cz = c[2];
+    toView(EX, g.ex);
+    toView(EY, g.ey);
+    g.n[0] = g.ex[1] * g.ey[2] - g.ex[2] * g.ey[1];
+    g.n[1] = g.ex[2] * g.ey[0] - g.ex[0] * g.ey[2];
+    g.n[2] = g.ex[0] * g.ey[1] - g.ex[1] * g.ey[0];
+    return g;
+}
 } // namespace
 
 // ---------------------------------------------------------------- hook side
@@ -260,8 +307,10 @@ void installCursorHook();
 void installSourceHooks();
 void tryGameMouse();
 void writeDiag();
+LARGE_INTEGER gOpenQpc{};
 void toggle() {
     bool on = !gEnabled.load();
+    if (on) QueryPerformanceCounter(&gOpenQpc);
     if (on) { installCursorHook(); installSourceHooks(); tryGameMouse(); }
     else writeDiag();
     gEnabled = on;
@@ -317,6 +366,7 @@ void noteScreen(void const* stack, std::string const& name) {
     if (want != gLastWant) {
         gLastWant = want;
         gWanted   = want ? 1 : 0;
+        if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want); // client thread
     }
 }
 
@@ -330,8 +380,9 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     applyWanted();
     float target = gEnabled ? 1.0f : 0.0f;
     float step   = gS.seconds > 0.01f ? dt / gS.seconds : 1.0f;
-    gT           = gT < target ? std::min(target, gT + step) : std::max(target, gT - step);
-    float e      = ease(gT);
+    if (gS.javaStyle) gT = target; // Java: the screen pops in (scale + fade below) and is gone when it closes
+    else gT = gT < target ? std::min(target, gT + step) : std::max(target, gT - step);
+    float e      = gS.javaStyle ? gT : ease(gT);
     gAnim        = e;
     bool redirected = gRedirected.exchange(false);
     if (gBroken || !RfOptions::uiCaptureSpike) { gAnim = 0; return false; }
@@ -348,7 +399,18 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     else ++gFramesNoUi;
 
     float aspect = float(bd.Width) / float(bd.Height);
-    Geom  g      = computeGeom(e, aspect);
+    float fade   = e;
+    Geom  g;
+    if (gS.javaStyle) {
+        // AnimationUtil.calculateAnimatedScale (Back easing from 75 %) + fade-in
+        float ms    = float(double(now.QuadPart - gOpenQpc.QuadPart) * 1000.0 / double(f.QuadPart));
+        float tt    = std::min(1.0f, ms / spatialcam::kOpenMs);
+        float scale = spatialcam::kStartScale + (1.0f - spatialcam::kStartScale) * easeOutBack(tt);
+        fade        = std::min(1.0f, ms / spatialcam::kFadeMs);
+        g           = computeGeomJava(spatialcam::view(), aspect, scale);
+    } else {
+        g = computeGeom(e, aspect);
+    }
     {
         std::lock_guard l(gGeomMutex);
         gGeom = g;
@@ -366,10 +428,11 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     toClip(g, g.hw, g.hh, c + 4);    // TR
     toClip(g, -g.hw, -g.hh, c + 8);  // BL
     toClip(g, g.hw, -g.hh, c + 12);  // BR
-    c[16] = 1.0f + gS.zoom * e;
-    c[17] = e;
-    c[18] = gS.dim * e;
+    c[16] = gS.javaStyle ? 1.0f : 1.0f + gS.zoom * e;
+    c[17] = fade;
+    c[18] = gS.javaStyle ? 0.0f : gS.dim * e;
     c[19] = gS.alphaBoost ? 1.0f : 0.0f;
+    c[20] = gS.javaStyle ? 0.0f : 1.0f; // panel frame line
 
     ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
     list->SetDescriptorHeaps(1, heaps);
@@ -499,6 +562,19 @@ BOOL WINAPI getCursorPosHook(LPPOINT p) {
         gGcpRing[slot] = {in.x, in.y, p->x, p->y};
     }
     return r;
+}
+// Real cursor (not remapped) in [-1, 1] over the client area, y down - parallax for the Java camera (SpatialCamera.cpp).
+bool cursorNdc(float& x, float& y) {
+    HWND h = gHwnd.load(std::memory_order_relaxed);
+    if (!h) return false;
+    POINT p{};
+    if (gGcpOrig) reinterpret_cast<GetCursorPos_t>(gGcpOrig)(&p);
+    else GetCursorPos(&p);
+    RECT rc;
+    if (!ScreenToClient(h, &p) || !GetClientRect(h, &rc) || rc.right < 1 || rc.bottom < 1) return false;
+    x = 2.0f * float(p.x) / float(rc.right) - 1.0f;
+    y = 2.0f * float(p.y) / float(rc.bottom) - 1.0f;
+    return true;
 }
 // v0.4 diagnostics: which mouse source the in-world menus actually read.
 // GetRawInputData (polled raw mouse), ClipCursor (cursor capture) and the last few GetCursorPos in/out pairs.
@@ -914,7 +990,7 @@ void installEarly() { initGameMod(); }
 void writeDiag() {
     char b[12000];
     snprintf(b, sizeof b,
-             "Spatial GUI panel diag v0.12\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
+             "Spatial GUI panel diag v0.13\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
              "GetRawInputData reads: %ld, mouse: %ld (last dx %ld dy %ld buttons 0x%x) hook %s\n"
              "ClipCursor calls: %ld (last rect %ld,%ld-%ld,%ld) hook %s\n"
@@ -983,6 +1059,8 @@ void writeDiag() {
             len += snprintf(b + len, sizeof b - len, "\n");
         }
         len += snprintf(b + len, sizeof b - len, "UI pipelines with alpha fixed: %ld\n", uicapture::uiAlphaFixedCount());
+        spatialcam::appendDiag(b, sizeof b);
+        len = strlen(b);
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n", gGiNote.c_str());
 #if RF_HAVE_GAMEINPUT
         for (auto& m : gGiMods) len += snprintf(b + len, sizeof b - len, "  %-30s %s\n", m.label, m.note.c_str());
@@ -1064,6 +1142,7 @@ void drawUi() {
         ImGui::Checkbox("Hide raw mouse input from the game (experiment)", &gS.eatRaw);
         ImGui::Checkbox("Remap mouse messages in the message pump", &gS.pumpRemap);
         ImGui::Checkbox("Auto: panel for inventory / chest / crafting screens", &gS.autoPanel);
+        ImGui::Checkbox("Java Spatial GUI look (third-person camera, world screen)", &gS.javaStyle);
         ImGui::TextWrapped("M1 prototype: everything the UI draws (HUD included) goes onto the panel while it is on.");
     }
     ImGui::Unindent();

@@ -8,6 +8,7 @@
 #include "Options.h"
 #include "Overlay.h"
 #include "ScreenWatch.h"
+#include "SpatialCamera.h"
 #include "SpatialPanel.h"
 #include "UiCapture.h"
 
@@ -37,11 +38,13 @@ public:
         overlay::install(); // retry if the load-time probe failed
         graphics::install();
         screens::install(); // Spatial GUI: panel only for inventory/chest/crafting screens
+        if (RfOptions::uiCaptureSpike) spatialcam::install(); // Spatial GUI third-person camera
         return true;
     }
     bool disable() {
         graphics::uninstall();
         screens::uninstall();
+        spatialcam::uninstall();
         overlay::uninstall();
         materials::uninstall();
         RfOptions::save();
