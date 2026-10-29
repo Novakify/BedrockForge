@@ -10,12 +10,21 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <d3d12.h>
 #include <wrl/client.h>
 
 #include <imgui.h>
+
+#if __has_include(<GameInput.h>)
+#include <GameInput.h>
+#define RF_HAVE_GAMEINPUT 1
+#else
+#define RF_HAVE_GAMEINPUT 0
+#endif
 
 #include "LLShim.h"
 #include "Options.h"
@@ -40,6 +49,7 @@ struct Settings {
     bool  alphaBoost = true;
     bool  eatRaw     = true; // experiment: hide raw mouse input from the game while the panel is up
     bool  remap      = true;
+    bool  pumpRemap  = true; // v0.10: remap mouse MSGs as the game pulls them from the queue
 } gS;
 
 std::atomic_bool   gEnabled{false};
@@ -244,12 +254,12 @@ size_t targetRtv() { return gRtv.load(std::memory_order_relaxed); }
 void   noteRedirected() { gRedirected.store(true, std::memory_order_relaxed); }
 
 void installCursorHook();
-void installGameInputHook();
+void installSourceHooks();
 void tryGameMouse();
 void writeDiag();
 void toggle() {
     bool on = !gEnabled.load();
-    if (on) { installCursorHook(); installGameInputHook(); tryGameMouse(); }
+    if (on) { installCursorHook(); installSourceHooks(); tryGameMouse(); }
     else writeDiag();
     gEnabled = on;
     if (on) uicapture::requestLearn(); // make sure the back-buffer RTV handles are known
@@ -368,6 +378,43 @@ bool remapClient(HWND hwnd, int& ix, int& iy) {
     return true;
 }
 
+struct ModRange {
+    uintptr_t lo = 0, hi = 0;
+    bool      has(void* p) const { auto a = reinterpret_cast<uintptr_t>(p); return a >= lo && a < hi; }
+};
+ModRange gGameMod;
+void initGameMod() {
+    if (gGameMod.lo) return;
+    auto base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    if (!base) return;
+    auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    auto nt  = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    gGameMod = {base, base + nt->OptionalHeader.SizeOfImage};
+}
+bool fromGame(void* ra) { return gGameMod.has(ra); }
+
+// screen point -> screen point the game should see
+bool remapScreen(POINT& p) {
+    HWND h = gHwnd.load(std::memory_order_relaxed);
+    if (!h || !gEnabled.load(std::memory_order_relaxed)) return false;
+    POINT c = p;
+    if (!ScreenToClient(h, &c)) return false;
+    RECT rc;
+    if (!GetClientRect(h, &rc) || c.x < 0 || c.y < 0 || c.x >= rc.right || c.y >= rc.bottom) return false;
+    int x = c.x, y = c.y;
+    if (!remapClient(h, x, y)) return false;
+    c = {x, y};
+    if (!ClientToScreen(h, &c)) return false;
+    p = c;
+    return true;
+}
+
+struct SrcStat {
+    std::atomic<long> calls{0}, game{0}, remapped{0};
+};
+SrcStat gStCursorInfo, gStPhys, gStMsgPos, gStPump, gStGcpGame;
+std::atomic<long> gPumpSkippedWnd{0};
+
 // In-world screens read the cursor with GetCursorPos (the title screen uses the WM_* coordinates): remap both.
 using GetCursorPos_t = BOOL(WINAPI*)(LPPOINT);
 struct GcpPair { long inX, inY, outX, outY; };
@@ -380,6 +427,7 @@ BOOL WINAPI getCursorPosHook(LPPOINT p) {
     HWND h = gHwnd.load(std::memory_order_relaxed);
     if (r && p && h && gEnabled.load(std::memory_order_relaxed)) {
         ++gGcpCalls;
+        if (fromGame(__builtin_return_address(0))) ++gStGcpGame.game;
         POINT in = *p;
         POINT c = *p;
         if (ScreenToClient(h, &c)) {
@@ -457,143 +505,334 @@ void installCursorHook() {
     }
 }
 
-// ---------------------------------------------------------------- GameInput mouse (v0.6)
-// In-world menus read the mouse through GameInput (GetMouseState on a reading), not GetCursorPos
-// (those ~3600 GetCursorPos calls are ImGui polling). Hook the reading's GetMouseState and remap the absolute
-// position. The remap only applies when the absolute position matches GetCursorPos, so a wrong struct layout
-// does nothing instead of corrupting the game's input.
-struct GiMouse { uint32_t buttons; int32_t posX, posY, absX, absY, wheelX, wheelY; };
-using GiCreate_t  = long(WINAPI*)(void**);
-using GiGetCur_t  = bool(WINAPI*)(void*, uint32_t, void*, void**); // GameInput methods return bool, not HRESULT
-using GiMouseFn   = bool(WINAPI*)(void*, GiMouse*);
-void*              gGiTarget = nullptr;
-void*              gGiOrig   = nullptr;
-std::atomic<long>  gGiReads{0}, gGiRemapped{0}, gGiSkipped{0};
-GiMouse            gGiLast{};
-std::string        gGiNote = "not installed";
+// ---------------------------------------------------------------- cursor sources (v0.10)
+// v0.9 showed the in-world (JSON UI) screens do not read the cursor through our GetCursorPos hook (its ~1 call per
+// frame is ImGui) and only 3 WM_* mouse messages reached the window procedure. Candidates hooked here, each counted
+// separately for calls made from the game's own module, and each remapped through the panel:
+//   * the message pump: PeekMessageW/GetMessageW handing a mouse MSG (pt + lParam) to the game before dispatch
+//   * GetCursorInfo, GetPhysicalCursorPos, GetMessagePos
+//   * GameInput through the real v0 header (the game binary carries the v0 IGameInput IID); vtable slots are
+//     computed from the header at runtime instead of hard-coded (v0.6-v0.9 used wrong slots)
 
-bool WINAPI giMouseHook(void* self, GiMouse* st) {
-    bool r = reinterpret_cast<GiMouseFn>(gGiOrig)(self, st);
-    if (!r || !st || !gEnabled.load(std::memory_order_relaxed)) return r;
-    ++gGiReads;
-    gGiLast = *st;
+using GetCursorInfo_t        = BOOL(WINAPI*)(PCURSORINFO);
+using GetPhysicalCursorPos_t = BOOL(WINAPI*)(LPPOINT);
+using GetMessagePos_t        = DWORD(WINAPI*)();
+using PeekMessageW_t         = BOOL(WINAPI*)(LPMSG, HWND, UINT, UINT, UINT);
+using GetMessageW_t          = BOOL(WINAPI*)(LPMSG, HWND, UINT, UINT);
+void *gCiOrig = nullptr, *gPhysOrig = nullptr, *gMpOrig = nullptr, *gPeekOrig = nullptr, *gGetMsgOrig = nullptr;
+bool  gSrcHooked = false;
+
+BOOL WINAPI getCursorInfoHook(PCURSORINFO pci) {
+    BOOL r = reinterpret_cast<GetCursorInfo_t>(gCiOrig)(pci);
+    if (r && pci && gEnabled.load(std::memory_order_relaxed)) {
+        ++gStCursorInfo.calls;
+        if (fromGame(__builtin_return_address(0))) ++gStCursorInfo.game;
+        if (remapScreen(pci->ptScreenPos)) ++gStCursorInfo.remapped;
+    }
+    return r;
+}
+BOOL WINAPI getPhysicalCursorPosHook(LPPOINT p) {
+    BOOL r = reinterpret_cast<GetPhysicalCursorPos_t>(gPhysOrig)(p);
+    if (r && p && gEnabled.load(std::memory_order_relaxed)) {
+        ++gStPhys.calls;
+        if (fromGame(__builtin_return_address(0))) ++gStPhys.game;
+        if (remapScreen(*p)) ++gStPhys.remapped;
+    }
+    return r;
+}
+DWORD WINAPI getMessagePosHook() {
+    DWORD r = reinterpret_cast<GetMessagePos_t>(gMpOrig)();
+    if (gEnabled.load(std::memory_order_relaxed)) {
+        ++gStMsgPos.calls;
+        if (fromGame(__builtin_return_address(0))) ++gStMsgPos.game;
+        POINT p{short(LOWORD(r)), short(HIWORD(r))};
+        if (remapScreen(p)) { r = MAKELONG(short(p.x), short(p.y)); ++gStMsgPos.remapped; }
+    }
+    return r;
+}
+
+// Messages the pump already remapped: the window procedure must not remap them a second time.
+struct PumpOut { UINT msg; LPARAM lp; };
+PumpOut              gPumpRing[32]{};
+std::atomic<unsigned> gPumpIdx{0};
+std::mutex           gPumpMutex;
+bool isClientMouseMsg(UINT m) {
+    switch (m) {
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDOWN: case WM_MBUTTONUP: case WM_MBUTTONDBLCLK:
+    case WM_XBUTTONDOWN: case WM_XBUTTONUP: case WM_XBUTTONDBLCLK: return true;
+    default: return false;
+    }
+}
+void pumpRemap(MSG* m, void* ra) {
+    if (!m || !gEnabled.load(std::memory_order_relaxed)) return;
+    bool client = isClientMouseMsg(m->message);
+    if (!client && m->message != WM_MOUSEWHEEL && m->message != WM_MOUSEHWHEEL) return;
     HWND h = gHwnd.load(std::memory_order_relaxed);
-    if (!h || !gGcpOrig) return r;
-    POINT cur{};
-    if (!reinterpret_cast<GetCursorPos_t>(gGcpOrig)(&cur)) return r;
-    if (std::abs(cur.x - st->absX) > 4 || std::abs(cur.y - st->absY) > 4) { ++gGiSkipped; return r; }
-    POINT c{st->absX, st->absY};
-    if (!ScreenToClient(h, &c)) return r;
-    int x = c.x, y = c.y;
-    if (!remapClient(h, x, y)) return r;
-    c = {x, y};
-    if (!ClientToScreen(h, &c)) return r;
-    st->absX = c.x;
-    st->absY = c.y;
-    ++gGiRemapped;
-    return r;
-}
-
-void installGameInputHook() {
-    if (gGiTarget) return;
-    HMODULE gi = LoadLibraryW(L"GameInput.dll");
-    if (!gi) { gGiNote = "GameInput.dll not loadable"; return; }
-    auto create = reinterpret_cast<GiCreate_t>(GetProcAddress(gi, "GameInputCreate"));
-    if (!create) { gGiNote = "GameInputCreate missing"; return; }
-    void* input = nullptr;
-    long  hr    = create(&input);
-    if (hr < 0 || !input) { char b[64]; snprintf(b, sizeof b, "GameInputCreate hr=0x%08lX", hr); gGiNote = b; return; }
-    void** inVt = *reinterpret_cast<void***>(input);
-    void*  reading = nullptr;
-    constexpr uint32_t kGameInputKindMouse = 0x00000020; // GameInputKindMouse
-    bool ok = reinterpret_cast<GiGetCur_t>(inVt[3])(input, kGameInputKindMouse, nullptr, &reading); // IGameInput::GetCurrentReading
-    if (!ok || !reading) { gGiNote = "GetCurrentReading(mouse) returned no reading"; return; }
-    void** rVt = *reinterpret_cast<void***>(reading);
-    void*  fn  = rVt[7];                                      // IGameInputReading::GetMouseState
-    if (ll_shim::hook(fn, reinterpret_cast<void*>(&giMouseHook), &gGiOrig) == 0) {
-        gGiTarget = fn;
-        gGiNote   = "GameInput GetMouseState hooked";
-        ll_shim::info("[RF] spatial panel: GameInput GetMouseState hooked");
+    if (!h || m->hwnd != h) return;
+    ++gStPump.calls;
+    if (fromGame(ra)) ++gStPump.game;
+    if (!gS.pumpRemap) return;
+    POINT pt = m->pt;
+    if (!remapScreen(pt)) return;
+    m->pt = pt;
+    if (client) {
+        POINT c = pt;
+        if (!ScreenToClient(h, &c)) return;
+        m->lParam = MAKELPARAM(short(c.x), short(c.y));
     } else {
-        gGiNote = "GameInput GetMouseState hook failed";
+        m->lParam = MAKELPARAM(short(pt.x), short(pt.y)); // wheel messages carry screen coordinates
     }
+    ++gStPump.remapped;
+    std::lock_guard l(gPumpMutex);
+    gPumpRing[gPumpIdx.fetch_add(1) % 32] = {m->message, m->lParam};
 }
-
-// v0.8: catch the game's own GameInput. At mod load, hook GameInputCreate; the game's IGameInput gets its
-// GetCurrentReading hooked; the first mouse reading it returns gets its GetMouseState hooked (giMouseHook).
-void*             gGicOrig = nullptr;
-void*             gGcurOrig = nullptr;
-std::atomic<long> gGicCalls{0}, gGcurCalls{0};
-bool              gGotMouseHook = false;
-std::string       gEarlyNote = "not installed";
-
-void*             gGameInput = nullptr; // the game's IGameInput (caught at creation)
-uint32_t          gLastKind  = 0;
-bool              gLastOk    = false;
-
-// IGameInput::GetCurrentReading(kind, device, reading) -> bool. Mouse reading seen -> hook its GetMouseState.
-bool WINAPI gcurHook(void* self, uint32_t kind, void* device, void** reading) {
-    bool r = reinterpret_cast<GiGetCur_t>(gGcurOrig)(self, kind, device, reading);
-    ++gGcurCalls;
-    gLastKind = kind;
-    gLastOk   = r;
-    if (r && reading && *reading && (kind & 0x20) && !gGotMouseHook) {
-        void** rv = *reinterpret_cast<void***>(*reading);
-        if (ll_shim::hook(rv[7], reinterpret_cast<void*>(&giMouseHook), &gGiOrig) == 0) {
-            gGotMouseHook = true;
-            gGiTarget     = rv[7];
-            gEarlyNote    = "game GameInput GetMouseState hooked";
-        } else {
-            gEarlyNote = "GetMouseState hook failed";
-        }
+bool pumpAlreadyRemapped(UINT msg, LPARAM lp) {
+    std::lock_guard l(gPumpMutex);
+    for (auto& e : gPumpRing) {
+        if (e.msg == msg && e.lp == lp && msg != 0) { e.msg = 0; return true; }
     }
+    return false;
+}
+BOOL WINAPI peekMessageWHook(LPMSG m, HWND h, UINT lo, UINT hi, UINT rm) {
+    BOOL r = reinterpret_cast<PeekMessageW_t>(gPeekOrig)(m, h, lo, hi, rm);
+    if (r) pumpRemap(m, __builtin_return_address(0));
+    return r;
+}
+BOOL WINAPI getMessageWHook(LPMSG m, HWND h, UINT lo, UINT hi) {
+    BOOL r = reinterpret_cast<GetMessageW_t>(gGetMsgOrig)(m, h, lo, hi);
+    if (r > 0) pumpRemap(m, __builtin_return_address(0));
     return r;
 }
 
-long WINAPI gicHook(void** out) {
-    long hr = reinterpret_cast<GiCreate_t>(gGicOrig)(out);
+void hookExport(HMODULE m, const char* name, void* detour, void** orig) {
+    void* t = m ? reinterpret_cast<void*>(GetProcAddress(m, name)) : nullptr;
+    if (t && ll_shim::hook(t, detour, orig) != 0) *orig = nullptr;
+}
+void installSourceHooks() {
+    if (gSrcHooked) return;
+    gSrcHooked = true;
+    initGameMod();
+    HMODULE u = GetModuleHandleW(L"user32.dll");
+    hookExport(u, "GetCursorInfo", reinterpret_cast<void*>(&getCursorInfoHook), &gCiOrig);
+    hookExport(u, "GetPhysicalCursorPos", reinterpret_cast<void*>(&getPhysicalCursorPosHook), &gPhysOrig);
+    hookExport(u, "GetMessagePos", reinterpret_cast<void*>(&getMessagePosHook), &gMpOrig);
+    hookExport(u, "PeekMessageW", reinterpret_cast<void*>(&peekMessageWHook), &gPeekOrig);
+    hookExport(u, "GetMessageW", reinterpret_cast<void*>(&getMessageWHook), &gGetMsgOrig);
+}
+
+// ---------------------------------------------------------------- GameInput (v0 header)
+std::string gGiNote = "not installed";
+void*       gGicOrig   = nullptr;
+std::atomic<long> gGicCalls{0};
+void*       gGameInput = nullptr; // the game's IGameInput
+
+#if RF_HAVE_GAMEINPUT
+// vtable slot of a virtual method, read from the header: call the method on a fake object whose vtable records
+// which slot was used.
+int gVtIdx = -1;
+template <int N> int64_t vtSlot() { gVtIdx = N; return 0; }
+template <int... N> void fillSlots(void** t, std::integer_sequence<int, N...>) { ((t[N] = reinterpret_cast<void*>(&vtSlot<N>)), ...); }
+void* const* slotTable() {
+    static void* t[96];
+    static bool  init = [] { fillSlots(t, std::make_integer_sequence<int, 96>{}); return true; }();
+    (void)init;
+    return t;
+}
+template <class M> struct MemFn;
+template <class C, class R, class... A> struct MemFn<R (C::*)(A...)> {
+    static int index(R (C::*m)(A...)) {
+        struct Fake { void* const* vt; } f{slotTable()};
+        gVtIdx = -1;
+        (reinterpret_cast<C*>(&f)->*m)(A{}...);
+        return gVtIdx;
+    }
+};
+template <class C, class R, class... A> struct MemFn<R (C::*)(A...) const> {
+    static int index(R (C::*m)(A...) const) {
+        struct Fake { void* const* vt; } f{slotTable()};
+        gVtIdx = -1;
+        (reinterpret_cast<const C*>(&f)->*m)(A{}...);
+        return gVtIdx;
+    }
+};
+template <class M> int vindex(M m) { return MemFn<M>::index(m); }
+
+int  gIdxCur = -1, gIdxNext = -1, gIdxPrev = -1, gIdxReg = -1, gIdxMouse = -1;
+bool gMouseHooked = false;
+std::string gMouseNote = "no reading seen yet";
+
+// mouse state seen by the game
+std::atomic<long> gMsCalls{0}, gMsGame{0}, gMsRemapped{0};
+long long gMsPosX = 0, gMsPosY = 0, gMsWheel = 0;
+unsigned  gMsButtons = 0;
+POINT     gMsCursor{}; // real cursor at the same moment
+bool      gMsHasAbs = false;
+double    gMsAbsX = 0, gMsAbsY = 0;
+
+template <class S> void recordMouse(S* st) {
+    if (!st) return;
+    if constexpr (requires { st->buttons; }) gMsButtons = unsigned(st->buttons);
+    if constexpr (requires { st->positionX; }) { gMsPosX = (long long)st->positionX; gMsPosY = (long long)st->positionY; }
+    if constexpr (requires { st->wheelY; }) gMsWheel = (long long)st->wheelY;
+    if constexpr (requires { st->absolutePositionX; }) {
+        gMsHasAbs = true;
+        gMsAbsX   = double(st->absolutePositionX);
+        gMsAbsY   = double(st->absolutePositionY);
+    }
+    if (gGcpOrig) reinterpret_cast<GetCursorPos_t>(gGcpOrig)(&gMsCursor);
+    else GetCursorPos(&gMsCursor);
+}
+
+template <class M> struct MouseHook;
+template <class C, class R, class... A> struct MouseHook<R (C::*)(A...)> {
+    static inline void* orig = nullptr;
+    static R STDMETHODCALLTYPE fn(C* self, A... a) {
+        R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
+        if (gEnabled.load(std::memory_order_relaxed)) {
+            ++gMsCalls;
+            if (fromGame(__builtin_return_address(0))) ++gMsGame;
+            (recordMouse(a), ...);
+        }
+        return r;
+    }
+};
+template <class C, class R, class... A> struct MouseHook<R (C::*)(A...) const> {
+    static inline void* orig = nullptr;
+    static R STDMETHODCALLTYPE fn(const C* self, A... a) {
+        R r = reinterpret_cast<R (*)(const C*, A...)>(orig)(self, a...);
+        if (gEnabled.load(std::memory_order_relaxed)) {
+            ++gMsCalls;
+            if (fromGame(__builtin_return_address(0))) ++gMsGame;
+            (recordMouse(a), ...);
+        }
+        return r;
+    }
+};
+using MouseM = decltype(&IGameInputReading::GetMouseState);
+
+void noteReading(IGameInputReading* rd) {
+    if (gMouseHooked || !rd) return;
+    gMouseHooked = true;
+    gIdxMouse    = vindex(&IGameInputReading::GetMouseState);
+    void** vt    = *reinterpret_cast<void***>(rd);
+    if (gIdxMouse < 0) { gMouseNote = "GetMouseState slot not found"; return; }
+    if (ll_shim::hook(vt[gIdxMouse], reinterpret_cast<void*>(&MouseHook<MouseM>::fn), &MouseHook<MouseM>::orig) == 0)
+        gMouseNote = "GetMouseState hooked (slot " + std::to_string(gIdxMouse) + ")";
+    else gMouseNote = "GetMouseState hook failed";
+}
+
+// counters per IGameInput method, keyed by Id
+struct GiStat {
+    std::atomic<long> calls{0}, game{0}, ok{0};
+    std::atomic<uint32_t> kinds{0}; // OR of the kinds asked for
+};
+GiStat gGiStat[4];
+const char* gGiName[4] = {"GetCurrentReading", "GetNextReading", "GetPreviousReading", "RegisterReadingCallback"};
+
+inline void scanArg(uint32_t& kind, IGameInputReading**&, GameInputKind k) { kind |= uint32_t(k); }
+inline void scanArg(uint32_t&, IGameInputReading**& out, IGameInputReading** r) { out = r; }
+template <class T> void scanArg(uint32_t&, IGameInputReading**&, T) {}
+
+template <int Id, class M> struct GiHook;
+template <int Id, class C, class R, class... A> struct GiHook<Id, R (C::*)(A...)> {
+    static inline void* orig = nullptr;
+    static R STDMETHODCALLTYPE fn(C* self, A... a) {
+        R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
+        auto& st = gGiStat[Id];
+        ++st.calls;
+        if (fromGame(__builtin_return_address(0))) ++st.game;
+        uint32_t kind = 0;
+        IGameInputReading** out = nullptr;
+        (scanArg(kind, out, a), ...);
+        st.kinds.fetch_or(kind);
+        bool ok;
+        if constexpr (std::is_same_v<R, bool>) ok = r;
+        else ok = SUCCEEDED(r);
+        if (ok) ++st.ok;
+        if (ok && out && *out) noteReading(*out);
+        return r;
+    }
+};
+using CurM  = decltype(&IGameInput::GetCurrentReading);
+using NextM = decltype(&IGameInput::GetNextReading);
+using PrevM = decltype(&IGameInput::GetPreviousReading);
+using RegM  = decltype(&IGameInput::RegisterReadingCallback);
+
+template <int Id, class M> void hookSlot(void** vt, int idx) {
+    if (idx < 0) return;
+    if (ll_shim::hook(vt[idx], reinterpret_cast<void*>(&GiHook<Id, M>::fn), &GiHook<Id, M>::orig) != 0) GiHook<Id, M>::orig = nullptr;
+}
+
+void hookGameInput(IGameInput* gi) {
+    initGameMod();
+    gIdxCur  = vindex(&IGameInput::GetCurrentReading);
+    gIdxNext = vindex(&IGameInput::GetNextReading);
+    gIdxPrev = vindex(&IGameInput::GetPreviousReading);
+    gIdxReg  = vindex(&IGameInput::RegisterReadingCallback);
+    void** vt = *reinterpret_cast<void***>(gi);
+    hookSlot<0, CurM>(vt, gIdxCur);
+    hookSlot<1, NextM>(vt, gIdxNext);
+    hookSlot<2, PrevM>(vt, gIdxPrev);
+    hookSlot<3, RegM>(vt, gIdxReg);
+    gGiNote = "game IGameInput hooked (slots cur " + std::to_string(gIdxCur) + " next " + std::to_string(gIdxNext) + " prev " +
+              std::to_string(gIdxPrev) + " reg " + std::to_string(gIdxReg) + ")";
+}
+
+// The game may only use callbacks: ask its IGameInput for one reading so the reading vtable gets hooked.
+void tryGameMouse() {
+    if (gMouseHooked || !gGameInput || !GiHook<0, CurM>::orig) return;
+    auto cur = reinterpret_cast<HRESULT (*)(IGameInput*, GameInputKind, IGameInputDevice*, IGameInputReading**)>(GiHook<0, CurM>::orig);
+    for (GameInputKind k : {GameInputKindMouse, GameInputKindKeyboard}) {
+        IGameInputReading* rd = nullptr;
+        HRESULT hr = cur(static_cast<IGameInput*>(gGameInput), k, nullptr, &rd);
+        if (SUCCEEDED(hr) && rd) {
+            noteReading(rd);
+            rd->Release();
+            return;
+        }
+        char b[96];
+        snprintf(b, sizeof b, "own GetCurrentReading(kind 0x%x) hr 0x%08lX", unsigned(k), long(hr));
+        gMouseNote = b;
+    }
+}
+#else
+void hookGameInput(void*) { gGiNote = "built without GameInput.h"; }
+void tryGameMouse() {}
+#endif
+
+using GiCreate_t = HRESULT(WINAPI*)(void**);
+HRESULT WINAPI gicHook(void** out) {
+    HRESULT hr = reinterpret_cast<GiCreate_t>(gGicOrig)(out);
     ++gGicCalls;
-    if (hr >= 0 && out && *out && !gGameInput) gGameInput = *out;
-    if (hr >= 0 && out && *out && !gGcurOrig) {
-        void** vt = *reinterpret_cast<void***>(*out);
-        if (ll_shim::hook(vt[3], reinterpret_cast<void*>(&gcurHook), &gGcurOrig) == 0) gEarlyNote = "game IGameInput caught";
+    if (SUCCEEDED(hr) && out && *out && !gGameInput) {
+        gGameInput = *out;
+#if RF_HAVE_GAMEINPUT
+        hookGameInput(static_cast<IGameInput*>(gGameInput));
+#else
+        hookGameInput(gGameInput);
+#endif
     }
     return hr;
 }
 
 void installEarly() {
     if (gGicOrig) return;
+    initGameMod();
     HMODULE gi = LoadLibraryW(L"GameInput.dll");
-    if (!gi) { gEarlyNote = "GameInput.dll not loadable"; return; }
+    if (!gi) { gGiNote = "GameInput.dll not loadable"; return; }
     void* create = reinterpret_cast<void*>(GetProcAddress(gi, "GameInputCreate"));
-    if (!create) { gEarlyNote = "GameInputCreate missing"; return; }
-    if (ll_shim::hook(create, reinterpret_cast<void*>(&gicHook), &gGicOrig) == 0) gEarlyNote = "GameInputCreate hooked (waiting for the game)";
-    else gEarlyNote = "GameInputCreate hook failed";
-}
-
-// Ask the game's own IGameInput for a mouse reading (the game rarely calls GetCurrentReading itself), then hook
-// that reading's GetMouseState. Runs on panel toggle.
-void tryGameMouse() {
-    if (gGotMouseHook || !gGameInput || !gGcurOrig) return;
-    void* rd = nullptr;
-    bool  ok = reinterpret_cast<GiGetCur_t>(gGcurOrig)(gGameInput, 0x20, nullptr, &rd);
-    gLastKind = 0x20;
-    gLastOk   = ok;
-    if (!ok || !rd) { gEarlyNote = "game GetCurrentReading(mouse) gave no reading (retry on next toggle)"; return; }
-    void** rv = *reinterpret_cast<void***>(rd);
-    if (ll_shim::hook(rv[7], reinterpret_cast<void*>(&giMouseHook), &gGiOrig) == 0) {
-        gGotMouseHook = true;
-        gGiTarget     = rv[7];
-        gEarlyNote    = "game GameInput GetMouseState hooked";
-    } else {
-        gEarlyNote = "GetMouseState hook failed";
-    }
+    if (!create) { gGiNote = "GameInputCreate missing"; return; }
+    if (ll_shim::hook(create, reinterpret_cast<void*>(&gicHook), &gGicOrig) == 0) gGiNote = "GameInputCreate hooked (waiting for the game)";
+    else gGiNote = "GameInputCreate hook failed";
 }
 
 void writeDiag() {
-    char b[3000];
+    char b[6000];
     snprintf(b, sizeof b,
-             "Spatial GUI panel diag v0.6\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
+             "Spatial GUI panel diag v0.10\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
              "GetRawInputData reads: %ld, mouse: %ld (last dx %ld dy %ld buttons 0x%x) hook %s\n"
              "ClipCursor calls: %ld (last rect %ld,%ld-%ld,%ld) hook %s\n"
@@ -644,10 +883,24 @@ void writeDiag() {
     }
     {
         size_t len = strlen(b);
-        len += snprintf(b + len, sizeof b - len, "GameInput: %s\n  mouse reads %ld, remapped %ld, skipped (no GetCursorPos match) %ld\n  last state: buttons %u pos %d,%d abs %d,%d\n",
-                        gGiNote.c_str(), gGiReads.load(), gGiRemapped.load(), gGiSkipped.load(), gGiLast.buttons, gGiLast.posX, gGiLast.posY, gGiLast.absX, gGiLast.absY);
-        len += snprintf(b + len, sizeof b - len, "GameInput early: %s\n  GameInputCreate calls %ld, GetCurrentReading calls %ld (last kind 0x%x ok %d), game mouse hook %s\n",
-                        gEarlyNote.c_str(), gGicCalls.load(), gGcurCalls.load(), gLastKind, gLastOk ? 1 : 0, gGotMouseHook ? "yes" : "no");
+        auto line = [&](const char* nm, SrcStat& st) {
+            len += snprintf(b + len, sizeof b - len, "  %-22s calls %ld, from game %ld, remapped %ld\n", nm, st.calls.load(), st.game.load(), st.remapped.load());
+        };
+        len += snprintf(b + len, sizeof b - len, "cursor sources while on (v0.10):\n  GetCursorPos from game %ld\n", gStGcpGame.game.load());
+        line("GetCursorInfo", gStCursorInfo);
+        line("GetPhysicalCursorPos", gStPhys);
+        line("GetMessagePos", gStMsgPos);
+        line("pump mouse MSG", gStPump);
+        len += snprintf(b + len, sizeof b - len, "  wndproc skipped (already remapped in pump) %ld; pump remap %s\n", gPumpSkippedWnd.load(), gS.pumpRemap ? "on" : "off");
+        len += snprintf(b + len, sizeof b - len, "GameInput: %s (GameInputCreate calls %ld)\n", gGiNote.c_str(), gGicCalls.load());
+#if RF_HAVE_GAMEINPUT
+        for (int k = 0; k < 4; ++k)
+            len += snprintf(b + len, sizeof b - len, "  %-24s calls %ld, from game %ld, ok %ld, kinds 0x%x\n", gGiName[k], gGiStat[k].calls.load(), gGiStat[k].game.load(),
+                            gGiStat[k].ok.load(), unsigned(gGiStat[k].kinds.load()));
+        len += snprintf(b + len, sizeof b - len, "  mouse: %s; GetMouseState calls %ld, from game %ld\n  last: buttons 0x%x pos %lld,%lld wheel %lld abs %s %.1f,%.1f  cursor %ld,%ld\n",
+                        gMouseNote.c_str(), gMsCalls.load(), gMsGame.load(), gMsButtons, gMsPosX, gMsPosY, gMsWheel, gMsHasAbs ? "yes" : "no", gMsAbsX, gMsAbsY,
+                        gMsCursor.x, gMsCursor.y);
+#endif
         (void)len;
     }
     uicapture::writeText("panel_diag.txt", b);
@@ -676,6 +929,7 @@ bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
     default: return false;
     }
     if (gEnabled.load(std::memory_order_relaxed)) ++gWmSeen;
+    if (gEnabled.load(std::memory_order_relaxed) && pumpAlreadyRemapped(msg, lp)) { ++gPumpSkippedWnd; return false; }
     int x = short(LOWORD(lp)), y = short(HIWORD(lp));
     if (!remapClient(hwnd, x, y)) return false;
     ++gWmRemapped;
@@ -706,6 +960,7 @@ void drawUi() {
         ImGui::SameLine();
         ImGui::Checkbox("Remap mouse (ray-pick)", &gS.remap);
         ImGui::Checkbox("Hide raw mouse input from the game (experiment)", &gS.eatRaw);
+        ImGui::Checkbox("Remap mouse messages in the message pump", &gS.pumpRemap);
         ImGui::TextWrapped("M1 prototype: everything the UI draws (HUD included) goes onto the panel while it is on.");
     }
     ImGui::Unindent();
