@@ -1,3 +1,31 @@
+# Next session handoff (updated 2026-10-29 ~22:25 UTC) - READ FIRST
+- CINEMATIC INTERACTIONS PORT: RF branch `cinematic` (CI works again; builds -> branch `cinematic-builds`, fetch with
+  `git fetch origin +cinematic-builds:refs/remotes/origin/cinematic-builds`, DLL = `git show
+  origin/cinematic-builds:RendererFoundation/RendererFoundation.dll`). Repo Novakify/BedrockForge is PUBLIC right now
+  (Fernando switched it for CI) - he has to switch it back to private himself (the proxy refuses settings writes).
+- REFERENCE = the 0.18.3 Fabric 1.21.11 jar in the chat attachments (the videos were made with it), NOT the newer
+  0.18.30 source in ci_src: e.g. the enchanting circles are the soft magic_circle.png as added light there (the source
+  has a pixel circle with a palette). Read the jar with `javap -c -p -constants` (running a decompiler jar is refused
+  here). Task left: compare every station's constants/looks with the jar + the videos side by side (Fernando asked).
+- Scenes done + seen in game: crafting table, furnaces, anvil, grindstone, stonecutter, smithing, loom (board),
+  cartography (untested), ENCHANTING (circles, floating item, sigils with Bedrock's own cost digits + runes recoloured,
+  socket + empty-crystal, Java-style offer tooltip, the rite: kick, hands, glyphs, burst, flash, beam - enchants for
+  real). The book hides the table circles via a screen polygon (shader `behind()`), tune BOOK_* if needed.
+- Enchanting detection: Bedrock's panel frame #373737 right of the lapis slot, buttons = its thirds; sampled cells:
+  buttons[3..5] the cost (coloured pixels only), [6..23] six cells per row along the runes (grey pixels only).
+- Mouse: GameInput readings that repeat our remapped point are skipped (echo); no more GetCursorPos substitute
+  (computer-use injection left it stale -> drawer pack rows never expanded). Diag has "drawer expand / over / live".
+- Bedrock keyboard focus (green square on a slot after keys) used to break slot rows: one missing slot is filled in.
+- Installed on the PC: RendererFoundation.dll = cine-e4 (86ac5fa); newer builds may be in the mods folder as
+  RendererFoundation.cine-eN-<sha>.dll. Restart = Esc, Esc, Save & Quit (mouse down/up, not a click), window X,
+  computer_open_application("Minecraft.windows") only when it is closed (else a 2nd instance), Play, first My World.
+  Focus: click the taskbar grass icon ONLY when the game is not in front (it minimizes otherwise).
+- Test world "My World": enchanting table at 102 200 -106 (tp @s 102.5 200 -104.4 180 55, then F9 + a 1 px nudge).
+  CinematicInteractions.json: devScenes true, dumpUi true (set both false when done); RendererFoundation.json
+  uiDebugUseKey 120 (set back to 0 when done).
+- Next: verify drawer pack rows + lapis placing with the echo fix build, then the side-by-side review of all stations
+  vs the videos and the 0.18.3 jar, cubes' count digits, docs, then the GeckoBridge prompt (research branch only).
+
 # Next session handoff (updated 2026-10-29 ~15:50 UTC) - READ FIRST
 - CINEMATIC INTERACTIONS PORT in progress: RF branch `cinematic` (builds -> branch `cinematic-builds`, fetch with
   `git fetch origin +cinematic-builds:refs/remotes/origin/cinematic-builds`; the artifact zip host is blocked here).
