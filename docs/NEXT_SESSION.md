@@ -1,3 +1,28 @@
+# Next session handoff (updated 2026-10-29 ~07:00 UTC) - READ FIRST
+- SPATIAL GUI DONE (RF branch spatialgui-m0, installed v0.15 `c0c6d24`, CI builds -> branch spatialgui-m0-builds).
+  Everything in the Java mod's config screen is in F6 > Spatial GUI panel > Spatial GUI config, saved to
+  config/SpatialGUI.json, defaults = Java defaults (read from SpatialGUIConfig's constructor with javap):
+  - avatar looks at the screen (AvatarRendererMixin): body = yaw + 20, head = body + mx*40 + 30, smoothed 0.15,
+    written into MobBodyRotationComponent / ActorHeadRotationComponent while third person is active, restored on close.
+    Head PITCH is deliberately not written: Bedrock's actor pitch is the look pitch and the first-person camera adopts
+    it (player kept looking where the avatar looked).
+  - CameraUtil.checkBlockCollision: camera spot (FOV-adjusted) inside / behind a solid block -> first person for
+    that screen. First person crosshair mode (useCrosshairForFirstPerson, default on): mouse grabbed at the window
+    centre, its motion = free look (yaw +-90), crosshair drawn with ImGui, pointer = crosshair. keepFirstPersonCameraAngle
+    snaps the player to the camera angle on close. hideHandsInFirstPerson -> IOptionRegistry::setHideItemInHand.
+  - per-screen toggles (Java shouldHookScreen) mapped to Bedrock names: inventory_screen, small_chest_screen,
+    crafting_screen, furnace_screen, anvil, enchanting, shulker ... (substring match in SpatialPanel isPanelScreen).
+  - GUI Scale (auto / 1-6) feeds the magnification; recipeBookShrinkFactor 1.5 for screens Bedrock shows with the
+    recipe book (crafting / furnace / smoker / blast furnace).
+  - Bedrock addition (Fernando's request): wide screens ease the camera 0.35 blocks further sideways so the player
+    stands clear of the UI ("Wide Screen Player Shift" slider).
+  - Stored but no Bedrock effect: render scale %, linear / anisotropic filtering, hide shield, swing arm on click,
+    curved screen (single quad), inheritScreenOriginOnSwap, hideHotbar (Bedrock hides the HUD under screens anyway).
+  - Tested in game: inventory, chest, crafting table, furnace, anvil, enchanting table, shulker box (TP), furnace in
+    forced first person + crosshair free look. uiDebugUseKey reset to 0 (F9 no longer right-clicks).
+  - Player model looks pale in close third person: Dread shader lighting + skin overlay layer, not Spatial GUI.
+- NEXT: Cinematic Interactions (docs/PORT_CINEMATIC.md), then GeckoBridge last (research branch only).
+
 # Next session handoff (updated 2026-10-29 ~05:40 UTC) - READ FIRST
 - SPATIAL GUI = JAVA LOOK (RF spatialgui-m0, installed v0.14 `55283ef`): 1:1 port of the Java mod (tastytrash
   Spatial GUI) defaults, read from its bytecode with javap (decompiler jar was not allowed to run):
