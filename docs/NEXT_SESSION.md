@@ -390,3 +390,10 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Likely cause: the ray-pick in SpatialPanel.cpp remapClient does not match the drawn quad (toClip / computeGeom / aspect). Next: calibrate by drawing a test marker at the remapped point, or compare toClip(corners) with remapClient inverse for the four corners.
 - Not done: screen detection (panel for inventory/chest/crafting only), chest and crafting captures, Cinematic prompt.
 - PC state: v0.4 DLL active, uiCaptureSpike true, game still running with the panel on. Stable DLL 5246159 on disk for rollback (config backup RendererFoundation.json.bak-stable).
+
+## Status 2026-10-29 (v0.9 test, bffd513)
+- v0.9 DLL installed on PC (mods\RendererFoundation\RendererFoundation.dll = sgm1-bffd513). Game launches, world loads, F8/I/inventory work.
+- In-world hover is still offset (hover at 552,352 highlights Gravel at ~626,376). Not fixed.
+- panel_diag.txt (02:28): game GetCurrentReading(kind 0x20) on toggle returned no reading; game mouse hook still "no". Early hook saw only 1 GetCurrentReading call total, so the game's mouse readings probably do not come from GetCurrentReading after startup.
+- Next: find how the game gets its mouse state (IGameInput callback registration, another device kind, or the Win32 path used by in-world GUI). Add a diag that logs every GameInput vtable call and the device kinds seen. Do not keep retrying GetCurrentReading.
+- Note: the diag header string still says v0.6 (cosmetic).
