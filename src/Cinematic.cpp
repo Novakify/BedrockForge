@@ -619,6 +619,8 @@ struct Press {
     double     since = 0, releasedAt = -1e9;
 };
 Press    gPress;
+std::string gPressLog[12];
+int         gPressLogN = 0;
 unsigned gPrevButtons = 0;
 double nowMs() {
     LARGE_INTEGER n, f;
@@ -877,6 +879,17 @@ unsigned filterButtons(unsigned buttons) {
         if (now - gPress.since < 70) out |= bit;
         else { gPress.state = PressState::Idle; gPress.releasedAt = now; }
         break;
+    }
+    {   // press log (diag): every change of the real or the passed buttons
+        static unsigned lastIn = 0, lastOut = 0;
+        if ((buttons & 7u) != lastIn || out != lastOut) {
+            char e[120];
+            snprintf(e, sizeof e, "%.0f ms: real %x -> passed %x, state %d target %d at %.0f,%.0f", now, buttons & 7u, out, int(gPress.state),
+                     gPress.target, gMapX, gMapY);
+            gPressLog[gPressLogN++ % 12] = e;
+            lastIn = buttons & 7u;
+            lastOut = out;
+        }
     }
     gPrevButtons = buttons & 7u;
     gHeld = gPress.state == PressState::Down || gPress.state == PressState::ForceDown ? bit : 0;
@@ -2161,6 +2174,10 @@ void appendDiag(char* b, unsigned long long cap) {
                          gS.hoverResult, gS.hoverDrawer, gHeld.load(), gS.cellFull[0], gS.cellFull[1], gS.cellFull[2], gS.cellFull[3], gS.cellFull[4],
                          gS.cellFull[5], gS.cellFull[6], gS.cellFull[7], gS.cellFull[8], gS.resultFull, gS.last.pos.x, gS.last.pos.y, gS.last.pos.z,
                          gS.last.yaw, gS.last.pitch, gS.last.roll, gS.tanHalf, gS.aspect, gS.fovY, gS.vanillaFovY, gG.status.c_str());
+    for (int i = 0; i < 12 && len < cap; ++i) {
+        auto const& e = gPressLog[(gPressLogN + i) % 12];
+        if (!e.empty()) len += std::snprintf(b + len, cap - len, "  press: %s\n", e.c_str());
+    }
     if (gLayout.valid)
         len += std::snprintf(b + len, cap - len, "  hotbar[0] %.0f,%.0f  inv[0] %.0f,%.0f  grid[0] %.0f,%.0f grid[8] %.0f,%.0f  result %.0f,%.0f %.0f\n",
                              gLayout.hotbar[0].x, gLayout.hotbar[0].y, gLayout.inv[0].x, gLayout.inv[0].y, gLayout.grid[0].x, gLayout.grid[0].y,
