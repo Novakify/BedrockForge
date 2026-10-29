@@ -592,12 +592,13 @@ std::atomic<long> gGcpCalls{0}, gGcpRemapped{0}, gGcpInClient{0}, gWmRemapped{0}
 std::string       gHookNote = "not installed";
 
 // client pixel -> client pixel the game should see (ray-pick through the panel)
+thread_local bool tLiveMouse = false; // set while the game's own mouse reading (GameInput) is remapped
 bool remapClient(HWND hwnd, int& ix, int& iy) {
     if (gCineScreen.load(std::memory_order_relaxed) && cine::active()) {
         if (!gEnabled || RfOptions::showImGui) return false;
         RECT rc;
         if (!GetClientRect(hwnd, &rc) || rc.right < 1 || rc.bottom < 1) return false;
-        return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy);
+        return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, tLiveMouse);
     }
     if (!gS.remap || !gEnabled || gAnim.load() < 0.5f || RfOptions::showImGui) return false;
     Geom g;
@@ -1009,12 +1010,21 @@ void onMouse(gi::GameInputMouseState* st, bool game) {
     gMsRelY      = st->positionY;
     gMsAbsX      = st->absolutePositionX;
     gMsAbsY      = st->absolutePositionY;
-    if (gMsPositions & unsigned(gi::GameInputMouseAbsolutePosition)) {
+    bool hasAbs = (gMsPositions & unsigned(gi::GameInputMouseAbsolutePosition)) != 0;
+    if (hasAbs) {
         ++gMsAbs;
+        tLiveMouse = true;
         if (gS.remap && remapAbs(st->absolutePositionX, st->absolutePositionY)) ++gMsRemapped;
+        tLiveMouse = false;
     }
-    if (gCineScreen.load(std::memory_order_relaxed) && cine::active())
-        st->buttons = gi::GameInputMouseButtons(cine::filterButtons(unsigned(st->buttons)));
+    if (gCineScreen.load(std::memory_order_relaxed) && cine::active()) {
+        // two streams of readings arrive in turn (one with the absolute position, one without), each with its own
+        // idea of the buttons: the scene sees them together, and both get the same answer
+        static unsigned last[2] = {0, 0};
+        last[hasAbs ? 0 : 1] = unsigned(st->buttons) & 7u;
+        unsigned both = (unsigned(st->buttons) & ~7u) | last[0] | last[1];
+        st->buttons   = gi::GameInputMouseButtons(cine::filterButtons(both));
+    }
     gMsOutX = st->absolutePositionX;
     gMsOutY = st->absolutePositionY;
     MsLog e{unsigned(st->buttons), unsigned(st->positions), inX, inY, st->absolutePositionX, st->absolutePositionY, seq};

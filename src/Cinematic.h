@@ -91,7 +91,7 @@ void drawUi();
 
 // ---- input (GameInput mouse readings, WM_* coordinates)
 /// Client pixel of the real cursor -> client pixel the hidden screen should see. true = remapped.
-bool mapClient(int w, int h, int& x, int& y);
+bool mapClient(int w, int h, int& x, int& y, bool live);
 /// Mouse buttons the hidden screen should see (GameInput buttons bitmask).
 unsigned filterButtons(unsigned buttons);
 

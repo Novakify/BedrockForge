@@ -1201,22 +1201,31 @@ bool cameraPose(float const eye[3], float yaw, float pitch, Pose& out, float& fo
 }
 
 // ================================================================ public: input
-bool mapClient(int w, int h, int& x, int& y) {
+bool mapClient(int w, int h, int& x, int& y, bool live) {
     std::lock_guard l(gM);
     if (gS.phase != Phase::Intro && gS.phase != Phase::Active) return false;
     gW = w;
     gH = h;
-    gCursorNdcX = 2.0f * x / std::max(1, w) - 1.0f;
-    gCursorNdcY = 1.0f - 2.0f * y / std::max(1, h);
-    gCursorValid = true;
-    if (!gS.cursorEngaged && gS.phase == Phase::Active && gS.time < 0.05) { gS.cursorStartX = float(x); gS.cursorStartY = float(y); }
     Layout L;
     {
         std::lock_guard ll2(gLayoutMutex);
         L = gLayout;
     }
-    int t = currentTarget(float(x), float(y));
-    gTargetNow = t;
+    // only the game's own mouse reading moves the cursor: the other ways the game asks (cursor position, window
+    // messages, already remapped points) are answered with the hidden screen's point for the target of that reading
+    int t = gTargetNow.load();
+    static double lastLive = -1e9;
+    double        nowL     = nowMs();
+    if (live) lastLive = nowL;
+    else if (nowL - lastLive > 300) live = true; // no GameInput readings: the other ways are all there is
+    if (live) {
+        gCursorNdcX = 2.0f * x / std::max(1, w) - 1.0f;
+        gCursorNdcY = 1.0f - 2.0f * y / std::max(1, h);
+        gCursorValid = true;
+        if (!gS.cursorEngaged && gS.phase == Phase::Active && gS.time < 0.05) { gS.cursorStartX = float(x); gS.cursorStartY = float(y); }
+        t = currentTarget(float(x), float(y));
+        gTargetNow = t;
+    }
     double now = nowMs();
     // a press goes to its target, a drag over other targets follows them (sharing a stack), the release lands where
     // the press is; otherwise the hidden screen's cursor waits in an empty corner
