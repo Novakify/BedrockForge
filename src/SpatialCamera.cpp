@@ -24,6 +24,7 @@
 #include "ll/api/service/Bedrock.h"
 
 #include "mc/client/game/ClientInstance.h"
+#include "mc/client/gui/GuiData.h"
 #include "mc/client/renderer/game/LevelRendererCamera.h"
 #include "mc/deps/ecs/WeakEntityRef.h"
 #include "mc/deps/ecs/gamerefs_entity/EntityContext.h"
@@ -115,6 +116,7 @@ void onCamera(mce::Camera& cam) {
     gView.tanHalf = 1.0f / P[1][1];
     gView.aspect  = P[1][1] / P[0][0];
     gView.fovYDeg = 2.0f * std::atan(gView.tanHalf) / kDeg;
+    if (auto gd = ci->getGuiData(); gd) gView.guiScale = *gd->mGuiScale;
     if (!gActive.load()) {
         gView.yawRel     = 0.0f;
         gView.pitch      = actor.getRotation().x;
@@ -285,10 +287,10 @@ void appendDiag(char* b, unsigned long long cap) {
     len += std::snprintf(b + len, cap - len,
                          "camera (v0.13b): %s; active %d; calls %ld, perspective %ld, world %ld, component writes %ld\n"
                          "  player feet %.2f,%.2f,%.2f rot pitch %.1f yaw %.1f; cam %.2f,%.2f,%.2f target %.2f,%.2f,%.2f t %.2f\n"
-                         "  view: valid %d overridden %d fovY %.1f aspect %.3f yawRel %.1f pitch %.1f\n",
+                         "  view: valid %d overridden %d fovY %.1f aspect %.3f yawRel %.1f pitch %.1f guiScale %.2f\n",
                          gNote, gActive.load() ? 1 : 0, gCalls, gPersp, gChosen, gOverrides, gLastFeet[0], gLastFeet[1], gLastFeet[2],
                          gLastRot[0], gLastRot[1], gLastCam[0], gLastCam[1], gLastCam[2], gLastTarget[0], gLastTarget[1],
-                         gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch);
+                         gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch, gView.guiScale);
     len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",
                          gConv, gConvTries, gCompMiss, gLastM[0], gLastM[3], gLastM[6], gLastM[1], gLastM[4], gLastM[7], gLastM[2], gLastM[5], gLastM[8]);
     for (int i = 0; i < gSeenN && len < cap; ++i)

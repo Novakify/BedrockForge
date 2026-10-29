@@ -37,7 +37,17 @@ struct View {
     float fovYDeg  = 70.0f;
     float yawRel   = 0.0f;  // camera yaw minus player yaw (degrees, + = turned right)
     float pitch    = 0.0f;  // camera pitch (degrees, + = down)
+    float guiScale = 0.0f;  // Bedrock UI pixels per GUI unit (GuiData::mGuiScale), 0 = unknown
 };
+
+/// Java SpatialGUIConfig.calculateAutoGuiScale(width, height): largest scale keeping >= 320 x 240 GUI units.
+inline int javaAutoGuiScale(int w, int h) {
+    if (w <= 0 || h <= 0) return 1;
+    int s = 1;
+    while (w / (s + 1) >= 320 && h / (s + 1) >= 240) ++s;
+    if (s == 1 && h >= 430 && w >= 640) s = 2;
+    return s;
+}
 
 void install();
 void uninstall();

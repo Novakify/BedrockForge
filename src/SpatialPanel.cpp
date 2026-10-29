@@ -260,7 +260,7 @@ float easeOutBack(float t) {
     float x = t - 1.0f;
     return 1.0f + c3 * x * x * x + c1 * x * x;
 }
-Geom computeGeomJava(spatialcam::View const& v, float uiAspect, float anim) {
+Geom computeGeomJava(spatialcam::View const& v, float uiAspect, float anim, float guiMag) {
     using namespace spatialcam;
     constexpr float kD = 0.017453292f;
     Geom g{};
@@ -270,7 +270,7 @@ Geom computeGeomJava(spatialcam::View const& v, float uiAspect, float anim) {
     float fm       = (v.valid ? v.fovYDeg : kBaselineFov) / kBaselineFov;
     float fovScale = std::pow(fm, kScreenPower);
     float tpMult   = 1.0f + (fovScale - 1.0f) * kTpScreenMult;
-    float scale    = kScreenScale * tpMult * anim;
+    float scale    = kScreenScale * tpMult * anim * guiMag;
     g.hh = 0.5f * scale;
     g.hw = g.hh * uiAspect;
     float a = (180.0f - kScreenYaw) * kD;
@@ -308,6 +308,7 @@ void installSourceHooks();
 void tryGameMouse();
 void writeDiag();
 LARGE_INTEGER gOpenQpc{};
+float         gGuiMag = 1.0f;
 void toggle() {
     bool on = !gEnabled.load();
     if (on) QueryPerformanceCounter(&gOpenQpc);
@@ -407,7 +408,12 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         float tt    = std::min(1.0f, ms / spatialcam::kOpenMs);
         float scale = spatialcam::kStartScale + (1.0f - spatialcam::kStartScale) * easeOutBack(tt);
         fade        = std::min(1.0f, ms / spatialcam::kFadeMs);
-        g           = computeGeomJava(spatialcam::view(), aspect, scale);
+        // The Java mod renders the screen at its own auto GUI scale (>= 320 x 240 units); Bedrock's UI is smaller in
+        // the window, so magnify the texture by java/bedrock scale to give the GUI the same world size.
+        spatialcam::View v = spatialcam::view();
+        float mag = v.guiScale > 0.5f ? float(spatialcam::javaAutoGuiScale(int(bd.Width), int(bd.Height))) / v.guiScale : 1.0f;
+        gGuiMag   = mag;
+        g         = computeGeomJava(v, aspect, scale, mag);
     } else {
         g = computeGeom(e, aspect);
     }
@@ -433,6 +439,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     c[18] = gS.javaStyle ? 0.0f : gS.dim * e;
     c[19] = gS.alphaBoost ? 1.0f : 0.0f;
     c[20] = gS.javaStyle ? 0.0f : 1.0f; // panel frame line
+    c[21] = gS.javaStyle ? 1.0f : 0.0f; // drop the dim background
 
     ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
     list->SetDescriptorHeaps(1, heaps);
@@ -1059,6 +1066,7 @@ void writeDiag() {
             len += snprintf(b + len, sizeof b - len, "\n");
         }
         len += snprintf(b + len, sizeof b - len, "UI pipelines with alpha fixed: %ld\n", uicapture::uiAlphaFixedCount());
+        len += snprintf(b + len, sizeof b - len, "GUI magnification (java auto scale / bedrock gui scale): %.3f\n", gGuiMag);
         spatialcam::appendDiag(b, sizeof b);
         len = strlen(b);
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n", gGiNote.c_str());

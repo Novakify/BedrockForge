@@ -2,7 +2,7 @@
 // Root constants (b0, 32 floats):
 //   c0  = 4 panel corners in clip space (TL, TR, BL, BR), float4 each
 //   c4  = x: world zoom (>= 1, "FOV lerp"), y: panel opacity, z: world dim, w: alpha mode (0 raw, 1 boost)
-//   c5  = x: frame line strength (0 = no frame, Java look)
+//   c5  = x: frame line strength (0 = no frame, Java look), y: 1 = drop the dim background layer
 // t0 = world (back buffer copy, UI already redirected away), t1 = UI target (premultiplied-ish, transparent clear)
 cbuffer Params : register(b0) {
     float4 corner[4];
@@ -43,6 +43,8 @@ V2P VSPanel(uint id : SV_VertexID) {
 
 float4 PSPanel(V2P i) : SV_Target {
     float4 u = tUi.SampleLevel(sLin, i.uv, 0);
+    // c5.y: drop the screen's dim background layer (near-black, partly transparent) - only the GUI itself shows
+    if (pad[0].y > 0.5 && max(u.r, max(u.g, u.b)) < 0.03 && u.a < 0.85) u = 0;
     float  a = misc.w > 0.5 ? max(u.a, max(u.r, max(u.g, u.b))) : u.a;
     // thin frame so the panel edge reads in dark scenes
     float2 e    = min(i.uv, 1.0 - i.uv);
