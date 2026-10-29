@@ -1841,9 +1841,9 @@ float4 PS(V2P i) : SV_Target {
             bool ok = false;
             for (int k = 0; k < 2; ++k) {
                 float4 pr = k == 0 ? key0 : key1;
-                bool line = near3(tCand.Load(int3(pr.xy, 0)), color.rgb) || near3(tCand.Load(int3(pr.xy + float2(0, 1), 0)), color.rgb) ||
+                bool bevel = near3(tCand.Load(int3(pr.xy, 0)), color.rgb) || near3(tCand.Load(int3(pr.xy + float2(0, 1), 0)), color.rgb) ||
                             near3(tCand.Load(int3(pr.xy - float2(0, 1), 0)), color.rgb);
-                ok = ok || (line && near3(tCand.Load(int3(pr.zw, 0)), uv01.xyz));
+                ok = ok || (bevel && near3(tCand.Load(int3(pr.zw, 0)), uv01.xyz));
             }
             if (!ok) discard;
         }
