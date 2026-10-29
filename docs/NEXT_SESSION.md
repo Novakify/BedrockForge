@@ -1,3 +1,24 @@
+# Next session handoff (updated 2026-10-29 ~05:40 UTC) - READ FIRST
+- SPATIAL GUI = JAVA LOOK (RF spatialgui-m0, installed v0.14 `55283ef`): 1:1 port of the Java mod (tastytrash
+  Spatial GUI) defaults, read from its bytecode with javap (decompiler jar was not allowed to run):
+  third-person camera (1.7 back / 1.2 right / 1.5 up, pitch 10, mouse parallax, 300 ms ease-in-out-sine glide),
+  screen = one quad hanging off the camera (2.5 fwd, 0.6 right, 0.4 down, yaw 160, 3.5 high x FOV factor), Back-ease
+  pop from 75 % + 150 ms fade, no dim/frame, Java auto GUI scale (>= 320x240 units) vs Bedrock GuiData::mGuiScale.
+  First-person mode + every Java config option in F6 > Spatial GUI panel > Spatial GUI config; saved to
+  config/SpatialGUI.json (defaults = Java defaults = third person).
+- Camera: written into MinecraftCamera::CameraComponent of CameraRegistry::mGameCamera (+ the active preset camera)
+  right before LevelRendererCamera::$preRenderUpdate (src/SpatialCamera.cpp). Overriding mce::Camera's view matrix
+  does NOT change the picture. Quaternion convention learned from the first-person camera (local->world).
+  The game is switched to third person (IOptionRegistry::setPlayerViewPerspective 1) while a container screen is open.
+- Panel draws only the part of the magnified quad in front of the camera (else warped mapping -> hover offset).
+  The screen's dim background layer is dropped in the shader (near-black, alpha < 0.85).
+- LeviLamina GOTCHA: after midnight the log rotation broke and NO MODS LOADED (empty 2026-10-29.log, latest.log not
+  rotated). Fix: rename logs\latest.log + the empty dated log, relaunch.
+- Reference video from Fernando (TikTok, Spatial GUI showcase) confirms the defaults; its 3D item icons are a pack.
+- Open: player looks pale/see-through in third person close-up (skin colours or Bedrock fade - asked Fernando);
+  Java "useCrosshairForFirstPerson" (free-look + crosshair picking in FP) not ported - FP uses the cursor;
+  "keepFirstPersonCameraAngle" not ported. uiDebugUseKey is 120 (F9) in the RF config for testing.
+
 # Next session handoff (updated 2026-10-29 ~04:00 UTC, remote PC session, computer use) - READ FIRST
 - SPATIAL GUI M1 DONE + VERIFIED in game (RF branch `spatialgui-m0`, installed build v0.12c `2d0e98f`):
   inventory, chest and crafting table come up on the 3D panel AUTOMATICALLY (no key) and go back to the flat HUD
