@@ -2509,6 +2509,15 @@ void detect(Img im, bool dump, int kindI) {
     std::vector<Row> nine;
     for (auto& r : rows) {
         std::sort(r.s.begin(), r.s.end(), [](Sq const& a, Sq const& b) { return a.x < b.x; });
+        // one slot of the row may be drawn over (Bedrock's green focus square when the keyboard was used last): a gap of
+        // two pitches in an otherwise even row is that slot
+        if (r.s.size() == 8)
+            for (size_t k = 1; k < r.s.size(); ++k)
+                if (std::abs(r.s[k].x - r.s[k - 1].x - 2 * best) <= std::max(4, best / 6)) {
+                    Sq m{r.s[k - 1].x + (r.s[k].x - r.s[k - 1].x) / 2, r.s[k - 1].y, r.s[k - 1].s};
+                    r.s.insert(r.s.begin() + long(k), m);
+                    break;
+                }
         // longest run of evenly spaced slots
         for (size_t i = 0; i + 9 <= r.s.size(); ++i) {
             bool ok = true;
