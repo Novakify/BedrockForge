@@ -111,7 +111,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone; }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -155,7 +155,9 @@ struct Station {
     V3   top;                     // TableStation.top
     bool lit = false;             // a lit furnace (block name lit_*)
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
-    V3 center() const { return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone ? top : V3{bx + 0.5, by + 0.5, bz + 0.5}; }
+    V3 center() const {
+        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
+    }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
     V3 fpoint(bool onTop, double u, double v, double out) const {
@@ -179,6 +181,14 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Stonecutter) { // StonecutterStation.lean
+            V3    eye = top + sideV() * 1.0 + V3{0, 0.95, 0};
+            JPose p;
+            p.pos = eye;
+            lookAngles(top + sideV() * -0.05 + V3{0, 0.25, 0} - eye, p.yaw, p.pitch);
+            p.roll = 1.5f;
             return p;
         }
         if (kind == Kind::Grindstone) { // GrindstoneStation.lean
@@ -234,6 +244,8 @@ struct Station {
 };
 
 // ================================================================ hidden screen layout (slot detection)
+constexpr int kButtons = 24;               // option buttons sampled (stonecutter recipes, ...)
+constexpr int kSampledN = 11 + kButtons;   // 9 grid + result + the parked cursor + buttons
 struct Rect { float x = 0, y = 0, w = 0, h = 0; float cx() const { return x + w * 0.5f; } float cy() const { return y + h * 0.5f; } };
 struct Layout {
     bool  valid = false;
@@ -246,6 +258,8 @@ struct Layout {
     bool  hasGrid = false, hasResult = false;
     int   nRoles = 0;                // non-table stations: grid[0..nRoles) = the menu's slots in Java order
     Rect  board;                     // option buttons (stonecutter recipes, loom patterns, enchantments), when found
+    Rect  buttons[kButtons];         // the option buttons themselves, reading order
+    int   nButtons = 0;
     bool  hasBoard = false;
     int   kind = 0;                  // Kind the layout was found for
     Rect  panel;                    // container panel (inventory rows' width)
@@ -297,7 +311,9 @@ struct Scene {
     // the hidden slots' icons (readback): block items stand as cubes; bounding box of the icon inside its slot
     bool    cellBlock[9] = {};
     bool    resultBlock = false;
-    float   iconBox[11][4] = {};  // per sampled slot: x0 y0 x1 y1 in 0..1 of the slot inside
+    float   iconBox[kSampledN][4] = {};
+    float   iconRgb[kSampledN][3] = {}; // mean colour of the icon (stone dust)
+    bool    btnFull[kButtons] = {};  // per sampled slot: x0 y0 x1 y1 in 0..1 of the slot inside
     // TableStation / Hands
     bool    haveAim = false;
     V3      aim;
@@ -317,7 +333,7 @@ struct Scene {
     double moveAt = -10, moveLength = 1, moveBeat = 0;
     int    blowsDone = 0;
     bool   mainWasFull = false, addWasFull = false, mainWasBlock = false, addWasBlock = false;
-    float  snapBox[11][4] = {};
+    float  snapBox[kSampledN][4] = {};
     int    anvilTarget = 0;
     // GrindstoneStation
     int    grindTarget = 0, grindHover = -1, grindPlace = -1;
@@ -326,6 +342,11 @@ struct Scene {
     bool   cellGlint[9] = {};   // the slot's icon shimmers violet (enchanted)
     bool   glintWas[2] = {};
     bool   resultWasBlock = false;
+    // StonecutterStation
+    int    stoneTarget = 0, hoverShape = -1, selectedShape = -1, lastShapes = -1, cutShape = -1, fitIndex = 0;
+    double scroll = 0, shapesAt = -10, fitAt = -10, cutLength = 1.05;
+    bool   cutAll = false, btnBlock[kButtons] = {};
+    float  btnRef[kButtons][3] = {}; // each button's own ground colour (keyed away like a slot's)
     double grindPrevT = -1;
     bool   resultFull3() const { return cellFull[2]; } // the menu's result slot (anvil, grindstone, cartography: slot 2)
     std::string lastRoute = "-";
@@ -447,6 +468,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
         else if (kind == Kind::Loom) allowed = 1u << facing;
     }
     st.side = freeSide(st, feet, allowed);
+    if (kind == Kind::Stonecutter) st.top = {bx + 0.5, by + 9 / 16.0, bz + 0.5}; // StonecutterStation.topOf: the table top
     if (kind == Kind::Grindstone) {
         // GrindstoneStation.wheelCenter: between its posts on the floor, from a wall (pushed out from it) or under a ceiling
         std::string sn = game::blockStates(bx, by, bz);
@@ -799,12 +821,14 @@ double sinceBlow(double t) {
     return since;
 }
 double grindKick(double t);
+double stoneKick(double t);
 /// ClientStation.cameraKick: 0..1 how hard the camera is shaken right now
 double cameraKick() {
     double t = moveTime();
     if (t < 0) return 0;
     if (gS.st.kind == Kind::Anvil) return 0.5 * std::exp(-sinceBlow(t) * 13);
     if (gS.st.kind == Kind::Grindstone) return grindKick(t);
+    if (gS.st.kind == Kind::Stonecutter) return stoneKick(t);
     return 0;
 }
 double stationFlash(float rgb[3]) {
@@ -926,6 +950,101 @@ int grindCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
 }
 double grindKick(double t) { return 0.13 * window(t, G_CONTACT - 0.05, G_CONTACT + 0.15) * (1 - window(t, G_LET_GO - 0.15, G_LET_GO + 0.1)); }
 
+// ---------------------------------------------------------------- StonecutterStation (vanilla geometry)
+constexpr double S_BLADE = 7 / 16.0, S_DIAL_HIGH = 0.5, S_SHAPE_SIZE = 0.15, S_PIECE = 0.2;
+constexpr int    S_DIAL_SLOTS = 9;
+constexpr double CUT_LENGTH = 1.05, CUT_ALL_LENGTH = 1.5, S_BITE = 0.26;
+enum StoneTarget { SNone, SPlace, SStack, SShape };
+V3 stoneStack() { return gS.st.top + gS.st.right() * -0.25 + gS.st.sideV() * 0.24; } // the stone, beside the blade
+/// the shapes on offer: the hidden screen's recipe buttons that hold something
+int  shapeCount() { int n = 0; for (int k = 0; k < kButtons; ++k) n += gS.btnFull[k]; return gS.cellFull[0] ? n : 0; }
+int  shapeButton(int k) { for (int b = 0; b < kButtons; ++b) if (gS.btnFull[b] && k-- == 0) return b; return -1; }
+int  dialVisible() { return std::min(S_DIAL_SLOTS, shapeCount()); }
+double dialStep() { int n = dialVisible(); return n <= 1 ? 0 : std::min(22.0, 144.0 / (n - 1)); }
+/// a shape's angle on the dial: 90 straight over the blade, the first ones to the left
+double dialAngle(int k) { return 90 + ((dialVisible() - 1) / 2.0 - (k - gS.scroll)) * dialStep(); }
+double onDial(int k) { double a = dialAngle(k); return smoother(window(a, 4, 18)) * smoother(window(176 - a, 0, 14)); }
+// DIAL_FITS: {width, lift, towards the player} - the dial closes in, rises and comes forward when blocks stand beside
+const double kDialFits[4][3] = {{0.72, 0, 0}, {0.5, 0.08, 0.04}, {0.42, 0.14, 0.26}, {0.34, 0.2, 0.42}};
+V3 dialPoint(double degrees, double up, double const fit[3]) {
+    double a = degrees * kDeg;
+    return gS.st.top + gS.st.sideV() * (-0.06 + fit[2]) + gS.st.right() * (std::cos(a) * fit[0]) + V3{0, up + fit[1] + std::sin(a) * S_DIAL_HIGH, 0};
+}
+bool dialFree(double const fit[3]) { // no shape of this dial inside a block (SHAPE_ROOM 0.07 round each)
+    for (double a = 4; a <= 176; a += 8) {
+        V3  at = dialPoint(a, 0.04, fit);
+        int bx = int(std::floor(at.x)), by = int(std::floor(at.y)), bz = int(std::floor(at.z));
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dz = -1; dz <= 1; ++dz) {
+                    int x = bx + dx, y = by + dy, z = bz + dz;
+                    if (x == gS.st.bx && y == gS.st.by && z == gS.st.bz) continue;
+                    if (at.x < x - 0.07 || at.x > x + 1.07 || at.y < y - 0.07 || at.y > y + 1.07 || at.z < z - 0.07 || at.z > z + 1.07) continue;
+                    if (solidAt(x, y, z)) return false;
+                }
+    }
+    return true;
+}
+double const* dialFit() {
+    if (gS.clock - gS.fitAt > 0.5) { // FIT_EVERY
+        gS.fitAt    = gS.clock;
+        gS.fitIndex = 3;
+        for (int i = 0; i < 4; ++i)
+            if (dialFree(kDialFits[i])) { gS.fitIndex = i; break; }
+    }
+    return kDialFits[gS.fitIndex];
+}
+V3 shapePoint(int k) { return dialPoint(dialAngle(k), 0.04 + 0.008 * std::sin(gS.clock * 1.7 + k * 1.3), dialFit()); }
+/// StonecutterStation.updateCursor; 200+k a shape, 103 the stone (take), 0 lay the carried stone down
+int stoneCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
+    gS.stoneTarget = SNone;
+    gS.hoverShape  = -1;
+    if (moving()) return -1;
+    int n = shapeCount();
+    for (int k = 0; k < n; ++k)
+        if (onDial(k) > 0.5 && underCursor(b, mx, my, shapePoint(k), 0.075)) {
+            gS.stoneTarget = SShape;
+            gS.hoverShape  = k;
+            gS.haveAim     = true;
+            gS.aim         = shapePoint(k) + V3{0, -0.1, 0} + gS.st.sideV() * 0.12;
+            return 200 + k;
+        }
+    if (!gS.carrying && gS.cellFull[0] && underCursor(b, mx, my, stoneStack() + V3{0, 0.08, 0}, 0.12)) {
+        gS.stoneTarget = SStack;
+        gS.haveAim     = true;
+        gS.aim         = stoneStack() + V3{0, 0.12, 0};
+        return 103;
+    }
+    V3 hit;
+    if (gS.carrying && onPlaneY(o, d, gS.st.top.y, hit)) {
+        V3 rel = hit - gS.st.top;
+        if (std::fabs(rel.dot(gS.st.right())) < 0.52 && std::fabs(rel.dot(gS.st.sideV())) < 0.52) {
+            gS.stoneTarget = SPlace;
+            gS.haveAim     = true;
+            gS.aim         = stoneStack();
+            return 0;
+        }
+    }
+    return -1;
+}
+double stoneOutAt(bool all) { return all ? 1.15 : 0.72; }
+double stoneAlong(double t) { return -0.46 + 0.76 * inOutSine(window(t, S_BITE - 0.04, stoneOutAt(gS.cutAll))); }
+bool   stoneCutting(double t) { return t >= S_BITE && std::fabs(stoneAlong(t)) < S_BLADE && t < stoneOutAt(gS.cutAll); }
+/// the piece until it is out past the blade: taken off the stack, set at the end of the blade, pushed through
+V3 piecePath(double t) {
+    V3 top = gS.st.top, rgt = gS.st.right();
+    if (t < S_BITE) {
+        V3     onStack = stoneStack() + V3{0, S_PIECE / 2 + 0.01, 0};
+        V3     start   = top + rgt * -0.46 + V3{0, S_PIECE / 2, 0};
+        double k       = inOutCubic(window(t, 0.06, S_BITE - 0.02));
+        return lerp(onStack, start, k) + V3{0, 0.07 * hump(k), 0};
+    }
+    return top + rgt * stoneAlong(t) + V3{0, S_PIECE / 2, 0};
+}
+V3     stoneCatch() { return gS.st.top + gS.st.right() * 0.34 + gS.st.sideV() * 0.08 + V3{0, S_PIECE * 0.6 + 0.062, 0}; }
+double stoneKick(double t) { return stoneCutting(t) ? 0.12 : 0; }
+
+void stoneAction(int t, unsigned bit, bool shift);
 /// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
 void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Anvil && t == 100) {
@@ -942,6 +1061,7 @@ void stationAction(int t, unsigned bit, bool shift) {
         }
         gS.tapAt = gS.clock;
     }
+    if (gS.st.kind == Kind::Stonecutter) { stoneAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -961,13 +1081,34 @@ void stationAction(int t, unsigned bit, bool shift) {
         gS.tapAt = gS.clock;
     }
 }
+void stoneAction(int t, unsigned bit, bool shift) {
+    if (t == 103) { inject(0, bit); gS.tapAt = gS.clock; return; } // the stone: take it (slotClick(0, button, shift))
+    if (t < 200) return;
+    int k = t - 200, button = shapeButton(k);
+    if (bit != 1 || button < 0) return; // only the left button cuts (deny)
+    // StonecutterStation.cut: pick the recipe as the window does, then the move takes the piece when the blade bites
+    if (gS.selectedShape != k) inject(300 + button, 1);
+    gS.selectedShape = k;
+    gS.cutShape  = k;
+    gS.cutAll    = shift;
+    gS.cutLength = shift ? CUT_ALL_LENGTH : CUT_LENGTH;
+    gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = gS.cutLength; gS.moveBeat = S_BITE; gS.moveBeatDone = false;
+    gS.moveToInv = shift;
+    gS.mainWasFull = gS.cellFull[0]; gS.mainWasBlock = gS.cellBlock[0];
+    gS.resultWasBlock = gS.btnBlock[button];
+    std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+    gSnapRequest = true;
+    gS.tapAt = gS.clock;
+}
 /// Every frame: the move's beat lands on time (MenuStation.frame).
 void moveFrame() {
     if (!gS.moveOn) return;
     double t = gS.clock - gS.moveAt;
     if (!gS.moveBeatDone && t >= gS.moveBeat) {
         gS.moveBeatDone = true;
-        if (gS.phase == Phase::Active && (gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone)) {
+        if (gS.phase == Phase::Active && gS.st.kind == Kind::Stonecutter) {
+            inject(1, 1); // the piece (the result can still be on its way from the server: no check)
+        } else if (gS.phase == Phase::Active && (gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone)) {
             if (gS.resultFull3()) inject(2, 1);
             else gS.moveOn = false; // nothing to take any more: the move stops (cancelMove)
         }
@@ -1004,6 +1145,11 @@ int currentTarget(float mx, float my) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
         return grindCursor(b, mx, my, o, d);
+    }
+    if (gS.st.kind == Kind::Stonecutter) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return stoneCursor(b, mx, my, o, d);
     }
     if (isFurnace(gS.st.kind)) {
         // FurnaceStation.updateCursor (vanilla geometry): the front face, and the top where a zone lies there
@@ -1073,6 +1219,7 @@ bool targetRect(Layout const& L, int t, Rect& r) {
     if (t == 9 && L.hasResult) { r = L.result; return true; }
     if (t >= 10 && t < 19) { r = L.hotbar[t - 10]; return true; }
     if (t >= 19 && t < 46) { r = L.inv[t - 19]; return true; }
+    if (t >= 300 && t < 300 + L.nButtons) { r = L.buttons[t - 300]; return true; }
     return false;
 }
 /// Off every target the hidden screen's cursor waits in an empty corner (outside the container panel, so nothing is
@@ -1859,6 +2006,13 @@ void detect(Img im, bool dump, int kindI) {
                               (nearSq(q, -pitch, 0) && nearSq(q, -2 * pitch, 0) && nearSq(q, -3 * pitch, 0));
                 (inGrid ? buttons : own).push_back(q);
             }
+            {
+                std::vector<Sq> bs = buttons;
+                std::sort(bs.begin(), bs.end(), [&](Sq const& a, Sq const& b) { return std::abs(a.y - b.y) > best / 3 ? a.y < b.y : a.x < b.x; });
+                L.nButtons = 0;
+                for (auto& q : bs)
+                    if (L.nButtons < kButtons) L.buttons[L.nButtons++] = {float(q.x), float(q.y), float(q.s) + unit, float(q.s) + unit};
+            }
             if (!buttons.empty()) {
                 int bx0 = 1 << 30, by0 = 1 << 30, bx1 = -1, by1 = -1;
                 for (auto& q : buttons) { bx0 = std::min(bx0, q.x); by0 = std::min(by0, q.y); bx1 = std::max(bx1, q.x + q.s); by1 = std::max(by1, q.y + q.s); }
@@ -2020,7 +2174,7 @@ void pollReadback() {
 // ---------------------------------------------------------------- per-frame slot contents (small ring readback)
 // The station's slots (grid + result) are copied into a small buffer every frame; read 4 frames later: a slot is
 // empty when its inside is all slot background (or the hovered slot's background).
-constexpr int kSampled = 11; // 9 grid + result + the parked cursor (carried stack)
+constexpr int kSampled = kSampledN; // 9 grid + result + the parked cursor (carried stack) + option buttons
 bool ensureRing(ID3D12Device* dev, UINT cell) {
     if (gG.sr[0] && gG.srCell == cell) return true;
     gG.srCell   = cell;
@@ -2043,7 +2197,8 @@ bool ensureRing(ID3D12Device* dev, UINT cell) {
 bool sampledRect(Layout const& L, int s, Rect& r) {
     if (s < 9) { if (!L.hasGrid || (L.kind != int(Kind::Table) && s >= L.nRoles)) return false; r = L.grid[s]; }
     else if (s == 9) { if (!L.hasResult) return false; r = L.result; }
-    else { float x, y; neutralPoint(L, x, y); r = {x - L.slot * 0.5f, y - L.slot * 0.5f, L.slot, L.slot}; return true; }
+    else if (s == 10) { float x, y; neutralPoint(L, x, y); r = {x - L.slot * 0.5f, y - L.slot * 0.5f, L.slot, L.slot}; return true; }
+    else { if (s - 11 >= L.nButtons) return false; r = L.buttons[s - 11]; }
     // the 16 px icon sits in the middle of the slot (a big result slot too)
     float in = L.slot * 16.0f / 18.0f;
     r = {r.cx() - in * 0.5f, r.cy() - in * 0.5f, in, in};
@@ -2076,13 +2231,21 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
         D3D12_RANGE rr{0, SIZE_T(gG.srStride * kSampled)};
         if (SUCCEEDED(gG.sr[i]->Map(0, &rr, &p)) && p) {
             bool  full[kSampled] = {}, block[kSampled] = {}, glint[kSampled] = {};
-            float box[kSampled][4] = {};
+            float box[kSampled][4] = {}, rgb[kSampled][3] = {}, refs[kSampled][3] = {};
             float tol  = 10.0f / 255.0f;
             bool  bgra = gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM || gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
             int   n    = int(cell);
             std::vector<uint8_t> mask(size_t(n) * n);
             for (int s = 0; s < kSampled; ++s) {
                 int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1, violet = 0;
+                double sr = 0, sgc = 0, sb = 0;
+                float  ref[3] = {0, 0, 0}; // a button's own ground: its inside corner
+                if (s >= 11) {
+                    uint8_t const* q = static_cast<uint8_t*>(p) + size_t(s) * gG.srStride + size_t(1) * gG.srPitch + size_t(1) * 4;
+                    float a = std::max(q[3] / 255.0f, 1e-3f);
+                    ref[0] = (bgra ? q[2] : q[0]) / 255.0f / a; ref[1] = q[1] / 255.0f / a; ref[2] = (bgra ? q[0] : q[2]) / 255.0f / a;
+                    std::memcpy(refs[s], ref, sizeof ref);
+                }
                 for (int y = 0; y < n; ++y)
                     for (int x = 0; x < n; ++x) {
                         uint8_t const* q = static_cast<uint8_t*>(p) + size_t(s) * gG.srStride + size_t(y) * gG.srPitch + size_t(x) * 4;
@@ -2095,6 +2258,8 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             bool bg   = std::fabs(r - L.bg[0]) < tol && std::fabs(g - L.bg[1]) < tol && std::fabs(b - L.bg[2]) < tol;
                             bool hi   = std::fabs(r - L.hi[0]) < tol && std::fabs(g - L.hi[1]) < tol && std::fabs(b - L.hi[2]) < tol;
                             item = a > 0.5f && !bg && !hi;
+                            if (s >= 11) item = a > 0.5f && (std::fabs(r - ref[0]) > 0.12f || std::fabs(g - ref[1]) > 0.12f || std::fabs(b - ref[2]) > 0.12f);
+                            if (item) { sr += r; sgc += g; sb += b; }
                             if (item && b > g + 0.12f && r > g + 0.04f) ++violet; // the enchantment glint's violet
                         }
                         mask[size_t(y) * n + x] = item;
@@ -2102,6 +2267,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                         if (item) { ++other; x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
                     }
                 full[s] = other * 50 > total;
+                if (other > 0) { rgb[s][0] = float(sr / other); rgb[s][1] = float(sgc / other); rgb[s][2] = float(sb / other); }
                 if (full[s]) {
                     box[s][0] = float(x0) / n; box[s][1] = float(y0) / n; box[s][2] = float(x1 + 1) / n; box[s][3] = float(y1 + 1) / n;
                     block[s] = isoBlock(mask, n, box[s]);
@@ -2122,7 +2288,11 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
             gS.resultBlock = block[9];
             gS.carrying     = full[10];
             gS.carriedBlock = block[10];
-            for (int s = 0; s < kSampled; ++s) std::memcpy(gS.iconBox[s], box[s], sizeof box[s]);
+            for (int s = 0; s < kSampled; ++s) { std::memcpy(gS.iconBox[s], box[s], sizeof box[s]); std::memcpy(gS.iconRgb[s], rgb[s], sizeof rgb[s]); }
+            for (int k = 0; k < kButtons; ++k) {
+                gS.btnFull[k] = k < L.nButtons && full[11 + k]; gS.btnBlock[k] = block[11 + k];
+                std::memcpy(gS.btnRef[k], refs[11 + k], sizeof refs[11 + k]);
+            }
             if (gS.resultFull != before) gS.resultChangedAt = gS.clock;
         }
         gG.srFrame[i] = -1;
@@ -2175,9 +2345,11 @@ void uvOf(Rect r, Layout const& L, float inset, float uv[8]) {
     float i = r.w * inset;
     setRect(uv, (r.x + i) / L.W, (r.y + i) / L.H, (r.x + r.w - i) / L.W, (r.y + r.h - i) / L.H);
 }
+float const* gKeyOv = nullptr; // a button's own ground colour instead of the slot's (while drawing its icon)
 void keyed(Quad& q, Layout const& L, float opacity, bool snap = false) {
     q.mode[0] = snap ? 4.0f : 1.0f; q.mode[1] = 1; q.mode[2] = gCfg.keyTolerance; q.mode[3] = opacity;
-    for (int i = 0; i < 3; ++i) { q.key0[i] = L.bg[i]; q.key1[i] = L.hi[i]; }
+    for (int i = 0; i < 3; ++i) { q.key0[i] = gKeyOv ? gKeyOv[i] : L.bg[i]; q.key1[i] = gKeyOv ? gKeyOv[i] : L.hi[i]; }
+    if (gKeyOv) q.mode[2] = std::max(q.mode[2], 0.06f);
 }
 /// world-space quad: centre, two half-axes; false when behind the camera
 bool worldQuad(JPose const& cam, Basis const& b, V3 c, V3 ax, V3 ay, Quad& q) {
@@ -2287,6 +2459,20 @@ void orientedItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc con
     placeItem(cam, b, L, src, false, center - V3{0, 0.004 + std::sin(t) * size * 0.5, 0}, right, out, size, size, tiltDeg, opacity, yawDeg);
 }
 
+/// ItemPlacer.drawOriented(Axis.YP(yaw)): a flat item stands upright and turns like a card; a block is a cube turned
+void cardItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& src, bool block, V3 center, double size, float opacity, double yawDeg) {
+    V3 h = turnY(V3{1, 0, 0}, -yawDeg);
+    if (block && gCfg.cubeItems) {
+        iconCube(cam, b, L, src, center - V3{0, size / 2, 0}, h, turnY(V3{0, 0, 1}, -yawDeg), size, opacity);
+        return;
+    }
+    Quad q;
+    if (!worldQuad(cam, b, center, h * (size / 2), V3{0, size / 2, 0}, q)) return;
+    setRect(q.uv, src.inside.x / L.W, src.inside.y / L.H, (src.inside.x + src.inside.w) / L.W, (src.inside.y + src.inside.h) / L.H);
+    keyed(q, L, opacity, src.snap);
+    gQuads.push_back(q);
+}
+
 // ---------------------------------------------------------------- Hands + ArmMesh (the player's own arms)
 struct Spring3 { // Anim.Spring3: critically damped, stepped exactly
     V3 x, v;
@@ -2320,6 +2506,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Stonecutter) // StonecutterStation.rest
+        return gS.st.top + gS.st.sideV() * 0.36 + gS.st.right() * (right ? 0.26 : -0.38) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Grindstone) // GrindstoneStation.rest: on the frame, on top of the axle posts either side of the wheel
         return gS.st.wheel + gS.st.right() * (right ? 0.31 : -0.31) + gS.st.sideV() * 0.1 + V3{0, 3 / 16.0 + HAND_Y, 0};
     if (gS.st.kind == Kind::Anvil) // AnvilStation.rest: on the near edge of the face, either side of the work
@@ -2343,7 +2531,7 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
     V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
     double hover = carrying ? 0.075 : 0.045;
     double y     = gS.st.kind == Kind::Table ? gS.st.by + 1.0 : aim.y;
-    return V3{aim.x, y + HAND_Y + hover - 0.06 * tap, aim.z} - reach * (gS.st.kind == Kind::Grindstone ? 0.07 : ITEM_REACH);
+    return V3{aim.x, y + HAND_Y + hover - 0.06 * tap, aim.z} - reach * (gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter ? 0.07 : ITEM_REACH);
 }
 V3 heldItemPoint(V3 hand, V3 shoulder) {
     if (isFurnace(gS.st.kind) && !gS.aimTop) { // FurnaceStation.heldItemPoint on the front
@@ -2351,7 +2539,8 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
         return hand + reach * 0.07 + V3{0, -0.045, 0};
     }
     V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
-    return hand + reach * (isFurnace(gS.st.kind) || gS.st.kind == Kind::Grindstone ? 0.07 : ITEM_REACH) + V3{0, -HAND_Y + 0.012, 0};
+    bool r07 = isFurnace(gS.st.kind) || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter;
+    return hand + reach * (r07 ? 0.07 : ITEM_REACH) + V3{0, -HAND_Y + 0.012, 0};
 }
 double craftProgress() { double t = (gS.clock - gS.craftAt) / 0.5; return t >= 0 && t <= 1 ? t : -1; }
 
@@ -2422,6 +2611,24 @@ void grindHands(JPose const& cam, V3& right, V3& left) {
     }
 }
 
+/// StonecutterStation.handsOverride: the left hand takes a block off the stone and pushes it through the blade from
+/// the left; the right waits past the blade for the new piece, then keeps it
+void stoneHands(V3& right, V3& left) {
+    double t = moveTime(), out = stoneOutAt(gS.cutAll), length = gS.cutLength;
+    V3     top = gS.st.top, rgt = gS.st.right(), sv = gS.st.sideV();
+    V3     onStack = stoneStack() + V3{0, S_PIECE + HAND_Y, 0} + sv * 0.05;
+    if (t < 0.08) left = lerp(restOf(false), onStack, inOutCubic(t / 0.08));
+    else {
+        V3 start = top + rgt * -0.63 + V3{0, S_PIECE * 0.55 + HAND_Y, 0} + sv * 0.05;
+        V3 path  = t < S_BITE ? lerp(onStack, start, inOutCubic(window(t, 0.06, S_BITE - 0.02)))
+                              : top + rgt * (stoneAlong(t) - 0.17) + V3{0, S_PIECE * 0.55 + HAND_Y, 0} + sv * 0.05;
+        left = lerp(path, restOf(false), inOutCubic(window(t, out - 0.05, length)));
+    }
+    V3 waiting = lerp(restOf(true), stoneCatch(), inOutCubic(window(t, S_BITE, out - 0.05)));
+    V3 end     = restOf(true) + V3{0, gS.cutAll ? 0 : 0.05, 0};
+    right      = lerp(waiting, end, inOutCubic(window(t, out, length)));
+}
+
 void updateHands(JPose const& cam, double dt) {
     V3    cp = cam.pos;
     float cy = cam.yaw;
@@ -2450,9 +2657,10 @@ void updateHands(JPose const& cam, double dt) {
         break;
     }
     case Phase::Active: {
-        if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone) && moving()) { // handsOverride, springs at 55
+        if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter) && moving()) { // handsOverride, springs at 55
             V3 r, l;
             if (gS.st.kind == Kind::Anvil) anvilHands(cam, r, l);
+            else if (gS.st.kind == Kind::Stonecutter) stoneHands(r, l);
             else grindHands(cam, r, l);
             gRight.update(r, 55, dt);
             gLeft.update(l, 55, dt);
@@ -3001,6 +3209,98 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 }
             }
         }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Stonecutter) {
+            // StonecutterStation.frame / renderScene / renderWorld
+            V3     rgt = gS.st.right(), out = gS.st.sideV();
+            double t   = moveTime();
+            gS.scroll  = approach(gS.scroll, 0, 10, handsDt);
+            int nShapes = shapeCount();
+            if (nShapes != gS.lastShapes) { gS.lastShapes = nShapes; gS.shapesAt = clock; if (nShapes == 0) gS.selectedShape = -1; }
+            auto buttonSrc = [&](int button) {
+                Rect    r  = L.buttons[button];
+                float   in = std::min(r.w, L.slot) * 16.0f / 18.0f;
+                IconSrc o{{r.cx() - in * 0.5f, r.cy() - in * 0.5f, in, in}, {0, 0, 1, 1}};
+                std::memcpy(o.box, gS.iconBox[11 + button], sizeof o.box);
+                return o;
+            };
+            if (t >= 0 && stoneCutting(t) && handsDt > 0) { // cutFx: dust and a few sparks where the blade bites
+                V3 bite = gS.st.top + rgt * (stoneAlong(t) + S_PIECE * 0.3) + V3{0, S_PIECE * 0.85, 0};
+                if (rnd() < handsDt * 45) fountain(bite, out * -0.3, out, 1, 1.6);
+                float* c  = gS.iconRgb[0];
+                float  cr = c[0] + c[1] + c[2] > 0.05f ? c[0] : 0x8A / 255.0f, cg = c[0] + c[1] + c[2] > 0.05f ? c[1] : 0x8A / 255.0f,
+                      cb = c[0] + c[1] + c[2] > 0.05f ? c[2] : 0x8A / 255.0f;
+                int count = int(std::lround(handsDt * (gS.cutAll ? 110 : 75) + rnd()));
+                for (int i = 0; i < count; ++i) { // dust: chips of the stone in its own colour
+                    V3    dir = (rgt * 0.5 + V3{gauss() * 0.5, 0.8 + rnd() * 0.7, gauss() * 0.5}).norm();
+                    float k   = float(0.55 + rnd() * 0.45);
+                    spark(bite + V3{gauss() * 0.015, 0, gauss() * 0.015}, dir * (0.6 + rnd() * 1.1), 0.3 + rnd() * 0.4, float(0.005 + rnd() * 0.007),
+                          cr * k, cg * k, cb * k, 2.6, 0.012);
+                }
+            }
+            // the stone on the table (a cube, or the item lying flat)
+            bool showStack = gS.cellFull[0] && !(t >= 0 && gS.cutAll);
+            if (showStack) {
+                if (gS.cellBlock[0] && gCfg.cubeItems)
+                    orientedItem(cam, b, L, src(L.grid[0], 0), true, stoneStack() + V3{0, S_PIECE / 2, 0}, rgt, out, S_PIECE, 0, tableAlpha, 180 + 6);
+                else orientedItem(cam, b, L, src(L.grid[0], 0), false, stoneStack() + V3{0, 0.004, 0}, rgt, out, 0.205 * 1.1, 0, tableAlpha, 0);
+            }
+            if (gS.phase == Phase::Active && gS.stoneTarget == SPlace && gS.haveAim) {
+                float p = float(0.16 + 0.06 * std::sin(clock * 5));
+                glowDisc(cam, b, gS.aim + V3{0, 0.004, 0}, 0.13, p, p * 0.9f, p * 0.75f);
+            }
+            if (t >= 0) { // drawPiece
+                double outT = stoneOutAt(gS.cutAll);
+                double size = S_PIECE;
+                if (t > outT) size *= gS.cutAll ? 1 - 0.85 * inCubic(window(t, outT, gS.cutLength)) : 1 - 0.3 * window(t, outT, gS.cutLength);
+                V3 at = piecePath(std::min(t, outT));
+                if (t >= outT) {
+                    if (gS.cutAll) at = lerp(at, cam.pos + V3{0, 0.5, 0} + yawForward(cam.yaw) * 0.6, inCubic(window(t, outT, gS.cutLength)));
+                    else {
+                        V3     held = heldItemPoint(gRight.x, shoulderOf(true, cam.pos, cam.yaw));
+                        double k    = inOutCubic(window(t, outT, gS.cutLength));
+                        at          = lerp(at, held, k) + V3{0, 0.06 * hump(k), 0};
+                    }
+                }
+                bool cut    = t >= S_BITE && stoneAlong(t) > 0;
+                int  button = shapeButton(gS.cutShape);
+                bool block  = cut ? gS.resultWasBlock : gS.mainWasBlock;
+                IconSrc is  = cut && button >= 0 ? buttonSrc(button) : src(L.grid[0], 0);
+                if (cut && button >= 0) gKeyOv = gS.btnRef[button];
+                int copies = cut ? 1 : gS.cutAll ? 2 : 1;
+                for (int i = 0; i < copies; ++i) {
+                    V3 off = rgt * ((i - (copies - 1) / 2.0) * size * 0.75) + V3{0, i * 0.01, 0};
+                    V3 c   = at + off + V3{0, block ? 0 : -size / 2 + 0.006, 0};
+                    if (block) cardItem(cam, b, L, is, true, c, size, 1, 180);
+                    else orientedItem(cam, b, L, is, false, c, rgt, out, size * 1.3, 0, 1, 0);
+                }
+                gKeyOv = nullptr;
+                if (stoneCutting(t)) { // the bright bite of the blade in the stone
+                    float bb = float(0.45 + 0.2 * std::sin(clock * 50));
+                    glowBillboard(cam, b, gS.st.top + rgt * (stoneAlong(t) + S_PIECE * 0.3) + V3{0, S_PIECE * 0.8, 0}, 0.04, bb, bb * 0.8f, bb * 0.55f);
+                }
+            }
+            // the dial: the shapes hang in an arc round the blade
+            double appear = outBack(window(clock - gS.shapesAt, 0, 0.4), 1.4);
+            double dim    = moving() ? 0.45 : 1;
+            for (int k = 0; k < nShapes && gS.phase != Phase::Outro; ++k) {
+                double on = onDial(k) * appear * tableAlpha;
+                int    bt = shapeButton(k);
+                if (on < 0.02 || bt < 0) continue;
+                V3    at      = shapePoint(k);
+                bool  hovered = k == gS.hoverShape, selected = k == gS.selectedShape;
+                float g       = float((hovered ? 0.34 : 0.15) * on * dim);
+                glowBillboard(cam, b, at, (hovered ? 0.095 : 0.075) * on, g, g * 0.95f, g * 0.85f);
+                if (selected) {
+                    float sl = float(0.4 * on * dim);
+                    glowBillboard(cam, b, at, 0.085 * on, sl * 0.5f, sl * 0.42f, sl * 0.2f);
+                }
+                double size = S_SHAPE_SIZE * on * (hovered ? 1.35 : 1.0);
+                double spin = clock * (hovered ? 90 : 25) + k * 40;
+                gKeyOv      = gS.btnRef[bt];
+                cardItem(cam, b, L, buttonSrc(bt), gS.btnBlock[bt], at, gS.btnBlock[bt] ? size * 0.85 : size * 1.2, 1, spin);
+                gKeyOv = nullptr;
+            }
+        }
         if (haveCam) drawSparks(cam, b, clock, handsDt);
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
             V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
@@ -3201,6 +3501,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them \xE2\x80\x94 forge" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
+    case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade \xE2\x80\x94 cut one" + dot + "Shift \xE2\x80\x94 cut the stack" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Grindstone: return std::string("Lay the item on the wheel") + dot + "LMB on it \xE2\x80\x94 grind (enchantments come off)" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
     default: return "Esc step back";
     }
@@ -3232,6 +3533,13 @@ void drawOverlay() {
                 tipLine  = "LMB \xE2\x80\x94 grind  \xC2\xB7  RMB \xE2\x80\x94 take  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
             } else {
                 tipTitle = "Click \xE2\x80\x94 take";
+            }
+        }
+        if (gS.st.kind == Kind::Stonecutter && !moving()) { // StonecutterStation.tooltip (without the item's own lines)
+            if (gS.stoneTarget == SShape) tipTitle = "LMB \xE2\x80\x94 cut one  \xC2\xB7  Shift \xE2\x80\x94 cut the whole stack";
+            else if (gS.stoneTarget == SStack) {
+                tipTitle = "Click \xE2\x80\x94 take";
+                if (shapeCount() == 0) tipLine = "This can't be cut";
             }
         }
         mx = (gCursorNdcX + 1) * 0.5f;
