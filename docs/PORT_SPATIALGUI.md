@@ -166,3 +166,20 @@ Reused later by Cinematic Interactions: the panel renderer, ray-pick and "drive 
 ## Starter line
 "New session. Read docs/NEXT_SESSION.md, docs/PLAN_JAVA_PORTS.md and docs/PORT_SPATIALGUI.md. Goal: Spatial GUI M0
 capture spike (RF UI-PSO tagging + method 1 on the inventory screen). Stop when done."
+
+## M1 result (2026-10-29, RF spatialgui-m0 v0.10-v0.12c)
+Done and verified in game (1.26.51.01, Vibrant Visuals, Dread):
+- Composite: world copy zoomed + dimmed, UI target drawn as a perspective quad (open/close animation, thin frame).
+- Automatic: SceneStack::$update hook reports the top screen of each stack every tick; container screens
+  (inventory, chest, crafting, furnace, barrel, shulker, anvil, enchanting, brewing, loom, grindstone, stonecutter,
+  cartography, smithing, beacon, horse, crafter) bring the panel up; HUD/pause/settings/chat stay flat. F8 overrides.
+- Input: the in-world JSON UI cursor is GameInput v2 `absolutePositionX/Y` (screen space). RF detours
+  `IGameInputReading::GetMouseState` (slot from the real v2 header, computed at runtime) and ray-picks the position
+  through the panel. WM_* messages are remapped in the message pump (PeekMessageW/GetMessageW) and skipped once in the
+  window procedure. Verified: hover + clicks on inventory, hotbar, crafting grid (2x2 and 3x3), chest; stack moves.
+- Colour: UI PSOs accumulate alpha as coverage (ONE / INV_SRC_ALPHA) so the panel is not see-through/washed out.
+- Dead ends, for the record: v0.6-v0.9 hard-coded GameInput slots were wrong (slot 3 = GetCurrentTimestamp) and hooked
+  the inbox GameInputCreate, which the game never calls. GetCursorPos/GetCursorInfo/GetPhysicalCursorPos/GetMessagePos
+  are not used by the game for the cursor (only ImGui calls GetCursorPos).
+- Remaining polish (not blocking): F6 help text still says "M1 prototype"; optional per-screen panel size; the test
+  aid uiDebugUseKey stays in (off by default).

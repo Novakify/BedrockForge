@@ -1,3 +1,33 @@
+# Next session handoff (updated 2026-10-29 ~04:00 UTC, remote PC session, computer use) - READ FIRST
+- SPATIAL GUI M1 DONE + VERIFIED in game (RF branch `spatialgui-m0`, installed build v0.12c `2d0e98f`):
+  inventory, chest and crafting table come up on the 3D panel AUTOMATICALLY (no key) and go back to the flat HUD
+  when closed; pause/settings/chat/HUD stay flat. Hover and clicks land on the slot under the pointer (tested:
+  inventory slots, hotbar, crafting grid, chest slots, stack moves both ways, crafting-grid placement). Panel colours
+  match vanilla. F8 = manual on/off override. Details: docs/PORT_SPATIALGUI.md "M1 result".
+- How the in-world mouse works: JSON UI screens read the cursor from GameInput API **v2** (the game binary carries
+  the v2 IGameInput IID; Microsoft's loader picks System32\GameInputRedist.dll and calls GameInputInitialize).
+  RF creates its own v2 IGameInput at panel-on, detours IGameInputReading::GetMouseState (slot 14, shared per class)
+  and ray-picks absolutePositionX/Y (screen space) through the panel. The WM_* path (title/OreUI) stays remapped too.
+- Screen detection: SceneStack::$update hook (RF src/ScreenWatch.cpp); names seen: hud_screen, inventory_screen,
+  toast_screen, start_screen ... container keywords -> panel (list in SpatialPanel.cpp isPanelScreen).
+- Washed-out fix: UI PSOs (tagged by PS hash via config/ui_shaders.txt) get alpha blend ONE/INV_SRC_ALPHA (79 PSOs).
+- CI: build.yml fetches the GameInput v2 header from nuget (deps/, not vendored); gameinput-headers.yml publishes all
+  Microsoft.GameInput headers to branch `gameinput-headers`. A changed xmake.lua invalidates the CI cache (~20 min build).
+- NOT the Spatial GUI: the grey/black player model (inventory paperdoll, pause, title) also shows with the STABLE RF
+  build and with RF NOT LOADED AT ALL (manifest renamed). Game/skin/Dread side. Investigate separately if wanted.
+- PC STATE: RendererFoundation.dll = .sgm1-2d0e98f (v0.12c). Config: uiCaptureSpike true, uiPanelKey 119,
+  uiDebugUseKey 0, shaderPack Dread, redirectShaders true (backups: .bak-dread, .bak-v012, .bak-stable).
+  Stable rollback: RendererFoundation.5246159.dll (note: running it rewrites the json WITHOUT the spike keys).
+  options.txt: inventory = I (73) since 10-28 (backup options.txt.bak-before-I-20261028).
+  "My World" (10/28/26): my in-world focus clicks broke the bfch test chest (contents dropped) and once the crafting
+  table; replaced with /setblock (chest at ~2 blocks south of 100.5 200 -107, crafting table 102 200 -106).
+- REMOTE TESTING NOTES: in-world (cursor locked) ANY left click is an attack - never click the title bar or world to
+  focus while in a world; keys reach the game after the first menu click. Synthetic right-click and instant left clicks
+  are missed (game samples GameInput state): use left down/up with a 60 ms wait; open containers with
+  RfOptions uiDebugUseKey (set e.g. 120 = F9 in RF config, hold F9 0.5 s = right button held; reset to 0 after).
+  Aim with `/tp @s x y z yaw pitch`. Mouse-look can't be driven remotely.
+- NEXT: Cinematic Interactions M1 (docs/PORT_CINEMATIC.md), then GeckoBridge (research branch only, last).
+
 # Next session handoff (updated 2026-10-28 ~18:35 local, cloud session + PC computer use, Fernando away) - READ FIRST
 - GOAL 1 DONE - Spatial GUI M0.5 -> **VERDICT: METHOD 1 VIABLE**. UI draws straight into the swap-chain back buffer.
   The "unknown" RTV handles were the 3 swap-chain RTVs created before RF hooked; M0.5b learns them at Present. Details:
@@ -390,29 +420,3 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Likely cause: the ray-pick in SpatialPanel.cpp remapClient does not match the drawn quad (toClip / computeGeom / aspect). Next: calibrate by drawing a test marker at the remapped point, or compare toClip(corners) with remapClient inverse for the four corners.
 - Not done: screen detection (panel for inventory/chest/crafting only), chest and crafting captures, Cinematic prompt.
 - PC state: v0.4 DLL active, uiCaptureSpike true, game still running with the panel on. Stable DLL 5246159 on disk for rollback (config backup RendererFoundation.json.bak-stable).
-
-## Status 2026-10-29 (v0.9 test, bffd513)
-- v0.9 DLL installed on PC (mods\RendererFoundation\RendererFoundation.dll = sgm1-bffd513). Game launches, world loads, F8/I/inventory work.
-- In-world hover is still offset (hover at 552,352 highlights Gravel at ~626,376). Not fixed.
-- panel_diag.txt (02:28): game GetCurrentReading(kind 0x20) on toggle returned no reading; game mouse hook still "no". Early hook saw only 1 GetCurrentReading call total, so the game's mouse readings probably do not come from GetCurrentReading after startup.
-- Next: find how the game gets its mouse state (IGameInput callback registration, another device kind, or the Win32 path used by in-world GUI). Add a diag that logs every GameInput vtable call and the device kinds seen. Do not keep retrying GetCurrentReading.
-- Note: the diag header string still says v0.6 (cosmetic).
-
-## Status 2026-10-29 03:25 UTC (RF spatialgui-m0 v0.10-v0.12)
-- SOLVED: in-world mouse on the 3D panel. The game reads the JSON UI cursor from GameInput API v2
-  (GameInputRedist.dll in System32, IGameInputReading::GetMouseState slot 14, absolutePositionX/Y in screen space),
-  created through Microsoft's loader (GameInputInitialize), not GameInputCreate. v0.11 (b12a6c9) creates its own v2
-  IGameInput at panel toggle, detours GetMouseState (shared per class) and ray-picks the absolute position.
-  Verified: hover lands on the slot under the pointer (first slot, bottom-right hotbar slot, crafting grid) and a
-  stack was moved by clicking through the panel.
-- v0.6-v0.9 used wrong hard-coded GameInput vtable slots (slot 3 is GetCurrentTimestamp) and the wrong API version.
-- CI: .github/workflows/gameinput-headers.yml publishes every Microsoft.GameInput NuGet header to the
-  gameinput-headers branch; build.yml fetches the v2 header (2.2.26100.6114) into deps/ at build time (not vendored).
-- v0.12 (fc65058): panel automatic for container screens via SceneStack::$update hook (ScreenWatch.cpp), F8 = manual
-  override; UI PSOs (tagged by PS hash) get alpha blend ONE/INV_SRC_ALPHA so the panel is not washed out.
-- Paperdoll / title / pause player model renders as a foggy grey silhouette with the STABLE RF build too
-  (5246159), and with redirectShaders false: not caused by the Spatial GUI. Investigate separately (VV / Dread fog).
-- Testing limits: synthetic right-click does not reach the game (instant press/release, game samples GameInput
-  state). Opening chest/crafting table needs Fernando or a temporary "use" key bind (asked).
-- Config gotcha: running the stable DLL rewrites RendererFoundation.json without uiCaptureSpike/uiPanelKey.
-  Restore from config/RendererFoundation.json.bak-dread after any stable-DLL run.
