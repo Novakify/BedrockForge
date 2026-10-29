@@ -414,7 +414,9 @@ void noteScreen(void const* stack, std::string const& name) {
         bool inv = false, book = false;
         for (auto& t : gStackTops) {
             inv  = inv || t.name.find("inventory_screen") != std::string::npos;
-            book = book || t.name.find("crafting_screen") != std::string::npos; // Bedrock shows the recipe book here
+            // Bedrock shows the recipe book next to these screens (Java: recipe book open -> shrink)
+            for (char const* k : {"crafting_screen", "furnace_screen", "smoker_screen", "blast_furnace_screen"})
+                book = book || t.name.find(k) != std::string::npos;
         }
         gRecipeBook = book;
         if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want, inv); // client thread
