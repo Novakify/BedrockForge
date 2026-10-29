@@ -40,7 +40,7 @@ struct Config {
     float camDistance = 1.7f, camSide = -1.2f, camHeight = 1.5f, camPitch = 10.0f;
     int   transitionMs = 300, transitionSkipPct = 15;
     float avatarBaseYaw = 30.0f, avatarBodyRot = 20.0f; // avatarBaseYawOffset / avatarBodyRotationOffset
-    float wideScreenShift = 0.6f; // Bedrock addition: wide screens (recipe book) slide the camera so the player moves left
+    float wideScreenShift = 0.35f; // Bedrock addition: wide screens (recipe book) slide the camera so the player moves left
     float tpSensYaw = 0.1f, tpSensPitch = 0.03f;
     bool  tpParallaxOff = false, lerpXRot = false;
     // FP Camera
