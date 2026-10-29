@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -243,10 +244,11 @@ size_t targetRtv() { return gRtv.load(std::memory_order_relaxed); }
 void   noteRedirected() { gRedirected.store(true, std::memory_order_relaxed); }
 
 void installCursorHook();
+void installGameInputHook();
 void writeDiag();
 void toggle() {
     bool on = !gEnabled.load();
-    if (on) installCursorHook();
+    if (on) { installCursorHook(); installGameInputHook(); }
     else writeDiag();
     gEnabled = on;
     if (on) uicapture::requestLearn(); // make sure the back-buffer RTV handles are known
@@ -454,10 +456,72 @@ void installCursorHook() {
     }
 }
 
+// ---------------------------------------------------------------- GameInput mouse (v0.6)
+// In-world menus read the mouse through GameInput (GetMouseState on a reading), not GetCursorPos
+// (those ~3600 GetCursorPos calls are ImGui polling). Hook the reading's GetMouseState and remap the absolute
+// position. The remap only applies when the absolute position matches GetCursorPos, so a wrong struct layout
+// does nothing instead of corrupting the game's input.
+struct GiMouse { uint32_t buttons; int32_t posX, posY, absX, absY, wheelX, wheelY; };
+using GiCreate_t  = long(WINAPI*)(void**);
+using GiGetCur_t  = long(WINAPI*)(void*, uint32_t, void*, void**);
+using GiMouseFn   = bool(WINAPI*)(void*, GiMouse*);
+void*              gGiTarget = nullptr;
+void*              gGiOrig   = nullptr;
+std::atomic<long>  gGiReads{0}, gGiRemapped{0}, gGiSkipped{0};
+GiMouse            gGiLast{};
+std::string        gGiNote = "not installed";
+
+bool WINAPI giMouseHook(void* self, GiMouse* st) {
+    bool r = reinterpret_cast<GiMouseFn>(gGiOrig)(self, st);
+    if (!r || !st || !gEnabled.load(std::memory_order_relaxed)) return r;
+    ++gGiReads;
+    gGiLast = *st;
+    HWND h = gHwnd.load(std::memory_order_relaxed);
+    if (!h || !gGcpOrig) return r;
+    POINT cur{};
+    if (!reinterpret_cast<GetCursorPos_t>(gGcpOrig)(&cur)) return r;
+    if (std::abs(cur.x - st->absX) > 4 || std::abs(cur.y - st->absY) > 4) { ++gGiSkipped; return r; }
+    POINT c{st->absX, st->absY};
+    if (!ScreenToClient(h, &c)) return r;
+    int x = c.x, y = c.y;
+    if (!remapClient(h, x, y)) return r;
+    c = {x, y};
+    if (!ClientToScreen(h, &c)) return r;
+    st->absX = c.x;
+    st->absY = c.y;
+    ++gGiRemapped;
+    return r;
+}
+
+void installGameInputHook() {
+    if (gGiTarget) return;
+    HMODULE gi = LoadLibraryW(L"GameInput.dll");
+    if (!gi) { gGiNote = "GameInput.dll not loadable"; return; }
+    auto create = reinterpret_cast<GiCreate_t>(GetProcAddress(gi, "GameInputCreate"));
+    if (!create) { gGiNote = "GameInputCreate missing"; return; }
+    void* input = nullptr;
+    long  hr    = create(&input);
+    if (hr < 0 || !input) { char b[64]; snprintf(b, sizeof b, "GameInputCreate hr=0x%08lX", hr); gGiNote = b; return; }
+    void** inVt = *reinterpret_cast<void***>(input);
+    void*  reading = nullptr;
+    constexpr uint32_t kGameInputKindMouse = 0x00000008; // GameInputKindMouse
+    hr = reinterpret_cast<GiGetCur_t>(inVt[3])(input, kGameInputKindMouse, nullptr, &reading); // IGameInput::GetCurrentReading
+    if (hr < 0 || !reading) { char b[64]; snprintf(b, sizeof b, "GetCurrentReading(mouse) hr=0x%08lX", hr); gGiNote = b; return; }
+    void** rVt = *reinterpret_cast<void***>(reading);
+    void*  fn  = rVt[7];                                      // IGameInputReading::GetMouseState
+    if (ll_shim::hook(fn, reinterpret_cast<void*>(&giMouseHook), &gGiOrig) == 0) {
+        gGiTarget = fn;
+        gGiNote   = "GameInput GetMouseState hooked";
+        ll_shim::info("[RF] spatial panel: GameInput GetMouseState hooked");
+    } else {
+        gGiNote = "GameInput GetMouseState hook failed";
+    }
+}
+
 void writeDiag() {
     char b[3000];
     snprintf(b, sizeof b,
-             "Spatial GUI panel diag v0.4\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
+             "Spatial GUI panel diag v0.6\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
              "GetRawInputData reads: %ld, mouse: %ld (last dx %ld dy %ld buttons 0x%x) hook %s\n"
              "ClipCursor calls: %ld (last rect %ld,%ld-%ld,%ld) hook %s\n"
@@ -505,6 +569,12 @@ void writeDiag() {
                 len += snprintf(b + len, sizeof b - len, "corner %s: drawn %d,%d -> remap %d,%d (%s)\n", nm[k], px, py, rx, ry, ok ? "ok" : "no");
             }
         }
+    }
+    {
+        size_t len = strlen(b);
+        len += snprintf(b + len, sizeof b - len, "GameInput: %s\n  mouse reads %ld, remapped %ld, skipped (no GetCursorPos match) %ld\n  last state: buttons %u pos %d,%d abs %d,%d\n",
+                        gGiNote.c_str(), gGiReads.load(), gGiRemapped.load(), gGiSkipped.load(), gGiLast.buttons, gGiLast.posX, gGiLast.posY, gGiLast.absX, gGiLast.absY);
+        (void)len;
     }
     uicapture::writeText("panel_diag.txt", b);
 }
