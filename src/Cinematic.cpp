@@ -2369,7 +2369,7 @@ void detect(Img im, bool dump, int kindI) {
             std::vector<Sq> own, buttons;
             for (auto& q : st) {
                 int  pitch  = q.s + q.s / 17;
-                bool inGrid = (kind == Kind::Stonecutter || kind == Kind::Loom) && (nearSq(q, -pitch, 0) && nearSq(q, pitch, 0)) || (nearSq(q, pitch, 0) && nearSq(q, 2 * pitch, 0) && nearSq(q, 3 * pitch, 0)) ||
+                bool inGrid = (kind == Kind::Stonecutter || kind == Kind::Loom) && ((nearSq(q, -pitch, 0) && nearSq(q, pitch, 0)) || (nearSq(q, pitch, 0) && nearSq(q, 2 * pitch, 0) && nearSq(q, 3 * pitch, 0)) ||
                               (nearSq(q, -pitch, 0) && nearSq(q, -2 * pitch, 0) && nearSq(q, -3 * pitch, 0)));
                 if (!inGrid && (q.s < best * 0.85f || q.x + q.s > px1 + s * 0.25f)) continue; // fragments, the window's close button
                 (inGrid ? buttons : own).push_back(q);
