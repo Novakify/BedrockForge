@@ -21,7 +21,13 @@
   - Tested in game: inventory, chest, crafting table, furnace, anvil, enchanting table, shulker box (TP), furnace in
     forced first person + crosshair free look. uiDebugUseKey reset to 0 (F9 no longer right-clicks).
   - Player model looks pale in close third person: Dread shader lighting + skin overlay layer, not Spatial GUI.
-- NEXT: Cinematic Interactions (docs/PORT_CINEMATIC.md), then GeckoBridge last (research branch only).
+- NEXT (decided 2026-10-29 with Fernando): Cinematic Interactions is built INTO the Spatial GUI mod as one package
+  (shared layer: screen detection, camera override, hidden vanilla screen + slot clicks, mouse remap, avatar, F6 config).
+  Per-station mode: Cinematic scene for the stations it supports (crafting table, furnace/smoker/blast furnace,
+  anvil, grindstone, smithing, stonecutter, loom, cartography, enchanting), Spatial GUI floating screen for
+  everything else (chests, shulkers, inventory...). Per-station setting Cinematic / Spatial / Vanilla + a master
+  toggle each; a broken scene falls back to Spatial GUI. Credit both originals (Cinematic MIT, hammer CC BY 4.0;
+  Spatial GUI by tastytrash). Plan in docs/PORT_CINEMATIC.md. GeckoBridge last (research branch only).
 
 # Next session handoff (updated 2026-10-29 ~05:40 UTC) - READ FIRST
 - SPATIAL GUI = JAVA LOOK (RF spatialgui-m0, installed v0.14 `55283ef`): 1:1 port of the Java mod (tastytrash
