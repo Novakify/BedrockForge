@@ -120,8 +120,8 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
     if (!head || !body || !rot) return;
     if (!on) {
         if (gAvatar.saved) {
-            (*head->mYHeadRot) = gAvatar.headYaw; (*head->mYHeadRotO) = gAvatar.headYawO;
-            (*body->mYBodyRot) = gAvatar.bodyYaw; (*body->mYBodyRotO) = gAvatar.bodyYawO;
+            head->mYHeadRot = gAvatar.headYaw; head->mYHeadRotO = gAvatar.headYawO;
+            body->mYBodyRot = gAvatar.bodyYaw; body->mYBodyRotO = gAvatar.bodyYawO;
             (*rot->mRot).x    = gAvatar.pitch;   (*rot->mRotPrev).x = gAvatar.pitchO;
             gAvatar.saved   = false;
         }
@@ -130,8 +130,8 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
     }
     if (!gAvatar.saved) {
         gAvatar.saved   = true;
-        gAvatar.headYaw = (*head->mYHeadRot); gAvatar.headYawO = (*head->mYHeadRotO);
-        gAvatar.bodyYaw = (*body->mYBodyRot); gAvatar.bodyYawO = (*body->mYBodyRotO);
+        gAvatar.headYaw = head->mYHeadRot; gAvatar.headYawO = head->mYHeadRotO;
+        gAvatar.bodyYaw = body->mYBodyRot; gAvatar.bodyYawO = body->mYBodyRotO;
         gAvatar.pitch   = (*rot->mRot).x;    gAvatar.pitchO   = (*rot->mRotPrev).x;
     }
     Config const& c   = cfg();
@@ -145,8 +145,8 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
         gAvatar.sPitch = gAvatar.sPitch + 0.15f * (pitch - gAvatar.sPitch);
     }
     // Java render state: bodyRot absolute, yRot = head yaw relative to the body, xRot = head pitch
-    (*body->mYBodyRot) = bodyRot; (*body->mYBodyRotO) = bodyRot;
-    (*head->mYHeadRot) = bodyRot + gAvatar.sYaw; (*head->mYHeadRotO) = (*head->mYHeadRot);
+    body->mYBodyRot = bodyRot; body->mYBodyRotO = bodyRot;
+    head->mYHeadRot = bodyRot + gAvatar.sYaw; head->mYHeadRotO = head->mYHeadRot;
     (*rot->mRot).x    = gAvatar.sPitch; (*rot->mRotPrev).x = gAvatar.sPitch;
     ++gAvatarWrites;
 }
@@ -165,7 +165,7 @@ bool tpSpotBlocked(Actor& actor) {
         glm::vec3 p = a + (b - a) * (float(i) / 24.0f);
         BlockPos  bp(int(std::floor(p.x)), int(std::floor(p.y)), int(std::floor(p.z)));
         Block const& blk = bs.getBlock(bp);
-        if (!blk.isAir() && *blk.mCachedComponentData->mIsSolid) return true;
+        if (!blk.isAir() && blk.mCachedComponentData->mIsSolid) return true;
     }
     return false;
 }
@@ -303,7 +303,7 @@ void applyComponent() {
                 (*rc->mRot).x = gLastCamPitch; (*rc->mRot).y = gLastCamYaw;
                 (*rc->mRotPrev).x = gLastCamPitch; (*rc->mRotPrev).y = gLastCamYaw;
             }
-            if (auto hr = actor.getEntityContext().tryGetComponent<ActorHeadRotationComponent>()) { (*hr->mYHeadRot) = gLastCamYaw; (*hr->mYHeadRotO) = gLastCamYaw; }
+            if (auto hr = actor.getEntityContext().tryGetComponent<ActorHeadRotationComponent>()) { hr->mYHeadRot = gLastCamYaw; hr->mYHeadRotO = gLastCamYaw; }
             gHaveStart = false;
             return;
         }
