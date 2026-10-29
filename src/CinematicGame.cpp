@@ -3,6 +3,7 @@
 #include "CinematicGame.h"
 
 #include <cmath>
+#include <memory>
 
 #include "ll/api/service/Bedrock.h"
 
@@ -24,6 +25,10 @@
 
 namespace rf::cine::game {
 namespace {
+template <class T> auto ptrOf(T& v) {
+    if constexpr (requires { v.get(); }) return v.get();
+    else return &v;
+}
 Actor* player() {
     auto ci = ll::service::getClientInstance();
     if (!ci) return nullptr;
@@ -91,9 +96,10 @@ bool skin(std::vector<unsigned char>& rgba, int& w, int& h, bool& slim) {
     Actor* a = player();
     if (!a) return false;
     Player& p = *static_cast<Player*>(a);
-    std::unique_ptr<SerializedSkinRef>& ref = *p.mSkin;
+    // header variants differ (value / unique_ptr / shared_ptr): reach the object either way
+    SerializedSkinRef* ref = ptrOf(*p.mSkin);
     if (!ref) return false;
-    auto& owner = *ref->mSkinImpl;
+    auto* owner = ptrOf(*ref->mSkinImpl);
     if (!owner) return false;
     SerializedSkinImpl& impl = owner->mObject;
     mce::Image const&   img  = *impl.mSkinImage;

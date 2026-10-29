@@ -195,6 +195,7 @@ struct Scene {
     // live view of this frame
     float   tanHalf = 0.7f, aspect = 16.0f / 9.0f, fovY = 70.0f, vanillaFovY = 70.0f;
     bool    projKnown = false;
+    double  fovScaleNow = 1.0;
     // left station (quick return)
     int     leftX = 0, leftY = -9999, leftZ = 0;
     double  leftAt = -1000;
@@ -521,6 +522,13 @@ JPose overridePose(V3 livePos, float liveYaw, float livePitch) { // CameraRig.ov
 
 // ================================================================ picking (present / input thread, under gM)
 struct Basis { V3 r, u, f; };
+/// tan(fovY/2) of what is on screen: the game's projection does not show our field-of-view write (it reports the
+/// player's own FOV), so the narrowing is applied here unless the projection already carries it.
+double effTanHalf() {
+    double s = gS.fovScaleNow;
+    if (std::fabs(s - 1.0) < 1e-4 || std::fabs(gS.fovY - gS.vanillaFovY) > 0.5) return gS.tanHalf;
+    return std::tan(std::atan(double(gS.tanHalf)) * s);
+}
 Basis basisOf(JPose const& p) {
     float y = p.yaw * kDeg, pt = p.pitch * kDeg, rl = p.roll * kDeg;
     V3 f{-std::sin(y) * std::cos(pt), -std::sin(pt), std::cos(y) * std::cos(pt)};
@@ -534,8 +542,9 @@ Basis basisOf(JPose const& p) {
 bool toClip(JPose const& cam, Basis const& b, V3 p, float out[4]) {
     V3 d = p - cam.pos;
     double x = d.dot(b.r), y = d.dot(b.u), z = d.dot(b.f);
-    out[0] = float(x / (gS.tanHalf * gS.aspect));
-    out[1] = float(y / gS.tanHalf);
+    double th = effTanHalf();
+    out[0] = float(x / (th * gS.aspect));
+    out[1] = float(y / th);
     out[2] = float(z * 0.5);
     out[3] = float(z);
     return z > 0.02;
@@ -551,7 +560,8 @@ bool toPixel(JPose const& cam, Basis const& b, V3 p, int W, int H, float& px, fl
 /// cursor (ndc, y up) -> world ray
 void cursorRay(JPose const& cam, Basis const& b, float nx, float ny, V3& o, V3& d) {
     o = cam.pos;
-    d = (b.f + b.r * (nx * gS.tanHalf * gS.aspect) + b.u * (ny * gS.tanHalf)).norm();
+    double th = effTanHalf();
+    d = (b.f + b.r * (nx * th * gS.aspect) + b.u * (ny * th)).norm();
 }
 bool onPlaneY(V3 o, V3 d, double y, V3& hit) {
     if (std::fabs(d.y) < 1e-9) return false;
@@ -781,7 +791,7 @@ bool cameraPose(float const eye[3], float yaw, float pitch, Pose& out, float& fo
     std::lock_guard l(gM);
     frame();
     fovScale = 1.0f;
-    if (gS.phase == Phase::None) return false;
+    if (gS.phase == Phase::None) { gS.fovScaleNow = 1.0; return false; }
     JPose p = overridePose(V3{eye[0], eye[1], eye[2]}, yaw, pitch);
     out.pos[0] = float(p.pos.x); out.pos[1] = float(p.pos.y); out.pos[2] = float(p.pos.z);
     out.yaw = p.yaw; out.pitch = p.pitch; out.roll = p.roll;
@@ -791,6 +801,7 @@ bool cameraPose(float const eye[3], float yaw, float pitch, Pose& out, float& fo
         double fov     = vanilla + (gS.st.leanFov() - vanilla) * (gS.weight * pct(gCfg.sceneZoom));
         fovScale       = float(fov / std::max(1.0, vanilla));
     }
+    gS.fovScaleNow = fovScale;
     return true;
 }
 
@@ -1271,7 +1282,9 @@ void detect(Img im, bool dump) {
         L.note = note;
     } else {
         auto& hb = nine[nine.size() - 1];
-        float s  = float(best);
+        // the dark top/left frame line is one GUI pixel (best/17) short of the whole 18 px slot
+        float unit = float(best) / 17.0f;
+        float s    = float(best) + unit;
         for (int i = 0; i < 9; ++i) L.hotbar[i] = {float(hb.s[i].x), float(hb.s[i].y), s, s};
         for (int r = 0; r < 3; ++r) {
             auto& row = nine[nine.size() - 4 + r];
@@ -1309,7 +1322,7 @@ void detect(Img im, bool dump) {
             if (L.hasGrid && st[i].x < L.grid[2].x + s) continue;
             if (bi < 0 || st[i].s > st[bi].s) bi = int(i);
         }
-        if (bi >= 0) { L.result = {float(st[bi].x), float(st[bi].y), float(st[bi].s), float(st[bi].s)}; L.hasResult = true; }
+        if (bi >= 0) { L.result = {float(st[bi].x), float(st[bi].y), float(st[bi].s) + unit, float(st[bi].s) + unit}; L.hasResult = true; }
         // slot background colour (an empty pack slot's inside), else the default #8B8B8B
         for (auto& r : L.inv) {
             int x = int(r.x + r.w * 0.2f), y = int(r.y + r.h * 0.2f);
