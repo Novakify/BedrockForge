@@ -6,9 +6,12 @@ Research only. Nothing built or installed. This is the starting point for the ki
 - `LyricsFlow.jar`, v1.19, Fabric, MC Java 1.21.11, author 374m, metadata says MIT. 103 classes, 22 TTF fonts (all OFL,
   plus Yellowtail and DejaVu-Arabic with their own licence files), 63 GUI textures, 14 UI sounds.
   The jar contains `NOVAK_PERMISSION.txt`: the *supplier* says 374m authorized Novak to port it and that the earlier ARR
-  metadata was applied without the creator's consent. The file says itself that this is the supplier's word, not
-  verified. **Before any public release, get a written OK from 374m (Discord: zulemayeniden, discord.gg/LyricsFlow), the
-  same way we did with tapeQ for Shine.** Keep the MIT notice and the font licence files, and credit 374m.
+  metadata was applied without the creator's consent.
+  **PERMISSION (Fernando, 2026-10-29): 374m gave the OK to modify LyricsFlow for PERSONAL USE ONLY. This build is for
+  Fernando alone and will NOT be distributed.** LyricsFlow is the foundation; we build our own Bedrock version on top of
+  it. Scope rule for the whole project: private/personal, no public release of this port. Keep the MIT notice and the
+  font licence files in our copy, and credit 374m. If this ever changes to a public release, get that permission in
+  writing first (Discord: zulemayeniden, discord.gg/LyricsFlow), the same way we did with tapeQ for Shine.
 - `lyricsplus-3.0.0-1.20.1.jar`, v3.0.0, author FRK, MIT, source on github.com/lyricsplus. 24 classes.
 - BedrockForge repo `main` @ 8572f25 (docs/NEXT_SESSION, PROJECT_STATUS, PORT_SPATIALGUI, src/).
 - Analysis: javap bytecode dumps (the CFR decompiler download was blocked in the cloud session). Enough to see the whole design.
@@ -121,5 +124,7 @@ Takeaways:
 - Fonts needed for the videos: Minecraft pixel (A, D), a thin cursive (B), a bold brush italic like Kaushan (C).
 
 ## Inputs still wanted for kickoff
-- 374m's written permission, at least for a private build.
-- For phase 5: Hive/CubeCraft rule check + a test session on a real server.
+- Permission: DONE. 374m OK'd personal-use modification; private build only, not distributed (see Sources above).
+- For phase 5: Hive/CubeCraft rule check + a test session on a real server. (Personal-use only means no distributing the
+  mod; it does NOT by itself make it allowed on a server. The Hive's "assume not allowed unless listed" rule still applies
+  to a lyrics overlay, so ask their support before using it there.)
