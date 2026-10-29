@@ -879,7 +879,7 @@ double moveTime() { double t = gS.clock - gS.moveAt; return gS.moveOn && t >= 0 
 constexpr double OFFER_HIGH = 0.92, OFFER_LOW = 0.74, OFFER_FAR = -0.12, OFFER_NEAR = 0.02, OFFER_SPREAD = 0.4;
 constexpr double RITUAL_LENGTH = 1.5, RITUAL_PEAK = 0.5, E_ITEM_SIZE = 0.34, LAPIS_RADIUS = 0.115;
 constexpr double LAPIS_RIGHT = 0.44, LAPIS_NEAR = 0.18, LAPIS_LIFT = 0.27;
-constexpr double OUTER_LIFT = 0.012, INNER_LIFT = 0.02, HINT_LIFT = 0.028, SOCKET_LIFT = 0.016;
+constexpr double OUTER_LIFT = 0.003, INNER_LIFT = 0.004, HINT_LIFT = 0.006, SOCKET_LIFT = 0.006; // 0.18.3
 // the book's outline over the table (blocks): half its width, how far it reaches towards / away from the player, its height there
 constexpr double BOOK_LIFT = 0.1, BOOK_HALF_W = 0.36, BOOK_NEAR = 0.2, BOOK_FAR = 0.3, BOOK_NEAR_H = 0.12, BOOK_FAR_H = 0.42;
 bool   moving() { return moveTime() >= 0; }
@@ -1985,6 +1985,7 @@ Texture2D    tProp : register(t2);
 Texture2D    tSnap : register(t3);
 Texture2D    tCand : register(t4);
 SamplerState sP    : register(s0);
+SamplerState sL    : register(s1);
 struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; float2 local : TEXCOORD1; };
 V2P VS(uint id : SV_VertexID) {
     static const uint idx[6] = {0, 1, 2, 2, 1, 3};
@@ -2026,8 +2027,10 @@ float4 PS(V2P i) : SV_Target {
     }
     if (behind(i.pos.xy)) discard;
     if (mode.x < 0.5) return (mode.y > 0.5 ? float4(color.rgb * color.a, 0) : float4(color.rgb * color.a, color.a)) * mode.w; // y: additive light
-    if (mode.x > 6.5 && mode.x < 7.5) { // 7: a light texture of the atlas (RenderType.eyes: added light)
-        float4 k = tProp.SampleLevel(sP, i.uv, 0);
+    if (mode.x > 6.5 && mode.x < 7.5) { // 7: a light texture of the atlas (RenderType.eyes: added light), smooth
+        float2 dx = ddx(i.uv) * 0.25, dy = ddy(i.uv) * 0.25; // four smooth taps over the pixel (the circle is minified)
+        float4 k = (tProp.SampleLevel(sL, i.uv + dx + dy, 0) + tProp.SampleLevel(sL, i.uv + dx - dy, 0) +
+                    tProp.SampleLevel(sL, i.uv - dx + dy, 0) + tProp.SampleLevel(sL, i.uv - dx - dy, 0)) * 0.25;
         return float4(k.rgb * color.rgb * color.a, 0) * mode.w;
     }
     if (mode.x > 7.5 && mode.x < 8.5) { // 8: the rune circle (entityTranslucent): white mask, colour top -> key0 at the bottom edge
@@ -2042,7 +2045,7 @@ float4 PS(V2P i) : SV_Target {
         // key1.w: only a slot's count digits (white, #3F3F3F shadow); key1.x / y: the most / least saturation kept
         if (key1.w > 0.5 && !(all(c > 0.96) || all(abs(c - 0.247) < 0.03))) discard;
         float  sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
-        if ((key1.x > 0 && sat > key1.x) || sat < key1.y) discard;
+        if ((key1.x > 0 && sat > key1.x) || sat < key1.y || max(c.r, max(c.g, c.b)) < key1.z) discard;
         float  v = key0.w > 0.5 ? 1 : max(c.r, max(c.g, c.b)); // key0.w: one flat colour
         float  a = color.a * mode.w;
         return float4(color.rgb * v * a, a);
@@ -2092,12 +2095,16 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
         p[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         p[1].DescriptorTable  = {1, &range};
         p[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        D3D12_STATIC_SAMPLER_DESC s{};
+        D3D12_STATIC_SAMPLER_DESC ss[2]{};
+        D3D12_STATIC_SAMPLER_DESC& s = ss[0];
         s.Filter   = D3D12_FILTER_MIN_MAG_MIP_POINT;
         s.AddressU = s.AddressV = s.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
         s.MaxLOD   = D3D12_FLOAT32_MAX;
         s.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-        D3D12_ROOT_SIGNATURE_DESC rs{2, p, 1, &s, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+        ss[1] = s; // s1: smooth (the soft light textures)
+        ss[1].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        ss[1].ShaderRegister = 1;
+        D3D12_ROOT_SIGNATURE_DESC rs{2, p, 2, ss, D3D12_ROOT_SIGNATURE_FLAG_NONE};
         ComPtr<ID3DBlob> blob, err;
         HRESULT hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
         if (FAILED(hr)) return fail("D3D12SerializeRootSignature", hr);
@@ -2300,8 +2307,8 @@ bool uploadTexture(ID3D12Device* dev, ID3D12GraphicsCommandList* list, unsigned 
 // beside it, Cinematic Interactions' own light textures (FxTextures.h: the enchanting beam, rune circle and glow) on the
 // right; the block textures are read from the game's own resource pack (data/resource_packs/vanilla/__brarchive/textures/blocks.brarchive:
 // a table of 256-byte entries {name length, name, offset, size} after a 16-byte header, then the files)
-constexpr int PROP_W = 192, PROP_H = 128;
-constexpr float FX_BEAM[4] = {96, 0, 32, 128}, FX_CIRCLE[4] = {128, 0, 64, 64}, FX_GLOW[4] = {128, 64, 64, 64}; // x y w h
+constexpr int PROP_W = 512, PROP_H = 256;
+constexpr float FX_BEAM[4] = {96, 0, 32, 128}, FX_GLOW[4] = {128, 0, 64, 64}, FX_MAGIC[4] = {256, 0, 256, 256}; // x y w h
 struct PropSlot { char const* file; int x, y, w, h; };
 const PropSlot kPropSlots[] = {
     {"grindstone_round.tga", 64, 0, 16, 16},     // GrindstoneStation.drawRim
@@ -2359,7 +2366,7 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
         for (int y = 0; y < h; ++y) std::memcpy(&atlas[(size_t(int(at[1]) + y) * PROP_W + int(at[0])) * 4], px + size_t(y) * w * 4, size_t(w) * 4);
     };
     blit(fxtex::kBeam, fxtex::kBeamW, fxtex::kBeamH, FX_BEAM);
-    blit(fxtex::kCircle, fxtex::kCircleW, fxtex::kCircleH, FX_CIRCLE);
+    blit(fxtex::kMagic, fxtex::kMagicW, fxtex::kMagicH, FX_MAGIC);
     blit(fxtex::kGlow, fxtex::kGlowW, fxtex::kGlowH, FX_GLOW);
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -3689,11 +3696,6 @@ void glowDisc(JPose const& cam, Basis const& b, V3 at, double radius, float r, f
 }
 
 // ---- EnchantFx: the rune circle, light textures of the atlas, the shaft of light, the table's glyphs
-struct CirclePalette { float top[3], bottom[3]; };
-// a short step from deep to bright violet: lit at full strength, a lavender end read as pale pink
-const CirclePalette VIOLET{{0xAB / 255.0f, 0x00 / 255.0f, 0xF9 / 255.0f}, {0xC5 / 255.0f, 0x66 / 255.0f, 0xFF / 255.0f}};
-const CirclePalette RED{{0xA3 / 255.0f, 0x30 / 255.0f, 0x3B / 255.0f}, {0xCF / 255.0f, 0x53 / 255.0f, 0x54 / 255.0f}};
-const CirclePalette LAPIS{{0x3B / 255.0f, 0x78 / 255.0f, 0xD9 / 255.0f}, {0x9C / 255.0f, 0xC8 / 255.0f, 0xFF / 255.0f}};
 void atlasRect(float uv[8], float const r[4]) { setRect(uv, r[0] / PROP_W, r[1] / PROP_H, (r[0] + r[2]) / PROP_W, (r[1] + r[3]) / PROP_H); }
 /// a square turned `angle` round its centre in the plane of ax / ay (unit axes): Java's corners i = 0..3 (uv 00 10 11 01)
 bool turnedSquare(JPose const& cam, Basis const& b, V3 c, V3 ax, V3 ay, double radius, double angle, Quad& q) {
@@ -3704,15 +3706,6 @@ bool turnedSquare(JPose const& cam, Basis const& b, V3 c, V3 ax, V3 ay, double r
     }
     V3 tl[4] = {p[0], p[1], p[3], p[2]}; // TL TR BL BR
     return worldQuad4(cam, b, tl, q);
-}
-/// EnchantFx.gradientQuad: the white pixel mask in the palette's two colours, faded by presence (alpha), never darkened
-void circleQuad(Quad& q, CirclePalette const& pal, float brightness) {
-    float presence = std::clamp(brightness / 0.4f, 0.0f, 1.0f);
-    float alpha    = presence * presence * (3 - 2 * presence);
-    atlasRect(q.uv, FX_CIRCLE);
-    q.mode[0] = 8;
-    for (int i = 0; i < 3; ++i) { q.color[i] = pal.top[i]; q.key0[i] = pal.bottom[i]; }
-    q.color[3] = alpha;
 }
 // What stands in front of a quad in the world (we draw over the finished frame, without its depth): a convex
 // polygon on screen the quad is cut away inside. The enchanting table's open book over the circles.
@@ -3740,31 +3733,51 @@ void applyOccluder(Quad& q) {
     q.occl[0] = float(gOcclN);
     std::memcpy(q.hull, gOccl, sizeof q.hull);
 }
-/// EnchantFx.circle: lying on a surface
-void fxCircle(JPose const& cam, Basis const& b, V3 center, double radius, double angle, CirclePalette const& pal, float brightness) {
-    if (brightness <= 0.001f) return;
+float clampC(float v) { return std::clamp(v, 0.0f, 1.0f); } // EnchantFx.clamp: a vertex colour byte
+/// EnchantFx.disc / billboard: a light texture of the atlas (Fx.glow: added light) as a turned square
+void fxLight(JPose const& cam, Basis const& b, float const tex[4], V3 c, V3 ax, V3 ay, double radius, double angle, float r, float g, float bl, bool occluded) {
     Quad q;
-    if (!turnedSquare(cam, b, center, V3{1, 0, 0}, V3{0, 0, 1}, radius, angle, q)) return;
-    circleQuad(q, pal, brightness);
-    applyOccluder(q);
+    if (!turnedSquare(cam, b, c, ax, ay, radius, angle, q)) return;
+    atlasRect(q.uv, tex);
+    q.mode[0] = 7;
+    q.color[0] = clampC(r); q.color[1] = clampC(g); q.color[2] = clampC(bl); q.color[3] = 1;
+    if (occluded) applyOccluder(q);
     gQuads.push_back(q);
 }
-/// EnchantFx.circleBillboard: facing the camera (camera left / up as Java's)
-void fxCircleBillboard(JPose const& cam, Basis const& b, V3 center, double radius, double angle, CirclePalette const& pal, float brightness) {
-    if (brightness <= 0.001f) return;
-    Quad q;
-    if (!turnedSquare(cam, b, center, b.r * -1.0, b.u, radius, angle, q)) return;
-    circleQuad(q, pal, brightness);
-    gQuads.push_back(q);
+/// EnchantFx.circle: the magic circle lying on a surface
+void fxCircle(JPose const& cam, Basis const& b, V3 center, double radius, double angle, float r, float g, float bl) {
+    fxLight(cam, b, FX_MAGIC, center, V3{1, 0, 0}, V3{0, 0, 1}, radius, angle, r, g, bl, true);
+}
+/// EnchantFx.billboard(CIRCLE): facing the camera (camera left / up as Java's)
+void fxCircleBillboard(JPose const& cam, Basis const& b, V3 center, double radius, double angle, float r, float g, float bl) {
+    fxLight(cam, b, FX_MAGIC, center, b.r * -1.0, b.u, radius, angle, r, g, bl, false);
 }
 /// EnchantFx.billboard(GLOW): the soft glow texture facing the camera, added light
 void fxGlow(JPose const& cam, Basis const& b, V3 center, double radius, double angle, float r, float g, float bl) {
-    Quad q;
-    if (!turnedSquare(cam, b, center, b.r * -1.0, b.u, radius, angle, q)) return;
-    atlasRect(q.uv, FX_GLOW);
-    q.mode[0] = 7;
-    q.color[0] = r; q.color[1] = g; q.color[2] = bl; q.color[3] = 1;
-    gQuads.push_back(q);
+    fxLight(cam, b, FX_GLOW, center, b.r * -1.0, b.u, radius, angle, r, g, bl, false);
+}
+/// EnchantFx.lapisGhost: the empty socket's crystal, a pentagon of light lines facing the camera
+void lapisGhost(JPose const& cam, Basis const& b, V3 at, float brightness, float scale) {
+    static const double gem[5][2] = {{0, 0.052}, {0.035, 0.018}, {0.023, -0.032}, {-0.023, -0.032}, {-0.035, 0.018}};
+    auto line = [&](double x0, double y0, double x1, double y1, float k) {
+        V3 l = b.r * -1.0, u = b.u;
+        V3 a = at + (l * x0 + u * y0) * scale, c = at + (l * x1 + u * y1) * scale;
+        V3 d = c - a;
+        if (d.len() < 1e-6) return;
+        V3 n = (l * -(y1 - y0) + u * (x1 - x0)).norm() * (0.0025 * scale);
+        V3 p4[4] = {a + n, c + n, a - n, c - n};
+        Quad q;
+        if (!worldQuad4(cam, b, p4, q)) return;
+        // the ribbons fade to nothing at their edges (alpha 190 -> 0, added light): about half their light on average
+        float s = k * 190 / 255.0f * 0.5f;
+        q.mode[1] = 1;
+        q.color[0] = clampC(0.25f * s); q.color[1] = clampC(0.62f * s); q.color[2] = clampC(s); q.color[3] = 1;
+        gQuads.push_back(q);
+    };
+    for (int i = 0; i < 5; ++i) line(gem[i][0], gem[i][1], gem[(i + 1) % 5][0], gem[(i + 1) % 5][1], brightness);
+    line(-0.035, 0.018, 0.035, 0.018, brightness * 0.65f);
+    line(0, 0.052, -0.023, -0.032, brightness * 0.65f);
+    line(0, 0.052, 0.023, -0.032, brightness * 0.65f);
 }
 /// EnchantFx.beam: two crossed planes rising from `base`, bright at the foot
 void fxBeam(JPose const& cam, Basis const& b, V3 base, double height, double width, double spin, float r, float g, float bl) {
@@ -4607,11 +4620,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             gS.glow = approach(gS.glow, target, target > gS.glow ? 6 : 2.5, handsDt);
             double spin = clock * 0.25 + (t >= 0 ? 4 * smoother(t) : 0);
             float  g    = float(gS.glow);
-            bool   canEnchant = !enchItem() || t >= 0;
-            for (int k = 0; k < 3 && !canEnchant; ++k) canEnchant = offered(k) && affordable(k);
-            CirclePalette const& tablePal = canEnchant ? VIOLET : RED;
-            fxCircle(cam, b, gS.st.top + V3{0, OUTER_LIFT, 0}, 0.47, spin, tablePal, 0.85f * g);
-            fxCircle(cam, b, gS.st.top + V3{0, INNER_LIFT, 0}, 0.25, -spin * 1.7, tablePal, 0.55f * g);
+            fxCircle(cam, b, gS.st.top + V3{0, OUTER_LIFT, 0}, 0.47, spin, 0.62f * g, 0.4f * g, 1.0f * g);
+            fxCircle(cam, b, gS.st.top + V3{0, INNER_LIFT, 0}, 0.25, -spin * 1.7, 0.4f * g, 0.7f * g, 1.0f * g);
             bool   outro = gS.phase == Phase::Outro;
             double fade  = outro ? 1 - smoother(gS.time / 0.45) : 1;
             // the item over the table: during the rite, the one being enchanted until the light breaks
@@ -4640,13 +4650,15 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             V3 corner = lapisCorner();
             if (presence > 0.01) {
                 bool wrong = active && gS.enchTarget == ELapis && gS.carrying && !carryingLapis();
+                float sk = float((0.50 + 0.42 * gS.lapisFocus) * presence);
                 int keepN = gOcclN;
                 gOcclN    = 0; // the socket floats beside the book, in front of it
-                fxCircle(cam, b, corner + V3{0, SOCKET_LIFT, 0}, 0.10, clock * 0.3, wrong ? RED : LAPIS, float((0.50 + 0.42 * gS.lapisFocus) * presence));
+                fxCircle(cam, b, corner + V3{0, SOCKET_LIFT, 0}, 0.10, clock * 0.3, wrong ? sk : sk * 0.2f, wrong ? sk * 0.2f : sk * 0.55f, wrong ? sk * 0.2f : sk);
                 gOcclN = keepN;
+                if (!gS.cellFull[1] && t < 0) lapisGhost(cam, b, corner + V3{0, 0.052 + std::sin(clock * 1.5) * 0.004, 0}, sk, 1);
             }
             // the cost digits / runes / a count of the hidden screen, in another colour, facing the camera
-            auto glyphs = [&](Rect r, float const* key, bool snap, bool countOnly, V3 c, double perPx, unsigned rgb, float alpha, float satMax = 0, float satMin = 0, bool flat = false) {
+            auto glyphs = [&](Rect r, float const* key, bool snap, bool countOnly, V3 c, double perPx, unsigned rgb, float alpha, float satMax = 0, float satMin = 0, bool flat = false, float minValue = 0) {
                 if (r.w <= 0 || alpha < 0.03f) return;
                 double hw = r.w / guiPx * perPx / 2, hh = r.h / guiPx * perPx / 2;
                 Quad   q;
@@ -4656,7 +4668,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 q.color[0] = ((rgb >> 16) & 255) / 255.0f; q.color[1] = ((rgb >> 8) & 255) / 255.0f; q.color[2] = (rgb & 255) / 255.0f; q.color[3] = alpha;
                 for (int i = 0; i < 3; ++i) q.key0[i] = key ? key[i] : L.bg[i];
                 q.key1[3] = countOnly ? 1.0f : 0.0f;
-                q.key1[0] = satMax; q.key1[1] = satMin; q.key0[3] = flat ? 1.0f : 0.0f;
+                q.key1[0] = satMax; q.key1[1] = satMin; q.key1[2] = minValue; q.key0[3] = flat ? 1.0f : 0.0f;
                 gQuads.push_back(q);
             };
             bool hasCount = gS.cellFull[1] && gS.iconBox[1][2] > 0.9f && gS.iconBox[1][3] > 0.9f; // the slot prints a count (2 or more)
@@ -4689,7 +4701,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 float r = aff ? 0.55f : 0.5f, gg = aff ? 0.45f : 0.12f, bl = aff ? 1.0f : 0.16f;
                 fxGlow(cam, b, c, size * 1.8, 0, r * br * 0.35f, gg * br * 0.35f, bl * br * 0.35f);
                 double turn = clock * (hovered ? 1.8 : 0.5) * (k % 2 == 0 ? 1 : -1);
-                fxCircleBillboard(cam, b, c, size, turn, aff ? VIOLET : RED, br);
+                fxCircleBillboard(cam, b, c, size, turn, r * br, gg * br, bl * br);
                 // the cost (Bedrock's own digits), the runes under it at 0.55, the lapis gems under those
                 double s   = 0.01 * appear * (hovered ? 1.2 : 1.0);
                 float  in  = L.slot * 16.0f / 18.0f;
@@ -4698,7 +4710,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 float const* bx = snap ? gS.snapBox[14 + k] : gS.iconBox[14 + k];
                 Rect   num{cell.x + cell.w * bx[0], cell.y + cell.h * bx[1], cell.w * (bx[2] - bx[0]), cell.h * (bx[3] - bx[1])};
                 float  a = std::min(1.0f, appear);
-                glyphs(num, gS.btnRef[3 + k], snap, false, c, s, aff ? 0xF4EEFF : 0xFF6B6B, a, 0, 0.2f);
+                glyphs(num, gS.btnRef[3 + k], snap, false, c, s, aff ? 0xF4EEFF : 0xFF6B6B, a, 0, 0.2f, true, 0.5f); // no shadow (0.18.3)
                 // the runes: what the six cells along the button hold (their extent), one flat colour, under the cost
                 float rx0 = 1e9f, rx1 = -1, ry0 = 1e9f, ry1 = -1;
                 for (int j = 0; j < 6; ++j) {
@@ -4751,7 +4763,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 }
                 if (gS.enchTarget == ESurface && gS.carrying && gS.haveAim) {
                     float pp = float(0.25 + 0.1 * std::sin(clock * 5));
-                    fxCircle(cam, b, gS.st.top + V3{0, HINT_LIFT, 0}, 0.16, -clock, VIOLET, pp);
+                    fxCircle(cam, b, gS.st.top + V3{0, HINT_LIFT, 0}, 0.16, -clock, pp * 0.8f, pp * 0.7f, pp);
                 }
             }
             drawGlyphs(cam, b, handsDt);
