@@ -21,6 +21,8 @@
 
 #include <d3d12.h>
 #include <d3dcompiler.h>
+#include <wincodec.h>
+#pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 #include <wrl/client.h>
 
@@ -2316,6 +2318,33 @@ const PropSlot kPropSlots[] = {
     {"stonecutter2_saw.tga", 80, 0, 16, 48},     // the stonecutter's blade (animated strip)
 };
 std::string gPropNote = "-";
+// the enchanting table's glyphs (vanilla EnchantmentTableParticle's sga_a..z): the game's own particles.png
+// (textures/particle.brarchive), its two bottom rows of 8 px glyphs, copied to (0, 64) of the atlas
+constexpr int FX_GLYPHS_X = 0, FX_GLYPHS_Y = 64;
+bool decodePng(std::vector<uint8_t> const& f, std::vector<uint8_t>& rgba, int& w, int& h) {
+    HRESULT ci = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool    ok = false;
+    {
+        ComPtr<IWICImagingFactory>    fac;
+        ComPtr<IWICStream>            st;
+        ComPtr<IWICBitmapDecoder>     dec;
+        ComPtr<IWICBitmapFrameDecode> fr;
+        ComPtr<IWICFormatConverter>   cv;
+        UINT uw = 0, uh = 0;
+        if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&fac))) &&
+            SUCCEEDED(fac->CreateStream(&st)) && SUCCEEDED(st->InitializeFromMemory(const_cast<BYTE*>(f.data()), DWORD(f.size()))) &&
+            SUCCEEDED(fac->CreateDecoderFromStream(st.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &dec)) && SUCCEEDED(dec->GetFrame(0, &fr)) &&
+            SUCCEEDED(fac->CreateFormatConverter(&cv)) &&
+            SUCCEEDED(cv->Initialize(fr.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)) &&
+            SUCCEEDED(cv->GetSize(&uw, &uh)) && uw > 0 && uh > 0) {
+            rgba.resize(size_t(uw) * uh * 4);
+            ok = SUCCEEDED(cv->CopyPixels(nullptr, uw * 4, UINT(rgba.size()), rgba.data()));
+            w = int(uw); h = int(uh);
+        }
+    }
+    if (SUCCEEDED(ci)) CoUninitialize();
+    return ok;
+}
 bool readBrarchive(std::filesystem::path const& file, char const* name, std::vector<uint8_t>& out) {
     std::ifstream in(file, std::ios::binary);
     if (!in) return false;
@@ -2373,6 +2402,16 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     auto arch = std::filesystem::path(exe).parent_path() / "data" / "resource_packs" / "vanilla" / "__brarchive" / "textures" / "blocks.brarchive";
     gPropNote.clear();
+    {
+        std::vector<uint8_t> file, px;
+        int                  w = 0, h = 0;
+        if (readBrarchive(arch.parent_path() / "particle.brarchive", "particles.png", file) && decodePng(file, px, w, h) && w >= 128 && h >= 128) {
+            for (int y = 0; y < 16; ++y)
+                std::memcpy(&atlas[(size_t(FX_GLYPHS_Y + y) * PROP_W + FX_GLYPHS_X) * 4], &px[(size_t(h - 16 + y) * w) * 4], 128 * 4);
+            gPropNote += "particles.png ok; ";
+            gPropHas[7] = true;
+        } else gPropNote += "particles.png missing; ";
+    }
     for (size_t i = 0; i < std::size(kPropSlots); ++i) {
         auto const&          ps = kPropSlots[i];
         std::vector<uint8_t> file, px;
@@ -3796,12 +3835,12 @@ void fxBeam(JPose const& cam, Basis const& b, V3 base, double height, double wid
 }
 // vanilla's EnchantmentTableParticle (EnchantFx.stream): spawned at `to` with an offset, it starts at to + offset and
 // converges on to, falling 1.2 at the very end; a glyph of light (its colour 0.9f, 0.9f, f)
-struct Glyph { V3 to, d; double age, life; float size, f; };
+struct Glyph { V3 to, d; double age, life; float size, f; int sprite; };
 std::vector<Glyph> gGlyphs;
 void glyphStream(V3 from, V3 to, int count) {
     for (int i = 0; i < count && gGlyphs.size() < 600; ++i) {
         V3 d = from - to + V3{(rnd() - 0.5) * 0.5, (rnd() - 0.5) * 0.4, (rnd() - 0.5) * 0.5};
-        gGlyphs.push_back({to, d, 0, (30 + std::floor(rnd() * 10)) / 20.0, float(0.1 * (rnd() * 0.5 + 0.2)), float(rnd() * 0.6 + 0.4)});
+        gGlyphs.push_back({to, d, 0, (30 + std::floor(rnd() * 10)) / 20.0, float(0.1 * (rnd() * 0.5 + 0.2)), float(rnd() * 0.6 + 0.4), int(rnd() * 26) % 26});
     }
 }
 void drawGlyphs(JPose const& cam, Basis const& b, double dt) {
@@ -3811,13 +3850,21 @@ void drawGlyphs(JPose const& cam, Basis const& b, double dt) {
         if (g.age >= g.life) { gGlyphs[i] = gGlyphs.back(); gGlyphs.pop_back(); continue; }
         double a = g.age / g.life, f = 1 - a, f1 = a * a * a * a;
         V3     p = g.to + g.d * f - V3{0, f1 * 1.2, 0};
-        // getLightColor: brighter as it nears the end
-        float k = float(0.55 + 0.45 * a);
+        // getLightColor: lit up towards the end (a^4 of full bright over the world's light; the night here)
+        float k = float(std::min(1.0, 0.35 + std::pow(a, 4) * 0.65));
         Quad  q;
-        if (!worldQuad(cam, b, p, b.r * (g.size * 0.5), b.u * (g.size * 0.5), q)) continue;
-        setRect(q.uv, 0, 0, 1, 1);
-        q.mode[0] = 5;
-        q.color[0] = 0.9f * g.f * k; q.color[1] = 0.9f * g.f * k; q.color[2] = g.f * k; q.color[3] = 1;
+        // SingleQuadParticle: a camera-facing square of +-quadSize, the glyph sprite, opaque (PARTICLE_SHEET_OPAQUE)
+        if (!worldQuad(cam, b, p, b.r * g.size, b.u * g.size, q)) continue;
+        if (gPropHas[7]) {
+            float u0 = float(FX_GLYPHS_X + (g.sprite % 16) * 8), v0 = float(FX_GLYPHS_Y + (g.sprite / 16) * 8);
+            setRect(q.uv, u0 / PROP_W, v0 / PROP_H, (u0 + 8) / PROP_W, (v0 + 8) / PROP_H);
+            q.mode[0] = 3;
+            q.color[0] = 0.9f * g.f * k; q.color[1] = 0.9f * g.f * k; q.color[2] = g.f * k; q.color[3] = 1;
+        } else {
+            setRect(q.uv, 0, 0, 1, 1);
+            q.mode[0] = 5;
+            q.color[0] = 0.9f * g.f * k; q.color[1] = 0.9f * g.f * k; q.color[2] = g.f * k; q.color[3] = 1;
+        }
         gQuads.push_back(q);
     }
 }
