@@ -112,7 +112,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography; }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -157,7 +157,7 @@ struct Station {
     bool lit = false;             // a lit furnace (block name lit_*)
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
     V3 center() const {
-        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
+        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography || kind == Kind::Loom ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
     }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
@@ -182,6 +182,13 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Loom) { // LoomStation.lean
+            V3    eye = top + sideV() * 0.8 + right() * 0.08 + V3{0, 0.72, 0};
+            JPose p;
+            p.pos = eye;
+            lookAngles(top + sideV() * -0.02 + right() * 0.12 + V3{0, 0.05, 0} - eye, p.yaw, p.pitch);
             return p;
         }
         if (kind == Kind::Stonecutter) { // StonecutterStation.lean
@@ -358,6 +365,12 @@ struct Scene {
     // CartographyStation
     int    cartTarget = 0, cartHover = -1, cartPlace = -1, cartWork = 0;
     bool   gleamed = false;
+    // LoomStation
+    int    loomTarget = 0, loomHover = -1, loomPattern = -1, loomPlace = -1, loomSelected = -1, loomWeave = -1, passesDone = 0;
+    bool   boardShown = false, loomSnap2 = false;
+    double board = 0;
+    float  boardRect[4] = {}; // x y w h (client px) of the glass board as last drawn
+    float  boardGui = 1;
     double grindPrevT = -1;
     bool   resultFull3() const { return cellFull[2]; } // the menu's result slot (anvil, grindstone, cartography: slot 2)
     std::string lastRoute = "-";
@@ -835,6 +848,7 @@ double grindKick(double t);
 double smithKick(double t);
 void   smithAction(int t, unsigned bit, bool shift);
 void   cartAction(int t, unsigned bit, bool shift);
+void   loomAction(int t, unsigned bit, bool shift);
 double stoneKick(double t);
 /// ClientStation.cameraKick: 0..1 how hard the camera is shaken right now
 double cameraKick() {
@@ -1204,6 +1218,82 @@ void cartAction(int t, unsigned bit, bool shift) {
     gS.tapAt = gS.clock;
 }
 
+// ---------------------------------------------------------------- LoomStation (vanilla geometry)
+constexpr double CLOTH_WIDTH = 0.42, CLOTH_LENGTH = 0.84, WEAVE_LENGTH = 2.4, WEAVE_FROM = 0.2, WEAVE_TO = 1.85, L_BEAT = 2.0;
+constexpr double LOOM_CORNERS[3][2] = {{0, 0}, {0.37, 0.34}, {-0.37, 0.34}}; // banner, dye (right front), pattern (left front)
+constexpr int    L_PASSES = 6, L_COLS = 5, L_ROWS = 4, L_CELL_W = 22, L_CELL_H = 38, L_PAD = 6, L_HEADER = 13;
+enum LoomTarget { LNone, LPlace, LItem, LPattern };
+V3  loomPoint(int slot) { return gS.st.top + gS.st.right() * LOOM_CORNERS[slot][0] + gS.st.sideV() * LOOM_CORNERS[slot][1]; }
+/// the patterns the loom offers: its pattern buttons that hold something, once banner and dye are in
+int loomPatterns() { int n = 0; for (int k = 0; k < kButtons; ++k) n += gS.btnFull[k]; return gS.cellFull[0] && gS.cellFull[1] ? n : 0; }
+double loomWoven(double t) { return window(t, WEAVE_FROM, WEAVE_TO); }
+double shuttleAcross(double t) { // -1 at the left edge of the cloth .. 1 at the right, crossing once per pass
+    double passes = loomWoven(t) * L_PASSES;
+    int    pass   = std::min(L_PASSES - 1, int(passes));
+    double f      = inOutSine(passes - pass);
+    return pass % 2 == 0 ? -1 + 2 * f : 1 - 2 * f;
+}
+V3 weaveLine(double t) { return loomPoint(0) + gS.st.sideV() * (CLOTH_LENGTH / 2 - CLOTH_LENGTH * loomWoven(t)) + V3{0, 0.01, 0}; }
+int loomCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
+    gS.loomTarget = LNone;
+    gS.loomHover = gS.loomPattern = gS.loomPlace = -1;
+    if (moving()) return -1;
+    float* r = gS.boardRect;
+    if (gS.boardShown && mx >= r[0] && mx < r[0] + r[2] && my >= r[1] && my < r[1] + r[3]) {
+        float g   = gS.boardGui;
+        int   col = int((mx - r[0] - L_PAD * g) / (L_CELL_W * g)), row = int((my - r[1] - (L_PAD + L_HEADER) * g) / (L_CELL_H * g));
+        int   k   = row * L_COLS + col;
+        gS.haveAim = true; // the hand lifts towards the board
+        gS.aim     = gS.st.top + gS.st.right() * 0.42 + gS.st.sideV() * 0.05 + V3{0, 0.12, 0};
+        if (col >= 0 && col < L_COLS && row >= 0 && row < L_ROWS && my >= r[1] + (L_PAD + L_HEADER) * g && k < loomPatterns()) {
+            gS.loomTarget  = LPattern;
+            gS.loomPattern = k;
+            return 200 + k;
+        }
+        return -1;
+    }
+    if (!gS.carrying) {
+        for (int i = 0; i < 3; ++i)
+            if (gS.cellFull[i] && underCursor(b, mx, my, loomPoint(i), i == 0 ? 0.24 : 0.09)) {
+                gS.loomTarget = LItem;
+                gS.loomHover  = i;
+                gS.haveAim    = true;
+                gS.aim        = loomPoint(i);
+                return 101 + i;
+            }
+        return -1;
+    }
+    V3 hit;
+    if (!onPlaneY(o, d, gS.st.top.y, hit) || std::fabs(hit.x - gS.st.top.x) > 0.52 || std::fabs(hit.z - gS.st.top.z) > 0.52) return -1;
+    int nearest = 0;
+    for (int i = 1; i < 3; ++i)
+        if ((hit - loomPoint(i)).len() < (hit - loomPoint(nearest)).len()) nearest = i;
+    gS.loomTarget = LPlace;
+    gS.loomPlace  = nearest;
+    gS.haveAim    = true;
+    gS.aim        = loomPoint(nearest);
+    return nearest;
+}
+void loomAction(int t, unsigned bit, bool shift) {
+    if (t >= 101 && t <= 103) { inject(t - 101, 1); gS.tapAt = gS.clock; return; } // take it (slotClick(hoverSlot, 0, shift))
+    if (t < 200 || bit != 1) return;
+    int k = t - 200, button = -1;
+    for (int b = 0, n = 0; b < kButtons; ++b) if (gS.btnFull[b] && n++ == k) { button = b; break; }
+    if (button < 0) return;
+    // LoomStation.weave: pick the pattern as the window does, then the banner is taken when it is woven
+    inject(300 + button, 1);
+    gS.loomSelected = k;
+    gS.loomWeave    = button;
+    gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = WEAVE_LENGTH; gS.moveBeat = L_BEAT; gS.moveBeatDone = false;
+    gS.moveToInv  = shift;
+    gS.passesDone = 0;
+    gS.loomSnap2  = false;
+    for (int i = 0; i < 4; ++i) { gS.wasFull[i] = gS.cellFull[i]; gS.wasBlock[i] = gS.cellBlock[i]; }
+    std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+    gSnapRequest = true;
+    gS.tapAt = gS.clock;
+}
+
 /// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
 void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Anvil && t == 100) {
@@ -1223,6 +1313,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Stonecutter) { stoneAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Smithing) { smithAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Cartography) { cartAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Loom) { loomAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -1272,6 +1363,9 @@ void moveFrame() {
         } else if (gS.phase == Phase::Active && gS.st.kind == Kind::Smithing) {
             if (gS.cellFull[3]) inject(3, 1);
             else gS.moveOn = false;
+        } else if (gS.phase == Phase::Active && gS.st.kind == Kind::Loom) {
+            if (gS.cellFull[3]) inject(3, 1);
+            else gS.moveOn = false;
         } else if (gS.phase == Phase::Active && gS.st.kind == Kind::Cartography) {
             if (gS.cellFull[2]) inject(2, 1);
             else gS.moveOn = false;
@@ -1279,6 +1373,12 @@ void moveFrame() {
             if (gS.resultFull3()) inject(2, 1);
             else gS.moveOn = false; // nothing to take any more: the move stops (cancelMove)
         }
+    }
+    // the loom keeps the woven banner (result slot) just before it is taken
+    if (gS.st.kind == Kind::Loom && !gS.loomSnap2 && t >= L_BEAT - 0.15) {
+        gS.loomSnap2 = true;
+        std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+        gSnapRequest = true;
     }
     if (t > gS.moveLength) gS.moveOn = false;
 }
@@ -1327,6 +1427,11 @@ int currentTarget(float mx, float my) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
         return cartCursor(b, mx, my, o, d);
+    }
+    if (gS.st.kind == Kind::Loom) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return loomCursor(b, mx, my, o, d);
     }
     if (isFurnace(gS.st.kind)) {
         // FurnaceStation.updateCursor (vanilla geometry): the front face, and the top where a zone lies there
@@ -1408,6 +1513,10 @@ void neutralPoint(Layout const& L, float& x, float& y) {
 }
 
 std::atomic<int> gTargetNow{-1};
+std::atomic<int> gGoodTarget{-1};  // the last target the cursor was really over, and when (a press a moment later still goes there)
+std::atomic<double> gGoodAt{-1e9};
+long gLiveCalls = 0;
+int  gLiveX = 0, gLiveY = 0;
 } // namespace
 
 // ================================================================ public: config
@@ -1542,13 +1651,17 @@ bool mapClient(int w, int h, int& x, int& y, bool live) {
     double        nowL     = nowMs();
     if (live) lastLive = nowL;
     else if (nowL - lastLive > 300) live = true; // no GameInput readings: the other ways are all there is
+    if (live && x == 0 && y == 0) live = false; // a reading without a real position
     if (live) {
+        ++gLiveCalls;
+        gLiveX = x; gLiveY = y;
         gCursorNdcX = 2.0f * x / std::max(1, w) - 1.0f;
         gCursorNdcY = 1.0f - 2.0f * y / std::max(1, h);
         gCursorValid = true;
         if (!gS.cursorEngaged && gS.phase == Phase::Active && gS.time < 0.05) { gS.cursorStartX = float(x); gS.cursorStartY = float(y); }
         t = currentTarget(float(x), float(y));
         gTargetNow = t;
+        if (t >= 0) { gGoodTarget = t; gGoodAt = nowMs(); }
     }
     double now = nowMs();
     // a press goes to its target, a drag over other targets follows them (sharing a stack), the release lands where
@@ -1597,6 +1710,7 @@ unsigned filterButtons(unsigned buttons) {
         break;
     case PressState::Idle: {
         int t = gTargetNow.load();
+        if (t < 0 && gGoodTarget.load() >= 0 && now - gGoodAt.load() < 200) t = gGoodTarget.load();
         for (unsigned b = 1; b <= 4; b <<= 1) {
             if (!(buttons & b) || (gPrevButtons & b)) continue; // a new press
             if (gS.phase == Phase::Active && t >= 100) {
@@ -1631,9 +1745,9 @@ unsigned filterButtons(unsigned buttons) {
     {   // press log (diag): every change of the real or the passed buttons
         static unsigned lastIn = 0, lastOut = 0;
         if ((buttons & 7u) != lastIn || out != lastOut) {
-            char e[120];
-            snprintf(e, sizeof e, "%.0f ms: real %x -> passed %x, state %d target %d at %.0f,%.0f", now, buttons & 7u, out, int(gPress.state),
-                     gPress.target, gMapX, gMapY);
+            char e[200];
+            snprintf(e, sizeof e, "%.0f ms: real %x -> passed %x, state %d target %d (now %d) at %.0f,%.0f; live %ld at %d,%d", now, buttons & 7u, out,
+                     int(gPress.state), gPress.target, gTargetNow.load(), gMapX, gMapY, gLiveCalls, gLiveX, gLiveY);
             gPressLog[gPressLogN++ % 12] = e;
             lastIn = buttons & 7u;
             lastOut = out;
@@ -2683,6 +2797,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Loom) // LoomStation.rest
+        return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Cartography) // CartographyStation.rest
         return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.26 : -0.26) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Smithing) // SmithingStation.rest
@@ -2863,6 +2979,25 @@ void cartHands(V3& right, V3& left) {
     }
 }
 
+/// LoomStation.handsOverride: each hand catches the shuttle as it arrives and beats the row tight
+void loomHands(V3& right, V3& left) {
+    double t  = moveTime();
+    V3     ac = gS.st.right(), nearV = gS.st.sideV();
+    double in = inOutCubic(window(t, 0, WEAVE_FROM)) * (1 - inOutCubic(window(t, WEAVE_TO - 0.05, L_BEAT)));
+    V3     line = weaveLine(std::min(t, WEAVE_TO)) + nearV * 0.06 + V3{0, HAND_Y + 0.03, 0};
+    double across = shuttleAcross(t);
+    double beat   = hump(window(std::fmod(loomWoven(t) * L_PASSES, 1.0), 0.8, 1.0)) * 0.02;
+    V3     r = line + ac * (CLOTH_WIDTH / 2 + 0.06 - 0.05 * std::max(0.0, across)) - nearV * beat;
+    V3     l = line + ac * (-CLOTH_WIDTH / 2 - 0.06 + 0.05 * std::max(0.0, -across)) - nearV * beat;
+    right = lerp(restOf(true), r, in);
+    left  = lerp(restOf(false), l, in);
+    if (t > L_BEAT - 0.1) { // the right hand takes the banner off the loom
+        V3 grab = loomPoint(0) + nearV * 0.2 + V3{0, HAND_Y + 0.04, 0};
+        right = lerp(lerp(right, grab, inOutCubic(window(t, L_BEAT - 0.1, L_BEAT + 0.05))), restOf(true) + V3{0, gS.moveToInv ? 0 : 0.05, 0},
+                     inOutCubic(window(t, L_BEAT + 0.05, WEAVE_LENGTH)));
+    }
+}
+
 void updateHands(JPose const& cam, double dt) {
     V3    cp = cam.pos;
     float cy = cam.yaw;
@@ -2892,12 +3027,13 @@ void updateHands(JPose const& cam, double dt) {
     }
     case Phase::Active: {
         if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter || gS.st.kind == Kind::Smithing ||
-             gS.st.kind == Kind::Cartography) && moving()) { // handsOverride, springs at 55
+             gS.st.kind == Kind::Cartography || gS.st.kind == Kind::Loom) && moving()) { // handsOverride, springs at 55
             V3 r, l;
             if (gS.st.kind == Kind::Anvil) anvilHands(cam, r, l);
             else if (gS.st.kind == Kind::Stonecutter) stoneHands(r, l);
             else if (gS.st.kind == Kind::Smithing) smithHands(r, l);
             else if (gS.st.kind == Kind::Cartography) cartHands(r, l);
+            else if (gS.st.kind == Kind::Loom) loomHands(r, l);
             else grindHands(cam, r, l);
             gRight.update(r, 55, dt);
             gLeft.update(l, 55, dt);
@@ -3705,6 +3841,126 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 }
             }
         }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Loom) {
+            // LoomStation.frame / renderScene / renderBoard (the cloth is the banner's own icon, stretched over the warp)
+            V3     rgt = gS.st.right(), out = gS.st.sideV();
+            double t   = moveTime();
+            int    nPat = loomPatterns();
+            auto cloth = [&](IconSrc const& is, V3 center, V3 upAxis, V3 across, double w, double l, double v0, double v1, float opacity) {
+                // the part of the flag from v0 to v1 of its length (0 = its top, at the farV end)
+                V3   tl = center + upAxis * (l / 2) - across * (w / 2);
+                V3   p4[4] = {tl - upAxis * (l * v0), tl + across * w - upAxis * (l * v0), tl - upAxis * (l * v1), tl + across * w - upAxis * (l * v1)};
+                Quad q;
+                if (!worldQuad4(cam, b, p4, q)) return;
+                float u0 = is.inside.x / L.W, u1 = (is.inside.x + is.inside.w) / L.W;
+                float vy0 = (is.inside.y + is.inside.h * float(v0)) / L.H, vy1 = (is.inside.y + is.inside.h * float(v1)) / L.H;
+                setRect(q.uv, u0, vy0, u1, vy1);
+                keyed(q, L, opacity, is.snap);
+                gQuads.push_back(q);
+            };
+            auto laid = [&](IconSrc const& is, bool block, int slot, double scale, float opacity) { // SmithingStation.drawLaid(slot 2)
+                double size = (block ? 0.13 : 0.2) * scale;
+                orientedItem(cam, b, L, is, block, loomPoint(slot) + V3{0, block ? size / 2 : 0.004, 0}, rgt, out, size, 0, opacity, 18);
+            };
+            V3 farV = out * -1.0, up{0, 1, 0};
+            if (t < 0) {
+                if (gS.cellFull[0]) cloth(src(L.grid[0], 0), loomPoint(0) + V3{0, 0.003, 0}, farV, rgt, CLOTH_WIDTH, CLOTH_LENGTH, 0, 1, tableAlpha);
+                for (int i = 1; i < 3; ++i)
+                    if (gS.cellFull[i]) laid(src(L.grid[i], i), gS.cellBlock[i], i, i == gS.loomHover ? 1.08 : 0.95, tableAlpha);
+                if (gS.phase == Phase::Active && gS.loomTarget == LPlace && gS.haveAim) {
+                    float p = float(0.18 + 0.06 * std::sin(clock * 5));
+                    glowDisc(cam, b, gS.aim + V3{0, 0.004, 0}, gS.loomPlace == 0 ? 0.24 : 0.1, p, p * 0.8f, p * 0.6f);
+                }
+            } else {
+                IconSrc sn[4];
+                for (int i = 0; i < 4; ++i) {
+                    sn[i] = src(L.grid[i], -1);
+                    std::memcpy(sn[i].box, gS.snapBox[i], sizeof sn[i].box);
+                    sn[i].snap = gG.snapValid;
+                }
+                if (gS.cellFull[2]) laid(src(L.grid[2], 2), gS.cellBlock[2], 2, 0.95, 1);
+                if (t >= WEAVE_TO && gS.cellFull[1]) laid(src(L.grid[1], 1), gS.cellBlock[1], 1, 0.95, 1);
+                int passes = int(std::min(double(L_PASSES), loomWoven(t) * L_PASSES + 0.5));
+                float* dc  = gS.iconRgb[1];
+                if (passes > gS.passesDone) {
+                    gS.passesDone = passes;
+                    motes(weaveLine(t) + rgt * (shuttleAcross(t) * CLOTH_WIDTH / 2), 0.05, 4, dc[0], dc[1], dc[2], 0.12);
+                }
+                if (t < L_BEAT) {
+                    double w = loomWoven(t);
+                    // the old banner, and the new one growing behind the shuttle from the farV end (live result slot)
+                    if (gS.loomSnap2) cloth(sn[3], loomPoint(0) + V3{0, 0.003, 0}, farV, rgt, CLOTH_WIDTH, CLOTH_LENGTH, 0, 1, 1);
+                    else {
+                        if (w < 0.999) cloth(sn[0], loomPoint(0) + V3{0, 0.003, 0}, farV, rgt, CLOTH_WIDTH, CLOTH_LENGTH, w, 1, 1);
+                        if (w > 0.001 && gS.cellFull[3]) cloth(src(L.grid[3], 3), loomPoint(0) + V3{0, 0.004, 0}, farV, rgt, CLOTH_WIDTH, CLOTH_LENGTH, 0, w, 1);
+                        else if (w > 0.001) cloth(sn[0], loomPoint(0) + V3{0, 0.003, 0}, farV, rgt, CLOTH_WIDTH, CLOTH_LENGTH, 0, w, 1);
+                    }
+                    if (t >= WEAVE_FROM && t < WEAVE_TO) { // the shuttle, carrying the dye's thread across
+                        V3 line = weaveLine(t);
+                        V3 at   = line + rgt * (shuttleAcross(t) * (CLOTH_WIDTH / 2 + 0.04)) + V3{0, 0.03, 0};
+                        orientedItem(cam, b, L, sn[1], false, at, rgt, out, 0.13, 15, 1, 90);
+                        float g = 0.35f;
+                        glowBillboard(cam, b, line + rgt * (shuttleAcross(t) * CLOTH_WIDTH / 2), 0.05, dc[0] * g + 0.1f, dc[1] * g + 0.1f, dc[2] * g + 0.1f);
+                    }
+                } else { // off the loom: the new banner rises, stands up and goes to the hand (or the bag)
+                    double k     = inOutCubic(window(t, L_BEAT, WEAVE_LENGTH));
+                    V3     lift  = loomPoint(0) + V3{0, 0.003 + 0.25 * k, 0} + out * (0.15 * k);
+                    V3     dest  = gS.moveToInv ? cam.pos + V3{0, 0.5, 0} + yawForward(cam.yaw) * 0.6 : heldItemPoint(gRight.x, shoulderOf(true, cam.pos, cam.yaw));
+                    V3     center = lerp(lift, dest, inCubic(window(t, L_BEAT + 0.15, WEAVE_LENGTH)));
+                    double stand  = smoother(k * 1.4);
+                    V3     vAxis  = lerp(farV, up, stand).norm();
+                    double size   = 1 - 0.75 * inCubic(window(t, L_BEAT + 0.1, WEAVE_LENGTH));
+                    cloth(sn[3], center, vAxis, rgt, CLOTH_WIDTH * size, CLOTH_LENGTH * size, 0, 1, 1);
+                }
+            }
+            // the glass board of patterns, beside the loom (GUI pixels, as the Java mod draws it)
+            gS.boardShown = nPat > 0 && t < 0 && gS.phase == Phase::Active;
+            double target = gS.boardShown ? 1 : 0;
+            gS.board      = approach(gS.board, target, target > gS.board ? 9 : 14, handsDt);
+            if (gS.board > 0.02 && nPat > 0) {
+                float gui = float(spatialcam::javaAutoGuiScale(int(W), int(H)));
+                gS.boardGui = gui;
+                int   rows = std::min(L_ROWS, (nPat + L_COLS - 1) / L_COLS);
+                float bw = float(L_PAD * 2 + L_COLS * L_CELL_W) * gui, bh = float(L_PAD * 2 + L_HEADER + rows * L_CELL_H) * gui;
+                float ax, ay;
+                if (!toPixel(cam, b, gS.st.top + rgt * 0.58 + V3{0, 0.28, 0}, int(W), int(H), ax, ay)) { ax = W * 0.7f; ay = H * 0.45f; }
+                float appear = float(smoother(gS.board)) * tableAlpha;
+                float bx = std::clamp(ax + 6 * gui + float(1 - gS.board) * 18 * gui, 8 * gui, float(W) - bw - 8 * gui);
+                float by = std::clamp(ay - bh / 2, float(H) * 0.14f, float(H) * 0.86f - bh);
+                gS.boardRect[0] = bx; gS.boardRect[1] = by; gS.boardRect[2] = bw; gS.boardRect[3] = bh;
+                solid(bx, by, bx + bw, by + bh, int(W), int(H), 12 / 255.0f, 12 / 255.0f, 16 / 255.0f, 0.5f * appear);
+                solid(bx, by + bh - gui, bx + bw, by + bh, int(W), int(H), 1, 1, 1, 0.22f * appear);
+                solid(bx, by, bx + gui, by + bh - gui, int(W), int(H), 1, 1, 1, 0.08f * appear);
+                solid(bx + bw - gui, by, bx + bw, by + bh - gui, int(W), int(H), 1, 1, 1, 0.08f * appear);
+                if (appear >= 0.3f)
+                    for (int k = 0, bt = 0; bt < kButtons && k < rows * L_COLS; ++bt) {
+                        if (!gS.btnFull[bt]) continue;
+                        int   row = k / L_COLS, col = k % L_COLS;
+                        float x = bx + (L_PAD + col * L_CELL_W) * gui, y = by + (L_PAD + L_HEADER + row * L_CELL_H) * gui;
+                        bool  hov = k == gS.loomPattern;
+                        solid(x + gui, y + gui, x + (L_CELL_W - 1) * gui, y + (L_CELL_H - 1) * gui, int(W), int(H), 1, 1, 1, (hov ? 0.3f : 0.1f) * appear);
+                        if (k == gS.loomSelected) {
+                            solid(x, y, x + L_CELL_W * gui, y + gui, int(W), int(H), 1, 226 / 255.0f, 150 / 255.0f, 0.8f * appear);
+                            solid(x, y + (L_CELL_H - 1) * gui, x + L_CELL_W * gui, y + L_CELL_H * gui, int(W), int(H), 1, 226 / 255.0f, 150 / 255.0f, 0.8f * appear);
+                        }
+                        // the pattern as the hidden screen's button shows it
+                        Rect  r  = L.buttons[bt];
+                        float in = std::min(r.w, L.slot) * 16.0f / 18.0f;
+                        float sz = (hov ? 16.0f : 15.0f) * gui;
+                        float cx = x + L_CELL_W * gui / 2, cy = y + (3 - (hov ? 1 : 0)) * gui + sz / 2 + 4 * gui;
+                        Quad  q;
+                        pixelQuad(cx - sz / 2, cy - sz / 2, cx + sz / 2, cy + sz / 2, int(W), int(H), q);
+                        setRect(q.uv, (r.cx() - in / 2) / L.W, (r.cy() - in / 2) / L.H, (r.cx() + in / 2) / L.W, (r.cy() + in / 2) / L.H);
+                        gKeyOv = gS.btnRef[bt];
+                        keyed(q, L, appear, false);
+                        gKeyOv = nullptr;
+                        gQuads.push_back(q);
+                        ++k;
+                    }
+            } else if (!gS.boardShown) {
+                gS.boardRect[2] = gS.boardRect[3] = 0;
+            }
+        }
         if (haveCam) drawSparks(cam, b, clock, handsDt);
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
             V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
@@ -3905,6 +4161,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them \xE2\x80\x94 forge" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
+    case Kind::Loom: return std::string("Banner on the warp, dye right, pattern left") + dot + "pick a pattern on the board \xE2\x80\x94 weave" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map \xE2\x80\x94 work it" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear \xE2\x80\x94 smith" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade \xE2\x80\x94 cut one" + dot + "Shift \xE2\x80\x94 cut the stack" + dot + "Esc \xE2\x80\x94 step away";
@@ -3916,6 +4173,8 @@ std::string stationHint(Kind k, bool overResult) {
 
 void drawOverlay() {
     std::string hint, tipTitle, tipLine;
+    bool        boardLabel = false;
+    float       boardAt[4] = {}, boardA = 0, boardG = 1;
     float       a = 0, mx = 0, my = 0;
     {
         std::lock_guard l(gM);
@@ -3939,6 +4198,13 @@ void drawOverlay() {
                 tipLine  = "LMB \xE2\x80\x94 grind  \xC2\xB7  RMB \xE2\x80\x94 take  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
             } else {
                 tipTitle = "Click \xE2\x80\x94 take";
+            }
+        }
+        if (gS.st.kind == Kind::Loom && !moving()) { // LoomStation.tooltip (without the item's own lines)
+            if (gS.loomTarget == LPattern) tipTitle = "LMB \xE2\x80\x94 weave  \xC2\xB7  Shift \xE2\x80\x94 straight into the inventory";
+            else if (gS.loomTarget == LItem) {
+                tipTitle = "Click \xE2\x80\x94 take";
+                if (gS.loomHover == 0 && !gS.cellFull[1]) tipLine = "Lay a dye and the patterns appear";
             }
         }
         if (gS.st.kind == Kind::Cartography && !moving()) { // CartographyStation.tooltip (without the item's own lines)
@@ -3974,6 +4240,12 @@ void drawOverlay() {
                 if (shapeCount() == 0) tipLine = "This can't be cut";
             }
         }
+        if (gS.st.kind == Kind::Loom && gS.boardRect[2] > 0 && gS.board > 0.3) {
+            boardLabel = true;
+            std::memcpy(boardAt, gS.boardRect, sizeof boardAt);
+            boardA  = float(smoother(gS.board));
+            boardG  = gS.boardGui;
+        }
         mx = (gCursorNdcX + 1) * 0.5f;
         my = (1 - gCursorNdcY) * 0.5f;
     }
@@ -3986,6 +4258,9 @@ void drawOverlay() {
     float  x = (d.x - ts.x) * 0.5f, y = d.y - fs * 2.2f;
     dl->AddRectFilled(ImVec2(x - fs * 0.5f, y - fs * 0.3f), ImVec2(x + ts.x + fs * 0.5f, y + ts.y + fs * 0.3f), IM_COL32(0, 0, 0, int(a * 200 * 0.45f)));
     dl->AddText(font, fs, ImVec2(x, y), IM_COL32(0xF2, 0xEA, 0xD8, int(a * 200)), hint.c_str());
+    if (boardLabel) // the loom's board: its title in the corner
+        dl->AddText(font, 9.0f * boardG, ImVec2(boardAt[0] + L_PAD * boardG, boardAt[1] + (L_PAD - 1) * boardG),
+                    IM_COL32(242, 234, 216, int(0.75f * boardA * 255)), "Patterns");
     // the station's tooltip, vanilla style (dark violet box, gold title)
     if (!tipTitle.empty()) {
         float  ts2 = std::max(14.0f, d.y / 54.0f), pad = ts2 * 0.35f;
