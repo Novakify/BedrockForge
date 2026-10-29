@@ -463,7 +463,7 @@ void installCursorHook() {
 // does nothing instead of corrupting the game's input.
 struct GiMouse { uint32_t buttons; int32_t posX, posY, absX, absY, wheelX, wheelY; };
 using GiCreate_t  = long(WINAPI*)(void**);
-using GiGetCur_t  = long(WINAPI*)(void*, uint32_t, void*, void**);
+using GiGetCur_t  = bool(WINAPI*)(void*, uint32_t, void*, void**); // GameInput methods return bool, not HRESULT
 using GiMouseFn   = bool(WINAPI*)(void*, GiMouse*);
 void*              gGiTarget = nullptr;
 void*              gGiOrig   = nullptr;
@@ -504,9 +504,9 @@ void installGameInputHook() {
     if (hr < 0 || !input) { char b[64]; snprintf(b, sizeof b, "GameInputCreate hr=0x%08lX", hr); gGiNote = b; return; }
     void** inVt = *reinterpret_cast<void***>(input);
     void*  reading = nullptr;
-    constexpr uint32_t kGameInputKindMouse = 0x00000008; // GameInputKindMouse
-    hr = reinterpret_cast<GiGetCur_t>(inVt[3])(input, kGameInputKindMouse, nullptr, &reading); // IGameInput::GetCurrentReading
-    if (hr < 0 || !reading) { char b[64]; snprintf(b, sizeof b, "GetCurrentReading(mouse) hr=0x%08lX", hr); gGiNote = b; return; }
+    constexpr uint32_t kGameInputKindMouse = 0x00000020; // GameInputKindMouse
+    bool ok = reinterpret_cast<GiGetCur_t>(inVt[3])(input, kGameInputKindMouse, nullptr, &reading); // IGameInput::GetCurrentReading
+    if (!ok || !reading) { gGiNote = "GetCurrentReading(mouse) returned no reading"; return; }
     void** rVt = *reinterpret_cast<void***>(reading);
     void*  fn  = rVt[7];                                      // IGameInputReading::GetMouseState
     if (ll_shim::hook(fn, reinterpret_cast<void*>(&giMouseHook), &gGiOrig) == 0) {
