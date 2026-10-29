@@ -219,7 +219,9 @@ void onDraw(ID3D12GraphicsCommandList* list) {
         if (auto lt = gListRt0.find(list); lt != gListRt0.end() && gBbHandles.count(lt->second)) {
             D3D12_CPU_DESCRIPTOR_HANDLE h{rf::panel::targetRtv()};
             if (!gFrameRedirect.exchange(true)) {
+                gInSnapshot = true; // its barriers / copy go to our hooks too: they must not lock gMutex again
                 rf::panel::beforeUiClear(list);
+                gInSnapshot = false;
                 float const clear[4] = {0, 0, 0, 0};
                 list->ClearRenderTargetView(h, clear, 0, nullptr);
             }
