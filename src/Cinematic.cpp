@@ -1792,7 +1792,8 @@ bool cameraPose(float const eye[3], float yaw, float pitch, Pose& out, float& fo
 }
 
 // ================================================================ public: input
-bool mapClient(int w, int h, int& x, int& y, bool live) {
+bool mapClient(int w, int h, int& x, int& y, int liveIn) {
+    bool live = liveIn > 0;
     std::lock_guard l(gM);
     if (gS.phase != Phase::Intro && gS.phase != Phase::Active) return false;
     gW = w;
@@ -1808,7 +1809,7 @@ bool mapClient(int w, int h, int& x, int& y, bool live) {
     static double lastLive = -1e9;
     double        nowL     = nowMs();
     if (live) lastLive = nowL;
-    else if (nowL - lastLive > 300) live = true; // no GameInput readings: the other ways are all there is
+    else if (liveIn == 0 && nowL - lastLive > 300) live = true; // no GameInput readings: the other ways are all there is
     if (live && x == 0 && y == 0) live = false; // a reading without a real position
     if (live) {
         ++gLiveCalls;
@@ -5190,10 +5191,10 @@ void appendDiag(char* b, unsigned long long cap) {
     len += std::snprintf(b + len, cap - len, "  block states: %s; lit %d; aimTop %d\n", gS.states.c_str(), gS.st.lit, gS.aimTop);
     if (len < cap)
         len += std::snprintf(b + len, cap - len, "  side %d; wheel %.3f %.3f %.3f; grind target %d hover %d place %d; glint %d%d%d; spin %.2f; props: %s; keep copies %ld checked %ld\n"
-                             "  move on %d at %.2f (clock %.2f) length %.2f beat %.2f done %d; %s; buttons %d\n", int(gS.st.side),
+                             "  move on %d at %.2f (clock %.2f) length %.2f beat %.2f done %d; %s; buttons %d; drawer expand %.2f over %d live %ld at %d,%d\n", int(gS.st.side),
                              gS.st.wheel.x, gS.st.wheel.y, gS.st.wheel.z, gS.grindTarget, gS.grindHover, gS.grindPlace, gS.cellGlint[0], gS.cellGlint[1],
                              gS.cellGlint[2], gS.spin, gPropNote.c_str(), gKeepCopies.load(), gKeepChecked, gS.moveOn, gS.moveAt, gS.clock,
-                             gS.moveLength, gS.moveBeat, gS.moveBeatDone, gActionNote.c_str(), gLayout.nButtons);
+                             gS.moveLength, gS.moveBeat, gS.moveBeatDone, gActionNote.c_str(), gLayout.nButtons, gS.expand, gS.overPanel, gLiveCalls, gLiveX, gLiveY);
     for (int i = 0; i < 12 && len < cap; ++i) {
         auto const& e = gPressLog[(gPressLogN + i) % 12];
         if (!e.empty()) len += std::snprintf(b + len, cap - len, "  press: %s\n", e.c_str());

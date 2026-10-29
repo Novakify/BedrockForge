@@ -603,6 +603,7 @@ std::atomic<long> gGcpCalls{0}, gGcpRemapped{0}, gGcpInClient{0}, gWmRemapped{0}
 std::string       gHookNote = "not installed";
 
 // client pixel -> client pixel the game should see (ray-pick through the panel)
+std::atomic<long> gEchoReadings{0}, gPointerReadings{0}; // GameInput readings in a scene: our own point repeated / the pointer
 thread_local bool tLiveMouse = false; // set while the game's own mouse reading (GameInput) is remapped
 POINT realCursor();
 bool remapClient(HWND hwnd, int& ix, int& iy) {
@@ -614,12 +615,13 @@ bool remapClient(HWND hwnd, int& ix, int& iy) {
             // the scene follows the real cursor: after a click GameInput's absolute position repeats the point we gave
             // the hidden screen (not where the pointer is)
             // (an echo); a reading elsewhere is the pointer itself (fresher than the system cursor when input is injected)
+            // such a reading says nothing about the pointer: it does not move the scene's cursor
             int  ex, ey;
             bool echo = cine::lastMapped(ex, ey) && std::abs(ix - ex) <= 2 && std::abs(iy - ey) <= 2;
-            POINT p = realCursor();
-            if (echo && ScreenToClient(hwnd, &p)) { ix = p.x; iy = p.y; }
+            ++(echo ? gEchoReadings : gPointerReadings);
+            return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, echo ? -1 : 1);
         }
-        return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, tLiveMouse);
+        return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, 0);
     }
     if (!gS.remap || !gEnabled || gAnim.load() < 0.5f || RfOptions::showImGui) return false;
     Geom g;
@@ -1281,6 +1283,7 @@ void writeDiag() {
         cine::appendDiag(b, sizeof b);
         len = strlen(b);
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n", gGiNote.c_str());
+        len += snprintf(b + len, sizeof b - len, "  scene readings: pointer %ld, echo of our point %ld\n", gPointerReadings.load(), gEchoReadings.load());
 #if RF_HAVE_GAMEINPUT
         for (auto& m : gGiMods) len += snprintf(b + len, sizeof b - len, "  %-30s %s\n", m.label, m.note.c_str());
         len += snprintf(b + len, sizeof b - len,

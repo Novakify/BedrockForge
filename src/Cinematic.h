@@ -95,7 +95,9 @@ void drawUi();
 
 // ---- input (GameInput mouse readings, WM_* coordinates)
 /// Client pixel of the real cursor -> client pixel the hidden screen should see. true = remapped.
-bool mapClient(int w, int h, int& x, int& y, bool live);
+/// live: 1 the game's own reading of the pointer, 0 another way of asking (used when no readings come), -1 a reading
+/// that only repeats our point (never moves the scene's cursor)
+bool mapClient(int w, int h, int& x, int& y, int live);
 /// The point the hidden screen was last given (client px): a mouse reading that repeats it is an echo, not the pointer.
 bool lastMapped(int& x, int& y);
 /// Mouse buttons the hidden screen should see (GameInput buttons bitmask).
