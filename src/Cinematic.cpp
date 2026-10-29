@@ -2682,7 +2682,9 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             if (a > 0.01f) { r /= a; g /= a; b /= a; }
                             bool bg   = std::fabs(r - L.bg[0]) < tol && std::fabs(g - L.bg[1]) < tol && std::fabs(b - L.bg[2]) < tol;
                             bool hi   = std::fabs(r - L.hi[0]) < tol && std::fabs(g - L.hi[1]) < tol && std::fabs(b - L.hi[2]) < tol;
-                            item = a > 0.5f && !bg && !hi;
+                            // Bedrock draws a ghost outline (#4A494C) in an empty slot that says what goes there: not an item
+                            bool ghost = std::fabs(r - 74 / 255.0f) < 0.025f && std::fabs(g - 73 / 255.0f) < 0.025f && std::fabs(b - 76 / 255.0f) < 0.025f;
+                            item = a > 0.5f && !bg && !hi && !ghost;
                             if (s >= 11) item = a > 0.5f && (std::fabs(r - ref[0]) > 0.12f || std::fabs(g - ref[1]) > 0.12f || std::fabs(b - ref[2]) > 0.12f);
                             if (item) { sr += r; sgc += g; sb += b; }
                             if (item && b > g + 0.12f && r > g + 0.04f) ++violet; // the enchantment glint's violet
