@@ -3004,7 +3004,10 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                         uint8_t const* q = static_cast<uint8_t*>(p) + size_t(s) * gG.srStride + size_t(y) * gG.srPitch + size_t(x) * 4;
                         float a = q[3] / 255.0f;
                         bool  item;
-                        if (s == 10) item = a > 0.5f; // the parked cursor sits on transparent ground
+                        if (s == 10) { // the parked cursor sits on transparent ground
+                            item = a > 0.5f;
+                            if (item) { float ia = 1.0f / a; sr += (bgra ? q[2] : q[0]) / 255.0f * ia; sgc += q[1] / 255.0f * ia; sb += (bgra ? q[0] : q[2]) / 255.0f * ia; }
+                        }
                         else {
                             float r = (bgra ? q[2] : q[0]) / 255.0f, g = q[1] / 255.0f, b = (bgra ? q[0] : q[2]) / 255.0f;
                             if (a > 0.01f) { r /= a; g /= a; b /= a; }
