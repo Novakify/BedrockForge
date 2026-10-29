@@ -613,8 +613,11 @@ bool remapClient(HWND hwnd, int& ix, int& iy) {
         if (tLiveMouse) {
             // the scene follows the real cursor: after a click GameInput's absolute position repeats the point we gave
             // the hidden screen (not where the pointer is)
+            // (an echo); a reading elsewhere is the pointer itself (fresher than the system cursor when input is injected)
+            int  ex, ey;
+            bool echo = cine::lastMapped(ex, ey) && std::abs(ix - ex) <= 2 && std::abs(iy - ey) <= 2;
             POINT p = realCursor();
-            if (ScreenToClient(hwnd, &p)) { ix = p.x; iy = p.y; }
+            if (echo && ScreenToClient(hwnd, &p)) { ix = p.x; iy = p.y; }
         }
         return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, tLiveMouse);
     }

@@ -1846,6 +1846,12 @@ bool mapClient(int w, int h, int& x, int& y, bool live) {
     return true;
 }
 
+bool lastMapped(int& x, int& y) {
+    std::lock_guard l(gM);
+    x = int(gMapX); y = int(gMapY);
+    return gMapValid;
+}
+
 unsigned filterButtons(unsigned buttons) {
     std::lock_guard l(gM);
     if (gS.phase != Phase::Intro && gS.phase != Phase::Active) { gPress = Press{}; return buttons; }
@@ -2697,8 +2703,8 @@ void detect(Img im, bool dump, int kindI) {
                             float ty = top + k * h, mid = ty + h / 2;
                             L.buttons[k]     = {float(x0), ty, right - x0, h};
                             L.buttons[3 + k] = {right - unit - in, mid - in / 2, in, in}; // the level cost (right, green while it can be paid)
-                            for (int j = 0; j < 6; ++j)                                     // the runes, along the middle
-                                L.buttons[6 + k * 6 + j] = {float(x0) + 16 * unit + j * in, mid - in / 2, in, in};
+                            float rx = float(x0) + 16 * unit, step = (right - 2 * unit - rx - in) / 5; // the runes, along the middle
+                            for (int j = 0; j < 6; ++j) L.buttons[6 + k * 6 + j] = {rx + j * step, mid - in / 2, in, in};
                         }
                         L.nButtons = 24;
                         L.board    = {float(x0), top, right - x0, bottom - top};
@@ -2917,7 +2923,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             bool bg   = std::fabs(r - L.bg[0]) < tol && std::fabs(g - L.bg[1]) < tol && std::fabs(b - L.bg[2]) < tol;
                             bool hi   = std::fabs(r - L.hi[0]) < tol && std::fabs(g - L.hi[1]) < tol && std::fabs(b - L.hi[2]) < tol;
                             // Bedrock draws a ghost outline (#4A494C) in an empty slot that says what goes there: not an item
-                            bool ghost = std::fabs(r - 74 / 255.0f) < 0.025f && std::fabs(g - 73 / 255.0f) < 0.025f && std::fabs(b - 76 / 255.0f) < 0.025f;
+                            bool ghost = std::max(r, std::max(g, b)) - std::min(r, std::min(g, b)) < 0.03f && r > 0.26f && r < 0.4f; // #4A494C, #5A5759 (lapis)
                             item = a > 0.5f && !bg && !hi && !ghost;
                             if (s >= 11) item = a > 0.5f && (std::fabs(r - ref[0]) > 0.12f || std::fabs(g - ref[1]) > 0.12f || std::fabs(b - ref[2]) > 0.12f);
                             if (s >= 11 + 3 && s < 11 + 24 && L.kind == int(Kind::Enchanting)) {
@@ -5025,7 +5031,7 @@ void drawOverlay() {
                 }
             }
         }
-        if (gS.st.kind == Kind::Enchanting && !moving()) { // EnchantStation.tooltip (the clue and the item's own lines are the hidden screen's)
+        if (gS.st.kind == Kind::Enchanting && !moving() && !gS.overPanel) { // EnchantStation.tooltip (the clue and the item's own lines are the hidden screen's)
             if (gS.enchTarget == EOffer && gS.hoverOffer >= 0) { // offerTooltip: what it costs (the clue is the server's)
                 int  need = gS.hoverOffer + 1;
                 bool aff  = affordable(gS.hoverOffer);
