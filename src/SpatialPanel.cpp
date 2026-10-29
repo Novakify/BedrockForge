@@ -251,33 +251,50 @@ void toClip(Geom const& g, float lx, float ly, float out[4]) {
     out[3]  = z;
 }
 
-// v0.13: the Java mod's screen placement (RenderUtil.applyScreenTransform, third person, default config), expressed in
-// view space. The screen hangs off the CAMERA in the player's yaw frame: kScreenDistance forward, -kScreenSide to the
-// right, kScreenHeight up, turned (180 - kScreenYaw) degrees so its right edge comes toward the player; height
-// kScreenScale (x FOV factor) for the full-window GUI texture, width = window aspect.
-float easeOutBack(float t) {
-    const float c1 = 1.70158f, c3 = c1 + 1.0f;
-    float x = t - 1.0f;
-    return 1.0f + c3 * x * x * x + c1 * x * x;
-}
+// v0.13: the Java mod's screen placement (RenderUtil.applyScreenTransform + InventoryRenderer.updateQuadBasis, config
+// from SpatialGUI.json), expressed in view space. Third person: the screen hangs off the CAMERA in the player's yaw
+// frame (distance forward, -side to the right, height up), turned (180 - yaw) degrees. First person: it sits along the
+// look direction at open (pitch clamped), facing the player. Height = scale (x FOV factor) for the full-window texture.
 Geom computeGeomJava(spatialcam::View const& v, float uiAspect, float anim, float guiMag) {
     using namespace spatialcam;
     constexpr float kD = 0.017453292f;
+    Config const& c = cfg();
     Geom g{};
     g.valid   = true;
     g.tanHalf = v.valid ? v.tanHalf : std::tan(35.0f * kD);
     g.aspect  = v.valid ? v.aspect : uiAspect;
-    float fm       = (v.valid ? v.fovYDeg : kBaselineFov) / kBaselineFov;
-    float fovScale = std::pow(fm, kScreenPower);
-    float tpMult   = 1.0f + (fovScale - 1.0f) * kTpScreenMult;
-    float scale    = kScreenScale * tpMult * anim * guiMag;
+    float fm       = c.autoScaleByFov ? (v.valid ? v.fovYDeg : c.baselineFov) / c.baselineFov : 1.0f;
+    float fovScale = std::pow(fm, c.screenPower); // RenderUtil.calculateFovScaleMultiplier
+    float scale;
+    float P[3], EX[3], EY[3];
+    float pt;
+    if (v.firstPerson) {
+        scale    = c.fpScale * fovScale;
+        float p0 = v.fpPitch0 * kD;
+        float dx = 0.0f, dy = -std::sin(p0), dz = std::cos(p0); // look direction at open (player yaw frame)
+        P[0] = -c.fpSide; P[1] = dy * c.fpDistance + c.fpHeight; P[2] = dz * c.fpDistance;
+        (void)dx;
+        float a = (180.0f - c.fpYaw) * kD;  // rotY(-yaw + yawOffset): 180 = facing the player
+        float pp = p0 - c.fpPitch * kD;     // rotX(-pitch + pitchOffset)
+        EX[0] = std::cos(a); EX[1] = 0.0f; EX[2] = -std::sin(a);
+        EY[0] = 0.0f; EY[1] = std::cos(pp); EY[2] = std::sin(pp);
+        pt = v.pitch * kD;
+    } else {
+        float tpMult = 1.0f + (fovScale - 1.0f) * c.tpScreenMult;
+        scale        = c.screenScale * tpMult;
+        float side = c.mirrorThirdPerson ? -c.screenSide : c.screenSide;
+        float yaw  = c.mirrorThirdPerson ? -c.screenYaw : c.screenYaw;
+        float a    = (180.0f - yaw) * kD;
+        P[0] = -side; P[1] = c.screenHeight; P[2] = c.screenDistance;
+        float pp = -c.screenPitch * kD;
+        EX[0] = std::cos(a); EX[1] = 0.0f; EX[2] = -std::sin(a);
+        EY[0] = 0.0f; EY[1] = std::cos(pp); EY[2] = std::sin(pp);
+        pt = (v.valid ? v.pitch : c.camPitch) * kD;
+    }
+    scale *= anim * guiMag;
     g.hh = 0.5f * scale;
     g.hw = g.hh * uiAspect;
-    float a = (180.0f - kScreenYaw) * kD;
-    float P[3]  = {-kScreenSide, kScreenHeight, kScreenDistance};
-    float EX[3] = {std::cos(a), 0.0f, -std::sin(a)};
-    float EY[3] = {0.0f, 1.0f, 0.0f};
-    float yr = v.yawRel * kD, pt = (v.valid ? v.pitch : kCamPitch) * kD;
+    float yr = v.yawRel * kD;
     auto toView = [&](float const* q, float* o) {
         float x1 = q[0] * std::cos(yr) - q[2] * std::sin(yr);
         float z1 = q[0] * std::sin(yr) + q[2] * std::cos(yr);
@@ -285,9 +302,9 @@ Geom computeGeomJava(spatialcam::View const& v, float uiAspect, float anim, floa
         o[1]     = q[1] * std::cos(pt) + z1 * std::sin(pt);
         o[2]     = z1 * std::cos(pt) - q[1] * std::sin(pt);
     };
-    float c[3];
-    toView(P, c);
-    g.cx = c[0]; g.cy = c[1]; g.cz = c[2];
+    float cc[3];
+    toView(P, cc);
+    g.cx = cc[0]; g.cy = cc[1]; g.cz = cc[2];
     toView(EX, g.ex);
     toView(EY, g.ey);
     g.n[0] = g.ex[1] * g.ey[2] - g.ex[2] * g.ey[1];
@@ -368,7 +385,9 @@ void noteScreen(void const* stack, std::string const& name) {
     if (want != gLastWant) {
         gLastWant = want;
         gWanted   = want ? 1 : 0;
-        if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want); // client thread
+        bool inv = false;
+        for (auto& t : gStackTops) inv = inv || t.name.find("inventory_screen") != std::string::npos;
+        if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want, inv); // client thread
     }
 }
 
@@ -406,9 +425,11 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     if (gS.javaStyle) {
         // AnimationUtil.calculateAnimatedScale (Back easing from 75 %) + fade-in
         float ms    = float(double(now.QuadPart - gOpenQpc.QuadPart) * 1000.0 / double(f.QuadPart));
-        float tt    = std::min(1.0f, ms / spatialcam::kOpenMs);
-        float scale = spatialcam::kStartScale + (1.0f - spatialcam::kStartScale) * easeOutBack(tt);
-        fade        = std::min(1.0f, ms / spatialcam::kFadeMs);
+        auto const& sc  = spatialcam::cfg();
+        float       tt  = std::min(1.0f, ms / float(std::max(1, sc.openMs)));
+        float       s0  = sc.startScalePct / 100.0f;
+        float scale = sc.scaleAnim ? s0 + (1.0f - s0) * spatialcam::applyEasing(sc.easing, tt) : 1.0f;
+        fade        = (sc.fade ? std::min(1.0f, ms / float(std::max(1, sc.fadeMs))) : 1.0f) * (sc.screenAlpha / 255.0f);
         // The Java mod renders the screen at its own auto GUI scale (>= 320 x 240 units); Bedrock's UI is smaller in
         // the window, so magnify the texture by java/bedrock scale to give the GUI the same world size.
         spatialcam::View v = spatialcam::view();
@@ -1142,6 +1163,85 @@ bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
 }
 
 // ---------------------------------------------------------------- F6
+// The Java mod's config screen (SpatialGUIConfig), same groups and ranges. Saved to config/SpatialGUI.json.
+void drawJavaConfig() {
+    auto& c = spatialcam::cfg();
+    if (!ImGui::TreeNode("Spatial GUI config (Java mod options)")) return;
+    if (ImGui::TreeNode("General")) {
+        ImGui::Checkbox("Enabled", &c.enabled);
+        ImGui::Checkbox("First Person Mode (Inventory)", &c.fpInventory);
+        ImGui::Checkbox("First Person Mode (Other)", &c.fpContainers);
+        ImGui::Checkbox("Auto Scale by FOV", &c.autoScaleByFov);
+        ImGui::Checkbox("Mirror Third Person", &c.mirrorThirdPerson);
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("Rendering")) {
+        ImGui::SliderInt("Screen Alpha", &c.screenAlpha, 0, 255);
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("TP Screen")) {
+        ImGui::SliderFloat("Screen Distance", &c.screenDistance, 0.5f, 6.0f, "%.2f");
+        ImGui::SliderFloat("Screen Side Offset", &c.screenSide, -4.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Screen Height Offset", &c.screenHeight, -4.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Screen Yaw Offset", &c.screenYaw, 0.0f, 360.0f, "%.1f");
+        ImGui::SliderFloat("Screen Pitch Offset", &c.screenPitch, -90.0f, 90.0f, "%.1f");
+        ImGui::SliderFloat("Screen Scale", &c.screenScale, 0.5f, 8.0f, "%.2f");
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("FP Screen")) {
+        ImGui::SliderFloat("Screen Distance##fp", &c.fpDistance, 0.3f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Screen Side Offset##fp", &c.fpSide, -4.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Screen Height Offset##fp", &c.fpHeight, -4.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Screen Yaw Offset##fp", &c.fpYaw, 0.0f, 360.0f, "%.1f");
+        ImGui::SliderFloat("Screen Pitch Offset##fp", &c.fpPitch, -90.0f, 90.0f, "%.1f");
+        ImGui::SliderFloat("Screen Scale##fp", &c.fpScale, 0.3f, 6.0f, "%.2f");
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("TP Camera")) {
+        ImGui::SliderFloat("Distance", &c.camDistance, -4.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Horizontal Offset", &c.camSide, -4.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Vertical Offset", &c.camHeight, -4.0f, 4.0f, "%.2f");
+        ImGui::SliderFloat("Target Pitch", &c.camPitch, -90.0f, 90.0f, "%.1f");
+        ImGui::SliderInt("Transition Duration (ms)", &c.transitionMs, 0, 2000);
+        ImGui::SliderInt("Transition Skip Percentage", &c.transitionSkipPct, 0, 100);
+        ImGui::SliderFloat("Mouse Sensitivity Yaw", &c.tpSensYaw, 0.0f, 1.0f, "%.3f");
+        ImGui::SliderFloat("Mouse Sensitivity Pitch", &c.tpSensPitch, 0.0f, 1.0f, "%.3f");
+        ImGui::Checkbox("Disable Parallax", &c.tpParallaxOff);
+        ImGui::Checkbox("Lerp X Rotation", &c.lerpXRot);
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("FP Camera")) {
+        ImGui::SliderFloat("Mouse Sensitivity Yaw##fp", &c.fpSensYaw, 0.0f, 1.0f, "%.3f");
+        ImGui::SliderFloat("Mouse Sensitivity Pitch##fp", &c.fpSensPitch, 0.0f, 1.0f, "%.3f");
+        ImGui::Checkbox("Disable Parallax##fp", &c.fpParallaxOff);
+        ImGui::SliderInt("First Person Pitch Clamp", &c.fpPitchClamp, 0, 90);
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("Animations")) {
+        ImGui::Checkbox("Enable Fade Animation", &c.fade);
+        ImGui::SliderInt("Fade Duration (ms)", &c.fadeMs, 0, 2000);
+        ImGui::Checkbox("Enable Scale Animation", &c.scaleAnim);
+        ImGui::SliderInt("Scale Duration (ms)", &c.openMs, 0, 2000);
+        const char* eases[] = {"Back", "Cubic", "Elastic", "Bounce", "Expo", "Quad", "Quart"};
+        int e = int(c.easing);
+        if (ImGui::Combo("Scale Easing", &e, eases, 7)) c.easing = spatialcam::Easing(e);
+        ImGui::SliderInt("Start Scale (%)", &c.startScalePct, 0, 100);
+        ImGui::TreePop();
+    }
+    if (ImGui::TreeNode("Auto FOV Tuning")) {
+        ImGui::SliderFloat("Auto Scale Baseline FOV", &c.baselineFov, 30.0f, 150.0f, "%.1f");
+        ImGui::SliderFloat("Auto Scale Screen Power", &c.screenPower, 0.0f, 3.0f, "%.2f");
+        ImGui::SliderFloat("Auto Scale Side Offset Multiplier", &c.sideMult, -2.0f, 2.0f, "%.2f");
+        ImGui::SliderFloat("Auto Scale Distance Multiplier", &c.distMult, -2.0f, 2.0f, "%.2f");
+        ImGui::SliderFloat("Auto Scale Third Person Screen Multiplier", &c.tpScreenMult, 0.0f, 2.0f, "%.2f");
+        ImGui::TreePop();
+    }
+    if (ImGui::Button("Save")) spatialcam::saveConfig();
+    ImGui::SameLine();
+    if (ImGui::Button("Reset to defaults")) spatialcam::resetConfig();
+    ImGui::TreePop();
+}
+
 void drawUi() {
     if (!ImGui::CollapsingHeader("Spatial GUI panel (M1)")) return;
     ImGui::Indent();
@@ -1167,6 +1267,7 @@ void drawUi() {
         ImGui::Checkbox("Remap mouse messages in the message pump", &gS.pumpRemap);
         ImGui::Checkbox("Auto: panel for inventory / chest / crafting screens", &gS.autoPanel);
         ImGui::Checkbox("Java Spatial GUI look (third-person camera, world screen)", &gS.javaStyle);
+        drawJavaConfig();
         ImGui::TextWrapped("M1 prototype: everything the UI draws (HUD included) goes onto the panel while it is on.");
     }
     ImGui::Unindent();

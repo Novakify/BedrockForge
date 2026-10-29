@@ -2,31 +2,50 @@
 // Spatial GUI (tastytrash, CameraMixin.calculateCameraTransform / applyCameraUpdate, default config).
 // Original code for Renderer Foundation (no LeviLamina types here; see SpatialCamera.cpp).
 #pragma once
+#include <filesystem>
 
 namespace rf::spatialcam {
 
-// Java defaults (SpatialGUIConfig): third-person camera + screen placement
-inline constexpr float kCamDistance    = 1.7f;  // cameraDistance (behind the player's feet, along the facing)
-inline constexpr float kCamSide        = -1.2f; // cameraSideOffset (+ = player's left)
-inline constexpr float kCamHeight      = 1.5f;  // cameraHeightOffset (above the feet)
-inline constexpr float kCamPitch       = 10.0f; // cameraTargetPitch (degrees, + = down)
-inline constexpr float kTransitionMs   = 300.0f;
-inline constexpr float kTransitionSkip = 0.15f;
-inline constexpr float kParallaxYaw    = 0.1f;  // thirdPersonMouseSensitivityYaw   (x 90 deg)
-inline constexpr float kParallaxPitch  = 0.03f; // thirdPersonMouseSensitivityPitch (x 180 deg)
-inline constexpr float kScreenDistance = 2.5f;  // screenDistance (from the camera, along the player's facing)
-inline constexpr float kScreenSide     = -0.6f; // screenSideOffset (+ = player's left)
-inline constexpr float kScreenHeight   = -0.4f; // screenHeightOffset
-inline constexpr float kScreenYaw      = 160.0f; // screenYawOffset (180 = squarely facing the player)
-inline constexpr float kScreenScale    = 3.5f;  // screenScale (world height of the full-window GUI texture)
-inline constexpr float kBaselineFov    = 70.0f; // autoFovTuning
-inline constexpr float kScreenPower    = 1.2f;
-inline constexpr float kSideMult       = -0.3f;
-inline constexpr float kDistMult       = 0.8f;
-inline constexpr float kTpScreenMult   = 0.82f;
-inline constexpr float kOpenMs         = 300.0f; // openAnimationDurationMs, easing Back
-inline constexpr float kStartScale     = 0.75f;  // animationStartScalePercent
-inline constexpr float kFadeMs         = 150.0f; // fadeDurationMs
+// All options of the Java mod's config screen (SpatialGUIConfig), same names and defaults. Saved to
+// config/SpatialGUI.json, edited in the F6 menu.
+enum class Easing : int { Back = 0, Cubic, Elastic, Bounce, Expo, Quad, Quart };
+struct Config {
+    // General
+    bool  enabled           = true;
+    bool  fpInventory       = false; // firstPersonModeInventory
+    bool  fpContainers      = false; // firstPersonModeContainers
+    bool  autoScaleByFov    = true;
+    bool  mirrorThirdPerson = false;
+    // Rendering
+    int   screenAlpha = 255;
+    // TP Screen
+    float screenDistance = 2.5f, screenSide = -0.6f, screenHeight = -0.4f, screenYaw = 160.0f, screenPitch = 0.0f, screenScale = 3.5f;
+    // FP Screen
+    float fpDistance = 1.5f, fpSide = 0.0f, fpHeight = 0.0f, fpYaw = 180.0f, fpPitch = 0.0f, fpScale = 1.8f;
+    // TP Camera
+    float camDistance = 1.7f, camSide = -1.2f, camHeight = 1.5f, camPitch = 10.0f;
+    int   transitionMs = 300, transitionSkipPct = 15;
+    float tpSensYaw = 0.1f, tpSensPitch = 0.03f;
+    bool  tpParallaxOff = false, lerpXRot = true;
+    // FP Camera
+    float fpSensYaw = 0.4f, fpSensPitch = 0.12f;
+    bool  fpParallaxOff = false;
+    int   fpPitchClamp = 40;
+    // Animations
+    bool   fade = true;
+    int    fadeMs = 150;
+    bool   scaleAnim = true;
+    int    openMs = 300;
+    Easing easing = Easing::Back;
+    int    startScalePct = 75;
+    // Auto FOV tuning
+    float baselineFov = 70.0f, screenPower = 1.2f, sideMult = -0.3f, distMult = 0.8f, tpScreenMult = 0.82f;
+};
+Config& cfg();
+void    loadConfig(std::filesystem::path const& configDir);
+void    saveConfig();
+void    resetConfig();
+float   applyEasing(Easing e, float t);
 
 /// What the panel needs from the camera this frame (render thread).
 struct View {
@@ -38,6 +57,9 @@ struct View {
     float yawRel   = 0.0f;  // camera yaw minus player yaw (degrees, + = turned right)
     float pitch    = 0.0f;  // camera pitch (degrees, + = down)
     float guiScale = 0.0f;  // Bedrock UI pixels per GUI unit (GuiData::mGuiScale), 0 = unknown
+    bool  firstPerson = false; // first person mode (screen placed along the look direction at open)
+    float fpYaw0 = 0.0f, fpPitch0 = 0.0f; // first person: player yaw / clamped pitch when the screen opened (degrees)
+    float playerYaw = 0.0f;
 };
 
 /// Java SpatialGUIConfig.calculateAutoGuiScale(width, height): largest scale keeping >= 320 x 240 GUI units.
@@ -51,8 +73,9 @@ inline int javaAutoGuiScale(int w, int h) {
 
 void install();
 void uninstall();
-/// Client thread: a container screen opened/closed. Switches the game to third person and starts the glide.
-void setActive(bool on);
+/// Client thread: a container screen opened/closed (inventory = the player inventory screen). Third person mode
+/// switches the game to third person and starts the glide; first person mode keeps the view and only turns it.
+void setActive(bool on, bool inventory = false);
 bool active();
 View view();
 /// Diagnostics text (panel_diag.txt).

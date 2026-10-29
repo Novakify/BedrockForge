@@ -15,7 +15,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <mutex>
+
+#include <nlohmann/json.hpp>
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/mat3x3.hpp>
@@ -49,6 +52,8 @@ using Clock = std::chrono::steady_clock;
 constexpr float kDeg = 0.017453292f;
 
 std::atomic_bool  gActive{false};
+std::atomic_bool  gFirstPerson{false};
+float             gBaseXRot = 0.0f;
 bool              gInstalled = false;
 int               gSavedPerspective = -1;
 Clock::time_point gOpen{};
@@ -214,28 +219,46 @@ void applyComponent() {
         gStartPos   = eye; // Java: the camera position when the screen opened (first person eyes)
         gStartYaw   = yawP;
         gStartPitch = pitchP;
+        float clampP = float(cfg().fpPitchClamp);
+        gBaseXRot   = std::clamp(pitchP, -clampP, clampP); // CameraMixin: baseXRot
     }
-    // CameraUtil.calculateAutoFovDistance / calculateAutoFovSideOffset
-    float fovY = gView.valid ? gView.fovYDeg : kBaselineFov;
-    float fm   = fovY / kBaselineFov;
+    Config const& c  = cfg();
+    bool          fp = gFirstPerson.load();
+    float fovY = gView.valid ? gView.fovYDeg : c.baselineFov;
+    float fm   = c.autoScaleByFov ? fovY / c.baselineFov : 1.0f; // CameraUtil.calculateFovMultiplier
     float inv  = 1.0f / fm - 1.0f;
-    float d    = std::clamp(kCamDistance * (1.0f + inv * kDistMult), -4.0f, 4.0f);
-    float side = std::clamp(kCamSide * (1.0f + inv * kSideMult), -4.0f, 4.0f);
-    float h    = std::clamp(kCamHeight, -4.0f, 4.0f);
-    float mx = 0.0f, my = 0.0f; // parallax (third person): mouse position in [-1, 1]
+    float mx = 0.0f, my = 0.0f; // parallax: mouse position in [-1, 1]
     rf::panel::cursorNdc(mx, my);
     mx = std::clamp(mx, -1.0f, 1.0f);
     my = std::clamp(my, -1.0f, 1.0f);
-    float     targetYaw   = yawP + mx * 90.0f * kParallaxYaw;
-    float     targetPitch = kCamPitch + my * 180.0f * kParallaxPitch;
-    float     r           = yawP * kDeg;
-    glm::vec3 target      = feet + glm::vec3(std::sin(r) * d + std::cos(r) * side, h, -std::cos(r) * d + std::sin(r) * side);
-    float     elapsed     = std::chrono::duration<float, std::milli>(Clock::now() - gOpen).count();
-    float     t           = std::min(1.0f, (elapsed + kTransitionSkip * kTransitionMs) / kTransitionMs);
-    float     e           = easeInOutSine(t);
-    glm::vec3 camPos      = t >= 1.0f ? target : gStartPos + (target - gStartPos) * e;
-    float     camYaw      = t >= 1.0f ? targetYaw : gStartYaw + (targetYaw - gStartYaw) * e;
-    float     camPitch    = t >= 1.0f ? targetPitch : gStartPitch + (targetPitch - gStartPitch) * e;
+    float     elapsed = std::chrono::duration<float, std::milli>(Clock::now() - gOpen).count();
+    glm::vec3 target;
+    float     targetYaw, targetPitch;
+    if (fp) {
+        // CameraMixin.calculateCameraTransform(firstPerson): camera stays at the eyes and turns with the mouse
+        float blend = std::min(1.0f, elapsed / 150.0f);
+        float yawOff = c.fpParallaxOff ? 0.0f : mx * 90.0f * c.fpSensYaw * blend;
+        targetPitch  = c.fpParallaxOff ? gBaseXRot : gBaseXRot + my * 180.0f * c.fpSensPitch * blend;
+        targetPitch  = std::clamp(targetPitch, -90.0f, 90.0f);
+        targetYaw    = yawP + yawOff;
+        target       = eye;
+    } else {
+        // CameraUtil.calculateAutoFovDistance / calculateAutoFovSideOffset
+        float d    = c.autoScaleByFov ? std::clamp(c.camDistance * (1.0f + inv * c.distMult), -4.0f, 4.0f) : c.camDistance;
+        float side = c.autoScaleByFov ? std::clamp(c.camSide * (1.0f + inv * c.sideMult), -4.0f, 4.0f) : c.camSide;
+        if (c.mirrorThirdPerson) side = -side;
+        float h     = std::clamp(c.camHeight, -4.0f, 4.0f);
+        targetYaw   = yawP + (c.tpParallaxOff ? 0.0f : mx * 90.0f * c.tpSensYaw);
+        targetPitch = c.camPitch + (c.tpParallaxOff ? 0.0f : my * 180.0f * c.tpSensPitch);
+        float r     = yawP * kDeg;
+        target      = feet + glm::vec3(std::sin(r) * d + std::cos(r) * side, h, -std::cos(r) * d + std::sin(r) * side);
+    }
+    float     dur      = float(std::max(1, c.transitionMs));
+    float     t        = std::min(1.0f, (elapsed + c.transitionSkipPct / 100.0f * dur) / dur);
+    float     e        = easeInOutSine(t);
+    glm::vec3 camPos   = t >= 1.0f ? target : gStartPos + (target - gStartPos) * e;
+    float     camYaw   = t >= 1.0f ? targetYaw : gStartYaw + (targetYaw - gStartYaw) * e;
+    float     camPitch = t >= 1.0f || !c.lerpXRot ? targetPitch : gStartPitch + (targetPitch - gStartPitch) * e;
 
     glm::mat3 R = orient(camYaw, camPitch) * gC;
     if (gConv == 2) R = glm::transpose(R);
@@ -249,9 +272,13 @@ void applyComponent() {
     gLastCam[0] = camPos.x; gLastCam[1] = camPos.y; gLastCam[2] = camPos.z;
     gLastTarget[0] = target.x; gLastTarget[1] = target.y; gLastTarget[2] = target.z;
     gLastT = t;
-    gView.yawRel     = camYaw - yawP;
-    gView.pitch      = camPitch;
-    gView.overridden = true;
+    gView.yawRel      = camYaw - yawP;
+    gView.pitch       = camPitch;
+    gView.overridden  = true;
+    gView.firstPerson = fp;
+    gView.fpYaw0      = yawP;
+    gView.fpPitch0    = gBaseXRot;
+    gView.playerYaw   = yawP;
 }
 } // namespace
 } // namespace rf::spatialcam
@@ -270,6 +297,71 @@ LL_TYPE_INSTANCE_HOOK(RfLevelCameraPreRenderHook, ll::memory::HookPriority::Norm
 }
 
 namespace rf::spatialcam {
+namespace {
+Config                gCfg;
+std::filesystem::path gCfgFile;
+} // namespace
+Config& cfg() { return gCfg; }
+
+float applyEasing(Easing e, float t) { // AnimationUtil
+    t = std::clamp(t, 0.0f, 1.0f);
+    switch (e) {
+    case Easing::Back: { const float c1 = 1.70158f, c3 = c1 + 1.0f; float x = t - 1.0f; return 1.0f + c3 * x * x * x + c1 * x * x; }
+    case Easing::Elastic: {
+        if (t <= 0.0f || t >= 1.0f) return t;
+        const float c4 = 2.0943951f;
+        return std::pow(2.0f, -10.0f * t) * std::sin((t * 10.0f - 0.75f) * c4) + 1.0f;
+    }
+    case Easing::Bounce: {
+        const float n1 = 7.5625f, d1 = 2.75f;
+        if (t < 1.0f / d1) return n1 * t * t;
+        if (t < 2.0f / d1) { t -= 1.5f / d1; return n1 * t * t + 0.75f; }
+        if (t < 2.5f / d1) { t -= 2.25f / d1; return n1 * t * t + 0.9375f; }
+        t -= 2.625f / d1;
+        return n1 * t * t + 0.984375f;
+    }
+    case Easing::Expo: return t >= 1.0f ? 1.0f : 1.0f - std::pow(2.0f, -10.0f * t);
+    case Easing::Quad: return 1.0f - (1.0f - t) * (1.0f - t);
+    case Easing::Quart: { float x = 1.0f - t; return 1.0f - x * x * x * x; }
+    case Easing::Cubic:
+    default: { float x = 1.0f - t; return 1.0f - x * x * x; }
+    }
+}
+
+#define RF_SG_FIELDS(X)                                                                                                       \
+    X(enabled) X(fpInventory) X(fpContainers) X(autoScaleByFov) X(mirrorThirdPerson) X(screenAlpha) X(screenDistance)       \
+    X(screenSide) X(screenHeight) X(screenYaw) X(screenPitch) X(screenScale) X(fpDistance) X(fpSide) X(fpHeight) X(fpYaw)    \
+    X(fpPitch) X(fpScale) X(camDistance) X(camSide) X(camHeight) X(camPitch) X(transitionMs) X(transitionSkipPct)           \
+    X(tpSensYaw) X(tpSensPitch) X(tpParallaxOff) X(lerpXRot) X(fpSensYaw) X(fpSensPitch) X(fpParallaxOff) X(fpPitchClamp)   \
+    X(fade) X(fadeMs) X(scaleAnim) X(openMs) X(startScalePct) X(baselineFov) X(screenPower) X(sideMult) X(distMult)         \
+    X(tpScreenMult)
+
+void loadConfig(std::filesystem::path const& configDir) {
+    gCfgFile = configDir / "SpatialGUI.json";
+    std::ifstream in(gCfgFile);
+    if (!in) { saveConfig(); return; }
+    try {
+        nlohmann::json j;
+        in >> j;
+#define X(f) if (j.contains(#f)) gCfg.f = j[#f].get<decltype(gCfg.f)>();
+        RF_SG_FIELDS(X)
+#undef X
+        if (j.contains("easing")) gCfg.easing = Easing(std::clamp(j["easing"].get<int>(), 0, 6));
+    } catch (...) {
+    }
+}
+void saveConfig() {
+    if (gCfgFile.empty()) return;
+    nlohmann::json j;
+#define X(f) j[#f] = gCfg.f;
+    RF_SG_FIELDS(X)
+#undef X
+    j["easing"] = int(gCfg.easing);
+    std::ofstream out(gCfgFile, std::ios::trunc);
+    if (out) out << j.dump(4);
+}
+void resetConfig() { gCfg = Config{}; }
+
 void install() {
     if (gInstalled) return;
     RfCameraUpdateHook::hook();
@@ -284,10 +376,14 @@ void uninstall() {
     gInstalled = false;
 }
 
-void setActive(bool on) {
+void setActive(bool on, bool inventory) {
     auto ci = ll::service::getClientInstance();
     if (on && !gActive.load()) {
-        if (ci) {
+        if (!cfg().enabled) return;
+        bool fp = inventory ? cfg().fpInventory : cfg().fpContainers;
+        gFirstPerson = fp;
+        gSavedPerspective = -1;
+        if (ci && !fp) {
             auto& o           = ci->getOptions();
             gSavedPerspective = o.getPlayerViewPerspective();
             if (gSavedPerspective == 0) o.setPlayerViewPerspective(1); // third person back: renders the player model
