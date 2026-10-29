@@ -4955,6 +4955,7 @@ std::string stationHint(Kind k, bool overResult) {
 
 void drawOverlay() {
     std::string hint, tipTitle, tipLine;
+    std::vector<std::pair<std::string, ImU32>> tipLines; // a tooltip of coloured lines (as the Java one) instead of title + line
     bool        boardLabel = false;
     float       boardAt[4] = {}, boardA = 0, boardG = 1;
     float       a = 0, mx = 0, my = 0;
@@ -5016,10 +5017,14 @@ void drawOverlay() {
             }
         }
         if (gS.st.kind == Kind::Enchanting && !moving()) { // EnchantStation.tooltip (the clue and the item's own lines are the hidden screen's)
-            if (gS.enchTarget == EOffer && gS.hoverOffer >= 0) {
-                int need = gS.hoverOffer + 1;
-                tipTitle = need == 1 ? "1 Lapis Lazuli  \xC2\xB7  1 Enchantment Level" : std::to_string(need) + " Lapis Lazuli  \xC2\xB7  " + std::to_string(need) + " Enchantment Levels";
-                tipLine  = affordable(gS.hoverOffer) ? "Touch the rune to enchant" : "Not enough levels or lapis";
+            if (gS.enchTarget == EOffer && gS.hoverOffer >= 0) { // offerTooltip: what it costs (the clue is the server's)
+                int  need = gS.hoverOffer + 1;
+                bool aff  = affordable(gS.hoverOffer);
+                ImU32 gray = IM_COL32(170, 170, 170, 255), red = IM_COL32(255, 85, 85, 255);
+                if (!aff) tipLines.push_back({"Not enough experience or lapis", red});
+                tipLines.push_back({need == 1 ? "1 Lapis Lazuli" : std::to_string(need) + " Lapis Lazuli", aff || gS.cellFull[1] ? gray : red});
+                tipLines.push_back({need == 1 ? "1 Enchantment Level" : std::to_string(need) + " Enchantment Levels", gray});
+                if (aff) tipLines.push_back({"Touch the rune to enchant", IM_COL32(255, 85, 255, 255)});
             } else if (gS.enchTarget == EItem && !gS.carrying) tipTitle = "Click to take it back";
             else if (gS.enchTarget == ESurface && !gS.carrying && !enchItem()) tipTitle = "Lay here what you want to enchant";
             else if (gS.enchTarget == ELapis) {
@@ -5057,7 +5062,16 @@ void drawOverlay() {
         dl->AddText(font, 9.0f * boardG, ImVec2(boardAt[0] + L_PAD * boardG, boardAt[1] + (L_PAD - 1) * boardG),
                     IM_COL32(242, 234, 216, int(0.75f * boardA * 255)), "Patterns");
     // the station's tooltip, vanilla style (dark violet box, gold title)
-    if (!tipTitle.empty()) {
+    if (!tipLines.empty()) {
+        float ts2 = std::max(14.0f, d.y / 54.0f), pad = ts2 * 0.35f, w = 0, h = pad * 2, lh = ts2 * 1.15f;
+        for (auto& l : tipLines) w = std::max(w, font->CalcTextSizeA(ts2, FLT_MAX, 0, l.first.c_str()).x);
+        w += pad * 2;
+        h += lh * tipLines.size();
+        float tx = std::min(mx * d.x + ts2, d.x - w - 4), ty = std::min(my * d.y - ts2 * 0.6f, d.y - h - 4);
+        dl->AddRectFilled(ImVec2(tx, ty), ImVec2(tx + w, ty + h), IM_COL32(16, 0, 16, 240), 0);
+        dl->AddRect(ImVec2(tx + 1, ty + 1), ImVec2(tx + w - 1, ty + h - 1), IM_COL32(80, 0, 255, 90), 0, 0, 2.0f);
+        for (size_t i = 0; i < tipLines.size(); ++i) dl->AddText(font, ts2, ImVec2(tx + pad, ty + pad + lh * i), tipLines[i].second, tipLines[i].first.c_str());
+    } else if (!tipTitle.empty()) {
         float  ts2 = std::max(14.0f, d.y / 54.0f), pad = ts2 * 0.35f;
         ImVec2 t1  = font->CalcTextSizeA(ts2, FLT_MAX, 0, tipTitle.c_str());
         ImVec2 t2  = tipLine.empty() ? ImVec2(0, 0) : font->CalcTextSizeA(ts2, FLT_MAX, 0, tipLine.c_str());
