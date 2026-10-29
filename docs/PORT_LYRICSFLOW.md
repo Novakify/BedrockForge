@@ -105,9 +105,13 @@ Yes. It's high-impact, mostly self-contained, and relies on only three fragile e
 4. **ImGui settings**, custom font import, Apple Music + local .lrc, album palette, localhost bridge, optional sky tint/FX, word-sync data sources.
 5. **Server hardening:** combat-safe defaults, performance caps, a version-update checklist, and a test on Hive/CubeCraft (after checking their rules).
 
-## Queue placement (decision for Fernando)
-Current order: Spatial GUI M1 (input) -> Cinematic Interactions -> GeckoBridge, under the rule "finish current work first".
-LyricsFlow shares RF pieces with Spatial GUI, so the natural slot is right after Spatial GUI M1. Spike S5 (text) could also run earlier, since it doesn't touch existing features.
+## Queue placement (CONFIRMED by Fernando 2026-10-29)
+Order: **Spatial GUI (DONE) -> Cinematic Interactions (in progress) -> LyricsFlow (this) -> GeckoBridge (last)**.
+- Spatial GUI: **ported basically 1-to-1** (major breakthrough). The RF perspective-quad + UI-pass pieces LyricsFlow's
+  world text reuses are now proven in-game, so S1/S2 start from a working base instead of from scratch.
+- LyricsFlow kicks off once **Cinematic Interactions is fully tested and working**. Don't start before then (project rule:
+  finish current work first).
+- Spike S5 (MSDF/pixel text hello-world) is the natural first step at kickoff since it touches no existing feature.
 
 ## Reference videos (studied 2026-10-29, all Java Edition TikTok clips, 576x1024)
 | Video | Source | What it shows | What it means for us |
