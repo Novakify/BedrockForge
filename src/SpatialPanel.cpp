@@ -762,8 +762,17 @@ bool remapAbs(int64_t& ax, int64_t& ay) {
     return true;
 }
 
+// last distinct readings (buttons / absolute in -> out), for click diagnostics
+struct MsLog { unsigned buttons, positions; long long inX, inY, outX, outY; long seq; };
+MsLog             gMsLog[24]{};
+std::atomic<unsigned> gMsLogIdx{0};
+MsLog             gMsPrev{};
+std::atomic<long> gMsSeq{0};
+
 void onMouse(gi::GameInputMouseState* st, bool game) {
     if (!st) return;
+    long seq = ++gMsSeq;
+    long long inX = st->absolutePositionX, inY = st->absolutePositionY;
     ++gMsCalls;
     if (game) ++gMsGame;
     gMsButtons   = unsigned(st->buttons);
@@ -778,6 +787,12 @@ void onMouse(gi::GameInputMouseState* st, bool game) {
     }
     gMsOutX = st->absolutePositionX;
     gMsOutY = st->absolutePositionY;
+    MsLog e{unsigned(st->buttons), unsigned(st->positions), inX, inY, st->absolutePositionX, st->absolutePositionY, seq};
+    if (e.buttons != gMsPrev.buttons || e.inX != gMsPrev.inX || e.inY != gMsPrev.inY || e.outX != gMsPrev.outX || e.outY != gMsPrev.outY ||
+        e.positions != gMsPrev.positions) {
+        gMsPrev = e;
+        gMsLog[gMsLogIdx.fetch_add(1) % 24] = e;
+    }
 }
 template <class T> void onMouse(T, bool) {}
 // Testing aid (uiDebugUseKey, off by default): remote input tools can only send instant right clicks, which the game
@@ -897,7 +912,7 @@ void tryGameMouse() { gGiNote = "built without the GameInput v2 header"; }
 void installEarly() { initGameMod(); }
 
 void writeDiag() {
-    char b[9000];
+    char b[12000];
     snprintf(b, sizeof b,
              "Spatial GUI panel diag v0.12\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
@@ -978,6 +993,15 @@ void writeDiag() {
                         gMsCalls.load(), gMsGame.load(), gMsAbs.load(), gMsRemapped.load(), gMsSpace == 2 ? "client" : gMsSpace == 1 ? "screen" : "unknown",
                         gMatchClient, gMatchScreen, gMsMismatch.load(), gMsButtons, gMsPositions, gMsAbsX, gMsAbsY, gMsOutX, gMsOutY, gMsRelX, gMsRelY,
                         gMsCursor.x, gMsCursor.y, gMsClient.x, gMsClient.y);
+        len += snprintf(b + len, sizeof b - len, "  distinct readings (oldest first): seq buttons positions in -> out\n");
+        {
+            unsigned end = gMsLogIdx.load();
+            for (unsigned k = 0; k < 24; ++k) {
+                auto& e = gMsLog[(end + k) % 24];
+                if (!e.seq) continue;
+                len += snprintf(b + len, sizeof b - len, "   %ld b%x p%x %lld,%lld -> %lld,%lld\n", e.seq, e.buttons, e.positions, e.inX, e.inY, e.outX, e.outY);
+            }
+        }
 #endif
         (void)len;
     }
