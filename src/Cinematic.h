@@ -50,6 +50,7 @@ struct Config {
     int  armStyle      = 0;     // Java armStyle: 0 stretching arms, 1 natural reach (bent), 2 floating forearms
     bool drawArms      = true;  // the player's own skin arms reach into the scene (Hands / ArmMesh)
     bool cubeItems     = true;  // block items stand as little cubes (unwrapped from their inventory icon)
+    bool devScenes     = false; // stations without their own scene yet still lean in (camera + hands; for layout dumps)
     bool dumpUi        = false; // write the hidden screen + found slots to logs/uicapture/cinematic_*.bmp/.txt
     float keyTolerance = 0.035f;
 };

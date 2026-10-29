@@ -1425,7 +1425,7 @@ void loadConfig(std::filesystem::path const& configDir) {
 #define RD(f) if (j.contains(#f)) gCfg.f = j[#f].get<decltype(gCfg.f)>();
         RD(enabled) RD(approachSpeed) RD(leaveSpeed) RD(leanStrength) RD(sceneZoom) RD(quickMode) RD(quickWindow) RD(letterbox)
         RD(livingCamera) RD(cameraShake) RD(screenFlash) RD(reduceMotion) RD(controlHints) RD(hideHand) RD(writeFov) RD(hoverTargets)
-        RD(dumpUi) RD(keyTolerance) RD(fullLean) RD(armStyle) RD(drawArms) RD(cubeItems)
+        RD(dumpUi) RD(keyTolerance) RD(fullLean) RD(armStyle) RD(drawArms) RD(cubeItems) RD(devScenes)
 #undef RD
         if (j.contains("stations"))
             for (int k = 0; k < int(Kind::Count); ++k)
@@ -1442,7 +1442,7 @@ void saveConfig() {
 #define WR(f) j[#f] = gCfg.f;
     WR(enabled) WR(approachSpeed) WR(leaveSpeed) WR(leanStrength) WR(sceneZoom) WR(quickMode) WR(quickWindow) WR(letterbox)
     WR(livingCamera) WR(cameraShake) WR(screenFlash) WR(reduceMotion) WR(controlHints) WR(hideHand) WR(writeFov) WR(hoverTargets)
-    WR(dumpUi) WR(keyTolerance) WR(fullLean) WR(armStyle) WR(drawArms) WR(cubeItems)
+    WR(dumpUi) WR(keyTolerance) WR(fullLean) WR(armStyle) WR(drawArms) WR(cubeItems) WR(devScenes)
 #undef WR
     for (int k = 0; k < int(Kind::Count); ++k) j["stations"][kKeys[k]] = gCfg.mode[k] == 1 ? "spatial" : gCfg.mode[k] == 2 ? "vanilla" : "cinematic";
     std::ofstream out(gCfgFile, std::ios::trunc);
@@ -1469,7 +1469,7 @@ Route onScreen(std::string const& containerTop) {
     Mode m = Mode(gCfg.mode[int(kind)]);
     if (m == Mode::Vanilla) { gS.lastRoute = std::string(kNames[int(kind)]) + ": Vanilla"; return Route::Vanilla; }
     if (m == Mode::Spatial || !gCfg.enabled) { gS.lastRoute = std::string(kNames[int(kind)]) + ": Spatial"; return Route::Spatial; }
-    if (!sceneAvailable(kind)) { gS.lastRoute = std::string(kNames[int(kind)]) + ": scene not ported yet, Spatial"; return Route::Spatial; }
+    if (!sceneAvailable(kind) && !gCfg.devScenes) { gS.lastRoute = std::string(kNames[int(kind)]) + ": scene not ported yet, Spatial"; return Route::Spatial; }
     if (gS.phase == Phase::Outro) finish(); // used again while still stepping away
     if (!begin(kind, bx, by, bz)) { gS.lastRoute = std::string(kNames[int(kind)]) + ": " + gS.refused + ", Spatial"; return Route::Spatial; }
     gS.lastRoute = std::string(kNames[int(kind)]) + ": Cinematic";
@@ -4041,6 +4041,7 @@ void drawUi() {
         const char* arms[] = {"Original stretching arms", "Natural reach (as stretching for now)", "Floating forearms"};
         ImGui::Combo("Arm style", &gCfg.armStyle, arms, 3);
         ImGui::Checkbox("Block items stand as cubes", &gCfg.cubeItems);
+        ImGui::Checkbox("Lean in at stations without a scene yet (testing)", &gCfg.devScenes);
         ImGui::Checkbox("Hide the vanilla hand in scenes", &gCfg.hideHand);
         ImGui::Checkbox("Narrow the view (field of view)", &gCfg.writeFov);
         ImGui::Checkbox("Hidden screen cursor follows the hovered slot", &gCfg.hoverTargets);
