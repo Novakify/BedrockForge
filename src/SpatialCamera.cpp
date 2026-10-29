@@ -103,6 +103,7 @@ float  gLastCamYaw = 0.0f, gLastCamPitch = 0.0f;  // last applied camera angle (
 std::atomic_bool gPendingSnap{false};
 std::atomic_bool gForcedFp{false}; // CameraUtil.checkBlockCollision switched this screen to first person
 long  gAvatarWrites = 0;
+float gReadHead = 0, gReadBody = 0;
 
 float wrapDeg(float a) {
     a = std::fmod(a, 360.0f);
@@ -118,6 +119,7 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
     auto  body = ec.tryGetComponent<MobBodyRotationComponent>();
     auto  rot  = ec.tryGetComponent<ActorRotationComponent>();
     if (!head || !body || !rot) return;
+    gReadHead = head->mYHeadRot; gReadBody = body->mYBodyRot; // before our write: what the game set this frame
     if (!on) {
         if (gAvatar.saved) {
             head->mYHeadRot = gAvatar.headYaw; head->mYHeadRotO = gAvatar.headYawO;
@@ -553,8 +555,8 @@ void appendDiag(char* b, unsigned long long cap) {
                          gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch, gView.guiScale);
     len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",
                          gConv, gConvTries, gCompMiss, gLastM[0], gLastM[3], gLastM[6], gLastM[1], gLastM[4], gLastM[7], gLastM[2], gLastM[5], gLastM[8]);
-    len += std::snprintf(b + len, cap - len, "  avatar writes %ld saved %d smoothed yaw %.1f pitch %.1f; first person %d (forced by block %d)\n",
-                         gAvatarWrites, gAvatar.saved ? 1 : 0, gAvatar.sYaw, gAvatar.sPitch, gFirstPerson.load() ? 1 : 0, gForcedFp.load() ? 1 : 0);
+    len += std::snprintf(b + len, cap - len, "  avatar writes %ld saved %d smoothed yaw %.1f pitch %.1f; orig head %.1f body %.1f pitch %.1f; last read head %.1f body %.1f; first person %d (forced by block %d)\n",
+                         gAvatarWrites, gAvatar.saved ? 1 : 0, gAvatar.sYaw, gAvatar.sPitch, gAvatar.headYaw, gAvatar.bodyYaw, gAvatar.pitch, gReadHead, gReadBody, gFirstPerson.load() ? 1 : 0, gForcedFp.load() ? 1 : 0);
     for (int i = 0; i < gEntN && len < cap; ++i)
         len += std::snprintf(b + len, cap - len, "  entity %s comp %d active %d pos %.2f,%.2f,%.2f\n", gEnt[i].kind == 0 ? "GAME" : "preset", gEnt[i].hasComp,
                              gEnt[i].active, gEnt[i].pos[0], gEnt[i].pos[1], gEnt[i].pos[2]);

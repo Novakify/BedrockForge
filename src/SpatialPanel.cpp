@@ -424,6 +424,11 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     gLast    = now;
     dt       = std::clamp(dt, 0.0f, 0.1f);
     applyWanted();
+    {
+        static ULONGLONG lastDiag = 0;
+        ULONGLONG        nowMs    = GetTickCount64();
+        if (gEnabled && nowMs - lastDiag > 1000) { lastDiag = nowMs; writeDiag(); } // live diagnostics while open
+    }
     float target = gEnabled ? 1.0f : 0.0f;
     float step   = gS.seconds > 0.01f ? dt / gS.seconds : 1.0f;
     if (gS.javaStyle) gT = target; // Java: the screen pops in (scale + fade below) and is gone when it closes
