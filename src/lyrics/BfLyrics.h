@@ -17,7 +17,7 @@ extern "C" {
 enum BfGlyphFlags : uint32_t {
     BF_GLYPH_SCREEN   = 1u << 0, // pos/right/up are screen units: x 0..aspect, y 0..1 (down); z unused
     BF_GLYPH_BITMAP   = 1u << 1, // atlas is a plain alpha bitmap (pixel font): nearest sampling, no SDF maths
-    BF_GLYPH_MSDF     = 1u << 2, // atlas is multi-channel SDF (median of rgb); otherwise single-channel SDF in .a
+    BF_GLYPH_MSDF     = 1u << 2, // atlas is multi-channel SDF (median of rgb); otherwise single-channel SDF in .r (grey PNG)
     BF_GLYPH_LETTER   = 1u << 3, // falling letter (physics) - informational
     BF_GLYPH_GRADIENT = 1u << 4, // vertical gradient fill -> fill2 at the bottom of the quad
 };
