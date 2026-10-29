@@ -366,6 +366,9 @@ bool remapClient(HWND hwnd, int& ix, int& iy) {
 
 // In-world screens read the cursor with GetCursorPos (the title screen uses the WM_* coordinates): remap both.
 using GetCursorPos_t = BOOL(WINAPI*)(LPPOINT);
+struct GcpPair { long inX, inY, outX, outY; };
+GcpPair gGcpRing[4]{};
+std::atomic<unsigned> gGcpRingIdx{0};
 void* gGcpTarget = nullptr;
 void* gGcpOrig   = nullptr;
 BOOL WINAPI getCursorPosHook(LPPOINT p) {
@@ -373,6 +376,7 @@ BOOL WINAPI getCursorPosHook(LPPOINT p) {
     HWND h = gHwnd.load(std::memory_order_relaxed);
     if (r && p && h && gEnabled.load(std::memory_order_relaxed)) {
         ++gGcpCalls;
+        POINT in = *p;
         POINT c = *p;
         if (ScreenToClient(h, &c)) {
             int  x = c.x, y = c.y;
@@ -385,9 +389,46 @@ BOOL WINAPI getCursorPosHook(LPPOINT p) {
                 }
             }
         }
+        unsigned slot = gGcpRingIdx.fetch_add(1) % 4;
+        gGcpRing[slot] = {in.x, in.y, p->x, p->y};
     }
     return r;
 }
+// v0.4 diagnostics: which mouse source the in-world menus actually read.
+// GetRawInputData (polled raw mouse), ClipCursor (cursor capture) and the last few GetCursorPos in/out pairs.
+using GetRawInputData_t = UINT(WINAPI*)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
+using ClipCursor_t      = BOOL(WINAPI*)(const RECT*);
+void* gRawTarget = nullptr;
+void* gRawOrig   = nullptr;
+void* gClipTarget = nullptr;
+void* gClipOrig   = nullptr;
+std::atomic<long> gRawReads{0}, gRawMouseReads{0}, gClipCalls{0};
+std::atomic<long> gRawDx{0}, gRawDy{0};
+std::atomic<unsigned> gRawBtn{0};
+RECT gLastClip{};
+UINT WINAPI rawInputHook(HRAWINPUT h, UINT cmd, LPVOID data, PUINT size, UINT hdrSize) {
+    UINT r = reinterpret_cast<GetRawInputData_t>(gRawOrig)(h, cmd, data, size, hdrSize);
+    if (data && r != UINT(-1) && gEnabled.load(std::memory_order_relaxed) && cmd == RID_INPUT) {
+        ++gRawReads;
+        auto* ri = reinterpret_cast<RAWINPUT*>(data);
+        if (ri->header.dwType == RIM_TYPEMOUSE) {
+            ++gRawMouseReads;
+            gRawDx = ri->data.mouse.lLastX;
+            gRawDy = ri->data.mouse.lLastY;
+            gRawBtn = ri->data.mouse.usButtonFlags;
+        }
+    }
+    return r;
+}
+
+BOOL WINAPI clipCursorHook(const RECT* r) {
+    if (gEnabled.load(std::memory_order_relaxed)) {
+        ++gClipCalls;
+        if (r) gLastClip = *r;
+    }
+    return reinterpret_cast<ClipCursor_t>(gClipOrig)(r);
+}
+
 void installCursorHook() {
     if (gGcpTarget) return;
     HMODULE u = GetModuleHandleW(L"user32.dll");
@@ -402,15 +443,41 @@ void installCursorHook() {
         gHookNote = "GetCursorPos hook failed rc " + std::to_string(rc);
         ll_shim::warn("[RF] spatial panel: " + gHookNote);
     }
+    if (!gRawTarget && u) {
+        void* rt = reinterpret_cast<void*>(GetProcAddress(u, "GetRawInputData"));
+        if (rt && ll_shim::hook(rt, reinterpret_cast<void*>(&rawInputHook), &gRawOrig) == 0) gRawTarget = rt;
+    }
+    if (!gClipTarget && u) {
+        void* ct = reinterpret_cast<void*>(GetProcAddress(u, "ClipCursor"));
+        if (ct && ll_shim::hook(ct, reinterpret_cast<void*>(&clipCursorHook), &gClipOrig) == 0) gClipTarget = ct;
+    }
 }
 
 void writeDiag() {
-    char b[512];
+    char b[1600];
     snprintf(b, sizeof b,
-             "Spatial GUI panel diag\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
-             "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\nstatus: %s\n",
+             "Spatial GUI panel diag v0.4\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
+             "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
+             "GetRawInputData reads: %ld, mouse: %ld (last dx %ld dy %ld buttons 0x%x) hook %s\n"
+             "ClipCursor calls: %ld (last rect %ld,%ld-%ld,%ld) hook %s\n"
+             "last GetCursorPos in->out (oldest->newest):\n%s"
+             "status: %s\n",
              gHookNote.c_str(), gGcpCalls.load(), gGcpInClient.load(), gGcpRemapped.load(), gWmSeen.load(), gWmRemapped.load(),
-             gRawSeen.load(), gRawEaten.load(), gStatus.c_str());
+             gRawSeen.load(), gRawEaten.load(), gRawReads.load(), gRawMouseReads.load(), gRawDx.load(), gRawDy.load(),
+             gRawBtn.load(), gRawTarget ? "on" : "off", gClipCalls.load(), gLastClip.left, gLastClip.top, gLastClip.right,
+             gLastClip.bottom, gClipTarget ? "on" : "off",
+             [] {
+                 static char s[4][80];
+                 std::string out;
+                 unsigned end = gGcpRingIdx.load();
+                 for (unsigned k = 0; k < 4; ++k) {
+                     unsigned i = (end + k) % 4;
+                     snprintf(s[k], sizeof s[k], "  in %ld,%ld -> out %ld,%ld\n", gGcpRing[i].inX, gGcpRing[i].inY, gGcpRing[i].outX, gGcpRing[i].outY);
+                     out += s[k];
+                 }
+                 return out;
+             }().c_str(),
+             gStatus.c_str());
     uicapture::writeText("panel_diag.txt", b);
 }
 
