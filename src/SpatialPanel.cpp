@@ -392,6 +392,7 @@ void applyWanted() {
     if ((w == 1) != gEnabled.load()) toggle();
 }
 
+std::atomic_bool gRecipeBook{false};
 void noteScreen(void const* stack, std::string const& name) {
     std::lock_guard l(gScreenMutex);
     StackTop* st = nullptr;
@@ -410,8 +411,12 @@ void noteScreen(void const* stack, std::string const& name) {
     if (want != gLastWant) {
         gLastWant = want;
         gWanted   = want ? 1 : 0;
-        bool inv = false;
-        for (auto& t : gStackTops) inv = inv || t.name.find("inventory_screen") != std::string::npos;
+        bool inv = false, book = false;
+        for (auto& t : gStackTops) {
+            inv  = inv || t.name.find("inventory_screen") != std::string::npos;
+            book = book || t.name.find("crafting_screen") != std::string::npos; // Bedrock shows the recipe book here
+        }
+        gRecipeBook = book;
         if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want, inv); // client thread
     }
 }
@@ -459,6 +464,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         float       tt  = std::min(1.0f, ms / float(std::max(1, sc.openMs)));
         float       s0  = sc.startScalePct / 100.0f;
         float scale = sc.scaleAnim ? s0 + (1.0f - s0) * spatialcam::applyEasing(sc.easing, tt) : 1.0f;
+        if (gRecipeBook.load()) scale /= std::max(1.0f, sc.recipeBookShrink); // recipe book open: wider screen
         fade        = (sc.fade ? std::min(1.0f, ms / float(std::max(1, sc.fadeMs))) : 1.0f) * (sc.screenAlpha / 255.0f);
         // The Java mod renders the screen at its own auto GUI scale (>= 320 x 240 units); Bedrock's UI is smaller in
         // the window, so magnify the texture by java/bedrock scale to give the GUI the same world size.
