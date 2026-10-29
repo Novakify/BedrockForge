@@ -25,3 +25,40 @@ you must also offer its complete source code under the same licence.
   hooks, D3D12 queue captured from `ExecuteCommandLists`, Win32 input instead of WinRT. Options live in the mod's
   config folder (`config/RendererFoundation.json`).
 - Removed bundled Detours / ImGui / GSL copies (xmake packages instead).
+
+## Spatial GUI + Cinematic Interactions (ported into this mod)
+The in-world container screens (`src/SpatialPanel.cpp`, `src/SpatialCamera.cpp`) and the station scenes
+(`src/Cinematic.cpp`, `src/CinematicGame.cpp`, `src/HammerModel.h`) are C++ ports of two Java Edition mods. Their
+code is used under the MIT licence; the notices below are kept as those licences require.
+
+### Spatial GUI
+- Original work: **Spatial GUI** by **tastytrash** - https://github.com/tastytrash/Spatial-GUI
+- Licence: MIT License, Copyright (c) 2026 tastytrash.
+
+### Cinematic Interactions
+- Original work: **Cinematic Interactions** by **Southware** - https://github.com/dcvke/CinematicInteractions
+- Licence: MIT License, Copyright (c) 2026 Southware.
+
+### "Just a Hammer" (the anvil scene's hammer, `src/HammerModel.h`)
+- Creator: **RDiamonds** - https://sketchfab.com/3d-models/just-a-hammer-0b069177ed664af1b8efec018bc55cee
+- Licence: Creative Commons Attribution 4.0 International (CC BY 4.0) - https://creativecommons.org/licenses/by/4.0/
+- Changes: Cinematic Interactions converted the glTF geometry to Minecraft JSON, remapped the UVs, renamed the
+  textures and adjusted scale and grip; this port converts that JSON model and its textures into a C++ header
+  (`tools/gen_hammer.py`). The source textures are unchanged. No endorsement by the creator is implied.
+
+### MIT License (applies to the Spatial GUI and Cinematic Interactions code named above)
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Block textures shown in the scenes (the grindstone's wheel, the stonecutter's blade) are read at runtime from the
+game's own installed resource pack; none are redistributed here. Minecraft is a trademark of Mojang Studios / Microsoft.

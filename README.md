@@ -11,6 +11,12 @@ contributors - **AGPL-3.0** (see `LICENSE`, `NOTICE.md`).
 - **Reload shaders** (experimental on 1.26) - button or a configurable key.
 - **Vibrant Visuals toggle** - switches the game's own graphics mode where the game allows it.
 - **ImGui overlay** - `F6` to show/hide; performance, shader and graphics panels, recently served materials.
+- **Spatial GUI + Cinematic Interactions** (ports of the Java mods by tastytrash and Southware, MIT) - container
+  screens float in the world, and work stations (crafting table, furnace, smoker, blast furnace, anvil, grindstone,
+  ...) play as cinematic scenes: the camera leans in, the vanilla screen is hidden and you work on the block itself.
+  Per station: Cinematic / Spatial / Vanilla in `F6 > Cinematic Interactions (stations)`; a scene that cannot play
+  where you stand falls back to Spatial GUI. The anvil's hammer is "Just a Hammer" by RDiamonds (CC BY 4.0).
+  Credits and licences: `NOTICE.md`.
 
 Load order inside a pack folder: resource packs > selected shaderpack > vanilla.
 
