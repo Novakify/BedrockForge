@@ -256,7 +256,7 @@ struct Station {
 
 // ================================================================ hidden screen layout (slot detection)
 constexpr int kButtons = 24;               // option buttons sampled (stonecutter recipes, ...)
-constexpr int kSampledN = 11 + kButtons;   // 9 grid + result + the parked cursor + buttons
+constexpr int kSampledN = 11 + kButtons + 1; // 9 grid + result + the parked cursor + buttons + the loom's preview
 struct Rect { float x = 0, y = 0, w = 0, h = 0; float cx() const { return x + w * 0.5f; } float cy() const { return y + h * 0.5f; } };
 struct Layout {
     bool  valid = false;
@@ -331,7 +331,8 @@ struct Scene {
     bool    resultBlock = false;
     float   iconBox[kSampledN][4] = {};
     float   iconRgb[kSampledN][3] = {}; // mean colour of the icon (stone dust)
-    bool    btnFull[kButtons] = {};  // per sampled slot: x0 y0 x1 y1 in 0..1 of the slot inside
+    bool    btnFull[kButtons] = {};
+    bool    previewFull = false;    // the loom's preview shows a banner  // per sampled slot: x0 y0 x1 y1 in 0..1 of the slot inside
     // TableStation / Hands
     bool    haveAim = false;
     V3      aim;
@@ -2623,6 +2624,12 @@ bool sampledRect(Layout const& L, int s, Rect& r) {
     if (s < 9) { if (!L.hasGrid || (L.kind != int(Kind::Table) && s >= L.nRoles)) return false; r = L.grid[s]; }
     else if (s == 9) { if (!L.hasResult) return false; r = L.result; }
     else if (s == 10) { float x, y; neutralPoint(L, x, y); r = {x - L.slot * 0.5f, y - L.slot * 0.5f, L.slot, L.slot}; return true; }
+    else if (s == 11 + kButtons) {
+        if (!L.hasPreview) return false;
+        float in = L.slot * 16.0f / 18.0f;
+        r = {L.preview.cx() - in * 0.5f, L.preview.cy() - in * 0.5f, in, in};
+        return true;
+    }
     else { if (s - 11 >= L.nButtons) return false; r = L.buttons[s - 11]; }
     // the 16 px icon sits in the middle of the slot (a big result slot too)
     float in = L.slot * 16.0f / 18.0f;
@@ -2665,7 +2672,8 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                 int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1, violet = 0;
                 double sr = 0, sgc = 0, sb = 0;
                 float  ref[3] = {0, 0, 0}; // a button's own ground: its inside corner
-                if (s >= 11) {
+                if (s == 11 + kButtons) { ref[0] = ref[1] = ref[2] = 73 / 255.0f; }
+                else if (s >= 11) {
                     uint8_t const* q = static_cast<uint8_t*>(p) + size_t(s) * gG.srStride + size_t(1) * gG.srPitch + size_t(1) * 4;
                     float a = std::max(q[3] / 255.0f, 1e-3f);
                     ref[0] = (bgra ? q[2] : q[0]) / 255.0f / a; ref[1] = q[1] / 255.0f / a; ref[2] = (bgra ? q[0] : q[2]) / 255.0f / a;
@@ -2716,6 +2724,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
             gS.carrying     = full[10];
             gS.carriedBlock = block[10];
             for (int s = 0; s < kSampled; ++s) { std::memcpy(gS.iconBox[s], box[s], sizeof box[s]); std::memcpy(gS.iconRgb[s], rgb[s], sizeof rgb[s]); }
+            gS.previewFull = L.hasPreview && full[11 + kButtons];
             for (int k = 0; k < kButtons; ++k) {
                 gS.btnFull[k] = k < L.nButtons && full[11 + k]; gS.btnBlock[k] = block[11 + k];
                 std::memcpy(gS.btnRef[k], refs[11 + k], sizeof refs[11 + k]);
@@ -4038,7 +4047,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             if (t < 0) {
                 if (gS.cellFull[0]) {
                     // Bedrock's own preview of the banner (with the pattern under the cursor), as the Java cloth shows it
-                    if (L.hasPreview) {
+                    if (L.hasPreview && gS.previewFull) {
                         IconSrc pv{L.preview, {0, 0, 1, 1}};
                         float   ground[3] = {73 / 255.0f, 73 / 255.0f, 73 / 255.0f};
                         gKeyOv = ground;
