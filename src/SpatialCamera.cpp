@@ -285,7 +285,7 @@ void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::ve
     float           fovScale = 1.0f;
     bool            on       = rf::cine::cameraPose(e, yawP, pitchP, p, fovScale);
     for (int i = 0; i < nComp; ++i) {
-        float& f = *comps[i]->mFieldOfView;
+        float& f = comps[i]->mFieldOfView;
         FovMem* m = nullptr;
         for (int k = 0; k < gFovN; ++k) if (gFov[k].comp == comps[i]) m = &gFov[k];
         if (!m && gFovN < 24) { m = &gFov[gFovN++]; m->comp = comps[i]; m->base = f; m->written = f; }
