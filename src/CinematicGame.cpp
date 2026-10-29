@@ -75,7 +75,7 @@ bool useHitBlock() {
     HitResult& hit = a->getLevel().getHitResult();
     if (hit.mType != HitResultType::Tile) return false;
     Player& p = *static_cast<Player*>(a);
-    auto&   gm = *p.mGameMode;
+    GameMode* gm = &*p.mGameMode; // the storage hands out the GameMode itself
     if (!gm) return false;
     gm->buildBlock(hit.mBlock, hit.mFacing, HandSlot::Mainhand, false);
     return true;
