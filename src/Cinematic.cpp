@@ -28,6 +28,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CinematicGame.h"
+#include "FxTextures.h"
 #include "HammerModel.h"
 #include "LLShim.h"
 #include "SpatialCamera.h"
@@ -112,7 +113,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom; }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -156,8 +157,9 @@ struct Station {
     V3   top;                     // TableStation.top
     bool lit = false;             // a lit furnace (block name lit_*)
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
+    std::vector<V3> shelves;      // EnchantStation.shelves: the bookshelves that empower the table (centres)
     V3 center() const {
-        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography || kind == Kind::Loom ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
+        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography || kind == Kind::Loom || kind == Kind::Enchanting ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
     }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
@@ -172,7 +174,7 @@ struct Station {
     V3 right() const { return dirVec(clockWise(opposite(side))); }
     V3 workPoint() const { return center(); }
     bool workOnTop() const { return !isFurnace(kind); }
-    double leanFov() const { return kind == Kind::Grindstone ? 64 : 66; }
+    double leanFov() const { return kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : 66; }
     // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
         if (isFurnace(kind)) {
@@ -182,6 +184,13 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Enchanting) { // EnchantStation.lean
+            V3    eye = top + sideV() * 1.15 + V3{0, 1.0, 0};
+            JPose p;
+            p.pos = eye;
+            lookAngles(top + V3{0, 0.5, 0} - eye, p.yaw, p.pitch);
             return p;
         }
         if (kind == Kind::Loom) { // LoomStation.lean
@@ -380,12 +389,19 @@ struct Scene {
     float  boardRect[4] = {}; // x y w h (client px) of the glass board as last drawn
     float  boardGui = 1;
     double grindPrevT = -1;
+    // EnchantStation
+    int    enchTarget = 0, hoverOffer = -1, ritualOffer = 0, ritualLapis = 0, denyOffer = -1, lastHoverOffer = -1;
+    bool   aimAir = false, burstDone = false, offerAff[3] = {}, ritualAff = true;
+    double offersAt = -10, burstAt = -10, denyAt = -10, glow = 0, lapisFocus = 0, enchTick = 0;
+    long   offersPrint = -1;
+    V3     ritualFrom;
     bool   resultFull3() const { return cellFull[2]; } // the menu's result slot (anvil, grindstone, cartography: slot 2)
     std::string lastRoute = "-";
     long    scenes = 0;
 } gS;
 std::mutex gM; // gS
 double cameraKick();
+double moveTime();
 void   moveFrame();
 
 LARGE_INTEGER gLastQpc{};
@@ -501,6 +517,19 @@ bool begin(Kind kind, int bx, int by, int bz) {
     }
     st.side = freeSide(st, feet, allowed);
     if (kind == Kind::Stonecutter) st.top = {bx + 0.5, by + 9 / 16.0, bz + 0.5}; // StonecutterStation.topOf: the table top
+    if (kind == Kind::Enchanting) {
+        st.top = {bx + 0.5, by + 0.75, bz + 0.5}; // EnchantFx.top
+        // EnchantFx.shelves: EnchantingTableBlock.BOOKSHELF_OFFSETS (the ring two out, at the table's height and one up),
+        // each with the block half-way to it free
+        for (int dy = 0; dy <= 1; ++dy)
+            for (int dx = -2; dx <= 2; ++dx)
+                for (int dz = -2; dz <= 2; ++dz) {
+                    if (std::abs(dx) != 2 && std::abs(dz) != 2) continue;
+                    if (game::blockName(bx + dx, by + dy, bz + dz) != "minecraft:bookshelf") continue;
+                    if (solidAt(bx + dx / 2, by + dy, bz + dz / 2)) continue;
+                    st.shelves.push_back({bx + dx + 0.5, by + dy + 0.5, bz + dz + 0.5});
+                }
+    }
     if (kind == Kind::Grindstone) {
         // GrindstoneStation.wheelCenter: between its posts on the floor, from a wall (pushed out from it) or under a ceiling
         std::string sn = game::blockStates(bx, by, bz);
@@ -846,6 +875,11 @@ constexpr double FORGE_LENGTH = 2.05, SWING = 0.09;
 constexpr double BLOWS[3] = {0.7, 1.02, 1.3};
 constexpr double PUT_AWAY = BLOWS[2] + 0.32;
 double moveTime() { double t = gS.clock - gS.moveAt; return gS.moveOn && t >= 0 && t <= gS.moveLength ? t : -1; }
+// EnchantStation / EnchantFx numbers
+constexpr double OFFER_HIGH = 0.92, OFFER_LOW = 0.74, OFFER_FAR = -0.12, OFFER_NEAR = 0.02, OFFER_SPREAD = 0.4;
+constexpr double RITUAL_LENGTH = 1.5, RITUAL_PEAK = 0.5, E_ITEM_SIZE = 0.34, LAPIS_RADIUS = 0.115;
+constexpr double LAPIS_RIGHT = 0.44, LAPIS_NEAR = 0.18, LAPIS_LIFT = 0.27;
+constexpr double OUTER_LIFT = 0.012, INNER_LIFT = 0.02, HINT_LIFT = 0.028, SOCKET_LIFT = 0.016;
 bool   moving() { return moveTime() >= 0; }
 double sinceBlow(double t) {
     double since = 1e9;
@@ -866,9 +900,18 @@ double cameraKick() {
     if (gS.st.kind == Kind::Grindstone) return grindKick(t);
     if (gS.st.kind == Kind::Stonecutter) return stoneKick(t);
     if (gS.st.kind == Kind::Smithing) return smithKick(t);
+    if (gS.st.kind == Kind::Enchanting) { // EnchantStation.cameraKick
+        double u = t / RITUAL_LENGTH, peak = RITUAL_PEAK / RITUAL_LENGTH;
+        return u < peak ? 0.6 * smoother(u / peak) : std::exp(-(u - peak) * RITUAL_LENGTH * 3.2);
+    }
     return 0;
 }
 double stationFlash(float rgb[3]) {
+    if (gS.st.kind == Kind::Enchanting) { // EnchantStation.flash: the white-violet flash of the burst
+        double d = gS.clock - gS.burstAt;
+        rgb[0] = 0xE8 / 255.0f; rgb[1] = 0xDC / 255.0f; rgb[2] = 1;
+        return d >= 0 && d < 0.5 ? std::pow(1 - d / 0.5, 2) * 0.26 : 0;
+    }
     double t = moveTime();
     if (t < 0) return 0;
     if (gS.st.kind == Kind::Anvil) { rgb[0] = 1; rgb[1] = 0xE6 / 255.0f; rgb[2] = 0xB8 / 255.0f; return 0.11 * std::exp(-sinceBlow(t) * 16); }
@@ -1302,6 +1345,97 @@ void loomAction(int t, unsigned bit, bool shift) {
     gS.tapAt = gS.clock;
 }
 
+
+// ---------------------------------------------------------------- EnchantStation (vanilla geometry)
+// Hidden screen: grid[0] the item, grid[1] the lapis; buttons[0..2] the three offers, buttons[3..5] the right end of
+// each (the level cost), buttons[6..8] its left end, buttons[9..11] the middle (the runes)
+enum EnchTarget { ENone, ESurface, EItem, ELapis, EOffer };
+/// how far into the rite, 0..1 of RITUAL_LENGTH, or -1
+double ritualTime() { double t = moveTime(); return gS.st.kind == Kind::Enchanting && t >= 0 ? std::min(1.0, t / RITUAL_LENGTH) : -1; }
+V3 enchItemCenter(double clock) { return gS.st.top + V3{0, 0.62 + std::sin(clock * 1.6) * 0.025, 0}; } // EnchantFx.itemCenter
+V3 enchItemPos() {
+    double t    = ritualTime();
+    double lift = t >= 0 ? 0.1 * hump(window(t * RITUAL_LENGTH, 0.2, 1.3)) : 0;
+    return enchItemCenter(gS.clock) + V3{0, lift, 0};
+}
+V3 lapisCorner() { return gS.st.top + gS.st.sideV() * LAPIS_NEAR + gS.st.right() * LAPIS_RIGHT + V3{0, LAPIS_LIFT, 0}; }
+/// the offers hang in a crown over the item: the middle one highest, the outer ones beside it and towards the player
+V3 sigilPos(int k) {
+    int    off = k - 1;
+    V3     at  = gS.st.top + V3{0, off == 0 ? OFFER_HIGH : OFFER_LOW, 0} + gS.st.sideV() * (off == 0 ? OFFER_FAR : OFFER_NEAR) + gS.st.right() * (off * OFFER_SPREAD);
+    at = at + V3{0, 0.015 * std::sin(gS.clock * 1.3 + k * 2.1), 0};
+    if (k == gS.denyOffer) {
+        double d = gS.clock - gS.denyAt;
+        if (d >= 0 && d < 0.35) at = at + gS.st.right() * (0.02 * std::sin(d * 60) * (1 - d / 0.35));
+    }
+    return at;
+}
+bool enchItem() { return gS.cellFull[0]; }
+bool offered(int k) { return k >= 0 && k < 3 && gS.btnFull[3 + k] && enchItem(); } // an offer prints its level cost
+/// Bedrock prints an offer's level cost green while the player can pay for it (red / dark when not)
+bool affordable(int k) {
+    if (!offered(k)) return false;
+    float const* c = gS.iconRgb[11 + 3 + k];
+    return c[1] > c[0] + 0.12f && c[1] > c[2] + 0.12f;
+}
+/// the carried stack is lapis (its icon blue)
+bool carryingLapis() { float const* c = gS.iconRgb[10]; return gS.carrying && c[2] > c[0] + 0.15f && c[2] > c[1] + 0.05f; }
+bool underMin(Basis const& b, float mx, float my, V3 center, double radius, float minGui) { // EnchantStation.under (at least 8 GUI px)
+    float ax, ay, ex, ey;
+    if (!toPixel(gS.last, b, center, gW, gH, ax, ay) || !toPixel(gS.last, b, center + V3{0, radius, 0}, gW, gH, ex, ey)) return false;
+    float gui = float(spatialcam::javaAutoGuiScale(gW, gH));
+    return std::hypot(mx - ax, my - ay) < std::max(minGui * gui, std::hypot(ax - ex, ay - ey));
+}
+int enchCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
+    gS.enchTarget = ENone;
+    gS.hoverOffer = -1;
+    gS.aimAir     = false;
+    bool rite = ritualTime() >= 0;
+    if (!rite)
+        for (int k = 0; k < 3; ++k)
+            if (offered(k) && underMin(b, mx, my, sigilPos(k), 0.15, 8)) {
+                gS.enchTarget = EOffer; gS.hoverOffer = k; gS.haveAim = true; gS.aim = sigilPos(k); gS.aimAir = true;
+                return 200 + k;
+            }
+    if (enchItem() && underMin(b, mx, my, enchItemPos(), 0.15, 8)) {
+        gS.enchTarget = EItem; gS.haveAim = true; gS.aim = enchItemPos(); gS.aimAir = true;
+        return rite ? -1 : 0;
+    }
+    // the socket and lapis count point the hand to the same place
+    V3 hit;
+    if (underMin(b, mx, my, lapisCorner() + V3{0, 0.06, 0}, 0.09, 8) ||
+        (onPlaneY(o, d, lapisCorner().y, hit) && (hit - lapisCorner()).len() <= LAPIS_RADIUS)) {
+        gS.enchTarget = ELapis; gS.haveAim = true; gS.aim = lapisCorner(); gS.aimAir = true;
+        return rite ? -1 : 1;
+    }
+    if (!onPlaneY(o, d, gS.st.top.y, hit)) return -1;
+    V3 rel = hit - gS.st.top;
+    if (std::fabs(rel.x) > 0.52 || std::fabs(rel.z) > 0.52) return -1;
+    gS.enchTarget = ESurface;
+    gS.haveAim    = true;
+    gS.aim        = {gS.st.top.x + std::clamp(rel.x, -0.43, 0.43), gS.st.top.y, gS.st.top.z + std::clamp(rel.z, -0.43, 0.43)};
+    return rite ? -1 : 0;
+}
+void enchAction(int t, unsigned bit, bool shift) {
+    (void)shift;
+    if (t < 200 || t > 202 || ritualTime() >= 0) return;
+    int k = t - 200;
+    if (!offered(k)) return;
+    (void)bit;
+    if (!affordable(k)) { gS.denyAt = gS.clock; gS.denyOffer = k; return; }
+    // EnchantStation.startRitual: the window's own button; the item is drawn as it was until the light breaks
+    gS.ritualFrom  = sigilPos(k);
+    gS.ritualOffer = k;
+    gS.ritualLapis = k + 1;
+    gS.burstDone   = false;
+    inject(300 + k, 1);
+    gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = RITUAL_LENGTH; gS.moveBeat = 1e9; gS.moveBeatDone = false;
+    gS.moveToInv = false;
+    for (int i = 0; i < 4; ++i) { gS.wasFull[i] = gS.cellFull[i]; gS.wasBlock[i] = gS.cellBlock[i]; }
+    std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+    gSnapRequest = true;
+}
+
 /// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
 std::string gActionNote = "-";
 void stationAction(int t, unsigned bit, bool shift) {
@@ -1328,6 +1462,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Smithing) { smithAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Cartography) { cartAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Loom) { loomAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Enchanting) { enchAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -1447,6 +1582,11 @@ int currentTarget(float mx, float my) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
         return loomCursor(b, mx, my, o, d);
+    }
+    if (gS.st.kind == Kind::Enchanting) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return enchCursor(b, mx, my, o, d);
     }
     if (isFurnace(gS.st.kind)) {
         // FurnaceStation.updateCursor (vanilla geometry): the front face, and the top where a zone lies there
@@ -1846,7 +1986,7 @@ V2P VS(uint id : SV_VertexID) {
 }
 bool near3(float4 p, float3 c) { float3 q = p.rgb / max(p.a, 1e-3); return p.a > 0.9 && all(abs(q - c) < 0.07); }
 float4 PS(V2P i) : SV_Target {
-    if (mode.x > 5.5) { // 6: the kept screen, copied only from a frame that has the screen drawn (probes)
+    if (mode.x > 5.5 && mode.x < 6.5) { // 6: the kept screen, copied only from a frame that has the screen drawn (probes)
         if (mode.y > 0.5) {
             bool ok = false;
             for (int k = 0; k < 2; ++k) {
@@ -1860,6 +2000,25 @@ float4 PS(V2P i) : SV_Target {
         return tCand.Load(int3(i.pos.xy, 0));
     }
     if (mode.x < 0.5) return (mode.y > 0.5 ? float4(color.rgb * color.a, 0) : float4(color.rgb * color.a, color.a)) * mode.w; // y: additive light
+    if (mode.x > 6.5 && mode.x < 7.5) { // 7: a light texture of the atlas (RenderType.eyes: added light)
+        float4 k = tProp.SampleLevel(sP, i.uv, 0);
+        return float4(k.rgb * color.rgb * color.a, 0) * mode.w;
+    }
+    if (mode.x > 7.5 && mode.x < 8.5) { // 8: the rune circle (entityTranslucent): white mask, colour top -> key0 at the bottom edge
+        float4 k = tProp.SampleLevel(sP, i.uv, 0);
+        float  a = k.a * color.a * mode.w;
+        return float4(k.rgb * lerp(color.rgb, key0.rgb, i.local.y) * a, a);
+    }
+    if (mode.x > 8.5) { // 9: glyphs of the hidden screen (cost digits, runes) taken in another colour: the ground keyed away
+        float4 u = mode.y > 0.5 ? tSnap.SampleLevel(sP, i.uv, 0) : tUi.SampleLevel(sP, i.uv, 0);
+        float3 c = u.rgb / max(u.a, 1e-3);
+        if (u.a < 0.5 || all(abs(c - key0.rgb) < mode.z)) discard;
+        // key1.w: only a slot's count digits (white, #3F3F3F shadow)
+        if (key1.w > 0.5 && !(all(c > 0.96) || all(abs(c - 0.247) < 0.03))) discard;
+        float  v = max(c.r, max(c.g, c.b));
+        float  a = color.a * mode.w;
+        return float4(color.rgb * v * a, a);
+    }
     if (mode.x > 4.5) { // 5: a soft round glow (sparks, the anvil's surface disc), added light
         float2 c = i.uv * 2 - 1;
         float  f = saturate(1 - dot(c, c));
@@ -2109,10 +2268,12 @@ bool uploadTexture(ID3D12Device* dev, ID3D12GraphicsCommandList* list, unsigned 
     dev->CreateShaderResourceView(tex.Get(), &sv, hc);
     return true;
 }
-// ---- the prop atlas (t2, 128 x 64): the hammer (HammerModel.h) on the left, block textures of the game itself on
-// the right, read from the game's own resource pack (data/resource_packs/vanilla/__brarchive/textures/blocks.brarchive:
+// ---- the prop atlas (t2, 192 x 128): the hammer (HammerModel.h) on the left, block textures of the game itself
+// beside it, Cinematic Interactions' own light textures (FxTextures.h: the enchanting beam, rune circle and glow) on the
+// right; the block textures are read from the game's own resource pack (data/resource_packs/vanilla/__brarchive/textures/blocks.brarchive:
 // a table of 256-byte entries {name length, name, offset, size} after a 16-byte header, then the files)
-constexpr int PROP_W = 128, PROP_H = 64;
+constexpr int PROP_W = 192, PROP_H = 128;
+constexpr float FX_BEAM[4] = {96, 0, 32, 128}, FX_CIRCLE[4] = {128, 0, 64, 64}, FX_GLOW[4] = {128, 64, 64, 64}; // x y w h
 struct PropSlot { char const* file; int x, y, w, h; };
 const PropSlot kPropSlots[] = {
     {"grindstone_round.tga", 64, 0, 16, 16},     // GrindstoneStation.drawRim
@@ -2166,6 +2327,12 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     if (gG.propTex) return true;
     std::vector<uint8_t> atlas(size_t(PROP_W) * PROP_H * 4, 0);
     for (int y = 0; y < 64; ++y) std::memcpy(&atlas[size_t(y) * PROP_W * 4], hammer::kAtlas + size_t(y) * 64 * 4, 64 * 4);
+    auto blit = [&](uint8_t const* px, int w, int h, float const at[4]) {
+        for (int y = 0; y < h; ++y) std::memcpy(&atlas[(size_t(int(at[1]) + y) * PROP_W + int(at[0])) * 4], px + size_t(y) * w * 4, size_t(w) * 4);
+    };
+    blit(fxtex::kBeam, fxtex::kBeamW, fxtex::kBeamH, FX_BEAM);
+    blit(fxtex::kCircle, fxtex::kCircleW, fxtex::kCircleH, FX_CIRCLE);
+    blit(fxtex::kGlow, fxtex::kGlowW, fxtex::kGlowH, FX_GLOW);
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     auto arch = std::filesystem::path(exe).parent_path() / "data" / "resource_packs" / "vanilla" / "__brarchive" / "textures" / "blocks.brarchive";
@@ -2475,10 +2642,42 @@ void detect(Img im, bool dump, int kindI) {
             L.nRoles  = n;
             L.hasGrid = n == expect;
             if (kind == Kind::Enchanting && n == 2) {
-                // the three enchantment buttons fill the panel right of the lapis slot
-                float x0 = std::max(L.grid[0].x, L.grid[1].x) + L.grid[1].w + unit * 4, y0 = L.grid[0].y - 3.0f * s;
-                L.board  = {x0, std::max(0.0f, y0 - s * 0.4f), px1 - x0, 3.6f * s};
-                L.hasBoard = true;
+                // the three enchantment buttons: a dark panel right of the lapis slot, the buttons lighter rows in it
+                // (separators and frame dark). Left edge on a line through the panel above the slots, the rows down
+                // the buttons' left margin (no writing there), the right edge along the top margin of the first row.
+                auto px3  = [&](int x, int y, int& r, int& g, int& b) { int a; im.get(std::clamp(x, 0, im.W - 1), std::clamp(y, 0, im.H - 1), r, g, b, a); };
+                auto dark = [&](int x, int y) { int r, g, b; px3(x, y, r, g, b); return std::max(r, std::max(g, b)) < 62; };
+                auto lite = [&](int x, int y) { int r, g, b; px3(x, y, r, g, b); return std::min(r, std::min(g, b)) > 150; };
+                Rect const& lap = L.grid[1].x > L.grid[0].x ? L.grid[1] : L.grid[0];
+                int  y = int(lap.y - 1.5f * s), x = int(lap.x + lap.w + unit), xEnd = int(px1 + s);
+                while (x < xEnd && !dark(x, y)) ++x;                // the panel's frame
+                while (x < xEnd && dark(x, y)) ++x;                 // .. to the first button
+                int x0 = x;
+                if (x0 < xEnd - 2 * s) {
+                    int cx = x0 + std::max(2, int(unit)), yy = y;
+                    while (yy > 0 && !lite(cx, yy)) --yy;           // up to the window above the panel
+                    struct Run { int a, b; };
+                    std::vector<Run> rows;
+                    for (int y2 = yy + 1, a = -1; y2 < im.H && !lite(cx, y2); ++y2) {
+                        bool on = !dark(cx, y2);
+                        if (on && a < 0) a = y2;
+                        if (!on && a >= 0) { if (y2 - a > s * 0.6f) rows.push_back({a, y2}); a = -1; }
+                    }
+                    if (rows.size() >= 3) {
+                        int x1 = x0;
+                        while (x1 < xEnd && !dark(x1, rows[0].a + std::max(2, int(unit)))) ++x1;
+                        for (int k = 0; k < 3; ++k) {
+                            float h = float(rows[k].b - rows[k].a), top = float(rows[k].a), cell = L.slot;
+                            L.buttons[k]     = {float(x0), top, float(x1 - x0), h};
+                            L.buttons[3 + k] = {float(x1) - cell - unit, top + h / 2 - cell / 2, cell, cell};         // the level cost
+                            L.buttons[6 + k] = {float(x0) + unit, top + h / 2 - cell / 2, cell, cell};                 // the left end
+                            L.buttons[9 + k] = {float(x0 + x1) / 2 - cell / 2, top + h / 2 - cell / 2, cell, cell};     // the runes
+                        }
+                        L.nButtons = 12;
+                        L.board    = {float(x0), float(rows[0].a), float(x1 - x0), float(rows[2].b - rows[0].a)};
+                        L.hasBoard = true;
+                    }
+                }
             }
         }
         // crafting grid: 3 x 3 normal slots
@@ -2946,6 +3145,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Enchanting) // EnchantStation.rest
+        return gS.st.top + gS.st.sideV() * 0.36 + gS.st.right() * (right ? 0.24 : -0.24) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Loom) // LoomStation.rest
         return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Cartography) // CartographyStation.rest
@@ -2972,6 +3173,10 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
         double hover = carrying ? 0.11 : 0.075;
         // a tap pushes the fist past the face, into the opening
         return aim + gS.st.sideV() * (hover - 0.18 * tap) - reach * 0.07 + V3{0, 0.035, 0};
+    }
+    if (gS.st.kind == Kind::Enchanting && gS.aimAir) { // EnchantStation.handTarget: a hand reaching out to something floating stops just short of it
+        V3 dir = (aim - shoulder).norm();
+        return aim - dir * (0.14 - 0.05 * tap) + V3{0, -0.03, 0};
     }
     // TableStation.handTarget (the anvil's is the same at the point aimed at)
     V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
@@ -3176,9 +3381,15 @@ void updateHands(JPose const& cam, double dt) {
     }
     case Phase::Active: {
         if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter || gS.st.kind == Kind::Smithing ||
-             gS.st.kind == Kind::Cartography || gS.st.kind == Kind::Loom) && moving()) { // handsOverride, springs at 55
+             gS.st.kind == Kind::Cartography || gS.st.kind == Kind::Loom || gS.st.kind == Kind::Enchanting) && moving()) { // handsOverride, springs at 55
             V3 r, l;
-            if (gS.st.kind == Kind::Anvil) anvilHands(cam, r, l);
+            if (gS.st.kind == Kind::Enchanting) { // EnchantStation.handsOverride: during the rite both hands rise around the item
+                double raise = hump(window(ritualTime(), 0, 0.85));
+                V3     c     = enchItemPos() + gS.st.sideV() * 0.07 + V3{0, -0.1 + 0.05 * raise, 0};
+                double sp    = 0.17 - 0.04 * raise; // * max(0.8, geometry().scale(0)), the scale 1 here
+                r = c + gS.st.right() * sp;
+                l = c + gS.st.right() * -sp;
+            } else if (gS.st.kind == Kind::Anvil) anvilHands(cam, r, l);
             else if (gS.st.kind == Kind::Stonecutter) stoneHands(r, l);
             else if (gS.st.kind == Kind::Smithing) smithHands(r, l);
             else if (gS.st.kind == Kind::Cartography) cartHands(r, l);
@@ -3434,6 +3645,130 @@ void glowDisc(JPose const& cam, Basis const& b, V3 at, double radius, float r, f
     q.color[0] = r; q.color[1] = g; q.color[2] = bl; q.color[3] = 1;
     q.mode[0] = 5;
     gQuads.push_back(q);
+}
+
+// ---- EnchantFx: the rune circle, light textures of the atlas, the shaft of light, the table's glyphs
+struct CirclePalette { float top[3], bottom[3]; };
+// a short step from deep to bright violet: lit at full strength, a lavender end read as pale pink
+const CirclePalette VIOLET{{0xAB / 255.0f, 0x00 / 255.0f, 0xF9 / 255.0f}, {0xC5 / 255.0f, 0x66 / 255.0f, 0xFF / 255.0f}};
+const CirclePalette RED{{0xA3 / 255.0f, 0x30 / 255.0f, 0x3B / 255.0f}, {0xCF / 255.0f, 0x53 / 255.0f, 0x54 / 255.0f}};
+const CirclePalette LAPIS{{0x3B / 255.0f, 0x78 / 255.0f, 0xD9 / 255.0f}, {0x9C / 255.0f, 0xC8 / 255.0f, 0xFF / 255.0f}};
+void atlasRect(float uv[8], float const r[4]) { setRect(uv, r[0] / PROP_W, r[1] / PROP_H, (r[0] + r[2]) / PROP_W, (r[1] + r[3]) / PROP_H); }
+/// a square turned `angle` round its centre in the plane of ax / ay (unit axes): Java's corners i = 0..3 (uv 00 10 11 01)
+bool turnedSquare(JPose const& cam, Basis const& b, V3 c, V3 ax, V3 ay, double radius, double angle, Quad& q) {
+    V3 p[4];
+    for (int i = 0; i < 4; ++i) {
+        double a = angle + kPi / 4 + i * kPi / 2, d = radius * std::sqrt(2.0);
+        p[i] = c + ax * (std::cos(a) * d) + ay * (std::sin(a) * d);
+    }
+    V3 tl[4] = {p[0], p[1], p[3], p[2]}; // TL TR BL BR
+    return worldQuad4(cam, b, tl, q);
+}
+/// EnchantFx.gradientQuad: the white pixel mask in the palette's two colours, faded by presence (alpha), never darkened
+void circleQuad(Quad& q, CirclePalette const& pal, float brightness) {
+    float presence = std::clamp(brightness / 0.4f, 0.0f, 1.0f);
+    float alpha    = presence * presence * (3 - 2 * presence);
+    atlasRect(q.uv, FX_CIRCLE);
+    q.mode[0] = 8;
+    for (int i = 0; i < 3; ++i) { q.color[i] = pal.top[i]; q.key0[i] = pal.bottom[i]; }
+    q.color[3] = alpha;
+}
+/// EnchantFx.circle: lying on a surface
+void fxCircle(JPose const& cam, Basis const& b, V3 center, double radius, double angle, CirclePalette const& pal, float brightness) {
+    if (brightness <= 0.001f) return;
+    Quad q;
+    if (!turnedSquare(cam, b, center, V3{1, 0, 0}, V3{0, 0, 1}, radius, angle, q)) return;
+    circleQuad(q, pal, brightness);
+    gQuads.push_back(q);
+}
+/// EnchantFx.circleBillboard: facing the camera (camera left / up as Java's)
+void fxCircleBillboard(JPose const& cam, Basis const& b, V3 center, double radius, double angle, CirclePalette const& pal, float brightness) {
+    if (brightness <= 0.001f) return;
+    Quad q;
+    if (!turnedSquare(cam, b, center, b.r * -1.0, b.u, radius, angle, q)) return;
+    circleQuad(q, pal, brightness);
+    gQuads.push_back(q);
+}
+/// EnchantFx.billboard(GLOW): the soft glow texture facing the camera, added light
+void fxGlow(JPose const& cam, Basis const& b, V3 center, double radius, double angle, float r, float g, float bl) {
+    Quad q;
+    if (!turnedSquare(cam, b, center, b.r * -1.0, b.u, radius, angle, q)) return;
+    atlasRect(q.uv, FX_GLOW);
+    q.mode[0] = 7;
+    q.color[0] = r; q.color[1] = g; q.color[2] = bl; q.color[3] = 1;
+    gQuads.push_back(q);
+}
+/// EnchantFx.beam: two crossed planes rising from `base`, bright at the foot
+void fxBeam(JPose const& cam, Basis const& b, V3 base, double height, double width, double spin, float r, float g, float bl) {
+    for (int plane = 0; plane < 2; ++plane) {
+        double a  = spin + plane * kPi / 2;
+        V3     dh = V3{std::cos(a), 0, std::sin(a)} * (width / 2);
+        V3     p4[4] = {base - dh + V3{0, height, 0}, base + dh + V3{0, height, 0}, base - dh, base + dh};
+        Quad   q;
+        if (!worldQuad4(cam, b, p4, q)) continue;
+        atlasRect(q.uv, FX_BEAM);
+        q.mode[0] = 7;
+        q.color[0] = r; q.color[1] = g; q.color[2] = bl; q.color[3] = 1;
+        gQuads.push_back(q);
+    }
+}
+// vanilla's EnchantmentTableParticle (EnchantFx.stream): spawned at `to` with an offset, it starts at to + offset and
+// converges on to, falling 1.2 at the very end; a glyph of light (its colour 0.9f, 0.9f, f)
+struct Glyph { V3 to, d; double age, life; float size, f; };
+std::vector<Glyph> gGlyphs;
+void glyphStream(V3 from, V3 to, int count) {
+    for (int i = 0; i < count && gGlyphs.size() < 600; ++i) {
+        V3 d = from - to + V3{(rnd() - 0.5) * 0.5, (rnd() - 0.5) * 0.4, (rnd() - 0.5) * 0.5};
+        gGlyphs.push_back({to, d, 0, (30 + std::floor(rnd() * 10)) / 20.0, float(0.1 * (rnd() * 0.5 + 0.2)), float(rnd() * 0.6 + 0.4)});
+    }
+}
+void drawGlyphs(JPose const& cam, Basis const& b, double dt) {
+    for (size_t i = gGlyphs.size(); i-- > 0;) {
+        Glyph& g = gGlyphs[i];
+        g.age += dt;
+        if (g.age >= g.life) { gGlyphs[i] = gGlyphs.back(); gGlyphs.pop_back(); continue; }
+        double a = g.age / g.life, f = 1 - a, f1 = a * a * a * a;
+        V3     p = g.to + g.d * f - V3{0, f1 * 1.2, 0};
+        // getLightColor: brighter as it nears the end
+        float k = float(0.55 + 0.45 * a);
+        Quad  q;
+        if (!worldQuad(cam, b, p, b.r * (g.size * 0.5), b.u * (g.size * 0.5), q)) continue;
+        setRect(q.uv, 0, 0, 1, 1);
+        q.mode[0] = 5;
+        q.color[0] = 0.9f * g.f * k; q.color[1] = 0.9f * g.f * k; q.color[2] = g.f * k; q.color[3] = 1;
+        gQuads.push_back(q);
+    }
+}
+// EnchantFx.spark & co: soft glowing motes in the violet and blue of the enchanting table
+const float E_PALETTE[3][3] = {{0.75f, 0.45f, 1.0f}, {0.45f, 0.8f, 1.0f}, {1.0f, 0.92f, 1.0f}};
+void eSpark(V3 at, V3 v, double life, float size) {
+    float const* c = E_PALETTE[int(rnd() * 3) % 3];
+    spark(at, v, life, size, c[0], c[1], c[2], -0.04, 0);
+}
+void eBurst(V3 at, double strength) { // the moment of enchantment: motes flung out, glyphs pulled in
+    for (int i = 0; i < int(70 * strength); ++i) {
+        V3 dir = V3{gauss(), gauss() * 0.7 + 0.25, gauss()}.norm();
+        eSpark(at, dir * (0.35 + rnd() * 1.0), 0.6 + rnd() * 0.8, float(0.018 + rnd() * 0.03));
+    }
+    for (int i = 0; i < int(8 * strength); ++i) // REVERSE_PORTAL: a little purple haze
+        spark(at + V3{(rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3}, V3{(rnd() - 0.5) * 1.0, rnd() * 0.8, (rnd() - 0.5) * 1.0},
+              0.8 + rnd() * 0.6, float(0.03 + rnd() * 0.02), 0.55f, 0.2f, 0.8f, -0.3, 0);
+    for (int i = 0; i < int(30 * strength); ++i) glyphStream(at + V3{gauss(), gauss(), gauss()}.norm() * (1.1 + rnd() * 0.6), at, 1);
+}
+void eSparkle(V3 at, double radius) {
+    double a = rnd() * kPi * 2, r = radius * (0.6 + rnd() * 0.4);
+    eSpark(at + V3{std::cos(a) * r, (rnd() - 0.5) * 0.2, std::sin(a) * r}, V3{0, 0.05 + rnd() * 0.05, 0}, 1.0 + rnd() * 0.6, float(0.012 + rnd() * 0.012));
+}
+void eGather(V3 at, double radius) {
+    V3     dir  = V3{gauss(), gauss(), gauss()}.norm();
+    double life = 0.45 + rnd() * 0.2;
+    eSpark(at + dir * radius, dir * (-radius / life * 1.6), life, float(0.014 + rnd() * 0.012));
+}
+V3 glyphSource() { // EnchantStation.source: a bookshelf, or a point in the air round the table when there are none
+    auto const& sh = gS.st.shelves;
+    if (!sh.empty()) return sh[size_t(rnd() * sh.size()) % sh.size()] + V3{0, 0.3, 0};
+    double a = rnd() * kPi * 2;
+    return gS.st.top + V3{std::cos(a) * 1.6, 0.6 + rnd() * 0.8, std::sin(a) * 1.6};
 }
 } // namespace
 
@@ -4151,6 +4486,178 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 gS.boardRect[2] = gS.boardRect[3] = 0;
             }
         }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Enchanting) {
+            // EnchantStation.tick / renderScene / renderWorld: the circle, the hovering item, the lapis, the shaft of
+            // light, the offers as rune sigils with their cost, the rite
+            V3     rgt = gS.st.right(), out = gS.st.sideV();
+            double t = ritualTime(), rt = t >= 0 ? t * RITUAL_LENGTH : -1;
+            bool   active = gS.phase == Phase::Active;
+            float  guiPx  = L.slot / 18.0f; // one GUI pixel of the hidden screen
+            // the offers change (an item laid, taken, enchanted): they pop up again
+            long print = 1;
+            for (int k = 0; k < 3; ++k) print = print * 37 + (offered(k) ? 1 + int(16 * (gS.iconBox[14 + k][2] - gS.iconBox[14 + k][0])) : 0);
+            if (print != gS.offersPrint) { gS.offersPrint = print; gS.offersAt = clock; }
+            if (gS.hoverOffer != gS.lastHoverOffer) gS.lastHoverOffer = gS.hoverOffer;
+            // per tick (20 a second)
+            static int tickNo = 0;
+            gS.enchTick += handsDt;
+            while (gS.enchTick >= 0.05) {
+                gS.enchTick -= 0.05;
+                ++tickNo;
+                if (!active) continue;
+                bool itemNow = t >= 0 && rt < RITUAL_PEAK ? gS.wasFull[0] : enchItem();
+                if (itemNow && tickNo % 3 == 0) eSparkle(enchItemPos(), 0.2);
+                if (gS.hoverOffer >= 0) {
+                    V3 sg = sigilPos(gS.hoverOffer);
+                    glyphStream(glyphSource(), sg, 1);
+                    glyphStream(sg, enchItemPos(), 1);
+                }
+                if (t >= 0 && rt < RITUAL_PEAK)
+                    for (int i = 0; i < 3; ++i) { glyphStream(glyphSource(), enchItemPos(), 1); eGather(enchItemPos(), 0.55); }
+            }
+            if (t >= 0 && !gS.burstDone && rt >= RITUAL_PEAK) {
+                gS.burstDone = true;
+                gS.burstAt   = clock;
+                eBurst(enchItemPos(), 1.4);
+            }
+            // ---- renderScene
+            double introP = clamp01(gS.time / gS.leanLength);
+            double target = gS.phase == Phase::Intro ? 0.5 * smoother(window(introP, 0.45, 1.0))
+                          : active ? 0.45 + (enchItem() ? 0.2 : 0) + (gS.hoverOffer >= 0 ? 0.3 : 0) + (t >= 0 ? 1.4 * hump(window(t, 0, 0.75)) : 0) : 0;
+            gS.glow = approach(gS.glow, target, target > gS.glow ? 6 : 2.5, handsDt);
+            double spin = clock * 0.25 + (t >= 0 ? 4 * smoother(t) : 0);
+            float  g    = float(gS.glow);
+            bool   canEnchant = !enchItem() || t >= 0;
+            for (int k = 0; k < 3 && !canEnchant; ++k) canEnchant = offered(k) && affordable(k);
+            CirclePalette const& tablePal = canEnchant ? VIOLET : RED;
+            fxCircle(cam, b, gS.st.top + V3{0, OUTER_LIFT, 0}, 0.47, spin, tablePal, 0.85f * g);
+            fxCircle(cam, b, gS.st.top + V3{0, INNER_LIFT, 0}, 0.25, -spin * 1.7, tablePal, 0.55f * g);
+            bool   outro = gS.phase == Phase::Outro;
+            double fade  = outro ? 1 - smoother(gS.time / 0.45) : 1;
+            // the item over the table: during the rite, the one being enchanted until the light breaks
+            auto floating = [&](IconSrc const& is, bool block, V3 at, double spinDeg, double size, float opacity) { // EnchantStation.drawFloating
+                if (size <= 0.002) return;
+                cardItem(cam, b, L, is, block, at, block ? size * 1.4 * 0.5 : size, opacity, spinDeg);
+            };
+            bool    before = t >= 0 && rt < RITUAL_PEAK;
+            IconSrc itemSrc = src(L.grid[0], 0), lapisSrc = src(L.grid[1], 1);
+            bool    itemFull = enchItem(), itemBlock = gS.cellBlock[0];
+            if (before) {
+                std::memcpy(itemSrc.box, gS.snapBox[0], sizeof itemSrc.box);
+                itemSrc.snap = gG.snapValid;
+                itemFull = gS.wasFull[0]; itemBlock = gS.wasBlock[0];
+            }
+            V3 at = enchItemPos();
+            if (itemFull && fade > 0.01) {
+                fxGlow(cam, b, at, 0.24, clock * 0.4, 0.3f * g, 0.18f * g, 0.5f * g);
+                double extraSpin = t >= 0 ? 900 * outCubic(t) : 0;
+                double pulse = t >= 0 && rt > RITUAL_PEAK ? 1 + 0.18 * hump(window(t, RITUAL_PEAK / RITUAL_LENGTH, 0.8)) : 1;
+                floating(itemSrc, itemBlock, at, clock * 40 + extraSpin, E_ITEM_SIZE * fade * pulse, 1);
+            }
+            // the lapis socket (the server takes the lapis for the rite at once; what flies into the item comes below)
+            double presence = gS.phase == Phase::Intro ? smoother(window(introP, 0.45, 1)) : fade;
+            gS.lapisFocus = approach(gS.lapisFocus, t >= 0 ? 0 : gS.enchTarget == ELapis && active ? 1 : carryingLapis() ? 0.65 : 0, 12, handsDt);
+            V3 corner = lapisCorner();
+            if (presence > 0.01) {
+                bool wrong = active && gS.enchTarget == ELapis && gS.carrying && !carryingLapis();
+                fxCircle(cam, b, corner + V3{0, SOCKET_LIFT, 0}, 0.10, clock * 0.3, wrong ? RED : LAPIS, float((0.50 + 0.42 * gS.lapisFocus) * presence));
+            }
+            // the cost digits / runes / a count of the hidden screen, in another colour, facing the camera
+            auto glyphs = [&](Rect r, float const* key, bool snap, bool countOnly, V3 c, double perPx, unsigned rgb, float alpha) {
+                if (r.w <= 0 || alpha < 0.03f) return;
+                double hw = r.w / guiPx * perPx / 2, hh = r.h / guiPx * perPx / 2;
+                Quad   q;
+                if (!worldQuad(cam, b, c, b.r * hw, b.u * hh, q)) return;
+                setRect(q.uv, r.x / L.W, r.y / L.H, (r.x + r.w) / L.W, (r.y + r.h) / L.H);
+                q.mode[0] = 9; q.mode[1] = snap ? 1.0f : 0.0f; q.mode[2] = 0.08f; q.mode[3] = 1;
+                q.color[0] = ((rgb >> 16) & 255) / 255.0f; q.color[1] = ((rgb >> 8) & 255) / 255.0f; q.color[2] = (rgb & 255) / 255.0f; q.color[3] = alpha;
+                for (int i = 0; i < 3; ++i) q.key0[i] = key ? key[i] : L.bg[i];
+                q.key1[3] = countOnly ? 1.0f : 0.0f;
+                gQuads.push_back(q);
+            };
+            bool hasCount = gS.cellFull[1] && gS.iconBox[1][2] > 0.9f && gS.iconBox[1][3] > 0.9f; // the slot prints a count (2 or more)
+            if (gS.cellFull[1] && fade > 0.01) { // EnchantStation.drawLapis: a few lying copies by the count
+                int    copies = hasCount ? 2 : 1;
+                double yaws[3] = {35, -20, 60};
+                for (int i = 0; i < copies; ++i) {
+                    V3 p = corner + V3{(i - (copies - 1) / 2.0) * 0.05, 0.001 + i * 0.008, (i % 2) * 0.03};
+                    orientedItem(cam, b, L, lapisSrc, gS.cellBlock[1], p + V3{0, 0.004, 0}, rgt, out, 0.2 * 0.8 * fade, 0, 1, yaws[i]);
+                }
+                // drawLapisCount: the slot's own count digits, in the socket's blue, over it
+                if (hasCount) {
+                    Rect sl = lapisSrc.inside;
+                    Rect cr{sl.x + sl.w * 0.42f, sl.y + sl.h * 0.5f, sl.w * 0.58f, sl.h * 0.5f};
+                    glyphs(cr, nullptr, false, true, corner + V3{0, 0.115, 0}, 0.0045, 0x9CC8FF, float(230 / 255.0 * presence));
+                }
+            }
+            if (t >= 0) { // the shaft of light from the burst on
+                double peak = RITUAL_PEAK / RITUAL_LENGTH, beam = t < peak ? 0 : 1 - smoother((t - peak) / (1 - peak));
+                if (beam > 0.01) {
+                    float bb = float(beam * 1.3);
+                    fxBeam(cam, b, V3{at.x, gS.st.top.y, at.z}, 1.9, 0.5 + 0.3 * beam, clock * 0.9, 0.7f * bb, 0.5f * bb, 1.0f * bb);
+                }
+            }
+            // ---- renderWorld: the sigils, the things flying into the item (only while working)
+            auto drawSigil = [&](int k, V3 c, float appear, bool hovered, bool aff, float brightness, bool snap) {
+                if (appear <= 0.01f) return;
+                float size = float(0.13 * appear * (hovered ? 1.2 : 1.0));
+                float br   = brightness * (hovered ? 1.35f : 0.85f) * std::min(1.0f, appear);
+                float r = aff ? 0.55f : 0.5f, gg = aff ? 0.45f : 0.12f, bl = aff ? 1.0f : 0.16f;
+                fxGlow(cam, b, c, size * 1.8, 0, r * br * 0.35f, gg * br * 0.35f, bl * br * 0.35f);
+                double turn = clock * (hovered ? 1.8 : 0.5) * (k % 2 == 0 ? 1 : -1);
+                fxCircleBillboard(cam, b, c, size, turn, aff ? VIOLET : RED, br);
+                // the cost (Bedrock's own digits), the runes under it at 0.55, the lapis gems under those
+                double s   = 0.01 * appear * (hovered ? 1.2 : 1.0);
+                float  in  = L.slot * 16.0f / 18.0f;
+                Rect   cc  = L.buttons[3 + k];
+                Rect   cell{cc.cx() - in / 2, cc.cy() - in / 2, in, in};
+                float const* bx = snap ? gS.snapBox[14 + k] : gS.iconBox[14 + k];
+                Rect   num{cell.x + cell.w * bx[0], cell.y + cell.h * bx[1], cell.w * (bx[2] - bx[0]), cell.h * (bx[3] - bx[1])};
+                float  a = std::min(1.0f, appear);
+                glyphs(num, gS.btnRef[3 + k], snap, false, c, s, aff ? 0xF4EEFF : 0xFF6B6B, a);
+                Rect bt = L.buttons[k], le = L.buttons[6 + k];
+                Rect rune{le.x + le.w, bt.y + guiPx * 2, cc.x - (le.x + le.w), bt.h - guiPx * 4};
+                glyphs(rune, gS.btnRef[9 + k], snap, false, c - b.u * ((26 + 4) * 0.55 * s), s * 0.55, aff ? 0xB9A6FF : 0x7A4A55, a);
+                for (int i = 0; i <= k; ++i) { // "◆" x (k + 1)
+                    V3   gc = c - b.u * ((37 + 3.5) * 0.55 * s) + b.r * ((i - k / 2.0) * 7 * 0.55 * s);
+                    double h = 3.0 * 0.55 * s;
+                    V3   d1 = (b.r + b.u) * (h / std::sqrt(2.0)), d2 = (b.u - b.r) * (h / std::sqrt(2.0));
+                    Quad q;
+                    if (!worldQuad(cam, b, gc, d1, d2, q)) continue;
+                    q.color[0] = 0x5B / 255.0f; q.color[1] = 0x86 / 255.0f; q.color[2] = 1; q.color[3] = a;
+                    gQuads.push_back(q);
+                }
+            };
+            if (active) {
+                double appear = outBack(window(clock - gS.offersAt, 0, 0.45), 1.6);
+                for (int k = 0; k < 3; ++k) {
+                    if (!offered(k) || (t >= 0 && k == gS.ritualOffer)) continue;
+                    drawSigil(k, sigilPos(k), float(appear), k == gS.hoverOffer, affordable(k), t >= 0 ? 0.4f : 1.0f, false);
+                }
+                if (t >= 0) {
+                    double flight = inOutCubic(window(rt, 0, RITUAL_PEAK - 0.05));
+                    if (flight < 1) {
+                        V3 p = lerp(gS.ritualFrom, enchItemPos(), flight) + V3{0, 0.12 * hump(flight), 0};
+                        drawSigil(gS.ritualOffer, p, float(1 - 0.8 * flight), true, true, 1.6f, gG.snapValid);
+                    }
+                    IconSrc lap = src(L.grid[1], -1);
+                    std::memcpy(lap.box, gS.snapBox[1], sizeof lap.box);
+                    lap.snap = gG.snapValid;
+                    for (int i = 0; i < gS.ritualLapis && gS.wasFull[1]; ++i) {
+                        double f = inOutSine(window(rt, 0.04 + i * 0.07, RITUAL_PEAK - 0.02));
+                        if (f > 0 && f < 1) {
+                            V3 p = lerp(corner + V3{0, 0.02, 0}, enchItemPos(), f) + V3{0, 0.18 * hump(f), 0};
+                            floating(lap, gS.wasBlock[1], p, clock * 300 + i * 90, 0.16 * (1 - 0.6 * f), 1);
+                        }
+                    }
+                }
+                if (gS.enchTarget == ESurface && gS.carrying && gS.haveAim) {
+                    float pp = float(0.25 + 0.1 * std::sin(clock * 5));
+                    fxCircle(cam, b, gS.st.top + V3{0, HINT_LIFT, 0}, 0.16, -clock, VIOLET, pp);
+                }
+            }
+            drawGlyphs(cam, b, handsDt);
+        }
         if (haveCam) drawSparks(cam, b, clock, handsDt);
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
             V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
@@ -4351,6 +4858,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them - forge" + dot + "RMB - take" + dot + "Esc - step away";
+    case Kind::Enchanting: return std::string("Lay the item on the table") + dot + "lapis into the blue rune right of the book" + dot + "touch a rune to enchant" + dot + "Esc step back";
     case Kind::Loom: return std::string("Banner on the warp, dye right, pattern left") + dot + "pick a pattern on the board - weave" + dot + "Esc - step away";
     case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map - work it" + dot + "Esc - step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear - smith" + dot + "RMB - take" + dot + "Esc - step away";
@@ -4421,6 +4929,19 @@ void drawOverlay() {
                     tipTitle = "Click - take";
                     for (int i = 0; i < 3; ++i) if (!gS.cellFull[i]) { tipLine = missing[i]; break; }
                 }
+            }
+        }
+        if (gS.st.kind == Kind::Enchanting && !moving()) { // EnchantStation.tooltip (the clue and the item's own lines are the hidden screen's)
+            if (gS.enchTarget == EOffer && gS.hoverOffer >= 0) {
+                int need = gS.hoverOffer + 1;
+                tipTitle = need == 1 ? "1 Lapis Lazuli  \xC2\xB7  1 Enchantment Level" : std::to_string(need) + " Lapis Lazuli  \xC2\xB7  " + std::to_string(need) + " Enchantment Levels";
+                tipLine  = affordable(gS.hoverOffer) ? "Touch the rune to enchant" : "Not enough levels or lapis";
+            } else if (gS.enchTarget == EItem && !gS.carrying) tipTitle = "Click to take it back";
+            else if (gS.enchTarget == ESurface && !gS.carrying && !enchItem()) tipTitle = "Lay here what you want to enchant";
+            else if (gS.enchTarget == ELapis) {
+                if (gS.carrying && !carryingLapis()) tipTitle = "Only lapis lazuli fits here";
+                else if (!gS.carrying && !gS.cellFull[1]) tipTitle = "Put lapis lazuli into this blue rune";
+                else if (!gS.carrying) tipTitle = "Lapis Lazuli";
             }
         }
         if (gS.st.kind == Kind::Stonecutter && !moving()) { // StonecutterStation.tooltip (without the item's own lines)
