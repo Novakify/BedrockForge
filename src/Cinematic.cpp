@@ -396,6 +396,12 @@ struct Scene {
     float  boardRect[4] = {}; // x y w h (client px) of the glass board as last drawn
     float  boardGui = 1;
     double grindPrevT = -1;
+    // item tooltips: the hidden screen's own, found by resting its cursor on the slot a moment (a probe), kept per slot
+    struct TipCache { bool ok = false, tried = false; float sig[7] = {}; double at = -10; Rect text; };
+    TipCache tipCache[46];
+    int    tipSlot = -1, tipSlotWas = -1, probe = -1;
+    double tipSince = -10, probeAt = -10, holdUntil = -10;
+    bool   probeForced = false;
     // EnchantStation
     int    enchTarget = 0, hoverOffer = -1, ritualOffer = 0, ritualLapis = 0, denyOffer = -1, lastHoverOffer = -1;
     bool   aimAir = false, burstDone = false, wasRune[18] = {};
@@ -1550,7 +1556,26 @@ void moveFrame() {
 }
 
 /// Target ids: 0..8 grid (recipe order), 9 result, 10..18 hotbar, 19..45 pack, -1 none
+int currentTarget0(float mx, float my);
+/// the hidden slot whose item is under the cursor (its tooltip), else -1
+int tipSlotOf(int t) {
+    if (t >= 10 && t < 46) return t; // the drawer
+    if (t >= 0 && t < 9) return gS.cellFull[t] ? t : -1;
+    if (t == 9) return gS.resultFull ? 9 : -1;
+    if (t >= 101 && t <= 104) return gS.cellFull[t - 101] ? t - 101 : -1;
+    if (gS.st.kind == Kind::Anvil && t == 100) return gS.cellFull[1] ? 1 : gS.cellFull[0] ? 0 : -1;
+    if (gS.st.kind == Kind::Stonecutter && t == 103) return gS.cellFull[0] ? 0 : -1;
+    return -1;
+}
 int currentTarget(float mx, float my) {
+    int t = currentTarget0(mx, my);
+    int s = gS.phase == Phase::Active && !moving() ? tipSlotOf(t) : -1;
+    // the enchanting table's item and lapis are slots of their own targets
+    if (gS.st.kind == Kind::Enchanting && (gS.enchTarget == EItem) && enchItem() && !moving()) s = 0;
+    if (s != gS.tipSlot) { gS.tipSlot = s; gS.tipSince = gS.clock; }
+    return t;
+}
+int currentTarget0(float mx, float my) {
     if (gS.phase != Phase::Active || !gS.haveLast || gW <= 0) { gS.haveAim = false; return -1; }
     if (!gS.cursorEngaged) {
         if (std::fabs(mx - gS.cursorStartX) + std::fabs(my - gS.cursorStartY) < 4) return -1;
@@ -1854,6 +1879,8 @@ bool mapClient(int w, int h, int& x, int& y, int liveIn) {
     // an enchantment offer under the cursor: the hidden screen's cursor rests on its button (nothing is clicked there:
     // presses on offers are the scene's), so the window shows the offer's clue as its tooltip
     bool clueHover = !mapToTarget && gS.st.kind == Kind::Enchanting && t >= 200 && t <= 202 && gPress.state == PressState::Idle;
+    // an item tooltip probe: the cursor rests on that slot a moment (presses go where they always go)
+    if (!mapToTarget && !clueHover && gS.probe >= 0 && gPress.state == PressState::Idle) { use = gS.probe; mapToTarget = true; }
     if (L.valid && L.kind == int(gS.st.kind) && mapToTarget && targetRect(L, use, r)) { fx = r.cx(); fy = r.cy(); }
     else if (L.valid && L.kind == int(gS.st.kind) && clueHover && L.nButtons >= 3) { fx = L.buttons[t - 200].cx(); fy = L.buttons[t - 200].cy(); }
     else if (L.valid) neutralPoint(L, fx, fy);
@@ -1972,6 +1999,7 @@ struct Gfx {
     ComPtr<ID3D12Resource>       skinTex, skinUp;
     ComPtr<ID3D12Resource>       propTex, propUp; // the hammer atlas (HammerModel.h)
     ComPtr<ID3D12Resource>       snap;            // the hidden screen when a move began (what lay on the block)
+    ComPtr<ID3D12Resource>       tip;             // the hidden screen's item tooltips, copied where they were (t5)
     ComPtr<ID3D12Resource>       cand;            // the game thread's copy of the last whole UI frame, before it is checked
     ComPtr<ID3D12DescriptorHeap> rtvHeap;         // keep as a render target (the checked copy is drawn into it)
     ComPtr<ID3D12PipelineState>  psoCopy;         // no blending: cand -> keep
@@ -2002,6 +2030,7 @@ Texture2D    tSkin : register(t1);
 Texture2D    tProp : register(t2);
 Texture2D    tSnap : register(t3);
 Texture2D    tCand : register(t4);
+Texture2D    tTip  : register(t5);
 SamplerState sP    : register(s0);
 SamplerState sL    : register(s1);
 struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; float2 local : TEXCOORD1; };
@@ -2056,6 +2085,13 @@ float4 PS(V2P i) : SV_Target {
         float  a = k.a * color.a * mode.w;
         return float4(k.rgb * lerp(color.rgb, key0.rgb, i.local.y) * a, a);
     }
+    if (mode.x > 9.5) { // 10: an item tooltip of the hidden screen (copied): its writing only (the box, border and shadows dark)
+        float4 u = tTip.SampleLevel(sP, i.uv, 0);
+        float3 c = u.rgb / max(u.a, 1e-3);
+        if (u.a < 0.5 || max(c.r, max(c.g, c.b)) < 0.3) discard;
+        float a = color.a * mode.w;
+        return float4(c * a, a);
+    }
     if (mode.x > 8.5) { // 9: glyphs of the hidden screen (cost digits, runes) taken in another colour: the ground keyed away
         float4 u = mode.y > 0.5 ? tSnap.SampleLevel(sP, i.uv, 0) : tUi.SampleLevel(sP, i.uv, 0);
         float3 c = u.rgb / max(u.a, 1e-3);
@@ -2082,6 +2118,7 @@ float4 PS(V2P i) : SV_Target {
     if (mode.y > 0.5 && u.a > 0.0) {
         float3 c = u.rgb / max(u.a, 1e-3);
         if (all(abs(c - key0.rgb) < mode.z) || all(abs(c - key1.rgb) < mode.z)) u = 0;
+        if (all(abs(c - float3(106, 173, 67) / 255.0) < 0.03)) u = 0; // Bedrock's green hovered (focused) slot
         // the stack count the slot prints in its lower right corner (white digits, #3F3F3F shadow) is not the item
         float lx = key1.w > 0.5 ? 1 - i.local.x : i.local.x;
         if (key0.w > 0.5 && lx > 0.42 && i.local.y > 0.5 && (all(c > 0.96) || all(abs(c - 0.247) < 0.03))) u = 0;
@@ -2107,7 +2144,7 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
     if (gG.pso && gG.fmt == fmt) return true;
     gG.dev = dev;
     if (!gG.root) {
-        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 5, 0, 0, 0};
+        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0, 0, 0};
         D3D12_ROOT_PARAMETER   p[2]{};
         p[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         p[0].Constants        = {0, 0, 60};
@@ -2130,7 +2167,7 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
         if (FAILED(hr)) return fail("D3D12SerializeRootSignature", hr);
         if (FAILED(hr = dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gG.root))))
             return fail("CreateRootSignature", hr);
-        D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 5, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+        D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 6, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
         if (FAILED(hr = dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gG.srvHeap)))) return fail("CreateDescriptorHeap", hr);
         gG.srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
@@ -2245,6 +2282,14 @@ bool ensureKeep(ID3D12Device* dev, D3D12_RESOURCE_DESC const& ud) {
         auto h3 = gG.srvHeap->GetCPUDescriptorHandleForHeapStart();
         h3.ptr += SIZE_T(3) * gG.srvInc;
         dev->CreateShaderResourceView(gG.snap.Get(), &s, h3);
+        ComPtr<ID3D12Resource> tp;
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&tp))))
+            return fail("CreateCommittedResource(tooltips)", E_FAIL);
+        if (gG.tip) graveyard.push_back(gG.tip);
+        gG.tip = tp;
+        auto h5 = gG.srvHeap->GetCPUDescriptorHandleForHeapStart();
+        h5.ptr += SIZE_T(5) * gG.srvInc;
+        dev->CreateShaderResourceView(gG.tip.Get(), &s, h5);
     }
     // full readback buffer for slot detection
     UINT64 total = 0;
@@ -2519,6 +2564,42 @@ void writeBmp(std::filesystem::path const& p, Img const& im) {
     }
 }
 
+// the item tooltip probe (record -> detect): which slot, where the hidden cursor rests (px); what was found
+std::atomic<int>   gProbeSlot{-1};
+std::atomic<float> gProbeX{0}, gProbeY{0};
+std::mutex         gTipM;
+int                gTipFoundSlot = -1;
+Rect               gTipFoundRect;
+/// Bedrock's hover text near a point the cursor rests on: a dark violet box (half transparent) with a violet border,
+/// beside and above the cursor; `text` = its writing (bright pixels inside the border)
+bool findTooltip(Img const& im, int cx, int cy, float unit, Rect& text) {
+    auto px3 = [&](int x, int y, int& r, int& g, int& b) { int a; im.get(std::clamp(x, 0, im.W - 1), std::clamp(y, 0, im.H - 1), r, g, b, a); };
+    auto tip = [&](int x, int y) {
+        int r, g, b;
+        px3(x, y, r, g, b);
+        return (g <= 18 && std::abs(r - b) < 14 && r >= 18 && r <= 205) || (b > r + 30 && g < 16);
+    };
+    auto bright = [&](int x, int y) { int r, g, b; px3(x, y, r, g, b); return std::max(r, std::max(g, b)) > 80 && !(b > r + 30 && g < 16); };
+    for (int dy = int(-14 * unit); dy <= int(6 * unit); dy += std::max(1, int(unit))) {
+        int yr = cy + dy, bx0 = -1;
+        for (int x = cx + int(2 * unit); x < cx + int(30 * unit) && bx0 < 0; ++x) if (tip(x, yr) && tip(x + 1, yr) && tip(x + 2, yr)) bx0 = x;
+        if (bx0 < 0) continue;
+        int bx1 = bx0, miss = 0;
+        for (int x = bx0; x < im.W && miss < int(2 * unit); ++x) { if (tip(x, yr) || bright(x, yr)) { bx1 = x; miss = 0; } else ++miss; }
+        int xs = bx0 + int(2 * unit), by0 = yr, by1 = yr;
+        while (by0 > 0 && (tip(xs, by0 - 1) || bright(xs, by0 - 1))) --by0;
+        while (by1 < im.H - 1 && (tip(xs, by1 + 1) || bright(xs, by1 + 1))) ++by1;
+        if (bx1 - bx0 < 10 * unit || by1 - by0 < 6 * unit) continue;
+        int in = int(1.5f * unit), tx0 = 1 << 30, ty0 = 1 << 30, tx1 = -1, ty1 = -1;
+        for (int y = by0 + in; y <= by1 - in; ++y)
+            for (int x = bx0 + in; x <= bx1 - in; ++x)
+                if (bright(x, y)) { tx0 = std::min(tx0, x); ty0 = std::min(ty0, y); tx1 = std::max(tx1, x); ty1 = std::max(ty1, y); }
+        if (tx1 <= tx0 || ty1 <= ty0) return false;
+        text = {float(tx0), float(ty0), float(tx1 + 1 - tx0) + unit, float(ty1 + 1 - ty0) + unit}; // + the writing's shadow
+        return true;
+    }
+    return false;
+}
 void detect(Img im, bool dump, int kindI) {
     Kind kind = Kind(kindI);
     struct Sq { int x, y, s; };
@@ -2839,6 +2920,15 @@ void detect(Img im, bool dump, int kindI) {
             }
         }
         L.valid = true;
+        {
+            int ps = gProbeSlot.load();
+            Rect tr;
+            if (ps >= 0 && findTooltip(im, int(gProbeX.load()), int(gProbeY.load()), unit, tr)) {
+                std::lock_guard tl(gTipM);
+                gTipFoundSlot = ps;
+                gTipFoundRect = tr;
+            }
+        }
         snprintf(note, sizeof note, "%s: squares %zu, slot %d px, rows of 9: %zu, station squares %zu, slots %s (%d), result %s (%.0f px), board %s",
                  kNames[kindI], sq.size(), best, nine.size(), st.size(), L.hasGrid ? "yes" : "no", kind == Kind::Table ? (L.hasGrid ? 9 : 0) : L.nRoles,
                  L.hasResult ? "yes" : "no", L.hasResult ? L.result.w : 0.0f, L.hasBoard ? "yes" : "no");
@@ -3053,6 +3143,8 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
             D3D12_RANGE none{0, 0};
             gG.sr[i]->Unmap(0, &none);
             std::lock_guard l(gM);
+            if (gS.probe >= 0 || gS.clock < gS.holdUntil) { gG.srFrame[i] = -1; goto sampled; } // a tooltip covers slots now
+            {
             bool before = gS.resultFull;
             static double glintAt[9] = {-10, -10, -10, -10, -10, -10, -10, -10, -10};
             for (int s = 0; s < 9; ++s) {
@@ -3073,9 +3165,11 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                 std::memcpy(gS.btnRef[k], refs[11 + k], sizeof refs[11 + k]);
             }
             if (gS.resultFull != before) gS.resultChangedAt = gS.clock;
+            }
         }
         gG.srFrame[i] = -1;
     }
+sampled:
     barrier(list, ui, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
     for (int s = 0; s < kSampled; ++s) {
         Rect r;
@@ -4100,6 +4194,61 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         Basis b   = basisOf(cam);
         double clock = gS.clock;
         bool layoutOk = L.valid && L.W == int(W) && gG.keepValid && L.kind == int(gS.st.kind);
+        // ---- item tooltips (a probe): the hidden cursor rests on the hovered item's slot, the slot detection finds the
+        // window's hover text, it is copied aside (t5) and shown in the scene's tooltip from then on
+        if (layoutOk && gS.phase == Phase::Active) {
+            auto sigOf = [&](int sl, float out[7]) {
+                for (int k = 0; k < 7; ++k) out[k] = 0;
+                if (sl < 9) { std::memcpy(out, gS.iconRgb[sl], 3 * sizeof(float)); std::memcpy(out + 3, gS.iconBox[sl], 4 * sizeof(float)); }
+            };
+            auto fresh = [&](int sl) {
+                auto const& c = gS.tipCache[sl];
+                if (!c.ok && !c.tried) return false;
+                if (sl >= 9) return clock - c.at < 4; // the drawer: no samples of its own, looked at again now and then
+                float sg[7];
+                sigOf(sl, sg);
+                for (int k = 0; k < 7; ++k) if (std::fabs(sg[k] - c.sig[k]) > 0.02f) return false;
+                return true;
+            };
+            if (gS.probe < 0 && gS.tipSlot >= 0 && !moving() && clock - gS.tipSince > 0.12 && !fresh(gS.tipSlot) && gPress.state == PressState::Idle) {
+                Rect r;
+                if (targetRect(L, gS.tipSlot, r)) {
+                    gS.probe = gS.tipSlot; gS.probeAt = clock; gS.probeForced = false;
+                    sigOf(gS.probe, gS.tipCache[gS.probe].sig);
+                    gProbeX = r.cx(); gProbeY = r.cy(); gProbeSlot = gS.probe;
+                    std::lock_guard tl(gTipM);
+                    gTipFoundSlot = -1;
+                }
+            }
+            if (gS.probe >= 0) {
+                if (!gS.probeForced && clock - gS.probeAt > 0.1) { gS.probeForced = true; gG.lastDetect = 0; }
+                Rect found;
+                bool got = false;
+                {
+                    std::lock_guard tl(gTipM);
+                    if (gTipFoundSlot == gS.probe) { found = gTipFoundRect; got = true; gTipFoundSlot = -1; }
+                }
+                auto& c = gS.tipCache[gS.probe];
+                if (got && gG.tip && gG.keep) { // copy the writing while the window still shows it
+                    D3D12_BOX bx{UINT(std::max(0.0f, found.x)), UINT(std::max(0.0f, found.y)), 0, UINT(std::min(float(gG.kw), found.x + found.w)),
+                                 UINT(std::min(float(gG.kh), found.y + found.h)), 1};
+                    if (bx.right > bx.left && bx.bottom > bx.top) {
+                        barrier(list, gG.tip.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+                        barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                        D3D12_TEXTURE_COPY_LOCATION dst{gG.tip.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+                        D3D12_TEXTURE_COPY_LOCATION srcl{gG.keep.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+                        list->CopyTextureRegion(&dst, bx.left, bx.top, 0, &srcl, &bx);
+                        barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                        barrier(list, gG.tip.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                        c.ok = true; c.tried = true; c.at = clock; c.text = found;
+                    }
+                    gS.probe = -1; gProbeSlot = -1; gS.holdUntil = clock + 0.3;
+                } else if (clock - gS.probeAt > 1.2 || gS.tipSlot != gS.probe) { // nothing shown (an empty slot), or the cursor left
+                    if (gS.tipSlot == gS.probe) { c.ok = false; c.tried = true; c.at = clock; }
+                    gS.probe = -1; gProbeSlot = -1; gS.holdUntil = clock + 0.3;
+                }
+            }
+        }
         float tableAlpha = gS.phase == Phase::Active ? float(smoother(gS.time / 0.4)) : gS.phase == Phase::Outro ? float(1 - smoother(gS.time / 0.3)) : float(smoother(gS.time / gS.leanLength));
         auto src = [&](Rect r, int sampled) {
             float   in = L.slot * 16.0f / 18.0f;
@@ -5190,6 +5339,9 @@ void drawOverlay() {
     bool        clueLine = false; // tipLines[0] is the hidden screen's clue text (`clue`, its pixels)
     Rect        clue;
     float       clueGui = 1, layW = 1, layH = 1;
+    bool        itemTip = false; // the hovered item's own hover text (the hidden screen's, copied aside by the probe)
+    Rect        itemText;
+    float       tipW = 1, tipH = 1;
     static bool creativeNow = false;
     static double creativeAt = -10;
     bool        boardLabel = false;
@@ -5257,6 +5409,11 @@ void drawOverlay() {
             std::lock_guard ll3(gLayoutMutex);
             clueGui = gLayout.slot / 18.0f; layW = float(gLayout.W); layH = float(gLayout.H);
         }
+        if (gS.tipSlot >= 0 && gS.tipCache[gS.tipSlot].ok && gS.probe != gS.tipSlot && !gS.overPanel && gG.kw > 0) {
+            itemTip  = true;
+            itemText = gS.tipCache[gS.tipSlot].text;
+            tipW = float(gG.kw); tipH = float(gG.kh);
+        }
         if (gS.st.kind == Kind::Enchanting && !moving() && !gS.overPanel) { // EnchantStation.tooltip (the clue and the item's own lines are the hidden screen's)
             if (gS.enchTarget == EOffer && gS.hoverOffer >= 0) { // offerTooltip: the window's own clue, then what it costs
                 int  h    = gS.hoverOffer, need = h + 1;
@@ -5309,22 +5466,40 @@ void drawOverlay() {
                     IM_COL32(242, 234, 216, int(0.75f * boardA * 255)), "Patterns");
     // the station's tooltip, vanilla style (dark violet box, gold title)
     gOverlayQuads.clear();
-    if (!tipLines.empty()) {
+    if (itemTip && tipLines.empty()) { // the item's text first, then the station's lines (title gold, the rest grey)
+        if (!tipTitle.empty()) tipLines.push_back({tipTitle, IM_COL32(255, 170, 0, 255)});
+        if (!tipLine.empty()) tipLines.push_back({tipLine, IM_COL32(170, 170, 170, 255)});
+        tipTitle.clear();
+    }
+    if (!tipLines.empty() || itemTip) {
         float ts2 = std::max(14.0f, d.y / 54.0f), pad = ts2 * 0.35f, w = 0, h = pad * 2, lh = ts2 * 1.15f;
         // the clue: Bedrock's writing at the tooltip's text size (its 7 px capitals as tall as ours)
         float cs = clueGui > 0 ? ts2 * 0.72f / (7 * clueGui) : 1, cw = clueLine ? clue.w * cs : 0, ch = clueLine ? clue.h * cs : 0;
+        float iw = itemTip ? itemText.w * cs : 0, ih = itemTip ? itemText.h * cs : 0, io = itemTip ? ih + (tipLines.empty() ? 0 : pad * 0.6f) : 0;
         for (auto& l : tipLines) w = std::max(w, font->CalcTextSizeA(ts2, FLT_MAX, 0, l.first.c_str()).x);
-        w = std::max(w, cw);
+        w = std::max(w, std::max(cw, iw));
         w += pad * 2;
-        h += lh * tipLines.size();
+        h += lh * tipLines.size() + io;
         float tx = std::min(mx * d.x + ts2, d.x - w - 4), ty = std::min(my * d.y - ts2 * 0.6f, d.y - h - 4);
         dl->AddRectFilled(ImVec2(tx, ty), ImVec2(tx + w, ty + h), IM_COL32(16, 0, 16, 240), 0);
         dl->AddRect(ImVec2(tx + 1, ty + 1), ImVec2(tx + w - 1, ty + h - 1), IM_COL32(80, 0, 255, 90), 0, 0, 2.0f);
-        for (size_t i = 0; i < tipLines.size(); ++i) dl->AddText(font, ts2, ImVec2(tx + pad, ty + pad + lh * i), tipLines[i].second, tipLines[i].first.c_str());
+        for (size_t i = 0; i < tipLines.size(); ++i) dl->AddText(font, ts2, ImVec2(tx + pad, ty + pad + io + lh * i), tipLines[i].second, tipLines[i].first.c_str());
+        if (itemTip && gImList && gImW > 0) {
+            float sx = float(gImW) / std::max(1.0f, d.x), sy = float(gImH) / std::max(1.0f, d.y);
+            float x0 = (tx + pad) * sx, y0 = (ty + pad) * sy;
+            Quad  q;
+            pixelQuad(x0, y0, x0 + iw * sx, y0 + ih * sy, int(gImW), int(gImH), q);
+            setRect(q.uv, itemText.x / tipW, itemText.y / tipH, (itemText.x + itemText.w) / tipW, (itemText.y + itemText.h) / tipH);
+            q.mode[0] = 10; q.mode[1] = 0; q.mode[2] = 0; q.mode[3] = 1;
+            q.color[0] = q.color[1] = q.color[2] = 1; q.color[3] = 1;
+            gOverlayQuads.push_back(q);
+            dl->AddCallback(overlayQuadCb, reinterpret_cast<void*>(uintptr_t(gOverlayQuads.size() - 1)));
+            dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+        }
         if (clueLine && gImList && gImW > 0) {
             // the window's clue, its white writing only, drawn in ImGui's order (over the tooltip box)
             float sx = float(gImW) / std::max(1.0f, d.x), sy = float(gImH) / std::max(1.0f, d.y);
-            float x0 = (tx + pad) * sx, y0 = (ty + pad + (lh - ch) * 0.5f) * sy;
+            float x0 = (tx + pad) * sx, y0 = (ty + pad + io + (lh - ch) * 0.5f) * sy;
             Quad  q;
             pixelQuad(x0, y0, x0 + cw * sx, y0 + ch * sy, int(gImW), int(gImH), q);
             setRect(q.uv, clue.x / layW, clue.y / layH, (clue.x + clue.w) / layW, (clue.y + clue.h) / layH);
