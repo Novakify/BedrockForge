@@ -382,3 +382,11 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Game launched via LeviLauncher (Launch on 1.26.51.01). The game window never came forward: the desktop shell and taskbar block clicks, and alt+tab needs systemKeyCombos. The DLL is locked while the game runs, so the stable restore failed.
 - NOT DONE: in-world mouse test (panel_diag.txt still shows last session's data), screen detection, inventory/chest/crafting capture.
 - Next run: close the game (or have Fernando close it), restore the stable DLL and uiCaptureSpike false if needed, then relaunch and read logs\uicapture\panel_diag.txt.
+
+## Status update 2 (remote run, after computer access re-approved)
+- Game ran, I key opens inventory (rebind works). F8 puts the inventory on the 3D panel: frame, zoom, dim all render. No crash.
+- panel_diag v0.4: GetCursorPos 932 calls, 929 remapped; GetRawInputData 0 reads; ClipCursor 0 calls. So in-world menus read GetCursorPos (the remap runs), not raw input.
+- Hover is still wrong at the panel edge: pointer on the top-left inventory slot highlights the slot one row down and right (Gravel). Near the centre the remap barely changes the point, so the centre test looked right.
+- Likely cause: the ray-pick in SpatialPanel.cpp remapClient does not match the drawn quad (toClip / computeGeom / aspect). Next: calibrate by drawing a test marker at the remapped point, or compare toClip(corners) with remapClient inverse for the four corners.
+- Not done: screen detection (panel for inventory/chest/crafting only), chest and crafting captures, Cinematic prompt.
+- PC state: v0.4 DLL active, uiCaptureSpike true, game still running with the panel on. Stable DLL 5246159 on disk for rollback (config backup RendererFoundation.json.bak-stable).
