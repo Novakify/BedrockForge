@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -26,6 +27,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CinematicGame.h"
+#include "HammerModel.h"
 #include "LLShim.h"
 #include "SpatialCamera.h"
 #include "UiCapture.h"
@@ -108,7 +110,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k); }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -151,7 +153,7 @@ struct Station {
     Dir  side = South;            // side worked from (from the block towards the player)
     V3   top;                     // TableStation.top
     bool lit = false;             // a lit furnace (block name lit_*)
-    V3 center() const { return kind == Kind::Table ? top : V3{bx + 0.5, by + 0.5, bz + 0.5}; }
+    V3 center() const { return kind == Kind::Table || kind == Kind::Anvil ? top : V3{bx + 0.5, by + 0.5, bz + 0.5}; }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
     V3 fpoint(bool onTop, double u, double v, double out) const {
@@ -175,6 +177,13 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Anvil) { // AnvilStation.lean
+            V3    eye = top + sideV() * 0.66 + V3{0, 0.7, 0};
+            JPose p;
+            p.pos = eye;
+            lookAngles(top + sideV() * -0.06 + V3{0, 0.12, 0} - eye, p.yaw, p.pitch);
             return p;
         }
         constexpr double LEAN_BACK = 0.86, LEAN_UP = 0.72, LOOK_BACK = -0.04;
@@ -293,10 +302,20 @@ struct Scene {
     std::string refused;
     std::string states;
     bool        aimTop = false;  // FurnaceStation.aimFace == TOP
+    // MenuStation move
+    bool   moveOn = false, moveBeatDone = false, moveToInv = false;
+    double moveAt = -10, moveLength = 1, moveBeat = 0;
+    int    blowsDone = 0;
+    bool   mainWasFull = false, addWasFull = false, mainWasBlock = false, addWasBlock = false;
+    float  snapBox[11][4] = {};
+    int    anvilTarget = 0;
+    bool   resultFull3() const { return cellFull[2]; } // the menu's result slot (anvil, grindstone, cartography: slot 2)
     std::string lastRoute = "-";
     long    scenes = 0;
 } gS;
 std::mutex gM; // gS
+double cameraKick();
+void   moveFrame();
 
 LARGE_INTEGER gLastQpc{};
 
@@ -342,12 +361,13 @@ bool planHere(Station const& st, V3 feet, V3 eye, std::string& why) {
 }
 
 /// ClientStation.freeSide: the side nearest the player with room to stand.
-Dir freeSide(Station const& st, V3 feet) {
+Dir freeSide(Station const& st, V3 feet, unsigned allowed = 15) {
     double dx = feet.x - (st.bx + 0.5), dz = feet.z - (st.bz + 0.5);
     for (int pass = 0; pass < 2; ++pass) {
         int    best  = -1;
         double score = -1e9;
         for (int d = 0; d < 4; ++d) {
+            if (!(allowed & (1u << d))) continue;
             double s  = stepX(Dir(d)) * dx + stepZ(Dir(d)) * dz;
             int    fx = st.bx + stepX(Dir(d)), fz = st.bz + stepZ(Dir(d));
             int    fy = pass == 0 ? int(std::floor(feet.y)) : st.by;
@@ -400,7 +420,16 @@ bool begin(Kind kind, int bx, int by, int bz) {
     st.kind = kind;
     st.bx = bx; st.by = by; st.bz = bz;
     st.top = {bx + 0.5, by + 1.0, bz + 0.5};
-    st.side = freeSide(st, feet);
+    // StationKind.sides: which sides a block is worked from
+    int      facing  = game::facing(bx, by, bz);
+    unsigned allowed = 15;
+    if (facing >= 0) {
+        if (kind == Kind::Anvil) allowed = (1u << int(clockWise(Dir(facing)))) | (1u << int(opposite(clockWise(Dir(facing)))));
+        else if (kind == Kind::Grindstone || kind == Kind::Stonecutter) allowed = (1u << facing) | (1u << int(opposite(Dir(facing))));
+        else if (kind == Kind::Loom) allowed = 1u << facing;
+    }
+    st.side = freeSide(st, feet, allowed);
+    gS.states = game::blockStates(bx, by, bz);
     if (isFurnace(kind)) {
         // a furnace is always worked from its front (FurnaceStation(pos, FACING))
         int f = game::facing(bx, by, bz);
@@ -535,6 +564,7 @@ void frame() { // Scene.frame (no pause handling: Bedrock single player keeps th
     gS.frameDt = dt;
     gS.clock += dt;
     if (gS.phase == Phase::None) return;
+    moveFrame();
     double pace = gS.phase == Phase::Intro ? pct(gCfg.approachSpeed) : gS.phase == Phase::Outro ? pct(gCfg.leaveSpeed) : 1;
     gS.time += dt * pace;
     if (gS.phase == Phase::Intro && gS.time >= gS.leanLength) {
@@ -567,9 +597,18 @@ JPose overridePose(V3 livePos, float liveYaw, float livePitch) { // CameraRig.ov
         break;
     }
     case Phase::Active: {
-        JPose base = tether(breathe(gS.st.view(), smoother(gS.time / 0.6)), livePos);
-        pose       = base; // kick: no dramatic moments at the table; FreeLook not ported (Left Alt)
-        gS.weight  = 1;
+        JPose  base = tether(breathe(gS.st.view(), smoother(gS.time / 0.6)), livePos);
+        double kick = cameraKick();
+        if (kick > 0.001 && cameraShake()) { // CameraRig.kick: a tremor that dies down with the moment
+            double t        = gS.clock;
+            float  shakeYaw = float((std::sin(t * 47) + std::sin(t * 31 + 1)) * 0.18 * kick);
+            float  shakePit = float((std::sin(t * 53 + 2) + std::sin(t * 29)) * 0.14 * kick);
+            base.yaw += shakeYaw;
+            base.pitch += shakePit;
+            base.roll += shakeYaw * 0.4f;
+        }
+        pose      = base; // FreeLook (Left Alt) not ported
+        gS.weight = 1;
         break;
     }
     default: {
@@ -681,7 +720,7 @@ bool overDrawer(DrawerGeom const& g, float mx, float my) {
 // ---------------------------------------------------------------- cursor -> what it is over (Scene.updateCursor)
 int   gW = 0, gH = 0;
 std::atomic<unsigned> gHeld{0};          // buttons held as the hidden screen sees them
-enum class PressState { Idle, Hover, Down, ForceDown };
+enum class PressState { Idle, Hover, Down, ForceDown, Swallow };
 struct Press {
     PressState state = PressState::Idle;
     unsigned   bit = 0;
@@ -699,6 +738,119 @@ double nowMs() {
     return double(n.QuadPart) * 1000.0 / double(f.QuadPart);
 }
 float gMapX = 0, gMapY = 0; bool gMapValid = false; // last mapped position (diag)
+
+// ---------------------------------------------------------------- clicks we make ourselves (a move's beat, a take)
+// The hidden screen's cursor goes to the slot, the button goes down there for a moment, and up again.
+struct Inject { int target; unsigned bit; double start; };
+std::deque<Inject> gInject;
+bool injectActive(double now, int& target, unsigned& bit, bool& down) {
+    while (!gInject.empty()) {
+        Inject& i = gInject.front();
+        if (i.start < 0) i.start = now;
+        double t = now - i.start;
+        target = i.target;
+        bit    = i.bit;
+        if (t < 45) { down = false; return true; }
+        if (t < 125) { down = true; return true; }
+        if (t < 185) { down = false; return true; }
+        gInject.pop_front();
+    }
+    return false;
+}
+void inject(int target, unsigned bit = 1) { gInject.push_back({target, bit, -1}); }
+std::atomic_bool gSnapRequest{false};
+
+// ---------------------------------------------------------------- MenuStation's big move (forging, ...)
+constexpr double FORGE_LENGTH = 2.05, SWING = 0.09;
+constexpr double BLOWS[3] = {0.7, 1.02, 1.3};
+constexpr double PUT_AWAY = BLOWS[2] + 0.32;
+double moveTime() { double t = gS.clock - gS.moveAt; return gS.moveOn && t >= 0 && t <= gS.moveLength ? t : -1; }
+bool   moving() { return moveTime() >= 0; }
+double sinceBlow(double t) {
+    double since = 1e9;
+    for (double b : BLOWS) if (t >= b) since = t - b;
+    return since;
+}
+/// ClientStation.cameraKick: 0..1 how hard the camera is shaken right now
+double cameraKick() {
+    double t = moveTime();
+    if (t < 0) return 0;
+    if (gS.st.kind == Kind::Anvil) return 0.5 * std::exp(-sinceBlow(t) * 13);
+    return 0;
+}
+double stationFlash(float rgb[3]) {
+    double t = moveTime();
+    if (t < 0) return 0;
+    if (gS.st.kind == Kind::Anvil) { rgb[0] = 1; rgb[1] = 0xE6 / 255.0f; rgb[2] = 0xB8 / 255.0f; return 0.11 * std::exp(-sinceBlow(t) * 16); }
+    return 0;
+}
+
+// ---------------------------------------------------------------- AnvilStation (vanilla geometry)
+V3 anvilMain() { return gS.st.top + gS.st.right() * -0.02; }                                              // slot 0
+V3 anvilAdd() { return gS.st.top + gS.st.right() * 0.07 + gS.st.sideV() * -0.03 + V3{0, 0.012, 0}; } // slot 1
+V3 anvilPoint() { return anvilMain() + gS.st.right() * 0.03; }
+enum AnvilTarget { ANone, ASurface, AStack, AName };
+/// GrindstoneStation.under: the cursor within a disc round a point, the disc `radius` tall there (at least 9 GUI px)
+bool underCursor(Basis const& b, float mx, float my, V3 center, double radius) {
+    float ax, ay, ex, ey;
+    if (!toPixel(gS.last, b, center, gW, gH, ax, ay) || !toPixel(gS.last, b, center + V3{0, radius, 0}, gW, gH, ex, ey)) return false;
+    float gui = float(spatialcam::javaAutoGuiScale(gW, gH));
+    float r   = std::max(9.0f * gui, std::hypot(ax - ex, ay - ey));
+    return std::hypot(mx - ax, my - ay) < r;
+}
+/// AnvilStation.updateCursor; returns the target id (hidden slot, or an action >= 100)
+int anvilCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
+    gS.anvilTarget = ANone;
+    if (moving()) return -1;
+    bool carrying = gS.carrying, pile = gS.cellFull[0] || gS.cellFull[1];
+    if (!carrying && pile && underCursor(b, mx, my, gS.cellFull[0] ? anvilMain() : anvilAdd(), 0.16)) {
+        gS.anvilTarget = AStack;
+        gS.haveAim     = true;
+        gS.aim         = gS.cellFull[1] ? anvilAdd() : anvilMain();
+        return 100;
+    }
+    V3 hit;
+    if (!carrying || !onPlaneY(o, d, gS.st.top.y, hit)) return -1;
+    V3 rel = hit - gS.st.top;
+    if (std::fabs(rel.dot(gS.st.right())) < 0.52 && std::fabs(rel.dot(gS.st.sideV())) < 0.36) {
+        gS.anvilTarget = ASurface;
+        gS.haveAim     = true;
+        int slot       = gS.cellFull[0] ? 1 : 0; // the item first; then what goes into it, on top
+        gS.aim         = slot == 0 ? anvilMain() : anvilAdd();
+        return slot;
+    }
+    return -1;
+}
+/// A press on an action target (MenuStation.click -> act): starts a move or clicks for the player.
+void stationAction(int t, unsigned bit, bool shift) {
+    if (gS.st.kind == Kind::Anvil && t == 100) {
+        if (bit == 1 && gS.resultFull3()) {
+            // AnvilStation.forge: three blows; the first one takes the result (the server checks the cost)
+            gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = FORGE_LENGTH; gS.moveBeat = BLOWS[0]; gS.moveBeatDone = false;
+            gS.moveToInv = shift; gS.blowsDone = 0;
+            gS.mainWasFull = gS.cellFull[0]; gS.addWasFull = gS.cellFull[1];
+            gS.mainWasBlock = gS.cellBlock[0]; gS.addWasBlock = gS.cellBlock[1];
+            std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+            gSnapRequest = true;
+        } else {
+            inject(gS.cellFull[1] ? 1 : 0, 1); // take (the window's own click with the left button)
+        }
+        gS.tapAt = gS.clock;
+    }
+}
+/// Every frame: the move's beat lands on time (MenuStation.frame).
+void moveFrame() {
+    if (!gS.moveOn) return;
+    double t = gS.clock - gS.moveAt;
+    if (!gS.moveBeatDone && t >= gS.moveBeat) {
+        gS.moveBeatDone = true;
+        if (gS.phase == Phase::Active && gS.st.kind == Kind::Anvil) {
+            if (gS.resultFull3()) inject(2, 1);
+            else gS.moveOn = false; // nothing to take any more: the move stops (cancelMove)
+        }
+    }
+    if (t > gS.moveLength) gS.moveOn = false;
+}
 
 /// Target ids: 0..8 grid (recipe order), 9 result, 10..18 hotbar, 19..45 pack, -1 none
 int currentTarget(float mx, float my) {
@@ -720,6 +872,11 @@ int currentTarget(float mx, float my) {
     }
     Basis b  = basisOf(gS.last);
     float nx = 2 * mx / gW - 1, ny = 1 - 2 * my / gH;
+    if (gS.st.kind == Kind::Anvil) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return anvilCursor(b, mx, my, o, d);
+    }
     if (isFurnace(gS.st.kind)) {
         // FurnaceStation.updateCursor (vanilla geometry): the front face, and the top where a zone lies there
         FLayout const& fl = furnaceLayout(gS.st.kind);
@@ -907,7 +1064,8 @@ bool cameraPose(float const eye[3], float yaw, float pitch, Pose& out, float& fo
     // CameraRig.fov: lerp(weight * sceneZoom, vanilla, leanFov)
     if (gCfg.writeFov) {
         double vanilla = gS.vanillaFovY;
-        double fov     = vanilla + (gS.st.leanFov() - vanilla) * (gS.weight * pct(gCfg.sceneZoom));
+        double punch   = cameraShake() ? 7 * cameraKick() : 0;
+        double fov     = vanilla + (gS.st.leanFov() - vanilla) * (gS.weight * pct(gCfg.sceneZoom)) - punch;
         fovScale       = float(fov / std::max(1.0, vanilla));
     }
     gS.fovScaleNow = fovScale;
@@ -938,6 +1096,12 @@ bool mapClient(int w, int h, int& x, int& y) {
     bool grace = gPress.state == PressState::Idle && now - gPress.releasedAt < 150 && gPress.target >= 0;
     if (grace) use = gPress.target;
     bool mapToTarget = use >= 0 && (gCfg.hoverTargets || gPress.state != PressState::Idle || grace);
+    {
+        int      it;
+        unsigned ib;
+        bool     idown;
+        if (injectActive(now, it, ib, idown)) { use = it; mapToTarget = true; }
+    }
     if (gPress.state == PressState::Down && t >= 0) gPress.target = t;
     Rect r;
     float fx, fy;
@@ -956,12 +1120,28 @@ unsigned filterButtons(unsigned buttons) {
     double   now = nowMs();
     unsigned out = 0;
     unsigned bit = gPress.bit;
+    {   // our own click under way: the real buttons wait
+        int      it;
+        unsigned ib;
+        bool     idown;
+        if (injectActive(now, it, ib, idown)) {
+            gPrevButtons = buttons & 7u;
+            gHeld        = idown ? ib : 0;
+            return (buttons & ~7u) | (idown ? ib : 0);
+        }
+    }
     switch (gPress.state) {
+    case PressState::Swallow: // a press that started a move or a click of ours: nothing of it reaches the screen
+        if (!(buttons & bit)) { gPress.state = PressState::Idle; gPress.releasedAt = now; gPress.target = -1; }
+        break;
     case PressState::Idle: {
         int t = gTargetNow.load();
         for (unsigned b = 1; b <= 4; b <<= 1) {
             if (!(buttons & b) || (gPrevButtons & b)) continue; // a new press
-            if (gS.phase == Phase::Active && t >= 0) {
+            if (gS.phase == Phase::Active && t >= 100) {
+                gPress = Press{PressState::Swallow, b, -1, now, -1e9};
+                stationAction(t, b, (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+            } else if (gS.phase == Phase::Active && t >= 0) {
                 // first the hidden screen's cursor moves onto the slot (hover), then the button goes down there
                 gPress = Press{PressState::Hover, b, t, now, -1e9};
                 gS.tapAt = gS.clock; // Hands.tap
@@ -1033,6 +1213,9 @@ struct Gfx {
     long                         frameNo = 0;
     // the player's skin (arms)
     ComPtr<ID3D12Resource>       skinTex, skinUp;
+    ComPtr<ID3D12Resource>       propTex, propUp; // the hammer atlas (HammerModel.h)
+    ComPtr<ID3D12Resource>       snap;            // the hidden screen when a move began (what lay on the block)
+    bool                         snapValid = false;
     long                         skinSerial = -1;
     bool                         skinValid = false;
     int                          skinW = 0, skinH = 0;
@@ -1053,6 +1236,8 @@ cbuffer C : register(b0) {
 };
 Texture2D    tUi   : register(t0);
 Texture2D    tSkin : register(t1);
+Texture2D    tProp : register(t2);
+Texture2D    tSnap : register(t3);
 SamplerState sP    : register(s0);
 struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 V2P VS(uint id : SV_VertexID) {
@@ -1065,12 +1250,17 @@ V2P VS(uint id : SV_VertexID) {
 }
 float4 PS(V2P i) : SV_Target {
     if (mode.x < 0.5) return (mode.y > 0.5 ? float4(color.rgb * color.a, 0) : float4(color.rgb * color.a, color.a)) * mode.w; // y: additive light
-    if (mode.x > 1.5) {
-        float4 k = tSkin.SampleLevel(sP, i.uv, 0);
+    if (mode.x > 4.5) { // 5: a soft round glow (sparks, the anvil's surface disc), added light
+        float2 c = i.uv * 2 - 1;
+        float  f = saturate(1 - dot(c, c));
+        return float4(color.rgb * color.a * f * f, 0) * mode.w;
+    }
+    if (mode.x > 1.5 && mode.x < 3.5) { // 2 skin, 3 prop (hammer): alpha tested, shaded
+        float4 k = mode.x < 2.5 ? tSkin.SampleLevel(sP, i.uv, 0) : tProp.SampleLevel(sP, i.uv, 0);
         if (k.a < 0.1) discard;
         return float4(k.rgb * color.rgb, 1.0) * mode.w;
     }
-    float4 u = tUi.SampleLevel(sP, i.uv, 0);
+    float4 u = mode.x > 3.5 ? tSnap.SampleLevel(sP, i.uv, 0) : tUi.SampleLevel(sP, i.uv, 0); // 4: the snapshot
     if (mode.y > 0.5 && u.a > 0.0) {
         float3 c = u.rgb / max(u.a, 1e-3);
         if (all(abs(c - key0.rgb) < mode.z) || all(abs(c - key1.rgb) < mode.z)) u = 0;
@@ -1092,7 +1282,7 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
     if (gG.pso && gG.fmt == fmt) return true;
     gG.dev = dev;
     if (!gG.root) {
-        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
+        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0};
         D3D12_ROOT_PARAMETER   p[2]{};
         p[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         p[0].Constants        = {0, 0, 40};
@@ -1111,7 +1301,7 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
         if (FAILED(hr)) return fail("D3D12SerializeRootSignature", hr);
         if (FAILED(hr = dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gG.root))))
             return fail("CreateRootSignature", hr);
-        D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+        D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
         if (FAILED(hr = dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gG.srvHeap)))) return fail("CreateDescriptorHeap", hr);
         gG.srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
@@ -1179,6 +1369,17 @@ bool ensureKeep(ID3D12Device* dev, D3D12_RESOURCE_DESC const& ud) {
     s.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     s.Texture2D.MipLevels = 1;
     dev->CreateShaderResourceView(gG.keep.Get(), &s, gG.srvHeap->GetCPUDescriptorHandleForHeapStart());
+    {
+        ComPtr<ID3D12Resource> sn;
+        HRESULT hs = dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&sn));
+        if (FAILED(hs)) return fail("CreateCommittedResource(snapshot)", hs);
+        if (gG.snap) graveyard.push_back(gG.snap);
+        gG.snap = sn;
+        gG.snapValid = false;
+        auto h3 = gG.srvHeap->GetCPUDescriptorHandleForHeapStart();
+        h3.ptr += SIZE_T(3) * gG.srvInc;
+        dev->CreateShaderResourceView(gG.snap.Get(), &s, h3);
+    }
     // full readback buffer for slot detection
     UINT64 total = 0;
     dev->GetCopyableFootprints(&d, 0, 1, 0, &gG.fp, nullptr, nullptr, &total);
@@ -1213,6 +1414,53 @@ std::vector<unsigned char> fallbackSkin() {
     fill(32, 48, false);
     return px;
 }
+/// RGBA8 pixels -> a texture with an SRV in our heap at `slot` (upload heap + copy on this frame's list).
+bool uploadTexture(ID3D12Device* dev, ID3D12GraphicsCommandList* list, unsigned char const* px, int w, int h, ComPtr<ID3D12Resource>& tex,
+                   ComPtr<ID3D12Resource>& up, UINT slot) {
+    static std::vector<ComPtr<ID3D12Resource>> graveyard;
+    if (tex) graveyard.push_back(tex);
+    if (up) graveyard.push_back(up);
+    tex.Reset();
+    up.Reset();
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC   d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = UINT(w); d.Height = UINT(h); d.DepthOrArraySize = 1; d.MipLevels = 1; d.Format = DXGI_FORMAT_R8G8B8A8_UNORM; d.SampleDesc.Count = 1;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex))))
+        return fail("CreateCommittedResource(texture)", E_FAIL);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+    UINT64 total = 0;
+    dev->GetCopyableFootprints(&d, 0, 1, 0, &fp, nullptr, nullptr, &total);
+    D3D12_HEAP_PROPERTIES uh{D3D12_HEAP_TYPE_UPLOAD};
+    D3D12_RESOURCE_DESC   bd{};
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bd.Width = total; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(dev->CreateCommittedResource(&uh, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&up))))
+        return fail("CreateCommittedResource(texture upload)", E_FAIL);
+    void* m = nullptr;
+    if (FAILED(up->Map(0, nullptr, &m)) || !m) return fail("Map(texture upload)", E_FAIL);
+    for (int y = 0; y < h; ++y) std::memcpy(static_cast<uint8_t*>(m) + fp.Offset + size_t(y) * fp.Footprint.RowPitch, px + size_t(y) * w * 4, size_t(w) * 4);
+    up->Unmap(0, nullptr);
+    D3D12_TEXTURE_COPY_LOCATION dst{tex.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+    dst.SubresourceIndex = 0;
+    D3D12_TEXTURE_COPY_LOCATION srcl{up.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+    srcl.PlacedFootprint = fp;
+    list->CopyTextureRegion(&dst, 0, 0, 0, &srcl, nullptr);
+    barrier(list, tex.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    auto hc = gG.srvHeap->GetCPUDescriptorHandleForHeapStart();
+    hc.ptr += SIZE_T(slot) * gG.srvInc;
+    dev->CreateShaderResourceView(tex.Get(), &sv, hc);
+    return true;
+}
+bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
+    if (gG.propTex) return true;
+    return uploadTexture(dev, list, hammer::kAtlas, 64, 64, gG.propTex, gG.propUp, 2);
+}
 bool uploadSkin(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     std::vector<unsigned char> px;
     int  w, h;
@@ -1226,44 +1474,7 @@ bool uploadSkin(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
         h  = gS.skinH;
     }
     if (px.empty() || w < 64) { px = fallbackSkin(); w = h = 64; }
-    static std::vector<ComPtr<ID3D12Resource>> graveyard;
-    if (gG.skinTex) graveyard.push_back(gG.skinTex);
-    if (gG.skinUp) graveyard.push_back(gG.skinUp);
-    gG.skinTex.Reset();
-    gG.skinUp.Reset();
-    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
-    D3D12_RESOURCE_DESC   d{};
-    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    d.Width = UINT(w); d.Height = UINT(h); d.DepthOrArraySize = 1; d.MipLevels = 1; d.Format = DXGI_FORMAT_R8G8B8A8_UNORM; d.SampleDesc.Count = 1;
-    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&gG.skinTex))))
-        return fail("CreateCommittedResource(skin)", E_FAIL);
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
-    UINT64 total = 0;
-    dev->GetCopyableFootprints(&d, 0, 1, 0, &fp, nullptr, nullptr, &total);
-    D3D12_HEAP_PROPERTIES up{D3D12_HEAP_TYPE_UPLOAD};
-    D3D12_RESOURCE_DESC   bd{};
-    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    bd.Width = total; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&gG.skinUp))))
-        return fail("CreateCommittedResource(skin upload)", E_FAIL);
-    void* m = nullptr;
-    if (FAILED(gG.skinUp->Map(0, nullptr, &m)) || !m) return fail("Map(skin upload)", E_FAIL);
-    for (int y = 0; y < h; ++y) std::memcpy(static_cast<uint8_t*>(m) + fp.Offset + size_t(y) * fp.Footprint.RowPitch, &px[size_t(y) * w * 4], size_t(w) * 4);
-    gG.skinUp->Unmap(0, nullptr);
-    D3D12_TEXTURE_COPY_LOCATION dst{gG.skinTex.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
-    dst.SubresourceIndex = 0;
-    D3D12_TEXTURE_COPY_LOCATION srcl{gG.skinUp.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
-    srcl.PlacedFootprint = fp;
-    list->CopyTextureRegion(&dst, 0, 0, 0, &srcl, nullptr);
-    barrier(list, gG.skinTex.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
-    sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    sv.Texture2D.MipLevels = 1;
-    auto h1 = gG.srvHeap->GetCPUDescriptorHandleForHeapStart();
-    h1.ptr += gG.srvInc;
-    dev->CreateShaderResourceView(gG.skinTex.Get(), &sv, h1);
+    if (!uploadTexture(dev, list, px.data(), w, h, gG.skinTex, gG.skinUp, 1)) return false;
     gG.skinSerial = serial;
     gG.skinValid  = true;
     gG.skinW = w;
@@ -1725,8 +1936,8 @@ void uvOf(Rect r, Layout const& L, float inset, float uv[8]) {
     float i = r.w * inset;
     setRect(uv, (r.x + i) / L.W, (r.y + i) / L.H, (r.x + r.w - i) / L.W, (r.y + r.h - i) / L.H);
 }
-void keyed(Quad& q, Layout const& L, float opacity) {
-    q.mode[0] = 1; q.mode[1] = 1; q.mode[2] = gCfg.keyTolerance; q.mode[3] = opacity;
+void keyed(Quad& q, Layout const& L, float opacity, bool snap = false) {
+    q.mode[0] = snap ? 4.0f : 1.0f; q.mode[1] = 1; q.mode[2] = gCfg.keyTolerance; q.mode[3] = opacity;
     for (int i = 0; i < 3; ++i) { q.key0[i] = L.bg[i]; q.key1[i] = L.hi[i]; }
 }
 /// world-space quad: centre, two half-axes; false when behind the camera
@@ -1754,7 +1965,7 @@ float faceShade(V3 n) {
 // A block's inventory icon is the cube seen at the GUI angle (45 deg round, 30 deg down): every point of the cube's
 // three visible faces can be found in the icon, so the icon unwraps back onto a real cube (ItemPlacer's block cubes).
 // The icon's own lighting (bright top, shaded sides) comes along. Hidden faces repeat the visible ones.
-struct IconSrc { Rect inside; float box[4]; }; // slot inside (screen px) + icon bounding box in 0..1 of it
+struct IconSrc { Rect inside; float box[4]; bool snap = false; }; // slot inside (screen px) + icon bounding box in 0..1 of it
 void iconUv(IconSrc const& s, Layout const& L, double x, double y, double z, float& u, float& v) {
     float bw = s.box[2] - s.box[0], bh = s.box[3] - s.box[1];
     float k  = bw / 1.41421f;
@@ -1800,13 +2011,15 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
                 iconUv(src, L, ux, uy, uz, q.uv[k * 2], q.uv[k * 2 + 1]);
             }
             if (!worldQuad4(cam, b, wp, q)) continue;
-            keyed(q, L, opacity);
+            keyed(q, L, opacity, src.snap);
             gQuads.push_back(q);
         }
 }
 /// An item lying on a surface (flat) or standing as a cube (block). `facing` = the item's up on the surface.
+V3 turnY(V3 v, double deg) { double t = deg * kDeg; return {v.x * std::cos(t) - v.z * std::sin(t), v.y, v.x * std::sin(t) + v.z * std::cos(t)}; }
 void placeItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& src, bool block, V3 base, V3 right, V3 out,
-               double flatSize, double blockSize, float tiltDeg, float opacity) {
+               double flatSize, double blockSize, float tiltDeg, float opacity, double turnDeg = 0) {
+    if (turnDeg != 0) { right = turnY(right, turnDeg); out = turnY(out, turnDeg); }
     if (block && gCfg.cubeItems) {
         iconCube(cam, b, L, src, base, right, out, blockSize, opacity);
         return;
@@ -1818,7 +2031,7 @@ void placeItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const&
     Quad   q;
     if (!worldQuad(cam, b, c, right * (flatSize / 2), up * (flatSize / 2), q)) return;
     setRect(q.uv, src.inside.x / L.W, src.inside.y / L.H, (src.inside.x + src.inside.w) / L.W, (src.inside.y + src.inside.h) / L.H);
-    keyed(q, L, opacity);
+    keyed(q, L, opacity, src.snap);
     gQuads.push_back(q);
 }
 
@@ -1855,6 +2068,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Anvil) // AnvilStation.rest: on the near edge of the face, either side of the work
+        return gS.st.top + gS.st.sideV() * 0.24 + gS.st.right() * (right ? 0.3 : -0.3) + V3{0, HAND_Y, 0};
     // TableStation.rest
     return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.24 : -0.24) + V3{0, HAND_Y, 0};
 }
@@ -1870,10 +2085,11 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
         // a tap pushes the fist past the face, into the opening
         return aim + gS.st.sideV() * (hover - 0.18 * tap) - reach * 0.07 + V3{0, 0.035, 0};
     }
-    // TableStation.handTarget
+    // TableStation.handTarget (the anvil's is the same at the point aimed at)
     V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
     double hover = carrying ? 0.075 : 0.045;
-    return V3{aim.x, gS.st.by + 1.0 + HAND_Y + hover - 0.06 * tap, aim.z} - reach * ITEM_REACH;
+    double y     = gS.st.kind == Kind::Table ? gS.st.by + 1.0 : aim.y;
+    return V3{aim.x, y + HAND_Y + hover - 0.06 * tap, aim.z} - reach * ITEM_REACH;
 }
 V3 heldItemPoint(V3 hand, V3 shoulder) {
     if (isFurnace(gS.st.kind) && !gS.aimTop) { // FurnaceStation.heldItemPoint on the front
@@ -1884,6 +2100,50 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
     return hand + reach * (isFurnace(gS.st.kind) ? 0.07 : ITEM_REACH) + V3{0, -HAND_Y + 0.012, 0};
 }
 double craftProgress() { double t = (gS.clock - gS.craftAt) / 0.5; return t >= 0 && t <= 1 ? t : -1; }
+
+// ---- AnvilStation's forging: the hammer's swing (grip + angle) on the three-blow timeline
+struct Swing { V3 grip; double angle; };
+V3 swingDirection() { return (gS.st.sideV() * -0.3 + gS.st.right() * -0.12).norm(); }
+V3 handleDirection(double angle) { double a = angle * kDeg; return swingDirection() * std::cos(a) + V3{0, std::sin(a), 0}; }
+V3 headAxis(double angle) { double a = angle * kDeg; return V3{0, std::cos(a), 0} - swingDirection() * std::sin(a); }
+constexpr double HAMMER_SCALE = 0.30, STRIKE_ALONG = (1.125 - 0.18) * HAMMER_SCALE, STRIKE_ACROSS = 0.375 * HAMMER_SCALE;
+Swing impactSwing() { double a = -12; return {anvilPoint() - handleDirection(a) * STRIKE_ALONG + headAxis(a) * STRIKE_ACROSS, a}; }
+Swing raisedSwing() { Swing h = impactSwing(); return {h.grip + V3{0, 0.16, 0} + gS.st.sideV() * 0.05, 95}; }
+Swing reboundSwing() { Swing h = impactSwing(); return {h.grip + V3{0, 0.05, 0} + gS.st.sideV() * 0.02, 28}; }
+Swing hiddenSwing(JPose const& cam) { return {hiddenOf(true, cam.pos, cam.yaw), 80}; }
+Swing mixSwing(Swing a, Swing b, double k) { return {lerp(a.grip, b.grip, k), a.angle + (b.angle - a.angle) * k}; }
+double inCubic(double t) { t = clamp01(t); return t * t * t; }
+bool hammerAt(double t, JPose const& cam, Swing& out) {
+    if (t < 0.3 || t > PUT_AWAY) return false;
+    if (t < 0.55) { out = mixSwing(hiddenSwing(cam), raisedSwing(), outCubic(window(t, 0.3, 0.55))); return true; }
+    for (int k = 0; k < 3; ++k) {
+        double blow = BLOWS[k], windFrom = k == 0 ? 0.55 : BLOWS[k - 1] + 0.12;
+        if (t < blow - SWING) { out = mixSwing(k == 0 ? raisedSwing() : reboundSwing(), raisedSwing(), inOutSine(window(t, windFrom, blow - SWING))); return true; }
+        if (t < blow) { out = mixSwing(raisedSwing(), impactSwing(), inCubic(window(t, blow - SWING, blow))); return true; }
+        if (t < blow + 0.12 || k == 2) {
+            if (k == 2 && t >= blow + 0.12) { out = mixSwing(reboundSwing(), hiddenSwing(cam), inCubic(window(t, blow + 0.12, PUT_AWAY))); return true; }
+            out = mixSwing(impactSwing(), reboundSwing(), outCubic(window(t, blow, blow + 0.12)));
+            return true;
+        }
+    }
+    return false;
+}
+void anvilHands(JPose const& cam, V3& right, V3& left) {
+    double t = moveTime();
+    Swing  sw;
+    bool   swing = hammerAt(t, cam, sw);
+    if (t < 0.3) right = lerp(restOf(true), hiddenSwing(cam).grip, inCubic(window(t, 0, 0.3)));
+    else if (swing) right = sw.grip;
+    else { // empty-handed again: up from below to the new item, then settle with it
+        V3 lifted = anvilMain() + V3{0, 0.13 + HAND_Y, 0} + gS.st.sideV() * ITEM_REACH;
+        V3 up     = lerp(hiddenSwing(cam).grip, lifted, outCubic(window(t, PUT_AWAY, PUT_AWAY + 0.16)));
+        right     = lerp(up, restOf(true) + V3{0, gS.moveToInv ? 0 : 0.05, 0}, inOutCubic(window(t, PUT_AWAY + 0.16, FORGE_LENGTH)));
+    }
+    // the other hand steadies the work at its left end
+    double hold   = inOutCubic(window(t, 0.05, 0.4)) * (1 - inOutCubic(window(t, BLOWS[2] + 0.1, BLOWS[2] + 0.4)));
+    V3     steady = anvilMain() + gS.st.right() * -0.2 + gS.st.sideV() * 0.05 + V3{0, HAND_Y + 0.015, 0};
+    left          = lerp(restOf(false), steady, hold);
+}
 
 void updateHands(JPose const& cam, double dt) {
     V3    cp = cam.pos;
@@ -1913,6 +2173,13 @@ void updateHands(JPose const& cam, double dt) {
         break;
     }
     case Phase::Active: {
+        if (gS.st.kind == Kind::Anvil && moving()) { // AnvilStation.handsOverride, springs at 55
+            V3 r, l;
+            anvilHands(cam, r, l);
+            gRight.update(r, 55, dt);
+            gLeft.update(l, 55, dt);
+            break;
+        }
         double craft = craftProgress();
         if (craft >= 0) { // TableStation.handsOverride: the hands press the ingredients together
             V3     middle = gS.st.top + gS.st.sideV() * 0.04;
@@ -2019,6 +2286,84 @@ void drawArm(JPose const& cam, Basis const& b, V3 hand, V3 shoulder, bool right,
     pieces(au, av, 0.0f);
     if (!legacy) pieces(su, sv, 0.25f); // the sleeve layer (alpha tested)
 }
+
+/// HammerModel.render: the model gripped at `grip`, its handle along `along`, its striking face away from `head`.
+void drawHammer(JPose const& cam, Basis const& b, V3 grip, V3 along, V3 head) {
+    V3 X = head, Y = along, Z{X.y * Y.z - X.z * Y.y, X.z * Y.x - X.x * Y.z, X.x * Y.y - X.y * Y.x};
+    auto wp = [&](double x, double y, double z) {
+        // pose.scale(0.3); translate(-GRIP): model pixels / 16 - grip (0.5, 0.18, 0.5)
+        double mx = (x / 16 - 0.5) * HAMMER_SCALE, my = (y / 16 - 0.18) * HAMMER_SCALE, mz = (z / 16 - 0.5) * HAMMER_SCALE;
+        return grip + X * mx + Y * my + Z * mz;
+    };
+    for (auto const& e : hammer::kElements) {
+        double x1 = e.from[0], y1 = e.from[1], z1 = e.from[2], x2 = e.to[0], y2 = e.to[1], z2 = e.to[2];
+        // corners TL TR BL BR as Minecraft's FaceBakery lays out each face, seen from outside
+        double P[6][4][3] = {
+            {{x1, y1, z2}, {x2, y1, z2}, {x1, y1, z1}, {x2, y1, z1}}, // down
+            {{x1, y2, z1}, {x2, y2, z1}, {x1, y2, z2}, {x2, y2, z2}}, // up
+            {{x2, y2, z1}, {x1, y2, z1}, {x2, y1, z1}, {x1, y1, z1}}, // north
+            {{x1, y2, z2}, {x2, y2, z2}, {x1, y1, z2}, {x2, y1, z2}}, // south
+            {{x1, y2, z1}, {x1, y2, z2}, {x1, y1, z1}, {x1, y1, z2}}, // west
+            {{x2, y2, z2}, {x2, y2, z1}, {x2, y1, z2}, {x2, y1, z1}}, // east
+        };
+        V3 N[6] = {Y * -1.0, Y, Z * -1.0, Z, X * -1.0, X};
+        for (int f = 0; f < 6; ++f) {
+            Quad q;
+            V3   p4[4];
+            for (int k = 0; k < 4; ++k) p4[k] = wp(P[f][k][0], P[f][k][1], P[f][k][2]);
+            if (!worldQuad4(cam, b, p4, q)) continue;
+            auto const& fc = e.face[f];
+            float u0 = fc.u0 / 64, v0 = fc.v0 / 64, u1 = fc.u1 / 64, v1 = fc.v1 / 64;
+            if (fc.rot == 180) { std::swap(u0, u1); std::swap(v0, v1); }
+            setRect(q.uv, u0, v0, u1, v1);
+            float sh = faceShade(N[f].norm());
+            q.color[0] = q.color[1] = q.color[2] = sh;
+            q.mode[0] = 3;
+            gQuads.push_back(q);
+        }
+    }
+}
+
+// ---- Fx: sparks (blowSparks / hotSparks), simple ballistic points of light
+struct Spark { V3 p, v; double born, life; float size, r, g, bl; };
+std::vector<Spark> gSparks;
+uint32_t gRng = 0x9E3779B9u;
+double rnd() { gRng ^= gRng << 13; gRng ^= gRng >> 17; gRng ^= gRng << 5; return (gRng & 0xFFFFFF) / double(0x1000000); }
+double gauss() { double u = std::max(1e-6, rnd()), v = rnd(); return std::sqrt(-2 * std::log(u)) * std::cos(6.2831853 * v); }
+void sparks(V3 at, int n, double speed, V3 bias, double clock) {
+    for (int i = 0; i < n; ++i) {
+        V3 v{gauss() * 0.5, 0.6 + rnd() * 0.8, gauss() * 0.5};
+        v = (v + bias).norm() * (speed * (0.35 + rnd() * 0.65));
+        gSparks.push_back({at, v, clock, 0.22 + rnd() * 0.35, float(0.008 + rnd() * 0.01), 1.0f, float(0.65 + rnd() * 0.3), float(0.25 + rnd() * 0.25)});
+    }
+}
+void drawSparks(JPose const& cam, Basis const& b, double clock, double dt) {
+    for (size_t i = 0; i < gSparks.size();) {
+        Spark& s = gSparks[i];
+        double age = clock - s.born;
+        if (age > s.life) { gSparks[i] = gSparks.back(); gSparks.pop_back(); continue; }
+        s.v.y -= 6.0 * dt;
+        s.v = s.v * std::exp(-1.5 * dt);
+        s.p = s.p + s.v * dt;
+        double k = 1 - age / s.life;
+        Quad   q;
+        if (worldQuad(cam, b, s.p, b.r * s.size, b.u * s.size, q)) {
+            setRect(q.uv, 0, 0, 1, 1);
+            q.color[0] = s.r; q.color[1] = s.g; q.color[2] = s.bl; q.color[3] = float(1.6 * k);
+            q.mode[0] = 5;
+            gQuads.push_back(q);
+        }
+        ++i;
+    }
+}
+void glowDisc(JPose const& cam, Basis const& b, V3 at, double radius, float r, float g, float bl) {
+    Quad q;
+    if (!worldQuad(cam, b, at, V3{radius, 0, 0}, V3{0, 0, radius}, q)) return;
+    setRect(q.uv, 0, 0, 1, 1);
+    q.color[0] = r; q.color[1] = g; q.color[2] = bl; q.color[3] = 1;
+    q.mode[0] = 5;
+    gQuads.push_back(q);
+}
 } // namespace
 
 bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* ui, bool uiFresh, unsigned W, unsigned H,
@@ -2044,6 +2389,16 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     if (!createPipeline(device, ud.Format ? ud.Format : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
     if (ui && !ensureKeep(device, ud)) return false;
     if (!uploadSkin(device, list)) return false;
+    if (!uploadProp(device, list)) return false;
+    // a move began: keep what lay on the block (its slots empty on the move's beat)
+    if (gSnapRequest.exchange(false) && gG.keep && gG.snap && gG.keepValid) {
+        barrier(list, gG.snap.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+        barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->CopyResource(gG.snap.Get(), gG.keep.Get());
+        barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        barrier(list, gG.snap.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        gG.snapValid = true;
+    }
     // keep this frame's hidden screen
     if (ui && uiFresh) {
         barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -2131,6 +2486,71 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 placeItem(cam, b, L, src(L.grid[slot], slot), gS.cellBlock[slot], base, rgt, out, 0.205 * 0.95, 0.15 * 0.95, bd.tilt, tableAlpha);
             }
         }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Anvil) {
+            // AnvilStation.renderScene / renderWorld
+            V3     rgt = gS.st.right(), out = gS.st.sideV();
+            double t   = moveTime();
+            constexpr double MAIN_SIZE = 0.4, ADDITION_SIZE = 0.3, MAIN_TURN = 45;
+            auto pile = [&](bool mainFull, bool mainBlock, bool addFull, bool addBlock, IconSrc ms, IconSrc as, double additionScale) {
+                if (mainFull) {
+                    double size = mainBlock ? 0.2 : MAIN_SIZE;
+                    placeItem(cam, b, L, ms, mainBlock, anvilMain(), rgt, out, size, size, 0, tableAlpha, MAIN_TURN);
+                }
+                if (addFull && additionScale > 0.01) {
+                    double size = (addBlock ? 0.16 : ADDITION_SIZE) * (0.35 + 0.65 * additionScale);
+                    V3     home = mainFull ? anvilAdd() : anvilMain();
+                    V3     at   = lerp(anvilMain(), home, additionScale) + V3{0, 0.002 - 0.01 * (1 - additionScale), 0};
+                    placeItem(cam, b, L, as, addBlock, at, rgt, out, size, size, 0, tableAlpha, MAIN_TURN + 70);
+                }
+            };
+            if (t < 0) {
+                if (gS.phase == Phase::Active && gS.anvilTarget == ASurface && gS.haveAim) {
+                    float p = float(0.16 + 0.06 * std::sin(clock * 5)); // the spot it would go to glows (EnchantFx.disc)
+                    glowDisc(cam, b, gS.aim + V3{0, 0.004, 0}, 0.14, p, p * 0.75f, p * 0.45f);
+                }
+                pile(gS.cellFull[0], gS.cellBlock[0], gS.cellFull[1], gS.cellBlock[1], src(L.grid[0], 0), src(L.grid[1], 1), 1);
+            } else {
+                // what lay there when the move began (the snapshot): the top piece sinks in with every blow
+                IconSrc m0 = src(L.grid[0], -1), a0 = src(L.grid[1], -1);
+                std::memcpy(m0.box, gS.snapBox[0], sizeof m0.box);
+                std::memcpy(a0.box, gS.snapBox[1], sizeof a0.box);
+                m0.snap = a0.snap = gG.snapValid;
+                if (t < BLOWS[2] + 0.04) {
+                    double sunk = 0;
+                    for (double bl : BLOWS) sunk += smoother(window(t, bl, bl + 0.07)) / 3;
+                    pile(gS.mainWasFull, gS.mainWasBlock, gS.addWasFull, gS.addWasBlock, m0, a0, 1 - sunk);
+                    double heat = sunk + 0.25 * std::exp(-sinceBlow(t) * 10);
+                    if (gS.addWasFull && heat > 0.02) glowDisc(cam, b, anvilPoint() + V3{0, 0.03, 0}, 0.16 + 0.05 * heat, float(0.22 * heat), float(0.13 * heat), float(0.05 * heat));
+                } else {
+                    // the new item rises off the anvil, turned over, then goes to the hand (it is in the cursor now)
+                    V3 lifted = anvilMain() + V3{0, 0.13, 0};
+                    V3 at     = lerp(anvilMain(), lifted, inOutCubic(window(t, BLOWS[2] + 0.18, PUT_AWAY + 0.08)));
+                    V3 held   = heldItemPoint(gRight.x, shoulderOf(true, cam.pos, cam.yaw));
+                    at        = lerp(at, held, inOutCubic(window(t, PUT_AWAY + 0.12, FORGE_LENGTH)));
+                    double size = MAIN_SIZE + (0.205 - MAIN_SIZE) * window(t, PUT_AWAY + 0.1, FORGE_LENGTH);
+                    double turn = 200 * inOutCubic(window(t, BLOWS[2] + 0.1, PUT_AWAY + 0.1));
+                    float  tilt = float(35 * hump(window(t, BLOWS[2] + 0.1, FORGE_LENGTH)));
+                    float  nx2, ny2;
+                    neutralPoint(L, nx2, ny2);
+                    float   sz = L.slot * 16.0f / 18.0f;
+                    IconSrc cs{{nx2 - sz * 0.5f, ny2 - sz * 0.5f, sz, sz}, {0, 0, 1, 1}};
+                    std::memcpy(cs.box, gS.iconBox[10], sizeof cs.box);
+                    if (gS.carrying) placeItem(cam, b, L, cs, gS.carriedBlock, at, rgt, out, size, std::min(size, 0.2), tilt, 1, MAIN_TURN + turn);
+                    double glow = 1 - window(t, BLOWS[2], PUT_AWAY + 0.2);
+                    if (glow > 0.01) glowDisc(cam, b, at, 0.2, float(0.4 * glow), float(0.32 * glow), float(0.2 * glow));
+                }
+                // blows: sparks off the anvil, and after the last the new item's glow
+                while (gS.blowsDone < 3 && t >= BLOWS[gS.blowsDone]) {
+                    V3 sp = anvilPoint() + V3{0, 0.03, 0};
+                    sparks(sp, 34, 2.4, V3{}, clock);
+                    sparks(sp, 12, 2.6, out * -1.0 + V3{0, 0.7, 0}, clock);
+                    ++gS.blowsDone;
+                }
+                Swing sw;
+                if (hammerAt(t, cam, sw)) drawHammer(cam, b, gRight.x, handleDirection(sw.angle), headAxis(sw.angle));
+            }
+        }
+        if (haveCam) drawSparks(cam, b, clock, handsDt);
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
             V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
             double craft = craftProgress();
@@ -2268,6 +2688,12 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 gQuads.push_back(q);
             }
         }
+        // ---- the station's flash over the whole frame (Overlay.render)
+        {
+            float  fc[3] = {1, 1, 1};
+            double fl    = stationFlash(fc);
+            if (fl > 0.003 && gCfg.screenFlash && !gCfg.reduceMotion) solid(0, 0, float(W), float(H), int(W), int(H), fc[0], fc[1], fc[2], float(std::min(1.0, fl)));
+        }
         // ---- letterbox (Overlay.bars)
         if (letterbox()) {
             double k = 0;
@@ -2323,6 +2749,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Furnace: return std::string("Fuel goes in below, things to smelt above") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::Smoker: return std::string("Fuel behind the grate, food into the window") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
     case Kind::BlastFurnace: return std::string("Ore goes in from the top, fuel behind the grate") + dot + "LMB take / put" + dot + "RMB one at a time" + dot + "Shift to inventory" + dot + "Esc step back";
+    case Kind::Anvil: return std::string("Item on the anvil, what goes into it on top") + dot + "LMB on them \xE2\x80\x94 forge" + dot + "RMB \xE2\x80\x94 take" + dot + "Esc \xE2\x80\x94 step away";
     default: return "Esc step back";
     }
 }
