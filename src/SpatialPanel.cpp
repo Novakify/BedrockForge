@@ -642,16 +642,16 @@ void* const* slotTable() {
     return t;
 }
 template <class M> struct MemFn;
-template <class C, class R, class... A> struct MemFn<R (C::*)(A...)> {
-    static int index(R (C::*m)(A...)) {
+template <class C, class R, bool NE, class... A> struct MemFn<R (C::*)(A...) noexcept(NE)> {
+    static int index(R (C::*m)(A...) noexcept(NE)) {
         struct Fake { void* const* vt; } f{slotTable()};
         gVtIdx = -1;
         (reinterpret_cast<C*>(&f)->*m)(A{}...);
         return gVtIdx;
     }
 };
-template <class C, class R, class... A> struct MemFn<R (C::*)(A...) const> {
-    static int index(R (C::*m)(A...) const) {
+template <class C, class R, bool NE, class... A> struct MemFn<R (C::*)(A...) const noexcept(NE)> {
+    static int index(R (C::*m)(A...) const noexcept(NE)) {
         struct Fake { void* const* vt; } f{slotTable()};
         gVtIdx = -1;
         (reinterpret_cast<const C*>(&f)->*m)(A{}...);
@@ -687,7 +687,7 @@ template <class S> void recordMouse(S* st) {
 }
 
 template <class M> struct MouseHook;
-template <class C, class R, class... A> struct MouseHook<R (C::*)(A...)> {
+template <class C, class R, bool NE, class... A> struct MouseHook<R (C::*)(A...) noexcept(NE)> {
     static inline void* orig = nullptr;
     static R STDMETHODCALLTYPE fn(C* self, A... a) {
         R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
@@ -699,7 +699,7 @@ template <class C, class R, class... A> struct MouseHook<R (C::*)(A...)> {
         return r;
     }
 };
-template <class C, class R, class... A> struct MouseHook<R (C::*)(A...) const> {
+template <class C, class R, bool NE, class... A> struct MouseHook<R (C::*)(A...) const noexcept(NE)> {
     static inline void* orig = nullptr;
     static R STDMETHODCALLTYPE fn(const C* self, A... a) {
         R r = reinterpret_cast<R (*)(const C*, A...)>(orig)(self, a...);
@@ -737,7 +737,7 @@ inline void scanArg(uint32_t&, IGameInputReading**& out, IGameInputReading** r) 
 template <class T> void scanArg(uint32_t&, IGameInputReading**&, T) {}
 
 template <int Id, class M> struct GiHook;
-template <int Id, class C, class R, class... A> struct GiHook<Id, R (C::*)(A...)> {
+template <int Id, class C, class R, bool NE, class... A> struct GiHook<Id, R (C::*)(A...) noexcept(NE)> {
     static inline void* orig = nullptr;
     static R STDMETHODCALLTYPE fn(C* self, A... a) {
         R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
