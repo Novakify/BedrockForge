@@ -164,13 +164,20 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
 
 // CameraUtil.checkBlockCollision: is the third person camera spot inside a block, or a block between the eyes and it?
 bool tpSpotBlocked(Actor& actor) {
+    // same spot the glide goes to (FOV-adjusted like applyComponent; Java uses the raw config values, which miss the
+    // real camera position at wide FOVs)
     Config const& c    = cfg();
     Vec3          f    = actor.getFeetPos();
     float         r    = actor.getRotation().y * kDeg;
-    float         side = c.mirrorThirdPerson ? -c.camSide : c.camSide;
+    float         fovY = gView.valid ? gView.fovYDeg : c.baselineFov;
+    float         inv  = (c.autoScaleByFov ? fovY / c.baselineFov : 1.0f);
+    inv                = 1.0f / inv - 1.0f;
+    float d    = c.autoScaleByFov ? std::clamp(c.camDistance * (1.0f + inv * c.distMult), -4.0f, 4.0f) : c.camDistance;
+    float side = c.autoScaleByFov ? std::clamp(c.camSide * (1.0f + inv * c.sideMult), -4.0f, 4.0f) : c.camSide;
+    if (gWide.load()) side += (side < 0.0f ? -1.0f : 1.0f) * c.wideScreenShift;
+    if (c.mirrorThirdPerson) side = -side;
     glm::vec3 a(f.x, f.y + 1.62f, f.z);
-    glm::vec3 b(f.x + std::sin(r) * c.camDistance + std::cos(r) * side, f.y + c.camHeight,
-                f.z - std::cos(r) * c.camDistance + std::sin(r) * side);
+    glm::vec3 b(f.x + std::sin(r) * d + std::cos(r) * side, f.y + c.camHeight, f.z - std::cos(r) * d + std::sin(r) * side);
     auto& bs = actor.getDimensionBlockSource();
     for (int i = 1; i <= 24; ++i) {
         glm::vec3 p = a + (b - a) * (float(i) / 24.0f);
