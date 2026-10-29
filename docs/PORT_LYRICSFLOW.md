@@ -106,7 +106,20 @@ Yes. It's high-impact, mostly self-contained, and relies on only three fragile e
 Current order: Spatial GUI M1 (input) -> Cinematic Interactions -> GeckoBridge, under the rule "finish current work first".
 LyricsFlow shares RF pieces with Spatial GUI, so the natural slot is right after Spatial GUI M1. Spike S5 (text) could also run earlier, since it doesn't touch existing features.
 
+## Reference videos (studied 2026-10-29, all Java Edition TikTok clips, 576x1024)
+| Video | Source | What it shows | What it means for us |
+|---|---|---|---|
+| A: "falling letters" (66 s, @nia_teppelin, Russian, "Music Subtitles" mod, Telegram TG_Nia_Teppelin0) | **A different mod, not LyricsFlow.** No jar, so we recreate it from the video | Vanilla Minecraft pixel font, white with drop shadow. Words pop up in the world near the player, then the letters drop and **land flat on the ground**, each at its own random angle. They follow the terrain (grass steps, a statue pedestal, cobble paths) and stay there a while | The physics is simpler than full 3D tumbling. The key look is "letters land flat on top faces and lie there as decals". Phase 3 v1 = fall + small spin + land on the top face of the block below (raycast down) + settle + fade. Tumble/bounce is extra polish. Also needs a **Minecraft pixel font preset** (nearest-filtered bitmap atlas, not MSDF). Read the game's own font from the installed game at runtime instead of shipping Mojang's file, or use an OFL Minecraft-style font |
+| B: "cursive sky" (31 s, @neonlyricsmod, Rihanna "We Found Love") | **Looks like LyricsFlow itself.** Same top karaoke bar with a purple highlight pill | SKY mode at night with an aurora/star sky preset. White thin cursive (Great Vibes / Dancing-style), mixed word sizes (`varySizes`), 2 lines, gentle fade-in word by word, soft glow | = LyricsFlow SKY + CLEAN/soft glow + "northern" sky FX. The sky FX/aurora is part of the look, so sky presets matter for this preset |
+| C: "big neon" (31 s, @neonlyricsmod, "Hate Me" Ellie Goulding & Juice WRLD) | Looks like LyricsFlow (same top bar) | NEON style: bold italic brush font, white core + pink/blue glow, **huge and small words scattered at different depths** across a PvP arena and the sky, overlapping, drawn over players and nametags. White streak lines (sky streaks). Second half: pink sky preset with cursive neon in the sky | = LyricsFlow FLOATING/SKY + NEON + streaks. Text sits on top of players, so occlusion isn't needed to match the look, but it **does cover the opponent**, so a combat-safe preset (keep the crosshair area clear, fade on hit) is a must for Hive |
+| D: "words on walls" (28 s, @kangetsuvisuals, "Spotify lyrics in your world") | Looks like LyricsFlow (same top bar) | WALL mode in a duels arena: blocky bold font with an orange/gold gradient and outline, **text fitted flat onto arena walls in perspective** ("goddamn pathetic"), a few words at a time, during combat | = LyricsFlow WALL + minecraft_gold theme. Proves `wallPlace`/`fitToSurface` (needs S4 block queries) is a core feature, not an extra |
+
+Takeaways:
+- 3 of the 4 videos are LyricsFlow itself, so porting its placement, styles and top bar recreates them. Video A is the only one that needs new work, and its physics is simpler than first assumed.
+- Presets to ship: **"Ground Drop"** (A), **"Aurora Cursive"** (B), **"Neon Arena"** (C), **"Wall Gold"** (D), plus a **"Combat Safe"** modifier.
+- The top karaoke bar (song title, current line, highlighted word) appears in 3 videos, so it's worth porting early (2D, easy).
+- Fonts needed for the videos: Minecraft pixel (A, D), a thin cursive (B), a bold brush italic like Kaushan (C).
+
 ## Inputs still wanted for kickoff
-- The 4 reference videos (not attached to the research session) to set presets and judge the falling-letter look.
 - 374m's written permission, at least for a private build.
 - For phase 5: Hive/CubeCraft rule check + a test session on a real server.
