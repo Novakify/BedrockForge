@@ -2,6 +2,10 @@
 
 Research only. Nothing built or installed. This is the starting point for the kickoff prompt.
 
+> **Update 2026-10-29 (prep phase):** the groundwork is built on branches `lyricsflow/scaffold` (BF) and
+> `lyricsflow/rf-scaffold` (RF). Exact v2.0 behaviour map, what's done, and the kickoff-day runbook:
+> **`docs/LYRICSFLOW_SPEC.md`** (+ `docs/lyricsflow/SPEC_SECONDARY.md`). Still nothing tested in game.
+
 ## Sources examined
 - `LyricsFlow.jar`, v1.19, Fabric, MC Java 1.21.11, author 374m, metadata says MIT. 103 classes, 22 TTF fonts (all OFL,
   plus Yellowtail and DejaVu-Arabic with their own licence files), 63 GUI textures, 14 UI sounds.
