@@ -212,6 +212,21 @@ struct Scene {
     bool    cellFull[9] = {};
     bool    resultFull = false;
     bool    carrying = false;
+    bool    carriedBlock = false;
+    // the hidden slots' icons (readback): block items stand as cubes; bounding box of the icon inside its slot
+    bool    cellBlock[9] = {};
+    bool    resultBlock = false;
+    float   iconBox[11][4] = {};  // per sampled slot: x0 y0 x1 y1 in 0..1 of the slot inside
+    // TableStation / Hands
+    bool    haveAim = false;
+    V3      aim;
+    double  tapAt = -10, craftAt = -10;
+    bool    leftWorks = false;
+    // skin (read on the client thread when a scene begins)
+    std::vector<unsigned char> skin;
+    int     skinW = 0, skinH = 0;
+    bool    skinSlim = false;
+    long    skinSerial = 0;
     int     savedHideHand = -1;
     std::string refused;
     std::string lastRoute = "-";
@@ -346,6 +361,18 @@ bool begin(Kind kind, int bx, int by, int bz) {
     gS.resultFull = false;
     ++gS.scenes;
     if (gCfg.hideHand) setHideHand(true);
+    gS.haveAim = false;
+    gS.tapAt = gS.craftAt = -10;
+    gS.leftWorks = false;
+    {
+        std::vector<unsigned char> px;
+        int  w = 0, h = 0;
+        bool slim = false;
+        if (game::skin(px, w, h, slim)) {
+            if (px != gS.skin || w != gS.skinW) { gS.skin = std::move(px); gS.skinW = w; gS.skinH = h; ++gS.skinSerial; }
+            gS.skinSlim = slim;
+        }
+    }
     return true;
 }
 
@@ -394,7 +421,9 @@ JPose cameraPoseReach(Station const& st, JPose const& pose, V3 eye) {
 JPose tether(JPose const& pose, V3 eye) {
     JPose held = cameraPoseReach(gS.st, pose, eye);
     V3    offset = held.pos - eye;
-    V3    end    = eye + (offset.len() > 0.35 ? offset.norm() * 0.35 : offset);
+    // client-only mode keeps the camera within 0.35 of the eyes; single player with the full lean leans in as the
+    // Java mod does with its server side (Reach.tethered already holds it within what the head can do)
+    V3    end    = gCfg.fullLean ? held.pos : eye + (offset.len() > 0.35 ? offset.norm() * 0.35 : offset);
     {
         double L = (end - eye).len();
         int    n = std::max(2, int(L / 0.02));
@@ -572,13 +601,26 @@ bool overDrawer(DrawerGeom const& g, float mx, float my) {
 // ---------------------------------------------------------------- cursor -> what it is over (Scene.updateCursor)
 int   gW = 0, gH = 0;
 std::atomic<unsigned> gHeld{0};          // buttons held as the hidden screen sees them
-int   gLatchedTarget = -2;               // target the current press went to
-ULONGLONG gReleaseAt = 0;
+enum class PressState { Idle, Hover, Down, ForceDown };
+struct Press {
+    PressState state = PressState::Idle;
+    unsigned   bit = 0;
+    int        target = -1;
+    double     since = 0, releasedAt = -1e9;
+};
+Press    gPress;
+unsigned gPrevButtons = 0;
+double nowMs() {
+    LARGE_INTEGER n, f;
+    QueryPerformanceCounter(&n);
+    QueryPerformanceFrequency(&f);
+    return double(n.QuadPart) * 1000.0 / double(f.QuadPart);
+}
 float gMapX = 0, gMapY = 0; bool gMapValid = false; // last mapped position (diag)
 
 /// Target ids: 0..8 grid (recipe order), 9 result, 10..18 hotbar, 19..45 pack, -1 none
 int currentTarget(float mx, float my) {
-    if (gS.phase != Phase::Active || !gS.haveLast || gW <= 0) return -1;
+    if (gS.phase != Phase::Active || !gS.haveLast || gW <= 0) { gS.haveAim = false; return -1; }
     if (!gS.cursorEngaged) {
         if (std::fabs(mx - gS.cursorStartX) + std::fabs(my - gS.cursorStartY) < 4) return -1;
         gS.cursorEngaged = true;
@@ -588,6 +630,7 @@ int currentTarget(float mx, float my) {
     gS.hoverCell = -1;
     gS.hoverResult = false;
     gS.hoverDrawer = -1;
+    gS.haveAim = false;
     if (gS.overPanel) {
         int s = drawerSlotAt(dg, mx, my);
         gS.hoverDrawer = s;
@@ -612,6 +655,9 @@ int currentTarget(float mx, float my) {
     if (lx > -0.02 && lx < 1.02 && lz > -0.02 && lz < 1.02) {
         int world = gS.st.cellAt(lx, lz);
         gS.hoverCell = world;
+        // TableStation.updateCursor: the working hand aims at the point under the cursor, kept on the top
+        gS.haveAim = true;
+        gS.aim = {std::clamp(hit.x, gS.st.bx + 0.07, gS.st.bx + 0.93), gS.st.by + 1.0, std::clamp(hit.z, gS.st.bz + 0.07, gS.st.bz + 0.93)};
         if (world < 0) return -1;
         for (int r = 0; r < 3; ++r)
             for (int c = 0; c < 3; ++c)
@@ -653,7 +699,7 @@ void loadConfig(std::filesystem::path const& configDir) {
 #define RD(f) if (j.contains(#f)) gCfg.f = j[#f].get<decltype(gCfg.f)>();
         RD(enabled) RD(approachSpeed) RD(leaveSpeed) RD(leanStrength) RD(sceneZoom) RD(quickMode) RD(quickWindow) RD(letterbox)
         RD(livingCamera) RD(cameraShake) RD(screenFlash) RD(reduceMotion) RD(controlHints) RD(hideHand) RD(writeFov) RD(hoverTargets)
-        RD(dumpUi) RD(keyTolerance)
+        RD(dumpUi) RD(keyTolerance) RD(fullLean) RD(armStyle) RD(drawArms) RD(cubeItems)
 #undef RD
         if (j.contains("stations"))
             for (int k = 0; k < int(Kind::Count); ++k)
@@ -670,7 +716,7 @@ void saveConfig() {
 #define WR(f) j[#f] = gCfg.f;
     WR(enabled) WR(approachSpeed) WR(leaveSpeed) WR(leanStrength) WR(sceneZoom) WR(quickMode) WR(quickWindow) WR(letterbox)
     WR(livingCamera) WR(cameraShake) WR(screenFlash) WR(reduceMotion) WR(controlHints) WR(hideHand) WR(writeFov) WR(hoverTargets)
-    WR(dumpUi) WR(keyTolerance)
+    WR(dumpUi) WR(keyTolerance) WR(fullLean) WR(armStyle) WR(drawArms) WR(cubeItems)
 #undef WR
     for (int k = 0; k < int(Kind::Count); ++k) j["stations"][kKeys[k]] = gCfg.mode[k] == 1 ? "spatial" : gCfg.mode[k] == 2 ? "vanilla" : "cinematic";
     std::ofstream out(gCfgFile, std::ios::trunc);
@@ -765,13 +811,14 @@ bool mapClient(int w, int h, int& x, int& y) {
     }
     int t = currentTarget(float(x), float(y));
     gTargetNow = t;
-    unsigned held = gHeld.load();
-    ULONGLONG now = GetTickCount64();
-    // a press stays on the target it went to until release; a drag over other targets (sharing a stack) follows them
-    int use = t;
-    if (held && t < 0) use = gLatchedTarget;
-    if (!held && now - gReleaseAt < 120 && t < 0) use = gLatchedTarget; // let the release land where the press did
-    bool mapToTarget = use >= 0 && (gCfg.hoverTargets || held || now - gReleaseAt < 120);
+    double now = nowMs();
+    // a press goes to its target, a drag over other targets follows them (sharing a stack), the release lands where
+    // the press is; otherwise the hidden screen's cursor waits in an empty corner
+    int  use = gPress.state != PressState::Idle ? (gPress.state == PressState::Down && t >= 0 ? t : gPress.target) : t;
+    bool grace = gPress.state == PressState::Idle && now - gPress.releasedAt < 150 && gPress.target >= 0;
+    if (grace) use = gPress.target;
+    bool mapToTarget = use >= 0 && (gCfg.hoverTargets || gPress.state != PressState::Idle || grace);
+    if (gPress.state == PressState::Down && t >= 0) gPress.target = t;
     Rect r;
     float fx, fy;
     if (L.valid && mapToTarget && targetRect(L, use, r)) { fx = r.cx(); fy = r.cy(); }
@@ -785,24 +832,43 @@ bool mapClient(int w, int h, int& x, int& y) {
 
 unsigned filterButtons(unsigned buttons) {
     std::lock_guard l(gM);
-    if (gS.phase != Phase::Intro && gS.phase != Phase::Active) { gHeld = 0; return buttons; }
-    unsigned held = gHeld.load();
-    int      t    = gTargetNow.load();
-    unsigned out  = 0;
-    // each button: a press only goes through on a target (or while the press is already under way)
-    for (unsigned bit = 1; bit <= 4; bit <<= 1) {
-        bool down = buttons & bit;
-        bool was  = held & bit;
-        if (down && !was) {
-            if (gS.phase == Phase::Active && t >= 0) { held |= bit; gLatchedTarget = t; out |= bit; }
-        } else if (down && was) {
-            out |= bit;
-        } else if (!down && was) {
-            held &= ~bit;
-            gReleaseAt = GetTickCount64();
+    if (gS.phase != Phase::Intro && gS.phase != Phase::Active) { gPress = Press{}; return buttons; }
+    double   now = nowMs();
+    unsigned out = 0;
+    unsigned bit = gPress.bit;
+    switch (gPress.state) {
+    case PressState::Idle: {
+        int t = gTargetNow.load();
+        for (unsigned b = 1; b <= 4; b <<= 1) {
+            if (!(buttons & b) || (gPrevButtons & b)) continue; // a new press
+            if (gS.phase == Phase::Active && t >= 0) {
+                // first the hidden screen's cursor moves onto the slot (hover), then the button goes down there
+                gPress = Press{PressState::Hover, b, t, now, -1e9};
+                gS.tapAt = gS.clock; // Hands.tap
+                if (t == 9) gS.craftAt = gS.clock; // TableStation.craft: the hands press the ingredients together
+            }
+            break;
         }
+        break;
     }
-    gHeld = held;
+    case PressState::Hover:
+        if (now - gPress.since >= 45) {
+            gPress.state = (buttons & bit) ? PressState::Down : PressState::ForceDown;
+            gPress.since = now;
+            out |= bit;
+        }
+        break;
+    case PressState::Down:
+        if (buttons & bit) out |= bit;
+        else { gPress.state = PressState::Idle; gPress.releasedAt = now; }
+        break;
+    case PressState::ForceDown: // the real button was already up: hold it long enough to be seen, then let go
+        if (now - gPress.since < 70) out |= bit;
+        else { gPress.state = PressState::Idle; gPress.releasedAt = now; }
+        break;
+    }
+    gPrevButtons = buttons & 7u;
+    gHeld = gPress.state == PressState::Down || gPress.state == PressState::ForceDown ? bit : 0;
     return (buttons & ~7u) | out;
 }
 
@@ -834,7 +900,11 @@ struct Gfx {
     UINT                         srPitch = 0, srCell = 0; // px per sampled cell side
     UINT64                       srStride = 0;            // bytes per sampled slot (512-aligned placement)
     long                         frameNo = 0;
-    std::vector<std::vector<uint32_t>> lastHash;
+    // the player's skin (arms)
+    ComPtr<ID3D12Resource>       skinTex, skinUp;
+    long                         skinSerial = -1;
+    bool                         skinValid = false;
+    int                          skinW = 0, skinH = 0;
 } gG;
 
 std::atomic_bool gDetectBusy{false};
@@ -843,31 +913,38 @@ std::filesystem::path gDumpDir;
 const char* kShader = R"(
 cbuffer C : register(b0) {
     float4 corner[4];
-    float4 uvr;
+    float4 uv01;   // uv of corners 0 and 1
+    float4 uv23;   // uv of corners 2 and 3
     float4 color;
-    float4 mode;   // x: 0 solid 1 texture, y: key on, z: key tolerance, w: opacity
+    float4 mode;   // x: 0 solid, 1 hidden screen, 2 skin; y: key on; z: key tolerance; w: opacity
     float4 key0;   // slot background
     float4 key1;   // hovered slot background
 };
-Texture2D    tUi : register(t0);
-SamplerState sP  : register(s0);
+Texture2D    tUi   : register(t0);
+Texture2D    tSkin : register(t1);
+SamplerState sP    : register(s0);
 struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 V2P VS(uint id : SV_VertexID) {
     static const uint idx[6] = {0, 1, 2, 2, 1, 3};
     uint k = idx[id];
     V2P o;
     o.pos = corner[k];
-    o.uv  = float2((k & 1) ? uvr.z : uvr.x, (k & 2) ? uvr.w : uvr.y);
+    o.uv  = k == 0 ? uv01.xy : k == 1 ? uv01.zw : k == 2 ? uv23.xy : uv23.zw;
     return o;
 }
 float4 PS(V2P i) : SV_Target {
     if (mode.x < 0.5) return float4(color.rgb * color.a, color.a) * mode.w;
+    if (mode.x > 1.5) {
+        float4 k = tSkin.SampleLevel(sP, i.uv, 0);
+        if (k.a < 0.1) discard;
+        return float4(k.rgb * color.rgb, 1.0) * mode.w;
+    }
     float4 u = tUi.SampleLevel(sP, i.uv, 0);
     if (mode.y > 0.5 && u.a > 0.0) {
         float3 c = u.rgb / max(u.a, 1e-3);
         if (all(abs(c - key0.rgb) < mode.z) || all(abs(c - key1.rgb) < mode.z)) u = 0;
     }
-    return u * color * mode.w;
+    return float4(u.rgb * color.rgb, u.a) * color.a * mode.w;
 }
 )";
 
@@ -884,10 +961,10 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
     if (gG.pso && gG.fmt == fmt) return true;
     gG.dev = dev;
     if (!gG.root) {
-        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0};
+        D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
         D3D12_ROOT_PARAMETER   p[2]{};
         p[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        p[0].Constants        = {0, 0, 36};
+        p[0].Constants        = {0, 0, 40};
         p[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         p[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
         p[1].DescriptorTable  = {1, &range};
@@ -984,6 +1061,82 @@ bool ensureKeep(ID3D12Device* dev, D3D12_RESOURCE_DESC const& ud) {
         return fail("CreateCommittedResource(readback)", hr);
     gG.rbSize  = total;
     gG.rbFrame = -1;
+    return true;
+}
+
+
+/// Steve-like stand-in when the skin has no image (persona skins): skin-coloured arms with short teal sleeves.
+std::vector<unsigned char> fallbackSkin() {
+    std::vector<unsigned char> px(64 * 64 * 4, 0);
+    auto fill = [&](int u, int v, bool sleeve) {
+        for (int y = v; y < v + 16; ++y)
+            for (int x = u; x < u + 16; ++x) {
+                bool    teal = sleeve ? false : (y >= v + 4 && y < v + 8);
+                uint8_t r = teal ? 0x00 : 0xB4, g = teal ? 0xAF : 0x84, b = teal ? 0xAF : 0x6D;
+                if (sleeve) continue;
+                unsigned char* q = &px[(size_t(y) * 64 + x) * 4];
+                q[0] = r; q[1] = g; q[2] = b; q[3] = 255;
+            }
+    };
+    fill(40, 16, false);
+    fill(32, 48, false);
+    return px;
+}
+bool uploadSkin(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
+    std::vector<unsigned char> px;
+    int  w, h;
+    long serial;
+    {
+        std::lock_guard l(gM);
+        serial = gS.skinSerial;
+        if (serial == gG.skinSerial && gG.skinTex) return true;
+        px = gS.skin;
+        w  = gS.skinW;
+        h  = gS.skinH;
+    }
+    if (px.empty() || w < 64) { px = fallbackSkin(); w = h = 64; }
+    static std::vector<ComPtr<ID3D12Resource>> graveyard;
+    if (gG.skinTex) graveyard.push_back(gG.skinTex);
+    if (gG.skinUp) graveyard.push_back(gG.skinUp);
+    gG.skinTex.Reset();
+    gG.skinUp.Reset();
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC   d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = UINT(w); d.Height = UINT(h); d.DepthOrArraySize = 1; d.MipLevels = 1; d.Format = DXGI_FORMAT_R8G8B8A8_UNORM; d.SampleDesc.Count = 1;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&gG.skinTex))))
+        return fail("CreateCommittedResource(skin)", E_FAIL);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+    UINT64 total = 0;
+    dev->GetCopyableFootprints(&d, 0, 1, 0, &fp, nullptr, nullptr, &total);
+    D3D12_HEAP_PROPERTIES up{D3D12_HEAP_TYPE_UPLOAD};
+    D3D12_RESOURCE_DESC   bd{};
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bd.Width = total; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1; bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&gG.skinUp))))
+        return fail("CreateCommittedResource(skin upload)", E_FAIL);
+    void* m = nullptr;
+    if (FAILED(gG.skinUp->Map(0, nullptr, &m)) || !m) return fail("Map(skin upload)", E_FAIL);
+    for (int y = 0; y < h; ++y) std::memcpy(static_cast<uint8_t*>(m) + fp.Offset + size_t(y) * fp.Footprint.RowPitch, &px[size_t(y) * w * 4], size_t(w) * 4);
+    gG.skinUp->Unmap(0, nullptr);
+    D3D12_TEXTURE_COPY_LOCATION dst{gG.skinTex.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+    dst.SubresourceIndex = 0;
+    D3D12_TEXTURE_COPY_LOCATION srcl{gG.skinUp.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+    srcl.PlacedFootprint = fp;
+    list->CopyTextureRegion(&dst, 0, 0, 0, &srcl, nullptr);
+    barrier(list, gG.skinTex.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Texture2D.MipLevels = 1;
+    auto h1 = gG.srvHeap->GetCPUDescriptorHandleForHeapStart();
+    h1.ptr += gG.srvInc;
+    dev->CreateShaderResourceView(gG.skinTex.Get(), &sv, h1);
+    gG.skinSerial = serial;
+    gG.skinValid  = true;
+    gG.skinW = w;
+    gG.skinH = h;
     return true;
 }
 
@@ -1227,11 +1380,11 @@ void pollReadback() {
 // ---------------------------------------------------------------- per-frame slot contents (small ring readback)
 // The station's slots (grid + result) are copied into a small buffer every frame; read 4 frames later: a slot is
 // empty when its inside is all slot background (or the hovered slot's background).
-constexpr int kSampled = 10; // 9 grid + result
+constexpr int kSampled = 11; // 9 grid + result + the parked cursor (carried stack)
 bool ensureRing(ID3D12Device* dev, UINT cell) {
     if (gG.sr[0] && gG.srCell == cell) return true;
-    gG.srCell  = cell;
-    gG.srPitch = (cell * 4 + 255) & ~255u;
+    gG.srCell   = cell;
+    gG.srPitch  = (cell * 4 + 255) & ~255u;
     gG.srStride = (UINT64(gG.srPitch) * cell + 511) & ~UINT64(511);
     D3D12_HEAP_PROPERTIES rh{D3D12_HEAP_TYPE_READBACK};
     D3D12_RESOURCE_DESC   bd{};
@@ -1246,54 +1399,96 @@ bool ensureRing(ID3D12Device* dev, UINT cell) {
     }
     return true;
 }
+/// Rect of sampled slot s in the hidden screen (the inside of the slot, where the icon is drawn).
+bool sampledRect(Layout const& L, int s, Rect& r) {
+    if (s < 9) { if (!L.hasGrid) return false; r = L.grid[s]; }
+    else if (s == 9) { if (!L.hasResult) return false; r = L.result; }
+    else { float x, y; neutralPoint(L, x, y); r = {x - L.slot * 0.5f, y - L.slot * 0.5f, L.slot, L.slot}; return true; }
+    float i = r.w / 18.0f;
+    r = {r.x + i, r.y + i, r.w - 2 * i, r.h - 2 * i};
+    return true;
+}
+/// Is this icon an isometric block (a full cube seen from above: a hexagon filling its box, empty corners)?
+bool isoBlock(std::vector<uint8_t> const& m, int n, float const box[4]) {
+    float bw = box[2] - box[0], bh = box[3] - box[1];
+    if (bw < 0.5f || bh < 0.5f) return false;
+    float ratio = bh / bw; // 1.113 for a cube at the inventory angle (45 / 30 degrees)
+    if (ratio < 0.98f || ratio > 1.25f) return false;
+    auto at = [&](float u, float v) {
+        int x = std::clamp(int((box[0] + u * bw) * n), 0, n - 1), y = std::clamp(int((box[1] + v * bh) * n), 0, n - 1);
+        return m[size_t(y) * n + x] != 0;
+    };
+    float in[6][2]  = {{0.5f, 0.06f}, {0.06f, 0.32f}, {0.94f, 0.32f}, {0.06f, 0.68f}, {0.94f, 0.68f}, {0.5f, 0.94f}};
+    float out[4][2] = {{0.04f, 0.04f}, {0.96f, 0.04f}, {0.04f, 0.96f}, {0.96f, 0.96f}};
+    for (auto& p : in) if (!at(p[0], p[1])) return false;
+    int corners = 0;
+    for (auto& p : out) corners += at(p[0], p[1]);
+    return corners <= 1; // a count digit may sit in the lower right corner
+}
 void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resource* ui, Layout const& L) {
     if (!L.valid || !L.hasGrid) return;
-    UINT cell = UINT(std::max(8.0f, L.slot * 0.75f));
+    UINT cell = UINT(std::max(8.0f, L.slot * 16.0f / 18.0f));
     if (!ensureRing(dev, cell)) return;
     int i = int(gG.frameNo % Gfx::kRing);
-    // read the oldest first
     if (gG.srFrame[i] >= 0) {
-        void* p = nullptr;
+        void*       p = nullptr;
         D3D12_RANGE rr{0, SIZE_T(gG.srStride * kSampled)};
         if (SUCCEEDED(gG.sr[i]->Map(0, &rr, &p)) && p) {
-            bool full[kSampled];
-            float tol = 10.0f / 255.0f;
-            bool bgra = gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM || gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+            bool  full[kSampled] = {}, block[kSampled] = {};
+            float box[kSampled][4] = {};
+            float tol  = 10.0f / 255.0f;
+            bool  bgra = gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM || gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+            int   n    = int(cell);
+            std::vector<uint8_t> mask(size_t(n) * n);
             for (int s = 0; s < kSampled; ++s) {
-                int other = 0, total = 0;
-                for (UINT y = 0; y < cell; y += 2)
-                    for (UINT x = 0; x < cell; x += 2) {
-                        uint8_t const* q = static_cast<uint8_t*>(p) + size_t(s) * gG.srStride + size_t(y) * gG.srPitch + x * 4;
-                        float r = (bgra ? q[2] : q[0]) / 255.0f, g = q[1] / 255.0f, b = (bgra ? q[0] : q[2]) / 255.0f;
-                        bool bg = std::fabs(r - L.bg[0]) < tol && std::fabs(g - L.bg[1]) < tol && std::fabs(b - L.bg[2]) < tol;
-                        bool hi = std::fabs(r - L.hi[0]) < tol && std::fabs(g - L.hi[1]) < tol && std::fabs(b - L.hi[2]) < tol;
-                        bool grey = std::fabs(r - g) < tol && std::fabs(g - b) < tol && r > L.bg[0] - tol; // hover tint of the background
+                int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1;
+                for (int y = 0; y < n; ++y)
+                    for (int x = 0; x < n; ++x) {
+                        uint8_t const* q = static_cast<uint8_t*>(p) + size_t(s) * gG.srStride + size_t(y) * gG.srPitch + size_t(x) * 4;
+                        float a = q[3] / 255.0f;
+                        bool  item;
+                        if (s == 10) item = a > 0.5f; // the parked cursor sits on transparent ground
+                        else {
+                            float r = (bgra ? q[2] : q[0]) / 255.0f, g = q[1] / 255.0f, b = (bgra ? q[0] : q[2]) / 255.0f;
+                            if (a > 0.01f) { r /= a; g /= a; b /= a; }
+                            bool bg   = std::fabs(r - L.bg[0]) < tol && std::fabs(g - L.bg[1]) < tol && std::fabs(b - L.bg[2]) < tol;
+                            bool hi   = std::fabs(r - L.hi[0]) < tol && std::fabs(g - L.hi[1]) < tol && std::fabs(b - L.hi[2]) < tol;
+                            item = a > 0.5f && !bg && !hi;
+                        }
+                        mask[size_t(y) * n + x] = item;
                         ++total;
-                        if (!bg && !hi && !grey) ++other;
+                        if (item) { ++other; x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
                     }
-                full[s] = other * 50 > total; // > 2 % of the inside is not background
+                full[s] = other * 50 > total;
+                if (full[s]) {
+                    box[s][0] = float(x0) / n; box[s][1] = float(y0) / n; box[s][2] = float(x1 + 1) / n; box[s][3] = float(y1 + 1) / n;
+                    block[s] = isoBlock(mask, n, box[s]);
+                }
             }
             D3D12_RANGE none{0, 0};
             gG.sr[i]->Unmap(0, &none);
             std::lock_guard l(gM);
             bool before = gS.resultFull;
-            for (int s = 0; s < 9; ++s) gS.cellFull[s] = full[s];
-            gS.resultFull = L.hasResult && full[9];
+            for (int s = 0; s < 9; ++s) { gS.cellFull[s] = full[s]; gS.cellBlock[s] = block[s]; }
+            gS.resultFull  = L.hasResult && full[9];
+            gS.resultBlock = block[9];
+            gS.carrying     = full[10];
+            gS.carriedBlock = block[10];
+            for (int s = 0; s < kSampled; ++s) std::memcpy(gS.iconBox[s], box[s], sizeof box[s]);
             if (gS.resultFull != before) gS.resultChangedAt = gS.clock;
         }
         gG.srFrame[i] = -1;
     }
     barrier(list, ui, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
     for (int s = 0; s < kSampled; ++s) {
-        Rect r = s < 9 ? L.grid[s] : L.result;
-        if (s == 9 && !L.hasResult) r = L.grid[0];
-        float inset = (r.w - float(cell)) * 0.5f;
-        D3D12_BOX box{UINT(std::max(0.0f, r.x + inset)), UINT(std::max(0.0f, r.y + inset)), 0, 0, 0, 1};
+        Rect r;
+        if (!sampledRect(L, s, r)) continue;
+        D3D12_BOX box{UINT(std::max(0.0f, r.x)), UINT(std::max(0.0f, r.y)), 0, 0, 0, 1};
         box.right  = std::min(UINT(L.W), box.left + cell);
         box.bottom = std::min(UINT(L.H), box.top + cell);
         if (box.right <= box.left || box.bottom <= box.top) continue;
         D3D12_TEXTURE_COPY_LOCATION dst{gG.sr[i].Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
-        dst.PlacedFootprint.Offset = UINT64(s) * gG.srStride;
+        dst.PlacedFootprint.Offset    = UINT64(s) * gG.srStride;
         dst.PlacedFootprint.Footprint = {gG.kfmt, box.right - box.left, box.bottom - box.top, 1, gG.srPitch};
         D3D12_TEXTURE_COPY_LOCATION src{ui, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
         list->CopyTextureRegion(&dst, 0, 0, 0, &src, &box);
@@ -1305,7 +1500,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
 // ---------------------------------------------------------------- quads
 struct Quad {
     float c[16];
-    float uv[4] = {0, 0, 1, 1};
+    float uv[8] = {0, 0, 1, 0, 0, 1, 1, 1}; // per corner (TL, TR, BL, BR)
     float color[4] = {1, 1, 1, 1};
     float mode[4] = {0, 0, 0, 1};
     float key0[4] = {0, 0, 0, 0};
@@ -1325,9 +1520,12 @@ void solid(float x0, float y0, float x1, float y1, int W, int H, float r, float 
     q.color[0] = r; q.color[1] = g; q.color[2] = b; q.color[3] = a;
     gQuads.push_back(q);
 }
-void uvOf(Rect r, Layout const& L, float inset, float uv[4]) {
+void setRect(float uv[8], float u0, float v0, float u1, float v1) {
+    uv[0] = u0; uv[1] = v0; uv[2] = u1; uv[3] = v0; uv[4] = u0; uv[5] = v1; uv[6] = u1; uv[7] = v1;
+}
+void uvOf(Rect r, Layout const& L, float inset, float uv[8]) {
     float i = r.w * inset;
-    uv[0] = (r.x + i) / L.W; uv[1] = (r.y + i) / L.H; uv[2] = (r.x + r.w - i) / L.W; uv[3] = (r.y + r.h - i) / L.H;
+    setRect(uv, (r.x + i) / L.W, (r.y + i) / L.H, (r.x + r.w - i) / L.W, (r.y + r.h - i) / L.H);
 }
 void keyed(Quad& q, Layout const& L, float opacity) {
     q.mode[0] = 1; q.mode[1] = 1; q.mode[2] = gCfg.keyTolerance; q.mode[3] = opacity;
@@ -1339,6 +1537,266 @@ bool worldQuad(JPose const& cam, Basis const& b, V3 c, V3 ax, V3 ay, Quad& q) {
     for (int k = 0; k < 4; ++k)
         if (!toClip(cam, b, p[k], q.c + k * 4)) return false;
     return true;
+}
+
+/// world-space quad from 4 corners (TL TR BL BR)
+bool worldQuad4(JPose const& cam, Basis const& b, V3 const p[4], Quad& q) {
+    for (int k = 0; k < 4; ++k)
+        if (!toClip(cam, b, p[k], q.c + k * 4)) return false;
+    return true;
+}
+/// Entity-style shading of a face by its world normal (top bright, bottom dark), as the vanilla entity lights do.
+float faceShade(V3 n) {
+    V3 l0 = V3{0.2, 1.0, -0.7}.norm(), l1 = V3{-0.2, 1.0, 0.7}.norm();
+    double d = std::max(0.0, n.dot(l0)) * 0.6 + std::max(0.0, n.dot(l1)) * 0.6 + 0.4;
+    return float(std::min(1.0, d));
+}
+
+// ---------------------------------------------------------------- items as the hidden slots draw them
+// A block's inventory icon is the cube seen at the GUI angle (45 deg round, 30 deg down): every point of the cube's
+// three visible faces can be found in the icon, so the icon unwraps back onto a real cube (ItemPlacer's block cubes).
+// The icon's own lighting (bright top, shaded sides) comes along. Hidden faces repeat the visible ones.
+struct IconSrc { Rect inside; float box[4]; }; // slot inside (screen px) + icon bounding box in 0..1 of it
+void iconUv(IconSrc const& s, Layout const& L, double x, double y, double z, float& u, float& v) {
+    float bw = s.box[2] - s.box[0], bh = s.box[3] - s.box[1];
+    float k  = bw / 1.41421f;
+    if (bh / 1.5739f < k) k = bh / 1.5739f;
+    float cx = (s.box[0] + s.box[2]) * 0.5f, cy = (s.box[1] + s.box[3]) * 0.5f;
+    float ix = cx + float((x - z) * 0.70711) * k;
+    float iy = cy - float(y * 0.86603 - (x + z) * 0.35355) * k;
+    u = (s.inside.x + ix * s.inside.w) / L.W;
+    v = (s.inside.y + iy * s.inside.h) / L.H;
+}
+/// A cube of edge `size` standing on `base`, its sides along ax (right) / az (towards the player); `opacity` fades it.
+void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& src, V3 base, V3 ax, V3 az, double size, float opacity) {
+    V3 ay{0, 1, 0};
+    V3 c = base + V3{0, size / 2, 0};
+    // faces: normal (local), and for each corner its local coordinates (x right, y up, z towards the player)
+    struct F { int nx, ny, nz; double pts[4][3]; };
+    const double h = 0.5;
+    F faces[6] = {
+        {0, 1, 0, {{-h, h, -h}, {h, h, -h}, {-h, h, h}, {h, h, h}}},     // top
+        {0, 0, 1, {{-h, h, h}, {h, h, h}, {-h, -h, h}, {h, -h, h}}},     // towards the player
+        {1, 0, 0, {{h, h, h}, {h, h, -h}, {h, -h, h}, {h, -h, -h}}},     // right
+        {-1, 0, 0, {{-h, h, -h}, {-h, h, h}, {-h, -h, -h}, {-h, -h, h}}}, // left
+        {0, 0, -1, {{h, h, -h}, {-h, h, -h}, {h, -h, -h}, {-h, -h, -h}}}, // away
+        {0, -1, 0, {{-h, -h, h}, {h, -h, h}, {-h, -h, -h}, {h, -h, -h}}}, // bottom
+    };
+    // back faces first (painter's order is enough for a small convex box: draw the faces turned away first)
+    V3 toCam = (cam.pos - c).norm();
+    for (int pass = 0; pass < 2; ++pass)
+        for (auto& f : faces) {
+            V3   n = ax * f.nx + ay * f.ny + az * f.nz;
+            bool front = n.dot(toCam) > 0;
+            if (front != (pass == 1)) continue;
+            Quad q;
+            V3   wp[4];
+            for (int k = 0; k < 4; ++k) {
+                double x = f.pts[k][0], y = f.pts[k][1], z = f.pts[k][2];
+                wp[k] = c + ax * (x * size) + ay * (y * size) + az * (z * size);
+                // the icon face this face borrows: top -> top, x faces -> the icon's right (+X) side, z faces -> its left (+Z)
+                double ux = x, uy = y, uz = z;
+                if (f.ny != 0) uy = 0.5;
+                else if (f.nx != 0) { ux = 0.5; uz = f.nx > 0 ? z : -z; }
+                else { uz = 0.5; ux = f.nz > 0 ? x : -x; }
+                iconUv(src, L, ux, uy, uz, q.uv[k * 2], q.uv[k * 2 + 1]);
+            }
+            if (!worldQuad4(cam, b, wp, q)) continue;
+            keyed(q, L, opacity);
+            gQuads.push_back(q);
+        }
+}
+/// An item lying on a surface (flat) or standing as a cube (block). `facing` = the item's up on the surface.
+void placeItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& src, bool block, V3 base, V3 right, V3 out,
+               double flatSize, double blockSize, float tiltDeg, float opacity) {
+    if (block && gCfg.cubeItems) {
+        iconCube(cam, b, L, src, base, right, out, blockSize, opacity);
+        return;
+    }
+    // lying like a dropped sheet, tipped `tilt` degrees towards its owner
+    double t  = tiltDeg * kDeg;
+    V3     up = (out * -1.0) * std::cos(t) + V3{0, 1, 0} * std::sin(t); // the icon's top edge points away from the player
+    V3     c  = base + V3{0, 0.004 + std::sin(t) * flatSize * 0.5, 0};
+    Quad   q;
+    if (!worldQuad(cam, b, c, right * (flatSize / 2), up * (flatSize / 2), q)) return;
+    setRect(q.uv, src.inside.x / L.W, src.inside.y / L.H, (src.inside.x + src.inside.w) / L.W, (src.inside.y + src.inside.h) / L.H);
+    keyed(q, L, opacity);
+    gQuads.push_back(q);
+}
+
+// ---------------------------------------------------------------- Hands + ArmMesh (the player's own arms)
+struct Spring3 { // Anim.Spring3: critically damped, stepped exactly
+    V3 x, v;
+    void snap(V3 p) { x = p; v = {}; }
+    void update(V3 t, double w, double dt) {
+        double e = std::exp(-w * dt);
+        auto one = [&](double& xx, double& vv, double tt) {
+            double d = xx - tt, tx = (vv + w * d) * dt;
+            vv = (vv - w * tx) * e;
+            xx = tt + (d + tx) * e;
+        };
+        one(x.x, v.x, t.x); one(x.y, v.y, t.y); one(x.z, v.z, t.z);
+    }
+};
+Spring3 gRight, gLeft;
+V3      gOutroR, gOutroL;
+Phase   gHandsPhase = Phase::None;
+bool    gRightLanded = false, gLeftLanded = false;
+constexpr double HAND_Y = 0.062, ITEM_REACH = 0.075, ARM_SCALE = 0.55;
+
+V3 yawForward(float yaw) { double r = yaw * kDeg; return {-std::sin(r), 0, std::cos(r)}; }
+V3 shoulderOf(bool right, V3 camera, float camYaw) {
+    V3 f = yawForward(camYaw), rv{-f.z, 0, f.x};
+    return camera + rv * (right ? 0.38 : -0.38) + V3{0, -0.46, 0} + f * 0.08;
+}
+V3 hiddenOf(bool right, V3 camera, float camYaw) { return shoulderOf(right, camera, camYaw) + yawForward(camYaw) * 0.1 + V3{0, -0.05, 0}; }
+V3 restOf(bool right) { // TableStation.rest
+    return gS.st.top + gS.st.sideV() * 0.4 + gS.st.right() * (right ? 0.24 : -0.24) + V3{0, HAND_Y, 0};
+}
+V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) { // TableStation.handTarget
+    V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
+    double hover = carrying ? 0.075 : 0.045;
+    return V3{aim.x, gS.st.by + 1.0 + HAND_Y + hover - 0.06 * tap, aim.z} - reach * ITEM_REACH;
+}
+V3 heldItemPoint(V3 hand, V3 shoulder) {
+    V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
+    return hand + reach * ITEM_REACH + V3{0, -HAND_Y + 0.012, 0};
+}
+double craftProgress() { double t = (gS.clock - gS.craftAt) / 0.5; return t >= 0 && t <= 1 ? t : -1; }
+
+void updateHands(JPose const& cam, double dt) {
+    V3    cp = cam.pos;
+    float cy = cam.yaw;
+    if (gS.phase != gHandsPhase) {
+        if (gS.phase == Phase::Intro) { gRightLanded = gLeftLanded = false; gS.leftWorks = false; }
+        if (gS.phase == Phase::Active) { gRight.snap(restOf(true)); gLeft.snap(restOf(false)); }
+        if (gS.phase == Phase::Outro) { gOutroR = gRight.x; gOutroL = gLeft.x; }
+        gHandsPhase = gS.phase;
+    }
+    auto arrive = [&](bool right, double k) { // Hands.arrive
+        V3     from = hiddenOf(right, cp, cy), to = restOf(right);
+        double e = outCubic(k);
+        double hover = 0.11 * hump(std::min(1.0, k * 1.15)) * (1 - window(k, 0.75, 1.0));
+        return lerp(from, to, e) + V3{0, hover, 0};
+    };
+    auto depart = [&](V3 from, bool right, double u) { // Hands.depart
+        double lift = outCubic(window(u, 0.0, 0.3)) * 0.07;
+        double away = std::pow(clamp01(window(u, 0.18, 0.72)), 3);
+        return lerp(from + V3{0, lift, 0}, hiddenOf(right, cp, cy), away);
+    };
+    switch (gS.phase) {
+    case Phase::Intro: {
+        double u = clamp01(gS.time / gS.leanLength);
+        gRight.snap(arrive(true, window(u, 0.42, 0.93)));
+        gLeft.snap(arrive(false, window(u, 0.47, 0.98)));
+        break;
+    }
+    case Phase::Active: {
+        double craft = craftProgress();
+        if (craft >= 0) { // TableStation.handsOverride: the hands press the ingredients together
+            V3     middle = gS.st.top + gS.st.sideV() * 0.04;
+            double y      = HAND_Y + 0.05 - 0.07 * hump(window(craft, 0.08, 0.62));
+            gRight.update(middle + gS.st.right() * 0.085 + V3{0, y, 0}, 20, dt);
+            gLeft.update(middle + gS.st.right() * -0.085 + V3{0, y, 0}, 20, dt);
+            break;
+        }
+        if (gS.haveAim) {
+            double lateral = (gS.aim - gS.st.center()).dot(gS.st.right());
+            if (!gS.leftWorks && lateral < -0.13) gS.leftWorks = true;
+            else if (gS.leftWorks && lateral > -0.07) gS.leftWorks = false;
+        }
+        bool   carrying = gS.carrying;
+        double tap      = hump(window(gS.clock - gS.tapAt, 0, 0.22));
+        V3     shoulder = shoulderOf(!gS.leftWorks, cp, cy);
+        V3     working  = gS.haveAim ? handTarget(gS.aim, shoulder, carrying, tap)
+                                     : restOf(!gS.leftWorks) + V3{0, (carrying ? 0.05 : 0.0) - 0.02 * tap, 0};
+        double idle = gS.clock;
+        V3 restR = restOf(true) + V3{0, 0.003 * std::sin(idle * 1.7), 0};
+        V3 restL = restOf(false) + V3{0, 0.003 * std::sin(idle * 1.5 + 2), 0};
+        gRight.update(gS.leftWorks ? restR : working, gS.leftWorks ? 12 : 17, dt);
+        gLeft.update(gS.leftWorks ? working : restL, gS.leftWorks ? 17 : 12, dt);
+        break;
+    }
+    case Phase::Outro: {
+        double u = gS.time / OUTRO_LENGTH;
+        gRight.snap(depart(gOutroR, true, u));
+        gLeft.snap(depart(gOutroL, false, u - 0.05));
+        break;
+    }
+    default: break;
+    }
+}
+
+/// One box of an arm (ModelPart.Cube): model pixels, +Y towards the hand; UV in skin pixels (64 wide layout).
+struct ArmBox { float x0, y0, z0, w, h, d; int u, v; float grow; unsigned faces; };
+enum : unsigned { FUp = 1, FDown = 2, FWest = 4, FNorth = 8, FEast = 16, FSouth = 32, FSides = 4 | 8 | 16 | 32 };
+void armBox(JPose const& cam, Basis const& b, ArmBox const& a, V3 pivot, V3 X, V3 Y, V3 Z, float centerX, float stretch, bool stretchY,
+            float uScale, float vScale, float opacity) {
+    float x0 = a.x0 - a.grow, x1 = a.x0 + a.w + a.grow, y0 = a.y0 - a.grow, y1 = a.y0 + a.h + a.grow, z0 = a.z0 - a.grow, z1 = a.z0 + a.d + a.grow;
+    const float joint = 6.0f; // (UPPER - 2) px: the upper piece stretches away from the elbow-less joint
+    auto wp = [&](float x, float y, float z) {
+        if (stretchY) y = joint + (y - joint) * stretch;
+        double s = ARM_SCALE / 16.0;
+        return pivot + X * ((x - centerX) * s) + Y * (y * s) + Z * (z * s);
+    };
+    float u = float(a.u), v = float(a.v), w = a.w, h = a.h, d = a.d;
+    struct Face { unsigned bit; float uv[4]; float p[4][3]; V3 n; };
+    Face fs[6] = {
+        {FUp, {u + d, v, u + d + w, v + d}, {{x0, y0, z0}, {x1, y0, z0}, {x0, y0, z1}, {x1, y0, z1}}, Y * -1},
+        {FDown, {u + d + w, v, u + d + 2 * w, v + d}, {{x0, y1, z0}, {x1, y1, z0}, {x0, y1, z1}, {x1, y1, z1}}, Y},
+        {FWest, {u, v + d, u + d, v + d + h}, {{x0, y0, z1}, {x0, y0, z0}, {x0, y1, z1}, {x0, y1, z0}}, X * -1},
+        {FNorth, {u + d, v + d, u + d + w, v + d + h}, {{x0, y0, z0}, {x1, y0, z0}, {x0, y1, z0}, {x1, y1, z0}}, Z * -1},
+        {FEast, {u + d + w, v + d, u + 2 * d + w, v + d + h}, {{x1, y0, z0}, {x1, y0, z1}, {x1, y1, z0}, {x1, y1, z1}}, X},
+        {FSouth, {u + 2 * d + w, v + d, u + 2 * d + 2 * w, v + d + h}, {{x1, y0, z1}, {x0, y0, z1}, {x1, y1, z1}, {x0, y1, z1}}, Z},
+    };
+    for (auto& f : fs) {
+        if (!(a.faces & f.bit)) continue;
+        Quad q;
+        V3   p[4];
+        for (int k = 0; k < 4; ++k) p[k] = wp(f.p[k][0], f.p[k][1], f.p[k][2]);
+        if (!worldQuad4(cam, b, p, q)) continue;
+        setRect(q.uv, f.uv[0] * uScale, f.uv[1] * vScale, f.uv[2] * uScale, f.uv[3] * vScale);
+        float sh = faceShade(f.n.norm());
+        q.color[0] = q.color[1] = q.color[2] = sh;
+        q.mode[0] = 2; q.mode[3] = opacity;
+        gQuads.push_back(q);
+    }
+}
+/// Hands.drawArm (armStyle 0 stretching, 2 floating forearm): the arm from the shoulder to the hand.
+void drawArm(JPose const& cam, Basis const& b, V3 hand, V3 shoulder, bool right, bool slim, int skinW, int skinH) {
+    V3 d = hand - shoulder;
+    if (d.len() < 1e-4) return;
+    double length = d.len() + 0.18;
+    d = d.norm();
+    V3 up{0, 1, 0};
+    V3 upPerp = up - d * up.dot(d);
+    if (upPerp.len() < 1e-3) upPerp = gS.st.forward();
+    upPerp = upPerp.norm();
+    V3 X = right ? upPerp * -1.0 : upPerp; // the forearm turned palm-down: the inner face of each arm looks at the work
+    V3 Z{X.y * d.z - X.z * d.y, X.z * d.x - X.x * d.z, X.x * d.y - X.y * d.x};
+    float stretch = float(std::max(0.6, (length * 16 / ARM_SCALE - 4.0) / 8.0));
+    float centerX = slim ? (right ? -0.5f : 0.5f) : (right ? -1.0f : 1.0f);
+    V3    pivot   = hand - d * (10.0 / 16.0 * ARM_SCALE);
+    float width = slim ? 3.0f : 4.0f;
+    float x0    = right ? (slim ? -2.0f : -3.0f) : -1.0f;
+    bool  legacy = skinH * 2 <= skinW; // 64x32 skins have no left arm of their own: the right arm is reused
+    int   au = right || legacy ? 40 : 32, av = right || legacy ? 16 : 48;
+    int   su = right ? 40 : 48, sv = right ? 32 : 48;
+    float uS = 1.0f / 64.0f, vS = 1.0f / (64.0f * float(skinH) / float(std::max(1, skinW)));
+    bool  floating = gCfg.armStyle == 2;
+    auto pieces = [&](int u, int v, float grow) {
+        if (floating) {
+            // ArmMesh.renderFloating: the hand, a short upper piece and its cap
+            armBox(cam, b, {x0, 6, -2, width, 4, 4, u, v + 8, grow, FSides}, pivot, X, d, Z, centerX, 1, false, uS, vS, 1);
+            armBox(cam, b, {x0, -2, -2, width, 8, 4, u, v, grow, FSides | FDown}, pivot, X, d, Z, centerX, 0.4f, true, uS, vS, 1);
+            return;
+        }
+        armBox(cam, b, {x0, 6, -2, width, 4, 4, u, v + 8, grow, FSides}, pivot, X, d, Z, centerX, 1, false, uS, vS, 1);          // hand
+        armBox(cam, b, {x0, -2, -2, width, 12, 4, u, v, grow, FUp}, pivot, X, d, Z, centerX, 1, false, uS, vS, 1);               // cap
+        armBox(cam, b, {x0, -2, -2, width, 8, 4, u, v, grow, FSides | FDown}, pivot, X, d, Z, centerX, stretch, true, uS, vS, 1); // upper
+    };
+    pieces(au, av, 0.0f);
+    if (!legacy) pieces(su, sv, 0.25f); // the sleeve layer (alpha tested)
 }
 } // namespace
 
@@ -1364,6 +1822,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     D3D12_RESOURCE_DESC ud = ui ? ui->GetDesc() : D3D12_RESOURCE_DESC{};
     if (!createPipeline(device, ud.Format ? ud.Format : DXGI_FORMAT_R8G8B8A8_UNORM)) return false;
     if (ui && !ensureKeep(device, ud)) return false;
+    if (!uploadSkin(device, list)) return false;
     // keep this frame's hidden screen
     if (ui && uiFresh) {
         barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -1407,23 +1866,22 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         double clock = gS.clock;
         bool layoutOk = L.valid && L.W == int(W) && gG.keepValid;
         float tableAlpha = gS.phase == Phase::Active ? float(smoother(gS.time / 0.4)) : gS.phase == Phase::Outro ? float(1 - smoother(gS.time / 0.3)) : float(smoother(gS.time / gS.leanLength));
-        // items lying on the table: the hidden grid's slot pixels (TableRenderer, ItemPlacer FLAT_SIZE 0.205)
+        auto src = [&](Rect r, int sampled) {
+            float i = r.w / 18.0f;
+            IconSrc o{{r.x + i, r.y + i, r.w - 2 * i, r.h - 2 * i}, {0, 0, 1, 1}};
+            if (sampled >= 0) std::memcpy(o.box, gS.iconBox[sampled], sizeof o.box);
+            return o;
+        };
+        // the hands (Hands.update), every phase
+        static double lastHands = -1;
+        double handsDt = lastHands < 0 ? 0 : std::clamp(clock - lastHands, 0.0, 0.1);
+        lastHands = clock;
+        if (haveCam) updateHands(cam, handsDt);
         if (haveCam && layoutOk && L.hasGrid) {
-            V3 fwd = gS.st.forward(), rgt = gS.st.right();
-            for (int r = 0; r < 3; ++r)
-                for (int c = 0; c < 3; ++c) {
-                    int recipe = r * 3 + c, world = gS.st.worldIndex(r, c);
-                    if (!gS.cellFull[recipe] && world != gS.hoverCell) continue;
-                    V3   p = gS.st.cellPoint(world) + V3{0, 0.004, 0};
-                    Quad q;
-                    // the item's top points away from the player (ItemPlacer: facing = the side it was put down from)
-                    if (!worldQuad(cam, b, p, rgt * (0.205 / 2), fwd * (0.205 / 2), q)) continue;
-                    uvOf(L.grid[recipe], L, 1.0f / 18.0f, q.uv);
-                    keyed(q, L, tableAlpha);
-                    gQuads.push_back(q);
-                }
-            // hover glow (TableStation.drawHighlight: one even warm glow, rim 150/255)
-            if (gS.hoverCell >= 0 && gS.phase == Phase::Active) {
+            V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
+            double craft = craftProgress();
+            // hover glow under the items (TableStation.drawHighlight: one even warm glow, rim 150/255)
+            if (gS.hoverCell >= 0 && gS.phase == Phase::Active && craft < 0) {
                 double half = Station::CELL / 2 - 0.006;
                 V3     p    = gS.st.cellPoint(gS.hoverCell) + V3{0, 0.002, 0};
                 Quad   q;
@@ -1444,21 +1902,67 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                     }
                 }
             }
+            // what lies on the table (TableRenderer + ItemPlacer: flat items lie, blocks stand as 0.15 cubes); while
+            // crafting they gather towards the middle and sink as the result appears
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) {
+                    int recipe = r * 3 + c, world = gS.st.worldIndex(r, c);
+                    if (!gS.cellFull[recipe]) continue;
+                    V3    p = gS.st.cellPoint(world);
+                    float scale = 1.0f;
+                    if (craft >= 0) {
+                        double k = inOutCubic(window(craft, 0.0, 0.55));
+                        p        = lerp(p, gS.st.top, k * 0.6);
+                        scale    = float(1 - 0.85 * window(craft, 0.35, 0.8));
+                    }
+                    if (scale <= 0.02f) continue;
+                    placeItem(cam, b, L, src(L.grid[recipe], recipe), gS.cellBlock[recipe], p, rgt, out, 0.205 * scale, 0.15 * scale, 0, tableAlpha);
+                }
             // the result floats over the far edge, turning slowly (TableStation.drawResult)
             if (gS.resultFull && L.hasResult) {
                 double appear = outBack(window(clock - gS.resultChangedAt, 0, 0.35), 1.8);
                 double hover  = gS.hoverResult ? 1.14 : 1.0;
-                double size   = 0.2 * appear * hover * 1.15;
+                double pop    = craft >= 0 ? 1 - 0.6 * hump(window(craft, 0.15, 0.55)) : 1;
+                double size   = 0.2 * appear * hover * pop;
                 double spin   = std::fmod(clock * (gS.hoverResult ? 70 : 32), 360.0) * kDeg;
                 V3     at     = gS.st.resultPosition(clock);
-                V3     ax{std::cos(spin) * size / 2, 0, std::sin(spin) * size / 2};
-                Quad   q;
-                if (size > 0.002 && worldQuad(cam, b, at, ax, V3{0, size / 2, 0}, q)) {
-                    uvOf(L.result, L, 0.12f, q.uv);
-                    keyed(q, L, tableAlpha);
-                    gQuads.push_back(q);
+                V3     ax{std::cos(spin), 0, std::sin(spin)}, az{-std::sin(spin), 0, std::cos(spin)};
+                IconSrc rs = src(L.result, 9);
+                if (size > 0.002) {
+                    if (gS.resultBlock && gCfg.cubeItems) {
+                        // ItemDisplayContext.FIXED of a block model: a cube of half the scale, x1.6 for blocks
+                        double edge = size * 1.6 * 0.5;
+                        iconCube(cam, b, L, rs, at - V3{0, edge / 2, 0}, ax, az, edge, tableAlpha);
+                    } else {
+                        Quad q;
+                        double half = size * 0.5;
+                        if (worldQuad(cam, b, at, ax * half, V3{0, half, 0}, q)) {
+                            setRect(q.uv, rs.inside.x / L.W, rs.inside.y / L.H, (rs.inside.x + rs.inside.w) / L.W, (rs.inside.y + rs.inside.h) / L.H);
+                            keyed(q, L, tableAlpha);
+                            gQuads.push_back(q);
+                        }
+                    }
                 }
             }
+        }
+        // the player's own arms (Hands.render) and what the working hand carries
+        if (haveCam && gCfg.drawArms && gG.skinValid && gS.phase != Phase::None) {
+            float  skinW = float(gG.skinW), skinH = float(gG.skinH);
+            V3     sR = shoulderOf(true, cam.pos, cam.yaw), sL = shoulderOf(false, cam.pos, cam.yaw);
+            drawArm(cam, b, gRight.x, sR, true, gS.skinSlim, int(skinW), int(skinH));
+            drawArm(cam, b, gLeft.x, sL, false, gS.skinSlim, int(skinW), int(skinH));
+        }
+        if (haveCam && layoutOk && gS.phase == Phase::Active && gS.carrying && gS.haveAim && craftProgress() < 0) {
+            // Hands.itemInHand: the carried stack hangs off the working fist (TableStation.heldItemPoint, tilt 18)
+            bool  lw = gS.leftWorks;
+            V3    hand = lw ? gLeft.x : gRight.x;
+            V3    at   = heldItemPoint(hand, shoulderOf(!lw, cam.pos, cam.yaw));
+            float nx, ny;
+            neutralPoint(L, nx, ny);
+            float   sz = L.slot * 16.0f / 18.0f;
+            IconSrc cs{{nx - sz * 0.5f, ny - sz * 0.5f, sz, sz}, {0, 0, 1, 1}};
+            std::memcpy(cs.box, gS.iconBox[10], sizeof cs.box);
+            placeItem(cam, b, L, cs, gS.carriedBlock, at, gS.st.right(), gS.st.sideV(), 0.205, 0.15, 18, 1);
         }
         // ---- the inventory drawer (SceneScreen.drawPanel)
         if (layoutOk && (gS.phase == Phase::Active || gS.phase == Phase::Outro)) {
@@ -1496,17 +2000,16 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 float gx = g.x + g.padPx + 4.5f * g.slotPx;
                 solid(gx - 9 * px, g.y + g.padPx + g.slotPx + 2 * px, gx + 9 * px, g.y + g.padPx + g.slotPx + 3 * px, int(W), int(H), 1, 1, 1, 0.35f * alpha);
             }
-            // the carried stack follows the real cursor (vanilla draws it at the parked cursor; we lift it from there)
-            if (gS.phase == Phase::Active && gCursorValid && gTargetNow.load() < 0) {
+            // off the work the carried stack follows the real cursor (SceneScreen: carried, drawn over everything)
+            if (gS.phase == Phase::Active && gCursorValid && gS.carrying && !gS.haveAim && !gS.hoverResult) {
                 float nx, ny;
                 neutralPoint(L, nx, ny);
-                float s  = L.slot;
+                float s2 = L.slot * 16.0f / 18.0f;
                 float mx = (gCursorNdcX + 1) * 0.5f * W, my = (1 - gCursorNdcY) * 0.5f * H;
-                Quad q;
-                float half = s * 0.6f;
+                float half = s2 * 0.5f;
+                Quad  q;
                 pixelQuad(mx - half, my - half, mx + half, my + half, int(W), int(H), q);
-                float uv[4] = {(nx - half) / L.W, (ny - half) / L.H, (nx + half) / L.W, (ny + half) / L.H};
-                std::memcpy(q.uv, uv, sizeof uv);
+                setRect(q.uv, (nx - half) / L.W, (ny - half) / L.H, (nx + half) / L.W, (ny + half) / L.H);
                 q.mode[0] = 1; q.mode[3] = 1;
                 gQuads.push_back(q);
             }
@@ -1541,7 +2044,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     list->RSSetScissorRects(1, &sc);
     list->SetGraphicsRootDescriptorTable(1, gG.srvHeap->GetGPUDescriptorHandleForHeapStart());
     for (auto& q : gQuads) {
-        list->SetGraphicsRoot32BitConstants(0, 36, &q, 0);
+        list->SetGraphicsRoot32BitConstants(0, 40, &q, 0);
         list->DrawInstanced(6, 1, 0, 0);
     }
     gG.status = "drawing " + std::to_string(gQuads.size()) + " quads";
@@ -1606,6 +2109,11 @@ void drawUi() {
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("Bedrock")) {
+        ImGui::Checkbox("Full lean (single player: the camera leans in like the Java mod with its server side)", &gCfg.fullLean);
+        ImGui::Checkbox("Draw the arms (your skin)", &gCfg.drawArms);
+        const char* arms[] = {"Original stretching arms", "Natural reach (as stretching for now)", "Floating forearms"};
+        ImGui::Combo("Arm style", &gCfg.armStyle, arms, 3);
+        ImGui::Checkbox("Block items stand as cubes", &gCfg.cubeItems);
         ImGui::Checkbox("Hide the vanilla hand in scenes", &gCfg.hideHand);
         ImGui::Checkbox("Narrow the view (field of view)", &gCfg.writeFov);
         ImGui::Checkbox("Hidden screen cursor follows the hovered slot", &gCfg.hoverTargets);

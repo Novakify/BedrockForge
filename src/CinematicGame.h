@@ -1,6 +1,7 @@
 // Renderer Foundation - Cinematic Interactions port: game queries (no LeviLamina types in this header).
 #pragma once
 #include <string>
+#include <vector>
 
 namespace rf::cine::game {
 /// Local player: feet position, look (degrees), alive. false = no player.
@@ -12,4 +13,6 @@ std::string blockName(int x, int y, int z);
 bool        solid(int x, int y, int z);
 /// Hide the vanilla first-person hand (Options "hide hand"); saved = previous value, -1 = not changed by us.
 void        hideHand(int& saved, bool on);
+/// The local player's skin image (RGBA8, usually 64x64 or 128x128) and arm size. false = none (persona skin, no image).
+bool        skin(std::vector<unsigned char>& rgba, int& w, int& h, bool& slim);
 } // namespace rf::cine::game

@@ -45,7 +45,11 @@ struct Config {
     // Bedrock additions
     bool hideHand      = true;  // Java draws its own arms instead of the vanilla hand; we hide the vanilla hand
     bool writeFov      = true;  // narrow the view to the station's lean FOV (camera component field of view)
-    bool hoverTargets  = true;  // keep the hidden screen's cursor on the hovered slot (off: only while a button is held)
+    bool hoverTargets  = false; // keep the hidden screen's cursor on the hovered slot (off: only while a button is held)
+    bool fullLean      = true;  // single player: the camera leans in like the Java mod with its server side (no 0.35 tether)
+    int  armStyle      = 0;     // Java armStyle: 0 stretching arms, 1 natural reach (bent), 2 floating forearms
+    bool drawArms      = true;  // the player's own skin arms reach into the scene (Hands / ArmMesh)
+    bool cubeItems     = true;  // block items stand as little cubes (unwrapped from their inventory icon)
     bool dumpUi        = false; // write the hidden screen + found slots to logs/uicapture/cinematic_*.bmp/.txt
     float keyTolerance = 0.035f;
 };
