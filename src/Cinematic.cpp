@@ -2085,6 +2085,8 @@ float4 PS(V2P i) : SV_Target {
         // the stack count the slot prints in its lower right corner (white digits, #3F3F3F shadow) is not the item
         float lx = key1.w > 0.5 ? 1 - i.local.x : i.local.x;
         if (key0.w > 0.5 && lx > 0.42 && i.local.y > 0.5 && (all(c > 0.96) || all(abs(c - 0.247) < 0.03))) u = 0;
+        // occl.y: the stack count's own box (uv, hull[0]) on a block's cube faces: its digits and their shadow
+        if (occl.y > 0.5 && all(i.uv >= hull[0].xy) && all(i.uv <= hull[0].zw) && (all(c > 0.96) || all(abs(c - 0.247) < 0.03))) u = 0;
     }
     return float4(u.rgb * color.rgb, u.a) * color.a * mode.w;
 }
@@ -3156,7 +3158,7 @@ float faceShade(V3 n) {
 // A block's inventory icon is the cube seen at the GUI angle (45 deg round, 30 deg down): every point of the cube's
 // three visible faces can be found in the icon, so the icon unwraps back onto a real cube (ItemPlacer's block cubes).
 // The icon's own lighting (bright top, shaded sides) comes along. Hidden faces repeat the visible ones.
-struct IconSrc { Rect inside; float box[4]; bool snap = false; }; // slot inside (screen px) + icon bounding box in 0..1 of it
+struct IconSrc { Rect inside; float box[4]; bool snap = false; bool count = false; float countBox[4] = {}; }; // slot inside (screen px) + icon bounding box in 0..1 of it (+ the stack count's)
 void iconUv(IconSrc const& s, Layout const& L, double x, double y, double z, float& u, float& v) {
     float bw = s.box[2] - s.box[0], bh = s.box[3] - s.box[1];
     float k  = bw / 1.41421f;
@@ -3203,6 +3205,14 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
             }
             if (!worldQuad4(cam, b, wp, q)) continue;
             keyed(q, L, opacity, src.snap);
+            if (src.count) { // the digits and the shadow one pixel past them
+                float px = 1.0f / 16.0f;
+                q.occl[1]    = 1;
+                q.hull[0][0] = (src.inside.x + src.inside.w * src.countBox[0]) / L.W;
+                q.hull[0][1] = (src.inside.y + src.inside.h * src.countBox[1]) / L.H;
+                q.hull[1][0] = (src.inside.x + src.inside.w * (src.countBox[2] + px)) / L.W;
+                q.hull[1][1] = (src.inside.y + src.inside.h * (src.countBox[3] + px)) / L.H;
+            }
             gQuads.push_back(q);
         }
 }
@@ -4095,6 +4105,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             float   in = L.slot * 16.0f / 18.0f;
             IconSrc o{{r.cx() - in * 0.5f, r.cy() - in * 0.5f, in, in}, {0, 0, 1, 1}};
             if (sampled >= 0) std::memcpy(o.box, gS.iconBox[sampled], sizeof o.box);
+            if (sampled >= 0 && sampled < 9 && gS.hasCount[sampled]) { o.count = true; std::memcpy(o.countBox, gS.countBox[sampled], sizeof o.countBox); }
             return o;
         };
         // the hands (Hands.update), every phase
