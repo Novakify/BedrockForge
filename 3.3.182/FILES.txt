@@ -1,0 +1,17 @@
+NOTICE.txt
+Microsoft.GameInput.nuspec
+redist/GameInputRedist.msi
+_rels/.rels
+.signature.p7s
+[Content_Types].xml
+native/include/v2/GameInput.h
+native/include/v1/GameInput.h
+native/include/GameInput.h
+native/include/v0/GameInput.h
+native/lib/x64/GameInput.lib
+native/lib/arm64/GameInput.lib
+native/src/GameInput.cpp
+README.md
+LICENSE.txt
+build/native/targets/Microsoft.GameInput.targets
+package/services/metadata/core-properties/bee2a9b6cb9644c88d2857b7f2ab1eaa.psmdcp
