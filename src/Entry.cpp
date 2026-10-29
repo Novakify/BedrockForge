@@ -7,6 +7,7 @@
 #include "Notice.h"
 #include "Options.h"
 #include "Overlay.h"
+#include "ScreenWatch.h"
 #include "SpatialPanel.h"
 #include "UiCapture.h"
 
@@ -35,10 +36,12 @@ public:
     bool enable() {
         overlay::install(); // retry if the load-time probe failed
         graphics::install();
+        screens::install(); // Spatial GUI: panel only for inventory/chest/crafting screens
         return true;
     }
     bool disable() {
         graphics::uninstall();
+        screens::uninstall();
         overlay::uninstall();
         materials::uninstall();
         RfOptions::save();

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -51,6 +52,7 @@ struct Settings {
     bool  eatRaw     = true; // experiment: hide raw mouse input from the game while the panel is up
     bool  remap      = true;
     bool  pumpRemap  = true; // v0.10: remap mouse MSGs as the game pulls them from the queue
+    bool  autoPanel  = true; // v0.12: panel up automatically for container screens only
 } gS;
 
 std::atomic_bool   gEnabled{false};
@@ -268,6 +270,56 @@ void toggle() {
 }
 
 // ---------------------------------------------------------------- Present
+// ---------------------------------------------------------------- automatic panel (v0.12)
+// SceneStack::update (ScreenWatch.cpp) reports each stack's top screen every tick. The panel comes up when a container
+// screen is on top of any stack and goes away when none is; HUD, pause, settings and chat stay flat. Edge-triggered,
+// so F8 still overrides until the next screen change. Applied on the render thread at the next Present.
+std::mutex               gScreenMutex;
+struct StackTop { void const* stack; std::string name; };
+std::vector<StackTop>    gStackTops;
+std::vector<std::string> gScreensSeen;
+std::atomic<int>         gWanted{-1};
+bool                     gLastWant = false;
+
+bool isPanelScreen(std::string const& n) {
+    static const char* keys[] = {"inventory", "chest", "crafting", "crafter", "furnace", "smoker", "barrel", "shulker", "dispenser",
+                                 "dropper", "hopper", "anvil", "enchant", "brewing", "loom", "grindstone", "stonecutter",
+                                 "cartography", "smithing", "beacon", "horse", "container"};
+    std::string l = n;
+    for (auto& c : l) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (l.find("hud") != std::string::npos || l.find("pause") != std::string::npos || l.find("setting") != std::string::npos) return false;
+    for (auto k : keys)
+        if (l.find(k) != std::string::npos) return true;
+    return false;
+}
+
+void applyWanted() {
+    int w = gWanted.exchange(-1);
+    if (w < 0 || !RfOptions::uiCaptureSpike || !gS.autoPanel) return;
+    if ((w == 1) != gEnabled.load()) toggle();
+}
+
+void noteScreen(void const* stack, std::string const& name) {
+    std::lock_guard l(gScreenMutex);
+    StackTop* st = nullptr;
+    for (auto& t : gStackTops)
+        if (t.stack == stack) st = &t;
+    if (!st) {
+        if (gStackTops.size() >= 8) return;
+        gStackTops.push_back({stack, {}});
+        st = &gStackTops.back();
+    }
+    if (st->name == name) return;
+    st->name = name;
+    if (gScreensSeen.size() < 40 && std::find(gScreensSeen.begin(), gScreensSeen.end(), name) == gScreensSeen.end()) gScreensSeen.push_back(name);
+    bool want = false;
+    for (auto& t : gStackTops) want = want || isPanelScreen(t.name);
+    if (want != gLastWant) {
+        gLastWant = want;
+        gWanted   = want ? 1 : 0;
+    }
+}
+
 bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv) {
     LARGE_INTEGER now, f;
     QueryPerformanceCounter(&now);
@@ -275,6 +327,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     float dt = gLast.QuadPart ? float(double(now.QuadPart - gLast.QuadPart) / double(f.QuadPart)) : 0.0f;
     gLast    = now;
     dt       = std::clamp(dt, 0.0f, 0.1f);
+    applyWanted();
     float target = gEnabled ? 1.0f : 0.0f;
     float step   = gS.seconds > 0.01f ? dt / gS.seconds : 1.0f;
     gT           = gT < target ? std::min(target, gT + step) : std::max(target, gT - step);
@@ -834,9 +887,9 @@ void tryGameMouse() { gGiNote = "built without the GameInput v2 header"; }
 void installEarly() { initGameMod(); }
 
 void writeDiag() {
-    char b[6000];
+    char b[9000];
     snprintf(b, sizeof b,
-             "Spatial GUI panel diag v0.11\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
+             "Spatial GUI panel diag v0.12\n%s\nGetCursorPos calls (panel on, our window known): %ld, inside client: %ld, remapped: %ld\n"
              "Mouse WM_* seen while on: %ld, remapped: %ld\nWM_INPUT mouse seen: %ld, swallowed: %ld\n"
              "GetRawInputData reads: %ld, mouse: %ld (last dx %ld dy %ld buttons 0x%x) hook %s\n"
              "ClipCursor calls: %ld (last rect %ld,%ld-%ld,%ld) hook %s\n"
@@ -896,6 +949,14 @@ void writeDiag() {
         line("GetMessagePos", gStMsgPos);
         line("pump mouse MSG", gStPump);
         len += snprintf(b + len, sizeof b - len, "  wndproc skipped (already remapped in pump) %ld; pump remap %s\n", gPumpSkippedWnd.load(), gS.pumpRemap ? "on" : "off");
+        {
+            std::lock_guard l(gScreenMutex);
+            len += snprintf(b + len, sizeof b - len, "screens (auto panel %s):", gS.autoPanel ? "on" : "off");
+            for (auto& t : gStackTops) len += snprintf(b + len, sizeof b - len, " [top %s%s]", t.name.c_str(), isPanelScreen(t.name) ? " -> panel" : "");
+            len += snprintf(b + len, sizeof b - len, "\n  seen:");
+            for (auto& n : gScreensSeen) len += snprintf(b + len, sizeof b - len, " %s%s", n.c_str(), isPanelScreen(n) ? "*" : "");
+            len += snprintf(b + len, sizeof b - len, "\n");
+        }
         len += snprintf(b + len, sizeof b - len, "GameInput: %s\n", gGiNote.c_str());
 #if RF_HAVE_GAMEINPUT
         for (auto& m : gGiMods) len += snprintf(b + len, sizeof b - len, "  %-30s %s\n", m.label, m.note.c_str());
@@ -967,6 +1028,7 @@ void drawUi() {
         ImGui::Checkbox("Remap mouse (ray-pick)", &gS.remap);
         ImGui::Checkbox("Hide raw mouse input from the game (experiment)", &gS.eatRaw);
         ImGui::Checkbox("Remap mouse messages in the message pump", &gS.pumpRemap);
+        ImGui::Checkbox("Auto: panel for inventory / chest / crafting screens", &gS.autoPanel);
         ImGui::TextWrapped("M1 prototype: everything the UI draws (HUD included) goes onto the panel while it is on.");
     }
     ImGui::Unindent();
