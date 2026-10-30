@@ -83,10 +83,11 @@ bool useHitBlock() {
     Player&    p   = *static_cast<Player*>(a);
     GameMode*  gm  = &*p.mGameMode; // the storage hands out the GameMode itself
     if (!gm) return false;
-    if (hit.mType != HitResultType::Tile) { // nothing looked at: the item in hand is used (a book opens), once
-        bool used = gm->useItem(const_cast<ItemStack&>(p.getSelectedItem()), HandSlot::Mainhand);
-        gm->releaseUsingItem();
-        return used;
+    if (hit.mType != HitResultType::Tile) { // nothing looked at: a book and quill in hand opens to be written in
+        ItemStack const& held = p.getSelectedItem();
+        if (held.getTypeName() != "minecraft:writable_book") return false;
+        p.openBook(p.getSelectedItemSlot(), true, 0, nullptr);
+        return true;
     }
     gm->buildBlock(hit.mBlock, hit.mFacing, HandSlot::Mainhand, false);
     return true;
