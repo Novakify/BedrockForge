@@ -25,7 +25,9 @@ says *exactly what LyricsFlow v2.0 does* and *what we already built*. Source of 
 | Font atlases (8 SDF + pixel placeholder) + generator + previewer | `resources/lyricsflow/fonts`, `tools/LyricsFonts` | **Generated + previewed** on CPU with the shader maths |
 | RF glyph shader + instanced pass + S1 camera hook + S2 under-HUD path | branch `lyricsflow/rf-scaffold` | **Compile-verified (CI, dxc)**, never run |
 
-Everything that needs the game is staged, not verified. Section 7 is the runbook for kickoff day.
+Everything that needs the game is staged, not verified. Section 7 is the runbook for kickoff day; exact install /
+rollback steps: `docs/lyricsflow/KICKOFF.md`. Install-ready CI builds: branch `lyricsflow-builds` (BF DLL + fonts +
+presets) and `lyricsflow-rf-builds` (RF = Cinematic `e076e8f` + lyrics pass, from `lyricsflow/rf-on-cinematic`).
 
 ## 1. Architecture (as built)
 
@@ -209,7 +211,7 @@ the ground, seen edge-on) and `docs/img/lyricsflow_topbar_preview.png`.
 - ~~Lyrics disk cache~~ done (`config/lyricsflow_cache/<fnv>.json`); album-art palette (SMTC thumbnail); top karaoke bar; sky presets/tint/streaks/stars; weather FX;
   ImGui settings page in RF for the BF config (today: `config/lyricsflow.json` + presets).
 - ~~Combat signal~~ done: BF's local attack hook + local hurt event call `noteCombat()`; opacity eases back over `combatHoldMs`.
-- Commit `src/GlyphShaders.h` into the RF branch from the CI artifact (so a PC build doesn't need dxc).
+- ~~Commit `src/GlyphShaders.h`~~ done (taken from the `lyricsflow-rf-builds` branch, which carries it).
 - The other 14 LyricsFlow fonts: `make_fonts.py --fonts <id>` after copying the TTF + licence from the jar.
 - True MSDF atlases (msdf-atlas-gen) if huge text shows rounded corners; the loader and shader already support them.
 - Keys: LyricsFlow's K (menu) / J (player) clash with BF's impact/HUD keys; only O (on/off) and `[` `]` (offset) are bound.
