@@ -99,10 +99,28 @@ int64_t SongClock::position(int64_t nowNs, Config const& cfg) const {
     return std::max<int64_t>(0, mTrack.positionNow(nowNs) + cfg.syncOffsetMs + own);
 }
 
+// [BF] Apple Music for Windows (Microsoft Store app "AppleInc.AppleMusicWin_...!App"; iTunes too).
+bool isAppleMusicApp(std::string const& appId) {
+    std::string a = text::toLower(appId);
+    return text::contains(a, "applemusic") || text::contains(a, "itunes");
+}
+
+// [BF] Apple Music on Windows reports odd SMTC metadata: the artist can be empty (album artist holds it) or come as
+// "Artist \u2014 Album" in one field. Titles are real song titles, so no YouTube-style "Artist - Song" split.
+void cleanAppleMusic(MediaSample& m) {
+    static constexpr std::string_view kSep = " \xE2\x80\x94 "; // " em-dash "
+    if (size_t i = m.artist.find(kSep); i != std::string::npos && i > 0) {
+        std::string album = text::trimmed(std::string_view(m.artist).substr(i + kSep.size()));
+        m.artist          = text::trimmed(std::string_view(m.artist).substr(0, i));
+        if (m.album.empty()) m.album = album;
+    }
+}
+
 bool sourceMatches(Source src, std::string const& appId) {
     std::string a = text::toLower(appId);
     if (src == Source::Any) return true;
     if (src == Source::Spotify) return text::contains(a, "spotify");
+    if (src == Source::AppleMusic) return isAppleMusicApp(appId);
     static char const* browsers[] = {"chrome", "msedge", "edge", "firefox", "308046b0af4a39cb", "opera", "brave", "vivaldi", "yandex", "arc", "zen"};
     for (auto b : browsers)
         if (text::contains(a, b)) return true;

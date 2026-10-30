@@ -64,7 +64,7 @@ std::optional<MediaSample> Smtc::poll(Source src) {
         if (!chosen) chosen = firstMatch;
         mImpl->current = chosen;
         if (!chosen) {
-            mImpl->status = src == Source::Spotify ? "open_spotify" : "nothing";
+            mImpl->status = src == Source::Spotify ? "open_spotify" : src == Source::AppleMusic ? "open_apple_music" : "nothing";
             return std::nullopt;
         }
         auto        props = chosen.TryGetMediaPropertiesAsync().get();
@@ -75,8 +75,10 @@ std::optional<MediaSample> Smtc::poll(Source src) {
         m.album     = winrt::to_string(props.AlbumTitle());
         std::string app = winrt::to_string(chosen.SourceAppUserModelId());
         bool spotify    = text::contains(text::toLower(app), "spotify");
-        m.sourceApp     = spotify ? "Spotify" : (sourceMatches(Source::Youtube, app) ? "Browser" : app);
-        if (!spotify) { // browser tabs: "Artist - Song (Official Video) - YouTube" + channel name
+        bool apple      = isAppleMusicApp(app);
+        m.sourceApp     = spotify ? "Spotify" : apple ? "Apple Music" : (sourceMatches(Source::Youtube, app) ? "Browser" : app);
+        if (apple) cleanAppleMusic(m);
+        else if (!spotify) { // browser tabs: "Artist - Song (Official Video) - YouTube" + channel name
             auto split = text::splitYoutube(m.title, m.artist);
             m.artist   = split[0];
             m.title    = split[1];

@@ -13,7 +13,7 @@
 
 namespace bf::lyrics {
 
-enum class Source : int { Spotify, Youtube, Any };
+enum class Source : int { Spotify, Youtube, Any, AppleMusic }; // [BF] AppleMusic (Windows app via SMTC)
 enum class LyricsStyle : int { Sky, Floating, Screen, Wall };
 enum class TextStyle : int { Neon, Clean };
 enum class EnterAnim : int { Word, Fade, Rise };
@@ -25,7 +25,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
 #define BF_LYRICS_CONFIG_FIELDS(B, I, F, S, C, E)                                                                       \
     I(configVersion, 14)                                                                                               \
     B(enabled, true)                                                                                                   \
-    E(Source, source, Source::Spotify)                                                                                 \
+    E(Source, source, Source::Any) /* [BF] Java default is SPOTIFY; ANY so Apple Music works out of the box */                                                                                 \
     I(syncOffsetMs, 0)                                                                                                 \
     B(showLyrics, true)                                                                                                \
     E(LyricsStyle, lyricsStyle, LyricsStyle::Floating)                                                                 \

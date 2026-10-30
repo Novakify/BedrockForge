@@ -61,5 +61,7 @@ private:
 
 /// Source filter (LyricsFlow SmtcBackend): does this session's app id belong to the chosen source?
 bool sourceMatches(Source src, std::string const& appId);
+bool isAppleMusicApp(std::string const& appId); // [BF]
+void cleanAppleMusic(MediaSample& m);           // [BF] fix Apple Music's SMTC artist/album fields
 
 } // namespace bf::lyrics

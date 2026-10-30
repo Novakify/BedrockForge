@@ -210,6 +210,24 @@ TEST(text_misc) {
     CHECK(sourceMatches(Source::Youtube, "MSEdge"));
     CHECK(sourceMatches(Source::Youtube, "308046B0AF4A39CB"));
     CHECK(!sourceMatches(Source::Spotify, "chrome"));
+    CHECK(sourceMatches(Source::AppleMusic, "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App"));
+    CHECK(!sourceMatches(Source::AppleMusic, "Spotify.exe"));
+    CHECK(sourceMatches(Source::Any, "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App"));
+    {
+        MediaSample am;
+        am.title = "Hate Me - Remastered"; am.artist = "Ellie Goulding \xE2\x80\x94 Hate Me (feat. Juice WRLD)";
+        cleanAppleMusic(am);
+        CHECK_EQ(am.artist, std::string("Ellie Goulding"));
+        CHECK_EQ(am.album, std::string("Hate Me (feat. Juice WRLD)"));
+        CHECK_EQ(am.title, std::string("Hate Me - Remastered")); // no YouTube split
+        MediaSample plain;
+        plain.artist = "Rihanna"; plain.album = "Talk That Talk";
+        cleanAppleMusic(plain);
+        CHECK_EQ(plain.artist, std::string("Rihanna"));
+        CHECK_EQ(plain.album, std::string("Talk That Talk"));
+        Config cd;
+        CHECK(cd.source == Source::Any);
+    }
 }
 
 // ================================================================ parsers vs the Java original

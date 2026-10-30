@@ -22,7 +22,7 @@ struct EnumNames {
         return false;
     }
 };
-constexpr EnumNames<Source, 3>      kSource{{"SPOTIFY", "YOUTUBE", "ANY"}};
+constexpr EnumNames<Source, 4>      kSource{{"SPOTIFY", "YOUTUBE", "ANY", "APPLE_MUSIC"}};
 constexpr EnumNames<LyricsStyle, 4> kStyle{{"SKY", "FLOATING", "SCREEN", "WALL"}};
 constexpr EnumNames<TextStyle, 2>   kTextStyle{{"NEON", "CLEAN"}};
 constexpr EnumNames<EnterAnim, 3>   kEnter{{"WORD", "FADE", "RISE"}};

@@ -11,8 +11,10 @@
 > - Pre-kickoff review fixes: RF camera hook idle unless lyrics draw / no game calls under its lock; stale frames
 >   dropped after 30 Presents (no frozen lyrics on menus); atlas index guard + BF loads max 8 fonts (config fonts
 >   first); S2 resize leak; O / [ / ] do nothing while the module is off; fetch thread can't std::terminate.
-> - **Source defaults to Spotify** (desktop app via SMTC). A browser / YouTube tab shows nothing unless
->   `"source"` is changed. F6 status "idle" + no top bar = check this first.
+> - **Source now defaults to ANY** (Fernando uses **Apple Music**, Windows app, which publishes SMTC). New
+>   `APPLE_MUSIC` source + clean-up of Apple Music's SMTC fields (artist can be empty -> album artist; or
+>   "Artist — Album" in one field -> split), and no YouTube-style title split for it. F6 status / top bar show the
+>   source app. Unverified on the real app: check what title/artist the top bar shows on the first song.
 > - **Host access needed:** this session's folder-access requests were auto-blocked; Fernando adds
 >   `C:\BedrockModding` + the `1.26.51.01` instance folder in the desktop app (+ -> Add folder).
 
