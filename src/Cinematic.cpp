@@ -2705,9 +2705,11 @@ void tick() {
         // putting food on: the carried food into the hand's hotbar slot, the campfire's own use, the slot's stack back
         if (gS.phase == Phase::Active) {
             auto note = [&](char const* what) {
-                char b[200];
-                snprintf(b, sizeof b, "campfire: %s (slot %d -> %d, hand %s x%d, carried %s)", what, game::selectedSlot(), gCamp.useSlot, gCamp.hand.c_str(), hn,
-                         gS.carriedName.c_str());
+                char b[320];
+                int  c0 = 0;
+                std::string inUse = gCamp.useSlot >= 0 ? game::inventoryItem(gCamp.useSlot, c0) : std::string("-");
+                snprintf(b, sizeof b, "campfire: %s (slot %d -> %d holding %s x%d, hand %s x%d, carried %s)", what, game::selectedSlot(), gCamp.useSlot,
+                         inUse.c_str(), c0, gCamp.hand.c_str(), hn, gS.carriedName.c_str());
                 trail(b);
             };
             // A use while the cursor carries a stack leaves Bedrock's inventory screen dead (its clicks are refused from then
@@ -2731,6 +2733,7 @@ void tick() {
                 }
                 if (gCamp.placeStep) { note("laid down"); gCamp.placeStep = 2; gCamp.placeAt = gS.clock; }
             } else if (gCamp.placeStep == 2 && gS.clock - gCamp.placeAt > 0.45) {
+                note("select");
                 if (gCamp.useSlot != gCamp.oldSlot) game::selectSlot(gCamp.useSlot);
                 gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
             } else if (gCamp.placeStep == 3 && gS.clock - gCamp.placeAt > (gCamp.useSlot != gCamp.oldSlot ? 0.25 : 0.0)) {

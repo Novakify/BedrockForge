@@ -261,8 +261,11 @@ std::string inventoryItem(int slot, int& count) {
 }
 
 void selectSlot(int slot) {
-    Actor* a = player();
-    if (a && slot >= 0 && slot < 9) static_cast<Player*>(a)->setSelectedSlot(slot);
+    // the hotbar key's own path (number keys), so the server hears of it as of a key press
+    auto ci = ll::service::getClientInstance();
+    if (!ci || !player() || slot < 0 || slot >= 9) return;
+    ClientInputCallbacks::handleSlotSelectButtonPress(*ci, slot);
+    if (static_cast<Player*>(player())->getSelectedItemSlot() != slot) static_cast<Player*>(player())->setSelectedSlot(slot);
 }
 } // namespace rf::cine::game
 
