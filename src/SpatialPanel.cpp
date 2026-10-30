@@ -436,7 +436,7 @@ void noteScreen(void const* stack, std::string const& name) {
             if (gLookScreenless.load()) cine::screenlessUse(gLookName, gLookX, gLookY, gLookZ);
             else cine::game::useHitBlock();
         }
-        was = now;
+        if (hud) was = now; // the key's edge as the HUD's stack sees it (other stacks report in the same tick)
     }
     std::lock_guard l(gScreenMutex);
     StackTop* st = nullptr;
