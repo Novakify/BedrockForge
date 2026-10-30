@@ -1,6 +1,6 @@
 # Port plan: Cinematic Interactions (Java) -> Bedrock Forge
 
-## STATUS (2026-10-29, RF branch `cinematic`) - how it was actually built
+## STATUS (2026-10-30, RF branch `cinematic`) - how it was actually built
 Not the add-on route below: everything is in RF (one mod with Spatial GUI). `src/Cinematic.cpp` (scene, camera,
 picking, slot detection, rendering), `src/CinematicGame.cpp` (LL queries), `src/SpatialPanel.cpp` (screen routing,
 UI redirect, GameInput remap), `src/SpatialCamera.cpp` (CameraComponent write before LevelRendererCamera::preRenderUpdate).
@@ -9,10 +9,21 @@ UI redirect, GameInput remap), `src/SpatialCamera.cpp` (CameraComponent write be
   unwrapped onto cubes from their isometric icon; enchant glint / mean colour are read from the crops.
 - Clicks: the hidden screen's cursor is parked in an empty corner and moved onto the target slot for a press
   (hover 45 ms, then down); own clicks (a move's beat, a take) are injected the same way.
-- Stations with scenes (Java timelines ported 1:1): crafting table, furnace, smoker, blast furnace, anvil (hammer,
-  3 blows), grindstone, stonecutter (dial of shapes from the recipe buttons), smithing, cartography.
-  To do: loom (board of pattern buttons, cloth), enchanting (runes from the 3 option buttons) - need screen dumps
-  (`dumpUi` + `devScenes` in config/CinematicInteractions.json).
+- Stations with scenes (Java 0.18.3 timelines ported 1:1, ALL DONE as of 2026-10-30, RF `cinematic` d09c967+):
+  crafting table, furnace, smoker, blast furnace, anvil (hammer, 3 blows), grindstone, stonecutter, smithing,
+  cartography, loom, enchanting, brewing, beacon, crafter, lectern (OpenBook), jukebox, campfire (H key + invitation
+  plate), chiseled bookshelf.
+- Screenless stations (jukebox, campfire, chiseled bookshelf): the use is taken over on the input side, the player's
+  inventory opens as the hidden window (ClientInputCallbacks::handleInventoryButtonPress - Player::openInventory gave a
+  screen whose moves the server refused). A use while the cursor carries a stack leaves the inventory screen dead, and
+  the hotbar selection can't change under it: carried items go into the hand's slot by clicks first (the hand's stack
+  parked in a free slot, put back after). The bookshelf picks its slot from the HitResult point (useBlockAt points the
+  hit result at the slot for the use).
+- Threading rule (the shelf hung the game): no game:: query or use while holding gM. tick() reads the game into a
+  TickIn first and runs the uses after letting go (render-thread UI draws wait on gM while the game holds its locks).
+- Bedrock differences kept on purpose: books / food go to the inventory (no cursor-carried result), food can't be
+  taken off a campfire, no reading at the shelf (no book window to borrow), the lectern's leaf turning untested with a
+  multi-page book.
 - Not portable 1:1: real 3D item models (icons/cubes instead), map pictures (map item icon), banner layers, sounds,
   the Left Alt orbit, mouse-wheel scrolling of the dial/board, other players' views.
 

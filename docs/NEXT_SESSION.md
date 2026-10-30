@@ -1,3 +1,18 @@
+# Next session handoff (updated 2026-10-30 ~15:00 UTC) - READ FIRST
+- CINEMATIC PORT DONE (RF branch `cinematic`, installed e46 = 22bee91). All 18 stations incl. chiseled bookshelf
+  (verified: put from hand at start, take into inventory, put from the panel) and campfire. The shelf hang was a
+  deadlock (game queries under gM in tick): fixed by TickIn (reads before the lock) + deferred uses.
+- Test config RESET on the PC: uiDebugUseKey 0, devScenes/dumpUi/hoverTargets false (backups *.bak-test in
+  mods/RendererFoundation/config). Graphics mode set back to Vibrant Visuals.
+- Harness gotchas: two Minecraft copies running (LeviLauncher Force Launch, or Fernando relaunching) make clicks land
+  at the window middle - check the taskbar; a hung game can't be killed from here (Task Manager is elevated); Razer
+  Synapse's invisible window can sit in front (grant it, then computer_open_application Minecraft.windows).
+- Open / possible follow-ups: Spatial GUI keeps the HUD hotbar+hearts visible in all of Fernando's references
+  (Bedrock hides the HUD under screens - needs a way to keep hud_screen drawn); lectern turning with a 3+ page book;
+  remove the press/jump diagnostics if wanted.
+- NEXT: LyricsFlow port (research/lyricsflow branch, docs/PORT_LYRICSFLOW.md), then GeckoBridge (research branch
+  only) - prompt in docs/NEXT_CHAT_GECKOBRIDGE.md. Repo still PUBLIC (Fernando switches it back).
+
 # Next session handoff (updated 2026-10-30 ~06:50 UTC) - READ FIRST
 - RF branch `cinematic`, installed e43 (30fc395, shelf breadcrumbs). Builds: RF-eN.dll in the mods folder; a loaded
   RendererFoundation.dll CAN be renamed (mv) while the game runs, then cp the new one in.
