@@ -80,10 +80,13 @@ bool useHitBlock() {
     Actor* a = player();
     if (!a) return false;
     HitResult& hit = a->getLevel().getHitResult();
-    if (hit.mType != HitResultType::Tile) return false;
-    Player& p = *static_cast<Player*>(a);
-    GameMode* gm = &*p.mGameMode; // the storage hands out the GameMode itself
+    Player&    p   = *static_cast<Player*>(a);
+    GameMode*  gm  = &*p.mGameMode; // the storage hands out the GameMode itself
     if (!gm) return false;
+    if (hit.mType != HitResultType::Tile) { // nothing looked at: use the item in hand (a book opens)
+        ItemStack item = p.getSelectedItem();
+        return gm->useItem(item, HandSlot::Mainhand);
+    }
     gm->buildBlock(hit.mBlock, hit.mFacing, HandSlot::Mainhand, false);
     return true;
 }
