@@ -27,10 +27,8 @@
 #include "mc/world/level/block/CachedComponentData.h"
 #include "mc/world/phys/HitResult.h"
 #include "mc/world/gamemode/GameMode.h"
-#include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/block/actor/JukeboxBlockActor.h"
-#include "ll/api/memory/Hook.h"
 #include "mc/world/item/HandSlot.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/PlayerUIContainer.h"
@@ -232,32 +230,6 @@ std::string handItem(int& count) {
 }
 } // namespace rf::cine::game
 
-// ---- the use of a block with no window of its own (jukebox, chiseled bookshelf) can start a scene instead
-namespace {
-bool takeOver(GameMode& gm, BlockPos const& pos) {
-    if (rf::cine::game::tOwnUse) return false;
-    Actor* a = rf::cine::game::playerActor();
-    if (!a || static_cast<Actor*>(&gm.mPlayer) != a) return false;
-    std::string name = a->getDimensionBlockSource().getBlock(pos).getTypeName();
-    return rf::cine::screenlessUse(name, pos.x, pos.y, pos.z);
-}
-} // namespace
-LL_TYPE_INSTANCE_HOOK(RfCineBuildBlockHook, ll::memory::HookPriority::Normal, GameMode, &GameMode::$buildBlock, bool, BlockPos const& pos,
-                      uchar face, HandSlot handSlot, bool const isSimTick) {
-    if (!isSimTick && takeOver(*this, pos)) return true;
-    return origin(pos, face, handSlot, isSimTick);
-}
-LL_TYPE_INSTANCE_HOOK(RfCineSurvivalBuildBlockHook, ll::memory::HookPriority::Normal, SurvivalMode, &SurvivalMode::$buildBlock, bool,
-                      BlockPos const& pos, uchar face, HandSlot handSlot, bool const isSimTick) {
-    if (!isSimTick && takeOver(*this, pos)) return true;
-    return origin(pos, face, handSlot, isSimTick);
-}
 namespace rf::cine::game {
-void installHooks() {
-    static bool done = false;
-    if (done) return;
-    done = true;
-    RfCineBuildBlockHook::hook();
-    RfCineSurvivalBuildBlockHook::hook();
-}
+void installHooks() {} // the take-over is done on the input side (SpatialPanel), no engine hooks
 } // namespace rf::cine::game

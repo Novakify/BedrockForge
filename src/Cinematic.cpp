@@ -2426,15 +2426,20 @@ void saveConfig() {
 /// a use taken over (screenlessUse) waits for the inventory screen it opened
 struct Pending { Kind kind = Kind::Count; int x = 0, y = 0, z = 0; double at = -1e9; };
 Pending gPending;
-bool screenlessUse(std::string const& block, int x, int y, int z) {
+bool screenlessWorth(std::string const& block, int x, int y, int z) {
     std::lock_guard l(gM);
     Kind kind;
     if (!kindOfBlock(block, kind) || kind != Kind::Jukebox) return false;
     if (gS.phase != Phase::None || !gCfg.enabled || Mode(gCfg.mode[int(kind)]) != Mode::Cinematic) return false;
     // JukeboxStation.worthIt: a record in it to take out, or one in hand to put in
-    int         n      = 0;
-    std::string inside = game::jukeboxRecord(x, y, z), hand = game::handItem(n);
-    if (inside.empty() && !isRecord(hand)) return false;
+    int n = 0;
+    return !game::jukeboxRecord(x, y, z).empty() || isRecord(game::handItem(n));
+}
+bool screenlessUse(std::string const& block, int x, int y, int z) {
+    if (!screenlessWorth(block, x, y, z)) return false;
+    std::lock_guard l(gM);
+    Kind kind;
+    kindOfBlock(block, kind);
     gPending = {kind, x, y, z, nowMs()};
     game::openInventory();
     return true;

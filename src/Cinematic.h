@@ -67,6 +67,8 @@ Route onScreen(std::string const& containerTop);
 /// The player uses a block that has no window of its own (jukebox, chiseled bookshelf): true = a scene takes the use
 /// over (the player's inventory opens as its hidden window; the scene makes the use itself when its move gets there).
 bool screenlessUse(std::string const& block, int x, int y, int z);
+/// Whether using that block now would start such a scene (no side effects). Client thread.
+bool screenlessWorth(std::string const& block, int x, int y, int z);
 /// Flicker diagnostics (kept-screen copies).
 std::string flickerNote();
 /// Every SceneStack update while a scene runs.

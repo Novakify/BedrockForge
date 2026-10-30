@@ -412,13 +412,30 @@ void applyWanted() {
 
 std::atomic_bool gRecipeBook{false};
 std::atomic<ULONGLONG> gDebugRightUntil{0};
+// a block with no window of its own (jukebox) looked at, whose use would start a scene: the game's use button is kept
+// from it (input side) and the scene starts instead (client thread)
+std::atomic_bool gLookScreenless{false}, gStartScreenless{false};
+int              gLookX = 0, gLookY = 0, gLookZ = 0;
+std::string      gLookName;
 void noteScreen(void const* stack, std::string const& name) {
     {   // testing aid (uiDebugUseKey): the key uses the block looked at, on the client thread
         static bool was = false;
         int         k   = RfOptions::uiDebugUseKey.get();
         bool        now = k > 0 && k < 256 && (GetAsyncKeyState(k) & 0x8000) != 0;
         // nothing looked at (an item used in the air: a book opens): the game's own use button, pressed a moment
-        if (now && !was && name.find("hud_screen") != std::string::npos && !cine::game::useHitBlock()) gDebugRightUntil = 0;
+        bool hud = name.find("hud_screen") != std::string::npos;
+        if (hud) {
+            int         x, y, z;
+            std::string t;
+            bool        w = cine::game::hitBlock(x, y, z, t) && cine::screenlessWorth(t, x, y, z);
+            if (w) { gLookX = x; gLookY = y; gLookZ = z; gLookName = t; }
+            gLookScreenless = w;
+            if (gStartScreenless.exchange(false) && w) cine::screenlessUse(t, x, y, z);
+        }
+        if (now && !was && hud) {
+            if (gLookScreenless.load()) cine::screenlessUse(gLookName, gLookX, gLookY, gLookZ);
+            else cine::game::useHitBlock();
+        }
         was = now;
     }
     std::lock_guard l(gScreenMutex);
@@ -1110,6 +1127,22 @@ void debugUse(gi::GameInputMouseState* st) {
     if (GetTickCount64() < gDebugRightUntil.load()) st->buttons = st->buttons | gi::GameInputMouseRightButton;
 }
 template <class T> void debugUse(T) {}
+/// the use button pressed at a block whose use starts a scene: kept from the game until it is let go
+void screenlessInput(gi::GameInputMouseState* st) {
+    if (!st) return;
+    static bool swallow = false, was = false;
+    bool        right   = (unsigned(st->buttons) & unsigned(gi::GameInputMouseRightButton)) != 0;
+    if (swallow) {
+        if (!right) swallow = false;
+        else st->buttons = gi::GameInputMouseButtons(unsigned(st->buttons) & ~unsigned(gi::GameInputMouseRightButton));
+    } else if (right && !was && gLookScreenless.load()) {
+        swallow         = true;
+        gStartScreenless = true;
+        st->buttons     = gi::GameInputMouseButtons(unsigned(st->buttons) & ~unsigned(gi::GameInputMouseRightButton));
+    }
+    was = right;
+}
+template <class T> void screenlessInput(T) {}
 
 template <int Id, class M> struct MouseHook;
 template <int Id, class C, class R, bool NE, class... A> struct MouseHook<Id, R (C::*)(A...) noexcept(NE)> {
@@ -1118,6 +1151,7 @@ template <int Id, class C, class R, bool NE, class... A> struct MouseHook<Id, R 
         R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
         if (r) {
             (debugUse(a), ...);
+            (screenlessInput(a), ...);
             if (gEnabled.load(std::memory_order_relaxed)) {
                 bool game = fromGame(__builtin_return_address(0));
                 (onMouse(a, game), ...);
