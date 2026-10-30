@@ -189,7 +189,7 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
   play them "more correctly" than Java did; diff per mod.
 - **Entity properties limit** for the trigger bridge; property changes are server->client synced (fine single-player).
 - **Licences**: most GeckoLib mods are ARR; even permissive ones need credit (Apache NOTICE, MIT notice).
-- **Repo is PUBLIC right now** (GitHub API says public): never commit jars, extracted assets or converted packs.
+- Repo is private since 2026-10-30; converted packs live in `ports/` for Fernando only - check visibility again before adding any if it ever goes public.
 
 ## Licences / permissions - questions for Fernando before anything is shared
 - Sculk Horde (proof): Apache-2.0 -> sharing allowed with credit + licence + "changes" note (CREDITS.txt in the

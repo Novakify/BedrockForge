@@ -18,7 +18,7 @@
   install as dev packs (game CLOSED), add to a test world, `/summon gb:sculk_enderman ~ ~ ~3` and
   `/summon gb:sculk_enderman_alphaglow ~3 ~ ~3`, check day + night, ContentLog 0 errors. Steps: PORT_GECKOBRIDGE.md end.
   Rebuild: python -I tools/GeckoBridge/convert.py tools/GeckoBridge/specs/proof_sculk_enderman.json OUT (fix "jar" path).
-- REPO IS PUBLIC (gh api says visibility public): never commit jars, extracted assets or converted packs.
+- REPO IS PRIVATE since 2026-10-30 18:30 UTC (Fernando switched it). Converted proof packs + previews now committed in ports/geckobridge/proof (private personal use only, never share). Test jars stay out (tools/GeckoBridge/fetch_testmods.py re-downloads them). NEXT: pull the PC-only code (private shader src, Downloads ZIP changes, DreadAtmos main.js) into the repo - needs folder access.
 - FERNANDO 2026-10-30: glow = whatever is closest to the mod -> overlay (GeckoLib translucent fullbright pass, checked in GL4+GL5 source), alpha mode = fallback. Ports are private personal use only (he has permission), never shared. Repo going PRIVATE -> then all code (incl. PC-only sources) goes on GitHub.
 
 # Next session handoff (updated 2026-10-28 ~18:35 local, cloud session + PC computer use, Fernando away) - READ FIRST

@@ -1,0 +1,39 @@
+{
+ "format_version": 2,
+ "header": {
+  "name": "GeckoBridge Proof BP",
+  "description": "GeckoBridge conversion (private test)",
+  "uuid": "7420b6e1-f446-58cd-a51e-ccee7dbf1438",
+  "version": [
+   0,
+   1,
+   0
+  ],
+  "min_engine_version": [
+   1,
+   21,
+   0
+  ]
+ },
+ "modules": [
+  {
+   "type": "data",
+   "uuid": "276e62d0-9c71-5746-9e94-f069f807f2b6",
+   "version": [
+    0,
+    1,
+    0
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "uuid": "8d3ce820-a432-509c-82a9-d9172cd943ff",
+   "version": [
+    0,
+    1,
+    0
+   ]
+  }
+ ]
+}
