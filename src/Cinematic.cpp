@@ -542,7 +542,10 @@ bool planHere(Station const& st, V3 feet, V3 eye, std::string& why) {
         return false;
     }
     V3 off = feet - work;
-    if (off.x * st.sideV().x + off.z * st.sideV().z < 0.2) {
+    // ClientStation.worksAtAnAngle (Scene.choose -> Reach.planBeside): these are also worked standing beside the side
+    bool angle = st.kind == Kind::Anvil || st.kind == Kind::Brewing || st.kind == Kind::Cartography || st.kind == Kind::Crafter || isFurnace(st.kind) ||
+                 st.kind == Kind::Grindstone || st.kind == Kind::Jukebox || st.kind == Kind::Smithing;
+    if (off.x * st.sideV().x + off.z * st.sideV().z < (angle ? -0.2 : 0.2)) {
         why = std::string("standing beside or behind the side it is worked from");
         return false;
     }
