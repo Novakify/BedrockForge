@@ -2698,6 +2698,8 @@ float4 PS(V2P i) : SV_Target {
         // occl.y: the stack count's own box (uv, hull[0]) on a block's cube faces: its digits and their shadow
         if (occl.y > 0.5 && all(i.uv >= hull[0].xy) && all(i.uv <= hull[0].zw) && (all(c > 0.96) || all(abs(c - 0.247) < 0.03))) u = 0;
     }
+    // occl.z: the dark marks in a box (uv, hull[1]) are painted over in key0 (the book window's close button on its page)
+    if (occl.z > 0.5 && all(i.uv >= hull[1].xy) && all(i.uv <= hull[1].zw) && max(u.r, max(u.g, u.b)) < 0.35 * max(u.a, 1e-3)) u = float4(key0.rgb, 1);
     return float4(u.rgb * color.rgb, u.a) * color.a * mode.w;
 }
 )";
@@ -4108,18 +4110,19 @@ void lecternFrame(Layout const& L, bool layoutOk, double dt) {
 }
 /// a face of the book, seen from its `out` side only (no depth buffer: faces turned away are left out); corners in
 /// loop order, uv per corner; mode 0 a flat colour, 1 / 4 the window (kept / snapshot), 3 the atlas
-void bookQuad(JPose const& cam, Basis const& b, V3 const p[4], float const uv[8], V3 out, float shade, int mode, float const rgb[3]) {
+bool bookQuad(JPose const& cam, Basis const& b, V3 const p[4], float const uv[8], V3 out, float shade, int mode, float const rgb[3]) {
     V3 c = (p[0] + p[1] + p[2] + p[3]) * 0.25;
-    if (out.dot(cam.pos - c) <= 0) return;
+    if (out.dot(cam.pos - c) <= 0) return false;
     V3   w[4] = {p[0], p[1], p[3], p[2]};
     Quad q;
-    if (!worldQuad4(cam, b, w, q)) return;
+    if (!worldQuad4(cam, b, w, q)) return false;
     int ord[4] = {0, 1, 3, 2};
     for (int k = 0; k < 4; ++k) { q.uv[k * 2] = uv[ord[k] * 2]; q.uv[k * 2 + 1] = uv[ord[k] * 2 + 1]; }
     float lit = shade * faceShade(out.norm());
     q.color[0] = rgb[0] * lit; q.color[1] = rgb[1] * lit; q.color[2] = rgb[2] * lit; q.color[3] = 1;
     q.mode[0] = float(mode); q.mode[1] = 0;
     gQuads.push_back(q);
+    return true;
 }
 /// the window's page for a page of the book (Java's numbering): its crop's uv box; 1 kept, 4 snapshot, 0 bare paper
 int bookPage(Layout const& L, int page, float box[4]) {
@@ -4151,7 +4154,14 @@ void bookGrid(JPose const& cam, Basis const& b, Layout const& L, G const& pts, i
             auto U = [&](int cc) { double x = double(cc) / ob::COLS; return float(box[0] + (box[2] - box[0]) * (leftFace ? 1 - x : x)); };
             auto V = [&](int rr) { return float(box[1] + (box[3] - box[1]) * (1 - double(rr) / rows)); };
             float uv[8] = {U(c), V(r), U(c + 1), V(r), U(c + 1), V(r + 1), U(c), V(r + 1)};
-            bookQuad(cam, b, q, uv, nm, 1.0f, mode, mode == 0 ? BOOK_CREAM : white);
+            if (bookQuad(cam, b, q, uv, nm, 1.0f, mode, mode == 0 ? BOOK_CREAM : white) && mode != 0 && (page + 1) % 2 == 1) {
+                // the right-hand page of the window carries its close button in the upper outer corner: not on the page
+                Quad& k = gQuads.back();
+                k.occl[2] = 1;
+                k.hull[2][0] = box[0] + (box[2] - box[0]) * 0.86f; k.hull[2][1] = box[1];
+                k.hull[3][0] = box[2]; k.hull[3][1] = box[1] + (box[3] - box[1]) * 0.075f;
+                for (int i = 0; i < 3; ++i) k.key0[i] = BOOK_CREAM[i];
+            }
         }
 }
 void drawBook(JPose const& cam, Basis const& b, Layout const& L) {
