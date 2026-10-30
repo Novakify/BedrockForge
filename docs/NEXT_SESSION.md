@@ -1,3 +1,25 @@
+# Next session handoff (updated 2026-10-30 ~03:05 UTC) - READ FIRST
+- Installed on the PC: RendererFoundation.dll = cine-e25 (73f7483). Pushed since: bfa3043 (use key: an item used in
+  the air is used once + released), 6a97ed7 (lectern: the window's close button painted off its right page).
+- New scenes since e15 (all in Cinematic.cpp, verified in game unless noted):
+  BREWING (bottles, ingredient melt, fuel card, bubbles, progress from the window's arrow), BEACON (crown of powers,
+  payment, light burst; confirm pressed at the end since Bedrock's confirm closes the window), CRAFTER (windows,
+  shut windows = the panel's grey #C6C6C6 drawn as a grey quad, the result spinning; e23 fixed the bevel read as
+  items - verified), LECTERN (e25: OpenBook port - leather from entity.brarchive enchanting_table_book.png at atlas
+  (0,160); pages = crops of Bedrock's book_screen (findBook: cream 253,248,236 either side of the spine -> L.grid 0/1);
+  the leaf turning uses the snapshot (t3) for the spread it turns from and t0 for the new one; turning clicks the
+  window's arrows = L.buttons 0/1 whose sampled "full" flag says an arrow is there. VERIFIED: the scene, camera,
+  pages, hands. NOT YET: arrow positions (L.buttons placeholders at 2% in from the lower outer corners) and turning -
+  needs a book with 3+ pages; editing a Book and Quill through the F9 use key did not keep its text (e23/e24), e25+
+  changed that path (bfa3043): try F9 looking at the sky with the Book and Quill (slot 9), write 4 pages, close, put
+  it on the lectern at 102 200 -106 (F9 looking at it), open it (F9), dump the read screen to find the arrows.
+- Quirks found: keys from the remote tools are instant presses; Bedrock misses some (F5, E): use hold_key 0.15-0.25 s.
+  The camera perspective had become Third Person Back (cause unknown) - set back to First Person in Settings > Video.
+  Number keys don't select hotbar slots via the tool; the scroll wheel does, one notch per scroll call.
+- Left after the lectern: campfire, jukebox, chiseled bookshelf (no screen in Bedrock: need the use intercepted and a
+  scene without a window), then the side-by-side 1:1 review of every station vs the videos, reset the config
+  (devScenes/dumpUi false, uiDebugUseKey 0), docs, GeckoBridge prompt. Repo still PUBLIC (Fernando switches it back).
+
 # Next session handoff (updated 2026-10-30 ~00:30 UTC) - READ FIRST
 - Installed on the PC: RendererFoundation.dll = cine-e15 (d391f46, RF branch `cinematic`). Builds as RF-eN.dll in
   the mods folder (old ones old-eN-*.dll; deleting there is not permitted without asking).
