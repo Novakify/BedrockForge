@@ -40,7 +40,7 @@ using Microsoft::WRL::ComPtr;
 
 constexpr UINT     kSlots     = 4;     // ring of upload buffers (>= swap chain buffers)
 constexpr UINT     kCap       = 16384; // glyphs per frame
-constexpr UINT     kTable     = 10;    // t0 glyphs, t1..t8 atlases, t9 UI target
+constexpr UINT     kTable     = 2 + kBfLyricsMaxAtlases; // t0 glyphs, t1..t16 atlases, t17 UI target
 constexpr uint32_t kMaxAtlas  = kBfLyricsMaxAtlases;
 
 // ---------------------------------------------------------------- settings (F6, not persisted yet)
@@ -72,6 +72,8 @@ struct Decoded {
 std::mutex           gDecMutex;
 std::vector<Decoded> gDecoded;
 uint32_t             gDecodedGen = 0, gRequestedGen = 0, gUploadedGen = 0;
+static_assert(kSlots == 4, "gSlotGen initialiser");
+uint32_t             gSlotGen[kSlots] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu}; // atlas generation each ring slot's descriptors show
 std::atomic_bool     gDecoding{false};
 std::string          gAtlasStatus = "none";
 
@@ -90,8 +92,8 @@ bool decodePng(std::wstring const& path, Decoded& out) {
     return SUCCEEDED(conv->CopyPixels(nullptr, out.w * 4, UINT(out.rgba.size()), out.rgba.data()));
 }
 
-void startDecode(BfLyricFrameV1 const& hdr) {
-    if (gDecoding.exchange(true)) return;
+bool startDecode(BfLyricFrameV1 const& hdr) {
+    if (gDecoding.exchange(true)) return false; // busy: the caller asks again next Present
     std::vector<std::wstring> files;
     for (uint32_t i = 0; i < std::min(hdr.atlasCount, kMaxAtlas); ++i) {
         int          n = MultiByteToWideChar(CP_UTF8, 0, hdr.atlasFiles[i], -1, nullptr, 0);
@@ -113,6 +115,7 @@ void startDecode(BfLyricFrameV1 const& hdr) {
         gAtlasStatus  = std::to_string(ok) + "/" + std::to_string(files.size()) + " atlases decoded";
         gDecoding     = false;
     }).detach();
+    return true;
 }
 
 // ---------------------------------------------------------------- D3D12 objects (overlay thread)
@@ -302,7 +305,7 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     s.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
     s.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     s.Texture2D.MipLevels     = 1;
-    for (UINT slot = 0; slot < kSlots; ++slot) gDevice->CreateShaderResourceView(gUiTarget.Get(), &s, srvCpu(slot * kTable + 9));
+    for (UINT slot = 0; slot < kSlots; ++slot) gDevice->CreateShaderResourceView(gUiTarget.Get(), &s, srvCpu(slot * kTable + kTable - 1));
     gUiReady = true;
     return true;
 }
@@ -367,7 +370,7 @@ void uploadAtlases(ID3D12GraphicsCommandList* list) {
         s.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
         s.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         s.Texture2D.MipLevels     = 1;
-        for (UINT slot = 0; slot < kSlots; ++slot) gDevice->CreateShaderResourceView(gAtlas[i].Get(), &s, srvCpu(slot * kTable + 1 + i));
+        (void)s; // descriptors: written per ring slot in record() (gSlotGen)
     }
     gUploadedGen = gen;
 }
@@ -445,6 +448,7 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     UINT const slot = slotIn % kSlots;
 
     gHdr          = {};
+    gHdr.size     = sizeof(BfLyricFrameV1); // BF copies at most this much (16-atlas header)
     uint32_t n    = 0;
     auto     copy = bfCopy();
     if (copy) n = copy(&gHdr, gHost.data(), kCap);
@@ -468,11 +472,23 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     if (!gRoot && !createStatic(device)) return;
     D3D12_RESOURCE_DESC bd = bb->GetDesc();
     if (!ensureSized(bd)) return;
-    if (copy && gHdr.atlasGeneration != gRequestedGen && gHdr.atlasCount > 0) {
-        gRequestedGen = gHdr.atlasGeneration;
-        startDecode(gHdr);
-    }
+    if (copy && gHdr.atlasGeneration != gRequestedGen && gHdr.atlasCount > 0 && startDecode(gHdr)) gRequestedGen = gHdr.atlasGeneration;
     uploadAtlases(list);
+    // Atlas descriptors are written per ring slot, only for the slot being recorded now (the other slots' tables
+    // may still be read by frames in flight). Missing / failed atlases get a null SRV (never a stale pointer).
+    if (gSlotGen[slot] != gUploadedGen) {
+        for (UINT i = 0; i < kMaxAtlas; ++i) {
+            if (gAtlas[i]) {
+                D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+                sv.Format                  = DXGI_FORMAT_R8G8B8A8_UNORM;
+                sv.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
+                sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                sv.Texture2D.MipLevels     = 1;
+                gDevice->CreateShaderResourceView(gAtlas[i].Get(), &sv, srvCpu(slot * kTable + 1 + i));
+            } else nullTextureSrv(srvCpu(slot * kTable + 1 + i));
+        }
+        gSlotGen[slot] = gUploadedGen;
+    }
 
     D3D12_VIEWPORT vp{0, 0, float(gW), float(gH), 0, 1};
     D3D12_RECT     sc{0, 0, LONG(gW), LONG(gH)};

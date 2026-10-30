@@ -22,6 +22,10 @@ enum BfGlyphFlags : uint32_t {
     BF_GLYPH_GRADIENT = 1u << 4, // vertical gradient fill -> fill2 at the bottom of the quad
     BF_GLYPH_SOLID    = 1u << 5, // no atlas: a rounded rectangle. outlineW = corner radius as a fraction of the
                                  // smaller half-extent (1 = pill/circle), glowW = edge softness in screen px (shadows)
+    BF_GLYPH_VIEW     = 1u << 6, // camera-locked perspective (the settings panel): pos/right/up are in BF's virtual view
+                                 // space, x right / y up / z forward, x and y already divided by tan(fovY/2). The vertex
+                                 // shader outputs (x / aspect, y, 0, z): exact perspective, so BF can ray-pick the mouse
+    BF_GLYPH_IMAGE    = 1u << 7, // colour image (cover art, icons, thumbnails): rgba sample * fill (tint), no SDF
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the
@@ -49,7 +53,7 @@ struct BfGlyphV1 {
 };
 static_assert(sizeof(BfGlyphV1) == 112, "BfGlyphV1 layout is shared with RF / glyph.hlsl");
 
-inline constexpr uint32_t kBfLyricsMaxAtlases = 8;
+inline constexpr uint32_t kBfLyricsMaxAtlases = 16; // fonts + UI image atlas + cover art
 
 struct BfLyricFrameV1 {
     uint32_t size;        // sizeof(BfLyricFrameV1)
