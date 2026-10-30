@@ -19,5 +19,6 @@ THREE=/path/to/three.min.js node tools/GeckoBridge/preview.js poses.json preview
 
 The easing maths in `gbanim.py` is ported from GeckoLib (`com.geckolib.animation.object.EasingType`, MIT, (c) GeckoLib).
 
-**Licence rule (same as ModPorter):** the tools are ours, the converted assets are not. Never commit generated packs,
-jars or extracted assets (this repo has been public at times). Ask Fernando before sharing any converted mod.
+**Licence rule:** the tools are ours, the converted assets are not. The repo is private (since 2026-10-30), so
+converted packs for Fernando's personal use may live in `ports/`; never share them, and never commit them while the
+repo is public. Test jars stay out of git (`fetch_testmods.py`).
