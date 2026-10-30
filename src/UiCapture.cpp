@@ -86,6 +86,8 @@ std::vector<std::string>         gLearnLog;
 std::unordered_set<SIZE_T>                                   gBbHandles;   // RTV handles known to be swap-chain buffers
 std::unordered_map<ID3D12GraphicsCommandList*, SIZE_T>       gListDsv;     // list -> bound DSV (0 = none)
 std::unordered_set<ID3D12GraphicsCommandList*>               gListOnPanel; // lists currently bound to the panel target
+std::unordered_set<ID3D12GraphicsCommandList*>               gListUi;      // lists that drew UI this frame (their re-binds of a back buffer stay on the panel)
+std::atomic<long>                                            gSparedBinds{0}; // back-buffer binds of lists with no UI this frame, left alone
 std::atomic_bool                                             gFrameRedirect{false}, gLearnOnly{false};
 bool tracking();
 void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
@@ -240,7 +242,7 @@ void onDraw(ID3D12GraphicsCommandList* list) {
             callOmSet(list, 1, &h, FALSE, d.ptr ? &d : nullptr);
             gListOnPanel.insert(list);
         }
-    if (gListOnPanel.count(list)) { rf::panel::noteRedirected(); ++gPanelUiDraws; }
+    if (gListOnPanel.count(list)) { rf::panel::noteRedirected(); ++gPanelUiDraws; gListUi.insert(list); }
     if (gState.load(std::memory_order_relaxed) == Idle) return;
     if (gState.load(std::memory_order_relaxed) == Tracking) {
         ++gFrameUiDraws;
@@ -394,7 +396,11 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
     std::lock_guard l(gMutex);
     gListDsv[list] = ds ? ds->ptr : 0;
     // M1: once the frame's UI pass started, binds of a back buffer go to the panel target instead
-    bool toPanel = n > 0 && rts && gFrameRedirect.load(std::memory_order_relaxed) && rf::panel::wantRedirect() && gBbHandles.count(rts[0].ptr);
+    // (only lists that drew UI this frame: another thread may already record the next frame's world composite into a
+    // back buffer while this frame's UI is under way - taking that to the panel target made the scene flicker)
+    bool bbBind  = n > 0 && rts && gFrameRedirect.load(std::memory_order_relaxed) && rf::panel::wantRedirect() && gBbHandles.count(rts[0].ptr);
+    bool toPanel = bbBind && gListUi.count(list);
+    if (bbBind && !toPanel) ++gSparedBinds;
     if (toPanel) {
         D3D12_CPU_DESCRIPTOR_HANDLE h{rf::panel::targetRtv()};
         reinterpret_cast<OmSet_t>(gOrig[4])(list, 1, &h, FALSE, ds);
@@ -877,9 +883,9 @@ std::string leakNote() {
     int  n  = std::min(gDrawHistN, 256);
     for (int i = 0; i < n; ++i) { mn = std::min(mn, gDrawHist[i]); mx = std::max(mx, gDrawHist[i]); }
     for (int i = 0; i < n; ++i) { if (gDrawHist[i] == 0) ++zero; else if (gDrawHist[i] * 10 < mx * 9) ++low; }
-    snprintf(b, sizeof b, "UI draws to the screen while redirecting: %ld, other draws to the screen after the UI began: %ld, frames with either: %ld\n"
+    snprintf(b, sizeof b, "UI draws to the screen while redirecting: %ld, other draws to the screen after the UI began: %ld, frames with either: %ld, back-buffer binds of non-UI lists left alone: %ld\n"
              "UI draws per frame (last %d frames): min %ld max %ld, frames with none %ld, frames under 90%% of the max %ld",
-             gLeakUi.load(), gLeakOther.load(), gLeakFrames.load(), n, n ? mn : 0, mx, zero, low);
+             gLeakUi.load(), gLeakOther.load(), gLeakFrames.load(), gSparedBinds.load(), n, n ? mn : 0, mx, zero, low);
     return b;
 }
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb) {
@@ -894,6 +900,7 @@ void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resour
     {
         std::lock_guard l(gMutex);
         gListOnPanel.clear(); // the game re-binds its targets every frame
+        gListUi.clear();
     }
     int s = gState.load();
     if (s == Idle) {

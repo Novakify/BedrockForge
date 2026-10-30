@@ -424,19 +424,24 @@ void noteScreen(void const* stack, std::string const& name) {
         bool        now = k > 0 && k < 256 && (GetAsyncKeyState(k) & 0x8000) != 0;
         // nothing looked at (an item used in the air: a book opens): the game's own use button, pressed a moment
         bool hud = name.find("hud_screen") != std::string::npos;
-        if (hud) {
+        // opening a screen from here reports it at once (this function again, nested): act once, edge taken first
+        static bool inside = false;
+        bool        press  = now && !was && hud;
+        if (hud) was = now;
+        if (hud && !inside) {
+            inside = true;
             int         x, y, z;
             std::string t;
             bool        w = cine::game::hitBlock(x, y, z, t) && cine::screenlessWorth(t, x, y, z);
             if (w) { gLookX = x; gLookY = y; gLookZ = z; gLookName = t; }
             gLookScreenless = w;
             if (gStartScreenless.exchange(false) && w) cine::screenlessUse(t, x, y, z);
+            else if (press) {
+                if (w) cine::screenlessUse(t, x, y, z);
+                else cine::game::useHitBlock();
+            }
+            inside = false;
         }
-        if (now && !was && hud) {
-            if (gLookScreenless.load()) cine::screenlessUse(gLookName, gLookX, gLookY, gLookZ);
-            else cine::game::useHitBlock();
-        }
-        if (hud) was = now; // the key's edge as the HUD's stack sees it (other stacks report in the same tick)
     }
     std::lock_guard l(gScreenMutex);
     StackTop* st = nullptr;
