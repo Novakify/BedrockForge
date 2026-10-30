@@ -1,3 +1,22 @@
+# Next session handoff (updated 2026-10-30 ~17:15 UTC) - READ FIRST
+- FANCY PASS DONE: all 18 Cinematic stations opened and checked on Fancy (test row at y 200, z -112, x 84..118 step 2:
+  furnace smoker blast anvil grindstone stonecutter smithing cartography loom enchanting brewing beacon crafter lectern
+  jukebox campfire shelf crafting). cine_frames: 0 UI leaks. Stand at z -110.6 (tp to an integer z centres you at
+  -109.5 = out of reach); anvil/grindstone/stonecutter are side-restricted (approach from the long side), crafter from
+  its grid side, lectern needs a book and an EMPTY hand, jukebox needs a record in hand or inside.
+- F9 test key: the press was lost after every scene (release not seen while the HUD was hidden) - fixed in e47.
+- SPATIAL GUI HUD (Fernando's ask: hotbar + hearts visible under the panel like his Java clips): e47/e48
+  (RF cinematic e0ef927 / bb94806). Hook UIScene::$renderOnlyWhenTopMost -> false for hud_screen while a Spatial panel
+  is up (keepHud: not Cinematic, javaStyle, cfg hideHotbar false); panel.hlsl masks the bottom HUD strip
+  (124 x 52 Bedrock GUI px around the bottom centre) off the panel and PSHud draws it flat (undims with the dim alpha read
+  at pixel 2,2). e47 FROZE the game (0% CPU) when a chest opened - e48 only compares an address in the render-time hook
+  (hud scene found in SceneStack::update via forEachScreenConst). e48 is INSTALLED BUT UNTESTED. If it freezes too,
+  the HUD drawing under the container is the cause: set "hideHotbar": true in config/SpatialGUI.json to switch it off.
+- PC state right now: SpatialGUI.json fpInventory TRUE (to screenshot first person; backup SpatialGUI.json.bak-fp),
+  uiDebugUseKey 120, graphics FANCY, player in SURVIVAL (/gamemode c to restore). Reset all of these when done.
+- Still to do: first-person Spatial GUI screenshots for Fernando (he has only seen third person), verify the HUD
+  strip, then reset config, LyricsFlow next, GeckoBridge last. Repo still PUBLIC.
+
 # Next session handoff (updated 2026-10-30 ~15:00 UTC) - READ FIRST
 - CINEMATIC PORT DONE (RF branch `cinematic`, installed e46 = 22bee91). All 18 stations incl. chiseled bookshelf
   (verified: put from hand at start, take into inventory, put from the panel) and campfire. The shelf hang was a
