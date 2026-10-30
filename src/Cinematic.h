@@ -27,7 +27,8 @@ struct ID3D12DescriptorHeap;
 
 namespace rf::cine {
 
-enum class Kind : int { Table = 0, Furnace, Smoker, BlastFurnace, Anvil, Grindstone, Smithing, Stonecutter, Loom, Cartography, Enchanting, Count };
+enum class Kind : int { Table = 0, Furnace, Smoker, BlastFurnace, Anvil, Grindstone, Smithing, Stonecutter, Loom, Cartography, Enchanting,
+                        Brewing, Beacon, Crafter, Lectern, Campfire, Jukebox, Shelf, Count };
 /// Per-station presentation (F6): the Cinematic scene, the Spatial GUI floating screen, or the plain vanilla screen.
 enum class Mode : int { Cinematic = 0, Spatial = 1, Vanilla = 2 };
 /// What the open container screen gets.

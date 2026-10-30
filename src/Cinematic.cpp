@@ -90,8 +90,8 @@ struct JPose { V3 pos; float yaw = 0, pitch = 0, roll = 0; };
 Config gCfg;
 std::filesystem::path gCfgFile;
 
-const char* kKeys[] = {"table", "furnace", "smoker", "blast_furnace", "anvil", "grindstone", "smithing", "stonecutter", "loom", "cartography", "enchanting"};
-const char* kNames[] = {"Crafting table", "Furnace", "Smoker", "Blast furnace", "Anvil", "Grindstone", "Smithing table", "Stonecutter", "Loom", "Cartography table", "Enchanting table"};
+const char* kKeys[] = {"table", "furnace", "smoker", "blast_furnace", "anvil", "grindstone", "smithing", "stonecutter", "loom", "cartography", "enchanting", "brewing", "beacon", "crafter", "lectern", "campfire", "jukebox", "chiseled_bookshelf"};
+const char* kNames[] = {"Crafting table", "Furnace", "Smoker", "Blast furnace", "Anvil", "Grindstone", "Smithing table", "Stonecutter", "Loom", "Cartography table", "Enchanting table", "Brewing stand", "Beacon", "Crafter", "Lectern", "Campfire", "Jukebox", "Chiseled bookshelf"};
 
 double pct(int v) { return v / 100.0; }
 bool livingCamera() { return gCfg.livingCamera && !gCfg.reduceMotion; }
@@ -113,6 +113,13 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     if (is("minecraft:loom")) { k = Kind::Loom; return true; }
     if (is("minecraft:cartography_table")) { k = Kind::Cartography; return true; }
     if (is("minecraft:enchanting_table")) { k = Kind::Enchanting; return true; }
+    if (is("minecraft:brewing_stand")) { k = Kind::Brewing; return true; }
+    if (is("minecraft:beacon")) { k = Kind::Beacon; return true; }
+    if (is("minecraft:crafter")) { k = Kind::Crafter; return true; }
+    if (is("minecraft:lectern")) { k = Kind::Lectern; return true; }
+    if (is("minecraft:campfire") || is("minecraft:soul_campfire")) { k = Kind::Campfire; return true; }
+    if (is("minecraft:jukebox")) { k = Kind::Jukebox; return true; }
+    if (is("minecraft:chiseled_bookshelf")) { k = Kind::Shelf; return true; }
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
@@ -1649,7 +1656,7 @@ int currentTarget0(float mx, float my) {
             gS.haveAim = true;
             gS.aim     = gS.st.fpoint(onTop, std::clamp(u, 0.08, 0.92), std::clamp(v, 0.05, 0.95), 0);
         };
-        V3     n = gS.st.sideV(), face = gS.st.center() + n * 0.5; // the front face
+        V3     n = gS.st.sideV(), face = gS.st.center(); // the front face (FurnaceStation.center)
         double dn   = d.dot(n);
         if (std::fabs(dn) > 1e-9) {
             double t = (face - o).dot(n) / dn;

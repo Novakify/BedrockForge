@@ -395,8 +395,9 @@ bool isPanelScreen(std::string const& n) {
 bool isStationScreen(std::string const& n) {
     std::string l = n;
     for (auto& ch : l) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-    for (char const* k : {"crafting", "furnace", "smoker", "anvil", "grindstone", "smithing", "stonecutter", "loom", "cartography", "enchant"})
+    for (char const* k : {"crafting", "furnace", "smoker", "anvil", "grindstone", "smithing", "stonecutter", "loom", "cartography", "enchant", "brewing", "beacon"})
         if (l.find(k) != std::string::npos && l.find("crafter") == std::string::npos) return true;
+    if (l.find("crafter") != std::string::npos && l.find("screen") != std::string::npos) return true;
     return false;
 }
 std::string     gLastCont;
