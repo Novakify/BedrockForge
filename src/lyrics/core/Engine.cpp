@@ -1,6 +1,8 @@
 // LyricsFlow port - frame builder + shared frame store. Original code for Bedrock Forge; see Engine.h.
 #include "lyrics/core/Engine.h"
 
+#include <cstddef>
+
 #include <algorithm>
 #include <cstring>
 
@@ -97,14 +99,20 @@ void FrameStore::setAtlases(std::vector<std::string> const& files) {
 uint32_t FrameStore::copy(BfLyricFrameV1* hdr, BfGlyphV1* dst, uint32_t cap) {
     std::lock_guard l(mMutex);
     if (!hdr) return 0;
-    *hdr       = mHdr;
-    hdr->size  = sizeof(BfLyricFrameV1);
-    hdr->version = 1;
-    hdr->total = uint32_t(mGlyphs.size());
+    // The caller says how big its header is (hdr->size). RF builds from before the 16-atlas header zero it: they have
+    // room for 8 atlas paths only, so never write past that (old RF + new BF must not corrupt RF's memory).
+    size_t const legacy = offsetof(BfLyricFrameV1, atlasFiles) + size_t(8) * sizeof(mHdr.atlasFiles[0]);
+    size_t const room   = hdr->size >= sizeof(BfLyricFrameV1) ? sizeof(BfLyricFrameV1) : hdr->size >= legacy ? size_t(hdr->size) : legacy;
+    BfLyricFrameV1 h = mHdr;
+    h.size           = sizeof(BfLyricFrameV1);
+    h.version        = 1;
+    h.total          = uint32_t(mGlyphs.size());
+    if (room < sizeof(BfLyricFrameV1)) h.atlasCount = std::min<uint32_t>(h.atlasCount, 8);
     uint32_t n = dst ? std::min<uint32_t>(cap, uint32_t(mGlyphs.size())) : 0;
     if (n) std::memcpy(dst, mGlyphs.data(), size_t(n) * sizeof(BfGlyphV1));
-    hdr->count = n;
-    if (!mInit) hdr->active = 0;
+    h.count = n;
+    if (!mInit) h.active = 0;
+    std::memcpy(hdr, &h, room);
     return n;
 }
 

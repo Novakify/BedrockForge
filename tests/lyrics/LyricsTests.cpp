@@ -632,6 +632,16 @@ TEST(engine_frame_and_export) {
     CHECK_EQ(hdr.active, 1u);
     CHECK_EQ(hdr.atlasCount, 1u);
     CHECK_NEAR(hdr.origin[1], cam.pos.y, 1e-9);
+    // legacy caller (size 0 = an RF from the 8-atlas days): BF must not write past atlasFiles[7]
+    std::vector<unsigned char> raw(sizeof(BfLyricFrameV1), 0xAB);
+    auto* old = reinterpret_cast<BfLyricFrameV1*>(raw.data());
+    old->size = 0;
+    BF_CopyLyricFrame(old, nullptr, 0);
+    size_t const legacyEnd = offsetof(BfLyricFrameV1, atlasFiles) + 8 * sizeof(old->atlasFiles[0]);
+    bool untouched = true;
+    for (size_t i = legacyEnd; i < raw.size(); ++i) untouched &= raw[i] == 0xAB;
+    CHECK(untouched);
+    CHECK(old->atlasCount <= 8u);
 }
 
 // ================================================================ falling letters
