@@ -1,3 +1,17 @@
+# Next session handoff (updated 2026-10-30 ~19:10 UTC) - READ FIRST
+- SPATIAL GUI POLISH (Fernando: "looks plain, camera angle off vs footage, blur missing" + 4 new reference clips
+  3b1dabb8/bb9b9270/a124cea8/94c3c01c). Latest Java source cloned: github.com/tastytrash/Spatial-GUI (2.x, MIT).
+  Root cause of the off framing: Fernando's Bedrock FOV is 121 deg vertical; autoScaleByFov then shrinks the camera
+  distance and blows the panel up 1.76x. Coded (RF cinematic 213379d..42e9101, UNBUILT, UNTESTED):
+  overrideFov (camera eases to 70 while a panel is up, back on close), parallax smoothing (50 ms), world blur
+  (golden-angle disc, worldBlurStrength 5, player blurred too like the clips; keep-sharp option), drop shadow
+  (alpha 120, 0.008/0.012 offset), close animation (panel shrinks/fades from the last image, third person camera
+  glides back, perspective restored after), F6 options for all of it.
+- BLOCKED: GitHub Actions won't run (repo now PRIVATE, "recent account payments have failed / spending limit").
+  Asked Fernando to make it public again or fix billing. No local Windows toolchain (MS downloads blocked).
+- Next once a build exists: install, test third person vs clips (player big + cropped at the left, panel square on
+  at the right), first person, close animation, send comparison shots.
+
 # Next session handoff (updated 2026-10-30 ~18:05 UTC) - READ FIRST
 - e48 VERIFIED: Spatial GUI keeps the hotbar + hearts + hunger + xp flat under the panel (third and first person),
   no freeze. Screenshots sent to Fernando. Config reset: uiDebugUseKey 0, SpatialGUI.json restored (fp off), Creative.
