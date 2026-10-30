@@ -126,6 +126,8 @@ ComPtr<ID3D12Resource>       gGlyphBuf[kSlots];
 BfGlyphV1*                   gGlyphMap[kSlots]{};
 ComPtr<ID3D12Resource>       gAtlas[kMaxAtlas];
 std::vector<ComPtr<ID3D12Resource>> gGraveyard;
+std::vector<std::pair<ComPtr<ID3D12Resource>, uint64_t>> gUiGrave; // old S2 targets + the Present they died on
+uint64_t                     gPresents = 0;
 ComPtr<ID3D12Resource>       gUiTarget;
 UINT                         gW = 0, gH = 0;
 DXGI_FORMAT                  gFmt = DXGI_FORMAT_UNKNOWN;
@@ -273,7 +275,7 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     if (gUiTarget && gW == UINT(bb.Width) && gH == bb.Height && gFmt == bb.Format) return true;
     // S2 UI target, same size/format as the back buffer (only bound when "under the HUD" is on)
     gUiReady = false;
-    if (gUiTarget) gGraveyard.push_back(gUiTarget);
+    if (gUiTarget) gUiGrave.push_back({gUiTarget, gPresents}); // freed a few Presents later (resize used to leak one)
     gUiTarget.Reset();
     gW   = UINT(bb.Width);
     gH   = bb.Height;
@@ -437,16 +439,30 @@ bool   tracking() { return gUi.enabled && gUi.underHud; }
 // ---------------------------------------------------------------- Present
 void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv, unsigned slotIn) {
     bool const redirected = gRedirected.exchange(false);
-    if (gBroken || !gUi.enabled || rf::panel::enabled()) return;
+    ++gPresents;
+    while (!gUiGrave.empty() && gPresents - gUiGrave.front().second > kSlots + 2) gUiGrave.erase(gUiGrave.begin());
+    if (gBroken || !gUi.enabled || rf::panel::enabled()) { setCameraWanted(false); return; }
     UINT const slot = slotIn % kSlots;
 
     gHdr          = {};
     uint32_t n    = 0;
     auto     copy = bfCopy();
     if (copy) n = copy(&gHdr, gHost.data(), kCap);
-    bool const draw = copy && gHdr.active && n > 0;
+    for (uint32_t i = 0; i < n; ++i) // the shader has kMaxAtlas texture slots: an index past them would sample t9
+        if (gHost[i].atlas >= kMaxAtlas && !(gHost[i].flags & BF_GLYPH_SOLID)) gHost[i].alpha = 0.0f, gHost[i].atlas = 0;
+    // BF only publishes while the HUD screen renders (in a world). If the frame counter stops moving (main menu,
+    // loading screen, world left) the last frame would stay on screen forever: treat it as inactive after ~0.5 s.
+    static uint32_t lastFrame = 0;
+    static int      stalePresents = 0;
+    if (gHdr.frame != lastFrame) { lastFrame = gHdr.frame; stalePresents = 0; }
+    else if (stalePresents < 1000) ++stalePresents;
+    bool const fresh = stalePresents < 30;
+    bool const draw  = copy && gHdr.active && n > 0 && fresh;
+    setCameraWanted(copy && gHdr.active && fresh);
     if (!draw && !redirected) {
-        gStatus = copy ? (gHdr.active ? "no lyrics on screen" : "idle (BF lyricsflow module off / nothing playing)") : "waiting for Bedrock Forge";
+        gStatus = !copy ? "waiting for Bedrock Forge"
+                : !fresh ? "paused (BF stopped publishing: menu / loading / no world)"
+                : (gHdr.active ? "no lyrics on screen" : "idle (BF lyricsflow module off / nothing playing)");
         return;
     }
     if (!gRoot && !createStatic(device)) return;
