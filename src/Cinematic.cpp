@@ -2805,7 +2805,8 @@ Route onScreen(std::string const& containerTop) {
             trail("onScreen: inventory for a taken-over use, begin");
             if (begin(pd.kind, pd.x, pd.y, pd.z)) {
                 trail("begin ok");
-                if (pd.kind == Kind::Shelf && pd.hasHit) gShelf.usedSlot = shSlotAt(V3{pd.hit[0], pd.hit[1], pd.hit[2]}); gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": Cinematic (inventory)"; return Route::Cinematic; }
+                if (pd.kind == Kind::Shelf && pd.hasHit) gShelf.usedSlot = shSlotAt(V3{pd.hit[0], pd.hit[1], pd.hit[2]});
+                if (pd.kind == Kind::Shelf) trail("shelf: used slot " + std::to_string(gShelf.usedSlot)); gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": Cinematic (inventory)"; return Route::Cinematic; }
             gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": " + gS.refused + ", Spatial";
             uicapture::writeText("cine_screenless.txt", (gS.lastRoute + "\n").c_str());
             return Route::Spatial;
@@ -2941,10 +2942,14 @@ void tick() {
         }
     }
     if (gS.st.kind == Kind::Shelf) { // ShelfStation.tick / beforeFrame: what the shelf holds, the moves, the server told at their moments
+        static long tickSeen = -1;
+        bool        firstTick = tickSeen != gS.scenes;
+        if (firstTick) { tickSeen = gS.scenes; trail("shelf: first tick"); }
         std::string sn = game::blockStates(gS.st.bx, gS.st.by, gS.st.bz);
         auto        at = sn.find("\"books_stored\":");
         if (at != std::string::npos) gShelf.bits = std::atoi(sn.c_str() + at + 15);
         game::shelfItems(gS.st.bx, gS.st.by, gS.st.bz, gShelf.items);
+        if (firstTick) trail("shelf: books " + std::to_string(gShelf.bits) + " " + gShelf.items[0] + " " + gShelf.items[1]);
         for (int i = 0; i < 6; ++i) if (!(gShelf.bits >> i & 1)) gShelf.emptyUntil[i] = -10; // the shelf shows it gone itself
         int hn       = 0;
         gShelf.hand  = game::handItem(hn);
@@ -3745,6 +3750,7 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
             gDiscOk[i] = true;
         }
     }
+    trail("props: loading");
     {   // ShelfBooks.TEXTURE: chiseled_bookshelf_occupied / _empty (vanilla_1.21.90, else vanilla_1.20.0: the packs that bring them)
         int got = 0;
         for (char const* pack : {"vanilla_1.21.90", "vanilla_1.20.0"}) {
@@ -3762,6 +3768,7 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
         }
         gShelfTexOk = got == 2;
         gPropNote += gShelfTexOk ? "chiseled_bookshelf ok; " : "chiseled_bookshelf missing; ";
+        trail("props: shelf textures " + std::to_string(got));
     }
     {   // OpenBook.LEATHER: the lectern's book is bound in the enchanting table book's leather
         std::vector<uint8_t> file, px;
@@ -6645,7 +6652,13 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         if (gS.st.kind == Kind::Jukebox) { static long seen = -1; if (seen != gS.scenes) { seen = gS.scenes; trail("record: first jukebox frame, layout " + L.note); } }
         if (haveCam && gS.st.kind == Kind::Jukebox) drawRecord(cam, b);                            // JukeboxStation.renderWorld
         if (haveCam && gS.st.kind == Kind::Campfire) drawCampfire(cam, b, handsDt, clock, int(W), int(H)); // CampfireStation.renderBody / World
-        if (haveCam && gS.st.kind == Kind::Shelf) drawShelf(cam, b, handsDt, clock); // ShelfStation.renderBooks / renderWorld
+        if (haveCam && gS.st.kind == Kind::Shelf) {
+            static long seen = -1;
+            bool        first = seen != gS.scenes;
+            if (first) trail("shelf: first frame drawn, quads " + std::to_string(gQuads.size()));
+            drawShelf(cam, b, handsDt, clock); // ShelfStation.renderBooks / renderWorld
+            if (first) { seen = gS.scenes; trail("shelf: first frame done, quads " + std::to_string(gQuads.size())); }
+        }
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Beacon) {
             // BeaconStation.frame / renderScene / renderWorld
             double t    = moveTime();
