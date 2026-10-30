@@ -28,6 +28,10 @@ bool        skin(std::vector<unsigned char>& rgba, int& w, int& h, bool& slim);
 std::string carriedItem(int& count);
 /// The item in the selected hotbar slot (type name, empty = none).
 std::string handItem(int& count);
+/// What lies in the player's inventory slot (0..8 hotbar, 9..35 the rest; type name, empty = nothing).
+std::string inventoryItem(int slot, int& count);
+/// Select a hotbar slot (0..8), as the scroll wheel does.
+void        selectSlot(int slot);
 /// The selected hotbar slot (0..8).
 int         selectedSlot();
 /// Use a block as the game's own use does (with the item in hand); not taken over by a scene. face 1 = its top.

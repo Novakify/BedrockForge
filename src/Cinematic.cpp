@@ -1751,7 +1751,7 @@ struct Campfire {
     int         placeStep = 0; // putting food on: 1 the carried food into the hand's slot, 2 the campfire's use, 3 back
     double      placeAt = -10;
     bool        swapped = false;
-    int         handCount = 0, tries = 0;
+    int         oldSlot = 0, useSlot = -1;
     std::string hand;          // what is in hand
 };
 Campfire gCamp;
@@ -1815,8 +1815,7 @@ void campAction(int t, unsigned bit, bool shift) {
     (void)bit; (void)shift;
     gS.tapAt = gS.clock; // Hands.tap
     if (t == 175 && gCamp.placeSpot >= 0 && gCamp.placeStep == 0) {
-        gCamp.swapped   = gS.carrying || !gS.carriedName.empty();
-        gCamp.placeStep = gCamp.swapped ? 1 : 2;
+        gCamp.placeStep = 1;
         gCamp.placeAt   = gS.clock;
     }
 }
@@ -2706,37 +2705,45 @@ void tick() {
         // putting food on: the carried food into the hand's hotbar slot, the campfire's own use, the slot's stack back
         if (gS.phase == Phase::Active) {
             auto note = [&](char const* what) {
-                char b[160];
-                snprintf(b, sizeof b, "campfire: %s (slot %d hand %s x%d, carried %s)", what, game::selectedSlot(), gCamp.hand.c_str(), hn, gS.carriedName.c_str());
+                char b[200];
+                snprintf(b, sizeof b, "campfire: %s (slot %d -> %d, hand %s x%d, carried %s)", what, game::selectedSlot(), gCamp.useSlot, gCamp.hand.c_str(), hn,
+                         gS.carriedName.c_str());
                 trail(b);
             };
+            // A use while the cursor carries a stack leaves Bedrock's inventory screen dead (its clicks are refused from then
+            // on): the carried food is laid down in the hotbar first (an empty slot, one of the same food, else the hand's
+            // slot with the hand's stack moved into the inventory), that slot is selected for the use and the hand's
+            // slot again after it.
             if (gCamp.placeStep == 1) {
-                note("food into the hand's slot");
-                inject(10 + game::selectedSlot(), 1); gCamp.placeStep = 2; gCamp.placeAt = gS.clock;
-            } else if (gCamp.placeStep == 2 && gS.clock - gCamp.placeAt > (gCamp.swapped ? 0.35 : 0.05)) {
-                if (campCookable(gCamp.hand) || gS.clock - gCamp.placeAt > 1.0) {
-                    note("use");
-                    gCamp.handCount = hn;
-                    game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1);
-                    gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
+                gCamp.oldSlot = game::selectedSlot();
+                gCamp.useSlot = -1;
+                int  cnt;
+                bool carried = gS.carrying || !gS.carriedName.empty();
+                if (!carried) gCamp.useSlot = gCamp.oldSlot;
+                for (int i = 0; i < 9 && carried && gCamp.useSlot < 0; ++i) if (game::inventoryItem(i, cnt).empty()) gCamp.useSlot = i;
+                for (int i = 0; i < 9 && carried && gCamp.useSlot < 0; ++i) if (game::inventoryItem(i, cnt) == gS.carriedName) gCamp.useSlot = i;
+                if (carried && gCamp.useSlot >= 0) inject(10 + gCamp.useSlot, 1);
+                else if (carried) { // the hand's slot: its stack goes into a free place in the inventory
+                    int freeInv = -1;
+                    for (int i = 9; i < 36 && freeInv < 0; ++i) if (game::inventoryItem(i, cnt).empty()) freeInv = i;
+                    if (freeInv < 0) { note("no room"); gCamp.placeStep = 0; gS.tapAt = gS.clock; }
+                    else { gCamp.useSlot = gCamp.oldSlot; inject(10 + gCamp.useSlot, 1); inject(19 + (freeInv - 9), 1); }
                 }
-            } else if (gCamp.placeStep == 3) {
-                // the slot's stack back once the server took the food off it (a click before that is lost)
-                if (!gCamp.swapped) gCamp.placeStep = 0;
-                else if (hn != gCamp.handCount || gCamp.hand.empty() || gS.clock - gCamp.placeAt > 1.0) {
-                    if (gS.clock - gCamp.placeAt > 0.15) {
-                        note("stack back");
-                        inject(10 + game::selectedSlot(), 1);
-                        gCamp.placeStep = 4; gCamp.placeAt = gS.clock; gCamp.tries = 0;
-                    }
+                if (gCamp.placeStep) { note("laid down"); gCamp.placeStep = 2; gCamp.placeAt = gS.clock; }
+            } else if (gCamp.placeStep == 2 && gS.clock - gCamp.placeAt > 0.45) {
+                if (gCamp.useSlot != gCamp.oldSlot) game::selectSlot(gCamp.useSlot);
+                gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
+            } else if (gCamp.placeStep == 3 && gS.clock - gCamp.placeAt > (gCamp.useSlot != gCamp.oldSlot ? 0.25 : 0.0)) {
+                bool emptyCursor = !gS.carrying && gS.carriedName.empty();
+                if ((campCookable(gCamp.hand) && emptyCursor) || gS.clock - gCamp.placeAt > 1.2) {
+                    note(emptyCursor ? "use" : "use (the cursor still carries)");
+                    if (emptyCursor) game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1);
+                    gCamp.placeStep = 4; gCamp.placeAt = gS.clock;
                 }
-            } else if (gCamp.placeStep == 4 && gS.clock - gCamp.placeAt > 0.5) {
-                // the hand holds what it held before (the food is carried again): done; otherwise once more
-                if (campCookable(gCamp.hand) && gS.carriedName != gCamp.hand && gCamp.tries < 2) {
-                    note("stack back again");
-                    inject(10 + game::selectedSlot(), 1);
-                    ++gCamp.tries; gCamp.placeAt = gS.clock;
-                } else { note("placed"); gCamp.placeStep = 0; }
+            } else if (gCamp.placeStep == 4 && gS.clock - gCamp.placeAt > 0.3) {
+                if (gCamp.useSlot != gCamp.oldSlot) game::selectSlot(gCamp.oldSlot);
+                note("placed");
+                gCamp.placeStep = 0;
             }
         }
     }

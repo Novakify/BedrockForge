@@ -19,6 +19,7 @@
 #include "mc/deps/core/image/Image.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/player/Player.h"
+#include "mc/world/actor/player/Inventory.h"
 #include "mc/world/actor/player/SerializedSkinImpl.h"
 #include "mc/world/actor/player/SerializedSkinRef.h"
 #include "mc/world/actor/player/SkinImage.h"
@@ -247,6 +248,21 @@ std::string handItem(int& count) {
     if (it.isNull() || it.mCount == 0) return {};
     count = it.mCount;
     return it.getTypeName();
+}
+
+std::string inventoryItem(int slot, int& count) {
+    count    = 0;
+    Actor* a = player();
+    if (!a || slot < 0 || slot >= 36) return {};
+    ItemStack const& it = static_cast<Player*>(a)->getInventory().getItem(slot);
+    if (it.isNull() || it.mCount == 0) return {};
+    count = it.mCount;
+    return it.getTypeName();
+}
+
+void selectSlot(int slot) {
+    Actor* a = player();
+    if (a && slot >= 0 && slot < 9) static_cast<Player*>(a)->setSelectedSlot(slot);
 }
 } // namespace rf::cine::game
 
