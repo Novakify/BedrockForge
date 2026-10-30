@@ -3,6 +3,7 @@
 #include "ll/api/mod/RegisterHelper.h"
 
 #include "Cinematic.h"
+#include "CinematicGame.h"
 #include "Graphics.h"
 #include "MaterialLoader.h"
 #include "Notice.h"
@@ -41,6 +42,7 @@ public:
         overlay::install(); // retry if the load-time probe failed
         graphics::install();
         screens::install(); // Spatial GUI: panel only for inventory/chest/crafting screens
+        if (RfOptions::uiCaptureSpike) cine::game::installHooks(); // jukebox / chiseled bookshelf uses -> scenes
         if (RfOptions::uiCaptureSpike) spatialcam::install(); // Spatial GUI third-person camera
         return true;
     }

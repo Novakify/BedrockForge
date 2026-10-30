@@ -1,6 +1,7 @@
 // Renderer Foundation - Cinematic Interactions port: the few game queries the scene needs (LeviLamina side; the scene
 // itself lives in Cinematic.cpp, which includes d3d12.h and so must not include LeviLamina headers). Original code.
 #include "CinematicGame.h"
+#include "Cinematic.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -26,6 +27,10 @@
 #include "mc/world/level/block/CachedComponentData.h"
 #include "mc/world/phys/HitResult.h"
 #include "mc/world/gamemode/GameMode.h"
+#include "mc/world/gamemode/SurvivalMode.h"
+#include "mc/world/level/block/actor/BlockActor.h"
+#include "mc/world/level/block/actor/JukeboxBlockActor.h"
+#include "ll/api/memory/Hook.h"
 #include "mc/world/item/HandSlot.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/PlayerUIContainer.h"
@@ -44,6 +49,7 @@ Actor* player() {
     return static_cast<Actor*>(lp);
 }
 } // namespace
+Actor* playerActor() { return player(); }
 
 bool playerState(double feet[3], float& yaw, float& pitch, bool& alive) {
     Actor* a = player();
@@ -91,6 +97,39 @@ bool useHitBlock() {
     }
     gm->buildBlock(hit.mBlock, hit.mFacing, HandSlot::Mainhand, false);
     return true;
+}
+
+namespace {
+thread_local int tOwnUse = 0; // a use the scene makes itself: not taken over by the interception below
+}
+bool useBlock(int x, int y, int z, int face) {
+    Actor* a = player();
+    if (!a) return false;
+    Player&   p  = *static_cast<Player*>(a);
+    GameMode* gm = &*p.mGameMode;
+    if (!gm) return false;
+    ++tOwnUse;
+    bool r = gm->buildBlock(BlockPos(x, y, z), uchar(face), HandSlot::Mainhand, false);
+    --tOwnUse;
+    return r;
+}
+int selectedSlot() {
+    Actor* a = player();
+    return a ? static_cast<Player*>(a)->getSelectedItemSlot() : 0;
+}
+bool openInventory() {
+    Actor* a = player();
+    if (!a) return false;
+    static_cast<Player*>(a)->openInventory();
+    return true;
+}
+std::string jukeboxRecord(int x, int y, int z) {
+    Actor* a = player();
+    if (!a) return {};
+    BlockActor* be = a->getDimensionBlockSource().getBlockEntity(BlockPos(x, y, z));
+    if (!be || a->getDimensionBlockSource().getBlock(BlockPos(x, y, z)).getTypeName() != "minecraft:jukebox") return {};
+    ItemStack const& rec = static_cast<JukeboxBlockActor*>(be)->mRecord;
+    return rec.isNull() ? std::string() : rec.getTypeName();
 }
 
 std::string blockName(int x, int y, int z) {
@@ -192,5 +231,35 @@ std::string handItem(int& count) {
     if (it.isNull() || it.mCount == 0) return {};
     count = it.mCount;
     return it.getTypeName();
+}
+} // namespace rf::cine::game
+
+// ---- the use of a block with no window of its own (jukebox, chiseled bookshelf) can start a scene instead
+namespace {
+bool takeOver(GameMode& gm, BlockPos const& pos) {
+    if (tOwnUse) return false;
+    Actor* a = rf::cine::game::playerActor();
+    if (!a || static_cast<Actor*>(&gm.mPlayer) != a) return false;
+    std::string name = a->getDimensionBlockSource().getBlock(pos).getTypeName();
+    return rf::cine::screenlessUse(name, pos.x, pos.y, pos.z);
+}
+} // namespace
+LL_TYPE_INSTANCE_HOOK(RfCineBuildBlockHook, ll::memory::HookPriority::Normal, GameMode, &GameMode::$buildBlock, bool, BlockPos const& pos,
+                      uchar face, HandSlot handSlot, bool const isSimTick) {
+    if (!isSimTick && takeOver(*this, pos)) return true;
+    return origin(pos, face, handSlot, isSimTick);
+}
+LL_TYPE_INSTANCE_HOOK(RfCineSurvivalBuildBlockHook, ll::memory::HookPriority::Normal, SurvivalMode, &SurvivalMode::$buildBlock, bool,
+                      BlockPos const& pos, uchar face, HandSlot handSlot, bool const isSimTick) {
+    if (!isSimTick && takeOver(*this, pos)) return true;
+    return origin(pos, face, handSlot, isSimTick);
+}
+namespace rf::cine::game {
+void installHooks() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    RfCineBuildBlockHook::hook();
+    RfCineSurvivalBuildBlockHook::hook();
 }
 } // namespace rf::cine::game

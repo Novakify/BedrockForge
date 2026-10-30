@@ -31,6 +31,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CinematicGame.h"
+#include "ScreenWatch.h"
 #include "FxTextures.h"
 #include "HammerModel.h"
 #include "LLShim.h"
@@ -123,7 +124,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Lectern || k == Kind::Beacon || k == Kind::Crafter || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
+bool sceneAvailable(Kind k) { return k == Kind::Jukebox || k == Kind::Lectern || k == Kind::Beacon || k == Kind::Crafter || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -177,7 +178,7 @@ struct Station {
             V3 f = dirVec(side);
             return {bx + 0.5 + f.x * 0.5, by + 0.5, bz + 0.5 + f.z * 0.5};
         }
-        return kind == Kind::Beacon || kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography || kind == Kind::Loom || kind == Kind::Enchanting ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
+        return kind == Kind::Jukebox || kind == Kind::Beacon || kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography || kind == Kind::Loom || kind == Kind::Enchanting ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
     }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
@@ -198,7 +199,7 @@ struct Station {
     bool   crafterFlat() const { return gridDir < 0; }
     V3     crafterNormal() const { return gridDir < 0 ? V3{0, 1, 0} : dirVec(Dir(gridDir)); }
     V3     crafterFace() const { return V3{bx + 0.5, by + 0.5, bz + 0.5} + crafterNormal() * 0.5; }
-    double leanFov() const { return kind == Kind::Lectern ? 52 : kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
+    double leanFov() const { return kind == Kind::Jukebox ? 64 : kind == Kind::Lectern ? 52 : kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
     // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
         if (isFurnace(kind)) {
@@ -208,6 +209,15 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Jukebox) { // JukeboxStation.lean
+            V3    eye = top + sideV() * 0.8 + V3{0, 0.58, 0};
+            JPose p;
+            p.pos = eye;
+            float yawIgnored;
+            lookAngles(top + sideV() * 0.04 + V3{0, 0.2, 0} - eye, yawIgnored, p.pitch);
+            p.yaw = toYRot(opposite(side));
             return p;
         }
         if (kind == Kind::Lectern) { // LecternStation.lean: bent over the book, looking down onto the pages almost square on
@@ -593,6 +603,7 @@ void leave() { // Scene.leave
 }
 
 void lecternBegin();
+void jukeReset();
 /// Scene.beginClientOnly: the vanilla screen is open; true = the scene plays.
 bool begin(Kind kind, int bx, int by, int bz) {
     double f[3];
@@ -612,6 +623,9 @@ bool begin(Kind kind, int bx, int by, int bz) {
         else if (kind == Kind::Grindstone || kind == Kind::Stonecutter) allowed = (1u << facing) | (1u << int(opposite(Dir(facing))));
         else if (kind == Kind::Loom || kind == Kind::Lectern) allowed = 1u << facing;
     }
+    // JukeboxStation: the slot runs north - south (jukebox_top), so it is worked from the east or west, where a record
+    // in it shows its face
+    if (kind == Kind::Jukebox) allowed = (1u << int(East)) | (1u << int(West));
     if (kind == Kind::Crafter) { // orientation "<front>_<top>": the grid is on the top side of it
         std::string sn = game::blockStates(bx, by, bz);
         auto        at = sn.find("\"orientation\":\"");
@@ -675,6 +689,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
     gS.st      = st;
     gS.refused.clear();
     lecternBegin();
+    jukeReset();
     {   // another station's window sits elsewhere: its probes would hold the kept image at the old window
         std::lock_guard ll(gLayoutMutex);
         if (gLayout.kind != int(kind)) { gLayout.hasProbe = false; gLayout.valid = false; }
@@ -1571,6 +1586,109 @@ void lecternAction(int t, unsigned bit, bool shift) {
 }
 void lecternBegin() { gBook = OpenBook{}; gLecternTarget = LtNone; }
 
+// ---------------------------------------------------------------- JukeboxStation (vanilla geometry)
+// A short scene: the record in hand is lifted over the slot, stood on its edge and lowered in (the jukebox's own use
+// when it is half way in), a playing jukebox is pressed and its record rises out and is taken. Bedrock has no window
+// for the jukebox: the use is taken over (screenlessUse) and the player's inventory opens as the hidden window (the
+// drawer); the scene closes it when the move is done.
+constexpr double JB_RECORD = 0.6, JB_DISC_R = JB_RECORD * 12 / 32.0, JB_INSERT = 1.3, JB_EJECT = 1.15, JB_LINGER = 0.55;
+constexpr double JB_INSERT_SEND = 0.62, JB_EJECT_SEND = 0.16;
+enum JukeMove { JmNone, JmInsert, JmEject };
+struct Jukebox {
+    int         move = JmNone;
+    double      at = -10;
+    bool        sent = false, started = false, hoverTop = false, closing = false, wantHand = false;
+    double      handAt = -10; // the carried record was clicked into the hand's hotbar slot
+    std::string record, inside; // the record moved; the one in the jukebox (client copy)
+    std::string hand;           // the record in hand, if any
+};
+Jukebox gJuke;
+bool   isRecord(std::string const& n) { return n.rfind("minecraft:music_disc", 0) == 0; }
+double jukeProgress() { return clamp01((gS.clock - gJuke.at) / (gJuke.move == JmEject ? JB_EJECT : JB_INSERT)); }
+V3     jukeRest(bool right) { return gS.st.top + gS.st.sideV() * 0.34 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, 0.035, 0}; }
+/// JukeboxStation.recordPoint: the record's middle in the move (false: not in sight)
+bool jukeRecordPoint(V3& out) {
+    if (gJuke.move == JmNone) return false;
+    double t = jukeProgress();
+    V3 low = jukeRest(true) + gS.st.sideV() * 0.18 + V3{0, -0.12, 0}, contact = gS.st.top;
+    V3 above = contact + V3{0, JB_DISC_R + 0.08, 0}, halfIn = contact + V3{0, JB_DISC_R * 0.25, 0}, gone = contact + V3{0, -JB_DISC_R - 0.02, 0};
+    if (gJuke.move == JmInsert) {
+        if (t < 0.32) { double k = inOutCubic(t / 0.32); out = lerp(low, above, k) + V3{0, 0.06 * hump(k), 0}; return true; }
+        if (t < 0.42) { out = above; return true; }
+        if (t < 0.72) { out = lerp(above, halfIn, inOutSine((t - 0.42) / 0.3)); return true; }
+        if (t < 0.86) { out = lerp(halfIn, gone, inCubic3((t - 0.72) / 0.14)); return true; }
+        return false;
+    }
+    // taking it out: it rises once the jukebox is pressed, is taken by its edge and carried off towards the player
+    if (t < 0.2) return false;
+    if (t < 0.55) { out = lerp(gone, above, outCubic((t - 0.2) / 0.35)); return true; }
+    if (t < 0.7) { out = above; return true; }
+    out = lerp(above, low + gS.st.sideV() * 0.12 + V3{0, -0.12, 0}, inCubic3((t - 0.7) / 0.3));
+    return true;
+}
+/// JukeboxStation.recordTurn: how far it leans (degrees, its top away from the player) on its way
+double jukeLean() {
+    double t = jukeProgress();
+    double lean = gJuke.move == JmInsert ? 1 - smoother(window(t, 0.2, 0.42)) : smoother(window(t, 0.7, 1.0));
+    return 35 * lean;
+}
+V3 jukeEdge(V3 disc) { return disc + gS.st.right() * (JB_DISC_R * 0.88) + gS.st.sideV() * 0.03 + V3{0, 0.01, 0}; }
+/// JukeboxStation.handsOverride {right, left}
+bool jukeHands(V3& r, V3& l) {
+    if (gJuke.move == JmNone) return false;
+    double t = jukeProgress();
+    V3     restR = jukeRest(true), disc, hand;
+    bool   seen  = jukeRecordPoint(disc);
+    V3     press = gS.st.top + gS.st.sideV() * 0.05 + V3{0, 0.045, 0};
+    if (gJuke.move == JmInsert) {
+        if (seen && t < 0.72) hand = jukeEdge(disc);
+        else if (t < 0.86) hand = lerp(jukeEdge(gS.st.top + V3{0, JB_DISC_R * 0.25, 0}), press, smoother((t - 0.72) / 0.14)); // the fingers push it home
+        else hand = lerp(press, restR, smoother((t - 0.86) / 0.14));
+    } else {
+        if (t < 0.2) hand = lerp(restR, press, smoother(t / 0.1)) + V3{0, -0.03 * hump(t / 0.2), 0}; // a press, the jukebox lets go
+        else if (t < 0.55) hand = lerp(press, restR, smoother((t - 0.2) / 0.2));
+        else if (seen && t < 0.7) hand = lerp(restR, jukeEdge(disc), smoother((t - 0.55) / 0.15));
+        else hand = seen ? jukeEdge(disc) : restR;
+    }
+    r = hand;
+    l = jukeRest(false);
+    return true;
+}
+void jukeBegin(int move, std::string const& rec) {
+    gJuke.move = move; gJuke.record = rec; gJuke.at = gS.clock; gJuke.sent = false;
+}
+/// JukeboxStation.updateCursor: 160 its top
+int jukeCursor(V3 o, V3 d) {
+    gJuke.hoverTop = false;
+    if (gJuke.move != JmNone) return -1;
+    V3 hit;
+    if (!onPlaneY(o, d, gS.st.top.y, hit) || std::fabs(hit.x - gS.st.top.x) >= 0.52 || std::fabs(hit.z - gS.st.top.z) >= 0.52) return -1;
+    gJuke.hoverTop = true;
+    gS.haveAim     = true;
+    gS.aim         = {std::clamp(hit.x, gS.st.bx + 0.1, gS.st.bx + 0.9), gS.st.top.y, std::clamp(hit.z, gS.st.bz + 0.1, gS.st.bz + 0.9)};
+    return 160;
+}
+/// JukeboxStation.click
+void jukeAction(int t, unsigned bit, bool shift) {
+    (void)shift;
+    if (t != 160 || bit != 1 || gJuke.move != JmNone) return;
+    if (!gJuke.inside.empty()) jukeBegin(JmEject, gJuke.inside);
+    else if (isRecord(gJuke.hand)) jukeBegin(JmInsert, gJuke.hand);
+    else if (isRecord(gS.carriedName)) gJuke.wantHand = true; // a record taken from the drawer: into the hand first (tick)
+    else gS.tapAt = gS.clock; // Hands.tap
+}
+/// the song a record plays (JukeboxSong.description)
+std::string recordSong(std::string const& rec) {
+    std::string k = rec.rfind("minecraft:music_disc_", 0) == 0 ? rec.substr(21) : rec;
+    static const std::pair<char const*, char const*> kSongs[] = {
+        {"pigstep", "Lena Raine - Pigstep"}, {"otherside", "Lena Raine - otherside"}, {"5", "Samuel Aberg - 5"}, {"relic", "Aaron Cherof - Relic"},
+        {"creator", "Lena Raine - Creator"}, {"creator_music_box", "Lena Raine - Creator (Music Box)"}, {"precipice", "Aaron Cherof - Precipice"},
+        {"tears", "Amos Roddy - Tears"}, {"lava_chicken", "Hyper Potions - Lava Chicken"}};
+    for (auto& s : kSongs) if (k == s.first) return s.second;
+    return "C418 - " + k;
+}
+void jukeReset() { gJuke = Jukebox{}; }
+
 // ---------------------------------------------------------------- BeaconStation (vanilla geometry)
 // The powers hang either side of the beam (RemainingLayouts.base BEACON), the payment floats over the glass. Bedrock's
 // beacon window underneath: its power buttons (L.buttons 0..6 in the order above), confirm (7) and cancel (8).
@@ -2003,6 +2121,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Loom) { loomAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Enchanting) { enchAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Lectern) { lecternAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Jukebox) { jukeAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -2158,6 +2277,11 @@ int currentTarget0(float mx, float my) {
         cursorRay(gS.last, b, nx, ny, o, d);
         return crafterCursor(b, mx, my, o, d);
     }
+    if (gS.st.kind == Kind::Jukebox) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return jukeCursor(o, d);
+    }
     if (gS.st.kind == Kind::Cartography) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
@@ -2299,6 +2423,22 @@ void saveConfig() {
 }
 
 // ================================================================ public: client thread
+/// a use taken over (screenlessUse) waits for the inventory screen it opened
+struct Pending { Kind kind = Kind::Count; int x = 0, y = 0, z = 0; double at = -1e9; };
+Pending gPending;
+bool screenlessUse(std::string const& block, int x, int y, int z) {
+    std::lock_guard l(gM);
+    Kind kind;
+    if (!kindOfBlock(block, kind) || kind != Kind::Jukebox) return false;
+    if (gS.phase != Phase::None || !gCfg.enabled || Mode(gCfg.mode[int(kind)]) != Mode::Cinematic) return false;
+    // JukeboxStation.worthIt: a record in it to take out, or one in hand to put in
+    int         n      = 0;
+    std::string inside = game::jukeboxRecord(x, y, z), hand = game::handItem(n);
+    if (inside.empty() && !isRecord(hand)) return false;
+    gPending = {kind, x, y, z, nowMs()};
+    game::openInventory();
+    return true;
+}
 Route onScreen(std::string const& containerTop) {
     std::lock_guard l(gM);
     if (containerTop.empty()) {
@@ -2309,7 +2449,18 @@ Route onScreen(std::string const& containerTop) {
     // which block was used: the hit result the use went to
     std::string lower = containerTop;
     for (auto& ch : lower) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-    if (lower.find("inventory_screen") != std::string::npos) { gS.lastRoute = "inventory: Spatial"; return Route::Spatial; }
+    if (lower.find("inventory_screen") != std::string::npos) {
+        if (gPending.kind != Kind::Count && nowMs() - gPending.at < 1500) { // the inventory a taken-over use opened
+            Pending pd       = gPending;
+            gPending.kind    = Kind::Count;
+            if (gS.phase == Phase::Outro) finish();
+            if (begin(pd.kind, pd.x, pd.y, pd.z)) { gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": Cinematic (inventory)"; return Route::Cinematic; }
+            gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": " + gS.refused + ", Spatial";
+            return Route::Spatial;
+        }
+        gS.lastRoute = "inventory: Spatial";
+        return Route::Spatial;
+    }
     int         bx, by, bz;
     std::string type;
     if (!game::hitBlock(bx, by, bz, type)) { gS.lastRoute = "no block hit: Spatial"; return Route::Spatial; }
@@ -2341,6 +2492,34 @@ void tick() {
     if (d2 > 49 || !kindOfBlock(name, k) || k != gS.st.kind) leave();
     int n = 0;
     gS.carriedName = game::carriedItem(n);
+    if (gS.st.kind == Kind::Jukebox) { // JukeboxStation.tick
+        int hn       = 0;
+        gJuke.hand   = game::handItem(hn);
+        gJuke.inside = game::jukeboxRecord(gS.st.bx, gS.st.by, gS.st.bz);
+        if (gS.phase == Phase::Active) {
+            if (!gJuke.started && gS.time > 0.1) { // the use that started the scene says what to do
+                gJuke.started = true;
+                if (!gJuke.inside.empty()) jukeBegin(JmEject, gJuke.inside);
+                else if (isRecord(gJuke.hand)) jukeBegin(JmInsert, gJuke.hand);
+            }
+            if (gJuke.wantHand) { gJuke.wantHand = false; inject(10 + game::selectedSlot(), 1); gJuke.handAt = gS.clock; }
+            if (gJuke.move == JmNone && gS.clock - gJuke.handAt < 1.0 && isRecord(gJuke.hand)) { gJuke.handAt = -10; jukeBegin(JmInsert, gJuke.hand); }
+            if (gJuke.move != JmNone) {
+                double t = jukeProgress();
+                if (!gJuke.sent && t >= (gJuke.move == JmEject ? JB_EJECT_SEND : JB_INSERT_SEND)) {
+                    gJuke.sent = true;
+                    game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1); // the jukebox's own use: the record in hand goes in / it lets go
+                    if (gJuke.move == JmInsert) motes(gS.st.top + V3{0, 0.06, 0}, 0.12, 10, 1.0f, 0.82f, 0.45f, 0.25);
+                }
+                if (gS.clock - gJuke.at > (gJuke.move == JmEject ? JB_EJECT : JB_INSERT) + JB_LINGER) {
+                    // a short scene: done, the player steps away by themselves
+                    gJuke.move = JmNone;
+                    leave();
+                    rf::screens::popInventory();
+                }
+            }
+        }
+    }
     if (gS.st.kind == Kind::Crafter) { // CrafterStation.tick: it made something - a puff at its mouth
         gS.states     = game::blockStates(gS.st.bx, gS.st.by, gS.st.bz);
         bool crafting = gS.states.find("\"crafting\":1") != std::string::npos;
@@ -3026,7 +3205,9 @@ bool decodeTga(std::vector<uint8_t> const& f, std::vector<uint8_t>& rgba, int& w
     return true;
 }
 bool gPropHas[8] = {};
-bool gLeatherOk = false; // the lectern book's boards (entity/enchanting_table_book)
+bool gLeatherOk = false;
+bool gDiscOk[12] = {}; // the records in the atlas
+constexpr char const* kDiscNames[12] = {"13", "cat", "blocks", "chirp", "far", "mall", "mellohi", "stal", "strad", "ward", "11", "wait"}; // the lectern book's boards (entity/enchanting_table_book)
 bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     if (gG.propTex) return true;
     std::vector<uint8_t> atlas(size_t(PROP_W) * PROP_H * 4, 0);
@@ -3054,6 +3235,18 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
             gPropNote += "particles.png ok; ";
             gPropHas[7] = true;
         } else gPropNote += "particles.png missing; ";
+    }
+    {   // JukeboxStation: the records (items.brarchive record_*.png), 16 px cells from (0, 192)
+        std::vector<uint8_t> file;
+        for (int i = 0; i < 12; ++i) {
+            std::vector<uint8_t> px;
+            int                  w = 0, h = 0;
+            std::string          nm = std::string("record_") + kDiscNames[i] + ".png";
+            if (!readBrarchive(arch.parent_path() / "items.brarchive", nm.c_str(), file) || !decodePng(file, px, w, h) || w != 16 || h != 16) continue;
+            for (int y = 0; y < 16; ++y)
+                std::memcpy(&atlas[(size_t(192 + 16 * (i / 8) + y) * PROP_W + 16 * (i % 8)) * 4], &px[size_t(y) * 16 * 4], 16 * 4);
+            gDiscOk[i] = true;
+        }
     }
     {   // OpenBook.LEATHER: the lectern's book is bound in the enchanting table book's leather
         std::vector<uint8_t> file, px;
@@ -3451,8 +3644,8 @@ void detect(Img im, bool dump, int kindI) {
                 L.hasBoard = true;
             }
             int expect = isFurnace(kind) ? 3 : kind == Kind::Smithing || kind == Kind::Loom ? 4 : kind == Kind::Stonecutter || kind == Kind::Enchanting ? 2 :
-                         kind == Kind::Brewing ? 5 : kind == Kind::Beacon ? 1 : kind == Kind::Crafter ? 9 : 3;
-            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing && kind != Kind::Beacon && kind != Kind::Crafter;
+                         kind == Kind::Brewing ? 5 : kind == Kind::Beacon ? 1 : kind == Kind::Crafter ? 9 : kind == Kind::Jukebox ? 0 : 3;
+            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing && kind != Kind::Beacon && kind != Kind::Crafter && kind != Kind::Jukebox;
             std::vector<Sq> rest = own;
             if (kind == Kind::Beacon) { // the payment slot only (the power buttons are larger squares of their own)
                 std::vector<Sq> slots;
@@ -4223,6 +4416,27 @@ void drawBook(JPose const& cam, Basis const& b, Layout const& L) {
         bookGrid(cam, b, L, pts, ob::ROWS, true, leaf.left, 0.0004);
     }
 }
+/// JukeboxStation.renderWorld: the record standing on its edge in the slot's line, its face to the player
+void drawRecord(JPose const& cam, Basis const& b) {
+    V3 at;
+    if (gJuke.record.empty() || !jukeRecordPoint(at)) return;
+    double size = JB_RECORD;
+    if (gJuke.move == JmEject) size *= 1 - 0.35 * smoother(window(jukeProgress(), 0.75, 1.0));
+    std::string k = gJuke.record.rfind("minecraft:music_disc_", 0) == 0 ? gJuke.record.substr(21) : gJuke.record;
+    int cell = 0;
+    for (int i = 0; i < 12; ++i) if (k == kDiscNames[i]) cell = i;
+    if (!gDiscOk[cell]) return;
+    double lean = jukeLean() * kDeg;
+    V3     up   = V3{0, 1, 0} * std::cos(lean) + gS.st.sideV() * -std::sin(lean);
+    Quad   q;
+    if (!worldQuad(cam, b, at, gS.st.right() * (size / 2), up * (size / 2), q)) return;
+    float u0 = float(16 * (cell % 8)) / PROP_W, v0 = float(192 + 16 * (cell / 8)) / PROP_H;
+    setRect(q.uv, u0, v0, u0 + 16.0f / PROP_W, v0 + 16.0f / PROP_H);
+    float lit = faceShade(cross(gS.st.right(), up).norm());
+    q.color[0] = q.color[1] = q.color[2] = lit;
+    q.mode[0] = 3;
+    gQuads.push_back(q);
+}
 
 // ---------------------------------------------------------------- Hands + ArmMesh (the player's own arms)
 struct Spring3 { // Anim.Spring3: critically damped, stepped exactly
@@ -4262,6 +4476,7 @@ V3 restOf(bool right) {
             return gS.st.crafterFace() + gS.st.crafterNormal() * 0.18 + gS.st.right() * (right ? 0.38 : -0.38) + V3{0, -0.28, 0};
         return V3{gS.st.bx + 0.5, gS.st.by + 1.0, gS.st.bz + 0.5} + gS.st.sideV() * 0.36 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, CR_HAND_Y, 0};
     }
+    if (gS.st.kind == Kind::Jukebox) return jukeRest(right); // JukeboxStation.rest
     if (gS.st.kind == Kind::Lectern) // LecternStation.rest: below the lower edge of the book, near its outer corners
         return gS.st.bookO + gS.st.right() * ((right ? 1 : -1) * (ob::GUTTER + ob::PAGE_W * 0.9)) + gS.st.bookS * (-ob::PAGE_H / 2 - 0.018) + gS.st.bookN * 0.035;
     if (gS.st.kind == Kind::Beacon) // BeaconStation.rest
@@ -4308,6 +4523,10 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
         return aim + V3{0, CR_HAND_Y + hover - 0.06 * tap, 0} - reach * CR_REACH;
     }
     if (gS.st.kind == Kind::Lectern) return aim + gS.st.bookN * (0.03 - 0.02 * tap); // LecternStation.handTarget
+    if (gS.st.kind == Kind::Jukebox) { // JukeboxStation.handTarget
+        V3 reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
+        return aim + V3{0, (carrying ? 0.09 : 0.05) - 0.05 * tap, 0} - reach * 0.07;
+    }
     if (gS.st.kind == Kind::Beacon) { // BeaconStation.handTarget: a power in the air is pointed at from well short of it
         V3     dir     = (aim - shoulder).norm();
         double shortOf = gS.beaconTarget == BnPower ? 0.42 : carrying ? 0.05 : 0.1;
@@ -4334,6 +4553,10 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
         return hand + reach * CR_REACH + V3{0, -CR_HAND_Y + 0.012, 0};
     }
     if (gS.st.kind == Kind::Lectern) return hand; // LecternStation.heldItemPoint
+    if (gS.st.kind == Kind::Jukebox) { // JukeboxStation.heldItemPoint
+        V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
+        return hand + reach * 0.08 + V3{0, -0.03, 0};
+    }
     if (gS.st.kind == Kind::Beacon) { // BeaconStation.heldItemPoint
         V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
         return hand + reach * B_REACH + V3{0, -B_HAND_Y + 0.02, 0};
@@ -4565,6 +4788,14 @@ void updateHands(JPose const& cam, double dt) {
             gRight.update(r, 55, dt);
             gLeft.update(l, 55, dt);
             break;
+        }
+        if (gS.st.kind == Kind::Jukebox) { // JukeboxStation.handsOverride
+            V3 r, l;
+            if (jukeHands(r, l)) {
+                gRight.update(r, 26, dt); // handsStiffness
+                gLeft.update(l, 26, dt);
+                break;
+            }
         }
         if (gS.st.kind == Kind::Lectern) { // LecternStation.handsOverride: the hand that turns a leaf holds its corner
             V3 r, l;
@@ -5608,6 +5839,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             }
         }
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Lectern) drawBook(cam, b, L); // LecternStation.renderScene
+        if (haveCam && gS.st.kind == Kind::Jukebox) drawRecord(cam, b);                            // JukeboxStation.renderWorld
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Beacon) {
             // BeaconStation.frame / renderScene / renderWorld
             double t    = moveTime();
@@ -6584,6 +6816,10 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map - work it" + dot + "Esc - step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear - smith" + dot + "RMB - take" + dot + "Esc - step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade - cut one" + dot + "Shift - cut the stack" + dot + "Esc - step away";
+    case Kind::Jukebox:
+        if (gJuke.move != JmNone && !gJuke.record.empty()) return "\xE2\x99\xAA " + recordSong(gJuke.record);
+        if (!gJuke.inside.empty()) return std::string("LMB on the jukebox - take the record out") + dot + "Esc - step away";
+        return std::string(isRecord(gJuke.hand) ? "LMB on the jukebox - put the record in" : "Take a record from the panel at the top and click the jukebox") + dot + "Esc - step away";
     case Kind::Lectern: return std::string("Click the right page - forward, the left - back") + dot + "Esc - step away";
     case Kind::Crafter: return std::string("Items into the grid's windows") + dot + "empty hand on an empty window - shut or open it" + dot + "crafts on a redstone signal" +
                                dot + "Esc - step away";

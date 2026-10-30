@@ -64,6 +64,9 @@ void    saveConfig();
 /// The set of top screens changed. Starts / ends scenes; returns how the open container screen is shown.
 /// `containerTop` = the container screen on top of a stack ("" = none).
 Route onScreen(std::string const& containerTop);
+/// The player uses a block that has no window of its own (jukebox, chiseled bookshelf): true = a scene takes the use
+/// over (the player's inventory opens as its hidden window; the scene makes the use itself when its move gets there).
+bool screenlessUse(std::string const& block, int x, int y, int z);
 /// Every SceneStack update while a scene runs.
 void tick();
 /// A scene is running (any phase, including the closing shot after the screen went away).

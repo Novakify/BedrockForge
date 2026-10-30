@@ -28,4 +28,14 @@ bool        skin(std::vector<unsigned char>& rgba, int& w, int& h, bool& slim);
 std::string carriedItem(int& count);
 /// The item in the selected hotbar slot (type name, empty = none).
 std::string handItem(int& count);
+/// The selected hotbar slot (0..8).
+int         selectedSlot();
+/// Use a block as the game's own use does (with the item in hand); not taken over by a scene. face 1 = its top.
+bool        useBlock(int x, int y, int z, int face);
+/// Open the player's own inventory screen (the hidden window of a scene at a block with no window of its own).
+bool        openInventory();
+/// The record a jukebox holds (its type name), empty = none.
+std::string jukeboxRecord(int x, int y, int z);
+/// Hooks: a use of a block with no window of its own may start a scene instead (rf::cine::screenlessUse).
+void        installHooks();
 } // namespace rf::cine::game
