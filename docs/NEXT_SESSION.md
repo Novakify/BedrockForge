@@ -1,4 +1,10 @@
-# Next session handoff (updated 2026-10-30 ~17:15 UTC) - READ FIRST
+# Next session handoff (updated 2026-10-30 ~18:05 UTC) - READ FIRST
+- e48 VERIFIED: Spatial GUI keeps the hotbar + hearts + hunger + xp flat under the panel (third and first person),
+  no freeze. Screenshots sent to Fernando. Config reset: uiDebugUseKey 0, SpatialGUI.json restored (fp off), Creative.
+  Graphics left on FANCY. The e47 copy of the game is STILL HUNG in the background (a second copy was force-launched
+  from LeviLauncher; in that copy only the keyboard works - mouse clicks don't land; keys must be HELD ~0.2 s, quick
+  taps are missed). Fernando has to End task the hung one.
+
 - FANCY PASS DONE: all 18 Cinematic stations opened and checked on Fancy (test row at y 200, z -112, x 84..118 step 2:
   furnace smoker blast anvil grindstone stonecutter smithing cartography loom enchanting brewing beacon crafter lectern
   jukebox campfire shelf crafting). cine_frames: 0 UI leaks. Stand at z -110.6 (tp to an integer z centres you at
