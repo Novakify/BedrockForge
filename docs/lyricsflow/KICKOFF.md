@@ -1,5 +1,21 @@
 # LyricsFlow kickoff on the PC - exact steps (written 2026-10-30, prep session)
 
+> **Update 2026-10-30 ~11:30 local (cloud session while Fernando was out, no PC access):**
+> - RF branch is now **`lyricsflow/rf-on-cinematic-v2`** = `cinematic` 22bee91 + lyrics pass (the force-push of
+>   the old branch was blocked; the workflow publishes `lyricsflow-rf-builds` from both names).
+> - Install is two scripts: cloud `tools/lyricsflow/prepare_incoming.sh <repo> /mnt/user-data/outputs/lf <stamp>`,
+>   `device_commit_files` the 4 files to `mods/_lyricsflow_incoming/<stamp>/`, then in the device shell
+>   `tools/lyricsflow/kickoff_install.sh install <mods> <stamp> <installed RF cinematic sha>` (backs up by copy,
+>   checks SHA256, never deletes; `rollback` restores). Dry-run tested in the cloud on a fake mods folder.
+> - Presets tuned against the 4 videos in the new offline preview (`tools/LyricsPreview`), + new **Wall Coral**.
+> - Pre-kickoff review fixes: RF camera hook idle unless lyrics draw / no game calls under its lock; stale frames
+>   dropped after 30 Presents (no frozen lyrics on menus); atlas index guard + BF loads max 8 fonts (config fonts
+>   first); S2 resize leak; O / [ / ] do nothing while the module is off; fetch thread can't std::terminate.
+> - **Source defaults to Spotify** (desktop app via SMTC). A browser / YouTube tab shows nothing unless
+>   `"source"` is changed. F6 status "idle" + no top bar = check this first.
+> - **Host access needed:** this session's folder-access requests were auto-blocked; Fernando adds
+>   `C:\BedrockModding` + the `1.26.51.01` instance folder in the desktop app (+ -> Add folder).
+
 Goes with `docs/LYRICSFLOW_SPEC.md` §7. Do NOT start while the Cinematic chat still drives the game (check its last
 commit on `cinematic` / its NEXT_SESSION block; if it moved in the last ~20 min, wait).
 

@@ -44,7 +44,7 @@ struct State {
     std::thread             media;
     std::unique_ptr<Smtc>   smtc;
     int64_t                 lastFrameNs = 0;
-    bool                    moduleOn    = false;
+    std::atomic<bool>       moduleOn{false}; // written on the game thread, read by the media thread + key callbacks
 };
 State* gS = nullptr;
 std::atomic<int64_t> gCombatAtMs{0};
@@ -68,26 +68,34 @@ void loadConfig() {
 }
 
 void loadFonts(std::filesystem::path const& dir) {
+    // RF has kBfLyricsMaxAtlases texture slots, so at most that many fonts: the configured lyric + top bar fonts
+    // first, then the rest in name order (a 9th font used to get index 8 and sample past the atlas array).
+    std::vector<std::filesystem::path> jsons;
+    std::error_code                    ec;
+    for (auto const& e : std::filesystem::directory_iterator(dir, ec))
+        if (e.path().extension() == ".json") jsons.push_back(e.path());
+    std::sort(jsons.begin(), jsons.end());
+    std::string const want[2] = {gS->engine.config().font, gS->engine.config().topBarFont};
+    std::stable_partition(jsons.begin(), jsons.end(), [&](auto const& p) { auto st = p.stem().string(); return st == want[0] || st == want[1]; });
     std::vector<std::string> atlases;
-    std::error_code          ec;
-    for (auto const& e : std::filesystem::directory_iterator(dir, ec)) {
-        if (e.path().extension() != ".json") continue;
-        auto png = e.path();
+    for (auto const& j : jsons) {
+        if (atlases.size() >= kBfLyricsMaxAtlases) break;
+        auto png = j;
         png.replace_extension(".png");
-        if (!std::filesystem::exists(png)) continue;
-        if (gS->engine.fonts().loadFromJson(e.path().stem().string(), readAll(e.path()), png.string())) atlases.push_back(png.string());
+        if (!std::filesystem::exists(png, ec)) continue;
+        if (gS->engine.fonts().loadFromJson(j.stem().string(), readAll(j), png.string())) atlases.push_back(png.string());
     }
     FrameStore::get().setAtlases(atlases);
 }
 
 // LyricsFlow MediaManager.fetchLyrics: up to 5 attempts, waiting 1.5 s * attempt, abandoned when the song changes.
 void fetchFor(MediaSample s, int64_t seq) {
-    std::thread([s, seq] {
+    std::thread([s, seq] { try {
         Track tk;
         tk.s = s;
         auto const cacheFile = gS->cacheDir / cacheFileName(tk.key());
         std::optional<Lyrics> got;
-        if (std::filesystem::exists(cacheFile)) got = fromCacheJson(readAll(cacheFile)); // LyricsFlow readCache
+        if (std::error_code e1; std::filesystem::exists(cacheFile, e1)) got = fromCacheJson(readAll(cacheFile)); // LyricsFlow readCache
         for (int attempt = 1; attempt <= 5 && !got; ++attempt) {
             {
                 std::lock_guard l(gS->mutex);
@@ -104,7 +112,7 @@ void fetchFor(MediaSample s, int64_t seq) {
                 if (gS->clock.songSeq() != seq || !gS->running) return;
             }
         }
-        if (got && !std::filesystem::exists(cacheFile)) { // LyricsFlow writeCache (synced results only reach here)
+        if (std::error_code e2; got && !std::filesystem::exists(cacheFile, e2)) { // LyricsFlow writeCache (synced results only reach here)
             std::ofstream out(cacheFile, std::ios::binary);
             out << toCacheJson(*got);
         }
@@ -112,7 +120,7 @@ void fetchFor(MediaSample s, int64_t seq) {
         if (gS->clock.songSeq() != seq) return;
         gS->lyrics      = got ? std::make_shared<Lyrics const>(std::move(*got)) : nullptr;
         gS->lyricsState = got ? LyricsState::Found : LyricsState::NotFound;
-    }).detach();
+    } catch (...) {} }).detach(); // filesystem / stream errors in a detached thread would std::terminate the game
 }
 
 void mediaLoop() {
@@ -222,13 +230,14 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
 
     // Keys: LyricsFlow's K / J are taken by BF (impact frames / HUD), so only on/off + per-song offset for now.
     bf::input::bindKey("lyricsflow.toggle", 0x4F /*O*/, [] {
+        if (!gS->moduleOn) return; // module off: the keys do nothing (used to flip + save "enabled" silently)
         std::lock_guard l(gS->mutex);
         gS->engine.config().enabled = !gS->engine.config().enabled;
         if (!gS->engine.config().enabled) gS->engine.reset();
         saveConfig();
     });
-    bf::input::bindKey("lyricsflow.earlier", 0xDD /*]*/, [] { nudgeSongOffset(+100); });
-    bf::input::bindKey("lyricsflow.later", 0xDB /*[*/, [] { nudgeSongOffset(-100); });
+    bf::input::bindKey("lyricsflow.earlier", 0xDD /*]*/, [] { if (gS->moduleOn) nudgeSongOffset(+100); });
+    bf::input::bindKey("lyricsflow.later", 0xDB /*[*/, [] { if (gS->moduleOn) nudgeSongOffset(-100); });
 
     gS->running = true;
     gS->media   = std::thread(mediaLoop);
