@@ -22,6 +22,7 @@
 #include "lyrics/core/Physics.h"
 #include "lyrics/core/Scene.h"
 #include "lyrics/core/Text.h"
+#include "lyrics/core/TopBar.h"
 
 using namespace bf::lyrics;
 
@@ -250,6 +251,27 @@ TEST(richsync) {
     CHECK_EQ(l->lines[0].words.back().end, int64_t(15200)); // line te
     CHECK_EQ(l->lines[0].wordAt(13300), 2);
 }
+TEST(lyrics_cache_roundtrip) {
+    for (char const* which : {"lrc", "yrc"}) {
+        gCur = std::string("cache ") + which;
+        auto l = std::string(which) == "lrc" ? *parseLrc(readFile("song.lrc"), 200000) : *parseYrc(readFile("netease_yrc.txt"), 200000);
+        auto r = fromCacheJson(toCacheJson(l));
+        CHECK(r.has_value());
+        if (!r) continue;
+        CHECK_EQ(r->lines.size(), l.lines.size());
+        CHECK_EQ(r->wordSynced, l.wordSynced);
+        CHECK_EQ(r->source, l.source);
+        for (size_t i = 0; i < l.lines.size(); ++i) {
+            CHECK_EQ(r->lines[i].text, l.lines[i].text);
+            CHECK_EQ(r->lines[i].end, l.lines[i].end);
+            CHECK_EQ(r->lines[i].words.size(), l.lines[i].words.size());
+            if (!l.lines[i].words.empty()) CHECK_EQ(r->lines[i].words.back().end, l.lines[i].words.back().origEnd);
+        }
+    }
+    CHECK_EQ(cacheFileName("a").size(), size_t(21));
+    CHECK(cacheFileName("x") != cacheFileName("y"));
+}
+
 TEST(hash_and_easing_match_java) {
     for (auto const& h : golden()["hash01"].items()) CHECK_NEAR(anim::hash01(h[0].asInt()), h[1].asNumber(), 1e-6);
     for (auto const& e : golden()["ease"].items()) {
@@ -663,6 +685,86 @@ TEST(falling_letters_through_engine) {
     bool anyResting = false;
     for (auto const& lt : e.physics().letters()) anyResting |= lt.state == Letter::State::Resting;
     CHECK(anyResting);
+}
+
+
+// ---- frame dump for tools/LyricsFonts/render_frame.py (set LYRICS_DUMP_DIR to write <dir>/<name>.json)
+namespace {
+void dumpFrame(std::string const& name, Engine& e, CameraState const& cam, float fov, float aspect) {
+    char const* dir = std::getenv("LYRICS_DUMP_DIR");
+    if (!dir) return;
+    std::ofstream o(std::string(dir) + "/" + name + ".json");
+    o << "{\"yaw\":" << cam.yaw << ",\"pitch\":" << cam.pitch << ",\"fov\":" << fov << ",\"aspect\":" << aspect << ",\"atlases\":[";
+    for (size_t i = 0; i < e.fonts().all().size(); ++i) o << (i ? "," : "") << "\"" << e.fonts().all()[i].atlasPath << "\"";
+    o << "],\"glyphs\":[";
+    bool first = true;
+    for (auto const& g : e.glyphs()) {
+        o << (first ? "" : ",") << "[" << g.pos[0] << "," << g.pos[1] << "," << g.pos[2] << "," << g.right[0] << "," << g.right[1] << "," << g.right[2]
+          << "," << g.up[0] << "," << g.up[1] << "," << g.up[2] << "," << g.uv[0] << "," << g.uv[1] << "," << g.uv[2] << "," << g.uv[3] << ","
+          << g.fill << "," << g.fill2 << "," << g.outline << "," << g.glow << "," << g.alpha << "," << g.outlineW << "," << g.glowW << ","
+          << g.glowK << "," << g.atlas << "," << g.flags << "," << g.pxRange << "]";
+        first = false;
+    }
+    o << "]}\n";
+}
+bool loadRealFonts(Engine& e) {
+    std::string base = gDir + "/../../../resources/lyricsflow/fonts/";
+    bool ok = true;
+    for (char const* f : {"lyricsflow_script", "outfit", "greatvibes", "kaushan", "minecraft"})
+        ok &= e.fonts().loadFromJson(f, readFile(std::string("../../../resources/lyricsflow/fonts/") + f + ".json"), base + f + ".png");
+    return ok;
+}
+} // namespace
+
+TEST(top_bar_phases_and_karaoke) {
+    Engine e;
+    CHECK(loadRealFonts(e));
+    Lyrics     l = *parseLrc(readFile("song.lrc"), 200000);
+    SceneInput in;
+    in.lyrics = &l; in.lyricsState = LyricsState::Found; in.songSeq = 1; in.playing = true; in.dt = 0.05f;
+    in.title = "Test Song"; in.artist = "Test Artist"; in.guiW = 480; in.guiH = 270;
+    auto cam = testCam();
+    in.t = 10000;
+    e.frame(in, cam, nullptr);
+    CHECK(e.topBar().phase() == TopBar::Phase::Title);
+    size_t solids = 0;
+    for (auto const& g : e.glyphs()) solids += (g.flags & BF_GLYPH_SOLID) ? 1 : 0;
+    CHECK(solids >= 7); // shadow, outline, pill, vinyl (4), bars (4)
+    for (int i = 0; i < 80; ++i) { in.t = 10000 + i * 50; e.frame(in, cam, nullptr); } // 4 s
+    CHECK(e.topBar().phase() == TopBar::Phase::Lyrics);
+    for (int i = 0; i < 40; ++i) { in.t = 13900 + i * 25; e.frame(in, cam, nullptr); }
+    CHECK(e.topBar().lastWord() >= 2); // "the"/"test" by ~14.9 s
+    dumpFrame("topbar_karaoke", e, cam, 70, 480.0f / 270);
+    in.playing = false;
+    for (int i = 0; i < 5; ++i) e.frame(in, cam, nullptr);
+    CHECK(e.topBar().phase() == TopBar::Phase::Paused);
+}
+
+TEST(preset_frames_render_dump) { // world text for each look, dumped for the CPU preview renderer
+    for (char const* p : {"neon_arena", "aurora_cursive", "wall_gold", "ground_drop"}) {
+        gCur = std::string("preset frame ") + p;
+        Engine e;
+        CHECK(loadRealFonts(e));
+        auto pj = json::parse(readFile(std::string("../../../resources/lyricsflow/presets/") + p + ".json"));
+        if (pj) applyJson(e.config(), (*pj)["settings"]);
+        FakeWorld w;
+        for (int x = -8; x <= 8; ++x)
+            for (int y = 64; y <= 72; ++y) w.extra[{x, y, 7}] = Aabb{};
+        Lyrics     l = *parseLrc(readFile("song.lrc"), 200000);
+        SceneInput in;
+        in.lyrics = &l; in.lyricsState = LyricsState::Found; in.songSeq = 1; in.playing = true; in.dt = 1.0f / 30;
+        in.title = "Test Song"; in.artist = "Test Artist"; in.guiW = 480; in.guiH = 270;
+        auto cam = testCam();
+        if (std::string(p) == "aurora_cursive") cam.pitch = -20;
+        int frames = std::string(p) == "ground_drop" ? 150 : 75;
+        for (int i = 0; i < frames; ++i) {
+            in.t          = 12300 + int64_t(i) * 33;
+            in.nowSeconds = i / 30.0;
+            e.frame(in, cam, &w);
+        }
+        CHECK(!e.glyphs().empty());
+        dumpFrame(std::string("preset_") + p, e, cam, 70, 480.0f / 270);
+    }
 }
 
 int main(int argc, char** argv) {

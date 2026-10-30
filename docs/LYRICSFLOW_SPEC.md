@@ -74,7 +74,7 @@ RF Present (overlay thread): BF_CopyLyricFrame ──► upload ring ──► g
 - **Port note:** Musixmatch's desktop API is unofficial and token-gated; kept as one source of several for this
   personal build (LyricsFlow does the same). Fallbacks cover it when it refuses.
 - MediaManager retries a failed search up to 5× (waits 1.5 s × attempt) unless the song changes.
-- Not ported yet: LyricsFlow's on-disk lyrics cache (`readCache/writeCache`) - easy add (one JSON per `artist\0title`).
+- On-disk lyrics cache: `config/lyricsflow_cache/<fnv64 of artist\0title>.json` (`toCacheJson`/`fromCacheJson`).
 
 ### 2.3 Clock (`Track` / `MediaManager.tick`)
 - Poll 250 ms (120 ms once after a command). Position extrapolates from the sample time while playing.
@@ -175,7 +175,14 @@ LETTER, GRADIENT), SDF pxRange. 112 bytes, `static_assert`ed.
 | Neon Arena | C | FLOATING, `kaushan`, neon_pink two-colour 0.85, strong glow, scale 1.35, 3 lines, streaks |
 | Wall Gold | D | WALL, `minecraft`, minecraft_gold, yellow→orange gradient, dark outline, strong shadow |
 | Combat Safe | modifier | combatSafe, 14° keep-out, 35 % in combat, 1 line, opacity .85 |
-Sky presets (`skyPreset`) and the top karaoke bar are parsed into config but not rendered yet (phase 4 per the plan).
+Sky presets (`skyPreset`) are parsed into config but not rendered yet. The **top karaoke bar is done** (`TopBar.*`,
+screen-space glyphs + `BF_GLYPH_SOLID` rounded shapes): title/artist, pause state, karaoke line with the highlight pill
+gliding to the sung word, vinyl icon, EQ bars. No cover art / logos / clock-ping-fps chips yet.
+
+CPU previews (rendered by `tools/LyricsFonts/render_frame.py` from frames the core tests dump with
+`LYRICS_DUMP_DIR=<dir>`; same maths as `glyph.hlsl`, fake world, BF camera estimate):
+`docs/img/lyricsflow_presets_preview.png` (Neon Arena, Aurora Cursive / Wall Gold, Ground Drop - letters lying flat on
+the ground, seen edge-on) and `docs/img/lyricsflow_topbar_preview.png`.
 
 ## 7. Kickoff-day runbook (needs the PC; in this order)
 1. **Merge order:** `lyricsflow/scaffold` (BF) and `lyricsflow/rf-scaffold` (RF, cut from `spatialgui-m0` @ c0c6d24)
@@ -199,9 +206,9 @@ Sky presets (`skyPreset`) and the top karaoke bar are parsed into config but not
 ## 8. Open items
 - Real collision shapes for slabs/stairs/snow layers in `World_win.cpp` (now: solid = full cube, rest passable);
   real sky light (`getBrightnessPair`) for the underground check.
-- Lyrics disk cache; album-art palette (SMTC thumbnail); top karaoke bar; sky presets/tint/streaks/stars; weather FX;
+- ~~Lyrics disk cache~~ done (`config/lyricsflow_cache/<fnv>.json`); album-art palette (SMTC thumbnail); top karaoke bar; sky presets/tint/streaks/stars; weather FX;
   ImGui settings page in RF for the BF config (today: `config/lyricsflow.json` + presets).
-- Combat signal → `SceneInput::combat` (BF attack/hurt hooks exist).
+- ~~Combat signal~~ done: BF's local attack hook + local hurt event call `noteCombat()`; opacity eases back over `combatHoldMs`.
 - Commit `src/GlyphShaders.h` into the RF branch from the CI artifact (so a PC build doesn't need dxc).
 - The other 14 LyricsFlow fonts: `make_fonts.py --fonts <id>` after copying the TTF + licence from the jar.
 - True MSDF atlases (msdf-atlas-gen) if huge text shows rounded corners; the loader and shader already support them.

@@ -39,7 +39,7 @@ struct State {
     SongClock               clock;
     std::shared_ptr<Lyrics const> lyrics;
     LyricsState             lyricsState = LyricsState::None;
-    std::filesystem::path   cfgFile, presetDir;
+    std::filesystem::path   cfgFile, presetDir, cacheDir;
     std::atomic<bool>       running{false};
     std::thread             media;
     std::unique_ptr<Smtc>   smtc;
@@ -47,6 +47,7 @@ struct State {
     bool                    moduleOn    = false;
 };
 State* gS = nullptr;
+std::atomic<int64_t> gCombatAtMs{0};
 
 std::string readAll(std::filesystem::path const& p) {
     std::ifstream in(p, std::ios::binary);
@@ -82,7 +83,11 @@ void loadFonts(std::filesystem::path const& dir) {
 // LyricsFlow MediaManager.fetchLyrics: up to 5 attempts, waiting 1.5 s * attempt, abandoned when the song changes.
 void fetchFor(MediaSample s, int64_t seq) {
     std::thread([s, seq] {
+        Track tk;
+        tk.s = s;
+        auto const cacheFile = gS->cacheDir / cacheFileName(tk.key());
         std::optional<Lyrics> got;
+        if (std::filesystem::exists(cacheFile)) got = fromCacheJson(readAll(cacheFile)); // LyricsFlow readCache
         for (int attempt = 1; attempt <= 5 && !got; ++attempt) {
             {
                 std::lock_guard l(gS->mutex);
@@ -98,6 +103,10 @@ void fetchFor(MediaSample s, int64_t seq) {
                 std::lock_guard l(gS->mutex);
                 if (gS->clock.songSeq() != seq || !gS->running) return;
             }
+        }
+        if (got && !std::filesystem::exists(cacheFile)) { // LyricsFlow writeCache (synced results only reach here)
+            std::ofstream out(cacheFile, std::ios::binary);
+            out << toCacheJson(*got);
         }
         std::lock_guard l(gS->mutex);
         if (gS->clock.songSeq() != seq) return;
@@ -162,6 +171,15 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     in.songSeq     = gS->clock.songSeq();
     in.dt          = dt;
     in.nowSeconds  = double(now) / 1e9;
+    in.title       = gS->clock.hasTrack() ? gS->clock.track().s.title : std::string();
+    in.artist      = gS->clock.hasTrack() ? gS->clock.track().s.artist : std::string();
+    in.guiW        = f.width;
+    in.guiH        = f.height;
+    { // Combat Safe: full right after a hit, easing out over combatHoldMs
+        int64_t since = now / 1000000 - gCombatAtMs.load();
+        int     hold  = std::max(1, gS->engine.config().combatHoldMs);
+        in.combat     = since < hold ? 1.0f - float(since) / float(hold) * 0.5f : std::max(0.0f, 1.5f - float(since) / float(hold));
+    }
     GameWorld world(a);
     gS->engine.frame(in, cam, &world);
     gS->engine.publish(true, fov);
@@ -184,6 +202,9 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     gS            = new State();
     gS->cfgFile   = configDir / "lyricsflow.json";
     gS->presetDir = modDir / "resources" / "lyricsflow" / "presets";
+    gS->cacheDir  = configDir / "lyricsflow_cache";
+    std::error_code ec;
+    std::filesystem::create_directories(gS->cacheDir, ec);
     loadConfig();
     loadFonts(modDir / "resources" / "lyricsflow" / "fonts");
 
@@ -211,6 +232,10 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
 
     gS->running = true;
     gS->media   = std::thread(mediaLoop);
+}
+
+void noteCombat() {
+    gCombatAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
 }
 
 void uninstall() {

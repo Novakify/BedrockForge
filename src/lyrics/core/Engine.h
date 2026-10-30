@@ -10,6 +10,7 @@
 #include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Physics.h"
 #include "lyrics/core/Scene.h"
+#include "lyrics/core/TopBar.h"
 
 namespace bf::lyrics {
 
@@ -27,6 +28,7 @@ public:
     Vec3                          origin() const { return mOrigin; }
     Scene&                        scene() { return mScene; }
     LetterPhysics&                physics() { return mPhysics; }
+    TopBar&                       topBar() { return mTopBar; }
     void                          reset();
 
 private:
@@ -34,6 +36,7 @@ private:
     FontSet                mFonts;
     Scene                  mScene;
     LetterPhysics          mPhysics;
+    TopBar                 mTopBar;
     std::vector<BfGlyphV1> mGlyphs;
     Vec3                   mOrigin;
     CameraState            mCam;

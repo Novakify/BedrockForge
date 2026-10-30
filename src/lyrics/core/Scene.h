@@ -68,6 +68,8 @@ struct SceneInput {
     float              focusA = 1.0f;  // Hud.focusA (dims while a menu is open)
     float              beat = 0.0f;    // Hud.beat (beatGlow)
     float              combat = 0.0f;  // [BF] 0..1, raised by hits (combat-safe)
+    std::string        title, artist;  // now playing (top bar)
+    float              guiW = 427.0f, guiH = 240.0f; // UI size in GUI units (Bedrock ScreenView size)
 };
 
 /// One word ready to draw. World mode: origin + orient (+X right, +Y up, +Z toward the viewer side the Java mod
@@ -88,6 +90,8 @@ struct DrawWord {
     float       layerStep = 0.06f; // z step between neon passes, font units (Java layerStep)
     bool        dropNow = false;    // [BF] falling letters: hand this word's glyphs to the physics this frame
     int64_t     key = 0;            // stable id of (line, word) for the physics hand-off
+    uint32_t    argb  = 0;          // [BF] fixed colour (0 = theme) - top bar text
+    bool        plain = false;      // [BF] main pass only (no shadow / offset passes / glow)
 };
 
 class Scene {

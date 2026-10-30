@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <regex>
 
 #include "lyrics/core/Json.h"
@@ -385,6 +386,64 @@ bool sameScript(std::string_view artist, std::string_view title, Lyrics const& l
         for (uint32_t c : text::codepoints(line.text))
             if (text::isLetter(c)) (text::isLatin(c) ? ll : ln)++;
     return ll + ln == 0 || double(ln) <= double(ll + ln) * 0.5;
+}
+
+namespace {
+std::string jq(std::string_view s) {
+    std::string o = "\"";
+    for (char ch : s) {
+        if (ch == '"' || ch == '\\') { o += '\\'; o += ch; }
+        else if (uint8_t(ch) < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", unsigned(uint8_t(ch))); o += b; }
+        else o += ch;
+    }
+    return o + "\"";
+}
+} // namespace
+
+std::string toCacheJson(Lyrics const& l) {
+    std::string o = "{\"v\":1,\"source\":" + jq(l.source) + ",\"synced\":" + (l.synced ? "true" : "false") + ",\"lines\":[";
+    for (size_t i = 0; i < l.lines.size(); ++i) {
+        auto const& ln = l.lines[i];
+        o += (i ? "," : "") + std::string("{\"t\":") + jq(ln.text) + ",\"s\":" + std::to_string(ln.start) + ",\"e\":" + std::to_string(ln.end) +
+             ",\"est\":" + (ln.estimated ? "true" : "false") + ",\"w\":[";
+        for (size_t j = 0; j < ln.words.size(); ++j) {
+            auto const& w = ln.words[j];
+            o += (j ? "," : "") + std::string("[") + jq(w.text) + "," + std::to_string(w.origStart) + "," + std::to_string(w.origEnd) + "]";
+        }
+        o += "]}";
+    }
+    return o + "]}";
+}
+
+std::optional<Lyrics> fromCacheJson(std::string_view s) {
+    auto d = json::parse(s);
+    if (!d || (*d)["v"].asInt() != 1 || !(*d)["lines"].isArray()) return std::nullopt;
+    Lyrics l;
+    l.source     = (*d)["source"].asString();
+    l.synced     = (*d)["synced"].asBool();
+    bool allReal = true;
+    for (auto const& j : (*d)["lines"].items()) {
+        Line ln;
+        ln.index     = int(l.lines.size());
+        ln.text      = j["t"].asString();
+        ln.start     = j["s"].asInt();
+        ln.end       = j["e"].asInt();
+        ln.estimated = j["est"].asBool(true);
+        for (auto const& w : j["w"].items()) ln.words.push_back(Word::of(w[0].asString(), w[1].asInt(), w[2].asInt()));
+        allReal &= !ln.estimated && !ln.words.empty();
+        l.lines.push_back(std::move(ln));
+    }
+    l.wordSynced = allReal && !l.lines.empty();
+    if (l.lines.empty()) return std::nullopt;
+    return l;
+}
+
+std::string cacheFileName(std::string_view key) {
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (char ch : key) { h ^= uint8_t(ch); h *= 0x100000001b3ull; }
+    char b[24];
+    std::snprintf(b, sizeof b, "%016llx.json", (unsigned long long)h);
+    return b;
 }
 
 std::string show(std::string_view s, bool allCaps) { return allCaps ? text::toUpper(s) : std::string(s); }

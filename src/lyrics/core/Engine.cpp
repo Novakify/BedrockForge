@@ -9,6 +9,7 @@ namespace bf::lyrics {
 void Engine::reset() {
     mScene.clear();
     mPhysics.clear();
+    mTopBar.reset();
     mGlyphs.clear();
 }
 
@@ -50,6 +51,8 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         mPhysics.emit(mOrigin, letters);
         mGlyphs.insert(mGlyphs.begin(), letters.begin(), letters.end()); // letters on the ground sit behind live text
     }
+    // the karaoke bar last: screen space, drawn over the world text
+    mTopBar.build(in, mCfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);
 }
 
 void Engine::publish(bool active, float fovY) {

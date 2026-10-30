@@ -75,6 +75,11 @@ std::optional<Lyrics> spread(std::string_view plain, int64_t durationMs, std::st
 Lyrics scaled(Lyrics const& l, double k, int64_t durationMs);
 /// Rejects lyrics in another script than the (mostly Latin) title (LyricsFetcher.sameScript).
 bool sameScript(std::string_view artist, std::string_view title, Lyrics const& l);
+/// Disk cache form (MediaManager readCache/writeCache): exact lines + word timing, round-trips losslessly.
+std::string           toCacheJson(Lyrics const& l);
+std::optional<Lyrics> fromCacheJson(std::string_view json);
+/// Cache file name for a track key (lower(artist + "\0" + title)): 16 hex digits of FNV-1a 64 + ".json".
+std::string           cacheFileName(std::string_view trackKey);
 /// Lyrics.show(): upper-case when allCaps is on.
 std::string show(std::string_view s, bool allCaps);
 

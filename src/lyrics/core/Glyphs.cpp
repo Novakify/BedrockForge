@@ -146,6 +146,7 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
     float const  hue   = c.hueShiftSpeed * st.timeSeconds;
 
     std::vector<Pass> passes;
+    if (w.plain) mainPassOnly = true;
     if (!mainPassOnly) {
         if (c.textShadow == 1) passes.push_back({o * 0.6f, -o * 1.0f, st.shadowSoft, w.alpha, false});
         else if (c.textShadow == 2) {
@@ -166,6 +167,7 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
         }
         passes.push_back({0, 0, hueRotate(th.main, hue), w.alpha, true});
     }
+    if (w.argb) passes.back().argb = w.argb;
 
     // layout in em: centred on x, visual middle (between x-height and cap-height) on y = 0
     auto const  cps      = text::codepoints(w.text);
@@ -224,7 +226,7 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
                 q.up[0] = float(u.x); q.up[1] = float(u.y); q.up[2] = float(u.z);
                 q.uv[0] = g->u0; q.uv[1] = g->v0; q.uv[2] = g->u1; q.uv[3] = g->v1;
                 uint32_t fillArgb = ps.argb;
-                if (ps.main && c.perLetterColor && !clean) {
+                if (ps.main && c.perLetterColor && !clean && !w.argb) {
                     uint32_t const cyc[3] = {th.main, th.a, th.b};
                     fillArgb              = hueRotate(cyc[letter % 3], hue);
                 }
@@ -232,10 +234,11 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
                 q.fill2   = toRgba(ps.main ? hueRotate(grad2Argb, hue) : fillArgb);
                 q.alpha   = ps.alpha;
                 q.atlas   = font.atlasIndex;
-                q.flags   = flags | (ps.main ? 0u : 0u);
+                q.flags   = flags;
                 if (!ps.main) q.flags &= ~uint32_t(BF_GLYPH_GRADIENT);
                 q.pxRange = font.pxRange;
-                if (ps.main) {
+                if (w.plain) q.flags &= ~uint32_t(BF_GLYPH_GRADIENT);
+                if (ps.main && !w.plain) {
                     q.outline  = c.outlineWidth > 0 ? toRgba(outlineArgb) : 0u;
                     q.outlineW = c.outlineWidth;
                     q.glow     = glowK > 0 ? toRgba(hueRotate(glowArgb, hue)) : 0u;

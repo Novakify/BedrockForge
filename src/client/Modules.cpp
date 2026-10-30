@@ -48,6 +48,7 @@
 #include "client/ShaderPacks.h"
 #include "client/PostFx.h"
 #include "core/Win32Input.h"
+#include "lyrics/win/Win.h"
 
 namespace bedrock_forge::client {
 
@@ -177,6 +178,7 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
     if (nowMs() - gComboAt.load() > 2500) gCombo = 0;
     ++gCombo;
     gComboAt = nowMs();
+    ::bf::lyrics::win::noteCombat(); // LyricsFlow Combat Safe: dim lyrics for a moment after a hit
     (void)target;
 }
 } // namespace
@@ -470,7 +472,10 @@ void installRuntime() {
 
     // Combo resets when the local player is hurt.
     gSubs.on<ll::event::ActorHurtEvent>([](ll::event::ActorHurtEvent& ev) {
-        if (gLocalId.load() != 0 && ev.self().getOrCreateUniqueID().rawID == gLocalId.load()) gCombo = 0;
+        if (gLocalId.load() != 0 && ev.self().getOrCreateUniqueID().rawID == gLocalId.load()) {
+            gCombo = 0;
+            ::bf::lyrics::win::noteCombat();
+        }
     });
 
     gSubs.on<ll::event::AfterUIRenderEvent>([](ll::event::AfterUIRenderEvent& ev) {

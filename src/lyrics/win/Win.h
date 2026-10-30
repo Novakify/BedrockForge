@@ -40,6 +40,8 @@ private:
 /// modDir = mods/BedrockForgeCore (fonts under resources/lyricsflow/fonts), configDir = its config folder.
 void install(std::filesystem::path const& modDir, std::filesystem::path const& configDir);
 void uninstall();
+/// Local player hit something or got hurt (Combat Safe dims lyrics for combatHoldMs). Any thread.
+void noteCombat();
 
 } // namespace bf::lyrics::win
 #endif
