@@ -5,6 +5,7 @@
 //   c5  = x: frame line strength (0 = no frame, Java look), y: 1 = drop the dim background layer, zw: drawn uv fraction
 //   c6  = the HUD strip (hotbar, hearts) kept flat under the panel, uv rect x0 y0 x1 y1 (x1 <= x0: none)
 //   c7  = x: world blur radius in pixels (0 = none), y: drop shadow alpha (0 = none), zw: drop shadow uv offset
+//   c9  = PSBlur1D: x sigma (texels of the output), yz uv step between taps
 //   c8  = the player on screen (uv rect x0 y0 x1 y1; x1 <= x0: none) - kept sharp in the world blur
 // t0 = world (back buffer copy, UI already redirected away), t1 = UI target (premultiplied-ish, transparent clear)
 cbuffer Params : register(b0) {
@@ -14,6 +15,7 @@ cbuffer Params : register(b0) {
 };
 Texture2D    tWorld : register(t0);
 Texture2D    tUi    : register(t1);
+Texture2D    tBlur  : register(t2); // the world blurred (half size, PSBlur1D twice)
 SamplerState sLin   : register(s0);
 
 struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
@@ -27,15 +29,13 @@ V2P VSFull(uint id : SV_VertexID) {
     return o;
 }
 
-// Java blurWorldBackground (WorldBlurRenderer: the vanilla menu blur over the world, the player drawn again sharp in
-// front of it): a golden-angle disc blur of the world copy; the player's screen rect (c8, soft edge) stays sharp.
+// Java blurWorldBackground (WorldBlurRenderer: the vanilla menu blur over the world): a separable Gaussian made at
+// half size (PSBlur1D, two passes) and mixed in here; c7.x = how much of it shows, the player rect (c8) can stay sharp.
 float4 PSWorld(V2P i) : SV_Target {
     float2 uv = (i.uv - 0.5) / max(misc.x, 1.0) + 0.5;
     float3 c  = tWorld.SampleLevel(sLin, uv, 0).rgb;
-    float  r  = pad[2].x;
-    if (r > 0.5) {
-        float w, h;
-        tWorld.GetDimensions(w, h);
+    float  m  = pad[2].x;
+    if (m > 0.0) {
         float keep = 0.0;
         if (pad[3].z > pad[3].x) {
             float2 lo = pad[3].xy, hi = pad[3].zw, ctr = (lo + hi) * 0.5, half = (hi - lo) * 0.5;
@@ -43,21 +43,29 @@ float4 PSWorld(V2P i) : SV_Target {
             float  f  = max(0.02, 0.35 * min(half.x, half.y));                 // feather
             keep      = 1.0 - smoothstep(0.0, f, max(q.x, q.y));
         }
-        float rr = r * (1.0 - keep);
-        if (rr > 0.5) {
-            float3 acc = c;
-            float  n   = 1.0;
-            [unroll] for (int k = 1; k < 33; ++k) {
-                float  a = k * 2.39996323;
-                float  d = sqrt(k / 32.0) * rr;
-                float2 o = float2(cos(a), sin(a)) * d / float2(w, h);
-                acc += tWorld.SampleLevel(sLin, uv + o, 0).rgb;
-                n   += 1.0;
-            }
-            c = acc / n;
-        }
+        float3 b = tBlur.SampleLevel(sLin, uv, 0).rgb;
+        c = lerp(c, b, saturate(m * (1.0 - keep)));
     }
     return float4(c * (1.0 - misc.z), 1);
+}
+
+// one direction of the Gaussian (bilinear pairs: two texels per tap, so a wide sigma stays cheap and smooth)
+float4 PSBlur1D(V2P i) : SV_Target {
+    float  sigma = max(pad[4].x, 0.5);
+    float2 stepv = pad[4].yz;
+    int    n     = (int)min(ceil(sigma * 3.0 / 2.0), 24.0);
+    float  w0    = 1.0;
+    float3 acc   = tWorld.SampleLevel(sLin, i.uv, 0).rgb;
+    float  wsum  = w0;
+    for (int k = 0; k < n; ++k) {
+        float  a  = 2.0 * k + 1.0, b = a + 1.0;                 // the texel pair a, a+1 (in output texels)
+        float  wa = exp(-a * a / (2.0 * sigma * sigma)), wb = exp(-b * b / (2.0 * sigma * sigma));
+        float  w  = wa + wb;
+        float  o  = (a * wa + b * wb) / max(w, 1e-6);           // where one bilinear fetch gets both
+        acc  += (tWorld.SampleLevel(sLin, i.uv + stepv * o, 0).rgb + tWorld.SampleLevel(sLin, i.uv - stepv * o, 0).rgb) * w;
+        wsum += 2.0 * w;
+    }
+    return float4(acc / wsum, 1);
 }
 
 // two triangles over the 4 corners; clip-space w carries perspective, so uv interpolates correctly

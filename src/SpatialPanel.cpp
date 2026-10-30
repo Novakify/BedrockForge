@@ -81,7 +81,10 @@ std::mutex gGeomMutex;
 // ---------------------------------------------------------------- D3D12 objects (overlay thread)
 ComPtr<ID3D12Device>         gDevice;
 ComPtr<ID3D12RootSignature>  gRoot;
-ComPtr<ID3D12PipelineState>  gPsoWorld, gPsoPanel, gPsoHud;
+ComPtr<ID3D12PipelineState>  gPsoWorld, gPsoPanel, gPsoHud, gPsoBlur;
+// world blur: the world copy blurred at half size (separable Gaussian, two passes) - smooth, not blocky
+ComPtr<ID3D12Resource>       gBlurA, gBlurB;
+UINT                         gBlurW = 0, gBlurH = 0;
 DXGI_FORMAT                  gPsoFmt = DXGI_FORMAT_UNKNOWN;
 ComPtr<ID3D12DescriptorHeap> gSrvHeap, gRtvHeap;
 UINT                         gSrvInc = 0;
@@ -104,7 +107,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE srvGpu(UINT i) { auto h = gSrvHeap->GetGPUDescriptor
 
 bool createStatic(ID3D12Device* device) {
     gDevice = device;
-    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0};
     D3D12_ROOT_PARAMETER   params[2]{};
     params[0].ParameterType   = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants       = {0, 0, 40};
@@ -125,8 +128,8 @@ bool createStatic(ID3D12Device* device) {
         fail("CreateRootSignature", hr);
         return false;
     }
-    D3D12_DESCRIPTOR_HEAP_DESC srv{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
-    D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC srv{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 6, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 3, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
     if (FAILED(hr = device->CreateDescriptorHeap(&srv, IID_PPV_ARGS(&gSrvHeap)))) { fail("CreateDescriptorHeap(SRV)", hr); return false; }
     if (FAILED(hr = device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&gRtvHeap)))) { fail("CreateDescriptorHeap(RTV)", hr); return false; }
     gSrvInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -183,12 +186,18 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     gReady = false;
     if (gUi) gGraveyard.push_back(gUi);
     if (gScene) gGraveyard.push_back(gScene);
+    if (gBlurA) gGraveyard.push_back(gBlurA);
+    if (gBlurB) gGraveyard.push_back(gBlurB);
     gUi.Reset();
     gScene.Reset();
+    gBlurA.Reset();
+    gBlurB.Reset();
     gW = UINT(bb.Width);
     gH = bb.Height;
     gFmt = bb.Format;
     if (!makeTex(gScene, gW, gH, gFmt, false) || !makeTex(gUi, gW, gH, gFmt, true)) return false;
+    gBlurW = std::max(1u, gW / 2); gBlurH = std::max(1u, gH / 2);
+    if (!makeTex(gBlurA, gBlurW, gBlurH, gFmt, true) || !makeTex(gBlurB, gBlurW, gBlurH, gFmt, true)) return false;
     D3D12_SHADER_RESOURCE_VIEW_DESC s{};
     s.Format                  = gFmt;
     s.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -196,16 +205,26 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     s.Texture2D.MipLevels     = 1;
     gDevice->CreateShaderResourceView(gScene.Get(), &s, srvCpu(0));
     gDevice->CreateShaderResourceView(gUi.Get(), &s, srvCpu(1));
+    // table at 0: world, UI, blurred world; table at 3: the horizontal pass result (vertical pass input), UI, blurred
+    gDevice->CreateShaderResourceView(gBlurB.Get(), &s, srvCpu(2));
+    gDevice->CreateShaderResourceView(gBlurA.Get(), &s, srvCpu(3));
+    gDevice->CreateShaderResourceView(gUi.Get(), &s, srvCpu(4));
+    gDevice->CreateShaderResourceView(gBlurB.Get(), &s, srvCpu(5));
     auto rtv = gRtvHeap->GetCPUDescriptorHandleForHeapStart();
     gDevice->CreateRenderTargetView(gUi.Get(), nullptr, rtv);
+    UINT rinc = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    { auto h = rtv; h.ptr += rinc;     gDevice->CreateRenderTargetView(gBlurA.Get(), nullptr, h); }
+    { auto h = rtv; h.ptr += 2 * rinc; gDevice->CreateRenderTargetView(gBlurB.Get(), nullptr, h); }
     gRtv = rtv.ptr;
     if (gPsoFmt != gFmt) {
         gPsoWorld.Reset();
         gPsoPanel.Reset();
         gPsoHud.Reset();
+        gPsoBlur.Reset();
         if (!createPso({shaders::VSFull, sizeof shaders::VSFull}, {shaders::PSWorld, sizeof shaders::PSWorld}, gFmt, false, gPsoWorld)) return false;
         if (!createPso({shaders::VSPanel, sizeof shaders::VSPanel}, {shaders::PSPanel, sizeof shaders::PSPanel}, gFmt, true, gPsoPanel)) return false;
         if (!createPso({shaders::VSFull, sizeof shaders::VSFull}, {shaders::PSHud, sizeof shaders::PSHud}, gFmt, true, gPsoHud)) return false;
+        if (!createPso({shaders::VSFull, sizeof shaders::VSFull}, {shaders::PSBlur1D, sizeof shaders::PSBlur1D}, gFmt, false, gPsoBlur)) return false;
         gPsoFmt = gFmt;
     }
     gReady = true;
@@ -537,6 +556,40 @@ void noteScreen(void const* stack, std::string const& name) {
     }
 }
 
+// world blur passes (gScene -> gBlurA horizontal -> gBlurB vertical, half size); c gets the pass constants in c[36..39]
+// and the root signature / heap are set here. sigma in full-size pixels.
+void blurPasses(ID3D12GraphicsCommandList* list, float* c, float sigma) {
+    if (!gPsoBlur || !gBlurA || !gBlurB) return;
+    ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
+    list->SetDescriptorHeaps(1, heaps);
+    list->SetGraphicsRootSignature(gRoot.Get());
+    list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    D3D12_VIEWPORT vp{0, 0, float(gBlurW), float(gBlurH), 0, 1};
+    D3D12_RECT     sc{0, 0, LONG(gBlurW), LONG(gBlurH)};
+    list->RSSetViewports(1, &vp);
+    list->RSSetScissorRects(1, &sc);
+    list->SetPipelineState(gPsoBlur.Get());
+    UINT rinc = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    auto rtA = gRtvHeap->GetCPUDescriptorHandleForHeapStart(); rtA.ptr += rinc;
+    auto rtB = gRtvHeap->GetCPUDescriptorHandleForHeapStart(); rtB.ptr += 2 * rinc;
+    float sh = std::max(0.5f, sigma * 0.5f); // half-size pixels
+    // horizontal: full-size world in, half-size out (one half-size texel = 1 / gBlurW in uv)
+    c[36] = sh; c[37] = 1.0f / float(gBlurW); c[38] = 0.0f; c[39] = 0.0f;
+    list->OMSetRenderTargets(1, &rtA, FALSE, nullptr);
+    list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
+    list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
+    list->DrawInstanced(3, 1, 0, 0);
+    barrier(list, gBlurA.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    c[37] = 0.0f; c[38] = 1.0f / float(gBlurH);
+    list->OMSetRenderTargets(1, &rtB, FALSE, nullptr);
+    list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
+    list->SetGraphicsRootDescriptorTable(1, srvGpu(3));
+    list->DrawInstanced(3, 1, 0, 0);
+    barrier(list, gBlurA.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    barrier(list, gBlurB.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+void blurDone(ID3D12GraphicsCommandList* list) { if (gBlurB) barrier(list, gBlurB.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET); }
+
 bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv) {
     LARGE_INTEGER now, f;
     QueryPerformanceCounter(&now);
@@ -629,12 +682,20 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
                 list->RSSetViewports(1, &vp);
                 list->RSSetScissorRects(1, &scr);
+                bool blurred = c[28] > 0.0f;
+                if (blurred) {
+                    blurPasses(list, c, float(std::clamp(sc.worldBlurStrength, 1, 10)) * 0.6f * float(bd.Height) / 1080.0f);
+                    list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
+                    list->RSSetViewports(1, &vp);
+                    list->RSSetScissorRects(1, &scr);
+                }
                 list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
                 list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
                 list->SetPipelineState(gPsoWorld.Get());
                 list->DrawInstanced(3, 1, 0, 0);
                 list->SetPipelineState(gPsoPanel.Get());
                 list->DrawInstanced(6, 1, 0, 0);
+                if (blurred) blurDone(list);
                 barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
                 gStatus = "closing";
                 return true;
@@ -718,7 +779,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         auto const& sc = spatialcam::cfg();
         // Java blurWorldBackground (vanilla menu blur, radius worldBlurStrength): blur radius in pixels at this height,
         // eased in with the panel
-        if (sc.worldBlur) c[28] = float(std::clamp(sc.worldBlurStrength, 1, 10)) * 1.6f * float(bd.Height) / 1080.0f * std::min(1.0f, fade * 1.5f);
+        // c[28] = how much of the blurred world shows (eased in with the panel); the blur size comes from the strength
+        if (sc.worldBlur) c[28] = std::min(1.0f, fade * 1.5f);
         // Java dropShadow: alpha 120, offset 0.008 right / 0.012 down of a panel 1 tall (the texture's height)
         if (sc.dropShadow) {
             c[29] = float(std::clamp(sc.dropShadowAlpha, 0, 255)) / 255.0f;
@@ -771,6 +833,13 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
     list->RSSetViewports(1, &vp);
     list->RSSetScissorRects(1, &sc);
+    bool blurred = c[28] > 0.0f;
+    if (blurred) { // Gaussian sigma: strength 5 = 3.5 px at 1080 lines (Java's menu blur is gentle)
+        blurPasses(list, c, float(std::clamp(spatialcam::cfg().worldBlurStrength, 1, 10)) * 0.6f * float(bd.Height) / 1080.0f);
+        list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
+        list->RSSetViewports(1, &vp);
+        list->RSSetScissorRects(1, &sc);
+    }
     list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
     if (gS.javaStyle && redirected && gEnabled.load()) { std::memcpy(gLastC, c, sizeof c); gHaveLastGeom = true; }
     list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
@@ -784,6 +853,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             list->DrawInstanced(3, 1, 0, 0);
         }
     }
+    if (blurred) blurDone(list);
     barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
     char b[160];
