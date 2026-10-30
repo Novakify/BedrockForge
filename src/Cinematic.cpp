@@ -2088,7 +2088,7 @@ float4 PS(V2P i) : SV_Target {
     if (mode.x > 9.5) { // 10: an item tooltip of the hidden screen (copied): its writing only (the box, border and shadows dark)
         float4 u = tTip.SampleLevel(sP, i.uv, 0);
         float3 c = u.rgb / max(u.a, 1e-3);
-        if (u.a < 0.5 || max(c.r, max(c.g, c.b)) < 0.3) discard;
+        if (u.a < 0.5 || all(abs(c - float3(0.106, 0.047, 0.106)) < 0.04) || all(abs(c - float3(0.173, 0.031, 0.388)) < 0.05)) discard; // its ground, its border
         float a = color.a * mode.w;
         return float4(c * a, a);
     }
@@ -2574,31 +2574,31 @@ Rect               gTipFoundRect;
 /// Bedrock's hover text near a point the cursor rests on: a dark violet box (half transparent) with a violet border,
 /// beside and above the cursor; `text` = its writing (bright pixels inside the border)
 bool findTooltip(Img const& im, int cx, int cy, float unit, Rect& text) {
-    auto px3 = [&](int x, int y, int& r, int& g, int& b) { int a; im.get(std::clamp(x, 0, im.W - 1), std::clamp(y, 0, im.H - 1), r, g, b, a); };
-    auto tip = [&](int x, int y) {
-        int r, g, b;
-        px3(x, y, r, g, b);
-        return (g <= 18 && std::abs(r - b) < 14 && r >= 18 && r <= 205) || (b > r + 30 && g < 16);
+    // the box: a one-pixel (gui) violet border (44,8,99) inside a ring of its dark ground (27,12,27); its writing within
+    auto border = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= im.W || y >= im.H) return false;
+        int r, g, b, a;
+        im.get(x, y, r, g, b, a);
+        return std::abs(r - 44) < 9 && g < 18 && std::abs(b - 99) < 12;
     };
-    auto bright = [&](int x, int y) { int r, g, b; px3(x, y, r, g, b); return std::max(r, std::max(g, b)) > 80 && !(b > r + 30 && g < 16); };
-    for (int dy = int(-14 * unit); dy <= int(6 * unit); dy += std::max(1, int(unit))) {
-        int yr = cy + dy, bx0 = -1;
-        for (int x = cx + int(2 * unit); x < cx + int(30 * unit) && bx0 < 0; ++x) if (tip(x, yr) && tip(x + 1, yr) && tip(x + 2, yr)) bx0 = x;
-        if (bx0 < 0) continue;
-        int bx1 = bx0, miss = 0;
-        for (int x = bx0; x < im.W && miss < int(2 * unit); ++x) { if (tip(x, yr) || bright(x, yr)) { bx1 = x; miss = 0; } else ++miss; }
-        int xs = bx0 + int(2 * unit), by0 = yr, by1 = yr;
-        while (by0 > 0 && (tip(xs, by0 - 1) || bright(xs, by0 - 1))) --by0;
-        while (by1 < im.H - 1 && (tip(xs, by1 + 1) || bright(xs, by1 + 1))) ++by1;
-        if (bx1 - bx0 < 10 * unit || by1 - by0 < 6 * unit) continue;
-        int in = int(1.5f * unit), tx0 = 1 << 30, ty0 = 1 << 30, tx1 = -1, ty1 = -1;
-        for (int y = by0 + in; y <= by1 - in; ++y)
-            for (int x = bx0 + in; x <= bx1 - in; ++x)
-                if (bright(x, y)) { tx0 = std::min(tx0, x); ty0 = std::min(ty0, y); tx1 = std::max(tx1, x); ty1 = std::max(ty1, y); }
-        if (tx1 <= tx0 || ty1 <= ty0) return false;
-        text = {float(tx0), float(ty0), float(tx1 + 1 - tx0) + unit, float(ty1 + 1 - ty0) + unit}; // + the writing's shadow
-        return true;
-    }
+    auto bright = [&](int x, int y) { int r, g, b, a; im.get(x, y, r, g, b, a); return std::max(r, std::max(g, b)) > 80; };
+    int u = std::max(1, int(unit + 0.5f));
+    for (int y = cy - int(24 * unit); y <= cy + int(8 * unit); ++y)
+        for (int x = cx; x < cx + int(40 * unit); ++x) {
+            if (!border(x, y) || border(x - 1, y) || border(x, y - 1) || !border(x + 1, y) || !border(x, y + 1)) continue; // a top-left corner
+            int x1 = x, y1 = y;
+            while (border(x1 + 1, y)) ++x1;
+            while (border(x, y1 + 1)) ++y1;
+            if (x1 - x < 16 * unit || y1 - y < 8 * unit || !border(x1, y1) || !border(x1 - u, y1)) continue; // a closed box
+            int tx0 = 1 << 30, ty0 = 1 << 30, tx1 = -1, ty1 = -1;
+            for (int yy = y + u; yy < y1 - u + 1; ++yy)
+                for (int xx = x + u; xx < x1 - u + 1; ++xx)
+                    if (bright(xx, yy)) { tx0 = std::min(tx0, xx); ty0 = std::min(ty0, yy); tx1 = std::max(tx1, xx); ty1 = std::max(ty1, yy); }
+            if (tx1 <= tx0 || ty1 <= ty0) return false;
+            tx1 = std::min(tx1 + u, x1 - 1); ty1 = std::min(ty1 + u, y1 - 1); // the writing's shadow
+            text = {float(tx0), float(ty0), float(tx1 + 1 - tx0), float(ty1 + 1 - ty0)};
+            return true;
+        }
     return false;
 }
 void detect(Img im, bool dump, int kindI) {
