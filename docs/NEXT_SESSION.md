@@ -1,3 +1,26 @@
+# Next session handoff (updated 2026-10-30 ~00:30 UTC) - READ FIRST
+- Installed on the PC: RendererFoundation.dll = cine-e15 (d391f46, RF branch `cinematic`). Builds as RF-eN.dll in
+  the mods folder (old ones old-eN-*.dll; deleting there is not permitted without asking).
+- CAMERA FIX (e9): the world is drawn around LevelRendererCamera::mCameraPos, not the CameraComponent position (that
+  only gave rotation/FOV in first person). SpatialCamera.cpp afterPreRender() sets mCameraPos (+ target by the same
+  delta) to the scene pose -> the crafting table now leans in like the Java formula. Diag line "render origin".
+- ITEM TOOLTIPS (e10-e15): when the cursor rests on an item (cell, result, drawer slot, enchanting item) the hidden
+  cursor rests on that slot a moment (probe), the slot detection finds Bedrock's hover box (violet border 44,8,99 with
+  cut corners; over the window's see-through ground the box keeps its rgb, alpha is the ground's), its writing is
+  copied into t5 (gG.tip) and drawn in the scene's tooltip (shader mode 10, ground/border keyed away). While probing
+  the scene shows the window snapshot taken just before (gS.frozen -> keyed() uses the snapshot). Cache per slot:
+  hotbar/grid by icon signature, drawer re-looked every 4 s. Diag line "item tooltip". Verified in game (Iron Sword /
+  Sharpness I / +7 Attack Damage; Lapis Lazuli).
+- Config now: CinematicInteractions.json devScenes true, dumpUi true, hoverTargets false; RendererFoundation.json
+  uiDebugUseKey 120 -> set devScenes/dumpUi false and uiDebugUseKey 0 when done.
+- Testing quirks: the Claude desktop window pops up over the game and steals focus (after clipboard typing etc):
+  click the taskbar grass icon (929,806) then F9 at once; if the game was in front the click minimizes it (click
+  again). The F6 panel open = the scene cursor goes to ImGui (close it while testing hover). /gamerule
+  dodaylightcycle false was set in the test world. Plain `tp 102.5 200 -104.4 180 55` works (no @s).
+- Reference videos are in /mnt/user-data/attachments/<session>/ (frame sheets in /tmp/claude-0/vid).
+- Next: side-by-side review of every station vs the videos (Task 6), then the stations still missing (brewing,
+  beacon, lectern, crafter, campfire, jukebox, chiseled bookshelf - all in the 0.18.3 jar), docs, GeckoBridge prompt.
+
 # Next session handoff (updated 2026-10-29 ~22:25 UTC) - READ FIRST
 - CINEMATIC INTERACTIONS PORT: RF branch `cinematic` (CI works again; builds -> branch `cinematic-builds`, fetch with
   `git fetch origin +cinematic-builds:refs/remotes/origin/cinematic-builds`, DLL = `git show
