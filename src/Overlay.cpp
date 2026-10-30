@@ -200,6 +200,8 @@ void render(IDXGISwapChain3* sc) {
     auto& bb = buffers[sc->GetCurrentBackBufferIndex()];
     if (!bb.resource) return;
     rf::uicapture::beforeOverlay(device.Get(), q, bb.resource.Get()); // Spatial GUI M0: copies the frame before RF draws
+    rf::uicapture::ownDraws(true); // our list: never redirected to the panel target (the hooks see these calls too)
+    struct OwnEnd { ~OwnEnd() { rf::uicapture::ownDraws(false); } } ownEnd;
     bb.allocator->Reset();
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;

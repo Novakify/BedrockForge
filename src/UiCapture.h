@@ -54,5 +54,8 @@ void writeText(char const* name, char const* text);
 std::string leakNote();
 /// UI draws that went to the panel target in the last finished frame.
 long lastFrameUiDraws();
+/// RF's own overlay list is being recorded on this thread: its binds and draws are never taken to the panel target (the
+/// game's next frame may start its UI on another thread meanwhile - the scene's own drawing flickered away).
+void ownDraws(bool on);
 
 } // namespace rf::uicapture

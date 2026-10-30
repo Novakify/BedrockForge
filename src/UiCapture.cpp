@@ -869,6 +869,7 @@ void requestLearn() {
     gRequest   = true;
 }
 
+void ownDraws(bool on) { gInSnapshot = on; }
 long lastFrameUiDraws() { return gLastFrameUiDraws.load(); }
 std::string leakNote() {
     char b[400];
