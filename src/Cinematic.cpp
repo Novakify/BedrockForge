@@ -95,6 +95,19 @@ const char* kKeys[] = {"table", "furnace", "smoker", "blast_furnace", "anvil", "
 const char* kNames[] = {"Crafting table", "Furnace", "Smoker", "Blast furnace", "Anvil", "Grindstone", "Smithing table", "Stonecutter", "Loom", "Cartography table", "Enchanting table", "Brewing stand", "Beacon", "Crafter", "Lectern", "Campfire", "Jukebox", "Chiseled bookshelf"};
 
 double pct(int v) { return v / 100.0; }
+/// breadcrumbs for crashes (logs/uicapture/cine_trace.txt, the last 40 steps, written at each step)
+void trail(std::string const& what) {
+    static std::mutex              m;
+    static std::deque<std::string> lines;
+    std::lock_guard                l(m);
+    char                           t[32];
+    snprintf(t, sizeof t, "%llu ", (unsigned long long)GetTickCount64());
+    lines.push_back(t + what);
+    while (lines.size() > 40) lines.pop_front();
+    std::string all;
+    for (auto& x : lines) all += x + "\n";
+    uicapture::writeText("cine_trace.txt", all.c_str());
+}
 bool livingCamera() { return gCfg.livingCamera && !gCfg.reduceMotion; }
 bool cameraShake() { return gCfg.cameraShake && !gCfg.reduceMotion; }
 bool letterbox() { return gCfg.letterbox && !gCfg.reduceMotion; }
@@ -2452,7 +2465,9 @@ bool screenlessUse(std::string const& block, int x, int y, int z) {
         kindOfBlock(block, kind);
         gPending = {kind, x, y, z, nowMs()};
     }
-    game::openInventory(); // not under gM: the screen opens at once and reports itself (onScreen locks gM)
+    trail("screenless: opening the inventory");
+    game::openInventory();
+    trail("screenless: inventory opened"); // not under gM: the screen opens at once and reports itself (onScreen locks gM)
     return true;
 }
 Route onScreen(std::string const& containerTop) {
@@ -2470,7 +2485,8 @@ Route onScreen(std::string const& containerTop) {
             Pending pd       = gPending;
             gPending.kind    = Kind::Count;
             if (gS.phase == Phase::Outro) finish();
-            if (begin(pd.kind, pd.x, pd.y, pd.z)) { gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": Cinematic (inventory)"; return Route::Cinematic; }
+            trail("onScreen: inventory for a taken-over use, begin");
+            if (begin(pd.kind, pd.x, pd.y, pd.z)) { trail("begin ok"); gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": Cinematic (inventory)"; return Route::Cinematic; }
             gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": " + gS.refused + ", Spatial";
             uicapture::writeText("cine_screenless.txt", (gS.lastRoute + "\n").c_str());
             return Route::Spatial;
@@ -2516,6 +2532,7 @@ void tick() {
         if (gS.phase == Phase::Active) {
             if (!gJuke.started && gS.time > 0.1) { // the use that started the scene says what to do
                 gJuke.started = true;
+                trail("jukebox: start, inside '" + gJuke.inside + "' hand '" + gJuke.hand + "'");
                 if (!gJuke.inside.empty()) jukeBegin(JmEject, gJuke.inside);
                 else if (isRecord(gJuke.hand)) jukeBegin(JmInsert, gJuke.hand);
             }
@@ -2525,14 +2542,18 @@ void tick() {
                 double t = jukeProgress();
                 if (!gJuke.sent && t >= (gJuke.move == JmEject ? JB_EJECT_SEND : JB_INSERT_SEND)) {
                     gJuke.sent = true;
+                    trail("jukebox: use");
                     game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1); // the jukebox's own use: the record in hand goes in / it lets go
+                    trail("jukebox: used");
                     if (gJuke.move == JmInsert) motes(gS.st.top + V3{0, 0.06, 0}, 0.12, 10, 1.0f, 0.82f, 0.45f, 0.25);
                 }
                 if (gS.clock - gJuke.at > (gJuke.move == JmEject ? JB_EJECT : JB_INSERT) + JB_LINGER) {
                     // a short scene: done, the player steps away by themselves
                     gJuke.move = JmNone;
+                    trail("jukebox: done, leaving");
                     leave();
                     rf::screens::popInventory();
+                    trail("jukebox: inventory popped");
                 }
             }
         }
@@ -5874,6 +5895,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             }
         }
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Lectern) drawBook(cam, b, L); // LecternStation.renderScene
+        if (gS.st.kind == Kind::Jukebox) { static long seen = -1; if (seen != gS.scenes) { seen = gS.scenes; trail("record: first jukebox frame, layout " + L.note); } }
         if (haveCam && gS.st.kind == Kind::Jukebox) drawRecord(cam, b);                            // JukeboxStation.renderWorld
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Beacon) {
             // BeaconStation.frame / renderScene / renderWorld
