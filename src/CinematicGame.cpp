@@ -29,6 +29,7 @@
 #include "mc/world/gamemode/GameMode.h"
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/block/actor/JukeboxBlockActor.h"
+#include "mc/world/level/block/actor/CampfireBlockActor.h"
 #include "mc/world/item/HandSlot.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/PlayerUIContainer.h"
@@ -126,6 +127,21 @@ std::string jukeboxRecord(int x, int y, int z) {
     if (!be || a->getDimensionBlockSource().getBlock(BlockPos(x, y, z)).getTypeName() != "minecraft:jukebox") return {};
     ItemStack const& rec = static_cast<JukeboxBlockActor*>(be)->mRecord;
     return rec.isNull() ? std::string() : rec.getTypeName();
+}
+
+bool campfireFood(int x, int y, int z, std::string names[4], int times[4]) {
+    Actor* a = player();
+    if (!a) return false;
+    BlockActor* be = a->getDimensionBlockSource().getBlockEntity(BlockPos(x, y, z));
+    std::string type = a->getDimensionBlockSource().getBlock(BlockPos(x, y, z)).getTypeName();
+    if (!be || (type != "minecraft:campfire" && type != "minecraft:soul_campfire")) return false;
+    auto* c = static_cast<CampfireBlockActor*>(be);
+    for (int i = 0; i < 4; ++i) {
+        ItemInstance const& it = c->mCookingItem[i].get();
+        names[i] = it.isNull() ? std::string() : it.getTypeName();
+        times[i] = c->mCookingTime[i];
+    }
+    return true;
 }
 
 std::string blockName(int x, int y, int z) {

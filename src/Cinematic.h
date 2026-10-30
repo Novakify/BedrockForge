@@ -55,6 +55,7 @@ struct Config {
     bool devScenes     = false; // stations without their own scene yet still lean in (camera + hands; for layout dumps)
     bool dumpUi        = false; // write the hidden screen + found slots to logs/uicapture/cinematic_*.bmp/.txt
     float keyTolerance = 0.035f;
+    int   campfireKey  = 72;    // Java's 'sit by the fire' key (H); 0 = off
 };
 Config& cfg();
 void    loadConfig(std::filesystem::path const& configDir);
@@ -67,6 +68,10 @@ Route onScreen(std::string const& containerTop);
 /// The player uses a block that has no window of its own (jukebox, chiseled bookshelf): true = a scene takes the use
 /// over (the player's inventory opens as its hidden window; the scene makes the use itself when its move gets there).
 bool screenlessUse(std::string const& block, int x, int y, int z);
+/// The campfire key (H) at a campfire: the 'sit by the fire' scene starts (the inventory opens as its hidden window).
+bool sitByFire(std::string const& block, int x, int y, int z);
+/// A campfire close enough to sit by is under the crosshair (the invitation shows).
+void noteLookCampfire(bool on);
 /// Whether using that block now would start such a scene (no side effects). Client thread.
 bool screenlessWorth(std::string const& block, int x, int y, int z);
 /// Flicker diagnostics (kept-screen copies).

@@ -36,6 +36,8 @@ bool        useBlock(int x, int y, int z, int face);
 bool        openInventory();
 /// The record a jukebox holds (its type name), empty = none.
 std::string jukeboxRecord(int x, int y, int z);
+/// A campfire's four spots: what lies on each (type name, empty = nothing) and how long it has cooked (ticks).
+bool        campfireFood(int x, int y, int z, std::string names[4], int times[4]);
 /// Hooks: a use of a block with no window of its own may start a scene instead (rf::cine::screenlessUse).
 void        installHooks();
 } // namespace rf::cine::game

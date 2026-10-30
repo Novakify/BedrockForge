@@ -440,6 +440,27 @@ void noteScreen(void const* stack, std::string const& name) {
                 if (w) cine::screenlessUse(t, x, y, z);
                 else cine::game::useHitBlock();
             }
+            {   // CampfireHint / the campfire key: sit by the fire looked at
+                static bool hWas = false;
+                int         hk   = cine::cfg().campfireKey;
+                bool        hNow = hk > 0 && hk < 256 && (GetAsyncKeyState(hk) & 0x8000) != 0;
+                DWORD fgPid = 0;
+                GetWindowThreadProcessId(GetForegroundWindow(), &fgPid);
+                hNow = hNow && fgPid == GetCurrentProcessId(); // the game in front (not typing elsewhere)
+                int         cx, cy, cz;
+                std::string ct;
+                bool        fire = cine::game::hitBlock(cx, cy, cz, ct) && (ct == "minecraft:campfire" || ct == "minecraft:soul_campfire");
+                if (fire) {
+                    double f[3];
+                    float  yy, pp;
+                    bool   alive;
+                    fire = cine::game::playerState(f, yy, pp, alive) &&
+                           std::hypot(f[0] - (cx + 0.5), std::hypot(f[1] + 1.62 - (cy + 0.5), f[2] - (cz + 0.5))) < 4.5;
+                }
+                cine::noteLookCampfire(fire);
+                if (hNow && !hWas && fire) cine::sitByFire(ct, cx, cy, cz);
+                hWas = hNow;
+            }
             inside = false;
         }
     }

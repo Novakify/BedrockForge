@@ -137,7 +137,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Jukebox || k == Kind::Lectern || k == Kind::Beacon || k == Kind::Crafter || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
+bool sceneAvailable(Kind k) { return k == Kind::Campfire || k == Kind::Jukebox || k == Kind::Lectern || k == Kind::Beacon || k == Kind::Crafter || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -182,11 +182,14 @@ struct Station {
     bool lit = false;             // a lit furnace (block name lit_*)
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
     std::vector<V3> shelves;      // EnchantStation.shelves: the bookshelves that empower the table (centres)
+    V3   campFire, campToward, campAcross, campSeat; // CampfireStation: the fire's foot, towards it, the player's right, the seat
+    double campLeanIn = 0;        // CampfireStation.leanIn: 0..1 leaning in from the seat towards the spot under the cursor
     V3   bookO, bookS, bookN;     // LecternStation: the middle of the spine on the cover board, up the desk's slope, out of it
     V3 center() const {
         if (kind == Kind::Brewing) return {bx + 0.5, by + 0.45, bz + 0.5}; // BrewingStation.center: base + 0.45
         if (kind == Kind::Crafter) return crafterFace();                     // CrafterStation.center: the grid's face
         if (kind == Kind::Lectern) return bookO;                             // LecternStation.center: the book's spine
+        if (kind == Kind::Campfire) return campFire + V3{0, 0.45, 0};        // CampfireStation.center
         if (isFurnace(kind)) { // FurnaceStation.center = FurnaceZones.point(pos, side, 0.5, 0.5, 0): the middle of the front
             V3 f = dirVec(side);
             return {bx + 0.5 + f.x * 0.5, by + 0.5, bz + 0.5 + f.z * 0.5};
@@ -201,9 +204,9 @@ struct Station {
         return {bx + 0.5 + f.x * (0.5 - v) + r.x * (u - 0.5), by + 1.0 + out, bz + 0.5 + f.z * (0.5 - v) + r.z * (u - 0.5)};
     }
     Staging const& staging() const { return kind == Kind::BlastFurnace ? kTall : kLow; }
-    V3 sideV() const { return dirVec(side); }
-    V3 forward() const { return dirVec(opposite(side)); }
-    V3 right() const { return dirVec(clockWise(opposite(side))); }
+    V3 sideV() const { return kind == Kind::Campfire ? campToward * -1.0 : dirVec(side); }
+    V3 forward() const { return kind == Kind::Campfire ? campToward : dirVec(opposite(side)); }
+    V3 right() const { return kind == Kind::Campfire ? campAcross : dirVec(clockWise(opposite(side))); }
     V3 workPoint() const { return center(); }
     bool workOnTop() const { return !isFurnace(kind) && kind != Kind::Brewing && !(kind == Kind::Crafter && !crafterFlat()); }
     double pull = 0;              // BeaconStation.pull: drawing back while the light breaks out
@@ -212,7 +215,7 @@ struct Station {
     bool   crafterFlat() const { return gridDir < 0; }
     V3     crafterNormal() const { return gridDir < 0 ? V3{0, 1, 0} : dirVec(Dir(gridDir)); }
     V3     crafterFace() const { return V3{bx + 0.5, by + 0.5, bz + 0.5} + crafterNormal() * 0.5; }
-    double leanFov() const { return kind == Kind::Jukebox ? 64 : kind == Kind::Lectern ? 52 : kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
+    double leanFov() const { return kind == Kind::Campfire ? 68 : kind == Kind::Jukebox ? 64 : kind == Kind::Lectern ? 52 : kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
     // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
         if (isFurnace(kind)) {
@@ -222,6 +225,13 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Campfire) { // CampfireStation.lean: leaning in over the outstretched leg for the far side of the fire
+            V3    eye = campSeat + V3{0, 0.8 - 0.1 * campLeanIn, 0} + campToward * (-0.05 + 0.85 * campLeanIn);
+            JPose p;
+            p.pos = eye;
+            lookAngles(campFire + V3{0, 0.18, 0} - eye, p.yaw, p.pitch);
             return p;
         }
         if (kind == Kind::Jukebox) { // JukeboxStation.lean
@@ -413,6 +423,7 @@ struct Scene {
     bool    cursorEngaged = false;
     float   cursorStartX = 0, cursorStartY = 0;
     bool    screenOpen = false;
+    V3      campFeet;           // the player's feet (CampfireStation: the legs fold down from where they stand)
     // results seen (readback)
     double  resultChangedAt = -10;
     bool    cellFull[9] = {};
@@ -620,6 +631,7 @@ void leave() { // Scene.leave
 
 void lecternBegin();
 void jukeReset();
+void campReset();
 /// Scene.beginClientOnly: the vanilla screen is open; true = the scene plays.
 bool begin(Kind kind, int bx, int by, int bz) {
     double f[3];
@@ -655,7 +667,23 @@ bool begin(Kind kind, int bx, int by, int bz) {
         if (st.gridDir == -2) { gS.refused = "the crafter's grid faces down"; return false; }
         if (st.gridDir >= 0) allowed = 1u << st.gridDir; // an upright grid is worked standing before it
     }
-    st.side = freeSide(st, feet, allowed);
+    if (kind == Kind::Campfire) {
+        // CampfireStation: the seat 1.6 from the fire on the player's side, at the player's ground
+        V3 fire{bx + 0.5, double(by), bz + 0.5};
+        V3 out{feet.x - fire.x, 0, feet.z - fire.z};
+        if (out.len() < 0.01) { double r = py * kDeg; out = V3{std::sin(r), 0, -std::cos(r)}; }
+        out            = out.norm();
+        st.campFire    = fire;
+        st.campToward  = out * -1.0;
+        st.campAcross  = V3{-st.campToward.z, 0, st.campToward.x};
+        double ground  = std::fabs(feet.y - by) < 0.6 ? feet.y : double(by);
+        V3     at      = fire + out * 1.6;
+        st.campSeat    = {at.x, ground, at.z};
+        st.side        = std::fabs(out.x) > std::fabs(out.z) ? (out.x > 0 ? East : West) : (out.z > 0 ? South : North);
+        st.top         = fire + V3{0, 0.45, 0};
+        if (std::hypot(feet.x - fire.x, feet.z - fire.z) > 4.5 || std::fabs(feet.y - by) > 1.5) { gS.refused = "too far from the fire to sit by it"; return false; }
+        gS.campFeet = feet;
+    } else st.side = freeSide(st, feet, allowed);
     if (kind == Kind::Stonecutter) st.top = {bx + 0.5, by + 9 / 16.0, bz + 0.5}; // StonecutterStation.topOf: the table top
     if (kind == Kind::Lectern) {
         // the desk of the lectern is tilted 22.5 degrees down towards the reader (lectern.json)
@@ -697,7 +725,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
         st.lit = game::blockName(bx, by, bz).rfind("minecraft:lit_", 0) == 0;
     }
     std::string why;
-    if (!planHere(st, feet, eye, why)) {
+    if (kind != Kind::Campfire && !planHere(st, feet, eye, why)) {
         gS.refused = why;
         ll_shim::info("[RF] cinematic: " + std::string(kNames[int(kind)]) + ": no scene (" + why + "), Spatial GUI instead");
         return false;
@@ -706,6 +734,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
     gS.refused.clear();
     lecternBegin();
     jukeReset();
+    campReset();
     {   // another station's window sits elsewhere: its probes would hold the kept image at the old window
         std::lock_guard ll(gLayoutMutex);
         if (gLayout.kind != int(kind)) { gLayout.hasProbe = false; gLayout.valid = false; }
@@ -1705,6 +1734,93 @@ std::string recordSong(std::string const& rec) {
 }
 void jukeReset() { gJuke = Jukebox{}; }
 
+// ---------------------------------------------------------------- CampfireStation (vanilla geometry)
+// Resting by a campfire, started by its own key (H: using the campfire stays vanilla): the camera sits down on the
+// ground facing the fire with the right knee drawn up (the player's own legs in the frame), the right hand on the knee.
+// Food from the drawer (the player's inventory opens as the hidden window) is put on the fire; the campfire cooks it
+// as usual. Bedrock places food on its next free spot itself, and takes nothing off by hand.
+constexpr double CF_EYE = 0.8, CF_HAND_Y = 0.055, CF_REACH = 0.07, CF_LEAN_IN = 0.85;
+enum CampTarget { CfNone, CfPlace, CfFood };
+struct Campfire {
+    int         target = CfNone, hoverSpot = -1, placeSpot = -1, facing = 0;
+    std::string food[4];
+    int         cooked[4] = {};
+    double      shown[4] = {};
+    bool        lit = true, soul = false;
+    float       lastMx = -1, lastMy = -1;
+    int         placeStep = 0; // putting food on: 1 the carried food into the hand's slot, 2 the campfire's use, 3 back
+    double      placeAt = -10;
+    bool        swapped = false;
+    std::string hand;          // what is in hand
+};
+Campfire gCamp;
+V3 campAt(V3 base, double fwd, double right, double up) { return base + gS.st.campToward * fwd + gS.st.campAcross * right + V3{0, up, 0}; }
+/// CampfireStation.vanillaSpot: where food lies on spot j (the campfire renderer's own transform)
+V3 campSpot(int j) {
+    int    f2d = (gCamp.facing + 2) % 4; // Direction.get2DDataValue: south 0, west 1, north 2, east 3
+    int    d   = (j + f2d) % 4;
+    double a   = -d * 90.0 * kDeg;       // Axis.YP(-d.toYRot())
+    double x = -0.3125, z = -0.3125;
+    double rx = x * std::cos(a) + z * std::sin(a), rz = -x * std::sin(a) + z * std::cos(a);
+    return {gS.st.bx + 0.5 + rx, gS.st.by + 0.44921875, gS.st.bz + 0.5 + rz};
+}
+V3 campKnee(bool right) { return right ? campAt(gS.st.campSeat, 0.36, 0.17, 0.46) : campAt(gS.st.campSeat, 0.45, -0.13, 0.13); }
+V3 campRest(bool right) {
+    return right ? campKnee(true) + gS.st.campToward * 0.02 + V3{0, 0.075, 0} : campKnee(false) + gS.st.campToward * -0.08 + V3{0, 0.085, 0};
+}
+bool campCookable(std::string const& n) {
+    for (char const* k : {"minecraft:beef", "minecraft:porkchop", "minecraft:chicken", "minecraft:mutton", "minecraft:rabbit", "minecraft:cod",
+                          "minecraft:salmon", "minecraft:potato", "minecraft:kelp"})
+        if (n == k) return true;
+    return false;
+}
+/// CampfireStation.updateCursor: 170 + j the food on spot j, 175 a place on the fire
+int campCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
+    int was = gCamp.hoverSpot, wasPlace = gCamp.placeSpot;
+    gCamp.target = CfNone; gCamp.hoverSpot = -1; gCamp.placeSpot = -1;
+    bool still = gCamp.lastMx == mx && gCamp.lastMy == my;
+    gCamp.lastMx = mx; gCamp.lastMy = my;
+    if (gCamp.placeStep) return -1;
+    bool carrying = gS.carrying || !gS.carriedName.empty();
+    bool handFood = !carrying && campCookable(gCamp.hand); // Bedrock: food in hand goes on the fire as well
+    if (!carrying && !handFood) {
+        for (int k = -1; k < 4; ++k) {
+            // first the food already under the cursor (leaning in moves it across the frame: it stays pointed at while the
+            // mouse rests, a little further out when it moves)
+            int j = k < 0 ? was : k;
+            if (j >= 0 && !gCamp.food[j].empty() && ((k < 0 && still) || underCursor(b, mx, my, campSpot(j), k < 0 ? 0.25 : 0.1))) {
+                gCamp.target = CfFood; gCamp.hoverSpot = j; gS.haveAim = true; gS.aim = campSpot(j);
+                return 170 + j;
+            }
+        }
+        return -1;
+    }
+    V3 hit;
+    if (!onPlaneY(o, d, campSpot(0).y, hit) || std::hypot(hit.x - gS.st.campFire.x, hit.z - gS.st.campFire.z) > 0.6) return -1;
+    gCamp.target = CfPlace;
+    double best = 1e18;
+    if (still && wasPlace >= 0 && gCamp.food[wasPlace].empty()) gCamp.placeSpot = wasPlace;
+    else if (campCookable(carrying ? gS.carriedName : gCamp.hand))
+        for (int j = 0; j < 4; ++j) {
+            double dd = (hit - campSpot(j)).dot(hit - campSpot(j));
+            if (gCamp.food[j].empty() && dd < best) { best = dd; gCamp.placeSpot = j; }
+        }
+    gS.haveAim = true;
+    gS.aim     = gCamp.placeSpot >= 0 ? campSpot(gCamp.placeSpot) : hit;
+    return 175;
+}
+/// CampfireStation.click
+void campAction(int t, unsigned bit, bool shift) {
+    (void)bit; (void)shift;
+    gS.tapAt = gS.clock; // Hands.tap
+    if (t == 175 && gCamp.placeSpot >= 0 && gCamp.placeStep == 0) {
+        gCamp.swapped   = gS.carrying || !gS.carriedName.empty();
+        gCamp.placeStep = gCamp.swapped ? 1 : 2;
+        gCamp.placeAt   = gS.clock;
+    }
+}
+void campReset() { gCamp = Campfire{}; }
+
 // ---------------------------------------------------------------- BeaconStation (vanilla geometry)
 // The powers hang either side of the beam (RemainingLayouts.base BEACON), the payment floats over the glass. Bedrock's
 // beacon window underneath: its power buttons (L.buttons 0..6 in the order above), confirm (7) and cancel (8).
@@ -2138,6 +2254,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Enchanting) { enchAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Lectern) { lecternAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Jukebox) { jukeAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Campfire) { campAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -2298,6 +2415,11 @@ int currentTarget0(float mx, float my) {
         cursorRay(gS.last, b, nx, ny, o, d);
         return jukeCursor(o, d);
     }
+    if (gS.st.kind == Kind::Campfire) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return campCursor(b, mx, my, o, d);
+    }
     if (gS.st.kind == Kind::Cartography) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
@@ -2414,7 +2536,7 @@ void loadConfig(std::filesystem::path const& configDir) {
 #define RD(f) if (j.contains(#f)) gCfg.f = j[#f].get<decltype(gCfg.f)>();
         RD(enabled) RD(approachSpeed) RD(leaveSpeed) RD(leanStrength) RD(sceneZoom) RD(quickMode) RD(quickWindow) RD(letterbox)
         RD(livingCamera) RD(cameraShake) RD(screenFlash) RD(reduceMotion) RD(controlHints) RD(hideHand) RD(writeFov) RD(hoverTargets)
-        RD(dumpUi) RD(keyTolerance) RD(fullLean) RD(armStyle) RD(drawArms) RD(cubeItems) RD(devScenes)
+        RD(dumpUi) RD(keyTolerance) RD(fullLean) RD(armStyle) RD(drawArms) RD(cubeItems) RD(devScenes) RD(campfireKey)
 #undef RD
         if (j.contains("stations"))
             for (int k = 0; k < int(Kind::Count); ++k)
@@ -2431,7 +2553,7 @@ void saveConfig() {
 #define WR(f) j[#f] = gCfg.f;
     WR(enabled) WR(approachSpeed) WR(leaveSpeed) WR(leanStrength) WR(sceneZoom) WR(quickMode) WR(quickWindow) WR(letterbox)
     WR(livingCamera) WR(cameraShake) WR(screenFlash) WR(reduceMotion) WR(controlHints) WR(hideHand) WR(writeFov) WR(hoverTargets)
-    WR(dumpUi) WR(keyTolerance) WR(fullLean) WR(armStyle) WR(drawArms) WR(cubeItems) WR(devScenes)
+    WR(dumpUi) WR(keyTolerance) WR(fullLean) WR(armStyle) WR(drawArms) WR(cubeItems) WR(devScenes) WR(campfireKey)
 #undef WR
     for (int k = 0; k < int(Kind::Count); ++k) j["stations"][kKeys[k]] = gCfg.mode[k] == 1 ? "spatial" : gCfg.mode[k] == 2 ? "vanilla" : "cinematic";
     std::ofstream out(gCfgFile, std::ios::trunc);
@@ -2456,6 +2578,17 @@ bool screenlessWorth(std::string const& block, int x, int y, int z) {
         if (note != lastNote) { lastNote = note; uicapture::writeText("cine_screenless.txt", note.c_str()); }
     }
     return !inside.empty() || isRecord(hand);
+}
+bool sitByFire(std::string const& block, int x, int y, int z) {
+    {
+        std::lock_guard l(gM);
+        if (block != "minecraft:campfire" && block != "minecraft:soul_campfire") return false;
+        if (gS.phase != Phase::None || !gCfg.enabled || Mode(gCfg.mode[int(Kind::Campfire)]) != Mode::Cinematic) return false;
+        gPending = {Kind::Campfire, x, y, z, nowMs()};
+    }
+    trail("campfire: sitting down, opening the inventory");
+    game::openInventory(); // not under gM (the screen reports itself at once)
+    return true;
 }
 bool screenlessUse(std::string const& block, int x, int y, int z) {
     if (!screenlessWorth(block, x, y, z)) return false;
@@ -2555,6 +2688,29 @@ void tick() {
                     rf::screens::popInventory();
                     trail("jukebox: inventory popped");
                 }
+            }
+        }
+    }
+    if (gS.st.kind == Kind::Campfire) { // CampfireStation: the food on the fire (the client's copy), lit or not, the player's feet
+        std::string names[4];
+        int         times[4] = {};
+        if (game::campfireFood(gS.st.bx, gS.st.by, gS.st.bz, names, times))
+            for (int i = 0; i < 4; ++i) { gCamp.food[i] = names[i]; gCamp.cooked[i] = times[i]; }
+        gCamp.lit    = game::blockStates(gS.st.bx, gS.st.by, gS.st.bz).find("\"extinguished\":1") == std::string::npos;
+        gCamp.soul   = name == "minecraft:soul_campfire";
+        gCamp.facing = std::max(0, game::facing(gS.st.bx, gS.st.by, gS.st.bz));
+        gS.campFeet  = V3{f[0], f[1], f[2]};
+        int hn       = 0;
+        gCamp.hand   = game::handItem(hn);
+        // putting food on: the carried food into the hand's hotbar slot, the campfire's own use, the slot's stack back
+        if (gS.phase == Phase::Active) {
+            if (gCamp.placeStep == 1) { inject(10 + game::selectedSlot(), 1); gCamp.placeStep = 2; gCamp.placeAt = gS.clock; }
+            else if (gCamp.placeStep == 2 && gS.clock - gCamp.placeAt > (gCamp.swapped ? 0.3 : 0.05)) {
+                game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1);
+                gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
+            } else if (gCamp.placeStep == 3 && gS.clock - gCamp.placeAt > 0.25) {
+                if (gCamp.swapped) inject(10 + game::selectedSlot(), 1);
+                gCamp.placeStep = 0;
             }
         }
     }
@@ -3683,8 +3839,8 @@ void detect(Img im, bool dump, int kindI) {
                 L.hasBoard = true;
             }
             int expect = isFurnace(kind) ? 3 : kind == Kind::Smithing || kind == Kind::Loom ? 4 : kind == Kind::Stonecutter || kind == Kind::Enchanting ? 2 :
-                         kind == Kind::Brewing ? 5 : kind == Kind::Beacon ? 1 : kind == Kind::Crafter ? 9 : kind == Kind::Jukebox ? 0 : 3;
-            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing && kind != Kind::Beacon && kind != Kind::Crafter && kind != Kind::Jukebox;
+                         kind == Kind::Brewing ? 5 : kind == Kind::Beacon ? 1 : kind == Kind::Crafter ? 9 : kind == Kind::Jukebox || kind == Kind::Campfire ? 0 : 3;
+            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing && kind != Kind::Beacon && kind != Kind::Crafter && kind != Kind::Jukebox && kind != Kind::Campfire;
             std::vector<Sq> rest = own;
             if (kind == Kind::Beacon) { // the payment slot only (the power buttons are larger squares of their own)
                 std::vector<Sq> slots;
@@ -4533,6 +4689,7 @@ V3 restOf(bool right) {
         return V3{gS.st.bx + 0.5, gS.st.by + 1.0, gS.st.bz + 0.5} + gS.st.sideV() * 0.36 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, CR_HAND_Y, 0};
     }
     if (gS.st.kind == Kind::Jukebox) return jukeRest(right); // JukeboxStation.rest
+    if (gS.st.kind == Kind::Campfire) return campRest(right); // CampfireStation.rest: the right hand on the raised knee, the left on the thigh
     if (gS.st.kind == Kind::Lectern) // LecternStation.rest: below the lower edge of the book, near its outer corners
         return gS.st.bookO + gS.st.right() * ((right ? 1 : -1) * (ob::GUTTER + ob::PAGE_W * 0.9)) + gS.st.bookS * (-ob::PAGE_H / 2 - 0.018) + gS.st.bookN * 0.035;
     if (gS.st.kind == Kind::Beacon) // BeaconStation.rest
@@ -4579,6 +4736,11 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
         return aim + V3{0, CR_HAND_Y + hover - 0.06 * tap, 0} - reach * CR_REACH;
     }
     if (gS.st.kind == Kind::Lectern) return aim + gS.st.bookN * (0.03 - 0.02 * tap); // LecternStation.handTarget
+    if (gS.st.kind == Kind::Campfire) { // CampfireStation.handTarget
+        V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
+        double hover = carrying ? 0.08 : 0.05;
+        return aim + V3{0, CF_HAND_Y + hover - 0.06 * tap, 0} - reach * CF_REACH;
+    }
     if (gS.st.kind == Kind::Jukebox) { // JukeboxStation.handTarget
         V3 reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
         return aim + V3{0, (carrying ? 0.09 : 0.05) - 0.05 * tap, 0} - reach * 0.07;
@@ -4609,6 +4771,10 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
         return hand + reach * CR_REACH + V3{0, -CR_HAND_Y + 0.012, 0};
     }
     if (gS.st.kind == Kind::Lectern) return hand; // LecternStation.heldItemPoint
+    if (gS.st.kind == Kind::Campfire) { // CampfireStation.heldItemPoint
+        V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
+        return hand + reach * CF_REACH + V3{0, -CF_HAND_Y + 0.012, 0};
+    }
     if (gS.st.kind == Kind::Jukebox) { // JukeboxStation.heldItemPoint
         V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
         return hand + reach * 0.08 + V3{0, -0.03, 0};
@@ -5224,6 +5390,118 @@ void fxDisc(JPose const& cam, Basis const& b, float const tex[4], V3 at, double 
 }
 void fxBillboard(JPose const& cam, Basis const& b, float const tex[4], V3 at, double radius, double angle, float r, float g, float bl) {
     fxLight(cam, b, tex, at, b.r * -1.0, b.u, radius, angle, r, g, bl, false);
+}
+/// LegMesh.segment: one half of a leg (4 x 6 x 4 skin pixels) stretched from `from` to `to`, its outer face towards
+/// `outward`; faces turned away from the camera are left out (no depth buffer)
+void legBox(JPose const& cam, Basis const& b, int u, int v, float grow, V3 from, V3 to, V3 outward, float uS, float vS) {
+    V3     dv = to - from;
+    double length = dv.len();
+    if (length < 1e-4) return;
+    V3 d = dv * (1 / length);
+    V3 x = outward - d * outward.dot(d);
+    if (x.len() < 1e-3) x = cross(V3{0, 1, 0}, d);
+    x = x.norm();
+    V3     z     = cross(x, d);
+    double s     = ARM_SCALE / 16.0;
+    double along = length / s / 6.0; // stretch of the 6 px piece
+    auto   wp    = [&](double px, double py, double pz) { return from + x * (px * s) + d * (py * along * s) + z * (pz * s); };
+    float  x0 = -2 - grow, x1 = 2 + grow, y0 = -grow, y1 = 6 + grow, z0 = -2 - grow, z1 = 2 + grow;
+    float  w = 4, h = 6, dd = 4, uu = float(u), vv = float(v);
+    struct Face { float uv[4]; float p[4][3]; V3 n; };
+    Face fs[6] = {
+        {{uu + dd, vv, uu + dd + w, vv + dd}, {{x0, y0, z0}, {x1, y0, z0}, {x0, y0, z1}, {x1, y0, z1}}, d * -1},
+        {{uu + dd + w, vv, uu + dd + 2 * w, vv + dd}, {{x0, y1, z0}, {x1, y1, z0}, {x0, y1, z1}, {x1, y1, z1}}, d},
+        {{uu, vv + dd, uu + dd, vv + dd + h}, {{x0, y0, z1}, {x0, y0, z0}, {x0, y1, z1}, {x0, y1, z0}}, x * -1},
+        {{uu + dd, vv + dd, uu + dd + w, vv + dd + h}, {{x0, y0, z0}, {x1, y0, z0}, {x0, y1, z0}, {x1, y1, z0}}, z * -1},
+        {{uu + dd + w, vv + dd, uu + 2 * dd + w, vv + dd + h}, {{x1, y0, z0}, {x1, y0, z1}, {x1, y1, z0}, {x1, y1, z1}}, x},
+        {{uu + 2 * dd + w, vv + dd, uu + 2 * dd + 2 * w, vv + dd + h}, {{x1, y0, z1}, {x0, y0, z1}, {x1, y1, z1}, {x0, y1, z1}}, z},
+    };
+    for (auto& f : fs) {
+        V3 p[4];
+        for (int k = 0; k < 4; ++k) p[k] = wp(f.p[k][0], f.p[k][1], f.p[k][2]);
+        V3 c = (p[0] + p[1] + p[2] + p[3]) * 0.25;
+        if (f.n.dot(cam.pos - c) <= 0) continue;
+        Quad q;
+        if (!worldQuad4(cam, b, p, q)) continue;
+        setRect(q.uv, f.uv[0] * uS, f.uv[1] * vS, f.uv[2] * uS, f.uv[3] * vS);
+        float sh = faceShade(f.n.norm());
+        q.color[0] = q.color[1] = q.color[2] = sh;
+        q.mode[0] = 2;
+        gQuads.push_back(q);
+    }
+}
+/// LegMesh.draw: one leg from the hip through the knee to the foot (thigh and shin, the pants layer over them)
+void drawLeg(JPose const& cam, Basis const& b, bool right, V3 hip, V3 knee, V3 foot, V3 outward, int skinW, int skinH) {
+    bool  legacy = skinH * 2 <= skinW; // 64 x 32: no left leg of its own, no pants layer
+    int   lu = right || legacy ? 0 : 16, lv = right || legacy ? 16 : 48;
+    float uS = 1.0f / 64.0f, vS = 1.0f / (64.0f * float(skinH) / float(std::max(1, skinW)));
+    V3    along = knee - hip;
+    V3    past  = along.len() < 1e-4 ? knee : knee + along.norm() * (2.0 / 16 * ARM_SCALE); // KNEE_OVERLAP closes the knee
+    legBox(cam, b, lu, lv, 0, hip, past, outward, uS, vS);
+    legBox(cam, b, lu, lv + 6, -0.02f, knee, foot, outward, uS, vS);
+    if (!legacy) {
+        int pu = 0, pv = right ? 32 : 48;
+        legBox(cam, b, pu, pv, 0.25f, hip, past, outward, uS, vS);
+        legBox(cam, b, pu, pv + 6, 0.25f, knee, foot, outward, uS, vS);
+    }
+}
+/// CampfireStation.seated: 0 standing .. 1 sitting, following the camera down on the way in and up on the way out
+double campSeated() {
+    switch (gS.phase) {
+    case Phase::Intro: return smoother(window(gS.time / gS.leanLength, 0.4, 0.95));
+    case Phase::Active: return 1;
+    case Phase::Outro: return 1 - smoother(window(gS.time / OUTRO_LENGTH, 0.0, 0.45));
+    default: return 0;
+    }
+}
+/// CampfireStation.renderBody / renderWorld / renderCookingProgress
+void drawCampfire(JPose const& cam, Basis const& b, double dt, double clock, int W, int H) {
+    Station& st = gS.st;
+    // lean in as far as the spot under the cursor needs, and settle back when the hands rest
+    double want   = gS.phase == Phase::Active && gS.haveAim ? clamp01((std::hypot(gS.aim.x - st.campSeat.x, gS.aim.z - st.campSeat.z) - 1.15) / 0.7) : 0;
+    st.campLeanIn = approach(st.campLeanIn, want, want > st.campLeanIn ? 5 : 3, dt);
+    double s      = campSeated();
+    if (s > 0.001 && gCfg.drawArms && gG.skinValid) {
+        V3 base = lerp(V3{gS.campFeet.x, st.campSeat.y, gS.campFeet.z}, st.campSeat, s);
+        for (int i = 0; i < 2; ++i) {
+            bool   right = i == 0;
+            double r     = right ? 1 : -1;
+            V3 standHip = campAt(base, 0, 0.12 * r, 0.75), standKnee = campAt(base, 0, 0.12 * r, 0.38), standFoot = campAt(base, 0, 0.12 * r, 0.02);
+            V3 hip  = right ? campAt(st.campSeat, -0.02, 0.1, 0.14) : campAt(st.campSeat, 0, -0.1, 0.12);
+            V3 knee = campKnee(right);
+            V3 foot = right ? campAt(st.campSeat, 0.56, 0.15, 0.05) : campAt(st.campSeat, 0.7, -0.15, 0.07);
+            drawLeg(cam, b, right, lerp(standHip, hip, s), lerp(standKnee, knee, s), lerp(standFoot, foot, s), st.campAcross * r, gG.skinW, gG.skinH);
+        }
+    }
+    if (gS.phase == Phase::Active && gCamp.lit && (std::rand() % 1000) / 1000.0 < dt * 5) {
+        // embers rising off the fire (a soul fire's are cold blue)
+        if (gCamp.soul) motes(st.campFire + V3{0, 0.45, 0}, 0.18, 1, 0.25f, 0.85f, 1.0f, 0.45);
+        else motes(st.campFire + V3{0, 0.45, 0}, 0.18, 1, 1.0f, 0.55f, 0.2f, 0.45);
+    }
+    if (gS.phase == Phase::Active && gS.haveAim && gCamp.target != CfNone) { // renderWorld: a patch of light where the hand goes
+        float p  = float(0.2 + 0.07 * std::sin(clock * 5));
+        bool  ok = gCamp.target == CfFood || gCamp.placeSpot >= 0;
+        fxDisc(cam, b, FX_GLOW, gS.aim + V3{0, 0.02, 0}, 0.14, 0, p, ok ? p * 0.75f : p * 0.2f, ok ? p * 0.4f : p * 0.2f);
+    }
+    // renderCookingProgress: a rail under each piece of food (30 x 4 gui px), filling as it cooks
+    if (gS.phase != Phase::Active) return;
+    float gui = float(spatialcam::javaAutoGuiScale(W, H));
+    for (int i = 0; i < 4; ++i) {
+        if (gCamp.food[i].empty()) { gCamp.shown[i] = 0; continue; }
+        double frac   = std::min(599.0, double(gCamp.cooked[i])) / 600.0; // Bedrock: 30 s on a campfire
+        gCamp.shown[i] = approach(gCamp.shown[i], frac, 14, dt);
+        float ax, ay;
+        if (!toPixel(cam, b, campSpot(i) + V3{0, 0.02, 0}, W, H, ax, ay)) continue;
+        float x = ax - 15 * gui, y = ay - 8 * gui, a = gCamp.hoverSpot == i ? 1.0f : 0.82f;
+        if (x < 2 * gui || x + 30 * gui >= W - 2 * gui || y < 18 * gui || y > H - 26 * gui) continue;
+        solid(x - 2 * gui, y - 2 * gui, x + 32 * gui, y + 7 * gui, W, H, 12 / 255.0f, 16 / 255.0f, 19 / 255.0f, a * 0.55f);
+        solid(x, y, x + 30 * gui, y + 4 * gui, W, H, 75 / 255.0f, 80 / 255.0f, 82 / 255.0f, a * 0.5f);
+        float filled = float(std::round(30 * gCamp.shown[i])) * gui;
+        if (filled <= 0) continue;
+        if (!gCamp.lit) solid(x, y, x + filled, y + 4 * gui, W, H, 155 / 255.0f, 176 / 255.0f, 183 / 255.0f, a);
+        else if (gCamp.soul) solid(x, y, x + filled, y + 4 * gui, W, H, 103 / 255.0f, 211 / 255.0f, 231 / 255.0f, a);
+        else solid(x, y, x + filled, y + 4 * gui, W, H, 1.0f, 188 / 255.0f, 99 / 255.0f, a);
+    }
 }
 /// EnchantFx.beam: two crossed planes rising from `base`, bright at the foot
 void fxBeam(JPose const& cam, Basis const& b, V3 base, double height, double width, double spin, float r, float g, float bl) {
@@ -5897,6 +6175,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Lectern) drawBook(cam, b, L); // LecternStation.renderScene
         if (gS.st.kind == Kind::Jukebox) { static long seen = -1; if (seen != gS.scenes) { seen = gS.scenes; trail("record: first jukebox frame, layout " + L.note); } }
         if (haveCam && gS.st.kind == Kind::Jukebox) drawRecord(cam, b);                            // JukeboxStation.renderWorld
+        if (haveCam && gS.st.kind == Kind::Campfire) drawCampfire(cam, b, handsDt, clock, int(W), int(H)); // CampfireStation.renderBody / World
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Beacon) {
             // BeaconStation.frame / renderScene / renderWorld
             double t    = moveTime();
@@ -6873,6 +7152,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map - work it" + dot + "Esc - step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear - smith" + dot + "RMB - take" + dot + "Esc - step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade - cut one" + dot + "Shift - cut the stack" + dot + "Esc - step away";
+    case Kind::Campfire: return std::string("Food from the panel at the top onto the fire") + dot + "Esc - stand up";
     case Kind::Jukebox:
         if (gJuke.move != JmNone && !gJuke.record.empty()) return "\xE2\x99\xAA " + recordSong(gJuke.record);
         if (!gJuke.inside.empty()) return std::string("LMB on the jukebox - take the record out") + dot + "Esc - step away";
@@ -6914,7 +7194,48 @@ static void overlayQuadCb(ImDrawList const*, ImDrawCmd const* cmd) {
     if (gImHeap) { ID3D12DescriptorHeap* back[] = {gImHeap}; gImList->SetDescriptorHeaps(1, back); }
 }
 
+std::atomic_bool gLookCampfire{false}; // a campfire to sit by is under the crosshair (client thread)
+void noteLookCampfire(bool on) { gLookCampfire = on; }
+/// CampfireHint.render: "[H] Sit by the fire" as a small glass pill under the crosshair while a campfire is looked at
+void campfireInvite() {
+    static double    shown = 0;
+    static ULONGLONG last  = GetTickCount64();
+    ULONGLONG        now   = GetTickCount64();
+    double           dt    = std::min(0.1, (now - last) / 1000.0);
+    last                   = now;
+    bool looking;
+    {
+        std::lock_guard l(gM);
+        looking = gLookCampfire.load() && gS.phase == Phase::None && gCfg.enabled && gCfg.campfireKey > 0 &&
+                  Mode(gCfg.mode[int(Kind::Campfire)]) == Mode::Cinematic;
+    }
+    shown       = approach(shown, looking ? 1 : 0, looking ? 9 : 12, dt);
+    float alpha = float(smoother(shown));
+    if (alpha < 0.02f) return;
+    auto*   dl   = ImGui::GetForegroundDrawList();
+    ImVec2  ds   = ImGui::GetIO().DisplaySize;
+    float   g    = float(spatialcam::javaAutoGuiScale(int(ds.x), int(ds.y)));
+    ImFont* font = ImGui::GetFont();
+    float   fs   = 8.0f * g;
+    char    keyName[8];
+    snprintf(keyName, sizeof keyName, "%c", char(gCfg.campfireKey >= 'A' && gCfg.campfireKey <= 'Z' ? gCfg.campfireKey : '?'));
+    char const* text = "Sit by the fire";
+    float keyW = std::max(11.0f * g, font->CalcTextSizeA(fs, FLT_MAX, 0, keyName).x + 6 * g);
+    float textW = font->CalcTextSizeA(fs, FLT_MAX, 0, text).x;
+    float w = 6 * g + keyW + 5 * g + textW + 7 * g, h = 15 * g;
+    float x = (ds.x - w) / 2, y = ds.y / 2 + 13 * g + (1 - alpha) * 5 * g;
+    auto  col = [&](float a, int r, int gg, int b) { return IM_COL32(r, gg, b, int(std::clamp(a, 0.0f, 1.0f) * 255)); };
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), col(0.5f * alpha, 12, 12, 16));
+    dl->AddRectFilled(ImVec2(x, y + h - g), ImVec2(x + w, y + h), col(0.35f * alpha, 255, 196, 120));
+    float kx = x + 6 * g, ky = y + 2 * g;
+    dl->AddRectFilled(ImVec2(kx, ky), ImVec2(kx + keyW, ky + 11 * g), col(0.85f * alpha, 242, 234, 216));
+    dl->AddRectFilled(ImVec2(kx + g, ky + g), ImVec2(kx + keyW - g, ky + 10 * g), col(0.9f * alpha, 30, 28, 34));
+    float kw = font->CalcTextSizeA(fs, FLT_MAX, 0, keyName).x;
+    dl->AddText(font, fs, ImVec2(kx + (keyW - kw) / 2, ky + 2 * g), col(alpha, 255, 226, 150), keyName);
+    dl->AddText(font, fs, ImVec2(kx + keyW + 5 * g, y + 4 * g), col(alpha, 242, 234, 216), text);
+}
 void drawOverlay() {
+    campfireInvite();
     std::string hint, tipTitle, tipLine;
     std::vector<std::pair<std::string, ImU32>> tipLines; // a tooltip of coloured lines (as the Java one) instead of title + line
     bool        clueLine = false; // tipLines[0] is the hidden screen's clue text (`clue`, its pixels)
