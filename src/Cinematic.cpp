@@ -604,6 +604,10 @@ bool begin(Kind kind, int bx, int by, int bz) {
     }
     gS.st      = st;
     gS.refused.clear();
+    {   // another station's window sits elsewhere: its probes would hold the kept image at the old window
+        std::lock_guard ll(gLayoutMutex);
+        if (gLayout.kind != int(kind)) { gLayout.hasProbe = false; gLayout.valid = false; }
+    }
     gS.quick      = gCfg.quickMode == 2; // client-only: only "quick on every entry"
     gS.leanLength = gS.quick ? 0.4 : 1.2;
     gS.phase   = Phase::Intro;
