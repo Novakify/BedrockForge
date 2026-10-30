@@ -11,6 +11,7 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.Control.h>
+#include <winrt/Windows.Media.h>
 #include <winrt/Windows.Storage.Streams.h>
 
 #include "lyrics/core/Text.h"
@@ -84,7 +85,12 @@ std::optional<MediaSample> Smtc::poll(Source src) {
             m.artist   = split[0];
             m.title    = split[1];
         }
-        m.playing = chosen.GetPlaybackInfo().PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+        auto info = chosen.GetPlaybackInfo();
+        m.playing = info.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+        if (auto rep = info.AutoRepeatMode()) {
+            auto v   = rep.Value();
+            m.repeat = v == winrt::Windows::Media::MediaPlaybackAutoRepeatMode::Track ? 1 : v == winrt::Windows::Media::MediaPlaybackAutoRepeatMode::List ? 2 : 0;
+        }
         auto    tl    = chosen.GetTimelineProperties();
         int64_t start = tl.StartTime().count(), end = tl.EndTime().count(), pos = tl.Position().count(); // 100 ns ticks
         if (end > 0) m.durationMs = (end - std::max<int64_t>(0, start)) / 10000;
@@ -135,6 +141,18 @@ std::vector<uint8_t> Smtc::thumbnail() {
     } catch (...) {
         return {};
     }
+}
+void Smtc::cycleRepeat() {
+    std::lock_guard l(mImpl->mutex);
+    try {
+        if (!mImpl->current) return;
+        using winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
+        auto rep = mImpl->current.GetPlaybackInfo().AutoRepeatMode();
+        auto cur = rep ? rep.Value() : MediaPlaybackAutoRepeatMode::None;
+        auto nxt = cur == MediaPlaybackAutoRepeatMode::None ? MediaPlaybackAutoRepeatMode::List
+                 : cur == MediaPlaybackAutoRepeatMode::List ? MediaPlaybackAutoRepeatMode::Track : MediaPlaybackAutoRepeatMode::None;
+        mImpl->current.TryChangeAutoRepeatModeAsync(nxt).get();
+    } catch (...) {}
 }
 void Smtc::seek(int64_t ms) {
     std::lock_guard l(mImpl->mutex);

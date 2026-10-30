@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "lyrics/core/Json.h"
 
@@ -16,7 +17,7 @@ namespace bf::lyrics {
 enum class Source : int { Spotify, Youtube, Any, AppleMusic }; // [BF] AppleMusic (Windows app via SMTC)
 enum class LyricsStyle : int { Sky, Floating, Screen, Wall };
 enum class TextStyle : int { Neon, Clean };
-enum class EnterAnim : int { Word, Fade, Rise };
+enum class EnterAnim : int { Word, Fade, Rise, Neon }; // Neon = 2.1 "Typed out (LyricsFlow)" (animates like Word for now)
 enum class ExitAnim : int { FloatUp, Drift, Fade };
 enum class TopBarStyle : int { Karaoke, Simple };
 enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat as decals (video A) or full rigid tumble
@@ -93,6 +94,18 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(perLetterColor, false)           /* cycle theme main/a/b per letter */                                           \
     F(hueShiftSpeed, 0.0f)             /* animated hue rotation, turns per second (0 = off) */                         \
     F(italic, 0.0f)                    /* slant: x shift per unit of height (0.2 = ~11 deg, video B caps) */           \
+    /* ---- LyricsFlow 2.1 (app.config.Config / LFConfig additions used by the world panel) */                       \
+    B(skyImage, false)                 /* "My picture": your own image as the sky */                                   \
+    F(skyStrength, 0.85f)              /* 0.1 .. 1 */                                                                  \
+    F(skySpeed, 1.0f)                  /* 0.25 .. 2 */                                                                 \
+    F(skyPattern, 1.0f)                /* 0.2 .. 1.5 */                                                                \
+    B(skyShuffle, false)               /* random sky per song */                                                       \
+    B(fxSkyMusic, false)               /* sky reacts to music */                                                       \
+    B(clock, false)                    /* top bar extras */                                                            \
+    B(fps, false)                                                                                                      \
+    B(ping, false)                                                                                                     \
+    B(customHotbar, false)             /* glass hotbar */                                                              \
+    B(uiSounds, true)                  /* menu sounds */                                                               \
     /* ---- [BF] falling letters (new feature, not in LyricsFlow) */                                                   \
     B(fallingLetters, false)                                                                                           \
     E(LetterLand, letterLand, LetterLand::Flat)                                                                        \
@@ -146,6 +159,7 @@ struct Theme {
     uint32_t         main, a, b, skyTop, skyBottom; // ARGB
 };
 Theme const* findTheme(std::string_view id);
+std::vector<Theme> allThemes(); // Themes.ALL order (the panel's colour dots)
 /// Themes.current(): custom theme / single colour override applied.
 Theme        currentTheme(Config const& cfg);
 

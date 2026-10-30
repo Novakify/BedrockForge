@@ -104,8 +104,10 @@ def render(d, W, img=None):
             px, py = np.abs(lu - 0.5) * 2 * hx, np.abs(lv - 0.5) * 2 * hy
             qx, qy = px - (hx - rad), py - (hy - rad)
             dist = np.hypot(np.maximum(qx, 0), np.maximum(qy, 0)) + np.minimum(np.maximum(qx, qy), 0) - rad
-            a = np.clip(0.5 - dist / max(1.0, glowW), 0, 1) * fill[3]
-            rgb, aa = fill[:3] * a[..., None], a
+            col = fill[None, None, :] * (1 - lv[..., None]) + fill2[None, None, :] * lv[..., None] if flags & F_GRADIENT \
+                else np.broadcast_to(fill, dist.shape + (4,))
+            a = np.clip(0.5 - dist / max(1.0, glowW), 0, 1) * col[..., 3]
+            rgb, aa = col[..., :3] * a[..., None], a
         else:
             uu, vv = u0 + lu * (u1 - u0), v0 + lv * (v1 - v0)
             A4 = atlases[atlas]

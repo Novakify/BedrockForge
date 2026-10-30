@@ -29,6 +29,7 @@ public:
     void        next();
     void        previous();
     void        seek(int64_t ms);
+    void        cycleRepeat(); // off -> list -> track -> off
     /// Cover art of the current session (PNG / JPEG bytes as the app provides them), empty if none.
     std::vector<uint8_t> thumbnail();
     std::string status() const; // "playing" / "paused" / "nothing" / "open_spotify" / "unsupported"

@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <utility>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -48,6 +50,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 int64_t nowNs() { return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count(); }
 
+struct PresetInfo { std::string id, name; }; // look presets (resources/lyricsflow/presets)
+
 struct State {
     std::mutex              mutex; // guards everything below except the atomics
     Engine                  engine;
@@ -69,6 +73,10 @@ struct State {
     std::vector<std::string>      fontAtlases;      // atlas files of the loaded fonts (indices 0..n-1)
     std::string                   uiAtlas;          // UI image atlas PNG
     std::vector<BfGlyphV1>        panelGlyphs;
+    Vec3                          camPos;           // last HUD-frame camera (panel placement + crosshair)
+    float                         camYaw = 0, camPitch = 0;
+    bool                          haveCam = false;
+    IClientInstance*              openMenuOn = nullptr; // "Open full menu": open BF's menu after the mutex is released
     int64_t                       panelStepNs = 0;  // last panel step (the HUD and the dialog both may drive it)
     float                         lastFov = 70.0f;
     bool                          cfgDirty = false;
@@ -158,7 +166,7 @@ void loadPresets() {
 }
 
 /// Apply a look preset on top of fresh defaults, keeping the "plumbing" (source, sync, combat, top bar) the user set.
-void applyPreset(std::string const& id) { // caller holds gS->mutex
+[[maybe_unused]] void applyPreset(std::string const& id) { // caller holds gS->mutex (not on the 2.1 panel; kept for a presets UI)
     auto it = gS->presetJson.find(id);
     if (it == gS->presetJson.end()) return;
     auto j = json::parse(it->second);
@@ -229,6 +237,7 @@ void mediaLoop() {
             else if (c.kind == PanelAction::Kind::Next) gS->smtc->next();
             else if (c.kind == PanelAction::Kind::Prev) gS->smtc->previous();
             else if (c.kind == PanelAction::Kind::Seek) gS->smtc->seek(c.ms);
+            else if (c.kind == PanelAction::Kind::Repeat) gS->smtc->cycleRepeat();
         }
         auto sample = gS->moduleOn ? gS->smtc->poll(src) : std::nullopt;
         if (!cmds.empty()) {
@@ -314,25 +323,19 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     GameWorld world(a);
     gS->engine.frame(in, cam, &world);
     gS->lastFov = fov;
+    gS->camPos = cam.pos; gS->camYaw = cam.yaw; gS->camPitch = cam.pitch; gS->haveCam = true;
     panelStepAndPublish(now, true);
 }
 
 
-// ---------------------------------------------------------------- settings panel (L)
-// Same trick as BF's ClickGUI: an empty native dialog gives us the mouse cursor and input focus; we cancel its UI
-// render (nothing vanilla shows) and draw the panel ourselves through RF (BF_GLYPH_VIEW). The pointer comes from
-// the dialog's ScreenView, the button state from mouse events (cancelled so the dialog never sees them).
+// ---------------------------------------------------------------- world panel (L; LyricsFlow 2.1 WorldPanel)
+// The panel stands in the world 3.2 blocks in front of you; you aim with the crosshair and left-click. While the
+// crosshair is on it, the game doesn't get the left / right click (no punching or placing through the menu).
 namespace host {
-std::shared_ptr<AbstractScene> scene;
-IClientInstance*               client = nullptr;
-Clock::time_point              openedAt{}, seen{};
-glm::vec2                      ptr{0, 0}, size{0, 0};
-bool                           ptrValid = false;
-std::atomic<bool>              down{false};
-bf::events::Subscriptions      subs;
-std::atomic<IClientInstance*>  lastClient{nullptr};
-
-bool ownsTop() { return scene && Clock::now() - seen < std::chrono::milliseconds(250); }
+std::atomic<bool>             click{false}, down{false};
+bf::events::Subscriptions     subs;
+std::atomic<IClientInstance*> client{nullptr};
+std::atomic<bool>             hovered{false}, open{false};
 } // namespace host
 
 void flushConfig(bool force) { // caller holds gS->mutex
@@ -344,26 +347,26 @@ void flushConfig(bool force) { // caller holds gS->mutex
     }
 }
 
-void closePanel() { // caller holds gS->mutex
-    gS->panel.setOpen(false);
-    if (host::scene && host::client) host::client->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
-    host::scene.reset();
-    host::ptrValid = false;
-    host::down     = false;
-    flushConfig(true);
+int64_t nowMsWall() { return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count(); }
+
+Vec3 lookOf(float yawDeg, float pitchDeg) { // Minecraft yaw / pitch (degrees) -> unit forward
+    double y = yawDeg * 3.14159265358979 / 180.0, p = pitchDeg * 3.14159265358979 / 180.0;
+    return {-std::sin(y) * std::cos(p), -std::sin(p), std::cos(y) * std::cos(p)};
+}
+Vec3 upOf(float yawDeg, float pitchDeg) {
+    double y = yawDeg * 3.14159265358979 / 180.0, p = pitchDeg * 3.14159265358979 / 180.0;
+    return {-std::sin(y) * std::sin(p), std::cos(p), std::cos(y) * std::sin(p)}; // right x forward (RF's camera basis)
 }
 
-void openPanel(IClientInstance& client) { // caller holds gS->mutex
-    if (host::scene || bedrock_forge::client::menu::isOpen()) return;
-    auto sc = client.getSceneFactory().createCommonDialogInfoScreen("LyricsFlow", "");
-    if (!sc) return;
-    host::scene    = sc;
-    host::client   = &client;
-    host::openedAt = Clock::now();
-    host::seen     = {};
-    host::down     = false;
-    client.getSceneFactory().getCurrentSceneStack()->pushScreen(sc, false);
-    gS->panel.setOpen(true);
+void togglePanel() { // caller holds gS->mutex
+    int64_t const t = nowMsWall();
+    if (gS->panel.isOpen()) {
+        gS->panel.close(t);
+        flushConfig(true);
+    } else if (gS->haveCam) {
+        gS->panel.open(gS->camPos, lookOf(gS->camYaw, gS->camPitch), t);
+    }
+    host::open = gS->panel.isOpen();
 }
 
 PanelMedia panelMedia(int64_t now) { // caller holds gS->mutex
@@ -375,9 +378,8 @@ PanelMedia panelMedia(int64_t now) { // caller holds gS->mutex
         m.durationMs  = t.durationMs;
         m.positionMs  = std::max<int64_t>(0, gS->clock.positionRaw(now));
         m.playing     = gS->clock.playing();
+        m.repeat      = t.repeat;
     }
-    m.lyricsState = gS->lyricsState == LyricsState::Found ? "synced" : gS->lyricsState == LyricsState::Searching ? "searching"
-                  : gS->lyricsState == LyricsState::NotFound ? "not found" : "";
     return m;
 }
 
@@ -385,96 +387,66 @@ PanelMedia panelMedia(int64_t now) { // caller holds gS->mutex
 void panelStepAndPublish(int64_t now, bool lyricsActive) {
     if (gS->coverPath != gS->coverShown) { gS->coverShown = gS->coverPath; publishAtlases(); }
     gS->panelGlyphs.clear();
-    if (gS->panel.visible()) {
+    int64_t const ms = nowMsWall();
+    if (gS->panel.visible(ms) && gS->haveCam) {
         PanelInput in;
-        in.dt         = gS->panelStepNs ? std::clamp(float(double(now - gS->panelStepNs) / 1e9), 0.0f, 0.1f) : 1.0f / 60.0f;
-        in.now        = double(now) / 1e9;
-        in.down       = host::down.load();
-        in.mouseValid = host::ptrValid && host::size.x > 1 && host::size.y > 1;
-        if (in.mouseValid) {
-            in.aspect    = host::size.x / host::size.y;
-            in.mouseNdcX = host::ptr.x / host::size.x * 2.0f - 1.0f;
-            in.mouseNdcY = 1.0f - host::ptr.y / host::size.y * 2.0f;
-        }
-        auto actions = gS->panel.frame(in, gS->engine.config(), gS->engine.fonts(), gS->panelAssets, panelMedia(now), gS->presets, gS->panelGlyphs);
+        in.eye   = gS->camPos;
+        in.look  = lookOf(gS->camYaw, gS->camPitch);
+        in.up    = upOf(gS->camYaw, gS->camPitch);
+        in.nowMs = ms;
+        in.dt    = gS->panelStepNs ? std::clamp(float(double(now - gS->panelStepNs) / 1e9), 0.0f, 0.1f) : 1.0f / 60.0f;
+        in.click = host::click.exchange(false);
+        in.down  = host::down.load();
+        auto actions = gS->panel.frame(in, gS->engine.origin(), gS->engine.config(), gS->engine.fonts(), gS->panelAssets, panelMedia(now),
+                                       gS->panelGlyphs);
         for (auto const& a : actions) {
             switch (a.kind) {
-            case PanelAction::Kind::Close: closePanel(); break;
+            case PanelAction::Kind::Close: gS->panel.close(ms); flushConfig(true); break;
             case PanelAction::Kind::SaveConfig: gS->cfgDirty = true; break;
-            case PanelAction::Kind::ApplyPreset: applyPreset(a.id); break;
-            case PanelAction::Kind::Refetch:
-                if (gS->clock.hasTrack()) {
-                    std::error_code ec;
-                    Track tk = gS->clock.track();
-                    std::filesystem::remove(gS->cacheDir / cacheFileName(tk.key()), ec);
-                    gS->lyrics = nullptr;
-                    gS->lyricsState = LyricsState::Searching;
-                    fetchFor(tk.s, gS->clock.songSeq());
+            case PanelAction::Kind::OpenFullMenu:
+                if (auto* cl = host::client.load()) {
+                    gS->panel.close(ms);
+                    gS->openMenuOn = cl; // opened after we drop the mutex (the menu takes its own lock)
                 }
                 break;
-            default: gS->mediaCmds.push_back(a); break; // play/pause/next/prev/seek -> media thread
+            default: gS->mediaCmds.push_back(a); break; // play/pause/next/prev/seek/repeat -> media thread
             }
         }
         flushConfig(false);
     }
+    host::hovered = gS->panel.hovered();
+    host::open    = gS->panel.isOpen();
     gS->panelStepNs = now;
     gS->engine.publish(lyricsActive, gS->lastFov, gS->panelGlyphs.empty() ? nullptr : &gS->panelGlyphs);
 }
 
 void installPanelHost() {
-    // L: open / close the panel (registered through the game's key registry, so it is rebindable in Controls)
+    // L opens / closes the panel (Java uses K, which Bedrock Forge already uses). Rebindable in Controls.
     auto& key = ll::input::KeyRegistry::getInstance().getOrCreateKey("lyricsflow.panel", {0x4C /*L*/}, true);
     key.registerButtonDownHandler(
         [](::FocusImpact, ::IClientInstance& client) {
-            if (!gS || !gS->moduleOn) return;
+            if (!gS || !gS->moduleOn || !client.getLocalPlayer()) return;
+            host::client = &client;
             std::lock_guard l(gS->mutex);
-            if (gS->panel.open()) closePanel();
-            else if (client.getLocalPlayer()) openPanel(client);
+            togglePanel();
         },
         true);
-
-    host::subs.on<ll::event::BeforeUIRenderEvent>([](ll::event::BeforeUIRenderEvent& ev) {
-        if (!gS) return;
-        std::lock_guard l(gS->mutex);
-        if (!host::scene) return;
-        auto const now = Clock::now();
-        if (bf::hud::isHudScreen(ev.screenView())) {
-            // only the HUD renders: the dialog went away (Esc closed it natively) -> close the panel
-            if (now - host::openedAt > std::chrono::milliseconds(800) && now - host::seen > std::chrono::milliseconds(400)) {
-                host::scene.reset();
-                gS->panel.setOpen(false);
-                host::ptrValid = false;
-                flushConfig(true);
-            }
-            return;
-        }
-        host::seen     = now;
-        host::size     = {ev.screenView().mSize->x, ev.screenView().mSize->y};
-        host::ptr      = *ev.screenView().mPointerLocationPrevious;
-        host::ptrValid = true;
-        ev.cancel(); // hide the empty dialog; the panel is drawn by RF
-        // If the HUD stops rendering under the dialog, keep the panel (and the last lyrics) alive from here.
-        int64_t t = nowNs();
-        if (t - gS->panelStepNs > 40'000'000) panelStepAndPublish(t, true);
-    });
+    // clicks on the panel: left = press, right also swallowed so nothing gets placed behind it
     host::subs.on<ll::event::MouseInputEvent>([](ll::event::MouseInputEvent& ev) {
-        if (!gS || !host::ownsTop()) return;
+        if (!gS || !host::open.load()) return;
         char const  a = ev.actionButtonId();
         schar const d = ev.buttonData();
         if (a == MouseAction::ActionLeft) {
-            host::down = d == MouseAction::DataDown; // anything else on the left button = released
-            ev.cancel();
-        } else if (a == MouseAction::ActionRight || a == MouseAction::ActionMiddle || a == MouseAction::ActionWheel) ev.cancel();
-    });
-    host::subs.on<ll::event::KeyInputEvent>([](ll::event::KeyInputEvent& ev) {
-        if (!gS || !host::ownsTop()) return;
-        // Esc (or L: the registry key is suspended while the dialog has focus) closes the panel and its dialog
-        if (ev.keyCode() == 0x1B || ev.keyCode() == 0x4C) {
-            ev.cancel();
-            if (!ev.isDown()) return;
-            std::lock_guard l(gS->mutex);
-            closePanel();
-        }
+            bool const pressed = d == MouseAction::DataDown;
+            if (pressed && host::hovered.load()) {
+                host::click = true;
+                host::down  = true;
+                ev.cancel();
+            } else if (!pressed && host::down.load()) {
+                host::down = false;
+                ev.cancel();
+            }
+        } else if (a == MouseAction::ActionRight && host::hovered.load()) ev.cancel();
     });
 }
 
@@ -507,12 +479,20 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
 
     auto& m = bedrock_forge::client::Registry::get().add("lyricsflow", "LyricsFlow", bedrock_forge::client::Category::Visual,
                                                          "Synced song lyrics in the world (port of LyricsFlow by 374m) - PREVIEW, untested in game");
-    m.hud      = [](bedrock_forge::client::Frame& f) { hudFrame(f); };
+    m.hud      = [](bedrock_forge::client::Frame& f) {
+        hudFrame(f);
+        IClientInstance* menuOn = nullptr;
+        {
+            std::lock_guard l(gS->mutex);
+            std::swap(menuOn, gS->openMenuOn);
+        }
+        if (menuOn) bedrock_forge::client::menu::open(*menuOn); // "Open full menu" on the panel
+    };
     m.onToggle = [](bool on) {
         gS->moduleOn = on;
         if (!on) {
             std::lock_guard l(gS->mutex);
-            if (gS->panel.open()) closePanel();
+            if (gS->panel.isOpen()) gS->panel.close(nowMsWall());
             gS->engine.reset();
             gS->engine.publish(false, 70.0f);
         }

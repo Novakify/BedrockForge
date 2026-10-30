@@ -25,7 +25,7 @@ struct EnumNames {
 constexpr EnumNames<Source, 4>      kSource{{"SPOTIFY", "YOUTUBE", "ANY", "APPLE_MUSIC"}};
 constexpr EnumNames<LyricsStyle, 4> kStyle{{"SKY", "FLOATING", "SCREEN", "WALL"}};
 constexpr EnumNames<TextStyle, 2>   kTextStyle{{"NEON", "CLEAN"}};
-constexpr EnumNames<EnterAnim, 3>   kEnter{{"WORD", "FADE", "RISE"}};
+constexpr EnumNames<EnterAnim, 4>   kEnter{{"WORD", "FADE", "RISE", "NEON"}};
 constexpr EnumNames<ExitAnim, 3>    kExit{{"FLOAT_UP", "DRIFT", "FADE"}};
 constexpr EnumNames<TopBarStyle, 2> kTopBar{{"KARAOKE", "SIMPLE"}};
 constexpr EnumNames<LetterLand, 2>  kLand{{"FLAT", "TUMBLE"}};
@@ -158,6 +158,8 @@ std::string toJson(Config const& cfg) {
     o += first ? "}\n}\n" : "\n  }\n}\n";
     return o;
 }
+
+std::vector<Theme> allThemes() { return std::vector<Theme>(std::begin(kThemes), std::end(kThemes)); }
 
 Theme const* findTheme(std::string_view id) {
     for (auto const& t : kThemes)

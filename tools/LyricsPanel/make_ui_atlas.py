@@ -214,12 +214,14 @@ def main():
     repo = pathlib.Path(sys.argv[1])
     stills = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else None
     icons_dir = repo / 'tools/LyricsPanel/icons'
-    sky_ids = ["inferno", "matrix", "prism", "pulsar", "watercolor", "synthwave", "northern_lights", "meteors", "sakura", "ocean",
-               "blood_moon", "golden_hour", "neon_city", "ice", "toxic", "void", "lilac", "storm", "lavender", "sunset_beams",
-               "cosmic", "eclipse", "fireflies", "night_lights"]
+    # LyricsFlow 2.1 SkyPreset.order() -> the thumbnail style used for it (procedural until the sky painter is ported)
+    sky_ids = {"inferno": "inferno", "matrix": "matrix", "prism": "prism", "pulsar": "pulsar", "aquarell": "watercolor",
+               "synthwave": "synthwave", "aurora": "northern_lights", "nebula": "cosmic", "black_hole": "eclipse", "cosmos": "night_lights",
+               "neon_city": "neon_city", "golden_hour": "golden_hour", "cotton_candy": "sakura", "sakura": "sakura", "frost": "ice",
+               "midnight": "meteors", "deep_sea": "ocean", "blood_moon": "blood_moon", "storm": "storm", "custom": "lilac"}
     entries = []  # (name, image)
-    for sid in sky_ids:
-        entries.append(('sky.' + sid, thumb(sid)))
+    for sid, kind in sky_ids.items():
+        entries.append(('sky.' + sid, thumb(kind)))
     if stills:
         for p in sorted(stills.glob('*.png')):
             im = Image.open(p).convert('RGB')

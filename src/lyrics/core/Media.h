@@ -20,6 +20,7 @@ struct MediaSample {
     bool        playing       = false;
     int64_t     rawPositionMs = -1; // timeline Position as-is
     int64_t     updatedFt     = -1; // timeline LastUpdatedTime (FILETIME ticks)
+    int         repeat        = 0;  // [BF] 0 off, 1 track, 2 list (SMTC AutoRepeatMode; the world panel's repeat button)
 };
 
 struct Track {
