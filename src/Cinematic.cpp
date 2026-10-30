@@ -3221,10 +3221,13 @@ bool findBook(Img const& im, Layout& L) {
     if (sr - sl < 4 || sr - sl > (x1 - x0) / 6) { L.note = "book: no spine"; return false; }
     L.grid[0] = {float(x0), float(y0), float(sl + 1 - x0), float(y1 + 1 - y0)};
     L.grid[1] = {float(sr), float(y0), float(x1 + 1 - sr), float(y1 + 1 - y0)};
-    float w = float(x1 - x0), as = std::max(8.0f, w * 0.03f);
-    L.slot     = as;
-    L.buttons[0] = {x0 + w * 0.02f - as / 2, y1 - w * 0.02f - as / 2, as, as};
-    L.buttons[1] = {x1 - w * 0.02f - as / 2, y1 - w * 0.02f - as / 2, as, as};
+    // book_screen.json: the book panel is 320 x 207 (gui px), the pages 8 in from its sides and 12.25 above its foot;
+    // prev / next_button 24 x 24 at (7, -9) from its lower corners, their chevron round (11.5, 11.5) of the button
+    float u = float(x1 - x0 + 1) / 304.0f, as = 6.75f * u; // sampled: the middle 16/18 of it, 6 gui px
+    float left = x0 - 8 * u, right = x1 + 1 + 8 * u, foot = y1 + 1 + 12.25f * u, cy = foot - (33 - 11.5f) * u;
+    L.slot       = as;
+    L.buttons[0] = {left + (7 + 11.5f) * u - as / 2, cy - as / 2, as, as};
+    L.buttons[1] = {right - (31 - 11.5f) * u - as / 2, cy - as / 2, as, as};
     L.nButtons = 2;
     L.nRoles   = 0;
     L.hasGrid  = true;
@@ -3827,6 +3830,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             if (panel) ++shutPx;
                             item = a > 0.5f && !bg && !hi && !ghost && !bevel && !panel;
                             if (s >= 11) item = a > 0.5f && (std::fabs(r - ref[0]) > 0.12f || std::fabs(g - ref[1]) > 0.12f || std::fabs(b - ref[2]) > 0.12f);
+                            if (s >= 11 && L.kind == int(Kind::Lectern)) item = a > 0.5f && r < 0.7f; // the arrow's brown chevron, not the page's edge
                             if (s >= 11 + 3 && s < 11 + 24 && L.kind == int(Kind::Enchanting)) {
                                 // the enchanting buttons: the cost is printed in colour (green / red), the runes in grey-brown
                                 float sat = std::max(r, std::max(g, b)) - std::min(r, std::min(g, b));
