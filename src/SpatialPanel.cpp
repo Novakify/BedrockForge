@@ -428,6 +428,9 @@ void noteScreen(void const* stack, std::string const& name) {
         static bool inside = false;
         bool        press  = now && !was && hud;
         if (hud) was = now;
+        static void const* hudStack = nullptr;
+        if (hud) hudStack = stack;
+        else if (stack == hudStack) cine::noteLookCampfire(false); // a screen over the HUD (pause, chat): no invitation
         if (hud && !inside) {
             inside = true;
             int         x, y, z;
