@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -2751,12 +2752,13 @@ void saveConfig() {
 struct Pending { Kind kind = Kind::Count; int x = 0, y = 0, z = 0; double at = -1e9; bool hasHit = false; double hit[3] = {}; };
 Pending gPending;
 bool screenlessWorth(std::string const& block, int x, int y, int z) {
-    std::lock_guard l(gM);
+    std::unique_lock l(gM);
     Kind kind;
     if (!kindOfBlock(block, kind) || (kind != Kind::Jukebox && kind != Kind::Shelf)) return false;
     if (gS.phase != Phase::None || !gCfg.enabled || Mode(gCfg.mode[int(kind)]) != Mode::Cinematic) return false;
     if (kind == Kind::Shelf) return true; // ShelfStation: every use of the shelf is the scene
-    // JukeboxStation.worthIt: a record in it to take out, or one in hand to put in
+    // JukeboxStation.worthIt: a record in it to take out, or one in hand to put in (read with gM let go)
+    l.unlock();
     int         n      = 0;
     std::string inside = game::jukeboxRecord(x, y, z), hand = game::handItem(n);
     {
@@ -2779,12 +2781,15 @@ bool sitByFire(std::string const& block, int x, int y, int z) {
 }
 bool screenlessUse(std::string const& block, int x, int y, int z) {
     if (!screenlessWorth(block, x, y, z)) return false;
+    double hit[3] = {};
+    bool   hasHit = game::hitPoint(hit); // the slot the use was on (ShelfStation.usedSlot); not under gM
     {
         std::lock_guard l(gM);
         Kind kind;
         kindOfBlock(block, kind);
         gPending = {kind, x, y, z, nowMs()};
-        gPending.hasHit = game::hitPoint(gPending.hit); // the slot the use was on (ShelfStation.usedSlot)
+        gPending.hasHit = hasHit;
+        std::memcpy(gPending.hit, hit, sizeof hit);
     }
     trail("screenless: opening the inventory");
     game::openInventory();
@@ -2833,26 +2838,79 @@ Route onScreen(std::string const& containerTop) {
     return Route::Cinematic;
 }
 
+/// What tick reads from the game: read before gM is taken (a game query under gM can wait on a lock the render thread
+/// holds while it waits for gM itself in a UI draw: the shelf scene's first frames hung the game that way)
+struct TickIn {
+    bool        player = false, alive = false;
+    double      f[3] = {};
+    std::string name, carried, hand, states, jukeRec, campFood[4], shelf[6], inv[36];
+    int         campTimes[4] = {}, facing = -1, sel = 0, beaconLevels = -1;
+    bool        campOk = false;
+};
+void tickLocked(TickIn const& in, std::vector<std::function<void()>>& after);
 void tick() {
+    Kind kind;
+    int  bx, by, bz;
+    bool beaconDue;
+    {
+        std::lock_guard l(gM);
+        if (gS.phase == Phase::None || gS.phase == Phase::Outro) return;
+        kind = gS.st.kind; bx = gS.st.bx; by = gS.st.by; bz = gS.st.bz;
+        beaconDue = kind == Kind::Beacon && gS.clock - gS.beaconLevelsAt > 0.5;
+    }
+    TickIn in;
+    {
+        float py, pp;
+        int   n = 0;
+        in.player  = game::playerState(in.f, py, pp, in.alive);
+        in.name    = game::blockName(bx, by, bz);
+        in.carried = game::carriedItem(n);
+        in.hand    = game::handItem(n);
+        if (kind == Kind::Jukebox) in.jukeRec = game::jukeboxRecord(bx, by, bz);
+        if (kind == Kind::Campfire || kind == Kind::Shelf || kind == Kind::Crafter) in.states = game::blockStates(bx, by, bz);
+        if (kind == Kind::Campfire) { in.campOk = game::campfireFood(bx, by, bz, in.campFood, in.campTimes); in.facing = game::facing(bx, by, bz); }
+        if (kind == Kind::Shelf) game::shelfItems(bx, by, bz, in.shelf);
+        if (kind == Kind::Campfire || kind == Kind::Shelf || kind == Kind::Jukebox) {
+            in.sel = game::selectedSlot();
+            for (int i = 0; i < 36; ++i) in.inv[i] = game::inventoryItem(i, n);
+        }
+        if (beaconDue) { // BeaconBlockEntity.updateBase: whole layers of the pyramid
+            int levels = 0;
+            for (int k = 1; k <= 4; ++k) {
+                bool whole = true;
+                for (int dx = -k; dx <= k && whole; ++dx)
+                    for (int dz = -k; dz <= k && whole; ++dz) {
+                        std::string b = game::blockName(bx + dx, by - k, bz + dz);
+                        whole = b == "minecraft:iron_block" || b == "minecraft:gold_block" || b == "minecraft:emerald_block" || b == "minecraft:diamond_block" ||
+                                b == "minecraft:netherite_block";
+                    }
+                if (!whole) break;
+                levels = k;
+            }
+            in.beaconLevels = levels;
+        }
+    }
+    std::vector<std::function<void()>> after; // the game's own actions: run once gM is let go
+    tickLocked(in, after);
+    for (auto& fn : after) fn();
+}
+void tickLocked(TickIn const& in, std::vector<std::function<void()>>& after) {
     std::lock_guard l(gM);
     if (gS.phase == Phase::None || gS.phase == Phase::Outro) return;
-    double f[3];
-    float  py, pp;
-    bool   alive;
-    if (!game::playerState(f, py, pp, alive)) { finish(); return; }
+    double f[3] = {in.f[0], in.f[1], in.f[2]};
+    bool   alive = in.alive;
+    if (!in.player) { finish(); return; }
     if (!alive) { finish(); return; }
     V3     c  = gS.st.center();
     double d2 = (f[0] - c.x) * (f[0] - c.x) + (f[1] - c.y) * (f[1] - c.y) + (f[2] - c.z) * (f[2] - c.z);
     Kind        k;
-    std::string name = game::blockName(gS.st.bx, gS.st.by, gS.st.bz);
+    std::string const& name = in.name;
     gS.st.lit        = name.rfind("minecraft:lit_", 0) == 0;
     if (d2 > 49 || !kindOfBlock(name, k) || k != gS.st.kind) leave();
-    int n = 0;
-    gS.carriedName = game::carriedItem(n);
+    gS.carriedName = in.carried;
     if (gS.st.kind == Kind::Jukebox) { // JukeboxStation.tick
-        int hn       = 0;
-        gJuke.hand   = game::handItem(hn);
-        gJuke.inside = game::jukeboxRecord(gS.st.bx, gS.st.by, gS.st.bz);
+        gJuke.hand   = in.hand;
+        gJuke.inside = in.jukeRec;
         if (gS.phase == Phase::Active) {
             if (!gJuke.started && gS.time > 0.1) { // the use that started the scene says what to do
                 gJuke.started = true;
@@ -2860,15 +2918,15 @@ void tick() {
                 if (!gJuke.inside.empty()) jukeBegin(JmEject, gJuke.inside);
                 else if (isRecord(gJuke.hand)) jukeBegin(JmInsert, gJuke.hand);
             }
-            if (gJuke.wantHand) { gJuke.wantHand = false; inject(10 + game::selectedSlot(), 1); gJuke.handAt = gS.clock; }
+            if (gJuke.wantHand) { gJuke.wantHand = false; inject(10 + in.sel, 1); gJuke.handAt = gS.clock; }
             if (gJuke.move == JmNone && gS.clock - gJuke.handAt < 1.0 && isRecord(gJuke.hand)) { gJuke.handAt = -10; jukeBegin(JmInsert, gJuke.hand); }
             if (gJuke.move != JmNone) {
                 double t = jukeProgress();
                 if (!gJuke.sent && t >= (gJuke.move == JmEject ? JB_EJECT_SEND : JB_INSERT_SEND)) {
                     gJuke.sent = true;
                     trail("jukebox: use");
-                    game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1); // the jukebox's own use: the record in hand goes in / it lets go
-                    trail("jukebox: used");
+                    int x = gS.st.bx, y = gS.st.by, z = gS.st.bz;
+                    after.push_back([x, y, z] { game::useBlock(x, y, z, 1); trail("jukebox: used"); }); // the record in hand goes in / it lets go
                     if (gJuke.move == JmInsert) motes(gS.st.top + V3{0, 0.06, 0}, 0.12, 10, 1.0f, 0.82f, 0.45f, 0.25);
                 }
                 if (gS.clock - gJuke.at > (gJuke.move == JmEject ? JB_EJECT : JB_INSERT) + JB_LINGER) {
@@ -2876,30 +2934,27 @@ void tick() {
                     gJuke.move = JmNone;
                     trail("jukebox: done, leaving");
                     leave();
-                    rf::screens::popInventory();
-                    trail("jukebox: inventory popped");
+                    after.push_back([] { rf::screens::popInventory(); trail("jukebox: inventory popped"); });
                 }
             }
         }
     }
     if (gS.st.kind == Kind::Campfire) { // CampfireStation: the food on the fire (the client's copy), lit or not, the player's feet
-        std::string names[4];
-        int         times[4] = {};
-        if (game::campfireFood(gS.st.bx, gS.st.by, gS.st.bz, names, times))
-            for (int i = 0; i < 4; ++i) { gCamp.food[i] = names[i]; gCamp.cooked[i] = times[i]; }
-        gCamp.lit    = game::blockStates(gS.st.bx, gS.st.by, gS.st.bz).find("\"extinguished\":1") == std::string::npos;
+        if (in.campOk)
+            for (int i = 0; i < 4; ++i) { gCamp.food[i] = in.campFood[i]; gCamp.cooked[i] = in.campTimes[i]; }
+        gCamp.lit    = in.states.find("\"extinguished\":1") == std::string::npos;
         gCamp.soul   = name == "minecraft:soul_campfire";
-        gCamp.facing = std::max(0, game::facing(gS.st.bx, gS.st.by, gS.st.bz));
+        gCamp.facing = std::max(0, in.facing);
         gS.campFeet  = V3{f[0], f[1], f[2]};
+        gCamp.hand   = in.hand;
         int hn       = 0;
-        gCamp.hand   = game::handItem(hn);
         // putting food on: the carried food into the hand's hotbar slot, the campfire's own use, the slot's stack back
         if (gS.phase == Phase::Active) {
             auto note = [&](char const* what) {
                 char b[320];
                 int  c0 = 0;
-                std::string inUse = gCamp.useSlot >= 0 ? game::inventoryItem(gCamp.useSlot, c0) : std::string("-");
-                snprintf(b, sizeof b, "campfire: %s (slot %d -> %d holding %s x%d, hand %s x%d, carried %s)", what, game::selectedSlot(), gCamp.useSlot,
+                std::string inUse = gCamp.useSlot >= 0 ? in.inv[gCamp.useSlot] : std::string("-");
+                snprintf(b, sizeof b, "campfire: %s (slot %d -> %d holding %s x%d, hand %s x%d, carried %s)", what, in.sel, gCamp.useSlot,
                          inUse.c_str(), c0, gCamp.hand.c_str(), hn, gS.carriedName.c_str());
                 trail(b);
             };
@@ -2908,15 +2963,14 @@ void tick() {
             // hand's own stack into a free slot (the cursor is empty for the use); afterwards the hand's stack comes back.
             auto slotTarget = [](int i) { return i < 9 ? 10 + i : 19 + (i - 9); };
             if (gCamp.placeStep == 1) {
-                int  cnt;
                 bool carried = gS.carrying || !gS.carriedName.empty();
-                gCamp.oldSlot = game::selectedSlot();
+                gCamp.oldSlot = in.sel;
                 gCamp.useSlot = -1; // where the hand's stack waits
                 gCamp.swapped = false;
                 if (carried) {
-                    bool handFull = !game::inventoryItem(gCamp.oldSlot, cnt).empty();
+                    bool handFull = !in.inv[gCamp.oldSlot].empty();
                     if (handFull)
-                        for (int i = 0; i < 36 && gCamp.useSlot < 0; ++i) if (i != gCamp.oldSlot && game::inventoryItem(i, cnt).empty()) gCamp.useSlot = i;
+                        for (int i = 0; i < 36 && gCamp.useSlot < 0; ++i) if (i != gCamp.oldSlot && in.inv[i].empty()) gCamp.useSlot = i;
                     if (handFull && gCamp.useSlot < 0) { note("no room"); gCamp.placeStep = 0; gS.tapAt = gS.clock; }
                     else {
                         inject(slotTarget(gCamp.oldSlot), 1);
@@ -2928,7 +2982,7 @@ void tick() {
                 bool emptyCursor = !gS.carrying && gS.carriedName.empty();
                 if ((campCookable(gCamp.hand) && emptyCursor) || gS.clock - gCamp.placeAt > 1.5) {
                     note(emptyCursor ? "use" : "use (the cursor still carries: skipped)");
-                    if (emptyCursor && campCookable(gCamp.hand)) game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1);
+                    if (emptyCursor && campCookable(gCamp.hand)) { int x = gS.st.bx, y = gS.st.by, z = gS.st.bz; after.push_back([x, y, z] { game::useBlock(x, y, z, 1); }); }
                     gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
                 }
             } else if (gCamp.placeStep == 3 && gS.clock - gCamp.placeAt > 0.35) {
@@ -2949,14 +3003,13 @@ void tick() {
         static long tickSeen = -1;
         bool        firstTick = tickSeen != gS.scenes;
         if (firstTick) { tickSeen = gS.scenes; trail("shelf: first tick"); }
-        std::string sn = game::blockStates(gS.st.bx, gS.st.by, gS.st.bz);
+        std::string const& sn = in.states;
         auto        at = sn.find("\"books_stored\":");
         if (at != std::string::npos) gShelf.bits = std::atoi(sn.c_str() + at + 15);
-        game::shelfItems(gS.st.bx, gS.st.by, gS.st.bz, gShelf.items);
+        for (int i = 0; i < 6; ++i) gShelf.items[i] = in.shelf[i];
         if (firstTick) trail("shelf: books " + std::to_string(gShelf.bits) + " " + gShelf.items[0] + " " + gShelf.items[1]);
         for (int i = 0; i < 6; ++i) if (!(gShelf.bits >> i & 1)) gShelf.emptyUntil[i] = -10; // the shelf shows it gone itself
-        int hn       = 0;
-        gShelf.hand  = game::handItem(hn);
+        gShelf.hand  = in.hand;
         auto slotTarget = [](int i) { return i < 9 ? 10 + i : 19 + (i - 9); };
         auto note = [&](std::string const& what) { trail("shelf: " + what + " (hand " + gShelf.hand + ", carried " + gS.carriedName + ")"); };
         if (gS.phase == Phase::Active) {
@@ -2970,13 +3023,12 @@ void tick() {
             // a book carried from the panel: into the hand's slot (the hand's own stack into a free place), as the
             // campfire does (a use with a stack on the cursor leaves the inventory screen dead)
             if (gShelf.putStep == 1) {
-                int  cnt;
-                gShelf.oldSlot  = game::selectedSlot();
+                gShelf.oldSlot  = in.sel;
                 gShelf.waitSlot = -1;
                 gShelf.swapped  = false;
-                bool handFull   = !game::inventoryItem(gShelf.oldSlot, cnt).empty();
+                bool handFull   = !in.inv[gShelf.oldSlot].empty();
                 if (handFull)
-                    for (int i = 0; i < 36 && gShelf.waitSlot < 0; ++i) if (i != gShelf.oldSlot && game::inventoryItem(i, cnt).empty()) gShelf.waitSlot = i;
+                    for (int i = 0; i < 36 && gShelf.waitSlot < 0; ++i) if (i != gShelf.oldSlot && in.inv[i].empty()) gShelf.waitSlot = i;
                 if (handFull && gShelf.waitSlot < 0) { note("no room"); gShelf.putStep = 0; shDeny(); }
                 else {
                     inject(slotTarget(gShelf.oldSlot), 1);
@@ -2993,8 +3045,9 @@ void tick() {
             if (gShelf.move == ShTake) {
                 if (!gShelf.sent && t >= SH_BAGGED) { // into the bag: the server told as it reaches the drawer
                     gShelf.sent = true;
-                    V3 u = shUsePoint(gShelf.moveSlot);
-                    game::useBlockAt(gS.st.bx, gS.st.by, gS.st.bz, shFaceIndex(), u.x, u.y, u.z);
+                    V3  u = shUsePoint(gShelf.moveSlot);
+                    int x = gS.st.bx, y = gS.st.by, z = gS.st.bz, fc = shFaceIndex();
+                    after.push_back([=] { game::useBlockAt(x, y, z, fc, u.x, u.y, u.z); });
                     note("take: used slot " + std::to_string(gShelf.moveSlot));
                 }
                 if (t >= SH_TAKEN) { // gone: its place stays drawn empty until the shelf shows it so
@@ -3004,8 +3057,9 @@ void tick() {
             } else if (gShelf.move == ShPut) {
                 if (!gShelf.sent && t >= SH_PUT_AT) {
                     gShelf.sent = true;
-                    V3 u = shUsePoint(gShelf.moveSlot);
-                    if (shelfBook(gShelf.hand)) game::useBlockAt(gS.st.bx, gS.st.by, gS.st.bz, shFaceIndex(), u.x, u.y, u.z);
+                    V3  u = shUsePoint(gShelf.moveSlot);
+                    int x = gS.st.bx, y = gS.st.by, z = gS.st.bz, fc = shFaceIndex();
+                    if (shelfBook(gShelf.hand)) after.push_back([=] { game::useBlockAt(x, y, z, fc, u.x, u.y, u.z); });
                     note("put: used slot " + std::to_string(gShelf.moveSlot));
                 }
                 if (t >= SH_PUT_END) {
@@ -3022,7 +3076,7 @@ void tick() {
         }
     }
     if (gS.st.kind == Kind::Crafter) { // CrafterStation.tick: it made something - a puff at its mouth
-        gS.states     = game::blockStates(gS.st.bx, gS.st.by, gS.st.bz);
+        gS.states     = in.states;
         bool crafting = gS.states.find("\"crafting\":1") != std::string::npos;
         if (crafting && !gS.crafterWasCrafting) {
             V3 front = gS.st.frontDir >= 0 ? dirVec(Dir(gS.st.frontDir)) : V3{0, gS.st.frontDir == -1 ? 1.0 : -1.0, 0};
@@ -3030,22 +3084,7 @@ void tick() {
         }
         gS.crafterWasCrafting = crafting;
     }
-    if (gS.st.kind == Kind::Beacon && gS.clock - gS.beaconLevelsAt > 0.5) { // BeaconBlockEntity.updateBase: whole layers of the pyramid
-        gS.beaconLevelsAt = gS.clock;
-        int levels = 0;
-        for (int k = 1; k <= 4; ++k) {
-            bool whole = true;
-            for (int dx = -k; dx <= k && whole; ++dx)
-                for (int dz = -k; dz <= k && whole; ++dz) {
-                    std::string b = game::blockName(gS.st.bx + dx, gS.st.by - k, gS.st.bz + dz);
-                    whole = b == "minecraft:iron_block" || b == "minecraft:gold_block" || b == "minecraft:emerald_block" || b == "minecraft:diamond_block" ||
-                            b == "minecraft:netherite_block";
-                }
-            if (!whole) break;
-            levels = k;
-        }
-        gS.beaconLevels = levels;
-    }
+    if (gS.st.kind == Kind::Beacon && in.beaconLevels >= 0) { gS.beaconLevelsAt = gS.clock; gS.beaconLevels = in.beaconLevels; }
 }
 
 bool active() { std::lock_guard l(gM); return gS.phase != Phase::None; }
