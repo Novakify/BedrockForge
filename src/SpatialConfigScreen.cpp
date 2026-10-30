@@ -276,7 +276,6 @@ void draw() {
         if (hov) cdl->AddRectFilled(p, ImVec2(p.x + rowW, p.y + rowH), IM_COL32(255, 255, 255, 18));
         ImVec2 ls = ImGui::CalcTextSize(f.label);
         shadowText(ImVec2(p.x + 6 * s, p.y + (rowH - ls.y) * 0.5f), kText, f.label);
-        if (hov && f.tip && *f.tip) ImGui::SetTooltip("%s", f.tip);
         // value
         float vx = p.x + rowW - valueW - resetW - 6 * s, vy = p.y + 2 * s;
         ImGui::SetCursorScreenPos(ImVec2(vx, vy));
@@ -325,6 +324,8 @@ void draw() {
         }
         ImGui::EndDisabled();
         gDisabled = false;
+        // tooltip only over the label side (never over the buttons, where it would sit under the pointer)
+        if (hov && f.tip && *f.tip && ImGui::GetMousePos().x < vx - 4 * s) ImGui::SetTooltip("%s", f.tip);
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y));
         ImGui::Dummy(ImVec2(rowW, rowH)); // reserve the row (scrolling)
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH + 1 * s));
