@@ -1900,6 +1900,9 @@ int currentTarget0(float mx, float my) {
     if (gS.overPanel) {
         int s = drawerSlotAt(dg, mx, my);
         gS.hoverDrawer = s;
+        gS.beaconTarget = BnNone; gS.hoverPower = -1;
+        gS.brewTarget = BrNone; gS.brewHover = gS.brewPlace = -1;
+        gS.crafterTarget = CrNone; gS.crafterCell = -1;
         return s < 0 ? -1 : s < 9 ? 10 + s : 19 + (s - 9);
     }
     Basis b  = basisOf(gS.last);
@@ -2151,7 +2154,9 @@ void noteProjection(float tanHalf, float aspect, float fovYDeg) {
     gS.aspect  = aspect;
     gS.fovY    = fovYDeg;
     gS.projKnown = true;
-    if (gS.phase == Phase::None) gS.vanillaFovY = fovYDeg;
+    // the player's own field of view: what the projection shows unless it already carries the scene's narrowing (it
+    // changes during a scene too: the speed of a beacon's power, sprinting)
+    if (gS.phase == Phase::None || std::fabs(fovYDeg - gS.vanillaFovY * gS.fovScaleNow) > 0.5) gS.vanillaFovY = fovYDeg;
 }
 
 bool cameraPose(float const eye[3], float yaw, float pitch, Pose& out, float& fovScale) {
@@ -3343,7 +3348,9 @@ void detect(Img im, bool dump, int kindI) {
     {
         std::lock_guard l(gLayoutMutex);
         L.serial = gLayout.serial + 1;
-        bool keepOld = !L.valid && gLayout.valid && gLayout.W == L.W && gLayout.kind == kindI;
+        // a frame that lost the station's own slots (a tooltip or the hovered slot over them) keeps the last good look too
+        bool same    = gLayout.valid && gLayout.W == L.W && gLayout.kind == kindI;
+        bool keepOld = same && (!L.valid || (gLayout.hasGrid && !L.hasGrid));
         if (keepOld) { gLayout.note = L.note + " (kept the previous layout)"; }
         else gLayout = L;
     }
@@ -4694,6 +4701,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             auto fresh = [&](int sl) {
                 auto const& c = gS.tipCache[sl];
                 if (!c.ok && !c.tried) return false;
+                if (c.at >= gS.tipSince) return true; // looked at already while the cursor rests here (a hovered slot looks other)
                 if (sl >= 9) return clock - c.at < 4; // the drawer: no samples of its own, looked at again now and then
                 float sg[7];
                 sigOf(sl, sg);
