@@ -7,7 +7,7 @@
 //   c0..c3  viewProj, column-major, camera-relative (input = glyph.pos + c4.xyz)
 //   c4      xyz: BF origin minus camera position (world units), w: time (s)
 //   c5      x: screen aspect (width / height), y: global opacity, z: debug (1 = show quad bounds), w: unused
-// t0 = StructuredBuffer<Glyph>, t1..t8 = atlases (index = Glyph.atlas), s0 = linear clamp, s1 = point clamp
+// t0 = StructuredBuffer<Glyph>, t1..t16 = atlases (index = Glyph.atlas), t17 = S2 UI target, s0 = linear clamp, s1 = point clamp
 cbuffer Params : register(b0) {
     float4x4 viewProj;
     float4   originTime;
@@ -30,9 +30,12 @@ static const uint F_BITMAP   = 2u;
 static const uint F_MSDF     = 4u;
 static const uint F_GRADIENT = 16u;
 static const uint F_SOLID    = 32u; // rounded rect, no atlas (top bar pill, icons, EQ bars)
+static const uint F_VIEW     = 64u; // settings panel: camera-locked perspective, pos already / tan(fovY/2)
+static const uint F_IMAGE    = 128u; // colour image: rgba * fill tint
+static const uint kAtlases   = 16u;
 
 StructuredBuffer<Glyph> gGlyphs  : register(t0);
-Texture2D               gAtlas[8] : register(t1);
+Texture2D               gAtlas[16] : register(t1);
 SamplerState            sLin     : register(s0);
 SamplerState            sPoint   : register(s1);
 
@@ -52,7 +55,9 @@ V2P VSGlyph(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     float2 c = corner[vid];
     float3 p = g.pos + g.right * c.x + g.up * c.y;
     V2P    o;
-    if (g.flags & F_SCREEN) // x 0..aspect, y 0..1 downwards
+    if (g.flags & F_VIEW) // panel: exact perspective (BF ray-picks the mouse with the same mapping)
+        o.pos = float4(p.x / max(misc.x, 1e-3), p.y, 0.0, max(p.z, 1e-3));
+    else if (g.flags & F_SCREEN) // x 0..aspect, y 0..1 downwards
         o.pos = float4(p.x / max(misc.x, 1e-3) * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);
     else
         o.pos = mul(viewProj, float4(p + originTime.xyz, 1.0));
@@ -77,14 +82,20 @@ float4 PSGlyph(V2P i) : SV_Target {
         return float4(fillC.rgb * a, a) * k;
     }
 
+    uint const ai = min(g.atlas, kAtlases - 1);
+    if (g.flags & F_IMAGE) { // cover art / icons / thumbnails: straight-alpha rgba, tinted
+        float4 t = gAtlas[NonUniformResourceIndex(ai)].Sample(sLin, i.uv) * fillC;
+        return float4(t.rgb * t.a, t.a) * k;
+    }
+
     if (g.flags & F_BITMAP) { // pixel font: hard texels, no SDF maths
-        float a = gAtlas[NonUniformResourceIndex(g.atlas)].Sample(sPoint, i.uv).r;
+        float a = gAtlas[NonUniformResourceIndex(ai)].Sample(sPoint, i.uv).r;
         float4 o = float4(fillC.rgb, 1.0) * (fillC.a * a);
         if (misc.z > 0.5) o = max(o, float4(0.2, 0.0, 0.0, 0.2));
         return o * k;
     }
 
-    Texture2D tex = gAtlas[NonUniformResourceIndex(g.atlas)];
+    Texture2D tex = gAtlas[NonUniformResourceIndex(ai)];
     float3    s   = tex.Sample(sLin, i.uv).rgb;
     float     v   = (g.flags & F_MSDF) ? median3(s) : s.r; // 0.5 = outline of the glyph
     // screen pixels per SDF unit (msdf-atlas-gen's screenPxRange)
@@ -112,7 +123,7 @@ float4 PSGlyph(V2P i) : SV_Target {
 
 // ---- S2 "under the HUD" (staged, unverified): the game's UI was redirected into our own target (UiCapture);
 // after the glyphs are drawn on the back buffer, the UI goes back on top with this full-screen pass.
-Texture2D gUiTarget : register(t9);
+Texture2D gUiTarget : register(t17);
 struct VFull { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 VFull VSComposite(uint id : SV_VertexID) {
     VFull  o;
