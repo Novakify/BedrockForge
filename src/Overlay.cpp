@@ -1,5 +1,6 @@
 // Renderer Foundation - ImGui overlay (see Overlay.h, Notice.h).
 #include "Overlay.h"
+#include "SpatialConfigScreen.h"
 
 #include <atomic>
 #include <cstdio>
@@ -75,13 +76,14 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiCaptureKey.get()) rf::uicapture::request();
         else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiPanelKey.get()) rf::panel::toggle();
     }
-    if (gInitialized && RfOptions::showImGui) {
+    if (gInitialized && (RfOptions::showImGui || rf::sgconfig::wantsInput())) {
         std::lock_guard l(gImGuiMutex);
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
         auto& io = ImGui::GetIO();
         bool  mouseMsg = msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST;
         bool  keyMsg   = (msg >= WM_KEYFIRST && msg <= WM_KEYLAST) && int(wp) != RfOptions::uiKey.get();
         if ((mouseMsg && io.WantCaptureMouse) || (keyMsg && io.WantCaptureKeyboard)) return 0;
+        if (rf::sgconfig::isOpen() && (mouseMsg || (msg >= WM_KEYFIRST && msg <= WM_KEYLAST))) return 0; // the settings screen has it all
     }
     if (RfOptions::uiCaptureSpike) {
         if (rf::panel::swallow(msg, lp)) return DefWindowProcW(hwnd, msg, wp, lp); // WM_INPUT must still reach DefWindowProc

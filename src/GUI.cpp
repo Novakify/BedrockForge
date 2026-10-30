@@ -2,6 +2,7 @@
 // Changes: 1.26 sections (Shaders with shaderpack picker + resource-pack shaders + reload, Graphics with Vibrant
 // Visuals), status/diagnostics window, options autosave kept from upstream, About credits the upstream project.
 #include "GUI.h"
+#include "SpatialConfigScreen.h"
 
 #include <string>
 #include <vector>
@@ -108,6 +109,7 @@ void updateImGui() {
     updateOptions();
     ImGui::NewFrame();
     rf::panel::drawOverlay();
+    rf::sgconfig::draw();
     if (RfOptions::showImGui) {
         auto& io = ImGui::GetIO();
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);

@@ -1,5 +1,6 @@
 // Renderer Foundation - Spatial GUI M1 panel (see SpatialPanel.h, shaders/panel.hlsl). Original code for Renderer Foundation.
 #include "SpatialPanel.h"
+#include "SpatialConfigScreen.h"
 
 #include <algorithm>
 #include <atomic>
@@ -500,6 +501,11 @@ void noteScreen(void const* stack, std::string const& name) {
     }
     if (st->name == name) { cine::tick(); return; }
     st->name = name;
+    {   // the pause screen on top of a stack: the Spatial GUI settings button (SpatialConfigScreen)
+        bool pause = false;
+        for (auto& t : gStackTops) pause = pause || t.name.find("pause") != std::string::npos;
+        sgconfig::notePause(pause);
+    }
     if (gScreensSeen.size() < 40 && std::find(gScreensSeen.begin(), gScreensSeen.end(), name) == gScreensSeen.end()) gScreensSeen.push_back(name);
     // the container screen on top (if any) decides: Cinematic scene, Spatial GUI screen or vanilla
     std::string cont;
@@ -716,8 +722,9 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         // Java dropShadow: alpha 120, offset 0.008 right / 0.012 down of a panel 1 tall (the texture's height)
         if (sc.dropShadow) {
             c[29] = float(std::clamp(sc.dropShadowAlpha, 0, 255)) / 255.0f;
-            c[30] = 0.008f / (float(bd.Width) / float(bd.Height));
-            c[31] = 0.012f;
+            float mg = std::max(1.0f, gGuiMag); // the texture is magnified: keep the offset relative to the GUI
+            c[30] = 0.008f / (float(bd.Width) / float(bd.Height)) / mg;
+            c[31] = 0.012f / mg;
         }
         // the player on screen (third person): kept sharp in the blur (Java draws the player again after the blur)
         spatialcam::View pv = spatialcam::view();
@@ -1281,6 +1288,11 @@ void debugUse(gi::GameInputMouseState* st) {
     if (GetTickCount64() < gDebugRightUntil.load()) st->buttons = st->buttons | gi::GameInputMouseRightButton;
 }
 template <class T> void debugUse(T) {}
+/// the Spatial GUI settings screen is up: the game behind it sees no mouse buttons
+void configBlock(gi::GameInputMouseState* st) {
+    if (st && sgconfig::blocksGameMouse()) st->buttons = gi::GameInputMouseButtons(0);
+}
+template <class T> void configBlock(T) {}
 /// the use button pressed at a block whose use starts a scene: kept from the game until it is let go
 void screenlessInput(gi::GameInputMouseState* st) {
     if (!st) return;
@@ -1305,6 +1317,7 @@ template <int Id, class C, class R, bool NE, class... A> struct MouseHook<Id, R 
         R r = reinterpret_cast<R (*)(C*, A...)>(orig)(self, a...);
         if (r) {
             (debugUse(a), ...);
+            (configBlock(a), ...);
             (screenlessInput(a), ...);
             if (gEnabled.load(std::memory_order_relaxed)) {
                 bool game = fromGame(__builtin_return_address(0));
@@ -1545,6 +1558,7 @@ bool remapMouse(HWND hwnd, UINT msg, LPARAM& lp) {
 // The Java mod's config screen (SpatialGUIConfig), same groups and ranges. Saved to config/SpatialGUI.json.
 void drawJavaConfig() {
     auto& c = spatialcam::cfg();
+    if (ImGui::Button("Open Spatial GUI settings screen")) { RfOptions::showImGui = false; sgconfig::open(); }
     if (!ImGui::TreeNode("Spatial GUI config (Java mod options)")) return;
     if (ImGui::TreeNode("General")) {
         ImGui::Checkbox("Enabled", &c.enabled);
