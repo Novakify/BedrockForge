@@ -123,7 +123,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting; }
+bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -169,6 +169,7 @@ struct Station {
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
     std::vector<V3> shelves;      // EnchantStation.shelves: the bookshelves that empower the table (centres)
     V3 center() const {
+        if (kind == Kind::Brewing) return {bx + 0.5, by + 0.45, bz + 0.5}; // BrewingStation.center: base + 0.45
         if (isFurnace(kind)) { // FurnaceStation.center = FurnaceZones.point(pos, side, 0.5, 0.5, 0): the middle of the front
             V3 f = dirVec(side);
             return {bx + 0.5 + f.x * 0.5, by + 0.5, bz + 0.5 + f.z * 0.5};
@@ -187,7 +188,7 @@ struct Station {
     V3 forward() const { return dirVec(opposite(side)); }
     V3 right() const { return dirVec(clockWise(opposite(side))); }
     V3 workPoint() const { return center(); }
-    bool workOnTop() const { return !isFurnace(kind); }
+    bool workOnTop() const { return !isFurnace(kind) && kind != Kind::Brewing; }
     double leanFov() const { return kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : 66; }
     // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
@@ -198,6 +199,15 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Brewing) { // BrewingStation.lean
+            V3    base{bx + 0.5, double(by), bz + 0.5};
+            V3    eye = base + sideV() * 1.2 + V3{0, 0.88, 0};
+            JPose p;
+            p.pos = eye;
+            lookAngles(base + V3{0, 0.46, 0} - eye, p.yaw, p.pitch);
+            p.roll = -2;
             return p;
         }
         if (kind == Kind::Enchanting) { // EnchantStation.lean
@@ -393,6 +403,11 @@ struct Scene {
     double scroll = 0, shapesAt = -10, fitAt = -10, cutLength = 1.05;
     bool   cutAll = false, btnBlock[kButtons] = {};
     float  btnRef[kButtons][3] = {}; // each button's own ground colour (keyed away like a slot's)
+    // BrewingStation
+    int    brewTarget = 0, brewHover = -1, brewPlace = -1;
+    double brewProgress = -1, brewProgressAt = -10, brewFuel = 0, brewDenyAt = -10, brewFlaredAt[3] = {-10, -10, -10};
+    bool   brewWas = false;
+    std::string carriedName; // the carried stack's type (game thread, polled in tick)
     // SmithingStation
     int    smithTarget = 0, smithHover = -1, smithPlace = -1, smithFx = 0;
     bool   wasFull[4] = {}, wasBlock[4] = {};
@@ -1240,6 +1255,79 @@ void smithAction(int t, unsigned bit, bool shift) {
     gS.tapAt = gS.clock;
 }
 
+// ---------------------------------------------------------------- BrewingStation (vanilla geometry)
+// The potions stand on the stand's three stone feet (east, north-west, south-west: its bottle slots), the ingredient
+// in the bowl on top, blaze powder at the foot of the rod. Client-only the stand's own bottles stay as they are.
+constexpr double BR_FEET[3][2] = {{12, 8}, {4, 4}, {4, 12}};
+constexpr double BR_SIZE = 0.42, BR_BELLY = 2 / 16.0 + 7 / 16.0 * BR_SIZE, BR_HAND_Y = 0.055, BR_REACH = 0.07;
+constexpr int    BR_BOTTLES = 3, BR_INGREDIENT = 3, BR_FUEL = 4;
+enum BrewTarget { BrNone, BrPlace, BrItem };
+V3 brewBase() { return {gS.st.bx + 0.5, double(gS.st.by), gS.st.bz + 0.5}; }
+double brewDenyShake() { // MenuStation.denyShake
+    double d = gS.clock - gS.brewDenyAt;
+    return d >= 0 && d < 0.35 ? 0.012 * std::sin(d * 60) * (1 - d / 0.35) : 0;
+}
+/// SpatialAppearance.Frame.base(BREWING): the middle of a standing bottle, the bowl, the foot
+V3 brewSlotPoint(int slot) {
+    if (slot < BR_BOTTLES) return {gS.st.bx + BR_FEET[slot][0] / 16, gS.st.by + BR_BELLY, gS.st.bz + BR_FEET[slot][1] / 16};
+    if (slot == BR_INGREDIENT) return brewBase() + V3{0, 14 / 16.0 + 0.01, 0};
+    return brewBase() + gS.st.sideV() * 0.1 + V3{0, 0.16, 0};
+}
+V3 brewHandle(int slot) { return brewSlotPoint(slot) + gS.st.right() * brewDenyShake(); } // restPoint
+/// BrewingStandMenu's slots: mayPlace (vanilla 1.21: PotionSlot, IngredientsSlot, FuelSlot)
+bool brewAccepts(int slot, std::string const& n) {
+    auto is = [&](char const* x) { return n == std::string("minecraft:") + x; };
+    if (n.empty()) return false;
+    if (slot < BR_BOTTLES) return is("potion") || is("splash_potion") || is("lingering_potion") || is("glass_bottle");
+    if (slot == BR_FUEL) return is("blaze_powder");
+    for (char const* k : {"nether_wart", "redstone", "glowstone_dust", "fermented_spider_eye", "gunpowder", "dragon_breath", "sugar", "rabbit_foot",
+                          "glistering_melon_slice", "spider_eye", "pufferfish", "magma_cream", "golden_carrot", "blaze_powder", "ghast_tear",
+                          "turtle_helmet", "turtle_scute", "phantom_membrane", "breeze_rod", "slime_block", "stone", "cobweb"})
+        if (is(k)) return true;
+    return false;
+}
+/// MenuStation.slotFor: the preferred slot if it fits there, else the first that takes it (a bottle needs an empty foot)
+int brewSlotFor(std::string const& n, int preferred) {
+    auto fits = [&](int i) { return brewAccepts(i, n) && (!gS.cellFull[i] || i >= BR_BOTTLES); };
+    if (preferred >= 0 && fits(preferred)) return preferred;
+    for (int i = 0; i < 5; ++i) if (fits(i)) return i;
+    return -1;
+}
+/// BrewingStation.updateCursor; 101+i an item there (take), 0..4 the slot the carried stack goes to, 110 refused
+int brewCursor(Basis const& b, float mx, float my) {
+    gS.brewTarget = BrNone;
+    gS.brewHover = gS.brewPlace = -1;
+    if (moving()) return -1;
+    int    nearest = -1;
+    double best    = 1e18;
+    for (int i = 0; i < 5; ++i) {
+        float ax, ay;
+        if (!toPixel(gS.last, b, brewHandle(i), gW, gH, ax, ay)) continue;
+        double d    = std::hypot(mx - ax, my - ay);
+        bool   isNear = underCursor(b, mx, my, brewHandle(i), i < BR_BOTTLES ? 0.1 : 0.09);
+        // empty-handed only what lies there can be picked; carrying, the nearest spot anywhere over the stand
+        bool candidate = !gS.carrying ? isNear && gS.cellFull[i] : isNear || underCursor(b, mx, my, brewBase() + V3{0, 0.4, 0}, 0.5);
+        if (candidate && d < best) { best = d; nearest = i; }
+    }
+    if (nearest < 0) return -1;
+    gS.haveAim = true;
+    if (!gS.carrying) {
+        gS.brewTarget = BrItem;
+        gS.brewHover  = nearest;
+        gS.aim        = brewHandle(nearest);
+        return 101 + nearest;
+    }
+    gS.brewTarget = BrPlace;
+    gS.brewPlace  = brewSlotFor(gS.carriedName, nearest);
+    gS.aim        = brewHandle(gS.brewPlace < 0 ? nearest : gS.brewPlace);
+    return gS.brewPlace < 0 ? 110 : gS.brewPlace;
+}
+void brewAction(int t, unsigned bit, bool shift) {
+    (void)bit; (void)shift;
+    if (t == 110) { gS.brewDenyAt = gS.clock; return; } // MenuStation.deny
+    if (t >= 101 && t <= 105) { inject(t - 101, 1); gS.tapAt = gS.clock; } // slotClick(hoverSlot, 0, shift)
+}
+
 // ---------------------------------------------------------------- CartographyStation (vanilla geometry)
 constexpr double CT_LAYOUT[2][2] = {{-0.04, 0.04}, {0.34, -0.1}}; // the map in the middle, what goes into it on the right
 constexpr double MAP_SIZE = 0.5, ADDITION_SIZE = 0.24, WORK_LENGTH = 2.1, CT_BEAT = 1.55;
@@ -1494,6 +1582,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     }
     if (gS.st.kind == Kind::Stonecutter) { stoneAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Smithing) { smithAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Brewing) { brewAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Cartography) { cartAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Loom) { loomAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Enchanting) { enchAction(t, bit, shift); return; }
@@ -1577,6 +1666,7 @@ int tipSlotOf(int t) {
     if (t >= 101 && t <= 104) return gS.cellFull[t - 101] ? t - 101 : -1;
     if (gS.st.kind == Kind::Anvil && t == 100) return gS.cellFull[1] ? 1 : gS.cellFull[0] ? 0 : -1;
     if (gS.st.kind == Kind::Stonecutter && t == 103) return gS.cellFull[0] ? 0 : -1;
+    if (gS.st.kind == Kind::Brewing && t >= 101 && t <= 105) return gS.cellFull[t - 101] ? t - 101 : -1;
     return -1;
 }
 int currentTarget(float mx, float my) {
@@ -1626,6 +1716,7 @@ int currentTarget0(float mx, float my) {
         cursorRay(gS.last, b, nx, ny, o, d);
         return smithCursor(b, mx, my, o, d);
     }
+    if (gS.st.kind == Kind::Brewing) return brewCursor(b, mx, my);
     if (gS.st.kind == Kind::Cartography) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
@@ -1807,6 +1898,8 @@ void tick() {
     std::string name = game::blockName(gS.st.bx, gS.st.by, gS.st.bz);
     gS.st.lit        = name.rfind("minecraft:lit_", 0) == 0;
     if (d2 > 49 || !kindOfBlock(name, k) || k != gS.st.kind) leave();
+    int n = 0;
+    gS.carriedName = game::carriedItem(n);
 }
 
 bool active() { std::lock_guard l(gM); return gS.phase != Phase::None; }
@@ -2811,8 +2904,9 @@ void detect(Img im, bool dump, int kindI) {
                 L.board = {float(bx0), float(by0), float(bx1 - bx0), float(by1 - by0)};
                 L.hasBoard = true;
             }
-            int expect = isFurnace(kind) ? 3 : kind == Kind::Smithing || kind == Kind::Loom ? 4 : kind == Kind::Stonecutter || kind == Kind::Enchanting ? 2 : 3;
-            bool hasRes = kind != Kind::Enchanting;
+            int expect = isFurnace(kind) ? 3 : kind == Kind::Smithing || kind == Kind::Loom ? 4 : kind == Kind::Stonecutter || kind == Kind::Enchanting ? 2 :
+                         kind == Kind::Brewing ? 5 : 3;
+            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing;
             std::vector<Sq> rest = own;
             Sq res{};
             if (hasRes && !rest.empty()) {
@@ -2830,6 +2924,14 @@ void detect(Img im, bool dump, int kindI) {
                 // banner and dye in the first row (left, right), the pattern below
                 std::sort(rest.begin(), rest.end(), byY);
                 if (rest.size() >= 2 && std::abs(rest[0].y - rest[1].y) <= best / 4 && rest[1].x < rest[0].x) std::swap(rest[0], rest[1]);
+            } else if (kind == Kind::Brewing && rest.size() == 5) {
+                // the bottles (the three lower slots, left to right), the ingredient (the upper one over the middle bottle), the
+                // blaze powder (the upper one at the left): BrewingStandMenu's order
+                std::sort(rest.begin(), rest.end(), byY);
+                std::vector<Sq> top(rest.begin(), rest.begin() + 2), low(rest.begin() + 2, rest.end());
+                std::sort(top.begin(), top.end(), byX);
+                std::sort(low.begin(), low.end(), byX);
+                rest = {low[0], low[1], low[2], top[1], top[0]};
             } else std::sort(rest.begin(), rest.end(), byX); // anvil, smithing (template, base, addition), stonecutter, enchanting
             int n = 0;
             for (auto& q : rest) {
@@ -3419,6 +3521,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Brewing) // BrewingStation.rest
+        return brewBase() + gS.st.sideV() * 0.55 + gS.st.right() * (right ? 0.3 : -0.3) + V3{0, 0.2, 0};
     if (gS.st.kind == Kind::Enchanting) // EnchantStation.rest
         return gS.st.top + gS.st.sideV() * 0.36 + gS.st.right() * (right ? 0.24 : -0.24) + V3{0, HAND_Y, 0};
     if (gS.st.kind == Kind::Loom) // LoomStation.rest
@@ -3452,6 +3556,11 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
         V3 dir = (aim - shoulder).norm();
         return aim - dir * (0.14 - 0.05 * tap) + V3{0, -0.03, 0};
     }
+    if (gS.st.kind == Kind::Brewing) { // BrewingStation.handTarget
+        V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
+        double hover = carrying ? 0.07 : 0.04;
+        return aim + V3{0, BR_HAND_Y + hover - 0.05 * tap, 0} - reach * BR_REACH;
+    }
     // TableStation.handTarget (the anvil's is the same at the point aimed at)
     V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
     double hover = carrying ? 0.075 : 0.045;
@@ -3462,6 +3571,10 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
     if (isFurnace(gS.st.kind) && !gS.aimTop) { // FurnaceStation.heldItemPoint on the front
         V3 reach = (hand - shoulder).norm();
         return hand + reach * 0.07 + V3{0, -0.045, 0};
+    }
+    if (gS.st.kind == Kind::Brewing) { // BrewingStation.heldItemPoint
+        V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
+        return hand + reach * BR_REACH + V3{0, -BR_HAND_Y + 0.012, 0};
     }
     V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
     bool r07 = isFurnace(gS.st.kind) || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter;
@@ -4603,6 +4716,81 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 gKeyOv = nullptr;
             }
         }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Brewing && gS.phase != Phase::Outro) {
+            // BrewingStation.frame / renderScene / renderWorld (the stand keeps what was put in it: nothing in the outro)
+            double p = gS.brewProgress;
+            auto colour = [&](int i, float c[3]) { // BrewingStation.color: the potion's colour, brightest channel 1
+                float const* m  = gS.iconRgb[i];
+                float        mx = std::max(0.1f, std::max(m[0], std::max(m[1], m[2])));
+                c[0] = m[0] / mx; c[1] = m[1] / mx; c[2] = m[2] / mx;
+            };
+            if (gS.phase == Phase::Active && p >= 0 && handsDt > 0) {
+                V3 bowl = brewHandle(BR_INGREDIENT) + V3{0, 0.03, 0};
+                for (int i = 0; i < BR_BOTTLES; ++i) {
+                    if (!gS.cellFull[i]) continue;
+                    float c[3];
+                    colour(i, c);
+                    if (rnd() < handsDt * 6) // bubbles rising in the bottle
+                        spark(brewHandle(i) + V3{gauss() * 0.015, -0.05, gauss() * 0.015}, V3{0, 0.08 + rnd() * 0.05, 0}, 0.6, 0.006f, c[0] * 0.8f,
+                              c[1] * 0.8f, c[2] * 0.8f, -0.05, 0);
+                    if (rnd() < handsDt * 3.5) { // a drop of the melting ingredient runs down the arm to the bottle
+                        double flight = 0.45, gravity = 1.2;
+                        V3     to     = brewHandle(i) + V3{0, 0.1, 0};
+                        V3     v      = (to - bowl) * (1 / flight) + V3{0, 0.5 * gravity * flight, 0};
+                        spark(bowl, v, flight, 0.008f, 0.85f, 0.6f, 1.0f, gravity, 0.03);
+                    }
+                }
+                if (rnd() < handsDt * 4) steam(bowl + V3{0, 0.02, 0}, 0.03, 1);
+            }
+            // the ingredient in the bowl, melting as it brews; the powder standing at the foot, turned to the eye
+            if (gS.cellFull[BR_INGREDIENT]) {
+                bool   block = gS.cellBlock[BR_INGREDIENT];
+                float  melt  = p >= 0 ? float(1 - 0.65 * p) : 1.0f;
+                float  grow  = gS.brewHover == BR_INGREDIENT ? 1.08f : 1.0f;
+                double size  = (block ? 0.1 : 0.17) * melt * grow;
+                orientedItem(cam, b, L, src(L.grid[BR_INGREDIENT], BR_INGREDIENT), block,
+                             brewSlotPoint(BR_INGREDIENT) + V3{0, block ? size / 2 : 0.004, 0}, gS.st.right(), gS.st.sideV(), size, 0, tableAlpha, 20);
+            }
+            if (gS.cellFull[BR_FUEL]) {
+                V3     at    = brewSlotPoint(BR_FUEL);
+                V3     toEye = V3{cam.pos.x - at.x, 0, cam.pos.z - at.z}.norm();
+                V3     h{toEye.z, 0, -toEye.x};
+                double yaw   = std::atan2(-h.z, h.x) / kDeg;
+                float  grow  = gS.brewHover == BR_FUEL ? 1.08f : 1.0f;
+                cardItem(cam, b, L, src(L.grid[BR_FUEL], BR_FUEL), false, at, 0.17 * grow, tableAlpha, yaw);
+            }
+            for (int i = 0; i < BR_BOTTLES; ++i) {
+                if (!gS.cellFull[i]) continue;
+                double flare = std::exp(-std::max(0.0, clock - gS.brewFlaredAt[i]) * 2.5);
+                // a soft light of the potion's colour round its belly: stronger while it brews, a flare when it is done
+                double glow = (p >= 0 ? 0.14 + 0.07 * std::sin(clock * 4 + i) : 0.05) + 0.5 * flare + (i == gS.brewHover ? 0.1 : 0);
+                if (glow <= 0.01) continue;
+                float c[3];
+                colour(i, c);
+                float g = float(glow * tableAlpha);
+                glowBillboard(cam, b, brewHandle(i) + V3{0, -0.04, 0}, 0.09 + 0.05 * flare, c[0] * g, c[1] * g, c[2] * g);
+            }
+            if (gS.brewFuel > 0) { // what is left of the fire, a small glow at the powder
+                float f = float((0.12 + 0.18 * gS.brewFuel / 20.0) * (0.85 + 0.15 * std::sin(clock * 9)) * tableAlpha);
+                glowBillboard(cam, b, brewHandle(BR_FUEL) + V3{0, 0.05, 0}, 0.07, f, f * 0.55f, f * 0.15f);
+            }
+            if (gS.phase == Phase::Active && gS.brewTarget == BrPlace && gS.haveAim) { // renderWorld: where the carried stack goes
+                float pp = float(0.2 + 0.07 * std::sin(clock * 5));
+                bool  ok = gS.brewPlace >= 0;
+                glowBillboard(cam, b, gS.aim, 0.07, pp, ok ? pp * 0.8f : pp * 0.2f, ok ? pp * 0.6f : pp * 0.2f);
+            }
+            // BrewingStation.tick: done - every bottle flares up in its new colour
+            bool brewing = p >= 0;
+            if (gS.brewWas && !brewing)
+                for (int i = 0; i < BR_BOTTLES; ++i)
+                    if (gS.cellFull[i]) {
+                        gS.brewFlaredAt[i] = clock;
+                        float c[3];
+                        colour(i, c);
+                        motes(brewHandle(i), 0.06, 14, c[0], c[1], c[2], 0.3);
+                    }
+            gS.brewWas = brewing;
+        }
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Smithing) {
             // SmithingStation.frame / renderScene / renderWorld
             V3     rgt = gS.st.right(), out = gS.st.sideV();
@@ -5342,6 +5530,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map - work it" + dot + "Esc - step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear - smith" + dot + "RMB - take" + dot + "Esc - step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade - cut one" + dot + "Shift - cut the stack" + dot + "Esc - step away";
+    case Kind::Brewing: return std::string("Bottles on the feet, ingredient in the bowl, blaze powder at the foot") + dot + "click - take" + dot + "Esc - step away";
     case Kind::Grindstone: return std::string("Lay the item on the wheel") + dot + "LMB on it - grind (enchantments come off)" + dot + "RMB - take" + dot + "Esc - step away";
     default: return "Esc step back";
     }
@@ -5430,6 +5619,20 @@ void drawOverlay() {
                     if (gS.cartHover == 0 && !gS.cellFull[1]) tipLine = "Lay paper, glass or an empty map on the right";
                     else if (gS.cellFull[1] && !gS.cellFull[2] && gS.cellFull[0]) tipLine = "This map can't take that";
                 }
+            }
+        }
+        if (gS.st.kind == Kind::Brewing && !moving()) { // BrewingStation.tooltip (the item's own lines come from the window)
+            ImU32 gray = IM_COL32(170, 170, 170, 255);
+            if (gS.brewTarget == BrPlace) {
+                static char const* kSlot[5] = {"A water bottle or a potion", "A water bottle or a potion", "A water bottle or a potion",
+                                               "The ingredient - into the bowl on top", "Blaze powder - the fuel"};
+                if (gS.brewPlace < 0) tipLines.push_back({"That doesn't go here", IM_COL32(255, 85, 85, 255)});
+                else tipLines.push_back({kSlot[gS.brewPlace], gray});
+            } else if (gS.brewTarget == BrItem && gS.brewHover >= 0) {
+                if (gS.brewProgress >= 0 && gS.brewHover != BR_FUEL)
+                    tipLines.push_back({"Brewing: " + std::to_string(int(std::lround(gS.brewProgress * 100))) + "%", IM_COL32(255, 85, 255, 255)});
+                if (gS.brewHover == BR_FUEL) tipLines.push_back({"Fire left for " + std::to_string(int(std::lround(gS.brewFuel))) + " brews", IM_COL32(255, 170, 0, 255)});
+                tipLines.push_back({"Click - take", gray});
             }
         }
         if (gS.st.kind == Kind::Smithing && !moving()) { // SmithingStation.tooltip (without the item's own lines)

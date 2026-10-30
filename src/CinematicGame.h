@@ -23,4 +23,9 @@ bool        solid(int x, int y, int z);
 void        hideHand(int& saved, bool on);
 /// The local player's skin image (RGBA8, usually 64x64 or 128x128) and arm size. false = none (persona skin, no image).
 bool        skin(std::vector<unsigned char>& rgba, int& w, int& h, bool& slim);
+/// The stack the cursor carries in a container screen (Bedrock's UI cursor slot): its type name ("minecraft:potion"),
+/// empty when nothing is carried; count = how many.
+std::string carriedItem(int& count);
+/// The item in the selected hotbar slot (type name, empty = none).
+std::string handItem(int& count);
 } // namespace rf::cine::game

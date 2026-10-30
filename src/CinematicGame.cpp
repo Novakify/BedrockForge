@@ -27,6 +27,8 @@
 #include "mc/world/phys/HitResult.h"
 #include "mc/world/gamemode/GameMode.h"
 #include "mc/world/item/HandSlot.h"
+#include "mc/world/item/ItemStack.h"
+#include "mc/world/PlayerUIContainer.h"
 
 namespace rf::cine::game {
 namespace {
@@ -165,4 +167,25 @@ bool skin(std::vector<unsigned char>& rgba, int& w, int& h, bool& slim) {
     return true;
 }
 
+
+std::string carriedItem(int& count) {
+    count    = 0;
+    Actor* a = player();
+    if (!a) return {};
+    Player&          p  = *static_cast<Player*>(a);
+    ItemStack const& it = p.mPlayerUIContainer->getItem(0); // PlayerUISlot::CursorSelected
+    if (it.isNull() || it.mCount == 0) return {};
+    count = it.mCount;
+    return it.getTypeName();
+}
+
+std::string handItem(int& count) {
+    count    = 0;
+    Actor* a = player();
+    if (!a) return {};
+    ItemStack const& it = static_cast<Player*>(a)->getSelectedItem();
+    if (it.isNull() || it.mCount == 0) return {};
+    count = it.mCount;
+    return it.getTypeName();
+}
 } // namespace rf::cine::game
