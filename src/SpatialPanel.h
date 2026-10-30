@@ -8,6 +8,8 @@
 // Toggle: F8 (uiPanelKey) or the F6 section. Needs "uiCaptureSpike": true (the hooks live in UiCapture).
 #pragma once
 #include <cstddef>
+#include <string>
+#include <vector>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -47,5 +49,7 @@ void drawUi();
 void drawOverlay();
 /// Mod load: hook GameInputCreate so the game's own GameInput mouse readings can be remapped (v0.8).
 void installEarly();
+/// Container screens seen this session that open as a panel (the settings screen's profile rules).
+std::vector<std::string> seenPanelScreens();
 
 } // namespace rf::panel

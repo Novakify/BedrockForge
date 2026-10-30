@@ -404,6 +404,7 @@ std::atomic<int>         gWanted{-1};
 bool                     gLastWant = false;
 
 // SpatialGUIClient.shouldHookScreen, mapped onto Bedrock screen names
+std::vector<std::string> seenPanelScreens(); // below
 bool isPanelScreen(std::string const& n) {
     std::string l = n;
     for (auto& ch : l) ch = char(std::tolower(static_cast<unsigned char>(ch)));
@@ -440,6 +441,13 @@ bool isPanelScreen(std::string const& n) {
     return false;
 }
 
+std::vector<std::string> seenPanelScreens() {
+    std::lock_guard l(gScreenMutex);
+    std::vector<std::string> v;
+    for (auto& n : gScreensSeen)
+        if (isPanelScreen(n)) v.push_back(n);
+    return v;
+}
 // Cinematic Interactions stations (Cinematic.h): these screens are offered to the scene first
 bool isStationScreen(std::string const& n) {
     std::string l = n;
@@ -559,6 +567,7 @@ void noteScreen(void const* stack, std::string const& name) {
         }
         gRecipeBook = book;
         spatialcam::setWideScreen(book);
+        if (want && !cineOn) spatialcam::setOpeningScreen(cont, inv, cont.find("pause") != std::string::npos); // screen profiles
         if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want && !cineOn, inv); // client thread
         gKeepHud = want && !cineOn && gS.javaStyle && !spatialcam::cfg().hideHotbar;
     }

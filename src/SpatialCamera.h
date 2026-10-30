@@ -3,6 +3,8 @@
 // Original code for Renderer Foundation (no LeviLamina types here; see SpatialCamera.cpp).
 #pragma once
 #include <filesystem>
+#include <string>
+#include <vector>
 
 namespace rf::spatialcam {
 
@@ -82,6 +84,21 @@ Config& cfg();
 void    loadConfig(std::filesystem::path const& configDir);
 void    saveConfig();
 void    resetConfig();
+// Screen profiles (Java ConfigProfiles, config/SpatialGUI-profiles.json): named placement overrides and rules that pick
+// one per screen (exact Bedrock screen name, then "#inventory" / "#containers" / "#pause", then "#all").
+inline constexpr const char* kProfileFields[] = {"fpInventory", "fpContainers", "fpScale", "screenScale", "fpSide", "screenSide",
+                                                 "fpHeight", "screenHeight", "fpDistance", "screenDistance", "curvedScreen", "curvedArc"};
+std::vector<std::string> profileNames();
+std::string              addProfileFromCurrent();       // "Profile N" with the current placement
+bool                     renameProfile(std::string const& from, std::string const& to);
+void                     updateProfileFromCurrent(std::string const& name);
+void                     removeProfile(std::string const& name);
+std::string              ruleFor(std::string const& target); // "" = none
+void                     setRule(std::string const& target, std::string const& profile);
+void                     saveProfiles();
+void                     reloadProfiles(); // Cancel in the settings screen
+/// Client thread, before setActive(true): the opening screen's name picks a profile (applied until setActive(false)).
+void                     setOpeningScreen(std::string const& name, bool inventory, bool pause);
 float   applyEasing(Easing e, float t);
 
 /// What the panel needs from the camera this frame (render thread).

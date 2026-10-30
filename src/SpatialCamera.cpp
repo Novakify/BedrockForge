@@ -699,7 +699,106 @@ float applyEasing(Easing e, float t) { // AnimationUtil
     X(dropShadow) X(dropShadowAlpha) X(closeAnim) X(autoDetectCameraMode) X(fallbackFpOnBlock) X(avatarMaxYaw) X(avatarMaxPitch)   \
     X(mirrorHeadMovement) X(lockFpYaw) X(elytraSide) X(elytraHeight) X(lightTint) X(lightTintStrength)
 
+namespace {
+std::filesystem::path gProfFile;
+nlohmann::json        gProf = nlohmann::json{{"profiles", nlohmann::json::object()}, {"rules", nlohmann::json::object()}};
+std::string           gOpenName;
+bool                  gOpenInv = false, gOpenPause = false;
+bool                  gProfApplied = false;
+Config                gBeforeProfile;
+nlohmann::json        placementOf(Config const& c) {
+    nlohmann::json j;
+#define X(f) j[#f] = c.f;
+    X(fpInventory) X(fpContainers) X(fpScale) X(screenScale) X(fpSide) X(screenSide) X(fpHeight) X(screenHeight) X(fpDistance)
+    X(screenDistance) X(curvedScreen) X(curvedArc)
+#undef X
+    return j;
+}
+void applyPlacement(Config& c, nlohmann::json const& j) {
+    try {
+#define X(f) if (j.contains(#f)) c.f = j[#f].get<decltype(c.f)>();
+        X(fpInventory) X(fpContainers) X(fpScale) X(screenScale) X(fpSide) X(screenSide) X(fpHeight) X(screenHeight) X(fpDistance)
+        X(screenDistance) X(curvedScreen) X(curvedArc) X(guiScale)
+#undef X
+        if (j.contains("guiScale")) c.autoGuiScale = false; // Java: "guiScale" turns on overrideGuiScale
+    } catch (...) {
+    }
+}
+} // namespace
+std::vector<std::string> profileNames() {
+    std::vector<std::string> v;
+    for (auto& [k, _] : gProf["profiles"].items()) v.push_back(k);
+    return v;
+}
+std::string addProfileFromCurrent() {
+    int n = int(gProf["profiles"].size()) + 1;
+    while (gProf["profiles"].contains("Profile " + std::to_string(n))) ++n;
+    std::string name = "Profile " + std::to_string(n);
+    gProf["profiles"][name] = placementOf(gCfg);
+    return name;
+}
+bool renameProfile(std::string const& from, std::string const& to) {
+    auto& P = gProf["profiles"];
+    if (to.empty() || !P.contains(from) || (from != to && P.contains(to))) return false;
+    if (from == to) return true;
+    P[to] = P[from];
+    P.erase(from);
+    for (auto& [k, v] : gProf["rules"].items())
+        if (v.is_string() && v.get<std::string>() == from) v = to;
+    return true;
+}
+void updateProfileFromCurrent(std::string const& name) {
+    if (gProf["profiles"].contains(name)) gProf["profiles"][name] = placementOf(gCfg);
+}
+void removeProfile(std::string const& name) {
+    gProf["profiles"].erase(name);
+    std::vector<std::string> drop;
+    for (auto& [k, v] : gProf["rules"].items())
+        if (v.is_string() && v.get<std::string>() == name) drop.push_back(k);
+    for (auto& k : drop) gProf["rules"].erase(k);
+}
+std::string ruleFor(std::string const& target) {
+    auto& R = gProf["rules"];
+    return R.contains(target) && R[target].is_string() ? R[target].get<std::string>() : std::string();
+}
+void setRule(std::string const& target, std::string const& profile) {
+    if (profile.empty()) gProf["rules"].erase(target);
+    else gProf["rules"][target] = profile;
+}
+void saveProfiles() {
+    if (gProfFile.empty()) return;
+    std::ofstream out(gProfFile, std::ios::trunc);
+    if (out) out << gProf.dump(4);
+}
+void reloadProfiles() {
+    std::ifstream pin(gProfFile);
+    gProf = nlohmann::json{{"profiles", nlohmann::json::object()}, {"rules", nlohmann::json::object()}};
+    if (pin) try {
+            nlohmann::json j;
+            pin >> j;
+            if (j.is_object() && j.contains("profiles") && j["profiles"].is_object() && j.contains("rules") && j["rules"].is_object()) gProf = j;
+        } catch (...) {
+        }
+}
+void setOpeningScreen(std::string const& name, bool inventory, bool pause) {
+    gOpenName = name; gOpenInv = inventory; gOpenPause = pause;
+}
+
 void loadConfig(std::filesystem::path const& configDir) {
+    gProfFile = configDir / "SpatialGUI-profiles.json";
+    {
+        std::ifstream pin(gProfFile);
+        if (pin) try {
+                nlohmann::json j;
+                pin >> j;
+                if (j.is_object()) {
+                    if (!j.contains("profiles") || !j["profiles"].is_object()) j["profiles"] = nlohmann::json::object();
+                    if (!j.contains("rules") || !j["rules"].is_object()) j["rules"] = nlohmann::json::object();
+                    gProf = j;
+                }
+            } catch (...) {
+            }
+    }
     gCfgFile = configDir / "SpatialGUI.json";
     std::ifstream in(gCfgFile);
     if (!in) { saveConfig(); return; }
@@ -743,6 +842,16 @@ void setActive(bool on, bool inventory) {
     auto ci = ll::service::getClientInstance();
     if (on && !gActive.load()) {
         if (!cfg().enabled) return;
+        {   // ConfigProfiles rules: exact screen, its category, then "#all"
+            std::string prof = ruleFor(gOpenName);
+            if (prof.empty()) prof = ruleFor(gOpenPause ? "#pause" : gOpenInv ? "#inventory" : "#containers");
+            if (prof.empty()) prof = ruleFor("#all");
+            if (!prof.empty() && gProf["profiles"].contains(prof)) {
+                if (!gProfApplied) gBeforeProfile = gCfg;
+                applyPlacement(gCfg, gProf["profiles"][prof]);
+                gProfApplied = true;
+            }
+        }
         if (gClosing.exchange(false)) { // reopened while gliding back: the saved perspective is still the original one
             gCloseDone      = false;
             gResumeFromLast = true;
@@ -777,6 +886,11 @@ void setActive(bool on, bool inventory) {
         }
         gActive = true;
     } else if (!on && gActive.load()) {
+        if (gProfApplied) { // the profile's placement was for that screen only
+            Config base = gBeforeProfile;
+            gCfg        = base;
+            gProfApplied = false;
+        }
         if (gFirstPerson.load() && cfg().keepFpAngle) gPendingSnap = true;
         if (!gFirstPerson.load() && gSavedPerspective >= 0 && cfg().closeAnim) {
             // third person: glide back first (applyComponent), the perspective comes back when it ends (clientTick)

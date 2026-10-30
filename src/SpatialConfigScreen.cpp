@@ -3,6 +3,7 @@
 // the pause screen (Bedrock has no mod menu) or the F6 menu. Original code for Renderer Foundation.
 #include "SpatialConfigScreen.h"
 #include "SpatialCamera.h"
+#include "SpatialPanel.h"
 
 #include <algorithm>
 #include <atomic>
@@ -29,7 +30,7 @@ struct Field {
     float Config::*f = nullptr;
     float       lo = 0, hi = 1, step = 0.05f;
 };
-const char* kTabs[] = {"General", "Screens", "Rendering", "TP Screen", "FP Screen", "TP Camera", "FP Camera", "Animations", "Auto FOV"};
+const char* kTabs[] = {"General", "Screens", "Rendering", "TP Screen", "FP Screen", "TP Camera", "FP Camera", "Animations", "Auto FOV", "Profiles"};
 constexpr int kTabN = int(sizeof kTabs / sizeof kTabs[0]);
 
 Field B(int tab, const char* l, const char* tip, bool Config::*m) { Field x{tab, l, tip, T::Bool}; x.b = m; return x; }
@@ -195,6 +196,60 @@ void shadowText(ImVec2 p, ImU32 c, const char* t) {
 }
 } // namespace
 
+// Java ConfigProfiles: named placement overrides + which screens use them
+void drawProfiles(float s, float rowW, float rowH, float valueW, float resetW) {
+    auto names = spatialcam::profileNames();
+    shadowText(ImGui::GetCursorScreenPos(), IM_COL32(255, 255, 160, 255), "Profiles: the panel placement of a screen (side, height, distance, scale, first person, curve)");
+    ImGui::Dummy(ImVec2(rowW, rowH * 0.8f));
+    if (mcButton("Save current placement as a new profile", ImVec2(260 * s, rowH - 4 * s))) spatialcam::addProfileFromCurrent();
+    ImGui::Dummy(ImVec2(rowW, 4 * s));
+    static char        renameBuf[64] = "";
+    static std::string renaming;
+    for (auto const& n : names) {
+        ImGui::PushID(n.c_str());
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        if (renaming == n) {
+            ImGui::SetNextItemWidth(160 * s);
+            if (ImGui::InputText("##rn", renameBuf, sizeof renameBuf, ImGuiInputTextFlags_EnterReturnsTrue)) {
+                spatialcam::renameProfile(n, renameBuf);
+                renaming.clear();
+            }
+        } else shadowText(ImVec2(p.x + 6 * s, p.y + 4 * s), kText, n.c_str());
+        float bx = p.x + rowW - 3 * resetW - 10 * s;
+        ImGui::SetCursorScreenPos(ImVec2(bx, p.y));
+        if (mcButton("Rename", ImVec2(resetW, rowH - 4 * s))) { renaming = n; std::snprintf(renameBuf, sizeof renameBuf, "%s", n.c_str()); }
+        ImGui::SetCursorScreenPos(ImVec2(bx + resetW + 4 * s, p.y));
+        if (mcButton("Update", ImVec2(resetW, rowH - 4 * s))) spatialcam::updateProfileFromCurrent(n);
+        ImGui::SetCursorScreenPos(ImVec2(bx + 2 * (resetW + 4 * s), p.y));
+        if (mcButton("Delete", ImVec2(resetW, rowH - 4 * s))) spatialcam::removeProfile(n);
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH + 1 * s));
+        ImGui::PopID();
+    }
+    ImGui::Dummy(ImVec2(rowW, 6 * s));
+    shadowText(ImGui::GetCursorScreenPos(), IM_COL32(255, 255, 160, 255), "Rules: which profile each screen uses (exact screen, then its group, then All screens)");
+    ImGui::Dummy(ImVec2(rowW, rowH * 0.8f));
+    std::vector<std::pair<std::string, std::string>> targets = {{"#all", "All screens"}, {"#inventory", "Inventory"}, {"#containers", "Containers"}, {"#pause", "Pause screen"}};
+    for (auto const& sc : rf::panel::seenPanelScreens()) targets.push_back({sc, sc});
+    for (auto const& [key, label] : targets) {
+        ImGui::PushID(key.c_str());
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        shadowText(ImVec2(p.x + 6 * s, p.y + 4 * s), kText, label.c_str());
+        std::string cur = spatialcam::ruleFor(key);
+        ImGui::SetCursorScreenPos(ImVec2(p.x + rowW - valueW * 2 - 6 * s, p.y));
+        if (mcButton(cur.empty() ? "(normal settings)" : cur.c_str(), ImVec2(valueW * 2, rowH - 4 * s))) { // cycle: none -> each profile
+            std::string next;
+            if (cur.empty()) next = names.empty() ? "" : names[0];
+            else {
+                auto it = std::find(names.begin(), names.end(), cur);
+                next    = (it == names.end() || it + 1 == names.end()) ? "" : *(it + 1);
+            }
+            spatialcam::setRule(key, next);
+        }
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH + 1 * s));
+        ImGui::PopID();
+    }
+}
+
 void open() {
     if (gOpen.load()) return;
     gSnapshot = spatialcam::cfg();
@@ -262,6 +317,7 @@ void draw() {
     Config const  def{};
     float         rowH = 20 * s, valueW = 90 * s, resetW = 70 * s, rowW = ImGui::GetContentRegionAvail().x;
     int           shownTab = -1;
+    if (!searching && gTab == kTabN - 1) drawProfiles(s, rowW, rowH, valueW, resetW);
     for (auto const& f : fields()) {
         if (searching ? !lower_has(f.label, gSearch) : f.tab != gTab) continue;
         if (searching && f.tab != shownTab) { // results grouped under their tab names
@@ -341,8 +397,8 @@ void draw() {
     bool save = mcButton("Save & Quit", ImVec2(bw, 20 * s));
     ImGui::End();
     styleEnd();
-    if (save) { spatialcam::saveConfig(); gOpen = false; }
-    else if (cancel) { c = gSnapshot; gOpen = false; }
+    if (save) { spatialcam::saveConfig(); spatialcam::saveProfiles(); gOpen = false; }
+    else if (cancel) { c = gSnapshot; spatialcam::reloadProfiles(); gOpen = false; }
     if (!gOpen.load()) focused = false;
 }
 
