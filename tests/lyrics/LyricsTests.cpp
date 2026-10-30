@@ -569,6 +569,27 @@ TEST(glyph_builder_neon_passes) {
     buildWordGlyphs(dw, f, c, makeStyle(c, 0), {0, 70, 0}, out);
     CHECK_EQ(out.size(), size_t(3));
 }
+TEST(glyph_builder_italic) { // [BF] italic slant: quads become parallelograms leaning right, top bar text stays upright
+    FontSet fs;
+    CHECK(fs.loadFromJson("lyricsflow_script", readFile("font_test.json"), "x.png"));
+    Font const& f = *fs.get("lyricsflow_script");
+    Config c;
+    c.textStyle = TextStyle::Clean; c.textShadow = 0;
+    DrawWord dw;
+    dw.text = "A"; dw.font = "lyricsflow_script"; dw.origin = {0, 70, 5}; dw.orient = Quat{}; dw.scale = 1.0f; dw.alpha = 1;
+    std::vector<BfGlyphV1> up, it;
+    buildWordGlyphs(dw, f, c, makeStyle(c, 0), {0, 70, 0}, up);
+    c.italic = 0.25f;
+    buildWordGlyphs(dw, f, c, makeStyle(c, 0), {0, 70, 0}, it);
+    CHECK_EQ(it.size(), size_t(1));
+    CHECK_NEAR(up[0].up[0], 0.0, 1e-6);                         // upright: up has no x part
+    CHECK_NEAR(it[0].up[0], 0.25 * double(it[0].up[1]), 1e-5);  // slanted: x leans by italic * height
+    CHECK_NEAR(it[0].up[1], up[0].up[1], 1e-6);                 // same height
+    dw.plain = true; // top bar text
+    it.clear();
+    buildWordGlyphs(dw, f, c, makeStyle(c, 0), {0, 70, 0}, it);
+    CHECK_NEAR(it[0].up[0], 0.0, 1e-6);
+}
 TEST(engine_frame_and_export) {
     Engine e;
     CHECK(e.fonts().loadFromJson("lyricsflow_script", readFile("font_test.json"), "x.png"));
@@ -741,7 +762,7 @@ TEST(top_bar_phases_and_karaoke) {
 }
 
 TEST(preset_frames_render_dump) { // world text for each look, dumped for the CPU preview renderer
-    for (char const* p : {"neon_arena", "aurora_cursive", "wall_gold", "ground_drop"}) {
+    for (char const* p : {"neon_arena", "aurora_cursive", "wall_gold", "wall_coral", "ground_drop"}) {
         gCur = std::string("preset frame ") + p;
         Engine e;
         CHECK(loadRealFonts(e));

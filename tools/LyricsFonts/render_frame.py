@@ -36,16 +36,25 @@ def homography(src, dst):
     return vt[-1].reshape(3, 3)
 
 
-def main():
-    d = json.loads(pathlib.Path(sys.argv[1]).read_text())
-    W = int(sys.argv[3]) if len(sys.argv) > 3 else 1280
+_ATLAS_CACHE = {}
+
+
+def load_atlas(p):
+    if p not in _ATLAS_CACHE:
+        _ATLAS_CACHE[p] = np.asarray(Image.open(p).convert('L'), np.float32) / 255.0
+    return _ATLAS_CACHE[p]
+
+
+def render(d, W, img=None):
+    """Draw the dump's glyphs over img (H x W x 3 float, linear 0..1); returns img. img=None: dusk gradient."""
     H = int(round(W / d['aspect']))
-    atlases = [np.asarray(Image.open(p).convert('L'), np.float32) / 255.0 for p in d['atlases']]
+    atlases = [load_atlas(p) for p in d['atlases']]
     r, u, f = camera(d['yaw'], d['pitch'])
     t = math.tan(math.radians(d['fov']) / 2)
-    img = np.zeros((H, W, 3), np.float32)
-    yy = np.linspace(0, 1, H)[:, None, None]
-    img[:] = np.concatenate([0.05 + 0.10 * yy, 0.05 + 0.08 * yy, 0.13 + 0.12 * yy], -1)  # dusk-sky gradient backdrop
+    if img is None:
+        img = np.zeros((H, W, 3), np.float32)
+        yy = np.linspace(0, 1, H)[:, None, None]
+        img[:] = np.concatenate([0.05 + 0.10 * yy, 0.05 + 0.08 * yy, 0.13 + 0.12 * yy], -1)  # dusk-sky gradient backdrop
 
     def to_px(p, screen):
         if screen:
@@ -127,6 +136,12 @@ def main():
         rgb, aa = rgb * k[..., None], aa * k
         reg = img[y0:y1, x0:x1]
         reg[:] = rgb + reg * (1 - aa[..., None])
+    return img
+
+
+def main():
+    d = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    img = render(d, int(sys.argv[3]) if len(sys.argv) > 3 else 1280)
     Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8)).save(sys.argv[2])
     print('wrote', sys.argv[2], f'({len(d["glyphs"])} glyphs)')
 

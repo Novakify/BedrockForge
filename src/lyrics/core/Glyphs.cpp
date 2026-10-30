@@ -218,8 +218,9 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
             if (g && !g->empty) {
                 double   cx = double(pen) + (g->pl + g->pr) * 0.5, cy = double(baseline + ps.oy) + (g->pb + g->pt) * 0.5;
                 double   hx = (g->pr - g->pl) * 0.5, hy = (g->pt - g->pb) * 0.5;
-                Vec3     p  = place(cx, cy, double(zEm));
-                Vec3     r  = vecOut(hx, 0), u = vecOut(0, hy);
+                double const sk = w.plain ? 0.0 : double(c.italic); // [BF] slant (not the top bar): quad -> parallelogram, x += sk * y
+                Vec3     p  = place(cx + sk * (cy - double(baseline)), cy, double(zEm));
+                Vec3     r  = vecOut(hx, 0), u = vecOut(sk * hy, hy);
                 BfGlyphV1 q{};
                 q.pos[0] = float(p.x); q.pos[1] = float(p.y); q.pos[2] = float(p.z);
                 q.right[0] = float(r.x); q.right[1] = float(r.y); q.right[2] = float(r.z);

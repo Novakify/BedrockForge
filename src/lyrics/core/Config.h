@@ -92,6 +92,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     C(gradientColor, 0)                /* 0 = theme.b */                                                               \
     B(perLetterColor, false)           /* cycle theme main/a/b per letter */                                           \
     F(hueShiftSpeed, 0.0f)             /* animated hue rotation, turns per second (0 = off) */                         \
+    F(italic, 0.0f)                    /* slant: x shift per unit of height (0.2 = ~11 deg, video B caps) */           \
     /* ---- [BF] falling letters (new feature, not in LyricsFlow) */                                                   \
     B(fallingLetters, false)                                                                                           \
     E(LetterLand, letterLand, LetterLand::Flat)                                                                        \
