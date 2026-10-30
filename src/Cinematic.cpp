@@ -2713,38 +2713,42 @@ void tick() {
                 trail(b);
             };
             // A use while the cursor carries a stack leaves Bedrock's inventory screen dead (its clicks are refused from then
-            // on): the carried food is laid down in the hotbar first (an empty slot, one of the same food, else the hand's
-            // slot with the hand's stack moved into the inventory), that slot is selected for the use and the hand's
-            // slot again after it.
+            // on), and the hotbar selection cannot change under the screen: the carried food goes into the hand's slot, the
+            // hand's own stack into a free slot (the cursor is empty for the use); afterwards the hand's stack comes back.
+            auto slotTarget = [](int i) { return i < 9 ? 10 + i : 19 + (i - 9); };
             if (gCamp.placeStep == 1) {
-                gCamp.oldSlot = game::selectedSlot();
-                gCamp.useSlot = -1;
                 int  cnt;
                 bool carried = gS.carrying || !gS.carriedName.empty();
-                if (!carried) gCamp.useSlot = gCamp.oldSlot;
-                for (int i = 0; i < 9 && carried && gCamp.useSlot < 0; ++i) if (game::inventoryItem(i, cnt).empty()) gCamp.useSlot = i;
-                for (int i = 0; i < 9 && carried && gCamp.useSlot < 0; ++i) if (game::inventoryItem(i, cnt) == gS.carriedName) gCamp.useSlot = i;
-                if (carried && gCamp.useSlot >= 0) inject(10 + gCamp.useSlot, 1);
-                else if (carried) { // the hand's slot: its stack goes into a free place in the inventory
-                    int freeInv = -1;
-                    for (int i = 9; i < 36 && freeInv < 0; ++i) if (game::inventoryItem(i, cnt).empty()) freeInv = i;
-                    if (freeInv < 0) { note("no room"); gCamp.placeStep = 0; gS.tapAt = gS.clock; }
-                    else { gCamp.useSlot = gCamp.oldSlot; inject(10 + gCamp.useSlot, 1); inject(19 + (freeInv - 9), 1); }
+                gCamp.oldSlot = game::selectedSlot();
+                gCamp.useSlot = -1; // where the hand's stack waits
+                gCamp.swapped = false;
+                if (carried) {
+                    bool handFull = !game::inventoryItem(gCamp.oldSlot, cnt).empty();
+                    if (handFull)
+                        for (int i = 0; i < 36 && gCamp.useSlot < 0; ++i) if (i != gCamp.oldSlot && game::inventoryItem(i, cnt).empty()) gCamp.useSlot = i;
+                    if (handFull && gCamp.useSlot < 0) { note("no room"); gCamp.placeStep = 0; gS.tapAt = gS.clock; }
+                    else {
+                        inject(slotTarget(gCamp.oldSlot), 1);
+                        if (handFull) { inject(slotTarget(gCamp.useSlot), 1); gCamp.swapped = true; }
+                    }
                 }
-                if (gCamp.placeStep) { note("laid down"); gCamp.placeStep = 2; gCamp.placeAt = gS.clock; }
-            } else if (gCamp.placeStep == 2 && gS.clock - gCamp.placeAt > 0.45) {
-                note("select");
-                if (gCamp.useSlot != gCamp.oldSlot) game::selectSlot(gCamp.useSlot);
-                gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
-            } else if (gCamp.placeStep == 3 && gS.clock - gCamp.placeAt > (gCamp.useSlot != gCamp.oldSlot ? 0.25 : 0.0)) {
+                if (gCamp.placeStep) { note("into the hand"); gCamp.placeStep = 2; gCamp.placeAt = gS.clock; }
+            } else if (gCamp.placeStep == 2 && gS.clock - gCamp.placeAt > 0.3) {
                 bool emptyCursor = !gS.carrying && gS.carriedName.empty();
-                if ((campCookable(gCamp.hand) && emptyCursor) || gS.clock - gCamp.placeAt > 1.2) {
-                    note(emptyCursor ? "use" : "use (the cursor still carries)");
-                    if (emptyCursor) game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1);
-                    gCamp.placeStep = 4; gCamp.placeAt = gS.clock;
+                if ((campCookable(gCamp.hand) && emptyCursor) || gS.clock - gCamp.placeAt > 1.5) {
+                    note(emptyCursor ? "use" : "use (the cursor still carries: skipped)");
+                    if (emptyCursor && campCookable(gCamp.hand)) game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1);
+                    gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
                 }
-            } else if (gCamp.placeStep == 4 && gS.clock - gCamp.placeAt > 0.3) {
-                if (gCamp.useSlot != gCamp.oldSlot) game::selectSlot(gCamp.oldSlot);
+            } else if (gCamp.placeStep == 3 && gS.clock - gCamp.placeAt > 0.35) {
+                if (gCamp.swapped) { // the food left in hand to the waiting slot, the hand's stack back into the hand
+                    note("the hand's stack back");
+                    inject(slotTarget(gCamp.oldSlot), 1);
+                    inject(slotTarget(gCamp.useSlot), 1);
+                    inject(slotTarget(gCamp.oldSlot), 1);
+                }
+                gCamp.placeStep = 4; gCamp.placeAt = gS.clock;
+            } else if (gCamp.placeStep == 4 && gS.clock - gCamp.placeAt > 0.8) {
                 note("placed");
                 gCamp.placeStep = 0;
             }
@@ -3107,6 +3111,8 @@ float4 PS(V2P i) : SV_Target {
         // occl.y: the stack count's own box (uv, hull[0]) on a block's cube faces: its digits and their shadow
         if (occl.y > 0.5 && all(i.uv >= hull[0].xy) && all(i.uv <= hull[0].zw) && (all(c > 0.96) || all(abs(c - 0.247) < 0.03))) u = 0;
     }
+    // occl.w: the screen's dim layer (translucent black over the whole window) is not part of the icon
+    if (occl.w > 0.5 && u.a < 0.85 && max(u.r, max(u.g, u.b)) < 0.06) u = 0;
     // occl.z: the dark marks in a box (uv, hull[1]) are painted over in key0 (the book window's close button on its page)
     if (occl.z > 0.5 && all(i.uv >= hull[1].xy) && all(i.uv <= hull[1].zw) && max(u.r, max(u.g, u.b)) < 0.35 * max(u.a, 1e-3)) u = float4(key0.rgb, 1);
     return float4(u.rgb * color.rgb, u.a) * color.a * mode.w;
@@ -4428,7 +4434,7 @@ float faceShade(V3 n) {
 // A block's inventory icon is the cube seen at the GUI angle (45 deg round, 30 deg down): every point of the cube's
 // three visible faces can be found in the icon, so the icon unwraps back onto a real cube (ItemPlacer's block cubes).
 // The icon's own lighting (bright top, shaded sides) comes along. Hidden faces repeat the visible ones.
-struct IconSrc { Rect inside; float box[4]; bool snap = false; bool count = false; float countBox[4] = {}; }; // slot inside (screen px) + icon bounding box in 0..1 of it (+ the stack count's)
+struct IconSrc { Rect inside; float box[4]; bool snap = false; bool count = false; float countBox[4] = {}; bool dim = false; }; // slot inside (screen px) + icon bounding box in 0..1 of it (+ the stack count's)
 /// the carried stack's whole icon (its bounding box measured in the middle 16/18 of a slot, widened to the whole icon
 /// where it touched that window's edge)
 IconSrc carriedSrc(Layout const& L) {
@@ -4436,6 +4442,7 @@ IconSrc carriedSrc(Layout const& L) {
     carriedCentre(L, cx, cy);
     float   big = L.slot * kCarrySize, in = L.slot * 16.0f / 18.0f, m = (big - in) * 0.5f;
     IconSrc cs{{cx - big * 0.5f, cy - big * 0.5f, big, big}, {0, 0, 1, 1}};
+    cs.dim = true; // the carried stack is drawn over the screen's dim layer
     for (int k = 0; k < 4; ++k) {
         float f = gS.iconBox[10][k];
         cs.box[k] = (f <= 0.001f && k < 2) || (f >= 0.999f && k >= 2) ? (k < 2 ? 0.0f : 1.0f) : (f * in + m) / big;
@@ -4488,6 +4495,7 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
             }
             if (!worldQuad4(cam, b, wp, q)) continue;
             keyed(q, L, opacity, src.snap);
+            if (src.dim) { q.occl[3] = 1; q.mode[1] = 0; } // no slot ground to key away, the white of a blade stays
             if (src.count) { // the digits and the shadow one pixel past them
                 float px = 1.0f / 16.0f;
                 q.occl[1]    = 1;
@@ -4519,6 +4527,7 @@ void placeItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const&
     // ItemDisplayContext.FIXED turns the model half round: lying flat, the sprite is seen from its back (mirrored)
     setRect(q.uv, (src.inside.x + src.inside.w) / L.W, src.inside.y / L.H, src.inside.x / L.W, (src.inside.y + src.inside.h) / L.H);
     keyed(q, L, opacity, src.snap);
+            if (src.dim) { q.occl[3] = 1; q.mode[1] = 0; } // no slot ground to key away, the white of a blade stays
     q.key0[3] = 1; // hide the stack count
     q.key1[3] = 1; // the quad's left is the icon's right
     gQuads.push_back(q);
@@ -4546,6 +4555,7 @@ void cardItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
     if (!worldQuad(cam, b, center, h * (size / 2), V3{0, size / 2, 0}, q)) return;
     setRect(q.uv, src.inside.x / L.W, src.inside.y / L.H, (src.inside.x + src.inside.w) / L.W, (src.inside.y + src.inside.h) / L.H);
     keyed(q, L, opacity, src.snap);
+            if (src.dim) { q.occl[3] = 1; q.mode[1] = 0; } // no slot ground to key away, the white of a blade stays
     q.key0[3] = 1; // hide the stack count
     gQuads.push_back(q);
 }
@@ -7137,6 +7147,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 Quad  q;
                 pixelQuad(mx - half, my - half, mx + half, my + half, int(W), int(H), q);
                 setRect(q.uv, cs.inside.x / L.W, cs.inside.y / L.H, (cs.inside.x + cs.inside.w) / L.W, (cs.inside.y + cs.inside.h) / L.H);
+                q.occl[3] = 1;
                 q.mode[0] = 1; q.mode[3] = 1;
                 gQuads.push_back(q);
             }
