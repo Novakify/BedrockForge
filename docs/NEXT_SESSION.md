@@ -1,3 +1,16 @@
+# Next session handoff (updated 2026-10-30 ~21:45 UTC) - READ FIRST
+- Spatial GUI 2.x parity pass (RF cinematic up to 20529b2 = e59, installed + checked): camera moves in front of
+  walls (8-ray collision), autoDetectCameraMode, fallbackToFirstPersonOnBlockCollision option (default off like Java),
+  avatar max yaw/pitch + mirrorHeadMovement, elytra offsets, lockFirstPersonYaw, world lighting tint, point filtering,
+  arm swing on first person click, curved screen (first person, VSPanelCurved + cylinder ray-pick), screen profiles
+  (config/SpatialGUI-profiles.json, Profiles tab: save/rename/update/delete + rules for All/Inventory/Containers/Pause/
+  seen screens). Settings screen click bugs fixed (buttons take the press; tooltips only over labels).
+- Still missing vs Java 2.x: the drag-gizmo layout editor (EditorScreen/EditorGizmo/history/help), keybinds (Java:
+  open config / editor / mouse-free / profile picker - ask Fernando before adding keys), render scale + anisotropic
+  (no Bedrock equivalent: the UI is drawn by the game at window resolution), head pitch on the avatar (Bedrock look
+  pitch would carry over), Minecraft font in the settings screen.
+- PC: test config reset (uiDebugUseKey 0, SpatialGUI.json from .bak-e54). The hung e47 copy is still running.
+
 # Next session handoff (updated 2026-10-30 ~20:05 UTC) - READ FIRST
 - Spatial GUI polish VERIFIED in game (e50-e53): Java framing FOV now works by narrowing the world camera's projection
   in mce::Camera::updateViewMatrixDependencies (the CameraComponent FOV write is ignored in third person); player big
