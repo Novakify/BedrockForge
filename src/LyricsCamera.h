@@ -19,6 +19,9 @@ struct CameraSnap {
 };
 
 void       installCamera();
+/// The hook stays installed but does nothing (no game reads at all) until this is on. LyricsPass sets it each Present:
+/// on only while BF actually publishes an active lyrics frame and "Draw lyrics" is checked.
+void       setCameraWanted(bool on);
 void       uninstallCamera();
 CameraSnap camera();
 

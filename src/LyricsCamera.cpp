@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <atomic>
 #include <mutex>
 
 #include <glm/glm.hpp>
@@ -30,12 +31,14 @@ int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+std::atomic<bool> gWanted{false};
+
 void onCamera(mce::Camera& cam) {
+    if (!gWanted.load(std::memory_order_relaxed)) return; // lyrics not drawing: touch nothing
     glm::mat4 const& P = *cam.projectionMatrixStack->top()._m;
-    std::lock_guard  l(gMutex);
-    ++gSnap.calls;
     bool persp = std::fabs(P[3][3]) < 1e-4f && std::fabs(P[2][3]) > 0.5f && P[1][1] > 0.05f;
     if (!persp) return;
+    // game reads first, outside the lock (lesson from cinematic 22bee91: no game calls under our locks)
     auto ci = ll::service::getClientInstance();
     if (!ci) return;
     auto* lp = ci->getLocalPlayer();
@@ -45,17 +48,21 @@ void onCamera(mce::Camera& cam) {
     glm::vec3 eye(feet.x, feet.y + 1.62f, feet.z);
     glm::vec3 pos = *cam.mPosition;
     if (glm::length(pos - eye) >= 8.0f) return; // not the world camera
-    ++gSnap.chosen;
-    gSnap.valid = true;
-    gSnap.pos[0] = pos.x; gSnap.pos[1] = pos.y; gSnap.pos[2] = pos.z;
+    CameraSnap s;
+    s.valid = true;
+    s.pos[0] = pos.x; s.pos[1] = pos.y; s.pos[2] = pos.z;
     glm::vec3 r = *cam.mRight, u = *cam.mUp, f = *cam.mForward;
-    std::memcpy(gSnap.right, &r[0], sizeof gSnap.right);
-    std::memcpy(gSnap.up, &u[0], sizeof gSnap.up);
-    std::memcpy(gSnap.forward, &f[0], sizeof gSnap.forward);
-    std::memcpy(gSnap.proj, &P[0][0], sizeof gSnap.proj);
-    gSnap.fovYDeg = 2.0f * std::atan(1.0f / P[1][1]) * 57.2957795f;
-    gSnap.aspect  = P[1][1] / P[0][0];
-    gSnap.atMs    = nowMs();
+    std::memcpy(s.right, &r[0], sizeof s.right);
+    std::memcpy(s.up, &u[0], sizeof s.up);
+    std::memcpy(s.forward, &f[0], sizeof s.forward);
+    std::memcpy(s.proj, &P[0][0], sizeof s.proj);
+    s.fovYDeg = 2.0f * std::atan(1.0f / P[1][1]) * 57.2957795f;
+    s.aspect  = P[1][1] / P[0][0];
+    s.atMs    = nowMs();
+    std::lock_guard l(gMutex); // only plain data under the lock
+    s.calls  = gSnap.calls + 1;
+    s.chosen = gSnap.chosen + 1;
+    gSnap    = s;
 }
 } // namespace
 
@@ -76,6 +83,7 @@ void installCamera() {
     RfLyricsCameraHook::hook();
     gHooked = true;
 }
+void setCameraWanted(bool on) { gWanted.store(on, std::memory_order_relaxed); }
 void uninstallCamera() {
     if (!gHooked) return;
     RfLyricsCameraHook::unhook();
