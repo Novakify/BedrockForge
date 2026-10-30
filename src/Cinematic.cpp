@@ -162,6 +162,10 @@ struct Station {
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
     std::vector<V3> shelves;      // EnchantStation.shelves: the bookshelves that empower the table (centres)
     V3 center() const {
+        if (isFurnace(kind)) { // FurnaceStation.center = FurnaceZones.point(pos, side, 0.5, 0.5, 0): the middle of the front
+            V3 f = dirVec(side);
+            return {bx + 0.5 + f.x * 0.5, by + 0.5, bz + 0.5 + f.z * 0.5};
+        }
         return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography || kind == Kind::Loom || kind == Kind::Enchanting ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
     }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
