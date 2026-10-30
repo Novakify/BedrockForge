@@ -110,17 +110,20 @@ bool createStatic(ID3D12Device* device) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0};
     D3D12_ROOT_PARAMETER   params[2]{};
     params[0].ParameterType   = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants       = {0, 0, 40};
+    params[0].Constants       = {0, 0, 44};
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[1].ParameterType   = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable = {1, &range};
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_STATIC_SAMPLER_DESC smp{};
-    smp.Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-    smp.AddressU = smp.AddressV = smp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    smp.MaxLOD           = D3D12_FLOAT32_MAX;
-    smp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_ROOT_SIGNATURE_DESC rs{2, params, 1, &smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    D3D12_STATIC_SAMPLER_DESC smp[2]{};
+    smp[0].Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    smp[0].AddressU = smp[0].AddressV = smp[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    smp[0].MaxLOD           = D3D12_FLOAT32_MAX;
+    smp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    smp[1]                  = smp[0];
+    smp[1].Filter           = D3D12_FILTER_MIN_MAG_MIP_POINT; // useLinearFiltering off: crisp GUI pixels
+    smp[1].ShaderRegister   = 1;
+    D3D12_ROOT_SIGNATURE_DESC rs{2, params, 2, smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, err;
     HRESULT          hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
     if (FAILED(hr)) { fail("D3D12SerializeRootSignature", hr); return false; }
@@ -361,7 +364,7 @@ void writeDiag();
 LARGE_INTEGER gOpenQpc{}, gCloseQpc{};
 float         gCloseFromMs = 0.0f; // how far the open animation had got when the screen closed
 bool          gHaveLastGeom = false;
-float         gLastC[40]{};       // the last frame's panel constants (the close animation reuses its placement)
+float         gLastC[44]{};       // the last frame's panel constants (the close animation reuses its placement)
 float         gGuiMag = 1.0f;
 float         gDrawFrac[2] = {1.0f, 1.0f};
 void toggle() {
@@ -576,13 +579,13 @@ void blurPasses(ID3D12GraphicsCommandList* list, float* c, float sigma) {
     // horizontal: full-size world in, half-size out (one half-size texel = 1 / gBlurW in uv)
     c[36] = sh; c[37] = 1.0f / float(gBlurW); c[38] = 0.0f; c[39] = 0.0f;
     list->OMSetRenderTargets(1, &rtA, FALSE, nullptr);
-    list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
+    list->SetGraphicsRoot32BitConstants(0, 44, c, 0);
     list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
     list->DrawInstanced(3, 1, 0, 0);
     barrier(list, gBlurA.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     c[37] = 0.0f; c[38] = 1.0f / float(gBlurH);
     list->OMSetRenderTargets(1, &rtB, FALSE, nullptr);
-    list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
+    list->SetGraphicsRoot32BitConstants(0, 44, c, 0);
     list->SetGraphicsRootDescriptorTable(1, srvGpu(3));
     list->DrawInstanced(3, 1, 0, 0);
     barrier(list, gBlurA.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -657,7 +660,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 float s0    = sc.startScalePct / 100.0f;
                 float scale = sc.scaleAnim ? s0 + (1.0f - s0) * spatialcam::applyEasing(sc.easing, tt) : 1.0f;
                 float fd    = (sc.fade ? std::min(1.0f, ms / float(std::max(1, sc.fadeMs))) : 1.0f) * (sc.screenAlpha / 255.0f);
-                float c[40];
+                float c[44];
                 std::memcpy(c, gLastC, sizeof c);
                 // shrink the four corners towards their centre (clip space, perspective kept)
                 float m[4] = {0, 0, 0, 0};
@@ -689,7 +692,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                     list->RSSetViewports(1, &vp);
                     list->RSSetScissorRects(1, &scr);
                 }
-                list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
+                list->SetGraphicsRoot32BitConstants(0, 44, c, 0);
                 list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
                 list->SetPipelineState(gPsoWorld.Get());
                 list->DrawInstanced(3, 1, 0, 0);
@@ -762,7 +765,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     }
     gDrawFrac[0] = a;
     gDrawFrac[1] = bb2;
-    float c[40]{};
+    float c[44]{};
     toClip(g, -a * g.hw, bb2 * g.hh, c + 0);   // TL
     toClip(g, a * g.hw, bb2 * g.hh, c + 4);    // TR
     toClip(g, -a * g.hw, -bb2 * g.hh, c + 8);  // BL
@@ -812,6 +815,11 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             if (any && x1 > x0) { c[32] = x0; c[33] = y0; c[34] = x1; c[35] = y1; }
         }
     }
+    if (gS.javaStyle) {
+        spatialcam::View lv = spatialcam::view();
+        c[40] = lv.lightTint;                                  // enableWorldLightingTint
+        c[41] = spatialcam::cfg().linearFiltering ? 0.0f : 1.0f; // point sampling of the GUI
+    } else c[40] = 1.0f;
     bool hudFlat = gKeepHud.load() && gS.javaStyle;
     if (hudFlat) {
         // the HUD strip at the bottom middle: hotbar (182 x 22 GUI px) with the offhand slot, xp bar, hearts / food,
@@ -840,7 +848,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         list->RSSetViewports(1, &vp);
         list->RSSetScissorRects(1, &sc);
     }
-    list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
+    list->SetGraphicsRoot32BitConstants(0, 44, c, 0);
     if (gS.javaStyle && redirected && gEnabled.load()) { std::memcpy(gLastC, c, sizeof c); gHaveLastGeom = true; }
     list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
     list->SetPipelineState(gPsoWorld.Get());
@@ -1313,6 +1321,12 @@ std::atomic<long> gMsSeq{0};
 
 void onMouse(gi::GameInputMouseState* st, bool game) {
     if (!st) return;
+    {   // swingArmOnFirstPersonClick: a click on the panel in first person swings the arm
+        static bool wasL = false;
+        bool        l    = (unsigned(st->buttons) & unsigned(gi::GameInputMouseLeftButton)) != 0;
+        if (game && l && !wasL) spatialcam::requestSwing();
+        if (game) wasL = l;
+    }
     long seq = ++gMsSeq;
     long long inX = st->absolutePositionX, inY = st->absolutePositionY;
     ++gMsCalls;

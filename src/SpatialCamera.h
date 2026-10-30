@@ -68,6 +68,15 @@ struct Config {
     bool  dropShadow = true;
     int   dropShadowAlpha = 120;
     bool  closeAnim = true; // enableCloseAnimation: the panel shrinks / fades out and the camera glides back
+    // Java 2.x options
+    bool  autoDetectCameraMode = false;        // first person mode when the game is in first person, third otherwise
+    bool  fallbackFpOnBlock    = false;        // fallbackToFirstPersonOnBlockCollision (else the camera moves in)
+    int   avatarMaxYaw = 40, avatarMaxPitch = 25; // avatarMaxYawOffset / avatarMaxPitchOffset (head follows the pointer)
+    bool  mirrorHeadMovement = false;
+    bool  lockFpYaw = false;                    // lockFirstPersonYaw: crosshair free look limited to +-90 degrees
+    float elytraSide = -0.5f, elytraHeight = -0.4f; // elytraFlyingSideOffset / elytraFlyingHeightOffset
+    bool  lightTint = false;                    // enableWorldLightingTint: the panel darkens in dark places
+    float lightTintStrength = 50.0f;
 };
 Config& cfg();
 void    loadConfig(std::filesystem::path const& configDir);
@@ -91,6 +100,7 @@ struct View {
     // third person pose of this frame (world space, Minecraft yaw/pitch degrees): keeps the player sharp in the blur
     bool  havePose = false;
     float camPos[3]{}, camYaw = 0.0f, camPitch = 0.0f, feet[3]{};
+    float lightTint = 1.0f; // panel brightness (enableWorldLightingTint), 1 = unchanged
 };
 
 /// Java SpatialGUIConfig.calculateAutoGuiScale(width, height): largest scale keeping >= 320 x 240 GUI units.
@@ -110,6 +120,8 @@ void setActive(bool on, bool inventory = false);
 bool active();
 /// Client thread, every screen-stack tick: finishes the close glide (restores the perspective).
 void clientTick();
+/// First person panel clicked (swingArmOnFirstPersonClick): the arm swings on the next client tick.
+void requestSwing();
 /// The open screen is wide (recipe book shown): the third person camera eases sideways (wideScreenShift).
 void setWideScreen(bool wide);
 View view();

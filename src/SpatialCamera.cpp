@@ -42,6 +42,8 @@
 #include "mc/deps/renderer/Camera.h"
 #include "mc/deps/renderer/MatrixStack.h"
 #include "mc/world/actor/Actor.h"
+#include "mc/world/actor/ActorSwingSource.h"
+#include "mc/world/item/HandSlot.h"
 #include "mc/entity/components/ActorHeadRotationComponent.h"
 #include "mc/entity/components/ActorRotationComponent.h"
 #include "mc/entity/components/MobBodyRotationComponent.h"
@@ -158,8 +160,9 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
     Config const& c   = cfg();
     float         sgn = c.mirrorThirdPerson ? -1.0f : 1.0f;
     float bodyRot = yawP + c.avatarBodyRot * sgn;
-    float yaw     = mx * 40.0f + c.avatarBaseYaw * sgn;
-    float pitch   = std::clamp(my * 25.0f, -60.0f, 60.0f);
+    if (c.mirrorHeadMovement) mx = -mx;
+    float yaw     = mx * float(c.avatarMaxYaw) + c.avatarBaseYaw * sgn;
+    float pitch   = std::clamp(my * float(c.avatarMaxPitch), -60.0f, 60.0f);
     if (!gAvatar.smoothInit) { gAvatar.smoothInit = true; gAvatar.sYaw = yaw; gAvatar.sPitch = pitch; }
     else {
         gAvatar.sYaw   = rotLerp(0.15f, gAvatar.sYaw, yaw);
@@ -197,6 +200,29 @@ bool tpSpotBlocked(Actor& actor) {
         if (!blk.isAir() && blk.mCachedComponentData->mIsSolid) return true;
     }
     return false;
+}
+
+// CameraUtil.adjustCameraPositionForCollision: eight rays from around the eyes (+-0.2) to around the camera spot;
+// the camera comes in to the nearest block they hit
+glm::vec3 collideCamera(Actor& actor, glm::vec3 const& eye, glm::vec3 const& target) {
+    glm::vec3 delta = target - eye;
+    float     maxD  = glm::length(delta);
+    if (maxD < 0.001f) return target;
+    auto& bs   = actor.getDimensionBlockSource();
+    float best = maxD;
+    int   steps = std::max(8, int(maxD / 0.05f));
+    for (int k = 0; k < 8; ++k) {
+        glm::vec3 off(((k & 1) * 2 - 1) * 0.2f, ((k >> 1 & 1) * 2 - 1) * 0.2f, ((k >> 2 & 1) * 2 - 1) * 0.2f);
+        for (int i = 1; i <= steps; ++i) {
+            float     t = maxD * float(i) / float(steps);
+            if (t >= best) break;
+            glm::vec3 p = eye + off + delta * (t / maxD);
+            BlockPos  bp(int(std::floor(p.x)), int(std::floor(p.y)), int(std::floor(p.z)));
+            Block const& blk = bs.getBlock(bp);
+            if (!blk.isAir() && blk.mCachedComponentData->mIsSolid) { best = t; break; }
+        }
+    }
+    return eye + delta * (best / maxD);
 }
 
 float easeInOutSine(float t) { return float(-(std::cos(3.14159265358979 * double(t)) - 1.0) / 2.0); }
@@ -510,7 +536,8 @@ void applyComponent() {
         float dx = 0.0f, dy = 0.0f;
         if (rf::panel::grabCursorDelta(dx, dy, gGrabReset)) gGrabReset = false;
         const float sens = 0.15f; // CameraUtil.calculateMouseSensitivity at the default sensitivity, degrees per pixel
-        gFreeYaw   = std::clamp(gFreeYaw + dx * sens, -90.0f, 90.0f);
+        gFreeYaw   = gFreeYaw + dx * sens;
+        if (c.lockFpYaw) gFreeYaw = std::clamp(gFreeYaw, -90.0f, 90.0f);
         gFreePitch = std::clamp(gFreePitch + dy * sens, -90.0f - pitchP, 90.0f - pitchP);
         targetYaw   = yawP + gFreeYaw;
         targetPitch = pitchP + gFreePitch;
@@ -542,6 +569,11 @@ void applyComponent() {
         targetPitch = c.camPitch + (c.tpParallaxOff ? 0.0f : my * 180.0f * c.tpSensPitch);
         float r     = yawP * kDeg;
         target      = feet + glm::vec3(std::sin(r) * d + std::cos(r) * side, h, -std::cos(r) * d + std::sin(r) * side);
+        if (actor.isGliding()) { // elytraFlyingSideOffset / elytraFlyingHeightOffset
+            float es = c.mirrorThirdPerson ? -c.elytraSide : c.elytraSide;
+            target += glm::vec3(std::cos(r) * es, c.elytraHeight, std::sin(r) * es);
+        }
+        target = collideCamera(actor, eye, target); // CameraUtil.adjustCameraPositionForCollision
     }
     float     dur      = float(std::max(1, c.transitionMs));
     float     t        = std::min(1.0f, (elapsed + c.transitionSkipPct / 100.0f * dur) / dur);
@@ -572,6 +604,16 @@ void applyComponent() {
     gView.fpPitch0    = gBaseXRot;
     gView.playerYaw   = yawP;
     gView.havePose    = !fp;
+    {   // InventoryRenderer.computeLightingTint: 255 - strength * (1 - light), smoothed
+        static float smooth = -1.0f;
+        float        tgt    = 1.0f;
+        if (c.lightTint) {
+            float light = std::clamp(actor.getDimensionBlockSource().getBrightness(BlockPos(int(std::floor(eye.x)), int(std::floor(eye.y)), int(std::floor(eye.z)))), 0.0f, 1.0f);
+            tgt         = std::clamp(1.0f - c.lightTintStrength / 255.0f * (1.0f - light), 0.0f, 1.0f);
+        }
+        smooth          = smooth < 0.0f ? tgt : smooth + (tgt - smooth) * 0.1f;
+        gView.lightTint = smooth;
+    }
     gView.camPos[0] = camPos.x; gView.camPos[1] = camPos.y; gView.camPos[2] = camPos.z;
     gView.camYaw = camYaw; gView.camPitch = camPitch;
     gView.feet[0] = feet.x; gView.feet[1] = feet.y; gView.feet[2] = feet.z;
@@ -654,7 +696,8 @@ float applyEasing(Easing e, float t) { // AnimationUtil
     X(creativeInventory) X(renderScalePct) X(linearFiltering) X(anisotropicFiltering) X(recipeBookShrink) X(hideHandsFp)    \
     X(hideShieldFp) X(swingArmFp) X(curvedScreen) X(curvedArc) X(avatarBaseYaw) X(avatarBodyRot) X(crosshairFp)            \
     X(keepFpAngle) X(inheritOrigin) X(wideScreenShift) X(overrideFov) X(targetFov) X(worldBlur) X(worldBlurStrength) X(blurKeepPlayer)   \
-    X(dropShadow) X(dropShadowAlpha) X(closeAnim)
+    X(dropShadow) X(dropShadowAlpha) X(closeAnim) X(autoDetectCameraMode) X(fallbackFpOnBlock) X(avatarMaxYaw) X(avatarMaxPitch)   \
+    X(mirrorHeadMovement) X(lockFpYaw) X(elytraSide) X(elytraHeight) X(lightTint) X(lightTintStrength)
 
 void loadConfig(std::filesystem::path const& configDir) {
     gCfgFile = configDir / "SpatialGUI.json";
@@ -707,8 +750,9 @@ void setActive(bool on, bool inventory) {
             gSavedPerspective = -1;
         }
         bool fp = inventory ? cfg().fpInventory : cfg().fpContainers;
+        if (cfg().autoDetectCameraMode && ci) fp = ci->getOptions().getPlayerViewPerspective() == 0; // SpatialGUIClient.shouldUseFirstPersonMode
         gForcedFp = false;
-        if (!fp && ci) {
+        if (!fp && ci && cfg().fallbackFpOnBlock) {
             if (auto* lp = ci->getLocalPlayer()) {
                 if (tpSpotBlocked(*lp)) { fp = true; gForcedFp = true; } // Java: switchedToFirstPersonDueToBlock
             }
@@ -757,7 +801,13 @@ void setActive(bool on, bool inventory) {
     }
 }
 bool active() { return gActive.load(); }
+std::atomic_bool gSwingReq{false};
+void requestSwing() { if (gActive.load() && gFirstPerson.load() && cfg().swingArmFp) gSwingReq = true; }
 void clientTick() {
+    if (gSwingReq.exchange(false)) {
+        if (auto ci = ll::service::getClientInstance())
+            if (auto* lp = ci->getLocalPlayer()) static_cast<Actor&>(*lp).swing(ActorSwingSource::Interact, HandSlot::Mainhand);
+    }
     if (!gCloseDone.exchange(false)) return;
     gClosing = false;
     auto ci  = ll::service::getClientInstance();

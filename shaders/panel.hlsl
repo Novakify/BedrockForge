@@ -5,18 +5,20 @@
 //   c5  = x: frame line strength (0 = no frame, Java look), y: 1 = drop the dim background layer, zw: drawn uv fraction
 //   c6  = the HUD strip (hotbar, hearts) kept flat under the panel, uv rect x0 y0 x1 y1 (x1 <= x0: none)
 //   c7  = x: world blur radius in pixels (0 = none), y: drop shadow alpha (0 = none), zw: drop shadow uv offset
+//   c10 = x: panel brightness (enableWorldLightingTint), y: 1 = point sampling (useLinearFiltering off)
 //   c9  = PSBlur1D: x sigma (texels of the output), yz uv step between taps
 //   c8  = the player on screen (uv rect x0 y0 x1 y1; x1 <= x0: none) - kept sharp in the world blur
 // t0 = world (back buffer copy, UI already redirected away), t1 = UI target (premultiplied-ish, transparent clear)
 cbuffer Params : register(b0) {
     float4 corner[4];
     float4 misc;
-    float4 pad[5];
+    float4 pad[6];
 };
 Texture2D    tWorld : register(t0);
 Texture2D    tUi    : register(t1);
 Texture2D    tBlur  : register(t2); // the world blurred (half size, PSBlur1D twice)
 SamplerState sLin   : register(s0);
+SamplerState sPoint : register(s1);
 
 struct V2P { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
 
@@ -82,7 +84,7 @@ V2P VSPanel(uint id : SV_VertexID) {
 bool inHud(float2 uv) { return pad[1].z > pad[1].x && all(uv >= pad[1].xy) && all(uv <= pad[1].zw); }
 
 float4 uiAt(float2 uv) {
-    float4 u = tUi.SampleLevel(sLin, uv, 0);
+    float4 u = pad[5].y > 0.5 ? tUi.SampleLevel(sPoint, uv, 0) : tUi.SampleLevel(sLin, uv, 0);
     if (inHud(uv)) u = 0; // the HUD strip is drawn flat (PSHud), not on the panel
     // c5.y: drop the screen's dim background layer (near-black, partly transparent) - only the GUI itself shows
     if (pad[0].y > 0.5 && max(u.r, max(u.g, u.b)) < 0.03 && u.a < 0.85) u = 0;
@@ -105,6 +107,7 @@ float4 PSPanel(V2P i) : SV_Target {
     float  edge = (1.0 - smoothstep(0.0, 0.004, min(e.x, e.y))) * pad[0].x;
     float3 rgb  = lerp(u.rgb, float3(0.85, 0.85, 0.85) * max(a, 0.6), edge);
     a           = max(a, edge * 0.6);
+    rgb *= pad[5].x;                // world lighting tint (premultiplied: colour only)
     return float4(rgb, a) * misc.y; // premultiplied output (blend ONE / INV_SRC_ALPHA)
 }
 

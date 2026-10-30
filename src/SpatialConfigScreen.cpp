@@ -50,6 +50,8 @@ std::vector<Field> const& fields() {
         B(0, "Auto Calculate GUI Scale", "Java's automatic GUI scale for the panel", &Config::autoGuiScale),
         I(0, "GUI Scale", "Panel GUI scale when not automatic", &Config::guiScale, 1, 6),
         B(0, "Use Crosshair for First Person", "First person: the mouse turns the view, a crosshair picks slots", &Config::crosshairFp),
+        B(0, "Auto Detect Camera Mode", "First person panels while the game is in first person, third person otherwise", &Config::autoDetectCameraMode),
+        B(0, "Fallback to First Person on Block Collision", "Off: the camera moves in front of walls instead", &Config::fallbackFpOnBlock),
         B(1, "Pause Screen", "", &Config::pauseScreen), B(1, "All Screens", "", &Config::allScreens),
         B(1, "Inventory", "", &Config::inventory), B(1, "Creative Inventory", "", &Config::creativeInventory),
         B(1, "Chests", "", &Config::chests), B(1, "Shulker Boxes", "", &Config::shulkerBoxes),
@@ -70,6 +72,9 @@ std::vector<Field> const& fields() {
         F(2, "Recipe Book Shrink Factor", "", &Config::recipeBookShrink, 1, 3),
         B(2, "Hide Hands in First Person", "", &Config::hideHandsFp), B(2, "Hide Shield in First Person", "", &Config::hideShieldFp),
         B(2, "Swing Arm on First Person Click", "", &Config::swingArmFp),
+        B(2, "Use Linear Filtering", "Off: crisp, pixel-sharp GUI on the panel", &Config::linearFiltering),
+        B(2, "World Lighting Tint", "The panel darkens in dark places", &Config::lightTint),
+        F(2, "Lighting Tint Strength", "", &Config::lightTintStrength, 0, 120, 1),
         F(3, "Screen Distance", "How far in front of the camera", &Config::screenDistance, 0.1f, 10),
         F(3, "Screen Side Offset", "Horizontal offset of the screen", &Config::screenSide, -5, 5),
         F(3, "Screen Height Offset", "", &Config::screenHeight, -3, 3),
@@ -88,6 +93,11 @@ std::vector<Field> const& fields() {
         I(5, "Transition Skip Percentage", "", &Config::transitionSkipPct, 0, 100),
         F(5, "Head Base Yaw Offset", "Avatar head turn toward the panel", &Config::avatarBaseYaw, -180, 180, 1),
         F(5, "Avatar Body Rotation Offset", "", &Config::avatarBodyRot, -180, 180, 1),
+        I(5, "Avatar Max Yaw Offset", "How far the head follows the pointer sideways", &Config::avatarMaxYaw, 0, 90),
+        I(5, "Avatar Max Pitch Offset", "", &Config::avatarMaxPitch, 0, 90),
+        B(5, "Mirror Head Movement", "", &Config::mirrorHeadMovement),
+        F(5, "Elytra Flying Side Offset", "", &Config::elytraSide, -2, 2),
+        F(5, "Elytra Flying Height Offset", "", &Config::elytraHeight, -2, 2),
         F(5, "Mouse Sensitivity Yaw", "Camera parallax with the pointer", &Config::tpSensYaw, 0.01f, 1, 0.01f),
         F(5, "Mouse Sensitivity Pitch", "", &Config::tpSensPitch, 0.01f, 1, 0.01f),
         B(5, "Disable Parallax", "", &Config::tpParallaxOff), B(5, "Lerp Camera Pitch", "", &Config::lerpXRot),
@@ -95,6 +105,7 @@ std::vector<Field> const& fields() {
         F(6, "Mouse Sensitivity Pitch", "", &Config::fpSensPitch, 0.01f, 1, 0.01f),
         I(6, "Pitch Clamp", "", &Config::fpPitchClamp, 0, 90), B(6, "Disable Parallax", "", &Config::fpParallaxOff),
         B(6, "Keep First Person Camera Angle", "", &Config::keepFpAngle),
+        B(6, "Lock First Person Yaw", "Crosshair free look stays within 90 degrees", &Config::lockFpYaw),
         B(7, "Enable Close Animation", "", &Config::closeAnim), B(7, "Enable Fade Animation", "", &Config::fade),
         I(7, "Fade Duration (ms)", "", &Config::fadeMs, 0, 1000, 10), B(7, "Enable Scale Animation", "", &Config::scaleAnim),
         I(7, "Scale Duration (ms)", "", &Config::openMs, 50, 1000, 10), Field{7, "Scale Easing", "", T::Ease},
@@ -168,7 +179,9 @@ bool mcButton(const char* label, ImVec2 size, bool active = false) {
     ImVec2      ts  = ImGui::CalcTextSize(label);
     ImVec2      tp(p.x + (size.x - ts.x) * 0.5f, p.y + (size.y - ts.y) * 0.5f);
     dl->AddText(ImVec2(tp.x + 1, tp.y + 1), IM_COL32(63, 63, 63, 255), label, end); // Minecraft text shadow
-    dl->AddText(tp, active ? IM_COL32(255, 255, 160, 255) : IM_COL32(255, 255, 255, 255), label, end);
+    ImU32 tc = ImGui::GetColorU32(ImGuiCol_Text);
+    if (tc == kText) tc = IM_COL32(255, 255, 255, 255); // plain buttons: white text; Yes / No keep their colour
+    dl->AddText(tp, active ? IM_COL32(255, 255, 160, 255) : tc, label, end);
     return hit;
 }
 
