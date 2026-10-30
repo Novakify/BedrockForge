@@ -4187,12 +4187,20 @@ bool ensureRing(ID3D12Device* dev, UINT cell) {
     return true;
 }
 /// Rect of sampled slot s in the hidden screen (the inside of the slot, where the icon is drawn).
+// Bedrock draws the stack the cursor carries 21/18 of a slot across (the slot's icon is 16/18), its middle a little up
+// and left of the cursor (measured at GUI scale 4: 84 px, centre 4.5 px left / 8.5 px up of the pointer)
+constexpr float kCarrySize = 21.0f / 18.0f, kCarryDX = -4.5f / 72.0f, kCarryDY = -8.5f / 72.0f;
+void carriedCentre(Layout const& L, float& x, float& y) {
+    neutralPoint(L, x, y);
+    x += L.slot * kCarryDX;
+    y += L.slot * kCarryDY;
+}
 bool sampledRect(Layout const& L, int s, Rect& r) {
     if (s < 9) { if (!L.hasGrid || (L.kind != int(Kind::Table) && s >= L.nRoles)) return false; r = L.grid[s]; }
     else if (s == 9) { if (!L.hasResult) return false; r = L.result; }
-    else if (s == 10) { // the carried stack is drawn centred on the (parked) cursor: its whole 16 px icon, not the slot's 18
+    else if (s == 10) { // the carried stack (Bedrock draws it larger, up and left of the parked cursor): the middle of it
         float x, y, in = L.slot * 16.0f / 18.0f;
-        neutralPoint(L, x, y);
+        carriedCentre(L, x, y);
         r = {x - in * 0.5f, y - in * 0.5f, in, in};
         return true;
     }
@@ -4421,6 +4429,19 @@ float faceShade(V3 n) {
 // three visible faces can be found in the icon, so the icon unwraps back onto a real cube (ItemPlacer's block cubes).
 // The icon's own lighting (bright top, shaded sides) comes along. Hidden faces repeat the visible ones.
 struct IconSrc { Rect inside; float box[4]; bool snap = false; bool count = false; float countBox[4] = {}; }; // slot inside (screen px) + icon bounding box in 0..1 of it (+ the stack count's)
+/// the carried stack's whole icon (its bounding box measured in the middle 16/18 of a slot, widened to the whole icon
+/// where it touched that window's edge)
+IconSrc carriedSrc(Layout const& L) {
+    float cx, cy;
+    carriedCentre(L, cx, cy);
+    float   big = L.slot * kCarrySize, in = L.slot * 16.0f / 18.0f, m = (big - in) * 0.5f;
+    IconSrc cs{{cx - big * 0.5f, cy - big * 0.5f, big, big}, {0, 0, 1, 1}};
+    for (int k = 0; k < 4; ++k) {
+        float f = gS.iconBox[10][k];
+        cs.box[k] = (f <= 0.001f && k < 2) || (f >= 0.999f && k >= 2) ? (k < 2 ? 0.0f : 1.0f) : (f * in + m) / big;
+    }
+    return cs;
+}
 void iconUv(IconSrc const& s, Layout const& L, double x, double y, double z, float& u, float& v) {
     float bw = s.box[2] - s.box[0], bh = s.box[3] - s.box[1];
     float k  = bw / 1.41421f;
@@ -5923,11 +5944,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                     double size = MAIN_SIZE + (0.205 - MAIN_SIZE) * window(t, PUT_AWAY + 0.1, FORGE_LENGTH);
                     double turn = 200 * inOutCubic(window(t, BLOWS[2] + 0.1, PUT_AWAY + 0.1));
                     float  tilt = float(35 * hump(window(t, BLOWS[2] + 0.1, FORGE_LENGTH)));
-                    float  nx2, ny2;
-                    neutralPoint(L, nx2, ny2);
-                    float   sz = L.slot * 16.0f / 18.0f;
-                    IconSrc cs{{nx2 - sz * 0.5f, ny2 - sz * 0.5f, sz, sz}, {0, 0, 1, 1}};
-                    std::memcpy(cs.box, gS.iconBox[10], sizeof cs.box);
+                    IconSrc cs = carriedSrc(L);
                     if (gS.carrying) placeItem(cam, b, L, cs, gS.carriedBlock, at, rgt, out, size, std::min(size, 0.2), tilt, 1, MAIN_TURN + turn);
                     double glow = 1 - window(t, BLOWS[2], PUT_AWAY + 0.2);
                     if (glow > 0.01) glowBillboard(cam, b, at, 0.2, float(0.4 * glow), float(0.32 * glow), float(0.2 * glow));
@@ -7072,11 +7089,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             bool  lw = gS.leftWorks;
             V3    hand = lw ? gLeft.x : gRight.x;
             V3    at   = heldItemPoint(hand, shoulderOf(!lw, cam.pos, cam.yaw));
-            float nx, ny;
-            neutralPoint(L, nx, ny);
-            float   sz = L.slot * 16.0f / 18.0f;
-            IconSrc cs{{nx - sz * 0.5f, ny - sz * 0.5f, sz, sz}, {0, 0, 1, 1}};
-            std::memcpy(cs.box, gS.iconBox[10], sizeof cs.box);
+            IconSrc cs = carriedSrc(L);
             placeItem(cam, b, L, cs, gS.carriedBlock, at, gS.st.right(), gS.st.sideV(), 0.205, 0.15, 18, 1);
         }
         // ---- the inventory drawer (SceneScreen.drawPanel)
@@ -7117,14 +7130,13 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             }
             // off the work the carried stack follows the real cursor (SceneScreen: carried, drawn over everything)
             if (gS.phase == Phase::Active && gCursorValid && gS.carrying && !gS.haveAim && !gS.hoverResult) {
-                float nx, ny;
-                neutralPoint(L, nx, ny);
-                float s2 = L.slot * 16.0f / 18.0f;
+                IconSrc cs = carriedSrc(L);
+                float s2 = L.slot * 16.0f / 18.0f; // drawn 16 GUI px across, as the slots are (SceneScreen)
                 float mx = (gCursorNdcX + 1) * 0.5f * W, my = (1 - gCursorNdcY) * 0.5f * H;
                 float half = s2 * 0.5f;
                 Quad  q;
                 pixelQuad(mx - half, my - half, mx + half, my + half, int(W), int(H), q);
-                setRect(q.uv, (nx - half) / L.W, (ny - half) / L.H, (nx + half) / L.W, (ny + half) / L.H);
+                setRect(q.uv, cs.inside.x / L.W, cs.inside.y / L.H, (cs.inside.x + cs.inside.w) / L.W, (cs.inside.y + cs.inside.h) / L.H);
                 q.mode[0] = 1; q.mode[3] = 1;
                 gQuads.push_back(q);
             }
