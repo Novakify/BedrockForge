@@ -208,7 +208,9 @@ bool safeSnapshot(ID3D12GraphicsCommandList* list, ID3D12Resource* rt) {
     return ok;
 }
 
-std::atomic<long> gLeakUi{0}, gLeakOther{0}, gLeakFrames{0}, gLeakFrameNow{0};
+std::atomic<long> gLeakUi{0}, gLeakOther{0}, gLeakFrames{0}, gLeakFrameNow{0}, gPanelUiDraws{0};
+std::atomic<long> gLastFrameUiDraws{0}; // UI draws that went to the panel target in the last finished frame
+long gDrawHist[256] = {}; int gDrawHistN = 0;
 void onDraw(ID3D12GraphicsCommandList* list) {
     std::lock_guard l(gMutex);
     auto p = gListPso.find(list);
@@ -238,7 +240,7 @@ void onDraw(ID3D12GraphicsCommandList* list) {
             callOmSet(list, 1, &h, FALSE, d.ptr ? &d : nullptr);
             gListOnPanel.insert(list);
         }
-    if (gListOnPanel.count(list)) rf::panel::noteRedirected();
+    if (gListOnPanel.count(list)) { rf::panel::noteRedirected(); ++gPanelUiDraws; }
     if (gState.load(std::memory_order_relaxed) == Idle) return;
     if (gState.load(std::memory_order_relaxed) == Tracking) {
         ++gFrameUiDraws;
@@ -867,15 +869,26 @@ void requestLearn() {
     gRequest   = true;
 }
 
+long lastFrameUiDraws() { return gLastFrameUiDraws.load(); }
 std::string leakNote() {
-    char b[160];
-    snprintf(b, sizeof b, "UI draws to the screen while redirecting: %ld, other draws to the screen after the UI began: %ld, frames with either: %ld",
-             gLeakUi.load(), gLeakOther.load(), gLeakFrames.load());
+    char b[400];
+    long mn = 1 << 30, mx = 0, zero = 0, low = 0;
+    int  n  = std::min(gDrawHistN, 256);
+    for (int i = 0; i < n; ++i) { mn = std::min(mn, gDrawHist[i]); mx = std::max(mx, gDrawHist[i]); }
+    for (int i = 0; i < n; ++i) { if (gDrawHist[i] == 0) ++zero; else if (gDrawHist[i] * 10 < mx * 9) ++low; }
+    snprintf(b, sizeof b, "UI draws to the screen while redirecting: %ld, other draws to the screen after the UI began: %ld, frames with either: %ld\n"
+             "UI draws per frame (last %d frames): min %ld max %ld, frames with none %ld, frames under 90%% of the max %ld",
+             gLeakUi.load(), gLeakOther.load(), gLeakFrames.load(), n, n ? mn : 0, mx, zero, low);
     return b;
 }
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb) {
     if (!gInstalled || !device || !queue || !bb) return;
     if (gLeakFrameNow.exchange(0)) ++gLeakFrames;
+    {
+        long n = gPanelUiDraws.exchange(0);
+        gLastFrameUiDraws = n;
+        gDrawHist[gDrawHistN++ & 255] = n;
+    }
     gFrameRedirect = false;
     {
         std::lock_guard l(gMutex);

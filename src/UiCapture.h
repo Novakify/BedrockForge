@@ -52,5 +52,7 @@ void drawUi();
 void writeText(char const* name, char const* text);
 /// Flicker diagnostics: draws that reached the screen while the UI went to the panel target.
 std::string leakNote();
+/// UI draws that went to the panel target in the last finished frame.
+long lastFrameUiDraws();
 
 } // namespace rf::uicapture
