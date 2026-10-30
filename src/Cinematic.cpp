@@ -310,6 +310,7 @@ struct Layout {
     Rect  clue[3];                   // the enchanting window's clue tooltip text ("Sharpness I . . . ?"), when one shows
     bool  hasClue[3] = {};
     int   kind = 0;                  // Kind the layout was found for
+    float brewP = -1, brewFuel = 0;  // the brewing stand's arrow (0..1 of the brew, -1 none) and fuel bar (0..20 brews)
     Rect  panel;                    // container panel (inventory rows' width)
     // a frame of the hidden screen counts when these hold: the top bevel of hotbar[0] / inv[0] is the dark line seen
     // at detection, and the panel just above it its colour (frames with the screen not drawn yet are left out)
@@ -2932,6 +2933,25 @@ void detect(Img im, bool dump, int kindI) {
                 std::sort(top.begin(), top.end(), byX);
                 std::sort(low.begin(), low.end(), byX);
                 rest = {low[0], low[1], low[2], top[1], top[0]};
+                // the arrow right of the ingredient fills downwards with the brew (white over #8B8B8B); the fuel bar under
+                // the bubbles fills with blaze (orange) from the left, 20 brews full
+                auto rgb3 = [&](int x, int y, int& r, int& g, int& b) { int a; im.get(std::clamp(x, 0, im.W - 1), std::clamp(y, 0, im.H - 1), r, g, b, a); };
+                float u = s / 18.0f;
+                int   ix = top[1].x, iy = top[1].y, white = 0, grey = 0, fill = 0, empty = 0;
+                for (int y = int(iy + 3 * u); y < int(iy + 24 * u); ++y) {
+                    int r, g, b;
+                    rgb3(int(ix + 25.25f * u), y, r, g, b);
+                    if (r > 240 && g > 240 && b > 240) ++white;
+                    else if (std::abs(r - 139) < 8 && std::abs(g - 139) < 8 && std::abs(b - 139) < 8) ++grey;
+                }
+                for (int x = int(ix - 24 * u); x < int(ix - 5 * u); ++x) {
+                    int r, g, b;
+                    rgb3(x, int(iy + 29.5f * u), r, g, b);
+                    if (r > 200 && g > 90 && b < 140) ++fill;
+                    else if (std::abs(r - 139) < 8 && std::abs(g - 139) < 8 && std::abs(b - 139) < 8) ++empty;
+                }
+                L.brewP    = white + grey > 4 && white > 0 ? float(white) / float(white + grey) : -1;
+                L.brewFuel = fill + empty > 4 ? 20.0f * float(fill) / float(fill + empty) : 0;
             } else std::sort(rest.begin(), rest.end(), byX); // anvil, smithing (template, base, addition), stonecutter, enchanting
             int n = 0;
             for (auto& q : rest) {
@@ -4718,6 +4738,13 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         }
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Brewing && gS.phase != Phase::Outro) {
             // BrewingStation.frame / renderScene / renderWorld (the stand keeps what was put in it: nothing in the outro)
+            {   // the window's arrow is looked at about once a second: the brew goes on in between (400 ticks)
+                static long   seen   = -1;
+                static double seenAt = 0;
+                if (L.serial != seen) { seen = L.serial; seenAt = clock; }
+                gS.brewProgress = L.brewP < 0 ? -1 : std::min(1.0, L.brewP + (clock - seenAt) / 20.0);
+                gS.brewFuel     = std::round(L.brewFuel);
+            }
             double p = gS.brewProgress;
             auto colour = [&](int i, float c[3]) { // BrewingStation.color: the potion's colour, brightest channel 1
                 float const* m  = gS.iconRgb[i];
