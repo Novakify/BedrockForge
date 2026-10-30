@@ -4187,7 +4187,12 @@ bool ensureRing(ID3D12Device* dev, UINT cell) {
 bool sampledRect(Layout const& L, int s, Rect& r) {
     if (s < 9) { if (!L.hasGrid || (L.kind != int(Kind::Table) && s >= L.nRoles)) return false; r = L.grid[s]; }
     else if (s == 9) { if (!L.hasResult) return false; r = L.result; }
-    else if (s == 10) { float x, y; neutralPoint(L, x, y); r = {x - L.slot * 0.5f, y - L.slot * 0.5f, L.slot, L.slot}; return true; }
+    else if (s == 10) { // the carried stack is drawn centred on the (parked) cursor: its whole 16 px icon, not the slot's 18
+        float x, y, in = L.slot * 16.0f / 18.0f;
+        neutralPoint(L, x, y);
+        r = {x - in * 0.5f, y - in * 0.5f, in, in};
+        return true;
+    }
     else if (s == 11 + kButtons) {
         if (!L.hasPreview) return false;
         float in = L.slot * 16.0f / 18.0f;
