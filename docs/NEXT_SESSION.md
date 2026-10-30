@@ -19,7 +19,7 @@
   `/summon gb:sculk_enderman_alphaglow ~3 ~ ~3`, check day + night, ContentLog 0 errors. Steps: PORT_GECKOBRIDGE.md end.
   Rebuild: python -I tools/GeckoBridge/convert.py tools/GeckoBridge/specs/proof_sculk_enderman.json OUT (fix "jar" path).
 - REPO IS PUBLIC (gh api says visibility public): never commit jars, extracted assets or converted packs.
-- ASK FERNANDO: which glow method looks right; Naturalist licence; OK to share any converted mod (default: no).
+- FERNANDO 2026-10-30: glow = whatever is closest to the mod -> overlay (GeckoLib translucent fullbright pass, checked in GL4+GL5 source), alpha mode = fallback. Ports are private personal use only (he has permission), never shared. Repo going PRIVATE -> then all code (incl. PC-only sources) goes on GitHub.
 
 # Next session handoff (updated 2026-10-28 ~18:35 local, cloud session + PC computer use, Fernando away) - READ FIRST
 - GOAL 1 DONE - Spatial GUI M0.5 -> **VERDICT: METHOD 1 VIABLE**. UI draws straight into the swap-chain back buffer.

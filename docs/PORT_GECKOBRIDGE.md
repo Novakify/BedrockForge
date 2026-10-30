@@ -120,7 +120,7 @@ shape is preserved by construction (same w as GeckoLib).
 | GeckoLib | Bedrock | Status |
 |---|---|---|
 | main texture, `getTextureResource()` per variant | client entity textures + render controller arrays | 1:1 / variants RT (property) |
-| `AutoGlowingGeoLayer`: `<tex>_glowmask.png` drawn fullbright (eyes-like render type) | (a) 2nd render controller, same geometry, glowmask texture, `entity_alphatest`, `ignore_lighting` - **converter default "overlay"**; (b) glowmask baked into base alpha + `entity_emissive_alpha` (less alpha = more glow) - converter `"glow": "alpha"` | approx; which looks closer must be checked **in game** (open). Additive "eyes" blend 1:1 = RF material (native) |
+| `AutoGlowingGeoLayer`: `<tex>_glowmask.png` drawn as a 2nd pass. Checked in source: GL5 `EmissiveRenderType` and GL4 `AutoGlowingTexture` = TRANSLUCENT blend, full-sky light, no shading, no culling, no depth write (NOT additive "eyes") | 2nd render controller, same geometry, glowmask texture, `ignore_lighting`, RP material `gb_glow:entity_alphablend` + `DisableCulling` - **converter default "overlay", chosen as the 1:1 match**. Fallback `"glow": "alpha"`: glowmask baked into base alpha + `entity_emissive_alpha` (only if RenderDragon ignores the custom material) | 1:1 expected - confirm in game |
 | custom `GeoRenderLayer` with another texture (Cave Dweller eyes) | same as above, texture name from bytecode string | approx by pattern |
 | `BlockAndItemGeoLayer` / `ItemInHandGeoLayer` (item held on a bone) | Bedrock draws held items on `rightitem`/`leftitem` locators of vanilla-like rigs only | approx (bone renamed to `rightItem` + `item_hand` binding) or **no** for arbitrary bones |
 | `ItemArmorGeoLayer` (armor on custom rig) | - | **no** generally (vanilla armor needs the humanoid rig) |
@@ -159,7 +159,7 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
 2. **Pattern library (generated JSON, M2):** head look, hide/show bones, walk speed scaling, sit/sleep poses.
 3. **BF native (only if a test mod needs it):** GeckoLib-only queries with no Bedrock source (e.g. exact
    `limb_swing`), per-frame bone overrides from code that Molang can't express.
-4. **RF native (later, optional):** true additive emissive "eyes" blend + per-pixel emissive strength, animated
+4. **RF native (later, optional):** per-pixel emissive strength, animated
    texture interpolation. Not needed for M0-M2.
 5. **Not planned:** a native GeckoLib keyframe evaluator inside Bedrock. Baking is exact enough; only revisit if
    the keyframe growth (x8.5 for Sculk Horde) ever costs load time or FPS.
@@ -181,7 +181,7 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
 
 ## Risks
 - **Java logic is the real work**: controllers are code; the extractor covers patterns, odd mods need overlays.
-- **Glow look**: neither Bedrock option is the exact Java "eyes" blend; must be judged in game (both modes ready).
+- **Glow look**: overlay mode copies GeckoLib's blend; the risk is only whether RenderDragon accepts the custom RP material (fallback: alpha mode, also in the proof pack).
 - **File growth** from baking (x8.5 keyframes on easing-heavy mods); tolerance knob exists.
 - **Molang edge cases**: one bad expression makes Bedrock drop the whole animation (seen before) - the report
   flags suspects; a real Molang parser check would be safer (M1).

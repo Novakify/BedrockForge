@@ -32,6 +32,10 @@ except ImportError:  # glow "alpha" mode needs Pillow; overlay mode doesn't
     Image = None
 
 GB_NS = "gb"
+# GeckoLib's glow pass (AutoGlowingGeoLayer; GL5 EmissiveRenderType / GL4 AutoGlowingTexture): a second pass of the
+# same model with the _glowmask texture, TRANSLUCENT blend, full-sky light, no shading, no culling, no depth write.
+# Bedrock match: 2nd render controller, ignore_lighting, alpha-blended material with culling off.
+GLOW_MATERIAL = {"materials": {"version": "1.0.0", "gb_glow:entity_alphablend": {"+states": ["DisableCulling"]}}}
 
 
 def ident_of(ns, eid): return f"{GB_NS}:{eid}"
@@ -134,7 +138,7 @@ def build(spec, out):
                 "spawn_egg": {"base_color": "#0d1a2e", "overlay_color": "#29dfeb"}}
         if e.get("scale", 1.0) != 1.0: desc["scripts"]["scale"] = str(e["scale"])
         if has_glow and mode == "overlay":
-            desc["materials"]["glow"] = "entity_alphatest"
+            desc["materials"]["glow"] = "gb_glow"  # see GLOW_MATERIAL
             desc["textures"]["glow"] = tex_key + "_glowmask"
             desc["render_controllers"].append(f"controller.render.{GB_NS}.glow")
             rcs[f"controller.render.{GB_NS}.glow"] = {"geometry": "Geometry.default", "materials": [{"*": "Material.glow"}],
@@ -156,6 +160,8 @@ def build(spec, out):
         (bp / "entities").mkdir(parents=True, exist_ok=True)
         (bp / f"entities/{eid}.json").write_text(json.dumps(bpe, indent=1))
     if rcs:
+        (rp / "materials").mkdir(exist_ok=True)
+        (rp / "materials/entity.material").write_text(json.dumps(GLOW_MATERIAL, indent=1))
         (rp / "render_controllers").mkdir(parents=True, exist_ok=True)
         (rp / f"render_controllers/{GB_NS}.render_controllers.json").write_text(json.dumps({"format_version": "1.8.0", "render_controllers": rcs}, indent=1))
     (rp / "texts").mkdir(exist_ok=True)
