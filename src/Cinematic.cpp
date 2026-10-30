@@ -2087,8 +2087,8 @@ float4 PS(V2P i) : SV_Target {
     }
     if (mode.x > 9.5) { // 10: an item tooltip of the hidden screen (copied): its writing only (the box, border and shadows dark)
         float4 u = tTip.SampleLevel(sP, i.uv, 0);
-        float3 c = u.rgb / max(u.a, 1e-3);
-        if (u.a < 0.5 || all(abs(c - float3(0.106, 0.047, 0.106)) < 0.04) || all(abs(c - float3(0.173, 0.031, 0.388)) < 0.05)) discard; // its ground, its border
+        float3 c = u.rgb; // as stored: over the window's see-through ground the box keeps its colours, not its alpha
+        if (all(abs(c - float3(0.106, 0.047, 0.106)) < 0.04) || all(abs(c - float3(0.173, 0.031, 0.388)) < 0.05)) discard; // its ground, its border
         float a = color.a * mode.w;
         return float4(c * a, a);
     }
@@ -2581,21 +2581,28 @@ bool findTooltip(Img const& im, int cx, int cy, float unit, Rect& text) {
         im.get(x, y, r, g, b, a);
         return std::abs(r - 44) < 9 && g < 18 && std::abs(b - 99) < 12;
     };
-    auto bright = [&](int x, int y) { int r, g, b, a; im.get(x, y, r, g, b, a); return std::max(r, std::max(g, b)) > 80; };
+    auto bright = [&](int x, int y) { int r, g, b, a; im.get(x, y, r, g, b, a); return std::max(r, std::max(g, b)) > 80 && !border(x, y); };
     int u = std::max(1, int(unit + 0.5f));
+    // its corners are cut (pixel-art rounding): the top border is a run of its own, the box one unit wider each side
     for (int y = cy - int(24 * unit); y <= cy + int(8 * unit); ++y)
         for (int x = cx; x < cx + int(40 * unit); ++x) {
-            if (!border(x, y) || border(x - 1, y) || border(x, y - 1) || !border(x + 1, y) || !border(x, y + 1)) continue; // a top-left corner
-            int x1 = x, y1 = y;
+            if (!border(x, y) || border(x - 1, y) || border(x, y - 1)) continue;
+            int x1 = x;
             while (border(x1 + 1, y)) ++x1;
-            while (border(x, y1 + 1)) ++y1;
-            if (x1 - x < 16 * unit || y1 - y < 8 * unit || !border(x1, y1) || !border(x1 - u, y1)) continue; // a closed box
+            if (x1 - x < 16 * unit) { x = x1; continue; }
+            int xm = (x + x1) / 2, yy = y;
+            while (border(xm, yy + 1)) ++yy; // its thickness
+            int top = yy + 1, yb = top;
+            while (yb < im.H && yb - top < 200 * unit && !border(xm, yb)) ++yb;
+            auto under = [&](int bx) { for (int d = -u; d <= u; ++d) if (border(bx, yb + d)) return true; return false; };
+            int q = (x1 - x) / 4;
+            if (yb >= im.H || yb - top < 6 * unit || !under(x + q) || !under(x1 - q)) continue; // the bottom border under the width
             int tx0 = 1 << 30, ty0 = 1 << 30, tx1 = -1, ty1 = -1;
-            for (int yy = y + u; yy < y1 - u + 1; ++yy)
-                for (int xx = x + u; xx < x1 - u + 1; ++xx)
-                    if (bright(xx, yy)) { tx0 = std::min(tx0, xx); ty0 = std::min(ty0, yy); tx1 = std::max(tx1, xx); ty1 = std::max(ty1, yy); }
+            for (int ty = top; ty < yb; ++ty)
+                for (int tx = x; tx <= x1; ++tx)
+                    if (bright(tx, ty)) { tx0 = std::min(tx0, tx); ty0 = std::min(ty0, ty); tx1 = std::max(tx1, tx); ty1 = std::max(ty1, ty); }
             if (tx1 <= tx0 || ty1 <= ty0) return false;
-            tx1 = std::min(tx1 + u, x1 - 1); ty1 = std::min(ty1 + u, y1 - 1); // the writing's shadow
+            tx1 = std::min(tx1 + u, x1); ty1 = std::min(ty1 + u, yb - 1); // the writing's shadow
             text = {float(tx0), float(ty0), float(tx1 + 1 - tx0), float(ty1 + 1 - ty0)};
             return true;
         }
