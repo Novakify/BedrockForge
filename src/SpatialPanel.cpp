@@ -411,12 +411,14 @@ void applyWanted() {
 }
 
 std::atomic_bool gRecipeBook{false};
+std::atomic<ULONGLONG> gDebugRightUntil{0};
 void noteScreen(void const* stack, std::string const& name) {
     {   // testing aid (uiDebugUseKey): the key uses the block looked at, on the client thread
         static bool was = false;
         int         k   = RfOptions::uiDebugUseKey.get();
         bool        now = k > 0 && k < 256 && (GetAsyncKeyState(k) & 0x8000) != 0;
-        if (now && !was && name.find("hud_screen") != std::string::npos) cine::game::useHitBlock();
+        // nothing looked at (an item used in the air: a book opens): the game's own use button, pressed a moment
+        if (now && !was && name.find("hud_screen") != std::string::npos && !cine::game::useHitBlock()) gDebugRightUntil = GetTickCount64() + 500;
         was = now;
     }
     std::lock_guard l(gScreenMutex);
@@ -1088,13 +1090,9 @@ template <class T> void onMouse(T, bool) {}
 void debugUse(gi::GameInputMouseState* st) {
     int k = RfOptions::uiDebugUseKey.get();
     if (!st || k <= 0 || k >= 256) return;
-    return; // the key now uses the block directly (noteScreen); the old way (right button in the mouse reading) only
-            // worked while the game happened to read the mouse
-    // held, and for 0.4 s after: in the world the game only reads the mouse when it moves
-    static ULONGLONG until = 0;
-    ULONGLONG        now   = GetTickCount64();
-    if (GetAsyncKeyState(k) & 0x8000) until = now + 400;
-    if (now < until) st->buttons = st->buttons | gi::GameInputMouseRightButton;
+    // the key uses a block directly (noteScreen); an item in the air gets the right button in the game's mouse
+    // readings for a moment (the game only reads the mouse while it moves: the tester nudges it)
+    if (GetTickCount64() < gDebugRightUntil.load()) st->buttons = st->buttons | gi::GameInputMouseRightButton;
 }
 template <class T> void debugUse(T) {}
 
