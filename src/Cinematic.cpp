@@ -389,6 +389,7 @@ struct Scene {
     bool    carriedBlock = false;
     // the hidden slots' icons (readback): block items stand as cubes; bounding box of the icon inside its slot
     bool    cellBlock[9] = {};
+    bool    cellShut[9] = {};  // the crafter's window is shut
     bool    hasCount[9] = {};      // the slot prints a stack count; its digits' box in 0..1 of the slot inside
     float   countBox[9][4] = {};
     bool    resultBlock = false;
@@ -3489,7 +3490,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
         void*       p = nullptr;
         D3D12_RANGE rr{0, SIZE_T(gG.srStride * kSampled)};
         if (SUCCEEDED(gG.sr[i]->Map(0, &rr, &p)) && p) {
-            bool  full[kSampled] = {}, block[kSampled] = {}, glint[kSampled] = {}, cnt[9] = {};
+            bool  full[kSampled] = {}, block[kSampled] = {}, glint[kSampled] = {}, cnt[9] = {}, shut[9] = {};
             float cbox[9][4] = {};
             float box[kSampled][4] = {}, rgb[kSampled][3] = {}, refs[kSampled][3] = {};
             float tol  = 10.0f / 255.0f;
@@ -3497,7 +3498,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
             int   n    = int(cell);
             std::vector<uint8_t> mask(size_t(n) * n);
             for (int s = 0; s < kSampled; ++s) {
-                int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1, violet = 0, cx0 = n, cy0 = n, cx1 = -1, cy1 = -1;
+                int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1, violet = 0, cx0 = n, cy0 = n, cx1 = -1, cy1 = -1, shutPx = 0;
                 double sr = 0, sgc = 0, sb = 0;
                 float  ref[3] = {0, 0, 0}; // a button's own ground: its inside corner
                 if (s == 11 + kButtons) { ref[0] = ref[1] = ref[2] = 73 / 255.0f; }
@@ -3523,7 +3524,13 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             bool hi   = std::fabs(r - L.hi[0]) < tol && std::fabs(g - L.hi[1]) < tol && std::fabs(b - L.hi[2]) < tol;
                             // Bedrock draws a ghost outline (#4A494C) in an empty slot that says what goes there: not an item
                             bool ghost = std::max(r, std::max(g, b)) - std::min(r, std::min(g, b)) < 0.03f && r > 0.26f && r < 0.4f; // #4A494C, #5A5759 (lapis)
-                            item = a > 0.5f && !bg && !hi && !ghost;
+                            // the crafter's windows are buttons: a light bevel (#ADADAD) up left, a dark one (#737373) down right
+                            bool grey  = std::max(r, std::max(g, b)) - std::min(r, std::min(g, b)) < 0.02f;
+                            bool bevel = L.kind == int(Kind::Crafter) && grey && (std::fabs(r - 173 / 255.0f) < tol || std::fabs(r - 115 / 255.0f) < tol);
+                            // a shut window is filled with the panel's own colour (#C6C6C6)
+                            bool panel = L.kind == int(Kind::Crafter) && s < 9 && grey && std::fabs(r - 198 / 255.0f) < tol;
+                            if (panel) ++shutPx;
+                            item = a > 0.5f && !bg && !hi && !ghost && !bevel && !panel;
                             if (s >= 11) item = a > 0.5f && (std::fabs(r - ref[0]) > 0.12f || std::fabs(g - ref[1]) > 0.12f || std::fabs(b - ref[2]) > 0.12f);
                             if (s >= 11 + 3 && s < 11 + 24 && L.kind == int(Kind::Enchanting)) {
                                 // the enchanting buttons: the cost is printed in colour (green / red), the runes in grey-brown
@@ -3542,6 +3549,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                         if (item) { ++other; x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
                     }
                 full[s] = other * 50 > total;
+                if (s < 9) shut[s] = shutPx * 2 > total;
                 if (s < 9) {
                     cnt[s] = cx1 >= cx0 && cy1 - cy0 >= n / 5;
                     if (cnt[s]) { cbox[s][0] = float(cx0) / n; cbox[s][1] = float(cy0) / n; cbox[s][2] = float(cx1 + 1) / n; cbox[s][3] = float(cy1 + 1) / n; }
@@ -3562,6 +3570,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
             static double glintAt[9] = {-10, -10, -10, -10, -10, -10, -10, -10, -10};
             for (int s = 0; s < 9; ++s) {
                 gS.cellFull[s] = full[s]; gS.cellBlock[s] = block[s];
+                gS.cellShut[s] = shut[s];
                 gS.hasCount[s] = cnt[s];
                 std::memcpy(gS.countBox[s], cbox[s], sizeof cbox[s]);
                 if (glint[s]) glintAt[s] = gS.clock; // the glint sweeps: an enchanted icon is violet in some frames only
@@ -5096,6 +5105,16 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                         cardItem(cam, b, L, src(L.grid[i], i), block, at + n * (block ? size / 2 : 0.006), size, tableAlpha, yaw);
                     }
                 }
+            for (int i = 0; i < 9 && stay > 0.01f; ++i) { // a shut window shows the window's own mark for it (Bedrock: the panel's grey)
+                if (!gS.cellShut[i]) continue;
+                V3   at = crafterCell(i) + n * 0.004;
+                float h = float(CR_PITCH / 2 * 0.95 * (i == gS.crafterCell ? 1.1 : 1.0));
+                Quad q;
+                if (worldQuad(cam, b, at, rgt * h, crafterRows() * h, q)) {
+                    q.color[0] = q.color[1] = q.color[2] = 198 / 255.0f * 0.9f; q.color[3] = 235 / 255.0f * tableAlpha;
+                    gQuads.push_back(q);
+                }
+            }
             if (gS.phase == Phase::Active) {
                 // the window touched: a patch of light (red where the carried stack would not go)
                 if (gS.crafterTarget == CrCell && gS.crafterCell >= 0) {
@@ -6213,8 +6232,11 @@ void drawOverlay() {
             if (gS.crafterTarget == CrResult)
                 tipLines.push_back({gS.states.find("\"triggered_bit\":1") != std::string::npos ? "Powered - it crafts on the next pulse" : "Crafted on a redstone signal", red});
             else if (gS.crafterTarget == CrCell && gS.crafterCell >= 0) {
-                if (gS.cellFull[gS.crafterCell] && !gS.carrying) tipLines.push_back({"Click - take", gray});
-                else if (!gS.carrying) tipLines.push_back({"Click with an empty hand - shut or open this window", gray});
+                if (gS.cellShut[gS.crafterCell]) {
+                    tipLines.push_back({"This window is shut", red});
+                    tipLines.push_back({"Click with an empty hand - open it", gray});
+                } else if (gS.cellFull[gS.crafterCell] && !gS.carrying) tipLines.push_back({"Click - take", gray});
+                else if (!gS.carrying) tipLines.push_back({"Click with an empty hand - shut this window", gray});
             }
         }
         if (gS.st.kind == Kind::Beacon && !moving()) { // BeaconStation.tooltip
