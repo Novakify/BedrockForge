@@ -3,11 +3,13 @@
 // (inventory, chest, crafting table and other container screens) or the UI stays flat (HUD, pause, settings, chat).
 #include "ScreenWatch.h"
 
+#include <atomic>
 #include <string>
 
 #include "ll/api/memory/Hook.h"
 
 #include "mc/client/gui/screens/SceneStack.h"
+#include "mc/client/gui/screens/AbstractScene.h"
 #include "mc/client/gui/screens/UIScene.h"
 
 #include "Options.h"
@@ -19,12 +21,19 @@ bool keepHud();                                              // SpatialPanel.cpp
 
 namespace {
 SceneStack* gInvStack = nullptr; // the stack whose top is the inventory screen (client thread)
+// the hud_screen scene, found while it is the top of its stack (client thread); compared by address only
+std::atomic<void const*> gHudScene{nullptr};
 }
 LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, SceneStack, &SceneStack::$update, bool) {
     bool        r    = origin();
     std::string name = this->getScreenName();
     if (name.find("inventory_screen") != std::string::npos) gInvStack = this;
     else if (gInvStack == this) gInvStack = nullptr;
+    if (name.find("hud_screen") != std::string::npos) {
+        AbstractScene const* top = nullptr;
+        this->forEachScreenConst([&](AbstractScene const& sc) { if (!top) top = &sc; return false; }, true);
+        if (top) gHudScene = static_cast<void const*>(top);
+    }
     rf::panel::noteScreen(this, name);
     return r;
 }
@@ -34,9 +43,8 @@ LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, 
 // under the container as well (SpatialPanel::record keeps its strip flat).
 LL_TYPE_INSTANCE_HOOK(RfHudTopmostHook, ll::memory::HookPriority::Normal, UIScene, &UIScene::$renderOnlyWhenTopMost, bool) {
     bool r = origin();
-    if (!r || !rf::panel::keepHud()) return r;
-    // only asked for screens under the top one, a few per frame while a panel is up
-    if (this->getScreenName().find("hud_screen") != std::string::npos) return false;
+    // nothing but an address compare here: this runs while the game renders its screen stack
+    if (r && static_cast<void const*>(static_cast<AbstractScene const*>(this)) == gHudScene.load(std::memory_order_relaxed) && rf::panel::keepHud()) return false;
     return r;
 }
 
