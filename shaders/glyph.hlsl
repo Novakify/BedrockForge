@@ -29,6 +29,7 @@ static const uint F_SCREEN   = 1u;
 static const uint F_BITMAP   = 2u;
 static const uint F_MSDF     = 4u;
 static const uint F_GRADIENT = 16u;
+static const uint F_SOLID    = 32u; // rounded rect, no atlas (top bar pill, icons, EQ bars)
 
 StructuredBuffer<Glyph> gGlyphs  : register(t0);
 Texture2D               gAtlas[8] : register(t1);
@@ -66,6 +67,15 @@ float4 PSGlyph(V2P i) : SV_Target {
     float4 fillC = unpack(g.fill);
     if (g.flags & F_GRADIENT) fillC = lerp(fillC, unpack(g.fill2), saturate(i.grad));
     float  k     = g.alpha * misc.y;
+
+    if (g.flags & F_SOLID) { // outlineW = corner radius (fraction of the smaller half-extent), glowW = edge softness px
+        float2 halfPx = 0.5 / max(fwidth(i.uv), 1e-6);
+        float  r      = min(halfPx.x, halfPx.y) * saturate(g.outlineW);
+        float2 q      = abs(i.uv - 0.5) * 2.0 * halfPx - (halfPx - r);
+        float  d      = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+        float  a      = saturate(0.5 - d / max(1.0, g.glowW)) * fillC.a;
+        return float4(fillC.rgb * a, a) * k;
+    }
 
     if (g.flags & F_BITMAP) { // pixel font: hard texels, no SDF maths
         float a = gAtlas[NonUniformResourceIndex(g.atlas)].Sample(sPoint, i.uv).r;

@@ -20,6 +20,8 @@ enum BfGlyphFlags : uint32_t {
     BF_GLYPH_MSDF     = 1u << 2, // atlas is multi-channel SDF (median of rgb); otherwise single-channel SDF in .r (grey PNG)
     BF_GLYPH_LETTER   = 1u << 3, // falling letter (physics) - informational
     BF_GLYPH_GRADIENT = 1u << 4, // vertical gradient fill -> fill2 at the bottom of the quad
+    BF_GLYPH_SOLID    = 1u << 5, // no atlas: a rounded rectangle. outlineW = corner radius as a fraction of the
+                                 // smaller half-extent (1 = pill/circle), glowW = edge softness in screen px (shadows)
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the
