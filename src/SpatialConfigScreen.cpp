@@ -164,11 +164,14 @@ void styleEnd() {
     ImGui::PopStyleVar(7);
 }
 
+bool gDisabled = false; // inside BeginDisabled (Reset of an option at its default)
 // a Minecraft button: grey with a dark outline and a light top edge
 bool mcButton(const char* label, ImVec2 size, bool active = false) {
     ImVec2 p  = ImGui::GetCursorScreenPos();
-    bool   hit = ImGui::InvisibleButton(label, size);
-    bool   hov = ImGui::IsItemHovered();
+    ImGui::InvisibleButton(label, size); // layout + hover; the click is taken on press below
+    bool   hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
+               (ImGui::IsMouseHoveringRect(p, ImVec2(p.x + size.x, p.y + size.y)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows));
+    bool   hit = hov && !gDisabled && ImGui::IsMouseClicked(0);
     auto*  dl  = ImGui::GetWindowDrawList();
     ImU32  fill = active ? IM_COL32(60, 60, 60, 255) : hov ? IM_COL32(126, 136, 191, 255) : IM_COL32(111, 111, 111, 255);
     dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), IM_COL32(0, 0, 0, 255));
@@ -311,6 +314,7 @@ void draw() {
         // Reset (Java: "Reset" next to each option)
         ImGui::SetCursorScreenPos(ImVec2(vx + valueW + 4 * s, vy));
         ImGui::BeginDisabled(isDefault);
+        gDisabled = isDefault;
         if (mcButton("Reset", ImVec2(resetW, rowH - 4 * s))) {
             switch (f.type) {
             case T::Bool: c.*f.b = def.*f.b; break;
@@ -320,6 +324,7 @@ void draw() {
             }
         }
         ImGui::EndDisabled();
+        gDisabled = false;
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y));
         ImGui::Dummy(ImVec2(rowW, rowH)); // reserve the row (scrolling)
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH + 1 * s));
