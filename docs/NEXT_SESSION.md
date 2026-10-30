@@ -1,3 +1,16 @@
+# Next session handoff (updated 2026-10-30 ~20:05 UTC) - READ FIRST
+- Spatial GUI polish VERIFIED in game (e50-e53): Java framing FOV now works by narrowing the world camera's projection
+  in mce::Camera::updateViewMatrixDependencies (the CameraComponent FOV write is ignored in third person); player big
+  + cropped at the left, panel at the right, like the clips. World blur = separable Gaussian at half size (Fernando:
+  "toned down, clean, not pixelated"; strength 5 = 3 px sigma at 1080 lines). Drop shadow offset / GUI magnification.
+  Close animation + camera glide back verified (ends in first person with the normal FOV).
+- NEW: in-game settings screen (SpatialConfigScreen.cpp): "Spatial GUI Settings" button bottom-left of the pause
+  screen (or F6 > Spatial GUI config > Open...). Tabs, search, value + Reset per option, Cancel / Save & Quit; the
+  game's mouse is blocked while it is open.
+- Harness: the hung e47 game copy is still in the background; force-launched copies take keyboard only (HOLD keys
+  ~0.15 s; click the title bar first so Claude's window doesn't have focus). LeviLauncher: close + reopen it if
+  Launch does nothing, then Force Launch.
+
 # Next session handoff (updated 2026-10-30 ~19:10 UTC) - READ FIRST
 - SPATIAL GUI POLISH (Fernando: "looks plain, camera angle off vs footage, blur missing" + 4 new reference clips
   3b1dabb8/bb9b9270/a124cea8/94c3c01c). Latest Java source cloned: github.com/tastytrash/Spatial-GUI (2.x, MIT).
