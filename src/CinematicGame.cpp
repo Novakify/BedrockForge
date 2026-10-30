@@ -13,6 +13,8 @@
 #include "mc/client/game/ClientInstance.h"
 #include "mc/client/options/IOptionRegistry.h"
 #include "mc/client/player/LocalPlayer.h"
+#include "mc/client/game/ClientInputCallbacks.h"
+#include "mc/client/gui/CraftingType.h"
 #include "mc/deps/nbt/CompoundTag.h"
 #include "mc/deps/core/image/Image.h"
 #include "mc/world/actor/Actor.h"
@@ -115,9 +117,11 @@ int selectedSlot() {
     return a ? static_cast<Player*>(a)->getSelectedItemSlot() : 0;
 }
 bool openInventory() {
-    Actor* a = player();
-    if (!a) return false;
-    static_cast<Player*>(a)->openInventory();
+    // the inventory key's own path (ClientInputCallbacks: tells the server the inventory is open, which then accepts
+    // the screen's item moves); Player::openInventory alone opened a screen whose moves the server turned down
+    auto ci = ll::service::getClientInstance();
+    if (!ci || !player()) return false;
+    ClientInputCallbacks::handleInventoryButtonPress(*ci, CraftingType::Inventory);
     return true;
 }
 std::string jukeboxRecord(int x, int y, int z) {
