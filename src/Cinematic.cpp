@@ -123,7 +123,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Beacon || k == Kind::Crafter || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
+bool sceneAvailable(Kind k) { return k == Kind::Lectern || k == Kind::Beacon || k == Kind::Crafter || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -168,9 +168,11 @@ struct Station {
     bool lit = false;             // a lit furnace (block name lit_*)
     V3   wheel;                   // GrindstoneStation.wheel (its top is `top`)
     std::vector<V3> shelves;      // EnchantStation.shelves: the bookshelves that empower the table (centres)
+    V3   bookO, bookS, bookN;     // LecternStation: the middle of the spine on the cover board, up the desk's slope, out of it
     V3 center() const {
         if (kind == Kind::Brewing) return {bx + 0.5, by + 0.45, bz + 0.5}; // BrewingStation.center: base + 0.45
         if (kind == Kind::Crafter) return crafterFace();                     // CrafterStation.center: the grid's face
+        if (kind == Kind::Lectern) return bookO;                             // LecternStation.center: the book's spine
         if (isFurnace(kind)) { // FurnaceStation.center = FurnaceZones.point(pos, side, 0.5, 0.5, 0): the middle of the front
             V3 f = dirVec(side);
             return {bx + 0.5 + f.x * 0.5, by + 0.5, bz + 0.5 + f.z * 0.5};
@@ -196,7 +198,7 @@ struct Station {
     bool   crafterFlat() const { return gridDir < 0; }
     V3     crafterNormal() const { return gridDir < 0 ? V3{0, 1, 0} : dirVec(Dir(gridDir)); }
     V3     crafterFace() const { return V3{bx + 0.5, by + 0.5, bz + 0.5} + crafterNormal() * 0.5; }
-    double leanFov() const { return kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
+    double leanFov() const { return kind == Kind::Lectern ? 52 : kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
     // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
         if (isFurnace(kind)) {
@@ -206,6 +208,13 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Lectern) { // LecternStation.lean: bent over the book, looking down onto the pages almost square on
+            V3    eye = bookO + bookN * 0.66 + sideV() * 0.07 + bookS * -0.02;
+            JPose p;
+            p.pos = eye;
+            lookAngles(bookO + bookS * -0.012 - eye, p.yaw, p.pitch);
             return p;
         }
         if (kind == Kind::Crafter) { // CrafterStation.lean
@@ -583,6 +592,7 @@ void leave() { // Scene.leave
     gS.hoverDrawer = -1;
 }
 
+void lecternBegin();
 /// Scene.beginClientOnly: the vanilla screen is open; true = the scene plays.
 bool begin(Kind kind, int bx, int by, int bz) {
     double f[3];
@@ -600,7 +610,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
     if (facing >= 0) {
         if (kind == Kind::Anvil) allowed = (1u << int(clockWise(Dir(facing)))) | (1u << int(opposite(clockWise(Dir(facing)))));
         else if (kind == Kind::Grindstone || kind == Kind::Stonecutter) allowed = (1u << facing) | (1u << int(opposite(Dir(facing))));
-        else if (kind == Kind::Loom) allowed = 1u << facing;
+        else if (kind == Kind::Loom || kind == Kind::Lectern) allowed = 1u << facing;
     }
     if (kind == Kind::Crafter) { // orientation "<front>_<top>": the grid is on the top side of it
         std::string sn = game::blockStates(bx, by, bz);
@@ -617,6 +627,15 @@ bool begin(Kind kind, int bx, int by, int bz) {
     }
     st.side = freeSide(st, feet, allowed);
     if (kind == Kind::Stonecutter) st.top = {bx + 0.5, by + 9 / 16.0, bz + 0.5}; // StonecutterStation.topOf: the table top
+    if (kind == Kind::Lectern) {
+        // the desk of the lectern is tilted 22.5 degrees down towards the reader (lectern.json)
+        V3     f = st.sideV(), up{0, 1, 0};
+        double c = std::cos(22.5 * kDeg), sn = std::sin(22.5 * kDeg);
+        st.bookS = up * sn - f * c;
+        st.bookN = up * c + f * sn;
+        st.bookO = V3{bx + 0.5, by + 15.96 / 16, bz + 0.5} + f * (1.67 / 16) + st.bookN * 0.012; // + n * OpenBook.COVER
+        st.top   = st.bookO;
+    }
     if (kind == Kind::Enchanting) {
         st.top = {bx + 0.5, by + 0.75, bz + 0.5}; // EnchantFx.top
         // EnchantFx.shelves: EnchantingTableBlock.BOOKSHELF_OFFSETS (the ring two out, at the table's height and one up),
@@ -655,6 +674,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
     }
     gS.st      = st;
     gS.refused.clear();
+    lecternBegin();
     {   // another station's window sits elsewhere: its probes would hold the kept image at the old window
         std::lock_guard ll(gLayoutMutex);
         if (gLayout.kind != int(kind)) { gLayout.hasProbe = false; gLayout.valid = false; }
@@ -1355,6 +1375,202 @@ int crafterCursor(Basis const& b, float mx, float my, V3 o, V3 d) {
     return gS.crafterCell;
 }
 
+// ---------------------------------------------------------------- LecternStation + OpenBook (vanilla geometry)
+// The lectern's book is read where it lies: the camera bends over it, the pages lie in two stacks on the cover boards,
+// a leaf turns by its corner. Its pages are the hidden book window's own two (copied as they show: page t0 / the
+// snapshot t3 for the spread a leaf turns from); Bedrock's book window underneath turns with its arrows (L.buttons 0
+// back, 1 forward), so the lectern keeps its page as before. OpenBook's pages count as Java's (spread k: pages 2k-1,
+// 2k); the window's page p of spread k is 2k + p (Java's page + 1).
+V3 cross(V3 a, V3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
+namespace ob {
+constexpr double PAGE_W = 0.40, PAGE_H = PAGE_W * 164.0 / 131.0, GUTTER = 0.007, MARGIN = 0.014, COVER = 0.012, STACK = 0.032, LEAF = 0.0012;
+constexpr double TURN = 0.62, RIFFLE = 0.34;
+constexpr int    COLS = 16, ROWS = 6;
+constexpr double DEEP = GUTTER + PAGE_W + MARGIN, TALL = PAGE_H + 2 * MARGIN;
+} // namespace ob
+enum class BookSide { None, Left, Right };
+struct BookTurn { double at, length; int from, dir; };
+struct BookLeaf { double p, curl; int right, left; double lift; };
+using LeafGrid = std::array<std::array<V3, ob::COLS + 1>, ob::ROWS + 1>;
+struct OpenBook {
+    V3     origin, a{1, 0, 0}, s{0, 1, 0}, n{0, 0, 1};
+    bool   closing = false;
+    double fold = 0;
+    int    spread = -1, last = 0; // last: the furthest spread known to be there (the window's forward arrow)
+    std::vector<BookTurn> turns;
+    double peekLeft = 0, peekRight = 0, leftShare = 0.5;
+    // which spreads the window showed in the kept image (t0) and in the snapshot (t3); the click that turned it
+    int    keepSpread = -1, snapSpread = -1, keepNext = -1;
+    double clickAt = -10, riffleAt = -10;
+    bool   riffleDue = false;
+
+    double phase(BookTurn const& t) const { return clamp01((gS.clock - t.at) / t.length); }
+    int    lastSpread() const { return std::max(last, spread); }
+    double share() const { return lastSpread() == 0 ? 0.5 : spread / double(lastSpread()); }
+    void   openAt(int sp) { spread = std::max(0, sp); leftShare = share(); keepSpread = spread; }
+    /// OpenBook.turn: 0 it turns, 1 wait for the leaf in the air, 2 no page that way
+    int turn(int dir, bool canNext, bool canBack) {
+        if (dir > 0 && !canNext) return 2;
+        if (dir < 0 && !canBack) return 2;
+        if (dir < 0 && spread == 0) { // the window has pages before the first one known here: count from one further on
+            ++spread; ++last; ++keepSpread; if (snapSpread >= 0) ++snapSpread;
+            for (auto& t : turns) ++t.from;
+        }
+        if (!turns.empty()) {
+            BookTurn const& l = turns.back();
+            if (l.dir != dir || phase(l) < 0.28) return 1;
+        }
+        turns.push_back({gS.clock, ob::TURN, spread, dir});
+        spread += dir;
+        last = std::max(last, spread);
+        return 0;
+    }
+    void riffle(double start) {
+        for (int j = 0; j < 3; ++j) turns.push_back({start + j * 0.12, ob::RIFFLE, spread - 3 + j, 1});
+    }
+    bool turning() const { return !turns.empty(); }
+    void settle(BookSide hover, bool idle, double dt) {
+        while (!turns.empty() && phase(turns.front()) >= 1) turns.erase(turns.begin());
+        leftShare = approach(leftShare, share(), 3, dt);
+        idle      = idle && turns.empty() && !closing;
+        peekRight = approach(peekRight, idle && hover == BookSide::Right && spread < lastSpread() ? 1 : 0, 9, dt);
+        peekLeft  = approach(peekLeft, idle && hover == BookSide::Left && spread > 0 ? 1 : 0, 9, dt);
+    }
+    std::vector<BookLeaf> leaves() const {
+        std::vector<BookLeaf> out;
+        int count = int(turns.size());
+        for (int j = 0; j < count; ++j) {
+            BookTurn const& t = turns[j];
+            double ph    = phase(t);
+            double eased = inOutCubic(window(ph, 0.16, 0.94));
+            // corner first, then the leaf trails behind as it falls
+            double curl = 0.95 * hump(window(ph, 0, 0.55)) - 0.55 * hump(window(ph, 0.5, 1));
+            double p    = t.dir > 0 ? eased : 1 - eased;
+            double lift = ob::LEAF * (count - j + 1) + (ob::LEAF * (j + 2) - ob::LEAF * (count - j + 1)) * p;
+            if (t.dir > 0) out.push_back({p, curl, 2 * t.from, 2 * t.from + 1, lift});
+            else out.push_back({p, -curl, 2 * t.from - 2, 2 * t.from - 1, lift});
+        }
+        if (count == 0 && !closing) {
+            if (peekRight > 0.01) out.push_back({0, 0.55 * smoother(peekRight), 2 * spread, 2 * spread + 1, ob::LEAF * 2});
+            if (peekLeft > 0.01) out.push_back({1, -0.55 * smoother(peekLeft), 2 * spread - 2, 2 * spread - 1, ob::LEAF * 2});
+        }
+        return out;
+    }
+    /// the pages lying still under the leaves: {left, right}
+    std::array<int, 2> still() const {
+        if (!turns.empty()) {
+            int from = turns.front().from;
+            return turns.front().dir > 0 ? std::array<int, 2>{2 * from - 1, 2 * spread} : std::array<int, 2>{2 * spread - 1, 2 * from};
+        }
+        return {peekLeft > 0.01 ? 2 * spread - 3 : 2 * spread - 1, peekRight > 0.01 ? 2 * spread + 2 : 2 * spread};
+    }
+    // ---- where things are
+    double stack(bool left) const { double sh = left ? leftShare : 1 - leftShare; return ob::STACK * (0.12 + 0.76 * sh); }
+    static double surface(double x, double stack) {
+        double k = std::min(1.0, x / (0.24 * ob::PAGE_W));
+        return stack * (0.42 + 0.58 * std::sin(k * kPi / 2)) + 0.004 * std::sin(kPi * std::min(1.0, x / (ob::GUTTER + ob::PAGE_W)));
+    }
+    V3 lying(bool left, double x, double v, double h) const { return origin + a * (left ? -x : x) + s * v + n * h; }
+    V3 at(double x, double v, double h) const { return origin + a * x + s * v + n * h; }
+    static double angle(BookLeaf const& leaf, double x, double v) {
+        double lead = 0.75 - 0.5 * (v / ob::PAGE_H);
+        double out  = std::pow(x / (ob::GUTTER + ob::PAGE_W), 1.5);
+        return std::max(0.0, std::min(kPi, kPi * leaf.p + leaf.curl * lead * out));
+    }
+    /// the bent leaf, [row from the lower edge][column from the spine]
+    LeafGrid leafPoints(BookLeaf const& leaf) const {
+        LeafGrid pts;
+        double sr = stack(false), sl = stack(true);
+        for (int r = 0; r <= ob::ROWS; ++r) {
+            double v = -ob::PAGE_H / 2 + ob::PAGE_H * r / ob::ROWS;
+            double across = 0, up = surface(0, sr) * (1 - leaf.p) + surface(0, sl) * leaf.p + leaf.lift, before = 0;
+            for (int c = 0; c <= ob::COLS; ++c) {
+                double x  = ob::GUTTER + ob::PAGE_W * c / ob::COLS;
+                double th = angle(leaf, (before + x) / 2, v);
+                across += std::cos(th) * (x - before);
+                up += std::sin(th) * (x - before);
+                before = x;
+                // as far as it still lies on the pages under it, it follows their rise out of the gutter
+                double flat = std::cos(angle(leaf, x, v));
+                double bump = flat >= 0 ? surface(x, sr) - surface(0, sr) : surface(x, sl) - surface(0, sl);
+                pts[r][c] = origin + a * across + s * v + n * (up + bump * flat * flat);
+            }
+        }
+        return pts;
+    }
+    BookLeaf foldLeaf() const { return {1 - fold, 0.25 * hump(fold), -1000, 2 * spread - 1, ob::LEAF}; }
+    V3 corner(bool left) const { // the lower outer corner of a page, where the hand takes a leaf
+        double x = ob::GUTTER + ob::PAGE_W + 0.01;
+        return lying(left, x, -ob::PAGE_H / 2 - 0.005, surface(x, stack(left)) + 0.004);
+    }
+    V3 rest(bool right) const { return lying(!right, ob::GUTTER + ob::PAGE_W * 0.9, -ob::PAGE_H / 2 - 0.018, 0.035); }
+    /// OpenBook.turningHands: the hand that turns a leaf holds its corner {right, left}; false when none is turned by hand
+    bool turningHands(V3& r, V3& l) const {
+        if (turns.empty()) return false;
+        BookTurn const& t = turns.back();
+        if (t.length < ob::TURN) return false;
+        double ph      = phase(t);
+        bool   forward = t.dir > 0;
+        BookLeaf leaf  = leaves()[turns.size() - 1];
+        V3     held    = leafPoints(leaf)[0][ob::COLS] + n.norm() * 0.025;
+        V3     home    = rest(forward);
+        double reach   = smoother(window(ph, 0, 0.14));
+        double letGo   = smoother(window(ph, 0.72, 1));
+        V3     working = lerp(lerp(corner(!forward), held, reach), home, letGo);
+        if (forward) { r = working; l = rest(false); }
+        else { r = rest(true); l = working; }
+        return true;
+    }
+    /// OpenBook.under: the page under the cursor ray
+    BookSide under(V3 o, V3 d) const {
+        V3     unit = n.norm(), p0 = origin + n * 0.02;
+        double dn   = d.dot(unit);
+        if (std::fabs(dn) < 1e-9) return BookSide::None;
+        double t = (p0 - o).dot(unit) / dn;
+        if (t <= 0) return BookSide::None;
+        V3     rel = o + d * t - origin;
+        double u = rel.dot(a) / a.dot(a), v = rel.dot(s) / s.dot(s);
+        if (std::fabs(v) > ob::PAGE_H / 2 + 0.03 || std::fabs(u) > ob::GUTTER + ob::PAGE_W + 0.04) return BookSide::None;
+        return u < 0 ? BookSide::Left : BookSide::Right;
+    }
+};
+OpenBook gBook;
+enum LecternTarget { LtNone, LtLeft, LtRight };
+int gLecternTarget = LtNone;
+double gLecternDenyAt = -10;
+/// LecternStation.updateCursor: 150 the left page (back), 151 the right (forward)
+int lecternCursor(V3 o, V3 d) {
+    gLecternTarget = LtNone;
+    if (gBook.spread < 0 || gBook.closing) return -1;
+    BookSide side = gBook.under(o, d);
+    if (side == BookSide::None) return -1;
+    bool left = side == BookSide::Left;
+    gLecternTarget = left ? LtLeft : LtRight;
+    gS.haveAim = true;
+    gS.aim     = gBook.corner(left);
+    return left ? 150 : 151;
+}
+/// LecternStation.turn: a leaf turns, and the window's own arrow is pressed under it
+void lecternTurn(int dir) {
+    if (gBook.spread < 0 || gS.phase != Phase::Active) return;
+    int r = gBook.turn(dir, gS.btnFull[1], gS.btnFull[0]);
+    if (r == 2) { gLecternDenyAt = gS.clock; return; }
+    if (r != 0) return;
+    // what the window shows now is the spread the leaf turns from: kept aside, then the window turns
+    gBook.snapSpread = gBook.keepSpread;
+    gSnapRequest     = true;
+    gBook.clickAt    = gS.clock;
+    gBook.keepNext   = gBook.spread;
+    inject(dir > 0 ? 301 : 300, 1);
+}
+void lecternAction(int t, unsigned bit, bool shift) {
+    (void)bit; (void)shift;
+    if (t == 151) lecternTurn(1);
+    else if (t == 150) lecternTurn(-1);
+    gS.tapAt = gS.clock;
+}
+void lecternBegin() { gBook = OpenBook{}; gLecternTarget = LtNone; }
+
 // ---------------------------------------------------------------- BeaconStation (vanilla geometry)
 // The powers hang either side of the beam (RemainingLayouts.base BEACON), the payment floats over the glass. Bedrock's
 // beacon window underneath: its power buttons (L.buttons 0..6 in the order above), confirm (7) and cancel (8).
@@ -1786,6 +2002,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Cartography) { cartAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Loom) { loomAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Enchanting) { enchAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Lectern) { lecternAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -1898,6 +2115,12 @@ int currentTarget0(float mx, float my) {
     gS.hoverResult = false;
     gS.hoverDrawer = -1;
     gS.haveAim = false;
+    if (gS.st.kind == Kind::Lectern) { // LecternStation.showsInventory: no drawer
+        gS.overPanel = false;
+        V3 o, d;
+        cursorRay(gS.last, basisOf(gS.last), 2 * mx / gW - 1, 1 - 2 * my / gH, o, d);
+        return lecternCursor(o, d);
+    }
     if (gS.overPanel) {
         int s = drawerSlotAt(dg, mx, my);
         gS.hoverDrawer = s;
@@ -2801,6 +3024,7 @@ bool decodeTga(std::vector<uint8_t> const& f, std::vector<uint8_t>& rgba, int& w
     return true;
 }
 bool gPropHas[8] = {};
+bool gLeatherOk = false; // the lectern book's boards (entity/enchanting_table_book)
 bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     if (gG.propTex) return true;
     std::vector<uint8_t> atlas(size_t(PROP_W) * PROP_H * 4, 0);
@@ -2828,6 +3052,17 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
             gPropNote += "particles.png ok; ";
             gPropHas[7] = true;
         } else gPropNote += "particles.png missing; ";
+    }
+    {   // OpenBook.LEATHER: the lectern's book is bound in the enchanting table book's leather
+        std::vector<uint8_t> file, px;
+        int                  w = 0, h = 0;
+        if (readBrarchive(arch.parent_path() / "entity.brarchive", "enchanting_table_book.png", file) && decodePng(file, px, w, h) && w >= 16 && h >= 16) {
+            int cw = std::min(w, 64), ch = std::min(h, 32);
+            for (int y = 0; y < ch; ++y)
+                std::memcpy(&atlas[(size_t(160 + y) * PROP_W) * 4], &px[(size_t(y) * w) * 4], size_t(cw) * 4);
+            gLeatherOk = w == 64; // the boards' rectangle is in 64 x 32 pixels
+            gPropNote += "enchanting_table_book.png ok; ";
+        } else gPropNote += "enchanting_table_book.png missing; ";
     }
     for (size_t i = 0; i < std::size(kPropSlots); ++i) {
         auto const&          ps = kPropSlots[i];
@@ -2961,6 +3196,41 @@ bool findTooltip(Img const& im, int cx, int cy, float unit, Rect& text) {
         }
     return false;
 }
+/// Bedrock's book window (book_screen, read on a lectern): two cream pages either side of the spine (L.grid 0 left, 1
+/// right), its arrows in the lower outer corners (L.buttons 0 back, 1 forward: sampled, an arrow drawn is a button full)
+bool findBook(Img const& im, Layout& L) {
+    auto cream = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= im.W || y >= im.H) return false;
+        int r, g, b, a;
+        im.get(x, y, r, g, b, a);
+        return a > 200 && std::abs(r - 253) < 5 && std::abs(g - 248) < 5 && std::abs(b - 236) < 5;
+    };
+    int x0 = 1 << 30, y0 = 1 << 30, x1 = -1, y1 = -1;
+    for (int y = 0; y < im.H; y += 2)
+        for (int x = 0; x < im.W; x += 2)
+            if (cream(x, y)) { x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
+    char note[200];
+    if (x1 - x0 < im.W / 8 || y1 - y0 < im.H / 6) { L.note = "book: no pages"; return false; }
+    while (cream(x0 - 1, (y0 + y1) / 2)) --x0;
+    while (cream(x1 + 1, (y0 + y1) / 2)) ++x1;
+    int ym = (y0 + y1) / 2, sl = (x0 + x1) / 2, sr = sl;
+    while (sl > x0 && !cream(sl, ym)) --sl;
+    while (sr < x1 && !cream(sr, ym)) ++sr;
+    if (sr - sl < 4 || sr - sl > (x1 - x0) / 6) { L.note = "book: no spine"; return false; }
+    L.grid[0] = {float(x0), float(y0), float(sl + 1 - x0), float(y1 + 1 - y0)};
+    L.grid[1] = {float(sr), float(y0), float(x1 + 1 - sr), float(y1 + 1 - y0)};
+    float w = float(x1 - x0), as = std::max(8.0f, w * 0.03f);
+    L.slot     = as;
+    L.buttons[0] = {x0 + w * 0.02f - as / 2, y1 - w * 0.02f - as / 2, as, as};
+    L.buttons[1] = {x1 - w * 0.02f - as / 2, y1 - w * 0.02f - as / 2, as, as};
+    L.nButtons = 2;
+    L.nRoles   = 0;
+    L.hasGrid  = true;
+    L.valid    = true;
+    snprintf(note, sizeof note, "book: pages %d..%d | %d..%d, %d..%d", x0, sl, sr, x1, y0, y1);
+    L.note = note;
+    return true;
+}
 void detect(Img im, bool dump, int kindI) {
     Kind kind = Kind(kindI);
     struct Sq { int x, y, s; };
@@ -3032,6 +3302,29 @@ void detect(Img im, bool dump, int kindI) {
         for (auto& rr : rows) if (std::abs(rr.y - q.y) <= 3) r = &rr;
         if (!r) { rows.push_back({q.y, {}}); r = &rows.back(); }
         r->s.push_back(q);
+    }
+    if (kind == Kind::Lectern) { // no slots: the book window's pages and arrows
+        Layout B;
+        B.W = W; B.H = H;
+        bool ok = findBook(im, B);
+        B.kind = kindI;
+        {
+            std::lock_guard l(gLayoutMutex);
+            B.serial = gLayout.serial + 1;
+            bool same = gLayout.valid && gLayout.W == B.W && gLayout.kind == kindI;
+            if (ok || !same) gLayout = B;
+            else gLayout.note = B.note + " (kept the previous layout)";
+        }
+        if (dump) {
+            static int nb = 0;
+            char name[64];
+            snprintf(name, sizeof name, "cinematic_ui_%d.bmp", nb % 4);
+            rf::uicapture::writeText((std::string("cinematic_slots_") + std::to_string(nb % 4) + ".txt").c_str(), (B.note + "\n").c_str());
+            if (!gDumpDir.empty()) writeBmp(gDumpDir / name, im);
+            ++nb;
+        }
+        gDetectBusy = false;
+        return;
     }
     std::vector<Row> nine;
     for (auto& r : rows) {
@@ -3784,6 +4077,139 @@ void cardItem(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
     gQuads.push_back(q);
 }
 
+// ---- LecternStation.beforeFrame / renderScene (OpenBook.render)
+constexpr float BOOK_LEATHER[2] = {0, 160}; // the enchanting table book's texture in the atlas (its boards: 6 x 10 px)
+constexpr float BOOK_CREAM[3] = {253 / 255.0f, 248 / 255.0f, 236 / 255.0f}, BOOK_EDGE[3] = {232 / 255.0f, 222 / 255.0f, 196 / 255.0f};
+void lecternFrame(Layout const& L, bool layoutOk, double dt) {
+    OpenBook& bk = gBook;
+    Station const& st = gS.st;
+    bk.origin = st.bookO; bk.a = st.right(); bk.s = st.bookS; bk.n = st.bookN;
+    if (bk.spread < 0 && layoutOk && gS.phase != Phase::Outro) {
+        // the window opens where the lectern was left: whether pages lie before and after it, the arrows say
+        bk.openAt(gS.btnFull[0] ? 1 : 0);
+        bk.last = bk.spread + (gS.btnFull[1] ? 1 : 0);
+        bk.riffleDue = gS.phase == Phase::Intro;
+    }
+    if (bk.spread < 0) return;
+    if (!bk.turning()) {
+        bk.last = std::max(bk.last, bk.spread + (gS.btnFull[1] ? 1 : 0));
+        if (bk.spread == 0 && gS.btnFull[0]) { ++bk.spread; ++bk.last; ++bk.keepSpread; if (bk.snapSpread >= 0) ++bk.snapSpread; }
+    }
+    // the window shows the spread clicked to a moment after its arrow is pressed
+    if (bk.keepNext >= 0 && gS.clock - bk.clickAt > 0.12) { bk.keepSpread = bk.keepNext; bk.keepNext = -1; }
+    if (bk.riffleDue && gS.phase == Phase::Intro) {
+        // riffled open once the player bends over it (Scene.introSecondsUntil(0.42))
+        bk.riffleDue = false;
+        bk.riffle(gS.clock + std::max(0.0, 0.42 * gS.leanLength - gS.time));
+    }
+    BookSide hover = gLecternTarget == LtLeft ? BookSide::Left : gLecternTarget == LtRight ? BookSide::Right : BookSide::None;
+    bk.settle(gS.phase == Phase::Active ? hover : BookSide::None, gS.phase == Phase::Active, dt);
+    (void)L;
+}
+/// a face of the book, seen from its `out` side only (no depth buffer: faces turned away are left out); corners in
+/// loop order, uv per corner; mode 0 a flat colour, 1 / 4 the window (kept / snapshot), 3 the atlas
+void bookQuad(JPose const& cam, Basis const& b, V3 const p[4], float const uv[8], V3 out, float shade, int mode, float const rgb[3]) {
+    V3 c = (p[0] + p[1] + p[2] + p[3]) * 0.25;
+    if (out.dot(cam.pos - c) <= 0) return;
+    V3   w[4] = {p[0], p[1], p[3], p[2]};
+    Quad q;
+    if (!worldQuad4(cam, b, w, q)) return;
+    int ord[4] = {0, 1, 3, 2};
+    for (int k = 0; k < 4; ++k) { q.uv[k * 2] = uv[ord[k] * 2]; q.uv[k * 2 + 1] = uv[ord[k] * 2 + 1]; }
+    float lit = shade * faceShade(out.norm());
+    q.color[0] = rgb[0] * lit; q.color[1] = rgb[1] * lit; q.color[2] = rgb[2] * lit; q.color[3] = 1;
+    q.mode[0] = float(mode); q.mode[1] = 0;
+    gQuads.push_back(q);
+}
+/// the window's page for a page of the book (Java's numbering): its crop's uv box; 1 kept, 4 snapshot, 0 bare paper
+int bookPage(Layout const& L, int page, float box[4]) {
+    int p = page + 1;
+    if (p < 0) return 0;
+    int k = p / 2, side = p % 2;
+    Rect r = L.grid[side];
+    box[0] = r.x / L.W; box[1] = r.y / L.H; box[2] = (r.x + r.w) / L.W; box[3] = (r.y + r.h) / L.H;
+    if (k == gBook.keepSpread && gG.keepValid) return 1;
+    if (k == gBook.snapSpread && gG.snapValid) return 4;
+    return 0;
+}
+/// OpenBook.drawGrid: a page over a grid of points [row from the lower edge][column from the spine]
+template <class G>
+void bookGrid(JPose const& cam, Basis const& b, Layout const& L, G const& pts, int rows, bool leftFace, int page, double offset) {
+    float box[4];
+    int   mode  = bookPage(L, page, box);
+    float white[3] = {1, 1, 1};
+    for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < ob::COLS; ++c) {
+            V3 p00 = pts[r][c], p01 = pts[r][c + 1], p11 = pts[r + 1][c + 1], p10 = pts[r + 1][c];
+            V3 nm  = cross(p01 - p00, p10 - p00);
+            if (nm.dot(nm) < 1e-12) continue;
+            nm = nm.norm();
+            if (leftFace) nm = nm * -1;
+            V3 lift = nm * std::fabs(offset);
+            V3 q[4] = {p00 + lift, p01 + lift, p11 + lift, p10 + lift};
+            // the spine edge of a right-hand page is its left edge, of a left-hand page its right edge
+            auto U = [&](int cc) { double x = double(cc) / ob::COLS; return float(box[0] + (box[2] - box[0]) * (leftFace ? 1 - x : x)); };
+            auto V = [&](int rr) { return float(box[1] + (box[3] - box[1]) * (1 - double(rr) / rows)); };
+            float uv[8] = {U(c), V(r), U(c + 1), V(r), U(c + 1), V(r + 1), U(c), V(r + 1)};
+            bookQuad(cam, b, q, uv, nm, 1.0f, mode, mode == 0 ? BOOK_CREAM : white);
+        }
+}
+void drawBook(JPose const& cam, Basis const& b, Layout const& L) {
+    OpenBook const& bk = gBook;
+    if (bk.spread < 0) return;
+    float u0 = BOOK_LEATHER[0] / PROP_W, u1 = (BOOK_LEATHER[0] + 6) / PROP_W, v0 = BOOK_LEATHER[1] / PROP_H, v1 = (BOOK_LEATHER[1] + 10) / PROP_H;
+    float plain[8] = {u0, v1, u1, v1, u1, v0, u0, v0};
+    float white[3] = {1, 1, 1}, flat[8] = {};
+    bool  leather  = gLeatherOk;
+    float brown[3] = {0.36f, 0.22f, 0.13f};
+    // OpenBook.drawCover: the cover board under the pages
+    for (int side = 0; side < 2; ++side) {
+        bool left = side == 0;
+        V3   inner = bk.origin + bk.n * -0.0005, outer = inner + bk.a * (left ? -ob::DEEP : ob::DEEP);
+        V3   lo = bk.s * (-ob::TALL / 2), hi = bk.s * (ob::TALL / 2), down = bk.n * -ob::COVER;
+        V3   top[4] = {inner + lo, outer + lo, outer + hi, inner + hi};
+        bookQuad(cam, b, top, plain, bk.n, 0.9f, leather ? 3 : 0, leather ? white : brown);
+        V3 out = bk.a * (left ? -1 : 1);
+        V3 sd[4] = {outer + lo + down, outer + hi + down, outer + hi, outer + lo};
+        bookQuad(cam, b, sd, plain, out, 0.7f, leather ? 3 : 0, leather ? white : brown);
+        V3 nr[4] = {inner + lo + down, outer + lo + down, outer + lo, inner + lo};
+        bookQuad(cam, b, nr, plain, bk.s * -1, 0.75f, leather ? 3 : 0, leather ? white : brown);
+        V3 fr[4] = {inner + hi, outer + hi, outer + hi + down, inner + hi + down};
+        bookQuad(cam, b, fr, plain, bk.s, 0.75f, leather ? 3 : 0, leather ? white : brown);
+    }
+    // OpenBook.drawStack: the pages lying on each side, the top page and the edges of the stack
+    auto st = bk.still();
+    for (int side = 0; side < 2; ++side) {
+        bool   left = side == 0;
+        double stk  = bk.stack(left);
+        std::array<std::array<V3, ob::COLS + 1>, 2> pts;
+        for (int c = 0; c <= ob::COLS; ++c) {
+            double x = ob::GUTTER + ob::PAGE_W * c / ob::COLS, h = OpenBook::surface(x, stk);
+            pts[0][c] = bk.lying(left, x, -ob::PAGE_H / 2, h);
+            pts[1][c] = bk.lying(left, x, ob::PAGE_H / 2, h);
+        }
+        auto drop = [&](V3 p) { V3 nn = bk.n; return p - nn * ((p - bk.origin).dot(nn) / nn.dot(nn)); };
+        float edge[3] = {BOOK_EDGE[0] * 0.82f, BOOK_EDGE[1] * 0.82f, BOOK_EDGE[2] * 0.82f};
+        for (int c = 0; c < ob::COLS; ++c) {
+            V3 e[4] = {drop(pts[0][c]), drop(pts[0][c + 1]), pts[0][c + 1], pts[0][c]};
+            bookQuad(cam, b, e, flat, bk.s * -1, 1, 0, edge);
+            V3 bk2[4] = {pts[1][c], pts[1][c + 1], drop(pts[1][c + 1]), drop(pts[1][c])};
+            bookQuad(cam, b, bk2, flat, bk.s, 1, 0, edge);
+        }
+        V3 o0 = pts[0][ob::COLS], o1 = pts[1][ob::COLS];
+        V3 ou[4] = {drop(o0), drop(o1), o1, o0};
+        float edge2[3] = {BOOK_EDGE[0] * 0.78f, BOOK_EDGE[1] * 0.78f, BOOK_EDGE[2] * 0.78f};
+        bookQuad(cam, b, ou, flat, bk.a * (left ? -1 : 1), 1, 0, edge2);
+        bookGrid(cam, b, L, pts, 1, left, st[side], 0);
+    }
+    // the leaves in the air (or lifted at the corner)
+    for (auto const& leaf : bk.leaves()) {
+        LeafGrid pts = bk.leafPoints(leaf);
+        bookGrid(cam, b, L, pts, ob::ROWS, false, leaf.right, 0.0004);
+        bookGrid(cam, b, L, pts, ob::ROWS, true, leaf.left, 0.0004);
+    }
+}
+
 // ---------------------------------------------------------------- Hands + ArmMesh (the player's own arms)
 struct Spring3 { // Anim.Spring3: critically damped, stepped exactly
     V3 x, v;
@@ -3822,6 +4248,8 @@ V3 restOf(bool right) {
             return gS.st.crafterFace() + gS.st.crafterNormal() * 0.18 + gS.st.right() * (right ? 0.38 : -0.38) + V3{0, -0.28, 0};
         return V3{gS.st.bx + 0.5, gS.st.by + 1.0, gS.st.bz + 0.5} + gS.st.sideV() * 0.36 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, CR_HAND_Y, 0};
     }
+    if (gS.st.kind == Kind::Lectern) // LecternStation.rest: below the lower edge of the book, near its outer corners
+        return gS.st.bookO + gS.st.right() * ((right ? 1 : -1) * (ob::GUTTER + ob::PAGE_W * 0.9)) + gS.st.bookS * (-ob::PAGE_H / 2 - 0.018) + gS.st.bookN * 0.035;
     if (gS.st.kind == Kind::Beacon) // BeaconStation.rest
         return gS.st.top + gS.st.sideV() * 0.86 + gS.st.right() * (right ? 0.32 : -0.32) + V3{0, -0.1, 0};
     if (gS.st.kind == Kind::Brewing) // BrewingStation.rest
@@ -3865,6 +4293,7 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
         double hover = carrying ? 0.075 : 0.045;
         return aim + V3{0, CR_HAND_Y + hover - 0.06 * tap, 0} - reach * CR_REACH;
     }
+    if (gS.st.kind == Kind::Lectern) return aim + gS.st.bookN * (0.03 - 0.02 * tap); // LecternStation.handTarget
     if (gS.st.kind == Kind::Beacon) { // BeaconStation.handTarget: a power in the air is pointed at from well short of it
         V3     dir     = (aim - shoulder).norm();
         double shortOf = gS.beaconTarget == BnPower ? 0.42 : carrying ? 0.05 : 0.1;
@@ -3890,6 +4319,7 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
         V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
         return hand + reach * CR_REACH + V3{0, -CR_HAND_Y + 0.012, 0};
     }
+    if (gS.st.kind == Kind::Lectern) return hand; // LecternStation.heldItemPoint
     if (gS.st.kind == Kind::Beacon) { // BeaconStation.heldItemPoint
         V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
         return hand + reach * B_REACH + V3{0, -B_HAND_Y + 0.02, 0};
@@ -4121,6 +4551,14 @@ void updateHands(JPose const& cam, double dt) {
             gRight.update(r, 55, dt);
             gLeft.update(l, 55, dt);
             break;
+        }
+        if (gS.st.kind == Kind::Lectern) { // LecternStation.handsOverride: the hand that turns a leaf holds its corner
+            V3 r, l;
+            if (gBook.turningHands(r, l)) {
+                gRight.update(r, 34, dt); // handsStiffness
+                gLeft.update(l, 34, dt);
+                break;
+            }
         }
         double craft = craftProgress();
         if (craft >= 0) { // TableStation.handsOverride: the hands press the ingredients together
@@ -4783,6 +5221,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         static double lastHands = -1;
         double handsDt = lastHands < 0 ? 0 : std::clamp(clock - lastHands, 0.0, 0.1);
         lastHands = clock;
+        if (gS.st.kind == Kind::Lectern) lecternFrame(L, layoutOk && L.hasGrid, handsDt);
         if (haveCam) updateHands(cam, handsDt);
         if (haveCam && layoutOk && L.hasGrid && isFurnace(gS.st.kind)) {
             // FurnaceStation.renderWorld + FurnaceRenderer: the fire's light in the openings, the hovered zone's glow,
@@ -5154,6 +5593,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 }
             }
         }
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Lectern) drawBook(cam, b, L); // LecternStation.renderScene
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Beacon) {
             // BeaconStation.frame / renderScene / renderWorld
             double t    = moveTime();
@@ -6014,7 +6454,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             placeItem(cam, b, L, cs, gS.carriedBlock, at, gS.st.right(), gS.st.sideV(), 0.205, 0.15, 18, 1);
         }
         // ---- the inventory drawer (SceneScreen.drawPanel)
-        if (layoutOk && (gS.phase == Phase::Active || gS.phase == Phase::Outro)) {
+        if (layoutOk && gS.st.kind != Kind::Lectern && (gS.phase == Phase::Active || gS.phase == Phase::Outro)) {
             bool  over = gS.phase == Phase::Active && gS.overPanel;
             gS.expand  = approach(gS.expand, over ? 1 : 0, 13, handsDt); // this frame's time (the camera is asked several times a frame)
             DrawerGeom g = drawerGeom(int(W), int(H));
@@ -6130,6 +6570,7 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map - work it" + dot + "Esc - step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear - smith" + dot + "RMB - take" + dot + "Esc - step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade - cut one" + dot + "Shift - cut the stack" + dot + "Esc - step away";
+    case Kind::Lectern: return std::string("Click the right page - forward, the left - back") + dot + "Esc - step away";
     case Kind::Crafter: return std::string("Items into the grid's windows") + dot + "empty hand on an empty window - shut or open it" + dot + "crafts on a redstone signal" +
                                dot + "Esc - step away";
     case Kind::Beacon: return std::string("Choose a power over the beacon") + dot + "payment on the glass" + dot + "click the payment - light the beacon" + dot +
