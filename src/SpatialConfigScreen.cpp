@@ -122,7 +122,7 @@ bool lower_has(const char* hay, const char* needle) {
 const char* kEase[] = {"Back", "Cubic", "Elastic", "Bounce", "Expo", "Quad", "Quart"};
 
 // Minecraft-like colours
-const ImU32 kDim = IM_COL32(0, 0, 0, 150), kPanel = IM_COL32(0, 0, 0, 110), kText = IM_COL32(224, 224, 224, 255),
+const ImU32 kDim = IM_COL32(8, 8, 12, 215), kPanel = IM_COL32(0, 0, 0, 110), kText = IM_COL32(224, 224, 224, 255),
             kTextDim = IM_COL32(160, 160, 160, 255), kYes = IM_COL32(85, 255, 85, 255), kNo = IM_COL32(255, 85, 85, 255);
 
 void styleBegin(float s) {
@@ -240,8 +240,7 @@ void draw() {
     // option rows
     float listTop = top + 44 * s, listBottom = H - 34 * s;
     ImGui::SetCursorScreenPos(ImVec2(margin, listTop));
-    ImGui::BeginChild("##rows", ImVec2(W - 2 * margin, listBottom - listTop), ImGuiChildFlags_None);
-    ImGui::SetWindowFontScale(s * 0.5f);
+    ImGui::BeginChild("##rows", ImVec2(W - 2 * margin, listBottom - listTop), ImGuiChildFlags_None); // font scale inherited
     Config&       c   = spatialcam::cfg();
     Config const  def{};
     float         rowH = 20 * s, valueW = 90 * s, resetW = 70 * s, rowW = ImGui::GetContentRegionAvail().x;
