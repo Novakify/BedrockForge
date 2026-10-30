@@ -400,6 +400,7 @@ struct Scene {
     struct TipCache { bool ok = false, tried = false; float sig[7] = {}; double at = -10; Rect text; };
     TipCache tipCache[46];
     int    tipSlot = -1, tipSlotWas = -1, probe = -1;
+    bool   frozen = false, frozenOk = false; // the window is shown as it was before the probe (its tooltip covers it now)
     double tipSince = -10, probeAt = -10, holdUntil = -10;
     bool   probeForced = false;
     // EnchantStation
@@ -3235,6 +3236,7 @@ void uvOf(Rect r, Layout const& L, float inset, float uv[8]) {
 }
 float const* gKeyOv = nullptr; // a button's own ground colour instead of the slot's (while drawing its icon)
 void keyed(Quad& q, Layout const& L, float opacity, bool snap = false) {
+    if (gS.frozen) snap = true;
     q.mode[0] = snap ? 4.0f : 1.0f; q.mode[1] = 1; q.mode[2] = gCfg.keyTolerance; q.mode[3] = opacity;
     for (int i = 0; i < 3; ++i) { q.key0[i] = gKeyOv ? gKeyOv[i] : L.bg[i]; q.key1[i] = gKeyOv ? gKeyOv[i] : L.hi[i]; }
     if (gKeyOv) q.mode[2] = std::max(q.mode[2], 0.06f);
@@ -4228,6 +4230,17 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                     gS.probe = gS.tipSlot; gS.probeAt = clock; gS.probeForced = false;
                     sigOf(gS.probe, gS.tipCache[gS.probe].sig);
                     gProbeX = r.cx(); gProbeY = r.cy(); gProbeUnit = std::max(1.0f, L.slot / 18.0f); gProbeSlot = gS.probe;
+                    // the window as it is now (no tooltip yet): what the scene shows of it while the probe lasts
+                    if (gG.keep && gG.snap && gG.keepValid) {
+                        barrier(list, gG.snap.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+                        barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                        list->CopyResource(gG.snap.Get(), gG.keep.Get());
+                        barrier(list, gG.keep.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                        barrier(list, gG.snap.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                        gG.snapValid = true;
+                        std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+                        gS.frozenOk = true;
+                    }
                     std::lock_guard tl(gTipM);
                     gTipFoundSlot = -1;
                 }
@@ -4263,6 +4276,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 }
             }
         }
+        if (gS.probe < 0 && clock >= gS.holdUntil) gS.frozenOk = false;
+        gS.frozen = gS.frozenOk && gG.snapValid;
         float tableAlpha = gS.phase == Phase::Active ? float(smoother(gS.time / 0.4)) : gS.phase == Phase::Outro ? float(1 - smoother(gS.time / 0.3)) : float(smoother(gS.time / gS.leanLength));
         auto src = [&](Rect r, int sampled) {
             float   in = L.slot * 16.0f / 18.0f;
@@ -4876,7 +4891,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             {
                 if (gS.hoverOffer >= 0) gS.dirtyUntil = clock + 0.3; // and a moment after (the screen catches up)
                 bool dirty = gS.hoverOffer >= 0 || t >= 0 || clock < gS.dirtyUntil;
-                if (!dirty && active && clock - gS.cleanAt > 0.2 && gG.keepValid) {
+                if (!dirty && active && clock - gS.cleanAt > 0.2 && gG.keepValid && !gS.frozen && gS.probe < 0) {
                     gSnapRequest = true;
                     std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
                     for (int j = 0; j < 18; ++j) gS.wasRune[j] = gS.btnFull[6 + j];
