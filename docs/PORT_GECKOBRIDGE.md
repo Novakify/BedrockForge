@@ -18,7 +18,7 @@ GeckoLib mobs: Sculk Horde, Dweller, From The Caves) and branch `geckobridge/com
   mostly a generated behaviour-pack script, not engine hooks.
 
 ## Sources read
-- GeckoLib **5.5.7** (your 3 jars: Fabric/Forge/NeoForge 26.3; byte-identical `com/geckolib` code) + its source
+- GeckoLib **5.5.7** (your 3 jars: Fabric/Forge/NeoForge 26.3; the format loader `com/geckolib/loading` and the easing/loop classes `animation/object` are byte-identical in all three, only loader glue and events differ) + its source
   `github.com/bernie-g/geckolib` `main` (= 5.5.7, changelog checked). Loader: `loading/definition/{geometry,animation}`,
   `animation/object/EasingType`, `animation/object/LoopType`, `loading/math/MolangQueries`, `MathParser`,
   `renderer/layer/builtin/*`, `util/RenderUtil.getEmissiveResource`, `constant/DefaultAnimations`.
@@ -200,7 +200,7 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
 
 ## Proof: how to install + check (needs your PC)
 Files: `GeckoBridgeProofRP` + `GeckoBridgeProofBP` (sent in chat as a zip; rebuild with
-`convert.py` + the spec in docs/NEXT_SESSION.md). Copy into
+`convert.py tools/GeckoBridge/specs/proof_sculk_enderman.json OUT`, jar path fixed). Copy into
 `<instance>\Minecraft Bedrock\Users\Shared\games\com.mojang\development_resource_packs` / `development_behavior_packs`
 (game closed - dev packs are only discovered at start), add both to a test world (or a copy of My World), then in
 the world: `/summon gb:sculk_enderman ~ ~ ~3` (or the spawn egg "Spawn Sculk Enderman (GeckoBridge)").

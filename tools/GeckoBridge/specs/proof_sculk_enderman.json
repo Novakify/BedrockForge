@@ -1,0 +1,40 @@
+{
+ "jar": "C:/BedrockModding/testmods/sculkhorde-1.20.1-0.12.7.jar  (Modrinth: sculk-horde 1.20.1-0.12.7, sha512 e308995f...)",
+ "namespace": "sculkhorde",
+ "pack_name": "GeckoBridge Proof",
+ "glow": "overlay",
+ "credits": "Sculk Enderman model, textures and animations: Sculk Horde by TeamPeril (Bob_Bobertson & contributors), Apache License 2.0, https://github.com/TeamPeril/sculkhorde . Changes: geometry renamed, GeckoLib easings baked to linear keyframes, packaged as a Bedrock pack.",
+ "entities": [
+  {
+   "id": "sculk_enderman",
+   "name": "Sculk Enderman",
+   "geo": "assets/sculkhorde/geo/entity/sculk_enderman.geo.json",
+   "texture": "assets/sculkhorde/textures/entity/sculk_enderman.png",
+   "animations": "assets/sculkhorde/animations/entity/sculk_enderman.animation.json",
+   "play": [
+    "idle",
+    "idle.tendrils"
+   ],
+   "collision": [
+    0.6,
+    2.9
+   ]
+  },
+  {
+   "id": "sculk_enderman_alphaglow",
+   "name": "Sculk Enderman alpha-glow",
+   "geo": "assets/sculkhorde/geo/entity/sculk_enderman.geo.json",
+   "texture": "assets/sculkhorde/textures/entity/sculk_enderman.png",
+   "animations": "assets/sculkhorde/animations/entity/sculk_enderman.animation.json",
+   "play": [
+    "idle",
+    "idle.tendrils"
+   ],
+   "collision": [
+    0.6,
+    2.9
+   ],
+   "glow": "alpha"
+  }
+ ]
+}

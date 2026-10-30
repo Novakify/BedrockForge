@@ -17,7 +17,7 @@
   installed and computer use was not started. Next: Fernando grants access (or copies the two folders himself) ->
   install as dev packs (game CLOSED), add to a test world, `/summon gb:sculk_enderman ~ ~ ~3` and
   `/summon gb:sculk_enderman_alphaglow ~3 ~ ~3`, check day + night, ContentLog 0 errors. Steps: PORT_GECKOBRIDGE.md end.
-  Rebuild: proof spec = docs/PORT_GECKOBRIDGE.md "Proof" + tools/GeckoBridge/convert.py (spec keys in its docstring).
+  Rebuild: python -I tools/GeckoBridge/convert.py tools/GeckoBridge/specs/proof_sculk_enderman.json OUT (fix "jar" path).
 - REPO IS PUBLIC (gh api says visibility public): never commit jars, extracted assets or converted packs.
 - ASK FERNANDO: which glow method looks right; Naturalist licence; OK to share any converted mod (default: no).
 
