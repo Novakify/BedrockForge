@@ -1751,6 +1751,7 @@ struct Campfire {
     int         placeStep = 0; // putting food on: 1 the carried food into the hand's slot, 2 the campfire's use, 3 back
     double      placeAt = -10;
     bool        swapped = false;
+    int         handCount = 0, tries = 0;
     std::string hand;          // what is in hand
 };
 Campfire gCamp;
@@ -2704,13 +2705,38 @@ void tick() {
         gCamp.hand   = game::handItem(hn);
         // putting food on: the carried food into the hand's hotbar slot, the campfire's own use, the slot's stack back
         if (gS.phase == Phase::Active) {
-            if (gCamp.placeStep == 1) { inject(10 + game::selectedSlot(), 1); gCamp.placeStep = 2; gCamp.placeAt = gS.clock; }
-            else if (gCamp.placeStep == 2 && gS.clock - gCamp.placeAt > (gCamp.swapped ? 0.3 : 0.05)) {
-                game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1);
-                gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
-            } else if (gCamp.placeStep == 3 && gS.clock - gCamp.placeAt > 0.25) {
-                if (gCamp.swapped) inject(10 + game::selectedSlot(), 1);
-                gCamp.placeStep = 0;
+            auto note = [&](char const* what) {
+                char b[160];
+                snprintf(b, sizeof b, "campfire: %s (slot %d hand %s x%d, carried %s)", what, game::selectedSlot(), gCamp.hand.c_str(), hn, gS.carriedName.c_str());
+                trail(b);
+            };
+            if (gCamp.placeStep == 1) {
+                note("food into the hand's slot");
+                inject(10 + game::selectedSlot(), 1); gCamp.placeStep = 2; gCamp.placeAt = gS.clock;
+            } else if (gCamp.placeStep == 2 && gS.clock - gCamp.placeAt > (gCamp.swapped ? 0.35 : 0.05)) {
+                if (campCookable(gCamp.hand) || gS.clock - gCamp.placeAt > 1.0) {
+                    note("use");
+                    gCamp.handCount = hn;
+                    game::useBlock(gS.st.bx, gS.st.by, gS.st.bz, 1);
+                    gCamp.placeStep = 3; gCamp.placeAt = gS.clock;
+                }
+            } else if (gCamp.placeStep == 3) {
+                // the slot's stack back once the server took the food off it (a click before that is lost)
+                if (!gCamp.swapped) gCamp.placeStep = 0;
+                else if (hn != gCamp.handCount || gCamp.hand.empty() || gS.clock - gCamp.placeAt > 1.0) {
+                    if (gS.clock - gCamp.placeAt > 0.15) {
+                        note("stack back");
+                        inject(10 + game::selectedSlot(), 1);
+                        gCamp.placeStep = 4; gCamp.placeAt = gS.clock; gCamp.tries = 0;
+                    }
+                }
+            } else if (gCamp.placeStep == 4 && gS.clock - gCamp.placeAt > 0.5) {
+                // the hand holds what it held before (the food is carried again): done; otherwise once more
+                if (campCookable(gCamp.hand) && gS.carriedName != gCamp.hand && gCamp.tries < 2) {
+                    note("stack back again");
+                    inject(10 + game::selectedSlot(), 1);
+                    ++gCamp.tries; gCamp.placeAt = gS.clock;
+                } else { note("placed"); gCamp.placeStep = 0; }
             }
         }
     }
@@ -5045,6 +5071,9 @@ void updateHands(JPose const& cam, double dt) {
         V3     shoulder = shoulderOf(!gS.leftWorks, cp, cy);
         V3     working  = gS.haveAim ? handTarget(gS.aim, shoulder, carrying, tap)
                                      : restOf(!gS.leftWorks) + V3{0, (carrying ? 0.05 : 0.0) - 0.02 * tap, 0};
+        // ClientStation.maxReach: beyond it the hand stops short instead of stretching the arm (CampfireStation: 1.0)
+        if (double maxReach = gS.st.kind == Kind::Campfire ? 1.0 : 1e9; (working - shoulder).len() > maxReach)
+            working = shoulder + (working - shoulder).norm() * maxReach;
         double idle = gS.clock;
         V3 restR = restOf(true) + V3{0, 0.003 * std::sin(idle * 1.7), 0};
         V3 restL = restOf(false) + V3{0, 0.003 * std::sin(idle * 1.5 + 2), 0};
