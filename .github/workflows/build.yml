@@ -122,7 +122,7 @@ jobs:
 
       # LyricsFlow prep (cinematic + lyrics pass): own branch so cinematic-builds / rf-builds stay untouched
       - name: Publish LyricsFlow RF build to lyricsflow-rf-builds
-        if: github.ref == 'refs/heads/lyricsflow/rf-on-cinematic' && github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/heads/lyricsflow/rf-on-cinematic') && github.event_name == 'push'
         shell: bash
         run: |
           mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/
