@@ -2437,11 +2437,13 @@ bool screenlessWorth(std::string const& block, int x, int y, int z) {
 }
 bool screenlessUse(std::string const& block, int x, int y, int z) {
     if (!screenlessWorth(block, x, y, z)) return false;
-    std::lock_guard l(gM);
-    Kind kind;
-    kindOfBlock(block, kind);
-    gPending = {kind, x, y, z, nowMs()};
-    game::openInventory();
+    {
+        std::lock_guard l(gM);
+        Kind kind;
+        kindOfBlock(block, kind);
+        gPending = {kind, x, y, z, nowMs()};
+    }
+    game::openInventory(); // not under gM: the screen opens at once and reports itself (onScreen locks gM)
     return true;
 }
 Route onScreen(std::string const& containerTop) {
