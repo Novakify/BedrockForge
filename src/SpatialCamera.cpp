@@ -587,7 +587,7 @@ float applyEasing(Easing e, float t) { // AnimationUtil
     X(hoppers) X(dispensers) X(grindstone) X(smithing) X(cartography) X(loom) X(stonecutter) X(lectern) X(inventory)        \
     X(creativeInventory) X(renderScalePct) X(linearFiltering) X(anisotropicFiltering) X(recipeBookShrink) X(hideHandsFp)    \
     X(hideShieldFp) X(swingArmFp) X(curvedScreen) X(curvedArc) X(avatarBaseYaw) X(avatarBodyRot) X(crosshairFp)            \
-    X(keepFpAngle) X(inheritOrigin) X(wideScreenShift) X(overrideFov) X(targetFov) X(worldBlur) X(worldBlurStrength)   \
+    X(keepFpAngle) X(inheritOrigin) X(wideScreenShift) X(overrideFov) X(targetFov) X(worldBlur) X(worldBlurStrength) X(blurKeepPlayer)   \
     X(dropShadow) X(dropShadowAlpha)
 
 void loadConfig(std::filesystem::path const& configDir) {

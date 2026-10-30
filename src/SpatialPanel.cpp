@@ -655,7 +655,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         }
         // the player on screen (third person): kept sharp in the blur (Java draws the player again after the blur)
         spatialcam::View pv = spatialcam::view();
-        if (pv.havePose && pv.valid) {
+        if (sc.worldBlur && sc.blurKeepPlayer && pv.havePose && pv.valid) {
             constexpr float kD = 0.017453292f;
             float y = pv.camYaw * kD, p = pv.camPitch * kD;
             float f[3] = {-std::sin(y) * std::cos(p), -std::sin(p), std::cos(y) * std::cos(p)};
@@ -1527,6 +1527,7 @@ void drawJavaConfig() {
         ImGui::Checkbox("Swing Arm on First Person Click", &c.swingArmFp);
         ImGui::Checkbox("Blur World Background", &c.worldBlur);
         if (c.worldBlur) ImGui::SliderInt("World Blur Strength", &c.worldBlurStrength, 1, 10);
+        if (c.worldBlur) ImGui::Checkbox("Keep the Player Sharp", &c.blurKeepPlayer);
         ImGui::Checkbox("Drop Shadow", &c.dropShadow);
         if (c.dropShadow) ImGui::SliderInt("Drop Shadow Alpha", &c.dropShadowAlpha, 0, 255);
         ImGui::Checkbox("Override FOV (Java framing)", &c.overrideFov);

@@ -64,6 +64,7 @@ struct Config {
     int   targetFov   = 70;
     bool  worldBlur = true;
     int   worldBlurStrength = 5;
+    bool  blurKeepPlayer = false; // Java 2.x draws the player sharp after the blur; the reference clips blur it too
     bool  dropShadow = true;
     int   dropShadowAlpha = 120;
 };
