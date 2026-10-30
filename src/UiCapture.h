@@ -10,6 +10,7 @@
 // Everything is inert unless "uiCaptureSpike": true in RendererFoundation.json (the hooks aren't even installed).
 #pragma once
 #include <filesystem>
+#include <string>
 
 struct ID3D12Device;
 struct ID3D12CommandQueue;
@@ -49,5 +50,7 @@ void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resour
 void drawUi();
 /// Write a small text file into the capture output folder (diagnostics).
 void writeText(char const* name, char const* text);
+/// Flicker diagnostics: draws that reached the screen while the UI went to the panel target.
+std::string leakNote();
 
 } // namespace rf::uicapture

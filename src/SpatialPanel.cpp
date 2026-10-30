@@ -485,6 +485,21 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         // Cinematic scene: the hidden screen is never drawn as a panel; the scene draws over the world instead
         bool redirected = gRedirected.exchange(false);
         gAnim           = gEnabled ? 1.0f : 0.0f;
+        {   // flicker diagnostics (logs/uicapture/cine_frames.txt, every 2 s while a scene runs)
+            static long      frames = 0, noUi = 0, notEnabled = 0;
+            static ULONGLONG last = 0;
+            ++frames;
+            if (!redirected) ++noUi;
+            if (!gEnabled.load()) ++notEnabled;
+            ULONGLONG nowT = GetTickCount64();
+            if (nowT - last > 2000) {
+                last = nowT;
+                char b[400];
+                snprintf(b, sizeof b, "scene frames %ld, frames whose UI was not redirected %ld, frames with the panel off %ld\n%s\n", frames, noUi, notEnabled,
+                         uicapture::leakNote().c_str());
+                uicapture::writeText("cine_frames.txt", b);
+            }
+        }
         if (!gRoot && !createStatic(device)) return false;
         D3D12_RESOURCE_DESC bd = bb->GetDesc();
         if (!ensureSized(bd)) return false;

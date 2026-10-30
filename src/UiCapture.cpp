@@ -208,9 +208,17 @@ bool safeSnapshot(ID3D12GraphicsCommandList* list, ID3D12Resource* rt) {
     return ok;
 }
 
+std::atomic<long> gLeakUi{0}, gLeakOther{0}, gLeakFrames{0}, gLeakFrameNow{0};
 void onDraw(ID3D12GraphicsCommandList* list) {
     std::lock_guard l(gMutex);
     auto p = gListPso.find(list);
+    bool isUi = p != gListPso.end() && gUiPso.count(p->second);
+    // flicker diagnostics: a draw that reaches the screen while the UI is meant to go to the panel target
+    if (rf::panel::enabled() && !gListOnPanel.count(list))
+        if (auto lt = gListRt0.find(list); lt != gListRt0.end() && gBbHandles.count(lt->second)) {
+            if (isUi && !rf::panel::wantRedirect()) { ++gLeakUi; gLeakFrameNow = 1; }
+            else if (!isUi && gFrameRedirect.load(std::memory_order_relaxed)) { ++gLeakOther; gLeakFrameNow = 1; }
+        }
     if (p == gListPso.end()) return;
     auto u = gUiPso.find(p->second);
     if (u == gUiPso.end()) return;
@@ -859,8 +867,15 @@ void requestLearn() {
     gRequest   = true;
 }
 
+std::string leakNote() {
+    char b[160];
+    snprintf(b, sizeof b, "UI draws to the screen while redirecting: %ld, other draws to the screen after the UI began: %ld, frames with either: %ld",
+             gLeakUi.load(), gLeakOther.load(), gLeakFrames.load());
+    return b;
+}
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb) {
     if (!gInstalled || !device || !queue || !bb) return;
+    if (gLeakFrameNow.exchange(0)) ++gLeakFrames;
     gFrameRedirect = false;
     {
         std::lock_guard l(gMutex);
