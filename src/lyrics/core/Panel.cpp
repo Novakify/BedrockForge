@@ -5,7 +5,7 @@
 // - Unicode glyphs the Minecraft font draws through its fallback fonts (play / pause / skip / repeat / note / close)
 //   are drawn with LyricsFlow's own icon PNGs from the UI atlas.
 // - Radial-gradient discs (Java ring()) are drawn as flat discs.
-// - The Cosmetics page (hats, death animations, glow ring) shows a note: those cosmetics are not in the Bedrock port.
+// - The Cosmetics tab (hats, death animations, glow ring: not in the Bedrock port) is the FPS page instead.
 // - "Normal" / "Open full menu" / "Back to the normal menu" ask the game side to open Bedrock Forge's menu (there is no
 //   LyricsFlow full-screen menu in the port yet).
 // - Sliders also follow a held click ([BF] drag); Java sets them on the click only.
@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <functional>
 
+#include "lyrics/core/Perf.h"
 #include "lyrics/core/Text.h"
 
 namespace bf::lyrics {
@@ -428,7 +429,7 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     c.text(nrm, 352 - nw, 10.5f, 0.62f, WHITE, (0.8f + 0.2f * hn) * a);
     if (c.clicked("nrm")) c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0});
 
-    static char const* const tabs[] = {"Sky", "Lyrics", "Look", "Cosmetics", "More"};
+    static char const* const tabs[] = {"Sky", "Lyrics", "Look", "FPS", "More"};
     float const tw = (160.0f - 3.0f * 4) / 5;
     for (int i = 0; i < 5; ++i) {
         float       tx  = 206 + float(i) * (tw + 3);
@@ -450,7 +451,7 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     case 0: skies(c, cfg); break;
     case 1: lyrics(c, cfg); break;
     case 2: look(c, cfg, c.fonts); break;
-    case 3: cosmetics(c); break;
+    case 3: fps(c, cfg); break;
     default: more(c, cfg); break;
     }
 }
@@ -552,11 +553,30 @@ void Panel::look(Ctx& c, Config& cfg, FontSet const& fonts) {
         c.option("sh" + std::to_string(i), 206 + float(i) * 54, 186, 50, 13, sh[i], cfg.textShadow == i, [&, i] { cfg.textShadow = i; }, a);
 }
 
-void Panel::cosmetics(Ctx& c) {
+// [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the
+// WorldPanel widgets. (2.1 has Cosmetics here: hats / death animations are not in the Bedrock port.)
+void Panel::fps(Ctx& c, Config& cfg) {
     float const a = c.pageA;
-    c.text("Hat", 206, 45, 0.62f, WHITE, 0.55f * a);
-    c.text("Hats, death animations and the glow", 206, 66, 0.6f, ACCENT2, 0.8f * a);
-    c.text("ring are not in the Bedrock port yet.", 206, 78, 0.6f, ACCENT2, 0.8f * a);
+    c.text("Profile", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.option("pf0", 206, 54, 78, 14, "Chill", cfg.profile == 0, [&] { applyProfile(cfg, 0); }, a);
+    c.option("pf1", 288, 54, 78, 14, "PvP", cfg.profile == 1, [&] { applyProfile(cfg, 1); }, a);
+    c.text("Graphics (lyrics & sky)", 206, 75, 0.62f, WHITE, 0.55f * a);
+    static char const* const q[] = {"Performance", "Balanced", "Pretty"};
+    for (int i = 0; i < 3; ++i)
+        c.option("q" + std::to_string(i), 206 + float(i) * 54, 84, 50, 13, q[i], cfg.quality == i, [&, i] { cfg.quality = i; }, a);
+    c.toggle2("auto", 206, 103, 160, "Automatic FPS", cfg.autoPerf, [&] { cfg.autoPerf = !cfg.autoPerf; }, a);
+    float tv = c.slider("tgt", cfg.targetFps > 0 ? "Target " + std::to_string(cfg.targetFps) : std::string("Target auto"), 126,
+                        float(cfg.targetFps) / 240.0f, a);
+    cfg.targetFps = int(std::lround(tv * 240.0f / 5.0f)) * 5;
+    if (cfg.targetFps > 0 && cfg.targetFps < 30) cfg.targetFps = 0; // the low end of the track = auto
+    c.toggle2("boost", 206, 141, 160, "FPS boost (game, next start)", cfg.fpsBoost, [&] { cfg.fpsBoost = !cfg.fpsBoost; }, a);
+    std::string st = !cfg.autoPerf ? "Auto off"
+                   : c.in.perfLevel > 0 ? "Auto is saving: level " + std::to_string(c.in.perfLevel) + " of 6"
+                                        : std::string("All on - FPS are fine");
+    c.text(st, 206, 165, 0.6f, ACCENT2, 0.85f * a);
+    char b[64];
+    std::snprintf(b, sizeof b, "FPS %d  \xC2\xB7  Mod %.2f ms", c.in.fps, c.in.modMs);
+    c.text(b, 206, 177, 0.56f, WHITE, 0.6f * a);
 }
 
 void Panel::more(Ctx& c, Config& cfg) {

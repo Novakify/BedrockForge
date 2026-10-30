@@ -22,9 +22,11 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         mSongSeq = in.songSeq;
         mPhysics.clear();
     }
+    // quality + Auto FPS: the frame renders with the costly effects dropped (the saved config is untouched)
+    Config const cfg = effectiveConfig(mCfg, mPerf);
     auto width = [this](std::string_view s, std::string_view f) { return mFonts.width(s, f); };
-    mScene.tick(in, mCfg, cam, world, width);
-    auto words = mScene.draw(in, mCfg, cam, world);
+    mScene.tick(in, cfg, cam, world, width);
+    auto words = mScene.draw(in, cfg, cam, world);
 
     // painter's order: far words first (we draw without depth test, like the Java mod's SEE_THROUGH text)
     std::stable_sort(words.begin(), words.end(), [&](DrawWord const& a, DrawWord const& b) {
@@ -33,28 +35,28 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     });
 
     mGlyphs.clear();
-    GlyphStyle const    st = makeStyle(mCfg, float(in.nowSeconds));
-    PhysicsParams const pp = PhysicsParams::from(mCfg);
+    GlyphStyle const    st = makeStyle(cfg, float(in.nowSeconds));
+    PhysicsParams const pp = PhysicsParams::from(cfg);
     std::vector<BfGlyphV1> drop;
     for (auto const& w : words) {
         Font const* f = mFonts.get(w.font);
         if (!f) continue;
         if (w.dropNow) {
             drop.clear();
-            buildWordGlyphs(w, *f, mCfg, st, mOrigin, drop, /*mainPassOnly*/ true);
+            buildWordGlyphs(w, *f, cfg, st, mOrigin, drop, /*mainPassOnly*/ true);
             mPhysics.spawn(drop, mOrigin, w.key ^ (mSongSeq << 20), pp);
             continue;
         }
-        buildWordGlyphs(w, *f, mCfg, st, mOrigin, mGlyphs);
+        buildWordGlyphs(w, *f, cfg, st, mOrigin, mGlyphs);
     }
-    if (mCfg.fallingLetters || !mPhysics.letters().empty()) {
+    if (cfg.fallingLetters || !mPhysics.letters().empty()) {
         mPhysics.step(in.dt, world, pp);
         std::vector<BfGlyphV1> letters;
         mPhysics.emit(mOrigin, letters);
         mGlyphs.insert(mGlyphs.begin(), letters.begin(), letters.end()); // letters on the ground sit behind live text
     }
     // the karaoke bar last: screen space, drawn over the world text
-    mTopBar.build(in, mCfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);
+    mTopBar.build(in, cfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);
 }
 
 void Engine::publish(bool active, float fovY, std::vector<BfGlyphV1> const* extra) {

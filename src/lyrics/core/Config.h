@@ -106,6 +106,14 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(ping, false)                                                                                                     \
     B(customHotbar, false)             /* glass hotbar */                                                              \
     B(uiSounds, true)                  /* menu sounds */                                                               \
+    /* ---- LyricsFlow 2.1 performance (perf.AutoPerf / Profiles / FpsBoost) */                                      \
+    I(quality, 2)                      /* 0 Performance, 1 Balanced, 2 Pretty */                                       \
+    B(autoPerf, true)                  /* Automatic FPS: lowers effects when FPS drop */                               \
+    I(targetFps, 0)                    /* 0 = auto (60) */                                                             \
+    I(profile, 0)                      /* 0 Chill, 1 PvP */                                                            \
+    B(fpsBoost, false)                 /* game settings boost (applied to options.txt on the next restart) */          \
+    B(vsync, false)                    /* [BF] mirrors the game option for the FPS target (set by the glue) */         \
+    I(maxFps, 0)                       /* [BF] game max framerate, 0 = unlimited (set by the glue) */                  \
     /* ---- [BF] falling letters (new feature, not in LyricsFlow) */                                                   \
     B(fallingLetters, false)                                                                                           \
     E(LetterLand, letterLand, LetterLand::Flat)                                                                        \

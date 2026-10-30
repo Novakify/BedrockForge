@@ -75,6 +75,7 @@ struct State {
     std::vector<BfGlyphV1>        panelGlyphs;
     Vec3                          camPos;           // last HUD-frame camera (panel placement + crosshair)
     float                         camYaw = 0, camPitch = 0;
+    float                         fpsSmooth = 0;
     bool                          haveCam = false;
     IClientInstance*              openMenuOn = nullptr; // "Open full menu": open BF's menu after the mutex is released
     int64_t                       panelStepNs = 0;  // last panel step (the HUD and the dialog both may drive it)
@@ -282,7 +283,8 @@ void mediaLoop() {
     gS->smtc.reset();
 }
 
-void panelStepAndPublish(int64_t now, bool lyricsActive); // settings panel section below
+void    panelStepAndPublish(int64_t now, bool lyricsActive); // world panel section below
+int64_t nowMsWall();
 
 void hudFrame(bedrock_forge::client::Frame& f) {
     if (!gS || !f.player) return;
@@ -321,10 +323,15 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         in.combat     = since < hold ? 1.0f - float(since) / float(hold) * 0.5f : std::max(0.0f, 1.5f - float(since) / float(hold));
     }
     GameWorld world(a);
+    auto const t0 = Clock::now();
     gS->engine.frame(in, cam, &world);
     gS->lastFov = fov;
     gS->camPos = cam.pos; gS->camYaw = cam.yaw; gS->camPitch = cam.pitch; gS->haveCam = true;
     panelStepAndPublish(now, true);
+    // Auto FPS (2.1 AutoPerf): frame rate from the HUD frame interval, the mod's own cost = this function's work
+    double const modMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    gS->fpsSmooth      = gS->fpsSmooth <= 0 ? 1.0f / std::max(dt, 1e-3f) : gS->fpsSmooth * 0.95f + 0.05f / std::max(dt, 1e-3f);
+    gS->engine.perf().tick(nowMsWall(), int(gS->fpsSmooth + 0.5f), modMs, gS->engine.config());
 }
 
 
@@ -396,6 +403,9 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
         in.nowMs = ms;
         in.dt    = gS->panelStepNs ? std::clamp(float(double(now - gS->panelStepNs) / 1e9), 0.0f, 0.1f) : 1.0f / 60.0f;
         in.click = host::click.exchange(false);
+        in.perfLevel = gS->engine.perf().level();
+        in.fps       = gS->engine.perf().fps();
+        in.modMs     = gS->engine.perf().modMs();
         in.down  = host::down.load();
         auto actions = gS->panel.frame(in, gS->engine.origin(), gS->engine.config(), gS->engine.fonts(), gS->panelAssets, panelMedia(now),
                                        gS->panelGlyphs);

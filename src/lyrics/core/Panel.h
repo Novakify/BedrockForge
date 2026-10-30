@@ -54,11 +54,14 @@ struct PanelInput {
     bool    down  = false;     // attack button held (slider drag, [BF])
     int64_t nowMs = 0;         // wall clock in ms (animations)
     float   dt    = 1.0f / 60; // seconds
+    // performance status for the FPS page
+    int     perfLevel = 0, fps = 0;
+    double  modMs = 0;
 };
 
 class Panel {
 public:
-    enum class Tab { Sky, Lyrics, Look, Cosmetics, More };
+    enum class Tab { Sky, Lyrics, Look, Fps, More }; // 2.1's Cosmetics slot is the FPS page in the port
 
     /// Open in front of the camera (WorldPanel constructor). eye/look = camera at that moment.
     void open(Vec3 eye, Vec3 look, int64_t nowMs);
@@ -97,7 +100,7 @@ private:
     void lyrics(Ctx& c, Config& cfg);
     void offset(Ctx& c, Config& cfg, float y);
     void look(Ctx& c, Config& cfg, FontSet const& fonts);
-    void cosmetics(Ctx& c);
+    void fps(Ctx& c, Config& cfg);
     void more(Ctx& c, Config& cfg);
 
     Vec3    mPos;              // panel centre (px 190, 111), world

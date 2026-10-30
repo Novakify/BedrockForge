@@ -96,6 +96,7 @@ jobs:
           mkdir -p out && cp -r bin/* out/
           mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
           cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
+          mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
           cd out
           git init -q -b lyricsflow-builds
           git config user.name "github-actions"

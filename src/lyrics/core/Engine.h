@@ -8,6 +8,7 @@
 
 #include "lyrics/BfLyrics.h"
 #include "lyrics/core/Glyphs.h"
+#include "lyrics/core/Perf.h"
 #include "lyrics/core/Physics.h"
 #include "lyrics/core/Scene.h"
 #include "lyrics/core/TopBar.h"
@@ -29,6 +30,7 @@ public:
     Scene&                        scene() { return mScene; }
     LetterPhysics&                physics() { return mPhysics; }
     TopBar&                       topBar() { return mTopBar; }
+    AutoPerf&                     perf() { return mPerf; }
     void                          reset();
 
 private:
@@ -37,6 +39,7 @@ private:
     Scene                  mScene;
     LetterPhysics          mPhysics;
     TopBar                 mTopBar;
+    AutoPerf               mPerf;
     std::vector<BfGlyphV1> mGlyphs;
     Vec3                   mOrigin;
     CameraState            mCam;

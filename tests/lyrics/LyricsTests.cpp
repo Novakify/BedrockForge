@@ -931,6 +931,41 @@ TEST(panel_widgets) {
     CHECK(PanelRig::has(r.click(358, 13), PanelAction::Kind::Close));
 }
 
+// ================================================================ performance (2.1 AutoPerf / quality / profiles)
+TEST(autoperf_levels) {
+    Config   cfg; // target 60
+    AutoPerf ap;
+    int64_t  t = 0;
+    for (int i = 0; i < 12; ++i, t += 500) ap.tick(t, 30, 4.0, cfg); // 30 fps, mod costs 4 ms: heavy and low
+    CHECK(ap.level() >= 2);
+    CHECK_EQ(ap.quality(cfg), 0);
+    Config e = effectiveConfig(cfg, ap);
+    CHECK(e.maxLetters <= 60);
+    for (int i = 0; i < 300; ++i, t += 500) ap.tick(t, 120, 0.2, cfg); // cheap again: relaxes (a "bad" level waits 2 min)
+    CHECK_EQ(ap.level(), 0);
+    CHECK_EQ(ap.quality(cfg), 2);
+    AutoPerf cheap;                                                   // low FPS but the mod is cheap: never blamed
+    for (int i = 0; i < 12; ++i) cheap.tick(int64_t(i) * 500, 25, 0.1, cfg);
+    CHECK_EQ(cheap.level(), 0);
+    cfg.vsync = true;
+    CHECK_EQ(ap.target(cfg), 57);
+}
+TEST(quality_and_profiles) {
+    Config   cfg;
+    AutoPerf ap;
+    cfg.quality = 0;
+    Config e = effectiveConfig(cfg, ap);
+    CHECK(!e.glow);
+    CHECK(!e.twoColor);
+    applyProfile(cfg, 1);
+    CHECK(cfg.combatSafe);
+    CHECK(!cfg.fallingLetters);
+    CHECK_EQ(cfg.maxLines, 1);
+    applyProfile(cfg, 0);
+    CHECK(!cfg.combatSafe);
+    CHECK_EQ(cfg.quality, 2);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) gDir = argv[1];
     else if (char const* e = std::getenv("LYRICS_FIXTURES")) gDir = e;

@@ -1,5 +1,18 @@
 # LyricsFlow kickoff on the PC - exact steps (written 2026-10-30, prep session)
 
+> **Update 2026-10-30 ~19:00 local: foundation is now LyricsFlow 2.1** (Fernando got it from 374m, MIT, authorised
+> for Novak; jar not committed). Priority (Fernando): lyrics + UI first, then glass hotbar + FPS profiles, sky last.
+> - **World panel** = port of 2.1 `app.cosmetic.WorldPanel` (`src/lyrics/core/Panel.*`): **L** opens/closes it
+>   (Java K is BF's), it stands 3.2 blocks in front of you, aim with the **crosshair**, left click. Clicks on it are
+>   swallowed (no punching / placing). Tabs Sky / Lyrics / Look / **FPS** / More (2.1's Cosmetics slot = FPS page:
+>   Chill/PvP profile, Performance/Balanced/Pretty, Automatic FPS = 2.1 AutoPerf, target, FPS boost).
+> - RF branch to install: **`lyricsflow/rf-on-cinematic-v3`** (= cinematic 20529b2 + lyrics). CI publishes both.
+> - **Glass hotbar** = resource pack `packs/LyricsFlowGlassHotbar` (in `lyricsflow-builds/packs/`): copy into the
+>   instance's resource_packs + add to global_resource_packs.json (top). Textures only, vanilla layout.
+> - **FPS boost (game settings)**: `tools/lyricsflow/fps_boost.py apply|restore|show <minecraftpe/options.txt>`,
+>   GAME CLOSED (Bedrock rewrites options.txt on exit). Check `show` first: key names unverified on 1.26.51.
+> - Sky system: not ported yet (skyPreset / strength / speed / pattern are stored, nothing draws a sky).
+
 > **Update 2026-10-30 ~11:30 local (cloud session while Fernando was out, no PC access):**
 > - RF branch is now **`lyricsflow/rf-on-cinematic-v2`** = `cinematic` 22bee91 + lyrics pass (the force-push of
 >   the old branch was blocked; the workflow publishes `lyricsflow-rf-builds` from both names).
