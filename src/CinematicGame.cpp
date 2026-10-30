@@ -99,9 +99,7 @@ bool useHitBlock() {
     return true;
 }
 
-namespace {
 thread_local int tOwnUse = 0; // a use the scene makes itself: not taken over by the interception below
-}
 bool useBlock(int x, int y, int z, int face) {
     Actor* a = player();
     if (!a) return false;
@@ -237,7 +235,7 @@ std::string handItem(int& count) {
 // ---- the use of a block with no window of its own (jukebox, chiseled bookshelf) can start a scene instead
 namespace {
 bool takeOver(GameMode& gm, BlockPos const& pos) {
-    if (tOwnUse) return false;
+    if (rf::cine::game::tOwnUse) return false;
     Actor* a = rf::cine::game::playerActor();
     if (!a || static_cast<Actor*>(&gm.mPlayer) != a) return false;
     std::string name = a->getDimensionBlockSource().getBlock(pos).getTypeName();
