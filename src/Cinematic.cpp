@@ -123,7 +123,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
+bool sceneAvailable(Kind k) { return k == Kind::Beacon || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -174,7 +174,7 @@ struct Station {
             V3 f = dirVec(side);
             return {bx + 0.5 + f.x * 0.5, by + 0.5, bz + 0.5 + f.z * 0.5};
         }
-        return kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography || kind == Kind::Loom || kind == Kind::Enchanting ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
+        return kind == Kind::Beacon || kind == Kind::Table || kind == Kind::Anvil || kind == Kind::Grindstone || kind == Kind::Stonecutter || kind == Kind::Smithing || kind == Kind::Cartography || kind == Kind::Loom || kind == Kind::Enchanting ? top : V3{bx + 0.5, by + 0.5, bz + 0.5};
     }
     /// FurnaceZones.point / top: a point on the front (u left->right, v bottom->top, out > 0 in front) or the top
     /// (u left->right, v front edge -> back edge, out = up)
@@ -189,7 +189,8 @@ struct Station {
     V3 right() const { return dirVec(clockWise(opposite(side))); }
     V3 workPoint() const { return center(); }
     bool workOnTop() const { return !isFurnace(kind) && kind != Kind::Brewing; }
-    double leanFov() const { return kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : 66; }
+    double pull = 0;              // BeaconStation.pull: drawing back while the light breaks out
+    double leanFov() const { return kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
     // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
         if (isFurnace(kind)) {
@@ -199,6 +200,14 @@ struct Station {
             p.pos = eye;
             lookAngles(fpoint(false, 0.5, sg.lookV, 0) - eye, p.yaw, p.pitch);
             p.roll = sg.roll;
+            return p;
+        }
+        if (kind == Kind::Beacon) { // BeaconStation.lean: facing the beam, drawing back and up while the light breaks out
+            double d = 1.5 + 1.7 * pull, h = 0.62 + 1.5 * pull;
+            V3     eye = top + sideV() * d + V3{0, h, 0};
+            JPose  p;
+            p.pos = eye;
+            lookAngles(top + V3{0, 0.42 - 0.85 * pull, 0} - eye, p.yaw, p.pitch);
             return p;
         }
         if (kind == Kind::Brewing) { // BrewingStation.lean
@@ -404,6 +413,13 @@ struct Scene {
     double scroll = 0, shapesAt = -10, fitAt = -10, cutLength = 1.05;
     bool   cutAll = false, btnBlock[kButtons] = {};
     float  btnRef[kButtons][3] = {}; // each button's own ground colour (keyed away like a slot's)
+    // BeaconStation (powers: 0 speed 1 haste 2 resistance 3 jump boost 4 strength 5 regeneration 6 the chosen one made stronger)
+    int    beaconTarget = 0, hoverPower = -1, lastHoverPower = -1, primary = -1, secondary = -1, beaconLevels = 0;
+    double beaconBurstAt = -10, beaconDenyAt = -10, beaconLevelsAt = -10, beaconMotesAt = 0;
+    float  beaconColor[3] = {1, 0.95f, 0.7f};
+    bool   beaconConfirmed = false;
+    struct Label { float x, y, h; std::string text; ImU32 col; };
+    std::vector<Label> labels; // text the scene puts in the world this frame (normalized screen x, y; height in screen fractions)
     // BrewingStation
     int    brewTarget = 0, brewHover = -1, brewPlace = -1;
     double brewProgress = -1, brewProgressAt = -10, brewFuel = 0, brewDenyAt = -10, brewFlaredAt[3] = {-10, -10, -10};
@@ -450,6 +466,8 @@ struct Scene {
 } gS;
 std::mutex gM; // gS
 double cameraKick();
+double beaconKick(double t);
+void   motes(V3 at, double radius, int count, float r, float g, float b, double rise);
 double moveTime();
 void   moveFrame();
 
@@ -760,7 +778,8 @@ JPose overridePose(V3 livePos, float liveYaw, float livePitch) { // CameraRig.ov
         break;
     }
     case Phase::Active: {
-        JPose  base = tether(breathe(gS.st.view(), smoother(gS.time / 0.6)), livePos);
+        JPose  base = gS.st.kind == Kind::Beacon && gS.st.pull > 0.01 ? breathe(gS.st.view(), smoother(gS.time / 0.6)) // freeCamera
+                                                                         : tether(breathe(gS.st.view(), smoother(gS.time / 0.6)), livePos);
         double kick = cameraKick();
         if (kick > 0.001 && cameraShake()) { // CameraRig.kick: a tremor that dies down with the moment
             double t        = gS.clock;
@@ -955,6 +974,7 @@ double cameraKick() {
     if (gS.st.kind == Kind::Grindstone) return grindKick(t);
     if (gS.st.kind == Kind::Stonecutter) return stoneKick(t);
     if (gS.st.kind == Kind::Smithing) return smithKick(t);
+    if (gS.st.kind == Kind::Beacon) return beaconKick(t);
     if (gS.st.kind == Kind::Enchanting) { // EnchantStation.cameraKick
         double u = t / RITUAL_LENGTH, peak = RITUAL_PEAK / RITUAL_LENGTH;
         return u < peak ? 0.6 * smoother(u / peak) : std::exp(-(u - peak) * RITUAL_LENGTH * 3.2);
@@ -966,6 +986,11 @@ double stationFlash(float rgb[3]) {
         double d = gS.clock - gS.burstAt;
         rgb[0] = 0xE8 / 255.0f; rgb[1] = 0xDC / 255.0f; rgb[2] = 1;
         return d >= 0 && d < 0.5 ? std::pow(1 - d / 0.5, 2) * 0.26 : 0;
+    }
+    if (gS.st.kind == Kind::Beacon) { // BeaconStation.flash
+        double d = gS.clock - gS.beaconBurstAt;
+        for (int i = 0; i < 3; ++i) rgb[i] = 0.6f + 0.4f * gS.beaconColor[i];
+        return d >= 0 && d < 0.6 ? std::pow(1 - d / 0.6, 2) * 0.32 : 0;
     }
     double t = moveTime();
     if (t < 0) return 0;
@@ -1258,6 +1283,105 @@ void smithAction(int t, unsigned bit, bool shift) {
         gSnapRequest = true;
     } else inject(i, 1); // take it
     gS.tapAt = gS.clock;
+}
+
+// ---------------------------------------------------------------- BeaconStation (vanilla geometry)
+// The powers hang either side of the beam (RemainingLayouts.base BEACON), the payment floats over the glass. Bedrock's
+// beacon window underneath: its power buttons (L.buttons 0..6 in the order above), confirm (7) and cancel (8).
+constexpr double B_LIGHT_LENGTH = 3.0, B_BURST = 0.62, B_HAND_Y = 0.06, B_REACH = 0.07;
+enum BeaconTarget { BnNone, BnPower, BnPayment, BnTop };
+constexpr int    kPowerTier[7] = {0, 0, 1, 1, 2, 3, 3};
+constexpr char const* kPowerName[6] = {"Speed", "Haste", "Resistance", "Jump Boost", "Strength", "Regeneration"};
+constexpr uint32_t kPowerRgb[6] = {0x33EBFF, 0xD9C043, 0x9146F0, 0xFDFF84, 0xFFC700, 0xCD5CAB}; // MobEffect colours
+int  powerCount() { return gS.primary >= 0 ? 7 : 6; }
+int  powerEffect(int i) { return i == 6 ? gS.primary : i; }
+bool powerOpen(int i) { return kPowerTier[i] < gS.beaconLevels; }
+bool powerChosen(int i) { return i < 5 ? gS.primary == i : i == 5 ? gS.secondary == 5 : gS.primary >= 0 && gS.secondary == gS.primary; }
+bool beaconReady() { return gS.primary >= 0 && gS.beaconLevels > 0 && gS.cellFull[0]; }
+void effectColour(int effect, float c[3]) { // BeaconStation.color
+    uint32_t rgb = effect < 0 ? 0xFFF2B0 : kPowerRgb[effect];
+    float    r = (rgb >> 16 & 255) / 255.0f, g = (rgb >> 8 & 255) / 255.0f, b = (rgb & 255) / 255.0f, mx = std::max(0.1f, std::max(r, std::max(g, b)));
+    c[0] = r / mx; c[1] = g / mx; c[2] = b / mx;
+}
+bool beaconPayment(std::string const& n) {
+    for (char const* k : {"minecraft:iron_ingot", "minecraft:gold_ingot", "minecraft:emerald", "minecraft:diamond", "minecraft:netherite_ingot"})
+        if (n == k) return true;
+    return false;
+}
+V3 beaconCore() { return {gS.st.bx + 0.5, gS.st.by + 0.5, gS.st.bz + 0.5}; }
+/// RemainingLayouts.base(BEACON): the powers two by two left of the beam (tier I lowest, III alone on top), the second
+/// power right of it with its stronger version above; all a little in front of the beam
+V3 powerPos(int i) {
+    double x = i < 4 ? (i % 2 == 0 ? -0.8 : -0.45) : i == 4 ? -0.62 : 0.6;
+    double y = i < 5 ? 0.2 + 0.31 * (i / 2) : 0.36 + 0.31 * (i - 5);
+    return gS.st.top + gS.st.sideV() * (0.14 - 0.08 * std::fabs(x)) + gS.st.right() * x + V3{0, y + 0.012 * std::sin(gS.clock * 1.4 + i * 1.7), 0};
+}
+V3 paymentPos() { return gS.st.top + gS.st.sideV() * 0.27 + V3{0, 0.14 + 0.012 * std::sin(gS.clock * 1.9), 0}; }
+double beaconDenyShake() {
+    double d = gS.clock - gS.beaconDenyAt;
+    return d >= 0 && d < 0.35 ? 0.012 * std::sin(d * 60) * (1 - d / 0.35) : 0;
+}
+/// BeaconStation.updateCursor; 120+i a power, 130 the payment, 131 the top (laying the carried payment)
+int beaconCursor(Basis const& b, float mx, float my) {
+    gS.beaconTarget = BnNone;
+    gS.hoverPower   = -1;
+    if (moving()) return -1;
+    if (!gS.carrying)
+        for (int i = 0; i < powerCount(); ++i)
+            if (underCursor(b, mx, my, powerPos(i), 0.12)) {
+                gS.beaconTarget = BnPower; gS.hoverPower = i; gS.haveAim = true; gS.aim = powerPos(i);
+                return 120 + i;
+            }
+    if (gS.cellFull[0] && underCursor(b, mx, my, paymentPos(), 0.1)) {
+        gS.beaconTarget = BnPayment; gS.haveAim = true; gS.aim = paymentPos();
+        return 130;
+    }
+    if (gS.carrying && underCursor(b, mx, my, gS.st.top + V3{0, 0.05, 0}, 0.32)) {
+        gS.beaconTarget = BnTop; gS.haveAim = true; gS.aim = paymentPos();
+        return 131;
+    }
+    return -1;
+}
+void beaconAction(int t, unsigned bit, bool shift) {
+    if (t >= 120 && t < 127) { // choose
+        int i = t - 120;
+        if (i >= powerCount()) return;
+        if (!powerOpen(i)) { gS.beaconDenyAt = gS.clock; return; }
+        if (i >= 5) gS.secondary = i == 5 ? 5 : gS.primary;
+        else {
+            bool upgraded = gS.secondary >= 0 && gS.secondary == gS.primary;
+            gS.primary    = i;
+            if (upgraded) gS.secondary = gS.primary; // the "made stronger" choice follows the new primary power
+        }
+        inject(300 + i, 1); // the window's own button
+        float c[3];
+        effectColour(powerEffect(i), c);
+        motes(powerPos(i), 0.06, 10, c[0], c[1], c[2], 0.15);
+        gS.tapAt = gS.clock;
+        return;
+    }
+    if (t == 130) {
+        if (bit == 1 && !shift && !gS.carrying && beaconReady()) { // light(): the move; the window's confirm when it ends
+            effectColour(gS.primary, gS.beaconColor);
+            gS.moveOn = true; gS.moveAt = gS.clock; gS.moveLength = B_LIGHT_LENGTH; gS.moveBeat = B_BURST; gS.moveBeatDone = false;
+            gS.beaconConfirmed = false;
+            std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+            gSnapRequest = true;
+        } else inject(0, 1); // slotClick(0, 0): take it
+        gS.tapAt = gS.clock;
+        return;
+    }
+    if (t == 131) {
+        if (!beaconPayment(gS.carriedName)) { gS.beaconDenyAt = gS.clock; return; }
+        inject(0, 2); // slotClick(0, 1): one of the carried stack
+        gS.tapAt = gS.clock;
+    }
+}
+/// BeaconStation.cameraKick / flash
+double beaconKick(double t) {
+    double d = gS.clock - gS.beaconBurstAt;
+    double build = t >= 0 && t < B_BURST ? 0.25 * smoother(t / B_BURST) : 0;
+    return std::max(build, d >= 0 && d < 1.2 ? std::exp(-d * 3.2) : 0);
 }
 
 // ---------------------------------------------------------------- BrewingStation (vanilla geometry)
@@ -1588,6 +1712,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Stonecutter) { stoneAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Smithing) { smithAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Brewing) { brewAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Beacon) { beaconAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Cartography) { cartAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Loom) { loomAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Enchanting) { enchAction(t, bit, shift); return; }
@@ -1647,6 +1772,8 @@ void moveFrame() {
         } else if (gS.phase == Phase::Active && gS.st.kind == Kind::Cartography) {
             if (gS.cellFull[2]) inject(2, 1);
             else gS.moveOn = false;
+        } else if (gS.phase == Phase::Active && gS.st.kind == Kind::Beacon) {
+            gS.beaconBurstAt = gS.clock; // the light breaks out (the burst itself is drawn by the scene)
         } else if (gS.phase == Phase::Active && (gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone)) {
             if (gS.resultFull3()) inject(2, 1);
             else gS.moveOn = false; // nothing to take any more: the move stops (cancelMove)
@@ -1657,6 +1784,11 @@ void moveFrame() {
         gS.loomSnap2 = true;
         std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
         gSnapRequest = true;
+    }
+    // the beacon's window closes on its confirm: it is pressed when the light has run its course
+    if (gS.st.kind == Kind::Beacon && gS.phase == Phase::Active && !gS.beaconConfirmed && t >= B_LIGHT_LENGTH - 0.12) {
+        gS.beaconConfirmed = true;
+        inject(307, 1);
     }
     if (t > gS.moveLength) gS.moveOn = false;
 }
@@ -1672,6 +1804,7 @@ int tipSlotOf(int t) {
     if (gS.st.kind == Kind::Anvil && t == 100) return gS.cellFull[1] ? 1 : gS.cellFull[0] ? 0 : -1;
     if (gS.st.kind == Kind::Stonecutter && t == 103) return gS.cellFull[0] ? 0 : -1;
     if (gS.st.kind == Kind::Brewing && t >= 101 && t <= 105) return gS.cellFull[t - 101] ? t - 101 : -1;
+    if (gS.st.kind == Kind::Beacon && t == 130) return gS.cellFull[0] ? 0 : -1;
     return -1;
 }
 int currentTarget(float mx, float my) {
@@ -1722,6 +1855,7 @@ int currentTarget0(float mx, float my) {
         return smithCursor(b, mx, my, o, d);
     }
     if (gS.st.kind == Kind::Brewing) return brewCursor(b, mx, my);
+    if (gS.st.kind == Kind::Beacon) return beaconCursor(b, mx, my);
     if (gS.st.kind == Kind::Cartography) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
@@ -1905,6 +2039,22 @@ void tick() {
     if (d2 > 49 || !kindOfBlock(name, k) || k != gS.st.kind) leave();
     int n = 0;
     gS.carriedName = game::carriedItem(n);
+    if (gS.st.kind == Kind::Beacon && gS.clock - gS.beaconLevelsAt > 0.5) { // BeaconBlockEntity.updateBase: whole layers of the pyramid
+        gS.beaconLevelsAt = gS.clock;
+        int levels = 0;
+        for (int k = 1; k <= 4; ++k) {
+            bool whole = true;
+            for (int dx = -k; dx <= k && whole; ++dx)
+                for (int dz = -k; dz <= k && whole; ++dz) {
+                    std::string b = game::blockName(gS.st.bx + dx, gS.st.by - k, gS.st.bz + dz);
+                    whole = b == "minecraft:iron_block" || b == "minecraft:gold_block" || b == "minecraft:emerald_block" || b == "minecraft:diamond_block" ||
+                            b == "minecraft:netherite_block";
+                }
+            if (!whole) break;
+            levels = k;
+        }
+        gS.beaconLevels = levels;
+    }
 }
 
 bool active() { std::lock_guard l(gM); return gS.phase != Phase::None; }
@@ -2484,6 +2634,7 @@ bool uploadTexture(ID3D12Device* dev, ID3D12GraphicsCommandList* list, unsigned 
 // a table of 256-byte entries {name length, name, offset, size} after a 16-byte header, then the files)
 constexpr int PROP_W = 512, PROP_H = 256;
 constexpr float FX_BEAM[4] = {96, 0, 32, 128}, FX_GLOW[4] = {128, 0, 64, 64}, FX_MAGIC[4] = {256, 0, 256, 256}; // x y w h
+constexpr float FX_RING[4] = {128, 64, 128, 128}, FX_RAY[4] = {0, 128, 128, 32}; // BeaconStation.RING / RAY
 struct PropSlot { char const* file; int x, y, w, h; };
 const PropSlot kPropSlots[] = {
     {"grindstone_round.tga", 64, 0, 16, 16},     // GrindstoneStation.drawRim
@@ -2570,6 +2721,8 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     blit(fxtex::kBeam, fxtex::kBeamW, fxtex::kBeamH, FX_BEAM);
     blit(fxtex::kMagic, fxtex::kMagicW, fxtex::kMagicH, FX_MAGIC);
     blit(fxtex::kGlow, fxtex::kGlowW, fxtex::kGlowH, FX_GLOW);
+    blit(fxtex::kRing, fxtex::kRingW, fxtex::kRingH, FX_RING);
+    blit(fxtex::kRay, fxtex::kRayW, fxtex::kRayH, FX_RAY);
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     auto arch = std::filesystem::path(exe).parent_path() / "data" / "resource_packs" / "vanilla" / "__brarchive" / "textures" / "blocks.brarchive";
@@ -2910,9 +3063,14 @@ void detect(Img im, bool dump, int kindI) {
                 L.hasBoard = true;
             }
             int expect = isFurnace(kind) ? 3 : kind == Kind::Smithing || kind == Kind::Loom ? 4 : kind == Kind::Stonecutter || kind == Kind::Enchanting ? 2 :
-                         kind == Kind::Brewing ? 5 : 3;
-            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing;
+                         kind == Kind::Brewing ? 5 : kind == Kind::Beacon ? 1 : 3;
+            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing && kind != Kind::Beacon;
             std::vector<Sq> rest = own;
+            if (kind == Kind::Beacon) { // the payment slot only (the power buttons are larger squares of their own)
+                std::vector<Sq> slots;
+                for (auto& q : rest) if (std::abs(q.s - best) <= 3) slots.push_back(q);
+                rest = slots;
+            }
             Sq res{};
             if (hasRes && !rest.empty()) {
                 size_t ri = 0;
@@ -2984,6 +3142,16 @@ void detect(Img im, bool dump, int kindI) {
             }
             L.nRoles  = n;
             L.hasGrid = n == expect;
+            if (kind == Kind::Beacon && n == 1) {
+                // Bedrock's beacon window, from its payment slot (GUI px): the primary powers in a panel up left (speed,
+                // haste / resistance, jump boost / strength), regeneration (and the chosen power made stronger) up right,
+                // confirm and cancel right of the slot; buttons 22 px
+                float u = unit, px = L.grid[0].x, py = L.grid[0].y, bs = 22 * u;
+                static const float kAt[9][2] = {{-82, -86.5f}, {-58, -86.5f}, {-82, -61.5f}, {-58, -61.5f}, {-70, -36.5f}, {9, -61.5f}, {33, -61.5f},
+                                                {29, -2}, {55, -2}};
+                for (int k = 0; k < 9; ++k) L.buttons[k] = {px + kAt[k][0] * u, py + kAt[k][1] * u, bs, bs};
+                L.nButtons = 9;
+            }
             if (kind == Kind::Enchanting && n == 2) {
                 // the three enchantment buttons fill a panel right of the lapis slot: its frame (#373737, one GUI px)
                 // is found on a line through it above the slots, its height down the frame's left column, its width
@@ -3545,6 +3713,8 @@ V3 restOf(bool right) {
         V3             at = gS.st.fpoint(sg.restTop, u, sg.restV, sg.restOut);
         return sg.restTop ? at + V3{0, HAND_Y - sg.restOut, 0} : at;
     }
+    if (gS.st.kind == Kind::Beacon) // BeaconStation.rest
+        return gS.st.top + gS.st.sideV() * 0.86 + gS.st.right() * (right ? 0.32 : -0.32) + V3{0, -0.1, 0};
     if (gS.st.kind == Kind::Brewing) // BrewingStation.rest
         return brewBase() + gS.st.sideV() * 0.55 + gS.st.right() * (right ? 0.3 : -0.3) + V3{0, 0.2, 0};
     if (gS.st.kind == Kind::Enchanting) // EnchantStation.rest
@@ -3580,6 +3750,11 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
         V3 dir = (aim - shoulder).norm();
         return aim - dir * (0.14 - 0.05 * tap) + V3{0, -0.03, 0};
     }
+    if (gS.st.kind == Kind::Beacon) { // BeaconStation.handTarget: a power in the air is pointed at from well short of it
+        V3     dir     = (aim - shoulder).norm();
+        double shortOf = gS.beaconTarget == BnPower ? 0.42 : carrying ? 0.05 : 0.1;
+        return aim - dir * (shortOf - 0.05 * tap) + V3{0, -0.03, 0};
+    }
     if (gS.st.kind == Kind::Brewing) { // BrewingStation.handTarget
         V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
         double hover = carrying ? 0.07 : 0.04;
@@ -3595,6 +3770,10 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
     if (isFurnace(gS.st.kind) && !gS.aimTop) { // FurnaceStation.heldItemPoint on the front
         V3 reach = (hand - shoulder).norm();
         return hand + reach * 0.07 + V3{0, -0.045, 0};
+    }
+    if (gS.st.kind == Kind::Beacon) { // BeaconStation.heldItemPoint
+        V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
+        return hand + reach * B_REACH + V3{0, -B_HAND_Y + 0.02, 0};
     }
     if (gS.st.kind == Kind::Brewing) { // BrewingStation.heldItemPoint
         V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
@@ -3792,8 +3971,22 @@ void updateHands(JPose const& cam, double dt) {
     }
     case Phase::Active: {
         if ((gS.st.kind == Kind::Anvil || gS.st.kind == Kind::Grindstone || gS.st.kind == Kind::Stonecutter || gS.st.kind == Kind::Smithing ||
-             gS.st.kind == Kind::Cartography || gS.st.kind == Kind::Loom || gS.st.kind == Kind::Enchanting) && moving()) { // handsOverride, springs at 55
+             gS.st.kind == Kind::Cartography || gS.st.kind == Kind::Loom || gS.st.kind == Kind::Enchanting || gS.st.kind == Kind::Beacon) && moving()) { // handsOverride, springs at 55
             V3 r, l;
+            if (gS.st.kind == Kind::Beacon) { // BeaconStation.handsOverride: both rise to it, then the light throws them out of the frame
+                double t     = moveTime();
+                double raise = inOutSine(window(t, 0, B_BURST));
+                double away  = smoother(window(t, B_BURST - 0.05, B_BURST + 0.25)) * (1 - smoother(window(t, 2.45, B_LIGHT_LENGTH)));
+                for (int i = 0; i < 2; ++i) {
+                    bool rt   = i == 0;
+                    V3   rest = restOf(rt);
+                    V3   up   = rest + gS.st.sideV() * -0.12 + gS.st.right() * (rt ? -0.06 : 0.06) + V3{0, 0.16, 0};
+                    (rt ? r : l) = lerp(lerp(rest, up, raise * (1 - away)), hiddenOf(rt, cp, cy), away);
+                }
+                gRight.update(r, 22, dt); // handsStiffness
+                gLeft.update(l, 22, dt);
+                break;
+            }
             if (gS.st.kind == Kind::Enchanting) { // EnchantStation.handsOverride: during the rite both hands rise around the item
                 double raise = hump(window(ritualTime(), 0, 0.85));
                 V3     c     = enchItemPos() + gS.st.sideV() * 0.07 + V3{0, -0.1 + 0.05 * raise, 0};
@@ -4141,6 +4334,38 @@ void lapisGhost(JPose const& cam, Basis const& b, V3 at, float brightness, float
     line(-0.035, 0.018, 0.035, 0.018, brightness * 0.65f);
     line(0, 0.052, -0.023, -0.032, brightness * 0.65f);
     line(0, 0.052, 0.023, -0.032, brightness * 0.65f);
+}
+/// BeaconStation.ray: a soft streak of light from `from` along `dir`, turned to the camera round its own axis
+void fxRay(JPose const& cam, Basis const& b, V3 from, V3 dir, double length, double width, float r, float g, float bl) {
+    V3 rel = from - cam.pos;
+    V3 across{dir.y * rel.z - dir.z * rel.y, dir.z * rel.x - dir.x * rel.z, dir.x * rel.y - dir.y * rel.x};
+    if (across.len() < 1e-9) return;
+    across = across.norm() * (width / 2);
+    V3   to    = from + dir * length;
+    V3   p4[4] = {from - across, to - across, from + across, to + across}; // uv: along the ray, across it
+    Quad q;
+    if (!worldQuad4(cam, b, p4, q)) return;
+    atlasRect(q.uv, FX_RAY);
+    q.mode[0] = 7;
+    q.color[0] = clampC(r); q.color[1] = clampC(g); q.color[2] = clampC(bl); q.color[3] = 1;
+    gQuads.push_back(q);
+}
+/// Fx.shade: dark glass (the glow texture as shade) facing the camera
+void fxShade(JPose const& cam, Basis const& b, V3 at, double radius, float alpha) {
+    Quad q;
+    if (!worldQuad(cam, b, at, b.r * radius, b.u * radius, q)) return;
+    atlasRect(q.uv, FX_GLOW);
+    q.mode[0] = 8;
+    q.color[0] = q.color[1] = q.color[2] = 0; q.color[3] = clampC(alpha);
+    q.key0[0] = q.key0[1] = q.key0[2] = 0;
+    gQuads.push_back(q);
+}
+/// EnchantFx.disc / billboard with any light texture of the atlas
+void fxDisc(JPose const& cam, Basis const& b, float const tex[4], V3 at, double radius, double angle, float r, float g, float bl) {
+    fxLight(cam, b, tex, at, V3{1, 0, 0}, V3{0, 0, 1}, radius, angle, r, g, bl, false);
+}
+void fxBillboard(JPose const& cam, Basis const& b, float const tex[4], V3 at, double radius, double angle, float r, float g, float bl) {
+    fxLight(cam, b, tex, at, b.r * -1.0, b.u, radius, angle, r, g, bl, false);
 }
 /// EnchantFx.beam: two crossed planes rising from `base`, bright at the foot
 void fxBeam(JPose const& cam, Basis const& b, V3 base, double height, double width, double spin, float r, float g, float bl) {
@@ -4738,6 +4963,162 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 gKeyOv      = gS.btnRef[bt];
                 cardItem(cam, b, L, buttonSrc(bt), gS.btnBlock[bt], at, gS.btnBlock[bt] ? size * 0.85 : size * 1.2, 1, spin);
                 gKeyOv = nullptr;
+            }
+        }
+        gS.labels.clear();
+        if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Beacon) {
+            // BeaconStation.frame / renderScene / renderWorld
+            double t    = moveTime();
+            V3     core = beaconCore(), top = gS.st.top, out = gS.st.sideV();
+            float* bc   = gS.beaconColor;
+            {   // pull: drawing back while the light breaks out
+                double target = t < 0 ? 0 : smoother(window(t, B_BURST - 0.05, B_BURST + 0.45)) * (1 - smoother(window(t, 1.8, 2.65)));
+                gS.st.pull    = approach(gS.st.pull, target, 5, handsDt);
+            }
+            if (gS.phase == Phase::Active && gS.hoverPower != gS.lastHoverPower) gS.lastHoverPower = gS.hoverPower;
+            if (t >= 0 && t < B_BURST && handsDt > 0 && rnd() < handsDt * 40) { // light gathering into the glass
+                V3     dir  = V3{gauss(), gauss() * 0.6, gauss()}.norm();
+                double life = 0.35 + rnd() * 0.2, r = 0.7 + rnd() * 0.4;
+                spark(core + dir * r, dir * (-r / life * 1.5), life, float(0.012 + rnd() * 0.01), bc[0], bc[1], bc[2], 0, 0.04);
+            }
+            if (gS.beaconBurstAt > gS.beaconMotesAt && clock - gS.beaconBurstAt < 0.1) { // BeaconStation.burst, once
+                gS.beaconMotesAt = gS.beaconBurstAt;
+                int levels = gS.beaconLevels;
+                for (int i = 0; i < 170; ++i) {
+                    double a = rnd() * 6.283185307179586, rise = -0.15 + rnd() * 0.75;
+                    V3     dir = V3{std::cos(a), rise, std::sin(a)}.norm();
+                    double speed = 2.5 + rnd() * 4.5;
+                    float  w = float(rnd() * 0.6);
+                    spark(core + dir * 0.3, dir * speed, 0.55 + rnd() * 0.7, float(0.012 + rnd() * 0.01), bc[0] + (1 - bc[0]) * w, bc[1] + (1 - bc[1]) * w,
+                          bc[2] + (1 - bc[2]) * w, 1.2, 0.05);
+                }
+                for (int i = 0; i < 70; ++i)
+                    spark(core + V3{gauss() * 0.12, 0.4, gauss() * 0.12}, V3{gauss() * 0.15, 4 + rnd() * 9, gauss() * 0.15}, 1.2 + rnd() * 0.8,
+                          float(0.02 + rnd() * 0.02), bc[0], bc[1], bc[2], -2, 0.07);
+                for (int i = 0; i < 40 + 20 * levels; ++i) { // motes left hanging round the pyramid, slowly drifting up
+                    double a = rnd() * 6.283185307179586, r = 0.8 + rnd() * (1.5 + levels);
+                    V3     at = core + V3{std::cos(a) * r, -rnd() * levels * 0.8 + 0.2, std::sin(a) * r};
+                    spark(at, V3{0, 0.15 + rnd() * 0.3, 0}, 1.2 + rnd() * 1.4, float(0.015 + rnd() * 0.02), bc[0], bc[1], bc[2], -0.1, 0);
+                }
+            }
+            if (gS.phase == Phase::Active && gS.cellFull[0] && clock - gS.beaconMotesAt > 0.2 && t < 0) { // tick: motes off the payment
+                gS.beaconMotesAt = clock;
+                float c[3] = {1, 0.9f, 0.6f};
+                if (beaconReady()) effectColour(gS.primary, c);
+                motes(paymentPos(), 0.06, 1, c[0], c[1], c[2], 0.1);
+            }
+            // renderScene: the payment floating over the glass; lighting, it sinks in spinning faster
+            if (gS.phase != Phase::Outro && (gS.cellFull[0] || (t >= 0 && t < B_BURST))) {
+                double sink = t >= 0 ? inCubic(window(t, 0.05, B_BURST)) : 0;
+                V3     at   = lerp(paymentPos(), core + out * 0.1 + V3{0, 0.1, 0}, sink);
+                double spin = clock * 50 + (t >= 0 ? 1500 * sink * sink : 0);
+                float  g    = float(0.22 + 0.5 * sink);
+                float  c[3] = {1, 0.85f, 0.5f};
+                if (t >= 0) std::memcpy(c, bc, sizeof c);
+                else if (beaconReady()) effectColour(gS.primary, c);
+                fxGlow(cam, b, at, 0.14 + 0.1 * sink, clock * 0.5, c[0] * g, c[1] * g, c[2] * g);
+                IconSrc is = src(L.grid[0], 0);
+                if (t >= 0) { std::memcpy(is.box, gS.snapBox[0], sizeof is.box); is.snap = gG.snapValid; }
+                cardItem(cam, b, L, is, gS.cellBlock[0], at, 0.26 * (1 - 0.7 * sink) * (gS.cellBlock[0] ? 0.85 : 1), tableAlpha, spin);
+            }
+            double presence = gS.phase == Phase::Intro ? smoother(window(gS.time / gS.leanLength, 0.4, 1)) : gS.phase == Phase::Outro ? 1 - smoother(gS.time / 0.5) : 1;
+            if (presence > 0.01 && !gS.cellFull[0] && t < 0) { // where the payment goes: a faint ring on the glass
+                float p = float((0.22 + 0.06 * std::sin(clock * 2)) * presence * (gS.carrying && beaconPayment(gS.carriedName) ? 1.8 : 1));
+                fxDisc(cam, b, FX_RING, top + out * 0.27 + V3{0, 0.004, 0}, 0.17, clock * 0.4, p, p * 0.85f, p * 0.55f);
+            }
+            // drawLight: the glass glowing, then the burst
+            if (t >= 0 && t < B_BURST) {
+                float g = float(0.6 * smoother(t / B_BURST));
+                fxGlow(cam, b, core, 0.5 + 0.3 * g, clock, bc[0] * g, bc[1] * g, bc[2] * g);
+            }
+            double d = clock - gS.beaconBurstAt;
+            if (d >= 0 && d <= 2.4) { // drawBurst
+                float glass = float(std::exp(-d * 2.5));
+                fxGlow(cam, b, core, 0.9 * glass + 0.3, d, bc[0] * glass, bc[1] * glass, bc[2] * glass);
+                int steps = std::max(1, gS.beaconLevels);
+                for (int k = 0; k <= steps; ++k) { // a ring of light running out over the pyramid, one per step
+                    double dk = d - k * 0.09;
+                    if (dk < 0 || dk > 1.2) continue;
+                    double radius = 0.4 + k + 4.5 * outCubic(dk / 1.2);
+                    float  fade   = float((1 - smoother(dk / 1.2)) * (k == 0 ? 1.0 : 0.7));
+                    fxDisc(cam, b, FX_RING, V3{core.x, core.y - 0.5 - k + 0.02, core.z}, radius, d * 0.3, bc[0] * fade, bc[1] * fade, bc[2] * fade);
+                }
+                double rays = outCubic(window(d, 0, 0.55));
+                float  rayFade = float(1 - smoother(window(d, 0.2, 1.3)));
+                if (rayFade > 0.01f)
+                    for (int i = 0; i < 24; ++i) { // rays bursting out flat round the beacon
+                        double a = i * kPi / 12 + 0.13 * std::sin(i * 3.7);
+                        double length = (1.4 + 1.2 * ((i * 7) % 5) / 4.0) * (0.3 + 2.6 * rays);
+                        double width  = 0.12 + 0.08 * ((i * 3) % 4) / 3.0;
+                        V3     dir    = V3{std::cos(a), 0.1 + 0.08 * ((i * 5) % 3), std::sin(a)}.norm();
+                        float  w      = 0.45f;
+                        fxRay(cam, b, core + dir * 0.3, dir, length, width, (bc[0] + (1 - bc[0]) * w) * rayFade, (bc[1] + (1 - bc[1]) * w) * rayFade,
+                              (bc[2] + (1 - bc[2]) * w) * rayFade);
+                    }
+                float flare = float(smoother(window(d, 0, 0.12)) * (1 - smoother(window(d, 0.4, 2.4))));
+                if (flare > 0.01f) { // the beam flares up into the sky
+                    fxBeam(cam, b, core + V3{0, 0.3, 0}, 48, 0.5 + 0.9 * flare, d * 2, bc[0] * flare, bc[1] * flare, bc[2] * flare);
+                    fxBeam(cam, b, core + V3{0, 0.3, 0}, 48, 0.22, -d * 3, flare, flare, flare);
+                }
+            }
+            // renderWorld: the crown of powers, only while working
+            if (gS.phase == Phase::Active) {
+                double appear = outBack(window(gS.time, 0, 0.5), 1.4);
+                for (int i = 0; i < powerCount(); ++i) {
+                    int    eff    = powerEffect(i);
+                    bool   chosen = powerChosen(i), open = powerOpen(i), hovered = i == gS.hoverPower;
+                    double fly    = t >= 0 && chosen ? inOutCubic(window(t, 0.1, B_BURST)) : 0;
+                    double fade   = t >= 0 && !chosen ? 1 - 0.7 * smoother(window(t, 0, 0.4)) * (1 - smoother(window(t, 1.8, B_LIGHT_LENGTH))) : 1;
+                    if (fly >= 0.999) continue;
+                    V3    at = lerp(powerPos(i), top + V3{0, 0.2, 0}, fly); // a chosen power flies into the beam
+                    float ap = float(appear * (1 - 0.6 * fly) * fade);
+                    if (ap <= 0.01f) continue;
+                    float c[3];
+                    effectColour(eff, c);
+                    float  k    = (open ? (chosen ? 1.0f : hovered ? 0.85f : 0.45f) : 0.14f) * ap;
+                    double size = 0.1 * ap * (hovered && open ? 1.15 : 1) * (chosen ? 1.1 : 1);
+                    fxShade(cam, b, at, size * 1.4, 0.75f * ap); // dark glass behind it: the icon reads against the sky and the beam
+                    if (chosen) { // tied to the beam by a thread of light
+                        V3 to = V3{core.x, at.y, core.z}, along = to - at;
+                        if (along.len() > 1e-6) fxRay(cam, b, at, along.norm(), along.len(), 0.05, c[0] * 0.6f * ap, c[1] * 0.6f * ap, c[2] * 0.6f * ap);
+                    }
+                    fxGlow(cam, b, at, size * 2.0, 0, c[0] * k * 0.35f, c[1] * k * 0.35f, c[2] * k * 0.35f);
+                    double turn = clock * (chosen ? 1.2 : 0.35) * (kPowerTier[i] % 2 == 0 ? 1 : -1);
+                    fxBillboard(cam, b, chosen ? FX_MAGIC : FX_RING, at, size * 1.3, turn, c[0] * k, c[1] * k, c[2] * k);
+                    // the power's icon: the window's own button picture (its ground keyed away)
+                    if (i < L.nButtons) {
+                        Rect const& br = L.buttons[i];
+                        float in2 = 2 * L.slot / 18.0f, half = float(size * 0.7);
+                        Quad  q;
+                        if (worldQuad(cam, b, at, b.r * half, b.u * half, q)) {
+                            setRect(q.uv, (br.x + in2) / L.W, (br.y + in2) / L.H, (br.x + br.w - in2) / L.W, (br.y + br.h - in2) / L.H);
+                            gKeyOv = gS.btnRef[i];
+                            keyed(q, L, ap);
+                            gKeyOv = nullptr;
+                            float bright = open ? 1.0f : 0.35f;
+                            q.color[0] = q.color[1] = q.color[2] = bright;
+                            gQuads.push_back(q);
+                        }
+                    }
+                    // the pyramid level a power needs, or the II of the stronger power
+                    std::string label = i == 6 ? "II" : !open ? (kPowerTier[i] == 3 ? "IV" : std::string(size_t(kPowerTier[i] + 1), 'I')) : "";
+                    if (!label.empty()) {
+                        float lx, ly, ex, ey;
+                        V3    la = at + V3{0, -size * 1.62, 0};
+                        if (toPixel(cam, b, la, int(W), int(H), lx, ly) && toPixel(cam, b, la + b.u * 0.044, int(W), int(H), ex, ey))
+                            gS.labels.push_back({lx / W, ly / H, std::fabs(ey - ly) / H, label,
+                                                 !open ? IM_COL32(0x9A, 0x9A, 0xA6, int(220 * ap)) : IM_COL32(0xFF, 0xF2, 0xC0, int(220 * ap))});
+                    }
+                    if (chosen && handsDt > 0 && rnd() < handsDt * 6) {
+                        double a = rnd() * 6.283185307179586;
+                        spark(at + b.r * (std::cos(a) * size) + b.u * (std::sin(a) * size), V3{0, 0.05, 0}, 0.6, 0.008f, c[0], c[1], c[2], -0.05, 0);
+                    }
+                }
+                if (gS.beaconTarget == BnTop && gS.haveAim) {
+                    bool  ok = beaconPayment(gS.carriedName);
+                    float p  = float(0.25 + 0.08 * std::sin(clock * 5));
+                    fxDisc(cam, b, FX_RING, top + out * 0.27 + V3{0, 0.006, 0}, 0.2, -clock, p, ok ? p * 0.85f : p * 0.2f, ok ? p * 0.5f : p * 0.2f);
+                }
             }
         }
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Brewing && gS.phase != Phase::Outro) {
@@ -5561,6 +5942,8 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map - work it" + dot + "Esc - step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear - smith" + dot + "RMB - take" + dot + "Esc - step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade - cut one" + dot + "Shift - cut the stack" + dot + "Esc - step away";
+    case Kind::Beacon: return std::string("Choose a power over the beacon") + dot + "payment on the glass" + dot + "click the payment - light the beacon" + dot +
+                              "right-click it - take it" + dot + "Esc - step away";
     case Kind::Brewing: return std::string("Bottles on the feet, ingredient in the bowl, blaze powder at the foot") + dot + "click - take" + dot + "Esc - step away";
     case Kind::Grindstone: return std::string("Lay the item on the wheel") + dot + "LMB on it - grind (enchantments come off)" + dot + "RMB - take" + dot + "Esc - step away";
     default: return "Esc step back";
@@ -5607,9 +5990,11 @@ void drawOverlay() {
     bool        boardLabel = false;
     float       boardAt[4] = {}, boardA = 0, boardG = 1;
     float       a = 0, mx = 0, my = 0;
+    std::vector<Scene::Label> labels;
     {
         std::lock_guard l(gM);
         if (gS.phase != Phase::Active || !gCfg.controlHints) return;
+        labels = gS.labels;
         double fade = 1 - 0.55 * smoother((gS.time - 7) / 2);
         a    = float(smoother(gS.time / 0.4) * fade);
         hint = stationHint(gS.st.kind, gS.hoverResult);
@@ -5650,6 +6035,25 @@ void drawOverlay() {
                     if (gS.cartHover == 0 && !gS.cellFull[1]) tipLine = "Lay paper, glass or an empty map on the right";
                     else if (gS.cellFull[1] && !gS.cellFull[2] && gS.cellFull[0]) tipLine = "This map can't take that";
                 }
+            }
+        }
+        if (gS.st.kind == Kind::Beacon && !moving()) { // BeaconStation.tooltip
+            ImU32 gray = IM_COL32(170, 170, 170, 255), red = IM_COL32(255, 85, 85, 255), gold = IM_COL32(255, 170, 0, 255);
+            if (gS.beaconTarget == BnPower && gS.hoverPower >= 0 && gS.hoverPower < powerCount()) {
+                int i = gS.hoverPower;
+                tipLines.push_back({std::string(kPowerName[powerEffect(i)]) + (i == 6 ? " II" : ""), IM_COL32(255, 255, 255, 255)});
+                tipLines.push_back({i >= 5 ? "Secondary Power" : "Primary Power", IM_COL32(85, 85, 85, 255)});
+                if (gS.beaconLevels == 0) tipLines.push_back({"The beacon stands on no pyramid", red});
+                else if (!powerOpen(i)) tipLines.push_back({"Needs a pyramid of level " + std::to_string(kPowerTier[i] + 1), red});
+                else if (powerChosen(i)) tipLines.push_back({"Chosen", gold});
+                else tipLines.push_back({"Click - choose", gray});
+            } else if (gS.beaconTarget == BnPayment) {
+                if (beaconReady()) tipLines.push_back({"Click - light the beacon", gold});
+                else tipLines.push_back({gS.beaconLevels == 0 ? "The beacon stands on no pyramid" : "Choose a power over the beacon first", IM_COL32(255, 255, 85, 255)});
+                tipLines.push_back({"Right-click - take it", gray});
+            } else if (gS.beaconTarget == BnTop) {
+                if (beaconPayment(gS.carriedName)) tipLines.push_back({"Lay the payment on the beacon", gray});
+                else tipLines.push_back({"A beacon takes only iron, gold, emerald, diamond or netherite", red});
             }
         }
         if (gS.st.kind == Kind::Brewing && !moving()) { // BrewingStation.tooltip (the item's own lines come from the window)
@@ -5735,6 +6139,11 @@ void drawOverlay() {
     float  x = (d.x - ts.x) * 0.5f, y = d.y - fs * 2.2f;
     dl->AddRectFilled(ImVec2(x - fs * 0.5f, y - fs * 0.3f), ImVec2(x + ts.x + fs * 0.5f, y + ts.y + fs * 0.3f), IM_COL32(0, 0, 0, int(a * 200 * 0.45f)));
     dl->AddText(font, fs, ImVec2(x, y), IM_COL32(0xF2, 0xEA, 0xD8, int(a * 200)), hint.c_str());
+    for (auto const& lb : labels) { // text the scene put in the world (BeaconStation.renderScreen: the levels of the powers)
+        float  h  = std::max(6.0f, lb.h * d.y);
+        ImVec2 sz = font->CalcTextSizeA(h, FLT_MAX, 0, lb.text.c_str());
+        dl->AddText(font, h, ImVec2(lb.x * d.x - sz.x * 0.5f, lb.y * d.y - sz.y * 0.5f), lb.col, lb.text.c_str());
+    }
     if (boardLabel) // the loom's board: its title in the corner
         dl->AddText(font, 9.0f * boardG, ImVec2(boardAt[0] + L_PAD * boardG, boardAt[1] + (L_PAD - 1) * boardG),
                     IM_COL32(242, 234, 216, int(0.75f * boardA * 255)), "Patterns");
