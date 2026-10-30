@@ -257,8 +257,23 @@ MOLANG_MAP = {
 }
 _ident = re.compile(r"\b(?:query|q)\.[a-z_][a-z0-9_]*", re.I)
 
+_UNIT_FN = {"math.to_rad": "0.0174532925", "math.to_deg": "57.2957795"}  # GeckoLib-only functions
+
+def _rewrite_unit_fns(e, report):
+    low = e.lower()
+    for fn, k in _UNIT_FN.items():
+        while fn + "(" in low:
+            i = low.index(fn + "("); j = i + len(fn) + 1; depth = 1
+            while j < len(e) and depth:
+                depth += {"(": 1, ")": -1}.get(e[j], 0); j += 1
+            inner = e[i + len(fn) + 1:j - 1]
+            e = e[:i] + f"(({inner}) * {k})" + e[j:]; low = e.lower()
+            report.setdefault("molang_mapped", set()).add(fn)
+    return e
+
 def fix_molang(expr, report):
     if not isinstance(expr, str): return expr
+    expr = _rewrite_unit_fns(expr, report)
     def sub(m):
         k = m.group(0).lower()
         if k in MOLANG_MAP:

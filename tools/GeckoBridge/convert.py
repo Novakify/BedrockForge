@@ -99,7 +99,7 @@ def build(spec, out):
         base_png = z.read(e["texture"])
         glow_name = e.get("glowmask") or e["texture"].replace(".png", "_glowmask.png")  # RenderUtil.getEmissiveResource
         has_glow = glow_name in z.namelist()
-        mode = spec.get("glow", "overlay")
+        mode = e.get("glow", spec.get("glow", "overlay"))
         (rp / f"textures/entity/{GB_NS}/{ns}").mkdir(parents=True, exist_ok=True)
         if has_glow and mode == "alpha" and Image:
             (rp / f"{tex_key}.png").write_bytes(glow_alpha(base_png, z.read(glow_name)))

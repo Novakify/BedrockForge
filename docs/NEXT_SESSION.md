@@ -1,3 +1,26 @@
+# Next session handoff (updated 2026-10-30 ~17:15 UTC, cloud session, GeckoBridge research) - READ FIRST
+- BRANCH `research/geckobridge` (from main; never merge without Fernando). Newer Cinematic/LyricsFlow handoff
+  blocks live on branch `handoff/v0.9-status-2026-10-29` (not merged into main) - read that file there too.
+- GECKOBRIDGE RESEARCH DONE (M0): docs/PORT_GECKOBRIDGE.md = format mapping, 1:1/bake/approx/RT/no tables,
+  converter + runtime design, milestones M1-M5, risks, licence questions. Verdict: GeckoLib assets ARE Bedrock
+  formats; only easing needs converting (baked offline, measured max error 0.06 deg over 534 anims of 3 mods);
+  the hard part is Java-side controllers/triggers -> pattern extraction + Script API/property runtime.
+- TOOLS: tools/GeckoBridge/ (scan.py, gbanim.py baker + error meter, convert.py M0 converter, preview.py/js).
+  Test mods (Modrinth, NOT in repo): Cave Dweller Evolved 1.7.0 (MIT), Naturalist 5.0pre4 (licence unclear),
+  Sculk Horde 0.12.7 (Apache-2.0). GeckoLib 5.5.7 jars came from Fernando's upload.
+- PROOF BUILT, NOT YET SEEN IN GAME: Sculk Enderman (Sculk Horde, Apache-2.0) model + `idle` + `idle.tendrils`
+  (concurrent) + glowmask, two entities to compare glow methods: `gb:sculk_enderman` (overlay render controller,
+  entity_alphatest + ignore_lighting) and `gb:sculk_enderman_alphaglow` (glowmask baked into alpha,
+  entity_emissive_alpha - may show the tendril cutouts wrongly, that's what the test is for). validate.py 0 errors;
+  preview render Bedrock == GeckoLib. Packs were sent to Fernando in chat as GeckoBridgeProof.zip.
+  BLOCKER: folder access to the game instance was refused this session (auto-mode classifier), so nothing was
+  installed and computer use was not started. Next: Fernando grants access (or copies the two folders himself) ->
+  install as dev packs (game CLOSED), add to a test world, `/summon gb:sculk_enderman ~ ~ ~3` and
+  `/summon gb:sculk_enderman_alphaglow ~3 ~ ~3`, check day + night, ContentLog 0 errors. Steps: PORT_GECKOBRIDGE.md end.
+  Rebuild: proof spec = docs/PORT_GECKOBRIDGE.md "Proof" + tools/GeckoBridge/convert.py (spec keys in its docstring).
+- REPO IS PUBLIC (gh api says visibility public): never commit jars, extracted assets or converted packs.
+- ASK FERNANDO: which glow method looks right; Naturalist licence; OK to share any converted mod (default: no).
+
 # Next session handoff (updated 2026-10-28 ~18:35 local, cloud session + PC computer use, Fernando away) - READ FIRST
 - GOAL 1 DONE - Spatial GUI M0.5 -> **VERDICT: METHOD 1 VIABLE**. UI draws straight into the swap-chain back buffer.
   The "unknown" RTV handles were the 3 swap-chain RTVs created before RF hooked; M0.5b learns them at Present. Details:
