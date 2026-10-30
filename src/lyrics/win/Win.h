@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "lyrics/core/Fetcher.h"
 #include "lyrics/core/Media.h"
@@ -28,6 +29,8 @@ public:
     void        next();
     void        previous();
     void        seek(int64_t ms);
+    /// Cover art of the current session (PNG / JPEG bytes as the app provides them), empty if none.
+    std::vector<uint8_t> thumbnail();
     std::string status() const; // "playing" / "paused" / "nothing" / "open_spotify" / "unsupported"
     bool        available() const;
 

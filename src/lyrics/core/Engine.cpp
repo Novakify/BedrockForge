@@ -57,16 +57,23 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     mTopBar.build(in, mCfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);
 }
 
-void Engine::publish(bool active, float fovY) {
+void Engine::publish(bool active, float fovY, std::vector<BfGlyphV1> const* extra) {
     BfLyricFrameV1 h{};
-    h.active    = active && mCfg.enabled && mCfg.showLyrics ? 1u : 0u;
+    bool const lyricsOn = active && mCfg.enabled && mCfg.showLyrics;
+    bool const panelOn  = extra && !extra->empty();
+    h.active    = lyricsOn || panelOn ? 1u : 0u;
     h.origin[0] = mOrigin.x;
     h.origin[1] = mOrigin.y;
     h.origin[2] = mOrigin.z;
     h.camYaw    = mCam.yaw;
     h.camPitch  = mCam.pitch;
     h.camFovY   = fovY;
-    FrameStore::get().publish(h, mGlyphs);
+    if (!panelOn) { FrameStore::get().publish(h, lyricsOn ? mGlyphs : std::vector<BfGlyphV1>{}); return; }
+    std::vector<BfGlyphV1> all;
+    all.reserve((lyricsOn ? mGlyphs.size() : 0) + extra->size());
+    if (lyricsOn) all = mGlyphs;
+    all.insert(all.end(), extra->begin(), extra->end()); // the panel draws last = on top
+    FrameStore::get().publish(h, all);
 }
 
 // ---------------------------------------------------------------- store

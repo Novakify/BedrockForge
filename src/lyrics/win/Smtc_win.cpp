@@ -11,6 +11,7 @@
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.Control.h>
+#include <winrt/Windows.Storage.Streams.h>
 
 #include "lyrics/core/Text.h"
 
@@ -115,6 +116,25 @@ void Smtc::next() {
 void Smtc::previous() {
     std::lock_guard l(mImpl->mutex);
     try { if (mImpl->current) mImpl->current.TrySkipPreviousAsync().get(); } catch (...) {}
+}
+std::vector<uint8_t> Smtc::thumbnail() {
+    std::lock_guard l(mImpl->mutex);
+    try {
+        if (!mImpl->current) return {};
+        auto props = mImpl->current.TryGetMediaPropertiesAsync().get();
+        auto ref   = props.Thumbnail();
+        if (!ref) return {};
+        auto     stream = ref.OpenReadAsync().get();
+        uint64_t size   = stream.Size();
+        if (size == 0 || size > (16ull << 20)) return {};
+        winrt::Windows::Storage::Streams::DataReader reader(stream);
+        uint32_t got = reader.LoadAsync(uint32_t(size)).get();
+        std::vector<uint8_t> bytes(got);
+        reader.ReadBytes(bytes);
+        return bytes;
+    } catch (...) {
+        return {};
+    }
 }
 void Smtc::seek(int64_t ms) {
     std::lock_guard l(mImpl->mutex);
