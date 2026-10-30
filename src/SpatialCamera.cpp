@@ -219,6 +219,37 @@ void noteSeen(void const* cam, glm::vec3 const& pos, float dist, float p11, bool
     if (gSeenN < 8) gSeen[gSeenN++] = {cam, {pos.x, pos.y, pos.z}, dist, p11, chosen};
 }
 
+// mce::Camera, before its derived matrices are built: while a Spatial GUI panel is up the world camera's projection is
+// narrowed to the Java FOV (writing the camera component's FOV has no effect in third person)
+float gFovBlendR = 0.0f; // render side copy of gFovBlend
+long  gProjWrites = 0;
+float gProjFrom = 0.0f, gProjTo = 0.0f;
+void preCamera(mce::Camera& cam) {
+    if (gFovBlendR <= 0.0f || !cfg().overrideFov) return;
+    glm::mat4& P = *cam.projectionMatrixStack->top()._m;
+    bool persp = std::fabs(P[3][3]) < 1e-4f && std::fabs(P[2][3]) > 0.5f && P[1][1] > 0.05f;
+    if (!persp) return;
+    auto ci = ll::service::getClientInstance();
+    if (!ci) return;
+    auto* lp = ci->getLocalPlayer();
+    if (!lp) return;
+    Vec3      feetV = static_cast<Actor&>(*lp).getFeetPos();
+    glm::vec3 eye(feetV.x, feetV.y + 1.62f, feetV.z);
+    glm::vec3 pos = *cam.mPosition;
+    if (glm::length(pos - eye) >= 8.0f) return; // the world camera only
+    float tanNow  = 1.0f / P[1][1];
+    float fovNow  = 2.0f * std::atan(tanNow);
+    float target  = float(std::clamp(cfg().targetFov, 30, 110)) * kDeg;
+    float e       = easeInOutSine(gFovBlendR);
+    float want    = fovNow + (target - fovNow) * e;
+    float k       = tanNow / std::tan(want * 0.5f);
+    if (std::fabs(k - 1.0f) < 1e-4f) return;
+    P[0][0] *= k;
+    P[1][1] *= k;
+    ++gProjWrites;
+    gProjFrom = fovNow / kDeg; gProjTo = want / kDeg;
+}
+
 // mce::Camera: read the world camera's projection (FOV/aspect) for the panel. Never modifies the camera.
 void onCamera(mce::Camera& cam) {
     std::lock_guard l(gMutex);
@@ -305,6 +336,7 @@ void stepFovBlend(bool on) {
     gFovLast   = nowT;
     float step = dtMs / float(std::max(1, cfg().transitionMs));
     gFovBlend  = on && cfg().overrideFov ? std::min(1.0f, gFovBlend + step) : std::max(0.0f, gFovBlend - step);
+    gFovBlendR = gFovBlend;
 }
 // writes the camera components' FOV: the Cinematic scene's scale, or the eased Spatial GUI target FOV
 void applyFov(MinecraftCamera::CameraComponent** comps, int nComp, bool cineOn, float fovScale) {
@@ -552,6 +584,7 @@ namespace rf::spatialcam { void afterPreRender(Vec3* cameraPos, Vec3* targetPos)
 
 LL_TYPE_INSTANCE_HOOK(RfCameraUpdateHook, ll::memory::HookPriority::Normal, mce::Camera, &mce::Camera::updateViewMatrixDependencies,
                       void) {
+    rf::spatialcam::preCamera(*this);
     origin();
     rf::spatialcam::onCamera(*this);
 }
@@ -748,7 +781,7 @@ void appendDiag(char* b, unsigned long long cap) {
                          gNote, gActive.load() ? 1 : 0, gCalls, gPersp, gChosen, gOverrides, gLastFeet[0], gLastFeet[1], gLastFeet[2],
                          gLastRot[0], gLastRot[1], gLastCam[0], gLastCam[1], gLastCam[2], gLastTarget[0], gLastTarget[1],
                          gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch, gView.guiScale);
-    len += std::snprintf(b + len, cap - len, "  cinematic camera writes %ld, fov field %.4f x %.3f\n", gCineWrites, gCineFovRaw, gCineFovScale);
+    len += std::snprintf(b + len, cap - len, "  cinematic camera writes %ld, fov field %.4f x %.3f; spatial fov blend %.2f, projection writes %ld (%.1f -> %.1f)\n", gCineWrites, gCineFovRaw, gCineFovScale, gFovBlend, gProjWrites, gProjFrom, gProjTo);
     len += std::snprintf(b + len, cap - len, "  render origin (LevelRendererCamera::mCameraPos) %.2f,%.2f,%.2f -> %.2f,%.2f,%.2f (writes %ld), target %.2f,%.2f,%.2f\n",
                          gRcBefore[0], gRcBefore[1], gRcBefore[2], gRcAfter[0], gRcAfter[1], gRcAfter[2], gRcWrites, gRcTarget[0], gRcTarget[1], gRcTarget[2]);
     len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",
