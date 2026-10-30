@@ -62,3 +62,9 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 
 Block textures shown in the scenes (the grindstone's wheel, the stonecutter's blade) are read at runtime from the
 game's own installed resource pack; none are redistributed here. Minecraft is a trademark of Mojang Studios / Microsoft.
+
+## LyricsFlow (world-space lyrics) - personal-use port
+`src/LyricsPass.*`, `src/LyricsCamera.*`, `shaders/glyph.hlsl` draw the lyric text Bedrock Forge builds from its port of
+**LyricsFlow v2.0 by 374m** (MIT; modification permitted for Fernando's personal use only, not distributed). The RF
+code here is original; see Bedrock Forge `third_party/lyricsflow/NOTICE.md` for the full credit and licences.
+
