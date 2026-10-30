@@ -2556,6 +2556,7 @@ int currentTarget0(float mx, float my) {
         gS.beaconTarget = BnNone; gS.hoverPower = -1;
         gS.brewTarget = BrNone; gS.brewHover = gS.brewPlace = -1;
         gS.crafterTarget = CrNone; gS.crafterCell = -1;
+        gShelf.target = SbNone; gShelf.hover = -1;
         return s < 0 ? -1 : s < 9 ? 10 + s : 19 + (s - 9);
     }
     Basis b  = basisOf(gS.last);
