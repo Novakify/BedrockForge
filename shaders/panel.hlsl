@@ -5,6 +5,8 @@
 //   c5  = x: frame line strength (0 = no frame, Java look), y: 1 = drop the dim background layer, zw: drawn uv fraction
 //   c6  = the HUD strip (hotbar, hearts) kept flat under the panel, uv rect x0 y0 x1 y1 (x1 <= x0: none)
 //   c7  = x: world blur radius in pixels (0 = none), y: drop shadow alpha (0 = none), zw: drop shadow uv offset
+//   c11.. = curved screen: centre xyz, unit x axis, unit y axis, normal toward the camera, half w, half h,
+//           tan(fovY/2), aspect, arc (radians)
 //   c10 = x: panel brightness (enableWorldLightingTint), y: 1 = point sampling (useLinearFiltering off)
 //   c9  = PSBlur1D: x sigma (texels of the output), yz uv step between taps
 //   c8  = the player on screen (uv rect x0 y0 x1 y1; x1 <= x0: none) - kept sharp in the world blur
@@ -13,6 +15,7 @@ cbuffer Params : register(b0) {
     float4 corner[4];
     float4 misc;
     float4 pad[6];
+    float4 cv[4]; // c11..c14: curved screen (VSPanelCurved)
 };
 Texture2D    tWorld : register(t0);
 Texture2D    tUi    : register(t1);
@@ -78,6 +81,29 @@ V2P VSPanel(uint id : SV_VertexID) {
     V2P  o;
     o.pos = corner[k];
     o.uv  = 0.5 + (uvs[k] - 0.5) * max(pad[0].zw, 1e-3); // c5.zw: drawn fraction of the texture (centred)
+    return o;
+}
+
+// RenderUtil.addCurvedScreenQuad: CURVED_SEGMENTS strips over the arc, bent toward the viewer (first person)
+V2P VSPanelCurved(uint id : SV_VertexID) {
+    static const uint idx[6] = {0, 1, 2, 2, 1, 3};
+    const int  N   = 24;
+    uint  seg = id / 6, k = idx[id % 6];
+    float3 C  = cv[0].xyz;                              // c[44..46]
+    float3 EX = float3(cv[0].w, cv[1].x, cv[1].y);      // c[47..49]
+    float3 EY = float3(cv[1].z, cv[1].w, cv[2].x);      // c[50..52]
+    float  hw = cv[2].y, hh = cv[2].z, tanH = cv[2].w, asp = cv[3].x, sarc = cv[3].y; // c[53..57]
+    float  arc = abs(sarc);
+    float3 NT = normalize(cross(EX, EY)) * (sarc < 0 ? -1.0 : 1.0); // the arc's sign says which side faces the camera
+    float  fa = max(pad[0].z, 1e-3), fb = max(pad[0].w, 1e-3); // drawn fraction (c5.zw)
+    float  R  = 2.0 * hw / max(arc, 1e-3);
+    float  th = (-0.5 + float(seg + (k & 1)) / N) * arc * fa;
+    float  y  = (k < 2 ? 1.0 : -1.0) * hh * fb;
+    float3 p  = C + EX * (R * sin(th)) + EY * y + NT * (R * (1.0 - cos(th)));
+    float  z  = max(p.z, 0.05);
+    V2P o;
+    o.pos = float4(p.x / (tanH * asp), p.y / tanH, 0.5 * z, z);
+    o.uv  = float2(0.5 + th / max(arc, 1e-3), 0.5 - 0.5 * y / hh);
     return o;
 }
 

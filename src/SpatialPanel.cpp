@@ -75,13 +75,16 @@ struct Geom {
     bool  valid = false;
     float cx, cy, cz, hw, hh, tanHalf, aspect;
     float ex[3], ey[3], n[3];
+    bool  curved = false;            // curvedScreenEnabled (first person): a cylinder bent toward the viewer
+    float arc = 0.0f, R = 0.0f, nt[3]{}; // arc (radians, full texture width), radius, normal toward the camera
 } gGeom;
 std::mutex gGeomMutex;
 
 // ---------------------------------------------------------------- D3D12 objects (overlay thread)
 ComPtr<ID3D12Device>         gDevice;
 ComPtr<ID3D12RootSignature>  gRoot;
-ComPtr<ID3D12PipelineState>  gPsoWorld, gPsoPanel, gPsoHud, gPsoBlur;
+ComPtr<ID3D12PipelineState>  gPsoWorld, gPsoPanel, gPsoHud, gPsoBlur, gPsoCurved;
+constexpr int kCurveSegs = 24; // CURVED_SEGMENTS
 // world blur: the world copy blurred at half size (separable Gaussian, two passes) - smooth, not blocky
 ComPtr<ID3D12Resource>       gBlurA, gBlurB;
 UINT                         gBlurW = 0, gBlurH = 0;
@@ -110,7 +113,7 @@ bool createStatic(ID3D12Device* device) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0};
     D3D12_ROOT_PARAMETER   params[2]{};
     params[0].ParameterType   = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants       = {0, 0, 44};
+    params[0].Constants       = {0, 0, 60};
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[1].ParameterType   = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable = {1, &range};
@@ -224,10 +227,12 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
         gPsoPanel.Reset();
         gPsoHud.Reset();
         gPsoBlur.Reset();
+        gPsoCurved.Reset();
         if (!createPso({shaders::VSFull, sizeof shaders::VSFull}, {shaders::PSWorld, sizeof shaders::PSWorld}, gFmt, false, gPsoWorld)) return false;
         if (!createPso({shaders::VSPanel, sizeof shaders::VSPanel}, {shaders::PSPanel, sizeof shaders::PSPanel}, gFmt, true, gPsoPanel)) return false;
         if (!createPso({shaders::VSFull, sizeof shaders::VSFull}, {shaders::PSHud, sizeof shaders::PSHud}, gFmt, true, gPsoHud)) return false;
         if (!createPso({shaders::VSFull, sizeof shaders::VSFull}, {shaders::PSBlur1D, sizeof shaders::PSBlur1D}, gFmt, false, gPsoBlur)) return false;
+        if (!createPso({shaders::VSPanelCurved, sizeof shaders::VSPanelCurved}, {shaders::PSPanel, sizeof shaders::PSPanel}, gFmt, true, gPsoCurved)) return false;
         gPsoFmt = gFmt;
     }
     gReady = true;
@@ -364,7 +369,7 @@ void writeDiag();
 LARGE_INTEGER gOpenQpc{}, gCloseQpc{};
 float         gCloseFromMs = 0.0f; // how far the open animation had got when the screen closed
 bool          gHaveLastGeom = false;
-float         gLastC[44]{};       // the last frame's panel constants (the close animation reuses its placement)
+float         gLastC[60]{};       // the last frame's panel constants (the close animation reuses its placement)
 float         gGuiMag = 1.0f;
 float         gDrawFrac[2] = {1.0f, 1.0f};
 void toggle() {
@@ -579,13 +584,13 @@ void blurPasses(ID3D12GraphicsCommandList* list, float* c, float sigma) {
     // horizontal: full-size world in, half-size out (one half-size texel = 1 / gBlurW in uv)
     c[36] = sh; c[37] = 1.0f / float(gBlurW); c[38] = 0.0f; c[39] = 0.0f;
     list->OMSetRenderTargets(1, &rtA, FALSE, nullptr);
-    list->SetGraphicsRoot32BitConstants(0, 44, c, 0);
+    list->SetGraphicsRoot32BitConstants(0, 60, c, 0);
     list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
     list->DrawInstanced(3, 1, 0, 0);
     barrier(list, gBlurA.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     c[37] = 0.0f; c[38] = 1.0f / float(gBlurH);
     list->OMSetRenderTargets(1, &rtB, FALSE, nullptr);
-    list->SetGraphicsRoot32BitConstants(0, 44, c, 0);
+    list->SetGraphicsRoot32BitConstants(0, 60, c, 0);
     list->SetGraphicsRootDescriptorTable(1, srvGpu(3));
     list->DrawInstanced(3, 1, 0, 0);
     barrier(list, gBlurA.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -660,7 +665,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 float s0    = sc.startScalePct / 100.0f;
                 float scale = sc.scaleAnim ? s0 + (1.0f - s0) * spatialcam::applyEasing(sc.easing, tt) : 1.0f;
                 float fd    = (sc.fade ? std::min(1.0f, ms / float(std::max(1, sc.fadeMs))) : 1.0f) * (sc.screenAlpha / 255.0f);
-                float c[44];
+                float c[60];
                 std::memcpy(c, gLastC, sizeof c);
                 // shrink the four corners towards their centre (clip space, perspective kept)
                 float m[4] = {0, 0, 0, 0};
@@ -692,12 +697,19 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                     list->RSSetViewports(1, &vp);
                     list->RSSetScissorRects(1, &scr);
                 }
-                list->SetGraphicsRoot32BitConstants(0, 44, c, 0);
+                list->SetGraphicsRoot32BitConstants(0, 60, c, 0);
                 list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
                 list->SetPipelineState(gPsoWorld.Get());
                 list->DrawInstanced(3, 1, 0, 0);
-                list->SetPipelineState(gPsoPanel.Get());
-                list->DrawInstanced(6, 1, 0, 0);
+                if (c[57] != 0.0f && gPsoCurved) { // curved: shrink the cylinder's half sizes (and so its radius)
+                    c[53] *= scale; c[54] *= scale;
+                    list->SetGraphicsRoot32BitConstants(0, 60, c, 0);
+                    list->SetPipelineState(gPsoCurved.Get());
+                    list->DrawInstanced(6 * kCurveSegs, 1, 0, 0);
+                } else {
+                    list->SetPipelineState(gPsoPanel.Get());
+                    list->DrawInstanced(6, 1, 0, 0);
+                }
                 if (blurred) blurDone(list);
                 barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
                 gStatus = "closing";
@@ -737,6 +749,14 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         float mag = v.guiScale > 0.5f ? jgs / v.guiScale : 1.0f;
         gGuiMag   = mag;
         g         = computeGeomJava(v, aspect, scale, mag);
+        if (v.firstPerson && sc.curvedScreen && sc.curvedArc >= 5 && sc.curvedArc <= 150) { // RenderUtil.computeCylinderBasis
+            g.curved = true;
+            g.arc    = float(sc.curvedArc) * 0.017453292f;
+            g.R      = 2.0f * g.hw / g.arc;
+            float tc = -(g.cx * g.n[0] + g.cy * g.n[1] + g.cz * g.n[2]); // n . (camera - centre)
+            float sg = tc >= 0.0f ? 1.0f : -1.0f;
+            for (int k = 0; k < 3; ++k) g.nt[k] = g.n[k] * sg;
+        }
     } else {
         g = computeGeom(e, aspect);
     }
@@ -765,7 +785,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     }
     gDrawFrac[0] = a;
     gDrawFrac[1] = bb2;
-    float c[44]{};
+    float c[60]{};
     toClip(g, -a * g.hw, bb2 * g.hh, c + 0);   // TL
     toClip(g, a * g.hw, bb2 * g.hh, c + 4);    // TR
     toClip(g, -a * g.hw, -bb2 * g.hh, c + 8);  // BL
@@ -819,6 +839,13 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         spatialcam::View lv = spatialcam::view();
         c[40] = lv.lightTint;                                  // enableWorldLightingTint
         c[41] = spatialcam::cfg().linearFiltering ? 0.0f : 1.0f; // point sampling of the GUI
+        if (g.curved) { // VSPanelCurved: centre, unit axes, half sizes, projection, arc (sign: n x / toward camera)
+            c[44] = g.cx; c[45] = g.cy; c[46] = g.cz;
+            for (int k = 0; k < 3; ++k) { c[47 + k] = g.ex[k]; c[50 + k] = g.ey[k]; }
+            float nx = g.ex[1] * g.ey[2] - g.ex[2] * g.ey[1], ny = g.ex[2] * g.ey[0] - g.ex[0] * g.ey[2], nz = g.ex[0] * g.ey[1] - g.ex[1] * g.ey[0];
+            float same = nx * g.nt[0] + ny * g.nt[1] + nz * g.nt[2];
+            c[53] = g.hw; c[54] = g.hh; c[55] = g.tanHalf; c[56] = g.aspect; c[57] = same >= 0.0f ? g.arc : -g.arc;
+        }
     } else c[40] = 1.0f;
     bool hudFlat = gKeepHud.load() && gS.javaStyle;
     if (hudFlat) {
@@ -848,14 +875,14 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         list->RSSetViewports(1, &vp);
         list->RSSetScissorRects(1, &sc);
     }
-    list->SetGraphicsRoot32BitConstants(0, 44, c, 0);
+    list->SetGraphicsRoot32BitConstants(0, 60, c, 0);
     if (gS.javaStyle && redirected && gEnabled.load()) { std::memcpy(gLastC, c, sizeof c); gHaveLastGeom = true; }
     list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
     list->SetPipelineState(gPsoWorld.Get());
     list->DrawInstanced(3, 1, 0, 0);
     if (redirected) {
-        list->SetPipelineState(gPsoPanel.Get());
-        list->DrawInstanced(6, 1, 0, 0);
+        if (g.curved && gPsoCurved) { list->SetPipelineState(gPsoCurved.Get()); list->DrawInstanced(6 * kCurveSegs, 1, 0, 0); }
+        else { list->SetPipelineState(gPsoPanel.Get()); list->DrawInstanced(6, 1, 0, 0); }
         if (hudFlat && gPsoHud) { // the HUD strip flat on top, like Java's HUD over the world-space panel
             list->SetPipelineState(gPsoHud.Get());
             list->DrawInstanced(3, 1, 0, 0);
@@ -912,6 +939,25 @@ bool remapClient(HWND hwnd, int& ix, int& iy) {
     // ray through the pixel (view space, z forward)
     float d[3] = {(2.0f * (px + 0.5f) / W - 1.0f) * g.tanHalf * g.aspect, (1.0f - 2.0f * (py + 0.5f) / H) * g.tanHalf, 1.0f};
     float c[3] = {g.cx, g.cy, g.cz};
+    if (g.curved) { // RenderUtil.getCylinderUv: X^2 + (Z - R)^2 = R^2 in the panel frame (Z toward the camera)
+        auto dot3 = [](float const* a, float const* b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+        float dX = dot3(d, g.ex), dZ = dot3(d, g.nt), dY = dot3(d, g.ey);
+        float oX = -dot3(c, g.ex), oZ = -dot3(c, g.nt), oY = -dot3(c, g.ey); // camera (origin) in the panel frame
+        float A = dX * dX + dZ * dZ, B = 2.0f * (oX * dX + (oZ - g.R) * dZ), C = oX * oX + (oZ - g.R) * (oZ - g.R) - g.R * g.R;
+        float disc = B * B - 4.0f * A * C;
+        if (A < 1e-8f || disc < 0.0f) return false;
+        float sq = std::sqrt(disc), best = -1.0f;
+        for (float t : {(-B - sq) / (2.0f * A), (-B + sq) / (2.0f * A)})
+            if (t > 0.0f && oZ + dZ * t < g.R && (best < 0.0f || t < best)) best = t;
+        if (best < 0.0f) return false;
+        float X = oX + dX * best, Z = oZ + dZ * best, Y = oY + dY * best;
+        float th = std::atan2(X, g.R - Z);
+        float u  = std::clamp(0.5f + th / g.arc, 0.0f, 1.0f);
+        float v  = std::clamp((1.0f - Y / g.hh) * 0.5f, 0.0f, 1.0f);
+        ix = std::min(int(u * W), int(W) - 1);
+        iy = std::min(int(v * H), int(H) - 1);
+        return true;
+    }
     float dn   = d[0] * g.n[0] + d[1] * g.n[1] + d[2] * g.n[2];
     if (std::fabs(dn) < 1e-5f) return false;
     float t = (c[0] * g.n[0] + c[1] * g.n[1] + c[2] * g.n[2]) / dn;
