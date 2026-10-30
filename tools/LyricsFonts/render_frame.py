@@ -12,7 +12,7 @@ import sys
 import numpy as np
 from PIL import Image
 
-F_SCREEN, F_BITMAP, F_MSDF, F_GRADIENT, F_SOLID = 1, 2, 4, 16, 32
+F_SCREEN, F_BITMAP, F_MSDF, F_GRADIENT, F_SOLID, F_VIEW, F_IMAGE = 1, 2, 4, 16, 32, 64, 128
 
 
 def unpack(c):
@@ -41,7 +41,7 @@ _ATLAS_CACHE = {}
 
 def load_atlas(p):
     if p not in _ATLAS_CACHE:
-        _ATLAS_CACHE[p] = np.asarray(Image.open(p).convert('L'), np.float32) / 255.0
+        _ATLAS_CACHE[p] = np.asarray(Image.open(p).convert('RGBA'), np.float32) / 255.0  # fonts use .r (grey PNG)
     return _ATLAS_CACHE[p]
 
 
@@ -56,7 +56,11 @@ def render(d, W, img=None):
         yy = np.linspace(0, 1, H)[:, None, None]
         img[:] = np.concatenate([0.05 + 0.10 * yy, 0.05 + 0.08 * yy, 0.13 + 0.12 * yy], -1)  # dusk-sky gradient backdrop
 
-    def to_px(p, screen):
+    def to_px(p, screen, view=False):
+        if view:  # BF_GLYPH_VIEW: clip = (x / aspect, y, 0, z)
+            if p[2] < 0.01:
+                return None, False
+            return np.array([W / 2 + p[0] / d['aspect'] / p[2] * W / 2, H / 2 - p[1] / p[2] * H / 2]), True
         if screen:
             return np.array([p[0] / d['aspect'] * W, p[1] * H]), True
         z = p @ f
@@ -74,7 +78,7 @@ def render(d, W, img=None):
         corners = [pos - R + U, pos + R + U, pos + R - U, pos - R - U]  # TL TR BR BL (uv 0,0 1,0 1,1 0,1)
         pts = []
         for c in corners:
-            q, ok = to_px(c, screen)
+            q, ok = to_px(c, screen, bool(flags & F_VIEW))
             if not ok:
                 break
             pts.append(q)
@@ -104,10 +108,19 @@ def render(d, W, img=None):
             rgb, aa = fill[:3] * a[..., None], a
         else:
             uu, vv = u0 + lu * (u1 - u0), v0 + lv * (v1 - v0)
-            A = atlases[atlas]
+            A4 = atlases[atlas]
+            A = A4[..., 0]
             ah, aw = A.shape
             sx = np.clip((uu * aw - 0.5), 0, aw - 1); sy = np.clip((vv * ah - 0.5), 0, ah - 1)
-            if flags & F_BITMAP:
+            if flags & F_IMAGE:  # colour image: bilinear rgba * tint, premultiplied
+                ix, iy = sx.astype(int), sy.astype(int)
+                fx, fy = (sx - ix)[..., None], (sy - iy)[..., None]
+                ix1, iy1 = np.minimum(ix + 1, aw - 1), np.minimum(iy + 1, ah - 1)
+                smp = (A4[iy, ix] * (1 - fx) + A4[iy, ix1] * fx) * (1 - fy) + (A4[iy1, ix] * (1 - fx) + A4[iy1, ix1] * fx) * fy
+                col = smp * fill[None, None, :]
+                aa = col[..., 3]
+                rgb = col[..., :3] * aa[..., None]
+            elif flags & F_BITMAP:
                 s = A[np.clip((vv * ah).astype(int), 0, ah - 1), np.clip((uu * aw).astype(int), 0, aw - 1)]
                 col = fill[None, None, :] * (1 - lv[..., None]) + fill2[None, None, :] * lv[..., None] if flags & F_GRADIENT \
                     else np.broadcast_to(fill, s.shape + (4,))

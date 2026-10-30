@@ -14,6 +14,7 @@
 #include "lyrics/BfLyrics.h"
 #include "lyrics/core/Config.h"
 #include "lyrics/core/Engine.h"
+#include "lyrics/core/Panel.h"
 #include "lyrics/core/Fetcher.h"
 #include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Json.h"
@@ -804,6 +805,109 @@ TEST(preset_frames_render_dump) { // world text for each look, dumped for the CP
         CHECK(!e.glyphs().empty());
         dumpFrame(std::string("preset_") + p, e, cam, 70, 480.0f / 270);
     }
+}
+
+// ================================================================ settings panel
+namespace {
+struct PanelRig {
+    Engine                  e;
+    Panel                   p;
+    PanelAssets             as;
+    PanelMedia              media;
+    std::vector<PresetInfo> presets{{"ground_drop", "Ground Drop"}, {"neon_arena", "Neon Arena"}, {"combat_safe", "Combat Safe"}};
+    std::vector<BfGlyphV1>  out;
+    PanelInput              in;
+    PanelRig() {
+        loadRealFonts(e);
+        media.title = "Song"; media.artist = "Artist"; media.hasTrack = true; media.durationMs = 200000; media.positionMs = 50000;
+        in.mouseValid = true;
+        p.setOpen(true);
+        for (int i = 0; i < 20; ++i) step(); // finish the open animation
+    }
+    void at(float x, float y) { // put the mouse on design px (x, y) through the panel's own projection
+        Vec3 v = p.toView(x, y);
+        in.mouseNdcX = float(v.x / v.z / in.aspect);
+        in.mouseNdcY = float(v.y / v.z);
+    }
+    std::vector<PanelAction> step() { out.clear(); return p.frame(in, e.config(), e.fonts(), as, media, presets, out); }
+    std::vector<PanelAction> click(float x, float y) {
+        at(x, y);
+        step();               // hover
+        in.down = true;
+        auto a = step();      // press
+        in.down = false;
+        auto b = step();      // release
+        a.insert(a.end(), b.begin(), b.end());
+        return a;
+    }
+    static bool has(std::vector<PanelAction> const& v, PanelAction::Kind k) {
+        for (auto const& a : v) if (a.kind == k) return true;
+        return false;
+    }
+};
+} // namespace
+
+TEST(panel_projection_and_pick) {
+    Panel p;
+    p.setOpen(true);
+    for (float x : {0.0f, 100.0f, 320.0f, 639.0f})
+        for (float y : {0.0f, 190.0f, 379.0f}) {
+            Vec3 v  = p.toView(x, y);
+            auto hp = p.pick(float(v.x / v.z / 1.7777778), float(v.y / v.z), 1.7777778f);
+            CHECK(hp.has_value());
+            CHECK_NEAR((*hp)[0], x, 0.05);
+            CHECK_NEAR((*hp)[1], y, 0.05);
+        }
+    // tilted back: the top edge is farther away than the bottom edge
+    CHECK(p.toView(320, 0).z > p.toView(320, 379).z);
+}
+TEST(panel_widgets) {
+    PanelRig r;
+    CHECK(!r.out.empty());
+    bool allView = true;
+    for (auto const& g : r.out) allView &= (g.flags & BF_GLYPH_VIEW) != 0;
+    CHECK(allView);
+    // Sky tab: the "Stars" toggle pill (x 462..618, y 58..82) flips cfg.stars and asks for a save
+    bool before = r.e.config().stars;
+    auto a      = r.click(540, 70);
+    CHECK_EQ(r.e.config().stars, !before);
+    CHECK(PanelRig::has(a, PanelAction::Kind::SaveConfig));
+    // a sky tile selects the preset
+    r.click(300 + 50, 92 + 25);
+    CHECK_EQ(r.e.config().skyPreset, std::string("inferno"));
+    // tabs: "Lyrics" (second pill)
+    r.click(292 + 66 + 33, 347);
+    CHECK(r.p.tab() == Panel::Tab::Lyrics);
+    // slider drag: Size track spans x 380..578 at y 238 -> drag to the far right = max 3.0
+    r.at(400, 238); r.step();
+    r.in.down = true; r.step();
+    r.at(630, 238); r.step(); r.step();
+    r.in.down = false; r.step();
+    CHECK_NEAR(r.e.config().lyricsScale, 3.0, 1e-4);
+    // chips: lyrics style "Wall" (4th chip of 322 px starting at 296, y 106..126)
+    r.click(296 + 322 * 0.875f, 116);
+    CHECK(r.e.config().lyricsStyle == LyricsStyle::Wall);
+    // player: play/pause button and seek
+    CHECK(PanelRig::has(r.click(118, 356), PanelAction::Kind::PlayPause));
+    r.at(34 + 107, 298); r.step();
+    r.in.down = true; r.step(); r.step();
+    r.in.down = false;
+    auto sk = r.step();
+    bool seek = false;
+    for (auto const& x : sk) seek |= x.kind == PanelAction::Kind::Seek && x.ms > 90000 && x.ms < 110000;
+    CHECK(seek);
+    // close button and clicking outside both close
+    CHECK(PanelRig::has(r.click(610, 25), PanelAction::Kind::Close));
+    CHECK(PanelRig::has(r.click(-80, 200), PanelAction::Kind::Close));
+}
+TEST(panel_presets_tab) {
+    PanelRig r;
+    r.click(292 + 3 * 66 + 33, 347); // Presets
+    CHECK(r.p.tab() == Panel::Tab::Presets);
+    auto a = r.click(296 + 50, 92 + 25); // first tile = Ground Drop (Combat Safe is a toggle, not a tile)
+    bool ok = false;
+    for (auto const& x : a) ok |= x.kind == PanelAction::Kind::ApplyPreset && x.id == "ground_drop";
+    CHECK(ok);
 }
 
 int main(int argc, char** argv) {

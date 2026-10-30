@@ -10,3 +10,9 @@ Bedrock Forge's lyrics feature (`src/lyrics/`, `resources/lyricsflow/`, the RF g
   combat-safe mode, the Bedrock/D3D12 renderer path) is original Bedrock Forge code.
 - Fonts keep their own licences: `third_party/lyricsflow/fonts/` (SIL OFL 1.1 for all bundled TTFs, Yellowtail under
   Apache 2.0, DejaVu for the Arabic fallback).
+
+## Panel icons (added 2026-10-30)
+`tools/LyricsPanel/icons/*.png` (play, pause, prev, next, refresh, music, close, tab icons, Spotify / YouTube logos) are
+copied from LyricsFlow v2.0 (`assets/lyricsflow/textures/gui`, 374m, MIT, see LICENSE) and packed into
+`resources/lyricsflow/ui/ui_atlas.png` together with procedural sky thumbnails and preview renders made for this port.
+The panel layout follows a LyricsFlow teaser screenshot shared by Fernando. Personal build, not distributed.
