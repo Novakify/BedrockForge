@@ -2987,6 +2987,7 @@ void barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STA
 std::mutex       gKeepM;          // gG.keep / snap (re)creation vs the game thread's copy
 std::atomic_bool gKeepFresh{false}; // the game thread copied a whole frame's UI into keep
 std::atomic<long> gKeepCopies{0};
+std::atomic<long> gKeepPartial{0}; // UI frames left out: drawn only in part
 long gKeepChecked = 0;
 bool ensureKeep(ID3D12Device* dev, D3D12_RESOURCE_DESC const& ud) {
     std::lock_guard kl(gKeepM);
@@ -3872,11 +3873,28 @@ void requestReadback(ID3D12GraphicsCommandList* list, ID3D12Resource* ui) {
     gG.rbFrame = gG.frameNo;
 }
 } // namespace
+std::string flickerNote() {
+    char b[200];
+    snprintf(b, sizeof b, "kept-screen copies %ld, checked %ld, UI frames left out as partial %ld", gKeepCopies.load(), long(gKeepChecked), gKeepPartial.load());
+    return b;
+}
 void beforeUiClear(ID3D12GraphicsCommandList* list, ID3D12Resource* ui) {
     if (!list || !ui) return;
     {
         std::lock_guard l(gM);
         if (gS.phase != Phase::Intro && gS.phase != Phase::Active) return; // the closing shot keeps the last screen
+    }
+    {   // a frame whose UI was drawn only in part (the game left some of it out that frame: fewer UI draws than the
+        // frames around it) is not kept - its holes would flicker in the scene; a lasting change is taken after 12 frames
+        static double best = 0;
+        static int    under = 0;
+        long          n     = uicapture::lastFrameUiDraws();
+        best                = std::max(double(n), best * 0.999);
+        if (n * 10 < best * 9) {
+            if (++under < 12) { ++gKeepPartial; return; }
+            best = double(n);
+        }
+        under = 0;
     }
     std::lock_guard kl(gKeepM);
     if (!gG.cand || gG.broken) return;

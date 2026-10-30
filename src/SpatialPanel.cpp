@@ -494,9 +494,9 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             ULONGLONG nowT = GetTickCount64();
             if (nowT - last > 2000) {
                 last = nowT;
-                char b[400];
-                snprintf(b, sizeof b, "scene frames %ld, frames whose UI was not redirected %ld, frames with the panel off %ld\n%s\n", frames, noUi, notEnabled,
-                         uicapture::leakNote().c_str());
+                char b[900];
+                snprintf(b, sizeof b, "scene frames %ld, frames whose UI was not redirected %ld, frames with the panel off %ld\n%s\n%s\n", frames, noUi, notEnabled,
+                         uicapture::leakNote().c_str(), cine::flickerNote().c_str());
                 uicapture::writeText("cine_frames.txt", b);
             }
         }
