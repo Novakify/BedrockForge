@@ -320,7 +320,9 @@ Geom computeGeomJava(spatialcam::View const& v, float uiAspect, float anim, floa
 
 // ---------------------------------------------------------------- hook side
 bool   enabled() { return gEnabled.load(std::memory_order_relaxed) || gAnim.load(std::memory_order_relaxed) > 0.0f; }
-bool   wantRedirect() { return enabled() && gReady.load(std::memory_order_relaxed); }
+// Java close animation: after the screen closes the last UI image shrinks / fades out (the UI is no longer redirected)
+std::atomic_bool gClosingPanel{false};
+bool   wantRedirect() { return enabled() && !gClosingPanel.load(std::memory_order_relaxed) && gReady.load(std::memory_order_relaxed); }
 // Java Spatial GUI keeps the HUD (hotbar, hearts) on the screen under the panel; Bedrock draws hud_screen only while
 // it is the top screen. While a Spatial GUI panel is up the HUD is drawn under the container too (ScreenWatch), and
 // record() keeps its bottom strip flat on the screen instead of on the panel.
@@ -336,12 +338,24 @@ void installCursorHook();
 void installSourceHooks();
 void tryGameMouse();
 void writeDiag();
-LARGE_INTEGER gOpenQpc{};
+LARGE_INTEGER gOpenQpc{}, gCloseQpc{};
+float         gCloseFromMs = 0.0f; // how far the open animation had got when the screen closed
+bool          gHaveLastGeom = false;
+float         gLastC[40]{};       // the last frame's panel constants (the close animation reuses its placement)
 float         gGuiMag = 1.0f;
 float         gDrawFrac[2] = {1.0f, 1.0f};
 void toggle() {
     bool on = !gEnabled.load();
-    if (on) QueryPerformanceCounter(&gOpenQpc);
+    if (on) { QueryPerformanceCounter(&gOpenQpc); gClosingPanel = false; }
+    else if (gS.javaStyle && spatialcam::cfg().closeAnim && gHaveLastGeom && !cine::active()) {
+        LARGE_INTEGER fq;
+        QueryPerformanceCounter(&gCloseQpc);
+        QueryPerformanceFrequency(&fq);
+        auto const& sc = spatialcam::cfg();
+        float ms       = float(double(gCloseQpc.QuadPart - gOpenQpc.QuadPart) * 1000.0 / double(fq.QuadPart));
+        gCloseFromMs   = std::min(ms, float(std::max(sc.scaleAnim ? sc.openMs : 0, sc.fade ? sc.fadeMs : 0)));
+        gClosingPanel  = gCloseFromMs > 1.0f;
+    }
     if (on) { installCursorHook(); installSourceHooks(); tryGameMouse(); }
     else writeDiag();
     gEnabled = on;
@@ -425,6 +439,7 @@ std::atomic_bool gLookScreenless{false}, gStartScreenless{false};
 int              gLookX = 0, gLookY = 0, gLookZ = 0;
 std::string      gLookName;
 void noteScreen(void const* stack, std::string const& name) {
+    spatialcam::clientTick();
     {   // testing aid (uiDebugUseKey): the key uses the block looked at, on the client thread
         static bool was = false;
         int         k   = RfOptions::uiDebugUseKey.get();
@@ -570,6 +585,57 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     }
     bool redirected = gRedirected.exchange(false);
     if (gBroken || !RfOptions::uiCaptureSpike) { gAnim = 0; return false; }
+    if (!gEnabled && gClosingPanel.load() && gHaveLastGeom && gUi && gRoot) {
+        // close animation: the open animation run backwards from where it had got, last placement, last UI image
+        float cms = float(double(now.QuadPart - gCloseQpc.QuadPart) * 1000.0 / double(f.QuadPart));
+        float ms  = gCloseFromMs - cms;
+        if (ms <= 0.0f) { gClosingPanel = false; gHaveLastGeom = false; }
+        else {
+            D3D12_RESOURCE_DESC bd = bb->GetDesc();
+            if (UINT(bd.Width) == gW && bd.Height == gH) {
+                auto const& sc = spatialcam::cfg();
+                float tt    = std::min(1.0f, ms / float(std::max(1, sc.openMs)));
+                float s0    = sc.startScalePct / 100.0f;
+                float scale = sc.scaleAnim ? s0 + (1.0f - s0) * spatialcam::applyEasing(sc.easing, tt) : 1.0f;
+                float fd    = (sc.fade ? std::min(1.0f, ms / float(std::max(1, sc.fadeMs))) : 1.0f) * (sc.screenAlpha / 255.0f);
+                float c[40];
+                std::memcpy(c, gLastC, sizeof c);
+                // shrink the four corners towards their centre (clip space, perspective kept)
+                float m[4] = {0, 0, 0, 0};
+                for (int k = 0; k < 4; ++k) for (int j = 0; j < 4; ++j) m[j] += c[k * 4 + j] * 0.25f;
+                for (int k = 0; k < 4; ++k) for (int j = 0; j < 4; ++j) c[k * 4 + j] = m[j] + (c[k * 4 + j] - m[j]) * scale;
+                c[17] = fd;
+                c[24] = c[25] = c[26] = c[27] = 0.0f; // no HUD strip: the HUD is drawn normally again
+                c[28] *= fd;                           // the blur goes with the panel
+                c[32] = c[33] = c[34] = c[35] = 0.0f;
+                barrier(list, bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                barrier(list, gScene.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+                list->CopyResource(gScene.Get(), bb);
+                barrier(list, gScene.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                barrier(list, bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
+                list->SetDescriptorHeaps(1, heaps);
+                list->SetGraphicsRootSignature(gRoot.Get());
+                list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                D3D12_VIEWPORT vp{0, 0, float(bd.Width), float(bd.Height), 0, 1};
+                D3D12_RECT     scr{0, 0, LONG(bd.Width), LONG(bd.Height)};
+                list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
+                list->RSSetViewports(1, &vp);
+                list->RSSetScissorRects(1, &scr);
+                list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
+                list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
+                list->SetPipelineState(gPsoWorld.Get());
+                list->DrawInstanced(3, 1, 0, 0);
+                list->SetPipelineState(gPsoPanel.Get());
+                list->DrawInstanced(6, 1, 0, 0);
+                barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                gStatus = "closing";
+                return true;
+            }
+            gClosingPanel = false;
+        }
+    }
     if (!gEnabled && gT <= 0.0f) {
         gStatus = "off";
         std::lock_guard l(gGeomMutex);
@@ -699,6 +765,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     list->RSSetViewports(1, &vp);
     list->RSSetScissorRects(1, &sc);
     list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
+    if (gS.javaStyle && redirected && gEnabled.load()) { std::memcpy(gLastC, c, sizeof c); gHaveLastGeom = true; }
     list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
     list->SetPipelineState(gPsoWorld.Get());
     list->DrawInstanced(3, 1, 0, 0);

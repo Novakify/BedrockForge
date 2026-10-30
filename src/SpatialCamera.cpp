@@ -72,7 +72,16 @@ std::mutex gMutex; // gView + diag
 View       gView;
 
 bool      gHaveStart = false;
-bool      gHaveStartFresh = false; // the screen just opened: parallax smoothing starts at the pointer
+bool      gHaveStartFresh = false;
+// CameraMixin closing branch: after a third person screen closes the camera glides back to the player's own view
+// (the game stays in third person until the glide ends, then the perspective is restored on the client thread)
+std::atomic_bool  gClosing{false}, gCloseDone{false};
+Clock::time_point gCloseStart{};
+glm::vec3         gCloseOffset{0.0f}; // camera position minus feet when the screen closed
+float             gCloseYaw = 0.0f, gClosePitch = 0.0f;
+int               gCloseToPersp = 0;  // the perspective the glide ends in (0 = first person)
+glm::vec3         gLastCamPos{0.0f};
+bool              gResumeFromLast = false; // the screen just opened: parallax smoothing starts at the pointer
 glm::vec3 gStartPos{0.0f};
 float     gStartYaw = 0.0f, gStartPitch = 0.0f;
 
@@ -382,6 +391,28 @@ void applyComponent() {
     gLastRot[0]  = rot.x;  gLastRot[1]  = rot.y;
     float yawP = rot.y, pitchP = rot.x;
     stepFovBlend(gActive.load());
+    if (!gActive.load() && gClosing.load() && gConv) {
+        Config const& c  = cfg();
+        float  dur = float(std::max(1, c.transitionMs)) * (1.0f - std::clamp(c.transitionSkipPct, 0, 99) / 100.0f);
+        float  t   = std::min(1.0f, std::chrono::duration<float, std::milli>(Clock::now() - gCloseStart).count() / dur);
+        float  e   = easeInOutSine(t);
+        glm::vec3 from = feet + gCloseOffset;
+        glm::vec3 to   = gCloseToPersp == 0 ? eye : pos; // first person: the eyes; otherwise the game's own camera
+        glm::quat qFrom = glm::quat_cast(gConv == 2 ? glm::transpose(orient(gCloseYaw, gClosePitch) * gC) : orient(gCloseYaw, gClosePitch) * gC);
+        glm::quat qTo   = gCloseToPersp == 0 ? glm::quat_cast(gConv == 2 ? glm::transpose(orient(yawP, pitchP) * gC) : orient(yawP, pitchP) * gC) : q;
+        glm::quat qn    = glm::slerp(qFrom, qTo, e);
+        glm::vec3 cp    = from + (to - from) * e;
+        for (int i = 0; i < nComp; ++i) {
+            *comps[i]->mOrientation = qn;
+            *comps[i]->mPosition    = cp;
+        }
+        gLastCamPos = cp;
+        applyFov(comps, nComp, false, 1.0f); // the FOV eases back with the glide
+        avatarApply(actor, yawP, 0, 0, t < 1.0f); // AvatarRendererMixin: the pose blends back as the camera returns
+        if (t >= 1.0f) gCloseDone = true;          // client thread restores the perspective (clientTick)
+        gView.havePose = false;
+        return;
+    }
     if (!gActive.load()) {
         avatarApply(actor, yawP, 0, 0, false);
         if (gPendingSnap.exchange(false)) { // SpatialGUIRenderer.applyCameraSnap: keep looking where the camera looked
@@ -403,7 +434,8 @@ void applyComponent() {
     if (!gConv) return;
     if (!gHaveStart) {
         gHaveStart  = true;
-        gStartPos   = eye; // Java: the camera position when the screen opened (first person eyes)
+        gStartPos   = gResumeFromLast ? gLastCamPos : eye; // Java: the camera position when the screen opened (first person eyes)
+        gResumeFromLast = false;
         gStartYaw   = yawP;
         gStartPitch = pitchP;
         float clampP = float(cfg().fpPitchClamp);
@@ -493,6 +525,7 @@ void applyComponent() {
         *comps[i]->mOrientation = qn;
         *comps[i]->mPosition    = camPos;
     }
+    gLastCamPos = camPos;
     ++gCompWrites;
     ++gOverrides;
     gLastCamYaw = camYaw; gLastCamPitch = camPitch;
@@ -588,7 +621,7 @@ float applyEasing(Easing e, float t) { // AnimationUtil
     X(creativeInventory) X(renderScalePct) X(linearFiltering) X(anisotropicFiltering) X(recipeBookShrink) X(hideHandsFp)    \
     X(hideShieldFp) X(swingArmFp) X(curvedScreen) X(curvedArc) X(avatarBaseYaw) X(avatarBodyRot) X(crosshairFp)            \
     X(keepFpAngle) X(inheritOrigin) X(wideScreenShift) X(overrideFov) X(targetFov) X(worldBlur) X(worldBlurStrength) X(blurKeepPlayer)   \
-    X(dropShadow) X(dropShadowAlpha)
+    X(dropShadow) X(dropShadowAlpha) X(closeAnim)
 
 void loadConfig(std::filesystem::path const& configDir) {
     gCfgFile = configDir / "SpatialGUI.json";
@@ -634,6 +667,12 @@ void setActive(bool on, bool inventory) {
     auto ci = ll::service::getClientInstance();
     if (on && !gActive.load()) {
         if (!cfg().enabled) return;
+        if (gClosing.exchange(false)) { // reopened while gliding back: the saved perspective is still the original one
+            gCloseDone      = false;
+            gResumeFromLast = true;
+            if (ci && gSavedPerspective >= 0) ci->getOptions().setPlayerViewPerspective(gSavedPerspective);
+            gSavedPerspective = -1;
+        }
         bool fp = inventory ? cfg().fpInventory : cfg().fpContainers;
         gForcedFp = false;
         if (!fp && ci) {
@@ -661,8 +700,23 @@ void setActive(bool on, bool inventory) {
         }
         gActive = true;
     } else if (!on && gActive.load()) {
-        gActive = false;
         if (gFirstPerson.load() && cfg().keepFpAngle) gPendingSnap = true;
+        if (!gFirstPerson.load() && gSavedPerspective >= 0 && cfg().closeAnim) {
+            // third person: glide back first (applyComponent), the perspective comes back when it ends (clientTick)
+            std::lock_guard l(gMutex);
+            gCloseOffset  = gLastCamPos - glm::vec3(gLastFeet[0], gLastFeet[1], gLastFeet[2]);
+            gCloseYaw     = gLastCamYaw;
+            gClosePitch   = gLastCamPitch;
+            gCloseToPersp = gSavedPerspective;
+            gCloseStart   = Clock::now();
+            gCloseDone    = false;
+            gClosing      = true;
+            gActive       = false;
+            if (ci && gSavedHideHand >= 0) ci->getOptions().setHideItemInHand(gSavedHideHand == 1);
+            gSavedHideHand = -1;
+            return; // gSavedPerspective stays until the glide ends
+        }
+        gActive = false;
         if (ci && gSavedPerspective >= 0) ci->getOptions().setPlayerViewPerspective(gSavedPerspective);
         if (ci && gSavedHideHand >= 0) ci->getOptions().setHideItemInHand(gSavedHideHand == 1);
         gSavedPerspective = -1;
@@ -670,6 +724,13 @@ void setActive(bool on, bool inventory) {
     }
 }
 bool active() { return gActive.load(); }
+void clientTick() {
+    if (!gCloseDone.exchange(false)) return;
+    gClosing = false;
+    auto ci  = ll::service::getClientInstance();
+    if (ci && gSavedPerspective >= 0) ci->getOptions().setPlayerViewPerspective(gSavedPerspective);
+    gSavedPerspective = -1;
+}
 void setWideScreen(bool wide) { gWide = wide; }
 
 View view() {

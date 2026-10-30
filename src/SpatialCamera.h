@@ -67,6 +67,7 @@ struct Config {
     bool  blurKeepPlayer = false; // Java 2.x draws the player sharp after the blur; the reference clips blur it too
     bool  dropShadow = true;
     int   dropShadowAlpha = 120;
+    bool  closeAnim = true; // enableCloseAnimation: the panel shrinks / fades out and the camera glides back
 };
 Config& cfg();
 void    loadConfig(std::filesystem::path const& configDir);
@@ -107,6 +108,8 @@ void uninstall();
 /// switches the game to third person and starts the glide; first person mode keeps the view and only turns it.
 void setActive(bool on, bool inventory = false);
 bool active();
+/// Client thread, every screen-stack tick: finishes the close glide (restores the perspective).
+void clientTick();
 /// The open screen is wide (recipe book shown): the third person camera eases sideways (wideScreenShift).
 void setWideScreen(bool wide);
 View view();
