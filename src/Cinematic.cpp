@@ -2432,8 +2432,14 @@ bool screenlessWorth(std::string const& block, int x, int y, int z) {
     if (!kindOfBlock(block, kind) || kind != Kind::Jukebox) return false;
     if (gS.phase != Phase::None || !gCfg.enabled || Mode(gCfg.mode[int(kind)]) != Mode::Cinematic) return false;
     // JukeboxStation.worthIt: a record in it to take out, or one in hand to put in
-    int n = 0;
-    return !game::jukeboxRecord(x, y, z).empty() || isRecord(game::handItem(n));
+    int         n      = 0;
+    std::string inside = game::jukeboxRecord(x, y, z), hand = game::handItem(n);
+    {
+        static std::string lastNote;
+        std::string        note = "jukebox at " + std::to_string(x) + " " + std::to_string(y) + " " + std::to_string(z) + ": inside '" + inside + "', hand '" + hand + "'\n";
+        if (note != lastNote) { lastNote = note; uicapture::writeText("cine_screenless.txt", note.c_str()); }
+    }
+    return !inside.empty() || isRecord(hand);
 }
 bool screenlessUse(std::string const& block, int x, int y, int z) {
     if (!screenlessWorth(block, x, y, z)) return false;
@@ -2463,6 +2469,7 @@ Route onScreen(std::string const& containerTop) {
             if (gS.phase == Phase::Outro) finish();
             if (begin(pd.kind, pd.x, pd.y, pd.z)) { gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": Cinematic (inventory)"; return Route::Cinematic; }
             gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": " + gS.refused + ", Spatial";
+            uicapture::writeText("cine_screenless.txt", (gS.lastRoute + "\n").c_str());
             return Route::Spatial;
         }
         gS.lastRoute = "inventory: Spatial";
