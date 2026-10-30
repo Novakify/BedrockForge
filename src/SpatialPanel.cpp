@@ -106,7 +106,7 @@ bool createStatic(ID3D12Device* device) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
     D3D12_ROOT_PARAMETER   params[2]{};
     params[0].ParameterType   = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants       = {0, 0, 32};
+    params[0].Constants       = {0, 0, 40};
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     params[1].ParameterType   = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable = {1, &range};
@@ -629,7 +629,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     }
     gDrawFrac[0] = a;
     gDrawFrac[1] = bb2;
-    float c[32]{};
+    float c[40]{};
     toClip(g, -a * g.hw, bb2 * g.hh, c + 0);   // TL
     toClip(g, a * g.hw, bb2 * g.hh, c + 4);    // TR
     toClip(g, -a * g.hw, -bb2 * g.hh, c + 8);  // BL
@@ -642,6 +642,41 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     c[21] = gS.javaStyle ? 1.0f : 0.0f; // drop the dim background
     c[22] = a;                          // drawn uv fraction (VSPanel)
     c[23] = bb2;
+    if (gS.javaStyle) {
+        auto const& sc = spatialcam::cfg();
+        // Java blurWorldBackground (vanilla menu blur, radius worldBlurStrength): blur radius in pixels at this height,
+        // eased in with the panel
+        if (sc.worldBlur) c[28] = float(std::clamp(sc.worldBlurStrength, 1, 10)) * 1.6f * float(bd.Height) / 1080.0f * std::min(1.0f, fade * 1.5f);
+        // Java dropShadow: alpha 120, offset 0.008 right / 0.012 down of a panel 1 tall (the texture's height)
+        if (sc.dropShadow) {
+            c[29] = float(std::clamp(sc.dropShadowAlpha, 0, 255)) / 255.0f;
+            c[30] = 0.008f / (float(bd.Width) / float(bd.Height));
+            c[31] = 0.012f;
+        }
+        // the player on screen (third person): kept sharp in the blur (Java draws the player again after the blur)
+        spatialcam::View pv = spatialcam::view();
+        if (pv.havePose && pv.valid) {
+            constexpr float kD = 0.017453292f;
+            float y = pv.camYaw * kD, p = pv.camPitch * kD;
+            float f[3] = {-std::sin(y) * std::cos(p), -std::sin(p), std::cos(y) * std::cos(p)};
+            float r[3] = {-std::cos(y), 0.0f, -std::sin(y)};
+            float u[3] = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            bool  any = false;
+            for (int k = 0; k < 8; ++k) { // the player's box: 0.35 around the feet, 1.9 tall (head turned, arms out)
+                float q[3] = {pv.feet[0] + ((k & 1) ? 0.45f : -0.45f) - pv.camPos[0], pv.feet[1] + ((k & 2) ? 1.95f : 0.0f) - pv.camPos[1],
+                              pv.feet[2] + ((k & 4) ? 0.45f : -0.45f) - pv.camPos[2]};
+                float zf = q[0] * f[0] + q[1] * f[1] + q[2] * f[2];
+                if (zf < 0.05f) zf = 0.05f;
+                float nx = (q[0] * r[0] + q[1] * r[1] + q[2] * r[2]) / (zf * pv.tanHalf * pv.aspect);
+                float ny = (q[0] * u[0] + q[1] * u[1] + q[2] * u[2]) / (zf * pv.tanHalf);
+                float ux = 0.5f + 0.5f * nx, uy = 0.5f - 0.5f * ny;
+                x0 = std::min(x0, ux); x1 = std::max(x1, ux); y0 = std::min(y0, uy); y1 = std::max(y1, uy);
+                any = true;
+            }
+            if (any && x1 > x0) { c[32] = x0; c[33] = y0; c[34] = x1; c[35] = y1; }
+        }
+    }
     bool hudFlat = gKeepHud.load() && gS.javaStyle;
     if (hudFlat) {
         // the HUD strip at the bottom middle: hotbar (182 x 22 GUI px) with the offhand slot, xp bar, hearts / food,
@@ -663,7 +698,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
     list->RSSetViewports(1, &vp);
     list->RSSetScissorRects(1, &sc);
-    list->SetGraphicsRoot32BitConstants(0, 32, c, 0);
+    list->SetGraphicsRoot32BitConstants(0, 40, c, 0);
     list->SetGraphicsRootDescriptorTable(1, srvGpu(0));
     list->SetPipelineState(gPsoWorld.Get());
     list->DrawInstanced(3, 1, 0, 0);
@@ -1490,6 +1525,12 @@ void drawJavaConfig() {
         ImGui::Checkbox("Hide Hands in First Person", &c.hideHandsFp);
         ImGui::Checkbox("Hide Shield in First Person", &c.hideShieldFp);
         ImGui::Checkbox("Swing Arm on First Person Click", &c.swingArmFp);
+        ImGui::Checkbox("Blur World Background", &c.worldBlur);
+        if (c.worldBlur) ImGui::SliderInt("World Blur Strength", &c.worldBlurStrength, 1, 10);
+        ImGui::Checkbox("Drop Shadow", &c.dropShadow);
+        if (c.dropShadow) ImGui::SliderInt("Drop Shadow Alpha", &c.dropShadowAlpha, 0, 255);
+        ImGui::Checkbox("Override FOV (Java framing)", &c.overrideFov);
+        if (c.overrideFov) ImGui::SliderInt("Target FOV", &c.targetFov, 30, 110);
         ImGui::TreePop();
     }
     if (ImGui::TreeNode("TP Screen")) {

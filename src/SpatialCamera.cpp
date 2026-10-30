@@ -72,6 +72,7 @@ std::mutex gMutex; // gView + diag
 View       gView;
 
 bool      gHaveStart = false;
+bool      gHaveStartFresh = false; // the screen just opened: parallax smoothing starts at the pointer
 glm::vec3 gStartPos{0.0f};
 float     gStartYaw = 0.0f, gStartPitch = 0.0f;
 
@@ -240,6 +241,7 @@ void onCamera(mce::Camera& cam) {
         gView.yawRel     = 0.0f;
         gView.pitch      = actor.getRotation().x;
         gView.overridden = false;
+        gView.havePose   = false;
     }
 }
 
@@ -285,11 +287,20 @@ glm::vec3 gCinePos{};
 float  gRcBefore[3] = {}, gRcAfter[3] = {}, gRcTarget[3] = {};
 long   gRcWrites = 0;
 float  gCineFovRaw = 0, gCineFovScale = 1;
-void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::vec3 const& eye, float yawP, float pitchP) {
-    float           e[3] = {eye.x, eye.y, eye.z};
-    rf::cine::Pose  p{};
-    float           fovScale = 1.0f;
-    bool            on       = rf::cine::cameraPose(e, yawP, pitchP, p, fovScale);
+// Spatial GUI FOV (Java overrideFov / targetFov): 0..1 how far the panel scene has eased to the target FOV
+float             gFovBlend = 0.0f;
+Clock::time_point gFovLast{};
+void stepFovBlend(bool on) {
+    auto  nowT = Clock::now();
+    float dtMs = gFovLast.time_since_epoch().count() ? std::min(100.0f, std::chrono::duration<float, std::milli>(nowT - gFovLast).count()) : 0.0f;
+    gFovLast   = nowT;
+    float step = dtMs / float(std::max(1, cfg().transitionMs));
+    gFovBlend  = on && cfg().overrideFov ? std::min(1.0f, gFovBlend + step) : std::max(0.0f, gFovBlend - step);
+}
+// writes the camera components' FOV: the Cinematic scene's scale, or the eased Spatial GUI target FOV
+void applyFov(MinecraftCamera::CameraComponent** comps, int nComp, bool cineOn, float fovScale) {
+    float target = float(std::clamp(cfg().targetFov, 30, 110)) * kDeg;
+    float e      = easeInOutSine(gFovBlend);
     for (int i = 0; i < nComp; ++i) {
         float& f = comps[i]->mFieldOfView;
         FovMem* m = nullptr;
@@ -297,11 +308,18 @@ void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::ve
         if (!m && gFovN < 24) { m = &gFov[gFovN++]; m->comp = comps[i]; m->base = f; m->written = f; }
         if (!m) continue;
         if (f != m->written) m->base = f; // the game set a new value since our last write
-        float want = on ? m->base * fovScale : m->base;
+        float want = cineOn ? m->base * fovScale : m->base + (target - m->base) * e;
         if (f != want) f = want;
         m->written = f;
         if (i == 0) { gCineFovRaw = m->base; gCineFovScale = fovScale; }
     }
+}
+void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::vec3 const& eye, float yawP, float pitchP) {
+    float           e[3] = {eye.x, eye.y, eye.z};
+    rf::cine::Pose  p{};
+    float           fovScale = 1.0f;
+    bool            on       = rf::cine::cameraPose(e, yawP, pitchP, p, fovScale);
+    applyFov(comps, nComp, on, fovScale);
     if (!on) gCineHavePos = false;
     if (!on || !gConv) return;
     glm::mat3 O = orient(p.yaw, p.pitch);
@@ -363,6 +381,7 @@ void applyComponent() {
     gLastFeet[0] = feet.x; gLastFeet[1] = feet.y; gLastFeet[2] = feet.z;
     gLastRot[0]  = rot.x;  gLastRot[1]  = rot.y;
     float yawP = rot.y, pitchP = rot.x;
+    stepFovBlend(gActive.load());
     if (!gActive.load()) {
         avatarApply(actor, yawP, 0, 0, false);
         if (gPendingSnap.exchange(false)) { // SpatialGUIRenderer.applyCameraSnap: keep looking where the camera looked
@@ -380,6 +399,7 @@ void applyComponent() {
         applyCinematic(comps, nComp, eye, yawP, pitchP);
         return;
     }
+    applyFov(comps, nComp, false, 1.0f);
     if (!gConv) return;
     if (!gHaveStart) {
         gHaveStart  = true;
@@ -391,6 +411,7 @@ void applyComponent() {
         gFreeYaw = gFreePitch = 0.0f;
         gGrabReset = true;
         gWideT     = gWide.load() ? 1.0f : 0.0f; // opened wide: the glide goes straight to the shifted spot
+        gHaveStartFresh = true;
     }
     Config const& c  = cfg();
     bool          fp = gFirstPerson.load();
@@ -401,6 +422,21 @@ void applyComponent() {
     rf::panel::cursorNdc(mx, my);
     mx = std::clamp(mx, -1.0f, 1.0f);
     my = std::clamp(my, -1.0f, 1.0f);
+    {   // CameraMixin.smoothParallaxOffsets: the camera follows the pointer with a 50 ms time constant
+        static float             sx = 0.0f, sy = 0.0f;
+        static Clock::time_point last{};
+        auto  nowT  = Clock::now();
+        float dt    = gHaveStartFresh || !last.time_since_epoch().count() ? -1.0f : std::min(0.1f, std::chrono::duration<float>(nowT - last).count());
+        last        = nowT;
+        if (dt < 0.0f) { sx = mx; sy = my; }
+        else {
+            float a = 1.0f - std::exp(-dt / 0.05f);
+            sx += (mx - sx) * a;
+            sy += (my - sy) * a;
+        }
+        gHaveStartFresh = false;
+        mx = sx; my = sy;
+    }
     float     elapsed = std::chrono::duration<float, std::milli>(Clock::now() - gOpen).count();
     glm::vec3 target;
     float     targetYaw, targetPitch;
@@ -470,6 +506,10 @@ void applyComponent() {
     gView.fpYaw0      = yawP;
     gView.fpPitch0    = gBaseXRot;
     gView.playerYaw   = yawP;
+    gView.havePose    = !fp;
+    gView.camPos[0] = camPos.x; gView.camPos[1] = camPos.y; gView.camPos[2] = camPos.z;
+    gView.camYaw = camYaw; gView.camPitch = camPitch;
+    gView.feet[0] = feet.x; gView.feet[1] = feet.y; gView.feet[2] = feet.z;
     avatarApply(actor, yawP, mx, my, !fp);
 }
 } // namespace
@@ -547,7 +587,8 @@ float applyEasing(Easing e, float t) { // AnimationUtil
     X(hoppers) X(dispensers) X(grindstone) X(smithing) X(cartography) X(loom) X(stonecutter) X(lectern) X(inventory)        \
     X(creativeInventory) X(renderScalePct) X(linearFiltering) X(anisotropicFiltering) X(recipeBookShrink) X(hideHandsFp)    \
     X(hideShieldFp) X(swingArmFp) X(curvedScreen) X(curvedArc) X(avatarBaseYaw) X(avatarBodyRot) X(crosshairFp)            \
-    X(keepFpAngle) X(inheritOrigin) X(wideScreenShift)
+    X(keepFpAngle) X(inheritOrigin) X(wideScreenShift) X(overrideFov) X(targetFov) X(worldBlur) X(worldBlurStrength)   \
+    X(dropShadow) X(dropShadowAlpha)
 
 void loadConfig(std::filesystem::path const& configDir) {
     gCfgFile = configDir / "SpatialGUI.json";

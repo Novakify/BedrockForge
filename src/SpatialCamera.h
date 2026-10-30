@@ -57,6 +57,15 @@ struct Config {
     int    startScalePct = 75;
     // Auto FOV tuning
     float baselineFov = 70.0f, screenPower = 1.2f, sideMult = -0.3f, distMult = 0.8f, tpScreenMult = 0.82f;
+    // Appearance (Java 2.x: overrideFov / targetFov, blurWorldBackground / worldBlurStrength, dropShadow*)
+    // Bedrock FOVs run far wider than Java's 70 (120+ vertical seen): the panel scene eases to the Java FOV so the
+    // camera framing (player big at the left, panel square on at the right) matches the Java mod.
+    bool  overrideFov = true;
+    int   targetFov   = 70;
+    bool  worldBlur = true;
+    int   worldBlurStrength = 5;
+    bool  dropShadow = true;
+    int   dropShadowAlpha = 120;
 };
 Config& cfg();
 void    loadConfig(std::filesystem::path const& configDir);
@@ -77,6 +86,9 @@ struct View {
     bool  firstPerson = false; // first person mode (configured, or forced because the third person spot is inside a block) (screen placed along the look direction at open)
     float fpYaw0 = 0.0f, fpPitch0 = 0.0f; // first person: player yaw / clamped pitch when the screen opened (degrees)
     float playerYaw = 0.0f;
+    // third person pose of this frame (world space, Minecraft yaw/pitch degrees): keeps the player sharp in the blur
+    bool  havePose = false;
+    float camPos[3]{}, camYaw = 0.0f, camPitch = 0.0f, feet[3]{};
 };
 
 /// Java SpatialGUIConfig.calculateAutoGuiScale(width, height): largest scale keeping >= 320 x 240 GUI units.
