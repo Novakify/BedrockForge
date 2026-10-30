@@ -227,7 +227,8 @@ void draw() {
     // full screen: dim the game (pause screen underneath), title, tabs, search, rows, Cancel / Save & Quit
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(W, H));
-    ImGui::SetNextWindowFocus();
+    static bool focused = false; // focus once: refocusing every frame would cancel clicks in the rows (child window)
+    if (!focused) { ImGui::SetNextWindowFocus(); focused = true; }
     ImGui::Begin("##sgcfg", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::SetWindowFontScale(s * 0.5f);
     auto* dl = ImGui::GetWindowDrawList();
@@ -336,6 +337,7 @@ void draw() {
     styleEnd();
     if (save) { spatialcam::saveConfig(); gOpen = false; }
     else if (cancel) { c = gSnapshot; gOpen = false; }
+    if (!gOpen.load()) focused = false;
 }
 
 } // namespace rf::sgconfig
