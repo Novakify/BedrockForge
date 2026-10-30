@@ -1,3 +1,29 @@
+# Next session handoff (updated 2026-10-30 ~06:50 UTC) - READ FIRST
+- RF branch `cinematic`, installed e43 (30fc395, shelf breadcrumbs). Builds: RF-eN.dll in the mods folder; a loaded
+  RendererFoundation.dll CAN be renamed (mv) while the game runs, then cp the new one in.
+- DONE since e25: JUKEBOX (screenless use taken over, record lifted/inserted, music), CAMPFIRE (H key, "[H] Sit by the
+  fire" invitation, legs/LegMesh, rails, cooking tooltip; food from the panel: the carried stack goes into the hand's
+  slot by clicks (hand's stack parked in a free slot), use with an EMPTY cursor, stack back afterwards - a use while
+  the cursor carries a stack leaves Bedrock's inventory screen dead; the hotbar selection can't be changed under the
+  screen), arm reach 1.0 (ClientStation.maxReach). Inventory for screenless scenes is opened via
+  ClientInputCallbacks::handleInventoryButtonPress (Player::openInventory opened a screen whose moves the server refused).
+- Carried icon fix: Bedrock draws the carried stack 21/18 of a slot, centred 4.5 px left / 8.5 px up of the pointer
+  (GUI scale 4) over the screen's dim layer: carriedSrc() + shader occl.w drops the dim; slot keying off for it.
+- Fancy graphics checked: crafting + campfire scenes work (Fancy currently SELECTED in the user's settings - they
+  usually run Vibrant Visuals; switch back in Settings > Video > Mode when done).
+- CHISELED BOOKSHELF (e42/e43): ported (ShelfStation/ShelfBooks: peek, take into the inventory, put from the panel,
+  empty-slot patch from chiseled_bookshelf_empty.png of vanilla_1.21.90 pack, useBlockAt with the HitResult pointed
+  at the slot). FIRST TEST HUNG THE GAME (0% CPU, deadlock) right after "begin ok" - e43 has breadcrumbs
+  (cine_trace.txt: shelf first tick / first frame / props loading). Test shelf at 101 200 -103 (direction 2), stand
+  tp 101.5 200 -104.25 0 35, F9.
+- Hung game: Task Manager clicks are blocked (UIPI); LeviLauncher "Force Launch" starts a 2nd copy without killing
+  the old one. Ask Fernando to End task.
+- Fernando's new asks: flicker check on every UI (stats clean: 0 leaks), Spatial GUI re-check vs his 4 new
+  references (attachments 385cf933, 3e37b101, b8b70ff6, cbbfc265: third person, panel right of the player; the HUD
+  hotbar/hearts stay visible under the panel in all of them), items must never be cut (fixed for the carried icon).
+- Then: 1:1 review of all stations vs footage, reset config (devScenes/dumpUi false, uiDebugUseKey 0), docs,
+  GeckoBridge prompt. Lyrics project comes before GeckoBridge (Fernando). Repo still PUBLIC.
+
 # Next session handoff (updated 2026-10-30 ~03:05 UTC) - READ FIRST
 - Installed on the PC: RendererFoundation.dll = cine-e25 (73f7483). Pushed since: bfa3043 (use key: an item used in
   the air is used once + released), 6a97ed7 (lectern: the window's close button painted off its right page).
