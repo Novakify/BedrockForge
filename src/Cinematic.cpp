@@ -2700,6 +2700,9 @@ void neutralPoint(Layout const& L, float& x, float& y) {
 std::atomic<int> gTargetNow{-1};
 std::atomic<int> gGoodTarget{-1};  // the last target the cursor was really over, and when (a press a moment later still goes there)
 std::atomic<double> gGoodAt{-1e9};
+std::atomic<int>    gJumpTarget{-1}; // the target before the pointer jumped, and when
+std::atomic<double> gJumpAt{-1e9};
+std::atomic<long>   gJumps{0};
 long gLiveCalls = 0;
 int  gLiveX = 0, gLiveY = 0;
 } // namespace
@@ -3106,6 +3109,17 @@ bool mapClient(int w, int h, int& x, int& y, int liveIn) {
         gCursorNdcY = 1.0f - 2.0f * y / std::max(1, h);
         gCursorValid = true;
         if (!gS.cursorEngaged && gS.phase == Phase::Active && gS.time < 0.05) { gS.cursorStartX = float(x); gS.cursorStartY = float(y); }
+        {   // the pointer thrown far in one reading (seen at presses in some scenes: the window's middle): a press in the
+            // next moment still goes where the cursor really was
+            static int    lastX = -1, lastY = -1;
+            static double lastAt = -1e9;
+            if (lastX >= 0 && nowL - lastAt < 250 && std::abs(x - lastX) + std::abs(y - lastY) > std::max(w, h) / 6) {
+                gJumpTarget = gTargetNow.load();
+                gJumpAt     = nowL;
+                ++gJumps;
+            }
+            lastX = x; lastY = y; lastAt = nowL;
+        }
         t = currentTarget(float(x), float(y));
         gTargetNow = t;
         if (t >= 0) { gGoodTarget = t; gGoodAt = nowMs(); }
@@ -3170,6 +3184,7 @@ unsigned filterButtons(unsigned buttons) {
     case PressState::Idle: {
         int t = gTargetNow.load();
         if (t < 0 && gGoodTarget.load() >= 0 && now - gGoodAt.load() < 200) t = gGoodTarget.load();
+        if (now - gJumpAt.load() < 200 && gJumpTarget.load() >= 0) t = gJumpTarget.load();
         for (unsigned b = 1; b <= 4; b <<= 1) {
             if (!(buttons & b) || (gPrevButtons & b)) continue; // a new press
             if (gS.phase == Phase::Active && t >= 100) {
@@ -3204,9 +3219,9 @@ unsigned filterButtons(unsigned buttons) {
     {   // press log (diag): every change of the real or the passed buttons
         static unsigned lastIn = 0, lastOut = 0;
         if ((buttons & 7u) != lastIn || out != lastOut) {
-            char e[200];
-            snprintf(e, sizeof e, "%.0f ms: real %x -> passed %x, state %d target %d (now %d) at %.0f,%.0f; live %ld at %d,%d", now, buttons & 7u, out,
-                     int(gPress.state), gPress.target, gTargetNow.load(), gMapX, gMapY, gLiveCalls, gLiveX, gLiveY);
+            char e[260];
+            snprintf(e, sizeof e, "%.0f ms: real %x -> passed %x, state %d target %d (now %d) at %.0f,%.0f; live %ld at %d,%d; jumps %ld (to %d)", now, buttons & 7u, out,
+                     int(gPress.state), gPress.target, gTargetNow.load(), gMapX, gMapY, gLiveCalls, gLiveX, gLiveY, gJumps.load(), gJumpTarget.load());
             gPressLog[gPressLogN++ % 12] = e;
             lastIn = buttons & 7u;
             lastOut = out;
