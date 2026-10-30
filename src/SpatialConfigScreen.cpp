@@ -266,8 +266,8 @@ void draw() {
         }
         ImGui::PushID(&f);
         ImVec2 p = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton("##row", ImVec2(rowW, rowH));
-        bool hov = ImGui::IsItemHovered();
+        // the row: hover highlight only (no item, so the value and Reset buttons over it get the clicks)
+        bool hov = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseHoveringRect(p, ImVec2(p.x + rowW, p.y + rowH));
         auto* cdl = ImGui::GetWindowDrawList();
         if (hov) cdl->AddRectFilled(p, ImVec2(p.x + rowW, p.y + rowH), IM_COL32(255, 255, 255, 18));
         ImVec2 ls = ImGui::CalcTextSize(f.label);
@@ -319,6 +319,8 @@ void draw() {
             }
         }
         ImGui::EndDisabled();
+        ImGui::SetCursorScreenPos(ImVec2(p.x, p.y));
+        ImGui::Dummy(ImVec2(rowW, rowH)); // reserve the row (scrolling)
         ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH + 1 * s));
         ImGui::PopID();
     }
