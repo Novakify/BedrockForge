@@ -36,6 +36,12 @@ void        selectSlot(int slot);
 int         selectedSlot();
 /// Use a block as the game's own use does (with the item in hand); not taken over by a scene. face 1 = its top.
 bool        useBlock(int x, int y, int z, int face);
+/// The point the player's hit result is at (on the block looked at). false = no block.
+bool        hitPoint(double p[3]);
+/// Use a block as useBlock does, at a given point of it (the hit result is pointed there for the use).
+bool        useBlockAt(int x, int y, int z, int face, double hx, double hy, double hz);
+/// A chiseled bookshelf's six slots (type names, empty = none) as the client knows them.
+bool        shelfItems(int x, int y, int z, std::string names[6]);
 /// Open the player's own inventory screen (the hidden window of a scene at a block with no window of its own).
 bool        openInventory();
 /// The record a jukebox holds (its type name), empty = none.

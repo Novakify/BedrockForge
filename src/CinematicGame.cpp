@@ -33,6 +33,7 @@
 #include "mc/world/level/block/actor/BlockActor.h"
 #include "mc/world/level/block/actor/JukeboxBlockActor.h"
 #include "mc/world/level/block/actor/CampfireBlockActor.h"
+#include "mc/world/level/block/actor/ChiseledBookshelfBlockActor.h"
 #include "mc/world/item/HandSlot.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/PlayerUIContainer.h"
@@ -248,6 +249,49 @@ std::string handItem(int& count) {
     if (it.isNull() || it.mCount == 0) return {};
     count = it.mCount;
     return it.getTypeName();
+}
+
+bool hitPoint(double p[3]) {
+    Actor* a = player();
+    if (!a) return false;
+    HitResult& hit = a->getLevel().getHitResult();
+    if (hit.mType != HitResultType::Tile) return false;
+    p[0] = hit.mPos.x; p[1] = hit.mPos.y; p[2] = hit.mPos.z;
+    return true;
+}
+
+bool useBlockAt(int x, int y, int z, int face, double hx, double hy, double hz) {
+    Actor* a = player();
+    if (!a) return false;
+    Player&   p  = *static_cast<Player*>(a);
+    GameMode* gm = &*p.mGameMode;
+    if (!gm) return false;
+    // the use goes where the hit result points (a chiseled bookshelf takes the slot from the point hit): pointed there
+    // for the use, as it was afterwards
+    HitResult& hit   = a->getLevel().getHitResult();
+    HitResult  saved = hit;
+    hit.mType   = HitResultType::Tile;
+    hit.mBlock  = BlockPos(x, y, z);
+    hit.mFacing = uchar(face);
+    hit.mPos    = Vec3(float(hx), float(hy), float(hz));
+    ++tOwnUse;
+    bool r = gm->buildBlock(BlockPos(x, y, z), uchar(face), HandSlot::Mainhand, false);
+    --tOwnUse;
+    hit = saved;
+    return r;
+}
+
+bool shelfItems(int x, int y, int z, std::string names[6]) {
+    Actor* a = player();
+    if (!a) return false;
+    BlockActor* be = a->getDimensionBlockSource().getBlockEntity(BlockPos(x, y, z));
+    if (!be || a->getDimensionBlockSource().getBlock(BlockPos(x, y, z)).getTypeName() != "minecraft:chiseled_bookshelf") return false;
+    auto const& items = static_cast<ChiseledBookshelfBlockActor*>(be)->mItems.get();
+    for (int i = 0; i < 6; ++i) {
+        names[i].clear();
+        if (i < int(items.size()) && !items[i].isNull() && items[i].mCount > 0) names[i] = items[i].getTypeName();
+    }
+    return true;
 }
 
 std::string inventoryItem(int slot, int& count) {

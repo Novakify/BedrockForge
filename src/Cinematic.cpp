@@ -137,7 +137,7 @@ bool kindOfBlock(std::string const& name, Kind& k) {
     return false;
 }
 bool isFurnace(Kind k) { return k == Kind::Furnace || k == Kind::Smoker || k == Kind::BlastFurnace; }
-bool sceneAvailable(Kind k) { return k == Kind::Campfire || k == Kind::Jukebox || k == Kind::Lectern || k == Kind::Beacon || k == Kind::Crafter || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
+bool sceneAvailable(Kind k) { return k == Kind::Shelf || k == Kind::Campfire || k == Kind::Jukebox || k == Kind::Lectern || k == Kind::Beacon || k == Kind::Crafter || k == Kind::Table || isFurnace(k) || k == Kind::Anvil || k == Kind::Grindstone || k == Kind::Stonecutter || k == Kind::Smithing || k == Kind::Cartography || k == Kind::Loom || k == Kind::Enchanting || k == Kind::Brewing; }
 
 // ---------------------------------------------------------------- FurnaceLayout (furnace/FurnaceLayout.java, px = 1/16)
 // Zones (click targets) and beds (where items rest) per slot: 0 input, 1 fuel, 2 result. top = on the top face.
@@ -190,6 +190,7 @@ struct Station {
         if (kind == Kind::Crafter) return crafterFace();                     // CrafterStation.center: the grid's face
         if (kind == Kind::Lectern) return bookO;                             // LecternStation.center: the book's spine
         if (kind == Kind::Campfire) return campFire + V3{0, 0.45, 0};        // CampfireStation.center
+        if (kind == Kind::Shelf) return V3{bx + 0.5, by + 0.5, bz + 0.5} + dirVec(side) * 0.5; // ShelfStation.center: the middle of its face
         if (isFurnace(kind)) { // FurnaceStation.center = FurnaceZones.point(pos, side, 0.5, 0.5, 0): the middle of the front
             V3 f = dirVec(side);
             return {bx + 0.5 + f.x * 0.5, by + 0.5, bz + 0.5 + f.z * 0.5};
@@ -208,14 +209,14 @@ struct Station {
     V3 forward() const { return kind == Kind::Campfire ? campToward : dirVec(opposite(side)); }
     V3 right() const { return kind == Kind::Campfire ? campAcross : dirVec(clockWise(opposite(side))); }
     V3 workPoint() const { return center(); }
-    bool workOnTop() const { return !isFurnace(kind) && kind != Kind::Brewing && !(kind == Kind::Crafter && !crafterFlat()); }
+    bool workOnTop() const { return !isFurnace(kind) && kind != Kind::Brewing && kind != Kind::Shelf && !(kind == Kind::Crafter && !crafterFlat()); }
     double pull = 0;              // BeaconStation.pull: drawing back while the light breaks out
     int    gridDir = -1;          // CrafterStation.grid: -1 up (lies flat), 0..3 the horizontal way the grid faces
     int    frontDir = -2;         // the crafter's mouth (orientation.front): -2 down, -1 up, 0..3 horizontal
     bool   crafterFlat() const { return gridDir < 0; }
     V3     crafterNormal() const { return gridDir < 0 ? V3{0, 1, 0} : dirVec(Dir(gridDir)); }
     V3     crafterFace() const { return V3{bx + 0.5, by + 0.5, bz + 0.5} + crafterNormal() * 0.5; }
-    double leanFov() const { return kind == Kind::Campfire ? 68 : kind == Kind::Jukebox ? 64 : kind == Kind::Lectern ? 52 : kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
+    double leanFov() const { return kind == Kind::Shelf ? 64 : kind == Kind::Campfire ? 68 : kind == Kind::Jukebox ? 64 : kind == Kind::Lectern ? 52 : kind == Kind::Grindstone ? 64 : kind == Kind::Enchanting ? 68 : kind == Kind::Beacon ? 60 + 8 * pull : 66; }
     // TableStation.lean / FurnaceStation.lean
     JPose lean() const {
         if (isFurnace(kind)) {
@@ -232,6 +233,15 @@ struct Station {
             JPose p;
             p.pos = eye;
             lookAngles(campFire + V3{0, 0.18, 0} - eye, p.yaw, p.pitch);
+            return p;
+        }
+        if (kind == Kind::Shelf) { // ShelfStation.lean: crouched before the shelf, the whole face in view, its top row clear of the drawer
+            V3    front = center(), eye = front + sideV() * 1.22 + V3{0, 0.35, 0};
+            JPose p;
+            p.pos = eye;
+            float yawIgnored;
+            lookAngles(front + V3{0, -0.02, 0} - eye, yawIgnored, p.pitch);
+            p.yaw = toYRot(opposite(side));
             return p;
         }
         if (kind == Kind::Jukebox) { // JukeboxStation.lean
@@ -632,6 +642,7 @@ void leave() { // Scene.leave
 void lecternBegin();
 void jukeReset();
 void campReset();
+void shelfReset();
 /// Scene.beginClientOnly: the vanilla screen is open; true = the scene plays.
 bool begin(Kind kind, int bx, int by, int bz) {
     double f[3];
@@ -654,6 +665,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
     // JukeboxStation: the slot runs north - south (jukebox_top), so it is worked from the east or west, where a record
     // in it shows its face
     if (kind == Kind::Jukebox) allowed = (1u << int(East)) | (1u << int(West));
+    if (kind == Kind::Shelf && facing >= 0) allowed = 1u << facing; // ShelfStation(pos, FACING): worked from its front
     if (kind == Kind::Crafter) { // orientation "<front>_<top>": the grid is on the top side of it
         std::string sn = game::blockStates(bx, by, bz);
         auto        at = sn.find("\"orientation\":\"");
@@ -684,6 +696,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
         if (std::hypot(feet.x - fire.x, feet.z - fire.z) > 4.5 || std::fabs(feet.y - by) > 1.5) { gS.refused = "too far from the fire to sit by it"; return false; }
         gS.campFeet = feet;
     } else st.side = freeSide(st, feet, allowed);
+    if (kind == Kind::Shelf && facing >= 0) st.side = Dir(facing);
     if (kind == Kind::Stonecutter) st.top = {bx + 0.5, by + 9 / 16.0, bz + 0.5}; // StonecutterStation.topOf: the table top
     if (kind == Kind::Lectern) {
         // the desk of the lectern is tilted 22.5 degrees down towards the reader (lectern.json)
@@ -735,6 +748,7 @@ bool begin(Kind kind, int bx, int by, int bz) {
     lecternBegin();
     jukeReset();
     campReset();
+    shelfReset();
     {   // another station's window sits elsewhere: its probes would hold the kept image at the old window
         std::lock_guard ll(gLayoutMutex);
         if (gLayout.kind != int(kind)) { gLayout.hasProbe = false; gLayout.valid = false; }
@@ -1821,6 +1835,168 @@ void campAction(int t, unsigned bit, bool shift) {
 }
 void campReset() { gCamp = Campfire{}; }
 
+// ---------------------------------------------------------------- ShelfStation + ShelfBooks (vanilla geometry)
+// The chiseled bookshelf: crouched at its front, the book under the cursor slides out a little, a click draws it out by
+// its spine and it goes into the inventory (Bedrock gives a book taken off a shelf to the inventory, not to the
+// cursor: Java's "into the hand" is its Shift path here); a book carried from the panel goes into an empty place. The
+// books are drawn as shut books (OpenBook.drawShut) with the shelf's own spine picture and that book's colour.
+// Bedrock has no window for the shelf (the use is taken over, the inventory opens as the hidden window), takes and puts
+// by the point of its face the use goes to (game::useBlockAt), and its block can't be drawn with a slot emptied: the
+// empty slot's own picture is laid over it while a book of the shelf is out. Reading a book at the shelf (OpenBook in
+// the hands) is not ported: Bedrock has no book window to borrow its pages from without taking the book.
+constexpr int    kSpines[6][4] = {{1, 2, 5, 7}, {6, 1, 10, 7}, {11, 1, 15, 7}, {1, 9, 5, 15}, {6, 10, 10, 15}, {11, 9, 15, 15}};
+constexpr double SH_DEPTH = 0.32, SH_PROUD = 0.004, SH_CLEAR = SH_DEPTH + 0.05, SH_PEEK = 0.05;
+constexpr double SH_GRIP = 0.24, SH_OUT = 0.5, SH_TAKEN = 0.95, SH_BAGGED = 0.8, SH_PUT_AT = 0.34, SH_PUT_HOME = 0.62, SH_PUT_END = 0.82;
+constexpr double SH_THICK = ob::STACK + 2 * ob::COVER;
+enum ShelfMove { ShNone, ShTake, ShPut };
+enum ShelfTarget { SbNone, SbBook, SbPlace };
+/// ShelfBooks.Pose: the book's frame (origin on the back board, half the pages from the spine's middle), its axes
+/// a (spine -> fore edge), s (up), n (through the boards) each scaled to the book, and how shut it is
+struct BookPose { V3 origin, a, s, n; };
+struct Shelf {
+    int         target = SbNone, hover = -1;
+    double      peek[6] = {}, emptyUntil[6] = {-10, -10, -10, -10, -10, -10}, denyAt = -10;
+    int         move = ShNone, moveSlot = -1, bits = 0;
+    double      moveAt = -10, peekAt = 0;
+    bool        sent = false, started = false, fromLow = false;
+    std::string moving, items[6], hand;
+    int         usedSlot = -1;
+    // a book carried from the panel into the hand first: 1 the clicks, 2 waiting for it in hand; afterwards the hand's
+    // own stack comes back (restore)
+    int    putStep = 0, putSlot = -1, oldSlot = 0, waitSlot = -1;
+    double putAt = -10;
+    bool   swapped = false, restore = false;
+};
+Shelf gShelf;
+void shelfReset() { gShelf = Shelf{}; }
+bool shelfBook(std::string const& n) { // ItemTags.BOOKSHELF_BOOKS
+    return n == "minecraft:book" || n == "minecraft:writable_book" || n == "minecraft:written_book" || n == "minecraft:enchanted_book" || n == "minecraft:knowledge_book";
+}
+V3 shBlock() { return {gS.st.bx + 0.5, gS.st.by + 0.5, gS.st.bz + 0.5}; }
+V3 shFront() { return shBlock() + gS.st.sideV() * 0.5; }
+/// ShelfBooks.face: a point of the shelf's face, u / v pixels from its top-left as seen from the front, `out` before it
+V3 shFace(double u, double v, double out) { return shBlock() + gS.st.sideV() * (0.5 + out) + gS.st.right() * (u / 16 - 0.5) + V3{0, 0.5 - v / 16, 0}; }
+/// SpatialAppearance.Frame.base (VANILLA): the middle of a slot's spine, a hair proud of the face
+V3 shSpine(int slot) {
+    int const* r = kSpines[slot];
+    return shFront() + gS.st.right() * ((r[0] + r[2]) / 32.0 - 0.5) + V3{0, 0.5 - (r[1] + r[3]) / 32.0, 0} + gS.st.sideV() * SH_PROUD;
+}
+/// ShelfBooks.inSlot: the book standing in its slot shut, its spine out, `out` drawn out
+BookPose shInSlot(int slot, double out) {
+    int const* r  = kSpines[slot];
+    double     sx = SH_DEPTH / ob::DEEP, sy = (r[3] - r[1]) / 16.0 / ob::TALL, sz = (r[2] - r[0]) / 16.0 / SH_THICK;
+    V3         side = gS.st.sideV(), right = gS.st.right();
+    BookPose   p;
+    p.origin = shSpine(slot) + side * out - right * (ob::STACK / 2 * sz);
+    p.a = side * -sx; p.s = V3{0, sy, 0}; p.n = right * sz;
+    return p;
+}
+/// ShelfStation.lying: shut, cover up, spine to the left, `size` of the slot's book
+BookPose shLying(V3 at, int slot, double size) {
+    BookPose in = shInSlot(slot, 0);
+    BookPose p;
+    p.origin = at;
+    p.a = gS.st.right() * (in.a.len() * size); p.s = gS.st.forward() * (in.s.len() * size); p.n = V3{0, in.n.len() * size, 0};
+    return p;
+}
+/// ShelfBooks.Pose.to: eased between two poses (the turn slerped: the axes eased and their lengths kept apart)
+BookPose shTo(BookPose const& p, BookPose const& q, double k) {
+    auto ax = [&](V3 x, V3 y) {
+        double l = x.len() + (y.len() - x.len()) * k;
+        V3     d = lerp(x.norm(), y.norm(), k);
+        return d.len() < 1e-6 ? y : d.norm() * l;
+    };
+    return {lerp(p.origin, q.origin, k), ax(p.a, q.a), ax(p.s, q.s), ax(p.n, q.n)};
+}
+V3 shAt(BookPose const& p, double x, double v, double h) { return p.origin + p.a * x + p.s * v + p.n * h; }
+/// ShelfStation.handPose (into the bag: up to the inventory drawer, small) / lowPose (a book held when the scene began)
+BookPose shBagPose(int slot) {
+    JPose  cam = gS.haveLast ? gS.last : gS.st.view();
+    double r   = cam.yaw * kDeg;
+    V3     f{-std::sin(r), 0, std::cos(r)};
+    return shLying(cam.pos + V3{0, 0.55, 0} + f * 0.6, slot, 0.25);
+}
+BookPose shLowPose(int slot) {
+    JPose  cam = gS.haveLast ? gS.last : gS.st.view();
+    double r   = cam.yaw * kDeg;
+    V3     f{-std::sin(r), 0, std::cos(r)};
+    return shLying(cam.pos + f * 0.45 + V3{0, -0.38, 0}, slot, 0.55);
+}
+BookPose shHandPose(int slot) { return shLying(shSpine(slot) + gS.st.sideV() * 0.24 + V3{0, -0.06, 0}, slot, 0.55); }
+/// the pose of the book on the move this frame (ShelfStation.pose)
+BookPose shMovePose() {
+    double   t     = gS.clock - gShelf.moveAt;
+    int      slot  = gShelf.moveSlot;
+    BookPose clear = shInSlot(slot, SH_CLEAR);
+    if (gShelf.move == ShTake) {
+        if (t < SH_OUT) return shInSlot(slot, gShelf.peekAt + (SH_CLEAR - gShelf.peekAt) * inOutCubic(window(t, SH_GRIP, SH_OUT)));
+        double   k = inOutCubic(window(t, SH_OUT, SH_TAKEN));
+        BookPose p = shTo(clear, shBagPose(slot), k);
+        p.origin   = p.origin + V3{0, 0.07 * hump(k), 0};
+        return p;
+    }
+    if (t < SH_PUT_AT) {
+        double   k = inOutCubic(window(t, 0, SH_PUT_AT));
+        BookPose p = shTo(gShelf.fromLow ? shLowPose(slot) : shHandPose(slot), clear, k);
+        p.origin   = p.origin + V3{0, 0.06 * hump(k), 0};
+        return p;
+    }
+    return shInSlot(slot, SH_CLEAR * (1 - inOutCubic(window(t, SH_PUT_AT, SH_PUT_HOME))));
+}
+/// the shelf shows a book in this slot (the one the scene has out does not count)
+bool shOccupied(int slot) { return slot >= 0 && (gShelf.bits >> slot & 1) && !(slot == gShelf.moveSlot && gShelf.move != ShNone); }
+/// ShelfStation.slotAt: the slot a point of the face is in, as vanilla divides the face (-1: not on it)
+int shSlotAt(V3 point) {
+    V3     rel = point - shFront();
+    double u = 8 + rel.dot(gS.st.right()) * 16, v = 8 - rel.y * 16;
+    if (std::fabs(rel.dot(gS.st.sideV())) > 0.05 || u < 0 || u > 16 || v < 0 || v > 16) return -1;
+    return (v < 8 ? 0 : 3) + (u < 6 ? 0 : u < 11 ? 1 : 2);
+}
+/// a point inside a slot's spine on the face, for the use (Bedrock picks the slot from it)
+V3 shUsePoint(int slot) { return shSpine(slot) - gS.st.sideV() * SH_PROUD; }
+int shFaceIndex() { static const int kFace[4] = {2, 5, 3, 4}; return kFace[int(gS.st.side) & 3]; } // north east south west -> Bedrock faces
+/// ShelfStation.updateCursor: 180 + slot
+int shelfCursor(V3 o, V3 d) {
+    gShelf.target = SbNone; gShelf.hover = -1;
+    if (gShelf.move != ShNone || gShelf.putStep) return -1;
+    V3     n  = gS.st.sideV(), f = shFront();
+    double dn = d.dot(n);
+    if (std::fabs(dn) < 1e-9) return -1;
+    double t = (f - o).dot(n) / dn;
+    if (t <= 0) return -1;
+    int slot = shSlotAt(o + d * t);
+    if (slot < 0) return -1;
+    gShelf.hover  = slot;
+    gShelf.target = shOccupied(slot) ? SbBook : SbPlace;
+    gS.haveAim    = true;
+    gS.aim        = shSpine(slot);
+    return 180 + slot;
+}
+void shDeny() { gShelf.denyAt = gS.clock; }
+void shTake(int slot) {
+    gShelf.move = ShTake; gShelf.moveAt = gS.clock; gShelf.moveSlot = slot; gShelf.sent = false;
+    gShelf.moving = gShelf.items[slot].empty() ? "minecraft:book" : gShelf.items[slot];
+    gShelf.peekAt = gShelf.peek[slot];
+}
+void shPut(int slot, std::string const& book, bool low) {
+    gShelf.move = ShPut; gShelf.moveAt = gS.clock; gShelf.moveSlot = slot; gShelf.sent = false;
+    gShelf.moving = book; gShelf.fromLow = low; gShelf.peekAt = 0;
+}
+/// ShelfStation.click
+void shelfAction(int t, unsigned bit, bool shift) {
+    (void)bit; (void)shift;
+    gS.tapAt = gS.clock;
+    if (gShelf.move != ShNone || gShelf.putStep || t < 180 || t > 185) return;
+    int slot = t - 180;
+    if (gShelf.target == SbBook) {
+        if (gS.carrying || !gS.carriedName.empty()) shDeny(); // the hand is full (the stack carried from the panel)
+        else shTake(slot);
+    } else if (gShelf.target == SbPlace) {
+        if (shelfBook(gS.carriedName)) { gShelf.putStep = 1; gShelf.putSlot = slot; }
+        else shDeny();
+    }
+}
+
 // ---------------------------------------------------------------- BeaconStation (vanilla geometry)
 // The powers hang either side of the beam (RemainingLayouts.base BEACON), the payment floats over the glass. Bedrock's
 // beacon window underneath: its power buttons (L.buttons 0..6 in the order above), confirm (7) and cancel (8).
@@ -2255,6 +2431,7 @@ void stationAction(int t, unsigned bit, bool shift) {
     if (gS.st.kind == Kind::Lectern) { lecternAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Jukebox) { jukeAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Campfire) { campAction(t, bit, shift); return; }
+    if (gS.st.kind == Kind::Shelf) { shelfAction(t, bit, shift); return; }
     if (gS.st.kind == Kind::Grindstone && (t == 101 || t == 102)) {
         if (bit == 1 && gS.resultFull3()) {
             // GrindstoneStation.grind: the result is taken when the blade first touches the stone
@@ -2420,6 +2597,11 @@ int currentTarget0(float mx, float my) {
         cursorRay(gS.last, b, nx, ny, o, d);
         return campCursor(b, mx, my, o, d);
     }
+    if (gS.st.kind == Kind::Shelf) {
+        V3 o, d;
+        cursorRay(gS.last, b, nx, ny, o, d);
+        return shelfCursor(o, d);
+    }
     if (gS.st.kind == Kind::Cartography) {
         V3 o, d;
         cursorRay(gS.last, b, nx, ny, o, d);
@@ -2562,13 +2744,14 @@ void saveConfig() {
 
 // ================================================================ public: client thread
 /// a use taken over (screenlessUse) waits for the inventory screen it opened
-struct Pending { Kind kind = Kind::Count; int x = 0, y = 0, z = 0; double at = -1e9; };
+struct Pending { Kind kind = Kind::Count; int x = 0, y = 0, z = 0; double at = -1e9; bool hasHit = false; double hit[3] = {}; };
 Pending gPending;
 bool screenlessWorth(std::string const& block, int x, int y, int z) {
     std::lock_guard l(gM);
     Kind kind;
-    if (!kindOfBlock(block, kind) || kind != Kind::Jukebox) return false;
+    if (!kindOfBlock(block, kind) || (kind != Kind::Jukebox && kind != Kind::Shelf)) return false;
     if (gS.phase != Phase::None || !gCfg.enabled || Mode(gCfg.mode[int(kind)]) != Mode::Cinematic) return false;
+    if (kind == Kind::Shelf) return true; // ShelfStation: every use of the shelf is the scene
     // JukeboxStation.worthIt: a record in it to take out, or one in hand to put in
     int         n      = 0;
     std::string inside = game::jukeboxRecord(x, y, z), hand = game::handItem(n);
@@ -2597,6 +2780,7 @@ bool screenlessUse(std::string const& block, int x, int y, int z) {
         Kind kind;
         kindOfBlock(block, kind);
         gPending = {kind, x, y, z, nowMs()};
+        gPending.hasHit = game::hitPoint(gPending.hit); // the slot the use was on (ShelfStation.usedSlot)
     }
     trail("screenless: opening the inventory");
     game::openInventory();
@@ -2619,7 +2803,9 @@ Route onScreen(std::string const& containerTop) {
             gPending.kind    = Kind::Count;
             if (gS.phase == Phase::Outro) finish();
             trail("onScreen: inventory for a taken-over use, begin");
-            if (begin(pd.kind, pd.x, pd.y, pd.z)) { trail("begin ok"); gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": Cinematic (inventory)"; return Route::Cinematic; }
+            if (begin(pd.kind, pd.x, pd.y, pd.z)) {
+                trail("begin ok");
+                if (pd.kind == Kind::Shelf && pd.hasHit) gShelf.usedSlot = shSlotAt(V3{pd.hit[0], pd.hit[1], pd.hit[2]}); gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": Cinematic (inventory)"; return Route::Cinematic; }
             gS.lastRoute = std::string(kNames[int(pd.kind)]) + ": " + gS.refused + ", Spatial";
             uicapture::writeText("cine_screenless.txt", (gS.lastRoute + "\n").c_str());
             return Route::Spatial;
@@ -2751,6 +2937,78 @@ void tick() {
             } else if (gCamp.placeStep == 4 && gS.clock - gCamp.placeAt > 0.8) {
                 note("placed");
                 gCamp.placeStep = 0;
+            }
+        }
+    }
+    if (gS.st.kind == Kind::Shelf) { // ShelfStation.tick / beforeFrame: what the shelf holds, the moves, the server told at their moments
+        std::string sn = game::blockStates(gS.st.bx, gS.st.by, gS.st.bz);
+        auto        at = sn.find("\"books_stored\":");
+        if (at != std::string::npos) gShelf.bits = std::atoi(sn.c_str() + at + 15);
+        game::shelfItems(gS.st.bx, gS.st.by, gS.st.bz, gShelf.items);
+        for (int i = 0; i < 6; ++i) if (!(gShelf.bits >> i & 1)) gShelf.emptyUntil[i] = -10; // the shelf shows it gone itself
+        int hn       = 0;
+        gShelf.hand  = game::handItem(hn);
+        auto slotTarget = [](int i) { return i < 9 ? 10 + i : 19 + (i - 9); };
+        auto note = [&](std::string const& what) { trail("shelf: " + what + " (hand " + gShelf.hand + ", carried " + gS.carriedName + ")"); };
+        if (gS.phase == Phase::Active) {
+            if (!gShelf.started && gS.time > 0.1) {
+                // the use that started the scene was a book in hand on an empty place: it goes in
+                gShelf.started = true;
+                note("start, used slot " + std::to_string(gShelf.usedSlot));
+                if (gShelf.move == ShNone && gShelf.usedSlot >= 0 && !shOccupied(gShelf.usedSlot) && shelfBook(gShelf.hand) && gS.carriedName.empty())
+                    shPut(gShelf.usedSlot, gShelf.hand, true);
+            }
+            // a book carried from the panel: into the hand's slot (the hand's own stack into a free place), as the
+            // campfire does (a use with a stack on the cursor leaves the inventory screen dead)
+            if (gShelf.putStep == 1) {
+                int  cnt;
+                gShelf.oldSlot  = game::selectedSlot();
+                gShelf.waitSlot = -1;
+                gShelf.swapped  = false;
+                bool handFull   = !game::inventoryItem(gShelf.oldSlot, cnt).empty();
+                if (handFull)
+                    for (int i = 0; i < 36 && gShelf.waitSlot < 0; ++i) if (i != gShelf.oldSlot && game::inventoryItem(i, cnt).empty()) gShelf.waitSlot = i;
+                if (handFull && gShelf.waitSlot < 0) { note("no room"); gShelf.putStep = 0; shDeny(); }
+                else {
+                    inject(slotTarget(gShelf.oldSlot), 1);
+                    if (handFull) { inject(slotTarget(gShelf.waitSlot), 1); gShelf.swapped = true; }
+                    note("the carried book into the hand");
+                    gShelf.putStep = 2; gShelf.putAt = gS.clock;
+                }
+            } else if (gShelf.putStep == 2 && gS.clock - gShelf.putAt > 0.3) {
+                bool ready = shelfBook(gShelf.hand) && !gS.carrying && gS.carriedName.empty();
+                if (ready) { gShelf.putStep = 0; gShelf.restore = gShelf.swapped; shPut(gShelf.putSlot, gShelf.hand, false); note("put, from the hand"); }
+                else if (gS.clock - gShelf.putAt > 1.5) { gShelf.putStep = 0; gShelf.restore = gShelf.swapped; shDeny(); note("put: the book never reached the hand"); }
+            }
+            double t = gS.clock - gShelf.moveAt;
+            if (gShelf.move == ShTake) {
+                if (!gShelf.sent && t >= SH_BAGGED) { // into the bag: the server told as it reaches the drawer
+                    gShelf.sent = true;
+                    V3 u = shUsePoint(gShelf.moveSlot);
+                    game::useBlockAt(gS.st.bx, gS.st.by, gS.st.bz, shFaceIndex(), u.x, u.y, u.z);
+                    note("take: used slot " + std::to_string(gShelf.moveSlot));
+                }
+                if (t >= SH_TAKEN) { // gone: its place stays drawn empty until the shelf shows it so
+                    gShelf.emptyUntil[gShelf.moveSlot] = gS.clock + 1.5;
+                    gShelf.move = ShNone; gShelf.moveSlot = -1;
+                }
+            } else if (gShelf.move == ShPut) {
+                if (!gShelf.sent && t >= SH_PUT_AT) {
+                    gShelf.sent = true;
+                    V3 u = shUsePoint(gShelf.moveSlot);
+                    if (shelfBook(gShelf.hand)) game::useBlockAt(gS.st.bx, gS.st.by, gS.st.bz, shFaceIndex(), u.x, u.y, u.z);
+                    note("put: used slot " + std::to_string(gShelf.moveSlot));
+                }
+                if (t >= SH_PUT_END) {
+                    gShelf.move = ShNone; gShelf.moveSlot = -1;
+                    if (gShelf.restore) { // the book left the hand: the hand's own stack back
+                        gShelf.restore = false;
+                        inject(slotTarget(gShelf.oldSlot), 1);
+                        inject(slotTarget(gShelf.waitSlot), 1);
+                        inject(slotTarget(gShelf.oldSlot), 1);
+                        note("the hand's stack back");
+                    }
+                }
             }
         }
     }
@@ -3443,6 +3701,8 @@ bool decodeTga(std::vector<uint8_t> const& f, std::vector<uint8_t>& rgba, int& w
 }
 bool gPropHas[8] = {};
 bool gLeatherOk = false;
+bool gShelfTexOk = false; // the chiseled bookshelf's front pictures in the atlas: occupied at (192, 0), empty at (208, 0)
+constexpr float SHELF_OCC[2] = {192, 0}, SHELF_EMPTY[2] = {208, 0};
 bool gDiscOk[12] = {}; // the records in the atlas
 constexpr char const* kDiscNames[12] = {"13", "cat", "blocks", "chirp", "far", "mall", "mellohi", "stal", "strad", "ward", "11", "wait"}; // the lectern book's boards (entity/enchanting_table_book)
 bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
@@ -3484,6 +3744,24 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
                 std::memcpy(&atlas[(size_t(192 + 16 * (i / 8) + y) * PROP_W + 16 * (i % 8)) * 4], &px[size_t(y) * 16 * 4], 16 * 4);
             gDiscOk[i] = true;
         }
+    }
+    {   // ShelfBooks.TEXTURE: chiseled_bookshelf_occupied / _empty (vanilla_1.21.90, else vanilla_1.20.0: the packs that bring them)
+        int got = 0;
+        for (char const* pack : {"vanilla_1.21.90", "vanilla_1.20.0"}) {
+            if (got == 2) break;
+            got = 0;
+            auto shelfArch = arch.parent_path().parent_path().parent_path().parent_path() / pack / "__brarchive" / "textures" / "blocks.brarchive";
+            for (int k = 0; k < 2; ++k) {
+                std::vector<uint8_t> file, px;
+                int                  w = 0, h = 0;
+                if (!readBrarchive(shelfArch, k == 0 ? "chiseled_bookshelf_occupied.png" : "chiseled_bookshelf_empty.png", file) || !decodePng(file, px, w, h) || w != 16 || h != 16) continue;
+                float const* at = k == 0 ? SHELF_OCC : SHELF_EMPTY;
+                for (int y = 0; y < 16; ++y) std::memcpy(&atlas[(size_t(int(at[1]) + y) * PROP_W + int(at[0])) * 4], &px[size_t(y) * 16 * 4], 16 * 4);
+                ++got;
+            }
+        }
+        gShelfTexOk = got == 2;
+        gPropNote += gShelfTexOk ? "chiseled_bookshelf ok; " : "chiseled_bookshelf missing; ";
     }
     {   // OpenBook.LEATHER: the lectern's book is bound in the enchanting table book's leather
         std::vector<uint8_t> file, px;
@@ -3881,8 +4159,8 @@ void detect(Img im, bool dump, int kindI) {
                 L.hasBoard = true;
             }
             int expect = isFurnace(kind) ? 3 : kind == Kind::Smithing || kind == Kind::Loom ? 4 : kind == Kind::Stonecutter || kind == Kind::Enchanting ? 2 :
-                         kind == Kind::Brewing ? 5 : kind == Kind::Beacon ? 1 : kind == Kind::Crafter ? 9 : kind == Kind::Jukebox || kind == Kind::Campfire ? 0 : 3;
-            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing && kind != Kind::Beacon && kind != Kind::Crafter && kind != Kind::Jukebox && kind != Kind::Campfire;
+                         kind == Kind::Brewing ? 5 : kind == Kind::Beacon ? 1 : kind == Kind::Crafter ? 9 : kind == Kind::Jukebox || kind == Kind::Campfire || kind == Kind::Shelf ? 0 : 3;
+            bool hasRes = kind != Kind::Enchanting && kind != Kind::Brewing && kind != Kind::Beacon && kind != Kind::Crafter && kind != Kind::Jukebox && kind != Kind::Campfire && kind != Kind::Shelf;
             std::vector<Sq> rest = own;
             if (kind == Kind::Beacon) { // the payment slot only (the power buttons are larger squares of their own)
                 std::vector<Sq> slots;
@@ -4761,6 +5039,8 @@ V3 restOf(bool right) {
         return V3{gS.st.bx + 0.5, gS.st.by + 1.0, gS.st.bz + 0.5} + gS.st.sideV() * 0.36 + gS.st.right() * (right ? 0.25 : -0.25) + V3{0, CR_HAND_Y, 0};
     }
     if (gS.st.kind == Kind::Jukebox) return jukeRest(right); // JukeboxStation.rest
+    if (gS.st.kind == Kind::Shelf) // ShelfStation.rest: hands on the knees, low at either side of the frame, clear of the books
+        return gS.st.center() + gS.st.sideV() * 0.3 + gS.st.right() * (right ? 0.6 : -0.6) + V3{0, -0.25, 0};
     if (gS.st.kind == Kind::Campfire) return campRest(right); // CampfireStation.rest: the right hand on the raised knee, the left on the thigh
     if (gS.st.kind == Kind::Lectern) // LecternStation.rest: below the lower edge of the book, near its outer corners
         return gS.st.bookO + gS.st.right() * ((right ? 1 : -1) * (ob::GUTTER + ob::PAGE_W * 0.9)) + gS.st.bookS * (-ob::PAGE_H / 2 - 0.018) + gS.st.bookN * 0.035;
@@ -4808,6 +5088,10 @@ V3 handTarget(V3 aim, V3 shoulder, bool carrying, double tap) {
         return aim + V3{0, CR_HAND_Y + hover - 0.06 * tap, 0} - reach * CR_REACH;
     }
     if (gS.st.kind == Kind::Lectern) return aim + gS.st.bookN * (0.03 - 0.02 * tap); // LecternStation.handTarget
+    if (gS.st.kind == Kind::Shelf) { // ShelfStation.handTarget: the fist before the spine; a tap touches it
+        V3 reach = (aim - shoulder).norm();
+        return aim + gS.st.sideV() * ((carrying ? 0.1 : 0.07) - 0.05 * tap) - reach * 0.05 + V3{0, -0.03, 0};
+    }
     if (gS.st.kind == Kind::Campfire) { // CampfireStation.handTarget
         V3     reach = V3{aim.x - shoulder.x, 0, aim.z - shoulder.z}.norm();
         double hover = carrying ? 0.08 : 0.05;
@@ -4843,6 +5127,10 @@ V3 heldItemPoint(V3 hand, V3 shoulder) {
         return hand + reach * CR_REACH + V3{0, -CR_HAND_Y + 0.012, 0};
     }
     if (gS.st.kind == Kind::Lectern) return hand; // LecternStation.heldItemPoint
+    if (gS.st.kind == Kind::Shelf) { // ShelfStation.heldItemPoint
+        V3 reach = (hand - shoulder).norm();
+        return hand + reach * 0.07 + V3{0, -0.04, 0};
+    }
     if (gS.st.kind == Kind::Campfire) { // CampfireStation.heldItemPoint
         V3 reach = V3{hand.x - shoulder.x, 0, hand.z - shoulder.z}.norm();
         return hand + reach * CF_REACH + V3{0, -CF_HAND_Y + 0.012, 0};
@@ -5081,6 +5369,23 @@ void updateHands(JPose const& cam, double dt) {
             else grindHands(cam, r, l);
             gRight.update(r, 55, dt);
             gLeft.update(l, 55, dt);
+            break;
+        }
+        if (gS.st.kind == Kind::Shelf && gShelf.move != ShNone) { // ShelfStation.handsOverride: the fist at the spine of the book on the move
+            double   t         = gS.clock - gShelf.moveAt;
+            bool     leftWorks = gShelf.moveSlot % 3 == 0;
+            V3       restR = restOf(true), restL = restOf(false);
+            BookPose where = shMovePose();
+            V3       spine = shAt(where, 0, 0, ob::STACK / 2);
+            V3       camP  = gS.haveLast ? gS.last.pos : gS.st.view().pos;
+            V3       grip  = spine + (camP - spine).norm() * 0.06 + V3{0, -0.02, 0};
+            V3       home  = leftWorks ? restL : restR, working;
+            if (gShelf.move == ShTake) {
+                double reach = smoother(window(t, 0, SH_GRIP)), back = smoother(window(t, SH_TAKEN - 0.25, SH_TAKEN));
+                working = lerp(lerp(home, grip, reach), home, back); // into the bag
+            } else working = lerp(grip, home, smoother(window(t, SH_PUT_HOME, SH_PUT_END)));
+            gRight.update(leftWorks ? restR : working, 30, dt); // handsStiffness
+            gLeft.update(leftWorks ? working : restL, 30, dt);
             break;
         }
         if (gS.st.kind == Kind::Jukebox) { // JukeboxStation.handsOverride
@@ -5528,6 +5833,99 @@ double campSeated() {
     case Phase::Outro: return 1 - smoother(window(gS.time / OUTRO_LENGTH, 0.0, 0.45));
     default: return 0;
     }
+}
+/// OpenBook.drawShut with ShelfBooks.look(slot): both boards in the book's colour (one column of its spine drawn across
+/// them), the block of pages between them showing its edges, the spine the shelf's own picture of it
+void drawShutBook(JPose const& cam, Basis const& b, BookPose const& p, int slot) {
+    int const* r = kSpines[slot];
+    auto U = [](double px) { return float((SHELF_OCC[0] + px) / PROP_W); };
+    auto Vv = [](double px) { return float((SHELF_OCC[1] + px) / PROP_H); };
+    double col = r[0] + 1;
+    float  plain[8] = {U(col + 0.3), Vv(r[3]), U(col + 0.7), Vv(r[3]), U(col + 0.7), Vv(r[1]), U(col + 0.3), Vv(r[1])};
+    float  spine[8] = {U(r[0]), Vv(r[3]), U(r[2]), Vv(r[3]), U(r[2]), Vv(r[1]), U(r[0]), Vv(r[1])};
+    float  white[3] = {1, 1, 1}, flat[8] = {}, brown[3] = {0.45f, 0.3f, 0.2f};
+    int    mode = gShelfTexOk ? 3 : 0;
+    float const* tone = gShelfTexOk ? white : brown;
+    V3 A = p.a.norm(), S = p.s.norm(), N = p.n.norm();
+    auto face = [&](V3 c0, V3 c1, V3 c2, V3 c3, float const uv[8], V3 out, float shade, int m, float const* rgb) {
+        V3 q[4] = {c0, c1, c2, c3};
+        bookQuad(cam, b, q, uv, out, shade, m, rgb);
+    };
+    auto slab = [&](double x0, double x1, double v0, double v1, double h0, double h1) {
+        face(shAt(p, x0, v0, h1), shAt(p, x1, v0, h1), shAt(p, x1, v1, h1), shAt(p, x0, v1, h1), plain, N, 0.95f, mode, tone);
+        face(shAt(p, x0, v0, h0), shAt(p, x1, v0, h0), shAt(p, x1, v1, h0), shAt(p, x0, v1, h0), plain, N * -1, 0.95f, mode, tone);
+        face(shAt(p, x1, v0, h0), shAt(p, x1, v1, h0), shAt(p, x1, v1, h1), shAt(p, x1, v0, h1), plain, A, 0.7f, mode, tone);
+        face(shAt(p, x0, v1, h0), shAt(p, x1, v1, h0), shAt(p, x1, v1, h1), shAt(p, x0, v1, h1), plain, S, 0.75f, mode, tone);
+        face(shAt(p, x0, v0, h0), shAt(p, x1, v0, h0), shAt(p, x1, v0, h1), shAt(p, x0, v0, h1), plain, S * -1, 0.75f, mode, tone);
+    };
+    double v = ob::TALL / 2;
+    slab(0, ob::DEEP, -v, v, -ob::COVER, 0);
+    slab(0, ob::DEEP, -v, v, ob::STACK, ob::STACK + ob::COVER);
+    double x = -0.0006;
+    face(shAt(p, x, -v, -ob::COVER), shAt(p, x, -v, ob::STACK + ob::COVER), shAt(p, x, v, ob::STACK + ob::COVER), shAt(p, x, v, -ob::COVER), spine, A * -1, 1.0f, mode, tone);
+    double x0 = ob::GUTTER, x1 = ob::GUTTER + ob::PAGE_W, pp = ob::PAGE_H / 2;
+    face(shAt(p, x1, -pp, 0), shAt(p, x1, pp, 0), shAt(p, x1, pp, ob::STACK), shAt(p, x1, -pp, ob::STACK), flat, A, 0.86f, 0, BOOK_EDGE);
+    face(shAt(p, x0, pp, 0), shAt(p, x1, pp, 0), shAt(p, x1, pp, ob::STACK), shAt(p, x0, pp, ob::STACK), flat, S, 0.86f, 0, BOOK_EDGE);
+    face(shAt(p, x0, -pp, 0), shAt(p, x1, -pp, 0), shAt(p, x1, -pp, ob::STACK), shAt(p, x0, -pp, ob::STACK), flat, S * -1, 0.8f, 0, BOOK_EDGE);
+}
+/// ShelfStation.renderBooks / renderWorld: the books the scene moves, the place under the cursor framed, enchanted
+/// books shimmering; a slot whose book is out drawn empty (its own picture laid over the shelf's)
+void drawShelf(JPose const& cam, Basis const& b, double dt, double clock) {
+    Shelf& sh = gShelf;
+    V3     side = gS.st.sideV(), right = gS.st.right(), up{0, 1, 0};
+    double t = gS.clock - sh.moveAt;
+    for (int i = 0; i < 6; ++i) {
+        bool hoverUp = i == sh.hover && sh.target == SbBook && sh.move == ShNone && gS.phase == Phase::Active;
+        sh.peek[i]   = approach(sh.peek[i], hoverUp ? SH_PEEK : 0, 14, dt);
+    }
+    // the empty places: the book on its way out / in, one gone until the shelf shows it gone
+    for (int i = 0; i < 6 && gShelfTexOk; ++i) {
+        bool moving = i == sh.moveSlot && ((sh.move == ShTake && t >= SH_GRIP * 0.8) || (sh.move == ShPut && t < SH_PUT_HOME));
+        bool gone   = (sh.bits >> i & 1) && gS.clock < sh.emptyUntil[i];
+        if (!moving && !gone) continue;
+        if (sh.move == ShPut && i == sh.moveSlot && !(sh.bits >> i & 1)) continue; // not in yet: the shelf shows it empty itself
+        int const* r = kSpines[i];
+        V3   q[4] = {shFace(r[0], r[1], SH_PROUD * 0.5), shFace(r[2], r[1], SH_PROUD * 0.5), shFace(r[2], r[3], SH_PROUD * 0.5), shFace(r[0], r[3], SH_PROUD * 0.5)};
+        float uv[8] = {float((SHELF_EMPTY[0] + r[0]) / PROP_W), float((SHELF_EMPTY[1] + r[1]) / PROP_H), float((SHELF_EMPTY[0] + r[2]) / PROP_W),
+                       float((SHELF_EMPTY[1] + r[1]) / PROP_H), float((SHELF_EMPTY[0] + r[2]) / PROP_W), float((SHELF_EMPTY[1] + r[3]) / PROP_H),
+                       float((SHELF_EMPTY[0] + r[0]) / PROP_W), float((SHELF_EMPTY[1] + r[3]) / PROP_H)};
+        float white[3] = {1, 1, 1};
+        bookQuad(cam, b, q, uv, side, 1.0f, 3, white);
+    }
+    // enchanted books shimmer on the shelf
+    for (int i = 0; i < 6; ++i) {
+        if (!shOccupied(i) || sh.items[i] != "minecraft:enchanted_book") continue;
+        float g = float(0.13 + 0.06 * std::sin(clock * 2.1 + i * 1.7));
+        fxLight(cam, b, FX_GLOW, shSpine(i) + side * (0.004 + sh.peek[i]), right, up, 0.17, 0, 0.75f * g, 0.38f * g, g, false);
+        if (rnd() < dt * 1.5) flakes(shSpine(i) + side * 0.04, 0.07, 1);
+    }
+    // the book under the cursor slid out (shaking when refused)
+    double shake = gS.clock - sh.denyAt < 0.3 ? 0.006 * std::sin((gS.clock - sh.denyAt) * 60) : 0;
+    for (int i = 0; i < 6; ++i) {
+        bool shaking = shake != 0 && i == sh.hover;
+        if ((sh.peek[i] > 0.001 || shaking) && shOccupied(i) && gS.clock >= sh.emptyUntil[i]) {
+            BookPose p = shInSlot(i, sh.peek[i]);
+            p.origin   = p.origin + right * (shaking ? shake : 0);
+            drawShutBook(cam, b, p, i);
+        }
+    }
+    if (sh.moveSlot >= 0 && sh.move != ShNone) {
+        BookPose p = shMovePose();
+        drawShutBook(cam, b, p, sh.moveSlot);
+        if (sh.moving == "minecraft:enchanted_book" && rnd() < dt * 6) flakes(shAt(p, ob::DEEP / 2, 0, ob::STACK), 0.05, 1);
+    }
+    // the place under the cursor framed
+    if (sh.hover < 0 || sh.move != ShNone || gS.phase != Phase::Active) return;
+    bool       ok  = sh.target == SbBook || shelfBook(gS.carriedName);
+    int const* r   = kSpines[sh.hover];
+    double     out = sh.target == SbBook ? sh.peek[sh.hover] + SH_PROUD + 0.002 : 0.003;
+    V3   q[4] = {shFace(r[0] - 0.5, r[1] - 0.5, out), shFace(r[2] + 0.5, r[1] - 0.5, out), shFace(r[0] - 0.5, r[3] + 0.5, out), shFace(r[2] + 0.5, r[3] + 0.5, out)};
+    Quad h;
+    if (!worldQuad4(cam, b, q, h)) return;
+    float a = (sh.target == SbBook ? 30 : 44) / 255.0f;
+    h.color[0] = 1; h.color[1] = ok ? 236 / 255.0f : 70 / 255.0f; h.color[2] = ok ? 200 / 255.0f : 60 / 255.0f; h.color[3] = a;
+    h.mode[0] = 0;
+    gQuads.push_back(h);
 }
 /// CampfireStation.renderBody / renderWorld / renderCookingProgress
 void drawCampfire(JPose const& cam, Basis const& b, double dt, double clock, int W, int H) {
@@ -6247,6 +6645,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         if (gS.st.kind == Kind::Jukebox) { static long seen = -1; if (seen != gS.scenes) { seen = gS.scenes; trail("record: first jukebox frame, layout " + L.note); } }
         if (haveCam && gS.st.kind == Kind::Jukebox) drawRecord(cam, b);                            // JukeboxStation.renderWorld
         if (haveCam && gS.st.kind == Kind::Campfire) drawCampfire(cam, b, handsDt, clock, int(W), int(H)); // CampfireStation.renderBody / World
+        if (haveCam && gS.st.kind == Kind::Shelf) drawShelf(cam, b, handsDt, clock); // ShelfStation.renderBooks / renderWorld
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Beacon) {
             // BeaconStation.frame / renderScene / renderWorld
             double t    = moveTime();
@@ -7219,7 +7618,10 @@ std::string stationHint(Kind k, bool overResult) {
     case Kind::Cartography: return std::string("Map in the middle, paper, glass or an empty map on the right") + dot + "click the map - work it" + dot + "Esc - step away";
     case Kind::Smithing: return std::string("Template left, gear in the middle, material right") + dot + "LMB on the gear - smith" + dot + "RMB - take" + dot + "Esc - step away";
     case Kind::Stonecutter: return std::string("Lay stone by the saw") + dot + "pick a shape round the blade - cut one" + dot + "Shift - cut the stack" + dot + "Esc - step away";
-    case Kind::Campfire: return std::string("Food from the panel at the top onto the fire") + dot + "Esc - stand up";
+    case Kind::Campfire: return std::string("Food onto a free spot of the fire") + dot + "Esc - stand up";
+    case Kind::Shelf:
+        if (shelfBook(gS.carriedName)) return std::string("LMB on an empty place - put the book in") + dot + "Esc - step away";
+        return std::string("LMB on a book - take it into the inventory") + dot + "Esc - step away";
     case Kind::Jukebox:
         if (gJuke.move != JmNone && !gJuke.record.empty()) return "\xE2\x99\xAA " + recordSong(gJuke.record);
         if (!gJuke.inside.empty()) return std::string("LMB on the jukebox - take the record out") + dot + "Esc - step away";
@@ -7392,6 +7794,38 @@ void drawOverlay() {
             } else if (gS.beaconTarget == BnTop) {
                 if (beaconPayment(gS.carriedName)) tipLines.push_back({"Lay the payment on the beacon", gray});
                 else tipLines.push_back({"A beacon takes only iron, gold, emerald, diamond or netherite", red});
+            }
+        }
+        if (gS.st.kind == Kind::Campfire && gCamp.target == CfFood && gCamp.hoverSpot >= 0 && !gCamp.food[gCamp.hoverSpot].empty()) {
+            // CampfireStation.tooltip: how far the food has cooked (Bedrock takes nothing off the fire by hand)
+            int  ticks = std::clamp(gCamp.cooked[gCamp.hoverSpot], 0, 600);
+            char b[96];
+            if (gCamp.lit) snprintf(b, sizeof b, "Cooking: %d%% \xC2\xB7 ~%d s left", ticks * 100 / 600, (600 - ticks + 19) / 20);
+            else snprintf(b, sizeof b, "Cooling down: %d%%", ticks * 100 / 600);
+            tipLines.push_back({b, IM_COL32(255, 170, 0, 255)});
+        }
+        if (gS.st.kind == Kind::Campfire && gCamp.target == CfPlace && gCamp.placeSpot < 0) {
+            bool food = campCookable(gS.carriedName.empty() ? gCamp.hand : gS.carriedName);
+            tipLines.push_back({food ? "No free spot on the fire" : "This can't be cooked on a campfire", IM_COL32(255, 85, 85, 255)});
+        }
+        if (gS.st.kind == Kind::Shelf && gShelf.move == ShNone && !gShelf.putStep) { // ShelfStation.tooltip
+            ImU32 gray = IM_COL32(170, 170, 170, 255), gold = IM_COL32(255, 170, 0, 255), red = IM_COL32(255, 85, 85, 255);
+            auto  bookName = [](std::string const& n) -> std::pair<std::string, ImU32> {
+                if (n == "minecraft:enchanted_book") return {"Enchanted Book", IM_COL32(255, 255, 85, 255)};
+                if (n == "minecraft:writable_book") return {"Book and Quill", IM_COL32(255, 255, 255, 255)};
+                if (n == "minecraft:written_book") return {"Written Book", IM_COL32(255, 255, 255, 255)};
+                if (n == "minecraft:knowledge_book") return {"Knowledge Book", IM_COL32(255, 85, 255, 255)};
+                return {"Book", IM_COL32(255, 255, 255, 255)};
+            };
+            if (gShelf.target == SbBook && gShelf.hover >= 0) {
+                tipLines.push_back(bookName(gShelf.items[gShelf.hover]));
+                tipLines.push_back({"", gray});
+                tipLines.push_back({"LMB - take", gold});
+                tipLines.push_back({"It goes into the inventory", gray});
+            } else if (gShelf.target == SbPlace) {
+                if (shelfBook(gS.carriedName)) { tipLines.push_back(bookName(gS.carriedName)); tipLines.push_back({"LMB - put it here", gold}); }
+                else if (gS.carriedName.empty() && !gS.carrying) tipLines.push_back({"An empty place: take a book from the panel at the top", gray});
+                else tipLines.push_back({"Only books go here", red});
             }
         }
         if (gS.st.kind == Kind::Brewing && !moving()) { // BrewingStation.tooltip (the item's own lines come from the window)
