@@ -3,6 +3,7 @@
 //   c0  = 4 panel corners in clip space (TL, TR, BL, BR), float4 each
 //   c4  = x: world zoom (>= 1, "FOV lerp"), y: panel opacity, z: world dim, w: alpha mode (0 raw, 1 boost)
 //   c5  = x: frame line strength (0 = no frame, Java look), y: 1 = drop the dim background layer, zw: drawn uv fraction
+//   c6  = the HUD strip (hotbar, hearts) kept flat under the panel, uv rect x0 y0 x1 y1 (x1 <= x0: none)
 // t0 = world (back buffer copy, UI already redirected away), t1 = UI target (premultiplied-ish, transparent clear)
 cbuffer Params : register(b0) {
     float4 corner[4];
@@ -41,8 +42,11 @@ V2P VSPanel(uint id : SV_VertexID) {
     return o;
 }
 
+bool inHud(float2 uv) { return pad[1].z > pad[1].x && all(uv >= pad[1].xy) && all(uv <= pad[1].zw); }
+
 float4 PSPanel(V2P i) : SV_Target {
     float4 u = tUi.SampleLevel(sLin, i.uv, 0);
+    if (inHud(i.uv)) u = 0; // the HUD strip is drawn flat (PSHud), not on the panel
     // c5.y: drop the screen's dim background layer (near-black, partly transparent) - only the GUI itself shows
     if (pad[0].y > 0.5 && max(u.r, max(u.g, u.b)) < 0.03 && u.a < 0.85) u = 0;
     float  a = misc.w > 0.5 ? max(u.a, max(u.r, max(u.g, u.b))) : u.a;
@@ -52,4 +56,16 @@ float4 PSPanel(V2P i) : SV_Target {
     float3 rgb  = lerp(u.rgb, float3(0.85, 0.85, 0.85) * max(a, 0.6), edge);
     a           = max(a, edge * 0.6);
     return float4(rgb, a) * misc.y; // premultiplied output (blend ONE / INV_SRC_ALPHA)
+}
+
+// The HUD under the panel (Java: the hotbar and hearts stay on the screen): the strip of the UI target, 1:1, with the
+// screen's dim background (drawn over the HUD) taken back out. The dim is read from the top-left corner of the target.
+float4 PSHud(V2P i) : SV_Target {
+    if (!inHud(i.uv)) return 0;
+    float4 u = tUi.SampleLevel(sLin, i.uv, 0);
+    float4 d = tUi.Load(int3(2, 2, 0));
+    float  k = (max(d.r, max(d.g, d.b)) < 0.03 && d.a < 0.85) ? d.a : 0.0;
+    float  a = saturate((u.a - k) / max(1.0 - k, 0.05));
+    float3 c = u.rgb / max(1.0 - k, 0.05);
+    return float4(c, a); // not faded with the panel: the HUD never went away
 }

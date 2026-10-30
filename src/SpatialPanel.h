@@ -30,6 +30,8 @@ void   noteRedirected();
 void   beforeUiClear(ID3D12GraphicsCommandList* list);
 /// Hooks should keep tracking lists/PSOs even when no capture runs.
 bool   enabled();
+/// A Spatial GUI panel is up and the HUD should still be drawn under it (ScreenWatch: hud_screen not topmost-only).
+bool   keepHud();
 
 // ---- overlay thread
 void toggle();

@@ -80,7 +80,7 @@ std::mutex gGeomMutex;
 // ---------------------------------------------------------------- D3D12 objects (overlay thread)
 ComPtr<ID3D12Device>         gDevice;
 ComPtr<ID3D12RootSignature>  gRoot;
-ComPtr<ID3D12PipelineState>  gPsoWorld, gPsoPanel;
+ComPtr<ID3D12PipelineState>  gPsoWorld, gPsoPanel, gPsoHud;
 DXGI_FORMAT                  gPsoFmt = DXGI_FORMAT_UNKNOWN;
 ComPtr<ID3D12DescriptorHeap> gSrvHeap, gRtvHeap;
 UINT                         gSrvInc = 0;
@@ -201,8 +201,10 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     if (gPsoFmt != gFmt) {
         gPsoWorld.Reset();
         gPsoPanel.Reset();
+        gPsoHud.Reset();
         if (!createPso({shaders::VSFull, sizeof shaders::VSFull}, {shaders::PSWorld, sizeof shaders::PSWorld}, gFmt, false, gPsoWorld)) return false;
         if (!createPso({shaders::VSPanel, sizeof shaders::VSPanel}, {shaders::PSPanel, sizeof shaders::PSPanel}, gFmt, true, gPsoPanel)) return false;
+        if (!createPso({shaders::VSFull, sizeof shaders::VSFull}, {shaders::PSHud, sizeof shaders::PSHud}, gFmt, true, gPsoHud)) return false;
         gPsoFmt = gFmt;
     }
     gReady = true;
@@ -319,6 +321,11 @@ Geom computeGeomJava(spatialcam::View const& v, float uiAspect, float anim, floa
 // ---------------------------------------------------------------- hook side
 bool   enabled() { return gEnabled.load(std::memory_order_relaxed) || gAnim.load(std::memory_order_relaxed) > 0.0f; }
 bool   wantRedirect() { return enabled() && gReady.load(std::memory_order_relaxed); }
+// Java Spatial GUI keeps the HUD (hotbar, hearts) on the screen under the panel; Bedrock draws hud_screen only while
+// it is the top screen. While a Spatial GUI panel is up the HUD is drawn under the container too (ScreenWatch), and
+// record() keeps its bottom strip flat on the screen instead of on the panel.
+std::atomic_bool gKeepHud{false};
+bool             keepHud() { return gKeepHud.load(std::memory_order_relaxed); }
 size_t targetRtv() { return gRtv.load(std::memory_order_relaxed); }
 void   noteRedirected() { gRedirected.store(true, std::memory_order_relaxed); }
 void   beforeUiClear(ID3D12GraphicsCommandList* list) {
@@ -427,7 +434,7 @@ void noteScreen(void const* stack, std::string const& name) {
         // opening a screen from here reports it at once (this function again, nested): act once, edge taken first
         static bool inside = false;
         bool        press  = now && !was && hud;
-        if (hud) was = now;
+        if (hud || !now) was = now; // a release seen on any screen (a scene hides the HUD while the key comes up)
         static void const* hudStack = nullptr;
         if (hud) hudStack = stack;
         else if (stack == hudStack) cine::noteLookCampfire(false); // a screen over the HUD (pause, chat): no invitation
@@ -505,6 +512,7 @@ void noteScreen(void const* stack, std::string const& name) {
         gRecipeBook = book;
         spatialcam::setWideScreen(book);
         if (gS.autoPanel && gS.javaStyle && RfOptions::uiCaptureSpike) spatialcam::setActive(want && !cineOn, inv); // client thread
+        gKeepHud = want && !cineOn && gS.javaStyle && !spatialcam::cfg().hideHotbar;
     }
 }
 
@@ -634,6 +642,17 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     c[21] = gS.javaStyle ? 1.0f : 0.0f; // drop the dim background
     c[22] = a;                          // drawn uv fraction (VSPanel)
     c[23] = bb2;
+    bool hudFlat = gKeepHud.load() && gS.javaStyle;
+    if (hudFlat) {
+        // the HUD strip at the bottom middle: hotbar (182 x 22 GUI px) with the offhand slot, xp bar, hearts / food,
+        // armour / air above them, in Bedrock GUI pixels
+        float s  = std::max(1.0f, spatialcam::view().guiScale);
+        float hw = 124.0f * s / float(bd.Width), hh = 52.0f * s / float(bd.Height);
+        c[24] = 0.5f - hw;
+        c[25] = 1.0f - hh;
+        c[26] = 0.5f + hw;
+        c[27] = 1.0f;
+    }
 
     ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
     list->SetDescriptorHeaps(1, heaps);
@@ -651,6 +670,10 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     if (redirected) {
         list->SetPipelineState(gPsoPanel.Get());
         list->DrawInstanced(6, 1, 0, 0);
+        if (hudFlat && gPsoHud) { // the HUD strip flat on top, like Java's HUD over the world-space panel
+            list->SetPipelineState(gPsoHud.Get());
+            list->DrawInstanced(3, 1, 0, 0);
+        }
     }
     barrier(list, gUi.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
