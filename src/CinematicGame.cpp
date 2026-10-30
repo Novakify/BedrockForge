@@ -83,7 +83,11 @@ bool useHitBlock() {
     Player&    p   = *static_cast<Player*>(a);
     GameMode*  gm  = &*p.mGameMode; // the storage hands out the GameMode itself
     if (!gm) return false;
-    if (hit.mType != HitResultType::Tile) return false; // nothing looked at: the caller presses the use button instead
+    if (hit.mType != HitResultType::Tile) { // nothing looked at: the item in hand is used (a book opens), once
+        bool used = gm->useItem(const_cast<ItemStack&>(p.getSelectedItem()), HandSlot::Mainhand);
+        gm->releaseUsingItem();
+        return used;
+    }
     gm->buildBlock(hit.mBlock, hit.mFacing, HandSlot::Mainhand, false);
     return true;
 }

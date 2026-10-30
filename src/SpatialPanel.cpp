@@ -418,7 +418,7 @@ void noteScreen(void const* stack, std::string const& name) {
         int         k   = RfOptions::uiDebugUseKey.get();
         bool        now = k > 0 && k < 256 && (GetAsyncKeyState(k) & 0x8000) != 0;
         // nothing looked at (an item used in the air: a book opens): the game's own use button, pressed a moment
-        if (now && !was && name.find("hud_screen") != std::string::npos && !cine::game::useHitBlock()) gDebugRightUntil = GetTickCount64() + 500;
+        if (now && !was && name.find("hud_screen") != std::string::npos && !cine::game::useHitBlock()) gDebugRightUntil = 0;
         was = now;
     }
     std::lock_guard l(gScreenMutex);
