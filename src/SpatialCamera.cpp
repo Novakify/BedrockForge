@@ -226,7 +226,7 @@ long  gProjWrites = 0;
 float gProjFrom = 0.0f, gProjTo = 0.0f;
 void preCamera(mce::Camera& cam) {
     if (gFovBlendR <= 0.0f || !cfg().overrideFov) return;
-    glm::mat4& P = *cam.projectionMatrixStack->top()._m;
+    glm::mat4& P = const_cast<glm::mat4&>(static_cast<glm::mat4 const&>(*cam.projectionMatrixStack->top()._m));
     bool persp = std::fabs(P[3][3]) < 1e-4f && std::fabs(P[2][3]) > 0.5f && P[1][1] > 0.05f;
     if (!persp) return;
     auto ci = ll::service::getClientInstance();
