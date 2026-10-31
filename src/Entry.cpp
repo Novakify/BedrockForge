@@ -5,6 +5,7 @@
 #include "Cinematic.h"
 #include "CinematicGame.h"
 #include "Graphics.h"
+#include "LyricsPass.h"
 #include "MaterialLoader.h"
 #include "Notice.h"
 #include "Options.h"
@@ -44,12 +45,14 @@ public:
         screens::install(); // Spatial GUI: panel only for inventory/chest/crafting screens
         if (RfOptions::uiCaptureSpike) cine::game::installHooks(); // jukebox / chiseled bookshelf uses -> scenes
         if (RfOptions::uiCaptureSpike) spatialcam::install(); // Spatial GUI third-person camera
+        rf::lyrics::install(); // LyricsFlow port: world camera capture (spike S1, read-only hook)
         return true;
     }
     bool disable() {
         graphics::uninstall();
         screens::uninstall();
         spatialcam::uninstall();
+        rf::lyrics::uninstall();
         overlay::uninstall();
         materials::uninstall();
         RfOptions::save();

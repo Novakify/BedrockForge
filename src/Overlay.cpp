@@ -24,6 +24,8 @@
 #include "Cinematic.h"
 #include "LLShim.h"
 #include "PostFx.h"
+#include "LyricsPass.h"
+#include "SkyPass.h"
 #include "SpatialPanel.h"
 #include "UiCapture.h"
 
@@ -218,6 +220,10 @@ void render(IDXGISwapChain3* sc) {
     if (!rf::panel::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv)
         && !rf::postfx::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv))
         bb.list->ResourceBarrier(1, &barrier);
+    // LyricsFlow port: lyric glyphs (+ the UI back on top when "under the HUD" redirected it), before ImGui
+    rf::lyrics::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv, sc->GetCurrentBackBufferIndex());
+    // LyricsFlow port: live sky preview (F6, stage 1 - drawn over the frame, off by default)
+    rf::sky::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv, sc->GetCurrentBackBufferIndex());
     bb.list->OMSetRenderTargets(1, &bb.rtv, FALSE, nullptr);
     bb.list->SetDescriptorHeaps(1, heaps);
     {
