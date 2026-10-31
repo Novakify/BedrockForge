@@ -125,7 +125,7 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/lyricsflow/rf-on-cinematic') && github.event_name == 'push'
         shell: bash
         run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/
+          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/ && (cp src/SkyShaders.h out/ || true)
           cd out
           git init -q -b lyricsflow-rf-builds
           git config user.name "github-actions"
