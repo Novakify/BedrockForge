@@ -74,13 +74,15 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
                 Vec3 side = upDir.cross(normal).normalized();
                 switch (mode) {
                 case ExitAnim::Shatter:
-                    f.vel    = (out * (2.2 + 2.0 * r3) + upDir * (2.0 + 1.5 * r3) + normal * (1.2 * r1)) * (letterH * intensity);
+                    // glass: a small pop, then the pieces rain down (Explode is the one that flies everywhere)
+                    f.vel    = (out * (0.9 + 1.1 * r3) + upDir * (0.9 + 0.9 * r3) + normal * (0.8 * r1)) * (letterH * intensity);
                     f.angVel = Vec3{r1, r2, r1 * r2}.normalized() * (5.0 + 5.0 * r3);
                     f.life   = 1.25f + 0.4f * float(r3);
                     f.delay  = 0.02f * float(qi);
                     break;
                 case ExitAnim::Explode:
-                    f.vel    = (out * (5.0 + 3.0 * r3) + normal * (2.5 * r1) + upDir * (1.0 + r2)) * (letterH * intensity);
+                    // outwards and a little away from you (letters flying into the camera filled the screen)
+                    f.vel    = (out * (5.0 + 3.0 * r3) + normal * (0.9 * r1 - 0.7) + upDir * (1.0 + r2)) * (letterH * intensity);
                     f.angVel = Vec3{r2, r1, 1.0}.normalized() * (7.0 + 6.0 * r3);
                     f.life   = 0.95f + 0.3f * float(r3);
                     break;
@@ -119,7 +121,7 @@ void LetterFx::step(float dt) {
         if (t <= 0) continue;
         double const g = f.size;
         switch (f.mode) {
-        case ExitAnim::Shatter: f.vel += f.upDir * (-9.0 * g * dt); break;
+        case ExitAnim::Shatter: f.vel += f.upDir * (-11.0 * g * dt); break;
         case ExitAnim::Explode: f.vel = f.vel * std::exp(-1.6 * dt) + f.upDir * (-2.0 * g * dt); break;
         case ExitAnim::Dissolve: f.vel += f.upDir * (0.6 * g * dt); break;
         case ExitAnim::Burn: f.vel += f.upDir * (1.1 * g * dt); break;
