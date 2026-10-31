@@ -56,6 +56,9 @@ struct Config {
     bool dumpUi        = false; // write the hidden screen + found slots to logs/uicapture/cinematic_*.bmp/.txt
     float keyTolerance = 0.035f;
     int   campfireKey  = 72;    // Java's 'sit by the fire' key (H); 0 = off
+    // Java walks the player up to the block first (Reach.plan, FAR 1.5 where they end up); this port cannot steer the
+    // player under a screen yet, so a scene is played from where they stand within this distance (blocks, horizontal)
+    float reachFar     = 3.5f;
 };
 Config& cfg();
 void    loadConfig(std::filesystem::path const& configDir);
