@@ -685,3 +685,4 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Not yet checked visually on e63: the panel should now fit on screen. Re-check the inventory, a chest and the pause screen.
 - Moving the game window between the user's two monitors crashed the game (0xC0000409, logs/crash/trace_2026-10-30_22-05-40.log). Not analyzed yet.
 - Crafting table: Cinematic reach is 3.5 (e60).
+- IMPORTANT: LyricsFlow's RF code (lyricsflow/rf-on-cinematic-v3) is now merged into `cinematic` (933a73c, e64). Builds from `cinematic` without it remove LyricsFlow (e60-e63 did that). Any session working on RF must build from a branch that has both, and merge before installing.
