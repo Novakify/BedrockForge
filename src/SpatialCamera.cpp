@@ -10,6 +10,12 @@
 #include "SpatialCamera.h"
 #include "Cinematic.h"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -226,6 +232,27 @@ glm::vec3 collideCamera(Actor& actor, glm::vec3 const& eye, glm::vec3 const& tar
 }
 
 float easeInOutSine(float t) { return float(-(std::cos(3.14159265358979 * double(t)) - 1.0) / 2.0); }
+
+// ---------------------------------------------------------------- Bedrock Forge glass menu: camera swing
+// While BF's menu wheel is open (BF_ClientMenuCamera() == 1) the camera glides round to a close front view of the
+// player (the Blueberry-style wheel frames your character in its clear middle) and glides back when it closes.
+// The game is put in third person for it (client thread, clientTick) so the player model renders.
+using BfMenuCam_t = int (*)();
+BfMenuCam_t bfMenuCam() {
+    static BfMenuCam_t fn    = nullptr;
+    static int         delay = 0;
+    if (fn || delay-- > 0) return fn;
+    delay = 240;
+    if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll"))
+        fn = reinterpret_cast<BfMenuCam_t>(reinterpret_cast<void*>(GetProcAddress(m, "BF_ClientMenuCamera")));
+    return fn;
+}
+std::atomic_bool  gMenuWant{false};     // client thread -> render prep: the wheel wants the front view
+std::atomic<float> gMenuBlend{0.0f};    // render prep -> client thread: 0 = normal camera, 1 = front view
+int               gMenuSavedPersp = -1; // client thread
+Clock::time_point gMenuLast{};          // last blend step (render prep, under gMutex)
+float             gMenuYaw = 0.0f;      // player yaw when the wheel opened (the pose doesn't follow later turns)
+bool              gMenuHaveYaw = false;
 
 // camera-to-world rotation for a Minecraft yaw/pitch (degrees; yaw 0 = +Z, + turns right; pitch + = down)
 glm::mat3 orient(float yawDeg, float pitchDeg) {
@@ -503,8 +530,42 @@ void applyComponent() {
             return;
         }
         // first person: the camera looks exactly where the player looks -> learn the quaternion convention
-        if (glm::length(pos - eye) < 0.3f) learnConvention(q, yawP, pitchP);
+        if (glm::length(pos - eye) < 0.3f && gMenuBlend.load() <= 0.0f) learnConvention(q, yawP, pitchP);
         gHaveStart = false;
+        {   // BF glass menu wheel: glide to the front view (and back)
+            auto  now  = Clock::now();
+            float dt   = gMenuLast.time_since_epoch().count() ? std::chrono::duration<float>(now - gMenuLast).count() : 0.0f;
+            gMenuLast  = now;
+            float b    = gMenuBlend.load();
+            bool  want = gMenuWant.load() && gConv;
+            b          = std::clamp(b + (want ? 1.0f : -1.0f) * std::min(dt, 0.1f) / 0.38f, 0.0f, 1.0f);
+            gMenuBlend = b;
+            if (want && !gMenuHaveYaw) { gMenuYaw = yawP; gMenuHaveYaw = true; }
+            if (b <= 0.0f) gMenuHaveYaw = false;
+            if (b > 0.0f && gConv) {
+                float      e  = easeInOutSine(b);
+                float      yr = gMenuYaw * kDeg;
+                glm::vec3  f(-std::sin(yr), 0.0f, std::cos(yr));                 // the way the player faces
+                glm::vec3  look = eye + glm::vec3(0.0f, -0.18f, 0.0f);           // the face, a little under the eyes
+                glm::vec3  spot = collideCamera(actor, look, look + f * 1.75f + glm::vec3(0.0f, 0.05f, 0.0f));
+                glm::vec3  d    = look - spot;
+                float      len  = std::max(glm::length(d), 1e-3f);
+                float      cy   = std::atan2(-d.x, d.z) / kDeg;                  // camera yaw / pitch (looking back at you)
+                float      cp   = std::asin(std::clamp(-d.y / len, -1.0f, 1.0f)) / kDeg;
+                auto       quatOf = [](float yw, float pt) {
+                    glm::mat3 R = orient(yw, pt) * gC;
+                    return glm::quat_cast(gConv == 2 ? glm::transpose(R) : R);
+                };
+                glm::quat  qn = glm::slerp(quatOf(yawP, pitchP), quatOf(cy, cp), e);
+                glm::vec3  cpos = eye + (spot - eye) * e;
+                for (int i = 0; i < nComp; ++i) {
+                    *comps[i]->mOrientation = qn;
+                    *comps[i]->mPosition    = cpos;
+                }
+                applyFov(comps, nComp, false, 1.0f);
+                return;
+            }
+        }
         applyCinematic(comps, nComp, eye, yawP, pitchP);
         return;
     }
@@ -938,6 +999,20 @@ bool active() { return gActive.load(); }
 std::atomic_bool gSwingReq{false};
 void requestSwing() { if (gActive.load() && gFirstPerson.load() && cfg().swingArmFp) gSwingReq = true; }
 void clientTick() {
+    {   // BF glass menu wheel: third person while the camera is round the front (restored after the glide back)
+        auto  fn   = bfMenuCam();
+        bool  want = fn && fn() == 1 && !gActive.load() && !gClosing.load();
+        gMenuWant  = want;
+        auto  ci   = ll::service::getClientInstance();
+        if (ci && want && gMenuSavedPersp < 0) {
+            auto& o         = ci->getOptions();
+            gMenuSavedPersp = o.getPlayerViewPerspective();
+            if (gMenuSavedPersp == 0) o.setPlayerViewPerspective(1);
+        } else if (ci && !want && gMenuSavedPersp >= 0 && gMenuBlend.load() <= 0.0f) {
+            ci->getOptions().setPlayerViewPerspective(gMenuSavedPersp);
+            gMenuSavedPersp = -1;
+        }
+    }
     if (gSwingReq.exchange(false)) {
         if (auto ci = ll::service::getClientInstance())
             if (auto* lp = ci->getLocalPlayer()) static_cast<Actor&>(*lp).swing(ActorSwingSource::Interact, HandSlot::Mainhand);

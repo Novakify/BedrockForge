@@ -120,6 +120,13 @@ float4 PSGlyph(V2P i) : SV_Target {
     float4 fillC = unpack(g.fill);
     if (g.flags & F_GRADIENT) fillC = lerp(fillC, unpack(g.fill2), saturate(i.grad));
     float  k     = g.alpha * misc.y;
+    if (g.pad1 > g.pad0) { // vertical clip (screen y 0..1, BF menu scroll areas): soft 10 px fade at both edges
+        float sy   = i.pos.y / max(misc.w, 1.0);
+        float fade = 10.0 / max(misc.w, 1.0);
+        float ck   = saturate((sy - g.pad0) / fade) * saturate((g.pad1 - sy) / fade);
+        if (ck <= 0.0) discard;
+        k *= ck;
+    }
 
     if (g.flags & F_BACKDROP) { // fill = darkening colour (a = amount), pxRange = blur, glowW = clear radius px, glowK = feather px
         float2 halfPx = 0.5 / max(fwidth(i.uv), 1e-6);
