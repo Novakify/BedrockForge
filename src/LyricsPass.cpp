@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -292,7 +293,7 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     // S2 UI target, same size/format as the back buffer (only bound when "under the HUD" is on)
     gUiReady = false;
     if (gUiTarget) gUiGrave.push_back({gUiTarget, gPresents}); // freed a few Presents later (resize used to leak one)
-    for (auto* r : {&gScene, &gBlurA, &gBlurB})
+    for (ComPtr<ID3D12Resource>* r : {std::addressof(gScene), std::addressof(gBlurA), std::addressof(gBlurB)}) // ComPtr overloads &
         if (*r) gUiGrave.push_back({*r, gPresents});
     gUiTarget.Reset();
     gScene.Reset(); gBlurA.Reset(); gBlurB.Reset();
@@ -332,8 +333,8 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     d.Width  = gQW;
     d.Height = gQH;
     d.Flags  = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-    for (auto* r : {&gBlurA, &gBlurB}) {
-        hr = gDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(r));
+    for (ComPtr<ID3D12Resource>* r : {std::addressof(gBlurA), std::addressof(gBlurB)}) {
+        hr = gDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(r->ReleaseAndGetAddressOf()));
         if (FAILED(hr)) { fail("CreateCommittedResource(glass blur)", hr); return false; }
     }
     UINT const rtvInc = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
