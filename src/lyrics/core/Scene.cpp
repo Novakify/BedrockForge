@@ -20,7 +20,7 @@ constexpr char const* kNotes[] = {"\xE2\x99\xAA \xE2\x99\xAB", "\xE2\x99\xAB \xE
 constexpr int64_t kNoteEvery = 1700;
 
 bool skyWords(Config const& c) { return c.lyricsStyle == LyricsStyle::Sky && c.skyWords; }
-bool chunked(Config const& c) { return c.lyricsStyle == LyricsStyle::Floating || skyWords(c); }
+bool chunked(Config const& c) { return (c.lyricsStyle == LyricsStyle::Floating && !c.wholeLine) || skyWords(c); }
 bool inWorld(Config const& c) { return c.lyricsStyle != LyricsStyle::Screen; }
 
 std::vector<std::pair<int, int>> chunks(Line const& line, Config const& c) {
@@ -557,6 +557,10 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
             else yaw = (c.viewLock ? 0.0f : cam.yaw) + r1 * 13.0f * spread;
             float rp = (r2 - 0.5f) * 26.0f * spread;
             pitch    = std::clamp((c.viewLock ? 0.0f : cam.pitch * 0.6f) + rp - 9.0f, -40.0f, 28.0f);
+            if (c.wholeLine) { // [BF] reference fall video: one row, a little below eye level (pitch + = down), straight ahead
+                yaw   = (c.viewLock ? 0.0f : cam.yaw) + r1 * 5.0f * spread;
+                pitch = std::clamp((c.viewLock ? 0.0f : cam.pitch * 0.6f) + (r2 - 0.5f) * 4.0f + 8.0f, -40.0f, 28.0f);
+            }
             dist     = double((5.0f + r3 * 2.5f) * std::clamp(c.lyricsDistance, 0.4f, 2.0f));
             float absYaw = c.viewLock ? cam.yaw + yaw : yaw, absPitch = c.viewLock ? cam.pitch + pitch : pitch;
             float cy = std::fabs(wrap(absYaw - cam.yaw)), cp = std::fabs(absPitch - cam.pitch);
@@ -663,7 +667,7 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
         p.wrot[size_t(j)]   = c.arcLayout && !sky ? (rnd(s, 40 + i) - 0.5f) * 8.0f : 0.0f;
     }
     float const spaceEm = std::max(0.26f, space);
-    float       maxRow  = sky ? 18.0f : (chunked(c) ? 99.0f : 9.5f);
+    float       maxRow  = sky ? 18.0f : (chunked(c) ? 99.0f : (c.wholeLine ? 16.0f : 9.5f));
     std::vector<std::pair<int, int>> rows;
     for (int pass = 0; pass < 20; ++pass) {
         rows.clear();

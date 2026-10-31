@@ -106,9 +106,27 @@ void LetterPhysics::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, int6
         l.halfH      = float(hh);
         int64_t s    = seed * 131 + k;
         float   r1 = anim::hash01(s * 7 + 1), r2 = anim::hash01(s * 7 + 2), r3 = anim::hash01(s * 7 + 3), r4 = anim::hash01(s * 7 + 4);
-        l.vel        = {(r1 - 0.5) * 1.2, 0.4 + r2 * 1.2, (r3 - 0.5) * 1.2};
-        double spinK = prm.spin * (prm.land == LetterLand::Tumble ? 1.0 : 0.35);
-        l.angVel     = Vec3{(r4 - 0.5) * 6.0, (r1 - 0.5) * 8.0, (r3 - 0.5) * 6.0} * spinK;
+        if (prm.land == LetterLand::Flat) {
+            // reference video: the line lets go letter by letter, each one tips over backwards (top away from you)
+            // and lands where it hung, so the lyric stays readable lying on the ground
+            Vec3 away = ez * -1.0;
+            away.y    = 0;
+            if (away.length() < 1e-3) { away = ey; away.y = 0; }
+            away        = away.length() < 1e-3 ? Vec3{0, 0, 1} : away.normalized();
+            double jit  = (double(r4) - 0.5) * (0.12 + 0.5 * std::min(1.0, double(prm.spin)));
+            double cj = std::cos(jit), sj = std::sin(jit);
+            Vec3   aw{away.x * cj - away.z * sj, 0, away.x * sj + away.z * cj};
+            Vec3   fy{0, 1, 0};
+            l.target    = quatFromBasis(aw.cross(fy).normalized(), aw, fy);
+            l.hasTarget = true;
+            l.vel       = Vec3{(r1 - 0.5) * 0.25, 0.25 + r2 * 0.35, (r3 - 0.5) * 0.25} + aw * 0.3;
+            l.angVel    = {};
+            l.waitMs    = 45.0f * float(k);
+            if (l.waitMs > 0) l.state = Letter::State::Waiting;
+        } else {
+            l.vel        = {(r1 - 0.5) * 1.2, 0.4 + r2 * 1.2, (r3 - 0.5) * 1.2};
+            l.angVel     = Vec3{(r4 - 0.5) * 6.0, (r1 - 0.5) * 8.0, (r3 - 0.5) * 6.0} * prm.spin;
+        }
         l.restLift   = 0.003f + 0.0009f * float(k % 9);
         mLetters.push_back(l);
         ++k;
@@ -125,8 +143,8 @@ void LetterPhysics::substep(Letter& l, float dt, IWorld* w, PhysicsParams const&
     l.pos += l.vel * dt;
     double av = l.angVel.length();
     if (av > 1e-6) l.orient = (Quat::axisAngle(l.angVel, av * dt) * l.orient).normalized();
-    if (prm.land == LetterLand::Flat) // video A look: they turn face-up while falling
-        l.orient = slerp(l.orient, flatTarget(l.orient), std::min(1.0, 3.5 * dt));
+    if (prm.land == LetterLand::Flat) // video A look: they tip over backwards while falling
+        l.orient = slerp(l.orient, l.hasTarget ? l.target : flatTarget(l.orient), std::min(1.0, 7.0 * dt));
     if (!w) return;
 
     // walls: center inside a block that isn't "below us" -> bounce off horizontally
@@ -168,7 +186,7 @@ void LetterPhysics::substep(Letter& l, float dt, IWorld* w, PhysicsParams const&
     l.angVel = l.angVel * (1.0 - prm.friction);
     double hv = std::sqrt(l.vel.x * l.vel.x + l.vel.z * l.vel.z);
     if (prm.land == LetterLand::Flat || (hv < 0.5 && l.angVel.length() < 1.5)) { // settle: lie on the top face
-        l.orient = flatTarget(l.orient);
+        l.orient = prm.land == LetterLand::Flat && l.hasTarget ? l.target : flatTarget(l.orient);
         l.pos.y  = ground + double(l.restLift);
         l.vel    = {};
         l.angVel = {};
@@ -180,6 +198,10 @@ void LetterPhysics::step(float dt, IWorld* w, PhysicsParams const& prm) {
     float const ms = dt * 1000.0f;
     for (auto& l : mLetters) {
         switch (l.state) {
+        case Letter::State::Waiting:
+            l.waitMs -= ms;
+            if (l.waitMs <= 0) l.state = Letter::State::Falling;
+            break;
         case Letter::State::Falling: {
             float left = std::min(dt, 0.1f);
             while (left > 1e-6f && l.state == Letter::State::Falling) {

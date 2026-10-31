@@ -564,6 +564,17 @@ void Panel::look(Ctx& c, Config& cfg, FontSet const& fonts) {
         c.option("sh" + std::to_string(i), 206 + float(i) * 54, 186, 50, 13, sh[i], cfg.textShadow == i, [&, i] { cfg.textShadow = i; }, a);
 }
 
+// [BF] The "Ground Drop" preset (reference video): plain white Minecraft text a few blocks ahead, letters fall one
+// by one and lie on the blocks, still readable.
+void applyGroundLook(Config& cfg) {
+    static char const* const kLook = R"({"lyricsStyle":"FLOATING","font":"minecraft","theme":"minecraft","textStyle":"CLEAN",
+        "textShadow":1,"twoColor":false,"glow":false,"varySizes":false,"arcLayout":false,"enterAnim":"WORD","exitAnim":"FALL",
+        "maxLines":1,"fallingLetters":true,"letterLand":"FLAT","fallDelayMs":200,"gravity":16,"bounce":0.1,"friction":0.8,
+        "spin":0.3,"letterLifetimeMs":6000,"letterFadeMs":1500,"lyricsDistance":0.65,"lyricsScale":0.75,"fxWave":false,
+        "fxRainbow":false,"fxBeatShake":false,"wholeLine":true})";
+    if (auto j = json::parse(kLook)) applyJson(cfg, *j);
+}
+
 // [BF] FX tab: how words come in and leave (incl. the falling-letter physics and the break-apart exits), plus
 // effects that run while a line is up.
 void Panel::fx(Ctx& c, Config& cfg) {
@@ -595,7 +606,11 @@ void Panel::fx(Ctx& c, Config& cfg) {
     c.toggle2("fxs", 206, 160, 78, "Beat shake", cfg.fxBeatShake, [&] { cfg.fxBeatShake = !cfg.fxBeatShake; }, a);
     c.toggle2("fxl", 288, 160, 78, "Land flat", cfg.letterLand == LetterLand::Flat,
               [&] { cfg.letterLand = cfg.letterLand == LetterLand::Flat ? LetterLand::Tumble : LetterLand::Flat; }, a);
-    cfg.fxIntensity = 0.2f + 1.8f * c.slider("fxi", "Break power", 186, (std::clamp(cfg.fxIntensity, 0.2f, 2.0f) - 0.2f) / 1.8f, a);
+    if (cfg.exitAnim == ExitAnim::Fall) { // [BF] one click to the reference-video look (small white pixel text, low, close)
+        bool const on = cfg.font == "minecraft" && !cfg.glow && cfg.maxLines == 1 && cfg.wholeLine && cfg.letterLand == LetterLand::Flat;
+        c.toggle2("fxg", 206, 182, 160, "Ground look (video)", on, [&cfg] { applyGroundLook(cfg); }, a);
+    } else
+        cfg.fxIntensity = 0.2f + 1.8f * c.slider("fxi", "Break power", 186, (std::clamp(cfg.fxIntensity, 0.2f, 2.0f) - 0.2f) / 1.8f, a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the
