@@ -754,8 +754,12 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         // The Java mod renders the screen at its own auto GUI scale (>= 320 x 240 units); Bedrock's UI is smaller in
         // the window, so magnify the texture by java/bedrock scale to give the GUI the same world size.
         spatialcam::View v = spatialcam::view();
-        float jgs = spatialcam::cfg().autoGuiScale ? float(spatialcam::javaAutoGuiScale(int(bd.Width), int(bd.Height))) : float(std::clamp(spatialcam::cfg().guiScale, 1, 6));
-        float mag = v.guiScale > 0.5f ? jgs / v.guiScale : 1.0f;
+        // Bedrock lays its screens out for its own (larger) GUI units: an inventory already covers about the share of
+        // the window the Java one does at Java's auto scale, so the window texture is used as is (Java: the full
+        // framebuffer at the target FOV). A fixed GUI scale in the config scales it against Java's auto scale.
+        float jgsAuto = float(spatialcam::javaAutoGuiScale(int(bd.Width), int(bd.Height)));
+        float mag = spatialcam::cfg().autoGuiScale ? 1.0f : float(std::clamp(spatialcam::cfg().guiScale, 1, 6)) / std::max(1.0f, jgsAuto);
+        (void)v.guiScale;
         gGuiMag   = mag;
         g         = computeGeomJava(v, aspect, scale, mag);
         if (v.firstPerson && sc.curvedScreen && sc.curvedArc >= 5 && sc.curvedArc <= 150) { // RenderUtil.computeCylinderBasis
