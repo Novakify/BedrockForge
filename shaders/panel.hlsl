@@ -7,7 +7,7 @@
 //   c7  = x: world blur radius in pixels (0 = none), y: drop shadow alpha (0 = none), zw: drop shadow uv offset
 //   c11.. = curved screen: centre xyz, unit x axis, unit y axis, normal toward the camera, half w, half h,
 //           tan(fovY/2), aspect, arc (radians)
-//   c10 = x: panel brightness (enableWorldLightingTint), y: 1 = point sampling (useLinearFiltering off)
+//   c10 = x: panel brightness (enableWorldLightingTint), y: 1 = point sampling (useLinearFiltering off), z: c6 is the screen rect
 //   c9  = PSBlur1D: x sigma (texels of the output), yz uv step between taps
 //   c8  = the player on screen (uv rect x0 y0 x1 y1; x1 <= x0: none) - kept sharp in the world blur
 // t0 = world (back buffer copy, UI already redirected away), t1 = UI target (premultiplied-ish, transparent clear)
@@ -107,7 +107,12 @@ V2P VSPanelCurved(uint id : SV_VertexID) {
     return o;
 }
 
-bool inHud(float2 uv) { return pad[1].z > pad[1].x && all(uv >= pad[1].xy) && all(uv <= pad[1].zw); }
+// c6 = the HUD strip kept flat; with c10.z = 1 it is the container screen's rect instead and everything outside it is
+// kept flat (the HUD, other mods' HUD text)
+bool inHud(float2 uv) {
+    bool inside = pad[1].z > pad[1].x && all(uv >= pad[1].xy) && all(uv <= pad[1].zw);
+    return pad[5].z > 0.5 ? !inside : inside;
+}
 
 float4 uiAt(float2 uv) {
     float4 u = pad[5].y > 0.5 ? tUi.SampleLevel(sPoint, uv, 0) : tUi.SampleLevel(sLin, uv, 0);

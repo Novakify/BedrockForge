@@ -11,12 +11,21 @@
 #include "mc/client/gui/screens/SceneStack.h"
 #include "mc/client/gui/screens/AbstractScene.h"
 #include "mc/client/gui/screens/UIScene.h"
+#include "mc/client/gui/screens/ScreenView.h"
+#include "mc/client/gui/controls/VisualTree.h"
+#include "mc/client/gui/controls/UIControl.h"
+
+#include <algorithm>
+#include <memory>
+#include <vector>
 
 #include "Options.h"
 
 namespace rf::panel {
 void noteScreen(void const* stack, std::string const& name); // SpatialPanel.cpp
 bool keepHud();                                              // SpatialPanel.cpp
+// the drawn part of a container screen, in uv of the window (x0 >= x1: unknown)
+void noteScreenBounds(std::string const& name, float x0, float y0, float x1, float y1); // SpatialPanel.cpp
 }
 
 namespace {
@@ -35,6 +44,45 @@ LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, 
         if (top) gHudScene = static_cast<void const*>(top);
     }
     rf::panel::noteScreen(this, name);
+    // Spatial GUI: where the container screen draws, so everything else of the UI (the HUD, mods' HUD text) stays flat
+    if (rf::panel::keepHud() && name.find("hud_screen") == std::string::npos && name.find("_screen") != std::string::npos &&
+        name.find("ui://") == std::string::npos) {
+        AbstractScene const* top = nullptr;
+        this->forEachScreenConst([&](AbstractScene const& sc) { if (!top) top = &sc; return false; }, true);
+        float b[4] = {1e9f, 1e9f, -1e9f, -1e9f};
+        bool  ok   = false;
+        if (top) {
+            auto const* ui = static_cast<UIScene const*>(static_cast<BaseScreen const*>(top));
+            ScreenView const* view = ui->mScreenView->get();
+            if (view && view->mVisualTree->get()) {
+                glm::vec2 vs = *view->mSize;
+                std::shared_ptr<UIControl> root = *(*view->mVisualTree)->mRootControl;
+                if (vs.x > 1 && vs.y > 1 && root) {
+                    std::vector<UIControl const*> todo{root.get()};
+                    int n = 0;
+                    while (!todo.empty() && n < 4000) {
+                        UIControl const* c = todo.back();
+                        todo.pop_back();
+                        ++n;
+                        if (!c || !c->mIsVisibleInTree) continue;
+                        glm::vec2 sz = *c->mSize, pos = *c->mCachedPosition;
+                        // something drawn, smaller than the window (full-window backgrounds / dims are not the screen)
+                        if (!c->mRenderableComponentLookup->empty() && sz.x > 0.5f && sz.y > 0.5f && sz.x < vs.x * 0.9f &&
+                            sz.y < vs.y * 0.9f && pos.x > -vs.x && pos.y > -vs.y && pos.x < 2 * vs.x && pos.y < 2 * vs.y) {
+                            b[0] = std::min(b[0], pos.x / vs.x);
+                            b[1] = std::min(b[1], pos.y / vs.y);
+                            b[2] = std::max(b[2], (pos.x + sz.x) / vs.x);
+                            b[3] = std::max(b[3], (pos.y + sz.y) / vs.y);
+                            ok   = true;
+                        }
+                        for (auto const& ch : *c->mChildren) todo.push_back(ch.get());
+                    }
+                }
+            }
+        }
+        if (ok) rf::panel::noteScreenBounds(name, b[0], b[1], b[2], b[3]);
+        else rf::panel::noteScreenBounds(name, 1, 1, 0, 0);
+    }
     return r;
 }
 

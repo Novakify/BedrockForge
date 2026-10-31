@@ -458,6 +458,9 @@ bool isStationScreen(std::string const& n) {
     return false;
 }
 std::string     gLastCont;
+// the open container screen's drawn area (uv, ScreenWatch): the rest of the UI target is kept flat
+std::mutex      gBoundsMutex;
+float           gBounds[4] = {1, 1, 0, 0};
 cine::Route     gRoute = cine::Route::None;
 std::atomic_bool gCineScreen{false}; // the open container screen is shown as a Cinematic scene
 
@@ -474,6 +477,11 @@ std::atomic<ULONGLONG> gDebugRightUntil{0};
 std::atomic_bool gLookScreenless{false}, gStartScreenless{false};
 int              gLookX = 0, gLookY = 0, gLookZ = 0;
 std::string      gLookName;
+void noteScreenBounds(std::string const& name, float x0, float y0, float x1, float y1) {
+    if (name != gLastCont) return; // client thread, like noteScreen
+    std::lock_guard l(gBoundsMutex);
+    gBounds[0] = x0; gBounds[1] = y0; gBounds[2] = x1; gBounds[3] = y1;
+}
 void noteScreen(void const* stack, std::string const& name) {
     spatialcam::clientTick();
     {   // testing aid (uiDebugUseKey): the key uses the block looked at, on the client thread
@@ -548,6 +556,10 @@ void noteScreen(void const* stack, std::string const& name) {
         if (cont.empty() && (isStationScreen(t.name) || isPanelScreen(t.name))) cont = t.name;
     if (cont != gLastCont) {
         gLastCont = cont;
+        {
+            std::lock_guard lb(gBoundsMutex);
+            gBounds[0] = gBounds[1] = 1; gBounds[2] = gBounds[3] = 0;
+        }
         gRoute    = RfOptions::uiCaptureSpike && gS.autoPanel ? cine::onScreen(cont) : cine::Route::Spatial;
     }
     bool cineOn = gRoute == cine::Route::Cinematic;
@@ -862,14 +874,30 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     } else c[40] = 1.0f;
     bool hudFlat = gKeepHud.load() && gS.javaStyle;
     if (hudFlat) {
-        // the HUD strip at the bottom middle: hotbar (182 x 22 GUI px) with the offhand slot, xp bar, hearts / food,
-        // armour / air above them, in Bedrock GUI pixels
-        float s  = std::max(1.0f, spatialcam::view().guiScale);
-        float hw = 124.0f * s / float(bd.Width), hh = 52.0f * s / float(bd.Height);
-        c[24] = 0.5f - hw;
-        c[25] = 1.0f - hh;
-        c[26] = 0.5f + hw;
-        c[27] = 1.0f;
+        float b[4];
+        {
+            std::lock_guard l(gBoundsMutex);
+            std::copy(gBounds, gBounds + 4, b);
+        }
+        if (b[2] > b[0] + 0.02f && b[3] > b[1] + 0.02f) {
+            // everything outside the container screen's drawn area (the HUD, other mods' HUD text, the lyrics bar)
+            // stays flat on the screen; a small margin keeps the screen's own edge on the panel
+            float mx = 4.0f / float(bd.Width), my = 4.0f / float(bd.Height);
+            c[24] = std::max(0.0f, b[0] - mx);
+            c[25] = std::max(0.0f, b[1] - my);
+            c[26] = std::min(1.0f, b[2] + mx);
+            c[27] = std::min(1.0f, b[3] + my);
+            c[42] = 1.0f; // c6 is the panel's rect, not the HUD's
+        } else {
+            // the HUD strip at the bottom middle: hotbar (182 x 22 GUI px) with the offhand slot, xp bar, hearts / food,
+            // armour / air above them, in Bedrock GUI pixels
+            float s  = std::max(1.0f, spatialcam::view().guiScale);
+            float hw = 124.0f * s / float(bd.Width), hh = 52.0f * s / float(bd.Height);
+            c[24] = 0.5f - hw;
+            c[25] = 1.0f - hh;
+            c[26] = 0.5f + hw;
+            c[27] = 1.0f;
+        }
     }
 
     ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
