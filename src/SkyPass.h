@@ -13,6 +13,8 @@ struct ID3D12Device;
 struct ID3D12GraphicsCommandList;
 struct ID3D12Resource;
 struct ID3D12PipelineState;
+struct ID3D12DescriptorHeap;
+struct ID3D12RootSignature;
 struct D3D12_CPU_DESCRIPTOR_HANDLE;
 struct D3D12_GRAPHICS_PIPELINE_STATE_DESC;
 struct D3D12_VERTEX_BUFFER_VIEW;
@@ -47,8 +49,8 @@ struct Calls { // the ORIGINAL list functions (no hooks, so the tracked game sta
     void (*setVb)(ID3D12GraphicsCommandList*, unsigned, unsigned, D3D12_VERTEX_BUFFER_VIEW const*);
     void (*draw)(ID3D12GraphicsCommandList*, unsigned, unsigned, unsigned, unsigned);
     // own root signature ("My picture"); restoreRoot puts the game's heaps / signature / arguments back
-    void (*setHeaps)(ID3D12GraphicsCommandList*, unsigned, struct ID3D12DescriptorHeap* const*);
-    void (*setRootSig)(ID3D12GraphicsCommandList*, struct ID3D12RootSignature*);
+    void (*setHeaps)(ID3D12GraphicsCommandList*, unsigned, ID3D12DescriptorHeap* const*);
+    void (*setRootSig)(ID3D12GraphicsCommandList*, ID3D12RootSignature*);
     void (*setTable)(ID3D12GraphicsCommandList*, unsigned, unsigned long long);
     void (*setConsts)(ID3D12GraphicsCommandList*, unsigned, unsigned, void const*, unsigned);
     void (*restoreRoot)(ID3D12GraphicsCommandList*);
