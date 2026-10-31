@@ -107,17 +107,16 @@ float4 PSWeatherGame(WOut i) : SV_Target {
     float  r = length(c);
     float  a;
     float3 tint = float3(1, 1, 1);
-    if (f < 0.5) {          // petal: rounded top, point at the bottom, pale centre stripe
-        float w = 0.38 * sqrt(saturate((1.0 - q.y) * 1.25)) * saturate(q.y * 4.0 + 0.2);
-        a    = 1.0 - smoothstep(w - 0.04, w, abs(c.x));
-        a   *= smoothstep(0.0, 0.06, q.y);
+    if (f < 0.5) {          // petal: round top, point at the bottom, pale centre stripe
+        float w = 0.34 * sin(3.14159265 * pow(saturate(1.0 - q.y), 1.4));
+        a    = 1.0 - smoothstep(w - 0.03, w, abs(c.x));
         tint = lerp(float3(0.96, 0.72, 0.84), float3(1.0, 0.93, 0.96), 1.0 - smoothstep(0.0, 0.12, abs(c.x)));
-    } else if (f < 1.5) {   // snow: soft blob
-        a = pow(saturate(1.0 - r * 2.2), 1.6);
+    } else if (f < 1.5) {   // snow: soft bright blob
+        a = pow(saturate(1.0 - r * 2.3), 0.6);
     } else if (f < 2.5) {   // glow: small core + wide halo
         a = saturate(exp(-r * r * 160.0) + 0.55 * exp(-r * r * 22.0));
-    } else {                // streak: thin bar, brightest at the bottom (head)
-        a = (1.0 - smoothstep(0.09, 0.16, abs(c.x))) * smoothstep(0.0, 1.0, q.y) * smoothstep(1.0, 0.92, q.y);
+    } else {                // streak: thin bar, brightest toward the bottom (head)
+        a = (1.0 - smoothstep(0.09, 0.16, abs(c.x))) * smoothstep(0.05, 0.85, q.y) * (1.0 - smoothstep(0.95, 0.99, q.y));
     }
     float4 o = i.col;
     o.rgb *= tint;
