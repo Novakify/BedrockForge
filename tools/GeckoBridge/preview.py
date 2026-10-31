@@ -27,6 +27,15 @@ def add(pose, bone, ch, v):
     else: p[key] = [a + b for a, b in zip(p.get(key, [0, 0, 0]), v)]
 
 
+def num(f, ch):
+    """Constant-only preview: a Molang-driven value shows as the rest pose (0, or 1 for scale)."""
+    try:
+        v = f()
+        return v if isinstance(v, (int, float)) else (1.0 if ch == "scale" else 0.0)
+    except TypeError:
+        return 1.0 if ch == "scale" else 0.0
+
+
 def bedrock_pose(anims, play, t):
     pose = {}
     for name in play:
@@ -34,7 +43,7 @@ def bedrock_pose(anims, play, t):
         for bone, chans in a.get("bones", {}).items():
             for ch, val in chans.items():
                 if ch not in ("rotation", "position", "scale"): continue
-                add(pose, bone, ch, [gbanim.bedrock_eval(val, lt, ax) for ax in range(3)])
+                add(pose, bone, ch, [num(lambda: gbanim.bedrock_eval(val, lt, ax), ch) for ax in range(3)])
     return pose
 
 

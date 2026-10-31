@@ -97,6 +97,10 @@ INSN = re.compile(r"^\s*(\d+):\s+(\w+)\s*(.*)$")
 METHOD_HDR = re.compile(r"^  (?:[\w$<>\[\],.? ]+ )?([\w$<>.]+)\((.*)\);$")
 
 
+import functools
+
+
+@functools.lru_cache(maxsize=4096)
 def javap(classdir, cls, verbose=False):
     args = ["javap", "-p", "-c", "-constants"] + (["-v"] if verbose else []) + ["-cp", classdir, cls]
     env = dict(os.environ, JAVA_TOOL_OPTIONS="")
@@ -195,10 +199,18 @@ def run_paths(code, rawfields, max_paths=96):
             elif op.startswith("invoke"):
                 own, nm, desc = member(rest)
                 if op == "invokedynamic":
-                    for _ in range(nargs(desc) if desc else 0): pop()
-                    st.append("lambda"); p.pc = nxt; continue
+                    md = re.search(r"InvokeDynamic #\d+:[\w$]+:(\(.*?\)\S+)", rest)
+                    for _ in range(nargs(md.group(1)) if md else 0): pop()
+                    mk = re.search(r"InvokeDynamic #(\d+):", rest)
+                    k = int(mk.group(1)) if mk else None
+                    st.append(("const", CONCAT[k]) if k in CONCAT and CONCAT[k] else "lambda"); p.pc = nxt; continue
                 args = [pop() for _ in range(nargs(desc))][::-1] if desc else []
                 recv = None if op == "invokestatic" else pop()
+                if op == "invokespecial" and nm == "<init>" and isinstance(recv, tuple) and recv[0] == "new":
+                    obj = ("obj", recv[1], args)       # the dup'd copy below it on the stack becomes the built object
+                    for i in range(len(st) - 1, -1, -1):
+                        if st[i] is recv or st[i] == recv: st[i] = obj; break
+                    p.pc = nxt; continue
                 ret = desc.split(")")[-1] if desc else "V"
                 if nm in ("setAnimation", "setAndContinue") and args:
                     p.anims.append(args[0])
@@ -302,7 +314,9 @@ def reserve(java, unknown, hint=None):
 
 def molang_value(v, unknown):
     if isinstance(v, tuple) and v[0] == "const":
-        return str(v[1]) if isinstance(v[1], (int, float)) else None
+        if isinstance(v[1], bool) or not isinstance(v[1], (int, float)): return None
+        x = v[1]
+        return str(int(x)) if float(x).is_integer() else (f"{x:.10f}".rstrip("0").rstrip("."))   # no 1e-06: Molang has no exponents
     if isinstance(v, tuple) and v[0] == "call":
         ch = tuple(chain(v))
         for n in range(len(ch), 0, -1):
@@ -348,6 +362,19 @@ def molang_cond(c, unknown):
     return None
 
 
+def path_terms(conds, unknown):
+    """Conditions of one path -> list of Molang terms, or None if the path can never run (x && !x, !1)."""
+    terms = []
+    for x in conds:
+        m = molang_cond(x, unknown)
+        if m == "!1": return None
+        if m and m != "1" and m not in terms: terms.append(m)
+    for t in terms:
+        neg = t[1:] if t.startswith("!") else "!" + t
+        if neg in terms: return None
+    return terms
+
+
 def anim_names(a, rawfields):
     """setAnimation argument -> RawAnimation chain."""
     if isinstance(a, tuple) and a[0] == "raw": return a[1]
@@ -384,17 +411,26 @@ def bootstrap_targets(verbose_dis):
     """BootstrapMethods index -> implementation method name (LambdaMetafactory) or None (string concat etc.)."""
     targets, cur = {}, None
     in_bsm = False
+    FULL_TARGETS.clear(); CONCAT.clear()
     for line in verbose_dis.splitlines():
         if line.startswith("BootstrapMethods:"): in_bsm = True; continue
         if not in_bsm: continue
         m = re.match(r"^\s+(\d+): #\d+ REF_invokeStatic (\S+)", line)
         if m:
             cur = int(m.group(1)); targets[cur] = None if "LambdaMetafactory" not in m.group(2) else ""
+            if "StringConcatFactory" in m.group(2): CONCAT[cur] = None
             continue
+        if cur is not None and cur in CONCAT and CONCAT[cur] is None:
+            mc = re.match(r"^\s+#\d+ (.*)$", line)
+            if mc: CONCAT[cur] = mc.group(1).replace("\\u0001", "*").replace("\u0001", "*")
         if cur is not None and targets.get(cur) == "":
-            mm = re.search(r"REF_invoke\w+ ([\w/$]+)\.([\w$<>]+):", line)
-            if mm: targets[cur] = mm.group(2)
+            mm = re.search(r"REF_(invoke\w+|newInvokeSpecial) ([\w/$]+)\.\"?([\w$<>]+)\"?:", line)
+            if mm: targets[cur] = mm.group(3); FULL_TARGETS[cur] = (mm.group(1), mm.group(2).replace("/", "."), mm.group(3))
     return targets
+
+
+FULL_TARGETS = {}   # last parsed class: bootstrap index -> (ref kind, owner class, method)
+CONCAT = {}         # last parsed class: bootstrap index -> string concat recipe, '*' where a runtime value goes
 
 
 def controllers_of(classdir, cls):
@@ -440,11 +476,7 @@ def controllers_of(classdir, cls):
         paths = run_paths(code, rawfields)
         c["paths"] = []
         for p in paths:
-            terms = []
-            for x in p.conds:
-                m = molang_cond(x, unknown)
-                if m == "!1": terms = None; break          # branch that can never run
-                if m and m != "1" and m not in terms: terms.append(m)
+            terms = path_terms(p.conds, unknown)
             if terms is None: continue
             if any(("!" + t) in terms or ("!(" + t.strip("()") + ")") in terms for t in terms): continue   # impossible path
             when = " && ".join(terms) if terms else "1"

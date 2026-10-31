@@ -110,7 +110,7 @@ def _lerp_expr(a, b, w):
     if not isinstance(a, str) and not isinstance(b, str): return a + (b - a) * w
     if w <= 0: return a
     if w >= 1: return b
-    return f"math.lerp({a}, {b}, {round(w, 6)})"
+    return f"math.lerp({a}, {b}, {w:.6f})"
 
 def bake_channel(kfs, single, tol=0.05, min_samples=2, stats=None):
     """list[KF] -> Bedrock channel value. Non-linear segments are sampled with GeckoLib's curve."""
@@ -225,6 +225,11 @@ def fix_molang(expr, report):
             report.setdefault("molang_mapped", set()).add(k); return MOLANG_MAP[k]
         return m.group(0)
     e = _ident.sub(sub, expr)
+    # GeckoLib's MathParser deletes ALL whitespace before parsing, so "q.anim_time * 10 5" means "* 105" in Java.
+    # Bedrock instead rejects it and drops the whole file's animations (ModPorter E-023). Do what GeckoLib does.
+    joined = re.sub(r"(\d)\s+(?=\d)", r"\1", e)
+    if joined != e:
+        report.setdefault("molang_whitespace_joined", []).append(expr); e = joined
     # ModPorter E-023: a lost operator ("q.anim_time * 10 5") makes Bedrock drop the whole animation
     if re.search(r"[0-9a-z_)]\s+[0-9(]", e, re.I) and not re.search(r"\b(return|loop|for_each)\b", e):
         report.setdefault("molang_suspect", []).append(expr)
