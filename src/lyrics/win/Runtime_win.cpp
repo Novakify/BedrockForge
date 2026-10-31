@@ -306,13 +306,17 @@ void nudgeSongOffset(int deltaMs);
 /// in chat never triggers them): L panel, O lyrics on/off, ] / [ timing for this song. Same approach as BF's menu key.
 void pollKeys(bedrock_forge::client::Frame& f) {
     namespace w32 = bedrock_forge::win32;
-    static bool was[4]  = {};
-    int const   vks[4]  = {0x4C /*L*/, 0x4F /*O*/, 0xDD /*]*/, 0xDB /*[*/};
-    bool const  live    = w32::gameFocused() && bf::hud::isHudScreen(f.view) && f.player;
+    if (!bf::hud::isHudScreen(f.view) || !f.player) return; // other views must not reset the key state
+    static bool    was[4]  = {};
+    static int64_t last[4] = {};
+    int const      vks[4]  = {0x4C /*L*/, 0x4F /*O*/, 0xDD /*]*/, 0xDB /*[*/};
+    bool const     focused = w32::gameFocused();
+    int64_t const  ms      = nowMsWall();
     for (int i = 0; i < 4; ++i) {
-        bool down = live && w32::keyDown(vks[i]);
-        bool edge = down && !was[i];
+        bool down = focused && w32::keyDown(vks[i]);
+        bool edge = down && !was[i] && ms - last[i] > 150;
         was[i]    = down;
+        if (edge) last[i] = ms;
         if (!edge) continue;
         if (i == 0) {
             host::client = &f.client;
