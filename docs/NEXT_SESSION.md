@@ -1,3 +1,19 @@
+# Next session handoff (updated 2026-10-31 ~12:30 local, cloud + PC computer use) - GLASS CLIENT MENU - READ FIRST
+- NEW: Bedrock Forge's menu is now a glass client UI (Blueberry-inspired layout, neon purple + white). Design + how it
+  works: docs/CLIENT_UI.md. Verified IN GAME 12:06: Right Shift wheel (glass petals refract the world, world blurred,
+  centre sharp), Mods window (tabs, rail, search, grid, toggles), Client page (presets + sliders), Shaderpacks page,
+  LyricsFlow page -> "Open the LyricsFlow panel" works, and the LyricsFlow panel is glass with a neon glow.
+- LyricsFlow panel bug fixed: Ctx::round never set uv -> every rounded box drew nothing (the "transparent box").
+- Branches: BF clientui/bf (= lyricsflow/scaffold 6542d0b + menu), RF clientui/rf (= cinematic aa98552 + glass).
+  CI -> clientui-builds / clientui-rf-builds. Merge into lyricsflow/scaffold and cinematic when Fernando signs off.
+  Another session was pushing LyricsFlow physics to lyricsflow/scaffold on 10-31: merge it into clientui/bf first.
+- PC: BedrockForgeCore.dll = clientui build (old: BedrockForgeCore.lyr-2e670f5.dll), RendererFoundation.dll =
+  clientui build (old: RendererFoundation.cine-aa98552.dll). resources/client/icons.* added; presets/ground_drop.json
+  updated (old .pre-clientui). Rollback = rename the two old DLLs back.
+- Computer use: key name for Right Shift is "rshift". The Claude desktop panel pops over the right side of the game.
+- Next ideas: wheel camera swing to face the player, HUD drag editor (HUD petal), pixel-smooth scrolling (scissor),
+  profiles page.
+
 # Next session handoff (updated 2026-10-28 ~18:35 local, cloud session + PC computer use, Fernando away) - READ FIRST
 - GOAL 1 DONE - Spatial GUI M0.5 -> **VERDICT: METHOD 1 VIABLE**. UI draws straight into the swap-chain back buffer.
   The "unknown" RTV handles were the 3 swap-chain RTVs created before RF hooked; M0.5b learns them at Present. Details:
