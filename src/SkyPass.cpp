@@ -343,8 +343,8 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     D3D12_RESOURCE_DESC bd = bb->GetDesc();
     if (gPsoFmt != bd.Format) {
         gPsoDome.Reset(); gPsoQuad.Reset();
-        if (!createPso({shaders::VSSky, sizeof shaders::VSSky}, {shaders::PSSky, sizeof shaders::PSSky}, bd.Format, gPsoDome)) return;
-        if (!createPso({shaders::VSSkyQuad, sizeof shaders::VSSkyQuad}, {shaders::PSSkyQuad, sizeof shaders::PSSkyQuad}, bd.Format, gPsoQuad)) return;
+        if (!createPso({rf::lyrics::shaders::VSSky, sizeof rf::lyrics::shaders::VSSky}, {rf::lyrics::shaders::PSSky, sizeof rf::lyrics::shaders::PSSky}, bd.Format, gPsoDome)) return;
+        if (!createPso({rf::lyrics::shaders::VSSkyQuad, sizeof rf::lyrics::shaders::VSSkyQuad}, {rf::lyrics::shaders::PSSkyQuad, sizeof rf::lyrics::shaders::PSSkyQuad}, bd.Format, gPsoQuad)) return;
         gPsoFmt = bd.Format;
     }
     if (gHdr.imageGeneration != gRequestedGen && !gDecoding) startDecode(gHdr);
