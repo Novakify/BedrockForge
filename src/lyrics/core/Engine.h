@@ -54,12 +54,17 @@ public:
     static FrameStore& get();
     void     publish(BfLyricFrameV1 const& hdr, std::vector<BfGlyphV1> const& glyphs);
     void     setAtlases(std::vector<std::string> const& files);
+    /// [BF] Screen-space glyphs drawn on top of the lyrics (Bedrock Forge's glass client menu). Empty = none. While
+    /// set, the frame is active and its counter moves on every call, even with the lyricsflow module off.
+    void     setOverlay(std::vector<BfGlyphV1> glyphs);
     uint32_t copy(BfLyricFrameV1* hdr, BfGlyphV1* dst, uint32_t cap);
 
 private:
     std::mutex             mMutex;
     BfLyricFrameV1         mHdr{};
     std::vector<BfGlyphV1> mGlyphs;
+    std::vector<BfGlyphV1> mOverlay;
+    uint32_t               mOverlaySeq = 0;
     bool                   mInit = false;
 };
 

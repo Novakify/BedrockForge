@@ -441,6 +441,13 @@ void registerBuiltins() {
     r.plan("cosmetics", "Cosmetics", Category::Misc, "Client-side capes and cloaks");
     r.plan("skin_grabber", "Skin Grabber", Category::Misc, "Save a player's public skin");
     r.plan("auto_hotbar", "Auto Hotbar", Category::Misc, "Refill hotbar slots from inventory");
+    // the glass client menu's own look (Settings page of the menu; hidden from the module grid)
+    r.add("client_ui", "Client UI", Category::Misc, "Glass menu look", true)
+        .slider("blur", "Background blur", 1, 0, 2, 0.05f)
+        .slider("refraction", "Glass refraction", 1, 0, 2.5f, 0.05f)
+        .slider("frost", "Frost tint", 1, 0, 2, 0.05f)
+        .toggleSetting("wheel", "Open with the wheel", true)
+        .toggleSetting("worldblur", "Blur the world", true);
 }
 
 // ============================================================================ runtime

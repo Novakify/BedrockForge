@@ -11,8 +11,12 @@
 #include <string>
 #include <vector>
 
+#include <map>
+
 #include "lyrics/core/Fetcher.h"
+#include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Media.h"
+#include "lyrics/core/Panel.h"
 
 namespace bf::lyrics::win {
 
@@ -46,6 +50,21 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
 void uninstall();
 /// Local player hit something or got hurt (Combat Safe dims lyrics for combatHoldMs). Any thread.
 void noteCombat();
+
+/// [BF] What Bedrock Forge's glass client menu draws with: the Outfit MSDF fonts (always kept in an atlas slot) and
+/// the white icon atlas (resources/client). Fonts are null until their atlas is slotted. Any thread.
+struct ClientUiAssets {
+    Font const*                   regular = nullptr;
+    Font const*                   bold    = nullptr;
+    int                           icons   = -1; // atlas index, -1 = missing
+    std::map<std::string, UiRect> iconRects;
+};
+ClientUiAssets clientUiAssets();
+/// Open the LyricsFlow world panel on the next HUD frame (the menu closes first, the panel needs the HUD view).
+void requestPanel();
+/// LyricsFlow's own on/off (the O key): lyrics drawn or not, independent of the module.
+bool lyricsShown();
+void setLyricsShown(bool on);
 
 } // namespace bf::lyrics::win
 #endif

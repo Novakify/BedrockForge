@@ -167,7 +167,28 @@ struct Panel::Ctx {
         float half = std::min(w, h) / 2;
         q.outlineW = clamp01(std::min(r, half) / std::max(0.01f, half));
         q.glowW    = 1.0f;
+        q.uv[2] = q.uv[3] = 1.0f; // the SOLID shape is measured from uv 0..1 across the quad
         q.flags    = BF_GLYPH_SOLID | (c1 != c2 ? BF_GLYPH_GRADIENT : 0u);
+        out.push_back(q);
+    }
+    /// [BF] Glass card (RF frosts + bends the world behind it): dark violet tint, white rim, violet inner glow.
+    /// Same look as Bedrock Forge's glass client menu. Panel px -> screen px is unknown here, so bevel / refraction
+    /// are given in screen px directly (the panel is ~1/3 of the screen tall at its 3.2 block distance).
+    void glass(float x, float y, float w, float h, float r, float alpha) {
+        if (alpha <= 0.003f || w <= 0 || h <= 0) return;
+        BfGlyphV1 q{};
+        quad(x + w / 2, y + h / 2, w / 2, h / 2, q);
+        float half = std::min(w, h) / 2;
+        q.outlineW = clamp01(std::min(r, half) / std::max(0.01f, half));
+        q.uv[2] = q.uv[3] = 1.0f;
+        q.fill     = 0x6A240A13u;            // rgb (19, 10, 36), tint 0.42: text stays readable on bright skies
+        q.glowW    = 26.0f;                  // bevel px
+        q.glowK    = 18.0f;                  // refraction px
+        q.pxRange  = 1.0f;                   // fully frosted
+        q.outline  = 0xE6FFFFFFu;            // white rim
+        q.glow     = 0x55FF4CB1u;            // violet inner edge glow (177, 76, 255)
+        q.alpha    = alpha;
+        q.flags    = BF_GLYPH_SOLID | BF_GLYPH_GLASS;
         out.push_back(q);
     }
     void disc(float cx, float cy, float r, uint32_t rgb, float alpha) { round(cx - r, cy - r, 2 * r, 2 * r, r, rgb, rgb, alpha); }
@@ -330,10 +351,9 @@ std::vector<PanelAction> Panel::frame(PanelInput const& in, Vec3 origin, Config&
         double const sx = t10;
         c.frame(P + R * (K * (98.0 - 190.0 - 98.0 * sx)) + U * (K * 111.0), R * (K * sx), U * (-K));
         float const a21 = std::min(1.0f, t10 * 1.5f);
-        for (int i = 4; i >= 1; --i) // soft purple glow
-            c.round(62 - float(i) * 2.5f, -float(i) * 2.5f, 318 + float(i) * 5, 222 + float(i) * 5, 19 + float(i) * 2.5f, ACCENT, ACCENT, 0.05f * a21);
-        c.round(61.2f, -0.8f, 319.6f, 223.6f, 19.8f, EDGE1, EDGE2, 0.35f * a21);
-        c.round(62, 0, 318, 222, 19, TOP, BOTTOM, 0.96f * a21);
+        for (int i = 6; i >= 1; --i) // neon purple glow around the glass
+            c.round(62 - float(i) * 2.5f, -float(i) * 2.5f, 318 + float(i) * 5, 222 + float(i) * 5, 19 + float(i) * 2.5f, ACCENT, ACCENT, 0.07f * a21);
+        c.glass(62, 0, 318, 222, 19, a21);
         c.round(150, 0.6f, 144, 1.6f, 0.8f, ACCENT, ACCENT2, 0.7f * a21);
         if (t11 > 0.01f) body(c, cfg, media);
     }
@@ -348,8 +368,9 @@ std::vector<PanelAction> Panel::frame(PanelInput const& in, Vec3 origin, Config&
         double const th = -(1.0 - t9) * 70.0 * 3.14159265358979 / 180.0;
         Vec3 const   Ur = U * std::cos(th) + N * std::sin(th);
         c.frame(pos, R * (K * s), Ur * (-K * s));
-        c.round(-84.8f, -104.8f, 169.6f, 223.6f, 19.8f, EDGE1, EDGE2, 0.35f * c.recA);
-        c.round(-84, -104, 168, 222, 19, TOP, BOTTOM, 0.97f * c.recA);
+        for (int i = 4; i >= 1; --i)
+            c.round(-84 - float(i) * 2.5f, -104 - float(i) * 2.5f, 168 + float(i) * 5, 222 + float(i) * 5, 19 + float(i) * 2.5f, ACCENT, ACCENT, 0.07f * c.recA);
+        c.glass(-84, -104, 168, 222, 19, c.recA);
         record(c, media);
     }
 

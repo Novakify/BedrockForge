@@ -78,6 +78,9 @@ struct State {
     std::vector<uint64_t>         slotUsed;         // last time each slot's font was wanted
     uint64_t                      slotClock = 0;
     std::string                   uiAtlas;          // UI image atlas PNG
+    std::string                   iconAtlas;        // [BF] client menu icons (resources/client/icons.png)
+    int                           iconAtlasIndex = -1;
+    std::map<std::string, UiRect> iconRects;
     std::vector<BfGlyphV1>        panelGlyphs;
     Vec3                          camPos;           // last HUD-frame camera (panel placement + crosshair)
     float                         camYaw = 0, camPitch = 0;
@@ -124,7 +127,7 @@ void loadConfig() {
 // [BF] Fonts: every font's metrics are loaded, but RF has kBfLyricsMaxAtlases texture slots (fonts + UI atlas + cover
 // art), so only the fonts in use get a slot. syncFontSlots() keeps the lyric / top bar / panel fonts slotted and
 // evicts the least recently used one when another font is picked (the atlas list is republished, RF reloads it).
-constexpr size_t kFontSlots = kBfLyricsMaxAtlases - 2;
+constexpr size_t kFontSlots = kBfLyricsMaxAtlases - 3; // fonts + UI atlas + client icon atlas + cover art
 void publishAtlases();
 
 void loadFonts(std::filesystem::path const& dir) {
@@ -147,7 +150,7 @@ void loadFonts(std::filesystem::path const& dir) {
 /// Make sure the fonts in use have atlas slots. Returns true when the atlas list changed. Caller holds gS->mutex.
 bool syncFontSlots() {
     auto const& cfg = gS->engine.config();
-    std::string const want[] = {cfg.font, cfg.topBarFont, gS->panelAssets.pixelFont, "minecraft"};
+    std::string const want[] = {cfg.font, cfg.topBarFont, gS->panelAssets.pixelFont, "minecraft", "outfit", "outfit_bold"}; // [BF] Outfit = client menu
     bool changed = false;
     ++gS->slotClock;
     for (auto const& id : want) {
@@ -184,6 +187,8 @@ void publishAtlases() {
     gS->panelAssets.uiAtlas = -1;
     gS->panelAssets.cover   = -1;
     if (!gS->uiAtlas.empty()) { gS->panelAssets.uiAtlas = int(files.size()); files.push_back(gS->uiAtlas); }
+    gS->iconAtlasIndex = -1;
+    if (!gS->iconAtlas.empty()) { gS->iconAtlasIndex = int(files.size()); files.push_back(gS->iconAtlas); }
     if (!gS->coverShown.empty()) { gS->panelAssets.cover = int(files.size()); files.push_back(gS->coverShown); }
     FrameStore::get().setAtlases(files);
 }
@@ -404,10 +409,17 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     gS->sky.step(gS->moduleOn && cfg.enabled, cfg, gS->engine.perf(), in);
 }
 
+std::atomic<bool> gPanelRequest{false}; // [BF] the client menu's "Open LyricsFlow panel" (opened on the next HUD frame)
+
 void hudFrame(bedrock_forge::client::Frame& f) {
     if (!gS || !f.player) return;
     gS->moduleOn = true; // hud only runs while the module is on (also after modules.json restored it)
     pollKeys(f);
+    if (gPanelRequest.exchange(false) && bf::hud::isHudScreen(f.view)) {
+        host::client = &f.client;
+        std::lock_guard l(gS->mutex);
+        if (!gS->panel.isOpen()) togglePanel();
+    }
     {
         std::lock_guard l(gS->mutex);
         syncFontSlots();
@@ -593,6 +605,16 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     loadConfig();
     loadFonts(modDir / "resources" / "lyricsflow" / "fonts");
     loadUiAtlas(modDir / "resources" / "lyricsflow" / "ui");
+    { // [BF] client menu icon atlas
+        std::error_code e2;
+        auto png = modDir / "resources" / "client" / "icons.png";
+        if (std::filesystem::exists(png, e2)) {
+            gS->iconAtlas = png.string();
+            if (auto j = json::parse(readAll(modDir / "resources" / "client" / "icons.json")))
+                for (auto const& [k, v] : (*j)["rects"].members())
+                    gS->iconRects[k] = UiRect{float(v[0].asNumber()), float(v[1].asNumber()), float(v[2].asNumber()), float(v[3].asNumber())};
+        }
+    }
     loadPresets();
     syncFontSlots();
     publishAtlases();
@@ -626,6 +648,33 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     // Keys: LyricsFlow's K / J are taken by BF (impact frames / HUD), so only on/off + per-song offset for now.
     gS->running = true;
     gS->media   = std::thread(mediaLoop);
+}
+
+ClientUiAssets clientUiAssets() {
+    ClientUiAssets a;
+    if (!gS) return a;
+    std::lock_guard l(gS->mutex);
+    syncFontSlots(); // the menu needs Outfit even while the lyricsflow module is off
+    auto const* r = gS->engine.fonts().get("outfit");
+    auto const* b = gS->engine.fonts().get("outfit_bold");
+    a.regular     = r && r->atlasIndex != FontSet::kNoAtlas && r->id == "outfit" ? r : nullptr;
+    a.bold        = b && b->atlasIndex != FontSet::kNoAtlas && b->id == "outfit_bold" ? b : a.regular;
+    a.icons       = gS->iconAtlasIndex;
+    a.iconRects   = gS->iconRects;
+    return a;
+}
+void requestPanel() { gPanelRequest = true; }
+bool lyricsShown() {
+    if (!gS) return false;
+    std::lock_guard l(gS->mutex);
+    return gS->engine.config().enabled;
+}
+void setLyricsShown(bool on) {
+    if (!gS) return;
+    std::lock_guard l(gS->mutex);
+    gS->engine.config().enabled = on;
+    if (!on) gS->engine.reset();
+    saveConfig();
 }
 
 void noteCombat() {
