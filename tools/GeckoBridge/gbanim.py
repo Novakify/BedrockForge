@@ -242,9 +242,12 @@ def convert_animation(name, anim, new_name, rate=30.0, report=None):
     if "loop" in anim:
         lp = anim["loop"]
         out["loop"] = lp if lp in (True, False, "hold_on_last_frame") else (lp == "loop")
-    for k in ("animation_length", "anim_time_update", "blend_weight", "start_delay", "loop_delay",
-              "override_previous_animation"):
-        if k in anim: out[k] = anim[k]
+    if "animation_length" in anim: out["animation_length"] = anim["animation_length"]
+    # GeckoLib reads but IGNORES anim_time_update, blend_weight, start_delay, loop_delay and override_previous_animation
+    # (ActorAnimation javadoc: "Not used by GeckoLib"). Bedrock would honour them (Naturalist's walk anims then ask for
+    # variables the Java side never sets -> Molang errors every frame). Java parity = drop them.
+    for k in ("anim_time_update", "blend_weight", "start_delay", "loop_delay", "override_previous_animation"):
+        if k in anim: report.setdefault("ignored_like_geckolib", {}).setdefault(k, 0); report["ignored_like_geckolib"][k] += 1
     bones = {}
     for bone, chans in parse_animation(anim).items():
         for ch, (kfs, single) in chans.items():

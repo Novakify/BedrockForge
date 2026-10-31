@@ -74,6 +74,23 @@ class Build:
         self.geo_ids[path] = ids[0]
         return ids[0]
 
+    def dedupe_locators(self, gids, er):
+        """Bedrock merges locators across an entity's geometries and errors when the same name differs
+        ("model already has a locator ... that doesn't exactly match"): keep the first, rename later copies."""
+        seen = {}
+        for gid in gids:
+            path = next((p for p in (self.rp / "models").rglob("*.json") if gid in p.read_text()), None)
+            if not path: continue
+            d = json.loads(path.read_text()); changed = False
+            for g in d["minecraft:geometry"]:
+                if g["description"]["identifier"] != gid: continue
+                for b in g.get("bones", []):
+                    for name in list((b.get("locators") or {})):
+                        if name in seen and seen[name] != b["locators"][name]:
+                            b["locators"][f"{name}_{gid.split('.')[-1]}"] = b["locators"].pop(name); changed = True
+                        else: seen.setdefault(name, b["locators"][name])
+            if changed: path.write_text(json.dumps(d)); er.setdefault("locators_renamed", []).append(gid)
+
     # ---------------------------------------------------------------- animations
     def animations(self, path):
         """Convert one GeckoLib animation file -> {source name: bedrock id}; written once per file."""
@@ -244,6 +261,7 @@ class Build:
         for i, g in enumerate(geos):
             gid = self.geometry(g["path"]) if g.get("path") else None
             if gid: geo_map[f"g{i}"] = (gid, g["when"])
+        if len(geo_map) > 1: self.dedupe_locators([v[0] for v in geo_map.values()], er)
         if not geo_map: er["skipped"] = "no geometry"; return
         # textures (+ variants)
         tex_map = {}
@@ -312,7 +330,16 @@ class Build:
             idle = next((v for k, v in amap.items() if "idle" in k.lower()), next(iter(amap.values())))
             anims[self.short_of(idle)] = idle; desc["scripts"]["animate"].append(self.short_of(idle)); er["fallback_idle"] = idle
         desc["animations"] = anims
-        if getattr(self, "entity_sounds", None): desc["sound_effects"] = {k: {"effect": v} for k, v in self.entity_sounds.items()}
+        used_vars = set()
+        for nid in anims.values():
+            stem = nid.split(".")[3] if nid.startswith("animation.") else None
+            a = self.anim_files.get(stem, {}).get(nid) if stem else None
+            if a: used_vars |= {("v." + m.split(".", 1)[1]).lower() for m in re.findall(r"\b(?:v|variable)\.[a-z_][a-z0-9_]*", json.dumps(a), re.I)}
+        for v in sorted(used_vars - set(reserved) - {OWNER_VAR}):
+            desc["scripts"]["pre_animation"].append(f"{v} = {v} ?? 0;")
+        if used_vars: er["anim_vars_initialised"] = sorted(used_vars)
+        if not anims: desc.pop("animations")      # Bedrock: "Node has too few children (0 < 1)"
+        if getattr(self, "entity_sounds", None): desc["sound_effects"] = dict(self.entity_sounds)   # short name -> sound id (string)
         if not desc["scripts"]["animate"]: desc["scripts"].pop("animate")
         er.update({"geometry": [v[0] for v in geo_map.values()], "textures": len(tex_map), "controllers": len(cnames),
                    "animations_used": len(anims) - len(cnames)})
@@ -373,6 +400,8 @@ class Build:
             if not e.get("is_mob", True): self.report["entities"][clean(e["id"])] = {"skipped": "not a mob (projectile etc.) - M3"}; continue
             self.entity(e, by_class.get(e["java_class"], {}))
         for stem, files in getattr(self, "anim_files", {}).items():
+            for a in files.values():
+                if not a.get("bones"): a.pop("bones", None)    # Bedrock: empty "bones" = "Required child not found"
             self.write(self.rp, f"animations/{self.ns}/{stem}.animation.json", {"format_version": "1.8.0", "animations": files})
         if self.acs: self.write(self.rp, f"animation_controllers/{self.ns}.ac.json", {"format_version": "1.10.0", "animation_controllers": self.acs})
         self.write(self.rp, f"render_controllers/{self.ns}.rc.json", {"format_version": "1.8.0", "render_controllers": self.rcs})

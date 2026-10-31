@@ -1,3 +1,17 @@
+# Next session handoff (updated 2026-10-31 ~20:15 UTC, GeckoBridge M1) - READ FIRST
+- M1 DONE + SEEN IN GAME (details: PORT_GECKOBRIDGE.md "M1 status"): 70 mobs of Naturalist / Sculk Horde / Cave Dweller
+  converted by tools/GeckoBridge/build.py, validate.py 0 errors, all spawned together in "GeckoBridge Test" at ~60 fps,
+  ContentLog 0 errors (one cosmetic deer locator message). Proof Sculk Enderman checked day + night.
+- Installed on the PC: development_resource_packs / development_behavior_packs "GB Naturalist|Sculk Horde|Cave Dweller RP/BP"
+  + GeckoBridge Proof RP/BP, all enabled in GeckoBridge Test (world MKKrqc0qT1g=, backups *.pre-gb.bak / *.pre-m1.bak).
+  Test functions in GB Cave Dweller BP/functions (gbp, gbn, gbs, gbc, gbe, gbf, gbu, gbk, gbd, gbm) - they register on
+  world load. Converted packs are NOT in git (auto-mode guard: no converted mod assets in this repo).
+- Computer use on this PC: game app = path c:\users\fazzman175\appdata\roaming\levilauncher.exe\versions\1.26.51.01\minecraft.windows.exe;
+  menus need mouse_down/up with a 0.15 s hold; Esc and "/" via hold_key 0.2 s; the world list reorders by last played
+  (screenshot before clicking a tile); click the title bar (y=6) when the Claude window steals focus.
+- NEXT (M2): runtime for the reserved v.gb_* conditions + triggered animations (Script API + entity properties), custom
+  layers, sound keyframe names, per-mob AI; then M3 (items/armor/blocks/projectiles).
+
 # Next session handoff (updated 2026-10-31 ~18:35 UTC, GeckoBridge kickoff) - READ FIRST
 - PROOF INSTALLED, NOT YET SEEN: GeckoBridge Proof RP/BP v2 (gb_glow material) in the instance's
   development_resource_packs / development_behavior_packs (v1 moved to <instance>\geckobridge_staging\old_v1).

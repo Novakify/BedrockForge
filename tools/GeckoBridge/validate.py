@@ -70,8 +70,10 @@ def main(rp, bp):
                 for t, se in (anims[a].get("sound_effects") or {}).items():
                     for one in (se if isinstance(se, list) else [se]):
                         if one["effect"] not in d.get("sound_effects", {}): errs.append(f"{eid}: {a} sound '{one['effect']}' not in sound_effects")
+        if "animations" in d and not d["animations"]: errs.append(f"{eid}: empty animations map")
         for short, se in d.get("sound_effects", {}).items():
-            if se["effect"] not in sdefs: errs.append(f"{eid}: sound {se['effect']} not defined")
+            if not isinstance(se, str): errs.append(f"{eid}: sound_effects.{short} must be a string (sound id)"); continue
+            if se not in sdefs: errs.append(f"{eid}: sound {se} not defined")
         for s in d.get("scripts", {}).get("animate", []):
             name = s if isinstance(s, str) else next(iter(s))
             if name not in keys: errs.append(f"{eid}: animate '{name}' not defined")
@@ -92,6 +94,7 @@ def main(rp, bp):
                     m = molang.check(expr)
                     if m: errs.append(f"{eid}: {name} Molang {m}: {expr[:80]}")
     for a, ad in anims.items():
+        if "bones" in ad and not ad["bones"]: errs.append(f"{a}: empty bones map")
         for bone, chans in (ad.get("bones") or {}).items():
             for ch, v in chans.items():
                 vals = [v] if isinstance(v, list) else list(v.values()) if isinstance(v, dict) else []

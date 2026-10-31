@@ -73,7 +73,7 @@ not identical, **RT** = needs a runtime piece, **no** = not possible on Bedrock 
 | `"easing"` + `"easingArgs"` (linear, step(n), 27 sine/quad/cubic/quart/quint/expo/circ, back/elastic/bounce(arg)) | not supported | **bake**: eased segment -> linear sub-keyframes, adaptive until error <= 0.05 deg / 0.005 px / 0.001 scale |
 | `lerp_mode`/`easing: catmullrom` (GeckoLib spline uses keyframe i-2 and i+1) | `lerp_mode: catmullrom` exists but Bedrock's segment rules differ | **bake** (exact GeckoLib spline) |
 | eased segment between **Molang** values | - | **bake** as `math.lerp(A, B, w)` with GeckoLib's weight w per sample (exact shape, Bedrock evaluates A/B live) |
-| `anim_time_update`, `blend_weight`, `start_delay`, `loop_delay`, `override_previous_animation`, `relative_to` (GeckoLib ignores most of these) | Bedrock honours them | 1:1 copy (Bedrock may look *more* correct than Java here - note per mod) |
+| `anim_time_update`, `blend_weight`, `start_delay`, `loop_delay`, `override_previous_animation` - GeckoLib parses them but **ignores** them | Bedrock would honour them (Naturalist's walk anims then asked for variables Java never sets -> Molang errors every frame, seen in game 2026-10-31) | 1:1 by **dropping** them (Java parity); the speeds GeckoLib sets in code become our own `anim_time_update` |
 | `geckolib_format_version` | unknown key | drop |
 | `sound_effects` keyframes (`effect: modid:sound`) | animation `sound_effects` -> client entity `sound_effects` short name -> `sound_definitions.json` + .ogg (Java .ogg plays on Bedrock) | 1:1 (converter M1; prototype drops them and reports) |
 | `particle_effects` keyframes (+locator) | animation `particle_effects` -> client entity particle short names | vanilla particles: approx (name map); mod particles: need a particle port (Shine/convert_assets work) |
@@ -101,7 +101,8 @@ shape is preserved by construction (same w as GeckoLib).
 | `query.limb_swing`, `query.limb_swing_amount` | `query.modified_distance_moved`, `query.modified_move_speed` | approx (done) |
 | `query.controller_speed` | - | approx: 1.0, or the speed baked into `anim_time_update` (RT for dynamic speed) |
 | `variable.*` / `v.*` set from Java (`MathParser.setVariable` / registered variables) | `variable.*` in client `pre_animation`, or entity **properties** (`client_sync`) read with `q.property` | **RT** (Script API writes the property) |
-| GeckoLib Molang that Bedrock rejects (ModPorter E-023: lost operator `q.anim_time * 10 5` drops the whole animation) | - | converter flags `molang_suspect` in the report |
+| GeckoLib Molang with spaces between numbers (`q.anim_time * 10 5`): GeckoLib's MathParser deletes ALL whitespace, so it means `* 105` | Bedrock rejects it and drops every animation in the file (ModPorter E-023) | 1:1: joined like GeckoLib does (`molang_whitespace_joined` in the report); every expression then goes through `molang.py` |
+| Variables read by animations but set by nobody | Bedrock logs `unknown variable` **every frame** (seen in game) | every `v.*` an entity's animations read is initialised in `pre_animation` (`v.x = v.x ?? 0;`) |
 
 ### Animation controllers (Java code -> Bedrock JSON)
 | GeckoLib | Bedrock | Status |
@@ -170,7 +171,7 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
 - **M0 (this session, done except the in-game look):** research, `scan.py`, easing baker with measured error,
   `convert.py` proof pack (Sculk Enderman: model + `idle` + `idle.tendrils` concurrent + glowmask), preview render
   showing Bedrock == GeckoLib, validator 0 errors. **Open: install + see it in game** (needs folder access).
-- **M1 - all mobs of the 3 test mods 1:1, on ModelCore** (plan below, waiting for Fernando's OK).
+- **M1 - all mobs of the 3 test mods 1:1, on ModelCore** - built + seen in game 2026-10-31 (status below).
 - **M2 - behaviour-linked animation:** trigger bridge + variable properties + head-look/hide-bone patterns;
   Sculk Horde attacks play their triggered animations; Naturalist sleep/eat/sit.
 - **M3 - items, armor, blocks:** attachables for GeoItem/GeoArmor, dummy entities for GeoBlockEntity,
@@ -179,7 +180,7 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
   test on Cave Dweller 1.6.4 NeoForge 26.3 (GL5) from your PC.
 - **M5 (optional):** RF emissive/eyes material, animated textures.
 
-## M1 plan (proposed 2026-10-31 - waiting for OK)
+## M1 (approved 2026-10-31) - status at the end of this section
 Goal: every mob of Cave Dweller Evolved, Naturalist and Sculk Horde spawns and animates in the `GeckoBridge Test`
 world like in Java, ContentLog 0 errors, built so FiguraBridge plugs into the same layer later. Offline only, no engine hooks.
 
@@ -214,6 +215,35 @@ Done when: 3 private pack pairs installed in `GeckoBridge Test`, every mob summo
 ContentLog 0 errors, FPS noted, docs + NEXT_SESSION updated. Not in M1: triggered animations / real AI (M2),
 items/armor/blocks (M3), GeckoLib 5 Java side (M4), the native evaluator (FiguraBridge F2).
 
+### M1 status (2026-10-31, in game on Fernando's PC)
+- **Built offline, 0 validation errors:** Naturalist 31 mobs, Sculk Horde 38 mobs (12 skipped: 3 block entities + 9
+  projectiles = M3), Cave Dweller 1 = **70 mobs**. Tools: `discover.py` -> `controllers.py` -> `build.py` -> `validate.py`
+  (+ `sheet.py` contact sheet). Run: `python -I tools/GeckoBridge/build.py mod.jar OUT --name "Mod"` (~2-10 min, javap bound).
+- **ModelCore:** `tools/ModelCore/rig.py` (81/81 geo files round-trip losslessly), `interp.py` + `golden.json` (53 curves,
+  the contract for the native evaluator), `tests.py`.
+- **Controllers:** 104 GeckoLib controllers / 260 decision paths read from bytecode and rebuilt as Bedrock animation
+  controllers (exclusive Molang conditions, Java's final else = initial state, RawAnimation chains, speeds, loop overrides).
+  Java conditions we can't express yet become reserved variables `v.gb_*` (initialised to 0 = Java's "false" branch);
+  M2's runtime sets them (e.g. Naturalist `isEating`, Cave Dweller `isCrawling`/`FLEEING`/`SPOTTED`).
+- **Variants:** texture / model picked by GeckoLib's own conditions (render controller ternaries), `TEXTURES[getVariant()]`
+  arrays -> `minecraft:variant` + random on spawn, runtime-built paths (string concat) resolved against the jar.
+- **Bake budget:** mods whose animations pass 1.5 MB rebuild at 0.25 deg (Sculk Horde: 3.8 MB -> 1.9 MB, max error 0.26 deg).
+- **In game (GeckoBridge Test world, Fancy, Hysteria):** all 70 mobs + the 2 proof endermen spawned at once, animating,
+  **~60 fps** (frame cap) on the RTX 4060. ContentLog after the fixes below: **0 errors** except one cosmetic geometry
+  message on the Naturalist deer (`armor_offset.default_neck` locator differs between the fawn and adult models -
+  Bedrock keeps the first; harmless).
+- **Found in game and fixed:** empty `bones` / `animations` maps (Bedrock rejects them), client-entity `sound_effects`
+  must be plain strings, Bedrock errors every frame on variables nobody sets (now all initialised), GeckoLib-ignored
+  `anim_time_update` keys dropped (Java parity).
+- **Proof:** Sculk Enderman idle + tendril sway + glow seen day and night; overlay and alpha glow look alike at night.
+- **Open for M2:** reserved `v.gb_*` conditions (eat/sniff/crawl/flee/...), triggered animations, custom layers
+  (Bear sheared, Tortoise skins), unmapped sound keyframes (generic names like `step`, `swim` the Java handler maps in
+  code), real AI per mob. Sounds that map through the mod's `sounds.json` already play.
+- **Private builds are NOT in git** (the auto-mode guard blocks publishing converted mod assets to this repo). They live in
+  the cloud session + on the PC (`<instance>\geckobridge_staging\m1c`, installed as dev packs `GB <Mod> RP/BP`).
+  Test functions (in `GB Cave Dweller BP/functions`): `gbp` platform, `gbn`/`gbs`/`gbc`/`gbe` summon rows, `gbf` freeze,
+  `gbu` unfreeze, `gbk` clear, `gbd` noon, `gbm` midnight.
+
 ## Coexistence with Figura (added 2026-10-31)
 Goal is GeckoLib + Figura features together in one client. Figura is a separate native runtime (FiguraBridge) that
 shares a **ModelCore** layer with GeckoBridge: one rig format, one native animation evaluator (also the fallback for
@@ -225,8 +255,7 @@ over-sized baked GeckoLib anims), one RF draw path for shaders/VV, one owner per
 - **File growth** from baking (x8.5 keyframes on easing-heavy mods); tolerance knob exists.
 - **Molang edge cases**: one bad expression makes Bedrock drop the whole animation (seen before) - the report
   flags suspects; a real Molang parser check would be safer (M1).
-- **Bedrock behaviour differences** for keys GeckoLib ignores (`anim_time_update`, `blend_weight`...): Bedrock may
-  play them "more correctly" than Java did; diff per mod.
+- **Bedrock behaviour differences** for keys GeckoLib ignores (`anim_time_update`, `blend_weight`...): dropped for Java parity (M1).
 - **Entity properties limit** for the trigger bridge; property changes are server->client synced (fine single-player).
 - **Licences**: most GeckoLib mods are ARR; even permissive ones need credit (Apache NOTICE, MIT notice).
 - Repo visibility flips between public and private (Fernando's call, to save Actions minutes). Converted packs in `ports/` are private personal use only, never shared.
