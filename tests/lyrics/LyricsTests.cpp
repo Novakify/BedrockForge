@@ -1001,6 +1001,16 @@ TEST(live_sky_params) {
     CHECK_EQ(aurora1(syn, cfg), 0xFFB35Cu);
     cfg.customTop = 0x123456;
     CHECK_EQ(find("custom", cfg)->top, 0x123456u);
+    auto const& st = stars();
+    CHECK_EQ(int(st.size()), 1300);
+    CHECK(std::abs(st[0].az - 237.5747f) < 1e-3f); // java.util.Random(1337): reference values from the JVM
+    CHECK(std::abs(st[0].el - 11.948353f) < 1e-3f);
+    CHECK(std::abs(st[1].bright - 0.46347016f) < 1e-6f);
+    CHECK(std::abs(st[2].phase - 2.0018098f) < 1e-5f);
+    std::vector<StarDraw> sd;
+    float up[3] = {0, 1, 0};
+    drawStars(*find("aurora", cfg), cfg, 2, 1.0f, 3.0, up, sd);
+    CHECK(sd.size() > 300 && sd.size() <= 520);
     Clock c;
     Frame f{};
     for (int i = 0; i < 100; ++i) f = c.tick(&syn, cfg, 0.05, 1, 0, true, false);

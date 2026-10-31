@@ -128,6 +128,52 @@ Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const
     return o;
 }
 
+namespace {
+struct JavaRandom { // java.util.Random
+    uint64_t seed;
+    explicit JavaRandom(int64_t s) : seed((uint64_t(s) ^ 0x5DEECE66DULL) & ((1ULL << 48) - 1)) {}
+    int   next(int bits) { seed = (seed * 0x5DEECE66DULL + 0xBULL) & ((1ULL << 48) - 1); return int(int64_t(seed) >> (48 - bits)); }
+    float nextFloat() { return float(next(24)) / float(1 << 24); }
+};
+constexpr double kPiD = 3.14159265358979323846;
+} // namespace
+
+std::vector<Star> const& stars() {
+    static std::vector<Star> const v = [] {
+        JavaRandom        r(1337);
+        std::vector<Star> o(1300);
+        for (auto& s : o) {
+            s.az     = r.nextFloat() * 360.0f;
+            s.el     = float(std::asin(0.04 + double(r.nextFloat()) * 0.96) * 180.0 / kPiD);
+            s.size   = r.nextFloat() < 0.1f ? 1.8f : 1.0f;
+            s.bright = 0.35f + r.nextFloat() * 0.65f;
+            s.phase  = r.nextFloat() * 6.28f;
+            double a = double(s.az) * kPiD / 180.0, e = double(s.el) * kPiD / 180.0;
+            s.x = float(-std::sin(a) * std::cos(e)); s.y = float(std::sin(e)); s.z = float(std::cos(a) * std::cos(e));
+        }
+        return o;
+    }();
+    return v;
+}
+
+void drawStars(Preset const& p, Config const& cfg, int quality, float alpha, double time, float const fwd[3],
+               std::vector<StarDraw>& out) {
+    static float const kQ[3] = {0.4f, 0.65f, 1.0f};
+    auto const&        all   = stars();
+    int   n    = int(std::min(float(all.size()), 520.0f * p.stars * kQ[std::clamp(quality, 0, 2)]));
+    float live = cfg.skyLively;
+    for (int i = 0; i < n; ++i) {
+        auto const& s = all[size_t(i)];
+        if (double(s.x) * fwd[0] + double(s.y) * fwd[1] + double(s.z) * fwd[2] < 0.05) continue;
+        double ph = double(s.phase);
+        float  tw = float(0.75 + 0.25 * std::sin(time * (0.8 + ph * 0.2) + ph));
+        float  a  = s.bright * tw * alpha * std::min(1.0f, s.el / 10.0f);
+        float  k  = live * float(std::pow(0.5 + 0.5 * std::sin(time * (1.3 + ph * 0.4) + double(s.phase * 3.0f)), 3.0)) +
+                  (1 - live) * 0.5f;
+        out.push_back({s.x, s.y, s.z, float(0.0016 * 1.7 * double(s.size)), a * (0.25f + 0.75f * k)});
+    }
+}
+
 Frame Clock::tick(Preset const* p, Config const& cfg, double dtSec, float night, float beat, bool lineActive,
                   bool playing) {
     double dt = std::min(0.1, std::max(0.0, dtSec));

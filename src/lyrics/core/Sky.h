@@ -60,6 +60,24 @@ using Params = std::array<Texel, 16>;
 /// rotation, row-major m00 m01 m02 m10 ... (identity when the dome is drawn in world axes).
 Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9]);
 
+/// WorldSky.initStars(): 1300 stars from java.util.Random(1337), same order of draws.
+struct Star {
+    float az, el, size, bright, phase; // degrees, degrees, 1 or 1.8, 0.35..1, 0..6.28
+    float x, y, z;                     // unit direction (+Y up, az 0 = +Z)
+};
+std::vector<Star> const& stars();
+
+/// One star quad of WorldSky.drawStars: a flat square of colour kStarColor facing the camera; `size` is its side as a
+/// fraction of the sky distance (= angular size in radians).
+struct StarDraw {
+    float x, y, z, size, alpha;
+};
+/// quality 0..2 (Q_STARS 0.4 / 0.65 / 1), alpha = fade * day/night * (0.85 + 0.3 beat), time = Clock::time(),
+/// fwd = camera forward (stars behind the camera are skipped like Java).
+void drawStars(Preset const& p, Config const& cfg, int quality, float alpha, double time, float const fwd[3],
+               std::vector<StarDraw>& out);
+inline constexpr uint32_t kStarColor = 0xF4EFFF;
+
 /// Per-frame values WorldSky.renderSky feeds the shader besides the param row.
 struct Frame {
     float alpha      = 1; // vertex Color.a
