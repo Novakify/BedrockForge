@@ -31,6 +31,9 @@ struct Targets {
     void* copyDescs         = nullptr; // ID3D12Device::CopyDescriptors (vtable 23)
     void* copyDescsSimple   = nullptr; // ID3D12Device::CopyDescriptorsSimple (vtable 24)
     void* resourceBarrier   = nullptr; // ID3D12GraphicsCommandList::ResourceBarrier (vtable 26)
+    // LyricsFlow sky stage 2: the list state it has to put back after drawing in place of Bedrock's sky
+    void* iaSetTopology     = nullptr; // ID3D12GraphicsCommandList::IASetPrimitiveTopology (vtable 20)
+    void* iaSetVb           = nullptr; // ID3D12GraphicsCommandList::IASetVertexBuffers (vtable 44)
 };
 
 /// Load config/ui_shaders.txt; output goes under outDir.

@@ -28,6 +28,7 @@
 #include "LLShim.h"
 #include "Options.h"
 #include "LyricsPass.h"
+#include "SkyPass.h"
 #include "SpatialPanel.h"
 
 namespace rf::uicapture {
@@ -315,13 +316,17 @@ using CopyDescs_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, D3D12_CPU_DES
 using CopySimple_t = void(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_CPU_DESCRIPTOR_HANDLE,
                                              D3D12_DESCRIPTOR_HEAP_TYPE);
 using Barrier_t    = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_RESOURCE_BARRIER const*);
-constexpr int kHooks = 11;
+using Topo_t       = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_PRIMITIVE_TOPOLOGY);
+using SetVb_t      = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, D3D12_VERTEX_BUFFER_VIEW const*);
+constexpr int kHooks = 13;
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
 bool          gInstalled = false;
 
-bool tracking() { return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled() || rf::lyrics::tracking(); }
+bool tracking() {
+    return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled() || rf::lyrics::tracking() || rf::sky::wanted();
+}
 void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
     reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds);
@@ -369,6 +374,13 @@ HRESULT STDMETHODCALLTYPE createGpsHook(ID3D12Device* d, D3D12_GRAPHICS_PIPELINE
         auto& s = gSeenPs[h];
         s.first = desc->PS.BytecodeLength;
         ++s.second;
+        if (int sk = rf::sky::kindOfHash(h)) { // LyricsFlow sky stage 2: Bedrock's Sky / Stars / SunMoon / Clouds
+            ID3D12PipelineState* pso = nullptr;
+            if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&pso))) && pso) {
+                rf::sky::notePso(pso, sk, *desc);
+                pso->Release();
+            }
+        }
         if (auto it = gUiHashes.find(h); it != gUiHashes.end()) {
             ID3D12PipelineState* pso = nullptr;
             if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&pso))) && pso) {
@@ -425,13 +437,77 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
             if (auto lr = gListLastRt.find(list); lr != gListLastRt.end() && lr->second) gRtvGuess[h] = lr->second;
     } else gListRt0.erase(list);
 }
+// ---- LyricsFlow sky stage 2: per-list topology + vertex buffers (what we put back after our draw)
+struct ListIa {
+    bool                     haveTopo = false;
+    D3D12_PRIMITIVE_TOPOLOGY topo{};
+    UINT                     nVb = 0;
+    D3D12_VERTEX_BUFFER_VIEW vb[8]{};
+};
+std::unordered_map<ID3D12GraphicsCommandList*, ListIa> gListIa;
+void STDMETHODCALLTYPE topoHook(ID3D12GraphicsCommandList* list, D3D12_PRIMITIVE_TOPOLOGY t) {
+    reinterpret_cast<Topo_t>(gOrig[11])(list, t);
+    if (gInSnapshot || !rf::sky::wanted()) return;
+    std::lock_guard l(gMutex);
+    auto& s    = gListIa[list];
+    s.haveTopo = true;
+    s.topo     = t;
+}
+void STDMETHODCALLTYPE setVbHook(ID3D12GraphicsCommandList* list, UINT start, UINT n, D3D12_VERTEX_BUFFER_VIEW const* v) {
+    reinterpret_cast<SetVb_t>(gOrig[12])(list, start, n, v);
+    if (gInSnapshot || !rf::sky::wanted()) return;
+    std::lock_guard l(gMutex);
+    auto& s = gListIa[list];
+    if (start != 0 || !v || n == 0 || n > 8) { s.nVb = 0; return; } // only the common "all streams from slot 0" form
+    s.nVb = n;
+    std::memcpy(s.vb, v, sizeof(D3D12_VERTEX_BUFFER_VIEW) * n);
+}
+void origSetPso(ID3D12GraphicsCommandList* l, ID3D12PipelineState* p) { reinterpret_cast<SetPso_t>(gOrig[3])(l, p); }
+void origTopo(ID3D12GraphicsCommandList* l, int t) { reinterpret_cast<Topo_t>(gOrig[11])(l, D3D12_PRIMITIVE_TOPOLOGY(t)); }
+void origVb(ID3D12GraphicsCommandList* l, unsigned s, unsigned n, D3D12_VERTEX_BUFFER_VIEW const* v) { reinterpret_cast<SetVb_t>(gOrig[12])(l, s, n, v); }
+void origDraw(ID3D12GraphicsCommandList* l, unsigned a, unsigned b, unsigned c, unsigned d) { reinterpret_cast<Draw_t>(gOrig[5])(l, a, b, c, d); }
+
+/// 0 = normal draw, 1 = skip it (vanilla sun / moon / stars / clouds), 2 = draw it, then ours (the sky dome)
+int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa& ia) {
+    if (!rf::sky::wanted() || !gTgt[11] || !gTgt[12]) return 0;
+    std::lock_guard l(gMutex);
+    auto p = gListPso.find(list);
+    if (p == gListPso.end()) return 0;
+    int k = rf::sky::kindOf(p->second);
+    if (k == rf::sky::Hide || k == rf::sky::Clouds) return 1;
+    if (k != rf::sky::Dome) return 0;
+    st.pso = p->second;
+    if (auto it = gListIa.find(list); it != gListIa.end()) ia = it->second;
+    return 2;
+}
+void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa const& ia) {
+    st.haveTopo = ia.haveTopo;
+    st.topo     = int(ia.topo);
+    st.nVb      = ia.nVb;
+    st.vb       = ia.vb;
+    rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw};
+    gInSnapshot = true; // our calls bypass the hooks anyway; keep onDraw etc. out of it
+    rf::sky::afterGameSky(list, st, c);
+    gInSnapshot = false;
+}
+
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
+    rf::sky::GameState st;
+    ListIa             ia;
+    int                sk = gInSnapshot ? 0 : skyDrawKind(list, st, ia);
+    if (sk == 1) { rf::sky::noteHidden(); return; }
     if (!gInSnapshot && tracking()) onDraw(list);
     reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
+    if (sk == 2) afterSky(list, st, ia);
 }
 void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
+    rf::sky::GameState st;
+    ListIa             ia;
+    int                sk = gInSnapshot ? 0 : skyDrawKind(list, st, ia);
+    if (sk == 1) { rf::sky::noteHidden(); return; }
     if (!gInSnapshot && tracking()) onDraw(list);
     reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
+    if (sk == 2) afterSky(list, st, ia);
 }
 
 HRESULT STDMETHODCALLTYPE createHeapHook(ID3D12Device* d, D3D12_DESCRIPTOR_HEAP_DESC const* desc, REFIID riid, void** out) {
@@ -835,13 +911,15 @@ void init(fs::path const& configDir, fs::path const& outDir) {
 bool install(Targets const& t) {
     if (gInstalled) return true;
     void* tg[kHooks]  = {t.createGraphicsPso, t.createStreamPso, t.createRtv,  t.setPso,          t.omSetRts,     t.drawInstanced,
-                         t.drawIndexed,       t.createHeap,      t.copyDescs, t.copyDescsSimple, t.resourceBarrier};
+                         t.drawIndexed,       t.createHeap,      t.copyDescs, t.copyDescsSimple, t.resourceBarrier,
+                         t.iaSetTopology,     t.iaSetVb};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
                          reinterpret_cast<void*>(&drawIdxHook),   reinterpret_cast<void*>(&createHeapHook),
                          reinterpret_cast<void*>(&copyDescsHook), reinterpret_cast<void*>(&copySimpleHook),
-                         reinterpret_cast<void*>(&barrierHook)};
+                         reinterpret_cast<void*>(&barrierHook),   reinterpret_cast<void*>(&topoHook),
+                         reinterpret_cast<void*>(&setVbHook)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;

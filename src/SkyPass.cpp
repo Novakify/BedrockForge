@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -22,6 +23,8 @@
 
 #include "BfLyrics.h"
 #include "LLShim.h"
+#include "LyricsCamera.h"
+#include <unordered_map>
 
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"
@@ -42,7 +45,10 @@ struct Ui {
     float opacity    = 1.0f;
     float fovY       = 70.0f;
     bool  layers     = true;
+    bool  replace    = true;  // stage 2: draw in place of Bedrock's sky
+    bool  hideClouds = true;  // WorldSky hides vanilla clouds by default
 } gUi;
+std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 
 BF_CopySkyFrame_t bfCopy() {
     static BF_CopySkyFrame_t fn = nullptr;
@@ -132,6 +138,10 @@ bool                         gBroken = false;
 std::string                  gStatus = "off (F6 to preview)";
 BfSkyFrameV1                 gHdr{};
 std::vector<BfSkyVertV1>     gHost(kMaxVerts);
+std::mutex                   gStage2Mutex;
+std::string                  gStage2 = "waiting for a sky (pick one in the L panel)";
+void setStage2(std::string v) { std::lock_guard l(gStage2Mutex); gStage2 = std::move(v); }
+std::string stage2() { std::lock_guard l(gStage2Mutex); return gStage2; }
 
 void fail(std::string const& what, HRESULT hr) {
     char b[16];
@@ -320,6 +330,17 @@ void basis(float yawDeg, float pitchDeg, float f[3], float r[3], float u[3]) { /
 } // namespace
 
 void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv, unsigned slotIn) {
+    { // stage 2 needs to know whether a sky is on (cheap header-only copy) + the game camera
+        static uint32_t lf = 0;
+        static int      st = 0;
+        BfSkyFrameV1    h{};
+        h.size = sizeof h;
+        auto c = bfCopy();
+        if (c) c(&h, nullptr, 0);
+        if (h.frame != lf) { lf = h.frame; st = 0; } else if (st < 1000) ++st;
+        gActive = c && h.active && st < 30;
+        if (gActive && gUi.replace) rf::lyrics::setCameraWanted(true);
+    }
     if (!gUi.enabled || gBroken) return;
 #if !RF_HAVE_SKY_SHADERS
     gStatus = "sky shaders not in this build (CI generates SkyShaders.h)";
@@ -399,6 +420,10 @@ void drawUi() {
     if (!ImGui::CollapsingHeader("LyricsFlow sky (preview)")) return;
     ImGui::TextDisabled("Port of LyricsFlow 2.1's sky by 374m - personal build. Pick a sky in the L panel (Sky tab).");
     ImGui::TextDisabled("Stage 1: drawn over the frame from BF's camera, not yet in place of Bedrock's sky.");
+    ImGui::Checkbox("Replace Bedrock's sky (stage 2)", &gUi.replace);
+    ImGui::SameLine();
+    ImGui::Checkbox("Hide vanilla clouds", &gUi.hideClouds);
+    ImGui::Text("Stage 2: %s", stage2().c_str());
     ImGui::Checkbox("Show sky preview", &gUi.enabled);
     ImGui::RadioButton("Corner window", &gUi.where, 0);
     ImGui::SameLine();
@@ -412,5 +437,275 @@ void drawUi() {
     ImGui::Text("BF frame %u, active %u, %u/%u verts, preset #%u", gHdr.frame, gHdr.active, gHdr.vertCount, gHdr.vertTotal,
                 unsigned(gHdr.params[7][2]));
 }
+
+
+// ================================================================ stage 2: in place of Bedrock's sky
+namespace {
+struct GamePso {
+    int                          kind = 0;
+    ComPtr<ID3D12RootSignature>  root;
+    DXGI_FORMAT                  rtv[8]{};
+    UINT                         numRt = 0;
+    DXGI_FORMAT                  dsv = DXGI_FORMAT_UNKNOWN;
+    DXGI_SAMPLE_DESC             sample{1, 0};
+    ComPtr<ID3D12PipelineState>  dome, quads; // ours, made on first use
+    bool                         failed = false;
+};
+std::mutex                                              gPsoMutex;
+std::unordered_map<ID3D12PipelineState*, GamePso>       gGame;
+std::atomic<long>                                       gInjected{0}, gHidden{0}, gSkipped{0};
+
+#pragma pack(push, 1)
+struct DomeVert {
+    float    pos[2];
+    uint32_t p[13];
+    float    f[3], r[3], u[3], txy[2], info[4];
+};
+struct QuadVert {
+    float    pos[3];
+    uint32_t col;
+    float    f[3], r[3], u[3], txy[2];
+};
+#pragma pack(pop)
+constexpr UINT kRing = 8, kMaxQuadVerts = 6 * 4000;
+constexpr UINT kRingBytes = 3 * sizeof(DomeVert) + kMaxQuadVerts * sizeof(QuadVert);
+ComPtr<ID3D12Resource> gRing[kRing];
+uint8_t*               gRingMap[kRing]{};
+UINT                   gRingNext = 0;
+
+bool makeGamePsos(ID3D12Device* dev, GamePso& g) {
+#if RF_HAVE_SKY_SHADERS
+    for (int which = 0; which < 2; ++which) {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
+        d.pRootSignature = g.root.Get();
+        std::vector<D3D12_INPUT_ELEMENT_DESC> il;
+        static char const* const kP = "PARAM";
+        if (which == 0) {
+            d.VS = {rf::lyrics::shaders::VSSkyGame, sizeof rf::lyrics::shaders::VSSkyGame};
+            d.PS = {rf::lyrics::shaders::PSSkyGame, sizeof rf::lyrics::shaders::PSSkyGame};
+            il.push_back({"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(DomeVert, pos), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            for (UINT i = 0; i < 13; ++i)
+                il.push_back({kP, i, DXGI_FORMAT_R8G8B8A8_UNORM, 0, UINT(offsetof(DomeVert, p) + 4 * i), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"CAMF", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(DomeVert, f), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"CAMR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(DomeVert, r), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"CAMU", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(DomeVert, u), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"CAMT", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(DomeVert, txy), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"INFO", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(DomeVert, info), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+        } else {
+            d.VS = {rf::lyrics::shaders::VSSkyQuadGame, sizeof rf::lyrics::shaders::VSSkyQuadGame};
+            d.PS = {rf::lyrics::shaders::PSSkyQuadGame, sizeof rf::lyrics::shaders::PSSkyQuadGame};
+            il.push_back({"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(QuadVert, pos), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, offsetof(QuadVert, col), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"CAMF", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(QuadVert, f), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"CAMR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(QuadVert, r), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"CAMU", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(QuadVert, u), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"CAMT", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(QuadVert, txy), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+        }
+        d.InputLayout = {il.data(), UINT(il.size())};
+        for (UINT i = 0; i < 8; ++i) {
+            auto& rt = d.BlendState.RenderTarget[i];
+            rt.RenderTargetWriteMask = i == 0 ? D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE : 0;
+            rt.BlendEnable = i == 0;
+            rt.SrcBlend = D3D12_BLEND_SRC_ALPHA; rt.DestBlend = D3D12_BLEND_INV_SRC_ALPHA; rt.BlendOp = D3D12_BLEND_OP_ADD;
+            rt.SrcBlendAlpha = D3D12_BLEND_ZERO; rt.DestBlendAlpha = D3D12_BLEND_ONE; rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            rt.LogicOp = D3D12_LOGIC_OP_NOOP;
+        }
+        d.BlendState.IndependentBlendEnable = g.numRt > 1;
+        d.SampleMask                      = UINT_MAX;
+        d.RasterizerState.FillMode        = D3D12_FILL_MODE_SOLID;
+        d.RasterizerState.CullMode        = D3D12_CULL_MODE_NONE;
+        d.RasterizerState.DepthClipEnable = FALSE;
+        d.DepthStencilState.DepthEnable   = FALSE;
+        d.DepthStencilState.StencilEnable = FALSE;
+        d.PrimitiveTopologyType           = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        d.NumRenderTargets                = g.numRt;
+        for (UINT i = 0; i < g.numRt; ++i) d.RTVFormats[i] = g.rtv[i];
+        d.DSVFormat  = g.dsv;
+        d.SampleDesc = g.sample;
+        HRESULT hr = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(which == 0 ? &g.dome : &g.quads));
+        if (FAILED(hr)) {
+            char b[16];
+            snprintf(b, sizeof b, "%08X", uint32_t(hr));
+            setStage2(std::string("our pipeline failed on the game's root signature (hr=0x") + b + ")");
+            ll_shim::error("[RF] sky stage 2: " + stage2());
+            return false;
+        }
+    }
+    return true;
+#else
+    (void)dev; (void)g;
+    setStage2("sky shaders not in this build");
+    return false;
+#endif
+}
+
+bool ensureRing(ID3D12Device* dev) {
+    if (gRing[0]) return true;
+    D3D12_HEAP_PROPERTIES up{D3D12_HEAP_TYPE_UPLOAD};
+    D3D12_RESOURCE_DESC   bd{};
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bd.Width = kRingBytes; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1;
+    bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&gRing[i])))) {
+            for (auto& r : gRing) r.Reset();
+            setStage2("could not create the upload ring");
+            return false;
+        }
+        D3D12_RANGE none{0, 0};
+        void*       p = nullptr;
+        gRing[i]->Map(0, &none, &p);
+        gRingMap[i] = static_cast<uint8_t*>(p);
+    }
+    return true;
+}
+
+struct CamB { float f[3], r[3], u[3], tx, ty; };
+CamB pickCam(BfSkyFrameV1 const& h) {
+    CamB       c{};
+    auto       s   = rf::lyrics::camera();
+    int64_t    now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (s.valid && now - s.atMs < 250 && s.proj[0] != 0 && s.proj[5] != 0) {
+        std::memcpy(c.f, s.forward, sizeof c.f);
+        std::memcpy(c.r, s.right, sizeof c.r);
+        std::memcpy(c.u, s.up, sizeof c.u);
+        c.tx = 1.0f / std::fabs(s.proj[0]);
+        c.ty = 1.0f / std::fabs(s.proj[5]);
+        return c;
+    }
+    basis(h.camYaw, h.camPitch, c.f, c.r, c.u);
+    c.ty = std::tan(gUi.fovY * 0.5f * 3.14159265f / 180.0f);
+    c.tx = c.ty * 16.0f / 9.0f;
+    return c;
+}
+} // namespace
+
+int kindOfHash(uint64_t h) {
+    switch (h) {
+    case 0xd9972838e1f3a16full: case 0xe12627ef9fbf72f5ull: return Dome;   // Sky (Opaque)
+    case 0x98a771a0871307d3ull: case 0x21dd4e6159f0b6d7ull:                // Stars
+    case 0xeb7192a1099bd0a4ull: case 0x58b1282fc2ca3f98ull: return Hide;   // SunMoon
+    case 0x23a6297867ab6cc7ull: case 0x8480faaf71cfdfcaull: return Clouds; // Clouds
+    default: return None;
+    }
+}
+
+void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d) {
+    if (!pso || !kind) return;
+    GamePso g;
+    g.kind  = kind;
+    g.root  = d.pRootSignature;
+    g.numRt = std::min<UINT>(d.NumRenderTargets, 8);
+    for (UINT i = 0; i < g.numRt; ++i) g.rtv[i] = d.RTVFormats[i];
+    g.dsv    = d.DSVFormat;
+    g.sample = d.SampleDesc;
+    std::lock_guard l(gPsoMutex);
+    gGame[pso] = std::move(g);
+}
+
+int kindOf(ID3D12PipelineState* pso) {
+    if (!pso) return None;
+    std::lock_guard l(gPsoMutex);
+    auto it = gGame.find(pso);
+    if (it == gGame.end()) return None;
+    if (it->second.kind == Clouds && !gUi.hideClouds) return None;
+    return it->second.kind;
+}
+
+bool wanted() { return gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken; }
+
+bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    if (!st.nVb || !st.vb || !st.haveTopo) { ++gSkipped; setStage2("skipped a sky draw (list state not tracked yet)"); return false; }
+    ComPtr<ID3D12Device> dev;
+    if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
+    ID3D12PipelineState* domePso = nullptr;
+    ID3D12PipelineState* quadPso = nullptr;
+    GamePso g; // copy: our CreateGraphicsPipelineState goes through UiCapture's hook (takes its mutex) -> never
+               // create pipelines while holding gPsoMutex (UiCapture's draw hook takes gMutex, then gPsoMutex)
+    {
+        std::lock_guard l(gPsoMutex);
+        auto it = gGame.find(st.pso);
+        if (it == gGame.end() || it->second.failed) return false;
+        g = it->second;
+    }
+    if (!g.dome) {
+        bool ok = makeGamePsos(dev.Get(), g);
+        std::lock_guard l(gPsoMutex);
+        auto it = gGame.find(st.pso);
+        if (it == gGame.end()) return false;
+        if (!ok) { it->second.failed = true; return false; }
+        if (!it->second.dome) { it->second.dome = g.dome; it->second.quads = g.quads; }
+        g = it->second;
+    }
+    domePso = g.dome.Get();
+    quadPso = g.quads.Get();
+    {
+        static std::mutex ringMutex;
+        std::lock_guard   l(ringMutex);
+        if (!ensureRing(dev.Get())) return false;
+    }
+    auto copy = bfCopy();
+    if (!copy) return false;
+    static thread_local std::vector<BfSkyVertV1> host(kMaxVerts);
+    BfSkyFrameV1 h{};
+    h.size     = sizeof h;
+    uint32_t n = copy(&h, host.data(), kMaxVerts);
+    if (!h.active || h.picture) return false; // My picture: stage 1 only for now
+
+    CamB cam = pickCam(h);
+    UINT slot;
+    {
+        std::lock_guard l(gPsoMutex);
+        slot = gRingNext++ % kRing;
+    }
+    uint8_t*  base = gRingMap[slot];
+    DomeVert* dv   = reinterpret_cast<DomeVert*>(base);
+    float const tri[3][2] = {{-1, -1}, {-1, 3}, {3, -1}};
+    for (int k = 0; k < 3; ++k) {
+        DomeVert& v = dv[k];
+        v.pos[0] = tri[k][0]; v.pos[1] = tri[k][1];
+        for (int i = 0; i < 13; ++i) std::memcpy(&v.p[i], h.params[i], 4);
+        std::memcpy(v.f, cam.f, 12); std::memcpy(v.r, cam.r, 12); std::memcpy(v.u, cam.u, 12);
+        v.txy[0] = cam.tx; v.txy[1] = cam.ty;
+        v.info[0] = h.info[0]; v.info[1] = h.info[1]; v.info[2] = h.info[2]; v.info[3] = 0;
+    }
+    // sky-layer quads only (stars, constellations, shooting stars, lightning); weather needs depth: not here yet
+    QuadVert* qv  = reinterpret_cast<QuadVert*>(base + 3 * sizeof(DomeVert));
+    UINT      nq  = 0;
+    static int const kCorner[6] = {0, 1, 2, 0, 2, 3};
+    for (uint32_t q = 0; q + 3 < n && nq + 6 <= kMaxQuadVerts; q += 4) {
+        if (host[q].flags & (BF_SKY_WORLD | BF_SKY_SPRITE)) continue;
+        for (int k = 0; k < 6; ++k) {
+            auto const& s = host[q + uint32_t(kCorner[k])];
+            QuadVert&   v = qv[nq++];
+            std::memcpy(v.pos, s.pos, 12);
+            v.col = s.color;
+            std::memcpy(v.f, cam.f, 12); std::memcpy(v.r, cam.r, 12); std::memcpy(v.u, cam.u, 12);
+            v.txy[0] = cam.tx; v.txy[1] = cam.ty;
+        }
+    }
+    D3D12_GPU_VIRTUAL_ADDRESS gpu = gRing[slot]->GetGPUVirtualAddress();
+    D3D12_VERTEX_BUFFER_VIEW  vd{gpu, UINT(3 * sizeof(DomeVert)), UINT(sizeof(DomeVert))};
+    calls.setPso(list, domePso);
+    calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    calls.setVb(list, 0, 1, &vd);
+    calls.draw(list, 3, 1, 0, 0);
+    if (nq) {
+        D3D12_VERTEX_BUFFER_VIEW vq{gpu + 3 * sizeof(DomeVert), UINT(nq * sizeof(QuadVert)), UINT(sizeof(QuadVert))};
+        calls.setPso(list, quadPso);
+        calls.setVb(list, 0, 1, &vq);
+        calls.draw(list, nq, 1, 0, 0);
+    }
+    // the game's state back
+    calls.setPso(list, st.pso);
+    calls.setTopo(list, st.topo);
+    calls.setVb(list, 0, st.nVb, st.vb);
+    ++gInjected;
+    if ((gInjected.load() & 63) == 1) setStage2("drawing in place of Bedrock's sky (" + std::to_string(gInjected.load()) + " frames, " + std::to_string(nq / 6) +
+              " quads, vanilla sun/moon/stars hidden: " + std::to_string(gHidden.load()) + ")");
+    return true;
+}
+
+void noteHidden() { ++gHidden; }
 
 } // namespace rf::sky

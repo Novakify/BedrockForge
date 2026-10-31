@@ -7,15 +7,46 @@
 // STAGE 2 (needs the PC): draw the same thing where Bedrock draws its sky (tag the Sky material's pipelines like
 // UiCapture tags UI ones, record the dome right after the game's sky draw, restore the game's state).
 #pragma once
+#include <cstdint>
 
 struct ID3D12Device;
 struct ID3D12GraphicsCommandList;
 struct ID3D12Resource;
+struct ID3D12PipelineState;
 struct D3D12_CPU_DESCRIPTOR_HANDLE;
+struct D3D12_GRAPHICS_PIPELINE_STATE_DESC;
+struct D3D12_VERTEX_BUFFER_VIEW;
 
 namespace rf::sky {
 
 void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv, unsigned slot);
 void drawUi(); // F6 section
+
+// ---- stage 2: in place of Bedrock's sky (driven by UiCapture's hooks, needs "uiCaptureSpike": true)
+// Bedrock 1.26.51 sky materials, by the FNV-1a 64 of their D3D12 pixel shaders (SM60 + SM65, from the game's
+// Sky / Stars / SunMoon / Clouds .material.bin; see Bedrock Forge docs/lyricsflow/KICKOFF.md).
+enum Kind : int { None = 0, Dome = 1, Hide = 2, Clouds = 3 };
+int  kindOfHash(uint64_t psHash);
+/// A game pipeline with a sky pixel shader was created (desc = the game's, root signature kept for our pipelines).
+void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& desc);
+int  kindOf(ID3D12PipelineState* pso); // any thread
+bool wanted();                         // a LyricsFlow sky is active: UiCapture tracks list state + calls us
+struct GameState {
+    ID3D12PipelineState*     pso = nullptr;
+    bool                     haveTopo = false;
+    int                      topo = 0; // D3D12_PRIMITIVE_TOPOLOGY
+    unsigned                 nVb = 0;  // 0 = unknown (not tracked since the list was reset)
+    D3D12_VERTEX_BUFFER_VIEW const* vb = nullptr;
+};
+struct Calls { // the ORIGINAL list functions (no hooks, so the tracked game state stays the game's)
+    void (*setPso)(ID3D12GraphicsCommandList*, ID3D12PipelineState*);
+    void (*setTopo)(ID3D12GraphicsCommandList*, int);
+    void (*setVb)(ID3D12GraphicsCommandList*, unsigned, unsigned, D3D12_VERTEX_BUFFER_VIEW const*);
+    void (*draw)(ID3D12GraphicsCommandList*, unsigned, unsigned, unsigned, unsigned);
+};
+/// Called right after the game drew its sky (kind Dome) on `list`: draws the live dome + sky quads over it and
+/// restores the game's pipeline / topology / vertex buffers. Returns false when it could not (state unknown etc.).
+bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
+void noteHidden(); // a vanilla sun / moon / stars / clouds draw was skipped
 
 } // namespace rf::sky
