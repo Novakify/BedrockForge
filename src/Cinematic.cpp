@@ -562,7 +562,8 @@ bool rayBlocked(V3 a, V3 b, Station const& st) {
     return false;
 }
 bool planHere(Station const& st, V3 feet, V3 eye, std::string& why) {
-    constexpr double SURFACE_HIGH = 1.42, FACE_HIGH = 1.85, LOW = -0.6, kFar = 1.5;
+    constexpr double SURFACE_HIGH = 1.42, FACE_HIGH = 1.85, LOW = -0.6;
+    double           kFar = std::clamp(double(gCfg.reachFar), 1.5, 5.0);
     V3     work = st.workPoint();
     double high = work.y - feet.y;
     double away = std::hypot(work.x - feet.x, work.z - feet.z);
@@ -2723,7 +2724,7 @@ void loadConfig(std::filesystem::path const& configDir) {
 #define RD(f) if (j.contains(#f)) gCfg.f = j[#f].get<decltype(gCfg.f)>();
         RD(enabled) RD(approachSpeed) RD(leaveSpeed) RD(leanStrength) RD(sceneZoom) RD(quickMode) RD(quickWindow) RD(letterbox)
         RD(livingCamera) RD(cameraShake) RD(screenFlash) RD(reduceMotion) RD(controlHints) RD(hideHand) RD(writeFov) RD(hoverTargets)
-        RD(dumpUi) RD(keyTolerance) RD(fullLean) RD(armStyle) RD(drawArms) RD(cubeItems) RD(devScenes) RD(campfireKey)
+        RD(dumpUi) RD(keyTolerance) RD(fullLean) RD(armStyle) RD(drawArms) RD(cubeItems) RD(devScenes) RD(campfireKey) RD(reachFar)
 #undef RD
         if (j.contains("stations"))
             for (int k = 0; k < int(Kind::Count); ++k)
@@ -2740,7 +2741,7 @@ void saveConfig() {
 #define WR(f) j[#f] = gCfg.f;
     WR(enabled) WR(approachSpeed) WR(leaveSpeed) WR(leanStrength) WR(sceneZoom) WR(quickMode) WR(quickWindow) WR(letterbox)
     WR(livingCamera) WR(cameraShake) WR(screenFlash) WR(reduceMotion) WR(controlHints) WR(hideHand) WR(writeFov) WR(hoverTargets)
-    WR(dumpUi) WR(keyTolerance) WR(fullLean) WR(armStyle) WR(drawArms) WR(cubeItems) WR(devScenes) WR(campfireKey)
+    WR(dumpUi) WR(keyTolerance) WR(fullLean) WR(armStyle) WR(drawArms) WR(cubeItems) WR(devScenes) WR(campfireKey) WR(reachFar)
 #undef WR
     for (int k = 0; k < int(Kind::Count); ++k) j["stations"][kKeys[k]] = gCfg.mode[k] == 1 ? "spatial" : gCfg.mode[k] == 2 ? "vanilla" : "cinematic";
     std::ofstream out(gCfgFile, std::ios::trunc);

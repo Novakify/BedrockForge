@@ -250,28 +250,38 @@ void noteSeen(void const* cam, glm::vec3 const& pos, float dist, float p11, bool
 float gFovBlendR = 0.0f; // render side copy of gFovBlend
 long  gProjWrites = 0;
 float gProjFrom = 0.0f, gProjTo = 0.0f;
+std::atomic<void const*> gWorldCam{nullptr};
+long  gProjSkip[6] = {}; // preCamera exits: blend 0 / option off, not perspective, no player, not the world camera, no change
+float gProjBlendSeen = -1.0f;
+float base00 = 0.0f, base11 = 0.0f, wrote11 = -1.0f; // the vanilla projection scale we narrowed / what we wrote
 void preCamera(mce::Camera& cam) {
-    if (gFovBlendR <= 0.0f || !cfg().overrideFov) return;
+    gProjBlendSeen = gFovBlendR;
     glm::mat4& P = const_cast<glm::mat4&>(static_cast<glm::mat4 const&>(*cam.projectionMatrixStack->top()._m));
+    if (gFovBlendR <= 0.0f || !cfg().overrideFov) {
+        ++gProjSkip[0];
+        if (wrote11 > 0.0f && &cam == gWorldCam.load(std::memory_order_relaxed)) { // a kept matrix gets the vanilla FOV back
+            if (std::fabs(P[1][1] - wrote11) <= 1e-6f) { P[0][0] = base00; P[1][1] = base11; }
+            wrote11 = -1.0f;
+        }
+        return;
+    }
     bool persp = std::fabs(P[3][3]) < 1e-4f && std::fabs(P[2][3]) > 0.5f && P[1][1] > 0.05f;
-    if (!persp) return;
-    auto ci = ll::service::getClientInstance();
-    if (!ci) return;
-    auto* lp = ci->getLocalPlayer();
-    if (!lp) return;
-    Vec3      feetV = static_cast<Actor&>(*lp).getFeetPos();
-    glm::vec3 eye(feetV.x, feetV.y + 1.62f, feetV.z);
-    glm::vec3 pos = *cam.mPosition;
-    if (glm::length(pos - eye) >= 8.0f) return; // the world camera only
-    float tanNow  = 1.0f / P[1][1];
+    if (!persp) { ++gProjSkip[1]; return; }
+    // the world camera only: before the update its position is not yet this frame's, so match the camera onCamera
+    // picked as the world camera (last frame)
+    if (&cam != gWorldCam.load(std::memory_order_relaxed)) { ++gProjSkip[3]; return; }
+    // the game may keep last frame's matrix: a matrix we wrote is narrowed from the vanilla one we saw, not again
+    if (std::fabs(P[1][1] - wrote11) > 1e-6f) { base00 = P[0][0]; base11 = P[1][1]; }
+    float tanNow  = 1.0f / base11;
     float fovNow  = 2.0f * std::atan(tanNow);
     float target  = float(std::clamp(cfg().targetFov, 30, 110)) * kDeg;
     float e       = easeInOutSine(gFovBlendR);
     float want    = fovNow + (target - fovNow) * e;
     float k       = tanNow / std::tan(want * 0.5f);
-    if (std::fabs(k - 1.0f) < 1e-4f) return;
-    P[0][0] *= k;
-    P[1][1] *= k;
+    if (std::fabs(k - 1.0f) < 1e-4f) { ++gProjSkip[4]; return; }
+    P[0][0] = base00 * k;
+    P[1][1] = base11 * k;
+    wrote11 = P[1][1];
     ++gProjWrites;
     gProjFrom = fovNow / kDeg; gProjTo = want / kDeg;
 }
@@ -296,6 +306,7 @@ void onCamera(mce::Camera& cam) {
     bool      world = dist < 8.0f;
     noteSeen(&cam, pos, dist, P[1][1], world);
     if (!world) return;
+    gWorldCam.store(&cam, std::memory_order_relaxed);
     ++gChosen;
     gView.valid   = true;
     gView.tanHalf = 1.0f / P[1][1];
@@ -946,6 +957,7 @@ void appendDiag(char* b, unsigned long long cap) {
                          gLastRot[0], gLastRot[1], gLastCam[0], gLastCam[1], gLastCam[2], gLastTarget[0], gLastTarget[1],
                          gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch, gView.guiScale);
     len += std::snprintf(b + len, cap - len, "  cinematic camera writes %ld, fov field %.4f x %.3f; spatial fov blend %.2f, projection writes %ld (%.1f -> %.1f)\n", gCineWrites, gCineFovRaw, gCineFovScale, gFovBlend, gProjWrites, gProjFrom, gProjTo);
+    len += std::snprintf(b + len, cap - len, "  projection skips: off %ld, not persp %ld, no player %ld, not world %ld, same %ld; blend seen %.2f, overrideFov %d target %d\n", gProjSkip[0], gProjSkip[1], gProjSkip[2], gProjSkip[3], gProjSkip[4], gProjBlendSeen, int(cfg().overrideFov), cfg().targetFov);
     len += std::snprintf(b + len, cap - len, "  render origin (LevelRendererCamera::mCameraPos) %.2f,%.2f,%.2f -> %.2f,%.2f,%.2f (writes %ld), target %.2f,%.2f,%.2f\n",
                          gRcBefore[0], gRcBefore[1], gRcBefore[2], gRcAfter[0], gRcAfter[1], gRcAfter[2], gRcWrites, gRcTarget[0], gRcTarget[1], gRcTarget[2]);
     len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",

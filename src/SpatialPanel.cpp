@@ -754,8 +754,12 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         // The Java mod renders the screen at its own auto GUI scale (>= 320 x 240 units); Bedrock's UI is smaller in
         // the window, so magnify the texture by java/bedrock scale to give the GUI the same world size.
         spatialcam::View v = spatialcam::view();
-        float jgs = spatialcam::cfg().autoGuiScale ? float(spatialcam::javaAutoGuiScale(int(bd.Width), int(bd.Height))) : float(std::clamp(spatialcam::cfg().guiScale, 1, 6));
-        float mag = v.guiScale > 0.5f ? jgs / v.guiScale : 1.0f;
+        // Bedrock lays its screens out for its own (larger) GUI units: an inventory already covers about the share of
+        // the window the Java one does at Java's auto scale, so the window texture is used as is (Java: the full
+        // framebuffer at the target FOV). A fixed GUI scale in the config scales it against Java's auto scale.
+        float jgsAuto = float(spatialcam::javaAutoGuiScale(int(bd.Width), int(bd.Height)));
+        float mag = spatialcam::cfg().autoGuiScale ? 1.0f : float(std::clamp(spatialcam::cfg().guiScale, 1, 6)) / std::max(1.0f, jgsAuto);
+        (void)v.guiScale;
         gGuiMag   = mag;
         g         = computeGeomJava(v, aspect, scale, mag);
         if (v.firstPerson && sc.curvedScreen && sc.curvedArc >= 5 && sc.curvedArc <= 150) { // RenderUtil.computeCylinderBasis
@@ -921,6 +925,17 @@ bool remapClient(HWND hwnd, int& ix, int& iy) {
         if (!gEnabled || RfOptions::showImGui) return false;
         RECT rc;
         if (!GetClientRect(hwnd, &rc) || rc.right < 1 || rc.bottom < 1) return false;
+        {   // v2: the pointer is the system cursor itself. GameInput's absolute position mostly repeats the point we
+            // gave the hidden screen (seen: 24573 echoes to 425 real readings), so following it left the hover stale and
+            // made presses miss; every way the game asks now gets the hidden point for what is under the real cursor
+            POINT rp = realCursor();
+            if (ScreenToClient(hwnd, &rp) && rp.x >= 0 && rp.y >= 0 && rp.x < rc.right && rp.y < rc.bottom) {
+                if (tLiveMouse) ++gPointerReadings;
+                ix = rp.x;
+                iy = rp.y;
+                return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, 1);
+            }
+        }
         if (tLiveMouse) {
             // the scene follows the real cursor: after a click GameInput's absolute position repeats the point we gave
             // the hidden screen (not where the pointer is)
@@ -1350,6 +1365,13 @@ bool remapAbs(int64_t& ax, int64_t& ay) {
         if (gMatchClient >= 3) gMsSpace = 2;
         else if (gMatchScreen >= 3) gMsSpace = 1;
         if (gMsSpace == 0) return false;
+    }
+    if (gEnabled.load(std::memory_order_relaxed)) { // the reading's own position can lag or repeat a point the game was
+        // given: the panel is aimed with the system cursor the player sees, so that is what gets remapped (its space)
+        POINT cur = realCursor();
+        if (gMsSpace == 2) ScreenToClient(h, &cur);
+        ax = cur.x;
+        ay = cur.y;
     }
     if (gMsSpace == 2) {
         RECT rc;
