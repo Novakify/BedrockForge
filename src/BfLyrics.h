@@ -72,4 +72,41 @@ struct BfLyricFrameV1 {
 /// Copy the current frame. hdr may not be null; dst may be null (header only). Returns glyphs copied.
 BF_LYRICS_EXPORT uint32_t BF_CopyLyricFrame(BfLyricFrameV1* hdr, BfGlyphV1* dst, uint32_t capacity);
 typedef uint32_t (*BF_CopyLyricFrame_t)(BfLyricFrameV1*, BfGlyphV1*, uint32_t);
+// ---------------------------------------------------------------- live sky (LyricsFlow 2.1 WorldSky), v1
+// The dome is shaders/live_sky (parameter row + 4 floats); everything else WorldSky draws (stars, constellations,
+// shooting stars, lightning, weather particles) comes as quads, 4 vertices each, camera-relative.
+enum BfSkyVertFlags : uint32_t {
+    BF_SKY_WORLD  = 1u << 0, // pos in blocks around the camera (weather); else a unit direction (sky distance = 1)
+    BF_SKY_SPRITE = 1u << 1, // sample spritesFile (256x64: petal, snow, glow, streak) * colour; else flat colour
+};
+/// One quad corner. 32 bytes. Colour RGBA8 with R in the low byte, straight alpha.
+struct BfSkyVertV1 {
+    float    pos[3];
+    float    uv[2];
+    uint32_t color;
+    uint32_t flags; // BfSkyVertFlags (same on all 4 corners)
+    float    _pad;
+};
+static_assert(sizeof(BfSkyVertV1) == 32, "BfSkyVertV1 layout is shared with RF");
+
+struct BfSkyFrameV1 {
+    uint32_t size;        // sizeof(BfSkyFrameV1) (caller sets it)
+    uint32_t version;     // 1
+    uint32_t active;      // 1 while a LyricsFlow sky replaces Bedrock's
+    uint32_t frame;       // increments every BF frame
+    uint8_t  params[16][4]; // live_sky parameter row (16 x 1 RGBA8), LiveSkyShader.params byte layout
+    float    info[4];     // x = shader time (UV0.x), y = brightness (Color.r * 2), z = alpha (Color.a), w = 0
+    uint32_t picture;     // 1 = draw pictureFile as an equirectangular panorama instead of the dome
+    float    pictureAlpha, pictureBright;
+    uint32_t imageGeneration; // bumps when spritesFile / pictureFile change
+    float    camYaw, camPitch; // BF's camera for these quads (Minecraft degrees)
+    uint32_t vertCount;   // vertices copied (multiple of 4)
+    uint32_t vertTotal;   // vertices available
+    char     spritesFile[260];
+    char     pictureFile[260];
+};
+
+/// Copy the current sky frame. hdr may not be null; dst may be null (header only). Returns vertices copied.
+BF_LYRICS_EXPORT uint32_t BF_CopySkyFrame(BfSkyFrameV1* hdr, BfSkyVertV1* dst, uint32_t capacity);
+typedef uint32_t (*BF_CopySkyFrame_t)(BfSkyFrameV1*, BfSkyVertV1*, uint32_t);
 }
