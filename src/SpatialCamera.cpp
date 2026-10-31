@@ -211,8 +211,9 @@ bool tpSpotBlocked(Actor& actor) {
 
 // CameraUtil.adjustCameraPositionForCollision: eight rays from around the eyes (+-0.2) to around the camera spot;
 // the camera comes in to the nearest block they hit
-// anyBlock: stop at every non-air block (chests, slabs, signs...) instead of solid ones only - the wheel's front view
-// sits right in front of the face, where a non-solid block would put the camera inside it.
+// anyBlock: past the first 0.6 blocks, stop at every non-air block (chests, slabs, signs...) too, not only solid ones -
+// the wheel's front view sits right in front of the face. Close to the start only solid blocks count, so water, a
+// ladder or vine you're on, tall grass or a cobweb around the head don't pull the camera into your face.
 glm::vec3 collideCamera(Actor& actor, glm::vec3 const& eye, glm::vec3 const& target, bool anyBlock = false) {
     glm::vec3 delta = target - eye;
     float     maxD  = glm::length(delta);
@@ -228,7 +229,7 @@ glm::vec3 collideCamera(Actor& actor, glm::vec3 const& eye, glm::vec3 const& tar
             glm::vec3 p = eye + off + delta * (t / maxD);
             BlockPos  bp(int(std::floor(p.x)), int(std::floor(p.y)), int(std::floor(p.z)));
             Block const& blk = bs.getBlock(bp);
-            if (!blk.isAir() && (anyBlock || blk.mCachedComponentData->mIsSolid)) { best = t; break; }
+            if (!blk.isAir() && ((anyBlock && t > 0.6f) || blk.mCachedComponentData->mIsSolid)) { best = t; break; }
         }
     }
     return eye + delta * (best / maxD);
@@ -256,6 +257,8 @@ int               gMenuSavedPersp = -1; // client thread
 Clock::time_point gMenuLast{};          // last blend step (render prep, under gMutex)
 float             gMenuYaw = 0.0f;      // player yaw when the wheel opened (the pose doesn't follow later turns)
 bool              gMenuHaveYaw = false;
+std::atomic_bool  gMenuReset{false};    // client thread -> render prep: forget the glide (world left, spatial screen opened)
+std::atomic_int   gMenuFrom{-1};        // client thread -> render prep: perspective saved when the wheel opened (-1 none)
 
 // camera-to-world rotation for a Minecraft yaw/pitch (degrees; yaw 0 = +Z, + turns right; pitch + = down)
 glm::mat3 orient(float yawDeg, float pitchDeg) {
@@ -459,6 +462,12 @@ void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::ve
 
 // called right before LevelRendererCamera::preRenderUpdate (main/render-prep thread)
 void applyComponent() {
+    gMenuHavePos = false; // afterPreRender moves the render origin only on frames the menu camera was written (same thread)
+    if (gMenuReset.exchange(false)) {
+        std::lock_guard l(gMutex);
+        gMenuHaveYaw = false;
+        gMenuLast    = {};
+    }
     auto ci = ll::service::getClientInstance();
     if (!ci) return;
     auto* lp = ci->getLocalPlayer();
@@ -547,23 +556,40 @@ void applyComponent() {
             gMenuBlend = b;
             if (want && !gMenuHaveYaw) { gMenuYaw = yawP; gMenuHaveYaw = true; }
             if (b <= 0.0f) gMenuHaveYaw = false;
+            auto quatOf = [](float yw, float pt) {
+                glm::mat3 R = orient(yw, pt) * gC;
+                return glm::quat_cast(gConv == 2 ? glm::transpose(R) : R);
+            };
+            int const from = gMenuFrom.load();
+            if (b <= 0.0f && from == 0 && gConv) {
+                // glided back but the client thread hasn't put first person back yet (it runs later this frame): hold
+                // the eyes, or the game shows one frame of its own third-person camera
+                for (int i = 0; i < nComp; ++i) {
+                    *comps[i]->mOrientation = quatOf(yawP, pitchP);
+                    *comps[i]->mPosition    = eye;
+                }
+                gMenuPos     = eye;
+                gMenuHavePos = true;
+                applyFov(comps, nComp, false, 1.0f);
+                return;
+            }
             if (b > 0.0f && gConv) {
                 float      e  = easeInOutSine(b);
                 float      yr = gMenuYaw * kDeg;
                 glm::vec3  f(-std::sin(yr), 0.0f, std::cos(yr));                 // the way the player faces
                 glm::vec3  look = eye + glm::vec3(0.0f, -0.18f, 0.0f);           // the face, a little under the eyes
-                glm::vec3  spot = collideCamera(actor, look, look + f * 1.75f + glm::vec3(0.0f, 0.05f, 0.0f), true);
-                glm::vec3  d    = look - spot;
-                float      len  = std::max(glm::length(d), 1e-3f);
-                float      cy   = std::atan2(-d.x, d.z) / kDeg;                  // camera yaw / pitch (looking back at you)
-                float      cp   = std::asin(std::clamp(-d.y / len, -1.0f, 1.0f)) / kDeg;
-                auto       quatOf = [](float yw, float pt) {
-                    glm::mat3 R = orient(yw, pt) * gC;
-                    return glm::quat_cast(gConv == 2 ? glm::transpose(R) : R);
-                };
-                glm::quat  qn = glm::slerp(quatOf(yawP, pitchP), quatOf(cy, cp), e);
-                glm::vec3  cpos = eye + (spot - eye) * e;
-                glm::vec3 const gamePos = pos; // the game's own camera this frame, before the override
+                glm::vec3  aim  = f * 1.75f + glm::vec3(0.0f, 0.05f, 0.0f);
+                glm::vec3  spot = collideCamera(actor, look, look + aim, true);
+                // look straight back along the aim line (not spot -> look: a camera pulled in close would turn wildly)
+                float      cy   = std::atan2(aim.x, -aim.z) / kDeg;
+                float      cp   = std::asin(std::clamp(aim.y / glm::length(aim), -1.0f, 1.0f)) / kDeg;
+                // glide from where the camera was: the eyes in first person, the game's own camera in third person
+                glm::vec3 const gamePos = pos; // the game's camera this frame, before the override
+                glm::quat const gameQ   = q;
+                bool const      fromFp  = from <= 0;
+                glm::quat  qn   = glm::slerp(fromFp ? quatOf(yawP, pitchP) : gameQ, quatOf(cy, cp), e);
+                glm::vec3  base = fromFp ? eye : gamePos;
+                glm::vec3  cpos = base + (spot - base) * e;
                 for (int i = 0; i < nComp; ++i) {
                     *comps[i]->mOrientation = qn;
                     *comps[i]->mPosition    = cpos;
@@ -576,27 +602,13 @@ void applyComponent() {
                 static int logged = 0; // one line per open (when the glide lands) -> logs/uicapture/menu_camera.txt
                 if (b >= 1.0f && !logged) {
                     logged = 1;
-                    char  t[2048];
-                    auto& bs = actor.getDimensionBlockSource();
-                    auto  blockAt = [&](glm::vec3 p) {
-                        Block const& k = bs.getBlock(BlockPos(int(std::floor(p.x)), int(std::floor(p.y)), int(std::floor(p.z))));
-                        return k.isAir() ? 0 : (k.mCachedComponentData->mIsSolid ? 2 : 1);
-                    };
+                    char t[768];
                     std::snprintf(t, sizeof t,
-                                  "menu camera: feet %.2f %.2f %.2f yaw %.1f pitch %.1f conv %d comps %d\n"
-                                  "  eye %.2f %.2f %.2f spot %.2f %.2f %.2f dist %.2f cam yaw %.1f pitch %.1f\n"
-                                  "  game camera pos %.2f %.2f %.2f; block at spot %d, eye %d (0 air 1 non-solid 2 solid)\n",
-                                  feet.x, feet.y, feet.z, yawP, pitchP, gConv, nComp, eye.x, eye.y, eye.z, spot.x, spot.y, spot.z,
-                                  glm::length(spot - look), cy, cp, gamePos.x, gamePos.y, gamePos.z, blockAt(spot), blockAt(eye));
-                    size_t n = std::strlen(t);
-                    n += std::snprintf(t + n, sizeof t - n, "  render origin (last frame) %.2f %.2f %.2f -> %.2f %.2f %.2f writes %ld\n  blocks around spot (y-1..y+1 rows, z-1..z+1, x-1..x+1):",
-                                       gRcBefore[0], gRcBefore[1], gRcBefore[2], gRcAfter[0], gRcAfter[1], gRcAfter[2], gRcWrites);
-                    for (int dy = -1; dy <= 1; ++dy) {
-                        n += std::snprintf(t + n, sizeof t - n, " |");
-                        for (int dz = -1; dz <= 1; ++dz) for (int dx = -1; dx <= 1; ++dx)
-                            n += std::snprintf(t + n, sizeof t - n, "%d", blockAt(spot + glm::vec3(float(dx), float(dy), float(dz))));
-                    }
-                    std::snprintf(t + n, sizeof t - n, "\n");
+                                  "menu camera: feet %.2f %.2f %.2f yaw %.1f pitch %.1f conv %d comps %d from perspective %d\n"
+                                  "  camera %.2f %.2f %.2f (%.2f from the face) yaw %.1f pitch %.1f; game camera %.2f %.2f %.2f\n"
+                                  "  render origin last frame %.2f %.2f %.2f\n",
+                                  feet.x, feet.y, feet.z, yawP, pitchP, gConv, nComp, from, spot.x, spot.y, spot.z, glm::length(spot - look),
+                                  cy, cp, gamePos.x, gamePos.y, gamePos.z, gRcBefore[0], gRcBefore[1], gRcBefore[2]);
                     rf::uicapture::writeText("menu_camera.txt", t);
                 }
                 if (b < 1.0f && !want) logged = 0;
@@ -765,8 +777,7 @@ void afterPreRender(Vec3* cameraPos, Vec3* targetPos) {
     if (!cameraPos) return;
     gRcBefore[0] = cameraPos->x; gRcBefore[1] = cameraPos->y; gRcBefore[2] = cameraPos->z;
     if (targetPos) { gRcTarget[0] = targetPos->x; gRcTarget[1] = targetPos->y; gRcTarget[2] = targetPos->z; }
-    bool const menu = gMenuHavePos && gMenuBlend.load() > 0.0f && !gActive.load();
-    if (!menu) gMenuHavePos = false;
+    bool const menu = gMenuHavePos && !gActive.load(); // set by applyComponent this frame only
     if (!menu && (!gCineHavePos || !rf::cine::active())) return;
     glm::vec3 const want = menu ? gMenuPos : gCinePos;
     Vec3 d{want.x - cameraPos->x, want.y - cameraPos->y, want.z - cameraPos->z};
@@ -964,6 +975,13 @@ void setActive(bool on, bool inventory) {
     auto ci = ll::service::getClientInstance();
     if (on && !gActive.load()) {
         if (!cfg().enabled) return;
+        if (gMenuSavedPersp >= 0) { // a screen opened while the menu camera was still out front: drop the glide and
+            if (ci) ci->getOptions().setPlayerViewPerspective(gMenuSavedPersp); // give back the real perspective first
+            gMenuSavedPersp = -1;
+            gMenuFrom       = -1;
+            gMenuBlend      = 0.0f;
+            gMenuReset      = true;
+        }
         {   // ConfigProfiles rules: exact screen, its category, then "#all"
             std::string prof = ruleFor(gOpenName);
             if (prof.empty()) prof = ruleFor(gOpenPause ? "#pause" : gOpenInv ? "#inventory" : "#containers");
@@ -1042,17 +1060,24 @@ void requestSwing() { if (gActive.load() && gFirstPerson.load() && cfg().swingAr
 void clientTick() {
     {   // BF glass menu wheel: third person while the camera is round the front (restored after the glide back)
         auto  fn   = bfMenuCam();
-        bool  want = fn && fn() == 1 && !gActive.load() && !gClosing.load();
-        gMenuWant  = want;
-        auto  ci   = ll::service::getClientInstance();
-        if (ci && want && gMenuSavedPersp < 0) {
+        auto  ci    = ll::service::getClientInstance();
+        bool  world = ci && ci->getLocalPlayer();
+        bool  want  = world && fn && fn() == 1 && !gActive.load() && !gClosing.load();
+        gMenuWant   = want;
+        if (!world) { // left the world (or no client): no glide back to wait for, put the perspective back now
+            if (ci && gMenuSavedPersp >= 0) ci->getOptions().setPlayerViewPerspective(gMenuSavedPersp);
+            if (gMenuSavedPersp >= 0 || gMenuBlend.load() > 0.0f) gMenuReset = true;
+            gMenuSavedPersp = -1;
+            gMenuBlend      = 0.0f;
+        } else if (want && gMenuSavedPersp < 0) {
             auto& o         = ci->getOptions();
             gMenuSavedPersp = o.getPlayerViewPerspective();
             if (gMenuSavedPersp == 0) o.setPlayerViewPerspective(1);
-        } else if (ci && !want && gMenuSavedPersp >= 0 && gMenuBlend.load() <= 0.0f) {
+        } else if (!want && gMenuSavedPersp >= 0 && gMenuBlend.load() <= 0.0f) {
             ci->getOptions().setPlayerViewPerspective(gMenuSavedPersp);
             gMenuSavedPersp = -1;
         }
+        gMenuFrom = gMenuSavedPersp;
     }
     if (gSwingReq.exchange(false)) {
         if (auto ci = ll::service::getClientInstance())
