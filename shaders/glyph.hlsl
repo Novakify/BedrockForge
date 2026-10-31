@@ -149,7 +149,9 @@ float4 PSGlyph(V2P i) : SV_Target {
         float2 q      = abs(i.uv - 0.5) * 2.0 * halfPx - (halfPx - r);
         float  d      = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
         if (g.flags & F_GLASS) return glassShade(g, d, i.pos.xy, fillC, k);
-        float  a      = saturate(0.5 - d / max(1.0, g.glowW)) * fillC.a;
+        // soft edge (glowW > 1.5 px: glows / shadows): fade to 0 exactly at the quad's edge, full at glowW px inside
+        // (the old 0.5 - d / glowW left alpha 0.5 at the edge, a hard rectangle around every glow)
+        float  a      = (g.glowW > 1.5 ? saturate(-d / g.glowW) : saturate(0.5 - d / max(1.0, g.glowW))) * fillC.a;
         return float4(fillC.rgb * a, a) * k;
     }
 
