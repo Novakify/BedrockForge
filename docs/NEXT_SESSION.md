@@ -686,3 +686,4 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Moving the game window between the user's two monitors crashed the game (0xC0000409, logs/crash/trace_2026-10-30_22-05-40.log). Not analyzed yet.
 - Crafting table: Cinematic reach is 3.5 (e60).
 - IMPORTANT: LyricsFlow's RF code (lyricsflow/rf-on-cinematic-v3) is now merged into `cinematic` (933a73c, e64). Builds from `cinematic` without it remove LyricsFlow (e60-e63 did that). Any session working on RF must build from a branch that has both, and merge before installing.
+- e65 (1d1cc67): Cinematic and Spatial GUI hover and clicks now use the system cursor instead of GameInput's absolute position. In the user's session GameInput mostly repeated the hidden-screen point: 24573 echoes against 425 real readings. That gave a stale hover, presses landing on -1, and a flickering drawer. Not tested live yet. Still open: the user's "UI hotbar on the top" in Spatial GUI (need a screenshot).
