@@ -678,3 +678,10 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Likely cause: the ray-pick in SpatialPanel.cpp remapClient does not match the drawn quad (toClip / computeGeom / aspect). Next: calibrate by drawing a test marker at the remapped point, or compare toClip(corners) with remapClient inverse for the four corners.
 - Not done: screen detection (panel for inventory/chest/crafting only), chest and crafting captures, Cinematic prompt.
 - PC state: v0.4 DLL active, uiCaptureSpike true, game still running with the panel on. Stable DLL 5246159 on disk for rollback (config backup RendererFoundation.json.bak-stable).
+
+## 2026-10-30 late: inventory misalignment / FOV (RF e61-e63, cinematic e8fb32f)
+- The FOV narrowing never applied before e62. preCamera matched the world camera by position, which is stale before the update. It now matches the camera that onCamera picked. With the user's FOV 110 the panel was ~2.5x too big and partly off screen, and the parallax swung it a lot. That is the likely "hit boxes off" feel. Hover and click were aligned at rest when tested in the lyric world.
+- e63: the window texture is drawn 1:1 (guiMag 1 with auto GUI scale). Bedrock screens already fill about Java's share of the window.
+- Not yet checked visually on e63: the panel should now fit on screen. Re-check the inventory, a chest and the pause screen.
+- Moving the game window between the user's two monitors crashed the game (0xC0000409, logs/crash/trace_2026-10-30_22-05-40.log). Not analyzed yet.
+- Crafting table: Cinematic reach is 3.5 (e60).
