@@ -447,7 +447,8 @@ void registerBuiltins() {
         .slider("refraction", "Glass refraction", 1, 0, 2.5f, 0.05f)
         .slider("frost", "Frost tint", 1, 0, 2, 0.05f)
         .toggleSetting("wheel", "Open with the wheel", true)
-        .toggleSetting("worldblur", "Blur the world", true);
+        .toggleSetting("worldblur", "Blur the world", true)
+        .toggleSetting("camswing", "Camera swing", true);
 }
 
 // ============================================================================ runtime

@@ -42,9 +42,9 @@ enum BfGlyphFlags : uint32_t {
 /// low byte (0xAABBGGRR), straight (not premultiplied) alpha.
 struct BfGlyphV1 {
     float    pos[3];     // quad centre, world units relative to BfLyricFrameV1::origin
-    float    _pad0;
+    float    _pad0;      // clip: _pad0 / _pad1 = top / bottom of a vertical clip band in screen y (0..1 down), used
     float    right[3];   // half-extent vector along the glyph's +x
-    float    _pad1;
+    float    _pad1;      // when _pad1 > _pad0 (BF menu scroll areas; RF fades the glyph out over 10 px at the band edges)
     float    up[3];      // half-extent vector along the glyph's +y
     float    _pad2;
     float    uv[4];      // atlas rect u0, v0 (top), u1, v1 (bottom), 0..1

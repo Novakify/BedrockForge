@@ -72,7 +72,10 @@ View        gView     = View::Wheel;
 Page        gPage     = Page::Mods;
 int         gTab      = 0;
 std::string gModPage;            // module shown on Page::ModSettings
-float       gScroll   = 0;       // design px
+float       gScroll   = 0;       // design px: scroll target (the wheel moves it, pages clamp it)
+float       gScrollAt = 0;       // design px: where the list is drawn, eased towards gScroll every frame
+int64_t     gScrollMs = 0;
+std::atomic<int64_t> gCamUntilMs{0}; // BF_ClientMenuCamera: RF swings the camera round to the player until then
 int64_t     gViewAtMs = 0;       // when the current view started (open / switch animation)
 std::string gDrag;               // slider being dragged ("<module>/<setting>")
 std::string gToast;
@@ -88,6 +91,7 @@ void closeMenu() { // caller holds gMutex
     gDrag.clear();
     gHeld = false;
     lyr::FrameStore::get().setOverlay({});
+    gCamUntilMs = 0;
 }
 bool ownsTop() { return gClient && gScene && Clock::now() - gDialogSeen < std::chrono::milliseconds(250); }
 
@@ -95,8 +99,9 @@ Module* uiModule() { return Registry::get().find("client_ui"); }
 float   look(char const* id, float fallback) { auto* m = uiModule(); return m ? m->num(id, fallback) : fallback; }
 bool    lookOn(char const* id, bool fallback) { auto* m = uiModule(); return m ? m->flag(id, fallback) : fallback; }
 
-void setView(View v) { gView = v; gViewAtMs = nowMs(); gScroll = 0; }
-void showPage(Page p) { gPage = p; gScroll = 0; if (gView != View::Window) setView(View::Window); }
+void resetScroll() { gScroll = gScrollAt = 0; }
+void setView(View v) { gView = v; gViewAtMs = nowMs(); resetScroll(); }
+void showPage(Page p) { gPage = p; resetScroll(); if (gView != View::Window) setView(View::Window); }
 void toast(std::string s) { gToast = std::move(s); gToastMs = nowMs(); }
 
 // ---------------------------------------------------------------- theme (neon purple + white)
@@ -114,14 +119,16 @@ struct Gfx {
     float blurK = 1, refrK = 1, tintK = 1;
     lyr::win::ClientUiAssets a;
     std::vector<BfGlyphV1> shapes, top; // top = icons + text, drawn after every shape
+    float clipTop = 0, clipBot = 0;     // design px; clipBot > clipTop = everything placed now is cut to that band (RF fades the edges)
 
-    static void place(BfGlyphV1& q, float cx, float cy, float hw, float hh) {
+    void place(BfGlyphV1& q, float cx, float cy, float hw, float hh) const {
         q.pos[0]   = cx / kH;
         q.pos[1]   = cy / kH;
         q.right[0] = hw / kH;
         q.up[1]    = -hh / kH; // screen y grows downwards; +up = towards the top
         q.uv[0] = 0; q.uv[1] = 0; q.uv[2] = 1; q.uv[3] = 1;
         q.flags |= BF_GLYPH_SCREEN;
+        if (clipBot > clipTop) { q._pad0 = clipTop / kH; q._pad1 = clipBot / kH; }
     }
     void backdrop(float cx, float cy, float clearR, float feather, float blur, float dark, float alpha) {
         BfGlyphV1 q{};
@@ -248,6 +255,30 @@ struct UiFrame {
     std::vector<Hit>  hits;
     float             mx = -1, my = -1; // pointer (design px)
     bool over(float x, float y, float w, float h) const { return inside(mx, my, x, y, w, h); }
+};
+
+// Everything drawn while a ClipBand lives is cut to [top, bot] (design px), and so are the click areas added meanwhile.
+struct ClipBand {
+    UiFrame& f;
+    float    top, bot;
+    size_t   hit0;
+    bool     live = true;
+    ClipBand(UiFrame& fr, float t, float b) : f(fr), top(t), bot(b), hit0(fr.hits.size()) { f.g.clipTop = t; f.g.clipBot = b; }
+    void done() {
+        if (!live) return;
+        live = false;
+        f.g.clipTop = f.g.clipBot = 0;
+        std::vector<Hit> keep(f.hits.begin(), f.hits.begin() + std::ptrdiff_t(hit0));
+        for (size_t i = hit0; i < f.hits.size(); ++i) {
+            Hit h = f.hits[i];
+            float y0 = std::max(h.y, top), y1 = std::min(h.y + h.h, bot);
+            if (y1 - y0 < 2) continue;
+            h.y = y0; h.h = y1 - y0;
+            keep.push_back(std::move(h));
+        }
+        f.hits = std::move(keep);
+    }
+    ~ClipBand() { done(); }
 };
 
 // a toggle switch at (x, y): 34 x 19
@@ -411,12 +442,14 @@ void drawMods(UiFrame& f, Win const& w, float a) {
     float const colW = (w.mainW - 12 - 8) / 2, rowH = 42, gap = 10;
     float const contentH = float((list.size() + 1) / 2) * (rowH + gap);
     gScroll = std::clamp(gScroll, 0.0f, std::max(0.0f, contentH - w.bodyH));
+    gScrollAt = std::clamp(gScrollAt, -60.0f, std::max(0.0f, contentH - w.bodyH) + 60.0f);
+    ClipBand clip(f, w.bodyY - 2, w.bodyY + w.bodyH + 2);
     if (list.empty()) g.text(gSearch.empty() ? "Nothing pinned yet: middle-click a module to pin it here." : "No modules match \"" + gSearch + "\".",
                              w.mainX + 4, w.bodyY + 16, 13, rgba(kLilac, 0.62f), a);
     for (size_t i = 0; i < list.size(); ++i) {
         Module* m = list[i];
-        float   x = w.mainX + 2 + float(i % 2) * (colW + 12), y = w.bodyY + 2 + float(i / 2) * (rowH + gap) - gScroll;
-        if (y < w.bodyY - 1 || y + rowH > w.bodyY + w.bodyH + 1) continue; // whole rows only (glyphs can't be clipped)
+        float   x = w.mainX + 2 + float(i % 2) * (colW + 12), y = w.bodyY + 2 + float(i / 2) * (rowH + gap) - gScrollAt;
+        if (y + rowH < w.bodyY - 2 || y > w.bodyY + w.bodyH + 2) continue; // rows partly in view are cut by the clip band
         bool const on  = m->enabled && !m->planned;
         float const hv = f.over(x, y, colW, rowH) ? 1.0f : 0.0f;
         pillGlass(g, x, y, colW, rowH, 12, on, a, hv);
@@ -442,16 +475,20 @@ void drawMods(UiFrame& f, Win const& w, float a) {
     }
 }
 
-// Sub-page scrolling: rows under the page header move with the wheel (gScroll); rows that would stick out of the
-// body are skipped (glyphs can't be clipped). Call fits() before drawing a row, end() once with the content bottom.
+// Sub-page scrolling: rows under the page header slide with the eased scroll (gScrollAt); rows partly in view are
+// cut by the clip band. Call fits() before drawing a row (false = fully out of view, skip), end() once at the bottom.
 struct Scroller {
     Win const& w;
     float      top, y;
-    explicit Scroller(Win const& win) : w(win), top(win.bodyY + 44), y(win.bodyY + 44 - gScroll) {}
-    bool fits(float h) const { return y >= top - 1 && y + h <= w.bodyY + w.bodyH + 1; }
-    void end() const {
-        float content = y + gScroll - top;
-        gScroll = std::clamp(gScroll, 0.0f, std::max(0.0f, content - (w.bodyY + w.bodyH - top)));
+    ClipBand   clip;
+    Scroller(UiFrame& f, Win const& win)
+        : w(win), top(win.bodyY + 44), y(win.bodyY + 44 - gScrollAt), clip(f, win.bodyY + 40, win.bodyY + win.bodyH + 2) {}
+    bool fits(float h) const { return y + h >= top - 4 && y <= w.bodyY + w.bodyH + 2; }
+    void end() {
+        float content = y + gScrollAt - top, mx = std::max(0.0f, content - (w.bodyY + w.bodyH - top));
+        gScroll   = std::clamp(gScroll, 0.0f, mx);
+        gScrollAt = std::clamp(gScrollAt, -60.0f, mx + 60.0f);
+        clip.done();
     }
 };
 
@@ -461,7 +498,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, m->name, m->planned ? m->description + " - on the roadmap." : m->description, a, m->planned ? -1 : (m->enabled ? 1 : 0),
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
-    Scroller sc(w);
+    Scroller sc(f, w);
     if (m->id == "lyricsflow") {
         if (sc.fits(50)) {
             row(f, x, sc.y, wd, 50, "Open the LyricsFlow panel", "The glass settings panel in the world (also: L in game)", a);
@@ -488,7 +525,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
 void drawShaders(UiFrame& f, Win const& w, float a) {
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, "Shaderpacks", "The game loads shaders at startup: a new pick applies after a restart.", a);
-    Scroller sc(w);
+    Scroller sc(f, w);
     auto packs = shaderpacks::listPacks();
     packs.insert(packs.begin(), "off");
     std::string const active = shaderpacks::activePack();
@@ -517,7 +554,7 @@ void drawClient(UiFrame& f, Win const& w, float a) {
     if (!m) return;
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, "Client", "How the glass looks. Presets set blur, refraction and frost together.", a);
-    Scroller sc(w);
+    Scroller sc(f, w);
     y = sc.y;
     // presets
     struct Pre { char const* n; float b, r, t; };
@@ -547,7 +584,8 @@ void drawClient(UiFrame& f, Win const& w, float a) {
     }
     struct Tg { char const* id; char const* t; char const* d; };
     for (Tg const tg : {Tg{"wheel", "Open with the wheel", "Right Shift shows the 4-button wheel first; off opens Mods directly"},
-                        Tg{"worldblur", "Blur the world", "Frost the whole world behind the wheel and the window"}}) {
+                        Tg{"worldblur", "Blur the world", "Frost the whole world behind the wheel and the window"},
+                        Tg{"camswing", "Camera swing", "The camera swings round to face your player while the wheel is up"}}) {
         if (auto* s = m->setting(tg.id); s && sc.fits(50)) toggleRow(f, x, sc.y, wd, tg.t, tg.d, s->on, a, [s] { s->on = !s->on; Registry::get().save(); });
         sc.y += 58;
     }
@@ -617,7 +655,7 @@ void drawWindow(UiFrame& f, float t) {
     pillGlass(g, bx, ty, 34, 30, 15, false, a, f.over(bx, ty, 34, 30) ? 1.0f : 0.0f);
     g.icon("back", bx + 17, ty + 15, 17, rgba(kWhite, 0.85f), a);
     f.hits.push_back({bx, ty, 34, 30, [](bool) {
-        if (gPage != Page::Mods) { gPage = Page::Mods; gScroll = 0; }
+        if (gPage != Page::Mods) { gPage = Page::Mods; resetScroll(); }
         else if (lookOn("wheel", true)) setView(View::Wheel);
         else closeMenu();
     }});
@@ -682,6 +720,13 @@ void render(ScreenView& view) {
 
     int64_t const now = nowMs();
     float const   t   = ease(float(now - gViewAtMs) / 240.0f);
+    { // smooth scroll: ease the drawn position towards the target (~90 ms time constant, frame-rate independent)
+        float dt = gScrollMs ? std::clamp(float(now - gScrollMs) / 1000.0f, 0.0f, 0.1f) : 0.0f;
+        gScrollMs = now;
+        gScrollAt += (gScroll - gScrollAt) * (1.0f - std::exp(-dt / 0.09f));
+        if (std::abs(gScroll - gScrollAt) < 0.25f) gScrollAt = gScroll;
+    }
+    gCamUntilMs = gView == View::Wheel && lookOn("camswing", true) ? now + 300 : 0;
     if (gView == View::Wheel) drawWheel(f, t);
     else drawWindow(f, t);
     drawToast(f);
@@ -724,6 +769,8 @@ void render(ScreenView& view) {
     lyr::FrameStore::get().setOverlay(std::move(out));
 }
 } // namespace
+
+int64_t camUntilMs() { return gCamUntilMs.load(); }
 
 bool isOpen() {
     std::lock_guard lock(gMutex);
@@ -813,7 +860,7 @@ void install() {
             ev.cancel();
             if (!ev.isDown()) return;
             if (!gSearch.empty()) gSearch.clear();
-            else if (gView == View::Window && gPage == Page::ModSettings) { gPage = Page::Mods; gScroll = 0; }
+            else if (gView == View::Window && gPage == Page::ModSettings) { gPage = Page::Mods; resetScroll(); }
             else closeMenu();
             return;
         }
@@ -821,9 +868,9 @@ void install() {
         ev.cancel();                                       // the menu owns the keyboard while open
         if (!ev.isDown()) return;
         if (gView == View::Wheel) return;                  // typing only in the window
-        if (k == 0x08) { if (!gSearch.empty()) gSearch.pop_back(); gScroll = 0; return; }
+        if (k == 0x08) { if (!gSearch.empty()) gSearch.pop_back(); resetScroll(); return; }
         if (gSearch.size() >= 20) return;
-        if ((k >= 0x41 && k <= 0x5A) || (k >= 0x30 && k <= 0x39)) { gSearch += char(std::tolower(k)); gScroll = 0; gPage = Page::Mods; }
+        if ((k >= 0x41 && k <= 0x5A) || (k >= 0x30 && k <= 0x39)) { gSearch += char(std::tolower(k)); resetScroll(); gPage = Page::Mods; }
         else if (k == 0x20 && !gSearch.empty()) gSearch += ' ';
     });
     gSubs.on<ll::event::MouseInputEvent>([](ll::event::MouseInputEvent& ev) {
@@ -854,3 +901,11 @@ void uninstall() {
 }
 
 } // namespace bedrock_forge::client::menu
+
+// RF (SpatialCamera.cpp) polls this: 1 while the wheel is up and "Camera swing" is on, so the camera swings round in
+// front of the player (third person) like the Blueberry wheel. Lock-free: called from RF's client tick.
+extern "C" __declspec(dllexport) int BF_ClientMenuCamera() {
+    using namespace std::chrono;
+    int64_t now = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+    return now < bedrock_forge::client::menu::camUntilMs() ? 1 : 0;
+}
