@@ -1,0 +1,7 @@
+{
+    "name": "BedrockForgeCore",
+    "entry": "BedrockForgeCore.dll",
+    "version": "0.2.0",
+    "type": "native",
+    "platform": "client"
+}
