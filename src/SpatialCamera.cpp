@@ -242,7 +242,9 @@ void noteSeen(void const* cam, glm::vec3 const& pos, float dist, float p11, bool
             gSeen[i] = {cam, {pos.x, pos.y, pos.z}, dist, p11, chosen};
             return;
         }
+    static int next = 0; // full: cameras come and go (a world reload), the oldest entry gives way
     if (gSeenN < 8) gSeen[gSeenN++] = {cam, {pos.x, pos.y, pos.z}, dist, p11, chosen};
+    else { gSeen[next] = {cam, {pos.x, pos.y, pos.z}, dist, p11, chosen}; next = (next + 1) % 8; }
 }
 
 // mce::Camera, before its derived matrices are built: while a Spatial GUI panel is up the world camera's projection is
@@ -269,7 +271,14 @@ void preCamera(mce::Camera& cam) {
     if (!persp) { ++gProjSkip[1]; return; }
     // the world camera only: before the update its position is not yet this frame's, so match the camera onCamera
     // picked as the world camera (last frame)
-    if (&cam != gWorldCam.load(std::memory_order_relaxed)) { ++gProjSkip[3]; return; }
+    // (the game cycles through several world cameras, one per frame in flight: any camera last seen as the world's)
+    bool isWorld = false;
+    {
+        std::lock_guard l(gMutex);
+        for (int i = 0; i < gSeenN; ++i)
+            if (gSeen[i].cam == &cam) { isWorld = gSeen[i].chosen; break; }
+    }
+    if (!isWorld) { ++gProjSkip[3]; return; }
     // the game may keep last frame's matrix: a matrix we wrote is narrowed from the vanilla one we saw, not again
     if (std::fabs(P[1][1] - wrote11) > 1e-6f) { base00 = P[0][0]; base11 = P[1][1]; }
     float tanNow  = 1.0f / base11;
