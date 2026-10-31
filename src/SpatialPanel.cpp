@@ -925,6 +925,17 @@ bool remapClient(HWND hwnd, int& ix, int& iy) {
         if (!gEnabled || RfOptions::showImGui) return false;
         RECT rc;
         if (!GetClientRect(hwnd, &rc) || rc.right < 1 || rc.bottom < 1) return false;
+        {   // v2: the pointer is the system cursor itself. GameInput's absolute position mostly repeats the point we
+            // gave the hidden screen (seen: 24573 echoes to 425 real readings), so following it left the hover stale and
+            // made presses miss; every way the game asks now gets the hidden point for what is under the real cursor
+            POINT rp = realCursor();
+            if (ScreenToClient(hwnd, &rp) && rp.x >= 0 && rp.y >= 0 && rp.x < rc.right && rp.y < rc.bottom) {
+                if (tLiveMouse) ++gPointerReadings;
+                ix = rp.x;
+                iy = rp.y;
+                return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, 1);
+            }
+        }
         if (tLiveMouse) {
             // the scene follows the real cursor: after a click GameInput's absolute position repeats the point we gave
             // the hidden screen (not where the pointer is)
@@ -1354,6 +1365,13 @@ bool remapAbs(int64_t& ax, int64_t& ay) {
         if (gMatchClient >= 3) gMsSpace = 2;
         else if (gMatchScreen >= 3) gMsSpace = 1;
         if (gMsSpace == 0) return false;
+    }
+    if (gEnabled.load(std::memory_order_relaxed)) { // the reading's own position can lag or repeat a point the game was
+        // given: the panel is aimed with the system cursor the player sees, so that is what gets remapped (its space)
+        POINT cur = realCursor();
+        if (gMsSpace == 2) ScreenToClient(h, &cur);
+        ax = cur.x;
+        ay = cur.y;
     }
     if (gMsSpace == 2) {
         RECT rc;
