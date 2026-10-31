@@ -687,3 +687,11 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Crafting table: Cinematic reach is 3.5 (e60).
 - IMPORTANT: LyricsFlow's RF code (lyricsflow/rf-on-cinematic-v3) is now merged into `cinematic` (933a73c, e64). Builds from `cinematic` without it remove LyricsFlow (e60-e63 did that). Any session working on RF must build from a branch that has both, and merge before installing.
 - e65 (1d1cc67): Cinematic and Spatial GUI hover and clicks now use the system cursor instead of GameInput's absolute position. In the user's session GameInput mostly repeated the hidden-screen point: 24573 echoes against 425 real readings. That gave a stale hover, presses landing on -1, and a flickering drawer. Not tested live yet. Still open: the user's "UI hotbar on the top" in Spatial GUI (need a screenshot).
+
+## 2026-10-31 ~2 AM (RF e66 = cinematic 9b24e26, includes LyricsFlow d68a690)
+- Spatial GUI: only the container screen is on the panel. Everything else stays flat: the HUD, the BF HUD text, WASD, the lyrics bar. The screen's bounds come from its visual tree (ScreenWatch → noteScreenBounds; shader c10.z inverts c6). Verified in game.
+- Crafting table opens as Cinematic from ~2 blocks. Verified.
+- The Cinematic drawer at the top matches Java (ClientStation: "the inventory drawer shows at the top of the frame").
+- OPEN: crafting table drawer → grid drag doesn't place items. The press log shows the click routed to the hidden slot (target 26 → 2436,1076, then grid target 4), but nothing moves. Never seen working in my sessions (cells full always 000000000). Loom drawer pick/place works. Investigate the hidden crafting_screen click handling.
+- An A/B run with old-e64 (933a73c) froze the game on F9 at the crafting table (hung, not crashed).
+- Crash at 01:43 (trace_2026-10-31_01-43-07) when the user turned a monitor off: same family as the window-move crash. Not analyzed.
