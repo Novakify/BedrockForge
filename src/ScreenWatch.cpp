@@ -67,7 +67,7 @@ LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, 
                         if (!c || !c->mIsVisibleInTree) continue;
                         glm::vec2 sz = c->mSize, pos = c->mCachedPosition;
                         // something drawn, smaller than the window (full-window backgrounds / dims are not the screen)
-                        if (!c->mRenderableComponentLookup.empty() && sz.x > 0.5f && sz.y > 0.5f && sz.x < vs.x * 0.9f &&
+                        if (!c->mRenderableComponentLookup->empty() && sz.x > 0.5f && sz.y > 0.5f && sz.x < vs.x * 0.9f &&
                             sz.y < vs.y * 0.9f && pos.x > -vs.x && pos.y > -vs.y && pos.x < 2 * vs.x && pos.y < 2 * vs.y) {
                             b[0] = std::min(b[0], pos.x / vs.x);
                             b[1] = std::min(b[1], pos.y / vs.y);
@@ -75,7 +75,7 @@ LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, 
                             b[3] = std::max(b[3], (pos.y + sz.y) / vs.y);
                             ok   = true;
                         }
-                        for (auto const& ch : c->mChildren) todo.push_back(ch.get());
+                        for (auto const& ch : *c->mChildren) todo.push_back(ch.get());
                     }
                 }
             }
