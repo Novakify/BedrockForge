@@ -400,6 +400,8 @@ long   gCineWrites = 0;
 // origin follows the player's eyes, not the camera component, so the scene's position goes there too (pose of the frame)
 bool   gCineHavePos = false;
 glm::vec3 gCinePos{};
+bool   gMenuHavePos = false; // BF menu wheel front view: the render origin goes to that camera too
+glm::vec3 gMenuPos{};
 float  gRcBefore[3] = {}, gRcAfter[3] = {}, gRcTarget[3] = {};
 long   gRcWrites = 0;
 float  gCineFovRaw = 0, gCineFovScale = 1;
@@ -567,6 +569,8 @@ void applyComponent() {
                     *comps[i]->mPosition    = cpos;
                 }
                 gLastCamPos = cpos;
+                gMenuPos     = cpos;
+                gMenuHavePos = true;
                 gLastCam[0] = cpos.x; gLastCam[1] = cpos.y; gLastCam[2] = cpos.z;
                 gLastTarget[0] = spot.x; gLastTarget[1] = spot.y; gLastTarget[2] = spot.z;
                 static int logged = 0; // one line per open (when the glide lands) -> logs/uicapture/menu_camera.txt
@@ -761,9 +765,12 @@ void afterPreRender(Vec3* cameraPos, Vec3* targetPos) {
     if (!cameraPos) return;
     gRcBefore[0] = cameraPos->x; gRcBefore[1] = cameraPos->y; gRcBefore[2] = cameraPos->z;
     if (targetPos) { gRcTarget[0] = targetPos->x; gRcTarget[1] = targetPos->y; gRcTarget[2] = targetPos->z; }
-    if (!gCineHavePos || !rf::cine::active()) return;
-    Vec3 d{gCinePos.x - cameraPos->x, gCinePos.y - cameraPos->y, gCinePos.z - cameraPos->z};
-    cameraPos->x = gCinePos.x; cameraPos->y = gCinePos.y; cameraPos->z = gCinePos.z;
+    bool const menu = gMenuHavePos && gMenuBlend.load() > 0.0f && !gActive.load();
+    if (!menu) gMenuHavePos = false;
+    if (!menu && (!gCineHavePos || !rf::cine::active())) return;
+    glm::vec3 const want = menu ? gMenuPos : gCinePos;
+    Vec3 d{want.x - cameraPos->x, want.y - cameraPos->y, want.z - cameraPos->z};
+    cameraPos->x = want.x; cameraPos->y = want.y; cameraPos->z = want.z;
     if (targetPos) { targetPos->x += d.x; targetPos->y += d.y; targetPos->z += d.z; }
     gRcAfter[0] = cameraPos->x; gRcAfter[1] = cameraPos->y; gRcAfter[2] = cameraPos->z;
     ++gRcWrites;
