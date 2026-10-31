@@ -45,7 +45,7 @@ def registry(tmp, all_classes):
         if b"EntityType" not in raw: continue
         dis = C.javap(tmp, cls); C.bootstrap_targets(C.javap(tmp, cls, verbose=True)); boot = dict(C.FULL_TARGETS)
         for code in C.parse_methods(dis).values():
-            last_str, i = None, 0
+            last_str, i, last_id = None, 0, None
             while i < len(code):
                 off, op, rest = code[i]
                 v = C.const_of(op, rest) if op.startswith(("ldc", "iconst", "bipush", "sipush", "fconst")) else None
@@ -63,7 +63,9 @@ def registry(tmp, all_classes):
                                 if isinstance(f, str) and re.fullmatch(r"[a-z0-9_]+", f) and not after_str: after_str = f
                             if op2 == "invokedynamic": break       # next registration
                         eid = last_str or after_str               # helper(id, F::new, ...) or Builder.of(F::new).sized(..).build(id)
-                        if eid: out.setdefault(eid, {"class": t[1], "size": floats[:2] or None, "category": cat})
+                        if eid: out.setdefault(eid, {"class": t[1], "size": floats[:2] or None, "category": cat}); last_id = eid
+                if op == "putstatic" and last_id and ("RegistryObject" in rest or "EntityType" in rest or "Supplier" in rest):
+                    out[last_id].setdefault("field", C.member(rest)[1]); last_id = None
                 i += 1
     return out
 
@@ -152,6 +154,81 @@ def renderer_info(tmp, cls, modid, names):
             "renderer_textures": [f"assets/{modid}/{t}" if ":" not in t else f"assets/{t.split(':')[0]}/{t.split(':')[1]}" for t in tex]}
 
 
+def string_switch(code):
+    """javac's switch on a String (hashCode + equals + tableswitch) -> {string: static field read in that case}."""
+    idx, pending, cases, fields_by_case = {}, None, {}, {}
+    for i, (off, op, rest) in enumerate(code):
+        if op.startswith("ldc"):
+            v = C.const_of(op, rest)
+            if isinstance(v, str) and i + 1 < len(code) and C.member(code[i + 1][2])[1] == "equals": pending = v
+        if pending and (op.startswith("iconst_") or op == "bipush") and i > 1 and code[i - 1][1] == "ifeq":
+            idx[pending] = int(op.split("_")[1]) if op.startswith("iconst_") and op[-1].isdigit() else int(rest.strip().split()[0]); pending = None
+    sw = next((i for i, (_, op, _) in enumerate(code) if op == "tableswitch"), None)
+    if sw is None or not idx: return {}
+    for off, op, rest in code[sw + 1:]:
+        if not op.isdigit(): break
+        cases[int(off)] = int(op)
+    offs = {off: i for i, (off, _, _) in enumerate(code)}
+    for n, target in cases.items():
+        j = offs.get(target)
+        if j is None: continue
+        for off, op, rest in code[j:j + 4]:
+            if op == "getstatic" and "ResourceLocation" in rest: fields_by_case[n] = C.member(rest)[1]; break
+    return {sname: fields_by_case[n] for sname, n in idx.items() if n in fields_by_case}
+
+
+def layer_info(tmp, cls, modid, names, ctor_textures=()):
+    """Custom GeoRenderLayer -> [{"when", "texture"}]: every path through render() that draws a texture, with its condition."""
+    dis = C.javap(tmp, cls); ms = C.parse_methods(dis); C.bootstrap_targets(C.javap(tmp, cls, verbose=True))
+    def asset(x):
+        if not x: return None
+        full = f"assets/{x.split(':', 1)[0]}/{x.split(':', 1)[1]}" if ":" in x else f"assets/{modid}/{x}"
+        if "*" in full:
+            rx = re.compile("^" + re.escape(full).replace("\\*", ".*") + "$"); hits = sorted((n for n in names if rx.match(n)), key=len)
+            return hits[0] if hits else None
+        return full if full in names else None
+    # static ResourceLocation fields: <clinit> string -> putstatic
+    fields, last = {}, None
+    for off, op, rest in ms.get("<clinit>", []):
+        if op.startswith("ldc"):
+            v = C.const_of(op, rest)
+            if isinstance(v, str) and (".png" in v or "textures/" in v): last = v
+        if op == "invokedynamic":
+            mk = re.search(r"InvokeDynamic #(\d+):", rest)
+            if mk and C.CONCAT.get(int(mk.group(1))): last = C.CONCAT[int(mk.group(1))]
+        if op == "putstatic" and "ResourceLocation" in rest and last: fields[C.member(rest)[1]] = last; last = None
+    rows, reserved = [], {}
+    for mname, code in ms.items():
+        if not mname.startswith("render"): continue
+        sw = string_switch(code)
+        if sw and "m_7755_" in " ".join(r for _, _, r in code):     # skins chosen by the mob's name (Tortoise TMNT)
+            for sname, f in sw.items():
+                t = asset(fields.get(f))
+                if t:
+                    var = "v.gb_name_" + re.sub("[^a-z0-9]", "", sname.lower())[:20]
+                    C.RESERVED_INFO[var] = {"java": "m_7755_.getString.equals", "chain": ["m_7755_", "getString", "equals"],
+                                            "consts": [sname], "fields": [], "case_sensitive": True}
+                    rows.append({"when": f"({var})", "texture": t, "name": sname})
+            if rows: break
+    for mname, code in ([] if rows else ms.items()):
+        if not mname.startswith("render") or "#" in mname and not any(op == "invokestatic" or op == "getstatic" for _, op, _ in code): continue
+        for pth in C.run_paths(code, {}):
+            texs = [asset(fields.get(r[1])) if r[0] == "field" else (ctor_textures[0] if ctor_textures else None) if r[0] == "ctor"
+                    else asset(r[1]) for r in pth.res]
+            texs = [t for t in texs if t]
+            if not texs: continue
+            terms = C.path_terms(pth.conds, reserved)
+            if terms is None: continue
+            rows.append({"when": " && ".join(terms) or "1", "texture": texs[-1]})
+        if rows: break
+    g = {}
+    for r in rows: g.setdefault(r["texture"], []).append(r["when"])
+    emissive = "m_110488_" in dis or "eyes" in dis or "Emissive" in dis or "m_234338_" in dis
+    names_ = {r["texture"]: r["name"] for r in rows if r.get("name")}
+    return [{"when": "1" if "1" in ws else " || ".join(f"({w})" for w in ws), "texture": t, **({"name": names_[t]} if t in names_ else {})}
+            for t, ws in g.items()], emissive
+
+
 def layer_textures(tmp, cls, modid, names):
     dis = C.javap(tmp, cls)
     C.bootstrap_targets(C.javap(tmp, cls, verbose=True))
@@ -220,7 +297,11 @@ def discover(jar):
         for L in ri.get("layers", []):
             if L["kind"] == "custom":
                 t = layer_textures(tmp, L["class"], modid, names)
-                layers.append({**L, "textures": t})
+                base_tex = {v["texture"] for v in mi.get("variants", [])}
+                ctor = [x for x in ri.get("renderer_textures", []) if x in names and x not in base_tex]
+                rows, emissive = layer_info(tmp, L["class"], modid, names, ctor)
+                if not rows and t: rows = [{"when": "1", "texture": x} for x in t[:1]]
+                layers.append({**L, "textures": t, "rows": rows, "emissive": emissive})
             else: layers.append(L)
         for eid in ids:
             vs = mi.get("variants") or []
@@ -237,9 +318,11 @@ def discover(jar):
                 "texture": vs[-1]["texture"] if vs else None, "variants": vs,
                 "glowmask": glowmask, "layers": layers, "name": lang.get(f"entity.{modid}.{eid}"),
                 "geo_variants": mi.get("geo_variants", []), "reserved": mi.get("reserved", {}),
-                "model_class": mi.get("model_class"), "renderer_class": ri.get("renderer_class"),
+                "model_class": mi.get("model_class"), "renderer_class": ri.get("renderer_class"), "type_field": r.get("field"),
             })
-    return {"mod_id": modid, "jar": os.path.basename(jar), "entity_count": len(entities), "entities": entities}, ctrl
+    type_fields = {v["field"]: k for k, v in reg.items() if v.get("field")}
+    return {"mod_id": modid, "jar": os.path.basename(jar), "entity_count": len(entities), "entities": entities,
+            "type_fields": type_fields, "reserved_info": {k: v for k, v in C.RESERVED_INFO.items()}}, ctrl
 
 
 def MP_jload(b):

@@ -137,7 +137,8 @@ def bake_channel(kfs, single, tol=0.05, min_samples=2, stats=None):
         dur = t1 - t0
         if dur <= 0:  # pre/post pair -> jump at the same time
             put(t1, B.v); continue
-        if ease in ("linear", "none") or all(A.v[k] == B.v[k] and not isinstance(A.v[k], str) for k in range(3)):
+        if ease in ("linear", "none") or (ease != "catmullrom" and all(A.v[k] == B.v[k] and not isinstance(A.v[k], str) for k in range(3))):
+            # (catmull-rom still moves between equal keys: its neighbours bend the curve)
             put(t1, B.v); continue
         if stats is not None: stats[ease] = stats.get(ease, 0) + 1
         if ease == "step":

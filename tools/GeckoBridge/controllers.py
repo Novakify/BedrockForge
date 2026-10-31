@@ -65,6 +65,12 @@ NUMERIC = {
     ("f_20916_",): "q.hurt_time", ("hurtTime",): "q.hurt_time", ("f_20919_",): "q.death_ticks", ("deathTime",): "q.death_ticks",
     ("f_19797_",): "q.life_time * 20", ("tickCount",): "q.life_time * 20",
     ("getLimbSwingAmount",): "q.modified_move_speed", ("m_267731_",): "q.modified_move_speed",
+    # getX()/xo (last tick's x): movement tests like getX() != xo
+    ("m_20185_",): "q.position(0)", ("getX",): "q.position(0)", ("m_20186_",): "q.position(1)", ("getY",): "q.position(1)",
+    ("m_20189_",): "q.position(2)", ("getZ",): "q.position(2)",
+    ("f_19790_",): "(q.position(0) - q.position_delta(0))", ("xo",): "(q.position(0) - q.position_delta(0))",
+    ("f_19791_",): "(q.position(1) - q.position_delta(1))", ("yo",): "(q.position(1) - q.position_delta(1))",
+    ("f_19792_",): "(q.position(2) - q.position_delta(2))", ("zo",): "(q.position(2) - q.position_delta(2))",
 }
 # GeckoLib DefaultAnimations templates (GeckoLib 4 constant/DefaultAnimations.java, MIT)
 TEMPLATES = {
@@ -163,10 +169,11 @@ def const_of(op, rest):
 
 
 class Path_:
-    __slots__ = ("conds", "anims", "speed", "ret", "stack", "pc", "locals")
-    def __init__(self, pc): self.conds, self.anims, self.speed, self.ret, self.stack, self.pc, self.locals = [], [], None, None, [], pc, {}
+    __slots__ = ("conds", "anims", "speed", "ret", "stack", "pc", "locals", "res")
+    def __init__(self, pc): self.conds, self.anims, self.speed, self.ret, self.stack, self.pc, self.locals, self.res = [], [], None, None, [], pc, {}, []
     def fork(self, pc):
         p = Path_(pc); p.conds, p.anims, p.speed, p.stack, p.locals = list(self.conds), list(self.anims), self.speed, list(self.stack), dict(self.locals)
+        p.res = list(self.res)
         return p
 
 
@@ -191,11 +198,13 @@ def run_paths(code, rawfields, max_paths=96):
             elif op in ("ldc", "ldc_w", "ldc2_w") or op.startswith(("iconst", "dconst", "fconst", "lconst")) or op in ("bipush", "sipush"):
                 st.append(("const", const_of(op, rest)))
             elif op == "getstatic":
-                own, nm, _ = member(rest)
+                own, nm, d_ = member(rest)
                 st.append(("field", own, nm))
+                if "ResourceLocation" in d_: p.res.append(("field", nm))
             elif op == "getfield":
-                own, nm, _ = member(rest); obj = pop()
+                own, nm, d_ = member(rest); obj = pop()
                 st.append(("call", obj, nm))
+                if "ResourceLocation" in d_: p.res.append(("ctor", nm))
             elif op.startswith("invoke"):
                 own, nm, desc = member(rest)
                 if op == "invokedynamic":
@@ -208,6 +217,8 @@ def run_paths(code, rawfields, max_paths=96):
                 recv = None if op == "invokestatic" else pop()
                 if op == "invokespecial" and nm == "<init>" and isinstance(recv, tuple) and recv[0] == "new":
                     obj = ("obj", recv[1], args)       # the dup'd copy below it on the stack becomes the built object
+                    if "ResourceLocation" in recv[1]:
+                        p.res.append(("path", next((a[1] for a in args if isinstance(a, tuple) and a[0] == "const" and isinstance(a[1], str) and ("textures/" in a[1] or a[1].endswith(".png"))), None)))
                     for i in range(len(st) - 1, -1, -1):
                         if st[i] is recv or st[i] == recv: st[i] = obj; break
                     p.pc = nxt; continue
@@ -293,6 +304,30 @@ def chain(v):
     return names[::-1]
 
 
+CTX = {"own_methods": set()}     # methods the entity class (or its mod superclasses) defines itself
+RESERVED_INFO = {}                # Molang var -> {"java", "chain", "consts", "fields"} for the M2 runtime drivers
+# Java methods with a Bedrock query that mods often OVERRIDE with their own logic (Bear.isSleeping = "sleeps at night").
+# When the entity class defines them itself, the Bedrock query would be wrong: the condition becomes runtime-driven.
+OVERRIDABLE = {"m_5803_", "isSleeping", "isSitting", "m_21825_", "isInSittingPose", "m_21827_", "isOrderedToSit",
+               "m_5912_", "isAggressive", "isAngry", "isFlying", "isRunning", "m_20142_", "isSprinting", "isClimbing",
+               "isCharging", "isAttacking", "m_6069_", "isSwimming"}
+
+
+def call_consts(v):
+    """String / number constants and static fields passed as arguments anywhere along a call chain."""
+    consts, fields = [], []
+    while isinstance(v, tuple) and v[0] == "call":
+        for a in (v[3] if len(v) > 3 else []):
+            if isinstance(a, tuple) and a[0] == "const": consts.append(a[1])
+            if isinstance(a, tuple) and a[0] == "field": fields.append(a[2])
+            if isinstance(a, tuple) and a[0] == "call":          # REGISTRY_OBJECT.get() passed as the argument
+                b = a
+                while isinstance(b, tuple) and b[0] == "call": b = b[1]
+                if isinstance(b, tuple) and b[0] == "field": fields.append(b[2])
+        v = v[1]
+    return consts[::-1], fields[::-1]
+
+
 def field_arg(v):
     """Last static field passed as an argument along a call chain (e.g. SynchedEntityData.get(FLEEING_ACCESSOR))."""
     found = None
@@ -303,12 +338,16 @@ def field_arg(v):
     return found
 
 
-def reserve(java, unknown, hint=None):
+def reserve(java, unknown, hint=None, v=None):
     """Unrecognised Java condition -> reserved Molang variable v.gb_<name> (0 until the M2 runtime sets it).
     Negations then behave like 'false' in Java, which keeps the else-branches (idle/walk) alive."""
+    consts, fields = call_consts(v) if v is not None else ([], [])
+    strs = [c for c in consts if isinstance(c, str)]
+    if strs and not hint: hint = java.split(".")[-1] + "_" + strs[0]
     base = hint.lower().replace("_accessor", "").replace("data_", "") if hint else java.split(".")[-1].lower()
     name = "v.gb_" + re.sub(r"[^a-z0-9]+", "_", base).strip("_")[:40]
     unknown[java + (f"({hint})" if hint else "")] = name
+    RESERVED_INFO.setdefault(name, {"java": java, "chain": java.split("."), "consts": consts, "fields": fields})
     return name
 
 
@@ -322,12 +361,17 @@ def molang_value(v, unknown):
         for n in range(len(ch), 0, -1):
             if ch[-n:] in NUMERIC: return NUMERIC[ch[-n:]]
         last = ch[-1] if ch else ""
-        if ".".join(ch[-2:]) in CONDITIONS: return CONDITIONS[".".join(ch[-2:])]
-        if last in CONDITIONS: return CONDITIONS[last]
+        if last in ("m_188503_", "nextInt") and len(v) > 3 and v[3] and isinstance(v[3][-1], tuple) and v[3][-1][0] == "const":
+            n = int(v[3][-1][1]); return f"math.random_integer(0, {max(n - 1, 0)})"   # random.nextInt(n), re-rolled per frame like Java
+        if last in ("m_188501_", "nextFloat", "m_188500_", "nextDouble"): return "math.random(0, 1)"
+        own = len(ch) == 1 and v[1] == "this" and last in CTX["own_methods"] and last in OVERRIDABLE
+        if not own:
+            if ".".join(ch[-2:]) in CONDITIONS: return CONDITIONS[".".join(ch[-2:])]
+            if last in CONDITIONS: return CONDITIONS[last]
         h = field_arg(v)
         if not h and len(ch) > 1:   # same method on different receivers/arguments (block above vs at feet): keep apart
             import hashlib; h = ch[-1] + "_" + hashlib.md5(repr(v).encode()).hexdigest()[:4]
-        return reserve(".".join(ch), unknown, hint=h)
+        return reserve(".".join(ch), unknown, hint=h, v=v)
     if isinstance(v, tuple) and v[0] == "field":
         return reserve(v[2], unknown)
     if isinstance(v, tuple) and v[0] == "arith":
@@ -350,7 +394,7 @@ def molang_cond(c, unknown):
         if ch and ch[-1] in ("m_5448_", "getTarget"):
             isnull = extra if taken else not extra
             return "!q.has_target" if isnull else "q.has_target"
-        n = reserve(".".join(ch) + "_present", unknown)
+        n = reserve(".".join(ch) + "_present", unknown, v=v)
         isnull = extra if taken else not extra
         return f"!{n}" if isnull else n
     if kind == "rel":
@@ -433,17 +477,31 @@ FULL_TARGETS = {}   # last parsed class: bootstrap index -> (ref kind, owner cla
 CONCAT = {}         # last parsed class: bootstrap index -> string concat recipe, '*' where a runtime value goes
 
 
+def own_methods(classdir, cls):
+    out, c, seen = set(), cls, 0
+    while c and seen < 8:
+        d = javap(classdir, c)
+        if not d: break
+        out |= {k.split("#")[0] for k in parse_methods(d)}
+        m = re.search(r"extends ([\w.$]+)", d); c = m.group(1) if m and os.path.exists(os.path.join(classdir, m.group(1).replace(".", "/") + ".class")) else None
+        seen += 1
+    return out
+
+
 def controllers_of(classdir, cls):
     dis = javap(classdir, cls); vdis = javap(classdir, cls, verbose=True)
     methods = parse_methods(dis)
+    CTX["own_methods"] = own_methods(classdir, cls)
     rawfields = raw_constants(methods)
     boot = bootstrap_targets(vdis)
-    regs = [k for k in methods if k.split("#")[0] == "registerControllers"]
+    # controllers are built in registerControllers, but also in constructors / field initialisers and kept in fields
+    regs = [k for k in methods if k.split("#")[0] in ("registerControllers", "<init>")]
     out = {"class": cls, "controllers": [], "triggerable": [], "raw_constants": rawfields}
     for r in regs:
-        code = methods[r]; pend = {}; last_str = None
+        code = methods[r]; pend = {}; last_str = None; last_field = None
         for i, (off, op, rest) in enumerate(code):
             own, nm, desc = member(rest)
+            if op == "getstatic" and desc.endswith(f"{RAW};"): last_field = (own, nm)
             if op in ("ldc", "ldc_w") and isinstance(const_of(op, rest), str): pend["name"] = last_str = const_of(op, rest)
             elif op.startswith(("iconst", "bipush", "sipush")): pend["ticks"] = const_of(op, rest)
             elif op == "invokedynamic":
@@ -452,12 +510,22 @@ def controllers_of(classdir, cls):
                 pend["handler"] = boot.get(k) if k is not None else None
             elif op == "invokespecial" and own.endswith("AnimationController") and nm == "<init>":
                 out["controllers"].append({"name": pend.get("name", "?"), "transition_ticks": pend.get("ticks") if "I" in desc.split(")")[0] else 0,
-                                           "handler": pend.get("handler")}); pend = {}
+                                           "handler": pend.get("handler")}); pend = {"ctrl_name": pend.get("name")}
             elif op == "invokestatic" and own.endswith("DefaultAnimations") and nm in TEMPLATES:
                 t = TEMPLATES[nm]
                 out["controllers"].append({"name": t[0], "transition_ticks": t[1], "template": nm}); pend = {}
             elif op.startswith("invoke") and nm == "triggerableAnim":
-                out["triggerable"].append(last_str)
+                chain_ = None
+                if last_field:
+                    own_, fn_ = last_field
+                    chain_ = ([("thenPlay", DEFAULT_ANIM_FIELDS[fn_])] if own_.endswith("DefaultAnimations") and fn_ in DEFAULT_ANIM_FIELDS
+                              else rawfields.get(fn_))
+                out["triggerable"].append({"name": last_str, "controller": pend.get("ctrl_name"), "chain": chain_})
+    seen_names = set(); uniq = []
+    for c in out["controllers"]:
+        if c["name"] in seen_names: continue
+        seen_names.add(c["name"]); uniq.append(c)
+    out["controllers"] = uniq
     # analyse handlers
     for c in out["controllers"]:
         unknown = {}
@@ -484,6 +552,7 @@ def controllers_of(classdir, cls):
             c["paths"].append({"when": when, "anims": [] if stop else [anim_names(a, rawfields) for a in p.anims],
                                "speed": p.speed, "stop": stop})
         c["unknown_conditions"] = dict(sorted(unknown.items()))
+        c["reserved_info"] = {n: RESERVED_INFO[n] for n in set(unknown.values()) if n in RESERVED_INFO}
     return out
 
 
