@@ -572,7 +572,7 @@ void applyComponent() {
                 static int logged = 0; // one line per open (when the glide lands) -> logs/uicapture/menu_camera.txt
                 if (b >= 1.0f && !logged) {
                     logged = 1;
-                    char  t[1024];
+                    char  t[2048];
                     auto& bs = actor.getDimensionBlockSource();
                     auto  blockAt = [&](glm::vec3 p) {
                         Block const& k = bs.getBlock(BlockPos(int(std::floor(p.x)), int(std::floor(p.y)), int(std::floor(p.z))));
@@ -584,6 +584,15 @@ void applyComponent() {
                                   "  game camera pos %.2f %.2f %.2f; block at spot %d, eye %d (0 air 1 non-solid 2 solid)\n",
                                   feet.x, feet.y, feet.z, yawP, pitchP, gConv, nComp, eye.x, eye.y, eye.z, spot.x, spot.y, spot.z,
                                   glm::length(spot - look), cy, cp, gamePos.x, gamePos.y, gamePos.z, blockAt(spot), blockAt(eye));
+                    size_t n = std::strlen(t);
+                    n += std::snprintf(t + n, sizeof t - n, "  render origin (last frame) %.2f %.2f %.2f -> %.2f %.2f %.2f writes %ld\n  blocks around spot (y-1..y+1 rows, z-1..z+1, x-1..x+1):",
+                                       gRcBefore[0], gRcBefore[1], gRcBefore[2], gRcAfter[0], gRcAfter[1], gRcAfter[2], gRcWrites);
+                    for (int dy = -1; dy <= 1; ++dy) {
+                        n += std::snprintf(t + n, sizeof t - n, " |");
+                        for (int dz = -1; dz <= 1; ++dz) for (int dx = -1; dx <= 1; ++dx)
+                            n += std::snprintf(t + n, sizeof t - n, "%d", blockAt(spot + glm::vec3(float(dx), float(dy), float(dz))));
+                    }
+                    std::snprintf(t + n, sizeof t - n, "\n");
                     rf::uicapture::writeText("menu_camera.txt", t);
                 }
                 if (b < 1.0f && !want) logged = 0;
