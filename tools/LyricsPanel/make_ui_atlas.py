@@ -220,8 +220,15 @@ def main():
                "neon_city": "neon_city", "golden_hour": "golden_hour", "cotton_candy": "sakura", "sakura": "sakura", "frost": "ice",
                "midnight": "meteors", "deep_sea": "ocean", "blood_moon": "blood_moon", "storm": "storm", "custom": "lilac"}
     entries = []  # (name, image)
+    renders = repo / 'tools/LyricsPanel/sky_thumbs'  # real renders of live_sky.fsh (tools/LyricsSky/render_sky.js)
     for sid, kind in sky_ids.items():
-        entries.append(('sky.' + sid, thumb(kind)))
+        rp = renders / (sid + '.png')
+        if rp.exists():
+            a = np.asarray(Image.open(rp).convert('RGB').resize((TW, TH), Image.LANCZOS), dtype=np.float64).copy()
+            im = Image.fromarray(np.uint8(np.clip(terrain(a), 0, 255)))
+        else:
+            im = thumb(kind)
+        entries.append(('sky.' + sid, im))
     if stills:
         for p in sorted(stills.glob('*.png')):
             im = Image.open(p).convert('RGB')

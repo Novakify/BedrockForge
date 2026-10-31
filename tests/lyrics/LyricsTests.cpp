@@ -24,6 +24,7 @@
 #include "lyrics/core/Scene.h"
 #include "lyrics/core/Text.h"
 #include "lyrics/core/TopBar.h"
+#include "lyrics/core/Sky.h"
 
 using namespace bf::lyrics;
 
@@ -964,6 +965,47 @@ TEST(quality_and_profiles) {
     applyProfile(cfg, 0);
     CHECK(!cfg.combatSafe);
     CHECK_EQ(cfg.quality, 2);
+}
+
+TEST(live_sky_params) {
+    using namespace bf::lyrics::sky;
+    Config cfg;
+    CHECK_EQ(int(presets().size()), 29);
+    CHECK_EQ(int(order().size()), 20);
+    for (auto id : order()) CHECK(find(id, cfg).has_value());
+    CHECK(!find("off", cfg).has_value());
+    auto syn = *find("synthwave", cfg);
+    CHECK_EQ(syn.ordinal, 0);
+    CHECK(find("polar", cfg)->painted());
+    CHECK_EQ(find("thunder", cfg)->ordinal, 28);
+    float id3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    Params q = pack(syn, aurora1(syn, cfg), aurora2(syn, cfg), 0.0, cfg, id3);
+    CHECK_EQ(int(q[0][0]), 0x0B); CHECK_EQ(int(q[0][2]), 0x24); CHECK_EQ(int(q[0][3]), 255);
+    CHECK_EQ(int(q[4][3]), 4);                      // SYNTH kind 3 + 1
+    CHECK_EQ(int(q[4][0]), 0xFF); CHECK_EQ(int(q[4][1]), 0xD3);
+    CHECK_EQ(int(q[5][0]), 170);                    // pattern 1 / 1.5
+    CHECK_EQ(int(q[5][1]), 153);                    // lively 0.6
+    CHECK_EQ(int(q[5][2]), 217);                    // breath 0.85 + 0.15 sin(0)
+    CHECK_EQ(int(q[5][3]), 255);
+    CHECK_EQ((int(q[6][0]) << 8 | q[6][1]), 18000); // az 180 * 100
+    CHECK_EQ((int(q[6][2]) << 8 | q[6][3]), 10200); // (el 12 + 90) * 100
+    CHECK_EQ((int(q[7][0]) << 8 | q[7][1]), 12000); // radius 12 * 1000
+    CHECK_EQ(int(q[7][2]), 0);                      // PRESET
+    // identity matrix: enc(1) = 49151, enc(0) = 32768 (round(32767.5))
+    CHECK_EQ((int(q[8][0]) << 8 | q[8][1]), 49151);
+    CHECK_EQ((int(q[8][2]) << 8 | q[8][3]), 32768);
+    auto pol = *find("polar", cfg);
+    CHECK(!body(pol).has_value() || pol.moon != 0);
+    CHECK_EQ(int(pack(pol, 0, 0, 0, cfg, id3)[7][2]), 20);
+    cfg.skyPalette = 2;
+    CHECK_EQ(aurora1(syn, cfg), 0xFFB35Cu);
+    cfg.customTop = 0x123456;
+    CHECK_EQ(find("custom", cfg)->top, 0x123456u);
+    Clock c;
+    Frame f{};
+    for (int i = 0; i < 100; ++i) f = c.tick(&syn, cfg, 0.05, 1, 0, true, false);
+    CHECK(f.alpha > 0.99f);
+    CHECK(std::abs(f.t - float((1000.0 + 5.0) * 2.2)) < 0.05f);
 }
 
 int main(int argc, char** argv) {

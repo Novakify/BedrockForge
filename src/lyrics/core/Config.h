@@ -96,11 +96,26 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     F(italic, 0.0f)                    /* slant: x shift per unit of height (0.2 = ~11 deg, video B caps) */           \
     /* ---- LyricsFlow 2.1 (app.config.Config / LFConfig additions used by the world panel) */                       \
     B(skyImage, false)                 /* "My picture": your own image as the sky */                                   \
-    F(skyStrength, 0.85f)              /* 0.1 .. 1 */                                                                  \
+    F(skyStrength, 0.8f)               /* 0.1 .. 1 */                                                                  \
     F(skySpeed, 1.0f)                  /* 0.25 .. 2 */                                                                 \
     F(skyPattern, 1.0f)                /* 0.2 .. 1.5 */                                                                \
     B(skyShuffle, false)               /* random sky per song */                                                       \
-    B(fxSkyMusic, false)               /* sky reacts to music */                                                       \
+    B(fxSkyMusic, true)                /* sky reacts to music */                                                       \
+    F(skyLively, 0.6f)                 /* 0 .. 1 sky motion */                                                         \
+    F(skyBreath, 1.0f)                 /* 0 = off, breathing glow speed */                                             \
+    I(skyPalette, -1)                  /* -1 = preset aurora colours, else WorldSky.PALETTES index */                  \
+    B(skyDay, true)                    /* keep the sky in daytime too */                                               \
+    B(fxDayNight, false)               /* dim the live sky by daylight */                                              \
+    B(fxAurora, true)                                                                                                  \
+    B(fxStars, true)                                                                                                   \
+    B(fxWeather, true)                                                                                                 \
+    B(fxSkyColor, true)                                                                                                \
+    B(fxConstellations, true)                                                                                          \
+    I(customTop, 0x0A0618)             /* CUSTOM sky colours (RGB) */                                                  \
+    I(customHorizon, 0x2A1648)                                                                                         \
+    I(customAurora1, 0xA391FF)                                                                                         \
+    I(customAurora2, 0xFFFFFF)                                                                                         \
+    B(customAurora, true)                                                                                              \
     B(clock, false)                    /* top bar extras */                                                            \
     B(fps, false)                                                                                                      \
     B(ping, false)                                                                                                     \
