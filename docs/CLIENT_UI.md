@@ -11,10 +11,11 @@ Prototype (look + shader reference, WebGL): claude.ai artifact "Bedrock Forge Gl
   The world blurs, the middle stays sharp, the petals bend the world like lenses. Click outside / Esc closes.
 - **Window**: icon rail (Mods, Client, Shaders, LyricsFlow; pencil = HUD tab), back button, tab pills
   (Quick Access = pinned modules, Visual, HUD, Combat, Camera, Misc), search (just type), 2-column module grid.
-  Left click toggles, gear / right click = module page, **middle click pins to Quick Access**, wheel scrolls.
+  Left click toggles, gear / right click = module page, **middle click pins to Quick Access**, the mouse wheel scrolls
+  (smooth, rows fade out at the list edges).
 - **Pages**: module settings (real Setting toggles / sliders, drag sliders), Shaderpacks (real switch via
   `shaderpack.txt`, applies after restart), Client (blur / refraction / frost + Off/Low/Balanced/Max presets, wheel on
-  open, blur the world), LyricsFlow (module on/off, Show lyrics = O, Open the LyricsFlow panel, keys).
+  open, blur the world, camera swing), LyricsFlow (module on/off, Show lyrics = O, Open the LyricsFlow panel, keys).
 - Settings live in the hidden module `client_ui` (modules.json).
 
 ## How it draws
