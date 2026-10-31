@@ -42,8 +42,22 @@ Prototype (look + shader reference, WebGL): claude.ai artifact "Bedrock Forge Gl
 - RF: `clientui/rf` (from cinematic aa98552) -> `clientui-rf-builds`.
 - Merge plan: clientui/bf -> lyricsflow/scaffold, clientui/rf -> cinematic once Fernando is happy.
 
+## Camera swing (10-31)
+- While the wheel is up, RF swings the camera round to a front view 1.75 blocks in front of your face (third person,
+  0.38 s ease, glides back on close). BF exports `BF_ClientMenuCamera()` (1 while the wheel is up and Client >
+  "Camera swing" is on); RF's SpatialCamera polls it (GetProcAddress) on the client tick.
+- The render origin (LevelRendererCamera::mCameraPos) is moved to that camera like Cinematic does - without it the
+  world is drawn from the game's own 3rd-person spot and goes grey when you stand against a block.
+- The front view stops at any non-air block. RF writes logs/uicapture/menu_camera.txt (pose, origin, nearby blocks)
+  once per open.
+
+## Smooth scrolling (10-31)
+- BfGlyphV1 `_pad0/_pad1` = vertical clip band in screen y (0..1); RF's glyph shader cuts the glyph to it with a
+  10 px fade. BF's `ClipBand` sets it while list rows draw (and clips their click areas too).
+- The wheel moves a scroll target (`gScroll`); the list is drawn at `gScrollAt`, eased towards it (90 ms).
+
 ## Not done yet / ideas
-- Wheel: camera swing to face the player (the reference shows the player close up in the middle) - SpatialCamera can do it.
 - HUD petal opens the HUD tab (no drag editor exists yet: HUD Layout is sliders). A drag editor is the natural next step.
-- No smooth pixel scrolling (rows are culled whole: glyphs can't be clipped). A scissor rect per glyph range would fix it.
+- Spotted 10-31 (unconfirmed cause): after a wheel camera swing the first-person arm once showed the default tan arm
+  instead of the skin's arm. Check whether it also happens with Camera swing off / after a plain F5 cycle.
 - Profiles (save/switch module setups) were in the prototype but have no backend yet.
