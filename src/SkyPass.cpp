@@ -140,6 +140,7 @@ bool                         gBroken = false;
 std::string                  gStatus = "off (F6 to preview)";
 BfSkyFrameV1                 gHdr{};
 std::vector<BfSkyVertV1>     gHost(kMaxVerts);
+std::atomic<long>            gWeatherFrames{0}, gWeatherNoCam{0};
 std::mutex                   gStage2Mutex;
 std::string                  gStage2 = "waiting for a sky (pick one in the L panel)";
 void setStage2(std::string v) { std::lock_guard l(gStage2Mutex); gStage2 = std::move(v); }
@@ -471,7 +472,7 @@ struct GamePso {
 };
 std::mutex                                              gPsoMutex;
 std::unordered_map<ID3D12PipelineState*, GamePso>       gGame;
-std::atomic<long>                                       gInjected{0}, gHidden{0}, gSkipped{0}, gWeatherFrames{0}, gWeatherNoCam{0};
+std::atomic<long>                                       gInjected{0}, gHidden{0}, gSkipped{0};
 
 #pragma pack(push, 1)
 struct DomeVert {
