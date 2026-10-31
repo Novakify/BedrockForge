@@ -695,3 +695,12 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - OPEN: crafting table drawer → grid drag doesn't place items. The press log shows the click routed to the hidden slot (target 26 → 2436,1076, then grid target 4), but nothing moves. Never seen working in my sessions (cells full always 000000000). Loom drawer pick/place works. Investigate the hidden crafting_screen click handling.
 - An A/B run with old-e64 (933a73c) froze the game on F9 at the crafting table (hung, not crashed).
 - Crash at 01:43 (trace_2026-10-31_01-43-07) when the user turned a monitor off: same family as the window-move crash. Not analyzed.
+
+## 2026-10-31 morning (RF e67 = cinematic aa98552)
+- Crafting table drag works (planks from drawer → centre cell placed). Last night's failure was test timing.
+- Furnace works: zones are split. Upper-left = input, upper-right = result, bottom = fuel (Java layout). Beef went in.
+- Loom, cartography, brewing: open and hover are correct. Chest and inventory (Spatial): hover is correct.
+- Fixed in e67: Spatial FOV narrowing broke when the game cycles 3 world cameras (one per frame in flight). preCamera now matches any camera seen as the world's (gSeen). Before, at 4K the panel came out huge with FOV 121.
+- Crafter at 108,-112 refuses Cinematic: "standing beside or behind the side it is worked from". This is Java behaviour, so it opens as Spatial.
+- Monitor-off crash (01:43): fast-fail 7 (abort) inside Minecraft.Windows.exe, no RF frames on the stack. Likely the game's own abort on display loss. Still open.
+- Test gotcha: the game writes RendererFoundation.json on exit. Edit uiDebugUseKey only while the game is closed.
