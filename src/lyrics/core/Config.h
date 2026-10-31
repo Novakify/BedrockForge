@@ -137,6 +137,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(fxBeatShake, false)              /* [BF] words shake a little on the beat */                                     \
     F(fxIntensity, 1.0f)               /* [BF] strength of the break-apart exits 0.2 .. 2 */                           \
     B(spreadOut, false)                /* [BF] more room between lyric lines/words (floating + sky) */                 \
+    B(wholeLine, false)                /* [BF] floating: the line stays one readable row (reference fall video) */     \
     B(fallingLetters, false)                                                                                           \
     E(LetterLand, letterLand, LetterLand::Flat)                                                                        \
     I(fallDelayMs, 350)                /* after a word's exit starts */                                                \

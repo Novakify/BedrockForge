@@ -676,6 +676,27 @@ TEST(letters_fall_and_lie_flat_on_ground) {
         CHECK(n.y > 0.99);                           // lying flat, face up
     }
 }
+TEST(letters_lie_readable_in_order) { // reference video: the line lies on the ground, top away from you, in order
+    FakeWorld     w;
+    LetterPhysics ph;
+    PhysicsParams prm;
+    prm.spin = 0.3f;
+    ph.spawn(letterQuads({0.5, 65.5, 3.5}, 5), {0, 0, 0}, 9, prm);
+    ph.step(1.0f / 60.0f, &w, prm);
+    int waiting = 0;
+    for (auto const& l : ph.letters()) waiting += l.state == Letter::State::Waiting;
+    CHECK(waiting >= 3); // they let go one after another
+    for (int i = 0; i < 240; ++i) ph.step(1.0f / 60.0f, &w, prm);
+    double lastX = -1e9;
+    for (auto const& l : ph.letters()) {
+        CHECK(l.state == Letter::State::Resting);
+        Vec3 up = l.orient.rotate({0, 1, 0});
+        CHECK(up.z > 0.9);                    // text top points away from the camera at -Z
+        CHECK(std::fabs(l.pos.z - 3.5) < 0.6); // lands about where it hung
+        CHECK(l.pos.x > lastX);                // reading order kept
+        lastX = l.pos.x;
+    }
+}
 TEST(letters_land_on_slab_and_steps) {
     FakeWorld w;
     w.extra[{0, 64, 3}] = Aabb{0, 0, 0, 1, 0.5, 1}; // bottom slab

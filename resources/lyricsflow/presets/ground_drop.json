@@ -1,7 +1,7 @@
 {
   "name": "Ground Drop",
   "video": "A (@nia_teppelin, falling letters)",
-  "description": "Video A (@nia_teppelin): Minecraft pixel font, white with a drop shadow. Words pop up a few blocks in front of you near eye level, then every letter drops and lies flat on the blocks below, following the terrain, and fades after a while. Tuned 2026-10-30: bigger and closer, like the clip.",
+  "description": "Video A (@nia_teppelin): Minecraft pixel font, white with a drop shadow. Words pop up a few blocks in front of you near eye level, then every letter drops and lies flat on the blocks below, following the terrain, and fades after a while. Tuned 2026-10-30: bigger and closer, like the clip. 2026-10-31: letters let go one by one and lie readable (top away from you), like the second clip.",
   "settings": {
     "lyricsStyle": "FLOATING",
     "font": "minecraft",
@@ -13,19 +13,20 @@
     "varySizes": false,
     "arcLayout": false,
     "enterAnim": "WORD",
-    "exitAnim": "FADE",
-    "lyricsScale": 1.0,
+    "exitAnim": "FALL",
+    "lyricsScale": 0.75,
     "maxLines": 1,
     "fallingLetters": true,
     "letterLand": "FLAT",
-    "fallDelayMs": 250,
-    "gravity": 18,
-    "bounce": 0.15,
-    "friction": 0.7,
+    "fallDelayMs": 200,
+    "gravity": 16,
+    "bounce": 0.1,
+    "friction": 0.8,
     "spin": 0.3,
-    "letterLifetimeMs": 7000,
+    "letterLifetimeMs": 6000,
     "letterFadeMs": 1500,
     "maxLetters": 400,
-    "lyricsDistance": 0.65
+    "lyricsDistance": 0.65,
+    "wholeLine": true
   }
 }

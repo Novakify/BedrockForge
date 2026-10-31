@@ -25,15 +25,18 @@ struct PhysicsParams {
 };
 
 struct Letter {
-    enum class State : uint8_t { Falling, Resting, Fading };
+    enum class State : uint8_t { Waiting, Falling, Resting, Fading };
     BfGlyphV1 tmpl{};            // look of the letter (uv, colours, flags); pos/right/up are rebuilt every frame
     Vec3      pos, vel, angVel;  // world
     Quat      orient;            // local +x = glyph right, +y = glyph up, +z = glyph normal
+    Quat      target;            // Flat: how it ends up lying (text reads from where you stood, small yaw jitter)
+    float     waitMs = 0;        // Flat: letters of a word let go one after another (reference video)
     float     halfW = 0.1f, halfH = 0.1f;
     float     restMs = 0, fadeMs = 0, alpha = 1;
     float     restLift = 0.003f; // tiny per-letter height so overlapping letters don't z-fight
     double    fallStartY = 0;
     State     state = State::Falling;
+    bool      hasTarget = false;
 };
 
 class LetterPhysics {
