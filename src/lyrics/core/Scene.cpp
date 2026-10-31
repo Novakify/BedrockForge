@@ -1,5 +1,6 @@
 // LyricsFlow port - WorldLyrics (scheduling, placement, animation). Logic ported from LyricsFlow v2.0 (374m, MIT).
 #include "lyrics/core/Scene.h"
+#include "lyrics/core/LetterFx.h"
 
 #include "lyrics/core/Text.h"
 
@@ -77,12 +78,40 @@ bool rtl(std::string_view s) {
 } // namespace
 
 // ---------------------------------------------------------------- word animation
-std::optional<std::array<float, 4>> wordAnim(Placed const& p, int j, Word const& w, int64_t t, Config const& c, float speed) {
+std::optional<std::array<float, 5>> wordAnim(Placed const& p, int j, Word const& w, int64_t t, Config const& c, float speed) {
     float ein = anim::progress(double(t), double(w.start - 40), double(float(w.start - 40) + kEnterMs / speed));
     if (ein <= 0.0f) return std::nullopt;
-    float dx = 0, dy = 0, sc = 1, alpha;
+    float dx = 0, dy = 0, sc = 1, alpha, rot = 0;
     switch (c.enterAnim) {
     case EnterAnim::Fade: alpha = anim::easeInOut(ein); break;
+    case EnterAnim::Drop: { // [BF] falls in from above and bounces
+        float e = ein;
+        alpha   = anim::easeOutCubic(anim::clamp01(e * 2.5f));
+        float b = e < 0.55f ? 1 - (e / 0.55f) * (e / 0.55f)                          // fall
+                            : -0.18f * float(std::sin(double((e - 0.55f) / 0.45f) * 3.14159265)); // bounce
+        dy      = -b * 2.2f;
+        break;
+    }
+    case EnterAnim::Spin: { // [BF] spins in while growing
+        float e = anim::easeOutBack(ein);
+        alpha   = anim::easeOutCubic(ein);
+        rot     = (1 - anim::easeOutCubic(ein)) * 3.14159265f * (rnd(p.seed, 70 + j) > 0.5f ? 1.0f : -1.0f);
+        sc      = 0.3f + 0.7f * e;
+        break;
+    }
+    case EnterAnim::Zoom: { // [BF] punches in from big
+        float e = anim::easeOutCubic(ein);
+        alpha   = e;
+        sc      = 1.0f + (1 - e) * 1.6f;
+        break;
+    }
+    case EnterAnim::Glitch: { // [BF] flickers on with sideways jumps
+        int   step = int(ein * 9.0f);
+        bool  on   = ein > 0.85f || rnd(p.seed, 300 + j * 13 + step) > 0.35f;
+        alpha      = on ? anim::easeOutCubic(ein) : 0.15f;
+        dx         = ein > 0.85f ? 0.0f : (rnd(p.seed, 400 + j * 13 + step) - 0.5f) * 0.5f;
+        break;
+    }
     case EnterAnim::Rise: {
         float e = anim::easeOutCubic(ein);
         alpha   = e;
@@ -98,6 +127,11 @@ std::optional<std::array<float, 4>> wordAnim(Placed const& p, int j, Word const&
     }
     if (p.exitAt >= 0) {
         int64_t start = p.exitAt + 55 * int64_t(j);
+        if (LetterFx::handles(c.exitAnim) && t >= start) return std::nullopt; // [BF] the fragments took over
+        if (c.exitAnim == ExitAnim::Fall || c.fallingLetters) {                  // [BF] hang on (a tiny wobble), then drop
+            float wob = anim::clamp01(float(t - start) / std::max(1.0f, float(c.fallDelayMs)));
+            return std::array<float, 5>{alpha, dx, dy, sc, 0.06f * wob * float(std::sin(double(t) * 0.05 + j))};
+        }
         float   eo    = anim::progress(double(t), double(start), double(float(start) + kExitMs / speed));
         if (eo >= 1.0f) return std::nullopt;
         float e = anim::easeInCubic(eo);
@@ -123,7 +157,7 @@ std::optional<std::array<float, 4>> wordAnim(Placed const& p, int j, Word const&
             sc *= 1 + 0.085f * beat * fin;
         }
     }
-    return std::array<float, 4>{alpha, dx, dy, sc};
+    return std::array<float, 5>{alpha, dx, dy, sc, rot};
 }
 
 // ---------------------------------------------------------------- scene
@@ -692,6 +726,13 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
     bool const    wall     = c.lyricsStyle == LyricsStyle::Wall;
     float const   glowBase = c.glow ? 0.65f : 0.0f;
     float const   beat     = c.beatGlow ? in.beat : 0.0f;
+    float         shake    = in.beat; // [BF] "shake on the beat": the beat source, else a kick on every sung word
+    if (c.fxBeatShake && shake <= 0.0f)
+        for (auto const& p : mVisible)
+            for (int j = 0; j < p.n(); ++j) {
+                int64_t d = t - p.line.words[size_t(p.w0 + j)].start;
+                if (d >= 0 && d < 600) shake = std::max(shake, float(std::exp(-double(d) / 140.0)));
+            }
     float const   combatK  = c.combatSafe ? 1.0f - (1.0f - c.combatAlpha) * anim::clamp01(in.combat) : 1.0f;
 
     if (!inWorld(c)) { // SCREEN mode (WorldLyrics.drawScreen), in screen-height units
@@ -703,7 +744,11 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 Word const& wd = p.line.words[size_t(p.w0 + j)];
                 auto        s  = wordAnim(p, j, wd, t, c, speed);
                 if (!s) continue;
-                auto [alpha, dx, dy, sc] = *s;
+                auto [alpha, dx, dy, sc, rot] = *s;
+                if (c.fxBeatShake && shake > 0.05f) { // [BF]
+                    dx += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7) - 0.5f) * 0.12f * shake;
+                    dy += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7 + 3) - 0.5f) * 0.12f * shake;
+                }
                 double   bob  = std::sin(in.nowSeconds * 1.6 + j * 0.9 + double(p.seed)) * 0.04;
                 DrawWord d;
                 d.text   = show(wd.text, c.allCaps);
@@ -713,7 +758,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.orient = Quat::rotationZ(rad(p.tilt));
                 d.x      = (p.wx0[size_t(j)] + dx) * emPx;
                 d.y      = float((double(p.wy0[size_t(j)] + dy) + bob) * emPx);
-                d.rotZ   = float(rad(p.wrot[size_t(j)]));
+                d.rotZ   = float(rad(p.wrot[size_t(j)])) + rot;
                 d.scale  = emPx * p.wsize[size_t(j)] * sc;
                 d.alpha  = alpha * gA;
                 d.sung   = t >= wd.start && t < wd.end + 80;
@@ -740,14 +785,22 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
         for (int j = 0; j < p.n(); ++j) {
             Word const& wd = p.line.words[size_t(p.w0 + j)];
             auto        s  = wordAnim(p, j, wd, t, c, speed);
-            bool const  falling = c.fallingLetters && p.exitAt >= 0 && t >= p.exitAt + 55 * int64_t(j) + c.fallDelayMs;
+            bool const  fall = c.fallingLetters || c.exitAnim == ExitAnim::Fall;
+            bool const  frag = LetterFx::handles(c.exitAnim); // [BF] break-apart exits
+            bool const  falling = p.exitAt >= 0 && ((fall && t >= p.exitAt + 55 * int64_t(j) + c.fallDelayMs) ||
+                                                    (frag && t >= p.exitAt + 55 * int64_t(j)));
             if (!s && !(falling && !p.dropped[size_t(j)])) continue;
-            std::array<float, 4> st = s ? *s : std::array<float, 4>{1.0f, 0, 0, 1};
-            if (falling) { // [BF] the word stops animating and drops as letters
+            std::array<float, 5> st = s ? *s : std::array<float, 5>{1.0f, 0, 0, 1, 0};
+            if (falling) { // [BF] the word stops animating and drops as letters / breaks apart
                 if (p.dropped[size_t(j)]) continue;
                 p.dropped[size_t(j)] = true;
+                if (frag) st = {1.0f, 0, 0, 1, 0};
             }
-            auto [alpha, dx, dy, sc] = st;
+            auto [alpha, dx, dy, sc, rot] = st;
+            if (c.fxBeatShake && shake > 0.05f) { // [BF]
+                dx += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7) - 0.5f) * 0.12f * shake;
+                dy += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7 + 3) - 0.5f) * 0.12f * shake;
+            }
             double   bob  = wall ? 0.0 : std::sin(in.nowSeconds * 1.6 + j * 0.9 + double(p.seed)) * (sky ? 0.02 : 0.04);
             DrawWord d;
             d.text      = show(wd.text, c.allCaps);
@@ -757,13 +810,14 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             d.orient    = q;
             d.x         = (p.wx0[size_t(j)] + dx) * e;
             d.y         = -float((double(p.wy0[size_t(j)] + dy) + bob) * e);
-            d.rotZ      = float(rad(-p.wrot[size_t(j)]));
+            d.rotZ      = float(rad(-p.wrot[size_t(j)])) - rot;
             d.scale     = e * p.wsize[size_t(j)] * sc;
             d.alpha     = alpha * gA;
             d.sung      = t >= wd.start && t < wd.end + 80;
             d.glow      = glowBase + (d.sung ? 0.35f : 0.0f) + beat * 0.5f;
             d.layerStep = wall ? 0.006f : 0.06f; // font units (wall: world units, see Glyphs.cpp)
             d.dropNow   = falling;
+            d.dropFx    = frag ? c.exitAnim : ExitAnim::Fall;
             d.key       = int64_t(p.line.index) * 1000 + p.w0 + j;
             out.push_back(std::move(d));
         }

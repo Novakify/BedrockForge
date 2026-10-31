@@ -21,6 +21,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     if (in.songSeq != mSongSeq) {
         mSongSeq = in.songSeq;
         mPhysics.clear();
+        mFx.clear();
     }
     // quality + Auto FPS: the frame renders with the costly effects dropped (the saved config is untouched)
     Config const cfg = effectiveConfig(mCfg, mPerf);
@@ -44,12 +45,17 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         if (w.dropNow) {
             drop.clear();
             buildWordGlyphs(w, *f, cfg, st, mOrigin, drop, /*mainPassOnly*/ true);
-            mPhysics.spawn(drop, mOrigin, w.key ^ (mSongSeq << 20), pp);
+            if (LetterFx::handles(w.dropFx)) mFx.spawn(drop, mOrigin, w.dropFx, w.key ^ (mSongSeq << 20), cfg.fxIntensity);
+            else mPhysics.spawn(drop, mOrigin, w.key ^ (mSongSeq << 20), pp);
             continue;
         }
         buildWordGlyphs(w, *f, cfg, st, mOrigin, mGlyphs);
     }
-    if (cfg.fallingLetters || !mPhysics.letters().empty()) {
+    if (mFx.size()) { // [BF] fragments of words that broke apart
+        mFx.step(in.dt);
+        mFx.emit(mOrigin, mGlyphs);
+    }
+    if (cfg.fallingLetters || cfg.exitAnim == ExitAnim::Fall || !mPhysics.letters().empty()) {
         mPhysics.step(in.dt, world, pp);
         std::vector<BfGlyphV1> letters;
         mPhysics.emit(mOrigin, letters);

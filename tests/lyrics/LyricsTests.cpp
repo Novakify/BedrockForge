@@ -25,6 +25,7 @@
 #include "lyrics/core/Text.h"
 #include "lyrics/core/TopBar.h"
 #include "lyrics/core/Sky.h"
+#include "lyrics/core/LetterFx.h"
 #include "lyrics/core/SkyFx.h"
 #include "lyrics/core/SkySystem.h"
 
@@ -1135,6 +1136,35 @@ TEST(sky_system_store) {
     h.size = sizeof h;
     BF_CopySkyFrame(&h, nullptr, 0);
     CHECK_EQ(h.active, 0u);              // nether / end keep their sky
+}
+
+TEST(letter_fx_exits) {
+    BfGlyphV1 q{};
+    q.pos[0] = 0; q.pos[1] = 2; q.pos[2] = 5;
+    q.right[0] = 0.2f; q.up[1] = 0.3f;
+    q.uv[0] = 0.1f; q.uv[1] = 0.2f; q.uv[2] = 0.3f; q.uv[3] = 0.6f;
+    q.alpha = 1; q.fill = 0xFFFFFFFFu;
+    std::vector<BfGlyphV1> word{q, q};
+    word[1].pos[0] = 0.5f;
+    struct M { ExitAnim m; size_t frags; } const ms[] = {{ExitAnim::Shatter, 18}, {ExitAnim::Dissolve, 72}, {ExitAnim::Explode, 2},
+                                                          {ExitAnim::Burn, 40}, {ExitAnim::Glitch, 10}};
+    for (auto const& m : ms) {
+        LetterFx fx;
+        fx.spawn(word, Vec3{100, 64, 100}, m.m, 42);
+        CHECK_EQ(fx.size(), m.frags);
+        std::vector<BfGlyphV1> out;
+        fx.emit(Vec3{100, 64, 100}, out);
+        CHECK(!out.empty());
+        // fragments keep the glyph's uv inside the original rect and start where the letter was
+        for (auto const& g : out) {
+            CHECK(g.uv[0] >= 0.1f - 1e-5f && g.uv[2] <= 0.3f + 1e-5f && g.uv[1] >= 0.2f - 1e-5f && g.uv[3] <= 0.6f + 1e-5f);
+            CHECK(std::abs(g.pos[2] - 5.0f) < 0.5f);
+        }
+        for (int i = 0; i < 40; ++i) fx.step(0.05f); // 2 s: everything has played out
+        CHECK_EQ(fx.size(), size_t(0));
+    }
+    CHECK(!LetterFx::handles(ExitAnim::Fall));
+    CHECK(LetterFx::handles(ExitAnim::Burn));
 }
 
 int main(int argc, char** argv) {

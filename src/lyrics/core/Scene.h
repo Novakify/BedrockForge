@@ -89,6 +89,7 @@ struct DrawWord {
     bool        sung  = false;
     float       layerStep = 0.06f; // z step between neon passes, font units (Java layerStep)
     bool        dropNow = false;    // [BF] falling letters: hand this word's glyphs to the physics this frame
+    ExitAnim    dropFx  = ExitAnim::Fall; // [BF] ... or to LetterFx (Shatter / Dissolve / Explode / Burn / Glitch)
     int64_t     key = 0;            // stable id of (line, word) for the physics hand-off
     uint32_t    argb  = 0;          // [BF] fixed colour (0 = theme) - top bar text
     bool        plain = false;      // [BF] main pass only (no shadow / offset passes / glow)
@@ -133,7 +134,8 @@ private:
     int64_t             mNoteSlot = -1, mNoteSong = -1;
 };
 
-/// Per-word enter/exit/beat animation: {alpha, dx, dy, scale}; nullopt = not visible (WorldLyrics.wordAnim).
-std::optional<std::array<float, 4>> wordAnim(Placed const& p, int j, Word const& w, int64_t t, Config const& c, float speed);
+/// Per-word enter/exit/beat animation: {alpha, dx, dy, scale, rotation (radians, [BF])}; nullopt = not visible
+/// (WorldLyrics.wordAnim).
+std::optional<std::array<float, 5>> wordAnim(Placed const& p, int j, Word const& w, int64_t t, Config const& c, float speed);
 
 } // namespace bf::lyrics

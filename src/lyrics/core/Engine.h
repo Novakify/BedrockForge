@@ -10,6 +10,7 @@
 #include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Perf.h"
 #include "lyrics/core/Physics.h"
+#include "lyrics/core/LetterFx.h"
 #include "lyrics/core/Scene.h"
 #include "lyrics/core/TopBar.h"
 
@@ -38,6 +39,7 @@ private:
     FontSet                mFonts;
     Scene                  mScene;
     LetterPhysics          mPhysics;
+    LetterFx                      mFx; // [BF] break-apart exits
     TopBar                 mTopBar;
     AutoPerf               mPerf;
     std::vector<BfGlyphV1> mGlyphs;

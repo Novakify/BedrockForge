@@ -108,6 +108,11 @@ def build(font_id, path, out, em, ss, rng, kind, width=1024, variation=None):
     have, upem, cap, xh = cmap_of(path)
     size = em * ss if kind == 'sdf' else em
     font = ImageFont.truetype(str(path), size=size)
+    try:  # variable fonts (Orbitron, Fredoka): render a bolder instance - the default is the thin end
+        axes = font.get_variation_axes()
+        font.set_variation_by_axes([min(a['maximum'], max(a['minimum'], 700 if a.get('name', b'') in (b'Weight', 'Weight') else a['default'])) for a in axes])
+    except Exception:
+        pass
     if variation is not None:
         try:
             font.set_variation_by_axes(variation)

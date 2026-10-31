@@ -72,7 +72,11 @@ struct State {
     PanelAssets                   panelAssets;
     std::vector<PresetInfo>       presets;
     std::map<std::string, std::string> presetJson; // id -> file text
-    std::vector<std::string>      fontAtlases;      // atlas files of the loaded fonts (indices 0..n-1)
+    std::vector<std::string>      fontAtlases;      // atlas files of the slotted fonts (indices 0..n-1)
+    std::map<std::string, std::string> fontPng;     // every font: id -> atlas PNG
+    std::vector<std::string>      slotFont;         // font in each atlas slot
+    std::vector<uint64_t>         slotUsed;         // last time each slot's font was wanted
+    uint64_t                      slotClock = 0;
     std::string                   uiAtlas;          // UI image atlas PNG
     std::vector<BfGlyphV1>        panelGlyphs;
     Vec3                          camPos;           // last HUD-frame camera (panel placement + crosshair)
@@ -117,25 +121,61 @@ void loadConfig() {
     saveConfig(); // writes new fields with defaults
 }
 
+// [BF] Fonts: every font's metrics are loaded, but RF has kBfLyricsMaxAtlases texture slots (fonts + UI atlas + cover
+// art), so only the fonts in use get a slot. syncFontSlots() keeps the lyric / top bar / panel fonts slotted and
+// evicts the least recently used one when another font is picked (the atlas list is republished, RF reloads it).
+constexpr size_t kFontSlots = kBfLyricsMaxAtlases - 2;
+void publishAtlases();
+
 void loadFonts(std::filesystem::path const& dir) {
-    // RF has kBfLyricsMaxAtlases texture slots, so at most that many fonts: the configured lyric + top bar fonts
-    // first, then the rest in name order (a 9th font used to get index 8 and sample past the atlas array).
     std::vector<std::filesystem::path> jsons;
     std::error_code                    ec;
     for (auto const& e : std::filesystem::directory_iterator(dir, ec))
         if (e.path().extension() == ".json") jsons.push_back(e.path());
     std::sort(jsons.begin(), jsons.end());
-    std::string const want[2] = {gS->engine.config().font, gS->engine.config().topBarFont};
-    std::stable_partition(jsons.begin(), jsons.end(), [&](auto const& p) { auto st = p.stem().string(); return st == want[0] || st == want[1]; });
-    std::vector<std::string> atlases;
     for (auto const& j : jsons) {
-        if (atlases.size() >= kBfLyricsMaxAtlases - 2) break; // + UI image atlas + cover art
         auto png = j;
         png.replace_extension(".png");
         if (!std::filesystem::exists(png, ec)) continue;
-        if (gS->engine.fonts().loadFromJson(j.stem().string(), readAll(j), png.string())) atlases.push_back(png.string());
+        if (gS->engine.fonts().loadFromJson(j.stem().string(), readAll(j), png.string())) {
+            gS->engine.fonts().setAtlasIndex(j.stem().string(), FontSet::kNoAtlas);
+            gS->fontPng[j.stem().string()] = png.string();
+        }
     }
-    gS->fontAtlases = atlases;
+}
+
+/// Make sure the fonts in use have atlas slots. Returns true when the atlas list changed. Caller holds gS->mutex.
+bool syncFontSlots() {
+    auto const& cfg = gS->engine.config();
+    std::string const want[] = {cfg.font, cfg.topBarFont, gS->panelAssets.pixelFont, "minecraft"};
+    bool changed = false;
+    ++gS->slotClock;
+    for (auto const& id : want) {
+        if (!gS->fontPng.count(id)) continue;
+        auto it = std::find(gS->slotFont.begin(), gS->slotFont.end(), id);
+        if (it != gS->slotFont.end()) { gS->slotUsed[size_t(it - gS->slotFont.begin())] = gS->slotClock; continue; }
+        size_t slot;
+        if (gS->slotFont.size() < kFontSlots) {
+            slot = gS->slotFont.size();
+            gS->slotFont.push_back(id);
+            gS->slotUsed.push_back(gS->slotClock);
+        } else { // evict the least recently wanted font that isn't wanted right now
+            slot = 0;
+            for (size_t i = 1; i < gS->slotFont.size(); ++i)
+                if (gS->slotUsed[i] < gS->slotUsed[slot]) slot = i;
+            gS->engine.fonts().setAtlasIndex(gS->slotFont[slot], FontSet::kNoAtlas);
+            gS->slotFont[slot] = id;
+            gS->slotUsed[slot] = gS->slotClock;
+        }
+        gS->engine.fonts().setAtlasIndex(id, uint32_t(slot));
+        changed = true;
+    }
+    if (changed) {
+        gS->fontAtlases.clear();
+        for (auto const& f : gS->slotFont) gS->fontAtlases.push_back(gS->fontPng[f]);
+        publishAtlases();
+    }
+    return changed;
 }
 
 /// Atlas list = fonts, then the UI image atlas, then the current cover art (panel assets follow the indices).
@@ -368,6 +408,10 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     if (!gS || !f.player) return;
     gS->moduleOn = true; // hud only runs while the module is on (also after modules.json restored it)
     pollKeys(f);
+    {
+        std::lock_guard l(gS->mutex);
+        syncFontSlots();
+    }
     std::lock_guard l(gS->mutex);
     int64_t now = nowNs();
     float   dt  = gS->lastFrameNs ? float(double(now - gS->lastFrameNs) / 1e9) : 1.0f / 60.0f;
@@ -550,6 +594,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     loadFonts(modDir / "resources" / "lyricsflow" / "fonts");
     loadUiAtlas(modDir / "resources" / "lyricsflow" / "ui");
     loadPresets();
+    syncFontSlots();
     publishAtlases();
     gS->skyDir      = configDir / "lyricsflow_sky";
     std::filesystem::create_directories(gS->skyDir, ec);

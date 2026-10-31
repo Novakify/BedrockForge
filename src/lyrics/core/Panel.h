@@ -61,7 +61,7 @@ struct PanelInput {
 
 class Panel {
 public:
-    enum class Tab { Sky, Lyrics, Look, Fps, More }; // 2.1's Cosmetics slot is the FPS page in the port
+    enum class Tab { Sky, Lyrics, Look, Fx, Fps, More }; // 2.1's Cosmetics slot is the FPS page; FX = [BF] effects
 
     /// Open in front of the camera (WorldPanel constructor). eye/look = camera at that moment.
     void open(Vec3 eye, Vec3 look, int64_t nowMs);
@@ -100,6 +100,7 @@ private:
     void lyrics(Ctx& c, Config& cfg);
     void offset(Ctx& c, Config& cfg, float y);
     void look(Ctx& c, Config& cfg, FontSet const& fonts);
+    void fx(Ctx& c, Config& cfg);
     void fps(Ctx& c, Config& cfg);
     void more(Ctx& c, Config& cfg);
 

@@ -71,8 +71,19 @@ bool FontSet::loadFromJson(std::string const& id, std::string_view jsonText, std
 }
 Font const* FontSet::get(std::string_view id) const {
     for (auto const& f : mFonts)
-        if (f.id == id) return &f;
+        if (f.id == id && f.atlasIndex != kNoAtlas) return &f;
+    for (auto const& f : mFonts)
+        if (f.atlasIndex != kNoAtlas) return &f;
     return mFonts.empty() ? nullptr : &mFonts.front();
+}
+void FontSet::setAtlasIndex(std::string_view id, uint32_t index) {
+    for (auto& f : mFonts)
+        if (f.id == id) f.atlasIndex = index;
+}
+bool FontSet::has(std::string_view id) const {
+    for (auto const& f : mFonts)
+        if (f.id == id) return true;
+    return false;
 }
 float FontSet::width(std::string_view s, std::string_view font) const {
     Font const* f = get(font);
@@ -143,7 +154,7 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
     Theme const& th    = st.theme;
     bool const   clean = c.textStyle == TextStyle::Clean;
     float const  o     = 0.055f; // Gfx.neon offset unit (h * 0.055)
-    float const  hue   = c.hueShiftSpeed * st.timeSeconds;
+    float const  hue   = (c.fxRainbow && c.hueShiftSpeed == 0.0f ? 0.12f : c.hueShiftSpeed) * st.timeSeconds; // [BF] Rainbow
 
     std::vector<Pass> passes;
     if (w.plain) mainPassOnly = true;
@@ -217,6 +228,8 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
             float adv = g ? g->advance : 0.5f;
             if (g && !g->empty) {
                 double   cx = double(pen) + (g->pl + g->pr) * 0.5, cy = double(baseline + ps.oy) + (g->pb + g->pt) * 0.5;
+                if (c.fxWave && !w.plain) // [BF] Wave: letters ripple along the word
+                    cy += 0.11 * std::sin(double(st.timeSeconds) * 4.2 - double(letter) * 0.75 + double(w.key % 7));
                 double   hx = (g->pr - g->pl) * 0.5, hy = (g->pt - g->pb) * 0.5;
                 double const sk = w.plain ? 0.0 : double(c.italic); // [BF] slant (not the top bar): quad -> parallelogram, x += sk * y
                 Vec3     p  = place(cx + sk * (cy - double(baseline)), cy, double(zEm));

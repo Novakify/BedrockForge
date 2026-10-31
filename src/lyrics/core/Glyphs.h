@@ -43,7 +43,11 @@ class FontSet {
 public:
     /// Load <dir>/<id>.json (+ .png). Returns false if the JSON can't be read.
     bool        loadFromJson(std::string const& id, std::string_view jsonText, std::string const& atlasPath);
-    Font const* get(std::string_view id) const; // falls back to the first loaded font
+    Font const* get(std::string_view id) const; // falls back to the first font that has an atlas slot
+    /// [BF] RF has a fixed number of texture slots: only fonts in use get one (Runtime assigns them, LRU).
+    static constexpr uint32_t kNoAtlas = 0xFFFFFFFFu;
+    void        setAtlasIndex(std::string_view id, uint32_t index);
+    bool        has(std::string_view id) const;
     size_t      size() const { return mFonts.size(); }
     std::vector<Font> const& all() const { return mFonts; }
     /// TextWidthFn for the Scene: width in units of the line height LyricsFlow uses (em).

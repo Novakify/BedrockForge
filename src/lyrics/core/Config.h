@@ -17,8 +17,8 @@ namespace bf::lyrics {
 enum class Source : int { Spotify, Youtube, Any, AppleMusic }; // [BF] AppleMusic (Windows app via SMTC)
 enum class LyricsStyle : int { Sky, Floating, Screen, Wall };
 enum class TextStyle : int { Neon, Clean };
-enum class EnterAnim : int { Word, Fade, Rise, Neon }; // Neon = 2.1 "Typed out (LyricsFlow)" (animates like Word for now)
-enum class ExitAnim : int { FloatUp, Drift, Fade };
+enum class EnterAnim : int { Word, Fade, Rise, Neon, Drop, Spin, Zoom, Glitch }; // Neon = 2.1 "Typed out"; Drop..Glitch [BF]
+enum class ExitAnim : int { FloatUp, Drift, Fade, Fall, Shatter, Dissolve, Explode, Burn, Glitch }; // Fall..Glitch [BF]
 enum class TopBarStyle : int { Karaoke, Simple };
 enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat as decals (video A) or full rigid tumble
 
@@ -132,6 +132,10 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(vsync, false)                    /* [BF] mirrors the game option for the FPS target (set by the glue) */         \
     I(maxFps, 0)                       /* [BF] game max framerate, 0 = unlimited (set by the glue) */                  \
     /* ---- [BF] falling letters (new feature, not in LyricsFlow) */                                                   \
+    B(fxWave, false)                   /* [BF] letters ripple in a wave */                                             \
+    B(fxRainbow, false)                /* [BF] colours cycle (hueShiftSpeed 0.12 when that is 0) */                    \
+    B(fxBeatShake, false)              /* [BF] words shake a little on the beat */                                     \
+    F(fxIntensity, 1.0f)               /* [BF] strength of the break-apart exits 0.2 .. 2 */                           \
     B(spreadOut, false)                /* [BF] more room between lyric lines/words (floating + sky) */                 \
     B(fallingLetters, false)                                                                                           \
     E(LetterLand, letterLand, LetterLand::Flat)                                                                        \

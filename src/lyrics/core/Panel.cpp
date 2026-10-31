@@ -56,7 +56,14 @@ std::string fmtTime(int64_t ms) { // WorldPanel.fmt: m:ss
 std::string fontName(std::string const& id) {
     static std::map<std::string, std::string> const names{{"lyricsflow_script", "LyricsFlow"}, {"outfit", "Outfit"}, {"outfit_bold", "Outfit Bold"},
                                                           {"greatvibes", "Great Vibes"},       {"kaushan", "Kaushan"}, {"dancing", "Dancing"},
-                                                          {"pacifico", "Pacifico"},            {"poppins", "Poppins"}, {"minecraft", "Minecraft"}};
+                                                          {"pacifico", "Pacifico"},            {"poppins", "Poppins"}, {"minecraft", "Minecraft"},
+                                                          // [BF] display fonts (OFL / Apache, Google Fonts)
+                                                          {"bebas", "Bebas Tall"}, {"bangers", "Comic Bangers"}, {"monoton", "Neon Tubes"},
+                                                          {"gothic", "Gothic"}, {"creepster", "Creepy"}, {"arcade", "Arcade Pixel"},
+                                                          {"orbitron", "Sci-Fi"}, {"marker", "Marker"}, {"glitch", "Glitch"},
+                                                          {"typewriter", "Typewriter"}, {"abril", "Fat Serif"}, {"fredoka", "Bubble"},
+                                                          {"righteous", "Retro"}, {"rocksalt", "Scribble"}, {"nosifer", "Blood Drip"},
+                                                          {"audiowide", "Racing"}, {"shrikhand", "Groovy"}, {"cinzel", "Royal"}};
     auto it = names.find(id);
     return it == names.end() ? id : it->second;
 }
@@ -429,9 +436,9 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     c.text(nrm, 352 - nw, 10.5f, 0.62f, WHITE, (0.8f + 0.2f * hn) * a);
     if (c.clicked("nrm")) c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0});
 
-    static char const* const tabs[] = {"Sky", "Lyrics", "Look", "FPS", "More"};
-    float const tw = (160.0f - 3.0f * 4) / 5;
-    for (int i = 0; i < 5; ++i) {
+    static char const* const tabs[] = {"Sky", "Lyrics", "Look", "FX", "FPS", "More"};
+    float const tw = (160.0f - 3.0f * 5) / 6;
+    for (int i = 0; i < 6; ++i) {
         float       tx  = 206 + float(i) * (tw + 3);
         bool        sel = mPage == i;
         std::string id  = "tab" + std::to_string(i);
@@ -451,7 +458,8 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     case 0: skies(c, cfg); break;
     case 1: lyrics(c, cfg); break;
     case 2: look(c, cfg, c.fonts); break;
-    case 3: fps(c, cfg); break;
+    case 3: fx(c, cfg); break;
+    case 4: fps(c, cfg); break;
     default: more(c, cfg); break;
     }
 }
@@ -554,6 +562,40 @@ void Panel::look(Ctx& c, Config& cfg, FontSet const& fonts) {
     static char const* const sh[] = {"No shadow", "Soft", "Strong"};
     for (int i = 0; i < 3; ++i)
         c.option("sh" + std::to_string(i), 206 + float(i) * 54, 186, 50, 13, sh[i], cfg.textShadow == i, [&, i] { cfg.textShadow = i; }, a);
+}
+
+// [BF] FX tab: how words come in and leave (incl. the falling-letter physics and the break-apart exits), plus
+// effects that run while a line is up.
+void Panel::fx(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Words come in", 206, 45, 0.62f, WHITE, 0.55f * a);
+    static std::pair<EnterAnim, char const*> const ins[] = {{EnterAnim::Word, "Pop"},   {EnterAnim::Fade, "Fade"}, {EnterAnim::Rise, "Rise"},
+                                                            {EnterAnim::Drop, "Drop"},  {EnterAnim::Spin, "Spin"}, {EnterAnim::Zoom, "Zoom"},
+                                                            {EnterAnim::Glitch, "Glitch"}, {EnterAnim::Neon, "Typed"}};
+    for (int i = 0; i < 8; ++i) {
+        auto [v, lab] = ins[i];
+        c.option("fi" + std::to_string(i), 206 + float(i % 4) * 40.5f, 53 + float(i / 4) * 15, 38, 13, lab, cfg.enterAnim == v,
+                 [&cfg, v = v] { cfg.enterAnim = v; }, a);
+    }
+    c.text("Words leave", 206, 86, 0.62f, WHITE, 0.55f * a);
+    static std::pair<ExitAnim, char const*> const outs[] = {{ExitAnim::FloatUp, "Float up"}, {ExitAnim::Drift, "Drift"},     {ExitAnim::Fade, "Fade"},
+                                                            {ExitAnim::Fall, "Fall"}, {ExitAnim::Shatter, "Shatter"}, {ExitAnim::Dissolve, "Dissolve"},
+                                                            {ExitAnim::Explode, "Explode"},  {ExitAnim::Burn, "Burn"},       {ExitAnim::Glitch, "Glitch"}};
+    for (int i = 0; i < 9; ++i) {
+        auto [v, lab] = outs[i];
+        c.option("fo" + std::to_string(i), 206 + float(i % 3) * 54, 94 + float(i / 3) * 15, 51, 13, lab, cfg.exitAnim == v,
+                 [&cfg, v = v] {
+                     cfg.exitAnim       = v;
+                     cfg.fallingLetters = v == ExitAnim::Fall; // the old toggle follows the choice
+                 },
+                 a);
+    }
+    c.toggle2("fxw", 206, 142, 78, "Wave", cfg.fxWave, [&] { cfg.fxWave = !cfg.fxWave; }, a);
+    c.toggle2("fxr", 288, 142, 78, "Rainbow", cfg.fxRainbow, [&] { cfg.fxRainbow = !cfg.fxRainbow; }, a);
+    c.toggle2("fxs", 206, 160, 78, "Beat shake", cfg.fxBeatShake, [&] { cfg.fxBeatShake = !cfg.fxBeatShake; }, a);
+    c.toggle2("fxl", 288, 160, 78, "Land flat", cfg.letterLand == LetterLand::Flat,
+              [&] { cfg.letterLand = cfg.letterLand == LetterLand::Flat ? LetterLand::Tumble : LetterLand::Flat; }, a);
+    cfg.fxIntensity = 0.2f + 1.8f * c.slider("fxi", "Break power", 186, (std::clamp(cfg.fxIntensity, 0.2f, 2.0f) - 0.2f) / 1.8f, a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the

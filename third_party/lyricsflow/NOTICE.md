@@ -21,3 +21,10 @@ The panel layout follows a LyricsFlow teaser screenshot shared by Fernando. Pers
 `resources/lyricsflow/shaders/live_sky.fsh` / `.vsh` are LyricsFlow 2.1's sky shaders (374m, MIT), unchanged;
 `live_sky.hlsl` and RF's `shaders/live_sky.hlsl` are mechanical translations of it (tools/LyricsSky/gen_sky_shaders.py).
 The panel's sky thumbnails (`tools/LyricsPanel/sky_thumbs`) are renders of that shader. Personal use, never distributed.
+
+## Display fonts (added 2026-10-31)
+`fonts/{bebas,bangers,monoton,gothic,creepster,arcade,orbitron,marker,glitch,typewriter,abril,fredoka,righteous,rocksalt,nosifer,audiowide,shrikhand,cinzel}.ttf`
+come from github.com/google/fonts (Bebas Neue, Bangers, Monoton, UnifrakturMaguntia, Creepster, Press Start 2P,
+Orbitron, Permanent Marker, Rubik Glitch, Special Elite, Abril Fatface, Fredoka, Righteous, Rock Salt, Nosifer,
+Audiowide, Shrikhand, Cinzel Decorative Bold). SIL OFL 1.1, except Permanent Marker, Special Elite and Rock Salt
+(Apache 2.0); each licence sits next to its font as `<id>_OFL.txt` / `<id>_LICENSE.txt`.
