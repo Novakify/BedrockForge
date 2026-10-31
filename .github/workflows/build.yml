@@ -121,6 +121,19 @@ jobs:
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" cinematic-builds
 
       # LyricsFlow prep (cinematic + lyrics pass): own branch so cinematic-builds / rf-builds stay untouched
+      - name: Publish client UI RF build to clientui-rf-builds
+        if: github.ref == 'refs/heads/clientui/rf' && github.event_name == 'push'
+        shell: bash
+        run: |
+          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/
+          cd out
+          git init -q -b clientui-rf-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
+          git add -A && git commit -qm "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" clientui-rf-builds
+
       - name: Publish LyricsFlow RF build to lyricsflow-rf-builds
         if: startsWith(github.ref, 'refs/heads/lyricsflow/rf-on-cinematic') && github.event_name == 'push'
         shell: bash

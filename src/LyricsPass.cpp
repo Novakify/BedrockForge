@@ -40,7 +40,10 @@ using Microsoft::WRL::ComPtr;
 
 constexpr UINT     kSlots     = 4;     // ring of upload buffers (>= swap chain buffers)
 constexpr UINT     kCap       = 16384; // glyphs per frame
-constexpr UINT     kTable     = 2 + kBfLyricsMaxAtlases; // t0 glyphs, t1..t16 atlases, t17 UI target
+constexpr UINT     kTable     = 2 + kBfLyricsMaxAtlases + 3; // t0 glyphs, t1..t16 atlases, t17 UI target, t18 frame copy, t19/t20 blur
+constexpr UINT     kUiSrv     = 1 + kBfLyricsMaxAtlases;     // 17
+constexpr UINT     kSceneSrv  = kUiSrv + 1;                  // 18 (glass)
+constexpr UINT     kBlurSrv   = kUiSrv + 2;                  // 19 (final blur), 20 = ping-pong
 constexpr uint32_t kMaxAtlas  = kBfLyricsMaxAtlases;
 
 // ---------------------------------------------------------------- settings (F6, not persisted yet)
@@ -121,7 +124,7 @@ bool startDecode(BfLyricFrameV1 const& hdr) {
 // ---------------------------------------------------------------- D3D12 objects (overlay thread)
 ComPtr<ID3D12Device>         gDevice;
 ComPtr<ID3D12RootSignature>  gRoot;
-ComPtr<ID3D12PipelineState>  gPsoGlyph, gPsoComposite;
+ComPtr<ID3D12PipelineState>  gPsoGlyph, gPsoComposite, gPsoDown, gPsoBlurH, gPsoBlurV;
 DXGI_FORMAT                  gPsoFmt = DXGI_FORMAT_UNKNOWN;
 ComPtr<ID3D12DescriptorHeap> gSrvHeap, gRtvHeap;
 UINT                         gSrvInc = 0;
@@ -132,6 +135,11 @@ std::vector<ComPtr<ID3D12Resource>> gGraveyard;
 std::vector<std::pair<ComPtr<ID3D12Resource>, uint64_t>> gUiGrave; // old S2 targets + the Present they died on
 uint64_t                     gPresents = 0;
 ComPtr<ID3D12Resource>       gUiTarget;
+// glass (client UI / LyricsFlow panel): copy of the frame + quarter-res blur ping-pong (A = final, B = temp)
+ComPtr<ID3D12Resource>       gScene, gBlurA, gBlurB;
+UINT                         gQW = 0, gQH = 0;
+D3D12_CPU_DESCRIPTOR_HANDLE  gRtvA{}, gRtvB{};
+bool                         gGlassUsed = false;
 UINT                         gW = 0, gH = 0;
 DXGI_FORMAT                  gFmt = DXGI_FORMAT_UNKNOWN;
 std::atomic<size_t>          gUiRtv{0};
@@ -198,7 +206,7 @@ bool createStatic(ID3D12Device* device) {
         return false;
     }
     D3D12_DESCRIPTOR_HEAP_DESC srv{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSlots * kTable, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
-    D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 3, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0}; // UI target, blur A, blur B
     if (FAILED(hr = device->CreateDescriptorHeap(&srv, IID_PPV_ARGS(&gSrvHeap)))) { fail("CreateDescriptorHeap(SRV)", hr); return false; }
     if (FAILED(hr = device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&gRtvHeap)))) { fail("CreateDescriptorHeap(RTV)", hr); return false; }
     gSrvInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -269,6 +277,11 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
         if (!createPso({shaders::VSComposite, sizeof shaders::VSComposite}, {shaders::PSComposite, sizeof shaders::PSComposite}, bb.Format, true,
                        gPsoComposite))
             return false;
+        gPsoDown.Reset(); gPsoBlurH.Reset(); gPsoBlurV.Reset();
+        D3D12_SHADER_BYTECODE const vsFull{shaders::VSComposite, sizeof shaders::VSComposite};
+        if (!createPso(vsFull, {shaders::PSDown, sizeof shaders::PSDown}, bb.Format, false, gPsoDown)) return false;
+        if (!createPso(vsFull, {shaders::PSBlurH, sizeof shaders::PSBlurH}, bb.Format, false, gPsoBlurH)) return false;
+        if (!createPso(vsFull, {shaders::PSBlurV, sizeof shaders::PSBlurV}, bb.Format, false, gPsoBlurV)) return false;
         gPsoFmt = bb.Format;
     }
 #else
@@ -279,7 +292,10 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     // S2 UI target, same size/format as the back buffer (only bound when "under the HUD" is on)
     gUiReady = false;
     if (gUiTarget) gUiGrave.push_back({gUiTarget, gPresents}); // freed a few Presents later (resize used to leak one)
+    for (auto* r : {&gScene, &gBlurA, &gBlurB})
+        if (*r) gUiGrave.push_back({*r, gPresents});
     gUiTarget.Reset();
+    gScene.Reset(); gBlurA.Reset(); gBlurB.Reset();
     gW   = UINT(bb.Width);
     gH   = bb.Height;
     gFmt = bb.Format;
@@ -305,7 +321,33 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     s.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
     s.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     s.Texture2D.MipLevels     = 1;
-    for (UINT slot = 0; slot < kSlots; ++slot) gDevice->CreateShaderResourceView(gUiTarget.Get(), &s, srvCpu(slot * kTable + kTable - 1));
+    for (UINT slot = 0; slot < kSlots; ++slot) gDevice->CreateShaderResourceView(gUiTarget.Get(), &s, srvCpu(slot * kTable + kUiSrv));
+
+    // glass: frame copy (full size, starts as a shader resource) + quarter-res blur targets (start as render targets)
+    d.Flags = D3D12_RESOURCE_FLAG_NONE;
+    hr = gDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&gScene));
+    if (FAILED(hr)) { fail("CreateCommittedResource(glass frame copy)", hr); return false; }
+    gQW     = std::max(1u, (gW + 3) / 4);
+    gQH     = std::max(1u, (gH + 3) / 4);
+    d.Width  = gQW;
+    d.Height = gQH;
+    d.Flags  = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    for (auto* r : {&gBlurA, &gBlurB}) {
+        hr = gDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(r));
+        if (FAILED(hr)) { fail("CreateCommittedResource(glass blur)", hr); return false; }
+    }
+    UINT const rtvInc = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    gRtvA = gRtvHeap->GetCPUDescriptorHandleForHeapStart();
+    gRtvA.ptr += rtvInc;
+    gRtvB = gRtvA;
+    gRtvB.ptr += rtvInc;
+    gDevice->CreateRenderTargetView(gBlurA.Get(), nullptr, gRtvA);
+    gDevice->CreateRenderTargetView(gBlurB.Get(), nullptr, gRtvB);
+    for (UINT slot = 0; slot < kSlots; ++slot) {
+        gDevice->CreateShaderResourceView(gScene.Get(), &s, srvCpu(slot * kTable + kSceneSrv));
+        gDevice->CreateShaderResourceView(gBlurA.Get(), &s, srvCpu(slot * kTable + kBlurSrv));
+        gDevice->CreateShaderResourceView(gBlurB.Get(), &s, srvCpu(slot * kTable + kBlurSrv + 1));
+    }
     gUiReady = true;
     return true;
 }
@@ -501,6 +543,43 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     list->SetGraphicsRootDescriptorTable(1, srvGpu(slot * kTable));
     list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
+    bool glass = false;
+    if (draw)
+        for (uint32_t i = 0; i < n && !glass; ++i) glass = (gHost[i].flags & (BF_GLYPH_GLASS | BF_GLYPH_BACKDROP)) != 0;
+    gGlassUsed = glass;
+    if (glass) { // copy the frame, blur it at quarter res (two gaussian rounds), then go back to the back buffer
+        barrier(list, bb, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        barrier(list, gScene.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+        list->CopyResource(gScene.Get(), bb);
+        barrier(list, gScene.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        barrier(list, bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        D3D12_VIEWPORT qvp{0, 0, float(gQW), float(gQH), 0, 1};
+        D3D12_RECT     qsc{0, 0, LONG(gQW), LONG(gQH)};
+        list->RSSetViewports(1, &qvp);
+        list->RSSetScissorRects(1, &qsc);
+        float zero[24]{};
+        list->SetGraphicsRoot32BitConstants(0, 24, zero, 0);
+        auto pass = [&](ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE rtv) {
+            list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+            list->SetPipelineState(pso);
+            list->DrawInstanced(3, 1, 0, 0);
+        };
+        auto const RT = D3D12_RESOURCE_STATE_RENDER_TARGET, SR = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        pass(gPsoDown.Get(), gRtvA);                       // A = frame / 4
+        barrier(list, gBlurA.Get(), RT, SR);
+        for (int round = 0; round < 2; ++round) {
+            pass(gPsoBlurH.Get(), gRtvB);                  // B = blurH(A)
+            barrier(list, gBlurB.Get(), RT, SR);
+            barrier(list, gBlurA.Get(), SR, RT);
+            pass(gPsoBlurV.Get(), gRtvA);                  // A = blurV(B)
+            barrier(list, gBlurA.Get(), RT, SR);
+            barrier(list, gBlurB.Get(), SR, RT);
+        }
+        list->RSSetViewports(1, &vp);
+        list->RSSetScissorRects(1, &sc);
+        list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
+    }
+
     if (draw) {
         std::memcpy(gGlyphMap[slot], gHost.data(), size_t(n) * sizeof(BfGlyphV1));
         float aspect = gH ? float(gW) / float(gH) : 16.0f / 9.0f;
@@ -514,9 +593,11 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         c[20] = aspect;
         c[21] = gUi.opacity;
         c[22] = gUi.debugBounds ? 1.0f : 0.0f;
+        c[23] = float(gH); // glass: screen height in px (width = aspect * height)
         list->SetGraphicsRoot32BitConstants(0, 24, c, 0);
         list->SetPipelineState(gPsoGlyph.Get());
         list->DrawInstanced(6, n, 0, 0);
+        if (glass) barrier(list, gBlurA.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
         gStatus = std::to_string(n) + " glyphs" + (gHdr.total > n ? " (truncated from " + std::to_string(gHdr.total) + ")" : "");
     }
     if (redirected) { // S2: the game's UI went to our target this frame -> put it back on top
@@ -550,6 +631,7 @@ void drawUi() {
     ImGui::Text("Status: %s", gStatus.c_str());
     ImGui::Text("Camera: %s", gCamStatus.c_str());
     ImGui::Text("Atlases: %s (gen %u)", gAtlasStatus.c_str(), gUploadedGen);
+    ImGui::Text("Glass: %s (blur %ux%u)", gGlassUsed ? "drawing" : "idle", gQW, gQH);
     ImGui::Text("BF frame %u, active %u, %u/%u glyphs", gHdr.frame, gHdr.active, gHdr.count, gHdr.total);
     CameraSnap s = camera();
     ImGui::Text("Camera hook: %llu calls, %llu world", (unsigned long long)s.calls, (unsigned long long)s.chosen);

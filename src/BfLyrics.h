@@ -26,6 +26,16 @@ enum BfGlyphFlags : uint32_t {
                                  // space, x right / y up / z forward, x and y already divided by tan(fovY/2). The vertex
                                  // shader outputs (x / aspect, y, 0, z): exact perspective, so BF can ray-pick the mouse
     BF_GLYPH_IMAGE    = 1u << 7, // colour image (cover art, icons, thumbnails): rgba sample * fill (tint), no SDF
+    // Glass (2026-10-31, client UI + LyricsFlow panel). RF copies the frame before the glyphs draw and blurs it; a glass
+    // surface shows that copy frosted and bent like a lens at its edge. With SOLID or PETAL:
+    //   fill = tint colour, fill.a = tint amount | glowW = bevel (px, refraction zone) | glowK = refraction (px)
+    //   pxRange = blur mix 0..1 (0 clear, 1 frosted) | outline = rim light (a = strength) | glow = inner edge glow
+    //   (a = strength) | outlineW = corner radius fraction (SOLID) or inner/outer radius (PETAL)
+    BF_GLYPH_GLASS    = 1u << 8,
+    BF_GLYPH_PETAL    = 1u << 9,  // ring sector filling the quad: fill2 = centre angle | half span << 16, both in
+                                  // 1/100 degree, screen space (0 = right, 9000 = down); without GLASS = flat colour
+    BF_GLYPH_BACKDROP = 1u << 10, // full-screen frosted frame: fill = darkening colour (a = amount), pxRange = blur,
+                                  // glowW = clear circle radius px around the quad centre, glowK = its feather px
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the
