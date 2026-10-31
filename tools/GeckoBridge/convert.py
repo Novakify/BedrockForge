@@ -25,6 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import gbanim  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from ModelCore.rig import load_bedrock_geo, write_bedrock_geo  # noqa: E402
 
 try:
     from PIL import Image
@@ -54,18 +56,18 @@ def manifest(name, desc, kind, dep=None, seed=""):
 
 
 def convert_geometry(geo, ns, eid, report):
-    """GeckoLib geometry is Bedrock geometry. Only the identifier must change: mods reuse vanilla names
-    (Sculk Horde's enderman is "geometry.enderman.v1.8"), which would replace/collide with vanilla models."""
-    g = json.loads(json.dumps(geo))
-    geoms = g.get("minecraft:geometry", [])
-    if len(geoms) != 1: report.setdefault("warnings", []).append(f"{eid}: {len(geoms)} geometries in file, using first")
-    first = geoms[0]
-    report.setdefault("geometry_renamed", {})[eid] = [first["description"]["identifier"], geo_id(ns, eid)]
-    first["description"]["identifier"] = geo_id(ns, eid)
-    fv = g.get("format_version", "1.12.0")
+    """GeckoLib geometry is Bedrock geometry, loaded through the shared ModelCore rig. Only the identifier changes:
+    mods reuse vanilla names (Sculk Horde's enderman is "geometry.enderman.v1.8"), which would collide with vanilla."""
+    rigs = load_bedrock_geo(geo)
+    if len(rigs) != 1: report.setdefault("warnings", []).append(f"{eid}: {len(rigs)} geometries in file, using first")
+    rig = rigs[0]
+    report.setdefault("geometry_renamed", {})[eid] = [rig.identifier, geo_id(ns, eid)]
+    report["rig"] = rig.stats()
+    rig.identifier = geo_id(ns, eid)
+    fv = geo.get("format_version", "1.12.0")
     if fv not in ("1.12.0", "1.16.0", "1.21.0"):
         report.setdefault("warnings", []).append(f"{eid}: geometry format {fv} -> written as 1.12.0"); fv = "1.12.0"
-    return {"format_version": fv, "minecraft:geometry": [first]}
+    return write_bedrock_geo([rig], fv)
 
 
 def glow_alpha(base_png, glow_png):

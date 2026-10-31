@@ -8,73 +8,18 @@ loop modes carry over as they are. What does NOT carry over is how a keyframe is
             GeckoLib 4 BakedAnimationsAdapter.buildKeyframeStack). Values are {"vector": [...]} objects.
   Bedrock:  keyframes are plain [x,y,z] (or {"pre","post","lerp_mode"}); only linear and catmullrom.
 
-So the converter BAKES every non-linear segment into short linear segments (sampled with GeckoLib's own
-easing maths, ported below from com.geckolib.animation.object.EasingType, MIT, (c) GeckoLib / Tslat).
+So the converter BAKES every non-linear segment into short linear segments, sampled with GeckoLib's own
+easing maths (tools/ModelCore/interp.py, ported from GeckoLib's EasingType, MIT, (c) GeckoLib / Tslat).
 `gl_eval` and `bedrock_eval` evaluate both sides so the error of the bake can be measured, not guessed.
 """
-import math, re
+import math, re, sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 TOL = {"rotation": 0.05, "position": 0.005, "scale": 0.001}  # max bake error: degrees / pixels / factor
 EPS = 1e-5  # GeckoLib uses Mth.EPSILON for pre/post; anything tiny works for evaluation
 
-# ---------------------------------------------------------------- GeckoLib easing maths (ported) ----
-def _ease_out(f): return lambda t: 1 - f(1 - t)
-def _ease_in_out(f): return lambda t: f(t * 2) / 2 if t < 0.5 else 1 - f((1 - t) * 2) / 2
-def _sine(n): return 1 - math.cos(n * math.pi / 2)
-def _circle(n): return 1 - math.sqrt(max(0.0, 1 - n * n))
-def _exp(n): return math.pow(2, 10 * (n - 1))
-def _pow(p): return lambda t: math.pow(t, p)
-def _elastic(a):
-    n2 = 1 if a is None else a
-    return lambda t: 1 - math.pow(math.cos(t * math.pi / 2), 3) * math.cos(t * n2 * math.pi)
-def _bounce(a):
-    n2 = 0.5 if a is None else a
-    one = lambda x: 121 / 16 * x * x
-    two = lambda x: 121 / 4 * n2 * (x - 6 / 11) ** 2 + 1 - n2
-    three = lambda x: 121 * n2 * n2 * (x - 9 / 11) ** 2 + 1 - n2 * n2
-    four = lambda x: 484 * n2 ** 3 * (x - 10.5 / 11) ** 2 + 1 - n2 ** 3
-    return lambda t: min(one(t), two(t), three(t), four(t))
-def _back(a):
-    n2 = 1.70158 if a is None else a * 1.70158
-    return lambda t: t * t * ((n2 + 1) * t - n2)
-def _step(a):
-    steps = int(2 if a is None else a)
-    if steps < 2: raise ValueError("step easing needs >= 2 steps")
-    L = 1 / steps
-    def f(t):
-        if t < 0: return 0.0
-        last = (steps - 1) * L
-        if t > last: return last
-        return math.floor(t / L + 1e-12) * L
-    return f
-
-_SIMPLE = {
-    "linear": lambda t: t, "none": lambda t: t,
-    "easeinsine": _sine, "easeoutsine": _ease_out(_sine), "easeinoutsine": _ease_in_out(_sine),
-    "easeinquad": _pow(2), "easeoutquad": _ease_out(_pow(2)), "easeinoutquad": _ease_in_out(_pow(2)),
-    "easeincubic": _pow(3), "easeoutcubic": _ease_out(_pow(3)), "easeinoutcubic": _ease_in_out(_pow(3)),
-    "easeinquart": _pow(4), "easeoutquart": _ease_out(_pow(4)), "easeinoutquart": _ease_in_out(_pow(4)),
-    "easeinquint": _pow(5), "easeoutquint": _ease_out(_pow(5)), "easeinoutquint": _ease_in_out(_pow(5)),
-    "easeinexpo": _exp, "easeoutexpo": _ease_out(_exp), "easeinoutexpo": _ease_in_out(_exp),
-    "easeincirc": _circle, "easeoutcirc": _ease_out(_circle), "easeinoutcirc": _ease_in_out(_circle),
-}
-_ARG = {
-    "easeinback": _back, "easeoutback": lambda a: _ease_out(_back(a)), "easeinoutback": lambda a: _ease_in_out(_back(a)),
-    "easeinelastic": _elastic, "easeoutelastic": lambda a: _ease_out(_elastic(a)),
-    "easeinoutelastic": lambda a: _ease_in_out(_elastic(a)),
-    "easeinbounce": _bounce, "easeoutbounce": lambda a: _ease_out(_bounce(a)),
-    "easeinoutbounce": lambda a: _ease_in_out(_bounce(a)),
-    "step": _step,
-}
-
-def easing_fn(name, arg=None):
-    n = (name or "linear").lower()
-    if n in _SIMPLE: return _SIMPLE[n]
-    if n in _ARG: return _ARG[n](arg)
-    return _SIMPLE["linear"]  # GeckoLib: unknown name -> LINEAR (EasingType.fromString)
-
-def catmull(d, p0, p1, p2, p3):  # EasingType.CatmullRomEasing.getPointOnSpline
-    return 0.5 * (2 * p1 + (p2 - p0) * d + (2 * p0 - 5 * p1 + 4 * p2 - p3) * d * d + (3 * p1 - p0 - 3 * p2 + p3) * d ** 3)
+from ModelCore.interp import easing_fn, catmull, EASINGS  # noqa: E402  (shared maths, see tools/ModelCore)
 
 # ---------------------------------------------------------------- parsing -----------------------------
 class KF:
