@@ -1,3 +1,17 @@
+# Next session handoff (updated 2026-10-31 ~18:35 UTC, GeckoBridge kickoff) - READ FIRST
+- PROOF INSTALLED, NOT YET SEEN: GeckoBridge Proof RP/BP v2 (gb_glow material) in the instance's
+  development_resource_packs / development_behavior_packs (v1 moved to <instance>\geckobridge_staging\old_v1).
+  Enabled in world "GeckoBridge Test" (folder MKKrqc0qT1g=, flat creative, cheats on): world_*_packs.json +
+  *_pack_history.json written (backups *.pre-gb.bak). Edited while the game ran in My World - safe because that world
+  was not opened in this game run.
+- IN-GAME CHECK BLOCKED: another Claude session held the computer-use lock (game open in My World, 13:22 local).
+  To do: open GeckoBridge Test, `/summon gb:sculk_enderman ~ ~ ~3`, `/summon gb:sculk_enderman_alphaglow ~3 ~ ~3`,
+  noon + `/time set midnight`, Fancy first, then VV; grep newest ContentLog for errors.
+  Computer use: game resolves as the path `c:\users\fazzman175\appdata\roaming\levilauncher.exe\versions\1.26.51.01\minecraft.windows.exe`
+  (name "Minecraft.windows" only resolves via that path). TikTok Live Studio was running - ask before taking the screen.
+- M1 PLAN WRITTEN (PORT_GECKOBRIDGE.md "M1 plan"), ModelCore-aware per PORT_FIGURA.md. Waiting for Fernando's OK
+  before starting.
+
 # Next session handoff (updated 2026-10-30 ~17:15 UTC, cloud session, GeckoBridge research) - READ FIRST
 - BRANCH `research/geckobridge` (from main; never merge without Fernando). Newer Cinematic/LyricsFlow handoff
   blocks live on branch `handoff/v0.9-status-2026-10-29` (not merged into main) - read that file there too.

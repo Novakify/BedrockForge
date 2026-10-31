@@ -161,16 +161,16 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
    `limb_swing`), per-frame bone overrides from code that Molang can't express.
 4. **RF native (later, optional):** per-pixel emissive strength, animated
    texture interpolation. Not needed for M0-M2.
-5. **Not planned:** a native GeckoLib keyframe evaluator inside Bedrock. Baking is exact enough; only revisit if
-   the keyframe growth (x8.5 for Sculk Horde) ever costs load time or FPS.
+5. **Native evaluator = ModelCore's (shared with FiguraBridge, PORT_FIGURA.md).** GeckoBridge keeps the offline bake
+   as default; the native evaluator (built for Figura in F2) becomes the fallback for mods whose baked files get too big.
+   To keep that cheap, the easing maths lives in one pure module (`tools/ModelCore/interp.py`, M1) with golden test
+   vectors the C++ port must reproduce.
 
 ## Milestones
 - **M0 (this session, done except the in-game look):** research, `scan.py`, easing baker with measured error,
   `convert.py` proof pack (Sculk Enderman: model + `idle` + `idle.tendrils` concurrent + glowmask), preview render
   showing Bedrock == GeckoLib, validator 0 errors. **Open: install + see it in game** (needs folder access).
-- **M1 - static mobs 1:1:** sound keyframes, glow mode chosen in game, geometry variants, controller extraction for
-  the common patterns (idle/walk/run/attack/death, DefaultAnimations), all 3 test mods converted with their
-  report.json; merge into ModPorter (`--gecko` path). In game: every mob of the 3 mods spawns + animates, 0 content errors.
+- **M1 - all mobs of the 3 test mods 1:1, on ModelCore** (plan below, waiting for Fernando's OK).
 - **M2 - behaviour-linked animation:** trigger bridge + variable properties + head-look/hide-bone patterns;
   Sculk Horde attacks play their triggered animations; Naturalist sleep/eat/sit.
 - **M3 - items, armor, blocks:** attachables for GeoItem/GeoArmor, dummy entities for GeoBlockEntity,
@@ -178,6 +178,41 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
 - **M4 - GeckoLib 5 Java side:** controller extraction tables for `com.geckolib` (render states, DataTickets);
   test on Cave Dweller 1.6.4 NeoForge 26.3 (GL5) from your PC.
 - **M5 (optional):** RF emissive/eyes material, animated textures.
+
+## M1 plan (proposed 2026-10-31 - waiting for OK)
+Goal: every mob of Cave Dweller Evolved, Naturalist and Sculk Horde spawns and animates in the `GeckoBridge Test`
+world like in Java, ContentLog 0 errors, built so FiguraBridge plugs into the same layer later. Offline only, no engine hooks.
+
+1. **ModelCore (offline half), `tools/ModelCore/`**
+   - `rig.py`: one in-memory rig (bones, pivots, rest rotation, cubes with box/per-face UV + uv_rotation, poly meshes,
+     locators, bindings). `load_bedrock_geo()` for every GeckoLib geo version (1.12 to 1.21.20), `write_bedrock_geo()`,
+     `load_bbmodel()` as a stub for Figura F1. Test: geo -> rig -> geo round-trips all 81 geo files of the 3 mods.
+   - `interp.py`: the pure maths moved out of `gbanim.py` (30+ GeckoLib easings, GeckoLib catmull-rom, step) plus a
+     slot for Figura's bezier. No JSON, no Bedrock in it. `golden.json` = sampled curves the future C++ evaluator must match.
+   - `gbanim.py` keeps only GeckoLib parsing + baking and imports `interp`.
+2. **Controller extraction** (`tools/GeckoBridge/controllers.py`, GeckoLib 4 tables now, GL5 in M4): javap over the
+   GeoEntity classes -> controller names, `thenPlay/thenLoop` chains, `DefaultAnimations` constants, `transitionLength`,
+   `setAnimationSpeed`, triggerable names (recorded for M2). Emits Bedrock animation controllers for idle / walk / run /
+   swim / fly / attack / death + always-on "living" animations; anything not recognised -> report + name-based fallback.
+3. **Sounds:** `sound_effects` keyframes -> client entity sound_effects + `sound_definitions.json` + .ogg copied.
+4. **Variants:** texture/model picked in `getTextureResource` (variants, baby) -> property + render controller arrays.
+5. **Glow through RF materials:** `gb_glow` derives from vanilla `entity_alphablend`, which RF/ShaderForge already
+   replace, so packs light it like vanilla. Checked on **Fancy first**, then Vibrant Visuals; alpha mode stays as fallback.
+   Cave Dweller's eye layer uses the same path.
+6. **Owner hook (for Figura later):** every converted entity gets family `geckobridge`; its render controllers get
+   `part_visibility` driven by a reserved Molang variable `v.gb_hidden_parts` (always 0 in M1), so Figura/Bedrock Forge
+   can hide GeckoBridge parts/armor later without regenerating packs. Attachables in M3 use the same contract.
+7. **Frame budget:** report.json per mod (bones per entity, keyframes, animation file size); bake tolerance 0.05 deg,
+   auto 0.25 deg for mods whose animations pass 1.5 MB. In game: 20 mobs of each mod, Fancy + Hysteria, FPS noted on the RTX 4060.
+8. **ModPorter merge:** `generate.py --gecko` uses gbanim's exact bake (replacing its catmull-rom approximation) and
+   ModelCore for geometry. The ports already installed in My World (SculkHordeRP, TheDwellerRP) are **not touched**;
+   M1 builds go to new pack names, tested in `GeckoBridge Test` first.
+9. **Molang check:** a small Molang tokenizer/parser validates every expression (replaces the regex "suspect" check).
+10. **Mobs get ModPorter's generic AI** (wander / attack) so walk/attack animations can be seen; real behaviour is M2.
+
+Done when: 3 private pack pairs installed in `GeckoBridge Test`, every mob summoned once (screenshot sheet),
+ContentLog 0 errors, FPS noted, docs + NEXT_SESSION updated. Not in M1: triggered animations / real AI (M2),
+items/armor/blocks (M3), GeckoLib 5 Java side (M4), the native evaluator (FiguraBridge F2).
 
 ## Coexistence with Figura (added 2026-10-31)
 Goal is GeckoLib + Figura features together in one client. Figura is a separate native runtime (FiguraBridge) that
@@ -194,7 +229,7 @@ over-sized baked GeckoLib anims), one RF draw path for shaders/VV, one owner per
   play them "more correctly" than Java did; diff per mod.
 - **Entity properties limit** for the trigger bridge; property changes are server->client synced (fine single-player).
 - **Licences**: most GeckoLib mods are ARR; even permissive ones need credit (Apache NOTICE, MIT notice).
-- Repo is private since 2026-10-30; converted packs live in `ports/` for Fernando only - check visibility again before adding any if it ever goes public.
+- Repo visibility flips between public and private (Fernando's call, to save Actions minutes). Converted packs in `ports/` are private personal use only, never shared.
 
 ## Licences / permissions - questions for Fernando before anything is shared
 - Sculk Horde (proof): Apache-2.0 -> sharing allowed with credit + licence + "changes" note (CREDITS.txt in the
