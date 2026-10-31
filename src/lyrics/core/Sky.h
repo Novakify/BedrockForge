@@ -76,28 +76,45 @@ struct StarDraw {
 /// fwd = camera forward (stars behind the camera are skipped like Java).
 void drawStars(Preset const& p, Config const& cfg, int quality, float alpha, double time, float const fwd[3],
                std::vector<StarDraw>& out);
-inline constexpr uint32_t kStarColor = 0xF4EFFF;
+inline constexpr uint32_t kStarColor = 0xF4F0FF;
 
-/// Per-frame values WorldSky.renderSky feeds the shader besides the param row.
+/// Per-frame values WorldSky.renderSky computes (fades, music, day/night) - the shader's vertex inputs plus what the
+/// other layers (stars, weather, picture) are scaled by.
 struct Frame {
-    float alpha      = 1; // vertex Color.a
-    float brightness = 1; // vertex Color.r * 2
-    float t          = 0; // UV0.x = skyTime * 2.2
+    float alpha      = 1; // live shader: vertex Color.a = visible * liveFade
+    float brightness = 1; // live shader: vertex Color.r * 2
+    float t          = 0; // live shader: UV0.x = skyTime * 2.2
+    float visible    = 0; // f14: sky on (Anim 3/s)
+    float bright     = 1; // f27: day/night dimming
+    float beat       = 0; // f21: beat pulse (fxSkyMusic)
+    float outside    = 1; // f15: 1 under open sky, eases to 0 underground / indoors (Anim 2/s) - weather only
+    float picture    = 0; // "My picture" fade (Anim 2.5/s)
+    float picBright  = 1; // picture brightness (day/night)
+    double time      = 0; // skyTime (seconds, speed-scaled)
 };
 
-/// WorldSky's clock + fades (renderSky): advance with the real frame time.
+/// WorldSky's clock + fades (renderSky); call once per frame.
 class Clock {
 public:
-    /// dtSec clamped to 0.1 like Java. night: 0 day .. 1 night (Minecraft 13000..23000 ticks); beat: 0..1 pulse;
-    /// calm: 1 while a line is playing, eases to 0.7 between lines (only with fxSkyMusic).
-    Frame tick(Preset const* p, Config const& cfg, double dtSec, float night, float beat, bool lineActive,
-               bool playing);
+    struct In {
+        double dtSec      = 0;     // real frame time (clamped to 0.1 like Java)
+        float  night      = 1;     // 0 day .. 1 night (Minecraft time 13000..23000 = 1, 1000-tick ramps)
+        float  beat       = 0;     // NowPlaying.beatPulse
+        bool   lineActive = true;  // a lyric line is playing (else "calm" eases to 0.7)
+        bool   playing    = false;
+        bool   skyOpen    = true;  // the sky is visible above the player's head (underground fade)
+        bool   picture    = false; // "My picture" is on and loaded
+    };
+    Frame  tick(Preset const* p, Config const& cfg, In const& in);
     double time() const { return mTime; }
 
 private:
     double      mTime = 1000.0, mBreath = 0;
-    float       mVisible = 0, mCalm = 1, mLiveFade = 0;
+    float       mVisible = 0, mCalm = 1, mLiveFade = 0, mOutside = 1, mPic = 0;
     std::string mLast;
 };
+
+/// Minecraft day time (ticks) -> the "night" factor renderSky uses.
+float nightOf(long long dayTime);
 
 } // namespace bf::lyrics::sky

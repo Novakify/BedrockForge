@@ -17,5 +17,9 @@ g++ -std=c++20 -Isrc src/lyrics/core/*.cpp tools/LyricsSky/sky_params.cpp -o /tm
 node tools/LyricsSky/render_sky.js /tmp/skyparams.json /tmp/sky 400 200 auto auto 70 all
 python3 tools/LyricsSky/gen_sky_shaders.py
 ```
-Not ported yet: WorldSky's stars, shooting stars, weather, constellations, "My picture", underground fade; and the
-in-game hook (RF has to draw the dome where Bedrock draws its sky - needs the PC).
+Layers (`src/lyrics/core/SkyFx.*`, from WorldSky): stars, constellations, shooting stars, storm lightning, weather
+particles (rain, snow, blizzard, petals, embers, fireflies; sprites = `resources/lyricsflow/sky/sprites.png`, made by
+running the jar's own `SkyPainter.sprites()`), "My picture" choice and the underground fade. `SkySystem` publishes
+everything per frame for RF (`BF_CopySkyFrame`, BfLyrics.h).
+* `sky_frame.cpp` + `compose_sky.py` - simulate the layers for a preset/camera and draw them over a dome render.
+Still missing: the in-game hook (RF has to draw the dome where Bedrock draws its sky - needs the PC).

@@ -25,6 +25,8 @@
 #include "lyrics/core/Text.h"
 #include "lyrics/core/TopBar.h"
 #include "lyrics/core/Sky.h"
+#include "lyrics/core/SkyFx.h"
+#include "lyrics/core/SkySystem.h"
 
 using namespace bf::lyrics;
 
@@ -1013,9 +1015,124 @@ TEST(live_sky_params) {
     CHECK(sd.size() > 300 && sd.size() <= 520);
     Clock c;
     Frame f{};
-    for (int i = 0; i < 100; ++i) f = c.tick(&syn, cfg, 0.05, 1, 0, true, false);
+    Clock::In ci; ci.dtSec = 0.05;
+    for (int i = 0; i < 100; ++i) f = c.tick(&syn, cfg, ci);
     CHECK(f.alpha > 0.99f);
     CHECK(std::abs(f.t - float((1000.0 + 5.0) * 2.2)) < 0.05f);
+}
+
+TEST(sky_layers) {
+    using namespace bf::lyrics::sky;
+    Config   cfg;
+    AutoPerf perf;
+    Fx       fx;
+    Clock    clk;
+    Clock::In ci;
+    ci.dtSec = 0.05;
+    auto storm = *find("storm", cfg), aurora = *find("aurora", cfg), sakura = *find("sakura", cfg);
+    Frame f{};
+    for (int i = 0; i < 60; ++i) f = clk.tick(&storm, cfg, ci);
+    CHECK(f.visible > 0.95f);
+    FxIn in;
+    in.cam = Cam::of(0, -30); // looking up toward +Z
+    CHECK(std::abs(in.cam.fz - std::cos(rad(30))) < 1e-9 && in.cam.fy > 0.4);
+    CHECK(std::abs(in.cam.rx + 1) < 1e-9);  // facing +Z, right is -X (Minecraft)
+    std::vector<Quad> out;
+    int  rainQuads = 0, skyQuads = 0, flashSeen = 0;
+    for (int i = 0; i < 400; ++i) {
+        f = clk.tick(&storm, cfg, ci);
+        in.nowMs += 50; in.dtSec = 0.05;
+        out.clear();
+        fx.frame(&storm, cfg, perf, f, in, out);
+        int w = 0, s = 0;
+        for (auto const& q : out) (q.layer == Layer::World ? w : s)++;
+        rainQuads = std::max(rainQuads, w); skyQuads = std::max(skyQuads, s);
+        for (auto const& q : out) if (q.v[0].rgb == 0xC8D4FFu) { ++flashSeen; break; }
+    }
+    CHECK_EQ(int(fx.particles()), int(220 * 0.85f));
+    CHECK(rainQuads > 40);                     // rain in front of the camera
+    CHECK(skyQuads > 40);                      // lightning: glow fan + bolt (storm has no stars)
+    CHECK(flashSeen > 3);                      // lightning flashes every 0.5..2.5 s
+    // shooting stars: aurora has them; one every 1.2..4.7 s, each lives 0.9 s
+    Fx fx2;
+    int  maxShots = 0, spawned = 0;
+    size_t prev = 0;
+    for (int i = 0; i < 600; ++i) {            // 30 s
+        in.nowMs += 50;
+        out.clear();
+        fx2.shooting(1.0f, in.nowMs, in.cam, out);
+        if (fx2.shootingCount() > prev) ++spawned;
+        prev = fx2.shootingCount();
+        maxShots = std::max(maxShots, int(fx2.shootingCount()));
+    }
+    CHECK(spawned >= 6 && spawned <= 26);
+    CHECK(maxShots <= 2);
+    // underground: weather fades out with the sky above
+    ci.skyOpen = false;
+    for (int i = 0; i < 80; ++i) f = clk.tick(&sakura, cfg, ci);
+    CHECK(f.outside < 0.01f);
+    out.clear();
+    Fx fx3;
+    fx3.frame(&sakura, cfg, perf, f, in, out);
+    for (auto const& q : out) CHECK(q.layer == Layer::Sky);
+    // picture replaces everything
+    in.picture = true;
+    out.clear();
+    fx3.frame(&aurora, cfg, perf, f, in, out);
+    CHECK(out.empty());
+    // My picture file choice
+    CHECK(isPictureFile("Pano.JPG"));
+    CHECK(!isPictureFile("notes.txt"));
+    CHECK_EQ(pictureChoice(cfg, {"b.png", "a.jpg", "x.txt"}), std::string("a.jpg"));
+    cfg.skyImageFile = "b.png";
+    CHECK_EQ(pictureChoice(cfg, {"b.png", "a.jpg"}), std::string("b.png"));
+    cfg.skyImageFile = "gone.png";
+    CHECK_EQ(pictureChoice(cfg, {"b.png", "a.jpg"}), std::string("a.jpg"));
+    CHECK_EQ(pictureChoice(cfg, {}), std::string(""));
+    int pw, ph;
+    pictureSize(8000, 3000, pw, ph);
+    CHECK(pw == 4096 && ph == 2048);
+    CHECK(std::abs(nightOf(18000) - 1) < 1e-6 && nightOf(6000) == 0 && std::abs(nightOf(12500) - 0.5f) < 1e-6);
+}
+
+TEST(sky_system_store) {
+    using namespace bf::lyrics::sky;
+    Config   cfg;
+    AutoPerf perf;
+    System   sys;
+    SystemIn in;
+    in.dtSec = 0.05; in.pitch = -40; in.spritesFile = "C:/x/sprites.png";
+    BfSkyFrameV1 h{};
+    h.size = sizeof h;
+    sys.step(true, cfg, perf, in); // skyPreset "off": inactive
+    BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK_EQ(h.active, 0u);
+    cfg.skyPreset = "midnight";
+    for (int i = 0; i < 40; ++i) { in.nowMs += 50; sys.step(true, cfg, perf, in); }
+    std::vector<BfSkyVertV1> v(20000);
+    h.size = sizeof h;
+    uint32_t n = BF_CopySkyFrame(&h, v.data(), uint32_t(v.size()));
+    CHECK_EQ(h.active, 1u);
+    CHECK(n > 400 && n % 4 == 0 && n == h.vertTotal);
+    CHECK_EQ(int(h.params[7][2]), find("midnight", cfg)->ordinal);
+    CHECK(h.info[2] > 0.5f && std::string(h.spritesFile) == "C:/x/sprites.png");
+    CHECK_EQ((v[0].color >> 16) & 255, 0xFFu); // star 0xF4F0FF: R low byte 0xF4, B in bits 16..23 = 0xFF
+    CHECK_EQ(v[0].color & 255, 0xF4u);
+    uint32_t gen = h.imageGeneration;
+    cfg.skyImage = true; in.pictureFile = "C:/x/sky/pano.jpg";
+    sys.step(true, cfg, perf, in);
+    h.size = sizeof h;
+    BF_CopySkyFrame(&h, v.data(), uint32_t(v.size()));
+    CHECK_EQ(h.picture, 1u);
+    CHECK_EQ(h.vertCount, 0u);           // the picture replaces stars & co
+    CHECK(h.imageGeneration == gen + 1);
+    h.size = 8;                           // a caller with an older/smaller header gets nothing
+    CHECK_EQ(BF_CopySkyFrame(&h, v.data(), 4), 0u);
+    in.overworld = false; cfg.skyImage = false;
+    for (int i = 0; i < 60; ++i) sys.step(true, cfg, perf, in);
+    h.size = sizeof h;
+    BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK_EQ(h.active, 0u);              // nether / end keep their sky
 }
 
 int main(int argc, char** argv) {

@@ -56,7 +56,7 @@ const ids = which === 'all' ? Object.keys(params) : which.split(',');
       const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
       const ty = Math.tan(vfov * Math.PI / 360), tx = ty * W / H;
       gl.uniform3fv(gl.getUniformLocation(prog, 'F'), f);
-      gl.uniform3fv(gl.getUniformLocation(prog, 'R'), r.map(v => -v)); // screen +x = player's right
+      gl.uniform3fv(gl.getUniformLocation(prog, 'R'), r); // Minecraft: facing +Z the right hand is -X
       gl.uniform3fv(gl.getUniformLocation(prog, 'U'), u);
       gl.uniform1f(gl.getUniformLocation(prog, 'TX'), tx);
       gl.uniform1f(gl.getUniformLocation(prog, 'TY'), ty);

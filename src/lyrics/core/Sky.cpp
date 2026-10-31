@@ -84,10 +84,10 @@ std::optional<Body> body(Preset const& p) {
     if (id == "synthwave") return Body{180, 12, 12, 0xFFD36B, BodyKind::Synth};
     if (id == "golden_hour") return Body{200, 4, 3.6, 0xFFC27A, BodyKind::Sun};
     if (id == "cotton_candy") return Body{120, 38, 2.4, 0xFFF4E0, BodyKind::Sun};
-    if (id == "sakura") return Body{60, 9, 2.6, 0xFFE3EE, BodyKind::Sun};
+    if (id == "sakura") return Body{60, 9, 2.6, 0xFFE2EE, BodyKind::Sun};
     if (id == "cosmos") return Body{60, 28, 5, 0xB9A6FF, BodyKind::Moon};
     if (id == "black_hole") return Body{165, 24, 5.2, 0xFFB45A, BodyKind::Eclipse};
-    if (id == "blood_moon") return Body{200, 22, 4.4, 0xFF4238, BodyKind::Moon};
+    if (id == "blood_moon") return Body{200, 22, 4.4, 0xFF4038, BodyKind::Moon};
     if (id == "frost") return Body{210, 30, 2.6, p.moon, BodyKind::Moon};
     if (p.moon != 0) return Body{200, 26, 2.4, p.moon, BodyKind::Moon};
     return std::nullopt;
@@ -174,31 +174,46 @@ void drawStars(Preset const& p, Config const& cfg, int quality, float alpha, dou
     }
 }
 
-Frame Clock::tick(Preset const* p, Config const& cfg, double dtSec, float night, float beat, bool lineActive,
-                  bool playing) {
-    double dt = std::min(0.1, std::max(0.0, dtSec));
+namespace {
+float ease(float v, float target, double dt, double speed) { // Anim.get(): v += (t - v) * (1 - e^(-speed dt))
+    return v + (target - v) * float(1.0 - std::exp(-speed * dt));
+}
+} // namespace
+
+float nightOf(long long dayTime) {
+    long long t = ((dayTime % 24000) + 24000) % 24000;
+    if (t >= 13000 && t <= 23000) return 1;
+    if (t > 12000 && t < 13000) return float(t - 12000) / 1000.0f;
+    if (t > 23000) return 1 - float(t - 23000) / 1000.0f;
+    return 0;
+}
+
+Frame Clock::tick(Preset const* p, Config const& cfg, In const& in) {
+    double dt = std::min(0.1, std::max(0.0, in.dtSec));
     mTime += dt * std::clamp(cfg.skySpeed, 0.1f, 3.0f);
     mBreath += dt * cfg.skyBreath * 1.3;
-    // Anim(0, 3.0) "visible": eases toward the target at 3/s.
-    float target = p ? 1.0f : 0.0f;
-    mVisible += (target - mVisible) * float(std::min(1.0, dt * 3.0));
-    if (std::abs(target - mVisible) < 1e-3f) mVisible = target;
+    mVisible = ease(mVisible, p ? 1.0f : 0.0f, dt, 3.0);
+    mOutside = ease(mOutside, in.skyOpen ? 1.0f : 0.0f, dt, 2.0);
+    mPic     = ease(mPic, in.picture ? 1.0f : 0.0f, dt, 2.5);
     std::string id = p ? p->id : "";
     if (id != mLast) { mLast = id; mLiveFade = 0; }
     mLiveFade = std::min(1.0f, mLiveFade + float(dt / 0.9));
 
-    float pulse = 0, calm = 1;
-    if (cfg.fxSkyMusic && playing) {
-        pulse = beat;
-        float ct = lineActive ? 1.0f : 0.7f;
-        mCalm += (ct - mCalm) * float(std::min(1.0, dt * 1.5));
-        calm = mCalm;
-    }
-    float bright = 1;
-    if (!cfg.skyDay && cfg.fxDayNight) bright = 0.35f + 0.65f * night;
     Frame f;
+    if (cfg.fxSkyMusic && in.playing) {
+        f.beat = in.beat;
+        mCalm  = ease(mCalm, in.lineActive ? 1.0f : 0.7f, dt, 1.5);
+    } else {
+        mCalm = 1;
+    }
+    f.bright     = (!cfg.skyDay && cfg.fxDayNight) ? 0.35f + 0.65f * in.night : 1.0f;
+    f.visible    = mVisible;
+    f.outside    = mOutside;
+    f.picture    = mPic;
+    f.picBright  = cfg.fxDayNight ? 0.45f + 0.55f * (1 - in.night) : 1.0f;
     f.alpha      = mVisible * outCubic(mLiveFade);
-    f.brightness = bright * (0.92f + 0.08f * calm) * (1 + 0.12f * pulse);
+    f.brightness = f.bright * (0.92f + 0.08f * mCalm) * (1 + 0.12f * f.beat);
+    f.time       = mTime;
     f.t          = float(mTime * 2.2);
     return f;
 }

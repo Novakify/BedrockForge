@@ -96,6 +96,8 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     F(italic, 0.0f)                    /* slant: x shift per unit of height (0.2 = ~11 deg, video B caps) */           \
     /* ---- LyricsFlow 2.1 (app.config.Config / LFConfig additions used by the world panel) */                       \
     B(skyImage, false)                 /* "My picture": your own image as the sky */                                   \
+    S(skyImageFile, "")                /* file in <lyricsflow>/sky (png/jpg, 2:1 panorama); "" = first one */          \
+    F(weatherAmount, 1.0f)             /* 0 .. 1 sky weather particles */                                              \
     F(skyStrength, 0.8f)               /* 0.1 .. 1 */                                                                  \
     F(skySpeed, 1.0f)                  /* 0.25 .. 2 */                                                                 \
     F(skyPattern, 1.0f)                /* 0.2 .. 1.5 */                                                                \

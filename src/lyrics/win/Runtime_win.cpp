@@ -42,6 +42,7 @@
 #include "client/Module.h"
 #include "client/PostFx.h"
 #include "lyrics/core/Engine.h"
+#include "lyrics/core/SkySystem.h"
 #include "lyrics/win/World_win.h"
 
 namespace bf::lyrics::win {
@@ -88,6 +89,11 @@ struct State {
     std::string                   coverPath, coverShown;
     int64_t                       coverSeq = -1;
     int                           coverTries = 0;
+    // live sky (LyricsFlow 2.1 WorldSky): published every HUD frame for RF (BF_CopySkyFrame)
+    sky::System                   sky;
+    std::filesystem::path         skyDir;           // "My picture" folder (<config>/lyricsflow_sky)
+    std::string                   spritesFile, pictureFile;
+    int64_t                       pictureListedMs = -10000;
 };
 State* gS = nullptr;
 std::atomic<int64_t> gCombatAtMs{0};
@@ -286,6 +292,37 @@ void mediaLoop() {
 void    panelStepAndPublish(int64_t now, bool lyricsActive); // world panel section below
 int64_t nowMsWall();
 
+/// LyricsFlow 2.1 live sky: clock + stars / weather / picture -> BF_CopySkyFrame. Caller holds gS->mutex.
+void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
+    auto const& cfg = gS->engine.config();
+    int64_t     ms  = nowMsWall();
+    if (cfg.skyImage && ms - gS->pictureListedMs > 3000) { // SkyImage.chosen(): folder listing cached 3 s
+        gS->pictureListedMs = ms;
+        std::vector<std::string> files;
+        std::error_code          ec;
+        for (auto it = std::filesystem::directory_iterator(gS->skyDir, ec); !ec && it != std::filesystem::directory_iterator();
+             it.increment(ec))
+            if (it->is_regular_file(ec)) files.push_back(it->path().filename().string());
+        auto pick       = sky::pictureChoice(cfg, files);
+        gS->pictureFile = pick.empty() ? std::string() : (gS->skyDir / pick).string();
+    } else if (!cfg.skyImage) {
+        gS->pictureFile.clear();
+    }
+    sky::SystemIn in;
+    in.nowMs = ms;
+    in.dtSec = dt;
+    in.yaw = cam.yaw; in.pitch = cam.pitch;
+    in.camX = cam.pos.x; in.camY = cam.pos.y; in.camZ = cam.pos.z;
+    in.overworld = static_cast<int>(a.getDimensionId()) == 0;
+    auto feet    = a.getFeetPos();
+    in.skyOpen   = world.canSeeSky(BlockPos::of(Vec3{feet.x, double(feet.y) + 1.0, feet.z})); // player.blockPos().above()
+    in.night     = 1.0f; // TODO: level day time (only matters with Day/night dimming and "keep sky by day" off)
+    in.playing   = gS->clock.playing();
+    in.spritesFile = gS->spritesFile;
+    in.pictureFile = gS->pictureFile;
+    gS->sky.step(gS->moduleOn && cfg.enabled, cfg, gS->engine.perf(), in);
+}
+
 void hudFrame(bedrock_forge::client::Frame& f) {
     if (!gS || !f.player) return;
     gS->moduleOn = true; // hud only runs while the module is on (also after modules.json restored it)
@@ -328,6 +365,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     gS->lastFov = fov;
     gS->camPos = cam.pos; gS->camYaw = cam.yaw; gS->camPitch = cam.pitch; gS->haveCam = true;
     panelStepAndPublish(now, true);
+    skyStep(a, cam, dt, world);
     // Auto FPS (2.1 AutoPerf): frame rate from the HUD frame interval, the mod's own cost = this function's work
     double const modMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     gS->fpsSmooth      = gS->fpsSmooth <= 0 ? 1.0f / std::max(dt, 1e-3f) : gS->fpsSmooth * 0.95f + 0.05f / std::max(dt, 1e-3f);
@@ -485,6 +523,9 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     loadUiAtlas(modDir / "resources" / "lyricsflow" / "ui");
     loadPresets();
     publishAtlases();
+    gS->skyDir      = configDir / "lyricsflow_sky";
+    std::filesystem::create_directories(gS->skyDir, ec);
+    gS->spritesFile = (modDir / "resources" / "lyricsflow" / "sky" / "sprites.png").string();
     installPanelHost();
 
     auto& m = bedrock_forge::client::Registry::get().add("lyricsflow", "LyricsFlow", bedrock_forge::client::Category::Visual,
@@ -505,6 +546,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
             if (gS->panel.isOpen()) gS->panel.close(nowMsWall());
             gS->engine.reset();
             gS->engine.publish(false, 70.0f);
+            gS->sky.step(false, gS->engine.config(), gS->engine.perf(), {});
         }
     };
 
