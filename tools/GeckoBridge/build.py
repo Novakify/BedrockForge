@@ -27,6 +27,11 @@ GLOW_MATERIAL = {"materials": {"version": "1.0.0", "gb_glow:entity_alphablend": 
 OWNER_VAR = "v.gb_hidden_parts"   # reserved for Figura / Bedrock Forge: non-zero hides the mob's parts (M3: bitmask)
 
 
+def bone_id(n):
+    """Bedrock rejects bone names with spaces/slashes in animations ("child 'Right Leg' not valid here")."""
+    return re.sub(r"[^A-Za-z0-9_.\-]", "_", n)
+
+
 def u5(*parts): return str(uuid.uuid5(uuid.NAMESPACE_URL, "geckobridge/" + "/".join(parts)))
 def clean(s): return re.sub(r"[^a-z0-9_]+", "_", s.lower()).strip("_")
 
@@ -55,6 +60,40 @@ def cached_triggers(jar):
     r = runtime.triggers(jar); cache.parent.mkdir(exist_ok=True); cache.write_text(json.dumps(r)); return r
 
 
+_CONV = {}
+def _convert_structure(job):
+    jar, n, modid, ns, custom = job
+    try:
+        sys.path.insert(0, str(HERE.parent / "ModPorter"))
+        import structures as ST
+        key = (jar, modid)
+        if key not in _CONV: _CONV[key] = (zipfile.ZipFile(jar), ST.Converter(modid, ns, custom))
+        z, cv = _CONV[key]
+        return n, cv.convert(z.read(n)), None
+    except Exception as ex:
+        return n, None, f"{type(ex).__name__}: {ex}"
+
+
+def cached_classinfo(jar):
+    """Block/item properties + registry names from bytecode (ModPorter classinfo), cached."""
+    import hashlib, tempfile
+    sys.path.insert(0, str(HERE.parent / "ModPorter"))
+    import classinfo as CI
+    h = hashlib.sha1(Path(jar).read_bytes()); h.update((HERE.parent / "ModPorter" / "classinfo.py").read_bytes())
+    cache = Path("/tmp/gb_cache") / f"{Path(jar).stem}.ci.{h.hexdigest()[:12]}.json"
+    if cache.exists(): return json.loads(cache.read_text())
+    tmp = tempfile.mkdtemp(prefix="gb_ci_")
+    with zipfile.ZipFile(jar) as z:
+        cls = [n for n in z.namelist() if n.endswith(".class") and not n.startswith(C.GL_PREFIXES)]
+        for n in cls: z.extract(n, tmp)
+    names = [n[:-6].replace("/", ".") for n in cls]
+    reg = CI.registries(tmp, [n for n in names if n.lower().endswith(("blocks", "items", "mobeffects"))])
+    out = {"registries": reg, "blocks": {}, "items": {}}
+    for rn, c in reg["block"].items(): out["blocks"][rn] = CI.block_props(tmp, c)
+    for rn, c in reg["item"].items(): out["items"][rn] = CI.item_info(tmp, c)
+    cache.parent.mkdir(exist_ok=True); cache.write_text(json.dumps(out)); return out
+
+
 def cached_sounds(jar, classes):
     import hashlib
     h = hashlib.sha1(Path(jar).read_bytes()); h.update((HERE / "sounds.py").read_bytes())
@@ -70,7 +109,7 @@ VISUAL_DIRS = ("entity", "render_controllers", "animation_controllers", "animati
 
 class Build:
     def __init__(self, jar, out, name=None, tol=None):
-        self.z = zipfile.ZipFile(jar); self.names = set(self.z.namelist()); self.out = Path(out)
+        self.jar = jar; self.z = zipfile.ZipFile(jar); self.names = set(self.z.namelist()); self.out = Path(out)
         if tol: gbanim.TOL.update({"rotation": tol, "position": tol / 10, "scale": tol / 50})
         self.ents, self.ctrl = cached_discover(jar)
         self.modid = self.ents["mod_id"]; self.ns = clean(self.modid)
@@ -113,6 +152,9 @@ class Build:
         rigs = load_bedrock_geo(jload(self.z.read(path)))
         ids = []
         for i, rig in enumerate(rigs):
+            for b in rig.bones:
+                b.name = bone_id(b.name)
+                if b.parent: b.parent = bone_id(b.parent)
             rig.identifier = f"geometry.{GB}.{self.ns}.{stem}" + (f"_{i}" if i else ""); ids.append(rig.identifier)
         self.write(self.rp, f"models/entity/{self.ns}/{stem}.geo.json", write_bedrock_geo(rigs))
         self.geo_ids[path] = ids[0]
@@ -144,6 +186,8 @@ class Build:
         src = jload(self.z.read(path)).get("animations", {})
         out, ids, rep = {}, {}, {}
         for name, a in src.items():
+            if isinstance(a.get("bones"), dict):
+                a = {**a, "bones": {bone_id(k): v for k, v in a["bones"].items()}}
             short = clean(re.sub(r"^animation\.", "", name))
             nid = f"animation.{GB}.{self.ns}.{stem}.{short}"
             conv = gbanim.convert_animation(name, a, nid, report=rep)
@@ -399,6 +443,11 @@ class Build:
                         if j + 1 < len(t["steps"]): st["transitions"].append({f"trig_{t['index']}__{j + 1}": "q.all_animations_finished"})
                         ac["states"][sn] = st
             er["triggers"] = [{k: t[k] for k in ("index", "anim", "role", "controller")} for t in trig]
+        if "gb:trig" not in props:   # MCreator 'no procedure animation' test with nothing to trigger: always true
+            for c in cnames + rcs:
+                tbl = self.acs if c in self.acs else self.rcs
+                t = json.dumps(tbl[c]).replace("(q.property('gb:trig') == 0)", "1").replace("q.property('gb:trig')", "0")
+                tbl[c] = json.loads(t)
         if props:
             self.js["entities"][full] = {"props": script_props, "range": (e.get("attributes") or {}).get("follow_range", 16),
                                          "triggers": [{k: t[k] for k in ("index", "anim", "role", "length")} for t in trig]}
@@ -578,17 +627,23 @@ class Build:
         if hostile:
             comps["minecraft:behavior.nearest_attackable_target"] = {"priority": 2, "must_see": True, "reselect_targets": True,
                 "entity_types": [{"filters": {"test": "is_family", "subject": "other", "value": "player"}, "max_dist": at.get("follow_range", 16)}]}
+        goals = self.goals_of(e) if e["gb_kind"] == "mob" else None
+        if goals:   # the mod's own AI goal list replaces the generic behaviours
+            for k in [k for k in comps if k.startswith("minecraft:behavior.")]: comps.pop(k)
+            comps.update(goals)
+            if "minecraft:behavior.melee_attack" in goals and "minecraft:attack" not in comps: comps["minecraft:attack"] = {"damage": at.get("attack_damage", 3)}
+            self.report["entities"][eid]["goals"] = sorted(goals)
         mv = e.get("movement", "walk")
         if e["id"] in self.climbers and mv == "walk":     # the mod's isClimbing (snails, snakes): wall climbing like spiders
-            comps.pop("minecraft:navigation.walk"); comps["minecraft:navigation.climb"] = {"can_path_over_water": True, "avoid_damage_blocks": True}
+            comps.pop("minecraft:navigation.walk", None); comps["minecraft:navigation.climb"] = {"can_path_over_water": True, "avoid_damage_blocks": True}
             comps["minecraft:can_climb"] = {}
         if mv == "fly":
-            for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll"): comps.pop(k)
+            for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll"): comps.pop(k, None)
             comps.update({"minecraft:can_fly": {}, "minecraft:flying_speed": {"value": 0.1}, "minecraft:physics": {"has_gravity": False},
                 "minecraft:movement.hover": {}, "minecraft:navigation.hover": {"can_path_over_water": True, "can_sink": False, "can_path_from_air": True},
                 "minecraft:behavior.random_hover": {"priority": 6, "xz_dist": 8, "y_dist": 4, "y_offset": -1, "interval": 1, "hover_height": [1, 4]}})
         elif mv == "swim":
-            for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll", "minecraft:behavior.float"): comps.pop(k)
+            for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll", "minecraft:behavior.float"): comps.pop(k, None)
             comps.update({"minecraft:breathable": {"breathes_water": True, "breathes_air": False, "suffocate_time": 0},
                 "minecraft:underwater_movement": {"value": 0.08},
                 "minecraft:navigation.generic": {"can_path_over_water": False, "can_swim": True, "can_walk": False, "can_breach": False},
@@ -693,6 +748,75 @@ class Build:
         self.lang.append(f"tile.{full_b}.name={nice}")
         return full_b
 
+    # ---------------------------------------------------------------- ModPorter content: blocks, items, recipes, loot
+    def content(self):
+        sys.path.insert(0, str(HERE.parent / "ModPorter"))
+        import content as CT
+        ci = cached_classinfo(self.jar)
+        skip = set()
+        if self.ov_dir and (self.ov_dir / "bp").exists():     # ids the behaviour overlay defines itself
+            for f in (self.ov_dir / "bp").rglob("*.json"):
+                skip.add(f.stem)
+        ct = CT.Content(self.z, self.modid, self.ns, self.rp, self.bp, self.report, self.title)
+        ct.skip = skip
+        lang = ct.run(item_info=ci["items"], block_props=ci["blocks"])
+        self.lang += [f"{k}={v}" for k, v in lang.items()]
+        self.content_ids = {"blocks": ct.blocks, "items": ct.items}
+
+    def worldgen(self):
+        """Structure templates -> .mcstructure; dimensions -> custom dimensions + generator script; portals."""
+        sys.path.insert(0, str(HERE.parent / "ModPorter"))
+        nbts = sorted(n for n in self.names if n.startswith(f"data/{self.modid}/structures/") and n.endswith(".nbt"))
+        if not nbts: return
+        import dimensions as DM
+        from concurrent.futures import ProcessPoolExecutor
+        custom = {k: v for k, v in (getattr(self, "content_ids", {}).get("blocks") or {}).items()}
+        jobs = [(self.jar, n, self.modid, self.ns, custom) for n in nbts]
+        sids, fails = {}, []
+        with ProcessPoolExecutor(max_workers=8) as ex:
+            for n, data, err in ex.map(_convert_structure, jobs, chunksize=8):
+                rel = n.split(f"data/{self.modid}/structures/", 1)[1][:-4]
+                if err: fails.append(f"{rel}: {err}"); continue
+                name = clean(rel.replace("/", "_"))
+                self.write(self.bp, f"structures/{self.ns}/{name}.mcstructure", data)
+                sids[f"{self.modid}:{rel}"] = f"{self.ns}:{name}"
+        self.report["structures"] = {"converted": len(sids), "failed": fails[:50]}
+        dm = DM.Dimensions(self.z, self.modid, self.ns, self.bp, self.report, sids)
+        dims = dm.run()
+        if not dims: return
+        portals = {}
+        for bid in (getattr(self, "content_ids", {}).get("blocks") or {}):
+            if bid.endswith("_portal"):
+                base = bid[:-7]
+                tgt = next((d for d in dims if d.split(":")[1] in (base, base + "_dimension", base.replace("_dimension", ""))), None)
+                if tgt: portals[f"{self.ns}:{bid}"] = tgt
+        self.write(self.bp, "scripts/worldgen.js", DM.script({"ns": self.ns, "dims": dims, "portals": portals}))
+        for rel, fog in DM.fogs(dims, self.ns).items(): self.write(self.rp, rel, fog)
+        self.report["dimensions"]["portals"] = len(portals)
+        self.worldgen_script = True
+
+    def javabridge(self):
+        """The mod's own Java code (MCreator procedures, entity/block/item/effect hooks, event subscribers) translated
+        to Script API JavaScript by tools/JavaBridge."""
+        sys.path.insert(0, str(HERE.parent / "JavaBridge"))
+        import bridge as JB
+        emap = {e["java_class"]: f"{self.ns}:{clean(e['id'])}" for e in self.ents["entities"]}
+        sids = {}
+        for p in (self.bp / "structures").rglob("*.mcstructure"):
+            sids[f"{self.modid}:{p.stem}"] = f"{self.ns}:{p.stem}"
+        rep = JB.build_bridge(self.jar, self.modid, self.ns, self.bp, emap, self.report, structures=sids)
+        ci = cached_classinfo(self.jar)
+        cfgp = self.bp / "scripts/javabridge/config.js"
+        txt = cfgp.read_text()
+        cfg = json.loads(txt[txt.index("=") + 1:].rstrip().rstrip(";"))
+        cfg["blockClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"]["block"].items()}
+        cfg["itemClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"]["item"].items()}
+        cfg["effectClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"].get("effect", {}).items()}
+        cfgp.write_text("globalThis.__JB_CFG = " + json.dumps(cfg, separators=(",", ":")) + ";\n")
+        # procedures drive the triggered animations now: no automatic ability cycle
+        for full, c in self.js["entities"].items(): c["hooked"] = True
+        self.javabridge_on = True
+
     # ---------------------------------------------------------------- ModPorter behaviour overlay
     def rn(self, text):
         for a, b in self.rename.items(): text = text.replace(a, b)
@@ -756,6 +880,12 @@ class Build:
                     bp_ents[stem].write_text(json.dumps(theirs, indent=1)); self.report.setdefault("overlay_merged", []).append(stem)
                     continue
                 data = self.rn(f.read_text()) if f.suffix in (".json", ".js", ".lang", ".mcfunction") else f.read_bytes()
+                tgt = root / rel_s
+                if rel_s in ("textures/terrain_texture.json", "textures/item_texture.json") and tgt.exists():   # merge, don't replace
+                    mine, theirs = json.loads(tgt.read_text()), json.loads(data)
+                    mine.setdefault("texture_data", {}).update(theirs.get("texture_data", {})); data = mine
+                elif rel_s == "textures/flipbook_textures.json" and tgt.exists():
+                    data = json.loads(tgt.read_text()) + json.loads(data)
                 self.write(root, rel_s, data)
         for key, change in (ov.get("entity_overrides") or {}).items():
             base = key.split("#")[0]
@@ -792,6 +922,73 @@ class Build:
             for root in (self.rp, self.bp): self.write(root, "LICENSE_original_mod.txt", (od / ov["license_file"]).read_bytes())
         self.ov_deps = ov.get("script_deps", [])
 
+    GOALS = {   # Java AI goal -> Bedrock behaviour component (args: the goal's constructor constants in order)
+        "MeleeAttackGoal": lambda a: ("minecraft:behavior.melee_attack", {"speed_multiplier": a[0] if a else 1.0, "track_target": True}),
+        "NearestAttackableTargetGoal": None, "HurtByTargetGoal": lambda a: ("minecraft:behavior.hurt_by_target", {}),
+        "RandomStrollGoal": lambda a: ("minecraft:behavior.random_stroll", {"speed_multiplier": a[0] if a else 1.0}),
+        "WaterAvoidingRandomStrollGoal": lambda a: ("minecraft:behavior.random_stroll", {"speed_multiplier": a[0] if a else 1.0}),
+        "LookAtPlayerGoal": lambda a: ("minecraft:behavior.look_at_player", {"look_distance": a[0] if a else 8}),
+        "RandomLookAroundGoal": lambda a: ("minecraft:behavior.random_look_around", {}), "FloatGoal": lambda a: ("minecraft:behavior.float", {}),
+        "PanicGoal": lambda a: ("minecraft:behavior.panic", {"speed_multiplier": a[0] if a else 1.25}),
+        "LeapAtTargetGoal": lambda a: ("minecraft:behavior.leap_at_target", {"yd": a[0] if a else 0.4, "must_be_on_ground": True}),
+        "MoveTowardsTargetGoal": lambda a: ("minecraft:behavior.move_towards_target", {"speed_multiplier": a[0] if a else 1.0, "within_radius": a[1] if len(a) > 1 else 16}),
+        "FleeSunGoal": lambda a: ("minecraft:behavior.flee_sun", {"speed_multiplier": a[0] if a else 1.0}),
+        "RestrictSunGoal": lambda a: ("minecraft:behavior.restrict_sun", {}),
+        "OpenDoorGoal": lambda a: ("minecraft:behavior.open_door", {"close_door_after": True}),
+        "BreakDoorGoal": lambda a: ("minecraft:behavior.break_door", {}),
+        "RandomSwimmingGoal": lambda a: ("minecraft:behavior.swim_wander", {"speed_multiplier": a[0] if a else 1.0, "look_ahead": 2, "wander_time": 5}),
+        "AvoidEntityGoal": lambda a: ("minecraft:behavior.avoid_mob_type", {"entity_types": [{"filters": {"test": "is_family", "subject": "other", "value": "player"}, "max_dist": a[0] if a else 6, "walk_speed_multiplier": a[1] if len(a) > 1 else 1, "sprint_speed_multiplier": a[2] if len(a) > 2 else 1.2}]}),
+        "TemptGoal": lambda a: ("minecraft:behavior.tempt", {"speed_multiplier": a[0] if a else 1.0}),
+        "BreedGoal": None, "FollowParentGoal": lambda a: ("minecraft:behavior.follow_parent", {"speed_multiplier": a[0] if a else 1.1}),
+        "MoveBackToVillageGoal": None, "RandomStandGoal": None,
+    }
+
+    def goals_of(self, e):
+        """registerGoals (m_8099_) of the entity class -> Bedrock behaviours (None: keep the generic AI)."""
+        import tempfile
+        sys.path.insert(0, str(HERE.parent / "ModPorter"))
+        import extract as MP
+        if not hasattr(self, "_gtmp"):
+            self._gtmp = tempfile.mkdtemp(prefix="gb_goals_")
+        cls = e["java_class"]; pre = cls.replace(".", "/")
+        for n in self.names:
+            if n.startswith(pre) and n.endswith(".class"): self.z.extract(n, self._gtmp)
+        dis = C.javap(self._gtmp, cls)
+        if not dis: return None
+        ms = MP.methods(dis)
+        goals = MP.parse_goals(ms.get("m_8099_", []))
+        if not goals: return None
+        out = {}
+        for g in goals:
+            name = g["goal"]
+            if "$" in name:   # anonymous subclass (MCreator: new MeleeAttackGoal(...) { ... }): its superclass decides
+                sd = C.javap(self._gtmp, (pre.rsplit("/", 1)[0] + "/" + name).replace("/", "."))
+                m = re.search(r"extends ([\w.$]+)", sd or ""); name = m.group(1).split(".")[-1] if m else name
+            nums = [x for x in g["args"] if isinstance(x, (int, float))]
+            if name == "NearestAttackableTargetGoal":
+                fam = "player" if "Player" in g["args"] else "mob"
+                comp = out.setdefault("minecraft:behavior.nearest_attackable_target", {"priority": g["priority"] or 2, "must_see": False, "reselect_targets": True, "entity_types": []})
+                comp["entity_types"].append({"filters": {"test": "is_family", "subject": "other", "value": fam}, "max_dist": 32})
+                continue
+            f = self.GOALS.get(name)
+            if not f:   # the mod's own goal classes: judge by what they are named after / extend
+                low = name.lower()
+                alias = ("MeleeAttackGoal" if "melee" in low or ("attack" in low and "ranged" not in low and "summon" not in low and "sequence" not in low) else
+                         "RandomStrollGoal" if "stroll" in low or "wander" in low else "PanicGoal" if "panic" in low else
+                         "HurtByTargetGoal" if "hurtbytarget" in low or "targetattacker" in low else
+                         "FollowParentGoal" if "followparent" in low or "followadult" in low else "FloatGoal" if "float" in low else
+                         "AvoidEntityGoal" if "avoid" in low or "hide" in low else None)
+                if alias == "MeleeAttackGoal" and "target" in low: alias = None
+                if "targetgoal" in low or low.endswith("target"):
+                    comp = out.setdefault("minecraft:behavior.nearest_attackable_target", {"priority": g["priority"] or 2, "must_see": False, "reselect_targets": True, "entity_types": []})
+                    if not comp["entity_types"]: comp["entity_types"].append({"filters": {"test": "is_family", "subject": "other", "value": "player"}, "max_dist": 32})
+                    continue
+                f = self.GOALS.get(alias) if alias else None
+                if not f: self.report.setdefault("goals_unmapped", {})[name] = self.report.get("goals_unmapped", {}).get(name, 0) + 1; continue
+            k, v = f(nums)
+            out[k] = {"priority": g["priority"] if g["priority"] is not None else 5, **v}
+        return out or None
+
     def prop_defs(self, props):
         return {p: ({"type": "int", "range": [0, d["max"]], "default": 0, "client_sync": True} if d.get("kind") == "trigger"
                     else {"type": "bool", "default": False, "client_sync": True}) for p, d in props.items()}
@@ -807,6 +1004,9 @@ class Build:
             self.fill_assets(e)
             self.entity(e, by_class.get(e["java_class"], {}))
         self.aliases()
+        if self.override.get("content", True): self.content()
+        if self.override.get("worldgen", True): self.worldgen()
+        if self.override.get("javabridge", any(n.startswith("net/mcreator/") for n in self.names)): self.javabridge()
         for stem, files in getattr(self, "anim_files", {}).items():
             for a in files.values():
                 if not a.get("bones"): a.pop("bones", None)    # Bedrock: empty "bones" = "Required child not found"
@@ -826,7 +1026,7 @@ class Build:
         for l in self.lang:
             if "=" in l: kv[l.split("=", 1)[0]] = l.split("=", 1)[1]
         self.write(self.rp, "texts/en_US.lang", "\n".join(f"{k}={v}" for k, v in kv.items()) + "\n"); self.write(self.rp, "texts/languages.json", ["en_US"])
-        rph = u5(self.ns, "rp"); bph = u5(self.ns, "bp")
+        rph = self.override.get("pack_uuids", {}).get("rp") or u5(self.ns, "rp"); bph = self.override.get("pack_uuids", {}).get("bp") or u5(self.ns, "bp")
         credit = (f"Models, textures and animations from {self.report['jar']} ({self.modid}) by its original authors; "
                   f"GeckoLib (MIT). Converted by GeckoBridge (Bedrock Forge) for Fernando's private personal use only. Do not share.\n")
         # test functions (dev): /function gb/<ns>/all summons every converted entity in a grid around you
@@ -838,8 +1038,11 @@ class Build:
             self.write(self.bp, f"functions/gb/{self.ns}/give_blocks.mcfunction", "\n".join(f"give @s {x}" for x in self.js["blocks"]) + "\n")
         use_script = (bool(self.js["entities"]) and any(c["props"] or c["triggers"] for c in self.js["entities"].values())) or bool(self.js.get("blocks"))
         ov_main = (self.bp / "scripts" / "overlay" / "main.js").exists()
-        if use_script or ov_main:
+        wg = getattr(self, "worldgen_script", False)
+        if use_script or ov_main or wg or getattr(self, "javabridge_on", False):
             body = runtime.script(self.js) if use_script else "// GeckoBridge: overlay only\n"
+            if wg: body = 'import "./worldgen.js";   // ModPorter dimensions + structure world generator\n' + body
+            if getattr(self, "javabridge_on", False): body = body + '\nimport "./javabridge/main.js";   // the mod\'s own code (JavaBridge)\n'
             if ov_main: body = 'import "./overlay/main.js";   // ModPorter behaviour overlay (our own code)\n' + body
             self.write(self.bp, "scripts/gb_runtime.js", body); use_script = True
             self.report["m2_script_entities"] = len(self.js["entities"])
