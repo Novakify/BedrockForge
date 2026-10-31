@@ -264,19 +264,22 @@ struct ClipBand {
     size_t   hit0;
     bool     live = true;
     ClipBand(UiFrame& fr, float t, float b) : f(fr), top(t), bot(b), hit0(fr.hits.size()) { f.g.clipTop = t; f.g.clipBot = b; }
-    void done() {
+    ClipBand(ClipBand const&)            = delete;
+    ClipBand& operator=(ClipBand const&) = delete;
+    void done() noexcept { // compacts in place (no allocation: also runs from the destructor)
         if (!live) return;
         live = false;
         f.g.clipTop = f.g.clipBot = 0;
-        std::vector<Hit> keep(f.hits.begin(), f.hits.begin() + std::ptrdiff_t(hit0));
+        size_t out = hit0;
         for (size_t i = hit0; i < f.hits.size(); ++i) {
-            Hit h = f.hits[i];
+            Hit&  h  = f.hits[i];
             float y0 = std::max(h.y, top), y1 = std::min(h.y + h.h, bot);
             if (y1 - y0 < 2) continue;
             h.y = y0; h.h = y1 - y0;
-            keep.push_back(std::move(h));
+            if (out != i) f.hits[out] = std::move(h);
+            ++out;
         }
-        f.hits = std::move(keep);
+        f.hits.erase(f.hits.begin() + std::ptrdiff_t(out), f.hits.end());
     }
     ~ClipBand() { done(); }
 };
@@ -427,6 +430,17 @@ void pageHeader(UiFrame& f, float x, float y, float w, std::string const& title,
     }
 }
 
+// slim scroll indicator at the window's right edge, only when the list is longer than its area
+void scrollBar(Gfx& g, Win const& w, float top, float bot, float content, float at, float a) {
+    float const view = bot - top;
+    if (content <= view + 1 || view < 40) return;
+    float const h = std::max(28.0f, view * view / content);
+    float const p = std::clamp(at / (content - view), 0.0f, 1.0f);
+    float const x = w.x + w.w - 13;
+    g.solid(x, top, 3, view, 1.5f, rgba(kWhite, 1), 0.08f * a);
+    g.solid(x, top + (view - h) * p, 3, h, 1.5f, rgba(kLilac, 1), 0.55f * a);
+}
+
 void drawMods(UiFrame& f, Win const& w, float a) {
     auto& g = f.g;
     auto& reg = Registry::get();
@@ -443,13 +457,14 @@ void drawMods(UiFrame& f, Win const& w, float a) {
     float const contentH = float((list.size() + 1) / 2) * (rowH + gap);
     gScroll = std::clamp(gScroll, 0.0f, std::max(0.0f, contentH - w.bodyH));
     gScrollAt = std::clamp(gScrollAt, -60.0f, std::max(0.0f, contentH - w.bodyH) + 60.0f);
-    ClipBand clip(f, w.bodyY - 2, w.bodyY + w.bodyH + 2);
+    ClipBand clip(f, w.bodyY - 6, w.bodyY + w.bodyH + 6); // RF's 10 px edge fade is centred on these lines
+    scrollBar(g, w, w.bodyY + 2, w.bodyY + w.bodyH, contentH, gScrollAt, a);
     if (list.empty()) g.text(gSearch.empty() ? "Nothing pinned yet: middle-click a module to pin it here." : "No modules match \"" + gSearch + "\".",
                              w.mainX + 4, w.bodyY + 16, 13, rgba(kLilac, 0.62f), a);
     for (size_t i = 0; i < list.size(); ++i) {
         Module* m = list[i];
         float   x = w.mainX + 2 + float(i % 2) * (colW + 12), y = w.bodyY + 2 + float(i / 2) * (rowH + gap) - gScrollAt;
-        if (y + rowH < w.bodyY - 2 || y > w.bodyY + w.bodyH + 2) continue; // rows partly in view are cut by the clip band
+        if (y + rowH < w.bodyY - 10 || y > w.bodyY + w.bodyH + 10) continue; // rows partly in view are cut by the clip band
         bool const on  = m->enabled && !m->planned;
         float const hv = f.over(x, y, colW, rowH) ? 1.0f : 0.0f;
         pillGlass(g, x, y, colW, rowH, 12, on, a, hv);
@@ -479,16 +494,17 @@ void drawMods(UiFrame& f, Win const& w, float a) {
 // cut by the clip band. Call fits() before drawing a row (false = fully out of view, skip), end() once at the bottom.
 struct Scroller {
     Win const& w;
-    float      top, y;
+    float      top, y, alpha;
     ClipBand   clip;
-    Scroller(UiFrame& f, Win const& win)
-        : w(win), top(win.bodyY + 44), y(win.bodyY + 44 - gScrollAt), clip(f, win.bodyY + 40, win.bodyY + win.bodyH + 2) {}
-    bool fits(float h) const { return y + h >= top - 4 && y <= w.bodyY + w.bodyH + 2; }
+    Scroller(UiFrame& f, Win const& win, float a)
+        : w(win), top(win.bodyY + 48), y(win.bodyY + 48 - gScrollAt), alpha(a), clip(f, win.bodyY + 43, win.bodyY + win.bodyH + 6) {}
+    bool fits(float h) const { return y + h >= top - 10 && y <= w.bodyY + w.bodyH + 10; }
     void end() {
         float content = y + gScrollAt - top, mx = std::max(0.0f, content - (w.bodyY + w.bodyH - top));
         gScroll   = std::clamp(gScroll, 0.0f, mx);
         gScrollAt = std::clamp(gScrollAt, -60.0f, mx + 60.0f);
         clip.done();
+        scrollBar(clip.f.g, w, top, w.bodyY + w.bodyH, content, gScrollAt, alpha);
     }
 };
 
@@ -498,7 +514,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, m->name, m->planned ? m->description + " - on the roadmap." : m->description, a, m->planned ? -1 : (m->enabled ? 1 : 0),
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
-    Scroller sc(f, w);
+    Scroller sc(f, w, a);
     if (m->id == "lyricsflow") {
         if (sc.fits(50)) {
             row(f, x, sc.y, wd, 50, "Open the LyricsFlow panel", "The glass settings panel in the world (also: L in game)", a);
@@ -525,7 +541,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
 void drawShaders(UiFrame& f, Win const& w, float a) {
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, "Shaderpacks", "The game loads shaders at startup: a new pick applies after a restart.", a);
-    Scroller sc(f, w);
+    Scroller sc(f, w, a);
     auto packs = shaderpacks::listPacks();
     packs.insert(packs.begin(), "off");
     std::string const active = shaderpacks::activePack();
@@ -554,7 +570,7 @@ void drawClient(UiFrame& f, Win const& w, float a) {
     if (!m) return;
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, "Client", "How the glass looks. Presets set blur, refraction and frost together.", a);
-    Scroller sc(f, w);
+    Scroller sc(f, w, a);
     y = sc.y;
     // presets
     struct Pre { char const* n; float b, r, t; };
@@ -598,24 +614,31 @@ void drawLyrics(UiFrame& f, Win const& w, float a) {
     if (!m) { f.g.text("LyricsFlow isn't part of this build.", x + 2, y + 12, 13, rgba(kLilac, 0.62f), a); return; }
     pageHeader(f, x, y - 4, wd, "LyricsFlow", "Synced lyrics in the world - port of LyricsFlow by 374m (personal build)", a, m->enabled ? 1 : 0,
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
-    y += 46;
+    Scroller sc(f, w, a);
     bool shown = lyr::win::lyricsShown();
-    toggleRow(f, x, y, wd, "Show lyrics", "Same as the O key in game", shown, a, [shown] { lyr::win::setLyricsShown(!shown); });
-    y += 58;
-    row(f, x, y, wd, 50, "Open the LyricsFlow panel", "Fonts, colours, sky, placement, FPS profiles (also: L in game)", a, false);
-    f.g.icon("music", x + wd - 30, y + 25, 20, rgba(kWhite, 1), a);
-    f.hits.push_back({x, y, wd, 50, [m](bool) {
-        if (!m->enabled) Registry::get().setEnabled(*m, true);
-        lyr::win::requestPanel();
-        closeMenu();
-    }});
-    y += 58;
-    row(f, x, y, wd, 50, "Keys", "L panel  |  O lyrics on / off  |  [ and ] nudge the timing of this song", a);
-    y += 58;
-    if (!m->settings.empty()) {
-        row(f, x, y, wd, 50, "More LyricsFlow settings", "Module options", a);
-        f.hits.push_back({x, y, wd, 50, [](bool) { gModPage = "lyricsflow"; showPage(Page::ModSettings); }});
+    if (sc.fits(50)) toggleRow(f, x, sc.y, wd, "Show lyrics", "Same as the O key in game", shown, a, [shown] { lyr::win::setLyricsShown(!shown); });
+    sc.y += 58;
+    if (sc.fits(50)) {
+        float ry = sc.y;
+        row(f, x, ry, wd, 50, "Open the LyricsFlow panel", "Fonts, colours, sky, placement, FPS profiles (also: L in game)", a, false);
+        f.g.icon("music", x + wd - 30, ry + 25, 20, rgba(kWhite, 1), a);
+        f.hits.push_back({x, ry, wd, 50, [m](bool) {
+            if (!m->enabled) Registry::get().setEnabled(*m, true);
+            lyr::win::requestPanel();
+            closeMenu();
+        }});
     }
+    sc.y += 58;
+    if (sc.fits(50)) row(f, x, sc.y, wd, 50, "Keys", "L panel  |  O lyrics on / off  |  [ and ] nudge the timing of this song", a);
+    sc.y += 58;
+    if (!m->settings.empty()) {
+        if (sc.fits(50)) {
+            row(f, x, sc.y, wd, 50, "More LyricsFlow settings", "Module options", a);
+            f.hits.push_back({x, sc.y, wd, 50, [](bool) { gModPage = "lyricsflow"; showPage(Page::ModSettings); }});
+        }
+        sc.y += 58;
+    }
+    sc.end();
 }
 
 void drawWindow(UiFrame& f, float t) {
@@ -726,14 +749,15 @@ void render(ScreenView& view) {
         gScrollAt += (gScroll - gScrollAt) * (1.0f - std::exp(-dt / 0.09f));
         if (std::abs(gScroll - gScrollAt) < 0.25f) gScrollAt = gScroll;
     }
-    gCamUntilMs = gView == View::Wheel && lookOn("camswing", true) ? now + 300 : 0;
+    // mouse wheel since the last frame: moves the target before the page draws (and clamps it), so the eased list
+    // never chases a target past the ends
+    for (int d : gWheel) gScroll += float(d) * 52.0f;
+    gWheel.clear();
     if (gView == View::Wheel) drawWheel(f, t);
     else drawWindow(f, t);
     drawToast(f);
 
     // input collected since the last frame (GUI units -> design units)
-    for (int d : gWheel) gScroll += float(d) * 52.0f;
-    gWheel.clear();
     auto clicks = std::move(gClicks);
     gClicks.clear();
     for (auto const& c : clicks) {
@@ -763,6 +787,9 @@ void render(ScreenView& view) {
         if (!gScene) break; // an action closed the menu
     }
     if (!gScene) return;
+    // camera swing request for RF (after the clicks: a petal click that opened the window ends it this frame). 800 ms
+    // so a loading hitch doesn't make it flicker; closeMenu() zeroes it at once
+    gCamUntilMs = gView == View::Wheel && lookOn("camswing", true) ? now + 800 : 0;
     // publish: shapes first, then icons + text on top
     std::vector<BfGlyphV1> out = std::move(g.shapes);
     out.insert(out.end(), g.top.begin(), g.top.end());
