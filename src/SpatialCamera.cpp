@@ -250,26 +250,29 @@ void noteSeen(void const* cam, glm::vec3 const& pos, float dist, float p11, bool
 float gFovBlendR = 0.0f; // render side copy of gFovBlend
 long  gProjWrites = 0;
 float gProjFrom = 0.0f, gProjTo = 0.0f;
+long  gProjSkip[6] = {}; // preCamera exits: blend 0 / option off, not perspective, no player, not the world camera, no change
+float gProjBlendSeen = -1.0f;
 void preCamera(mce::Camera& cam) {
-    if (gFovBlendR <= 0.0f || !cfg().overrideFov) return;
+    gProjBlendSeen = gFovBlendR;
+    if (gFovBlendR <= 0.0f || !cfg().overrideFov) { ++gProjSkip[0]; return; }
     glm::mat4& P = const_cast<glm::mat4&>(static_cast<glm::mat4 const&>(*cam.projectionMatrixStack->top()._m));
     bool persp = std::fabs(P[3][3]) < 1e-4f && std::fabs(P[2][3]) > 0.5f && P[1][1] > 0.05f;
-    if (!persp) return;
+    if (!persp) { ++gProjSkip[1]; return; }
     auto ci = ll::service::getClientInstance();
-    if (!ci) return;
+    if (!ci) { ++gProjSkip[2]; return; }
     auto* lp = ci->getLocalPlayer();
-    if (!lp) return;
+    if (!lp) { ++gProjSkip[2]; return; }
     Vec3      feetV = static_cast<Actor&>(*lp).getFeetPos();
     glm::vec3 eye(feetV.x, feetV.y + 1.62f, feetV.z);
     glm::vec3 pos = *cam.mPosition;
-    if (glm::length(pos - eye) >= 8.0f) return; // the world camera only
+    if (glm::length(pos - eye) >= 8.0f) { ++gProjSkip[3]; return; } // the world camera only
     float tanNow  = 1.0f / P[1][1];
     float fovNow  = 2.0f * std::atan(tanNow);
     float target  = float(std::clamp(cfg().targetFov, 30, 110)) * kDeg;
     float e       = easeInOutSine(gFovBlendR);
     float want    = fovNow + (target - fovNow) * e;
     float k       = tanNow / std::tan(want * 0.5f);
-    if (std::fabs(k - 1.0f) < 1e-4f) return;
+    if (std::fabs(k - 1.0f) < 1e-4f) { ++gProjSkip[4]; return; }
     P[0][0] *= k;
     P[1][1] *= k;
     ++gProjWrites;
@@ -946,6 +949,7 @@ void appendDiag(char* b, unsigned long long cap) {
                          gLastRot[0], gLastRot[1], gLastCam[0], gLastCam[1], gLastCam[2], gLastTarget[0], gLastTarget[1],
                          gLastTarget[2], gLastT, gView.valid, gView.overridden, gView.fovYDeg, gView.aspect, gView.yawRel, gView.pitch, gView.guiScale);
     len += std::snprintf(b + len, cap - len, "  cinematic camera writes %ld, fov field %.4f x %.3f; spatial fov blend %.2f, projection writes %ld (%.1f -> %.1f)\n", gCineWrites, gCineFovRaw, gCineFovScale, gFovBlend, gProjWrites, gProjFrom, gProjTo);
+    len += std::snprintf(b + len, cap - len, "  projection skips: off %ld, not persp %ld, no player %ld, not world %ld, same %ld; blend seen %.2f, overrideFov %d target %d\n", gProjSkip[0], gProjSkip[1], gProjSkip[2], gProjSkip[3], gProjSkip[4], gProjBlendSeen, int(cfg().overrideFov), cfg().targetFov);
     len += std::snprintf(b + len, cap - len, "  render origin (LevelRendererCamera::mCameraPos) %.2f,%.2f,%.2f -> %.2f,%.2f,%.2f (writes %ld), target %.2f,%.2f,%.2f\n",
                          gRcBefore[0], gRcBefore[1], gRcBefore[2], gRcAfter[0], gRcAfter[1], gRcAfter[2], gRcWrites, gRcTarget[0], gRcTarget[1], gRcTarget[2]);
     len += std::snprintf(b + len, cap - len, "  quaternion convention %d (tries %ld, component misses %ld); M %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f\n",
