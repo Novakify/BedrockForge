@@ -210,7 +210,9 @@ bool tpSpotBlocked(Actor& actor) {
 
 // CameraUtil.adjustCameraPositionForCollision: eight rays from around the eyes (+-0.2) to around the camera spot;
 // the camera comes in to the nearest block they hit
-glm::vec3 collideCamera(Actor& actor, glm::vec3 const& eye, glm::vec3 const& target) {
+// anyBlock: stop at every non-air block (chests, slabs, signs...) instead of solid ones only - the wheel's front view
+// sits right in front of the face, where a non-solid block would put the camera inside it.
+glm::vec3 collideCamera(Actor& actor, glm::vec3 const& eye, glm::vec3 const& target, bool anyBlock = false) {
     glm::vec3 delta = target - eye;
     float     maxD  = glm::length(delta);
     if (maxD < 0.001f) return target;
@@ -225,7 +227,7 @@ glm::vec3 collideCamera(Actor& actor, glm::vec3 const& eye, glm::vec3 const& tar
             glm::vec3 p = eye + off + delta * (t / maxD);
             BlockPos  bp(int(std::floor(p.x)), int(std::floor(p.y)), int(std::floor(p.z)));
             Block const& blk = bs.getBlock(bp);
-            if (!blk.isAir() && blk.mCachedComponentData->mIsSolid) { best = t; break; }
+            if (!blk.isAir() && (anyBlock || blk.mCachedComponentData->mIsSolid)) { best = t; break; }
         }
     }
     return eye + delta * (best / maxD);
@@ -547,7 +549,7 @@ void applyComponent() {
                 float      yr = gMenuYaw * kDeg;
                 glm::vec3  f(-std::sin(yr), 0.0f, std::cos(yr));                 // the way the player faces
                 glm::vec3  look = eye + glm::vec3(0.0f, -0.18f, 0.0f);           // the face, a little under the eyes
-                glm::vec3  spot = collideCamera(actor, look, look + f * 1.75f + glm::vec3(0.0f, 0.05f, 0.0f));
+                glm::vec3  spot = collideCamera(actor, look, look + f * 1.75f + glm::vec3(0.0f, 0.05f, 0.0f), true);
                 glm::vec3  d    = look - spot;
                 float      len  = std::max(glm::length(d), 1e-3f);
                 float      cy   = std::atan2(-d.x, d.z) / kDeg;                  // camera yaw / pitch (looking back at you)
