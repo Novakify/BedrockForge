@@ -318,7 +318,13 @@ using CopySimple_t = void(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, D3D12_CPU_DES
 using Barrier_t    = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_RESOURCE_BARRIER const*);
 using Topo_t       = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_PRIMITIVE_TOPOLOGY);
 using SetVb_t      = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, D3D12_VERTEX_BUFFER_VIEW const*);
-constexpr int kHooks = 13;
+using SetHeaps_t   = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, ID3D12DescriptorHeap* const*);
+using SetRootSig_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12RootSignature*);
+using SetTable_t   = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_GPU_DESCRIPTOR_HANDLE);
+using SetConst_t   = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, UINT);
+using SetConsts_t  = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, void const*, UINT);
+using SetAddr_t    = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_GPU_VIRTUAL_ADDRESS);
+constexpr int kHooks = 21; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
@@ -467,47 +473,161 @@ void origTopo(ID3D12GraphicsCommandList* l, int t) { reinterpret_cast<Topo_t>(gO
 void origVb(ID3D12GraphicsCommandList* l, unsigned s, unsigned n, D3D12_VERTEX_BUFFER_VIEW const* v) { reinterpret_cast<SetVb_t>(gOrig[12])(l, s, n, v); }
 void origDraw(ID3D12GraphicsCommandList* l, unsigned a, unsigned b, unsigned c, unsigned d) { reinterpret_cast<Draw_t>(gOrig[5])(l, a, b, c, d); }
 
-/// 0 = normal draw, 1 = skip it (vanilla sun / moon / stars / clouds), 2 = draw it, then ours (the sky dome)
-int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa& ia) {
+// ---- graphics root state per list (only tracked while rf::sky::wantRoot(): "My picture" binds its own texture)
+struct RootArg {
+    int                   type = 0; // 1 table, 2 constants, 3 CBV, 4 SRV, 5 UAV
+    UINT64                v    = 0;
+    std::vector<uint32_t> c;        // constants by offset
+    std::vector<bool>     cSet;
+};
+struct ListRoot {
+    bool                  sigKnown = false, heapsKnown = false;
+    ID3D12RootSignature*  sig = nullptr;
+    UINT                  nHeaps = 0;
+    ID3D12DescriptorHeap* heaps[2]{};
+    std::unordered_map<UINT, RootArg> args;
+};
+std::unordered_map<ID3D12GraphicsCommandList*, ListRoot> gListRoot;
+bool rootTracking() { return !gInSnapshot && rf::sky::wantRoot(); }
+void STDMETHODCALLTYPE setHeapsHook(ID3D12GraphicsCommandList* l, UINT n, ID3D12DescriptorHeap* const* h) {
+    reinterpret_cast<SetHeaps_t>(gOrig[13])(l, n, h);
+    if (!rootTracking()) return;
+    std::lock_guard g(gMutex);
+    auto& r = gListRoot[l];
+    r.heapsKnown = n <= 2 && (h || n == 0);
+    r.nHeaps     = r.heapsKnown ? n : 0;
+    for (UINT i = 0; i < r.nHeaps; ++i) r.heaps[i] = h[i];
+}
+void STDMETHODCALLTYPE setRootSigHook(ID3D12GraphicsCommandList* l, ID3D12RootSignature* sig) {
+    reinterpret_cast<SetRootSig_t>(gOrig[14])(l, sig);
+    if (!rootTracking()) return;
+    std::lock_guard g(gMutex);
+    auto& r    = gListRoot[l];
+    r.sigKnown = true;
+    r.sig      = sig;
+    r.args.clear(); // a new root signature drops every root argument
+}
+void STDMETHODCALLTYPE setTableHook(ID3D12GraphicsCommandList* l, UINT i, D3D12_GPU_DESCRIPTOR_HANDLE h) {
+    reinterpret_cast<SetTable_t>(gOrig[15])(l, i, h);
+    if (!rootTracking()) return;
+    std::lock_guard g(gMutex);
+    auto& a = gListRoot[l].args[i];
+    a.type  = 1;
+    a.v     = h.ptr;
+}
+void noteConsts(ID3D12GraphicsCommandList* l, UINT i, UINT n, uint32_t const* d, UINT off) {
+    std::lock_guard g(gMutex);
+    auto& a = gListRoot[l].args[i];
+    a.type  = 2;
+    if (a.c.size() < off + n) { a.c.resize(off + n); a.cSet.resize(off + n); }
+    for (UINT k = 0; k < n; ++k) { a.c[off + k] = d[k]; a.cSet[off + k] = true; }
+}
+void STDMETHODCALLTYPE setConstHook(ID3D12GraphicsCommandList* l, UINT i, UINT v, UINT off) {
+    reinterpret_cast<SetConst_t>(gOrig[16])(l, i, v, off);
+    if (rootTracking()) noteConsts(l, i, 1, &v, off);
+}
+void STDMETHODCALLTYPE setConstsHook(ID3D12GraphicsCommandList* l, UINT i, UINT n, void const* d, UINT off) {
+    reinterpret_cast<SetConsts_t>(gOrig[17])(l, i, n, d, off);
+    if (rootTracking() && d && n <= 64) noteConsts(l, i, n, static_cast<uint32_t const*>(d), off);
+}
+template <int Hook, int Type>
+void STDMETHODCALLTYPE setAddrHook(ID3D12GraphicsCommandList* l, UINT i, D3D12_GPU_VIRTUAL_ADDRESS v) {
+    reinterpret_cast<SetAddr_t>(gOrig[Hook])(l, i, v);
+    if (!rootTracking()) return;
+    std::lock_guard g(gMutex);
+    auto& a = gListRoot[l].args[i];
+    a.type  = Type;
+    a.v     = v;
+}
+bool rootKnown(ID3D12GraphicsCommandList* l) {
+    for (int i = 13; i <= 20; ++i)
+        if (!gTgt[i]) return false;
+    std::lock_guard g(gMutex);
+    auto it = gListRoot.find(l);
+    return it != gListRoot.end() && it->second.sigKnown && it->second.heapsKnown;
+}
+void origSetHeaps(ID3D12GraphicsCommandList* l, unsigned n, ID3D12DescriptorHeap* const* h) { reinterpret_cast<SetHeaps_t>(gOrig[13])(l, n, h); }
+void origSetRootSig(ID3D12GraphicsCommandList* l, ID3D12RootSignature* s) { reinterpret_cast<SetRootSig_t>(gOrig[14])(l, s); }
+void origSetTable(ID3D12GraphicsCommandList* l, unsigned i, UINT64 h) { reinterpret_cast<SetTable_t>(gOrig[15])(l, i, D3D12_GPU_DESCRIPTOR_HANDLE{h}); }
+void origSetConsts(ID3D12GraphicsCommandList* l, unsigned i, unsigned n, void const* d, unsigned off) { reinterpret_cast<SetConsts_t>(gOrig[17])(l, i, n, d, off); }
+/// Put the game's heaps, root signature and every root argument back (after our own root signature was bound).
+void restoreRoot(ID3D12GraphicsCommandList* l) {
+    ListRoot r;
+    {
+        std::lock_guard g(gMutex);
+        auto it = gListRoot.find(l);
+        if (it == gListRoot.end()) return;
+        r = it->second;
+    }
+    reinterpret_cast<SetHeaps_t>(gOrig[13])(l, r.nHeaps, r.heaps);
+    reinterpret_cast<SetRootSig_t>(gOrig[14])(l, r.sig);
+    for (auto const& [i, a] : r.args) {
+        switch (a.type) {
+        case 1: reinterpret_cast<SetTable_t>(gOrig[15])(l, i, D3D12_GPU_DESCRIPTOR_HANDLE{a.v}); break;
+        case 2:
+            for (UINT k = 0; k < a.c.size(); ++k)
+                if (a.cSet[k]) reinterpret_cast<SetConst_t>(gOrig[16])(l, i, a.c[k], k);
+            break;
+        case 3: reinterpret_cast<SetAddr_t>(gOrig[18])(l, i, a.v); break;
+        case 4: reinterpret_cast<SetAddr_t>(gOrig[19])(l, i, a.v); break;
+        case 5: reinterpret_cast<SetAddr_t>(gOrig[20])(l, i, a.v); break;
+        default: break;
+        }
+    }
+}
+
+/// 0 = normal draw, 1 = skip it (vanilla sun / moon / stars), 2 = draw it, then our dome,
+/// 3 = clouds: draw them (unless hidden), then our weather particles (depth-tested against the terrain there)
+int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa& ia, bool& drawOrig) {
+    drawOrig = true;
     if (!rf::sky::wanted() || !gTgt[11] || !gTgt[12]) return 0;
     std::lock_guard l(gMutex);
     auto p = gListPso.find(list);
     if (p == gListPso.end()) return 0;
     int k = rf::sky::kindOf(p->second);
-    if (k == rf::sky::Hide || k == rf::sky::Clouds) return 1;
-    if (k != rf::sky::Dome) return 0;
+    if (k == rf::sky::Hide) { drawOrig = false; return 1; }
+    if (k != rf::sky::Dome && k != rf::sky::Clouds) return 0;
     st.pso = p->second;
     if (auto it = gListIa.find(list); it != gListIa.end()) ia = it->second;
+    if (k == rf::sky::Clouds) { drawOrig = !rf::sky::hideClouds(); return 3; }
     return 2;
 }
-void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa const& ia) {
-    st.haveTopo = ia.haveTopo;
-    st.topo     = int(ia.topo);
-    st.nVb      = ia.nVb;
-    st.vb       = ia.vb;
-    rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw};
+void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa const& ia, int kind) {
+    st.haveTopo  = ia.haveTopo;
+    st.topo      = int(ia.topo);
+    st.nVb       = ia.nVb;
+    st.vb        = ia.vb;
+    st.rootKnown = rootKnown(list);
+    rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
     gInSnapshot = true; // our calls bypass the hooks anyway; keep onDraw etc. out of it
-    rf::sky::afterGameSky(list, st, c);
+    if (kind == 2) rf::sky::afterGameSky(list, st, c);
+    else rf::sky::afterGameClouds(list, st, c);
     gInSnapshot = false;
 }
 
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
     rf::sky::GameState st;
     ListIa             ia;
-    int                sk = gInSnapshot ? 0 : skyDrawKind(list, st, ia);
-    if (sk == 1) { rf::sky::noteHidden(); return; }
-    if (!gInSnapshot && tracking()) onDraw(list);
-    reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
-    if (sk == 2) afterSky(list, st, ia);
+    bool               orig = true;
+    int                sk   = gInSnapshot ? 0 : skyDrawKind(list, st, ia, orig);
+    if (!orig) rf::sky::noteHidden();
+    if (orig) {
+        if (!gInSnapshot && tracking()) onDraw(list);
+        reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
+    }
+    if (sk >= 2) afterSky(list, st, ia, sk);
 }
 void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
     rf::sky::GameState st;
     ListIa             ia;
-    int                sk = gInSnapshot ? 0 : skyDrawKind(list, st, ia);
-    if (sk == 1) { rf::sky::noteHidden(); return; }
-    if (!gInSnapshot && tracking()) onDraw(list);
-    reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
-    if (sk == 2) afterSky(list, st, ia);
+    bool               orig = true;
+    int                sk   = gInSnapshot ? 0 : skyDrawKind(list, st, ia, orig);
+    if (!orig) rf::sky::noteHidden();
+    if (orig) {
+        if (!gInSnapshot && tracking()) onDraw(list);
+        reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
+    }
+    if (sk >= 2) afterSky(list, st, ia, sk);
 }
 
 HRESULT STDMETHODCALLTYPE createHeapHook(ID3D12Device* d, D3D12_DESCRIPTOR_HEAP_DESC const* desc, REFIID riid, void** out) {
@@ -912,14 +1032,19 @@ bool install(Targets const& t) {
     if (gInstalled) return true;
     void* tg[kHooks]  = {t.createGraphicsPso, t.createStreamPso, t.createRtv,  t.setPso,          t.omSetRts,     t.drawInstanced,
                          t.drawIndexed,       t.createHeap,      t.copyDescs, t.copyDescsSimple, t.resourceBarrier,
-                         t.iaSetTopology,     t.iaSetVb};
+                         t.iaSetTopology,     t.iaSetVb,         t.setHeaps,  t.setRootSig,     t.setTable,
+                         t.setConst,          t.setConsts,       t.setCbv,    t.setSrv,          t.setUav};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
                          reinterpret_cast<void*>(&drawIdxHook),   reinterpret_cast<void*>(&createHeapHook),
                          reinterpret_cast<void*>(&copyDescsHook), reinterpret_cast<void*>(&copySimpleHook),
                          reinterpret_cast<void*>(&barrierHook),   reinterpret_cast<void*>(&topoHook),
-                         reinterpret_cast<void*>(&setVbHook)};
+                         reinterpret_cast<void*>(&setVbHook),     reinterpret_cast<void*>(&setHeapsHook),
+                         reinterpret_cast<void*>(&setRootSigHook), reinterpret_cast<void*>(&setTableHook),
+                         reinterpret_cast<void*>(&setConstHook),  reinterpret_cast<void*>(&setConstsHook),
+                         reinterpret_cast<void*>(&setAddrHook<18, 3>), reinterpret_cast<void*>(&setAddrHook<19, 4>),
+                         reinterpret_cast<void*>(&setAddrHook<20, 5>)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;

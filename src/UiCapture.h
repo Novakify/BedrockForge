@@ -34,6 +34,15 @@ struct Targets {
     // LyricsFlow sky stage 2: the list state it has to put back after drawing in place of Bedrock's sky
     void* iaSetTopology     = nullptr; // ID3D12GraphicsCommandList::IASetPrimitiveTopology (vtable 20)
     void* iaSetVb           = nullptr; // ID3D12GraphicsCommandList::IASetVertexBuffers (vtable 44)
+    // "My picture" binds its own root signature: the game's graphics root state is tracked and put back
+    void* setHeaps          = nullptr; // SetDescriptorHeaps (28)
+    void* setRootSig        = nullptr; // SetGraphicsRootSignature (30)
+    void* setTable          = nullptr; // SetGraphicsRootDescriptorTable (32)
+    void* setConst          = nullptr; // SetGraphicsRoot32BitConstant (34)
+    void* setConsts         = nullptr; // SetGraphicsRoot32BitConstants (36)
+    void* setCbv            = nullptr; // SetGraphicsRootConstantBufferView (38)
+    void* setSrv            = nullptr; // SetGraphicsRootShaderResourceView (40)
+    void* setUav            = nullptr; // SetGraphicsRootUnorderedAccessView (42)
 };
 
 /// Load config/ui_shaders.txt; output goes under outDir.

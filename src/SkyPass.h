@@ -31,22 +31,33 @@ int  kindOfHash(uint64_t psHash);
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& desc);
 int  kindOf(ID3D12PipelineState* pso); // any thread
 bool wanted();                         // a LyricsFlow sky is active: UiCapture tracks list state + calls us
+bool wantRoot();                       // "My picture" is on: also track the graphics root state
+bool hideClouds();
 struct GameState {
     ID3D12PipelineState*     pso = nullptr;
     bool                     haveTopo = false;
     int                      topo = 0; // D3D12_PRIMITIVE_TOPOLOGY
     unsigned                 nVb = 0;  // 0 = unknown (not tracked since the list was reset)
     D3D12_VERTEX_BUFFER_VIEW const* vb = nullptr;
+    bool                     rootKnown = false; // the game's heaps + root signature + root args are tracked
 };
 struct Calls { // the ORIGINAL list functions (no hooks, so the tracked game state stays the game's)
     void (*setPso)(ID3D12GraphicsCommandList*, ID3D12PipelineState*);
     void (*setTopo)(ID3D12GraphicsCommandList*, int);
     void (*setVb)(ID3D12GraphicsCommandList*, unsigned, unsigned, D3D12_VERTEX_BUFFER_VIEW const*);
     void (*draw)(ID3D12GraphicsCommandList*, unsigned, unsigned, unsigned, unsigned);
+    // own root signature ("My picture"); restoreRoot puts the game's heaps / signature / arguments back
+    void (*setHeaps)(ID3D12GraphicsCommandList*, unsigned, struct ID3D12DescriptorHeap* const*);
+    void (*setRootSig)(ID3D12GraphicsCommandList*, struct ID3D12RootSignature*);
+    void (*setTable)(ID3D12GraphicsCommandList*, unsigned, unsigned long long);
+    void (*setConsts)(ID3D12GraphicsCommandList*, unsigned, unsigned, void const*, unsigned);
+    void (*restoreRoot)(ID3D12GraphicsCommandList*);
 };
 /// Called right after the game drew its sky (kind Dome) on `list`: draws the live dome + sky quads over it and
 /// restores the game's pipeline / topology / vertex buffers. Returns false when it could not (state unknown etc.).
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
+/// Called at Bedrock's cloud draw (after the opaque terrain, depth bound): weather particles, depth-tested.
+bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void noteHidden(); // a vanilla sun / moon / stars / clouds draw was skipped
 
 } // namespace rf::sky

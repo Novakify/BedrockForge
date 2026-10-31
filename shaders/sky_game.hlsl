@@ -55,3 +55,72 @@ QOut VSSkyQuadGame(QIn i) {
     return o;
 }
 float4 PSSkyQuadGame(QOut i) : SV_Target { return i.col; }
+
+// ---- "My picture" in place of the sky: own root signature (b0 = 16 root constants, t0 = the panorama, s0 wrap)
+cbuffer PicCB : register(b0) {
+    float3 pF; float pTx;
+    float3 pR; float pTy;
+    float3 pU; float pAlpha;
+    float  pBright; float3 pPad;
+};
+Texture2D<float4> gPic : register(t0);
+SamplerState      sPicWrap : register(s0);
+struct POut { float4 pos : SV_Position; float3 dir : TEXCOORD0; };
+POut VSSkyPicGame(uint id : SV_VertexID) {
+    float2 p = float2((id << 1) & 2, id & 2) * 2.0 - 1.0;
+    POut o;
+    o.pos = float4(p, 1.0, 1.0);
+    o.dir = pF + pR * (p.x * pTx) + pU * (p.y * pTy);
+    return o;
+}
+float4 PSSkyPicGame(POut i) : SV_Target { // SkyImage: u = az / 360, v = 0.5 - el / 180
+    float3 d  = normalize(i.dir);
+    float  az = degrees(atan2(-d.x, d.z));
+    if (az < 0.0) az += 360.0;
+    float  el = degrees(asin(clamp(d.y, -1.0, 1.0)));
+    float3 c  = gPic.SampleLevel(sPicWrap, float2(az / 360.0, 0.5 - el / 180.0), 0).rgb * pBright;
+    return float4(c, saturate(pAlpha));
+}
+
+// ---- weather particles (WorldSky rain / snow / blizzard / petals / embers / fireflies), drawn at Bedrock's cloud
+// draw with the terrain's depth (test only). Sprites are drawn procedurally after SkyPainter.sprites():
+// frame 0 petal, 1 snow, 2 glow, 3 streak (u = frame / 4 + local u).
+struct WIn {
+    float3 pos : POSITION;  // blocks, camera-relative
+    float2 uv  : TEXCOORD0;
+    float4 col : COLOR0;
+    float4 m0 : VPROW0; float4 m1 : VPROW1; float4 m2 : VPROW2; float4 m3 : VPROW3; // game view-projection rows
+};
+struct WOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; float4 col : COLOR0; };
+WOut VSWeatherGame(WIn i) {
+    WOut   o;
+    float4 p = float4(i.pos, 1.0);
+    o.pos = float4(dot(i.m0, p), dot(i.m1, p), dot(i.m2, p), dot(i.m3, p));
+    o.uv  = i.uv;
+    o.col = i.col;
+    return o;
+}
+float4 PSWeatherGame(WOut i) : SV_Target {
+    float  f = floor(clamp(i.uv.x, 0.0, 0.9999) * 4.0);
+    float2 q = float2(frac(i.uv.x * 4.0), i.uv.y);
+    float2 c = q - 0.5;
+    float  r = length(c);
+    float  a;
+    float3 tint = float3(1, 1, 1);
+    if (f < 0.5) {          // petal: rounded top, point at the bottom, pale centre stripe
+        float w = 0.38 * sqrt(saturate((1.0 - q.y) * 1.25)) * saturate(q.y * 4.0 + 0.2);
+        a    = 1.0 - smoothstep(w - 0.04, w, abs(c.x));
+        a   *= smoothstep(0.0, 0.06, q.y);
+        tint = lerp(float3(0.96, 0.72, 0.84), float3(1.0, 0.93, 0.96), 1.0 - smoothstep(0.0, 0.12, abs(c.x)));
+    } else if (f < 1.5) {   // snow: soft blob
+        a = pow(saturate(1.0 - r * 2.2), 1.6);
+    } else if (f < 2.5) {   // glow: small core + wide halo
+        a = saturate(exp(-r * r * 160.0) + 0.55 * exp(-r * r * 22.0));
+    } else {                // streak: thin bar, brightest at the bottom (head)
+        a = (1.0 - smoothstep(0.09, 0.16, abs(c.x))) * smoothstep(0.0, 1.0, q.y) * smoothstep(1.0, 0.92, q.y);
+    }
+    float4 o = i.col;
+    o.rgb *= tint;
+    o.a   *= a;
+    return o;
+}

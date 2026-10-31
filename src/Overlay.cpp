@@ -445,6 +445,14 @@ bool findTargets() {
             gUiTargets.resourceBarrier = lv[26];
             gUiTargets.iaSetTopology   = lv[20];
             gUiTargets.iaSetVb         = lv[44];
+            gUiTargets.setHeaps        = lv[28];
+            gUiTargets.setRootSig      = lv[30];
+            gUiTargets.setTable        = lv[32];
+            gUiTargets.setConst        = lv[34];
+            gUiTargets.setConsts       = lv[36];
+            gUiTargets.setCbv          = lv[38];
+            gUiTargets.setSrv          = lv[40];
+            gUiTargets.setUav          = lv[42];
             cl->Close();
         }
     }
