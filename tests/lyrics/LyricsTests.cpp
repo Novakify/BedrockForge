@@ -921,8 +921,10 @@ TEST(panel_widgets) {
     r.click(300, 75); // "Floating words" (row 1: y 67)
     CHECK_EQ(r.e.config().lyricsStyle == LyricsStyle::Floating, !fl);
     int off = r.e.config().syncOffsetMs;
-    r.click(359, 181); // timing ›
+    r.click(359, 187); // timing ›
     CHECK_EQ(r.e.config().syncOffsetMs, off + 100);
+    r.click(258, 171); // Distance slider, far left -> 0.4 (closest)
+    CHECK_NEAR(r.e.config().lyricsDistance, 0.4, 1e-3);
     // player buttons (on the record card) and seek
     CHECK(PanelRig::has(r.click(98, 207), PanelAction::Kind::PlayPause));
     CHECK(PanelRig::has(r.click(126, 207), PanelAction::Kind::Next));

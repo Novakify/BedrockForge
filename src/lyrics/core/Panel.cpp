@@ -496,9 +496,11 @@ void Panel::lyrics(Ctx& c, Config& cfg) {
     c.toggle2("notes", 288, 87, 78, "Music notes", cfg.musicNotes, [&] { cfg.musicNotes = !cfg.musicNotes; }, a);
     c.toggle2("smus", 206, 107, 78, "Sky reacts to music", cfg.fxSkyMusic, [&] { cfg.fxSkyMusic = !cfg.fxSkyMusic; }, a);
     c.toggle2("ugr", 288, 107, 78, "Underground", cfg.showUnderground, [&] { cfg.showUnderground = !cfg.showUnderground; }, a);
-    cfg.textOpacity = 0.2f + 0.8f * c.slider("lop", "Opacity", 142, (cfg.textOpacity - 0.2f) / 0.8f, a);
-    cfg.lyricsScale = 0.4f + 2.1f * c.slider("lsz", "Size", 160, (cfg.lyricsScale - 0.4f) / 2.1f, a);
-    offset(c, cfg, 178);
+    cfg.textOpacity = 0.2f + 0.8f * c.slider("lop", "Opacity", 136, (cfg.textOpacity - 0.2f) / 0.8f, a);
+    cfg.lyricsScale = 0.4f + 2.1f * c.slider("lsz", "Size", 152, (cfg.lyricsScale - 0.4f) / 2.1f, a);
+    // [BF] how far the floating words stand (Scene: 5..7.5 blocks x 0.4..2)
+    cfg.lyricsDistance = 0.4f + 1.6f * c.slider("ldist", "Distance", 168, (std::clamp(cfg.lyricsDistance, 0.4f, 2.0f) - 0.4f) / 1.6f, a);
+    offset(c, cfg, 184);
 }
 
 void Panel::offset(Ctx& c, Config& cfg, float y) {
