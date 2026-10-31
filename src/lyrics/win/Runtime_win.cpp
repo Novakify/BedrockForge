@@ -35,6 +35,7 @@
 
 #include "bf/Events.h"
 #include "bf/Hud.h"
+#include "core/Win32Input.h"
 #include "client/Menu.h"
 #include "lyrics/core/Panel.h"
 
@@ -292,6 +293,42 @@ void mediaLoop() {
 void    panelStepAndPublish(int64_t now, bool lyricsActive); // world panel section below
 int64_t nowMsWall();
 
+namespace host {
+std::atomic<bool>             click{false}, down{false};
+bf::events::Subscriptions     subs;
+std::atomic<IClientInstance*> client{nullptr};
+std::atomic<bool>             hovered{false}, open{false};
+} // namespace host
+void togglePanel();
+void nudgeSongOffset(int deltaMs);
+
+/// Keys, polled once per HUD frame (edge-triggered, only with the game focused and the HUD screen on top, so typing
+/// in chat never triggers them): L panel, O lyrics on/off, ] / [ timing for this song. Same approach as BF's menu key.
+void pollKeys(bedrock_forge::client::Frame& f) {
+    namespace w32 = bedrock_forge::win32;
+    static bool was[4]  = {};
+    int const   vks[4]  = {0x4C /*L*/, 0x4F /*O*/, 0xDD /*]*/, 0xDB /*[*/};
+    bool const  live    = w32::gameFocused() && bf::hud::isHudScreen(f.view) && f.player;
+    for (int i = 0; i < 4; ++i) {
+        bool down = live && w32::keyDown(vks[i]);
+        bool edge = down && !was[i];
+        was[i]    = down;
+        if (!edge) continue;
+        if (i == 0) {
+            host::client = &f.client;
+            std::lock_guard l(gS->mutex);
+            togglePanel();
+        } else if (i == 1) {
+            std::lock_guard l(gS->mutex);
+            gS->engine.config().enabled = !gS->engine.config().enabled;
+            if (!gS->engine.config().enabled) gS->engine.reset();
+            saveConfig();
+        } else {
+            nudgeSongOffset(i == 2 ? +100 : -100);
+        }
+    }
+}
+
 /// LyricsFlow 2.1 live sky: clock + stars / weather / picture -> BF_CopySkyFrame. Caller holds gS->mutex.
 void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     auto const& cfg = gS->engine.config();
@@ -326,6 +363,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
 void hudFrame(bedrock_forge::client::Frame& f) {
     if (!gS || !f.player) return;
     gS->moduleOn = true; // hud only runs while the module is on (also after modules.json restored it)
+    pollKeys(f);
     std::lock_guard l(gS->mutex);
     int64_t now = nowNs();
     float   dt  = gS->lastFrameNs ? float(double(now - gS->lastFrameNs) / 1e9) : 1.0f / 60.0f;
@@ -376,12 +414,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
 // ---------------------------------------------------------------- world panel (L; LyricsFlow 2.1 WorldPanel)
 // The panel stands in the world 3.2 blocks in front of you; you aim with the crosshair and left-click. While the
 // crosshair is on it, the game doesn't get the left / right click (no punching or placing through the menu).
-namespace host {
-std::atomic<bool>             click{false}, down{false};
-bf::events::Subscriptions     subs;
-std::atomic<IClientInstance*> client{nullptr};
-std::atomic<bool>             hovered{false}, open{false};
-} // namespace host
+// (host state: see namespace host above pollKeys)
 
 void flushConfig(bool force) { // caller holds gS->mutex
     int64_t now = nowNs();
@@ -469,16 +502,7 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
 }
 
 void installPanelHost() {
-    // L opens / closes the panel (Java uses K, which Bedrock Forge already uses). Rebindable in Controls.
-    auto& key = ll::input::KeyRegistry::getInstance().getOrCreateKey("lyricsflow.panel", {0x4C /*L*/}, true);
-    key.registerButtonDownHandler(
-        [](::FocusImpact, ::IClientInstance& client) {
-            if (!gS || !gS->moduleOn || !client.getLocalPlayer()) return;
-            host::client = &client;
-            std::lock_guard l(gS->mutex);
-            togglePanel();
-        },
-        true);
+    // L / O / [ / ] are polled in hudFrame (pollKeys): LeviLamina's KeyRegistry handlers never fired in game.
     // clicks on the panel: left = press, right also swallowed so nothing gets placed behind it
     host::subs.on<ll::event::MouseInputEvent>([](ll::event::MouseInputEvent& ev) {
         if (!gS || !host::open.load()) return;
@@ -551,16 +575,6 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     };
 
     // Keys: LyricsFlow's K / J are taken by BF (impact frames / HUD), so only on/off + per-song offset for now.
-    bf::input::bindKey("lyricsflow.toggle", 0x4F /*O*/, [] {
-        if (!gS->moduleOn) return; // module off: the keys do nothing (used to flip + save "enabled" silently)
-        std::lock_guard l(gS->mutex);
-        gS->engine.config().enabled = !gS->engine.config().enabled;
-        if (!gS->engine.config().enabled) gS->engine.reset();
-        saveConfig();
-    });
-    bf::input::bindKey("lyricsflow.earlier", 0xDD /*]*/, [] { if (gS->moduleOn) nudgeSongOffset(+100); });
-    bf::input::bindKey("lyricsflow.later", 0xDB /*[*/, [] { if (gS->moduleOn) nudgeSongOffset(-100); });
-
     gS->running = true;
     gS->media   = std::thread(mediaLoop);
 }
