@@ -9,6 +9,7 @@
 // is open the game is put in third person (so the player model renders) and restored afterwards.
 #include "SpatialCamera.h"
 #include "Cinematic.h"
+#include "UiCapture.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -560,10 +561,32 @@ void applyComponent() {
                 };
                 glm::quat  qn = glm::slerp(quatOf(yawP, pitchP), quatOf(cy, cp), e);
                 glm::vec3  cpos = eye + (spot - eye) * e;
+                glm::vec3 const gamePos = pos; // the game's own camera this frame, before the override
                 for (int i = 0; i < nComp; ++i) {
                     *comps[i]->mOrientation = qn;
                     *comps[i]->mPosition    = cpos;
                 }
+                gLastCamPos = cpos;
+                gLastCam[0] = cpos.x; gLastCam[1] = cpos.y; gLastCam[2] = cpos.z;
+                gLastTarget[0] = spot.x; gLastTarget[1] = spot.y; gLastTarget[2] = spot.z;
+                static int logged = 0; // one line per open (when the glide lands) -> logs/uicapture/menu_camera.txt
+                if (b >= 1.0f && !logged) {
+                    logged = 1;
+                    char  t[1024];
+                    auto& bs = actor.getDimensionBlockSource();
+                    auto  blockAt = [&](glm::vec3 p) {
+                        Block const& k = bs.getBlock(BlockPos(int(std::floor(p.x)), int(std::floor(p.y)), int(std::floor(p.z))));
+                        return k.isAir() ? 0 : (k.mCachedComponentData->mIsSolid ? 2 : 1);
+                    };
+                    std::snprintf(t, sizeof t,
+                                  "menu camera: feet %.2f %.2f %.2f yaw %.1f pitch %.1f conv %d comps %d\n"
+                                  "  eye %.2f %.2f %.2f spot %.2f %.2f %.2f dist %.2f cam yaw %.1f pitch %.1f\n"
+                                  "  game camera pos %.2f %.2f %.2f; block at spot %d, eye %d (0 air 1 non-solid 2 solid)\n",
+                                  feet.x, feet.y, feet.z, yawP, pitchP, gConv, nComp, eye.x, eye.y, eye.z, spot.x, spot.y, spot.z,
+                                  glm::length(spot - look), cy, cp, gamePos.x, gamePos.y, gamePos.z, blockAt(spot), blockAt(eye));
+                    rf::uicapture::writeText("menu_camera.txt", t);
+                }
+                if (b < 1.0f && !want) logged = 0;
                 applyFov(comps, nComp, false, 1.0f);
                 return;
             }
