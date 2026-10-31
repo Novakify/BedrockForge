@@ -49,8 +49,10 @@ Prototype (look + shader reference, WebGL): claude.ai artifact "Bedrock Forge Gl
   "Camera swing" is on); RF's SpatialCamera polls it (GetProcAddress) on the client tick.
 - The render origin (LevelRendererCamera::mCameraPos) is moved to that camera like Cinematic does - without it the
   world is drawn from the game's own 3rd-person spot and goes grey when you stand against a block.
-- The front view stops at any non-air block. RF writes logs/uicapture/menu_camera.txt (pose, origin, nearby blocks)
-  once per open.
+- The front view stops at solid blocks, and past 0.6 blocks at any non-air block (chests, slabs). Opening in third
+  person glides from the game's camera; leaving the world mid-swing restores the perspective at once. RF writes
+  logs/uicapture/menu_camera.txt (pose + render origin) once per open.
+- Lists show a slim scrollbar when they're longer than the window.
 
 ## Smooth scrolling (10-31)
 - BfGlyphV1 `_pad0/_pad1` = vertical clip band in screen y (0..1); RF's glyph shader cuts the glyph to it with a
