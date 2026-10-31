@@ -24,9 +24,9 @@ struct Binding {
 std::mutex& gMutex() { static std::mutex m; return m; }
 std::vector<Binding>& gBindings() { static std::vector<Binding> b; return b; }
 void ensurePolling() {
-    static bf::events::Subscriptions* subs = nullptr; // never freed: must outlive static destruction at exit
-    if (subs) return;
-    subs = new bf::events::Subscriptions();
+    static std::once_flag once; // registered outside gMutex: the event bus may hold its own lock while dispatching
+    std::call_once(once, [] {
+    auto* subs = new bf::events::Subscriptions(); // never freed: must outlive static destruction at exit
     subs->on<ll::event::AfterUIRenderEvent>([](ll::event::AfterUIRenderEvent& ev) {
         // Several UI views render per frame (HUD, toasts, overlays): only the HUD view reads the keys, the others
         // must not touch the state (they used to reset it, so one J press toggled 3 times).
@@ -44,12 +44,15 @@ void ensurePolling() {
         }
         for (auto& f : fire) f(); // outside the lock: callbacks take their own locks
     });
+    });
 }
 } // namespace
 
 void bindKey(std::string_view name, int keyCode, std::function<void()> onDown) {
-    std::lock_guard l(gMutex());
-    gBindings().push_back({std::string(name), keyCode, false, std::move(onDown), {}});
+    {
+        std::lock_guard l(gMutex());
+        gBindings().push_back({std::string(name), keyCode, false, std::move(onDown), {}});
+    }
     ensurePolling();
 }
 

@@ -128,7 +128,7 @@ std::optional<std::array<float, 5>> wordAnim(Placed const& p, int j, Word const&
     if (p.exitAt >= 0) {
         int64_t start = p.exitAt + 55 * int64_t(j);
         if (LetterFx::handles(c.exitAnim) && t >= start) return std::nullopt; // [BF] the fragments took over
-        if (c.exitAnim == ExitAnim::Fall || c.fallingLetters) {                  // [BF] hang on (a tiny wobble), then drop
+        if ((c.exitAnim == ExitAnim::Fall || c.fallingLetters) && inWorld(c)) { // [BF] hang on (a tiny wobble), then drop (screen text just fades)
             float wob = anim::clamp01(float(t - start) / std::max(1.0f, float(c.fallDelayMs)));
             return std::array<float, 5>{alpha, dx, dy, sc, 0.06f * wob * float(std::sin(double(t) * 0.05 + j))};
         }
@@ -255,7 +255,10 @@ void Scene::tick(SceneInput const& in, Config const& c, CameraState const& cam, 
 
     float speed = std::max(0.3f, c.animSpeed);
     std::erase_if(mVisible, [&](Placed const& p) {
-        bool gone = p.exitAt >= 0 && float(t) > float(p.exitAt) + kExitMs / speed + float(60 * int64_t(p.n()));
+        float end = float(p.exitAt) + kExitMs / speed + float(60 * int64_t(p.n()));
+        if ((c.exitAnim == ExitAnim::Fall || c.fallingLetters) && inWorld(c)) // [BF] every word must get to drop first
+            end = std::max(end, float(p.exitAt) + float(55 * int64_t(std::max(0, p.n() - 1)) + std::max(0, c.fallDelayMs)) + 80.0f);
+        bool gone = p.exitAt >= 0 && float(t) > end;
         return gone || (p.lookedAway && p.viewVis < 0.02f);
     });
 
@@ -747,8 +750,11 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             for (int j = 0; j < p.n(); ++j) {
                 Word const& wd = p.line.words[size_t(p.w0 + j)];
                 auto        s  = wordAnim(p, j, wd, t, c, speed);
-                if (!s) continue;
-                auto [alpha, dx, dy, sc, rot] = *s;
+                bool const  frag = LetterFx::handles(c.exitAnim) && p.exitAt >= 0 && t >= p.exitAt + 55 * int64_t(j); // [BF]
+                if (frag && p.dropped[size_t(j)]) continue;
+                if (!s && !frag) continue;
+                if (frag) p.dropped[size_t(j)] = true;
+                auto [alpha, dx, dy, sc, rot] = s ? *s : std::array<float, 5>{1.0f, 0, 0, 1, 0};
                 if (c.fxBeatShake && shake > 0.05f) { // [BF]
                     dx += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7) - 0.5f) * 0.12f * shake;
                     dy += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7 + 3) - 0.5f) * 0.12f * shake;
@@ -768,6 +774,8 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.sung   = t >= wd.start && t < wd.end + 80;
                 d.glow   = glowBase + (d.sung ? 0.35f : 0.0f) + beat * 0.5f;
                 d.key    = int64_t(p.line.index) * 1000 + p.w0 + j;
+                d.dropNow = frag; // [BF] screen words break apart too (fragments in screen space)
+                d.dropFx  = c.exitAnim;
                 out.push_back(std::move(d));
             }
         return out;

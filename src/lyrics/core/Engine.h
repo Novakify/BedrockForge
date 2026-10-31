@@ -30,9 +30,12 @@ public:
     Vec3                          origin() const { return mOrigin; }
     Scene&                        scene() { return mScene; }
     LetterPhysics&                physics() { return mPhysics; }
+    LetterFx const&               fx() const { return mFx; }
     TopBar&                       topBar() { return mTopBar; }
     AutoPerf&                     perf() { return mPerf; }
     void                          reset();
+    /// [BF] An atlas slot is being reused for another font: drop falling letters / fragments still drawn from it.
+    void forgetAtlas(uint32_t atlas) { mPhysics.dropAtlas(atlas); mFx.dropAtlas(atlas); }
 
 private:
     Config                 mCfg;

@@ -47,6 +47,7 @@ public:
     /// Append the letters as quads relative to `origin`.
     void emit(Vec3 origin, std::vector<BfGlyphV1>& out) const;
     void clear() { mLetters.clear(); }
+    void dropAtlas(uint32_t atlas) { std::erase_if(mLetters, [&](Letter const& l) { return l.tmpl.atlas == atlas; }); }
     std::vector<Letter> const& letters() const { return mLetters; }
 
     /// Height of the highest collision surface under (x, z) at or below y (NaN if none within 4 blocks).

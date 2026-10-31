@@ -49,7 +49,6 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
         Vec3 const normal = R.cross(U).normalized();
         for (int j = 0; j < gy; ++j)
             for (int i = 0; i < gx; ++i) {
-                if (mFrags.size() >= kMaxFrags) return;
                 int  k = qi * 64 + j * gx + i;
                 Frag f;
                 f.tmpl   = q;
@@ -108,6 +107,8 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
             }
         ++qi;
     }
+    if (mFrags.size() > kMaxFrags) // [BF] full: the oldest pieces (nearly gone anyway) make room, new words never vanish
+        mFrags.erase(mFrags.begin(), mFrags.begin() + std::ptrdiff_t(mFrags.size() - kMaxFrags));
 }
 
 void LetterFx::step(float dt) {

@@ -164,6 +164,7 @@ bool syncFontSlots() {
             for (size_t i = 1; i < gS->slotFont.size(); ++i)
                 if (gS->slotUsed[i] < gS->slotUsed[slot]) slot = i;
             gS->engine.fonts().setAtlasIndex(gS->slotFont[slot], FontSet::kNoAtlas);
+            gS->engine.forgetAtlas(uint32_t(slot)); // letters lying around in the old font would sample the new atlas
             gS->slotFont[slot] = id;
             gS->slotUsed[slot] = gS->slotClock;
         }

@@ -19,6 +19,7 @@ public:
     void step(float dt);
     void emit(Vec3 origin, std::vector<BfGlyphV1>& out) const;
     void clear() { mFrags.clear(); }
+    void dropAtlas(uint32_t atlas) { std::erase_if(mFrags, [&](Frag const& f) { return f.tmpl.atlas == atlas; }); }
     size_t size() const { return mFrags.size(); }
     static bool handles(ExitAnim m); // modes this class plays (the others are word transforms or physics)
 

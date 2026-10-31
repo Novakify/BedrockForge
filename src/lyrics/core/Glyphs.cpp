@@ -150,7 +150,7 @@ struct Pass {
 
 void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, GlyphStyle const& st, Vec3 origin, std::vector<BfGlyphV1>& out,
                      bool mainPassOnly) {
-    if (w.alpha <= 0.01f || w.text.empty()) return;
+    if (w.alpha <= 0.01f || w.text.empty() || font.atlasIndex == FontSet::kNoAtlas) return; // [BF] no atlas slot (yet)
     Theme const& th    = st.theme;
     bool const   clean = c.textStyle == TextStyle::Clean;
     float const  o     = 0.055f; // Gfx.neon offset unit (h * 0.055)

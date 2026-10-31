@@ -142,10 +142,25 @@ struct Panel::Ctx {
         v += ((on ? 1.0f : 0.0f) - v) * std::min(1.0f, in.dt * 14.0f);
         return v;
     }
+    // [BF] Forgiving aim: every target reaches kSlop px past its box and the nearest box wins, so the crosshair doesn't
+    // have to sit exactly on a label. Hover glow follows last frame's winner, i.e. exactly what a click would hit.
+    static constexpr float kSlop = 3.5f;
+    float                  hotScore = 1e30f;
+    bool claim(std::string const& id, float x, float y, float w, float h) {
+        if (!p.mHovered) return false;
+        float dx = std::max({x - p.mHx, 0.0f, p.mHx - (x + w)}), dy = std::max({y - p.mHy, 0.0f, p.mHy - (y + h)});
+        float d  = std::sqrt(dx * dx + dy * dy);
+        if (d > kSlop) return false;
+        float cx = (p.mHx - (x + w / 2)) / std::max(1.0f, w), cy = (p.mHy - (y + h / 2)) / std::max(1.0f, h);
+        float score = d * 10.0f + std::sqrt(cx * cx + cy * cy); // inside beats near; then closest to the middle
+        if (score >= hotScore) return false;
+        hotScore = score;
+        hotNow   = id;
+        return true;
+    }
     float hit(std::string const& id, float x, float y, float w, float h) {
-        bool o = over(x, y, w, h);
-        if (o) hotNow = id;
-        return hv(id, o);
+        claim(id, x, y, w, h);
+        return hv(id, p.mHovered && p.mHot == id);
     }
     bool clicked(std::string const& id) const { return in.click && p.mHot == id; }
 
@@ -169,6 +184,18 @@ struct Panel::Ctx {
         q.glowW    = 1.0f;
         q.flags    = BF_GLYPH_SOLID | (c1 != c2 ? BF_GLYPH_GRADIENT : 0u);
         out.push_back(q);
+    }
+    /// [BF] A neat outlined button box: thin ring (brightens + turns accent on hover), dark inset, faint fill.
+    void box(float x, float y, float w, float h, float r, float hv, float a, bool sel = false) {
+        float const t = 0.75f;
+        if (sel) {
+            round(x - t, y - t, w + 2 * t, h + 2 * t, r + t, ACCENT2, ACCENT, (0.55f + 0.3f * hv) * a);
+            round(x, y, w, h, r, ACCENT, DEEP2, 0.92f * a);
+            return;
+        }
+        round(x - t, y - t, w + 2 * t, h + 2 * t, r + t, lerpRgb(WHITE, ACCENT2, hv), lerpRgb(WHITE, ACCENT, hv), (0.13f + 0.32f * hv) * a);
+        round(x, y, w, h, r, 0x1D1A36, 0x16132B, 0.94f * a);
+        round(x, y, w, h, r, WHITE, WHITE, (0.035f + 0.07f * hv) * a);
     }
     void disc(float cx, float cy, float r, uint32_t rgb, float alpha) { round(cx - r, cy - r, 2 * r, 2 * r, r, rgb, rgb, alpha); }
     void imageAt(int atlas, UiRect const& uv, float x, float y, float w, float h, float alpha, uint32_t tint = WHITE, bool isLate = false) {
@@ -204,6 +231,11 @@ struct Panel::Ctx {
         }
         return "...";
     }
+    /// [BF] Shrink a label (down to 82%) before cutting it with "...".
+    float fit(std::string const& s, float maxW, float scale) const {
+        float w = textW(s, scale);
+        return w <= maxW ? scale : std::max(scale * 0.82f, scale * maxW / std::max(1.0f, w));
+    }
     void text(std::string const& s, float x, float y, float scale, uint32_t rgb, float alpha, bool centered = false) {
         if (!font || s.empty() || alpha <= 0.01f) return;
         float const size = mcSize(scale);
@@ -233,8 +265,9 @@ struct Panel::Ctx {
     void toggle2(std::string const& id, float x, float y, float w, std::string const& label, bool on, std::function<void()> const& run, float a) {
         float const h  = 16;
         float       hv = hit(id, x, y, w, h);
-        round(x, y, w, h, 6, WHITE, WHITE, (0.035f + 0.05f * hv) * a);
-        text(ellip(label, w - 34, 0.68f), x + 7, y + 5, 0.68f, WHITE, 0.92f * a);
+        box(x, y, w, h, 6, hv, a);
+        float const ts = fit(label, w - 34, 0.68f);
+        text(ellip(label, w - 34, ts), x + 7, y + 5 + (0.68f - ts) * 3.5f, ts, WHITE, 0.92f * a);
         float sx = x + w - 25, sy = y + 4;
         round(sx, sy, 19, 8, 4, on ? ACCENT : WHITE, on ? DEEP2 : WHITE, (on ? 0.95f : 0.16f) * a);
         disc(on ? sx + 15 : sx + 4, sy + 4, 3.2f, WHITE, a);
@@ -245,17 +278,17 @@ struct Panel::Ctx {
     }
     void option(std::string const& id, float x, float y, float w, float h, std::string const& label, bool sel, std::function<void()> const& run, float a) {
         float hv = hit(id, x, y, w, h);
-        if (sel) round(x, y, w, h, 6, ACCENT, DEEP2, 0.88f * a);
-        else round(x, y, w, h, 6, WHITE, WHITE, (0.035f + 0.06f * hv) * a);
-        text(ellip(label, w - 12, 0.66f), x + 7, y + (h - 6) / 2, 0.66f, WHITE, (sel ? 1.0f : 0.8f + 0.2f * hv) * a);
+        box(x, y, w, h, 6, hv, a, sel);
+        float const ts = fit(label, w - 12, 0.66f);
+        text(ellip(label, w - 12, ts), x + 7, y + (h - 6) / 2 + (0.66f - ts) * 3.5f, ts, WHITE, (sel ? 1.0f : 0.8f + 0.2f * hv) * a);
         if (clicked(id)) { run(); changed = true; }
     }
     /// v in 0..1; returns the new 0..1 value (set by a click on the track; [BF] follows a held click).
     float slider(std::string const& id, std::string const& label, float y, float v, float a) {
         v = clamp01(v);
         float const x0 = 258, w = 366 - x0;
-        float       hvv = hv(id, over(206, y - 4, 160, 14));
-        if (over(x0 - 4, y - 4, w + 8, 14)) hotNow = id;
+        claim(id, x0 - 4, y - 4, w + 8, 14);
+        float hvv = hv(id, (p.mHovered && p.mHot == id) || p.mActive == id);
         if (clicked(id)) p.mActive = id;
         if (p.mActive == id && in.down && p.mHovered) {
             float nv = clamp01((p.mHx - x0) / w);
@@ -277,8 +310,8 @@ struct Panel::Ctx {
     void pager(std::string const& id, float y, int page, int count, int& target, float a) {
         if (count <= 1) return;
         float hl = hit(id + "<", 320, y, 14, 12), hr = hit(id + ">", 352, y, 14, 12);
-        round(320, y, 14, 12, 6, WHITE, WHITE, (0.08f + 0.2f * hl) * a);
-        round(352, y, 14, 12, 6, WHITE, WHITE, (0.08f + 0.2f * hr) * a);
+        box(320, y, 14, 12, 6, hl, a);
+        box(352, y, 14, 12, 6, hr, a);
         text("\xE2\x80\xB9", 325, y + 2.5f, 0.75f, WHITE, a); // ‹
         text("\xE2\x80\xBA", 357, y + 2.5f, 0.75f, WHITE, a); // ›
         text(std::to_string(page + 1) + "/" + std::to_string(count), 336, y + 3, 0.6f, WHITE, 0.7f * a);
@@ -443,10 +476,10 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
         bool        sel = mPage == i;
         std::string id  = "tab" + std::to_string(i);
         float       h   = c.hit(id, tx, 203, tw, 14);
-        if (sel) c.round(tx, 203, tw, 14, 7, ACCENT, DEEP2, 0.9f * a);
-        else c.round(tx, 203, tw, 14, 7, WHITE, WHITE, (0.05f + 0.08f * h) * a);
-        std::string lab = c.ellip(tabs[i], tw - 6, 0.62f);
-        c.text(lab, tx + (tw - c.textW(lab, 0.62f)) / 2, 207, 0.62f, WHITE, (sel ? 1.0f : 0.7f + 0.3f * h) * a);
+        c.box(tx, 203, tw, 14, 7, h, a, sel);
+        float       ts  = std::max(0.5f, std::min(0.62f, 0.62f * (tw - 5) / std::max(1.0f, c.textW(tabs[i], 0.62f)))); // shrink to fit
+        std::string lab = c.ellip(tabs[i], tw - 4, ts);
+        c.text(lab, tx + (tw - c.textW(lab, ts)) / 2, 207 + (0.62f - ts) * 3.5f, ts, WHITE, (sel ? 1.0f : 0.7f + 0.3f * h) * a);
         if (c.clicked(id) && !sel) { mPage = i; mPageTime = c.in.nowMs; }
     }
     std::string const line = np.hasTrack ? np.title + "  \xC2\xB7  " + np.artist : std::string("No music");
@@ -500,16 +533,17 @@ void Panel::lyrics(Ctx& c, Config& cfg) {
     c.toggle(0, "Lyrics in the sky", cfg.showLyrics, [&] { cfg.showLyrics = !cfg.showLyrics; }, a);
     bool const fl = cfg.lyricsStyle == LyricsStyle::Floating;
     c.toggle(1, "Floating words", fl, [&] { cfg.lyricsStyle = fl ? LyricsStyle::Sky : LyricsStyle::Floating; }, a);
-    c.toggle2("beat", 206, 87, 78, "Pulse to the beat", cfg.beatGlow, [&] { cfg.beatGlow = !cfg.beatGlow; }, a);
+    c.toggle2("beat", 206, 87, 78, "Beat pulse", cfg.beatGlow, [&] { cfg.beatGlow = !cfg.beatGlow; }, a);
     c.toggle2("notes", 288, 87, 78, "Music notes", cfg.musicNotes, [&] { cfg.musicNotes = !cfg.musicNotes; }, a);
-    c.toggle2("smus", 206, 105, 78, "Sky reacts to music", cfg.fxSkyMusic, [&] { cfg.fxSkyMusic = !cfg.fxSkyMusic; }, a);
+    c.toggle2("smus", 206, 105, 78, "Sky reacts", cfg.fxSkyMusic, [&] { cfg.fxSkyMusic = !cfg.fxSkyMusic; }, a);
     c.toggle2("ugr", 288, 105, 78, "Underground", cfg.showUnderground, [&] { cfg.showUnderground = !cfg.showUnderground; }, a);
-    c.toggle2("spread", 206, 123, 160, "Spread lyrics out", cfg.spreadOut, [&] { cfg.spreadOut = !cfg.spreadOut; }, a);
-    cfg.textOpacity = 0.2f + 0.8f * c.slider("lop", "Opacity", 141, (cfg.textOpacity - 0.2f) / 0.8f, a);
-    cfg.lyricsScale = 0.4f + 2.1f * c.slider("lsz", "Size", 155, (cfg.lyricsScale - 0.4f) / 2.1f, a);
+    c.toggle2("spread", 206, 123, 78, "Spread out", cfg.spreadOut, [&] { cfg.spreadOut = !cfg.spreadOut; }, a);
+    c.toggle2("wline", 288, 123, 78, "Whole line", cfg.wholeLine, [&] { cfg.wholeLine = !cfg.wholeLine; }, a); // [BF] one row
+    cfg.textOpacity = 0.2f + 0.8f * c.slider("lop", "Opacity", 145, (cfg.textOpacity - 0.2f) / 0.8f, a);
+    cfg.lyricsScale = 0.4f + 2.1f * c.slider("lsz", "Size", 159, (cfg.lyricsScale - 0.4f) / 2.1f, a);
     // [BF] how far the floating words stand (Scene: 5..7.5 blocks x 0.4..2)
-    cfg.lyricsDistance = 0.4f + 1.6f * c.slider("ldist", "Distance", 169, (std::clamp(cfg.lyricsDistance, 0.4f, 2.0f) - 0.4f) / 1.6f, a);
-    offset(c, cfg, 184);
+    cfg.lyricsDistance = 0.4f + 1.6f * c.slider("ldist", "Distance", 173, (std::clamp(cfg.lyricsDistance, 0.4f, 2.0f) - 0.4f) / 1.6f, a);
+    offset(c, cfg, 187);
 }
 
 void Panel::offset(Ctx& c, Config& cfg, float y) {
@@ -518,8 +552,8 @@ void Panel::offset(Ctx& c, Config& cfg, float y) {
     std::string v = (cfg.syncOffsetMs > 0 ? "+" : "") + std::to_string(cfg.syncOffsetMs) + " ms";
     c.text(v, 330 - c.textW(v, 0.66f) / 2, y, 0.66f, WHITE, a);
     float hl = c.hit("offl", 294, y - 4, 14, 14), hr = c.hit("offr", 352, y - 4, 14, 14);
-    c.round(294, y - 4, 14, 14, 7, WHITE, WHITE, (0.06f + 0.12f * hl) * a);
-    c.round(352, y - 4, 14, 14, 7, WHITE, WHITE, (0.06f + 0.12f * hr) * a);
+    c.box(294, y - 4, 14, 14, 7, hl, a);
+    c.box(352, y - 4, 14, 14, 7, hr, a);
     c.text("\xE2\x80\xB9", 299, y, 0.66f, WHITE, a);
     c.text("\xE2\x80\xBA", 357, y, 0.66f, WHITE, a);
     if (c.clicked("offl")) { cfg.syncOffsetMs = std::max(-2000, cfg.syncOffsetMs - 100); c.changed = true; }
@@ -621,7 +655,7 @@ void Panel::fps(Ctx& c, Config& cfg) {
     c.option("pf0", 206, 54, 78, 14, "Chill", cfg.profile == 0, [&] { applyProfile(cfg, 0); }, a);
     c.option("pf1", 288, 54, 78, 14, "PvP", cfg.profile == 1, [&] { applyProfile(cfg, 1); }, a);
     c.text("Graphics (lyrics & sky)", 206, 75, 0.62f, WHITE, 0.55f * a);
-    static char const* const q[] = {"Performance", "Balanced", "Pretty"};
+    static char const* const q[] = {"Fast", "Balanced", "Pretty"};
     for (int i = 0; i < 3; ++i)
         c.option("q" + std::to_string(i), 206 + float(i) * 54, 84, 50, 13, q[i], cfg.quality == i, [&, i] { cfg.quality = i; }, a);
     c.toggle2("auto", 206, 103, 160, "Automatic FPS", cfg.autoPerf, [&] { cfg.autoPerf = !cfg.autoPerf; }, a);

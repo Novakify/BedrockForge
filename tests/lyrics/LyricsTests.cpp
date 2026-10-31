@@ -954,6 +954,17 @@ TEST(panel_widgets) {
     bool seek = false;
     for (auto const& x : sk) seek |= x.kind == PanelAction::Kind::Seek && x.ms > 90000 && x.ms < 110000;
     CHECK(seek);
+    // [BF] forgiving aim: just outside the "Whole line" toggle (288, 123, 78 x 16) still hits it
+    bool wl = r.e.config().wholeLine;
+    r.click(287, 131); // 1 px left of it (3 px from "Spread out"): nearer wins
+    CHECK_EQ(r.e.config().wholeLine, !wl);
+    // ... and a point in the 2 px gap between FX rows goes to the nearer one (Drift row 94..107 vs Shatter 109..122)
+    r.click(206 + 3 * 27.17f + 12, 210); // FX tab (4th pill)
+    CHECK(r.p.tab() == Panel::Tab::Fx);
+    r.click(206 + 54 + 25, 107.6f);
+    CHECK(r.e.config().exitAnim == ExitAnim::Drift);
+    r.click(206 + 54 + 25, 108.6f);
+    CHECK(r.e.config().exitAnim == ExitAnim::Shatter);
     // close button
     CHECK(PanelRig::has(r.click(358, 13), PanelAction::Kind::Close));
 }
@@ -1186,6 +1197,44 @@ TEST(letter_fx_exits) {
     }
     CHECK(!LetterFx::handles(ExitAnim::Fall));
     CHECK(LetterFx::handles(ExitAnim::Burn));
+}
+
+TEST(letter_fx_cap_and_atlas) { // [BF] review fixes
+    BfGlyphV1 q{};
+    q.right[0] = 0.2f; q.up[1] = 0.3f; q.alpha = 1; q.atlas = 3;
+    std::vector<BfGlyphV1> word{q, q};
+    LetterFx fx;
+    for (int i = 0; i < 200; ++i) fx.spawn(word, Vec3{}, ExitAnim::Dissolve, i); // 14400 pieces asked for
+    CHECK_EQ(fx.size(), size_t(6000));                                          // capped, newest kept
+    fx.dropAtlas(2);
+    CHECK_EQ(fx.size(), size_t(6000));
+    fx.dropAtlas(3);
+    CHECK_EQ(fx.size(), size_t(0));
+    LetterPhysics ph;
+    ph.spawn(word, Vec3{0, 70, 0}, 1, PhysicsParams{});
+    ph.dropAtlas(3);
+    CHECK(ph.letters().empty());
+}
+TEST(exits_reach_every_word) { // [BF] screen text breaks apart; a fast Fall still drops every word before the line goes
+    for (int mode = 0; mode < 2; ++mode) {
+        Engine e;
+        e.fonts().loadFromJson("lyricsflow_script", readFile("font_test.json"), "x.png");
+        if (mode == 0) { e.config().lyricsStyle = LyricsStyle::Screen; e.config().exitAnim = ExitAnim::Shatter; }
+        else { e.config().exitAnim = ExitAnim::Fall; e.config().fallingLetters = true; e.config().animSpeed = 3.0f; e.config().fallDelayMs = 600; }
+        FakeWorld  w;
+        Lyrics     l = testLyrics();
+        SceneInput in;
+        in.lyrics = &l; in.lyricsState = LyricsState::Found; in.songSeq = 1; in.playing = true;
+        auto   cam = testCam();
+        size_t peak = 0;
+        for (int i = 0; i < 400; ++i) {
+            in.t  = 12400 + i * 50;
+            in.dt = 0.05f;
+            e.frame(in, cam, &w);
+            peak = std::max(peak, mode == 0 ? e.fx().size() : e.physics().letters().size());
+        }
+        CHECK(peak > 5);
+    }
 }
 
 int main(int argc, char** argv) {
