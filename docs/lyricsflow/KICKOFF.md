@@ -13,6 +13,16 @@
 >   GAME CLOSED (Bedrock rewrites options.txt on exit). Check `show` first: key names unverified on 1.26.51.
 > - Sky system: see the ~20:30 update below (look ported + verified offline, nothing draws it in game yet).
 
+> **Update 2026-10-30 ~21:30 local: sky layers + RF preview.**
+> - Ported from WorldSky: shooting stars, constellations, storm lightning, weather particles (rain / snow / blizzard /
+>   petals / embers / fireflies, sprites = the jar's own SkyPainter output), "My picture" (png/jpg panoramas in
+>   `<BF config>/lyricsflow_sky`, choice like SkyImage), underground fade (weather fades when the sky above you is
+>   blocked), sky only in the overworld. BF publishes it all every HUD frame: `BF_CopySkyFrame` (BfLyrics.h).
+> - RF **stage 1**: F6 > "LyricsFlow sky (preview)" > *Show sky preview* draws the dome / picture + layers in a corner
+>   window (or full screen) from BF's camera. Off by default. Proves data + shaders + images in game.
+> - Stage 2 (in place of Bedrock's sky) still needs the PC spike below. Day/night dimming uses night = 1 for now
+>   (no level time read yet); only matters with "Day/night" on and "keep sky by day" off.
+
 > **Update 2026-10-30 ~20:30 local: sky system started.**
 > - LyricsFlow 2.1's sky look is ONE shader (`live_sky.fsh`, copied unchanged to `resources/lyricsflow/shaders`).
 >   Core `src/lyrics/core/Sky.*`: 29 presets, LiveSky.body (sun/moon), the 16x1 param row byte-for-byte like
