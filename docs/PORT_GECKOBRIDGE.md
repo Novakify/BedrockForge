@@ -179,6 +179,11 @@ Order of preference: generated JSON > generated Script API > Bedrock Forge nativ
   test on Cave Dweller 1.6.4 NeoForge 26.3 (GL5) from your PC.
 - **M5 (optional):** RF emissive/eyes material, animated textures.
 
+## Coexistence with Figura (added 2026-10-31)
+Goal is GeckoLib + Figura features together in one client. Figura is a separate native runtime (FiguraBridge) that
+shares a **ModelCore** layer with GeckoBridge: one rig format, one native animation evaluator (also the fallback for
+over-sized baked GeckoLib anims), one RF draw path for shaders/VV, one owner per entity. Full plan: `PORT_FIGURA.md`.
+
 ## Risks
 - **Java logic is the real work**: controllers are code; the extractor covers patterns, odd mods need overlays.
 - **Glow look**: overlay mode copies GeckoLib's blend; the risk is only whether RenderDragon accepts the custom RP material (fallback: alpha mode, also in the proof pack).
