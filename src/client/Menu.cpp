@@ -442,52 +442,74 @@ void drawMods(UiFrame& f, Win const& w, float a) {
     }
 }
 
+// Sub-page scrolling: rows under the page header move with the wheel (gScroll); rows that would stick out of the
+// body are skipped (glyphs can't be clipped). Call fits() before drawing a row, end() once with the content bottom.
+struct Scroller {
+    Win const& w;
+    float      top, y;
+    explicit Scroller(Win const& win) : w(win), top(win.bodyY + 44), y(win.bodyY + 44 - gScroll) {}
+    bool fits(float h) const { return y >= top - 1 && y + h <= w.bodyY + w.bodyH + 1; }
+    void end() const {
+        float content = y + gScroll - top;
+        gScroll = std::clamp(gScroll, 0.0f, std::max(0.0f, content - (w.bodyY + w.bodyH - top)));
+    }
+};
+
 void drawModSettings(UiFrame& f, Win const& w, float a) {
     auto* m = Registry::get().find(gModPage);
     if (!m) { gPage = Page::Mods; return; }
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, m->name, m->planned ? m->description + " - on the roadmap." : m->description, a, m->planned ? -1 : (m->enabled ? 1 : 0),
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
-    y += 46;
+    Scroller sc(w);
     if (m->id == "lyricsflow") {
-        row(f, x, y, wd, 50, "Open the LyricsFlow panel", "The glass settings panel in the world (also: L in game)", a);
-        f.g.icon("music", x + wd - 30, y + 25, 20, rgba(kWhite, 1), a);
-        f.hits.push_back({x, y, wd, 50, [](bool) { lyr::win::requestPanel(); closeMenu(); }});
-        y += 60;
+        if (sc.fits(50)) {
+            row(f, x, sc.y, wd, 50, "Open the LyricsFlow panel", "The glass settings panel in the world (also: L in game)", a);
+            f.g.icon("music", x + wd - 30, sc.y + 25, 20, rgba(kWhite, 1), a);
+            f.hits.push_back({x, sc.y, wd, 50, [](bool) { lyr::win::requestPanel(); closeMenu(); }});
+        }
+        sc.y += 60;
     }
     for (auto& s : m->settings) {
-        if (y > w.bodyY + w.bodyH - 50) break;
         Setting* sp = &s;
         if (s.kind == Setting::Kind::Toggle) {
-            toggleRow(f, x, y, wd, s.label, "", s.on, a, [sp] { sp->on = !sp->on; Registry::get().save(); });
-            y += 60;
+            if (sc.fits(50)) toggleRow(f, x, sc.y, wd, s.label, "", s.on, a, [sp] { sp->on = !sp->on; Registry::get().save(); });
+            sc.y += 60;
         } else {
-            slider(f, m->id + "/" + s.id, x, y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); });
-            y += 74;
+            if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); });
+            sc.y += 74;
         }
     }
     if (m->settings.empty() && m->id != "lyricsflow")
-        f.g.text(m->planned ? "Not built yet." : "This module has no settings.", x + 2, y + 10, 13, rgba(kLilac, 0.62f), a);
+        f.g.text(m->planned ? "Not built yet." : "This module has no settings.", x + 2, sc.y + 10, 13, rgba(kLilac, 0.62f), a);
+    sc.end();
 }
 
 void drawShaders(UiFrame& f, Win const& w, float a) {
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, "Shaderpacks", "The game loads shaders at startup: a new pick applies after a restart.", a);
-    y += 46;
+    Scroller sc(w);
     auto packs = shaderpacks::listPacks();
     packs.insert(packs.begin(), "off");
     std::string const active = shaderpacks::activePack();
     for (auto const& p : packs) {
         if (p.rfind("Debug", 0) == 0) continue; // debug packs stay hidden
-        if (y > w.bodyY + w.bodyH - 50) break;
-        bool on = p == active;
-        row(f, x, y, wd, 50, p == "off" ? "Off (vanilla)" : p, on ? "Active" : "", a, on);
-        if (on) f.g.icon("check", x + wd - 30, y + 25, 20, rgba(kWhite, 1), a);
-        f.hits.push_back({x, y, wd, 50, [p](bool) {
-            if (shaderpacks::setActivePack(p)) toast(p == "off" ? "Shaders off - restart the game to apply" : p + " selected - restart the game to apply");
-        }});
-        y += 58;
+        if (sc.fits(46)) {
+            bool on = p == active;
+            float y2 = sc.y;
+            pillGlass(f.g, x, y2, wd, 46, 12, on, a, f.over(x, y2, wd, 46) ? 1.0f : 0.0f);
+            f.g.text(p == "off" ? "Off (vanilla)" : p, x + 14, y2 + 23, 13.5f, rgba(kWhite, 1), a, true, 0, on ? 0.6f : 0);
+            if (on) {
+                f.g.text("ACTIVE", x + wd - 44, y2 + 23, 11, rgba(kWhite, 0.85f), a, true, 2);
+                f.g.icon("check", x + wd - 24, y2 + 23, 18, rgba(kWhite, 1), a);
+            }
+            f.hits.push_back({x, y2, wd, 46, [p](bool) {
+                if (shaderpacks::setActivePack(p)) toast(p == "off" ? "Shaders off - restart the game to apply" : p + " selected - restart the game to apply");
+            }});
+        }
+        sc.y += 54;
     }
+    sc.end();
 }
 
 void drawClient(UiFrame& f, Win const& w, float a) {
@@ -495,12 +517,13 @@ void drawClient(UiFrame& f, Win const& w, float a) {
     if (!m) return;
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
     pageHeader(f, x, y - 4, wd, "Client", "How the glass looks. Presets set blur, refraction and frost together.", a);
-    y += 46;
+    Scroller sc(w);
+    y = sc.y;
     // presets
     struct Pre { char const* n; float b, r, t; };
     constexpr Pre pres[4] = {{"Off", 0, 0, 0.3f}, {"Low", 0.5f, 0.5f, 0.7f}, {"Balanced", 1, 1, 1}, {"Max", 1.8f, 2, 1.3f}};
     float sw = (wd - 3 * 8) / 4;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 4 && sc.fits(30); ++i) {
         float sx = x + float(i) * (sw + 8);
         bool  on = std::abs(m->num("blur", 1) - pres[i].b) < 0.01f && std::abs(m->num("refraction", 1) - pres[i].r) < 0.01f &&
                   std::abs(m->num("frost", 1) - pres[i].t) < 0.01f;
@@ -514,20 +537,21 @@ void drawClient(UiFrame& f, Win const& w, float a) {
             Registry::get().save();
         }});
     }
-    y += 42;
+    sc.y += 42;
     auto save = [] { Registry::get().save(); };
-    if (auto* s = m->setting("blur")) { slider(f, "client_ui/blur", x, y, wd, "Background blur", "How strongly the glass frosts the world", s->value, 0, 2, 0.05f, "x", a, save); y += 72; }
-    if (auto* s = m->setting("refraction")) { slider(f, "client_ui/refraction", x, y, wd, "Glass refraction", "How much the edges bend the world behind", s->value, 0, 2.5f, 0.05f, "x", a, save); y += 72; }
-    if (auto* s = m->setting("frost")) { slider(f, "client_ui/frost", x, y, wd, "Frost tint", "Dark violet haze on panels and buttons", s->value, 0, 2, 0.05f, "x", a, save); y += 72; }
-    if (y < w.bodyY + w.bodyH - 50) {
-        auto* s = m->setting("wheel");
-        if (s) toggleRow(f, x, y, wd, "Open with the wheel", "Right Shift shows the 4-button wheel first; off opens Mods directly", s->on, a, [s] { s->on = !s->on; Registry::get().save(); });
-        y += 58;
+    struct Sl { char const* id; char const* t; char const* d; float mx; };
+    for (Sl const sl : {Sl{"blur", "Background blur", "How strongly the glass frosts the world", 2}, Sl{"refraction", "Glass refraction", "How much the edges bend the world behind", 2.5f},
+                        Sl{"frost", "Frost tint", "Dark violet haze on panels and buttons", 2}}) {
+        if (auto* s = m->setting(sl.id); s && sc.fits(64)) slider(f, std::string("client_ui/") + sl.id, x, sc.y, wd, sl.t, sl.d, s->value, 0, sl.mx, 0.05f, "x", a, save);
+        sc.y += 72;
     }
-    if (y < w.bodyY + w.bodyH - 50) {
-        auto* s = m->setting("worldblur");
-        if (s) toggleRow(f, x, y, wd, "Blur the world", "Frost the whole world behind the wheel and the window", s->on, a, [s] { s->on = !s->on; Registry::get().save(); });
+    struct Tg { char const* id; char const* t; char const* d; };
+    for (Tg const tg : {Tg{"wheel", "Open with the wheel", "Right Shift shows the 4-button wheel first; off opens Mods directly"},
+                        Tg{"worldblur", "Blur the world", "Frost the whole world behind the wheel and the window"}}) {
+        if (auto* s = m->setting(tg.id); s && sc.fits(50)) toggleRow(f, x, sc.y, wd, tg.t, tg.d, s->on, a, [s] { s->on = !s->on; Registry::get().save(); });
+        sc.y += 58;
     }
+    sc.end();
 }
 
 void drawLyrics(UiFrame& f, Win const& w, float a) {
