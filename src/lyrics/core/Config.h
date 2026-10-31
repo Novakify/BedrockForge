@@ -132,6 +132,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(vsync, false)                    /* [BF] mirrors the game option for the FPS target (set by the glue) */         \
     I(maxFps, 0)                       /* [BF] game max framerate, 0 = unlimited (set by the glue) */                  \
     /* ---- [BF] falling letters (new feature, not in LyricsFlow) */                                                   \
+    B(spreadOut, false)                /* [BF] more room between lyric lines/words (floating + sky) */                 \
     B(fallingLetters, false)                                                                                           \
     E(LetterLand, letterLand, LetterLand::Flat)                                                                        \
     I(fallDelayMs, 350)                /* after a word's exit starts */                                                \

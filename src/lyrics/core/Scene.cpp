@@ -480,6 +480,7 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
     double        bDist   = 6.0;
     auto          avoid   = c.lyricsStyle == LyricsStyle::Floating ? avoidBoxes(cam, w) : std::vector<AvoidBox>{};
 
+    float const   spread  = c.spreadOut ? 1.6f : 1.0f; // [BF] "Spread lyrics out"
     for (int k = 0; k < tries; ++k) {
         float  r1 = random ? rnd(s, 100 + k * 3) * 2 - 1 : 0.0f;
         float  r2 = random ? rnd(s, 101 + k * 3) : 0.5f;
@@ -490,14 +491,14 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
         case LyricsStyle::Sky:
             if (c.skyWords) {
                 dist  = skyDist(c, cam);
-                yaw   = cam.yaw + r1 * 36.0f;
-                pitch = std::clamp(cam.pitch * 0.5f - 16.0f + (r2 - 0.5f) * 30.0f, -55.0f, -4.0f);
+                yaw   = cam.yaw + r1 * (36.0f * spread);
+                pitch = std::clamp(cam.pitch * 0.5f - 16.0f + (r2 - 0.5f) * (30.0f * spread), -60.0f, -4.0f);
                 score -= float(blocked(yaw, pitch, dist, 6.0f, cam, w) * 450);
                 if (inClouds(pitch, dist, cloud, cam)) score -= 500.0f;
             } else { // two-line "pairs" in the sky: odd lines sit beside their even mate
                 dist        = skyDist(c, cam);
                 float emDeg = float(deg(std::atan(double(em(p, c)) / dist)));
-                float h = emDeg * 2.0f, v = emDeg * 1.9f;
+                float h = emDeg * 2.0f * spread, v = emDeg * 1.9f * (1.0f + (spread - 1.0f) * 0.4f); // wider, barely taller (stays on screen)
                 int   side  = p.line.index >= 0 ? (p.line.index % 2 == 0 ? -1 : 1) : 0;
                 Placed* mate = side > 0 ? findIndex(p.line.index - 1) : nullptr;
                 if (mate) {
@@ -508,7 +509,7 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
                 } else {
                     float ry = k == 0 ? 0.0f : r1, rp = k == 0 ? 0.5f : r2;
                     if (k == 0) score += 120.0f;
-                    pY = cam.yaw + ry * 14.0f;
+                    pY = cam.yaw + ry * (14.0f * spread * spread);
                     pP = std::min(cam.pitch - (8.0f + (rp - 0.5f) * 6.0f) - (k >= tries / 2 ? 4.0f : 0.0f), -3.0f - v);
                 }
                 yaw   = pY + float(side) * h;
@@ -518,9 +519,9 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
             }
             break;
         case LyricsStyle::Floating: {
-            if (!c.followView && !c.viewLock) yaw = cam.yaw + (r1 < 0 ? -1.0f : 1.0f) * (8.0f + std::fabs(r1) * 26.0f);
-            else yaw = (c.viewLock ? 0.0f : cam.yaw) + r1 * 13.0f;
-            float rp = (r2 - 0.5f) * 26.0f;
+            if (!c.followView && !c.viewLock) yaw = cam.yaw + (r1 < 0 ? -1.0f : 1.0f) * (8.0f * spread + std::fabs(r1) * 26.0f * spread);
+            else yaw = (c.viewLock ? 0.0f : cam.yaw) + r1 * 13.0f * spread;
+            float rp = (r2 - 0.5f) * 26.0f * spread;
             pitch    = std::clamp((c.viewLock ? 0.0f : cam.pitch * 0.6f) + rp - 9.0f, -40.0f, 28.0f);
             dist     = double((5.0f + r3 * 2.5f) * std::clamp(c.lyricsDistance, 0.4f, 2.0f));
             float absYaw = c.viewLock ? cam.yaw + yaw : yaw, absPitch = c.viewLock ? cam.pitch + pitch : pitch;
@@ -586,12 +587,12 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
                 double len = e.length();
                 if (len < 0.001) continue;
                 float ok = float(ox.dist / len), oy = float(yawOf(e)), op = float(-deg(std::asin(e.y / len)));
-                if (std::fabs(wrap(oy - yaw)) < cw + ox.angW * ok + 3.0f && std::fabs(op - pitch) < ch + ox.angH * ok + 2.5f) score -= 12000.0f;
-                else if (std::fabs(wrap(oy - yaw)) < cw + ox.angW * ok + 6.0f && std::fabs(op - pitch) < ch + ox.angH * ok + 4.0f) score -= 600.0f;
+                if (std::fabs(wrap(oy - yaw)) < cw + ox.angW * ok + 3.0f * spread && std::fabs(op - pitch) < ch + ox.angH * ok + 2.5f * spread) score -= 12000.0f;
+                else if (std::fabs(wrap(oy - yaw)) < cw + ox.angW * ok + 6.0f * spread && std::fabs(op - pitch) < ch + ox.angH * ok + 4.0f * spread) score -= 600.0f;
             }
         }
-        if (nearest < 22.0f) score -= (22.0f - nearest) * 40.0f;
-        score += std::min(nearest, 60.0f) * 4.0f;
+        if (nearest < 22.0f * spread) score -= (22.0f * spread - nearest) * 40.0f;
+        score += std::min(nearest, 60.0f * spread) * 4.0f;
         if (score > bestScore) {
             bestScore = score;
             bYaw = yaw; bPitch = pitch; bDist = dist; bSx = sx; bSy = sy; bSize = tSize; bPY = pY; bPP = pP;

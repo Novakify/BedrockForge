@@ -494,12 +494,13 @@ void Panel::lyrics(Ctx& c, Config& cfg) {
     c.toggle(1, "Floating words", fl, [&] { cfg.lyricsStyle = fl ? LyricsStyle::Sky : LyricsStyle::Floating; }, a);
     c.toggle2("beat", 206, 87, 78, "Pulse to the beat", cfg.beatGlow, [&] { cfg.beatGlow = !cfg.beatGlow; }, a);
     c.toggle2("notes", 288, 87, 78, "Music notes", cfg.musicNotes, [&] { cfg.musicNotes = !cfg.musicNotes; }, a);
-    c.toggle2("smus", 206, 107, 78, "Sky reacts to music", cfg.fxSkyMusic, [&] { cfg.fxSkyMusic = !cfg.fxSkyMusic; }, a);
-    c.toggle2("ugr", 288, 107, 78, "Underground", cfg.showUnderground, [&] { cfg.showUnderground = !cfg.showUnderground; }, a);
-    cfg.textOpacity = 0.2f + 0.8f * c.slider("lop", "Opacity", 136, (cfg.textOpacity - 0.2f) / 0.8f, a);
-    cfg.lyricsScale = 0.4f + 2.1f * c.slider("lsz", "Size", 152, (cfg.lyricsScale - 0.4f) / 2.1f, a);
+    c.toggle2("smus", 206, 105, 78, "Sky reacts to music", cfg.fxSkyMusic, [&] { cfg.fxSkyMusic = !cfg.fxSkyMusic; }, a);
+    c.toggle2("ugr", 288, 105, 78, "Underground", cfg.showUnderground, [&] { cfg.showUnderground = !cfg.showUnderground; }, a);
+    c.toggle2("spread", 206, 123, 160, "Spread lyrics out", cfg.spreadOut, [&] { cfg.spreadOut = !cfg.spreadOut; }, a);
+    cfg.textOpacity = 0.2f + 0.8f * c.slider("lop", "Opacity", 141, (cfg.textOpacity - 0.2f) / 0.8f, a);
+    cfg.lyricsScale = 0.4f + 2.1f * c.slider("lsz", "Size", 155, (cfg.lyricsScale - 0.4f) / 2.1f, a);
     // [BF] how far the floating words stand (Scene: 5..7.5 blocks x 0.4..2)
-    cfg.lyricsDistance = 0.4f + 1.6f * c.slider("ldist", "Distance", 168, (std::clamp(cfg.lyricsDistance, 0.4f, 2.0f) - 0.4f) / 1.6f, a);
+    cfg.lyricsDistance = 0.4f + 1.6f * c.slider("ldist", "Distance", 169, (std::clamp(cfg.lyricsDistance, 0.4f, 2.0f) - 0.4f) / 1.6f, a);
     offset(c, cfg, 184);
 }
 
