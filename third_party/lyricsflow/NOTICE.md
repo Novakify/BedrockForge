@@ -16,3 +16,8 @@ Bedrock Forge's lyrics feature (`src/lyrics/`, `resources/lyricsflow/`, the RF g
 copied from LyricsFlow v2.0 (`assets/lyricsflow/textures/gui`, 374m, MIT, see LICENSE) and packed into
 `resources/lyricsflow/ui/ui_atlas.png` together with procedural sky thumbnails and preview renders made for this port.
 The panel layout follows a LyricsFlow teaser screenshot shared by Fernando. Personal build, not distributed.
+
+## Sky shader (added 2026-10-30)
+`resources/lyricsflow/shaders/live_sky.fsh` / `.vsh` are LyricsFlow 2.1's sky shaders (374m, MIT), unchanged;
+`live_sky.hlsl` and RF's `shaders/live_sky.hlsl` are mechanical translations of it (tools/LyricsSky/gen_sky_shaders.py).
+The panel's sky thumbnails (`tools/LyricsPanel/sky_thumbs`) are renders of that shader. Personal use, never distributed.

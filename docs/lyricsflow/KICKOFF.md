@@ -11,7 +11,19 @@
 >   instance's resource_packs + add to global_resource_packs.json (top). Textures only, vanilla layout.
 > - **FPS boost (game settings)**: `tools/lyricsflow/fps_boost.py apply|restore|show <minecraftpe/options.txt>`,
 >   GAME CLOSED (Bedrock rewrites options.txt on exit). Check `show` first: key names unverified on 1.26.51.
-> - Sky system: not ported yet (skyPreset / strength / speed / pattern are stored, nothing draws a sky).
+> - Sky system: see the ~20:30 update below (look ported + verified offline, nothing draws it in game yet).
+
+> **Update 2026-10-30 ~20:30 local: sky system started.**
+> - LyricsFlow 2.1's sky look is ONE shader (`live_sky.fsh`, copied unchanged to `resources/lyricsflow/shaders`).
+>   Core `src/lyrics/core/Sky.*`: 29 presets, LiveSky.body (sun/moon), the 16x1 param row byte-for-byte like
+>   LiveSkyShader.params (tests), WorldSky clock/fades, the 1300-star field (java.util.Random(1337), matches the JVM).
+> - `tools/LyricsSky`: the original shader runs in headless Chromium/WebGL2 -> all 29 skies render; panel thumbnails
+>   are now real renders. GLSL->HLSL generator: its GLSL check build matches the original **pixel for pixel** (all
+>   29); the HLSL (`rf: shaders/sky.hlsl` + `live_sky.hlsl`) compiles with dxc in RF CI (v3 709a023 green).
+> - NOT done (needs the PC): drawing it in game. RF has no depth buffer and draws at Present, so the dome has to go in
+>   where Bedrock draws its sky. Spike plan: hash the Sky* materials' pixel shaders like gen_ui_shaders.py does for UI,
+>   tag those PSOs (UiCapture's hook set), and draw `VSSky/PSSky` right after the game's sky draw on the same list
+>   (restoring the game's PSO / root signature / heaps / root args). Then stars as tiny quads in the same pass.
 
 > **Update 2026-10-30 ~11:30 local (cloud session while Fernando was out, no PC access):**
 > - RF branch is now **`lyricsflow/rf-on-cinematic-v2`** = `cinematic` 22bee91 + lyrics pass (the force-push of
