@@ -364,7 +364,7 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
     bool camOk = false;
     if (s.host && s.host->client) {
         if (auto* lr = s.host->client->getLevelRenderer()) {
-            auto& lrp = lr->mLevelRendererPlayer.get();
+            auto* lrp = lr->mLevelRendererPlayer.get();
             if (lrp) {
                 ::Vec3 const f = lrp->mCameraForward.get();
                 double l = std::sqrt(double(f.x) * f.x + double(f.y) * f.y + double(f.z) * f.z);
