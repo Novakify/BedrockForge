@@ -1305,6 +1305,7 @@ class Build:
             self.entity(e, by_class.get(e["java_class"], {}))
         self.aliases()
         if self.override.get("content", True): self.content()
+        import armor as GA; GA.convert(self)          # GeckoLib armour -> attachables (+ wearable items)
         if self.override.get("worldgen", True): self.worldgen()
         if self.override.get("javabridge", any(n.startswith("net/mcreator/") for n in self.names)): self.javabridge()
         for stem, files in getattr(self, "anim_files", {}).items():
