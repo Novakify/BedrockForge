@@ -1248,8 +1248,14 @@ class Build:
                 "minecraft:despawn": {"despawn_from_distance": {}}}}})
         self.write(self.rp, f"entity/{self.ns}/gb_nav_point.entity.json", {"format_version": "1.10.0", "minecraft:client_entity": {
             "description": {"identifier": f"{self.ns}:gb_nav_point", "materials": {"default": "entity_alphatest"},
-                "textures": {"default": "textures/entity/chicken"}, "geometry": {"default": "geometry.chicken"},
+                "textures": {"default": f"textures/entity/{self.ns}/gb_nav_point"}, "geometry": {"default": "geometry.gb.nav_point"},
                 "render_controllers": ["controller.render.default"], "scripts": {"scale": "0.0"}}}})   # never visible
+        self.write(self.rp, "models/entity/gb_nav_point.geo.json", {"format_version": "1.12.0", "minecraft:geometry": [{
+            "description": {"identifier": "geometry.gb.nav_point", "texture_width": 16, "texture_height": 16},
+            "bones": [{"name": "root", "pivot": [0, 0, 0]}]}]})
+        self.write(self.rp, f"textures/entity/{self.ns}/gb_nav_point.png", bytes.fromhex(   # 1x1 transparent PNG
+            "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+            "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082"))
         cfgp.write_text("globalThis.__JB_CFG = " + json.dumps(cfg, separators=(",", ":")) + ";\n")
         # client overlays -> HUD images bound to formatting-code-only titles
         ovs = cfg["hooks"].get("overlays") or []
