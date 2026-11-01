@@ -2,6 +2,7 @@
 #include "figura/core/Avatar.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <cstring>
 #include <cstdio>
@@ -618,7 +619,38 @@ void Avatar::clearAnimations() {
         if (a) animationPlayerClear(*a);
 }
 
-void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible) {
+// FiguraModelPart.applyExtraTransforms (ParentType.Camera): the part cancels every rotation above it and turns to
+// face the camera (rightMultiply rotateY(180)), pivoting around pivot + offsetPivot. Model space = Blockbench space,
+// whose front is -Z; the camera's look relative to the body is (pitch, yaw - bodyYaw).
+void Avatar::applyCameraTransform(Part* p, Mat4 const& parentMat) {
+    float yaw   = cameraSet ? cameraYaw : player.yaw;
+    float pitch = cameraSet ? cameraPitch : player.pitch;
+    float rel   = yaw - (player.prevBodyYaw + (player.bodyYaw - player.prevBodyYaw) * tickDelta);
+    // parent rotation (normalised columns, translation dropped)
+    Mat4 inv;
+    double c[3][3] = {{parentMat.v11, parentMat.v12, parentMat.v13}, {parentMat.v21, parentMat.v22, parentMat.v23}, {parentMat.v31, parentMat.v32, parentMat.v33}};
+    for (int col = 0; col < 3; col++) {
+        double l = std::sqrt(c[0][col] * c[0][col] + c[1][col] * c[1][col] + c[2][col] * c[2][col]);
+        if (l > 0) for (int r = 0; r < 3; r++) c[r][col] /= l;
+    }
+    // inverse rotation = transpose
+    inv.v11 = c[0][0]; inv.v12 = c[1][0]; inv.v13 = c[2][0];
+    inv.v21 = c[0][1]; inv.v22 = c[1][1]; inv.v23 = c[2][1];
+    inv.v31 = c[0][2]; inv.v32 = c[1][2]; inv.v33 = c[2][2];
+    Mat4 cam;                       // billboard: face the camera (signs tunable: config/figura/tuning.json)
+    cam.rotateX(tune("camPitchSign", -1) * pitch);
+    cam.rotateY(tune("camYawOffset", 180) + tune("camYawSign", -1) * rel);
+    Vec3 piv2 = p->pivot + p->offsetPivot;
+    Mat4 m;
+    m.translate(-piv2.x, -piv2.y, -piv2.z);
+    m.scale(p->stackScale);
+    m = cam * m;
+    m = inv * m;
+    m.translate(piv2.x + p->position.x + p->animPos.x, piv2.y + p->position.y + p->animPos.y, piv2.z + p->position.z + p->animPos.z);
+    p->positionMatrix = m;
+}
+
+void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat) {
     if (p->removed) return;
     if (p->primaryTexture.set) prim = p->primaryTexture;
     if (p->secondaryTexture.set) sec = p->secondaryTexture;
@@ -632,6 +664,7 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         runChunk(3, 0);
     }
     p->recalculate();
+    if (p->parentType == ParentType::Camera) applyCameraTransform(p, parentMat);
     if (vis && p->midRender && L) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, p->midRender);
         lua_pushnumber(L, tickDelta);
@@ -665,7 +698,8 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         o.opacity   = p->alpha.value_or(1.0f);
         o.color     = p->color;
     }
-    for (Part* c : std::vector<Part*>(p->children)) traverse(c, prim, sec, vis);
+    Mat4 myMat = parentMat * p->positionMatrix;
+    for (Part* c : std::vector<Part*>(p->children)) traverse(c, prim, sec, vis, myMat);
     if (vis && p->postRender && L) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, p->postRender);
         lua_pushnumber(L, tickDelta);
@@ -694,7 +728,7 @@ void Avatar::frame(float delta) {
             callEvent("RENDER", 3);
         }
     }
-    traverse(root, {}, {}, true);
+    traverse(root, {}, {}, true, Mat4{});
     if (!scriptError) {
         if (player.loaded) {
             lua_pushnumber(L, delta);

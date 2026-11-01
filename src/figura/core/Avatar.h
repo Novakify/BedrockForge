@@ -91,6 +91,10 @@ public:
     std::string                                lastError;
     AnimClock                                  clock;
     float                                      tickDelta = 0;
+    float                                      cameraYaw = 0, cameraPitch = 0; // camera look (Java degrees), for Camera parts
+    bool                                       cameraSet = false;
+    std::map<std::string, double>              tuning;     // host-provided knobs (config/figura/tuning.json)
+    double tune(char const* k, double d) const { auto it = tuning.find(k); return it == tuning.end() ? d : it->second; }
     std::string                                renderMode = "RENDER";
     // vanilla_model: visibility per vanilla part name ("HEAD", "PLAYER" ...), unset = visible
     std::map<std::string, bool>                vanillaVisible;
@@ -123,7 +127,8 @@ private:
     void  readAnimData(Part* part, lyrics::json::Value const& anim);
     bool  initLua(std::string* err);
     void  initScripts();
-    void  traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible);
+    void  traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat);
+    void  applyCameraTransform(Part* p, Mat4 const& parentMat);
     void  applyAnimations();
     void  clearAnimations();
 };

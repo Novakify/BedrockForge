@@ -185,6 +185,8 @@ struct State {
     int                           nameMode = -1; // -1 unknown, 0 "variable.x", 1 "x"
     int64_t                       lastTickMs = 0;
     int64_t                       lastScanMs = 0;
+    int64_t                       lastReloadCheckMs = 0;
+    long long                     reloadStamp = 0;
     bool                          wheelHeld = false;
     std::set<int>                 digitsDown;
     std::string                   status;
@@ -355,6 +357,9 @@ bool loadAvatar(State& s, std::string const& name) {
         return false;
     }
     s.avatar     = std::move(av);
+    if (auto t = lyrics::json::parse(readAll(s.root / "tuning.json")))
+        for (auto const& [k, v] : t->members())
+            if (v.isNumber()) s.avatar->tuning[k] = v.asNumber();
     s.avatarName = name;
     s.status     = "FiguraBridge: " + s.avatar->name + (s.avatar->scriptError ? " (script error)" : "");
     s.host->write("[figurabridge] loaded " + name + ": " + std::to_string(s.avatar->parts.size()) + " parts");
@@ -431,6 +436,27 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         if (want.empty() && !all.empty()) want = all.front();
         if (!want.empty()) loadAvatar(s, want);
         if (!s.avatar) return;
+    }
+    { // hot reload: touch <config>/figura/reload.txt (re-reads active.json, tuning.json and the avatar bundle)
+        int64_t t = nowMs();
+        if (t - s.lastReloadCheckMs > 1000) {
+            s.lastReloadCheckMs = t;
+            std::error_code ec;
+            auto mt = fs::last_write_time(s.root / "reload.txt", ec);
+            if (!ec) {
+                auto v = mt.time_since_epoch().count();
+                if (s.reloadStamp != 0 && v != s.reloadStamp) {
+                    if (auto cfg = lyrics::json::parse(readAll(s.root / "active.json"))) s.avatarName = (*cfg)["avatar"].str();
+                    s.host->lastError.clear();
+                    std::string n = s.avatarName.empty() ? s.avatarName : s.avatarName;
+                    s.avatar.reset();
+                    s.names.clear();
+                    if (!n.empty()) loadAvatar(s, n);
+                    if (!s.avatar) return;
+                }
+                s.reloadStamp = v;
+            }
+        }
     }
     if (!f.player) return;
     LocalPlayer& lp = *f.player;
