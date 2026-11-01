@@ -3,6 +3,8 @@
   ask before sharing) converts end to end: 129/129 mobs, 87 blocks, items, recipes, 44 effects, 44 dimensions with
   structure world-gen + portals, overlays (jumpscares), procedures/events via JavaBridge. Seen in game at ~60 fps,
   ContentLog clean for Wonderland. Status + gaps: PORT_GECKOBRIDGE.md "M2/M3 + full-mod pipeline status".
+- FRESH TEST WORLD for Fernando: "Wonderland Test" (folder Hw+zI-keu9c=, creative, only the Wonderland packs
+  = GeckoBridgeProof BP/RP UUIDs). "GeckoBridge Test" is the messy all-mods test world (ERR66 state, leftovers).
 - TEST INSTALL IS A HACK: Wonderland is deployed INTO development_*_packs/GeckoBridgeProofBP|RP with the Proof pack
   UUIDs (mods/the_wonderland.json "pack_uuids") because new dev packs weren't picked up without a game restart.
   Old proof is in <instance>/geckobridge_staging/old_proof. For a normal install drop pack_uuids and rebuild.
