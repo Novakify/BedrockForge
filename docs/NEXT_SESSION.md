@@ -1,3 +1,18 @@
+# Next session handoff (updated 2026-11-01 ~00:55 local, GeckoBridge M4/M5 done) - READ FIRST
+- GeckoBridge now does GeckoLib 5 (M4), animated .mcmeta textures (M5) and the earlier M3 items/armor + animation
+  cues. Status: PORT_GECKOBRIDGE.md "M3 / M4 / M5 status". Test mods (not committed): testmods/m4/
+  santa_dweller-1.21.8-1.9.0-neo.jar (NeoForge 1.21.8) and mochipets-0.23.0+26.3.jar (Fabric 26.3, com.geckolib).
+- Wonderland: 95/129 mobs had the WRONG SKIN (fish.png) since the first port - MCreator synced texture names are now
+  read. 16 mobs have animated skins (gb_anim material, USE_UV_ANIM). Seen in game: sphere/keeper/watching correct.
+- Deployed on the PC: wl7 build (MobAI commit 4e77e75 + this work) into GeckoBridgeProofRP/BP (Wonderland Test).
+  NOTE: an earlier wl5 deploy from this session briefly overwrote the MobAI deploy (old paintings.js); wl7 fixes it.
+- NOT YET SEEN IN GAME: GB Santa Dweller / GB Mochi Pets RP+BP (dev packs, added to "GeckoBridge Test" world;
+  backups world_*_packs.json.bak_gl5). Needs a game restart, then /summon santa_dweller:santa_dweller and
+  /summon mochipets:mochi.
+- Computer-use lesson: the world list re-sorts after Save & Quit; hover + zoom on the name before clicking. A
+  misclick landed in Fernando's "My World" (AWJgm..., Dweller/Dread) where `/kill @e[type=!player]` was run (told him).
+- Builds: batched javap (uncached Wonderland ~10 min, cached ~3 min), deterministic output (PYTHONHASHSEED=0 re-exec).
+
 # Next session handoff (updated 2026-10-31 ~19:20 local / 00:20 UTC, Wonderland full port) - READ FIRST
 - WONDERLAND (the_wonderland 3.0.3, MCreator + GeckoLib, file from its creator, private use only - keep credits,
   ask before sharing) converts end to end: 129/129 mobs, 87 blocks, items, recipes, 44 effects, 44 dimensions with
