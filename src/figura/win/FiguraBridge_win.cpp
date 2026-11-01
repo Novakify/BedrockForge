@@ -380,6 +380,10 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
         p.onGround  = a.isOnGround();
         // NOTE: Actor::evalMolang rejects every query./variable. here ("not allowed in this context", one content-log
         // error per call), so player state comes straight from the actor
+        // test knob: tuning "forceSneak" puts the real player into Bedrock's sneak state (what Shift does)
+        if (double fs = s.avatar->tune("forceSneak", -1); fs >= 0) {
+            try { a.setSneaking(fs > 0); } catch (...) {}
+        }
         try {
             p.crouching = a.isSneaking();
             p.sprinting = a.isSprinting();
