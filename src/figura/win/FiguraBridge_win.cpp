@@ -606,7 +606,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             if (an && an->playState != PlayState::Stopped) pl += an->name + "(" + std::to_string(int(an->blend * 100)) + ") ";
         f.infoLines.push_back("Figura anims: " + pl);
         auto const& pp = s.avatar->player;
-        char b[160];
+        char b[320];
         std::snprintf(b, sizeof b, "Figura v=%.2f,%.2f,%.2f ground=%d sneak=%d yaw=%.0f body=%.0f cam=%.0f,%.0f fp=%d", pp.velocity.x, pp.velocity.y, pp.velocity.z,
                       int(pp.onGround), int(pp.crouching), pp.yaw, pp.bodyYaw, s.avatar->cameraPitch, s.avatar->cameraYaw, int(pp.isFirstPerson));
         f.infoLines.push_back(b);
@@ -615,9 +615,10 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             auto const& o  = s.avatar->out[pi];
             std::string bn = "fb" + std::to_string(pi);
             auto rd = [&](char const* suf) { return readVar(lp, vn(s.nameMode, bn + suf).c_str()); };
-            std::snprintf(b, sizeof b, "probe p%d out v=%d t=%d rx=%.1f | map v=%.1f t=%.1f rx=%.1f | names=%zu vars=%zu", pi,
-                          int(o.visible && o.opacity > 0.001f), int(o.primary), o.bone.rot.x, rd("v"), rd("t"), rd("rx"), s.names.size(),
-                          s.avatar->out.size());
+            std::snprintf(b, sizeof b, "probe p%d v=%d t=%d r=%.1f,%.1f,%.1f p=%.2f,%.2f,%.2f s=%.2f,%.2f,%.2f | map v=%.0f t=%.0f r=%.1f,%.1f,%.1f p=%.2f,%.2f,%.2f s=%.2f",
+                          pi, int(o.visible && o.opacity > 0.001f), int(o.primary), o.bone.rot.x, o.bone.rot.y, o.bone.rot.z, o.bone.pos.x,
+                          o.bone.pos.y, o.bone.pos.z, o.bone.scale.x, o.bone.scale.y, o.bone.scale.z, rd("v"), rd("t"), rd("rx"), rd("ry"),
+                          rd("rz"), rd("px"), rd("py"), rd("pz"), rd("sx"));
             f.infoLines.push_back(b);
         }
     }
