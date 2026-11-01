@@ -100,9 +100,12 @@ std::string stemOf(std::string const& entry) { return fs::path(entry).stem().str
 // Another .dll in the folder with exactly the entry DLL's bytes (a named build), or "".
 std::string namedCopyOf(ModFolder const& m, uint64_t h) {
     std::error_code ec;
+    auto const      size = fs::file_size(m.dir / m.entry, ec);
+    if (ec) return {};
     for (auto& e : fs::directory_iterator(m.dir, ec)) {
         auto fn = e.path().filename().string();
         if (!e.is_regular_file(ec) || lower(fn) == lower(m.entry) || isTempOld(e.path()) || lower(e.path().extension().string()) != ".dll") continue;
+        if (e.file_size(ec) != size) continue; // cheap reject before hashing
         if (hashFile(e.path()) == h) return fn;
     }
     return {};
@@ -191,19 +194,56 @@ void install(fs::path const& modDir) {
     log().info("[BF] loadouts: {} found, active '{}', {} old DLL copies cleaned", list().size(), gActive, cleaned);
 }
 
-std::vector<Info> list() {
-    std::vector<Info> out;
-    std::error_code   ec;
-    for (auto& e : fs::directory_iterator(gDir, ec)) {
-        if (lower(e.path().extension().string()) != ".json") continue;
-        Info i{e.path().stem().string(), {}};
-        if (auto j = readJson(e.path()); j && j->contains("description") && (*j)["description"].is_string())
-            i.description = (*j)["description"].get<std::string>();
-        out.push_back(std::move(i));
+namespace {
+std::vector<Info>  gList;
+std::string        gListSig = "?";
+std::atomic<unsigned long long> gListNext{0};
+
+Info parseInfo(fs::path const& p) {
+    Info i;
+    i.name = p.stem().string();
+    auto j = readJson(p);
+    if (!j) { i.description = "broken JSON - fix the file"; return i; }
+    auto str = [&](char const* k) { auto it = j->find(k); return it != j->end() && it->is_string() ? it->get<std::string>() : std::string{}; };
+    i.description = str("description");
+    i.shaderpack  = str("shaderpack");
+    if (auto m = j->find("modules"); m != j->end() && m->is_object()) {
+        i.modules = int(m->size());
+        if (auto sp = m->find("shaderpacks"); sp != m->end() && sp->is_object())
+            if (auto st = sp->find("settings"); st != sp->end() && st->is_object())
+                if (auto v = st->find("vibrant"); v != st->end() && v->is_boolean()) i.vibrant = v->get<bool>() ? 1 : 0;
     }
-    std::sort(out.begin(), out.end(), [](Info const& a, Info const& b) { return lower(a.name) < lower(b.name); });
-    return out;
+    if (auto m = j->find("mods"); m != j->end() && m->is_object())
+        for (auto& [n, on] : m->items()) i.mods.push_back(n + (on.is_boolean() && on.get<bool>() ? " on" : " off"));
+    if (auto d = j->find("dlls"); d != j->end() && d->is_object())
+        for (auto& [n, b] : d->items()) i.dlls.push_back(n + ": " + (b.is_string() ? b.get<std::string>() : "?"));
+    return i;
 }
+} // namespace
+
+std::vector<Info> const& list() {
+    // re-scan the folder at most once a second; re-parse only when a name or write time changed
+    if (unsigned long long t = GetTickCount64(); t >= gListNext.load()) {
+        gListNext = t + 1000;
+        std::error_code       ec;
+        std::vector<fs::path> files;
+        std::string           sig;
+        for (auto& e : fs::directory_iterator(gDir, ec)) {
+            if (lower(e.path().extension().string()) != ".json") continue;
+            files.push_back(e.path());
+            sig += e.path().filename().string() + std::to_string(e.last_write_time(ec).time_since_epoch().count()) + "|";
+        }
+        if (sig != gListSig) {
+            gListSig = std::move(sig);
+            gList.clear();
+            for (auto& f : files) gList.push_back(parseInfo(f));
+            std::sort(gList.begin(), gList.end(), [](Info const& a, Info const& b) { return lower(a.name) < lower(b.name); });
+        }
+    }
+    return gList;
+}
+
+bool busy() { return gBusy; }
 
 std::string active() {
     std::lock_guard l(gMutex);
@@ -216,7 +256,7 @@ std::string status() {
 bool restartNeeded() { return gRestart; }
 
 void apply(std::string const& name) {
-    if (gBusy.exchange(true)) return;
+    if (gBusy.exchange(true)) { setStatus("still working on the last one..."); return; }
     auto j = readJson(fileFor(name));
     if (!j) {
         setStatus("can't read loadouts/" + name + ".json (broken JSON?)");
@@ -270,6 +310,7 @@ void apply(std::string const& name) {
 }
 
 std::string saveCurrent(std::string name) {
+    if (gBusy.exchange(true)) { setStatus("still working on the last one..."); return {}; }
     std::error_code ec;
     // file names: letters, digits, space, - _
     name.erase(std::remove_if(name.begin(), name.end(), [](char c) { return !(std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '-' || c == '_'); }), name.end());
@@ -280,8 +321,11 @@ std::string saveCurrent(std::string name) {
     if (!name.empty()) name[0] = char(std::toupper(static_cast<unsigned char>(name[0])));
 
     json j;
-    j["description"] = "Saved from the menu";
-    j["shaderpack"]  = shaderpacks::activePack();
+    std::string pack = shaderpacks::activePack();
+    auto*       fr   = Registry::get().find("shaderpacks");
+    bool        vv   = fr && fr->flag("vibrant");
+    j["description"] = (pack == "off" ? std::string("No shaders") : pack) + (vv ? " | Vibrant" : " | Fancy");
+    j["shaderpack"]  = pack;
     json mods = json::object();
     for (auto& m : Registry::get().all()) {
         if (m->planned) continue;
@@ -291,31 +335,43 @@ std::string saveCurrent(std::string name) {
         mods[m->id] = {{"enabled", m->enabled}, {"settings", s}};
     }
     j["modules"] = mods;
-    json on = json::object(), dlls = json::object();
-    for (auto& m : scanMods()) {
-        if (isProtected(m.name)) continue;
-        on[m.name] = m.enabled;
-        fs::path dll = m.dir / m.entry;
-        uint64_t h   = fs::exists(dll, ec) ? hashFile(dll) : 0;
-        if (!h) continue;
-        // pin the exact build: point at a named copy, or make one so the loadout can always restore it
-        std::string build = namedCopyOf(m, h);
-        if (build.empty()) {
-            build = std::format("{}.saved-{:08x}.dll", stemOf(m.entry), uint32_t(h));
-            fs::copy_file(dll, m.dir / build, fs::copy_options::skip_existing, ec);
-        }
-        dlls[m.name] = build;
-    }
-    j["mods"] = on;
-    j["dlls"] = dlls;
-    std::ofstream{fileFor(name)} << j.dump(2);
+    // keep the description of a loadout being overwritten
+    if (auto old = readJson(fileFor(name)); old && old->contains("description") && (*old)["description"].is_string())
+        j["description"] = (*old)["description"];
     {
         std::lock_guard l(gMutex);
         gActive = name;
-        gStatus = "saved as " + name;
+        gStatus = "saving " + name + "...";
     }
     std::ofstream{gActiveFile} << name << "\n";
-    log().info("[BF] loadouts: saved current setup as '{}'", name);
+    // mods + DLL builds: hashing DLLs takes a moment, keep it off the render thread
+    std::thread([name, j = std::move(j)]() mutable {
+        std::error_code ec;
+        json on = json::object(), dlls = json::object();
+        try {
+            for (auto& m : scanMods()) {
+                if (isProtected(m.name)) continue;
+                on[m.name] = m.enabled;
+                fs::path dll = m.dir / m.entry;
+                uint64_t h   = fs::exists(dll, ec) ? hashFile(dll) : 0;
+                if (!h) continue;
+                // pin the exact build: point at a named copy, or make one so the loadout can always restore it
+                std::string build = namedCopyOf(m, h);
+                if (build.empty()) {
+                    build = std::format("{}.saved-{:08x}.dll", stemOf(m.entry), uint32_t(h));
+                    fs::copy_file(dll, m.dir / build, fs::copy_options::skip_existing, ec);
+                }
+                dlls[m.name] = build;
+            }
+        } catch (std::exception const& ex) { log().warn("[BF] loadouts: save: {}", ex.what()); }
+        j["mods"] = on;
+        j["dlls"] = dlls;
+        std::ofstream{fileFor(name)} << j.dump(2);
+        gListNext = 0; // show it right away
+        setStatus("saved " + name);
+        log().info("[BF] loadouts: saved current setup as '{}'", name);
+        gBusy = false;
+    }).detach();
     return name;
 }
 

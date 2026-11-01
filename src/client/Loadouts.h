@@ -25,17 +25,25 @@
 namespace bedrock_forge::client::loadouts {
 
 struct Info {
-    std::string name, description;
+    std::string              name, description;
+    std::string              shaderpack;   // "" = not set by this loadout
+    int                      vibrant = -1; // -1 not set, 0 off, 1 on
+    int                      modules = 0;  // how many modules it sets
+    std::vector<std::string> mods;         // "Name on" / "Name off"
+    std::vector<std::string> dlls;         // "Mod: build.dll"
 };
 
 /// Call from Core::enable after the module registry is loaded. Cleans up DLLs swapped out last run.
 void install(std::filesystem::path const& modDir);
-std::vector<Info> list();
+/// Cached; re-read only when a file in loadouts/ changes (cheap to call every frame).
+std::vector<Info> const& list();
 std::string       active();            // last applied loadout ("" = none)
 /// Apply a loadout. File work (DLL swaps) runs on a worker thread; watch status().
 void apply(std::string const& name);
 /// Save the current setup (shaderpack, modules, mods, DLL builds) as loadouts/<name>.json. Empty name = "Loadout N".
+/// An existing name is overwritten (its description is kept). DLL hashing runs on a worker thread.
 std::string saveCurrent(std::string name);
+bool        busy();
 std::string status();
 bool        restartNeeded();           // mods / DLLs changed: they load at startup
 
