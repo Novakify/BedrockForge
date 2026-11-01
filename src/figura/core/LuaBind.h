@@ -35,6 +35,8 @@ struct TypeDef {
 uint32_t registerType(lua_State* L, TypeDef const& def);
 uint32_t typeId(char const* name);
 char const* typeName(uint32_t id);
+/// Push the metatable registered for a type id (for value types that build their own userdata).
+void pushTypeMetatable(lua_State* L, uint32_t type);
 
 /// Push a reference object (cached). ptr null -> nil.
 void  pushRef(lua_State* L, void* ptr, uint32_t type);
@@ -61,9 +63,13 @@ bool     optVec3(lua_State* L, int idx, Vec3* out);
 void     openVectors(lua_State* L);            // registers Vector2/3/4 + vectors API + `vec`
 void     openMatrices(lua_State* L);
 
-// ---- matrices (value types, Figura FiguraMat4 / FiguraMat3) ----
+// ---- matrices (value types, Figura FiguraMat2 / FiguraMat3 / FiguraMat4) ----
 void   pushMat4(lua_State* L, Mat4 const& m);
-Mat4*  toMat4(lua_State* L, int idx);
+Mat4*  toMat4(lua_State* L, int idx);                    // null unless a Matrix4
+/// Any size: rowMajor holds n*n values (row r, column c at [r*n+c]); n = 2, 3, 4.
+void   pushMat(lua_State* L, double const* rowMajor, int n);
+/// Row-major n*n storage of any Figura matrix (null if not a matrix). Writing through it is allowed.
+double* toMat(lua_State* L, int idx, int* n);
 
 // ---- misc helpers ----
 double      optNum(lua_State* L, int idx, double def);

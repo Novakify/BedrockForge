@@ -110,6 +110,7 @@ void Part::recalculate() {
 // ---------------------------------------------------------------- vanilla transforms
 void Part::applyVanillaTransforms(VanillaPart const* d) {
     if (!d || !parentTypeHasVanilla(parentType)) return;
+    customMatrix = false; // offset setters set needsMatrixRecalculation (a setMatrix() matrix is recomputed)
     hasPlayerCustomization = true;
     saveOffsetPivot = offsetPivot;
     saveOffsetPos   = offsetPos;
@@ -145,12 +146,17 @@ void Part::resetVanillaTransforms() {
 void Part::animPosition(Vec3 v, bool merge) {
     Vec3 n{-v.x, v.y, v.z};
     animPos = merge ? animPos + n : n;
+    customMatrix = false;
 }
 void Part::animRotation(Vec3 v, bool merge) {
     Vec3 n{-v.x, -v.y, v.z};
     animRot = merge ? animRot + n : n;
+    customMatrix = false;
 }
-void Part::animScaleSet(Vec3 v, bool merge) { animScale = merge ? animScale.mul(v) : v; }
+void Part::animScaleSet(Vec3 v, bool merge) {
+    animScale    = merge ? animScale.mul(v) : v;
+    customMatrix = false;
+}
 
 bool Part::isChildOf(Part const* p) const {
     for (Part const* q = parent; q; q = q->parent)

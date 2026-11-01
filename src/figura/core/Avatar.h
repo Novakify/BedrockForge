@@ -101,6 +101,35 @@ public:
     std::map<std::string, bool>                vanillaVisible;
     std::map<std::string, std::string>         renderer;   // renderer API simple settings (as text)
     float                                      shadowRadius = -1;
+    // ---- render settings (RendererAPI) ----
+    // Written by LuaApiEntity.cpp (renderer / vanilla_model / nameplate APIs); the host reads them to drive Bedrock
+    // rendering. Unset optionals = Figura default (no override).
+    struct RenderSettings {
+        std::optional<float> shadowRadius, fov;
+        bool                 renderFire = true, renderVehicle = true, renderCrosshair = true, forcePaperdoll = false,
+                             renderHUD = true;
+        std::optional<Vec3>  cameraPos, cameraPivot, cameraOffsetPivot, cameraRot, cameraOffsetRot, outlineColor, eyeOffset;
+        std::optional<Mat4>  cameraMatrix;       // setCameraMatrix (when given a Matrix4)
+        int                  cameraMatrixRef = 0, cameraNormalRef = 0; // Lua registry refs of the values as set
+        std::string          postEffect;         // "shaders/post/<x>.json" resource path, empty = none
+        std::optional<Vec2>  crosshairOffset;
+        std::string          primaryFireTexture, secondaryFireTexture;
+        std::optional<bool>  renderLeftArm, renderRightArm, upsideDown, rootRotation;
+        std::optional<Vec4>  blockOutlineColor;
+    } render;
+    struct VanillaOverride { // vanilla_model.<PART> settings (VanillaPart): unset = vanilla
+        std::optional<bool> visible;
+        std::optional<Vec3> pos, rot, scale, offsetRot, offsetScale;
+    };
+    std::map<std::string, VanillaOverride> vanillaOverrides; // by part name ("HEAD", "RIGHT_ITEM" ...), leaf parts only
+    struct NameplateSettings { // nameplate.CHAT / ENTITY / LIST
+        std::optional<std::string> chatText, entityText, listText; // raw text (may be JSON)
+        bool                       entityVisible = true, shadow = false, outline = false;
+        std::optional<Vec3>        pivot, pos, scale;
+        std::optional<uint32_t>    background, outlineColor;  // ARGB / RGB
+        std::optional<int>         light;                     // packed block | sky << 16
+    } nameplate;
+    // ---- end render settings ----
     std::vector<KeybindState>                  keybinds;
     VanillaPose                                vanillaPose;
     int64_t                                    instructionLimit = 50'000'000;

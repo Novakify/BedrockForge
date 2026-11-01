@@ -4,6 +4,7 @@
 // state into the per-bone values the pack reads.
 #pragma once
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -42,6 +43,12 @@ struct TextureOverride {
     TexKind     kind  = TexKind::Default;
     int         file  = -1;     // index into Avatar::textureFiles for CUSTOM (and the avatar's own textures)
     std::string resource;       // RESOURCE path (not renderable yet: logged)
+    void*       tex   = nullptr; // CUSTOM: the Lua Texture object (LuaTex.cpp Tex), valid while the Lua state lives
+};
+
+/// Figura model.rendering.Vertex (floats, like Figura).
+struct Vertex {
+    float x = 0, y = 0, z = 0, u = 0, v = 0, nx = 0, ny = 0, nz = 0;
 };
 
 /// One vanilla model part pose (VanillaModelData.PartData), already in Figura's convention.
@@ -76,7 +83,8 @@ struct Part {
     TextureOverride primaryTexture, secondaryTexture;
     Mat4   positionMatrix;
     bool   customMatrix = false; // setMatrix()
-    Vec3   uvOffset;             // setUV (unused by Bedrock yet)
+    Vec3   uvOffset;             // setUV (unused by Bedrock yet) = uvMatrix translation
+    double uvMatrix[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}; // PartCustomization.uvMatrix (FiguraMat3, row-major)
 
     // animation bookkeeping (FiguraModelPart)
     int  lastAnimationPriority = INT32_MIN;
@@ -92,6 +100,12 @@ struct Part {
 
     // render tasks by name (text/item/block/sprite/entity) - kept for the API; Bedrock draws none yet
     std::map<std::string, int> tasks;
+
+    // geometry info (FiguraModelPartReader), filled lazily from the avatar NBT by the ModelPart Lua API
+    bool                              geomInit = false;
+    std::map<int, std::deque<Vertex>> vertices;        // texture set index -> vertices (4 per face)
+    std::vector<int>                  textureSets;     // FiguraModelPart.textures (avatar texture set indices)
+    int                               textureWidth = -1, textureHeight = -1;
 
     // ---- Figura behaviour ----
     void recalculate();                    // PartCustomization.recalculate -> positionMatrix

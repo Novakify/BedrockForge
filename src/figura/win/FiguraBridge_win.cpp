@@ -99,8 +99,35 @@ bool gameFocused() {
     return pid == GetCurrentProcessId();
 }
 
+// ---------------------------------------------------------------- world (what Molang can tell us; blocks/biomes stay default)
+struct BedrockWorld final : IWorldQuery {
+    float   timeOfDay = 0.25f; // query.time_of_day: midnight 0, sunrise 0.25, noon 0.5
+    int     moon      = 0;     // query.moon_phase
+    int64_t ticks     = 0;     // ticks since the avatar loaded (game time stand-in)
+    int64_t time() override { return ticks; }
+    int64_t dayTime() override {
+        float j = timeOfDay - 0.25f; // Java: 0 = sunrise, 6000 = noon, 18000 = midnight
+        if (j < 0) j += 1.0f;
+        return int64_t(j * 24000.0f);
+    }
+    int moonPhase() override { return moon; }
+};
+
 // ---------------------------------------------------------------- host
 struct BedrockHost final : IHost {
+    BedrockWorld             worldQ;
+    std::string              title, subtitle, actionbar;   // host:setTitle/... shown in the info panel
+    int64_t                  titleUntil = 0, actionbarUntil = 0;
+    int                      titleFadeIn = 10, titleStay = 70, titleFadeOut = 20; // ticks (Gui defaults)
+    IWorldQuery& world() override { return worldQ; }
+    void setTitle(std::string const& t) override { title = t; titleUntil = nowMs() + int64_t(titleFadeIn + titleStay + titleFadeOut) * 50; }
+    void setSubtitle(std::string const& t) override { subtitle = t; }
+    void setTitleTimes(int a, int b, int c) override { titleFadeIn = a; titleStay = b; titleFadeOut = c; }
+    void clearTitle() override { title.clear(); subtitle.clear(); titleUntil = 0; }
+    void setActionbar(std::string const& t) override { actionbar = t; actionbarUntil = nowMs() + 3000; }
+    std::string titleText() override { return nowMs() < titleUntil ? title : std::string(); }
+    std::string subtitleText() override { return nowMs() < titleUntil ? subtitle : std::string(); }
+    std::string actionbarText() override { return nowMs() < actionbarUntil ? actionbar : std::string(); }
     IClientInstance*         client = nullptr;
     std::vector<std::string> lines;
     std::string              lastError;
@@ -315,6 +342,14 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
         p.health    = q("query.health");
         p.maxHealth = q("query.max_health");
         p.climbing  = q("query.is_wall_climbing") > 0.5f;
+        p.inLava    = q("query.is_in_lava") > 0.5f;
+        p.inRain    = !p.inWater && q("query.is_in_water_or_rain") > 0.5f;
+        p.blocking  = q("query.blocking") > 0.5f;
+        p.hasCape   = q("query.has_cape") > 0.5f;
+        p.experienceLevel = int(q("query.player_level"));
+        s.host->worldQ.timeOfDay = q("query.time_of_day");
+        s.host->worldQ.moon      = int(q("query.moon_phase"));
+        s.host->worldQ.ticks++;
         p.jumping   = q("query.is_jumping") > 0.5f;
         p.pose      = p.sleeping ? "SLEEPING" : p.gliding ? "FALL_FLYING" : p.swimming ? "SWIMMING" : p.crouching ? "CROUCHING" : "STANDING";
         float used  = q("query.main_hand_item_use_duration");
@@ -388,6 +423,11 @@ bool loadAvatar(State& s, std::string const& name) {
     fs::path dir = s.root / name;
     auto     av  = std::make_unique<Avatar>(s.host.get());
     std::string err;
+    {   // Figura's FileAPI root: <figura>/data (created here so file:write works like a fresh Figura install)
+        std::error_code ec;
+        fs::create_directories(s.root / "data", ec);
+        if (!ec) av->dataDir = s.root / "data";
+    }
     s.host->soundEvents.clear();
     if (auto rig = lyrics::json::parse(readAll(dir / "rig.json")))
         for (auto const& [k, v] : (*rig)["sounds"].members()) s.host->soundEvents[k] = v.str();
@@ -531,6 +571,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     writeVars(s, lp);
     wheelFrame(s, f);
     if (!s.host->lastError.empty()) f.infoLines.push_back("Figura error: " + s.host->lastError.substr(0, 120));
+    if (auto t = s.host->titleText(); !t.empty()) f.infoLines.push_back(t + (s.host->subtitle.empty() ? "" : "  - " + s.host->subtitle));
+    if (auto t = s.host->actionbarText(); !t.empty()) f.infoLines.push_back(t);
     if (s.avatar->tune("debug", 0) > 0) {
         std::string pl;
         for (auto& an : s.avatar->animations)

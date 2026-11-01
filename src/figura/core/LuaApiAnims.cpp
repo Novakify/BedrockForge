@@ -69,15 +69,16 @@ int setSpeed(lua_State* L) {
 int getName(lua_State* L) { lua_pushstring(L, self(L, "getName")->name.c_str()); return 1; }
 int animIndex(lua_State* L) { // Animation.__index: only "name"
     Animation* a = self(L, "__index");
-    if (lua_isstring(L, 2) && std::string(lua_tostring(L, 2)) == "name") { lua_pushstring(L, a->name.c_str()); return 1; }
-    return 0;
+    if (lua_type(L, 2) == LUA_TSTRING && std::string(lua_tostring(L, 2)) == "name") { lua_pushstring(L, a->name.c_str()); return 1; }
+    lua_pushnil(L);
+    return 1;
 }
 int animToString(lua_State* L) { lua_pushfstring(L, "%s (Animation)", self(L, "__tostring")->name.c_str()); return 1; }
 
 // ---- AnimationAPI
 int apiIndex(lua_State* L) { // animations.<modelName> -> table name -> Animation
     Avatar* av = avatarOf(L);
-    if (!lua_isstring(L, 2)) return 0;
+    if (lua_type(L, 2) != LUA_TSTRING) { lua_pushnil(L); return 1; }
     std::string mdl = lua_tostring(L, 2);
     bool any = false;
     lua_newtable(L);
@@ -138,16 +139,17 @@ void openAnimationApi(Avatar& a) {
         {"overridePos", setOverridePos}, {"setOverrideScale", setOverrideScale}, {"overrideScale", setOverrideScale},
         {"getLoop", getLoop}, {"setLoop", setLoop}, {"loop", setLoop}, {"getPriority", getPriority},
         {"setPriority", setPriority}, {"priority", setPriority}, {"getSpeed", getSpeed}, {"setSpeed", setSpeed},
-        {"speed", setSpeed}, {"getName", getName}};
+        {"speed", setSpeed}, {"getName", getName}, {"__index", animIndex}};
     d.index    = animIndex;
     d.tostring = animToString;
     tAnimation = registerType(L, d);
 
     TypeDef api;
     api.name    = "AnimationAPI";
-    api.methods = {{"getAnimations", apiGetAnimations}, {"getPlaying", apiGetPlaying}, {"stopAll", apiStopAll}};
+    api.methods = {{"getAnimations", apiGetAnimations}, {"getPlaying", apiGetPlaying}, {"stopAll", apiStopAll},
+                   {"__index", apiIndex}};
     api.index   = apiIndex;
-    api.tostring = [](lua_State* L2) { lua_pushstring(L2, "AnimationAPI"); return 1; };
+    api.tostring = [](lua_State* L2) { lua_pushstring(L2, "AnimationsAPI"); return 1; };
     tAnimationAPI = registerType(L, api);
     static int anchor;
     pushRef(L, &anchor, tAnimationAPI);
