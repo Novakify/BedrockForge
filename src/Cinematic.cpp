@@ -2849,7 +2849,9 @@ struct TickIn {
     bool        campOk = false;
 };
 void tickLocked(TickIn const& in, std::vector<std::function<void()>>& after);
+namespace { void startPropAtlas(); }
 void tick() {
+    startPropAtlas(); // ready long before the first scene
     Kind kind;
     int  bx, by, bz;
     bool beaconDue;
@@ -3766,9 +3768,30 @@ bool gShelfTexOk = false; // the chiseled bookshelf's front pictures in the atla
 constexpr float SHELF_OCC[2] = {192, 0}, SHELF_EMPTY[2] = {208, 0};
 bool gDiscOk[12] = {}; // the records in the atlas
 constexpr char const* kDiscNames[12] = {"13", "cat", "blocks", "chirp", "far", "mall", "mellohi", "stal", "strad", "ward", "11", "wait"}; // the lectern book's boards (entity/enchanting_table_book)
+// The props atlas reads the game's texture archives and decodes PNG/TGA files: a long freeze when it was done on the
+// render thread as the first scene began. It is built on a worker thread from the first client tick instead; the
+// render thread only uploads it (and waits for it only if a scene starts before it is done).
+std::vector<uint8_t> gPropAtlas;
+std::atomic<int>     gPropState{0}; // 0 not started, 1 building, 2 ready
+void buildPropAtlas(std::vector<uint8_t>& atlas);
+void startPropAtlas() {
+    int expect = 0;
+    if (!gPropState.compare_exchange_strong(expect, 1)) return;
+    std::thread([] {
+        std::vector<uint8_t> a;
+        buildPropAtlas(a);
+        gPropAtlas = std::move(a);
+        gPropState = 2;
+    }).detach();
+}
 bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     if (gG.propTex) return true;
-    std::vector<uint8_t> atlas(size_t(PROP_W) * PROP_H * 4, 0);
+    startPropAtlas();
+    while (gPropState.load() != 2) Sleep(1);
+    return uploadTexture(dev, list, gPropAtlas.data(), PROP_W, PROP_H, gG.propTex, gG.propUp, 2);
+}
+void buildPropAtlas(std::vector<uint8_t>& atlas) {
+    atlas.assign(size_t(PROP_W) * PROP_H * 4, 0);
     for (int y = 0; y < 64; ++y) std::memcpy(&atlas[size_t(y) * PROP_W * 4], hammer::kAtlas + size_t(y) * 64 * 4, 64 * 4);
     auto blit = [&](uint8_t const* px, int w, int h, float const at[4]) {
         for (int y = 0; y < h; ++y) std::memcpy(&atlas[(size_t(int(at[1]) + y) * PROP_W + int(at[0])) * 4], px + size_t(y) * w * 4, size_t(w) * 4);
@@ -3781,7 +3804,7 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     auto arch = std::filesystem::path(exe).parent_path() / "data" / "resource_packs" / "vanilla" / "__brarchive" / "textures" / "blocks.brarchive";
-    gPropNote.clear();
+    std::string note;
     {
         std::vector<uint8_t> file, px;
         int                  w = 0, h = 0;
@@ -3790,9 +3813,9 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
                 std::memcpy(&atlas[(size_t(FX_GLYPHS_Y + y) * PROP_W + FX_GLYPHS_X) * 4], &px[(size_t(h - 16 + y) * w) * 4], 128 * 4);
             for (int y = 0; y < 8; ++y) // generic_0..7 (the portal particles' sprites): its top row
                 std::memcpy(&atlas[(size_t(FX_GLYPHS_Y + 16 + y) * PROP_W + FX_GLYPHS_X) * 4], &px[(size_t(y) * w) * 4], 64 * 4);
-            gPropNote += "particles.png ok; ";
+            note += "particles.png ok; ";
             gPropHas[7] = true;
-        } else gPropNote += "particles.png missing; ";
+        } else note += "particles.png missing; ";
     }
     {   // JukeboxStation: the records (items.brarchive record_*.png), 16 px cells from (0, 192)
         std::vector<uint8_t> file;
@@ -3823,7 +3846,7 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
             }
         }
         gShelfTexOk = got == 2;
-        gPropNote += gShelfTexOk ? "chiseled_bookshelf ok; " : "chiseled_bookshelf missing; ";
+        note += gShelfTexOk ? "chiseled_bookshelf ok; " : "chiseled_bookshelf missing; ";
         trail("props: shelf textures " + std::to_string(got));
     }
     {   // OpenBook.LEATHER: the lectern's book is bound in the enchanting table book's leather
@@ -3834,21 +3857,21 @@ bool uploadProp(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
             for (int y = 0; y < ch; ++y)
                 std::memcpy(&atlas[(size_t(160 + y) * PROP_W) * 4], &px[(size_t(y) * w) * 4], size_t(cw) * 4);
             gLeatherOk = w == 64; // the boards' rectangle is in 64 x 32 pixels
-            gPropNote += "enchanting_table_book.png ok; ";
-        } else gPropNote += "enchanting_table_book.png missing; ";
+            note += "enchanting_table_book.png ok; ";
+        } else note += "enchanting_table_book.png missing; ";
     }
     for (size_t i = 0; i < std::size(kPropSlots); ++i) {
         auto const&          ps = kPropSlots[i];
         std::vector<uint8_t> file, px;
         int                  w = 0, h = 0;
-        if (!readBrarchive(arch, ps.file, file) || !decodeTga(file, px, w, h)) { gPropNote += std::string(ps.file) + " missing; "; continue; }
+        if (!readBrarchive(arch, ps.file, file) || !decodeTga(file, px, w, h)) { note += std::string(ps.file) + " missing; "; continue; }
         for (int y = 0; y < std::min(h, ps.h); ++y)
             for (int x = 0; x < std::min(w, ps.w); ++x)
                 std::memcpy(&atlas[(size_t(ps.y + y) * PROP_W + ps.x + x) * 4], &px[(size_t(y) * w + x) * 4], 4);
         gPropHas[i] = true;
-        gPropNote += std::string(ps.file) + " ok; ";
+        note += std::string(ps.file) + " ok; ";
     }
-    return uploadTexture(dev, list, atlas.data(), PROP_W, PROP_H, gG.propTex, gG.propUp, 2);
+    gPropNote = note; // read by the diagnostics: set once, after the build
 }
 bool uploadSkin(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     std::vector<unsigned char> px;
