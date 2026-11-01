@@ -71,11 +71,11 @@ def parse_goals(ins: list[str]) -> list[dict]:
         if sel and prio is None and (v := consts(l)) is not None and name is None: prio = int(v); continue
         if (m := re.search(r"new\s+#\d+\s+// class ([\w/$]+)", l)):
             cls = m.group(1)
-            if name is None and ("Goal" in cls or "/goal/" in cls or "/target/" in cls): name = cls; args = []
+            if name is None and ("Goal" in cls or "/goal/" in cls or "/target/" in cls or "$" in cls): name = cls; args = []   # "$": anonymous goal subclass (MCreator)
             elif name: args.append(cls.split("/")[-1])
             continue
         if name and (v := consts(l)) is not None: args.append(v); continue
-        if name and (m := re.search(r"ldc_w?\s+#\d+\s+// class ([\w/$]+)", l)): args.append(m.group(1).split("/")[-1]); continue
+        if name and (m := re.search(r"ldc(?:_w)?\s+#\d+\s+// class ([\w/$]+)", l)): args.append(m.group(1).split("/")[-1]); continue
         if "GoalSelector.m_25352_" in l and name:   # addGoal
             goals.append({"selector": sel, "priority": prio, "goal": name.split("/")[-1], "args": args, "custom": "net/mcreator" in name})
             prio, sel, name, args = None, None, None, []

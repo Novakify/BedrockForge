@@ -113,10 +113,13 @@ import { world, system, GameMode } from "@minecraft/server";
 const ITEMS = __ITEMS__;   // item/entity id -> [width, height] in blocks
 const YAW = { North: 180, South: 0, East: -90, West: 90 };
 const N = { North: [0, 0, -1], South: [0, 0, 1], East: [1, 0, 0], West: [-1, 0, 0] };
-world.beforeEvents.itemUseOn.subscribe((ev) => {
+// @minecraft/server 2.x removed beforeEvents.itemUseOn (playerInteractWithBlock replaces it). A throw here would
+// abort the whole script graph (gb_runtime -> worldgen -> javabridge), so subscribe defensively.
+const USE_ON = world.beforeEvents.playerInteractWithBlock ?? world.beforeEvents.itemUseOn;
+USE_ON?.subscribe?.((ev) => {
   const id = ev.itemStack?.typeId; if (!ITEMS[id] || !N[ev.blockFace]) return;
   ev.cancel = true;
-  const [w, h] = ITEMS[id], n = N[ev.blockFace], b = ev.block.location, p = ev.source;
+  const [w, h] = ITEMS[id], n = N[ev.blockFace], b = ev.block.location, p = ev.player ?? ev.source;
   system.run(() => {
     try {
       // centre of the painting on the wall face: odd sizes centre on the block, even sizes on the block edge
@@ -150,7 +153,7 @@ class Build:
         self.trigs = cached_triggers(jar)
         ov = HERE / "mods" / f"{self.modid}.json"
         self.override = json.loads(ov.read_text()) if ov.exists() else {}
-        self.js = {"ns": self.ns, "entities": {}}; self.climbers = set()
+        self.js = {"ns": self.ns, "entities": {}}; self.climbers = set(); self.mobai = {}
         self.mob_sounds = cached_sounds(jar, sorted({e["java_class"] for e in self.ents["entities"]}))
         self.report["sounds_vanilla_default"] = self.mob_sounds.get("_unmapped", [])
         ovn = self.override.get("overlay") or (self.modid if (OVERLAYS / self.modid / "overlay.json").exists() else None)
@@ -724,12 +727,18 @@ class Build:
         if hostile:
             comps["minecraft:behavior.nearest_attackable_target"] = {"priority": 2, "must_see": True, "reselect_targets": True,
                 "entity_types": [{"filters": {"test": "is_family", "subject": "other", "value": "player"}, "max_dist": at.get("follow_range", 16)}]}
-        goals = self.goals_of(e) if e["gb_kind"] == "mob" else None
-        if goals:   # the mod's own AI goal list replaces the generic behaviours
+        comps["minecraft:type_family"]["family"].append(f"{self.ns}_{clean(e['id'])}")   # exact-type family (MobAI targets/avoids)
+        gres = self.goals_of(e) if e["gb_kind"] == "mob" else None
+        gates = []
+        if gres:   # the mod's own AI goal list replaces the generic behaviours
+            goals, gates = gres["components"], gres["gates"]
             for k in [k for k in comps if k.startswith("minecraft:behavior.")]: comps.pop(k)
             comps.update(goals)
-            if "minecraft:behavior.melee_attack" in goals and "minecraft:attack" not in comps: comps["minecraft:attack"] = {"damage": at.get("attack_damage", 3)}
-            self.report["entities"][eid]["goals"] = sorted(goals)
+            gated_keys = {k for gt in gates for k in gt.get("components", {})}
+            if ("minecraft:behavior.melee_attack" in goals or "minecraft:behavior.melee_attack" in gated_keys) and "minecraft:attack" not in comps:
+                comps["minecraft:attack"] = {"damage": at.get("attack_damage", 3)}
+            self.report["entities"][eid]["goals"] = sorted(goals) + [f"gated:{k}" for k in sorted(gated_keys)]
+            if gates: self.report["entities"][eid]["gates"] = [{k: v for k, v in gt.items() if k != "components"} for gt in gates]
         mv = e.get("movement", "walk")
         if e["id"] in self.climbers and mv == "walk":     # the mod's isClimbing (snails, snakes): wall climbing like spiders
             comps.pop("minecraft:navigation.walk", None); comps["minecraft:navigation.climb"] = {"can_path_over_water": True, "avoid_damage_blocks": True}
@@ -770,6 +779,27 @@ class Build:
                                                                                      "time_down_event": {"event": "gb:regrow"}}}
             ent.setdefault("events", {})["gb:sheared"] = {"set_property": {p: True}, "add": {"component_groups": ["gb_regrow"]}}
             ent["events"]["gb:regrow"] = {"set_property": {p: False}, "remove": {"component_groups": ["gb_regrow"]}}
+        # MobAI gated goals: the merged behaviour with / without the gated goal lives in an on/off group pair; the
+        # GoalRunner fires gb:g<i>_on / _off from the translated Java canUse. Off at spawn (Java checks before use).
+        for gi, gt in enumerate([g for g in gates if g["mode"] == "gate"]):
+            on, off = {}, {}
+            for k, v in gt["components"].items():
+                base = comps.pop(k, None)
+                if base is not None and "entity_types" in v and "entity_types" in base:
+                    on[k] = {**base, "priority": min(base["priority"], v["priority"]), "entity_types": base["entity_types"] + v["entity_types"]}; off[k] = base
+                else: on[k] = v; off.update({k: base} if base is not None else {})
+            # later gates on the same key build on the base without earlier gates: keep their "off" component in base
+            for k, v in off.items(): comps.setdefault(k, None)
+            cg = ent.setdefault("component_groups", {})
+            cg[f"gb_g{gi}_on"] = on
+            if off: cg[f"gb_g{gi}_off"] = off
+            evs = ent.setdefault("events", {})
+            evs[f"gb:g{gi}_on"] = {"add": {"component_groups": [f"gb_g{gi}_on"]}, **({"remove": {"component_groups": [f"gb_g{gi}_off"]}} if off else {})}
+            evs[f"gb:g{gi}_off"] = {"remove": {"component_groups": [f"gb_g{gi}_on"]}, **({"add": {"component_groups": [f"gb_g{gi}_off"]}} if off else {})}
+            if off: seq.append({"add": {"component_groups": [f"gb_g{gi}_off"]}})
+            gt["index"] = gi
+        for k in [k for k, v in comps.items() if v is None]: comps.pop(k)
+        if gates: self.mobai[full] = [{k: v for k, v in gt.items() if k != "components"} for gt in gates]
         if seq: ent.setdefault("events", {})["minecraft:entity_spawned"] = seq[0] if len(seq) == 1 else {"sequence": seq}
         self.write(self.bp, f"entities/{self.ns}/{eid}.json", {"format_version": "1.21.0", "minecraft:entity": ent})
 
@@ -1128,7 +1158,7 @@ class Build:
         sids = {}
         for p in (self.bp / "structures").rglob("*.mcstructure"):
             sids[f"{self.modid}:{p.stem}"] = f"{self.ns}:{p.stem}"
-        rep = JB.build_bridge(self.jar, self.modid, self.ns, self.bp, emap, self.report, structures=sids)
+        rep = JB.build_bridge(self.jar, self.modid, self.ns, self.bp, emap, self.report, structures=sids, goals=self.mobai)
         ci = cached_classinfo(self.jar)
         cfgp = self.bp / "scripts/javabridge/config.js"
         txt = cfgp.read_text()
@@ -1281,8 +1311,28 @@ class Build:
         "MoveBackToVillageGoal": None, "RandomStandGoal": None,
     }
 
+    # Java entity classes -> Bedrock families (mod classes get their own family "<ns>_<id>", see behaviour())
+    VANILLA_FAM = {"Player": "player", "ServerPlayer": "player", "Monster": "monster", "Animal": "animal", "LivingEntity": "mob",
+                   "Mob": "mob", "PathfinderMob": "mob", "Villager": "villager", "AbstractVillager": "villager", "IronGolem": "irongolem",
+                   "Zombie": "zombie", "Skeleton": "skeleton", "Creeper": "creeper", "WanderingTrader": "wandering_trader",
+                   "Pig": "pig", "Cow": "cow", "Sheep": "sheep", "Chicken": "chicken", "Wolf": "wolf", "Cat": "cat", "Fox": "fox",
+                   "Spider": "spider", "EnderMan": "enderman", "Witch": "witch", "Pillager": "pillager", "Raider": "illager"}
+    GATE_METHODS = {"canUse": "m_8036_()Z", "canContinueToUse": "m_8045_()Z", "start": "m_8056_()V", "tick": "m_8037_()V", "stop": "m_8041_()V"}
+
+    def fam_of(self, simple):
+        if simple in self.VANILLA_FAM: return self.VANILLA_FAM[simple]
+        if not hasattr(self, "_cls_fam"):
+            self._cls_fam = {en["java_class"].split(".")[-1]: f"{self.ns}_{clean(en['id'])}" for en in self.ents["entities"]}
+        return self._cls_fam.get(simple)
+
     def goals_of(self, e):
-        """registerGoals (m_8099_) of the entity class -> Bedrock behaviours (None: keep the generic AI)."""
+        """MobAI (docs/PORT_MOBAI.md): registerGoals (m_8099_) of the entity class -> Bedrock behaviours.
+
+        Returns {"components": {...}, "gates": [...]} or None (keep the generic AI). Every goal keeps its Java
+        priority and constructor values; target/avoid classes become Bedrock families (exact mob types).
+        Anonymous MCreator goals that override canUse/canContinueToUse become *gated* goals: the Bedrock behaviour
+        lives in an on/off component-group pair and the GoalRunner (JavaBridge hooks.js) evaluates the translated
+        Java condition. A goal written from scratch (extends Goal) runs fully in the GoalRunner (start/tick/stop)."""
         import tempfile
         sys.path.insert(0, str(HERE.parent / "ModPorter"))
         import extract as MP
@@ -1296,36 +1346,74 @@ class Build:
         ms = MP.methods(dis)
         goals = MP.parse_goals(ms.get("m_8099_", []))
         if not goals: return None
-        out = {}
-        for g in goals:
-            name = g["goal"]
-            if "$" in name:   # anonymous subclass (MCreator: new MeleeAttackGoal(...) { ... }): its superclass decides
-                sd = C.javap(self._gtmp, (pre.rsplit("/", 1)[0] + "/" + name).replace("/", "."))
-                m = re.search(r"extends ([\w.$]+)", sd or ""); name = m.group(1).split(".")[-1] if m else name
+        w = (e.get("size") or [0.6, 1.8])[0] or 0.6
+        out, gates, rep = {}, [], self.report.setdefault("mobai", {"mapped": 0, "gated": 0, "custom": 0, "unmapped": {}})
+
+        def put(key, val, gate=None):
+            """merge into an existing behaviour of the same kind (Bedrock has one per entity), or add it"""
+            tgt = out
+            if gate is not None: tgt = gate.setdefault("components", {})
+            if key in tgt and "entity_types" in val and "entity_types" in tgt[key]:
+                tgt[key]["entity_types"] += val["entity_types"]; tgt[key]["priority"] = min(tgt[key]["priority"], val["priority"])
+            else: tgt[key] = val
+
+        for gi, g in enumerate(goals):
+            name, over, acls = g["goal"], [], None
+            if "$" in name:   # anonymous subclass (MCreator: new MeleeAttackGoal(...) { ... }): superclass + overrides
+                acls = pre.rsplit("/", 1)[0] + "/" + name
+                sd = C.javap(self._gtmp, acls.replace("/", ".")) or ""
+                m = re.search(r"extends ([\w.$]+)", sd); name = m.group(1).split(".")[-1] if m else name
+                ams = MP.methods(sd)
+                over = [k for k, v in self.GATE_METHODS.items() if re.search(rf"\b{v.split('(')[0]}\(", sd)]
+                reach = None
+                if re.search(r"\bm_6639_\(", sd):   # getAttackReachSqr override
+                    code = "\n".join(ams.get("m_6639_", []))
+                    k = re.search(r"ldc2_w\s+#\d+\s+// double ([\d.]+)d\s*\n.*dreturn", code)
+                    reach = round(max(0.5, (float(k.group(1)) ** 0.5) / w), 3) if k else 1.0 if "m_20205_" in code else None
+            prio = g["priority"] if g["priority"] is not None else 5
             nums = [x for x in g["args"] if isinstance(x, (int, float))]
+            strs = [x for x in g["args"] if isinstance(x, str)]
+            gate = None
+            if name == "Goal" or (acls and over and set(over) - {"canUse", "canContinueToUse"} and name not in self.GOALS):
+                # a goal written from scratch: the GoalRunner runs it as-is
+                gates.append({"mode": "custom", "cls": acls, "priority": prio, "methods": over}); rep["custom"] += 1; continue
+            if acls and ("canUse" in over or "canContinueToUse" in over):
+                gate = {"mode": "gate", "cls": acls, "priority": prio, "methods": [m for m in over if m in ("canUse", "canContinueToUse")], "java": name}
+            fams = [f for f in (self.fam_of(x) for x in strs) if f]
             if name == "NearestAttackableTargetGoal":
-                fam = "player" if "Player" in g["args"] else "mob"
-                comp = out.setdefault("minecraft:behavior.nearest_attackable_target", {"priority": g["priority"] or 2, "must_see": False, "reselect_targets": True, "entity_types": []})
-                comp["entity_types"].append({"filters": {"test": "is_family", "subject": "other", "value": fam}, "max_dist": 32})
-                continue
-            f = self.GOALS.get(name)
-            if not f:   # the mod's own goal classes: judge by what they are named after / extend
-                low = name.lower()
-                alias = ("MeleeAttackGoal" if "melee" in low or ("attack" in low and "ranged" not in low and "summon" not in low and "sequence" not in low) else
-                         "RandomStrollGoal" if "stroll" in low or "wander" in low else "PanicGoal" if "panic" in low else
-                         "HurtByTargetGoal" if "hurtbytarget" in low or "targetattacker" in low else
-                         "FollowParentGoal" if "followparent" in low or "followadult" in low else "FloatGoal" if "float" in low else
-                         "AvoidEntityGoal" if "avoid" in low or "hide" in low else None)
-                if alias == "MeleeAttackGoal" and "target" in low: alias = None
-                if "targetgoal" in low or low.endswith("target"):
-                    comp = out.setdefault("minecraft:behavior.nearest_attackable_target", {"priority": g["priority"] or 2, "must_see": False, "reselect_targets": True, "entity_types": []})
-                    if not comp["entity_types"]: comp["entity_types"].append({"filters": {"test": "is_family", "subject": "other", "value": "player"}, "max_dist": 32})
-                    continue
-                f = self.GOALS.get(alias) if alias else None
-                if not f: self.report.setdefault("goals_unmapped", {})[name] = self.report.get("goals_unmapped", {}).get(name, 0) + 1; continue
-            k, v = f(nums)
-            out[k] = {"priority": g["priority"] if g["priority"] is not None else 5, **v}
-        return out or None
+                must_see = bool(nums[0]) if nums else True
+                ent = [{"filters": {"test": "is_family", "subject": "other", "value": f}, "max_dist": 32, "must_see": must_see} for f in (fams or ["player"])]
+                put("minecraft:behavior.nearest_attackable_target", {"priority": prio, "must_see": must_see, "reselect_targets": True, "scan_interval": 10, "entity_types": ent}, gate)
+            elif name == "AvoidEntityGoal":
+                d, ws, ss = (nums + [6, 1, 1.2])[:3] if len(nums) >= 3 else ((nums + [6, 1, 1.2])[0], (nums + [6, 1, 1.2])[1], 1.2)
+                ent = [{"filters": {"test": "is_family", "subject": "other", "value": f}, "max_dist": d, "walk_speed_multiplier": ws,
+                        "sprint_speed_multiplier": ss, "sprint_distance": 7} for f in (fams or ["player"])]
+                put("minecraft:behavior.avoid_mob_type", {"priority": prio, "entity_types": ent}, gate)
+            elif name == "MeleeAttackGoal":
+                v = {"priority": prio, "speed_multiplier": nums[0] if nums else 1.0, "track_target": bool(nums[1]) if len(nums) > 1 else True}
+                if acls and reach is not None: v["reach_multiplier"] = reach
+                put("minecraft:behavior.melee_attack", v, gate)
+            else:
+                f = self.GOALS.get(name)
+                if not f:   # the mod's own goal classes: judge by what they are named after / extend
+                    low = name.lower()
+                    alias = ("MeleeAttackGoal" if "melee" in low or ("attack" in low and "ranged" not in low and "summon" not in low and "sequence" not in low) else
+                             "RandomStrollGoal" if "stroll" in low or "wander" in low else "PanicGoal" if "panic" in low else
+                             "HurtByTargetGoal" if "hurtbytarget" in low or "targetattacker" in low else
+                             "FollowParentGoal" if "followparent" in low or "followadult" in low else "FloatGoal" if "float" in low else
+                             "AvoidEntityGoal" if "avoid" in low or "hide" in low else None)
+                    f = self.GOALS.get(alias) if alias else None
+                    if not f: rep["unmapped"][name] = rep["unmapped"].get(name, 0) + 1; continue
+                k, v = f(nums)
+                put(k, {"priority": prio, **v}, gate)
+            if gate: gates.append(gate); rep["gated"] += 1
+            else: rep["mapped"] += 1
+        # forced targets: Java procedures call setTarget(x); the runtime tags x with "gbt_<family>" and this entry picks it up
+        own = f"{self.ns}_{clean(e['id'])}"
+        forced = {"filters": {"test": "has_tag", "subject": "other", "value": f"gbt_{own}"}, "max_dist": 64, "must_see": False}
+        nat = out.setdefault("minecraft:behavior.nearest_attackable_target", {"priority": 1, "must_see": False, "reselect_targets": True, "scan_interval": 10, "entity_types": []})
+        nat["entity_types"].insert(0, forced)
+        return {"components": out, "gates": gates}
 
     def prop_defs(self, props):
         return {p: ({"type": "int", "range": [0, d["max"]], "default": 0, "client_sync": True} if d.get("kind") == "trigger"

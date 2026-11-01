@@ -79,6 +79,7 @@ const bp = (x, y, z) => new Vec(Math.floor(x), Math.floor(y), Math.floor(z));
 class AABB { constructor(a, b, c, d, e, f) { this.min = V(Math.min(a, d), Math.min(b, e), Math.min(c, f)); this.max = V(Math.max(a, d), Math.max(b, e), Math.max(c, f)); }
   inflate(x, y = x, z = x) { return new AABB(this.min.x_ - x, this.min.y_ - y, this.min.z_ - z, this.max.x_ + x, this.max.y_ + y, this.max.z_ + z); }
   getCenter() { return V((this.min.x_ + this.max.x_) / 2, (this.min.y_ + this.max.y_) / 2, (this.min.z_ + this.max.z_) / 2); }
+  intersects(o) { return this.min.x_ < o.max.x_ && this.max.x_ > o.min.x_ && this.min.y_ < o.max.y_ && this.max.y_ > o.min.y_ && this.min.z_ < o.max.z_ && this.max.z_ > o.min.z_; }
 }
 class JList extends Array {
   static of(xs) { const l = new JList(); for (const x of xs) l.push(x); return l; }
@@ -125,7 +126,14 @@ export class JEntity {
   getLookAngle() { try { const v = this.e.getViewDirection(); return V(v.x, v.y, v.z); } catch { return V(0, 0, 1); } }
   getViewVector() { return this.getLookAngle(); }
   getBbHeight() { try { return this.e.getComponent("collision_box")?.height ?? 1.8; } catch { return 1.8; } }
-  getBbWidth() { return 0.6; }
+  getBbWidth() { try { return this.e.getComponent("collision_box")?.width ?? 0.6; } catch { return 0.6; } }
+  getBoundingBox() { const l = this.loc(), w = this.getBbWidth() / 2, h = this.getBbHeight(); return new AABB(l.x - w, l.y, l.z - w, l.x + w, l.y + h, l.z + w); }
+  getMoveControl() { return MoveCtl.of(this); }
+  doHurtTarget(t) {   // Java Mob.doHurtTarget: melee hit with the mob's attack damage (+ the mod's own attack hook runs from entityHitEntity)
+    if (!t?.e) return false; const now = system.currentTick; if ((this.__fields.__lastHit ?? -99) > now - 10) return false; this.__fields.__lastHit = now;
+    let dmg = 2; try { dmg = this.e.getComponent("attack")?.damage?.rangeMin ?? this.e.getComponent("attack")?.damage ?? 2; } catch {}
+    try { return t.e.applyDamage(+dmg || 2, { cause: "entityAttack", damagingEntity: this.e }); } catch { return false; }
+  }
   getStringUUID() { return this.e.id; } getUUID() { return this.e.id; } getId() { return this.e.id; }
   getDirection() { const y = ((this.getYRot() % 360) + 360) % 360; return y < 45 || y >= 315 ? DIR.SOUTH : y < 135 ? DIR.WEST : y < 225 ? DIR.NORTH : DIR.EAST; }
   onGround() { try { return this.e.isOnGround; } catch { return true; } } isInWater() { try { return this.e.isInWater; } catch { return false; } }
@@ -146,7 +154,13 @@ export class JEntity {
     } catch {}
   }
   moveTo(x, y, z) { this.teleportTo(x, y, z); } setPos(x, y, z) { this.teleportTo(x, y, z); }
-  lookAt(anchor, v) { try { const t = v instanceof Vec ? v.toB() : v; this.e.teleport(this.e.location, { facingLocation: t }); } catch {} }
+  lookAt(anchor, v) {
+    // Java Entity.lookAt only turns the head/body. The old teleport(facingLocation) re-placed the mob every tick and
+    // killed its movement (stalkers "froze" while they watched you): set the rotation instead.
+    try { const t = v instanceof Vec ? v.toB() : v instanceof JEntity ? v.e.getHeadLocation() : v; const f = this.e.getHeadLocation?.() ?? this.e.location;
+      const dx = t.x - f.x, dy = t.y - f.y, dz = t.z - f.z;
+      this.e.setRotation({ x: -Math.atan2(dy, Math.hypot(dx, dz)) * 180 / Math.PI, y: Math.atan2(-dx, dz) * 180 / Math.PI }); } catch {}
+  }
   hurt(src, amt) {
     try { return this.e.applyDamage(amt, { cause: src?.cause ?? EntityDamageCause.entityAttack, ...(src?.attacker ? { damagingEntity: src.attacker.e } : {}) }); } catch { return false; }
   }
@@ -262,7 +276,31 @@ class Inv { constructor(p) { this.p = p; this.armor = JList.of(["feet", "legs", 
   removeItem(i, n) {} setItem(i, s) { try { this.cont().setItem(i, s.isEmpty() ? undefined : new BItemStack(s.id, s.n)); } catch {} }
 }
 class Cooldowns { constructor(p) { this.p = p; } addCooldown(item, ticks) { R.cool.set(this.p.e.id + bid(item), system.currentTick + ticks); } isOnCooldown(item) { return (R.cool.get(this.p.e.id + bid(item)) ?? 0) > system.currentTick; } }
-class Nav { constructor(m) { this.m = m; } moveTo(a, b, c, sp) { R.moveTo(this.m, a, b, c); return true; } stop() { R.flag(this.m, "nav", 0); } isDone() { return true; } createPath() { return null; } }
+// MobAI: Java MoveControl (setWantedPosition / hasWanted). The GoalRunner (hooks.js) steers every mob that has a
+// wanted position one step per tick, like Java's MoveControl.tick(); fliers get no gravity pull-down.
+export class MoveCtl {
+  static of(w) { let c = MOVES.get(w.e.id); if (!c) { c = new MoveCtl(w); MOVES.set(w.e.id, c); } return c; }
+  constructor(w) { this.w = w; this.want = null; this.speed = 1; }
+  setWantedPosition(x, y, z, sp) { this.want = { x: +x, y: +y, z: +z }; this.speed = +sp || 1; }
+  hasWanted() { return !!this.want; } getWantedX() { return this.want?.x ?? this.w.getX(); } getWantedY() { return this.want?.y ?? this.w.getY(); }
+  getWantedZ() { return this.want?.z ?? this.w.getZ(); } getSpeedModifier() { return this.speed; }
+  step() {
+    const e = this.w.e; if (!this.want) return;
+    let l; try { l = e.location; } catch { MOVES.delete(e.id); return; }
+    const dx = this.want.x - l.x, dy = this.want.y - l.y, dz = this.want.z - l.z, d = Math.hypot(dx, dy, dz);
+    if (d < 0.5) { this.want = null; return; }
+    let base = 0.25; try { base = e.getComponent("movement")?.currentValue ?? 0.25; } catch {}
+    const fly = (() => { try { return !!e.getComponent("can_fly"); } catch { return false; } })();
+    const v = Math.min(d, base * this.speed * (fly ? 1.0 : 0.6));
+    let cur = { x: 0, y: 0, z: 0 }; try { cur = e.getVelocity(); } catch {}
+    const want = { x: dx / d * v, y: fly ? dy / d * v : 0, z: dz / d * v };
+    try { e.applyImpulse({ x: (want.x - cur.x) * 0.5, y: fly ? (want.y - cur.y) * 0.5 : 0, z: (want.z - cur.z) * 0.5 }); } catch {}
+    try { e.setRotation({ x: 0, y: Math.atan2(-dx, dz) * 180 / Math.PI }); } catch {}
+  }
+}
+export const MOVES = new Map();
+const TARGETS = new Map();   // mob id -> entity it was told to target
+class Nav { constructor(m) { this.m = m; } moveTo(a, b, c, sp) { if (a instanceof JEntity || a instanceof Vec) { R.moveTo(this.m, a, null, null, b); } else R.moveTo(this.m, a, b, c, sp); return true; } stop() { MoveCtl.of(this.m).want = null; } isDone() { return !MoveCtl.of(this.m).want; } createPath() { return null; } }
 
 // ------------------------------------------------------------------------------------------ data: NBT, synced data, variables
 const DP = (e) => e?.e ?? world;
@@ -355,8 +393,10 @@ export const R = {
       if (f === "yRotO" || f === "yBodyRotO" || f === "yHeadRotO") return o.getYRot(); if (f === "xRotO") return o.getXRot();
       if (f === "inventoryMenu") return { getCraftSlots: () => ({ getContainerSize: () => 4, getItem: () => new Stack("minecraft:air", 0) }) };
       if (f === "player") return o;
+      if (f === "moveControl") return MoveCtl.of(o); if (f === "navigation") return o.getNavigation();
       return o.__fields[f] ?? null;
     }
+    if (o instanceof Vec && (f === "x" || f === "y" || f === "z")) return o[f + "_"];   // Vec3.x/y/z fields
     if (o instanceof Inv) return o[f];
     if (o.__ev) return o[f];
     if (f in o) return o[f];
@@ -490,7 +530,7 @@ export const R = {
     if (c === "ForgeRegistries" || c === "IForgeRegistry") return null;
     warn("static " + k); return null;
   },
-  superCall(o, name, a) { return null; },
+  superCall(o, name, a) { if (o?.__goal && (name === "canUse" || name === "canContinueToUse")) return true; return null; },
   // ---- virtual calls on non-mod objects
   call(o, name, a, owner) {
     if (o == null) return null;
@@ -678,12 +718,19 @@ export const R = {
       eq.setEquipment(st.slot, it); } catch {}
   },
   setTarget(w, t) {
-    // Bedrock has no setTarget: make the mob angry at the target the vanilla way (hurt_by_target picks the attacker)
-    try { if (t && t.e) { R.flag(w, "target", t.e.id); w.e.applyDamage(0, { cause: "entityAttack", damagingEntity: t.e }); } } catch {}
+    // MobAI: Bedrock has no setTarget. Every converted mob has a nearest_attackable_target entry for entities tagged
+    // gbt_<its family>; tag the new target, untag the old one. Nothing is hurt (the old zero-damage hit fired the
+    // mod's own hurt procedures).
+    try {
+      const tag = "gbt_" + w.e.typeId.replace(":", "_");
+      const prev = TARGETS.get(w.e.id);
+      if (prev && (!t || prev !== t.e)) { try { prev.removeTag(tag); } catch {} TARGETS.delete(w.e.id); }
+      if (t && t.e && t.e !== w.e) { t.e.addTag(tag); TARGETS.set(w.e.id, t.e); }
+    } catch {}
   },
-  moveTo(w, a, b, c) {
-    try { const to = a instanceof Vec ? a.toB() : a instanceof JEntity ? a.loc() : { x: a, y: b, z: c }; const l = w.e.location; const d = Math.hypot(to.x - l.x, to.z - l.z) || 1;
-      w.e.applyImpulse({ x: (to.x - l.x) / d * 0.15, y: 0, z: (to.z - l.z) / d * 0.15 }); } catch {}
+  moveTo(w, a, b, c, sp) {
+    // Java PathNavigation.moveTo: Bedrock scripts can't drive the pathfinder, so the GoalRunner steers toward the point
+    try { const to = a instanceof Vec ? a.toB() : a instanceof JEntity ? a.loc() : { x: a, y: b, z: c }; MoveCtl.of(w).setWantedPosition(to.x, to.y, to.z, sp ?? 1); } catch {}
   },
   // ---- effects (vanilla -> Bedrock effects; the mod's own effects -> timed flags + their tick procedures)
   fxId(eff) { return eff?.__ro ? eff.id : eff?.id; },

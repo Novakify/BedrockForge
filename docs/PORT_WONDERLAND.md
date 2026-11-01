@@ -10,7 +10,7 @@ Build: `python3 -I tools/GeckoBridge/build.py the_wonderland-3.0.3-1.20.1-forge-
 |---|---|---|
 | 95 GeckoLib mobs | works | GeckoBridge M1/M2 (models, baked animations, controllers, triggers) |
 | 34 non-GeckoLib mobs (The Eye, Hoarder, Sorrow, Eyeless, Somebody, Spawn Cow/Pig, projectiles...) | works | `vanilla.py`: Java model bytecode -> geometry, setupAnim -> Molang, eye layers -> glow |
-| Mob AI | approximate | Java `registerGoals` -> Bedrock behaviours; procedures drive the rest |
+| Mob AI | works (MobAI, 2026-10-31) | every goal with its Java priority/values + exact target/avoid mob types; conditional + custom goals run from the translated Java (GoalRunner); procedures' setTarget/lookAt/moveTo fixed. See docs/PORT_MOBAI.md |
 | Procedures, events, effects, items, blocks hooks (MCreator Java) | works (translated) | JavaBridge: bytecode -> Script API JS, 72 event hooks |
 | Jumpscare / screen overlays (15) | works | HUD JSON UI images keyed by formatting-code titles |
 | 44 dimensions + structures | works (structure tiles in a void) | ModPorter dimensions.py + structures.py, script world generator, fog, ambience, portals |

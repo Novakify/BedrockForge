@@ -254,7 +254,7 @@ class Transpiler:
             return f"S.push({{__new:{jsstr(cl)}}});" if not self.is_mod(cl) else f"S.push(R.newObj({jsstr(cl)}));"
         if op in ("getstatic", "putstatic", "getfield", "putfield"):
             own, nm, desc = member(rest)
-            n = self.api_name(own, nm) if not self.is_mod(own) else nm
+            n = self.api_name(own, nm) if not self.is_mod(own) or re.match(r"f_\d+_$", nm) else nm   # inherited vanilla field (Mob.moveControl) read through a mod class
             if op == "getstatic":
                 return f"S.push(M.sget({jsstr(own)},{jsstr(nm)}));" if self.is_mod(own) else f"S.push(R.sget({jsstr(own)},{jsstr(n)}));"
             if op == "putstatic": return f"M.sput({jsstr(own)},{jsstr(nm)},S.pop());"

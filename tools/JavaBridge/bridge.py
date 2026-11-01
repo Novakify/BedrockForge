@@ -135,7 +135,10 @@ def commands_of(T):
 
 
 
-def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, structures=None, block_rename=None, mod_prefixes=None):
+GOAL_METHODS = {"canUse": "m_8036_()Z", "canContinueToUse": "m_8045_()Z", "start": "m_8056_()V", "tick": "m_8037_()V", "stop": "m_8041_()V"}
+
+
+def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, structures=None, block_rename=None, mod_prefixes=None, goals=None):
     rep = report.setdefault("javabridge", {})
     with zipfile.ZipFile(jar) as z:
         pkgs = {n.rsplit("/", 1)[0] for n in z.namelist() if n.endswith(".class") and "/" in n}
@@ -185,6 +188,16 @@ def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, 
         for v in d.values(): roots |= set(v)
     for d in list(hooks["block"].values()) + list(hooks["item"].values()): roots |= set(d.values())
     roots |= set(hooks["effect"].values()) | {e["fn"] for e in hooks["events"]}
+    # MobAI GoalRunner: the mod's goal methods (anonymous MCreator goals, goals written from scratch) - see docs/PORT_MOBAI.md
+    hooks["goals"] = {}
+    for etype, specs in (goals or {}).items():
+        lst = []
+        for g in specs:
+            fids = {m: f"{g['cls']}.{GOAL_METHODS[m]}" for m in GOAL_METHODS if g.get("cls") and f"{g['cls']}.{GOAL_METHODS[m]}" in meth_js}
+            if not fids: rep.setdefault("goal_missing", []).append(f"{etype}:{g.get('cls')}"); continue
+            roots |= set(fids.values())
+            lst.append({"mode": g["mode"], "cls": g["cls"], "priority": g["priority"], "index": g.get("index"), "fn": fids})
+        if lst: hooks["goals"][etype] = lst
     hooks["commands"] = commands_of(T)
     roots |= {c["fn"] for c in hooks["commands"]}
     ovs = overlays_of(jar, prefixes)

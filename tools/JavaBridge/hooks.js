@@ -1,6 +1,6 @@
 // JavaBridge hooks (original Bedrock Forge code): call the translated Java methods from Bedrock events.
 import { world, system, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
-import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR } from "./runtime.js";
+import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR, MOVES } from "./runtime.js";
 
 const CFG = globalThis.__JB_CFG, H = CFG.hooks, NS = CFG.ns;
 const errs = new Map();
@@ -40,6 +40,39 @@ system.runInterval(() => {
     const w = JEntity.of(e); for (const id of H.entity[e.typeId].tick) run(id, [w]);
   }
 }, 1);
+// ---- MobAI GoalRunner (docs/PORT_MOBAI.md). Java's GoalSelector runs the mod's goal objects every tick; here:
+//  * "gate" goals (MCreator anonymous goals overriding canUse/canContinueToUse): the Bedrock behaviour does the
+//    vanilla part, the translated Java condition switches it on/off (entity events gb:g<i>_on / _off).
+//  * "custom" goals (written from scratch): canUse -> start -> tick ... canContinueToUse false -> stop, as in Java.
+//  * MoveControl wanted positions (setWantedPosition, navigation.moveTo) are steered one step per tick.
+const GOALS = H.goals ?? {}, GTYPES = Object.keys(GOALS), GSTATE = new Map();
+let gtick = 0;
+function goalObj(cls, w) { const o = R.newObj(cls); o.__goal = true; o["this$0"] = w; return o; }
+function runGoals(e, specs) {
+  const w = JEntity.of(e); let st = GSTATE.get(e.id);
+  if (!st) { st = { objs: specs.map((g) => goalObj(g.cls, w)), on: specs.map(() => null), active: specs.map(() => false) }; GSTATE.set(e.id, st); }
+  for (let i = 0; i < specs.length; i++) {
+    const g = specs[i], o = st.objs[i], fn = g.fn;
+    if (g.mode === "gate") {
+      if ((gtick + i) % 2) continue;
+      const f = st.on[i] ? (fn.canContinueToUse ?? fn.canUse) : (fn.canUse ?? fn.canContinueToUse);
+      const v = !!run(f, [o]);
+      if (v !== st.on[i]) { st.on[i] = v; try { e.triggerEvent(`gb:g${g.index}_${v ? "on" : "off"}`); } catch {} }
+    } else if (!st.active[i]) {
+      if (fn.canUse && run(fn.canUse, [o])) { st.active[i] = true; if (fn.start) run(fn.start, [o]); }
+    } else if (!run(fn.canContinueToUse ?? fn.canUse, [o])) { st.active[i] = false; if (fn.stop) run(fn.stop, [o]); }
+    else if (fn.tick) run(fn.tick, [o]);
+  }
+}
+system.runInterval(() => {
+  if (!ready) return; gtick++;
+  if (GTYPES.length) for (const dimId of dims()) {
+    let d; try { d = world.getDimension(dimId); } catch { continue; }
+    for (const t of GTYPES) { let list; try { list = d.getEntities({ type: t }); } catch { continue; } for (const e of list) runGoals(e, GOALS[t]); }
+  }
+  for (const [id, c] of MOVES) { let ok = false; try { ok = c.w.e.isValid; } catch {} if (!ok) { MOVES.delete(id); continue; } c.step(); }
+}, 1);
+world.beforeEvents.entityRemove?.subscribe?.(({ removedEntity }) => { try { GSTATE.delete(removedEntity.id); MOVES.delete(removedEntity.id); } catch {} });
 function dims() { const out = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"]; for (const k of Object.keys(globalThis.__WG_DIMS ?? {})) out.push(k); return out; }
 world.afterEvents.entitySpawn.subscribe(({ entity, cause }) => {
   if (!ready || cause === "Loaded") return;
