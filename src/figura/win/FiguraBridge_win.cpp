@@ -26,6 +26,8 @@
 #include <windows.h>
 
 #include "mc/client/game/IClientInstance.h"
+#include "mc/client/renderer/game/LevelRenderer.h"
+#include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/sound/SoundEngine.h"
 #include "mc/deps/audio/PlaySoundOptions.h"
@@ -357,8 +359,27 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
     p.attackAnim = std::clamp(q("variable.attack_time"), 0.0f, 1.0f);
     p.isFirstPerson = q("variable.is_first_person") > 0.5f;
     // the real camera (third-person front, /camera ...) for Figura's Camera parts
-    s.avatar->cameraPitch = q("query.camera_rotation(0)");
-    s.avatar->cameraYaw   = q("query.camera_rotation(1)");
+    // query.camera_rotation reads 0 outside a render context, so take the renderer's own camera forward vector
+    // (LevelRendererPlayer::mCameraForward, the audio-listener camera: follows F5 views and /camera)
+    bool camOk = false;
+    if (s.host && s.host->client) {
+        if (auto* lr = s.host->client->getLevelRenderer()) {
+            auto& lrp = lr->mLevelRendererPlayer.get();
+            if (lrp) {
+                ::Vec3 const f = lrp->mCameraForward.get();
+                double l = std::sqrt(double(f.x) * f.x + double(f.y) * f.y + double(f.z) * f.z);
+                if (std::isfinite(l) && l > 0.5 && l < 1.5) {
+                    s.avatar->cameraYaw   = float(std::atan2(-f.x / l, f.z / l) * 57.29577951308232);
+                    s.avatar->cameraPitch = float(std::asin(std::clamp(-f.y / l, -1.0, 1.0)) * 57.29577951308232);
+                    camOk = true;
+                }
+            }
+        }
+    }
+    if (!camOk) {
+        s.avatar->cameraPitch = q("query.camera_rotation(0)");
+        s.avatar->cameraYaw   = q("query.camera_rotation(1)");
+    }
     s.avatar->cameraSet   = s.avatar->tune("useCamera", 1) > 0;
 }
 
