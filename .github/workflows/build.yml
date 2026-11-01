@@ -78,6 +78,10 @@ jobs:
         run: |
           grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; cat bin/BedrockForgeCore/manifest.json; exit 1; }
           mkdir -p out && cp -r bin/* out/ && cp -r packs out/packs && cp tools/Install-BedrockForge.ps1 out/
+          # same payload as lyricsflow-builds / clientui-builds: lyrics resources, glass menu icons, licences
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
           cd out
           git init -q -b builds
           git config user.name "github-actions"
