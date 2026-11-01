@@ -623,7 +623,10 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     for side, pt, bone in (("right", "RightItemPivot", "rightItem"), ("left", "LeftItemPivot", "leftItem")):
         if any(p.pt == pt for p in parts):
             bpiv = next(pv for n, _, pv in SKELETON if n == bone)
-            item_pivots[side] = {"bone": bone, "pivot": [num(-bpiv[0]), num(bpiv[1]), num(bpiv[2])]}
+            # "hand": where the held item sits at rest, in Figura space = Figura's default item pivot (AvatarWizard:
+            # (+-6, 12, -2), the point vanilla Java's ItemInHandLayer translates to); the pivot part's point replaces it
+            item_pivots[side] = {"bone": bone, "pivot": [num(-bpiv[0]), num(bpiv[1]), num(bpiv[2])],
+                                 "hand": [6.0 if side == "right" else -6.0, 12.0, -2.0]}
     if item_pivots:
         ib = {n: {"rotation": [0, 0, 0], "position": [0, 0, 0]} for n in ("root", "waist", "body", "rightArm", "leftArm")}
         for side, d in item_pivots.items():

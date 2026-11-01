@@ -105,6 +105,7 @@ public:
         bool    configured = false; // the RP drives this item bone (rig "itemPivots")
         bool    found      = false; // a visible pivot part was drawn this frame
         Vec3    pivot;              // the Bedrock item bone's rest pivot, Figura space
+        Vec3    hand{6, 12, -2};    // where the item sits at rest (Figura space): moved onto the pivot part's point
         BoneOut bone;
     } itemOut[2];                   // 0 = right, 1 = left
     std::vector<char>                          uvBones;

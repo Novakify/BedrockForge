@@ -123,6 +123,7 @@ bool Avatar::load(std::filesystem::path const& bundleDir, std::filesystem::path 
             if (!ip.isObject()) continue;
             itemOut[side].configured = true;
             itemOut[side].pivot      = vec3Of(ip["pivot"]);
+            itemOut[side].hand       = vec3Of(ip["hand"], {side == 0 ? 6.0 : -6.0, 12, -2});
         }
     // render task bones: free-floating item quads / block cubes (compile.py) placed by the bone solve
     if (rig && (*rig)["taskBones"].isArray())
@@ -791,7 +792,8 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
     }
     bool onBody = vis && !separate;
     // Figura renders the held item at the first visible Right/LeftItemPivot: the Bedrock item bone gets the pivot
-    // part's frame, its rest pivot moved onto the part's pivot point (X = T(P) * L * T(-q), decomposed about q)
+    // part's frame, the rest item position (hand) moved onto the part's pivot point (X = T(P) * L * T(-hand),
+    // decomposed about the bone's pivot q)
     if (onBody && (p->parentType == ParentType::RightItemPivot || p->parentType == ParentType::LeftItemPivot)) {
         auto& io = itemOut[p->parentType == ParentType::RightItemPivot ? 0 : 1];
         if (io.configured && !io.found) {
@@ -801,7 +803,7 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
             Mat4 t;
             t.translate(P.x, P.y, P.z);
             Mat4 tq;
-            tq.translate(-io.pivot.x, -io.pivot.y, -io.pivot.z);
+            tq.translate(-io.hand.x, -io.hand.y, -io.hand.z);
             io.bone  = decomposeForBedrock(t * x * tq, io.pivot);
             io.found = true;
         }
