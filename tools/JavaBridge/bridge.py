@@ -34,7 +34,7 @@ EVENTS = {"TickEvent$PlayerTickEvent": "playerTick", "LivingEvent$LivingTickEven
           "LivingAttackEvent": "attack", "LivingHurtEvent": "attack", "ServerChatEvent": "chat", "PlayerInteractEvent$RightClickBlock": "rightClickBlock",
           "BlockEvent$BreakEvent": "breakBlock", "BlockEvent$EntityPlaceEvent": "placeBlock", "PlayerSleepInBedEvent": "sleep", "PlayerWakeUpEvent": "wake",
           "EntityJoinLevelEvent": "join", "PlayerEvent$PlayerLoggedInEvent": "login", "PlayerEvent$PlayerRespawnEvent": "respawn",
-          "PlayerEvent$PlayerChangedDimensionEvent": "changedDim"}
+          "PlayerEvent$PlayerChangedDimensionEvent": "changedDim", "TickEvent$ServerTickEvent": "serverTick"}
 
 
 def disassemble(jar, prefixes, exclude=("/client/",)):
@@ -157,7 +157,9 @@ def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, 
             if s.endswith(suf) and s.startswith(tuple(p.split("/")[-2].title() for p in prefixes) + ("TheWonderland", "Mod")): regs[s] = kind
     cfg = {"ns": ns, "modid": modid, "registries": regs, "typeToClass": {t: c for c, t in cls_type.items()}, "classToType": cls_type,
            "structures": structures or {}, "blockRename": block_rename or {}, "hooks": hooks,
-           "pvDefaults": field_defaults(T, "Variables$PlayerVariables"), "mvDefaults": field_defaults(T, "Variables$MapVariables"), "particles": PARTICLES, "blockJ2B": block_j2b()}
+           "pvDefaults": field_defaults(T, "Variables$PlayerVariables"), "mvDefaults": field_defaults(T, "Variables$MapVariables"), "particles": PARTICLES, "blockJ2B": block_j2b(),
+           # MCreator's Mod.queueServerWork(ticks, runnable): run on Bedrock's scheduler instead of the ServerTickEvent queue
+           "workQueue": sorted(f"{cn}.{k}" for cn, info in T.classes.items() for k in info.methods if k == "queueServerWork(ILjava/lang/Runnable;)V")}
     out = Path(bp) / "scripts" / "javabridge"; out.mkdir(parents=True, exist_ok=True)
     (out / "runtime.js").write_text((HERE / "runtime.js").read_text())
     (out / "mod.js").write_text("// JavaBridge: the mod's own code translated from its bytecode (private use only)\n"

@@ -79,6 +79,16 @@ for (const ev of H.events) if (ev.kind === "attack") {
   });
 }
 
+// ---- MCreator delayed work: queueServerWork(ticks, runnable) -> system.runTimeout (the mod's ServerTickEvent queue
+// would also work, but the scheduler costs nothing while idle)
+for (const id of CFG.workQueue ?? []) M.def(id, (ticks, r) => {
+  system.runTimeout(() => { try { R.lam(r); } catch (e) { console.warn(`[JavaBridge] queued work: ${e}`); } }, Math.max(1, ticks | 0));
+});
+if (H.events.some((ev) => ev.kind === "serverTick") && !(CFG.workQueue ?? []).length) system.runInterval(() => {
+  if (!ready) return;
+  for (const ev of H.events) if (ev.kind === "serverTick") run(ev.fn, [{ __ev: true, phase: { key: "END" }, side: { key: "SERVER" }, getServer: () => R.server?.() ?? null }]);
+}, 1);
+
 // ---- players: tick events, living tick, chat, sleep
 system.runInterval(() => {
   if (!ready) return;
