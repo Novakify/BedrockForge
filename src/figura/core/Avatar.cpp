@@ -738,7 +738,7 @@ void Avatar::frame(float delta) {
     // Java PlayerRenderer.getRenderOffset: a crouching player is drawn 2px (scale 1/16) lower; Bedrock has no such
     // render offset, so it goes into the root matrix (otherwise the crouch pose floats above the ground)
     Mat4 rootMat;
-    if (player.crouching && renderMode != "FIRST_PERSON") rootMat.translate(0, -2 * tune("crouchDrop", 1), 0);
+    if (player.crouching && renderMode != "FIRST_PERSON") rootMat.translate(0, -2 / 0.9375 * tune("crouchDrop", 1), 0); // 2/16 block in world, model is drawn at 0.9375
     traverse(root, {}, {}, true, rootMat);
     if (!scriptError) {
         if (player.loaded) {
