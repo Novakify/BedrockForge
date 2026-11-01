@@ -116,6 +116,13 @@ bool Avatar::load(std::filesystem::path const& bundleDir, std::filesystem::path 
     boneModel.resize(boneParent.size());
     boneWorld.resize(boneParent.size());
     boneClaimed.assign(boneParent.size(), 0);
+    if (rig && (*rig)["itemPivots"].isObject())
+        for (int side = 0; side < 2; side++) {
+            auto const& ip = (*rig)["itemPivots"][side == 0 ? "right" : "left"];
+            if (!ip.isObject()) continue;
+            itemOut[side].configured = true;
+            itemOut[side].pivot      = vec3Of(ip["pivot"]);
+        }
     uvBones.assign(boneParent.size(), 0);
     if (rig && (*rig)["uvParts"].isArray())
         for (auto const& u : (*rig)["uvParts"].items()) {
@@ -743,6 +750,22 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         }
     }
     bool onBody = vis && !separate;
+    // Figura renders the held item at the first visible Right/LeftItemPivot: the Bedrock item bone gets the pivot
+    // part's frame, its rest pivot moved onto the part's pivot point (X = T(P) * L * T(-q), decomposed about q)
+    if (onBody && (p->parentType == ParentType::RightItemPivot || p->parentType == ParentType::LeftItemPivot)) {
+        auto& io = itemOut[p->parentType == ParentType::RightItemPivot ? 0 : 1];
+        if (io.configured && !io.found) {
+            Vec3 P = myMat.apply(p->pivot);
+            Mat4 x = myMat;
+            x.v14 = x.v24 = x.v34 = 0;
+            Mat4 t;
+            t.translate(P.x, P.y, P.z);
+            Mat4 tq;
+            tq.translate(-io.pivot.x, -io.pivot.y, -io.pivot.z);
+            io.bone  = decomposeForBedrock(t * x * tq, io.pivot);
+            io.found = true;
+        }
+    }
     if (bone >= 0 && bone < int(out.size()) && !boneClaimed[size_t(bone)] && (p->bone >= 0 || onBody)) {
         boneClaimed[size_t(bone)] = 1;
         boneModel[size_t(bone)] = myMat;
@@ -811,6 +834,7 @@ void Avatar::frame(float delta) {
     Mat4 rootMat;
     if (player.crouching && renderMode != "FIRST_PERSON") rootMat.translate(0, -2 / 0.9375 * tune("crouchDrop", 1), 0); // 2/16 block in world, model is drawn at 0.9375
     std::fill(boneClaimed.begin(), boneClaimed.end(), 0);
+    itemOut[0].found = itemOut[1].found = false;
     traverse(root, {}, {}, true, rootMat);
     solveBones();
     if (!scriptError) {

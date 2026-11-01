@@ -292,6 +292,18 @@ void writeVars(State& s, Actor& a) {
             set(n.usv, o.uv[3]);
         }
     }
+    for (int side = 0; side < 2; side++) { // held items on Figura's item pivots (compile.py animation.figura.items)
+        auto const& io = s.avatar->itemOut[side];
+        if (!io.configured) continue;
+        std::string b = side == 0 ? "fbir" : "fbil";
+        int m = s.nameMode < 0 ? 0 : s.nameMode;
+        auto w = [&](char const* suf, double v) { map.setMolangVariable(HashedString(vn(m, b + suf)), MolangScriptArg(float(v))); };
+        BoneOut const bo = io.found ? io.bone : BoneOut{};
+        double sc = io.found ? 1.0 : 0.0; // pivot hidden or gone: Figura draws no item
+        w("rx", bo.rot.x); w("ry", bo.rot.y); w("rz", bo.rot.z);
+        w("px", bo.pos.x); w("py", bo.pos.y); w("pz", bo.pos.z);
+        w("sx", bo.scale.x * sc); w("sy", bo.scale.y * sc); w("sz", bo.scale.z * sc);
+    }
     bool vanillaShown = true;
     if (auto it = s.avatar->vanillaVisible.find("PLAYER"); it != s.avatar->vanillaVisible.end()) vanillaShown = it->second;
     if (s.van) set(*s.van, vanillaShown ? 1.0 : 0.0);

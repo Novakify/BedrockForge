@@ -92,6 +92,12 @@ public:
     std::vector<int>                           boneParent;   // compiled parent bone, -1 = root
     std::vector<Mat4>                          boneModel, boneWorld;
     std::vector<char>                          boneClaimed;
+    struct ItemPivotOut {
+        bool    configured = false; // the RP drives this item bone (rig "itemPivots")
+        bool    found      = false; // a visible pivot part was drawn this frame
+        Vec3    pivot;              // the Bedrock item bone's rest pivot, Figura space
+        BoneOut bone;
+    } itemOut[2];                   // 0 = right, 1 = left
     std::vector<char>                          uvBones;      // bones with a uv_anim render controller (rig "uvParts")
     std::map<int, std::vector<int>>            dupSlots;     // source bone -> free-floating dup bones (rig "dups")
     int                                        compiledParts = 0;

@@ -503,6 +503,23 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             anim_bones[bname] = anim_bones[p.bone]
     animation = {"format_version": "1.8.0", "animations": {"animation.figura.drive": {"loop": True, "bones": anim_bones}}}
 
+    # held items follow Figura's RightItemPivot / LeftItemPivot parts: Bedrock draws held items on the skeleton bones
+    # rightItem / leftItem. In third person this animation (played after the vanilla ones, override_previous_animation)
+    # puts the vanilla skeleton back at rest and drives the item bones from v.fbir* / v.fbil* (model space, solved by
+    # the runtime). First person keeps Bedrock's own arms and items.
+    item_pivots = {}
+    for side, pt, bone in (("right", "RightItemPivot", "rightItem"), ("left", "LeftItemPivot", "leftItem")):
+        if any(p.pt == pt for p in parts):
+            bpiv = next(pv for n, _, pv in SKELETON if n == bone)
+            item_pivots[side] = {"bone": bone, "pivot": [num(-bpiv[0]), num(bpiv[1]), num(bpiv[2])]}
+    if item_pivots:
+        ib = {n: {"rotation": [0, 0, 0], "position": [0, 0, 0]} for n in ("root", "waist", "body", "rightArm", "leftArm")}
+        for side, d in item_pivots.items():
+            v = "fbir" if side == "right" else "fbil"
+            ib[d["bone"]] = {"rotation": [f"v.{v}r{a} ?? 0" for a in "xyz"], "position": [f"v.{v}p{a} ?? 0" for a in "xyz"],
+                             "scale": [f"v.{v}s{a} ?? 1" for a in "xyz"]}
+        animation["animations"]["animation.figura.items"] = {"loop": True, "override_previous_animation": True, "bones": ib}
+
     # render controllers: one primary + one secondary per d/e texture file
     rc_files = [f for f in files if f["type"] in ("d", "e") and f["_data"] is not None]
     controllers = {}
@@ -624,6 +641,9 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         desc["textures"][f["bedrockKey"]] = f["rpTexture"]
     desc["animations"]["figura_drive"] = "animation.figura.drive"
     desc["scripts"].setdefault("animate", []).append("figura_drive")
+    if item_pivots:
+        desc["animations"]["figura_items"] = "animation.figura.items"
+        desc["scripts"]["animate"].append({"figura_items": "!variable.is_first_person"})
     gated = []
     for r in desc.get("render_controllers", []):  # vanilla stays available, hidden unless v.fbvan
         if isinstance(r, str):
@@ -672,6 +692,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         rig["parts"].append(e)
     rig["dups"] = [{"i": d.i, "source": d.source.i} for d in dups]
     rig["uvParts"] = sorted(uv_parts)
+    rig["itemPivots"] = item_pivots
     (out / "rig.json").write_text(json.dumps(rig, indent=1), encoding="utf-8")
     return {"out": str(out), "parts": len(parts), "bones": len(bones), "textureFiles": len(files),
             "textureSets": len(sets), "renderControllers": len(controllers), "sounds": len(sound_map),
