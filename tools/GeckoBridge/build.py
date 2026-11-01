@@ -1,0 +1,1586 @@
+#!/usr/bin/env python3
+"""GeckoBridge M1 builder: a GeckoLib mod jar -> private Bedrock RP + BP for every GeckoLib mob in it.
+
+    python -I tools/GeckoBridge/build.py mod.jar OUT [--name "Naturalist"] [--tol 0.05]
+
+Pipeline (all offline):
+  discover.py      entities, ids, sizes, model/texture/animation paths, texture variants, layers, stats
+  controllers.py   GeckoLib controllers -> condition paths
+  ModelCore.rig    geometry (renamed geometry.gb.<mod>.<file>)
+  gbanim           animations, every GeckoLib easing baked exactly; Molang fixed + checked (molang.py)
+  here             client entities, Bedrock animation controllers, render controllers (texture/geometry variants,
+                   glow through the gb_glow material, owner hook v.gb_hidden_parts), sounds, BP entities, report.json
+The packs are built from the mod's assets: private personal use only, never shared (see CREDITS.txt in the packs).
+"""
+from __future__ import annotations
+import argparse, json, re, sys, uuid, zipfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE.parent))
+import gbanim
+import vanilla as VM, molang, discover, runtime, sounds as S             # noqa: E402
+import controllers as C                                            # noqa: E402
+import animtex                                                     # noqa: E402
+from ModelCore.rig import load_bedrock_geo, write_bedrock_geo       # noqa: E402
+
+GB = "gb"
+# gb_anim*: animated .mcmeta textures; Bedrock only applies a render controller's uv_anim when the material
+# has USE_UV_ANIM (vanilla charged_creeper / player_spectator do the same)
+GLOW_MATERIAL = {"materials": {"version": "1.0.0", "gb_glow:entity_alphablend": {"+states": ["DisableCulling"]},
+                               "gb_anim:entity_alphatest": {"+defines": ["USE_UV_ANIM"]},
+                               "gb_glow_anim:entity_alphablend": {"+states": ["DisableCulling"], "+defines": ["USE_UV_ANIM"]}}}
+OWNER_VAR = "v.gb_hidden_parts"   # reserved for Figura / Bedrock Forge: non-zero hides the mob's parts (M3: bitmask)
+
+
+def bone_id(n):
+    """Bedrock rejects bone names with spaces/slashes in animations ("child 'Right Leg' not valid here")."""
+    return re.sub(r"[^A-Za-z0-9_.\-]", "_", n)
+
+
+def u5(*parts): return str(uuid.uuid5(uuid.NAMESPACE_URL, "geckobridge/" + "/".join(parts)))
+def clean(s): return re.sub(r"[^a-z0-9_]+", "_", s.lower()).strip("_")
+
+
+def jload(b):
+    t = re.sub(r"(?m)^\s*//[^\n]*", "", b.decode("utf-8-sig", "replace")); t = re.sub(r",(\s*[}\]])", r"\1", t)
+    return json.loads(t)
+
+
+def cached_discover(jar):
+    """discover() takes minutes on big mods (javap per class): cache by jar + converter source."""
+    import hashlib
+    h = hashlib.sha1(Path(jar).read_bytes())
+    for f in ("discover.py", "controllers.py"): h.update((HERE / f).read_bytes())
+    cache = Path("/tmp/gb_cache") / f"{Path(jar).stem}.{h.hexdigest()[:12]}.json"
+    if cache.exists(): return tuple(json.loads(cache.read_text()))
+    r = discover.discover(jar); cache.parent.mkdir(exist_ok=True); cache.write_text(json.dumps(r, default=list))
+    return json.loads(json.dumps(r, default=list))
+
+
+def cached_triggers(jar):
+    import hashlib
+    h = hashlib.sha1(Path(jar).read_bytes()); h.update((HERE / "runtime.py").read_bytes()); h.update((HERE / "controllers.py").read_bytes())
+    cache = Path("/tmp/gb_cache") / f"{Path(jar).stem}.trig.{h.hexdigest()[:12]}.json"
+    if cache.exists(): return json.loads(cache.read_text())
+    r = runtime.triggers(jar); cache.parent.mkdir(exist_ok=True); cache.write_text(json.dumps(r)); return r
+
+
+_CONV = {}
+def _convert_structure(job):
+    jar, n, modid, ns, custom = job
+    try:
+        sys.path.insert(0, str(HERE.parent / "ModPorter"))
+        import structures as ST
+        key = (jar, modid)
+        if key not in _CONV: _CONV[key] = (zipfile.ZipFile(jar), ST.Converter(modid, ns, custom))
+        z, cv = _CONV[key]
+        return n, cv.convert(z.read(n)), None
+    except Exception as ex:
+        return n, None, f"{type(ex).__name__}: {ex}"
+
+
+def cached_classinfo(jar):
+    """Block/item properties + registry names from bytecode (ModPorter classinfo), cached."""
+    import hashlib, tempfile
+    sys.path.insert(0, str(HERE.parent / "ModPorter"))
+    import classinfo as CI
+    h = hashlib.sha1(Path(jar).read_bytes()); h.update((HERE.parent / "ModPorter" / "classinfo.py").read_bytes())
+    cache = Path("/tmp/gb_cache") / f"{Path(jar).stem}.ci.{h.hexdigest()[:12]}.json"
+    if cache.exists(): return json.loads(cache.read_text())
+    tmp = tempfile.mkdtemp(prefix="gb_ci_")
+    with zipfile.ZipFile(jar) as z:
+        cls = [n for n in z.namelist() if n.endswith(".class") and not n.startswith(C.GL_PREFIXES)]
+        for n in cls: z.extract(n, tmp)
+    names = [n[:-6].replace("/", ".") for n in cls]
+    reg = CI.registries(tmp, [n for n in names if n.lower().endswith(("blocks", "items", "mobeffects"))])
+    out = {"registries": reg, "blocks": {}, "items": {}}
+    for rn, c in reg["block"].items(): out["blocks"][rn] = CI.block_props(tmp, c)
+    for rn, c in reg["item"].items(): out["items"][rn] = CI.item_info(tmp, c)
+    cache.parent.mkdir(exist_ok=True); cache.write_text(json.dumps(out)); return out
+
+
+def cached_sounds(jar, classes):
+    import hashlib
+    h = hashlib.sha1(Path(jar).read_bytes()); h.update((HERE / "sounds.py").read_bytes())
+    cache = Path("/tmp/gb_cache") / f"{Path(jar).stem}.snd.{h.hexdigest()[:12]}.json"
+    if cache.exists(): return json.loads(cache.read_text())
+    r = S.mob_sounds(jar, classes); cache.parent.mkdir(exist_ok=True); cache.write_text(json.dumps(r)); return r
+
+
+OVERLAYS = HERE.parent / "ModPorter" / "overlays"
+# overlay rp/ files describing an entity's look: GeckoBridge's own conversion wins for entities it built
+VISUAL_DIRS = ("entity", "render_controllers", "animation_controllers", "animations", "models")
+
+
+PAINTING_JS = r"""// GeckoBridge: the mod's painting variants as wall entities (Bedrock has no custom painting variants)
+import { world, system, GameMode } from "@minecraft/server";
+const ITEMS = __ITEMS__;   // item/entity id -> [width, height] in blocks
+const YAW = { North: 180, South: 0, East: -90, West: 90 };
+const N = { North: [0, 0, -1], South: [0, 0, 1], East: [1, 0, 0], West: [-1, 0, 0] };
+// @minecraft/server 2.x removed beforeEvents.itemUseOn (playerInteractWithBlock replaces it). A throw here would
+// abort the whole script graph (gb_runtime -> worldgen -> javabridge), so subscribe defensively.
+const USE_ON = world.beforeEvents.playerInteractWithBlock ?? world.beforeEvents.itemUseOn;
+USE_ON?.subscribe?.((ev) => {
+  const id = ev.itemStack?.typeId; if (!ITEMS[id] || !N[ev.blockFace]) return;
+  ev.cancel = true;
+  const [w, h] = ITEMS[id], n = N[ev.blockFace], b = ev.block.location, p = ev.player ?? ev.source;
+  system.run(() => {
+    try {
+      // centre of the painting on the wall face: odd sizes centre on the block, even sizes on the block edge
+      const ox = (w % 2 === 0 ? 0.5 : 0) * (n[2] !== 0 ? 1 : 0), oz = (w % 2 === 0 ? 0.5 : 0) * (n[0] !== 0 ? 1 : 0);
+      const loc = { x: b.x + 0.5 + n[0] * 0.53 + ox, y: b.y - Math.floor((h - 1) / 2), z: b.z + 0.5 + n[2] * 0.53 + oz };
+      const e = ev.block.dimension.spawnEntity(id, loc);
+      e.setRotation({ x: 0, y: YAW[ev.blockFace] });
+      if (p.getGameMode?.() !== GameMode.Creative && p.getGameMode?.() !== "Creative") {
+        const inv = p.getComponent("inventory")?.container, slot = p.selectedSlotIndex, it = inv?.getItem(slot);
+        if (it) { if (it.amount > 1) { it.amount -= 1; inv.setItem(slot, it); } else inv.setItem(slot, undefined); }
+      }
+    } catch (e) { console.warn("[GeckoBridge] painting: " + e); }
+  });
+});
+"""
+
+class Build:
+    def __init__(self, jar, out, name=None, tol=None):
+        self.jar = jar; self.z = zipfile.ZipFile(jar); self.names = set(self.z.namelist()); self.out = Path(out)
+        if tol: gbanim.TOL.update({"rotation": tol, "position": tol / 10, "scale": tol / 50})
+        self.ents, self.ctrl = cached_discover(jar)
+        self.modid = self.ents["mod_id"]; self.ns = clean(self.modid)
+        self.title = name or self.modid.replace("_", " ").title()
+        self.rp = self.out / f"GB {self.title} RP"; self.bp = self.out / f"GB {self.title} BP"
+        self.report = {"jar": Path(jar).name, "mod_id": self.modid, "entities": {}, "molang_errors": [], "warnings": [],
+                       "baked_segments": {}, "bake_error_max": {"rotation": 0, "position": 0, "scale": 0}}
+        self.geo_ids, self.anim_ids, self.anim_meta, self.rcs, self.acs, self.sound_defs = {}, {}, {}, {}, {}, {}
+        self.files_written = 0
+        # M2: Java-side state -> entity properties + Script API driver; triggered animations
+        self.rinfo = {**C.RESERVED_INFO, **self.ents.get("reserved_info", {})}
+        self.trigs = cached_triggers(jar)
+        ov = HERE / "mods" / f"{self.modid}.json"
+        self.override = json.loads(ov.read_text()) if ov.exists() else {}
+        self.js = {"ns": self.ns, "entities": {}}; self.climbers = set(); self.mobai = {}; self.melee_types = set(); self.nat_player = {}
+        self.mob_sounds = cached_sounds(jar, sorted({e["java_class"] for e in self.ents["entities"]}))
+        self.report["sounds_vanilla_default"] = self.mob_sounds.get("_unmapped", [])
+        ovn = self.override.get("overlay") or (self.modid if (OVERLAYS / self.modid / "overlay.json").exists() else None)
+        self.ov_dir = OVERLAYS / ovn if ovn else None
+        self.rename = self.override.get("rename", {})
+
+    # ---------------------------------------------------------------- helpers
+    def write(self, rel_root, rel, data):
+        p = rel_root / rel; p.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(data, (dict, list)): p.write_text(json.dumps(data, indent=1))
+        elif isinstance(data, bytes): p.write_bytes(data)
+        else: p.write_text(data)
+        self.files_written += 1
+
+    def check(self, where, expr):
+        r = molang.check(expr)
+        if r: self.report["molang_errors"].append({"where": where, "expr": expr, "error": r})
+        return r is None
+
+    # ---------------------------------------------------------------- geometry
+    def geometry(self, path):
+        if path in self.geo_ids: return self.geo_ids[path]
+        if path not in self.names: self.report["warnings"].append(f"geometry missing: {path}"); return None
+        stem = clean(Path(path).name.replace(".geo.json", "").replace(".json", ""))
+        rigs = load_bedrock_geo(jload(self.z.read(path)))
+        ids = []
+        for i, rig in enumerate(rigs):
+            for b in rig.bones:
+                b.name = bone_id(b.name)
+                if b.parent: b.parent = bone_id(b.parent)
+            rig.identifier = f"geometry.{GB}.{self.ns}.{stem}" + (f"_{i}" if i else ""); ids.append(rig.identifier)
+        self.write(self.rp, f"models/entity/{self.ns}/{stem}.geo.json", write_bedrock_geo(rigs))
+        self.geo_ids[path] = ids[0]
+        return ids[0]
+
+    def dedupe_locators(self, gids, er):
+        """Bedrock merges locators across an entity's geometries and errors when the same name differs
+        ("model already has a locator ... that doesn't exactly match"): keep the first, rename later copies."""
+        seen = {}
+        for gid in gids:
+            path = self.geo_file(gid)
+            if not path: continue
+            d = json.loads(path.read_text()); changed = False
+            for g in d["minecraft:geometry"]:
+                if g["description"]["identifier"] != gid: continue
+                for b in g.get("bones", []):
+                    for name in list((b.get("locators") or {})):
+                        if name in seen and seen[name] != b["locators"][name]:
+                            b["locators"][f"{name}_{gid.split('.')[-1]}"] = b["locators"].pop(name); changed = True
+                        else: seen.setdefault(name, b["locators"][name])
+            if changed: path.write_text(json.dumps(d)); er.setdefault("locators_renamed", []).append(gid)
+        # Bedrock also derives armor_offset.default_neck from a bone called "neck": with two geometries whose necks
+        # sit at different pivots that clashes too (Naturalist deer/fawn). Rename the later neck; the animations get a
+        # copy of the neck channels under the new name (see entity()).
+        necks, alias = {}, {}
+        for gid in gids:
+            path = self.geo_file(gid)
+            if not path: continue
+            d = json.loads(path.read_text()); changed = False
+            for g in d["minecraft:geometry"]:
+                if g["description"]["identifier"] != gid: continue
+                for b in g.get("bones", []):
+                    if b["name"] != "neck": continue
+                    if necks and b.get("pivot") not in necks.values():
+                        new = f"neck_{gid.split('.')[-1]}"; b["name"] = new; changed = True; alias.setdefault("neck", []).append(new)
+                        for c in g["bones"]:
+                            if c.get("parent") == "neck": c["parent"] = new
+                    else: necks[gid] = b.get("pivot")
+            if changed: path.write_text(json.dumps(d)); er.setdefault("bones_renamed", []).append(gid)
+        self.bone_alias = alias
+
+    # ---------------------------------------------------------------- animations
+    def still_png(self, src):
+        """texture bytes; an animated .mcmeta strip -> its first frame (items, armor and block models cannot animate)."""
+        data = self.z.read(src)
+        return animtex.first_frame(data, self.z.read(src + ".mcmeta")) if src + ".mcmeta" in self.names else data
+
+    def entity_png(self, key, src):
+        """copy an entity texture; an animated .mcmeta strip is repacked in play order -> (frames, ticks per frame)."""
+        data = self.z.read(src)
+        if src + ".mcmeta" in self.names:
+            r = animtex.strip(data, self.z.read(src + ".mcmeta"))
+            if r:
+                self.write(self.rp, key + ".png", r[0]); return r[1], r[2]
+        self.write(self.rp, key + ".png", data); return 1, 1
+
+    def animations(self, path):
+        """Convert one GeckoLib animation file -> {source name: bedrock id}; written once per file."""
+        if path in self.anim_ids: return self.anim_ids[path]
+        if path not in self.names: self.report["warnings"].append(f"animation file missing: {path}"); self.anim_ids[path] = {}; return {}
+        stem = clean(Path(path).name.split(".")[0])
+        src = jload(self.z.read(path)).get("animations", {})
+        out, ids, rep = {}, {}, {}
+        for name, a in src.items():
+            if isinstance(a.get("bones"), dict):
+                a = {**a, "bones": {bone_id(k): v for k, v in a["bones"].items()}}
+            short = clean(re.sub(r"^animation\.", "", name))
+            nid = f"animation.{GB}.{self.ns}.{stem}.{short}"
+            conv = gbanim.convert_animation(name, a, nid, report=rep)
+            err, _ = gbanim.measure_error(a, conv[nid])
+            for k, v in err.items():
+                if v > self.report["bake_error_max"][k]: self.report["bake_error_max"][k] = v
+            out.update(conv); ids[name] = nid; self.anim_meta[nid] = {"loop": a.get("loop", False), "length": a.get("animation_length"),
+                                                                      "src": a}
+        for k, v in rep.get("baked_segments", {}).items(): self.report["baked_segments"][k] = self.report["baked_segments"].get(k, 0) + v
+        if rep.get("molang_whitespace_joined"): self.report.setdefault("molang_whitespace_joined", []).extend(rep["molang_whitespace_joined"])
+        if rep.get("dropped_markers"): self.report.setdefault("dropped_markers", {}).update(rep["dropped_markers"])
+        # sound keyframes: GeckoLib hands the effect name to the mod's Java handler; we map it to the mod's sounds.json
+        for nid, a in out.items():
+            se_out = {}
+            for t, se in (self.anim_meta[nid]["src"].get("sound_effects") or {}).items():
+                for one in (se if isinstance(se, list) else [se]):
+                    short = self.sound(one.get("effect", "") if isinstance(one, dict) else str(one))
+                    if short: se_out.setdefault(t, []).append({"effect": short})
+            if se_out: a["sound_effects"] = {t: (v[0] if len(v) == 1 else v) for t, v in se_out.items()}
+            # particle keyframes: GeckoLib passes {effect, locator, pre_effect_script}; Bedrock wants a short name the
+            # client entity maps to a particle id (entity desc particle_effects, filled in entity())
+            pe_out = {}
+            for t, pe in (self.anim_meta[nid]["src"].get("particle_effects") or {}).items():
+                for one in (pe if isinstance(pe, list) else [pe]):
+                    eff = one.get("effect", "") if isinstance(one, dict) else str(one)
+                    if not eff: continue
+                    short = "p_" + clean(eff.split(":")[-1])
+                    self.particle_map = getattr(self, "particle_map", {}); self.particle_map[short] = self.particle_id(eff)
+                    o = {"effect": short}
+                    if isinstance(one, dict) and one.get("locator"): o["locator"] = one["locator"]
+                    if isinstance(one, dict) and one.get("pre_effect_script"): o["pre_effect_script"] = one["pre_effect_script"]
+                    pe_out.setdefault(t, []).append(o)
+            if pe_out: a["particle_effects"] = {t: (v[0] if len(v) == 1 else v) for t, v in pe_out.items()}
+            elif "particle_effects" in a: a.pop("particle_effects")
+            self._walk_molang(nid, a)
+        self.anim_files = getattr(self, "anim_files", {}); self.anim_files[stem] = out
+        self.anim_ids[path] = ids
+        return ids
+
+    def _walk_molang(self, where, a):
+        for bone, chans in (a.get("bones") or {}).items():
+            for ch, val in chans.items():
+                vals = [val] if isinstance(val, list) else list(val.values()) if isinstance(val, dict) else []
+                for v in vals:
+                    for x in (v if isinstance(v, list) else (v.get("pre", []) + v.get("post", [])) if isinstance(v, dict) else []):
+                        if isinstance(x, str): self.check(f"{where}/{bone}/{ch}", x)
+        if a.get("anim_time_update"): self.check(f"{where}/anim_time_update", a["anim_time_update"])
+
+    def java_sounds(self):
+        if not hasattr(self, "_sounds"):
+            p = f"assets/{self.modid}/sounds.json"
+            self._sounds = jload(self.z.read(p)) if p in self.names else {}
+        return self._sounds
+
+    def particle_id(self, eff):
+        """Java/GeckoLib particle name -> Bedrock particle id (mod particles keep theirs, vanilla via JavaBridge's table)."""
+        sys.path.insert(0, str(HERE.parent / "JavaBridge"))
+        try: from bridge import PARTICLES
+        except Exception: PARTICLES = {}
+        ns, _, name = eff.rpartition(":"); ns = ns or "minecraft"
+        if ns not in ("minecraft", ""): return f"{clean(ns)}:{clean(name)}"
+        return PARTICLES.get(name, "minecraft:basic_smoke_particle")
+
+    def sound(self, effect):
+        """GeckoLib sound keyframe effect -> Bedrock short name (client entity sound_effects), or None."""
+        if not effect: return None
+        sj = self.java_sounds(); key = effect.split(":")[-1]
+        cand = [k for k in sj if k == key or k.endswith("." + key) or k.replace(".", "_") == key.replace(".", "_")]
+        if not cand:   # registry name "bear_hurt" for sounds.json event "entity.bear.hurt"
+            cand = sorted((k for k in sj if k.replace(".", "_").endswith("_" + key.replace(".", "_"))), key=len)
+        if not cand:
+            self.report.setdefault("sounds_unmapped", {}); self.report["sounds_unmapped"][effect] = self.report["sounds_unmapped"].get(effect, 0) + 1
+            return None
+        ev = cand[0]; bid = f"{GB}.{self.ns}.{clean(ev)}"
+        if bid not in self.sound_defs:
+            files = []
+            for snd in sj[ev].get("sounds", []):
+                name = snd["name"] if isinstance(snd, dict) else snd
+                ns_, rel = (name.split(":", 1) if ":" in name else (self.modid, name))
+                src = f"assets/{ns_}/sounds/{rel}.ogg"
+                if src in self.names:
+                    dst = f"sounds/{GB}/{self.ns}/{clean(rel)}"
+                    self.write(self.rp, dst + ".ogg", self.z.read(src))
+                    files.append({"name": dst, **({k: snd[k] for k in ("volume", "pitch") if isinstance(snd, dict) and k in snd})})
+            if not files:
+                self.report.setdefault("sounds_unmapped", {})[effect] = "vanilla/missing files"; return None
+            self.sound_defs[bid] = {"category": "neutral", "sounds": files}
+        short = clean(ev)
+        self.entity_sounds = getattr(self, "entity_sounds", {}); self.entity_sounds[short] = bid
+        return short
+
+    def variant_anim(self, nid, loop=None, speed=None):
+        """A copy of an animation with GeckoLib's controller-side loop override or speed."""
+        stem = nid.split(".")[3]; base = self.anim_files[stem][nid]
+        if loop is not None and base.get("loop", False) == loop: loop = None      # already loops that way
+        if loop is None and (speed in (None, 1, 1.0)): return nid
+        suffix = (f".loop_{loop}" if loop is not None else "") + (f".x{str(round(speed, 3)).replace('.', '_')}" if speed not in (None, 1, 1.0) else "")
+        vid = nid + suffix
+        if vid not in self.anim_files[stem]:
+            a = json.loads(json.dumps(base))
+            if loop is not None: a["loop"] = loop
+            if speed not in (None, 1, 1.0):
+                a["anim_time_update"] = f"q.anim_time + q.delta_time * {round(float(speed), 4)}"
+            self.anim_files[stem][vid] = a
+        return vid
+
+    # ---------------------------------------------------------------- controllers
+    def chain_states(self, chain, amap):
+        """RawAnimation chain -> list of (bedrock anim id or None for a wait, wait seconds)."""
+        steps = []
+        for step in chain:
+            kind, args = step[0], list(step[1:])
+            if kind in ("unresolved",): continue
+            if kind == "thenWait": steps.append((None, (args[0] if args else 0) / 20)); continue
+            name = args[0] if args else None
+            nid = amap.get(name) or next((v for k, v in amap.items() if k.split(".")[-1] == str(name).split(".")[-1]), None)
+            if not nid and str(name).split(".")[-1] in ("undefined", "empty", ""): continue   # MCreator's "no animation" sentinel
+            if not nid:
+                self.report["warnings"].append(f"{getattr(self, 'cur', '?')}: animation '{name}' not found in its animation file"); continue
+            loop = {"thenLoop": True, "thenPlayAndHold": "hold_on_last_frame", "thenPlay": None, "then": None}.get(kind)
+            reps = int(args[1]) if kind == "thenPlayXTimes" and len(args) > 1 else 1
+            for _ in range(reps): steps.append((nid, loop))
+        return steps
+
+    def controller(self, eid, ci, c, amap, speedmap):
+        """One GeckoLib controller -> one Bedrock animation controller (states = distinct outcomes)."""
+        cname = f"controller.animation.{GB}.{self.ns}.{eid}.{clean(c['name']) or ci}"
+        outcomes = {}   # key -> {"when": [..], "steps": [...]}
+        for p in c.get("paths", []):
+            steps = []
+            for chain in p["anims"][-1:]:      # the last setAnimation on a path wins in GeckoLib
+                for nid, loop in self.chain_states(chain, amap):
+                    if nid is None: steps.append(("wait", loop)); continue
+                    sp = p.get("speed") if isinstance(p.get("speed"), (int, float)) else None
+                    steps.append(("anim", self.variant_anim(nid, loop=loop if loop is not None else None, speed=sp)))
+            key = json.dumps(steps)
+            outcomes.setdefault(key, {"when": [], "steps": steps})["when"].append(p["when"])
+        if not outcomes: return None
+        states, order = {}, []
+        def cond(ws): return "1" if "1" in ws else " || ".join(f"({w})" for w in ws) if len(ws) > 1 else ws[0]
+        for i, (key, o) in enumerate(outcomes.items()):
+            base = clean("_".join(self.short_of(s[1]).split("_", 1)[-1] if s[0] == "anim" else "wait" for s in o["steps"]))[:40] or "none"
+            sname = base if base not in states else f"{base}_{i}"
+            o["state"] = sname; o["cond"] = cond(o["when"]); order.append(o)
+            states[sname] = None
+        states = {}
+        for o in order:
+            sub = []
+            for j, (kind, val) in enumerate(o["steps"]):
+                sub.append((f"{o['state']}" if j == 0 else f"{o['state']}__{j}", kind, val))
+            if not sub: sub = [(o["state"], "none", None)]       # GeckoLib PlayState.STOP: nothing plays
+            for j, (sname, kind, val) in enumerate(sub):
+                st = {"transitions": []}
+                if kind == "anim":
+                    short = self.short_of(val); st["animations"] = [short]
+                # leave for the state another outcome wants (exclusive conditions); own condition false -> others
+                for other in order:
+                    if other is o: continue
+                    if other["cond"] != "1": st["transitions"].append({other["state"]: other["cond"]})
+                if o["cond"] != "1":
+                    fallback = next((x for x in order if x["cond"] == "1"), None)
+                    if fallback and fallback is not o: st["transitions"].append({fallback["state"]: f"!({o['cond']})"})
+                if j + 1 < len(sub):   # chained RawAnimation: next step when this one is done
+                    nxt = sub[j + 1][0]
+                    st["transitions"].append({nxt: "q.all_animations_finished" if kind == "anim" else f"q.state_time >= {val}"})
+                if c.get("transition_ticks"): st["blend_transition"] = round(c["transition_ticks"] / 20, 3)
+                if not st["transitions"]: st.pop("transitions")
+                states[sname] = st
+        for st in states.values():
+            for tr in st.get("transitions", []):
+                for k, v in tr.items(): self.check(f"{cname}/{k}", v)
+        initial = next((o["state"] for o in order if o["cond"] == "1"), order[-1]["state"])   # Java's final else-branch
+        self.acs[cname] = {"initial_state": initial, "states": states}
+        return cname
+
+    def short_of(self, nid):
+        return nid.split(".", 4)[-1].replace(".", "_")
+
+
+    # ---------------------------------------------------------------- M2: Java state + triggers
+    def resolve(self, var, e):
+        """Reserved v.gb_* -> ("const", "0"/"1") | ("query", molang) | ("prop", driver)."""
+        ov = (self.override.get("vars") or {}).get(var) or (self.override.get("entities", {}).get(e["id"], {}).get("vars") or {}).get(var)
+        info = self.rinfo.get(var) or {"java": next((k for k, v in (e.get("reserved") or {}).items() if v == var), var), "consts": [], "fields": []}
+        java = info.get("java", ""); consts = info.get("consts") or []; fields = info.get("fields") or []
+        strs = [c for c in consts if isinstance(c, str)]
+        if ov:
+            if "molang" in ov: return ("query", ov["molang"])
+            if "const" in ov: return ("const", str(ov["const"]))
+            return ("prop", ov)
+        if "animationprocedure" in java and "empty" in strs:      # MCreator: no procedure animation playing
+            return ("query", "(q.property('gb:trig') == 0)") if getattr(self, "has_trig", False) else ("const", "1")
+        if java.split(".")[-1] in ("m_46467_", "getDayTime"): return ("query", "(q.time_of_day * 24000)")
+        if ("m_6095_" in java or "getType" in java) and fields:            # getType() == SOME_ENTITY_TYPE: fixed per entity
+            ids = [self.ents.get("type_fields", {}).get(f) for f in fields]
+            if any(ids): return ("const", "1" if e["id"] in ids else "0")
+        if java.split(".")[-1] in ("m_29443_",): return ("query", "(!q.is_on_ground)")             # Parrot-style isFlying
+        if java.split(".")[-1] in ("isClimbing", "m_6147_", "onClimbable"):
+            self.climbers.add(e["id"]); return ("query", "q.is_wall_climbing")                        # + BP climb navigation
+        if java.split(".")[-1] in ("isGlowing",): return ("prop", {"kind": "night"})
+        if java.split(".")[-1] in ("m_21660_", "isAngry"): return ("prop", {"kind": "has_target", "dist": 16})
+        if "m_150930_" in java: return ("prop", {"kind": "random_spawn", "p": 0.5})                    # held item (berries/honey)
+        if "m_7755_" in java or "getName" in java and "getVariant" not in java or "m_8077_" in java:
+            if strs:
+                k = "name_contains" if "contains" in java else "name_equals"
+                cs = info.get("case_sensitive") or (java.endswith(".equals") and "IgnoreCase" not in java)
+                return ("prop", {"kind": k, "value": strs[0] if cs else strs[0].lower(), "case": bool(cs)})
+        if "getVariant" in java and strs: return ("prop", {"kind": "one_of", "group": "variant_name", "value": strs[0]})
+        if java.endswith("_present"): return ("prop", {"kind": "random_spawn", "p": 0.5})
+        if "sheared" in var: return ("prop", {"kind": "bp_sheared"})          # JSON: shears interaction + regrow timer
+        d = runtime.classify(var, info)
+        if d["kind"] == "off": self.report.setdefault("m2_off", {})[var] = java
+        return ("prop", d)
+
+    def m2_entity(self, e, eid, full, cnames, rcs, desc, er, amap, ctrl_entity):
+        """Replace reserved vars in this entity's controllers/render controllers; add trigger states; collect properties."""
+        # MCreator: procedures call setAnimation("name") -> the entity's procedure controller plays it once
+        mc = [{"name": t["anim"], "controller": e.get("mcreator") or "procedure", "chain": [["thenPlay", t["anim"]]], "role": t["role"]}
+              for t in self.trigs if t.get("mcreator") and t.get("owner") == e["java_class"]]
+        trig_src = list(ctrl_entity.get("triggerable") or []) + mc
+        self.has_trig = bool(trig_src)
+        txt = json.dumps([self.acs[c] for c in cnames] + [self.rcs[r] for r in rcs])
+        # the entity overrides isSleeping (Bear sleeps at night): GeckoLib layers/variants calling it get the same driver
+        for a, b in (self.override.get("replace") or {}).items(): txt = txt.replace(a, b)
+        sleepvar = next((v for v, i in self.rinfo.items() if i.get("java") in ("m_5803_", "isSleeping") and v in txt), None)
+        if sleepvar: txt = txt.replace("q.is_sleeping", sleepvar)
+        vars_ = sorted(set(re.findall(r"\bv\.gb_[a-z0-9_]+", txt)) - {OWNER_VAR})
+        props, script_props, onegroups = {}, {}, {}
+        for v in vars_:
+            kind, val = self.resolve(v, e)
+            if kind == "const": rep = val
+            elif kind == "query": rep = val
+            else:
+                pn = runtime.prop_name(v); props[pn] = val; rep = f"q.property('{pn}')"
+                if val["kind"] == "one_of": onegroups.setdefault(val["group"], []).append(pn)
+                elif val["kind"] not in ("random_spawn", "bp_sheared"): script_props[pn] = val
+            txt = re.sub(re.escape(v) + r"\b", rep, txt)
+            er.setdefault("m2", {})[v] = {"java": (self.rinfo.get(v) or {}).get("java"), kind: val}
+        parts = json.loads(txt)
+        for c, d in zip(cnames, parts[:len(cnames)]): self.acs[c] = d
+        for r, d in zip(rcs, parts[len(cnames):]): self.rcs[r] = d
+        # triggered animations -> int property gb:trig; states injected into the named GeckoLib controller
+        trig = []
+        roles = {t["anim"]: t["role"] for t in self.trigs if t.get("owner") == e["java_class"]}
+        for t in trig_src:
+            c = {"name": t.get("controller") or "triggerable"}
+            if not any(x["anim"] == t["name"] for x in trig):
+                steps = [(n, l) for n, l in self.chain_states(t["chain"], amap) if n]
+                if not steps: continue
+                role = t.get("role") or roles.get(t["name"]) or ("melee" if re.search(r"attack|bite|swing|slam|hit", t["name"], re.I) else
+                                               "spawn" if re.search(r"spawn|emerge|birth|summon_in|rise", t["name"], re.I) else
+                                               "death" if "death" in t["name"].lower() or "die" in t["name"].lower() else
+                                               "hurt" if re.search(r"hurt|damage|flinch", t["name"], re.I) else "ability")
+                trig.append({"index": len(trig) + 1, "anim": t["name"], "role": role, "controller": c["name"], "steps": steps,
+                             "length": sum((self.anim_meta.get(n, {}).get("length") or 1) for n, _ in steps)})
+        if trig:
+            props["gb:trig"] = {"kind": "trigger", "max": len(trig)}
+            by_ctrl = {}
+            for t in trig: by_ctrl.setdefault(t["controller"], []).append(t)
+            for cn_name, ts in by_ctrl.items():
+                cn = next((x for x in cnames if x.endswith("." + (clean(cn_name) or "x"))), None)
+                if cn is None:   # controller has no normal paths: its own Bedrock controller with an idle state
+                    cn = f"controller.animation.{GB}.{self.ns}.{eid}.{clean(cn_name) or 'trig'}"
+                    self.acs[cn] = {"initial_state": "default", "states": {"default": {}}}
+                    key = f"ctrl_{len(cnames)}"; desc.setdefault("animations", {})[key] = cn; desc["scripts"].setdefault("animate", []).append(key)
+                    cnames.append(cn)
+                ac = self.acs[cn]; init = ac["initial_state"]
+                for t in ts:
+                    cond = f"q.property('gb:trig') == {t['index']}"
+                    for sn, st in ac["states"].items():
+                        if sn.startswith("trig_"): continue
+                        st.setdefault("transitions", []).insert(0, {f"trig_{t['index']}": cond})
+                    for j, (nid, loop) in enumerate(t["steps"]):
+                        vid = self.variant_anim(nid, loop=loop); short = self.short_of(vid)
+                        desc.setdefault("animations", {})[short] = vid
+                        sn = f"trig_{t['index']}" + (f"__{j}" if j else "")
+                        st = {"animations": [short], "transitions": [{init: f"q.property('gb:trig') != {t['index']}"}]}
+                        if j + 1 < len(t["steps"]): st["transitions"].append({f"trig_{t['index']}__{j + 1}": "q.all_animations_finished"})
+                        ac["states"][sn] = st
+            er["triggers"] = [{k: t[k] for k in ("index", "anim", "role", "controller")} for t in trig]
+        if "gb:trig" not in props:   # MCreator 'no procedure animation' test with nothing to trigger: always true
+            for c in cnames + rcs:
+                tbl = self.acs if c in self.acs else self.rcs
+                t = json.dumps(tbl[c]).replace("(q.property('gb:trig') == 0)", "1").replace("q.property('gb:trig')", "0")
+                tbl[c] = json.loads(t)
+        if props:
+            self.js["entities"][full] = {"props": script_props, "range": (e.get("attributes") or {}).get("follow_range", 16),
+                                         "triggers": [{k: t[k] for k in ("index", "anim", "role", "length")} for t in trig]}
+            hk = (self.override.get("hook_anims") or {}).get(eid)
+            if hk: self.js["entities"][full]["hooks"] = hk
+            if eid in (self.override.get("ability_hooked") or []): self.js["entities"][full]["hooked"] = True
+        return props, onegroups
+
+    # ---------------------------------------------------------------- per entity
+    def entity(self, e, ctrl_entity):
+        eid = clean(e["id"]); full = f"{self.ns}:{eid}"; self.cur = eid
+        er = self.report["entities"].setdefault(eid, {"java": e["class"]})
+        # geometry (+ baby/other models chosen in getModelResource)
+        geos = [{"when": "1", "path": e["geo"]}] if not e.get("geo_variants") else e["geo_variants"]
+        geo_map = {}
+        for i, g in enumerate(geos):
+            gid = self.geometry(g["path"]) if g.get("path") else None
+            if gid: geo_map[f"g{i}"] = (gid, g["when"])
+        if len(geo_map) > 1: self.dedupe_locators([v[0] for v in geo_map.values()], er)
+        if not geo_map: er["skipped"] = "no geometry"; return
+        # textures (+ variants)
+        tex_map, tex_anim = {}, {}
+        for i, v in enumerate(e.get("variants") or []):
+            if v["texture"] not in self.names: continue
+            key = f"textures/entity/{GB}/{self.ns}/{clean(Path(v['texture']).stem)}"
+            if "/" in v["texture"].split("textures/entity/")[-1]:
+                key = f"textures/entity/{GB}/{self.ns}/" + clean(v["texture"].split("textures/entity/")[-1][:-4].replace("/", "_"))
+            n, t = self.entity_png(key, v["texture"]); tex_map[f"t{i}"] = (key, v["when"]); tex_anim[f"t{i}"] = (n, t)
+        if not tex_map: er["skipped"] = "no texture"; return
+        desc = {"identifier": full, "materials": {"default": "entity_alphatest"},
+                "textures": {k: v[0] for k, v in tex_map.items()}, "geometry": {k: v[0] for k, v in geo_map.items()},
+                "render_controllers": [], "spawn_egg": self.egg_colors().get(e.get("type_field"), {"base_color": "#2b2b2b", "overlay_color": "#7a3cff"}),
+                "scripts": {"pre_animation": [f"{OWNER_VAR} = {OWNER_VAR} ?? 0;"], "animate": []}}
+        reserved = set(e.get("reserved", {}).values())       # Java-side conditions: resolved in m2_entity()
+        # main render controller: geometry + texture picked by GeckoLib's own conditions
+        rc = f"controller.render.{GB}.{self.ns}.{eid}"
+        def pick(kind, m):
+            items = list(m.items())
+            if len(items) == 1: return f"{kind}.{items[0][0]}"
+            expr = f"{kind}.{next((k for k, v in items if v[1] == '1'), items[-1][0])}"
+            for k, (_, when) in reversed([x for x in items if x[1][1] != "1"]):
+                expr = f"({when}) ? {kind}.{k} : ({expr})"
+            return expr
+        rcd = {"geometry": pick("Geometry", geo_map), "materials": [{"*": "Material.default"}],
+               "textures": [pick("Texture", tex_map)], "part_visibility": [{"*": f"{OWNER_VAR} == 0"}]}
+        uva = animtex.uv_anim([(tex_map[k][1], *tex_anim[k]) for k in tex_map])    # animated .mcmeta skins: scroll the strip
+        if uva:
+            rcd["uv_anim"] = uva; rcd["materials"] = [{"*": "Material.anim"}]; desc["materials"]["anim"] = "gb_anim"
+            er["animated_textures"] = sum(1 for k in tex_anim if tex_anim[k][0] > 1)
+        for k in ("geometry",): self.check(f"{rc}/{k}", rcd[k])
+        self.check(f"{rc}/texture", rcd["textures"][0])
+        self.rcs[rc] = rcd; desc["render_controllers"].append(rc)
+        # glow (GeckoLib AutoGlowingGeoLayer / emissive custom layers) through the gb_glow material
+        glows = []
+        if e.get("glowmask") and e["glowmask"] in self.names: glows.append(e["glowmask"])
+        layer_rows = []
+        for L in e.get("layers", []):
+            if L.get("kind") != "custom": continue
+            for r in L.get("rows") or []:
+                if r["texture"] not in self.names: continue
+                emis = L.get("emissive") or any(w in r["texture"].lower() for w in ("eye", "glow", "emissive"))
+                if emis and r["when"] == "1": glows.append(r["texture"])
+                else: layer_rows.append({**r, "emissive": emis, "layer": L["class"].split(".")[-1]})
+            if not L.get("rows"): self.report["warnings"].append(f"{full}: custom layer {L['class'].split('.')[-1]} draws nothing we could find")
+        for i, g in enumerate(dict.fromkeys(glows)):
+            key = f"textures/entity/{GB}/{self.ns}/{clean(Path(g).stem)}"
+            gn, gt = self.entity_png(key, g)
+            desc["textures"][f"glow{i}"] = key; desc["materials"]["glow"] = "gb_glow"
+            grc = f"controller.render.{GB}.{self.ns}.{eid}.glow{i}"
+            self.rcs[grc] = {"geometry": rcd["geometry"], "materials": [{"*": "Material.glow"}], "textures": [f"Texture.glow{i}"],
+                             "ignore_lighting": True, "part_visibility": [{"*": f"{OWNER_VAR} == 0"}]}
+            if gn > 1:
+                self.rcs[grc]["uv_anim"] = animtex.uv_anim([("1", gn, gt)])
+                self.rcs[grc]["materials"] = [{"*": "Material.glow_anim"}]; desc["materials"]["glow_anim"] = "gb_glow_anim"
+            desc["render_controllers"].append(grc); er["glow"] = er.get("glow", 0) + 1
+        # custom GeoRenderLayers (GeckoLib reRender with another texture): one overlay render controller each, shown by the
+        # layer's own condition (sheared bear, sleeping snake eyes, TMNT tortoise skins by name)
+        for i, r in enumerate(layer_rows):
+            key = f"textures/entity/{GB}/{self.ns}/{clean(Path(r['texture']).stem)}"
+            ln, lt = self.entity_png(key, r["texture"])
+            desc["textures"][f"layer{i}"] = key
+            if r["emissive"]: desc["materials"]["glow"] = "gb_glow"
+            lrc = f"controller.render.{GB}.{self.ns}.{eid}.layer{i}"
+            self.rcs[lrc] = {"geometry": rcd["geometry"], "materials": [{"*": "Material.glow" if r["emissive"] else "Material.default"}],
+                             "textures": [f"Texture.layer{i}"], "part_visibility": [{"*": f"({r['when']}) && {OWNER_VAR} == 0"}],
+                             **({"ignore_lighting": True} if r["emissive"] else {})}
+            if ln > 1:
+                self.rcs[lrc]["uv_anim"] = animtex.uv_anim([("1", ln, lt)])
+                self.rcs[lrc]["materials"] = [{"*": "Material.glow_anim" if r["emissive"] else "Material.anim"}]
+                desc["materials"]["glow_anim" if r["emissive"] else "anim"] = "gb_glow_anim" if r["emissive"] else "gb_anim"
+            desc["render_controllers"].append(lrc); er.setdefault("layers", []).append({"layer": r["layer"], "when": r["when"], "texture": key})
+        # animations + controllers
+        amap = self.animations(e["animation_file"]) if e.get("animation_file") else {}
+        for extra in e.get("animation_files") or []:     # model swaps animation files per form (dragon form etc.): all of them
+            if extra != e.get("animation_file"): amap = {**self.animations(extra), **amap}
+        cnames = []
+        for ci, c in enumerate(ctrl_entity.get("controllers", [])):
+            if any("animationprocedure" in json.dumps(p.get("anims")) for p in c.get("paths", [])):
+                e["mcreator"] = c["name"]; continue        # MCreator procedure controller: becomes trigger states (m2_entity)
+            cn = self.controller(eid, ci, c, amap, {})
+            if cn: cnames.append(cn)
+        desc.setdefault("animations", {})
+        if e.get("_vm_anim"):     # vanilla-model entity: its setupAnim() as one looping Molang animation
+            nid, anim = e["_vm_anim"]
+            self.anim_files = getattr(self, "anim_files", {}); self.anim_files.setdefault(f"vm_{eid}", {})[nid] = anim
+            desc["animations"]["vm_setup"] = nid; desc["scripts"]["animate"].append("vm_setup")
+            desc["scripts"]["pre_animation"].insert(0, "v.gb_ls = q.modified_distance_moved * 4.0;")
+            if e["vanilla_model"].get("scale"): desc["scripts"]["scale"] = str(e["vanilla_model"]["scale"])
+        if e["gb_kind"] == "projectile": self.projectile_face(next(iter(geo_map.values()))[0], desc)
+        if e["gb_kind"] == "block": er["block"] = self.block_for(e, eid, next(iter(geo_map.values()))[0], e["variants"][0]["texture"])
+        my_rcs = [r for r in desc["render_controllers"]]
+        props, onegroups = self.m2_entity(e, eid, full, cnames, my_rcs, desc, er, amap, ctrl_entity)
+        used = set()
+        for cn in cnames:
+            for st in self.acs[cn]["states"].values(): used |= set(st.get("animations", []))
+        anims = {}
+        for stem, files in getattr(self, "anim_files", {}).items():
+            for nid in files:
+                if self.short_of(nid) in used: anims[self.short_of(nid)] = nid
+        for i, cn in enumerate(cnames):
+            key = f"ctrl_{i}"; anims[key] = cn; desc["scripts"]["animate"].append(key)
+        if not cnames and amap:   # no controller we could read (AzureLib 3 animators, data-driven mods): locomotion controller
+            pick = lambda *ws: next((v for k, v in amap.items() if any(w in k.lower() for w in ws)), None)
+            idle = pick("idle") or next(iter(amap.values())); walk = pick("walk", "move"); run_ = pick("run", "sprint", "chase")
+            atk = pick("attack", "melee", "swing", "bite", "slash")
+            states = {"idle": {"animations": [self.short_of(idle)], "transitions": [], "blend_transition": 0.2}}
+            if walk: states["walk"] = {"animations": [self.short_of(walk)], "transitions": [{"idle": "q.ground_speed < 0.05"}] + ([{"attack": "v.attack_time > 0"}] if atk else []), "blend_transition": 0.2}
+            if run_: states["run"] = {"animations": [self.short_of(run_)], "transitions": [{"idle": "q.ground_speed < 0.05"}] + ([{"walk": "q.ground_speed < 3.5"}] if walk else []), "blend_transition": 0.2}
+            if atk: states["attack"] = {"animations": [self.short_of(atk)], "transitions": [{"idle": "v.attack_time <= 0 && q.all_animations_finished"}], "blend_transition": 0.1}
+            tr = states["idle"]["transitions"]
+            if atk: tr.append({"attack": "v.attack_time > 0"})
+            if run_: tr.append({"run": "q.ground_speed > 3.5"})
+            if walk: tr.append({"walk": "q.ground_speed > 0.05"})
+            if walk and run_: states["walk"]["transitions"].append({"run": "q.ground_speed > 3.5"})
+            cn = f"controller.animation.{GB}.{self.ns}.{eid}.locomotion"
+            self.acs[cn] = {"initial_state": "idle", "states": states}
+            for nid in filter(None, (idle, walk, run_, atk)): anims[self.short_of(nid)] = nid
+            anims["ctrl_loco"] = cn; desc["scripts"]["animate"].append("ctrl_loco"); er["fallback_locomotion"] = sorted(states)
+        anims.update({k: v for k, v in desc.get("animations", {}).items() if k not in anims})
+        for src_bone, copies in (getattr(self, "bone_alias", None) or {}).items():   # renamed bones (dedupe_locators)
+            for nid in anims.values():
+                stem = nid.split(".")[3] if nid.startswith("animation.") else None
+                a = self.anim_files.get(stem, {}).get(nid) if stem else None
+                if a and src_bone in (a.get("bones") or {}):
+                    for c in copies: a["bones"][c] = a["bones"][src_bone]
+        self.bone_alias = {}
+        desc["animations"] = anims
+        used_vars = set()
+        for nid in anims.values():
+            stem = nid.split(".")[3] if nid.startswith("animation.") else None
+            a = self.anim_files.get(stem, {}).get(nid) if stem else None
+            if a: used_vars |= {("v." + m.split(".", 1)[1]).lower() for m in re.findall(r"\b(?:v|variable)\.[a-z_][a-z0-9_]*", json.dumps(a), re.I)}
+        for v in sorted(used_vars - set(reserved) - {OWNER_VAR}):
+            desc["scripts"]["pre_animation"].append(f"{v} = {v} ?? 0;")
+        if used_vars: er["anim_vars_initialised"] = sorted(used_vars)
+        if not anims: desc.pop("animations")      # Bedrock: "Node has too few children (0 < 1)"
+        if getattr(self, "entity_sounds", None): desc["sound_effects"] = dict(self.entity_sounds)   # short name -> sound id (string)
+        if getattr(self, "particle_map", None): desc["particle_effects"] = dict(self.particle_map)   # keyframe short name -> particle id
+        evs = {}
+        for kind, ev in (self.mob_sounds.get(e["java_class"]) or {}).items():
+            short = self.sound(ev)
+            if short: evs[kind] = self.entity_sounds[short]
+        if evs: self.ent_sounds[full] = {"volume": 1.0, "pitch": [0.9, 1.1], "events": evs}; er["sounds"] = evs
+        if not desc["scripts"].get("animate"): desc["scripts"].pop("animate", None)
+        if e["gb_kind"] != "mob": desc.pop("spawn_egg", None)
+        er.update({"geometry": [v[0] for v in geo_map.values()], "textures": len(tex_map), "controllers": len(cnames),
+                   "animations_used": len(anims) - len(cnames)})
+        self.built.add(eid)
+        self.write(self.rp, f"entity/{self.ns}/{eid}.entity.json", {"format_version": "1.10.0", "minecraft:client_entity": {"description": desc}})
+        self.behaviour(e, eid, full, any("q.variant" in v[1] for v in tex_map.values()), len(tex_map), props, onegroups)
+        nice = e.get("name") or " ".join(re.findall(r"[A-Z][a-z0-9]*", re.sub(r"(Attack)?Entity$", "", e["class"]))) or e["class"]
+        self.lang += [f"entity.{full}.name={nice}", f"item.spawn_egg.entity.{full}.name=Spawn {nice} (GeckoBridge)"]
+
+    def behaviour(self, e, eid, full, uses_variant, ntex, props=None, onegroups=None):
+        at = e.get("attributes") or {}; w, h = (e.get("size") or [0.6, 1.8])
+        hostile = e.get("kind") == "hostile"
+        if e["gb_kind"] == "projectile":
+            comps = {"minecraft:type_family": {"family": ["geckobridge", self.ns, "projectile"]},
+                     "minecraft:collision_box": {"width": min(w, 1.0), "height": min(h, 1.0)},
+                     "minecraft:projectile": {"on_hit": {"impact_damage": {"damage": at.get("attack_damage", 4), "knockback": True, "destroy_on_hit": True},
+                                                         "remove_on_hit": {}}, "power": 1.2, "gravity": 0.0, "uncertainty_base": 1, "anchor": 1,
+                                              "offset": [0, -0.1, 0], "inertia": 1, "liquid_inertia": 1, "hit_sound": "bow.hit"},
+                     "minecraft:physics": {}, "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": True},
+                     "minecraft:conditional_bandwidth_optimization": {"default_values": {"max_optimized_distance": 80, "max_dropped_ticks": 7, "use_motion_prediction_hints": True}}}
+            self.write(self.bp, f"entities/{self.ns}/{eid}.json", {"format_version": "1.21.0", "minecraft:entity": {
+                "description": {"identifier": full, "is_spawnable": False, "is_summonable": True, "is_experimental": False,
+                                **({"properties": self.prop_defs(props)} if props else {})}, "components": comps}})
+            return
+        if e["gb_kind"] == "block":
+            comps = {"minecraft:type_family": {"family": ["geckobridge", self.ns, "gb_block_companion", "inanimate"]},
+                     "minecraft:health": {"value": 1, "max": 1}, "minecraft:collision_box": {"width": 0.01, "height": 0.01},
+                     "minecraft:physics": {"has_gravity": False, "has_collision": False},
+                     "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": False},
+                     "minecraft:damage_sensor": {"triggers": {"cause": "all", "deals_damage": "no"}},
+                     "minecraft:knockback_resistance": {"value": 1}, "minecraft:persistent": {}, "minecraft:fire_immune": {}}
+            ent = {"description": {"identifier": full, "is_spawnable": False, "is_summonable": True, "is_experimental": False,
+                                   **({"properties": self.prop_defs(props)} if props else {})}, "components": comps}
+            self.write(self.bp, f"entities/{self.ns}/{eid}.json", {"format_version": "1.21.0", "minecraft:entity": ent})
+            return
+        comps = {
+            "minecraft:type_family": {"family": ["geckobridge", self.ns, "mob"] + (["monster"] if hostile else [])},
+            "minecraft:health": {"value": at.get("max_health", 20), "max": at.get("max_health", 20)},
+            "minecraft:movement": {"value": round(at.get("movement_speed", 0.25), 3)},
+            "minecraft:collision_box": {"width": w, "height": h},
+            "minecraft:physics": {}, "minecraft:pushable": {"is_pushable": True, "is_pushable_by_piston": True},
+            "minecraft:jump.static": {}, "minecraft:movement.basic": {},
+            "minecraft:navigation.walk": {"can_path_over_water": True, "avoid_damage_blocks": True},
+            "minecraft:behavior.float": {"priority": 0},
+            "minecraft:behavior.random_stroll": {"priority": 6, "speed_multiplier": 1.0},
+            "minecraft:behavior.look_at_player": {"priority": 7, "look_distance": 8},
+            "minecraft:behavior.random_look_around": {"priority": 8},
+            "minecraft:behavior.hurt_by_target": {"priority": 1},
+            "minecraft:persistent": {}, "minecraft:nameable": {},
+        }
+        if at.get("attack_damage"):
+            comps["minecraft:attack"] = {"damage": at["attack_damage"]}
+            comps["minecraft:behavior.melee_attack"] = {"priority": 2, "speed_multiplier": 1.25, "track_target": True}
+        if hostile:
+            comps["minecraft:behavior.nearest_attackable_target"] = {"priority": 2, "must_see": True, "reselect_targets": True,
+                "entity_types": [{"filters": {"test": "is_family", "subject": "other", "value": "player"}, "max_dist": at.get("follow_range", 16)}]}
+        comps["minecraft:type_family"]["family"].append(f"{self.ns}_{clean(e['id'])}")   # exact-type family (MobAI targets/avoids)
+        gres = self.goals_of(e) if e["gb_kind"] == "mob" else None
+        gates = []
+        if gres:   # the mod's own AI goal list replaces the generic behaviours
+            goals, gates = gres["components"], gres["gates"]
+            for k in [k for k in comps if k.startswith("minecraft:behavior.")]: comps.pop(k)
+            comps.update(goals)
+            gated_keys = {k for gt in gates for k in gt.get("components", {})}
+            if ("minecraft:behavior.melee_attack" in goals or "minecraft:behavior.melee_attack" in gated_keys) and "minecraft:attack" not in comps:
+                comps["minecraft:attack"] = {"damage": at.get("attack_damage", 3)}
+            self.report["entities"][eid]["goals"] = sorted(goals) + [f"gated:{k}" for k in sorted(gated_keys)]
+            if gates: self.report["entities"][eid]["gates"] = [{k: v for k, v in gt.items() if k != "components"} for gt in gates]
+        mv = e.get("movement", "walk")
+        if e["id"] in self.climbers and mv == "walk":     # the mod's isClimbing (snails, snakes): wall climbing like spiders
+            comps.pop("minecraft:navigation.walk", None); comps["minecraft:navigation.climb"] = {"can_path_over_water": True, "avoid_damage_blocks": True}
+            comps["minecraft:can_climb"] = {}
+        if mv == "fly":
+            for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll"): comps.pop(k, None)
+            comps.update({"minecraft:can_fly": {}, "minecraft:flying_speed": {"value": 0.1}, "minecraft:physics": {"has_gravity": False},
+                "minecraft:movement.hover": {}, "minecraft:navigation.hover": {"can_path_over_water": True, "can_sink": False, "can_path_from_air": True},
+                "minecraft:behavior.random_hover": {"priority": 6, "xz_dist": 8, "y_dist": 4, "y_offset": -1, "interval": 1, "hover_height": [1, 4]}})
+            if gres:   # Java's wander goal (if any) becomes the hover wander, with its priority; none in Java -> none here
+                rs = gres["components"].get("minecraft:behavior.random_stroll")
+                if rs: comps["minecraft:behavior.random_hover"]["priority"] = rs["priority"]
+                else: comps.pop("minecraft:behavior.random_hover", None)
+        elif mv == "swim":
+            for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll", "minecraft:behavior.float"): comps.pop(k, None)
+            comps.update({"minecraft:breathable": {"breathes_water": True, "breathes_air": False, "suffocate_time": 0},
+                "minecraft:underwater_movement": {"value": 0.08},
+                "minecraft:navigation.generic": {"can_path_over_water": False, "can_swim": True, "can_walk": False, "can_breach": False},
+                "minecraft:movement.sway": {"sway_amplitude": 0}, "minecraft:behavior.swim_wander": {"priority": 6, "speed_multiplier": 1.0, "look_ahead": 2, "wander_time": 5}})
+        ent = {"description": {"identifier": full, "is_spawnable": True, "is_summonable": True, "is_experimental": False}, "components": comps}
+        props = props or {}; seq = []
+        if uses_variant:
+            ent["component_groups"] = {f"gb_variant_{i}": {"minecraft:variant": {"value": i}} for i in range(ntex)}
+            seq.append({"randomize": [{"weight": 1, "add": {"component_groups": [f"gb_variant_{i}"]}} for i in range(ntex)]})
+        if props:   # Java-side state (M2): client-synced entity properties, read by the client with q.property()
+            ent["description"]["properties"] = self.prop_defs(props)
+        for p, d in props.items():     # chosen once at spawn, pure JSON (no script)
+            if d.get("kind") == "random_spawn":
+                w = max(1, min(99, round(d.get("p", 0.5) * 100)))
+                seq.append({"randomize": [{"weight": w, "set_property": {p: True}}, {"weight": 100 - w, "set_property": {p: False}}]})
+        for g, ps in (onegroups or {}).items():
+            seq.append({"randomize": [{"weight": 1, "set_property": {p: True}} for p in ps]})
+        # sheared state (shears -> layer shown, wool/fur regrows) for *sheared* properties: pure JSON
+        sheared = [p for p, d in props.items() if "sheared" in p]
+        if sheared:
+            p = sheared[0]
+            comps["minecraft:interact"] = {"interactions": [{"on_interact": {"filters": {"all_of": [
+                {"test": "has_equipment", "subject": "other", "domain": "hand", "value": "shears"},
+                {"test": "bool_property", "domain": p, "operator": "!=", "value": True}]}, "event": "gb:sheared", "target": "self"},
+                "use_item": False, "hurt_item": 1, "play_sounds": "shear", "interact_text": "action.interact.shear"}]}
+            ent.setdefault("component_groups", {})["gb_regrow"] = {"minecraft:timer": {"looping": False, "time": [240, 480],
+                                                                                     "time_down_event": {"event": "gb:regrow"}}}
+            ent.setdefault("events", {})["gb:sheared"] = {"set_property": {p: True}, "add": {"component_groups": ["gb_regrow"]}}
+            ent["events"]["gb:regrow"] = {"set_property": {p: False}, "remove": {"component_groups": ["gb_regrow"]}}
+        # MobAI gated goals: the merged behaviour with / without the gated goal lives in an on/off group pair; the
+        # GoalRunner fires gb:g<i>_on / _off from the translated Java canUse. Off at spawn (Java checks before use).
+        for gi, gt in enumerate([g for g in gates if g["mode"] == "gate"]):
+            on, off = {}, {}
+            for k, v in gt["components"].items():
+                base = comps.pop(k, None)
+                if base is not None and "entity_types" in v and "entity_types" in base:
+                    on[k] = {**base, "priority": min(base["priority"], v["priority"]), "entity_types": base["entity_types"] + v["entity_types"]}; off[k] = base
+                else: on[k] = v; off.update({k: base} if base is not None else {})
+            # later gates on the same key build on the base without earlier gates: keep their "off" component in base
+            for k, v in off.items(): comps.setdefault(k, None)
+            cg = ent.setdefault("component_groups", {})
+            cg[f"gb_g{gi}_on"] = on
+            if off: cg[f"gb_g{gi}_off"] = off
+            evs = ent.setdefault("events", {})
+            evs[f"gb:g{gi}_on"] = {"add": {"component_groups": [f"gb_g{gi}_on"]}, **({"remove": {"component_groups": [f"gb_g{gi}_off"]}} if off else {})}
+            evs[f"gb:g{gi}_off"] = {"remove": {"component_groups": [f"gb_g{gi}_on"]}, **({"add": {"component_groups": [f"gb_g{gi}_off"]}} if off else {})}
+            if off: seq.append({"add": {"component_groups": [f"gb_g{gi}_off"]}})
+            gt["index"] = gi
+        for k in [k for k, v in comps.items() if v is None]: comps.pop(k)
+        if gates: self.mobai[full] = [{k: v for k, v in gt.items() if k != "components"} for gt in gates]
+        for src, gi in [(comps, None)] + [(g, int(k[4:-3])) for k, g in ent.get("component_groups", {}).items() if k.startswith("gb_g") and k.endswith("_on")]:
+            nat = src.get("minecraft:behavior.nearest_attackable_target") or {}
+            pl = [t for t in nat.get("entity_types", []) if t.get("filters", {}).get("value") == "player"]
+            if pl: self.nat_player[full] = {"range": max(t.get("max_dist", 16) for t in pl), "gate": gi}; break
+        if "minecraft:behavior.melee_attack" in comps or any("minecraft:behavior.melee_attack" in g for g in ent.get("component_groups", {}).values()):
+            self.melee_types.add(full)   # Java navigation.moveTo on these walks Bedrock's pathfinder to a nav point
+        if seq: ent.setdefault("events", {})["minecraft:entity_spawned"] = seq[0] if len(seq) == 1 else {"sequence": seq}
+        self.write(self.bp, f"entities/{self.ns}/{eid}.json", {"format_version": "1.21.0", "minecraft:entity": ent})
+
+    # ---------------------------------------------------------------- M3: assets by name, projectiles, block entities
+    def fill_assets(self, e):
+        """GeckoLib's DefaultedEntityGeoModel / DefaultedBlockGeoModel build paths from the id at runtime: try those."""
+        stems, s_ = [e["id"]], e["id"]
+        for suf in ("_block", "_attack", "_entity", "_projectile", "_attack"):
+            if s_.endswith(suf): s_ = s_[: -len(suf)]; stems.append(s_)
+        dirs = ("block/", "entity/", "") if e["gb_kind"] == "block" else ("entity/", "")
+        def find(kind, ext):
+            for st in stems:
+                for d in dirs:
+                    n = f"assets/{self.modid}/{kind}/{d}{st}{ext}"
+                    if n in self.names: return n
+            return None
+        if not e.get("geo"): e["geo"] = find("geo", ".geo.json") or find("geckolib/models", ".geo.json"); e.setdefault("assets_by_name", []).append("geo")
+        if not e.get("animation_file"): e["animation_file"] = find("animations", ".animation.json") or find("geckolib/animations", ".animation.json")
+        if not e.get("variants"):
+            t = find("textures", ".png")
+            if t: e["variants"] = [{"when": "1", "texture": t}]
+
+    def vanilla_assets(self, e):
+        """Non-GeckoLib entity: build its geometry from the Java model (or the vanilla model its renderer uses)."""
+        vm = e["vanilla_model"]; eid = clean(e["id"]); kind = vm.get("vanilla")
+        mesh, assigns = None, {}
+        if vm.get("model_class"):
+            text = self.javap_class(vm["model_class"])
+            mesh = VM.parse_mesh(text) if text else None
+            if mesh: assigns = VM.parse_anim(text, VM.part_fields(text))
+            else: self.report["warnings"].append(f"{e['id']}: could not read {vm['model_class']}.createBodyLayer, using the player model")
+        if not mesh:
+            if kind in ("cow", "pig"): mesh, assigns = VM.quadruped_mesh(kind), dict(VM.QUADRUPED_ANIM)
+            elif kind in ("block", "item"): mesh = VM.cube_mesh(8 if kind == "block" else 4)
+            elif kind == "none": mesh = VM.cube_mesh(0.01)
+            else: mesh, assigns = VM.player_mesh(), dict(VM.HUMANOID_ANIM)
+        gid = f"geometry.{GB}.{self.ns}.vm_{eid}"
+        geo = VM.to_bedrock(mesh, gid)
+        self.write(self.rp, f"models/entity/{self.ns}/vm_{eid}.geo.json", geo)
+        key = f"<vanilla_model>/{eid}"; self.geo_ids[key] = gid; e["geo"] = key
+        rest = {b["name"]: b.get("rotation", [0, 0, 0]) for b in geo["minecraft:geometry"][0]["bones"]}
+        anim = VM.anim_json(f"animation.{GB}.{self.ns}.vm_{eid}.setup", assigns, rest)
+        if anim: e["_vm_anim"] = next(iter(anim.items()))
+        if kind in ("block", "item") and not e.get("variants"):
+            pick = next((n for n in sorted(self.names) if re.search(rf"assets/{self.modid}/textures/blocks?/(cobblestone|stone\w*)\.png$", n)), None) \
+                or next((n for n in sorted(self.names) if re.search(rf"assets/{self.modid}/textures/blocks?/\w+\.png$", n)), None)
+            if pick: e["variants"] = [{"when": "1", "texture": pick}]
+        if kind == "none" and not e.get("variants"):
+            pick = next((n for n in sorted(self.names) if n.endswith("/invisible.png")), None) or next((n for n in sorted(self.names) if n.startswith(f"assets/{self.modid}/textures/") and n.endswith(".png")), None)
+            if pick: e["variants"] = [{"when": "1", "texture": pick}]
+        e["layers"] = [{"kind": "custom", "class": (vm.get("renderer_class") or "") + "$eyes", "rows": [{"when": "1", "texture": g}], "emissive": True}
+                       for g in dict.fromkeys(vm.get("glow") or [])]
+        self.report["entities"].setdefault(clean(e["id"]), {"java": e["class"]})["vanilla_model"] = vm.get("model_class") or kind
+
+    def mod_particles(self):
+        """assets/<mod>/particles/<name>.json -> Bedrock billboard particles (texture, gravity, lifetime from the Java
+        particle class when readable, else sensible defaults). Returns the particle ids for the JavaBridge."""
+        ids = []
+        for n in sorted(x for x in self.names if x.startswith(f"assets/{self.modid}/particles/") and x.endswith(".json")):
+            name = Path(n).stem
+            try: texs = jload(self.z.read(n)).get("textures") or []
+            except Exception: continue
+            if not texs: continue
+            ns_, path = (texs[0].split(":", 1) + [None])[:2] if ":" in texs[0] else (self.modid, texs[0])
+            src = f"assets/{ns_}/textures/particle/{path}.png"
+            if src not in self.names: continue
+            key = f"textures/particle/{self.ns}/{name}"
+            self.write(self.rp, key + ".png", self.z.read(src))
+            life, grav, size = 2.0, 0.0, 0.2
+            cls = next((c for c in self.names if c.endswith(".class") and "/particle/" in c and Path(c).stem.lower() == name.replace("_", "") + "particle"), None)
+            if cls:
+                t = self.javap_class(cls[:-6].replace("/", "."), extract_dir="/particle/") or ""
+                g = re.search(r"ldc\s+#\d+\s+// float ([\d.]+)f\s*\n\s*\d+: putfield\s+#\d+\s+// Field f_107226_", t)    # gravity
+                qi = t.find("putfield      #"); qi = max((m.start() for m in re.finditer(r"putfield\s+#\d+\s+// Field f_107663_", t)), default=-1); qf = re.findall(r"// float ([\d.]+)f", t[max(0, qi - 200):qi]) if qi > 0 else []   # quadSize
+                q = type("m", (), {"group": lambda self, i, v=qf[-1]: v})() if qf else None
+                L = re.findall(r"bipush\s+(\d+)", t[t.find("f_107225_") - 400: t.find("f_107225_")]) if "f_107225_" in t else []
+                if g: grav = float(g.group(1))
+                if q: size = min(1.0, float(q.group(1)) * 0.15)     # Java quadSize starts ~0.15 (half size), times the factor
+                if L: life = max(int(x) for x in L) / 20
+            pid = f"{self.ns}:{name}"
+            self.write(self.rp, f"particles/{self.ns}_{name}.json", {"format_version": "1.10.0", "particle_effect": {
+                "description": {"identifier": pid, "basic_render_parameters": {"material": "particles_alpha", "texture": key}},
+                "components": {
+                    "minecraft:emitter_rate_instant": {"num_particles": 1}, "minecraft:emitter_lifetime_once": {"active_time": 0.05},
+                    "minecraft:emitter_shape_point": {"direction": ["math.random(-1, 1)", "math.random(0, 1)", "math.random(-1, 1)"]},
+                    "minecraft:particle_lifetime_expression": {"max_lifetime": f"math.random({life / 2:.2f}, {life:.2f})"},
+                    "minecraft:particle_initial_speed": 1.0,
+                    "minecraft:particle_motion_dynamic": {"linear_acceleration": [0, -24 * grav, 0], "linear_drag_coefficient": 0.5},
+                    "minecraft:particle_motion_collision": {"coefficient_of_restitution": 0, "collision_radius": 0.05, "collision_drag": 4},
+                    "minecraft:particle_appearance_billboard": {"size": [size, size], "facing_camera_mode": "rotate_xyz",
+                                                                 "uv": {"texture_width": 1, "texture_height": 1, "uv": [0, 0], "uv_size": [1, 1]}},
+                    "minecraft:particle_appearance_lighting": {}}}})
+            ids.append(pid)
+        if ids: self.report["particles"] = ids
+        return ids
+
+    def paintings(self):
+        """Mod painting variants (PaintingVariant(w, h) registered under a name, texture painting/<name>.png).
+        Bedrock has no custom painting variants, so each becomes a flat wall entity + an item that hangs it
+        (script: item used on a block face -> entity on that face, facing out; hitting it drops the item)."""
+        import subprocess, tempfile
+        classes = [n for n in self.names if n.endswith(".class") and b"PaintingVariant" in self.z.read(n) and b"DeferredRegister" in self.z.read(n)]
+        if not classes: return False
+        tmp = tempfile.mkdtemp(prefix="gb_paint_")
+        for n in classes: self.z.extract(n, tmp)
+        sys.path.insert(0, str(HERE.parent / "JavaBridge")); import jvm2js as J
+        variants = []
+        for n in classes:
+            info = J.ClassInfo(n[:-6], J.javap(Path(tmp), [n[:-6].replace("/", ".")]))
+            sizes = {}
+            for key, m in info.methods.items():
+                ints = [int(r.split()[0]) for _, op, r in m["code"] if op in ("bipush", "sipush")] + \
+                       [int(op.split("_")[1]) for _, op, r in m["code"] if op.startswith("iconst_") and op[-1].isdigit()]
+                if key.startswith("lambda$") and any("PaintingVariant" in r for _, _, r in m["code"]) and len(ints) >= 2:
+                    sizes[key.split("(")[0]] = (ints[0], ints[1])
+            clinit = info.methods.get("<clinit>()V", {"code": []})["code"]
+            last = None
+            for _, op, r in clinit:
+                sm = re.search(r"// String (\w+)", r)
+                if op.startswith("ldc") and sm: last = sm.group(1)
+                if op == "invokedynamic" and last:
+                    bm = re.search(r"InvokeDynamic #(\d+):", r); b = info.boot.get(int(bm.group(1)), {}) if bm else {}
+                    t = b.get("target")
+                    if t and t[1] in sizes and f"assets/{self.modid}/textures/painting/{last}.png" in self.names:
+                        variants.append((last, *sizes[t[1]]))
+                    last = None
+        if not variants: return False
+        items, js = {}, []
+        for name, w, h in variants:
+            eid = f"painting_{name}"; full = f"{self.ns}:{eid}"
+            src = f"assets/{self.modid}/textures/painting/{name}.png"
+            tex = f"textures/entity/{GB}/{self.ns}/painting/{name}"
+            self.write(self.rp, tex + ".png", self.z.read(src))
+            import struct as _st
+            tw, th = _st.unpack(">II", self.z.read(src)[16:24])
+            gid = f"geometry.{GB}.{self.ns}.painting_{w}x{h}_{tw}x{th}"
+            front = {"uv": [0, 0], "uv_size": [tw, th]}
+            edge = {"uv": [0, 0], "uv_size": [1, 1]}
+            self.write(self.rp, f"models/entity/{self.ns}/painting_{w}x{h}_{tw}x{th}.geo.json", {"format_version": "1.12.0", "minecraft:geometry": [{
+                "description": {"identifier": gid, "texture_width": tw, "texture_height": th,
+                                "visible_bounds_width": max(w, h) / 16 + 1, "visible_bounds_height": max(w, h) / 16 + 1, "visible_bounds_offset": [0, h / 32, 0]},
+                "bones": [{"name": "painting", "pivot": [0, 0, 0], "cubes": [{"origin": [-w / 2, 0, -1], "size": [w, h, 1],
+                    "uv": {"south": front, "north": edge, "east": edge, "west": edge, "up": edge, "down": edge}}]}]}]})
+            rc = f"controller.render.{GB}.{self.ns}.painting"
+            self.write(self.rp, f"render_controllers/{self.ns}.painting.rc.json", {"format_version": "1.8.0", "render_controllers": {
+                rc: {"geometry": "Geometry.default", "materials": [{"*": "Material.default"}], "textures": ["Texture.default"]}}})
+            self.write(self.rp, f"entity/{self.ns}/{eid}.entity.json", {"format_version": "1.10.0", "minecraft:client_entity": {"description": {
+                "identifier": full, "materials": {"default": "entity_alphatest"}, "textures": {"default": tex},
+                "geometry": {"default": gid}, "render_controllers": [rc]}}})
+            self.write(self.bp, f"entities/{self.ns}/{eid}.json", {"format_version": "1.21.0", "minecraft:entity": {
+                "description": {"identifier": full, "is_spawnable": False, "is_summonable": True, "is_experimental": False},
+                "components": {
+                    "minecraft:type_family": {"family": ["painting", "inanimate", self.ns]},
+                    "minecraft:health": {"value": 1, "max": 1}, "minecraft:collision_box": {"width": min(w, h) / 16, "height": h / 16},
+                    "minecraft:physics": {"has_gravity": False, "has_collision": False}, "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": False},
+                    "minecraft:knockback_resistance": {"value": 1}, "minecraft:body_rotation_blocked": {},
+                    "minecraft:damage_sensor": {"triggers": [{"cause": "all", "deals_damage": "yes"}]},
+                    "minecraft:loot": {"table": f"loot_tables/{self.ns}/paintings/{name}.json"},
+                    "minecraft:persistent": {}, "minecraft:fire_immune": True}}})
+            self.write(self.bp, f"loot_tables/{self.ns}/paintings/{name}.json", {"pools": [{"rolls": 1, "entries": [{"type": "item", "name": full, "weight": 1}]}]})
+            self.write(self.bp, f"items/{self.ns}/{eid}.json", {"format_version": "1.21.60", "minecraft:item": {
+                "description": {"identifier": full, "menu_category": {"category": "items"}},
+                "components": {"minecraft:icon": f"{self.ns}_{eid}", "minecraft:max_stack_size": 64}}})
+            self.item_tex[f"{self.ns}_{eid}"] = {"textures": tex}
+            nice = " ".join(x.capitalize() for x in name.split("_"))
+            self.lang += [f"entity.{full}.name=Painting: {nice}", f"item.{full}=Painting: {nice}"]
+            items[full] = [w / 16, h / 16]
+        self.write(self.bp, "scripts/paintings.js", PAINTING_JS.replace("__ITEMS__", json.dumps(items)))
+        self.report["paintings"] = len(variants)
+        return True
+
+    def menu_pack(self):
+        """assets/minecraft title logo + panorama -> a separate global resource pack (the main menu only reads
+        Global Resources): textures/ui/title.png, panorama_0..5 (+ _alternate and the HDR copies newer
+        Bedrock menus prefer). Returns the pack dir or None."""
+        from PIL import Image
+        import io, struct
+        logo = "assets/minecraft/textures/gui/title/minecraft.png"
+        faces = [f"assets/minecraft/textures/gui/title/background/panorama_{i}.png" for i in range(6)]
+        has_logo, has_pano = logo in self.names, all(f in self.names for f in faces)
+        if not (has_logo or has_pano): return None
+        out = self.out / f"GB {self.title} Menu RP"
+        import shutil; shutil.rmtree(out, ignore_errors=True)
+        def png(im): b = io.BytesIO(); im.save(b, "PNG"); return b.getvalue()
+        def hdr(im):   # Radiance RGBE, flat (uncompressed scanlines)
+            im = im.convert("RGB"); w, h = im.size
+            rows = []
+            for r, g, bb in im.getdata():
+                rf, gf, bf = (r / 255) ** 2.2, (g / 255) ** 2.2, (bb / 255) ** 2.2
+                m = max(rf, gf, bf)
+                if m < 1e-32: rows.append(b"\0\0\0\0"); continue
+                import math
+                e = math.frexp(m)[1]; sc = 256.0 / (2 ** e)
+                rows.append(bytes([min(255, int(rf * sc)), min(255, int(gf * sc)), min(255, int(bf * sc)), e + 128]))
+            return f"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {h} +X {w}\n".encode() + b"".join(rows)
+        if has_logo:
+            im = Image.open(io.BytesIO(self.z.read(logo))).convert("RGBA"); im = im.crop(im.getbbox())
+            W, H = 1937, 333; k = min(W / im.width, H / im.height)
+            im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.NEAREST)
+            canvas = Image.new("RGBA", (W, H)); canvas.paste(im, ((W - im.width) // 2, (H - im.height) // 2))
+            self.write(out, "textures/ui/title.png", png(canvas))
+        if has_pano:
+            for i, f in enumerate(faces):
+                im = Image.open(io.BytesIO(self.z.read(f))).convert("RGB").resize((1024, 1024), Image.BICUBIC)
+                for nm in (f"panorama_{i}", f"panorama_alternate_{i}"): self.write(out, f"textures/ui/{nm}.png", png(im))
+                small = im.resize((512, 512), Image.BICUBIC)
+                for nm in (f"panoramahdr_{i}", f"panoramahdr_alternate_{i}"): self.write(out, f"textures/ui/{nm}.hdr", hdr(small))
+        self.write(out, "manifest.json", {"format_version": 2, "header": {"name": f"GB {self.title} Menu", "description":
+            f"Main menu logo + panorama from {self.report['jar']} (private use). Activate under Global Resources.",
+            "uuid": u5(self.ns, "menu"), "version": [0, 1, 0], "min_engine_version": [1, 21, 0]},
+            "modules": [{"type": "resources", "uuid": u5(self.ns, "menu", "m"), "version": [0, 1, 0]}]})
+        self.report["menu_pack"] = {"logo": has_logo, "panorama": has_pano, "uuid": u5(self.ns, "menu")}
+        return out
+
+    def egg_colors(self):
+        """ForgeSpawnEggItem(type, background, highlight, props) in the mod's item registry -> Bedrock spawn_egg colours,
+        keyed by the entity registry field (e.g. COMPLIANCE_ANGEL)."""
+        if hasattr(self, "_eggs"): return self._eggs
+        import subprocess, tempfile
+        self._eggs = {}
+        classes = [n for n in self.names if n.endswith(".class") and b"ForgeSpawnEggItem" in self.z.read(n)]
+        if not classes: return self._eggs
+        tmp = tempfile.mkdtemp(prefix="gb_egg_")
+        for n in classes: self.z.extract(n, tmp)
+        text = subprocess.run(["javap", "-c", "-p", "-cp", tmp] + [n[:-6].replace("/", ".") for n in classes], capture_output=True, text=True).stdout
+        def num(line):
+            m = re.search(r"(iconst_m1|iconst_(\d)|bipush\s+(-?\d+)|sipush\s+(-?\d+)|// int (-?\d+))", line)
+            if not m: return None
+            if m.group(1) == "iconst_m1": return -1
+            return int(next(g for g in m.groups()[1:] if g is not None))
+        lines = text.splitlines()
+        for i, l in enumerate(lines):
+            f = re.search(r"getstatic\s+#\d+\s+// Field [\w/$]+\.(\w+):Lnet/minecraftforge/registries/RegistryObject;", l)
+            if not f or i + 3 >= len(lines) or "ForgeSpawnEggItem" not in " ".join(lines[i + 1:i + 9]): continue
+            a, b = num(lines[i + 1]), num(lines[i + 2])
+            if a is None or b is None: continue
+            self._eggs[f.group(1)] = {"base_color": "#%06x" % (a & 0xFFFFFF), "overlay_color": "#%06x" % (b & 0xFFFFFF)}
+        return self._eggs
+
+    def javap_class(self, cls, extract_dir="/client/model/"):
+        import subprocess, tempfile
+        tmp = getattr(self, "_vm_tmp", None)
+        if not tmp:
+            tmp = self._vm_tmp = tempfile.mkdtemp(prefix="gb_vm_")
+            for n in self.names:
+                if n.endswith(".class") and "/client/" in n: self.z.extract(n, tmp)
+        r = subprocess.run(["javap", "-c", "-p", "-cp", tmp, cls], capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else None
+
+    def aliases(self):
+        """Overlay entities (our own AI's projectiles) shown with a converted GeckoLib model: mods/<modid>.json visual_alias."""
+        for alias, target in (self.override.get("visual_alias") or {}).items():
+            src = self.rp / f"entity/{self.ns}/{target}.entity.json"
+            if not src.exists(): self.report["warnings"].append(f"visual_alias {alias}: {target} not built"); continue
+            d = json.loads(src.read_text()); d["minecraft:client_entity"]["description"]["identifier"] = f"{self.ns}:{alias}"
+            d["minecraft:client_entity"]["description"].pop("spawn_egg", None)
+            self.write(self.rp, f"entity/{self.ns}/{alias}.entity.json", d); self.built.add(alias)
+            self.report.setdefault("visual_alias", {})[alias] = target
+
+    def geo_file(self, gid):
+        return next((p for p in (self.rp / "models").rglob("*.json") if f'"{gid}"' in p.read_text()), None)
+
+    def projectile_face(self, gid, desc):
+        """Projectiles: wrap the model in a gb_root bone turned to the flight direction (vanilla arrow-style)."""
+        path = self.geo_file(gid); d = json.loads(path.read_text())
+        for g in d["minecraft:geometry"]:
+            if g["description"]["identifier"] != gid or any(b["name"] == "gb_root" for b in g.get("bones", [])): continue
+            for b in g.get("bones", []):
+                if not b.get("parent"): b["parent"] = "gb_root"
+            g["bones"].insert(0, {"name": "gb_root", "pivot": [0, 0, 0]})
+        path.write_text(json.dumps(d))
+        nid = f"animation.{GB}.{self.ns}.gb_projectile.face"
+        self.anim_files = getattr(self, "anim_files", {})
+        self.anim_files.setdefault("gb_projectile", {})[nid] = {"loop": True, "bones": {"gb_root": {"rotation": ["q.target_x_rotation", "-q.target_y_rotation", 0]}}}
+        desc["animations"]["gb_face"] = nid; desc["scripts"].setdefault("animate", []).append("gb_face")
+
+    def block_for(self, e, eid, gid, tex_path):
+        """GeckoLib block entity -> Bedrock block with the same (static) geometry + an animated companion entity spawned by
+        the runtime when a player places the block (Bedrock blocks can't play animations); the block hides its bones
+        while the companion is there (state gb:has_entity)."""
+        bid = re.sub(r"_block$", "", eid); full_b = f"{self.ns}:{bid}"
+        src = json.loads(self.geo_file(gid).read_text())
+        g = next(x for x in src["minecraft:geometry"] if x["description"]["identifier"] == gid)
+        bg = json.loads(json.dumps(g)); bgid = f"geometry.{GB}.{self.ns}.block.{bid}"; bg["description"]["identifier"] = bgid
+        for k in ("visible_bounds_width", "visible_bounds_height", "visible_bounds_offset"): bg["description"].pop(k, None)
+        self.write(self.rp, f"models/blocks/{self.ns}/{bid}.geo.json", {"format_version": "1.12.0", "minecraft:geometry": [bg]})
+        tkey = f"gb_{self.ns}_{bid}"; tpath = f"textures/blocks/{GB}/{self.ns}/{bid}"
+        self.write(self.rp, tpath + ".png", self.still_png(tex_path)); self.terrain[tkey] = {"textures": tpath}
+        tops = [b["name"].lower() for b in bg.get("bones", [])]   # Bedrock matches these lower-cased
+        box = {"origin": [-8, 0, -8], "size": [16, 16, 16]}
+        self.write(self.bp, f"blocks/{self.ns}/{bid}.json", {"format_version": "1.21.40", "minecraft:block": {
+            "description": {"identifier": full_b, "menu_category": {"category": "construction"}, "states": {"gb:has_entity": [False, True]}},
+            "components": {"minecraft:geometry": bgid, "minecraft:material_instances": {"*": {"texture": tkey, "render_method": "alpha_test"}},
+                           "minecraft:collision_box": box, "minecraft:selection_box": box, "minecraft:light_dampening": 0,
+                           "minecraft:destructible_by_mining": {"seconds_to_destroy": 1.5}, "minecraft:destructible_by_explosion": {"explosion_resistance": 6}},
+            "permutations": [{"condition": "q.block_state('gb:has_entity')",
+                              "components": {"minecraft:geometry": {"identifier": bgid, "bone_visibility": {b: False for b in tops}}}}]}})
+        self.js.setdefault("blocks", {})[full_b] = f"{self.ns}:{eid}"
+        nice = (e.get("name") or bid.replace("_", " ").title())
+        self.lang.append(f"tile.{full_b}.name={nice}")
+        return full_b
+
+    # ---------------------------------------------------------------- ModPorter content: blocks, items, recipes, loot
+    def content(self):
+        sys.path.insert(0, str(HERE.parent / "ModPorter"))
+        import content as CT
+        ci = cached_classinfo(self.jar)
+        skip = set()
+        if self.ov_dir and (self.ov_dir / "bp").exists():     # ids the behaviour overlay defines itself
+            for f in (self.ov_dir / "bp").rglob("*.json"):
+                skip.add(f.stem)
+        ct = CT.Content(self.z, self.modid, self.ns, self.rp, self.bp, self.report, self.title)
+        ct.skip = skip
+        lang = ct.run(item_info=ci["items"], block_props=ci["blocks"])
+        self.lang += [f"{k}={v}" for k, v in lang.items()]
+        self.content_ids = {"blocks": ct.blocks, "items": ct.items}
+
+    def worldgen(self):
+        """Structure templates -> .mcstructure; dimensions -> custom dimensions + generator script; portals."""
+        sys.path.insert(0, str(HERE.parent / "ModPorter"))
+        nbts = sorted(n for n in self.names if n.startswith(f"data/{self.modid}/structures/") and n.endswith(".nbt"))
+        if not nbts: return
+        import dimensions as DM
+        from concurrent.futures import ProcessPoolExecutor
+        custom = {k: v for k, v in (getattr(self, "content_ids", {}).get("blocks") or {}).items()}
+        jobs = [(self.jar, n, self.modid, self.ns, custom) for n in nbts]
+        sids, fails = {}, []
+        with ProcessPoolExecutor(max_workers=8) as ex:
+            for n, data, err in ex.map(_convert_structure, jobs, chunksize=8):
+                rel = n.split(f"data/{self.modid}/structures/", 1)[1][:-4]
+                if err: fails.append(f"{rel}: {err}"); continue
+                name = clean(rel.replace("/", "_"))
+                self.write(self.bp, f"structures/{self.ns}/{name}.mcstructure", data)
+                sids[f"{self.modid}:{rel}"] = f"{self.ns}:{name}"
+        self.report["structures"] = {"converted": len(sids), "failed": fails[:50]}
+        dm = DM.Dimensions(self.z, self.modid, self.ns, self.bp, self.report, sids)
+        dims = dm.run()
+        if not dims: return
+        portals = {}
+        for bid in (getattr(self, "content_ids", {}).get("blocks") or {}):
+            if bid.endswith("_portal"):
+                base = bid[:-7]
+                tgt = next((d for d in dims if d.split(":")[1] in (base, base + "_dimension", base.replace("_dimension", ""))), None)
+                if tgt: portals[f"{self.ns}:{bid}"] = tgt
+        self.write(self.bp, "scripts/worldgen.js", DM.script({"ns": self.ns, "dims": dims, "portals": portals}))
+        for rel, fog in DM.fogs(dims, self.ns).items(): self.write(self.rp, rel, fog)
+        self.report["dimensions"]["portals"] = len(portals)
+        self.worldgen_script = True
+
+    def javabridge(self):
+        """The mod's own Java code (MCreator procedures, entity/block/item/effect hooks, event subscribers) translated
+        to Script API JavaScript by tools/JavaBridge."""
+        sys.path.insert(0, str(HERE.parent / "JavaBridge"))
+        import bridge as JB
+        emap = {e["java_class"]: f"{self.ns}:{clean(e['id'])}" for e in self.ents["entities"]}
+        sids = {}
+        for p in (self.bp / "structures").rglob("*.mcstructure"):
+            sids[f"{self.modid}:{p.stem}"] = f"{self.ns}:{p.stem}"
+        rep = JB.build_bridge(self.jar, self.modid, self.ns, self.bp, emap, self.report, structures=sids, goals=self.mobai)
+        ci = cached_classinfo(self.jar)
+        cfgp = self.bp / "scripts/javabridge/config.js"
+        txt = cfgp.read_text()
+        cfg = json.loads(txt[txt.index("=") + 1:].rstrip().rstrip(";"))
+        cfg["blockClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"]["block"].items()}
+        cfg["itemClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"]["item"].items()}
+        cfg["effectClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"].get("effect", {}).items()}
+        cfg["modParticles"] = self.mod_particles()
+        # MobAI nav point: Java navigation.moveTo(x, y, z) -> an invisible marker the mob is told to target, so
+        # Bedrock's own pathfinder walks it there (runtime R.moveTo); mobs without a melee behaviour steer instead
+        cfg["navTypes"] = sorted(self.melee_types); cfg["navPoint"] = f"{self.ns}:gb_nav_point"
+        cfg["natPlayer"] = self.nat_player   # mobs whose Java goals target the nearest player (runtime getTarget)
+        self.write(self.bp, f"entities/{self.ns}/gb_nav_point.json", {"format_version": "1.21.0", "minecraft:entity": {
+            "description": {"identifier": f"{self.ns}:gb_nav_point", "is_spawnable": False, "is_summonable": True, "is_experimental": False},
+            "components": {"minecraft:type_family": {"family": ["gb_nav_point", "inanimate"]}, "minecraft:health": {"value": 1, "max": 1},
+                "minecraft:collision_box": {"width": 0.1, "height": 0.1}, "minecraft:physics": {"has_gravity": False, "has_collision": False},
+                "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": False}, "minecraft:knockback_resistance": {"value": 1},
+                "minecraft:damage_sensor": {"triggers": {"cause": "all", "deals_damage": "no"}}, "minecraft:fire_immune": {},
+                "minecraft:despawn": {"despawn_from_distance": {}}}}})
+        self.write(self.rp, f"entity/{self.ns}/gb_nav_point.entity.json", {"format_version": "1.10.0", "minecraft:client_entity": {
+            "description": {"identifier": f"{self.ns}:gb_nav_point", "materials": {"default": "entity_alphatest"},
+                "textures": {"default": "textures/entity/chicken"}, "geometry": {"default": "geometry.chicken"},
+                "render_controllers": ["controller.render.default"], "scripts": {"scale": "0.0"}}}})   # never visible
+        cfgp.write_text("globalThis.__JB_CFG = " + json.dumps(cfg, separators=(",", ":")) + ";\n")
+        # client overlays -> HUD images bound to formatting-code-only titles
+        ovs = cfg["hooks"].get("overlays") or []
+        if ovs:
+            ctrls = []
+            for i, o in enumerate(ovs):
+                ns_, path = o["tex"].split(":", 1)
+                src = f"assets/{ns_}/{path}"
+                if src not in self.names: continue
+                self.write(self.rp, f"textures/ui/{self.ns}/overlay_{i}.png", self.z.read(src))
+                ctrls.append({f"gb_ov_{i}@hud.gb_overlay_img": {"$ov_tex": f"textures/ui/{self.ns}/overlay_{i}", "$ov_key": o["key"]}})
+            self.write(self.rp, "ui/hud_screen.json", {"namespace": "hud",
+                "root_panel": {"modifications": [{"array_name": "controls", "operation": "insert_back", "value": [{"gb_overlays@hud.gb_overlay_panel": {}}]}]},
+                "gb_overlay_panel": {"type": "panel", "size": ["100%", "100%"], "layer": 60, "controls": ctrls},
+                "gb_overlay_img": {"type": "image", "texture": "$ov_tex", "size": ["100%", "100%"], "keep_ratio": False,
+                    "bindings": [{"binding_name": "#hud_title_text_string", "binding_name_override": "#text", "binding_type": "global"},
+                                 {"binding_type": "view", "source_property_name": "(#text = $ov_key)", "target_property_name": "#visible"}]}})
+            self.report["overlays"] = len(ctrls)
+        # procedures drive the triggered animations now: no automatic ability cycle
+        for full, c in self.js["entities"].items(): c["hooked"] = True
+        self.javabridge_on = True
+
+    # ---------------------------------------------------------------- ModPorter behaviour overlay
+    def rn(self, text):
+        for a, b in self.rename.items(): text = text.replace(a, b)
+        return text
+
+    def apply_overlay(self):
+        """Merge a ModPorter behaviour overlay (our own Script API AI, entity overrides, blocks, sounds) with the
+        GeckoBridge visuals. Overlay BP entities replace our generic AI; our client-synced properties are kept."""
+        import shutil
+        od = self.ov_dir; ov = json.loads(self.rn((od / "overlay.json").read_text()))
+        self.report["overlay"] = od.name
+        if (od / "scripts").exists():
+            for f in (od / "scripts").rglob("*"):
+                if not f.is_file(): continue
+                if f.suffix == ".js":
+                    txt = self.rn(f.read_text())
+                    for pt in self.override.get("patch") or []:   # hooks so the overlay's abilities fire GeckoLib triggered animations
+                        if pt["find"] in txt:
+                            txt = txt.replace(pt["find"], pt.get("prepend", "") + pt["find"] + pt.get("append", ""), 1)
+                            self.report.setdefault("overlay_patches", []).append(pt["find"][:40])
+                    self.write(self.bp, f"scripts/overlay/{f.relative_to(od / 'scripts')}", txt)
+                else: self.write(self.bp, f"scripts/overlay/{f.relative_to(od / 'scripts')}", f.read_bytes())
+        # random sound groups (the mod's events are all registered as <ns>.<event> in run())
+        for g, evs in (ov.get("sound_groups") or {}).items():
+            files = [f for ev in evs for f in self.sound_defs.get(f"{self.ns}.{ev}", {}).get("sounds", [])]
+            if files: self.sound_defs[f"{self.ns}.{g}"] = {"category": "hostile", "sounds": files}
+        if ov.get("entity_sounds"):
+            for e in self.ents["entities"]:
+                full = f"{self.ns}:{clean(e['id'])}"
+                self.ent_sounds[full] = {"volume": 1.0, "pitch": [0.9, 1.1], "events": {k: f"{self.ns}.{v}" for k, v in ov["entity_sounds"].items()}}
+        bp_ents = {p.stem: p for p in (self.bp / "entities").rglob("*.json")}
+        # overlay bp/ files: entities we built get the overlay's behaviour + our properties; the rest is copied
+        for side, root in (("bp", self.bp), ("rp", self.rp)):
+            if not (od / side).exists(): continue
+            for f in (od / side).rglob("*"):
+                if not f.is_file(): continue
+                rel = f.relative_to(od / side); rel_s = self.rn(str(rel)); stem = Path(rel_s).name.split(".")[0]
+                if side == "rp" and rel.parts[0] in VISUAL_DIRS and stem in self.built: continue
+                if side == "bp" and rel.parts[0] == "entities" and stem in bp_ents:
+                    mine = json.loads(bp_ents[stem].read_text()); theirs = json.loads(self.rn(f.read_text()))
+                    me, te = mine["minecraft:entity"], theirs["minecraft:entity"]
+                    te["description"]["properties"] = {**me["description"].get("properties", {}), **te["description"].get("properties", {})}
+                    for k in ("component_groups", "events"):
+                        merged = {**me.get(k, {}), **te.get(k, {})}
+                        if merged: te[k] = merged
+                    if "minecraft:entity_spawned" in me.get("events", {}) and "minecraft:entity_spawned" in te.get("events", {}) and \
+                            me["events"]["minecraft:entity_spawned"] != te["events"]["minecraft:entity_spawned"]:
+                        te["events"]["minecraft:entity_spawned"] = {"sequence": [me["events"]["minecraft:entity_spawned"], theirs["minecraft:entity"]["events"]["minecraft:entity_spawned"]]}
+                    for c in ("minecraft:interact", "minecraft:navigation.climb", "minecraft:can_climb"):
+                        if c in me["components"] and c not in te["components"]: te["components"][c] = me["components"][c]
+                    te["description"]["identifier"] = me["description"]["identifier"]
+                    if te["description"]["properties"]:   # our runtime finds its mobs by family
+                        fam = te["components"].setdefault("minecraft:type_family", {"family": []}).setdefault("family", [])
+                        for need in ("geckobridge", self.ns):
+                            if need not in fam: fam.append(need)
+                    else: te["description"].pop("properties")
+                    bp_ents[stem].write_text(json.dumps(theirs, indent=1)); self.report.setdefault("overlay_merged", []).append(stem)
+                    continue
+                data = self.rn(f.read_text()) if f.suffix in (".json", ".js", ".lang", ".mcfunction") else f.read_bytes()
+                tgt = root / rel_s
+                if rel_s in ("textures/terrain_texture.json", "textures/item_texture.json") and tgt.exists():   # merge, don't replace
+                    mine, theirs = json.loads(tgt.read_text()), json.loads(data)
+                    mine.setdefault("texture_data", {}).update(theirs.get("texture_data", {})); data = mine
+                elif rel_s == "textures/flipbook_textures.json" and tgt.exists():
+                    data = json.loads(tgt.read_text()) + json.loads(data)
+                self.write(root, rel_s, data)
+        for key, change in (ov.get("entity_overrides") or {}).items():
+            base = key.split("#")[0]
+            targets = [p for st, p in bp_ents.items() if key == "*" or (st.startswith(base[1:]) or base[1:] in st if base.startswith("*") else st == base)]
+            for p in targets:
+                d = json.loads(p.read_text()); c = d["minecraft:entity"]["components"]
+                if p.stem in change.get("except", []) or (change.get("if_has") and change["if_has"] not in c): continue
+                for k in change.get("remove", []): c.pop(k, None)
+                c.update(change.get("set", {}))
+                fam = c.get("minecraft:type_family", {}).get("family", [])
+                for need in ("geckobridge", self.ns):        # our runtime finds its mobs by family
+                    if need not in fam: fam.append(need)
+                p.write_text(json.dumps(d, indent=1))
+            if not targets: self.report["warnings"].append(f"overlay override '{key}' matched no entity")
+        for it in ov.get("items", []):
+            iid = f"{self.ns}:{it['id']}"
+            comps = {"minecraft:icon": it["id"], "minecraft:display_name": {"value": it.get("name", it["id"])},
+                     "minecraft:max_stack_size": 1 if it.get("durability") else it.get("max_stack", 64)}
+            if it.get("durability"): comps["minecraft:durability"] = {"max_durability": it["durability"]}
+            self.write(self.bp, f"items/{it['id']}.json", {"format_version": "1.21.0", "minecraft:item": {
+                "description": {"identifier": iid, "menu_category": {"category": "equipment"}}, "components": comps}})
+            if it.get("texture") in self.names:
+                self.write(self.rp, f"textures/items/{self.ns}/{it['id']}.png", self.still_png(it["texture"]))
+                self.item_tex[it["id"]] = {"textures": f"textures/items/{self.ns}/{it['id']}"}
+            if it.get("recipe"):
+                r = it["recipe"]
+                self.write(self.bp, f"recipes/{it['id']}.json", {"format_version": "1.20.10", "minecraft:recipe_shaped": {
+                    "description": {"identifier": f"{iid}_recipe"}, "tags": ["crafting_table"], "pattern": r["pattern"],
+                    "key": {k: {"item": v} for k, v in r["key"].items()}, "unlock": [{"item": next(iter(r["key"].values()))}],
+                    "result": {"item": iid, "count": 1}}})
+            self.lang.append(f"item.{iid}={it.get('name', it['id'])}")
+        for k, v in (ov.get("lang") or {}).items(): self.lang.append(f"{k}={v}")
+        if ov.get("license_file") and (od / ov["license_file"]).exists():
+            for root in (self.rp, self.bp): self.write(root, "LICENSE_original_mod.txt", (od / ov["license_file"]).read_bytes())
+        self.ov_deps = ov.get("script_deps", [])
+
+    GOALS = {   # Java AI goal -> Bedrock behaviour component (args: the goal's constructor constants in order)
+        "MeleeAttackGoal": lambda a: ("minecraft:behavior.melee_attack", {"speed_multiplier": a[0] if a else 1.0, "track_target": True}),
+        "NearestAttackableTargetGoal": None, "HurtByTargetGoal": lambda a: ("minecraft:behavior.hurt_by_target", {}),
+        "RandomStrollGoal": lambda a: ("minecraft:behavior.random_stroll", {"speed_multiplier": a[0] if a else 1.0}),
+        "WaterAvoidingRandomStrollGoal": lambda a: ("minecraft:behavior.random_stroll", {"speed_multiplier": a[0] if a else 1.0}),
+        "LookAtPlayerGoal": lambda a: ("minecraft:behavior.look_at_player", {"look_distance": a[0] if a else 8}),
+        "RandomLookAroundGoal": lambda a: ("minecraft:behavior.random_look_around", {}), "FloatGoal": lambda a: ("minecraft:behavior.float", {}),
+        "PanicGoal": lambda a: ("minecraft:behavior.panic", {"speed_multiplier": a[0] if a else 1.25}),
+        "LeapAtTargetGoal": lambda a: ("minecraft:behavior.leap_at_target", {"yd": a[0] if a else 0.4, "must_be_on_ground": True}),
+        "MoveTowardsTargetGoal": lambda a: ("minecraft:behavior.move_towards_target", {"speed_multiplier": a[0] if a else 1.0, "within_radius": a[1] if len(a) > 1 else 16}),
+        "FleeSunGoal": lambda a: ("minecraft:behavior.flee_sun", {"speed_multiplier": a[0] if a else 1.0}),
+        "RestrictSunGoal": lambda a: ("minecraft:behavior.restrict_sun", {}),
+        "OpenDoorGoal": lambda a: ("minecraft:behavior.open_door", {"close_door_after": True}),
+        "BreakDoorGoal": lambda a: ("minecraft:behavior.break_door", {}),
+        "RandomSwimmingGoal": lambda a: ("minecraft:behavior.swim_wander", {"speed_multiplier": a[0] if a else 1.0, "look_ahead": 2, "wander_time": 5}),
+        "AvoidEntityGoal": lambda a: ("minecraft:behavior.avoid_mob_type", {"entity_types": [{"filters": {"test": "is_family", "subject": "other", "value": "player"}, "max_dist": a[0] if a else 6, "walk_speed_multiplier": a[1] if len(a) > 1 else 1, "sprint_speed_multiplier": a[2] if len(a) > 2 else 1.2}]}),
+        "TemptGoal": lambda a: ("minecraft:behavior.tempt", {"speed_multiplier": a[0] if a else 1.0}),
+        "BreedGoal": None, "FollowParentGoal": lambda a: ("minecraft:behavior.follow_parent", {"speed_multiplier": a[0] if a else 1.1}),
+        "MoveBackToVillageGoal": None, "RandomStandGoal": None,
+    }
+
+    # Java entity classes -> Bedrock families (mod classes get their own family "<ns>_<id>", see behaviour())
+    VANILLA_FAM = {"Player": "player", "ServerPlayer": "player", "Monster": "monster", "Animal": "animal", "LivingEntity": "mob",
+                   "Mob": "mob", "PathfinderMob": "mob", "Villager": "villager", "AbstractVillager": "villager", "IronGolem": "irongolem",
+                   "Zombie": "zombie", "Skeleton": "skeleton", "Creeper": "creeper", "WanderingTrader": "wandering_trader",
+                   "Pig": "pig", "Cow": "cow", "Sheep": "sheep", "Chicken": "chicken", "Wolf": "wolf", "Cat": "cat", "Fox": "fox",
+                   "Spider": "spider", "EnderMan": "enderman", "Witch": "witch", "Pillager": "pillager", "Raider": "illager"}
+    GATE_METHODS = {"canUse": "m_8036_()Z", "canContinueToUse": "m_8045_()Z", "start": "m_8056_()V", "tick": "m_8037_()V", "stop": "m_8041_()V"}
+
+    def fam_of(self, simple):
+        if simple in self.VANILLA_FAM: return self.VANILLA_FAM[simple]
+        if not hasattr(self, "_cls_fam"):
+            self._cls_fam = {en["java_class"].split(".")[-1]: f"{self.ns}_{clean(en['id'])}" for en in self.ents["entities"]}
+        return self._cls_fam.get(simple)
+
+    def goals_of(self, e):
+        """MobAI (docs/PORT_MOBAI.md): registerGoals (m_8099_) of the entity class -> Bedrock behaviours.
+
+        Returns {"components": {...}, "gates": [...]} or None (keep the generic AI). Every goal keeps its Java
+        priority and constructor values; target/avoid classes become Bedrock families (exact mob types).
+        Anonymous MCreator goals that override canUse/canContinueToUse become *gated* goals: the Bedrock behaviour
+        lives in an on/off component-group pair and the GoalRunner (JavaBridge hooks.js) evaluates the translated
+        Java condition. A goal written from scratch (extends Goal) runs fully in the GoalRunner (start/tick/stop)."""
+        import tempfile
+        sys.path.insert(0, str(HERE.parent / "ModPorter"))
+        import extract as MP
+        if not hasattr(self, "_gtmp"):
+            self._gtmp = tempfile.mkdtemp(prefix="gb_goals_")
+            mine = [n for n in self.names if n.endswith(".class") and not n.startswith(C.GL_PREFIXES)]
+            for n in mine: self.z.extract(n, self._gtmp)
+            C.prefetch(self._gtmp, [n[:-6].replace("/", ".") for n in mine])     # one JVM per batch, not per mob
+        cls = e["java_class"]; pre = cls.replace(".", "/")
+        dis = C.javap(self._gtmp, cls)
+        if not dis: return None
+        ms = MP.methods(dis)
+        goals = MP.parse_goals(ms.get("m_8099_", []))
+        # no goals in Java (PathfinderMob/Monster add none): the mob does only what the mod's code tells it, so it
+        # gets no Bedrock behaviours either (the old generic "chase + hit" brain made Pillars/Angels/stare mobs attack)
+        w = (e.get("size") or [0.6, 1.8])[0] or 0.6
+        out, gates, rep = {}, [], self.report.setdefault("mobai", {"mapped": 0, "gated": 0, "custom": 0, "unmapped": {}})
+
+        def put(key, val, gate=None):
+            """merge into an existing behaviour of the same kind (Bedrock has one per entity), or add it"""
+            tgt = out
+            if gate is not None: tgt = gate.setdefault("components", {})
+            if key in tgt and "entity_types" in val and "entity_types" in tgt[key]:
+                tgt[key]["entity_types"] += val["entity_types"]; tgt[key]["priority"] = min(tgt[key]["priority"], val["priority"])
+            else: tgt[key] = val
+
+        for gi, g in enumerate(goals):
+            name, over, acls = g["goal"], [], None
+            if "$" in name:   # anonymous subclass (MCreator: new MeleeAttackGoal(...) { ... }): superclass + overrides
+                acls = pre.rsplit("/", 1)[0] + "/" + name
+                sd = C.javap(self._gtmp, acls.replace("/", ".")) or ""
+                m = re.search(r"extends ([\w.$]+)", sd); name = m.group(1).split(".")[-1] if m else name
+                ams = MP.methods(sd)
+                over = [k for k, v in self.GATE_METHODS.items() if re.search(rf"\b{v.split('(')[0]}\(", sd)]
+                reach = None
+                if re.search(r"\bm_6639_\(", sd):   # getAttackReachSqr override
+                    code = "\n".join(ams.get("m_6639_", []))
+                    k = re.search(r"ldc2_w\s+#\d+\s+// double ([\d.]+)d\s*\n.*dreturn", code)
+                    reach = round(max(0.5, (float(k.group(1)) ** 0.5) / w), 3) if k else 1.0 if "m_20205_" in code else None
+            prio = g["priority"] if g["priority"] is not None else 5
+            nums = [x for x in g["args"] if isinstance(x, (int, float))]
+            strs = [x for x in g["args"] if isinstance(x, str)]
+            gate = None
+            if name == "Goal" or (acls and over and set(over) - {"canUse", "canContinueToUse"} and name not in self.GOALS):
+                # a goal written from scratch: the GoalRunner runs it as-is
+                gates.append({"mode": "custom", "cls": acls, "priority": prio, "methods": over}); rep["custom"] += 1; continue
+            if acls and ("canUse" in over or "canContinueToUse" in over):
+                gate = {"mode": "gate", "cls": acls, "priority": prio, "methods": [m for m in over if m in ("canUse", "canContinueToUse")], "java": name}
+            fams = [f for f in (self.fam_of(x) for x in strs) if f]
+            if name == "NearestAttackableTargetGoal":
+                must_see = bool(nums[0]) if nums else True
+                fr = (e.get("attributes") or {}).get("follow_range", 16)   # Java targeting range = FOLLOW_RANGE attribute
+                ent = [{"filters": {"test": "is_family", "subject": "other", "value": f}, "max_dist": fr, "must_see": must_see} for f in (fams or ["player"])]
+                put("minecraft:behavior.nearest_attackable_target", {"priority": prio, "must_see": must_see, "reselect_targets": True, "scan_interval": 10, "entity_types": ent}, gate)
+            elif name == "AvoidEntityGoal":
+                d, ws, ss = (nums + [6, 1, 1.2])[:3] if len(nums) >= 3 else ((nums + [6, 1, 1.2])[0], (nums + [6, 1, 1.2])[1], 1.2)
+                ent = [{"filters": {"test": "is_family", "subject": "other", "value": f}, "max_dist": d, "walk_speed_multiplier": ws,
+                        "sprint_speed_multiplier": ss, "sprint_distance": 7} for f in (fams or ["player"])]
+                put("minecraft:behavior.avoid_mob_type", {"priority": prio, "entity_types": ent}, gate)
+            elif name == "MeleeAttackGoal":
+                v = {"priority": prio, "speed_multiplier": nums[0] if nums else 1.0, "track_target": bool(nums[1]) if len(nums) > 1 else True}
+                if acls and reach is not None: v["reach_multiplier"] = reach
+                put("minecraft:behavior.melee_attack", v, gate)
+            else:
+                f = self.GOALS.get(name)
+                if not f:   # the mod's own goal classes: judge by what they are named after / extend
+                    low = name.lower()
+                    alias = ("MeleeAttackGoal" if "melee" in low or ("attack" in low and "ranged" not in low and "summon" not in low and "sequence" not in low) else
+                             "RandomStrollGoal" if "stroll" in low or "wander" in low else "PanicGoal" if "panic" in low else
+                             "HurtByTargetGoal" if "hurtbytarget" in low or "targetattacker" in low else
+                             "FollowParentGoal" if "followparent" in low or "followadult" in low else "FloatGoal" if "float" in low else
+                             "AvoidEntityGoal" if "avoid" in low or "hide" in low else None)
+                    f = self.GOALS.get(alias) if alias else None
+                    if not f: rep["unmapped"][name] = rep["unmapped"].get(name, 0) + 1; continue
+                k, v = f(nums)
+                put(k, {"priority": prio, **v}, gate)
+            if gate: gates.append(gate); rep["gated"] += 1
+            else: rep["mapped"] += 1
+        # forced targets: Java procedures call setTarget(x); the runtime tags x with "gbt_<family>" and this entry picks it up
+        own = f"{self.ns}_{clean(e['id'])}"
+        forced = {"filters": {"test": "has_tag", "subject": "other", "value": f"gbt_{own}"}, "max_dist": 64, "must_see": False}
+        nat = out.setdefault("minecraft:behavior.nearest_attackable_target", {"priority": 1, "must_see": False, "reselect_targets": True, "scan_interval": 10, "entity_types": []})
+        nat["entity_types"].insert(0, forced)
+        if not goals: self.report.setdefault("mobai", {}).setdefault("no_goals", []).append(e["id"])
+        return {"components": out, "gates": gates}
+
+    def prop_defs(self, props):
+        return {p: ({"type": "int", "range": [0, d["max"]], "default": 0, "client_sync": True} if d.get("kind") == "trigger"
+                    else {"type": "bool", "default": False, "client_sync": True}) for p, d in props.items()}
+
+    # ---------------------------------------------------------------- run
+    def run(self):
+        import shutil
+        for d in (self.rp, self.bp): shutil.rmtree(d, ignore_errors=True)
+        self.lang = []; self.ent_sounds = {}; self.item_tex = {}; self.built = set(); self.terrain = {}
+        by_class = {c["class"]: c for c in self.ctrl["entities"]}
+        for e in self.ents["entities"]:
+            e["gb_kind"] = "block" if e["class"].endswith("BlockEntity") else "mob" if e.get("is_mob", True) else "projectile"
+            if e.get("vanilla_model"): self.vanilla_assets(e)
+            else: self.fill_assets(e)
+            self.entity(e, by_class.get(e["java_class"], {}))
+        self.aliases()
+        if self.override.get("content", True): self.content()
+        import armor as GA; GA.convert(self)          # GeckoLib armour -> attachables (+ wearable items)
+        import items as GI; GI.convert(self)          # 3D held items (builtin/entity + geo) -> attachables
+        if self.override.get("worldgen", True): self.worldgen()
+        if self.override.get("javabridge", any(n.startswith("net/mcreator/") for n in self.names)): self.javabridge()
+        for stem, files in getattr(self, "anim_files", {}).items():
+            for a in files.values():
+                if not a.get("bones"): a.pop("bones", None)    # Bedrock: empty "bones" = "Required child not found"
+            self.write(self.rp, f"animations/{self.ns}/{stem}.animation.json", {"format_version": "1.8.0", "animations": files})
+        if self.acs: self.write(self.rp, f"animation_controllers/{self.ns}.ac.json", {"format_version": "1.10.0", "animation_controllers": self.acs})
+        self.write(self.rp, f"render_controllers/{self.ns}.rc.json", {"format_version": "1.8.0", "render_controllers": self.rcs})
+        self.write(self.rp, "materials/entity.material", GLOW_MATERIAL)
+        for ev in self.java_sounds():   # every mod sound event as <ns>.<event> (scripts, JavaBridge, biome ambience play these)
+            short = self.sound(ev)
+            if short: self.sound_defs[f"{self.ns}.{ev}"] = self.sound_defs[self.entity_sounds[short]]
+        if self.ov_dir: self.apply_overlay()
+        if self.terrain:
+            tt = self.rp / "textures/terrain_texture.json"
+            d = json.loads(tt.read_text()) if tt.exists() else {"resource_pack_name": self.title, "texture_name": "atlas.terrain", "padding": 8, "num_mip_levels": 4, "texture_data": {}}
+            d["texture_data"].update(self.terrain); self.write(self.rp, "textures/terrain_texture.json", d)
+        if self.sound_defs: self.write(self.rp, "sounds/sound_definitions.json", {"format_version": "1.14.0", "sound_definitions": self.sound_defs})
+        if self.ent_sounds: self.write(self.rp, "sounds.json", {"entity_sounds": {"entities": self.ent_sounds}})
+        pj = self.paintings() if self.override.get("paintings", True) else False
+        self.menu_pack()
+        if self.item_tex:
+            it = self.rp / "textures/item_texture.json"
+            d = json.loads(it.read_text()) if it.exists() else {"resource_pack_name": self.title, "texture_name": "atlas.items", "texture_data": {}}
+            d["texture_data"].update(self.item_tex); self.write(self.rp, "textures/item_texture.json", d)
+        kv = {}
+        for l in self.lang:
+            if "=" in l: kv[l.split("=", 1)[0]] = l.split("=", 1)[1]
+        self.write(self.rp, "texts/en_US.lang", "\n".join(f"{k}={v}" for k, v in kv.items()) + "\n"); self.write(self.rp, "texts/languages.json", ["en_US"])
+        rph = self.override.get("pack_uuids", {}).get("rp") or u5(self.ns, "rp"); bph = self.override.get("pack_uuids", {}).get("bp") or u5(self.ns, "bp")
+        credit = (f"Models, textures and animations from {self.report['jar']} ({self.modid}) by its original authors; "
+                  f"GeckoLib (MIT). Converted by GeckoBridge (Bedrock Forge) for Fernando's private personal use only. Do not share.\n")
+        # test functions (dev): /function gb/<ns>/all summons every converted entity in a grid around you
+        ids = [k for k, v in self.report["entities"].items() if not v.get("skipped") and not v.get("block")]
+        lines = [f"summon {self.ns}:{eid} ~{(i % 8) * 4 - 14} ~ ~{(i // 8) * 4 + 4}" for i, eid in enumerate(ids)]
+        self.write(self.bp, f"functions/gb/{self.ns}/all.mcfunction", "\n".join(lines) + "\n")
+        self.write(self.bp, f"functions/gb/{self.ns}/clear.mcfunction", f"kill @e[family={self.ns},type=!player]\n")
+        for b in (self.js.get("blocks") or {}):
+            self.write(self.bp, f"functions/gb/{self.ns}/give_blocks.mcfunction", "\n".join(f"give @s {x}" for x in self.js["blocks"]) + "\n")
+        use_script = (bool(self.js["entities"]) and any(c["props"] or c["triggers"] for c in self.js["entities"].values())) or bool(self.js.get("blocks"))
+        ov_main = (self.bp / "scripts" / "overlay" / "main.js").exists()
+        wg = getattr(self, "worldgen_script", False)
+        if use_script or ov_main or wg or pj or getattr(self, "javabridge_on", False):
+            body = runtime.script(self.js) if use_script else "// GeckoBridge: overlay only\n"
+            if wg: body = 'import "./worldgen.js";   // ModPorter dimensions + structure world generator\n' + body
+            if pj: body = 'import "./paintings.js";   // mod painting variants as wall entities\n' + body
+            if getattr(self, "javabridge_on", False): body = body + '\nimport "./javabridge/main.js";   // the mod\'s own code (JavaBridge)\n'
+            if ov_main: body = 'import "./overlay/main.js";   // ModPorter behaviour overlay (our own code)\n' + body
+            self.write(self.bp, "scripts/gb_runtime.js", body); use_script = True
+            self.report["m2_script_entities"] = len(self.js["entities"])
+        for root, kind, h, dep in ((self.rp, "resources", rph, bph), (self.bp, "data", bph, rph)):
+            mods = [{"type": kind, "uuid": u5(self.ns, kind, "m"), "version": [0, 1, 0]}]
+            deps = [{"uuid": dep, "version": [0, 1, 0]}]
+            if kind == "data" and use_script:
+                mods.append({"type": "script", "language": "javascript", "uuid": u5(self.ns, "script"), "entry": "scripts/gb_runtime.js",
+                             "version": [0, 1, 0]})
+                deps.append({"module_name": "@minecraft/server", "version": runtime.SCRIPT_VERSION})
+            self.write(root, "manifest.json", {"format_version": 2, "header": {"name": f"GB {self.title} {'RP' if kind == 'resources' else 'BP'}",
+                "description": "GeckoBridge private conversion", "uuid": h, "version": [0, 1, 0], "min_engine_version": [1, 21, 0]},
+                "modules": mods, "dependencies": deps})
+            self.write(root, "CREDITS.txt", credit)
+        # budget
+        kf = sum(len(v) if isinstance(v, dict) else 1 for files in getattr(self, "anim_files", {}).values() for a in files.values()
+                 for b in (a.get("bones") or {}).values() for k, v in b.items() if k in ("rotation", "position", "scale"))
+        size = sum(p.stat().st_size for p in (self.rp / "animations").rglob("*.json")) if (self.rp / "animations").exists() else 0
+        self.report["budget"] = {"entities": len(self.report["entities"]), "keyframes": kf, "animation_bytes": size,
+                                 "max_bones": max((len(g.get("bones", [])) for p in (self.rp / "models").rglob("*.json")
+                                                   for g in json.loads(p.read_text())["minecraft:geometry"]), default=0)}
+        self.report["rp_uuid"], self.report["bp_uuid"] = rph, bph
+        self.write(self.out, "report.json", self.report)
+        return self.report
+
+
+if __name__ == "__main__":
+    import os
+    if os.environ.get("PYTHONHASHSEED") != "0":       # same packs every build: set/dict-of-set order must not vary per run
+        os.environ["PYTHONHASHSEED"] = "0"; os.execv(sys.executable, [sys.executable] + sys.orig_argv[1:])
+    ap = argparse.ArgumentParser(); ap.add_argument("jar"); ap.add_argument("out"); ap.add_argument("--name"); ap.add_argument("--tol", type=float)
+    a = ap.parse_args()
+    r = Build(a.jar, a.out, a.name, a.tol).run()
+    if a.tol is None and r["budget"]["animation_bytes"] > 1.5 * 1024 * 1024:   # frame/load budget (M1 plan item 7)
+        print(f"animations {r['budget']['animation_bytes'] // 1024} KB > 1.5 MB: rebuilding with 0.25 deg tolerance")
+        r = Build(a.jar, a.out, a.name, 0.25).run(); r["budget"]["tolerance_deg"] = 0.25
+        Path(a.out, "report.json").write_text(json.dumps(r, indent=1))
+    ok = [k for k, v in r["entities"].items() if not v.get("skipped")]
+    print(f"{r['mod_id']}: {len(ok)} mobs built, {len(r['entities']) - len(ok)} skipped, molang errors {len(r['molang_errors'])}, "
+          f"warnings {len(r['warnings'])}, bake error max {r['bake_error_max']}, keyframes {r['budget']['keyframes']}, "
+          f"animations {r['budget']['animation_bytes'] // 1024} KB")

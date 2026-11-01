@@ -30,3 +30,6 @@ Copy `bin/BedrockForgeCore/` into `<LeviLauncher instance>/mods/`. Logs go to th
 See `docs/`: PROJECT_STATUS, RESEARCH_INDEX, ARCHITECTURE, LICENSE_AUDIT, and the rest.
 
 License: TBD (see docs/LICENSE_AUDIT.md). The template base is CC0. The HUD drawing approach was learned from Lamium (LGPL-3.0) and re-implemented here, not copied.
+
+## Converting Java mods
+One pipeline for every mod (models, content, the mod's own code and mob AI): see [docs/CONVERT_A_MOD.md](docs/CONVERT_A_MOD.md).

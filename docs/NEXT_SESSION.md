@@ -20,6 +20,93 @@
 - Next ideas: wheel camera swing to face the player, HUD drag editor (HUD petal), pixel-smooth scrolling (scissor),
   profiles page.
 
+# Next session handoff (updated 2026-11-01 ~00:55 local, GeckoBridge M4/M5 done) - READ FIRST
+- GeckoBridge now does GeckoLib 5 (M4), animated .mcmeta textures (M5) and the earlier M3 items/armor + animation
+  cues. Status: PORT_GECKOBRIDGE.md "M3 / M4 / M5 status". Test mods (not committed): testmods/m4/
+  santa_dweller-1.21.8-1.9.0-neo.jar (NeoForge 1.21.8) and mochipets-0.23.0+26.3.jar (Fabric 26.3, com.geckolib).
+- Wonderland: 95/129 mobs had the WRONG SKIN (fish.png) since the first port - MCreator synced texture names are now
+  read. 16 mobs have animated skins (gb_anim material, USE_UV_ANIM). Seen in game: sphere/keeper/watching correct.
+- Deployed on the PC: wl7 build (MobAI commit 4e77e75 + this work) into GeckoBridgeProofRP/BP (Wonderland Test).
+  NOTE: an earlier wl5 deploy from this session briefly overwrote the MobAI deploy (old paintings.js); wl7 fixes it.
+- NOT YET SEEN IN GAME: GB Santa Dweller / GB Mochi Pets RP+BP (dev packs, added to "GeckoBridge Test" world;
+  backups world_*_packs.json.bak_gl5). Needs a game restart, then /summon santa_dweller:santa_dweller and
+  /summon mochipets:mochi.
+- Computer-use lesson: the world list re-sorts after Save & Quit; hover + zoom on the name before clicking. A
+  misclick landed in Fernando's "My World" (AWJgm..., Dweller/Dread) where `/kill @e[type=!player]` was run (told him).
+- Builds: batched javap (uncached Wonderland ~10 min, cached ~3 min), deterministic output (PYTHONHASHSEED=0 re-exec).
+
+# Next session handoff (updated 2026-10-31 ~19:20 local / 00:20 UTC, Wonderland full port) - READ FIRST
+- WONDERLAND (the_wonderland 3.0.3, MCreator + GeckoLib, file from its creator, private use only - keep credits,
+  ask before sharing) converts end to end: 129/129 mobs, 87 blocks, items, recipes, 44 effects, 44 dimensions with
+  structure world-gen + portals, overlays (jumpscares), procedures/events via JavaBridge. Seen in game at ~60 fps,
+  ContentLog clean for Wonderland. Status + gaps: PORT_GECKOBRIDGE.md "M2/M3 + full-mod pipeline status".
+- FRESH TEST WORLD for Fernando: "Wonderland Test" (folder Hw+zI-keu9c=, creative, only the Wonderland packs
+  = GeckoBridgeProof BP/RP UUIDs). "GeckoBridge Test" is the messy all-mods test world (ERR66 state, leftovers).
+- TEST INSTALL IS A HACK: Wonderland is deployed INTO development_*_packs/GeckoBridgeProofBP|RP with the Proof pack
+  UUIDs (mods/the_wonderland.json "pack_uuids") because new dev packs weren't picked up without a game restart.
+  Old proof is in <instance>/geckobridge_staging/old_proof. For a normal install drop pack_uuids and rebuild.
+- Crash lesson: whole-set vanilla retextures crashed world load -> quarantined copy in geckobridge_staging/vo_quarantine;
+  world db backup before the player-dimension edit: geckobridge_staging/world_db_backup_1817.
+- Deploy flow that works: build in the cloud -> md5 lists from the PC -> tar only changed files -> device_commit_files
+  (<25 MB per file) -> Save & Quit -> cp -rf into the dev packs -> reopen the world. Game relaunch: LeviLauncher Launch.
+- Later the same evening: queueServerWork on the Bedrock scheduler, javap string unescape (all concat text was broken),
+  mod commands (/the_wonderland:wonderland debug works), mod particles, spawn egg colours, vanilla mob/armor/HUD-icon
+  retextures where bedrock-samples has the same file+size (list in /home/claude/tools/vanilla, not committed),
+  Naturalist deer locator error fixed (neck bone rename), 3D item icons. Feature table: docs/PORT_WONDERLAND.md.
+- Rebuild: python3 -I tools/GeckoBridge/build.py testmods/the_wonderland-3.0.3-1.20.1-forge-MIT-Novak.jar m2/build_wonderland --name Wonderland --tol 0.25
+  (needs /home/claude/mappings/srg_1.20.1.json, /home/claude/tools/packconv/textures.json, /home/claude/tools/vanilla/*; none committed).
+
+# Next session handoff (updated 2026-10-31 ~20:15 UTC, GeckoBridge M1) - READ FIRST
+- M1 DONE + SEEN IN GAME (details: PORT_GECKOBRIDGE.md "M1 status"): 70 mobs of Naturalist / Sculk Horde / Cave Dweller
+  converted by tools/GeckoBridge/build.py, validate.py 0 errors, all spawned together in "GeckoBridge Test" at ~60 fps,
+  ContentLog 0 errors (one cosmetic deer locator message). Proof Sculk Enderman checked day + night.
+- Installed on the PC: development_resource_packs / development_behavior_packs "GB Naturalist|Sculk Horde|Cave Dweller RP/BP"
+  + GeckoBridge Proof RP/BP, all enabled in GeckoBridge Test (world MKKrqc0qT1g=, backups *.pre-gb.bak / *.pre-m1.bak).
+  Test functions in GB Cave Dweller BP/functions (gbp, gbn, gbs, gbc, gbe, gbf, gbu, gbk, gbd, gbm) - they register on
+  world load. Converted packs are NOT in git (auto-mode guard: no converted mod assets in this repo).
+- Computer use on this PC: game app = path c:\users\fazzman175\appdata\roaming\levilauncher.exe\versions\1.26.51.01\minecraft.windows.exe;
+  menus need mouse_down/up with a 0.15 s hold; Esc and "/" via hold_key 0.2 s; the world list reorders by last played
+  (screenshot before clicking a tile); click the title bar (y=6) when the Claude window steals focus.
+- NEXT (M2): runtime for the reserved v.gb_* conditions + triggered animations (Script API + entity properties), custom
+  layers, sound keyframe names, per-mob AI; then M3 (items/armor/blocks/projectiles).
+
+# Next session handoff (updated 2026-10-31 ~18:35 UTC, GeckoBridge kickoff) - READ FIRST
+- PROOF INSTALLED, NOT YET SEEN: GeckoBridge Proof RP/BP v2 (gb_glow material) in the instance's
+  development_resource_packs / development_behavior_packs (v1 moved to <instance>\geckobridge_staging\old_v1).
+  Enabled in world "GeckoBridge Test" (folder MKKrqc0qT1g=, flat creative, cheats on): world_*_packs.json +
+  *_pack_history.json written (backups *.pre-gb.bak). Edited while the game ran in My World - safe because that world
+  was not opened in this game run.
+- IN-GAME CHECK BLOCKED: another Claude session held the computer-use lock (game open in My World, 13:22 local).
+  To do: open GeckoBridge Test, `/summon gb:sculk_enderman ~ ~ ~3`, `/summon gb:sculk_enderman_alphaglow ~3 ~ ~3`,
+  noon + `/time set midnight`, Fancy first, then VV; grep newest ContentLog for errors.
+  Computer use: game resolves as the path `c:\users\fazzman175\appdata\roaming\levilauncher.exe\versions\1.26.51.01\minecraft.windows.exe`
+  (name "Minecraft.windows" only resolves via that path). TikTok Live Studio was running - ask before taking the screen.
+- M1 PLAN WRITTEN (PORT_GECKOBRIDGE.md "M1 plan"), ModelCore-aware per PORT_FIGURA.md. Waiting for Fernando's OK
+  before starting.
+
+# Next session handoff (updated 2026-10-30 ~17:15 UTC, cloud session, GeckoBridge research) - READ FIRST
+- BRANCH `research/geckobridge` (from main; never merge without Fernando). Newer Cinematic/LyricsFlow handoff
+  blocks live on branch `handoff/v0.9-status-2026-10-29` (not merged into main) - read that file there too.
+- GECKOBRIDGE RESEARCH DONE (M0): docs/PORT_GECKOBRIDGE.md = format mapping, 1:1/bake/approx/RT/no tables,
+  converter + runtime design, milestones M1-M5, risks, licence questions. Verdict: GeckoLib assets ARE Bedrock
+  formats; only easing needs converting (baked offline, measured max error 0.06 deg over 534 anims of 3 mods);
+  the hard part is Java-side controllers/triggers -> pattern extraction + Script API/property runtime.
+- TOOLS: tools/GeckoBridge/ (scan.py, gbanim.py baker + error meter, convert.py M0 converter, preview.py/js).
+  Test mods (Modrinth, NOT in repo): Cave Dweller Evolved 1.7.0 (MIT), Naturalist 5.0pre4 (licence unclear),
+  Sculk Horde 0.12.7 (Apache-2.0). GeckoLib 5.5.7 jars came from Fernando's upload.
+- PROOF BUILT, NOT YET SEEN IN GAME: Sculk Enderman (Sculk Horde, Apache-2.0) model + `idle` + `idle.tendrils`
+  (concurrent) + glowmask, two entities to compare glow methods: `gb:sculk_enderman` (overlay render controller,
+  entity_alphatest + ignore_lighting) and `gb:sculk_enderman_alphaglow` (glowmask baked into alpha,
+  entity_emissive_alpha - may show the tendril cutouts wrongly, that's what the test is for). validate.py 0 errors;
+  preview render Bedrock == GeckoLib. Packs were sent to Fernando in chat as GeckoBridgeProof.zip.
+  BLOCKER: folder access to the game instance was refused this session (auto-mode classifier), so nothing was
+  installed and computer use was not started. Next: Fernando grants access (or copies the two folders himself) ->
+  install as dev packs (game CLOSED), add to a test world, `/summon gb:sculk_enderman ~ ~ ~3` and
+  `/summon gb:sculk_enderman_alphaglow ~3 ~ ~3`, check day + night, ContentLog 0 errors. Steps: PORT_GECKOBRIDGE.md end.
+  Rebuild: python -I tools/GeckoBridge/convert.py tools/GeckoBridge/specs/proof_sculk_enderman.json OUT (fix "jar" path).
+- REPO IS PRIVATE since 2026-10-30 18:30 UTC (Fernando switched it). Converted proof packs + previews now committed in ports/geckobridge/proof (private personal use only, never share). Test jars stay out (tools/GeckoBridge/fetch_testmods.py re-downloads them). NEXT: pull the PC-only code (private shader src, Downloads ZIP changes, DreadAtmos main.js) into the repo - needs folder access.
+- FERNANDO 2026-10-30: glow = whatever is closest to the mod -> overlay (GeckoLib translucent fullbright pass, checked in GL4+GL5 source), alpha mode = fallback. Ports are private personal use only (he has permission), never shared. Repo going PRIVATE -> then all code (incl. PC-only sources) goes on GitHub.
+
 # Next session handoff (updated 2026-10-28 ~18:35 local, cloud session + PC computer use, Fernando away) - READ FIRST
 - GOAL 1 DONE - Spatial GUI M0.5 -> **VERDICT: METHOD 1 VIABLE**. UI draws straight into the swap-chain back buffer.
   The "unknown" RTV handles were the 3 swap-chain RTVs created before RF hooked; M0.5b learns them at Present. Details:

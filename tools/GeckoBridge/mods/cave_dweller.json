@@ -1,0 +1,15 @@
+{
+  "about": "Cave Dweller (Cadentem, MIT) = the mod the ModPorter 'ice_bear_2026' overlay (The Dweller AI) re-implements. GeckoBridge reuses that overlay's Script API AI, renamed, and maps the mod's GeckoLib conditions onto the overlay's client-synced properties.",
+  "overlay": "ice_bear_2026",
+  "rename": {"ice_bear_2026": "cave_dweller", "The Dweller": "Cave Dweller"},
+  "replace": {"q.has_target": "(q.property('cave_dweller:state') == 'chase')"},
+  "vars": {
+    "v.gb_iscrawling": {"molang": "(q.property('cave_dweller:pose') == 'crawl')"},
+    "v.gb_m_280296_3ecc": {"molang": "(q.property('cave_dweller:pose') == 'crawl')", "java": "level.getBlockState(blockPosition().above()).isSolid()"},
+    "v.gb_m_280296_3b73": {"molang": "(q.property('cave_dweller:pose') == 'crawl')", "java": "level.getBlockState(blockPosition()).isSolid() (while crawling)"},
+    "v.gb_m_280296_5de0": {"molang": "(q.property('cave_dweller:pose') == 'crouch')", "java": "level.getBlockState(blockPosition().above(2)).isSolid()"},
+    "v.gb_fleeing": {"molang": "(q.property('cave_dweller:state') == 'flee')"},
+    "v.gb_spotted": {"molang": "q.property('cave_dweller:spotted')"},
+    "v.gb_pleasestopmoving": {"molang": "q.property('cave_dweller:frozen')"}
+  }
+}
