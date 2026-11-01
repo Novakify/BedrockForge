@@ -48,12 +48,20 @@ struct PartOut {
     double  uv[4] = {0, 0, 1, 1};   // effective UV matrix as Bedrock uv_anim: offset u, v, scale u, v
 };
 
-/// a render task the bridge can draw (ItemTask / BlockTask): its item/block id and its matrix in the part's space
+/// a render task the bridge can draw: its item/block/entity id (or text/sprite content) and its matrix in the
+/// part's space
 struct TaskDraw {
-    int         kind = 0; // 1 item, 2 block
-    std::string id;       // "minecraft:diamond_sword"
+    int         kind = 0; // 1 item, 2 block, 3 text, 4 sprite, 5 entity
+    std::string id;       // "minecraft:diamond_sword"; text/sprite: a content key (repaint when it changes)
     Mat4        m;
+    void*       task = nullptr;  // text / sprite: the Task (taskRaster paints it)
+    double      w = 0, h = 0;    // text / sprite: painted size (pixels = task units)
+    double      ox = 0, oy = 0;  // text: alignment offset (task units, text space: x right, y down)
+    int         pw = 0, ph = 0;  // painted pixels (texture area the quad shows); text: = w x h
 };
+class Avatar;
+/// paint a text / sprite task into a size x size RGBA buffer (r in the low byte), top-left; LuaTask.cpp
+void taskRaster(Avatar& a, TaskDraw const& d, std::vector<uint32_t>& px, int size);
 
 struct KeybindState {
     std::string name, key;
@@ -111,11 +119,22 @@ public:
     std::vector<char>                          uvBones;
     std::map<std::string, std::vector<int>>    taskBones;    // "item:minecraft:x" / "block:minecraft:y" -> bones (rig "taskBones")
     std::vector<void*>                         dynSlotTex;   // runtime texture slot -> script Texture (LuaTex Tex*)
+    struct QuadSlot {             // text / sprite task bone (rig "taskBones" kind quad) + its runtime texture
+        int         bone = -1, file = -1;
+        std::string key;          // content painted into the texture now
+        bool        used = false; // claimed this frame
+    };
+    std::vector<QuadSlot>                      quadSlots;
+    std::vector<uint32_t>                      quadPx;
+    std::map<std::string, std::string>         vanillaTextures; // "minecraft:textures/...png" -> bundle file (rig)
+    Mat4                                       worldToModel;   // Figura WORLD space -> player model space, per frame
+    bool                                       inWorld = false; // traverse: inside a WORLD part
     int  customTextureFile(void* tex);
     int  textureFileByName(std::string const& figuraName) const;                       // TextureFile index that shows a CUSTOM texture, -1 none      // bones with a uv_anim render controller (rig "uvParts")
     std::map<int, std::vector<int>>            dupSlots;     // source bone -> free-floating dup bones (rig "dups")
     int                                        compiledParts = 0;
     void solveBones();
+    void drawQuadTask(TaskDraw const& d, Mat4 const& partMat);
     bool separateType(ParentType t) const;
     int                                        nbtRef = 0; // Lua table: avatar:getNBT()
     std::shared_ptr<lyrics::json::Value>       nbtJson;    // the compiled avatar NBT

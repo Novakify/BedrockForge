@@ -843,7 +843,21 @@ int apiGetTextures(lua_State* L) {
 int apiFromVanilla(lua_State* L) {
     std::string name = optStr(L, 1, "");
     std::string path = luaL_checkstring(L, 2);
-    // Minecraft's resources are not available: the resource is "missing" -> MissingTextureAtlasSprite (16x16)
+    // vanilla textures the compiler found named in the scripts ship in the bundle (rig "vanillaTextures")
+    if (Avatar* av = avatarOf(L)) {
+        std::string key = path.find(':') == std::string::npos ? "minecraft:" + path : path;
+        auto it = av->vanillaTextures.find(key);
+        if (it != av->vanillaTextures.end()) {
+            std::string data = readFileBin(av->dir / it->second);
+            int w = 0, h = 0;
+            std::vector<uint32_t> px;
+            if (!data.empty() && pngDecode(data, w, h, px, nullptr)) {
+                registerTex(L, name, w, h, std::move(px));
+                return 1;
+            }
+        }
+    }
+    // other Minecraft resources are not available: "missing" -> MissingTextureAtlasSprite (16x16)
     std::vector<uint32_t> px(256);
     for (int y = 0; y < 16; y++)
         for (int x = 0; x < 16; x++) px[size_t(y * 16 + x)] = ((y < 8) ^ (x < 8)) ? 0xFFF800F8u : 0xFF000000u;

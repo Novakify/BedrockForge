@@ -13,6 +13,8 @@
 #include "figura/core/LuaApi.h"
 #include "figura/core/LuaBind.h"
 #include "figura/core/LuaTex.h"
+#include "figura/core/Font8x8.h"
+#include "lyrics/core/Json.h"
 
 namespace bf::figura {
 
@@ -825,6 +827,189 @@ void openRenderTaskApi(Avatar& a) {
                                       {"setHeadRotation", etSetHeadRotation}});
 }
 
+// ---- text / sprite painting (TextTask / SpriteTask drawn as a quad with a runtime texture)
+namespace {
+struct Glyph { uint32_t cp; uint32_t rgb; };
+struct TextLayout {
+    std::vector<std::vector<Glyph>> lines;
+    std::vector<int>                widths;
+    int                             w = 0, h = 0;
+};
+uint32_t const kMcColors[16] = {0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA,
+                                0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF};
+char const* const kMcColorNames[16] = {"black", "dark_blue", "dark_green", "dark_aqua", "dark_red", "dark_purple",
+                                       "gold", "gray", "dark_gray", "blue", "green", "aqua", "red", "light_purple",
+                                       "yellow", "white"};
+int glyphAdvance(uint32_t cp) {
+    if (cp == ' ') return 4;
+    if (cp >= 128) cp = '?';
+    int right = -1;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++)
+            if (kFont8x8[cp][r] & (1 << c)) right = std::max(right, c);
+    return right < 0 ? 4 : right + 2;
+}
+void appendText(std::vector<Glyph>& out, std::string const& s, uint32_t& rgb) {
+    uint32_t base = rgb;
+    for (size_t i = 0; i < s.size();) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        uint32_t cp = c;
+        int n = c < 0x80 ? 1 : (c >> 5) == 6 ? 2 : (c >> 4) == 14 ? 3 : (c >> 3) == 30 ? 4 : 1;
+        if (n > 1 && i + size_t(n) <= s.size()) {
+            cp = c & (0x7F >> n);
+            for (int k = 1; k < n; k++) cp = (cp << 6) | (static_cast<unsigned char>(s[i + size_t(k)]) & 0x3F);
+        }
+        i += size_t(n);
+        if (cp == 0xA7 && i < s.size()) { // section sign formatting code
+            char f = char(std::tolower(static_cast<unsigned char>(s[i])));
+            i++;
+            if (f >= '0' && f <= '9') rgb = kMcColors[f - '0'];
+            else if (f >= 'a' && f <= 'f') rgb = kMcColors[10 + f - 'a'];
+            else if (f == 'r') rgb = base;
+            continue;
+        }
+        out.push_back({cp, rgb});
+    }
+}
+uint32_t colorOf(lyrics::json::Value const& v, uint32_t dflt) {
+    if (!v.isString()) return dflt;
+    std::string c = v.str();
+    if (c.size() == 7 && c[0] == '#') return uint32_t(std::strtoul(c.c_str() + 1, nullptr, 16));
+    for (int k = 0; k < 16; k++)
+        if (c == kMcColorNames[k]) return kMcColors[k];
+    return dflt;
+}
+void walkComponent(lyrics::json::Value const& v, uint32_t rgb, std::vector<Glyph>& out) {
+    if (v.isString()) { std::string s = v.str(); appendText(out, s, rgb); return; }
+    if (v.isArray()) { for (auto const& e : v.items()) walkComponent(e, rgb, out); return; }
+    if (!v.isObject()) return;
+    uint32_t c = colorOf(v["color"], rgb);
+    for (char const* k : {"text", "translate", "keybind"})
+        if (v[k].isString()) { std::string s = v[k].str(); uint32_t cc = c; appendText(out, s, cc); break; }
+    if (v["extra"].isArray())
+        for (auto const& e : v["extra"].items()) walkComponent(e, c, out);
+}
+TextLayout layoutText(Task const& t) {
+    std::vector<Glyph> gs;
+    size_t first = t.text.find_first_not_of(" \t\r\n");
+    bool parsed = false;
+    if (first != std::string::npos && (t.text[first] == '{' || t.text[first] == '[' || t.text[first] == '"'))
+        if (auto j = lyrics::json::parse(t.text)) { walkComponent(*j, 0xFFFFFF, gs); parsed = true; }
+    if (!parsed) { uint32_t c = 0xFFFFFF; appendText(gs, t.text, c); }
+    TextLayout L;
+    L.lines.emplace_back();
+    int lineW = 0;
+    for (auto const& g : gs) {
+        if (g.cp == '\n') { L.lines.emplace_back(); lineW = 0; continue; }
+        int adv = glyphAdvance(g.cp);
+        if (t.wrap && t.width > 0 && lineW + adv > t.width && !L.lines.back().empty()) {
+            // wrap at the last space of the line when there is one
+            auto& cur = L.lines.back();
+            size_t sp = cur.size();
+            while (sp > 0 && cur[sp - 1].cp != ' ') sp--;
+            std::vector<Glyph> rest;
+            if (sp > 0 && sp < cur.size()) { rest.assign(cur.begin() + long(sp), cur.end()); cur.resize(sp - 1); }
+            L.lines.emplace_back(std::move(rest));
+            lineW = 0;
+            for (auto const& r : L.lines.back()) lineW += glyphAdvance(r.cp);
+        }
+        L.lines.back().push_back(g);
+        lineW += adv;
+    }
+    for (auto const& ln : L.lines) {
+        int w = 0;
+        for (auto const& g : ln) w += glyphAdvance(g.cp);
+        if (w > 0) w -= 1; // no gap after the last glyph
+        L.widths.push_back(w);
+        L.w = std::max(L.w, w);
+    }
+    L.h = int(L.lines.size()) * 9 - 1;
+    return L;
+}
+inline uint32_t rgba(uint32_t rgb, int a) { // NativeImage order: r low byte
+    return (uint32_t(std::clamp(a, 0, 255)) << 24) | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
+}
+void blend(std::vector<uint32_t>& px, int size, int x, int y, uint32_t c) {
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    uint32_t& d = px[size_t(y) * size_t(size) + size_t(x)];
+    unsigned sa = c >> 24, da = d >> 24;
+    if (sa == 255 || da == 0) { d = c; return; }
+    unsigned oa = sa + da * (255 - sa) / 255;
+    if (!oa) { d = 0; return; }
+    uint32_t r = 0;
+    for (int sh = 0; sh < 24; sh += 8) {
+        unsigned sc = (c >> sh) & 0xFF, dc = (d >> sh) & 0xFF;
+        r |= ((sc * sa + dc * da * (255 - sa) / 255) / oa) << sh;
+    }
+    d = r | (oa << 24);
+}
+int pad(Task const& t) { return (t.background || t.outline) ? 1 : 0; }
+std::map<std::string, Tex>& vanillaCache() { static std::map<std::string, Tex> c; return c; }
+Tex* spriteSource(Avatar& a, Task* t) {
+    if (t->texture) { texDecode(a.L, *t->texture); return t->texture; }
+    auto it = a.vanillaTextures.find(t->texturePath);
+    if (it == a.vanillaTextures.end()) return nullptr;
+    std::string file = (a.dir / it->second).string();
+    Tex& tx = vanillaCache()[file];
+    if (!tx.decoded) { tx.file = file; texDecode(a.L, tx); }
+    return tx.decoded ? &tx : nullptr;
+}
+} // namespace
+
+void taskRaster(Avatar& a, TaskDraw const& d, std::vector<uint32_t>& px, int size) {
+    Task* t = static_cast<Task*>(d.task);
+    if (!t) return;
+    if (t->kind == TaskKind::Text) {
+        TextLayout L = layoutText(*t);
+        int p = pad(*t);
+        int op = std::clamp(t->opacity, 0, 255);
+        if (t->background) {
+            uint32_t bg = t->hasBackgroundColor ? uint32_t(t->backgroundColor) : 0x00000040u; // r g b a
+            uint32_t c = rgba(((bg >> 24) & 0xFF) << 16 | ((bg >> 16) & 0xFF) << 8 | ((bg >> 8) & 0xFF), int((bg & 0xFF) * op / 255));
+            for (int y = 0; y < L.h + 2 * p; y++)
+                for (int x = 0; x < L.w + 2 * p; x++) blend(px, size, x, y, c);
+        }
+        auto drawLine = [&](int li, int dx, int dy, int pass) {
+            int x0 = p + dx, w = L.widths[size_t(li)];
+            if (t->alignment == "CENTER") x0 += (L.w - w) / 2;
+            else if (t->alignment == "RIGHT") x0 += L.w - w;
+            for (auto const& g : L.lines[size_t(li)]) {
+                uint32_t cp = g.cp < 128 ? g.cp : '?';
+                uint32_t rgb = pass == 0 ? (t->hasOutlineColor ? uint32_t(t->outlineColor) : 0u)
+                             : pass == 1 ? ((g.rgb & 0xFCFCFC) >> 2) : g.rgb;
+                uint32_t c = rgba(rgb, op);
+                for (int r = 0; r < 8; r++)
+                    for (int col = 0; col < 8; col++)
+                        if (kFont8x8[cp][r] & (1 << col)) blend(px, size, x0 + col, p + dy + li * 9 + r, c);
+                x0 += glyphAdvance(g.cp);
+            }
+        };
+        for (int li = 0; li < int(L.lines.size()); li++) {
+            if (t->outline)
+                for (int oy = -1; oy <= 1; oy++)
+                    for (int ox = -1; ox <= 1; ox++)
+                        if (ox || oy) drawLine(li, ox, oy, 0);
+            if (t->shadow && !t->outline) drawLine(li, 1, 1, 1);
+            drawLine(li, 0, 0, 2);
+        }
+        return;
+    }
+    if (t->kind == TaskKind::Sprite) {
+        Tex* src = spriteSource(a, t);
+        if (!src || src->w <= 0 || src->h <= 0 || src->px.size() < size_t(src->w) * size_t(src->h)) return;
+        int tw = t->textureW > 0 ? t->textureW : src->w, th = t->textureH > 0 ? t->textureH : src->h;
+        for (int y = 0; y < d.ph; y++)
+            for (int x = 0; x < d.pw; x++) {
+                double u = t->u + (x + 0.5) / tw, v = t->v + (y + 0.5) / th;
+                int sx = std::clamp(int(std::floor(u * src->w)), 0, src->w - 1), sy = std::clamp(int(std::floor(v * src->h)), 0, src->h - 1);
+                uint32_t c = src->px[size_t(sy) * size_t(src->w) + size_t(sx)];
+                unsigned r = (c & 0xFF) * unsigned(t->r) / 255, g = ((c >> 8) & 0xFF) * unsigned(t->g) / 255,
+                         b = ((c >> 16) & 0xFF) * unsigned(t->b) / 255, al = (c >> 24) * unsigned(t->a) / 255;
+                px[size_t(y) * size_t(size) + size_t(x)] = r | (g << 8) | (b << 16) | (al << 24);
+            }
+    }
+}
+
 void taskDraws(Avatar& a, Part* p, std::vector<TaskDraw>& out) {
     lua_State* L = a.L;
     if (!L) return;
@@ -833,7 +1018,63 @@ void taskDraws(Avatar& a, Part* p, std::vector<TaskDraw>& out) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
         Task* t = toTask(L, -1);
         lua_pop(L, 1);
-        if (!t || !t->cust.visible || (t->kind != TaskKind::Item && t->kind != TaskKind::Block) || !t->itemRef) continue;
+        if (!t || !t->cust.visible) continue;
+        if (t->kind == TaskKind::Text) {
+            if (!t->hasText || t->text.empty()) continue;
+            TextLayout lay = layoutText(*t);
+            int pp = pad(*t);
+            TaskDraw d;
+            d.kind = 3;
+            d.task = t;
+            d.pw = lay.w + 2 * pp + (t->shadow ? 1 : 0);
+            d.ph = lay.h + 2 * pp + (t->shadow ? 1 : 0);
+            d.w = d.pw;
+            d.h = d.ph;
+            d.ox = (t->alignment == "CENTER" ? -lay.w / 2.0 : t->alignment == "RIGHT" ? -double(lay.w) : 0) - pp;
+            d.oy = -pp;
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "T|%s|%d%d%d%d|%d|%d|%x|%x|", t->alignment.c_str(), t->shadow, t->outline,
+                          t->background, t->wrap, t->width, t->opacity, unsigned(t->outlineColor), unsigned(t->backgroundColor));
+            d.id = buf + t->text;
+            t->cust.recalculate();
+            d.m = t->cust.positionMatrix;
+            out.push_back(std::move(d));
+            continue;
+        }
+        if (t->kind == TaskKind::Sprite) {
+            if (!t->hasTexture || t->sw == 0 || t->sh == 0) continue;
+            Tex* src = spriteSource(a, t);
+            if (!src) continue;
+            TaskDraw d;
+            d.kind = 4;
+            d.task = t;
+            d.pw = std::clamp(t->regionW > 0 ? t->regionW : src->w, 1, 256);
+            d.ph = std::clamp(t->regionH > 0 ? t->regionH : src->h, 1, 256);
+            d.w = t->sw;
+            d.h = t->sh;
+            // content key: source + region + tint + a cheap checksum of the source pixels (scripts paint textures)
+            uint64_t hsum = 1469598103934665603ull;
+            for (size_t i = 0; i < src->px.size(); i += 7) hsum = (hsum ^ src->px[i]) * 1099511628211ull;
+            char buf[200];
+            std::snprintf(buf, sizeof buf, "S|%p|%g|%g|%d|%d|%d|%d|%d|%d|%d|%d|%llx", static_cast<void*>(src), double(t->u),
+                          double(t->v), t->textureW, t->textureH, d.pw, d.ph, t->r, t->g, t->b, t->a, (unsigned long long)hsum);
+            d.id = buf;
+            t->cust.recalculate();
+            d.m = t->cust.positionMatrix;
+            out.push_back(std::move(d));
+            continue;
+        }
+        if (t->kind == TaskKind::Entity) {
+            if (!t->hasEntity || t->entityId.empty()) continue;
+            TaskDraw d;
+            d.kind = 5;
+            d.id   = t->entityId.find(':') == std::string::npos ? "minecraft:" + t->entityId : t->entityId;
+            t->cust.recalculate();
+            d.m = t->cust.positionMatrix;
+            out.push_back(std::move(d));
+            continue;
+        }
+        if ((t->kind != TaskKind::Item && t->kind != TaskKind::Block) || !t->itemRef) continue;
         std::string id;
         lua_rawgeti(L, LUA_REGISTRYINDEX, t->itemRef);
         if (lua_type(L, -1) == LUA_TSTRING) id = lua_tostring(L, -1);

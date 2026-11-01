@@ -132,8 +132,16 @@ bool Avatar::load(std::filesystem::path const& bundleDir, std::filesystem::path 
             if (i != int(boneParent.size())) break;
             boneParent.push_back(-1);
             compiledPivots.push_back({});
-            taskBones[tb["kind"].str() + ":" + tb["id"].str()].push_back(i);
+            if (tb["kind"].str() == "quad") {
+                QuadSlot q;
+                q.bone = i;
+                q.file = tb["file"].isNumber() ? int(tb["file"].asNumber()) : -1;
+                quadSlots.push_back(q);
+            } else
+                taskBones[tb["kind"].str() + ":" + tb["id"].str()].push_back(i);
         }
+    if (rig && (*rig)["vanillaTextures"].isObject())
+        for (auto const& [k, v] : (*rig)["vanillaTextures"].members()) vanillaTextures[k] = v.str();
     out.resize(boneParent.size());
     boneModel.resize(boneParent.size());
     boneWorld.resize(boneParent.size());
@@ -756,7 +764,12 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
                 uvm[r * 3 + c] = v;
             }
     } else std::memcpy(uvm, p->uvMatrix, sizeof uvm);
-    separate = separate || separateType(p->parentType);
+    // WORLD parts: Figura draws them at world coordinates (16 units = 1 block); here they are drawn through the
+    // player's bones, mapped into the player model's space each frame (worldToModel)
+    bool enterWorld = p->parentType == ParentType::World && !inWorld && !separate;
+    separate = separate || (separateType(p->parentType) && !(p->parentType == ParentType::World && (inWorld || enterWorld)));
+    bool savedInWorld = inWorld;
+    if (enterWorld) inWorld = true;
     if (p->primaryTexture.set) prim = p->primaryTexture;
     if (p->secondaryTexture.set) sec = p->secondaryTexture;
     p->applyVanillaTransforms(vanillaPose.get(p->parentType));
@@ -777,7 +790,8 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         pushRef(L, p, typeId("ModelPart"));
         runChunk(3, 0);
     }
-    Mat4 myMat = parentMat * p->positionMatrix;
+    Mat4 myMat = (enterWorld ? Mat4{} : parentMat) * p->positionMatrix;
+    Mat4 drawMat = inWorld ? worldToModel * myMat : myMat; // model space (what the bone solve wants)
     // which bone draws this part: its own (compiled parts), else a free dup bone of its source (script copies)
     int bone = p->bone;
     if (bone < 0 && p->sourceBone >= 0 && vis) {
@@ -794,7 +808,7 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
     // Figura renders the held item at the first visible Right/LeftItemPivot: the Bedrock item bone gets the pivot
     // part's frame, the rest item position (hand) moved onto the part's pivot point (X = T(P) * L * T(-hand),
     // decomposed about the bone's pivot q)
-    if (onBody && (p->parentType == ParentType::RightItemPivot || p->parentType == ParentType::LeftItemPivot)) {
+    if (onBody && !inWorld && (p->parentType == ParentType::RightItemPivot || p->parentType == ParentType::LeftItemPivot)) {
         auto& io = itemOut[p->parentType == ParentType::RightItemPivot ? 0 : 1];
         if (io.configured && !io.found) {
             Vec3 P = myMat.apply(p->pivot);
@@ -810,7 +824,7 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
     }
     if (bone >= 0 && bone < int(out.size()) && !boneClaimed[size_t(bone)] && (p->bone >= 0 || onBody)) {
         boneClaimed[size_t(bone)] = 1;
-        boneModel[size_t(bone)] = myMat;
+        boneModel[size_t(bone)] = drawMat;
         PartOut& o = out[size_t(bone)];
         o.visible = onBody;
         auto texIndex = [&](TextureOverride const& t, bool primary) -> int {
@@ -832,7 +846,9 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
                 int f = textureFileByName("resource:" + r);
                 return f >= 0 ? f : textureFileByName("resource:" + t.resource);
             }
-            default: return -1; // CAPE / ELYTRA: no Bedrock texture for them yet
+            case TexKind::Cape: return textureFileByName("__cape");       // the player's Bedrock cape
+            case TexKind::Elytra: return textureFileByName("__elytra");   // vanilla elytra texture
+            default: return -1;
             }
         };
         o.primary   = texIndex(prim, true);
@@ -844,17 +860,22 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         o.uv[2] = uvm[0];
         o.uv[3] = uvm[4];
     }
-    // ItemTask / BlockTask: drawn through a task bone holding that item's / block's vanilla texture
-    if (onBody && !p->tasks.empty() && !taskBones.empty()) {
+    // render tasks: items / blocks / entities through a task bone holding their vanilla geometry + texture; text and
+    // sprites through a quad bone whose runtime texture gets the painted pixels
+    if (onBody && !p->tasks.empty() && (!taskBones.empty() || !quadSlots.empty())) {
         std::vector<TaskDraw> draws;
         taskDraws(*this, p, draws);
         for (auto const& d : draws) {
-            auto it = taskBones.find((d.kind == 1 ? "item:" : "block:") + d.id);
+            if (d.kind == 3 || d.kind == 4) {
+                drawQuadTask(d, drawMat);
+                continue;
+            }
+            auto it = taskBones.find((d.kind == 1 ? "item:" : d.kind == 2 ? "block:" : "entity:") + d.id);
             if (it == taskBones.end()) continue;
             for (int b : it->second) {
                 if (boneClaimed[size_t(b)]) continue;
                 boneClaimed[size_t(b)] = 1;
-                boneModel[size_t(b)]   = myMat * d.m;
+                boneModel[size_t(b)]   = drawMat * d.m;
                 PartOut& o = out[size_t(b)];
                 o.visible = true;
                 o.primary = o.secondary = -1;
@@ -864,6 +885,7 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         }
     }
     for (Part* c : std::vector<Part*>(p->children)) traverse(c, prim, sec, vis, myMat, separate, uvm);
+    inWorld = savedInWorld;
     if (vis && p->postRender && L) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, p->postRender);
         lua_pushnumber(L, tickDelta);
@@ -872,6 +894,45 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         runChunk(3, 0);
     }
     p->resetVanillaTransforms();
+}
+
+void Avatar::drawQuadTask(TaskDraw const& d, Mat4 const& partMat) {
+    if (d.w == 0 || d.h == 0 || d.pw <= 0 || d.ph <= 0 || quadSlots.empty()) return;
+    int const size = 256;
+    // same content keeps its slot (no repaint); else the first free one
+    QuadSlot* slot = nullptr;
+    for (auto& q : quadSlots)
+        if (!q.used && q.key == d.id) { slot = &q; break; }
+    if (!slot)
+        for (auto& q : quadSlots)
+            if (!q.used) { slot = &q; break; }
+    if (!slot || slot->bone < 0 || size_t(slot->bone) >= out.size() || boneClaimed[size_t(slot->bone)]) return;
+    slot->used = true;
+    double w = std::min(double(d.pw), double(size)), h = std::min(double(d.ph), double(size));
+    if (slot->key != d.id) {
+        quadPx.assign(size_t(size) * size, 0);
+        taskRaster(*this, d, quadPx, size);
+        if (slot->file >= 0 && slot->file < int(textureFiles.size()) && host)
+            host->uploadTexture(textureFiles[size_t(slot->file)].rpTexture, size, size,
+                                reinterpret_cast<uint8_t const*>(quadPx.data()));
+        slot->key = d.id;
+    }
+    size_t b = size_t(slot->bone);
+    boneClaimed[b] = 1;
+    // quad geometry: Figura x in [-1, 0], y in [-1, 0] (text space x right / y down, flipped like Figura's tasks)
+    Mat4 q;
+    q.scale(d.w, d.h, 1);
+    q.translate(-d.ox, -d.oy, 0);
+    boneModel[b] = partMat * d.m * q;
+    PartOut& o = out[b];
+    o.visible = true;
+    o.primary = o.secondary = -1;
+    o.opacity = 1;
+    bool flip = tune("quadFlipU", 0) != 0;
+    o.uv[0] = flip ? w / size : 0;
+    o.uv[1] = 0;
+    o.uv[2] = (flip ? -w : w) / size;
+    o.uv[3] = h / size;
 }
 
 void Avatar::frame(float delta) {
@@ -903,6 +964,18 @@ void Avatar::frame(float delta) {
     if (player.crouching && renderMode != "FIRST_PERSON") rootMat.translate(0, -2 / 0.9375 * tune("crouchDrop", 1), 0); // 2/16 block in world, model is drawn at 0.9375
     std::fill(boneClaimed.begin(), boneClaimed.end(), 0);
     itemOut[0].found = itemOut[1].found = false;
+    for (auto& q : quadSlots) q.used = false;
+    { // WORLD -> model: inverse of Java's player render transform T(pos) Ry(180 - bodyYaw) S(0.9375 / 16)
+        double t  = delta;
+        Vec3   P  = player.prevPos + (player.pos - player.prevPos) * t;
+        double by = player.prevBodyYaw + (player.bodyYaw - player.prevBodyYaw) * t;
+        Mat4   w;
+        w.translate(-16 * P.x, -16 * P.y, -16 * P.z);
+        w.rotateY(tune("worldYawSign", 1) * (by - tune("worldYawOff", 180)));
+        double s = 1 / 0.9375;
+        w.scale(s * tune("worldMirrorX", 1), s, s);
+        worldToModel = w;
+    }
     traverse(root, {}, {}, true, rootMat);
     solveBones();
     if (!scriptError) {

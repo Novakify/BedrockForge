@@ -166,7 +166,11 @@ def rgba_png(data: bytes) -> bytes:
 
 DYN_SLOTS = 4      # runtime texture slots (see build)
 DYN_SIZE = 64      # their placeholder size (same-size uploads are updated in place)
-DUPS = 1           # spare geometry copies per part for ModelPart:copy() (see build)
+DUPS = 1           # spare geometry copies per part for ModelPart:copy() of a part the compiler can't name (see build)
+NAMED_DUPS = 8     # spare copies of a subtree a script copies by path (models.a.b:copy(...)), e.g. particle-like effects
+DUP_BONE_BUDGET = 400  # max bones spent on named copies
+QUAD_SLOTS = 8     # text / sprite render tasks drawn at once (each a quad bone + a runtime texture)
+QUAD_SIZE = 256    # their runtime texture size (text / sprite pixels, cropped by uv_anim)
 BONE_LIMIT = 250   # per geometry; Bedrock breaks somewhere past 255 (see chunk_bones)
 
 
@@ -255,7 +259,7 @@ def kinds_for(f: dict):
 
 
 def tex_ref(f: dict) -> str:
-    return "Texture.default" if f.get("skin") else f"Texture.fbt{f['i']}"
+    return "Texture.default" if f.get("skin") else "Texture.cape" if f.get("cape") else f"Texture.fbt{f['i']}"
 
 
 _VANILLA_MAP = None
@@ -289,6 +293,83 @@ def bedrock_vanilla_texture(res: str) -> str | None:
     if cat == "models/armor" and a:
         return f"textures/models/armor/{a.group(1)}_{a.group(2)}"
     return f"textures/{folder}/{name}"
+
+
+_ENTITIES = None
+_GEOS = None
+
+
+def _json_loose(path: Path):
+    import re as _r
+    t = path.read_text(encoding="utf-8", errors="replace")
+    t = _r.sub(r"(?m)^\s*//.*$", "", t)
+    t = _r.sub(r"/\*.*?\*/", "", t, flags=_r.S)
+    try:
+        return json.loads(t)
+    except ValueError:
+        return None
+
+
+def vanilla_entity(rp: Path, eid: str) -> dict | None:
+    """Bedrock vanilla client entity -> {"bones", "tw", "th", "texture"} (default geometry + texture), from the
+    bedrock-samples resource pack given with --vanilla (entity/ + models/entity/); None when it isn't there."""
+    global _ENTITIES, _GEOS
+    if _ENTITIES is None:
+        _ENTITIES, _GEOS = {}, {}
+        for f in sorted((rp / "entity").glob("*.json")) if (rp / "entity").is_dir() else []:
+            d = _json_loose(f)
+            try:
+                desc = d["minecraft:client_entity"]["description"]
+            except (TypeError, KeyError):
+                continue
+            ident = desc.get("identifier")
+            geos, texs = desc.get("geometry") or {}, desc.get("textures") or {}
+            if ident and geos and texs and ident not in _ENTITIES:
+                g = geos.get("default") or next(iter(geos.values()))
+                t = texs.get("default") or next(iter(texs.values()))
+                _ENTITIES[ident] = (g, t)
+        raw = {}
+        for f in sorted((rp / "models").rglob("*.json")) if (rp / "models").is_dir() else []:
+            d = _json_loose(f)
+            if not isinstance(d, dict):
+                continue
+            for g in d.get("minecraft:geometry") or []:
+                desc = g.get("description") or {}
+                if desc.get("identifier"):
+                    raw[desc["identifier"]] = (None, g.get("bones") or [], desc.get("texture_width", 64), desc.get("texture_height", 64))
+            for k, v in d.items():
+                if k.startswith("geometry.") and isinstance(v, dict):
+                    ident, _, parent = k.partition(":")
+                    raw[ident] = (parent or None, v.get("bones"), v.get("texturewidth"), v.get("textureheight"))
+        def resolve(ident, depth=0):
+            if ident not in raw or depth > 8:
+                return None
+            parent, bones, tw, th = raw[ident]
+            base = resolve(parent, depth + 1) if parent else None
+            if base:
+                merged = {b["name"]: b for b in base[0]}
+                for b in bones or []:
+                    merged[b["name"]] = {**merged.get(b["name"], {}), **b}
+                bones = list(merged.values())
+                tw, th = tw or base[1], th or base[2]
+            return (bones or [], tw or 64, th or 64)
+        _GEOS = resolve
+    e = _ENTITIES.get(eid)
+    if not e:
+        return None
+    g = _GEOS(e[0])
+    if not g or not g[0]:
+        return None
+    bones = []
+    for b in g[0]:
+        if not isinstance(b, dict) or not b.get("name") or b.get("neverRender"):
+            continue
+        bones.append(b)
+    names = {b["name"] for b in bones}
+    for b in bones:  # parents the geometry doesn't define (inherited skeletons) are dropped -> attach to the root
+        if b.get("parent") and b["parent"] not in names:
+            b = b.pop("parent")
+    return {"bones": bones, "tw": g[1], "th": g[2], "texture": e[1]}
 
 
 def vanilla_item_or_block_texture(kind: str, mid: str) -> str | None:
@@ -464,15 +545,44 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     # ModelPart:copy(). Only when a script calls copy().
     script_text = "\n".join(v if isinstance(v, str) else v.decode("utf-8", "replace") if isinstance(v, bytes) else ""
                             for v in (nbt.get("scripts") or {}).values())
-    n_dups = DUPS if ":copy(" in script_text else 0
+    # ModelPart:copy(name) always takes a name (Vector/Matrix :copy() take none, TextureAPI copy is textures:copy):
+    # a copy of a part the script names by path gets NAMED_DUPS spares of that subtree; a copy through a variable
+    # the compiler can't resolve gets DUPS spares of every part
+    by_path = {p.path: p for p in parts}
+    named_roots, unnamed = [], False
+    for obj, _arg in _re.findall(r"([A-Za-z_][\w.\[\]\"']*)\s*:\s*copy\s*\(\s*([^)\s])", script_text):
+        if obj == "textures" or obj.endswith(".textures"):
+            continue
+        if obj.startswith("models.") and obj in by_path:
+            if by_path[obj] not in named_roots:
+                named_roots.append(by_path[obj])
+        else:
+            unnamed = True
     dups = []
-    for _ in range(n_dups):
+    def add_dup(src):
+        d = Part(len(parts) + len(dups), src.tag, None, src.path + "#dup", False, src.smooth)
+        d.geo = copy.deepcopy(src.geo)
+        d.rot = [0.0, 0.0, 0.0]
+        d.source = src
+        dups.append(d)
+    def subtree(p):
+        out, st = [], [p]
+        while st:
+            q = st.pop()
+            out.append(q)
+            st.extend(reversed(q.children))
+        return out
+    for _ in range(DUPS if unnamed else 0):
         for src in [p for p in parts if p.geo]:
-            d = Part(len(parts) + len(dups), src.tag, None, src.path + "#dup", False, src.smooth)
-            d.geo = copy.deepcopy(src.geo)
-            d.rot = [0.0, 0.0, 0.0]
-            d.source = src
-            dups.append(d)
+            add_dup(src)
+    for r in named_roots:
+        geo_parts = [q for q in subtree(r) if q.geo]
+        n = max(1, min(NAMED_DUPS, DUP_BONE_BUDGET // max(1, len(geo_parts) * 2)))
+        if unnamed:
+            n = max(0, n - DUPS)
+        for _ in range(n):
+            for src in geo_parts:
+                add_dup(src)
 
     # parts whose UVs scripts move (eyes, mouths, blink frames): drawn by their own render controllers with a Molang
     # uv_anim offset/scale (v.fb<i>uu/uv/usu/usv); a UV matrix also applies to the part's descendants
@@ -504,15 +614,62 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 if tex and (kind, full) not in seen_tasks:
                     seen_tasks.add((kind, full))
                     task_specs.append((kind, full, tex))
+    # EntityTask: the vanilla Bedrock geometry + default texture of every entity id a newEntity / setNbt line names,
+    # posed at bind (one free-floating bone holding the entity's bones, in its own geometry: own texture size)
+    for line in script_text.splitlines():
+        if not _re.search(r"(?:newEntity\s*\(|setNbt\s*\()", line):
+            continue
+        for mid in _re.findall(r"minecraft:([a-z0-9_]+)", line):
+            full = "minecraft:" + mid
+            ent = vanilla_entity(vanilla_rp, full)
+            if ent and ("entity", full) not in seen_tasks:
+                seen_tasks.add(("entity", full))
+                task_specs.append(("entity", full, ent))
     task_parts = []
+    # TextTask / SpriteTask: QUAD_SLOTS quad bones, each with its own runtime texture the native side paints the
+    # text / sprite pixels into (uv_anim crops the used area)
+    if _re.search(r"\bnew(?:Text|Sprite)\s*\(", script_text):
+        for k in range(QUAD_SLOTS):
+            task_specs.append(("quad", str(k), None))
     for kind, full, tex in task_specs:
         t = Part(len(parts) + len(dups) + len(task_parts), {"name": f"task_{kind}_{full}"}, None, f"#task:{kind}:{full}",
                  False, False)
         t.task = (kind, full, tex)
-        t.file = {"i": len(files), "figuraName": f"task:{kind}:{full}", "set": -1, "type": "d", "file": None, "w": 16,
-                  "h": 16, "_data": None, "vanilla": tex, "task": True}
+        if kind == "quad":
+            t.file = {"i": len(files), "figuraName": f"__quad{full}", "set": -1, "type": "d", "file": None,
+                      "w": QUAD_SIZE, "h": QUAD_SIZE, "_data": blank_png(QUAD_SIZE, QUAD_SIZE), "task": True,
+                      "quad": int(full)}
+        else:
+            t.file = {"i": len(files), "figuraName": f"task:{kind}:{full}", "set": -1, "type": "d", "file": None,
+                      "w": 16, "h": 16, "_data": None, "vanilla": tex["texture"] if kind == "entity" else tex,
+                      "task": True}
         files.append(t.file)
         task_parts.append(t)
+
+    # vanilla textures scripts name literally ("minecraft:textures/....png"): their pixels ship in the bundle so
+    # SpriteTask:setTexture(path) and textures:fromVanilla(name, path) work (Bedrock's files, mapped from Java paths)
+    vanilla_res = {}
+    for res in sorted(set(_re.findall(r"[\"']((?:minecraft:)?textures/[\w/.-]+?\.png)[\"']", script_text))):
+        bed = bedrock_vanilla_texture(res)
+        src = None
+        for ext in (".png", ".tga"):
+            if bed and (vanilla_rp / (bed + ext)).is_file():
+                src = vanilla_rp / (bed + ext)
+                break
+        if src is None:
+            continue
+        key = res if ":" in res else "minecraft:" + res
+        rel = "vanilla/" + key.split(":", 1)[1]
+        dst = out / "avatar" / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            from PIL import Image
+            Image.open(src).convert("RGBA").save(dst, "PNG")
+        except Exception:  # noqa: BLE001
+            if src.suffix != ".png":
+                continue
+            shutil.copy(src, dst)
+        vanilla_res[key] = rel
 
     # bones: vanilla skeleton (no cubes) + one bone per part (+ per-texture-set sub-bones)
     bones = [{"name": n, **({"parent": par} if par else {}), "pivot": [float(c) for c in pv]} for n, par, pv in SKELETON]
@@ -538,9 +695,32 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 geo_bones[p.bone] = (p, sid)
                 p.subs.append({"bone": p.bone, "set": sid})
 
+    ent_geos = []          # (identifier, geometry) of entity tasks
     for t in task_parts:   # unit geometry in Bedrock space; texture = the vanilla file added below (full UV)
         kind, full, tex = t.task
         u = {"uv": [0, 0], "uv_size": [geo_w, geo_h]}
+        if kind == "entity":
+            ebones = [{"name": t.bone, "pivot": [0, 0, 0]}]
+            for b in tex["bones"]:
+                nb = {k: copy.deepcopy(v) for k, v in b.items() if k in ("pivot", "rotation", "cubes", "mirror", "inflate")}
+                nb["name"] = f"{t.bone}_{b['name']}"
+                nb["parent"] = f"{t.bone}_{b['parent']}" if b.get("parent") else t.bone
+                nb.setdefault("pivot", [0, 0, 0])
+                ebones.append(nb)
+            gid = f"geometry.figura.{slug}.ent{len(ent_geos)}"
+            ent_geos.append((gid, {"description": {"identifier": gid, "texture_width": tex["tw"], "texture_height": tex["th"],
+                                                   "visible_bounds_width": 4, "visible_bounds_height": 4,
+                                                   "visible_bounds_offset": [0, 1, 0]}, "bones": ebones}))
+            t.ent_geo = len(ent_geos) - 1
+            geo_bones[t.bone] = (t, -1)
+            continue
+        if kind == "quad":   # Figura text / sprite space: x to -x, y down (pixel units); Bedrock = mirrored X
+            q = {"uv": [geo_w, 0], "uv_size": [-geo_w, geo_h]}
+            cube = {"origin": [0, -1, 0], "size": [1, 1, 0], "uv": {"north": q, "south": u}}
+            bones.append({"name": t.bone, "pivot": [0, 0, 0], "cubes": [cube]})
+            geo_bones[t.bone] = (t, -1)
+            uv_parts.add(t.i)
+            continue
         if kind == "item":   # 16x16 quad centred on the task origin (Figura item task, display NONE)
             cube = {"origin": [-8, -8, 0], "size": [16, 16, 0], "uv": {"north": u, "south": u}}
         else:                # 16^3 block from the task origin (mirrored on X like every bone)
@@ -599,6 +779,14 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                         "visible_bounds_width": 4, "visible_bounds_height": 5, "visible_bounds_offset": [0, 2, 0]},
         "bones": ch} for k, ch in enumerate(chunks)]}
     chunk_names = [{b["name"] for b in ch} for ch in chunks]
+    # Figura WORLD parts are drawn at world coordinates through the player's bones: Bedrock culls an entity by its
+    # visible bounds, so they are widened when the avatar has world parts
+    uses_world = any(p.pt == "World" for p in parts) or bool(_re.search(r"[\"']WORLD[\"']", script_text, _re.I))
+    if uses_world:
+        for g in geometry["minecraft:geometry"]:
+            g["description"].update({"visible_bounds_width": 96, "visible_bounds_height": 96, "visible_bounds_offset": [0, 0, 0]})
+    for gid, g in ent_geos:
+        geometry["minecraft:geometry"].append(g)
 
     # drive animation
     anim_bones = {}
@@ -649,12 +837,20 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     if _re.search(r"set(?:Primary|Secondary)Texture\s*\(\s*[\"']SKIN[\"']", script_text, _re.I):
         files.append({"i": len(files), "figuraName": "__skin", "set": -1, "type": "d", "file": None, "w": 64, "h": 64,
                       "_data": None, "skin": True})
+    # setPrimaryTexture("CAPE"): the player's own cape (Bedrock's player entity already has Texture.cape);
+    # "ELYTRA": the vanilla elytra texture
+    if _re.search(r"set(?:Primary|Secondary)Texture\s*\(\s*[\"']CAPE[\"']", script_text, _re.I):
+        files.append({"i": len(files), "figuraName": "__cape", "set": -1, "type": "d", "file": None, "w": 64, "h": 32,
+                      "_data": None, "cape": True})
+    if _re.search(r"set(?:Primary|Secondary)Texture\s*\(\s*[\"']ELYTRA[\"']", script_text, _re.I):
+        files.append({"i": len(files), "figuraName": "__elytra", "set": -1, "type": "d", "file": None, "w": 64,
+                      "h": 32, "_data": None, "vanilla": "textures/models/armor/elytra"})
     for res in sorted(set(_re.findall(r"[\"']((?:minecraft:)?textures/[\w/.-]+?\.png)[\"']", script_text))):
         bed = bedrock_vanilla_texture(res)
         if bed:
             files.append({"i": len(files), "figuraName": "resource:" + res, "set": -1, "type": "d", "file": None,
                           "w": 0, "h": 0, "_data": None, "vanilla": bed})
-    rc_files = [f for f in files if f["type"] in ("d", "e") and (f["_data"] is not None or f.get("skin") or f.get("vanilla"))]
+    rc_files = [f for f in files if f["type"] in ("d", "e") and (f["_data"] is not None or f.get("skin") or f.get("cape") or f.get("vanilla"))]
     all_tex_files = rc_files
     rc_files = [f for f in rc_files if not f.get("task")]
     controllers = {}
@@ -701,10 +897,20 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
 
     # render task bones: one controller each, their own vanilla texture, shown only while the runtime claims them
     for t in task_parts:
+        kind = t.task[0]
+        if kind == "entity":
+            controllers[f"controller.render.player.figura_task_{t.bone}"] = {
+                "geometry": f"Geometry.figura_ent{t.ent_geo}", "materials": [{"*": "Material.fbd"}],
+                "textures": [tex_ref(t.file)], "part_visibility": [{"*": False}, {"*": f"v.fb{t.i}v ?? 0"}]}
+            continue
         k = next(n for n, c in enumerate(chunk_names) if t.bone in c)
-        controllers[f"controller.render.player.figura_task_{t.bone}"] = {
-            "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": "Material.fbd"}], "textures": [tex_ref(t.file)],
-            "part_visibility": [{"*": False}, {t.bone: f"v.fb{t.i}v ?? 0"}]}
+        rc = {"geometry": f"Geometry.figura{k or ''}", "materials": [{"*": "Material.fbd"}], "textures": [tex_ref(t.file)],
+              "part_visibility": [{"*": False}, {t.bone: f"v.fb{t.i}v ?? 0"}]}
+        if kind == "quad":   # text / sprite pixels: blended, cropped to the painted area by uv_anim
+            rc["materials"] = [{"*": "Material.fbub"}]
+            rc["uv_anim"] = {"offset": [f"v.fb{t.i}uu ?? 0", f"v.fb{t.i}uv ?? 0"],
+                             "scale": [f"v.fb{t.i}usu ?? 1", f"v.fb{t.i}usv ?? 1"]}
+        controllers[f"controller.render.player.figura_task_{t.bone}"] = rc
 
     # UV-animated parts: one controller per (part, texture file it can show), restricted to that part's bones
     files_by_i = {f["i"]: f for f in rc_files}
@@ -785,8 +991,8 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     (rp / "render_controllers/figura_player.render_controllers.json").write_text(
         json.dumps({"format_version": "1.10.0", "render_controllers": controllers}, indent=1))
     for f in all_tex_files:
-        if f.get("skin"):
-            f["bedrockKey"] = "default"
+        if f.get("skin") or f.get("cape"):
+            f["bedrockKey"] = "default" if f.get("skin") else "cape"
             continue
         f["bedrockKey"] = f"fbt{f['i']}"
         if f.get("vanilla"):
@@ -805,10 +1011,12 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     desc = ent["minecraft:client_entity"]["description"]
     for k, gid in enumerate(geo_ids):
         desc["geometry"][f"figura{k or ''}"] = gid
+    for k, (gid, _) in enumerate(ent_geos):
+        desc["geometry"][f"figura_ent{k}"] = gid
     desc["materials"]["fbd"] = "entity_alphatest"    # cutout: what nearly every Figura texture is
     desc["materials"]["fbb"] = "entity_alphablend"   # textures with partial alpha (blush, glass...); depth write is off
     desc["materials"]["fbe"] = "entity_emissive_alpha"
-    if uv_parts:
+    if uv_parts or any(t.task[0] == "quad" for t in task_parts):
         desc["materials"]["fbu"] = "figura_uv"
         desc["materials"]["fbub"] = "figura_uv_blend"
         desc["materials"]["fbue"] = "figura_uv_emissive"
@@ -819,7 +1027,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             "figura_uv_blend:entity_alphablend": {"+defines": ["USE_UV_ANIM"]},
             "figura_uv_emissive:entity_emissive_alpha": {"+defines": ["USE_UV_ANIM"]}}}, indent=1))
     for f in all_tex_files:
-        if not f.get("skin"):
+        if not (f.get("skin") or f.get("cape")):
             desc["textures"][f["bedrockKey"]] = f["rpTexture"]
     desc["animations"]["figura_drive"] = "animation.figura.drive"
     desc["scripts"].setdefault("animate", []).append("figura_drive")
@@ -874,7 +1082,9 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         rig["parts"].append(e)
     rig["dups"] = [{"i": d.i, "source": d.source.i} for d in dups]
     rig["uvParts"] = sorted(uv_parts)
-    rig["taskBones"] = [{"i": t.i, "kind": t.task[0], "id": t.task[1], "texture": t.task[2]} for t in task_parts]
+    rig["taskBones"] = [{"i": t.i, "kind": t.task[0], "id": t.task[1], "texture": t.file.get("vanilla"), "file": t.file["i"]}
+                        for t in task_parts]
+    rig["vanillaTextures"] = vanilla_res
     rig["itemPivots"] = item_pivots
     (out / "rig.json").write_text(json.dumps(rig, indent=1), encoding="utf-8")
     return {"out": str(out), "parts": len(parts), "bones": len(bones), "textureFiles": len(files),

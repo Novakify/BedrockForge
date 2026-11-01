@@ -27,6 +27,18 @@ struct FakeHost : IHost {
         std::printf("[sound] %s%s v=%.2f p=%.2f\n", custom ? "(custom) " : "", id.c_str(), v, p);
     }
     bool        keyDown(std::string const& k) override { return down.count(k) > 0; }
+    // SIMUPLOAD=<dir>: runtime texture uploads are written there as raw RGBA (<path with / -> _>.<w>x<h>.rgba)
+    bool uploadTexture(std::string const& path, int w, int h, uint8_t const* rgba) override {
+        uploads++;
+        if (char const* d = std::getenv("SIMUPLOAD")) {
+            std::string n = path;
+            for (char& c : n) if (c == '/' || c == ':') c = '_';
+            std::ofstream f(std::string(d) + "/" + n + "." + std::to_string(w) + "x" + std::to_string(h) + ".rgba", std::ios::binary);
+            f.write(reinterpret_cast<char const*>(rgba), std::streamsize(size_t(w) * size_t(h) * 4));
+        }
+        return true;
+    }
+    int uploads = 0;
     std::string vanillaKeyBinding(std::string const& id) override {
         if (id == "key.forward") return "key.keyboard.w";
         if (id == "key.back") return "key.keyboard.s";
