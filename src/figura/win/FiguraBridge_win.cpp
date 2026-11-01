@@ -36,6 +36,9 @@
 #include "mc/util/MolangScriptArg.h"
 #include "mc/util/MolangVariableMap.h"
 #include "mc/world/actor/Actor.h"
+#include "mc/world/actor/ActorFlags.h"
+#include "mc/world/actor/Mob.h"
+#include "mc/util/MolangScriptArgType.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/item/ItemStack.h"
 
@@ -308,10 +311,19 @@ ItemState itemOf(ItemStack const& st) {
     return it;
 }
 
+// read an actor's own Molang variable (set by its animation controllers) without evaluating an expression
+float readVar(Actor& a, char const* name) {
+    try {
+        HashedString h(name);
+        auto const& arg = a.mMolangVariables->getMolangVariable(h.getHash(), name);
+        if (arg.mType == MolangScriptArgType::Float) return arg.mPOD.mFloat;
+    } catch (...) {}
+    return 0.0f;
+}
+
 void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
     Actor&       a = lp;
     PlayerState& p = s.avatar->player;
-    auto q = [&](char const* expr) { return a.evalMolang(expr); };
     p.loaded = true;
     try { p.name = a.getNameTag(); } catch (...) {}
     auto feet = a.getFeetPos();
@@ -329,30 +341,33 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
         p.walkPos += p.walkSpeed;
         p.age++;
         p.onGround  = a.isOnGround();
-        p.crouching = q("query.is_sneaking") > 0.5f;
-        p.sprinting = q("query.is_sprinting") > 0.5f;
-        p.swimming  = q("query.is_swimming") > 0.5f;
-        p.gliding   = q("query.is_gliding") > 0.5f;
-        p.sleeping  = q("query.is_sleeping") > 0.5f;
-        p.inWater   = q("query.is_in_water") > 0.5f;
-        p.onFire    = q("query.is_on_fire") > 0.5f;
-        p.invisible = q("query.is_invisible") > 0.5f;
-        p.alive     = q("query.is_alive") > 0.5f;
-        p.usingItem = q("query.is_using_item") > 0.5f;
-        p.health    = q("query.health");
-        p.maxHealth = q("query.max_health");
-        p.climbing  = q("query.is_wall_climbing") > 0.5f;
-        p.inLava    = q("query.is_in_lava") > 0.5f;
-        p.inRain    = !p.inWater && q("query.is_in_water_or_rain") > 0.5f;
-        p.blocking  = q("query.blocking") > 0.5f;
-        p.hasCape   = q("query.has_cape") > 0.5f;
-        p.experienceLevel = int(q("query.player_level"));
-        s.host->worldQ.timeOfDay = q("query.time_of_day");
-        s.host->worldQ.moon      = int(q("query.moon_phase"));
+        // NOTE: Actor::evalMolang rejects every query./variable. here ("not allowed in this context", one content-log
+        // error per call), so player state comes straight from the actor
+        try {
+            p.crouching = a.isSneaking();
+            p.sprinting = a.isSprinting();
+            p.swimming  = a.isSwimming();
+            p.gliding   = a.isGliding();
+            p.sleeping  = a.isSleeping();
+            p.inWater   = a.isInWater();
+            p.onFire    = a.isOnFire();
+            p.invisible = a.isInvisible();
+            p.alive     = a.isAlive();
+            p.usingItem = a.getStatusFlag(ActorFlags::Usingitem);
+            p.health    = float(a.getHealth());
+            p.maxHealth = float(a.getMaxHealth());
+            p.climbing  = a.getStatusFlag(ActorFlags::Wallclimbing);
+            p.inRain    = !p.inWater && a.isInRain();
+            p.blocking  = a.isBlocking();
+            p.jumping   = a.isJumping();
+        } catch (...) {}
+        p.inLava    = false;
+        p.hasCape   = false;
         s.host->worldQ.ticks++;
-        p.jumping   = q("query.is_jumping") > 0.5f;
+
         p.pose      = p.sleeping ? "SLEEPING" : p.gliding ? "FALL_FLYING" : p.swimming ? "SWIMMING" : p.crouching ? "CROUCHING" : "STANDING";
-        float used  = q("query.main_hand_item_use_duration");
+        float used  = 0;
+        try { used = float(lp.getItemUseDuration()) / 20.0f; } catch (...) {}
         try {
             p.mainHand = itemOf(lp.getCarriedItem());
             p.offHand  = itemOf(a.getOffhandSlot());
@@ -366,8 +381,8 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
             auto vp = veh->getFeetPos();
             p.vehicle.pos = {vp.x, vp.y, vp.z};
         }
-        float attack = q("variable.attack_time");
-        bool  sw     = attack > 0.0f;
+        bool sw = false;
+        try { sw = lp.mSwinging; } catch (...) {}
         if (sw && !p.swinging) p.swingTime = 0;
         p.swinging   = sw;
         if (sw) p.swingTime++;
@@ -390,9 +405,9 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
     p.pitch     = rot.x;
     p.yaw       = rot.y;
     p.headYaw   = rot.y;
-    p.bodyYaw   = q("query.body_y_rotation");
-    p.attackAnim = std::clamp(q("variable.attack_time"), 0.0f, 1.0f);
-    p.isFirstPerson = q("variable.is_first_person") > 0.5f;
+    try { p.bodyYaw = lp.getYBodyRotation(); } catch (...) { p.bodyYaw = rot.y; }
+    try { p.attackAnim = std::clamp(float(lp.mAttackAnim), 0.0f, 1.0f); } catch (...) {}
+    p.isFirstPerson = readVar(a, "variable.is_first_person") > 0.5f;
     // the real camera (third-person front, /camera ...) for Figura's Camera parts
     // query.camera_rotation reads 0 outside a render context, so take the renderer's own camera forward vector
     // (LevelRendererPlayer::mCameraForward, the audio-listener camera: follows F5 views and /camera)
@@ -412,8 +427,8 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
         }
     }
     if (!camOk) {
-        s.avatar->cameraPitch = q("query.camera_rotation(0)");
-        s.avatar->cameraYaw   = q("query.camera_rotation(1)");
+        s.avatar->cameraPitch = p.pitch;
+        s.avatar->cameraYaw   = p.yaw;
     }
     s.avatar->cameraSet   = s.avatar->tune("useCamera", 1) > 0;
 }
