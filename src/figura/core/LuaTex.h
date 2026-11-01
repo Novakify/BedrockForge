@@ -98,6 +98,8 @@ void openTextureApi(Avatar& a);
 /// push changed textures to Bedrock (texture:update()): edited avatar textures over their own pack path, script
 /// textures shown with setPrimaryTexture("CUSTOM") over their runtime slot. Called once per frame.
 void texSync(Avatar& a);
+/// every texture already pushed to Bedrock is pushed again on the next texSync (world join / resource reload)
+void texMarkDirty(Avatar& a);
 void openRenderTaskApi(Avatar& a);
 void ensureGeometry(lua_State* L, Part* p); // fill vertices / textures / texture size from the NBT (lazy)
 int  pushVertexList(lua_State* L, std::deque<Vertex>& list);

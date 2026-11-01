@@ -948,6 +948,14 @@ void openTextureApi(Avatar& a) {
     lua_setglobal(L, "textures");
 }
 
+void texMarkDirty(Avatar& a) {
+    if (!a.L) return;
+    TexRegistry& r = reg(a.L);
+    for (Tex* t : r.avatarList)
+        if (t && t->uploaded) t->dirty = true;
+    for (void* p : a.dynSlotTex)
+        if (p) static_cast<Tex*>(p)->dirty = true;
+}
 void texSync(Avatar& a) { texSyncImpl(a); }
 
 } // namespace bf::figura

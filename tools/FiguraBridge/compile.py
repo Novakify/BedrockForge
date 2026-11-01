@@ -583,7 +583,8 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             if own not in files_by_i:
                 continue
             f = files_by_i[own]
-            mat = primary_material(f) if kind == "p" else "Material.fbe"
+            # uv_anim only works on materials built with USE_UV_ANIM (materials/entity.material, verified in game)
+            mat = {"Material.fbd": "Material.fbu", "Material.fbb": "Material.fbub"}[primary_material(f)] if kind == "p" else "Material.fbue"
             controllers[f"controller.render.player.figura_uv_{bname}_{kind}{f['i']}"] = {
                 "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
                 "uv_anim": uv,
@@ -659,6 +660,16 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     desc["materials"]["fbd"] = "entity_alphatest"    # cutout: what nearly every Figura texture is
     desc["materials"]["fbb"] = "entity_alphablend"   # textures with partial alpha (blush, glass...); depth write is off
     desc["materials"]["fbe"] = "entity_emissive_alpha"
+    if uv_parts:
+        desc["materials"]["fbu"] = "figura_uv"
+        desc["materials"]["fbub"] = "figura_uv_blend"
+        desc["materials"]["fbue"] = "figura_uv_emissive"
+        (rp / "materials").mkdir(parents=True, exist_ok=True)
+        (rp / "materials/entity.material").write_text(json.dumps({"materials": {
+            "version": "1.0.0",
+            "figura_uv:entity_alphatest": {"+defines": ["USE_UV_ANIM"]},
+            "figura_uv_blend:entity_alphablend": {"+defines": ["USE_UV_ANIM"]},
+            "figura_uv_emissive:entity_emissive_alpha": {"+defines": ["USE_UV_ANIM"]}}}, indent=1))
     for f in rc_files:
         desc["textures"][f["bedrockKey"]] = f["rpTexture"]
     desc["animations"]["figura_drive"] = "animation.figura.drive"

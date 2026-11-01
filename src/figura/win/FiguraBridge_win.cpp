@@ -45,6 +45,7 @@
 #include "client/Module.h"
 #include "figura/core/Avatar.h"
 #include "figura/core/LuaBind.h"
+#include "figura/core/LuaTex.h"
 #include "figura/win/DynTex.h"
 #include "lyrics/core/Json.h"
 
@@ -233,6 +234,7 @@ struct State {
     bool                          wheelHeld = false, bWasDown = false, wheelExecDone = false;
     std::set<int>                 digitsDown;
     std::string                   status;
+    void*                         lastPlayer = nullptr;
 };
 State* gS = nullptr;
 
@@ -616,6 +618,10 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     if (!f.player) return;
     LocalPlayer& lp = *f.player;
     if (s.nameMode < 0) calibrate(s, lp);
+    if (s.lastPlayer != f.player) { // joined a world: the game reloaded pack textures, push ours again
+        s.lastPlayer = f.player;
+        texMarkDirty(*s.avatar);
+    }
     int64_t now = nowMs();
     if (s.lastTickMs == 0) s.lastTickMs = now - 50;
     int ticks = 0;
