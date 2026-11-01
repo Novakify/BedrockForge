@@ -24,7 +24,10 @@ Build: `python3 -I tools/GeckoBridge/build.py the_wonderland-3.0.3-1.20.1-forge-
 | Vanilla retextures (blocks, items, mobs, armor, HUD icons, colormaps) | works where the layout matches | only files Bedrock has at the same path + size (GeyserMC mapping + bedrock-samples); others skipped |
 | Vanilla sound replacements | works | same path in Bedrock |
 | Splash texts | works | splashes.json |
-| Title screen logo/panorama, Java GUI screens, Java shaders, noise terrain, paintings, custom particles | not portable | Bedrock has no equivalent (particles fall back to vanilla ones) |
+| Java shader (only `fog.glsl`: fog starts at 20% distance) | works | all 80 Bedrock fog definitions overridden with fog_start x 0.2 |
+| 18 painting variants | works (as wall entities) | item per painting hangs it on the clicked face; punching drops it back (Bedrock can't add painting variants) |
+| Title screen logo / panorama | not portable | Bedrock's menu is OreUI with a 3D world backdrop, not these textures |
+| GUI screens | n/a | Wonderland has none besides the overlays (all converted) |
 
 Checked in game (2026-10-31 evening, "GeckoBridge Test" world, ~60 fps with all 129 mobs summoned):
 packs load, ContentLog has no Wonderland errors, mod chat lines / jumpscares / camera effects fire, Hellways
