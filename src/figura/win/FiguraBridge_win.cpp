@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -334,6 +335,20 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
         p.swinging   = sw;
         if (sw) p.swingTime++;
     }
+    // test knobs (config/figura/tuning.json): fake movement so animations can be checked without holding keys
+    if (tick) {
+        double fw = s.avatar->tune("simWalk", 0);
+        if (fw != 0) {
+            p.velocity.z += 0.1 * fw;
+            double h = std::sqrt(p.velocity.x * p.velocity.x + p.velocity.z * p.velocity.z);
+            p.walkSpeed = p.prevWalkSpeed + (float(std::min(1.0, h * 4.0)) - p.prevWalkSpeed) * 0.4f;
+            p.walkPos += p.walkSpeed;
+            p.sprinting = fw > 2.5;
+        }
+        if (s.avatar->tune("simCrouch", 0) > 0) { p.crouching = true; p.pose = "CROUCHING"; }
+        if (s.avatar->tune("simRide", 0) > 0) { p.vehicle.valid = true; p.vehicle.type = "minecraft:boat"; }
+        if (s.avatar->tune("simAir", 0) > 0) { p.onGround = false; p.velocity.y = -0.4; }
+    }
     auto rot    = a.getRotation();
     p.pitch     = rot.x;
     p.yaw       = rot.y;
@@ -477,6 +492,17 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     writeVars(s, lp);
     wheelFrame(s, f);
     if (!s.host->lastError.empty()) f.infoLines.push_back("Figura error: " + s.host->lastError.substr(0, 120));
+    if (s.avatar->tune("debug", 0) > 0) {
+        std::string pl;
+        for (auto& an : s.avatar->animations)
+            if (an && an->playState != PlayState::Stopped) pl += an->name + "(" + std::to_string(int(an->blend * 100)) + ") ";
+        f.infoLines.push_back("Figura anims: " + pl);
+        auto const& pp = s.avatar->player;
+        char b[160];
+        std::snprintf(b, sizeof b, "Figura v=%.2f,%.2f,%.2f ground=%d sneak=%d yaw=%.0f body=%.0f", pp.velocity.x, pp.velocity.y, pp.velocity.z,
+                      int(pp.onGround), int(pp.crouching), pp.yaw, pp.bodyYaw);
+        f.infoLines.push_back(b);
+    }
 }
 } // namespace
 

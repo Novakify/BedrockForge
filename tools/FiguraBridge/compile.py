@@ -46,7 +46,7 @@ VARS_DOC = {
     "v.fb<i>e": "secondary (emissive) texture override of part i: textureFiles index; < 0 (default -1) = own set's 'e'.",
     "v.fbvan": "1 = also render the vanilla player (Mojang render controllers). Default 0 (hidden, like Figura).",
     "render controllers": "controller.render.player.figura_p<f> (primary, Material.fbd = entity_alphablend) and "
-                          "figura_s<f> (secondary, Material.fbe = entity_beam_additive) for every d/e texture file f, "
+                          "figura_s<f> (secondary, Material.fbe = entity_emissive_alpha) for every d/e texture file f, "
                           "texture key fbt<f>; third person only (!variable.is_first_person).",
 }
 
@@ -397,7 +397,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     desc = ent["minecraft:client_entity"]["description"]
     desc["geometry"]["figura"] = geo_id
     desc["materials"]["fbd"] = "entity_alphablend"
-    desc["materials"]["fbe"] = "entity_beam_additive"
+    desc["materials"]["fbe"] = "entity_emissive_alpha"
     for f in rc_files:
         desc["textures"][f["bedrockKey"]] = f["rpTexture"]
     desc["animations"]["figura_drive"] = "animation.figura.drive"
