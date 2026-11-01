@@ -684,6 +684,12 @@ void Avatar::applyCameraTransform(Part* p, Mat4 const& parentMat) {
     p->positionMatrix = m;
 }
 
+int Avatar::textureFileByName(std::string const& n) const {
+    for (auto const& f : textureFiles)
+        if (f.figuraName == n) return f.index;
+    return -1;
+}
+
 int Avatar::customTextureFile(void* tex) {
     if (!tex) return -1;
     auto* t = static_cast<Tex*>(tex);
@@ -804,7 +810,14 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
                 int s = p->defaultSet;
                 return s >= 0 && s < int(textureSets.size()) ? textureSets[s].e : -1;
             }
-            default: return primary ? -1 : -1; // SKIN/CAPE/ELYTRA/RESOURCE: not available on Bedrock yet
+            case TexKind::Skin: return textureFileByName("__skin");
+            case TexKind::Resource: {
+                std::string r = t.resource;
+                if (r.find(':') == std::string::npos) r = "minecraft:" + r;
+                int f = textureFileByName("resource:" + r);
+                return f >= 0 ? f : textureFileByName("resource:" + t.resource);
+            }
+            default: return -1; // CAPE / ELYTRA: no Bedrock texture for them yet
             }
         };
         o.primary   = texIndex(prim, true);

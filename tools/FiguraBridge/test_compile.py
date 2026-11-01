@@ -194,8 +194,9 @@ def check(name: str, src: Path, out: Path, vanilla: Path) -> tuple[dict, list]:
         tex_key = rc["textures"][0].split(".", 1)[1]
         if tex_key not in ent["textures"]:
             errs.append(f"{k}: texture {tex_key} not in entity")
-        if not (out / "rp" / (ent["textures"][tex_key] + ".png")).is_file():
-            errs.append(f"{k}: texture file missing")
+        own = ent["textures"].get(tex_key, "")
+        if tex_key != "default" and own.startswith("textures/figura/") and not (out / "rp" / (own + ".png")).is_file():
+            errs.append(f"{k}: texture file missing")   # vanilla textures / the player skin come from the game
         if k not in ent_rcs:
             errs.append(f"{k} not in player.entity.json")
     anim = json.loads((out / "rp/animations/figura_drive.animation.json").read_text())

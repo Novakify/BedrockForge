@@ -102,7 +102,8 @@ public:
     } itemOut[2];                   // 0 = right, 1 = left
     std::vector<char>                          uvBones;
     std::vector<void*>                         dynSlotTex;   // runtime texture slot -> script Texture (LuaTex Tex*)
-    int  customTextureFile(void* tex);                       // TextureFile index that shows a CUSTOM texture, -1 none      // bones with a uv_anim render controller (rig "uvParts")
+    int  customTextureFile(void* tex);
+    int  textureFileByName(std::string const& figuraName) const;                       // TextureFile index that shows a CUSTOM texture, -1 none      // bones with a uv_anim render controller (rig "uvParts")
     std::map<int, std::vector<int>>            dupSlots;     // source bone -> free-floating dup bones (rig "dups")
     int                                        compiledParts = 0;
     void solveBones();

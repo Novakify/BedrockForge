@@ -27,6 +27,8 @@ import sys
 import uuid
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import figura_nbt as fn  # noqa: E402
 from avatar_pack import SKELETON  # noqa: E402
@@ -250,6 +252,43 @@ def kinds_for(f: dict):
     if f["type"] == "e":
         return (("s", "e", "Material.fbe", "e"),)
     return (("p", "t", primary_material(f), "d"),)
+
+
+def tex_ref(f: dict) -> str:
+    return "Texture.default" if f.get("skin") else f"Texture.fbt{f['i']}"
+
+
+_VANILLA_MAP = None
+
+
+def bedrock_vanilla_texture(res: str) -> str | None:
+    """Java resource texture ("minecraft:textures/block/spruce_planks.png") -> Bedrock vanilla texture path, via the
+    GeyserMC PackConverter mapping (MIT, optional: tools/FiguraBridge/data/textures.json) for blocks/items, a fixed
+    rule for armor layers, else the same path (most entity textures match)."""
+    global _VANILLA_MAP
+    import os
+    p = res.split(":", 1)[-1]
+    if not p.startswith("textures/"):
+        return None
+    p = p[len("textures/"):-len(".png")]
+    cat, _, name = p.rpartition("/")
+    if _VANILLA_MAP is None:
+        _VANILLA_MAP = {}
+        for cand in (os.environ.get("PACKCONVERTER_TEXTURES", ""), str(HERE / "data/textures.json")):
+            if cand and Path(cand).is_file():
+                _VANILLA_MAP = json.loads(Path(cand).read_text(encoding="utf-8"))
+                break
+    folder = {"block": "blocks", "item": "items"}.get(cat, cat)
+    m = (_VANILLA_MAP.get(cat) or {}).get(name)
+    if isinstance(m, list):
+        m = m[0]
+    if isinstance(m, str):
+        return f"textures/{folder}/{m}"
+    import re as _r
+    a = _r.fullmatch(r"(\w+)_layer_([12])", name)
+    if cat == "models/armor" and a:
+        return f"textures/models/armor/{a.group(1)}_{a.group(2)}"
+    return f"textures/{folder}/{name}"
 
 
 def collect_parts(models: dict) -> list[Part]:
@@ -551,7 +590,17 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         for k in range(DYN_SLOTS):
             files.append({"i": len(files), "figuraName": f"__dyn{k}", "set": -1, "type": "d", "file": None,
                           "w": DYN_SIZE, "h": DYN_SIZE, "_data": blank, "dyn": k})
-    rc_files = [f for f in files if f["type"] in ("d", "e") and f["_data"] is not None]
+    # textures Bedrock already has: the player's own skin (setPrimaryTexture("SKIN")) and vanilla textures scripts
+    # name with setPrimaryTexture("RESOURCE", "minecraft:textures/...") - mapped to the Bedrock vanilla paths
+    if _re.search(r"set(?:Primary|Secondary)Texture\s*\(\s*[\"']SKIN[\"']", script_text, _re.I):
+        files.append({"i": len(files), "figuraName": "__skin", "set": -1, "type": "d", "file": None, "w": 64, "h": 64,
+                      "_data": None, "skin": True})
+    for res in sorted(set(_re.findall(r"[\"']((?:minecraft:)?textures/[\w/.-]+?\.png)[\"']", script_text))):
+        bed = bedrock_vanilla_texture(res)
+        if bed:
+            files.append({"i": len(files), "figuraName": "resource:" + res, "set": -1, "type": "d", "file": None,
+                          "w": 0, "h": 0, "_data": None, "vanilla": bed})
+    rc_files = [f for f in files if f["type"] in ("d", "e") and (f["_data"] is not None or f.get("skin") or f.get("vanilla"))]
     controllers = {}
 
     def vis_expr(p: Part):
@@ -591,7 +640,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             if len(pv) == 1:
                 continue
             controllers[f"controller.render.player.figura_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
-                "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
+                "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
                 "part_visibility": pv}
 
     # UV-animated parts: one controller per (part, texture file it can show), restricted to that part's bones
@@ -609,7 +658,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             # uv_anim only works on materials built with USE_UV_ANIM (materials/entity.material, verified in game)
             mat = {"Material.fbd": "Material.fbu", "Material.fbb": "Material.fbub"}[primary_material(f)] if kind == "p" else "Material.fbue"
             controllers[f"controller.render.player.figura_uv_{bname}_{kind}{f['i']}"] = {
-                "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
+                "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
                 "uv_anim": uv,
                 "part_visibility": [{"*": False}, {bname: f"{vis_expr(p)} && ((v.fb{p.i}{var} ?? -1) < 0 ? 1 : (v.fb{p.i}{var} == {f['i']}))"}]}
 
@@ -650,7 +699,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 if len(pv) == 1:
                     continue
                 fp_controllers[f"controller.render.player.figura_fp_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
-                    "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
+                    "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
                     "part_visibility": pv}
         controllers.update(fp_controllers)
 
@@ -673,7 +722,13 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     (rp / "render_controllers/figura_player.render_controllers.json").write_text(
         json.dumps({"format_version": "1.10.0", "render_controllers": controllers}, indent=1))
     for f in rc_files:
+        if f.get("skin"):
+            f["bedrockKey"] = "default"
+            continue
         f["bedrockKey"] = f"fbt{f['i']}"
+        if f.get("vanilla"):
+            f["rpTexture"] = f["vanilla"]
+            continue
         f["rpTexture"] = f"textures/figura/{slug}/t{f['i']}"
         (rp / (f["rpTexture"] + ".png")).write_bytes(rgba_png(f["_data"]))
     for rel, data in sound_files.items():
@@ -701,7 +756,8 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             "figura_uv_blend:entity_alphablend": {"+defines": ["USE_UV_ANIM"]},
             "figura_uv_emissive:entity_emissive_alpha": {"+defines": ["USE_UV_ANIM"]}}}, indent=1))
     for f in rc_files:
-        desc["textures"][f["bedrockKey"]] = f["rpTexture"]
+        if not f.get("skin"):
+            desc["textures"][f["bedrockKey"]] = f["rpTexture"]
     desc["animations"]["figura_drive"] = "animation.figura.drive"
     desc["scripts"].setdefault("animate", []).append("figura_drive")
     if item_pivots:
