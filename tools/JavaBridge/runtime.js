@@ -179,7 +179,27 @@ export class JEntity {
   getPersistentData() { return new Tag(this, "pd"); }
   getEntityData() { return new SynchedData(this); } m_20088_() { return this.getEntityData(); }
   getCapability(cap) { return new JOpt(new PlayerVars(this)); }
-  getTarget() { try { return JEntity.of(this.e.target); } catch { return null; } }
+  getTarget() {
+    // Script API reports no target for most mobs (seen in game: e.target always undefined), so rebuild Java's answer:
+    // forced target (setTarget) -> last attacker (HurtByTargetGoal) -> nearest valid player in range when the mob's
+    // player-targeting goal is active (NearestAttackableTargetGoal, gated goals only while their Java canUse holds).
+    try { const t = this.e.target; if (t?.isValid) return JEntity.of(t); } catch {}
+    const f = TARGETS.get(this.e.id); try { if (f?.isValid) return JEntity.of(f); } catch {}
+    const id = this.e.id, now = system.currentTick, c = TCACHE.get(id);
+    if (c && c.t === now) return c.v;
+    let v = null;
+    const h = LASTHURT.get(id); try { if (h && now - h.t < 200 && h.by.isValid) v = JEntity.of(h.by); } catch {}
+    const n = CFG.natPlayer?.[this.e.typeId];
+    if (!v && n && (n.gate == null || globalThis.__GB_GATE?.(id, n.gate))) {
+      let best = null, bd = n.range * n.range; const l = this.loc();
+      for (const p of world.getAllPlayers()) {
+        try { if (p.dimension.id !== this.e.dimension.id) continue; const gm = String(p.getGameMode()).toLowerCase(); if (gm === "creative" || gm === "spectator") continue;
+          const d = (p.location.x - l.x) ** 2 + (p.location.y - l.y) ** 2 + (p.location.z - l.z) ** 2; if (d < bd) { bd = d; best = p; } } catch {}
+      }
+      v = best ? JEntity.of(best) : null;
+    }
+    TCACHE.set(id, { t: now, v }); return v;
+  }
   setTarget(t) { R.setTarget(this, t); }
   getNavigation() { return new Nav(this); }
   getMainHandItem() { return R.handItem(this, "mainhand"); } getOffhandItem() { return R.handItem(this, "offhand"); }
@@ -300,7 +320,10 @@ export class MoveCtl {
 }
 export const MOVES = new Map();
 const TARGETS = new Map();   // mob id -> entity it was told to target
-class Nav { constructor(m) { this.m = m; } moveTo(a, b, c, sp) { if (a instanceof JEntity || a instanceof Vec) { R.moveTo(this.m, a, null, null, b); } else R.moveTo(this.m, a, b, c, sp); return true; } stop() { MoveCtl.of(this.m).want = null; } isDone() { return !MoveCtl.of(this.m).want; } createPath() { return null; } }
+const NAVS = new Map();
+const TCACHE = new Map();   // mob id -> {t: tick, v: target} (getTarget once per tick)
+export const LASTHURT = new Map();   // mob id -> {by: attacker entity, t: tick}      // mob id -> {p: nav point entity, mob, until}
+class Nav { constructor(m) { this.m = m; } moveTo(a, b, c, sp) { if (a instanceof JEntity || a instanceof Vec) { R.moveTo(this.m, a, null, null, b); } else R.moveTo(this.m, a, b, c, sp); return true; } stop() { MoveCtl.of(this.m).want = null; R.navStop(this.m); } isDone() { return !MoveCtl.of(this.m).want && !R.navBusy(this.m); } createPath() { return null; } }
 
 // ------------------------------------------------------------------------------------------ data: NBT, synced data, variables
 const DP = (e) => e?.e ?? world;
@@ -729,8 +752,26 @@ export const R = {
     } catch {}
   },
   moveTo(w, a, b, c, sp) {
-    // Java PathNavigation.moveTo: Bedrock scripts can't drive the pathfinder, so the GoalRunner steers toward the point
-    try { const to = a instanceof Vec ? a.toB() : a instanceof JEntity ? a.loc() : { x: a, y: b, z: c }; MoveCtl.of(w).setWantedPosition(to.x, to.y, to.z, sp ?? 1); } catch {}
+    // Java PathNavigation.moveTo(x, y, z, speed). Mobs with a melee behaviour: an invisible nav point at the spot that
+    // the mob is told to target, so Bedrock's pathfinder walks there (around walls, through doors); it is removed on
+    // arrival / stop / after 10 s. Others: the GoalRunner steers toward the point every tick (MoveControl).
+    try {
+      const to = a instanceof Vec ? a.toB() : a instanceof JEntity ? a.loc() : { x: +a, y: +b, z: +c };
+      if (!CFG.navPoint || !(CFG.navTypes ?? []).includes(w.e.typeId)) { MoveCtl.of(w).setWantedPosition(to.x, to.y, to.z, sp ?? 1); return; }
+      let n = NAVS.get(w.e.id);
+      if (n && n.p?.isValid) { const l = n.p.location; if (Math.hypot(l.x - to.x, l.y - to.y, l.z - to.z) > 0.75) n.p.teleport(to); n.until = system.currentTick + 200; return; }
+      const p = w.e.dimension.spawnEntity(CFG.navPoint, to); p.addTag("gbt_" + w.e.typeId.replace(":", "_"));
+      NAVS.set(w.e.id, { p, mob: w.e, until: system.currentTick + 200 });
+    } catch {}
+  },
+  navBusy(w) { return NAVS.has(w.e.id); },
+  navStop(w) { const n = NAVS.get(w.e.id); if (n) { try { n.p.remove(); } catch {} NAVS.delete(w.e.id); } },
+  navTick() {   // called by the GoalRunner every tick
+    for (const [id, n] of NAVS) {
+      let ok = false; try { ok = n.mob.isValid && n.p.isValid; } catch {}
+      if (ok) { try { const a = n.mob.location, b = n.p.location; if (Math.hypot(a.x - b.x, a.z - b.z) < 1.2 && Math.abs(a.y - b.y) < 2) ok = false; } catch {} }
+      if (!ok || system.currentTick > n.until) { try { n.p.remove(); } catch {} NAVS.delete(id); }
+    }
   },
   // ---- effects (vanilla -> Bedrock effects; the mod's own effects -> timed flags + their tick procedures)
   fxId(eff) { return eff?.__ro ? eff.id : eff?.id; },

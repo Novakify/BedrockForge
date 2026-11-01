@@ -61,7 +61,15 @@ getAttackReachSqr (`reach_multiplier`). Report: 673 goals mapped, 7 gated, 1 cus
 Checks: node harness with a fake Script API (all 129 types ticked 200 ticks, 0 errors; Remember Me charges the
 target; Lithic gates switch from LithicCanTarget); validate.py 0 errors; in game ContentLog: no entity/behaviour
 errors, JavaBridge loads, procedures call setTarget (player got gbt_* tags from Skinless and Blue Eye).
-Not yet done: W4 Java-vs-Bedrock trace comparison (needs a Java dev run); a real pathfinder for moveTo (Layer C).
+Update (2026-11-01):
+- navigation.moveTo now uses Bedrock's pathfinder: an invisible `gb_nav_point` entity the mob is told to target
+  (mobs with a melee behaviour); others still steer (MoveCtl).
+- Mobs with no goals in Java (34 in Wonderland) get no Bedrock behaviours (the generic chase brain is gone).
+- getTarget rebuilt (Script API reports no target for these mobs): forced target -> last attacker -> nearest
+  survival player in FOLLOW_RANGE while the Java targeting goal (or its gate) is active. NAT ranges = follow_range.
+- W4 tooling: tools/MobAITrace (Java recorder mod) + Bedrock trace (`/tag @s add gb_trace`). First Bedrock run
+  (5 mobs, 30 s): Skinless walked in and killed the player; Sanguine/The Sorrow held position (their gates off);
+  Remember Me never charged -> found the getTarget gap above (fixed, deployed). Java run still to do.
 Pre-existing, not MobAI: GeckoBridgeProofRP fog files use the "minecraft:" namespace (Bedrock rejects them).
 
 ## 1. Why ported mobs don't act like Java (the actual cause)

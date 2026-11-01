@@ -158,7 +158,7 @@ class Build:
         self.trigs = cached_triggers(jar)
         ov = HERE / "mods" / f"{self.modid}.json"
         self.override = json.loads(ov.read_text()) if ov.exists() else {}
-        self.js = {"ns": self.ns, "entities": {}}; self.climbers = set(); self.mobai = {}
+        self.js = {"ns": self.ns, "entities": {}}; self.climbers = set(); self.mobai = {}; self.melee_types = set(); self.nat_player = {}
         self.mob_sounds = cached_sounds(jar, sorted({e["java_class"] for e in self.ents["entities"]}))
         self.report["sounds_vanilla_default"] = self.mob_sounds.get("_unmapped", [])
         ovn = self.override.get("overlay") or (self.modid if (OVERLAYS / self.modid / "overlay.json").exists() else None)
@@ -781,6 +781,10 @@ class Build:
             comps.update({"minecraft:can_fly": {}, "minecraft:flying_speed": {"value": 0.1}, "minecraft:physics": {"has_gravity": False},
                 "minecraft:movement.hover": {}, "minecraft:navigation.hover": {"can_path_over_water": True, "can_sink": False, "can_path_from_air": True},
                 "minecraft:behavior.random_hover": {"priority": 6, "xz_dist": 8, "y_dist": 4, "y_offset": -1, "interval": 1, "hover_height": [1, 4]}})
+            if gres:   # Java's wander goal (if any) becomes the hover wander, with its priority; none in Java -> none here
+                rs = gres["components"].get("minecraft:behavior.random_stroll")
+                if rs: comps["minecraft:behavior.random_hover"]["priority"] = rs["priority"]
+                else: comps.pop("minecraft:behavior.random_hover", None)
         elif mv == "swim":
             for k in ("minecraft:navigation.walk", "minecraft:movement.basic", "minecraft:jump.static", "minecraft:behavior.random_stroll", "minecraft:behavior.float"): comps.pop(k, None)
             comps.update({"minecraft:breathable": {"breathes_water": True, "breathes_air": False, "suffocate_time": 0},
@@ -833,6 +837,12 @@ class Build:
             gt["index"] = gi
         for k in [k for k, v in comps.items() if v is None]: comps.pop(k)
         if gates: self.mobai[full] = [{k: v for k, v in gt.items() if k != "components"} for gt in gates]
+        for src, gi in [(comps, None)] + [(g, int(k[4:-3])) for k, g in ent.get("component_groups", {}).items() if k.startswith("gb_g") and k.endswith("_on")]:
+            nat = src.get("minecraft:behavior.nearest_attackable_target") or {}
+            pl = [t for t in nat.get("entity_types", []) if t.get("filters", {}).get("value") == "player"]
+            if pl: self.nat_player[full] = {"range": max(t.get("max_dist", 16) for t in pl), "gate": gi}; break
+        if "minecraft:behavior.melee_attack" in comps or any("minecraft:behavior.melee_attack" in g for g in ent.get("component_groups", {}).values()):
+            self.melee_types.add(full)   # Java navigation.moveTo on these walks Bedrock's pathfinder to a nav point
         if seq: ent.setdefault("events", {})["minecraft:entity_spawned"] = seq[0] if len(seq) == 1 else {"sequence": seq}
         self.write(self.bp, f"entities/{self.ns}/{eid}.json", {"format_version": "1.21.0", "minecraft:entity": ent})
 
@@ -1200,6 +1210,21 @@ class Build:
         cfg["itemClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"]["item"].items()}
         cfg["effectClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"].get("effect", {}).items()}
         cfg["modParticles"] = self.mod_particles()
+        # MobAI nav point: Java navigation.moveTo(x, y, z) -> an invisible marker the mob is told to target, so
+        # Bedrock's own pathfinder walks it there (runtime R.moveTo); mobs without a melee behaviour steer instead
+        cfg["navTypes"] = sorted(self.melee_types); cfg["navPoint"] = f"{self.ns}:gb_nav_point"
+        cfg["natPlayer"] = self.nat_player   # mobs whose Java goals target the nearest player (runtime getTarget)
+        self.write(self.bp, f"entities/{self.ns}/gb_nav_point.json", {"format_version": "1.21.0", "minecraft:entity": {
+            "description": {"identifier": f"{self.ns}:gb_nav_point", "is_spawnable": False, "is_summonable": True, "is_experimental": False},
+            "components": {"minecraft:type_family": {"family": ["gb_nav_point", "inanimate"]}, "minecraft:health": {"value": 1, "max": 1},
+                "minecraft:collision_box": {"width": 0.1, "height": 0.1}, "minecraft:physics": {"has_gravity": False, "has_collision": False},
+                "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": False}, "minecraft:knockback_resistance": {"value": 1},
+                "minecraft:damage_sensor": {"triggers": {"cause": "all", "deals_damage": "no"}}, "minecraft:fire_immune": {},
+                "minecraft:despawn": {"despawn_from_distance": {}}}}})
+        self.write(self.rp, f"entity/{self.ns}/gb_nav_point.entity.json", {"format_version": "1.10.0", "minecraft:client_entity": {
+            "description": {"identifier": f"{self.ns}:gb_nav_point", "materials": {"default": "entity_alphatest"},
+                "textures": {"default": "textures/entity/chicken"}, "geometry": {"default": "geometry.chicken"},
+                "render_controllers": ["controller.render.default"], "scripts": {"scale": "0.0"}}}})   # never visible
         cfgp.write_text("globalThis.__JB_CFG = " + json.dumps(cfg, separators=(",", ":")) + ";\n")
         # client overlays -> HUD images bound to formatting-code-only titles
         ovs = cfg["hooks"].get("overlays") or []
@@ -1379,7 +1404,8 @@ class Build:
         if not dis: return None
         ms = MP.methods(dis)
         goals = MP.parse_goals(ms.get("m_8099_", []))
-        if not goals: return None
+        # no goals in Java (PathfinderMob/Monster add none): the mob does only what the mod's code tells it, so it
+        # gets no Bedrock behaviours either (the old generic "chase + hit" brain made Pillars/Angels/stare mobs attack)
         w = (e.get("size") or [0.6, 1.8])[0] or 0.6
         out, gates, rep = {}, [], self.report.setdefault("mobai", {"mapped": 0, "gated": 0, "custom": 0, "unmapped": {}})
 
@@ -1416,7 +1442,8 @@ class Build:
             fams = [f for f in (self.fam_of(x) for x in strs) if f]
             if name == "NearestAttackableTargetGoal":
                 must_see = bool(nums[0]) if nums else True
-                ent = [{"filters": {"test": "is_family", "subject": "other", "value": f}, "max_dist": 32, "must_see": must_see} for f in (fams or ["player"])]
+                fr = (e.get("attributes") or {}).get("follow_range", 16)   # Java targeting range = FOLLOW_RANGE attribute
+                ent = [{"filters": {"test": "is_family", "subject": "other", "value": f}, "max_dist": fr, "must_see": must_see} for f in (fams or ["player"])]
                 put("minecraft:behavior.nearest_attackable_target", {"priority": prio, "must_see": must_see, "reselect_targets": True, "scan_interval": 10, "entity_types": ent}, gate)
             elif name == "AvoidEntityGoal":
                 d, ws, ss = (nums + [6, 1, 1.2])[:3] if len(nums) >= 3 else ((nums + [6, 1, 1.2])[0], (nums + [6, 1, 1.2])[1], 1.2)
@@ -1447,6 +1474,7 @@ class Build:
         forced = {"filters": {"test": "has_tag", "subject": "other", "value": f"gbt_{own}"}, "max_dist": 64, "must_see": False}
         nat = out.setdefault("minecraft:behavior.nearest_attackable_target", {"priority": 1, "must_see": False, "reselect_targets": True, "scan_interval": 10, "entity_types": []})
         nat["entity_types"].insert(0, forced)
+        if not goals: self.report.setdefault("mobai", {}).setdefault("no_goals", []).append(e["id"])
         return {"components": out, "gates": gates}
 
     def prop_defs(self, props):

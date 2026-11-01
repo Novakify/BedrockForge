@@ -1,6 +1,6 @@
 // JavaBridge hooks (original Bedrock Forge code): call the translated Java methods from Bedrock events.
 import { world, system, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
-import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR, MOVES } from "./runtime.js";
+import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR, MOVES, LASTHURT } from "./runtime.js";
 
 const CFG = globalThis.__JB_CFG, H = CFG.hooks, NS = CFG.ns;
 const errs = new Map();
@@ -46,11 +46,14 @@ system.runInterval(() => {
 //  * "custom" goals (written from scratch): canUse -> start -> tick ... canContinueToUse false -> stop, as in Java.
 //  * MoveControl wanted positions (setWantedPosition, navigation.moveTo) are steered one step per tick.
 const GOALS = H.goals ?? {}, GTYPES = Object.keys(GOALS), GSTATE = new Map();
+// gate state for the runtime's getTarget (gated NearestAttackableTargetGoal): gate group index -> current Java canUse
+globalThis.__GB_GATE = (id, gi) => { const st = GSTATE.get(id); if (!st) return false; const t = st.type; const specs = GOALS[t] ?? []; const i = specs.findIndex((g) => g.index === gi); return i >= 0 && !!st.on[i]; };
+world.afterEvents.entityHurt.subscribe(({ hurtEntity, damageSource }) => { try { const by = damageSource.damagingEntity; if (by && hurtEntity.typeId.startsWith(NS + ":")) LASTHURT.set(hurtEntity.id, { by, t: system.currentTick }); } catch {} });
 let gtick = 0;
 function goalObj(cls, w) { const o = R.newObj(cls); o.__goal = true; o["this$0"] = w; return o; }
 function runGoals(e, specs) {
   const w = JEntity.of(e); let st = GSTATE.get(e.id);
-  if (!st) { st = { objs: specs.map((g) => goalObj(g.cls, w)), on: specs.map(() => null), active: specs.map(() => false) }; GSTATE.set(e.id, st); }
+  if (!st) { st = { type: e.typeId, objs: specs.map((g) => goalObj(g.cls, w)), on: specs.map(() => null), active: specs.map(() => false) }; GSTATE.set(e.id, st); }
   for (let i = 0; i < specs.length; i++) {
     const g = specs[i], o = st.objs[i], fn = g.fn;
     if (g.mode === "gate") {
@@ -70,7 +73,30 @@ system.runInterval(() => {
     let d; try { d = world.getDimension(dimId); } catch { continue; }
     for (const t of GTYPES) { let list; try { list = d.getEntities({ type: t }); } catch { continue; } for (const e of list) runGoals(e, GOALS[t]); }
   }
+  R.navTick();
   for (const [id, c] of MOVES) { let ok = false; try { ok = c.w.e.isValid; } catch {} if (!ok) { MOVES.delete(id); continue; } c.step(); }
+}, 1);
+// ---- MobAI parity trace (docs/PORT_MOBAI.md W4): `/tag @s add gb_trace` (or `/scriptevent gb:trace on|off`). One JSON line per tick per mod mob
+// (and player) within 48 blocks, to the content log as "[MobAITrace] {...}"; same fields as the Java recorder mod.
+let TRACE = false;
+system.afterEvents.scriptEventReceive?.subscribe?.((ev) => { if (ev.id === "gb:trace") { TRACE = ev.message.trim() !== "off"; console.warn(`[MobAITrace] ${TRACE ? "on" : "off"}`); } });
+const r2 = (v) => Math.round(v * 100) / 100;
+system.runInterval(() => {
+  const players = world.getAllPlayers().filter((p) => TRACE || p.hasTag("gb_trace"));
+  if (!players.length) return;
+  for (const p of players) {
+    let list = []; try { list = p.dimension.getEntities({ location: p.location, maxDistance: 48 }); } catch {}
+    for (const e of list) {
+      if (e.typeId !== "minecraft:player" && !e.typeId.startsWith(NS + ":")) continue;
+      if (e.typeId === NS + ":gb_nav_point") continue;
+      let v = { x: 0, z: 0 }, hp = 0, tg = null; try { v = e.getVelocity(); } catch {} try { hp = e.getComponent("health")?.currentValue ?? 0; } catch {}
+      try { const j = JEntity.of(e).getTarget(); tg = j ? `${j.e.typeId}#${j.e.id}` : null; } catch {}
+      const st = GSTATE.get(e.id), specs = GOALS[e.typeId] ?? [];
+      const goals = specs.map((g, i) => (g.mode === "gate" ? st?.on?.[i] : st?.active?.[i]) ? `${g.priority}:${g.cls.split("/").pop()}` : null).filter(Boolean);
+      const l = e.location;
+      console.warn("[MobAITrace] " + JSON.stringify({ t: system.currentTick, id: e.id, type: e.typeId, x: r2(l.x), y: r2(l.y), z: r2(l.z), vx: r2(v.x), vz: r2(v.z), hp: r2(hp), target: tg, goals, nav: R.navBusy({ e }) || !!MOVES.get(e.id)?.want }));
+    }
+  }
 }, 1);
 world.beforeEvents.entityRemove?.subscribe?.(({ removedEntity }) => { try { GSTATE.delete(removedEntity.id); MOVES.delete(removedEntity.id); } catch {} });
 function dims() { const out = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"]; for (const k of Object.keys(globalThis.__WG_DIMS ?? {})) out.push(k); return out; }
