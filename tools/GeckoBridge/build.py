@@ -21,10 +21,15 @@ sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE.parent))
 import gbanim
 import vanilla as VM, molang, discover, runtime, sounds as S             # noqa: E402
 import controllers as C                                            # noqa: E402
+import animtex                                                     # noqa: E402
 from ModelCore.rig import load_bedrock_geo, write_bedrock_geo       # noqa: E402
 
 GB = "gb"
-GLOW_MATERIAL = {"materials": {"version": "1.0.0", "gb_glow:entity_alphablend": {"+states": ["DisableCulling"]}}}
+# gb_anim*: animated .mcmeta textures; Bedrock only applies a render controller's uv_anim when the material
+# has USE_UV_ANIM (vanilla charged_creeper / player_spectator do the same)
+GLOW_MATERIAL = {"materials": {"version": "1.0.0", "gb_glow:entity_alphablend": {"+states": ["DisableCulling"]},
+                               "gb_anim:entity_alphatest": {"+defines": ["USE_UV_ANIM"]},
+                               "gb_glow_anim:entity_alphablend": {"+states": ["DisableCulling"], "+defines": ["USE_UV_ANIM"]}}}
 OWNER_VAR = "v.gb_hidden_parts"   # reserved for Figura / Bedrock Forge: non-zero hides the mob's parts (M3: bitmask)
 
 
@@ -226,6 +231,20 @@ class Build:
         self.bone_alias = alias
 
     # ---------------------------------------------------------------- animations
+    def still_png(self, src):
+        """texture bytes; an animated .mcmeta strip -> its first frame (items, armor and block models cannot animate)."""
+        data = self.z.read(src)
+        return animtex.first_frame(data, self.z.read(src + ".mcmeta")) if src + ".mcmeta" in self.names else data
+
+    def entity_png(self, key, src):
+        """copy an entity texture; an animated .mcmeta strip is repacked in play order -> (frames, ticks per frame)."""
+        data = self.z.read(src)
+        if src + ".mcmeta" in self.names:
+            r = animtex.strip(data, self.z.read(src + ".mcmeta"))
+            if r:
+                self.write(self.rp, key + ".png", r[0]); return r[1], r[2]
+        self.write(self.rp, key + ".png", data); return 1, 1
+
     def animations(self, path):
         """Convert one GeckoLib animation file -> {source name: bedrock id}; written once per file."""
         if path in self.anim_ids: return self.anim_ids[path]
@@ -352,6 +371,7 @@ class Build:
             if kind == "thenWait": steps.append((None, (args[0] if args else 0) / 20)); continue
             name = args[0] if args else None
             nid = amap.get(name) or next((v for k, v in amap.items() if k.split(".")[-1] == str(name).split(".")[-1]), None)
+            if not nid and str(name).split(".")[-1] in ("undefined", "empty", ""): continue   # MCreator's "no animation" sentinel
             if not nid:
                 self.report["warnings"].append(f"{getattr(self, 'cur', '?')}: animation '{name}' not found in its animation file"); continue
             loop = {"thenLoop": True, "thenPlayAndHold": "hold_on_last_frame", "thenPlay": None, "then": None}.get(kind)
@@ -541,13 +561,13 @@ class Build:
         if len(geo_map) > 1: self.dedupe_locators([v[0] for v in geo_map.values()], er)
         if not geo_map: er["skipped"] = "no geometry"; return
         # textures (+ variants)
-        tex_map = {}
+        tex_map, tex_anim = {}, {}
         for i, v in enumerate(e.get("variants") or []):
             if v["texture"] not in self.names: continue
             key = f"textures/entity/{GB}/{self.ns}/{clean(Path(v['texture']).stem)}"
             if "/" in v["texture"].split("textures/entity/")[-1]:
                 key = f"textures/entity/{GB}/{self.ns}/" + clean(v["texture"].split("textures/entity/")[-1][:-4].replace("/", "_"))
-            self.write(self.rp, key + ".png", self.z.read(v["texture"])); tex_map[f"t{i}"] = (key, v["when"])
+            n, t = self.entity_png(key, v["texture"]); tex_map[f"t{i}"] = (key, v["when"]); tex_anim[f"t{i}"] = (n, t)
         if not tex_map: er["skipped"] = "no texture"; return
         desc = {"identifier": full, "materials": {"default": "entity_alphatest"},
                 "textures": {k: v[0] for k, v in tex_map.items()}, "geometry": {k: v[0] for k, v in geo_map.items()},
@@ -565,6 +585,10 @@ class Build:
             return expr
         rcd = {"geometry": pick("Geometry", geo_map), "materials": [{"*": "Material.default"}],
                "textures": [pick("Texture", tex_map)], "part_visibility": [{"*": f"{OWNER_VAR} == 0"}]}
+        uva = animtex.uv_anim([(tex_map[k][1], *tex_anim[k]) for k in tex_map])    # animated .mcmeta skins: scroll the strip
+        if uva:
+            rcd["uv_anim"] = uva; rcd["materials"] = [{"*": "Material.anim"}]; desc["materials"]["anim"] = "gb_anim"
+            er["animated_textures"] = sum(1 for k in tex_anim if tex_anim[k][0] > 1)
         for k in ("geometry",): self.check(f"{rc}/{k}", rcd[k])
         self.check(f"{rc}/texture", rcd["textures"][0])
         self.rcs[rc] = rcd; desc["render_controllers"].append(rc)
@@ -582,26 +606,35 @@ class Build:
             if not L.get("rows"): self.report["warnings"].append(f"{full}: custom layer {L['class'].split('.')[-1]} draws nothing we could find")
         for i, g in enumerate(dict.fromkeys(glows)):
             key = f"textures/entity/{GB}/{self.ns}/{clean(Path(g).stem)}"
-            self.write(self.rp, key + ".png", self.z.read(g))
+            gn, gt = self.entity_png(key, g)
             desc["textures"][f"glow{i}"] = key; desc["materials"]["glow"] = "gb_glow"
             grc = f"controller.render.{GB}.{self.ns}.{eid}.glow{i}"
             self.rcs[grc] = {"geometry": rcd["geometry"], "materials": [{"*": "Material.glow"}], "textures": [f"Texture.glow{i}"],
                              "ignore_lighting": True, "part_visibility": [{"*": f"{OWNER_VAR} == 0"}]}
+            if gn > 1:
+                self.rcs[grc]["uv_anim"] = animtex.uv_anim([("1", gn, gt)])
+                self.rcs[grc]["materials"] = [{"*": "Material.glow_anim"}]; desc["materials"]["glow_anim"] = "gb_glow_anim"
             desc["render_controllers"].append(grc); er["glow"] = er.get("glow", 0) + 1
         # custom GeoRenderLayers (GeckoLib reRender with another texture): one overlay render controller each, shown by the
         # layer's own condition (sheared bear, sleeping snake eyes, TMNT tortoise skins by name)
         for i, r in enumerate(layer_rows):
             key = f"textures/entity/{GB}/{self.ns}/{clean(Path(r['texture']).stem)}"
-            self.write(self.rp, key + ".png", self.z.read(r["texture"]))
+            ln, lt = self.entity_png(key, r["texture"])
             desc["textures"][f"layer{i}"] = key
             if r["emissive"]: desc["materials"]["glow"] = "gb_glow"
             lrc = f"controller.render.{GB}.{self.ns}.{eid}.layer{i}"
             self.rcs[lrc] = {"geometry": rcd["geometry"], "materials": [{"*": "Material.glow" if r["emissive"] else "Material.default"}],
                              "textures": [f"Texture.layer{i}"], "part_visibility": [{"*": f"({r['when']}) && {OWNER_VAR} == 0"}],
                              **({"ignore_lighting": True} if r["emissive"] else {})}
+            if ln > 1:
+                self.rcs[lrc]["uv_anim"] = animtex.uv_anim([("1", ln, lt)])
+                self.rcs[lrc]["materials"] = [{"*": "Material.glow_anim" if r["emissive"] else "Material.anim"}]
+                desc["materials"]["glow_anim" if r["emissive"] else "anim"] = "gb_glow_anim" if r["emissive"] else "gb_anim"
             desc["render_controllers"].append(lrc); er.setdefault("layers", []).append({"layer": r["layer"], "when": r["when"], "texture": key})
         # animations + controllers
         amap = self.animations(e["animation_file"]) if e.get("animation_file") else {}
+        for extra in e.get("animation_files") or []:     # model swaps animation files per form (dragon form etc.): all of them
+            if extra != e.get("animation_file"): amap = {**self.animations(extra), **amap}
         cnames = []
         for ci, c in enumerate(ctrl_entity.get("controllers", [])):
             if any("animationprocedure" in json.dumps(p.get("anims")) for p in c.get("paths", [])):
@@ -816,8 +849,8 @@ class Build:
                     n = f"assets/{self.modid}/{kind}/{d}{st}{ext}"
                     if n in self.names: return n
             return None
-        if not e.get("geo"): e["geo"] = find("geo", ".geo.json"); e.setdefault("assets_by_name", []).append("geo")
-        if not e.get("animation_file"): e["animation_file"] = find("animations", ".animation.json")
+        if not e.get("geo"): e["geo"] = find("geo", ".geo.json") or find("geckolib/models", ".geo.json"); e.setdefault("assets_by_name", []).append("geo")
+        if not e.get("animation_file"): e["animation_file"] = find("animations", ".animation.json") or find("geckolib/animations", ".animation.json")
         if not e.get("variants"):
             t = find("textures", ".png")
             if t: e["variants"] = [{"when": "1", "texture": t}]
@@ -1087,7 +1120,7 @@ class Build:
         for k in ("visible_bounds_width", "visible_bounds_height", "visible_bounds_offset"): bg["description"].pop(k, None)
         self.write(self.rp, f"models/blocks/{self.ns}/{bid}.geo.json", {"format_version": "1.12.0", "minecraft:geometry": [bg]})
         tkey = f"gb_{self.ns}_{bid}"; tpath = f"textures/blocks/{GB}/{self.ns}/{bid}"
-        self.write(self.rp, tpath + ".png", self.z.read(tex_path)); self.terrain[tkey] = {"textures": tpath}
+        self.write(self.rp, tpath + ".png", self.still_png(tex_path)); self.terrain[tkey] = {"textures": tpath}
         tops = [b["name"].lower() for b in bg.get("bones", [])]   # Bedrock matches these lower-cased
         box = {"origin": [-8, 0, -8], "size": [16, 16, 16]}
         self.write(self.bp, f"blocks/{self.ns}/{bid}.json", {"format_version": "1.21.40", "minecraft:block": {
@@ -1276,7 +1309,7 @@ class Build:
             self.write(self.bp, f"items/{it['id']}.json", {"format_version": "1.21.0", "minecraft:item": {
                 "description": {"identifier": iid, "menu_category": {"category": "equipment"}}, "components": comps}})
             if it.get("texture") in self.names:
-                self.write(self.rp, f"textures/items/{self.ns}/{it['id']}.png", self.z.read(it["texture"]))
+                self.write(self.rp, f"textures/items/{self.ns}/{it['id']}.png", self.still_png(it["texture"]))
                 self.item_tex[it["id"]] = {"textures": f"textures/items/{self.ns}/{it['id']}"}
             if it.get("recipe"):
                 r = it["recipe"]
@@ -1338,9 +1371,10 @@ class Build:
         import extract as MP
         if not hasattr(self, "_gtmp"):
             self._gtmp = tempfile.mkdtemp(prefix="gb_goals_")
+            mine = [n for n in self.names if n.endswith(".class") and not n.startswith(C.GL_PREFIXES)]
+            for n in mine: self.z.extract(n, self._gtmp)
+            C.prefetch(self._gtmp, [n[:-6].replace("/", ".") for n in mine])     # one JVM per batch, not per mob
         cls = e["java_class"]; pre = cls.replace(".", "/")
-        for n in self.names:
-            if n.startswith(pre) and n.endswith(".class"): self.z.extract(n, self._gtmp)
         dis = C.javap(self._gtmp, cls)
         if not dis: return None
         ms = MP.methods(dis)
@@ -1508,6 +1542,9 @@ class Build:
 
 
 if __name__ == "__main__":
+    import os
+    if os.environ.get("PYTHONHASHSEED") != "0":       # same packs every build: set/dict-of-set order must not vary per run
+        os.environ["PYTHONHASHSEED"] = "0"; os.execv(sys.executable, [sys.executable] + sys.orig_argv[1:])
     ap = argparse.ArgumentParser(); ap.add_argument("jar"); ap.add_argument("out"); ap.add_argument("--name"); ap.add_argument("--tol", type=float)
     a = ap.parse_args()
     r = Build(a.jar, a.out, a.name, a.tol).run()

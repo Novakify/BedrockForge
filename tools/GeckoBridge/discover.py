@@ -44,8 +44,12 @@ def registry(tmp, all_classes):
         if b"REF_newInvokeSpecial" not in raw and b"EntityType" not in raw: continue
         if b"EntityType" not in raw: continue
         dis = C.javap(tmp, cls); C.bootstrap_targets(C.javap(tmp, cls, verbose=True)); boot = dict(C.FULL_TARGETS)
-        for code in C.parse_methods(dis).values():
+        methods = C.parse_methods(dis)
+        helpers = {}    # helper(String id, float w, float h) that builds the EntityType itself: id comes from each caller
+        for mname, code in methods.items():
             last_str, i, last_id = None, 0, None
+            sig = re.search(rf"\b{re.escape(mname.split('#')[0])}\(([^)]*)\)", dis)
+            takes_id = bool(sig and sig.group(1).split(",")[0].strip() == "java.lang.String")
             while i < len(code):
                 off, op, rest = code[i]
                 v = C.const_of(op, rest) if op.startswith(("ldc", "iconst", "bipush", "sipush", "fconst")) else None
@@ -63,10 +67,25 @@ def registry(tmp, all_classes):
                                 if isinstance(f, str) and re.fullmatch(r"[a-z0-9_]+", f) and not after_str: after_str = f
                             if op2 == "invokedynamic": break       # next registration
                         eid = last_str or after_str               # helper(id, F::new, ...) or Builder.of(F::new).sized(..).build(id)
-                        if eid: out.setdefault(eid, {"class": t[1], "size": floats[:2] or None, "category": cat}); last_id = eid
+                        if takes_id and any(o.startswith("aload_0") or o == "aload" and r.strip() == "0" for _, o, r in code[:i]) \
+                                and not any(op2.startswith("ldc") and isinstance(C.const_of(op2, r2), str) and C.const_of(op2, r2) == eid and "build" in " ".join(x for _, _, x in code[j:j + 3])
+                                            for j, (_, op2, r2) in enumerate(code)):
+                            helpers[mname.split("#")[0]] = {"class": t[1], "category": cat}; i += 1; continue
+                        if eid: out.setdefault(eid, {"class": t[1], "size": floats[:2] if len(floats) >= 2 else None, "category": cat}); last_id = eid
                 if op == "putstatic" and last_id and ("RegistryObject" in rest or "EntityType" in rest or "Supplier" in rest):
                     out[last_id].setdefault("field", C.member(rest)[1]); last_id = None
                 i += 1
+        # callers of the helpers: ldc "id", [floats], invokestatic helper
+        for code in (methods.values() if helpers else []):
+            for i, (off, op, rest) in enumerate(code):
+                if op != "invokestatic" or C.member(rest)[1] not in helpers: continue
+                h = helpers[C.member(rest)[1]]; prev = code[max(0, i - 8):i]
+                ids = [C.const_of(o, r) for _, o, r in prev if o.startswith("ldc") and isinstance(C.const_of(o, r), str)]
+                fl = [C.const_of(o, r) for _, o, r in prev if o.startswith(("ldc", "fconst")) and isinstance(C.const_of(o, r), float)]
+                if ids and re.fullmatch(r"[a-z0-9_]+", ids[-1]):
+                    out.setdefault(ids[-1], {"class": h["class"], "size": fl[-2:] if len(fl) >= 2 else None, "category": h["category"]})
+                    nxt = code[i + 1] if i + 1 < len(code) else None
+                    if nxt and nxt[1] == "putstatic": out[ids[-1]].setdefault("field", C.member(nxt[2])[1])
     return out
 
 
@@ -86,10 +105,41 @@ def model_info(tmp, cls, modid, names):
         if "*" in full:   # string built at runtime (config suffix etc.): the shortest matching file = default choice
             rx = re.compile("^" + re.escape(full).replace("\\*", ".*") + "$")
             hits = sorted((n for n in names if rx.match(n)), key=len)
+            if hits: patterns[hits[0]] = full
             return hits[0] if hits else full
         return full
+    patterns = {}
     info = {"model_class": cls}
     reserved = {}
+    GL5 = {"geo": ("geckolib/models/", ".geo.json"), "animations": ("geckolib/animations/", ".animation.json")}
+
+    def resolve(s, want):
+        """a path string from the model -> jar asset. GeckoLib 5 ids are bare ('entity/mochi'): GeckoLib adds the
+        geckolib/models/ (or animations/) folder and the .geo.json suffix itself."""
+        if not isinstance(s, str) or (want == "textures" and not (".png" in s or "textures" in s)): return None
+        if want in s or (want == "textures"): return asset(s)
+        if want in GL5 and "." not in s.rsplit("/", 1)[-1]:
+            ns, pth = s.split(":", 1) if ":" in s else (None, s)
+            pre, suf = GL5[want]
+            cand = asset((f"{ns}:" if ns else "") + pre + pth + suf)
+            if cand in names or (cand and "*" in cand): return cand
+            c2 = asset((f"{ns}:" if ns else "") + {"geo": "geo/", "animations": "animations/"}[want] + pth + suf)
+            if c2 in names: return c2       # GeckoLib 4 layout reached with a bare id
+        return None
+
+    # static ResourceLocation fields set in <clinit>: field -> its path string
+    sfields, lasts = {}, []
+    for off, op, rest in ms.get("<clinit>", []):
+        if op.startswith("ldc"):
+            v = C.const_of(op, rest)
+            if isinstance(v, str): lasts.append(v)
+        elif op == "invokedynamic":
+            mk = re.search(r"InvokeDynamic #(\d+):", rest)
+            if mk and C.CONCAT.get(int(mk.group(1))): lasts.append(C.CONCAT[int(mk.group(1))])
+        elif op == "putstatic":
+            if "ResourceLocation" in rest and lasts:
+                sfields[C.member(rest)[1]] = (lasts[-2] + ":" + lasts[-1]) if len(lasts) > 1 and "/" not in lasts[-2] and ":" not in lasts[-1] else lasts[-1]
+            lasts = []
 
     def returns(mname, want):
         """Every return path of a resource getter -> [{"when", "path"}] (conditions in Molang)."""
@@ -104,14 +154,16 @@ def model_info(tmp, cls, modid, names):
         out = []
         for p in C.run_paths(code, {}):
             r = p.ret
+            path = None
             if isinstance(r, tuple) and r[0] == "obj":
                 strs = [a[1] for a in r[2] if isinstance(a, tuple) and a[0] == "const" and isinstance(a[1], str)]
-                path = next((x for x in strs if want in x), None)
-                terms = C.path_terms(p.conds, reserved)
-                if path and terms is not None:
-                    out.append({"when": " && ".join(terms) or "1", "path": asset(path)})
-            elif isinstance(r, tuple) and r[0] == "field":
-                pass
+                ns = strs[0] if len(strs) > 1 and "/" not in strs[0] and ":" not in strs[0] else None
+                path = next((x for x in (resolve((f"{ns}:" if ns else "") + y, want) for y in strs[::-1] if y != ns) if x), None)
+            elif isinstance(r, tuple) and r[0] == "field" and r[2] in sfields:
+                path = resolve(sfields[r[2]], want)
+            terms = C.path_terms(p.conds, reserved) if path else None
+            if path and terms is not None:
+                out.append({"when": " && ".join(terms) or "1", "path": path})
         if not out:   # constant fallback: any matching string literal in the method
             out = [{"when": "1", "path": asset(x)} for x in strings(mname) if want in x][:1]
         return out
@@ -128,16 +180,68 @@ def model_info(tmp, cls, modid, names):
     def default(rows): return (next((r for r in rows if r["when"] == "1"), rows[-1])["path"]) if rows else None
     info["geo"], info["animation_file"] = default(geos), default(anims)
     info["geo_variants"] = geos if len(geos) > 1 else []
+    info["animation_files"] = [r["path"] for r in anims if r["path"] in names] if len(anims) > 1 else []
     info["reserved"] = reserved
     # DefaultedEntityGeoModel(new ResourceLocation(modid, "name")): paths by convention
     if "DefaultedEntityGeoModel" in dis or "DefaultedGeoModel" in dis:
         nm = next((s for s in sum((strings(k) for k in ms if k.startswith("<init>")), []) if s and s != modid and "/" not in s and "." not in s), None)
         if nm:
-            info["geo"] = info["geo"] or f"assets/{modid}/geo/entity/{nm}.geo.json"
-            info["animation_file"] = info["animation_file"] or f"assets/{modid}/animations/entity/{nm}.animation.json"
+            def first(*c): return next((x for x in c if x in names), c[0])
+            info["geo"] = info["geo"] or first(f"assets/{modid}/geo/entity/{nm}.geo.json", f"assets/{modid}/geckolib/models/entity/{nm}.geo.json")
+            info["animation_file"] = info["animation_file"] or first(f"assets/{modid}/animations/entity/{nm}.animation.json",
+                                                                     f"assets/{modid}/geckolib/animations/entity/{nm}.animation.json")
             if not variants: variants = [{"when": "1", "texture": f"assets/{modid}/textures/entity/{nm}.png"}]
+    variants = enum_variants(tmp, ms.get("getTextureResource", []), variants, patterns, names)
+    variants = synced_texture(tmp, ms.get("getTextureResource", []), variants, patterns, names)
     info["variants"] = [v for v in variants if v["texture"] in names] or variants
     return info
+
+
+def synced_texture(tmp, code, variants, patterns, names):
+    """MCreator: "textures/entities/" + entity.getTexture() + ".png", where getTexture() reads a synced String
+    (entityData.define(TEXTURE, "the_sphere_calm")). Without this the gap was filled by the shortest matching file."""
+    if not any(v["texture"] in patterns for v in variants): return variants
+    call = next(((C.member(rest)[0], C.member(rest)[1]) for off, op, rest in code
+                 if op == "invokevirtual" and C.member(rest)[2].endswith(")Ljava/lang/String;")
+                 and not C.member(rest)[0].startswith(("java/", "net/minecraft/"))), None)
+    if not call: return variants
+    ecls, getter = call
+    dis = C.javap(tmp, ecls.replace("/", ".")); ms = C.parse_methods(dis)
+    field = next((C.member(rest)[1] for off, op, rest in ms.get(getter, []) if op == "getstatic"), None)
+    if not field: return variants
+    default = None
+    for code2 in ms.values():
+        for i, (off, op, rest) in enumerate(code2):
+            if op == "getstatic" and C.member(rest)[1] == field and i + 2 < len(code2) and code2[i + 1][1].startswith("ldc"):
+                v = C.const_of(code2[i + 1][1], code2[i + 1][2])
+                if isinstance(v, str) and code2[i + 2][1] == "invokevirtual": default = default or v
+    if not default: return variants
+    out = []
+    for v in variants:
+        pat = patterns.get(v["texture"])
+        t = pat.replace("*", default, 1) if pat else None
+        out.append({**v, "texture": t} if t and t in names else v)
+    return out
+
+
+def enum_variants(tmp, code, variants, patterns, names):
+    """texture path built from an enum looked up by the variant id (MochiVariant.byId(id).textureName()):
+    one texture row per enum constant, picked with q.variant == ordinal (the constant's lower-cased name fills the gap)."""
+    enum = next((C.member(rest)[0] for off, op, rest in code if op == "invokestatic" and C.member(rest)[1] in ("byId", "byOrdinal", "fromId", "values", "byIndex")), None)
+    if not enum or not any(v["texture"] in patterns for v in variants): return variants
+    dis = C.javap(tmp, enum.replace("/", "."))
+    if "extends java.lang.Enum" not in dis: return variants
+    consts = re.findall(r"public static final [\w.$]+ (\w+);", dis.split("{", 1)[1].split("(")[0]) if "{" in dis else []
+    if len(consts) < 2: return variants
+    out = []
+    for v in variants:
+        pat = patterns.get(v["texture"])
+        if not pat: out.append(v); continue
+        base = " && ".join(t for t in re.split(r"\s*&&\s*", v["when"].split(" || ")[0].strip("()")) if "gb_variant" not in t) or "1"
+        for i, c in enumerate(consts):
+            t = pat.replace("*", c.lower(), 1)
+            if t in names: out.append({"when": f"(q.variant == {i})" + ("" if base == "1" else f" && {base}"), "texture": t})
+    return out if len(out) > len(variants) else variants
 
 
 def renderer_info(tmp, cls, modid, names):
@@ -258,6 +362,7 @@ def discover(jar):
             try: lang = MP_jload(z.read(lp))
             except Exception: lang = {}
     all_classes = [str(p.relative_to(tmp))[:-6].replace("/", ".") for p in Path(tmp).rglob("*.class")]
+    C.prefetch(tmp, all_classes); C.prefetch(tmp, all_classes, verbose=True)     # one JVM per few hundred classes
     ctrl = {"jar": os.path.basename(jar), "entities": []}
     geo_classes = []
     models, renderers = {}, {}
@@ -284,7 +389,7 @@ def discover(jar):
         tex = next((x for x in strs if x.endswith(".png")), None)
         if not geo: continue
         stem = Path(geo).name[:-9]
-        anim = next((f"assets/{modid}/{d}{stem}.animation.json" for d in ("animations/", "animations/entity/") if f"assets/{modid}/{d}{stem}.animation.json" in names), None)
+        anim = next((f"assets/{modid}/{d}{stem}.animation.json" for d in ("animations/", "animations/entity/", "geckolib/animations/", "geckolib/animations/entity/") if f"assets/{modid}/{d}{stem}.animation.json" in names), None)
         animator = next((x for x in geo_classes if x.rsplit(".", 1)[1] == c.rsplit(".", 1)[1].replace("Renderer", "Animator")), None)
         az[t] = {"geo": f"assets/{modid}/{geo}", "texture": f"assets/{modid}/{tex}" if tex else None, "anim": anim, "animator": animator, "renderer": c}
     for t, a in az.items():
@@ -341,7 +446,7 @@ def discover(jar):
                 "geckolib": True, "is_mob": not is_proj, "category": r.get("category"),
                 "kind": CATEGORY_KIND.get(r.get("category") or "", "hostile" if attributes.get("attack_damage") else "passive"),
                 "size": r.get("size"), "movement": movement, "attributes": attributes,
-                "geo": mi.get("geo"), "animation_file": mi.get("animation_file"),
+                "geo": mi.get("geo"), "animation_file": mi.get("animation_file"), "animation_files": mi.get("animation_files", []),
                 "texture": vs[-1]["texture"] if vs else None, "variants": vs,
                 "glowmask": glowmask, "layers": layers, "name": lang.get(f"entity.{modid}.{eid}"),
                 "geo_variants": mi.get("geo_variants", []), "reserved": mi.get("reserved", {}),

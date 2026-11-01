@@ -104,7 +104,7 @@ def convert(b):
     """b: the GeckoBridge Build. Adds attachables for armour items that have a GeckoLib armour geo."""
     geos = {}
     for n in b.names:
-        if n.startswith(f"assets/{b.modid}/geo/") and n.endswith(".geo.json"):
+        if n.startswith((f"assets/{b.modid}/geo/", f"assets/{b.modid}/geckolib/models/")) and n.endswith(".geo.json"):
             try: d = json.loads(b.z.read(n).decode("utf-8-sig"))
             except Exception: continue
             if is_armor_geo(d): geos[n.rsplit("/", 1)[1][:-9]] = (n, d)
@@ -137,7 +137,7 @@ def convert(b):
             tex_src = best[1] if best else None
         if not tex_src: b.report["warnings"].append(f"armor {iid}: no texture for {key}"); continue
         tex = f"textures/models/armor/{b.ns}/{key}"
-        b.write(b.rp, tex + ".png", b.z.read(tex_src))
+        b.write(b.rp, tex + ".png", b.still_png(tex_src))
         gid = f"geometry.gb.{b.ns}.armor.{key}.{slot}"
         b.write(b.rp, f"models/entity/{b.ns}/armor/{key}.{slot}.geo.json", slot_geometry(geo, slot, gid))
         bslot, layer, prot, dur = BEDROCK[slot]
@@ -146,7 +146,7 @@ def convert(b):
                 "geometry": {"default": gid}, "scripts": {"parent_setup": f"variable.{layer} = 0.0;"},
                 "render_controllers": ["controller.render.armor"]}
         # animated GeoArmor (capes, wings): its looping animations play while worn (baked like mob animations)
-        anim_src = next((a for a in (f"assets/{b.modid}/animations/{key}.animation.json", f"assets/{b.modid}/animations/armor/{key}.animation.json") if a in b.names), None)
+        anim_src = next((a for a in (f"assets/{b.modid}/{d}{key}.animation.json" for d in ("animations/", "animations/armor/", "geckolib/animations/", "geckolib/animations/armor/")) if a in b.names), None)
         if anim_src:
             amap = b.animations(anim_src)
             loops = [nid for nm, nid in amap.items() if "idle" in nm.lower() or "loop" in nm.lower()] or list(amap.values())[:1]

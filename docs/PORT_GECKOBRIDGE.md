@@ -273,6 +273,39 @@ Known gaps (honest list): Java shaders / post effects, noise terrain (dimensions
 true pathfinding / setTarget beyond Bedrock behaviours, GUIs other than overlays, paintings, custom particles
 (mapped to vanilla ones), deer locator message (cosmetic).
 
+## M3 / M4 / M5 status (2026-10-31 night)
+- **M3 items + armor (done):** GeoArmor templates -> Bedrock attachables (`armor.py`: bones renamed to the player
+  skeleton, one geometry per slot, `controller.render.armor`, wearable/durability/enchantable on the item, looping
+  armor animations). 3D GeoItems (model parent `builtin/entity`, or a 1.21.4+ `items/<id>.json` that hands
+  rendering to GeckoLib) -> attachables bound to the hand bone with the Java display transforms, icon rendered from
+  the model (`items.py` + `preview.js` icon mode). AzureLib (GeckoLib 4 fork) is read as GeckoLib.
+  Tested on Fantasy Armor (120 pieces) and Samurai Dynasty (171 armor pieces, 9 weapons, 12 mobs).
+- **Animation cues (done):** sound keyframes -> Bedrock sound_effects, particle keyframes -> particle_effects
+  (GeckoLib particle names mapped per entity to Bedrock / mod particle ids).
+- **M4 GeckoLib 5 (done for what the test mods use):**
+  - package `com.geckolib` (GeckoLib 5.4+, MC 26.x) and Mojang's `Identifier` are read as the GeckoLib 4 names;
+  - `ResourceLocation.fromNamespaceAndPath / withDefaultNamespace / parse / tryParse` and static Identifier fields;
+  - GeckoLib 5 bare model ids (`mochipets:entity/mochi` -> `geckolib/models/entity/mochi.geo.json`, animations
+    likewise) and the `assets/<ns>/geckolib/{models,animations}` layout everywhere (entities, armor, items);
+  - controllers registered from a helper class (`registerControllers(r) { Anims.register(this, r); }`) with static
+    lambdas, small static helpers inlined into conditions (`groundSpeed(e) = e.walkAnimation.speed() / 4`);
+  - textures picked by an enum (`MochiVariant.byId(id).textureName()`) -> one variant per enum constant (q.variant);
+  - several animation files per model (form swaps) merged; registration through `make(String id, w, h)` helpers;
+  - 1.21 data folders (`recipe/`, `loot_table/`) and string ingredients / `result.id`.
+  Test mods: Santa Dweller 1.9.0 (NeoForge 1.21.8, GeckoLib 5 with GeoRenderState) and Adorable Mochi Pets
+  0.23.0 (Fabric 26.3, GeckoLib 5.5 `com.geckolib`): both build, validate.py 0 errors.
+- **M5 animated textures (done):** entity / glow / layer textures with a `.png.mcmeta` animation are repacked into a
+  strip in play order (frame lists and per-frame times honoured) and scrolled with the render controller's
+  `uv_anim` (through the `gb_anim` / `gb_glow_anim` materials: Bedrock ignores uv_anim unless the material defines
+  `USE_UV_ANIM`, seen in game); animated block textures already used flipbook_textures.json; items, armor and block models show
+  frame 0 (Bedrock cannot animate those).
+- **Polish:** javap runs in batches of 300 classes per JVM (output byte-identical to one call per class): an uncached
+  Wonderland build went from ~25 min to ~10 min, cached rebuilds ~3 min. Builds are deterministic now (fixed hash
+  seed, sorted asset scans): two runs give identical packs. MCreator's "undefined" animation sentinel no longer warns.
+- **Wonderland fix found on the way:** 95 of 129 Wonderland mobs used `"textures/entities/" + getTexture() + ".png"`
+  (MCreator synced texture name) and were getting the shortest matching file (fish.png). The synced default
+  (`entityData.define(TEXTURE, "the_sphere_calm")`) is now read, so every mob gets its real skin.
+
 ## Coexistence with Figura (added 2026-10-31)
 Goal is GeckoLib + Figura features together in one client. Figura is a separate native runtime (FiguraBridge) that
 shares a **ModelCore** layer with GeckoBridge: one rig format, one native animation evaluator (also the fallback for

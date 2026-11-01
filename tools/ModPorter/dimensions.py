@@ -96,7 +96,7 @@ class Dimensions:
     def run(self):
         dims = {}
         mods = {}
-        for n in self.names:
+        for n in sorted(self.names):      # sorted: same output every build
             if n.startswith(f"data/{self.modid}/forge/biome_modifier/") and n.endswith(".json"):
                 d = jload(self.z.read(n))
                 if d.get("type", "").endswith("add_features"):

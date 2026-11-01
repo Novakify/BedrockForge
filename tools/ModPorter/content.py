@@ -11,7 +11,7 @@ Reads only the jar's data/assets JSON + a little bytecode (block/item properties
   sounds   every sounds.json event as <ns>.<event>
 """
 from __future__ import annotations
-import json, re
+import json, re, sys
 from pathlib import Path
 
 try:
@@ -321,6 +321,11 @@ class Content:
             if tex:
                 src = self.asset("textures", tex, ".png")
                 data = self.z.read(src) if src in self.names else missing_png()   # the jar ships no texture (pre-release mods)
+                if src + ".mcmeta" in self.names:     # animated item texture: Bedrock items cannot animate, show frame 0
+                    try:
+                        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "GeckoBridge")); import animtex
+                        data = animtex.first_frame(data, self.z.read(src + ".mcmeta"))
+                    except Exception as ex: self.warn(f"mcmeta {src}: {ex}")
                 if src not in self.names: self.rep.setdefault("items_missing_texture", []).append(iid)
                 self.write(self.rp, f"textures/items/{self.ns}/{iid}.png", data)
                 self.item_tex[f"{self.ns}_{iid}"] = {"textures": f"textures/items/{self.ns}/{iid}"}
@@ -346,7 +351,9 @@ class Content:
                 "string": "minecraft:string", "leather": "minecraft:leather", "feathers": "minecraft:feather", "slimeballs": "minecraft:slime_ball"}
 
     def ingredient(self, i):
-        if isinstance(i, list): i = i[0]
+        if isinstance(i, list): i = i[0] if i else {}
+        if isinstance(i, str):      # 1.21.2+: "ns:item" or "#ns:tag"
+            i = {"tag": i[1:]} if i.startswith("#") else {"item": i}
         if "item" in i: return {"item": self.ref(i["item"])}
         if "tag" in i:
             t = i["tag"].split(":")[-1]
@@ -354,13 +361,13 @@ class Content:
         return None
 
     def recipes_run(self):
-        rd = f"data/{self.modid}/recipes/"
-        for n in sorted(x for x in self.names if x.startswith(rd) and x.endswith(".json")):
+        rds = (f"data/{self.modid}/recipes/", f"data/{self.modid}/recipe/")    # 1.21 renamed the folder to singular
+        for n in sorted(x for x in self.names if x.startswith(rds) and x.endswith(".json")):
             rid = clean(Path(n).stem)
             try: r = jload(self.z.read(n))
             except Exception: continue
             ty = r.get("type", "").split(":")[-1]
-            res = r.get("result"); res = {"item": self.ref(res)} if isinstance(res, str) else ({"item": self.ref(res.get("item")), "count": res.get("count", 1)} if res else None)
+            res = r.get("result"); res = {"item": self.ref(res)} if isinstance(res, str) else ({"item": self.ref(res.get("item") or res.get("id")), "count": res.get("count", 1)} if res else None)
             ident = {"identifier": f"{self.ns}:{rid}"}
             if ty == "crafting_shaped":
                 out = {"minecraft:recipe_shaped": {"description": ident, "tags": ["crafting_table"], "pattern": r["pattern"],
@@ -374,7 +381,7 @@ class Content:
                        if "item" in (self.ingredient(r["ingredient"]) or {}) else self.ingredient(r["ingredient"]), "output": res["item"] if res else None}}
             elif ty == "stonecutting":
                 out = {"minecraft:recipe_shapeless": {"description": ident, "tags": ["stonecutter"],
-                       "ingredients": [self.ingredient(r["ingredient"])], "result": {"item": self.ref(r["result"]), "count": r.get("count", 1)}}}
+                       "ingredients": [self.ingredient(r["ingredient"])], "result": res if isinstance(r["result"], dict) else {"item": self.ref(r["result"]), "count": r.get("count", 1)}}}
             else:
                 self.warn(f"recipe {rid}: type {ty} not converted"); continue
             body = next(iter(out.values())); body["unlock"] = {"context": "AlwaysUnlocked"}
@@ -392,9 +399,9 @@ class Content:
         return None
 
     def loot_run(self):
-        ld = f"data/{self.modid}/loot_tables/"
-        for n in sorted(x for x in self.names if x.startswith(ld) and x.endswith(".json")):
-            rel = n[len(ld):]
+        lds = (f"data/{self.modid}/loot_tables/", f"data/{self.modid}/loot_table/")
+        for n in sorted(x for x in self.names if x.startswith(lds) and x.endswith(".json")):
+            rel = n[len(next(d for d in lds if n.startswith(d))):]
             try: t = jload(self.z.read(n))
             except Exception: continue
             pools = []
@@ -450,7 +457,7 @@ class Content:
         not animated (.mcmeta strips have other frame layouts), sound files that exist in Bedrock under the same path,
         and splashes. Entity / GUI / environment / colormap / panorama replacements are skipped: their Bedrock layouts
         differ, and shipping the whole Java set crashed the game while loading (Wonderland, 2026-10-31)."""
-        names = [n for n in self.names if n.startswith("assets/minecraft/") and not n.endswith("/")]
+        names = [n for n in sorted(self.names) if n.startswith("assets/minecraft/") and not n.endswith("/")]
         if not names: return
         mp = json.loads(self.TEXMAP.read_text()) if self.TEXMAP.exists() else {}
         vd = self.VANILLA_DIR

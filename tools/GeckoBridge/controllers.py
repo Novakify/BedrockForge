@@ -65,6 +65,7 @@ NUMERIC = {
     ("f_20916_",): "q.hurt_time", ("hurtTime",): "q.hurt_time", ("f_20919_",): "q.death_ticks", ("deathTime",): "q.death_ticks",
     ("f_19797_",): "q.life_time * 20", ("tickCount",): "q.life_time * 20",
     ("getLimbSwingAmount",): "q.modified_move_speed", ("m_267731_",): "q.modified_move_speed",
+    ("walkAnimation", "speed"): "q.modified_move_speed", ("f_267362_", "m_267731_"): "q.modified_move_speed",
     # getX()/xo (last tick's x): movement tests like getX() != xo
     ("m_20185_",): "q.position(0)", ("getX",): "q.position(0)", ("m_20186_",): "q.position(1)", ("getY",): "q.position(1)",
     ("m_20189_",): "q.position(2)", ("getZ",): "q.position(2)",
@@ -106,13 +107,48 @@ METHOD_HDR = re.compile(r"^  (?:[\w$<>\[\],.? ]+ )?([\w$<>.]+)\((.*)\);$")
 import functools
 
 
+_PRE = {}     # (classdir, class, verbose) -> raw javap text, filled by prefetch()
+
+
+def prefetch(classdir, classes, verbose=False, batch=300):
+    """Disassemble many classes with one JVM per batch (one javap per class costs ~0.7 s of JVM start-up;
+    batched it is ~0.01 s a class). javap() then answers from this table."""
+    todo = [c for c in dict.fromkeys(classes) if (classdir, c, verbose) not in _PRE]
+    env = dict(os.environ, JAVA_TOOL_OPTIONS="")
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(min(8, os.cpu_count() or 2)) as ex:
+        list(ex.map(lambda i: _prefetch_part(classdir, todo[i:i + batch], verbose, env), range(0, len(todo), batch)))
+
+
+def _prefetch_part(classdir, part, verbose, env):
+    args = ["javap", "-p", "-c", "-constants", "-sysinfo"] + (["-v"] if verbose else []) + ["-cp", classdir] + part
+    out = subprocess.run(args, capture_output=True, text=True, env=env).stdout
+    blocks = re.split(r"(?m)^(?=Classfile )", out)
+    for blk in blocks:
+        m = re.match(r"Classfile (.+?)\.class\s*$", blk.split("\n", 1)[0])
+        if not m: continue
+        p = os.path.relpath(m.group(1), classdir).replace(os.sep, ".")
+        if not verbose:      # single-class javap has no sysinfo lines and no indent on "Compiled from"
+            lines = blk.split("\n")[3:]
+            if lines and lines[0].startswith("  Compiled from"): lines[0] = lines[0].strip()
+            blk = "\n".join(lines)
+        _PRE[(classdir, p, verbose)] = blk
+
+
 @functools.lru_cache(maxsize=4096)
 def javap(classdir, cls, verbose=False):
-    args = ["javap", "-p", "-c", "-constants"] + (["-v"] if verbose else []) + ["-cp", classdir, cls]
-    env = dict(os.environ, JAVA_TOOL_OPTIONS="")
-    out = subprocess.run(args, capture_output=True, text=True, env=env).stdout
+    out = _PRE.get((classdir, cls, verbose))
+    if out is None:
+        args = ["javap", "-p", "-c", "-constants"] + (["-v"] if verbose else []) + ["-cp", classdir, cls]
+        env = dict(os.environ, JAVA_TOOL_OPTIONS="")
+        out = subprocess.run(args, capture_output=True, text=True, env=env).stdout
     # AzureLib (GeckoLib 4 fork, mod.azure.azurelib) mirrors GeckoLib's API: read it as GeckoLib
     if "azurelib" in out: out = out.replace("mod/azure/azurelib", "software/bernie/geckolib").replace("mod.azure.azurelib", "software.bernie.geckolib")
+    # GeckoLib 5 on 26.x moved to com.geckolib, and Mojang renamed ResourceLocation -> Identifier: read both as before
+    if "com/geckolib" in out or "com.geckolib" in out:
+        out = out.replace("com/geckolib/", "software/bernie/geckolib/").replace("com.geckolib.", "software.bernie.geckolib.")
+    if "resources/Identifier" in out or "resources.Identifier" in out:
+        out = out.replace("net/minecraft/resources/Identifier", "net/minecraft/resources/ResourceLocation").replace("net.minecraft.resources.Identifier", "net.minecraft.resources.ResourceLocation")
     return out
 
 
@@ -180,10 +216,25 @@ class Path_:
         return p
 
 
-def run_paths(code, rawfields, max_paths=96):
+def inline_static(own, nm, args):
+    """Small branch-free static helper of the class being read (groundSpeed(e) = e.walkAnimation.speed() / 4):
+    its return expression with the call's arguments in place, or None."""
+    code = CTX.get("methods", {}).get(nm)
+    if not code or (own and own.replace("/", ".") != CTX.get("cls")) or len(code) > 24 or CTX.get("inlining"): return None
+    if any(op.startswith(("if", "goto", "tableswitch", "lookupswitch")) for _, op, _ in code): return None
+    CTX["inlining"] = True
+    try:
+        start = Path_(0); start.locals = {str(i): a for i, a in enumerate(args)}
+        ps = run_paths(code, {}, max_paths=2, start=start)
+    finally:
+        CTX["inlining"] = False
+    return ps[0].ret if len(ps) == 1 and ps[0].ret is not None and not isinstance(ps[0].ret, str) else None
+
+
+def run_paths(code, rawfields, max_paths=96, start=None):
     """Symbolic execution of one handler method -> list of paths (conds, anims, speed, ret)."""
     idx = {off: i for i, (off, _, _) in enumerate(code)}
-    done, todo, seen = [], [Path_(0)], set()
+    done, todo, seen = [], [start or Path_(0)], set()
     while todo and len(done) < max_paths:
         p = todo.pop()
         steps = 0
@@ -218,6 +269,12 @@ def run_paths(code, rawfields, max_paths=96):
                     st.append(("const", CONCAT[k]) if k in CONCAT and CONCAT[k] else "lambda"); p.pc = nxt; continue
                 args = [pop() for _ in range(nargs(desc))][::-1] if desc else []
                 recv = None if op == "invokestatic" else pop()
+                if op == "invokestatic" and CTX.get("cls"):
+                    inl = inline_static(own, nm, args)
+                    if inl is not None: st.append(inl); p.pc = nxt; continue
+                if op == "invokestatic" and own.split("/")[-1].split(".")[-1] in ("ResourceLocation", "Identifier") and nm in RL_FACTORIES:
+                    if nm == "withDefaultNamespace": args = [("const", "minecraft")] + args
+                    st.append(("obj", "net/minecraft/resources/ResourceLocation", args)); p.pc = nxt; continue
                 if op == "invokespecial" and nm == "<init>" and isinstance(recv, tuple) and recv[0] == "new":
                     obj = ("obj", recv[1], args)       # the dup'd copy below it on the stack becomes the built object
                     if "ResourceLocation" in recv[1]:
@@ -267,7 +324,7 @@ def run_paths(code, rawfields, max_paths=96):
             elif op == "goto" or op == "goto_w":
                 target = int(rest.split()[0])
                 if target in idx: nxt = idx[target]
-            elif op in ("areturn", "ireturn", "return"):
+            elif op in ("areturn", "ireturn", "dreturn", "freturn", "lreturn", "return"):
                 p.ret = pop() if op != "return" else None; done.append(p); break
             elif op == "athrow":
                 break
@@ -476,6 +533,7 @@ def bootstrap_targets(verbose_dis):
     return targets
 
 
+RL_FACTORIES = {"fromNamespaceAndPath", "withDefaultNamespace", "parse", "tryParse", "tryBuild", "of", "bySeparator"}
 FULL_TARGETS = {}   # last parsed class: bootstrap index -> (ref kind, owner class, method)
 CONCAT = {}         # last parsed class: bootstrap index -> string concat recipe, '*' where a runtime value goes
 
@@ -491,14 +549,22 @@ def own_methods(classdir, cls):
     return out
 
 
-def controllers_of(classdir, cls):
+def controllers_of(classdir, cls, entry=None):
     dis = javap(classdir, cls); vdis = javap(classdir, cls, verbose=True)
     methods = parse_methods(dis)
-    CTX["own_methods"] = own_methods(classdir, cls)
+    if entry is None:
+        # registerControllers(r) { Helper.register(this, r); }: the controllers live in the helper class
+        for off, op, rest in methods.get("registerControllers", []):
+            own, nm, desc = member(rest)
+            if op == "invokestatic" and "ControllerRegistrar" in desc and own.replace("/", ".") != cls \
+                    and os.path.exists(os.path.join(classdir, own + ".class")):
+                out = controllers_of(classdir, own.replace("/", "."), nm); out["class"] = cls; out["delegate"] = own.replace("/", ".")
+                return out
+    CTX["own_methods"] = own_methods(classdir, cls); CTX["cls"] = cls; CTX["methods"] = methods
     rawfields = raw_constants(methods)
     boot = bootstrap_targets(vdis)
     # controllers are built in registerControllers, but also in constructors / field initialisers and kept in fields
-    regs = [k for k in methods if k.split("#")[0] in ("registerControllers", "<init>")]
+    regs = [entry] if entry else [k for k in methods if k.split("#")[0] in ("registerControllers", "<init>")]
     out = {"class": cls, "controllers": [], "triggerable": [], "raw_constants": rawfields}
     for r in regs:
         code = methods[r]; pend = {}; last_str = None; last_field = None

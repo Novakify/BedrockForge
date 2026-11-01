@@ -44,6 +44,7 @@ def triggers(jar, tmp=None):
         for n in set(callers) | set(geo): z.extract(n, tmp)
         geo_cls = [g[:-6].replace("/", ".") for g in geo]
         geo_raw = {g: z.read(g.replace(".", "/") + ".class") for g in geo_cls}
+    C.prefetch(tmp, [n[:-6].replace("/", ".") for n in set(callers) | set(geo)])
     for n in callers:
         cls = n[:-6].replace("/", ".")
         for mname, code in C.parse_methods(C.javap(tmp, cls)).items():

@@ -23,7 +23,7 @@ def find_geo(b, iid):
     cands = [iid]
     if "_" in iid: cands.append(iid.rsplit("_", 1)[0])
     for c in cands:
-        for d in ("geo/", "geo/item/", "geo/items/"):
+        for d in ("geo/", "geo/item/", "geo/items/", "geckolib/models/", "geckolib/models/item/", "geckolib/models/items/"):
             n = f"assets/{b.modid}/{d}{c}.geo.json"
             if n in b.names: return n, c
     return None, None
@@ -59,6 +59,14 @@ def render_icon(geo_bones, desc, tex_path, out_png, gui):
         return r.returncode == 0 and Path(out_png).exists()
 
 
+def gl5_item(b, iid):
+    """1.21.4+ item definition (assets/<ns>/items/<id>.json) that hands rendering to GeckoLib / a special renderer."""
+    n = f"assets/{b.modid}/items/{iid}.json"
+    if n not in b.names: return False
+    t = b.z.read(n).decode("utf-8", "replace")
+    return "geckolib" in t or '"minecraft:special"' in t
+
+
 def convert(b):
     md = f"assets/{b.modid}/models/item/"
     done = 0
@@ -66,7 +74,7 @@ def convert(b):
         iid = Path(n).stem
         try: m = json.loads(b.z.read(n).decode("utf-8-sig"))
         except Exception: continue
-        if m.get("parent") != "builtin/entity": continue
+        if m.get("parent") != "builtin/entity" and not gl5_item(b, iid): continue
         gpath, base = find_geo(b, iid)
         if not gpath: continue
         geo = json.loads(b.z.read(gpath).decode("utf-8-sig"))
@@ -75,7 +83,7 @@ def convert(b):
         tsrc = find_tex(b, iid, base, (tw, th))
         if not tsrc: b.report["warnings"].append(f"3D item {iid}: no texture"); continue
         tex = f"textures/items/{b.ns}/3d/{iid}"
-        b.write(b.rp, tex + ".png", b.z.read(tsrc))
+        b.write(b.rp, tex + ".png", b.still_png(tsrc))
         gid = f"geometry.gb.{b.ns}.item.{iid}"
         bones = []
         for bn in g.get("bones", []):
