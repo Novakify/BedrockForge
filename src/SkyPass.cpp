@@ -47,7 +47,10 @@ struct Ui {
     bool  layers     = true;
     bool  replace    = true;  // stage 2: draw in place of Bedrock's sky
     bool  hideClouds = true;  // WorldSky hides vanilla clouds by default
+    bool  vv         = true;  // Vibrant Visuals: replace the deferred sky too
+    float vvGain     = 1.0f;  // Vibrant Visuals: brightness of our (sRGB -> linear) sky in the game's HDR target
 } gUi;
+std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one dome per frame
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
 
@@ -337,6 +340,7 @@ void basis(float yawDeg, float pitchDeg, float f[3], float r[3], float u[3]) { /
 } // namespace
 
 void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv, unsigned slotIn) {
+    ++gPresentNo;
     { // stage 2 needs to know whether a sky is on (cheap header-only copy) + the game camera
         static uint32_t lf = 0;
         static int      st = 0;
@@ -438,6 +442,10 @@ void drawUi() {
     ImGui::Checkbox("Replace Bedrock's sky (stage 2)", &gUi.replace);
     ImGui::SameLine();
     ImGui::Checkbox("Hide vanilla clouds", &gUi.hideClouds);
+    ImGui::Checkbox("Vibrant Visuals too", &gUi.vv);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(160);
+    ImGui::SliderFloat("VV sky brightness", &gUi.vvGain, 0.01f, 1000.0f, "%.3g", ImGuiSliderFlags_Logarithmic);
     ImGui::Text("Stage 2: %s", stage2().c_str());
     ImGui::Text("Weather: %ld frames drawn, %ld without the game camera", gWeatherFrames.load(), gWeatherNoCam.load());
     ImGui::Checkbox("Show sky preview", &gUi.enabled);
@@ -459,6 +467,8 @@ void drawUi() {
 namespace {
 struct GamePso {
     int                          kind = 0;
+    bool                         vv   = false; // Vibrant Visuals pass: depth-test against the scene, HDR target
+    float                        farZ = 1.0f;  // depth of "nothing there" (0 with reversed Z)
     ComPtr<ID3D12RootSignature>  root;
     DXGI_FORMAT                  rtv[8]{};
     UINT                         numRt = 0;
@@ -479,11 +489,13 @@ struct DomeVert {
     float    pos[2];
     uint32_t p[13];
     float    f[3], r[3], u[3], txy[2], info[4];
+    float    extra[4]; // x = far depth, y = HDR gain, z = 1: sRGB -> linear (Vibrant Visuals), w = 0
 };
 struct QuadVert {
     float    pos[3];
     uint32_t col;
     float    f[3], r[3], u[3], txy[2];
+    float    extra[4];
 };
 #pragma pack(pop)
 constexpr UINT kRing = 8, kMaxQuadVerts = 6 * 4000;
@@ -492,7 +504,21 @@ ComPtr<ID3D12Resource> gRing[kRing];
 uint8_t*               gRingMap[kRing]{};
 UINT                   gRingNext = 0;
 
+/// Vibrant Visuals: only where the scene depth is still "far" (nothing drawn there = sky). The vanilla star / sun
+/// pass tells us the depth convention: GREATER(_EQUAL) = reversed Z (far = 0), else far = 1. No depth writes.
+void vvDepth(D3D12_GRAPHICS_PIPELINE_STATE_DESC& d, GamePso const& g) {
+    bool const rev = g.dss.DepthFunc == D3D12_COMPARISON_FUNC_GREATER || g.dss.DepthFunc == D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+    d.DepthStencilState.DepthEnable    = TRUE;
+    d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    d.DepthStencilState.DepthFunc      = rev ? D3D12_COMPARISON_FUNC_GREATER_EQUAL : D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    d.DepthStencilState.StencilEnable  = FALSE;
+}
+
 bool makeGamePsos(ID3D12Device* dev, GamePso& g) {
+    if (g.vv && (g.dsv == DXGI_FORMAT_UNKNOWN || !g.dss.DepthEnable)) {
+        setStage2("Vibrant Visuals: the vanilla star / sun pass has no depth buffer bound - can't find the sky pixels");
+        return false;
+    }
 #if RF_HAVE_SKY_SHADERS
     for (int which = 0; which < 2; ++which) {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
@@ -510,6 +536,7 @@ bool makeGamePsos(ID3D12Device* dev, GamePso& g) {
             il.push_back({"CAMU", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(DomeVert, u), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
             il.push_back({"CAMT", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(DomeVert, txy), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
             il.push_back({"INFO", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(DomeVert, info), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"EXTRA", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(DomeVert, extra), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
         } else {
             d.VS = {rf::lyrics::shaders::VSSkyQuadGame, sizeof rf::lyrics::shaders::VSSkyQuadGame};
             d.PS = {rf::lyrics::shaders::PSSkyQuadGame, sizeof rf::lyrics::shaders::PSSkyQuadGame};
@@ -519,6 +546,7 @@ bool makeGamePsos(ID3D12Device* dev, GamePso& g) {
             il.push_back({"CAMR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(QuadVert, r), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
             il.push_back({"CAMU", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(QuadVert, u), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
             il.push_back({"CAMT", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(QuadVert, txy), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
+            il.push_back({"EXTRA", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(QuadVert, extra), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
         }
         d.InputLayout = {il.data(), UINT(il.size())};
         for (UINT i = 0; i < 8; ++i) {
@@ -536,6 +564,7 @@ bool makeGamePsos(ID3D12Device* dev, GamePso& g) {
         d.RasterizerState.DepthClipEnable = FALSE;
         d.DepthStencilState.DepthEnable   = FALSE;
         d.DepthStencilState.StencilEnable = FALSE;
+        if (g.vv) vvDepth(d, g);
         d.PrimitiveTopologyType           = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         d.NumRenderTargets                = g.numRt;
         for (UINT i = 0; i < g.numRt; ++i) d.RTVFormats[i] = g.rtv[i];
@@ -619,6 +648,7 @@ ComPtr<ID3D12PipelineState> makeExtraPso(ID3D12Device* dev, GamePso const& g, in
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
     std::vector<D3D12_INPUT_ELEMENT_DESC> il;
     if (which == 2) {
+        if (g.vv) vvDepth(d, g);
         d.pRootSignature = gPicRoot.Get();
         d.VS = {rf::lyrics::shaders::VSSkyPicGame, sizeof rf::lyrics::shaders::VSSkyPicGame};
         d.PS = {rf::lyrics::shaders::PSSkyPicGame, sizeof rf::lyrics::shaders::PSSkyPicGame};
@@ -727,6 +757,11 @@ int kindOfHash(uint64_t h) {
     case 0x98a771a0871307d3ull: case 0x21dd4e6159f0b6d7ull:                // Stars
     case 0xeb7192a1099bd0a4ull: case 0x58b1282fc2ca3f98ull: return Hide;   // SunMoon
     case 0x23a6297867ab6cc7ull: case 0x8480faaf71cfdfcaull: return Clouds; // Clouds
+    // Vibrant Visuals (deferred): StarsForwardPBR / SunMoonForwardPBR pass ForwardPBRTransparent (main view; the
+    // ForwardPBRTransparentSkyProbe variants draw the reflection probe and stay vanilla), CloudsForwardPBR the same
+    case 0x27e7fe771b768d6full: case 0x273041e66dbfeec4ull:                // StarsForwardPBR (SM65 / SM60)
+    case 0x96b9d91fc5b00e36ull: case 0x7d76328b74749755ull: return VvSky;  // SunMoonForwardPBR
+    case 0x5e8488d4230fb66bull: case 0x525642266eb1f729ull: return Clouds; // CloudsForwardPBR
     default: return None;
     }
 }
@@ -741,6 +776,9 @@ void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_D
     g.dsv    = d.DSVFormat;
     g.sample = d.SampleDesc;
     g.dss    = d.DepthStencilState;
+    g.vv     = kind == VvSky;
+    g.farZ   = (d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_GREATER || d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_GREATER_EQUAL)
+                   ? 0.0f : 1.0f;
     std::lock_guard l(gPsoMutex);
     gGame[pso] = std::move(g);
 }
@@ -817,6 +855,7 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
         std::memcpy(v.f, cam.f, 12); std::memcpy(v.r, cam.r, 12); std::memcpy(v.u, cam.u, 12);
         v.txy[0] = cam.tx; v.txy[1] = cam.ty;
         v.info[0] = h.info[0]; v.info[1] = h.info[1]; v.info[2] = h.info[2]; v.info[3] = 0;
+        v.extra[0] = g.vv ? g.farZ : 1.0f; v.extra[1] = g.vv ? gUi.vvGain : 1.0f; v.extra[2] = g.vv ? 1.0f : 0.0f; v.extra[3] = 0;
     }
     // sky-layer quads only (stars, constellations, shooting stars, lightning); weather needs depth: not here yet
     QuadVert* qv  = reinterpret_cast<QuadVert*>(base + 3 * sizeof(DomeVert));
@@ -831,6 +870,7 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
             v.col = s.color;
             std::memcpy(v.f, cam.f, 12); std::memcpy(v.r, cam.r, 12); std::memcpy(v.u, cam.u, 12);
             v.txy[0] = cam.tx; v.txy[1] = cam.ty;
+            v.extra[0] = g.vv ? g.farZ : 1.0f; v.extra[1] = g.vv ? gUi.vvGain : 1.0f; v.extra[2] = g.vv ? 1.0f : 0.0f; v.extra[3] = 0;
         }
     }
     D3D12_GPU_VIRTUAL_ADDRESS gpu = gRing[slot]->GetGPUVirtualAddress();
@@ -850,7 +890,7 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     calls.setTopo(list, st.topo);
     calls.setVb(list, 0, st.nVb, st.vb);
     ++gInjected;
-    if ((gInjected.load() & 63) == 1) setStage2("drawing in place of Bedrock's sky (" + std::to_string(gInjected.load()) + " frames, " + std::to_string(nq / 6) +
+    if ((gInjected.load() & 63) == 1) setStage2(std::string(g.vv ? "Vibrant Visuals: " : "") + "drawing in place of Bedrock's sky (" + std::to_string(gInjected.load()) + " frames, " + std::to_string(nq / 6) +
               " quads, vanilla sun/moon/stars hidden: " + std::to_string(gHidden.load()) + ")");
     return true;
 }
@@ -859,7 +899,6 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
 namespace {
 bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, ID3D12Device* dev, GamePso const& g,
                  BfSkyFrameV1 const& h) {
-    (void)g;
     if (!st.rootKnown) { setStage2("My picture: waiting for the game's root state (tracking starts with the picture)"); return false; }
     ComPtr<ID3D12Resource> pic;
     {
@@ -891,6 +930,9 @@ bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls con
     std::memcpy(c + 4, cam.r, 12); c[7] = cam.ty;
     std::memcpy(c + 8, cam.u, 12); c[11] = h.pictureAlpha;
     c[12] = h.pictureBright;
+    c[13] = g.vv ? g.farZ : 1.0f;   // far depth
+    c[14] = g.vv ? gUi.vvGain : 1.0f; // HDR gain
+    c[15] = g.vv ? 1.0f : 0.0f;     // sRGB -> linear
     auto gpuH = gPicHeap->GetGPUDescriptorHandleForHeapStart();
     gpuH.ptr += UINT64(slot) * gPicInc;
     ID3D12DescriptorHeap* heaps[] = {gPicHeap.Get()};
@@ -969,5 +1011,10 @@ bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 }
 
 void noteHidden() { ++gHidden; }
+bool vvWanted() { return gUi.vv; }
+bool claimVvFrame() {
+    uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
+    return gVvClaimed.exchange(now) != now;
+}
 
 } // namespace rf::sky

@@ -586,6 +586,14 @@ int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa&
     if (p == gListPso.end()) return 0;
     int k = rf::sky::kindOf(p->second);
     if (k == rf::sky::Hide) { drawOrig = false; return 1; }
+    if (k == rf::sky::VvSky) { // Vibrant Visuals: the first vanilla star / sun / moon draw of the frame gets our sky
+        if (!rf::sky::vvWanted()) return 0;
+        drawOrig = false;
+        if (!rf::sky::claimVvFrame()) return 1;
+        st.pso = p->second;
+        if (auto it = gListIa.find(list); it != gListIa.end()) ia = it->second;
+        return 2;
+    }
     if (k != rf::sky::Dome && k != rf::sky::Clouds) return 0;
     st.pso = p->second;
     if (auto it = gListIa.find(list); it != gListIa.end()) ia = it->second;

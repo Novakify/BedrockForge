@@ -9,19 +9,24 @@ struct GIn {
     float3 f    : CAMF;    float3 r   : CAMR;    float3 u   : CAMU;
     float2 txy  : CAMT;         // tan(hfov/2), tan(vfov/2)
     float4 info : INFO;         // time, brightness, alpha, -
+    float4 extra : EXTRA;       // far depth (0 = reversed Z), HDR gain, 1 = sRGB -> linear (Vibrant Visuals), -
 };
 struct GOut {
     float4 pos : SV_Position;
     float3 dir : TEXCOORD0;
     nointerpolation float4 info : TEXCOORD1;
+    nointerpolation float4 extra : TEXCOORD15;
     nointerpolation float4 p[13] : TEXCOORD2;
 };
+// Vibrant Visuals renders in linear HDR: our colours are display (sRGB-ish) values -> linear, then the gain
+float3 toTarget(float3 c, float4 e) { return e.z > 0.5 ? pow(max(c, 0.0), 2.2) * e.y : c; }
 
 GOut VSSkyGame(GIn i) {
     GOut o;
-    o.pos  = float4(i.pos, 1.0, 1.0);
+    o.pos  = float4(i.pos, i.extra.x, 1.0); // at the far plane (depth-tested in Vibrant Visuals)
     o.dir  = i.f + i.r * (i.pos.x * i.txy.x) + i.u * (i.pos.y * i.txy.y);
     o.info = i.info;
+    o.extra = i.extra;
     o.p[0] = i.p0; o.p[1] = i.p1; o.p[2] = i.p2; o.p[3] = i.p3; o.p[4] = i.p4; o.p[5] = i.p5; o.p[6] = i.p6;
     o.p[7] = i.p7; o.p[8] = i.p8; o.p[9] = i.p9; o.p[10] = i.p10; o.p[11] = i.p11; o.p[12] = i.p12;
     return o;
@@ -34,6 +39,7 @@ static float4 gP[13];
 float4 PSSkyGame(GOut i) : SV_Target {
     [unroll] for (int k = 0; k < 13; ++k) gP[k] = i.p[k];
     float4 c = skyMain(i.dir, i.info.xyz);
+    c.rgb    = toTarget(c.rgb, i.extra);
     return c; // straight alpha, blended SRC_ALPHA / INV_SRC_ALPHA over Bedrock's own sky
 }
 
@@ -42,6 +48,7 @@ struct QIn {
     float3 pos : POSITION;
     float4 col : COLOR0;        // RGBA8_UNORM, straight alpha
     float3 f : CAMF; float3 r : CAMR; float3 u : CAMU; float2 txy : CAMT;
+    float4 extra : EXTRA;
 };
 struct QOut {
     float4 pos : SV_Position;
@@ -50,8 +57,8 @@ struct QOut {
 QOut VSSkyQuadGame(QIn i) {
     QOut  o;
     float z = dot(i.pos, i.f);
-    o.pos   = float4(dot(i.pos, i.r) / i.txy.x, dot(i.pos, i.u) / i.txy.y, z, z); // depth disabled; z = w keeps it far
-    o.col   = i.col;
+    o.pos   = float4(dot(i.pos, i.r) / i.txy.x, dot(i.pos, i.u) / i.txy.y, z * i.extra.x, z); // at the far plane
+    o.col   = float4(toTarget(i.col.rgb, i.extra), i.col.a);
     return o;
 }
 float4 PSSkyQuadGame(QOut i) : SV_Target { return i.col; }
@@ -61,7 +68,7 @@ cbuffer PicCB : register(b0) {
     float3 pF; float pTx;
     float3 pR; float pTy;
     float3 pU; float pAlpha;
-    float  pBright; float3 pPad;
+    float  pBright; float pFarZ; float pGain; float pLinear; // Vibrant Visuals: far depth, HDR gain, sRGB -> linear
 };
 Texture2D<float4> gPic : register(t0);
 SamplerState      sPicWrap : register(s0);
@@ -69,7 +76,7 @@ struct POut { float4 pos : SV_Position; float3 dir : TEXCOORD0; };
 POut VSSkyPicGame(uint id : SV_VertexID) {
     float2 p = float2((id << 1) & 2, id & 2) * 2.0 - 1.0;
     POut o;
-    o.pos = float4(p, 1.0, 1.0);
+    o.pos = float4(p, pFarZ, 1.0);
     o.dir = pF + pR * (p.x * pTx) + pU * (p.y * pTy);
     return o;
 }
@@ -79,6 +86,7 @@ float4 PSSkyPicGame(POut i) : SV_Target { // SkyImage: u = az / 360, v = 0.5 - e
     if (az < 0.0) az += 360.0;
     float  el = degrees(asin(clamp(d.y, -1.0, 1.0)));
     float3 c  = gPic.SampleLevel(sPicWrap, float2(az / 360.0, 0.5 - el / 180.0), 0).rgb * pBright;
+    if (pLinear > 0.5) c = pow(max(c, 0.0), 2.2) * pGain;
     return float4(c, saturate(pAlpha));
 }
 
