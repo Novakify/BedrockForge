@@ -69,6 +69,16 @@ def overlays_of(jar, prefixes):
 MCDATA_J2B = Path("/home/claude/tools/mcdata/package/minecraft-data/data/bedrock/1.26.30/blocksJ2B.json")   # minecraft-data (MIT)
 
 
+GEYSER_SOUNDS = Path("/home/claude/tools/geyser/sounds.json")   # GeyserMC/mappings sounds.json (MIT), fetched locally
+
+
+def vanilla_sounds():
+    """Java sound event -> Bedrock playsound name (entity.zombie.ambient -> mob.zombie.say)."""
+    if not GEYSER_SOUNDS.exists(): return {}
+    import json as _j
+    return {k: v["playsound_mapping"] for k, v in _j.loads(GEYSER_SOUNDS.read_text()).items() if v.get("playsound_mapping")}
+
+
 def block_j2b():
     """Java block id -> Bedrock block id where the names differ (snow_block -> snow, ...), for commands and setBlock."""
     if not MCDATA_J2B.exists(): return {}
@@ -204,7 +214,7 @@ def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, 
             if s.endswith(suf) and s.startswith(tuple(p.split("/")[-2].title() for p in prefixes) + ("TheWonderland", "Mod")): regs[s] = kind
     cfg = {"ns": ns, "modid": modid, "registries": regs, "typeToClass": {t: c for c, t in cls_type.items()}, "classToType": cls_type,
            "structures": structures or {}, "blockRename": block_rename or {}, "hooks": hooks,
-           "pvDefaults": field_defaults(T, "Variables$PlayerVariables"), "mvDefaults": field_defaults(T, "Variables$MapVariables"), "particles": PARTICLES, "blockJ2B": block_j2b(),
+           "pvDefaults": field_defaults(T, "Variables$PlayerVariables"), "mvDefaults": field_defaults(T, "Variables$MapVariables"), "particles": PARTICLES, "blockJ2B": block_j2b(), "vanillaSounds": vanilla_sounds(),
            # MCreator's Mod.queueServerWork(ticks, runnable): run on Bedrock's scheduler instead of the ServerTickEvent queue
            "workQueue": sorted(f"{cn}.{k}" for cn, info in T.classes.items() for k in info.methods if k == "queueServerWork(ILjava/lang/Runnable;)V")}
     out = Path(bp) / "scripts" / "javabridge"; out.mkdir(parents=True, exist_ok=True)
