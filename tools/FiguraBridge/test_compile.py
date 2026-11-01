@@ -183,6 +183,8 @@ def check(name: str, src: Path, out: Path, vanilla: Path) -> tuple[dict, list]:
     # render controllers: bones exist, textures declared, all controllers referenced by the entity
     ent_rcs = {next(iter(r)) if isinstance(r, dict) else r for r in ent["render_controllers"]}
     for k, rc in rcs.items():
+        if rc["geometry"] == "Geometry.default":   # figura_itembones: vanilla geometry kept posed for held items
+            continue
         gk = rc["geometry"].split(".", 1)[1]
         cidx = int(gk[len("figura"):] or 0)
         for entry in rc["part_visibility"]:

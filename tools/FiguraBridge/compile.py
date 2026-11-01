@@ -590,6 +590,13 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 "uv_anim": uv,
                 "part_visibility": [{"*": False}, {bname: f"{vis_expr(p)} && ((v.fb{p.i}{var} ?? -1) < 0 ? 1 : (v.fb{p.i}{var} == {f['i']}))"}]}
 
+    # held items are positioned from the vanilla geometry's rightItem/leftItem, and Bedrock only poses a geometry some
+    # active render controller uses (verified in game): keep Geometry.default in an all-hidden controller
+    if item_pivots:
+        controllers["controller.render.player.figura_itembones"] = {
+            "geometry": "Geometry.default", "materials": [{"*": "Material.default"}], "textures": ["Texture.default"],
+            "part_visibility": [{"*": False}]}
+
     # first-person controllers: same rules over the f-bones, plus Bedrock's own empty-hand conditions
     FP_RIGHT = "(query.get_equipped_item_name(0, 1) == '' || query.get_equipped_item_name(0, 1) == 'filled_map')"
     FP_LEFT = ("((query.get_equipped_item_name(0, 1) == 'filled_map' && query.get_equipped_item_name('off_hand') != 'shield') || "
