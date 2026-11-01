@@ -17,7 +17,7 @@ Private use only: credit the authors, ask Fernando about licences.
 | mob AI | MobAI (GeckoBridge goals + JavaBridge GoalRunner) |
 | shaderpacks / core shaders | ShaderForge + VVPackGen (worksheet generated per pack; GLSL->HLSL by hand) |
 | custom GL rendering, screens, client mixins | Bedrock Forge (src/) + Renderer Foundation (RF line) - listed in the report |
-| Figura avatars (avatar.json + bbmodel/Lua) | FiguraBridge (in progress) - detected now, converted once its plug-in lands |
+| Figura avatars (avatar.json + bbmodel/Lua) | FiguraBridge plug-in (tools/FiguraBridge/javaport_plugin.py): RP + figura/<slug> avatar data for the Bedrock Forge runtime |
 
 **New converters plug in without touching JavaPort:** add `tools/<Name>/javaport_plugin.py` with `KIND`,
 `detect(path, names) -> bool` and `port(path, out, name, rep)` (contract in the header of tools/JavaPort/port.py).

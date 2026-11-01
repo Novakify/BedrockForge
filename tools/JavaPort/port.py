@@ -19,7 +19,7 @@ several of them (each one is converted). Every part of the input is routed to ou
   core shaders / shaderpacks                  ShaderForge + VVPackGen          renderer/materials (needs BF + RF)
   client rendering mixins (GL/Blaze3D)        Bedrock Forge / Renderer         native feature list (report)
                                                 Foundation (C++ DLLs)
-  Figura avatars (avatar.json, bbmodel, Lua)  FiguraBridge (plug-in, WIP)      native runtime (Bedrock Forge)
+  Figura avatars (avatar.json, bbmodel, Lua)  FiguraBridge (plug-in)           RP + avatar data for the native runtime
   anything else                               tools/<X>/javaport_plugin.py     whatever the plug-in writes
 
 Output: <out>/packs/<Name> BP|RP (ready dev packs), <out>/PORT_REPORT.md, <out>/port.json (install manifest:
@@ -48,7 +48,7 @@ SHADER_PROGRAMS = {   # OptiFine/Iris program -> Bedrock RenderDragon material t
 #   def port(path: Path, out: Path, name: str, rep: dict) -> None
 #       write packs into out/"packs", append to rep["packs"], rep["converters"][<Name>], rep["todo"], rep["native"],
 #       rep["requires_dlls"] (a set), rep["errors"]
-# FiguraBridge (in progress) plugs in this way, so a new converter never needs JavaPort edits.
+# FiguraBridge (tools/FiguraBridge/javaport_plugin.py) plugs in this way, so a new converter never needs JavaPort edits.
 def plugins():
     import importlib.util
     out = []
