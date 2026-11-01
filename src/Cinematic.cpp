@@ -4492,15 +4492,9 @@ void pollReadback() {
     void*       p = nullptr;
     D3D12_RANGE rr{0, SIZE_T(gG.rbSize)};
     if (FAILED(gG.rb->Map(0, &rr, &p)) || !p) return;
-    Img im;
-    im.W = int(gG.kw);
-    im.H = int(gG.kh);
-    im.bgra = gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM || gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-    im.px.resize(size_t(im.W) * im.H * 4);
-    for (int y = 0; y < im.H; ++y)
-        std::memcpy(&im.px[size_t(y) * im.W * 4], static_cast<uint8_t*>(p) + gG.fp.Offset + size_t(y) * gG.fp.Footprint.RowPitch, size_t(im.W) * 4);
-    D3D12_RANGE none{0, 0};
-    gG.rb->Unmap(0, &none);
+    // the read of the whole frame out of the readback heap (uncached memory, ~30 MB at 4K) is done on the detect
+    // thread: on the render thread it was a hitch every second. No new copy is recorded into the buffer while the
+    // detection runs (gDetectBusy), and the buffer is kept alive by the thread's reference.
     gDetectBusy = true;
     bool dump = gCfg.dumpUi;
     int kindNow;
@@ -4508,7 +4502,23 @@ void pollReadback() {
         std::lock_guard l(gM);
         kindNow = int(gS.st.kind);
     }
-    std::thread(detect, std::move(im), dump, kindNow).detach();
+    Microsoft::WRL::ComPtr<ID3D12Resource> rb = gG.rb;
+    int      W = int(gG.kw), H = int(gG.kh);
+    bool     bgra   = gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM || gG.kfmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    UINT64   offset = gG.fp.Offset;
+    UINT     pitch  = gG.fp.Footprint.RowPitch;
+    std::thread([rb, p, W, H, bgra, offset, pitch, dump, kindNow]() {
+        Img im;
+        im.W    = W;
+        im.H    = H;
+        im.bgra = bgra;
+        im.px.resize(size_t(W) * H * 4);
+        for (int y = 0; y < H; ++y)
+            std::memcpy(&im.px[size_t(y) * W * 4], static_cast<uint8_t*>(p) + offset + size_t(y) * pitch, size_t(W) * 4);
+        D3D12_RANGE none{0, 0};
+        rb->Unmap(0, &none);
+        detect(std::move(im), dump, kindNow);
+    }).detach();
 }
 
 // ---------------------------------------------------------------- per-frame slot contents (small ring readback)
