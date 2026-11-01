@@ -15,6 +15,7 @@
 #include "bf/Config.h"
 #include "bf/Hud.h"
 #include "bf/Input.h"
+#include "client/Loadouts.h"
 #include "client/Menu.h"
 #include "client/Module.h"
 #include "client/ForgeRender.h"
@@ -105,6 +106,7 @@ bool Core::enable() {
     // ---- Client: module framework + ClickGUI (Right Shift) ----
     client::registerBuiltins();
     client::Registry::get().load((getSelf().getConfigDir() / "modules.json").string());
+    client::loadouts::install(getSelf().getModDir()); // after modules.json so a loadout can override it
     client::installRuntime();
     client::menu::install();
 

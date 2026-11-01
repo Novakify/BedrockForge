@@ -26,6 +26,7 @@
 
 #include "bf/Events.h"
 #include "bf/Hud.h"
+#include "client/Loadouts.h"
 #include "client/Module.h"
 #include "core/Win32Input.h"
 #include "mc/client/player/LocalPlayer.h"
@@ -40,6 +41,7 @@ std::shared_ptr<AbstractScene> gScene;
 IClientInstance*               gClient = nullptr;
 int                            gGoneFrames = 0;
 Category                       gCategory = Category::Hud;
+bool                           gLoadoutsTab = true; // the Loadouts tab is selected (opens first)
 std::string                    gSelected; // module whose settings are shown
 float                          gScroll = 0;
 struct Click { float x, y; bool right; bool middle = false; };
@@ -77,6 +79,42 @@ float tw(std::string const& s) { return 6.0f * float(s.size()); }
 
 struct Hit { float x, y, w, h; std::function<void(bool right)> action; };
 
+// Loadouts page: one card per loadouts/<Name>.json, click = apply everything it sets. The last card saves the current
+// setup (name = whatever is typed in the search box).
+void renderLoadouts(MinecraftUIRenderContext& ctx, glm::vec2 ptr, float gx, float top, float gw, float bottom, std::vector<Hit>& hits) {
+    auto        items  = loadouts::list();
+    std::string active = loadouts::active();
+    float const colW = (gw - 4) / 2, rowH = 28;
+    size_t const count = items.size() + 1;
+    float const viewH = bottom - top - 26, contentH = float((count + 1) / 2) * (rowH + 4);
+    gScroll = std::clamp(gScroll, 0.0f, std::max(0.0f, contentH - viewH));
+    auto clip = [](std::string const& s, float w, float px) { size_t n = size_t(w / px); return s.size() > n ? s.substr(0, n > 1 ? n - 1 : 0) + "." : s; };
+    for (size_t i = 0; i < count; ++i) {
+        float x = gx + float(i % 2) * (colW + 4), y = top + 4 + float(i / 2) * (rowH + 4) - gScroll;
+        if (y < top || y + rowH > bottom - 22) continue;
+        bool hov = inside(ptr.x, ptr.y, x, y, colW, rowH);
+        bf::hud::fillBox(ctx, x, y, colW, rowH, hov ? kCardHover : kCard);
+        if (i == items.size()) { // save card
+            std::string label = gSearch.empty() ? "+ Save current setup" : "+ Save as \"" + gSearch + "\"";
+            bf::hud::drawLabel(ctx, x + 6, y + 5, clip(label, colW - 12, 6), kAccent);
+            bf::hud::drawLabel(ctx, x + 6, y + 16, "type a name first (optional)", kDim, 0.8f);
+            hits.push_back({x, y, colW, rowH, [](bool) { loadouts::saveCurrent(gSearch); gSearch.clear(); }});
+            continue;
+        }
+        auto const& it  = items[i];
+        bool        on  = it.name == active;
+        bf::hud::fillBox(ctx, x, y, 2, rowH, on ? kOn : kOff);
+        bf::hud::drawLabel(ctx, x + 6, y + 5, clip(it.name, colW - 40, 6), kText);
+        if (on) bf::hud::drawLabel(ctx, x + colW - tw("ACTIVE") - 4, y + 5, "ACTIVE", kOn);
+        bf::hud::drawLabel(ctx, x + 6, y + 16, clip(it.description, colW - 12, 4.8f), kDim, 0.8f);
+        std::string n = it.name;
+        hits.push_back({x, y, colW, rowH, [n](bool) { loadouts::apply(n); }});
+    }
+    std::string st = loadouts::status();
+    bf::hud::drawLabel(ctx, gx, bottom - 20, clip(st, gw, 6), loadouts::restartNeeded() ? kSoon : kDim, 0.9f);
+    bf::hud::drawLabel(ctx, gx, bottom - 10, "Click = load it all | edit loadouts\\*.json for details | Esc close", kDim, 0.7f);
+}
+
 void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
     float const W = view.mSize->x, H = view.mSize->y;
     glm::vec2 const ptr = *view.mPointerLocationPrevious;
@@ -108,15 +146,26 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
     float const cw = 70, top = my + 18;
     bf::hud::fillBox(ctx, mx, top, cw, mh - 18, kSide);
     float cy = top + 4;
+    {
+        bool sel = gLoadoutsTab, hov = inside(ptr.x, ptr.y, mx, cy, cw, 14);
+        if (sel || hov) bf::hud::fillBox(ctx, mx, cy, cw, 14, sel ? kCardHover : kCard);
+        if (sel) bf::hud::fillBox(ctx, mx, cy, 2, 14, kAccent);
+        bf::hud::drawLabel(ctx, mx + 7, cy + 3, "Loadouts", sel ? kAccent : kDim);
+        hits.push_back({mx, cy, cw, 14, [](bool) { gLoadoutsTab = true; gScroll = 0; gSelected.clear(); }});
+        cy += 17;
+    }
     for (Category c : kCategories) {
-        bool sel = c == gCategory, hov = inside(ptr.x, ptr.y, mx, cy, cw, 14);
+        bool sel = !gLoadoutsTab && c == gCategory, hov = inside(ptr.x, ptr.y, mx, cy, cw, 14);
         if (sel || hov) bf::hud::fillBox(ctx, mx, cy, cw, 14, sel ? kCardHover : kCard);
         if (sel) bf::hud::fillBox(ctx, mx, cy, 2, 14, kAccent);
         bf::hud::drawLabel(ctx, mx + 7, cy + 3, categoryName(c), sel ? kText : kDim);
-        hits.push_back({mx, cy, cw, 14, [c](bool) { gCategory = c; gScroll = 0; gSelected.clear(); }});
+        hits.push_back({mx, cy, cw, 14, [c](bool) { gCategory = c; gLoadoutsTab = false; gScroll = 0; gSelected.clear(); }});
         cy += 15;
     }
 
+    if (gLoadoutsTab) {
+        renderLoadouts(ctx, ptr, mx + cw + 6, top, mw - cw - 12, my + mh, hits);
+    } else {
     // module cards (2 columns), settings panel on the right third when a module is selected
     Module* sel = gSelected.empty() ? nullptr : reg.find(gSelected);
     float const settingsW = sel ? 120.0f : 0.0f;
@@ -211,6 +260,7 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
         }
     }
     bf::hud::drawLabel(ctx, mx + cw + 6, my + mh - 10, "L toggle | R settings | Mid favourite | type to search | Esc close", kDim, 0.7f);
+    }
 
     // apply input collected since the last frame
     for (int d : gWheel) gScroll += float(d) * 16.0f;
