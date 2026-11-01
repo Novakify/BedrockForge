@@ -26,6 +26,7 @@
 
 #include "bf/Events.h"
 #include "bf/Hud.h"
+#include "client/Loadouts.h"
 #include "client/Module.h"
 #include "core/Win32Input.h"
 #include "mc/client/player/LocalPlayer.h"
@@ -40,6 +41,7 @@ std::shared_ptr<AbstractScene> gScene;
 IClientInstance*               gClient = nullptr;
 int                            gGoneFrames = 0;
 Category                       gCategory = Category::Hud;
+bool                           gLoadoutsTab = true; // the Loadouts tab is selected (opens first)
 std::string                    gSelected; // module whose settings are shown
 float                          gScroll = 0;
 struct Click { float x, y; bool right; bool middle = false; };
@@ -77,6 +79,94 @@ float tw(std::string const& s) { return 6.0f * float(s.size()); }
 
 struct Hit { float x, y, w, h; std::function<void(bool right)> action; };
 
+// Loadouts page: same cards + side panel as the module grid. Left click = load everything it sets, right click = details
+// (what it changes) with the same toggle rows as module settings. The last card saves the current setup (name = whatever
+// is typed in the search box).
+std::string gSelLoadout;
+void renderLoadouts(MinecraftUIRenderContext& ctx, glm::vec2 ptr, float mx, float my, float mw, float mh, float cw, float top,
+                    std::vector<Hit>& hits) {
+    auto const& items  = loadouts::list();
+    std::string active = loadouts::active();
+    loadouts::Info const* sel = nullptr;
+    for (auto& it : items)
+        if (it.name == gSelLoadout) sel = &it;
+    if (!sel) gSelLoadout.clear();
+    float const settingsW = sel ? 120.0f : 0.0f;
+    float const gx = mx + cw + 6, gw = mw - cw - 12 - (sel ? settingsW + 6 : 0);
+    float const colW = (gw - 4) / 2, rowH = 24;
+    size_t const count = items.size() + 1;
+    float const viewH = mh - 44, contentH = float((count + 1) / 2) * (rowH + 4);
+    gScroll = std::clamp(gScroll, 0.0f, std::max(0.0f, contentH - viewH));
+    auto clip = [](std::string const& s, size_t n) { return s.size() > n ? s.substr(0, n > 1 ? n - 1 : 0) + "." : s; };
+    for (size_t i = 0; i < count; ++i) {
+        float x = gx + float(i % 2) * (colW + 4), y = top + 4 + float(i / 2) * (rowH + 4) - gScroll;
+        if (y < top || y + rowH > my + mh - 22) continue;
+        bool hov = inside(ptr.x, ptr.y, x, y, colW, rowH);
+        bf::hud::fillBox(ctx, x, y, colW, rowH, hov ? kCardHover : kCard);
+        if (i == items.size()) { // save card
+            bf::hud::fillBox(ctx, x, y, 2, rowH, kAccent);
+            std::string label = gSearch.empty() ? "+ Save current" : "+ Save as " + gSearch;
+            bf::hud::drawLabel(ctx, x + 6, y + 3, clip(label, size_t(colW / 6 - 2)), kAccent);
+            bf::hud::drawLabel(ctx, x + 6, y + 13, clip("type a name first (optional)", size_t(colW / 5 - 2)), kDim, 0.8f);
+            hits.push_back({x, y, colW, rowH, [](bool) { if (!loadouts::saveCurrent(gSearch).empty()) gSearch.clear(); }});
+            continue;
+        }
+        auto const& it    = items[i];
+        bool const  on    = it.name == active;
+        Rgba const  pill  = on ? kOn : kOff;
+        std::string state = on ? "ON" : "LOAD";
+        if (gSelLoadout == it.name) bf::hud::fillBox(ctx, x, y, colW, 1, kAccent);
+        bf::hud::fillBox(ctx, x, y, 2, rowH, pill);
+        bf::hud::drawLabel(ctx, x + 6, y + 3, clip(it.name, size_t(colW / 6 - 6)), kText);
+        bf::hud::drawLabel(ctx, x + colW - tw(state) - 4, y + 3, state, pill);
+        bf::hud::drawLabel(ctx, x + 6, y + 13, clip(it.description, size_t(colW / 5 - 2)), kDim, 0.8f);
+        std::string n = it.name;
+        hits.push_back({x, y, colW, rowH, [n](bool right) {
+            if (right) { gSelLoadout = (gSelLoadout == n) ? "" : n; return; }
+            loadouts::apply(n);
+        }});
+    }
+
+    // details panel (module settings style)
+    if (sel) {
+        float sx = mx + mw - settingsW - 6, sy = top + 4;
+        bf::hud::fillBox(ctx, sx, sy, settingsW, mh - 26, kSide);
+        bf::hud::drawLabel(ctx, sx + 5, sy + 4, clip(sel->name, size_t((settingsW - 10) / 6)), kAccent);
+        float ly = sy + 17;
+        auto line = [&](std::string const& text) {
+            size_t per = size_t((settingsW - 10) / 4.8f);
+            for (size_t p = 0; p < text.size() && ly < my + mh - 44; p += per) {
+                bf::hud::drawLabel(ctx, sx + 5, ly, text.substr(p, per), kDim, 0.8f);
+                ly += 9;
+            }
+        };
+        if (!sel->description.empty()) line(sel->description);
+        line("Shaders: " + (sel->shaderpack.empty() ? std::string("unchanged") : sel->shaderpack == "off" ? std::string("none") : sel->shaderpack));
+        if (sel->vibrant >= 0) line(sel->vibrant ? "Graphics: Vibrant" : "Graphics: Fancy");
+        if (sel->modules) line(std::format("Modules: {} set", sel->modules));
+        for (auto& m : sel->mods) line("Mod " + m);
+        for (auto& d : sel->dlls) line("DLL " + d);
+        ly += 4;
+        // action rows drawn like toggle settings (same as ForgeRender's "Reload materials now")
+        auto row = [&](char const* label, std::function<void()> act) {
+            if (ly > my + mh - 22) return;
+            bf::hud::drawLabel(ctx, sx + 5, ly, label, kText, 0.8f);
+            float bx = sx + settingsW - 22;
+            bf::hud::fillBox(ctx, bx, ly - 1, 17, 9, kOff);
+            bf::hud::fillBox(ctx, bx + 1, ly, 7, 7, kText);
+            hits.push_back({sx, ly - 2, settingsW, 12, [act](bool) { act(); }});
+            ly += 13;
+        };
+        std::string n = sel->name;
+        row("Load now", [n] { loadouts::apply(n); });
+        row("Overwrite with current", [n] { loadouts::saveCurrent(n); });
+    }
+
+    std::string st = loadouts::status();
+    bf::hud::drawLabel(ctx, gx, my + mh - 20, clip(st, size_t(gw / 4.8f)), loadouts::restartNeeded() ? kSoon : kDim, 0.8f);
+    bf::hud::drawLabel(ctx, mx + cw + 6, my + mh - 10, "L load | R details | type a name + Save | Esc close", kDim, 0.7f);
+}
+
 void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
     float const W = view.mSize->x, H = view.mSize->y;
     glm::vec2 const ptr = *view.mPointerLocationPrevious;
@@ -108,15 +198,26 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
     float const cw = 70, top = my + 18;
     bf::hud::fillBox(ctx, mx, top, cw, mh - 18, kSide);
     float cy = top + 4;
+    {
+        bool sel = gLoadoutsTab, hov = inside(ptr.x, ptr.y, mx, cy, cw, 14);
+        if (sel || hov) bf::hud::fillBox(ctx, mx, cy, cw, 14, sel ? kCardHover : kCard);
+        if (sel) bf::hud::fillBox(ctx, mx, cy, 2, 14, kAccent);
+        bf::hud::drawLabel(ctx, mx + 7, cy + 3, "Loadouts", sel ? kText : kDim);
+        hits.push_back({mx, cy, cw, 14, [](bool) { gLoadoutsTab = true; gScroll = 0; gSelected.clear(); }});
+        cy += 15;
+    }
     for (Category c : kCategories) {
-        bool sel = c == gCategory, hov = inside(ptr.x, ptr.y, mx, cy, cw, 14);
+        bool sel = !gLoadoutsTab && c == gCategory, hov = inside(ptr.x, ptr.y, mx, cy, cw, 14);
         if (sel || hov) bf::hud::fillBox(ctx, mx, cy, cw, 14, sel ? kCardHover : kCard);
         if (sel) bf::hud::fillBox(ctx, mx, cy, 2, 14, kAccent);
         bf::hud::drawLabel(ctx, mx + 7, cy + 3, categoryName(c), sel ? kText : kDim);
-        hits.push_back({mx, cy, cw, 14, [c](bool) { gCategory = c; gScroll = 0; gSelected.clear(); }});
+        hits.push_back({mx, cy, cw, 14, [c](bool) { gCategory = c; gLoadoutsTab = false; gScroll = 0; gSelected.clear(); }});
         cy += 15;
     }
 
+    if (gLoadoutsTab) {
+        renderLoadouts(ctx, ptr, mx, my, mw, mh, cw, top, hits);
+    } else {
     // module cards (2 columns), settings panel on the right third when a module is selected
     Module* sel = gSelected.empty() ? nullptr : reg.find(gSelected);
     float const settingsW = sel ? 120.0f : 0.0f;
@@ -211,6 +312,7 @@ void render(MinecraftUIRenderContext& ctx, ScreenView& view) {
         }
     }
     bf::hud::drawLabel(ctx, mx + cw + 6, my + mh - 10, "L toggle | R settings | Mid favourite | type to search | Esc close", kDim, 0.7f);
+    }
 
     // apply input collected since the last frame
     for (int d : gWheel) gScroll += float(d) * 16.0f;
