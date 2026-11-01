@@ -3,8 +3,8 @@
   verified in game. See docs/CLIENT_UI.md "Camera swing" / "Smooth scrolling".
 - 10-31 evening: review fixes + polish (perspective restore on world leave, no 1-frame pop, 3rd-person glide,
   ladder/water collision, scrollbar, LyricsFlow page scrolls) BUILT green on clientui-builds / clientui-rf-builds but
-  NOT installed on the PC yet (the PC still runs fc59697 / dd98bdf). Install + quick in-game check next time.
-  Open question: after a swing the first-person arm showed the default tan arm once - recheck after installing.
+  INSTALLED 21:05 (BF fab4658, RF cbd3233) and checked in game: swing at the chest + glide back OK, Visual list scrolls.
+  The tan first-person arm shows right after loading a world, before any swing - not caused by the menu camera.
 - NEW: Bedrock Forge's menu is now a glass client UI (Blueberry-inspired layout, neon purple + white). Design + how it
   works: docs/CLIENT_UI.md. Verified IN GAME 12:06: Right Shift wheel (glass petals refract the world, world blurred,
   centre sharp), Mods window (tabs, rail, search, grid, toggles), Client page (presets + sliders), Shaderpacks page,

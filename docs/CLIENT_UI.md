@@ -61,6 +61,6 @@ Prototype (look + shader reference, WebGL): claude.ai artifact "Bedrock Forge Gl
 
 ## Not done yet / ideas
 - HUD petal opens the HUD tab (no drag editor exists yet: HUD Layout is sliders). A drag editor is the natural next step.
-- Spotted 10-31 (unconfirmed cause): after a wheel camera swing the first-person arm once showed the default tan arm
-  instead of the skin's arm. Check whether it also happens with Camera swing off / after a plain F5 cycle.
+- The first-person arm sometimes shows the default tan arm instead of the skin's: seen right after loading a world,
+  before any wheel swing, so it's not the menu camera (skin / game side, not investigated).
 - Profiles (save/switch module setups) were in the prototype but have no backend yet.
