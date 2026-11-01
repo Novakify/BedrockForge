@@ -19,6 +19,8 @@ several of them (each one is converted). Every part of the input is routed to ou
   core shaders / shaderpacks                  ShaderForge + VVPackGen          renderer/materials (needs BF + RF)
   client rendering mixins (GL/Blaze3D)        Bedrock Forge / Renderer         native feature list (report)
                                                 Foundation (C++ DLLs)
+  Figura avatars (avatar.json, bbmodel, Lua)  FiguraBridge (plug-in, WIP)      native runtime (Bedrock Forge)
+  anything else                               tools/<X>/javaport_plugin.py     whatever the plug-in writes
 
 Output: <out>/packs/<Name> BP|RP (ready dev packs), <out>/PORT_REPORT.md, <out>/port.json (install manifest:
 packs, required DLLs, shader work). See docs/CONVERT_A_MOD.md.
@@ -40,6 +42,28 @@ SHADER_PROGRAMS = {   # OptiFine/Iris program -> Bedrock RenderDragon material t
 }
 
 
+# ---- plug-in converters: any tools/<Converter>/javaport_plugin.py is picked up automatically. Contract:
+#   KIND = "figura-avatar"              # name shown in the report
+#   def detect(path: Path, names: list[str]) -> bool      # claim this input (checked before the built-in kinds)
+#   def port(path: Path, out: Path, name: str, rep: dict) -> None
+#       write packs into out/"packs", append to rep["packs"], rep["converters"][<Name>], rep["todo"], rep["native"],
+#       rep["requires_dlls"] (a set), rep["errors"]
+# FiguraBridge (in progress) plugs in this way, so a new converter never needs JavaPort edits.
+def plugins():
+    import importlib.util
+    out = []
+    for f in sorted(TOOLS.glob("*/javaport_plugin.py")):
+        spec = importlib.util.spec_from_file_location(f"jp_{f.parent.name}", f); m = importlib.util.module_from_spec(spec)
+        try: spec.loader.exec_module(m); out.append((f.parent.name, m))
+        except Exception as ex: print(f"[JavaPort] plugin {f.parent.name} failed to load: {ex}", file=sys.stderr)
+    return out
+
+
+def figura_avatar(names: list[str]) -> bool:
+    """a Figura avatar folder/zip: avatar.json + Blockbench models and/or Lua scripts"""
+    return any(n.split("/")[-1] == "avatar.json" for n in names) and any(n.endswith((".bbmodel", ".lua")) for n in names)
+
+
 def kind_of(p: Path) -> str:
     """mod | shaderpack | resourcepack | unknown"""
     names = []
@@ -51,6 +75,11 @@ def kind_of(p: Path) -> str:
         except zipfile.BadZipFile: return "unknown"
     else: return "unknown"
     s = set(names)
+    for pname, m in PLUGINS:
+        try:
+            if m.detect(p, names): return "plugin:" + pname
+        except Exception: pass
+    if figura_avatar(names): return "figura-avatar"
     if any(n.endswith(".class") for n in names) or "META-INF/mods.toml" in s or "fabric.mod.json" in s or "META-INF/neoforge.mods.toml" in s:
         return "mod"
     if any(re.match(r"(.*/)?shaders/[^/]+\.(fsh|vsh|glsl)$", n) for n in names) or any(n.endswith("shaders.properties") for n in names):
@@ -138,14 +167,18 @@ def pretty(stem: str) -> str:
     return n.title() if n == n.lower() else n
 
 
+PLUGINS = plugins()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("input", type=Path); ap.add_argument("out", type=Path); ap.add_argument("--name")
     ap.add_argument("--install", type=Path, help="com.mojang folder: copy the packs into development_*_packs")
     a = ap.parse_args(argv)
     a.out.mkdir(parents=True, exist_ok=True)
-    inputs = [a.input] if not a.input.is_dir() or kind_of(a.input) in ("shaderpack", "resourcepack") else \
-             [p for p in sorted(a.input.iterdir()) if kind_of(p) != "unknown"]
+    top = {x.name for x in a.input.iterdir()} if a.input.is_dir() else set()
+    single = not a.input.is_dir() or bool(top & {"avatar.json", "pack.mcmeta", "shaders", "META-INF", "fabric.mod.json"})
+    inputs = [a.input] if single else [p for p in sorted(a.input.iterdir()) if kind_of(p) != "unknown"]   # a folder of inputs
     rep = {"inputs": [], "packs": [], "converters": {}, "shader_work": [], "native": [], "todo": [], "errors": [],
            "requires_dlls": set()}
     for p in inputs:
@@ -154,6 +187,11 @@ def main(argv=None):
         if k == "mod": port_mod(p, a.out, name, rep)
         elif k == "shaderpack": port_shaderpack(p, a.out, name, rep)
         elif k == "resourcepack": port_resourcepack(p, a.out, name, rep)
+        elif k.startswith("plugin:"): dict(PLUGINS)[k[7:]].port(p, a.out, name, rep)
+        elif k == "figura-avatar":
+            rep["native"].append({"source": p.name, "needs": ["FiguraBridge runtime (Lua + avatar renderer)"],
+                                  "how": "FiguraBridge is being built (docs/PORT_FIGURA.md); it plugs in via tools/FiguraBridge/javaport_plugin.py"})
+            rep["todo"].append(f"{p.name}: Figura avatar - waiting for the FiguraBridge plug-in")
         else: rep["errors"].append(f"{p.name}: not a mod jar, shaderpack or resource pack")
     rep["requires_dlls"] = sorted(rep["requires_dlls"])
     (a.out / "port.json").write_text(json.dumps(rep, indent=2, default=str))
