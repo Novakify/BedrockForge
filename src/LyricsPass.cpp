@@ -40,7 +40,10 @@ using Microsoft::WRL::ComPtr;
 
 constexpr UINT     kSlots     = 4;     // ring of upload buffers (>= swap chain buffers)
 constexpr UINT     kCap       = 16384; // glyphs per frame
-constexpr UINT     kTable     = 2 + kBfLyricsMaxAtlases; // t0 glyphs, t1..t16 atlases, t17 UI target
+constexpr UINT     kTable     = 5 + kBfLyricsMaxAtlases; // t0 glyphs, t1..t16 atlases, t17 UI target, t18..t20 glass
+constexpr UINT     kUiSrv     = 1 + kBfLyricsMaxAtlases; // t17
+constexpr UINT     kGlassSrv  = 2 + kBfLyricsMaxAtlases; // t18 blurred screen, t19 back buffer copy, t20 blur temp
+constexpr float    kGlassSigma = 7.0f;                    // quarter-size texels (~28 px at full size)
 constexpr uint32_t kMaxAtlas  = kBfLyricsMaxAtlases;
 
 // ---------------------------------------------------------------- settings (F6, not persisted yet)
@@ -51,6 +54,7 @@ struct Ui {
     bool  flipForward = false; // S1 check: projection expects +Z forward
     bool  debugBounds = false;
     float opacity     = 1.0f;
+    bool  glass       = true;  // [BF] frosted glass (blur behind the music player card)
 } gUi;
 
 // ---------------------------------------------------------------- BF link
@@ -121,7 +125,7 @@ bool startDecode(BfLyricFrameV1 const& hdr) {
 // ---------------------------------------------------------------- D3D12 objects (overlay thread)
 ComPtr<ID3D12Device>         gDevice;
 ComPtr<ID3D12RootSignature>  gRoot;
-ComPtr<ID3D12PipelineState>  gPsoGlyph, gPsoComposite;
+ComPtr<ID3D12PipelineState>  gPsoGlyph, gPsoComposite, gPsoBlurH, gPsoBlurV;
 DXGI_FORMAT                  gPsoFmt = DXGI_FORMAT_UNKNOWN;
 ComPtr<ID3D12DescriptorHeap> gSrvHeap, gRtvHeap;
 UINT                         gSrvInc = 0;
@@ -132,6 +136,13 @@ std::vector<ComPtr<ID3D12Resource>> gGraveyard;
 std::vector<std::pair<ComPtr<ID3D12Resource>, uint64_t>> gUiGrave; // old S2 targets + the Present they died on
 uint64_t                     gPresents = 0;
 ComPtr<ID3D12Resource>       gUiTarget;
+// [BF] glass: a copy of the back buffer and its blur at quarter size (made only while a glass glyph is on screen)
+ComPtr<ID3D12Resource>       gScene, gBlurTmp, gBlur;
+D3D12_RESOURCE_STATES        gSceneState = D3D12_RESOURCE_STATE_COPY_DEST;
+UINT                         gGlassW = 0, gGlassH = 0, gBlurW = 0, gBlurH = 0;
+DXGI_FORMAT                  gGlassFmt = DXGI_FORMAT_UNKNOWN;
+bool                         gGlassBroken = false;
+std::string                  gGlassStatus = "-";
 UINT                         gW = 0, gH = 0;
 DXGI_FORMAT                  gFmt = DXGI_FORMAT_UNKNOWN;
 std::atomic<size_t>          gUiRtv{0};
@@ -198,7 +209,7 @@ bool createStatic(ID3D12Device* device) {
         return false;
     }
     D3D12_DESCRIPTOR_HEAP_DESC srv{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kSlots * kTable, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
-    D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC rtv{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 3, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0}; // UI target, blur temp, blur
     if (FAILED(hr = device->CreateDescriptorHeap(&srv, IID_PPV_ARGS(&gSrvHeap)))) { fail("CreateDescriptorHeap(SRV)", hr); return false; }
     if (FAILED(hr = device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&gRtvHeap)))) { fail("CreateDescriptorHeap(RTV)", hr); return false; }
     gSrvInc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -265,9 +276,14 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     if (gPsoFmt != bb.Format) {
         gPsoGlyph.Reset();
         gPsoComposite.Reset();
+        gPsoBlurH.Reset();
+        gPsoBlurV.Reset();
         if (!createPso({shaders::VSGlyph, sizeof shaders::VSGlyph}, {shaders::PSGlyph, sizeof shaders::PSGlyph}, bb.Format, true, gPsoGlyph)) return false;
         if (!createPso({shaders::VSComposite, sizeof shaders::VSComposite}, {shaders::PSComposite, sizeof shaders::PSComposite}, bb.Format, true,
                        gPsoComposite))
+            return false;
+        if (!createPso({shaders::VSComposite, sizeof shaders::VSComposite}, {shaders::PSBlurH, sizeof shaders::PSBlurH}, bb.Format, false, gPsoBlurH) ||
+            !createPso({shaders::VSComposite, sizeof shaders::VSComposite}, {shaders::PSBlurV, sizeof shaders::PSBlurV}, bb.Format, false, gPsoBlurV))
             return false;
         gPsoFmt = bb.Format;
     }
@@ -305,9 +321,102 @@ bool ensureSized(D3D12_RESOURCE_DESC const& bb) {
     s.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
     s.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     s.Texture2D.MipLevels     = 1;
-    for (UINT slot = 0; slot < kSlots; ++slot) gDevice->CreateShaderResourceView(gUiTarget.Get(), &s, srvCpu(slot * kTable + kTable - 1));
+    for (UINT slot = 0; slot < kSlots; ++slot) gDevice->CreateShaderResourceView(gUiTarget.Get(), &s, srvCpu(slot * kTable + kUiSrv));
     gUiReady = true;
     return true;
+}
+
+// [BF] Glass targets: back buffer copy (full size) + two quarter-size render targets. Rebuilt on resize / format change.
+D3D12_CPU_DESCRIPTOR_HANDLE rtvCpu(UINT i) {
+    auto h = gRtvHeap->GetCPUDescriptorHandleForHeapStart();
+    h.ptr += SIZE_T(i) * gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    return h;
+}
+bool ensureGlass(D3D12_RESOURCE_DESC const& bb) {
+    if (gGlassBroken) return false;
+    if (gScene && gGlassW == UINT(bb.Width) && gGlassH == bb.Height && gGlassFmt == bb.Format) return true;
+    if (gScene) gUiGrave.push_back({gScene, gPresents});
+    if (gBlurTmp) gUiGrave.push_back({gBlurTmp, gPresents});
+    if (gBlur) gUiGrave.push_back({gBlur, gPresents});
+    gScene.Reset(); gBlurTmp.Reset(); gBlur.Reset();
+    gGlassW = UINT(bb.Width); gGlassH = bb.Height; gGlassFmt = bb.Format;
+    gBlurW  = std::max(1u, gGlassW / 4); gBlurH = std::max(1u, gGlassH / 4);
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC   d{};
+    d.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width            = gGlassW;
+    d.Height           = gGlassH;
+    d.DepthOrArraySize = 1;
+    d.MipLevels        = 1;
+    d.Format           = gGlassFmt;
+    d.SampleDesc.Count = 1;
+    HRESULT hr = gDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&gScene));
+    gSceneState = D3D12_RESOURCE_STATE_COPY_DEST;
+    if (SUCCEEDED(hr)) {
+        d.Width  = gBlurW;
+        d.Height = gBlurH;
+        d.Flags  = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+        hr       = gDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&gBlurTmp));
+        if (SUCCEEDED(hr))
+            hr = gDevice->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&gBlur));
+    }
+    if (FAILED(hr)) {
+        char b[16];
+        snprintf(b, sizeof b, "%08X", uint32_t(hr));
+        gGlassStatus = std::string("off: targets failed (hr=0x") + b + ")";
+        gGlassBroken = true; // glass glyphs then show their plain tint (t18 stays a null SRV)
+        gScene.Reset(); gBlurTmp.Reset(); gBlur.Reset();
+        return false;
+    }
+    gDevice->CreateRenderTargetView(gBlurTmp.Get(), nullptr, rtvCpu(1));
+    gDevice->CreateRenderTargetView(gBlur.Get(), nullptr, rtvCpu(2));
+    D3D12_SHADER_RESOURCE_VIEW_DESC s{};
+    s.Format                  = gGlassFmt;
+    s.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
+    s.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    s.Texture2D.MipLevels     = 1;
+    for (UINT slot = 0; slot < kSlots; ++slot) {
+        gDevice->CreateShaderResourceView(gBlur.Get(), &s, srvCpu(slot * kTable + kGlassSrv));
+        gDevice->CreateShaderResourceView(gScene.Get(), &s, srvCpu(slot * kTable + kGlassSrv + 1));
+        gDevice->CreateShaderResourceView(gBlurTmp.Get(), &s, srvCpu(slot * kTable + kGlassSrv + 2));
+    }
+    gGlassStatus = "ready " + std::to_string(gBlurW) + "x" + std::to_string(gBlurH);
+    return true;
+}
+
+// [BF] Blur what is on the back buffer so far (world + game UI) for the glass glyphs: copy -> H pass -> V pass.
+// Expects the glyph root signature, heap and this slot's table to be set. Leaves the blur targets readable.
+void blurBehind(ID3D12GraphicsCommandList* list, ID3D12Resource* bb) {
+    barrier(list, bb, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    if (gSceneState != D3D12_RESOURCE_STATE_COPY_DEST) barrier(list, gScene.Get(), gSceneState, D3D12_RESOURCE_STATE_COPY_DEST);
+    list->CopyResource(gScene.Get(), bb);
+    barrier(list, bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    barrier(list, gScene.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    gSceneState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    D3D12_VIEWPORT vp{0, 0, float(gBlurW), float(gBlurH), 0, 1};
+    D3D12_RECT     sc{0, 0, LONG(gBlurW), LONG(gBlurH)};
+    list->RSSetViewports(1, &vp);
+    list->RSSetScissorRects(1, &sc);
+    list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    float c[24]{};
+    // horizontal, also downscaling 4x
+    barrier(list, gBlurTmp.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    auto rt1 = rtvCpu(1);
+    list->OMSetRenderTargets(1, &rt1, FALSE, nullptr);
+    c[16] = 1.0f / float(gBlurW); c[17] = 0.0f; c[18] = kGlassSigma;
+    list->SetGraphicsRoot32BitConstants(0, 24, c, 0);
+    list->SetPipelineState(gPsoBlurH.Get());
+    list->DrawInstanced(3, 1, 0, 0);
+    barrier(list, gBlurTmp.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    // vertical
+    barrier(list, gBlur.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    auto rt2 = rtvCpu(2);
+    list->OMSetRenderTargets(1, &rt2, FALSE, nullptr);
+    c[16] = 0.0f; c[17] = 1.0f / float(gBlurH);
+    list->SetGraphicsRoot32BitConstants(0, 24, c, 0);
+    list->SetPipelineState(gPsoBlurV.Get());
+    list->DrawInstanced(3, 1, 0, 0);
+    barrier(list, gBlur.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 }
 
 // Create atlas textures from decoded pixels and record their upload on `list`.
@@ -490,15 +599,21 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         gSlotGen[slot] = gUploadedGen;
     }
 
+    list->SetGraphicsRootSignature(gRoot.Get());
+    ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
+    list->SetDescriptorHeaps(1, heaps);
+    list->SetGraphicsRootDescriptorTable(1, srvGpu(slot * kTable));
+    // [BF] glass glyphs on screen (the music player's frosted card): blur what is behind first
+    bool wantGlass = false;
+    if (draw && gUi.glass)
+        for (uint32_t i = 0; i < n && !wantGlass; ++i) wantGlass = (gHost[i].flags & BF_GLYPH_GLASS) && gHost[i].alpha > 0.0f;
+    if (wantGlass && ensureGlass(bd)) blurBehind(list, bb);
+
     D3D12_VIEWPORT vp{0, 0, float(gW), float(gH), 0, 1};
     D3D12_RECT     sc{0, 0, LONG(gW), LONG(gH)};
     list->RSSetViewports(1, &vp);
     list->RSSetScissorRects(1, &sc);
     list->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
-    list->SetGraphicsRootSignature(gRoot.Get());
-    ID3D12DescriptorHeap* heaps[] = {gSrvHeap.Get()};
-    list->SetDescriptorHeaps(1, heaps);
-    list->SetGraphicsRootDescriptorTable(1, srvGpu(slot * kTable));
     list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     if (draw) {
@@ -546,10 +661,12 @@ void drawUi() {
     ImGui::RadioButton("BF estimate", &gUi.camSource, 1);
     ImGui::Checkbox("Flip forward axis (S1 check)", &gUi.flipForward);
     ImGui::Checkbox("Show quad bounds", &gUi.debugBounds);
+    ImGui::Checkbox("Frosted glass (blur behind the player card)", &gUi.glass);
     ImGui::Separator();
     ImGui::Text("Status: %s", gStatus.c_str());
     ImGui::Text("Camera: %s", gCamStatus.c_str());
     ImGui::Text("Atlases: %s (gen %u)", gAtlasStatus.c_str(), gUploadedGen);
+    ImGui::Text("Glass: %s", gGlassStatus.c_str());
     ImGui::Text("BF frame %u, active %u, %u/%u glyphs", gHdr.frame, gHdr.active, gHdr.count, gHdr.total);
     CameraSnap s = camera();
     ImGui::Text("Camera hook: %llu calls, %llu world", (unsigned long long)s.calls, (unsigned long long)s.chosen);

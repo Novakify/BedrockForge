@@ -8,6 +8,7 @@
 //   c4      xyz: BF origin minus camera position (world units), w: time (s)
 //   c5      x: screen aspect (width / height), y: global opacity, z: debug (1 = show quad bounds), w: unused
 // t0 = StructuredBuffer<Glyph>, t1..t16 = atlases (index = Glyph.atlas), t17 = S2 UI target, s0 = linear clamp, s1 = point clamp
+// t18 = the screen behind, blurred (quarter size; glass), t19 = back buffer copy, t20 = blur temp (PSBlurH -> PSBlurV)
 cbuffer Params : register(b0) {
     float4x4 viewProj;
     float4   originTime;
@@ -32,12 +33,17 @@ static const uint F_GRADIENT = 16u;
 static const uint F_SOLID    = 32u; // rounded rect, no atlas (top bar pill, icons, EQ bars)
 static const uint F_VIEW     = 64u; // settings panel: camera-locked perspective, pos already / tan(fovY/2)
 static const uint F_IMAGE    = 128u; // colour image: rgba * fill tint
+static const uint F_GLASS    = 256u; // with SOLID: frosted glass (t18 at this pixel, tinted by fill, * glowK)
+static const uint F_BLUR     = 512u; // with IMAGE: soft-blurred image, radius glowW (fraction of the image), soft edges
 static const uint kAtlases   = 16u;
 
 StructuredBuffer<Glyph> gGlyphs  : register(t0);
 Texture2D               gAtlas[16] : register(t1);
 SamplerState            sLin     : register(s0);
 SamplerState            sPoint   : register(s1);
+Texture2D               gGlassBlur : register(t18);
+Texture2D               gScene     : register(t19);
+Texture2D               gBlurTmp   : register(t20);
 
 struct V2P {
     float4 pos  : SV_Position;
@@ -73,6 +79,18 @@ float4 PSGlyph(V2P i) : SV_Target {
     if (g.flags & F_GRADIENT) fillC = lerp(fillC, unpack(g.fill2), saturate(i.grad));
     float  k     = g.alpha * misc.y;
 
+    if ((g.flags & F_SOLID) && (g.flags & F_GLASS)) { // [BF] frosted glass: what is behind, blurred, then the tint
+        float2 halfPx = 0.5 / max(fwidth(i.uv), 1e-6);
+        float  r      = min(halfPx.x, halfPx.y) * saturate(g.outlineW);
+        float2 q      = abs(i.uv - 0.5) * 2.0 * halfPx - (halfPx - r);
+        float  d      = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+        float  a      = saturate(0.5 - d / max(1.0, g.glowW));
+        float  sw, sh;
+        gScene.GetDimensions(sw, sh);
+        float3 b   = gGlassBlur.SampleLevel(sLin, i.pos.xy / float2(max(sw, 1.0), max(sh, 1.0)), 0).rgb * g.glowK;
+        float3 rgb = lerp(b, fillC.rgb, fillC.a);
+        return float4(rgb * a, a) * k;
+    }
     if (g.flags & F_SOLID) { // outlineW = corner radius (fraction of the smaller half-extent), glowW = edge softness px
         float2 halfPx = 0.5 / max(fwidth(i.uv), 1e-6);
         float  r      = min(halfPx.x, halfPx.y) * saturate(g.outlineW);
@@ -84,7 +102,36 @@ float4 PSGlyph(V2P i) : SV_Target {
 
     uint const ai = min(g.atlas, kAtlases - 1);
     if (g.flags & F_IMAGE) { // cover art / icons / thumbnails: straight-alpha rgba, tinted
-        float4 t = gAtlas[NonUniformResourceIndex(ai)].Sample(sLin, i.uv) * fillC;
+        Texture2D img   = gAtlas[NonUniformResourceIndex(ai)];
+        float2    span  = g.uv.zw - g.uv.xy;
+        float2    local = (i.uv - g.uv.xy) / (abs(span.x) > 1e-6 && abs(span.y) > 1e-6 ? span : float2(1, 1));
+        float4    t;
+        if (g.flags & F_BLUR) { // [BF] 32 taps on a golden-angle spiral, weighted to the middle; edges fade out
+            float r = g.glowW;
+            t       = 0;
+            float wsum = 0;
+            [unroll] for (int s = 0; s < 32; ++s) {
+                float  rr = sqrt((s + 0.5) / 32.0);
+                float  an = s * 2.39996323;
+                float2 o  = float2(cos(an), sin(an)) * rr * r * span;
+                float  w  = 1.0 - 0.6 * rr;
+                t += img.SampleLevel(sLin, i.uv + o, 0) * w;
+                wsum += w;
+            }
+            t /= wsum;
+            float e = min(min(local.x, 1.0 - local.x), min(local.y, 1.0 - local.y));
+            t.a *= pow(saturate(e / max(r * 1.6, 1e-3)), 1.5);
+        } else {
+            t = img.Sample(sLin, i.uv);
+        }
+        t *= fillC;
+        if (g.outlineW > 0) { // [BF] rounded corners (outlineW = radius as a fraction of the smaller half-extent)
+            float2 halfPx = 0.5 / max(fwidth(local), 1e-6);
+            float  r      = min(halfPx.x, halfPx.y) * saturate(g.outlineW);
+            float2 q      = abs(local - 0.5) * 2.0 * halfPx - (halfPx - r);
+            float  d      = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+            t.a *= saturate(0.5 - d);
+        }
         return float4(t.rgb * t.a, t.a) * k;
     }
 
@@ -133,3 +180,42 @@ VFull VSComposite(uint id : SV_VertexID) {
     return o;
 }
 float4 PSComposite(VFull i) : SV_Target { return gUiTarget.Sample(sPoint, i.uv); } // UI target is premultiplied-ish (see UiCapture alpha fix)
+
+// ---- [BF] glass blur: back buffer copy (t19) -> quarter size, horizontal (t20 target) -> vertical (t18 target).
+// c4 (originTime) = xy: uv step between taps (one output texel along the pass direction), z: sigma in output texels.
+// Bilinear pairs (two texels per fetch), like RF's panel blur; the horizontal pass also folds the 4x4 source block in.
+float4 PSBlurH(VFull i) : SV_Target {
+    float  sigma = max(originTime.z, 0.5);
+    float2 stepv = originTime.xy;
+    float  sw, sh;
+    gScene.GetDimensions(sw, sh);
+    float2 px  = float2(0, 1.0 / max(sh, 1.0)) * 1.0; // a second row: the 4x downscale reads 2 rows per tap
+    int    n   = (int)min(ceil(sigma * 1.5), 16.0);
+    float3 acc = (gScene.SampleLevel(sLin, i.uv - px, 0).rgb + gScene.SampleLevel(sLin, i.uv + px, 0).rgb) * 0.5;
+    float  ws  = 1.0;
+    for (int k = 0; k < n; ++k) {
+        float a = 2.0 * k + 1.0, b = a + 1.0;
+        float wa = exp(-a * a / (2.0 * sigma * sigma)), wb = exp(-b * b / (2.0 * sigma * sigma));
+        float w = wa + wb, o = (a * wa + b * wb) / max(w, 1e-6);
+        float2 off = stepv * o;
+        acc += (gScene.SampleLevel(sLin, i.uv + off - px, 0).rgb + gScene.SampleLevel(sLin, i.uv + off + px, 0).rgb +
+                gScene.SampleLevel(sLin, i.uv - off - px, 0).rgb + gScene.SampleLevel(sLin, i.uv - off + px, 0).rgb) * 0.5 * w;
+        ws += 2.0 * w;
+    }
+    return float4(acc / ws, 1);
+}
+float4 PSBlurV(VFull i) : SV_Target {
+    float  sigma = max(originTime.z, 0.5);
+    float2 stepv = originTime.xy;
+    int    n     = (int)min(ceil(sigma * 1.5), 16.0);
+    float3 acc   = gBlurTmp.SampleLevel(sLin, i.uv, 0).rgb;
+    float  ws    = 1.0;
+    for (int k = 0; k < n; ++k) {
+        float a = 2.0 * k + 1.0, b = a + 1.0;
+        float wa = exp(-a * a / (2.0 * sigma * sigma)), wb = exp(-b * b / (2.0 * sigma * sigma));
+        float w = wa + wb, o = (a * wa + b * wb) / max(w, 1e-6);
+        acc += (gBlurTmp.SampleLevel(sLin, i.uv + stepv * o, 0).rgb + gBlurTmp.SampleLevel(sLin, i.uv - stepv * o, 0).rgb) * w;
+        ws += 2.0 * w;
+    }
+    return float4(acc / ws, 1);
+}
