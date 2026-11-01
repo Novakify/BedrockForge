@@ -58,6 +58,8 @@ LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, 
                 glm::vec2 vs = view->mSize;
                 std::shared_ptr<UIControl> root = view->mVisualTree->mRootControl;
                 if (vs.x > 1 && vs.y > 1 && root) {
+                    struct R { float x0, y0, x1, y1; };
+                    std::vector<R>                rects;
                     std::vector<UIControl const*> todo{root.get()};
                     int n = 0;
                     while (!todo.empty() && n < 4000) {
@@ -68,14 +70,29 @@ LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, 
                         glm::vec2 sz = c->mSize, pos = c->mCachedPosition;
                         // something drawn, smaller than the window (full-window backgrounds / dims are not the screen)
                         if (!c->mRenderableComponentLookup->empty() && sz.x > 0.5f && sz.y > 0.5f && sz.x < vs.x * 0.9f &&
-                            sz.y < vs.y * 0.9f && pos.x > -vs.x && pos.y > -vs.y && pos.x < 2 * vs.x && pos.y < 2 * vs.y) {
-                            b[0] = std::min(b[0], pos.x / vs.x);
-                            b[1] = std::min(b[1], pos.y / vs.y);
-                            b[2] = std::max(b[2], (pos.x + sz.x) / vs.x);
-                            b[3] = std::max(b[3], (pos.y + sz.y) / vs.y);
-                            ok   = true;
-                        }
+                            sz.y < vs.y * 0.9f && pos.x > -vs.x && pos.y > -vs.y && pos.x < 2 * vs.x && pos.y < 2 * vs.y)
+                            rects.push_back({pos.x, pos.y, pos.x + sz.x, pos.y + sz.y});
                         for (auto const& ch : *c->mChildren) todo.push_back(ch.get());
+                    }
+                    // the screen is its biggest drawn piece (the container's panel) and what touches it (tabs, the
+                    // recipe book, buttons on its edge, tooltips over it) - loose bits elsewhere (a hotbar row the screen
+                    // keeps at the bottom of the window) stay off the panel
+                    int   big = -1;
+                    float area = 0;
+                    for (int i = 0; i < int(rects.size()); ++i) {
+                        float a = (rects[i].x1 - rects[i].x0) * (rects[i].y1 - rects[i].y0);
+                        if (a > area) { area = a; big = i; }
+                    }
+                    if (big >= 0) {
+                        R u = rects[big];
+                        for (int pass = 0; pass < 3; ++pass) // grow through pieces touching the union (a margin of 4 GUI px)
+                            for (auto const& r : rects)
+                                if (r.x0 <= u.x1 + 4 && r.x1 >= u.x0 - 4 && r.y0 <= u.y1 + 4 && r.y1 >= u.y0 - 4) {
+                                    u.x0 = std::min(u.x0, r.x0); u.y0 = std::min(u.y0, r.y0);
+                                    u.x1 = std::max(u.x1, r.x1); u.y1 = std::max(u.y1, r.y1);
+                                }
+                        b[0] = u.x0 / vs.x; b[1] = u.y0 / vs.y; b[2] = u.x1 / vs.x; b[3] = u.y1 / vs.y;
+                        ok   = true;
                     }
                 }
             }
