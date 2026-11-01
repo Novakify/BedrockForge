@@ -49,9 +49,10 @@ cg::ImageBuffer makeBuffer(int w, int h, uint8_t const* rgba) {
 BedrockTextureData const* loadedData(mce::TextureGroup& tg, ResourceLocation const& loc, mce::TexturePtr& keep) {
     if (!tg.isLoaded(loc, false, cg::TextureSetLayerType::Color)) return nullptr;
     keep = tg.getTexture(loc, false, std::nullopt, cg::TextureSetLayerType::Color);
-    auto const& sp = keep.mClientTexture.get();
+    // ll::TypedStorage<A,S,T> is T itself here (sizes match), so members are used directly.
+    std::shared_ptr<BedrockTextureData const> const& sp = keep.mClientTexture;
     if (!sp) return nullptr;
-    if (sp->mIsMissingTexture.get() == IsMissingTexture::Yes) return nullptr;
+    if (sp->mIsMissingTexture == IsMissingTexture::Yes) return nullptr;
     return sp.get();
 }
 
@@ -66,7 +67,7 @@ DynTexResult dynTexUploadEx(IClientInstance& ci, std::string const& resourcePath
 
         mce::TexturePtr keep;
         if (auto const* d = loadedData(*tg, loc, keep)) {
-            auto const& desc = d->mTextureDescription.get();
+            auto const& desc = d->mTextureDescription;
             if (int(desc.mWidth) == w && int(desc.mHeight) == h
                 && tg->updateTextureInPlace(loc, makeBuffer(w, h, rgba)))
                 return DynTexResult::InPlace;
@@ -113,7 +114,7 @@ bool dynTexInfo(IClientInstance& ci, std::string const& resourcePath, int& w, in
         mce::TexturePtr keep;
         auto const* d = loadedData(*tg, loc, keep);
         if (!d) return false;
-        auto const& desc = d->mTextureDescription.get();
+        auto const& desc = d->mTextureDescription;
         w = int(desc.mWidth);
         h = int(desc.mHeight);
         return true;
