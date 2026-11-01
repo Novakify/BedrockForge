@@ -311,7 +311,9 @@ class Content:
             if iid in self.blocks or iid in getattr(self, "skip", ()): continue                  # block items come with the block
             d = jload(self.z.read(n))
             if "spawn_egg" in (d.get("parent") or ""): continue
-            tex = (d.get("textures") or {}).get("layer0")
+            txs = d.get("textures") or {}
+            tex = txs.get("layer0") or (next((v for k, v in txs.items() if k != "particle" and isinstance(v, str) and not v.startswith("#")), None)
+                                        if d.get("elements") else None)    # 3D Blockbench item model: its texture as the icon
             full = f"{self.ns}:{iid}"
             comps = {"minecraft:icon": f"{self.ns}_{iid}", "minecraft:max_stack_size": 64}
             info = getattr(self, "_item_info", {}).get(iid, {})
