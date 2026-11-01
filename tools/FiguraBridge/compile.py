@@ -199,6 +199,20 @@ def chunk_bones(bones: list[dict], skeleton: set[str], limit: int = BONE_LIMIT) 
     return [[b for b in bones if b["name"] in keep or b["name"] in c] for c in chunks]
 
 
+def primary_material(f: dict) -> str:
+    """Bedrock's entity_alphablend draws without depth writes, so a whole avatar on it sorts wrong (verified in game:
+    CatMaid's head and body cubes vanished behind their own layers); entity_alphatest (cutout) is right for every
+    texture whose alpha is only 0 or 255. Textures with real partial alpha keep blending."""
+    try:
+        import io
+        from PIL import Image
+        a = Image.open(io.BytesIO(f["_data"])).convert("RGBA").getchannel("A")
+        partial = any(0 < v < 255 for v in set(a.getdata()))
+        return "Material.fbb" if partial else "Material.fbd"
+    except Exception:  # noqa: BLE001
+        return "Material.fbd"
+
+
 def collect_parts(models: dict) -> list[Part]:
     parts: list[Part] = []
 
@@ -449,7 +463,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         return f"(v.fb{p.i}v ?? {1 if p.vis_eff else 0})"
 
     for f, (k, cnames) in ((f, kc) for f in rc_files for kc in enumerate(chunk_names)):
-        for kind, var, mat, key in (("p", "t", "Material.fbd", "d"), ("s", "e", "Material.fbe", "e")):
+        for kind, var, mat, key in (("p", "t", primary_material(f), "d"), ("s", "e", "Material.fbe", "e")):
             pv = [{"*": False}]
             for bname, (p, sid) in geo_bones.items():
                 if bname not in cnames:
@@ -483,7 +497,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     fp_controllers = {}
     if fp_bones:
         for f, (k, cnames) in ((f, kc) for f in rc_files for kc in enumerate(chunk_names)):
-            for kind, var, mat, key in (("p", "t", "Material.fbd", "d"), ("s", "e", "Material.fbe", "e")):
+            for kind, var, mat, key in (("p", "t", primary_material(f), "d"), ("s", "e", "Material.fbe", "e")):
                 pv = [{"*": False}]
                 for bname, (p, sid) in fp_bones.items():
                     if bname not in cnames:
@@ -535,7 +549,8 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     desc = ent["minecraft:client_entity"]["description"]
     for k, gid in enumerate(geo_ids):
         desc["geometry"][f"figura{k or ''}"] = gid
-    desc["materials"]["fbd"] = "entity_alphablend"
+    desc["materials"]["fbd"] = "entity_alphatest"    # cutout: what nearly every Figura texture is
+    desc["materials"]["fbb"] = "entity_alphablend"   # textures with partial alpha (blush, glass...); depth write is off
     desc["materials"]["fbe"] = "entity_emissive_alpha"
     for f in rc_files:
         desc["textures"][f["bedrockKey"]] = f["rpTexture"]
