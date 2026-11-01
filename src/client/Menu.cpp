@@ -40,6 +40,7 @@
 #include "bf/Events.h"
 #include "bf/Hud.h"
 #include "client/Module.h"
+#include "client/Loadouts.h"
 #include "client/ShaderPacks.h"
 #include "core/Win32Input.h"
 #include "lyrics/BfLyrics.h"
@@ -67,11 +68,12 @@ bf::events::Subscriptions     gSubs;
 std::atomic<IClientInstance*> gLastClient{nullptr};
 
 enum class View { Wheel, Window };
-enum class Page { Mods, ModSettings, Shaders, Client, Lyrics };
+enum class Page { Mods, ModSettings, Shaders, Loadout, Client, Lyrics };
 View        gView     = View::Wheel;
 Page        gPage     = Page::Mods;
 int         gTab      = 0;
 std::string gModPage;            // module shown on Page::ModSettings
+std::string gLoadoutPage;        // loadout shown on Page::Loadout
 float       gScroll   = 0;       // design px: scroll target (the wheel moves it, pages clamp it)
 float       gScrollAt = 0;       // design px: where the list is drawn, eased towards gScroll every frame
 int64_t     gScrollMs = 0;
@@ -538,10 +540,55 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     sc.end();
 }
 
+// Section label inside a page (small caps-style, lilac).
+void sectionLabel(UiFrame& f, Scroller& sc, float x, std::string const& t, float a) {
+    if (sc.fits(20)) f.g.text(t, x + 2, sc.y + 10, 11, rgba(kLilac, 0.62f), a, true);
+    sc.y += 24;
+}
+
+// Shaders page: Loadouts first (one click sets shaders, graphics mode, modules, mods and DLL builds), then the plain
+// shaderpack list. Right click a loadout = its details page.
 void drawShaders(UiFrame& f, Win const& w, float a) {
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
-    pageHeader(f, x, y - 4, wd, "Shaderpacks", "The game loads shaders at startup: a new pick applies after a restart.", a);
+    pageHeader(f, x, y - 4, wd, "Shaders", "Loadouts set everything at once (right click = details). Shaders apply after a restart.", a);
     Scroller sc(f, w, a);
+
+    sectionLabel(f, sc, x, "LOADOUTS", a);
+    auto const&       items  = loadouts::list();
+    std::string const lo     = loadouts::active();
+    for (auto const& it : items) {
+        if (sc.fits(50)) {
+            bool on = it.name == lo;
+            row(f, x, sc.y, wd, 50, it.name, it.description, a, on);
+            if (on) {
+                f.g.text("ACTIVE", x + wd - 44, sc.y + 25, 11, rgba(kWhite, 0.85f), a, true, 2);
+                f.g.icon("check", x + wd - 24, sc.y + 25, 18, rgba(kWhite, 1), a);
+            }
+            std::string n = it.name;
+            f.hits.push_back({x, sc.y, wd, 50, [n](bool right) {
+                if (right) { gLoadoutPage = n; showPage(Page::Loadout); return; }
+                loadouts::apply(n);
+                toast("Loading " + n + "...");
+            }});
+        }
+        sc.y += 58;
+    }
+    if (sc.fits(50)) {
+        row(f, x, sc.y, wd, 50, "Save current setup", "Saves shaders, graphics mode, modules, mods and DLL builds as a new loadout", a);
+        f.g.icon("pin", x + wd - 24, sc.y + 25, 18, rgba(kWhite, 1), a);
+        f.hits.push_back({x, sc.y, wd, 50, [](bool) {
+            auto n = loadouts::saveCurrent("");
+            if (!n.empty()) toast("Saved as " + n);
+        }});
+    }
+    sc.y += 58;
+    if (std::string st = loadouts::status(); sc.fits(20)) {
+        bool restart = loadouts::restartNeeded();
+        f.g.text(st, x + 2, sc.y + 8, 11.5f, rgba(restart ? kWhite : kLilac, restart ? 1.0f : 0.62f), a, restart, 0, restart ? 0.6f : 0);
+    }
+    sc.y += 30;
+
+    sectionLabel(f, sc, x, "SHADERPACKS", a);
     auto packs = shaderpacks::listPacks();
     packs.insert(packs.begin(), "off");
     std::string const active = shaderpacks::activePack();
@@ -562,6 +609,44 @@ void drawShaders(UiFrame& f, Win const& w, float a) {
         }
         sc.y += 54;
     }
+    sc.end();
+}
+
+// One loadout: what it changes + Load / Overwrite rows.
+void drawLoadout(UiFrame& f, Win const& w, float a) {
+    loadouts::Info const* it = nullptr;
+    for (auto const& i : loadouts::list())
+        if (i.name == gLoadoutPage) it = &i;
+    if (!it) { gPage = Page::Shaders; return; }
+    float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
+    pageHeader(f, x, y - 4, wd, it->name, it->description.empty() ? "Loadout" : it->description, a);
+    Scroller sc(f, w, a);
+    std::string const n = it->name;
+    if (sc.fits(50)) {
+        row(f, x, sc.y, wd, 50, "Load now", "Mods and DLL builds switch on the next launch", a, n == loadouts::active());
+        f.g.icon("check", x + wd - 24, sc.y + 25, 18, rgba(kWhite, 1), a);
+        f.hits.push_back({x, sc.y, wd, 50, [n](bool) { loadouts::apply(n); toast("Loading " + n + "..."); }});
+    }
+    sc.y += 58;
+    if (sc.fits(50)) {
+        row(f, x, sc.y, wd, 50, "Overwrite with current setup", "Replaces this loadout with how things are right now", a);
+        f.g.icon("pencil", x + wd - 24, sc.y + 25, 18, rgba(kWhite, 1), a);
+        f.hits.push_back({x, sc.y, wd, 50, [n](bool) { if (!loadouts::saveCurrent(n).empty()) toast("Updated " + n); }});
+    }
+    sc.y += 66;
+    sectionLabel(f, sc, x, "WHAT IT SETS", a);
+    auto line = [&](std::string const& t, std::string const& v) {
+        if (sc.fits(46)) {
+            row(f, x, sc.y, wd, 46, t, "", a);
+            f.g.text(f.g.ellip(v, wd * 0.55f, 12.5f), x + wd - 14, sc.y + 23, 12.5f, rgba(kLilac, 0.85f), a, false, 2);
+        }
+        sc.y += 54;
+    };
+    line("Shaders", it->shaderpack.empty() ? "unchanged" : it->shaderpack == "off" ? "off (vanilla)" : it->shaderpack);
+    line("Graphics", it->vibrant < 0 ? "unchanged" : it->vibrant ? "Vibrant Visuals" : "Fancy");
+    line("Bedrock Forge modules", it->modules ? std::format("{} set", it->modules) : "unchanged");
+    for (auto const& m : it->mods) line("Mod", m);
+    for (auto const& d : it->dlls) line("DLL build", d);
     sc.end();
 }
 
@@ -660,7 +745,7 @@ void drawWindow(UiFrame& f, float t) {
     constexpr Rail rail[4] = {{"home", Page::Mods, -1}, {"gear", Page::Client, -1}, {"sparkle", Page::Shaders, -1}, {"music", Page::Lyrics, -1}};
     float rx = w.x + 19, ry = w.y + 18;
     for (auto const& r : rail) {
-        bool on = gPage == r.page || (r.page == Page::Mods && gPage == Page::ModSettings);
+        bool on = gPage == r.page || (r.page == Page::Mods && gPage == Page::ModSettings) || (r.page == Page::Shaders && gPage == Page::Loadout);
         pillGlass(g, rx, ry, 38, 38, 11, on, a, f.over(rx, ry, 38, 38) ? 1.0f : 0.0f);
         g.icon(r.icon, rx + 19, ry + 19, 18, rgba(kWhite, on ? 1.0f : 0.7f), a);
         Page p = r.page;
@@ -678,7 +763,8 @@ void drawWindow(UiFrame& f, float t) {
     pillGlass(g, bx, ty, 34, 30, 15, false, a, f.over(bx, ty, 34, 30) ? 1.0f : 0.0f);
     g.icon("back", bx + 17, ty + 15, 17, rgba(kWhite, 0.85f), a);
     f.hits.push_back({bx, ty, 34, 30, [](bool) {
-        if (gPage != Page::Mods) { gPage = Page::Mods; resetScroll(); }
+        if (gPage == Page::Loadout) { gPage = Page::Shaders; resetScroll(); }
+        else if (gPage != Page::Mods) { gPage = Page::Mods; resetScroll(); }
         else if (lookOn("wheel", true)) setView(View::Wheel);
         else closeMenu();
     }});
@@ -706,6 +792,7 @@ void drawWindow(UiFrame& f, float t) {
     case Page::Mods: drawMods(f, w, a); break;
     case Page::ModSettings: drawModSettings(f, w, a); break;
     case Page::Shaders: drawShaders(f, w, a); break;
+    case Page::Loadout: drawLoadout(f, w, a); break;
     case Page::Client: drawClient(f, w, a); break;
     case Page::Lyrics: drawLyrics(f, w, a); break;
     }
@@ -888,6 +975,7 @@ void install() {
             if (!ev.isDown()) return;
             if (!gSearch.empty()) gSearch.clear();
             else if (gView == View::Window && gPage == Page::ModSettings) { gPage = Page::Mods; resetScroll(); }
+            else if (gView == View::Window && gPage == Page::Loadout) { gPage = Page::Shaders; resetScroll(); }
             else closeMenu();
             return;
         }
