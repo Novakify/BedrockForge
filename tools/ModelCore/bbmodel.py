@@ -119,6 +119,7 @@ def _cube(el, box_uv_default, tex_w, tex_h, uv_scale):
         c.uv = faces
     c.extra["bb_uuid"] = el.get("uuid")
     if el.get("name"): c.extra["bb_name"] = el["name"]
+    if el.get("visibility") is False: c.extra["bb_visible"] = False
     return c
 
 
