@@ -36,6 +36,8 @@ enum BfGlyphFlags : uint32_t {
                                   // 1/100 degree, screen space (0 = right, 9000 = down); without GLASS = flat colour
     BF_GLYPH_BACKDROP = 1u << 10, // full-screen frosted frame: fill = darkening colour (a = amount), pxRange = blur,
                                   // glowW = clear circle radius px around the quad centre, glowK = its feather px
+    BF_GLYPH_BLUR     = 1u << 11, // [LyricsFlow player] with IMAGE: the image soft-blurred, radius glowW in uv (aura,
+                                  // cover glow), edges faded. RF without it draws the sharp IMAGE.
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the

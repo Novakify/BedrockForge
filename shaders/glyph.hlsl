@@ -40,6 +40,7 @@ static const uint F_IMAGE    = 128u; // colour image: rgba * fill tint
 static const uint F_GLASS    = 256u;  // with SOLID / PETAL: glass (see BfLyrics.h for the field meanings)
 static const uint F_PETAL    = 512u;  // ring sector inside the quad (the client wheel's buttons)
 static const uint F_BACKDROP = 1024u; // full-screen frosted copy of the frame with a clear circle in the middle
+static const uint F_BLUR     = 2048u; // [LyricsFlow player] with IMAGE: soft-blurred image, radius glowW (fraction), faded edges
 static const uint kAtlases   = 16u;
 
 StructuredBuffer<Glyph> gGlyphs  : register(t0);
@@ -163,7 +164,35 @@ float4 PSGlyph(V2P i) : SV_Target {
 
     uint const ai = min(g.atlas, kAtlases - 1);
     if (g.flags & F_IMAGE) { // cover art / icons / thumbnails: straight-alpha rgba, tinted
-        float4 t = gAtlas[NonUniformResourceIndex(ai)].Sample(sLin, i.uv) * fillC;
+        Texture2D img   = gAtlas[NonUniformResourceIndex(ai)];
+        float2    span  = g.uv.zw - g.uv.xy;
+        float2    local = (i.uv - g.uv.xy) / (abs(span.x) > 1e-6 && abs(span.y) > 1e-6 ? span : float2(1, 1));
+        float4    t;
+        if (g.flags & F_BLUR) { // [LyricsFlow player] 32 taps on a golden-angle spiral, weighted to the middle; edges fade
+            float r    = g.glowW;
+            float wsum = 0;
+            t          = 0;
+            [unroll] for (int s = 0; s < 32; ++s) {
+                float  rr = sqrt((s + 0.5) / 32.0);
+                float  an = s * 2.39996323;
+                float  w  = 1.0 - 0.6 * rr;
+                t += img.SampleLevel(sLin, i.uv + float2(cos(an), sin(an)) * rr * r * span, 0) * w;
+                wsum += w;
+            }
+            t /= wsum;
+            float e = min(min(local.x, 1.0 - local.x), min(local.y, 1.0 - local.y));
+            t.a *= pow(saturate(e / max(r * 1.6, 1e-3)), 1.5);
+        } else {
+            t = img.Sample(sLin, i.uv);
+        }
+        t *= fillC;
+        if (g.outlineW > 0) { // [LyricsFlow player] rounded corners (outlineW = radius / smaller half-extent)
+            float2 halfPx = 0.5 / max(fwidth(local), 1e-6);
+            float  r      = min(halfPx.x, halfPx.y) * saturate(g.outlineW);
+            float2 q      = abs(local - 0.5) * 2.0 * halfPx - (halfPx - r);
+            float  d      = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+            t.a *= saturate(0.5 - d);
+        }
         return float4(t.rgb * t.a, t.a) * k;
     }
 
