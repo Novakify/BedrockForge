@@ -161,6 +161,44 @@ def rgba_png(data: bytes) -> bytes:
         return data
 
 
+BONE_LIMIT = 250   # per geometry; Bedrock breaks somewhere past 255 (see chunk_bones)
+
+
+def chunk_bones(bones: list[dict], skeleton: set[str], limit: int = BONE_LIMIT) -> list[list[dict]]:
+    """Split one bone list (parents before children) into geometries of <= limit bones. Each chunk = vanilla skeleton +
+    whole ancestor chains of the geometry bones it holds; bones with no geometry below them are dropped."""
+    by = {b["name"]: b for b in bones}
+    has_geo = {n: bool(b.get("cubes") or b.get("poly_mesh")) for n, b in by.items()}
+    for b in reversed(bones):  # children come after parents: propagate "has geometry below" upwards
+        par = b.get("parent")
+        if par in has_geo and has_geo[b["name"]]:
+            has_geo[par] = True
+    def chain(n):
+        out = []
+        while n is not None and n not in skeleton:
+            out.append(n)
+            n = by[n].get("parent")
+        return out
+    base = [b["name"] for b in bones if b["name"] in skeleton]
+    chunks, cur = [], set()
+    for b in bones:
+        n = b["name"]
+        if n in skeleton or not has_geo[n] or not (b.get("cubes") or b.get("poly_mesh")):
+            continue
+        need = set(chain(n)) - cur
+        if cur and len(base) + len(cur) + len(need) > limit:
+            chunks.append(cur)
+            cur = set()
+            need = set(chain(n))
+        if len(base) + len(need) > limit:
+            raise fn.FiguraCompileError(f"bone {n} is nested deeper than one geometry allows ({len(need)} ancestors)")
+        cur |= need
+    if cur or not chunks:
+        chunks.append(cur)
+    keep = set(base)
+    return [[b for b in bones if b["name"] in keep or b["name"] in c] for c in chunks]
+
+
 def collect_parts(models: dict) -> list[Part]:
     parts: list[Part] = []
 
@@ -375,11 +413,18 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     if len(set(names)) != len(names):
         raise fn.FiguraCompileError("duplicate bone names")
 
-    geo_id = f"geometry.figura.{slug}"
+    # Bedrock stops applying animations / part_visibility to a geometry with more than ~255 bones (verified in game:
+    # CatMaid at 326 bones froze in its bind pose with every part shown; trimmed to 230 it posed correctly). Big avatars
+    # are split into several geometries ("chunks", each <= BONE_LIMIT bones) rendered together. A chunk carries the
+    # full ancestor chain of its geometry bones; ancestors repeated in several chunks keep the same names, so the one
+    # drive animation moves them identically. Bones whose subtree has no geometry are dropped.
+    chunks = chunk_bones(bones, {n for n, _, _ in SKELETON})
+    geo_ids = [f"geometry.figura.{slug}" + (f".c{k}" if k else "") for k in range(len(chunks))]
     geometry = {"format_version": GEO_FORMAT, "minecraft:geometry": [{
-        "description": {"identifier": geo_id, "texture_width": geo_w, "texture_height": geo_h,
+        "description": {"identifier": geo_ids[k], "texture_width": geo_w, "texture_height": geo_h,
                         "visible_bounds_width": 4, "visible_bounds_height": 5, "visible_bounds_offset": [0, 2, 0]},
-        "bones": bones}]}
+        "bones": ch} for k, ch in enumerate(chunks)]}
+    chunk_names = [{b["name"] for b in ch} for ch in chunks]
 
     # drive animation
     anim_bones = {}
@@ -403,10 +448,12 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     def vis_expr(p: Part):
         return f"(v.fb{p.i}v ?? {1 if p.vis_eff else 0})"
 
-    for f in rc_files:
+    for f, (k, cnames) in ((f, kc) for f in rc_files for kc in enumerate(chunk_names)):
         for kind, var, mat, key in (("p", "t", "Material.fbd", "d"), ("s", "e", "Material.fbe", "e")):
             pv = [{"*": False}]
             for bname, (p, sid) in geo_bones.items():
+                if bname not in cnames:
+                    continue
                 if sid is None:
                     # bone without geometry (group, or a split part's own bone): only matters if Bedrock's
                     # part_visibility were hierarchical; keep it on with the part's visibility so it is safe both ways
@@ -415,8 +462,10 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 own = sets[sid][key] if 0 <= sid < len(sets) else None
                 dflt = 1 if own == f["i"] else 0
                 pv.append({bname: f"{vis_expr(p)} && ((v.fb{p.i}{var} ?? -1) < 0 ? {dflt} : (v.fb{p.i}{var} == {f['i']}))"})
-            controllers[f"controller.render.player.figura_{kind}{f['i']}"] = {
-                "geometry": "Geometry.figura", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
+            if len(pv) == 1:
+                continue
+            controllers[f"controller.render.player.figura_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
+                "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
                 "part_visibility": pv}
 
     # first-person controllers: same rules over the f-bones, plus Bedrock's own empty-hand conditions
@@ -433,10 +482,12 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             stack.extend(q.children)
     fp_controllers = {}
     if fp_bones:
-        for f in rc_files:
+        for f, (k, cnames) in ((f, kc) for f in rc_files for kc in enumerate(chunk_names)):
             for kind, var, mat, key in (("p", "t", "Material.fbd", "d"), ("s", "e", "Material.fbe", "e")):
                 pv = [{"*": False}]
                 for bname, (p, sid) in fp_bones.items():
+                    if bname not in cnames:
+                        continue
                     hand = FP_RIGHT if root_of.get(p.i) == "rightArm" else FP_LEFT
                     if sid is None:
                         pv.append({bname: f"{vis_expr(p)} && {hand}"})
@@ -444,8 +495,10 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                     own = sets[sid][key] if 0 <= sid < len(sets) else None
                     dflt = 1 if own == f["i"] else 0
                     pv.append({bname: f"{vis_expr(p)} && {hand} && ((v.fb{p.i}{var} ?? -1) < 0 ? {dflt} : (v.fb{p.i}{var} == {f['i']}))"})
-                fp_controllers[f"controller.render.player.figura_fp_{kind}{f['i']}"] = {
-                    "geometry": "Geometry.figura", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
+                if len(pv) == 1:
+                    continue
+                fp_controllers[f"controller.render.player.figura_fp_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
+                    "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
                     "part_visibility": pv}
         controllers.update(fp_controllers)
 
@@ -480,7 +533,8 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
 
     ent = json.loads((vanilla_rp / "entity/player.entity.json").read_text(encoding="utf-8"))
     desc = ent["minecraft:client_entity"]["description"]
-    desc["geometry"]["figura"] = geo_id
+    for k, gid in enumerate(geo_ids):
+        desc["geometry"][f"figura{k or ''}"] = gid
     desc["materials"]["fbd"] = "entity_alphablend"
     desc["materials"]["fbe"] = "entity_emissive_alpha"
     for f in rc_files:
@@ -514,7 +568,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     rig = {
         "avatar": meta_name, "slug": slug, "figuraVersion": fn.FIGURA_VERSION,
         "nbt": "avatar/figura_avatar.json",
-        "geometry": {"identifier": geo_id, "textureWidth": geo_w, "textureHeight": geo_h},
+        "geometry": {"identifier": geo_ids[0], "chunks": geo_ids, "textureWidth": geo_w, "textureHeight": geo_h},
         "skeleton": [n for n, _, _ in SKELETON],
         "parts": [],
         "textureFiles": [{k: v for k, v in f.items() if k != "_data"} for f in files],

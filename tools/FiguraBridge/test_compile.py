@@ -21,6 +21,8 @@ AVATARS = {
     "stick": Path("/home/claude/untrusted/stick"),
     "StrawberryMiku": Path("/home/claude/untrusted/avatars/StrawberryMiku"),
     "FiguraAvatarTemplate": Path("/home/claude/untrusted/avatars/FiguraAvatarTemplate"),
+    "CatMaid": Path("/home/claude/untrusted/avatars/CatMaid"),
+    "SenkoSan": Path("/home/claude/untrusted/avatars/SenkoSan"),
 }
 KNOWN_ELEMENTS = ("cube", "mesh", "locator", "null_object")
 
@@ -65,7 +67,7 @@ def check(name: str, src: Path, out: Path, vanilla: Path) -> tuple[dict, list]:
     nbt = json.loads((out / "avatar/figura_avatar.json").read_text(encoding="utf-8"))
     rig = json.loads((out / "rig.json").read_text(encoding="utf-8"))
     geo_file = next((out / "rp/models/entity").glob("*.geo.json"))
-    geo = json.loads(geo_file.read_text())["minecraft:geometry"][0]
+    geos = json.loads(geo_file.read_text())["minecraft:geometry"]
     rcs = json.loads((out / "rp/render_controllers/figura_player.render_controllers.json").read_text())["render_controllers"]
     ent = json.loads((out / "rp/entity/player.entity.json").read_text())["minecraft:client_entity"]["description"]
 
@@ -138,14 +140,29 @@ def check(name: str, src: Path, out: Path, vanilla: Path) -> tuple[dict, list]:
             if s[t] is not None and not 0 <= s[t] < len(rig["textureFiles"]):
                 errs.append(f"set {s['i']} {t} -> bad file index")
 
-    # geometry: unique names, parents exist, part bones present
-    names = [b["name"] for b in geo["bones"]]
-    nameset = set(names)
-    if len(nameset) != len(names):
-        errs.append("duplicate bone names")
+    # geometry chunks: each <= BONE_LIMIT bones, unique names, parents exist in the same chunk
+    nameset, chunk_sets = set(), []
+    for g in geos:
+        names = [b["name"] for b in g["bones"]]
+        cs = set(names)
+        chunk_sets.append(cs)
+        nameset |= cs
+        if len(cs) != len(names):
+            errs.append(f"{g['description']['identifier']}: duplicate bone names")
+        if len(names) > fbc.BONE_LIMIT:
+            errs.append(f"{g['description']['identifier']}: {len(names)} bones > {fbc.BONE_LIMIT}")
+        for b in g["bones"]:
+            if "parent" in b and b["parent"] not in cs:
+                errs.append(f"bone {b['name']} parent {b['parent']} missing in its chunk")
+    seen = set()
+    for g in geos:
+        for b in g["bones"]:
+            if b["name"] in seen and (b.get("cubes") or b.get("poly_mesh")):
+                errs.append(f"geometry bone {b['name']} in two chunks")
+            if b.get("cubes") or b.get("poly_mesh"):
+                seen.add(b["name"])
+    geo = {"bones": [b for g in geos for b in g["bones"]]}
     for b in geo["bones"]:
-        if "parent" in b and b["parent"] not in nameset:
-            errs.append(f"bone {b['name']} parent {b['parent']} missing")
         if "rotation" in b:
             errs.append(f"bone {b['name']} has a bind rotation")
         for c in b.get("cubes", []):
@@ -157,8 +174,6 @@ def check(name: str, src: Path, out: Path, vanilla: Path) -> tuple[dict, list]:
                 if len(poly) != 4 or any(v[0] >= len(pm["positions"]) or v[2] >= len(pm["uvs"]) for v in poly):
                     errs.append(f"bad poly in {b['name']}")
     for p in rig["parts"]:
-        if p["bone"] not in nameset:
-            errs.append(f"part bone {p['bone']} missing")
         for s in p.get("subs", []):
             if s["bone"] not in nameset:
                 errs.append(f"sub bone {s['bone']} missing")
@@ -168,10 +183,12 @@ def check(name: str, src: Path, out: Path, vanilla: Path) -> tuple[dict, list]:
     # render controllers: bones exist, textures declared, all controllers referenced by the entity
     ent_rcs = {next(iter(r)) if isinstance(r, dict) else r for r in ent["render_controllers"]}
     for k, rc in rcs.items():
+        gk = rc["geometry"].split(".", 1)[1]
+        cidx = int(gk[len("figura"):] or 0)
         for entry in rc["part_visibility"]:
             for b in entry:
-                if b != "*" and b not in nameset:
-                    errs.append(f"{k}: bone {b} not in geometry")
+                if b != "*" and b not in chunk_sets[cidx]:
+                    errs.append(f"{k}: bone {b} not in its geometry chunk")
         tex_key = rc["textures"][0].split(".", 1)[1]
         if tex_key not in ent["textures"]:
             errs.append(f"{k}: texture {tex_key} not in entity")

@@ -9,7 +9,9 @@ const path = require('path');
 const [dir, simPath, out, pick, colsArg] = process.argv.slice(2);
 const rig = JSON.parse(fs.readFileSync(path.join(dir, 'rig.json')));
 const geoFile = fs.readdirSync(path.join(dir, 'rp/models/entity'))[0];
-const geo = JSON.parse(fs.readFileSync(path.join(dir, 'rp/models/entity', geoFile)))['minecraft:geometry'][0];
+const geos = JSON.parse(fs.readFileSync(path.join(dir, 'rp/models/entity', geoFile)))['minecraft:geometry'];
+const geo = geos[0];   // big avatars are split into chunks (same bone names): merge them back into one bone list
+{ const seen = new Set(geo.bones.map(b => b.name)); for (const g of geos.slice(1)) for (const b of g.bones) if (!seen.has(b.name)) { seen.add(b.name); geo.bones.push(b); } }
 const sim = JSON.parse(fs.readFileSync(simPath));
 const frames = pick ? pick.split(',').map(Number).map(i => sim.frames[Math.min(i, sim.frames.length - 1)]) : sim.frames.slice(0, 8);
 // texel colours
