@@ -4869,6 +4869,9 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
             }
             if (!worldQuad4(cam, b, wp, q)) continue;
             keyed(q, L, opacity, src.snap);
+            // a cube face samples only the inside of the icon's hexagon: nothing of the slot ground is in it, and keying
+            // the ground colour away punched holes in grey blocks (stone, cobblestone, andesite...)
+            q.mode[2] = 0.0f;
             if (src.dim) { q.occl[3] = 1; q.mode[1] = 0; } // no slot ground to key away, the white of a blade stays
             if (src.count) { // the digits and the shadow one pixel past them
                 float px = 1.0f / 16.0f;
