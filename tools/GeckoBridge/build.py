@@ -108,6 +108,31 @@ OVERLAYS = HERE.parent / "ModPorter" / "overlays"
 VISUAL_DIRS = ("entity", "render_controllers", "animation_controllers", "animations", "models")
 
 
+PAINTING_JS = r"""// GeckoBridge: the mod's painting variants as wall entities (Bedrock has no custom painting variants)
+import { world, system, GameMode } from "@minecraft/server";
+const ITEMS = __ITEMS__;   // item/entity id -> [width, height] in blocks
+const YAW = { North: 180, South: 0, East: -90, West: 90 };
+const N = { North: [0, 0, -1], South: [0, 0, 1], East: [1, 0, 0], West: [-1, 0, 0] };
+world.beforeEvents.itemUseOn.subscribe((ev) => {
+  const id = ev.itemStack?.typeId; if (!ITEMS[id] || !N[ev.blockFace]) return;
+  ev.cancel = true;
+  const [w, h] = ITEMS[id], n = N[ev.blockFace], b = ev.block.location, p = ev.source;
+  system.run(() => {
+    try {
+      // centre of the painting on the wall face: odd sizes centre on the block, even sizes on the block edge
+      const ox = (w % 2 === 0 ? 0.5 : 0) * (n[2] !== 0 ? 1 : 0), oz = (w % 2 === 0 ? 0.5 : 0) * (n[0] !== 0 ? 1 : 0);
+      const loc = { x: b.x + 0.5 + n[0] * 0.53 + ox, y: b.y - Math.floor((h - 1) / 2), z: b.z + 0.5 + n[2] * 0.53 + oz };
+      const e = ev.block.dimension.spawnEntity(id, loc);
+      e.setRotation({ x: 0, y: YAW[ev.blockFace] });
+      if (p.getGameMode?.() !== GameMode.Creative && p.getGameMode?.() !== "Creative") {
+        const inv = p.getComponent("inventory")?.container, slot = p.selectedSlotIndex, it = inv?.getItem(slot);
+        if (it) { if (it.amount > 1) { it.amount -= 1; inv.setItem(slot, it); } else inv.setItem(slot, undefined); }
+      }
+    } catch (e) { console.warn("[GeckoBridge] painting: " + e); }
+  });
+});
+"""
+
 class Build:
     def __init__(self, jar, out, name=None, tol=None):
         self.jar = jar; self.z = zipfile.ZipFile(jar); self.names = set(self.z.namelist()); self.out = Path(out)
@@ -802,6 +827,81 @@ class Build:
         if ids: self.report["particles"] = ids
         return ids
 
+    def paintings(self):
+        """Mod painting variants (PaintingVariant(w, h) registered under a name, texture painting/<name>.png).
+        Bedrock has no custom painting variants, so each becomes a flat wall entity + an item that hangs it
+        (script: item used on a block face -> entity on that face, facing out; hitting it drops the item)."""
+        import subprocess, tempfile
+        classes = [n for n in self.names if n.endswith(".class") and b"PaintingVariant" in self.z.read(n) and b"DeferredRegister" in self.z.read(n)]
+        if not classes: return False
+        tmp = tempfile.mkdtemp(prefix="gb_paint_")
+        for n in classes: self.z.extract(n, tmp)
+        sys.path.insert(0, str(HERE.parent / "JavaBridge")); import jvm2js as J
+        variants = []
+        for n in classes:
+            info = J.ClassInfo(n[:-6], J.javap(Path(tmp), [n[:-6].replace("/", ".")]))
+            sizes = {}
+            for key, m in info.methods.items():
+                ints = [int(r.split()[0]) for _, op, r in m["code"] if op in ("bipush", "sipush")] + \
+                       [int(op.split("_")[1]) for _, op, r in m["code"] if op.startswith("iconst_") and op[-1].isdigit()]
+                if key.startswith("lambda$") and any("PaintingVariant" in r for _, _, r in m["code"]) and len(ints) >= 2:
+                    sizes[key.split("(")[0]] = (ints[0], ints[1])
+            clinit = info.methods.get("<clinit>()V", {"code": []})["code"]
+            last = None
+            for _, op, r in clinit:
+                sm = re.search(r"// String (\w+)", r)
+                if op.startswith("ldc") and sm: last = sm.group(1)
+                if op == "invokedynamic" and last:
+                    bm = re.search(r"InvokeDynamic #(\d+):", r); b = info.boot.get(int(bm.group(1)), {}) if bm else {}
+                    t = b.get("target")
+                    if t and t[1] in sizes and f"assets/{self.modid}/textures/painting/{last}.png" in self.names:
+                        variants.append((last, *sizes[t[1]]))
+                    last = None
+        if not variants: return False
+        items, js = {}, []
+        for name, w, h in variants:
+            eid = f"painting_{name}"; full = f"{self.ns}:{eid}"
+            src = f"assets/{self.modid}/textures/painting/{name}.png"
+            tex = f"textures/entity/{GB}/{self.ns}/painting/{name}"
+            self.write(self.rp, tex + ".png", self.z.read(src))
+            import struct as _st
+            tw, th = _st.unpack(">II", self.z.read(src)[16:24])
+            gid = f"geometry.{GB}.{self.ns}.painting_{w}x{h}_{tw}x{th}"
+            front = {"uv": [0, 0], "uv_size": [tw, th]}
+            edge = {"uv": [0, 0], "uv_size": [1, 1]}
+            self.write(self.rp, f"models/entity/{self.ns}/painting_{w}x{h}_{tw}x{th}.geo.json", {"format_version": "1.12.0", "minecraft:geometry": [{
+                "description": {"identifier": gid, "texture_width": tw, "texture_height": th,
+                                "visible_bounds_width": max(w, h) / 16 + 1, "visible_bounds_height": max(w, h) / 16 + 1, "visible_bounds_offset": [0, h / 32, 0]},
+                "bones": [{"name": "painting", "pivot": [0, 0, 0], "cubes": [{"origin": [-w / 2, 0, -1], "size": [w, h, 1],
+                    "uv": {"south": front, "north": edge, "east": edge, "west": edge, "up": edge, "down": edge}}]}]}]})
+            rc = f"controller.render.{GB}.{self.ns}.painting"
+            self.write(self.rp, f"render_controllers/{self.ns}.painting.rc.json", {"format_version": "1.8.0", "render_controllers": {
+                rc: {"geometry": "Geometry.default", "materials": [{"*": "Material.default"}], "textures": ["Texture.default"]}}})
+            self.write(self.rp, f"entity/{self.ns}/{eid}.entity.json", {"format_version": "1.10.0", "minecraft:client_entity": {"description": {
+                "identifier": full, "materials": {"default": "entity_alphatest"}, "textures": {"default": tex},
+                "geometry": {"default": gid}, "render_controllers": [rc]}}})
+            self.write(self.bp, f"entities/{self.ns}/{eid}.json", {"format_version": "1.21.0", "minecraft:entity": {
+                "description": {"identifier": full, "is_spawnable": False, "is_summonable": True, "is_experimental": False},
+                "components": {
+                    "minecraft:type_family": {"family": ["painting", "inanimate", self.ns]},
+                    "minecraft:health": {"value": 1, "max": 1}, "minecraft:collision_box": {"width": min(w, h) / 16, "height": h / 16},
+                    "minecraft:physics": {"has_gravity": False, "has_collision": False}, "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": False},
+                    "minecraft:knockback_resistance": {"value": 1}, "minecraft:body_rotation_blocked": {},
+                    "minecraft:damage_sensor": {"triggers": [{"cause": "all", "deals_damage": "yes"}]},
+                    "minecraft:loot": {"table": f"loot_tables/{self.ns}/paintings/{name}.json"},
+                    "minecraft:persistent": {}, "minecraft:fire_immune": True}}})
+            self.write(self.bp, f"loot_tables/{self.ns}/paintings/{name}.json", {"pools": [{"rolls": 1, "entries": [{"type": "item", "name": full, "weight": 1}]}]})
+            self.write(self.bp, f"items/{self.ns}/{eid}.json", {"format_version": "1.21.60", "minecraft:item": {
+                "description": {"identifier": full, "menu_category": {"category": "items"}},
+                "components": {"minecraft:icon": f"{self.ns}_{eid}", "minecraft:max_stack_size": 64}}})
+            self.item_tex[f"{self.ns}_{eid}"] = {"textures": tex}
+            nice = " ".join(x.capitalize() for x in name.split("_"))
+            self.lang += [f"entity.{full}.name=Painting: {nice}", f"item.{full}=Painting: {nice}"]
+            items[full] = [w / 16, h / 16]
+        self.write(self.bp, "scripts/paintings.js", PAINTING_JS.replace("__ITEMS__", json.dumps(items)))
+        self.report["paintings"] = len(variants)
+        return True
+
     def egg_colors(self):
         """ForgeSpawnEggItem(type, background, highlight, props) in the mod's item registry -> Bedrock spawn_egg colours,
         keyed by the entity registry field (e.g. COMPLIANCE_ANGEL)."""
@@ -1181,7 +1281,11 @@ class Build:
             d["texture_data"].update(self.terrain); self.write(self.rp, "textures/terrain_texture.json", d)
         if self.sound_defs: self.write(self.rp, "sounds/sound_definitions.json", {"format_version": "1.14.0", "sound_definitions": self.sound_defs})
         if self.ent_sounds: self.write(self.rp, "sounds.json", {"entity_sounds": {"entities": self.ent_sounds}})
-        if self.item_tex: self.write(self.rp, "textures/item_texture.json", {"resource_pack_name": self.title, "texture_name": "atlas.items", "texture_data": self.item_tex})
+        pj = self.paintings() if self.override.get("paintings", True) else False
+        if self.item_tex:
+            it = self.rp / "textures/item_texture.json"
+            d = json.loads(it.read_text()) if it.exists() else {"resource_pack_name": self.title, "texture_name": "atlas.items", "texture_data": {}}
+            d["texture_data"].update(self.item_tex); self.write(self.rp, "textures/item_texture.json", d)
         kv = {}
         for l in self.lang:
             if "=" in l: kv[l.split("=", 1)[0]] = l.split("=", 1)[1]
@@ -1199,9 +1303,10 @@ class Build:
         use_script = (bool(self.js["entities"]) and any(c["props"] or c["triggers"] for c in self.js["entities"].values())) or bool(self.js.get("blocks"))
         ov_main = (self.bp / "scripts" / "overlay" / "main.js").exists()
         wg = getattr(self, "worldgen_script", False)
-        if use_script or ov_main or wg or getattr(self, "javabridge_on", False):
+        if use_script or ov_main or wg or pj or getattr(self, "javabridge_on", False):
             body = runtime.script(self.js) if use_script else "// GeckoBridge: overlay only\n"
             if wg: body = 'import "./worldgen.js";   // ModPorter dimensions + structure world generator\n' + body
+            if pj: body = 'import "./paintings.js";   // mod painting variants as wall entities\n' + body
             if getattr(self, "javabridge_on", False): body = body + '\nimport "./javabridge/main.js";   // the mod\'s own code (JavaBridge)\n'
             if ov_main: body = 'import "./overlay/main.js";   // ModPorter behaviour overlay (our own code)\n' + body
             self.write(self.bp, "scripts/gb_runtime.js", body); use_script = True

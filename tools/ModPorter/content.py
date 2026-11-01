@@ -497,6 +497,19 @@ class Content:
             elif rel.startswith("sounds/") and rel.endswith(".ogg"):
                 if vsnd and rel[:-4] not in vsnd: skipped["sounds"] = skipped.get("sounds", 0) + 1; continue
                 self.write(self.rp, rel, self.z.read(n)); n_snd += 1
+            elif rel == "shaders/include/fog.glsl":
+                # Java core-shader fog tweak (fogStart *= k): same change on every Bedrock fog definition
+                m_ = re.search(r"fogStart\s*\*=\s*([\d.]+)", self.z.read(n).decode("utf-8", "replace"))
+                if m_ and (vd / "fogs").is_dir():
+                    k = float(m_.group(1)); nf = 0
+                    for f in sorted((vd / "fogs").glob("*.json")):
+                        d = json.loads(f.read_text())
+                        for media, v in (d.get("minecraft:fog_settings", {}).get("distance") or {}).items():
+                            if media in ("air", "weather") and isinstance(v.get("fog_start"), (int, float)):
+                                v["fog_start"] = round(v["fog_start"] * k, 4)
+                        self.write(self.rp, f"fogs/{f.name}", d); nf += 1
+                    self.rep["fog_shader"] = {"fogStart_factor": k, "fogs": nf}
+                    self.fog_factor = k
             elif rel == "texts/splashes.txt":
                 lines = [l for l in self.z.read(n).decode("utf-8", "replace").splitlines() if l.strip()]
                 self.write(self.rp, "splashes.json", {"splashes": lines})
