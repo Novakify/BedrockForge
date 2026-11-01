@@ -479,8 +479,20 @@ void wheelFrame(State& s, bedrock_forge::client::Frame& f) {
         s.wheelExecDone = true;
         runWheelAction(s, n, false);
     }
-    bool bDown = gameFocused() && (GetAsyncKeyState('B') & 0x8000);
-    if (bDown && !s.bWasDown) s.wheelHeld = !s.wheelHeld; // tap B: open / close (hold-to-open is awkward on Bedrock)
+    // Figura's default is B, but B opens Bedrock's emote wheel, so the toggle key defaults to Z
+    // (tuning "wheelKey" = a Windows virtual-key code, e.g. 66 for B)
+    int  wheelKey = int(s.avatar->tune("wheelKey", 'Z'));
+    bool bDown    = gameFocused() && (GetAsyncKeyState(wheelKey) & 0x8000);
+    if (bDown && !s.bWasDown) {
+        s.wheelHeld = !s.wheelHeld; // tap: open / close (hold-to-open is awkward on Bedrock)
+        lua_State* WL = s.avatar->L;  // action_wheel:isEnabled() follows the wheel
+        lua_getfield(WL, LUA_REGISTRYINDEX, "fb.wheelState");
+        if (lua_isfunction(WL, -1)) {
+            lua_pushboolean(WL, s.wheelHeld);
+            lua_pushinteger(WL, 0);
+            if (lua_pcall(WL, 2, 0, 0) != 0) lua_pop(WL, 1);
+        } else lua_pop(WL, 1);
+    }
     s.bWasDown = bDown;
     if (!s.wheelHeld) return;
     lua_State* L = s.avatar->L;
@@ -492,7 +504,7 @@ void wheelFrame(State& s, bedrock_forge::client::Frame& f) {
     }
     lua_getfield(L, -1, "title");
     f.infoLines.push_back(std::string("Action wheel: ") + (lua_isstring(L, -1) ? lua_tostring(L, -1) : "") +
-                          "  (1-8 = click, Shift = right click, B = close)");
+                          "  (1-8 = click, Shift = right click, Z = close)");
     lua_pop(L, 1);
     int n = int(lua_rawlen(L, -1));
     for (int i = 1; i <= n && i <= 8; i++) {
