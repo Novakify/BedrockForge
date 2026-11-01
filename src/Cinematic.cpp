@@ -3436,6 +3436,13 @@ float4 PS(V2P i) : SV_Target {
     if (occl.w > 0.5 && u.a < 0.85 && max(u.r, max(u.g, u.b)) < 0.06) u = 0;
     // occl.z: the dark marks in a box (uv, hull[1]) are painted over in key0 (the book window's close button on its page)
     if (occl.z > 0.5 && all(i.uv >= hull[1].xy) && all(i.uv <= hull[1].zw) && max(u.r, max(u.g, u.b)) < 0.35 * max(u.a, 1e-3)) u = float4(key0.rgb, 1);
+    // mode.z < 0: a block cube's face - only the inside of the icon's hexagon is sampled, so it is solid. The game's UI
+    // pass does not always leave the icon's alpha whole (Vibrant Visuals' 3D item icons): holes showed the world through
+    if (mode.z < -0.5) {
+        if (u.a < 0.004 && max(u.r, max(u.g, u.b)) < 0.004) discard; // keyed away (count digits) or nothing drawn
+        // over the slot's opaque ground the colour is already the finished blend: only the alpha is off
+        return float4(u.rgb * color.rgb, 1) * color.a * mode.w;
+    }
     return float4(u.rgb * color.rgb, u.a) * color.a * mode.w;
 }
 )";
@@ -4871,7 +4878,7 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
             keyed(q, L, opacity, src.snap);
             // a cube face samples only the inside of the icon's hexagon: nothing of the slot ground is in it, and keying
             // the ground colour away punched holes in grey blocks (stone, cobblestone, andesite...)
-            q.mode[2] = 0.0f;
+            q.mode[2] = -1.0f; // no ground key, solid (see the shader)
             if (src.dim) { q.occl[3] = 1; q.mode[1] = 0; } // no slot ground to key away, the white of a blade stays
             if (src.count) { // the digits and the shadow one pixel past them
                 float px = 1.0f / 16.0f;
