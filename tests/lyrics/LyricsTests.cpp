@@ -20,6 +20,7 @@
 #include "lyrics/core/Json.h"
 #include "lyrics/core/Lyrics.h"
 #include "lyrics/core/Media.h"
+#include "lyrics/core/Beat.h"
 #include "lyrics/core/Palette.h"
 #include "lyrics/core/Physics.h"
 #include "lyrics/core/Scene.h"
@@ -1266,6 +1267,36 @@ TEST(cover_accent_and_player_styles) { // [BF]
         CHECK(PanelRig::has(r.click(98, 207), PanelAction::Kind::PlayPause)); // the controls still sit where they did
         CHECK(PanelRig::has(r.click(126, 207), PanelAction::Kind::Next));
     }
+}
+
+TEST(bass_hits_only_when_loud) { // [BF] Neon pulse / beat effects
+    auto run = [](float kickAmp, float padAmp, int& hits, float& peak) {
+        BeatDetector d(48000);
+        std::vector<float> buf(480);
+        peak = 0;
+        double ph = 0;
+        for (int blk = 0; blk < 800; ++blk) { // 8 s, 120 bpm kicks (every 50 blocks), a steady pad underneath
+            for (int i = 0; i < 480; ++i) {
+                int    s   = blk * 480 + i;
+                double tk  = double(s % 24000) / 48000.0; // time since the last kick
+                double env = std::exp(-tk / 0.09);
+                ph += 2 * 3.14159265 * (55.0 + 60.0 * std::exp(-tk / 0.03)) / 48000.0; // kick: pitch drop 115 -> 55 Hz
+                buf[size_t(i)] = float(kickAmp * env * std::sin(ph) + padAmp * std::sin(2 * 3.14159265 * 440.0 * s / 48000.0));
+            }
+            d.feed(buf.data(), buf.size());
+            peak = std::max(peak, d.level(0.01f));
+        }
+        hits = d.hits();
+    };
+    int   h;
+    float pk;
+    run(0.6f, 0.1f, h, pk); // loud kicks
+    CHECK(h >= 12 && h <= 17);
+    CHECK(pk > 0.6f);
+    run(0.02f, 0.1f, h, pk); // quiet song: no thump
+    CHECK_EQ(h, 0);
+    run(0.0f, 0.5f, h, pk); // loud but no bass (a lead / vocals): no thump
+    CHECK_EQ(h, 0);
 }
 
 int main(int argc, char** argv) {

@@ -94,6 +94,8 @@ struct State {
     // cover art: written by the media thread, picked up by the HUD frame (atlas list + panel asset)
     std::string                   coverPath, coverShown;
     uint32_t                      coverAccent = 0; // [BF] vivid colour of the cover (Neon player)
+    float                         bass = 0;        // [BF] bass hit level this frame (Audio_win.cpp)
+    bool                          bassLive = false;
     int64_t                       coverSeq = -1;
     int                           coverTries = 0;
     // live sky (LyricsFlow 2.1 WorldSky): published every HUD frame for RF (BF_CopySkyFrame)
@@ -423,6 +425,11 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     float   dt  = gS->lastFrameNs ? float(double(now - gS->lastFrameNs) / 1e9) : 1.0f / 60.0f;
     gS->lastFrameNs = now;
     dt              = std::clamp(dt, 0.0f, 0.1f);
+    { // [BF] bass hits: only listen while something uses them
+        auto const& c = gS->engine.config();
+        bassWanted(c.playerStyle == 2 || c.beatGlow || c.fxBeatShake);
+        gS->bass = bassLevel(dt, &gS->bassLive);
+    }
 
     Actor&      a = *f.player;
     auto        feet = a.getFeetPos();
@@ -446,6 +453,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     in.artist      = gS->clock.hasTrack() ? gS->clock.track().s.artist : std::string();
     in.guiW        = f.width;
     in.guiH        = f.height;
+    in.beat        = gS->bassLive ? gS->bass : 0.0f;
+    in.beatLive    = gS->bassLive;
     { // Combat Safe: full right after a hit, easing out over combatHoldMs
         int64_t since = now / 1000000 - gCombatAtMs.load();
         int     hold  = std::max(1, gS->engine.config().combatHoldMs);
@@ -527,6 +536,8 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
         in.look  = lookOf(gS->camYaw, gS->camPitch);
         in.up    = upOf(gS->camYaw, gS->camPitch);
         in.nowMs = ms;
+        in.beat     = gS->bass;
+        in.beatLive = gS->bassLive;
         in.dt    = gS->panelStepNs ? std::clamp(float(double(now - gS->panelStepNs) / 1e9), 0.0f, 0.1f) : 1.0f / 60.0f;
         in.click = host::click.exchange(false);
         in.perfLevel = gS->engine.perf().level();
@@ -621,6 +632,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     };
     m.onToggle = [](bool on) {
         gS->moduleOn = on;
+        if (!on) bassWanted(false);
         if (!on) {
             std::lock_guard l(gS->mutex);
             if (gS->panel.isOpen()) gS->panel.close(nowMsWall());
@@ -633,6 +645,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     // Keys: LyricsFlow's K / J are taken by BF (impact frames / HUD), so only on/off + per-song offset for now.
     gS->running = true;
     gS->media   = std::thread(mediaLoop);
+    bassStart(); // idles (device closed) until the Neon player / beat effects want it
 }
 
 void noteCombat() {
@@ -644,6 +657,7 @@ void uninstall() {
     host::subs.clear();
     gS->running = false;
     if (gS->media.joinable()) gS->media.join();
+    bassStop();
     {
         std::lock_guard l(gS->mutex);
         saveConfig();

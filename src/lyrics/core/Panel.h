@@ -54,6 +54,8 @@ struct PanelInput {
     bool    click = false;     // attack button went down this frame
     bool    down  = false;     // attack button held (slider drag, [BF])
     int64_t nowMs = 0;         // wall clock in ms (animations)
+    float   beat  = 0;         // [BF] bass hits from the PC's audio, 0..1 (Neon player pulse)
+    bool    beatLive = false;  // [BF] that feed is running
     float   dt    = 1.0f / 60; // seconds
     // performance status for the FPS page
     int     perfLevel = 0, fps = 0;

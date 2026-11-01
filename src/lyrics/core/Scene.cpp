@@ -734,7 +734,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
     float const   glowBase = c.glow ? 0.65f : 0.0f;
     float const   beat     = c.beatGlow ? in.beat : 0.0f;
     float         shake    = in.beat; // [BF] "shake on the beat": the beat source, else a kick on every sung word
-    if (c.fxBeatShake && shake <= 0.0f)
+    if (c.fxBeatShake && !in.beatLive && shake <= 0.0f)
         for (auto const& p : mVisible)
             for (int j = 0; j < p.n(); ++j) {
                 int64_t d = t - p.line.words[size_t(p.w0 + j)].start;

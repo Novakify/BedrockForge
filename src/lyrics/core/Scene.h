@@ -66,7 +66,8 @@ struct SceneInput {
     float              dt = 1.0f / 60.0f;
     double             nowSeconds = 0; // wall clock for bobbing
     float              focusA = 1.0f;  // Hud.focusA (dims while a menu is open)
-    float              beat = 0.0f;    // Hud.beat (beatGlow)
+    float              beat = 0.0f;    // Hud.beat (beatGlow); [BF] bass hits from the PC's audio (0..1)
+    bool               beatLive = false; // [BF] the audio feed is running (beat is real, not just 0)
     float              combat = 0.0f;  // [BF] 0..1, raised by hits (combat-safe)
     std::string        title, artist;  // now playing (top bar)
     float              guiW = 427.0f, guiH = 240.0f; // UI size in GUI units (Bedrock ScreenView size)

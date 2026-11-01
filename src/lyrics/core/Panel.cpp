@@ -467,7 +467,8 @@ void Panel::player(Ctx& c, PanelMedia const& np, int style) {
         float dh = std::fabs(hueOf(acc) - hueOf(pink));
         if (std::min(dh, 360.0f - dh) < 45.0f) { pink = 0x2E7BFF; pinkC = 0xD2E4FF; }
     }
-    float const    pulse = np.playing ? float(std::exp(-std::fmod(t, 0.78) / 0.16)) : 0.25f; // ~77 bpm thump
+    // the cover frame thumps on hard bass / loud hits only (PC audio); without that feed it just glows steadily
+    float const    pulse = c.in.beatLive ? 0.2f + 0.8f * clamp01(c.in.beat) : 0.35f;
     float const    cs = 124, cx = -cs / 2, cy = -86;
 
     // ---- card

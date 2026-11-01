@@ -44,6 +44,13 @@ private:
 /// worker thread (WinRT BitmapDecoder).
 std::vector<uint8_t> decodeSmallRgba(std::vector<uint8_t> const& bytes, uint32_t size);
 
+/// [BF] Bass hits from what the PC is playing (WASAPI loopback, Audio_win.cpp). bassWanted(false) closes the device.
+void  bassStart();
+void  bassStop();
+void  bassWanted(bool on);
+/// 0..1, 1 on a hard bass hit, decaying; *live = audio is coming in right now.
+float bassLevel(float dt, bool* live);
+
 /// Called from Core::enable(): registers the "lyricsflow" module (off by default), keybinds and threads.
 /// modDir = mods/BedrockForgeCore (fonts under resources/lyricsflow/fonts), configDir = its config folder.
 void install(std::filesystem::path const& modDir, std::filesystem::path const& configDir);
