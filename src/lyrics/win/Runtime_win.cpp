@@ -640,7 +640,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     gS->spritesFile = (modDir / "resources" / "lyricsflow" / "sky" / "sprites.png").string();
     installPanelHost();
 
-    auto& m = bedrock_forge::client::Registry::get().add("lyricsflow", "LyricsFlow", bedrock_forge::client::Category::Visual,
+    auto& m = bedrock_forge::client::Registry::get().add("lyricsflow", "LyricsForge", bedrock_forge::client::Category::Visual,
                                                          "Synced song lyrics in the world (port of LyricsFlow by 374m) - PREVIEW, untested in game");
     m.hud      = [](bedrock_forge::client::Frame& f) {
         hudFrame(f);

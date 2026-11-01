@@ -517,7 +517,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     Scroller sc(f, w, a);
     if (m->id == "lyricsflow") {
         if (sc.fits(50)) {
-            row(f, x, sc.y, wd, 50, "Open the LyricsFlow panel", "The glass settings panel in the world (also: L in game)", a);
+            row(f, x, sc.y, wd, 50, "Open the LyricsForge panel", "The glass settings panel in the world (also: L in game)", a);
             f.g.icon("music", x + wd - 30, sc.y + 25, 20, rgba(kWhite, 1), a);
             f.hits.push_back({x, sc.y, wd, 50, [](bool) { lyr::win::requestPanel(); closeMenu(); }});
         }
@@ -611,8 +611,8 @@ void drawClient(UiFrame& f, Win const& w, float a) {
 void drawLyrics(UiFrame& f, Win const& w, float a) {
     auto* m = Registry::get().find("lyricsflow");
     float x = w.mainX + 2, y = w.bodyY + 2, wd = w.mainW - 8;
-    if (!m) { f.g.text("LyricsFlow isn't part of this build.", x + 2, y + 12, 13, rgba(kLilac, 0.62f), a); return; }
-    pageHeader(f, x, y - 4, wd, "LyricsFlow", "Synced lyrics in the world - port of LyricsFlow by 374m (personal build)", a, m->enabled ? 1 : 0,
+    if (!m) { f.g.text("LyricsForge isn't part of this build.", x + 2, y + 12, 13, rgba(kLilac, 0.62f), a); return; }
+    pageHeader(f, x, y - 4, wd, "LyricsForge", "Synced lyrics in the world - port of LyricsFlow by 374m (personal build)", a, m->enabled ? 1 : 0,
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
     Scroller sc(f, w, a);
     bool shown = lyr::win::lyricsShown();
@@ -620,7 +620,7 @@ void drawLyrics(UiFrame& f, Win const& w, float a) {
     sc.y += 58;
     if (sc.fits(50)) {
         float ry = sc.y;
-        row(f, x, ry, wd, 50, "Open the LyricsFlow panel", "Fonts, colours, sky, placement, FPS profiles (also: L in game)", a, false);
+        row(f, x, ry, wd, 50, "Open the LyricsForge panel", "Fonts, colours, sky, placement, FPS profiles (also: L in game)", a, false);
         f.g.icon("music", x + wd - 30, ry + 25, 20, rgba(kWhite, 1), a);
         f.hits.push_back({x, ry, wd, 50, [m](bool) {
             if (!m->enabled) Registry::get().setEnabled(*m, true);
@@ -633,7 +633,7 @@ void drawLyrics(UiFrame& f, Win const& w, float a) {
     sc.y += 58;
     if (!m->settings.empty()) {
         if (sc.fits(50)) {
-            row(f, x, sc.y, wd, 50, "More LyricsFlow settings", "Module options", a);
+            row(f, x, sc.y, wd, 50, "More LyricsForge settings", "Module options", a);
             f.hits.push_back({x, sc.y, wd, 50, [](bool) { gModPage = "lyricsflow"; showPage(Page::ModSettings); }});
         }
         sc.y += 58;

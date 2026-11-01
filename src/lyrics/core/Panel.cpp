@@ -54,7 +54,7 @@ std::string fmtTime(int64_t ms) { // WorldPanel.fmt: m:ss
     return b;
 }
 std::string fontName(std::string const& id) {
-    static std::map<std::string, std::string> const names{{"lyricsflow_script", "LyricsFlow"}, {"outfit", "Outfit"}, {"outfit_bold", "Outfit Bold"},
+    static std::map<std::string, std::string> const names{{"lyricsflow_script", "LyricsForge"}, {"outfit", "Outfit"}, {"outfit_bold", "Outfit Bold"},
                                                           {"greatvibes", "Great Vibes"},       {"kaushan", "Kaushan"}, {"dancing", "Dancing"},
                                                           {"pacifico", "Pacifico"},            {"poppins", "Poppins"}, {"minecraft", "Minecraft"},
                                                           // [BF] display fonts (OFL / Apache, Google Fonts)
@@ -680,7 +680,7 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
         c.actions.push_back({PanelAction::Kind::Seek, int64_t(clamp01((mHx - 30) / 136) * float(np.durationMs))});
     }
 
-    c.text("LyricsFlow", 206, 10, 0.85f, WHITE, a);
+    c.text("LyricsForge", 206, 10, 0.85f, WHITE, a); // the panel's name (credit to LyricsFlow by 374m stays in the notices)
     float hc = c.hit("x", 351, 6, 15, 15);
     c.disc(358.5f, 13.5f, 7.5f, lerpRgb(WHITE, CLOSE_R, hc), (0.08f + 0.55f * hc) * a);
     if (!c.image("icon.close", 355.5f, 10.5f, 6, 6, a, WHITE, true)) c.text("x", 355.5f, 10.5f, 0.7f, WHITE, a);
@@ -815,7 +815,7 @@ void Panel::look(Ctx& c, Config& cfg, FontSet const& fonts) {
     c.toggle2("caps", 206, 148, 78, "Capitals", cfg.allCaps, [&] { cfg.allCaps = !cfg.allCaps; }, a);
     c.toggle2("glow", 288, 148, 78, "Glow", cfg.glow, [&] { cfg.glow = !cfg.glow; }, a);
     bool const typed = cfg.enterAnim == EnterAnim::Neon;
-    c.toggle2("typed", 206, 167, 160, "Typed out (LyricsFlow)", typed, [&] { cfg.enterAnim = typed ? EnterAnim::Word : EnterAnim::Neon; }, a);
+    c.toggle2("typed", 206, 167, 160, "Typed out", typed, [&] { cfg.enterAnim = typed ? EnterAnim::Word : EnterAnim::Neon; }, a);
     static char const* const sh[] = {"No shadow", "Soft", "Strong"};
     for (int i = 0; i < 3; ++i)
         c.option("sh" + std::to_string(i), 206 + float(i) * 54, 186, 50, 13, sh[i], cfg.textShadow == i, [&, i] { cfg.textShadow = i; }, a);
