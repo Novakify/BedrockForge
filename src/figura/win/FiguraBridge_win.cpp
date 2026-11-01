@@ -206,6 +206,7 @@ struct BedrockHost final : IHost {
 // ---------------------------------------------------------------- Molang writer
 struct VarNames {
     HashedString rx, ry, rz, px, py, pz, sx, sy, sz, v, t, e;
+    HashedString uu{std::string()}, uv{std::string()}, usu{std::string()}, usv{std::string()}; // only for bones with a uv_anim controller
 };
 struct State {
     std::mutex                    mutex;
@@ -232,12 +233,19 @@ void buildNames(State& s) {
     s.names.clear();
     if (!s.avatar) return;
     int m = s.nameMode < 0 ? 0 : s.nameMode;
-    for (size_t i = 0; i < s.avatar->parts.size(); i++) {
+    for (size_t i = 0; i < s.avatar->out.size(); i++) { // one entry per Bedrock bone (parts + dup bones)
         std::string b = "fb" + std::to_string(i);
         s.names.push_back({HashedString(vn(m, b + "rx")), HashedString(vn(m, b + "ry")), HashedString(vn(m, b + "rz")),
                            HashedString(vn(m, b + "px")), HashedString(vn(m, b + "py")), HashedString(vn(m, b + "pz")),
                            HashedString(vn(m, b + "sx")), HashedString(vn(m, b + "sy")), HashedString(vn(m, b + "sz")),
                            HashedString(vn(m, b + "v")), HashedString(vn(m, b + "t")), HashedString(vn(m, b + "e"))});
+        if (i < s.avatar->uvBones.size() && s.avatar->uvBones[i]) {
+            auto& n = s.names.back();
+            n.uu = HashedString(vn(m, b + "uu"));
+            n.uv = HashedString(vn(m, b + "uv"));
+            n.usu = HashedString(vn(m, b + "usu"));
+            n.usv = HashedString(vn(m, b + "usv"));
+        }
     }
     s.van = std::make_unique<HashedString>(vn(m, "fbvan"));
 }
@@ -277,6 +285,12 @@ void writeVars(State& s, Actor& a) {
         set(n.v, o.visible && o.opacity > 0.001f ? 1.0 : 0.0);
         set(n.t, o.primary);
         set(n.e, o.secondary);
+        if (i < s.avatar->uvBones.size() && s.avatar->uvBones[i]) {
+            set(n.uu, o.uv[0]);
+            set(n.uv, o.uv[1]);
+            set(n.usu, o.uv[2]);
+            set(n.usv, o.uv[3]);
+        }
     }
     bool vanillaShown = true;
     if (auto it = s.avatar->vanillaVisible.find("PLAYER"); it != s.avatar->vanillaVisible.end()) vanillaShown = it->second;

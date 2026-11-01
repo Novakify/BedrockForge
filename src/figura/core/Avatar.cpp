@@ -116,6 +116,12 @@ bool Avatar::load(std::filesystem::path const& bundleDir, std::filesystem::path 
     boneModel.resize(boneParent.size());
     boneWorld.resize(boneParent.size());
     boneClaimed.assign(boneParent.size(), 0);
+    uvBones.assign(boneParent.size(), 0);
+    if (rig && (*rig)["uvParts"].isArray())
+        for (auto const& u : (*rig)["uvParts"].items()) {
+            int i = int(u.asNumber());
+            if (i >= 0 && i < int(uvBones.size())) uvBones[size_t(i)] = 1;
+        }
     if (!initLua(err)) return false;
     loaded = true;
     initScripts();
@@ -689,8 +695,19 @@ void Avatar::solveBones() {
     }
 }
 
-void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat, bool separate) {
+void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat, bool separate,
+                      double const* parentUV) {
     if (p->removed) return;
+    // PartCustomizationStack: a part's UV matrix applies on top of its parent's (row-major 3x3, texture fractions)
+    double uvm[9];
+    if (parentUV) {
+        for (int r = 0; r < 3; r++)
+            for (int c = 0; c < 3; c++) {
+                double v = 0;
+                for (int k = 0; k < 3; k++) v += parentUV[r * 3 + k] * p->uvMatrix[k * 3 + c];
+                uvm[r * 3 + c] = v;
+            }
+    } else std::memcpy(uvm, p->uvMatrix, sizeof uvm);
     separate = separate || separateType(p->parentType);
     if (p->primaryTexture.set) prim = p->primaryTexture;
     if (p->secondaryTexture.set) sec = p->secondaryTexture;
@@ -750,8 +767,12 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         o.secondary = texIndex(sec, false);
         o.opacity   = p->alpha.value_or(1.0f);
         o.color     = p->color;
+        o.uv[0] = uvm[2];
+        o.uv[1] = uvm[5];
+        o.uv[2] = uvm[0];
+        o.uv[3] = uvm[4];
     }
-    for (Part* c : std::vector<Part*>(p->children)) traverse(c, prim, sec, vis, myMat, separate);
+    for (Part* c : std::vector<Part*>(p->children)) traverse(c, prim, sec, vis, myMat, separate, uvm);
     if (vis && p->postRender && L) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, p->postRender);
         lua_pushnumber(L, tickDelta);

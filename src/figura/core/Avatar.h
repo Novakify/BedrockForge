@@ -43,6 +43,7 @@ struct PartOut {
     int     secondary = -1;   // TextureFile index forced as secondary (emissive), -1 = part default
     float   opacity = 1;
     Vec3    color{1, 1, 1};
+    double  uv[4] = {0, 0, 1, 1};   // effective UV matrix as Bedrock uv_anim: offset u, v, scale u, v
 };
 
 struct KeybindState {
@@ -91,6 +92,7 @@ public:
     std::vector<int>                           boneParent;   // compiled parent bone, -1 = root
     std::vector<Mat4>                          boneModel, boneWorld;
     std::vector<char>                          boneClaimed;
+    std::vector<char>                          uvBones;      // bones with a uv_anim render controller (rig "uvParts")
     std::map<int, std::vector<int>>            dupSlots;     // source bone -> free-floating dup bones (rig "dups")
     int                                        compiledParts = 0;
     void solveBones();
@@ -167,7 +169,8 @@ private:
     void  readAnimData(Part* part, lyrics::json::Value const& anim);
     bool  initLua(std::string* err);
     void  initScripts();
-    void traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat, bool separate = false);
+    void traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat, bool separate = false,
+                  double const* parentUV = nullptr);
     void  applyCameraTransform(Part* p, Mat4 const& parentMat);
     void  applyAnimations();
     void  clearAnimations();

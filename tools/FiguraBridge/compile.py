@@ -215,6 +215,22 @@ def primary_material(f: dict) -> str:
         return "Material.fbd"
 
 
+UV_METHODS = r"(?:setUV|uv|setUVPixels|uvPixels|setUVMatrix|uvMatrix)"
+
+
+def uv_dynamic_paths(script_text: str) -> set[str]:
+    """Model part paths a script moves the UVs of (ModelPart:setUV / setUVPixels / setUVMatrix and their aliases).
+    Catches `models.a.b:setUV(...)` and `X = models.a.b ... X:setUV(...)` (also `X.Y = models...`)."""
+    import re
+    found = set(re.findall(r"\b(models(?:\.[A-Za-z_]\w*)+)\s*:\s*" + UV_METHODS + r"\s*\(", script_text))
+    alias = {}
+    for name, path in re.findall(r"([A-Za-z_][\w.]*)\s*=\s*(models(?:\.[A-Za-z_]\w*)+)\b(?!\s*[:(])", script_text):
+        alias.setdefault(name, set()).add(path)
+    for name in re.findall(r"([A-Za-z_][\w.]*)\s*:\s*" + UV_METHODS + r"\s*\(", script_text):
+        found |= alias.get(name, set())
+    return found
+
+
 def collect_parts(models: dict) -> list[Part]:
     parts: list[Part] = []
 
@@ -381,6 +397,21 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             d.source = src
             dups.append(d)
 
+    # parts whose UVs scripts move (eyes, mouths, blink frames): drawn by their own render controllers with a Molang
+    # uv_anim offset/scale (v.fb<i>uu/uv/usu/usv); a UV matrix also applies to the part's descendants
+    uv_roots = uv_dynamic_paths(script_text)
+    uv_parts = set()
+    for p in parts:
+        q = p
+        while q is not None:
+            if q.path in uv_roots:
+                uv_parts.add(p.i)
+                break
+            q = q.parent
+    for d in dups:
+        if d.source.i in uv_parts:
+            uv_parts.add(d.i)
+
     # bones: vanilla skeleton (no cubes) + one bone per part (+ per-texture-set sub-bones)
     bones = [{"name": n, **({"parent": par} if par else {}), "pivot": [float(c) for c in pv]} for n, par, pv in SKELETON]
     geo_bones = {}  # bone name -> (part, set or None)
@@ -490,6 +521,8 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                     # part_visibility were hierarchical; keep it on with the part's visibility so it is safe both ways
                     pv.append({bname: vis_expr(p)})
                     continue
+                if p.i in uv_parts:
+                    continue
                 own = sets[sid][key] if 0 <= sid < len(sets) else None
                 dflt = 1 if own == f["i"] else 0
                 pv.append({bname: f"{vis_expr(p)} && ((v.fb{p.i}{var} ?? -1) < 0 ? {dflt} : (v.fb{p.i}{var} == {f['i']}))"})
@@ -498,6 +531,24 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             controllers[f"controller.render.player.figura_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
                 "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
                 "part_visibility": pv}
+
+    # UV-animated parts: one controller per (part, texture file it can show), restricted to that part's bones
+    files_by_i = {f["i"]: f for f in rc_files}
+    for bname, (p, sid) in geo_bones.items():
+        if sid is None or p.i not in uv_parts:
+            continue
+        k = next(n for n, c in enumerate(chunk_names) if bname in c)
+        uv = {"offset": [f"v.fb{p.i}uu ?? 0", f"v.fb{p.i}uv ?? 0"], "scale": [f"v.fb{p.i}usu ?? 1", f"v.fb{p.i}usv ?? 1"]}
+        for kind, var, key in (("p", "t", "d"), ("s", "e", "e")):
+            own = sets[sid][key] if 0 <= sid < len(sets) else None
+            if own not in files_by_i:
+                continue
+            f = files_by_i[own]
+            mat = primary_material(f) if kind == "p" else "Material.fbe"
+            controllers[f"controller.render.player.figura_uv_{bname}_{kind}{f['i']}"] = {
+                "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
+                "uv_anim": uv,
+                "part_visibility": [{"*": False}, {bname: f"{vis_expr(p)} && ((v.fb{p.i}{var} ?? -1) < 0 ? 1 : (v.fb{p.i}{var} == {f['i']}))"}]}
 
     # first-person controllers: same rules over the f-bones, plus Bedrock's own empty-hand conditions
     FP_RIGHT = "(query.get_equipped_item_name(0, 1) == '' || query.get_equipped_item_name(0, 1) == 'filled_map')"
@@ -620,6 +671,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 e["set"] = p.subs[0]["set"]
         rig["parts"].append(e)
     rig["dups"] = [{"i": d.i, "source": d.source.i} for d in dups]
+    rig["uvParts"] = sorted(uv_parts)
     (out / "rig.json").write_text(json.dumps(rig, indent=1), encoding="utf-8")
     return {"out": str(out), "parts": len(parts), "bones": len(bones), "textureFiles": len(files),
             "textureSets": len(sets), "renderControllers": len(controllers), "sounds": len(sound_map),
