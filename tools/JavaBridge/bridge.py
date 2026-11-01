@@ -79,6 +79,50 @@ def block_j2b():
         if jn != bn: votes.setdefault(jn, {}); votes[jn][bn] = votes[jn].get(bn, 0) + 1
     return {j: max(v, key=v.get) for j, v in votes.items()}
 
+ARG_TYPES = {"StringArgumentType": "string", "BoolArgumentType": "bool", "IntegerArgumentType": "int", "DoubleArgumentType": "float",
+             "FloatArgumentType": "float", "EntityArgument": "entity", "BlockPosArgument": "pos", "Vec3Argument": "pos"}
+
+
+def commands_of(T):
+    """Brigadier trees built in RegisterCommandsEvent handlers -> [{"path": [literal|<arg:type>...], "fn": lambda fid}].
+    Symbolic run of the builder calls: literal()/argument() push a node, executes() attaches the Command lambda,
+    then() hangs the child under its parent, register() closes the tree."""
+    out = []
+    for cn, info in T.classes.items():
+        for key, m in info.methods.items():
+            code = m["code"]
+            if not any("RegisterCommandsEvent" in r or "CommandDispatcher.register" in r for _, _, r in code): continue
+            stack, last_str, last_type = [], None, None
+            def walk(node, path):
+                p2 = path + [node["lit"]]
+                if node.get("fn"): out.append({"path": p2, "fn": node["fn"]})
+                for c in node["kids"]: walk(c, p2)
+            for _, op, rest in code:
+                if op.startswith("ldc"):
+                    sm = re.search(r"// String (\S+)", rest); last_str = sm.group(1) if sm else last_str
+                elif op == "invokestatic" and ("Commands.m_82127_" in rest or "Commands.literal" in rest):
+                    stack.append({"lit": last_str, "kids": [], "fn": None})
+                elif op == "invokestatic" and ("Commands.m_82129_" in rest or "Commands.argument" in rest):
+                    stack.append({"lit": f"<{last_str}:{last_type or 'string'}>", "kids": [], "fn": None}); last_type = None
+                elif op == "invokestatic" and any(f"/{k}." in rest for k in ARG_TYPES):
+                    last_type = next(v for k, v in ARG_TYPES.items() if f"/{k}." in rest)
+                elif op == "invokedynamic":
+                    bm = re.search(r"InvokeDynamic #(\d+):(\w+)", rest)
+                    b = info.boot.get(int(bm.group(1)), {}) if bm else {}
+                    if bm and bm.group(2) == "run" and b.get("target"):
+                        t = b["target"]; stack.append({"lambda": f"{t[0]}.{t[1]}{t[2]}"})
+                    else: stack.append({"other": True})
+                elif op in ("invokevirtual", "invokeinterface"):
+                    if ".executes:" in rest and len(stack) >= 2 and "lambda" in stack[-1]:
+                        lam = stack.pop(); stack[-1]["fn"] = lam["lambda"]
+                    elif ".requires:" in rest and stack and "other" in stack[-1]: stack.pop()
+                    elif ".then:" in rest and len(stack) >= 2 and "lit" in stack[-1] and "lit" in stack[-2]:
+                        child = stack.pop(); stack[-1]["kids"].append(child)
+                    elif "CommandDispatcher.register" in rest and stack and "lit" in stack[-1]:
+                        walk(stack.pop(), [])
+    return out
+
+
 
 def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, structures=None, block_rename=None, mod_prefixes=None):
     rep = report.setdefault("javabridge", {})
@@ -130,6 +174,8 @@ def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, 
         for v in d.values(): roots |= set(v)
     for d in list(hooks["block"].values()) + list(hooks["item"].values()): roots |= set(d.values())
     roots |= set(hooks["effect"].values()) | {e["fn"] for e in hooks["events"]}
+    hooks["commands"] = commands_of(T)
+    roots |= {c["fn"] for c in hooks["commands"]}
     ovs = overlays_of(jar, prefixes)
     hooks["overlays"] = [{"proc": o["proc"], "key": "§" + "§".join(f"{i:02d}") + "§r", "tex": o["texture"]} for i, o in enumerate(ovs)]
     roots |= {o["proc"] for o in ovs}

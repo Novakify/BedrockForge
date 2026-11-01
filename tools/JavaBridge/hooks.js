@@ -1,5 +1,5 @@
 // JavaBridge hooks (original Bedrock Forge code): call the translated Java methods from Bedrock events.
-import { world, system } from "@minecraft/server";
+import { world, system, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
 import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR } from "./runtime.js";
 
 const CFG = globalThis.__JB_CFG, H = CFG.hooks, NS = CFG.ns;
@@ -78,6 +78,37 @@ for (const ev of H.events) if (ev.kind === "attack") {
     run(ev.fn, [{ __ev: true, entity: JEntity.of(hurtEntity), source: DS(damageSource.cause, damageSource.damagingEntity), amount: damage }]);
   });
 }
+
+// ---- the mod's Brigadier commands (RegisterCommandsEvent) -> one Bedrock custom command per root literal:
+//      /<ns>:<root> [word] [word] [word] [word]  walks the same literal/argument path and runs the Command lambda
+const CMDS = H.commands ?? [];
+if (CMDS.length) system.beforeEvents.startup.subscribe((ev) => {
+  const roots = [...new Set(CMDS.map((c) => c.path[0]))];
+  for (const root of roots) {
+    const mine = CMDS.filter((c) => c.path[0] === root);
+    const depth = Math.max(...mine.map((c) => c.path.length)) - 1;
+    const params = Array.from({ length: Math.min(depth, 6) }, (_, i) => ({ name: `arg${i + 1}`, type: CustomCommandParamType.String }));
+    const usage = mine.map((c) => c.path.slice(1).join(" ")).slice(0, 12).join(" | ");
+    try {
+      ev.customCommandRegistry.registerCommand({ name: `${NS}:${root}`, description: `${root} (mod command): ${usage}`.slice(0, 250),
+        permissionLevel: CommandPermissionLevel.GameDirectors, optionalParameters: params }, (origin, ...words) => {
+        words = words.filter((w) => w !== undefined && w !== "");
+        const hit = mine.find((c) => c.path.length - 1 === words.length && c.path.slice(1).every((seg, i) => seg.startsWith("<") || seg === words[i]));
+        if (!hit) return { status: CustomCommandStatus.Failure, message: `usage: /${NS}:${root} ${usage}` };
+        const args = {}; hit.path.slice(1).forEach((seg, i) => { const m = /^<(\w+):(\w+)>$/.exec(seg); if (m) args[m[1]] = m[2] === "int" ? parseInt(words[i]) : m[2] === "float" ? parseFloat(words[i]) : m[2] === "bool" ? words[i] === "true" : words[i]; });
+        const src = origin.sourceEntity;
+        system.run(() => {
+          const w = src ? JEntity.of(src) : null, lv = JLevel.of(src?.dimension ?? world.getDimension("minecraft:overworld"));
+          const l = src?.location ?? { x: 0, y: 64, z: 0 };
+          const source = { __src: true, pos: V(l.x, l.y, l.z), level: lv, entity: w, getEntity: () => w, getPlayer: () => w, getLevel: () => lv, getUnsidedLevel: () => lv,
+            getPosition: () => V(l.x, l.y, l.z), getServer: () => null, sendSuccess() {}, sendFailure() {}, hasPermission: () => true };
+          run(hit.fn, [{ __ctx: true, getSource: () => source, getArgument: (n) => args[n] ?? null, getInput: () => [root, ...words].join(" ") }]);
+        });
+        return { status: CustomCommandStatus.Success };
+      });
+    } catch (e) { console.warn(`[JavaBridge] command ${root}: ${e}`); }
+  }
+});
 
 // ---- MCreator delayed work: queueServerWork(ticks, runnable) -> system.runTimeout (the mod's ServerTickEvent queue
 // would also work, but the scheduler costs nothing while idle)

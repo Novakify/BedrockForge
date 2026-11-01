@@ -59,6 +59,14 @@ def arg_types(desc):
 def jsstr(s): return json.dumps(s)
 
 
+_ESC = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "'": "'", '"': '"', "\\": "\\"}
+
+
+def junesc(s):
+    """javap prints constants Java-escaped (\\u0001 concat holes, \\' quotes): turn them back into the real string."""
+    return re.sub(r"\\(u[0-9a-fA-F]{4}|.)", lambda m: chr(int(m.group(1)[1:], 16)) if m.group(1)[0] == "u" and len(m.group(1)) == 5 else _ESC.get(m.group(1), m.group(1)), s)
+
+
 class ClassInfo:
     def __init__(self, name, text):
         self.name = name; self.methods = {}; self.boot = {}; self.concat = {}; self.super = None; self.fields = []
@@ -80,7 +88,7 @@ class ClassInfo:
                         self.boot[bidx].update(target=(mm.group(2), mm.group(3), mm.group(4)), ref=mm.group(1))
                     mc = re.match(r"^\s+#\d+ (.*)$", line)
                     if mc and self.boot[bidx]["kind"] == "concat" and "recipe" not in self.boot[bidx]:
-                        self.boot[bidx]["recipe"] = mc.group(1)
+                        self.boot[bidx]["recipe"] = junesc(mc.group(1))
                 i += 1; continue
             if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(";") and "(" in line:
                 name_m = re.search(r"([\w$<>.]+)\(", line)
@@ -180,7 +188,7 @@ class Transpiler:
         if op in ("bipush", "sipush"): return f"S.push({int(rest.split()[0])});"
         if op in ("ldc", "ldc_w", "ldc2_w"):
             mm = re.match(r"String (.*)$", c)
-            if mm: return f"S.push({jsstr(mm.group(1).encode('latin-1', 'backslashreplace').decode('unicode_escape', 'replace') if False else mm.group(1))});"
+            if mm: return f"S.push({jsstr(junesc(mm.group(1)))});"
             mm = re.match(r"(?:int|long|float|double) (\S+?)[dfl]?$", c)
             if mm: return f"S.push({float(mm.group(1)) if not mm.group(1).lstrip('-').isdigit() else int(mm.group(1))});".replace("inf", "Infinity")
             mm = re.match(r"class (\S+)$", c)
