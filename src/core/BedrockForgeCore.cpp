@@ -15,6 +15,7 @@
 #include "bf/Config.h"
 #include "bf/Hud.h"
 #include "bf/Input.h"
+#include "client/Loadouts.h"
 #include "client/Menu.h"
 #include "client/Module.h"
 #include "client/ForgeRender.h"
@@ -107,6 +108,7 @@ bool Core::enable() {
     client::registerBuiltins();
     ::bf::lyrics::win::install(getSelf().getModDir(), getSelf().getConfigDir()); // LyricsFlow port (module off by default)
     client::Registry::get().load((getSelf().getConfigDir() / "modules.json").string());
+    client::loadouts::install(getSelf().getModDir()); // after modules.json so a loadout can override it
     client::installRuntime();
     client::menu::install();
 
