@@ -95,6 +95,7 @@ jobs:
           grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
           mkdir -p out && cp -r bin/* out/
           mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
           cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
           mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
           cd out
