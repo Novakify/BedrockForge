@@ -11,3 +11,9 @@
 - Research branches (`research/*`) hold tools/docs only; keep them off `main` until the plan is agreed.
 - Renderer Foundation has its own line; same rule applies there (one live RF branch, everything merged into it).
 - CI: a push to `main` publishes the full payload (DLL + resources/client + resources/lyricsflow) to `builds`.
+
+## Java -> Bedrock conversions: one pipeline
+- Every Java mod / shaderpack / resource pack conversion starts with `tools/JavaPort/port.py` (docs/CONVERT_A_MOD.md).
+  It routes each part to our converters (JavaModAnalyzer, GeckoBridge, ModPorter, JavaBridge, MobAI, ShaderForge,
+  VVPackGen) and lists what needs native Bedrock Forge / Renderer Foundation work. Improve the converters, don't
+  hand-patch converted packs; a fix for one mod must help every mod.

@@ -1,10 +1,22 @@
 # Converting a Java mod to Bedrock: the standard pipeline (read first for ANY new mod)
 
-One command converts a whole Forge/NeoForge/Fabric mod. Everything below is on by default, so every new mod gets
-the same 1-to-1 treatment Wonderland got. Private use only: credit the authors, ask Fernando about licences.
+ONE command for everything Java: mod jars, shaderpacks, resource packs, or a folder with several of them.
+JavaPort routes each part to our own converter and writes ready dev packs + a report of what's left.
+Private use only: credit the authors, ask Fernando about licences.
 
-    python3 -I tools/GeckoBridge/build.py <mod.jar> <outdir> --name <Pack Name> --tol 0.25
+    python3 -I tools/JavaPort/port.py <mod.jar | shaderpack.zip | folder> <outdir> [--name "Pack Name"] [--install <com.mojang>]
+    # -> <outdir>/packs/<Name> BP|RP, PORT_REPORT.md, port.json (packs, required DLLs, shader + native work)
     # optional per-mod overrides: tools/GeckoBridge/mods/<modid>.json
+
+| Part of the Java input | Our converter |
+|---|---|
+| feasibility (APIs, mixins, rendering refs) | JavaModAnalyzer |
+| mobs, armour, items, animations, textures | GeckoBridge + ModelCore |
+| blocks, items, recipes, loot, sounds, particles, dimensions, structures, fog | ModPorter |
+| the mod's Java code | JavaBridge |
+| mob AI | MobAI (GeckoBridge goals + JavaBridge GoalRunner) |
+| shaderpacks / core shaders | ShaderForge + VVPackGen (worksheet generated per pack; GLSL->HLSL by hand) |
+| custom GL rendering, screens, client mixins | Bedrock Forge (src/) + Renderer Foundation (RF line) - listed in the report |
 
 ## What you get (all automatic)
 | Layer | Tool | What it does |
