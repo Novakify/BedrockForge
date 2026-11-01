@@ -89,6 +89,21 @@ GeckoBridge is past M5, so the "after GeckoBridge M2" gate is open. Fernando re-
 - **Next in F1:** native side (C++) - load the rig in BF, hide the vanilla player, draw through RF following the pose.
   Needs: 2 test avatars (one plain, one scripted) that Fernando made or has permission for, and a PC build/test pass.
 
+### F1-lite test pack (2026-11-01)
+`tools/FiguraBridge/avatar_pack.py` turns an avatar folder into a resource pack that replaces the player model
+(vanilla skeleton, no vanilla cubes, avatar groups parented by ParentType, vanilla player animations drive it).
+Tested in the cloud preview with Gakuto1112's MIT avatars FiguraAvatarTemplate + StrawberryMiku (52 bones,
+135 cubes, all kept). Sent to Fernando as .mcpack files; NOT YET SEEN IN GAME. No Lua: Miku's hair physics, dress
+tilt when crouching and fork item are F3/F4. To do in the loader: honour per-texture uv_width/uv_height when it
+differs from the project resolution (Blockbench 4.9+), multi-texture avatars.
+
+## Handoff trigger for the Java->Bedrock pipeline chat
+Fernando has another chat waiting to fold FiguraBridge into the pipeline (`tools/JavaPort/port.py`). The signal is:
+**git tag `figurabridge-ready` on `main` + `docs/FIGURABRIDGE_HANDOFF.md`** (entry points, formats, test avatars,
+known gaps). It is created only when F1-F5 below pass in game: native avatar load (no resource pack), Blockbench
+animations 1:1, Lua core with sandbox, wider API, coexistence/FPS pass. Until then FiguraBridge is not "100%".
+The pipeline chat can check: `git ls-remote --tags https://github.com/Novakify/BedrockForge figurabridge-ready`.
+
 ## Third player-model owner: Cosmetics And Attachments Mod (CAAM)
 `cosmetics_and_attachments_mod-1.0.0` by **TideBorn** (Forge 1.20.1, optional GeckoLib 4). Sent by Fernando
 2026-11-01 with an MIT licence file and a PERMISSION_NOTE (his account of TideBorn's permission, not a signed grant).
