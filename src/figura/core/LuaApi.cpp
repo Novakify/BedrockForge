@@ -179,6 +179,7 @@ void openFiguraApis(Avatar& a) {
     openModelApi(a);
     openAnimationApi(a);
     openEntityApis(a);
+    openDataApis(a);
 
     lua_newtable(L); // __fb
     luaL_Reg fns[] = {{"print", hPrint}, {"keyNew", hKeyNew}, {"keyRef", hKeyRef}, {"keyDown", hKeyDown},

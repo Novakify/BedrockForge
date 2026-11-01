@@ -73,6 +73,7 @@ public:
     lua_State*                                 L = nullptr;
     std::string                                name, author, color;
     std::filesystem::path                      dir;
+    std::filesystem::path                      dataDir;    // file API root (host sets it; empty = file API disabled)
     std::vector<std::unique_ptr<Part>>         parts;      // index = original pre-order index; new parts appended
     Part*                                      root = nullptr;
     std::vector<std::unique_ptr<Animation>>    animations;

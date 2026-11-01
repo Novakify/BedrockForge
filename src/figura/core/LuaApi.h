@@ -7,5 +7,6 @@ class Avatar;
 extern uint32_t tModelPart, tTexture, tRenderTask, tAnimation, tAnimationAPI;
 void openModelApi(Avatar& a);
 void openAnimationApi(Avatar& a);
-void openEntityApis(Avatar& a);   // player/user, world, client, host, renderer, nameplate, vanilla_model, sounds, avatar...
+void openEntityApis(Avatar& a);
+void openDataApis(Avatar& a);     // json, data/streams, file, net/http, resources, texture atlas (LuaApiData.cpp)   // player/user, world, client, host, renderer, nameplate, vanilla_model, sounds, avatar...
 } // namespace bf::figura
