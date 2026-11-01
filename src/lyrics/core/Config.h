@@ -122,6 +122,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(fps, false)                                                                                                      \
     B(ping, false)                                                                                                     \
     B(customHotbar, false)             /* glass hotbar */                                                              \
+    I(playerStyle, 0)                  /* [BF] music player card: 0 Classic, 1 Glass (frosted, RF blur), 2 Neon */    \
     B(uiSounds, true)                  /* menu sounds */                                                               \
     /* ---- LyricsFlow 2.1 performance (perf.AutoPerf / Profiles / FpsBoost) */                                      \
     I(quality, 2)                      /* 0 Performance, 1 Balanced, 2 Pretty */                                       \

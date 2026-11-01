@@ -3,6 +3,8 @@
 // usage: panel_preview <repo> <out dir> <tab 0..4> [aim_px_x aim_px_y] [cover.png] [ms...]
 //   aim = where the crosshair points on the panel (design px); ms = panel ages to dump (default 1700)
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +14,7 @@
 #include "lyrics/core/Engine.h"
 #include "lyrics/core/Json.h"
 #include "lyrics/core/Lyrics.h"
+#include "lyrics/core/Palette.h"
 #include "lyrics/core/Panel.h"
 
 using namespace bf::lyrics;
@@ -74,6 +77,18 @@ int main(int argc, char** argv) {
 
     if (auto pj = json::parse(readFile(repo + "/resources/lyricsflow/presets/neon_arena.json"))) applyJson(e.config(), (*pj)["settings"]);
     e.config().skyPreset = "inferno";
+    // [BF] env: PLAYER_STYLE=0|1|2 (Classic / Glass / Neon), COVER_RGBA=<file: u32 w, u32 h, then w*h*4 bytes> (cover accent),
+    // SOURCE_APP=<name>
+    if (char const* ps = std::getenv("PLAYER_STYLE")) e.config().playerStyle = std::atoi(ps);
+    if (char const* cr = std::getenv("COVER_RGBA")) {
+        std::string raw = readFile(cr);
+        if (raw.size() >= 8) {
+            uint32_t w = 0, h = 0;
+            std::memcpy(&w, raw.data(), 4); std::memcpy(&h, raw.data() + 4, 4);
+            if (raw.size() >= 8 + size_t(w) * h * 4) as.coverAccent = coverAccent(reinterpret_cast<uint8_t const*>(raw.data() + 8), int(w), int(h), 0);
+            std::printf("cover accent %06X\n", as.coverAccent);
+        }
+    }
     FlatWorld  w;
     Lyrics     l = *parseLrc(readFile(repo + "/tests/lyrics/fixtures/song.lrc"), 200000);
     SceneInput in;
@@ -87,7 +102,7 @@ int main(int argc, char** argv) {
     p.setTab(Panel::Tab(tab));
     p.open(cam.pos, lookOf(0, 0), 0);
     PanelMedia media;
-    media.title = "Green Room"; media.artist = "Ken Carson"; media.sourceApp = "Spotify"; media.hasTrack = true;
+    media.title = "Green Room"; media.artist = "Ken Carson"; media.sourceApp = std::getenv("SOURCE_APP") ? std::getenv("SOURCE_APP") : "Spotify"; media.hasTrack = true;
     media.positionMs = 109000; media.durationMs = 188000; media.playing = true;
 
     int dumped = 0;

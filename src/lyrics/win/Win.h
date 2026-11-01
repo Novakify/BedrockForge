@@ -40,6 +40,10 @@ private:
     std::unique_ptr<Impl> mImpl;
 };
 
+/// [BF] Decode image bytes (PNG / JPEG) to a small RGBA8 thumbnail (size x size). Empty on failure. Blocking, any
+/// worker thread (WinRT BitmapDecoder).
+std::vector<uint8_t> decodeSmallRgba(std::vector<uint8_t> const& bytes, uint32_t size);
+
 /// Called from Core::enable(): registers the "lyricsflow" module (off by default), keybinds and threads.
 /// modDir = mods/BedrockForgeCore (fonts under resources/lyricsflow/fonts), configDir = its config folder.
 void install(std::filesystem::path const& modDir, std::filesystem::path const& configDir);

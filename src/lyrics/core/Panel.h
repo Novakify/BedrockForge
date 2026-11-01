@@ -31,6 +31,7 @@ struct PanelAssets {
     std::map<std::string, UiRect> ui;            // "sky.inferno", "logo.spotify", ...
     int                           cover = -1;    // atlas index of the current cover art (-1 = none)
     std::string                   pixelFont = "minecraft"; // panel text (2.1 draws with the Minecraft font)
+    uint32_t                      coverAccent = 0;          // [BF] vivid colour picked from the cover (0xRRGGBB, 0 = none)
 };
 
 struct PanelMedia {
@@ -95,6 +96,7 @@ public:
 private:
     struct Ctx;
     void record(Ctx& c, PanelMedia const& media);
+    void player(Ctx& c, PanelMedia const& media, int style); // [BF] Glass / Neon player card (card + controls)
     void body(Ctx& c, Config& cfg, PanelMedia const& media);
     void skies(Ctx& c, Config& cfg);
     void lyrics(Ctx& c, Config& cfg);

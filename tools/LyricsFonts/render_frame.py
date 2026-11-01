@@ -13,6 +13,7 @@ import numpy as np
 from PIL import Image
 
 F_SCREEN, F_BITMAP, F_MSDF, F_GRADIENT, F_SOLID, F_VIEW, F_IMAGE = 1, 2, 4, 16, 32, 64, 128
+F_GLASS, F_BLUR = 256, 512  # [BF] frosted glass (RF blurs the screen behind), soft-blurred image
 
 
 def unpack(c):
@@ -43,6 +44,28 @@ def load_atlas(p):
     if p not in _ATLAS_CACHE:
         _ATLAS_CACHE[p] = np.asarray(Image.open(p).convert('RGBA'), np.float32) / 255.0  # fonts use .r (grey PNG)
     return _ATLAS_CACHE[p]
+
+
+_BLUR_CACHE = {}
+
+
+def blurred_atlas(p, A4, r_uv):
+    """[BF] BLUR: the atlas image soft-blurred (RF: a disc of taps in the shader, radius glowW in uv)."""
+    key = (p, round(r_uv, 3))
+    if key not in _BLUR_CACHE:
+        from PIL import ImageFilter
+        im = Image.fromarray((np.clip(A4, 0, 1) * 255).astype(np.uint8), 'RGBA')
+        _BLUR_CACHE[key] = np.asarray(im.filter(ImageFilter.GaussianBlur(max(1.0, r_uv * im.width * 0.55))), np.float32) / 255.0
+    return _BLUR_CACHE[key]
+
+
+def rounded_mask(lu, lv, qw, qh, frac, soft=1.0):
+    hx, hy = qw / 2, qh / 2
+    rad = min(hx, hy) * min(max(frac, 0), 1)
+    px, py = np.abs(lu - 0.5) * 2 * hx, np.abs(lv - 0.5) * 2 * hy
+    qx, qy = px - (hx - rad), py - (hy - rad)
+    dist = np.hypot(np.maximum(qx, 0), np.maximum(qy, 0)) + np.minimum(np.maximum(qx, qy), 0) - rad
+    return np.clip(0.5 - dist / max(1.0, soft), 0, 1)
 
 
 def render(d, W, img=None):
@@ -98,7 +121,15 @@ def render(d, W, img=None):
         if not inside.any():
             continue
         qw = np.linalg.norm(pts[1] - pts[0]); qh = np.linalg.norm(pts[3] - pts[0])
-        if flags & F_SOLID:  # rounded rect, radius = outW * min half extent, softness glowW px
+        if (flags & F_SOLID) and (flags & F_GLASS):  # [BF] frosted glass: the image so far, blurred, tinted
+            from PIL import ImageFilter
+            sharp = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
+            bl = np.asarray(sharp.filter(ImageFilter.GaussianBlur(H * 0.022)), np.float32)[y0:y1, x0:x1] / 255.0
+            m = rounded_mask(lu, lv, qw, qh, outW)
+            tint = fill
+            col = bl * glowK * (1 - tint[3]) + tint[:3] * tint[3]
+            rgb, aa = col * m[..., None], m
+        elif flags & F_SOLID:  # rounded rect, radius = outW * min half extent, softness glowW px
             hx, hy = qw / 2, qh / 2
             rad = min(hx, hy) * min(max(outW, 0), 1)
             px, py = np.abs(lu - 0.5) * 2 * hx, np.abs(lv - 0.5) * 2 * hy
@@ -115,12 +146,19 @@ def render(d, W, img=None):
             ah, aw = A.shape
             sx = np.clip((uu * aw - 0.5), 0, aw - 1); sy = np.clip((vv * ah - 0.5), 0, ah - 1)
             if flags & F_IMAGE:  # colour image: bilinear rgba * tint, premultiplied
+                if flags & F_BLUR:
+                    A4 = blurred_atlas(d['atlases'][atlas], A4, glowW)
                 ix, iy = sx.astype(int), sy.astype(int)
                 fx, fy = (sx - ix)[..., None], (sy - iy)[..., None]
                 ix1, iy1 = np.minimum(ix + 1, aw - 1), np.minimum(iy + 1, ah - 1)
                 smp = (A4[iy, ix] * (1 - fx) + A4[iy, ix1] * fx) * (1 - fy) + (A4[iy1, ix] * (1 - fx) + A4[iy1, ix1] * fx) * fy
                 col = smp * fill[None, None, :]
                 aa = col[..., 3]
+                if outW > 0:  # [BF] rounded corners
+                    aa = aa * rounded_mask(lu, lv, qw, qh, outW)
+                if flags & F_BLUR:  # [BF] soft edges, so a blurred image never shows its square outline
+                    e = np.minimum(np.minimum(lu, 1 - lu), np.minimum(lv, 1 - lv))
+                    aa = aa * np.clip(e / max(glowW * 1.6, 1e-3), 0, 1) ** 1.5
                 rgb = col[..., :3] * aa[..., None]
             elif flags & F_BITMAP:
                 s = A[np.clip((vv * ah).astype(int), 0, ah - 1), np.clip((uu * aw).astype(int), 0, aw - 1)]

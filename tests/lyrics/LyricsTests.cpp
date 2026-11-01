@@ -20,6 +20,7 @@
 #include "lyrics/core/Json.h"
 #include "lyrics/core/Lyrics.h"
 #include "lyrics/core/Media.h"
+#include "lyrics/core/Palette.h"
 #include "lyrics/core/Physics.h"
 #include "lyrics/core/Scene.h"
 #include "lyrics/core/Text.h"
@@ -1234,6 +1235,36 @@ TEST(exits_reach_every_word) { // [BF] screen text breaks apart; a fast Fall sti
             peak = std::max(peak, mode == 0 ? e.fx().size() : e.physics().letters().size());
         }
         CHECK(peak > 5);
+    }
+}
+
+TEST(cover_accent_and_player_styles) { // [BF]
+    // a mostly dark cover with a green patch and a little red: the accent is the green, pushed to full brightness
+    std::vector<uint8_t> px(32 * 32 * 4, 0);
+    for (int i = 0; i < 32 * 32; ++i) {
+        uint8_t* p = &px[size_t(i) * 4];
+        p[3] = 255;
+        int x = i % 32, y = i / 32;
+        if (x < 16 && y < 20) { p[0] = 40; p[1] = 170; p[2] = 70; }
+        else if (x > 28) { p[0] = 200; p[1] = 30; p[2] = 30; }
+        else { p[0] = p[1] = p[2] = 20; }
+    }
+    uint32_t a = coverAccent(px.data(), 32, 32, 0x123456);
+    CHECK(((a >> 8) & 255) == 255);            // green channel at the top
+    CHECK(((a >> 16) & 255) < 140);            // not red
+    std::vector<uint8_t> grey(16 * 16 * 4, 128);
+    CHECK_EQ(coverAccent(grey.data(), 16, 16, 0x123456), 0x123456u); // nothing vivid: fallback
+    for (int style = 1; style <= 2; ++style) {
+        PanelRig r;
+        r.e.config().playerStyle = style;
+        r.as.cover               = 0;
+        r.as.coverAccent         = 0x4DFFC1;
+        r.step(r.in(300, 100));
+        bool glass = false;
+        for (auto const& g : r.out) glass |= (g.flags & BF_GLYPH_GLASS) && (g.flags & BF_GLYPH_SOLID);
+        CHECK(glass);
+        CHECK(PanelRig::has(r.click(98, 207), PanelAction::Kind::PlayPause)); // the controls still sit where they did
+        CHECK(PanelRig::has(r.click(126, 207), PanelAction::Kind::Next));
     }
 }
 

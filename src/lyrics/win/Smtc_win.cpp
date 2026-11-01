@@ -12,6 +12,7 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.Control.h>
 #include <winrt/Windows.Media.h>
+#include <winrt/Windows.Graphics.Imaging.h>
 #include <winrt/Windows.Storage.Streams.h>
 
 #include "lyrics/core/Text.h"
@@ -142,6 +143,34 @@ std::vector<uint8_t> Smtc::thumbnail() {
         return {};
     }
 }
+std::vector<uint8_t> decodeSmallRgba(std::vector<uint8_t> const& bytes, uint32_t size) {
+    using namespace winrt::Windows::Graphics::Imaging;
+    using namespace winrt::Windows::Storage::Streams;
+    try {
+        InMemoryRandomAccessStream mem;
+        {
+            DataWriter w(mem);
+            w.WriteBytes(bytes);
+            w.StoreAsync().get();
+            w.DetachStream();
+        }
+        mem.Seek(0);
+        auto           dec = BitmapDecoder::CreateAsync(mem).get();
+        BitmapTransform tr;
+        tr.ScaledWidth(size);
+        tr.ScaledHeight(size);
+        tr.InterpolationMode(BitmapInterpolationMode::Linear);
+        auto px = dec.GetPixelDataAsync(BitmapPixelFormat::Rgba8, BitmapAlphaMode::Straight, tr, ExifOrientationMode::IgnoreExifOrientation,
+                                         ColorManagementMode::DoNotColorManage)
+                      .get();
+        auto data = px.DetachPixelData();
+        if (data.size() < size_t(size) * size * 4) return {};
+        return std::vector<uint8_t>(data.begin(), data.begin() + size_t(size) * size * 4);
+    } catch (...) {
+        return {};
+    }
+}
+
 void Smtc::cycleRepeat() {
     std::lock_guard l(mImpl->mutex);
     try {

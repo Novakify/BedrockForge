@@ -26,6 +26,10 @@ enum BfGlyphFlags : uint32_t {
                                  // space, x right / y up / z forward, x and y already divided by tan(fovY/2). The vertex
                                  // shader outputs (x / aspect, y, 0, z): exact perspective, so BF can ray-pick the mouse
     BF_GLYPH_IMAGE    = 1u << 7, // colour image (cover art, icons, thumbnails): rgba sample * fill (tint), no SDF
+    BF_GLYPH_GLASS    = 1u << 8, // with SOLID: frosted glass - the screen behind, blurred (RF), tinted by fill (fill alpha
+                                 // = tint amount); glowK = brightness of the blur. RF without it draws the plain SOLID.
+    BF_GLYPH_BLUR     = 1u << 9, // with IMAGE: the image soft-blurred, radius glowW in uv (aura / cover glow). RF without
+                                 // it draws the sharp IMAGE.
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the

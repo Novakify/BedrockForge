@@ -43,6 +43,7 @@
 #include "client/Module.h"
 #include "client/PostFx.h"
 #include "lyrics/core/Engine.h"
+#include "lyrics/core/Palette.h"
 #include "lyrics/core/SkySystem.h"
 #include "lyrics/win/World_win.h"
 
@@ -92,6 +93,7 @@ struct State {
     std::vector<PanelAction>      mediaCmds;
     // cover art: written by the media thread, picked up by the HUD frame (atlas list + panel asset)
     std::string                   coverPath, coverShown;
+    uint32_t                      coverAccent = 0; // [BF] vivid colour of the cover (Neon player)
     int64_t                       coverSeq = -1;
     int                           coverTries = 0;
     // live sky (LyricsFlow 2.1 WorldSky): published every HUD frame for RF (BF_CopySkyFrame)
@@ -147,7 +149,8 @@ void loadFonts(std::filesystem::path const& dir) {
 /// Make sure the fonts in use have atlas slots. Returns true when the atlas list changed. Caller holds gS->mutex.
 bool syncFontSlots() {
     auto const& cfg = gS->engine.config();
-    std::string const want[] = {cfg.font, cfg.topBarFont, gS->panelAssets.pixelFont, "minecraft"};
+    bool const        fancy  = cfg.playerStyle == 1 || cfg.playerStyle == 2; // [BF] Glass / Neon player type
+    std::string const want[] = {cfg.font, cfg.topBarFont, gS->panelAssets.pixelFont, "minecraft", fancy ? "outfit_bold" : "", fancy ? "outfit" : ""};
     bool changed = false;
     ++gS->slotClock;
     for (auto const& id : want) {
@@ -314,7 +317,7 @@ void mediaLoop() {
             std::lock_guard l(gS->mutex);
             seq  = gS->clock.songSeq();
             want = sample && gS->clock.hasTrack() && (gS->coverSeq != seq || (gS->coverPath.empty() && gS->coverTries < 20));
-            if (gS->coverSeq != seq) { gS->coverSeq = seq; gS->coverTries = 0; gS->coverPath.clear(); }
+            if (gS->coverSeq != seq) { gS->coverSeq = seq; gS->coverTries = 0; gS->coverPath.clear(); gS->coverAccent = 0; }
             if (want) ++gS->coverTries;
         }
         if (want) {
@@ -322,8 +325,10 @@ void mediaLoop() {
             if (!bytes.empty()) {
                 auto file = gS->cacheDir / ("cover_" + std::to_string(seq % 2) + ".img"); // WIC sniffs PNG/JPEG itself
                 { std::ofstream o(file, std::ios::binary | std::ios::trunc); o.write(reinterpret_cast<char const*>(bytes.data()), std::streamsize(bytes.size())); }
+                auto const     small  = decodeSmallRgba(bytes, 48); // [BF] Neon player: the cover's own colour
+                uint32_t const accent = small.empty() ? 0u : coverAccent(small.data(), 48, 48, 0);
                 std::lock_guard l(gS->mutex);
-                if (gS->clock.songSeq() == seq) gS->coverPath = file.string();
+                if (gS->clock.songSeq() == seq) { gS->coverPath = file.string(); gS->coverAccent = accent; }
             }
         }
         std::this_thread::sleep_until(started + std::chrono::milliseconds(250));
@@ -513,6 +518,7 @@ PanelMedia panelMedia(int64_t now) { // caller holds gS->mutex
 /// One panel step + publish (lyrics glyphs + panel glyphs). Caller holds gS->mutex.
 void panelStepAndPublish(int64_t now, bool lyricsActive) {
     if (gS->coverPath != gS->coverShown) { gS->coverShown = gS->coverPath; publishAtlases(); }
+    gS->panelAssets.coverAccent = gS->coverShown.empty() ? 0u : gS->coverAccent;
     gS->panelGlyphs.clear();
     int64_t const ms = nowMsWall();
     if (gS->panel.visible(ms) && gS->haveCam) {

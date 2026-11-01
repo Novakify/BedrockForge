@@ -198,7 +198,9 @@ struct Panel::Ctx {
         round(x, y, w, h, r, WHITE, WHITE, (0.035f + 0.07f * hv) * a);
     }
     void disc(float cx, float cy, float r, uint32_t rgb, float alpha) { round(cx - r, cy - r, 2 * r, 2 * r, r, rgb, rgb, alpha); }
-    void imageAt(int atlas, UiRect const& uv, float x, float y, float w, float h, float alpha, uint32_t tint = WHITE, bool isLate = false) {
+    /// corner = rounded corners in px ([BF], RF masks them like SOLID), blur = soft blur radius in uv ([BF] BLUR)
+    void imageAt(int atlas, UiRect const& uv, float x, float y, float w, float h, float alpha, uint32_t tint = WHITE, bool isLate = false,
+                 float corner = 0, float blur = 0) {
         if (atlas < 0 || alpha <= 0.003f) return;
         BfGlyphV1 q{};
         quad(x + w / 2, y + h / 2, w / 2, h / 2, q);
@@ -207,7 +209,24 @@ struct Panel::Ctx {
         q.alpha = alpha;
         q.atlas = uint32_t(atlas);
         q.flags = BF_GLYPH_IMAGE;
+        if (corner > 0) q.outlineW = clamp01(corner / std::max(0.01f, std::min(w, h) / 2));
+        if (blur > 0) { q.flags |= BF_GLYPH_BLUR; q.glowW = blur; }
         (isLate ? late : out).push_back(q);
+    }
+    /// [BF] Frosted glass: RF draws the screen behind it blurred, tinted (tintA = how much tint), brightness `bright`.
+    /// An RF without glass support draws the tint as a plain rounded rect.
+    void glass(float x, float y, float w, float h, float r, uint32_t tint, float tintA, float bright, float alpha) {
+        if (alpha <= 0.003f || w <= 0 || h <= 0) return;
+        BfGlyphV1 q{};
+        quad(x + w / 2, y + h / 2, w / 2, h / 2, q);
+        q.fill = q.fill2 = toRgba((uint32_t(std::lround(clamp01(tintA) * 255.0f)) << 24) | (tint & 0xFFFFFFu));
+        q.alpha    = alpha;
+        float half = std::min(w, h) / 2;
+        q.outlineW = clamp01(std::min(r, half) / std::max(0.01f, half));
+        q.glowW    = 1.0f;
+        q.glowK    = bright;
+        q.flags    = BF_GLYPH_SOLID | BF_GLYPH_GLASS;
+        out.push_back(q);
     }
     /// isLate = drawn with the text, on top of everything (Java draws glyph icons through the late text pass)
     bool image(std::string const& name, float x, float y, float w, float h, float alpha, uint32_t tint = WHITE, bool isLate = false) {
@@ -259,6 +278,24 @@ struct Panel::Ctx {
             }
             pen += adv * size;
         }
+    }
+
+    /// [BF] text in another font, optionally with a soft SDF glow around it (neon); bitmap fonts get no glow
+    void textF(Font const* f, std::string const& s, float x, float y, float scale, uint32_t rgb, float alpha, bool centered = false,
+               uint32_t glowRgb = 0, float glowA = 0, float glowW = 0.3f) {
+        Font const* keep = font;
+        if (f) font = f;
+        size_t const n0 = late.size();
+        text(s, x, y, scale, rgb, alpha, centered);
+        if (glowA > 0)
+            for (size_t i = n0; i < late.size(); ++i) {
+                auto& q = late[i];
+                if (q.flags & BF_GLYPH_BITMAP) continue;
+                q.glow  = toRgba((uint32_t(std::lround(clamp01(glowA) * 255.0f)) << 24) | (glowRgb & 0xFFFFFFu));
+                q.glowW = glowW;
+                q.glowK = 1.0f;
+            }
+        font = keep;
     }
 
     // ---- widgets (WorldPanel.toggle2 / toggle / option / slider / roundBtn / pager)
@@ -381,9 +418,12 @@ std::vector<PanelAction> Panel::frame(PanelInput const& in, Vec3 origin, Config&
         double const th = -(1.0 - t9) * 70.0 * 3.14159265358979 / 180.0;
         Vec3 const   Ur = U * std::cos(th) + N * std::sin(th);
         c.frame(pos, R * (K * s), Ur * (-K * s));
-        c.round(-84.8f, -104.8f, 169.6f, 223.6f, 19.8f, EDGE1, EDGE2, 0.35f * c.recA);
-        c.round(-84, -104, 168, 222, 19, TOP, BOTTOM, 0.97f * c.recA);
-        record(c, media);
+        if (cfg.playerStyle == 1 || cfg.playerStyle == 2) player(c, media, cfg.playerStyle); // [BF] Glass / Neon
+        else {
+            c.round(-84.8f, -104.8f, 169.6f, 223.6f, 19.8f, EDGE1, EDGE2, 0.35f * c.recA);
+            c.round(-84, -104, 168, 222, 19, TOP, BOTTOM, 0.97f * c.recA);
+            record(c, media);
+        }
     }
 
     // crosshair dot on the panel
@@ -397,6 +437,168 @@ std::vector<PanelAction> Panel::frame(PanelInput const& in, Vec3 origin, Config&
     mHot = c.hotNow;
     if (c.changed) c.actions.push_back({PanelAction::Kind::SaveConfig, 0});
     return std::move(c.actions);
+}
+
+// ---------------------------------------------------------------- [BF] Glass / Neon player card
+// Same controls in the same places as the classic card (card px = panel px - (98, 104)); everything else is the look.
+//   Glass: frosted glass over the world (RF blurs what is behind it), the cover's colours glowing through it and
+//          around it, white type, white controls (Apple Music "now playing" feel).
+//   Neon:  dark smoked glass inside a pink neon tube; the cover sits in a tube in the cover's own colour, which also
+//          lights the progress bar and the small controls; the cover frame pulses while music plays.
+void Panel::player(Ctx& c, PanelMedia const& np, int style) {
+    float const  a      = c.recA;
+    bool const   neon   = style == 2;
+    double const t      = double(c.in.nowMs) / 1000.0;
+    bool const   cover  = np.hasTrack && c.assets.cover >= 0;
+    Font const*  bold   = c.fonts.get("outfit_bold");
+    Font const*  reg    = c.fonts.get("outfit");
+    uint32_t const acc  = neon ? (c.assets.coverAccent ? c.assets.coverAccent : 0x19E3FFu) : WHITE; // cover colour
+    uint32_t const accC = lerpRgb(acc, WHITE, 0.62f);                                                // tube core
+    // the card's tube is pink; when the cover's own colour is pink too, the tube goes electric blue so it stays two-tone
+    uint32_t pink = 0xFF2ED6, pinkC = 0xFFD2F6;
+    if (neon) {
+        auto hueOf = [](uint32_t rgb) {
+            float r = float((rgb >> 16) & 255), g = float((rgb >> 8) & 255), b = float(rgb & 255);
+            float mx = std::max({r, g, b}), mn = std::min({r, g, b}), d = mx - mn;
+            if (d < 1) return 0.0f;
+            float h = mx == r ? std::fmod((g - b) / d + 6.0f, 6.0f) : mx == g ? (b - r) / d + 2.0f : (r - g) / d + 4.0f;
+            return h * 60.0f;
+        };
+        float dh = std::fabs(hueOf(acc) - hueOf(pink));
+        if (std::min(dh, 360.0f - dh) < 45.0f) { pink = 0x2E7BFF; pinkC = 0xD2E4FF; }
+    }
+    float const    pulse = np.playing ? float(std::exp(-std::fmod(t, 0.78) / 0.16)) : 0.25f; // ~77 bpm thump
+    float const    cs = 124, cx = -cs / 2, cy = -86;
+
+    // ---- card
+    if (!neon) {
+        float const br = 0.5f + 0.5f * float(std::sin(t * 0.9));
+        for (int i = 4; i >= 1; --i) { // soft shadow under the glass
+            float const g = float(i) * 2.5f;
+            c.round(-84 - g, -100 - g + 4, 168 + 2 * g, 222 + 2 * g, 19 + g, 0x0A0614, 0x0A0614, 0.05f * a);
+        }
+        if (cover) c.imageAt(c.assets.cover, UiRect{}, -132, -146, 264, 318, (0.5f + 0.15f * br) * a, WHITE, false, 60, 0.12f); // aura
+        else c.round(-110, -125, 220, 270, 110, ACCENT, DEEP2, 0.18f * a);
+        c.round(-84.8f, -104.8f, 169.6f, 223.6f, 19.8f, WHITE, WHITE, 0.22f * a);           // hairline
+        c.glass(-84, -104, 168, 222, 19, 0x140C26, 0.36f, 0.8f, a);
+        if (cover) c.imageAt(c.assets.cover, UiRect{}, -80, -100, 160, 214, 0.32f * a, WHITE, false, 16, 0.2f); // colour film
+        c.round(-66, -103.5f, 132, 0.7f, 0.35f, WHITE, WHITE, 0.45f * a);                    // top edge catching light
+    } else {
+        for (int i = 6; i >= 1; --i) { // the tube's glow
+            float const g = float(i) * 1.7f;
+            c.round(-84 - g, -104 - g, 168 + 2 * g, 222 + 2 * g, 19 + g, pink, pink, (0.03f + 0.012f * float(7 - i)) * a);
+        }
+        c.round(-85, -105, 170, 224, 20, pinkC, pinkC, a); // the tube itself (1 px of it shows)
+        c.glass(-84, -104, 168, 222, 19, 0x06040E, 0.66f, 0.42f, a);
+    }
+
+    // ---- source line
+    std::string const src = np.sourceApp == "Browser" ? "YouTube" : np.sourceApp;
+    if (!src.empty()) {
+        std::string lab = "PLAYING FROM " + text::toUpper(src);
+        c.textF(reg, lab, 0, -99, 0.4f, neon ? accC : WHITE, (neon ? 0.85f : 0.62f) * a, true, acc, neon ? 0.5f : 0.0f, 0.3f);
+    }
+
+    // ---- cover
+    if (neon) {
+        float const k = 0.5f + 0.5f * pulse;
+        for (int i = 5; i >= 1; --i) {
+            float const g = float(i) * 1.5f;
+            c.round(cx - g, cy - g, cs + 2 * g, cs + 2 * g, 7 + g, acc, acc, (0.025f + 0.035f * k) * float(6 - i) * 0.5f * a);
+        }
+        c.round(cx - 0.9f, cy - 0.9f, cs + 1.8f, cs + 1.8f, 7.9f, accC, accC, (0.75f + 0.25f * k) * a);
+    } else if (cover) {
+        c.imageAt(c.assets.cover, UiRect{}, cx + 7, cy + 12, cs - 14, cs - 14, 0.8f * a, WHITE, false, 12, 0.1f); // glow under it
+    }
+    if (cover) c.imageAt(c.assets.cover, UiRect{}, cx, cy, cs, cs, a, WHITE, false, 7);
+    else {
+        c.round(cx, cy, cs, cs, 7, neon ? 0x1A1030 : 0x3A3354, neon ? 0x0C0818 : 0x231E38, (neon ? 1.0f : 0.6f) * a);
+        c.image("icon.music", -10, cy + cs / 2 - 10, 20, 20, 0.7f * a, neon ? accC : WHITE, true);
+    }
+
+    // ---- title, artist
+    std::string const title  = np.hasTrack ? np.title : "No music";
+    std::string const artist = np.hasTrack ? np.artist : "";
+    if (neon) {
+        // a real neon sign: now and then the tube stutters
+        double const ph      = std::fmod(t, 6.0);
+        float const  flicker = (ph > 2.52 && ph < 2.6) || (ph > 4.66 && ph < 4.7) ? 0.6f : 1.0f;
+        c.textF(bold, c.ellip(title, 150, 0.95f), 0, 44, 0.95f, 0xFFF0FC, flicker * a, true, pink, 0.95f * flicker, 0.42f);
+        if (!artist.empty()) c.textF(reg, c.ellip(artist, 150, 0.66f), 0, 57.5f, 0.66f, accC, 0.95f * a, true, acc, 0.7f, 0.35f);
+    } else {
+        c.textF(bold, c.ellip(title, 112, 0.95f), cx, 44, 0.95f, WHITE, a);
+        if (!artist.empty()) c.textF(reg, c.ellip(artist, 112, 0.68f), cx, 57.5f, 0.68f, WHITE, 0.7f * a);
+        if (np.playing) // little live EQ beside the title
+            for (int i = 0; i < 4; ++i) {
+                float const h = 2.5f + 6.5f * (0.5f + 0.5f * float(std::sin(t * (5.0 + i * 1.7) + i * 1.3)));
+                c.round(52 + float(i) * 2.8f, 54 - h, 1.8f, h, 0.6f, WHITE, WHITE, 0.85f * a);
+            }
+    }
+
+    // ---- progress (same track as the classic card, so the seek hit-box stays)
+    float const bw = 136, bx = -bw / 2, by = 70;
+    float       pr = 0;
+    int64_t     pos = 0;
+    if (np.hasTrack && np.durationMs > 0) {
+        pos = mActive == "seek" && mHovered ? int64_t(clamp01((mHx - 30) / 136) * float(np.durationMs)) : np.positionMs;
+        pr  = clamp01(float(double(pos) / double(np.durationMs)));
+    }
+    if (neon) {
+        c.round(bx, by, bw, 1.6f, 0.8f, acc, acc, 0.18f * a);
+        if (pr > 0) {
+            c.round(bx - 1.5f, by - 1.6f, std::max(3.0f, bw * pr) + 3, 4.8f, 2.4f, acc, acc, 0.22f * a); // glow
+            c.round(bx, by, std::max(1.6f, bw * pr), 1.6f, 0.8f, accC, accC, a);
+            c.disc(bx + bw * pr, by + 0.8f, 4.2f, acc, 0.3f * a);
+            c.disc(bx + bw * pr, by + 0.8f, 2.1f, WHITE, a);
+        }
+    } else {
+        c.round(bx, by, bw, 2, 1, WHITE, WHITE, 0.22f * a);
+        if (pr > 0) c.round(bx, by, std::max(2.0f, bw * pr), 2, 1, WHITE, WHITE, 0.92f * a);
+    }
+    if (np.hasTrack) {
+        uint32_t const tc = neon ? accC : WHITE;
+        float const    ta = (neon ? 0.75f : 0.6f) * a;
+        c.textF(reg, fmtTime(pos), bx, 75.5f, 0.5f, tc, ta);
+        std::string d = "-" + fmtTime(std::max<int64_t>(0, np.durationMs - pos));
+        Font const* keep = c.font;
+        c.font           = reg ? reg : c.font;
+        float const dw   = c.textW(d, 0.5f);
+        c.font           = keep;
+        c.textF(reg, d, bx + bw - dw, 75.5f, 0.5f, tc, ta);
+    }
+
+    // ---- controls (hit-boxes in panel px, like the classic buttons)
+    float const y   = 103;
+    auto        btn = [&](std::string const& id, float x, float r, std::string const& icon, std::string const& fb, bool big) {
+        float const h = c.hit(id, 98 + x - r, 104 + y - r, 2 * r, 2 * r);
+        float const is = r * (big ? 1.0f : 1.15f);
+        uint32_t    ic = WHITE;
+        if (neon && big) {
+            c.disc(x, y, r + 4.5f, pink, (0.1f + 0.08f * h) * a);
+            c.disc(x, y, r + 1.2f, pinkC, a);
+            c.disc(x, y, r + 0.3f, 0x0B0614, a);
+            c.disc(x, y, r + 0.3f, pink, (0.12f + 0.12f * h) * a);
+            ic = 0xFFE6FB;
+        } else if (neon) {
+            c.disc(x, y, r + 2.5f, acc, 0.16f * h * a);
+            ic = lerpRgb(WHITE, acc, 0.3f);
+        } else if (big) {
+            c.disc(x, y, r + 1.4f, WHITE, (0.24f + 0.1f * h) * a);
+            c.disc(x, y, r + 0.7f, 0x2A2040, 0.55f * a);
+            c.disc(x, y, r + 0.7f, WHITE, (0.14f + 0.12f * h) * a);
+        } else {
+            c.disc(x, y, r + 1, WHITE, 0.12f * h * a);
+        }
+        if (!c.image(icon, x - is / 2, y - is / 2, is, is, a, ic, true)) c.text(fb, x, y - 3, 0.75f, ic, a, true);
+        return c.clicked(id);
+    };
+    if (btn("prev", -28, 8, "icon.prev", "<<", false)) c.actions.push_back({PanelAction::Kind::Prev, 0});
+    if (btn("play", 0, 10, np.playing ? "icon.pause" : "icon.play", np.playing ? "||" : ">", true))
+        c.actions.push_back({PanelAction::Kind::PlayPause, 0});
+    if (btn("next", 28, 8, "icon.next", ">>", false)) c.actions.push_back({PanelAction::Kind::Next, 0});
+    if (btn("repeat", 52, 6.5f, "icon.refresh", "R", false)) c.actions.push_back({PanelAction::Kind::Repeat, 0});
+    if (np.repeat == 1) c.text("1", 55, y + 0.5f, 0.45f, neon ? accC : WHITE, a);
+    else if (np.repeat == 2) c.disc(57, y + 4, 1.2f, neon ? accC : WHITE, a);
 }
 
 // ---------------------------------------------------------------- record card (left), centred on px (98, 104)
@@ -442,13 +644,15 @@ void Panel::record(Ctx& c, PanelMedia const& np) {
 void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     float const a = c.bodyA;
     float const y = 207;
-    if (c.roundBtn("prev", 70, y, 8, "icon.prev", "<<", a)) c.actions.push_back({PanelAction::Kind::Prev, 0});
-    if (c.roundBtn("play", 98, y, 10, np.playing ? "icon.pause" : "icon.play", np.playing ? "||" : ">", a))
-        c.actions.push_back({PanelAction::Kind::PlayPause, 0});
-    if (c.roundBtn("next", 126, y, 8, "icon.next", ">>", a)) c.actions.push_back({PanelAction::Kind::Next, 0});
-    if (c.roundBtn("repeat", 150, y, 6.5f, "icon.refresh", "R", a)) c.actions.push_back({PanelAction::Kind::Repeat, 0});
-    if (np.repeat == 1) c.text("1", 153, y + 0.5f, 0.45f, ACCENT2, a);
-    else if (np.repeat == 2) c.disc(155, y + 4, 1.2f, ACCENT2, a);
+    if (cfg.playerStyle != 1 && cfg.playerStyle != 2) { // [BF] Glass / Neon draw their controls on the card (player())
+        if (c.roundBtn("prev", 70, y, 8, "icon.prev", "<<", a)) c.actions.push_back({PanelAction::Kind::Prev, 0});
+        if (c.roundBtn("play", 98, y, 10, np.playing ? "icon.pause" : "icon.play", np.playing ? "||" : ">", a))
+            c.actions.push_back({PanelAction::Kind::PlayPause, 0});
+        if (c.roundBtn("next", 126, y, 8, "icon.next", ">>", a)) c.actions.push_back({PanelAction::Kind::Next, 0});
+        if (c.roundBtn("repeat", 150, y, 6.5f, "icon.refresh", "R", a)) c.actions.push_back({PanelAction::Kind::Repeat, 0});
+        if (np.repeat == 1) c.text("1", 153, y + 0.5f, 0.45f, ACCENT2, a);
+        else if (np.repeat == 2) c.disc(155, y + 4, 1.2f, ACCENT2, a);
+    }
     c.hit("cover", 36, 18, 124, 124);
     if (c.clicked("cover")) c.actions.push_back({PanelAction::Kind::PlayPause, 0});
     c.hit("seek", 30, 169, 136, 10);
@@ -683,7 +887,11 @@ void Panel::more(Ctx& c, Config& cfg) {
     c.toggle2("snd", 288, 107, 78, "Menu sounds", cfg.uiSounds, [&] { cfg.uiSounds = !cfg.uiSounds; }, a);
     c.option("m0", 206, 128, 160, 15, "Open full menu", false, [&] { c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0}); }, a);
     c.toggle2("m1", 206, 145, 160, "Random sky", cfg.skyShuffle, [&] { cfg.skyShuffle = !cfg.skyShuffle; }, a);
-    c.option("m2", 206, 162, 160, 15, "Back to the normal menu", false, [&] { c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0}); }, a);
+    // [BF] player card look (replaces a second "open the full menu" button)
+    c.text("Player", 206, 166, 0.62f, WHITE, 0.6f * a);
+    static char const* const ps[] = {"Classic", "Glass", "Neon"};
+    for (int i = 0; i < 3; ++i)
+        c.option("ps" + std::to_string(i), 238 + float(i) * 43, 162, 41, 15, ps[i], cfg.playerStyle == i, [&cfg, i] { cfg.playerStyle = i; }, a);
     c.option("m3", 206, 179, 160, 15, "Close", false, [&] { c.actions.push_back({PanelAction::Kind::Close, 0}); }, a);
 }
 
