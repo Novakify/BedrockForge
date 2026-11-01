@@ -24,7 +24,7 @@ Build: `python3 -I tools/GeckoBridge/build.py the_wonderland-3.0.3-1.20.1-forge-
 | Vanilla retextures (blocks, items, mobs, armor, HUD icons, colormaps) | works where the layout matches | only files Bedrock has at the same path + size (GeyserMC mapping + bedrock-samples); others skipped |
 | Vanilla sound replacements | works | same path in Bedrock |
 | Splash texts | works | splashes.json |
-| Java shader (only `fog.glsl`: fog starts at 20% distance) | works | all 80 Bedrock fog definitions overridden with fog_start x 0.2 |
+| Java shader (only `fog.glsl`: fog starts at 20% distance) | works (seen 2026-11-01) | Bedrock refuses minecraft: fog files, so the 80 vanilla biome fogs are copied as `the_wonderland:shader_<biome>` (colours kept, fog_start x 0.2) and `scripts/shader_fog.js` pushes the one for the player's biome in vanilla dimensions (mod dimensions keep their own fog) |
 | 18 painting variants | works (as wall entities) | item per painting hangs it on the clicked face; punching drops it back (Bedrock can't add painting variants) |
 | Title screen logo / panorama | works (global pack) | separate "GB Wonderland Menu RP": textures/ui/title.png + panorama_0..5 (PNG, _alternate, HDR); the main menu only reads Global Resources, so enable it there |
 | GUI screens | n/a | Wonderland has none besides the overlays (all converted) |

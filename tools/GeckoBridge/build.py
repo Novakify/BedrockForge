@@ -27,6 +27,30 @@ from ModelCore.rig import load_bedrock_geo, write_bedrock_geo       # noqa: E402
 GB = "gb"
 # gb_anim*: animated .mcmeta textures; Bedrock only applies a render controller's uv_anim when the material
 # has USE_UV_ANIM (vanilla charged_creeper / player_spectator do the same)
+# Java fog.glsl port: the fog of the biome the player stands in, from our namespace (minecraft:fog_* can't be replaced).
+# Only in vanilla dimensions: mod dimensions push their own full fog (worldgen.js). Re-pushed when the biome changes.
+SHADER_FOG_JS = """import { world, system } from "@minecraft/server";
+const MAP = __MAP__, TAG = "__NS___shader", DEF = MAP["minecraft:default"];
+const VANILLA = new Set(["minecraft:overworld", "minecraft:nether", "minecraft:the_end"]);
+const cur = new Map();
+let said = false;
+system.runInterval(() => {
+  if (!said) { said = true; try { const d = world.getDimension("overworld"); console.warn(`[GeckoBridge] shader fog: ${Object.keys(MAP).length} biome fogs, biome lookup ${d.getBiome ? "on" : "off (default fog)"}`); } catch {} }
+  for (const p of world.getAllPlayers()) {
+    let want = null;
+    if (VANILLA.has(p.dimension.id)) {
+      let b = null;
+      try { b = p.dimension.getBiome ? p.dimension.getBiome(p.location)?.id : null; } catch {}
+      want = (b && MAP[b]) || DEF || null;
+    }
+    if (cur.get(p.id) === want) continue;
+    cur.set(p.id, want);
+    try { p.runCommand(`fog @s remove ${TAG}`); } catch {}
+    if (want) { try { p.runCommand(`fog @s push ${want} ${TAG}`); } catch {} }
+  }
+}, 20);
+world.afterEvents.playerLeave.subscribe((e) => cur.delete(e.playerId));
+"""
 GLOW_MATERIAL = {"materials": {"version": "1.0.0", "gb_glow:entity_alphablend": {"+states": ["DisableCulling"]},
                                "gb_anim:entity_alphatest": {"+defines": ["USE_UV_ANIM"]},
                                "gb_glow_anim:entity_alphablend": {"+states": ["DisableCulling"], "+defines": ["USE_UV_ANIM"]}}}
@@ -1159,6 +1183,7 @@ class Build:
         lang = ct.run(item_info=ci["items"], block_props=ci["blocks"])
         self.lang += [f"{k}={v}" for k, v in lang.items()]
         self.content_ids = {"blocks": ct.blocks, "items": ct.items}
+        if getattr(ct, "fog_factor", None) is not None: self.fog_factor, self.fog_map = ct.fog_factor, ct.fog_map
 
     def worldgen(self):
         """Structure templates -> .mcstructure; dimensions -> custom dimensions + generator script; portals."""
@@ -1538,9 +1563,13 @@ class Build:
         use_script = (bool(self.js["entities"]) and any(c["props"] or c["triggers"] for c in self.js["entities"].values())) or bool(self.js.get("blocks"))
         ov_main = (self.bp / "scripts" / "overlay" / "main.js").exists()
         wg = getattr(self, "worldgen_script", False)
-        if use_script or ov_main or wg or pj or getattr(self, "javabridge_on", False):
+        fog = getattr(self, "fog_factor", None) is not None
+        if fog:   # Java fog.glsl tweak -> our own copies of the biome fogs, pushed by biome (vanilla fogs can't be overridden)
+            self.write(self.bp, "scripts/shader_fog.js", SHADER_FOG_JS.replace("__MAP__", json.dumps(self.fog_map)).replace("__NS__", self.ns))
+        if use_script or ov_main or wg or pj or fog or getattr(self, "javabridge_on", False):
             body = runtime.script(self.js) if use_script else "// GeckoBridge: overlay only\n"
             if wg: body = 'import "./worldgen.js";   // ModPorter dimensions + structure world generator\n' + body
+            if fog: body = 'import "./shader_fog.js";   // Java fog.glsl tweak as a pushed fog\n' + body
             if pj: body = 'import "./paintings.js";   // mod painting variants as wall entities\n' + body
             if getattr(self, "javabridge_on", False): body = body + '\nimport "./javabridge/main.js";   // the mod\'s own code (JavaBridge)\n'
             if ov_main: body = 'import "./overlay/main.js";   // ModPorter behaviour overlay (our own code)\n' + body

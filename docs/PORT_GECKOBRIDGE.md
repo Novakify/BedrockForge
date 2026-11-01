@@ -302,6 +302,9 @@ true pathfinding / setTarget beyond Bedrock behaviours, GUIs other than overlays
 - **Polish:** javap runs in batches of 300 classes per JVM (output byte-identical to one call per class): an uncached
   Wonderland build went from ~25 min to ~10 min, cached rebuilds ~3 min. Builds are deterministic now (fixed hash
   seed, sorted asset scans): two runs give identical packs. MCreator's "undefined" animation sentinel no longer warns.
+- **Fog port fixed (2026-11-01):** the old fog.glsl port wrote `minecraft:fog_*` files, which Bedrock rejects (80 ContentLog
+  errors, no effect). Now: per-biome copies in the mod namespace + a script that pushes the right one (fog stack tag
+  `<ns>_shader`). Every fog medium needs fog_color, so a partial "start only" fog is not possible.
 - **Wonderland fix found on the way:** 95 of 129 Wonderland mobs used `"textures/entities/" + getTexture() + ".png"`
   (MCreator synced texture name) and were getting the shortest matching file (fish.png). The synced default
   (`entityData.define(TEXTURE, "the_sphere_calm")`) is now read, so every mob gets its real skin.
