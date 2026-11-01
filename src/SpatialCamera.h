@@ -65,7 +65,7 @@ struct Config {
     bool  overrideFov = true;
     int   targetFov   = 70;
     bool  worldBlur = true;
-    int   worldBlurStrength = 5;
+    int   worldBlurStrength = 3; // subtler than Java's 5 (the user found 5 too blurry)
     bool  blurKeepPlayer = false; // Java 2.x draws the player sharp after the blur; the reference clips blur it too
     bool  dropShadow = true;
     int   dropShadowAlpha = 120;

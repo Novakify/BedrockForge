@@ -137,7 +137,7 @@ float wrapDeg(float a) {
 }
 float rotLerp(float t, float a, float b) { return a + t * wrapDeg(b - a); } // Mth.rotLerp
 
-void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
+void avatarApply(Actor& actor, float yawP, float mx, float my, bool on, bool closing = false) {
     auto& ec   = actor.getEntityContext();
     auto  head = ec.tryGetComponent<ActorHeadRotationComponent>();
     auto  body = ec.tryGetComponent<MobBodyRotationComponent>();
@@ -148,8 +148,9 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
         if (gAvatar.saved) {
             head->mYHeadRot = gAvatar.headYaw; head->mYHeadRotO = gAvatar.headYawO;
             body->mYBodyRot = gAvatar.bodyYaw; body->mYBodyRotO = gAvatar.bodyYawO;
+            (*rot->mRot).x = gAvatar.pitch; (*rot->mRotPrev).x = gAvatar.pitchO;
             gAvatar.saved   = false;
-            gAvatar.restoreFrames = 0;
+            gAvatar.restoreFrames = 8;
         }
         if (gAvatar.restoreFrames > 0) { // the game re-derives the look pitch for a few frames: keep putting it back
             --gAvatar.restoreFrames;
@@ -169,8 +170,11 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
     float bodyRot = yawP + c.avatarBodyRot * sgn;
     if (c.mirrorHeadMovement) mx = -mx;
     float yaw     = mx * float(c.avatarMaxYaw) + c.avatarBaseYaw * sgn;
-    float pitch   = std::clamp(my * float(c.avatarMaxPitch), -60.0f, 60.0f);
-    if (!gAvatar.smoothInit) { gAvatar.smoothInit = true; gAvatar.sYaw = yaw; gAvatar.sPitch = pitch; }
+    // AvatarRendererMixin: xRot = normY * avatarMaxPitchOffset (clamped to +-60), eased in from the player's pitch;
+    // while closing it eases back to where the player looked
+    float pitch   = closing ? gAvatar.pitch : std::clamp(my * float(c.avatarMaxPitch), -60.0f, 60.0f);
+    if (actor.isGliding()) pitch = gAvatar.pitch; // elytra: vanilla pitch
+    if (!gAvatar.smoothInit) { gAvatar.smoothInit = true; gAvatar.sYaw = yaw; gAvatar.sPitch = gAvatar.pitch; }
     else {
         gAvatar.sYaw   = rotLerp(0.15f, gAvatar.sYaw, yaw);
         gAvatar.sPitch = gAvatar.sPitch + 0.15f * (pitch - gAvatar.sPitch);
@@ -178,8 +182,9 @@ void avatarApply(Actor& actor, float yawP, float mx, float my, bool on) {
     // Java render state: bodyRot absolute, yRot = head yaw relative to the body, xRot = head pitch
     body->mYBodyRot = bodyRot; body->mYBodyRotO = bodyRot;
     head->mYHeadRot = bodyRot + gAvatar.sYaw; head->mYHeadRotO = head->mYHeadRot;
-    // head pitch (Java xRot) is NOT written: on Bedrock the actor pitch is the look direction and the first person
-    // camera adopts it, so the player would keep looking where the avatar looked after the screen closes.
+    // head pitch (Java xRot): on Bedrock the actor pitch is also the look direction, so it is written only while the
+    // third person panel camera is ours (its pitch comes from the config, not the actor) and put back on close
+    (*rot->mRot).x = gAvatar.sPitch; (*rot->mRotPrev).x = gAvatar.sPitch;
     ++gAvatarWrites;
 }
 
@@ -527,7 +532,7 @@ void applyComponent() {
         }
         gLastCamPos = cp;
         applyFov(comps, nComp, false, 1.0f); // the FOV eases back with the glide
-        avatarApply(actor, yawP, 0, 0, t < 1.0f); // AvatarRendererMixin: the pose blends back as the camera returns
+        avatarApply(actor, yawP, 0, 0, t < 1.0f, true); // AvatarRendererMixin: the pose blends back as the camera returns
         if (t >= 1.0f) gCloseDone = true;          // client thread restores the perspective (clientTick)
         gView.havePose = false;
         return;

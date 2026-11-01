@@ -114,8 +114,22 @@ bool inHud(float2 uv) {
     return pad[5].z > 0.5 ? !inside : inside;
 }
 
+// sharp bilinear: the GUI is pixel art, so texel centres stay solid and only the one screen pixel across each texel
+// edge is blended (crisp when magnified, still smooth when the tilted panel shrinks it)
+float2 sharpUv(float2 uv) {
+    float w, h;
+    tUi.GetDimensions(w, h);
+    float2 sz = float2(w, h);
+    float2 t  = uv * sz - 0.5;
+    float2 fl = floor(t);
+    float2 fr = t - fl;
+    float2 px = max(fwidth(t), 1e-4);
+    fr        = saturate((fr - 0.5) / px + 0.5);
+    return (fl + fr + 0.5) / sz;
+}
+
 float4 uiAt(float2 uv) {
-    float4 u = pad[5].y > 0.5 ? tUi.SampleLevel(sPoint, uv, 0) : tUi.SampleLevel(sLin, uv, 0);
+    float4 u = pad[5].y > 0.5 ? tUi.SampleLevel(sPoint, uv, 0) : tUi.SampleLevel(sLin, sharpUv(uv), 0);
     if (inHud(uv)) u = 0; // the HUD strip is drawn flat (PSHud), not on the panel
     // c5.y: drop the screen's dim background layer (near-black, partly transparent) - only the GUI itself shows
     if (pad[0].y > 0.5 && max(u.r, max(u.g, u.b)) < 0.03 && u.a < 0.85) u = 0;
