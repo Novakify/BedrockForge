@@ -27,6 +27,8 @@
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/sound/SoundEngine.h"
+#include "mc/deps/audio/PlaySoundOptions.h"
+#include "mc/deps/audio/ServerSoundHandle.h"
 #include "mc/deps/core/string/HashedString.h"
 #include "mc/util/MolangScriptArg.h"
 #include "mc/util/MolangVariableMap.h"
@@ -97,7 +99,7 @@ bool gameFocused() {
 // ---------------------------------------------------------------- host
 struct BedrockHost final : IHost {
     IClientInstance*         client = nullptr;
-    std::vector<std::string> log;
+    std::vector<std::string> lines;
     std::string              lastError;
     fs::path                 logFile;
     std::map<int, uint64_t>  handles;
@@ -111,8 +113,8 @@ struct BedrockHost final : IHost {
         f << line << "\n";
     }
     void log_(std::string const& m) {
-        log.push_back(m);
-        if (log.size() > 6) log.erase(log.begin());
+        lines.push_back(m);
+        if (lines.size() > 6) lines.erase(lines.begin());
         write(m);
     }
     void log(std::string const& m) override { log_("[lua] " + m); }
