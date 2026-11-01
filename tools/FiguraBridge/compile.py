@@ -244,6 +244,14 @@ def blank_png(w: int, h: int) -> bytes:
             + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
+def kinds_for(f: dict):
+    """render controller kinds for a texture file: a primary ('d') file only ever shows as a primary texture, an
+    emissive ('e') file as a secondary one - one full geometry pass per controller, so no unused pairs"""
+    if f["type"] == "e":
+        return (("s", "e", "Material.fbe", "e"),)
+    return (("p", "t", primary_material(f), "d"),)
+
+
 def collect_parts(models: dict) -> list[Part]:
     parts: list[Part] = []
 
@@ -549,8 +557,23 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     def vis_expr(p: Part):
         return f"(v.fb{p.i}v ?? {1 if p.vis_eff else 0})"
 
+    # which texture files each chunk's parts use by default; a file nobody uses by default (swap targets like
+    # Blue_e, runtime slots) may be put on any part by a script, so it gets a controller in every chunk
+    chunk_files = [set() for _ in chunk_names]
+    default_files = set()
+    for bname, (p, sid) in geo_bones.items():
+        if sid is None or not (0 <= sid < len(sets)):
+            continue
+        for key in ("d", "e"):
+            if sets[sid][key] is not None:
+                default_files.add(sets[sid][key])
+                for k, c in enumerate(chunk_names):
+                    if bname in c:
+                        chunk_files[k].add(sets[sid][key])
     for f, (k, cnames) in ((f, kc) for f in rc_files for kc in enumerate(chunk_names)):
-        for kind, var, mat, key in (("p", "t", primary_material(f), "d"), ("s", "e", "Material.fbe", "e")):
+        if f["i"] in default_files and f["i"] not in chunk_files[k]:
+            continue
+        for kind, var, mat, key in kinds_for(f):
             pv = [{"*": False}]
             for bname, (p, sid) in geo_bones.items():
                 if bname not in cnames:
@@ -612,7 +635,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     fp_controllers = {}
     if fp_bones:
         for f, (k, cnames) in ((f, kc) for f in rc_files for kc in enumerate(chunk_names)):
-            for kind, var, mat, key in (("p", "t", primary_material(f), "d"), ("s", "e", "Material.fbe", "e")):
+            for kind, var, mat, key in kinds_for(f):
                 pv = [{"*": False}]
                 for bname, (p, sid) in fp_bones.items():
                     if bname not in cnames:
