@@ -272,13 +272,12 @@ int removeP(lua_State* L) {
 int addChild(lua_State* L) {
     Part* p = self(L, "addChild");
     Part* c = check<Part>(L, 2, tModelPart, "addChild");
-    if (c == p || p->isChildOf(c)) return luaL_error(L, "Cannot add a parent as its own child");
-    if (c->parent) {
-        auto& v = c->parent->children;
-        v.erase(std::remove(v.begin(), v.end(), c), v.end());
-    }
-    c->parent = p;
+    if (c == p) return luaL_error(L, "Fractal, cannot parent part to itself");
+    for (Part* q = p->parent; q; q = q->parent)
+        if (q == c) return luaL_error(L, "Cannot add child that's already parent of this part");
+    // Figura: the part is NOT removed from its old parent's list (it can be in several), only re-pointed
     p->children.push_back(c);
+    c->parent = p;
     return ret(L);
 }
 int removeChild(lua_State* L) {
@@ -294,6 +293,7 @@ int removeChild(lua_State* L) {
 int moveTo(lua_State* L) {
     Part* p = self(L, "moveTo");
     Part* n = check<Part>(L, 2, tModelPart, "moveTo");
+    if (n == p) return luaL_error(L, "Fractal, cannot parent part to itself");
     if (p->parent) {
         auto& v = p->parent->children;
         v.erase(std::remove(v.begin(), v.end(), p), v.end());
@@ -322,8 +322,9 @@ int copyP(lua_State* L) {
     *c        = Part(*p);
     c->name   = n;
     c->index  = idx;
-    c->parent = nullptr;
-    c->children.clear();
+    c->parent = nullptr;          // Figura: children list is shared (new ArrayList<>(children)), parent not set
+    c->preRender = c->midRender = c->postRender = 0;
+    c->tasks.clear();
     a->out.resize(a->parts.size());
     a->compiledPivots.push_back(p->pivot);
     pushRef(L, c, tModelPart);

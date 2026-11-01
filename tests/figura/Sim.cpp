@@ -8,6 +8,8 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <map>
+#include <cstdlib>
 
 #include "figura/core/Avatar.h"
 #include "figura/core/LuaBind.h"
@@ -132,6 +134,30 @@ int main(int argc, char** argv) {
             p.attackAnim = t < 0.3 ? float(t / 0.3) : 0;
             if (t < 0.05) host.down.insert("key.mouse.left"); else host.down.erase("key.mouse.left");
         });
+    }
+    if (scen == "coverage") {
+        std::ifstream cf(std::getenv("COVERAGE") ? std::getenv("COVERAGE") : "/tmp/coverage.lua");
+        std::stringstream ss; ss << cf.rdbuf();
+        std::string src = ss.str();
+        run("tick", 0.1, stand);
+        if (luaL_loadbuffer(a.L, src.data(), src.size(), "=coverage") != 0 || lua_pcall(a.L, 0, 0, 0) != 0) std::printf("coverage error: %s\n", lua_tostring(a.L, -1));
+    }
+    if (scen == "wheel") {
+        auto exec = [&](int i) {
+            lua_getglobal(a.L, "action_wheel");
+            lua_getfield(a.L, -1, "execute");
+            lua_pushvalue(a.L, -2);
+            lua_pushinteger(a.L, i);
+            lua_pushboolean(a.L, 0);
+            if (lua_pcall(a.L, 3, 0, 0) != 0) { std::printf("[ERROR] %s\n", lua_tostring(a.L, -1)); lua_pop(a.L, 1); host.errors++; }
+            lua_pop(a.L, 1);
+        };
+        run("before", 0.5, stand);
+        exec(6); run("page", 0.2, stand);
+        exec(3); run("blue", 0.5, stand);
+        std::map<int, int> sec;
+        for (auto& o : a.out) sec[o.secondary]++;
+        for (auto& [k, v] : sec) std::printf("  secondary file %d: %d parts (%s)\n", k, v, k >= 0 ? a.textureFiles[k].figuraName.c_str() : "default");
     }
     if (all || scen == "sit") {
         p.vehicle.valid = true; p.vehicle.type = "minecraft:boat";

@@ -337,6 +337,7 @@ function CfgMT.__index.setName(_, n) cfgName = tostring(n) return config end
 function CfgMT.__index.getName(_) return cfgName end
 function CfgMT.__index.save(_, k, v) fb.cfgSave(cfgName, k, v) return config end
 function CfgMT.__index.load(_, k) return fb.cfgLoad(cfgName, k) end
+CfgMT.__index.name = CfgMT.__index.setName
 config = setmetatable({}, CfgMT)
 figuraMetatables.ConfigAPI = CfgMT
 

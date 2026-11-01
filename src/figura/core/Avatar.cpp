@@ -504,7 +504,8 @@ void Avatar::initScripts() {
     lua_newtable(L);
     lua_setfield(L, LUA_REGISTRYINDEX, "fb.loading");
     std::vector<std::string> order;
-    if (!autoScripts.empty()) order = autoScripts;
+    if (!autoScripts.empty())
+        for (auto const& n : autoScripts) order.push_back(normScript(n)); // PathUtils: "scripts/main" -> "scripts.main"
     else for (auto const& [k, v] : scripts) order.push_back(k);
     for (auto const& nm : order) {
         if (scriptError) break;
