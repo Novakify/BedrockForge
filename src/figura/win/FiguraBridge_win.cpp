@@ -184,6 +184,7 @@ struct State {
     std::unique_ptr<HashedString> van;
     int                           nameMode = -1; // -1 unknown, 0 "variable.x", 1 "x"
     int64_t                       lastTickMs = 0;
+    int64_t                       lastScanMs = 0;
     bool                          wheelHeld = false;
     std::set<int>                 digitsDown;
     std::string                   status;
@@ -421,14 +422,15 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     std::lock_guard lk(s.mutex);
     s.host->client = &f.client;
     if (!s.avatar) {
+        int64_t t = nowMs();
+        if (t - s.lastScanMs < 5000) return; // nothing installed: rescan every 5 s, stay silent
+        s.lastScanMs = t;
         auto all = listAvatars(s);
         std::string want = s.avatarName;
+        if (!want.empty() && std::find(all.begin(), all.end(), want) == all.end()) want.clear();
         if (want.empty() && !all.empty()) want = all.front();
         if (!want.empty()) loadAvatar(s, want);
-        if (!s.avatar) {
-            f.infoLines.push_back("FiguraBridge: no compiled avatar in " + s.root.string());
-            return;
-        }
+        if (!s.avatar) return;
     }
     if (!f.player) return;
     LocalPlayer& lp = *f.player;

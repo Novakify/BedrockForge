@@ -113,6 +113,7 @@ bool Avatar::buildFromNbt(json::Value const& nbt, json::Value const& rig, std::s
     color            = meta["color"].str();
     if (meta["authors"].isArray())
         for (auto const& a : meta["authors"].items()) author += (author.empty() ? "" : ", ") + a.str();
+    else if (meta["authors"].isString()) author = meta["authors"].str();
     else author = meta["author"].str();
     if (meta["autoScripts"].isArray())
         for (auto const& s : meta["autoScripts"].items()) autoScripts.push_back(s.str());
