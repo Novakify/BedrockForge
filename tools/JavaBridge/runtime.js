@@ -209,7 +209,7 @@ export class JLevel {
   destroyBlock(p, drop) { try { const b = this.d.getBlock(p.toB()); if (b && !b.isAir) { this.d.runCommand(`setblock ${p.x_} ${p.y_} ${p.z_} air ${drop ? "destroy" : "replace"}`); return true; } } catch {} return false; }
   isEmptyBlock(p) { try { return !!this.d.getBlock(p.toB())?.isAir; } catch { return true; } }
   getHeight(type, x, z) { try { const t = this.d.getTopmostBlock({ x: Math.floor(x), z: Math.floor(z) }); return t ? t.location.y + 1 : this.d.heightRange.min; } catch { return 64; } }
-  getBlockFloorHeight(p) { return 0; }
+  getBlockFloorHeight(p) { try { const b = this.d.getBlock(p.toB()); return !b || b.isAir || b.isLiquid ? 0 : (R.solid(BLOCK(b.typeId)) ? 1 : 0); } catch { return 0; } }
   getMaxLocalRawBrightness(p) { try { return this.d.getBlock(p.toB())?.getLightLevel?.() ?? 15; } catch { return 15; } }
   getMaxBuildHeight() { try { return this.d.heightRange.max; } catch { return 320; } } getMinBuildHeight() { try { return this.d.heightRange.min; } catch { return -64; } }
   canSeeSkyFromBelowWater(p) { try { const t = this.d.getTopmostBlock({ x: p.x_, z: p.z_ }); return !t || t.location.y < p.y_; } catch { return true; } }
@@ -568,7 +568,7 @@ export const R = {
       case "substring": return s.substring(a[0], a[1]); case "replace": return s.split(R.str(a[0])).join(R.str(a[1])); case "trim": return s.trim();
       case "indexOf": return s.indexOf(a[0]); case "charAt": return s.charCodeAt(a[0]); case "split": return JList.of(s.split(new RegExp(a[0])));
       case "hashCode": { let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return h; }
-      case "toString": case "intern": return s; case "matches": return new RegExp(`^${a[0]}$`).test(s);
+      case "toString": case "intern": case "getString": case "getContents": case "plainCopy": case "copy": return s; case "matches": return new RegExp(`^${a[0]}$`).test(s);
     }
     warn("String." + name); return null;
   },
@@ -583,7 +583,15 @@ export const R = {
       if (c === "ItemEntity") return t === "minecraft:item";
       if (c === "TamableAnimal") return false;
       const mc = o.modClass(); if (mc) { let x = mc, n = 0; while (x && n++ < 10) { if (x === cls) return true; x = CLS.get(x)?.sup; } }
-      return CFG.classToType?.[cls] === t;
+      if (CFG.classToType?.[cls]) return CFG.classToType[cls] === t;
+      if (cls.startsWith("net/minecraft/")) {      // vanilla class: abstract groups by family, concrete ones by snake-cased id
+        if (c === "Animal" || c === "AgeableMob") { try { return t !== "minecraft:player" && !!o.e.getComponent("health") && !o.e.matches({ families: ["monster"] }); } catch { return false; } }
+        if (c === "WaterAnimal" || c === "AbstractFish") { try { return o.e.matches({ families: ["fish"] }) || o.e.matches({ families: ["squid"] }); } catch { return false; } }
+        if (c === "AbstractVillager") return t === "minecraft:villager_v2" || t === "minecraft:wandering_trader";
+        if (c === "Villager") return t === "minecraft:villager_v2";
+        return t === "minecraft:" + c.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+      }
+      return false;
     }
     if (o.__cls) { let x = o.__cls, n = 0; while (x && n++ < 10) { if (x === cls) return true; x = CLS.get(x)?.sup; } return false; }
     if (c === "LevelAccessor" || c === "Level" || c === "ServerLevel" || c === "ServerLevelAccessor" || c === "WorldGenLevel") return o instanceof JLevel;
@@ -605,7 +613,7 @@ export const R = {
     const c = cls?.cls?.split("/").pop();
     for (const e of list) {
       const w = JEntity.of(e);
-      if ((c === "LivingEntity" || c === "Mob" || c === "Monster" || c === "PathfinderMob") && !R.instOf(w, cls.cls)) continue;
+      if (c !== "Entity" && cls?.cls && !R.instOf(w, cls.cls)) continue;   // typed query: never hand back unrelated entities (or the player)
       if (pred && !R.lam(pred, w)) continue;
       out.push(w);
     }

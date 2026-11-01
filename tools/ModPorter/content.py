@@ -45,6 +45,13 @@ RENAMES = {"minecraft:grass": "minecraft:short_grass", "minecraft:grass_path": "
            "minecraft:turtle_helmet": "minecraft:turtle_helmet", "minecraft:redstone_torch": "minecraft:redstone_torch"}
 
 
+def missing_png():
+    """16x16 magenta/black checker - Minecraft's own 'missing texture' look, so the gap is visible but not an error."""
+    import io, struct, zlib
+    rows = b"".join(b"\x00" + b"".join((b"\xf8\x00\xf8" if ((x // 8) + (y // 8)) % 2 == 0 else b"\x00\x00\x00") for x in range(16)) for y in range(16))
+    def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 16, 16, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
 class Content:
     def __init__(self, z, modid, ns, rp, bp, report, title=None, block_rename=None):
         self.z, self.modid, self.ns, self.rp, self.bp, self.report = z, modid, ns, Path(rp), Path(bp), report
@@ -311,9 +318,10 @@ class Content:
             comps.update(info.get("components", {}))
             if tex:
                 src = self.asset("textures", tex, ".png")
-                if src in self.names:
-                    self.write(self.rp, f"textures/items/{self.ns}/{iid}.png", self.z.read(src))
-                    self.item_tex[f"{self.ns}_{iid}"] = {"textures": f"textures/items/{self.ns}/{iid}"}
+                data = self.z.read(src) if src in self.names else missing_png()   # the jar ships no texture (pre-release mods)
+                if src not in self.names: self.rep.setdefault("items_missing_texture", []).append(iid)
+                self.write(self.rp, f"textures/items/{self.ns}/{iid}.png", data)
+                self.item_tex[f"{self.ns}_{iid}"] = {"textures": f"textures/items/{self.ns}/{iid}"}
             elif d.get("parent", "").startswith(f"{self.modid}:block/"):
                 continue
             self.write(self.bp, f"items/{self.ns}/{iid}.json", {"format_version": "1.21.60", "minecraft:item": {
@@ -422,7 +430,48 @@ class Content:
             elif kind == "entity": out[f"entity.{self.ns}:{name}.name"] = v; out[f"item.spawn_egg.entity.{self.ns}:{name}.name"] = f"Spawn {v}"
         return out
 
+    # ------------------------------------------------------------------ vanilla resource overrides bundled in the mod
+    TEXMAP = Path("/home/claude/tools/packconv/textures.json")   # GeyserMC PackConverter mapping (MIT), fetched locally
+
+    VANILLA_DIR = Path("/home/claude/tools/vanilla")   # lists read from the installed game (terrain atlas paths, sound files)
+
+    def vanilla_overrides(self):
+        """assets/minecraft/** in the mod jar -> Bedrock vanilla paths, conservatively.
+
+        Only block / item textures (GeyserMC PackConverter mapping) whose Bedrock target is a known atlas texture,
+        not animated (.mcmeta strips have other frame layouts), sound files that exist in Bedrock under the same path,
+        and splashes. Entity / GUI / environment / colormap / panorama replacements are skipped: their Bedrock layouts
+        differ, and shipping the whole Java set crashed the game while loading (Wonderland, 2026-10-31)."""
+        names = [n for n in self.names if n.startswith("assets/minecraft/") and not n.endswith("/")]
+        if not names: return
+        mp = json.loads(self.TEXMAP.read_text()) if self.TEXMAP.exists() else {}
+        vd = self.VANILLA_DIR
+        terrain = set(json.loads((vd / "terrain_paths.json").read_text())) if (vd / "terrain_paths.json").exists() else set()
+        vsnd = {k[1:] for k in json.loads((vd / "vanilla_tex.json").read_text()) if k.startswith("@")} if (vd / "vanilla_tex.json").exists() else set()
+        n_tex = n_snd = 0; skipped = {}
+        nameset = set(names)
+        for n in names:
+            rel = n[len("assets/minecraft/"):]
+            if rel.startswith("textures/") and rel.endswith(".png"):
+                key = rel[len("textures/"):-4]; cat, _, name = key.partition("/")
+                if cat not in ("block", "item") or n + ".mcmeta" in nameset: skipped[cat] = skipped.get(cat, 0) + 1; continue
+                if key in mp: v = mp[key]; targets = v if isinstance(v, list) else [v]
+                elif isinstance(mp.get(cat), dict) and name in mp[cat]:
+                    v = mp[cat][name]; targets = [f"{'blocks' if cat == 'block' else 'items'}/{x}" for x in (v if isinstance(v, list) else [v])]
+                else: skipped[cat] = skipped.get(cat, 0) + 1; continue
+                for t in targets:
+                    if not t.startswith(("blocks/", "items/")): continue
+                    if t.startswith("blocks/") and terrain and f"textures/{t}" not in terrain: continue
+                    self.write(self.rp, f"textures/{t}.png", self.z.read(n)); n_tex += 1
+            elif rel.startswith("sounds/") and rel.endswith(".ogg"):
+                if vsnd and rel[:-4] not in vsnd: skipped["sounds"] = skipped.get("sounds", 0) + 1; continue
+                self.write(self.rp, rel, self.z.read(n)); n_snd += 1
+            elif rel == "texts/splashes.txt":
+                lines = [l for l in self.z.read(n).decode("utf-8", "replace").splitlines() if l.strip()]
+                self.write(self.rp, "splashes.json", {"splashes": lines})
+        self.rep["vanilla_overrides"] = {"textures": n_tex, "sounds": n_snd, "skipped": skipped}
+
     def run(self, item_info=None, block_props=None):
         self._item_info = item_info or {}; self._props = block_props or {}
-        self.blocks_run(); self.items_run(); self.recipes_run(); self.loot_run()
+        self.blocks_run(); self.items_run(); self.recipes_run(); self.loot_run(); self.vanilla_overrides()
         return self.lang_run()

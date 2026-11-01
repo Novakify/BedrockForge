@@ -50,6 +50,22 @@ def disassemble(jar, prefixes, exclude=("/client/",)):
     return out, tmp
 
 
+def overlays_of(jar, prefixes):
+    """Client GUI overlays (RenderGuiEvent): [{"proc": display procedure fid, "texture": asset path}]."""
+    tmp = Path(tempfile.mkdtemp(prefix="jb_ov_")); out = []
+    with zipfile.ZipFile(jar) as z:
+        names = [n for n in z.namelist() if n.endswith("Overlay.class") and "/client/" in n and n.startswith(tuple(prefixes))]
+        for n in names: z.extract(n, tmp)
+    if not names: return out
+    text = J.javap(tmp, [n[:-6].replace("/", ".") for n in names])
+    for cn, t in J.split_classes(text).items():
+        proc = re.search(r"invokestatic\s+#\d+\s+// Method ([\w/$]+Procedure)\.execute:(\([^)]*\)Z)", t)
+        tex = re.search(r"// String (\w+:textures/screens/[\w/.]+\.png)", t)
+        if proc and tex:
+            out.append({"cls": cn, "proc": f"{proc.group(1)}.execute{proc.group(2)}", "texture": tex.group(1)})
+    return out
+
+
 def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, structures=None, block_rename=None, mod_prefixes=None):
     rep = report.setdefault("javabridge", {})
     with zipfile.ZipFile(jar) as z:
@@ -100,6 +116,9 @@ def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, 
         for v in d.values(): roots |= set(v)
     for d in list(hooks["block"].values()) + list(hooks["item"].values()): roots |= set(d.values())
     roots |= set(hooks["effect"].values()) | {e["fn"] for e in hooks["events"]}
+    ovs = overlays_of(jar, prefixes)
+    hooks["overlays"] = [{"proc": o["proc"], "key": "§" + "§".join(f"{i:02d}") + "§r", "tex": o["texture"]} for i, o in enumerate(ovs)]
+    roots |= {o["proc"] for o in ovs}
     for cn in T.classes:                                  # static data the runtime may need
         if cn.endswith(("Variables$MapVariables", "Variables$PlayerVariables")): roots |= {f"{cn}.{k}" for k in T.classes[cn].methods}
         if cn.split("/")[-1].endswith("Configs") or "/configuration/" in cn: roots.add(f"{cn}.<clinit>()V")

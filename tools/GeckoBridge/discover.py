@@ -320,9 +320,72 @@ def discover(jar):
                 "geo_variants": mi.get("geo_variants", []), "reserved": mi.get("reserved", {}),
                 "model_class": mi.get("model_class"), "renderer_class": ri.get("renderer_class"), "type_field": r.get("field"),
             })
+    entities += vanilla_model_entities(tmp, all_classes, reg, {c for c in geo_classes}, modid, names, lang)
     type_fields = {v["field"]: k for k, v in reg.items() if v.get("field")}
     return {"mod_id": modid, "jar": os.path.basename(jar), "entity_count": len(entities), "entities": entities,
             "type_fields": type_fields, "reserved_info": {k: v for k, v in C.RESERVED_INFO.items()}}, ctrl
+
+
+# ------------------------------------------------------------------ non-GeckoLib entities (vanilla / Java-model renderers)
+VANILLA_RENDER = {"HumanoidModel": "player", "PlayerModel": "player", "CowModel": "cow", "PigModel": "pig"}
+
+
+def vanilla_model_entities(tmp, all_classes, reg, gecko, modid, names, lang):
+    """Registered entity types GeckoLib discovery skipped: their renderer says how they look (vanilla model, the mod's own
+    Java model class, eye layers, block/item renderers). build.py turns `vanilla_model` into geometry (vanilla.py)."""
+    def asset(t): return f"assets/{modid}/{t}" if ":" not in t else f"assets/{t.split(':')[0]}/{t.split(':')[1]}"
+    rend = {}
+    for c in all_classes:
+        if not c.endswith("Renderer") and "Renderer$" not in c: continue
+        raw = Path(tmp, c.replace(".", "/") + ".class").read_bytes()
+        if b"geckolib" in raw: continue
+        dis = C.javap(tmp, c)
+        m = re.search(r"extends net\.minecraft\.client\.renderer\.entity\.(\w+)<([\w.$]+)", dis)
+        if m and "$" not in c: rend[m.group(2)] = (c, m.group(1), dis)
+    out = []
+    done = set()
+    for eid, r in sorted(reg.items()):
+        c = r["class"]
+        if c in gecko or c not in all_classes: continue
+        dis = C.javap(tmp, c)
+        sup = re.search(r"extends ([\w.$]+)", dis)
+        hier = dis + (C.javap(tmp, sup.group(1)) if sup and sup.group(1) in all_classes else "")
+        is_proj = any(h in (sup.group(1) if sup else "") for h in PROJECTILE_HINTS) or any(h in hier.split("{")[0] for h in PROJECTILE_HINTS)
+        ms = MP.methods(MP.javap(Path(tmp), c))
+        attr_m = next((k for k in ms if k in ("createAttributes", "getAttributeBuilder", "createMobAttributes", "registerAttributes", "m_21183_")), None)
+        attributes = MP.parse_attributes(ms.get(attr_m, [])) if attr_m else {}
+        movement = "swim" if any(h in hier for h in SWIM_HINTS) else "fly" if any(h in hier for h in FLY_HINTS) else "walk"
+        rc, base, rdis = rend.get(c, (None, None, ""))
+        vm = {"renderer": base, "renderer_class": rc}
+        tex = [asset(t) for t in re.findall(r"// String ([\w/.:-]+\.png)", rdis)]
+        vm["texture"] = next((t for t in tex if t in names), None)
+        mcls = re.search(r"// class (net/[\w/$]+/client/model/\w+)\b", rdis) or re.search(r"Method ([\w/$]+)\.\"<init>\":\(Lnet/minecraft/client/model/geom/ModelPart;\)V", rdis)
+        model = mcls.group(1).replace("/", ".") if mcls else None
+        if model and model.startswith("net.minecraft.client.model."): vm["vanilla"] = VANILLA_RENDER.get(model.split(".")[-1], "player")
+        elif model: vm["model_class"] = model
+        elif base in ("HumanoidMobRenderer",): vm["vanilla"] = "player"
+        elif rc and "BlockRenderDispatcher" in rdis: vm["vanilla"] = "block"
+        elif base in ("ThrownItemRenderer",) or is_proj: vm["vanilla"] = "item"
+        sc = re.search(r"ldc\s+#\d+\s+// float ([\d.]+)f\s*\n.*\n?.*m_85841_", rdis)
+        if sc: vm["scale"] = float(sc.group(1))
+        # eye / emissive layers: inner RenderLayer classes of the renderer drawing RenderType.eyes(texture)
+        glows = []
+        for inner in [x for x in all_classes if rc and x.startswith(rc + "$")]:
+            idis = C.javap(tmp, inner)
+            t = [asset(x) for x in re.findall(r"// String ([\w/.:-]+\.png)", idis)]
+            if t and ("m_110488_" in idis or "m_234338_" in idis or "m_110473_" in idis): glows += [x for x in t if x in names]
+        vm["glow"] = glows
+        if not rc and not is_proj: vm["vanilla"] = "none"
+        out.append({
+            "id": eid, "class": c.split(".")[-1], "java_class": c, "extends": sup.group(1).split(".")[-1] if sup else None,
+            "geckolib": False, "is_mob": not is_proj, "category": r.get("category"),
+            "kind": CATEGORY_KIND.get(r.get("category") or "", "hostile" if attributes.get("attack_damage") else "passive"),
+            "size": r.get("size"), "movement": movement, "attributes": attributes,
+            "geo": None, "animation_file": None, "texture": vm.get("texture"),
+            "variants": [{"when": "1", "texture": vm["texture"]}] if vm.get("texture") else [],
+            "glowmask": None, "layers": [], "name": lang.get(f"entity.{modid}.{eid}"), "geo_variants": [], "reserved": {},
+            "model_class": vm.get("model_class"), "renderer_class": rc, "type_field": r.get("field"), "vanilla_model": vm})
+    return out
 
 
 def MP_jload(b):

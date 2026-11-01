@@ -244,6 +244,35 @@ items/armor/blocks (M3), GeckoLib 5 Java side (M4), the native evaluator (Figura
   Test functions (in `GB Cave Dweller BP/functions`): `gbp` platform, `gbn`/`gbs`/`gbc`/`gbe` summon rows, `gbf` freeze,
   `gbu` unfreeze, `gbk` clear, `gbd` noon, `gbm` midnight.
 
+## M2/M3 + full-mod pipeline status (2026-10-31 evening, Wonderland test)
+Pipeline per mod jar (`tools/GeckoBridge/build.py JAR OUT --name N [--tol 0.25]`):
+GeckoLib mobs (M1) + Java-side conditions/triggers as entity properties + Script API (M2) + projectiles, block
+entities, items, blocks, recipes, loot, lang (M3 via ModPorter/content.py) + dimensions/structures/world generator
+(ModPorter/dimensions.py, structures.py) + MCreator Java code translated to Script API JS (tools/JavaBridge).
+
+New this session:
+- **Vanilla-model entities** (`tools/GeckoBridge/vanilla.py`, discover.vanilla_model_entities): registered entity
+  types with no GeckoLib renderer. Mod Java models are read from `createBodyLayer()` bytecode (CubeListBuilder /
+  PartDefinition / PartPose, symbolic stack run) and `setupAnim()` maths becomes one Molang animation; vanilla
+  renderer models (HumanoidModel on the PLAYER layer, CowModel, PigModel) use built-in meshes; RenderType.eyes
+  layers become glow overlays; block-rendering projectiles become a cube. Wonderland: 95 -> 129 mobs (all of them).
+- **Vanilla retextures are conservative now** (content.vanilla_overrides): only block/item textures with a
+  GeyserMC PackConverter mapping whose Bedrock target is a known terrain atlas path, non-animated, plus sound files
+  that exist in Bedrock and splashes. Copying Wonderland's whole assets/minecraft set (~2500 files: entity, GUI,
+  colormap, panorama...) made the game abort while loading the world (0xC0000409, 2026-10-31 18:12). Lists read
+  from the installed game live in /home/claude/tools/vanilla (not committed).
+- JavaBridge fixes: typed entity queries never return unrelated entities (the eye jumpscare showed forever because
+  `getEntitiesOfClass(TheEyeChasingEntity)` matched the player); vanilla classes matched by family / snake id;
+  `getBlockFloorHeight` real (a spawn-search loop hit the loop guard); BlockHitResult location/direction;
+  Component.getString on strings; dev commands `/scriptevent jb:fx` (mod effects + active overlay) and
+  `/scriptevent jb:fxclear`.
+- Items whose jar ships no texture (Naturalist pre-release, Sculk purifier) get a magenta/black placeholder icon
+  instead of a ContentLog error.
+
+Known gaps (honest list): Java shaders / post effects, noise terrain (dimensions are structure tiles in a void),
+true pathfinding / setTarget beyond Bedrock behaviours, GUIs other than overlays, paintings, custom particles
+(mapped to vanilla ones), deer locator message (cosmetic).
+
 ## Coexistence with Figura (added 2026-10-31)
 Goal is GeckoLib + Figura features together in one client. Figura is a separate native runtime (FiguraBridge) that
 shares a **ModelCore** layer with GeckoBridge: one rig format, one native animation evaluator (also the fallback for

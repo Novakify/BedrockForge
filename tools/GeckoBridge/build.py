@@ -18,7 +18,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE.parent))
-import gbanim, molang, discover, runtime, sounds as S             # noqa: E402
+import gbanim
+import vanilla as VM, molang, discover, runtime, sounds as S             # noqa: E402
 import controllers as C                                            # noqa: E402
 from ModelCore.rig import load_bedrock_geo, write_bedrock_geo       # noqa: E402
 
@@ -537,6 +538,12 @@ class Build:
             cn = self.controller(eid, ci, c, amap, {})
             if cn: cnames.append(cn)
         desc.setdefault("animations", {})
+        if e.get("_vm_anim"):     # vanilla-model entity: its setupAnim() as one looping Molang animation
+            nid, anim = e["_vm_anim"]
+            self.anim_files = getattr(self, "anim_files", {}); self.anim_files.setdefault(f"vm_{eid}", {})[nid] = anim
+            desc["animations"]["vm_setup"] = nid; desc["scripts"]["animate"].append("vm_setup")
+            desc["scripts"]["pre_animation"].insert(0, "v.gb_ls = q.modified_distance_moved * 4.0;")
+            if e["vanilla_model"].get("scale"): desc["scripts"]["scale"] = str(e["vanilla_model"]["scale"])
         if e["gb_kind"] == "projectile": self.projectile_face(next(iter(geo_map.values()))[0], desc)
         if e["gb_kind"] == "block": er["block"] = self.block_for(e, eid, next(iter(geo_map.values()))[0], e["variants"][0]["texture"])
         my_rcs = [r for r in desc["render_controllers"]]
@@ -695,6 +702,48 @@ class Build:
             t = find("textures", ".png")
             if t: e["variants"] = [{"when": "1", "texture": t}]
 
+    def vanilla_assets(self, e):
+        """Non-GeckoLib entity: build its geometry from the Java model (or the vanilla model its renderer uses)."""
+        vm = e["vanilla_model"]; eid = clean(e["id"]); kind = vm.get("vanilla")
+        mesh, assigns = None, {}
+        if vm.get("model_class"):
+            text = self.javap_class(vm["model_class"])
+            mesh = VM.parse_mesh(text) if text else None
+            if mesh: assigns = VM.parse_anim(text, VM.part_fields(text))
+            else: self.report["warnings"].append(f"{e['id']}: could not read {vm['model_class']}.createBodyLayer, using the player model")
+        if not mesh:
+            if kind in ("cow", "pig"): mesh, assigns = VM.quadruped_mesh(kind), dict(VM.QUADRUPED_ANIM)
+            elif kind in ("block", "item"): mesh = VM.cube_mesh(8 if kind == "block" else 4)
+            elif kind == "none": mesh = VM.cube_mesh(0.01)
+            else: mesh, assigns = VM.player_mesh(), dict(VM.HUMANOID_ANIM)
+        gid = f"geometry.{GB}.{self.ns}.vm_{eid}"
+        geo = VM.to_bedrock(mesh, gid)
+        self.write(self.rp, f"models/entity/{self.ns}/vm_{eid}.geo.json", geo)
+        key = f"<vanilla_model>/{eid}"; self.geo_ids[key] = gid; e["geo"] = key
+        rest = {b["name"]: b.get("rotation", [0, 0, 0]) for b in geo["minecraft:geometry"][0]["bones"]}
+        anim = VM.anim_json(f"animation.{GB}.{self.ns}.vm_{eid}.setup", assigns, rest)
+        if anim: e["_vm_anim"] = next(iter(anim.items()))
+        if kind in ("block", "item") and not e.get("variants"):
+            pick = next((n for n in sorted(self.names) if re.search(rf"assets/{self.modid}/textures/blocks?/(cobblestone|stone\w*)\.png$", n)), None) \
+                or next((n for n in sorted(self.names) if re.search(rf"assets/{self.modid}/textures/blocks?/\w+\.png$", n)), None)
+            if pick: e["variants"] = [{"when": "1", "texture": pick}]
+        if kind == "none" and not e.get("variants"):
+            pick = next((n for n in sorted(self.names) if n.endswith("/invisible.png")), None) or next((n for n in sorted(self.names) if n.startswith(f"assets/{self.modid}/textures/") and n.endswith(".png")), None)
+            if pick: e["variants"] = [{"when": "1", "texture": pick}]
+        e["layers"] = [{"kind": "custom", "class": (vm.get("renderer_class") or "") + "$eyes", "rows": [{"when": "1", "texture": g}], "emissive": True}
+                       for g in dict.fromkeys(vm.get("glow") or [])]
+        self.report["entities"].setdefault(clean(e["id"]), {"java": e["class"]})["vanilla_model"] = vm.get("model_class") or kind
+
+    def javap_class(self, cls):
+        import subprocess, tempfile
+        tmp = getattr(self, "_vm_tmp", None)
+        if not tmp:
+            tmp = self._vm_tmp = tempfile.mkdtemp(prefix="gb_vm_")
+            for n in self.names:
+                if n.endswith(".class") and "/client/model/" in n: self.z.extract(n, tmp)
+        r = subprocess.run(["javap", "-c", "-p", "-cp", tmp, cls], capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else None
+
     def aliases(self):
         """Overlay entities (our own AI's projectiles) shown with a converted GeckoLib model: mods/<modid>.json visual_alias."""
         for alias, target in (self.override.get("visual_alias") or {}).items():
@@ -813,6 +862,23 @@ class Build:
         cfg["itemClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"]["item"].items()}
         cfg["effectClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"].get("effect", {}).items()}
         cfgp.write_text("globalThis.__JB_CFG = " + json.dumps(cfg, separators=(",", ":")) + ";\n")
+        # client overlays -> HUD images bound to formatting-code-only titles
+        ovs = cfg["hooks"].get("overlays") or []
+        if ovs:
+            ctrls = []
+            for i, o in enumerate(ovs):
+                ns_, path = o["tex"].split(":", 1)
+                src = f"assets/{ns_}/{path}"
+                if src not in self.names: continue
+                self.write(self.rp, f"textures/ui/{self.ns}/overlay_{i}.png", self.z.read(src))
+                ctrls.append({f"gb_ov_{i}@hud.gb_overlay_img": {"$ov_tex": f"textures/ui/{self.ns}/overlay_{i}", "$ov_key": o["key"]}})
+            self.write(self.rp, "ui/hud_screen.json", {"namespace": "hud",
+                "root_panel": {"modifications": [{"array_name": "controls", "operation": "insert_back", "value": [{"gb_overlays@hud.gb_overlay_panel": {}}]}]},
+                "gb_overlay_panel": {"type": "panel", "size": ["100%", "100%"], "layer": 60, "controls": ctrls},
+                "gb_overlay_img": {"type": "image", "texture": "$ov_tex", "size": ["100%", "100%"], "keep_ratio": False,
+                    "bindings": [{"binding_name": "#hud_title_text_string", "binding_name_override": "#text", "binding_type": "global"},
+                                 {"binding_type": "view", "source_property_name": "(#text = $ov_key)", "target_property_name": "#visible"}]}})
+            self.report["overlays"] = len(ctrls)
         # procedures drive the triggered animations now: no automatic ability cycle
         for full, c in self.js["entities"].items(): c["hooked"] = True
         self.javabridge_on = True
@@ -839,11 +905,7 @@ class Build:
                             self.report.setdefault("overlay_patches", []).append(pt["find"][:40])
                     self.write(self.bp, f"scripts/overlay/{f.relative_to(od / 'scripts')}", txt)
                 else: self.write(self.bp, f"scripts/overlay/{f.relative_to(od / 'scripts')}", f.read_bytes())
-        # every mod sound event as <ns>.<event> (the overlay scripts play those), plus random groups
-        sj = self.java_sounds()
-        for ev in sj:
-            short = self.sound(ev)
-            if short: self.sound_defs[f"{self.ns}.{ev}"] = self.sound_defs[self.entity_sounds[short]]
+        # random sound groups (the mod's events are all registered as <ns>.<event> in run())
         for g, evs in (ov.get("sound_groups") or {}).items():
             files = [f for ev in evs for f in self.sound_defs.get(f"{self.ns}.{ev}", {}).get("sounds", [])]
             if files: self.sound_defs[f"{self.ns}.{g}"] = {"category": "hostile", "sounds": files}
@@ -1001,7 +1063,8 @@ class Build:
         by_class = {c["class"]: c for c in self.ctrl["entities"]}
         for e in self.ents["entities"]:
             e["gb_kind"] = "block" if e["class"].endswith("BlockEntity") else "mob" if e.get("is_mob", True) else "projectile"
-            self.fill_assets(e)
+            if e.get("vanilla_model"): self.vanilla_assets(e)
+            else: self.fill_assets(e)
             self.entity(e, by_class.get(e["java_class"], {}))
         self.aliases()
         if self.override.get("content", True): self.content()
@@ -1014,6 +1077,9 @@ class Build:
         if self.acs: self.write(self.rp, f"animation_controllers/{self.ns}.ac.json", {"format_version": "1.10.0", "animation_controllers": self.acs})
         self.write(self.rp, f"render_controllers/{self.ns}.rc.json", {"format_version": "1.8.0", "render_controllers": self.rcs})
         self.write(self.rp, "materials/entity.material", GLOW_MATERIAL)
+        for ev in self.java_sounds():   # every mod sound event as <ns>.<event> (scripts, JavaBridge, biome ambience play these)
+            short = self.sound(ev)
+            if short: self.sound_defs[f"{self.ns}.{ev}"] = self.sound_defs[self.entity_sounds[short]]
         if self.ov_dir: self.apply_overlay()
         if self.terrain:
             tt = self.rp / "textures/terrain_texture.json"

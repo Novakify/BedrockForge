@@ -1,6 +1,6 @@
 // JavaBridge hooks (original Bedrock Forge code): call the translated Java methods from Bedrock events.
 import { world, system } from "@minecraft/server";
-import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX } from "./runtime.js";
+import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR } from "./runtime.js";
 
 const CFG = globalThis.__JB_CFG, H = CFG.hooks, NS = CFG.ns;
 const errs = new Map();
@@ -142,9 +142,9 @@ world.afterEvents.playerBreakBlock.subscribe(({ block, player, brokenBlockPermut
   if (cls && H.block[cls].destroy) run(H.block[cls].destroy, [{ __cls: cls }, lv, pos, BLOCK(id), JEntity.of(player)]);
   for (const ev of H.events) if (ev.kind === "breakBlock") run(ev.fn, [{ __ev: true, player: JEntity.of(player), entity: JEntity.of(player), pos, level: lv, state: BLOCK(id) }]);
 });
-world.afterEvents.playerInteractWithBlock.subscribe(({ block, player }) => {
+world.afterEvents.playerInteractWithBlock.subscribe(({ block, player, blockFace, faceLocation }) => {
   const cls = blockClass.get(block.typeId); const lv = JLevel.of(block.dimension), pos = V(block.location.x, block.location.y, block.location.z);
-  if (cls && H.block[cls].use) run(H.block[cls].use, [{ __cls: cls }, BLOCK(block.typeId), lv, pos, JEntity.of(player), HAND, { getBlockPos: () => pos, getLocation: () => pos, getDirection: () => ({ n: "up" }) }]);
+  if (cls && H.block[cls].use) run(H.block[cls].use, [{ __cls: cls }, BLOCK(block.typeId), lv, pos, JEntity.of(player), HAND, { getBlockPos: () => pos, getLocation: () => (faceLocation ? V(pos.x_ + faceLocation.x, pos.y_ + faceLocation.y, pos.z_ + faceLocation.z) : V(pos.x_ + 0.5, pos.y_ + 0.5, pos.z_ + 0.5)), getDirection: () => DIR[String(blockFace ?? "Up").toUpperCase()] ?? DIR.UP, isInside: () => false }]);
   for (const ev of H.events) if (ev.kind === "rightClickBlock") run(ev.fn, [{ __ev: true, entity: JEntity.of(player), player: JEntity.of(player), pos, level: lv, getPos: () => pos }]);
 });
 // standing in / on mod blocks
@@ -173,5 +173,45 @@ world.afterEvents.itemUseOn?.subscribe?.(({ source, itemStack, block }) => {
   const cls = itemClass.get(itemStack?.typeId); if (!cls || !H.item[cls].useOn) return;
   const w = JEntity.of(source), pos = V(block.location.x, block.location.y, block.location.z);
   run(H.item[cls].useOn, [{ __cls: cls }, { getLevel: () => w.level(), getClickedPos: () => pos, getPlayer: () => w, getItemInHand: () => R.handItem(w, "mainhand"), getHand: () => HAND }]);
+});
+// ---- client overlays (jumpscares, eye overlays): the mod's display procedure decides, the HUD shows the image
+// (resource pack ui/hud_screen.json binds each image to a title made only of formatting codes, so no text shows)
+const OVS = H.overlays ?? [];
+const shown = new Map();
+if (OVS.length) system.runInterval(() => {
+  for (const p of world.getAllPlayers()) {
+    const w = JEntity.of(p), lv = w.level(), l = p.location; let on = null;
+    for (const o of OVS) {
+      const desc = o.proc.slice(o.proc.indexOf("("));
+      const args = []; const types = desc.slice(1, desc.indexOf(")")).match(/\[*(L[^;]+;|[A-Z])/g) ?? [];
+      let d = 0;
+      for (const t of types) {
+        if (t === "D") args.push([l.x, l.y, l.z][d++] ?? 0);
+        else if (t.includes("LevelAccessor") || t.includes("Level;")) args.push(lv);
+        else if (t.includes("Entity") || t.includes("Player")) args.push(w);
+        else args.push(null);
+      }
+      const r = run(o.proc, args);
+      if (r === true || r === 1) { on = o; break; }
+    }
+    const prev = shown.get(p.id) ?? null;
+    if (on) { try { p.onScreenDisplay.setTitle(on.key, { fadeInDuration: 0, stayDuration: 6, fadeOutDuration: 0 }); } catch {} }
+    else if (prev) { try { p.onScreenDisplay.setTitle("§r", { fadeInDuration: 0, stayDuration: 1, fadeOutDuration: 0 }); } catch {} }
+    shown.set(p.id, on);
+  }
+}, 3);
+// ---- dev diagnostics: /scriptevent jb:fx (list mod effects + active overlay), /scriptevent jb:fxclear (Java's /effect clear for mod effects)
+system.afterEvents.scriptEventReceive.subscribe(({ id, sourceEntity: p }) => {
+  if (!p || (id !== "jb:fx" && id !== "jb:fxclear")) return;
+  if (id === "jb:fxclear") {
+    MODFX.delete(p.id);
+    for (const k of p.getDynamicPropertyIds()) if (k.startsWith("fx:")) p.setDynamicProperty(k, undefined);
+    try { p.runCommand("effect @s clear"); } catch {}
+    p.sendMessage("[JavaBridge] mod effects cleared"); return;
+  }
+  const fx = p.getDynamicPropertyIds().filter(k => k.startsWith("fx:")).map(k => `${k.slice(3)}=${(p.getDynamicProperty(k) ?? 0) - system.currentTick}t`);
+  const on = shown.get(p.id);
+  const msg = `[JavaBridge] effects: ${fx.join(", ") || "none"} | overlay: ${on ? on.tex : "none"} | title key: ${JSON.stringify(on?.key ?? null)}`;
+  p.sendMessage(msg); console.warn(msg);
 });
 console.warn(`[JavaBridge] ${NS}: ${Object.keys(H.entity).length} mobs, ${blockClass.size} blocks, ${itemClass.size} items, ${effectClass.size} effects, ${H.events.length} event hooks`);
