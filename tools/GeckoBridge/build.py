@@ -902,6 +902,49 @@ class Build:
         self.report["paintings"] = len(variants)
         return True
 
+    def menu_pack(self):
+        """assets/minecraft title logo + panorama -> a separate global resource pack (the main menu only reads
+        Global Resources): textures/ui/title.png, panorama_0..5 (+ _alternate and the HDR copies newer
+        Bedrock menus prefer). Returns the pack dir or None."""
+        from PIL import Image
+        import io, struct
+        logo = "assets/minecraft/textures/gui/title/minecraft.png"
+        faces = [f"assets/minecraft/textures/gui/title/background/panorama_{i}.png" for i in range(6)]
+        has_logo, has_pano = logo in self.names, all(f in self.names for f in faces)
+        if not (has_logo or has_pano): return None
+        out = self.out / f"GB {self.title} Menu RP"
+        import shutil; shutil.rmtree(out, ignore_errors=True)
+        def png(im): b = io.BytesIO(); im.save(b, "PNG"); return b.getvalue()
+        def hdr(im):   # Radiance RGBE, flat (uncompressed scanlines)
+            im = im.convert("RGB"); w, h = im.size
+            rows = []
+            for r, g, bb in im.getdata():
+                rf, gf, bf = (r / 255) ** 2.2, (g / 255) ** 2.2, (bb / 255) ** 2.2
+                m = max(rf, gf, bf)
+                if m < 1e-32: rows.append(b"\0\0\0\0"); continue
+                import math
+                e = math.frexp(m)[1]; sc = 256.0 / (2 ** e)
+                rows.append(bytes([min(255, int(rf * sc)), min(255, int(gf * sc)), min(255, int(bf * sc)), e + 128]))
+            return f"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y {h} +X {w}\n".encode() + b"".join(rows)
+        if has_logo:
+            im = Image.open(io.BytesIO(self.z.read(logo))).convert("RGBA"); im = im.crop(im.getbbox())
+            W, H = 1937, 333; k = min(W / im.width, H / im.height)
+            im = im.resize((max(1, int(im.width * k)), max(1, int(im.height * k))), Image.NEAREST)
+            canvas = Image.new("RGBA", (W, H)); canvas.paste(im, ((W - im.width) // 2, (H - im.height) // 2))
+            self.write(out, "textures/ui/title.png", png(canvas))
+        if has_pano:
+            for i, f in enumerate(faces):
+                im = Image.open(io.BytesIO(self.z.read(f))).convert("RGB").resize((1024, 1024), Image.BICUBIC)
+                for nm in (f"panorama_{i}", f"panorama_alternate_{i}"): self.write(out, f"textures/ui/{nm}.png", png(im))
+                small = im.resize((512, 512), Image.BICUBIC)
+                for nm in (f"panoramahdr_{i}", f"panoramahdr_alternate_{i}"): self.write(out, f"textures/ui/{nm}.hdr", hdr(small))
+        self.write(out, "manifest.json", {"format_version": 2, "header": {"name": f"GB {self.title} Menu", "description":
+            f"Main menu logo + panorama from {self.report['jar']} (private use). Activate under Global Resources.",
+            "uuid": u5(self.ns, "menu"), "version": [0, 1, 0], "min_engine_version": [1, 21, 0]},
+            "modules": [{"type": "resources", "uuid": u5(self.ns, "menu", "m"), "version": [0, 1, 0]}]})
+        self.report["menu_pack"] = {"logo": has_logo, "panorama": has_pano, "uuid": u5(self.ns, "menu")}
+        return out
+
     def egg_colors(self):
         """ForgeSpawnEggItem(type, background, highlight, props) in the mod's item registry -> Bedrock spawn_egg colours,
         keyed by the entity registry field (e.g. COMPLIANCE_ANGEL)."""
@@ -1282,6 +1325,7 @@ class Build:
         if self.sound_defs: self.write(self.rp, "sounds/sound_definitions.json", {"format_version": "1.14.0", "sound_definitions": self.sound_defs})
         if self.ent_sounds: self.write(self.rp, "sounds.json", {"entity_sounds": {"entities": self.ent_sounds}})
         pj = self.paintings() if self.override.get("paintings", True) else False
+        self.menu_pack()
         if self.item_tex:
             it = self.rp / "textures/item_texture.json"
             d = json.loads(it.read_text()) if it.exists() else {"resource_pack_name": self.title, "texture_name": "atlas.items", "texture_data": {}}
