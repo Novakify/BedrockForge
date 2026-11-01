@@ -636,7 +636,7 @@ export const R = {
   },
   soundId(snd) { const rl = R.rl(snd?.sound ?? snd); if (!rl) return null; const [ns, path] = rl.split(":"); if (ns === MODID) return `${NS}.${path}`; return CFG.vanillaSounds?.[path] ?? path; },
   particles(lv, type, x, y, z, n, dx, dy, dz) {
-    const id = CFG.particles?.[type?.particle] ?? "minecraft:basic_smoke_particle";
+    const id = CFG.particles?.[type?.particle] ?? (CFG.modParticles?.includes(type?.particle) ? type.particle : "minecraft:basic_smoke_particle");
     for (let i = 0; i < Math.min(n ?? 1, 24); i++) { try { lv.d.spawnParticle(id, { x: x + (Math.random() - 0.5) * 2 * (dx ?? 0), y: y + (Math.random() - 0.5) * 2 * (dy ?? 0), z: z + (Math.random() - 0.5) * 2 * (dz ?? 0) }); } catch {} }
   },
   spawn(lv, etype, pos) {

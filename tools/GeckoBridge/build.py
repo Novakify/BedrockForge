@@ -734,13 +734,55 @@ class Build:
                        for g in dict.fromkeys(vm.get("glow") or [])]
         self.report["entities"].setdefault(clean(e["id"]), {"java": e["class"]})["vanilla_model"] = vm.get("model_class") or kind
 
-    def javap_class(self, cls):
+    def mod_particles(self):
+        """assets/<mod>/particles/<name>.json -> Bedrock billboard particles (texture, gravity, lifetime from the Java
+        particle class when readable, else sensible defaults). Returns the particle ids for the JavaBridge."""
+        ids = []
+        for n in sorted(x for x in self.names if x.startswith(f"assets/{self.modid}/particles/") and x.endswith(".json")):
+            name = Path(n).stem
+            try: texs = jload(self.z.read(n)).get("textures") or []
+            except Exception: continue
+            if not texs: continue
+            ns_, path = (texs[0].split(":", 1) + [None])[:2] if ":" in texs[0] else (self.modid, texs[0])
+            src = f"assets/{ns_}/textures/particle/{path}.png"
+            if src not in self.names: continue
+            key = f"textures/particle/{self.ns}/{name}"
+            self.write(self.rp, key + ".png", self.z.read(src))
+            life, grav, size = 2.0, 0.0, 0.2
+            cls = next((c for c in self.names if c.endswith(".class") and "/particle/" in c and Path(c).stem.lower() == name.replace("_", "") + "particle"), None)
+            if cls:
+                t = self.javap_class(cls[:-6].replace("/", "."), extract_dir="/particle/") or ""
+                g = re.search(r"ldc\s+#\d+\s+// float ([\d.]+)f\s*\n\s*\d+: putfield\s+#\d+\s+// Field f_107226_", t)    # gravity
+                qi = t.find("putfield      #"); qi = max((m.start() for m in re.finditer(r"putfield\s+#\d+\s+// Field f_107663_", t)), default=-1); qf = re.findall(r"// float ([\d.]+)f", t[max(0, qi - 200):qi]) if qi > 0 else []   # quadSize
+                q = type("m", (), {"group": lambda self, i, v=qf[-1]: v})() if qf else None
+                L = re.findall(r"bipush\s+(\d+)", t[t.find("f_107225_") - 400: t.find("f_107225_")]) if "f_107225_" in t else []
+                if g: grav = float(g.group(1))
+                if q: size = min(1.0, float(q.group(1)) * 0.15)     # Java quadSize starts ~0.15 (half size), times the factor
+                if L: life = max(int(x) for x in L) / 20
+            pid = f"{self.ns}:{name}"
+            self.write(self.rp, f"particles/{self.ns}_{name}.json", {"format_version": "1.10.0", "particle_effect": {
+                "description": {"identifier": pid, "basic_render_parameters": {"material": "particles_alpha", "texture": key}},
+                "components": {
+                    "minecraft:emitter_rate_instant": {"num_particles": 1}, "minecraft:emitter_lifetime_once": {"active_time": 0.05},
+                    "minecraft:emitter_shape_point": {"direction": ["math.random(-1, 1)", "math.random(0, 1)", "math.random(-1, 1)"]},
+                    "minecraft:particle_lifetime_expression": {"max_lifetime": f"math.random({life / 2:.2f}, {life:.2f})"},
+                    "minecraft:particle_initial_speed": 1.0,
+                    "minecraft:particle_motion_dynamic": {"linear_acceleration": [0, -24 * grav, 0], "linear_drag_coefficient": 0.5},
+                    "minecraft:particle_motion_collision": {"coefficient_of_restitution": 0, "collision_radius": 0.05, "collision_drag": 4},
+                    "minecraft:particle_appearance_billboard": {"size": [size, size], "facing_camera_mode": "rotate_xyz",
+                                                                 "uv": {"texture_width": 1, "texture_height": 1, "uv": [0, 0], "uv_size": [1, 1]}},
+                    "minecraft:particle_appearance_lighting": {}}}})
+            ids.append(pid)
+        if ids: self.report["particles"] = ids
+        return ids
+
+    def javap_class(self, cls, extract_dir="/client/model/"):
         import subprocess, tempfile
         tmp = getattr(self, "_vm_tmp", None)
         if not tmp:
             tmp = self._vm_tmp = tempfile.mkdtemp(prefix="gb_vm_")
             for n in self.names:
-                if n.endswith(".class") and "/client/model/" in n: self.z.extract(n, tmp)
+                if n.endswith(".class") and "/client/" in n: self.z.extract(n, tmp)
         r = subprocess.run(["javap", "-c", "-p", "-cp", tmp, cls], capture_output=True, text=True)
         return r.stdout if r.returncode == 0 else None
 
@@ -861,6 +903,7 @@ class Build:
         cfg["blockClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"]["block"].items()}
         cfg["itemClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"]["item"].items()}
         cfg["effectClasses"] = {f"{self.ns}:{k}": v.replace(".", "/") for k, v in ci["registries"].get("effect", {}).items()}
+        cfg["modParticles"] = self.mod_particles()
         cfgp.write_text("globalThis.__JB_CFG = " + json.dumps(cfg, separators=(",", ":")) + ";\n")
         # client overlays -> HUD images bound to formatting-code-only titles
         ovs = cfg["hooks"].get("overlays") or []
