@@ -188,7 +188,7 @@ struct State {
     int64_t                       lastScanMs = 0;
     int64_t                       lastReloadCheckMs = 0;
     long long                     reloadStamp = 0;
-    bool                          wheelHeld = false;
+    bool                          wheelHeld = false, bWasDown = false, wheelExecDone = false;
     std::set<int>                 digitsDown;
     std::string                   status;
 };
@@ -376,6 +376,7 @@ bool loadAvatar(State& s, std::string const& name) {
         return false;
     }
     s.avatar     = std::move(av);
+    s.wheelExecDone = false;
     if (auto t = lyrics::json::parse(readAll(s.root / "tuning.json")))
         for (auto const& [k, v] : t->members())
             if (v.isNumber()) s.avatar->tuning[k] = v.asNumber();
@@ -396,19 +397,41 @@ std::vector<std::string> listAvatars(State const& s) {
 }
 
 // ---------------------------------------------------------------- action wheel (info panel + digit keys)
+void runWheelAction(State& s, int i, bool right) {
+    lua_State* L = s.avatar->L;
+    lua_getglobal(L, "action_wheel");
+    lua_getfield(L, -1, "execute");
+    lua_pushvalue(L, -2);
+    lua_pushinteger(L, i);
+    lua_pushboolean(L, right);
+    if (lua_pcall(L, 3, 0, 0) != 0) {
+        s.host->error(lua_tostring(L, -1) ? lua_tostring(L, -1) : "action error");
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
 void wheelFrame(State& s, bedrock_forge::client::Frame& f) {
-    bool held = gameFocused() && (GetAsyncKeyState('B') & 0x8000);
-    s.wheelHeld = held;
-    if (!held || !s.avatar || !s.avatar->L) return;
+    if (!s.avatar || !s.avatar->L) return;
+    // test hook: tuning "wheelExec" = n runs action n once per reload
+    if (int n = int(s.avatar->tune("wheelExec", 0)); n > 0 && !s.wheelExecDone) {
+        s.wheelExecDone = true;
+        runWheelAction(s, n, false);
+    }
+    bool bDown = gameFocused() && (GetAsyncKeyState('B') & 0x8000);
+    if (bDown && !s.bWasDown) s.wheelHeld = !s.wheelHeld; // tap B: open / close (hold-to-open is awkward on Bedrock)
+    s.bWasDown = bDown;
+    if (!s.wheelHeld) return;
     lua_State* L = s.avatar->L;
     lua_getfield(L, LUA_REGISTRYINDEX, "fb.wheel");
     if (!lua_isfunction(L, -1) || lua_pcall(L, 0, 1, 0) != 0 || !lua_istable(L, -1)) {
         lua_pop(L, 1);
-        f.infoLines.push_back("Action wheel: (no page)");
+        f.infoLines.push_back("Action wheel: (no page)  [B to close]");
         return;
     }
     lua_getfield(L, -1, "title");
-    f.infoLines.push_back(std::string("Action wheel: ") + (lua_isstring(L, -1) ? lua_tostring(L, -1) : "") + "  (1-8)");
+    f.infoLines.push_back(std::string("Action wheel: ") + (lua_isstring(L, -1) ? lua_tostring(L, -1) : "") +
+                          "  (1-8 = click, Shift = right click, B = close)");
     lua_pop(L, 1);
     int n = int(lua_rawlen(L, -1));
     for (int i = 1; i <= n && i <= 8; i++) {
@@ -421,21 +444,11 @@ void wheelFrame(State& s, bedrock_forge::client::Frame& f) {
         lua_pop(L, 3);
     }
     lua_pop(L, 1);
-    // digit keys execute (edge)
     for (int i = 1; i <= 8; i++) {
-        bool d = (GetAsyncKeyState('0' + i) & 0x8000) != 0;
+        bool d = gameFocused() && (GetAsyncKeyState('0' + i) & 0x8000) != 0;
         if (d && !s.digitsDown.count(i)) {
             s.digitsDown.insert(i);
-            lua_getglobal(L, "action_wheel");
-            lua_getfield(L, -1, "execute");
-            lua_pushvalue(L, -2);
-            lua_pushinteger(L, i);
-            lua_pushboolean(L, (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
-            if (lua_pcall(L, 3, 0, 0) != 0) {
-                s.host->error(lua_tostring(L, -1) ? lua_tostring(L, -1) : "action error");
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1);
+            runWheelAction(s, i, (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
         } else if (!d) s.digitsDown.erase(i);
     }
 }
