@@ -59,6 +59,7 @@ class Rig:
     description_extra: dict = field(default_factory=dict)   # visible_bounds_* etc.
     extra: dict = field(default_factory=dict)               # geometry-level keys besides description/bones
     source_format: str = "bedrock_geo"
+    source_meta: dict = field(default_factory=dict)          # not written to geo (e.g. .bbmodel textures/animations)
 
     def bone(self, name):
         return next((b for b in self.bones if b.name == name), None)
@@ -125,9 +126,10 @@ def write_bedrock_geo(rigs: list[Rig], format_version: str = "1.12.0") -> dict:
     return {"format_version": format_version, "minecraft:geometry": geoms}
 
 
-def load_bbmodel(data: dict) -> Rig:
-    """Figura / Blockbench .bbmodel -> Rig (cubes, meshes, groups). FiguraBridge F1."""
-    raise NotImplementedError("load_bbmodel: FiguraBridge F1")
+def load_bbmodel(data: dict, name: str = "model") -> Rig:
+    """Figura / Blockbench .bbmodel -> Rig (cubes, meshes, groups). FiguraBridge F1; lives in bbmodel.py."""
+    from .bbmodel import load_bbmodel as _load
+    return _load(data, name)
 
 
 def _norm(x):

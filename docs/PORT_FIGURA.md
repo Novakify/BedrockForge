@@ -76,6 +76,34 @@ One native module in Bedrock Forge. Both bridges plug into it instead of owning 
 6. **One menu.** Avatar picker, trust settings and the action wheel live in the BF client menu (neon purple glass),
    next to LyricsFlow and Shaders.
 
+## Status: F1 started (2026-11-01, branch `figurabridge/f1-bbmodel` from main)
+GeckoBridge is past M5, so the "after GeckoBridge M2" gate is open. Fernando re-sent Figura.jar (same 0.1.6+1.21.1 build).
+- **Done: `.bbmodel` -> ModelCore rig** (`tools/ModelCore/bbmodel.py`, tests `tools/ModelCore/test_bbmodel.py`).
+  Reads Blockbench 4 (inline outliner groups) and 5 (top-level `groups`) like Figura's BlockbenchV4Model/V5Model.
+  Cubes (box + per-face UV, inflate, rotation), meshes -> Bedrock `poly_mesh`, groups -> bones, locators.
+  Same axis/UV rules as Blockbench's Bedrock exporter, so avatars and GeckoBridge mobs share one rig format.
+- Each bone carries `figura_parent` = Figura's ParentType for its group name (copied from
+  `org.figuramc.figura.model.ParentType`: prefix match, enum order, quirks kept). `BEDROCK_PLAYER_BONE` maps
+  Head/Body/arms/legs/Cape to the Bedrock player rig bones the native side will follow.
+- Animations are kept raw in `rig.source_meta["animations"]` for F2.
+- **Next in F1:** native side (C++) - load the rig in BF, hide the vanilla player, draw through RF following the pose.
+  Needs: 2 test avatars (one plain, one scripted) that Fernando made or has permission for, and a PC build/test pass.
+
+## Third player-model owner: Cosmetics And Attachments Mod (CAAM)
+`cosmetics_and_attachments_mod-1.0.0` by **TideBorn** (Forge 1.20.1, optional GeckoLib 4). Sent by Fernando
+2026-11-01 with an MIT licence file and a PERMISSION_NOTE (his account of TideBorn's permission, not a signed grant).
+Private use only, credit TideBorn, ask before anything is shared. Jar inspected in the cloud only, not in the repo.
+- It is a **library**, not content: other mods register attachments through `CAAMApi` / `CAAMCoreAPI`. Parts:
+  bone-mounted models on player bones (HEAD/BODY/arms/legs/DETACHED), its own player animation system
+  (JSON keyframes, ease functions, loop types, pose accumulator), hide masks for vanilla parts, first-person
+  full-body mode, beams between attachment points, impact rings + screen shake, "hero flight" poses, disguises,
+  GeckoLib compat (GeckoLib models as attachments), server<->client sync packets.
+- **Fit:** the same ModelCore rule "one owner per entity" gets a stack instead: Figura avatar (base body) ->
+  CAAM attachments (mounted on ModelCore bones) -> GeckoBridge armor. CAAM's hide masks and Figura's
+  `vanilla_model` both feed one per-bone visibility mask. CAAM player animations run on the ModelCore evaluator.
+  Beams / impact rings reuse the Shine VFX + Cinematic screen-shake work.
+- Needs a mod that actually uses CAAM to test anything visible (CAAM alone adds nothing on screen).
+
 ## Milestones (after GeckoBridge M2)
 - **F0 - research (this doc).** Pick 2 test avatars: a simple one (model + 1 animation, no Lua) and a scripted one.
 - **F1 - ModelCore + static avatar:** load `.bbmodel`, hide the vanilla player, draw the avatar through RF, follow the
