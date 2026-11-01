@@ -16,6 +16,9 @@ The FiguraBridge plug-in (`tools/FiguraBridge/javaport_plugin.py`) produces:
 
 Test knobs: `config/figura/tuning.json` (`debug`, `probe` = bone index, `simWalk`, `simCrouch`, `forceSneak`,
 `wheelKey`, `wheelExec`), hot reload by touching `config/figura/reload.txt`.
+Switching to a *different* avatar while in a world is deferred until you leave and re-join the world: Bedrock keeps
+the resource pack (geometry) it read at world load, and driving the old geometry with another avatar's vars draws
+garbage. Reloading the same avatar applies at once.
 
 ## Architecture
 - `tools/FiguraBridge/compile.py`: avatar -> Figura NBT (port of Figura's loader) + `rig.json` + Bedrock RP.
