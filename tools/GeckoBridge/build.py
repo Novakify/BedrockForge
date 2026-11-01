@@ -1306,6 +1306,7 @@ class Build:
         self.aliases()
         if self.override.get("content", True): self.content()
         import armor as GA; GA.convert(self)          # GeckoLib armour -> attachables (+ wearable items)
+        import items as GI; GI.convert(self)          # 3D held items (builtin/entity + geo) -> attachables
         if self.override.get("worldgen", True): self.worldgen()
         if self.override.get("javabridge", any(n.startswith("net/mcreator/") for n in self.names)): self.javabridge()
         for stem, files in getattr(self, "anim_files", {}).items():

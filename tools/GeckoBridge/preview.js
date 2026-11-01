@@ -63,18 +63,24 @@ async function texOf(src) {
   const t = new T.Texture(img); t.magFilter = T.NearestFilter; t.minFilter = T.NearestFilter; t.needsUpdate = true; t.colorSpace = T.SRGBColorSpace; return t;
 }
 window.renderAll = async (job, W) => {
-  const r = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); r.setSize(W, W);
+  const r = new T.WebGLRenderer({ antialias: !job.icon, alpha: !!job.icon, preserveDrawingBuffer: true }); r.setSize(W, W);
   const mats = [new T.MeshLambertMaterial({ map: await texOf(job.tex), transparent: true, alphaTest: 0.1, side: T.DoubleSide })];
   if (job.glowTex) mats.push(new T.MeshBasicMaterial({ map: await texOf(job.glowTex), transparent: true, alphaTest: 0.1, side: T.DoubleSide,
                                                         polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
   const out = [];
   for (const f of job.frames) {
-    const s = new T.Scene(); s.background = new T.Color(job.dark ? 0x07090c : 0x20262c);
+    const s = new T.Scene(); s.background = job.icon ? null : new T.Color(job.dark ? 0x07090c : 0x20262c);
     s.add(new T.AmbientLight(0xffffff, job.dark ? 0.25 : 1.1)); const dl = new T.DirectionalLight(0xffffff, job.dark ? 0.3 : 1.4); dl.position.set(2, 3, 4); s.add(dl);
     const m = build(job.geo, mats, f.pose); s.add(m);
-    const c = new T.Vector3(...(job.center || [0, 16, 0])), dist = job.dist || 70;
-    const [ax, az] = job.view || [0.55, -1];
-    const cam = new T.PerspectiveCamera(35, 1, 0.1, 1000); cam.position.set(c.x + dist * ax, c.y + dist * 0.15, c.z + dist * az); cam.lookAt(c);
+    let c = new T.Vector3(...(job.center || [0, 16, 0])), dist = job.dist || 70;
+    let [ax, az] = job.view || [0.55, -1];
+    if (job.icon) {   // inventory icon: Java gui display rotation, model framed to fill the square
+      const g = job.gui || {}; const rr = (g.rotation || [30, 225, 0]).map((d) => d * Math.PI / 180);
+      m.rotation.set(rr[0], -rr[1], -rr[2], 'XYZ');
+      const box = new T.Box3().setFromObject(m), sz = box.getSize(new T.Vector3()); c = box.getCenter(new T.Vector3());
+      dist = Math.max(sz.x, sz.y, sz.z) * 1.9; ax = 0; az = 1;
+    }
+    const cam = new T.PerspectiveCamera(35, 1, 0.1, 1000); cam.position.set(c.x + dist * ax, c.y + (job.icon ? 0 : dist * 0.15), c.z + dist * az); cam.lookAt(c);
     r.render(s, cam); out.push({ label: f.label, url: r.domElement.toDataURL('image/png') });
   }
   return out;
@@ -85,6 +91,7 @@ window.renderAll = async (job, W) => {
   const p = await b.newPage();
   await p.setContent(`<script>${three}</script><script>${page_js}</script>`);
   const W = Number(process.env.SIZE || 240), res = await p.evaluate(([j, w]) => window.renderAll(j, w), [job, W]);
+  if (job.icon) { fs.writeFileSync(out, Buffer.from(res[0].url.split(',')[1], 'base64')); await b.close(); console.log('icon -> ' + out); return; }
   const cols = job.cols || res.length, rows = Math.ceil(res.length / cols);
   await p.setViewportSize({ width: cols * W, height: rows * (W + 20) + 24 });
   await p.setContent(`<body style="margin:0;background:#111;font:12px monospace;color:#ccc"><div style="padding:4px">${job.title || ''}</div>` +

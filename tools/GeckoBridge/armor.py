@@ -23,6 +23,7 @@ SLOT_OF_SUFFIX = {"helmet": "head", "hat": "head", "hood": "head", "mask": "head
                   "boots": "feet", "shoes": "feet", "feet": "feet"}
 BEDROCK = {"head": ("slot.armor.head", "helmet_layer_visible", 3, 363), "chest": ("slot.armor.chest", "chest_layer_visible", 8, 528),
            "legs": ("slot.armor.legs", "leg_layer_visible", 6, 495), "feet": ("slot.armor.feet", "boot_layer_visible", 3, 429)}
+NOISE = {"armor", "armour", "textures", "texture", "layer", "model"}
 ENCHANT_SLOT = {"head": "armor_head", "chest": "armor_torso", "legs": "armor_legs", "feet": "armor_feet"}
 
 
@@ -31,9 +32,28 @@ def is_armor_geo(geo):
     return bool(names & {"armorhead", "armorbody", "armorrightleg", "armorrightboot"})
 
 
+VANILLA_PIVOT = {"head": [0, 24, 0], "body": [0, 24, 0], "rightArm": [-5, 22, 0], "leftArm": [5, 22, 0], "rightLeg": [-1.9, 12, 0], "leftLeg": [1.9, 12, 0]}
+PART_ANCHOR = {"armorhead": "head", "armorbody": "body", "armorrightarm": "rightArm", "armorleftarm": "leftArm",
+               "armorrightleg": "rightLeg", "armorleftleg": "leftLeg", "armorrightboot": "rightLeg", "armorleftboot": "leftLeg"}
+
+
+def add_anchors(g):
+    """Templates without biped* anchors (armorBody etc. at the root, AzureLib / older GeckoLib): add the anchors."""
+    bones = g.get("bones", [])
+    if any(b["name"].lower() in ANCHOR for b in bones): return
+    need = {}
+    for b in bones:
+        a = PART_ANCHOR.get(b["name"].lower())
+        if a and not b.get("parent"):
+            anchor = "biped" + a[0].upper() + a[1:]
+            b["parent"] = anchor; need[anchor] = VANILLA_PIVOT[a]
+    g["bones"] = [{"name": n, "pivot": p} for n, p in need.items()] + bones
+
+
 def slot_geometry(geo, slot, identifier):
     """Keep the anchors + the slot's armour parts (+ any extra bones hung under them), anchors renamed."""
     g = copy.deepcopy(geo["minecraft:geometry"][0])
+    add_anchors(g)
     bones = g.get("bones", [])
     by = {b["name"]: b for b in bones}
     keep_roots = {b["name"] for b in bones if b["name"].lower() in SLOT_PARTS[slot]}
@@ -71,8 +91,9 @@ def slot_geometry(geo, slot, identifier):
 
 
 def slot_of(item_id):
-    last = item_id.rsplit("_", 1)[-1]
-    return SLOT_OF_SUFFIX.get(last)
+    for w in reversed(item_id.split("_")):      # blue_samurai_chestplate_light: the slot word needn't be last
+        if w in SLOT_OF_SUFFIX: return SLOT_OF_SUFFIX[w]
+    return None
 
 
 def set_name(item_id):
@@ -95,10 +116,25 @@ def convert(b):
         if not slot: continue
         st = set_name(iid)
         key = next((k for k in (f"{st}_armor", st, f"{st}_armour") if k in geos), None)
+        toks = set(iid.split("_")) - set(SLOT_OF_SUFFIX)
+        if not key:   # token match: geo whose name words (minus armor) all appear in the item id, most words wins
+            fits = [(len(set(k.split("_")) - NOISE), k) for k in geos if (set(k.split("_")) - NOISE) <= toks]
+            key = max(fits)[1] if fits else None
         if not key: continue
         path, geo = geos[key]
+        gsize = [geo["minecraft:geometry"][0]["description"].get(x) for x in ("texture_width", "texture_height")]
         tex_src = next((t for t in (f"assets/{b.modid}/textures/armor/{key}.png", f"assets/{b.modid}/textures/armor/{st}.png",
                                     f"assets/{b.modid}/textures/models/armor/{key}.png") if t in b.names), None)
+        if not tex_src:   # texture named after the item's words (blue_samurai_armor_light_textures for blue_samurai_*_light)
+            best = None
+            for t in b.names:
+                if not (t.startswith(f"assets/{b.modid}/textures/") and "/armor/" in t and t.endswith(".png")): continue
+                w = set(t.rsplit("/", 1)[1][:-4].split("_")) - NOISE
+                if not w or not w <= toks: continue
+                import struct as _st
+                if list(_st.unpack(">II", b.z.read(t)[16:24])) != gsize: continue
+                if best is None or len(w) > best[0]: best = (len(w), t)
+            tex_src = best[1] if best else None
         if not tex_src: b.report["warnings"].append(f"armor {iid}: no texture for {key}"); continue
         tex = f"textures/models/armor/{b.ns}/{key}"
         b.write(b.rp, tex + ".png", b.z.read(tex_src))
