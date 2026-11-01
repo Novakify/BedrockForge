@@ -26,7 +26,7 @@ Build: `python3 -I tools/GeckoBridge/build.py the_wonderland-3.0.3-1.20.1-forge-
 | Splash texts | works | splashes.json |
 | Java shader (only `fog.glsl`: fog starts at 20% distance) | works | all 80 Bedrock fog definitions overridden with fog_start x 0.2 |
 | 18 painting variants | works (as wall entities) | item per painting hangs it on the clicked face; punching drops it back (Bedrock can't add painting variants) |
-| Title screen logo / panorama | not portable | Bedrock's menu is OreUI with a 3D world backdrop, not these textures |
+| Title screen logo / panorama | works (global pack) | separate "GB Wonderland Menu RP": textures/ui/title.png + panorama_0..5 (PNG, _alternate, HDR); the main menu only reads Global Resources, so enable it there |
 | GUI screens | n/a | Wonderland has none besides the overlays (all converted) |
 
 Checked in game (2026-10-31 evening, "GeckoBridge Test" world, ~60 fps with all 129 mobs summoned):
