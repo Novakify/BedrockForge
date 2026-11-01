@@ -13,7 +13,7 @@ import numpy as np
 from PIL import Image
 
 F_SCREEN, F_BITMAP, F_MSDF, F_GRADIENT, F_SOLID, F_VIEW, F_IMAGE = 1, 2, 4, 16, 32, 64, 128
-F_GLASS, F_BLUR = 256, 512  # [BF] frosted glass (RF blurs the screen behind), soft-blurred image
+F_GLASS, F_BLUR = 256, 2048  # [BF] frosted glass (RF blurs the screen behind), soft-blurred image
 
 
 def unpack(c):
@@ -121,13 +121,25 @@ def render(d, W, img=None):
         if not inside.any():
             continue
         qw = np.linalg.norm(pts[1] - pts[0]); qh = np.linalg.norm(pts[3] - pts[0])
-        if (flags & F_SOLID) and (flags & F_GLASS):  # [BF] frosted glass: the image so far, blurred, tinted
+        if (flags & F_SOLID) and (flags & F_GLASS):  # [BF] RF glass (clientui glyph.hlsl glassShade, no refraction here)
             from PIL import ImageFilter
+            hx, hy = qw / 2, qh / 2
+            rad = min(hx, hy) * min(max(outW, 0), 1)
+            px_, py_ = np.abs(lu - 0.5) * 2 * hx, np.abs(lv - 0.5) * 2 * hy
+            qx, qy = px_ - (hx - rad), py_ - (hy - rad)
+            dist = np.hypot(np.maximum(qx, 0), np.maximum(qy, 0)) + np.minimum(np.maximum(qx, qy), 0) - rad
             sharp = Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8))
             bl = np.asarray(sharp.filter(ImageFilter.GaussianBlur(H * 0.022)), np.float32)[y0:y1, x0:x1] / 255.0
-            m = rounded_mask(lu, lv, qw, qh, outW)
-            tint = fill
-            col = bl * glowK * (1 - tint[3]) + tint[:3] * tint[3]
+            mix = min(max(pxr, 0), 1)
+            col = img[y0:y1, x0:x1] * (1 - mix) + bl * mix
+            col = col * (1 - fill[3]) + fill[:3] * fill[3]
+            bevel = max(glowW, 1.0)
+            xx = np.clip(-dist / bevel, 0, 1)
+            edge = (1 - xx) ** 2.2
+            rim = 1 - np.clip(np.abs(dist + 0.9) / 1.6, 0, 1)
+            col = col + outl[:3] * outl[3] * (rim * 0.7 * 0.75 + edge * 0.10)[..., None]
+            col = col + glow[:3] * glow[3] * (np.clip(1 + dist / bevel, 0, 1) ** 3)[..., None]
+            m = np.clip(0.5 - dist, 0, 1)
             rgb, aa = col * m[..., None], m
         elif flags & F_SOLID:  # rounded rect, radius = outW * min half extent, softness glowW px
             hx, hy = qw / 2, qh / 2

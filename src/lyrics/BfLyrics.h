@@ -26,19 +26,27 @@ enum BfGlyphFlags : uint32_t {
                                  // space, x right / y up / z forward, x and y already divided by tan(fovY/2). The vertex
                                  // shader outputs (x / aspect, y, 0, z): exact perspective, so BF can ray-pick the mouse
     BF_GLYPH_IMAGE    = 1u << 7, // colour image (cover art, icons, thumbnails): rgba sample * fill (tint), no SDF
-    BF_GLYPH_GLASS    = 1u << 8, // with SOLID: frosted glass - the screen behind, blurred (RF), tinted by fill (fill alpha
-                                 // = tint amount); glowK = brightness of the blur. RF without it draws the plain SOLID.
-    BF_GLYPH_BLUR     = 1u << 9, // with IMAGE: the image soft-blurred, radius glowW in uv (aura / cover glow). RF without
-                                 // it draws the sharp IMAGE.
+    // Glass (2026-10-31, client UI + LyricsFlow panel). RF copies the frame before the glyphs draw and blurs it; a glass
+    // surface shows that copy frosted and bent like a lens at its edge. With SOLID or PETAL:
+    //   fill = tint colour, fill.a = tint amount | glowW = bevel (px, refraction zone) | glowK = refraction (px)
+    //   pxRange = blur mix 0..1 (0 clear, 1 frosted) | outline = rim light (a = strength) | glow = inner edge glow
+    //   (a = strength) | outlineW = corner radius fraction (SOLID) or inner/outer radius (PETAL)
+    BF_GLYPH_GLASS    = 1u << 8,
+    BF_GLYPH_PETAL    = 1u << 9,  // ring sector filling the quad: fill2 = centre angle | half span << 16, both in
+                                  // 1/100 degree, screen space (0 = right, 9000 = down); without GLASS = flat colour
+    BF_GLYPH_BACKDROP = 1u << 10, // full-screen frosted frame: fill = darkening colour (a = amount), pxRange = blur,
+                                  // glowW = clear circle radius px around the quad centre, glowK = its feather px
+    BF_GLYPH_BLUR     = 1u << 11, // [LyricsFlow player] with IMAGE: the image soft-blurred, radius glowW in uv (aura,
+                                  // cover glow), edges faded. RF without it draws the sharp IMAGE.
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the
 /// low byte (0xAABBGGRR), straight (not premultiplied) alpha.
 struct BfGlyphV1 {
     float    pos[3];     // quad centre, world units relative to BfLyricFrameV1::origin
-    float    _pad0;
+    float    _pad0;      // clip: _pad0 / _pad1 = top / bottom of a vertical clip band in screen y (0..1 down), used
     float    right[3];   // half-extent vector along the glyph's +x
-    float    _pad1;
+    float    _pad1;      // when _pad1 > _pad0 (BF menu scroll areas; RF fades the glyph out over 10 px centred on each band edge)
     float    up[3];      // half-extent vector along the glyph's +y
     float    _pad2;
     float    uv[4];      // atlas rect u0, v0 (top), u1, v1 (bottom), 0..1

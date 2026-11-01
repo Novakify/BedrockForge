@@ -105,6 +105,25 @@ jobs:
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" lyricsflow-builds
 
+      # Glass client menu branch: same payload as lyricsflow-builds + resources/client (icon atlas)
+      - name: Publish client UI build to clientui-builds
+        if: github.ref == 'refs/heads/clientui/bf' && github.event_name == 'push'
+        shell: bash
+        run: |
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
+          mkdir -p out && cp -r bin/* out/
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
+          mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
+          cd out
+          git init -q -b clientui-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
+          git add -A && git commit -qm "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" clientui-builds
+
   # LyricsFlow port: the pure core (src/lyrics/core) + its tests also build and run on Linux (gcc), so parser/placement
   # regressions show up even when the Windows/LeviLamina build is busy or broken for unrelated reasons.
   lyrics-core-linux:

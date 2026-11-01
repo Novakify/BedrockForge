@@ -182,6 +182,7 @@ struct Panel::Ctx {
         float half = std::min(w, h) / 2;
         q.outlineW = clamp01(std::min(r, half) / std::max(0.01f, half));
         q.glowW    = 1.0f;
+        q.uv[2] = q.uv[3] = 1.0f; // the SOLID shape is measured from uv 0..1 across the quad
         q.flags    = BF_GLYPH_SOLID | (c1 != c2 ? BF_GLYPH_GRADIENT : 0u);
         out.push_back(q);
     }
@@ -196,6 +197,26 @@ struct Panel::Ctx {
         round(x - t, y - t, w + 2 * t, h + 2 * t, r + t, lerpRgb(WHITE, ACCENT2, hv), lerpRgb(WHITE, ACCENT, hv), (0.13f + 0.32f * hv) * a);
         round(x, y, w, h, r, 0x1D1A36, 0x16132B, 0.94f * a);
         round(x, y, w, h, r, WHITE, WHITE, (0.035f + 0.07f * hv) * a);
+    }
+    /// [BF] Glass card (RF frosts + bends the world behind it): dark violet tint, white rim, violet inner glow.
+    /// Same look as Bedrock Forge's glass client menu. Panel px -> screen px is unknown here, so bevel / refraction
+    /// are given in screen px directly (the panel is ~1/3 of the screen tall at its 3.2 block distance).
+    void glass(float x, float y, float w, float h, float r, float alpha) {
+        if (alpha <= 0.003f || w <= 0 || h <= 0) return;
+        BfGlyphV1 q{};
+        quad(x + w / 2, y + h / 2, w / 2, h / 2, q);
+        float half = std::min(w, h) / 2;
+        q.outlineW = clamp01(std::min(r, half) / std::max(0.01f, half));
+        q.uv[2] = q.uv[3] = 1.0f;
+        q.fill     = 0x6A240A13u;            // rgb (19, 10, 36), tint 0.42: text stays readable on bright skies
+        q.glowW    = 26.0f;                  // bevel px
+        q.glowK    = 18.0f;                  // refraction px
+        q.pxRange  = 1.0f;                   // fully frosted
+        q.outline  = 0xE6FFFFFFu;            // white rim
+        q.glow     = 0x55FF4CB1u;            // violet inner edge glow (177, 76, 255)
+        q.alpha    = alpha;
+        q.flags    = BF_GLYPH_SOLID | BF_GLYPH_GLASS;
+        out.push_back(q);
     }
     void disc(float cx, float cy, float r, uint32_t rgb, float alpha) { round(cx - r, cy - r, 2 * r, 2 * r, r, rgb, rgb, alpha); }
     /// corner = rounded corners in px ([BF], RF masks them like SOLID), blur = soft blur radius in uv ([BF] BLUR)
@@ -213,18 +234,24 @@ struct Panel::Ctx {
         if (blur > 0) { q.flags |= BF_GLYPH_BLUR; q.glowW = blur; }
         (isLate ? late : out).push_back(q);
     }
-    /// [BF] Frosted glass: RF draws the screen behind it blurred, tinted (tintA = how much tint), brightness `bright`.
-    /// An RF without glass support draws the tint as a plain rounded rect.
-    void glass(float x, float y, float w, float h, float r, uint32_t tint, float tintA, float bright, float alpha) {
+    /// [BF] Glass with its own tint / rim / inner glow (RF glass, same maths as glass() above; the Neon player's
+    /// smoked glass with a neon rim). Colours 0xRRGGBB, amounts 0..1.
+    void glassEx(float x, float y, float w, float h, float r, uint32_t tint, float tintA, uint32_t rim, float rimA, uint32_t inner,
+                 float innerA, float alpha) {
         if (alpha <= 0.003f || w <= 0 || h <= 0) return;
         BfGlyphV1 q{};
         quad(x + w / 2, y + h / 2, w / 2, h / 2, q);
-        q.fill = q.fill2 = toRgba((uint32_t(std::lround(clamp01(tintA) * 255.0f)) << 24) | (tint & 0xFFFFFFu));
-        q.alpha    = alpha;
         float half = std::min(w, h) / 2;
         q.outlineW = clamp01(std::min(r, half) / std::max(0.01f, half));
-        q.glowW    = 1.0f;
-        q.glowK    = bright;
+        q.uv[2] = q.uv[3] = 1.0f;
+        auto argb  = [](uint32_t rgb, float k) { return (uint32_t(std::lround(clamp01(k) * 255.0f)) << 24) | (rgb & 0xFFFFFFu); };
+        q.fill     = toRgba(argb(tint, tintA));
+        q.glowW    = 26.0f; // bevel px (as glass())
+        q.glowK    = 18.0f; // refraction px
+        q.pxRange  = 1.0f;  // fully frosted
+        q.outline  = toRgba(argb(rim, rimA));
+        q.glow     = toRgba(argb(inner, innerA));
+        q.alpha    = alpha;
         q.flags    = BF_GLYPH_SOLID | BF_GLYPH_GLASS;
         out.push_back(q);
     }
@@ -400,10 +427,9 @@ std::vector<PanelAction> Panel::frame(PanelInput const& in, Vec3 origin, Config&
         double const sx = t10;
         c.frame(P + R * (K * (98.0 - 190.0 - 98.0 * sx)) + U * (K * 111.0), R * (K * sx), U * (-K));
         float const a21 = std::min(1.0f, t10 * 1.5f);
-        for (int i = 4; i >= 1; --i) // soft purple glow
-            c.round(62 - float(i) * 2.5f, -float(i) * 2.5f, 318 + float(i) * 5, 222 + float(i) * 5, 19 + float(i) * 2.5f, ACCENT, ACCENT, 0.05f * a21);
-        c.round(61.2f, -0.8f, 319.6f, 223.6f, 19.8f, EDGE1, EDGE2, 0.35f * a21);
-        c.round(62, 0, 318, 222, 19, TOP, BOTTOM, 0.96f * a21);
+        for (int i = 6; i >= 1; --i) // neon purple glow around the glass
+            c.round(62 - float(i) * 2.5f, -float(i) * 2.5f, 318 + float(i) * 5, 222 + float(i) * 5, 19 + float(i) * 2.5f, ACCENT, ACCENT, 0.07f * a21);
+        c.glass(62, 0, 318, 222, 19, a21);
         c.round(150, 0.6f, 144, 1.6f, 0.8f, ACCENT, ACCENT2, 0.7f * a21);
         if (t11 > 0.01f) body(c, cfg, media);
     }
@@ -420,8 +446,9 @@ std::vector<PanelAction> Panel::frame(PanelInput const& in, Vec3 origin, Config&
         c.frame(pos, R * (K * s), Ur * (-K * s));
         if (cfg.playerStyle == 1 || cfg.playerStyle == 2) player(c, media, cfg.playerStyle); // [BF] Glass / Neon
         else {
-            c.round(-84.8f, -104.8f, 169.6f, 223.6f, 19.8f, EDGE1, EDGE2, 0.35f * c.recA);
-            c.round(-84, -104, 168, 222, 19, TOP, BOTTOM, 0.97f * c.recA);
+            for (int i = 4; i >= 1; --i)
+                c.round(-84 - float(i) * 2.5f, -104 - float(i) * 2.5f, 168 + float(i) * 5, 222 + float(i) * 5, 19 + float(i) * 2.5f, ACCENT, ACCENT, 0.07f * c.recA);
+            c.glass(-84, -104, 168, 222, 19, c.recA);
             record(c, media);
         }
     }
@@ -472,25 +499,16 @@ void Panel::player(Ctx& c, PanelMedia const& np, int style) {
     float const    cs = 124, cx = -cs / 2, cy = -86;
 
     // ---- card
-    if (!neon) {
-        float const br = 0.5f + 0.5f * float(std::sin(t * 0.9));
-        for (int i = 4; i >= 1; --i) { // soft shadow under the glass
-            float const g = float(i) * 2.5f;
-            c.round(-84 - g, -100 - g + 4, 168 + 2 * g, 222 + 2 * g, 19 + g, 0x0A0614, 0x0A0614, 0.05f * a);
-        }
-        if (cover) c.imageAt(c.assets.cover, UiRect{}, -132, -146, 264, 318, (0.5f + 0.15f * br) * a, WHITE, false, 60, 0.12f); // aura
-        else c.round(-110, -125, 220, 270, 110, ACCENT, DEEP2, 0.18f * a);
-        c.round(-84.8f, -104.8f, 169.6f, 223.6f, 19.8f, WHITE, WHITE, 0.22f * a);           // hairline
-        c.glass(-84, -104, 168, 222, 19, 0x140C26, 0.36f, 0.8f, a);
-        if (cover) c.imageAt(c.assets.cover, UiRect{}, -80, -100, 160, 214, 0.32f * a, WHITE, false, 16, 0.2f); // colour film
-        c.round(-66, -103.5f, 132, 0.7f, 0.35f, WHITE, WHITE, 0.45f * a);                    // top edge catching light
+    if (!neon) { // exactly the client menu's glass (glass()), with its violet halo
+        for (int i = 4; i >= 1; --i)
+            c.round(-84 - float(i) * 2.5f, -104 - float(i) * 2.5f, 168 + float(i) * 5, 222 + float(i) * 5, 19 + float(i) * 2.5f, ACCENT, ACCENT, 0.07f * a);
+        c.glass(-84, -104, 168, 222, 19, a);
     } else {
         for (int i = 6; i >= 1; --i) { // the tube's glow
             float const g = float(i) * 1.7f;
             c.round(-84 - g, -104 - g, 168 + 2 * g, 222 + 2 * g, 19 + g, pink, pink, (0.03f + 0.012f * float(7 - i)) * a);
         }
-        c.round(-85, -105, 170, 224, 20, pinkC, pinkC, a); // the tube itself (1 px of it shows)
-        c.glass(-84, -104, 168, 222, 19, 0x06040E, 0.66f, 0.42f, a);
+        c.glassEx(-84, -104, 168, 222, 19, 0x06040E, 0.62f, pinkC, 1.0f, pink, 0.45f, a); // smoked glass, the tube as its rim
     }
 
     // ---- source line

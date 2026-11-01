@@ -111,6 +111,12 @@ void FrameStore::setAtlases(std::vector<std::string> const& files) {
     for (uint32_t i = 0; i < mHdr.atlasCount; ++i) std::strncpy(mHdr.atlasFiles[i], files[i].c_str(), 259);
     ++mHdr.atlasGeneration;
 }
+void FrameStore::setOverlay(std::vector<BfGlyphV1> glyphs) {
+    std::lock_guard l(mMutex);
+    if (glyphs.empty() && mOverlay.empty()) return;
+    mOverlay = std::move(glyphs);
+    ++mOverlaySeq;
+}
 uint32_t FrameStore::copy(BfLyricFrameV1* hdr, BfGlyphV1* dst, uint32_t cap) {
     std::lock_guard l(mMutex);
     if (!hdr) return 0;
@@ -121,12 +127,24 @@ uint32_t FrameStore::copy(BfLyricFrameV1* hdr, BfGlyphV1* dst, uint32_t cap) {
     BfLyricFrameV1 h = mHdr;
     h.size           = sizeof(BfLyricFrameV1);
     h.version        = 1;
-    h.total          = uint32_t(mGlyphs.size());
+    bool const lyr   = mInit && mHdr.active;      // lyric glyphs only while the lyricsflow frame is live
+    size_t const nl  = lyr ? mGlyphs.size() : 0;
+    h.total          = uint32_t(nl + mOverlay.size());
     if (room < sizeof(BfLyricFrameV1)) h.atlasCount = std::min<uint32_t>(h.atlasCount, 8);
-    uint32_t n = dst ? std::min<uint32_t>(cap, uint32_t(mGlyphs.size())) : 0;
+    uint32_t n = dst ? std::min<uint32_t>(cap, uint32_t(nl)) : 0;
     if (n) std::memcpy(dst, mGlyphs.data(), size_t(n) * sizeof(BfGlyphV1));
+    if (dst && !mOverlay.empty()) { // the menu goes last (on top); it keeps room even when the lyrics fill the buffer
+        uint32_t m = std::min<uint32_t>(cap, uint32_t(mOverlay.size()));
+        n          = std::min<uint32_t>(n, cap - m);
+        std::memcpy(dst + n, mOverlay.data(), size_t(m) * sizeof(BfGlyphV1));
+        n += m;
+    }
     h.count = n;
     if (!mInit) h.active = 0;
+    if (!mOverlay.empty()) {
+        h.active = 1;
+        h.frame  = mHdr.frame * 7919u + mOverlaySeq; // keeps moving while the menu redraws (RF's freshness check)
+    }
     std::memcpy(hdr, &h, room);
     return n;
 }
