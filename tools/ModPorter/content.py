@@ -430,6 +430,12 @@ class Content:
             if kind == "block": out[f"tile.{self.ns}:{name}.name"] = v
             elif kind == "item": out[f"item.{self.ns}:{name}"] = v
             elif kind == "entity": out[f"entity.{self.ns}:{name}.name"] = v; out[f"item.spawn_egg.entity.{self.ns}:{name}.name"] = f"Spawn {v}"
+        # blocks / items the mod never named (portal blocks, technical items): a readable name instead of the raw key
+        nice = lambda i: " ".join(w.capitalize() for w in i.split("_"))
+        for full in getattr(self, "blocks", {}).values():
+            out.setdefault(f"tile.{full}.name", nice(full.split(":")[1]))
+        for full in getattr(self, "items", {}).values():
+            out.setdefault(f"item.{full}", nice(full.split(":")[1]))
         return out
 
     # ------------------------------------------------------------------ vanilla resource overrides bundled in the mod
