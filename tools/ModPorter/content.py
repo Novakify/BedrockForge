@@ -505,18 +505,25 @@ class Content:
                 if vsnd and rel[:-4] not in vsnd: skipped["sounds"] = skipped.get("sounds", 0) + 1; continue
                 self.write(self.rp, rel, self.z.read(n)); n_snd += 1
             elif rel == "shaders/include/fog.glsl":
-                # Java core-shader fog tweak (fogStart *= k): same change on every Bedrock fog definition
+                # Java core-shader fog tweak (fogStart *= k). Bedrock refuses fog files in the minecraft namespace
+                # (vanilla fogs cannot be overridden) and needs fog_color in every medium, so each vanilla biome fog
+                # is copied under our namespace (<ns>:shader_<biome>, colours kept, start scaled) and the behaviour
+                # pack's script pushes the one for the biome the player stands in (scripts/shader_fog.js).
                 m_ = re.search(r"fogStart\s*\*=\s*([\d.]+)", self.z.read(n).decode("utf-8", "replace"))
                 if m_ and (vd / "fogs").is_dir():
-                    k = float(m_.group(1)); nf = 0
+                    k = float(m_.group(1)); fogmap = {}
                     for f in sorted((vd / "fogs").glob("*.json")):
-                        d = json.loads(f.read_text())
-                        for media, v in (d.get("minecraft:fog_settings", {}).get("distance") or {}).items():
+                        d = json.loads(f.read_text()); fs = d.get("minecraft:fog_settings", {})
+                        vid = fs.get("description", {}).get("identifier", "")
+                        if not vid.startswith("minecraft:fog_"): continue
+                        biome = vid[len("minecraft:fog_"):]
+                        for media, v in (fs.get("distance") or {}).items():
                             if media in ("air", "weather") and isinstance(v.get("fog_start"), (int, float)):
                                 v["fog_start"] = round(v["fog_start"] * k, 4)
-                        self.write(self.rp, f"fogs/{f.name}", d); nf += 1
-                    self.rep["fog_shader"] = {"fogStart_factor": k, "fogs": nf}
-                    self.fog_factor = k
+                        fs["description"]["identifier"] = f"{self.ns}:shader_{biome}"
+                        self.write(self.rp, f"fogs/gb_shader_{biome}.json", d); fogmap[f"minecraft:{biome}"] = f"{self.ns}:shader_{biome}"
+                    self.rep["fog_shader"] = {"fogStart_factor": k, "fogs": len(fogmap)}
+                    self.fog_factor = k; self.fog_map = fogmap
             elif rel == "texts/splashes.txt":
                 lines = [l for l in self.z.read(n).decode("utf-8", "replace").splitlines() if l.strip()]
                 self.write(self.rp, "splashes.json", {"splashes": lines})
