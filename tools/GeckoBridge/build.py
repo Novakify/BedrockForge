@@ -252,6 +252,21 @@ class Build:
                     short = self.sound(one.get("effect", "") if isinstance(one, dict) else str(one))
                     if short: se_out.setdefault(t, []).append({"effect": short})
             if se_out: a["sound_effects"] = {t: (v[0] if len(v) == 1 else v) for t, v in se_out.items()}
+            # particle keyframes: GeckoLib passes {effect, locator, pre_effect_script}; Bedrock wants a short name the
+            # client entity maps to a particle id (entity desc particle_effects, filled in entity())
+            pe_out = {}
+            for t, pe in (self.anim_meta[nid]["src"].get("particle_effects") or {}).items():
+                for one in (pe if isinstance(pe, list) else [pe]):
+                    eff = one.get("effect", "") if isinstance(one, dict) else str(one)
+                    if not eff: continue
+                    short = "p_" + clean(eff.split(":")[-1])
+                    self.particle_map = getattr(self, "particle_map", {}); self.particle_map[short] = self.particle_id(eff)
+                    o = {"effect": short}
+                    if isinstance(one, dict) and one.get("locator"): o["locator"] = one["locator"]
+                    if isinstance(one, dict) and one.get("pre_effect_script"): o["pre_effect_script"] = one["pre_effect_script"]
+                    pe_out.setdefault(t, []).append(o)
+            if pe_out: a["particle_effects"] = {t: (v[0] if len(v) == 1 else v) for t, v in pe_out.items()}
+            elif "particle_effects" in a: a.pop("particle_effects")
             self._walk_molang(nid, a)
         self.anim_files = getattr(self, "anim_files", {}); self.anim_files[stem] = out
         self.anim_ids[path] = ids
@@ -271,6 +286,15 @@ class Build:
             p = f"assets/{self.modid}/sounds.json"
             self._sounds = jload(self.z.read(p)) if p in self.names else {}
         return self._sounds
+
+    def particle_id(self, eff):
+        """Java/GeckoLib particle name -> Bedrock particle id (mod particles keep theirs, vanilla via JavaBridge's table)."""
+        sys.path.insert(0, str(HERE.parent / "JavaBridge"))
+        try: from bridge import PARTICLES
+        except Exception: PARTICLES = {}
+        ns, _, name = eff.rpartition(":"); ns = ns or "minecraft"
+        if ns not in ("minecraft", ""): return f"{clean(ns)}:{clean(name)}"
+        return PARTICLES.get(name, "minecraft:basic_smoke_particle")
 
     def sound(self, effect):
         """GeckoLib sound keyframe effect -> Bedrock short name (client entity sound_effects), or None."""
@@ -637,6 +661,7 @@ class Build:
         if used_vars: er["anim_vars_initialised"] = sorted(used_vars)
         if not anims: desc.pop("animations")      # Bedrock: "Node has too few children (0 < 1)"
         if getattr(self, "entity_sounds", None): desc["sound_effects"] = dict(self.entity_sounds)   # short name -> sound id (string)
+        if getattr(self, "particle_map", None): desc["particle_effects"] = dict(self.particle_map)   # keyframe short name -> particle id
         evs = {}
         for kind, ev in (self.mob_sounds.get(e["java_class"]) or {}).items():
             short = self.sound(ev)
