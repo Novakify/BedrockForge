@@ -159,9 +159,11 @@ struct BedrockHost final : IHost {
         log_("[error] " + m);
     }
     int lastTexResult = -1;
+    std::set<std::string> loggedUploads;
     bool uploadTexture(std::string const& path, int w, int h, uint8_t const* rgba) override {
         if (!client) return false;
         lastTexResult = int(dynTexUploadEx(*client, path, w, h, rgba)); // HUD frame = client thread
+        if (lastTexResult != 0 && !loggedUploads.insert(path).second) return true; // log once per texture (failures always)
         write("[figurabridge] texture upload " + path + " " + std::to_string(w) + "x" + std::to_string(h) + " -> " +
               (lastTexResult == 1 ? "in place" : lastTexResult == 2 ? "uploaded" : "FAILED"));
         return lastTexResult != 0;
@@ -662,6 +664,12 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     if (s.lastPlayer != f.player) { // joined a world: the game reloaded pack textures, push ours again
         s.lastPlayer = f.player;
         s.lastFullWriteMs = 0; // new actor: write every variable again
+        // the pack Bedrock just loaded holds whatever avatar is installed now (active.json), even without a reload
+        if (s.pendingAvatar.empty())
+            if (auto cfg = lyrics::json::parse(readAll(s.root / "active.json"))) {
+                std::string n = (*cfg)["avatar"].str();
+                if (!n.empty() && n != s.avatarName && fs::exists(s.root / n / "rig.json")) s.pendingAvatar = n;
+            }
         if (!s.pendingAvatar.empty()) { // the pack now holds the newly installed avatar: switch to it
             std::string n = std::move(s.pendingAvatar);
             s.pendingAvatar.clear();

@@ -1035,6 +1035,18 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     for f in all_tex_files:
         if not (f.get("skin") or f.get("cape")):
             desc["textures"][f["bedrockKey"]] = f["rpTexture"]
+    # the game's built-in player entity sets variables its controllers read that bedrock-samples' copy may not
+    # (game 1.26: variable.melee_spear_equipped -> ~180 Molang errors a second in the content log): every variable
+    # the vanilla player controllers read and this entity never assigns gets a keep-or-0 default
+    import re as _r2
+    ctl = vanilla_rp / "animation_controllers/player.animation_controllers.json"
+    read_vars = set(_r2.findall(r"variable\.([a-z0-9_]+)", ctl.read_text(encoding="utf-8", errors="replace"), _r2.I)) \
+        if ctl.is_file() else set()
+    read_vars |= {"melee_spear_equipped"}
+    pre = desc["scripts"].setdefault("pre_animation", [])
+    assigned = set(_r2.findall(r"variable\.([a-z0-9_]+)\s*=", " ".join(pre + desc["scripts"].get("initialize", [])), _r2.I))
+    for v in sorted(read_vars - assigned):
+        pre.append(f"variable.{v} = variable.{v} ?? 0;")
     desc["animations"]["figura_drive"] = "animation.figura.drive"
     desc["scripts"].setdefault("animate", []).append("figura_drive")
     if item_pivots:

@@ -955,7 +955,7 @@ void Avatar::drawQuadTask(TaskDraw const& d, Mat4 const& partMat) {
     o.visible = true;
     o.primary = o.secondary = -1;
     o.opacity = 1;
-    bool flip = tune("quadFlipU", 0) != 0;
+    bool flip = tune("quadFlipU", 0) != 0; // verified in game: reads left to right from the front
     o.uv[0] = flip ? w / size : 0;
     o.uv[1] = 0;
     o.uv[2] = (flip ? -w : w) / size;
