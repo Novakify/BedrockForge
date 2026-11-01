@@ -5,6 +5,34 @@ Scope: **mob behaviour only**. "Mimic AI" (voice mimic / LLM chat / mic input) i
 project, see the end of this file.
 Evidence labels: **[Source]** seen in our repo / a mod's code · **[Docs]** documented, not tested by us · **[Theory]** inference.
 
+## 0. Test mod: The Wonderland 3.0.3 (decided 2026-10-31)
+Wonderland is already fully ported on `research/geckobridge` (129 mobs, procedures via JavaBridge, dimensions,
+jumpscares; see docs/PORT_WONDERLAND.md). Its one "approximate" row is **Mob AI**. Doing MobAI on it finishes the
+pack and builds the system at the same time.
+
+What the Wonderland build already does (`tools/GeckoBridge/build.py` GOALS / `goals_of`, ~line 1181) [Source]:
+- reads each mob's `registerGoals` and maps ~20 vanilla goals to Bedrock behaviours (= Layer A below, mostly done);
+- for MCreator anonymous goals (`new MeleeAttackGoal(...) { canUse() {...} }`) it uses only the superclass and
+  **drops the overridden methods**;
+- for the mod's own goal classes it **guesses by class name** ("stalk" / "hide" / "attack"...), else drops them.
+That dropped code is exactly the "intelligence" that's missing.
+
+Big shortcut: **JavaBridge already translates MCreator bytecode to Script API JS** (72 event hooks work). The same
+translator can turn the dropped `canUse / canContinueToUse / start / tick / stop` methods into JS for the GoalRunner
+(Layer B), so most custom goals convert automatically instead of being hand-written.
+
+Wonderland MobAI milestones (replace generic M1-M5 below for this mod):
+- **W1** Inventory: list every mob's goals -> mapped / anonymous-with-overrides / custom class / tick() logic, with
+  counts. Report in this file.
+- **W2** GoalRunner (JS, Java GoalSelector rules: priority + MOVE/LOOK/JUMP/TARGET flags) + JavaBridge emits the
+  goal methods. Vanilla components get switched by component groups while a custom goal holds their slot.
+- **W3** Convert all mobs; native BF `moveTo` only if W2 shows the waypoint trick isn't good enough.
+- **W4** Parity: Java AI trace vs Bedrock trace on the 5 mobs you care about most; fix until they match.
+- **W5** Rebuild + install in "Wonderland Test", in-game check with you.
+
+Needs from the PC: the Wonderland jar (C:\BedrockModding\TestMods) staged into the cloud session, plus the
+build inputs that aren't in git (srg_1.20.1 mappings, packconv textures.json, tools/vanilla).
+
 ## 1. Why ported mobs don't act like Java (the actual cause)
 - `tools/ModPorter/extract.py` and `src_details.py` already **read every mob's AI goals** (selector, priority, class,
   args). [Source]
