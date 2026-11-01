@@ -21,6 +21,7 @@
 #include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
 #include "lyrics/win/Win.h"
+#include "figura/win/Win.h"
 
 namespace bedrock_forge {
 
@@ -107,6 +108,7 @@ bool Core::enable() {
     // ---- Client: module framework + ClickGUI (Right Shift) ----
     client::registerBuiltins();
     ::bf::lyrics::win::install(getSelf().getModDir(), getSelf().getConfigDir()); // LyricsFlow port (module off by default)
+    ::bf::figura::win::install(getSelf().getModDir(), getSelf().getConfigDir()); // FiguraBridge (Figura avatars)
     client::Registry::get().load((getSelf().getConfigDir() / "modules.json").string());
     client::loadouts::install(getSelf().getModDir()); // after modules.json so a loadout can override it
     client::installRuntime();
@@ -129,6 +131,7 @@ bool Core::disable() {
     impact::uninstall();
     client::uninstallRuntime();
     ::bf::lyrics::win::uninstall();
+    ::bf::figura::win::uninstall();
     client::Registry::get().save();
     mSubs.clear();
     mConfig.hudEnabled = gHudVisible;
