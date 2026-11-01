@@ -10,6 +10,10 @@
   world db backup before the player-dimension edit: geckobridge_staging/world_db_backup_1817.
 - Deploy flow that works: build in the cloud -> md5 lists from the PC -> tar only changed files -> device_commit_files
   (<25 MB per file) -> Save & Quit -> cp -rf into the dev packs -> reopen the world. Game relaunch: LeviLauncher Launch.
+- Later the same evening: queueServerWork on the Bedrock scheduler, javap string unescape (all concat text was broken),
+  mod commands (/the_wonderland:wonderland debug works), mod particles, spawn egg colours, vanilla mob/armor/HUD-icon
+  retextures where bedrock-samples has the same file+size (list in /home/claude/tools/vanilla, not committed),
+  Naturalist deer locator error fixed (neck bone rename), 3D item icons. Feature table: docs/PORT_WONDERLAND.md.
 - Rebuild: python3 -I tools/GeckoBridge/build.py testmods/the_wonderland-3.0.3-1.20.1-forge-MIT-Novak.jar m2/build_wonderland --name Wonderland --tol 0.25
   (needs /home/claude/mappings/srg_1.20.1.json, /home/claude/tools/packconv/textures.json, /home/claude/tools/vanilla/*; none committed).
 

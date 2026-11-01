@@ -16,6 +16,11 @@ Build: `python3 -I tools/GeckoBridge/build.py the_wonderland-3.0.3-1.20.1-forge-
 | 44 dimensions + structures | works (structure tiles in a void) | ModPorter dimensions.py + structures.py, script world generator, fog, ambience, portals |
 | Blocks (87), items, recipes, loot, lang | works | ModPorter content.py |
 | Mod sounds | works | all mod sound events as `the_wonderland.<event>` |
+| Delayed procedure steps (`queueServerWork`) | works | Bedrock scheduler (was silently never run before 2026-10-31 19:40) |
+| Chat / title text built by string concatenation | works | javap escapes decoded (before: `\u0001` instead of the value) |
+| `/wonderland ...` debug command (58 paths) | works as `/the_wonderland:wonderland <args>` | Brigadier tree -> Bedrock custom command |
+| Blood particles (3) | works | Bedrock particle JSON from the mod's texture + Java particle constants |
+| Spawn eggs | real colours | ForgeSpawnEggItem colours |
 | Vanilla retextures (blocks, items, mobs, armor, HUD icons, colormaps) | works where the layout matches | only files Bedrock has at the same path + size (GeyserMC mapping + bedrock-samples); others skipped |
 | Vanilla sound replacements | works | same path in Bedrock |
 | Splash texts | works | splashes.json |
@@ -25,6 +30,6 @@ Checked in game (2026-10-31 evening, "GeckoBridge Test" world, ~60 fps with all 
 packs load, ContentLog has no Wonderland errors, mod chat lines / jumpscares / camera effects fire, Hellways
 rooms generate, retextured cow/zombie render correctly.
 
-Fixed on the way: whole-set vanilla retextures crashed world load; eye overlay stuck (typed entity query matched
+Fixed on the way: delayed work never ran; concatenated strings broken; Java particles fell back to smoke; whole-set vanilla retextures crashed world load; eye overlay stuck (typed entity query matched
 the player); spawn-search loop (getBlockFloorHeight stub); Java block ids in `fill` commands (snow_block -> snow);
 EntityType.spawn overload picked the wrong argument as position.
