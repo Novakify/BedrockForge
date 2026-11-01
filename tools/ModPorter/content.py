@@ -456,7 +456,10 @@ class Content:
             if rel.startswith("textures/") and rel.endswith(".png"):
                 key = rel[len("textures/"):-4]; cat, _, name = key.partition("/")
                 if n + ".mcmeta" in nameset: skipped[cat] = skipped.get(cat, 0) + 1; continue
-                if cat in ("entity", "environment", "colormap"):
+                if cat == "models" and name.startswith("armor/"):   # Java <mat>_layer_<n> -> Bedrock <mat>_<n>
+                    m_ = re.match(r"armor/(\w+?)_layer_(\d)$", name)
+                    if m_: key = f"models/armor/{ {'chainmail': 'chain', 'leather': 'cloth'}.get(m_.group(1), m_.group(1)) }_{m_.group(2)}"
+                if cat in ("entity", "environment", "colormap", "models", "gui"):
                     # only where Bedrock has the same file at the same size (bedrock-samples): same layout, safe to swap
                     v = mp.get(cat, {}).get(name) if isinstance(mp.get(cat), dict) else mp.get(key)
                     cands = [key] + ([x if "/" in x else f"{cat}/{x}" for x in (v if isinstance(v, list) else [v])] if v else [])
@@ -471,7 +474,14 @@ class Content:
                 if key in mp: v = mp[key]; targets = v if isinstance(v, list) else [v]
                 elif isinstance(mp.get(cat), dict) and name in mp[cat]:
                     v = mp[cat][name]; targets = [f"{'blocks' if cat == 'block' else 'items'}/{x}" for x in (v if isinstance(v, list) else [v])]
-                else: skipped[cat] = skipped.get(cat, 0) + 1; continue
+                else:   # newer textures the mapping doesn't know: same name + same size in bedrock-samples
+                    t_ = f"{'blocks' if cat == 'block' else 'items'}/{name}"
+                    raw_ = self.z.read(n)
+                    import struct as _st
+                    if t_ in dims and list(_st.unpack(">II", raw_[16:24])) == dims[t_]:
+                        self.write(self.rp, f"textures/{t_}.png", raw_); n_tex += 1
+                    else: skipped[cat] = skipped.get(cat, 0) + 1
+                    continue
                 for t in targets:
                     if not t.startswith(("blocks/", "items/")): continue
                     if t.startswith("blocks/") and terrain and f"textures/{t}" not in terrain: continue
