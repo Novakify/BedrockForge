@@ -514,7 +514,7 @@ void wheelFrame(State& s, bedrock_forge::client::Frame& f) {
     lua_getfield(L, LUA_REGISTRYINDEX, "fb.wheel");
     if (!lua_isfunction(L, -1) || lua_pcall(L, 0, 1, 0) != 0 || !lua_istable(L, -1)) {
         lua_pop(L, 1);
-        f.infoLines.push_back("Action wheel: (no page)  [B to close]");
+        f.infoLines.push_back("Action wheel: (no page)  [Z to close]");
         return;
     }
     lua_getfield(L, -1, "title");
@@ -610,6 +610,16 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         std::snprintf(b, sizeof b, "Figura v=%.2f,%.2f,%.2f ground=%d sneak=%d yaw=%.0f body=%.0f cam=%.0f,%.0f fp=%d", pp.velocity.x, pp.velocity.y, pp.velocity.z,
                       int(pp.onGround), int(pp.crouching), pp.yaw, pp.bodyYaw, s.avatar->cameraPitch, s.avatar->cameraYaw, int(pp.isFirstPerson));
         f.infoLines.push_back(b);
+        // tuning "probe" = part index: what the actor's Molang map really holds for that part (written vs read back)
+        if (int pi = int(s.avatar->tune("probe", -1)); pi >= 0 && pi < int(s.avatar->out.size()) && pi < int(s.names.size())) {
+            auto const& o  = s.avatar->out[pi];
+            std::string bn = "fb" + std::to_string(pi);
+            auto rd = [&](char const* suf) { return readVar(lp, vn(s.nameMode, bn + suf).c_str()); };
+            std::snprintf(b, sizeof b, "probe p%d out v=%d t=%d rx=%.1f | map v=%.1f t=%.1f rx=%.1f | names=%zu vars=%zu", pi,
+                          int(o.visible && o.opacity > 0.001f), int(o.primary), o.bone.rot.x, rd("v"), rd("t"), rd("rx"), s.names.size(),
+                          s.avatar->out.size());
+            f.infoLines.push_back(b);
+        }
     }
 }
 } // namespace
