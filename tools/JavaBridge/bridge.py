@@ -76,8 +76,9 @@ def block_j2b():
     votes = {}
     for j, b in _j.loads(MCDATA_J2B.read_text()).items():
         jn, bn = j.split("[")[0].replace("minecraft:", ""), b.split("[")[0].replace("minecraft:", "")
-        if jn != bn: votes.setdefault(jn, {}); votes[jn][bn] = votes[jn].get(bn, 0) + 1
-    return {j: max(v, key=v.get) for j, v in votes.items()}
+        votes.setdefault(jn, {}); votes[jn][bn] = votes[jn].get(bn, 0) + 1
+    # a Java id some state of which keeps its name in Bedrock is not renamed (water[level=0] -> water, not flowing_water)
+    return {j: max(v, key=v.get) for j, v in votes.items() if j not in v}
 
 ARG_TYPES = {"StringArgumentType": "string", "BoolArgumentType": "bool", "IntegerArgumentType": "int", "DoubleArgumentType": "float",
              "FloatArgumentType": "float", "EntityArgument": "entity", "BlockPosArgument": "pos", "Vec3Argument": "pos"}
@@ -244,4 +245,13 @@ def field_defaults(T, suffix):
 PARTICLES = {"squid_ink": "minecraft:basic_smoke_particle", "glow_squid_ink": "minecraft:glow_particle", "damage_indicator": "minecraft:critical_hit_emitter",
              "smoke": "minecraft:basic_smoke_particle", "large_smoke": "minecraft:large_explosion", "flame": "minecraft:basic_flame_particle",
              "soul": "minecraft:soul_particle", "portal": "minecraft:portal_directional", "end_rod": "minecraft:endrod", "cloud": "minecraft:evaporation_elephant_toothpaste_vapor_particle",
-             "ash": "minecraft:basic_smoke_particle", "sculk_soul": "minecraft:sculk_soul_particle", "explosion": "minecraft:huge_explosion_emitter"}
+             "ash": "minecraft:basic_smoke_particle", "sculk_soul": "minecraft:sculk_soul_particle", "explosion": "minecraft:huge_explosion_emitter",
+             "block_dust": "minecraft:falling_dust_gravel_particle", "block": "minecraft:falling_dust_gravel_particle", "falling_dust": "minecraft:falling_dust_sand_particle",
+             "dust": "minecraft:redstone_wire_dust_particle", "crit": "minecraft:critical_hit_emitter", "enchanted_hit": "minecraft:critical_hit_emitter",
+             "heart": "minecraft:heart_particle", "angry_villager": "minecraft:villager_angry", "happy_villager": "minecraft:villager_happy",
+             "witch": "minecraft:witchspell_emitter", "dripping_water": "minecraft:water_drip_particle", "dripping_lava": "minecraft:lava_drip_particle",
+             "lava": "minecraft:lava_particle", "bubble": "minecraft:basic_bubble_particle", "splash": "minecraft:water_splash_particle",
+             "note": "minecraft:note_particle", "enchant": "minecraft:enchanting_table_particle", "totem_of_undying": "minecraft:totem_particle",
+             "sculk_charge": "minecraft:sculk_charge_particle", "soul_fire_flame": "minecraft:blue_flame_particle", "snowflake": "minecraft:snowflake_particle",
+             "white_ash": "minecraft:white_ash_particle", "crimson_spore": "minecraft:crimson_spore_particle", "warped_spore": "minecraft:warped_spore_particle",
+             "poof": "minecraft:explosion_particle", "electric_spark": "minecraft:electric_spark_particle", "glow": "minecraft:glow_particle"}

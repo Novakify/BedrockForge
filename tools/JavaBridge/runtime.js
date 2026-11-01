@@ -704,7 +704,25 @@ export const R = {
   // ---- commands (Java syntax -> Bedrock; NBT stripped)
   command(src, cmd) {
     let c = String(cmd).replace(/^\//, "");
+    // Java-only syntax handled here: particle (dx dy dz speed count), kick (host can't be kicked in single player),
+    // fill ... replace water/lava (Java matches flowing states too)
+    const pm = /^particle (?:minecraft:)?(\S+)(?: (\S+))? (\S+) (\S+) (\S+)(?: (\S+) (\S+) (\S+) (\S+) (\d+))?/.exec(c);
+    if (pm) {
+      const lv = src?.level instanceof JLevel ? src.level : (src?.entity instanceof JEntity ? src.entity.level() : JLevel.of(world.getDimension("minecraft:overworld")));
+      const base = src?.entity instanceof JEntity ? src.entity.position() : (src?.pos ?? V(0, 64, 0));
+      const hasArg = ["block", "block_marker", "falling_dust", "item", "dust", "dust_color_transition"].includes(pm[1]);
+      const xyz = hasArg ? [pm[3], pm[4], pm[5]] : [pm[2], pm[3], pm[4]];
+      const rel = (t, b) => t?.startsWith("~") ? b + (parseFloat(t.slice(1)) || 0) : parseFloat(t);
+      const x = rel(xyz[0], base.x_), y = rel(xyz[1], base.y_), z = rel(xyz[2], base.z_);
+      const rest = hasArg ? [pm[6], pm[7], pm[8], pm[9], pm[10]] : [pm[5], pm[6], pm[7], pm[8], pm[9]];
+      const type = { particle: hasArg && /stone|granite|cobble|gravel|dirt|deepslate|andesite|diorite/.test(pm[2] ?? "") ? "block_dust" : pm[1] };
+      R.particles(lv, type, x, y, z, Math.max(1, parseInt(rest[4]) || 1), parseFloat(rest[0]) || 0, parseFloat(rest[1]) || 0, parseFloat(rest[2]) || 0);
+      return 1;
+    }
+    const km = /^kick (\S+)(?: (.*))?$/.exec(c);
+    if (km) c = `title ${km[1]} title §c${km[2] ?? "Disconnected"}`;
     c = R.fixCommand(c);
+    if (/^fill .* replace (water|lava)\b/.test(c)) R.command(src, c.replace(/ replace (water|lava)\b/, " replace flowing_$1"));
     try {
       if (src?.entity instanceof JEntity) return src.entity.e.runCommand(c).successCount ?? 0;
       const lv = src?.level instanceof JLevel ? src.level : JLevel.of(world.getDimension("minecraft:overworld"));
@@ -714,14 +732,14 @@ export const R = {
   },
   fixCommand(c) {
     c = c.replace(/\{[^{}]*(\{[^{}]*\}[^{}]*)*\}/g, "");                 // NBT
+    c = c.replace(/^playsound (\S+) (master|music|record|weather|block|hostile|neutral|player|ambient|voice) /, (m, s, cat) => `playsound ${R.soundId({ sound: s.includes(":") ? s : MODID + ":" + s }) ?? s} `);
+    c = c.replace(/^stopsound (\S+)(?: \S+)?(?: (\S+))?/, (m, t, s) => `stopsound ${t}${s ? " " + (R.soundId({ sound: s.includes(":") ? s : MODID + ":" + s }) ?? s) : ""}`);
     c = c.replace(/minecraft:/g, "");
     if (/^(fill|setblock|clone|testforblock|execute)\b/.test(c) && CFG.blockJ2B)          // Java block ids -> Bedrock ids
       c = c.replace(/(^|\s)([a-z_]+)(?=\s|$|\[)/g, (m, sp, w) => sp + (CFG.blockJ2B[w] ?? w));
     c = c.replace(new RegExp(MODID + ":", "g"), NS + ":");
     c = c.replace(/^effect give (\S+) (\S+) (\d+) (\d+) true/, "effect $1 $2 $3 $4 true").replace(/^effect give /, "effect ").replace(/^effect clear (\S+) (\S+)/, "effect $1 clear");
     c = c.replace(/^title (\S+) (title|subtitle|actionbar) "?(.*?)"?$/, (m, t, k, txt) => `title ${t} ${k} ${txt.replace(/^\{"text":"(.*)".*\}$/, "$1")}`);
-    c = c.replace(/^playsound (\S+) (master|music|record|weather|block|hostile|neutral|player|ambient|voice) /, (m, s, cat) => `playsound ${R.soundId({ sound: s.includes(":") ? s : MODID + ":" + s }) ?? s} `);
-    c = c.replace(/^stopsound (\S+)(?: \S+)?(?: (\S+))?/, (m, t, s) => `stopsound ${t}${s ? " " + (R.soundId({ sound: s.includes(":") ? s : MODID + ":" + s }) ?? s) : ""}`);
     c = c.replace(/\bweather clear\b/, "weather clear");
     return c;
   },
