@@ -144,6 +144,23 @@ class Part:
         self.children: list[Part] = []
 
 
+def rgba_png(data: bytes) -> bytes:
+    """Bedrock ignores a palette PNG's tRNS chunk (transparent texels render with their palette colour), so every
+    texture goes into the pack as 8-bit RGBA. Figura (Java NativeImage) reads all PNG types, so this changes nothing."""
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(data))
+        if im.mode == "RGBA" and im.info.get("transparency") is None:
+            return data
+        buf = io.BytesIO()
+        im.convert("RGBA").save(buf, "PNG")
+        return buf.getvalue()
+    except ImportError:
+        print("[FiguraBridge] Pillow missing: textures copied as is (palette PNG transparency breaks on Bedrock)", file=sys.stderr)
+        return data
+
+
 def collect_parts(models: dict) -> list[Part]:
     parts: list[Part] = []
 
@@ -453,7 +470,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     for f in rc_files:
         f["bedrockKey"] = f"fbt{f['i']}"
         f["rpTexture"] = f"textures/figura/{slug}/t{f['i']}"
-        (rp / (f["rpTexture"] + ".png")).write_bytes(f["_data"])
+        (rp / (f["rpTexture"] + ".png")).write_bytes(rgba_png(f["_data"]))
     for rel, data in sound_files.items():
         (rp / rel).parent.mkdir(parents=True, exist_ok=True)
         (rp / rel).write_bytes(data)
