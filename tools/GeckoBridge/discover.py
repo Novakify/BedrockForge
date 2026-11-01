@@ -147,7 +147,7 @@ def renderer_info(tmp, cls, modid, names):
     # custom layers drawn with RenderType.eyes (SRG m_110488_) / entityTranslucentEmissive (m_234338_) are emissive
     for m in re.finditer(r"// class ([\w/$]+Layer\w*)\b", dis):
         n = m.group(1).replace("/", ".")
-        if "geckolib" not in n: layers.append({"kind": "custom", "class": n})
+        if "geckolib" not in n and "azurelib" not in n: layers.append({"kind": "custom", "class": n})
     model = re.search(r"// class ([\w/$]+Model)\b", dis)
     tex = [s for s in re.findall(r"// String ([\w/.:-]+\.png)", dis)]
     return {"renderer_class": cls, "model_class": model.group(1).replace("/", ".") if model else None, "layers": layers,
@@ -263,14 +263,38 @@ def discover(jar):
     models, renderers = {}, {}
     for c in all_classes:
         raw = Path(tmp, c.replace(".", "/") + ".class").read_bytes()
-        if b"registerControllers" in raw and b"geckolib" in raw: geo_classes.append(c)
+        if b"registerControllers" in raw and (b"geckolib" in raw or b"azurelib" in raw): geo_classes.append(c)
         elif b"GeoModel" in raw or b"GeoEntityRenderer" in raw:
             dis = C.javap(tmp, c)
             t = generic_target(dis, "GeoModel") or generic_target(dis, "DefaultedEntityGeoModel") or generic_target(dis, "DefaultedGeoModel")
             if t: models[t] = c
             r = generic_target(dis, "GeoEntityRenderer")
             if r: renderers[r] = c
-    for c in sorted(geo_classes): ctrl["entities"].append(C.controllers_of(tmp, c))
+    # AzureLib 3 ("Az" API): AzEntityRenderer<Entity> with AzEntityRendererConfig.builder(geo, texture) and a separate
+    # <Name>Animator holding registerControllers. Map the animator's controllers onto the entity class.
+    az = {}
+    for c in all_classes:
+        raw = Path(tmp, c.replace(".", "/") + ".class").read_bytes()
+        if b"AzEntityRenderer" not in raw or c.endswith("Config"): continue
+        dis = C.javap(tmp, c)
+        t = generic_target(dis, "AzEntityRenderer")
+        if not t: continue
+        strs = re.findall(r"// String ([\w/.:-]+)", dis)
+        geo = next((x for x in strs if x.endswith(".geo.json")), None)
+        tex = next((x for x in strs if x.endswith(".png")), None)
+        if not geo: continue
+        stem = Path(geo).name[:-9]
+        anim = next((f"assets/{modid}/{d}{stem}.animation.json" for d in ("animations/", "animations/entity/") if f"assets/{modid}/{d}{stem}.animation.json" in names), None)
+        animator = next((x for x in geo_classes if x.rsplit(".", 1)[1] == c.rsplit(".", 1)[1].replace("Renderer", "Animator")), None)
+        az[t] = {"geo": f"assets/{modid}/{geo}", "texture": f"assets/{modid}/{tex}" if tex else None, "anim": anim, "animator": animator, "renderer": c}
+    for t, a in az.items():
+        if a["animator"] in geo_classes: geo_classes.remove(a["animator"])
+        if t not in geo_classes and t in all_classes: geo_classes.append(t)
+    for c in sorted(geo_classes):
+        if c in az and az[c]["animator"]:
+            ce = C.controllers_of(tmp, az[c]["animator"]); ce["class"] = c; ctrl["entities"].append(ce)
+        elif c in az: ctrl["entities"].append({"class": c, "controllers": []})
+        else: ctrl["entities"].append(C.controllers_of(tmp, c))
     reg = registry(tmp, all_classes)
     by_class = {}
     for eid, r in reg.items(): by_class.setdefault(r["class"], []).append(eid)
@@ -280,6 +304,9 @@ def discover(jar):
         sup = re.search(r"extends ([\w.$]+)", dis)
         ids = by_class.get(c) or [snake(c.split(".")[-1])]
         mi = model_info(tmp, models[c], modid, names) if c in models else {}
+        if c in az:
+            a = az[c]; mi = {"geo": a["geo"], "animation_file": a["anim"], "geo_variants": [], "reserved": {},
+                             "variants": [{"when": "1", "texture": a["texture"]}] if a["texture"] in names else []}
         ri = renderer_info(tmp, renderers[c], modid, names) if c in renderers else {"layers": []}
         if not mi and ri.get("model_class"):
             mi = model_info(tmp, ri["model_class"], modid, names)
@@ -338,7 +365,7 @@ def vanilla_model_entities(tmp, all_classes, reg, gecko, modid, names, lang):
     for c in all_classes:
         if not c.endswith("Renderer") and "Renderer$" not in c: continue
         raw = Path(tmp, c.replace(".", "/") + ".class").read_bytes()
-        if b"geckolib" in raw: continue
+        if b"geckolib" in raw or b"azurelib" in raw: continue
         dis = C.javap(tmp, c)
         m = re.search(r"extends net\.minecraft\.client\.renderer\.entity\.(\w+)<([\w.$]+)", dis)
         if m and "$" not in c: rend[m.group(2)] = (c, m.group(1), dis)

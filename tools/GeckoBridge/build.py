@@ -601,9 +601,23 @@ class Build:
                 if self.short_of(nid) in used: anims[self.short_of(nid)] = nid
         for i, cn in enumerate(cnames):
             key = f"ctrl_{i}"; anims[key] = cn; desc["scripts"]["animate"].append(key)
-        if not cnames and amap:   # no controller found: play the idle-like animation so the mob isn't frozen
-            idle = next((v for k, v in amap.items() if "idle" in k.lower()), next(iter(amap.values())))
-            anims[self.short_of(idle)] = idle; desc["scripts"]["animate"].append(self.short_of(idle)); er["fallback_idle"] = idle
+        if not cnames and amap:   # no controller we could read (AzureLib 3 animators, data-driven mods): locomotion controller
+            pick = lambda *ws: next((v for k, v in amap.items() if any(w in k.lower() for w in ws)), None)
+            idle = pick("idle") or next(iter(amap.values())); walk = pick("walk", "move"); run_ = pick("run", "sprint", "chase")
+            atk = pick("attack", "melee", "swing", "bite", "slash")
+            states = {"idle": {"animations": [self.short_of(idle)], "transitions": [], "blend_transition": 0.2}}
+            if walk: states["walk"] = {"animations": [self.short_of(walk)], "transitions": [{"idle": "q.ground_speed < 0.05"}] + ([{"attack": "v.attack_time > 0"}] if atk else []), "blend_transition": 0.2}
+            if run_: states["run"] = {"animations": [self.short_of(run_)], "transitions": [{"idle": "q.ground_speed < 0.05"}] + ([{"walk": "q.ground_speed < 3.5"}] if walk else []), "blend_transition": 0.2}
+            if atk: states["attack"] = {"animations": [self.short_of(atk)], "transitions": [{"idle": "v.attack_time <= 0 && q.all_animations_finished"}], "blend_transition": 0.1}
+            tr = states["idle"]["transitions"]
+            if atk: tr.append({"attack": "v.attack_time > 0"})
+            if run_: tr.append({"run": "q.ground_speed > 3.5"})
+            if walk: tr.append({"walk": "q.ground_speed > 0.05"})
+            if walk and run_: states["walk"]["transitions"].append({"run": "q.ground_speed > 3.5"})
+            cn = f"controller.animation.{GB}.{self.ns}.{eid}.locomotion"
+            self.acs[cn] = {"initial_state": "idle", "states": states}
+            for nid in filter(None, (idle, walk, run_, atk)): anims[self.short_of(nid)] = nid
+            anims["ctrl_loco"] = cn; desc["scripts"]["animate"].append("ctrl_loco"); er["fallback_locomotion"] = sorted(states)
         anims.update({k: v for k, v in desc.get("animations", {}).items() if k not in anims})
         for src_bone, copies in (getattr(self, "bone_alias", None) or {}).items():   # renamed bones (dedupe_locators)
             for nid in anims.values():

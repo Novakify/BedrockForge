@@ -18,7 +18,7 @@ GeckoLib 4 (software/bernie/geckolib, Forge 1.20.1 SRG names) now; GeckoLib 5 / 
 from __future__ import annotations
 import json, os, re, subprocess, sys, tempfile, zipfile
 
-GL_PREFIXES = ("software/bernie/geckolib/", "com/geckolib/")
+GL_PREFIXES = ("software/bernie/geckolib/", "com/geckolib/", "mod/azure/azurelib/")
 RAW = "RawAnimation"
 
 # ---- Java condition -> Molang. Keys: method/field name (SRG for Forge 1.20.1, Mojang names, or the mod's own
@@ -110,7 +110,10 @@ import functools
 def javap(classdir, cls, verbose=False):
     args = ["javap", "-p", "-c", "-constants"] + (["-v"] if verbose else []) + ["-cp", classdir, cls]
     env = dict(os.environ, JAVA_TOOL_OPTIONS="")
-    return subprocess.run(args, capture_output=True, text=True, env=env).stdout
+    out = subprocess.run(args, capture_output=True, text=True, env=env).stdout
+    # AzureLib (GeckoLib 4 fork, mod.azure.azurelib) mirrors GeckoLib's API: read it as GeckoLib
+    if "azurelib" in out: out = out.replace("mod/azure/azurelib", "software/bernie/geckolib").replace("mod.azure.azurelib", "software.bernie.geckolib")
+    return out
 
 
 def parse_methods(dis):
@@ -563,7 +566,7 @@ def scan_jar(jar):
         for n in z.namelist():
             if n.endswith(".class") and not n.startswith(GL_PREFIXES):
                 b = z.read(n)
-                if b"registerControllers" in b and (b"geckolib" in b):
+                if b"registerControllers" in b and (b"geckolib" in b or b"azurelib" in b):
                     z.extract(n, tmp); classes.append(n[:-6].replace("/", "."))
         # also extract the whole mod package so javap can resolve nothing else is needed (javap reads one class)
     return {"jar": os.path.basename(jar), "entities": [controllers_of(tmp, c) for c in sorted(classes)]}
