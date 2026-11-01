@@ -235,6 +235,7 @@ struct State {
     std::set<int>                 digitsDown;
     std::string                   status;
     void*                         lastPlayer = nullptr;
+    std::string                   pendingAvatar; // switch requested mid-world: applied on the next world join
 };
 State* gS = nullptr;
 
@@ -607,13 +608,23 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             if (!ec) {
                 auto v = mt.time_since_epoch().count();
                 if (s.reloadStamp != 0 && v != s.reloadStamp) {
-                    if (auto cfg = lyrics::json::parse(readAll(s.root / "active.json"))) s.avatarName = (*cfg)["avatar"].str();
+                    std::string n = s.avatarName;
+                    if (auto cfg = lyrics::json::parse(readAll(s.root / "active.json"))) n = (*cfg)["avatar"].str();
                     s.host->lastError.clear();
-                    std::string n = s.avatarName.empty() ? s.avatarName : s.avatarName;
-                    s.avatar.reset();
-                    s.names.clear();
-                    if (!n.empty()) loadAvatar(s, n);
-                    if (!s.avatar) return;
+                    if (f.player && !n.empty() && n != s.avatarName) {
+                        // Bedrock keeps the resource pack (geometry/animations of the installed avatar) it read at
+                        // world load; driving the old geometry with another avatar's bone vars draws garbage.
+                        // Keep the current avatar until the player re-joins a world.
+                        s.pendingAvatar = n;
+                        s.status = "FiguraBridge: '" + n + "' installed - leave and re-join the world to switch";
+                        s.host->write(s.status);
+                    } else {
+                        s.pendingAvatar.clear();
+                        s.avatar.reset();
+                        s.names.clear();
+                        if (!n.empty()) loadAvatar(s, n);
+                        if (!s.avatar) return;
+                    }
                 }
                 s.reloadStamp = v;
             }
@@ -624,6 +635,15 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     if (s.nameMode < 0) calibrate(s, lp);
     if (s.lastPlayer != f.player) { // joined a world: the game reloaded pack textures, push ours again
         s.lastPlayer = f.player;
+        if (!s.pendingAvatar.empty()) { // the pack now holds the newly installed avatar: switch to it
+            std::string n = std::move(s.pendingAvatar);
+            s.pendingAvatar.clear();
+            s.avatar.reset();
+            s.names.clear();
+            loadAvatar(s, n);
+            if (!s.avatar) return;
+            if (s.nameMode < 0) calibrate(s, lp);
+        }
         texMarkDirty(*s.avatar);
     }
     int64_t now = nowMs();
