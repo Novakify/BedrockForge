@@ -825,4 +825,34 @@ void openRenderTaskApi(Avatar& a) {
                                       {"setHeadRotation", etSetHeadRotation}});
 }
 
+void taskDraws(Avatar& a, Part* p, std::vector<TaskDraw>& out) {
+    lua_State* L = a.L;
+    if (!L) return;
+    for (auto const& [name, ref] : p->tasks) {
+        (void)name;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+        Task* t = toTask(L, -1);
+        lua_pop(L, 1);
+        if (!t || !t->cust.visible || (t->kind != TaskKind::Item && t->kind != TaskKind::Block) || !t->itemRef) continue;
+        std::string id;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, t->itemRef);
+        if (lua_type(L, -1) == LUA_TSTRING) id = lua_tostring(L, -1);
+        else {
+            lua_getfield(L, -1, "getID");
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, -2);
+                if (lua_pcall(L, 1, 1, 0) == 0 && lua_type(L, -1) == LUA_TSTRING) id = lua_tostring(L, -1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        size_t cut = id.find_first_of("{[ ");
+        if (cut != std::string::npos) id.resize(cut);
+        if (id.empty()) continue;
+        if (id.find(':') == std::string::npos) id = "minecraft:" + id;
+        t->cust.recalculate();
+        out.push_back({t->kind == TaskKind::Item ? 1 : 2, id, t->cust.positionMatrix});
+    }
+}
+
 } // namespace bf::figura

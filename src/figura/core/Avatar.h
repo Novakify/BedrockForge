@@ -48,6 +48,13 @@ struct PartOut {
     double  uv[4] = {0, 0, 1, 1};   // effective UV matrix as Bedrock uv_anim: offset u, v, scale u, v
 };
 
+/// a render task the bridge can draw (ItemTask / BlockTask): its item/block id and its matrix in the part's space
+struct TaskDraw {
+    int         kind = 0; // 1 item, 2 block
+    std::string id;       // "minecraft:diamond_sword"
+    Mat4        m;
+};
+
 struct KeybindState {
     std::string name, key;
     bool        enabled = true, gui = false, down = false;
@@ -101,6 +108,7 @@ public:
         BoneOut bone;
     } itemOut[2];                   // 0 = right, 1 = left
     std::vector<char>                          uvBones;
+    std::map<std::string, std::vector<int>>    taskBones;    // "item:minecraft:x" / "block:minecraft:y" -> bones (rig "taskBones")
     std::vector<void*>                         dynSlotTex;   // runtime texture slot -> script Texture (LuaTex Tex*)
     int  customTextureFile(void* tex);
     int  textureFileByName(std::string const& figuraName) const;                       // TextureFile index that shows a CUSTOM texture, -1 none      // bones with a uv_anim render controller (rig "uvParts")
@@ -194,5 +202,8 @@ Avatar* avatarOf(lua_State* L);
 void openFiguraApis(Avatar& a);
 /// Lua-side part of the API (events, pings, action_wheel, keybinds, config ...), see Prelude.cpp.
 char const* figuraPreludeSource();
+
+/// ItemTask / BlockTask draw list of one part (LuaTask.cpp)
+void taskDraws(Avatar& a, Part* p, std::vector<TaskDraw>& out);
 
 } // namespace bf::figura

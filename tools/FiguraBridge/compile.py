@@ -291,6 +291,22 @@ def bedrock_vanilla_texture(res: str) -> str | None:
     return f"textures/{folder}/{name}"
 
 
+def vanilla_item_or_block_texture(kind: str, mid: str) -> str | None:
+    """Bedrock vanilla texture for an item / block id (PackConverter mapping; blocks fall back to the *_side /
+    *_front texture or the planks of a wood stair/slab)."""
+    bedrock_vanilla_texture("minecraft:textures/block/stone.png")  # loads the mapping
+    m = _VANILLA_MAP.get("item" if kind == "item" else "block") or {}
+    cands = [mid] if kind == "item" else [mid, mid + "_side", mid + "_front", mid + "_top",
+                                           mid.replace("_stairs", "_planks").replace("_slab", "_planks")]
+    for c in cands:
+        v = m.get(c)
+        if isinstance(v, list):
+            v = v[0]
+        if isinstance(v, str):
+            return f"textures/{'items' if kind == 'item' else 'blocks'}/{v}"
+    return f"textures/items/{mid}" if kind == "item" else None
+
+
 def collect_parts(models: dict) -> list[Part]:
     parts: list[Part] = []
 
@@ -403,6 +419,7 @@ def mesh_geometry(p: Part, sets):
 # ----------------------------------------------------------------------------------------------------------------
 
 def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dict:
+    import re as _re
     avatar_dir = avatar_dir.resolve()
     compiled = fn.compile_avatar(avatar_dir, owner_uuid)
     nbt = compiled.nbt
@@ -472,6 +489,31 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         if d.source.i in uv_parts:
             uv_parts.add(d.i)
 
+    # render tasks: ItemTask / BlockTask ids the scripts name (item quads / block cubes with the vanilla texture, one
+    # free-floating bone each, placed by the runtime bone solve)
+    task_specs = []   # (kind, id, bedrock texture)
+    seen_tasks = set()
+    for line in script_text.splitlines():
+        # only lines that create a task or resolve an id for one (Action:setItem wheel icons are not tasks)
+        kinds = (["item"] if _re.search(r"(?:newItem\s*\(|checkItem\s*\()", line) else []) + \
+                (["block"] if _re.search(r"(?:newBlock\s*\(|checkBlock\s*\()", line) else [])
+        for kind in kinds:
+            for mid in _re.findall(r"[\"']minecraft:([a-z0-9_]+)(?:[\[{][^\"']*)?[\"']", line):
+                full = "minecraft:" + mid
+                tex = vanilla_item_or_block_texture(kind, mid)
+                if tex and (kind, full) not in seen_tasks:
+                    seen_tasks.add((kind, full))
+                    task_specs.append((kind, full, tex))
+    task_parts = []
+    for kind, full, tex in task_specs:
+        t = Part(len(parts) + len(dups) + len(task_parts), {"name": f"task_{kind}_{full}"}, None, f"#task:{kind}:{full}",
+                 False, False)
+        t.task = (kind, full, tex)
+        t.file = {"i": len(files), "figuraName": f"task:{kind}:{full}", "set": -1, "type": "d", "file": None, "w": 16,
+                  "h": 16, "_data": None, "vanilla": tex, "task": True}
+        files.append(t.file)
+        task_parts.append(t)
+
     # bones: vanilla skeleton (no cubes) + one bone per part (+ per-texture-set sub-bones)
     bones = [{"name": n, **({"parent": par} if par else {}), "pivot": [float(c) for c in pv]} for n, par, pv in SKELETON]
     geo_bones = {}  # bone name -> (part, set or None)
@@ -495,6 +537,16 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 b.update(p.geo[sid])
                 geo_bones[p.bone] = (p, sid)
                 p.subs.append({"bone": p.bone, "set": sid})
+
+    for t in task_parts:   # unit geometry in Bedrock space; texture = the vanilla file added below (full UV)
+        kind, full, tex = t.task
+        u = {"uv": [0, 0], "uv_size": [geo_w, geo_h]}
+        if kind == "item":   # 16x16 quad centred on the task origin (Figura item task, display NONE)
+            cube = {"origin": [-8, -8, 0], "size": [16, 16, 0], "uv": {"north": u, "south": u}}
+        else:                # 16^3 block from the task origin (mirrored on X like every bone)
+            cube = {"origin": [-16, 0, 0], "size": [16, 16, 16], "uv": {k: u for k in ("north", "south", "east", "west", "up", "down")}}
+        bones.append({"name": t.bone, "pivot": [0, 0, 0], "cubes": [cube]})
+        geo_bones[t.bone] = (t, -1)
 
     # First person (Figura renderMode FIRST_PERSON): Bedrock only draws first-person arms from bones under its vanilla
     # rightArm / leftArm (animated by the first-person animations). Every subtree rooted at an arm-typed part (no
@@ -550,7 +602,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
 
     # drive animation
     anim_bones = {}
-    for p in parts + dups:
+    for p in parts + dups + task_parts:
         i = p.bone[1:]
         d = (-p.rot[0], -p.rot[1], p.rot[2])
         anim_bones[p.bone] = {
@@ -584,7 +636,6 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     # dynamic texture slots: textures scripts create (textures:newTexture / copy / read / fromVanilla) and show with
     # setPrimaryTexture("CUSTOM", tex) are uploaded at runtime (native TextureGroup upload) over a placeholder PNG the
     # pack ships, so the render controllers already hold a handle to that path
-    import re as _re
     if _re.search(r"textures\s*[:.]\s*(?:newTexture|copy|read|fromVanilla)\s*\(", script_text):
         blank = blank_png(DYN_SIZE, DYN_SIZE)
         for k in range(DYN_SLOTS):
@@ -601,6 +652,8 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             files.append({"i": len(files), "figuraName": "resource:" + res, "set": -1, "type": "d", "file": None,
                           "w": 0, "h": 0, "_data": None, "vanilla": bed})
     rc_files = [f for f in files if f["type"] in ("d", "e") and (f["_data"] is not None or f.get("skin") or f.get("vanilla"))]
+    all_tex_files = rc_files
+    rc_files = [f for f in rc_files if not f.get("task")]
     controllers = {}
 
     def vis_expr(p: Part):
@@ -625,7 +678,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         for kind, var, mat, key in kinds_for(f):
             pv = [{"*": False}]
             for bname, (p, sid) in geo_bones.items():
-                if bname not in cnames:
+                if bname not in cnames or getattr(p, "task", None):
                     continue
                 if sid is None:
                     # bone without geometry (group, or a split part's own bone): only matters if Bedrock's
@@ -642,6 +695,13 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             controllers[f"controller.render.player.figura_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
                 "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
                 "part_visibility": pv}
+
+    # render task bones: one controller each, their own vanilla texture, shown only while the runtime claims them
+    for t in task_parts:
+        k = next(n for n, c in enumerate(chunk_names) if t.bone in c)
+        controllers[f"controller.render.player.figura_task_{t.bone}"] = {
+            "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": "Material.fbd"}], "textures": [tex_ref(t.file)],
+            "part_visibility": [{"*": False}, {t.bone: f"v.fb{t.i}v ?? 0"}]}
 
     # UV-animated parts: one controller per (part, texture file it can show), restricted to that part's bones
     files_by_i = {f["i"]: f for f in rc_files}
@@ -721,7 +781,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     (rp / "animations/figura_drive.animation.json").write_text(json.dumps(animation, indent=1))
     (rp / "render_controllers/figura_player.render_controllers.json").write_text(
         json.dumps({"format_version": "1.10.0", "render_controllers": controllers}, indent=1))
-    for f in rc_files:
+    for f in all_tex_files:
         if f.get("skin"):
             f["bedrockKey"] = "default"
             continue
@@ -755,7 +815,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             "figura_uv:entity_alphatest": {"+defines": ["USE_UV_ANIM"]},
             "figura_uv_blend:entity_alphablend": {"+defines": ["USE_UV_ANIM"]},
             "figura_uv_emissive:entity_emissive_alpha": {"+defines": ["USE_UV_ANIM"]}}}, indent=1))
-    for f in rc_files:
+    for f in all_tex_files:
         if not f.get("skin"):
             desc["textures"][f["bedrockKey"]] = f["rpTexture"]
     desc["animations"]["figura_drive"] = "animation.figura.drive"
@@ -811,6 +871,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         rig["parts"].append(e)
     rig["dups"] = [{"i": d.i, "source": d.source.i} for d in dups]
     rig["uvParts"] = sorted(uv_parts)
+    rig["taskBones"] = [{"i": t.i, "kind": t.task[0], "id": t.task[1], "texture": t.task[2]} for t in task_parts]
     rig["itemPivots"] = item_pivots
     (out / "rig.json").write_text(json.dumps(rig, indent=1), encoding="utf-8")
     return {"out": str(out), "parts": len(parts), "bones": len(bones), "textureFiles": len(files),

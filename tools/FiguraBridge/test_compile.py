@@ -201,7 +201,7 @@ def check(name: str, src: Path, out: Path, vanilla: Path) -> tuple[dict, list]:
             errs.append(f"{k} not in player.entity.json")
     anim = json.loads((out / "rp/animations/figura_drive.animation.json").read_text())
     drive = set(anim["animations"]["animation.figura.drive"]["bones"])
-    part_bones = {p["bone"] for p in rig["parts"]} | {f"p{d['i']}" for d in rig.get("dups", [])}
+    part_bones = {p["bone"] for p in rig["parts"]} | {f"p{d['i']}" for d in rig.get("dups", []) + rig.get("taskBones", [])}
     fp = {b for b in drive if b.startswith("f")}
     if drive - fp != part_bones:
         errs.append("drive animation bones != part bones")

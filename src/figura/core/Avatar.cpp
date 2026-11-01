@@ -124,6 +124,19 @@ bool Avatar::load(std::filesystem::path const& bundleDir, std::filesystem::path 
             itemOut[side].configured = true;
             itemOut[side].pivot      = vec3Of(ip["pivot"]);
         }
+    // render task bones: free-floating item quads / block cubes (compile.py) placed by the bone solve
+    if (rig && (*rig)["taskBones"].isArray())
+        for (auto const& tb : (*rig)["taskBones"].items()) {
+            int i = int(tb["i"].asNumber());
+            if (i != int(boneParent.size())) break;
+            boneParent.push_back(-1);
+            compiledPivots.push_back({});
+            taskBones[tb["kind"].str() + ":" + tb["id"].str()].push_back(i);
+        }
+    out.resize(boneParent.size());
+    boneModel.resize(boneParent.size());
+    boneWorld.resize(boneParent.size());
+    boneClaimed.assign(boneParent.size(), 0);
     uvBones.assign(boneParent.size(), 0);
     if (rig && (*rig)["uvParts"].isArray())
         for (auto const& u : (*rig)["uvParts"].items()) {
@@ -828,6 +841,25 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         o.uv[1] = uvm[5];
         o.uv[2] = uvm[0];
         o.uv[3] = uvm[4];
+    }
+    // ItemTask / BlockTask: drawn through a task bone holding that item's / block's vanilla texture
+    if (onBody && !p->tasks.empty() && !taskBones.empty()) {
+        std::vector<TaskDraw> draws;
+        taskDraws(*this, p, draws);
+        for (auto const& d : draws) {
+            auto it = taskBones.find((d.kind == 1 ? "item:" : "block:") + d.id);
+            if (it == taskBones.end()) continue;
+            for (int b : it->second) {
+                if (boneClaimed[size_t(b)]) continue;
+                boneClaimed[size_t(b)] = 1;
+                boneModel[size_t(b)]   = myMat * d.m;
+                PartOut& o = out[size_t(b)];
+                o.visible = true;
+                o.primary = o.secondary = -1;
+                o.opacity = 1;
+                break;
+            }
+        }
     }
     for (Part* c : std::vector<Part*>(p->children)) traverse(c, prim, sec, vis, myMat, separate, uvm);
     if (vis && p->postRender && L) {
