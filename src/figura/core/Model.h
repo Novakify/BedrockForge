@@ -62,6 +62,9 @@ struct VanillaPart {
 struct Part {
     // identity / tree
     int                  index  = -1; // pre-order index = Bedrock bone "p<index>"
+    int                  bone   = -1; // Bedrock bone this part draws through (compiled parts: = index; copies: a dup slot)
+    int                  sourceBone = -1; // copies: the compiled bone whose geometry they show
+    int                  dupSlot = -1;    // copies: last dup bone claimed (kept while free, so it doesn't flicker)
     std::string          name;
     Part*                parent = nullptr;
     std::vector<Part*>   children; // current children (Lua can move/remove)

@@ -85,6 +85,16 @@ public:
     std::vector<std::string>                   autoAnims;
     std::vector<PartOut>                       out;        // per part, after frame()
     std::vector<Vec3>                          compiledPivots; // Bedrock bone pivots (part pivots at load)
+    // bone solve: Bedrock bones form the COMPILED hierarchy, scripts can move/copy parts anywhere. Each frame every
+    // part records its model-space matrix on its bone; bones are then solved parents-first as
+    // local = inverse(world of the compiled parent bone) * model matrix (the identity case = the part's own matrix).
+    std::vector<int>                           boneParent;   // compiled parent bone, -1 = root
+    std::vector<Mat4>                          boneModel, boneWorld;
+    std::vector<char>                          boneClaimed;
+    std::map<int, std::vector<int>>            dupSlots;     // source bone -> free-floating dup bones (rig "dups")
+    int                                        compiledParts = 0;
+    void solveBones();
+    bool separateType(ParentType t) const;
     int                                        nbtRef = 0; // Lua table: avatar:getNBT()
     std::shared_ptr<lyrics::json::Value>       nbtJson;    // the compiled avatar NBT
     bool                                       scriptError = false;
@@ -157,7 +167,7 @@ private:
     void  readAnimData(Part* part, lyrics::json::Value const& anim);
     bool  initLua(std::string* err);
     void  initScripts();
-    void  traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat);
+    void traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat, bool separate = false);
     void  applyCameraTransform(Part* p, Mat4 const& parentMat);
     void  applyAnimations();
     void  clearAnimations();

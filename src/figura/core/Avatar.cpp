@@ -98,7 +98,24 @@ bool Avatar::load(std::filesystem::path const& bundleDir, std::filesystem::path 
     if (!buildFromNbt(*nbt, rig ? *rig : json::Value::makeObject(), err)) return false;
     nbtJson = std::make_shared<json::Value>(*nbt);
     for (auto& p : parts) compiledPivots.push_back(p->pivot); // fixed Bedrock bone pivots (before any script runs)
-    out.resize(parts.size());
+    compiledParts = int(parts.size());
+    for (auto& p : parts) {
+        p->bone = p->index;
+        boneParent.push_back(p->parent ? p->parent->index : -1);
+    }
+    // dup bones (compile.py "dups"): free-floating copies of a part's geometry for script-made copies
+    if (rig && (*rig)["dups"].isArray())
+        for (auto const& d : (*rig)["dups"].items()) {
+            int i = int(d["i"].asNumber()), src = int(d["source"].asNumber());
+            if (i != int(boneParent.size()) || src < 0 || src >= compiledParts) break; // must follow the parts in order
+            boneParent.push_back(-1);
+            compiledPivots.push_back(compiledPivots[size_t(src)]);
+            dupSlots[src].push_back(i);
+        }
+    out.resize(boneParent.size());
+    boneModel.resize(boneParent.size());
+    boneWorld.resize(boneParent.size());
+    boneClaimed.assign(boneParent.size(), 0);
     if (!initLua(err)) return false;
     loaded = true;
     initScripts();
@@ -651,8 +668,30 @@ void Avatar::applyCameraTransform(Part* p, Mat4 const& parentMat) {
     p->positionMatrix = m;
 }
 
-void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat) {
+bool Avatar::separateType(ParentType t) const {
+    // FiguraModelPart parent types rendered in their own pass (never on the player model)
+    switch (t) {
+    case ParentType::World: case ParentType::Hud: case ParentType::Gui: case ParentType::Skull: case ParentType::Portrait:
+    case ParentType::Arrow: case ParentType::Trident: case ParentType::Item: return true;
+    default: return false;
+    }
+}
+
+void Avatar::solveBones() {
+    for (size_t b = 0; b < out.size(); b++) {
+        int  par = boneParent[b];
+        Mat4 pw  = par >= 0 && par < int(b) ? boneWorld[size_t(par)] : Mat4{};
+        Mat4 local;
+        if (boneClaimed[b]) local = par >= 0 ? affineInverse(pw) * boneModel[b] : boneModel[b];
+        else out[b].visible = false;     // nothing draws through this bone this frame
+        boneWorld[b] = pw * local;
+        out[b].bone  = decomposeForBedrock(local, compiledPivots[b]);
+    }
+}
+
+void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool parentVisible, Mat4 const& parentMat, bool separate) {
     if (p->removed) return;
+    separate = separate || separateType(p->parentType);
     if (p->primaryTexture.set) prim = p->primaryTexture;
     if (p->secondaryTexture.set) sec = p->secondaryTexture;
     p->applyVanillaTransforms(vanillaPose.get(p->parentType));
@@ -673,12 +712,25 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         pushRef(L, p, typeId("ModelPart"));
         runChunk(3, 0);
     }
-    if (p->index >= 0 && p->index < int(out.size())) {
-        PartOut& o = out[p->index];
-        Vec3 bonePivot = p->pivot; // fixed Bedrock pivot = the part's pivot as compiled
-        if (p->index < int(compiledPivots.size())) bonePivot = compiledPivots[p->index];
-        o.bone    = decomposeForBedrock(p->positionMatrix, bonePivot);
-        o.visible = vis;
+    Mat4 myMat = parentMat * p->positionMatrix;
+    // which bone draws this part: its own (compiled parts), else a free dup bone of its source (script copies)
+    int bone = p->bone;
+    if (bone < 0 && p->sourceBone >= 0 && vis) {
+        auto it = dupSlots.find(p->sourceBone);
+        if (it != dupSlots.end()) {
+            if (p->dupSlot >= 0 && !boneClaimed[size_t(p->dupSlot)]) bone = p->dupSlot;
+            else
+                for (int d : it->second)
+                    if (!boneClaimed[size_t(d)]) { bone = d; break; }
+            p->dupSlot = bone;
+        }
+    }
+    bool onBody = vis && !separate;
+    if (bone >= 0 && bone < int(out.size()) && !boneClaimed[size_t(bone)] && (p->bone >= 0 || onBody)) {
+        boneClaimed[size_t(bone)] = 1;
+        boneModel[size_t(bone)] = myMat;
+        PartOut& o = out[size_t(bone)];
+        o.visible = onBody;
         auto texIndex = [&](TextureOverride const& t, bool primary) -> int {
             if (!t.set) return -1;
             switch (t.kind) {
@@ -699,8 +751,7 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         o.opacity   = p->alpha.value_or(1.0f);
         o.color     = p->color;
     }
-    Mat4 myMat = parentMat * p->positionMatrix;
-    for (Part* c : std::vector<Part*>(p->children)) traverse(c, prim, sec, vis, myMat);
+    for (Part* c : std::vector<Part*>(p->children)) traverse(c, prim, sec, vis, myMat, separate);
     if (vis && p->postRender && L) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, p->postRender);
         lua_pushnumber(L, tickDelta);
@@ -714,7 +765,6 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
 void Avatar::frame(float delta) {
     if (!loaded) return;
     tickDelta = delta;
-    if (out.size() < parts.size()) out.resize(parts.size());
     auto it = vanillaVisible.find("PLAYER");
     (void)it;
     vanillaPose = computeVanillaPose(player, delta, !player.invisible);
@@ -739,7 +789,9 @@ void Avatar::frame(float delta) {
     // render offset, so it goes into the root matrix (otherwise the crouch pose floats above the ground)
     Mat4 rootMat;
     if (player.crouching && renderMode != "FIRST_PERSON") rootMat.translate(0, -2 / 0.9375 * tune("crouchDrop", 1), 0); // 2/16 block in world, model is drawn at 0.9375
+    std::fill(boneClaimed.begin(), boneClaimed.end(), 0);
     traverse(root, {}, {}, true, rootMat);
+    solveBones();
     if (!scriptError) {
         if (player.loaded) {
             lua_pushnumber(L, delta);

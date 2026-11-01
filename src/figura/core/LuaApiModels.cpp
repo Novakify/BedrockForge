@@ -765,8 +765,6 @@ int newPart(lua_State* L) {
     std::string name = lua_isnoneornil(L, 2) ? "null" : luaL_checkstring(L, 2);
     Part*   c = a->addPart(name, nullptr);
     c->geomInit = true;
-    a->out.resize(a->parts.size());
-    a->compiledPivots.push_back({});
     addChildTo(L, p, c);
     c->pivot = p->pivot; // newer.setPivot(this.getPivot())
     if (!lua_isnoneornil(L, 3)) c->parentType = parentTypeGet(luaL_checkstring(L, 3));
@@ -790,8 +788,10 @@ int copyP(lua_State* L) {
     c->animationOverride     = 0;
     c->lastAnimationPriority = INT32_MIN;
     c->hasPlayerCustomization = false;
-    a->out.resize(a->parts.size());
-    a->compiledPivots.push_back(p->index >= 0 && p->index < int(a->compiledPivots.size()) ? a->compiledPivots[size_t(p->index)] : p->pivot);
+    // Bedrock can't add bones at runtime: the copy draws through a spare "dup" bone of the same geometry (compile.py)
+    c->sourceBone = p->bone >= 0 ? p->bone : p->sourceBone;
+    c->bone       = -1;
+    c->dupSlot    = -1;
     pushRef(L, c, tModelPart);
     return 1;
 }

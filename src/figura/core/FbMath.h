@@ -123,6 +123,26 @@ struct BoneOut {
 /// whose fixed pivot is `pivot` (Blockbench space) and whose bind rotation is 0:
 ///   M = T(t) * T(p) * Rz*Ry*Rx * S * T(-p)   ->   t = M*p - p, R*S = linear part.
 /// Handles negative scale (mirroring) by flipping X; assumes no shear (Figura parts only rotate/scale/translate).
+/// inverse of an affine matrix (bottom row 0 0 0 1); singular 3x3 -> identity rotation part
+inline Mat4 affineInverse(Mat4 const& m) {
+    double a = m.v11, b = m.v12, c = m.v13, d = m.v21, e = m.v22, f = m.v23, g = m.v31, h = m.v32, i = m.v33;
+    double A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+    double det = a * A + b * B + c * C;
+    Mat4 r;
+    if (std::fabs(det) < 1e-12) {
+        r.v14 = -m.v14; r.v24 = -m.v24; r.v34 = -m.v34;
+        return r;
+    }
+    double id = 1.0 / det;
+    r.v11 = A * id;                 r.v12 = -(b * i - c * h) * id; r.v13 = (b * f - c * e) * id;
+    r.v21 = B * id;                 r.v22 = (a * i - c * g) * id;  r.v23 = -(a * f - c * d) * id;
+    r.v31 = C * id;                 r.v32 = -(a * h - b * g) * id; r.v33 = (a * e - b * d) * id;
+    r.v14 = -(r.v11 * m.v14 + r.v12 * m.v24 + r.v13 * m.v34);
+    r.v24 = -(r.v21 * m.v14 + r.v22 * m.v24 + r.v23 * m.v34);
+    r.v34 = -(r.v31 * m.v14 + r.v32 * m.v24 + r.v33 * m.v34);
+    return r;
+}
+
 inline BoneOut decomposeForBedrock(Mat4 const& m, Vec3 pivot) {
     BoneOut o;
     double a[3][3] = {{m.v11, m.v12, m.v13}, {m.v21, m.v22, m.v23}, {m.v31, m.v32, m.v33}};

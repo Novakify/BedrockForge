@@ -56,6 +56,12 @@ int main(int argc, char** argv) {
     }
     std::printf("loaded '%s' by %s: %zu parts, %zu animations, %zu textures, scriptError=%d\n", a.name.c_str(),
                 a.author.c_str(), a.parts.size(), a.animations.size(), a.textureFiles.size(), int(a.scriptError));
+    if (char const* pre = std::getenv("PRELUA")) { // extra test script run after the avatar's own scripts
+        if (luaL_loadfile(a.L, pre) != 0 || lua_pcall(a.L, 0, 0, 0) != 0) {
+            std::printf("PRELUA error: %s\n", lua_tostring(a.L, -1));
+            lua_pop(a.L, 1);
+        }
+    }
     PlayerState& p = a.player;
     p.loaded = true;
     p.name   = "Novak";

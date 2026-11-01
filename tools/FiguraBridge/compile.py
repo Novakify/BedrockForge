@@ -19,6 +19,7 @@ Bedrock conventions used (Blockbench's Bedrock exporter, mirrored on X):
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import shutil
@@ -161,6 +162,7 @@ def rgba_png(data: bytes) -> bytes:
         return data
 
 
+DUPS = 1           # spare geometry copies per part for ModelPart:copy() (see build)
 BONE_LIMIT = 250   # per geometry; Bedrock breaks somewhere past 255 (see chunk_bones)
 
 
@@ -364,10 +366,25 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         elif p.type == "MESH":
             mesh_geometry(p, sets)
 
+    # dup bones: Bedrock can't create bones at runtime, so every part with geometry gets DUPS spare free-floating
+    # copies of its geometry (driven in model space by the runtime's bone solve) for parts scripts create with
+    # ModelPart:copy(). Only when a script calls copy().
+    script_text = "\n".join(v if isinstance(v, str) else v.decode("utf-8", "replace") if isinstance(v, bytes) else ""
+                            for v in (nbt.get("scripts") or {}).values())
+    n_dups = DUPS if ":copy(" in script_text else 0
+    dups = []
+    for _ in range(n_dups):
+        for src in [p for p in parts if p.geo]:
+            d = Part(len(parts) + len(dups), src.tag, None, src.path + "#dup", False, src.smooth)
+            d.geo = copy.deepcopy(src.geo)
+            d.rot = [0.0, 0.0, 0.0]
+            d.source = src
+            dups.append(d)
+
     # bones: vanilla skeleton (no cubes) + one bone per part (+ per-texture-set sub-bones)
     bones = [{"name": n, **({"parent": par} if par else {}), "pivot": [float(c) for c in pv]} for n, par, pv in SKELETON]
     geo_bones = {}  # bone name -> (part, set or None)
-    for p in parts:
+    for p in parts + dups:
         b = {"name": p.bone, "pivot": [num(-p.piv[0]), num(p.piv[1]), num(p.piv[2])]}
         if p.parent:
             b["parent"] = p.parent.bone
@@ -442,7 +459,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
 
     # drive animation
     anim_bones = {}
-    for p in parts:
+    for p in parts + dups:
         i = p.bone[1:]
         d = (-p.rot[0], -p.rot[1], p.rot[2])
         anim_bones[p.bone] = {
@@ -602,6 +619,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             else:
                 e["set"] = p.subs[0]["set"]
         rig["parts"].append(e)
+    rig["dups"] = [{"i": d.i, "source": d.source.i} for d in dups]
     (out / "rig.json").write_text(json.dumps(rig, indent=1), encoding="utf-8")
     return {"out": str(out), "parts": len(parts), "bones": len(bones), "textureFiles": len(files),
             "textureSets": len(sets), "renderControllers": len(controllers), "sounds": len(sound_map),
