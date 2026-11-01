@@ -17,6 +17,7 @@
 #include <fstream>
 #include <map>
 #include <memory>
+#include <limits>
 #include <mutex>
 #include <set>
 #include <string>
@@ -236,6 +237,9 @@ struct State {
     std::string                   status;
     void*                         lastPlayer = nullptr;
     std::string                   pendingAvatar; // switch requested mid-world: applied on the next world join
+    std::vector<std::pair<int, HashedString>> useNames; // v.fbuse<file> (render controller gating)
+    std::vector<float>            cache;      // last value written per bone var (16 per bone); NaN = unknown
+    int64_t                       lastFullWriteMs = 0;
 };
 State* gS = nullptr;
 
@@ -260,6 +264,9 @@ void buildNames(State& s) {
         }
     }
     s.van = std::make_unique<HashedString>(vn(m, "fbvan"));
+    s.useNames.clear();
+    for (int f : s.avatar->gatedFiles) s.useNames.emplace_back(f, HashedString(vn(m, "fbuse" + std::to_string(f))));
+    s.cache.assign(s.avatar->out.size() * 16, std::numeric_limits<float>::quiet_NaN());
 }
 
 void calibrate(State& s, Actor& a) {
@@ -282,28 +289,47 @@ void writeVars(State& s, Actor& a) {
     auto& map = *a.mMolangVariables;
     auto  set = [&](HashedString const& n, double v) { map.setMolangVariable(n, MolangScriptArg(float(v))); };
     auto const& out = s.avatar->out;
+    // only changed values are written (a full write every 2 s in case the game reset the variable map); a hidden
+    // bone's pose is not written at all (nothing draws it)
+    int64_t now = nowMs();
+    bool    full = now - s.lastFullWriteMs > 2000 || s.cache.size() < out.size() * 16;
+    if (full) {
+        s.lastFullWriteMs = now;
+        if (s.cache.size() < out.size() * 16) s.cache.assign(out.size() * 16, std::numeric_limits<float>::quiet_NaN());
+    }
+    auto put = [&](size_t i, int k, HashedString const& n, double v) {
+        float  f = float(v);
+        float& c = s.cache[i * 16 + size_t(k)];
+        if (!full && c == f) return;
+        c = f;
+        set(n, f);
+    };
     for (size_t i = 0; i < out.size() && i < s.names.size(); i++) {
         auto const& o = out[i];
         auto const& n = s.names[i];
-        set(n.rx, o.bone.rot.x);
-        set(n.ry, o.bone.rot.y);
-        set(n.rz, o.bone.rot.z);
-        set(n.px, o.bone.pos.x);
-        set(n.py, o.bone.pos.y);
-        set(n.pz, o.bone.pos.z);
-        set(n.sx, o.bone.scale.x);
-        set(n.sy, o.bone.scale.y);
-        set(n.sz, o.bone.scale.z);
-        set(n.v, o.visible && o.opacity > 0.001f ? 1.0 : 0.0);
-        set(n.t, o.primary);
-        set(n.e, o.secondary);
+        bool vis = o.visible && o.opacity > 0.001f;
+        put(i, 9, n.v, vis ? 1.0 : 0.0);
+        if (!vis && !full) continue;
+        put(i, 0, n.rx, o.bone.rot.x);
+        put(i, 1, n.ry, o.bone.rot.y);
+        put(i, 2, n.rz, o.bone.rot.z);
+        put(i, 3, n.px, o.bone.pos.x);
+        put(i, 4, n.py, o.bone.pos.y);
+        put(i, 5, n.pz, o.bone.pos.z);
+        put(i, 6, n.sx, o.bone.scale.x);
+        put(i, 7, n.sy, o.bone.scale.y);
+        put(i, 8, n.sz, o.bone.scale.z);
+        put(i, 10, n.t, o.primary);
+        put(i, 11, n.e, o.secondary);
         if (i < s.avatar->uvBones.size() && s.avatar->uvBones[i]) {
-            set(n.uu, o.uv[0]);
-            set(n.uv, o.uv[1]);
-            set(n.usu, o.uv[2]);
-            set(n.usv, o.uv[3]);
+            put(i, 12, n.uu, o.uv[0]);
+            put(i, 13, n.uv, o.uv[1]);
+            put(i, 14, n.usu, o.uv[2]);
+            put(i, 15, n.usv, o.uv[3]);
         }
     }
+    for (auto const& [f, n] : s.useNames)
+        set(n, f >= 0 && size_t(f) < s.avatar->fileUsed.size() && s.avatar->fileUsed[size_t(f)] ? 1.0 : 0.0);
     for (int side = 0; side < 2; side++) { // held items on Figura's item pivots (compile.py animation.figura.items)
         auto const& io = s.avatar->itemOut[side];
         if (!io.configured) continue;
@@ -635,6 +661,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     if (s.nameMode < 0) calibrate(s, lp);
     if (s.lastPlayer != f.player) { // joined a world: the game reloaded pack textures, push ours again
         s.lastPlayer = f.player;
+        s.lastFullWriteMs = 0; // new actor: write every variable again
         if (!s.pendingAvatar.empty()) { // the pack now holds the newly installed avatar: switch to it
             std::string n = std::move(s.pendingAvatar);
             s.pendingAvatar.clear();

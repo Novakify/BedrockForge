@@ -140,6 +140,15 @@ bool Avatar::load(std::filesystem::path const& bundleDir, std::filesystem::path 
             } else
                 taskBones[tb["kind"].str() + ":" + tb["id"].str()].push_back(i);
         }
+    if (rig && (*rig)["gatedFiles"].isArray())
+        for (auto const& g : (*rig)["gatedFiles"].items()) gatedFiles.push_back(int(g.asNumber()));
+    boneFiles.assign(boneParent.size(), {});
+    if (rig && (*rig)["boneFiles"].isObject())
+        for (auto const& [k, v] : (*rig)["boneFiles"].members()) {
+            size_t b = size_t(std::strtoul(k.c_str(), nullptr, 10));
+            if (b < boneFiles.size() && v.isArray())
+                for (auto const& f : v.items()) boneFiles[b].push_back(int(f.asNumber()));
+        }
     if (rig && (*rig)["vanillaTextures"].isObject())
         for (auto const& [k, v] : (*rig)["vanillaTextures"].members()) vanillaTextures[k] = v.str();
     out.resize(boneParent.size());
@@ -896,6 +905,24 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
     p->resetVanillaTransforms();
 }
 
+void Avatar::computeFileUse() {
+    fileUsed.assign(textureFiles.size() + 1, 0);
+    auto mark = [&](int f) { if (f >= 0 && size_t(f) < fileUsed.size()) fileUsed[size_t(f)] = 1; };
+    for (size_t b = 0; b < out.size(); b++) {
+        PartOut const& o = out[b];
+        if (!o.visible || o.opacity <= 0.001f) continue;
+        bool task = b < boneFiles.size() && boneFiles[b].size() == 1 && o.primary < 0 && o.secondary < 0;
+        if (o.primary >= 0) mark(o.primary);
+        if (o.secondary >= 0) mark(o.secondary);
+        if (b < boneFiles.size())
+            for (int f : boneFiles[b]) {
+                // a forced primary replaces the default primary, a forced secondary the default emissive
+                bool emissive = f >= 0 && size_t(f) < textureFiles.size() && textureFiles[size_t(f)].kind == 'e';
+                if (task || (emissive ? o.secondary < 0 : o.primary < 0)) mark(f);
+            }
+    }
+}
+
 void Avatar::drawQuadTask(TaskDraw const& d, Mat4 const& partMat) {
     if (d.w == 0 || d.h == 0 || d.pw <= 0 || d.ph <= 0 || quadSlots.empty()) return;
     int const size = 256;
@@ -978,6 +1005,7 @@ void Avatar::frame(float delta) {
     }
     traverse(root, {}, {}, true, rootMat);
     solveBones();
+    computeFileUse();
     if (!scriptError) {
         if (player.loaded) {
             lua_pushnumber(L, delta);

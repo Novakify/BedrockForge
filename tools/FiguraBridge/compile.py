@@ -854,6 +854,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     all_tex_files = rc_files
     rc_files = [f for f in rc_files if not f.get("task")]
     controllers = {}
+    rc_file = {}   # controller -> the texture file it draws
 
     def vis_expr(p: Part):
         return f"(v.fb{p.i}v ?? {1 if p.vis_eff else 0})"
@@ -891,6 +892,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 pv.append({bname: f"{vis_expr(p)} && ((v.fb{p.i}{var} ?? -1) < 0 ? {dflt} : (v.fb{p.i}{var} == {f['i']}))"})
             if len(pv) == 1:
                 continue
+            rc_file[f"controller.render.player.figura_{kind}{f['i']}" + (f"c{k}" if k else "")] = f["i"]
             controllers[f"controller.render.player.figura_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
                 "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
                 "part_visibility": pv}
@@ -899,6 +901,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     for t in task_parts:
         kind = t.task[0]
         if kind == "entity":
+            rc_file[f"controller.render.player.figura_task_{t.bone}"] = t.file["i"]
             controllers[f"controller.render.player.figura_task_{t.bone}"] = {
                 "geometry": f"Geometry.figura_ent{t.ent_geo}", "materials": [{"*": "Material.fbd"}],
                 "textures": [tex_ref(t.file)], "part_visibility": [{"*": False}, {"*": f"v.fb{t.i}v ?? 0"}]}
@@ -910,6 +913,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             rc["materials"] = [{"*": "Material.fbub"}]
             rc["uv_anim"] = {"offset": [f"v.fb{t.i}uu ?? 0", f"v.fb{t.i}uv ?? 0"],
                              "scale": [f"v.fb{t.i}usu ?? 1", f"v.fb{t.i}usv ?? 1"]}
+        rc_file[f"controller.render.player.figura_task_{t.bone}"] = t.file["i"]
         controllers[f"controller.render.player.figura_task_{t.bone}"] = rc
 
     # UV-animated parts: one controller per (part, texture file it can show), restricted to that part's bones
@@ -926,6 +930,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             f = files_by_i[own]
             # uv_anim only works on materials built with USE_UV_ANIM (materials/entity.material, verified in game)
             mat = {"Material.fbd": "Material.fbu", "Material.fbb": "Material.fbub"}[primary_material(f)] if kind == "p" else "Material.fbue"
+            rc_file[f"controller.render.player.figura_uv_{bname}_{kind}{f['i']}"] = f["i"]
             controllers[f"controller.render.player.figura_uv_{bname}_{kind}{f['i']}"] = {
                 "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
                 "uv_anim": uv,
@@ -967,6 +972,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                     pv.append({bname: f"{vis_expr(p)} && {hand} && ((v.fb{p.i}{var} ?? -1) < 0 ? {dflt} : (v.fb{p.i}{var} == {f['i']}))"})
                 if len(pv) == 1:
                     continue
+                rc_file[f"controller.render.player.figura_fp_{kind}{f['i']}" + (f"c{k}" if k else "")] = f["i"]
                 fp_controllers[f"controller.render.player.figura_fp_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
                     "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
                     "part_visibility": pv}
@@ -1041,8 +1047,15 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         else:
             k, cond = next(iter(r.items()))
             gated.append({k: f"({cond}) && (v.fbvan ?? 0)"})
+    # a controller whose texture no part shows by default (swap targets, runtime slots, render tasks, skin/cape...)
+    # is skipped by Bedrock unless the runtime says some bone uses that texture this frame (v.fbuse<i>): Bedrock
+    # otherwise evaluates its whole part_visibility list and draws its geometry every frame for nothing
+    gated_files = sorted(set(rc_file.values()))
     for k in controllers:
-        gated.append({k: "variable.is_first_person" if k in fp_controllers else "!variable.is_first_person"})
+        cond = "variable.is_first_person" if k in fp_controllers else "!variable.is_first_person"
+        if rc_file.get(k) in gated_files:
+            cond += f" && (v.fbuse{rc_file[k]} ?? 0)"
+        gated.append({k: cond})
     desc["render_controllers"] = gated
     (rp / "entity/player.entity.json").write_text(json.dumps(ent, indent=1))
 
@@ -1085,6 +1098,21 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     rig["taskBones"] = [{"i": t.i, "kind": t.task[0], "id": t.task[1], "texture": t.file.get("vanilla"), "file": t.file["i"]}
                         for t in task_parts]
     rig["vanillaTextures"] = vanilla_res
+    rig["gatedFiles"] = gated_files
+    # per bone (parts, dups, tasks): the texture files it draws with by default (primary, emissive) - the runtime
+    # marks a file in use when a visible bone draws with it
+    bone_files = {}
+    for bname, (p, sid) in geo_bones.items():
+        if sid is None:
+            continue
+        fl = bone_files.setdefault(p.i, [])
+        if getattr(p, "task", None):
+            fl.append(p.file["i"])
+        elif 0 <= sid < len(sets):
+            for key in ("d", "e"):
+                if sets[sid][key] is not None and sets[sid][key] not in fl:
+                    fl.append(sets[sid][key])
+    rig["boneFiles"] = {str(k): v for k, v in sorted(bone_files.items())}
     rig["itemPivots"] = item_pivots
     (out / "rig.json").write_text(json.dumps(rig, indent=1), encoding="utf-8")
     return {"out": str(out), "parts": len(parts), "bones": len(bones), "textureFiles": len(files),

@@ -125,6 +125,12 @@ public:
         bool        used = false; // claimed this frame
     };
     std::vector<QuadSlot>                      quadSlots;
+    // render controller gating (rig "gatedFiles" / "boneFiles"): fileUsed[i] = some visible bone draws with texture
+    // file i this frame; the host writes v.fbuse<i> so Bedrock skips controllers of unused textures
+    std::vector<int>                           gatedFiles;
+    std::vector<std::vector<int>>              boneFiles;
+    std::vector<char>                          fileUsed;
+    void computeFileUse();
     std::vector<uint32_t>                      quadPx;
     std::map<std::string, std::string>         vanillaTextures; // "minecraft:textures/...png" -> bundle file (rig)
     Mat4                                       worldToModel;   // Figura WORLD space -> player model space, per frame
