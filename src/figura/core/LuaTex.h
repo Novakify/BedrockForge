@@ -75,6 +75,7 @@ struct Tex {
     std::string           bytes;           // encoded PNG (lazy decode)
     int                   fileIndex = -1;  // Avatar::textureFiles index (rendered by Bedrock), -1 = script texture
     bool                  avatarTexture = false;
+    bool                  uploaded = false;  // pushed to Bedrock at least once (texSync)
 };
 extern uint32_t tTexture;
 /// Ensure dimensions are known (reads the PNG header lazily).
@@ -94,6 +95,9 @@ struct TexSet {
 std::vector<TexSet>& texSets(lua_State* L);
 
 void openTextureApi(Avatar& a);
+/// push changed textures to Bedrock (texture:update()): edited avatar textures over their own pack path, script
+/// textures shown with setPrimaryTexture("CUSTOM") over their runtime slot. Called once per frame.
+void texSync(Avatar& a);
 void openRenderTaskApi(Avatar& a);
 void ensureGeometry(lua_State* L, Part* p); // fill vertices / textures / texture size from the NBT (lazy)
 int  pushVertexList(lua_State* L, std::deque<Vertex>& list);

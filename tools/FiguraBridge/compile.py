@@ -162,6 +162,8 @@ def rgba_png(data: bytes) -> bytes:
         return data
 
 
+DYN_SLOTS = 4      # runtime texture slots (see build)
+DYN_SIZE = 64      # their placeholder size (same-size uploads are updated in place)
 DUPS = 1           # spare geometry copies per part for ModelPart:copy() (see build)
 BONE_LIMIT = 250   # per geometry; Bedrock breaks somewhere past 255 (see chunk_bones)
 
@@ -209,7 +211,7 @@ def primary_material(f: dict) -> str:
         import io
         from PIL import Image
         a = Image.open(io.BytesIO(f["_data"])).convert("RGBA").getchannel("A")
-        partial = any(0 < v < 255 for v in set(a.getdata()))
+        partial = sum(a.histogram()[1:255]) > 0
         return "Material.fbb" if partial else "Material.fbd"
     except Exception:  # noqa: BLE001
         return "Material.fbd"
@@ -229,6 +231,17 @@ def uv_dynamic_paths(script_text: str) -> set[str]:
     for name in re.findall(r"([A-Za-z_][\w.]*)\s*:\s*" + UV_METHODS + r"\s*\(", script_text):
         found |= alias.get(name, set())
     return found
+
+
+def blank_png(w: int, h: int) -> bytes:
+    """fully transparent RGBA PNG (stdlib only)"""
+    import struct
+    import zlib
+    raw = b"".join(b"\x00" + b"\x00\x00\x00\x00" * w for _ in range(h))
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
 def collect_parts(models: dict) -> list[Part]:
@@ -521,6 +534,15 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         animation["animations"]["animation.figura.items"] = {"loop": True, "override_previous_animation": True, "bones": ib}
 
     # render controllers: one primary + one secondary per d/e texture file
+    # dynamic texture slots: textures scripts create (textures:newTexture / copy / read / fromVanilla) and show with
+    # setPrimaryTexture("CUSTOM", tex) are uploaded at runtime (native TextureGroup upload) over a placeholder PNG the
+    # pack ships, so the render controllers already hold a handle to that path
+    import re as _re
+    if _re.search(r"textures\s*[:.]\s*(?:newTexture|copy|read|fromVanilla)\s*\(", script_text):
+        blank = blank_png(DYN_SIZE, DYN_SIZE)
+        for k in range(DYN_SLOTS):
+            files.append({"i": len(files), "figuraName": f"__dyn{k}", "set": -1, "type": "d", "file": None,
+                          "w": DYN_SIZE, "h": DYN_SIZE, "_data": blank, "dyn": k})
     rc_files = [f for f in files if f["type"] in ("d", "e") and f["_data"] is not None]
     controllers = {}
 

@@ -1,5 +1,6 @@
 // FiguraBridge avatar runtime (Figura 0.1.6 Avatar / FiguraLuaRuntime / FiguraModelPartReader / renderer traversal).
 #include "figura/core/Avatar.h"
+#include "figura/core/LuaTex.h"
 
 #include <algorithm>
 #include <cmath>
@@ -168,6 +169,8 @@ bool Avatar::buildFromNbt(json::Value const& nbt, json::Value const& rig, std::s
         f.file = t["file"].str();
         f.w    = int(t["w"].asInt(0));
         f.h    = int(t["h"].asInt(0));
+        f.rpTexture = t["rpTexture"].str();
+        f.dyn       = t.has("dyn") ? int(t["dyn"].asInt(-1)) : -1;
         textureFiles.push_back(f);
     }
     for (auto const& s : rig["textureSets"].items()) {
@@ -681,6 +684,24 @@ void Avatar::applyCameraTransform(Part* p, Mat4 const& parentMat) {
     p->positionMatrix = m;
 }
 
+int Avatar::customTextureFile(void* tex) {
+    if (!tex) return -1;
+    auto* t = static_cast<Tex*>(tex);
+    if (t->fileIndex >= 0) return t->fileIndex; // one of the avatar's own textures
+    // a script texture: the dyn slot it already has, else a free one (slots are handed out first come)
+    int freeFile = -1;
+    for (auto const& f : textureFiles) {
+        if (f.dyn < 0) continue;
+        if (size_t(f.dyn) >= dynSlotTex.size()) dynSlotTex.resize(size_t(f.dyn) + 1, nullptr);
+        if (dynSlotTex[size_t(f.dyn)] == tex) return f.index;
+        if (!dynSlotTex[size_t(f.dyn)] && freeFile < 0) freeFile = f.index;
+    }
+    if (freeFile < 0) return -1;
+    dynSlotTex[size_t(textureFiles[size_t(freeFile)].dyn)] = tex;
+    t->dirty = true; // first use: upload its pixels
+    return freeFile;
+}
+
 bool Avatar::separateType(ParentType t) const {
     // FiguraModelPart parent types rendered in their own pass (never on the player model)
     switch (t) {
@@ -774,7 +795,7 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
         auto texIndex = [&](TextureOverride const& t, bool primary) -> int {
             if (!t.set) return -1;
             switch (t.kind) {
-            case TexKind::Custom: return t.file;
+            case TexKind::Custom: return customTextureFile(t.tex);
             case TexKind::Primary: {
                 int s = p->defaultSet;
                 return s >= 0 && s < int(textureSets.size()) ? textureSets[s].d : -1;
@@ -847,6 +868,7 @@ void Avatar::frame(float delta) {
         lua_pushnumber(L, delta);
         callEvent("POST_WORLD_RENDER", 1);
     }
+    if (L) texSync(*this);
     clearAnimations();
 }
 

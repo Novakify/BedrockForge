@@ -45,6 +45,7 @@
 #include "client/Module.h"
 #include "figura/core/Avatar.h"
 #include "figura/core/LuaBind.h"
+#include "figura/win/DynTex.h"
 #include "lyrics/core/Json.h"
 
 namespace bf::figura::win {
@@ -154,6 +155,14 @@ struct BedrockHost final : IHost {
     void error(std::string const& m) override {
         lastError = m;
         log_("[error] " + m);
+    }
+    int lastTexResult = -1;
+    bool uploadTexture(std::string const& path, int w, int h, uint8_t const* rgba) override {
+        if (!client) return false;
+        lastTexResult = int(dynTexUploadEx(*client, path, w, h, rgba)); // HUD frame = client thread
+        write("[figurabridge] texture upload " + path + " " + std::to_string(w) + "x" + std::to_string(h) + " -> " +
+              (lastTexResult == 1 ? "in place" : lastTexResult == 2 ? "uploaded" : "FAILED"));
+        return lastTexResult != 0;
     }
     void playSound(std::string const& id, bool custom, Vec3 pos, float volume, float pitch, bool, int handle) override {
         if (!client) return;
@@ -645,6 +654,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
                           pi, int(o.visible && o.opacity > 0.001f), int(o.primary), o.bone.rot.x, o.bone.rot.y, o.bone.rot.z, o.bone.pos.x,
                           o.bone.pos.y, o.bone.pos.z, o.bone.scale.x, o.bone.scale.y, o.bone.scale.z, rd("v"), rd("t"), rd("rx"), rd("ry"),
                           rd("rz"), rd("px"), rd("py"), rd("pz"), rd("sx"));
+            f.infoLines.push_back(b);
+            std::snprintf(b, sizeof b, "probe uv out %.3f,%.3f s%.2f,%.2f | map %.3f,%.3f", o.uv[0], o.uv[1], o.uv[2], o.uv[3], rd("uu"), rd("uv"));
             f.infoLines.push_back(b);
         }
     }

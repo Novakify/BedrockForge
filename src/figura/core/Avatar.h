@@ -29,6 +29,8 @@ struct TextureFile {
     char        kind  = 'd';  // d e n s
     std::string file;         // path relative to the avatar bundle
     int         w = 0, h = 0;
+    std::string rpTexture;    // the resource pack texture path (Bedrock), for runtime uploads
+    int         dyn = -1;     // >= 0: a runtime texture slot (compile.py DYN_SLOTS)
 };
 struct TextureSet {
     std::string name;
@@ -98,7 +100,9 @@ public:
         Vec3    pivot;              // the Bedrock item bone's rest pivot, Figura space
         BoneOut bone;
     } itemOut[2];                   // 0 = right, 1 = left
-    std::vector<char>                          uvBones;      // bones with a uv_anim render controller (rig "uvParts")
+    std::vector<char>                          uvBones;
+    std::vector<void*>                         dynSlotTex;   // runtime texture slot -> script Texture (LuaTex Tex*)
+    int  customTextureFile(void* tex);                       // TextureFile index that shows a CUSTOM texture, -1 none      // bones with a uv_anim render controller (rig "uvParts")
     std::map<int, std::vector<int>>            dupSlots;     // source bone -> free-floating dup bones (rig "dups")
     int                                        compiledParts = 0;
     void solveBones();

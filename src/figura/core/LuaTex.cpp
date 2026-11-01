@@ -721,6 +721,32 @@ int texToString(lua_State* L) {
     return 1;
 }
 
+// ---- runtime upload to Bedrock
+void texSyncImpl(Avatar& a) {
+    if (!a.L || !a.host) return;
+    auto upload = [&](Tex& t, std::string const& path) {
+        if (path.empty()) return;
+        texDecode(a.L, t);
+        if (t.w <= 0 || t.h <= 0 || t.px.size() < size_t(t.w) * size_t(t.h)) return;
+        // NativeImage int = ABGR with red in the low byte: little-endian bytes are already R, G, B, A
+        a.host->uploadTexture(path, t.w, t.h, reinterpret_cast<uint8_t const*>(t.px.data()));
+    };
+    TexRegistry& r = reg(a.L);
+    for (Tex* t : r.avatarList)
+        if (t && t->dirty && (t->modified || t->uploaded) && t->fileIndex >= 0 && t->fileIndex < int(a.textureFiles.size())) {
+            upload(*t, a.textureFiles[size_t(t->fileIndex)].rpTexture);
+            t->dirty    = false;
+            t->uploaded = true;
+        }
+    for (auto const& f : a.textureFiles) {
+        if (f.dyn < 0 || size_t(f.dyn) >= a.dynSlotTex.size() || !a.dynSlotTex[size_t(f.dyn)]) continue;
+        Tex& t = *static_cast<Tex*>(a.dynSlotTex[size_t(f.dyn)]);
+        if (!t.dirty) continue;
+        upload(t, f.rpTexture);
+        t.dirty = false;
+    }
+}
+
 // ---- TextureAPI
 Tex* newTex(lua_State* L, std::string const& name, bool custom) {
     Tex* t      = newOwned<Tex>(L, tTexture);
@@ -921,5 +947,7 @@ void openTextureApi(Avatar& a) {
     pushRef(L, &texApiAnchor, tTexApi);
     lua_setglobal(L, "textures");
 }
+
+void texSync(Avatar& a) { texSyncImpl(a); }
 
 } // namespace bf::figura

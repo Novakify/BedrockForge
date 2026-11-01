@@ -224,6 +224,12 @@ public:
         (void)id; (void)custom; (void)pos; (void)volume; (void)pitch; (void)loop; (void)handle;
     }
     virtual void    stopSound(int handle) { (void)handle; }   // -1 = all of this avatar
+    /// replace the pixels of a resource-pack texture (path without extension, e.g. "textures/figura/x/t8");
+    /// rgba = w*h*4 bytes, top row first. Returns false if the host can't.
+    virtual bool    uploadTexture(std::string const& path, int w, int h, uint8_t const* rgba) {
+        (void)path; (void)w; (void)h; (void)rgba;
+        return false;
+    }
     virtual void    pauseSound(int handle) { stopSound(handle); }
     /// a playing sound's parameters changed (setPos/setVolume/setPitch/setLoop on a playing Sound)
     virtual void    updateSound(int handle, Vec3 pos, float volume, float pitch, bool loop) {
