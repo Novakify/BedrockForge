@@ -319,6 +319,41 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                 geo_bones[p.bone] = (p, sid)
                 p.subs.append({"bone": p.bone, "set": sid})
 
+    # First person (Figura renderMode FIRST_PERSON): Bedrock only draws first-person arms from bones under its vanilla
+    # rightArm / leftArm (animated by the first-person animations). Every subtree rooted at an arm-typed part (no
+    # arm-typed ancestor) gets a copy "f<i>" parented to that vanilla bone, driven by the SAME v.fb<i>* variables
+    # (the runtime computes them in FIRST_PERSON mode, where arm parts get no vanilla offsets).
+    fp_bones = {}   # bone name -> (part, set or None)
+    fp_roots = []   # (part, 'rightArm'|'leftArm')
+    def arm_root(p):
+        q = p.parent
+        while q is not None:
+            if q.pt in ("RightArm", "LeftArm"):
+                return False
+            q = q.parent
+        return p.pt in ("RightArm", "LeftArm")
+    def copy_subtree(p, parent_bone):
+        b = {"name": f"f{p.i}", "parent": parent_bone, "pivot": [num(-p.piv[0]), num(p.piv[1]), num(p.piv[2])]}
+        bones.append(b)
+        fp_bones[b["name"]] = (p, None)
+        if p.geo:
+            split = len(p.geo) > 1 or bool(p.children)
+            for sid in sorted(p.geo):
+                if split:
+                    sb = {"name": f"f{p.i}s{sid}", "parent": b["name"], "pivot": list(b["pivot"]), **json.loads(json.dumps(p.geo[sid]))}
+                    bones.append(sb)
+                    fp_bones[sb["name"]] = (p, sid)
+                else:
+                    b.update(json.loads(json.dumps(p.geo[sid])))
+                    fp_bones[b["name"]] = (p, sid)
+        for c in p.children:
+            copy_subtree(c, b["name"])
+    for p in parts:
+        if arm_root(p):
+            van = "rightArm" if p.pt == "RightArm" else "leftArm"
+            fp_roots.append((p, van))
+            copy_subtree(p, van)
+
     names = [b["name"] for b in bones]
     if len(set(names)) != len(names):
         raise fn.FiguraCompileError("duplicate bone names")
@@ -339,6 +374,9 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             "position": [f"v.fb{i}p{a} ?? 0" for a in "xyz"],
             "scale": [f"v.fb{i}s{a} ?? 1" for a in "xyz"],
         }
+    for bname, (p, sid) in fp_bones.items():
+        if sid is None:
+            anim_bones[bname] = anim_bones[p.bone]
     animation = {"format_version": "1.8.0", "animations": {"animation.figura.drive": {"loop": True, "bones": anim_bones}}}
 
     # render controllers: one primary + one secondary per d/e texture file
@@ -363,6 +401,36 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             controllers[f"controller.render.player.figura_{kind}{f['i']}"] = {
                 "geometry": "Geometry.figura", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
                 "part_visibility": pv}
+
+    # first-person controllers: same rules over the f-bones, plus Bedrock's own empty-hand conditions
+    FP_RIGHT = "(query.get_equipped_item_name(0, 1) == '' || query.get_equipped_item_name(0, 1) == 'filled_map')"
+    FP_LEFT = ("((query.get_equipped_item_name(0, 1) == 'filled_map' && query.get_equipped_item_name('off_hand') != 'shield') || "
+               "(query.get_equipped_item_name('off_hand') == 'filled_map' && !query.item_is_charged) || "
+               "(!query.item_is_charged && (variable.item_use_normalized > 0 && variable.item_use_normalized < 1.0)))")
+    root_of = {}
+    for rp_, van in fp_roots:
+        stack = [rp_]
+        while stack:
+            q = stack.pop()
+            root_of[q.i] = van
+            stack.extend(q.children)
+    fp_controllers = {}
+    if fp_bones:
+        for f in rc_files:
+            for kind, var, mat, key in (("p", "t", "Material.fbd", "d"), ("s", "e", "Material.fbe", "e")):
+                pv = [{"*": False}]
+                for bname, (p, sid) in fp_bones.items():
+                    hand = FP_RIGHT if root_of.get(p.i) == "rightArm" else FP_LEFT
+                    if sid is None:
+                        pv.append({bname: f"{vis_expr(p)} && {hand}"})
+                        continue
+                    own = sets[sid][key] if 0 <= sid < len(sets) else None
+                    dflt = 1 if own == f["i"] else 0
+                    pv.append({bname: f"{vis_expr(p)} && {hand} && ((v.fb{p.i}{var} ?? -1) < 0 ? {dflt} : (v.fb{p.i}{var} == {f['i']}))"})
+                fp_controllers[f"controller.render.player.figura_fp_{kind}{f['i']}"] = {
+                    "geometry": "Geometry.figura", "materials": [{"*": mat}], "textures": [f"Texture.fbt{f['i']}"],
+                    "part_visibility": pv}
+        controllers.update(fp_controllers)
 
     # sounds
     sound_map, sound_defs, sound_files = {}, {}, {}
@@ -410,7 +478,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             k, cond = next(iter(r.items()))
             gated.append({k: f"({cond}) && (v.fbvan ?? 0)"})
     for k in controllers:
-        gated.append({k: "!variable.is_first_person"})
+        gated.append({k: "variable.is_first_person" if k in fp_controllers else "!variable.is_first_person"})
     desc["render_controllers"] = gated
     (rp / "entity/player.entity.json").write_text(json.dumps(ent, indent=1))
 

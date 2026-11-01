@@ -488,6 +488,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     if (now - s.lastTickMs > 500) s.lastTickMs = now;
     samplePlayer(s, lp, false);
     float delta = float(std::clamp(double(now - s.lastTickMs) / 50.0, 0.0, 1.0));
+    s.avatar->renderMode = s.avatar->player.isFirstPerson ? "FIRST_PERSON" : "RENDER";
     s.avatar->frame(delta);
     writeVars(s, lp);
     wheelFrame(s, f);

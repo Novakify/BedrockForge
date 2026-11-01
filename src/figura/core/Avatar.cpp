@@ -717,6 +717,12 @@ void Avatar::frame(float delta) {
     auto it = vanillaVisible.find("PLAYER");
     (void)it;
     vanillaPose = computeVanillaPose(player, delta, !player.invisible);
+    if (renderMode == "FIRST_PERSON") {
+        // Figura's first-person arm render uses the arm ModelPart at rest (PlayerRenderer.renderHand resets it):
+        // no vanilla offsets on arm parts; the Bedrock first-person animation moves the vanilla arm bone instead
+        vanillaPose.rightArm = VanillaPart{{-5, 2, 0}, {}, {1, 1, 1}, true};
+        vanillaPose.leftArm  = VanillaPart{{5, 2, 0}, {}, {1, 1, 1}, true};
+    }
     applyAnimations();
     if (!scriptError) {
         lua_pushnumber(L, delta);
