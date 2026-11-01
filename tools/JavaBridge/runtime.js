@@ -238,7 +238,11 @@ export class JLevel {
 
 // ------------------------------------------------------------------------------------------ blocks / items
 const BLOCK = (id, states) => ({ __block: true, id, states: states ?? {} });
-function bid(x) { return typeof x === "string" ? x : x?.id ?? "minecraft:air"; }
+function bid(x) {
+  const id = typeof x === "string" ? x : x?.id ?? "minecraft:air";
+  if (id.startsWith("minecraft:")) { const b = CFG.blockJ2B?.[id.slice(10)]; if (b) return "minecraft:" + b; }
+  return id;
+}
 const DIR = { DOWN: { n: "down", dx: 0, dy: -1, dz: 0 }, UP: { n: "up", dx: 0, dy: 1, dz: 0 }, NORTH: { n: "north", dx: 0, dy: 0, dz: -1 },
   SOUTH: { n: "south", dx: 0, dy: 0, dz: 1 }, WEST: { n: "west", dx: -1, dy: 0, dz: 0 }, EAST: { n: "east", dx: 1, dy: 0, dz: 0 } };
 class Stack { constructor(id, n = 1, dmg = 0) { this.id = id; this.n = n; this.dmg = dmg; }
@@ -505,7 +509,7 @@ export const R = {
       case "getKey": if (o.registry) return { rl: a[0]?.id ?? a[0]?.etype ?? "", toString() { return this.rl; } }; break;
       case "put": if (o.__map) { o.__map.set(a[0], a[1]); return null; } break;
       case "containsKey": if (o.__map) return o.__map.has(a[0]); break;
-      case "spawn": if (o.etype) return R.spawn(a[0], o.etype, a[2] ?? a[1]); break;
+      case "spawn": if (o.etype) return R.spawn(a[0], o.etype, a.find((x) => x instanceof Vec) ?? V(0, 64, 0)); break;   // (level, pos, type) | (level, stack, player, pos, type, b, b)
       case "create": if (o.etype) return null; break;
       case "getBlock": if (o.__block) return o; break;
       case "defaultBlockState": if (o.__block) return BLOCK(o.id); break;
@@ -711,6 +715,8 @@ export const R = {
   fixCommand(c) {
     c = c.replace(/\{[^{}]*(\{[^{}]*\}[^{}]*)*\}/g, "");                 // NBT
     c = c.replace(/minecraft:/g, "");
+    if (/^(fill|setblock|clone|testforblock|execute)\b/.test(c) && CFG.blockJ2B)          // Java block ids -> Bedrock ids
+      c = c.replace(/(^|\s)([a-z_]+)(?=\s|$|\[)/g, (m, sp, w) => sp + (CFG.blockJ2B[w] ?? w));
     c = c.replace(new RegExp(MODID + ":", "g"), NS + ":");
     c = c.replace(/^effect give (\S+) (\S+) (\d+) (\d+) true/, "effect $1 $2 $3 $4 true").replace(/^effect give /, "effect ").replace(/^effect clear (\S+) (\S+)/, "effect $1 clear");
     c = c.replace(/^title (\S+) (title|subtitle|actionbar) "?(.*?)"?$/, (m, t, k, txt) => `title ${t} ${k} ${txt.replace(/^\{"text":"(.*)".*\}$/, "$1")}`);

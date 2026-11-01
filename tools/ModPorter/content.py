@@ -448,13 +448,26 @@ class Content:
         vd = self.VANILLA_DIR
         terrain = set(json.loads((vd / "terrain_paths.json").read_text())) if (vd / "terrain_paths.json").exists() else set()
         vsnd = {k[1:] for k in json.loads((vd / "vanilla_tex.json").read_text()) if k.startswith("@")} if (vd / "vanilla_tex.json").exists() else set()
+        dims = json.loads((vd / "bedrock_samples_png_dims.json").read_text()) if (vd / "bedrock_samples_png_dims.json").exists() else {}
         n_tex = n_snd = 0; skipped = {}
         nameset = set(names)
         for n in names:
             rel = n[len("assets/minecraft/"):]
             if rel.startswith("textures/") and rel.endswith(".png"):
                 key = rel[len("textures/"):-4]; cat, _, name = key.partition("/")
-                if cat not in ("block", "item") or n + ".mcmeta" in nameset: skipped[cat] = skipped.get(cat, 0) + 1; continue
+                if n + ".mcmeta" in nameset: skipped[cat] = skipped.get(cat, 0) + 1; continue
+                if cat in ("entity", "environment", "colormap"):
+                    # only where Bedrock has the same file at the same size (bedrock-samples): same layout, safe to swap
+                    v = mp.get(cat, {}).get(name) if isinstance(mp.get(cat), dict) else mp.get(key)
+                    cands = [key] + ([x if "/" in x else f"{cat}/{x}" for x in (v if isinstance(v, list) else [v])] if v else [])
+                    tgt = next((c for c in cands if c in dims), None)
+                    import struct as _st
+                    raw = self.z.read(n)
+                    if tgt and list(_st.unpack(">II", raw[16:24])) == dims[tgt]:
+                        self.write(self.rp, f"textures/{tgt}.png", raw); n_tex += 1
+                    else: skipped[cat] = skipped.get(cat, 0) + 1
+                    continue
+                if cat not in ("block", "item"): skipped[cat] = skipped.get(cat, 0) + 1; continue
                 if key in mp: v = mp[key]; targets = v if isinstance(v, list) else [v]
                 elif isinstance(mp.get(cat), dict) and name in mp[cat]:
                     v = mp[cat][name]; targets = [f"{'blocks' if cat == 'block' else 'items'}/{x}" for x in (v if isinstance(v, list) else [v])]

@@ -66,6 +66,20 @@ def overlays_of(jar, prefixes):
     return out
 
 
+MCDATA_J2B = Path("/home/claude/tools/mcdata/package/minecraft-data/data/bedrock/1.26.30/blocksJ2B.json")   # minecraft-data (MIT)
+
+
+def block_j2b():
+    """Java block id -> Bedrock block id where the names differ (snow_block -> snow, ...), for commands and setBlock."""
+    if not MCDATA_J2B.exists(): return {}
+    import json as _j
+    votes = {}
+    for j, b in _j.loads(MCDATA_J2B.read_text()).items():
+        jn, bn = j.split("[")[0].replace("minecraft:", ""), b.split("[")[0].replace("minecraft:", "")
+        if jn != bn: votes.setdefault(jn, {}); votes[jn][bn] = votes[jn].get(bn, 0) + 1
+    return {j: max(v, key=v.get) for j, v in votes.items()}
+
+
 def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, structures=None, block_rename=None, mod_prefixes=None):
     rep = report.setdefault("javabridge", {})
     with zipfile.ZipFile(jar) as z:
@@ -143,7 +157,7 @@ def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, 
             if s.endswith(suf) and s.startswith(tuple(p.split("/")[-2].title() for p in prefixes) + ("TheWonderland", "Mod")): regs[s] = kind
     cfg = {"ns": ns, "modid": modid, "registries": regs, "typeToClass": {t: c for c, t in cls_type.items()}, "classToType": cls_type,
            "structures": structures or {}, "blockRename": block_rename or {}, "hooks": hooks,
-           "pvDefaults": field_defaults(T, "Variables$PlayerVariables"), "mvDefaults": field_defaults(T, "Variables$MapVariables"), "particles": PARTICLES}
+           "pvDefaults": field_defaults(T, "Variables$PlayerVariables"), "mvDefaults": field_defaults(T, "Variables$MapVariables"), "particles": PARTICLES, "blockJ2B": block_j2b()}
     out = Path(bp) / "scripts" / "javabridge"; out.mkdir(parents=True, exist_ok=True)
     (out / "runtime.js").write_text((HERE / "runtime.js").read_text())
     (out / "mod.js").write_text("// JavaBridge: the mod's own code translated from its bytecode (private use only)\n"
