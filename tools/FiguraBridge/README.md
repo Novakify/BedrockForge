@@ -14,3 +14,15 @@ Those are the native runtime's job (F2-F4).
 
 Test avatars used (MIT, by Gakuto1112, not in this repo): github.com/Gakuto1112/FiguraAvatarTemplate (a57327d),
 github.com/Gakuto1112/StrawberryMiku (a710a6b).
+
+## compile.py - full compile (Figura NBT + rig contract + driven Bedrock pack)
+    python3 -I tools/FiguraBridge/compile.py AVATAR_DIR OUT_DIR --vanilla <bedrock-samples>/resource_pack [--uuid PLAYER_UUID]
+    python3 -I tools/FiguraBridge/test_compile.py          # compiles the 3 test avatars into /home/claude/out/compiled/
+
+- `figura_nbt.py`: line-by-line port of Figura 0.1.6 LocalAvatarLoader + BlockbenchParser2 (+V4/V5) +
+  AvatarMetadataParser -> `OUT_DIR/avatar/figura_avatar.json` (byte arrays as `{"__file": ...}` side files,
+  scripts as original Lua text, collections "pr" as `{"__bytes": [...]}`).
+- `OUT_DIR/rig.json`: parts in pre-order (bone `p<i>`), textureFiles / textureSets, sounds, Molang variable doc.
+- `OUT_DIR/rp/`: one bone per Figura part (no bind rotation), `animation.figura.drive` reads `v.fb<i>{r,p,s}{x,y,z}`,
+  per-texture-file render controllers `figura_p<f>` / `figura_s<f>` read `v.fb<i>v`, `v.fb<i>t`, `v.fb<i>e`;
+  vanilla player controllers only render when `v.fbvan` is 1.
