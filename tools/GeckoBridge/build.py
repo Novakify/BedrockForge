@@ -177,6 +177,25 @@ class Build:
                             b["locators"][f"{name}_{gid.split('.')[-1]}"] = b["locators"].pop(name); changed = True
                         else: seen.setdefault(name, b["locators"][name])
             if changed: path.write_text(json.dumps(d)); er.setdefault("locators_renamed", []).append(gid)
+        # Bedrock also derives armor_offset.default_neck from a bone called "neck": with two geometries whose necks
+        # sit at different pivots that clashes too (Naturalist deer/fawn). Rename the later neck; the animations get a
+        # copy of the neck channels under the new name (see entity()).
+        necks, alias = {}, {}
+        for gid in gids:
+            path = self.geo_file(gid)
+            if not path: continue
+            d = json.loads(path.read_text()); changed = False
+            for g in d["minecraft:geometry"]:
+                if g["description"]["identifier"] != gid: continue
+                for b in g.get("bones", []):
+                    if b["name"] != "neck": continue
+                    if necks and b.get("pivot") not in necks.values():
+                        new = f"neck_{gid.split('.')[-1]}"; b["name"] = new; changed = True; alias.setdefault("neck", []).append(new)
+                        for c in g["bones"]:
+                            if c.get("parent") == "neck": c["parent"] = new
+                    else: necks[gid] = b.get("pivot")
+            if changed: path.write_text(json.dumps(d)); er.setdefault("bones_renamed", []).append(gid)
+        self.bone_alias = alias
 
     # ---------------------------------------------------------------- animations
     def animations(self, path):
@@ -480,7 +499,7 @@ class Build:
         if not tex_map: er["skipped"] = "no texture"; return
         desc = {"identifier": full, "materials": {"default": "entity_alphatest"},
                 "textures": {k: v[0] for k, v in tex_map.items()}, "geometry": {k: v[0] for k, v in geo_map.items()},
-                "render_controllers": [], "spawn_egg": {"base_color": "#2b2b2b", "overlay_color": "#7a3cff"},
+                "render_controllers": [], "spawn_egg": self.egg_colors().get(e.get("type_field"), {"base_color": "#2b2b2b", "overlay_color": "#7a3cff"}),
                 "scripts": {"pre_animation": [f"{OWNER_VAR} = {OWNER_VAR} ?? 0;"], "animate": []}}
         reserved = set(e.get("reserved", {}).values())       # Java-side conditions: resolved in m2_entity()
         # main render controller: geometry + texture picked by GeckoLib's own conditions
@@ -561,6 +580,13 @@ class Build:
             idle = next((v for k, v in amap.items() if "idle" in k.lower()), next(iter(amap.values())))
             anims[self.short_of(idle)] = idle; desc["scripts"]["animate"].append(self.short_of(idle)); er["fallback_idle"] = idle
         anims.update({k: v for k, v in desc.get("animations", {}).items() if k not in anims})
+        for src_bone, copies in (getattr(self, "bone_alias", None) or {}).items():   # renamed bones (dedupe_locators)
+            for nid in anims.values():
+                stem = nid.split(".")[3] if nid.startswith("animation.") else None
+                a = self.anim_files.get(stem, {}).get(nid) if stem else None
+                if a and src_bone in (a.get("bones") or {}):
+                    for c in copies: a["bones"][c] = a["bones"][src_bone]
+        self.bone_alias = {}
         desc["animations"] = anims
         used_vars = set()
         for nid in anims.values():
@@ -775,6 +801,31 @@ class Build:
             ids.append(pid)
         if ids: self.report["particles"] = ids
         return ids
+
+    def egg_colors(self):
+        """ForgeSpawnEggItem(type, background, highlight, props) in the mod's item registry -> Bedrock spawn_egg colours,
+        keyed by the entity registry field (e.g. COMPLIANCE_ANGEL)."""
+        if hasattr(self, "_eggs"): return self._eggs
+        import subprocess, tempfile
+        self._eggs = {}
+        classes = [n for n in self.names if n.endswith(".class") and b"ForgeSpawnEggItem" in self.z.read(n)]
+        if not classes: return self._eggs
+        tmp = tempfile.mkdtemp(prefix="gb_egg_")
+        for n in classes: self.z.extract(n, tmp)
+        text = subprocess.run(["javap", "-c", "-p", "-cp", tmp] + [n[:-6].replace("/", ".") for n in classes], capture_output=True, text=True).stdout
+        def num(line):
+            m = re.search(r"(iconst_m1|iconst_(\d)|bipush\s+(-?\d+)|sipush\s+(-?\d+)|// int (-?\d+))", line)
+            if not m: return None
+            if m.group(1) == "iconst_m1": return -1
+            return int(next(g for g in m.groups()[1:] if g is not None))
+        lines = text.splitlines()
+        for i, l in enumerate(lines):
+            f = re.search(r"getstatic\s+#\d+\s+// Field [\w/$]+\.(\w+):Lnet/minecraftforge/registries/RegistryObject;", l)
+            if not f or i + 3 >= len(lines) or "ForgeSpawnEggItem" not in " ".join(lines[i + 1:i + 9]): continue
+            a, b = num(lines[i + 1]), num(lines[i + 2])
+            if a is None or b is None: continue
+            self._eggs[f.group(1)] = {"base_color": "#%06x" % (a & 0xFFFFFF), "overlay_color": "#%06x" % (b & 0xFFFFFF)}
+        return self._eggs
 
     def javap_class(self, cls, extract_dir="/client/model/"):
         import subprocess, tempfile
