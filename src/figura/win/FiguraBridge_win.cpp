@@ -356,6 +356,10 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
     p.bodyYaw   = q("query.body_y_rotation");
     p.attackAnim = std::clamp(q("variable.attack_time"), 0.0f, 1.0f);
     p.isFirstPerson = q("variable.is_first_person") > 0.5f;
+    // the real camera (third-person front, /camera ...) for Figura's Camera parts
+    s.avatar->cameraPitch = q("query.camera_rotation(0)");
+    s.avatar->cameraYaw   = q("query.camera_rotation(1)");
+    s.avatar->cameraSet   = s.avatar->tune("useCamera", 1) > 0;
 }
 
 // ---------------------------------------------------------------- avatar loading
@@ -500,8 +504,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         f.infoLines.push_back("Figura anims: " + pl);
         auto const& pp = s.avatar->player;
         char b[160];
-        std::snprintf(b, sizeof b, "Figura v=%.2f,%.2f,%.2f ground=%d sneak=%d yaw=%.0f body=%.0f", pp.velocity.x, pp.velocity.y, pp.velocity.z,
-                      int(pp.onGround), int(pp.crouching), pp.yaw, pp.bodyYaw);
+        std::snprintf(b, sizeof b, "Figura v=%.2f,%.2f,%.2f ground=%d sneak=%d yaw=%.0f body=%.0f cam=%.0f,%.0f fp=%d", pp.velocity.x, pp.velocity.y, pp.velocity.z,
+                      int(pp.onGround), int(pp.crouching), pp.yaw, pp.bodyYaw, s.avatar->cameraPitch, s.avatar->cameraYaw, int(pp.isFirstPerson));
         f.infoLines.push_back(b);
     }
 }
