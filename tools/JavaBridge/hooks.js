@@ -1,6 +1,6 @@
 // JavaBridge hooks (original Bedrock Forge code): call the translated Java methods from Bedrock events.
 import { world, system, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
-import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR, MOVES, LASTHURT } from "./runtime.js";
+import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR, MOVES, LASTHURT, FAKESLEEP } from "./runtime.js";
 
 const CFG = globalThis.__JB_CFG, H = CFG.hooks, NS = CFG.ns;
 const errs = new Map();
@@ -13,13 +13,29 @@ function run(id, args) {
 // the content log, so a stutter can be pinned on what causes it instead of guessed.
 const PERF = globalThis.__GB_PERF ??= (() => {
   const P = { on: false, sec: new Map(), t0: Date.now(), tick0: 0,
-    add(name, ms) { if (!P.on) return; const s = P.sec.get(name) ?? { sum: 0, max: 0 }; s.sum += ms; if (ms > s.max) s.max = ms; P.sec.set(name, s); } };
+    add(name, ms) { if (!P.on) return; const s = P.sec.get(name) ?? { sum: 0, max: 0, n: 0 }; s.sum += ms; s.n++; if (ms > s.max) s.max = ms; P.sec.set(name, s); } };
   return P;
 })();
 function timed(name, fn) { const t0 = Date.now(); try { fn(); } finally { PERF.add(name, Date.now() - t0); } }
+// `/scriptevent gb:perf deep`: also time every runtime helper (R.*, JEntity / JLevel methods), reported as "#name"
+// (inclusive ms per tick; nested helpers count in both). Costs a little itself; reload the scripts to remove it.
+let deepOn = false;
+function deepProfile() {
+  if (deepOn) return; deepOn = true;
+  const wrap = (obj, label) => {
+    for (const k of Object.getOwnPropertyNames(obj)) {
+      if (k === "constructor") continue;
+      const d = Object.getOwnPropertyDescriptor(obj, k); if (!d || typeof d.value !== "function") continue;
+      const f = d.value, name = "#" + label + k; let depth = 0;
+      obj[k] = function (...a) { if (depth++) { try { return f.apply(this, a); } finally { depth--; } } const t0 = Date.now(); try { return f.apply(this, a); } finally { depth--; PERF.add(name, Date.now() - t0); } };
+    }
+  };
+  wrap(R, "R."); wrap(JEntity.prototype, "E."); wrap(JLevel.prototype, "L.");
+}
 system.afterEvents.scriptEventReceive?.subscribe?.((ev) => {
   if (ev.id !== "gb:perf") return;
-  PERF.on = ev.message.trim() === "off" ? false : ev.message.trim() === "on" ? true : !PERF.on;
+  if (ev.message.trim() === "deep") { deepProfile(); PERF.on = true; }
+  else PERF.on = ev.message.trim() === "off" ? false : ev.message.trim() === "on" ? true : !PERF.on;
   PERF.sec.clear(); PERF.t0 = Date.now(); PERF.tick0 = system.currentTick;
   const m = `[GBPerf] ${PERF.on ? "on: report every 5 s" : "off"}`; console.warn(m); try { ev.sourceEntity?.sendMessage?.(m); } catch {}
 });
@@ -27,7 +43,7 @@ system.runInterval(() => {
   if (!PERF.on) return;
   const ticks = system.currentTick - PERF.tick0, secs = (Date.now() - PERF.t0) / 1000;
   const parts = [...PERF.sec.entries()].sort((a, b) => b[1].sum - a[1].sum)
-    .map(([k, v]) => `${k} ${(v.sum / Math.max(1, ticks)).toFixed(1)}/${v.max}`);
+    .slice(0, 16).map(([k, v]) => `${k} ${(v.sum / Math.max(1, ticks)).toFixed(1)}/${v.max}${k[0] === "#" ? " x" + Math.round(v.n / Math.max(1, ticks)) : ""}`);
   const m = `[GBPerf] TPS ${(ticks / secs).toFixed(1)} | ms per tick avg/max: ${parts.join(", ") || "-"} | mobs ${modEntities().length}`;
   console.warn(m); for (const p of world.getAllPlayers()) { try { p.sendMessage(`§7${m}`); } catch {} }
   PERF.sec.clear(); PERF.t0 = Date.now(); PERF.tick0 = system.currentTick;
@@ -85,7 +101,9 @@ system.runInterval(() => {
   if (!queue.length) { pass++; for (const e of modEntities()) if (ETICK.has(e.typeId) && (pass % 4 === 0 || isNear(e))) queue.push(e); }
   while (queue.length && Date.now() - t0 < BUDGET) {
     const e = queue.shift(); let ok = false; try { ok = e.isValid; } catch {} if (!ok) continue;
+    const t1 = PERF.on ? Date.now() : 0;
     const w = JEntity.of(e); for (const id of H.entity[e.typeId].tick) run(id, [w]);
+    if (PERF.on) PERF.add("  " + e.typeId.split(":")[1], Date.now() - t1);
   }
   PERF.add("mobTick", Date.now() - t0);
 }, 1);
@@ -246,8 +264,11 @@ system.runInterval(() => { const t0 = Date.now(); try {
   for (const p of world.getAllPlayers()) {
     const w = JEntity.of(p);
     for (const ev of H.events) {
+      const t1 = PERF.on ? Date.now() : 0;
       if (ev.kind === "playerTick") run(ev.fn, [{ __ev: true, player: w, phase: { key: "END" }, side: { key: "SERVER" } }]);
       else if (ev.kind === "livingTick") run(ev.fn, [{ __ev: true, entity: w }]);
+      else continue;
+      if (PERF.on) PERF.add("  " + ev.fn.split("(")[0].split("/").pop().replace(/Procedure|\.on\w+Tick/g, ""), Date.now() - t1);
     }
     // held items / armour: inventoryTick
     for (const slot of ["Mainhand", "Offhand", "Head", "Chest", "Legs", "Feet"]) {
@@ -258,7 +279,7 @@ system.runInterval(() => { const t0 = Date.now(); try {
     // the mod's own effects: tick procedures
     for (const [id, st] of R.modEffectsOf(w)) { const fn = effectClass.get(id); if (fn) run(fn, [{ __cls: "effect" }, w, st.amp]); }
     // sleeping
-    let sl = false; try { sl = p.isSleeping; } catch {}
+    const sl = w.isSleeping();   // real bed sleep, or a mod-dimension bed (FAKESLEEP)
     if (sl !== (w.__wasSleeping ?? false)) {
       w.__wasSleeping = sl;
       for (const ev of H.events) if ((sl && ev.kind === "sleep") || (!sl && ev.kind === "wake")) run(ev.fn, [{ __ev: true, entity: w, player: w, pos: w.blockPosition(), level: w.level() }]);
@@ -294,6 +315,28 @@ world.beforeEvents.chatSend?.subscribe?.((ev) => {
   system.run(() => { for (const e of evs) run(e.fn, [{ __ev: true, player: JEntity.of(p), text: msg, getRawText: () => msg, getMessage: () => ({ __text: msg }) }]); });
 });
 
+// Beds outside the overworld: Bedrock blows them up (nether rules), Java only fires PlayerSleepInBedEvent and lets
+// the mod decide (Wonderland: sleeping in a Wonderland bed is how you move on to the next dream / wake up). In a mod
+// dimension the bed use is taken over: no explosion, the mod's sleep handlers run.
+const SLEEPS = H.events.filter((ev) => ev.kind === "sleep");
+function useBed(p, loc) {
+  system.run(() => {
+    // lie down: the player is moved onto the bed and counts as asleep (isSleeping) for 5 s unless they walk off
+    try { p.teleport({ x: loc.x + 0.5, y: loc.y + 0.6, z: loc.z + 0.5 }); p.runCommand("camera @s fade time 1 3 1 color 0 0 0"); } catch {}
+    FAKESLEEP.set(p.id, { until: system.currentTick + 100, x: loc.x + 0.5, z: loc.z + 0.5 });
+    const w = JEntity.of(p), lv = w.level(), pos = V(loc.x, loc.y, loc.z);
+    for (const e of SLEEPS) run(e.fn, [{ __ev: true, entity: w, player: w, pos, level: lv, getPos: () => pos, getOptionalPos: () => ({ isPresent: () => true, get: () => pos }) }]);
+  });
+}
+if (SLEEPS.length) world.beforeEvents.playerInteractWithBlock?.subscribe?.((ev) => {
+  const b = ev.block; let id, d; try { id = b.typeId; d = ev.player.dimension.id; } catch { return; }
+  if (id !== "minecraft:bed" || d === "minecraft:overworld" || !(globalThis.__WG_DIMS ?? {})[d]) return;
+  ev.cancel = true;
+  if (ev.isFirstEvent === false) return;
+  useBed(ev.player, b.location);
+});
+// dev: `/scriptevent gb:bed` = use a bed where you stand
+system.afterEvents.scriptEventReceive?.subscribe?.((ev) => { if (ev.id === "gb:bed" && ev.sourceEntity) { const l = ev.sourceEntity.location; useBed(ev.sourceEntity, { x: Math.floor(l.x), y: Math.floor(l.y), z: Math.floor(l.z) }); } });
 // ---- blocks
 world.afterEvents.playerPlaceBlock.subscribe(({ block, player }) => {
   const cls = blockClass.get(block.typeId); const lv = JLevel.of(block.dimension), pos = V(block.location.x, block.location.y, block.location.z);

@@ -139,7 +139,13 @@ export class JEntity {
   onGround() { try { return this.e.isOnGround; } catch { return true; } } isInWater() { try { return this.e.isInWater; } catch { return false; } }
   isShiftKeyDown() { try { return this.e.isSneaking; } catch { return false; } } setShiftKeyDown(v) { try { this.e.isSneaking = !!v; } catch {} }
   isSprinting() { try { return this.e.isSprinting; } catch { return false; } } isPassenger() { try { return !!this.e.getComponent("riding"); } catch { return false; } }
-  isSleeping() { try { return this.e.isSleeping; } catch { return false; } }
+  isSleeping() {
+    try { if (this.e.isSleeping) return true; } catch { return false; }
+    const f = FAKESLEEP.get(this.e.id); if (!f) return false;
+    let l; try { l = this.e.location; } catch { return false; }
+    if (system.currentTick > f.until || (l.x - f.x) ** 2 + (l.z - f.z) ** 2 > 2.25) { FAKESLEEP.delete(this.e.id); return false; }
+    return true;
+  }
   stopRiding() { try { this.e.getComponent("riding")?.entityRidingOn?.getComponent("rideable")?.ejectRider(this.e); } catch {} }
   setCustomName(c) { try { this.e.nameTag = String(c ?? ""); } catch {} } getDisplayName() { return this.e.nameTag || this.e.typeId.split(":")[1]; }
   getName() { return this.getDisplayName(); } hasCustomName() { try { return !!this.e.nameTag; } catch { return false; } }
@@ -232,7 +238,10 @@ export class JLevel {
   isClientSide() { return false; } m_5776_() { return false; }
   getServer() { return SERVER; } getLevel() { return this; } getRandom() { return RANDOM; } getRandomSource() { return RANDOM; }
   dimension() { return { key: this.d.id, location: () => this.d.id, equals: (o) => o && o.key === this.d.id }; }
-  players() { try { return JList.of(this.d.getPlayers().map(JEntity.of)); } catch { return new JList(); } }
+  players() {     // per-tick cache: MCreator code asks for level.players().size() many times a tick
+    if (this._pt !== system.currentTick) { this._pt = system.currentTick; try { this._pl = this.d.getPlayers().map(JEntity.of); } catch { this._pl = []; } }
+    return JList.of(this._pl);
+  }
   getEntitiesOfClass(cls, box, pred) { return R.entitiesIn(this, cls, box, pred); }
   getEntities(ex, box, pred) { return R.entitiesIn(this, { cls: "net/minecraft/world/entity/Entity" }, box, pred); }
   getNearestPlayer(x, y, z, dist) { try { const p = this.d.getPlayers({ location: { x, y, z }, maxDistance: dist < 0 ? 1e6 : dist, closest: 1 })[0]; return JEntity.of(p); } catch { return null; } }
@@ -286,14 +295,29 @@ class Stack { constructor(id, n = 1, dmg = 0) { this.id = id; this.n = n; this.d
   getOrCreateTag() { return new Tag(this, "item"); } getTag() { return new Tag(this, "item"); } hurtAndBreak(k) { this.hurt(k); }
   getDisplayName() { return this.id; } getHoverName() { return this.id; } setHoverName() {} enchant() {}
 }
-class Inv { constructor(p) { this.p = p; this.armor = JList.of(["feet", "legs", "chest", "head"].map((s) => R.handItem(p, s))); this.items = this.list(); this.selected = 0; }
+// Player inventory. Reading it is many native calls (one per slot), and MCreator procedures ask "does the player
+// have X" several times every tick (Wonderland's recipe unlocks: 8 inventory scans per player per tick), so the slot
+// list is snapshotted once per tick per player and dropped whenever our code changes the inventory.
+const INVSNAP = new Map(); let INVSNAP_T = -1;
+const SNAP = new Map(); let SNAP_T = -1;
+const FIXC = new Map(), FILLSEEN = new Map();
+class Inv { constructor(p) { this.p = p; this.selected = 0; }
+  get armor() { return this._armor ??= JList.of(["feet", "legs", "chest", "head"].map((s) => R.handItem(this.p, s))); }
+  get items() { return this.list(); }
   cont() { try { return this.p.e.getComponent("inventory").container; } catch { return null; } }
-  list() { const c = this.cont(); const l = new JList(); if (!c) return l; for (let i = 0; i < c.size; i++) { const it = c.getItem(i); l.push(it ? new Stack(it.typeId, it.amount) : new Stack("minecraft:air", 0)); } return l; }
+  dirty() { INVSNAP.delete(this.p.e.id); }
+  list() {
+    if (INVSNAP_T !== system.currentTick) { INVSNAP_T = system.currentTick; INVSNAP.clear(); }
+    let l = INVSNAP.get(this.p.e.id); if (l) return l;
+    const c = this.cont(); l = new JList();
+    if (c) for (let i = 0; i < c.size; i++) { const it = c.getItem(i); l.push(it ? new Stack(it.typeId, it.amount) : new Stack("minecraft:air", 0)); }
+    INVSNAP.set(this.p.e.id, l); return l;
+  }
   contains(stack) { const id = bid(stack?.id ?? stack); return this.list().some((s) => s.id === id); }
-  clearOrCountMatchingItems(pred, n) { const id = pred?.id ?? pred?.__item_id; try { this.p.e.runCommand(`clear @s ${id} 0 ${n < 0 ? 9999 : n}`); } catch {} return 0; }
-  add(stack) { try { this.cont().addItem(new BItemStack(stack.id, Math.max(1, stack.n))); return true; } catch { return false; } }
+  clearOrCountMatchingItems(pred, n) { const id = pred?.id ?? pred?.__item_id; this.dirty(); try { this.p.e.runCommand(`clear @s ${id} 0 ${n < 0 ? 9999 : n}`); } catch {} return 0; }
+  add(stack) { this.dirty(); try { this.cont().addItem(new BItemStack(stack.id, Math.max(1, stack.n))); return true; } catch { return false; } }
   getSelected() { return R.handItem(this.p, "mainhand"); } setChanged() {} getContainerSize() { return this.cont()?.size ?? 36; } getItem(i) { return this.list()[i] ?? new Stack("minecraft:air", 0); }
-  removeItem(i, n) {} setItem(i, s) { try { this.cont().setItem(i, s.isEmpty() ? undefined : new BItemStack(s.id, s.n)); } catch {} }
+  removeItem(i, n) {} setItem(i, s) { this.dirty(); try { this.cont().setItem(i, s.isEmpty() ? undefined : new BItemStack(s.id, s.n)); } catch {} }
 }
 class Cooldowns { constructor(p) { this.p = p; } addCooldown(item, ticks) { R.cool.set(this.p.e.id + bid(item), system.currentTick + ticks); } isOnCooldown(item) { return (R.cool.get(this.p.e.id + bid(item)) ?? 0) > system.currentTick; } }
 // MobAI: Java MoveControl (setWantedPosition / hasWanted). The GoalRunner (hooks.js) steers every mob that has a
@@ -324,6 +348,7 @@ const NAVS = new Map();
 const INSTOF = new Map();   // "typeId|java class" -> instanceof answer
 const SCAN = new Map(); let SCANTICK = -1;   // per-tick entity scan cache
 const TCACHE = new Map();   // mob id -> {t: tick, v: target} (getTarget once per tick)
+export const FAKESLEEP = new Map();   // player id -> {until, x, z}: lying in a bed outside the overworld (hooks.js useBed)
 export const LASTHURT = new Map();   // mob id -> {by: attacker entity, t: tick}      // mob id -> {p: nav point entity, mob, until}
 class Nav { constructor(m) { this.m = m; } moveTo(a, b, c, sp) { if (a instanceof JEntity || a instanceof Vec) { R.moveTo(this.m, a, null, null, b); } else R.moveTo(this.m, a, b, c, sp); return true; } stop() { MoveCtl.of(this.m).want = null; R.navStop(this.m); } isDone() { return !MoveCtl.of(this.m).want && !R.navBusy(this.m); } createPath() { return null; } }
 
@@ -688,6 +713,27 @@ export const R = {
     if (!pred) return JList.of(base);
     const out = new JList(); for (const w of base) if (R.lam(pred, w)) out.push(w); return out;
   },
+  // Per-tick snapshot of players and mod mobs with their positions, one native query per dimension per tick. MCreator
+  // procedures scan boxes for players / their own mobs several times per mob per tick ("is the player within 32
+  // blocks?"); answering those from the snapshot replaces a native volume query each (the costliest Script API call).
+  snapIn(d, box, kind, type) {
+    if (SNAP_T !== system.currentTick) { SNAP_T = system.currentTick; SNAP.clear(); }
+    const k = kind + d.id; let l = SNAP.get(k);
+    if (!l) {
+      l = []; let src = [];
+      try { src = kind === "p" ? d.getPlayers() : d.getEntities({ families: [NS] }); } catch {}
+      for (const e of src) { try { const p = e.location; l.push({ e, t: e.typeId, x: p.x, y: p.y, z: p.z }); } catch {} }
+      SNAP.set(k, l);
+    }
+    const a = box.min, b = box.max, out = [];
+    for (const o of l) {
+      if (type && o.t !== type) continue;
+      if (o.x + 0.3 < a.x_ || o.x - 0.3 > b.x_ || o.y + 1.8 < a.y_ || o.y > b.y_ || o.z + 0.3 < a.z_ || o.z - 0.3 > b.z_) continue;
+      try { if (!o.e.isValid) continue; } catch { continue; }
+      out.push(o.e);
+    }
+    return out;
+  },
   entitiesIn0(lv, cls, box) {
     const pred = null;
     const out = new JList();
@@ -695,10 +741,9 @@ export const R = {
     try {
       const opt = { location: box.min.toB(), volume: { x: box.max.x_ - box.min.x_, y: box.max.y_ - box.min.y_, z: box.max.z_ - box.min.z_ } };
       const c = cls?.cls?.split("/").pop();
-      if (c === "Player" || c === "ServerPlayer") opt.type = "minecraft:player";
-      else if (CFG.classToType?.[cls?.cls]) opt.type = CFG.classToType[cls.cls];
-      else if (c === "ItemEntity") opt.type = "minecraft:item";
-      list = lv.d.getEntities(opt);
+      if (c === "Player" || c === "ServerPlayer") list = R.snapIn(lv.d, box, "p");          // no native query: players and
+      else if (CFG.classToType?.[cls?.cls]) list = R.snapIn(lv.d, box, "m", CFG.classToType[cls.cls]);   // mod mobs come from
+      else { if (c === "ItemEntity") opt.type = "minecraft:item"; list = lv.d.getEntities(opt); }      // a per-tick snapshot
     } catch { return out; }
     const c = cls?.cls?.split("/").pop();
     for (const e of list) {
@@ -833,6 +878,16 @@ export const R = {
     const km = /^kick (\S+)(?: (.*))?$/.exec(c);
     if (km) c = `title ${km[1]} title §c${km[2] ?? "Disconnected"}`;
     c = R.fixCommand(c);
+    // relative "fill ... replace" sent by the same mob from the same block again within 10 ticks: the area was just
+    // cleaned (Wonderland stalkers clear torches / water around themselves every tick); skip the repeat
+    if (/^fill .* replace\b/.test(c) && src?.entity instanceof JEntity && c.includes("~")) {
+      let l; try { l = src.entity.e.location; } catch {}
+      if (l) {
+        const k = src.entity.e.id + "|" + Math.floor(l.x) + "," + Math.floor(l.y) + "," + Math.floor(l.z) + "|" + c, t = FILLSEEN.get(k);
+        if (t !== undefined && system.currentTick - t < 10) return 1;
+        if (FILLSEEN.size > 4000) FILLSEEN.clear(); FILLSEEN.set(k, system.currentTick);
+      }
+    }
     if (/^summon\b|\bsummon /.test(c)) globalThis.__GB_OWN_SPAWN = system.currentTick;   // the mod's own spawns stay (worldgen spawn filter)
     if (/^fill .* replace (water|lava)\b/.test(c)) R.command(src, c.replace(/ replace (water|lava)\b/, " replace flowing_$1"));
     try {
@@ -842,7 +897,11 @@ export const R = {
       return lv.d.runCommand(`execute positioned ${p.x_ ?? p.x} ${p.y_ ?? p.y} ${p.z_ ?? p.z} run ${c}`).successCount ?? 0;
     } catch (e) { warn("command " + c.split(" ")[0] + ": " + e); return 0; }
   },
-  fixCommand(c) {
+  fixCommand(c0) {        // pure string rewrite: cached (mobs send the same commands every tick)
+    let r = FIXC.get(c0); if (r !== undefined) return r;
+    r = R.fixCommand0(c0); if (FIXC.size > 2000) FIXC.clear(); FIXC.set(c0, r); return r;
+  },
+  fixCommand0(c) {
     c = c.replace(/\{[^{}]*(\{[^{}]*\}[^{}]*)*\}/g, "");                 // NBT
     c = c.replace(/^playsound (\S+) (master|music|record|weather|block|hostile|neutral|player|ambient|voice) /, (m, s, cat) => `playsound ${R.soundId({ sound: s.includes(":") ? s : MODID + ":" + s }) ?? s} `);
     c = c.replace(/^stopsound (\S+)(?: \S+)?(?: (\S+))?/, (m, t, s) => `stopsound ${t}${s ? " " + (R.soundId({ sound: s.includes(":") ? s : MODID + ":" + s }) ?? s) : ""}`);
