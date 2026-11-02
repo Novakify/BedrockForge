@@ -719,3 +719,19 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Device config during testing: uiDebugUseKey 120 and dumpUi true. Reset both (0 / false) with the game closed.
 - 2026-11-01 19:30: lyricsflow/rf-on-cinematic-v6 fast-forwarded to cinematic 3225820 (e77) at the user's request. It already contained all LyricsFlow work, so nothing was lost. LyricsFlow sessions: keep building from this branch (or newer) so an install doesn't wipe the Cinematic fixes. Any new LyricsFlow RF work goes on top of it.
 - 2026-11-01 19:36: clientui/rf fast-forwarded to cinematic 3225820 (e77) as well (it was fully contained). Client UI RF work goes on top of it.
+
+## 2026-11-02 crafting-table polish (RF e78-e87, cinematic 468b290 .. 1226f4d, includes LyricsFlow 5f666ba)
+- User report from stream: choppy scenes, crafting textures glitching, a sword craft with no animation where the sword appeared in the hotbar seconds later.
+- Holes in items on the table (every item with a stack count, not only grey): under Vibrant Visuals the count digits on the hidden screen are see-through. Fixes:
+  - e81: see-through digits count as the count.
+  - e80: digits are kept out of the icon box.
+  - e82: a counted stack is still seen as a block.
+  - e84-e86: a counted block's sides show the top quarter of their own face, mirrored in halves (they used to sample the digits).
+- Stone was never seen as a block: its grey matched the slot ground (139), so it was drawn as a keyed flat picture full of holes. e83 runs the shape test on a mask where only the exact ground is ground, with a radius check.
+- e79: while one of our clicks hovers a slot, the hidden screen shows that slot's tooltip over its neighbours. The scene now freezes its picture of the window (snapshot) for 0.35 s per click. A running tooltip probe is cancelled on a click, and new probes wait 0.6 s after one.
+- Count digits are no longer shown over the floating result. Result and carried stacks count as counted for cubes.
+- Craft animation verified (hands press in, planks shrink, the result goes to the hand). Couldn't reproduce "sword appears in hotbar"; likely the tooltip-probe freeze, now fixed.
+- Pacing: new 2-s lines in cine_frames.txt (frame gaps, our render-thread work). Steady 60 FPS, no gaps over 25 ms under VV. Our work went from 1.3-1.7 ms to 0.8 ms (e86 skips the 24 unused button slots in the slot readback).
+- Test harness: F9 needs hold_key (0.6 s). The world at x=90 has cows wandering over the table; use the table at 118.5 200 -109.6.
+- Device config is back to uiDebugUseKey 0, dumpUi false, hoverTargets false. Note: dumpUi true writes a 23 MB BMP every second, which stutters.
+- lyricsflow/rf-on-cinematic-v6 and clientui/rf are fast-forwarded to cinematic 1226f4d (LyricsFlow's 5f666ba merged in).
