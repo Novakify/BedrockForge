@@ -127,7 +127,7 @@ class Dimensions:
             biomes = [b["biome"] for b in src.get("biomes", [])] if src.get("biomes") else [src.get("biome")] if src.get("biome") else []
             dt = self.read("dimension_type", d.get("type", "")) if isinstance(d.get("type"), str) else d.get("type")
             min_y = (dt or {}).get("min_y", 0); height = (dt or {}).get("height", 256)
-            rules, look = [], {}
+            rules, look, spawns = [], {}, set()
             for b in biomes:
                 bj = self.read("worldgen/biome", b) or {}
                 # Java decorates a chunk step by step (raw_generation first: Wonderland's ground tiles, then the
@@ -136,11 +136,16 @@ class Dimensions:
                 for st, f in sorted(feats, key=lambda t: t[0]):
                     r = self.placed(f)
                     if r: rules.append(r)
+                for cat in (bj.get("spawners") or {}).values():   # what Java spawns naturally here (Wonderland: nothing)
+                    for sp in cat or []:
+                        t = sp.get("type", "")
+                        if t: spawns.add(t if ":" in t else "minecraft:" + t)
                 eff = bj.get("effects", {})
                 look = {"fog": eff.get("fog_color"), "sky": eff.get("sky_color"), "ambient": (eff.get("ambient_sound") or "").split(":")[-1],
                         "mood": ((eff.get("mood_sound") or {}).get("sound") or "").split(":")[-1]}
             bid = f"{self.ns}:{name}"
-            dims[bid] = {"min_y": min_y, "height": height, "rules": rules, "look": look, "biomes": biomes}
+            dims[bid] = {"min_y": min_y, "height": height, "rules": rules, "look": look, "biomes": biomes,
+                         "spawns": sorted(x.replace(f"{self.modid}:", f"{self.ns}:") for x in spawns)}
             mh = max(16, ((height + 15) // 16) * 16); my = max(-512, min(512, min_y)); mh = min(mh, 512 - my)
             self.write(f"dimensions/{name}.json", {"format_version": "1.26.50", "minecraft:dimension": {
                 "description": {"identifier": bid}, "components": {"minecraft:generation": {"generator_type": "void"},
@@ -288,6 +293,20 @@ system.runInterval(() => {
     }
   }
 }, 20);
+// ---- natural spawns: a Bedrock custom dimension spawns the vanilla mobs of its default biome (creepers, zombies,
+// skeletons...), a Java mod dimension only what its biomes list (Wonderland: nothing - its creatures come from the
+// mod's own code). Vanilla mobs that appear in a mod dimension on their own are removed; the mod's mobs, anything the
+// mod's code spawns (spawnEntity / summon this tick, tagged gb_own) and the biome's Java spawn list stay.
+world.afterEvents.entitySpawn.subscribe(({ entity, cause }) => {
+  let d, t; try { d = entity.dimension.id; t = entity.typeId; } catch { return; }
+  const D = WG.dims[d]; if (!D || t.startsWith(NS + ":") || t === "minecraft:player") return;
+  if ((D.spawns ?? []).includes(t)) return;
+  try { if (entity.hasTag("gb_own")) return; } catch { return; }
+  const own = globalThis.__GB_OWN_SPAWN;
+  if (cause !== "Loaded" && own != null && system.currentTick - own <= 1) { try { entity.addTag("gb_own"); } catch {} return; }
+  let mob = false; try { mob = entity.matches({ families: ["mob"] }) || entity.matches({ families: ["monster"] }); } catch {}
+  if (mob) { try { entity.remove(); } catch {} }
+});
 // ---- dev travel: /scriptevent wg:tp <dimension name|overworld>
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
   if (ev.id !== "wg:tp" || !ev.sourceEntity) return;

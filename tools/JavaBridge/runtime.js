@@ -726,7 +726,7 @@ export const R = {
     for (let i = 0; i < Math.min(n ?? 1, 24); i++) { try { lv.d.spawnParticle(id, { x: x + (Math.random() - 0.5) * 2 * (dx ?? 0), y: y + (Math.random() - 0.5) * 2 * (dy ?? 0), z: z + (Math.random() - 0.5) * 2 * (dz ?? 0) }); } catch {} }
   },
   spawn(lv, etype, pos) {
-    try { const id = etype.etype ?? etype; const e = lv.d.spawnEntity(id, { x: pos.x_ + 0.5, y: pos.y_, z: pos.z_ + 0.5 }); return JEntity.of(e); } catch (e) { warn("spawn " + etype?.etype + " " + e); return null; }
+    try { const id = etype.etype ?? etype; globalThis.__GB_OWN_SPAWN = system.currentTick; const e = lv.d.spawnEntity(id, { x: pos.x_ + 0.5, y: pos.y_, z: pos.z_ + 0.5 }); try { e.addTag("gb_own"); } catch {} return JEntity.of(e); } catch (e) { warn("spawn " + etype?.etype + " " + e); return null; }
   },
   spawnPending(lv, e) {
     if (e?.__spawnItem) { try { lv.d.spawnItem(new BItemStack(e.stack.id, Math.max(1, e.stack.n)), e.pos.toB()); return true; } catch { return false; } }
@@ -833,6 +833,7 @@ export const R = {
     const km = /^kick (\S+)(?: (.*))?$/.exec(c);
     if (km) c = `title ${km[1]} title §c${km[2] ?? "Disconnected"}`;
     c = R.fixCommand(c);
+    if (/^summon\b|\bsummon /.test(c)) globalThis.__GB_OWN_SPAWN = system.currentTick;   // the mod's own spawns stay (worldgen spawn filter)
     if (/^fill .* replace (water|lava)\b/.test(c)) R.command(src, c.replace(/ replace (water|lava)\b/, " replace flowing_$1"));
     try {
       if (src?.entity instanceof JEntity) return src.entity.e.runCommand(c).successCount ?? 0;
