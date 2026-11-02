@@ -4679,10 +4679,19 @@ bool isoBlock(std::vector<uint8_t> const& m, int n, float const box[4], bool cou
         int x = std::clamp(int((box[0] + u * bw) * n), 0, n - 1), y = std::clamp(int((box[1] + v * bh) * n), 0, n - 1);
         return m[size_t(y) * n + x] != 0;
     };
+    // inside points look round themselves (a block's texture can have pixels of the slot's own grey: stone)
+    int  rad  = std::max(1, n / 20);
+    auto near = [&](float u, float v) {
+        int cx = int((box[0] + u * bw) * n), cy = int((box[1] + v * bh) * n);
+        for (int y = std::max(0, cy - rad); y <= std::min(n - 1, cy + rad); ++y)
+            for (int x = std::max(0, cx - rad); x <= std::min(n - 1, cx + rad); ++x)
+                if (m[size_t(y) * n + x]) return true;
+        return false;
+    };
     float in[6][2]  = {{0.5f, 0.06f}, {0.06f, 0.32f}, {0.94f, 0.32f}, {0.06f, 0.68f}, {0.94f, 0.68f}, {0.5f, 0.94f}};
     float out[4][2] = {{0.04f, 0.04f}, {0.96f, 0.04f}, {0.04f, 0.96f}, {0.96f, 0.96f}};
     // a stack's count covers the hexagon's lower right (its digits are not the item): those points are not asked
-    for (auto& p : in) if (!(counted && p[0] >= 0.5f && p[1] > 0.5f) && !at(p[0], p[1])) return false;
+    for (auto& p : in) if (!(counted && p[0] >= 0.5f && p[1] > 0.5f) && !near(p[0], p[1])) return false;
     int corners = 0;
     for (auto& p : out) corners += at(p[0], p[1]);
     return corners <= 1; // a count digit may sit in the lower right corner
@@ -4764,6 +4773,18 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             if (white || shadow) item = false;
                         }
                         mask[size_t(y) * n + x] = item;
+                        if (!item && s <= 10 && s != 10 && a > 0.5f) { // the shape test: only the slot's exact ground is ground
+                            float ia = a > 0.01f ? 1.0f / a : 1.0f;
+                            float r = (bgra ? q[2] : q[0]) / 255.0f * ia, g = q[1] / 255.0f * ia, b = (bgra ? q[0] : q[2]) / 255.0f * ia;
+                            float t2 = 1.5f / 255.0f;
+                            bool  ground = (std::fabs(r - L.bg[0]) < t2 && std::fabs(g - L.bg[1]) < t2 && std::fabs(b - L.bg[2]) < t2) ||
+                                          (std::fabs(r - L.hi[0]) < t2 && std::fabs(g - L.hi[1]) < t2 && std::fabs(b - L.hi[2]) < t2);
+                            bool  digit  = x > n * 0.3f && y > n / 2 &&
+                                          ((r > 0.96f && g > 0.96f && b > 0.96f) || (std::fabs(r - 0.247f) < 0.03f && std::fabs(g - 0.247f) < 0.03f && std::fabs(b - 0.247f) < 0.03f));
+                            float mx = std::max(r, std::max(g, b)), mn = std::min(r, std::min(g, b));
+                            bool  ghost = mx - mn < 0.03f && r > 0.26f && r < 0.4f;
+                            if (!ground && !digit && !ghost) mask[size_t(y) * n + x] = 1;
+                        }
                         ++total;
                         if (item) { ++other; x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
                     }
