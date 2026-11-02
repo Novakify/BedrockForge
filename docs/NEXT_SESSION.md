@@ -704,3 +704,16 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Crafter at 108,-112 refuses Cinematic: "standing beside or behind the side it is worked from". This is Java behaviour, so it opens as Spatial.
 - Monitor-off crash (01:43): fast-fail 7 (abort) inside Minecraft.Windows.exe, no RF frames on the stack. Likely the game's own abort on display loss. Still open.
 - Test gotcha: the game writes RendererFoundation.json on exit. Edit uiDebugUseKey only while the game is closed.
+
+## 2026-11-01 test + polish pass (RF e68-e77, cinematic daec055 .. 3225820, includes LyricsFlow c430642)
+- e68 daec055: avatar head pitch follows the cursor (Java AvatarRendererMixin: xRot eased 0.15, clamp ±60, put back on close). Spatial GUI sharper: sharp-bilinear sampling in panel.hlsl; worldBlurStrength 5 -> 3. Head tilt verified in game.
+- e69 ceaf94b: the once-a-second ~31 MB layout readback copy moved off the render thread (detect thread). This was the stutter.
+- e70 9fb3cd8: props atlas (texture archives + PNG/TGA decodes) built on a worker from the first tick. This was the freeze/skip on the first crafting-table click (worse under Vibrant Visuals).
+- e72/e73 f9e0b40, 5e7e2e8: block cubes are no longer keyed by the slot colour, and faces are drawn solid (iconCube mode.z = -1). This fixes see-through/holey grey blocks like stone. Not yet seen placed after the fix.
+- e74 1d227fa: a take-press held >90 ms is released to the hidden screen as a click.
+- e75 9487401: window button messages are dropped in a scene. Turned out to be unneeded (0 seen), harmless.
+- e77 3225820: ROOT CAUSE of "picks fail / randomly work". The real press reached the hidden screen by a path filterButtons doesn't see. Our injected clicks (station actions) always landed. A press on a slot (t < 100) is now Swallowed and replaced by inject(t) (hover 45 ms, down 80 ms, up). Verified: lapis picked from the drawer. Known loss: drag-to-share across cells (needs a held inject).
+  - Odd: putting the lapis back on its own (now empty) hotbar slot sent it to inventory row 2 slot 0. Check the second-click-while-carrying path.
+- Test harness note: computer-use left_click is too short for GameInput sampling. Use left_mouse_down, wait 0.12, left_mouse_up.
+- Remote moved: github.com/Novakify/BedrockForge (fetch FETCH_HEAD if origin/cinematic-builds looks stale).
+- Device config during testing: uiDebugUseKey 120 and dumpUi true. Reset both (0 / false) with the game closed.
