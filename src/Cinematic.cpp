@@ -4681,7 +4681,7 @@ bool isoBlock(std::vector<uint8_t> const& m, int n, float const box[4], bool cou
     };
     // inside points look round themselves (a block's texture can have pixels of the slot's own grey: stone)
     int  rad  = std::max(1, n / 20);
-    auto near = [&](float u, float v) {
+    auto nearAny = [&](float u, float v) {
         int cx = int((box[0] + u * bw) * n), cy = int((box[1] + v * bh) * n);
         for (int y = std::max(0, cy - rad); y <= std::min(n - 1, cy + rad); ++y)
             for (int x = std::max(0, cx - rad); x <= std::min(n - 1, cx + rad); ++x)
@@ -4691,7 +4691,7 @@ bool isoBlock(std::vector<uint8_t> const& m, int n, float const box[4], bool cou
     float in[6][2]  = {{0.5f, 0.06f}, {0.06f, 0.32f}, {0.94f, 0.32f}, {0.06f, 0.68f}, {0.94f, 0.68f}, {0.5f, 0.94f}};
     float out[4][2] = {{0.04f, 0.04f}, {0.96f, 0.04f}, {0.04f, 0.96f}, {0.96f, 0.96f}};
     // a stack's count covers the hexagon's lower right (its digits are not the item): those points are not asked
-    for (auto& p : in) if (!(counted && p[0] >= 0.5f && p[1] > 0.5f) && !near(p[0], p[1])) return false;
+    for (auto& p : in) if (!(counted && p[0] >= 0.5f && p[1] > 0.5f) && !nearAny(p[0], p[1])) return false;
     int corners = 0;
     for (auto& p : out) corners += at(p[0], p[1]);
     return corners <= 1; // a count digit may sit in the lower right corner
