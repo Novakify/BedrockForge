@@ -1041,6 +1041,7 @@ struct Press {
 };
 Press    gPress;
 std::string gPressLog[12];
+long        gCraftFrames = 0; // frames drawn with the craft flourish on (diag)
 int         gPressLogN = 0;
 unsigned gPrevButtons = 0;
 double nowMs() {
@@ -3270,9 +3271,10 @@ unsigned filterButtons(unsigned buttons) {
     {   // press log (diag): every change of the real or the passed buttons
         static unsigned lastIn = 0, lastOut = 0;
         if ((buttons & 7u) != lastIn || out != lastOut) {
-            char e[260];
-            snprintf(e, sizeof e, "%.0f ms: real %x -> passed %x, state %d target %d (now %d) at %.0f,%.0f; live %ld at %d,%d; jumps %ld (to %d)", now, buttons & 7u, out,
-                     int(gPress.state), gPress.target, gTargetNow.load(), gMapX, gMapY, gLiveCalls, gLiveX, gLiveY, gJumps.load(), gJumpTarget.load());
+            char e[360];
+            snprintf(e, sizeof e, "%.0f ms: real %x -> passed %x, state %d target %d (now %d) at %.0f,%.0f; live %ld at %d,%d; jumps %ld (to %d); craft at %.2f clock %.2f, craft frames %ld",
+                     now, buttons & 7u, out, int(gPress.state), gPress.target, gTargetNow.load(), gMapX, gMapY, gLiveCalls, gLiveX, gLiveY, gJumps.load(),
+                     gJumpTarget.load(), gS.craftAt, gS.clock, gCraftFrames);
             gPressLog[gPressLogN++ % 12] = e;
             lastIn = buttons & 7u;
             lastOut = out;
@@ -4489,10 +4491,53 @@ void requestReadback(ID3D12GraphicsCommandList* list, ID3D12Resource* ui) {
     gG.rbFrame = gG.frameNo;
 }
 } // namespace
+// frame pacing while a scene runs (diag): time between record() calls and the time record() itself takes
+struct FrameStats {
+    double last = 0, maxGap = 0, sumGap = 0, maxWork = 0, sumWork = 0;
+    long   n = 0, over25 = 0, over40 = 0, over70 = 0, over150 = 0, work2 = 0, work5 = 0;
+} gFs;
+std::mutex gFsM;
+struct FrameTimer {
+    double t0;
+    FrameTimer() {
+        t0 = nowMs();
+        std::lock_guard l(gFsM);
+        if (gFs.last > 0) {
+            double g = t0 - gFs.last;
+            if (g < 2000) {
+                ++gFs.n; gFs.sumGap += g; gFs.maxGap = std::max(gFs.maxGap, g);
+                gFs.over25 += g > 25; gFs.over40 += g > 40; gFs.over70 += g > 70; gFs.over150 += g > 150;
+            }
+        }
+        gFs.last = t0;
+    }
+    ~FrameTimer() {
+        double w = nowMs() - t0;
+        std::lock_guard l(gFsM);
+        gFs.sumWork += w; gFs.maxWork = std::max(gFs.maxWork, w); gFs.work2 += w > 2; gFs.work5 += w > 5;
+    }
+};
 std::string flickerNote() {
-    char b[200];
-    snprintf(b, sizeof b, "kept-screen copies %ld, checked %ld, UI frames left out as partial %ld", gKeepCopies.load(), long(gKeepChecked), gKeepPartial.load());
-    return b;
+    char b[600];
+    FrameStats f;
+    {
+        std::lock_guard l(gFsM);
+        f = gFs;
+        double last = gFs.last;
+        gFs = FrameStats{};
+        gFs.last = last;
+    }
+    static std::deque<std::string> hist;
+    snprintf(b, sizeof b, "frames %ld: gap avg %.1f ms max %.1f, over 25 ms %ld, 40 %ld, 70 %ld, 150 %ld; our work avg %.2f ms max %.2f, over 2 ms %ld, 5 ms %ld",
+             f.n, f.n ? f.sumGap / f.n : 0.0, f.maxGap, f.over25, f.over40, f.over70, f.over150, f.n ? f.sumWork / f.n : 0.0, f.maxWork, f.work2, f.work5);
+    if (f.n) hist.push_back(b);
+    while (hist.size() > 20) hist.pop_front();
+    std::string out;
+    snprintf(b, sizeof b, "kept-screen copies %ld, checked %ld, UI frames left out as partial %ld\nframe pacing, one line per 2 s (oldest first):",
+             gKeepCopies.load(), long(gKeepChecked), gKeepPartial.load());
+    out = b;
+    for (auto const& h : hist) out += "\n  " + h;
+    return out;
 }
 void beforeUiClear(ID3D12GraphicsCommandList* list, ID3D12Resource* ui) {
     if (!list || !ui) return;
@@ -4833,6 +4878,7 @@ IconSrc carriedSrc(Layout const& L) {
     float   big = L.slot * kCarrySize, in = L.slot * 16.0f / 18.0f, m = (big - in) * 0.5f;
     IconSrc cs{{cx - big * 0.5f, cy - big * 0.5f, big, big}, {0, 0, 1, 1}};
     cs.dim = true; // the carried stack is drawn over the screen's dim layer
+    cs.count = true; // the carried stack's count digits: cube sides keep off them (no digit box measured here)
     for (int k = 0; k < 4; ++k) {
         float f = gS.iconBox[10][k];
         cs.box[k] = (f <= 0.001f && k < 2) || (f >= 0.999f && k >= 2) ? (k < 2 ? 0.0f : 1.0f) : (f * in + m) / big;
@@ -4877,9 +4923,12 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
                 double x = f.pts[k][0], y = f.pts[k][1], z = f.pts[k][2];
                 wp[k] = c + ax * (x * size) + ay * (y * size) + az * (z * size);
                 // the icon face this face borrows: top -> top, x faces -> the icon's right (+X) side, z faces -> its left (+Z)
+                // A stack's count is printed over the icon's lower right, on its right (+X) side: then every side face
+                // borrows the left (+Z) side instead (the digits cut holes in those faces before)
                 double ux = x, uy = y, uz = z;
                 if (f.ny != 0) uy = 0.5;
-                else if (f.nx != 0) { ux = 0.5; uz = f.nx > 0 ? z : -z; }
+                else if (f.nx != 0 && !src.count) { ux = 0.5; uz = f.nx > 0 ? z : -z; }
+                else if (f.nx != 0) { uz = 0.5; ux = f.nx > 0 ? -z : z; }
                 else { uz = 0.5; ux = f.nz > 0 ? x : -x; }
                 iconUv(src, L, ux, uy, uz, q.uv[k * 2], q.uv[k * 2 + 1]);
             }
@@ -4889,7 +4938,7 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
             // the ground colour away punched holes in grey blocks (stone, cobblestone, andesite...)
             q.mode[2] = -1.0f; // no ground key, solid (see the shader)
             if (src.dim) { q.occl[3] = 1; q.mode[1] = 0; } // no slot ground to key away, the white of a blade stays
-            if (src.count) { // the digits and the shadow one pixel past them
+            if (src.count && f.ny != 0 && src.countBox[2] > src.countBox[0]) { // the top: the digits and the shadow one pixel past them (the sides avoid them)
                 float px = 1.0f / 16.0f;
                 q.occl[1]    = 1;
                 q.hull[0][0] = (src.inside.x + src.inside.w * src.countBox[0]) / L.W;
@@ -6197,6 +6246,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv) {
     if (gG.broken) return false;
     ++gG.frameNo;
+    FrameTimer ft;
     Phase phase;
     {
         std::lock_guard l(gM);
@@ -6382,6 +6432,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             IconSrc o{{r.cx() - in * 0.5f, r.cy() - in * 0.5f, in, in}, {0, 0, 1, 1}};
             if (sampled >= 0) std::memcpy(o.box, gS.iconBox[sampled], sizeof o.box);
             if (sampled >= 0 && sampled < 9 && gS.hasCount[sampled]) { o.count = true; std::memcpy(o.countBox, gS.countBox[sampled], sizeof o.countBox); }
+            if (sampled == 9) o.count = true; // the result's count (crafting 4 sticks...): cube sides keep off the digits
             return o;
         };
         // the hands (Hands.update), every phase
@@ -6750,6 +6801,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                         if (worldQuad(cam, b, at, ax * (size * 0.5), V3{0, size * 0.5, 0}, q)) {
                             setRect(q.uv, rs.inside.x / L.W, rs.inside.y / L.H, (rs.inside.x + rs.inside.w) / L.W, (rs.inside.y + rs.inside.h) / L.H);
                             keyed(q, L, tableAlpha);
+                            q.key0[3] = 1; // no stack count over the floating result (Java draws the item alone)
                             gQuads.push_back(q);
                         }
                     }
@@ -7542,6 +7594,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         if (haveCam && layoutOk && L.hasGrid && gS.st.kind == Kind::Table) {
             V3 fwd = gS.st.forward(), rgt = gS.st.right(), out = gS.st.sideV();
             double craft = craftProgress();
+            if (craft >= 0) ++gCraftFrames;
             // hover glow under the items (TableStation.drawHighlight: one even warm glow, rim 150/255)
             if (gS.hoverCell >= 0 && gS.phase == Phase::Active && craft < 0) {
                 double half = Station::CELL / 2 - 0.006;
@@ -7601,6 +7654,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                         if (worldQuad(cam, b, at, ax * half, V3{0, half, 0}, q)) {
                             setRect(q.uv, rs.inside.x / L.W, rs.inside.y / L.H, (rs.inside.x + rs.inside.w) / L.W, (rs.inside.y + rs.inside.h) / L.H);
                             keyed(q, L, tableAlpha);
+                            q.key0[3] = 1; // no stack count over the floating result (Java draws the item alone)
                             gQuads.push_back(q);
                         }
                     }
