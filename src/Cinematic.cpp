@@ -3173,10 +3173,7 @@ bool mapClient(int w, int h, int& x, int& y, int liveIn) {
     int  use = gPress.state != PressState::Idle ? (gPress.state == PressState::Down && t >= 0 ? t : gPress.target) : t;
     bool grace = gPress.state == PressState::Idle && now - gPress.releasedAt < 150 && gPress.target >= 0;
     if (grace) use = gPress.target;
-    // the hidden screen's cursor follows the hovered slot: the game takes each mouse reading once, when it is new, so
-    // the press has to find the cursor already there (a hover started at the press was never seen: a still mouse sends
-    // no reading between the press and the release, and the press went to the empty corner or nowhere)
-    bool mapToTarget = use >= 0;
+    bool mapToTarget = use >= 0 && (gCfg.hoverTargets || gPress.state != PressState::Idle || grace);
     {
         int      it;
         unsigned ib;
@@ -3237,11 +3234,13 @@ unsigned filterButtons(unsigned buttons) {
                 gPress = Press{PressState::Swallow, b, -1, now, -1e9};
                 stationAction(t, b, (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
             } else if (gS.phase == Phase::Active && t >= 0) {
-                // the hidden screen's cursor already rests on the slot (mapClient): the button goes down in this same
-                // reading (a later one may never come while the mouse is still)
-                gPress = Press{PressState::Down, b, t, now, -1e9};
+                // the real press never reaches the hidden screen: it also gets there by a way we do not filter (seen:
+                // passed presses on a slot took nothing unless the hand moved during the click, while our own clicks -
+                // the station actions - always land). The press becomes one of our clicks on the slot (hover, down,
+                // up), and the real button is swallowed until it is let go.
+                gPress = Press{PressState::Swallow, b, t, now, -1e9};
                 gPress.take = !gS.carrying && gS.carriedName.empty();
-                out |= b;
+                inject(t, b);
                 gS.tapAt = gS.clock; // Hands.tap
                 if (t == 9) gS.craftAt = gS.clock; // TableStation.craft: the hands press the ingredients together
             }
