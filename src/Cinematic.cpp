@@ -4963,18 +4963,20 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
             V3   n = ax * f.nx + ay * f.ny + az * f.nz;
             bool front = n.dot(toCam) > 0;
             if (front != (pass == 1)) continue;
+            // A stack's count is printed over the lower half of the icon's sides (at GUI scale 4 "23" covers both):
+            // then a side is drawn in two halves, both showing the upper half of its own face (the lower one mirrored)
+            // - the digits cut holes into the faces before
+            bool split = src.count && f.ny == 0;
+            for (int part = 0; part < (split ? 2 : 1); ++part) {
             Quad q;
             V3   wp[4];
             for (int k = 0; k < 4; ++k) {
                 double x = f.pts[k][0], y = f.pts[k][1], z = f.pts[k][2];
+                if (split) y = part == 0 ? (y > 0 ? h : 0.0) : (y > 0 ? 0.0 : -h);
                 wp[k] = c + ax * (x * size) + ay * (y * size) + az * (z * size);
                 // the icon face this face borrows: top -> top, x faces -> the icon's right (+X) side, z faces -> its left (+Z)
-                // A stack's count is printed over the icon's lower half (at GUI scale 4 "23" covers both side faces):
-                // then the sides borrow the top face, shaded as the GUI shades its sides (the digits cut holes before)
-                double ux = x, uy = y, uz = z;
+                double ux = x, uy = split ? std::fabs(y) : y, uz = z;
                 if (f.ny != 0) uy = 0.5;
-                else if (src.count && f.nx != 0) { uy = 0.5; ux = -y; uz = f.nx > 0 ? z : -z; }
-                else if (src.count) { uy = 0.5; uz = -y; ux = f.nz > 0 ? x : -x; }
                 else if (f.nx != 0) { ux = 0.5; uz = f.nx > 0 ? z : -z; }
                 else { uz = 0.5; ux = f.nz > 0 ? x : -x; }
                 iconUv(src, L, ux, uy, uz, q.uv[k * 2], q.uv[k * 2 + 1]);
@@ -4984,10 +4986,6 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
             // a cube face samples only the inside of the icon's hexagon: nothing of the slot ground is in it, and keying
             // the ground colour away punched holes in grey blocks (stone, cobblestone, andesite...)
             q.mode[2] = -1.0f; // no ground key, solid (see the shader)
-            if (src.count && f.ny == 0) { // the GUI's own side shading (left 0.8, right 0.6), the top is lit fully
-                float k = f.nx != 0 ? 0.6f : 0.8f;
-                for (int i = 0; i < 3; ++i) q.color[i] *= k;
-            }
             if (src.dim) { q.occl[3] = 1; q.mode[1] = 0; } // no slot ground to key away, the white of a blade stays
             if (src.count && f.ny != 0 && src.countBox[2] > src.countBox[0]) { // the top: the digits and the shadow one pixel past them (the sides avoid them)
                 float px = 1.0f / 16.0f;
@@ -4998,6 +4996,7 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
                 q.hull[1][1] = (src.inside.y + src.inside.h * (src.countBox[3] + px)) / L.H;
             }
             gQuads.push_back(q);
+            }
         }
 }
 /// An item lying on a surface (flat) or standing as a cube (block). `facing` = the item's up on the surface.
