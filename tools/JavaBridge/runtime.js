@@ -12,6 +12,7 @@ function warn(k) { if (warned.has(k)) return; warned.add(k); if (warned.size < 4
 const FN = new Map(), CLS = new Map(), STATIC = new Map();
 export const M = {
   def(id, fn) { FN.set(id, fn); },
+  fn(id) { return FN.get(id); },   // late-bound: methods the runtime replaces (hooks.js M.def after mod.js loaded)
   cls(name, sup, methods) { CLS.set(name, { sup, methods: new Set(methods) }); },
   call(id, args) {
     const f = FN.get(id);

@@ -212,8 +212,13 @@ def build_bridge(jar, modid, ns, bp, entity_map, report, registry_classes=None, 
         if f in seen or f not in meth_js: continue
         seen.add(f); todo += list(refs.get(f, ()))
     order = sorted(seen); idx = {f: i for i, f in enumerate(order)}
+    work = {f"{cn}.{k}" for cn, info in T.classes.items() for k in info.methods if k == "queueServerWork(ILjava/lang/Runnable;)V"}
     def target(f):
         if re.search(r"Variables\$(MapVariables|WorldVariables)\.get\(", f): return "R.mapVars"     # SavedData -> world dynamic properties
+        # methods hooks.js replaces after load (MCreator queueServerWork -> system.runTimeout) are called late-bound:
+        # a direct FX[] call would keep the mod's own queue, which nothing ticks (the work never ran: Endless House
+        # entry, exits, delayed scripted events)
+        if f in work: return f"M.fn({json.dumps(f)})"
         return f"FX[{idx[f]}]" if f in idx else f"M.miss({json.dumps(f)})"
     def link(js):   # direct calls through the FX table (no string lookups at run time)
         return re.sub(r"@@(.+?)@@", lambda m: target(m.group(1)), js)
