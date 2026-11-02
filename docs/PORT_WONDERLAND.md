@@ -36,3 +36,17 @@ rooms generate, retextured cow/zombie render correctly.
 Fixed on the way: delayed work never ran; concatenated strings broken; Java particles fell back to smoke; whole-set vanilla retextures crashed world load; eye overlay stuck (typed entity query matched
 the player); spawn-search loop (getBlockFloorHeight stub); Java block ids in `fill` commands (snow_block -> snow);
 EntityType.spawn overload picked the wrong argument as position.
+
+## 2026-11-02 fixes (tested in game, Wonderland Test + Wonderland Stream, 20 TPS)
+- Dimensions generate fully: chunk jobs wait for loaded chunks, Java step order, ignored blocks baked as `-1`
+  (structures no longer place invisible `structure_void` blocks), 8-chunk radius. Tree plain, houses, Endless House
+  rooms and Winter Wonderland verified.
+- Progression: block/item/effect registry names were paired with their neighbour's Java class (house teleporter ran
+  the Exit block = straight back to the overworld). Fixed; house teleporter -> Endless House -> room search works.
+- `queueServerWork` (273 delayed calls: Endless House room search, ExitPart2, timed scripted events) now runs.
+- Spawn mechanics see real ground (Java heightmaps; no structure_void): Wondertree / No One spawn in the Wonderland.
+- Vanilla mobs no longer spawn in mod dimensions (only what the Java biomes list, Wonderland: none).
+- Stutter: FiguraBridge player entity defined the variable the game's first-person animation reads (64k Molang errors
+  per 6 min in the content log); mob logic/goals time-budgeted with distance LOD.
+- Dev commands: `/scriptevent gb:perf` (TPS + ms per job), `gb:tpdebug` (who teleports you), `gb:proc <Name>[!]`
+  (run a mod procedure where you stand, `!` logs its block reads), `gb:ground` (what spawn code sees around you).
