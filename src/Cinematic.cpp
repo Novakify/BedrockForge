@@ -4670,7 +4670,7 @@ bool sampledRect(Layout const& L, int s, Rect& r) {
     return true;
 }
 /// Is this icon an isometric block (a full cube seen from above: a hexagon filling its box, empty corners)?
-bool isoBlock(std::vector<uint8_t> const& m, int n, float const box[4]) {
+bool isoBlock(std::vector<uint8_t> const& m, int n, float const box[4], bool counted = false) {
     float bw = box[2] - box[0], bh = box[3] - box[1];
     if (bw < 0.5f || bh < 0.5f) return false;
     float ratio = bh / bw; // 1.113 for a cube at the inventory angle (45 / 30 degrees)
@@ -4681,7 +4681,8 @@ bool isoBlock(std::vector<uint8_t> const& m, int n, float const box[4]) {
     };
     float in[6][2]  = {{0.5f, 0.06f}, {0.06f, 0.32f}, {0.94f, 0.32f}, {0.06f, 0.68f}, {0.94f, 0.68f}, {0.5f, 0.94f}};
     float out[4][2] = {{0.04f, 0.04f}, {0.96f, 0.04f}, {0.04f, 0.96f}, {0.96f, 0.96f}};
-    for (auto& p : in) if (!at(p[0], p[1])) return false;
+    // a stack's count covers the hexagon's lower right (its digits are not the item): those points are not asked
+    for (auto& p : in) if (!(counted && p[0] >= 0.5f && p[1] > 0.5f) && !at(p[0], p[1])) return false;
     int corners = 0;
     for (auto& p : out) corners += at(p[0], p[1]);
     return corners <= 1; // a count digit may sit in the lower right corner
@@ -4775,7 +4776,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                 if (other > 0) { rgb[s][0] = float(sr / other); rgb[s][1] = float(sgc / other); rgb[s][2] = float(sb / other); }
                 if (full[s]) {
                     box[s][0] = float(x0) / n; box[s][1] = float(y0) / n; box[s][2] = float(x1 + 1) / n; box[s][3] = float(y1 + 1) / n;
-                    block[s] = isoBlock(mask, n, box[s]);
+                    block[s] = isoBlock(mask, n, box[s], s < 9 ? cnt[s] : s <= 10);
                     glint[s] = violet * 12 > other;
                 }
             }
