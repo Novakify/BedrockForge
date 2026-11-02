@@ -13,6 +13,7 @@ const FN = new Map(), CLS = new Map(), STATIC = new Map();
 export const M = {
   def(id, fn) { FN.set(id, fn); },
   fn(id) { return FN.get(id); },   // late-bound: methods the runtime replaces (hooks.js M.def after mod.js loaded)
+  lookup(re) { for (const k of FN.keys()) if (re.test(k)) return k; return null; },   // first method id matching re (dev tools)
   cls(name, sup, methods) { CLS.set(name, { sup, methods: new Set(methods) }); },
   call(id, args) {
     const f = FN.get(id);
@@ -252,7 +253,19 @@ export class JLevel {
   removeBlock(p) { return R.setBlockAt(this, p, BLOCK("minecraft:air")); }
   destroyBlock(p, drop) { try { const b = this.d.getBlock(p.toB()); if (b && !b.isAir) { this.d.runCommand(`setblock ${p.x_} ${p.y_} ${p.z_} air ${drop ? "destroy" : "replace"}`); return true; } } catch {} return false; }
   isEmptyBlock(p) { try { return !!this.d.getBlock(p.toB())?.isAir; } catch { return true; } }
-  getHeight(type, x, z) { try { const t = this.d.getTopmostBlock({ x: Math.floor(x), z: Math.floor(z) }); return t ? t.location.y + 1 : this.d.heightRange.min; } catch { return 64; } }
+  getHeight(type, x, z) {
+    // Java heightmaps: WORLD_SURFACE = topmost non-air; MOTION_BLOCKING = topmost blocking block or liquid (plants,
+    // torches, snow layers don't count); *_NO_LEAVES skips leaves too. getTopmostBlock is WORLD_SURFACE.
+    const k = String(type?.key ?? type?.name ?? type ?? "");
+    try {
+      const t = this.d.getTopmostBlock({ x: Math.floor(x), z: Math.floor(z) }); if (!t) return this.d.heightRange.min;
+      if (!/MOTION_BLOCKING|OCEAN_FLOOR/.test(k)) return t.location.y + 1;
+      let b = t, n = 0;
+      const pass = (id) => (/leaves/.test(id) && /NO_LEAVES/.test(k)) || (!/water|lava/.test(id) && !R.solid({ id })) || (/OCEAN_FLOOR/.test(k) && /water|lava/.test(id));
+      while (b && n++ < 64 && pass(b.typeId)) b = b.below();
+      return b ? b.location.y + 1 : this.d.heightRange.min;
+    } catch { return 64; }
+  }
   getBlockFloorHeight(p) { try { const b = this.d.getBlock(p.toB()); return !b || b.isAir || b.isLiquid ? 0 : (R.solid(BLOCK(b.typeId)) ? 1 : 0); } catch { return 0; } }
   getMaxLocalRawBrightness(p) { try { return this.d.getBlock(p.toB())?.getLightLevel?.() ?? 15; } catch { return 15; } }
   getMaxBuildHeight() { try { return this.d.heightRange.max; } catch { return 320; } } getMinBuildHeight() { try { return this.d.heightRange.min; } catch { return -64; } }

@@ -87,18 +87,20 @@ class Converter:
                 palette.append(None); continue
             n, st = self.bedrock_state(str(p["Name"]), props)
             palette.append(Compound({"name": String(n), "states": Compound(st), "version": Int(BLOCK_VERSION)}))
-        # bedrock palette: index 0 = structure_void (untouched), then the used states
-        bpal = [Compound({"name": String("minecraft:structure_void"), "states": Compound({}), "version": Int(BLOCK_VERSION)})]
+        # bedrock palette: only the placed states. Positions the template doesn't place are block index -1 - the
+        # .mcstructure "nothing here" marker. (A minecraft:structure_void palette entry is a real block: it was
+        # placed as invisible structure_void blocks everywhere, which the mod's spawn checks read as solid ground.)
+        bpal = []
         idx_of = {}
         for i, c in enumerate(palette):
-            if c is None: idx_of[i] = 0; continue
+            if c is None: idx_of[i] = -1; continue
             bpal.append(c); idx_of[i] = len(bpal) - 1
         water_idx = None
         if any(water):
             bpal.append(Compound({"name": String("minecraft:water"), "states": Compound({"liquid_depth": Int(0)}), "version": Int(BLOCK_VERSION)}))
             water_idx = len(bpal) - 1
         n = sx * sy * sz
-        layer0, layer1 = [0] * n, [-1] * n
+        layer0, layer1 = [-1] * n, [-1] * n
         pos_data = {}
         for b in nbt["blocks"]:
             x, y, z = (int(v) for v in b["pos"]); s = int(b["state"])
@@ -107,7 +109,7 @@ class Converter:
             if water[s] and water_idx is not None: layer1[i] = water_idx
             be = b.get("nbt")
             if be is not None:
-                d = self.block_entity(be, bpal[idx_of[s]]["name"] if idx_of[s] else "", (x, y, z))
+                d = self.block_entity(be, bpal[idx_of[s]]["name"] if idx_of[s] >= 0 else "", (x, y, z))
                 if d is not None: pos_data[str(i)] = Compound({"block_entity_data": d})
         out = nbtlib.File({
             "format_version": Int(1), "size": List[Int]([Int(sx), Int(sy), Int(sz)]),

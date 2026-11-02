@@ -423,6 +423,44 @@ if (OVS.length) system.runInterval(() => {
     shown.set(p.id, on);
   }
 }, 3);
+// ---- dev: `/scriptevent gb:proc <ProcedureName>` runs one of the mod's procedures as if for you, where you stand
+// (LevelAccessor / x y z / Entity arguments filled from you) - to test scripted events and spawn mechanics on demand.
+system.afterEvents.scriptEventReceive.subscribe(({ id, sourceEntity: p, message }) => {
+  if (id !== "gb:proc" || !p) return;
+  const name = message.trim(); if (!name) return;
+  const fid = M.lookup(new RegExp(`/${name.replace("!", "").replace(/[^\w$]/g, "")}(Procedure)?\\.execute\\(`));
+  if (!fid) { p.sendMessage(`[gb:proc] no procedure ${name}`); return; }
+  const w = JEntity.of(p), lv = w.level(), l = p.location;
+  const types = fid.slice(fid.indexOf("(") + 1, fid.indexOf(")")).match(/\[*(L[^;]+;|[A-Z])/g) ?? [];
+  const nd = types.filter((t) => t === "D").length, xyz = nd === 2 ? [l.x, l.z] : [l.x, l.y, l.z];   // (x, z) procedures take no y
+  let d = 0; const args = types.map((t) => t === "D" ? xyz[d++] ?? 0 : /LevelAccessor|Level;/.test(t) ? lv : /Entity|Player/.test(t) ? w : null);
+  const cw = console.warn, said = []; console.warn = (m) => { said.push(String(m)); cw(m); };
+  // `/scriptevent gb:proc Name!` (trailing !) also logs every heightmap / block read and identity test it makes
+  const verbose = message.trim().endsWith("!"), undo = [];
+  if (verbose) {
+    const wrap = (obj, k, fmt) => { const f = obj[k]; undo.push(() => { obj[k] = f; }); obj[k] = function (...a) { const r = f.apply(this, a); if (said.length < 40) said.push(fmt(a, r)); return r; }; };
+    const pv = (v) => (v?.x_ != null ? `${Math.round(v.x_)},${Math.round(v.y_)},${Math.round(v.z_)}` : String(v));
+    wrap(JLevel.prototype, "getHeight", (a, r) => `h(${Math.round(a[1])},${Math.round(a[2])})=${r}`);
+    wrap(JLevel.prototype, "getBlockState", (a, r) => `b(${pv(a[0])})=${r?.id ?? r}`);
+    wrap(R, "same", (a, r) => `same(${a[0]?.id ?? a[0]?.key ?? typeof a[0]},${a[1]?.id ?? a[1]?.key ?? typeof a[1]})=${r}`);
+  }
+  let r; try { r = M.call(fid, args); } catch (e) { said.push(`threw ${e} ${String(e?.stack ?? "").split("\n")[1] ?? ""}`); } finally { console.warn = cw; for (const u of undo) u(); }
+  p.sendMessage(`[gb:proc] ran ${fid.split("/").pop().split("(")[0]} -> ${r}${said.length ? " | " + said.slice(0, verbose ? 40 : 4).join(" | ").slice(0, verbose ? 2000 : 300) : ""}`);
+});
+// ---- dev: `/scriptevent gb:ground` - what the mod's spawn code sees around you (heightmap + surface blocks at 8 spots
+// out to 128 blocks): shows whether far terrain is loaded / generated for spawn mechanics.
+system.afterEvents.scriptEventReceive.subscribe(({ id, sourceEntity: p }) => {
+  if (id !== "gb:ground" || !p) return;
+  const lv = JLevel.of(p.dimension), l = p.location, out = [];
+  for (const [dx, dz] of [[16, 0], [48, 0], [96, 0], [128, 0], [0, -32], [0, -64], [-100, 40], [60, 110]]) {
+    const x = Math.floor(l.x + dx), z = Math.floor(l.z + dz);
+    let top = "?", b = "?"; try { top = p.dimension.getTopmostBlock({ x, z })?.typeId?.split(":")[1] ?? "none"; } catch (e) { top = "unloaded"; }
+    const h = lv.getHeight({ key: "MOTION_BLOCKING_NO_LEAVES" }, x, z);
+    try { b = p.dimension.getBlock({ x, y: h - 1, z })?.typeId?.split(":")[1] ?? "none"; } catch { b = "unloaded"; }
+    out.push(`${dx},${dz}:${top}/${h}/${b}`);
+  }
+  p.sendMessage("[gb:ground] " + out.join("  "));
+});
 // ---- dev diagnostics: /scriptevent jb:fx (list mod effects + active overlay), /scriptevent jb:fxclear (Java's /effect clear for mod effects)
 system.afterEvents.scriptEventReceive.subscribe(({ id, sourceEntity: p }) => {
   if (!p || (id !== "jb:fx" && id !== "jb:fxclear")) return;

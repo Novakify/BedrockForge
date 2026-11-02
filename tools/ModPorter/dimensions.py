@@ -155,8 +155,8 @@ class Dimensions:
         return dims
 
     def apply_ignored(self):
-        """Bake each structure's ignored blocks into its .mcstructure as structure_void (palette index 0 in
-        structures.py output), the Bedrock equivalent of Java's BlockIgnoreProcessor at place time."""
+        """Bake each structure's ignored blocks into its .mcstructure as index -1 (nothing placed), the Bedrock
+        equivalent of Java's BlockIgnoreProcessor at place time."""
         import nbtlib
         n = 0
         for sid, ign in sorted(self.ignored.items()):
@@ -167,10 +167,10 @@ class Dimensions:
             nbt = nbtlib.File.load(str(f), gzipped=False, byteorder="little")
             pal = nbt["structure"]["palette"]["default"]["block_palette"]
             drop = {i for i, c in enumerate(pal) if str(c["name"]) in names}
-            if not drop or str(pal[0]["name"]) != "minecraft:structure_void": continue
+            if not drop: continue
             layer = nbt["structure"]["block_indices"][0]
             for i, v in enumerate(layer):
-                if int(v) in drop: layer[i] = nbtlib.Int(0)
+                if int(v) in drop: layer[i] = nbtlib.Int(-1)     # -1 = leave the world block as it is
             nbt.save(str(f), gzipped=False, byteorder="little"); n += 1
         self.rep["ignored_baked"] = n
 
@@ -197,7 +197,7 @@ const dimCache = {};
 function dim(id) { if (!(id in dimCache)) { try { dimCache[id] = world.getDimension(id); } catch { dimCache[id] = null; } } return dimCache[id]; }
 // ---- per-chunk "generated" flags, 32x32 chunk regions packed in one dynamic property string each
 const regions = new Map();
-function regKey(d, cx, cz) { return `wg2:${d}:${cx >> 5}:${cz >> 5}`; }
+function regKey(d, cx, cz) { return `wg3:${d}:${cx >> 5}:${cz >> 5}`; }
 function getRegion(k) {
   if (!regions.has(k)) { let s = ""; try { s = world.getDynamicProperty(k) ?? ""; } catch {} regions.set(k, { bits: s.padEnd(1024, "0").split(""), dirty: false }); }
   return regions.get(k);
@@ -254,6 +254,16 @@ function ready(j, q) {
   const y = Math.max(j.D.min_y, Math.min(j.D.min_y + j.D.height - 1, q.y));
   return loadedAt(j.d, q.x, y, q.z) && loadedAt(j.d, q.x + s.x - 1, y, q.z + s.z - 1) && loadedAt(j.d, q.x + s.x - 1, y, q.z) && loadedAt(j.d, q.x, y, q.z + s.z - 1);
 }
+// Older converter builds placed real (invisible) structure_void blocks wherever a tile had nothing: clear them from
+// the footprint before placing again (at most 32768 blocks per fill, so tall footprints go in slabs).
+function clearVoid(d, q, y) {
+  const s = sizeOf(q.sid) ?? { x: 16, y: 16, z: 16 };
+  const slab = Math.max(1, Math.floor(32768 / (s.x * s.z)));
+  for (let y0 = y; y0 < y + s.y; y0 += slab) {
+    const y1 = Math.min(y + s.y - 1, y0 + slab - 1);
+    try { d.runCommand(`fill ${q.x} ${y0} ${q.z} ${q.x + s.x - 1} ${y1} ${q.z + s.z - 1} air replace structure_void`); } catch {}
+  }
+}
 const MS = 4;   // generation's share of the 50 ms server tick
 system.runInterval(() => {
   const t0 = Date.now(), now = system.currentTick;
@@ -268,6 +278,7 @@ system.runInterval(() => {
         let y = q.y;
         if (q.hm) { const top = j.d.getTopmostBlock({ x: q.x, z: q.z }); if (top) y = top.location.y + 1; }
         const opt = {}; if (q.rot) opt.rotation = q.rot; if (q.mir) opt.mirror = q.mir;
+        clearVoid(j.d, q, y);
         world.structureManager.place(q.sid, j.d, { x: q.x, y, z: q.z }, opt);
         j.i++;
       } catch (e) {
@@ -280,7 +291,7 @@ system.runInterval(() => {
   }
   globalThis.__GB_PERF?.add("worldgen", Date.now() - t0);
 }, 1);
-const RADIUS = 4;
+const RADIUS = 8;   // chunks around each player: Java has the whole view distance generated (spawn mechanics look up to 128 blocks away)
 system.runInterval(() => {
   for (const p of world.getAllPlayers()) {
     const dId = p.dimension.id; if (!WG.dims[dId]) continue;
