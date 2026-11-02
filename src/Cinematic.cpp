@@ -2852,6 +2852,7 @@ struct TickIn {
 };
 void tickLocked(TickIn const& in, std::vector<std::function<void()>>& after);
 namespace { void startPropAtlas(); }
+namespace { std::atomic<int> gProbeSlot{-1}; } // the item tooltip probe's slot (record -> detect)
 void tick() {
     startPropAtlas(); // ready long before the first scene
     Kind kind;
@@ -3231,6 +3232,18 @@ unsigned filterButtons(unsigned buttons) {
         if (now - gJumpAt.load() < 200 && gJumpTarget.load() >= 0) t = gJumpTarget.load();
         for (unsigned b = 1; b <= 4; b <<= 1) {
             if (!(buttons & b) || (gPrevButtons & b)) continue; // a new press
+            if (gS.phase == Phase::Active && t >= 0) {
+                // our click moves the hidden screen's cursor onto a slot, where the window shows that slot's tooltip
+                // over its neighbours: the scene keeps the window as it was until the click is done (else the
+                // tooltip's pixels came into the items on the block - glitched textures - and the carried stack
+                // blinked). A tooltip probe under way ends: its frozen picture is older than this click.
+                gS.probe    = -1;
+                gProbeSlot  = -1;
+                std::memcpy(gS.snapBox, gS.iconBox, sizeof gS.snapBox);
+                gSnapRequest = true;
+                gS.frozenOk  = true;
+                gS.holdUntil = gS.clock + 0.35;
+            }
             if (gS.phase == Phase::Active && t >= 100) {
                 gPress = Press{PressState::Swallow, b, -1, now, -1e9};
                 stationAction(t, b, (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
@@ -3967,7 +3980,6 @@ void writeBmp(std::filesystem::path const& p, Img const& im) {
 }
 
 // the item tooltip probe (record -> detect): which slot, where the hidden cursor rests (px); what was found
-std::atomic<int>   gProbeSlot{-1};
 std::atomic<float> gProbeX{0}, gProbeY{0}, gProbeUnit{4};
 std::atomic<int>   gProbeLooks{0}, gProbeHits{0};
 std::mutex         gTipM;
@@ -4923,12 +4935,13 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
                 double x = f.pts[k][0], y = f.pts[k][1], z = f.pts[k][2];
                 wp[k] = c + ax * (x * size) + ay * (y * size) + az * (z * size);
                 // the icon face this face borrows: top -> top, x faces -> the icon's right (+X) side, z faces -> its left (+Z)
-                // A stack's count is printed over the icon's lower right, on its right (+X) side: then every side face
-                // borrows the left (+Z) side instead (the digits cut holes in those faces before)
+                // A stack's count is printed over the icon's lower half (at GUI scale 4 "23" covers both side faces):
+                // then the sides borrow the top face, shaded as the GUI shades its sides (the digits cut holes before)
                 double ux = x, uy = y, uz = z;
                 if (f.ny != 0) uy = 0.5;
-                else if (f.nx != 0 && !src.count) { ux = 0.5; uz = f.nx > 0 ? z : -z; }
-                else if (f.nx != 0) { uz = 0.5; ux = f.nx > 0 ? -z : z; }
+                else if (src.count && f.nx != 0) { uy = 0.5; ux = -y; uz = f.nx > 0 ? z : -z; }
+                else if (src.count) { uy = 0.5; uz = -y; ux = f.nz > 0 ? x : -x; }
+                else if (f.nx != 0) { ux = 0.5; uz = f.nx > 0 ? z : -z; }
                 else { uz = 0.5; ux = f.nz > 0 ? x : -x; }
                 iconUv(src, L, ux, uy, uz, q.uv[k * 2], q.uv[k * 2 + 1]);
             }
@@ -4937,6 +4950,10 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
             // a cube face samples only the inside of the icon's hexagon: nothing of the slot ground is in it, and keying
             // the ground colour away punched holes in grey blocks (stone, cobblestone, andesite...)
             q.mode[2] = -1.0f; // no ground key, solid (see the shader)
+            if (src.count && f.ny == 0) { // the GUI's own side shading (left 0.8, right 0.6), the top is lit fully
+                float k = f.nx != 0 ? 0.6f : 0.8f;
+                for (int i = 0; i < 3; ++i) q.color[i] *= k;
+            }
             if (src.dim) { q.occl[3] = 1; q.mode[1] = 0; } // no slot ground to key away, the white of a blade stays
             if (src.count && f.ny != 0 && src.countBox[2] > src.countBox[0]) { // the top: the digits and the shadow one pixel past them (the sides avoid them)
                 float px = 1.0f / 16.0f;
@@ -6372,7 +6389,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 for (int k = 0; k < 7; ++k) if (std::fabs(sg[k] - c.sig[k]) > 0.02f) return false;
                 return true;
             };
-            if (gS.probe < 0 && gS.tipSlot >= 0 && !moving() && clock - gS.tipSince > 0.12 && !fresh(gS.tipSlot) && gPress.state == PressState::Idle) {
+            if (gS.probe < 0 && gS.tipSlot >= 0 && !moving() && clock - gS.tipSince > 0.12 && !fresh(gS.tipSlot) && gPress.state == PressState::Idle &&
+                clock - gS.tapAt > 0.6) { // not right after a click (the window is still settling)
                 Rect r;
                 if (targetRect(L, gS.tipSlot, r)) {
                     gS.probe = gS.tipSlot; gS.probeAt = clock; gS.probeForced = false;
