@@ -84,6 +84,62 @@ def slugify(s: str) -> str:
 # textures
 # ----------------------------------------------------------------------------------------------------------------
 
+COMPOSITE_LIMIT = 400  # max primary x emissive pre-blended textures per avatar
+
+
+def composite_png(d: bytes, e: bytes) -> bytes | None:
+    """Figura draws the secondary (emissive) texture over the primary with additive blending (RenderType.eyes):
+    primary + emissive. Bedrock's separate emissive pass is not reliably drawn on top of the primary at the same
+    depth (in game: the stick figure's green emissive body never showed, so its colour options did nothing), so the
+    sum is baked into one texture the primary pass draws. Emissive pixels over transparent primary pixels show the
+    emissive colour."""
+    try:
+        import io
+        from PIL import Image
+        di = Image.open(io.BytesIO(d)).convert("RGBA")
+        ei = Image.open(io.BytesIO(e)).convert("RGBA")
+        if ei.size != di.size:
+            ei = ei.resize(di.size, Image.NEAREST)
+        flat = lambda im: list(im.get_flattened_data() if hasattr(im, "get_flattened_data") else im.getdata())  # noqa: E731
+        dp, ep = flat(di), flat(ei)
+        out = []
+        for (dr, dg, db, da), (er, eg, eb, ea) in zip(dp, ep):
+            if ea == 0:
+                out.append((dr, dg, db, da))
+            elif da == 0:
+                out.append((er, eg, eb, ea))
+            else:
+                k = ea / 255
+                out.append((min(255, round(dr + er * k)), min(255, round(dg + eg * k)), min(255, round(db + eb * k)), max(da, ea)))
+        ci = Image.new("RGBA", di.size)
+        ci.putdata(out)
+        buf = io.BytesIO()
+        ci.save(buf, "PNG")
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001 - Pillow missing / unreadable image: no composite, the overlay pass stays
+        return None
+
+
+def add_emissive_composites(files: list, sets: list) -> list:
+    """Every (primary of a texture set) x (emissive texture) pair as a pre-blended texture file ("comp": [d, e]);
+    the runtime draws it in the primary pass for parts showing that pair. Pairs are limited to COMPOSITE_LIMIT
+    (default pairs first, then swap targets)."""
+    d_files = sorted({st["d"] for st in sets if st["d"] is not None and files[st["d"]]["_data"] is not None})
+    e_files = [f["i"] for f in files if f["type"] == "e" and f["_data"] is not None]
+    pairs = [(st["d"], st["e"]) for st in sets if st["d"] in d_files and st["e"] in e_files]
+    pairs += [(dd, ee) for dd in d_files for ee in e_files if (dd, ee) not in pairs]
+    out = []
+    for dd, ee in pairs[:COMPOSITE_LIMIT]:
+        data = composite_png(files[dd]["_data"], files[ee]["_data"])
+        if data is None:
+            continue
+        f = {"i": len(files), "figuraName": f"__comp{dd}_{ee}", "set": -1, "type": "d", "file": None,
+             "w": files[dd]["w"], "h": files[dd]["h"], "_data": data, "comp": [dd, ee]}
+        files.append(f)
+        out.append(f)
+    return out
+
+
 def build_textures(nbt: dict):
     """textureFiles (one per d/e/n/s image) + textureSets (Figura's textures.data order = global texture ids)."""
     tex = nbt.get("textures", {"src": {}, "data": []})
@@ -521,6 +577,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
 
     # 2. rig
     files, sets = build_textures(nbt)
+    composites = add_emissive_composites(files, sets)
     parts = collect_parts(nbt["models"])
     # geometry texture size = size of the set used by most cube faces (its per-face uvs then need no rescale);
     # meshes use normalized uvs so they don't care
@@ -1111,6 +1168,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
                         for t in task_parts]
     rig["vanillaTextures"] = vanilla_res
     rig["gatedFiles"] = gated_files
+    rig["composites"] = [[f["comp"][0], f["comp"][1], f["i"]] for f in composites]
     # per bone (parts, dups, tasks): the texture files it draws with by default (primary, emissive) - the runtime
     # marks a file in use when a visible bone draws with it
     bone_files = {}

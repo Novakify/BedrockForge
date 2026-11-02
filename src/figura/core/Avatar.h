@@ -131,6 +131,9 @@ public:
     std::vector<std::vector<int>>              boneFiles;
     std::vector<char>                          fileUsed;
     void computeFileUse();
+    // emissive composites (rig "composites"): (primary file, emissive file) -> pre-blended file the primary pass draws
+    std::map<std::pair<int, int>, int>         composites;
+    void applyComposites();
     std::vector<uint32_t>                      quadPx;
     std::map<std::string, std::string>         vanillaTextures; // "minecraft:textures/...png" -> bundle file (rig)
     Mat4                                       worldToModel;   // Figura WORLD space -> player model space, per frame

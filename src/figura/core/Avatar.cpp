@@ -149,6 +149,10 @@ bool Avatar::load(std::filesystem::path const& bundleDir, std::filesystem::path 
             if (b < boneFiles.size() && v.isArray())
                 for (auto const& f : v.items()) boneFiles[b].push_back(int(f.asNumber()));
         }
+    if (rig && (*rig)["composites"].isArray())
+        for (auto const& c : (*rig)["composites"].items())
+            if (c.isArray() && c.items().size() == 3)
+                composites[{int(c[0].asNumber()), int(c[1].asNumber())}] = int(c[2].asNumber());
     if (rig && (*rig)["vanillaTextures"].isObject())
         for (auto const& [k, v] : (*rig)["vanillaTextures"].members()) vanillaTextures[k] = v.str();
     out.resize(boneParent.size());
@@ -905,6 +909,25 @@ void Avatar::traverse(Part* p, TextureOverride prim, TextureOverride sec, bool p
     p->resetVanillaTransforms();
 }
 
+void Avatar::applyComposites() {
+    if (composites.empty()) return;
+    for (size_t b = 0; b < out.size() && b < boneFiles.size(); b++) {
+        PartOut& o = out[b];
+        if (!o.visible || (b < uvBones.size() && uvBones[b])) continue; // uv_anim parts keep their own passes
+        int d = -1, e = -1, nd = 0, ne = 0;
+        for (int f : boneFiles[b]) {
+            if (f < 0 || size_t(f) >= textureFiles.size()) continue;
+            if (textureFiles[size_t(f)].kind == 'e') { e = f; ne++; }
+            else { d = f; nd++; }
+        }
+        if (nd > 1 || ne > 1) continue; // a part drawn with several texture sets: no single pair
+        int P = o.primary >= 0 ? o.primary : d, E = o.secondary >= 0 ? o.secondary : e;
+        if (P < 0 || E < 0) continue;
+        auto it = composites.find({P, E});
+        if (it != composites.end()) o.primary = it->second; // the emissive pass still draws on top where it can
+    }
+}
+
 void Avatar::computeFileUse() {
     fileUsed.assign(textureFiles.size() + 1, 0);
     auto mark = [&](int f) { if (f >= 0 && size_t(f) < fileUsed.size()) fileUsed[size_t(f)] = 1; };
@@ -1005,6 +1028,7 @@ void Avatar::frame(float delta) {
     }
     traverse(root, {}, {}, true, rootMat);
     solveBones();
+    applyComposites();
     computeFileUse();
     if (!scriptError) {
         if (player.loaded) {
