@@ -64,8 +64,9 @@ inline void drawLabel(MinecraftUIRenderContext& ctx, float x, float y, std::stri
     TextMeasureData const  textData{scale, 0.0f, false, false, false, ::ui::TextAlignment::Left};
     CaretMeasureData const caret{-1, false};
     float const            lineH = 10.0f * scale;
+    if (!*handle.mDefaultFont) return; // 26.60: FontHandle::getFont() is gone, the handle's default font is the same font
     auto draw = [&](float off, mce::Color const& col) {
-        ctx.drawText(handle.getFont(), RectangleArea{x + off, x + off + 400.0f, y + off, y + off + lineH},
+        ctx.drawText(**handle.mDefaultFont, RectangleArea{x + off, x + off + 400.0f, y + off, y + off + lineH},
                      std::string(text), col, c.a, ::ui::TextAlignment::Left, textData, caret);
     };
     draw(1.0f, mce::Color{0.15f, 0.15f, 0.15f, 1.0f});
