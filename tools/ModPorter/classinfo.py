@@ -29,24 +29,38 @@ def calls(code):
 
 
 def registries(tmp, classes):
-    """MCreator/DeferredRegister: REGISTRY.register("name", () -> new XBlock()) in <clinit>; lambdas numbered in order."""
+    """MCreator/DeferredRegister: REGISTRY.register("name", () -> new XBlock()) in <clinit>. Each name is the ldc right
+    before an invokedynamic; that call site's bootstrap method (javap -v BootstrapMethods) names the lambda that
+    builds the object. (Pairing the n-th string with lambda$static$n was off by one - the modid "the_wonderland" is
+    an ldc too - so every block / item / effect got its neighbour's Java class: teleporters ran other blocks' code.)"""
+    import subprocess
     reg = {"block": {}, "item": {}, "entity": {}, "effect": {}, "sound": {}}
     for cls in classes:
         low = cls.split(".")[-1].lower()
         kind = "block" if low.endswith("blocks") else "item" if low.endswith("items") else "effect" if low.endswith("mobeffects") else None
         if not kind: continue
         ms = C.parse_methods(C.javap(tmp, cls))
-        names = []
-        for off, op, rest in ms.get("<clinit>", []):
+        verbose = subprocess.run(["javap", "-v", "-p", "-cp", str(tmp), cls], capture_output=True, text=True).stdout
+        boot, cur = {}, None                      # bootstrap index -> lambda method name
+        if "BootstrapMethods:" in verbose:
+            for line in verbose.split("BootstrapMethods:", 1)[1].splitlines():
+                m = re.match(r"^\s+(\d+): #\d+ REF_invokeStatic", line)
+                if m: cur = int(m.group(1)); continue
+                m = re.search(r"REF_invoke\w+ [\w/$]+\.(lambda\$[\w$]+):", line)
+                if m and cur is not None and cur not in boot: boot[cur] = m.group(1)
+        code = ms.get("<clinit>", [])
+        pending = None
+        for off, op, rest in code:
             if op.startswith("ldc"):
-                v = C.const_of(op, rest)
-                if isinstance(v, str) and re.fullmatch(r"[a-z0-9_]+", v): names.append(v)
-        lam = sorted((k for k in ms if k.startswith("lambda$static$")), key=lambda k: int(k.rsplit("$", 1)[1]))
-        for i, name in enumerate(names):
-            if i >= len(lam): break
-            body = ms[lam[i]]
-            new = next((C.comment(r).split("class ")[-1].replace("/", ".") for o, op, r in body if op == "new"), None)
-            if new: reg[kind][name] = new
+                v = C.const_of(op, rest); pending = v if isinstance(v, str) and re.fullmatch(r"[a-z0-9_]+", v) else None
+                continue
+            if op == "invokedynamic" and pending:
+                m = re.search(r"InvokeDynamic #(\d+):", rest)
+                lam = boot.get(int(m.group(1))) if m else None
+                body = ms.get(lam) if lam else None
+                new = next((C.comment(r).split("class ")[-1].replace("/", ".") for o, op2, r in body if op2 == "new"), None) if body else None
+                if new: reg[kind][pending] = new
+            pending = None
     return reg
 
 

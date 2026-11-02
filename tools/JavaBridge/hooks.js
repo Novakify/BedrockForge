@@ -154,6 +154,23 @@ system.runInterval(() => {
   for (const [id, c] of MOVES) { let ok = false; try { ok = c.w.e.isValid; } catch {} if (!ok) { MOVES.delete(id); continue; } c.step(); }
   PERF.add("steer", Date.now() - t1);
 }, 1);
+// ---- `/scriptevent gb:tpdebug`: say in chat which translated Java method teleports an entity (where it goes and the
+// calling procedure) - for tracking dimension travel / exits.
+system.afterEvents.scriptEventReceive?.subscribe?.((ev) => {
+  if (ev.id !== "gb:tpdebug" || JEntity.prototype.__tpdbg) return;
+  const orig = JEntity.prototype.teleportTo; JEntity.prototype.__tpdbg = true;
+  JEntity.prototype.teleportTo = function (...a) {
+    const st = String(new Error().stack ?? "").split("\n").slice(2, 5).map((l) => l.trim()).join(" < ");
+    const where = a[0] instanceof JLevel ? `${a[0].d.id} ${a.slice(1, 4).map((v) => Math.round(v)).join(",")}` : a.slice(0, 3).map((v) => Math.round(v)).join(",");
+    const m = `[TP] ${this.e?.typeId} -> ${where} | ${st}`; console.warn(m); for (const p of world.getAllPlayers()) { try { p.sendMessage(m.slice(0, 400)); } catch {} }
+    return orig.apply(this, a);
+  };
+  const oc = R.command; R.command = function (src, c, ...r) {
+    if (/\b(tp|teleport|execute in)\b/.test(String(c))) { const m = `[TP] command: ${c}`; console.warn(m); for (const p of world.getAllPlayers()) { try { p.sendMessage(m.slice(0, 300)); } catch {} } }
+    return oc.call(this, src, c, ...r);
+  };
+  try { ev.sourceEntity?.sendMessage?.("[TP] debug on"); } catch {}
+});
 // ---- MobAI parity trace (docs/PORT_MOBAI.md W4): `/tag @s add gb_trace` (or `/scriptevent gb:trace on|off`). One JSON line per tick per mod mob
 // (and player) within 48 blocks, to the content log as "[MobAITrace] {...}"; same fields as the Java recorder mod.
 let TRACE = false;
