@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <cwctype>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -25,6 +26,10 @@
 #include "LLShim.h"
 #include "LyricsCamera.h"
 #include <unordered_map>
+#include <fstream>
+#include <iterator>
+
+#include "SkyMaterialScan.h"
 
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"
@@ -53,6 +58,13 @@ struct Ui {
 std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one dome per frame
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
+// sky shaders learned from the game's own materials (learnGameMaterials / learnMaterialFile)
+std::mutex                        gLearnMutex;
+std::unordered_map<uint64_t, int> gLearned;            // pixel-shader hash -> Kind
+int                               gLearnKind[5]{};     // learned shaders per Kind
+int                               gLearnFiles = 0, gLearnMissing = 0, gLearnPack = 0;
+std::atomic<long>                 gTagged[5]{};        // game pipelines tagged per Kind
+std::atomic<long>                 gTaggedBuiltin{0};   // ... found only by the built-in 1.26.51 table
 
 BF_CopySkyFrame_t bfCopy() {
     static BF_CopySkyFrame_t fn = nullptr;
@@ -447,6 +459,16 @@ void drawUi() {
     ImGui::SetNextItemWidth(160);
     ImGui::SliderFloat("VV sky brightness", &gUi.vvGain, 0.01f, 1000.0f, "%.3g", ImGuiSliderFlags_Logarithmic);
     ImGui::Text("Stage 2: %s", stage2().c_str());
+    {
+        std::lock_guard l(gLearnMutex);
+        ImGui::Text("Sky shaders learned from the game: %d files (%d from packs), sky %d, sun/stars %d, clouds %d, Vibrant Visuals %d",
+                    gLearnFiles, gLearnPack, gLearnKind[Dome], gLearnKind[Hide], gLearnKind[Clouds], gLearnKind[VvSky]);
+        if (gLearnMissing) ImGui::TextColored(ImVec4(1, .7f, .3f, 1), "%d sky material files could not be read", gLearnMissing);
+        if (!gLearnKind[VvSky])
+            ImGui::TextColored(ImVec4(1, .7f, .3f, 1), "No Vibrant Visuals sky shaders found - the game update may have changed the materials");
+    }
+    ImGui::Text("Game sky pipelines tagged: sky %ld, sun/stars %ld, clouds %ld, Vibrant Visuals %ld (%ld by the old table only)",
+                gTagged[Dome].load(), gTagged[Hide].load(), gTagged[Clouds].load(), gTagged[VvSky].load(), gTaggedBuiltin.load());
     ImGui::Text("Weather: %ld frames drawn, %ld without the game camera", gWeatherFrames.load(), gWeatherNoCam.load());
     ImGui::Checkbox("Show sky preview", &gUi.enabled);
     ImGui::RadioButton("Corner window", &gUi.where, 0);
@@ -751,7 +773,9 @@ CamB pickCam(BfSkyFrameV1 const& h) {
 }
 } // namespace
 
-int kindOfHash(uint64_t h) {
+namespace {
+
+int builtinKind(uint64_t h) {
     switch (h) {
     case 0xd9972838e1f3a16full: case 0xe12627ef9fbf72f5ull: return Dome;   // Sky (Opaque)
     case 0x98a771a0871307d3ull: case 0x21dd4e6159f0b6d7ull:                // Stars
@@ -764,6 +788,53 @@ int kindOfHash(uint64_t h) {
     case 0x5e8488d4230fb66bull: case 0x525642266eb1f729ull: return Clouds; // CloudsForwardPBR
     default: return None;
     }
+}
+
+std::string_view canonical(std::wstring_view fileName) { // "starsforwardpbr.material.bin" -> "StarsForwardPBR"
+    constexpr std::wstring_view ext = L".material.bin";
+    if (fileName.size() <= ext.size()) return {};
+    auto stem = fileName.substr(0, fileName.size() - ext.size());
+    for (auto m : rf::skyscan::kMaterials) {
+        if (m.size() != stem.size()) continue;
+        bool eq = true;
+        for (size_t i = 0; i < m.size() && eq; ++i) eq = towlower(stem[i]) == towlower(wchar_t(m[i]));
+        if (eq) return m;
+    }
+    return {};
+}
+} // namespace
+
+void learnMaterialFile(std::filesystem::path const& file, std::wstring_view fileName, char const* source) {
+    auto name = canonical(fileName);
+    if (name.empty()) return;
+    std::ifstream f(file, std::ios::binary);
+    if (!f) { std::lock_guard l(gLearnMutex); ++gLearnMissing; return; }
+    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)), {});
+    auto shaders = rf::skyscan::scan(d.data(), d.size());
+    std::lock_guard l(gLearnMutex);
+    ++gLearnFiles;
+    if (source && *source) ++gLearnPack;
+    for (auto& s : shaders)
+        if (int k = rf::skyscan::kindFor(name, s); k > 0 && k < 5)
+            if (gLearned.emplace(s.hash, k).second) ++gLearnKind[k];
+}
+
+void learnGameMaterials(std::filesystem::path const& dir) {
+    for (auto m : rf::skyscan::kMaterials) {
+        std::wstring fn(m.begin(), m.end());
+        fn += L".material.bin";
+        learnMaterialFile(dir / fn, fn, nullptr);
+    }
+}
+
+int kindOfHash(uint64_t h) {
+    {
+        std::lock_guard l(gLearnMutex);
+        if (auto it = gLearned.find(h); it != gLearned.end()) return it->second;
+    }
+    int k = builtinKind(h);
+    if (k) ++gTaggedBuiltin;
+    return k;
 }
 
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d) {
@@ -779,6 +850,7 @@ void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_D
     g.vv     = kind == VvSky;
     g.farZ   = (d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_GREATER || d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_GREATER_EQUAL)
                    ? 0.0f : 1.0f;
+    if (kind > 0 && kind < 5) ++gTagged[kind];
     std::lock_guard l(gPsoMutex);
     gGame[pso] = std::move(g);
 }

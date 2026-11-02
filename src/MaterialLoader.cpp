@@ -23,6 +23,7 @@
 #include "mc/resources/ResourcePackManager.h"
 
 #include "Options.h"
+#include "SkyPass.h"
 
 namespace rf::materials {
 
@@ -108,7 +109,9 @@ bool redirect(wchar_t const* path, wchar_t* out, size_t outLen) {
     ++gSeen;
     std::wstring name(p.substr(p.find_last_of(L"\\/") + 1));
     ++tInHook;
-    bool hit = fromResourcePacks(*st, name, out, outLen) || fromShaderpack(*st, name, out, outLen);
+    bool pack = fromResourcePacks(*st, name, out, outLen);
+    bool hit  = pack || fromShaderpack(*st, name, out, outLen);
+    if (hit) rf::sky::learnMaterialFile(out, name, pack ? "pack" : "shaderpack"); // a replaced sky material: learn its shaders
     --tInHook;
     return hit;
 }
@@ -205,6 +208,7 @@ void install(fs::path const& modDir) {
     std::wstring data = lower((fs::path(exe).parent_path() / "data" / "renderer" / "materials").wstring()) + L"\\";
     gState.store(std::make_shared<State const>(State{data, {}, (modDir / "cache" / "rp").wstring()}));
     setShaderpack(RfOptions::shaderPack.get());
+    rf::sky::learnGameMaterials(fs::path(exe).parent_path() / "data" / "renderer" / "materials"); // before any hook
 
     auto& log = ll::mod::NativeMod::current()->getLogger();
     if (HMODULE kb = GetModuleHandleW(L"KernelBase.dll")) {

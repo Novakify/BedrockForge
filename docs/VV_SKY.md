@@ -33,3 +33,15 @@
    cloud draw instead.
 2. Tune "VV sky brightness" until the sky sits right next to the terrain at noon, dusk and night; bake the default.
 3. Check weather particles, My picture, underground (no sky pixels), water reflections (vanilla, expected).
+
+## Update-proof hashes (learned at boot)
+
+RF no longer depends only on the hard-coded 1.26.51 table. At boot `materials::install` calls
+`rf::sky::learnGameMaterials(<game>/data/renderer/materials)`, which scans Sky / Stars / SunMoon / Clouds and their
+ForwardPBR versions with `src/SkyMaterialScan.h` (the same rules as `tools/vv_sky_hashes.py`) and learns their pixel
+shader hashes. When a resource pack or shaderpack serves one of those materials, the served file is scanned too.
+`kindOfHash` checks the learned set first and falls back to the old table. F6 > LyricsFlow sky shows how many were
+learned and how many game pipelines were tagged, and warns when no Vibrant Visuals sky shaders were found.
+
+Check on Linux: `g++ -std=c++20 -Isrc tools/sky_scan_test.cpp -o sst && ./sst <materials dir>` (1.26.51: 14 shaders,
+identical to the table).
