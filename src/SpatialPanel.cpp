@@ -1058,7 +1058,7 @@ struct SrcStat {
     std::atomic<long> calls{0}, game{0}, remapped{0};
 };
 SrcStat gStCursorInfo, gStPhys, gStMsgPos, gStPump, gStGcpGame;
-std::atomic<long> gPumpSkippedWnd{0};
+std::atomic<long> gPumpSkippedWnd{0}, gPumpButtonsDropped{0};
 
 // In-world screens read the cursor with GetCursorPos (the title screen uses the WM_* coordinates): remap both.
 using GetCursorPos_t = BOOL(WINAPI*)(LPPOINT);
@@ -1278,6 +1278,14 @@ void pumpRemap(MSG* m, void* ra) {
     if (!h || m->hwnd != h) return;
     ++gStPump.calls;
     if (fromGame(ra)) ++gStPump.game;
+    // a Cinematic scene: the hidden screen's buttons come from GameInput only (filterButtons times them: hover first,
+    // then the press). The window's own button message arrives at once, before that hover, so the screen saw two
+    // presses (one from each source) and a pick was undone by the second one: the message goes nowhere.
+    if (client && m->message != WM_MOUSEMOVE && gCineScreen.load(std::memory_order_relaxed) && cine::active()) {
+        m->message = WM_NULL;
+        ++gPumpButtonsDropped;
+        return;
+    }
     if (!gS.pumpRemap) return;
     POINT pt = m->pt;
     if (!remapScreen(pt)) return;
@@ -1672,7 +1680,7 @@ void writeDiag() {
         line("GetPhysicalCursorPos", gStPhys);
         line("GetMessagePos", gStMsgPos);
         line("pump mouse MSG", gStPump);
-        len += snprintf(b + len, sizeof b - len, "  wndproc skipped (already remapped in pump) %ld; pump remap %s\n", gPumpSkippedWnd.load(), gS.pumpRemap ? "on" : "off");
+        len += snprintf(b + len, sizeof b - len, "  wndproc skipped (already remapped in pump) %ld; scene button messages dropped %ld; pump remap %s\n", gPumpSkippedWnd.load(), gPumpButtonsDropped.load(),gS.pumpRemap ? "on" : "off");
         {
             std::lock_guard l(gScreenMutex);
             len += snprintf(b + len, sizeof b - len, "screens (auto panel %s):", gS.autoPanel ? "on" : "off");
