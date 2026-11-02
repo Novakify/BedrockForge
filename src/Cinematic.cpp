@@ -4713,6 +4713,7 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
             int   n    = int(cell);
             std::vector<uint8_t> mask(size_t(n) * n);
             for (int s = 0; s < kSampled; ++s) {
+                { Rect sr0; if (!sampledRect(L, s, sr0)) continue; } // not copied for this window (no such button): nothing to read
                 int other = 0, total = 0, x0 = n, y0 = n, x1 = -1, y1 = -1, violet = 0, cx0 = n, cy0 = n, cx1 = -1, cy1 = -1, shutPx = 0;
                 double sr = 0, sgc = 0, sb = 0;
                 float  ref[3] = {0, 0, 0}; // a button's own ground: its inside corner
