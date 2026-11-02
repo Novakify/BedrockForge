@@ -241,6 +241,8 @@ struct State {
     std::string                   pendingAvatar; // switch requested mid-world: applied on the next world join
     std::vector<std::pair<int, HashedString>> useNames; // v.fbuse<file> (render controller gating)
     std::vector<float>            cache;      // last value written per bone var (16 per bone); NaN = unknown
+    int64_t                       frameNo = 0, dumpAtFrame = -1, wheelSeqNext = 0;
+    int                           wheelSeqPos = 0;
     int64_t                       lastFullWriteMs = 0;
 };
 State* gS = nullptr;
@@ -330,8 +332,9 @@ void writeVars(State& s, Actor& a) {
             put(i, 15, n.usv, o.uv[3]);
         }
     }
+    bool gate = s.avatar->tune("rcGate", 1) != 0; // 0: every texture pass always on (pre-gating behaviour)
     for (auto const& [f, n] : s.useNames)
-        set(n, f >= 0 && size_t(f) < s.avatar->fileUsed.size() && s.avatar->fileUsed[size_t(f)] ? 1.0 : 0.0);
+        set(n, !gate || (f >= 0 && size_t(f) < s.avatar->fileUsed.size() && s.avatar->fileUsed[size_t(f)]) ? 1.0 : 0.0);
     for (int side = 0; side < 2; side++) { // held items on Figura's item pivots (compile.py animation.figura.items)
         auto const& io = s.avatar->itemOut[side];
         if (!io.configured) continue;
@@ -523,6 +526,7 @@ bool loadAvatar(State& s, std::string const& name) {
     }
     s.avatar     = std::move(av);
     s.wheelExecDone = false;
+    s.wheelSeqPos   = 0;
     if (auto t = lyrics::json::parse(readAll(s.root / "tuning.json")))
         for (auto const& [k, v] : t->members())
             if (v.isNumber()) s.avatar->tuning[k] = v.asNumber();
@@ -543,7 +547,29 @@ std::vector<std::string> listAvatars(State const& s) {
 }
 
 // ---------------------------------------------------------------- action wheel (info panel + digit keys)
+std::string wheelTitle(State& s, int i) { // "page / action" titles of slot i (1-8) on the current page
+    lua_State* L = s.avatar->L;
+    std::string page = "(none)", act = "(empty)";
+    lua_getfield(L, LUA_REGISTRYINDEX, "fb.wheel");
+    if (lua_isfunction(L, -1) && lua_pcall(L, 0, 1, 0) == 0 && lua_istable(L, -1)) {
+        lua_getfield(L, -1, "title");
+        if (lua_isstring(L, -1)) page = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        lua_rawgeti(L, -1, i);
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "title");
+            if (lua_isstring(L, -1)) act = lua_tostring(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    return page + " / " + act;
+}
+
 void runWheelAction(State& s, int i, bool right) {
+    s.host->write("[figurabridge] wheel " + std::to_string(i) + (right ? " (right)" : "") + ": " + wheelTitle(s, i));
+    s.dumpAtFrame = s.frameNo + 20; // log what the game holds once the action took effect
     lua_State* L = s.avatar->L;
     lua_getglobal(L, "action_wheel");
     lua_getfield(L, -1, "execute");
@@ -564,12 +590,22 @@ void wheelFrame(State& s, bedrock_forge::client::Frame& f) {
         s.wheelExecDone = true;
         runWheelAction(s, n, false);
     }
+    // test hook: tuning "wheelSeq" = digits run one after another (e.g. 63 = slot 6, then slot 3), once per reload
+    if (int q = int(s.avatar->tune("wheelSeq", 0)); q > 0 && s.wheelSeqPos >= 0) {
+        std::string digits = std::to_string(q);
+        if (s.wheelSeqPos < int(digits.size()) && s.frameNo >= s.wheelSeqNext) {
+            runWheelAction(s, digits[size_t(s.wheelSeqPos)] - '0', false);
+            s.wheelSeqPos++;
+            s.wheelSeqNext = s.frameNo + 15;
+        }
+    }
     // Figura's default is B, but B opens Bedrock's emote wheel, so the toggle key defaults to Z
     // (tuning "wheelKey" = a Windows virtual-key code, e.g. 66 for B)
     int  wheelKey = int(s.avatar->tune("wheelKey", 'Z'));
     bool bDown    = gameFocused() && (GetAsyncKeyState(wheelKey) & 0x8000);
     if (bDown && !s.bWasDown) {
         s.wheelHeld = !s.wheelHeld; // tap: open / close (hold-to-open is awkward on Bedrock)
+        s.host->write(std::string("[figurabridge] wheel ") + (s.wheelHeld ? "opened" : "closed"));
         lua_State* WL = s.avatar->L;  // action_wheel:isEnabled() follows the wheel
         lua_getfield(WL, LUA_REGISTRYINDEX, "fb.wheelState");
         if (lua_isfunction(WL, -1)) {
@@ -696,6 +732,28 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     s.avatar->renderMode = s.avatar->player.isFirstPerson ? "FIRST_PERSON" : "RENDER";
     s.avatar->frame(delta);
     writeVars(s, lp);
+    s.frameNo++;
+    if (s.dumpAtFrame >= 0 && s.frameNo >= s.dumpAtFrame) { // after a wheel action: what Bedrock actually holds
+        s.dumpAtFrame = -1;
+        std::map<std::pair<int, int>, int> texCount;
+        for (auto const& o : s.avatar->out)
+            if (o.visible && o.opacity > 0.001f) texCount[{o.primary, o.secondary}]++;
+        std::string line = "[figurabridge] state: visible bones by (primary,secondary):";
+        for (auto const& [k, c] : texCount) line += " (" + std::to_string(k.first) + "," + std::to_string(k.second) + ")x" + std::to_string(c);
+        line += " | in use (runtime -> actor):";
+        int m = s.nameMode < 0 ? 0 : s.nameMode;
+        for (auto const& [fi, n] : s.useNames)
+            if (fi >= 0 && size_t(fi) < s.avatar->fileUsed.size() && s.avatar->fileUsed[size_t(fi)])
+                line += " " + std::to_string(fi) + "->" + std::to_string(int(readVar(lp, vn(m, "fbuse" + std::to_string(fi)).c_str())));
+        for (size_t b = 0; b < s.avatar->out.size(); b++)
+            if (s.avatar->out[b].visible && s.avatar->out[b].secondary >= 0) {
+                std::string bn = "fb" + std::to_string(b);
+                line += " | bone " + std::to_string(b) + " e=" + std::to_string(s.avatar->out[b].secondary) + " actor e=" +
+                        std::to_string(int(readVar(lp, vn(m, bn + "e").c_str()))) + " v=" + std::to_string(int(readVar(lp, vn(m, bn + "v").c_str())));
+                break;
+            }
+        s.host->write(line);
+    }
     wheelFrame(s, f);
     if (!s.host->lastError.empty()) f.infoLines.push_back("Figura error: " + s.host->lastError.substr(0, 120));
     if (auto t = s.host->titleText(); !t.empty()) f.infoLines.push_back(t + (s.host->subtitle.empty() ? "" : "  - " + s.host->subtitle));
