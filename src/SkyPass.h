@@ -8,6 +8,8 @@
 // UiCapture tags UI ones, record the dome right after the game's sky draw, restore the game's state).
 #pragma once
 #include <cstdint>
+#include <filesystem>
+#include <string_view>
 
 struct ID3D12Device;
 struct ID3D12GraphicsCommandList;
@@ -33,7 +35,11 @@ enum Kind : int { None = 0, Dome = 1, Hide = 2, Clouds = 3,
 /// first vanilla star / sun / moon draw of the frame, depth-tested so only pixels with nothing in front change.
 bool claimVvFrame(); // true once per Present (the first VvSky draw of the frame gets our dome)
 bool vvWanted();     // "Vibrant Visuals too" is on (F6)
-int  kindOfHash(uint64_t psHash);
+int  kindOfHash(uint64_t psHash); // learned from the game's own sky materials first, then the 1.26.51 table
+/// Learn the sky pixel-shader hashes from the materials the game really loads (SkyMaterialScan.h), so a game update
+/// or a pack / shaderpack that replaces a sky material keeps working without a new RF build.
+void learnGameMaterials(std::filesystem::path const& materialsDir);                                // at boot
+void learnMaterialFile(std::filesystem::path const& file, std::wstring_view fileName, char const* source); // pack-served
 /// A game pipeline with a sky pixel shader was created (desc = the game's, root signature kept for our pipelines).
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& desc);
 int  kindOf(ID3D12PipelineState* pso); // any thread
