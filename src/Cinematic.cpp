@@ -4975,7 +4975,7 @@ void iconCube(JPose const& cam, Basis const& b, Layout const& L, IconSrc const& 
                 if (split) y = part == 0 ? (y > 0 ? h : 0.0) : (y > 0 ? 0.0 : -h);
                 wp[k] = c + ax * (x * size) + ay * (y * size) + az * (z * size);
                 // the icon face this face borrows: top -> top, x faces -> the icon's right (+X) side, z faces -> its left (+Z)
-                double ux = x, uy = split ? std::fabs(y) : y, uz = z;
+                double ux = x, uy = split ? h - (h - std::fabs(y)) * 0.7 : y, uz = z; // (the top 35% of the face: the digits reach up to its middle)
                 if (f.ny != 0) uy = 0.5;
                 else if (f.nx != 0) { ux = 0.5; uz = f.nx > 0 ? z : -z; }
                 else { uz = 0.5; ux = f.nz > 0 ? x : -x; }
