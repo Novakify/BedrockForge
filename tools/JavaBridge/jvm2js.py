@@ -233,6 +233,9 @@ class Transpiler:
         cmp1 = {"ifeq": "===0", "ifne": "!==0", "iflt": "<0", "ifge": ">=0", "ifgt": ">0", "ifle": "<=0"}
         if op in cmp1: return jump(f"R.num(S.pop()){cmp1[op]}")
         cmp2 = {"if_icmpeq": "===", "if_icmpne": "!==", "if_icmplt": "<", "if_icmpge": ">=", "if_icmpgt": ">", "if_icmple": "<="}
+        # ints compare by value: a Java boolean is an int on the JVM stack, but runtime helpers hand back JS true/false
+        # (Boolean.booleanValue() == 1 was always false: every MCreator config gate "Can X spawn?" stayed shut)
+        if op in ("if_icmpeq", "if_icmpne"): return "t1=S.pop();t2=S.pop();" + jump(f"R.num(t2){cmp2[op]}R.num(t1)")
         if op in cmp2: return "t1=S.pop();t2=S.pop();" + jump(f"t2{cmp2[op]}t1")
         if op == "if_acmpeq": return "t1=S.pop();t2=S.pop();" + jump("R.same(t2,t1)")
         if op == "if_acmpne": return "t1=S.pop();t2=S.pop();" + jump("!R.same(t2,t1)")
