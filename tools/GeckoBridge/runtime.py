@@ -204,6 +204,11 @@ world.afterEvents.entityRemove.subscribe(({ removedEntityId }) => { state.delete
 
 // GeckoLib block entities: Bedrock blocks can't animate, so a player-placed block gets an animated companion entity
 // (the converted GeckoLib model) and hides its own bones while it is there.
+function liveDims() {             // dimensions with a player in them (only those have ticking chunks to look at)
+  const out = [], seen = new Set();
+  for (const p of world.getAllPlayers()) { let d; try { d = p.dimension; } catch { continue; } if (!seen.has(d.id)) { seen.add(d.id); out.push(d); } }
+  return out;
+}
 const BLOCKS = CFG.blocks ?? {};
 function setHas(block, v) { try { block.setPermutation(block.permutation.withState("gb:has_entity", v)); } catch {} }
 function companionsAt(dim, loc, id) {
@@ -219,8 +224,8 @@ if (Object.keys(BLOCKS).length) {
     for (const c of companionsAt(block.dimension, block.location, id)) { try { c.remove(); } catch {} }
   });
   system.runInterval(() => {      // block gone some other way (explosion, horde): drop its companion
-    for (const dimId of ["overworld", "nether", "the_end"]) {
-      let list = []; try { list = world.getDimension(dimId).getEntities({ families: ["gb_block_companion"] }); } catch { continue; }
+    for (const dm of liveDims()) {
+      let list = []; try { list = dm.getEntities({ families: ["gb_block_companion"] }); } catch { continue; }
       for (const c of list) {
         try {
           const b = c.dimension.getBlock({ x: Math.floor(c.location.x), y: Math.floor(c.location.y + 0.01), z: Math.floor(c.location.z) });
@@ -233,12 +238,13 @@ if (Object.keys(BLOCKS).length) {
 }
 
 system.runInterval(() => {
-  now += TICK;
-  for (const dimId of ["overworld", "nether", "the_end"]) {
+  now += TICK; const t0 = Date.now();
+  for (const dm of liveDims()) {      // every dimension a player is in (mod dimensions too: their mobs animate)
     let list = [];
-    try { list = world.getDimension(dimId).getEntities({ families: [NS] }); } catch { continue; }
+    try { list = dm.getEntities({ families: [NS] }); } catch { continue; }
     for (const e of list) { const conf = CFG.entities[e.typeId]; if (conf) { try { drive(e, conf); } catch {} } }
   }
+  globalThis.__GB_PERF?.add("anim", Date.now() - t0);
 }, TICK);
 '''
 

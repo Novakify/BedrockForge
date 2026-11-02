@@ -1099,11 +1099,20 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     ctl = vanilla_rp / "animation_controllers/player.animation_controllers.json"
     read_vars = set(_r2.findall(r"variable\.([a-z0-9_]+)", ctl.read_text(encoding="utf-8", errors="replace"), _r2.I)) \
         if ctl.is_file() else set()
-    read_vars |= {"melee_spear_equipped"}
+    # ...and the vanilla player animations read some too (game 1.26's player_firstperson.animation.json reads
+    # variable.first_person_item_rotation_factor every frame: ~64000 Molang errors per 6 minutes, written to the
+    # content log one by one = constant frame stutter). Variables only the game's newer copy uses get their real value.
+    for af in ("animations/player.animation.json", "animations/player_firstperson.animation.json"):
+        f = vanilla_rp / af
+        if f.is_file():
+            read_vars |= set(_r2.findall(r"variable\.([a-z0-9_]+)", f.read_text(encoding="utf-8", errors="replace"), _r2.I))
+    GAME_ONLY = {"melee_spear_equipped": None,
+                 "first_person_item_rotation_factor": "math.sin((1 - variable.attack_time) * 180.0)"}
+    read_vars |= set(GAME_ONLY)
     pre = desc["scripts"].setdefault("pre_animation", [])
     assigned = set(_r2.findall(r"variable\.([a-z0-9_]+)\s*=", " ".join(pre + desc["scripts"].get("initialize", [])), _r2.I))
     for v in sorted(read_vars - assigned):
-        pre.append(f"variable.{v} = variable.{v} ?? 0;")
+        pre.append(f"variable.{v} = {GAME_ONLY[v]};" if GAME_ONLY.get(v) else f"variable.{v} = variable.{v} ?? 0;")
     desc["animations"]["figura_drive"] = "animation.figura.drive"
     desc["scripts"].setdefault("animate", []).append("figura_drive")
     if item_pivots:

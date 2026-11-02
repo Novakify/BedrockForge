@@ -13,6 +13,10 @@ import json, re
 from pathlib import Path
 
 
+STEPS = ["raw_generation", "lakes", "local_modifications", "underground_structures", "surface_structures", "strongholds",
+         "underground_ores", "underground_decoration", "fluid_springs", "vegetal_decoration", "top_layer_modification"]
+
+
 def jload(b):
     t = b.decode("utf-8-sig", "replace") if isinstance(b, bytes) else b
     return json.loads(re.sub(r",(\s*[}\]])", r"\1", t))
@@ -45,6 +49,7 @@ class Dimensions:
         self.z, self.modid, self.ns, self.bp, self.report = z, modid, ns, Path(bp), report
         self.names = set(z.namelist()); self.structs = structure_ids     # java "ns:name" -> bedrock structure id
         self.rep = report.setdefault("dimensions", {"count": 0, "rules": 0, "skipped_features": {}})
+        self.ignored, self.sopts = {}, {}
 
     def read(self, kind, ref):
         ns, path = ref.split(":", 1) if ":" in ref else ("minecraft", ref)
@@ -57,8 +62,19 @@ class Dimensions:
         if not cf: return None
         t = cf.get("type", "").split(":")[-1]
         if t == "structure_feature":
-            sid = self.structs.get(cf["config"]["structure"])
-            return [sid] if sid else None
+            c = cf["config"]; sid = self.structs.get(c["structure"])
+            if not sid: return None
+            # BlockIgnoreProcessor(ignored_blocks): those template blocks are not placed (mostly air, so a tile
+            # never wipes what the tiles before it built). A structure used by several features keeps only the
+            # blocks every one of them ignores.
+            ign = c.get("ignored_blocks", [])
+            ign = {b for b in ([ign] if isinstance(ign, str) else ign) if isinstance(b, str) and not b.startswith("#")}
+            self.ignored[sid] = (self.ignored[sid] & ign) if sid in self.ignored else ign
+            off = c.get("offset") or [0, 0, 0]
+            o = {"rot": bool(c.get("random_rotation")), "mir": bool(c.get("random_mirror")),
+                 "off": [int(v) for v in off] if isinstance(off, list) and len(off) == 3 else [0, 0, 0]}
+            if o["rot"] or o["mir"] or any(o["off"]): self.sopts[sid] = o
+            return [sid]
         if t in ("simple_random_selector",):
             alts = []
             for f in cf["config"].get("features", []):
@@ -102,7 +118,8 @@ class Dimensions:
                 if d.get("type", "").endswith("add_features"):
                     bs = d["biomes"] if isinstance(d["biomes"], list) else [d["biomes"]]
                     fs = d["features"] if isinstance(d["features"], list) else [d["features"]]
-                    for b in bs: mods.setdefault(b, []).extend(fs)
+                    st = STEPS.index(d.get("step")) if d.get("step") in STEPS else len(STEPS)
+                    for b in bs: mods.setdefault(b, []).extend((st, f) for f in fs)
         for n in sorted(self.names):
             if not (n.startswith(f"data/{self.modid}/dimension/") and n.endswith(".json")): continue
             name = Path(n).stem; d = jload(self.z.read(n)); gen = d.get("generator", {})
@@ -113,8 +130,10 @@ class Dimensions:
             rules, look = [], {}
             for b in biomes:
                 bj = self.read("worldgen/biome", b) or {}
-                feats = [f for step in bj.get("features", []) for f in (step if isinstance(step, list) else [step])] + mods.get(b, [])
-                for f in feats:
+                # Java decorates a chunk step by step (raw_generation first: Wonderland's ground tiles, then the
+                # houses / entrances standing on them): rules keep that order and the generator places in it
+                feats = [(i, f) for i, step in enumerate(bj.get("features", [])) for f in (step if isinstance(step, list) else [step])] + mods.get(b, [])
+                for st, f in sorted(feats, key=lambda t: t[0]):
                     r = self.placed(f)
                     if r: rules.append(r)
                 eff = bj.get("effects", {})
@@ -127,7 +146,28 @@ class Dimensions:
                 "description": {"identifier": bid}, "components": {"minecraft:generation": {"generator_type": "void"},
                 "minecraft:dimension_height": {"min_y": my, "height_range": mh}}}})
             self.rep["count"] += 1; self.rep["rules"] += len(rules)
+        self.apply_ignored()
         return dims
+
+    def apply_ignored(self):
+        """Bake each structure's ignored blocks into its .mcstructure as structure_void (palette index 0 in
+        structures.py output), the Bedrock equivalent of Java's BlockIgnoreProcessor at place time."""
+        import nbtlib
+        n = 0
+        for sid, ign in sorted(self.ignored.items()):
+            if not ign: continue
+            names = {b if not b.startswith(self.modid + ":") else f"{self.ns}:{b.split(':', 1)[1]}" for b in ign}
+            ns, name = sid.split(":", 1); f = self.bp / f"structures/{ns}/{name}.mcstructure"
+            if not f.is_file(): continue
+            nbt = nbtlib.File.load(str(f), gzipped=False, byteorder="little")
+            pal = nbt["structure"]["palette"]["default"]["block_palette"]
+            drop = {i for i, c in enumerate(pal) if str(c["name"]) in names}
+            if not drop or str(pal[0]["name"]) != "minecraft:structure_void": continue
+            layer = nbt["structure"]["block_indices"][0]
+            for i, v in enumerate(layer):
+                if int(v) in drop: layer[i] = nbtlib.Int(0)
+            nbt.save(str(f), gzipped=False, byteorder="little"); n += 1
+        self.rep["ignored_baked"] = n
 
     def write(self, rel, data):
         p = self.bp / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(data, indent=1))
@@ -152,7 +192,7 @@ const dimCache = {};
 function dim(id) { if (!(id in dimCache)) { try { dimCache[id] = world.getDimension(id); } catch { dimCache[id] = null; } } return dimCache[id]; }
 // ---- per-chunk "generated" flags, 32x32 chunk regions packed in one dynamic property string each
 const regions = new Map();
-function regKey(d, cx, cz) { return `wg:${d}:${cx >> 5}:${cz >> 5}`; }
+function regKey(d, cx, cz) { return `wg2:${d}:${cx >> 5}:${cz >> 5}`; }
 function getRegion(k) {
   if (!regions.has(k)) { let s = ""; try { s = world.getDynamicProperty(k) ?? ""; } catch {} regions.set(k, { bits: s.padEnd(1024, "0").split(""), dirty: false }); }
   return regions.get(k);
@@ -164,40 +204,87 @@ system.runInterval(() => { for (const [k, r] of regions) if (r.dirty) { try { wo
 function rng(seed) { let s = seed >>> 0; return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
 function hash(str, cx, cz) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } h ^= Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663); return h >>> 0; }
 function ri(r, a) { return Array.isArray(a) ? a[0] + Math.floor(r() * (a[1] - a[0] + 1)) : a; }
-const queue = [];
+// ---- generation jobs. One job per chunk: its placements in Java step order. A job waits until every block its
+// structures cover is loaded (structureManager.place throws on unloaded chunks - the old one-retry queue lost most
+// tiles that way, leaving the Wonderland as a few floating roofs), then places within a per-tick time budget so
+// big tiles never stall a frame. A chunk counts as generated only once all of its placements went in.
+const SOPTS = WG.sopts ?? {};
+const ROT = ["None", "Rotate90", "Rotate180", "Rotate270"], MIR = ["None", "X", "Z"];
+const sizes = new Map();
+function sizeOf(sid) {
+  if (!sizes.has(sid)) { let s = null; try { s = world.structureManager.get(sid)?.size ?? null; } catch {} sizes.set(sid, s ? { x: s.x, y: s.y, z: s.z } : null); }
+  return sizes.get(sid);
+}
+function loadedAt(d, x, y, z) { try { return !!d.getBlock({ x, y, z }); } catch { return false; } }
+const jobs = [], pending = new Set();
 function generate(dId, cx, cz) {
   const D = WG.dims[dId]; const d = dim(dId); if (!D || !d) return;
+  const key = `${dId}|${cx}|${cz}`; if (pending.has(key)) return;
+  const places = [];
   for (const rule of D.rules) {
     const r = rng(hash(dId + rule.id, cx, cz));
     if (rule.chance > 1 && r() >= 1 / rule.chance) continue;
     const n = ri(r, rule.count);
     for (let i = 0; i < n; i++) {
       const x = cx * 16 + (rule.square ? Math.floor(r() * 16) : 0), z = cz * 16 + (rule.square ? Math.floor(r() * 16) : 0);
-      let y = rule.y[0] + Math.floor(r() * (rule.y[1] - rule.y[0] + 1));
-      const sid = rule.s[Math.floor(r() * rule.s.length)];
-      queue.push({ d, sid, x, y, z, hm: rule.heightmap });
+      const y = rule.y[0] + Math.floor(r() * (rule.y[1] - rule.y[0] + 1));
+      const sid = rule.s[Math.floor(r() * rule.s.length)], o = SOPTS[sid];
+      const q = { sid, x, y, z, hm: rule.heightmap };
+      if (o) { q.x += o.off[0]; q.y += o.off[1]; q.z += o.off[2]; if (o.rot) q.rot = ROT[Math.floor(r() * 4)]; if (o.mir) q.mir = MIR[Math.floor(r() * 3)]; }
+      places.push(q);
     }
   }
+  if (!places.length) { markDone(dId, cx, cz); return; }
+  pending.add(key); jobs.push({ key, dId, cx, cz, d, D, places, i: 0, next: 0 });
 }
-system.runInterval(() => {            // place a few structures per tick (keeps the frame budget)
-  for (let k = 0; k < 6 && queue.length; k++) {
-    const q = queue.shift();
-    try {
-      let y = q.y;
-      if (q.hm) { const top = q.d.getTopmostBlock({ x: q.x, z: q.z }); if (top) y = top.location.y + 1; }
-      world.structureManager.place(q.sid, q.d, { x: q.x, y, z: q.z });
-    } catch (e) { if (!q.retry) { q.retry = 1; queue.push(q); } }
+function playerNear(dId, cx, cz, r) {
+  for (const p of world.getAllPlayers()) {
+    let pd; try { pd = p.dimension.id; } catch { continue; } if (pd !== dId) continue;
+    if (Math.abs(Math.floor(p.location.x / 16) - cx) <= r && Math.abs(Math.floor(p.location.z / 16) - cz) <= r) return true;
   }
+  return false;
+}
+function ready(j, q) {
+  const s = sizeOf(q.sid) ?? { x: 16, y: 1, z: 16 };
+  const y = Math.max(j.D.min_y, Math.min(j.D.min_y + j.D.height - 1, q.y));
+  return loadedAt(j.d, q.x, y, q.z) && loadedAt(j.d, q.x + s.x - 1, y, q.z + s.z - 1) && loadedAt(j.d, q.x + s.x - 1, y, q.z) && loadedAt(j.d, q.x, y, q.z + s.z - 1);
+}
+const MS = 4;   // generation's share of the 50 ms server tick
+system.runInterval(() => {
+  const t0 = Date.now(), now = system.currentTick;
+  for (let k = 0; k < jobs.length; k++) {
+    if (Date.now() - t0 >= MS) break;
+    const j = jobs[k]; if (j.next > now) continue;
+    if (!playerNear(j.dId, j.cx, j.cz, RADIUS + 4)) { jobs.splice(k--, 1); pending.delete(j.key); continue; }   // regenerates when someone comes back
+    while (j.i < j.places.length && Date.now() - t0 < MS) {
+      const q = j.places[j.i];
+      if (!ready(j, q)) { j.next = now + 10; break; }
+      try {
+        let y = q.y;
+        if (q.hm) { const top = j.d.getTopmostBlock({ x: q.x, z: q.z }); if (top) y = top.location.y + 1; }
+        const opt = {}; if (q.rot) opt.rotation = q.rot; if (q.mir) opt.mirror = q.mir;
+        world.structureManager.place(q.sid, j.d, { x: q.x, y, z: q.z }, opt);
+        j.i++;
+      } catch (e) {
+        q.fail = (q.fail ?? 0) + 1;
+        if (q.fail >= 5) { if (q.fail === 5) console.warn(`[WorldGen] ${q.sid} at ${q.x},${q.y},${q.z}: ${e}`); j.i++; }
+        else { j.next = now + 20; break; }
+      }
+    }
+    if (j.i >= j.places.length) { markDone(j.dId, j.cx, j.cz); pending.delete(j.key); jobs.splice(k--, 1); }
+  }
+  globalThis.__GB_PERF?.add("worldgen", Date.now() - t0);
 }, 1);
 const RADIUS = 4;
 system.runInterval(() => {
   for (const p of world.getAllPlayers()) {
     const dId = p.dimension.id; if (!WG.dims[dId]) continue;
     const pcx = Math.floor(p.location.x / 16), pcz = Math.floor(p.location.z / 16);
-    for (let dx = -RADIUS; dx <= RADIUS; dx++) for (let dz = -RADIUS; dz <= RADIUS; dz++) {
+    for (let r = 0; r <= RADIUS; r++) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {   // nearest first
+      if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
       const cx = pcx + dx, cz = pcz + dz;
       if (isDone(dId, cx, cz)) continue;
-      markDone(dId, cx, cz); generate(dId, cx, cz);
+      generate(dId, cx, cz);
     }
   }
 }, 20);
@@ -208,7 +295,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   const id = name.includes(":") ? name : (name === "overworld" ? "minecraft:overworld" : `${NS}:${name}`);
   const d = dim(id); if (!d) { try { p.sendMessage(`no dimension ${id}`); } catch {} return; }
   const D = WG.dims[id]; const x = Math.floor(p.location.x), z = Math.floor(p.location.z);
-  if (D) { generate(id, Math.floor(x / 16), Math.floor(z / 16)); markDone(id, Math.floor(x / 16), Math.floor(z / 16)); }
+  if (D) generate(id, Math.floor(x / 16), Math.floor(z / 16));
   try { p.teleport({ x: x + 0.5, y: D ? D.min_y + Math.min(D.height - 2, 100) : 100, z: z + 0.5 }, { dimension: d }); p.addEffect("slow_falling", 300, { showParticles: false }); } catch (e) { try { p.sendMessage(String(e)); } catch {} }
 });
 // ---- look: fog per dimension (fog definitions in the resource pack), ambient sound loop
@@ -251,7 +338,7 @@ system.runInterval(() => {
       try { p.setDynamicProperty(`wg:back:${target}`, JSON.stringify({ d: here, x: p.location.x + 2, y: p.location.y, z: p.location.z + 2 })); } catch {}
       const d = dim(target); if (!d) continue;
       const D = WG.dims[target]; const x = Math.floor(p.location.x), z = Math.floor(p.location.z);
-      generate(target, Math.floor(x / 16), Math.floor(z / 16)); markDone(target, Math.floor(x / 16), Math.floor(z / 16));
+      generate(target, Math.floor(x / 16), Math.floor(z / 16));
       try { p.teleport({ x: x + 0.5, y: D.min_y + Math.min(D.height - 2, 80), z: z + 0.5 }, { dimension: d }); } catch {}
       system.runTimeout(() => { try { const y = safeY(d, x, z, null); if (y !== null) p.teleport({ x: x + 0.5, y, z: z + 0.5 }, { dimension: d }); } catch {} }, 60);
       try { p.addEffect("slow_falling", 200, { showParticles: false }); } catch {}

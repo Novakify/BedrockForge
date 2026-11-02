@@ -66,3 +66,10 @@ Dev packs live in `<instance>\Minecraft Bedrock\Users\Shared\games\com.mojang\de
 (`<instance>` = `%APPDATA%\levilauncher.exe\versions\1.26.51.01`). Copy changed files only, keep the installed
 `scripts/javabridge/config.js` "structures" map if your build has no structures, Save & Quit, reopen the world.
 New entity types need a world reopen; script-only changes work with `/reload`.
+
+## Performance check in game
+`/scriptevent gb:perf` (run it again to stop) prints every 5 s: server TPS (20 = full speed) and the average/worst
+ms per tick of each converted-pack job (mobTick, goals, steer, playerTick, effects, serverTick, worldgen, anim).
+Mob logic and goals are time-budgeted round-robin and mobs over 64 blocks from every player run at quarter rate,
+so a crowd slows mob thinking instead of the game. Also check the content log: a client-side Molang error repeats
+every frame, and thousands of log writes a minute stutter the game on their own.

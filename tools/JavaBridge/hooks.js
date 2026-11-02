@@ -8,6 +8,30 @@ function run(id, args) {
   try { return M.call(id, args); }
   catch (e) { const n = (errs.get(id) ?? 0) + 1; errs.set(id, n); if (n <= 2) console.warn(`[JavaBridge] ${id.split("/").pop()}: ${e}${e?.stack ? " " + String(e.stack).split("\n")[1] : ""}`); return null; }
 }
+// ---- performance: every per-tick job reports its ms here. `/scriptevent gb:perf` (again to stop) prints, every 5 s,
+// the real server speed (ticks per second, 20 = full speed) and each job's average / worst ms per tick, to chat and
+// the content log, so a stutter can be pinned on what causes it instead of guessed.
+const PERF = globalThis.__GB_PERF ??= (() => {
+  const P = { on: false, sec: new Map(), t0: Date.now(), tick0: 0,
+    add(name, ms) { if (!P.on) return; const s = P.sec.get(name) ?? { sum: 0, max: 0 }; s.sum += ms; if (ms > s.max) s.max = ms; P.sec.set(name, s); } };
+  return P;
+})();
+function timed(name, fn) { const t0 = Date.now(); try { fn(); } finally { PERF.add(name, Date.now() - t0); } }
+system.afterEvents.scriptEventReceive?.subscribe?.((ev) => {
+  if (ev.id !== "gb:perf") return;
+  PERF.on = ev.message.trim() === "off" ? false : ev.message.trim() === "on" ? true : !PERF.on;
+  PERF.sec.clear(); PERF.t0 = Date.now(); PERF.tick0 = system.currentTick;
+  const m = `[GBPerf] ${PERF.on ? "on: report every 5 s" : "off"}`; console.warn(m); try { ev.sourceEntity?.sendMessage?.(m); } catch {}
+});
+system.runInterval(() => {
+  if (!PERF.on) return;
+  const ticks = system.currentTick - PERF.tick0, secs = (Date.now() - PERF.t0) / 1000;
+  const parts = [...PERF.sec.entries()].sort((a, b) => b[1].sum - a[1].sum)
+    .map(([k, v]) => `${k} ${(v.sum / Math.max(1, ticks)).toFixed(1)}/${v.max}`);
+  const m = `[GBPerf] TPS ${(ticks / secs).toFixed(1)} | ms per tick avg/max: ${parts.join(", ") || "-"} | mobs ${modEntities().length}`;
+  console.warn(m); for (const p of world.getAllPlayers()) { try { p.sendMessage(`§7${m}`); } catch {} }
+  PERF.sec.clear(); PERF.t0 = Date.now(); PERF.tick0 = system.currentTick;
+}, 100);
 const DS = (cause, attacker) => ({ cause: cause ?? "entityAttack", attacker: attacker ? JEntity.of(attacker) : null, key: cause,
   getEntity() { return this.attacker; }, getDirectEntity() { return this.attacker; }, is() { return false; }, getMsgId() { return cause; } });
 const HAND = { key: "MAIN_HAND", hand: "mainhand" };
@@ -24,7 +48,7 @@ system.runTimeout(() => { ready = true; }, 40);
 // ---- entities: Java ticks every mod mob 20x a second; here each loaded mod mob is ticked round-robin within a
 // per-tick time budget (BUDGET ms), so a crowd of mobs slows their logic down instead of the game.
 const ETICK = new Set(Object.keys(H.entity).filter((t) => H.entity[t].tick));
-const BUDGET = 8;   // ms of the 50 ms server tick; past it the rest of the mobs tick next tick (game TPS comes first)
+const BUDGET = 4;   // ms of the 50 ms server tick; past it the rest of the mobs tick next tick (game TPS comes first)
 // All loaded mod entities, ONE native query per dimension that has a player, cached for the tick. (The old loop asked
 // every dimension - 3 vanilla + every mod dimension - for every mob type separately: ~6000 getEntities calls per
 // refill for Wonderland, which dragged the server to ~1/3 speed: slow mobs, slow days, eating/hits lagging.)
@@ -39,15 +63,31 @@ function modEntities() {
   }
   return entCache;
 }
-let queue = [], tickN = 0;
+// Distance LOD: mobs more than FAR blocks from every player run their Java logic every 4th pass (nothing near a
+// player can see or reach them; Java's own entity ticking stops at the simulation distance anyway).
+const FAR = 64;
+let lodCache = { tick: -1, near: new Set() };
+function isNear(e) {
+  if (lodCache.tick !== system.currentTick) {
+    lodCache = { tick: system.currentTick, near: new Set() };
+    const ps = []; for (const p of world.getAllPlayers()) { try { ps.push({ d: p.dimension.id, l: p.location }); } catch {} }
+    for (const e2 of modEntities()) {
+      let l, d; try { l = e2.location; d = e2.dimension.id; } catch { continue; }
+      for (const p of ps) if (p.d === d && (p.l.x - l.x) ** 2 + (p.l.z - l.z) ** 2 < FAR * FAR) { lodCache.near.add(e2.id); break; }
+    }
+  }
+  return lodCache.near.has(e.id);
+}
+let queue = [], tickN = 0, pass = 0;
 system.runInterval(() => {
   if (!ready) return; tickN++;
-  if (!queue.length) { for (const e of modEntities()) if (ETICK.has(e.typeId)) queue.push(e); }
   const t0 = Date.now();
+  if (!queue.length) { pass++; for (const e of modEntities()) if (ETICK.has(e.typeId) && (pass % 4 === 0 || isNear(e))) queue.push(e); }
   while (queue.length && Date.now() - t0 < BUDGET) {
     const e = queue.shift(); let ok = false; try { ok = e.isValid; } catch {} if (!ok) continue;
     const w = JEntity.of(e); for (const id of H.entity[e.typeId].tick) run(id, [w]);
   }
+  PERF.add("mobTick", Date.now() - t0);
 }, 1);
 // ---- MobAI GoalRunner (docs/PORT_MOBAI.md). Java's GoalSelector runs the mod's goal objects every tick; here:
 //  * "gate" goals (MCreator anonymous goals overriding canUse/canContinueToUse): the Bedrock behaviour does the
@@ -63,10 +103,11 @@ function goalObj(cls, w) { const o = R.newObj(cls); o.__goal = true; o["this$0"]
 function runGoals(e, specs) {
   const w = JEntity.of(e); let st = GSTATE.get(e.id);
   if (!st) { st = { type: e.typeId, objs: specs.map((g) => goalObj(g.cls, w)), on: specs.map(() => null), active: specs.map(() => false) }; GSTATE.set(e.id, st); }
+  st.n = (st.n ?? 0) + 1;
   for (let i = 0; i < specs.length; i++) {
     const g = specs[i], o = st.objs[i], fn = g.fn;
     if (g.mode === "gate") {
-      if ((gtick + i) % 2) continue;
+      if ((st.n + i) % 2) continue;
       const f = st.on[i] ? (fn.canContinueToUse ?? fn.canUse) : (fn.canUse ?? fn.canContinueToUse);
       const v = !!run(f, [o]);
       if (v !== st.on[i]) { st.on[i] = v; try { e.triggerEvent(`gb:g${g.index}_${v ? "on" : "off"}`); } catch {} }
@@ -76,11 +117,24 @@ function runGoals(e, specs) {
     else if (fn.tick) run(fn.tick, [o]);
   }
 }
+// Goals run round-robin inside GBUDGET ms too: a crowd of mobs gets its goals checked a little less often instead of
+// stretching every server tick (which slows the whole game: mob movement, day length, hits, eating).
+const GBUDGET = 3;
+let gqueue = [], gpass = 0;
 system.runInterval(() => {
   if (!ready) return; gtick++;
-  if (GTYPES.length) for (const e of modEntities()) { const g = GOALS[e.typeId]; if (g) runGoals(e, g); }
+  const t0 = Date.now();
+  if (GTYPES.length) {
+    if (!gqueue.length) { gpass++; for (const e of modEntities()) if (GOALS[e.typeId] && (gpass % 4 === 0 || isNear(e))) gqueue.push(e); }
+    while (gqueue.length && Date.now() - t0 < GBUDGET) {
+      const e = gqueue.shift(); let ok = false; try { ok = e.isValid; } catch {} if (!ok) continue;
+      runGoals(e, GOALS[e.typeId]);
+    }
+  }
+  const t1 = Date.now(); PERF.add("goals", t1 - t0);
   R.navTick();
   for (const [id, c] of MOVES) { let ok = false; try { ok = c.w.e.isValid; } catch {} if (!ok) { MOVES.delete(id); continue; } c.step(); }
+  PERF.add("steer", Date.now() - t1);
 }, 1);
 // ---- MobAI parity trace (docs/PORT_MOBAI.md W4): `/tag @s add gb_trace` (or `/scriptevent gb:trace on|off`). One JSON line per tick per mod mob
 // (and player) within 48 blocks, to the content log as "[MobAITrace] {...}"; same fields as the Java recorder mod.
@@ -180,13 +234,14 @@ if (CMDS.length) system.beforeEvents.startup.subscribe((ev) => {
 for (const id of CFG.workQueue ?? []) M.def(id, (ticks, r) => {
   system.runTimeout(() => { try { R.lam(r); } catch (e) { console.warn(`[JavaBridge] queued work: ${e}`); } }, Math.max(1, ticks | 0));
 });
-if (H.events.some((ev) => ev.kind === "serverTick") && !(CFG.workQueue ?? []).length) system.runInterval(() => {
+if (H.events.some((ev) => ev.kind === "serverTick") && !(CFG.workQueue ?? []).length) system.runInterval(() => { const t0 = Date.now(); try {
   if (!ready) return;
   for (const ev of H.events) if (ev.kind === "serverTick") run(ev.fn, [{ __ev: true, phase: { key: "END" }, side: { key: "SERVER" }, getServer: () => R.server?.() ?? null }]);
+  } finally { PERF.add("serverTick", Date.now() - t0); }
 }, 1);
 
 // ---- players: tick events, living tick, chat, sleep
-system.runInterval(() => {
+system.runInterval(() => { const t0 = Date.now(); try {
   if (!ready) return;
   for (const p of world.getAllPlayers()) {
     const w = JEntity.of(p);
@@ -209,16 +264,18 @@ system.runInterval(() => {
       for (const ev of H.events) if ((sl && ev.kind === "sleep") || (!sl && ev.kind === "wake")) run(ev.fn, [{ __ev: true, entity: w, player: w, pos: w.blockPosition(), level: w.level() }]);
     }
   }
+  } finally { PERF.add("playerTick", Date.now() - t0); }
 }, 1);
 // the mod's effects on mobs too (their tick procedures), within a budget
 system.runInterval(() => {
   const t0 = Date.now();
   for (const [eid, m] of MODFX) {
-    if (Date.now() - t0 > 4) break;
+    if (Date.now() - t0 > 2) break;
     let e; try { e = world.getEntity(eid); } catch {} if (!e || e.typeId === "minecraft:player") continue;
     const w = JEntity.of(e);
     for (const [id, st] of Object.entries(m)) if (st.until > system.currentTick) { const fn = effectClass.get(id); if (fn) run(fn, [{ __cls: "effect" }, w, st.amp]); }
   }
+  PERF.add("effects", Date.now() - t0);
 }, 1);
 // dimension changes, login / respawn
 const lastDim = new Map();

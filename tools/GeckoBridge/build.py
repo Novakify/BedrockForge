@@ -1212,7 +1212,7 @@ class Build:
                 base = bid[:-7]
                 tgt = next((d for d in dims if d.split(":")[1] in (base, base + "_dimension", base.replace("_dimension", ""))), None)
                 if tgt: portals[f"{self.ns}:{bid}"] = tgt
-        self.write(self.bp, "scripts/worldgen.js", DM.script({"ns": self.ns, "dims": dims, "portals": portals}))
+        self.write(self.bp, "scripts/worldgen.js", DM.script({"ns": self.ns, "dims": dims, "portals": portals, "sopts": dm.sopts}))
         for rel, fog in DM.fogs(dims, self.ns).items(): self.write(self.rp, rel, fog)
         self.report["dimensions"]["portals"] = len(portals)
         self.worldgen_script = True
