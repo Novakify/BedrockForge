@@ -3,7 +3,7 @@ add_rules("mode.debug", "mode.release")
 add_repositories("levimc-repo https://github.com/LiteLDev/xmake-repo.git")
 
 -- Bedrock Forge targets the CLIENT build of LeviLamina only (for now).
--- Pinned to the 26.51 line = Minecraft Bedrock 1.26.51.01. Don't bump without
+-- PORT BRANCH: built against LeviLamina main (26.60 line, unreleased) to find what breaks. Live line stays 26.51.
 -- updating docs/COMPATIBILITY_MATRIX.md.
 -- levibuildscript's modpacker reads target_type to fill "platform" in manifest.json;
 -- without it the manifest says ${modPlatform} and LeviLamina refuses to load the mod.
@@ -15,7 +15,7 @@ option_end()
 
 -- The game mod only builds for Windows; the LyricsFlow core unit tests (target LyricsCoreTests) also build on Linux.
 if is_plat("windows") then
-    add_requires("levilamina 26.51.x", {configs = {target_type = get_config("target_type")}})
+    add_requires("levilamina main", {configs = {target_type = get_config("target_type")}})
     add_requires("levibuildscript")
 end
 
