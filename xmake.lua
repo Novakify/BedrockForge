@@ -10,7 +10,7 @@ option("target_type")
     set_values("client")
 option_end()
 
-add_requires("levilamina 26.51.x", {configs = {target_type = get_config("target_type")}})
+add_requires("levilamina main", {configs = {target_type = get_config("target_type")}})
 add_requires("levibuildscript")
 add_requires("imgui v1.91.8", {configs = {dx11 = true, dx12 = true, win32 = true}})
 
