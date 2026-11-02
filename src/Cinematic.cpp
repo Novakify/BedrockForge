@@ -4750,6 +4750,16 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                                 cx0 = std::min(cx0, x); cy0 = std::min(cy0, y); cx1 = std::max(cx1, x); cy1 = std::max(cy1, y);
                             }
                         }
+                        if (item && s <= 10 && x > n * 0.3f && y > n / 2) {
+                            // the stack count's digits (white) and their shadow (#3F3F3F) are not the item: counted in, they
+                            // stretched its box to the slot's lower right and the cube faces were unwrapped off the icon
+                            // (holes, white marks on placed blocks)
+                            float ia = a > 0.01f ? 1.0f / a : 1.0f;
+                            float r = (bgra ? q[2] : q[0]) / 255.0f * ia, g = q[1] / 255.0f * ia, b = (bgra ? q[0] : q[2]) / 255.0f * ia;
+                            bool  white  = r > 0.96f && g > 0.96f && b > 0.96f;
+                            bool  shadow = std::fabs(r - 0.247f) < 0.03f && std::fabs(g - 0.247f) < 0.03f && std::fabs(b - 0.247f) < 0.03f;
+                            if (white || shadow) item = false;
+                        }
                         mask[size_t(y) * n + x] = item;
                         ++total;
                         if (item) { ++other; x0 = std::min(x0, x); y0 = std::min(y0, y); x1 = std::max(x1, x); y1 = std::max(y1, y); }
