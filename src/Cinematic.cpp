@@ -4746,7 +4746,9 @@ void sampleSlots(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resou
                             if (item) { sr += r; sgc += g; sb += b; }
                             if (item && b > g + 0.12f && r > g + 0.04f) ++violet; // the enchantment glint's violet
                             // the stack count (white digits in the lower right)
-                            if (s < 9 && a > 0.5f && r > 0.96f && g > 0.96f && b > 0.96f && x > n * 0.42f && y > n / 2) {
+                            // (under Vibrant Visuals the digits come out see-through: the slot's inside is opaque, so a
+                            // see-through pixel there is a digit too)
+                            if (s < 9 && ((a > 0.5f && r > 0.96f && g > 0.96f && b > 0.96f) || a < 0.5f) && x > n * 0.42f && y > n / 2) {
                                 cx0 = std::min(cx0, x); cy0 = std::min(cy0, y); cx1 = std::max(cx1, x); cy1 = std::max(cy1, y);
                             }
                         }
@@ -8259,6 +8261,12 @@ void appendDiag(char* b, unsigned long long cap) {
                          gS.cellFull[5], gS.cellFull[6], gS.cellFull[7], gS.cellFull[8], gS.resultFull, gS.last.pos.x, gS.last.pos.y, gS.last.pos.z,
                          gS.last.yaw, gS.last.pitch, gS.last.roll, gS.tanHalf, gS.aspect, gS.fovY, gS.vanillaFovY, gG.status.c_str());
     len += std::snprintf(b + len, cap - len, "  block states: %s; lit %d; aimTop %d\n", gS.states.c_str(), gS.st.lit, gS.aimTop);
+    for (int s = 0; s < 11 && len < cap; ++s)
+        if (s < 9 ? gS.cellFull[s] : s == 9 ? gS.resultFull : gS.carrying)
+            len += std::snprintf(b + len, cap - len, "  slot %d: block %d count %d [%.2f %.2f %.2f %.2f] box %.3f %.3f %.3f %.3f frozen %d\n", s,
+                                 s < 9 ? gS.cellBlock[s] : s == 9 ? gS.resultBlock : gS.carriedBlock, s < 9 ? gS.hasCount[s] : -1,
+                                 s < 9 ? gS.countBox[s][0] : 0, s < 9 ? gS.countBox[s][1] : 0, s < 9 ? gS.countBox[s][2] : 0, s < 9 ? gS.countBox[s][3] : 0,
+                                 gS.iconBox[s][0], gS.iconBox[s][1], gS.iconBox[s][2], gS.iconBox[s][3], int(gS.frozen));
     if (len < cap)
         len += std::snprintf(b + len, cap - len, "  side %d; wheel %.3f %.3f %.3f; grind target %d hover %d place %d; glint %d%d%d; spin %.2f; props: %s; keep copies %ld checked %ld\n"
                              "  move on %d at %.2f (clock %.2f) length %.2f beat %.2f done %d; %s; buttons %d; drawer expand %.2f over %d live %ld at %d,%d\n", int(gS.st.side),
