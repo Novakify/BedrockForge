@@ -1037,6 +1037,7 @@ struct Press {
     unsigned   bit = 0;
     int        target = -1;
     double     since = 0, releasedAt = -1e9;
+    bool       take = false; // the press began with nothing carried: a click that takes from a slot
 };
 Press    gPress;
 std::string gPressLog[12];
@@ -3235,6 +3236,7 @@ unsigned filterButtons(unsigned buttons) {
             } else if (gS.phase == Phase::Active && t >= 0) {
                 // first the hidden screen's cursor moves onto the slot (hover), then the button goes down there
                 gPress = Press{PressState::Hover, b, t, now, -1e9};
+                gPress.take = !gS.carrying && gS.carriedName.empty();
                 gS.tapAt = gS.clock; // Hands.tap
                 if (t == 9) gS.craftAt = gS.clock; // TableStation.craft: the hands press the ingredients together
             }
@@ -3250,6 +3252,9 @@ unsigned filterButtons(unsigned buttons) {
         }
         break;
     case PressState::Down:
+        // a press that takes a stack goes to the hidden screen as a click: held there it is a drag that puts the stack
+        // back where it was on release (a slower click took nothing). Presses while carrying stay held (drag to share).
+        if ((buttons & bit) && gPress.take && now - gPress.since > 90) { gPress.state = PressState::Swallow; break; }
         if (buttons & bit) out |= bit;
         else { gPress.state = PressState::Idle; gPress.releasedAt = now; }
         break;
