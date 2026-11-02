@@ -23,17 +23,26 @@ system.runTimeout(() => { ready = true; }, 40);
 
 // ---- entities: Java ticks every mod mob 20x a second; here each loaded mod mob is ticked round-robin within a
 // per-tick time budget (BUDGET ms), so a crowd of mobs slows their logic down instead of the game.
-const ETYPES = Object.keys(H.entity).filter((t) => H.entity[t].tick);
-const BUDGET = 12;
+const ETICK = new Set(Object.keys(H.entity).filter((t) => H.entity[t].tick));
+const BUDGET = 8;   // ms of the 50 ms server tick; past it the rest of the mobs tick next tick (game TPS comes first)
+// All loaded mod entities, ONE native query per dimension that has a player, cached for the tick. (The old loop asked
+// every dimension - 3 vanilla + every mod dimension - for every mob type separately: ~6000 getEntities calls per
+// refill for Wonderland, which dragged the server to ~1/3 speed: slow mobs, slow days, eating/hits lagging.)
+let entCacheTick = -1, entCache = [];
+function modEntities() {
+  if (entCacheTick === system.currentTick) return entCache;
+  entCacheTick = system.currentTick; entCache = [];
+  const seen = new Set();
+  for (const p of world.getAllPlayers()) {
+    let d; try { d = p.dimension; } catch { continue; } if (seen.has(d.id)) continue; seen.add(d.id);
+    try { for (const e of d.getEntities({ families: [NS] })) entCache.push(e); } catch {}
+  }
+  return entCache;
+}
 let queue = [], tickN = 0;
 system.runInterval(() => {
   if (!ready) return; tickN++;
-  if (!queue.length) {
-    for (const dimId of dims()) {
-      let d; try { d = world.getDimension(dimId); } catch { continue; }
-      for (const t of ETYPES) { let list; try { list = d.getEntities({ type: t }); } catch { continue; } for (const e of list) queue.push(e); }
-    }
-  }
+  if (!queue.length) { for (const e of modEntities()) if (ETICK.has(e.typeId)) queue.push(e); }
   const t0 = Date.now();
   while (queue.length && Date.now() - t0 < BUDGET) {
     const e = queue.shift(); let ok = false; try { ok = e.isValid; } catch {} if (!ok) continue;
@@ -69,10 +78,7 @@ function runGoals(e, specs) {
 }
 system.runInterval(() => {
   if (!ready) return; gtick++;
-  if (GTYPES.length) for (const dimId of dims()) {
-    let d; try { d = world.getDimension(dimId); } catch { continue; }
-    for (const t of GTYPES) { let list; try { list = d.getEntities({ type: t }); } catch { continue; } for (const e of list) runGoals(e, GOALS[t]); }
-  }
+  if (GTYPES.length) for (const e of modEntities()) { const g = GOALS[e.typeId]; if (g) runGoals(e, g); }
   R.navTick();
   for (const [id, c] of MOVES) { let ok = false; try { ok = c.w.e.isValid; } catch {} if (!ok) { MOVES.delete(id); continue; } c.step(); }
 }, 1);

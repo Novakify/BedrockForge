@@ -321,6 +321,8 @@ export class MoveCtl {
 export const MOVES = new Map();
 const TARGETS = new Map();   // mob id -> entity it was told to target
 const NAVS = new Map();
+const INSTOF = new Map();   // "typeId|java class" -> instanceof answer
+const SCAN = new Map(); let SCANTICK = -1;   // per-tick entity scan cache
 const TCACHE = new Map();   // mob id -> {t: tick, v: target} (getTarget once per tick)
 export const LASTHURT = new Map();   // mob id -> {by: attacker entity, t: tick}      // mob id -> {p: nav point entity, mob, until}
 class Nav { constructor(m) { this.m = m; } moveTo(a, b, c, sp) { if (a instanceof JEntity || a instanceof Vec) { R.moveTo(this.m, a, null, null, b); } else R.moveTo(this.m, a, b, c, sp); return true; } stop() { MoveCtl.of(this.m).want = null; R.navStop(this.m); } isDone() { return !MoveCtl.of(this.m).want && !R.navBusy(this.m); } createPath() { return null; } }
@@ -641,6 +643,16 @@ export const R = {
   },
   instOf(o, cls) {
     if (o == null) return false;
+    if (o instanceof JEntity) {   // answer depends only on (entity type, class): cache it (hot in MCreator entity scans)
+      let t; try { t = o.e.typeId; } catch { return false; }
+      const k = t + "|" + cls; let r = INSTOF.get(k);
+      if (r === undefined) { r = R.instOf0(o, cls); INSTOF.set(k, r); }
+      return r;
+    }
+    return R.instOf0(o, cls);
+  },
+  instOf0(o, cls) {
+    if (o == null) return false;
     const c = cls.split("/").pop();
     if (o instanceof JEntity) {
       const t = o.e.typeId;
@@ -667,6 +679,17 @@ export const R = {
   },
   // ---- world helpers
   entitiesIn(lv, cls, box, pred) {
+    // same scan (dimension, class, box) more than once in a tick -> one native query (procedures of several mobs and
+    // the player's tick events often scan the same area every tick)
+    const key = (lv?.d?.id ?? "") + "|" + (cls?.cls ?? "") + "|" + [box.min.x_, box.min.y_, box.min.z_, box.max.x_, box.max.y_, box.max.z_].map((v) => Math.round(v * 2)).join(",");
+    if (SCANTICK !== system.currentTick) { SCANTICK = system.currentTick; SCAN.clear(); }
+    let base = SCAN.get(key);
+    if (!base) { base = R.entitiesIn0(lv, cls, box); SCAN.set(key, base); }
+    if (!pred) return JList.of(base);
+    const out = new JList(); for (const w of base) if (R.lam(pred, w)) out.push(w); return out;
+  },
+  entitiesIn0(lv, cls, box) {
+    const pred = null;
     const out = new JList();
     let list = [];
     try {
