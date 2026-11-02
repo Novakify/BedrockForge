@@ -717,3 +717,4 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Test harness note: computer-use left_click is too short for GameInput sampling. Use left_mouse_down, wait 0.12, left_mouse_up.
 - Remote moved: github.com/Novakify/BedrockForge (fetch FETCH_HEAD if origin/cinematic-builds looks stale).
 - Device config during testing: uiDebugUseKey 120 and dumpUi true. Reset both (0 / false) with the game closed.
+- 2026-11-01 19:30: lyricsflow/rf-on-cinematic-v6 fast-forwarded to cinematic 3225820 (e77) at the user's request. It already contained all LyricsFlow work, so nothing was lost. LyricsFlow sessions: keep building from this branch (or newer) so an install doesn't wipe the Cinematic fixes. Any new LyricsFlow RF work goes on top of it.
