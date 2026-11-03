@@ -222,6 +222,8 @@ float halo(Glyph g, uint ai, float2 lc, float ar, float r) {
     return acc / 8.0;
 }
 
+float smin(float a, float b, float k) { float h = saturate(0.5 + 0.5 * (b - a) / k); return lerp(b, a, h) - k * h * (1.0 - h); }
+float sdSeg(float2 p, float2 a, float2 b) { float2 pa = p - a, ba = b - a; float h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-6)); return length(pa - ba * h); }
 // sd = signed distance in screen px (+ inside), F = fill coverage, Hpx = glyph height in px, base = the glyph colour
 float4 letterFx(Glyph g, uint ai, V2P i, float sd, float F, float4 base) {
     uint   fx   = fxOf(g);
@@ -273,42 +275,70 @@ float4 letterFx(Glyph g, uint ai, V2P i, float sd, float F, float4 base) {
         }
         return float4(rgb, a);
     }
-    if (fx == FX_WATER) { // wet glossy letters, drops form on the bottom edge, stretch and fall
-        float3 tint = lerp(C, float3(0.25, 0.62, 1.0), 0.45);
-        float  caus = vnoise(q * 7.0 + float2(t * 0.6, t * 0.9)) * 0.5 + vnoise(q * 11.0 - t * 0.7) * 0.5;
-        float  vUp  = glyphV(g, ai, lc + float2(0, -0.045));
-        float  spec = saturate((glyphV(g, ai, lc) - vUp) * 7.0);
-        float3 rgb  = (tint * (0.6 + 0.4 * caus) + W * spec * 0.55) * F + W * edge * 0.25;
-        float  a    = F;
-        float  w0   = 0.05;
-        [loop] for (int k = 0; k < 3; ++k) {
-            float cx = (0.15 + 0.7 * hash11(sdd * 3.1 + k * 5.7)) * ar;
-            if (abs(q.x - cx) > 0.12) continue;
-            float yb = -1.0; // bottom of the letter in this column
-            [loop] for (int s = 0; s < 16; ++s) {
-                float y = 1.0 - s / 15.0;
-                if (glyphCov(g, ai, float2(cx / ar, y)) > 0.5) { yb = y; break; }
-            }
-            if (yb < 0.0) continue;
-            float ph  = frac(t * 0.3 * (0.7 + 0.6 * hash11(k + sdd)) + hash11(k * 2.3 + sdd * 1.7));
-            float L0  = 0.32 * I;
-            float L   = L0 * smoothstep(0.0, 0.7, ph) * (ph > 0.75 ? 1.0 - (ph - 0.75) * 2.8 : 1.0);
-            float dy  = q.y - yb;
-            float d   = 8.0;
-            if (dy >= -0.02 && dy <= L) d = abs(q.x - cx) - w0 * (0.55 + 0.45 * dy / max(L, 1e-3)) * 0.8;
-            d = min(d, length(q - float2(cx, yb + L)) - w0 * (0.6 + 0.6 * smoothstep(0.3, 0.7, ph)));
-            if (ph > 0.72) {
-                float fall = (ph - 0.72) / 0.28;
-                float dyY  = yb + L0 + fall * fall * 1.1;
-                d = min(d, length((q - float2(cx, dyY)) * float2(1.0, 0.8)) - w0 * 1.05);
-            }
-            float cov = smoothstep(aa, -aa, d) * saturate((1.0 + fxMargin(FX_WATER).z - 0.05 - q.y) / 0.1);
-            float hl  = smoothstep(0.4, 1.0, saturate(1.0 - abs(q.x - cx + w0 * 0.35) / (w0 * 0.4)));
-            rgb = lerp(rgb, tint * 0.95 + W * hl * 0.5, cov * (1.0 - F));
-            a   = max(a, cov * 0.92);
-        }
-        return float4(rgb * 1.0, a);
+  if (fx == FX_WATER) {
+    float rH = g.pxRange / max(abs(g.uv.w - g.uv.y) * atlasSize(ai).y, 1.0);
+    float vHere = glyphV(g, ai, lc);
+    float sheen = saturate((vHere - glyphV(g, ai, lc + float2(0.0, -0.045))) * 7.0);
+    float gloss = smoothstep(0.65, 0.0, lc.y) * 0.18;
+    float3 rgb = (C * 0.82 + W * sheen * 0.4 + W * gloss) * F;
+    float a = F;
+    float2 bg = q * 8.0; float2 bcl = floor(bg); float bh = hash21(bcl + sdd);
+    if (bh > 0.55 && F > 0.5) {
+      float2 bp = bcl + 0.25 + 0.5 * hash22(bcl + sdd * 1.3);
+      float br = 0.13 + 0.12 * hash11(bh * 9.0);
+      float2 rel = (bg - bp) / br; float rr = length(rel);
+      float inB = smoothstep(1.0, 0.9, rr);
+      float hlt = smoothstep(0.32, 0.08, length(rel - float2(-0.35, -0.4)));
+      rgb = lerp(rgb, C * 0.55 * F, pow(rr, 3.0) * 0.55 * inB) + W * hlt * 0.9 * inB * F;
     }
+    float dL = (0.5 - vHere) * rH;
+    for (int k = 0; k < 2; ++k) {
+      float fk = float(k);
+      float cx = (0.18 + 0.64 * hash11(sdd * 3.1 + fk * 5.7)) * ar;
+      if (abs(q.x - cx) > 0.16) continue;
+      float yb = -1.0; float vb = 0.5;
+      for (int s = 0; s < 16; ++s) { float y = 1.0 - float(s) / 15.0; float vv = glyphV(g, ai, float2(cx / ar, y)); if (vv > 0.5) { yb = y; vb = vv; break; } }
+      if (yb < 0.0) continue;
+      yb += (vb - 0.5) * rH;
+      float cyc = t * 0.14 * (0.7 + 0.6 * hash11(fk + sdd)) + hash11(fk * 2.3 + sdd * 1.7);
+      if (hash11(floor(cyc) * 3.7 + fk + sdd) < 0.35) continue; // some cycles this spot stays dry
+      float ph = frac(cyc);
+      float sI = sqrt(I);
+      float grow = smoothstep(0.0, 0.55, ph);
+      float r = lerp(0.025, 0.075, grow) * sI;
+      float stretch = smoothstep(0.45, 0.72, ph) * 0.15 * sI;
+      float2 c = float2(cx, yb + r * 0.85 + stretch);
+      float dS; float rr = r;
+      if (ph < 0.72) {
+        float neckR = lerp(r * 0.8, 0.011, smoothstep(0.45, 0.72, ph));
+        dS = smin(length((q - c) * float2(1.0, 0.92)) - r, sdSeg(q, float2(cx, yb - 0.02), c) - neckR, 0.03);
+      } else {
+        float f = (ph - 0.72) / 0.28;
+        float rb = 0.028 * (1.0 - f) * sI;
+        float dLeft = length(q - float2(cx, yb + rb * 0.5)) - rb;
+        c = float2(cx, yb + 0.065 * sI * 0.85 + 0.15 * sI + f * f * 1.15);
+        rr = 0.06 * sI;
+        float2 rq = q - c;
+        float tear = rq.y < 0.0 ? length(rq * float2(1.0, 0.55 + 0.2 * (1.0 - f))) - rr : length(rq) - rr;
+        dS = min(dLeft, tear);
+      }
+      float dAll = smin(dL, dS, 0.035);
+      float cov = smoothstep(aa, -aa, dAll) * (1.0 - F) * saturate((1.9 - q.y) / 0.1);
+      if (cov <= 0.0) continue;
+      float depth = saturate(-dS / max(rr, 1e-3));          // 0 at the surface, 1 in the middle
+      float2 n = (q - c) / max(rr, 1e-3);
+      float ringA = smoothstep(0.28, 0.0, depth);                     // thin dark edge (total internal reflection)
+      float cres = smoothstep(0.55, 0.1, depth) * smoothstep(0.05, 0.75, n.y); // light focused through the drop: bright lower rim
+      float hl = smoothstep(0.24, 0.06, length(n - float2(-0.36, -0.38)));
+      float hl2 = smoothstep(0.12, 0.0, length(n - float2(0.3, -0.5))) * 0.5;
+      float3 body = lerp(C, float3(0.7, 0.85, 1.0), 0.4);
+      float3 dropRgb = float3(0.02, 0.03, 0.05) * ringA * 0.5 + body * 0.14 + (body * 0.5 + W * 0.45) * cres * 0.75 + W * (hl + hl2);
+      float dropA = saturate(0.16 + ringA * 0.5 + cres * 0.35 + hl + hl2);
+      rgb = rgb * (1.0 - cov * dropA) + dropRgb * cov;
+      a = a * (1.0 - cov * dropA) + dropA * cov;
+    }
+    return float4(rgb, a);
+  }
     if (fx == FX_ICE) { // frosted, cracked ice with glints; snowflakes drift off the letters
         float3 icy  = lerp(C, float3(0.78, 0.93, 1.0), 0.6);
         float2 vo   = voronoiEdge(q * 6.0 + sdd);
@@ -383,20 +413,25 @@ float4 letterFx(Glyph g, uint ai, V2P i, float sd, float F, float4 base) {
         float a = max(r, max(gg, b));
         return float4(rgb, a);
     }
-    if (fx == FX_GALAXY) { // a moving nebula with twinkling stars inside, shifting pink / cyan rim
-        float  neb  = fbm(q * 3.0 + float2(t * 0.05, t * 0.03) + sdd);
-        float3 col  = lerp(float3(0.08, 0.02, 0.2), float3(0.45, 0.1, 0.65), neb) + float3(0.1, 0.3, 0.6) * pow(fbm(q * 5.0 - t * 0.04 + sdd), 2.0) * 1.3;
-        col = lerp(col, C, 0.22);
-        float2 gq   = q * 22.0 + float2(t * 0.3, 0);
-        float  hh   = hash21(floor(gq) + sdd);
-        float2 jit  = hash22(floor(gq) + 3.0) - 0.5;
-        float  star = step(0.84, hh) * smoothstep(0.22, 0.0, length(frac(gq) - 0.5 - jit * 0.5)) * (0.5 + 0.5 * sin(t * 3.0 + hh * 50.0));
-        float3 rim  = lerp(float3(1.0, 0.4, 0.9), float3(0.3, 0.9, 1.0), 0.5 + 0.5 * sin(t + ang));
-        float  hl   = halo(g, ai, lc, ar, 0.08) * (1.0 - F) * I;
-        float3 rgb  = (col + W * star * 1.2) * F + rim * edge * 1.2 + float3(0.6, 0.3, 1.0) * hl * 0.45;
-        float  a    = saturate(F + edge * 0.6 + hl * 0.25);
-        return float4(rgb, a);
-    }
+  if (fx == FX_GALAXY) {
+    float neb = fbm(q * 2.2 + float2(t * 0.03, t * 0.02) + sdd);
+    float neb2 = fbm(q * 4.5 - float2(t * 0.02, 0.0) + sdd * 1.7);
+    float3 col = float3(0.006, 0.006, 0.02) + float3(0.18, 0.06, 0.32) * pow(neb, 3.0) * 1.6 + float3(0.04, 0.08, 0.22) * pow(neb2, 4.0) * 2.0;
+    col += C * pow(neb, 3.0) * 0.12;
+    float2 g1 = q * 38.0 + float2(t * 0.15, 0.0); float h1 = hash21(floor(g1) + sdd); float2 j1 = hash22(floor(g1) + 7.0);
+    float s1 = step(0.78, h1) * smoothstep(0.12, 0.0, length(frac(g1) - j1 * 0.6 - 0.2)) * (0.35 + 0.65 * frac(h1 * 13.0)) * (0.75 + 0.25 * sin(t * 4.0 + h1 * 80.0));
+    float2 g2 = q * 7.0 + float2(t * 0.06, 0.0); float2 c2 = floor(g2); float h2 = hash21(c2 + sdd * 2.1);
+    float2 p2 = frac(g2) - (0.25 + 0.5 * hash22(c2 + 3.7));
+    float twk = 0.6 + 0.4 * sin(t * 2.5 + h2 * 40.0);
+    float core = exp(-dot(p2, p2) * 600.0);
+    float spikes = (exp(-abs(p2.x) * 80.0) * exp(-abs(p2.y) * 6.0) + exp(-abs(p2.y) * 80.0) * exp(-abs(p2.x) * 6.0)) * 0.75;
+    float s2 = step(0.6, h2) * (core * 1.6 + spikes) * twk * (0.6 + 0.4 * frac(h2 * 31.0));
+    float3 starC = lerp(float3(0.75, 0.85, 1.0), float3(1.0, 0.9, 0.75), frac(h2 * 7.0));
+    float3 rimC = lerp(float3(0.55, 0.5, 1.0), float3(0.82, 0.86, 1.0), 0.5 + 0.5 * sin(t * 0.7 + ang));
+    float hl = halo(g, ai, lc, ar, 0.08) * (1.0 - F) * I;
+    float3 rgb = (col + W * s1 + starC * s2) * F + rimC * edge * 0.45 + float3(0.22, 0.1, 0.45) * hl * 0.35;
+    return float4(rgb, saturate(F + edge * 0.5 + hl * 0.2));
+  }
     return float4(base.rgb * F * base.a, F * base.a);
 }
 
