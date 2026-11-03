@@ -191,7 +191,7 @@ float4 PSGlyph(V2P i) : SV_Target {
         return float4(fillC.rgb * a, a) * k;
     }
 
-    uint const ai = min(g.atlas, kAtlases - 1);
+    const uint ai = min(g.atlas, kAtlases - 1);
     if (g.flags & F_IMAGE) { // cover art / icons / thumbnails: straight-alpha rgba, tinted
         float2    span  = g.uv.zw - g.uv.xy;
         float2    local = (i.uv - g.uv.xy) / (abs(span.x) > 1e-6 && abs(span.y) > 1e-6 ? span : float2(1, 1));
