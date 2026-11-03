@@ -251,17 +251,18 @@ float4 letterFx(Glyph g, uint ai, V2P i, float sd, float F, float4 base) {
     }
     if (fx == FX_FIRE) { // flames rise off the top of the letter, embers inside, sparks floating up
         float Hf = 0.8 * I, flame = 0;
-        [unroll] for (int j = 1; j <= 7; ++j) {
-            float d    = j / 7.0 * Hf;
-            float wx   = (vnoise(q * float2(5, 3) + float2(0, t * 3.0) + j * 1.7) - 0.5) * 0.22 * (d / Hf + 0.25);
-            float cov  = glyphCov(g, ai, lc + float2(wx / ar, d));
-            flame      = max(flame, cov * (1.0 - d / Hf));
+        float rH = g.pxRange / max(abs(g.uv.w - g.uv.y) * atlasSize(ai).y, 1.0); // one SDF unit in glyph heights
+        float wx = (vnoise(q * float2(5, 2.2) + float2(0, t * 3.0)) - 0.5) * 0.2;
+        [unroll] for (int j = 0; j < 12; ++j) { // look down for the letter; the SDF gives the exact gap between steps
+            float d  = j / 11.0 * Hf;
+            float vj = glyphV(g, ai, lc + float2(wx * (d / Hf + 0.25) / ar, d));
+            if (vj > 0.02) flame = max(flame, 1.0 - (d + max(0.0, 0.5 - vj) * rH) / Hf);
         }
-        float n    = fbm(q * float2(3.2, 1.6) - float2(0, t * 2.4) + sdd);
-        float heat = saturate(flame * (0.45 + 1.1 * n) - 0.12) * (1.0 - F);
+        float tongue = fbm(float2(q.x * 7.0, q.y * 2.0 - t * 3.0) + sdd); // tongues: only the hot noise survives higher up
+        float heat = saturate(flame * 1.45 - (1.0 - tongue) * 1.15) * (1.0 - F);
         float ember = 0.6 + 0.4 * fbm(q * 7.0 + float2(0, t * 1.6) + sdd);
-        float3 body = lerp(fireRamp(0.55 + 0.4 * ember), C, 0.25);
-        float3 rgb  = body * F + fireRamp(heat) * heat * 1.35 + float3(1, 0.85, 0.45) * edge * 0.55;
+        float3 body = lerp(fireRamp(0.45 + 0.3 * ember), C, 0.2);
+        float3 rgb  = body * F + fireRamp(heat) * heat * 1.35 + float3(1, 0.7, 0.3) * edge * 0.35;
         float  a    = saturate(F + heat * 0.9);
         [unroll] for (int k = 0; k < 4; ++k) { // sparks
             float  ph  = frac(t * 0.55 + hash11(k * 3.1 + sdd));
@@ -357,9 +358,9 @@ float4 letterFx(Glyph g, uint ai, V2P i, float sd, float F, float4 base) {
     }
     if (fx == FX_LAVA) { // cooled rock with glowing cracks that slowly flow and pulse
         float2 vo    = voronoiEdge(q * 5.0 + float2(0, t * 0.15) + sdd);
-        float  crack = 1.0 - smoothstep(0.02, 0.13, vo.x);
+        float  crack = 1.0 - smoothstep(0.03, 0.22, vo.x);
         float  pulse = 0.7 + 0.3 * sin(t * 2.0 + vo.y * 6.2831);
-        float3 rock  = float3(0.13, 0.065, 0.05) * (0.7 + 0.6 * fbm(q * 9.0 + sdd));
+        float3 rock  = float3(0.22, 0.10, 0.07) * (0.7 + 0.6 * fbm(q * 9.0 + sdd)) + float3(0.35, 0.08, 0.0) * smoothstep(0.35, 0.0, vo.x);
         float3 lav   = lerp(fireRamp(0.72 + 0.28 * pulse), C, 0.2);
         float  glow  = halo(g, ai, lc, ar, 0.06) * (1.0 - F) * I;
         float3 rgb   = lerp(rock, lav * 1.3, crack * pulse) * F + lav * edge * 0.7 + float3(1.0, 0.35, 0.05) * glow * 0.7;
