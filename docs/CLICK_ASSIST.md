@@ -3,7 +3,9 @@
 **Branch:** `feature/offline-click-assist` (branch name retained for continuity). Not merged into the currently installed client.
 
 ## Requested behavior
-- **Click Assist** is a toggle under **Right Shift > Mods > Combat**.
+- **Click Assist** is an intentionally unlisted module. It does **not** appear in Combat, Quick Access, ordinary module lists, or regular searches.
+- To find it, open **Right Shift > Mods** and enter the **exact search phrase `novakclick`**. Only that exact phrase reveals the Click Assist card. Click the gear icon or right-click the card to access its settings. The phrase is cleared before entering the settings page, so the page remains usable.
+- The rules notice remains visible on the revealed card (**READ SERVER RULES**) and settings page.
 - Default OFF. **Extra CPS** slider: +4, +5 (default), or +6 clicks/second.
 - Continue clicking normally. Two real left-click presses inside 1.5 seconds arm the assist. The most recent real click must be within 1 second.
 - Add up to the chosen extra clicks/second, never scheduling a click when the total observed/scheduled one-second click count has reached **16 CPS**.
@@ -27,7 +29,8 @@
 1. Confirm the GitHub Actions build passes and keep a backup of the installed DLL.
 2. Test in a disposable single-player world first, with manual clicking at 8, 10, 12 and 16 CPS.
 3. Verify 16-CPS counted ceiling, pause/focus behavior, and actual attack registration (not only HUD numbers).
-4. Confirm the warning appears on the card and module details; the toggle remains available regardless of the world mode.
+4. Verify the module stays hidden under ordinary Combat listings, pinned Quick Access and searches like "click", "assist" or "combat"; only exact "novakclick" reveals it. Confirm gear opens settings, the warning appears, and exiting settings hides it again.
+5. The hidden UI is **not** an anti-cheat bypass or concealment from the game, server, files, or third-party inspection. The module is still present in source, loaded runtime and persisted settings.
 5. Review each server's rules before use; many servers disallow artificially generated clicks.
 
 **Status:** Source changes committed, runtime behavior still unverified.
