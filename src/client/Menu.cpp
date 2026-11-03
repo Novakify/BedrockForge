@@ -446,9 +446,20 @@ void drawMods(UiFrame& f, Win const& w, float a) {
     auto& reg = Registry::get();
     std::vector<Module*> list;
     std::string const q = lower(gSearch);
-    for (auto& m : reg.all())
-        if (m->id != "client_ui" && (q.empty() ? inTab(*m, gTab) : (lower(m->name).find(q) != std::string::npos || lower(m->description).find(q) != std::string::npos)))
+    // Deliberately unlisted personal-access module. It is never shown in Combat,
+    // Quick Access, or regular searches; only the exact search phrase reveals it.
+    constexpr std::string_view kClickAssistUnlock = "novakclick";
+    for (auto& m : reg.all()) {
+        if (m->id == "client_ui") continue;
+        if (m->id == "click_assist") {
+            if (q == kClickAssistUnlock) list.push_back(m.get());
+            continue;
+        }
+        if (q == kClickAssistUnlock) continue;
+        if (q.empty() ? inTab(*m, gTab) :
+            (lower(m->name).find(q) != std::string::npos || lower(m->description).find(q) != std::string::npos))
             list.push_back(m.get());
+    }
     std::stable_sort(list.begin(), list.end(), [](Module* l, Module* r) {
         if (l->favorite != r->favorite) return l->favorite;
         return !l->planned && r->planned;
@@ -479,10 +490,18 @@ void drawMods(UiFrame& f, Win const& w, float a) {
             bool  gh = f.over(gx, y + 8, 26, 26);
             g.icon("gear", gx + 13, y + rowH / 2, 16, rgba(kWhite, on ? 0.9f : (gh ? 1.0f : 0.6f)), a);
             f.hits.push_back({x, y, colW, rowH, [m](bool right) {
-                if (right) { gModPage = m->id; showPage(Page::ModSettings); return; }
+                if (right) {
+                    // Search normally redirects the UI back to Mods. Clear the private phrase
+                    // before entering this module's detail/settings page.
+                    if (m->id == "click_assist") gSearch.clear();
+                    gModPage = m->id; showPage(Page::ModSettings); return;
+                }
                 Registry::get().setEnabled(*m, !m->enabled);
             }, "", m->id});
-            f.hits.push_back({gx, y + 6, 26, 30, [m](bool) { gModPage = m->id; showPage(Page::ModSettings); }});
+            f.hits.push_back({gx, y + 6, 26, 30, [m](bool) {
+                if (m->id == "click_assist") gSearch.clear();
+                gModPage = m->id; showPage(Page::ModSettings);
+            }});
         }
         bool const clickAssist = m->id == "click_assist";
         g.text(g.ellip(m->name, right - 80 - tx, 14), tx, y + rowH / 2 - (clickAssist ? 6 : 0), 14,
