@@ -7,6 +7,8 @@ void open();
 bool isOpen();
 /// Client thread: whether the pause screen is the top screen (shows the "Spatial GUI Settings" button).
 void notePause(bool pauseOnTop);
+/// Whether the pause screen is the top screen right now (the Bedrock Forge client menu button uses it too).
+bool pauseOnTop();
 /// ImGui should get the window's mouse/keyboard messages (screen open, or the pause button shown).
 bool wantsInput();
 /// The game's own mouse (GameInput) should see no buttons.

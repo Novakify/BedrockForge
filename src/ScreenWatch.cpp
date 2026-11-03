@@ -32,10 +32,15 @@ namespace {
 SceneStack* gInvStack = nullptr; // the stack whose top is the inventory screen (client thread)
 // the hud_screen scene, found while it is the top of its stack (client thread); compared by address only
 std::atomic<void const*> gHudScene{nullptr};
+// the stack that shows hud_screen, and whether that stack's top is still the HUD (Bedrock Forge client HUD)
+void const*       gHudStack = nullptr;
+std::atomic<bool> gHudTop{false};
 }
 LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, SceneStack, &SceneStack::$update, bool) {
     bool        r    = origin();
     std::string name = this->getScreenName();
+    if (name.find("hud_screen") != std::string::npos) { gHudStack = this; gHudTop = true; }
+    else if (gHudStack == static_cast<void const*>(this)) gHudTop = name.find("chat_screen") != std::string::npos;
     if (name.find("inventory_screen") != std::string::npos) gInvStack = this;
     else if (gInvStack == this) gInvStack = nullptr;
     if (name.find("hud_screen") != std::string::npos) {
@@ -125,6 +130,7 @@ void popInventory() {
     if (gInvStack) gInvStack->schedulePopScreen(1);
     gInvStack = nullptr;
 }
+bool hudOnTop() { return gHudTop.load(std::memory_order_relaxed); }
 void uninstall() {
     if (!gInstalled) return;
     RfSceneStackUpdateHook::unhook();

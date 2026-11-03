@@ -7,4 +7,6 @@ void uninstall();
 /// Close the player's inventory screen if it is open (the hidden window of a scene at a block with no window of its
 /// own, when the scene ends by itself). Client thread.
 void popInventory();
+/// Whether the in-game HUD is the top screen of its stack (chat on top counts as the HUD). Any thread.
+bool hudOnTop();
 } // namespace rf::screens

@@ -260,6 +260,7 @@ void notePause(bool pauseOnTop) {
     gPause = pauseOnTop;
     if (!pauseOnTop && gOpen.load()) { spatialcam::cfg() = gSnapshot; gOpen = false; } // the pause screen went away: cancel
 }
+bool pauseOnTop() { return gPause.load(); }
 bool wantsInput() { return gOpen.load() || gPause.load(); }
 bool blocksGameMouse() { return gOpen.load() || (gPause.load() && ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse); }
 

@@ -2,6 +2,7 @@
 #include "D3D12Api.h"
 #include "SpatialPanel.h"
 #include "SpatialConfigScreen.h"
+#include "Hud.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1488,7 +1489,7 @@ void debugUse(gi::GameInputMouseState* st) {
 template <class T> void debugUse(T) {}
 /// the Spatial GUI settings screen is up: the game behind it sees no mouse buttons
 void configBlock(gi::GameInputMouseState* st) {
-    if (st && sgconfig::blocksGameMouse()) st->buttons = gi::GameInputMouseButtons(0);
+    if (st && (sgconfig::blocksGameMouse() || hud::blocksGameMouse())) st->buttons = gi::GameInputMouseButtons(0);
 }
 template <class T> void configBlock(T) {}
 /// the use button pressed at a block whose use starts a scene: kept from the game until it is let go
