@@ -150,3 +150,17 @@ jobs:
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" lyricsflow-rf-builds
+
+      # LyricsFlow on Direct3D 11 (Blueberry compatibility): own builds branch so lyricsflow-rf-builds stays untouched
+      - name: Publish D3D11 RF build to lyricsflow-rf-d3d11-builds
+        if: github.ref == 'refs/heads/lyricsflow/rf-d3d11' && github.event_name == 'push'
+        shell: bash
+        run: |
+          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/
+          cd out
+          git init -q -b lyricsflow-rf-d3d11-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
+          git add -A && git commit -qm "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" lyricsflow-rf-d3d11-builds
