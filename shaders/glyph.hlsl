@@ -427,10 +427,10 @@ float4 letterFx(Glyph g, uint ai, V2P i, float sd, float F, float4 base) {
     float spikes = (exp(-abs(p2.x) * 80.0) * exp(-abs(p2.y) * 6.0) + exp(-abs(p2.y) * 80.0) * exp(-abs(p2.x) * 6.0)) * 0.75;
     float s2 = step(0.6, h2) * (core * 1.6 + spikes) * twk * (0.6 + 0.4 * frac(h2 * 31.0));
     float3 starC = lerp(float3(0.75, 0.85, 1.0), float3(1.0, 0.9, 0.75), frac(h2 * 7.0));
-    float3 rimC = lerp(float3(0.55, 0.5, 1.0), float3(0.82, 0.86, 1.0), 0.5 + 0.5 * sin(t * 0.7 + ang));
+    float3 rimC = lerp(float3(1.0, 0.4, 0.9), float3(0.3, 0.9, 1.0), 0.5 + 0.5 * sin(t + ang)); // the original neon rim
     float hl = halo(g, ai, lc, ar, 0.08) * (1.0 - F) * I;
-    float3 rgb = (col + W * s1 + starC * s2) * F + rimC * edge * 0.65 + float3(0.22, 0.1, 0.45) * hl * 0.35;
-    return float4(rgb, saturate(F + edge * 0.5 + hl * 0.2));
+    float3 rgb = (col + W * s1 + starC * s2) * F + rimC * edge * 1.2 + float3(0.6, 0.3, 1.0) * hl * 0.45;
+    return float4(rgb, saturate(F + edge * 0.6 + hl * 0.25));
   }
     return float4(base.rgb * F * base.a, F * base.a);
 }
