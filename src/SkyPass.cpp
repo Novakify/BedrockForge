@@ -1,6 +1,7 @@
 // Renderer Foundation - LyricsFlow port: live sky preview pass (see SkyPass.h). Original code for Renderer Foundation.
 // STAGED, NOT RUN IN GAME YET: compile-verified by CI only. Same D3D12 patterns as LyricsPass (root constants + SRV
 // table per ring slot, premultiplied blend, PSO per back-buffer format, WIC decode on a worker thread).
+#include "D3D12Api.h"
 #include "SkyPass.h"
 
 #include <algorithm>
@@ -210,7 +211,7 @@ bool createStatic(ID3D12Device* device) {
     }
     D3D12_ROOT_SIGNATURE_DESC rs{2, params, 2, smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob>          blob, err;
-    HRESULT                   hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+    HRESULT                   hr = rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
     if (FAILED(hr)) { fail("D3D12SerializeRootSignature", hr); return false; }
     if (FAILED(hr = device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gRoot)))) {
         fail("CreateRootSignature", hr);
@@ -655,7 +656,7 @@ bool makePictureRoot(ID3D12Device* dev) {
     smp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC rs{2, prm, 1, &smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob>          blob, err;
-    if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
+    if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     if (FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gPicRoot)))) return false;
     D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kRing, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gPicHeap)))) { gPicRoot.Reset(); return false; }

@@ -1,4 +1,5 @@
 // Renderer Foundation - full-screen post effects (see PostFx.h, shaders/postfx.hlsl).
+#include "D3D12Api.h"
 #include "PostFx.h"
 
 #include <algorithm>
@@ -131,7 +132,7 @@ bool createStatic(ID3D12Device* device) {
     smp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_ROOT_SIGNATURE_DESC rs{2, params, 1, &smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, err;
-    HRESULT          hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+    HRESULT          hr = rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
     if (FAILED(hr)) { fail("D3D12SerializeRootSignature", hr); return false; }
     hr = device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gRoot));
     if (FAILED(hr)) { fail("CreateRootSignature", hr); return false; }

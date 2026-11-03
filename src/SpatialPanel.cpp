@@ -1,4 +1,5 @@
 // Renderer Foundation - Spatial GUI M1 panel (see SpatialPanel.h, shaders/panel.hlsl). Original code for Renderer Foundation.
+#include "D3D12Api.h"
 #include "SpatialPanel.h"
 #include "SpatialConfigScreen.h"
 
@@ -128,7 +129,7 @@ bool createStatic(ID3D12Device* device) {
     smp[1].ShaderRegister   = 1;
     D3D12_ROOT_SIGNATURE_DESC rs{2, params, 2, smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, err;
-    HRESULT          hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+    HRESULT          hr = rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
     if (FAILED(hr)) { fail("D3D12SerializeRootSignature", hr); return false; }
     if (FAILED(hr = device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gRoot)))) {
         fail("CreateRootSignature", hr);

@@ -1,6 +1,7 @@
 // Renderer Foundation - LyricsFlow port: lyric glyph pass (see LyricsPass.h). Original code for Renderer Foundation.
 // STAGED, NOT RUN IN GAME YET: compile-verified by CI only. Mirrors SpatialPanel's D3D12 patterns (root constants +
 // SRV table, premultiplied blend, PSO per back-buffer format, graveyard for resources in flight).
+#include "D3D12Api.h"
 #include "LyricsPass.h"
 
 #include <algorithm>
@@ -202,7 +203,7 @@ bool createStatic(ID3D12Device* device) {
     }
     D3D12_ROOT_SIGNATURE_DESC rs{2, params, 2, smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob>          blob, err;
-    HRESULT                   hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+    HRESULT                   hr = rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
     if (FAILED(hr)) { fail("D3D12SerializeRootSignature", hr); return false; }
     if (FAILED(hr = device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gRoot)))) {
         fail("CreateRootSignature", hr);

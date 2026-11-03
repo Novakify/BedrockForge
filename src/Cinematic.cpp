@@ -2,6 +2,7 @@
 // logic, poses and timings follow the Java mod Cinematic Interactions (Southware, MIT) in its client-only mode:
 // Scene.beginClientOnly / frame / leave, CameraRig.override / tether / breathe / fov, Reach.planHere,
 // TableStation (lean, cells, result), SceneScreen (inventory drawer), Overlay (letterbox).
+#include "D3D12Api.h"
 #include "Cinematic.h"
 
 #include <algorithm>
@@ -3505,7 +3506,7 @@ bool createPipeline(ID3D12Device* dev, DXGI_FORMAT fmt) {
         ss[1].ShaderRegister = 1;
         D3D12_ROOT_SIGNATURE_DESC rs{2, p, 2, ss, D3D12_ROOT_SIGNATURE_FLAG_NONE};
         ComPtr<ID3DBlob> blob, err;
-        HRESULT hr = D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+        HRESULT hr = rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
         if (FAILED(hr)) return fail("D3D12SerializeRootSignature", hr);
         if (FAILED(hr = dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gG.root))))
             return fail("CreateRootSignature", hr);

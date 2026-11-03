@@ -1,4 +1,5 @@
 // Renderer Foundation - ImGui overlay (see Overlay.h, Notice.h).
+#include "D3D12Api.h"
 #include "Overlay.h"
 #include "SpatialConfigScreen.h"
 
@@ -418,7 +419,7 @@ bool findTargets() {
     ComPtr<ID3D12Device>       dev;
     ComPtr<ID3D12CommandQueue> q;
     D3D12_COMMAND_QUEUE_DESC   qd{};
-    if (FAILED(hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) probeNote("D3D12CreateDevice", hr);
+    if (FAILED(hr = rf::d3d12api::CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) probeNote("D3D12CreateDevice", hr);
     else if (FAILED(hr = dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q)))) probeNote("CreateCommandQueue", hr);
     if (q) gTargets[3] = (*reinterpret_cast<void***>(q.Get()))[10]; // ID3D12CommandQueue::ExecuteCommandLists
     if (dev) { // Spatial GUI M0 spike targets (hooked only when uiCaptureSpike is on)
