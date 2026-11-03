@@ -17,6 +17,10 @@ Everything you need is in this package. You don't need the game.
 | `preview.py` | renders the stick wearing the armor from 4 angles (front, 3/4, side, back 3/4) |
 | `current_design.png` | v1, rendered (gold helmet, diamond chest, netherite legs, iron boots) |
 | `current_materials.png` | v1's 8 material textures |
+| `STICK_DIMENSIONS.md` | **exact dimensions** of every part: true length, thickness, tilt, axis end points, bounds, centre, joints (pivots) |
+| `stick_dimensions.json` | the same as data |
+| `stick_figure_rest.obj` | **the exact model** as a 3D mesh (rest pose), one group per part; opens in Blender / Blockbench / any viewer |
+| `stick_figure_with_armor_v1.obj` | the model + the current v1 armor, one group per slot |
 
 Quick start (Python 3 with numpy, pillow, matplotlib):
 
