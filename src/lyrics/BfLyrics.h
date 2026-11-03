@@ -48,7 +48,7 @@ struct BfGlyphV1 {
     float    right[3];   // half-extent vector along the glyph's +x
     float    _pad1;      // when _pad1 > _pad0 (BF menu scroll areas; RF fades the glyph out over 10 px centred on each band edge)
     float    up[3];      // half-extent vector along the glyph's +y
-    float    _pad2;
+    float    _pad2;      // [letter fx] effect id (bits 0-4, bit 5 rainbow) + intensity / 2.5 as the fraction (0 = none)
     float    uv[4];      // atlas rect u0, v0 (top), u1, v1 (bottom), 0..1
     uint32_t fill;       // main colour (top colour when BF_GLYPH_GRADIENT)
     uint32_t fill2;      // gradient bottom colour
@@ -61,7 +61,7 @@ struct BfGlyphV1 {
     uint32_t atlas;      // index into BfLyricFrameV1::atlasFiles
     uint32_t flags;      // BfGlyphFlags
     float    pxRange;    // SDF distance range of the atlas in atlas pixels (msdf-atlas-gen "distanceRange")
-    float    _pad3;
+    float    _pad3;      // [letter fx] letter seed + speed / 4 as the fraction
 };
 static_assert(sizeof(BfGlyphV1) == 112, "BfGlyphV1 layout is shared with RF / glyph.hlsl");
 

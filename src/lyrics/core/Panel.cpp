@@ -841,6 +841,8 @@ void applyGroundLook(Config& cfg) {
 // effects that run while a line is up.
 void Panel::fx(Ctx& c, Config& cfg) {
     float const a = c.pageA;
+    c.pager("fxp", 43, mFxPage, 2, mFxPage, a); // page 2: animated letters
+    if (mFxPage == 1) { letterFx(c, cfg); return; }
     c.text("Words come in", 206, 45, 0.62f, WHITE, 0.55f * a);
     static std::pair<EnterAnim, char const*> const ins[] = {{EnterAnim::Word, "Pop"},   {EnterAnim::Fade, "Fade"}, {EnterAnim::Rise, "Rise"},
                                                             {EnterAnim::Drop, "Drop"},  {EnterAnim::Spin, "Spin"}, {EnterAnim::Zoom, "Zoom"},
@@ -873,6 +875,40 @@ void Panel::fx(Ctx& c, Config& cfg) {
         c.toggle2("fxg", 206, 182, 160, "Ground look (video)", on, [&cfg] { applyGroundLook(cfg); }, a);
     } else
         cfg.fxIntensity = 0.2f + 1.8f * c.slider("fxi", "Break power", 186, (std::clamp(cfg.fxIntensity, 0.2f, 2.0f) - 0.2f) / 1.8f, a);
+}
+
+// [BF] FX page 2: animated letters (fire, water, ice ... drawn per letter by RF's glyph shader), their colour,
+// rainbow, speed and strength.
+void Panel::letterFx(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Animated letters", 206, 45, 0.62f, WHITE, 0.55f * a);
+    static char const* const names[] = {"None", "Neon", "Fire", "Water", "Ice", "Electric", "Lava", "Glitch", "Galaxy"};
+    for (int i = 0; i < 9; ++i)
+        c.option("lx" + std::to_string(i), 206 + float(i % 3) * 54, 56 + float(i / 3) * 15, 51, 13, names[i], cfg.letterFx == i,
+                 [&cfg, i] { cfg.letterFx = i; }, a);
+    c.text("Colour", 206, 104, 0.62f, WHITE, 0.55f * a);
+    static uint32_t const cols[] = {0, 0xFFFFFF, 0xFF3B3B, 0xFF8A1E, 0xFFE03A, 0x3BFF6A, 0x2EE6FF, 0x3B6BFF, 0xA64BFF, 0xFF4FD8};
+    for (int i = 0; i < 10; ++i) {
+        float       x = 212 + float(i) * 16, y = 118;
+        bool        sel = (cols[i] == 0 && cfg.letterFxColor == 0) || (cols[i] != 0 && (uint32_t(cfg.letterFxColor) & 0xFFFFFFu) == cols[i] && cfg.letterFxColor != 0);
+        std::string id  = "lxc" + std::to_string(i);
+        float       hv  = c.hit(id, x - 6, y - 6, 12, 12);
+        if (sel) { c.disc(x, y, 6.6f, WHITE, a); c.disc(x, y, 5.2f, BOTTOM, a); }
+        float r = 4.6f + hv * 0.6f;
+        if (cols[i] == 0) { // "text colour": the theme's two colours
+            auto const th = currentTheme(cfg);
+            c.disc(x, y, r, th.a & 0xFFFFFF, a);
+            c.disc(x, y, r * 0.55f, th.main & 0xFFFFFF, a);
+        } else
+            c.disc(x, y, r, cols[i], a);
+        if (c.clicked(id)) { cfg.letterFxColor = cols[i] == 0 ? 0 : int32_t(0xFF000000u | cols[i]); c.changed = true; }
+    }
+    c.toggle2("lxr", 206, 128, 78, "Rainbow", cfg.fxRainbow, [&] { cfg.fxRainbow = !cfg.fxRainbow; }, a);
+    cfg.letterFxSpeed = 0.25f + 2.75f * c.slider("lxs", "Speed", 152, (std::clamp(cfg.letterFxSpeed, 0.25f, 3.0f) - 0.25f) / 2.75f, a);
+    cfg.letterFxIntensity =
+        0.2f + 1.8f * c.slider("lxi", "Strength", 168, (std::clamp(cfg.letterFxIntensity, 0.2f, 2.0f) - 0.2f) / 1.8f, a);
+    if (cfg.letterFx != 0 && cfg.font == "minecraft")
+        c.text("Pixel font: pick another font to see it", 206, 184, 0.55f, ACCENT2, 0.8f * a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the

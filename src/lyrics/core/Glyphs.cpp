@@ -125,6 +125,18 @@ uint32_t hueRotate(uint32_t c, float turns) {
     return (c & 0xFF000000u) | (to8(rr) << 16) | (to8(gg) << 8) | to8(bb);
 }
 
+namespace {
+uint32_t hsvArgb(float h, float s, float v) {
+    h -= std::floor(h);
+    auto ch = [&](float n) {
+        float k = std::fmod(n + h * 6.0f, 6.0f);
+        return v - v * s * std::clamp(std::min(k, 4.0f - k), 0.0f, 1.0f);
+    };
+    auto to8 = [](float x) { return uint32_t(std::clamp(x, 0.0f, 1.0f) * 255.0f + 0.5f); };
+    return 0xFF000000u | (to8(ch(5)) << 16) | (to8(ch(3)) << 8) | to8(ch(1));
+}
+} // namespace
+
 GlyphStyle makeStyle(Config const& c, float timeSeconds) {
     GlyphStyle st;
     st.theme       = currentTheme(c);
@@ -244,8 +256,20 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
                     uint32_t const cyc[3] = {th.main, th.a, th.b};
                     fillArgb              = hueRotate(cyc[letter % 3], hue);
                 }
+                // [BF] Rainbow: real colours per letter, running along the word. (Hue-rotating the theme did nothing
+                // on white / grey text and in Clean style.)
+                bool const rainbow = c.fxRainbow && ps.main && !w.argb && !w.plain;
+                float const rbH    = (c.hueShiftSpeed != 0.0f ? c.hueShiftSpeed : 0.12f) * st.timeSeconds + float(letter) * 0.07f
+                                + float(w.key % 31) * 0.13f;
+                if (rainbow) fillArgb = hsvArgb(rbH, 0.72f, 1.0f);
+                int const fx = (ps.main && !w.plain && !(font.flags & BF_GLYPH_BITMAP)) ? std::clamp(c.letterFx, 0, 8) : 0;
+                if (fx && c.letterFxColor != 0 && !rainbow && !w.argb) fillArgb = uint32_t(c.letterFxColor) | 0xFF000000u;
                 q.fill    = toRgba(fillArgb);
-                q.fill2   = toRgba(ps.main ? hueRotate(grad2Argb, hue) : fillArgb);
+                q.fill2   = toRgba(rainbow ? hsvArgb(rbH + 0.15f, 0.72f, 1.0f) : ps.main ? hueRotate(grad2Argb, hue) : fillArgb);
+                if (fx) { // [BF] animated letters, see RF shaders/glyph.hlsl letterFx()
+                    q._pad2 = float(uint32_t(fx) | (c.fxRainbow ? 32u : 0u)) + std::clamp(c.letterFxIntensity, 0.2f, 2.0f) / 2.5f;
+                    q._pad3 = float((letter * 7 + int(uint64_t(w.key) % 97u) * 13) % 4096) + std::clamp(c.letterFxSpeed, 0.1f, 3.0f) / 4.0f;
+                }
                 q.alpha   = ps.alpha;
                 q.atlas   = font.atlasIndex;
                 q.flags   = flags;

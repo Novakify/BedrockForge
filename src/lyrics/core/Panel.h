@@ -105,6 +105,7 @@ private:
     void offset(Ctx& c, Config& cfg, float y);
     void look(Ctx& c, Config& cfg, FontSet const& fonts);
     void fx(Ctx& c, Config& cfg);
+    void letterFx(Ctx& c, Config& cfg); // [BF] FX page 2: animated letters
     void fps(Ctx& c, Config& cfg);
     void more(Ctx& c, Config& cfg);
 
@@ -112,7 +113,7 @@ private:
     float   mRx = 1, mRz = 0;  // panel +x (the player's right)
     float   mNx = 0, mNz = -1; // panel normal (toward the player)
     int64_t mBorn = -1, mClosing = -1, mPageTime = 0;
-    int     mPage = 0, mSkyPage = 0, mFontPage = 0;
+    int     mPage = 0, mSkyPage = 0, mFontPage = 0, mFxPage = 0;
     bool    mHovered = false;
     float   mHx = 0, mHy = 0;
     float   mSpin = 0;
