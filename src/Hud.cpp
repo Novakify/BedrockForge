@@ -18,13 +18,16 @@
 #include <deque>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "ll/api/memory/Hook.h"
 #include "ll/api/service/Bedrock.h"
 
 #include "mc/client/game/ClientInstance.h"
+#include "mc/client/network/ClientNetworkHandler.h"
 #include "mc/client/options/IOptionRegistry.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/client/player/LocalPlayer.h"
@@ -44,6 +47,19 @@
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/level/Level.h"
 #include "mc/world/level/dimension/Dimension.h"
+#include "mc/network/MinecraftPacketIds.h"
+#include "mc/network/MinecraftPackets.h"
+#include "mc/network/NetworkIdentifier.h"
+#include "mc/network/PacketSender.h"
+#include "mc/network/packet/CommandRequestPacket.h"
+#include "mc/network/packet/CommandRequestPacketPayload.h"
+#include "mc/network/packet/SetTitlePacket.h"
+#include "mc/network/packet/SetTitlePacketPayload.h"
+#include "mc/network/packet/TextPacket.h"
+#include "mc/network/packet/TextPacketPayload.h"
+#include "mc/server/commands/CommandOriginData.h"
+#include "mc/server/commands/CommandOriginType.h"
+#include "mc/server/commands/CurrentCmdVersion.h"
 
 #include <windows.h>
 
@@ -132,6 +148,15 @@ struct BrightOpt {
     float orig  = -1.0f; // the player's own brightness (0..1) from before fullbright, kept across restarts
 } gBright;
 bool              gAutoSprint = false;
+struct AutoOpt {
+    bool        gg        = false;
+    std::string ggMsg     = "gg";
+    float       ggDelay   = 1.0f;
+    bool        rq        = false;
+    bool        rqOnDeath = false;
+    float       rqDelay   = 2.0f;
+    std::string rqCustom; // other servers: a play-again command of your own ("" = The Hive only, found by itself)
+} gAuto;
 std::atomic<bool> gZoomHeld{false};
 std::atomic<bool> gMenu{false};
 std::atomic<bool> gBtnHover{false};
@@ -141,7 +166,7 @@ ImFont*           gFont = nullptr;
 
 struct Entry {
     std::string key;
-    char        t; // b bool, i int, f float, u colour
+    char        t; // b bool, i int, f float, u colour, s text
     void*       p;
 };
 std::vector<Entry> entries() {
@@ -155,7 +180,9 @@ std::vector<Entry> entries() {
         {"zoom.on", 'b', &gZoom.on},    {"zoom.key", 'i', &gZoom.key},      {"zoom.factor", 'f', &gZoom.factor},
         {"zoom.smooth", 'b', &gZoom.smooth}, {"time.on", 'b', &gTime.on},   {"time.ticks", 'i', &gTime.ticks},
         {"bright.on", 'b', &gBright.on}, {"bright.gamma", 'f', &gBright.gamma}, {"bright.orig", 'f', &gBright.orig},
-        {"autoSprint", 'b', &gAutoSprint},
+        {"autoSprint", 'b', &gAutoSprint}, {"auto.gg", 'b', &gAuto.gg}, {"auto.ggMsg", 's', &gAuto.ggMsg},
+        {"auto.ggDelay", 'f', &gAuto.ggDelay}, {"auto.rq", 'b', &gAuto.rq}, {"auto.rqDeath", 'b', &gAuto.rqOnDeath},
+        {"auto.rqDelay", 'f', &gAuto.rqDelay}, {"auto.rqCustom", 's', &gAuto.rqCustom},
     };
     for (auto& m : gMods) {
         std::string k = std::string("m.") + m.id;
@@ -304,6 +331,131 @@ void fill(Piece& p, ItemStack const& st) {
 bool anyGameModule() {
     return gMods[MCoords].on || gMods[MDir].on || gMods[MArmor].on || gMods[MTab].on;
 }
+// ---------------------------------------------------------------- Auto GG / auto re-queue
+// Game ends are read from chat and title packets (patterns of The Hive, CubeCraft, Lifeboat, Zeqa, Galaxite, Mineville).
+// What we send goes out later on the client thread (a short, natural delay): a chat message, a command. On The Hive the
+// game to re-queue for comes from its own /connection command ("You are connected to server name SKY-DUOS12"), whose
+// answer is kept out of chat. Nothing Hive-specific is ever sent before Hive was seen (its Game OVER or that answer).
+struct Action {
+    Clock::time_point at;
+    bool              command;
+    std::string       text;
+};
+std::mutex          gActMutex;
+std::vector<Action> gActs;
+Clock::time_point   gLastEnd{}, gAwaitUntil{};
+std::atomic<bool>   gAwaitConn{false};
+std::atomic<bool>   gOnHive{false};
+std::atomic<long>   gGgSent{0}, gRqSent{0};
+std::mutex          gGameMutex;
+std::string         gHiveGame; // last /connection answer, digits removed: "SKY-DUOS"
+
+void queueAction(float delaySec, bool command, std::string text) {
+    std::lock_guard l(gActMutex);
+    gActs.push_back({Clock::now() + std::chrono::milliseconds(int(std::clamp(delaySec, 0.0f, 30.0f) * 1000.0f)), command, std::move(text)});
+}
+enum : int { EndNone, EndHive, EndOther, EndDeath };
+bool has(std::string const& s, char const* p) { return s.find(p) != std::string::npos; }
+int endFromText(std::string const& m) {
+    std::string c = stripCodes(m);
+    if (c == "» Game OVER!") return EndHive; // The Hive
+    if (has(m, "§a won the game!") || has(m, "§a has won the game!")) return EndOther; // CubeCraft / Lifeboat
+    return EndNone;
+}
+int endFromTitle(std::string const& t) {
+    if (t == "§f§aYou won the game!" || t == "§f§cYou lost the game!") return EndOther; // Zeqa
+    if (has(t, "Team§r§a won the game!") || has(t, "§bHiders§r§f Win") || has(t, "§eSeekers§r§f Win") || t == "Finished" ||
+        t == "Out of Time!")
+        return EndOther; // Galaxite
+    if (t == "§aYou Win!" || t == "§cGame Over!") return EndOther; // Mineville
+    if (t == "§cYou died!" || t == "§7You're spectating the §as§eh§6o§cw§7!") return EndDeath; // The Hive (solo)
+    return EndNone;
+}
+void onGameEnd(int kind) {
+    if (kind == EndHive) gOnHive = true;
+    if (kind == EndOther) gOnHive = false;
+    if (kind == EndDeath && !gOnHive.load()) return; // only re-queue after a death where /q is known to exist
+    auto now = Clock::now();
+    if (now - gLastEnd < std::chrono::seconds(8)) return; // the same end seen as a title and a chat line
+    gLastEnd = now;
+    if (kind != EndDeath && gAuto.gg && !gAuto.ggMsg.empty()) {
+        queueAction(gAuto.ggDelay, false, gAuto.ggMsg);
+        ++gGgSent;
+    }
+    if (!gAuto.rq || (kind == EndDeath && !gAuto.rqOnDeath)) return;
+    if (kind == EndHive || kind == EndDeath) {
+        float d = std::max(0.3f, gAuto.rqDelay - 0.4f);
+        queueAction(d, true, "/connection"); // its answer queues /q <game> (onText)
+        gAwaitUntil = now + std::chrono::milliseconds(int(d * 1000.0f) + 6000);
+        gAwaitConn  = true;
+    } else if (!gAuto.rqCustom.empty())
+        queueAction(gAuto.rqDelay, true, gAuto.rqCustom);
+}
+/// false: keep this message out of chat (our own /connection question)
+bool onText(std::string const& m) {
+    if (gAwaitConn.load()) {
+        std::string c = stripCodes(m);
+        size_t      k = c.find("You are connected to server name ");
+        if (k != std::string::npos || has(c, "You are connected")) {
+            gAwaitConn = false;
+            if (k != std::string::npos) {
+                std::string srv = c.substr(k + 33), game;
+                for (char ch : srv)
+                    if (!std::isdigit(uint8_t(ch)) && !std::isspace(uint8_t(ch))) game += char(std::tolower(uint8_t(ch)));
+                while (!game.empty() && game.back() == '-') game.pop_back();
+                {
+                    std::lock_guard l(gGameMutex);
+                    gHiveGame = game;
+                }
+                gOnHive = true;
+                if (!game.empty() && game.find("hub") == std::string::npos && game != "replay") {
+                    queueAction(0.4f, true, "/q " + game);
+                    ++gRqSent;
+                }
+            }
+            return false;
+        }
+        if (Clock::now() > gAwaitUntil) gAwaitConn = false;
+    }
+    if (int e = endFromText(m)) onGameEnd(e);
+    return true;
+}
+void onTitle(std::string const& t) {
+    if (int e = endFromTitle(t)) onGameEnd(e);
+}
+/// client thread: send what is due (kept while the player is between servers, dropped after 20 s)
+void runActions(ClientInstance* ci, LocalPlayer* lp) {
+    std::vector<Action> due;
+    {
+        std::lock_guard l(gActMutex);
+        if (gActs.empty()) return;
+        auto now = Clock::now();
+        for (size_t i = 0; i < gActs.size();) {
+            if (now - gActs[i].at > std::chrono::seconds(20)) { gActs.erase(gActs.begin() + i); continue; }
+            if (gActs[i].at <= now && ci && lp) { due.push_back(std::move(gActs[i])); gActs.erase(gActs.begin() + i); continue; }
+            ++i;
+        }
+    }
+    for (auto& a : due) {
+        if (!a.command) {
+            TextPacket pkt = TextPacketPayload::createChat(lp->getRealName(), a.text, std::nullopt, lp->getXuid(), "");
+            ci->getPacketSender().sendToServer(pkt);
+            continue;
+        }
+        std::shared_ptr<Packet> sp = MinecraftPackets::createPacket(MinecraftPacketIds::CommandRequest);
+        auto*                   c  = static_cast<CommandRequestPacket*>(sp.get());
+        if (!c) continue;
+        c->mCommand         = a.text;
+        c->mOrigin->mType   = CommandOriginType::Player;
+        c->mInternalSource  = true;
+        c->mVersion         = CurrentCmdVersion::Latest;
+        ci->getPacketSender().sendToServer(*c);
+    }
+}
+std::string messageOf(TextPacket const& p) {
+    return std::visit([](auto const& b) { return std::string(b.mMessage.get()); }, p.mBody.get());
+}
+
 /// Auto sprint: the sprint key held for the game (same as holding Ctrl - the game still decides whether you can sprint:
 /// forward only, enough food, not sneaking), re-asserted every frame because a key-up event clears it.
 bool gSprintSet = false;
@@ -332,7 +484,7 @@ bool gBrightApplied = false;
 void applyBright(ClientInstance& c) {
     Option* o = c.getOptions().get(OptionID::Gamma).get();
     if (!o) return;
-    float& v = static_cast<FloatOption*>(o)->mValue.get();
+    float& v = static_cast<FloatOption*>(o)->mValue; // TypedStorage of a scalar is the scalar itself
     if (gBright.on) {
         if (!gBrightApplied) {
             if (v <= 1.0f) gBright.orig = v;
@@ -348,6 +500,7 @@ void snapshot() {
     auto  ci = ll::service::getClientInstance();
     auto* lp = ci ? ci->getLocalPlayer() : nullptr;
     applySprint(lp); // every frame
+    runActions(ci ? &*ci : nullptr, lp);
     auto now = Clock::now();
     if (now - gLastFast < std::chrono::milliseconds(50)) return; // 20 Hz is plenty for a HUD
     gLastFast = now;
@@ -584,6 +737,16 @@ void captureKey() {
         }
     }
 }
+/// single-line text field bound to a std::string (ImGui keeps its own buffer while the field is being edited)
+void inputString(char const* label, std::string& str, float w) {
+    char buf[128];
+    std::snprintf(buf, sizeof buf, "%s", str.c_str());
+    ImGui::SetNextItemWidth(w);
+    if (ImGui::InputText(label, buf, sizeof buf)) {
+        str = buf;
+        str.erase(std::remove(str.begin(), str.end(), '\n'), str.end());
+    }
+}
 /// a button that shows a key and waits for a new one when clicked
 void keyButton(char const* id, int which, int key) {
     std::string lbl = (gCapture == which ? std::string("press a key... (Esc cancels)") : keyName(key)) + "##" + id;
@@ -605,8 +768,12 @@ void loadConfig(std::filesystem::path const& configDir) {
     std::ifstream in(gCfgFile);
     if (!in) return;
     auto        es = entries();
-    std::string key, val;
-    while (in >> key >> val) {
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t sp = line.find(' ');
+        if (sp == std::string::npos) continue;
+        std::string key = line.substr(0, sp), val = line.substr(sp + 1);
         for (auto& e : es) {
             if (e.key != key) continue;
             switch (e.t) {
@@ -614,6 +781,7 @@ void loadConfig(std::filesystem::path const& configDir) {
             case 'i': *static_cast<int*>(e.p) = std::atoi(val.c_str()); break;
             case 'f': *static_cast<float*>(e.p) = float(std::atof(val.c_str())); break;
             case 'u': *static_cast<ImU32*>(e.p) = ImU32(std::strtoul(val.c_str(), nullptr, 16)); break;
+            case 's': *static_cast<std::string*>(e.p) = val; break;
             }
         }
     }
@@ -632,6 +800,7 @@ void saveConfig() {
         case 'i': out << *static_cast<int*>(e.p); break;
         case 'f': out << *static_cast<float*>(e.p); break;
         case 'u': out << sfmt("%08X", unsigned(*static_cast<ImU32*>(e.p))); break;
+        case 's': out << *static_cast<std::string*>(e.p); break;
         }
         out << '\n';
     }
@@ -851,6 +1020,39 @@ void drawMenu() {
                 ImGui::Checkbox("Auto sprint", &gAutoSprint);
                 ImGui::SameLine();
                 ImGui::TextDisabled("like holding the sprint key - forward only, the game's normal rules");
+                ImGui::Separator();
+                ImGui::Checkbox("Auto GG", &gAuto.gg);
+                ImGui::SameLine();
+                ImGui::TextDisabled("says it in chat when a game ends");
+                if (gAuto.gg) {
+                    ImGui::Indent();
+                    inputString("Message", gAuto.ggMsg, 160 * s);
+                    ImGui::SetNextItemWidth(160 * s);
+                    ImGui::SliderFloat("Delay##gg", &gAuto.ggDelay, 0.2f, 5.0f, "%.1f s");
+                    ImGui::Unindent();
+                }
+                ImGui::Checkbox("Auto re-queue", &gAuto.rq);
+                ImGui::SameLine();
+                ImGui::TextDisabled("joins the next game of the same mode");
+                if (gAuto.rq) {
+                    ImGui::Indent();
+                    ImGui::SetNextItemWidth(160 * s);
+                    ImGui::SliderFloat("Delay##rq", &gAuto.rqDelay, 0.5f, 10.0f, "%.1f s");
+                    ImGui::Checkbox("Also when you die (The Hive solo modes)", &gAuto.rqOnDeath);
+                    ImGui::TextDisabled("The Hive: found by itself (/q with the mode you were in).");
+                    inputString("Other servers' command", gAuto.rqCustom, 200 * s);
+                    ImGui::TextDisabled("For other servers: their play-again command if they have one. Empty = The Hive only.");
+                    ImGui::Unindent();
+                }
+                {
+                    std::string game;
+                    {
+                        std::lock_guard l(gGameMutex);
+                        game = gHiveGame;
+                    }
+                    ImGui::TextDisabled("Seen: %s%s   GG sent %ld   re-queues %ld", gOnHive.load() ? "The Hive" : "no Hive game yet",
+                                        game.empty() ? "" : (" (" + game + ")").c_str(), gGgSent.load(), gRqSent.load());
+                }
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Settings")) {
@@ -870,7 +1072,7 @@ void drawMenu() {
             }
             if (ImGui::BeginTabItem("Coming next")) {
                 ImGui::TextWrapped("On the way in the next builds:");
-                for (char const* f : {"Auto GG", "Auto re-queue (Hive / CubeCraft)", "Potion effects HUD", "Ping",
+                for (char const* f : {"Potion effects HUD", "Ping",
                                       "Lower mouse sensitivity while zoomed", "Movable vanilla HUD (hotbar, chat, scoreboard)",
                                       "Replay mode"})
                     ImGui::BulletText("%s", f);
@@ -898,6 +1100,17 @@ LL_TYPE_INSTANCE_HOOK(RfZoomHook, ll::memory::HookPriority::Normal, LevelRendere
                       bool variable) {
     return rf::hud::zoomFov(origin(a, variable), variable);
 }
+// Auto GG / re-queue: chat and title packets as they arrive (a /connection answer we asked for is kept out of chat).
+LL_TYPE_INSTANCE_HOOK(RfTextPacketHook, ll::memory::HookPriority::Normal, ClientNetworkHandler, &ClientNetworkHandler::$handle, void,
+                      NetworkIdentifier const& source, TextPacket const& packet) {
+    if (!rf::hud::onText(rf::hud::messageOf(packet))) return;
+    origin(source, packet);
+}
+LL_TYPE_INSTANCE_HOOK(RfTitlePacketHook, ll::memory::HookPriority::Normal, ClientNetworkHandler, &ClientNetworkHandler::$handle, void,
+                      NetworkIdentifier const& source, SetTitlePacket const& packet) {
+    rf::hud::onTitle(packet.mTitleText.get());
+    origin(source, packet);
+}
 // Time changer: the sky / sun / light curve evaluated at our time.
 LL_TYPE_INSTANCE_HOOK(RfTimeHook, ll::memory::HookPriority::Normal, Dimension, &Dimension::$getTimeOfDay, float, int time, float a) {
     return origin(rf::hud::timeOfDay(time), a);
@@ -909,6 +1122,8 @@ void install() {
     RfHudSnapshotHook::hook();
     RfZoomHook::hook();
     RfTimeHook::hook();
+    RfTextPacketHook::hook();
+    RfTitlePacketHook::hook();
     gHooked = true;
 }
 void uninstall() {
@@ -916,6 +1131,8 @@ void uninstall() {
     RfHudSnapshotHook::unhook();
     RfZoomHook::unhook();
     RfTimeHook::unhook();
+    RfTextPacketHook::unhook();
+    RfTitlePacketHook::unhook();
     gHooked = false;
     saveConfig();
 }
