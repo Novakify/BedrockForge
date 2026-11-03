@@ -11,7 +11,9 @@ One geometry per slot (head / chest / legs / feet), one texture per material, pi
 wears (query.is_item_name_any on slot.armor.*). Only on the avatar's player (v.fbnoarmor), only while the stick is the
 installed avatar (v.fbstickarmor is written into its player.entity.json only).
 
-usage: stick_armor.py STICK_GEO PLAYER_ENTITY OUT_DIR
+usage: stick_armor.py STICK_GEO [PLAYER_ENTITY] OUT_DIR
+  STICK_GEO: the stick's geometry (figura_stick.geo.json, or the trimmed stick_skeleton.json)
+  PLAYER_ENTITY: optional - without it only the geometry, render controllers and textures are written
   writes OUT_DIR/models/entity/fb_armor_stick.geo.json, OUT_DIR/render_controllers/fb_stick_armor.render_controllers.json,
   OUT_DIR/textures/figura/fb_armor/*.png and OUT_DIR/entity/player.entity.json (the given one, patched; idempotent)
 """
@@ -106,26 +108,29 @@ def build_cubes(bones):
         add(slot, bone, box(cx - half_w, y0, cz - half_d + dz, cx + half_w, y1, cz + half_d + dz))
 
     R = 0.75  # rod half thickness
-    # ---- head: a band that hugs the head ball (p17: 6.6 wide, 3.5 deep, centre y 29.9 z -1.87) just above its middle,
-    # clear of the camera-facing outline disc behind it (p6, z 0.85), + a small fin and a front gem. Head group p4.
+    # ---- head: on the head ball's own bone (p17). Its parent p16 is a Figura "Camera" part = a billboard that turns to
+    # face the viewer, so the helmet must ride p17 (not the Head group p4) to stay snug from every side.
+    HEAD_BONE = "p17"
+    # A band that hugs the head ball (p17: 6.6 wide, 3.5 deep, centre y 29.9 z -1.87) just above its middle,
+    # clear of the camera-facing outline disc behind it (p6, z 0.85), + a small fin and a front gem.
     P = mesh["p17"]
     hx = float(P[:, 0].mean())
     zf, zb = float(P[:, 2].min()), max(float(P[:, 2].max()), 0.85)  # front of the ball, back past the disc
     y0, y1 = 30.55, 31.45
     hw = float(np.ptp(P[:, 0])) / 2 + 0.35   # half width of the band
     t = 0.45
-    add("head", "p4", box(hx - hw + 0.8, y0, zf - 0.4 - t, hx + hw - 0.8, y1, zf - 0.4))          # front
-    add("head", "p4", box(hx - hw + 0.8, y0, zb + 0.45, hx + hw - 0.8, y1, zb + 0.45 + t))        # back
+    add("head", HEAD_BONE, box(hx - hw + 0.8, y0, zf - 0.4 - t, hx + hw - 0.8, y1, zf - 0.4))          # front
+    add("head", HEAD_BONE, box(hx - hw + 0.8, y0, zb + 0.45, hx + hw - 0.8, y1, zb + 0.45 + t))        # back
     for sx in (-1, 1):
         xo = hx + sx * hw
-        add("head", "p4", box(min(xo, xo + sx * t), y0, zf + 0.35, max(xo, xo + sx * t), y1, zb + 0.1))  # side
+        add("head", HEAD_BONE, box(min(xo, xo + sx * t), y0, zf + 0.35, max(xo, xo + sx * t), y1, zb + 0.1))  # side
         xc = hx + sx * (hw - 0.45)
-        add("head", "p4", box(xc - 0.55, y0 - 0.05, zf - 0.4 - t - 0.05, xc + 0.55, y1 + 0.05, zf + 0.6))  # front corner
-        add("head", "p4", box(xc - 0.55, y0 - 0.05, zb - 0.15, xc + 0.55, y1 + 0.05, zb + 0.45 + t + 0.05))  # back corner
+        add("head", HEAD_BONE, box(xc - 0.55, y0 - 0.05, zf - 0.4 - t - 0.05, xc + 0.55, y1 + 0.05, zf + 0.6))  # front corner
+        add("head", HEAD_BONE, box(xc - 0.55, y0 - 0.05, zb - 0.15, xc + 0.55, y1 + 0.05, zb + 0.45 + t + 0.05))  # back corner
     zc = (zf + float(P[:, 2].max())) / 2
-    add("head", "p4", box(hx - 0.25, 32.5, zc - 0.9, hx + 0.25, 33.9, zc + 0.9))                 # fin on top
-    add("head", "p4", box(hx - 0.25, 33.4, zc - 1.5, hx + 0.25, 34.3, zc - 0.5))                 # fin tip, forward
-    add("head", "p4", box(hx - 0.5, y0 - 0.25, zf - 0.4 - t - 0.25, hx + 0.5, y1 + 0.35, zf - 0.4 - t))  # front gem
+    add("head", HEAD_BONE, box(hx - 0.25, 32.5, zc - 0.9, hx + 0.25, 33.9, zc + 0.9))                 # fin on top
+    add("head", HEAD_BONE, box(hx - 0.25, 33.4, zc - 1.5, hx + 0.25, 34.3, zc - 0.5))                 # fin tip, forward
+    add("head", HEAD_BONE, box(hx - 0.5, y0 - 0.25, zf - 0.4 - t - 0.25, hx + 0.5, y1 + 0.35, zf - 0.4 - t))  # front gem
 
     # ---- chest: vest + raised breastplate + collar + abdomen bands on the torso; pauldrons, arm bands, bracers
     band("chest", "p22", "p22", 21.6, 26.4, R + 0.8, R + 0.65)
@@ -199,6 +204,8 @@ def build(stick_geo: Path, player_entity: Path, out: Path):
     (out / "render_controllers/fb_stick_armor.render_controllers.json").write_text(
         json.dumps({"format_version": "1.10.0", "render_controllers": rcs}, indent=1))
 
+    if player_entity is None:
+        return cubes
     ent = json.loads(player_entity.read_text())
     d = ent["minecraft:client_entity"]["description"]
     for s in SLOTS:
@@ -225,5 +232,9 @@ def build(stick_geo: Path, player_entity: Path, out: Path):
 
 
 if __name__ == "__main__":
-    c = build(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]))
+    a = sys.argv[1:]
+    if len(a) == 2:
+        c = build(Path(a[0]), None, Path(a[1]))
+    else:
+        c = build(Path(a[0]), Path(a[1]), Path(a[2]))
     print({s: sum(len(v) for v in c[s].values()) for s in SLOTS}, "cubes per slot")
