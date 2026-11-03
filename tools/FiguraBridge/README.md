@@ -26,3 +26,14 @@ github.com/Gakuto1112/StrawberryMiku (a710a6b).
 - `OUT_DIR/rp/`: one bone per Figura part (no bind rotation), `animation.figura.drive` reads `v.fb<i>{r,p,s}{x,y,z}`,
   per-texture-file render controllers `figura_p<f>` / `figura_s<f>` read `v.fb<i>v`, `v.fb<i>t`, `v.fb<i>e`;
   vanilla player controllers render unless `v.fbvan` is 0 (the runtime writes it on the avatar's player only, so other players stay visible); worn armor and elytra are hidden on the avatar's player (`attachables/fb_armor`, `v.fbnoarmor`).
+
+## Stick figure armor (`stick_armor.py`)
+
+Fitted armor for the stick avatar: segmented plates on copies of the stick's own bones (same names, parents, pivots),
+drawn by the player entity's own render controllers, so `animation.figura.drive` moves the armor with the limbs.
+Per slot (head circlet + fin, chest vest/breastplate/pauldrons/bracers, belt/thighs/knees, shins/boots), one texture
+per material (leather, chainmail, iron, golden, diamond, netherite, copper, turtle) picked with
+`query.is_item_name_any('slot.armor.*')`. Only on the avatar's player, only while the stick is the installed avatar.
+
+    python3 -I tools/FiguraBridge/stick_armor.py RP/models/entity/figura_stick.geo.json RP/entity/player.entity.json OUT
+    # then copy OUT/* over the FiguraBridge RP (player.entity.json is patched, idempotent)
