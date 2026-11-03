@@ -36,6 +36,14 @@ Module& Module::slider(std::string sid, std::string label, float value, float mi
     return *this;
 }
 
+Module& Module::choice(std::string sid, std::string label, std::vector<std::string> options, int value) {
+    Setting s; s.kind = Setting::Kind::Slider; s.id = std::move(sid); s.label = std::move(label);
+    s.value = float(value); s.min = 0; s.max = float(options.empty() ? 0 : options.size() - 1); s.step = 1;
+    s.choices = std::move(options);
+    settings.push_back(std::move(s));
+    return *this;
+}
+
 Registry& Registry::get() {
     static Registry r;
     return r;

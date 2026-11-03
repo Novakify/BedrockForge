@@ -47,6 +47,7 @@
 #include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
 #include "client/PostFx.h"
+#include "client/ServerAuto.h"
 #include "core/Win32Input.h"
 #include "lyrics/win/Win.h"
 
@@ -397,7 +398,8 @@ void registerBuiltins() {
     r.add("view_bobbing", "No View Bobbing", Category::Camera, "Turn off the walking camera bob");
     r.plan("view_model", "View Model", Category::Camera, "Move / scale the held item");
     r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
-    r.plan("motion_blur", "Motion Blur", Category::Camera, "Frame blending (shader pipeline)");
+    r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth blur when you turn the camera (drawn by Renderer Foundation)")
+        .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f);
 
     // ---------------- Visual
     r.add("fullbright", "Fullbright", Category::Visual, "See in the dark: lifts the light baked into nearby terrain (client-side, relights chunks on toggle)")
@@ -409,7 +411,11 @@ void registerBuiltins() {
     r.plan("block_outline", "Block Outline", Category::Visual, "Custom selection outline colour / width");
     r.plan("better_nametags", "Better Nametags", Category::Visual, "Health and distance under names");
     r.plan("chunk_borders", "Chunk Borders", Category::Visual, "Chunk edges (Lamium has this today)");
-    r.plan("post_processing", "Post Processing", Category::Visual, "Shader effects from shaderpacks");
+    r.add("post_processing", "Post Processing", Category::Visual, "Bloom, colour fringe and sharpening on the whole frame (overrides the shaderpack's)")
+        .slider("bloom", "Bloom", 0.12f, 0.0f, 0.5f, 0.01f)
+        .slider("sharpen", "Sharpen", 0.5f, 0.0f, 1.0f, 0.05f)
+        .slider("ca", "Colour fringe", 0.0f, 0.0f, 10.0f, 0.5f)
+        .choice("ca_style", "Fringe style", {"Edges", "Toward centre"}, 0);
     r.plan("dark_mode", "Dark Mode", Category::Visual, "Dark UI theme");
     r.plan("gui_scale", "GUI Scale", Category::Visual, "Finer GUI scale steps");
     r.plan("projectile_scaler", "Projectile Scaler", Category::Visual, "Bigger arrows / pearls / snowballs");
@@ -418,7 +424,7 @@ void registerBuiltins() {
 
     // ---------------- Movement / input
     r.add("scroll_disabler", "Scroll Wheel Disabler", Category::Movement, "Stop the wheel changing hotbar slots");
-    r.plan("toggle_sprint", "Toggle Sprint", Category::Movement, "Sprint without holding the key (Lamium: Permanent Sprint)");
+    r.add("toggle_sprint", "Auto Sprint", Category::Movement, "Always sprint when you walk forward (same as holding the sprint key)");
     r.plan("toggle_sneak", "Auto Sneak", Category::Movement, "Toggle sneaking (Lamium: Permanent Sneak)");
     r.plan("null_movement", "Null Movement", Category::Movement, "Last pressed of A/D (W/S) wins");
     r.plan("modern_keyboard", "Modern Keyboard Handling", Category::Movement, "Java-like key repeat / chat input");
@@ -428,6 +434,12 @@ void registerBuiltins() {
     r.plan("pack_switcher", "Pack Switcher", Category::World, "Switch resource packs without leaving the world");
     r.plan("waypoints", "Waypoints", Category::World, "Saved points in the world (Lamium has this today)");
     r.plan("minimap", "Minimap", Category::World, "Minimap + radar (Lamium has this today)");
+    r.add("auto_gg", "Auto GG", Category::World, "Says gg in chat when a game ends (Hive, CubeCraft, Lifeboat, Zeqa, Galaxite, Mineville)")
+        .choice("message", "Message", serverauto::ggMessages(), 0)
+        .slider("delay", "Delay (s)", 1.0f, 0.0f, 5.0f, 0.5f);
+    r.add("auto_requeue", "Auto Re-queue", Category::World, "Joins the next game of the same mode when one ends (The Hive)")
+        .slider("delay", "Delay (s)", 2.0f, 0.5f, 10.0f, 0.5f)
+        .toggleSetting("ondeath", "Also when you die", false);
     r.plan("replay", "Replay", Category::World, "Record and replay gameplay");
     r.plan("proximity_chat", "Proximity Chat", Category::World, "Voice/text by distance");
 
@@ -455,6 +467,7 @@ void registerBuiltins() {
 void installRuntime() {
     installVisualHooks();
     installChatHooks();
+    serverauto::install();
     BfFovHook::hook();
     BfTurnHook::hook();
     BfAttackHook::hook();
@@ -504,6 +517,7 @@ void installRuntime() {
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
+        try { serverauto::frame(ctx.mClient, player, hudInputAllowed() && !menu::isOpen()); } catch (...) {}
 
         std::vector<std::string> info;
         Frame f{ctx, view, ctx.mClient, player, view.mSize->x, view.mSize->y, info};
@@ -522,6 +536,7 @@ void installRuntime() {
 void uninstallRuntime() {
     uninstallVisualHooks();
     uninstallChatHooks();
+    serverauto::uninstall();
     gSubs.clear();
     BfFovHook::unhook();
     BfTurnHook::unhook();

@@ -392,11 +392,13 @@ void row(UiFrame& f, float x, float y, float w, float h, std::string const& titl
 }
 
 void slider(UiFrame& f, std::string const& id, float x, float y, float w, std::string const& title, std::string const& desc, float& value,
-            float mn, float mx, float step, std::string const& unit, float a, std::function<void()> const& changed) {
+            float mn, float mx, float step, std::string const& unit, float a, std::function<void()> const& changed,
+            std::vector<std::string> const* names = nullptr) {
     auto& g = f.g;
     float const h = 64;
     row(f, x, y, w, h, title, desc, a);
-    std::string v = step >= 1 ? std::format("{:.0f}{}", value, unit) : step >= 0.1f ? std::format("{:.1f}{}", value, unit) : std::format("{:.2f}{}", value, unit);
+    std::string v = names && !names->empty() ? (*names)[size_t(std::clamp(int(value + 0.5f), 0, int(names->size()) - 1))]
+                  : step >= 1 ? std::format("{:.0f}{}", value, unit) : step >= 0.1f ? std::format("{:.1f}{}", value, unit) : std::format("{:.2f}{}", value, unit);
     g.text(v, x + w - 14, y + 17, 12.5f, rgba(kWhite, 1), a, true, 2);
     float bx = x + 14, bw = w - 28, by = y + 49;
     float t  = std::clamp((value - mn) / std::max(1e-4f, mx - mn), 0.0f, 1.0f);
@@ -531,7 +533,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
             if (sc.fits(50)) toggleRow(f, x, sc.y, wd, s.label, "", s.on, a, [sp] { sp->on = !sp->on; Registry::get().save(); });
             sc.y += 60;
         } else {
-            if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); });
+            if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); }, &s.choices);
             sc.y += 74;
         }
     }

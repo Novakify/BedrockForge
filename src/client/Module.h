@@ -28,6 +28,7 @@ struct Setting {
     std::string id, label;
     bool        on    = false;
     float       value = 0, min = 0, max = 1, step = 0.1f;
+    std::vector<std::string> choices; // slider shown as named options (value = index)
 };
 
 /// Everything a module's HUD callback may draw with.
@@ -56,6 +57,7 @@ struct Module {
     bool        flag(std::string const& sid, bool fallback = false) { auto* s = setting(sid); return s ? s->on : fallback; }
     Module&     toggleSetting(std::string sid, std::string label, bool on);
     Module&     slider(std::string sid, std::string label, float value, float min, float max, float step);
+    Module&     choice(std::string sid, std::string label, std::vector<std::string> options, int value = 0);
 };
 
 class Registry {

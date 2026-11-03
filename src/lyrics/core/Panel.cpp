@@ -815,7 +815,12 @@ void Panel::look(Ctx& c, Config& cfg, FontSet const& fonts) {
     c.toggle2("caps", 206, 148, 78, "Capitals", cfg.allCaps, [&] { cfg.allCaps = !cfg.allCaps; }, a);
     c.toggle2("glow", 288, 148, 78, "Glow", cfg.glow, [&] { cfg.glow = !cfg.glow; }, a);
     bool const typed = cfg.enterAnim == EnterAnim::Neon;
-    c.toggle2("typed", 206, 167, 160, "Typed out", typed, [&] { cfg.enterAnim = typed ? EnterAnim::Word : EnterAnim::Neon; }, a);
+    c.toggle2("typed", 206, 167, 78, "Typed out", typed, [&] { cfg.enterAnim = typed ? EnterAnim::Word : EnterAnim::Neon; }, a);
+    bool const threeD = cfg.twoColor && cfg.textStyle == TextStyle::Neon; // the blue/red offset look of the first fonts
+    c.toggle2("twoc", 288, 167, 78, "3D colours", threeD, [&] {
+        if (threeD) cfg.twoColor = false;
+        else { cfg.twoColor = true; cfg.textStyle = TextStyle::Neon; }
+    }, a);
     static char const* const sh[] = {"No shadow", "Soft", "Strong"};
     for (int i = 0; i < 3; ++i)
         c.option("sh" + std::to_string(i), 206 + float(i) * 54, 186, 50, 13, sh[i], cfg.textShadow == i, [&, i] { cfg.textShadow = i; }, a);
