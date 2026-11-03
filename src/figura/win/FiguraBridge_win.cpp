@@ -390,9 +390,10 @@ ItemState itemOf(ItemStack const& st) {
 // read an actor's own Molang variable (set by its animation controllers) without evaluating an expression
 float readVar(Actor& a, char const* name) {
     try {
-        HashedString h(name);
-        auto const& arg = a.mMolangVariables->getMolangVariable(h.getHash(), name);
-        if (arg.mType == MolangScriptArgType::Float) return arg.mPOD.mFloat;
+        // 26.60: MolangVariableMap::getMolangVariable is not exported on the client any more -> read it as Molang
+        std::string_view n(name);
+        std::string expr = n.starts_with("variable.") || n.starts_with("v.") ? std::string(n) : "v." + std::string(n);
+        return a.evalMolang(expr);
     } catch (...) {}
     return 0.0f;
 }
