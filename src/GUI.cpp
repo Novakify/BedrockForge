@@ -12,7 +12,6 @@
 #include "ll/api/thread/ClientThreadExecutor.h"
 
 #include "Graphics.h"
-#include "Hud.h"
 #include "MaterialLoader.h"
 #include "Notice.h"
 #include "Options.h"
@@ -101,7 +100,6 @@ void initializeImGui() {
     auto& st          = ImGui::GetStyle();
     st.WindowRounding = 6.0f;
     st.FrameRounding  = 4.0f;
-    rf::hud::loadFonts(); // Bedrock Forge client HUD font (secondary: ImGui's default font stays first)
 }
 
 void updateImGui() {
@@ -114,8 +112,6 @@ void updateImGui() {
     ImGui::NewFrame();
     rf::panel::drawOverlay();
     rf::sgconfig::draw();
-    rf::hud::drawOverlay(); // Bedrock Forge client HUD (FPS, CPS, keystrokes, armor, player list, crosshair ...)
-    rf::hud::drawMenu();    // Bedrock Forge client menu (Right Shift / the pause-screen button)
     if (RfOptions::showImGui) {
         auto& io = ImGui::GetIO();
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);

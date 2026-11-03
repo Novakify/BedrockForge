@@ -31,7 +31,6 @@
 #include "UiCapture.h"
 
 #include "GUI.h"
-#include "Hud.h"
 #include "Options.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -79,9 +78,8 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (RfOptions::reloadShadersKey.get() != 0 && int(wp) == RfOptions::reloadShadersKey.get()) RfOptions::reloadShaders = true;
         else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiCaptureKey.get()) rf::uicapture::request();
         else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiPanelKey.get()) rf::panel::toggle();
-        else if (rf::hud::isMenuKey(wp, lp)) rf::hud::toggleMenu(); // Bedrock Forge client menu (Right Shift)
     }
-    if (gInitialized && (RfOptions::showImGui || rf::sgconfig::wantsInput() || rf::hud::wantsInput())) {
+    if (gInitialized && (RfOptions::showImGui || rf::sgconfig::wantsInput())) {
         std::lock_guard l(gImGuiMutex);
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp);
         auto& io = ImGui::GetIO();
