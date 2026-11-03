@@ -25,4 +25,4 @@ github.com/Gakuto1112/StrawberryMiku (a710a6b).
 - `OUT_DIR/rig.json`: parts in pre-order (bone `p<i>`), textureFiles / textureSets, sounds, Molang variable doc.
 - `OUT_DIR/rp/`: one bone per Figura part (no bind rotation), `animation.figura.drive` reads `v.fb<i>{r,p,s}{x,y,z}`,
   per-texture-file render controllers `figura_p<f>` / `figura_s<f>` read `v.fb<i>v`, `v.fb<i>t`, `v.fb<i>e`;
-  vanilla player controllers only render when `v.fbvan` is 1.
+  vanilla player controllers render unless `v.fbvan` is 0 (the runtime writes it on the avatar's player only, so other players stay visible); worn armor and elytra are hidden on the avatar's player (`attachables/fb_armor`, `v.fbnoarmor`).

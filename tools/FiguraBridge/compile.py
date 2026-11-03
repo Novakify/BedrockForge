@@ -47,7 +47,8 @@ VARS_DOC = {
     "v.fb<i>t": "primary texture override of part i: index into rig.json textureFiles; < 0 (default -1) = the part's "
                 "own Figura texture set ('d' file of each face's set).",
     "v.fb<i>e": "secondary (emissive) texture override of part i: textureFiles index; < 0 (default -1) = own set's 'e'.",
-    "v.fbvan": "1 = also render the vanilla player (Mojang render controllers). Default 0 (hidden, like Figura).",
+    "v.fbvan": "1 = also render the vanilla player (Mojang render controllers). The runtime writes it on the avatar's player only; "
+               "unset (every other player) = vanilla model.",
     "render controllers": "controller.render.player.figura_p<f> (primary, Material.fbd = entity_alphablend) and "
                           "figura_s<f> (secondary, Material.fbe = entity_emissive_alpha) for every d/e texture file f, "
                           "texture key fbt<f>; third person only (!variable.is_first_person).",
@@ -554,6 +555,45 @@ def mesh_geometry(p: Part, sets):
 # ----------------------------------------------------------------------------------------------------------------
 # main build
 # ----------------------------------------------------------------------------------------------------------------
+
+def write_armor_overrides(vanilla_rp: Path, rp: Path) -> int:
+    """Vanilla armor and elytra attachables, drawn only when the wearer is not shown as an avatar (v.fbnoarmor on the
+    owner, set in player.entity.json). Other players and mobs keep their armor. Figura places armor only on avatars
+    with ArmorHead/ArmorBody/... parts; for the rest (most avatars) it would float on the hidden vanilla bones."""
+    import re as _re
+    src = vanilla_rp / "attachables"
+    if not src.is_dir():
+        return 0
+    armor = _re.compile(r"_(helmet|chestplate|leggings|boots)$|^elytra$")
+    out_dir = rp / "attachables/fb_armor"
+    n = 0
+    for f in sorted(src.glob("*.json")):
+        try:
+            j = json.loads(f.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        desc = j.get("minecraft:attachable", {}).get("description", {})
+        ident = desc.get("identifier", "")
+        name = ident.split(":")[-1]
+        if not ident.startswith("minecraft:") or not armor.search(name):
+            continue
+        j["format_version"] = "1.10.0"
+        sc = desc.setdefault("scripts", {})
+        pre = sc.get("pre_animation", [])
+        pre = pre if isinstance(pre, list) else [pre]
+        sc["pre_animation"] = ["variable.fbhide = c.owning_entity->v.fbnoarmor;"] + pre
+        rcs = []
+        for r in desc.get("render_controllers", []):
+            if isinstance(r, str):
+                rcs.append({r: "!v.fbhide"})
+            else:
+                rcs.append({k: f"({v}) && !v.fbhide" for k, v in r.items()})
+        desc["render_controllers"] = rcs
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"{name}.json").write_text(json.dumps(j, indent=1))
+        n += 1
+    return n
+
 
 def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dict:
     import re as _re
@@ -1119,12 +1159,16 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         desc["animations"]["figura_items"] = "animation.figura.items"
         desc["scripts"]["animate"].append({"figura_items": "!variable.is_first_person"})
     gated = []
-    for r in desc.get("render_controllers", []):  # vanilla stays available, hidden unless v.fbvan
+    # vanilla model: hidden only where the runtime wrote v.fbvan = 0 (the avatar's player). Unset = every other
+    # player in a multiplayer world, who must stay visible (a default of 0 made other players invisible on servers)
+    for r in desc.get("render_controllers", []):
         if isinstance(r, str):
-            gated.append({r: "(v.fbvan ?? 0)"})
+            gated.append({r: "(v.fbvan ?? 1)"})
         else:
             k, cond = next(iter(r.items()))
-            gated.append({k: f"({cond}) && (v.fbvan ?? 0)"})
+            gated.append({k: f"({cond}) && (v.fbvan ?? 1)"})
+    # worn armor / elytra are attachables on the vanilla bones: on an avatar they float in the wrong places
+    pre.append("variable.fbnoarmor = (v.fbvan ?? 1) ? 0.0 : 1.0;")
     # a controller whose texture no part shows by default (swap targets, runtime slots, render tasks, skin/cape...)
     # is skipped by Bedrock unless the runtime says some bone uses that texture this frame (v.fbuse<i>): Bedrock
     # otherwise evaluates its whole part_visibility list and draws its geometry every frame for nothing
@@ -1136,6 +1180,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
         gated.append({k: cond})
     desc["render_controllers"] = gated
     (rp / "entity/player.entity.json").write_text(json.dumps(ent, indent=1))
+    write_armor_overrides(vanilla_rp, rp)
 
     manifest = {"format_version": 2,
                 "header": {"name": f"FiguraBridge: {meta_name}",
