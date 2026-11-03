@@ -9,4 +9,6 @@ void uninstall();
 void popInventory();
 /// Whether the in-game HUD is the top screen of its stack (chat on top counts as the HUD). Any thread.
 bool hudOnTop();
+/// Only the HUD on top (no chat, no menu): in-game keys such as zoom may act. Any thread.
+bool playing();
 } // namespace rf::screens

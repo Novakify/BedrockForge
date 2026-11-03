@@ -25,11 +25,17 @@
 #include "ll/api/service/Bedrock.h"
 
 #include "mc/client/game/ClientInstance.h"
+#include "mc/client/options/IOptionRegistry.h"
+#include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/deps/core/math/Vec2.h"
 #include "mc/deps/core/math/Vec3.h"
 #include "mc/deps/renderer/Camera.h"
 #include "mc/deps/shared_types/legacy/actor/ArmorSlot.h"
+#include "mc/entity/components/MoveInputComponent.h"
+#include "mc/input/MoveInputState.h"
+#include "mc/options/option_types/FloatOption.h"
+#include "mc/options/option_types/OptionID.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/Mob.h"
 #include "mc/world/actor/player/Player.h"
@@ -37,6 +43,7 @@
 #include "mc/world/item/Item.h"
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/level/Level.h"
+#include "mc/world/level/dimension/Dimension.h"
 
 #include <windows.h>
 
@@ -44,6 +51,10 @@
 
 #include "ScreenWatch.h"
 #include "SpatialConfigScreen.h"
+
+namespace rf::postfx {
+void drawUi(); // PostFx.h includes d3d12.h, which must not meet LeviLamina's headers in one file
+}
 
 namespace rf::hud {
 namespace {
@@ -105,6 +116,23 @@ bool              gTabHold    = true;
 int               gTabKey     = VK_TAB;
 bool              gCoordsDec  = true;
 bool              gArmorHeld  = true;
+struct ZoomOpt {
+    bool  on     = true;
+    int   key    = 'C';
+    float factor = 4.0f;
+    bool  smooth = true;
+} gZoom;
+struct TimeOpt {
+    bool on    = false;
+    int  ticks = 6000; // 0 sunrise, 6000 noon, 12000 sunset, 18000 midnight
+} gTime;
+struct BrightOpt {
+    bool  on    = false;
+    float gamma = 12.0f;
+    float orig  = -1.0f; // the player's own brightness (0..1) from before fullbright, kept across restarts
+} gBright;
+bool              gAutoSprint = false;
+std::atomic<bool> gZoomHeld{false};
 std::atomic<bool> gMenu{false};
 std::atomic<bool> gBtnHover{false};
 bool              gEdit = false;
@@ -124,6 +152,10 @@ std::vector<Entry> entries() {
         {"armorHeld", 'b', &gArmorHeld}, {"cross.on", 'b', &gCross.on},     {"cross.style", 'i', &gCross.style},
         {"cross.size", 'f', &gCross.size}, {"cross.gap", 'f', &gCross.gap}, {"cross.thick", 'f', &gCross.thick},
         {"cross.color", 'u', &gCross.color}, {"cross.outline", 'b', &gCross.outline},
+        {"zoom.on", 'b', &gZoom.on},    {"zoom.key", 'i', &gZoom.key},      {"zoom.factor", 'f', &gZoom.factor},
+        {"zoom.smooth", 'b', &gZoom.smooth}, {"time.on", 'b', &gTime.on},   {"time.ticks", 'i', &gTime.ticks},
+        {"bright.on", 'b', &gBright.on}, {"bright.gamma", 'f', &gBright.gamma}, {"bright.orig", 'f', &gBright.orig},
+        {"autoSprint", 'b', &gAutoSprint},
     };
     for (auto& m : gMods) {
         std::string k = std::string("m.") + m.id;
@@ -272,14 +304,56 @@ void fill(Piece& p, ItemStack const& st) {
 bool anyGameModule() {
     return gMods[MCoords].on || gMods[MDir].on || gMods[MArmor].on || gMods[MTab].on;
 }
+/// Auto sprint: the sprint key held for the game (same as holding Ctrl - the game still decides whether you can sprint:
+/// forward only, enough food, not sneaking), re-asserted every frame because a key-up event clears it.
+bool gSprintSet = false;
+void applySprint(LocalPlayer* lp) {
+    bool want = gAutoSprint && lp && rf::screens::playing();
+    if (!want && !gSprintSet) return;
+    if (!lp) { gSprintSet = false; return; }
+    auto mi = lp->getEntityContext().tryGetComponent<MoveInputComponent>();
+    if (!mi) return;
+    size_t const bit = size_t(MoveInputState::Flag::SprintDown);
+    if (want) {
+        mi->mRawInputState->mFlagValues->set(bit, true);
+        mi->mInputState->mFlagValues->set(bit, true);
+        gSprintSet = true;
+    } else { // let go once (a sprint key the player really holds sets it again on its own)
+        if (!down(VK_CONTROL)) {
+            mi->mRawInputState->mFlagValues->set(bit, false);
+            mi->mInputState->mFlagValues->set(bit, false);
+        }
+        gSprintSet = false;
+    }
+}
+/// Fullbright: the game's brightness option above its slider's 0..1 range. The player's own value is kept (also in the
+/// cfg, so a crash while it was on still gets it back on the next start).
+bool gBrightApplied = false;
+void applyBright(ClientInstance& c) {
+    Option* o = c.getOptions().get(OptionID::Gamma).get();
+    if (!o) return;
+    float& v = static_cast<FloatOption*>(o)->mValue.get();
+    if (gBright.on) {
+        if (!gBrightApplied) {
+            if (v <= 1.0f) gBright.orig = v;
+            gBrightApplied = true;
+        }
+        if (v != gBright.gamma) v = gBright.gamma;
+    } else if (gBrightApplied || (v > 1.0f && gBright.orig >= 0.0f)) {
+        v              = gBright.orig >= 0.0f && gBright.orig <= 1.0f ? gBright.orig : 0.5f;
+        gBrightApplied = false;
+    }
+}
 void snapshot() {
-    if (!gHudOn) return;
+    auto  ci = ll::service::getClientInstance();
+    auto* lp = ci ? ci->getLocalPlayer() : nullptr;
+    applySprint(lp); // every frame
     auto now = Clock::now();
     if (now - gLastFast < std::chrono::milliseconds(50)) return; // 20 Hz is plenty for a HUD
     gLastFast = now;
+    if (ci) applyBright(*ci);
+    if (!gHudOn) return;
     Snap s;
-    auto ci   = ll::service::getClientInstance();
-    auto* lp  = ci ? ci->getLocalPlayer() : nullptr;
     bool list = false;
     if (lp) {
         Actor& a  = *lp;
@@ -467,27 +541,53 @@ template <class F> void moduleWindow(Module& m, bool background, F&& body) {
     ImGui::PopStyleVar(5);
 }
 
+// ---------------------------------------------------------------- zoom + time changer (game hooks below)
+Clock::time_point gZoomLast{};
+float             gZoomK = 1.0f;
+/// LevelRendererPlayer::getFov: the world FOV narrowed while the zoom key is held (eased in and out)
+float zoomFov(float fov, bool variable) {
+    auto  now = Clock::now();
+    float dt  = gZoomLast.time_since_epoch().count() ? std::chrono::duration<float>(now - gZoomLast).count() : 0.0f;
+    gZoomLast = now;
+    dt        = std::clamp(dt, 0.0f, 0.1f);
+    float target = gZoom.on && gZoomHeld.load(std::memory_order_relaxed) ? std::max(1.0f, gZoom.factor) : 1.0f;
+    gZoomK       = gZoom.smooth ? gZoomK + (target - gZoomK) * std::min(1.0f, dt * 14.0f) : target;
+    if (std::fabs(gZoomK - target) < 0.002f) gZoomK = target;
+    if (gZoomK <= 1.0005f) return fov;
+    if (!variable && std::fabs(fov - 70.0f) < 0.01f) return fov; // the held item's fixed FOV stays
+    constexpr float kRad = 3.14159265f / 180.0f;
+    return 2.0f * std::atan(std::tan(fov * kRad * 0.5f) / gZoomK) / kRad;
+}
+/// Dimension::getTimeOfDay: the sky, sun and light follow our time instead of the server's (client only on servers)
+int timeOfDay(int time) { return gTime.on ? std::clamp(gTime.ticks, 0, 23999) : time; }
+
 // ---------------------------------------------------------------- menu bits
-int  gCapture = 0; // 1 = waiting for the menu key, 2 = waiting for the player-list key
+int  gCapture = 0; // waiting for a key: 1 menu, 2 player list, 3 zoom
+int* captureTarget() { return gCapture == 1 ? &gMenuKey : gCapture == 2 ? &gTabKey : &gZoom.key; }
 void captureKey() {
     if (!gCapture) return;
     if (down(VK_ESCAPE)) { gCapture = 0; return; }
     static int const kOrder[] = {VK_RSHIFT, VK_LSHIFT, VK_RCONTROL, VK_LCONTROL};
     for (int vk : kOrder)
         if (down(vk)) {
-            (gCapture == 1 ? gMenuKey : gTabKey) = vk;
-            gCapture = 0;
+            *captureTarget() = vk;
+            gCapture         = 0;
             return;
         }
     for (int vk = 0x08; vk < 0xFF; ++vk) {
         if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU || vk == VK_LBUTTON || vk == VK_RBUTTON || vk == VK_MBUTTON) continue;
         if (vk >= VK_LSHIFT && vk <= VK_RMENU) continue;
         if (down(vk)) {
-            (gCapture == 1 ? gMenuKey : gTabKey) = vk;
-            gCapture = 0;
+            *captureTarget() = vk;
+            gCapture         = 0;
             return;
         }
     }
+}
+/// a button that shows a key and waits for a new one when clicked
+void keyButton(char const* id, int which, int key) {
+    std::string lbl = (gCapture == which ? std::string("press a key... (Esc cancels)") : keyName(key)) + "##" + id;
+    if (ImGui::SmallButton(lbl.c_str())) gCapture = which;
 }
 void closeMenu() {
     gMenu    = false;
@@ -586,6 +686,7 @@ void drawOverlay() {
     bool editing = gEdit && gMenu.load() && s.inWorld;
     double t     = ImGui::GetTime();
     pollClicks(t, inGame && gameFocused());
+    gZoomHeld = gZoom.on && inGame && rf::screens::playing() && !gMenu.load() && gameFocused() && down(gZoom.key);
     if (!gHudOn || !(inGame || editing)) return;
 
     if (gMods[MFps].on) moduleWindow(gMods[MFps], true, [] { bodyFps(); });
@@ -675,8 +776,7 @@ void drawMenu() {
                             ImGui::Checkbox("Only while holding the key", &gTabHold);
                             if (gTabHold) {
                                 ImGui::SameLine();
-                                std::string lbl = (gCapture == 2 ? std::string("press a key...") : keyName(gTabKey)) + "##tabkey";
-                                if (ImGui::SmallButton(lbl.c_str())) gCapture = 2;
+                                keyButton("tabkey", 2, gTabKey);
                             }
                         }
                         ImGui::Unindent();
@@ -702,6 +802,57 @@ void drawMenu() {
                 ImGui::Checkbox("Black outline", &gCross.outline);
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Visual")) {
+                ImGui::Checkbox("Zoom", &gZoom.on);
+                ImGui::SameLine();
+                ImGui::TextDisabled("hold");
+                ImGui::SameLine();
+                keyButton("zoomkey", 3, gZoom.key);
+                if (gZoom.on) {
+                    ImGui::Indent();
+                    ImGui::SetNextItemWidth(200 * s);
+                    ImGui::SliderFloat("Zoom amount", &gZoom.factor, 1.5f, 10.0f, "%.1fx");
+                    ImGui::Checkbox("Smooth", &gZoom.smooth);
+                    ImGui::Unindent();
+                }
+                ImGui::Separator();
+                ImGui::Checkbox("Time changer", &gTime.on);
+                ImGui::SameLine();
+                ImGui::TextDisabled("your sky only - servers still run their own time");
+                if (gTime.on) {
+                    ImGui::Indent();
+                    ImGui::SetNextItemWidth(260 * s);
+                    ImGui::SliderInt("Time", &gTime.ticks, 0, 23999);
+                    if (ImGui::SmallButton("Sunrise")) gTime.ticks = 0;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Noon")) gTime.ticks = 6000;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Sunset")) gTime.ticks = 12000;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Midnight")) gTime.ticks = 18000;
+                    ImGui::TextDisabled("In single player this also changes the world's own day/night.");
+                    ImGui::Unindent();
+                }
+                ImGui::Separator();
+                ImGui::Checkbox("Fullbright", &gBright.on);
+                if (gBright.on) {
+                    ImGui::Indent();
+                    ImGui::SetNextItemWidth(200 * s);
+                    ImGui::SliderFloat("Brightness", &gBright.gamma, 1.5f, 25.0f, "%.1f");
+                    ImGui::TextDisabled("Turning it off gives your own brightness back. Vibrant Visuals may ignore it.");
+                    ImGui::Unindent();
+                }
+                ImGui::Separator();
+                ImGui::TextDisabled("Post effects (bloom, motion blur, chromatic aberration, sharpening):");
+                rf::postfx::drawUi();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Utility")) {
+                ImGui::Checkbox("Auto sprint", &gAutoSprint);
+                ImGui::SameLine();
+                ImGui::TextDisabled("like holding the sprint key - forward only, the game's normal rules");
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Settings")) {
                 ImGui::SetNextItemWidth(220 * s);
                 ImGui::SliderFloat("HUD size", &gScale, 0.5f, 2.5f, "%.2fx");
@@ -712,17 +863,16 @@ void drawMenu() {
                 if (ImGui::ColorEdit3("Accent colour", &a.x, ImGuiColorEditFlags_NoInputs)) gAccent = ImGui::ColorConvertFloat4ToU32(a) | 0xFF000000;
                 ImGui::Text("Menu key:");
                 ImGui::SameLine();
-                std::string lbl = (gCapture == 1 ? std::string("press a key... (Esc cancels)") : keyName(gMenuKey)) + "##menukey";
-                if (ImGui::Button(lbl.c_str())) gCapture = 1;
+                keyButton("menukey", 1, gMenuKey);
                 ImGui::Separator();
                 ImGui::TextDisabled("Saved to BedrockForgeClient.cfg in Renderer Foundation's config folder.");
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Coming next")) {
                 ImGui::TextWrapped("On the way in the next builds:");
-                for (char const* f : {"Zoom", "FOV changer", "Time changer", "Fullbright", "Auto sprint", "Auto GG",
-                                      "Auto re-queue (Hive / CubeCraft)", "Motion blur toggle here (already in F6 > Post effects)",
-                                      "Movable vanilla HUD (hotbar, chat, scoreboard)", "Replay mode"})
+                for (char const* f : {"Auto GG", "Auto re-queue (Hive / CubeCraft)", "Potion effects HUD", "Ping",
+                                      "Lower mouse sensitivity while zoomed", "Movable vanilla HUD (hotbar, chat, scoreboard)",
+                                      "Replay mode"})
                     ImGui::BulletText("%s", f);
                 ImGui::EndTabItem();
             }
@@ -743,15 +893,29 @@ LL_TYPE_INSTANCE_HOOK(RfHudSnapshotHook, ll::memory::HookPriority::Low, mce::Cam
     rf::hud::snapshot();
 }
 
+// Zoom: the world FOV while the zoom key is held.
+LL_TYPE_INSTANCE_HOOK(RfZoomHook, ll::memory::HookPriority::Normal, LevelRendererPlayer, &LevelRendererPlayer::getFov, float, float a,
+                      bool variable) {
+    return rf::hud::zoomFov(origin(a, variable), variable);
+}
+// Time changer: the sky / sun / light curve evaluated at our time.
+LL_TYPE_INSTANCE_HOOK(RfTimeHook, ll::memory::HookPriority::Normal, Dimension, &Dimension::$getTimeOfDay, float, int time, float a) {
+    return origin(rf::hud::timeOfDay(time), a);
+}
+
 namespace rf::hud {
 void install() {
     if (gHooked) return;
     RfHudSnapshotHook::hook();
+    RfZoomHook::hook();
+    RfTimeHook::hook();
     gHooked = true;
 }
 void uninstall() {
     if (!gHooked) return;
     RfHudSnapshotHook::unhook();
+    RfZoomHook::unhook();
+    RfTimeHook::unhook();
     gHooked = false;
     saveConfig();
 }
