@@ -29,6 +29,8 @@
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/deps/input/MouseAction.h"
+#include "mc/deps/input/Mouse.h"
+#include "mc/deps/input/MouseDevice.h"
 #include "mc/deps/shared_types/legacy/actor/ArmorSlot.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/actor/ActorDamageSource.h"
@@ -79,6 +81,14 @@ std::atomic<int64_t>  gLastReachAt{0};
 std::atomic<int>      gCombo{0};
 std::atomic<int64_t>  gComboAt{0};
 std::atomic<float>    gZoomNow{1.0f};
+std::atomic<short>    gAssistMouseX{0}, gAssistMouseY{0};
+// The synthetic input path is intentionally limited to offline survival. It is never sent via SendInput.
+struct ClickAssistState {
+    bool armed = false;
+    bool syntheticReleased = false;
+    Clock::time_point next{};
+};
+ClickAssistState gClickAssist;
 int64_t               gSessionStart = nowMs();
 
 struct Fps {
@@ -135,6 +145,45 @@ void keycap(MinecraftUIRenderContext& ctx, float x, float y, float w, float h, s
 }
 
 bool hudInputAllowed() { return w32::gameFocused() && nowMs() - gLastNonHudFrameMs.load() > 150; }
+
+// Fail closed: never synthesize input for external servers, Realms or multiplayer/LAN sessions.
+// A menu toggle alone is not permission to inject clicks in an online world.
+bool clickAssistPermitted(IClientInstance& client, LocalPlayer* player) {
+    return player && player->isSurvival()
+        && !client.isMultiPlayerClient() && !client.isInMultiplayerGame()
+        && client.getMouseGrabbed() && !client.isShowingMenu()
+        && hudInputAllowed() && !menu::isOpen();
+}
+
+// Generate alternating release/press events at half-period intervals while the *real* left button is held.
+// This preserves a vanilla physical click at the start of a hold. We do not burst missed events after a frame hitch.
+// The native MouseDevice path is experimental on GDK/GameInput; validate in-game hits before considering it proven.
+void tickClickAssist(IClientInstance& client, LocalPlayer* player) {
+    Module* m = Registry::get().find("click_assist");
+    if (!m || !m->enabled || !clickAssistPermitted(client, player)
+        || Registry::get().on("cps_cap") || !w32::keyDown(w32::vk::LButton)) {
+        gClickAssist = {};
+        return;
+    }
+
+    float cps = std::clamp(m->num("target_cps", 16.0f), 8.0f, 20.0f);
+    auto half = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(0.5 / cps));
+    auto now = Clock::now();
+    if (!gClickAssist.armed) {
+        gClickAssist.armed = true;
+        gClickAssist.next = now + half;
+        return;
+    }
+    if (now < gClickAssist.next) return;
+
+    // Use Bedrock's native mouse event queue, rather than Windows SendInput, which GameInput bypasses.
+    auto data = gClickAssist.syntheticReleased ? MouseAction::DataDown : MouseAction::DataUp;
+    Mouse::_instance().feed(MouseAction::ActionLeft, data,
+                            gAssistMouseX.load(), gAssistMouseY.load(), 0, 0, false);
+    gClickAssist.syntheticReleased = !gClickAssist.syntheticReleased;
+    gClickAssist.next += half;
+    if (gClickAssist.next + half < now) gClickAssist.next = now + half;
+}
 } // namespace
 
 // ============================================================================ hooks
@@ -377,6 +426,9 @@ void registerBuiltins() {
         if (gCombo.load() < 2 || nowMs() - gComboAt.load() > 2500) return;
         f.infoLines.push_back(std::format("Combo x{}", gCombo.load()));
     };
+    r.add("click_assist", "Click Assist (Offline)", Category::Combat,
+          "Hold LMB for repeated attacks in offline survival worlds. Never runs on servers, Realms, LAN, or menus.")
+        .slider("target_cps", "Target CPS", 16, 8, 20, 1);
     r.add("cps_cap", "CPS Cap", Category::Combat, "Drop clicks above a limit (for servers with CPS rules)")
         .slider("limit", "Max CPS", 15, 5, 30, 1);
     r.add("hit_color", "Hit Color", Category::Combat, "Recolour the red flash on hurt mobs")
@@ -464,6 +516,9 @@ void installRuntime() {
     gSubs.on<ll::event::MouseInputEvent>([](ll::event::MouseInputEvent& ev) {
         char const  action = ev.actionButtonId();
         schar const data   = ev.buttonData();
+        // Keep the mouse coordinates from Bedrock's input stream for native synthetic events.
+        gAssistMouseX.store(ev.x());
+        gAssistMouseY.store(ev.y());
         if (menu::isOpen()) return;
         if ((action == MouseAction::ActionLeft || action == MouseAction::ActionRight) && data == MouseAction::DataDown) {
             std::lock_guard lock(gMutex);
@@ -504,6 +559,7 @@ void installRuntime() {
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
+        tickClickAssist(ctx.mClient, player);
 
         std::vector<std::string> info;
         Frame f{ctx, view, ctx.mClient, player, view.mSize->x, view.mSize->y, info};
@@ -527,6 +583,7 @@ void uninstallRuntime() {
     BfTurnHook::unhook();
     BfAttackHook::unhook();
     BfSurvivalAttackHook::unhook();
+    gClickAssist = {};
 }
 
 } // namespace bedrock_forge::client
