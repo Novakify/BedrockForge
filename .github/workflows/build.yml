@@ -52,7 +52,11 @@ jobs:
                  Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $dxc) { Write-Output "::error::dxc.exe not found in the Windows SDK"; exit 1 }
           Write-Output "dxc: $($dxc.FullName)"
-          python tools/gen_glyph.py "$($dxc.FullName)"
+          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter fxc.exe -ErrorAction SilentlyContinue |
+                 Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { Write-Output "::error::fxc.exe not found in the Windows SDK"; exit 1 }
+          Write-Output "fxc: $($fxc.FullName)"
+          python tools/gen_glyph.py "$($dxc.FullName)" "$($fxc.FullName)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - run: xmake repo -u

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Compile shaders/glyph.hlsl (LyricsFlow world text) to signed DXIL with dxc and write src/GlyphShaders.h.
-Usage: python3 tools/gen_glyph.py [path/to/dxc]   (needs a dxc that signs: Windows SDK dxc.exe + dxil.dll, or a
+Usage: python3 tools/gen_glyph.py [path/to/dxc] [path/to/fxc]   (fxc adds the D3D11 / SM5 variants)   (needs a dxc that signs: Windows SDK dxc.exe + dxil.dll, or a
 DirectXShaderCompiler release with libdxil). CI runs this with the Windows SDK's dxc before the build; the generated
 header is also committed so a PC build doesn't need dxc."""
 import pathlib, subprocess, sys, tempfile
@@ -18,6 +18,18 @@ with tempfile.TemporaryDirectory() as td:
         assert b[4:20] != bytes(16), f"{name}: unsigned DXIL (dxc without libdxil/dxil.dll)"
         rows = [", ".join(f"0x{x:02x}" for x in b[i:i + 20]) for i in range(0, len(b), 20)]
         out.append(f"inline constexpr uint8_t {name}[{len(b)}] = {{\n    " + ",\n    ".join(rows) + "\n};")
+# Direct3D 11 (Blueberry and other clients run Minecraft on D3D11): the same shader as SM5 bytecode via fxc
+fxc = sys.argv[2] if len(sys.argv) > 2 else None
+if fxc:
+    with tempfile.TemporaryDirectory() as td:
+        for name, prof in entries:
+            o = pathlib.Path(td) / f"{name}.dxbc"
+            subprocess.run([fxc, "/nologo", "/T", prof.replace("_6_0", "_5_0"), "/E", name, "/D", "RF_SM5=1", "/O3",
+                            "/Fo", str(o), str(root / "shaders/glyph.hlsl")], check=True)
+            b = o.read_bytes()
+            rows = [", ".join(f"0x{x:02x}" for x in b[i:i + 20]) for i in range(0, len(b), 20)]
+            out.append(f"inline constexpr uint8_t {name}11[{len(b)}] = {{\n    " + ",\n    ".join(rows) + "\n};")
+    out.insert(5, "#define RF_HAVE_GLYPH_SHADERS11 1")
 out.append("} // namespace rf::lyrics::shaders\n")
 (root / "src/GlyphShaders.h").write_text("\n".join(out))
 print("wrote src/GlyphShaders.h")

@@ -264,6 +264,8 @@ void render() {
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     updateImGui();
+    // LyricsFlow port on D3D11 (Blueberry and other clients block D3D12): lyric glyphs + panel + glass, before ImGui
+    rf::lyrics::record11(device.Get(), context.Get(), rtv.Get());
     ID3D11RenderTargetView* v[] = {rtv.Get()};
     context->OMSetRenderTargets(1, v, nullptr);
     ImGui::Render();

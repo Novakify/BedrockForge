@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -16,6 +17,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <d3d11.h>
 #include <d3d12.h>
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -474,6 +476,47 @@ void viewProj(Cam const& c, bool flip, float out[16]) {
             out[col * 4 + row] = s;
         }
 }
+
+/// Copies this Present's glyphs from BF into gHost (both renderers). draw = something to draw; gStatus says why not.
+uint32_t fetchFrame(bool& draw) {
+    gHdr          = {};
+    gHdr.size     = sizeof(BfLyricFrameV1); // BF copies at most this much (16-atlas header)
+    uint32_t n    = 0;
+    auto     copy = bfCopy();
+    if (copy) n = copy(&gHdr, gHost.data(), kCap);
+    for (uint32_t i = 0; i < n; ++i) // the shader has kMaxAtlas texture slots: an index past them would sample t9
+        if (gHost[i].atlas >= kMaxAtlas && !(gHost[i].flags & BF_GLYPH_SOLID)) gHost[i].alpha = 0.0f, gHost[i].atlas = 0;
+    // BF only publishes while the HUD screen renders (in a world). If the frame counter stops moving (main menu,
+    // loading screen, world left) the last frame would stay on screen forever: treat it as inactive after ~0.5 s.
+    static uint32_t lastFrame = 0;
+    static int      stalePresents = 0;
+    if (gHdr.frame != lastFrame) { lastFrame = gHdr.frame; stalePresents = 0; }
+    else if (stalePresents < 1000) ++stalePresents;
+    bool const fresh = stalePresents < 30;
+    draw             = copy && gHdr.active && n > 0 && fresh;
+    setCameraWanted(copy && gHdr.active && fresh);
+    if (!draw)
+        gStatus = !copy ? "waiting for Bedrock Forge"
+                : !fresh ? "paused (BF stopped publishing: menu / loading / no world)"
+                : (gHdr.active ? "no lyrics on screen" : "idle (BF lyricsflow module off / nothing playing)");
+    if (copy && gHdr.atlasGeneration != gRequestedGen && gHdr.atlasCount > 0 && startDecode(gHdr)) gRequestedGen = gHdr.atlasGeneration;
+    return n;
+}
+
+/// The 24 shader constants (viewProj, origin - camera, time, aspect, opacity, debug, screen height).
+void frameConstants(UINT w, UINT h, float c[24]) {
+    float aspect = h ? float(w) / float(h) : 16.0f / 9.0f;
+    Cam   cam    = pickCamera(gHdr, aspect);
+    viewProj(cam, gUi.flipForward, c);
+    c[16] = float(gHdr.origin[0] - cam.pos[0]);
+    c[17] = float(gHdr.origin[1] - cam.pos[1]);
+    c[18] = float(gHdr.origin[2] - cam.pos[2]);
+    c[19] = float(double(GetTickCount64() % 3600000ull) / 1000.0);
+    c[20] = aspect;
+    c[21] = gUi.opacity;
+    c[22] = gUi.debugBounds ? 1.0f : 0.0f;
+    c[23] = float(h);
+}
 } // namespace
 
 // ---------------------------------------------------------------- UiCapture tie-in (S2)
@@ -490,32 +533,14 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     if (gBroken || !gUi.enabled || rf::panel::enabled()) { setCameraWanted(false); return; }
     UINT const slot = slotIn % kSlots;
 
-    gHdr          = {};
-    gHdr.size     = sizeof(BfLyricFrameV1); // BF copies at most this much (16-atlas header)
-    uint32_t n    = 0;
-    auto     copy = bfCopy();
-    if (copy) n = copy(&gHdr, gHost.data(), kCap);
-    for (uint32_t i = 0; i < n; ++i) // the shader has kMaxAtlas texture slots: an index past them would sample t9
-        if (gHost[i].atlas >= kMaxAtlas && !(gHost[i].flags & BF_GLYPH_SOLID)) gHost[i].alpha = 0.0f, gHost[i].atlas = 0;
-    // BF only publishes while the HUD screen renders (in a world). If the frame counter stops moving (main menu,
-    // loading screen, world left) the last frame would stay on screen forever: treat it as inactive after ~0.5 s.
-    static uint32_t lastFrame = 0;
-    static int      stalePresents = 0;
-    if (gHdr.frame != lastFrame) { lastFrame = gHdr.frame; stalePresents = 0; }
-    else if (stalePresents < 1000) ++stalePresents;
-    bool const fresh = stalePresents < 30;
-    bool const draw  = copy && gHdr.active && n > 0 && fresh;
-    setCameraWanted(copy && gHdr.active && fresh);
-    if (!draw && !redirected) {
-        gStatus = !copy ? "waiting for Bedrock Forge"
-                : !fresh ? "paused (BF stopped publishing: menu / loading / no world)"
-                : (gHdr.active ? "no lyrics on screen" : "idle (BF lyricsflow module off / nothing playing)");
-        return;
-    }
+    bool           draw = false;
+    uint32_t const n    = fetchFrame(draw);
+    auto const     copy = bfCopy();
+    if (!draw && !redirected) return;
     if (!gRoot && !createStatic(device)) return;
     D3D12_RESOURCE_DESC bd = bb->GetDesc();
     if (!ensureSized(bd)) return;
-    if (copy && gHdr.atlasGeneration != gRequestedGen && gHdr.atlasCount > 0 && startDecode(gHdr)) gRequestedGen = gHdr.atlasGeneration;
+    (void)copy;
     uploadAtlases(list);
     // Atlas descriptors are written per ring slot, only for the slot being recorded now (the other slots' tables
     // may still be read by frames in flight). Missing / failed atlases get a null SRV (never a stale pointer).
@@ -583,18 +608,8 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
 
     if (draw) {
         std::memcpy(gGlyphMap[slot], gHost.data(), size_t(n) * sizeof(BfGlyphV1));
-        float aspect = gH ? float(gW) / float(gH) : 16.0f / 9.0f;
-        Cam   cam    = pickCamera(gHdr, aspect);
         float c[24]{};
-        viewProj(cam, gUi.flipForward, c);
-        c[16] = float(gHdr.origin[0] - cam.pos[0]);
-        c[17] = float(gHdr.origin[1] - cam.pos[1]);
-        c[18] = float(gHdr.origin[2] - cam.pos[2]);
-        c[19] = float(double(GetTickCount64() % 3600000ull) / 1000.0);
-        c[20] = aspect;
-        c[21] = gUi.opacity;
-        c[22] = gUi.debugBounds ? 1.0f : 0.0f;
-        c[23] = float(gH); // glass: screen height in px (width = aspect * height)
+        frameConstants(gW, gH, c);
         list->SetGraphicsRoot32BitConstants(0, 24, c, 0);
         list->SetPipelineState(gPsoGlyph.Get());
         list->DrawInstanced(6, n, 0, 0);
@@ -609,6 +624,310 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         list->DrawInstanced(3, 1, 0, 0);
         barrier(list, gUiTarget.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
     }
+}
+
+// ---------------------------------------------------------------- Direct3D 11 (game on D3D11, e.g. under Blueberry)
+namespace {
+struct D11 {
+    ComPtr<ID3D11Device>             dev;
+    ComPtr<ID3D11VertexShader>       vsGlyph, vsFull;
+    ComPtr<ID3D11PixelShader>        psGlyph, psDown, psBlurH, psBlurV;
+    ComPtr<ID3D11Buffer>             cb, glyphs;
+    ComPtr<ID3D11ShaderResourceView> glyphSrv;
+    ComPtr<ID3D11Texture2D>          atlas[kMaxAtlas];
+    ComPtr<ID3D11ShaderResourceView> atlasSrv[kMaxAtlas];
+    ComPtr<ID3D11BlendState>         premul, opaque;
+    ComPtr<ID3D11RasterizerState>    raster;
+    ComPtr<ID3D11DepthStencilState>  noDepth;
+    ComPtr<ID3D11SamplerState>       lin, point;
+    // glass: copy of the frame + quarter-res blur ping-pong (A = final)
+    ComPtr<ID3D11Texture2D>          scene, blurA, blurB;
+    ComPtr<ID3D11ShaderResourceView> sceneSrv, blurASrv, blurBSrv;
+    ComPtr<ID3D11RenderTargetView>   blurARtv, blurBRtv;
+    UINT                             w = 0, h = 0, qw = 0, qh = 0;
+    DXGI_FORMAT                      fmt = DXGI_FORMAT_UNKNOWN;
+    bool                             ready = false;
+} g11;
+
+DXGI_FORMAT viewFormat(DXGI_FORMAT f) { // swap chain buffers can be typeless; views need a concrete format
+    switch (f) {
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM;
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS: return DXGI_FORMAT_R10G10B10A2_UNORM;
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS: return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    default: return f;
+    }
+}
+
+bool create11(ID3D11Device* dev) {
+#if RF_HAVE_GLYPH_SHADERS11
+    g11.dev = dev;
+    HRESULT hr;
+    if (FAILED(hr = dev->CreateVertexShader(shaders::VSGlyph11, sizeof shaders::VSGlyph11, nullptr, &g11.vsGlyph))) { fail("D3D11 VSGlyph", hr); return false; }
+    if (FAILED(hr = dev->CreateVertexShader(shaders::VSComposite11, sizeof shaders::VSComposite11, nullptr, &g11.vsFull))) { fail("D3D11 VSComposite", hr); return false; }
+    if (FAILED(hr = dev->CreatePixelShader(shaders::PSGlyph11, sizeof shaders::PSGlyph11, nullptr, &g11.psGlyph))) { fail("D3D11 PSGlyph", hr); return false; }
+    if (FAILED(hr = dev->CreatePixelShader(shaders::PSDown11, sizeof shaders::PSDown11, nullptr, &g11.psDown))) { fail("D3D11 PSDown", hr); return false; }
+    if (FAILED(hr = dev->CreatePixelShader(shaders::PSBlurH11, sizeof shaders::PSBlurH11, nullptr, &g11.psBlurH))) { fail("D3D11 PSBlurH", hr); return false; }
+    if (FAILED(hr = dev->CreatePixelShader(shaders::PSBlurV11, sizeof shaders::PSBlurV11, nullptr, &g11.psBlurV))) { fail("D3D11 PSBlurV", hr); return false; }
+    D3D11_BUFFER_DESC cbd{96, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
+    if (FAILED(hr = dev->CreateBuffer(&cbd, nullptr, &g11.cb))) { fail("D3D11 constant buffer", hr); return false; }
+    D3D11_BUFFER_DESC gbd{UINT(kCap * sizeof(BfGlyphV1)), D3D11_USAGE_DYNAMIC, D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE,
+                          D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, UINT(sizeof(BfGlyphV1))};
+    if (FAILED(hr = dev->CreateBuffer(&gbd, nullptr, &g11.glyphs))) { fail("D3D11 glyph buffer", hr); return false; }
+    D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Format              = DXGI_FORMAT_UNKNOWN;
+    sv.ViewDimension       = D3D11_SRV_DIMENSION_BUFFER;
+    sv.Buffer.FirstElement = 0;
+    sv.Buffer.NumElements  = kCap;
+    if (FAILED(hr = dev->CreateShaderResourceView(g11.glyphs.Get(), &sv, &g11.glyphSrv))) { fail("D3D11 glyph SRV", hr); return false; }
+    D3D11_BLEND_DESC bd{};
+    auto& rt                 = bd.RenderTarget[0];
+    rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    dev->CreateBlendState(&bd, &g11.opaque);
+    rt.BlendEnable = TRUE;
+    rt.SrcBlend = D3D11_BLEND_ONE;      rt.DestBlend = D3D11_BLEND_INV_SRC_ALPHA;      rt.BlendOp = D3D11_BLEND_OP_ADD;
+    rt.SrcBlendAlpha = D3D11_BLEND_ONE; rt.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA; rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    dev->CreateBlendState(&bd, &g11.premul);
+    D3D11_RASTERIZER_DESC rd{};
+    rd.FillMode        = D3D11_FILL_SOLID;
+    rd.CullMode        = D3D11_CULL_NONE;
+    rd.DepthClipEnable = TRUE;
+    dev->CreateRasterizerState(&rd, &g11.raster);
+    D3D11_DEPTH_STENCIL_DESC dd{};
+    dd.DepthEnable = FALSE;
+    dev->CreateDepthStencilState(&dd, &g11.noDepth);
+    D3D11_SAMPLER_DESC sd{};
+    sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.MaxLOD   = D3D11_FLOAT32_MAX;
+    sd.Filter   = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    dev->CreateSamplerState(&sd, &g11.lin);
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    dev->CreateSamplerState(&sd, &g11.point);
+    if (!g11.premul || !g11.opaque || !g11.raster || !g11.noDepth || !g11.lin || !g11.point) { fail("D3D11 state objects", E_FAIL); return false; }
+    g11.ready = true;
+    return true;
+#else
+    (void)dev;
+    fail("D3D11 glyph shaders not compiled into this build (run tools/gen_glyph.py with fxc)", E_NOTIMPL);
+    return false;
+#endif
+}
+
+bool sized11(D3D11_TEXTURE2D_DESC const& bb) {
+    if (g11.scene && g11.w == bb.Width && g11.h == bb.Height && g11.fmt == bb.Format) return true;
+    g11.scene.Reset(); g11.blurA.Reset(); g11.blurB.Reset();
+    g11.sceneSrv.Reset(); g11.blurASrv.Reset(); g11.blurBSrv.Reset(); g11.blurARtv.Reset(); g11.blurBRtv.Reset();
+    g11.w = bb.Width; g11.h = bb.Height; g11.fmt = bb.Format;
+    D3D11_TEXTURE2D_DESC d{};
+    d.Width = g11.w; d.Height = g11.h; d.MipLevels = 1; d.ArraySize = 1; d.Format = bb.Format; d.SampleDesc.Count = 1;
+    d.Usage = D3D11_USAGE_DEFAULT; d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    HRESULT hr = g11.dev->CreateTexture2D(&d, nullptr, &g11.scene);
+    if (FAILED(hr)) { fail("D3D11 glass frame copy", hr); return false; }
+    D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.Format = viewFormat(bb.Format); sv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D; sv.Texture2D.MipLevels = 1;
+    g11.dev->CreateShaderResourceView(g11.scene.Get(), &sv, &g11.sceneSrv);
+    g11.qw = std::max(1u, (g11.w + 3) / 4);
+    g11.qh = std::max(1u, (g11.h + 3) / 4);
+    d.Width = g11.qw; d.Height = g11.qh; d.Format = viewFormat(bb.Format);
+    d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    if (FAILED(hr = g11.dev->CreateTexture2D(&d, nullptr, &g11.blurA)) || FAILED(hr = g11.dev->CreateTexture2D(&d, nullptr, &g11.blurB))) {
+        fail("D3D11 glass blur", hr);
+        return false;
+    }
+    g11.dev->CreateShaderResourceView(g11.blurA.Get(), nullptr, &g11.blurASrv);
+    g11.dev->CreateShaderResourceView(g11.blurB.Get(), nullptr, &g11.blurBSrv);
+    g11.dev->CreateRenderTargetView(g11.blurA.Get(), nullptr, &g11.blurARtv);
+    g11.dev->CreateRenderTargetView(g11.blurB.Get(), nullptr, &g11.blurBRtv);
+    return g11.sceneSrv && g11.blurASrv && g11.blurBSrv && g11.blurARtv && g11.blurBRtv;
+}
+
+void upload11() {
+    std::vector<Decoded> dec;
+    uint32_t             gen;
+    {
+        std::lock_guard l(gDecMutex);
+        if (gDecodedGen == gUploadedGen) return;
+        dec = std::move(gDecoded);
+        gen = gDecodedGen;
+        gDecoded.clear();
+    }
+    for (UINT i = 0; i < kMaxAtlas; ++i) {
+        g11.atlas[i].Reset();
+        g11.atlasSrv[i].Reset();
+        if (i >= dec.size() || !dec[i].w || !dec[i].h) continue;
+        D3D11_TEXTURE2D_DESC d{};
+        d.Width = dec[i].w; d.Height = dec[i].h; d.MipLevels = 1; d.ArraySize = 1; d.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        d.SampleDesc.Count = 1; d.Usage = D3D11_USAGE_IMMUTABLE; d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA init{dec[i].rgba.data(), dec[i].w * 4, 0};
+        if (FAILED(g11.dev->CreateTexture2D(&d, &init, &g11.atlas[i]))) continue;
+        g11.dev->CreateShaderResourceView(g11.atlas[i].Get(), nullptr, &g11.atlasSrv[i]);
+    }
+    gUploadedGen = gen;
+}
+
+/// Everything record11 changes, put back afterwards (the game keeps its own state across Present on D3D11).
+struct Saved11 {
+    ID3D11DeviceContext*      c;
+    ID3D11RenderTargetView*   rtv[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+    ID3D11DepthStencilView*   dsv = nullptr;
+    UINT                      nvp = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
+    D3D11_VIEWPORT            vp[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+    ID3D11RasterizerState*    rs = nullptr;
+    ID3D11BlendState*         bs = nullptr;
+    float                     bf[4]{};
+    UINT                      mask = 0;
+    ID3D11DepthStencilState*  ds = nullptr;
+    UINT                      ref = 0;
+    ID3D11VertexShader*       vs = nullptr;
+    ID3D11PixelShader*        ps = nullptr;
+    ID3D11GeometryShader*     gs = nullptr;
+    ID3D11HullShader*         hs = nullptr;
+    ID3D11DomainShader*       dsh = nullptr;
+    ID3D11ShaderResourceView* psSrv[kTable]{};
+    ID3D11ShaderResourceView* vsSrv = nullptr;
+    ID3D11SamplerState*       smp[2]{};
+    ID3D11Buffer*             vsCb = nullptr;
+    ID3D11Buffer*             psCb = nullptr;
+    ID3D11InputLayout*        il = nullptr;
+    D3D11_PRIMITIVE_TOPOLOGY  topo{};
+    explicit Saved11(ID3D11DeviceContext* ctx) : c(ctx) {
+        c->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtv, &dsv);
+        c->RSGetViewports(&nvp, vp);
+        c->RSGetState(&rs);
+        c->OMGetBlendState(&bs, bf, &mask);
+        c->OMGetDepthStencilState(&ds, &ref);
+        c->VSGetShader(&vs, nullptr, nullptr);
+        c->PSGetShader(&ps, nullptr, nullptr);
+        c->GSGetShader(&gs, nullptr, nullptr);
+        c->HSGetShader(&hs, nullptr, nullptr);
+        c->DSGetShader(&dsh, nullptr, nullptr);
+        c->PSGetShaderResources(0, kTable, psSrv);
+        c->VSGetShaderResources(0, 1, &vsSrv);
+        c->PSGetSamplers(0, 2, smp);
+        c->VSGetConstantBuffers(0, 1, &vsCb);
+        c->PSGetConstantBuffers(0, 1, &psCb);
+        c->IAGetInputLayout(&il);
+        c->IAGetPrimitiveTopology(&topo);
+    }
+    ~Saved11() {
+        c->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtv, dsv);
+        c->RSSetViewports(nvp, vp);
+        c->RSSetState(rs);
+        c->OMSetBlendState(bs, bf, mask);
+        c->OMSetDepthStencilState(ds, ref);
+        c->VSSetShader(vs, nullptr, 0);
+        c->PSSetShader(ps, nullptr, 0);
+        c->GSSetShader(gs, nullptr, 0);
+        c->HSSetShader(hs, nullptr, 0);
+        c->DSSetShader(dsh, nullptr, 0);
+        c->PSSetShaderResources(0, kTable, psSrv);
+        c->VSSetShaderResources(0, 1, &vsSrv);
+        c->PSSetSamplers(0, 2, smp);
+        c->VSSetConstantBuffers(0, 1, &vsCb);
+        c->PSSetConstantBuffers(0, 1, &psCb);
+        c->IASetInputLayout(il);
+        c->IASetPrimitiveTopology(topo);
+        for (auto* p : rtv) if (p) p->Release();
+        for (auto* p : psSrv) if (p) p->Release();
+        for (auto* p : smp) if (p) p->Release();
+        for (IUnknown* p : std::initializer_list<IUnknown*>{dsv, rs, bs, ds, vs, ps, gs, hs, dsh, vsSrv, vsCb, psCb, il})
+            if (p) p->Release();
+    }
+};
+} // namespace
+
+void record11(ID3D11Device* device, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* bbRtv) {
+    ++gPresents;
+    if (gBroken || !gUi.enabled || !bbRtv) { setCameraWanted(false); return; }
+    bool           draw = false;
+    uint32_t const n    = fetchFrame(draw);
+    if (!draw) return;
+    if (!g11.ready && !create11(device)) return;
+    ComPtr<ID3D11Resource>  res;
+    bbRtv->GetResource(&res);
+    ComPtr<ID3D11Texture2D> bb;
+    if (!res || FAILED(res.As(&bb))) return;
+    D3D11_TEXTURE2D_DESC bd{};
+    bb->GetDesc(&bd);
+    if (!sized11(bd)) return;
+    gW = bd.Width;
+    gH = bd.Height;
+    upload11();
+
+    Saved11 saved(ctx);
+    D3D11_MAPPED_SUBRESOURCE m{};
+    if (FAILED(ctx->Map(g11.glyphs.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
+    std::memcpy(m.pData, gHost.data(), size_t(n) * sizeof(BfGlyphV1));
+    ctx->Unmap(g11.glyphs.Get(), 0);
+
+    ID3D11SamplerState* smp[2] = {g11.lin.Get(), g11.point.Get()};
+    ctx->PSSetSamplers(0, 2, smp);
+    ctx->IASetInputLayout(nullptr);
+    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx->RSSetState(g11.raster.Get());
+    ctx->OMSetDepthStencilState(g11.noDepth.Get(), 0);
+    ctx->GSSetShader(nullptr, nullptr, 0);
+    ctx->HSSetShader(nullptr, nullptr, 0);
+    ctx->DSSetShader(nullptr, nullptr, 0);
+    ID3D11ShaderResourceView* none[kTable]{};
+    ctx->PSSetShaderResources(0, kTable, none);
+
+    bool glass = false;
+    for (uint32_t i = 0; i < n && !glass; ++i) glass = (gHost[i].flags & (BF_GLYPH_GLASS | BF_GLYPH_BACKDROP)) != 0;
+    gGlassUsed = glass;
+    if (glass) { // copy the frame, blur it at quarter res (two gaussian rounds)
+        gQW = g11.qw;
+        gQH = g11.qh;
+        ctx->OMSetRenderTargets(0, nullptr, nullptr);
+        ctx->CopyResource(g11.scene.Get(), bb.Get());
+        D3D11_VIEWPORT qvp{0, 0, float(g11.qw), float(g11.qh), 0, 1};
+        ctx->RSSetViewports(1, &qvp);
+        ctx->OMSetBlendState(g11.opaque.Get(), nullptr, 0xFFFFFFFFu);
+        ctx->VSSetShader(g11.vsFull.Get(), nullptr, 0);
+        auto pass = [&](ID3D11PixelShader* ps, ID3D11RenderTargetView* rtv, UINT slot, ID3D11ShaderResourceView* src) {
+            ID3D11ShaderResourceView* clear[3]{};
+            ctx->PSSetShaderResources(kSceneSrv, 3, clear); // never read and write the same texture
+            ID3D11RenderTargetView* r[] = {rtv};
+            ctx->OMSetRenderTargets(1, r, nullptr);
+            ctx->PSSetShaderResources(slot, 1, &src);
+            ctx->PSSetShader(ps, nullptr, 0);
+            ctx->Draw(3, 0);
+        };
+        pass(g11.psDown.Get(), g11.blurARtv.Get(), kSceneSrv, g11.sceneSrv.Get()); // A = frame / 4
+        for (int round = 0; round < 2; ++round) {
+            pass(g11.psBlurH.Get(), g11.blurBRtv.Get(), kBlurSrv, g11.blurASrv.Get());     // B = blurH(A)
+            pass(g11.psBlurV.Get(), g11.blurARtv.Get(), kBlurSrv + 1, g11.blurBSrv.Get()); // A = blurV(B)
+        }
+        ctx->OMSetRenderTargets(0, nullptr, nullptr);
+    }
+
+    float c[24]{};
+    frameConstants(gW, gH, c);
+    D3D11_MAPPED_SUBRESOURCE cm{};
+    if (SUCCEEDED(ctx->Map(g11.cb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cm))) {
+        std::memcpy(cm.pData, c, sizeof c);
+        ctx->Unmap(g11.cb.Get(), 0);
+    }
+    ID3D11Buffer* cbs[] = {g11.cb.Get()};
+    ctx->VSSetConstantBuffers(0, 1, cbs);
+    ctx->PSSetConstantBuffers(0, 1, cbs);
+    ID3D11ShaderResourceView* srvs[kTable]{};
+    srvs[0] = g11.glyphSrv.Get();
+    for (UINT i = 0; i < kMaxAtlas; ++i) srvs[1 + i] = g11.atlasSrv[i].Get();
+    srvs[kSceneSrv]   = g11.sceneSrv.Get();
+    srvs[kBlurSrv]    = g11.blurASrv.Get();
+    srvs[kBlurSrv + 1] = g11.blurBSrv.Get();
+    ctx->VSSetShaderResources(0, 1, srvs);
+    ctx->PSSetShaderResources(0, kTable, srvs);
+    D3D11_VIEWPORT vp{0, 0, float(gW), float(gH), 0, 1};
+    ctx->RSSetViewports(1, &vp);
+    ctx->OMSetRenderTargets(1, &bbRtv, nullptr);
+    ctx->OMSetBlendState(g11.premul.Get(), nullptr, 0xFFFFFFFFu);
+    ctx->VSSetShader(g11.vsGlyph.Get(), nullptr, 0);
+    ctx->PSSetShader(g11.psGlyph.Get(), nullptr, 0);
+    ctx->DrawInstanced(6, n, 0, 0);
+    ctx->PSSetShaderResources(0, kTable, none); // unbind before the game / ImGui uses these textures again
+    gStatus = std::to_string(n) + " glyphs (D3D11)" + (gHdr.total > n ? " (truncated from " + std::to_string(gHdr.total) + ")" : "");
 }
 
 void drawUi() {

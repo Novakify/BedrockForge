@@ -51,6 +51,35 @@ Texture2D               gScene   : register(t18);
 Texture2D               gBlur    : register(t19);
 Texture2D               gBlurB   : register(t20);
 
+// Atlas access. SM6 (D3D12) indexes the texture array directly; SM5 (D3D11, compiled with fxc /D RF_SM5) cannot index
+// resources at run time, so it switches over the 16 slots. The atlas index is per glyph (nointerpolation), so every
+// pixel of a quad takes the same case. Gradients are taken before the switch (SampleGrad) so filtering stays correct.
+#ifdef RF_SM5
+#define RF_ATLAS_CASES(X) X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15)
+float4 atlasSample(uint ai, SamplerState s, float2 uv) {
+    float2 dx = ddx(uv), dy = ddy(uv);
+    #define RF_CASE(n) case n: return gAtlas[n].SampleGrad(s, uv, dx, dy);
+    [forcecase] switch (ai) { RF_ATLAS_CASES(RF_CASE) default: return 0; }
+    #undef RF_CASE
+}
+float4 atlasSampleLevel(uint ai, SamplerState s, float2 uv, float lod) {
+    #define RF_CASE(n) case n: return gAtlas[n].SampleLevel(s, uv, lod);
+    [forcecase] switch (ai) { RF_ATLAS_CASES(RF_CASE) default: return 0; }
+    #undef RF_CASE
+}
+float2 atlasSize(uint ai) {
+    float w = 1, h = 1;
+    #define RF_CASE(n) case n: gAtlas[n].GetDimensions(w, h); break;
+    [forcecase] switch (ai) { RF_ATLAS_CASES(RF_CASE) default: break; }
+    #undef RF_CASE
+    return float2(w, h);
+}
+#else
+float4 atlasSample(uint ai, SamplerState s, float2 uv) { return gAtlas[NonUniformResourceIndex(ai)].Sample(s, uv); }
+float4 atlasSampleLevel(uint ai, SamplerState s, float2 uv, float lod) { return gAtlas[NonUniformResourceIndex(ai)].SampleLevel(s, uv, lod); }
+float2 atlasSize(uint ai) { float w, h; gAtlas[NonUniformResourceIndex(ai)].GetDimensions(w, h); return float2(w, h); }
+#endif
+
 struct V2P {
     float4 pos  : SV_Position;
     float2 uv   : TEXCOORD0;
@@ -164,7 +193,6 @@ float4 PSGlyph(V2P i) : SV_Target {
 
     uint const ai = min(g.atlas, kAtlases - 1);
     if (g.flags & F_IMAGE) { // cover art / icons / thumbnails: straight-alpha rgba, tinted
-        Texture2D img   = gAtlas[NonUniformResourceIndex(ai)];
         float2    span  = g.uv.zw - g.uv.xy;
         float2    local = (i.uv - g.uv.xy) / (abs(span.x) > 1e-6 && abs(span.y) > 1e-6 ? span : float2(1, 1));
         float4    t;
@@ -176,14 +204,14 @@ float4 PSGlyph(V2P i) : SV_Target {
                 float  rr = sqrt((s + 0.5) / 32.0);
                 float  an = s * 2.39996323;
                 float  w  = 1.0 - 0.6 * rr;
-                t += img.SampleLevel(sLin, i.uv + float2(cos(an), sin(an)) * rr * r * span, 0) * w;
+                t += atlasSampleLevel(ai, sLin, i.uv + float2(cos(an), sin(an)) * rr * r * span, 0) * w;
                 wsum += w;
             }
             t /= wsum;
             float e = min(min(local.x, 1.0 - local.x), min(local.y, 1.0 - local.y));
             t.a *= pow(saturate(e / max(r * 1.6, 1e-3)), 1.5);
         } else {
-            t = img.Sample(sLin, i.uv);
+            t = atlasSample(ai, sLin, i.uv);
         }
         t *= fillC;
         if (g.outlineW > 0) { // [LyricsFlow player] rounded corners (outlineW = radius / smaller half-extent)
@@ -197,19 +225,16 @@ float4 PSGlyph(V2P i) : SV_Target {
     }
 
     if (g.flags & F_BITMAP) { // pixel font: hard texels, no SDF maths
-        float a = gAtlas[NonUniformResourceIndex(ai)].Sample(sPoint, i.uv).r;
+        float a = atlasSample(ai, sPoint, i.uv).r;
         float4 o = float4(fillC.rgb, 1.0) * (fillC.a * a);
         if (misc.z > 0.5) o = max(o, float4(0.2, 0.0, 0.0, 0.2));
         return o * k;
     }
 
-    Texture2D tex = gAtlas[NonUniformResourceIndex(ai)];
-    float3    s   = tex.Sample(sLin, i.uv).rgb;
+    float3    s   = atlasSample(ai, sLin, i.uv).rgb;
     float     v   = (g.flags & F_MSDF) ? median3(s) : s.r; // 0.5 = outline of the glyph
     // screen pixels per SDF unit (msdf-atlas-gen's screenPxRange)
-    float tw, th;
-    tex.GetDimensions(tw, th);
-    float2 unitRange  = g.pxRange / float2(tw, th);
+    float2 unitRange  = g.pxRange / atlasSize(ai);
     float2 screenTex  = 1.0 / max(fwidth(i.uv), 1e-6);
     float  spr        = max(0.5 * dot(unitRange, screenTex), 1.0);
     float  sd         = (v - 0.5) * spr;                         // screen px, + inside

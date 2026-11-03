@@ -19,6 +19,9 @@ struct ID3D12Device;
 struct ID3D12GraphicsCommandList;
 struct ID3D12Resource;
 struct D3D12_CPU_DESCRIPTOR_HANDLE;
+struct ID3D11Device;
+struct ID3D11DeviceContext;
+struct ID3D11RenderTargetView;
 
 namespace rf::lyrics {
 
@@ -30,6 +33,9 @@ bool   tracking(); // keep UiCapture's list/PSO tracking on
 
 // ---- overlay thread (Present). slot = back buffer index (ring slot for the upload buffer)
 void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv, unsigned slot);
+/// Direct3D 11 (the game runs on D3D11 when a client such as Blueberry blocks D3D12): same glyphs, glass and atlases,
+/// drawn on the back buffer at Present with the D3D11 immediate context (state saved and restored around it).
+void record11(ID3D11Device* device, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* bbRtv);
 void drawUi(); // F6 section
 void install(); // mod enable
 void uninstall();
