@@ -83,9 +83,12 @@ std::atomic<int64_t>  gComboAt{0};
 std::atomic<float>    gZoomNow{1.0f};
 std::atomic<short>    gAssistMouseX{0}, gAssistMouseY{0};
 // The synthetic input path is intentionally limited to offline survival. It is never sent via SendInput.
+// Total accepted presses are tracked by gLeftClicks (the existing CPS HUD's queue).
+// gRealLeftClicks contains physical presses only; synthetic presses never arm their own assist.
+std::deque<int64_t> gRealLeftClicks; // guarded by gMutex
+std::atomic<bool>  gInjectingAssistEvent{false};
 struct ClickAssistState {
-    bool armed = false;
-    bool syntheticReleased = false;
+    bool syntheticDown = false;
     Clock::time_point next{};
 };
 ClickAssistState gClickAssist;
@@ -155,35 +158,65 @@ bool clickAssistPermitted(IClientInstance& client, LocalPlayer* player) {
         && hudInputAllowed() && !menu::isOpen();
 }
 
-// Generate alternating release/press events at half-period intervals while the *real* left button is held.
-// This preserves a vanilla physical click at the start of a hold. We do not burst missed events after a frame hitch.
-// The native MouseDevice path is experimental on GDK/GameInput; validate in-game hits before considering it proven.
+// A *manual clicking pattern* arms the boost: at least two distinct real button-down
+// events inside the previous 1.5 seconds and the latest real click within 1 second.
+// Merely holding LMB after one click cannot start it; extra clicks never extend the timer.
+// This is deliberately not a hold-to-autoclicker.
 void tickClickAssist(IClientInstance& client, LocalPlayer* player) {
-    Module* m = Registry::get().find("click_assist");
-    if (!m || !m->enabled || !clickAssistPermitted(client, player)
-        || Registry::get().on("cps_cap") || !w32::keyDown(w32::vk::LButton)) {
-        gClickAssist = {};
-        return;
-    }
+    auto* m = Registry::get().find("click_assist");
+    bool permitted = m && m->enabled && clickAssistPermitted(client, player)
+        && !Registry::get().on("cps_cap");
 
-    float cps = std::clamp(m->num("target_cps", 16.0f), 8.0f, 20.0f);
-    auto half = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(0.5 / cps));
     auto now = Clock::now();
-    if (!gClickAssist.armed) {
-        gClickAssist.armed = true;
-        gClickAssist.next = now + half;
+    int64_t const ms = nowMs();
+    bool realPattern = false;
+    if (permitted) {
+        std::lock_guard lock(gMutex);
+        while (!gRealLeftClicks.empty() && ms - gRealLeftClicks.front() > 1500)
+            gRealLeftClicks.pop_front();
+        realPattern = gRealLeftClicks.size() >= 2 && ms - gRealLeftClicks.back() <= 1000;
+    }
+    bool const active = permitted && realPattern;
+
+    // A synthetic press is always released, even on world exit, toggle OFF or lost focus.
+    if (gClickAssist.syntheticDown) {
+        gInjectingAssistEvent = true;
+        Mouse::_instance().feed(MouseAction::ActionLeft, MouseAction::DataUp,
+                                gAssistMouseX.load(), gAssistMouseY.load(), 0, 0, false);
+        gInjectingAssistEvent = false;
+        gClickAssist.syntheticDown = false;
+        if (!active) gClickAssist.next = {};
         return;
     }
+    if (!active) { gClickAssist = {}; return; }
+
+    int boostCps = std::clamp(int(std::round(m->num("boost_cps", 5.0f))), 4, 6);
+    auto period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / boostCps));
+    if (gClickAssist.next == Clock::time_point{}) { gClickAssist.next = now + period; return; }
     if (now < gClickAssist.next) return;
 
-    // Use Bedrock's native mouse event queue, rather than Windows SendInput, which GameInput bypasses.
-    auto data = gClickAssist.syntheticReleased ? MouseAction::DataDown : MouseAction::DataUp;
-    Mouse::_instance().feed(MouseAction::ActionLeft, data,
+    // Don't overlap a real button-down or double-spend the strict combined 16-CPS budget.
+    // The physical MouseInputEvent hook also cancels presses over this same ceiling.
+    bool budgetAvailable = false;
+    {
+        std::lock_guard lock(gMutex);
+        budgetAvailable = clicksPerSecond(gLeftClicks) < 16;
+        if (budgetAvailable && !w32::keyDown(w32::vk::LButton)) {
+            gLeftClicks.push_back(ms); // account for the injection even if the callback isn't raised
+        } else {
+            budgetAvailable = false;
+        }
+    }
+    gClickAssist.next += period;
+    if (gClickAssist.next < now) gClickAssist.next = now + period; // don't burst after frame stalls
+    if (!budgetAvailable) return;
+    gInjectingAssistEvent = true;
+    Mouse::_instance().feed(MouseAction::ActionLeft, MouseAction::DataDown,
                             gAssistMouseX.load(), gAssistMouseY.load(), 0, 0, false);
-    gClickAssist.syntheticReleased = !gClickAssist.syntheticReleased;
-    gClickAssist.next += half;
-    if (gClickAssist.next + half < now) gClickAssist.next = now + half;
+    gInjectingAssistEvent = false;
+    gClickAssist.syntheticDown = true;
 }
+
 } // namespace
 
 // ============================================================================ hooks
@@ -427,8 +460,8 @@ void registerBuiltins() {
         f.infoLines.push_back(std::format("Combo x{}", gCombo.load()));
     };
     r.add("click_assist", "Click Assist (Offline)", Category::Combat,
-          "Hold LMB for repeated attacks in offline survival worlds. Never runs on servers, Realms, LAN, or menus.")
-        .slider("target_cps", "Target CPS", 16, 8, 20, 1);
+          "Adds 4-6 CPS while you click manually, with a hard 16-CPS combined cap. Offline Survival only.")
+        .slider("boost_cps", "Extra CPS", 5, 4, 6, 1);
     r.add("cps_cap", "CPS Cap", Category::Combat, "Drop clicks above a limit (for servers with CPS rules)")
         .slider("limit", "Max CPS", 15, 5, 30, 1);
     r.add("hit_color", "Hit Color", Category::Combat, "Recolour the red flash on hurt mobs")
@@ -521,14 +554,26 @@ void installRuntime() {
         gAssistMouseY.store(ev.y());
         if (menu::isOpen()) return;
         if ((action == MouseAction::ActionLeft || action == MouseAction::ActionRight) && data == MouseAction::DataDown) {
+            // The synthetic press has already been counted in tickClickAssist.
+            if (action == MouseAction::ActionLeft && gInjectingAssistEvent.load()) return;
             std::lock_guard lock(gMutex);
-            auto&           q = action == MouseAction::ActionLeft ? gLeftClicks : gRightClicks;
-            if (action == MouseAction::ActionLeft && Registry::get().on("cps_cap") && hudInputAllowed()
-                && clicksPerSecond(q) >= int(Registry::get().find("cps_cap")->num("limit", 15))) {
+            auto& q = action == MouseAction::ActionLeft ? gLeftClicks : gRightClicks;
+            if (action == MouseAction::ActionLeft && hudInputAllowed()
+                && ((Registry::get().on("cps_cap")
+                     && clicksPerSecond(q) >= int(Registry::get().find("cps_cap")->num("limit", 15)))
+                    || (Registry::get().on("click_assist") && clicksPerSecond(q) >= 16))) {
+                // The 16-CPS ceiling also limits the user's presses if they would push the
+                // combined count beyond 16 while the module is enabled.
                 ev.cancel();
                 return;
             }
             q.push_back(nowMs());
+            if (action == MouseAction::ActionLeft && !gInjectingAssistEvent.load()) {
+                int64_t ms = nowMs();
+                while (!gRealLeftClicks.empty() && ms - gRealLeftClicks.front() > 1500)
+                    gRealLeftClicks.pop_front();
+                gRealLeftClicks.push_back(ms);
+            }
         }
         if (action == MouseAction::ActionWheel && data != 0 && Registry::get().on("scroll_disabler") && hudInputAllowed()) ev.cancel();
     });
@@ -584,6 +629,8 @@ void uninstallRuntime() {
     BfAttackHook::unhook();
     BfSurvivalAttackHook::unhook();
     gClickAssist = {};
+    gInjectingAssistEvent = false;
+    { std::lock_guard lock(gMutex); gRealLeftClicks.clear(); }
 }
 
 } // namespace bedrock_forge::client
