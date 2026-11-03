@@ -82,12 +82,12 @@ std::atomic<int>      gCombo{0};
 std::atomic<int64_t>  gComboAt{0};
 std::atomic<float>    gZoomNow{1.0f};
 std::atomic<short>    gAssistMouseX{0}, gAssistMouseY{0};
-// The synthetic input path is intentionally limited to offline survival. It is never sent via SendInput.
+// Injected mouse events are opt-in. Mode and server restrictions are communicated via the UI notice.
 // Total accepted presses are tracked by gLeftClicks (the existing CPS HUD's queue).
 // gRealLeftClicks contains physical presses only; synthetic presses never arm their own assist.
 std::deque<int64_t> gRealLeftClicks; // guarded by gMutex
 std::atomic<bool>  gInjectingAssistEvent{false};
-std::atomic<bool>  gAssistOfflineEligible{false};
+std::atomic<bool>  gAssistCapActive{false};
 struct ClickAssistState {
     bool syntheticDown = false;
     Clock::time_point next{};
@@ -150,12 +150,10 @@ void keycap(MinecraftUIRenderContext& ctx, float x, float y, float w, float h, s
 
 bool hudInputAllowed() { return w32::gameFocused() && nowMs() - gLastNonHudFrameMs.load() > 150; }
 
-// Fail closed: never synthesize input for external servers, Realms or multiplayer/LAN sessions.
-// A menu toggle alone is not permission to inject clicks in an online world.
-bool clickAssistPermitted(IClientInstance& client, LocalPlayer* player) {
-    return player && player->isSurvival()
-        && !client.isMultiPlayerClient() && !client.isInMultiplayerGame()
-        && client.getMouseGrabbed() && !client.isShowingMenu()
+// Only suppress input when the player cannot meaningfully click in the world.
+// Do not gate by game mode or multiplayer status: the module presents a rules notice instead.
+bool clickAssistInputReady(IClientInstance& client, LocalPlayer* player) {
+    return player && client.getMouseGrabbed() && !client.isShowingMenu()
         && hudInputAllowed() && !menu::isOpen();
 }
 
@@ -165,9 +163,9 @@ bool clickAssistPermitted(IClientInstance& client, LocalPlayer* player) {
 // This is deliberately not a hold-to-autoclicker.
 void tickClickAssist(IClientInstance& client, LocalPlayer* player) {
     auto* m = Registry::get().find("click_assist");
-    bool permitted = m && m->enabled && clickAssistPermitted(client, player)
+    bool permitted = m && m->enabled && clickAssistInputReady(client, player)
         && !Registry::get().on("cps_cap");
-    gAssistOfflineEligible = permitted;
+    gAssistCapActive = permitted;
 
     auto now = Clock::now();
     int64_t const ms = nowMs();
@@ -461,8 +459,8 @@ void registerBuiltins() {
         if (gCombo.load() < 2 || nowMs() - gComboAt.load() > 2500) return;
         f.infoLines.push_back(std::format("Combo x{}", gCombo.load()));
     };
-    r.add("click_assist", "Click Assist (Offline)", Category::Combat,
-          "Adds 4-6 CPS while you click manually, with a hard 16-CPS combined cap. Offline Survival only.")
+    r.add("click_assist", "Click Assist", Category::Combat,
+          "Adds 4-6 clicks/s while manually clicking (16 CPS cap). Read server rules before using.")
         .slider("boost_cps", "Extra CPS", 5, 4, 6, 1);
     r.add("cps_cap", "CPS Cap", Category::Combat, "Drop clicks above a limit (for servers with CPS rules)")
         .slider("limit", "Max CPS", 15, 5, 30, 1);
@@ -563,7 +561,7 @@ void installRuntime() {
             if (action == MouseAction::ActionLeft && hudInputAllowed()
                 && ((Registry::get().on("cps_cap")
                      && clicksPerSecond(q) >= int(Registry::get().find("cps_cap")->num("limit", 15)))
-                    || (gAssistOfflineEligible.load() && hudInputAllowed() && !menu::isOpen()
+                    || (gAssistCapActive.load() && hudInputAllowed() && !menu::isOpen()
                         && clicksPerSecond(q) >= 16))) {
                 // The 16-CPS ceiling also limits the user's presses if they would push the
                 // combined count beyond 16 while the module is enabled.
@@ -592,7 +590,7 @@ void installRuntime() {
     gSubs.on<ll::event::AfterUIRenderEvent>([](ll::event::AfterUIRenderEvent& ev) {
         auto& view = ev.screenView();
         if (!bf::hud::isHudScreen(view)) {
-            gAssistOfflineEligible = false;
+            gAssistCapActive = false;
             gLastNonHudFrameMs = nowMs();
             return;
         }
@@ -634,7 +632,7 @@ void uninstallRuntime() {
     BfSurvivalAttackHook::unhook();
     gClickAssist = {};
     gInjectingAssistEvent = false;
-    gAssistOfflineEligible = false;
+    gAssistCapActive = false;
     { std::lock_guard lock(gMutex); gRealLeftClicks.clear(); }
 }
 
