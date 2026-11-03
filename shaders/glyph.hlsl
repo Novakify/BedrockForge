@@ -429,7 +429,7 @@ float4 letterFx(Glyph g, uint ai, V2P i, float sd, float F, float4 base) {
     float3 starC = lerp(float3(0.75, 0.85, 1.0), float3(1.0, 0.9, 0.75), frac(h2 * 7.0));
     float3 rimC = lerp(float3(0.55, 0.5, 1.0), float3(0.82, 0.86, 1.0), 0.5 + 0.5 * sin(t * 0.7 + ang));
     float hl = halo(g, ai, lc, ar, 0.08) * (1.0 - F) * I;
-    float3 rgb = (col + W * s1 + starC * s2) * F + rimC * edge * 0.45 + float3(0.22, 0.1, 0.45) * hl * 0.35;
+    float3 rgb = (col + W * s1 + starC * s2) * F + rimC * edge * 0.65 + float3(0.22, 0.1, 0.45) * hl * 0.35;
     return float4(rgb, saturate(F + edge * 0.5 + hl * 0.2));
   }
     return float4(base.rgb * F * base.a, F * base.a);
