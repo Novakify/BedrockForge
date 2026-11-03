@@ -10,6 +10,7 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -91,7 +92,7 @@ std::unordered_set<ID3D12GraphicsCommandList*>               gListOnPanel; // li
 std::unordered_set<ID3D12GraphicsCommandList*>               gListUi;      // lists that drew UI this frame (their re-binds of a back buffer stay on the panel)
 std::atomic<long>                                            gSparedBinds{0}; // back-buffer binds of lists with no UI this frame, left alone
 std::atomic_bool                                             gFrameRedirect{false}, gLearnOnly{false};
-bool tracking();
+bool panelActive();
 // Who receives the redirected UI this frame: the Spatial GUI panel / Cinematic scene or, when neither is up, the
 // LyricsFlow "under the HUD" pass (spike S2, opt-in). Same mechanism, different target.
 bool   redirectWanted() { return rf::panel::wantRedirect() || rf::lyrics::wantRedirect(); }
@@ -330,9 +331,6 @@ void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
 bool          gInstalled = false;
 
-bool tracking() {
-    return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled() || rf::lyrics::tracking() || rf::sky::wanted();
-}
 void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
     reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds);
@@ -411,15 +409,72 @@ void STDMETHODCALLTYPE createRtvHook(ID3D12Device* d, ID3D12Resource* res, D3D12
     else gRtvRes.erase(h.ptr);
     gRtvGuess.erase(h.ptr);
 }
+// ---------------------------------------------------------------- lock-free per-list sky state
+// The VV sky injection runs on RenderDragon's recording threads tens of thousands of times a
+// frame (one setPso + draw per sky-candidate). Taking gMutex there serialized the whole
+// multithreaded command recording - the single biggest reason our stack ran slower than a
+// hookless client with the aurora on. The sky only needs two things per list: the current PSO
+// (and its sky kind) and the current IA (topology + vertex buffers). Keep those in a per-list
+// SkyLS reached through a tiny thread-local cache, so the hot path never locks: a list is
+// recorded by one thread at a time and setPso/setTopo/setVb/draw run in order on that thread,
+// so plain fields are safe. SkyLS objects are never freed (a cached pointer would dangle) -
+// a retired list just leaves an unused slot, which is cheap.
+struct ListIa {
+    bool                     haveTopo = false;
+    D3D12_PRIMITIVE_TOPOLOGY topo{};
+    UINT                     nVb = 0;
+    D3D12_VERTEX_BUFFER_VIEW vb[8]{};
+};
+struct SkyLS {
+    ID3D12PipelineState* pso  = nullptr;
+    int                  kind = -1; // cached rf::sky::kindOf(pso); -1 = not yet computed for pso
+    ListIa               ia;
+};
+std::mutex                                                        gSkyMutex; // only on a thread-local cache miss
+std::unordered_map<ID3D12GraphicsCommandList*, std::unique_ptr<SkyLS>> gSkyReg;
+SkyLS* skyLS(ID3D12GraphicsCommandList* list) {
+    constexpr int           N = 8; // concurrently recorded lists per worker thread (small, fixed)
+    struct Ent { ID3D12GraphicsCommandList* l; SkyLS* s; };
+    static thread_local Ent cache[N]{};
+    static thread_local int rr = 0;
+    for (int i = 0; i < N; ++i)
+        if (cache[i].l == list && cache[i].s) return cache[i].s;
+    SkyLS* s;
+    {
+        std::lock_guard lk(gSkyMutex);
+        auto            it = gSkyReg.find(list);
+        if (it != gSkyReg.end()) s = it->second.get();
+        else s = (gSkyReg[list] = std::make_unique<SkyLS>()).get();
+    }
+    cache[rr] = {list, s};
+    rr        = (rr + 1) % N;
+    return s;
+}
+
+// Panel / under-HUD / snapshot capture (the gMutex maps). The aurora sky is NOT in here any
+// more: when nothing but the sky is on this is false and the per-command gMutex work is skipped.
+bool panelActive() {
+    return gState.load(std::memory_order_relaxed) != Idle || rf::panel::enabled() || rf::lyrics::tracking();
+}
+
 void STDMETHODCALLTYPE setPsoHook(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
     reinterpret_cast<SetPso_t>(gOrig[3])(list, pso);
-    if (gInSnapshot || !tracking()) return;
-    std::lock_guard l(gMutex);
-    gListPso[list] = pso;
+    if (gInSnapshot) return;
+    if (rf::sky::wanted()) { // lock-free: refresh the cached kind only when this list's PSO changes
+        SkyLS* s = skyLS(list);
+        if (s->pso != pso) {
+            s->pso  = pso;
+            s->kind = rf::sky::kindOf(pso); // gPsoMutex, but per PSO-bind not per draw
+        }
+    }
+    if (panelActive()) { // panel capture still wants list -> PSO
+        std::lock_guard l(gMutex);
+        gListPso[list] = pso;
+    }
 }
 void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                                  D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
-    if (gInSnapshot || !tracking()) { reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds); return; }
+    if (gInSnapshot || !panelActive()) { reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds); return; }
     std::lock_guard l(gMutex);
     gListDsv[list] = ds ? ds->ptr : 0;
     // M1: once the frame's UI pass started, binds of a back buffer go to the panel target instead
@@ -443,27 +498,20 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
             if (auto lr = gListLastRt.find(list); lr != gListLastRt.end() && lr->second) gRtvGuess[h] = lr->second;
     } else gListRt0.erase(list);
 }
-// ---- LyricsFlow sky stage 2: per-list topology + vertex buffers (what we put back after our draw)
-struct ListIa {
-    bool                     haveTopo = false;
-    D3D12_PRIMITIVE_TOPOLOGY topo{};
-    UINT                     nVb = 0;
-    D3D12_VERTEX_BUFFER_VIEW vb[8]{};
-};
-std::unordered_map<ID3D12GraphicsCommandList*, ListIa> gListIa;
+// ---- LyricsFlow sky stage 2: per-list topology + vertex buffers (what we put back after our draw).
+// Lock-free: ListIa lives in the per-list SkyLS (declared above), written and read on the one
+// thread recording this list, in order (setTopo/setVb precede the draw that reads them).
 void STDMETHODCALLTYPE topoHook(ID3D12GraphicsCommandList* list, D3D12_PRIMITIVE_TOPOLOGY t) {
     reinterpret_cast<Topo_t>(gOrig[11])(list, t);
     if (gInSnapshot || !rf::sky::wanted()) return;
-    std::lock_guard l(gMutex);
-    auto& s    = gListIa[list];
+    ListIa& s  = skyLS(list)->ia;
     s.haveTopo = true;
     s.topo     = t;
 }
 void STDMETHODCALLTYPE setVbHook(ID3D12GraphicsCommandList* list, UINT start, UINT n, D3D12_VERTEX_BUFFER_VIEW const* v) {
     reinterpret_cast<SetVb_t>(gOrig[12])(list, start, n, v);
     if (gInSnapshot || !rf::sky::wanted()) return;
-    std::lock_guard l(gMutex);
-    auto& s = gListIa[list];
+    ListIa& s = skyLS(list)->ia;
     if (start != 0 || !v || n == 0 || n > 8) { s.nVb = 0; return; } // only the common "all streams from slot 0" form
     s.nVb = n;
     std::memcpy(s.vb, v, sizeof(D3D12_VERTEX_BUFFER_VIEW) * n);
@@ -581,22 +629,23 @@ void restoreRoot(ID3D12GraphicsCommandList* l) {
 int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa& ia, bool& drawOrig) {
     drawOrig = true;
     if (!rf::sky::wanted() || !gTgt[11] || !gTgt[12]) return 0;
-    std::lock_guard l(gMutex);
-    auto p = gListPso.find(list);
-    if (p == gListPso.end()) return 0;
-    int k = rf::sky::kindOf(p->second);
+    SkyLS*               s   = skyLS(list); // lock-free
+    ID3D12PipelineState* pso = s->pso;
+    if (!pso) return 0;
+    int k = s->kind;
+    if (k < 0) { k = rf::sky::kindOf(pso); s->kind = k; } // cold path: a draw beat setPso's cache fill
     if (k == rf::sky::Hide) { drawOrig = false; return 1; }
     if (k == rf::sky::VvSky) { // Vibrant Visuals: the first vanilla star / sun / moon draw of the frame gets our sky
         if (!rf::sky::vvWanted()) return 0;
         drawOrig = false;
         if (!rf::sky::claimVvFrame()) return 1;
-        st.pso = p->second;
-        if (auto it = gListIa.find(list); it != gListIa.end()) ia = it->second;
+        st.pso = pso;
+        ia     = s->ia;
         return 2;
     }
     if (k != rf::sky::Dome && k != rf::sky::Clouds) return 0;
-    st.pso = p->second;
-    if (auto it = gListIa.find(list); it != gListIa.end()) ia = it->second;
+    st.pso = pso;
+    ia     = s->ia;
     if (k == rf::sky::Clouds) { drawOrig = !rf::sky::hideClouds(); return 3; }
     return 2;
 }
@@ -620,7 +669,7 @@ void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b,
     int                sk   = gInSnapshot ? 0 : skyDrawKind(list, st, ia, orig);
     if (!orig) rf::sky::noteHidden();
     if (orig) {
-        if (!gInSnapshot && tracking()) onDraw(list);
+        if (!gInSnapshot && panelActive()) onDraw(list);
         reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
     }
     if (sk >= 2) afterSky(list, st, ia, sk);
@@ -632,7 +681,7 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
     int                sk   = gInSnapshot ? 0 : skyDrawKind(list, st, ia, orig);
     if (!orig) rf::sky::noteHidden();
     if (orig) {
-        if (!gInSnapshot && tracking()) onDraw(list);
+        if (!gInSnapshot && panelActive()) onDraw(list);
         reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
     }
     if (sk >= 2) afterSky(list, st, ia, sk);
