@@ -87,7 +87,7 @@ int64_t nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(C
 float   ease(float t) { t = std::clamp(t, 0.0f, 1.0f); return 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t); }
 
 void closeMenu() { // caller holds gMutex
-    if (gClient && gScene) gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
+    if (gClient && gScene) gClient->getCurrentSceneStack()->schedulePopScreen(1);
     gScene.reset();
     gSearch.clear();
     gDrag.clear();
@@ -907,7 +907,7 @@ void open(IClientInstance& client) {
     gDrag.clear();
     setView(lookOn("wheel", true) ? View::Wheel : View::Window);
     if (gView == View::Window) gPage = Page::Mods;
-    client.getSceneFactory().getCurrentSceneStack()->pushScreen(scene, false);
+    client.getCurrentSceneStack()->pushScreen(scene, false);
 }
 
 void install() {
