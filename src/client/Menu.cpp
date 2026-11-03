@@ -484,8 +484,12 @@ void drawMods(UiFrame& f, Win const& w, float a) {
             }, "", m->id});
             f.hits.push_back({gx, y + 6, 26, 30, [m](bool) { gModPage = m->id; showPage(Page::ModSettings); }});
         }
-        g.text(g.ellip(m->name, right - 80 - tx, 14), tx, y + rowH / 2, 14, rgba(m->planned ? kLilac : kWhite, m->planned ? 0.6f : 1), a, false, 0,
-               on ? 0.55f : 0);
+        bool const clickAssist = m->id == "click_assist";
+        g.text(g.ellip(m->name, right - 80 - tx, 14), tx, y + rowH / 2 - (clickAssist ? 6 : 0), 14,
+               rgba(m->planned ? kLilac : kWhite, m->planned ? 0.6f : 1), a, false, 0, on ? 0.55f : 0);
+        if (clickAssist)
+            g.text(g.ellip("READ SERVER RULES", right - 80 - tx, 10), tx, y + rowH / 2 + 12,
+                   10, rgba(kLilac, 0.85f), a);
         if (m->planned) f.hits.push_back({x, y, colW, rowH, [m](bool) { gModPage = m->id; showPage(Page::ModSettings); }, "", m->id});
     }
 }
@@ -515,6 +519,13 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     pageHeader(f, x, y - 4, wd, m->name, m->planned ? m->description + " - on the roadmap." : m->description, a, m->planned ? -1 : (m->enabled ? 1 : 0),
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
     Scroller sc(f, w, a);
+    if (m->id == "click_assist") {
+        // Informational notice only: never disables the toggle based on world or server type.
+        if (sc.fits(50))
+            row(f, x, sc.y, wd, 50, "Read server rules before enabling",
+                "Artificial clicking may violate multiplayer server rules.", a);
+        sc.y += 60;
+    }
     if (m->id == "lyricsflow") {
         if (sc.fits(50)) {
             row(f, x, sc.y, wd, 50, "Open the LyricsFlow panel", "The glass settings panel in the world (also: L in game)", a);
