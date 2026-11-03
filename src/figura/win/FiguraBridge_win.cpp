@@ -50,6 +50,13 @@
 #include "figura/win/DynTex.h"
 #include "lyrics/core/Json.h"
 
+namespace {
+// 26.60: the client MolangVariableMap only exports setMolangVariable(hash, name, value)
+inline void fbSetVar(MolangVariableMap& m, HashedString const& n, MolangScriptArg const& v) {
+    m.setMolangVariable(n.mStrHash, n.mStr.c_str(), v);
+}
+} // namespace
+
 namespace bf::figura::win {
 
 namespace fs = std::filesystem;
@@ -276,11 +283,11 @@ void buildNames(State& s) {
 void calibrate(State& s, Actor& a) {
     // Which key does a Molang "v.x" read? Write a probe both ways, read it back through evalMolang.
     auto& map = *a.mMolangVariables;
-    map.setMolangVariable(HashedString("variable.fbprobe"), MolangScriptArg(42.0f));
+    fbSetVar(map, HashedString("variable.fbprobe"), MolangScriptArg(42.0f));
     float v0 = a.evalMolang("v.fbprobe");
     if (v0 > 41.5f && v0 < 42.5f) s.nameMode = 0;
     else {
-        map.setMolangVariable(HashedString("fbprobe2"), MolangScriptArg(43.0f));
+        fbSetVar(map, HashedString("fbprobe2"), MolangScriptArg(43.0f));
         float v1 = a.evalMolang("v.fbprobe2");
         s.nameMode = (v1 > 42.5f && v1 < 43.5f) ? 1 : 0;
     }
@@ -291,7 +298,7 @@ void calibrate(State& s, Actor& a) {
 void writeVars(State& s, Actor& a) {
     if (!s.avatar || s.names.size() < s.avatar->out.size()) buildNames(s);
     auto& map = *a.mMolangVariables;
-    auto  set = [&](HashedString const& n, double v) { map.setMolangVariable(n, MolangScriptArg(float(v))); };
+    auto  set = [&](HashedString const& n, double v) { fbSetVar(map, n, MolangScriptArg(float(v))); };
     auto const& out = s.avatar->out;
     // only changed values are written (a full write every 2 s in case the game reset the variable map); a hidden
     // bone's pose is not written at all (nothing draws it)
@@ -340,7 +347,7 @@ void writeVars(State& s, Actor& a) {
         if (!io.configured) continue;
         std::string b = side == 0 ? "fbir" : "fbil";
         int m = s.nameMode < 0 ? 0 : s.nameMode;
-        auto w = [&](char const* suf, double v) { map.setMolangVariable(HashedString(vn(m, b + suf)), MolangScriptArg(float(v))); };
+        auto w = [&](char const* suf, double v) { fbSetVar(map, HashedString(vn(m, b + suf)), MolangScriptArg(float(v))); };
         BoneOut const bo = io.found ? io.bone : BoneOut{};
         double sc = io.found ? 1.0 : 0.0; // pivot hidden or gone: Figura draws no item
         w("rx", bo.rot.x); w("ry", bo.rot.y); w("rz", bo.rot.z);
@@ -455,7 +462,7 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
             p.vehicle.pos = {vp.x, vp.y, vp.z};
         }
         bool sw = false;
-        try { sw = lp.mSwinging; } catch (...) {}
+        try { sw = lp.mSwingingHand->has_value(); } catch (...) {} // 26.60: mSwinging -> mSwingingHand
         if (sw && !p.swinging) p.swingTime = 0;
         p.swinging   = sw;
         if (sw) p.swingTime++;
