@@ -87,6 +87,7 @@ std::atomic<short>    gAssistMouseX{0}, gAssistMouseY{0};
 // gRealLeftClicks contains physical presses only; synthetic presses never arm their own assist.
 std::deque<int64_t> gRealLeftClicks; // guarded by gMutex
 std::atomic<bool>  gInjectingAssistEvent{false};
+std::atomic<bool>  gAssistOfflineEligible{false};
 struct ClickAssistState {
     bool syntheticDown = false;
     Clock::time_point next{};
@@ -166,6 +167,7 @@ void tickClickAssist(IClientInstance& client, LocalPlayer* player) {
     auto* m = Registry::get().find("click_assist");
     bool permitted = m && m->enabled && clickAssistPermitted(client, player)
         && !Registry::get().on("cps_cap");
+    gAssistOfflineEligible = permitted;
 
     auto now = Clock::now();
     int64_t const ms = nowMs();
@@ -561,7 +563,8 @@ void installRuntime() {
             if (action == MouseAction::ActionLeft && hudInputAllowed()
                 && ((Registry::get().on("cps_cap")
                      && clicksPerSecond(q) >= int(Registry::get().find("cps_cap")->num("limit", 15)))
-                    || (Registry::get().on("click_assist") && clicksPerSecond(q) >= 16))) {
+                    || (gAssistOfflineEligible.load() && hudInputAllowed() && !menu::isOpen()
+                        && clicksPerSecond(q) >= 16))) {
                 // The 16-CPS ceiling also limits the user's presses if they would push the
                 // combined count beyond 16 while the module is enabled.
                 ev.cancel();
@@ -589,6 +592,7 @@ void installRuntime() {
     gSubs.on<ll::event::AfterUIRenderEvent>([](ll::event::AfterUIRenderEvent& ev) {
         auto& view = ev.screenView();
         if (!bf::hud::isHudScreen(view)) {
+            gAssistOfflineEligible = false;
             gLastNonHudFrameMs = nowMs();
             return;
         }
@@ -630,6 +634,7 @@ void uninstallRuntime() {
     BfSurvivalAttackHook::unhook();
     gClickAssist = {};
     gInjectingAssistEvent = false;
+    gAssistOfflineEligible = false;
     { std::lock_guard lock(gMutex); gRealLeftClicks.clear(); }
 }
 
