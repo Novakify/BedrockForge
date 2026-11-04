@@ -738,6 +738,113 @@ vec3 styledSky(vec3 d, int id, float t) {
 }
 
 
+// ================================================================ LyricsFlow 2.2: the five newest (Rift, Supernova, Warp, Silk, Eclipse)
+// ported from live_sky.fsh 2.2 (noise -> lfNoise, atan(y, x) -> atan2)
+float angAround(vec3 d, vec3 c) {
+    vec3 u = normalize(vec3(c.z, 0.0, -c.x) + vec3(1e-9, 0.0, 0.0));
+    vec3 v = vec3(c.y * u.z, c.z * u.x - c.x * u.z, -c.y * u.x);
+    return atan2(dot(d, v), dot(d, u));
+}
+
+void addMix(float k, float inten) {
+    add(mix(A1, A2, clamp(k, 0.0, 1.0)), inten);
+}
+
+void rift(float x, float y, float z) {
+    float d = -x * 0.513 + y * 0.42 - z * 0.747;
+    float t = T * 0.05 * (0.5 + LIVELY);
+    float wob = (fbm(x * 3.0 + t, y * 3.0 - t, z * 3.0, 3) - 0.5) * 0.16 + (lfNoise(x * 14.0, y * 14.0 + T * 0.4, z * 14.0) - 0.5) * 0.03;
+    float dd = d + wob;
+    float along = fbm(x * 5.0 - t * 3.0, y * 5.0, z * 5.0 + t * 2.0, 2);
+    float open = 0.6 + 0.4 * sin(T * 0.7 + along * 6.0);
+    float core = exp(-dd * dd / (0.00018 * open));
+    float edge = exp(-dd * dd / 0.0025);
+    float glow = exp(-abs(dd) / 0.09);
+    addMix(sm(0.35, 0.65, along), edge * 0.9 * PATTERN * BREATH);
+    add(vec3(1.0), core * 1.2 * PATTERN);
+    add(A1, glow * 0.22 * PATTERN);
+    add(mix(A1, A2, 0.5), exp(-abs(dd) / 0.35) * 0.12 * PATTERN);
+    float w = fbm(x * 2.2 + dd * 6.0, y * 2.2 - t * 2.0, z * 2.2 + t, 3);
+    float wisp = pow(1.0 - abs(2.0 * w - 1.0), 8.0) * exp(-abs(dd) / 0.25);
+    addMix(1.0 - w, wisp * 0.45 * PATTERN);
+}
+
+void supernova(float x, float y, float z) {
+    vec3 d = vec3(x, y, z), c = sdir(200.0, 30.0);
+    float ang = degrees(acos(clamp(dot(d, c), -1.0, 1.0)));
+    float th = angAround(d, c);
+    float flick = 0.85 + 0.15 * sin(T * 3.0);
+    add(vec3(1.0), (exp(-ang / 0.9) * 1.3 + exp(-ang / 4.0) * 0.45) * flick);
+    add(A1, exp(-ang / 12.0) * 0.35 * BREATH);
+    float rays = pow(0.5 + 0.5 * sin(th * 13.0 + lfNoise(th * 3.0, T * 0.2, 1.0) * 4.0), 10.0) * exp(-ang / 18.0);
+    add(mix(vec3(1.0, 0.9, 0.8), A1, 0.4), rays * 0.6 * PATTERN);
+    for (int i = 0; i < 2; i++) {
+        float R = fract(T * 0.07 + float(i) * 0.5) * 85.0;
+        float rd = (ang - R) / (1.5 + R * 0.05);
+        float ring = exp(-rd * rd) * (1.0 - R / 85.0);
+        addMix(1.0 - float(i), ring * 0.55 * PATTERN);
+    }
+    float n = fbm(x * 3.0 + 2.0, y * 3.0 + T * 0.01, z * 3.0, 4);
+    float fil = pow(1.0 - abs(2.0 * n - 1.0), 6.0) * exp(-ang / 45.0);
+    addMix(fbm(x * 1.5, y * 1.5, z * 1.5 + 5.0, 2), fil * 0.7 * PATTERN);
+}
+
+void warp(float x, float y, float z) {
+    vec3 d = vec3(x, y, z), c = sdir(0.0, 12.0);
+    float ang = acos(clamp(dot(d, c), -1.0, 1.0));
+    float th = angAround(d, c);
+    float lanes = 140.0;
+    float lf = (th / 6.2831853 + 0.5) * lanes;
+    float lane = floor(lf);
+    float h = hash3(int(lane), 3, 9), h2 = hash3(int(lane), 5, 1);
+    float speed = (0.25 + h * 0.6) * (0.6 + LIVELY);
+    float r = ang / 3.14159265;
+    float head = fract(T * speed * 0.18 + h2);
+    float s = head * head;
+    float dr = s - r;
+    float len = 0.04 + 0.12 * s;
+    float streak = dr >= 0.0 ? (dr <= len * 4.0 ? exp(-dr / len) : 0.0) : exp(dr / 0.004);
+    float width = 1.0 - abs(lf - lane - 0.5) * 2.0;
+    streak *= pow(width, 3.0) * (h2 >= 0.45 ? 1.0 : 0.0) * sm(0.0, 0.05, r);
+    addMix(h, streak * 1.1 * PATTERN);
+    add(A1, exp(-ang * 8.0) * 0.6 * BREATH + exp(-ang * 2.0) * 0.12);
+    add(vec3(1.0), exp(-ang * 40.0) * 0.9);
+}
+
+void silk(float az, float el) {
+    if (el < -4.0) return;
+    float azr = radians(az), t = T * (0.12 + LIVELY * 0.15);
+    for (int k = 0; k < 3; k++) {
+        float fk = float(k);
+        float c = 22.0 + fk * 16.0 + 9.0 * sin(azr * 2.0 + t + fk * 2.1) + 5.0 * sin(azr * 5.0 - t * 1.4 + fk);
+        float w = 4.0 + 2.5 * sin(azr * 3.0 + t * 0.7 + fk);
+        float h = (el - c) / w;
+        float band = exp(-h * h);
+        if (band < 0.01) continue;
+        float fold = 0.55 + 0.45 * sin(azr * 18.0 + 3.0 * sin(azr * 3.0 + t) + t * 2.0 + fk);
+        float sheen = pow(max(0.0, 1.0 - abs(h)), 6.0);
+        addMix(0.5 + 0.5 * sin(azr * 2.0 + fk * 2.0 + t * 0.3), band * (0.35 + 0.65 * fold) * 0.6 * PATTERN * BREATH);
+        add(vec3(1.0), sheen * fold * 0.25 * PATTERN);
+    }
+}
+
+void eclipse(float x, float y, float z, float el) {
+    vec3 d = vec3(x, y, z), c = sdir(160.0, 26.0);
+    float ang = degrees(acos(clamp(dot(d, c), -1.0, 1.0)));
+    float th = angAround(d, c);
+    float R = 4.6;
+    add(A2, exp(-max(0.0, el) / 7.0) * 0.55);
+    float stream = 0.55 + 0.45 * lfNoise(th * 2.5, T * 0.05, 3.0);
+    float rays = pow(0.5 + 0.5 * sin(th * 9.0 + lfNoise(th, T * 0.1, 7.0) * 5.0), 4.0);
+    float outer = max(0.0, ang - R);
+    float corona = exp(-outer / (2.2 + 4.0 * rays * stream)) * (0.8 + 0.4 * rays);
+    add(A1, corona * 1.1 * PATTERN * BREATH);
+    add(vec3(1.0), exp(-outer / 0.5) * 0.9);
+    add(A1, exp(-outer / 9.0) * 0.4 * BREATH + exp(-outer / 1.6) * 0.5);
+    float disc = 1.0 - sm(R - 0.15, R, ang);
+    over(vec3(0.01, 0.008, 0.012), disc);
+}
+
 float soft(float v) {
     if (v <= 0.8) return max(0.0, v);
     float o = v - 0.8;
@@ -776,9 +883,9 @@ vec4 skyMain(vec3 skyDir, vec3 skyInfo) {
     float az = degrees(atan2(-x, z));
     if (az < 0.0) az += 360.0;
 
-    if (PRESET >= 20) {
+    if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34+: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
-        C = styledSky(dir, PRESET - 20, T / 2.2);
+        C = styledSky(dir, PRESET <= 28 ? PRESET - 20 : PRESET - 25, T / 2.2);
     } else {
     // 1) ruhiger Verlauf vom Horizont nach oben
     float k = pow(clamp(el / 72.0, 0.0, 1.0), 0.55);
@@ -836,6 +943,17 @@ vec4 skyMain(vec3 skyDir, vec3 skyInfo) {
         milkyWay(x, y, z, 0.25);
         pulsar(x, y, z);
     } else if (PRESET == 19) paint(x, y, z, el);
+    else if (PRESET == 29) { // LyricsFlow 2.2
+        milkyWay(x, y, z, 0.2);
+        rift(x, y, z);
+    } else if (PRESET == 30) {
+        supernova(x, y, z);
+        add(A2, 0.06 * lowGlow);
+    } else if (PRESET == 31) warp(x, y, z);
+    else if (PRESET == 32) {
+        silk(az, el);
+        add(A1, 0.12 * lowGlow);
+    } else if (PRESET == 33) eclipse(x, y, z, el);
     if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     }
 
