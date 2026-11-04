@@ -38,6 +38,9 @@ private:
         float     seedF = 0;
         bool      screen = false;
         Vec3      center, axis, r0;    // [LyricsForge] Vortex: spiral centre, spin axis, start offset
+        Vec3      trail[2];            // [LyricsForge] motion trail: where it was ~40 / ~80 ms ago
+        float     trailT = 0;
+        bool      hasTrail = false;
     };
     std::vector<Frag> mFrags;
     static constexpr size_t kMaxFrags = 6000;

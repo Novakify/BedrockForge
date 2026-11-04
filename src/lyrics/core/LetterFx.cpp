@@ -153,6 +153,9 @@ void LetterFx::step(float dt) {
             break;
         default: break;
         }
+        if (!f.hasTrail) { f.trail[0] = f.trail[1] = f.pos; f.hasTrail = true; }
+        f.trailT += dt;
+        if (f.trailT >= 0.04f) { f.trailT = 0; f.trail[1] = f.trail[0]; f.trail[0] = f.pos; }
         f.pos += f.vel * dt;
         double w = f.angVel.length();
         if (w > 1e-6) f.orient = (Quat::axisAngle(f.angVel, w * dt) * f.orient).normalized();
@@ -215,6 +218,18 @@ void LetterFx::emit(Vec3 origin, std::vector<BfGlyphV1>& out) const {
         q.pos[0] = float(p.x); q.pos[1] = float(p.y); q.pos[2] = float(p.z);
         q.right[0] = float(r.x); q.right[1] = float(r.y); q.right[2] = float(r.z);
         q.up[0] = float(u.x); q.up[1] = float(u.y); q.up[2] = float(u.z);
+        // [LyricsForge] motion trail: fast pieces leave two fading ghosts behind them (drawn first = underneath)
+        bool const trails = f.hasTrail && t > 0 && (f.mode == ExitAnim::Explode || f.mode == ExitAnim::Shatter || f.mode == ExitAnim::Vortex);
+        if (trails && (f.trail[1] - f.pos).length() > double(f.size) * 0.15) {
+            for (int k = 1; k >= 0; --k) {
+                BfGlyphV1 g = q;
+                Vec3 const tp = f.trail[k] + shift - (f.screen ? Vec3{} : origin);
+                g.pos[0] = float(tp.x); g.pos[1] = float(tp.y); g.pos[2] = float(f.screen ? 0.0 : tp.z);
+                g.alpha  = q.alpha * (k == 0 ? 0.32f : 0.14f);
+                g.glowK  = std::max(g.glowK, 0.4f);
+                out.push_back(g);
+            }
+        }
         out.push_back(q);
     }
 }
