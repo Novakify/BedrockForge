@@ -47,7 +47,7 @@ public:
     /// star + link quads (world positions relative to `origin`)
     void emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& out) const;
     std::vector<Constellation> const& constellations() const { return mCons; }
-    void clear() { mCons.clear(); mDying.clear(); }
+    void clear() { mCons.clear(); mDying.clear(); mSeq = -2; mLastEnd = -1; mLastLine = -1; } // [BF] lyrics swapped: start over
 
     static constexpr int   kMaxPerSong = 7;
     static constexpr float kRadius     = 160.0f; // blocks: far, but inside the depth range
@@ -60,6 +60,8 @@ private:
     float   mSinceWrite = 1e9f;
     float   mFinale = 0;
     int64_t mLastEnd = -1;
+    mutable std::vector<Vec3>  mPos;   // [BF] emit scratch (no per-frame allocations)
+    mutable std::vector<float> mShown;
 };
 
 /// true when this line's text (normalised) occurs at least twice in the lyrics - a hook

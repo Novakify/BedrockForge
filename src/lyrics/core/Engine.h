@@ -45,6 +45,7 @@ public:
 private:
     static constexpr float kTitleCardSec = 4.2f;
     uint32_t               mAccent = 0; // [BF] eased album-art colour
+    float                  mAccentF[3] = {-1, -1, -1}; // ... eased in float (integer easing stalled short of the target)
     float                  mShot = 1;   // [BF] shot language: eased framing (distance factor)
     void direct(std::vector<DrawWord>& words, MusicState const& m, Config const& cfg);
     void titleCard(std::vector<DrawWord>& words, SceneInput const& in, Config const& cfg, CameraState const& cam);

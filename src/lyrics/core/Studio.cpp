@@ -1,6 +1,7 @@
 // LyricsForge - [BF] Scene Studio. Original code for Bedrock Forge; see Studio.h.
 #include "lyrics/core/Studio.h"
 
+#include <algorithm>
 #include <cstdio>
 
 #include "lyrics/core/Json.h"
@@ -156,6 +157,14 @@ std::optional<StudioScene> sceneFromJson(std::string_view text) {
     s.constellations = v["constellations"].asBool(true);
     s.glow = float(v["glow"].asNumber(-1));
     s.albumColors = v["albumColors"].asBool(false);
+    // [BF] files from disk: keep every enum in range (-1 = keep)
+    s.letterFx   = std::clamp(s.letterFx, -1, 10);
+    s.enter      = std::clamp(s.enter, -1, int(EnterAnim::Glitch));
+    s.exit       = std::clamp(s.exit, -1, int(ExitAnim::Vortex));
+    s.style      = std::clamp(s.style, -1, int(LyricsStyle::Wall));
+    s.reactivity = std::clamp(s.reactivity, 0, 3);
+    s.fxSpeed    = std::clamp(s.fxSpeed, 0.25f, 3.0f);
+    s.fxStrength = std::clamp(s.fxStrength, 0.2f, 2.0f);
     return s;
 }
 

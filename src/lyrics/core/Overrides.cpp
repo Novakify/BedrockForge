@@ -96,6 +96,7 @@ Lyrics retimeLines(Lyrics const& l, std::vector<std::pair<int, int64_t>> const& 
     // keep the lines in order even if a tap made two of them cross
     for (size_t i = 1; i < out.lines.size(); ++i)
         if (out.lines[i].start < out.lines[i - 1].start) out.lines[i].start = out.lines[i - 1].start + 1;
+    for (auto& ln : out.lines) ln.end = std::max(ln.end, ln.start + 1);
     return out;
 }
 

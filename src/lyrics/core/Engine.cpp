@@ -40,8 +40,12 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         cfg.lyricsScale *= 1.0f + (1.0f - mShot) * 0.5f;
     }
     if (cfg.albumColors && in.albumAccent != 0) { // [BF] album-art palette: colours ease to the new cover over ~1 s
-        if (mAccent == 0) mAccent = in.albumAccent;
-        mAccent = colLerp(mAccent | 0xFF000000u, in.albumAccent | 0xFF000000u, std::min(1.0f, in.dt * 2.5f));
+        float const k = std::min(1.0f, in.dt * 2.5f);
+        for (int c = 0; c < 3; ++c) {
+            float const want = float((in.albumAccent >> (16 - 8 * c)) & 0xFF);
+            mAccentF[c] = mAccentF[c] < 0 ? want : mAccentF[c] + (want - mAccentF[c]) * k;
+        }
+        mAccent = 0xFF000000u | uint32_t(std::lround(mAccentF[0])) << 16 | uint32_t(std::lround(mAccentF[1])) << 8 | uint32_t(std::lround(mAccentF[2]));
         cfg.letterFxColor = int32_t(mAccent | 0xFF000000u);
         cfg.glowColor     = int32_t(mAccent | 0xFF000000u);
     }
@@ -114,7 +118,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         mPhysics.emit(mOrigin, mBack); // letters on the ground sit behind live text
         if (cfg.materialImpacts) { // stone chips, sand puffs, water splashes ... where letters land
             uint32_t k = 0;
-            for (auto const& ld : mPhysics.takeLandings()) mBursts.spawn(ld, uint32_t(in.nowSeconds * 1000.0) + 7919u * ++k);
+            for (auto const& ld : mPhysics.takeLandings()) mBursts.spawn(ld, uint32_t(uint64_t(in.nowSeconds * 1000.0)) + 7919u * ++k);
         } else
             mPhysics.takeLandings();
         mBursts.step(in.dt);
@@ -149,6 +153,7 @@ void Engine::direct(std::vector<DrawWord>& words, MusicState const& m, Config co
     // [BF] echo: held notes ring out - two transparent copies swell and fade behind the word, like reverb
     if (cfg.heroWords) {
         size_t const n = words.size();
+        words.reserve(n * 3); // push_back below must never reallocate under `w` (it is a reference into words)
         for (size_t i = 0; i < n; ++i) {
             DrawWord const& w = words[i];
             if (!w.hero || w.sungMs < 0 || w.sungMs > 2600 || w.plain || w.dropNow) continue;

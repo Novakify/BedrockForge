@@ -49,6 +49,10 @@ void SkyWriter::step(In const& in) {
     mDying.erase(std::remove_if(mDying.begin(), mDying.end(), [](Constellation const& c) { return c.fade <= 0; }), mDying.end());
     for (auto& c : mCons) c.age += dt;
     mSinceWrite += dt;
+    if (!in.enabled && !mCons.empty()) { // [BF] switched off: the sky lets them go instead of freezing them
+        for (auto& c : mCons) mDying.push_back(std::move(c));
+        mCons.clear();
+    }
     if (!in.enabled || !in.lyrics || in.t < 0) return;
     if (mLastEnd < 0)
         for (auto const& l : in.lyrics->lines) if (l.index >= 0) mLastEnd = std::max(mLastEnd, l.end);
@@ -132,8 +136,10 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
     auto draw = [&](Constellation const& c, bool dying) {
         float const life = std::min(1.0f, c.fade) * (dying ? 1.0f : 1.0f);
         float const bright = life * (0.55f + 0.25f * budget + 0.35f * impact + 0.7f * mFinale);
-        std::vector<Vec3> pos(c.stars.size());
-        std::vector<float> shown(c.stars.size());
+        auto& pos = mPos;
+        auto& shown = mShown;
+        pos.assign(c.stars.size(), Vec3{});
+        shown.assign(c.stars.size(), 0.0f);
         for (size_t i = 0; i < c.stars.size(); ++i) {
             auto const& s = c.stars[i];
             float const p = easeOut((c.age - s.delay) / 1.4f); // rises from below into place

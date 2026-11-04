@@ -614,7 +614,7 @@ void mediaLoop() {
                             if (auto sc = findScene(it->second); sc && cfg.scene != sc->id) {
                                 applyScene(cfg, *sc);
                                 gS->lastScene = cfg.scene;
-                                saveConfig();
+                                gS->cfgDirty = true; // [BF] saved by the game thread's flush, not here under the lock
                             }
                 }
                 if (e == MediaEvent::Stop) {
@@ -739,8 +739,10 @@ void pollKeys(bedrock_forge::client::Frame& f) {
 
 /// LyricsFlow 2.1 live sky: clock + stars / weather / picture -> BF_CopySkyFrame. Caller holds gS->mutex.
 std::atomic<float> gFovScale{1.0f}; // [BF] fovBreath -> the FOV hook (client/Modules.cpp)
+std::atomic<int64_t> gFovAtNs{0};   // when it was last published: a stale value (no HUD frames) falls back to 1
 void publishDirector(MusicState const& m, CinemaOut const& c) {
     gFovScale.store(c.fovScale, std::memory_order_relaxed);
+    gFovAtNs.store(nowNs(), std::memory_order_relaxed);
     BfDirectorV1 d{};
     d.size = sizeof d; d.version = 1; d.active = c.active ? 1u : 0u; d.frame = gBfDirector.frame + 1;
     d.budget = m.budget; d.impact = m.impact; d.build = m.build; d.beat = m.beat;
@@ -1028,8 +1030,13 @@ void tapAction(PanelAction::Kind k, int64_t now) {
         std::thread([text, path, dir] { try { // file IO off the game thread
             std::error_code ec;
             std::filesystem::create_directories(dir, ec);
-            std::ofstream out(path, std::ios::binary);
-            out << text;
+            auto tmp = path;
+            tmp += ".tmp";
+            { std::ofstream out(tmp, std::ios::binary); out << text; }
+            std::filesystem::rename(tmp, path, ec); // whole file at once: the watcher never reads half of it
+            auto const t = std::filesystem::last_write_time(path, ec);
+            std::lock_guard l(gS->mutex);
+            if (!ec) gS->overrideTime = t; // we wrote it and already show it: no second reload
         } catch (...) {} }).detach();
         tp = {};
         break;
@@ -1110,7 +1117,8 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
             }
         }
         flushConfig(false);
-    }
+    } else if (gS->cfgDirty)
+        flushConfig(false); // [BF] changes made off the panel (song scenes, pinning) get saved too
     host::hovered = gS->panel.hovered();
     host::open    = gS->panel.isOpen();
     gS->panelStepNs = now;
@@ -1256,7 +1264,10 @@ void uninstall() {
     // State stays allocated on purpose: detached fetch threads may still be finishing and check gS->running.
 }
 
-float cinemaFovScale() { return gFovScale.load(std::memory_order_relaxed); }
+float cinemaFovScale() {
+    if (nowNs() - gFovAtNs.load(std::memory_order_relaxed) > 200000000LL) return 1.0f; // HUD stopped publishing
+    return gFovScale.load(std::memory_order_relaxed);
+}
 } // namespace bf::lyrics::win
 extern "C" __declspec(dllexport) BfDirectorV1 const* BF_GetDirector() { return &gBfDirector; }
 #endif
