@@ -57,6 +57,7 @@ public:
     // tuning (public for tests)
     static constexpr float kDropCooldown   = 20.0f; // s between drops
     static constexpr float kChorusCooldown = 12.0f;
+    static constexpr float kLiveDropCooldown = 30.0f; // live guesses are less sure: rarer
 
 private:
     MusicState mS;
@@ -65,7 +66,7 @@ private:
     float      mShort = 0, mLong = 0;   // live loudness followers (~0.4 s, ~6 s)
     float      mLo = 0.3f, mHi = 0.7f;  // live normalisation range (slow percentile followers)
     float      mHold = 0;               // s the live section must hold before it can change
-    float      mSinceDrop = 1e9f, mSinceChorus = 1e9f;
+    float      mSinceDrop = 1e9f, mSinceChorus = 1e9f, mSinceCalm = 1e9f;
     float      mBudgetTarget = 0.5f;
     bool       mWasBuilding = false, mWasHook = false;
     MusicSection mPrevSection = MusicSection::Mid;

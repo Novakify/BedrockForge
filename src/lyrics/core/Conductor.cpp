@@ -19,7 +19,7 @@ void Conductor::reset() {
     mShort = mLong = 0;
     mLo = 0.3f; mHi = 0.7f;
     mHold = 0;
-    mSinceDrop = mSinceChorus = 1e9f;
+    mSinceDrop = mSinceChorus = mSinceCalm = 1e9f;
     mBudgetTarget = 0.5f;
     mWasBuilding = mWasHook = false;
     mPrevSection = MusicSection::Mid;
@@ -49,7 +49,7 @@ void Conductor::update(ConductorIn const& in) {
         s.songStart = true;
         s.build = 0;
         s.inHook = 0;
-        mSinceDrop = mSinceChorus = 1e9f;
+        mSinceDrop = mSinceChorus = mSinceCalm = 1e9f;
         mWasBuilding = mWasHook = false;
         mLastPos = -1;
         mHold = 0;
@@ -104,7 +104,8 @@ void Conductor::update(ConductorIn const& in) {
         MusicSection want = liveE < 0.33f ? MusicSection::Calm : liveE < 0.66f ? MusicSection::Mid : MusicSection::High;
         if (want != sec && mHold <= 0) { sec = want; mHold = 4.0f; }
     }
-    if (sec == MusicSection::Calm && mPrevSection != MusicSection::Calm) s.calmNow = true;
+    mSinceCalm += dt;
+    if (sec == MusicSection::Calm && mPrevSection != MusicSection::Calm && mSinceCalm > 8.0f) { s.calmNow = true; mSinceCalm = 0; }
     mPrevSection = s.section = sec;
 
     // ---- events: scan (lastPos, pos]; a jump (seek) skips them
@@ -129,15 +130,16 @@ void Conductor::update(ConductorIn const& in) {
         s.inHook += ((hook ? 1.0f : 0.0f) - s.inHook) * ease(dt, hook ? 0.3f : 1.2f);
     }
     if (!s.known && in.bandsLive && !drop) { // live guess: a sudden, loud lift above the recent average
-        if (liveE - liveL > 0.35f && liveE > 0.7f) drop = true;
+        if (liveE - liveL > 0.40f && liveE > 0.72f && mSinceDrop > kLiveDropCooldown) drop = true;
         if (liveE - liveL > 0.12f && liveE > 0.45f) build = std::max(build, clamp01((liveE - liveL - 0.12f) / 0.25f) * 0.6f);
     }
     if (drop && mSinceDrop < kDropCooldown) drop = false;
     if (chorus && (mSinceChorus < kChorusCooldown || mSinceDrop < 3.0f)) chorus = false;
     if (drop) { s.dropNow = true; mSinceDrop = 0; mSinceChorus = 0; s.impact = 1.0f; s.choruses++; }
     if (chorus) { s.chorusNow = true; mSinceChorus = 0; s.impact = std::max(s.impact, 0.75f); s.choruses++; }
-    if (build > 0.05f && !mWasBuilding) s.buildNow = true;
-    mWasBuilding = build > 0.05f;
+    // a build is announced once it is real (> 0.35), and re-armed only after it fades (< 0.05): no flicker
+    if (build > 0.35f && !mWasBuilding) { s.buildNow = true; mWasBuilding = true; }
+    if (build < 0.05f) mWasBuilding = false;
     if (s.dropNow) { mWasBuilding = false; build = 0; }
     s.build += (build - s.build) * ease(dt, build > s.build ? 0.2f : 0.6f);
 
