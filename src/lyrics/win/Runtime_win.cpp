@@ -49,8 +49,6 @@
 #include "lyrics/core/Conductor.h"
 #include "lyrics/core/Cinema.h"
 #include "lyrics/core/Overrides.h"
-#include <shellapi.h>
-#pragma comment(lib, "shell32.lib")
 #include "lyrics/BfDirector.h"
 #include "lyrics/core/Studio.h"
 #include "lyrics/win/World_win.h"
@@ -326,7 +324,7 @@ void editLyrics() {
         std::ofstream out(p, std::ios::binary);
         out << (cur && !cur->empty() ? toOverrideLrc(*cur, s.artist, s.title) : emptyOverrideLrc(s.artist, s.title));
     }
-    ShellExecuteW(nullptr, L"open", L"notepad.exe", (L"\"" + p.wstring() + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+    openInNotepad(p);
 }
 
 // [BF] the override of the song playing changed on disk -> swap it in (edits show up while the song plays)

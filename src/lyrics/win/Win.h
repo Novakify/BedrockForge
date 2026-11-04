@@ -21,6 +21,9 @@
 
 namespace bf::lyrics::win {
 
+/// [BF] open a file in Notepad (the lyric override editor). Shell_win.cpp
+void openInNotepad(std::filesystem::path const& p);
+
 fetch::HttpResponse httpGet(std::string const& url, fetch::Headers const& headers, int64_t deadlineMs);
 
 /// GlobalSystemMediaTransportControls. All calls block; use from a worker thread (it joins the MTA itself).
