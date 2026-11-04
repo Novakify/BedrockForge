@@ -923,13 +923,14 @@ void Panel::director(Ctx& c, Config& cfg) {
     c.toggle2("tc", 288, 54, 78, "Title card", cfg.titleCard, [&] { cfg.titleCard = !cfg.titleCard; }, a);
     c.toggle2("hw", 206, 70, 78, "Hero words", cfg.heroWords, [&] { cfg.heroWords = !cfg.heroWords; }, a);
     c.toggle2("cg", 288, 70, 78, "Contrast", cfg.contrastGuard, [&] { cfg.contrastGuard = !cfg.contrastGuard; }, a);
-    c.toggle2("cs", 206, 86, 160, "Sky writes the song", cfg.constellations, [&] { cfg.constellations = !cfg.constellations; }, a);
+    c.toggle2("cs", 206, 86, 78, "Sky writes", cfg.constellations, [&] { cfg.constellations = !cfg.constellations; }, a);
     c.toggle2("sm", 206, 102, 78, "Song Memory", cfg.songMemory, [&] { cfg.songMemory = !cfg.songMemory; }, a);
     c.toggle2("ac", 288, 102, 78, "Album colours", cfg.albumColors, [&] { cfg.albumColors = !cfg.albumColors; }, a);
     // [BF] the full-screen look (RF on D3D12): grade per scene, impact frames on drops, cinema bars in builds
     c.toggle2("gr", 206, 118, 52, "Grade", cfg.cinemaGrade, [&] { cfg.cinemaGrade = !cfg.cinemaGrade; }, a);
     c.toggle2("if", 260, 118, 52, "Impact", cfg.impactFrames, [&] { cfg.impactFrames = !cfg.impactFrames; }, a);
     c.toggle2("lb", 314, 118, 52, "Bars", cfg.letterbox, [&] { cfg.letterbox = !cfg.letterbox; }, a);
+    c.toggle2("fb", 288, 86, 78, "FOV breath", cfg.fovBreath, [&] { cfg.fovBreath = !cfg.fovBreath; }, a);
     c.text("Reactivity", 206, 140, 0.62f, WHITE, 0.55f * a);
     static char const* const r[] = {"Soft", "Balanced", "Dynamic", "Cinema"};
     for (int i = 0; i < 4; ++i)

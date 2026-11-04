@@ -139,6 +139,7 @@ bool hudInputAllowed() { return w32::gameFocused() && nowMs() - gLastNonHudFrame
 } // namespace
 
 // ============================================================================ hooks
+namespace bf::lyrics::win { float cinemaFovScale(); } // LyricsForge Director "FOV breath" (1 = off)
 LL_TYPE_INSTANCE_HOOK(BfFovHook, ll::memory::HookPriority::Normal, LevelRendererPlayer, &LevelRendererPlayer::getFov, float,
                       float alpha, bool variable) {
     ++diag::fovHook;
@@ -153,6 +154,7 @@ LL_TYPE_INSTANCE_HOOK(BfFovHook, ll::memory::HookPriority::Normal, LevelRenderer
     now += (target - now) * lerp;
     if (std::abs(now - target) < 0.01f) now = target;
     gZoomNow = now;
+    fov *= bf::lyrics::win::cinemaFovScale();
     postfx::noteFov(fov / now);
     return fov / now;
 }

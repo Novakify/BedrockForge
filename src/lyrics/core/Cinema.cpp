@@ -81,7 +81,9 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt) {
         mKick  = m->dropNow ? 1.0f : 0.6f;
         mSinceFlash = 0;
     }
+    if (on && cfg.fovBreath && (m->dropNow || m->chorusNow)) mFovPunch = m->dropNow ? 1.0f : 0.5f;
     mFlash *= std::exp(-dt / 0.22f);
+    mFovPunch *= std::exp(-dt / 0.45f);
     mKick  *= std::exp(-dt / 0.5f);
     float const imp = on && cfg.impactFrames ? std::max(mKick, m->impact * 0.6f) : 0.0f;
 
@@ -111,6 +113,10 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt) {
     o.letterbox  = mBox;
     o.bloomBoost = imp * 0.10f * mv;
     o.caBoost    = imp * 0.0022f * mv;
+    // camera breath: a little tighter while a build holds its breath, a quick push out on the drop (max +-5%)
+    float const fovT = on && cfg.fovBreath ? 1.0f - 0.035f * m->build * mv + 0.05f * mFovPunch * std::min(1.0f, mv) : 1.0f;
+    mFov += (fovT - mFov) * ease(dt, fovT > mFov ? 0.08f : 0.5f);
+    o.fovScale = std::clamp(mFov, 0.94f, 1.06f);
     mOut = o;
 }
 

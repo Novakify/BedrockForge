@@ -28,6 +28,7 @@ struct CinemaOut {
     float amount = 0, saturation = 1, contrast = 1, vignette = 0, flash = 0;
     float flashColor[3] = {1, 1, 1};
     float letterbox = 0, bloomBoost = 0, caBoost = 0;
+    float fovScale = 1;   // multiply the camera FOV (fovBreath)
 };
 
 class Cinema {
@@ -44,7 +45,7 @@ private:
     float      mBlend = 1.0f;     // 0..1 crossfade progress mFrom -> mTo
     bool       mHave = false;
     char       mScene[48] = {};
-    float      mFlash = 0, mSinceFlash = 99, mKick = 0, mBox = 0, mVig = 0, mOn = 0;
+    float      mFlash = 0, mSinceFlash = 99, mKick = 0, mBox = 0, mVig = 0, mOn = 0, mFov = 1, mFovPunch = 0;
     CinemaOut  mOut;
 };
 

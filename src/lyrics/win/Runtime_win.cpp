@@ -711,7 +711,9 @@ void pollKeys(bedrock_forge::client::Frame& f) {
 }
 
 /// LyricsFlow 2.1 live sky: clock + stars / weather / picture -> BF_CopySkyFrame. Caller holds gS->mutex.
+std::atomic<float> gFovScale{1.0f}; // [BF] fovBreath -> the FOV hook (client/Modules.cpp)
 void publishDirector(MusicState const& m, CinemaOut const& c) {
+    gFovScale.store(c.fovScale, std::memory_order_relaxed);
     BfDirectorV1 d{};
     d.size = sizeof d; d.version = 1; d.active = c.active ? 1u : 0u; d.frame = gBfDirector.frame + 1;
     d.budget = m.budget; d.impact = m.impact; d.build = m.build; d.beat = m.beat;
@@ -1105,6 +1107,7 @@ void uninstall() {
     // State stays allocated on purpose: detached fetch threads may still be finishing and check gS->running.
 }
 
+float cinemaFovScale() { return gFovScale.load(std::memory_order_relaxed); }
 } // namespace bf::lyrics::win
 extern "C" __declspec(dllexport) BfDirectorV1 const* BF_GetDirector() { return &gBfDirector; }
 #endif
