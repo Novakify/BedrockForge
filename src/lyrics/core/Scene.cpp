@@ -743,6 +743,35 @@ bool heroWord(Line const& l, int i) {
 }
 } // namespace
 
+// [BF] duets + translations (override files): the second singer gets its own tint; a translation is one small line
+// centred under the first chunk of its lyric line, fading with it
+constexpr uint32_t kVoice2 = 0xFFFFB3DE;
+void translationUnder(Placed const& p, DrawWord const& first, float lineAlpha, bool screen, float emScale, std::vector<DrawWord>& out) {
+    if (p.line.translation.empty() || p.w0 != 0 || p.n() == 0) return;
+    float x0 = 1e9f, x1 = -1e9f, yMax = -1e9f;
+    for (int j = 0; j < p.n(); ++j) {
+        x0 = std::min(x0, p.wx0[size_t(j)] - p.widths[size_t(j)] / 2);
+        x1 = std::max(x1, p.wx0[size_t(j)] + p.widths[size_t(j)] / 2);
+        yMax = std::max(yMax, p.wy0[size_t(j)] + 0.5f * p.wsize[size_t(j)]);
+    }
+    DrawWord d = first;
+    d.text    = p.line.translation;
+    d.x       = (x0 + x1) * 0.5f * emScale;
+    float const yy = (yMax + 0.45f) * emScale;
+    d.y       = screen ? yy : -yy;
+    d.rotZ    = 0;
+    d.scale   = first.scale / std::max(0.01f, p.wsize[0]) * 0.52f;
+    d.alpha   = lineAlpha * 0.78f;
+    d.sung    = false;
+    d.glow    = first.glow * 0.4f;
+    d.argb    = 0xFFE8E4F0;
+    d.dropNow = false;
+    d.hero    = false;
+    d.sungMs  = -1;
+    d.key     = int64_t(p.line.index) * 1000 + 999;
+    out.push_back(std::move(d));
+}
+
 std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraState const& cam, IWorld* w) {
     std::vector<DrawWord> out;
     if (!c.enabled || !c.showLyrics || mVisible.empty() || mPauseFade < 0.01f) return out;
@@ -797,6 +826,8 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.sungMs = t >= wd.start ? t - wd.start : -1;
                 d.dropNow = frag; // [BF] screen words break apart too (fragments in screen space)
                 d.dropFx  = c.exitAnim;
+                if (p.line.voice == 1) d.argb = kVoice2;
+                if (j == 0 && !frag) translationUnder(p, d, alpha * gA, true, emPx, out);
                 out.push_back(std::move(d));
             }
         return out;
@@ -854,6 +885,8 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             d.key       = int64_t(p.line.index) * 1000 + p.w0 + j;
             d.hero      = heroWord(p.line, p.w0 + j);
             d.sungMs    = t >= wd.start ? t - wd.start : -1;
+            if (p.line.voice == 1) d.argb = kVoice2;
+            if (j == 0 && !falling) translationUnder(p, d, alpha * gA, false, e, out);
             out.push_back(std::move(d));
         }
     }

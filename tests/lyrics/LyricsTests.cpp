@@ -229,6 +229,23 @@ TEST(lyric_overrides_roundtrip) {
         }
     }
     CHECK(parseOverride(emptyOverrideLrc("a", "b"), 30000).has_value());
+    // duets + translations
+    auto d = parseOverride("[00:01.00]Hello there\n[00:01.00]tr: Hola\n[00:04.00]v2: <00:04.00>I <00:04.50>answer\n[00:08.00]End\n", 12000);
+    CHECK(d.has_value());
+    if (d) {
+        std::vector<Line const*> real;
+        for (auto const& ln : d->lines) if (ln.index >= 0) real.push_back(&ln);
+        CHECK_EQ(real.size(), size_t(3));
+        if (real.size() == 3) {
+            CHECK_EQ(real[0]->translation, std::string("Hola"));
+            CHECK_EQ(int(real[1]->voice), 1);
+            CHECK_EQ(real[1]->text, std::string("I answer"));
+            CHECK_EQ(real[1]->words.front().text, std::string("I"));
+            CHECK_EQ(int(real[2]->voice), 0);
+            std::string const again = toOverrideLrc(*d, "a", "b");
+            CHECK(again.find("tr: Hola") != std::string::npos && again.find("v2: ") != std::string::npos);
+        }
+    }
 }
 
 TEST(json_basics) {

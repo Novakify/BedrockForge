@@ -1,7 +1,10 @@
 // LyricsForge - [BF] local lyric overrides. Original code for Bedrock Forge; see Overrides.h.
 #include "lyrics/core/Overrides.h"
 
+#include <cctype>
 #include <cstdio>
+#include <map>
+#include <sstream>
 
 namespace bf::lyrics {
 
@@ -18,6 +21,7 @@ std::string header(std::string_view artist, std::string_view title) {
     h += "[ti:" + std::string(title) + "]\n";
     h += "[by:LyricsForge override - save this file and the game picks it up]\n";
     h += "[re:[mm:ss.xx] = when a line starts, <mm:ss.xx> before a word = when that word is sung (optional)]\n";
+    h += "[re:duets - start a line with v2: for the second singer | translations - a line [same time]tr: text]\n";
     return h;
 }
 } // namespace
@@ -47,6 +51,7 @@ std::string toOverrideLrc(Lyrics const& l, std::string_view artist, std::string_
     for (auto const& ln : l.lines) {
         if (ln.index < 0) continue;
         s += "[" + stamp(ln.start) + "]";
+        if (ln.voice == 1) s += "v2: ";
         if (l.synced && !ln.words.empty()) {
             for (size_t i = 0; i < ln.words.size(); ++i) {
                 if (i) s += ' ';
@@ -55,6 +60,7 @@ std::string toOverrideLrc(Lyrics const& l, std::string_view artist, std::string_
         } else
             s += ln.text;
         s += '\n';
+        if (!ln.translation.empty()) s += "[" + stamp(ln.start) + "]tr: " + ln.translation + "\n";
     }
     return s;
 }
@@ -63,11 +69,74 @@ std::string emptyOverrideLrc(std::string_view artist, std::string_view title) {
     return header(artist, title) + "[00:00.00]First line here\n[00:05.00]Second line here\n";
 }
 
+namespace {
+// "[01:02.50]" at the start of s -> ms (-1 = none); `rest` = what follows the last leading tag
+int64_t leadTime(std::string_view s, std::string_view& rest) {
+    int64_t t = -1;
+    while (s.size() > 2 && s[0] == '[') {
+        size_t const e = s.find(']');
+        if (e == std::string_view::npos) break;
+        std::string_view tag = s.substr(1, e - 1);
+        int mm = 0, ss = 0, cs = 0, n = 0;
+        if (std::sscanf(std::string(tag).c_str(), "%d:%d.%d%n", &mm, &ss, &cs, &n) >= 2) t = (mm * 60 + ss) * 1000 + cs * 10;
+        else break;
+        s.remove_prefix(e + 1);
+    }
+    rest = s;
+    return t;
+}
+bool voicePrefix(std::string& s) { // "v2:" / "V2:" (also "2:") marks the second singer
+    size_t i = 0;
+    while (i < s.size() && s[i] == ' ') ++i;
+    auto pre = [&](std::string_view p) {
+        if (s.size() - i < p.size()) return false;
+        for (size_t k = 0; k < p.size(); ++k)
+            if (std::tolower(static_cast<unsigned char>(s[i + k])) != p[k]) return false;
+        s.erase(0, i + p.size());
+        while (!s.empty() && s[0] == ' ') s.erase(s.begin());
+        return true;
+    };
+    return pre("v2:") || pre("2:");
+}
+} // namespace
+
 std::optional<Lyrics> parseOverride(std::string_view text, int64_t durationMs) {
     if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
         static_cast<unsigned char>(text[2]) == 0xBF)
         text.remove_prefix(3); // Notepad's UTF-8 BOM
-    return parseLrc(text, durationMs, "override");
+    // "[mm:ss.xx]tr: ..." lines are translations of the line with the same time; they don't become lyric lines
+    std::map<int64_t, std::string> tr;
+    std::string                    kept;
+    std::istringstream             in{std::string(text)};
+    for (std::string ln; std::getline(in, ln);) {
+        if (!ln.empty() && ln.back() == '\r') ln.pop_back();
+        std::string_view rest;
+        int64_t const    t = leadTime(ln, rest);
+        size_t           i = 0;
+        while (i < rest.size() && rest[i] == ' ') ++i;
+        if (t >= 0 && rest.size() >= i + 3 && (rest.substr(i, 3) == "tr:" || rest.substr(i, 3) == "TR:")) {
+            std::string v(rest.substr(i + 3));
+            while (!v.empty() && v[0] == ' ') v.erase(v.begin());
+            tr[t] = v;
+            continue;
+        }
+        kept += ln;
+        kept += '\n';
+    }
+    auto l = parseLrc(kept, durationMs, "override");
+    if (!l) return l;
+    for (auto& line : l->lines) {
+        if (line.index < 0) continue;
+        if (voicePrefix(line.text)) {
+            line.voice = 1;
+            if (!line.words.empty()) {
+                voicePrefix(line.words.front().text);
+                if (line.words.front().text.empty()) line.words.erase(line.words.begin());
+            }
+        }
+        if (auto it = tr.lower_bound(line.start - 30); it != tr.end() && it->first <= line.start + 30) line.translation = it->second;
+    }
+    return l;
 }
 
 } // namespace bf::lyrics

@@ -24,6 +24,8 @@ struct Line {
     int64_t           start = 0, end = 0;
     std::vector<Word> words;
     bool              estimated = true; // words were spread by syllables, not real word timing
+    std::string       translation;      // [BF] override files: a translation shown small under the line
+    uint8_t           voice = 0;        // [BF] override files: 0 lead, 1 second singer (duets, "v2:" lines)
 
     /// LyricsFlow Line.retime: AudioSync's k stretches estimated word timing inside the line.
     void    retime(double k);
