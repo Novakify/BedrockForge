@@ -93,7 +93,7 @@ struct V2P {
 // Glyph.pad2 = effect id (low 5 bits; bit 5 = rainbow) + intensity / 2.5 as the fraction, Glyph.pad3 = letter seed +
 // speed / 4 as the fraction. The VS grows the quad by a per-effect margin (flames above, drips below, flakes around);
 // everything outside the atlas rect samples as empty so neighbouring glyphs in the atlas never show.
-static const uint FX_NEON = 1, FX_FIRE = 2, FX_WATER = 3, FX_ICE = 4, FX_ELECTRIC = 5, FX_LAVA = 6, FX_GLITCH = 7, FX_GALAXY = 8;
+static const uint FX_NEON = 1, FX_FIRE = 2, FX_WATER = 3, FX_ICE = 4, FX_ELECTRIC = 5, FX_LAVA = 6, FX_GLITCH = 7, FX_GALAXY = 8, FX_INK = 9, FX_HOLO = 10;
 uint   fxOf(Glyph g)        { return g.pad2 >= 1.0 ? (uint(floor(g.pad2)) & 31u) : 0u; }
 bool   fxRainbow(Glyph g)   { return g.pad2 >= 1.0 && (uint(floor(g.pad2)) & 32u) != 0u; }
 float  fxIntensity(Glyph g) { return clamp(frac(g.pad2) * 2.5, 0.2, 2.0); }
@@ -109,6 +109,8 @@ float3 fxMargin(uint fx) {
     if (fx == FX_LAVA) return float3(0.18, 0.18, 0.18);
     if (fx == FX_GLITCH) return float3(0.25, 0.08, 0.08);
     if (fx == FX_GALAXY) return float3(0.22, 0.22, 0.22);
+    if (fx == FX_INK) return float3(0.28, 0.22, 0.40);
+    if (fx == FX_HOLO) return float3(0.20, 0.18, 0.18);
     return float3(0, 0, 0);
 }
 
@@ -431,6 +433,35 @@ float4 letterFx(Glyph g, uint ai, V2P i, float sd, float F, float4 base) {
     float hl = halo(g, ai, lc, ar, 0.08) * (1.0 - F) * I;
     float3 rgb = (col + W * s1 + starC * s2) * F + rimC * edge * 1.2 + float3(0.6, 0.3, 1.0) * hl * 0.45;
     return float4(rgb, saturate(F + edge * 0.6 + hl * 0.25));
+  }
+  if (fx == FX_INK) { // [LyricsForge] liquid ink: marbled, slowly flowing pigment; wisps bleed off and sink like ink in water
+    float2 w  = float2(fbm(q * 3.0 + float2(0.0, t * 0.25) + sdd), fbm(q * 3.0 + float2(5.2, -t * 0.2) + sdd));
+    float  mb = fbm(q * 4.0 + w * 2.2 + float2(t * 0.05, 0.0));
+    float3 ink = lerp(float3(0.015, 0.012, 0.03), C * 0.9, smoothstep(0.35, 0.85, mb));
+    ink += C * pow(saturate(1.0 - abs(mb - 0.62) * 9.0), 3.0) * 0.6;            // bright vein where the pigments meet
+    // bleed: the letter shape advected down and sideways through curl-ish noise, fading with distance
+    float bleed = 0;
+    [unroll] for (int j = 1; j <= 6; ++j) {
+        float  d  = j / 6.0;
+        float2 off = float2((vnoise(q * 3.0 + float2(j * 1.7, t * 0.6)) - 0.5) * 0.35 * d, -d * 0.32 * I);
+        bleed += glyphCov(g, ai, lc + float2(off.x / ar, off.y)) * (1.0 - d) * (0.6 + 0.4 * vnoise(q * 9.0 + float2(0, t) + j));
+    }
+    bleed = saturate(bleed * 0.42) * (1.0 - F);
+    float  rim = edge * (0.35 + 0.65 * vnoise(q * 14.0 + t * 0.8));
+    float3 rgb = ink * F + C * rim * 0.55 + lerp(C, float3(0.05, 0.04, 0.1), 0.45) * bleed;
+    return float4(rgb, saturate(F + bleed * 0.75 + rim * 0.3));
+  }
+  if (fx == FX_HOLO) { // [LyricsForge] holographic foil: thin-film rainbow that slides with time and the letter's angle
+    float  film = q.x * 0.9 + q.y * 1.6 + 0.25 * sin(q.y * 9.0 + t * 1.3) + fbm(q * 2.5 + sdd) * 0.8 - t * 0.35;
+    float3 iri  = 0.5 + 0.5 * cos(6.2831853 * (frac(film) + float3(0.0, 0.33, 0.67)));
+    iri = lerp(iri, C, 0.18);
+    float  scan = 0.86 + 0.14 * sin(i.pos.y * 1.7 + t * 8.0);
+    float  sweep = pow(saturate(1.0 - abs(frac(q.x * 0.35 - q.y * 0.2 - t * 0.22) - 0.5) * 7.0), 3.0); // light bar
+    float2 sg  = q * 22.0; float hs = hash21(floor(sg) + sdd);
+    float  spark = step(0.93, hs) * smoothstep(0.16, 0.0, length(frac(sg) - 0.5)) * (0.5 + 0.5 * sin(t * 6.0 + hs * 90.0));
+    float  hl  = halo(g, ai, lc, ar, 0.07) * (1.0 - F) * I;
+    float3 rgb = (iri * scan * 1.05 + W * (sweep * 0.7 + spark)) * F + lerp(W, iri, 0.5) * edge * 0.9 + iri * hl * 0.5;
+    return float4(rgb, saturate(F + edge * 0.5 + hl * 0.25));
   }
     return float4(base.rgb * F * base.a, F * base.a);
 }

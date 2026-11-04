@@ -664,6 +664,64 @@ vec3 styledSky(vec3 d, int id, float t) {
         col = mix(col, cc, c.z * .92);
         col += vec3(1., .15, .08) * ring * flame;
         col = mix(col, vec3(.01, 0., 0.), smoothstep(r, r * .97, ma));
+    } else if (id == 9) { // [LyricsForge] ASTRAL SYMPHONY: a concert hall of stars - golden/violet ribbons, harmonic rings
+        col = mix(vec3(.10, .05, .24), vec3(.01, .0, .05), smoothstep(-.05, .85, y));
+        col += sStars(d, 1.8, t) * 1.25;
+        col += sGalaxy(d, sdir(200., 38.), .42, t) * 1.1;
+        col += sAurora(d, t * .8, vec3(1., .78, .35), vec3(.62, .35, 1.)) * 1.1;
+        float za = acos(clamp(y, -1., 1.));                                  // angle from the zenith
+        float rings = exp(-pow((fract(za * 3.2 - t * .04) - .5) * 9., 2.)) * smoothstep(.15, .75, y);
+        col += mix(vec3(1., .8, .45), vec3(.7, .5, 1.), .5 + .5 * sin(za * 6. + t * .3)) * rings * (.10 + .10 * BREATH);
+        col += vec3(.45, .3, .8) * hz * .35;
+    } else if (id == 10) { // [LyricsForge] ECLIPSE HEARTBEAT: a black sun whose corona beats like a heart
+        vec3 mc = sdir(10., 30.);
+        float ma = acos(clamp(dot(d, mc), -1., 1.));
+        float r = .065;
+        float ph = fract(t * 1.15);
+        float beat = exp(-ph * 9.) + .65 * exp(-max(ph - .2, 0.) * 9.) * step(.2, ph) + .5 * BREATH;
+        col = mix(vec3(.16, .02, .05), vec3(.015, .0, .02), smoothstep(-.05, .7, y));
+        col += sStars(d, .6, t) * .45 * smoothstep(.25, .8, y);
+        vec2 lp = slocal(d, mc);
+        float rays = .55 + .45 * sn2(vec2(atan2(lp.y, lp.x) * 7., t * .35));
+        float corona = exp(-max(ma - r, 0.) * (24. - 8. * beat)) * rays * (1. + 1.4 * beat);
+        float ring = exp(-pow((ma - r) * 110., 2.)) * (2. + 1.5 * beat);
+        col += vec3(1., .35, .25) * corona * .9 + vec3(1., .85, .7) * ring;
+        col += vec3(.6, .05, .08) * exp(-ma * 3.) * (.25 + .35 * beat);        // the whole sky blushes on each beat
+        vec4 c = sClouds(d, mc, 1.0, .4, t, .015);
+        col = mix(col, mix(vec3(.05, .0, .02), vec3(.55, .1, .12), c.x) + vec3(1., .4, .3) * c.y * .6, c.z * .6);
+        col = mix(col, vec3(.005, 0., .005), smoothstep(r, r * .96, ma));       // the dark moon in front
+    } else if (id == 11) { // [LyricsForge] DREAM OCEAN: pastel dusk over a glassy sea, caustic light rippling overhead
+        col = mix(vec3(1., .78, .86), vec3(.30, .55, .85), smoothstep(-.02, .55, y));
+        col = mix(col, vec3(.10, .20, .45), smoothstep(.45, 1., y));
+        vec3 mc = sdir(150., 18.);
+        float ma = acos(clamp(dot(d, mc), -1., 1.));
+        col += vec3(1., .95, .9) * (exp(-ma * 14.) * .5 + smoothstep(.045, .04, ma) * .8);
+        vec4 c = sClouds(d, mc, 1.2, .5, t, .02);
+        col = mix(col, mix(vec3(.55, .45, .75), vec3(1., .85, .92), c.x) + vec3(1., 1., 1.) * c.y * .5, c.z * .75);
+        vec2 cp = d.xz / max(y + .35, .2) * 2.5;
+        float ca = pow(1. - abs(sn2(cp + vec2(t * .12, t * .07)) * 2. - 1.), 6.) * pow(1. - abs(sn2(cp * 1.7 - vec2(t * .09, 0.)) * 2. - 1.), 4.);
+        col += vec3(.6, 1., .95) * ca * smoothstep(.35, .9, y) * .35;
+        col += sStars(d, .6, t) * .5 * smoothstep(.55, .95, y);
+        col += vec3(.7, 1., .95) * hz * .3;
+    } else if (id == 12) { // [LyricsForge] METEOR CHORUS: a clear night where meteors sing across the sky in waves
+        col = mix(vec3(.05, .09, .22), vec3(.0, .01, .05), smoothstep(-.05, .8, y));
+        col += sStars(d, 1.4, t) * 1.1;
+        float met = 0.;
+        for (int k = 0; k < 6; k++) {
+            float P = 1.6 + float(k) * .41, ph = fract(t / P + float(k) * .17), cid = floor(t / P + float(k) * .17);
+            vec3 hh = sh33(vec3(cid, float(k), 3.));
+            vec3 a0 = sdir(hh.x * 360., 35. + hh.y * 40.);
+            vec3 tg = normalize(cross(a0, vec3(0, 1, 0)) * (hh.z > .5 ? 1. : -1.) - vec3(0, .45, 0));
+            vec3 head = normalize(a0 + tg * ph * .5);
+            vec2 lp = slocal(d, head);
+            vec2 dirL = normalize(slocal(normalize(head - tg * .05), head) + 1e-4);
+            float along = dot(lp, dirL), across = abs(dot(lp, vec2(-dirL.y, dirL.x)));
+            float tail = smoothstep(.18, 0., along) * step(0., along) * smoothstep(.004, 0., across);
+            float bright = smoothstep(0., .15, ph) * smoothstep(1., .6, ph) * step(.0, dot(d, head));
+            met += (tail * (1. - along / .18) + exp(-dot(lp, lp) * 9000.) * 2.) * bright;
+        }
+        col += vec3(.75, .9, 1.) * met;
+        col += vec3(.2, .35, .7) * hz * .35;
     } else { // STORM
         col = mix(vec3(.08, .14, .28), vec3(.01, .03, .08), smoothstep(-.05, .7, y));
         float f1 = sFlash(t, .0), f2 = sFlash(t + 1.3, .5);
