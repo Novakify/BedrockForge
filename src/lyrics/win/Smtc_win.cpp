@@ -82,7 +82,10 @@ std::optional<MediaSample> Smtc::poll(Source src) {
         std::string app = winrt::to_string(chosen.SourceAppUserModelId());
         bool spotify    = text::contains(text::toLower(app), "spotify");
         bool apple      = isAppleMusicApp(app);
-        m.sourceApp     = spotify ? "Spotify" : apple ? "Apple Music" : (sourceMatches(Source::Youtube, app) ? "Browser" : app);
+        std::string const lowApp = text::toLower(app);
+        bool const ytMusic = text::contains(lowApp, "youtube music") || text::contains(lowApp, "youtube-music") ||
+                             text::contains(lowApp, "music.youtube") || text::contains(lowApp, "ytmusic"); // LyricsFlow 2.2: YT Music
+        m.sourceApp     = spotify ? "Spotify" : apple ? "Apple Music" : ytMusic ? "YT Music" : (sourceMatches(Source::Youtube, app) ? "Browser" : app);
         if (apple) cleanAppleMusic(m);
         else if (!spotify) { // browser tabs: "Artist - Song (Official Video) - YouTube" + channel name
             auto split = text::splitYoutube(m.title, m.artist);

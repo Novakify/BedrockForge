@@ -39,9 +39,9 @@ struct Body {
     BodyKind kind;
 };
 
-/// All 29 presets in enum order (index == ordinal).
+/// All 38 presets in enum order (index == ordinal).
 std::vector<Preset> const& presets();
-/// SkyPreset.order(): the 20 presets the menu shows.
+/// SkyPreset.order(): the 25 presets the menu shows (LyricsFlow 2.2).
 std::vector<std::string_view> const& order();
 /// By id; "custom" gets the CUSTOM colours from cfg (SkyPreset.applyCustom). nullopt for "off"/unknown.
 std::optional<Preset> find(std::string_view id, Config const& cfg);

@@ -50,7 +50,7 @@ std::vector<StudioScene> const& builtinScenes() {
         // [LyricsForge] the four new painted skies, each with its own letter material
         add({"astral_symphony", "Astral Symphony", "concert of stars, holographic letters", "astral", "aurora", 10, 0, false,
              0.8f, 1.0f, ei(E::Rise), xi(X::FloatUp), int(LyricsStyle::Sky), 2, true, 0.6f});
-        add({"eclipse_heartbeat", "Eclipse Heartbeat", "black sun beating with the bass, lava", "eclipse", "blood_moon", 6, 0,
+        add({"eclipse_heartbeat", "Eclipse Heartbeat", "black sun beating with the bass, lava", "eclipse_heart", "blood_moon", 6, 0,
              false, 1.1f, 1.2f, ei(E::Zoom), xi(X::Burn), int(LyricsStyle::Sky), 3, true, 0.7f});
         add({"dream_ocean", "Dream Ocean", "pastel sea, ink letters bleeding softly", "dream_ocean", "ocean", 9,
              int32_t(0xFF5A3A8C), false, 0.7f, 0.9f, ei(E::Fade), xi(X::Dissolve), int(LyricsStyle::Sky), 0, true, 0.4f});

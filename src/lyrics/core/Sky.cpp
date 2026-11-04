@@ -57,6 +57,7 @@ std::vector<Preset> const& presets() {
 
 std::vector<std::string_view> const& order() {
     static std::vector<std::string_view> const v{
+        "rift", "supernova", "warp", "silk", "eclipse", // LyricsFlow 2.2: the newest first
         "inferno",  "matrix", "prism",  "pulsar",    "aquarell",  "synthwave",   "aurora",
         "nebula",   "black_hole", "cosmos", "neon_city", "golden_hour", "cotton_candy", "sakura",
         "frost",    "midnight", "deep_sea", "blood_moon", "storm", "custom"};

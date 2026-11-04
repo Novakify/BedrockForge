@@ -27,8 +27,14 @@
     {"cherry", 0x1F0A33, 0x8C3380, 0.9f, 0.0f, false, 0xFFC6E6, 0xC890FF, Weather::Petals, 0x000000, false, 0xFFC6E6},
     {"crimson", 0x0A0002, 0x400305, 0.9f, 0.0f, false, 0xFF3B2A, 0xFF8A6A, Weather::Embers, 0x000000, false, 0xFF8A8A},
     {"thunder", 0x030814, 0x14244A, 0.9f, 0.0f, false, 0x8FB0FF, 0xC8D4FF, Weather::Rain, 0x000000, false, 0xC8D4F0},
-    // [LyricsForge] painted skies 9..12 of RF's styledSky (ordinals 29..32)
+    // LyricsFlow 2.2 (ordinals 29..33, drawn by live_sky's own code paths)
+    {"rift", 0x03030C, 0x1A0B2E, 0.9f, 1.2f, false, 0xB44CFF, 0x4CF0FF, Weather::None, 0x000000, true, 0xE8C8FF},
+    {"supernova", 0x040612, 0x101A3A, 0.9f, 1.4f, false, 0xFF7A4C, 0x4CC8FF, Weather::None, 0x000000, true, 0xFFD8C0},
+    {"warp", 0x020512, 0x0A1C40, 0.9f, 0.6f, false, 0x8FB8FF, 0xFFFFFF, Weather::None, 0x000000, false, 0xCFE0FF},
+    {"silk", 0x02100E, 0x0B3A3A, 0.9f, 0.9f, false, 0x3CFFB0, 0x7A5CFF, Weather::Fireflies, 0x000000, false, 0xC8FFE8},
+    {"eclipse", 0x050A1E, 0x7A3A1C, 0.85f, 1.0f, false, 0xFFE2A8, 0xFF8A3D, Weather::None, 0x000000, true, 0xFFE8C8},
+    // [LyricsForge] painted skies 9..12 of RF's styledSky (ordinals 34..37)
     {"astral", 0x0A0520, 0x2A1650, 0.9f, 0.0f, false, 0xFFC75A, 0x9E5CFF, Weather::None, 0x000000, true, 0xFFE6B0},
-    {"eclipse", 0x050002, 0x2A0408, 0.9f, 0.0f, false, 0xFF5A4A, 0xFFD6B0, Weather::Embers, 0x000000, false, 0xFFB8A8},
+    {"eclipse_heart", 0x050002, 0x2A0408, 0.9f, 0.0f, false, 0xFF5A4A, 0xFFD6B0, Weather::Embers, 0x000000, false, 0xFFB8A8},
     {"dream_ocean", 0x1A3373, 0xFFC6DC, 0.9f, 0.0f, false, 0x9CFFF0, 0xFFC6E6, Weather::None, 0x000000, false, 0xFFFFFF},
     {"meteor", 0x000310, 0x0C1838, 0.9f, 0.0f, false, 0xBFDCFF, 0x6E9CFF, Weather::None, 0x000000, true, 0xCFE4FF},

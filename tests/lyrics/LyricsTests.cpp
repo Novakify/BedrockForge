@@ -1084,13 +1084,13 @@ TEST(panel_widgets) {
     auto a      = r.click(330, 52);
     CHECK_EQ(r.e.config().skyImage, !before);
     CHECK(PanelRig::has(a, PanelAction::Kind::SaveConfig));
-    // sky tile 2 (Prism) at x 206 + 2 * 56, y 66
+    // sky tile 2 (Warp, LyricsFlow 2.2 order) at x 206 + 2 * 56, y 66
     r.click(206 + 2 * 56 + 20, 78);
-    CHECK_EQ(r.e.config().skyPreset, std::string("prism"));
-    // pager >, then the first tile of page 2 = Aurora
+    CHECK_EQ(r.e.config().skyPreset, std::string("warp"));
+    // pager >, then the first tile of page 2 = Matrix
     r.click(358, 151);
     r.click(206 + 20, 78);
-    CHECK_EQ(r.e.config().skyPreset, std::string("aurora"));
+    CHECK_EQ(r.e.config().skyPreset, std::string("matrix"));
     // Strength slider: click at the far right of the track (258 + 108) -> 1.0
     r.click(369, 165);
     CHECK_NEAR(r.e.config().skyStrength, 1.0, 1e-3);
@@ -1165,8 +1165,8 @@ TEST(quality_and_profiles) {
 TEST(live_sky_params) {
     using namespace bf::lyrics::sky;
     Config cfg;
-    CHECK_EQ(int(presets().size()), 33);
-    CHECK_EQ(int(order().size()), 20);
+    CHECK_EQ(int(presets().size()), 38);
+    CHECK_EQ(int(order().size()), 25);
     for (auto id : order()) CHECK(find(id, cfg).has_value());
     CHECK(!find("off", cfg).has_value());
     auto syn = *find("synthwave", cfg);

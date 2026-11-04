@@ -304,8 +304,9 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
     if (p->stars > 0 && cfg.fxStars && cfg.fxConstellations && perf.allow(2)) constellations(f.visible * f.bright, in.cam, out);
     if (std::string_view(p->id) == "storm" && perf.allow(2)) storm(f.visible, f.time, in.cam, out);
     if ((p->shootingStars || p->stars >= 0.8f) && perf.allow(3)) shooting(f.visible, in.nowMs, in.cam, out);
-    if (cfg.fxWeather && perf.allow(4) && cfg.weatherAmount > 0.01f && p->weather != Weather::None && f.outside > 0.01f)
-        weather(p->weather, cfg.weatherAmount * (perf.allow(3) ? 1.0f : 0.5f), q, f.outside, std::min(0.1, in.dtSec), f.time,
+    Weather const wx = cfg.snowAnySky ? Weather::Snow : p->weather; // LyricsFlow 2.2: snow with any sky
+    if (cfg.fxWeather && perf.allow(4) && cfg.weatherAmount > 0.01f && wx != Weather::None && f.outside > 0.01f)
+        weather(wx, cfg.weatherAmount * (perf.allow(3) ? 1.0f : 0.5f), q, f.outside, std::min(0.1, in.dtSec), f.time,
                 in, out);
 }
 

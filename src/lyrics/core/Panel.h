@@ -97,7 +97,7 @@ public:
         char const* name;         // en_us lyricsflow.sky.<id>
         uint32_t    top, horizon; // RGB
     };
-    /// SkyPreset.order(): the 20 skies of the grid, in LyricsFlow 2.1's order.
+    /// SkyPreset.order(): the 25 skies of the grid, in LyricsFlow 2.2's order.
     static std::vector<SkyPresetInfo> const& skyOrder();
 
 private:

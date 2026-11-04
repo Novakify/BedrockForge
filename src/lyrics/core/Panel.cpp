@@ -64,7 +64,9 @@ std::string fontName(std::string const& id) {
                                                           {"orbitron", "Sci-Fi"}, {"marker", "Marker"}, {"glitch", "Glitch"},
                                                           {"typewriter", "Typewriter"}, {"abril", "Fat Serif"}, {"fredoka", "Bubble"},
                                                           {"righteous", "Retro"}, {"rocksalt", "Scribble"}, {"nosifer", "Blood Drip"},
-                                                          {"audiowide", "Racing"}, {"shrikhand", "Groovy"}, {"cinzel", "Royal"}};
+                                                          {"audiowide", "Racing"}, {"shrikhand", "Groovy"}, {"cinzel", "Royal"},
+                                                          // [BF] LyricsFlow 2.2
+                                                          {"caveatbrush", "Brush"}, {"comfortaa", "Comfortaa"}, {"lobster", "Lobster"}};
     auto it = names.find(id);
     return it == names.end() ? id : it->second;
 }
@@ -72,6 +74,9 @@ std::string fontName(std::string const& id) {
 
 std::vector<Panel::SkyPresetInfo> const& Panel::skyOrder() { // SkyPreset.order() + enum colours (top, horizon)
     static std::vector<SkyPresetInfo> const v{
+        {"rift", "Rift", 0x03030C, 0x1A0B2E},                 {"supernova", "Supernova", 0x040612, 0x101A3A}, // LyricsFlow 2.2
+        {"warp", "Warp", 0x020512, 0x0A1C40},                 {"silk", "Silk", 0x02100E, 0x0B3A3A},
+        {"eclipse", "Eclipse", 0x050A1E, 0x7A3A1C},
         {"inferno", "Inferno", 0x1A0402, 0x7A1C06},           {"matrix", "Matrix", 0x000804, 0x021C0C},
         {"prism", "Prism", 0x070414, 0x1A1036},               {"pulsar", "Pulsar", 0x02030C, 0x0A1430},
         {"aquarell", "Watercolor", 0xE6C8E8, 0xFFE4D2},        {"synthwave", "Synthwave", 0x0B0524, 0x5A1A6E},
@@ -968,35 +973,37 @@ void Panel::cinema(Ctx& c, Config& cfg) {
     c.toggle2("mi", 288, 54, 78, "Impacts", cfg.materialImpacts, [&] { cfg.materialImpacts = !cfg.materialImpacts; }, a);
     c.toggle2("sd", 206, 70, 78, "Stereo drift", cfg.stereoDrift > 0.01f, [&] { cfg.stereoDrift = cfg.stereoDrift > 0.01f ? 0.0f : 0.5f; }, a);
     c.toggle2("sc", 288, 70, 78, "Showcase", cfg.showcase, [&] { cfg.showcase = !cfg.showcase; }, a);
+    c.toggle2("sn", 206, 86, 78, "Snow (any sky)", cfg.snowAnySky, [&] { cfg.snowAnySky = !cfg.snowAnySky; }, a);
+    c.toggle2("lo", 288, 86, 78, "Lyrics", cfg.showLyrics, [&] { cfg.showLyrics = !cfg.showLyrics; }, a);
     // tap-sync
     auto const& m = mMedia;
-    c.text("Tap sync", 206, 90, 0.62f, WHITE, 0.55f * a);
+    c.text("Tap sync", 206, 104, 0.62f, WHITE, 0.55f * a);
     if (!m.tapOn) {
-        c.option("ts0", 206, 98, 160, 14, m.hasLyrics ? "Start tap sync" : "Tap sync (needs lyrics)", false, [&] {
+        c.option("ts0", 206, 112, 160, 14, m.hasLyrics ? "Start tap sync" : "Tap sync (needs lyrics)", false, [&] {
             if (m.hasLyrics) c.actions.push_back({PanelAction::Kind::TapStart, 0});
         }, a);
-        c.text("click TAP as each line starts", 206, 116, 0.5f, ACCENT2, 0.7f * a);
+        c.text("click TAP as each line starts", 206, 130, 0.5f, ACCENT2, 0.7f * a);
     } else {
         std::string const next = m.tapNext.empty() ? "(last line)" : m.tapNext;
-        c.text("next: " + next.substr(0, std::min<size_t>(next.size(), 34)), 206, 98, 0.52f, ACCENT2, 0.85f * a);
-        c.option("ts1", 206, 106, 160, 16, "TAP  (" + std::to_string(m.taps) + ")", true, [&] { c.actions.push_back({PanelAction::Kind::Tap, 0}); }, a);
-        c.option("ts2", 206, 124, 52, 12, "Undo", false, [&] { c.actions.push_back({PanelAction::Kind::TapUndo, 0}); }, a);
-        c.option("ts3", 260, 124, 52, 12, "Save", false, [&] { c.actions.push_back({PanelAction::Kind::TapSave, 0}); }, a);
-        c.option("ts4", 314, 124, 52, 12, "Cancel", false, [&] { c.actions.push_back({PanelAction::Kind::TapCancel, 0}); }, a);
+        c.text("next: " + next.substr(0, std::min<size_t>(next.size(), 34)), 206, 112, 0.52f, ACCENT2, 0.85f * a);
+        c.option("ts1", 206, 119, 160, 15, "TAP  (" + std::to_string(m.taps) + ")", true, [&] { c.actions.push_back({PanelAction::Kind::Tap, 0}); }, a);
+        c.option("ts2", 206, 136, 52, 12, "Undo", false, [&] { c.actions.push_back({PanelAction::Kind::TapUndo, 0}); }, a);
+        c.option("ts3", 260, 136, 52, 12, "Save", false, [&] { c.actions.push_back({PanelAction::Kind::TapSave, 0}); }, a);
+        c.option("ts4", 314, 136, 52, 12, "Cancel", false, [&] { c.actions.push_back({PanelAction::Kind::TapCancel, 0}); }, a);
     }
     // place by hand (floating lyrics)
-    c.text("Place lyrics", 206, 142, 0.62f, WHITE, 0.55f * a);
-    c.option("pn0", 206, 150, 78, 13, "Pin here", cfg.pinned, [&] { c.actions.push_back({PanelAction::Kind::PinHere, 0}); }, a);
-    c.option("pn1", 288, 150, 78, 13, "Unpin", false, [&] { cfg.pinned = false; }, a);
+    c.text("Place lyrics", 206, 153, 0.62f, WHITE, 0.55f * a);
+    c.option("pn0", 206, 161, 78, 13, "Pin here", cfg.pinned, [&] { c.actions.push_back({PanelAction::Kind::PinHere, 0}); }, a);
+    c.option("pn1", 288, 161, 78, 13, "Unpin", false, [&] { cfg.pinned = false; }, a);
     if (cfg.pinned) {
         double const yr = cfg.pinYaw * kPi / 180.0;
         float const  fx = float(-std::sin(yr)), fz = float(std::cos(yr)); // the way you faced when pinning
-        c.option("pn2", 206, 166, 38, 12, "Up", false, [&] { cfg.pinY += 0.25f; }, a);
-        c.option("pn3", 246.5f, 166, 38, 12, "Down", false, [&] { cfg.pinY -= 0.25f; }, a);
-        c.option("pn4", 287, 166, 38, 12, "Closer", false, [&] { cfg.pinX -= fx * 0.5f; cfg.pinZ -= fz * 0.5f; }, a);
-        c.option("pn5", 327.5f, 166, 38, 12, "Farther", false, [&] { cfg.pinX += fx * 0.5f; cfg.pinZ += fz * 0.5f; }, a);
+        c.option("pn2", 206, 176, 38, 12, "Up", false, [&] { cfg.pinY += 0.25f; }, a);
+        c.option("pn3", 246.5f, 176, 38, 12, "Down", false, [&] { cfg.pinY -= 0.25f; }, a);
+        c.option("pn4", 287, 176, 38, 12, "Closer", false, [&] { cfg.pinX -= fx * 0.5f; cfg.pinZ -= fz * 0.5f; }, a);
+        c.option("pn5", 327.5f, 176, 38, 12, "Farther", false, [&] { cfg.pinX += fx * 0.5f; cfg.pinZ += fz * 0.5f; }, a);
     } else if (cfg.lyricsStyle != LyricsStyle::Floating)
-        c.text("pinning moves Floating lyrics", 206, 168, 0.5f, ACCENT2, 0.7f * a);
+        c.text("pinning moves Floating lyrics", 206, 178, 0.5f, ACCENT2, 0.7f * a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the

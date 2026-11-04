@@ -149,6 +149,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(cinemaGrade, true)               /* [BF] Director colour grade + vignette of the world per scene (RF, D3D12) */  \
     B(impactFrames, true)              /* [BF] a soft light flash + bloom / CA kick on drops and chorus hits (RF) */   \
     B(letterbox, true)                 /* [BF] cinema bars ease in during builds and big hooks (RF) */               \
+    B(snowAnySky, false)               /* [BF] LyricsFlow 2.2 "Snow": snow falls around you with any sky */          \
     B(showcase, false)                 /* [BF] Showcase: camera sways behind you, soft focus, bars (RF, D3D12) */    \
     B(pinned, false)                   /* [BF] floating lyrics stay where you pinned them */                        \
     F(pinX, 0.0f)                                                                                                      \
