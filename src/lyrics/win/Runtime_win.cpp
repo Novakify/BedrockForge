@@ -296,38 +296,71 @@ void songMemoryLog(std::string const& text) {
         o << text;
     } catch (...) {}
 }
-void finishSongMemory() { // gS->mutex held
-    if (gS->memory.key().empty()) return;
-    int64_t const heard = gS->memory.heardThisPlayMs();
-    bool const    counted = gS->memory.endPlay();
-    if (counted) gS->memory.save(gS->memoryDir / SongMemory::fileNameFor(gS->memory.key()));
-    gS->memory.analyze(gS->lyrics.get());
-    songMemoryLog("== " + gS->memoryTitle + "  (heard " + std::to_string(heard / 1000) + " s this play" +
-                  (counted ? ", saved)\n" : ", too short to save)\n") + gS->memory.describe() + "\n");
-    gS->memory.reset("", 0);
+// Merge + save + log a finished play. Runs WITHOUT gS->mutex (file I/O), on a SongMemory moved out of gS.
+void finishPlay(SongMemory& m, std::shared_ptr<Lyrics const> const& lyrics, std::string const& title) {
+    if (m.key().empty()) return;
+    int64_t const heard   = m.heardThisPlayMs();
+    bool const    counted = m.endPlay();
+    if (counted) m.save(gS->memoryDir / SongMemory::fileNameFor(m.key()));
+    m.analyze(lyrics.get());
+    songMemoryLog("== " + title + "  (heard " + std::to_string(heard / 1000) + " s this play" +
+                  (counted ? ", saved)\n" : ", too short to save)\n") + m.describe() + "\n");
+}
+void finishSongMemory() { // gS->mutex held - only at shutdown, where a short wait doesn't matter
+    SongMemory m = std::move(gS->memory);
+    gS->memory   = SongMemory();
+    finishPlay(m, gS->lyrics, gS->memoryTitle);
 }
 void songMemoryStep() {
     std::vector<BandFrame> frames;
     audioFrames(frames); // its own lock: never inside gS->mutex
-    std::lock_guard l(gS->mutex);
-    auto const& cfg = gS->engine.config();
-    bool const  on  = gS->moduleOn && cfg.songMemory;
-    memoryWanted(on && gS->clock.playing());
-    int64_t const seq = gS->clock.hasTrack() ? gS->clock.songSeq() : -1;
-    if (seq != gS->memorySeq) { finishSongMemory(); gS->memorySeq = seq; }
-    if (!on || seq < 0) return;
-    auto const& tr = gS->clock.track();
-    if (gS->memory.key().empty()) { // start once the app reports the length (the key includes it)
-        if (tr.s.durationMs <= 0) return;
-        std::string const key = SongMemory::keyFor(tr.key(), tr.s.durationMs);
-        gS->memory.reset(key, tr.s.durationMs);
-        gS->memoryTitle = tr.s.artist + " - " + tr.s.title;
-        bool const known = gS->memory.load(gS->memoryDir / SongMemory::fileNameFor(key));
-        gS->memory.analyze(gS->lyrics.get());
-        if (known) songMemoryLog("-- " + gS->memoryTitle + ": known song, " + std::to_string(gS->memory.plays()) + " play(s) remembered\n");
+    SongMemory                    done;
+    std::shared_ptr<Lyrics const> doneLyrics;
+    std::string                   doneTitle, loadKey;
+    int64_t                       loadDur = 0;
+    {
+        std::lock_guard l(gS->mutex);
+        auto const& cfg = gS->engine.config();
+        bool const  on  = gS->moduleOn && cfg.songMemory;
+        memoryWanted(on && gS->clock.playing());
+        int64_t const seq = gS->clock.hasTrack() ? gS->clock.songSeq() : -1;
+        if (seq != gS->memorySeq) {
+            if (!gS->memory.key().empty()) {
+                done       = std::move(gS->memory);
+                gS->memory = SongMemory();
+                doneLyrics = gS->lyrics;
+                doneTitle  = gS->memoryTitle;
+            }
+            gS->memorySeq = seq;
+        }
+        if (on && seq >= 0) {
+            auto const& tr = gS->clock.track();
+            if (gS->memory.key().empty() && tr.s.durationMs > 0) { // start once the app reports the length (it's in the key)
+                loadKey = SongMemory::keyFor(tr.key(), tr.s.durationMs);
+                loadDur = tr.s.durationMs;
+                gS->memory.reset(loadKey, loadDur); // recording starts now; the saved map is adopted below
+                gS->memoryTitle = tr.s.artist + " - " + tr.s.title;
+            }
+            if (!gS->memory.key().empty() && gS->clock.playing())
+                for (auto const& f : frames) gS->memory.record(gS->clock.position(f.tNs, cfg), f);
+        }
     }
-    if (!gS->clock.playing()) return;
-    for (auto const& f : frames) gS->memory.record(gS->clock.position(f.tNs, cfg), f);
+    finishPlay(done, doneLyrics, doneTitle);
+    if (!loadKey.empty()) {
+        SongMemory saved;
+        saved.reset(loadKey, loadDur);
+        bool const known = saved.load(gS->memoryDir / SongMemory::fileNameFor(loadKey));
+        std::string title;
+        if (known) {
+            std::lock_guard l(gS->mutex);
+            if (gS->memory.key() == loadKey) {
+                gS->memory.adoptMap(std::move(saved));
+                gS->memory.analyze(gS->lyrics.get());
+            }
+            title = gS->memoryTitle;
+        }
+        if (known) songMemoryLog("-- " + title + ": known song, map loaded\n");
+    }
 }
 
 void mediaLoop() {
@@ -372,31 +405,44 @@ void mediaLoop() {
         }
         songMemoryStep();
         // [BF] timing log (mods/BedrockForgeCore/logs/lyrics_clock.txt, ~1 line/s, this song + lyrics_clock.prev.txt):
-        // what Windows reports vs our song clock, so a lyrics delay can be traced to the app or to the lyrics
+        // what Windows reports vs our song clock, so a lyrics delay can be traced to the app or to the lyrics.
+        // The line is built under the lock; the file is written AFTER it (the game thread waits on gS->mutex every
+        // frame, and an antivirus scan of the growing file must never stall a frame).
         try {
             static int     tick = 0;
             static int64_t logSeq = -1;
             auto const     logDir = gS->cfgFile.parent_path().parent_path() / "logs";
-            std::lock_guard l(gS->mutex);
-            int64_t const   seqNow = gS->clock.songSeq();
-            if (seqNow != logSeq && sample) {
-                logSeq = seqNow;
+            std::string    header, line;
+            {
+                std::lock_guard l(gS->mutex);
+                int64_t const seqNow = gS->clock.songSeq();
+                if (seqNow != logSeq && sample) {
+                    logSeq = seqNow;
+                    header = "song: " + sample->artist + " - " + sample->title + "  app: " + sample->sourceApp + "  offset: " +
+                             std::to_string(gS->engine.config().syncOffsetMs) +
+                             " ms\n# wallMs playing rawPos(app) extrapolated(app) updatedAgeMs ourClock(ourClock-app) lyrics\n";
+                }
+                if (sample && (++tick % 4) == 0) {
+                    int64_t const nowFt = int64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                                                      std::chrono::system_clock::now().time_since_epoch()).count() * 10 + 116444736000000000LL);
+                    int64_t const age   = sample->updatedFt > 0 ? (nowFt - sample->updatedFt) / 10000 : -1;
+                    int64_t const ours  = gS->clock.positionRaw(nowNs());
+                    line = std::to_string(nowNs() / 1000000) + ' ' + (sample->playing ? "1" : "0") + ' ' + std::to_string(sample->rawPositionMs) + ' ' +
+                           std::to_string(sample->positionMs) + ' ' + std::to_string(age) + ' ' + std::to_string(ours) + " (" +
+                           std::to_string(ours - sample->positionMs) + ") " +
+                           (gS->lyrics ? gS->lyrics->source + (gS->lyrics->wordSynced ? " words" : " lines") : std::string("-")) + '\n';
+                }
+            }
+            if (!header.empty()) {
                 std::error_code ec;
                 std::filesystem::create_directories(logDir, ec);
                 std::filesystem::rename(logDir / "lyrics_clock.txt", logDir / "lyrics_clock.prev.txt", ec);
                 std::ofstream o(logDir / "lyrics_clock.txt", std::ios::binary | std::ios::trunc);
-                o << "song: " << sample->artist << " - " << sample->title << "  app: " << sample->sourceApp << "  offset: " << gS->engine.config().syncOffsetMs
-                  << " ms\n# wallMs playing rawPos(app) extrapolated(app) updatedAgeMs ourClock(ourClock-app) lyrics\n";
+                o << header;
             }
-            if (sample && (++tick % 4) == 0) {
-                int64_t const nowFt = int64_t(std::chrono::duration_cast<std::chrono::microseconds>(
-                                                  std::chrono::system_clock::now().time_since_epoch()).count() * 10 + 116444736000000000LL);
-                int64_t const age   = sample->updatedFt > 0 ? (nowFt - sample->updatedFt) / 10000 : -1;
-                int64_t const ours  = gS->clock.positionRaw(nowNs());
+            if (!line.empty()) {
                 std::ofstream o(logDir / "lyrics_clock.txt", std::ios::binary | std::ios::app);
-                o << nowNs() / 1000000 << ' ' << (sample->playing ? 1 : 0) << ' ' << sample->rawPositionMs << ' ' << sample->positionMs << ' ' << age
-                  << ' ' << ours << " (" << (ours - sample->positionMs) << ") "
-                  << (gS->lyrics ? gS->lyrics->source + (gS->lyrics->wordSynced ? " words" : " lines") : std::string("-")) << '\n';
+                o << line;
             }
         } catch (...) {}
         // cover art for the panel: once per song, retried for a few seconds (apps often set it after the title)

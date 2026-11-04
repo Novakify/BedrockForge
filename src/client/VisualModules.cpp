@@ -89,7 +89,10 @@ int fullbrightLevel() {
 
 LL_TYPE_INSTANCE_HOOK(BfTessLightHook, ll::memory::HookPriority::Normal, BlockTessellatorCache, &BlockTessellatorCache::getLightColor,
                       BrightnessPair, BlockPos const& p, Block const* blockHint) {
-    diag::tessLight.fetch_add(1, std::memory_order_relaxed);
+    // counted in batches of 4096 per chunk-build thread: one shared atomic per vertex had every worker fighting over a
+    // single cache line (137 M calls in a few minutes of building)
+    thread_local uint32_t n = 0;
+    if ((++n & 4095u) == 0) diag::tessLight.fetch_add(4096, std::memory_order_relaxed);
     BrightnessPair r = origin(p, blockHint);
     int lv = gFbLevel.load(std::memory_order_relaxed);
     if (lv >= 0) {

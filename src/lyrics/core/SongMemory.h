@@ -43,6 +43,8 @@ public:
     void reset(std::string key, int64_t durationMs);
     bool load(std::filesystem::path const& file); // false = missing / damaged (the map stays empty)
     bool save(std::filesystem::path const& file) const;
+    /// take over another memory's saved map (same key) - the play recorded so far is kept
+    void adoptMap(SongMemory&& saved);
 
     /// one frame of the current play at song position posMs
     void record(int64_t posMs, BandFrame const& f);

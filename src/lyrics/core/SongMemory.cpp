@@ -240,6 +240,15 @@ SongMemory::Event const* SongMemory::nextEvent(int64_t posMs, int64_t horizonMs)
     return nullptr;
 }
 
+void SongMemory::adoptMap(SongMemory&& saved) {
+    if (saved.mKey != mKey || saved.mFrames.empty()) return;
+    mFrames = std::move(saved.mFrames);
+    mCounts = std::move(saved.mCounts);
+    mPlays  = saved.mPlays;
+    if (mDurationMs <= 0) mDurationMs = saved.mDurationMs;
+    if (mPlay.size() < mFrames.size()) { mPlay.resize(mFrames.size()); mPlayHeard.resize(mFrames.size(), 0); }
+}
+
 bool SongMemory::save(std::filesystem::path const& file) const {
     if (mKey.empty() || mFrames.empty()) return false;
     std::error_code ec;
