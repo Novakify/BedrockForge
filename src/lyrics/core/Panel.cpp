@@ -989,7 +989,9 @@ void Panel::more(Ctx& c, Config& cfg) {
     c.toggle2("png", 288, 87, 78, "Ping", cfg.ping, [&] { cfg.ping = !cfg.ping; }, a);
     c.toggle2("hb", 206, 107, 78, "Glass hotbar", cfg.customHotbar, [&] { cfg.customHotbar = !cfg.customHotbar; }, a);
     c.toggle2("snd", 288, 107, 78, "Menu sounds", cfg.uiSounds, [&] { cfg.uiSounds = !cfg.uiSounds; }, a);
-    c.option("m0", 206, 128, 160, 15, "Open full menu", false, [&] { c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0}); }, a);
+    c.option("m0", 206, 128, 78, 15, "Full menu", false, [&] { c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0}); }, a);
+    // [BF] your own lyrics for this song: written next to the config, opened in Notepad, picked up when you save
+    c.option("m2", 288, 128, 78, 15, "Edit lyrics", false, [&] { c.actions.push_back({PanelAction::Kind::EditLyrics, 0}); }, a);
     c.toggle2("m1", 206, 145, 160, "Random sky", cfg.skyShuffle, [&] { cfg.skyShuffle = !cfg.skyShuffle; }, a);
     // [BF] player card look (replaces a second "open the full menu" button)
     c.text("Player", 206, 166, 0.62f, WHITE, 0.6f * a);

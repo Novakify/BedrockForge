@@ -35,6 +35,7 @@
 #include "lyrics/core/SkySystem.h"
 #include "lyrics/core/Conductor.h"
 #include "lyrics/core/Cinema.h"
+#include "lyrics/core/Overrides.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 
@@ -208,6 +209,26 @@ TEST(cinema_grade_flash_letterbox) {
     m.active = false;
     for (int i = 0; i < 600; ++i) c.step(&m, cfg, 1.0f / 60);
     CHECK(c.out().amount < 0.01f && !c.out().active);
+}
+
+TEST(lyric_overrides_roundtrip) {
+    CHECK_EQ(overrideFileName("AC/DC", "Back: In Black?"), std::string("AC_DC - Back_ In Black_.lrc"));
+    CHECK_EQ(overrideFileName("", ""), std::string("unknown.lrc"));
+    auto l = parseLrc(readFile("enhanced.lrc"), 30000);
+    CHECK(l.has_value());
+    std::string const txt = toOverrideLrc(*l, "Artist", "Song");
+    CHECK(txt.find("<00:10.50>pixel") != std::string::npos);
+    auto back = parseOverride("\xEF\xBB\xBF" + txt, 30000);
+    CHECK(back.has_value());
+    if (back && l) {
+        CHECK_EQ(back->source, std::string("override"));
+        CHECK_EQ(back->lines.size(), l->lines.size());
+        for (size_t i = 0; i < back->lines.size() && i < l->lines.size(); ++i) {
+            CHECK_EQ(back->lines[i].text, l->lines[i].text);
+            CHECK(std::llabs(back->lines[i].start - l->lines[i].start) <= 10);
+        }
+    }
+    CHECK(parseOverride(emptyOverrideLrc("a", "b"), 30000).has_value());
 }
 
 TEST(json_basics) {

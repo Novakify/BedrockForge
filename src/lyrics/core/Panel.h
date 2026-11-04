@@ -43,7 +43,7 @@ struct PanelMedia {
 
 /// What the panel asks the game side to do (BF glue performs these on the media thread / config).
 struct PanelAction {
-    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu } kind;
+    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics } kind;
     int64_t ms = 0; // Seek target
 };
 

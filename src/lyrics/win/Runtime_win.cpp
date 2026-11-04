@@ -48,6 +48,9 @@
 #include "lyrics/core/SongMemory.h"
 #include "lyrics/core/Conductor.h"
 #include "lyrics/core/Cinema.h"
+#include "lyrics/core/Overrides.h"
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
 #include "lyrics/BfDirector.h"
 #include "lyrics/core/Studio.h"
 #include "lyrics/win/World_win.h"
@@ -70,7 +73,9 @@ struct State {
     SongClock               clock;
     std::shared_ptr<Lyrics const> lyrics;
     LyricsState             lyricsState = LyricsState::None;
-    std::filesystem::path   cfgFile, presetDir, cacheDir, memoryDir;
+    std::filesystem::path   cfgFile, presetDir, cacheDir, memoryDir, overrideDir;
+    std::filesystem::file_time_type overrideTime{}; // [BF] mtime of this song's override seen last (hot reload)
+    int64_t                 overrideSeq = -1;
     SongMemory              memory;         // [BF] Song Memory of the song playing now (key empty = none)
     Conductor               conductor;      // [BF] music state for the Director (game thread, under mutex)
     Cinema                  cinema;         // [BF] the Director's full-screen look -> BF_GetDirector() -> RF
@@ -301,6 +306,57 @@ void loadPresets() {
     gS->cfgDirty = true;
 }
 
+std::filesystem::path u8p(std::string const& s) { return std::filesystem::path(std::u8string(reinterpret_cast<char8_t const*>(s.data()), s.size())); }
+std::filesystem::path overridePath(MediaSample const& s) { return gS->overrideDir / u8p(overrideFileName(s.artist, s.title)); }
+
+// [BF] "Edit lyrics" (media thread): write this song's override from what is showing (or a template), open Notepad
+void editLyrics() {
+    MediaSample s;
+    std::shared_ptr<Lyrics const> cur;
+    {
+        std::lock_guard l(gS->mutex);
+        if (!gS->clock.hasTrack()) return;
+        s   = gS->clock.track().s;
+        cur = gS->lyrics;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(gS->overrideDir, ec);
+    auto const p = overridePath(s);
+    if (!std::filesystem::exists(p, ec)) {
+        std::ofstream out(p, std::ios::binary);
+        out << (cur && !cur->empty() ? toOverrideLrc(*cur, s.artist, s.title) : emptyOverrideLrc(s.artist, s.title));
+    }
+    ShellExecuteW(nullptr, L"open", L"notepad.exe", (L"\"" + p.wstring() + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+}
+
+// [BF] the override of the song playing changed on disk -> swap it in (edits show up while the song plays)
+void overrideWatch() {
+    static int tick = 0;
+    if (++tick % 6) return; // ~1.5 s (the media loop ticks every 250 ms)
+    MediaSample s;
+    int64_t     seq;
+    {
+        std::lock_guard l(gS->mutex);
+        if (!gS->clock.hasTrack()) return;
+        s   = gS->clock.track().s;
+        seq = gS->clock.songSeq();
+    }
+    std::error_code ec;
+    auto const p = overridePath(s);
+    auto const t = std::filesystem::last_write_time(p, ec);
+    if (ec) return;
+    if (seq != gS->overrideSeq) { gS->overrideSeq = seq; gS->overrideTime = t; return; } // fetchFor already read it
+    if (t == gS->overrideTime) return;
+    gS->overrideTime = t;
+    auto got = parseOverride(readAll(p), s.durationMs);
+    if (!got) return;
+    std::lock_guard l(gS->mutex);
+    if (gS->clock.songSeq() != seq) return;
+    gS->lyrics      = std::make_shared<Lyrics const>(std::move(*got));
+    gS->lyricsState = LyricsState::Found;
+    gS->engine.reset();
+}
+
 // LyricsFlow MediaManager.fetchLyrics: up to 5 attempts, waiting 1.5 s * attempt, abandoned when the song changes.
 void fetchFor(MediaSample s, int64_t seq) {
     std::thread([s, seq] { try {
@@ -308,7 +364,10 @@ void fetchFor(MediaSample s, int64_t seq) {
         tk.s = s;
         auto const cacheFile = gS->cacheDir / cacheFileName(tk.key());
         std::optional<Lyrics> got;
-        if (std::error_code e1; std::filesystem::exists(cacheFile, e1)) got = fromCacheJson(readAll(cacheFile)); // LyricsFlow readCache
+        bool fromOverride = false;
+        if (std::error_code e0; std::filesystem::exists(overridePath(s), e0)) // [BF] your own lyrics win over every source
+            if ((got = parseOverride(readAll(overridePath(s)), s.durationMs))) fromOverride = true;
+        if (std::error_code e1; !got && std::filesystem::exists(cacheFile, e1)) got = fromCacheJson(readAll(cacheFile)); // LyricsFlow readCache
         for (int attempt = 1; attempt <= 5 && !got; ++attempt) {
             {
                 std::lock_guard l(gS->mutex);
@@ -325,7 +384,7 @@ void fetchFor(MediaSample s, int64_t seq) {
                 if (gS->clock.songSeq() != seq || !gS->running) return;
             }
         }
-        if (std::error_code e2; got && !std::filesystem::exists(cacheFile, e2)) { // LyricsFlow writeCache (synced results only reach here)
+        if (std::error_code e2; got && !fromOverride && !std::filesystem::exists(cacheFile, e2)) { // LyricsFlow writeCache (synced results only reach here)
             std::ofstream out(cacheFile, std::ios::binary);
             out << toCacheJson(*got);
         }
@@ -508,6 +567,7 @@ void mediaLoop() {
             else if (c.kind == PanelAction::Kind::Prev) gS->smtc->previous();
             else if (c.kind == PanelAction::Kind::Seek) gS->smtc->seek(c.ms);
             else if (c.kind == PanelAction::Kind::Repeat) gS->smtc->cycleRepeat();
+            else if (c.kind == PanelAction::Kind::EditLyrics) editLyrics();
         }
         auto sample = gS->moduleOn ? gS->smtc->poll(src) : std::nullopt;
         if (!cmds.empty()) {
@@ -537,6 +597,7 @@ void mediaLoop() {
             }
         }
         songMemoryStep();
+        overrideWatch();
         saveSongScenes();
         demoStep();
         // [BF] timing log (mods/BedrockForgeCore/logs/lyrics_clock.txt, ~1 line/s, this song + lyrics_clock.prev.txt):
@@ -944,6 +1005,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     gS->cfgFile   = configDir / "lyricsflow.json";
     gS->presetDir = modDir / "resources" / "lyricsflow" / "presets";
     gS->cacheDir  = configDir / "lyricsflow_cache";
+    gS->overrideDir = configDir / "lyricsflow_overrides";
     gS->memoryDir = configDir / "lyricsflow_memory";
     std::error_code ec;
     std::filesystem::create_directories(gS->cacheDir, ec);
