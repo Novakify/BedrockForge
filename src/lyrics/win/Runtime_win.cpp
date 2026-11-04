@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <ctime>
 #include <cmath>
 #include <utility>
 #include <fstream>
@@ -95,6 +96,8 @@ struct State {
         float                         speed = 1, prevBass = 0;
     } demo;
     std::vector<std::string> directorLines;  // [BF] Director events for logs/director.txt (written by the media thread)
+    std::vector<std::string> perfLines;      // [BF] logs/perf.txt: frame pacing + the mod's own cost, every 5 s
+    struct PerfWin { int frames = 0, hitch50 = 0, hitch100 = 0; double dtSum = 0, dtMax = 0, modSum = 0, modMax = 0; int64_t startNs = 0; } perfWin;
     int64_t                 memoryHooksSeq = -1; // song whose lyrics the memory's hooks were found from
     std::map<std::string, std::string> songScenes; // [BF] track key -> Scene Studio scene (config/lyricsflow_songscenes.json)
     std::string             lastScene;      // cfg.scene seen last frame (a change while a song plays = remember it)
@@ -512,6 +515,19 @@ void demoStep() {
         std::ofstream out(logDir / "director.txt", std::ios::app | std::ios::binary);
         for (auto const& x : lines) out << x << "\n";
     }
+    { // [BF] perf log
+        std::vector<std::string> pl;
+        {
+            std::lock_guard l(gS->mutex);
+            pl.swap(gS->perfLines);
+        }
+        if (!pl.empty()) {
+            std::error_code ec;
+            std::filesystem::create_directories(logDir, ec);
+            std::ofstream out(logDir / "perf.txt", std::ios::app | std::ios::binary);
+            for (auto const& x : pl) out << x << "\n";
+        }
+    }
     int64_t const now = nowNs();
     if (now - lastCheck < 1000000000LL) return;
     lastCheck = now;
@@ -771,6 +787,7 @@ std::atomic<bool> gPanelRequest{false}; // [BF] the client menu's "Open LyricsFl
 
 void hudFrame(bedrock_forge::client::Frame& f) {
     if (!gS || !f.player) return;
+    auto const tAll = Clock::now(); // [BF] perf log: the whole LyricsForge HUD frame
     gS->moduleOn = true; // hud only runs while the module is on (also after modules.json restored it)
     pollKeys(f);
     if (gPanelRequest.exchange(false) && bf::hud::isHudScreen(f.view)) {
@@ -786,6 +803,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     int64_t now = nowNs();
     float   dt  = gS->lastFrameNs ? float(double(now - gS->lastFrameNs) / 1e9) : 1.0f / 60.0f;
     gS->lastFrameNs = now;
+    float const rawDt = dt; // [BF] perf log sees real hitches (the clamp below hides them)
     dt              = std::clamp(dt, 0.0f, 0.1f);
     { // [BF] bass hits: only listen while something uses them
         auto const& c = gS->engine.config();
@@ -889,6 +907,34 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     double const modMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     gS->fpsSmooth      = gS->fpsSmooth <= 0 ? 1.0f / std::max(dt, 1e-3f) : gS->fpsSmooth * 0.95f + 0.05f / std::max(dt, 1e-3f);
     gS->engine.perf().tick(nowMsWall(), int(gS->fpsSmooth + 0.5f), modMs, gS->engine.config());
+    { // [BF] logs/perf.txt every 5 s: is it the game / the mod, or the PC? (dt = time between HUD frames)
+        double const all = std::chrono::duration<double, std::milli>(Clock::now() - tAll).count();
+        auto& w = gS->perfWin;
+        if (w.startNs == 0) w.startNs = now;
+        double const dms = double(rawDt) * 1000.0;
+        if (dms > 2000.0) { w = {}; w.startNs = now; } // a menu / pause, not a hitch: start a fresh window
+        else {
+            ++w.frames; w.dtSum += dms; w.dtMax = std::max(w.dtMax, dms);
+            if (dms > 50) ++w.hitch50;
+            if (dms > 100) ++w.hitch100;
+            w.modSum += all; w.modMax = std::max(w.modMax, all);
+        }
+        if (now - w.startNs >= 5000000000LL) {
+            char b[320], ts[16];
+            std::time_t const tt = std::time(nullptr);
+            std::tm lt{};
+            localtime_s(&lt, &tt);
+            std::strftime(ts, sizeof ts, "%H:%M:%S", &lt);
+            auto const& cf = gS->engine.config();
+            std::snprintf(b, sizeof b, "%s fps %5.1f | frame avg %5.2f ms max %6.1f ms | hitches >50ms %3d >100ms %3d | mod avg %5.2f ms max %5.2f ms (%4.1f%%) | glyphs %5zu | perf lvl %d | lyrics %d sky %s",
+                          ts, w.frames * 1000.0 / std::max(1.0, w.dtSum), w.dtSum / std::max(1, w.frames), w.dtMax, w.hitch50, w.hitch100,
+                          w.modSum / std::max(1, w.frames), w.modMax, 100.0 * w.modSum / std::max(1.0, w.dtSum), gS->engine.glyphs().size(),
+                          gS->engine.perf().level(), cf.enabled ? 1 : 0, cf.skyPreset.c_str());
+            gS->perfLines.emplace_back(b);
+            w = {};
+            w.startNs = now;
+        }
+    }
 }
 
 
