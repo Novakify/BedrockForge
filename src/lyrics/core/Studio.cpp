@@ -23,7 +23,7 @@ std::vector<StudioScene> const& builtinScenes() {
         add({"celestial_dream", "Celestial Dream", "soft auroras, stars, constellation hooks", "aurora", "lavender", 1,
              int32_t(0xFFB9A2FF), false, 0.7f, 0.8f, ei(E::Fade), xi(X::FloatUp), int(LyricsStyle::Sky), 0, true, 0.6f});
         add({"cosmic_collapse", "Cosmic Collapse", "black hole, galaxy letters, heavy bass", "black_hole", "galaxy", 8, 0,
-             false, 1.0f, 1.2f, ei(E::Zoom), xi(X::Explode), int(LyricsStyle::Sky), 3, true, 0.7f});
+             false, 1.0f, 1.2f, ei(E::Zoom), xi(X::Vortex), int(LyricsStyle::Sky), 3, true, 0.7f});
         add({"liquid_paradise", "Liquid Paradise", "deep sea, water letters, gentle flow", "deep_sea", "ocean", 3, 0, false,
              0.8f, 1.0f, ei(E::Rise), xi(X::Dissolve), int(LyricsStyle::Floating), 1, true, 0.5f});
         add({"neon_afterlife", "Neon Afterlife", "neon city, glitch, energetic", "neon_city", "vaporwave", 1, 0, true, 1.4f,
