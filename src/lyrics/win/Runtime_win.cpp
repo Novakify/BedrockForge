@@ -76,6 +76,8 @@ struct State {
     } demo;
     std::vector<std::string> directorLines;  // [BF] Director events for logs/director.txt (written by the media thread)
     int64_t                 memoryHooksSeq = -1; // song whose lyrics the memory's hooks were found from
+    std::string             directorLog;    // [BF] Director events waiting for logs/director.txt (written off-lock)
+    float                   directorLogAcc = 0;
     int64_t                 memorySeq = -1; // song the memory belongs to (clock.songSeq)
     std::string             memoryTitle;
     std::shared_ptr<Lyrics const> memoryLyrics; // this song's lyrics (gS->lyrics is already cleared when the song ends)
@@ -298,18 +300,19 @@ void fetchFor(MediaSample s, int64_t seq) {
 // ---------------------------------------------------------------- [BF] Song Memory (media thread, see core/SongMemory.h)
 // Every 50 ms band frame from the loopback is stamped with the song position and recorded; the play is merged into the
 // song's saved map when the song changes or stops. logs/song_memory.txt gets a readable summary per song.
-void songMemoryLog(std::string const& text) {
+void appendLog(char const* name, std::string const& text) {
     try {
         auto const      logDir = gS->cfgFile.parent_path().parent_path() / "logs";
         std::error_code ec;
         std::filesystem::create_directories(logDir, ec);
-        auto const file = logDir / "song_memory.txt";
+        auto const file = logDir / (std::string(name) + ".txt");
         if (std::filesystem::exists(file, ec) && std::filesystem::file_size(file, ec) > 256 * 1024)
-            std::filesystem::rename(file, logDir / "song_memory.prev.txt", ec);
+            std::filesystem::rename(file, logDir / (std::string(name) + ".prev.txt"), ec);
         std::ofstream o(file, std::ios::binary | std::ios::app);
         o << text;
     } catch (...) {}
 }
+void songMemoryLog(std::string const& text) { appendLog("song_memory", text); }
 // Merge + save + log a finished play. Runs WITHOUT gS->mutex (file I/O), on a SongMemory moved out of gS.
 void finishPlay(SongMemory& m, std::shared_ptr<Lyrics const> const& lyrics, std::string const& title) {
     if (m.key().empty()) return;
@@ -486,6 +489,14 @@ void mediaLoop() {
             }
         }
         songMemoryStep();
+        {
+            std::string dl;
+            {
+                std::lock_guard l(gS->mutex);
+                dl.swap(gS->directorLog);
+            }
+            if (!dl.empty()) appendLog("director", dl);
+        }
         demoStep();
         // [BF] timing log (mods/BedrockForgeCore/logs/lyrics_clock.txt, ~1 line/s, this song + lyrics_clock.prev.txt):
         // what Windows reports vs our song clock, so a lyrics delay can be traced to the app or to the lyrics.
@@ -708,6 +719,19 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.enabled = gS->engine.config().director;
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
+        auto const& m = gS->conductor.state();
+        gS->directorLogAcc += dt;
+        bool const ev = m.dropNow || m.chorusNow || m.buildNow || m.calmNow || m.songStart;
+        if (m.active && (ev || gS->directorLogAcc >= 5.0f)) { // logs/director.txt: what the Director saw (remote tuning)
+            gS->directorLogAcc = 0;
+            char b[200];
+            std::snprintf(b, sizeof b, "%3lld:%04.1f %-7s %s sec=%d e=%.2f bud=%.2f build=%.2f hook=%.2f n=%d%s\n",
+                          (long long)(in.t / 60000), double(in.t % 60000) / 1000.0,
+                          m.songStart ? "START" : m.dropNow ? "DROP" : m.chorusNow ? "CHORUS" : m.buildNow ? "BUILD" : m.calmNow ? "CALM" : "",
+                          m.songStart ? (in.artist + " - " + in.title).c_str() : "", int(m.section), m.energy, m.budget, m.build, m.inHook,
+                          m.choruses, m.known ? " mem" : " live");
+            gS->directorLog += b;
+        }
         auto const& m = gS->conductor.state();
         auto stamp = [&](char const* what) {
             char b[160];

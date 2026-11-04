@@ -78,10 +78,8 @@ void Engine::direct(std::vector<DrawWord>& words, MusicState const& m, Config co
         w.glow = w.glow * glowK + 0.25f * m.inHook;
         if (w.sung) {
             w.glow += 0.45f * m.impact;
-            w.scale *= 1.0f + 0.16f * m.impact;
-            if (cfg.heroWords && w.hero) { w.scale *= 1.12f; w.glow += 0.5f; }
-        } else {
-            w.scale *= 1.0f + 0.05f * m.impact;
+            w.scale *= 1.0f + 0.10f * m.impact;
+            if (cfg.heroWords && w.hero) { w.scale *= 1.08f; w.glow += 0.5f; }
         }
     }
 }
