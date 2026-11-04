@@ -195,7 +195,7 @@ TEST(cinema_grade_flash_letterbox) {
     CHECK(c.out().flash < f1 * 0.2f);                              // decays fast
     m.build = 1.0f;
     for (int i = 0; i < 400; ++i) c.step(&m, cfg, 1.0f / 60);
-    CHECK(c.out().letterbox > 0.08f && c.out().letterbox <= Cinema::kLetterMax + 1e-6f);
+    CHECK(c.out().letterbox > 0.05f && c.out().letterbox <= Cinema::kLetterMax + 1e-6f);
     cfg.letterbox = false;
     for (int i = 0; i < 400; ++i) c.step(&m, cfg, 1.0f / 60);
     CHECK(c.out().letterbox < 0.005f);

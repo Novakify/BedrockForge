@@ -22,7 +22,7 @@ struct BfDirectorV1 {
     float vignette;      // 0..1 corner darkening
     float flash;         // 0..1 additive light flash (impact frame), already capped for comfort
     float flashColor[3]; // rgb 0..1
-    float letterbox;     // fraction of the screen height covered top + bottom each (0..0.12)
+    float letterbox;     // fraction of the screen height covered top + bottom each (0..0.075)
     float bloomBoost;    // added to the pack's bloom mix
     float caBoost;       // added to the pack's chromatic aberration
     float reserved[8];

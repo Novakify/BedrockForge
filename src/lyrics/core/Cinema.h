@@ -37,7 +37,7 @@ public:
 
     static constexpr float kFlashCap  = 0.16f; // comfort: an impact frame never adds more than this much light
     static constexpr float kFlashGap  = 0.9f;  // s: at most one flash this often (no strobing)
-    static constexpr float kLetterMax = 0.11f;
+    static constexpr float kLetterMax = 0.075f; // thin: the hotbar is still drawn under it on the HUD
 
 private:
     SceneGrade mCur, mFrom, mTo;
