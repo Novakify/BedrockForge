@@ -316,6 +316,34 @@ void mediaLoop() {
                 }
             }
         }
+        // [BF] timing log (mods/BedrockForgeCore/logs/lyrics_clock.txt, ~1 line/s, this song + lyrics_clock.prev.txt):
+        // what Windows reports vs our song clock, so a lyrics delay can be traced to the app or to the lyrics
+        try {
+            static int     tick = 0;
+            static int64_t logSeq = -1;
+            auto const     logDir = gS->cfgFile.parent_path().parent_path() / "logs";
+            std::lock_guard l(gS->mutex);
+            int64_t const   seqNow = gS->clock.songSeq();
+            if (seqNow != logSeq && sample) {
+                logSeq = seqNow;
+                std::error_code ec;
+                std::filesystem::create_directories(logDir, ec);
+                std::filesystem::rename(logDir / "lyrics_clock.txt", logDir / "lyrics_clock.prev.txt", ec);
+                std::ofstream o(logDir / "lyrics_clock.txt", std::ios::binary | std::ios::trunc);
+                o << "song: " << sample->artist << " - " << sample->title << "  app: " << sample->sourceApp << "  offset: " << gS->engine.config().syncOffsetMs
+                  << " ms\n# wallMs playing rawPos(app) extrapolated(app) updatedAgeMs ourClock(ourClock-app) lyrics\n";
+            }
+            if (sample && (++tick % 4) == 0) {
+                int64_t const nowFt = int64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                                                  std::chrono::system_clock::now().time_since_epoch()).count() * 10 + 116444736000000000LL);
+                int64_t const age   = sample->updatedFt > 0 ? (nowFt - sample->updatedFt) / 10000 : -1;
+                int64_t const ours  = gS->clock.positionRaw(nowNs());
+                std::ofstream o(logDir / "lyrics_clock.txt", std::ios::binary | std::ios::app);
+                o << nowNs() / 1000000 << ' ' << (sample->playing ? 1 : 0) << ' ' << sample->rawPositionMs << ' ' << sample->positionMs << ' ' << age
+                  << ' ' << ours << " (" << (ours - sample->positionMs) << ") "
+                  << (gS->lyrics ? gS->lyrics->source + (gS->lyrics->wordSynced ? " words" : " lines") : std::string("-")) << '\n';
+            }
+        } catch (...) {}
         // cover art for the panel: once per song, retried for a few seconds (apps often set it after the title)
         int64_t seq;
         bool    want;

@@ -120,15 +120,25 @@ std::vector<Word> splitWords(std::string_view textIn, int64_t start, int64_t end
     if (lineRate >= rate * 0.9) sing = int64_t(double(gap) * 0.74);
     else sing = std::max(int64_t(double(total) / rate * 1000.0), int64_t(double(gap) * 0.6));
     sing = std::max(std::min<int64_t>(350, gap), std::min(sing, int64_t(double(gap) * 0.82)));
+    // [BF] a word ending in , ; : . ! ? (or a dash) is followed by a short breath: give it extra weight so the words
+    // after it start later instead of being spread evenly across the pause
+    auto pauseAfter = [&](size_t i) {
+        if (i + 1 >= parts.size() || parts[i].empty()) return 0.0;
+        char const ch = parts[i].back();
+        if (ch == ',' || ch == ';' || ch == ':') return 0.9;
+        if (ch == '.' || ch == '!' || ch == '?' || ch == '-') return 1.3;
+        return 0.0;
+    };
     double weight = 0.0;
-    for (int n : syl) weight += double(n) + 0.6;
+    for (size_t i = 0; i < parts.size(); ++i) weight += double(syl[i]) + 0.6 + pauseAfter(i);
     double t = double(start);
     for (size_t i = 0; i < parts.size(); ++i) {
         double  d    = double(sing) * ((double(syl[i]) + 0.6) / weight);
+        double  rest = double(sing) * (pauseAfter(i) / weight);
         int64_t prev = out.empty() ? start - 1000 : out.back().start;
         int64_t ws   = i == 0 ? start : std::max(prev + 130, int64_t(t) - 60);
         out.push_back(Word::of(parts[i], ws, std::max(ws + 60, int64_t(t + d) - 60)));
-        t += d;
+        t += d + rest;
     }
     return out;
 }

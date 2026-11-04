@@ -79,7 +79,12 @@ bool rtl(std::string_view s) {
 
 // ---------------------------------------------------------------- word animation
 std::optional<std::array<float, 5>> wordAnim(Placed const& p, int j, Word const& w, int64_t t, Config const& c, float speed) {
-    float ein = anim::progress(double(t), double(w.start - 40), double(float(w.start - 40) + kEnterMs / speed));
+    // [BF] fast words (rap) pop in as fast as they're sung: the 300 ms entrance shrinks to ~1.1x the word's length
+    // (min 110 ms) and starts a little earlier, so a word is readable while it's being sung, not after it.
+    float const dur   = float(std::max<int64_t>(1, w.end - w.start));
+    float const enter = std::clamp(dur * 1.1f, 110.0f, kEnterMs) / speed;
+    float const lead  = enter < kEnterMs * 0.8f ? 70.0f : 40.0f;
+    float ein = anim::progress(double(t), double(float(w.start) - lead), double(float(w.start) - lead + enter));
     if (ein <= 0.0f) return std::nullopt;
     float dx = 0, dy = 0, sc = 1, alpha, rot = 0;
     switch (c.enterAnim) {
