@@ -13,6 +13,7 @@
 
 #include <map>
 
+#include "lyrics/core/Bands.h"
 #include "lyrics/core/Fetcher.h"
 #include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Media.h"
@@ -54,6 +55,10 @@ void  bassStop();
 void  bassWanted(bool on);
 /// 0..1, 1 on a hard bass hit, decaying; *live = audio is coming in right now.
 float bassLevel(float dt, bool* live);
+/// [BF] Song Memory: keep the loopback open while a song plays, and the 50 ms band frames it produced since the last call
+void      memoryWanted(bool on);
+void      audioFrames(std::vector<BandFrame>& out);
+BandFrame audioLatest();
 
 /// Called from Core::enable(): registers the "lyricsflow" module (off by default), keybinds and threads.
 /// modDir = mods/BedrockForgeCore (fonts under resources/lyricsflow/fonts), configDir = its config folder.

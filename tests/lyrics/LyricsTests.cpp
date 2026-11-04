@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -21,6 +22,8 @@
 #include "lyrics/core/Lyrics.h"
 #include "lyrics/core/Media.h"
 #include "lyrics/core/Beat.h"
+#include "lyrics/core/Bands.h"
+#include "lyrics/core/SongMemory.h"
 #include "lyrics/core/Palette.h"
 #include "lyrics/core/Physics.h"
 #include "lyrics/core/Scene.h"
@@ -1297,6 +1300,108 @@ TEST(bass_hits_only_when_loud) { // [BF] Neon pulse / beat effects
     CHECK_EQ(h, 0);
     run(0.0f, 0.5f, h, pk); // loud but no bass (a lead / vocals): no thump
     CHECK_EQ(h, 0);
+}
+
+
+// [BF] multi-band analyser: a 60 Hz tone is bass, an 8 kHz tone is treble, silence is 0
+TEST(bands_split) {
+    auto run = [](double hz, double amp) {
+        BandAnalyzer a(48000.0f);
+        std::vector<float> buf(4800);
+        for (int b = 0; b < 10; ++b) { // 1 s
+            for (int i = 0; i < 4800; ++i) buf[size_t(i)] = float(amp * std::sin(2 * 3.14159265 * hz * double(b * 4800 + i) / 48000.0));
+            a.feed(buf.data(), buf.size(), int64_t(b + 1) * 100000000);
+        }
+        std::vector<BandFrame> out;
+        a.drain(out);
+        return std::make_pair(out.size(), out.empty() ? BandFrame{} : out.back());
+    };
+    auto [n1, lo] = run(60, 0.5);
+    CHECK(n1 >= 18 && n1 <= 21); // 20 frames a second
+    CHECK(lo.bass > 0.8f && lo.treble < 0.4f);
+    auto [n2, hi] = run(8000, 0.5);
+    std::printf("  8 kHz: bass %.2f mid %.2f treble %.2f\n", hi.bass, hi.mid, hi.treble);
+    CHECK(hi.treble > 0.7f && hi.treble > hi.mid + 0.1f && hi.bass < 0.4f);
+    auto [n3, mid] = run(800, 0.5);
+    CHECK(mid.mid > hi.mid && mid.mid > lo.mid);
+    auto [n4, quiet] = run(440, 0.0);
+    CHECK(quiet.loud == 0.0f);
+}
+
+// [BF] Song Memory: a made-up song (quiet intro, 16 s build, drop at 0:56, calm, second high part)
+namespace {
+float fakeLevel(int64_t ms) {
+    double s = double(ms) / 1000.0;
+    if (s < 40) return 0.30f;
+    if (s < 56) return float(0.30 + 0.25 * (s - 40) / 16.0); // build
+    if (s < 100) return 0.85f;                                // drop -> high
+    if (s < 140) return 0.35f;
+    return 0.80f;
+}
+void playFake(SongMemory& m, int64_t fromMs, int64_t toMs, float noiseAt = -1) {
+    for (int64_t t = fromMs; t < toMs; t += 50) {
+        BandFrame f;
+        float     v = fakeLevel(t);
+        if (noiseAt >= 0 && std::llabs(t - int64_t(noiseAt)) < 300) v = 1.0f; // a TNT blast in one play
+        f.bass = f.mid = f.treble = f.loud = v;
+        m.record(t, f);
+    }
+}
+} // namespace
+TEST(song_memory_shape) {
+    SongMemory m;
+    m.reset(SongMemory::keyFor("artist\x01song", 180000), 180000);
+    playFake(m, 0, 180000, 120000);
+    CHECK(m.endPlay());
+    CHECK_EQ(m.plays(), 1);
+    CHECK(m.coverage() > 0.95f);
+    m.analyze(nullptr);
+    std::printf("%s", m.describe().c_str());
+    SongMemory::Event const* drop = nullptr;
+    for (auto const& e : m.events) if (e.kind == SongMemory::Event::Kind::Drop && !drop) drop = &e;
+    CHECK(drop != nullptr);
+    if (drop) {
+        CHECK(std::llabs(drop->at - 56000) < 1500);
+        CHECK(drop->buildFrom >= 0 && std::llabs(drop->buildFrom - 40000) < 4000);
+    }
+    CHECK(m.nextEvent(50000, 8000) == drop);  // seen 6 s ahead
+    CHECK(m.nextEvent(20000, 8000) == nullptr);
+    CHECK(m.energyAt(10000) < 0.3f && m.energyAt(80000) > 0.7f);
+    // a second play that only heard the first minute still counts and keeps the map
+    playFake(m, 0, 60000);
+    CHECK(m.endPlay());
+    CHECK_EQ(m.plays(), 1); // under half the song: merged, but not a full play
+    // a play of 5 s is ignored
+    playFake(m, 0, 5000);
+    CHECK(!m.endPlay());
+}
+TEST(song_memory_save_load_and_hooks) {
+    SongMemory m;
+    std::string const key = SongMemory::keyFor("artist\x01song", 180000);
+    m.reset(key, 180000);
+    playFake(m, 0, 180000);
+    m.endPlay();
+    auto file = std::filesystem::temp_directory_path() / SongMemory::fileNameFor(key);
+    CHECK(m.save(file));
+    SongMemory b;
+    b.reset(key, 180000);
+    CHECK(b.load(file));
+    CHECK_EQ(b.plays(), 1);
+    CHECK(b.coverage() > 0.95f);
+    SongMemory other;
+    other.reset("someone else|180", 180000);
+    CHECK(!other.load(file)); // same file name can't hand another song's map over
+    std::filesystem::remove(file);
+    // hooks: the repeated lines become chorus events
+    std::vector<Timing>      times{{10000, -1}, {14000, -1}, {18000, -1}, {60000, -1}, {120000, -1}, {150000, -1}, {154000, -1}, {158000, -1}};
+    std::vector<std::string> texts{"verse one here", "we light it up", "keep it going now", "verse two again", "bridge",
+                                   "we light it up", "keep it going now", "outro line"};
+    Lyrics lyr = Lyrics::build(times, texts, true, "test", 180000);
+    b.analyze(&lyr);
+    CHECK_EQ(b.hooks.size(), size_t(2));
+    int chorus = 0;
+    for (auto const& e : b.events) chorus += e.kind == SongMemory::Event::Kind::Chorus;
+    CHECK(chorus >= 1);
 }
 
 int main(int argc, char** argv) {

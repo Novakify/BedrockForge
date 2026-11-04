@@ -18,6 +18,7 @@
 #include <mmdeviceapi.h>
 #include <mmreg.h>
 
+#include "lyrics/core/Bands.h"
 #include "lyrics/core/Beat.h"
 
 namespace bf::lyrics::win {
@@ -27,7 +28,8 @@ template <class T> void release(T*& p) { if (p) { p->Release(); p = nullptr; } }
 struct Loopback {
     std::mutex        mutex;
     BeatDetector      det;
-    std::atomic_bool  running{false}, wanted{false};
+    BandAnalyzer      bands; // [BF] Song Memory / music state (same mutex as det)
+    std::atomic_bool  running{false}, wanted{false}, bassW{false}, memW{false};
     std::atomic<int64_t> lastAudioMs{0};
     std::thread       thread;
 };
@@ -76,7 +78,7 @@ void loop() {
                 teardown();
                 continue;
             }
-            { std::lock_guard l(L().mutex); L().det.setRate(float(fmt->nSamplesPerSec)); }
+            { std::lock_guard l(L().mutex); L().det.setRate(float(fmt->nSamplesPerSec)); L().bands.setRate(float(fmt->nSamplesPerSec)); }
             checkAt = t + 4000;
         }
         // the default output can change (headphones plugged in): reopen if it did
@@ -127,7 +129,12 @@ void loop() {
                 L().lastAudioMs = t;
             }
             cap->ReleaseBuffer(frames);
-            { std::lock_guard l(L().mutex); L().det.feed(mono.data(), mono.size()); }
+            {
+                int64_t const ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                std::lock_guard l(L().mutex);
+                L().det.feed(mono.data(), mono.size());
+                L().bands.feed(mono.data(), mono.size(), ns);
+            }
             hr = cap->GetNextPacketSize(&packet);
         }
         if (FAILED(hr)) { teardown(); retryAt = t + 500; continue; } // device gone / invalidated: reopen
@@ -147,7 +154,16 @@ void bassStop() {
     if (!L().running.exchange(false)) return;
     if (L().thread.joinable()) L().thread.join();
 }
-void bassWanted(bool on) { L().wanted = on; }
+void bassWanted(bool on) { L().bassW = on; L().wanted = on || L().memW.load(); }
+void memoryWanted(bool on) { L().memW = on; L().wanted = on || L().bassW.load(); }
+void audioFrames(std::vector<BandFrame>& out) {
+    std::lock_guard l(L().mutex);
+    L().bands.drain(out);
+}
+BandFrame audioLatest() {
+    std::lock_guard l(L().mutex);
+    return L().bands.latest();
+}
 float bassLevel(float dt, bool* live) {
     if (live) *live = L().wanted && nowMs() - L().lastAudioMs.load() < 1500;
     std::lock_guard l(L().mutex);

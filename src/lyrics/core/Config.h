@@ -136,6 +136,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(fxWave, false)                   /* [BF] letters ripple in a wave */                                             \
     B(fxRainbow, false)                /* [BF] colours cycle (hueShiftSpeed 0.12 when that is 0) */                    \
     B(fxBeatShake, false)              /* [BF] words shake a little on the beat */                                     \
+    B(songMemory, true)                /* [BF] remember each song's energy map (lyricsflow_memory, never audio) */     \
     I(letterFx, 0)                     /* [BF] animated letters: 0 none, 1 neon, 2 fire, 3 water, 4 ice, 5 electric,   \
                                           6 lava, 7 glitch, 8 galaxy (drawn by RF's glyph shader) */                   \
     C(letterFxColor, 0)                /* [BF] effect colour, 0 = the text colour */                                   \

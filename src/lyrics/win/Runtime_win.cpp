@@ -45,6 +45,7 @@
 #include "lyrics/core/Engine.h"
 #include "lyrics/core/Palette.h"
 #include "lyrics/core/SkySystem.h"
+#include "lyrics/core/SongMemory.h"
 #include "lyrics/win/World_win.h"
 
 namespace bf::lyrics::win {
@@ -61,7 +62,10 @@ struct State {
     SongClock               clock;
     std::shared_ptr<Lyrics const> lyrics;
     LyricsState             lyricsState = LyricsState::None;
-    std::filesystem::path   cfgFile, presetDir, cacheDir;
+    std::filesystem::path   cfgFile, presetDir, cacheDir, memoryDir;
+    SongMemory              memory;         // [BF] Song Memory of the song playing now (key empty = none)
+    int64_t                 memorySeq = -1; // song the memory belongs to (clock.songSeq)
+    std::string             memoryTitle;
     std::atomic<bool>       running{false};
     std::thread             media;
     std::unique_ptr<Smtc>   smtc;
@@ -276,6 +280,56 @@ void fetchFor(MediaSample s, int64_t seq) {
     } catch (...) {} }).detach(); // filesystem / stream errors in a detached thread would std::terminate the game
 }
 
+
+// ---------------------------------------------------------------- [BF] Song Memory (media thread, see core/SongMemory.h)
+// Every 50 ms band frame from the loopback is stamped with the song position and recorded; the play is merged into the
+// song's saved map when the song changes or stops. logs/song_memory.txt gets a readable summary per song.
+void songMemoryLog(std::string const& text) {
+    try {
+        auto const      logDir = gS->cfgFile.parent_path().parent_path() / "logs";
+        std::error_code ec;
+        std::filesystem::create_directories(logDir, ec);
+        auto const file = logDir / "song_memory.txt";
+        if (std::filesystem::exists(file, ec) && std::filesystem::file_size(file, ec) > 256 * 1024)
+            std::filesystem::rename(file, logDir / "song_memory.prev.txt", ec);
+        std::ofstream o(file, std::ios::binary | std::ios::app);
+        o << text;
+    } catch (...) {}
+}
+void finishSongMemory() { // gS->mutex held
+    if (gS->memory.key().empty()) return;
+    int64_t const heard = gS->memory.heardThisPlayMs();
+    bool const    counted = gS->memory.endPlay();
+    if (counted) gS->memory.save(gS->memoryDir / SongMemory::fileNameFor(gS->memory.key()));
+    gS->memory.analyze(gS->lyrics.get());
+    songMemoryLog("== " + gS->memoryTitle + "  (heard " + std::to_string(heard / 1000) + " s this play" +
+                  (counted ? ", saved)\n" : ", too short to save)\n") + gS->memory.describe() + "\n");
+    gS->memory.reset("", 0);
+}
+void songMemoryStep() {
+    std::vector<BandFrame> frames;
+    audioFrames(frames); // its own lock: never inside gS->mutex
+    std::lock_guard l(gS->mutex);
+    auto const& cfg = gS->engine.config();
+    bool const  on  = gS->moduleOn && cfg.songMemory;
+    memoryWanted(on && gS->clock.playing());
+    int64_t const seq = gS->clock.hasTrack() ? gS->clock.songSeq() : -1;
+    if (seq != gS->memorySeq) { finishSongMemory(); gS->memorySeq = seq; }
+    if (!on || seq < 0) return;
+    auto const& tr = gS->clock.track();
+    if (gS->memory.key().empty()) { // start once the app reports the length (the key includes it)
+        if (tr.s.durationMs <= 0) return;
+        std::string const key = SongMemory::keyFor(tr.key(), tr.s.durationMs);
+        gS->memory.reset(key, tr.s.durationMs);
+        gS->memoryTitle = tr.s.artist + " - " + tr.s.title;
+        bool const known = gS->memory.load(gS->memoryDir / SongMemory::fileNameFor(key));
+        gS->memory.analyze(gS->lyrics.get());
+        if (known) songMemoryLog("-- " + gS->memoryTitle + ": known song, " + std::to_string(gS->memory.plays()) + " play(s) remembered\n");
+    }
+    if (!gS->clock.playing()) return;
+    for (auto const& f : frames) gS->memory.record(gS->clock.position(f.tNs, cfg), f);
+}
+
 void mediaLoop() {
     gS->smtc = std::make_unique<Smtc>();
     while (gS->running) {
@@ -316,6 +370,7 @@ void mediaLoop() {
                 }
             }
         }
+        songMemoryStep();
         // [BF] timing log (mods/BedrockForgeCore/logs/lyrics_clock.txt, ~1 line/s, this song + lyrics_clock.prev.txt):
         // what Windows reports vs our song clock, so a lyrics delay can be traced to the app or to the lyrics
         try {
@@ -645,6 +700,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     gS->cfgFile   = configDir / "lyricsflow.json";
     gS->presetDir = modDir / "resources" / "lyricsflow" / "presets";
     gS->cacheDir  = configDir / "lyricsflow_cache";
+    gS->memoryDir = configDir / "lyricsflow_memory";
     std::error_code ec;
     std::filesystem::create_directories(gS->cacheDir, ec);
     loadConfig();
@@ -733,6 +789,7 @@ void uninstall() {
     host::subs.clear();
     gS->running = false;
     if (gS->media.joinable()) gS->media.join();
+    try { std::lock_guard l(gS->mutex); finishSongMemory(); } catch (...) {} // keep this play's map
     bassStop();
     {
         std::lock_guard l(gS->mutex);
