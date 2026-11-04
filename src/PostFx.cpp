@@ -56,6 +56,7 @@ struct Dir {
     bool  on = false;
     float tint[3] = {1, 1, 1}, amount = 0, sat = 1, con = 1, vig = 0, flash = 0, flashCol[3] = {1, 1, 1}, box = 0;
     float bloom = 0, ca = 0;
+    float focus = 0;
 };
 // a copy of BF's frame; inactive once BF stops publishing (no world on screen) for ~1/3 s
 Dir readDirector(bool allow) {
@@ -78,6 +79,7 @@ Dir readDirector(bool allow) {
     d.box    = std::clamp(v.letterbox, 0.0f, 0.08f);
     d.bloom  = std::clamp(v.bloomBoost, 0.0f, 0.2f);
     d.ca     = std::clamp(v.caBoost, 0.0f, 0.004f);
+    d.focus  = std::clamp(v.focus, 0.0f, 1.0f);
     return d;
 }
 
@@ -161,7 +163,7 @@ bool createStatic(ID3D12Device* device) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 0, 0, 0};
     D3D12_ROOT_PARAMETER   params[2]{};
     params[0].ParameterType            = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants                = {0, 0, 36};
+    params[0].Constants                = {0, 0, 40};
     params[0].ShaderVisibility         = D3D12_SHADER_VISIBILITY_PIXEL;
     params[1].ParameterType            = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable          = {1, &range};
@@ -269,7 +271,7 @@ void barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STA
     l->ResourceBarrier(1, &x);
 }
 
-struct Consts { float v[36]; };
+struct Consts { float v[40]; };
 
 void draw(ID3D12GraphicsCommandList* l, ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE rtv, UINT w, UINT h,
           UINT srcSlot, Consts const& c) {
@@ -279,7 +281,7 @@ void draw(ID3D12GraphicsCommandList* l, ID3D12PipelineState* pso, D3D12_CPU_DESC
     l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     l->RSSetViewports(1, &vp);
     l->RSSetScissorRects(1, &sc);
-    l->SetGraphicsRoot32BitConstants(0, 36, c.v, 0);
+    l->SetGraphicsRoot32BitConstants(0, 40, c.v, 0);
     l->SetGraphicsRootDescriptorTable(1, srvGpu(srcSlot));
     l->DrawInstanced(3, 1, 0, 0);
 }
@@ -310,6 +312,23 @@ bool       gDirOn = false;
 bool       gLinked = false;
 } // namespace
 
+bool showcasePose(float& blend, float& yaw, float& pitch, float& radius) {
+    if (!gUi.enabled || !gUi.director) return false;
+    DirFn fn = dirGet();
+    BfDirectorV1 const* b = fn ? fn() : nullptr;
+    if (!b || b->version < 1 || b->size < sizeof(BfDirectorV1)) return false;
+    BfDirectorV1 const v = *b;
+    static uint32_t last = 0;
+    static int      still = 0;
+    if (v.frame != last) { last = v.frame; still = 0; } else if (still < 1000) ++still;
+    if (still > 20 || !(v.showcase > 0.001f)) return false;
+    blend  = std::clamp(v.showcase, 0.0f, 1.0f);
+    yaw    = v.orbitYaw;
+    pitch  = std::clamp(v.orbitPitch, -60.0f, 60.0f);
+    radius = std::clamp(v.orbitRadius, 1.0f, 8.0f);
+    return true;
+}
+
 bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE bbRtv) {
     gRecorded = false;
     if (gBroken || !gUi.enabled) return false;
@@ -328,6 +347,10 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         p.bloom += dir.bloom;
         p.ca += dir.ca;
         if (p.tiles < 1) p.tiles = 6;
+        if (dir.focus > 0.01f) { // the soft focus reads blurred bloom tiles 2 + 3
+            if (p.bloom <= 0) p.bloom = 1e-4f;
+            p.tiles = std::max(p.tiles, 3.0f);
+        }
     }
     if (!p.any() && !dir.on) { gStatus = "idle (all effects 0)"; return false; }
     if (!gRoot && !createStatic(device)) return false;
@@ -399,6 +422,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     c.v[27] = dir.on ? dir.amount : 0;
     c.v[28] = dir.on ? dir.sat : 1; c.v[29] = dir.on ? dir.con : 1; c.v[30] = dir.on ? dir.vig : 0; c.v[31] = dir.on ? dir.flash : 0;
     c.v[32] = dir.flashCol[0]; c.v[33] = dir.flashCol[1]; c.v[34] = dir.flashCol[2]; c.v[35] = dir.on ? dir.box : 0;
+    c.v[36] = dir.on ? dir.focus : 0;
     gPrevYaw   = p.yaw;
     gPrevPitch = p.pitch;
     gHavePrev  = true;

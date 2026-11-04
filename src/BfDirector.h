@@ -25,7 +25,12 @@ struct BfDirectorV1 {
     float letterbox;     // fraction of the screen height covered top + bottom each (0..0.075)
     float bloomBoost;    // added to the pack's bloom mix
     float caBoost;       // added to the pack's chromatic aberration
-    float reserved[6];
+    // Showcase (was reserved[0..4] before; old RF ignores them): RF moves the camera when showcase > 0
+    float showcase;      // 0..1 blend from the player's eyes to the sway pose
+    float orbitYaw, orbitPitch; // camera pose looking at the player's eyes, degrees (Minecraft yaw / pitch)
+    float orbitRadius;   // blocks behind the eyes
+    float focus;         // 0..1 soft focus towards the screen edges (no depth buffer: a lens-style falloff)
+    float reserved[1];
 };
 static_assert(sizeof(BfDirectorV1) == 128, "BfDirectorV1 layout is shared with RF");
 

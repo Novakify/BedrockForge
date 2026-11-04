@@ -10,6 +10,7 @@
 #include "SpatialCamera.h"
 #include "Cinematic.h"
 #include "UiCapture.h"
+#include "PostFx.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -408,6 +409,7 @@ long   gCineWrites = 0;
 // origin follows the player's eyes, not the camera component, so the scene's position goes there too (pose of the frame)
 bool   gCineHavePos = false;
 glm::vec3 gCinePos{};
+std::atomic_bool gShowcaseNow{false}; // [LyricsForge] the Showcase camera wrote the components this frame
 bool   gMenuHavePos = false; // BF menu wheel front view: the render origin goes to that camera too
 glm::vec3 gMenuPos{};
 float  gRcBefore[3] = {}, gRcAfter[3] = {}, gRcTarget[3] = {};
@@ -446,6 +448,24 @@ void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::ve
     rf::cine::Pose  p{};
     float           fovScale = 1.0f;
     bool            on       = rf::cine::cameraPose(e, yawP, pitchP, p, fovScale);
+    gShowcaseNow = false;
+    if (!on) { // [LyricsForge] Showcase: the camera sways behind the player, looking at their eyes
+        float blend = 0, sy = 0, sp = 0, sr = 0;
+        if (rf::postfx::showcasePose(blend, sy, sp, sr)) {
+            float const     e2 = blend * blend * (3.0f - 2.0f * blend);
+            float const     y = sy * kDeg, pt = sp * kDeg;
+            glm::vec3 const f(-std::sin(y) * std::cos(pt), -std::sin(pt), std::cos(y) * std::cos(pt));
+            glm::vec3 const cam = eye - f * (sr * e2);
+            auto lerpAng = [](float a, float b, float t) { float d = std::remainder(b - a, 360.0f); return a + d * t; };
+            p.pos[0] = cam.x; p.pos[1] = cam.y; p.pos[2] = cam.z;
+            p.yaw    = lerpAng(yawP, sy, e2);
+            p.pitch  = pitchP + (sp - pitchP) * e2;
+            p.roll   = 0;
+            fovScale = 1.0f;
+            on       = true;
+            gShowcaseNow = true;
+        }
+    }
     applyFov(comps, nComp, on, fovScale);
     if (!on) gCineHavePos = false;
     if (!on || !gConv) return;
@@ -783,7 +803,7 @@ void afterPreRender(Vec3* cameraPos, Vec3* targetPos) {
     gRcBefore[0] = cameraPos->x; gRcBefore[1] = cameraPos->y; gRcBefore[2] = cameraPos->z;
     if (targetPos) { gRcTarget[0] = targetPos->x; gRcTarget[1] = targetPos->y; gRcTarget[2] = targetPos->z; }
     bool const menu = gMenuHavePos && !gActive.load(); // set by applyComponent this frame only
-    if (!menu && (!gCineHavePos || !rf::cine::active())) return;
+    if (!menu && (!gCineHavePos || !(rf::cine::active() || gShowcaseNow.load()))) return;
     glm::vec3 const want = menu ? gMenuPos : gCinePos;
     Vec3 d{want.x - cameraPos->x, want.y - cameraPos->y, want.z - cameraPos->z};
     cameraPos->x = want.x; cameraPos->y = want.y; cameraPos->z = want.z;

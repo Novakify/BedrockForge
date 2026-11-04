@@ -15,5 +15,8 @@ void submitted(ID3D12CommandQueue* queue);
 void release();
 /// F6 section.
 void drawUi();
+/// [LyricsForge] Showcase camera from BF_GetDirector(): blend 0..1 and the sway pose (Minecraft yaw / pitch, degrees;
+/// radius in blocks behind the eyes). false = not active.
+bool showcasePose(float& blend, float& yaw, float& pitch, float& radius);
 
 } // namespace rf::postfx

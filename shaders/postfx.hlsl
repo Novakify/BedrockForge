@@ -18,6 +18,7 @@ cbuffer Params : register(b0) {
     float4 d0;   // LyricsForge Director: xyz = grade tint, w = grade amount
     float4 d1;   // x = saturation, y = contrast, z = vignette, w = impact flash
     float4 d2;   // xyz = flash colour, w = letterbox (fraction of the height, top and bottom)
+    float4 d3;   // x = Showcase soft focus 0..1 (lens-style: sharp middle, blurred edges; no depth buffer here)
 };
 
 Texture2D t0 : register(t0);
@@ -186,6 +187,13 @@ float4 PSComposite(V2P i) : SV_Target {
         col = cas(uv, p1.z);
     } else {
         col = sceneCA(uv);
+    }
+    if (d3.x > 0.0) { // LyricsForge Showcase focus: mix toward the blurred tiles away from the middle
+        float2 q = uv - float2(0.5, 0.47);
+        q.x *= p2.y * 0.8;
+        float k = smoothstep(0.18, 0.62, length(q)) * d3.x;
+        float3 soft = t3.SampleLevel(sLinear, uv, 0).rgb * 0.6 + t4.SampleLevel(sLinear, uv, 0).rgb * 0.4;
+        col = lerp(col, soft, k);
     }
     if (p0.z > 0.0) {
         // Hysteria get_bloom(): average of the tiles (radius 1 -> equal weights), scene = mix(scene, bloom, 0.12*I)
