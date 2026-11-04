@@ -66,6 +66,8 @@ struct State {
     SongMemory              memory;         // [BF] Song Memory of the song playing now (key empty = none)
     int64_t                 memorySeq = -1; // song the memory belongs to (clock.songSeq)
     std::string             memoryTitle;
+    std::shared_ptr<Lyrics const> memoryLyrics; // this song's lyrics (gS->lyrics is already cleared when the song ends)
+    int64_t                 memorySongNs = 0;   // when the current song began (its reported length settles after ~3 s)
     std::atomic<bool>       running{false};
     std::thread             media;
     std::unique_ptr<Smtc>   smtc;
@@ -309,7 +311,7 @@ void finishPlay(SongMemory& m, std::shared_ptr<Lyrics const> const& lyrics, std:
 void finishSongMemory() { // gS->mutex held - only at shutdown, where a short wait doesn't matter
     SongMemory m = std::move(gS->memory);
     gS->memory   = SongMemory();
-    finishPlay(m, gS->lyrics, gS->memoryTitle);
+    finishPlay(m, gS->memoryLyrics ? gS->memoryLyrics : gS->lyrics, gS->memoryTitle);
 }
 void songMemoryStep() {
     std::vector<BandFrame> frames;
@@ -328,14 +330,19 @@ void songMemoryStep() {
             if (!gS->memory.key().empty()) {
                 done       = std::move(gS->memory);
                 gS->memory = SongMemory();
-                doneLyrics = gS->lyrics;
+                doneLyrics = gS->memoryLyrics;
                 doneTitle  = gS->memoryTitle;
             }
-            gS->memorySeq = seq;
+            gS->memoryLyrics = nullptr;
+            gS->memorySeq    = seq;
+            gS->memorySongNs = nowNs();
         }
+        if (gS->lyrics) gS->memoryLyrics = gS->lyrics; // the fetch for THIS song (cleared on every song change)
         if (on && seq >= 0) {
             auto const& tr = gS->clock.track();
-            if (gS->memory.key().empty() && tr.s.durationMs > 0) { // start once the app reports the length (it's in the key)
+            if (!gS->memory.key().empty() && tr.s.durationMs > 0 && nowNs() - gS->memorySongNs > 3000000000LL)
+                gS->memory.setDuration(tr.s.durationMs); // the app's length settles a few seconds into the song
+            if (gS->memory.key().empty()) {
                 loadKey = SongMemory::keyFor(tr.key(), tr.s.durationMs);
                 loadDur = tr.s.durationMs;
                 gS->memory.reset(loadKey, loadDur); // recording starts now; the saved map is adopted below

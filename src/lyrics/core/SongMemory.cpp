@@ -44,8 +44,10 @@ template <class T> void put(std::ofstream& o, T v) { o.write(reinterpret_cast<ch
 template <class T> bool get(std::ifstream& in, T& v) { return bool(in.read(reinterpret_cast<char*>(&v), sizeof v)); }
 } // namespace
 
-std::string SongMemory::keyFor(std::string const& trackKey, int64_t durationMs) {
-    return trackKey + "|" + std::to_string((std::max<int64_t>(0, durationMs) + 500) / 1000);
+std::string SongMemory::keyFor(std::string const& trackKey, int64_t) {
+    // artist + title only: Apple Music can report the PREVIOUS song's length for a while after a change (Nov 4: a 4:08
+    // song came in as 4:44). Remixes / sped-up uploads have their own titles.
+    return trackKey + "|2";
 }
 
 std::string SongMemory::fileNameFor(std::string const& key) {
@@ -169,39 +171,49 @@ void SongMemory::analyze(Lyrics const* lyrics) {
             i = j;
         }
 
-        // drops: a big rise from the last few seconds into a high level, at least 12 s apart
-        long lastDrop = -100000;
-        auto mean = [&](long a, long b) { // [a, b)
+        // drops (tuned on real plays, Nov 4): the 4 s after a moment vs the 4 s before, on the 2 s-smoothed curve.
+        // A drop = that jump is >= 0.25 and the new part sits at >= 0.5. At least 20 s apart, at most 6 per song
+        // (the strongest), so bar-to-bar swells, a TNT blast or a chat ping never count.
+        auto meanN = [&](long a, long b) { // [a, b) of mEnergy, NaN when under 70 % known
             double sum = 0;
-            int    c   = 0;
-            for (long k = std::max(0L, a); k < std::min(long(n), b); ++k)
-                if (!std::isnan(fast[size_t(k)])) { sum += fast[size_t(k)]; ++c; }
-            return c ? float(sum / c) : NaN;
+            int    c = 0, all = 0;
+            for (long k = std::max(0L, a); k < std::min(long(n), b); ++k, ++all)
+                if (!std::isnan(mEnergy[size_t(k)])) { sum += mEnergy[size_t(k)]; ++c; }
+            return (all && c * 10 >= all * 7) ? float(sum / c) : NaN;
         };
-        for (long i = 60; i + 10 < long(n); ++i) {
-            if (i - lastDrop < 240) continue;
-            // the new level has to HOLD for 2 s (a TNT blast or a chat ping is not a drop)
-            float prev = mean(i - 60, i - 20), now = mean(i, i + 10), hold = mean(i, i + 40);
-            if (std::isnan(prev) || std::isnan(now) || std::isnan(hold) || now - prev < 0.30f || now < 0.55f || hold < 0.55f) continue;
-            long  j = i, best = i;                   // the sharpest step near i
-            float bestD = -1;
-            for (j = std::max(1L, i - 20); j < std::min(long(n), i + 10); ++j) {
-                if (std::isnan(fast[size_t(j)]) || std::isnan(fast[size_t(j - 1)])) continue;
-                float d = fast[size_t(j)] - fast[size_t(j - 1)];
-                if (d > bestD) { bestD = d; best = j; }
-            }
+        std::vector<float> nov(n, -1.0f);
+        for (long i = 80; i + 80 <= long(n); ++i) {
+            float before = meanN(i - 80, i), after = meanN(i, i + 80);
+            if (!std::isnan(before) && !std::isnan(after)) nov[size_t(i)] = after - before;
+        }
+        std::vector<std::pair<long, float>> cand;
+        for (long i = 0; i < long(n);) {
+            if (nov[size_t(i)] < 0.25f) { ++i; continue; }
+            long j = i, pk = i;
+            while (j < long(n) && nov[size_t(j)] >= 0.25f) { if (nov[size_t(j)] > nov[size_t(pk)]) pk = j; ++j; }
+            float after = meanN(pk, pk + 80);
+            if (!std::isnan(after) && after >= 0.5f) cand.push_back({pk, nov[size_t(pk)]});
+            i = j;
+        }
+        std::sort(cand.begin(), cand.end(), [](auto const& a, auto const& b) { return a.second > b.second; });
+        std::vector<std::pair<long, float>> keep;
+        for (auto const& c : cand) {
+            bool far = true;
+            for (auto const& k : keep) far &= std::labs(k.first - c.first) >= 400;
+            if (far && keep.size() < 6) keep.push_back(c);
+        }
+        for (auto const& [pk, v] : keep) {
             Event ev;
             ev.kind     = Event::Kind::Drop;
-            ev.at       = int64_t(best) * kFrameMs;
-            ev.strength = std::clamp(now - prev + 0.2f, 0.0f, 1.0f);
-            long k = best - 1; // the build: energy really climbing for 3..16 s before it (a flat stretch is no build)
-            while (k > 0 && best - k < 320 && !std::isnan(mEnergy[size_t(k - 1)]) && mEnergy[size_t(k - 1)] < mEnergy[size_t(k)] - 0.0005f) --k;
-            if (best - k >= 60 && !std::isnan(mEnergy[size_t(best - 1)]) && mEnergy[size_t(best - 1)] - mEnergy[size_t(k)] >= 0.15f)
+            ev.at       = int64_t(pk) * kFrameMs;
+            ev.strength = std::clamp(v * 1.6f, 0.0f, 1.0f);
+            long k = pk - 1; // the build: energy really climbing for 3..16 s before it (a flat stretch is no build)
+            while (k > 0 && pk - k < 320 && !std::isnan(mEnergy[size_t(k - 1)]) && mEnergy[size_t(k - 1)] < mEnergy[size_t(k)] - 0.0005f) --k;
+            if (pk - k >= 60 && !std::isnan(mEnergy[size_t(pk - 1)]) && mEnergy[size_t(pk - 1)] - mEnergy[size_t(k)] >= 0.15f)
                 ev.buildFrom = int64_t(k) * kFrameMs;
             events.push_back(ev);
-            lastDrop = best;
-            i        = best + 40;
         }
+        std::sort(events.begin(), events.end(), [](Event const& a, Event const& b) { return a.at < b.at; });
     } else mEnergy.clear();
 
     // hooks: lyric lines that come back (choruses), merged into time ranges

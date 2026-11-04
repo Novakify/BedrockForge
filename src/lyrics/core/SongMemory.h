@@ -36,8 +36,8 @@ public:
         float   strength  = 0;  // 0..1
     };
 
-    /// Storage key: lower(artist + "\0" + title) + duration in whole seconds (a remix / sped-up version is its own song)
-    static std::string keyFor(std::string const& trackKey, int64_t durationMs);
+    /// Storage key: lower(artist + "\0" + title) (a remix / sped-up upload has its own title)
+    static std::string keyFor(std::string const& trackKey, int64_t durationMs = 0);
     static std::string fileNameFor(std::string const& key); // "<fnv64 hex>.lfm"
 
     void reset(std::string key, int64_t durationMs);
@@ -57,6 +57,7 @@ public:
 
     std::string const& key() const { return mKey; }
     int64_t            durationMs() const { return mDurationMs; }
+    void               setDuration(int64_t ms) { if (ms > 0) mDurationMs = ms; }
     int                plays() const { return mPlays; }
     float              coverage() const;     // share of the song the map knows, 0..1
     bool               ready() const { return coverage() > 0.5f; }
