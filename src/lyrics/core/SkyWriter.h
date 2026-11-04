@@ -40,6 +40,7 @@ public:
         uint32_t          color = 0xFFB9A2FF; // star tint (ARGB)
         bool              enabled = true;
         double            now = 0;            // s, twinkle clock
+        float             skyLuma = 0;        // bright sky behind: dark-edged stars so they still read
     };
 
     void step(In const& in);

@@ -77,7 +77,7 @@ void SkyWriter::write(Line const& l, In const& in) {
     int const k = int(mCons.size());
     static float const azOff[] = {-38, 30, -6, 56, -62, 12, -24};
     float const az   = in.camYaw + azOff[k % 7];
-    float const elev = 52.0f - 9.0f * float(k % 3);
+    float const elev = 46.0f - 8.0f * float(k % 3);
     // letters laid out along a gentle arc; spaces start a new word (no line across words)
     std::vector<int> chars;
     for (size_t i = 0; i < l.text.size() && chars.size() < 40; ++i) chars.push_back(uint8_t(l.text[i]));
@@ -111,6 +111,10 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
     MusicState const* m = in.music;
     float const budget = m ? m->budget : 0.5f, treble = m ? m->treble : 0.0f, impact = m ? m->impact : 0.0f;
     Vec3 const  up0{0, 1, 0};
+    bool const     lightSky = in.skyLuma > 0.45f; // stars on a pastel sky: coloured cores, dark rings, darker lines
+    uint32_t const darkCol  = colDarken(in.color, 0.7f);
+    uint32_t const lineCol  = lightSky ? colDarken(in.color, 0.45f) : in.color;
+    float const    lineA    = lightSky ? 0.6f : 0.35f;
     auto quad = [&](Vec3 c, Vec3 r, Vec3 u, uint32_t argb, float alpha, float round, float soft) {
         if (alpha <= 0.004f) return;
         BfGlyphV1 q{};
@@ -145,8 +149,8 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
             Vec3 const A = pos[size_t(a)], B = A + (pos[size_t(b)] - A) * double(lp);
             Vec3 const mid = (A + B) * 0.5, axis = (B - A) * 0.5;
             Vec3 const n = (mid * -1.0).normalized();
-            Vec3 const thick = n.cross(axis.normalized()).normalized() * double(R * 0.0011f);
-            quad(mid, axis, thick, in.color, 0.32f * bright, 1.0f, 1.5f);
+            Vec3 const thick = n.cross(axis.normalized()).normalized() * double(R * 0.0017f);
+            quad(mid, axis, thick, lineCol, lineA * bright, 1.0f, 1.5f);
         }
         for (size_t i = 0; i < c.stars.size(); ++i) {
             if (shown[i] <= 0) continue;
@@ -155,9 +159,10 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
             float const tw = 0.8f + 0.2f * std::sin(float(in.now) * 2.3f + float(i) * 1.7f) +
                              0.35f * treble * hash01(uint32_t(i) * 31u + uint32_t(c.age * 4));
             float const a  = bright * tw * shown[i];
-            float const rc = R * 0.0042f, rh = R * 0.013f * (1.0f + 0.5f * mFinale);
-            quad(pos[i], r * double(rh), u * double(rh), in.color, 0.22f * a, 1.0f, 10.0f); // halo
-            quad(pos[i], r * double(rc), u * double(rc), 0xFFFFFFFFu, a, 1.0f, 2.0f);      // white-hot core
+            float const rc = R * 0.006f, rh = R * 0.017f * (1.0f + 0.5f * mFinale);
+            if (lightSky) quad(pos[i], r * double(rc * 1.9f), u * double(rc * 1.9f), darkCol, 0.55f * a, 1.0f, 3.0f); // dark ring
+            quad(pos[i], r * double(rh), u * double(rh), in.color, (lightSky ? 0.3f : 0.22f) * a, 1.0f, 10.0f); // halo
+            quad(pos[i], r * double(rc), u * double(rc), lightSky ? in.color : 0xFFFFFFFFu, a, 1.0f, 2.0f);   // core
         }
     };
     for (auto const& c : mCons) draw(c, false);

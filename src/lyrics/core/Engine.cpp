@@ -78,7 +78,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     { // [BF] the sky writes the song: constellations sit behind everything else
         SkyWriter::In si;
         si.t = in.t; si.songSeq = in.songSeq; si.playing = in.playing; si.lyrics = in.lyrics; si.music = in.music;
-        si.dt = in.dt; si.camYaw = cam.yaw; si.camPitch = cam.pitch; si.camPos = cam.pos; si.now = in.nowSeconds;
+        si.dt = in.dt; si.camYaw = cam.yaw; si.camPitch = cam.pitch; si.camPos = cam.pos; si.now = in.nowSeconds; si.skyLuma = in.skyLuma;
         si.enabled = cfg.constellations && cfg.showLyrics;
         Theme const th = currentTheme(cfg);
         si.color = cfg.letterFxColor != 0 ? uint32_t(cfg.letterFxColor) : th.a;
