@@ -32,7 +32,7 @@ void Portal::emit(In const& in, std::vector<BfGlyphV1>& out) const {
     Vec3 const c = dir(mYaw, mPitch) * double(kRadius);          // centre (relative to the eye = origin)
     Vec3 const f = c.normalized() * -1.0;                          // facing the player
     Vec3 const r = Vec3{0, 1, 0}.cross(f).normalized(), u = f.cross(r).normalized();
-    float const R = kRadius * float(std::tan(rad(9.0 + 4.0 * mPower))) * (0.35f + 0.65f * e);
+    float const R = kRadius * float(std::tan(rad(15.0 + 5.0 * mPower))) * (0.35f + 0.65f * e);
     MusicState const* m = in.music;
     float const beat = m ? m->beat : 0.0f, energy = m ? m->energy : 0.5f;
     uint32_t const col = toRgba(in.color | 0xFF000000u), white = toRgba(0xFFFFFFFFu);
@@ -57,7 +57,7 @@ void Portal::emit(In const& in, std::vector<BfGlyphV1>& out) const {
             Vec3 const mid = (p0 + p1) * 0.5, half = (p1 - p0) * 0.55;
             Vec3 const th = f.cross(half.normalized()) * double(R * (ring ? 0.008f : 0.016f) * (1.0f + 0.6f * beat));
             float const flick = 0.75f + 0.25f * float(std::sin(i * 1.7 + in.now * 5.0));
-            quad(mid, half, th, ring ? white : col, e * (ring ? 0.35f : 0.9f) * flick, 1.0f, 1.5f);
+            quad(mid, half, th, ring ? white : col, e * (ring ? 0.5f : 1.0f) * flick, 1.0f, 2.0f);
         }
     }
     // the swirl inside: dots spiralling into the centre
