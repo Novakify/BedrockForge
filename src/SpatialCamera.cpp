@@ -1106,6 +1106,22 @@ void clientTick() {
         }
         gMenuFrom = gMenuSavedPersp;
     }
+    {   // [LyricsForge] Showcase: third person while the camera sways round (so you see your player), restored after
+        static int saved = -1;
+        float      b = 0, y = 0, p = 0, r = 0;
+        auto       ci    = ll::service::getClientInstance();
+        bool const world = ci && ci->getLocalPlayer();
+        bool const want  = world && !gActive.load() && gMenuSavedPersp < 0 && rf::postfx::showcasePose(b, y, p, r);
+        if (!world) saved = -1;
+        else if (want && saved < 0) {
+            auto& o = ci->getOptions();
+            saved   = o.getPlayerViewPerspective();
+            if (saved == 0) o.setPlayerViewPerspective(1);
+        } else if (!want && saved >= 0) {
+            ci->getOptions().setPlayerViewPerspective(saved);
+            saved = -1;
+        }
+    }
     if (gSwingReq.exchange(false)) {
         if (auto ci = ll::service::getClientInstance())
             if (auto* lp = ci->getLocalPlayer()) static_cast<Actor&>(*lp).swing(ActorSwingSource::Interact, HandSlot::Mainhand);
