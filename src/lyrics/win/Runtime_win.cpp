@@ -66,6 +66,15 @@ struct State {
     std::filesystem::path   cfgFile, presetDir, cacheDir, memoryDir;
     SongMemory              memory;         // [BF] Song Memory of the song playing now (key empty = none)
     Conductor               conductor;      // [BF] music state for the Director (game thread, under mutex)
+    struct Demo {                           // [BF] Director demo: replays a known song silently (config/lyricsflow_demo.json)
+        bool                          on = false;
+        std::string                   artist, title, stamp;
+        std::shared_ptr<Lyrics const> lyrics;
+        SongMemory                    mem;
+        int64_t                       startNs = 0, startMs = 0, seq = 1000000, durMs = 0;
+        float                         speed = 1, prevBass = 0;
+    } demo;
+    std::vector<std::string> directorLines;  // [BF] Director events for logs/director.txt (written by the media thread)
     int64_t                 memoryHooksSeq = -1; // song whose lyrics the memory's hooks were found from
     int64_t                 memorySeq = -1; // song the memory belongs to (clock.songSeq)
     std::string             memoryTitle;
@@ -377,6 +386,65 @@ void songMemoryStep() {
     }
 }
 
+// [BF] Director demo (media thread): config/lyricsflow_demo.json = {"artist": "...", "title": "...", "startMs": 0,
+// "speed": 1} replays that song's cached lyrics against its Song Memory map, with no music playing - so the Director
+// can be checked (and tuned) remotely. Delete the file to stop. Also flushes the Director log.
+void demoStep() {
+    static int64_t lastCheck = 0;
+    std::vector<std::string> lines;
+    {
+        std::lock_guard l(gS->mutex);
+        lines.swap(gS->directorLines);
+    }
+    auto const logDir = gS->cfgFile.parent_path().parent_path() / "logs";
+    if (!lines.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(logDir, ec);
+        std::ofstream out(logDir / "director.txt", std::ios::app | std::ios::binary);
+        for (auto const& x : lines) out << x << "\n";
+    }
+    int64_t const now = nowNs();
+    if (now - lastCheck < 1000000000LL) return;
+    lastCheck = now;
+    auto const file = gS->cfgFile.parent_path() / "lyricsflow_demo.json";
+    std::error_code ec;
+    if (!std::filesystem::exists(file, ec)) {
+        std::lock_guard l(gS->mutex);
+        gS->demo.on = false;
+        return;
+    }
+    std::string const text = readAll(file);
+    {
+        std::lock_guard l(gS->mutex);
+        if (gS->demo.on && gS->demo.stamp == text) return;
+    }
+    auto j = json::parse(text);
+    if (!j || !j->isObject()) return;
+    std::string const artist = (*j)["artist"].asString(), title = (*j)["title"].asString();
+    std::string const key    = text::toLower(artist + std::string(1, '\0') + title);
+    std::optional<Lyrics> lyr;
+    if (auto cf = gS->cacheDir / cacheFileName(key); std::filesystem::exists(cf, ec)) lyr = fromCacheJson(readAll(cf));
+    SongMemory mem;
+    std::string const mkey = SongMemory::keyFor(key);
+    mem.reset(mkey, 0);
+    bool const known = mem.load(gS->memoryDir / SongMemory::fileNameFor(mkey));
+    if (known) mem.analyze(lyr ? &*lyr : nullptr);
+    std::lock_guard l(gS->mutex);
+    auto& d   = gS->demo;
+    d.on      = lyr.has_value() || known;
+    d.stamp   = text;
+    d.artist  = artist;
+    d.title   = title;
+    d.lyrics  = lyr ? std::make_shared<Lyrics const>(std::move(*lyr)) : nullptr;
+    d.mem     = std::move(mem);
+    d.startMs = int64_t((*j)["startMs"].asNumber(0));
+    d.speed   = float(std::clamp((*j)["speed"].asNumber(1), 0.25, 4.0));
+    d.startNs = now;
+    d.durMs   = d.mem.durationMs() > 0 ? d.mem.durationMs() : 240000;
+    d.seq++;
+    gS->directorLines.push_back("== demo " + artist + " - " + title + (known ? " (memory: " + std::to_string(d.mem.events.size()) + " events, " + std::to_string(d.mem.hooks.size()) + " hooks)" : " (no memory)") + (d.lyrics ? "" : " (no cached lyrics)"));
+}
+
 void mediaLoop() {
     gS->smtc = std::make_unique<Smtc>();
     while (gS->running) {
@@ -418,6 +486,7 @@ void mediaLoop() {
             }
         }
         songMemoryStep();
+        demoStep();
         // [BF] timing log (mods/BedrockForgeCore/logs/lyrics_clock.txt, ~1 line/s, this song + lyrics_clock.prev.txt):
         // what Windows reports vs our song clock, so a lyrics delay can be traced to the app or to the lyrics.
         // The line is built under the lock; the file is written AFTER it (the game thread waits on gS->mutex every
@@ -617,17 +686,42 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     }
     { // [BF] the Conductor: one music state for the Director (lyrics now, sky / grade through RF next)
         ConductorIn ci;
-        ci.posMs     = in.t;
-        ci.playing   = in.playing;
-        ci.songSeq   = in.songSeq;
-        ci.dt        = dt;
         ci.bandsLive = gS->bassLive;
         ci.bands     = gS->bassLive ? audioLatest() : BandFrame{};
-        ci.beat      = in.beat;
         ci.memory    = gS->memory.key().empty() ? nullptr : &gS->memory;
-        ci.enabled   = gS->engine.config().director;
+        if (auto& d = gS->demo; d.on) { // Director demo: a known song replayed from its memory map, no music needed
+            int64_t t = d.startMs + int64_t(double(now - d.startNs) / 1e6 * d.speed);
+            if (t > d.durMs) { d.startNs = now; d.startMs = 0; d.seq++; t = 0; }
+            in.t = t; in.playing = true; in.lyrics = d.lyrics.get(); in.lyricsState = d.lyrics ? LyricsState::Found : LyricsState::NotFound;
+            in.songSeq = d.seq; in.title = d.title; in.artist = d.artist;
+            BandFrame const f = d.mem.frameAt(t);
+            float const hit = std::clamp((f.bass - d.prevBass) * 6.0f, 0.0f, 1.0f);
+            d.prevBass = f.bass;
+            in.beat  = std::max(hit, in.beat * 0.9f); in.beatLive = true;
+            ci.bands = f; ci.bandsLive = true; ci.memory = &d.mem;
+        }
+        ci.posMs   = in.t;
+        ci.playing = in.playing;
+        ci.songSeq = in.songSeq;
+        ci.dt      = dt;
+        ci.beat    = in.beat;
+        ci.enabled = gS->engine.config().director;
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
+        auto const& m = gS->conductor.state();
+        auto stamp = [&](char const* what) {
+            char b[160];
+            std::snprintf(b, sizeof b, "%7.1fs %-7s budget %.2f energy %.2f section %d build %.2f hook %.2f choruses %d %s", double(in.t) / 1000.0,
+                          what, m.budget, m.energy, int(m.section), m.build, m.inHook, m.choruses, m.known ? "memory" : "live");
+            gS->directorLines.emplace_back(b);
+        };
+        if (m.songStart) stamp("start");
+        if (m.buildNow) stamp("build");
+        if (m.dropNow) stamp("DROP");
+        if (m.chorusNow) stamp("CHORUS");
+        if (m.calmNow) stamp("calm");
+        static int64_t lastBeatLog = 0;
+        if (m.active && now - lastBeatLog > 5000000000LL) { lastBeatLog = now; stamp("."); }
     }
     GameWorld world(a);
     auto const t0 = Clock::now();

@@ -66,6 +66,8 @@ public:
 
     /// smoothed, song-normalised energy at posMs (0..1), -1 = unknown
     float energyAt(int64_t posMs) const;
+    /// the averaged map's bands at posMs (zeros when unknown) - the Director demo replays a song from it
+    BandFrame frameAt(int64_t posMs) const;
     /// the next drop / chorus within horizonMs after posMs, or nullptr
     Event const* nextEvent(int64_t posMs, int64_t horizonMs) const;
 

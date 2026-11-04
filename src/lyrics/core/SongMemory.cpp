@@ -251,6 +251,18 @@ float SongMemory::energyAt(int64_t posMs) const {
     return mEnergy[i];
 }
 
+BandFrame SongMemory::frameAt(int64_t posMs) const {
+    BandFrame f;
+    if (posMs < 0) return f;
+    size_t const i = size_t(posMs / kFrameMs);
+    if (i >= mFrames.size() || i >= mCounts.size() || mCounts[i] == 0) return f;
+    f.bass   = mFrames[i].bass / 255.0f;
+    f.mid    = mFrames[i].mid / 255.0f;
+    f.treble = mFrames[i].treble / 255.0f;
+    f.loud   = mFrames[i].loud / 255.0f;
+    return f;
+}
+
 SongMemory::Event const* SongMemory::nextEvent(int64_t posMs, int64_t horizonMs) const {
     for (auto const& e : events)
         if (e.at > posMs && e.at <= posMs + horizonMs) return &e;
