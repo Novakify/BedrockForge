@@ -19,7 +19,7 @@ void Atmos::respawn(Mote& m, Vec3 const& cam, bool anywhere) {
     double const az = rnd() * 6.2831853, el = (rnd() - 0.35) * 1.4;
     m.pos   = cam + Vec3{std::cos(az) * std::cos(el), std::sin(el) * 0.6 + 0.3, std::sin(az) * std::cos(el)} * r;
     m.vel   = Vec3{(rnd() - 0.5) * 0.25, 0.04 + rnd() * 0.12, (rnd() - 0.5) * 0.25};
-    m.size  = 0.025f + 0.045f * rnd();
+    m.size  = 0.06f + 0.08f * rnd();   // half size, blocks: visible specks at 3 .. 13 m
     m.phase = rnd() * 6.2831853f;
     m.seed  = rnd();
 }
@@ -62,7 +62,7 @@ void Atmos::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& out) 
         if (d < 1.2 || rel.dot(f) < 0) continue;                         // too close / behind
         float const edge = float(std::clamp((kRadius - d) / 3.0, 0.0, 1.0)) * float(std::clamp((d - 1.2) / 1.5, 0.0, 1.0));
         float const tw   = 0.55f + 0.45f * std::sin(float(in.now) * (2.0f + 3.0f * m.seed) + m.phase);
-        float const lvl  = (0.10f + 0.55f * treble * tw + 0.35f * onset * m.seed + 0.6f * impact) * (0.5f + budget);
+        float const lvl  = (0.28f + 0.55f * treble * tw + 0.35f * onset * m.seed + 0.6f * impact) * (0.6f + 0.6f * budget);
         float const a    = std::clamp(lvl, 0.0f, 0.9f) * edge * mOn;
         if (a < 0.01f) continue;
         float const s = m.size * (1.0f + 0.6f * treble + 0.8f * impact);
@@ -74,7 +74,7 @@ void Atmos::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& out) 
         q.fill = q.fill2 = rgba;
         q.alpha    = a;
         q.outlineW = 1.0f;  // round
-        q.glowW    = 2.5f;  // soft edge, px
+        q.glowW    = 1.5f;  // soft edge, px
         q.uv[2] = q.uv[3] = 1.0f;
         q.flags = BF_GLYPH_SOLID;
         out.push_back(q);
