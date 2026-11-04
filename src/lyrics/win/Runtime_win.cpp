@@ -81,9 +81,11 @@ struct State {
         bool                           on = false;
         std::shared_ptr<Lyrics const>  lyr;
         std::vector<std::pair<int, int64_t>> taps;
+        std::vector<std::pair<int64_t, char>> marks; // [BF] section marks tapped while it played
         int                            next = -1;  // Line::index the next tap is for
         int64_t                        seq = -1;
     } tap;
+    int tapMarkKind = 0;
     struct Demo {                           // [BF] Director demo: replays a known song silently (config/lyricsflow_demo.json)
         bool                          on = false;
         std::string                   artist, title, stamp;
@@ -828,6 +830,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.bandsLive = gS->bassLive;
         ci.bands     = gS->bassLive ? audioLatest() : BandFrame{};
         ci.memory    = gS->memory.key().empty() ? nullptr : &gS->memory;
+        ci.marks     = gS->lyrics ? &gS->lyrics->marks : nullptr; // [BF] your section marks win
         if (auto& d = gS->demo; d.on) { // Director demo: a known song replayed from its memory map, no music needed
             int64_t t = d.startMs + int64_t(double(now - d.startNs) / 1e6 * d.speed);
             if (t > d.durMs) { d.startNs = now; d.startMs = 0; d.seq++; t = 0; }
@@ -838,6 +841,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             d.prevBass = f.bass;
             in.beat  = std::max(hit, in.beat * 0.9f); in.beatLive = true;
             ci.bands = f; ci.bandsLive = true; ci.memory = &d.mem;
+            ci.marks = d.lyrics ? &d.lyrics->marks : nullptr;
         }
         ci.posMs   = in.t;
         ci.playing = in.playing;
@@ -960,9 +964,15 @@ void tapAction(PanelAction::Kind k, int64_t now) {
         tp.taps.pop_back();
         break;
     case PanelAction::Kind::TapCancel: tp = {}; break;
+    case PanelAction::Kind::TapMark:
+        if (tp.on) tp.marks.push_back({std::max<int64_t>(0, t - 80), char(gS->tapMarkKind)});
+        break;
     case PanelAction::Kind::TapSave: {
-        if (!tp.on || tp.taps.empty() || !gS->clock.hasTrack() || tp.seq != gS->clock.songSeq()) { tp = {}; return; }
-        auto fixed = std::make_shared<Lyrics const>(retimeLines(*tp.lyr, tp.taps));
+        if (!tp.on || (tp.taps.empty() && tp.marks.empty()) || !gS->clock.hasTrack() || tp.seq != gS->clock.songSeq()) { tp = {}; return; }
+        Lyrics re = retimeLines(*tp.lyr, tp.taps);
+        re.marks.insert(re.marks.end(), tp.marks.begin(), tp.marks.end());
+        std::sort(re.marks.begin(), re.marks.end());
+        auto fixed = std::make_shared<Lyrics const>(std::move(re));
         MediaSample const s = gS->clock.track().s;
         gS->lyrics = fixed;
         gS->engine.reset();
@@ -988,6 +998,7 @@ PanelMedia panelMedia(int64_t now) { // caller holds gS->mutex
     if (gS->tap.on && gS->tap.seq != gS->clock.songSeq()) gS->tap = {}; // the song changed under us
     m.tapOn   = gS->tap.on;
     m.taps    = int(gS->tap.taps.size());
+    m.marks   = int(gS->tap.marks.size());
     m.tapNext = lineText(gS->tap.lyr.get(), gS->tap.next);
     m.tapLast = gS->tap.taps.empty() ? std::string() : lineText(gS->tap.lyr.get(), gS->tap.taps.back().first);
     if (gS->clock.hasTrack()) {
@@ -1035,7 +1046,8 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
                 }
                 break;
             case PanelAction::Kind::TapStart: case PanelAction::Kind::Tap: case PanelAction::Kind::TapUndo:
-            case PanelAction::Kind::TapSave: case PanelAction::Kind::TapCancel:
+            case PanelAction::Kind::TapSave: case PanelAction::Kind::TapCancel: case PanelAction::Kind::TapMark:
+                gS->tapMarkKind = int(a.ms);
                 tapAction(a.kind, now); // game thread: the tap is stamped with this frame's song position
                 break;
             case PanelAction::Kind::PinHere: { // [BF] floating lyrics stand ~5 blocks in front of you from now on

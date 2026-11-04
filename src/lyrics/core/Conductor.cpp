@@ -129,7 +129,25 @@ void Conductor::update(ConductorIn const& in) {
         mWasHook = hook;
         s.inHook += ((hook ? 1.0f : 0.0f) - s.inHook) * ease(dt, hook ? 0.3f : 1.2f);
     }
-    if (!s.known && in.bandsLive && !drop) { // live guess: a sudden, loud lift above the recent average
+    bool const manual = in.marks && !in.marks->empty();
+    if (manual) { // [BF] your own marks: they decide the moments, the guesses stand down
+        drop = chorus = false;
+        build = 0;
+        int64_t nextDrop = -1, buildFrom = -1;
+        for (auto const& [t, k] : *in.marks) {
+            if (contiguous && t > mLastPos && t <= in.posMs) {
+                if (k == 'd') drop = true;
+                else if (k == 'c') chorus = true;
+                else if (k == 'q') { s.calmNow = true; mSinceCalm = 0; }
+            }
+            if (k == 'b' && t <= in.posMs) buildFrom = t;
+            if (k == 'd' && t > in.posMs && nextDrop < 0) nextDrop = t;
+        }
+        if (buildFrom >= 0 && nextDrop > buildFrom) build = clamp01(float(in.posMs - buildFrom) / float(nextDrop - buildFrom));
+        mSinceDrop = drop ? 1e9f : mSinceDrop;     // manual hits ignore the cooldowns
+        mSinceChorus = chorus ? 1e9f : mSinceChorus;
+    }
+    if (!manual && !s.known && in.bandsLive && !drop) { // live guess: a sudden, loud lift above the recent average
         if (liveE - liveL > 0.40f && liveE > 0.72f && mSinceDrop > kLiveDropCooldown) drop = true;
         if (liveE - liveL > 0.12f && liveE > 0.45f) build = std::max(build, clamp01((liveE - liveL - 0.12f) / 0.25f) * 0.6f);
     }

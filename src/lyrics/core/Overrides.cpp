@@ -3,6 +3,7 @@
 
 #include <cctype>
 #include <cstdio>
+#include <algorithm>
 #include <map>
 #include <sstream>
 
@@ -22,6 +23,7 @@ std::string header(std::string_view artist, std::string_view title) {
     h += "[by:LyricsForge override - save this file and the game picks it up]\n";
     h += "[re:[mm:ss.xx] = when a line starts, <mm:ss.xx> before a word = when that word is sung (optional)]\n";
     h += "[re:duets - start a line with v2: for the second singer | translations - a line [same time]tr: text]\n";
+    h += "[re:sections - a line [time]@build, @drop, @chorus or @calm makes the Director hit exactly there]\n";
     return h;
 }
 } // namespace
@@ -62,6 +64,8 @@ std::string toOverrideLrc(Lyrics const& l, std::string_view artist, std::string_
         s += '\n';
         if (!ln.translation.empty()) s += "[" + stamp(ln.start) + "]tr: " + ln.translation + "\n";
     }
+    for (auto const& [t, k] : l.marks) // [BF] manual sections
+        s += "[" + stamp(t) + "]@" + (k == 'b' ? "build" : k == 'd' ? "drop" : k == 'c' ? "chorus" : "calm") + "\n";
     return s;
 }
 
@@ -136,6 +140,7 @@ std::optional<Lyrics> parseOverride(std::string_view text, int64_t durationMs) {
         text.remove_prefix(3); // Notepad's UTF-8 BOM
     // "[mm:ss.xx]tr: ..." lines are translations of the line with the same time; they don't become lyric lines
     std::map<int64_t, std::string> tr;
+    std::vector<std::pair<int64_t, char>> marks;
     std::string                    kept;
     std::istringstream             in{std::string(text)};
     for (std::string ln; std::getline(in, ln);) {
@@ -144,6 +149,14 @@ std::optional<Lyrics> parseOverride(std::string_view text, int64_t durationMs) {
         int64_t const    t = leadTime(ln, rest);
         size_t           i = 0;
         while (i < rest.size() && rest[i] == ' ') ++i;
+        if (t >= 0 && rest.size() > i && rest[i] == '@') { // [BF] manual section marks: @build @drop @chorus @calm
+            std::string k(rest.substr(i + 1));
+            for (auto& ch : k) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+            char const kind = k.rfind("build", 0) == 0 ? 'b' : k.rfind("drop", 0) == 0 ? 'd' : k.rfind("chorus", 0) == 0 ? 'c'
+                            : k.rfind("calm", 0) == 0 ? 'q' : 0;
+            if (kind) marks.push_back({t, kind});
+            continue;
+        }
         if (t >= 0 && rest.size() >= i + 3 && (rest.substr(i, 3) == "tr:" || rest.substr(i, 3) == "TR:")) {
             std::string v(rest.substr(i + 3));
             while (!v.empty() && v[0] == ' ') v.erase(v.begin());
@@ -155,6 +168,8 @@ std::optional<Lyrics> parseOverride(std::string_view text, int64_t durationMs) {
     }
     auto l = parseLrc(kept, durationMs, "override");
     if (!l) return l;
+    std::sort(marks.begin(), marks.end());
+    l->marks = std::move(marks);
     for (auto& line : l->lines) {
         if (line.index < 0) continue;
         if (voicePrefix(line.text)) {

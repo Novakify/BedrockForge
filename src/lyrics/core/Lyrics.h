@@ -48,6 +48,8 @@ struct Lyrics {
     bool              synced     = false;
     bool              wordSynced = false; // every line carries real word timing
     std::string       source;
+    /// [BF] manual sections (override files "[mm:ss.xx]@drop"): time + kind 'b' build, 'd' drop, 'c' chorus, 'q' calm
+    std::vector<std::pair<int64_t, char>> marks;
 
     /// Java Lyrics(times, texts, synced, source, durationMs, words). `words` may be empty (no word timing) or have
     /// one entry per line (an empty entry = that line has none -> its words are estimated).
@@ -82,6 +84,8 @@ std::string           toCacheJson(Lyrics const& l);
 std::optional<Lyrics> fromCacheJson(std::string_view json);
 /// Cache file name for a track key (lower(artist + "\0" + title)): 16 hex digits of FNV-1a 64 + ".json".
 std::string           cacheFileName(std::string_view trackKey);
+/// [BF] NetEase "tlyric" (an LRC of translations): each line whose time matches a lyric line becomes its translation
+int                   attachTranslations(Lyrics& l, std::string_view translationLrc);
 /// Lyrics.show(): upper-case when allCaps is on.
 std::string show(std::string_view s, bool allCaps);
 

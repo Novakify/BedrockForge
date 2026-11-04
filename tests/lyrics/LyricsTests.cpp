@@ -344,6 +344,35 @@ TEST(corner_player_hud) {
     CHECK(out.empty());
 }
 
+TEST(manual_sections_and_translations) {
+    auto l = parseOverride("[00:01.00]one\n[00:05.00]two\n[00:09.00]three\n[00:04.00]@build\n[00:08.00]@DROP\n[00:12.00]@chorus\n", 20000);
+    CHECK(l.has_value());
+    if (!l) return;
+    CHECK_EQ(l->marks.size(), size_t(3));
+    std::string const txt = toOverrideLrc(*l, "a", "b");
+    CHECK(txt.find("@drop") != std::string::npos && txt.find("@build") != std::string::npos);
+    auto back = fromCacheJson(toCacheJson(*l));
+    CHECK(back && back->marks.size() == 3);
+    // the Conductor follows the marks: build ramps from 4 s to the drop at 8 s, the drop fires exactly there
+    Conductor cd;
+    ConductorIn in; in.playing = true; in.songSeq = 1; in.dt = 0.05f; in.marks = &l->marks; in.bandsLive = true;
+    bool dropAt8 = false; float buildAt7 = 0;
+    for (int64_t t = 0; t <= 10000; t += 50) {
+        in.posMs = t;
+        cd.update(in);
+        if (cd.state().dropNow) dropAt8 = t >= 8000 && t <= 8050;
+        if (t == 7500) buildAt7 = cd.state().build;
+    }
+    CHECK(dropAt8);
+    CHECK(buildAt7 > 0.4f);
+    // NetEase translations by time
+    Lyrics x = *parseLrc("[00:01.00]hello\n[00:03.00]world\n[00:05.00]again\n", 8000);
+    CHECK_EQ(attachTranslations(x, "[00:01.00]hola\n[00:03.05]mundo\n"), 2);
+    int n = 0;
+    for (auto const& ln : x.lines) if (!ln.translation.empty()) ++n;
+    CHECK_EQ(n, 2);
+}
+
 TEST(json_basics) {
     auto v = json::parse(R"({"a":[1,2.5,-3e2,true,null,"xé🎵\n"],"b":{"c":"d"}})");
     CHECK(v.has_value());

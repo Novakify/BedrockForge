@@ -842,7 +842,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.dropNow = frag; // [BF] screen words break apart too (fragments in screen space)
                 d.dropFx  = c.exitAnim;
                 if (p.line.voice == 1) d.argb = kVoice2;
-                if (j == 0 && !frag) translationUnder(p, d, alpha * gA, true, emPx, out);
+                if (j == 0 && !frag && c.translations) translationUnder(p, d, alpha * gA, true, emPx, out);
                 out.push_back(std::move(d));
             }
         return out;
@@ -903,7 +903,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             d.sungMs    = t >= wd.start ? t - wd.start : -1;
             d.durMs     = std::max<int64_t>(1, wd.end - wd.start);
             if (p.line.voice == 1) d.argb = kVoice2;
-            if (j == 0 && !falling) translationUnder(p, d, alpha * gA, false, e, out);
+            if (j == 0 && !falling && c.translations) translationUnder(p, d, alpha * gA, false, e, out);
             out.push_back(std::move(d));
         }
     }

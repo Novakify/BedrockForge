@@ -991,6 +991,14 @@ void Panel::cinema(Ctx& c, Config& cfg) {
         c.option("ts2", 206, 136, 52, 12, "Undo", false, [&] { c.actions.push_back({PanelAction::Kind::TapUndo, 0}); }, a);
         c.option("ts3", 260, 136, 52, 12, "Save", false, [&] { c.actions.push_back({PanelAction::Kind::TapSave, 0}); }, a);
         c.option("ts4", 314, 136, 52, 12, "Cancel", false, [&] { c.actions.push_back({PanelAction::Kind::TapCancel, 0}); }, a);
+        // mark the song's moments while it plays: the Director hits exactly there from now on
+        c.text("mark now (" + std::to_string(m.marks) + "):", 206, 153, 0.5f, ACCENT2, 0.8f * a);
+        static char const* const mk[] = {"Build", "Drop", "Chorus", "Calm"};
+        static char const kk[] = {'b', 'd', 'c', 'q'};
+        for (int i = 0; i < 4; ++i)
+            c.option("tm" + std::to_string(i), 206 + float(i) * 40.5f, 161, 38, 12, mk[i], false,
+                     [&c, i] { c.actions.push_back({PanelAction::Kind::TapMark, int64_t(kk[i])}); }, a);
+        return; // the place-lyrics block comes back after tap-sync
     }
     // place by hand (floating lyrics)
     c.text("Place lyrics", 206, 153, 0.62f, WHITE, 0.55f * a);

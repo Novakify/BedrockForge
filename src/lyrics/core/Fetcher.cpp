@@ -317,6 +317,7 @@ std::optional<Lyrics> netease(HttpGet const& http, Variant const& v, int64_t dur
         clean += line + "\n";
     }
     auto l = parseLrc(clean, durationMs);
+    if (l && (*lo)["tlyric"].has("lyric")) attachTranslations(*l, (*lo)["tlyric"]["lyric"].str()); // [BF] translations
     return (l && l->lines.size() >= 3) ? l : std::nullopt;
 }
 std::optional<Lyrics> neteaseWords(HttpGet const& http, Variant const& v, int64_t durationMs, double maxDiff, int64_t deadline) {

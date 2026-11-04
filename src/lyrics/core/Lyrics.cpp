@@ -415,14 +415,21 @@ std::string toCacheJson(Lyrics const& l) {
     for (size_t i = 0; i < l.lines.size(); ++i) {
         auto const& ln = l.lines[i];
         o += (i ? "," : "") + std::string("{\"t\":") + jq(ln.text) + ",\"s\":" + std::to_string(ln.start) + ",\"e\":" + std::to_string(ln.end) +
-             ",\"est\":" + (ln.estimated ? "true" : "false") + ",\"w\":[";
+             ",\"est\":" + (ln.estimated ? "true" : "false") + (ln.translation.empty() ? std::string() : ",\"tr\":" + jq(ln.translation)) +
+             (ln.voice ? ",\"vo\":" + std::to_string(int(ln.voice)) : std::string()) + ",\"w\":[";
         for (size_t j = 0; j < ln.words.size(); ++j) {
             auto const& w = ln.words[j];
             o += (j ? "," : "") + std::string("[") + jq(w.text) + "," + std::to_string(w.origStart) + "," + std::to_string(w.origEnd) + "]";
         }
         o += "]}";
     }
-    return o + "]}";
+    o += "]";
+    if (!l.marks.empty()) { // [BF] manual sections
+        o += ",\"marks\":[";
+        for (size_t i = 0; i < l.marks.size(); ++i) o += (i ? "," : "") + std::string("[") + std::to_string(l.marks[i].first) + ",\"" + l.marks[i].second + "\"]";
+        o += "]";
+    }
+    return o + "}";
 }
 
 std::optional<Lyrics> fromCacheJson(std::string_view s) {
@@ -439,13 +446,39 @@ std::optional<Lyrics> fromCacheJson(std::string_view s) {
         ln.start     = j["s"].asInt();
         ln.end       = j["e"].asInt();
         ln.estimated = j["est"].asBool(true);
+        ln.translation = j["tr"].asString();
+        ln.voice       = uint8_t(std::clamp(int(j["vo"].asInt()), 0, 1));
         for (auto const& w : j["w"].items()) ln.words.push_back(Word::of(w[0].asString(), w[1].asInt(), w[2].asInt()));
         allReal &= !ln.estimated && !ln.words.empty();
         l.lines.push_back(std::move(ln));
     }
     l.wordSynced = allReal && !l.lines.empty();
+    if ((*d)["marks"].isArray())
+        for (auto const& m : (*d)["marks"].items()) {
+            std::string const k = m[1].asString();
+            if (!k.empty()) l.marks.push_back({m[0].asInt(), k[0]});
+        }
     if (l.lines.empty()) return std::nullopt;
     return l;
+}
+
+int attachTranslations(Lyrics& l, std::string_view tlrc) {
+    auto t = parseLrc(tlrc, 0, "tlyric");
+    if (!t) return 0;
+    int n = 0;
+    for (auto& ln : l.lines) {
+        if (ln.index < 0 || !ln.translation.empty()) continue;
+        for (auto const& tl : t->lines) {
+            if (tl.index < 0) continue;
+            if (std::llabs(tl.start - ln.start) <= 150) {
+                std::string tx = text::trimmed(tl.text);
+                if (!tx.empty() && tx != text::trimmed(ln.text)) { ln.translation = tx; ++n; }
+                break;
+            }
+            if (tl.start > ln.start + 150) break;
+        }
+    }
+    return n;
 }
 
 std::string cacheFileName(std::string_view key) {

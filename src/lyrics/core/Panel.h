@@ -41,15 +41,15 @@ struct PanelMedia {
     int         repeat = 0; // 0 off, 1 one, 2 all (SMTC AutoRepeatMode: None / Track / List)
     // [BF] tap-sync state (Cinema page)
     bool        tapOn = false;
-    int         taps = 0;
+    int         taps = 0, marks = 0;
     std::string tapNext, tapLast; // the line the next tap starts, the line tapped last
     bool        hasLyrics = false;
 };
 
 /// What the panel asks the game side to do (BF glue performs these on the media thread / config).
 struct PanelAction {
-    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics, TapStart, Tap, TapUndo, TapSave, TapCancel, PinHere } kind;
-    int64_t ms = 0; // Seek target
+    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics, TapStart, Tap, TapUndo, TapSave, TapCancel, PinHere, TapMark } kind;
+    int64_t ms = 0; // Seek target (TapMark: the section kind b / d / c / q)
 };
 
 struct PanelInput {

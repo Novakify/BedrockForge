@@ -10,6 +10,8 @@
 // (choruses, even on the first play), then a live guess from the loudness. Pure logic: no Windows, no game types.
 #pragma once
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 #include "lyrics/core/Bands.h"
 
@@ -46,6 +48,7 @@ struct ConductorIn {
     bool             bandsLive = false;
     float            beat    = 0;      // BeatDetector level
     SongMemory const* memory = nullptr; // this song's memory (may be empty / not ready)
+    std::vector<std::pair<int64_t, char>> const* marks = nullptr; // [BF] manual sections (win over the guesses)
     bool             enabled = true;
 };
 
