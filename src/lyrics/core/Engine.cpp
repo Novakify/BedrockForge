@@ -92,6 +92,14 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         std::vector<BfGlyphV1> stars;
         mSkyWriter.emit(si, mOrigin, stars);
         if (!stars.empty()) mGlyphs.insert(mGlyphs.begin(), stars.begin(), stars.end());
+        Atmos::In ai; // [BF] atmosphere: motes in the air, same tint as the stars
+        ai.music = in.music; ai.dt = in.dt; ai.camPos = cam.pos; ai.camYaw = cam.yaw; ai.camPitch = cam.pitch;
+        ai.color = si.color; ai.now = in.nowSeconds; ai.enabled = cfg.atmosphere && cfg.director && cfg.showLyrics;
+        ai.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
+        mAtmos.step(ai);
+        std::vector<BfGlyphV1> motes;
+        mAtmos.emit(ai, mOrigin, motes);
+        if (!motes.empty()) mGlyphs.insert(mGlyphs.begin(), motes.begin(), motes.end());
     }
     // the karaoke bar last: screen space, drawn over the world text
     mTopBar.build(in, cfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);

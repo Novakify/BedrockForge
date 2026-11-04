@@ -13,6 +13,7 @@
 #include "lyrics/core/LetterFx.h"
 #include "lyrics/core/Scene.h"
 #include "lyrics/core/SkyWriter.h"
+#include "lyrics/core/Atmos.h"
 #include "lyrics/core/TopBar.h"
 
 namespace bf::lyrics {
@@ -47,6 +48,7 @@ private:
     Config                 mCfg;
     FontSet                mFonts;
     Scene                  mScene;
+    Atmos                  mAtmos;       // [BF] music-reactive motes around the player
     SkyWriter              mSkyWriter;   // [BF] the sky writes the song (hook lines -> constellations)
     LetterPhysics          mPhysics;
     LetterFx                      mFx; // [BF] break-apart exits

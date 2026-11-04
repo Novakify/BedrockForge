@@ -36,6 +36,7 @@
 #include "lyrics/core/Conductor.h"
 #include "lyrics/core/Cinema.h"
 #include "lyrics/core/Overrides.h"
+#include "lyrics/core/Atmos.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 
@@ -246,6 +247,25 @@ TEST(lyric_overrides_roundtrip) {
             CHECK(again.find("tr: Hola") != std::string::npos && again.find("v2: ") != std::string::npos);
         }
     }
+}
+
+TEST(atmos_motes_follow_music) {
+    Atmos at;
+    MusicState m; m.active = true; m.treble = 0.8f; m.budget = 0.8f; m.energy = 0.6f;
+    Atmos::In in; in.music = &m; in.camPos = {100, 70, 100};
+    for (int i = 0; i < 120; ++i) { in.now += 1.0 / 60; at.step(in); }
+    CHECK_EQ(at.size(), size_t(Atmos::kCount));
+    std::vector<BfGlyphV1> out;
+    at.emit(in, in.camPos, out);
+    CHECK(!out.empty());
+    for (auto const& q : out) CHECK(q.flags == BF_GLYPH_SOLID && q.alpha > 0 && q.alpha <= 0.9f);
+    in.camPos = {400, 70, 400}; // walk far away: motes come along
+    for (int i = 0; i < 10; ++i) at.step(in);
+    out.clear(); at.emit(in, in.camPos, out);
+    for (auto const& q : out) CHECK(std::sqrt(q.pos[0] * q.pos[0] + q.pos[1] * q.pos[1] + q.pos[2] * q.pos[2]) < Atmos::kRadius + 2);
+    m.active = false;
+    for (int i = 0; i < 900; ++i) at.step(in);
+    CHECK_EQ(at.size(), size_t(0));
 }
 
 TEST(json_basics) {
