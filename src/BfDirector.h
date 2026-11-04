@@ -25,7 +25,7 @@ struct BfDirectorV1 {
     float letterbox;     // fraction of the screen height covered top + bottom each (0..0.075)
     float bloomBoost;    // added to the pack's bloom mix
     float caBoost;       // added to the pack's chromatic aberration
-    float reserved[8];
+    float reserved[6];
 };
 static_assert(sizeof(BfDirectorV1) == 128, "BfDirectorV1 layout is shared with RF");
 
