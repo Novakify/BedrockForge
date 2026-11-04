@@ -102,10 +102,10 @@ void Conductor::update(ConductorIn const& in) {
     } else if (in.bandsLive) {
         mHold -= dt;
         MusicSection want = liveE < 0.33f ? MusicSection::Calm : liveE < 0.66f ? MusicSection::Mid : MusicSection::High;
-        if (want != sec && mHold <= 0) { sec = want; mHold = 4.0f; }
+        if (want != sec && mHold <= 0) { sec = want; mHold = 6.0f; }
     }
     mSinceCalm += dt;
-    if (sec == MusicSection::Calm && mPrevSection != MusicSection::Calm && mSinceCalm > 8.0f) { s.calmNow = true; mSinceCalm = 0; }
+    if (sec == MusicSection::Calm && mPrevSection != MusicSection::Calm && mSinceCalm > 20.0f) { s.calmNow = true; mSinceCalm = 0; }
     mPrevSection = s.section = sec;
 
     // ---- events: scan (lastPos, pos]; a jump (seek) skips them
@@ -137,11 +137,11 @@ void Conductor::update(ConductorIn const& in) {
     if (chorus && (mSinceChorus < kChorusCooldown || mSinceDrop < 3.0f)) chorus = false;
     if (drop) { s.dropNow = true; mSinceDrop = 0; mSinceChorus = 0; s.impact = 1.0f; s.choruses++; }
     if (chorus) { s.chorusNow = true; mSinceChorus = 0; s.impact = std::max(s.impact, 0.75f); s.choruses++; }
-    // a build is announced once it is real (> 0.35), and re-armed only after it fades (< 0.05): no flicker
-    if (build > 0.35f && !mWasBuilding) { s.buildNow = true; mWasBuilding = true; }
-    if (build < 0.05f) mWasBuilding = false;
-    if (s.dropNow) { mWasBuilding = false; build = 0; }
+    if (s.dropNow) build = 0;
     s.build += (build - s.build) * ease(dt, build > s.build ? 0.2f : 0.6f);
+    // a build is announced once the eased value is real (> 0.4), re-armed only after it has faded (< 0.05)
+    if (s.build > 0.4f && !mWasBuilding) { s.buildNow = true; mWasBuilding = true; }
+    if (s.build < 0.05f) mWasBuilding = false;
 
     // ---- budget: what the section allows, plus hooks, anticipation and escalation; drops open it fully
     float t = sec == MusicSection::Calm ? 0.3f : sec == MusicSection::High ? 0.8f : 0.55f;
