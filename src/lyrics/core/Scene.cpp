@@ -789,6 +789,9 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 if (d >= 0 && d < 600) shake = std::max(shake, float(std::exp(-double(d) / 140.0)));
             }
     float const   combatK  = c.combatSafe ? 1.0f - (1.0f - c.combatAlpha) * anim::clamp01(in.combat) : 1.0f;
+    // [BF] stereo drift: the words lean toward the side the sound comes from (eased, at most ~0.45 em)
+    mStereo += (std::clamp(in.stereo, -1.0f, 1.0f) * std::clamp(c.stereoDrift, 0.0f, 1.0f) - mStereo) * float(1.0 - std::exp(-double(in.dt) / 0.35));
+    float const   drift    = mStereo * 0.9f;
 
     if (!inWorld(c)) { // SCREEN mode (WorldLyrics.drawScreen), in screen-height units
         float const emPx = 15.0f * c.lyricsScale / 240.0f; // Java: 15 GUI px at a ~240 px tall GUI
@@ -803,6 +806,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 if (!s && !frag) continue;
                 if (frag) p.dropped[size_t(j)] = true;
                 auto [alpha, dx, dy, sc, rot] = s ? *s : std::array<float, 5>{1.0f, 0, 0, 1, 0};
+                dx += drift;
                 if (c.fxBeatShake && shake > 0.05f) { // [BF]
                     dx += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7) - 0.5f) * 0.12f * shake;
                     dy += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7 + 3) - 0.5f) * 0.12f * shake;
@@ -862,6 +866,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 if (frag) st = {1.0f, 0, 0, 1, 0};
             }
             auto [alpha, dx, dy, sc, rot] = st;
+            dx += drift;
             if (c.fxBeatShake && shake > 0.05f) { // [BF]
                 dx += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7) - 0.5f) * 0.12f * shake;
                 dy += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7 + 3) - 0.5f) * 0.12f * shake;

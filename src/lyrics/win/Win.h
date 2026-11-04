@@ -62,6 +62,8 @@ float bassLevel(float dt, bool* live);
 void      memoryWanted(bool on);
 void      audioFrames(std::vector<BandFrame>& out);
 BandFrame audioLatest();
+/// [BF] stereo balance of what is playing, -1 left .. +1 right (0 when silent / mono)
+float audioBalance();
 
 /// Called from Core::enable(): registers the "lyricsflow" module (off by default), keybinds and threads.
 /// modDir = mods/BedrockForgeCore (fonts under resources/lyricsflow/fonts), configDir = its config folder.

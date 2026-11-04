@@ -5,7 +5,9 @@
 #ifdef _WIN32
 #include "lyrics/win/Win.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cstring>
 #include <mutex>
@@ -31,6 +33,7 @@ struct Loopback {
     BandAnalyzer      bands; // [BF] Song Memory / music state (same mutex as det)
     std::atomic_bool  running{false}, wanted{false}, bassW{false}, memW{false};
     std::atomic<int64_t> lastAudioMs{0};
+    std::atomic<float>   balance{0};  // [BF] stereo drift: -1 left .. +1 right (smoothed, ~0.3 s)
     std::thread       thread;
 };
 Loopback& L() { static Loopback* l = new Loopback(); return *l; } // never freed (thread may outlive statics)
@@ -127,6 +130,24 @@ void loop() {
                     }
                 }
                 L().lastAudioMs = t;
+                if (ch >= 2 && frames > 0 && (fmt->wBitsPerSample == 16 || (isFloat(fmt) && fmt->wBitsPerSample == 32))) {
+                    double sl = 0, sr = 0; // [BF] stereo drift: energy of the first two channels
+                    for (UINT32 i = 0; i < frames; ++i) {
+                        float l, r;
+                        if (fmt->wBitsPerSample == 16) {
+                            auto const* s = reinterpret_cast<int16_t const*>(data);
+                            l = float(s[size_t(i) * ch]) / 32768.0f; r = float(s[size_t(i) * ch + 1]) / 32768.0f;
+                        } else {
+                            auto const* s = reinterpret_cast<float const*>(data);
+                            l = s[size_t(i) * ch]; r = s[size_t(i) * ch + 1];
+                        }
+                        sl += double(l) * l; sr += double(r) * r;
+                    }
+                    double const el = std::sqrt(sl / frames), er = std::sqrt(sr / frames);
+                    float const  b  = el + er > 1e-4 ? float((er - el) / (er + el)) : 0.0f;
+                    float const  k  = std::min(1.0f, float(frames) / float(std::max<DWORD>(1, fmt->nSamplesPerSec)) / 0.3f);
+                    L().balance.store(L().balance.load() + (b - L().balance.load()) * k);
+                }
             }
             cap->ReleaseBuffer(frames);
             {
@@ -160,6 +181,7 @@ void audioFrames(std::vector<BandFrame>& out) {
     std::lock_guard l(L().mutex);
     L().bands.drain(out);
 }
+float audioBalance() { return nowMs() - L().lastAudioMs.load() < 1500 ? L().balance.load() : 0.0f; }
 BandFrame audioLatest() {
     std::lock_guard l(L().mutex);
     return L().bands.latest();

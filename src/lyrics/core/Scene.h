@@ -59,6 +59,7 @@ struct Placed {
 enum class LyricsState { None, Searching, Found, NotFound };
 
 struct SceneInput {
+    float stereo = 0; // [BF] stereo drift: -1 left .. +1 right
     int64_t            t = -1;       // song position (ms) incl. offsets, -1 = no track
     bool               playing = false;
     Lyrics const*      lyrics = nullptr;
@@ -114,6 +115,7 @@ public:
     float                      pauseFade() const { return mPauseFade; }
 
 private:
+    float mStereo = 0; // [BF] eased stereo drift
     void   place(Placed& p, Config const& c, CameraState const& cam, IWorld* w, TextWidthFn const& width);
     void   wallPlace(Placed& p, int64_t s, CameraState const& cam, IWorld* w);
     void   fitToSurface(Placed& p, Config const& c, IWorld* w);
