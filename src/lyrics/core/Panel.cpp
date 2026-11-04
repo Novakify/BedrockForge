@@ -848,8 +848,9 @@ void applyGroundLook(Config& cfg) {
 // effects that run while a line is up.
 void Panel::fx(Ctx& c, Config& cfg) {
     float const a = c.pageA;
-    c.pager("fxp", 43, mFxPage, 5, mFxPage, a); // 2: animated letters, 3: Director, 4: scenes, 5: cinema
+    c.pager("fxp", 43, mFxPage, 6, mFxPage, a); // 2: animated letters, 3: Director, 4: scenes, 5: cinema, 6: player
     if (mFxPage == 4) { cinema(c, cfg); return; }
+    if (mFxPage == 5) { hudPage(c, cfg); return; }
     if (mFxPage == 1) { letterFx(c, cfg); return; }
     if (mFxPage == 2) { director(c, cfg); return; }
     if (mFxPage == 3) { scenes(c, cfg); return; }
@@ -1004,6 +1005,29 @@ void Panel::cinema(Ctx& c, Config& cfg) {
         c.option("pn5", 327.5f, 176, 38, 12, "Farther", false, [&] { cfg.pinX += fx * 0.5f; cfg.pinZ += fz * 0.5f; }, a);
     } else if (cfg.lyricsStyle != LyricsStyle::Floating)
         c.text("pinning moves Floating lyrics", 206, 178, 0.5f, ACCENT2, 0.7f * a);
+}
+
+// [BF] FX page 6: the corner music player (LyricsFlow 2.2's Extra tab idea)
+void Panel::hudPage(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Music player", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.toggle2("hp", 206, 54, 78, "Show it", cfg.hudPlayer, [&] { cfg.hudPlayer = !cfg.hudPlayer; }, a);
+    c.toggle2("hl", 288, 54, 78, "Lyrics in it", cfg.hudPlayerLyrics, [&] { cfg.hudPlayerLyrics = !cfg.hudPlayerLyrics; }, a);
+    c.toggle2("hr", 206, 70, 78, "Rounded", cfg.hudRound, [&] { cfg.hudRound = !cfg.hudRound; }, a);
+    c.toggle2("hc", 288, 70, 78, "Cover colour", cfg.hudColorFromCover, [&] { cfg.hudColorFromCover = !cfg.hudColorFromCover; }, a);
+    c.text("Place", 206, 92, 0.62f, WHITE, 0.55f * a);
+    static char const* const where[] = {"Top left", "Top right", "Low left", "Low right"};
+    static float const wx[] = {0.01f, 0.99f, 0.01f, 0.99f}, wy[] = {0.12f, 0.12f, 0.62f, 0.62f};
+    for (int i = 0; i < 4; ++i) {
+        bool const sel = std::fabs(cfg.hudPlayerX - wx[i]) < 0.02f && std::fabs(cfg.hudPlayerY - wy[i]) < 0.02f;
+        c.option("hw" + std::to_string(i), 206 + float(i % 2) * 82, 100 + float(i / 2) * 15, 78, 13, where[i], sel,
+                 [&cfg, i] { cfg.hudPlayerX = wx[i]; cfg.hudPlayerY = wy[i]; }, a);
+    }
+    c.option("hu", 206, 133, 38, 12, "Up", false, [&] { cfg.hudPlayerY = std::max(0.0f, cfg.hudPlayerY - 0.04f); }, a);
+    c.option("hd", 246.5f, 133, 38, 12, "Down", false, [&] { cfg.hudPlayerY = std::min(1.0f, cfg.hudPlayerY + 0.04f); }, a);
+    c.option("hs", 287, 133, 38, 12, "Smaller", false, [&] { cfg.hudPlayerScale = std::max(0.5f, cfg.hudPlayerScale - 0.1f); }, a);
+    c.option("hb", 327.5f, 133, 38, 12, "Bigger", false, [&] { cfg.hudPlayerScale = std::min(2.0f, cfg.hudPlayerScale + 0.1f); }, a);
+    c.text("song, cover, time bar and the next lines", 206, 152, 0.5f, ACCENT2, 0.7f * a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the

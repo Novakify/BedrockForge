@@ -39,6 +39,7 @@
 #include "lyrics/core/Atmos.h"
 #include "lyrics/core/Bursts.h"
 #include "lyrics/core/Ribbon.h"
+#include "lyrics/core/PlayerHud.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 
@@ -322,6 +323,25 @@ TEST(word_ribbon_runs_with_the_singing) {
     CHECK(b.x - a.x > 0.9 && b.y < 0.0);
     for (int i = 0; i < 20; ++i) rb.step({}, width, Vec3{0, 70, 0}, t += 0.1, 0.5f, true);
     CHECK_EQ(rb.points(), size_t(0));
+}
+
+TEST(corner_player_hud) {
+    FontSet fonts;
+    fonts.loadFromJson("outfit", readFile("font_test.json"), "x.png");
+    fonts.loadFromJson("outfit_bold", readFile("font_test.json"), "x.png");
+    fonts.setAtlasIndex("outfit", 0); fonts.setAtlasIndex("outfit_bold", 0);
+    Config c; c.hudPlayer = true;
+    Lyrics l = *parseLrc(readFile("song.lrc"), 200000);
+    SceneInput in; in.title = "Song"; in.artist = "Artist"; in.t = 1500; in.playing = true; in.lyrics = &l; in.guiW = 480; in.guiH = 270; in.songSeq = 1;
+    PlayerHud h; PlayerHud::Extra ex; ex.durationMs = 200000;
+    std::vector<BfGlyphV1> out;
+    for (int i = 0; i < 30; ++i) { out.clear(); h.build(in, ex, c, fonts, out); }
+    CHECK(h.visible() > 0.9f);
+    CHECK(out.size() > 20);
+    for (auto const& q : out) CHECK((q.flags & BF_GLYPH_SCREEN) != 0);
+    c.hudPlayer = false;
+    for (int i = 0; i < 60; ++i) { out.clear(); h.build(in, ex, c, fonts, out); }
+    CHECK(out.empty());
 }
 
 TEST(json_basics) {

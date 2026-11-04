@@ -816,6 +816,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     in.beat        = gS->bassLive ? gS->bass : 0.0f;
     in.beatLive    = gS->bassLive;
     in.stereo      = gS->bassLive ? audioBalance() : 0.0f; // [BF] stereo drift
+    in.durationMs  = gS->clock.hasTrack() ? gS->clock.track().s.durationMs : 0;
+    in.coverAtlas  = gS->panelAssets.cover;
     { // Combat Safe: full right after a hit, easing out over combatHoldMs
         int64_t since = now / 1000000 - gCombatAtMs.load();
         int     hold  = std::max(1, gS->engine.config().combatHoldMs);

@@ -113,7 +113,8 @@ private:
     void letterFx(Ctx& c, Config& cfg); // [BF] FX page 2: animated letters
     void director(Ctx& c, Config& cfg); // [BF] FX page 3: the Director's switches + reactivity
     void scenes(Ctx& c, Config& cfg);   // [BF] FX page 4: Scene Studio
-    void cinema(Ctx& c, Config& cfg);   // [BF] FX page 5: Cinema (ribbon, impacts, showcase, tap-sync, place)
+    void cinema(Ctx& c, Config& cfg);
+    void hudPage(Ctx& c, Config& cfg);  // [BF] FX page 6: corner music player (LyricsFlow 2.2 Extra)   // [BF] FX page 5: Cinema (ribbon, impacts, showcase, tap-sync, place)
     void fps(Ctx& c, Config& cfg);
     void more(Ctx& c, Config& cfg);
 

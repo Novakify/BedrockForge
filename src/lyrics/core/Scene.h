@@ -60,6 +60,8 @@ enum class LyricsState { None, Searching, Found, NotFound };
 
 struct SceneInput {
     float stereo = 0; // [BF] stereo drift: -1 left .. +1 right
+    int64_t durationMs = 0; // [BF] corner player
+    int     coverAtlas = -1;
     int64_t            t = -1;       // song position (ms) incl. offsets, -1 = no track
     bool               playing = false;
     Lyrics const*      lyrics = nullptr;

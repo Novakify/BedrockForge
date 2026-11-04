@@ -117,6 +117,9 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     }
     // the karaoke bar last: screen space, drawn over the world text
     mTopBar.build(in, cfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);
+    PlayerHud::Extra px; // [BF] corner music player
+    px.durationMs = in.durationMs; px.coverAtlas = in.coverAtlas; px.coverAccent = in.albumAccent;
+    mPlayer.build(in, px, cfg, mFonts, mGlyphs);
 }
 
 // [BF] the Director's touch on the lyric words: glow follows the energy budget, held notes become hero words,

@@ -149,6 +149,13 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(cinemaGrade, true)               /* [BF] Director colour grade + vignette of the world per scene (RF, D3D12) */  \
     B(impactFrames, true)              /* [BF] a soft light flash + bloom / CA kick on drops and chorus hits (RF) */   \
     B(letterbox, true)                 /* [BF] cinema bars ease in during builds and big hooks (RF) */               \
+    B(hudPlayer, false)                /* [BF] corner music player (LyricsFlow 2.2 Extra): cover, time, controls */  \
+    B(hudPlayerLyrics, true)           /* [BF] ... with the line being sung and the next two */                     \
+    B(hudRound, true)                  /* [BF] rounded LyricsForge look (off = square Minecraft look) */            \
+    B(hudColorFromCover, false)        /* [BF] highlights follow the song cover instead of the lyrics colour */     \
+    F(hudPlayerX, 0.01f)               /* [BF] 0 left .. 1 right */                                                 \
+    F(hudPlayerY, 0.62f)               /* [BF] 0 top .. 1 bottom */                                                 \
+    F(hudPlayerScale, 1.0f)                                                                                            \
     B(snowAnySky, false)               /* [BF] LyricsFlow 2.2 "Snow": snow falls around you with any sky */          \
     B(showcase, false)                 /* [BF] Showcase: camera sways behind you, soft focus, bars (RF, D3D12) */    \
     B(pinned, false)                   /* [BF] floating lyrics stay where you pinned them */                        \
