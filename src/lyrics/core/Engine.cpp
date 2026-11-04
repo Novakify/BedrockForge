@@ -71,6 +71,13 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         }
         buildWordGlyphs(w, *f, cfg, st, mOrigin, mGlyphs);
     }
+    { // [BF] word ribbon (drawn behind the words: inserted at the front)
+        mRibbon.step(words, width, mOrigin, in.nowSeconds, m ? m->energy : 0.0f, cfg.wordRibbon && cfg.showLyrics);
+        std::vector<BfGlyphV1> rib;
+        Theme const th = currentTheme(cfg);
+        mRibbon.emit(cfg.letterFxColor != 0 ? uint32_t(cfg.letterFxColor) : th.a, m ? std::clamp(m->budget, 0.0f, 1.0f) : 0.5f, rib);
+        if (!rib.empty()) mGlyphs.insert(mGlyphs.begin(), rib.begin(), rib.end());
+    }
     if (mFx.size()) { // [BF] fragments of words that broke apart
         mFx.step(in.dt * (m ? std::clamp(m->timeScale, 0.25f, 2.5f) : 1.0f)); // [BF] speed ramp
         mFx.emit(mOrigin, mGlyphs);

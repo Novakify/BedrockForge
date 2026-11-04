@@ -69,6 +69,9 @@ struct GlyphStyle {
 GlyphStyle makeStyle(Config const& c, float timeSeconds);
 
 /// Append the quads of one word. Positions are relative to `origin`. passes = neon/shadow layering.
+/// [BF] where a point of the word's em layout (x centred, y up, 0 = visual middle) ends up: relative to `origin` in the
+/// world, or screen units for screen words (same maths as buildWordGlyphs, no slant / wave)
+Vec3 wordPoint(DrawWord const& w, double lx, double ly, Vec3 origin);
 void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, GlyphStyle const& st, Vec3 origin, std::vector<BfGlyphV1>& out,
                      bool mainPassOnly = false);
 

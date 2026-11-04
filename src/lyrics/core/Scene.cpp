@@ -824,6 +824,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.key    = int64_t(p.line.index) * 1000 + p.w0 + j;
                 d.hero   = heroWord(p.line, p.w0 + j);
                 d.sungMs = t >= wd.start ? t - wd.start : -1;
+                d.durMs  = std::max<int64_t>(1, wd.end - wd.start);
                 d.dropNow = frag; // [BF] screen words break apart too (fragments in screen space)
                 d.dropFx  = c.exitAnim;
                 if (p.line.voice == 1) d.argb = kVoice2;
@@ -885,6 +886,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             d.key       = int64_t(p.line.index) * 1000 + p.w0 + j;
             d.hero      = heroWord(p.line, p.w0 + j);
             d.sungMs    = t >= wd.start ? t - wd.start : -1;
+            d.durMs     = std::max<int64_t>(1, wd.end - wd.start);
             if (p.line.voice == 1) d.argb = kVoice2;
             if (j == 0 && !falling) translationUnder(p, d, alpha * gA, false, e, out);
             out.push_back(std::move(d));

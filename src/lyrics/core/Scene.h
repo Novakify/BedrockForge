@@ -100,6 +100,7 @@ struct DrawWord {
     bool        plain = false;      // [BF] main pass only (no shadow / offset passes / glow)
     bool        hero  = false;      // [BF] a held note (sustained word): the Director emphasises it while sung
     int64_t     sungMs = -1;        // [BF] ms since the word started being sung (-1 = not yet)
+    int64_t     durMs = 0;          // [BF] how long the word is sung (ribbon progress)
 };
 
 class Scene {

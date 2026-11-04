@@ -14,6 +14,7 @@
 #include "lyrics/core/Scene.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Atmos.h"
+#include "lyrics/core/Ribbon.h"
 #include "lyrics/core/TopBar.h"
 
 namespace bf::lyrics {
@@ -49,7 +50,8 @@ private:
     FontSet                mFonts;
     Scene                  mScene;
     Atmos                  mAtmos;
-    Bursts                 mBursts;      // [BF] material-aware impact bits of falling letters       // [BF] music-reactive motes around the player
+    Bursts                 mBursts;
+    Ribbon                 mRibbon;      // [BF] light running under the line with the singing      // [BF] material-aware impact bits of falling letters       // [BF] music-reactive motes around the player
     SkyWriter              mSkyWriter;   // [BF] the sky writes the song (hook lines -> constellations)
     LetterPhysics          mPhysics;
     LetterFx                      mFx; // [BF] break-apart exits

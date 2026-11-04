@@ -38,6 +38,7 @@
 #include "lyrics/core/Overrides.h"
 #include "lyrics/core/Atmos.h"
 #include "lyrics/core/Bursts.h"
+#include "lyrics/core/Ribbon.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 
@@ -289,6 +290,23 @@ TEST(material_impacts) {
     CHECK_EQ(out.size(), b.size());
     for (int i = 0; i < 40; ++i) b.step(0.05f);
     CHECK_EQ(b.size(), size_t(0));
+}
+
+TEST(word_ribbon_runs_with_the_singing) {
+    Ribbon rb;
+    DrawWord w; w.text = "hello"; w.font = "f"; w.origin = {0, 70, 5}; w.scale = 0.5f; w.alpha = 1; w.sung = true; w.durMs = 1000; w.key = 3000;
+    auto width = [](std::string_view, std::string_view) { return 2.0f; };
+    double t = 10;
+    for (int i = 0; i <= 10; ++i) { w.sungMs = i * 100; rb.step({w}, width, Vec3{0, 70, 0}, t += 0.1, 0.5f, true); }
+    CHECK(rb.points() >= 8);
+    std::vector<BfGlyphV1> out;
+    rb.emit(0xFFFF00FF, 0.8f, out);
+    CHECK(out.size() >= 8);
+    // the head walked from the left end of the word to the right end, under it
+    Vec3 a = wordPoint(w, -1.0, -0.62, Vec3{0, 70, 0}), b = wordPoint(w, 1.0, -0.62, Vec3{0, 70, 0});
+    CHECK(b.x - a.x > 0.9 && b.y < 0.0);
+    for (int i = 0; i < 20; ++i) rb.step({}, width, Vec3{0, 70, 0}, t += 0.1, 0.5f, true);
+    CHECK_EQ(rb.points(), size_t(0));
 }
 
 TEST(json_basics) {

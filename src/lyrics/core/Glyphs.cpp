@@ -160,6 +160,20 @@ struct Pass {
 };
 } // namespace
 
+Vec3 wordPoint(DrawWord const& w, double lx, double ly, Vec3 origin) {
+    double const sinR = std::sin(double(w.rotZ)), cosR = std::cos(double(w.rotZ));
+    double const s    = double(w.scale);
+    if (w.screen) {
+        double const tilt = 2.0 * std::atan2(w.orient.z, w.orient.w), sinT = std::sin(tilt), cosT = std::cos(tilt);
+        double gx = lx * s, gy = -ly * s;
+        double rx = gx * cosR - gy * sinR + w.x, ry = gx * sinR + gy * cosR + w.y;
+        return Vec3{w.origin.x + rx * cosT - ry * sinT, w.origin.y + rx * sinT + ry * cosT, 0};
+    }
+    double gx = lx * s, gy = ly * s;
+    Vec3   local{gx * cosR - gy * sinR + w.x, gx * sinR + gy * cosR + w.y, 0};
+    return w.origin + w.orient.rotate(local) - origin;
+}
+
 void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, GlyphStyle const& st, Vec3 origin, std::vector<BfGlyphV1>& out,
                      bool mainPassOnly) {
     if (w.alpha <= 0.01f || w.text.empty() || font.atlasIndex == FontSet::kNoAtlas) return; // [BF] no atlas slot (yet)
