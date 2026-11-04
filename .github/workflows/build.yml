@@ -58,6 +58,8 @@ jobs:
           Write-Output "fxc: $($fxc.FullName)"
           python tools/gen_glyph.py "$($dxc.FullName)" "$($fxc.FullName)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/gen_postfx.py "$($dxc.FullName)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - run: xmake repo -u
       - run: xmake f -a x64 -m release -p windows -v -y --target_type=client

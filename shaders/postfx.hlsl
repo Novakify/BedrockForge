@@ -15,6 +15,9 @@ cbuffer Params : register(b0) {
     float4 m0;   // rows of the previous-from-current camera rotation (3x3)
     float4 m1;
     float4 m2;
+    float4 d0;   // LyricsForge Director: xyz = grade tint, w = grade amount
+    float4 d1;   // x = saturation, y = contrast, z = vignette, w = impact flash
+    float4 d2;   // xyz = flash colour, w = letterbox (fraction of the height, top and bottom)
 };
 
 Texture2D t0 : register(t0);
@@ -137,6 +140,25 @@ float3 cas(float2 uv, float sharp) {
     return saturate((b * w + d * w + f * w + h * w + e) * rcpW);
 }
 
+// LyricsForge Director look, in display space (after bloom). Neutral constants (1,1,1,0 / 1,1,0,0 / -,0) = no-op.
+float3 directorGrade(float3 c, float2 uv) {
+    c = lerp(c, saturate(c * d0.xyz), d0.w);
+    float l = dot(c, float3(0.2126, 0.7152, 0.0722));
+    c = max(lerp(l.xxx, c, d1.x), 0.0);
+    c = (c - 0.5) * d1.y + 0.5;
+    float2 q = uv - 0.5;
+    q.x *= p2.y;
+    float v = smoothstep(0.4, 1.2, length(q));
+    c *= 1.0 - d1.z * v;
+    c += d2.xyz * d1.w * (1.0 - 0.4 * v);
+    if (d2.w > 0.0) {
+        float e  = min(uv.y, 1.0 - uv.y);
+        float px = p0.y * 1.5;
+        c *= lerp(0.08, 1.0, smoothstep(d2.w - px, d2.w + px, e));
+    }
+    return saturate(c);
+}
+
 float ign(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }
 
 float4 PSComposite(V2P i) : SV_Target {
@@ -177,5 +199,6 @@ float4 PSComposite(V2P i) : SV_Target {
         b /= float(n);
         col = lerp(col, b, p0.z);
     }
-    return float4(p2.w > 0.5 ? toSrgb(col) : col, 1.0);
+    float3 o = p2.w > 0.5 ? toSrgb(col) : saturate(col);
+    return float4(directorGrade(o, uv), 1.0);
 }

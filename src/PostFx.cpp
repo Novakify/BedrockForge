@@ -17,6 +17,7 @@
 
 #include "LLShim.h"
 #include "PostFxShaders.h"
+#include "BfDirector.h"
 
 namespace rf::postfx {
 namespace {
@@ -40,10 +41,51 @@ GetFn bfGet() {
     return fn;
 }
 
+// LyricsForge Director (BF lyricsforge-cinematic): grade / vignette / impact flash / letterbox, optional export
+using DirFn = BfDirectorV1 const* (*)();
+DirFn dirGet() {
+    static DirFn fn    = nullptr;
+    static int   delay = 0;
+    if (fn || delay-- > 0) return fn;
+    delay = 240;
+    if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll"))
+        fn = reinterpret_cast<DirFn>(reinterpret_cast<void*>(GetProcAddress(m, "BF_GetDirector")));
+    return fn;
+}
+struct Dir {
+    bool  on = false;
+    float tint[3] = {1, 1, 1}, amount = 0, sat = 1, con = 1, vig = 0, flash = 0, flashCol[3] = {1, 1, 1}, box = 0;
+    float bloom = 0, ca = 0;
+};
+// a copy of BF's frame; inactive once BF stops publishing (no world on screen) for ~1/3 s
+Dir readDirector(bool allow) {
+    static uint32_t lastFrame = 0;
+    static int      still     = 0;
+    Dir d;
+    DirFn fn = allow ? dirGet() : nullptr;
+    BfDirectorV1 const* b = fn ? fn() : nullptr;
+    if (!b || b->version < 1 || b->size < sizeof(BfDirectorV1)) return d;
+    BfDirectorV1 const v = *b;
+    if (v.frame != lastFrame) { lastFrame = v.frame; still = 0; } else if (still < 1000) ++still;
+    if (!v.active || still > 20) return d;
+    d.on = true;
+    for (int k = 0; k < 3; ++k) { d.tint[k] = std::clamp(v.tint[k], 0.0f, 2.0f); d.flashCol[k] = std::clamp(v.flashColor[k], 0.0f, 1.0f); }
+    d.amount = std::clamp(v.gradeAmount, 0.0f, 1.0f);
+    d.sat    = std::clamp(v.saturation, 0.0f, 2.0f);
+    d.con    = std::clamp(v.contrast, 0.5f, 1.6f);
+    d.vig    = std::clamp(v.vignette, 0.0f, 0.7f);
+    d.flash  = std::clamp(v.flash, 0.0f, 0.2f);
+    d.box    = std::clamp(v.letterbox, 0.0f, 0.08f);
+    d.bloom  = std::clamp(v.bloomBoost, 0.0f, 0.2f);
+    d.ca     = std::clamp(v.caBoost, 0.0f, 0.004f);
+    return d;
+}
+
 struct Ui {
     bool  enabled = true;
     bool  custom  = false;  // use the sliders instead of the pack's postfx.json
     float bloom = 0.12f, tiles = 6.f, ca = 0.0f, caStyle = 0.f, cas = 0.0f, motionBlur = 0.0f;
+    bool  director = true;  // apply the LyricsForge Director's look
 } gUi;
 
 struct Params {
@@ -119,7 +161,7 @@ bool createStatic(ID3D12Device* device) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 0, 0, 0};
     D3D12_ROOT_PARAMETER   params[2]{};
     params[0].ParameterType            = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants                = {0, 0, 24};
+    params[0].Constants                = {0, 0, 36};
     params[0].ShaderVisibility         = D3D12_SHADER_VISIBILITY_PIXEL;
     params[1].ParameterType            = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable          = {1, &range};
@@ -227,7 +269,7 @@ void barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STA
     l->ResourceBarrier(1, &x);
 }
 
-struct Consts { float v[24]; };
+struct Consts { float v[36]; };
 
 void draw(ID3D12GraphicsCommandList* l, ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE rtv, UINT w, UINT h,
           UINT srcSlot, Consts const& c) {
@@ -237,7 +279,7 @@ void draw(ID3D12GraphicsCommandList* l, ID3D12PipelineState* pso, D3D12_CPU_DESC
     l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     l->RSSetViewports(1, &vp);
     l->RSSetScissorRects(1, &sc);
-    l->SetGraphicsRoot32BitConstants(0, 24, c.v, 0);
+    l->SetGraphicsRoot32BitConstants(0, 36, c.v, 0);
     l->SetGraphicsRootDescriptorTable(1, srvGpu(srcSlot));
     l->DrawInstanced(3, 1, 0, 0);
 }
@@ -264,6 +306,7 @@ bool linearizable(DXGI_FORMAT f) {
 }
 
 BfPostFxV1 gLast{};
+bool       gDirOn = false;
 bool       gLinked = false;
 } // namespace
 
@@ -275,11 +318,18 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     gLinked = bf && bf->version >= 1;
     if (gLinked) gLast = *bf;
     if (!gLinked) { gStatus = "waiting for Bedrock Forge"; gHavePrev = false; return false; }
-    if (!bf->active && !gUi.custom) { gStatus = "idle (no world on screen or the pack has no postfx.json)"; gHavePrev = false; return false; }
+    Dir const dir = readDirector(gUi.director);
+    gDirOn = dir.on;
+    if (!bf->active && !gUi.custom && !dir.on) { gStatus = "idle (no world on screen or the pack has no postfx.json)"; gHavePrev = false; return false; }
     if (gUi.custom && !bf->active && bf->frame == 0) { gHavePrev = false; return false; }
     Params p = gUi.custom ? Params{gUi.bloom, gUi.tiles, gUi.ca, gUi.caStyle, gUi.cas, gUi.motionBlur, bf->yaw, bf->pitch, bf->fov}
                           : Params{bf->bloom, bf->bloomTiles, bf->ca, bf->caStyle, bf->cas, bf->motionBlur, bf->yaw, bf->pitch, bf->fov};
-    if (!p.any()) { gStatus = "idle (all effects 0)"; return false; }
+    if (dir.on) { // the Director's kicks ride on top of the pack's values
+        p.bloom += dir.bloom;
+        p.ca += dir.ca;
+        if (p.tiles < 1) p.tiles = 6;
+    }
+    if (!p.any() && !dir.on) { gStatus = "idle (all effects 0)"; return false; }
     if (!gRoot && !createStatic(device)) return false;
     D3D12_RESOURCE_DESC bd = bb->GetDesc();
     if (!ensureSized(bd)) return false;
@@ -344,6 +394,11 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         c.v[12 + r * 4 + 1] = m[r * 3 + 1];
         c.v[12 + r * 4 + 2] = m[r * 3 + 2];
     }
+    // Director grade (neutral when off: saturation / contrast 1, everything else 0)
+    c.v[24] = dir.on ? dir.tint[0] : 1; c.v[25] = dir.on ? dir.tint[1] : 1; c.v[26] = dir.on ? dir.tint[2] : 1;
+    c.v[27] = dir.on ? dir.amount : 0;
+    c.v[28] = dir.on ? dir.sat : 1; c.v[29] = dir.on ? dir.con : 1; c.v[30] = dir.on ? dir.vig : 0; c.v[31] = dir.on ? dir.flash : 0;
+    c.v[32] = dir.flashCol[0]; c.v[33] = dir.flashCol[1]; c.v[34] = dir.flashCol[2]; c.v[35] = dir.on ? dir.box : 0;
     gPrevYaw   = p.yaw;
     gPrevPitch = p.pitch;
     gHavePrev  = true;
@@ -379,6 +434,8 @@ void drawUi() {
     if (gLinked)
         ImGui::Text("Shaderpack asks for: bloom %.2f  CA %.4f (%s)  CAS %.2f  motion blur %.2f", gLast.bloom, gLast.ca,
                     gLast.caStyle < 0.5f ? "Cursed Fog" : "Insanity", gLast.cas, gLast.motionBlur);
+    ImGui::Checkbox("LyricsForge Director look (grade, impact frames, cinema bars)", &gUi.director);
+    if (gUi.director) { ImGui::SameLine(); ImGui::TextDisabled(gDirOn ? "(active)" : "(waiting for a song)"); }
     ImGui::Checkbox("Override with my own values", &gUi.custom);
     if (gUi.custom) {
         ImGui::SliderFloat("Bloom", &gUi.bloom, 0.0f, 0.5f, "%.2f");
