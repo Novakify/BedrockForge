@@ -34,6 +34,8 @@
 #include "lyrics/core/SkyFx.h"
 #include "lyrics/core/SkySystem.h"
 #include "lyrics/core/Conductor.h"
+#include "lyrics/core/SkyWriter.h"
+#include "lyrics/core/Studio.h"
 
 using namespace bf::lyrics;
 
@@ -1462,6 +1464,51 @@ TEST(conductor_live_guess_without_memory) {
     in.enabled = false;
     c.update(in);
     CHECK(!c.state().active && !c.state().dropNow);
+}
+
+TEST(sky_writes_the_song) { // [BF] hook lines become constellations, finale lights them, a new song dissolves them
+    std::vector<Timing>      times{{1000, 4000}, {5000, 8000}, {9000, 12000}, {13000, 16000}, {20000, 24000}, {25000, 28000}};
+    std::vector<std::string> texts{"first verse line", "we light it up", "another verse", "we light it up", "bridge part", "outro"};
+    Lyrics lyr = Lyrics::build(times, texts, true, "test", 30000);
+    CHECK(isHookLine(lyr, lyr.lines[1]));
+    CHECK(!isHookLine(lyr, lyr.lines[0]));
+    SkyWriter w;
+    SkyWriter::In in;
+    in.lyrics = &lyr; in.playing = true; in.songSeq = 1; in.dt = 1.0f / 30.0f;
+    size_t afterFirst = 0;
+    for (int64_t t = 0; t < 19000; t += 33) {
+        in.t = t;
+        w.step(in);
+        if (t > 8500 && t < 8600) afterFirst = w.constellations().size();
+    }
+    CHECK_EQ(afterFirst, size_t(1));                  // written when "we light it up" ended
+    CHECK_EQ(w.constellations().size(), size_t(2));   // and again at the second hook
+    auto const& c = w.constellations()[0];
+    CHECK(c.stars.size() >= 10);
+    CHECK(!c.links.empty());
+    for (auto const& s : c.stars) CHECK(s.dir.y > 0.4); // up in the sky
+    std::vector<BfGlyphV1> q;
+    w.emit(in, Vec3{}, q);
+    CHECK(q.size() > 20);
+    in.songSeq = 2; in.t = 0;
+    w.step(in);
+    CHECK(w.constellations().empty()); // moved to dissolving
+    q.clear();
+    w.emit(in, Vec3{}, q);
+    CHECK(!q.empty());
+}
+TEST(studio_scenes) {
+    CHECK(builtinScenes().size() >= 10);
+    auto s = findScene("celestial_dream");
+    CHECK(s.has_value());
+    Config c;
+    applyScene(c, *s);
+    CHECK_EQ(c.scene, std::string("celestial_dream"));
+    CHECK_EQ(c.skyPreset, std::string("aurora"));
+    auto j = sceneToJson(captureScene(c, "mine", "My \"scene\""));
+    auto back = sceneFromJson(j);
+    CHECK(back.has_value());
+    if (back) { CHECK_EQ(back->name, std::string("My \"scene\"")); CHECK_EQ(back->sky, std::string("aurora")); CHECK_EQ(back->letterFx, c.letterFx); }
 }
 
 int main(int argc, char** argv) {

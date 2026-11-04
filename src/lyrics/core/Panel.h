@@ -106,6 +106,8 @@ private:
     void look(Ctx& c, Config& cfg, FontSet const& fonts);
     void fx(Ctx& c, Config& cfg);
     void letterFx(Ctx& c, Config& cfg); // [BF] FX page 2: animated letters
+    void director(Ctx& c, Config& cfg); // [BF] FX page 3: the Director's switches + reactivity
+    void scenes(Ctx& c, Config& cfg);   // [BF] FX page 4: Scene Studio
     void fps(Ctx& c, Config& cfg);
     void more(Ctx& c, Config& cfg);
 

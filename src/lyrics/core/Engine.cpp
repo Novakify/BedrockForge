@@ -13,6 +13,7 @@ void Engine::reset() {
     mPhysics.clear();
     mTopBar.reset();
     mGlyphs.clear();
+    mSkyWriter.clear();
 }
 
 void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) {
@@ -26,7 +27,10 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     // quality + Auto FPS: the frame renders with the costly effects dropped (the saved config is untouched)
     Config cfg = effectiveConfig(mCfg, mPerf);
     MusicState const* m = cfg.director && in.music && in.music->active ? in.music : nullptr;
-    if (m) cfg.letterFxIntensity *= 0.55f + 0.75f * m->budget + 0.5f * m->impact; // [BF] calm verses simmer, choruses burn
+    // [BF] reactivity preset: how far apart calm and full are (Soft .. Cinematic)
+    static constexpr float kCalm[4] = {0.75f, 0.55f, 0.45f, 0.35f}, kFull[4] = {1.05f, 1.25f, 1.4f, 1.5f}, kImp[4] = {0.5f, 1.0f, 1.3f, 1.5f};
+    int const rx = std::clamp(cfg.reactivity, 0, 3);
+    if (m) cfg.letterFxIntensity *= kCalm[rx] + (kFull[rx] - kCalm[rx]) * m->budget + 0.5f * kImp[rx] * m->impact; // calm verses simmer, choruses burn
     if (cfg.contrastGuard && in.skyLuma > 0.4f) { // [BF] light text on a light sky: give it a dark edge it can stand on
         float const k = std::clamp((in.skyLuma - 0.4f) / 0.35f, 0.0f, 1.0f);
         cfg.outlineWidth = std::max(cfg.outlineWidth, 0.08f + 0.14f * k);
@@ -71,6 +75,18 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         mPhysics.emit(mOrigin, letters);
         mGlyphs.insert(mGlyphs.begin(), letters.begin(), letters.end()); // letters on the ground sit behind live text
     }
+    { // [BF] the sky writes the song: constellations sit behind everything else
+        SkyWriter::In si;
+        si.t = in.t; si.songSeq = in.songSeq; si.playing = in.playing; si.lyrics = in.lyrics; si.music = in.music;
+        si.dt = in.dt; si.camYaw = cam.yaw; si.camPitch = cam.pitch; si.camPos = cam.pos; si.now = in.nowSeconds;
+        si.enabled = cfg.constellations && cfg.showLyrics;
+        Theme const th = currentTheme(cfg);
+        si.color = cfg.letterFxColor != 0 ? uint32_t(cfg.letterFxColor) : th.a;
+        mSkyWriter.step(si);
+        std::vector<BfGlyphV1> stars;
+        mSkyWriter.emit(si, mOrigin, stars);
+        if (!stars.empty()) mGlyphs.insert(mGlyphs.begin(), stars.begin(), stars.end());
+    }
     // the karaoke bar last: screen space, drawn over the world text
     mTopBar.build(in, cfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);
 }
@@ -78,13 +94,16 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
 // [BF] the Director's touch on the lyric words: glow follows the energy budget, held notes become hero words,
 // drops / choruses punch the sung words for a moment. Calm verses stay readable (never below ~55 % glow).
 void Engine::direct(std::vector<DrawWord>& words, MusicState const& m, Config const& cfg) {
-    float const glowK = directed(m, 0.55f, 1.25f);
+    static constexpr float kCalm[4] = {0.75f, 0.55f, 0.45f, 0.35f}, kFull[4] = {1.05f, 1.25f, 1.4f, 1.5f}, kImp[4] = {0.5f, 1.0f, 1.3f, 1.5f};
+    int const   rx    = std::clamp(cfg.reactivity, 0, 3);
+    float const glowK = directed(m, kCalm[rx], kFull[rx]);
+    float const imp   = m.impact * kImp[rx];
     for (auto& w : words) {
         if (w.plain) continue;
         w.glow = w.glow * glowK + 0.25f * m.inHook;
         if (w.sung) {
-            w.glow += 0.45f * m.impact;
-            w.scale *= 1.0f + 0.10f * m.impact;
+            w.glow += 0.45f * imp;
+            w.scale *= 1.0f + 0.10f * imp;
             if (cfg.heroWords && w.hero) { w.scale *= 1.08f; w.glow += 0.5f; }
         }
     }

@@ -10,6 +10,7 @@
 //   LyricsFlow full-screen menu in the port yet).
 // - Sliders also follow a held click ([BF] drag); Java sets them on the click only.
 #include "lyrics/core/Panel.h"
+#include "lyrics/core/Studio.h"
 
 #include <algorithm>
 #include <cmath>
@@ -841,8 +842,10 @@ void applyGroundLook(Config& cfg) {
 // effects that run while a line is up.
 void Panel::fx(Ctx& c, Config& cfg) {
     float const a = c.pageA;
-    c.pager("fxp", 43, mFxPage, 2, mFxPage, a); // page 2: animated letters
+    c.pager("fxp", 43, mFxPage, 4, mFxPage, a); // 2: animated letters, 3: Director, 4: scenes
     if (mFxPage == 1) { letterFx(c, cfg); return; }
+    if (mFxPage == 2) { director(c, cfg); return; }
+    if (mFxPage == 3) { scenes(c, cfg); return; }
     c.text("Words come in", 206, 45, 0.62f, WHITE, 0.55f * a);
     static std::pair<EnterAnim, char const*> const ins[] = {{EnterAnim::Word, "Pop"},   {EnterAnim::Fade, "Fade"}, {EnterAnim::Rise, "Rise"},
                                                             {EnterAnim::Drop, "Drop"},  {EnterAnim::Spin, "Spin"}, {EnterAnim::Zoom, "Zoom"},
@@ -909,6 +912,41 @@ void Panel::letterFx(Ctx& c, Config& cfg) {
         0.2f + 1.8f * c.slider("lxi", "Strength", 168, (std::clamp(cfg.letterFxIntensity, 0.2f, 2.0f) - 0.2f) / 1.8f, a);
     if (cfg.letterFx != 0 && cfg.font == "minecraft")
         c.text("Pixel font: pick another font to see it", 206, 184, 0.55f, ACCENT2, 0.8f * a);
+}
+
+// [BF] FX page 3: the Director (Conductor) - what reacts to the song, and how strongly
+void Panel::director(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Director", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.toggle2("dr", 206, 54, 78, "Director", cfg.director, [&] { cfg.director = !cfg.director; }, a);
+    c.toggle2("tc", 288, 54, 78, "Title card", cfg.titleCard, [&] { cfg.titleCard = !cfg.titleCard; }, a);
+    c.toggle2("hw", 206, 70, 78, "Hero words", cfg.heroWords, [&] { cfg.heroWords = !cfg.heroWords; }, a);
+    c.toggle2("cg", 288, 70, 78, "Contrast", cfg.contrastGuard, [&] { cfg.contrastGuard = !cfg.contrastGuard; }, a);
+    c.toggle2("cs", 206, 86, 160, "Sky writes the song", cfg.constellations, [&] { cfg.constellations = !cfg.constellations; }, a);
+    c.toggle2("sm", 206, 102, 160, "Song Memory", cfg.songMemory, [&] { cfg.songMemory = !cfg.songMemory; }, a);
+    c.text("Reactivity", 206, 124, 0.62f, WHITE, 0.55f * a);
+    static char const* const r[] = {"Soft", "Balanced", "Dynamic", "Cinema"};
+    for (int i = 0; i < 4; ++i)
+        c.option("rx" + std::to_string(i), 206 + float(i) * 40.5f, 132, 38, 13, r[i], cfg.reactivity == i, [&cfg, i] { cfg.reactivity = i; }, a);
+    static char const* const tip[] = {"gentle: the lyrics stay the focus", "calm verses, full choruses",
+                                      "big contrast between sections", "everything for the drop"};
+    c.text(tip[std::clamp(cfg.reactivity, 0, 3)], 206, 154, 0.55f, ACCENT2, 0.8f * a);
+}
+
+// [BF] FX page 4: Scene Studio - one tap sets the whole look (sky, letters, colours, motion, Director style)
+void Panel::scenes(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Scenes", 206, 45, 0.62f, WHITE, 0.55f * a);
+    auto const& all = builtinScenes();
+    for (size_t i = 0; i < all.size() && i < 12; ++i) {
+        auto const& s = all[i];
+        c.option("sc" + std::to_string(i), 206 + float(i % 2) * 81, 53 + float(i / 2) * 15, 78, 13, s.name, cfg.scene == s.id,
+                 [&cfg, &s] { applyScene(cfg, s); }, a);
+    }
+    c.toggle2("ss", 206, 146, 160, "Remember per song", cfg.songScenes, [&] { cfg.songScenes = !cfg.songScenes; }, a);
+    std::string mood = "pick a scene: sky, letters and Director move together";
+    if (auto s = findScene(cfg.scene)) mood = s->mood;
+    c.text(mood, 206, 166, 0.52f, ACCENT2, 0.8f * a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the

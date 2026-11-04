@@ -47,6 +47,7 @@
 #include "lyrics/core/SkySystem.h"
 #include "lyrics/core/SongMemory.h"
 #include "lyrics/core/Conductor.h"
+#include "lyrics/core/Studio.h"
 #include "lyrics/win/World_win.h"
 
 namespace bf::lyrics::win {
@@ -76,6 +77,9 @@ struct State {
     } demo;
     std::vector<std::string> directorLines;  // [BF] Director events for logs/director.txt (written by the media thread)
     int64_t                 memoryHooksSeq = -1; // song whose lyrics the memory's hooks were found from
+    std::map<std::string, std::string> songScenes; // [BF] track key -> Scene Studio scene (config/lyricsflow_songscenes.json)
+    std::string             lastScene;      // cfg.scene seen last frame (a change while a song plays = remember it)
+    bool                    songScenesDirty = false;
     int64_t                 memorySeq = -1; // song the memory belongs to (clock.songSeq)
     std::string             memoryTitle;
     std::shared_ptr<Lyrics const> memoryLyrics; // this song's lyrics (gS->lyrics is already cleared when the song ends)
@@ -144,6 +148,37 @@ void loadConfig() {
     if (std::filesystem::exists(gS->cfgFile))
         if (auto j = json::parse(readAll(gS->cfgFile))) applyJson(gS->engine.config(), *j);
     saveConfig(); // writes new fields with defaults
+    // [BF] per-song scenes
+    auto const ss = gS->cfgFile.parent_path() / "lyricsflow_songscenes.json";
+    if (std::filesystem::exists(ss))
+        if (auto j = json::parse(readAll(ss)); j && j->isObject())
+            for (auto const& [k, v] : j->members()) if (v.isString()) gS->songScenes[k] = v.asString();
+    gS->lastScene = gS->engine.config().scene;
+}
+
+void saveSongScenes() { // media thread, without gS->mutex: a copy is written
+    std::map<std::string, std::string> copy;
+    {
+        std::lock_guard l(gS->mutex);
+        if (!gS->songScenesDirty) return;
+        gS->songScenesDirty = false;
+        copy = gS->songScenes;
+    }
+    auto esc = [](std::string const& x) {
+        std::string o;
+        for (char c : x) {
+            if (c == '"' || c == '\\') { o += '\\'; o += c; }
+            else if (uint8_t(c) < 0x20) { char b[8]; std::snprintf(b, sizeof b, "\\u%04x", unsigned(uint8_t(c))); o += b; }
+            else o += c;
+        }
+        return o;
+    };
+    std::string out = "{\n";
+    bool first = true;
+    for (auto const& [k, v] : copy) { out += (first ? "  \"" : ",\n  \"") + esc(k) + "\": \"" + esc(v) + "\""; first = false; }
+    out += "\n}\n";
+    std::ofstream f(gS->cfgFile.parent_path() / "lyricsflow_songscenes.json", std::ios::binary);
+    f << out;
 }
 
 // [BF] Fonts: every font's metrics are loaded, but RF has kBfLyricsMaxAtlases texture slots (fonts + UI atlas + cover
@@ -479,6 +514,14 @@ void mediaLoop() {
                     gS->lyrics      = nullptr;
                     gS->lyricsState = LyricsState::Searching;
                     fetchFor(*sample, gS->clock.songSeq());
+                    auto& cfg = gS->engine.config(); // [BF] this song's remembered scene comes back
+                    if (cfg.songScenes)
+                        if (auto it = gS->songScenes.find(gS->clock.track().key()); it != gS->songScenes.end())
+                            if (auto sc = findScene(it->second); sc && cfg.scene != sc->id) {
+                                applyScene(cfg, *sc);
+                                gS->lastScene = cfg.scene;
+                                saveConfig();
+                            }
                 }
                 if (e == MediaEvent::Stop) {
                     gS->lyrics      = nullptr;
@@ -487,6 +530,7 @@ void mediaLoop() {
             }
         }
         songMemoryStep();
+        saveSongScenes();
         demoStep();
         // [BF] timing log (mods/BedrockForgeCore/logs/lyrics_clock.txt, ~1 line/s, this song + lyrics_clock.prev.txt):
         // what Windows reports vs our song clock, so a lyrics delay can be traced to the app or to the lyrics.
@@ -710,6 +754,14 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
         in.skyLuma = gS->sky.luma();
+        auto const& cfgNow = gS->engine.config(); // [BF] a scene picked while a song plays is remembered for it
+        if (cfgNow.scene != gS->lastScene) {
+            gS->lastScene = cfgNow.scene;
+            if (cfgNow.songScenes && gS->clock.hasTrack() && !cfgNow.scene.empty()) {
+                gS->songScenes[gS->clock.track().key()] = cfgNow.scene;
+                gS->songScenesDirty = true;
+            }
+        }
         auto const& m = gS->conductor.state();
         auto stamp = [&](char const* what) {
             char b[160];

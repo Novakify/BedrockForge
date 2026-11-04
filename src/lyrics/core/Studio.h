@@ -1,0 +1,45 @@
+// LyricsForge - [BF] Scene Studio: one scene = a whole look (sky, lyric material, colours, entry/exit, style, how
+// strongly the Director reacts, constellations). Original code for Bedrock Forge.
+//
+// A scene is applied on top of the config (the fields it names), so picking one changes everything coherently - the
+// "one cinematic system" idea: lyrics, sky, letter material and the Director's taste move together. Built-in scenes
+// cover the cinematic presets of the vision doc; user scenes are JSON files in config/lyricsflow_scenes/ (save /
+// duplicate / edit / load), and a scene can be remembered per song (config/lyricsflow_songscenes.json).
+#pragma once
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "lyrics/core/Config.h"
+
+namespace bf::lyrics {
+
+struct StudioScene {
+    std::string id, name, mood;   // mood = one line for the panel ("soft auroras, constellation lyrics")
+    std::string sky;              // sky preset id ("" = keep)
+    std::string theme;            // colour theme id ("" = keep)
+    int         letterFx = -1;    // -1 = keep
+    int32_t     fxColor  = 0;
+    bool        rainbow  = false;
+    float       fxSpeed = 1, fxStrength = 1;
+    int         enter = -1, exit = -1; // EnterAnim / ExitAnim ints, -1 = keep
+    int         style = -1;            // LyricsStyle, -1 = keep
+    int         reactivity = 1;        // 0 soft, 1 balanced, 2 dynamic, 3 cinematic
+    bool        constellations = true;
+    float       glow = -1;             // glowStrength, -1 = keep
+};
+
+/// the built-in scenes (Celestial Dream first)
+std::vector<StudioScene> const& builtinScenes();
+std::optional<StudioScene>      findScene(std::string_view id, std::vector<StudioScene> const& user = {});
+/// writes the scene's fields into cfg and remembers cfg.scene = id
+void applyScene(Config& cfg, StudioScene const& s);
+/// capture the current look as a scene (Scene Studio "save as")
+StudioScene captureScene(Config const& cfg, std::string id, std::string name);
+
+std::string                 sceneToJson(StudioScene const& s);
+std::optional<StudioScene>  sceneFromJson(std::string_view text);
+
+} // namespace bf::lyrics
