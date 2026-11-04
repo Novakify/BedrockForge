@@ -34,6 +34,7 @@
 #include "lyrics/core/SkyFx.h"
 #include "lyrics/core/SkySystem.h"
 #include "lyrics/core/Conductor.h"
+#include "lyrics/core/Cinema.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 
@@ -176,6 +177,39 @@ struct FakeHttp {
 } // namespace
 
 // ================================================================ JSON / text
+TEST(cinema_grade_flash_letterbox) {
+    Config cfg; cfg.director = true; cfg.reactivity = 2; cfg.scene = "blood_moon";
+    Cinema c;
+    MusicState m; m.active = true; m.budget = 0.6f;
+    c.step(&m, cfg, 1.0f / 60);
+    for (int i = 0; i < 300; ++i) c.step(&m, cfg, 1.0f / 60);
+    CHECK(c.out().active);
+    CHECK(c.out().amount > 0.3f && c.out().tint[0] > 1.05f);      // red grade in
+    CHECK(c.out().flash == 0.0f);
+    m.dropNow = true; c.step(&m, cfg, 1.0f / 60); m.dropNow = false;
+    CHECK(c.out().flash > 0.1f && c.out().flash <= Cinema::kFlashCap + 1e-6f);
+    CHECK(c.out().bloomBoost > 0.0f && c.out().caBoost > 0.0f);
+    m.chorusNow = true; c.step(&m, cfg, 1.0f / 60); m.chorusNow = false; // too soon: no second flash
+    float f1 = c.out().flash;
+    for (int i = 0; i < 30; ++i) c.step(&m, cfg, 1.0f / 60);
+    CHECK(c.out().flash < f1 * 0.2f);                              // decays fast
+    m.build = 1.0f;
+    for (int i = 0; i < 400; ++i) c.step(&m, cfg, 1.0f / 60);
+    CHECK(c.out().letterbox > 0.08f && c.out().letterbox <= Cinema::kLetterMax + 1e-6f);
+    cfg.letterbox = false;
+    for (int i = 0; i < 400; ++i) c.step(&m, cfg, 1.0f / 60);
+    CHECK(c.out().letterbox < 0.005f);
+    // scene switch crossfades instead of snapping
+    cfg.scene = "liquid_paradise"; c.step(&m, cfg, 1.0f / 60);
+    CHECK(c.out().tint[0] > 1.0f);
+    for (int i = 0; i < 200; ++i) c.step(&m, cfg, 1.0f / 60);
+    CHECK(c.out().tint[0] < 0.9f);
+    // music stops -> the look fades out
+    m.active = false;
+    for (int i = 0; i < 600; ++i) c.step(&m, cfg, 1.0f / 60);
+    CHECK(c.out().amount < 0.01f && !c.out().active);
+}
+
 TEST(json_basics) {
     auto v = json::parse(R"({"a":[1,2.5,-3e2,true,null,"xé🎵\n"],"b":{"c":"d"}})");
     CHECK(v.has_value());

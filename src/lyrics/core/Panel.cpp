@@ -925,13 +925,17 @@ void Panel::director(Ctx& c, Config& cfg) {
     c.toggle2("cs", 206, 86, 160, "Sky writes the song", cfg.constellations, [&] { cfg.constellations = !cfg.constellations; }, a);
     c.toggle2("sm", 206, 102, 78, "Song Memory", cfg.songMemory, [&] { cfg.songMemory = !cfg.songMemory; }, a);
     c.toggle2("ac", 288, 102, 78, "Album colours", cfg.albumColors, [&] { cfg.albumColors = !cfg.albumColors; }, a);
-    c.text("Reactivity", 206, 124, 0.62f, WHITE, 0.55f * a);
+    // [BF] the full-screen look (RF on D3D12): grade per scene, impact frames on drops, cinema bars in builds
+    c.toggle2("gr", 206, 118, 52, "Grade", cfg.cinemaGrade, [&] { cfg.cinemaGrade = !cfg.cinemaGrade; }, a);
+    c.toggle2("if", 260, 118, 52, "Impact", cfg.impactFrames, [&] { cfg.impactFrames = !cfg.impactFrames; }, a);
+    c.toggle2("lb", 314, 118, 52, "Bars", cfg.letterbox, [&] { cfg.letterbox = !cfg.letterbox; }, a);
+    c.text("Reactivity", 206, 140, 0.62f, WHITE, 0.55f * a);
     static char const* const r[] = {"Soft", "Balanced", "Dynamic", "Cinema"};
     for (int i = 0; i < 4; ++i)
-        c.option("rx" + std::to_string(i), 206 + float(i) * 40.5f, 132, 38, 13, r[i], cfg.reactivity == i, [&cfg, i] { cfg.reactivity = i; }, a);
+        c.option("rx" + std::to_string(i), 206 + float(i) * 40.5f, 148, 38, 13, r[i], cfg.reactivity == i, [&cfg, i] { cfg.reactivity = i; }, a);
     static char const* const tip[] = {"gentle: the lyrics stay the focus", "calm verses, full choruses",
                                       "big contrast between sections", "everything for the drop"};
-    c.text(tip[std::clamp(cfg.reactivity, 0, 3)], 206, 154, 0.55f, ACCENT2, 0.8f * a);
+    c.text(tip[std::clamp(cfg.reactivity, 0, 3)], 206, 170, 0.55f, ACCENT2, 0.8f * a);
 }
 
 // [BF] FX page 4: Scene Studio - one tap sets the whole look (sky, letters, colours, motion, Director style)

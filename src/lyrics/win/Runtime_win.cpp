@@ -47,8 +47,14 @@
 #include "lyrics/core/SkySystem.h"
 #include "lyrics/core/SongMemory.h"
 #include "lyrics/core/Conductor.h"
+#include "lyrics/core/Cinema.h"
+#include "lyrics/BfDirector.h"
 #include "lyrics/core/Studio.h"
 #include "lyrics/win/World_win.h"
+
+// [BF] the Director's full-screen look for RF (game thread writes, RF's render thread reads; floats only, a torn
+// frame is harmless). RF treats it as inactive when `frame` stops moving (no world on screen).
+static BfDirectorV1 gBfDirector{sizeof(BfDirectorV1), 1};
 
 namespace bf::lyrics::win {
 
@@ -67,6 +73,7 @@ struct State {
     std::filesystem::path   cfgFile, presetDir, cacheDir, memoryDir;
     SongMemory              memory;         // [BF] Song Memory of the song playing now (key empty = none)
     Conductor               conductor;      // [BF] music state for the Director (game thread, under mutex)
+    Cinema                  cinema;         // [BF] the Director's full-screen look -> BF_GetDirector() -> RF
     struct Demo {                           // [BF] Director demo: replays a known song silently (config/lyricsflow_demo.json)
         bool                          on = false;
         std::string                   artist, title, stamp;
@@ -643,6 +650,17 @@ void pollKeys(bedrock_forge::client::Frame& f) {
 }
 
 /// LyricsFlow 2.1 live sky: clock + stars / weather / picture -> BF_CopySkyFrame. Caller holds gS->mutex.
+void publishDirector(MusicState const& m, CinemaOut const& c) {
+    BfDirectorV1 d{};
+    d.size = sizeof d; d.version = 1; d.active = c.active ? 1u : 0u; d.frame = gBfDirector.frame + 1;
+    d.budget = m.budget; d.impact = m.impact; d.build = m.build; d.beat = m.beat;
+    d.bass = m.bass; d.mid = m.mid; d.treble = m.treble; d.timeScale = m.timeScale;
+    for (int k = 0; k < 3; ++k) { d.tint[k] = c.tint[k]; d.flashColor[k] = c.flashColor[k]; }
+    d.gradeAmount = c.amount; d.saturation = c.saturation; d.contrast = c.contrast; d.vignette = c.vignette;
+    d.flash = c.flash; d.letterbox = c.letterbox; d.bloomBoost = c.bloomBoost; d.caBoost = c.caBoost;
+    gBfDirector = d;
+}
+
 void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     auto const& cfg = gS->engine.config();
     int64_t     ms  = nowMsWall();
@@ -753,6 +771,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.enabled = gS->engine.config().director;
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
+        gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt);
+        publishDirector(gS->conductor.state(), gS->cinema.out());
         in.skyLuma = gS->sky.luma();
         in.albumAccent = gS->coverAccent;
         auto const& cfgNow = gS->engine.config(); // [BF] a scene picked while a song plays is remembered for it
@@ -1024,4 +1044,6 @@ void uninstall() {
 }
 
 } // namespace bf::lyrics::win
+extern "C" __declspec(dllexport) BfDirectorV1 const* BF_GetDirector() { return &gBfDirector; }
 #endif
+
