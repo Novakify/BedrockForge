@@ -564,7 +564,8 @@ def write_armor_overrides(vanilla_rp: Path, rp: Path) -> int:
     src = vanilla_rp / "attachables"
     if not src.is_dir():
         return 0
-    armor = _re.compile(r"_(helmet|chestplate|leggings|boots)$|^elytra$")
+    # players wear the ".player" variants (minecraft:diamond_helmet.player, item-matched on the owner): both kinds
+    armor = _re.compile(r"_(helmet|chestplate|leggings|boots)(\.player)?$|^elytra(\.player)?$")
     out_dir = rp / "attachables/fb_armor"
     n = 0
     for f in sorted(src.glob("*.json")):
@@ -581,14 +582,23 @@ def write_armor_overrides(vanilla_rp: Path, rp: Path) -> int:
         sc = desc.setdefault("scripts", {})
         pre = sc.get("pre_animation", [])
         pre = pre if isinstance(pre, list) else [pre]
-        sc["pre_animation"] = ["variable.fbhide = c.owning_entity->v.fbnoarmor;"] + pre
+        # only a player has the (public) variable; reading it through another owner logs an error every frame
+        hide = ("c.owning_entity->v.fbnoarmor" if name.endswith(".player") else
+                "q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.fbnoarmor : 0.0")
+        sc["pre_animation"] = [f"variable.fbhide = {hide};"] + [l for l in pre if "fbhide" not in l]
         rcs = []
         for r in desc.get("render_controllers", []):
             if isinstance(r, str):
-                rcs.append({r: "!v.fbhide"})
+                rcs.append({r: "!(v.fbhide ?? 0)"})
             else:
-                rcs.append({k: f"({v}) && !v.fbhide" for k, v in r.items()})
+                rcs.append({k: f"({v}) && !(v.fbhide ?? 0)" for k, v in r.items()})
         desc["render_controllers"] = rcs
+        # hidden armor must not run its offset animations either: they read owner variables the avatar's
+        # player.entity.json may not define (in game: ~200 Molang errors a second in the content log)
+        if sc.get("animate"):
+            sc["animate"] = [{a: "!(v.fbhide ?? 0)"} if isinstance(a, str) else
+                             {k: v if "fbhide" in v else f"({v}) && !(v.fbhide ?? 0)" for k, v in a.items()}
+                             for a in sc["animate"]]
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"{name}.json").write_text(json.dumps(j, indent=1))
         n += 1
@@ -1169,6 +1179,7 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
             gated.append({k: f"({cond}) && (v.fbvan ?? 1)"})
     # worn armor / elytra are attachables on the vanilla bones: on an avatar they float in the wrong places
     pre.append("variable.fbnoarmor = (v.fbvan ?? 1) ? 0.0 : 1.0;")
+    desc["scripts"].setdefault("variables", {})["variable.fbnoarmor"] = "public"  # read by the armor attachables
     # a controller whose texture no part shows by default (swap targets, runtime slots, render tasks, skin/cape...)
     # is skipped by Bedrock unless the runtime says some bone uses that texture this frame (v.fbuse<i>): Bedrock
     # otherwise evaluates its whole part_visibility list and draws its geometry every frame for nothing
