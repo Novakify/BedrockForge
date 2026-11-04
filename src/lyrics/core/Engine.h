@@ -38,6 +38,10 @@ public:
     void forgetAtlas(uint32_t atlas) { mPhysics.dropAtlas(atlas); mFx.dropAtlas(atlas); }
 
 private:
+    static constexpr float kTitleCardSec = 4.2f;
+    void direct(std::vector<DrawWord>& words, MusicState const& m, Config const& cfg);
+    void titleCard(std::vector<DrawWord>& words, SceneInput const& in, Config const& cfg, CameraState const& cam);
+
     Config                 mCfg;
     FontSet                mFonts;
     Scene                  mScene;

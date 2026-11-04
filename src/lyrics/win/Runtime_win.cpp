@@ -46,6 +46,7 @@
 #include "lyrics/core/Palette.h"
 #include "lyrics/core/SkySystem.h"
 #include "lyrics/core/SongMemory.h"
+#include "lyrics/core/Conductor.h"
 #include "lyrics/win/World_win.h"
 
 namespace bf::lyrics::win {
@@ -64,6 +65,8 @@ struct State {
     LyricsState             lyricsState = LyricsState::None;
     std::filesystem::path   cfgFile, presetDir, cacheDir, memoryDir;
     SongMemory              memory;         // [BF] Song Memory of the song playing now (key empty = none)
+    Conductor               conductor;      // [BF] music state for the Director (game thread, under mutex)
+    int64_t                 memoryHooksSeq = -1; // song whose lyrics the memory's hooks were found from
     int64_t                 memorySeq = -1; // song the memory belongs to (clock.songSeq)
     std::string             memoryTitle;
     std::shared_ptr<Lyrics const> memoryLyrics; // this song's lyrics (gS->lyrics is already cleared when the song ends)
@@ -324,7 +327,7 @@ void songMemoryStep() {
         std::lock_guard l(gS->mutex);
         auto const& cfg = gS->engine.config();
         bool const  on  = gS->moduleOn && cfg.songMemory;
-        memoryWanted(on && gS->clock.playing());
+        memoryWanted((on || (gS->moduleOn && cfg.director)) && gS->clock.playing()); // the Director reads the bands too
         int64_t const seq = gS->clock.hasTrack() ? gS->clock.songSeq() : -1;
         if (seq != gS->memorySeq) {
             if (!gS->memory.key().empty()) {
@@ -338,6 +341,10 @@ void songMemoryStep() {
             gS->memorySongNs = nowNs();
         }
         if (gS->lyrics) gS->memoryLyrics = gS->lyrics; // the fetch for THIS song (cleared on every song change)
+        if (gS->memoryLyrics && gS->memoryHooksSeq != seq && !gS->memory.key().empty()) {
+            gS->memory.analyze(gS->memoryLyrics.get()); // hooks from repeated lines: choruses even on a first play
+            gS->memoryHooksSeq = seq;
+        }
         if (on && seq >= 0) {
             auto const& tr = gS->clock.track();
             if (!gS->memory.key().empty() && tr.s.durationMs > 0 && nowNs() - gS->memorySongNs > 3000000000LL)
@@ -547,6 +554,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.skyOpen   = world.canSeeSky(BlockPos::of(Vec3{feet.x, double(feet.y) + 1.0, feet.z})); // player.blockPos().above()
     in.night     = 1.0f; // TODO: level day time (only matters with Day/night dimming and "keep sky by day" off)
     in.playing   = gS->clock.playing();
+    in.beat      = gS->bassLive ? std::max(gS->bass, gS->conductor.state().impact) : 0.0f; // [BF] sky breathes with the music
     in.spritesFile = gS->spritesFile;
     in.pictureFile = gS->pictureFile;
     gS->sky.step(gS->moduleOn && cfg.enabled, cfg, gS->engine.perf(), in);
@@ -574,7 +582,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     dt              = std::clamp(dt, 0.0f, 0.1f);
     { // [BF] bass hits: only listen while something uses them
         auto const& c = gS->engine.config();
-        bassWanted(c.playerStyle == 2 || c.beatGlow || c.fxBeatShake);
+        bassWanted(c.playerStyle == 2 || c.beatGlow || c.fxBeatShake || c.director);
         gS->bass = bassLevel(dt, &gS->bassLive);
     }
 
@@ -606,6 +614,20 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         int64_t since = now / 1000000 - gCombatAtMs.load();
         int     hold  = std::max(1, gS->engine.config().combatHoldMs);
         in.combat     = since < hold ? 1.0f - float(since) / float(hold) * 0.5f : std::max(0.0f, 1.5f - float(since) / float(hold));
+    }
+    { // [BF] the Conductor: one music state for the Director (lyrics now, sky / grade through RF next)
+        ConductorIn ci;
+        ci.posMs     = in.t;
+        ci.playing   = in.playing;
+        ci.songSeq   = in.songSeq;
+        ci.dt        = dt;
+        ci.bandsLive = gS->bassLive;
+        ci.bands     = gS->bassLive ? audioLatest() : BandFrame{};
+        ci.beat      = in.beat;
+        ci.memory    = gS->memory.key().empty() ? nullptr : &gS->memory;
+        ci.enabled   = gS->engine.config().director;
+        gS->conductor.update(ci);
+        in.music = &gS->conductor.state();
     }
     GameWorld world(a);
     auto const t0 = Clock::now();

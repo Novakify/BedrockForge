@@ -33,6 +33,7 @@
 #include "lyrics/core/LetterFx.h"
 #include "lyrics/core/SkyFx.h"
 #include "lyrics/core/SkySystem.h"
+#include "lyrics/core/Conductor.h"
 
 using namespace bf::lyrics;
 
@@ -1402,6 +1403,65 @@ TEST(song_memory_save_load_and_hooks) {
     int chorus = 0;
     for (auto const& e : b.events) chorus += e.kind == SongMemory::Event::Kind::Chorus;
     CHECK(chorus >= 1);
+}
+
+TEST(conductor_directs_from_memory) { // [BF] the Director: budget per section, build before the drop, one drop hit
+    SongMemory m;
+    m.reset(SongMemory::keyFor("artist\x01song", 180000), 180000);
+    playFake(m, 0, 180000);
+    m.endPlay();
+    m.analyze(nullptr);
+    Conductor c;
+    ConductorIn in;
+    in.playing = true; in.songSeq = 1; in.dt = 1.0f / 60.0f; in.memory = &m; in.bandsLive = true;
+    int drops = 0; int64_t dropAt = -1; bool started = false;
+    float bud20 = 0, build52 = 0, bud58 = 0, imp60 = 1;
+    for (int64_t t = 0; t < 90000; t += 17) {
+        in.posMs = t;
+        float v = fakeLevel(t);
+        in.bands.bass = in.bands.mid = in.bands.treble = in.bands.loud = v;
+        c.update(in);
+        auto const& s = c.state();
+        if (t == 0) started = s.songStart;
+        if (s.dropNow) { drops++; if (dropAt < 0) dropAt = t; }
+        if (std::llabs(t - 20000) < 9) bud20 = s.budget;
+        if (std::llabs(t - 52000) < 9) build52 = s.build;
+        if (std::llabs(t - 58000) < 9) bud58 = s.budget;
+        if (std::llabs(t - 60000) < 9) imp60 = s.impact;
+    }
+    std::printf("conductor: drops %d at %lld, budget20 %.2f build52 %.2f budget58 %.2f impact60 %.2f\n", drops,
+                (long long)dropAt, bud20, build52, bud58, imp60);
+    CHECK(started);
+    CHECK(c.state().known);
+    CHECK_EQ(drops, 1);
+    CHECK(std::llabs(dropAt - 56000) < 1500);
+    CHECK(bud20 < 0.45f);
+    CHECK(build52 > 0.3f);
+    CHECK(bud58 > 0.9f);
+    CHECK(imp60 < 0.05f);
+}
+TEST(conductor_live_guess_without_memory) {
+    Conductor c;
+    ConductorIn in;
+    in.playing = true; in.songSeq = 3; in.dt = 1.0f / 60.0f; in.bandsLive = true;
+    int drops = 0; float budQuiet = 0, budLoud = 0;
+    for (int64_t t = 0; t < 70000; t += 17) {
+        in.posMs = t;
+        float v = t < 30000 ? 0.35f + 0.02f * float(std::sin(double(t) / 300.0)) : 0.85f;
+        in.bands.bass = in.bands.mid = in.bands.treble = in.bands.loud = v;
+        c.update(in);
+        drops += c.state().dropNow;
+        if (std::llabs(t - 25000) < 9) budQuiet = c.state().budget;
+        if (std::llabs(t - 60000) < 9) budLoud = c.state().budget;
+    }
+    std::printf("conductor live: drops %d budget quiet %.2f loud %.2f\n", drops, budQuiet, budLoud);
+    CHECK(!c.state().known);
+    CHECK_EQ(drops, 1);
+    CHECK(budLoud > budQuiet + 0.2f);
+    // pausing / disabling never fires events
+    in.enabled = false;
+    c.update(in);
+    CHECK(!c.state().active && !c.state().dropNow);
 }
 
 int main(int argc, char** argv) {

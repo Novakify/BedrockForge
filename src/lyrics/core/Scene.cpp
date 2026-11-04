@@ -729,6 +729,20 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
 }
 
 // ---------------------------------------------------------------- draw
+
+namespace {
+// [BF] hero words: a sung word held well past the line's typical word (a sustained note), at least 650 ms
+bool heroWord(Line const& l, int i) {
+    auto const& w = l.words[size_t(i)];
+    int64_t const dur = w.end - w.start;
+    if (dur < 650 || l.words.size() < 2) return dur >= 900;
+    int64_t sum = 0;
+    for (auto const& x : l.words) sum += std::max<int64_t>(0, x.end - x.start);
+    double const avg = double(sum) / double(l.words.size());
+    return double(dur) >= 2.0 * avg;
+}
+} // namespace
+
 std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraState const& cam, IWorld* w) {
     std::vector<DrawWord> out;
     if (!c.enabled || !c.showLyrics || mVisible.empty() || mPauseFade < 0.01f) return out;
@@ -779,6 +793,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.sung   = t >= wd.start && t < wd.end + 80;
                 d.glow   = glowBase + (d.sung ? 0.35f : 0.0f) + beat * 0.5f;
                 d.key    = int64_t(p.line.index) * 1000 + p.w0 + j;
+                d.hero   = heroWord(p.line, p.w0 + j);
                 d.dropNow = frag; // [BF] screen words break apart too (fragments in screen space)
                 d.dropFx  = c.exitAnim;
                 out.push_back(std::move(d));
@@ -836,6 +851,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             d.dropNow   = falling;
             d.dropFx    = frag ? c.exitAnim : ExitAnim::Fall;
             d.key       = int64_t(p.line.index) * 1000 + p.w0 + j;
+            d.hero      = heroWord(p.line, p.w0 + j);
             out.push_back(std::move(d));
         }
     }

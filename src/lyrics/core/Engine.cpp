@@ -24,10 +24,14 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         mFx.clear();
     }
     // quality + Auto FPS: the frame renders with the costly effects dropped (the saved config is untouched)
-    Config const cfg = effectiveConfig(mCfg, mPerf);
+    Config cfg = effectiveConfig(mCfg, mPerf);
+    MusicState const* m = cfg.director && in.music && in.music->active ? in.music : nullptr;
+    if (m) cfg.letterFxIntensity *= 0.55f + 0.75f * m->budget + 0.5f * m->impact; // [BF] calm verses simmer, choruses burn
     auto width = [this](std::string_view s, std::string_view f) { return mFonts.width(s, f); };
     mScene.tick(in, cfg, cam, world, width);
     auto words = mScene.draw(in, cfg, cam, world);
+    if (m) direct(words, *m, cfg);
+    if (cfg.titleCard && in.music && in.music->songAge < kTitleCardSec) titleCard(words, in, cfg, cam);
 
     // painter's order: far words first (we draw without depth test, like the Java mod's SEE_THROUGH text)
     std::stable_sort(words.begin(), words.end(), [&](DrawWord const& a, DrawWord const& b) {
@@ -63,6 +67,50 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     }
     // the karaoke bar last: screen space, drawn over the world text
     mTopBar.build(in, cfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);
+}
+
+// [BF] the Director's touch on the lyric words: glow follows the energy budget, held notes become hero words,
+// drops / choruses punch the sung words for a moment. Calm verses stay readable (never below ~55 % glow).
+void Engine::direct(std::vector<DrawWord>& words, MusicState const& m, Config const& cfg) {
+    float const glowK = directed(m, 0.55f, 1.25f);
+    for (auto& w : words) {
+        if (w.plain) continue;
+        w.glow = w.glow * glowK + 0.25f * m.inHook;
+        if (w.sung) {
+            w.glow += 0.45f * m.impact;
+            w.scale *= 1.0f + 0.16f * m.impact;
+            if (cfg.heroWords && w.hero) { w.scale *= 1.12f; w.glow += 0.5f; }
+        } else {
+            w.scale *= 1.0f + 0.05f * m.impact;
+        }
+    }
+}
+
+// [BF] title card: the song's title and artist, centred in the upper third, fading in and out over ~4 s with a
+// slow push-in - every song starts like a scene.
+void Engine::titleCard(std::vector<DrawWord>& words, SceneInput const& in, Config const& cfg, CameraState const& cam) {
+    if (in.title.empty() || !in.playing) return;
+    float const age = in.music->songAge;
+    float const a   = std::min({1.0f, age / 0.6f, std::max(0.0f, (kTitleCardSec - age) / 0.9f)});
+    if (a <= 0.01f) return;
+    float const push   = 1.0f + 0.04f * (age / kTitleCardSec);
+    float const aspect = cam.screenAspect > 0 ? cam.screenAspect : 16.0f / 9.0f;
+    auto card = [&](std::string const& text, float y, float size, float alpha) {
+        DrawWord d;
+        d.text   = text;
+        d.font   = cfg.font;
+        d.screen = true;
+        d.origin = {double(aspect) * 0.5, double(y), 0};
+        d.orient = Quat::rotationZ(0);
+        d.scale  = size * push;
+        d.alpha  = alpha;
+        d.glow   = 0.6f;
+        d.sung   = true;
+        d.key    = -77 - int64_t(y * 1000);
+        words.push_back(std::move(d));
+    };
+    card(in.title, 0.27f, 0.085f, a);
+    if (!in.artist.empty()) card(in.artist, 0.36f, 0.042f, a * 0.8f);
 }
 
 void Engine::publish(bool active, float fovY, std::vector<BfGlyphV1> const* extra) {
