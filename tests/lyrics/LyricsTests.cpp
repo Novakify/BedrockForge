@@ -232,6 +232,21 @@ TEST(lyric_overrides_roundtrip) {
         }
     }
     CHECK(parseOverride(emptyOverrideLrc("a", "b"), 30000).has_value());
+    { // tap-sync: tapped lines move to the taps, the rest follow (linear in between)
+        auto base = parseOverride("[00:10.00]one\n[00:20.00]two\n[00:30.00]three\n[00:40.00]four\n[00:50.00]five\n", 60000);
+        CHECK(base.has_value());
+        if (base) {
+            std::vector<int> idx;
+            for (auto const& ln : base->lines) if (ln.index >= 0) idx.push_back(ln.index);
+            auto r = retimeLines(*base, {{idx[0], 11000}, {idx[2], 33000}});
+            std::vector<int64_t> st;
+            for (auto const& ln : r.lines) if (ln.index >= 0) st.push_back(ln.start);
+            CHECK_EQ(st[0], int64_t(11000));
+            CHECK_EQ(st[1], int64_t(22000));  // halfway between +1 s and +3 s
+            CHECK_EQ(st[2], int64_t(33000));
+            CHECK_EQ(st[4], int64_t(53000));  // after the last tap: its shift
+        }
+    }
     // duets + translations
     auto d = parseOverride("[00:01.00]Hello there\n[00:01.00]tr: Hola\n[00:04.00]v2: <00:04.00>I <00:04.50>answer\n[00:08.00]End\n", 12000);
     CHECK(d.has_value());

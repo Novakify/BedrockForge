@@ -29,11 +29,14 @@ struct CinemaOut {
     float flashColor[3] = {1, 1, 1};
     float letterbox = 0, bloomBoost = 0, caBoost = 0;
     float fovScale = 1;   // multiply the camera FOV (fovBreath)
+    float showcase = 0;   // 0..1 Showcase blend (camera sway, focus)
+    float orbitYaw = 0, orbitPitch = 14, orbitRadius = 4; // camera sway pose, degrees / blocks (MC yaw convention)
+    float focus = 0;      // 0..1 soft focus at the screen edges
 };
 
 class Cinema {
 public:
-    void             step(MusicState const* m, Config const& cfg, float dt);
+    void             step(MusicState const* m, Config const& cfg, float dt, float camYaw = 0);
     CinemaOut const& out() const { return mOut; }
 
     static constexpr float kFlashCap  = 0.16f; // comfort: an impact frame never adds more than this much light
@@ -45,7 +48,7 @@ private:
     float      mBlend = 1.0f;     // 0..1 crossfade progress mFrom -> mTo
     bool       mHave = false;
     char       mScene[48] = {};
-    float      mFlash = 0, mSinceFlash = 99, mKick = 0, mBox = 0, mVig = 0, mOn = 0, mFov = 1, mFovPunch = 0;
+    float      mFlash = 0, mSinceFlash = 99, mKick = 0, mBox = 0, mVig = 0, mOn = 0, mFov = 1, mFovPunch = 0, mShow = 0, mShowAge = 0, mShowYaw = 0;
     CinemaOut  mOut;
 };
 

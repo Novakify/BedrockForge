@@ -8,6 +8,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "lyrics/core/Lyrics.h"
 
@@ -19,6 +21,9 @@ std::string overrideFileName(std::string_view artist, std::string_view title);
 std::string toOverrideLrc(Lyrics const& l, std::string_view artist, std::string_view title);
 /// a template for a song that has no lyrics yet
 std::string emptyOverrideLrc(std::string_view artist, std::string_view title);
+/// [BF] tap-sync: lines (by Line::index) given new start times; untapped lines move with their nearest taps (linear
+/// in between, the nearest tap's shift before the first / after the last). Words move with their line.
+Lyrics retimeLines(Lyrics const& l, std::vector<std::pair<int, int64_t>> const& taps);
 /// parse an override file (null = nothing usable in it)
 std::optional<Lyrics> parseOverride(std::string_view text, int64_t durationMs);
 

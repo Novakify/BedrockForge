@@ -54,7 +54,7 @@ SceneGrade gradeForScene(std::string_view id) {
     return g(1, 1, 1, 0, 1.0f, 1.0f, 0.10f, 1, 1, 1);
 }
 
-void Cinema::step(MusicState const* m, Config const& cfg, float dt) {
+void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw) {
     dt = std::clamp(dt, 0.0f, 0.25f);
     int const  r      = std::clamp(cfg.reactivity, 0, 3);
     bool const on     = m && m->active && cfg.director;
@@ -117,6 +117,22 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt) {
     float const fovT = on && cfg.fovBreath ? 1.0f - 0.035f * m->build * mv + 0.05f * mFovPunch * std::min(1.0f, mv) : 1.0f;
     mFov += (fovT - mFov) * ease(dt, fovT > mFov ? 0.08f : 0.5f);
     o.fovScale = std::clamp(mFov, 0.94f, 1.06f);
+    // Showcase: the camera leaves your eyes and sways in a slow arc behind you, soft focus at the edges, bars
+    if (cfg.showcase && mShow < 0.001f) { mShowAge = 0; mShowYaw = camYaw; }
+    mShow += ((cfg.showcase ? 1.0f : 0.0f) - mShow) * ease(dt, 0.7f);
+    if (mShow > 0.001f) {
+        mShowAge += dt;
+        mShowYaw += (camYaw - mShowYaw) * ease(dt, 2.5f);              // follows where you look, lazily
+        float const sway = 48.0f * std::sin(mShowAge * 0.13f);          // a slow arc around your back
+        float const breath = on ? 0.5f * m->budget + 0.4f * m->impact : 0.0f;
+        o.showcase    = mShow;
+        o.orbitYaw    = mShowYaw + sway;
+        o.orbitPitch  = 13.0f + 5.0f * std::sin(mShowAge * 0.21f);
+        o.orbitRadius = 3.6f + breath;
+        o.focus       = 0.55f * mShow;
+        o.letterbox   = std::max(o.letterbox, 0.06f * mShow);
+        o.active      = true;
+    }
     mOut = o;
 }
 

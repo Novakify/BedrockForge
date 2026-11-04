@@ -392,6 +392,7 @@ std::vector<PanelAction> Panel::frame(PanelInput const& in, Vec3 origin, Config&
         mHovered = false;
         return {};
     }
+    mMedia = media;
     float const age = float(in.nowMs - mBorn), ca = mClosing >= 0 ? float(in.nowMs - mClosing) : -1.0f;
     float t9, t10, t11, t12; // record flight, panel unfold, body fade, record content (WorldPanel.render)
     if (ca < 0) {
@@ -842,7 +843,8 @@ void applyGroundLook(Config& cfg) {
 // effects that run while a line is up.
 void Panel::fx(Ctx& c, Config& cfg) {
     float const a = c.pageA;
-    c.pager("fxp", 43, mFxPage, 4, mFxPage, a); // 2: animated letters, 3: Director, 4: scenes
+    c.pager("fxp", 43, mFxPage, 5, mFxPage, a); // 2: animated letters, 3: Director, 4: scenes, 5: cinema
+    if (mFxPage == 4) { cinema(c, cfg); return; }
     if (mFxPage == 1) { letterFx(c, cfg); return; }
     if (mFxPage == 2) { director(c, cfg); return; }
     if (mFxPage == 3) { scenes(c, cfg); return; }
@@ -955,6 +957,46 @@ void Panel::scenes(Ctx& c, Config& cfg) {
     std::string mood = "pick a scene: sky, letters and Director move together";
     if (auto s = findScene(cfg.scene)) mood = s->mood;
     c.text(mood, 206, 172, 0.52f, ACCENT2, 0.8f * a);
+}
+
+// [BF] FX page 5: Cinema - the newest touches, Showcase, tap-sync (fix a song's timing by clicking on each line) and
+// placing the lyrics by hand
+void Panel::cinema(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Cinema", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.toggle2("rb", 206, 54, 78, "Ribbon", cfg.wordRibbon, [&] { cfg.wordRibbon = !cfg.wordRibbon; }, a);
+    c.toggle2("mi", 288, 54, 78, "Impacts", cfg.materialImpacts, [&] { cfg.materialImpacts = !cfg.materialImpacts; }, a);
+    c.toggle2("sd", 206, 70, 78, "Stereo drift", cfg.stereoDrift > 0.01f, [&] { cfg.stereoDrift = cfg.stereoDrift > 0.01f ? 0.0f : 0.5f; }, a);
+    c.toggle2("sc", 288, 70, 78, "Showcase", cfg.showcase, [&] { cfg.showcase = !cfg.showcase; }, a);
+    // tap-sync
+    auto const& m = mMedia;
+    c.text("Tap sync", 206, 90, 0.62f, WHITE, 0.55f * a);
+    if (!m.tapOn) {
+        c.option("ts0", 206, 98, 160, 14, m.hasLyrics ? "Start tap sync" : "Tap sync (needs lyrics)", false, [&] {
+            if (m.hasLyrics) c.actions.push_back({PanelAction::Kind::TapStart, 0});
+        }, a);
+        c.text("click TAP as each line starts", 206, 116, 0.5f, ACCENT2, 0.7f * a);
+    } else {
+        std::string const next = m.tapNext.empty() ? "(last line)" : m.tapNext;
+        c.text("next: " + next.substr(0, std::min<size_t>(next.size(), 34)), 206, 98, 0.52f, ACCENT2, 0.85f * a);
+        c.option("ts1", 206, 106, 160, 16, "TAP  (" + std::to_string(m.taps) + ")", true, [&] { c.actions.push_back({PanelAction::Kind::Tap, 0}); }, a);
+        c.option("ts2", 206, 124, 52, 12, "Undo", false, [&] { c.actions.push_back({PanelAction::Kind::TapUndo, 0}); }, a);
+        c.option("ts3", 260, 124, 52, 12, "Save", false, [&] { c.actions.push_back({PanelAction::Kind::TapSave, 0}); }, a);
+        c.option("ts4", 314, 124, 52, 12, "Cancel", false, [&] { c.actions.push_back({PanelAction::Kind::TapCancel, 0}); }, a);
+    }
+    // place by hand (floating lyrics)
+    c.text("Place lyrics", 206, 142, 0.62f, WHITE, 0.55f * a);
+    c.option("pn0", 206, 150, 78, 13, "Pin here", cfg.pinned, [&] { c.actions.push_back({PanelAction::Kind::PinHere, 0}); }, a);
+    c.option("pn1", 288, 150, 78, 13, "Unpin", false, [&] { cfg.pinned = false; }, a);
+    if (cfg.pinned) {
+        double const yr = cfg.pinYaw * kPi / 180.0;
+        float const  fx = float(-std::sin(yr)), fz = float(std::cos(yr)); // the way you faced when pinning
+        c.option("pn2", 206, 166, 38, 12, "Up", false, [&] { cfg.pinY += 0.25f; }, a);
+        c.option("pn3", 246.5f, 166, 38, 12, "Down", false, [&] { cfg.pinY -= 0.25f; }, a);
+        c.option("pn4", 287, 166, 38, 12, "Closer", false, [&] { cfg.pinX -= fx * 0.5f; cfg.pinZ -= fz * 0.5f; }, a);
+        c.option("pn5", 327.5f, 166, 38, 12, "Farther", false, [&] { cfg.pinX += fx * 0.5f; cfg.pinZ += fz * 0.5f; }, a);
+    } else if (cfg.lyricsStyle != LyricsStyle::Floating)
+        c.text("pinning moves Floating lyrics", 206, 168, 0.5f, ACCENT2, 0.7f * a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the

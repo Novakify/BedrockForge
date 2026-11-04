@@ -65,6 +65,36 @@ std::string toOverrideLrc(Lyrics const& l, std::string_view artist, std::string_
     return s;
 }
 
+Lyrics retimeLines(Lyrics const& l, std::vector<std::pair<int, int64_t>> const& taps) {
+    Lyrics out = l;
+    if (taps.empty()) return out;
+    std::map<int, int64_t> shift; // line index -> ms shift
+    for (auto const& [idx, t] : taps)
+        for (auto const& ln : l.lines)
+            if (ln.index == idx) { shift[idx] = t - ln.start; break; }
+    if (shift.empty()) return out;
+    for (auto& ln : out.lines) {
+        if (ln.index < 0) continue;
+        int64_t d;
+        auto hi = shift.lower_bound(ln.index);
+        if (hi != shift.end() && hi->first == ln.index) d = hi->second;
+        else if (hi == shift.begin()) d = hi->second;
+        else if (hi == shift.end()) d = std::prev(hi)->second;
+        else {
+            auto lo = std::prev(hi);
+            double const k = double(ln.index - lo->first) / double(hi->first - lo->first);
+            d = int64_t(double(lo->second) + (double(hi->second) - double(lo->second)) * k);
+        }
+        ln.start += d; ln.end += d;
+        for (auto& w : ln.words) { w.start += d; w.end += d; w.origStart += d; w.origEnd += d; }
+        if (ln.start < 0) { ln.start = 0; }
+    }
+    // keep the lines in order even if a tap made two of them cross
+    for (size_t i = 1; i < out.lines.size(); ++i)
+        if (out.lines[i].start < out.lines[i - 1].start) out.lines[i].start = out.lines[i - 1].start + 1;
+    return out;
+}
+
 std::string emptyOverrideLrc(std::string_view artist, std::string_view title) {
     return header(artist, title) + "[00:00.00]First line here\n[00:05.00]Second line here\n";
 }

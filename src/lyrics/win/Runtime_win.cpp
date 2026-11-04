@@ -77,6 +77,13 @@ struct State {
     SongMemory              memory;         // [BF] Song Memory of the song playing now (key empty = none)
     Conductor               conductor;      // [BF] music state for the Director (game thread, under mutex)
     Cinema                  cinema;         // [BF] the Director's full-screen look -> BF_GetDirector() -> RF
+    struct TapSync {                        // [BF] tap-sync (Cinema page): click TAP as each line starts
+        bool                           on = false;
+        std::shared_ptr<Lyrics const>  lyr;
+        std::vector<std::pair<int, int64_t>> taps;
+        int                            next = -1;  // Line::index the next tap is for
+        int64_t                        seq = -1;
+    } tap;
     struct Demo {                           // [BF] Director demo: replays a known song silently (config/lyricsflow_demo.json)
         bool                          on = false;
         std::string                   artist, title, stamp;
@@ -723,6 +730,7 @@ void publishDirector(MusicState const& m, CinemaOut const& c) {
     for (int k = 0; k < 3; ++k) { d.tint[k] = c.tint[k]; d.flashColor[k] = c.flashColor[k]; }
     d.gradeAmount = c.amount; d.saturation = c.saturation; d.contrast = c.contrast; d.vignette = c.vignette;
     d.flash = c.flash; d.letterbox = c.letterbox; d.bloomBoost = c.bloomBoost; d.caBoost = c.caBoost;
+    d.showcase = c.showcase; d.orbitYaw = c.orbitYaw; d.orbitPitch = c.orbitPitch; d.orbitRadius = c.orbitRadius; d.focus = c.focus;
     gBfDirector = d;
 }
 
@@ -837,7 +845,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.enabled = gS->engine.config().director;
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
-        gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt);
+        gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt, cam.yaw);
         publishDirector(gS->conductor.state(), gS->cinema.out());
         in.skyLuma = gS->sky.luma();
         in.albumAccent = gS->coverAccent;
@@ -914,8 +922,72 @@ void togglePanel() { // caller holds gS->mutex
     host::open = gS->panel.isOpen();
 }
 
+// [BF] tap-sync helpers (caller holds gS->mutex)
+int nextRealLine(Lyrics const& l, int afterIndex) {
+    for (auto const& ln : l.lines) if (ln.index > afterIndex) return ln.index;
+    return -1;
+}
+std::string lineText(Lyrics const* l, int index) {
+    if (!l || index < 0) return {};
+    for (auto const& ln : l->lines) if (ln.index == index) return ln.text;
+    return {};
+}
+void tapAction(PanelAction::Kind k, int64_t now) {
+    auto& tp = gS->tap;
+    int64_t const t = gS->clock.position(now, gS->engine.config());
+    switch (k) {
+    case PanelAction::Kind::TapStart: {
+        if (!gS->lyrics || gS->lyrics->empty()) return;
+        tp = {};
+        tp.on  = true;
+        tp.lyr = gS->lyrics;
+        tp.seq = gS->clock.songSeq();
+        int first = -1; // the first line that hasn't started yet (or is just starting)
+        for (auto const& ln : tp.lyr->lines) if (ln.index >= 0 && ln.start >= t - 400) { first = ln.index; break; }
+        tp.next = first;
+        break;
+    }
+    case PanelAction::Kind::Tap:
+        if (!tp.on || tp.next < 0) return;
+        tp.taps.push_back({tp.next, std::max<int64_t>(0, t - 80)}); // ~80 ms: you hear it, then you click
+        tp.next = nextRealLine(*tp.lyr, tp.next);
+        break;
+    case PanelAction::Kind::TapUndo:
+        if (!tp.on || tp.taps.empty()) return;
+        tp.next = tp.taps.back().first;
+        tp.taps.pop_back();
+        break;
+    case PanelAction::Kind::TapCancel: tp = {}; break;
+    case PanelAction::Kind::TapSave: {
+        if (!tp.on || tp.taps.empty() || !gS->clock.hasTrack() || tp.seq != gS->clock.songSeq()) { tp = {}; return; }
+        auto fixed = std::make_shared<Lyrics const>(retimeLines(*tp.lyr, tp.taps));
+        MediaSample const s = gS->clock.track().s;
+        gS->lyrics = fixed;
+        gS->engine.reset();
+        std::string const text = toOverrideLrc(*fixed, s.artist, s.title);
+        auto const path = overridePath(s);
+        auto const dir  = gS->overrideDir;
+        std::thread([text, path, dir] { try { // file IO off the game thread
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            std::ofstream out(path, std::ios::binary);
+            out << text;
+        } catch (...) {} }).detach();
+        tp = {};
+        break;
+    }
+    default: break;
+    }
+}
+
 PanelMedia panelMedia(int64_t now) { // caller holds gS->mutex
     PanelMedia m;
+    m.hasLyrics = gS->lyrics && !gS->lyrics->empty();
+    if (gS->tap.on && gS->tap.seq != gS->clock.songSeq()) gS->tap = {}; // the song changed under us
+    m.tapOn   = gS->tap.on;
+    m.taps    = int(gS->tap.taps.size());
+    m.tapNext = lineText(gS->tap.lyr.get(), gS->tap.next);
+    m.tapLast = gS->tap.taps.empty() ? std::string() : lineText(gS->tap.lyr.get(), gS->tap.taps.back().first);
     if (gS->clock.hasTrack()) {
         auto const& t = gS->clock.track().s;
         m.hasTrack    = true;
@@ -960,6 +1032,20 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
                     gS->openMenuOn = cl; // opened after we drop the mutex (the menu takes its own lock)
                 }
                 break;
+            case PanelAction::Kind::TapStart: case PanelAction::Kind::Tap: case PanelAction::Kind::TapUndo:
+            case PanelAction::Kind::TapSave: case PanelAction::Kind::TapCancel:
+                tapAction(a.kind, now); // game thread: the tap is stamped with this frame's song position
+                break;
+            case PanelAction::Kind::PinHere: { // [BF] floating lyrics stand ~5 blocks in front of you from now on
+                auto& cfg = gS->engine.config();
+                Vec3 const p = gS->camPos + dir(gS->camYaw, std::clamp(gS->camPitch, -20.0f, 20.0f)) * 5.0;
+                cfg.pinned = true;
+                cfg.pinX = float(p.x); cfg.pinY = float(p.y); cfg.pinZ = float(p.z); cfg.pinYaw = gS->camYaw;
+                if (cfg.lyricsStyle != LyricsStyle::Floating) cfg.lyricsStyle = LyricsStyle::Floating;
+                gS->engine.reset();
+                gS->cfgDirty = true;
+                break;
+            }
             default: gS->mediaCmds.push_back(a); break; // play/pause/next/prev/seek/repeat -> media thread
             }
         }

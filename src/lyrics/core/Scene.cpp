@@ -649,6 +649,16 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
     if (c.lyricsStyle == LyricsStyle::Wall) wallPlace(p, s, cam, w);
     if ((c.lyricsStyle == LyricsStyle::Floating || c.lyricsStyle == LyricsStyle::Sky) && !c.viewLock) p.a = cam.pos + dir(bYaw, bPitch) * bDist;
     if (c.lyricsStyle == LyricsStyle::Floating && !c.viewLock) p.a.y += double(c.floatHeight);
+    bool const pinned = c.pinned && c.lyricsStyle == LyricsStyle::Floating && !c.viewLock;
+    if (pinned) { // [BF] moved by hand: every line stands at the pin, facing where you stood; lines alternate a row
+        Vec3 const pin{double(c.pinX), double(c.pinY), double(c.pinZ)};
+        int const  slot = p.line.index >= 0 ? p.line.index % 2 : 0;
+        p.yaw  = c.pinYaw;
+        p.pitch = 0;
+        p.dist = std::max(1.0, pin.dist(cam.pos));
+        p.sizeDist = float(std::clamp(p.dist, 3.0, 12.0));
+        p.a    = pin + Vec3{0, slot == 0 ? 0.55 : -0.55, 0} * double(std::clamp(c.lyricsScale, 0.3f, 3.0f));
+    }
 
     bool const sky = c.lyricsStyle == LyricsStyle::Sky;
     p.turn = sky && c.arcLayout ? (rnd(s, 5) > 0.5f ? 1.0f : -1.0f) * (c.skyWords ? 8.0f + rnd(s, 6) * 16.0f : 3.0f + rnd(s, 6) * 4.0f) : 0.0f;
@@ -725,7 +735,7 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
     if (rtl(p.line.text))
         for (auto& x : p.wx0) x = -x;
     if (c.lyricsStyle == LyricsStyle::Wall) fitToSurface(p, c, w);
-    if (c.lyricsStyle == LyricsStyle::Floating && !c.viewLock) keepOutOfBlocks(p, c, cam, w);
+    if (c.lyricsStyle == LyricsStyle::Floating && !c.viewLock && !pinned) keepOutOfBlocks(p, c, cam, w);
 }
 
 // ---------------------------------------------------------------- draw

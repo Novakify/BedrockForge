@@ -149,6 +149,12 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(cinemaGrade, true)               /* [BF] Director colour grade + vignette of the world per scene (RF, D3D12) */  \
     B(impactFrames, true)              /* [BF] a soft light flash + bloom / CA kick on drops and chorus hits (RF) */   \
     B(letterbox, true)                 /* [BF] cinema bars ease in during builds and big hooks (RF) */               \
+    B(showcase, false)                 /* [BF] Showcase: camera sways behind you, soft focus, bars (RF, D3D12) */    \
+    B(pinned, false)                   /* [BF] floating lyrics stay where you pinned them */                        \
+    F(pinX, 0.0f)                                                                                                      \
+    F(pinY, 0.0f)                                                                                                      \
+    F(pinZ, 0.0f)                                                                                                      \
+    F(pinYaw, 0.0f)                                                                                                    \
     F(stereoDrift, 0.5f)               /* [BF] lyrics lean toward the side the sound is on, 0 off .. 1 */           \
     B(wordRibbon, true)                /* [BF] a ribbon of light runs under the line with the singing */             \
     B(materialImpacts, true)           /* [BF] falling letters kick up what they land on (chips, puffs, splashes) */ \

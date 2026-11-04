@@ -39,11 +39,16 @@ struct PanelMedia {
     int64_t     positionMs = 0, durationMs = 0;
     bool        playing = false, hasTrack = false;
     int         repeat = 0; // 0 off, 1 one, 2 all (SMTC AutoRepeatMode: None / Track / List)
+    // [BF] tap-sync state (Cinema page)
+    bool        tapOn = false;
+    int         taps = 0;
+    std::string tapNext, tapLast; // the line the next tap starts, the line tapped last
+    bool        hasLyrics = false;
 };
 
 /// What the panel asks the game side to do (BF glue performs these on the media thread / config).
 struct PanelAction {
-    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics } kind;
+    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics, TapStart, Tap, TapUndo, TapSave, TapCancel, PinHere } kind;
     int64_t ms = 0; // Seek target
 };
 
@@ -108,9 +113,11 @@ private:
     void letterFx(Ctx& c, Config& cfg); // [BF] FX page 2: animated letters
     void director(Ctx& c, Config& cfg); // [BF] FX page 3: the Director's switches + reactivity
     void scenes(Ctx& c, Config& cfg);   // [BF] FX page 4: Scene Studio
+    void cinema(Ctx& c, Config& cfg);   // [BF] FX page 5: Cinema (ribbon, impacts, showcase, tap-sync, place)
     void fps(Ctx& c, Config& cfg);
     void more(Ctx& c, Config& cfg);
 
+    PanelMedia mMedia;         // [BF] this frame's media (Cinema page tap-sync)
     Vec3    mPos;              // panel centre (px 190, 111), world
     float   mRx = 1, mRz = 0;  // panel +x (the player's right)
     float   mNx = 0, mNz = -1; // panel normal (toward the player)
