@@ -44,6 +44,9 @@ std::vector<StudioScene> const& builtinScenes() {
              ei(E::Glitch), xi(X::Glitch), int(LyricsStyle::Floating), 3, false, 0.8f});
         add({"blood_moon", "Blood Moon", "crimson, lava letters, intense", "blood_moon", "blood_moon", 6, 0, false, 1.0f,
              1.2f, ei(E::Drop), xi(X::Burn), int(LyricsStyle::Sky), 2, true, 0.7f});
+        { StudioScene a{"album_glow", "Album Glow", "colours from the cover art, galaxy sky", "galaxy", "galaxy", 1, 0, false, 0.9f,
+                        1.0f, ei(E::Rise), xi(X::Dissolve), int(LyricsStyle::Sky), 1, true, 0.6f};
+          a.albumColors = true; add(a); }
         return v;
     }();
     return s;
@@ -73,6 +76,7 @@ void applyScene(Config& c, StudioScene const& s) {
     if (s.glow >= 0) c.glowStrength = s.glow;
     c.reactivity     = s.reactivity;
     c.constellations = s.constellations;
+    c.albumColors    = s.albumColors;
     c.scene          = s.id;
 }
 
@@ -94,6 +98,7 @@ StudioScene captureScene(Config const& c, std::string id, std::string name) {
     s.reactivity = c.reactivity;
     s.constellations = c.constellations;
     s.glow = c.glowStrength;
+    s.albumColors = c.albumColors;
     return s;
 }
 
@@ -113,9 +118,9 @@ std::string sceneToJson(StudioScene const& s) {
     char b[512];
     std::snprintf(b, sizeof b,
                   ",\n  \"letterFx\": %d, \"fxColor\": %d, \"rainbow\": %s, \"fxSpeed\": %.3f, \"fxStrength\": %.3f,\n"
-                  "  \"enter\": %d, \"exit\": %d, \"style\": %d, \"reactivity\": %d, \"constellations\": %s, \"glow\": %.3f\n}\n",
+                  "  \"enter\": %d, \"exit\": %d, \"style\": %d, \"reactivity\": %d, \"constellations\": %s, \"glow\": %.3f, \"albumColors\": %s\n}\n",
                   s.letterFx, s.fxColor, s.rainbow ? "true" : "false", s.fxSpeed, s.fxStrength, s.enter, s.exit, s.style,
-                  s.reactivity, s.constellations ? "true" : "false", s.glow);
+                  s.reactivity, s.constellations ? "true" : "false", s.glow, s.albumColors ? "true" : "false");
     return "{\n  \"id\": " + q(s.id) + ", \"name\": " + q(s.name) + ", \"mood\": " + q(s.mood) + ",\n  \"sky\": " + q(s.sky) +
            ", \"theme\": " + q(s.theme) + b;
 }
@@ -141,6 +146,7 @@ std::optional<StudioScene> sceneFromJson(std::string_view text) {
     s.reactivity = int(v["reactivity"].asInt(1));
     s.constellations = v["constellations"].asBool(true);
     s.glow = float(v["glow"].asNumber(-1));
+    s.albumColors = v["albumColors"].asBool(false);
     return s;
 }
 

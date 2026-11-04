@@ -74,6 +74,7 @@ struct SceneInput {
     float              guiW = 427.0f, guiH = 240.0f; // UI size in GUI units (Bedrock ScreenView size)
     MusicState const*  music = nullptr; // [BF] the Conductor's state this frame (nullptr = no director)
     float              skyLuma = 0;     // [BF] brightness of our sky behind the text (contrast guard)
+    uint32_t           albumAccent = 0; // [BF] the cover art's accent colour (0 = none)
 };
 
 /// One word ready to draw. World mode: origin + orient (+X right, +Y up, +Z toward the viewer side the Java mod
@@ -98,6 +99,7 @@ struct DrawWord {
     uint32_t    argb  = 0;          // [BF] fixed colour (0 = theme) - top bar text
     bool        plain = false;      // [BF] main pass only (no shadow / offset passes / glow)
     bool        hero  = false;      // [BF] a held note (sustained word): the Director emphasises it while sung
+    int64_t     sungMs = -1;        // [BF] ms since the word started being sung (-1 = not yet)
 };
 
 class Scene {

@@ -660,7 +660,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     }
     sky::SystemIn in;
     in.nowMs = ms;
-    in.dtSec = dt;
+    in.dtSec = dt * std::clamp(gS->conductor.state().timeScale, 0.25f, 2.5f); // [BF] the sky rides the speed ramp too
     in.yaw = cam.yaw; in.pitch = cam.pitch;
     in.camX = cam.pos.x; in.camY = cam.pos.y; in.camZ = cam.pos.z;
     in.overworld = static_cast<int>(a.getDimensionId()) == 0;
@@ -754,6 +754,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
         in.skyLuma = gS->sky.luma();
+        in.albumAccent = gS->coverAccent;
         auto const& cfgNow = gS->engine.config(); // [BF] a scene picked while a song plays is remembered for it
         if (cfgNow.scene != gS->lastScene) {
             gS->lastScene = cfgNow.scene;

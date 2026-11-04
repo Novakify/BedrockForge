@@ -923,7 +923,8 @@ void Panel::director(Ctx& c, Config& cfg) {
     c.toggle2("hw", 206, 70, 78, "Hero words", cfg.heroWords, [&] { cfg.heroWords = !cfg.heroWords; }, a);
     c.toggle2("cg", 288, 70, 78, "Contrast", cfg.contrastGuard, [&] { cfg.contrastGuard = !cfg.contrastGuard; }, a);
     c.toggle2("cs", 206, 86, 160, "Sky writes the song", cfg.constellations, [&] { cfg.constellations = !cfg.constellations; }, a);
-    c.toggle2("sm", 206, 102, 160, "Song Memory", cfg.songMemory, [&] { cfg.songMemory = !cfg.songMemory; }, a);
+    c.toggle2("sm", 206, 102, 78, "Song Memory", cfg.songMemory, [&] { cfg.songMemory = !cfg.songMemory; }, a);
+    c.toggle2("ac", 288, 102, 78, "Album colours", cfg.albumColors, [&] { cfg.albumColors = !cfg.albumColors; }, a);
     c.text("Reactivity", 206, 124, 0.62f, WHITE, 0.55f * a);
     static char const* const r[] = {"Soft", "Balanced", "Dynamic", "Cinema"};
     for (int i = 0; i < 4; ++i)
@@ -938,9 +939,9 @@ void Panel::scenes(Ctx& c, Config& cfg) {
     float const a = c.pageA;
     c.text("Scenes", 206, 45, 0.62f, WHITE, 0.55f * a);
     auto const& all = builtinScenes();
-    for (size_t i = 0; i < all.size() && i < 12; ++i) {
+    for (size_t i = 0; i < all.size() && i < 14; ++i) { // 2 columns x 7 rows
         auto const& s = all[i];
-        c.option("sc" + std::to_string(i), 206 + float(i % 2) * 81, 53 + float(i / 2) * 15, 78, 13, s.name, cfg.scene == s.id,
+        c.option("sc" + std::to_string(i), 206 + float(i % 2) * 81, 53 + float(i / 2) * 13, 78, 11.5f, s.name, cfg.scene == s.id,
                  [&cfg, &s] { applyScene(cfg, s); }, a);
     }
     c.toggle2("ss", 206, 146, 160, "Remember per song", cfg.songScenes, [&] { cfg.songScenes = !cfg.songScenes; }, a);

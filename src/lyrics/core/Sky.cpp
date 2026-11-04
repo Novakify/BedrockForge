@@ -212,7 +212,9 @@ Frame Clock::tick(Preset const* p, Config const& cfg, In const& in) {
     f.picture    = mPic;
     f.picBright  = cfg.fxDayNight ? 0.45f + 0.55f * (1 - in.night) : 1.0f;
     f.alpha      = mVisible * outCubic(mLiveFade);
-    f.brightness = f.bright * (0.92f + 0.08f * mCalm) * (1 + 0.12f * f.beat);
+    // [BF] a scene change: the new sky emerges from a soft burst of light instead of popping in
+    float const burst = mLiveFade < 1 ? std::sin(3.14159265f * mLiveFade) * 0.6f : 0.0f;
+    f.brightness = f.bright * (0.92f + 0.08f * mCalm) * (1 + 0.12f * f.beat) * (1 + burst);
     f.time       = mTime;
     f.t          = float(mTime * 2.2);
     return f;

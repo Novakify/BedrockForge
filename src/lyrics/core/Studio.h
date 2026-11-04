@@ -29,6 +29,7 @@ struct StudioScene {
     int         reactivity = 1;        // 0 soft, 1 balanced, 2 dynamic, 3 cinematic
     bool        constellations = true;
     float       glow = -1;             // glowStrength, -1 = keep
+    bool        albumColors = false;   // colours from the album art
 };
 
 /// the built-in scenes (Celestial Dream first)

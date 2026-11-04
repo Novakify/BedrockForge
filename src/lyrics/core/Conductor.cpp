@@ -150,6 +150,9 @@ void Conductor::update(ConductorIn const& in) {
     if (mSinceDrop < 2.0f) t = 1.0f;
     mBudgetTarget = std::clamp(t, 0.15f, 1.0f);
     s.budget += (mBudgetTarget - s.budget) * ease(dt, mBudgetTarget > s.budget ? 0.25f : 1.5f);
+    // ---- speed ramp: fragments / sky motion hang in the air while it builds, then burst on the hit
+    float const ramp = (1.0f - 0.6f * s.build) * (1.0f + 1.6f * s.impact);
+    s.timeScale += (ramp - s.timeScale) * ease(dt, ramp > s.timeScale ? 0.05f : 0.35f);
     mLastPos = in.posMs;
 }
 

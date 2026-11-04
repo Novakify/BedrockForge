@@ -794,6 +794,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.glow   = glowBase + (d.sung ? 0.35f : 0.0f) + beat * 0.5f;
                 d.key    = int64_t(p.line.index) * 1000 + p.w0 + j;
                 d.hero   = heroWord(p.line, p.w0 + j);
+                d.sungMs = t >= wd.start ? t - wd.start : -1;
                 d.dropNow = frag; // [BF] screen words break apart too (fragments in screen space)
                 d.dropFx  = c.exitAnim;
                 out.push_back(std::move(d));
@@ -852,6 +853,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             d.dropFx    = frag ? c.exitAnim : ExitAnim::Fall;
             d.key       = int64_t(p.line.index) * 1000 + p.w0 + j;
             d.hero      = heroWord(p.line, p.w0 + j);
+            d.sungMs    = t >= wd.start ? t - wd.start : -1;
             out.push_back(std::move(d));
         }
     }

@@ -34,6 +34,7 @@ struct MusicState {
     // events, true on the frame they happen
     bool    dropNow = false, chorusNow = false, buildNow = false, calmNow = false, songStart = false;
     float   songAge = 0;        // seconds since the song started (title card)
+    float   timeScale = 1;      // speed-ramp for cosmetic motion: < 1 suspended in a build, > 1 bursting after a drop
 };
 
 struct ConductorIn {

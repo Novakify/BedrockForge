@@ -31,6 +31,12 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     static constexpr float kCalm[4] = {0.75f, 0.55f, 0.45f, 0.35f}, kFull[4] = {1.05f, 1.25f, 1.4f, 1.5f}, kImp[4] = {0.5f, 1.0f, 1.3f, 1.5f};
     int const rx = std::clamp(cfg.reactivity, 0, 3);
     if (m) cfg.letterFxIntensity *= kCalm[rx] + (kFull[rx] - kCalm[rx]) * m->budget + 0.5f * kImp[rx] * m->impact; // calm verses simmer, choruses burn
+    if (cfg.albumColors && in.albumAccent != 0) { // [BF] album-art palette: colours ease to the new cover over ~1 s
+        if (mAccent == 0) mAccent = in.albumAccent;
+        mAccent = colLerp(mAccent | 0xFF000000u, in.albumAccent | 0xFF000000u, std::min(1.0f, in.dt * 2.5f));
+        cfg.letterFxColor = int32_t(mAccent | 0xFF000000u);
+        cfg.glowColor     = int32_t(mAccent | 0xFF000000u);
+    }
     if (cfg.contrastGuard && in.skyLuma > 0.4f) { // [BF] light text on a light sky: give it a dark edge it can stand on
         float const k = std::clamp((in.skyLuma - 0.4f) / 0.35f, 0.0f, 1.0f);
         cfg.outlineWidth = std::max(cfg.outlineWidth, 0.08f + 0.14f * k);
@@ -66,7 +72,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         buildWordGlyphs(w, *f, cfg, st, mOrigin, mGlyphs);
     }
     if (mFx.size()) { // [BF] fragments of words that broke apart
-        mFx.step(in.dt);
+        mFx.step(in.dt * (m ? std::clamp(m->timeScale, 0.25f, 2.5f) : 1.0f)); // [BF] speed ramp
         mFx.emit(mOrigin, mGlyphs);
     }
     if (cfg.fallingLetters || cfg.exitAnim == ExitAnim::Fall || !mPhysics.letters().empty()) {
@@ -105,6 +111,25 @@ void Engine::direct(std::vector<DrawWord>& words, MusicState const& m, Config co
             w.glow += 0.45f * imp;
             w.scale *= 1.0f + 0.10f * imp;
             if (cfg.heroWords && w.hero) { w.scale *= 1.08f; w.glow += 0.5f; }
+        }
+    }
+    // [BF] echo: held notes ring out - two transparent copies swell and fade behind the word, like reverb
+    if (cfg.heroWords) {
+        size_t const n = words.size();
+        for (size_t i = 0; i < n; ++i) {
+            DrawWord const& w = words[i];
+            if (!w.hero || w.sungMs < 0 || w.sungMs > 2600 || w.plain || w.dropNow) continue;
+            for (int e = 0; e < 2; ++e) {
+                float const ph = std::fmod(float(w.sungMs) / 900.0f + 0.5f * float(e), 1.0f);
+                DrawWord c = w;
+                c.scale *= 1.0f + 0.45f * ph;
+                c.alpha *= 0.32f * (1.0f - ph) * std::min(1.0f, float(w.sungMs) / 200.0f);
+                c.glow  *= 0.6f;
+                c.y     += (w.screen ? 0.25f : -0.25f) * ph * w.scale;
+                c.key    = w.key ^ (int64_t(0x5EC0) << (8 * (e + 1)));
+                c.hero   = false;
+                if (c.alpha > 0.01f) words.push_back(std::move(c));
+            }
         }
     }
 }

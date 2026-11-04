@@ -40,6 +40,7 @@ public:
 
 private:
     static constexpr float kTitleCardSec = 4.2f;
+    uint32_t               mAccent = 0; // [BF] eased album-art colour
     void direct(std::vector<DrawWord>& words, MusicState const& m, Config const& cfg);
     void titleCard(std::vector<DrawWord>& words, SceneInput const& in, Config const& cfg, CameraState const& cam);
 
