@@ -513,17 +513,21 @@ void demoStep() {
         gS->demo.on = false;
         return;
     }
-    std::string const text = readAll(file);
+    std::string text = readAll(file);
+    auto j = json::parse(text);
+    if (!j || !j->isObject()) return;
+    std::string const artist = (*j)["artist"].asString(), title = (*j)["title"].asString();
+    auto const ovr = gS->overrideDir / u8p(overrideFileName(artist, title)); // [BF] the demo uses your override too
+    if (auto t = std::filesystem::last_write_time(ovr, ec); !ec) text += "|ovr" + std::to_string(t.time_since_epoch().count());
+    ec.clear();
     {
         std::lock_guard l(gS->mutex);
         if (gS->demo.on && gS->demo.stamp == text) return;
     }
-    auto j = json::parse(text);
-    if (!j || !j->isObject()) return;
-    std::string const artist = (*j)["artist"].asString(), title = (*j)["title"].asString();
     std::string const key    = text::toLower(artist + std::string(1, '\0') + title);
     std::optional<Lyrics> lyr;
-    if (auto cf = gS->cacheDir / cacheFileName(key); std::filesystem::exists(cf, ec)) lyr = fromCacheJson(readAll(cf));
+    if (std::filesystem::exists(ovr, ec)) lyr = parseOverride(readAll(ovr), 0); // 0 = no known duration (last line keeps its guessed end)
+    if (auto cf = gS->cacheDir / cacheFileName(key); !lyr && std::filesystem::exists(cf, ec)) lyr = fromCacheJson(readAll(cf));
     SongMemory mem;
     std::string const mkey = SongMemory::keyFor(key);
     mem.reset(mkey, 0);
