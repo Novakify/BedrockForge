@@ -10,7 +10,6 @@
 #include "SpatialCamera.h"
 #include "Cinematic.h"
 #include "UiCapture.h"
-#include "PostFx.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -59,6 +58,9 @@
 #include "mc/world/level/BlockSource.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/CachedComponentData.h"
+
+// PostFx.cpp (d3d12.h clashes with the LeviLamina headers here, so no #include "PostFx.h")
+namespace rf::postfx { bool showcasePose(float& blend, float& yaw, float& pitch, float& radius); }
 
 namespace rf::panel {
 bool grabCursorDelta(float& dx, float& dy, bool reset); // SpatialPanel.cpp: crosshair mode mouse grab
