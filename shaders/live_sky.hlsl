@@ -761,7 +761,7 @@ void rift(float x, float y, float z) {
     float edge = exp(-dd * dd / 0.0025);
     float glow = exp(-abs(dd) / 0.09);
     addMix(sm(0.35, 0.65, along), edge * 0.9 * PATTERN * BREATH);
-    add(vec3(1.0), core * 1.2 * PATTERN);
+    add(SPLAT3(1.0), core * 1.2 * PATTERN);
     add(A1, glow * 0.22 * PATTERN);
     add(mix(A1, A2, 0.5), exp(-abs(dd) / 0.35) * 0.12 * PATTERN);
     float w = fbm(x * 2.2 + dd * 6.0, y * 2.2 - t * 2.0, z * 2.2 + t, 3);
@@ -774,7 +774,7 @@ void supernova(float x, float y, float z) {
     float ang = degrees(acos(clamp(dot(d, c), -1.0, 1.0)));
     float th = angAround(d, c);
     float flick = 0.85 + 0.15 * sin(T * 3.0);
-    add(vec3(1.0), (exp(-ang / 0.9) * 1.3 + exp(-ang / 4.0) * 0.45) * flick);
+    add(SPLAT3(1.0), (exp(-ang / 0.9) * 1.3 + exp(-ang / 4.0) * 0.45) * flick);
     add(A1, exp(-ang / 12.0) * 0.35 * BREATH);
     float rays = pow(0.5 + 0.5 * sin(th * 13.0 + lfNoise(th * 3.0, T * 0.2, 1.0) * 4.0), 10.0) * exp(-ang / 18.0);
     add(mix(vec3(1.0, 0.9, 0.8), A1, 0.4), rays * 0.6 * PATTERN);
@@ -808,7 +808,7 @@ void warp(float x, float y, float z) {
     streak *= pow(width, 3.0) * (h2 >= 0.45 ? 1.0 : 0.0) * sm(0.0, 0.05, r);
     addMix(h, streak * 1.1 * PATTERN);
     add(A1, exp(-ang * 8.0) * 0.6 * BREATH + exp(-ang * 2.0) * 0.12);
-    add(vec3(1.0), exp(-ang * 40.0) * 0.9);
+    add(SPLAT3(1.0), exp(-ang * 40.0) * 0.9);
 }
 
 void silk(float az, float el) {
@@ -824,7 +824,7 @@ void silk(float az, float el) {
         float fold = 0.55 + 0.45 * sin(azr * 18.0 + 3.0 * sin(azr * 3.0 + t) + t * 2.0 + fk);
         float sheen = pow(max(0.0, 1.0 - abs(h)), 6.0);
         addMix(0.5 + 0.5 * sin(azr * 2.0 + fk * 2.0 + t * 0.3), band * (0.35 + 0.65 * fold) * 0.6 * PATTERN * BREATH);
-        add(vec3(1.0), sheen * fold * 0.25 * PATTERN);
+        add(SPLAT3(1.0), sheen * fold * 0.25 * PATTERN);
     }
 }
 
@@ -839,7 +839,7 @@ void eclipse(float x, float y, float z, float el) {
     float outer = max(0.0, ang - R);
     float corona = exp(-outer / (2.2 + 4.0 * rays * stream)) * (0.8 + 0.4 * rays);
     add(A1, corona * 1.1 * PATTERN * BREATH);
-    add(vec3(1.0), exp(-outer / 0.5) * 0.9);
+    add(SPLAT3(1.0), exp(-outer / 0.5) * 0.9);
     add(A1, exp(-outer / 9.0) * 0.4 * BREATH + exp(-outer / 1.6) * 0.5);
     float disc = 1.0 - sm(R - 0.15, R, ang);
     over(vec3(0.01, 0.008, 0.012), disc);
