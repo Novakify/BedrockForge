@@ -1,0 +1,23 @@
+{
+  "name": "Wall Gold",
+  "video": "D (@kangetsuvisuals, words on walls)",
+  "description": "WALL mode: blocky font with a yellow-to-orange gradient and a dark outline, fitted flat onto nearby walls in perspective, a few words at a time.",
+  "settings": {
+    "lyricsStyle": "WALL",
+    "font": "minecraft",
+    "theme": "minecraft_gold",
+    "textStyle": "NEON",
+    "twoColor": false,
+    "textShadow": 2,
+    "gradient": true,
+    "gradientColor": "#FFFF8A00",
+    "outlineWidth": 0.12,
+    "outlineColor": "#FF3F2600",
+    "glow": false,
+    "varySizes": false,
+    "arcLayout": true,
+    "maxLines": 1,
+    "enterAnim": "RISE",
+    "exitAnim": "FADE"
+  }
+}
