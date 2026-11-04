@@ -12,7 +12,7 @@ using E = EnterAnim;
 using X = ExitAnim;
 int ei(E e) { return int(e); }
 int xi(X x) { return int(x); }
-// letter fx ids: 0 none, 1 neon, 2 fire, 3 water, 4 ice, 5 electric, 6 lava, 7 glitch, 8 galaxy
+// letter fx ids: 0 none, 1 neon, 2 fire, 3 water, 4 ice, 5 electric, 6 lava, 7 glitch, 8 galaxy, 9 ink, 10 holo
 } // namespace
 
 std::vector<StudioScene> const& builtinScenes() {
@@ -47,6 +47,15 @@ std::vector<StudioScene> const& builtinScenes() {
         { StudioScene a{"album_glow", "Album Glow", "colours from the cover art, galaxy sky", "galaxy", "galaxy", 1, 0, false, 0.9f,
                         1.0f, ei(E::Rise), xi(X::Dissolve), int(LyricsStyle::Sky), 1, true, 0.6f};
           a.albumColors = true; add(a); }
+        // [LyricsForge] the four new painted skies, each with its own letter material
+        add({"astral_symphony", "Astral Symphony", "concert of stars, holographic letters", "astral", "aurora", 10, 0, false,
+             0.8f, 1.0f, ei(E::Rise), xi(X::FloatUp), int(LyricsStyle::Sky), 2, true, 0.6f});
+        add({"eclipse_heartbeat", "Eclipse Heartbeat", "black sun beating with the bass, lava", "eclipse", "blood_moon", 6, 0,
+             false, 1.1f, 1.2f, ei(E::Zoom), xi(X::Burn), int(LyricsStyle::Sky), 3, true, 0.7f});
+        add({"dream_ocean", "Dream Ocean", "pastel sea, ink letters bleeding softly", "dream_ocean", "ocean", 9,
+             int32_t(0xFF5A3A8C), false, 0.7f, 0.9f, ei(E::Fade), xi(X::Dissolve), int(LyricsStyle::Sky), 0, true, 0.4f});
+        add({"meteor_chorus", "Meteor Chorus", "meteors in waves, neon, chorus lights up", "meteor", "midnight", 1, 0, false,
+             1.0f, 1.0f, ei(E::Drop), xi(X::Shatter), int(LyricsStyle::Sky), 2, true, 0.7f});
         return v;
     }();
     return s;

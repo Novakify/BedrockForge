@@ -46,6 +46,10 @@ SceneGrade gradeForScene(std::string_view id) {
     if (id == "dark_cosmic")       return g(0.90f, 0.86f, 1.08f, 0.45f, 0.95f, 1.12f, 0.36f, 0.80f, 0.60f, 1.00f);
     if (id == "cyber_edit")        return g(0.86f, 1.08f, 0.92f, 0.40f, 1.10f, 1.14f, 0.28f, 0.50f, 1.00f, 0.60f);
     if (id == "blood_moon")        return g(1.14f, 0.82f, 0.80f, 0.50f, 1.00f, 1.12f, 0.34f, 1.00f, 0.45f, 0.40f);
+    if (id == "astral_symphony")   return g(1.02f, 0.96f, 1.08f, 0.30f, 1.10f, 1.04f, 0.22f, 1.00f, 0.85f, 0.55f);
+    if (id == "eclipse_heartbeat") return g(1.10f, 0.84f, 0.84f, 0.45f, 1.00f, 1.16f, 0.38f, 1.00f, 0.40f, 0.30f);
+    if (id == "dream_ocean")       return g(1.04f, 0.98f, 1.04f, 0.30f, 0.92f, 0.95f, 0.10f, 0.80f, 1.00f, 0.95f);
+    if (id == "meteor_chorus")     return g(0.92f, 0.96f, 1.10f, 0.35f, 1.06f, 1.08f, 0.26f, 0.80f, 0.90f, 1.00f);
     if (id == "album_glow")        return g(1.00f, 1.00f, 1.00f, 0.00f, 1.10f, 1.04f, 0.18f, 1.00f, 1.00f, 1.00f);
     return g(1, 1, 1, 0, 1.0f, 1.0f, 0.10f, 1, 1, 1);
 }

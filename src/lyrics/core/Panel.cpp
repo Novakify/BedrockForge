@@ -885,9 +885,9 @@ void Panel::fx(Ctx& c, Config& cfg) {
 void Panel::letterFx(Ctx& c, Config& cfg) {
     float const a = c.pageA;
     c.text("Animated letters", 206, 45, 0.62f, WHITE, 0.55f * a);
-    static char const* const names[] = {"None", "Neon", "Fire", "Water", "Ice", "Electric", "Lava", "Glitch", "Galaxy"};
-    for (int i = 0; i < 9; ++i)
-        c.option("lx" + std::to_string(i), 206 + float(i % 3) * 54, 56 + float(i / 3) * 15, 51, 13, names[i], cfg.letterFx == i,
+    static char const* const names[] = {"None", "Neon", "Fire", "Water", "Ice", "Electric", "Lava", "Glitch", "Galaxy", "Ink", "Holo"};
+    for (int i = 0; i < 11; ++i)
+        c.option("lx" + std::to_string(i), 206 + float(i % 4) * 40.5f, 56 + float(i / 4) * 15, 38, 13, names[i], cfg.letterFx == i,
                  [&cfg, i] { cfg.letterFx = i; }, a);
     c.text("Colour", 206, 104, 0.62f, WHITE, 0.55f * a);
     static uint32_t const cols[] = {0, 0xFFFFFF, 0xFF3B3B, 0xFF8A1E, 0xFFE03A, 0x3BFF6A, 0x2EE6FF, 0x3B6BFF, 0xA64BFF, 0xFF4FD8};
@@ -943,15 +943,15 @@ void Panel::scenes(Ctx& c, Config& cfg) {
     float const a = c.pageA;
     c.text("Scenes", 206, 45, 0.62f, WHITE, 0.55f * a);
     auto const& all = builtinScenes();
-    for (size_t i = 0; i < all.size() && i < 14; ++i) { // 2 columns x 7 rows
+    for (size_t i = 0; i < all.size() && i < 18; ++i) { // 2 columns x 9 rows
         auto const& s = all[i];
-        c.option("sc" + std::to_string(i), 206 + float(i % 2) * 81, 53 + float(i / 2) * 13, 78, 11.5f, s.name, cfg.scene == s.id,
+        c.option("sc" + std::to_string(i), 206 + float(i % 2) * 81, 52 + float(i / 2) * 11, 78, 10, s.name, cfg.scene == s.id,
                  [&cfg, &s] { applyScene(cfg, s); }, a);
     }
-    c.toggle2("ss", 206, 146, 160, "Remember per song", cfg.songScenes, [&] { cfg.songScenes = !cfg.songScenes; }, a);
+    c.toggle2("ss", 206, 153, 160, "Remember per song", cfg.songScenes, [&] { cfg.songScenes = !cfg.songScenes; }, a);
     std::string mood = "pick a scene: sky, letters and Director move together";
     if (auto s = findScene(cfg.scene)) mood = s->mood;
-    c.text(mood, 206, 166, 0.52f, ACCENT2, 0.8f * a);
+    c.text(mood, 206, 172, 0.52f, ACCENT2, 0.8f * a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the

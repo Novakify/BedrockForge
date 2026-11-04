@@ -1049,7 +1049,7 @@ TEST(quality_and_profiles) {
 TEST(live_sky_params) {
     using namespace bf::lyrics::sky;
     Config cfg;
-    CHECK_EQ(int(presets().size()), 29);
+    CHECK_EQ(int(presets().size()), 33);
     CHECK_EQ(int(order().size()), 20);
     for (auto id : order()) CHECK(find(id, cfg).has_value());
     CHECK(!find("off", cfg).has_value());

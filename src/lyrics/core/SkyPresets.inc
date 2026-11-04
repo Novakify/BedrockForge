@@ -27,3 +27,8 @@
     {"cherry", 0x1F0A33, 0x8C3380, 0.9f, 0.0f, false, 0xFFC6E6, 0xC890FF, Weather::Petals, 0x000000, false, 0xFFC6E6},
     {"crimson", 0x0A0002, 0x400305, 0.9f, 0.0f, false, 0xFF3B2A, 0xFF8A6A, Weather::Embers, 0x000000, false, 0xFF8A8A},
     {"thunder", 0x030814, 0x14244A, 0.9f, 0.0f, false, 0x8FB0FF, 0xC8D4FF, Weather::Rain, 0x000000, false, 0xC8D4F0},
+    // [LyricsForge] painted skies 9..12 of RF's styledSky (ordinals 29..32)
+    {"astral", 0x0A0520, 0x2A1650, 0.9f, 0.0f, false, 0xFFC75A, 0x9E5CFF, Weather::None, 0x000000, true, 0xFFE6B0},
+    {"eclipse", 0x050002, 0x2A0408, 0.9f, 0.0f, false, 0xFF5A4A, 0xFFD6B0, Weather::Embers, 0x000000, false, 0xFFB8A8},
+    {"dream_ocean", 0x1A3373, 0xFFC6DC, 0.9f, 0.0f, false, 0x9CFFF0, 0xFFC6E6, Weather::None, 0x000000, false, 0xFFFFFF},
+    {"meteor", 0x000310, 0x0C1838, 0.9f, 0.0f, false, 0xBFDCFF, 0x6E9CFF, Weather::None, 0x000000, true, 0xCFE4FF},
