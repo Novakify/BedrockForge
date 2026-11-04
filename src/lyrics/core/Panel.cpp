@@ -1035,7 +1035,10 @@ void Panel::hudPage(Ctx& c, Config& cfg) {
     c.option("hd", 246.5f, 133, 38, 12, "Down", false, [&] { cfg.hudPlayerY = std::min(1.0f, cfg.hudPlayerY + 0.04f); }, a);
     c.option("hs", 287, 133, 38, 12, "Smaller", false, [&] { cfg.hudPlayerScale = std::max(0.5f, cfg.hudPlayerScale - 0.1f); }, a);
     c.option("hb", 327.5f, 133, 38, 12, "Bigger", false, [&] { cfg.hudPlayerScale = std::min(2.0f, cfg.hudPlayerScale + 0.1f); }, a);
-    c.text("song, cover, time bar and the next lines", 206, 152, 0.5f, ACCENT2, 0.7f * a);
+    c.text("More", 206, 152, 0.62f, WHITE, 0.55f * a);
+    c.toggle2("tl", 206, 161, 52, "Translate", cfg.translations, [&] { cfg.translations = !cfg.translations; }, a);
+    c.toggle2("pt", 260, 161, 52, "Portals", cfg.portals, [&] { cfg.portals = !cfg.portals; }, a);
+    c.toggle2("sl", 314, 161, 52, "Framing", cfg.shotLanguage, [&] { cfg.shotLanguage = !cfg.shotLanguage; }, a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the

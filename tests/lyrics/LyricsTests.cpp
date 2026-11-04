@@ -40,6 +40,7 @@
 #include "lyrics/core/Bursts.h"
 #include "lyrics/core/Ribbon.h"
 #include "lyrics/core/PlayerHud.h"
+#include "lyrics/core/Portal.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 
@@ -371,6 +372,24 @@ TEST(manual_sections_and_translations) {
     int n = 0;
     for (auto const& ln : x.lines) if (!ln.translation.empty()) ++n;
     CHECK_EQ(n, 2);
+}
+
+TEST(portal_opens_on_chorus) {
+    Portal p;
+    MusicState m; m.active = true;
+    Portal::In in; in.music = &m;
+    for (int i = 0; i < 10; ++i) p.step(in);
+    CHECK(!p.open());
+    m.chorusNow = true; in.now = 5; p.step(in); m.chorusNow = false;
+    CHECK(p.open());
+    for (int i = 0; i < 40; ++i) { in.now += 1.0 / 60; p.step(in); }
+    std::vector<BfGlyphV1> out;
+    p.emit(in, out);
+    CHECK(out.size() > 100);
+    for (int i = 0; i < 300; ++i) { in.now += 1.0 / 60; p.step(in); }
+    CHECK(!p.open());
+    m.dropNow = true; p.step(in); m.dropNow = false; // too soon after the last one
+    CHECK(!p.open());
 }
 
 TEST(json_basics) {

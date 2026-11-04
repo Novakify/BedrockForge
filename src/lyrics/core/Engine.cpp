@@ -31,6 +31,14 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     static constexpr float kCalm[4] = {0.75f, 0.55f, 0.45f, 0.35f}, kFull[4] = {1.05f, 1.25f, 1.4f, 1.5f}, kImp[4] = {0.5f, 1.0f, 1.3f, 1.5f};
     int const rx = std::clamp(cfg.reactivity, 0, 3);
     if (m) cfg.letterFxIntensity *= kCalm[rx] + (kFull[rx] - kCalm[rx]) * m->budget + 0.5f * kImp[rx] * m->impact; // calm verses simmer, choruses burn
+    { // [BF] shot language: calm sections frame the words wide (further, smaller), the big moments go close-up
+        float want = 1.0f;
+        if (m && cfg.shotLanguage && rx >= 1 && !cfg.pinned)
+            want = m->section == MusicSection::Calm ? 1.16f : m->section == MusicSection::High ? 0.87f - 0.05f * m->impact : 1.0f;
+        mShot += (want - mShot) * std::min(1.0f, in.dt / 2.0f);
+        cfg.lyricsDistance *= mShot;
+        cfg.lyricsScale *= 1.0f + (1.0f - mShot) * 0.5f;
+    }
     if (cfg.albumColors && in.albumAccent != 0) { // [BF] album-art palette: colours ease to the new cover over ~1 s
         if (mAccent == 0) mAccent = in.albumAccent;
         mAccent = colLerp(mAccent | 0xFF000000u, in.albumAccent | 0xFF000000u, std::min(1.0f, in.dt * 2.5f));
@@ -106,6 +114,13 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         std::vector<BfGlyphV1> stars;
         mSkyWriter.emit(si, mOrigin, stars);
         if (!stars.empty()) mGlyphs.insert(mGlyphs.begin(), stars.begin(), stars.end());
+        Portal::In pi; // [BF] musical portal (behind the stars)
+        pi.music = in.music; pi.dt = in.dt; pi.camYaw = cam.yaw; pi.camPitch = cam.pitch; pi.now = in.nowSeconds; pi.color = si.color;
+        pi.enabled = cfg.portals && cfg.director && cfg.showLyrics;
+        mPortal.step(pi);
+        std::vector<BfGlyphV1> ring;
+        mPortal.emit(pi, ring);
+        if (!ring.empty()) mGlyphs.insert(mGlyphs.begin(), ring.begin(), ring.end());
         Atmos::In ai; // [BF] atmosphere: motes in the air, same tint as the stars
         ai.music = in.music; ai.dt = in.dt; ai.camPos = cam.pos; ai.camYaw = cam.yaw; ai.camPitch = cam.pitch;
         ai.color = si.color; ai.now = in.nowSeconds; ai.enabled = cfg.atmosphere && cfg.director && cfg.showLyrics;

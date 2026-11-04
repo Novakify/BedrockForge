@@ -16,6 +16,7 @@
 #include "lyrics/core/Atmos.h"
 #include "lyrics/core/Ribbon.h"
 #include "lyrics/core/PlayerHud.h"
+#include "lyrics/core/Portal.h"
 #include "lyrics/core/TopBar.h"
 
 namespace bf::lyrics {
@@ -44,6 +45,7 @@ public:
 private:
     static constexpr float kTitleCardSec = 4.2f;
     uint32_t               mAccent = 0; // [BF] eased album-art colour
+    float                  mShot = 1;   // [BF] shot language: eased framing (distance factor)
     void direct(std::vector<DrawWord>& words, MusicState const& m, Config const& cfg);
     void titleCard(std::vector<DrawWord>& words, SceneInput const& in, Config const& cfg, CameraState const& cam);
 
@@ -53,7 +55,8 @@ private:
     Atmos                  mAtmos;
     Bursts                 mBursts;
     Ribbon                 mRibbon;
-    PlayerHud              mPlayer;      // [BF] corner music player      // [BF] light running under the line with the singing      // [BF] material-aware impact bits of falling letters       // [BF] music-reactive motes around the player
+    PlayerHud              mPlayer;
+    Portal                 mPortal;      // [BF] a ring of light opens in the sky on choruses / drops      // [BF] corner music player      // [BF] light running under the line with the singing      // [BF] material-aware impact bits of falling letters       // [BF] music-reactive motes around the player
     SkyWriter              mSkyWriter;   // [BF] the sky writes the song (hook lines -> constellations)
     LetterPhysics          mPhysics;
     LetterFx                      mFx; // [BF] break-apart exits

@@ -62,11 +62,15 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     if (!mHave || std::strncmp(mScene, cfg.scene.c_str(), sizeof mScene - 1) != 0) {
         SceneGrade const t = gradeForScene(cfg.scene);
         if (!mHave) { mCur = mFrom = mTo = t; mBlend = 1; mHave = true; }
-        else { mFrom = mCur; mTo = t; mBlend = 0; }
+        else { mFrom = mCur; mTo = t; mBlend = 0; mPendingFade = true; mWaitBeat = 0; } // starts on the next downbeat
         std::strncpy(mScene, cfg.scene.c_str(), sizeof mScene - 1);
         mScene[sizeof mScene - 1] = 0;
     }
-    if (mBlend < 1) {
+    if (mPendingFade) { // [BF] synced transition: the new look lands on a beat (at most 0.8 s later)
+        mWaitBeat += dt;
+        if (!m || !m->active || m->beat > 0.55f || m->impact > 0.5f || mWaitBeat > 0.8f) mPendingFade = false;
+    }
+    if (mBlend < 1 && !mPendingFade) {
         mBlend = std::min(1.0f, mBlend + dt / 1.6f);
         float const s = mBlend * mBlend * (3 - 2 * mBlend);
         mCur = mix(mFrom, mTo, s);
@@ -95,7 +99,7 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
         if (m->section == MusicSection::Calm) box *= 0.5f;
         box = std::clamp(box * mv, 0.0f, 1.0f) * kLetterMax;
     }
-    if (on) vig = 0.18f * m->build + 0.08f * m->beat * m->budget;
+    if (on) vig = 0.18f * m->build + 0.08f * m->beat * m->budget + 0.05f * m->bass * m->budget; // the world breathes with the bass
     mBox += (box - mBox) * ease(dt, box > mBox ? 0.9f : 0.6f);
     mVig += (vig - mVig) * ease(dt, 0.25f);
 
