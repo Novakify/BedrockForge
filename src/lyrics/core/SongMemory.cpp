@@ -221,16 +221,21 @@ void SongMemory::analyze(Lyrics const* lyrics) {
         std::map<std::string, int> count;
         for (auto const& l : lyrics->lines)
             if (l.index >= 0) ++count[normLine(l.text)];
+        // repeated lines within 6 s of each other form one block; a block needs 2+ lines and 6+ s (tuned on real
+        // songs: a chorus is usually broken up by ad-libs / unique lines, which must not split it)
+        std::vector<int> lines;
         for (auto const& l : lyrics->lines) {
             if (l.index < 0) continue;
             std::string const k = normLine(l.text);
             if (count[k] < 2 || std::count(k.begin(), k.end(), ' ') < 1) continue;
-            if (!hooks.empty() && l.start - hooks.back().second < 1500) hooks.back().second = std::max(hooks.back().second, l.end);
-            else hooks.push_back({l.start, l.end});
+            if (!hooks.empty() && l.start - hooks.back().second < 6000) { hooks.back().second = std::max(hooks.back().second, l.end); ++lines.back(); }
+            else { hooks.push_back({l.start, l.end}); lines.push_back(1); }
         }
+        for (size_t i = hooks.size(); i-- > 0;)
+            if (lines[i] < 2 || hooks[i].second - hooks[i].first < 6000) hooks.erase(hooks.begin() + long(i));
         for (auto const& h : hooks) { // a chorus event where a hook block starts (unless a drop is right there)
             bool nearDrop = false;
-            for (auto const& ev : events) nearDrop |= ev.kind == Event::Kind::Drop && std::llabs(ev.at - h.first) < 1500;
+            for (auto const& ev : events) nearDrop |= ev.kind == Event::Kind::Drop && std::llabs(ev.at - h.first) < 3000;
             if (nearDrop) continue;
             float lv = energyAt(h.first + 1000);
             events.push_back({h.first, -1, Event::Kind::Chorus, lv < 0 ? 0.6f : lv});

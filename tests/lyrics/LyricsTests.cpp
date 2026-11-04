@@ -1393,7 +1393,7 @@ TEST(song_memory_save_load_and_hooks) {
     CHECK(!other.load(file)); // same file name can't hand another song's map over
     std::filesystem::remove(file);
     // hooks: the repeated lines become chorus events
-    std::vector<Timing>      times{{10000, -1}, {14000, -1}, {18000, -1}, {60000, -1}, {120000, -1}, {150000, -1}, {154000, -1}, {158000, -1}};
+    std::vector<Timing>      times{{10000, -1}, {14000, -1}, {18000, -1}, {24000, -1}, {120000, -1}, {150000, -1}, {154000, -1}, {160000, -1}};
     std::vector<std::string> texts{"verse one here", "we light it up", "keep it going now", "verse two again", "bridge",
                                    "we light it up", "keep it going now", "outro line"};
     Lyrics lyr = Lyrics::build(times, texts, true, "test", 180000);
