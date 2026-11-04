@@ -37,6 +37,7 @@ private:
         ExitAnim  mode = ExitAnim::Shatter;
         float     seedF = 0;
         bool      screen = false;
+        Vec3      center, axis, r0;    // [LyricsForge] Vortex: spiral centre, spin axis, start offset
     };
     std::vector<Frag> mFrags;
     static constexpr size_t kMaxFrags = 6000;

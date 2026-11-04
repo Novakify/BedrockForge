@@ -18,7 +18,7 @@ enum class Source : int { Spotify, Youtube, Any, AppleMusic }; // [BF] AppleMusi
 enum class LyricsStyle : int { Sky, Floating, Screen, Wall };
 enum class TextStyle : int { Neon, Clean };
 enum class EnterAnim : int { Word, Fade, Rise, Neon, Drop, Spin, Zoom, Glitch }; // Neon = 2.1 "Typed out"; Drop..Glitch [BF]
-enum class ExitAnim : int { FloatUp, Drift, Fade, Fall, Shatter, Dissolve, Explode, Burn, Glitch }; // Fall..Glitch [BF]
+enum class ExitAnim : int { FloatUp, Drift, Fade, Fall, Shatter, Dissolve, Explode, Burn, Glitch, Vortex }; // Fall..Vortex [BF]
 enum class TopBarStyle : int { Karaoke, Simple };
 enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat as decals (video A) or full rigid tumble
 

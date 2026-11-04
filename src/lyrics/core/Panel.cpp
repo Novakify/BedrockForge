@@ -858,10 +858,11 @@ void Panel::fx(Ctx& c, Config& cfg) {
     c.text("Words leave", 206, 86, 0.62f, WHITE, 0.55f * a);
     static std::pair<ExitAnim, char const*> const outs[] = {{ExitAnim::FloatUp, "Float up"}, {ExitAnim::Drift, "Drift"},     {ExitAnim::Fade, "Fade"},
                                                             {ExitAnim::Fall, "Fall"}, {ExitAnim::Shatter, "Shatter"}, {ExitAnim::Dissolve, "Dissolve"},
-                                                            {ExitAnim::Explode, "Explode"},  {ExitAnim::Burn, "Burn"},       {ExitAnim::Glitch, "Glitch"}};
-    for (int i = 0; i < 9; ++i) {
+                                                            {ExitAnim::Explode, "Explode"},  {ExitAnim::Burn, "Burn"},       {ExitAnim::Glitch, "Glitch"},
+                                                            {ExitAnim::Vortex, "Vortex"}};
+    for (int i = 0; i < 10; ++i) {
         auto [v, lab] = outs[i];
-        c.option("fo" + std::to_string(i), 206 + float(i % 3) * 54, 94 + float(i / 3) * 15, 51, 13, lab, cfg.exitAnim == v,
+        c.option("fo" + std::to_string(i), 206 + float(i % 4) * 40.5f, 94 + float(i / 4) * 15, 38, 13, lab, cfg.exitAnim == v,
                  [&cfg, v = v] {
                      cfg.exitAnim       = v;
                      cfg.fallingLetters = v == ExitAnim::Fall; // the old toggle follows the choice

@@ -21,7 +21,8 @@ Vec3 v3(float const* f) { return {f[0], f[1], f[2]}; }
 } // namespace
 
 bool LetterFx::handles(ExitAnim m) {
-    return m == ExitAnim::Shatter || m == ExitAnim::Dissolve || m == ExitAnim::Explode || m == ExitAnim::Burn || m == ExitAnim::Glitch;
+    return m == ExitAnim::Shatter || m == ExitAnim::Dissolve || m == ExitAnim::Explode || m == ExitAnim::Burn || m == ExitAnim::Glitch ||
+           m == ExitAnim::Vortex;
 }
 
 void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim mode, int64_t seed, float intensity) {
@@ -38,6 +39,7 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
     case ExitAnim::Dissolve: gx = 6; gy = 6; break;
     case ExitAnim::Burn: gx = 4; gy = 5; break;
     case ExitAnim::Glitch: gx = 1; gy = 5; break;
+    case ExitAnim::Vortex: gx = 2; gy = 2; break;
     default: break; // Explode: whole letters
     }
     int qi = 0;
@@ -98,6 +100,15 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
                     f.delay  = 0.45f * (1.0f - float(j) / float(std::max(1, gy - 1))) + 0.05f * float(qi); // bottom rows first
                     f.life   = 1.0f + 0.4f * float(r3);
                     break;
+                case ExitAnim::Vortex: // [LyricsForge] gravity vortex: the word spirals into a point and is swallowed
+                    f.center = c + upDir * (letterH * 0.25);
+                    f.axis   = screen ? Vec3{0, 0, 1} : normal;
+                    f.r0     = f.pos - f.center;
+                    f.angVel = f.axis * (4.0 + 5.0 * r3);
+                    f.life   = 1.15f + 0.35f * float(r3);
+                    f.delay  = 0.03f * float(qi);
+                    f.jitter = float(intensity);
+                    break;
                 case ExitAnim::Glitch:
                     f.vel    = Vec3{};
                     f.life   = 0.55f + 0.25f * float(r3);
@@ -125,6 +136,14 @@ void LetterFx::step(float dt) {
         case ExitAnim::Explode: f.vel = f.vel * std::exp(-1.6 * dt) + f.upDir * (-2.0 * g * dt); break;
         case ExitAnim::Dissolve: f.vel += f.upDir * (0.6 * g * dt); break;
         case ExitAnim::Burn: f.vel += f.upDir * (1.1 * g * dt); break;
+        case ExitAnim::Vortex: {
+            float const k  = anim::clamp01(t / f.life);
+            double const th = double(k * k) * (7.0 + 5.0 * f.seedF) * f.jitter;
+            double const rr = 1.0 - anim::easeInCubic(k) * 0.97;
+            f.pos = f.center + Quat::axisAngle(f.axis, th).rotate(f.r0) * rr;
+            f.vel = Vec3{};
+            break;
+        }
         case ExitAnim::Glitch:
             f.jitterT -= dt;
             if (f.jitterT <= 0) { // jump sideways every ~60 ms
@@ -151,6 +170,13 @@ void LetterFx::emit(Vec3 origin, std::vector<BfGlyphV1>& out) const {
         switch (f.mode) {
         case ExitAnim::Shatter: a = 1 - anim::easeInCubic(anim::clamp01((k - 0.45f) / 0.55f)); break;
         case ExitAnim::Explode: a = 1 - anim::easeInCubic(k); s = 1 + 0.4f * k; break;
+        case ExitAnim::Vortex: {
+            a = 1 - anim::easeInCubic(anim::clamp01((k - 0.55f) / 0.45f));
+            s = 1 - 0.75f * anim::easeInCubic(k);
+            q.fill  = mixRgba(f.baseFill, 0xFFFFD8E8u, k * 0.5f);   // pulled light: a little brighter as it falls in
+            q.glowK = std::max(q.glowK, 0.6f * k);
+            break;
+        }
         case ExitAnim::Dissolve: {
             a = 1 - anim::easeInOut(k);
             s = 1 - 0.6f * k;

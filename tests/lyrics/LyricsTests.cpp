@@ -1000,13 +1000,13 @@ TEST(panel_widgets) {
     bool wl = r.e.config().wholeLine;
     r.click(287, 131); // 1 px left of it (3 px from "Spread out"): nearer wins
     CHECK_EQ(r.e.config().wholeLine, !wl);
-    // ... and a point in the 2 px gap between FX rows goes to the nearer one (Drift row 94..107 vs Shatter 109..122)
+    // ... and a point in the 2 px gap between FX rows goes to the nearer one (Drift row 94..107 vs Dissolve 109..122)
     r.click(206 + 3 * 27.17f + 12, 210); // FX tab (4th pill)
     CHECK(r.p.tab() == Panel::Tab::Fx);
-    r.click(206 + 54 + 25, 107.6f);
+    r.click(206 + 40.5f + 19, 107.6f);
     CHECK(r.e.config().exitAnim == ExitAnim::Drift);
-    r.click(206 + 54 + 25, 108.6f);
-    CHECK(r.e.config().exitAnim == ExitAnim::Shatter);
+    r.click(206 + 40.5f + 19, 108.6f);
+    CHECK(r.e.config().exitAnim == ExitAnim::Dissolve);
     // close button
     CHECK(PanelRig::has(r.click(358, 13), PanelAction::Kind::Close));
 }
@@ -1221,7 +1221,8 @@ TEST(letter_fx_exits) {
     std::vector<BfGlyphV1> word{q, q};
     word[1].pos[0] = 0.5f;
     struct M { ExitAnim m; size_t frags; } const ms[] = {{ExitAnim::Shatter, 18}, {ExitAnim::Dissolve, 72}, {ExitAnim::Explode, 2},
-                                                          {ExitAnim::Burn, 40}, {ExitAnim::Glitch, 10}};
+                                                          {ExitAnim::Burn, 40}, {ExitAnim::Glitch, 10},
+                                                          {ExitAnim::Vortex, 8}};
     for (auto const& m : ms) {
         LetterFx fx;
         fx.spawn(word, Vec3{100, 64, 100}, m.m, 42);
