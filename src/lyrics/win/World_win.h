@@ -18,6 +18,7 @@ public:
     bool                canSeeSky(BlockPos p) override;
     int                 skyLight(BlockPos p) override;
     std::vector<Entity> entities() override;
+    std::string         blockName(BlockPos p) override;
 
 private:
     bool         solidCube(BlockPos p);

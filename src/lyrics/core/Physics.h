@@ -3,6 +3,7 @@
 // the top face of the block below (reference video A: letters lie flat on grass, steps, slabs), optionally bounces
 // and tumbles, settles, stays a while, then fades. Pure C++ against IWorld so it is unit-tested with a fake world.
 #pragma once
+#include "lyrics/core/Bursts.h"
 #include <cstdint>
 #include <vector>
 
@@ -37,6 +38,8 @@ struct Letter {
     double    fallStartY = 0;
     State     state = State::Falling;
     bool      hasTarget = false;
+    uint8_t   hits = 0;          // [BF] ground impacts that threw a burst (max 2)
+    bool      wet = false;       // [BF] fell into water: splashed, sinks slowly
 };
 
 class LetterPhysics {
@@ -49,13 +52,16 @@ public:
     void clear() { mLetters.clear(); }
     void dropAtlas(uint32_t atlas) { std::erase_if(mLetters, [&](Letter const& l) { return l.tmpl.atlas == atlas; }); }
     std::vector<Letter> const& letters() const { return mLetters; }
+    /// [BF] ground impacts since the last call (material-aware bursts)
+    std::vector<Landing> takeLandings() { std::vector<Landing> o; o.swap(mLandings); return o; }
 
     /// Height of the highest collision surface under (x, z) at or below y (NaN if none within 4 blocks).
     static double supportY(IWorld& w, double x, double y, double z);
 
 private:
     void substep(Letter& l, float dt, IWorld* w, PhysicsParams const& prm);
-    std::vector<Letter> mLetters;
+    std::vector<Letter>  mLetters;
+    std::vector<Landing> mLandings;
 };
 
 /// Rotation whose columns are the given orthonormal axes.

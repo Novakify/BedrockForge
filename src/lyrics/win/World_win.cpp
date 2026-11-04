@@ -38,6 +38,18 @@ bool GameWorld::solidCube(BlockPos p) {
 void GameWorld::collisionBoxes(BlockPos p, std::vector<Aabb>& out) {
     if (solidCube(p)) out.push_back(Aabb{});
 }
+std::string GameWorld::blockName(BlockPos p) { // [BF] material-aware impacts
+    try {
+        if (!hasFluid(p)) {
+            Block const* b = blockAt(mBs, p);
+            if (b && !b->isAir()) return b->getTypeName();
+        }
+        auto const& lb = mBs.getLiquidBlock(::BlockPos(p.x, p.y, p.z));
+        if (!lb.isAir()) return lb.getTypeName();
+    } catch (...) {}
+    return {};
+}
+
 bool GameWorld::hasFluid(BlockPos p) {
     if (p.y < -64 || p.y > 319) return false;
     return !mBs.getLiquidBlock(::BlockPos(p.x, p.y, p.z)).isAir();

@@ -79,6 +79,13 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         mPhysics.step(in.dt, world, pp);
         std::vector<BfGlyphV1> letters;
         mPhysics.emit(mOrigin, letters);
+        if (cfg.materialImpacts) { // [BF] stone chips, sand puffs, water splashes ... where letters land
+            uint32_t k = 0;
+            for (auto const& ld : mPhysics.takeLandings()) mBursts.spawn(ld, uint32_t(in.nowSeconds * 1000.0) + 7919u * ++k);
+        } else
+            mPhysics.takeLandings();
+        mBursts.step(in.dt);
+        mBursts.emit(mOrigin, cam.yaw, cam.pitch, letters);
         mGlyphs.insert(mGlyphs.begin(), letters.begin(), letters.end()); // letters on the ground sit behind live text
     }
     { // [BF] the sky writes the song: constellations sit behind everything else

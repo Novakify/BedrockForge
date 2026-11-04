@@ -37,6 +37,7 @@
 #include "lyrics/core/Cinema.h"
 #include "lyrics/core/Overrides.h"
 #include "lyrics/core/Atmos.h"
+#include "lyrics/core/Bursts.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 
@@ -266,6 +267,28 @@ TEST(atmos_motes_follow_music) {
     m.active = false;
     for (int i = 0; i < 900; ++i) at.step(in);
     CHECK_EQ(at.size(), size_t(0));
+}
+
+TEST(material_impacts) {
+    CHECK(surfaceOf("minecraft:grass_block") == Surface::Grass);
+    CHECK(surfaceOf("minecraft:stone") == Surface::Stone);
+    CHECK(surfaceOf("minecraft:sandstone") == Surface::Stone);
+    CHECK(surfaceOf("minecraft:sand") == Surface::Sand);
+    CHECK(surfaceOf("minecraft:oak_planks") == Surface::Wood);
+    CHECK(surfaceOf("minecraft:flowing_water") == Surface::Water);
+    CHECK(surfaceOf("minecraft:snow_layer") == Surface::Snow);
+    CHECK(surfaceOf("minecraft:iron_block") == Surface::Metal);
+    CHECK(surfaceOf("minecraft:oak_leaves") == Surface::Leaves);
+    CHECK(surfaceOf("") == Surface::Generic);
+    Bursts b;
+    Landing l; l.pos = {0, 64, 0}; l.surface = Surface::Lava; l.strength = 1; l.size = 0.25f;
+    b.spawn(l, 1);
+    CHECK(b.size() >= 4);
+    std::vector<BfGlyphV1> out;
+    b.emit(Vec3{0, 65, -3}, 0, 10, out);
+    CHECK_EQ(out.size(), b.size());
+    for (int i = 0; i < 40; ++i) b.step(0.05f);
+    CHECK_EQ(b.size(), size_t(0));
 }
 
 TEST(json_basics) {
@@ -775,6 +798,8 @@ TEST(letters_fall_and_lie_flat_on_ground) {
         Vec3 n = l.orient.rotate({0, 0, 1});
         CHECK(n.y > 0.99);                           // lying flat, face up
     }
+    CHECK(!ph.takeLandings().empty());              // [BF] each landing reported once for the impact bits
+    CHECK(ph.takeLandings().empty());
 }
 TEST(letters_lie_readable_in_order) { // reference video: the line lies on the ground, top away from you, in order
     FakeWorld     w;

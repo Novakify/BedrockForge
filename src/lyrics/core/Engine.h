@@ -48,7 +48,8 @@ private:
     Config                 mCfg;
     FontSet                mFonts;
     Scene                  mScene;
-    Atmos                  mAtmos;       // [BF] music-reactive motes around the player
+    Atmos                  mAtmos;
+    Bursts                 mBursts;      // [BF] material-aware impact bits of falling letters       // [BF] music-reactive motes around the player
     SkyWriter              mSkyWriter;   // [BF] the sky writes the song (hook lines -> constellations)
     LetterPhysics          mPhysics;
     LetterFx                      mFx; // [BF] break-apart exits
