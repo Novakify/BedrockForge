@@ -3,6 +3,7 @@
 #include "PostFx.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -314,14 +315,24 @@ bool       gLinked = false;
 
 bool showcasePose(float& blend, float& yaw, float& pitch, float& radius) {
     if (!gUi.enabled || !gUi.director) return false;
-    DirFn fn = dirGet();
-    BfDirectorV1 const* b = fn ? fn() : nullptr;
+    // render path + client tick both call this: fresh = BF published within the last ~0.4 s (wall clock, no shared
+    // per-caller counters); BF_GetDirector is looked up once, from here, and kept
+    static std::atomic<DirFn> sFn{nullptr};
+    DirFn fn = sFn.load(std::memory_order_acquire);
+    if (!fn) {
+        if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll"))
+            fn = reinterpret_cast<DirFn>(reinterpret_cast<void*>(GetProcAddress(m, "BF_GetDirector")));
+        if (!fn) return false;
+        sFn.store(fn, std::memory_order_release);
+    }
+    BfDirectorV1 const* b = fn();
     if (!b || b->version < 1 || b->size < sizeof(BfDirectorV1)) return false;
     BfDirectorV1 const v = *b;
-    static uint32_t last = 0;
-    static int      still = 0;
-    if (v.frame != last) { last = v.frame; still = 0; } else if (still < 1000) ++still;
-    if (still > 20 || !(v.showcase > 0.001f)) return false;
+    static std::atomic<uint32_t> sLast{0};
+    static std::atomic<int64_t>  sSeenMs{0};
+    int64_t const nowMs = int64_t(GetTickCount64());
+    if (v.frame != sLast.load(std::memory_order_relaxed)) { sLast.store(v.frame, std::memory_order_relaxed); sSeenMs.store(nowMs, std::memory_order_relaxed); }
+    if (nowMs - sSeenMs.load(std::memory_order_relaxed) > 400 || !(v.showcase > 0.001f)) return false;
     blend  = std::clamp(v.showcase, 0.0f, 1.0f);
     yaw    = v.orbitYaw;
     pitch  = std::clamp(v.orbitPitch, -60.0f, 60.0f);

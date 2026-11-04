@@ -1112,8 +1112,10 @@ void clientTick() {
         auto       ci    = ll::service::getClientInstance();
         bool const world = ci && ci->getLocalPlayer();
         bool const want  = world && !gActive.load() && gMenuSavedPersp < 0 && rf::postfx::showcasePose(b, y, p, r);
-        if (!world) saved = -1;
-        else if (want && saved < 0) {
+        if (!world) { // left the world mid-Showcase: give the perspective back so the next world starts normal
+            if (ci && saved >= 0) ci->getOptions().setPlayerViewPerspective(saved);
+            saved = -1;
+        } else if (want && saved < 0) {
             auto& o = ci->getOptions();
             saved   = o.getPlayerViewPerspective();
             if (saved == 0) o.setPlayerViewPerspective(1);
