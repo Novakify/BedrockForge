@@ -75,6 +75,7 @@ struct PlayerState {
     bool inRain = false, glowing = false, silent = false, riptide = false;
     int  swingTime = 0;                 // ticks since swing start (LivingEntity.swingTime), 0 when not swinging
     bool swinging = false;
+    float swingAnimPrev = 0;            // last tick's attack progress: a fall while swinging = swing restarted
     bool swingOffhand = false;
     int  swingDuration = 6;             // LivingEntity.getCurrentSwingDuration (6, haste/fatigue change it)
     float attackAnim = 0;               // getAttackAnim(delta) 0..1
