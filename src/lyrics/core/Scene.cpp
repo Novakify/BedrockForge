@@ -745,7 +745,7 @@ bool heroWord(Line const& l, int i) {
 
 // [BF] duets + translations (override files): the second singer gets its own tint; a translation is one small line
 // centred under the first chunk of its lyric line, fading with it
-constexpr uint32_t kVoice2 = 0xFFFFB3DE;
+constexpr uint32_t kVoice2 = 0xFFFFD27A; // warm gold: reads apart from the pink / blue themes
 void translationUnder(Placed const& p, DrawWord const& first, float lineAlpha, bool screen, float emScale, std::vector<DrawWord>& out) {
     if (p.line.translation.empty() || p.w0 != 0 || p.n() == 0) return;
     float x0 = 1e9f, x1 = -1e9f, yMax = -1e9f;
