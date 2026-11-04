@@ -32,8 +32,8 @@ void Ribbon::step(std::vector<DrawWord> const& words, WidthFn const& width, Vec3
     double const lx    = -total / 2 + total * p, ly = -0.62;
     Pt pt;
     pt.pos    = wordPoint(*cur, lx, ly, origin);
-    Vec3 const above = wordPoint(*cur, lx, ly + 0.05, origin);
-    pt.up     = above - pt.pos;   // 0.05 em "up" in output space = half the ribbon thickness
+    Vec3 const above = wordPoint(*cur, lx, ly + 0.09, origin);
+    pt.up     = above - pt.pos;   // 0.09 em "up" in output space = half the ribbon thickness
     pt.t      = now;
     pt.line   = cur->key / 1000;
     pt.screen = cur->screen;
@@ -60,7 +60,7 @@ void Ribbon::emit(uint32_t argb, float glow, std::vector<BfGlyphV1>& out) const 
         q.right[0] = float(r.x); q.right[1] = float(r.y); q.right[2] = float(r.z);
         q.up[0] = float(up.x); q.up[1] = float(up.y); q.up[2] = float(up.z);
         q.fill = q.fill2 = rgba;
-        q.alpha    = std::min(1.0f, (0.25f + 0.55f * glow) * k * k * b.alpha);
+        q.alpha    = std::min(1.0f, (0.5f + 0.5f * glow) * k * b.alpha);
         q.outlineW = 1.0f;
         q.glowW    = 2.0f;
         q.uv[2] = q.uv[3] = 1.0f;
