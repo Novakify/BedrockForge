@@ -140,6 +140,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(director, true)                  /* [BF] Conductor: section-aware glow / punch / letter fx budget */             \
     B(titleCard, true)                 /* [BF] movie-style title + artist card when a song starts */                   \
     B(heroWords, true)                 /* [BF] held notes get the hero treatment (bigger, brighter) */                 \
+    B(contrastGuard, true)             /* [BF] dark outline + shadow when the sky behind the words is bright */        \
     I(letterFx, 0)                     /* [BF] animated letters: 0 none, 1 neon, 2 fire, 3 water, 4 ice, 5 electric,   \
                                           6 lava, 7 glitch, 8 galaxy (drawn by RF's glyph shader) */                   \
     C(letterFxColor, 0)                /* [BF] effect colour, 0 = the text colour */                                   \

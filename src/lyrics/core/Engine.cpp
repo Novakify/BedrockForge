@@ -27,6 +27,12 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     Config cfg = effectiveConfig(mCfg, mPerf);
     MusicState const* m = cfg.director && in.music && in.music->active ? in.music : nullptr;
     if (m) cfg.letterFxIntensity *= 0.55f + 0.75f * m->budget + 0.5f * m->impact; // [BF] calm verses simmer, choruses burn
+    if (cfg.contrastGuard && in.skyLuma > 0.4f) { // [BF] light text on a light sky: give it a dark edge it can stand on
+        float const k = std::clamp((in.skyLuma - 0.4f) / 0.35f, 0.0f, 1.0f);
+        cfg.outlineWidth = std::max(cfg.outlineWidth, 0.08f + 0.14f * k);
+        if (cfg.outlineColor == 0) cfg.outlineColor = int64_t(0xFF1A0E24u);
+        cfg.textShadow = std::max(cfg.textShadow, k > 0.5f ? 2 : 1);
+    }
     auto width = [this](std::string_view s, std::string_view f) { return mFonts.width(s, f); };
     mScene.tick(in, cfg, cam, world, width);
     auto words = mScene.draw(in, cfg, cam, world);

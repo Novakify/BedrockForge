@@ -73,6 +73,7 @@ struct SceneInput {
     std::string        title, artist;  // now playing (top bar)
     float              guiW = 427.0f, guiH = 240.0f; // UI size in GUI units (Bedrock ScreenView size)
     MusicState const*  music = nullptr; // [BF] the Conductor's state this frame (nullptr = no director)
+    float              skyLuma = 0;     // [BF] brightness of our sky behind the text (contrast guard)
 };
 
 /// One word ready to draw. World mode: origin + orient (+X right, +Y up, +Z toward the viewer side the Java mod

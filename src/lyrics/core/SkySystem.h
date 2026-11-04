@@ -30,6 +30,8 @@ public:
     /// One frame; publishes to the store. `on` = module on (off publishes an inactive frame).
     void step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn const& in);
     Frame const&             frame() const { return mFrame; }
+    /// [BF] how bright the sky behind the lyrics is right now, 0..1 (contrast guard)
+    float                    luma() const { return mLuma; }
     std::vector<Quad> const& quads() const { return mQuads; }
 
 private:
@@ -38,6 +40,7 @@ private:
     Frame             mFrame{};
     std::vector<Quad> mQuads;
     uint32_t          mSeq = 0;
+    float             mLuma = 0;
 };
 
 /// Pack quads into the shared vertex layout (4 vertices per quad).

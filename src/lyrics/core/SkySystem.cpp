@@ -35,6 +35,13 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     ci.dtSec = in.dtSec; ci.night = in.night; ci.beat = in.beat; ci.lineActive = in.lineActive; ci.playing = in.playing;
     ci.skyOpen = in.skyOpen; ci.picture = picture;
     mFrame = mClock.tick(p ? &*p : nullptr, cfg, ci);
+    mLuma  = 0;
+    if (p) { // relative luminance of the preset's top + horizon, as visible as the sky is
+        auto lum = [](uint32_t c) {
+            return (0.2126f * float((c >> 16) & 255) + 0.7152f * float((c >> 8) & 255) + 0.0722f * float(c & 255)) / 255.0f;
+        };
+        mLuma = 0.5f * (lum(p->top) + lum(p->horizon)) * mFrame.visible * std::min(1.0f, mFrame.bright);
+    }
 
     FxIn fi;
     fi.nowMs = in.nowMs; fi.dtSec = in.dtSec; fi.cam = Cam::of(in.yaw, in.pitch);

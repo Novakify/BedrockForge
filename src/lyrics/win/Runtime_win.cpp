@@ -709,6 +709,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.enabled = gS->engine.config().director;
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
+        in.skyLuma = gS->sky.luma();
         auto const& m = gS->conductor.state();
         auto stamp = [&](char const* what) {
             char b[160];
