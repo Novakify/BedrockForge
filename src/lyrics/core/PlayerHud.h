@@ -3,6 +3,7 @@
 // Screen-mode quads (BF_GLYPH_SCREEN). Rounded (LyricsForge look) or square (Minecraft look).
 #pragma once
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "lyrics/BfLyrics.h"
@@ -24,6 +25,9 @@ public:
 
 private:
     float mVis = 0, mBars[5]{}, mPos = 0;
+    struct Fit { std::string font, in, out; float maxEm = 0; };
+    std::vector<Fit> mFits; // the ellipsized texts of the last frames (title, artist, lines): no re-measuring per frame
+    std::string const& fitCached(FontSet const& f, std::string const& font, std::string const& s, float maxEm);
     int64_t mSeq = -1;
 };
 

@@ -31,6 +31,14 @@ std::string mmss(int64_t ms) {
 }
 } // namespace
 
+std::string const& PlayerHud::fitCached(FontSet const& f, std::string const& font, std::string const& s, float maxEm) {
+    for (auto& x : mFits)
+        if (x.in == s && x.font == font && std::fabs(x.maxEm - maxEm) < 0.01f) return x.out;
+    if (mFits.size() >= 12) mFits.erase(mFits.begin());
+    mFits.push_back({font, s, fit(f, font, s, maxEm), maxEm});
+    return mFits.back().out;
+}
+
 void PlayerHud::build(SceneInput const& in, Extra const& ex, Config const& c, FontSet const& fonts, std::vector<BfGlyphV1>& out) {
     float const dt = std::clamp(in.dt, 0.0f, 0.1f);
     bool const want = c.enabled && c.hudPlayer && !in.title.empty();
@@ -85,8 +93,8 @@ void PlayerHud::build(SceneInput const& in, Extra const& ex, Config const& c, Fo
     // title / artist
     float const tx = cx + coverS + pad, tw = w - (tx - x) - pad - 14 * k;
     float const ts = 8.2f * k, as = 6.6f * k;
-    text(fit(fonts, bold, in.title, tw / ts), bold, tx, cy + 1 * k, ts, 0xFFFFFFFFu, a);
-    text(fit(fonts, font, in.artist, tw / as), font, tx, cy + 11.5f * k, as, 0xFFB9B3D6u, a);
+    text(fitCached(fonts, bold, in.title, tw / ts), bold, tx, cy + 1 * k, ts, 0xFFFFFFFFu, a);
+    text(fitCached(fonts, font, in.artist, tw / as), font, tx, cy + 11.5f * k, as, 0xFFB9B3D6u, a);
     // equalizer (5 bars, beat-driven)
     float const bx = x + w - pad - 12 * k, by = cy + 10 * k;
     for (int i = 0; i < 5; ++i) {
@@ -124,7 +132,7 @@ void PlayerHud::build(SceneInput const& in, Extra const& ex, Config const& c, Fo
         for (size_t i = 0; i < rows.size(); ++i) {
             float const sz = i == 0 ? 7.6f * k : 6.4f * k;
             uint32_t const col = i == 0 ? acc : 0xFF9A93B5u;
-            std::string const t = fit(fonts, i == 0 ? bold : font, show(rows[i]->text, c.allCaps), (w - 2 * pad) / sz);
+            std::string const t = fitCached(fonts, i == 0 ? bold : font, show(rows[i]->text, c.allCaps), (w - 2 * pad) / sz);
             text(t, i == 0 ? bold : font, x + pad, ly, sz, i == 0 ? colLerp(col, 0xFFFFFFFFu, 0.35f) : col, a * (i == 0 ? 1.0f : 0.8f - 0.2f * float(i)));
             ly += sz + 3.2f * k;
         }

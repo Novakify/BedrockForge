@@ -54,6 +54,7 @@ private:
     Scene                  mScene;
     Atmos                  mAtmos;
     Bursts                 mBursts;
+    std::vector<BfGlyphV1> mBack;        // [BF] reused: glyphs drawn behind the words
     Ribbon                 mRibbon;
     PlayerHud              mPlayer;
     Portal                 mPortal;      // [BF] a ring of light opens in the sky on choruses / drops      // [BF] corner music player      // [BF] light running under the line with the singing      // [BF] material-aware impact bits of falling letters       // [BF] music-reactive motes around the player

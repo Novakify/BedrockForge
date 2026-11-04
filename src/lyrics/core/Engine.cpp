@@ -79,57 +79,50 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         }
         buildWordGlyphs(w, *f, cfg, st, mOrigin, mGlyphs);
     }
-    { // [BF] word ribbon (drawn behind the words: inserted at the front)
-        mRibbon.step(words, width, mOrigin, in.nowSeconds, m ? m->energy : 0.0f, cfg.wordRibbon && cfg.showLyrics);
-        std::vector<BfGlyphV1> rib;
-        Theme const th = currentTheme(cfg);
-        mRibbon.emit(cfg.letterFxColor != 0 ? uint32_t(cfg.letterFxColor) : th.a, m ? std::clamp(m->budget, 0.0f, 1.0f) : 0.5f, rib);
-        if (!rib.empty()) mGlyphs.insert(mGlyphs.begin(), rib.begin(), rib.end());
-    }
     if (mFx.size()) { // [BF] fragments of words that broke apart
         mFx.step(in.dt * (m ? std::clamp(m->timeScale, 0.25f, 2.5f) : 1.0f)); // [BF] speed ramp
         mFx.emit(mOrigin, mGlyphs);
     }
-    if (cfg.fallingLetters || cfg.exitAnim == ExitAnim::Fall || !mPhysics.letters().empty()) {
+    // [BF] everything that sits BEHIND the live words, back to front: motes, portal, constellations, fallen letters +
+    // their impact bits, the ribbon. Built into one reused buffer and put in front of the words with ONE insert
+    // (was five front-inserts of temporary vectors per frame).
+    Theme const th  = currentTheme(cfg);
+    uint32_t const tint = cfg.letterFxColor != 0 ? uint32_t(cfg.letterFxColor) : th.a;
+    mBack.clear();
+    {
+        Atmos::In ai; // atmosphere: motes in the air, same tint as the stars
+        ai.music = in.music; ai.dt = in.dt; ai.camPos = cam.pos; ai.camYaw = cam.yaw; ai.camPitch = cam.pitch;
+        ai.color = tint; ai.now = in.nowSeconds; ai.enabled = cfg.atmosphere && cfg.director && cfg.showLyrics;
+        ai.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
+        mAtmos.step(ai);
+        mAtmos.emit(ai, mOrigin, mBack);
+        Portal::In pi; // musical portal
+        pi.music = in.music; pi.dt = in.dt; pi.camYaw = cam.yaw; pi.camPitch = cam.pitch; pi.now = in.nowSeconds; pi.color = tint;
+        pi.enabled = cfg.portals && cfg.director && cfg.showLyrics;
+        mPortal.step(pi);
+        mPortal.emit(pi, mBack);
+        SkyWriter::In si; // the sky writes the song
+        si.t = in.t; si.songSeq = in.songSeq; si.playing = in.playing; si.lyrics = in.lyrics; si.music = in.music;
+        si.dt = in.dt; si.camYaw = cam.yaw; si.camPitch = cam.pitch; si.camPos = cam.pos; si.now = in.nowSeconds; si.skyLuma = in.skyLuma;
+        si.enabled = cfg.constellations && cfg.showLyrics;
+        si.color = tint;
+        mSkyWriter.step(si);
+        mSkyWriter.emit(si, mOrigin, mBack);
+    }
+    if (cfg.fallingLetters || cfg.exitAnim == ExitAnim::Fall || !mPhysics.letters().empty() || mBursts.size()) {
         mPhysics.step(in.dt, world, pp);
-        std::vector<BfGlyphV1> letters;
-        mPhysics.emit(mOrigin, letters);
-        if (cfg.materialImpacts) { // [BF] stone chips, sand puffs, water splashes ... where letters land
+        mPhysics.emit(mOrigin, mBack); // letters on the ground sit behind live text
+        if (cfg.materialImpacts) { // stone chips, sand puffs, water splashes ... where letters land
             uint32_t k = 0;
             for (auto const& ld : mPhysics.takeLandings()) mBursts.spawn(ld, uint32_t(in.nowSeconds * 1000.0) + 7919u * ++k);
         } else
             mPhysics.takeLandings();
         mBursts.step(in.dt);
-        mBursts.emit(mOrigin, cam.yaw, cam.pitch, letters);
-        mGlyphs.insert(mGlyphs.begin(), letters.begin(), letters.end()); // letters on the ground sit behind live text
+        mBursts.emit(mOrigin, cam.yaw, cam.pitch, mBack);
     }
-    { // [BF] the sky writes the song: constellations sit behind everything else
-        SkyWriter::In si;
-        si.t = in.t; si.songSeq = in.songSeq; si.playing = in.playing; si.lyrics = in.lyrics; si.music = in.music;
-        si.dt = in.dt; si.camYaw = cam.yaw; si.camPitch = cam.pitch; si.camPos = cam.pos; si.now = in.nowSeconds; si.skyLuma = in.skyLuma;
-        si.enabled = cfg.constellations && cfg.showLyrics;
-        Theme const th = currentTheme(cfg);
-        si.color = cfg.letterFxColor != 0 ? uint32_t(cfg.letterFxColor) : th.a;
-        mSkyWriter.step(si);
-        std::vector<BfGlyphV1> stars;
-        mSkyWriter.emit(si, mOrigin, stars);
-        if (!stars.empty()) mGlyphs.insert(mGlyphs.begin(), stars.begin(), stars.end());
-        Portal::In pi; // [BF] musical portal (behind the stars)
-        pi.music = in.music; pi.dt = in.dt; pi.camYaw = cam.yaw; pi.camPitch = cam.pitch; pi.now = in.nowSeconds; pi.color = si.color;
-        pi.enabled = cfg.portals && cfg.director && cfg.showLyrics;
-        mPortal.step(pi);
-        std::vector<BfGlyphV1> ring;
-        mPortal.emit(pi, ring);
-        if (!ring.empty()) mGlyphs.insert(mGlyphs.begin(), ring.begin(), ring.end());
-        Atmos::In ai; // [BF] atmosphere: motes in the air, same tint as the stars
-        ai.music = in.music; ai.dt = in.dt; ai.camPos = cam.pos; ai.camYaw = cam.yaw; ai.camPitch = cam.pitch;
-        ai.color = si.color; ai.now = in.nowSeconds; ai.enabled = cfg.atmosphere && cfg.director && cfg.showLyrics;
-        ai.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
-        mAtmos.step(ai);
-        std::vector<BfGlyphV1> motes;
-        mAtmos.emit(ai, mOrigin, motes);
-        if (!motes.empty()) mGlyphs.insert(mGlyphs.begin(), motes.begin(), motes.end());
-    }
+    mRibbon.step(words, width, mOrigin, in.nowSeconds, m ? m->energy : 0.0f, cfg.wordRibbon && cfg.showLyrics);
+    mRibbon.emit(tint, m ? std::clamp(m->budget, 0.0f, 1.0f) : 0.5f, mBack);
+    if (!mBack.empty()) mGlyphs.insert(mGlyphs.begin(), mBack.begin(), mBack.end());
     // the karaoke bar last: screen space, drawn over the world text
     mTopBar.build(in, cfg, mFonts, in.guiH > 0 ? in.guiW / in.guiH : 16.0f / 9.0f, mGlyphs);
     PlayerHud::Extra px; // [BF] corner music player
