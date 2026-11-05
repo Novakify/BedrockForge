@@ -184,9 +184,14 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
             float const a  = bright * tw * shown[i];
             float const mg = c.stars[i].mag;
             float const rc = R * 0.0048f * mg, rh = R * 0.014f * mg * (1.0f + 0.5f * mFinale);
-            if (lightSky) quad(pos[i], r * double(rc * 1.9f), u * double(rc * 1.9f), darkCol, 0.55f * a, 1.0f, 3.0f); // dark ring
+            // [BF] audit: a coloured core with a dark outline read as a gem sticker on bright skies. A star is a white-hot
+            // point in a tinted halo; on a bright sky only a faint soft shadow helps it read.
+            if (lightSky) quad(pos[i], r * double(rc * 2.4f), u * double(rc * 2.4f), darkCol, 0.22f * a, 1.0f, 8.0f); // soft shadow
             quad(pos[i], r * double(rh), u * double(rh), in.color, (lightSky ? 0.3f : 0.22f) * a, 1.0f, 10.0f); // halo
-            quad(pos[i], r * double(rc), u * double(rc), lightSky ? in.color : 0xFFFFFFFFu, a, 1.0f, 2.0f);   // core
+            uint32_t const cc = in.color;
+            uint32_t const warmWhite = 0xFF000000u | ((((cc >> 16) & 0xFF) + 3 * 255) / 4 << 16) |
+                                       ((((cc >> 8) & 0xFF) + 3 * 255) / 4 << 8) | (((cc & 0xFF) + 3 * 255) / 4);
+            quad(pos[i], r * double(rc), u * double(rc), warmWhite, a, 1.0f, 2.0f); // core
         }
     };
     for (auto const& c : mCons) draw(c, false);

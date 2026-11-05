@@ -808,6 +808,22 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
             p.pitch += float(mate->rowsN - 1 + p.rowsN - 1) * rowGap * 0.5f * emDeg;
             p.a = cam.pos + dir(p.yaw, p.pitch) * p.dist;
         }
+    // [BF] busy lyrics: the second line of a pair is placed beside its mate without the overlap search, so a big
+    // (kinetic / stacked / still breaking apart) mate could sit right under it. Slide it below the mate until clear.
+    if (sky && !c.viewLock && !c.skyWords && p.line.index >= 0 && p.line.index % 2 == 1)
+        if (Placed* mate = findIndex(p.line.index - 1)) {
+            Vec3 const e = mate->a - cam.pos;
+            double const len = e.length();
+            if (len > 0.001) {
+                float const k  = float(mate->dist / len);
+                float const my = float(yawOf(e)), mp = float(-deg(std::asin(e.y / len)));
+                float const needW = p.angW + mate->angW * k + 1.5f, needH = p.angH + mate->angH * k + 1.2f;
+                if (std::fabs(wrap(my - p.yaw)) < needW && std::fabs(p.pitch - mp) < needH) {
+                    p.pitch = std::min(mp + needH, 40.0f);
+                    p.a     = cam.pos + dir(p.yaw, p.pitch) * p.dist;
+                }
+            }
+        }
     if (rtl(p.line.text))
         for (auto& x : p.wx0) x = -x;
     if (c.lyricsStyle == LyricsStyle::Wall) fitToSurface(p, c, w);

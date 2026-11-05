@@ -32,7 +32,9 @@ void Pulse::emit(In const& in, std::vector<BfGlyphV1>& out) const {
     if (mOn < 0.01f) return;
     MusicState const* m = in.music;
     float const bass = m ? m->bass : 0, mid = m ? m->mid : 0, treble = m ? m->treble : 0, energy = m ? m->energy : 0.5f;
-    uint32_t const col = toRgba(in.color | 0xFF000000u), white = toRgba(0xFFFFFFFFu);
+    uint32_t const col = toRgba(in.color | 0xFF000000u);
+    uint32_t const tip = toRgba(0xFF000000u | (((((in.color >> 16) & 0xFF) * 2 + 255) / 3) << 16) |
+                                (((((in.color >> 8) & 0xFF) * 2 + 255) / 3) << 8) | (((in.color & 0xFF) * 2 + 255) / 3));
     auto quad = [&](Vec3 p, Vec3 hr, Vec3 hu, uint32_t rgba, float alpha, float soft, float round = 1.0f) {
         if (alpha <= 0.004f) return;
         BfGlyphV1 q{};
@@ -83,7 +85,18 @@ void Pulse::emit(In const& in, std::vector<BfGlyphV1>& out) const {
         Vec3 const up{0, h * 0.5, 0};
         Vec3 const side = Vec3{-std::sin(az), 0, std::cos(az)} * double(kHorizon * 3.14159 / bars * 0.16);
         float const a = mOn * (0.30f + 0.35f * bass + 0.35f * mFlare);
-        quad(base + up, side, up, i % 6 ? col : white, a, 3.0f, 0.15f); // thin, square-ish bars (seen in game: round = dots)
+        // [BF] audit: flat solid posts (every 6th white) read as a fence. Light, not objects: each bar is a beam that is
+        // brightest at its tip and fades into the ground, all one colour.
+        BfGlyphV1 q{};
+        Vec3 const p = base + up;
+        q.pos[0] = float(p.x); q.pos[1] = float(p.y); q.pos[2] = float(p.z);
+        Vec3 const sd = side * 0.8;
+        q.right[0] = float(sd.x); q.right[1] = float(sd.y); q.right[2] = float(sd.z);
+        q.up[0] = float(up.x); q.up[1] = float(up.y); q.up[2] = float(up.z);
+        q.fill = tip; q.fill2 = col & 0x00FFFFFFu;
+        q.alpha = std::min(1.0f, a); q.outlineW = 0.15f; q.glowW = 3.0f;
+        q.uv[2] = q.uv[3] = 1.0f; q.flags = BF_GLYPH_SOLID | BF_GLYPH_GRADIENT;
+        if (q.alpha > 0.004f) out.push_back(q);
     }
 }
 
