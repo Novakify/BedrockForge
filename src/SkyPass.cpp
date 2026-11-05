@@ -510,7 +510,7 @@ std::atomic<long>                                       gInjected{0}, gHidden{0}
 #pragma pack(push, 1)
 struct DomeVert {
     float    pos[2];
-    uint32_t p[13];
+    uint32_t p[14]; // [LyricsForge] 13: the music right now (lightning, kick, beat, chorus wave)
     float    f[3], r[3], u[3], txy[2], info[4];
     float    extra[4]; // x = far depth, y = HDR gain, z = 1: sRGB -> linear (Vibrant Visuals), w = 0
 };
@@ -552,7 +552,7 @@ bool makeGamePsos(ID3D12Device* dev, GamePso& g) {
             d.VS = {rf::lyrics::shaders::VSSkyGame, sizeof rf::lyrics::shaders::VSSkyGame};
             d.PS = {rf::lyrics::shaders::PSSkyGame, sizeof rf::lyrics::shaders::PSSkyGame};
             il.push_back({"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, offsetof(DomeVert, pos), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
-            for (UINT i = 0; i < 13; ++i)
+            for (UINT i = 0; i < 14; ++i)
                 il.push_back({kP, i, DXGI_FORMAT_R8G8B8A8_UNORM, 0, UINT(offsetof(DomeVert, p) + 4 * i), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
             il.push_back({"CAMF", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(DomeVert, f), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
             il.push_back({"CAMR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(DomeVert, r), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0});
@@ -965,7 +965,7 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     for (int k = 0; k < 3; ++k) {
         DomeVert& v = dv[k];
         v.pos[0] = tri[k][0]; v.pos[1] = tri[k][1];
-        for (int i = 0; i < 13; ++i) std::memcpy(&v.p[i], h.params[i], 4);
+        for (int i = 0; i < 14; ++i) std::memcpy(&v.p[i], h.params[i], 4);
         std::memcpy(v.f, cam.f, 12); std::memcpy(v.r, cam.r, 12); std::memcpy(v.u, cam.u, 12);
         v.txy[0] = cam.tx; v.txy[1] = cam.ty;
         v.info[0] = h.info[0]; v.info[1] = h.info[1]; v.info[2] = h.info[2]; v.info[3] = h.info[3]; // w: music pulse
