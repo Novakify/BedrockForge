@@ -86,7 +86,8 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
                                  mFrame.brightness, std::clamp(in.pulse - in.kick, 0.0f, 1.0f), in.kick, in.lightning);
         }
         float const dt = float(std::clamp(in.dtSec, 0.0, 0.25));
-        for (int k = 0; k < 3; ++k) mWorld.tint[k] = ease(mWorld.tint[k], want.tint[k], dt, 0.25f, 0.25f); // follows the kick
+        float const tt = mSweep < 1.0f ? 0.7f : 0.25f; // during a sky sweep the light turns with it
+        for (int k = 0; k < 3; ++k) mWorld.tint[k] = ease(mWorld.tint[k], want.tint[k], dt, tt, tt); // follows the kick
         mWorld.amount   = ease(mWorld.amount, want.amount, dt, 0.10f, 0.7f);
         mWorld.exposure = ease(mWorld.exposure, want.exposure, dt, 0.05f, 0.35f);
         mWorld.sat      = ease(mWorld.sat, want.sat, dt, 0.08f, 0.8f);
@@ -116,6 +117,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     if (p) {
         float id3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}; // the dome is drawn in world axes (RF builds rays from the camera)
         if (mDomeFor != p->id) { // [BF] a new sky: turn its signature (body / burst / eclipse, az ~180) to where you look
+            if (mHaveQ && !mDomeFor.empty()) { mPrevQ = mCurQ; mSweep = 0; } // [LyricsForge] sweep the old one away
             mDomeFor = p->id;
             float const front = frontAz(*p);
             mDomeYaw = float(in.yaw) - front;
@@ -124,6 +126,10 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         // [LyricsForge] texel 13: what the music is doing right now, for every sky (the dome reacts, not just the quads)
         auto b8 = [](float v) { return uint8_t(std::clamp(int(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)), 0, 255)); };
         q[13] = {b8(in.lightning), b8(in.kick), b8(in.beat), in.wave < 0 ? uint8_t(0) : uint8_t(1 + int(std::clamp(in.wave, 0.0f, 1.0f) * 254.0f))};
+        mCurQ = q; mHaveQ = true;
+        mSweep = std::min(1.0f, mSweep + float(std::clamp(in.dtSec, 0.0, 0.1)) / 1.6f);
+        q[14] = {mSweep < 1.0f ? uint8_t(1 + int(mSweep * 254.0f)) : uint8_t(0), 0, 0, 0};
+        if (mSweep < 1.0f) for (int i = 0; i < 16; ++i) std::memcpy(h.prevParams[i], mPrevQ[size_t(i)].data(), 4);
         for (int i = 0; i < 16; ++i) std::memcpy(h.params[i], q[size_t(i)].data(), 4);
     }
     h.info[0]       = mFrame.t;

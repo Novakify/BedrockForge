@@ -67,6 +67,9 @@ private:
     WorldLight        mWorld;
     float             mDomeYaw = 0;  // [BF] the dome's turn for the current preset
     std::string       mDomeFor;
+    Params            mCurQ{}, mPrevQ{}; // [LyricsForge] the sky shown last frame / the one being swept away
+    bool              mHaveQ = false;
+    float             mSweep = 1;        // 0..1 how far the new sky has swept in (1 = done)
 };
 
 /// Pack quads into the shared vertex layout (4 vertices per quad).

@@ -225,7 +225,10 @@ Frame Clock::tick(Preset const* p, Config const& cfg, In const& in) {
     mOutside = ease(mOutside, in.skyOpen ? 1.0f : 0.0f, dt, 2.0);
     mPic     = ease(mPic, in.picture ? 1.0f : 0.0f, dt, 2.5);
     std::string id = p ? p->id : "";
-    if (id != mLast) { mLast = id; mLiveFade = 0; }
+    if (id != mLast) { // [LyricsForge] sky to sky: the shader sweeps the new one in (no fade through the vanilla sky)
+        mLiveFade = (!mLast.empty() && !id.empty()) ? 1.0f : 0.0f;
+        mLast = id;
+    }
     mLiveFade = std::min(1.0f, mLiveFade + float(dt / 0.9));
 
     Frame f;
