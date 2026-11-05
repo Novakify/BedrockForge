@@ -38,3 +38,9 @@
     {"eclipse_heart", 0x050002, 0x2A0408, 0.9f, 0.0f, false, 0xFF5A4A, 0xFFD6B0, Weather::Embers, 0x000000, false, 0xFFB8A8},
     {"dream_ocean", 0x1A3373, 0xFFC6DC, 0.9f, 0.0f, false, 0x9CFFF0, 0xFFC6E6, Weather::None, 0x000000, false, 0xFFFFFF},
     {"meteor", 0x000310, 0x0C1838, 0.9f, 0.0f, false, 0xBFDCFF, 0x6E9CFF, Weather::None, 0x000000, true, 0xCFE4FF},
+    // [LyricsForge] realistic skies (ordinals 38..42, drawn by live_sky's realSky): real clouds, real light, vivid colour
+    {"summer", 0x1C5CD6, 0xB0D6F8, 0.9f, 0.0f, false, 0x5ABEFF, 0xFFFFFF, Weather::None, 0x000000, false, 0xFFFFFF},
+    {"dawn", 0x4676E6, 0xFFC4CE, 0.9f, 0.0f, false, 0xFF8CC8, 0xFFD6BA, Weather::None, 0x000000, false, 0xFFE6F0},
+    {"dusk", 0x2E2878, 0xFF8448, 0.9f, 0.1f, false, 0xFF5096, 0xFFA860, Weather::None, 0x000000, false, 0xFFD2B0},
+    {"bright_night", 0x140E46, 0x2860BE, 0.9f, 1.6f, false, 0xC85AFF, 0x50C8FF, Weather::None, 0xEAF0FF, true, 0xD6E4FF},
+    {"silver_lining", 0x2854AA, 0xC4D6E8, 0.9f, 0.0f, false, 0xFFD28C, 0xFFFFFF, Weather::None, 0x000000, false, 0xFFF6E6},

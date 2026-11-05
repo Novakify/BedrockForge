@@ -1166,14 +1166,14 @@ TEST(panel_widgets) {
     CHECK_EQ(r.e.config().skyShuffle, !before);
     CHECK(PanelRig::has(a, PanelAction::Kind::SaveConfig));
     if (!before) CHECK(r.e.config().skyPreset != "off");     // random turns the sky on
-    // sky tile 2 (Warp, LyricsFlow 2.2 order) at x 206 + 2 * 56, y 66: picking one = your sky, random off
+    // sky tile 2 (Wildfire Dusk, the realistic skies come first) at x 206 + 2 * 56, y 66: picking one = your sky, random off
     r.click(206 + 2 * 56 + 20, 78);
-    CHECK_EQ(r.e.config().skyPreset, std::string("warp"));
+    CHECK_EQ(r.e.config().skyPreset, std::string("dusk"));
     CHECK(!r.e.config().skyShuffle);
-    // pager >, then the first tile of page 2 = Matrix
+    // pager >, then the first tile of page 2 = Supernova
     r.click(358, 151);
     r.click(206 + 20, 78);
-    CHECK_EQ(r.e.config().skyPreset, std::string("matrix"));
+    CHECK_EQ(r.e.config().skyPreset, std::string("supernova"));
     // Strength slider: click at the far right of the track (258 + 108) -> 1.0
     r.click(369, 165);
     CHECK_NEAR(r.e.config().skyStrength, 1.0, 1e-3);
@@ -1248,8 +1248,12 @@ TEST(quality_and_profiles) {
 TEST(live_sky_params) {
     using namespace bf::lyrics::sky;
     Config cfg;
-    CHECK_EQ(int(presets().size()), 38);
-    CHECK_EQ(int(order().size()), 25);
+    CHECK_EQ(int(presets().size()), 43);
+    CHECK_EQ(int(order().size()), 30);
+    CHECK_EQ(find("summer", cfg)->ordinal, 38);                    // [LyricsForge] realistic skies 38..42
+    CHECK_EQ(find("silver_lining", cfg)->ordinal, 42);
+    CHECK(!find("summer", cfg)->painted());
+    CHECK(body(*find("bright_night", cfg)).has_value());
     for (auto id : order()) CHECK(find(id, cfg).has_value());
     CHECK(!find("off", cfg).has_value());
     auto syn = *find("synthwave", cfg);

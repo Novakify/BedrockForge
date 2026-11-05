@@ -120,7 +120,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         ui.enabled = cfg.instrumentalFx && cfg.director;
         { // [BF] what fits the sky: a neon equaliser belongs to night / space / neon skies, not a pastel or storm sky
             SkyFamily const f = skyFamily(in.skyShown.empty() ? std::string_view(cfg.skyPreset) : std::string_view(in.skyShown));
-            ui.bars = f != SkyFamily::Warm && f != SkyFamily::Storm;
+            ui.bars = f != SkyFamily::Warm && f != SkyFamily::Storm && f != SkyFamily::Day;
         }
         ui.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
         mPulse.step(ui);

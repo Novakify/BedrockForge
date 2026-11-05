@@ -12,6 +12,7 @@ namespace bf::lyrics {
 
 SkyFamily skyFamily(std::string_view id) {
     auto in = [&](std::initializer_list<std::string_view> l) { return std::find(l.begin(), l.end(), id) != l.end(); };
+    if (in({"summer", "dawn", "dusk", "silver_lining"})) return SkyFamily::Day; // [LyricsForge] the realistic day skies
     if (in({"aurora", "polar", "prism", "silk", "purple"})) return SkyFamily::Aurora;
     if (in({"golden_hour", "sunset", "sakura", "cotton_candy", "aquarell", "cherry"})) return SkyFamily::Warm;
     if (in({"thunder", "storm", "inferno", "blood_moon", "crimson", "eclipse_heart"})) return SkyFamily::Storm;
@@ -22,7 +23,7 @@ SkyFamily skyFamily(std::string_view id) {
 }
 
 char const* familyName(SkyFamily f) {
-    static char const* const n[] = {"space", "aurora", "warm", "storm", "neon", "water", "cold"};
+    static char const* const n[] = {"space", "aurora", "warm", "storm", "neon", "water", "cold", "day"};
     return n[int(f)];
 }
 Moment momentByName(std::string_view n) {
@@ -47,6 +48,7 @@ std::vector<Moment> const& chorusDeck(SkyFamily f) {
         /* neon   */ {M::Wave, M::Meteors, M::AuroraBurst},
         /* water  */ {M::Fireflies, M::Wave, M::Rain},
         /* cold   */ {M::Snow, M::AuroraBurst, M::Blizzard},
+        /* day    */ {M::AuroraBurst, M::Heartbeat, M::Wave}, // the sky itself surges: faster clouds, brighter light
     };
     return decks[int(f)];
 }

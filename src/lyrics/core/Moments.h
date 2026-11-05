@@ -25,7 +25,7 @@ struct MusicState;
 struct Lyrics;
 using sky::Weather;
 
-enum class SkyFamily : uint8_t { Space, Aurora, Warm, Storm, Neon, Water, Cold };
+enum class SkyFamily : uint8_t { Space, Aurora, Warm, Storm, Neon, Water, Cold, Day };
 SkyFamily   skyFamily(std::string_view skyId);
 char const* familyName(SkyFamily f);
 

@@ -74,6 +74,9 @@ std::string fontName(std::string const& id) {
 
 std::vector<Panel::SkyPresetInfo> const& Panel::skyOrder() { // SkyPreset.order() + enum colours (top, horizon)
     static std::vector<SkyPresetInfo> const v{
+        {"summer", "Summer Day", 0x1C5CD6, 0xB0D6F8},         {"dawn", "Pastel Dawn", 0x4676E6, 0xFFC4CE}, // realistic
+        {"dusk", "Wildfire Dusk", 0x2E2878, 0xFF8448},        {"bright_night", "Bright Night", 0x140E46, 0x2860BE},
+        {"silver_lining", "Silver Lining", 0x2854AA, 0xC4D6E8},
         {"rift", "Rift", 0x03030C, 0x1A0B2E},                 {"supernova", "Supernova", 0x040612, 0x101A3A}, // LyricsFlow 2.2
         {"warp", "Warp", 0x020512, 0x0A1C40},                 {"silk", "Silk", 0x02100E, 0x0B3A3A},
         {"eclipse", "Eclipse", 0x050A1E, 0x7A3A1C},

@@ -30,7 +30,7 @@ struct Preset {
     bool        shootingStars;
     uint32_t    lyricColor;
     int         ordinal; // enum ordinal = shader PRESET (>= 20 painted)
-    bool painted() const { return ordinal >= 20; }
+    bool painted() const { return ordinal >= 20 && ordinal <= 37; } // 38+: the realistic skies draw their own way
 };
 
 struct Body {

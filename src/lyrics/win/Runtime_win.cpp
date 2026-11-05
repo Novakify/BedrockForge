@@ -864,6 +864,15 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.dim = std::min(1.0f, in.dim + mo.dim + 0.25f * bridge);
     in.dtSec *= 1.0 - 0.4 * bridge;
     in.burst = mo.weather; in.burstAmt = mo.weatherAmt; in.lightning = mo.lightning;
+    { // [LyricsForge] sky pulse: the music's energy, plus a kick on each drop / chorus that eases out over ~2 s
+        static float sEnergy = 0, sKick = 0;
+        float const want = m.active ? std::clamp(0.45f * m.energy * m.budget + 0.25f * m.beat * m.budget, 0.0f, 1.0f) : 0.0f;
+        sEnergy += (want - sEnergy) * std::min(1.0f, dt / 0.6f);
+        if (m.active && m.dropNow) sKick = m.bigDrop ? 1.0f : 0.8f;
+        else if (m.active && m.chorusNow) sKick = std::max(sKick, 0.55f);
+        sKick *= std::exp(-dt / 1.8f);
+        in.pulse = cfg.director ? sEnergy + sKick : 0.4f * sEnergy;
+    }
     { auto const& pu = gS->engine.pulse(); // [BF] the horizon equaliser is drawn by the sky (behind the terrain)
       if (!pu.barEl().empty()) { in.eq = &pu.barEl(); in.eqAlpha = pu.barAlpha(); in.eqColor = pu.barColor(); } }
     std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" && !cfg.skyShuffle ? gS->chorus.sky : std::string();

@@ -78,6 +78,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     h.info[0]       = mFrame.t;
     h.info[1]       = mFrame.brightness;
     h.info[2]       = picture ? 0.0f : mFrame.alpha;
+    h.info[3]       = std::clamp(in.pulse, 0.0f, 1.6f);
     h.picture       = picture ? 1u : 0u;
     h.pictureAlpha  = mFrame.picture;
     h.pictureBright = mFrame.picBright;

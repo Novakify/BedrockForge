@@ -57,7 +57,8 @@ std::vector<Preset> const& presets() {
 
 std::vector<std::string_view> const& order() {
     static std::vector<std::string_view> const v{
-        "rift", "supernova", "warp", "silk", "eclipse", // LyricsFlow 2.2: the newest first
+        "summer", "dawn", "dusk", "bright_night", "silver_lining", // [LyricsForge] the realistic skies, newest first
+        "rift", "supernova", "warp", "silk", "eclipse", // LyricsFlow 2.2
         "inferno",  "matrix", "prism",  "pulsar",    "aquarell",  "synthwave",   "aurora",
         "nebula",   "black_hole", "cosmos", "neon_city", "golden_hour", "cotton_candy", "sakura",
         "frost",    "midnight", "deep_sea", "blood_moon", "storm", "custom"};
@@ -94,6 +95,11 @@ float frontAz(Preset const& p) {
 
 std::optional<Body> body(Preset const& p) {
     std::string_view id = p.id;
+    if (id == "summer") return Body{150, 52, 2.4, 0xFFF6E0, BodyKind::Sun};
+    if (id == "dawn") return Body{110, 9, 3.0, 0xFFD8B8, BodyKind::Sun};
+    if (id == "dusk") return Body{200, 4, 3.4, 0xFFB070, BodyKind::Sun};
+    if (id == "silver_lining") return Body{160, 30, 2.6, 0xFFF0D8, BodyKind::Sun};
+    if (id == "bright_night") return Body{200, 32, 2.6, 0xEAF0FF, BodyKind::Moon};
     if (id == "synthwave") return Body{180, 17, 10, 0xFFD36B, BodyKind::Synth}; // [BF] higher: its striped half clears the trees
     if (id == "golden_hour") return Body{200, 4, 3.6, 0xFFC27A, BodyKind::Sun};
     if (id == "cotton_candy") return Body{120, 38, 2.4, 0xFFF4E0, BodyKind::Sun};
