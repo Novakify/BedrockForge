@@ -183,6 +183,7 @@ void loadConfig() {
             for (auto const& [k, v] : j->members()) if (v.isString()) gS->songScenes[k] = v.asString();
     gS->lastScene = gS->engine.config().scene;
     // [BF] your saved scenes
+    gS->userScenes.clear();
     std::error_code ec;
     auto const dir = gS->cfgFile.parent_path() / "lyricsflow_scenes";
     for (auto it = std::filesystem::directory_iterator(dir, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
