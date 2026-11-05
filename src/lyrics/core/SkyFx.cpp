@@ -158,12 +158,13 @@ void Fx::stars(Preset const& p, Config const& cfg, int quality, float alpha, dou
 }
 
 void Fx::constellations(float alpha, Cam const& c, std::vector<Quad>& out) const {
+    // [BF] audit: quieter. Small stars, hairline links that barely read (a star chart, not fairy lights)
     double const u = 0.0016;
     for (auto const& k : kConst)
         for (size_t i = 0; i < k.size(); ++i) {
             V3 a = at(k[i].first, k[i].second);
-            billboard(out, c, a, u * 2.6, 0xFFFFFF, 0.9f * alpha);
-            if (i + 1 < k.size()) streak(out, a, at(k[i + 1].first, k[i + 1].second), u * 0.7, 0xD8CCFF, 0.22f * alpha, 0.22f * alpha);
+            billboard(out, c, a, u * 1.9, 0xF4F0FF, 0.75f * alpha);
+            if (i + 1 < k.size()) streak(out, a, at(k[i + 1].first, k[i + 1].second), u * 0.45, 0xD8CCFF, 0.09f * alpha, 0.09f * alpha);
         }
 }
 
@@ -183,20 +184,22 @@ void Fx::meteorBurst(int n, int64_t nowMs) {
 
 void Fx::wave(float t, uint32_t rgb, float alpha, std::vector<Quad>& out) const {
     if (t < 0 || t > 1 || alpha <= 0.004f) return;
-    float const e  = 1.0f - (1.0f - t) * (1.0f - t);              // fast out of the zenith, slowing at the horizon
-    double const el = 84.0 - 82.0 * double(e);
-    float const a  = alpha * std::sin(3.14159265f * std::min(1.0f, t * 1.15f)) * (1.0f - 0.5f * t);
-    int const   N  = 64;
+    // [BF] audit: near the zenith the ring is tiny, and 64 wide segments piled up into a block of squares.
+    // Start lower, fade in, and thin the strokes with the ring's own size so it reads as one clean line of light.
+    float const e  = 1.0f - (1.0f - t) * (1.0f - t);              // fast out of the top, slowing at the horizon
+    double const el = 74.0 - 72.0 * double(e);
+    float const a  = alpha * std::min(1.0f, t * 6.0f) * std::sin(3.14159265f * std::min(1.0f, t * 1.1f)) * (1.0f - 0.5f * t);
+    double const k = std::clamp(std::cos(el * 3.14159265 / 180.0) / 0.8, 0.3, 1.0);
+    int const   N  = 96;
     for (int i = 0; i < N; ++i) {
         double const a0 = i * 360.0 / N, a1 = (i + 1) * 360.0 / N;
-        V3 const p0 = at(a0, el), p1 = at(a1, el);
-        streak(out, p0, p1, 0.010, 0xFFFFFF, a, a);                                       // the bright edge
-        streak(out, at(a0, el + 2.2), at(a1, el + 2.2), 0.05, rgb, a * 0.45f, a * 0.45f); // its glow behind
-        streak(out, at(a0, el + 5.5), at(a1, el + 5.5), 0.09, rgb, a * 0.16f, a * 0.16f); // the trail
+        streak(out, at(a0, el), at(a1, el), 0.0045 * k, 0xFFFFFF, a * 0.9f, a * 0.9f);              // the bright edge
+        streak(out, at(a0, el + 1.6), at(a1, el + 1.6), 0.026 * k, rgb, a * 0.32f, a * 0.32f);       // its glow
+        streak(out, at(a0, el + 4.5), at(a1, el + 4.5), 0.06 * k, rgb, a * 0.10f, a * 0.10f);        // the trail
     }
 }
 
-void Fx::shooting(float alpha, int64_t nowMs, Cam const&, std::vector<Quad>& out, bool spawn) {
+void Fx::shooting(float alpha, int64_t nowMs, Cam const& c, std::vector<Quad>& out, bool spawn) {
     if (mT0 < 0) mT0 = nowMs;
     if (spawn && nowMs > mNextShooting) {
         mNextShooting = nowMs + 1200 + mRnd.nextInt(3500);
@@ -220,8 +223,11 @@ void Fx::shooting(float alpha, int64_t nowMs, Cam const&, std::vector<Quad>& out
             double az = s.az + s.dir * t * 42.0f, el = s.el - t * 26.0f;
             V3     head = at(az, el), tail = at(az - s.dir * 14.0f, el + 8.0);
             float const a = alpha * (1 - t * t);
-            streak(out, tail, head, 0.009, 0xFFF2D8, 0.0f, a);
-            streak(out, at(az - s.dir * 6.0f, el + 3.4), head, 0.024, 0xFFC88A, 0.0f, a * 0.35f);
+            float const in = std::min(1.0f, t * 12.0f); // no pop-in
+            // [BF] audit: hairline core + faint warm sheath + a small head, not a white wedge
+            streak(out, tail, head, 0.0042, 0xFFF6E8, 0.0f, a * in);
+            streak(out, at(az - s.dir * 7.0f, el + 4.0), head, 0.011, 0xFFC88A, 0.0f, a * in * 0.22f);
+            softGlow(out, c, head, 0.035, 0xFFE7C4, a * in * 0.55f);
             continue;
         }
         double az = s.az + s.dir * t * 30.0f, el = s.el - t * 12.0f;
@@ -234,25 +240,46 @@ void Fx::storm(float alpha, double time, Cam const& c, std::vector<Quad>& out, b
     if (time >= mFlashNext) { // flashLevel
         mFlashT0   = time;
         mFlashNext = time + 0.5 + mRnd.nextDouble() * 2.0;
-        int    n   = 10;
         double az  = inView ? c_yaw + (mRnd.nextDouble() - 0.5) * 90.0 : mRnd.nextDouble() * 360.0; // [BF] Moments: where you look
-        mBolt.assign(size_t(n) * 2, 0);
-        for (int i = 0; i < n; ++i) {
-            double t        = double(i) / (n - 1);
-            mBolt[size_t(i) * 2]     = az + (mRnd.nextDouble() - 0.5) * 9.0;
-            mBolt[size_t(i) * 2 + 1] = 58.0 - t * 48.0 + (mRnd.nextDouble() - 0.5) * 4.0;
-            az += (mRnd.nextDouble() - 0.5) * 6.0;
-        }
+        // [BF] audit: a real-looking bolt. Midpoint displacement (5 levels, 33 points) instead of 10 straight
+        // segments, plus one fork that splits off part way down and thins out.
+        auto bolt = [&](double a0, double e0, double a1, double e1, double rough) {
+            std::vector<double> pts{a0, e0, a1, e1};
+            for (int lvl = 0; lvl < 5; ++lvl) {
+                std::vector<double> nx;
+                for (size_t i = 0; i + 3 < pts.size(); i += 2) {
+                    double ma = (pts[i] + pts[i + 2]) * 0.5, me = (pts[i + 1] + pts[i + 3]) * 0.5;
+                    double len = std::hypot(pts[i + 2] - pts[i], pts[i + 3] - pts[i + 1]);
+                    ma += (mRnd.nextDouble() - 0.5) * len * rough;
+                    nx.insert(nx.end(), {pts[i], pts[i + 1], ma, me});
+                }
+                nx.insert(nx.end(), {pts[pts.size() - 2], pts.back()});
+                pts.swap(nx);
+            }
+            return pts;
+        };
+        double const endAz = az + (mRnd.nextDouble() - 0.5) * 16.0;
+        mBolt = bolt(az, 60.0, endAz, 6.0, 0.55);
+        size_t const k = (mBolt.size() / 2) * (3 + mRnd.nextInt(3)) / 10; // fork from 30..50% down
+        double const fa = mBolt[k * 2], fe = mBolt[k * 2 + 1];
+        mFork = bolt(fa, fe, fa + (mRnd.nextBoolean() ? 1 : -1) * (8.0 + mRnd.nextDouble() * 8.0), fe - 14.0 - mRnd.nextDouble() * 10.0, 0.6);
+        mBoltAz = az;
     }
     double dt = time - mFlashT0;
     float  fl = dt < 0.05 ? 1.0f : dt < 0.12 ? 0.25f : dt < 0.18 ? 0.9f : dt < 0.6 ? float(0.8 * std::exp(-(dt - 0.18) * 9.0)) : 0.0f;
     if (fl <= 0.02f || mBolt.size() < 4) return;
-    softGlow(out, c, at(0, 70), 0.6, 0xC8D4FF, 0.35f * fl * alpha);
-    for (size_t i = 0; i + 1 < mBolt.size() / 2; ++i) {
-        V3 a = at(mBolt[i * 2], mBolt[i * 2 + 1]), b = at(mBolt[i * 2 + 2], mBolt[i * 2 + 3]);
-        streak(out, a, b, 0.006, 0xB8C8FF, fl * alpha, fl * alpha);
-        streak(out, a, b, 0.0025, 0xFFFFFF, fl * alpha, fl * alpha);
-    }
+    softGlow(out, c, at(mBoltAz, 52), 0.55, 0xC8D4FF, 0.30f * fl * alpha); // the cloud lit from inside, behind the bolt
+    auto draw = [&](std::vector<double> const& b, float w, float a) {
+        size_t const n = b.size() / 2;
+        for (size_t i = 0; i + 1 < n; ++i) {
+            float const taper = 1.0f - 0.55f * float(i) / float(std::max<size_t>(1, n - 1)); // thinner towards the ground
+            V3 p0 = at(b[i * 2], b[i * 2 + 1]), p1 = at(b[i * 2 + 2], b[i * 2 + 3]);
+            streak(out, p0, p1, 0.0105 * w * taper, 0x9FB4FF, fl * alpha * a * 0.22f, fl * alpha * a * 0.22f); // glow
+            streak(out, p0, p1, 0.0022 * w * taper, 0xF4F7FF, fl * alpha * a, fl * alpha * a);                 // hot core
+        }
+    };
+    draw(mBolt, 1.0f, 1.0f);
+    if (mFork.size() >= 4) draw(mFork, 0.6f, 0.65f);
 }
 
 void Fx::weather(Weather w, float amount, int quality, float outside, double dt, double time, FxIn const& in,
@@ -311,22 +338,22 @@ void Fx::weather(Weather w, float amount, int quality, float outside, double dt,
         switch (w) {
         case Weather::Blizzard:
             spriteStreak(out, pos - V3{vx, vy, vz} * 0.06, pos, 0.07, 0xF4F2FF, outside * fade * (0.45f + 0.4f * nearK)); break;
-        case Weather::Snow: sprite(out, c, pos, 0.11 * p[9], 1, 0xFFFFFF, outside * fade * (0.55f + 0.4f * nearK)); break;
+        case Weather::Snow: sprite(out, c, pos, 0.13 * p[9], 1, 0xFFFFFF, outside * fade * (0.6f + 0.4f * nearK)); break;
         case Weather::Rain:
         case Weather::Thunder:
-            spriteStreak(out, pos - V3{vx, vy, vz} * 0.035, pos, 0.05, 0xC2D0EC, outside * fade * (0.3f + 0.35f * nearK)); break;
+            spriteStreak(out, pos - V3{vx, vy, vz} * 0.045, pos, 0.022, 0xDCE6F8, outside * fade * (0.38f + 0.4f * nearK)); break;
         case Weather::Petals:
             petal(out, pos, 0.16 * p[9], p[5], p[6], p[7], p[3] + time * p[8], lerpColor(0xFFFFFF, 0xFFD2E6, float(p[10])),
                   outside * fade * 0.95f);
             break;
-        case Weather::Embers: {
-            float fl = float(0.5 + 0.5 * std::sin(time * 9.0 + ph * 3.0));
+        case Weather::Embers: { // [BF] a slower, irregular flicker (9 Hz read as strobing sparks)
+            float fl = float(0.5 + 0.5 * std::sin(time * 3.7 + ph * 3.0) * std::sin(time * 1.3 + ph));
             sprite(out, c, pos, 0.22 * p[9], 2, lerpColor(0xFF3B1F, 0xFFC04A, fl), outside * fade * (0.5f + 0.5f * fl));
             break;
         }
-        default: {
-            float gl = float(std::pow(0.5 + 0.5 * std::sin(time * 2.2 + ph * 4.0), 2.0));
-            sprite(out, c, pos, 0.6, 2, 0xD6FF6A, outside * fade * (0.15f + 0.85f * gl));
+        default: { // [BF] fireflies: sizes vary, slow breathing glow, colour from the sky (gold under warm skies)
+            float gl = float(std::pow(0.5 + 0.5 * std::sin(time * 1.4 + ph * 4.0), 2.0));
+            sprite(out, c, pos, 0.32 + 0.22 * (p[9] - 0.75) / 0.6, 2, in.fireflyRgb, outside * fade * (0.12f + 0.78f * gl));
         }
         }
     }
@@ -341,7 +368,8 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
     int q = std::clamp(in.quality, 0, 2);
     if (p->stars > 0 && cfg.fxStars && perf.allow(5))
         stars(*p, cfg, q, f.visible * f.bright * (0.85f + 0.3f * f.beat), f.time, in.cam, out);
-    if (p->stars > 0 && cfg.fxStars && cfg.fxConstellations && perf.allow(2)) constellations(f.visible * f.bright, in.cam, out);
+    if (p->stars >= 0.8f && cfg.fxStars && cfg.fxConstellations && perf.allow(2)) // [BF] only real night skies
+        constellations(f.visible * f.bright * std::clamp((p->stars - 0.8f) * 5.0f, 0.0f, 1.0f), in.cam, out);
     if (std::string_view(p->id) == "storm" && perf.allow(2)) storm(f.visible, f.time, in.cam, out);
     else if (in.lightning > 0.05f && perf.allow(2)) storm(f.visible * in.lightning, f.time, in.cam, out, true); // [BF] Moments
     if (in.meteors > 0) meteorBurst(in.meteors, in.nowMs);
@@ -350,7 +378,7 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
     if (in.wave >= 0 && perf.allow(2)) wave(in.wave, in.waveColor, f.visible * std::min(1.0f, 0.5f + f.bright), out);
     Weather wx = cfg.snowAnySky ? Weather::Snow : p->weather; // LyricsFlow 2.2: snow with any sky
     float   wa = cfg.weatherAmount;
-    if (in.burst != Weather::None && in.burstAmt > 0.02f) { wx = in.burst; wa = std::max(0.15f, cfg.weatherAmount) * std::min(1.0f, in.burstAmt); } // [BF] Moments
+    if (in.burst != Weather::None && in.burstAmt > 0.02f) { wx = in.burst; wa = std::max(0.6f, cfg.weatherAmount) * std::min(1.0f, in.burstAmt); } // [BF] Moments
     if (cfg.fxWeather && perf.allow(4) && wa > 0.01f && wx != Weather::None && f.outside > 0.01f)
         weather(wx, wa * (perf.allow(3) ? 1.0f : 0.5f), q, f.outside, std::min(0.1, in.dtSec), f.time,
                 in, out);

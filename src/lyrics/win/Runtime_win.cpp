@@ -116,6 +116,7 @@ struct State {
     std::vector<StudioScene> userScenes;    // [BF] config/lyricsflow_scenes/*.json (Save as my scene)
     ChorusLook              chorus;         // [BF] the current scene's chorus look (cached per scene + sky)
     std::string             chorusKey = "\x01";
+    std::string             skyShown; // [BF] the sky actually drawn this frame (tour / chorus / yours)
     float                   waveT = -1;     // [BF] chorus light wave progress (< 0 none)
     int                     meteors = 0;    // [BF] meteor burst queued for the next sky frame
     std::string             autoKey;        // [BF] Auto director: the song it last picked for
@@ -870,11 +871,13 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         Config eff = cfg;
         if (!wantSky.empty()) eff.skyPreset = wantSky;
         if (!tourSky.empty()) eff.skyPreset = tourSky; // the tour wins (each sky seen as itself)
+        gS->skyShown = eff.skyPreset;
         eff.skyStrength = std::min(1.0f, eff.skyStrength * (1.0f + 0.45f * mo.skyBoost)); // aurora burst: the sky's
         eff.skySpeed *= 1.0f + 0.7f * mo.skyBoost;                                         // own layers, brighter + faster
         gS->sky.step(gS->moduleOn && cfg.enabled, eff, gS->engine.perf(), in);
         return;
     }
+    gS->skyShown = cfg.skyPreset;
     gS->sky.step(gS->moduleOn && cfg.enabled, cfg, gS->engine.perf(), in);
 }
 
@@ -1027,7 +1030,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             in.chorusExit = gS->chorus.exit;
             MomentsIn mi; // [BF] what the world does at this beat, in the language of the sky showing now
             mi.music = &ms; mi.lyrics = in.lyrics; mi.t = in.t; mi.songSeq = in.songSeq; mi.dt = dt;
-            std::string const skyNow = ms.lifted && c.chorusLooks && !gS->chorus.sky.empty() ? gS->chorus.sky : c.skyPreset;
+            std::string const skyNow = !gS->skyShown.empty() ? gS->skyShown
+                                     : ms.lifted && c.chorusLooks && !gS->chorus.sky.empty() ? gS->chorus.sky : c.skyPreset;
             mi.sky = skyNow; mi.variant = songVariant(song);
             mi.chorusVariety = variety; mi.keywords = c.lyricMoments && c.director;
             gS->moments.step(mi);
@@ -1053,6 +1057,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt, cam.yaw, gS->coverAccent & 0xFFFFFF);
         publishDirector(gS->conductor.state(), gS->cinema.out());
         in.skyLuma = gS->sky.luma();
+        in.skyShown = gS->skyShown;
         in.albumAccent = gS->coverAccent;
         auto const& cfgNow = gS->engine.config(); // [BF] a scene picked while a song plays is remembered for it
         if (cfgNow.scene != gS->lastScene) {

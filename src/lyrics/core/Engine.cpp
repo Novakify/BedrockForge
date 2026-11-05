@@ -119,7 +119,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         ui.music = in.music; ui.dt = in.dt; ui.camYaw = cam.yaw; ui.now = in.nowSeconds; ui.color = tint;
         ui.enabled = cfg.instrumentalFx && cfg.director;
         { // [BF] what fits the sky: a neon equaliser belongs to night / space / neon skies, not a pastel or storm sky
-            SkyFamily const f = skyFamily(cfg.skyPreset);
+            SkyFamily const f = skyFamily(in.skyShown.empty() ? std::string_view(cfg.skyPreset) : std::string_view(in.skyShown));
             ui.bars = f != SkyFamily::Warm && f != SkyFamily::Storm;
         }
         ui.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
@@ -134,7 +134,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         si.t = in.t; si.songSeq = in.songSeq; si.playing = in.playing; si.lyrics = in.lyrics; si.music = in.music;
         si.dt = in.dt; si.camYaw = cam.yaw; si.camPitch = cam.pitch; si.camPos = cam.pos; si.now = in.nowSeconds; si.skyLuma = in.skyLuma;
         { // [BF] the sky writes in stars only where there are stars to write with (night / space / aurora / cold)
-            SkyFamily const f = skyFamily(cfg.skyPreset);
+            SkyFamily const f = skyFamily(in.skyShown.empty() ? std::string_view(cfg.skyPreset) : std::string_view(in.skyShown));
             bool const starry = f == SkyFamily::Space || f == SkyFamily::Aurora || f == SkyFamily::Cold || f == SkyFamily::Neon;
             si.enabled = cfg.constellations && cfg.showLyrics && starry;
         }

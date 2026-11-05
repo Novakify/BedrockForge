@@ -43,18 +43,19 @@ void Pulse::emit(In const& in, std::vector<BfGlyphV1>& out) const {
         q.uv[2] = q.uv[3] = 1.0f; q.flags = BF_GLYPH_SOLID;
         out.push_back(q);
     };
-    // ground rings: flat bands lying on the ground around your feet, rolling outward
-    int const seg = std::max(24, int(56 * in.density));
+    // ground rings: a thin, soft pulse of light rolling outward along the ground (reworked after an in-game look: the
+    // first version was a thick band with white dashes and read as a cheap hoop). One colour, smooth, faint.
+    int const seg = std::max(32, int(72 * in.density));
     for (auto const& r : mRings) {
         float const k = r.age / kRingLife, e = 1.0f - (1.0f - k) * (1.0f - k);
-        float const R = 0.6f + (kRingMax - 0.6f) * e * (0.7f + 0.3f * r.power);
-        float const a = mOn * (1.0f - k) * (1.0f - k) * 0.85f * r.power;
-        float const w = 0.12f + 0.25f * (1.0f - k);
+        float const R = 0.8f + (kRingMax - 0.8f) * e * (0.7f + 0.3f * r.power);
+        float const a = mOn * (1.0f - k) * (1.0f - k) * 0.38f * r.power;
+        float const w = 0.035f + 0.05f * (1.0f - k);
         for (int i = 0; i < seg; ++i) {
             double const a0 = i * 6.2831853 / seg, a1 = a0 + 6.2831853 / seg;
             Vec3 const p0{std::cos(a0) * R, -kEye, std::sin(a0) * R}, p1{std::cos(a1) * R, -kEye, std::sin(a1) * R};
-            Vec3 const mid3 = (p0 + p1) * 0.5, half = (p1 - p0) * 0.55, radial = Vec3{mid3.x, 0, mid3.z}.normalized() * double(w);
-            quad(mid3 + Vec3{0, 0.03, 0}, half, radial, i % 4 ? col : white, a, 2.5f);
+            Vec3 const mid3 = (p0 + p1) * 0.5, half = (p1 - p0) * 0.52, radial = Vec3{mid3.x, 0, mid3.z}.normalized() * double(w);
+            quad(mid3 + Vec3{0, 0.04, 0}, half, radial, col, a, 4.0f);
         }
     }
     // the horizon equaliser: thin standing bars all around you, heights from the bands

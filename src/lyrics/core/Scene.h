@@ -83,6 +83,7 @@ struct SceneInput {
     int                chorusFx = -1, chorusExit = -1; // [BF] the scene's chorus look (letters) while lifted, -1 = keep
     float              skyLuma = 0;     // [BF] brightness of our sky behind the text (contrast guard)
     uint32_t           albumAccent = 0; // [BF] the cover art's accent colour (0 = none)
+    std::string        skyShown;        // [BF] the sky actually on screen (tour / chorus sky), empty = cfg.skyPreset
 };
 
 /// One word ready to draw. World mode: origin + orient (+X right, +Y up, +Z toward the viewer side the Java mod

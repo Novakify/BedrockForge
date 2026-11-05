@@ -55,6 +55,7 @@ struct FxIn {
     Weather burst = Weather::None; // [BF] Moments: weather that belongs to this moment (overrides the sky's own)
     float   burstAmt = 0;
     float   lightning = 0;      // [BF] Moments: storm flashes in front of you, 0..1
+    uint32_t fireflyRgb = 0xE2F2A0; // [BF] firefly colour (the sky's light)
 };
 
 /// The weather particle textures (SkyPainter.sprites(), 256x64 RGBA): resources/lyricsflow/sky/sprites.png.
@@ -105,6 +106,8 @@ private:
     int64_t              mNextShooting = 0, mT0 = -1;
     double               mFlashNext = 0, mFlashT0 = -10;
     std::vector<double>  mBolt; // az, el pairs
+    std::vector<double>  mFork; // [BF] a side branch
+    double               mBoltAz = 0;
     std::vector<Part>    mParts;
     int                  mPartType = -1;
     double               c_yaw = 0; // camera yaw of this frame (new shooting stars start around it)

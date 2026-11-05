@@ -77,9 +77,12 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
                 switch (mode) {
                 case ExitAnim::Shatter:
                     // glass: a small pop, then the pieces rain down (Explode is the one that flies everywhere)
-                    f.vel    = (out * (0.9 + 1.1 * r3) + upDir * (0.9 + 0.9 * r3) + normal * (0.8 * r1)) * (letterH * intensity);
-                    f.angVel = Vec3{r1, r2, r1 * r2}.normalized() * (5.0 + 5.0 * r3);
-                    f.life   = 1.25f + 0.4f * float(r3);
+                    // [BF] audit: fast random tumbling turned every shard edge-on into a white sliver (confetti).
+                    // Glass keeps its face to you: a gentle pop, a slow tilt in the letter's own plane, then it falls.
+                    f.vel    = (out * (0.35 + 0.45 * r3) + upDir * (0.5 + 0.5 * r3) + normal * (0.15 * r1)) *
+                               (letterH * std::sqrt(intensity));
+                    f.angVel = (normal * r1 + side * (0.35 * r2)) * (1.2 + 1.2 * r3);
+                    f.life   = 1.1f + 0.35f * float(r3);
                     f.delay  = 0.02f * float(qi);
                     break;
                 case ExitAnim::Explode:
@@ -132,7 +135,7 @@ void LetterFx::step(float dt) {
         if (t <= 0) continue;
         double const g = f.size;
         switch (f.mode) {
-        case ExitAnim::Shatter: f.vel += f.upDir * (-11.0 * g * dt); break;
+        case ExitAnim::Shatter: f.vel += f.upDir * (-7.5 * g * dt); break;
         case ExitAnim::Explode: f.vel = f.vel * std::exp(-1.6 * dt) + f.upDir * (-2.0 * g * dt); break;
         case ExitAnim::Dissolve: f.vel += f.upDir * (0.6 * g * dt); break;
         case ExitAnim::Burn: f.vel += f.upDir * (1.1 * g * dt); break;
@@ -171,7 +174,10 @@ void LetterFx::emit(Vec3 origin, std::vector<BfGlyphV1>& out) const {
         float a = 1, s = 1;
         Vec3  shift{};
         switch (f.mode) {
-        case ExitAnim::Shatter: a = 1 - anim::easeInCubic(anim::clamp01((k - 0.45f) / 0.55f)); break;
+        case ExitAnim::Shatter:
+            a = 1 - anim::easeInOut(anim::clamp01((k - 0.2f) / 0.8f));
+            q.glowK = std::max(q.glowK, 0.35f * (1 - k)); // a little light caught in each piece
+            break;
         case ExitAnim::Explode: a = 1 - anim::easeInCubic(k); s = 1 + 0.4f * k; break;
         case ExitAnim::Vortex: {
             a = 1 - anim::easeInCubic(anim::clamp01((k - 0.55f) / 0.45f));
