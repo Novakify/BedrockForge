@@ -41,6 +41,7 @@ struct MusicState {
     // slows and goes quiet, then everything lands on the hit. toDrop = s to that drop (-1 = none in sight).
     float   hold = 0;
     float   toDrop = -1;
+    bool    bigDrop = false;    // [BF] with dropNow: one of the song's big drops (held breath + the hardest landing)
     // [BF] chorus transformation: the world changes into its chorus look on a chorus / drop and eases back after
     float   lift = 0;           // 0..1 eased
     bool    lifted = false;     // in the chorus look now
@@ -71,6 +72,7 @@ public:
     static constexpr float kChorusCooldown = 12.0f;
     static constexpr float kLiveDropCooldown = 30.0f; // live guesses are less sure: rarer
     static constexpr float kHoldLead = 0.6f;  // s of held breath before a known drop
+    static constexpr float kBigDrop  = 0.65f; // Song Memory strength a drop needs to be one of the big ones
     static constexpr float kLiftMin  = 10.0f; // the chorus look stays at least this long...
     static constexpr float kLiftMax  = 45.0f; // ...and never longer than this without a new hit
 

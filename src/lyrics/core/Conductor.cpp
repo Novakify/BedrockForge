@@ -35,7 +35,7 @@ void Conductor::update(ConductorIn const& in) {
     float const dt = std::clamp(in.dt, 0.0f, 0.25f);
     auto&       s  = mS;
     s.dropNow = s.chorusNow = s.buildNow = s.calmNow = s.songStart = false;
-    s.liftNow = s.liftEnd = false;
+    s.liftNow = s.liftEnd = s.bigDrop = false;
     s.impact *= 1.0f - ease(dt, 0.35f);
     s.beat = in.beat;
 
@@ -139,26 +139,47 @@ void Conductor::update(ConductorIn const& in) {
         s.inHook += ((hook ? 1.0f : 0.0f) - s.inHook) * ease(dt, hook ? 0.3f : 1.2f);
     }
     bool const manual = in.marks && !in.marks->empty();
-    int64_t nextHit = -1; bool nextIsDrop = false; // [BF] the next known hit (held breath)
+    // [BF] the next known hit (held breath). Real songs: Song Memory finds 0..6 "drops" per song, many of them small
+    // (strength ~0.5). Only the song's BIG drops get the hush and the hardest landing - at most its top three, and
+    // only strong ones - so the moment stays special; the rest are ordinary hits.
+    int64_t nextHit = -1; bool nextIsDrop = false, nextIsChorus = false;
+    float bigAt = 2;
+    if (mem) {
+        float top[3] = {0, 0, 0};
+        for (auto const& e : mem->events)
+            if (e.kind == SongMemory::Event::Kind::Drop) {
+                float v = e.strength;
+                for (auto& t : top) if (v > t) std::swap(v, t);
+            }
+        if (top[0] > 0) bigAt = std::max({kBigDrop, 0.85f * top[0], top[2]});
+    }
     if (mem && !manual)
         for (auto const& e : mem->events)
             if (e.at > in.posMs) {
-                if (e.at - in.posMs < 3000) { nextHit = e.at; nextIsDrop = e.kind == SongMemory::Event::Kind::Drop; }
+                if (e.at - in.posMs < 3000) {
+                    nextHit = e.at;
+                    nextIsDrop = e.kind == SongMemory::Event::Kind::Drop && e.strength >= bigAt;
+                    nextIsChorus = e.kind == SongMemory::Event::Kind::Chorus;
+                }
                 break;
             }
+    bool bigNow = false;
+    if (mem && !manual && contiguous)
+        for (auto const& e : mem->events)
+            if (e.at > mLastPos && e.at <= in.posMs && e.kind == SongMemory::Event::Kind::Drop && e.strength >= bigAt) bigNow = true;
     if (manual) { // [BF] your own marks: they decide the moments, the guesses stand down
         drop = chorus = false;
         build = 0;
         int64_t nextDrop = -1, buildFrom = -1;
         for (auto const& [t, k] : *in.marks) {
             if (contiguous && t > mLastPos && t <= in.posMs) {
-                if (k == 'd') drop = true;
+                if (k == 'd') { drop = true; bigNow = true; } // your own drop marks are always the big ones
                 else if (k == 'c') chorus = true;
                 else if (k == 'q') { s.calmNow = true; mSinceCalm = 0; }
             }
             if (k == 'b' && t <= in.posMs) buildFrom = t;
             if (k == 'd' && t > in.posMs && nextDrop < 0) nextDrop = t;
-            if ((k == 'd' || k == 'c') && t > in.posMs && nextHit < 0 && t - in.posMs < 3000) { nextHit = t; nextIsDrop = k == 'd'; }
+            if ((k == 'd' || k == 'c') && t > in.posMs && nextHit < 0 && t - in.posMs < 3000) { nextHit = t; nextIsDrop = k == 'd'; nextIsChorus = k == 'c'; }
         }
         if (buildFrom >= 0 && nextDrop > buildFrom) build = clamp01(float(in.posMs - buildFrom) / float(nextDrop - buildFrom));
         mSinceDrop = drop ? 1e9f : mSinceDrop;     // manual hits ignore the cooldowns
@@ -170,13 +191,13 @@ void Conductor::update(ConductorIn const& in) {
     }
     if (drop && mSinceDrop < kDropCooldown) drop = false;
     if (chorus && (mSinceChorus < kChorusCooldown || mSinceDrop < 3.0f)) chorus = false;
-    if (drop) { s.dropNow = true; mSinceDrop = 0; mSinceChorus = 0; s.impact = 1.0f; s.choruses++; }
+    if (drop) { s.dropNow = true; s.bigDrop = bigNow; mSinceDrop = 0; mSinceChorus = 0; s.impact = 1.0f; s.choruses++; }
     if (chorus) { s.chorusNow = true; mSinceChorus = 0; s.impact = std::max(s.impact, 0.75f); s.choruses++; }
     if (s.dropNow) build = 0;
     // ---- held breath: a known drop (or chorus, softer) right ahead - dim, slow, quiet; released on the hit
     s.toDrop = nextHit >= 0 ? float(nextHit - in.posMs) / 1000.0f : -1.0f;
     float holdT = 0;
-    if (s.toDrop >= 0 && s.toDrop <= kHoldLead && in.enabled && (nextIsDrop || mSinceChorus > kChorusCooldown)) {
+    if (s.toDrop >= 0 && s.toDrop <= kHoldLead && in.enabled && (nextIsDrop || nextIsChorus) && (nextIsDrop || mSinceChorus > kChorusCooldown)) {
         float const x = 1.0f - s.toDrop / kHoldLead;
         holdT = x * x * (3 - 2 * x) * (nextIsDrop ? 1.0f : 0.55f);
     }

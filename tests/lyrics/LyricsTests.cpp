@@ -1767,7 +1767,7 @@ TEST(drop_moment_and_chorus_look) { // [BF] held breath before a known drop, the
     CHECK_EQ(early, 0);
     std::printf("drop moment: drop %lld hold max %.2f at-drop %.2f timeScale min %.2f lift at %lld end %lld lifts %d\n",
                 (long long)dropAt, holdMax, holdAtDrop, tsMin, (long long)liftAt, (long long)endAt, lifts);
-    CHECK(holdMax > 0.6f);                                       // it holds its breath right before
+    CHECK(holdMax > 0.6f);                                       // it holds its breath right before (strength 0.86: a big one)
     CHECK_EQ(holdAtDrop, 0.0f);                                  // ...and lets go exactly on the hit
     CHECK(tsMin < 0.5f);                                         // motion slows nearly to a stop
     CHECK_EQ(liftAt, dropAt);                                    // the chorus look starts on the drop
@@ -1783,7 +1783,7 @@ TEST(drop_moment_and_chorus_look) { // [BF] held breath before a known drop, the
     for (int i = 0; i < 40; ++i) cin.step(&ms, cfg, 1.0f / 60);
     CHECK(cin.out().saturation < sat0 * 0.75f);
     CHECK(cin.out().vignette > 0.25f);
-    ms.hold = 0; ms.dropNow = true; ms.known = true; cin.step(&ms, cfg, 1.0f / 60); ms.dropNow = false;
+    ms.hold = 0; ms.dropNow = true; ms.bigDrop = true; cin.step(&ms, cfg, 1.0f / 60); ms.dropNow = false;
     CHECK(cin.out().flash > Cinema::kFlashCap && cin.out().flash <= Cinema::kDropFlashCap + 1e-6f);
     cfg.dropMoment = false; ms.hold = 1;
     for (int i = 0; i < 120; ++i) cin.step(&ms, cfg, 1.0f / 60);
@@ -1889,6 +1889,29 @@ TEST(panel_cinema_home) {
     r.click(358, 47);
     r.click(206 + 25, 70);
     CHECK_EQ(r.e.config().scene, builtinScenes()[6].id);
+}
+
+TEST(only_big_drops_hold_their_breath) { // [BF] real-music tuning: Song Memory finds many small "drops"
+    SongMemory m;
+    m.reset(SongMemory::keyFor("a\x01b", 120000), 120000);
+    SongMemory::Event big; big.at = 30000; big.kind = SongMemory::Event::Kind::Drop; big.strength = 0.9f;
+    SongMemory::Event small = big; small.at = 70000; small.strength = 0.5f;
+    m.events = {big, small};
+    Conductor c;
+    ConductorIn in;
+    in.playing = true; in.songSeq = 1; in.dt = 1.0f / 60.0f; in.memory = &m;
+    float h1 = 0, h2 = 0; bool big1 = false, big2 = true; int drops = 0;
+    for (int64_t t = 0; t < 90000; t += 17) {
+        in.posMs = t;
+        c.update(in);
+        auto const& s = c.state();
+        if (t > 29000 && t < 30000) h1 = std::max(h1, s.hold);
+        if (t > 69000 && t < 70000) h2 = std::max(h2, s.hold);
+        if (s.dropNow) { drops++; (t < 50000 ? big1 : big2) = s.bigDrop; }
+    }
+    CHECK_EQ(drops, 2);
+    CHECK(h1 > 0.6f && big1);
+    CHECK(h2 < 0.01f && !big2);
 }
 
 int main(int argc, char** argv) {

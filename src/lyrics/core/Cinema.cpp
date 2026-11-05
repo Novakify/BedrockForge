@@ -83,7 +83,7 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     if (on && cfg.impactFrames && mSinceFlash > kFlashGap && (m->dropNow || m->chorusNow)) {
         mFlash = m->dropNow ? 1.0f : 0.55f;
         // a drop after a held breath lands hardest: the contrast between the hush and the hit is the moment
-        mFlashCap = m->dropNow ? (mHold > 0.3f || m->known ? kDropFlashCap : 0.2f) : kFlashCap;
+        mFlashCap = m->dropNow ? (m->bigDrop || mHold > 0.3f ? kDropFlashCap : 0.2f) : kFlashCap;
         mKick  = m->dropNow ? 1.0f : 0.6f;
         mSinceFlash = 0;
     }
