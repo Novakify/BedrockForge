@@ -593,7 +593,7 @@ vec3 styledSky(vec3 d, int id, float t) {
         col += sStars(d, .8, t) * .9;
         col += sAurora(d, t, vec3(.1, 1., .7), vec3(.2, .5, 1.)) * 1.3;
         float b = sBeam(d, 0., .045, t);
-        col += vec3(.45, .95, 1.) * b * .7;
+        col += vec3(.45, .95, 1.) * b * .4;   // [BF] the light pillar is an accent, not the subject
         vec4 c = sClouds(d, sdir(0., 10.), 1.1, .35, t, .02);
         vec3 cc = mix(vec3(.01, .05, .1), vec3(.1, .45, .55), c.x) + vec3(.3, 1., .95) * c.y * .9;
         col = mix(col, cc, c.z * .85 * smoothstep(.0, .35, 1. - y));
@@ -622,15 +622,16 @@ vec3 styledSky(vec3 d, int id, float t) {
         float near = pow(max(dot(normalize(d.xz + 1e-4), vec2(0, 1)), 0.), 6.);
         vec3 cc = mix(vec3(.05, .12, .35), vec3(.55, .75, 1.), c.x) + vec3(.9, .97, 1.) * c.y * (.5 + near * .5);
         col = mix(col, cc, c.z * .92);
-        col += vec3(.75, .9, 1.) * b * .6;
+        col += vec3(.75, .9, 1.) * b * .35;
     } else if (id == 4) { // PURPLE
         col = mix(vec3(.25, .08, .45), vec3(.04, .01, .12), smoothstep(-.05, .8, y));
         col += sStars(d, 1., t) * .8;
         float b = sBeam(d, 0., .04, t);
         vec4 c = sClouds(d, sdir(0., 15.), 1.15, .5, t, .02);
-        vec3 cc = mix(vec3(.1, .02, .25), vec3(.6, .3, .95), c.x) + vec3(.95, .7, 1.) * c.y * .9;
-        col = mix(col, cc, c.z * .9);
-        col += vec3(.75, .45, 1.) * b * .9;
+        // [BF] richer, less neon: cool blue-violet shadows, softer lilac light (one flat purple read as cheap in game)
+        vec3 cc = mix(vec3(.05, .03, .18), vec3(.46, .28, .76), c.x) + vec3(.92, .74, 1.) * c.y * .55;
+        col = mix(col, cc, c.z * .88);
+        col += vec3(.75, .45, 1.) * b * .45;
         col = sPlanet(col, d, sdir(320., 38.), .06, vec3(.5, .3, .8), vec3(.8, .5, 1.), vec3(.6, .2, .7), 0.);
         col = sPlanet(col, d, sdir(40., 40.), .035, vec3(.6, .4, .9), vec3(.8, .6, 1.), vec3(-.6, .2, .7), 0.);
     } else if (id == 5) { // SUNSET
@@ -658,14 +659,14 @@ vec3 styledSky(vec3 d, int id, float t) {
         vec4 s = sSakura(d, t);
         col = mix(col, s.rgb, s.a);
     } else if (id == 7) { // BLOOD MOON
-        col = mix(vec3(.25, .01, .02), vec3(.04, .0, .01), smoothstep(-.05, .7, y));
+        col = mix(vec3(.16, .015, .03), vec3(.03, .0, .012), smoothstep(-.05, .7, y)); // [BF] deep maroon, not flat red
         vec3 mc = sdir(0., 26.);
         float ma = acos(clamp(dot(d, mc), -1., 1.));
         float r = .055;
         float ring = exp(-pow((ma - r) * 90., 2.)) * 2.2 + exp(-max(ma - r, 0.) * 18.) * 1.1;
         float flame = .7 + .3 * sn2(vec2(atan2(slocal(d, mc).y, slocal(d, mc).x) * 6., t * .5));
         vec4 c = sClouds(d, mc, 1.1, .6, t, .02);
-        vec3 cc = mix(vec3(.08, .0, .01), vec3(.75, .05, .05), c.x) + vec3(1., .2, .1) * c.y * .9;
+        vec3 cc = mix(vec3(.05, .0, .015), vec3(.52, .06, .08), c.x) + vec3(.95, .38, .25) * c.y * .55;
         col = mix(col, cc, c.z * .92);
         col += vec3(1., .15, .08) * ring * flame;
         col = mix(col, vec3(.01, 0., 0.), smoothstep(r, r * .97, ma));
