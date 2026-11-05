@@ -116,15 +116,11 @@ vec3 hsv(float h, float s, float v) {
 void synth(float el) {
     float glow = exp(-max(0.0, el) / 9.0);
     add(A1, 0.5 * glow);
-    float l = (el - 0.7) / 0.6;
-    float lfLine = exp(-l * l);
+    float l = (el - 0.7) / 1.4;
+    float lfLine = exp(-l * l) * 0.6;
     float pulse = 0.75 + 0.25 * sin(T * 1.6);
     add(A2, lfLine * 0.85 * pulse);
     add(A2, 0.08 * exp(-max(0.0, el) / 3.0));
-    if (el > 20.0) {
-        float sl = 0.5 + 0.5 * sin(el * 1.3 - T * 0.5);
-        add(A1, 0.03 * sl * sm(20.0, 40.0, el) * PATTERN);
-    }
 }
 
 void curtains(float az, float el, float strength) {
@@ -258,7 +254,7 @@ void code(float az, float el) {
     float cellH = 2.2;
     float cell = floor(el / cellH), cf = fract(el / cellH);
     float glyph = step(0.18, cf) * step(cf, 0.86) * (hash3(int(col), int(cell), int(floor(T * 2.0 + h1 * 9.0))) > 0.3 ? 1.0 : 0.25);
-    float fadeTop = sm(72.0, 38.0, el);
+    float fadeTop = sm(62.0, 30.0, el);
     if (d < 0.0) add(A1, exp(d / 12.0) * glyph * edge * fadeTop * 0.7 * PATTERN);
     if (abs(d) < 1.6) add(A2, (1.0 - abs(d) / 1.6) * edge * fadeTop * 1.2 * PATTERN);
 }
@@ -357,13 +353,20 @@ void clouds(float x, float y, float z, float thr, float opacity, vec3 light, vec
     over(mix(dark, light, lfLit), cov * opacity);
 }
 
+// the blood moon: a lunar eclipse, the disc copper-red, one limb brighter where the Earth's shadow thins
+vec3 eclipseMoon(float du, float dv, float limb, float maria) {
+    float k = sm(-1.1, 1.1, du * 0.55 + dv * 0.83);
+    vec3 col = mix(vec3(0.275, 0.055, 0.04), vec3(0.92, 0.46, 0.245), k * k);
+    return col * (0.55 + 0.45 * limb) * (0.8 + 0.35 * maria);
+}
+
 void bodyGlow(float x, float y, float z, float az, float el) {
     float dt = x * SUN.x + y * SUN.y + z * SUN.z;
     float ang = degrees(acos(clamp(dt, -1.0, 1.0)));
     float rad = BRAD;
     if (BKIND == SUN_K) {
         add(BCOL, exp(-ang / 14.0) * 0.55 + exp(-ang / 4.0) * 0.45);
-        if (PRESET == 6 || PRESET == 8) {
+        if (false) { // [LyricsForge] golden hour / sakura draw their rays in realSky now (in the sun's frame)
             float around = atan2(el - BEL, wrap180(az - BAZ));
             float ray = pow(0.5 + 0.5 * sin(around * 11.0 + T * 0.3 + lfNoise(cos(around) * 2.0, T * 0.25 + sin(around) * 2.0, 3.0) * 3.0), 5.0);
             add(BCOL, ray * exp(-ang / 26.0) * 0.28 * sm(rad, rad * 2.5, ang) * PATTERN);
@@ -378,7 +381,7 @@ void bodyGlow(float x, float y, float z, float az, float el) {
             float limb = sqrt(max(0.0, 1.0 - r * r));
             float du = wrap180(az - BAZ) * cos(radians(el)) / rad, dv = (el - BEL) / rad;
             float maria = lfNoise(du * 2.2 + 3.1, dv * 2.2 - 1.7, 2.4) * 0.6 + lfNoise(du * 5.0, dv * 5.0, 7.3) * 0.4;
-            vec3 moonC = BCOL * (0.62 + 0.38 * limb) * (0.82 + 0.3 * maria) * 1.15;
+            vec3 moonC = PRESET == 12 ? eclipseMoon(du, dv, limb, maria) : BCOL * (0.62 + 0.38 * limb) * (0.82 + 0.3 * maria) * 1.15;
             C = mix(C, moonC, disc * 0.96);
         }
     } else if (BKIND == SYNTH_K) {
@@ -821,7 +824,7 @@ void supernova(float x, float y, float z) {
     add(SPLAT3(1.0), (exp(-ang / 0.9) * 1.3 + exp(-ang / 4.0) * 0.45) * flick);
     add(A1, exp(-ang / 12.0) * 0.35 * BREATH);
     float rays = pow(0.5 + 0.5 * sin(th * 13.0 + lfNoise(th * 3.0, T * 0.2, 1.0) * 4.0), 10.0) * exp(-ang / 18.0);
-    add(mix(vec3(1.0, 0.9, 0.8), A1, 0.4), rays * 0.6 * PATTERN);
+    add(mix(vec3(1.0, 0.9, 0.8), A1, 0.4), rays * 0.22 * PATTERN);
     for (int i = 0; i < 2; i++) {
         float R = fract(T * 0.07 + float(i) * 0.5) * 85.0;
         float rd = (ang - R) / (1.5 + R * 0.05);
@@ -906,14 +909,238 @@ vec3 rgb(float r, float g, float b) {
 // sun and get a silver lining toward it. PULSE (music energy + a kick on drops) speeds the wind, brightens the light
 // and pushes the colour; the world takes the sky's colour from the same palette.
 GLOBAL float PULSE;
+// ==== LF KIT BEGIN
+// ================================================================ [LyricsForge] polished sky kit
+// Shared building blocks for the reworked skies: stars with real magnitudes and colours, a Milky Way with dust
+// lanes and star clouds, emission nebulae with filaments, a cumulus deck that can be lit from the sun, from below
+// (city, lava) or from inside (lightning), crepuscular rays in the sun's own frame (no seams at the zenith), ice
+// halos, rainbows, an eclipse corona and a filmic tone curve (bright stays bright without going flat white).
+GLOBAL float LIGHTNING, KICK, BEAT, WAVE;
+
+vec3 v3(float a) { return vec3(a, a, a); }
+float fbm3(vec3 p, int oct) { return fbm(p.x, p.y, p.z, oct); }
+float noise3(vec3 p) { return lfNoise(p.x, p.y, p.z); }
+float rfbm(vec3 p, int oct) { // ridged: thin bright filaments
+    float s = 0.0, a = 0.5, n = 0.0;
+    for (int i = 0; i < oct; i++) {
+        float r = 1.0 - abs(2.0 * noise3(p) - 1.0);
+        s += r * r * a; n += a;
+        p = p * 2.03 + vec3(17.1, -9.7, 3.3);
+        a *= 0.5;
+    }
+    return s / n;
+}
+float lum3(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+float angTo(vec3 d, vec3 c) { return acos(clamp(dot(d, c), -1.0, 1.0)); }
+void frameOf(vec3 c, out vec3 t1, out vec3 t2) {
+    vec3 up = abs(c.y) > 0.95 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    t1 = normalize(cross(up, c));
+    t2 = cross(c, t1);
+}
+vec3 dirAE(float azDeg, float elDeg) {
+    float a = radians(azDeg), e = radians(elDeg);
+    return vec3(-sin(a) * cos(e), sin(e), cos(a) * cos(e));
+}
+
+// stars: two magnitude layers on a 3D cell grid; real colour temperatures; a gentle twinkle
+vec3 starField(vec3 d, float dens, float bright) {
+    vec3 acc = v3(0.0);
+    for (int l = 0; l < 3; l++) {
+        float K = l == 0 ? 48.0 : (l == 1 ? 105.0 : 210.0);
+        vec3 p = d * K;
+        vec3 c = floor(p);
+        vec3 j = sh33(c + float(l) * 31.7);
+        if (j.x > dens * (l == 0 ? 0.30 : (l == 1 ? 0.22 : 0.10))) continue;
+        vec3 sp = c + 0.2 + 0.6 * sh33(c + 4.1 + float(l));
+        float dist = length(cross(d, normalize(sp))) * K;
+        float mag = l == 0 ? 0.55 + 0.6 * j.y * j.y : (l == 1 ? 0.22 + 0.3 * j.y : 0.10 + 0.12 * j.y);
+        float sz = l == 0 ? 0.075 : (l == 1 ? 0.10 : 0.14);
+        float tw = 0.78 + 0.22 * sin(T * (1.5 + 3.0 * j.z) + j.y * 40.0);
+        vec3 col = j.z < 0.33 ? vec3(0.72, 0.82, 1.0) : (j.z < 0.8 ? vec3(1.0, 0.97, 0.92) : vec3(1.0, 0.8, 0.6));
+        acc += col * exp(-dist * dist / (sz * sz)) * mag * tw;
+    }
+    return acc * bright;
+}
+
+// Milky Way: a band with a brighter, warmer bulge, star clouds, fine star dust and dark lanes (the Great Rift)
+vec3 milky(vec3 d, float s, vec3 warm, vec3 cool) {
+    vec3 n = normalize(vec3(0.36, 0.58, 0.73));
+    vec3 gc = normalize(vec3(-0.58, 0.36, 0.0) - n * dot(vec3(-0.58, 0.36, 0.0), n));
+    float b = dot(d, n);
+    float bulge = exp(-max(0.0, 1.0 - dot(d, gc)) * 3.0);
+    float width = 0.11 + 0.13 * bulge;
+    float band = exp(-b * b / (width * width));
+    if (band < 0.004) return v3(0.0);
+    vec3 p = d * 4.0;
+    vec3 w = vec3(fbm3(p * 0.9 + 1.3, 3), fbm3(p * 0.9 + 7.1, 3), fbm3(p * 0.9 - 3.7, 3)) - 0.5;
+    float cl = fbm3(p * 1.8 + w * 1.3, 5);
+    float grain = noise3(d * 170.0) * noise3(d * 330.0 + 5.0);
+    float lane = rfbm(p * 2.4 + w * 0.9, 4);
+    float bo = b + 0.02 * sin(dot(d, gc) * 9.0);
+    float laneMask = exp(-bo * bo / (0.0016 + 0.004 * bulge));
+    float dust = sm(0.42, 0.8, lane) * laneMask + 0.35 * sm(0.55, 0.9, lane) * band;
+    float L = band * (0.2 + 1.2 * sm(0.3, 0.85, cl)) * (0.6 + 1.6 * grain) * (1.0 - 0.9 * clamp(dust, 0.0, 1.0));
+    L *= 0.55 + 1.3 * bulge;
+    vec3 col = mix(cool, warm, clamp(0.85 * bulge + 0.25 * (cl - 0.5), 0.0, 1.0));
+    return col * L * s;
+}
+
+// emission nebula around direction c: hydrogen glow (cA), oxygen glow (cB), filaments and dark dust
+vec3 nebulaCloud(vec3 d, vec3 c, vec3 cA, vec3 cB, float size, float s) {
+    float a = angTo(d, c);
+    float fall = exp(-a * a / (size * size));
+    if (fall < 0.01) return v3(0.0);
+    vec3 p = d * 2.4 + vec3(0.0, T * 0.003, 0.0);
+    vec3 w = (vec3(fbm3(p, 4), fbm3(p + 5.2, 4), fbm3(p - 3.1, 4)) - 0.5) * 1.5;
+    float gas = fbm3(p * 1.15 + w, 6);
+    float neb = sm(0.40, 0.86, gas) * fall;                                  // the main glow: smooth, billowing
+    float fil = pow(rfbm(p * 2.0 + w * 1.3, 4), 4.0) * neb * 1.4;            // bright filaments, only inside the glow
+    float ox = sm(0.50, 0.86, fbm3(p * 0.95 - w + 9.0, 5)) * fall;          // a second gas (other colour), offset
+    float dust = sm(0.52, 0.80, fbm3(p * 1.7 + w * 0.6 + 20.0, 5));         // broad dark lanes, not a web
+    vec3 col = cA * (neb * 0.55 + fil * 0.9) + cB * ox * 0.45 * (1.1 - neb);
+    col *= 1.0 - 0.8 * dust * sm(0.15, 0.6, fall);
+    col += mix(cA, v3(1.0), 0.5) * exp(-a * a / (size * size * 0.04)) * 0.12;
+    return col * s;
+}
+
+// a cumulus deck on a sky plane (the realistic skies' clouds, shared). lit/shade: sunlit and shadowed colour;
+// glowBelow: light from under the clouds (a city, lava); flash: lightning inside the clouds right now
+void cumulus(float x, float y, float z, vec3 lit, vec3 shade, vec3 sunC, vec3 hor, float cover, float scale,
+             float speed, float haze, float opac, vec3 glowBelow, float flash, vec3 flashC) {
+    if (y <= 0.012) return;
+    float mu = max(0.0, x * SUN.x + y * SUN.y + z * SUN.z);
+    float pulse = clamp(PULSE, 0.0, 1.6);
+    float s = 1.0 / (y + 0.08);
+    float ux = x * s, uz = z * s;
+    float t = T * speed * (1.0 + 1.2 * LIVELY) * (1.0 + 0.9 * pulse);
+    float sc = scale * 1.5;
+    float px_ = ux * sc + t, pz = uz * sc + t * 0.35;
+    float w1 = fbm(px_ * 0.35, pz * 0.35, 2.7, 3);
+    float cx = px_ + w1 * 0.9, cz = pz + w1 * 0.7;
+    float n = fbm(cx, cz, t * 0.15, 6);
+    float m = fbm(px_ * 0.12 + 5.0, pz * 0.12 - 3.0, 1.1, 3);
+    float cl = cover + (0.5 - m) * 0.35;
+    float d = sm(cl, cl + 0.09, n) * sm(0.0, 0.14, y);
+    if (d < 0.004) return;
+    float core = sm(cl, cl + 0.32, n);
+    float sx = SUN.x, sz = SUN.z, sn = max(1e-3, sqrt(sx * sx + sz * sz));
+    float n2 = fbm(cx + sx / sn * 0.18, cz + sz / sn * 0.18, t * 0.15, 5);
+    float occl = sm(cl, cl + 0.28, n2);
+    float lightK = clamp(1.0 - occl * 0.5 * (0.4 + 0.6 * core), 0.0, 1.0);
+    float base = sm(0.0, 0.25, n - n2 + 0.08);                     // the side away from the sun: a greyer base
+    vec3 cc = mix(shade, lit * 0.93, lightK) * (1.0 - 0.20 * core) * (1.0 - 0.12 * base);
+    float back = pow(mu, 4.0);                                     // looking toward the sun: dense cores go dark,
+    cc = mix(cc, shade * 1.05, back * core * 0.65);                // only the thin edges catch the light
+    cc += sunC * pow(mu, 8.0) * (1.0 - core) * (1.0 - core) * 1.1;
+    cc += glowBelow * (0.35 + 0.65 * core) * (1.0 - 0.5 * lightK);
+    if (flash > 0.001) { // lightning: the cloud lights up from inside around a moving spot
+        float fx = sin(T * 0.37) * 2.0, fz = cos(T * 0.29) * 2.0 + 2.0;
+        float near = exp(-((px_ - t - fx) * (px_ - t - fx) + (pz - t * 0.35 - fz) * (pz - t * 0.35 - fz)) / 6.0);
+        cc += flashC * flash * (0.10 + 1.1 * near) * (0.45 + 0.55 * core);
+    }
+    cc = mix(cc, hor, haze * (1.0 - sm(0.0, 0.3, y)));
+    cc *= 1.0 + 0.12 * pulse;
+    over(cc, d * opac);
+}
+
+// crepuscular rays around the sun, built in the sun's own frame: smooth everywhere, no seam at the zenith
+float sunRays(vec3 d, vec3 sun, float count, float sharp) {
+    float mu = dot(d, sun);
+    if (mu < 0.0) return 0.0;
+    vec3 t1, t2;
+    frameOf(sun, t1, t2);
+    vec3 q = d - sun * mu;
+    float around = atan2(dot(q, t2), dot(q, t1));
+    float n = noise3(vec3(cos(around) * 2.5, sin(around) * 2.5, T * 0.06));
+    float r = pow(0.5 + 0.5 * sin(around * count + n * 5.0 + T * 0.05), sharp);
+    float r2 = pow(0.5 + 0.5 * sin(around * count * 1.7 - n * 3.0 - T * 0.03), sharp * 1.5);
+    return (0.65 * r + 0.35 * r2) * pow(mu, 2.0) * sm(0.0, 0.25, mu);
+}
+
+// 22-degree ice halo, sundogs, upper tangent arc, a sun pillar (real ice-crystal optics)
+void iceHalo(vec3 d, vec3 sun, vec3 light, float s) {
+    float a = degrees(angTo(d, sun));
+    float ring = exp(-(a - 22.0) * (a - 22.0) / 0.8) * 0.26 + exp(-(a - 22.8) * (a - 22.8) / 5.0) * 0.10;
+    vec3 rc = mix(vec3(1.0, 0.62, 0.42), light, sm(21.6, 22.8, a)); // a thin warm inner edge, white outside
+    float inside = sm(22.0, 15.0, a) * 0.10; // the sky inside the halo is a touch darker
+    C *= 1.0 - inside * s;
+    add(rc, ring * s);
+    // sundogs: bright spots on the horizon circle of the sun, 22 degrees left and right
+    float de = degrees(asin(clamp(d.y, -1.0, 1.0))) - degrees(asin(clamp(sun.y, -1.0, 1.0)));
+    vec3 hs = normalize(vec3(sun.x, 0.0, sun.z)), hd = normalize(vec3(d.x, 0.0, d.z) + 1e-5);
+    float daz = degrees(acos(clamp(dot(hs, hd), -1.0, 1.0)));
+    float dog = exp(-(daz - 23.0) * (daz - 23.0) / 1.6 - de * de / 3.5);
+    float tail = exp(-de * de / 1.5) * sm(23.0, 26.0, daz) * exp(-(daz - 23.0) / 8.0);
+    add(mix(vec3(1.0, 0.6, 0.4), light, sm(22.5, 24.0, daz)), (dog * 1.1 + tail * 0.25) * s);
+    // sun pillar: a vertical streak of light through the sun
+    float side = length(vec2(d.x, d.z) - normalize(vec2(sun.x, sun.z)) * length(vec2(d.x, d.z)));
+    add(light, exp(-side * side / 0.0006) * exp(-abs(de) / 9.0) * 0.35 * s);
+}
+
+// rainbow at 42 degrees round the anti-sun (secondary at 51, reversed; Alexander's dark band between)
+void rainbow(vec3 d, vec3 sun, float s) {
+    vec3 anti = -sun;
+    float a = degrees(angTo(d, anti));
+    float fade = sm(-2.0, 6.0, degrees(asin(clamp(d.y, -1.0, 1.0)))) * s;
+    if (fade < 0.001) return;
+    float u = (a - 40.5) / 2.2; // 0 violet .. 1 red across the primary
+    vec3 spec = clamp(vec3(1.5 - abs(u - 1.0) * 3.0, 1.5 - abs(u - 0.55) * 3.0, 1.5 - abs(u - 0.1) * 3.0), 0.0, 1.0);
+    float band = sm(-0.3, 0.1, u) * sm(1.3, 0.9, u);
+    add(spec, band * 0.33 * fade);
+    float u2 = (53.5 - a) / 3.2; // secondary: red inside
+    vec3 spec2 = clamp(vec3(1.5 - abs(u2 - 1.0) * 3.0, 1.5 - abs(u2 - 0.55) * 3.0, 1.5 - abs(u2 - 0.1) * 3.0), 0.0, 1.0);
+    float band2 = sm(-0.3, 0.1, u2) * sm(1.3, 0.9, u2);
+    add(spec2, band2 * 0.12 * fade);
+    C *= 1.0 - 0.18 * sm(43.0, 44.5, a) * sm(50.5, 49.0, a) * fade; // Alexander's band
+    add(v3(1.0), 0.06 * sm(40.0, 20.0, a) * fade);                  // brighter inside the bow
+}
+
+// filmic shoulder on the brightest channel: hue kept, highlights roll off softly into a warm white
+vec3 toneMap(vec3 c) {
+    c = max(c, v3(0.0));
+    float m = max(c.r, max(c.g, c.b));
+    if (m <= 0.72) return c;
+    float f = 0.72 + 0.28 * (1.0 - exp(-(m - 0.72) / 0.28));
+    vec3 o = c * (f / m);
+    return mix(o, v3(f), 0.35 * sm(1.3, 3.5, m));
+}
+// ==== LF KIT END
+// searchlights over a city: beams rising from the horizon, leaning slowly, wider at the base
+void searchlights(vec3 d, vec3 c1, vec3 c2, float s) {
+    float el = degrees(asin(clamp(d.y, -1.0, 1.0)));
+    if (el < -1.0 || el > 80.0) return;
+    for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        float az0 = 150.0 + fi * 32.0 + 6.0 * sin(T * 0.11 + fi);
+        float lean = 22.0 * sin(T * (0.19 + 0.05 * fi) + fi * 2.1);
+        vec3 base = dirAE(az0, 0.0), top = dirAE(az0 + lean, 62.0 - 9.0 * fi);
+        vec3 nrm = normalize(cross(base, top));
+        float off = abs(dot(d, nrm));
+        float w = 0.0035 + 0.011 * sm(55.0, 0.0, el);
+        float topEl = 62.0 - 9.0 * fi;
+        float gate = sm(-1.0, 1.5, el) * sm(topEl + 6.0, topEl - 26.0, el) * step(0.0, dot(d, base));
+        float core = exp(-off * off / (w * w * 0.35)), halo = exp(-off * off / (w * w * 9.0));
+        vec3 bc = mix(c1, c2, fi * 0.5);
+        add(mix(bc, v3(1.0), 0.5), core * gate * (0.10 + 0.25 * exp(-el / 16.0)) * s);
+        add(bc, halo * gate * (0.05 + 0.16 * exp(-el / 10.0)) * s);
+        add(bc, exp(-angTo(d, base) * angTo(d, base) / 0.004) * 0.25 * s);
+    }
+}
+
+// [LyricsForge] the realistic sky engine: real gradient, Mie sun glow, cirrus + cumulus that self-shadow and light
+// up from the sun, from below or from inside. Kinds 0..4: the realistic skies; 5..18: the reworked skies that
+// belong in a real sky (golden hour, storms, a rainbow after rain, ice halos, a city at night...)
 void realSky(float x, float y, float z, float el, int kind) {
-    vec3 zen, hor, sunC, lit, shade, accent;
-    float cover, speed, haze, opac, scale;
+    vec3 zen = v3(0.5), hor = v3(0.7), sunC = v3(1.0), lit = v3(1.0), shade = v3(0.5), accent = v3(1.0);
+    float cover = 0.5, speed = 0.04, haze = 0.55, opac = 0.95, scale = 0.9;
+    float rays = 0.0, stars = 0.0, flash = 0.0;
+    vec3 below = v3(0.0);
+    float yy = max(y, 0.0);
     if (kind == 0) {        // Summer Day: deep blue, big bright cumulus racing past
         zen = rgb(28.0, 92.0, 214.0); hor = rgb(176.0, 214.0, 248.0); sunC = rgb(255.0, 244.0, 222.0);
         lit = rgb(255.0, 255.0, 255.0); shade = rgb(120.0, 140.0, 178.0); accent = rgb(90.0, 190.0, 255.0);
         cover = 0.50; speed = 0.050; haze = 0.55; opac = 0.97; scale = 1.0;
-    } else if (kind == 1) { // Pastel Dawn: the real version of Cotton Candy - blue up top, peach / pink low, pink-lit clouds
+    } else if (kind == 1) { // Pastel Dawn
         zen = rgb(70.0, 118.0, 230.0); hor = rgb(255.0, 196.0, 206.0); sunC = rgb(255.0, 214.0, 186.0);
         lit = rgb(255.0, 228.0, 238.0); shade = rgb(150.0, 136.0, 196.0); accent = rgb(255.0, 140.0, 200.0);
         cover = 0.53; speed = 0.042; haze = 0.6; opac = 0.93; scale = 0.9;
@@ -921,71 +1148,356 @@ void realSky(float x, float y, float z, float el, int kind) {
         zen = rgb(46.0, 40.0, 120.0); hor = rgb(255.0, 132.0, 72.0); sunC = rgb(255.0, 168.0, 96.0);
         lit = rgb(255.0, 176.0, 120.0); shade = rgb(92.0, 48.0, 108.0); accent = rgb(255.0, 80.0, 150.0);
         cover = 0.52; speed = 0.036; haze = 0.65; opac = 0.95; scale = 0.9;
-    } else if (kind == 3) { // Bright Night: a glowing blue night at eye level, a vivid Milky Way and nebula above
-        zen = rgb(20.0, 14.0, 70.0); hor = rgb(40.0, 96.0, 190.0); sunC = rgb(200.0, 220.0, 255.0);
+        below = rgb(255.0, 110.0, 60.0) * 0.30 * exp(-yy * 3.0);
+    } else if (kind == 3) { // Bright Night: a glowing blue night at eye level, a vivid Milky Way above
+        zen = rgb(16.0, 12.0, 60.0); hor = rgb(40.0, 96.0, 190.0); sunC = rgb(200.0, 220.0, 255.0);
         lit = rgb(170.0, 190.0, 255.0); shade = rgb(28.0, 32.0, 78.0); accent = rgb(200.0, 90.0, 255.0);
-        cover = 0.62; speed = 0.03; haze = 0.5; opac = 0.7; scale = 0.8;
-    } else {                // Silver Lining: towering clouds, the sun breaking through with real rays
+        cover = 0.62; speed = 0.03; haze = 0.5; opac = 0.7; scale = 0.8; stars = 1.0;
+    } else if (kind == 4) { // Silver Lining: towering clouds, the sun breaking through with real rays
         zen = rgb(40.0, 84.0, 170.0); hor = rgb(196.0, 214.0, 232.0); sunC = rgb(255.0, 236.0, 200.0);
         lit = rgb(255.0, 250.0, 240.0); shade = rgb(86.0, 98.0, 126.0); accent = rgb(255.0, 210.0, 140.0);
-        cover = 0.47; speed = 0.04; haze = 0.5; opac = 1.0; scale = 0.75;
+        cover = 0.47; speed = 0.04; haze = 0.5; opac = 1.0; scale = 0.75; rays = 0.22;
+    } else if (kind == 5) { // Golden Hour: low sun, honey light, gold-rimmed clouds and long rays
+        zen = rgb(58.0, 62.0, 140.0); hor = rgb(255.0, 168.0, 92.0); sunC = rgb(255.0, 196.0, 120.0);
+        lit = rgb(255.0, 206.0, 148.0); shade = rgb(118.0, 82.0, 112.0); accent = rgb(255.0, 120.0, 70.0);
+        cover = 0.52; speed = 0.035; haze = 0.6; opac = 0.95; scale = 0.9; rays = 0.30;
+        below = rgb(255.0, 150.0, 80.0) * 0.16 * exp(-yy * 3.0);
+    } else if (kind == 6) { // Cotton Candy: blue up top, pink at the horizon, soft bluish clouds racing past
+        zen = rgb(70.0, 130.0, 245.0); hor = rgb(255.0, 196.0, 226.0); sunC = rgb(255.0, 240.0, 246.0);
+        lit = rgb(242.0, 244.0, 255.0); shade = rgb(150.0, 160.0, 226.0); accent = rgb(255.0, 150.0, 215.0);
+        cover = 0.50; speed = 0.075; haze = 0.55; opac = 0.92; scale = 1.0;
+    } else if (kind == 7) { // Sakura: a rose sunrise, pink-lit clouds, soft rays (petals fall in front)
+        zen = rgb(98.0, 70.0, 160.0); hor = rgb(255.0, 176.0, 212.0); sunC = rgb(255.0, 196.0, 222.0);
+        lit = rgb(255.0, 214.0, 234.0); shade = rgb(150.0, 100.0, 160.0); accent = rgb(255.0, 110.0, 190.0);
+        cover = 0.55; speed = 0.035; haze = 0.65; opac = 0.9; scale = 0.9; rays = 0.10;
+    } else if (kind == 8) { // Storm: a low slate deck racing overhead, lightning lighting the clouds from inside
+        zen = rgb(34.0, 40.0, 52.0); hor = rgb(88.0, 98.0, 114.0); sunC = rgb(150.0, 160.0, 175.0);
+        lit = rgb(126.0, 136.0, 150.0); shade = rgb(28.0, 32.0, 42.0); accent = rgb(170.0, 190.0, 255.0);
+        cover = 0.30; speed = 0.085; haze = 0.7; opac = 1.0; scale = 0.7; flash = 1.0;
+    } else if (kind == 9) { // Inferno: an ash cloud deck lit from below by lava, a burning horizon
+        zen = rgb(26.0, 10.0, 10.0); hor = rgb(170.0, 56.0, 20.0); sunC = rgb(255.0, 120.0, 40.0);
+        lit = rgb(52.0, 28.0, 26.0); shade = rgb(12.0, 7.0, 8.0); accent = rgb(255.0, 90.0, 20.0);
+        cover = 0.42; speed = 0.028; haze = 0.45; opac = 1.0; scale = 0.75;
+        float flick = 0.8 + 0.2 * noise3(vec3(x * 2.0, T * 0.9, z * 2.0)) + 0.25 * BEAT;
+        below = rgb(255.0, 92.0, 24.0) * (1.05 * exp(-yy * 1.7) + 0.16) * flick;
+    } else if (kind == 10) { // Prism: the sky after rain, a double rainbow opposite the sun
+        zen = rgb(46.0, 92.0, 175.0); hor = rgb(190.0, 206.0, 222.0); sunC = rgb(255.0, 240.0, 215.0);
+        lit = rgb(250.0, 246.0, 238.0); shade = rgb(92.0, 104.0, 128.0); accent = rgb(170.0, 210.0, 255.0);
+        cover = 0.52; speed = 0.04; haze = 0.5; opac = 0.96; scale = 0.8;
+    } else if (kind == 11) { // Frost: a polar day, thin ice haze, a 22-degree halo with sundogs and a sun pillar
+        zen = rgb(30.0, 80.0, 185.0); hor = rgb(205.0, 226.0, 246.0); sunC = rgb(255.0, 250.0, 240.0);
+        lit = rgb(255.0, 255.0, 255.0); shade = rgb(175.0, 195.0, 222.0); accent = rgb(150.0, 220.0, 255.0);
+        cover = 0.64; speed = 0.03; haze = 0.55; opac = 0.55; scale = 1.1;
+    } else if (kind == 12) { // Ocean: a bright ocean day, towering white cumulus
+        zen = rgb(16.0, 92.0, 210.0); hor = rgb(150.0, 214.0, 248.0); sunC = rgb(255.0, 246.0, 226.0);
+        lit = rgb(255.0, 255.0, 255.0); shade = rgb(110.0, 135.0, 175.0); accent = rgb(60.0, 200.0, 255.0);
+        cover = 0.45; speed = 0.05; haze = 0.5; opac = 0.98; scale = 0.6;
+    } else if (kind == 13) { // Dream Ocean: a pastel evening, lilac and rose
+        zen = rgb(80.0, 86.0, 190.0); hor = rgb(255.0, 198.0, 214.0); sunC = rgb(255.0, 214.0, 190.0);
+        lit = rgb(255.0, 222.0, 228.0); shade = rgb(140.0, 124.0, 190.0); accent = rgb(150.0, 255.0, 240.0);
+        cover = 0.55; speed = 0.04; haze = 0.6; opac = 0.92; scale = 0.85;
+    } else if (kind == 14) { // Sunset: the sun on the horizon, fire-lit clouds
+        zen = rgb(52.0, 34.0, 112.0); hor = rgb(255.0, 104.0, 40.0); sunC = rgb(255.0, 150.0, 70.0);
+        lit = rgb(255.0, 150.0, 80.0); shade = rgb(84.0, 36.0, 76.0); accent = rgb(255.0, 70.0, 110.0);
+        cover = 0.5; speed = 0.033; haze = 0.65; opac = 0.96; scale = 0.85; rays = 0.2;
+        below = rgb(255.0, 90.0, 40.0) * 0.35 * exp(-yy * 3.0);
+    } else if (kind == 15) { // Thunder: a night thunderstorm
+        zen = rgb(8.0, 12.0, 26.0); hor = rgb(26.0, 38.0, 70.0); sunC = rgb(120.0, 140.0, 200.0);
+        lit = rgb(50.0, 62.0, 96.0); shade = rgb(10.0, 13.0, 24.0); accent = rgb(140.0, 170.0, 255.0);
+        cover = 0.32; speed = 0.08; haze = 0.6; opac = 1.0; scale = 0.7; flash = 1.0; stars = 0.35;
+    } else if (kind == 16) { // Cherry: a pink moonlit night
+        zen = rgb(28.0, 14.0, 46.0); hor = rgb(140.0, 56.0, 118.0); sunC = rgb(255.0, 200.0, 230.0);
+        lit = rgb(200.0, 140.0, 190.0); shade = rgb(40.0, 20.0, 48.0); accent = rgb(255.0, 120.0, 200.0);
+        cover = 0.6; speed = 0.03; haze = 0.6; opac = 0.8; scale = 0.9; stars = 0.55;
+    } else if (kind == 17) { // Crimson: a blood-red dusk, dark clouds with burning undersides
+        zen = rgb(30.0, 6.0, 12.0); hor = rgb(200.0, 40.0, 30.0); sunC = rgb(255.0, 90.0, 50.0);
+        lit = rgb(220.0, 76.0, 58.0); shade = rgb(40.0, 8.0, 14.0); accent = rgb(255.0, 40.0, 40.0);
+        cover = 0.5; speed = 0.035; haze = 0.6; opac = 0.95; scale = 0.85;
+        below = rgb(255.0, 60.0, 40.0) * 0.35 * exp(-yy * 3.0);
+    } else {                // 18 Neon City: a city night, low clouds lit from below, searchlights
+        zen = rgb(10.0, 8.0, 28.0); hor = rgb(60.0, 20.0, 80.0); sunC = v3(0.0);
+        lit = rgb(70.0, 40.0, 90.0); shade = rgb(14.0, 10.0, 26.0); accent = rgb(255.0, 60.0, 170.0);
+        cover = 0.46; speed = 0.03; haze = 0.5; opac = 0.9; scale = 0.8; stars = 0.25;
+        below = mix(A1, A2, 0.5 + 0.5 * sin(x * 3.0 + T * 0.1)) * 0.5 * exp(-yy * 1.8);
     }
     float pulse = clamp(PULSE, 0.0, 1.6);
     // the drop pushes the whole palette toward its accent and saturates it; it eases back but never goes dull
-    zen = mix(zen, accent * 0.9, 0.22 * pulse);
-    hor = mix(hor, accent, 0.16 * pulse);
-    float yy = max(y, 0.0);
+    zen = mix(zen, accent * 0.9, 0.16 * pulse);
+    hor = mix(hor, accent, 0.12 * pulse);
+    vec3 d = vec3(x, y, z);
     float mu = max(0.0, x * SUN.x + y * SUN.y + z * SUN.z);
+    bool hasSun = BKIND >= 0 && SUN.y > -0.3;
     // 1) sky: Rayleigh-ish gradient (bluer and darker up, paler and brighter near the horizon)
     C = mix(hor, zen, pow(clamp(yy * 1.15, 0.0, 1.0), 0.42));
     add(hor, 0.18 * exp(-yy * 9.0));
     if (el < 0.0) C = mix(C, hor * 0.75, clamp(-el / 10.0, 0.0, 1.0));
-    // Mie glow around the sun / moon
-    add(sunC, (pow(mu, 6.0) * 0.28 + pow(mu, 64.0) * 0.45 + pow(mu, 900.0) * 1.2) * (1.0 + 0.4 * pulse));
-    if (kind == 3) { // the night sky itself
-        milkyWay(x, y, z, 0.5);
-        float neb = fbm(x * 2.2 + 4.0, y * 2.2 + T * 0.004, z * 2.2, 4);
-        float bd = x * 0.36 + y * 0.58 + z * 0.73;
-        float band = exp(-bd * bd / 0.06);
-        add(mix(accent, rgb(80.0, 200.0, 255.0), neb), sm(0.45, 0.85, neb) * band * 0.7 * (1.0 + 0.6 * pulse) * PATTERN);
-        add(rgb(60.0, 140.0, 255.0), 0.10 * exp(-yy * 5.0) * (1.0 + 0.5 * pulse)); // the bright night glow at eye level
+    if (hasSun) add(sunC, (pow(mu, 6.0) * 0.28 + pow(mu, 64.0) * 0.45 + pow(mu, 900.0) * 1.2) * (1.0 + 0.12 * pulse) * (stars > 0.0 ? 0.3 : 1.0));
+    if (stars > 0.0) { // the night sky itself
+        add(starField(d, 1.0, 1.0) * stars, sm(-2.0, 10.0, el));
+        if (kind == 3) {
+            add(milky(d, 0.55, rgb(255.0, 214.0, 190.0), rgb(150.0, 170.0, 255.0)), 1.0 + 0.4 * pulse);
+            add(nebulaCloud(d, normalize(vec3(-0.5, 0.55, 0.65)), accent * 0.6, rgb(80.0, 200.0, 255.0) * 0.5, 0.45, 0.7 * PATTERN), 1.0 + 0.5 * pulse);
+            add(rgb(60.0, 140.0, 255.0), 0.10 * exp(-yy * 5.0) * (1.0 + 0.5 * pulse));
+        }
     }
-    if (kind == 4) { // crepuscular rays fanning out from the sun
-        float around = atan2(z * SUN.x - x * SUN.z, y - SUN.y);
-        float ray = pow(0.5 + 0.5 * sin(around * 14.0 + lfNoise(around * 3.0, T * 0.05, 1.0) * 4.0), 6.0);
-        add(sunC, ray * pow(mu, 3.0) * 0.22 * (1.0 + pulse));
+    if (kind == 9) add(rgb(255.0, 90.0, 20.0), (0.35 * exp(-yy * 6.0)) * (0.9 + 0.2 * BEAT));
+    if (kind == 18) {
+        add(A1, 0.30 * exp(-yy * 7.0)); add(A2, 0.12 * exp(-yy * 3.0)); // light pollution over the city
+        searchlights(d, A2, rgb(255.0, 240.0, 255.0), 1.0 + 0.6 * pulse);
     }
+    if (rays > 0.0 && hasSun) add(sunC, sunRays(d, SUN, 13.0, 5.0) * mu * rays * (1.0 + 0.35 * pulse));
+    if (kind == 10 && hasSun) rainbow(d, SUN, 0.9 + 0.3 * pulse);
+    if (kind == 11 && hasSun) iceHalo(d, SUN, v3(1.0), 0.9 + 0.3 * pulse);
+    if (flash > 0.0) add(rgb(200.0, 210.0, 255.0), LIGHTNING * 0.10 * (0.3 + 0.7 * sm(-2.0, 30.0, el)));
+    add(accent, 0.10 * KICK * exp(-yy * 4.0)); // the drop: a breath of the sky's own colour along the horizon
     // 2) clouds on a sky plane: real shapes from domain-warped fbm, moving with the wind (faster with the music)
     if (y > 0.015) {
         float s  = 1.0 / (y + 0.08);
         float ux = x * s, uz = z * s;
         float t  = T * speed * (1.0 + 1.2 * LIVELY) * (1.0 + 0.9 * pulse);
-        float sc = scale * 1.5;
-        float px = ux * sc + t, pz = uz * sc + t * 0.35;
-        float w1 = fbm(px * 0.35, pz * 0.35, 2.7, 3);
-        float cx = px + w1 * 0.9, cz = pz + w1 * 0.7;
-        float n  = fbm(cx, cz, t * 0.15, 6);
-        float m  = fbm(px * 0.12 + 5.0, pz * 0.12 - 3.0, 1.1, 3);   // big-scale coverage: clear gaps and cloud banks
-        float cl = cover + (0.5 - m) * 0.35;
-        float d  = sm(cl, cl + 0.09, n) * sm(0.0, 0.14, y);
-        if (d > 0.004) {
-            float core = sm(cl, cl + 0.32, n);
-            float sx = SUN.x, sz = SUN.z, sn = max(1e-3, sqrt(sx * sx + sz * sz));
-            float n2 = fbm(cx + sx / sn * 0.18, cz + sz / sn * 0.18, t * 0.15, 5);
-            float occl = sm(cl, cl + 0.28, n2);
-            float lightK = clamp(1.0 - occl * 0.5 * (0.4 + 0.6 * core), 0.0, 1.0);
-            vec3 cc = mix(shade, lit, lightK) * (1.0 - 0.10 * core);
-            cc += sunC * pow(mu, 6.0) * (1.0 - core) * 1.3;               // silver lining toward the sun
-            if (kind == 2) cc += rgb(255.0, 110.0, 60.0) * (1.0 - lightK) * 0.35 * exp(-yy * 3.0); // glowing bellies
-            cc = mix(cc, hor, haze * (1.0 - sm(0.0, 0.3, y)));           // aerial perspective near the horizon
-            cc *= 1.0 + 0.18 * pulse;
-            over(cc, d * opac);
-        }
-        // 3) a thin high cirrus layer, slower, streaked by the wind
+        // a thin high cirrus layer first (it is higher, so the cumulus passes in front of it), streaked by the wind
         float ci = fbm(ux * 0.12 + t * 0.4, uz * 1.1 + t * 0.12, 9.1, 4);
-        float cd = sm(0.56, 0.8, ci) * sm(0.05, 0.4, y) * (kind == 3 ? 0.25 : 0.5);
-        if (cd > 0.004) over(mix(lit, hor, 0.35) * (1.0 + 0.2 * pulse), cd);
+        float cd = sm(0.56, 0.8, ci) * sm(0.05, 0.4, y) * (stars > 0.0 ? 0.25 : 0.5) * (flash > 0.0 ? 0.3 : 1.0);
+        if (cd > 0.004) over(mix(lit, hor, 0.35) * (1.0 + 0.08 * pulse), cd);
+        cumulus(x, y, z, lit, shade, sunC, hor, cover, scale, speed, haze, opac, below, flash * LIGHTNING, rgb(210.0, 220.0, 255.0) * 1.3);
     }
+}
+
+
+// ==== LF SPACE BEGIN
+// ---------------------------------------------------------------- [LyricsForge] night, space and special skies
+void nightBase(vec3 d, float el, vec3 zen, vec3 hor, float glow) {
+    float yy = max(d.y, 0.0);
+    C = mix(hor, zen, pow(clamp(yy * 1.1, 0.0, 1.0), 0.55));
+    add(hor, glow * exp(-yy * 8.0));
+    if (el < 0.0) C = mix(C, hor * 0.6, clamp(-el / 10.0, 0.0, 1.0));
+}
+
+// aurora: curtains as stacked glowing layers (the layers line up into vertical rays), green low, violet high
+vec3 auroraMarch(vec3 d, vec3 cLow, vec3 cHigh, float s, float silk) {
+    if (d.y < 0.01) return v3(0.0);
+    vec3 acc = v3(0.0);
+    float t = T * (0.035 + 0.045 * LIVELY) * (1.0 + 0.5 * clamp(PULSE, 0.0, 1.6));
+    float jit = sh21(vec2(d.x * 1731.0 + d.y * 317.0, d.z * 1931.0)); // dither the layers: no stripes
+    for (int i = 0; i < 24; i++) {
+        float fi = float(i) + jit;
+        float h = 1.0 + fi * 0.037;
+        float k = h / (d.y * 1.5 + 0.10);
+        vec2 p = vec2(d.x, d.z) * k;
+        float w = fbm(p.x * 0.22 + t, p.y * 0.22 - t * 0.4, 1.7, 3);
+        float lines = sin(p.y * 0.75 + w * 5.0 + p.x * 0.14 + t * 0.5);
+        float curtain = pow(max(0.0, 1.0 - abs(lines)), mix(9.0, 3.5, silk));
+        float rays = mix(0.3 + 0.7 * noise3(vec3(p.x * 2.6 + w * 4.0, p.y * 0.4, t * 2.0)), 1.0, silk * 0.8);
+        acc += mix(cLow, cHigh, sm(5.0, 22.0, fi)) * curtain * rays * exp(-fi * 0.075);
+    }
+    acc *= 0.20 * s * sm(0.0, 0.22, d.y);
+    return acc / (1.0 + lum3(acc) * 0.9);
+}
+
+// a galaxy seen at an angle: bright bulge, two spiral arms, a dust lane on the near side
+vec3 galaxyDisc(vec3 d, vec3 c, float R, vec3 core, vec3 arm) {
+    if (dot(d, c) < 0.0) return v3(0.0);
+    vec3 t1, t2;
+    frameOf(c, t1, t2);
+    vec3 q = d - c * dot(d, c);
+    float u = dot(q, t1) / R, v = dot(q, t2) / R;
+    float ca = cos(0.55), sa = sin(0.55);
+    float uu = u * ca - v * sa, vv = (u * sa + v * ca) / 0.24;
+    float r = sqrt(uu * uu + vv * vv);
+    if (r > 1.8) return v3(0.0);
+    float th = atan2(vv, uu);
+    float spiral = 0.5 + 0.5 * cos(2.0 * (th - log(r + 0.05) * 2.4) - T * 0.004);
+    float n = fbm3(vec3(uu * 7.0, vv * 7.0, 3.0), 4);
+    float arms = pow(spiral, 1.6) * exp(-r * 2.0) * (0.55 + 0.9 * n);
+    float disc = exp(-r * 2.8);
+    float bulge = exp(-r * r * 22.0);
+    float knots = pow(fbm3(vec3(uu * 22.0, vv * 22.0, 2.0), 3), 6.0) * 40.0 * arms; // star-forming regions
+    float lane = exp(-(vv + 0.08 * r) * (vv + 0.08 * r) / 0.006) * sm(0.12, 0.35, r) * sm(1.5, 0.6, r);
+    float dust = clamp(sm(0.45, 0.8, fbm3(vec3(uu * 10.0, vv * 10.0, 7.0), 4)) * sm(0.06, 0.3, r) * (1.0 - spiral) * 0.6 + lane * 0.8, 0.0, 1.0);
+    vec3 col = arm * (disc * 0.40 + arms * 1.0) + core * (bulge * 2.0 + disc * 0.45) + vec3(1.0, 0.55, 0.75) * knots * 0.25;
+    return col * (1.0 - 0.75 * dust) * (0.9 + 0.2 * BREATH);
+}
+
+// a total solar eclipse: black disc, pearly streamers (longer along the sun's equator), pink prominences
+void coronaEclipse(vec3 d, vec3 c, float R, vec3 cc, float s) {
+    float a = angTo(d, c);
+    vec3 t1, t2;
+    frameOf(c, t1, t2);
+    vec3 q = d - c * dot(d, c);
+    float th = atan2(dot(q, t2), dot(q, t1));
+    float o = max(0.0, a - R) / R;
+    float str = noise3(vec3(cos(th) * 3.0, sin(th) * 3.0, T * 0.015));
+    float fine = 0.55 + 0.45 * noise3(vec3(cos(th) * 16.0, sin(th) * 16.0, o * 0.5 - T * 0.02));
+    float eq = pow(abs(cos(th - 0.35)), 1.5);
+    float len = 0.35 + 2.6 * eq * (0.4 + 0.6 * str);
+    float L = exp(-o / (0.55 * len)) * fine * (1.0 + 0.5 * KICK) + exp(-o / 0.14) * 0.9;
+    add(cc, L * 0.95 * s);
+    add(cc, exp(-o / 3.0) * 0.10 * s); // the faint outer glow
+    add(v3(1.0), exp(-o / 0.03) * 0.8 * s); // the inner corona, almost white
+    float pr = pow(noise3(vec3(cos(th) * 10.0, sin(th) * 10.0, 4.0 + T * 0.01)), 5.0) * 5.0;
+    add(vec3(1.0, 0.32, 0.42), pr * exp(-o / 0.035) * s * step(R, a));
+    over(vec3(0.006, 0.006, 0.01), sm(R * 1.004, R * 0.99, a));
+}
+
+// looking up from under water: Snell's window overhead, its bright rim, caustics, light shafts and drifting motes
+void underwater(vec3 d, float el) {
+    float za = degrees(acos(clamp(d.y, -1.0, 1.0)));
+    vec3 deep = TOP, mid = HOR, light = A2, tint = A1;
+    C = mix(mid, deep, sm(0.0, -60.0, el));
+    C = mix(C, mid * 1.3, sm(0.0, 45.0, el) * 0.6);
+    float t = T * 0.22 * (1.0 + 0.5 * LIVELY);
+    vec2 sp = vec2(d.x, d.z) / max(d.y, 0.08);
+    float rip = fbm(sp.x * 1.3 + t, sp.y * 1.3 - t * 0.7, t * 0.5, 4);
+    float win = sm(50.0, 45.5, za);
+    vec3 sky = mix(light * 0.75, mix(light, v3(1.0), 0.35), sm(46.0, 5.0, za)) * (0.7 + 0.28 * rip);
+    C = mix(C, sky, win * 0.92);
+    float caus = pow(1.0 - abs(2.0 * noise3(vec3(sp.x * 2.6 + rip * 2.5, sp.y * 2.6, t * 1.4)) - 1.0), 3.0);
+    add(v3(1.0), caus * win * 0.07);
+    add(light, exp(-(za - 47.5) * (za - 47.5) / 5.0) * 0.4 * (1.0 + 0.4 * KICK));
+    float az = atan2(d.x, d.z);
+    float sh = pow(noise3(vec3(cos(az) * 4.0, sin(az) * 4.0, t * 0.5)), 3.0) * 1.3 + 0.6 * pow(noise3(vec3(cos(az) * 12.0, sin(az) * 12.0, t * 0.8)), 4.0);
+    add(tint, sh * sm(105.0, 48.0, za) * sm(30.0, 52.0, za) * sm(-50.0, 12.0, el) * 0.40 * (1.0 + 0.5 * clamp(PULSE, 0.0, 1.6)));
+    C += light * 0.7 * starField(normalize(d + vec3(sin(T * 0.03) * 0.01, T * 0.0015, 0.0)), 0.9, 0.35);
+}
+
+// mother-of-pearl clouds in a deep twilight: thin high sheets shimmering in pastel colours
+void nacreous(vec3 d, float el) {
+    float yy = max(d.y, 0.0);
+    vec3 zen = TOP, hor = HOR;
+    C = mix(hor, zen, pow(clamp(yy * 1.2, 0.0, 1.0), 0.45));
+    float mu = max(0.0, dot(normalize(vec3(d.x, 0.0, d.z) + 1e-4), normalize(vec3(SUN.x, 0.0, SUN.z) + 1e-4)));
+    add(rgb(255.0, 150.0, 90.0), pow(mu, 3.0) * exp(-yy * 7.0) * 0.45);
+    if (el < 0.0) C = mix(C, hor * 0.6, clamp(-el / 10.0, 0.0, 1.0));
+    add(starField(d, 0.6, 0.6), sm(10.0, 40.0, el));
+    if (d.y > 0.02) {
+        vec2 p = vec2(d.x, d.z) / (d.y + 0.18);
+        float t = T * 0.012 * (1.0 + LIVELY);
+        float n = fbm(p.x * 0.55 + t, p.y * 1.7, 2.0, 5);
+        float n2 = fbm(p.x * 1.4 - t, p.y * 3.0, 5.0, 3);
+        float cl = sm(0.48, 0.72, n) * sm(0.02, 0.14, d.y) * sm(0.85, 0.35, d.y);
+        float hue = fract(0.78 + 0.45 * n + 0.2 * n2 + p.x * 0.03 + T * 0.004);
+        vec3 iri = mix(v3(1.0), hsv(hue, 0.42, 1.0), 0.7);
+        vec3 col = iri * (0.75 + 0.35 * pow(mu, 2.0)) * (0.95 + 0.25 * KICK);
+        over(col, cl * 0.78);
+    }
+}
+
+// a pulsar in its remnant: the neutron star, twin beams sweeping round it, a flash each time a beam faces you
+void pulsarSky(vec3 d, vec3 c) {
+    add(nebulaCloud(d, c, A2 * 0.9, A1 * 0.7, 0.32, 0.85 * PATTERN), 1.0);
+    float a = angTo(d, c);
+    float spin = T * 1.4;
+    vec3 t1, t2;
+    frameOf(c, t1, t2);
+    vec3 q = d - c * dot(d, c);
+    float th = atan2(dot(q, t2), dot(q, t1));
+    float beam = pow(abs(cos(th - spin * 0.25)), 90.0) * exp(-a / 0.40);
+    float flash = pow(0.5 + 0.5 * cos(spin * 2.0), 24.0);
+    add(mix(A1, v3(1.0), 0.4), beam * 0.55 * (0.7 + 0.6 * BEAT));
+    add(v3(1.0), exp(-a * a / 0.00003) * (1.2 + 1.6 * flash) + exp(-a / 0.012) * (0.15 + 0.5 * flash));
+    add(A1, exp(-a / 0.08) * 0.10 * (1.0 + flash));
+}
+
+bool spaceSky(vec3 d, float az, float el) {
+    float yy = max(d.y, 0.0), p = clamp(PULSE, 0.0, 1.6);
+    float up = sm(-2.0, 10.0, el);
+    if (PRESET == 1 || PRESET == 20 || PRESET == 32 || PRESET == 23) { // auroras
+        nightBase(d, el, TOP, HOR, 0.10);
+        add(starField(d, 1.0, PRESET == 32 ? 0.7 : 1.0), up);
+        add(milky(d, PRESET == 23 ? 0.25 : 0.35, rgb(255.0, 220.0, 200.0), rgb(160.0, 180.0, 255.0)), up);
+        float s = PRESET == 20 ? 1.5 : (PRESET == 23 ? 0.6 : 1.1);
+        add(auroraMarch(d, A1, A2, s * (1.0 + 0.6 * p) * PATTERN, PRESET == 32 ? 1.0 : 0.0), 1.0);
+        if (PRESET == 20) add(A2, 0.05 * exp(-yy * 3.0) * (1.0 + 0.5 * p)); // polar: the whole low sky glows
+        add(rgb(40.0, 110.0, 70.0), 0.05 * exp(-yy * 12.0)); // airglow
+        if (PRESET == 23 && BKIND >= 0) iceHalo(d, SUN, rgb(200.0, 220.0, 255.0) * 0.55, 0.8); // a moon halo in the frost
+        return true;
+    }
+    if (PRESET == 2 || PRESET == 24 || PRESET == 34) { // nebulae
+        nightBase(d, el, TOP, HOR, 0.08);
+        add(starField(d, 1.0, 1.0), up);
+        add(milky(d, 0.18, rgb(255.0, 220.0, 200.0), rgb(160.0, 180.0, 255.0)), up);
+        vec3 c1 = dirAE(185.0, 34.0), c2 = dirAE(135.0, 52.0);
+        add(nebulaCloud(d, c1, A1, A2, 0.55, (1.0 + 0.45 * p) * PATTERN), up);
+        add(nebulaCloud(d, c2, A2, A1 * 0.8, 0.28, 0.6 * PATTERN), up);
+        if (PRESET == 34) add(galaxyDisc(d, dirAE(230.0, 24.0), 0.10, rgb(255.0, 236.0, 200.0), A2), up);
+        return true;
+    }
+    if (PRESET == 21) { // galaxy: a great spiral rising over the hills
+        nightBase(d, el, TOP, HOR, 0.08);
+        add(starField(d, 1.1, 1.0), up);
+        add(milky(d, 0.25, rgb(255.0, 220.0, 200.0), rgb(160.0, 180.0, 255.0)), up);
+        add(galaxyDisc(d, dirAE(190.0, 22.0), 0.36, rgb(255.0, 232.0, 196.0), mix(A2, v3(1.0), 0.3)) * (1.0 + 0.35 * p), up);
+        return true;
+    }
+    if (PRESET == 4 || PRESET == 10 || PRESET == 37) { // the clear night: Milky Way, stars, a moon
+        nightBase(d, el, TOP, HOR, 0.10);
+        float mw = PRESET == 4 ? 1.0 : (PRESET == 10 ? 0.65 : 0.55);
+        add(starField(d, PRESET == 37 ? 1.25 : 1.0, 1.0), up);
+        add(milky(d, mw * (1.0 + 0.3 * p), rgb(255.0, 214.0, 186.0), PRESET == 4 ? mix(A1, v3(1.0), 0.5) : rgb(160.0, 180.0, 255.0)), up);
+        add(rgb(40.0, 90.0, 70.0), 0.04 * exp(-yy * 12.0));
+        if (PRESET == 37) add(rgb(255.0, 240.0, 220.0), 0.05 * exp(-yy * 3.0) * pow(max(0.0, dot(d, dirAE(250.0, 0.0))), 6.0)); // zodiacal light
+        return true;
+    }
+    if (PRESET == 3) { // black hole: stars and Milky Way behind the disc (the disc and the hole are drawn after)
+        nightBase(d, el, TOP, HOR, 0.06);
+        add(starField(d, 1.0, 1.0), up);
+        add(milky(d, 0.30, rgb(255.0, 214.0, 186.0), rgb(160.0, 170.0, 255.0)), up);
+        accretion(az, el);
+        float a = degrees(angTo(d, SUN));
+        add(mix(A1, v3(1.0), 0.6), exp(-(a - BRAD * 1.08) * (a - BRAD * 1.08) / 0.05) * 0.9 * step(BRAD, a)); // photon ring
+        return true;
+    }
+    if (PRESET == 18) { // pulsar
+        nightBase(d, el, TOP, HOR, 0.06);
+        add(starField(d, 1.0, 1.0), up);
+        add(milky(d, 0.4, rgb(255.0, 214.0, 186.0), rgb(150.0, 170.0, 255.0)), up);
+        pulsarSky(d, dirAE(30.0, 50.0));
+        return true;
+    }
+    if (PRESET == 29) { // rift: a dark nebula torn by a glowing seam
+        nightBase(d, el, TOP, HOR, 0.06);
+        add(starField(d, 1.2, 1.0), up);
+        add(milky(d, 0.7, rgb(255.0, 214.0, 186.0), rgb(150.0, 170.0, 255.0)), up);
+        add(nebulaCloud(d, normalize(vec3(-0.513, 0.42, -0.747) * -1.0 + vec3(0.0, 0.5, 0.0)), A1 * 0.6, A2 * 0.5, 0.7, 0.6 * PATTERN), up);
+        rift(d.x, d.y, d.z);
+        return true;
+    }
+    if (PRESET == 30) { // supernova: the remnant shell glows around the burst
+        nightBase(d, el, TOP, HOR, 0.06);
+        add(starField(d, 1.0, 1.0), up);
+        add(nebulaCloud(d, dirAE(200.0, 30.0), A1 * 0.8, A2 * 0.8, 0.55, 0.8 * PATTERN), up);
+        supernova(d.x, d.y, d.z);
+        return true;
+    }
+    if (PRESET == 33 || PRESET == 35) { // total eclipse: a deep day-night, twilight all round the horizon
+        nightBase(d, el, TOP, HOR * 0.6, 0.0);
+        add(A2, (0.55 * exp(-yy * 7.0) + 0.12 * exp(-yy * 2.0)) * (1.0 + 0.3 * p));
+        add(starField(d, 0.5, 0.7), sm(15.0, 40.0, el));
+        vec3 cc = PRESET == 35 ? mix(A1, v3(1.0), 0.45) : rgb(245.0, 240.0, 255.0);
+        coronaEclipse(d, dirAE(160.0, 26.0), radians(3.2), cc, (1.0 + 0.5 * p) * PATTERN);
+        return true;
+    }
+    if (PRESET == 12) { // blood moon: the eclipse darkens the night - stars come out round a copper moon
+        nightBase(d, el, TOP, HOR * 0.7, 0.08);
+        add(starField(d, 1.0, 0.9), up);
+        add(milky(d, 0.25, rgb(255.0, 200.0, 170.0), rgb(170.0, 150.0, 200.0)), up);
+        add(rgb(160.0, 30.0, 24.0), 0.10 * exp(-yy * 6.0));
+        return true;
+    }
+    if (PRESET == 11) { underwater(d, el); return true; }
+    if (PRESET == 19) { nacreous(d, el); return true; }
+    return false;
+}
+// ==== LF SPACE END
+
+// which skies the realistic engine draws (and as which kind), -1 = their own code
+int realKind(int p) {
+    if (p >= 38) return p - 38;
+    if (p == 6) return 5;   if (p == 7) return 6;   if (p == 8) return 7;   if (p == 13) return 8;
+    if (p == 15) return 9;  if (p == 17) return 10; if (p == 9) return 11;  if (p == 22) return 12;
+    if (p == 36) return 13; if (p == 25) return 14; if (p == 28) return 15; if (p == 26) return 16;
+    if (p == 27) return 17; if (p == 5) return 18;
+    return -1;
 }
 
 vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
@@ -1009,6 +1521,7 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     BRAD = u16(o7.rg) / 1000.0;
     PRESET = int(floor(o7.b * 255.0 + 0.5));
     T = skyInfo.x;
+    { vec4 m13 = px(13); LIGHTNING = m13.r; KICK = m13.g; BEAT = m13.b; WAVE = m13.a > 0.002 ? (m13.a * 255.0 - 1.0) / 254.0 : -1.0; }
     float ba = radians(BAZ), be = radians(BEL);
     SUN = vec3(-sin(ba) * cos(be), sin(be), cos(ba) * cos(be));
 
@@ -1023,8 +1536,11 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     float az = degrees(atan2(-x, z));
     if (az < 0.0) az += 360.0;
 
-    if (PRESET >= 38) { // [LyricsForge] realistic skies
-        realSky(x, y, z, el, PRESET - 38);
+    int rk = realKind(PRESET);
+    if (rk < 0 && spaceSky(dir, az, el)) { // [LyricsForge] the reworked night / space / special skies
+        if (BKIND >= 0) bodyGlow(x, y, z, az, el);
+    } else if (rk >= 0) { // [LyricsForge] realistic skies + the skies reworked onto the same engine
+        realSky(x, y, z, el, rk);
         if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
@@ -1036,7 +1552,7 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     if (el < 0.0) C *= 1.0 - clamp(-el / 6.0, 0.0, 1.0) * 0.55;
     float lowGlow = exp(-max(0.0, el) / 9.0);
 
-    if (PRESET == 0) synth(el);
+    if (PRESET == 0) { synth(el); add(starField(vec3(x, y, z), 0.8, 0.8), sm(8.0, 30.0, el)); }
     else if (PRESET == 1 || PRESET == 14) {
         milkyWay(x, y, z, 0.16);
         curtains(az, el, 1.0);
@@ -1100,7 +1616,17 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     }
 
-    vec3 col = vec3(soft(C.r), soft(C.g), soft(C.b));
+    if (WAVE >= 0.0) { // [LyricsForge] the chorus light wave: a soft sweep down the dome in the sky's own colours
+        float e = 1.0 - (1.0 - WAVE) * (1.0 - WAVE);
+        float dd = el - (78.0 - 76.0 * e);
+        float wa = sin(3.14159265 * min(1.0, WAVE * 1.05)) * min(1.0, WAVE * 6.0);
+        vec3 wc = mix(A1, A2, 0.5 + 0.5 * sin(radians(az) * 2.0 + T * 0.7));
+        if (lum3(wc) < 0.05) wc = mix(HOR, v3(1.0), 0.45); // skies without accent colours: their own horizon light
+        float shimmer = 0.75 + 0.25 * noise3(vec3(cos(radians(az)) * 6.0, sin(radians(az)) * 6.0, T * 2.0));
+        add(mix(wc, v3(1.0), 0.6), exp(-dd * dd / 1.4) * 0.45 * wa * shimmer);
+        add(wc, (dd > 0.0 ? exp(-dd / 16.0) : exp(dd / 1.2)) * 0.14 * wa);
+    }
+    vec3 col = toneMap(C); // [LyricsForge] filmic shoulder (was a per-channel clip: drops went flat white)
     col = clamp(col * skyInfo.y, 0.0, 1.0);
     // deckend bis weit unter den Horizont (kein heller Minecraft-Nebel dazwischen), ganz unten weich aus
     float ht = clamp((el + 30.0) / 6.0, 0.0, 1.0);
