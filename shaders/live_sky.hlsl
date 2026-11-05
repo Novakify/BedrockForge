@@ -373,6 +373,19 @@ void bodyGlow(float x, float y, float z, float az, float el) {
     } else if (BKIND == SYNTH_K) {
         float o = max(0.0, ang - rad);
         add(A1, exp(-o / 10.0) * 0.45 + exp(-o / 3.0) * 0.35);
+        // [BF] the retro sun itself (in game it was only a glow): yellow-to-pink disc, cut by bands that widen downward
+        if (ang < rad) {
+            float dy = el - BEL;
+            float k = clamp(dy / rad * 0.5 + 0.5, 0.0, 1.0);
+            vec3 sunC = mix(A1 * 1.1, BCOL * 1.15, k * k);
+            float cut = 1.0;
+            if (dy < 0.0) {
+                float u = -dy / rad;
+                float band = fract(u * 5.0 - T * 0.05);
+                cut = step(0.10 + 0.45 * u, band);
+            }
+            over(sunC, cut * sm(rad, rad * 0.94, ang));
+        }
     } else {
         if (ang < rad) {
             over(vec3(0.008, 0.004, 0.02), 1.0);
