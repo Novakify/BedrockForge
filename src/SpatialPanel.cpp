@@ -374,6 +374,7 @@ LARGE_INTEGER gOpenQpc{}, gCloseQpc{};
 // from the toggle, so after a hitch the screen just appeared
 float         gAnimMs = 0.0f;
 bool          gAnimStarted = false;
+float         gOpenMaxDt = 0.0f;
 std::mutex    gHookM; // the input hooks: toggle or the prewarm worker
 void ensureInputHooks() {
     std::lock_guard l(gHookM);
@@ -399,7 +400,7 @@ void toggle() {
         gCloseFromMs   = std::min(ms, float(std::max(sc.scaleAnim ? sc.openMs : 0, sc.fade ? sc.fadeMs : 0)));
         gClosingPanel  = gCloseFromMs > 1.0f;
     }
-    if (on) { ensureInputHooks(); gAnimMs = 0.0f; gAnimStarted = false; }
+    if (on) { ensureInputHooks(); gAnimMs = 0.0f; gAnimStarted = false; gOpenMaxDt = 0.0f; }
     else writeDiag();
     gEnabled = on;
     if (on) uicapture::requestLearn(); // make sure the back-buffer RTV handles are known
@@ -672,6 +673,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     QueryPerformanceFrequency(&f);
     float dt = gLast.QuadPart ? float(double(now.QuadPart - gLast.QuadPart) / double(f.QuadPart)) : 0.0f;
     gLast    = now;
+    if (gEnabled && !gAnimStarted) gOpenMaxDt = std::max(gOpenMaxDt, dt); // (diag, before the clamp)
     dt       = std::clamp(dt, 0.0f, 0.1f);
     applyWanted();
     {
@@ -802,6 +804,13 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     Geom  g;
     if (gS.javaStyle) {
         // AnimationUtil.calculateAnimatedScale (Back easing from 75 %) + fade-in
+        if (redirected && !gAnimStarted) { // diag: how long the screen took to show up, and the slowest frame meanwhile
+            LARGE_INTEGER fq2;
+            QueryPerformanceFrequency(&fq2);
+            double wait = double(now.QuadPart - gOpenQpc.QuadPart) * 1000.0 / double(fq2.QuadPart);
+            ll_shim::info("[RF] spatial panel: first picture " + std::to_string(int(wait)) + " ms after opening, slowest frame " +
+                          std::to_string(int(gOpenMaxDt * 1000.0f)) + " ms (prepared " + (gPrewarm.load() == 2 ? "yes" : "no") + ")");
+        }
         if (redirected) gAnimStarted = true;
         if (gAnimStarted && gEnabled) gAnimMs += std::min(dt * 1000.0f, 34.0f);
         float ms    = gAnimMs;
