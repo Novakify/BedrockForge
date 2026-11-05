@@ -960,6 +960,8 @@ void Panel::director(Ctx& c, Config& cfg) {
     c.option("dc", 246.5f, 177, 38, 13, "Cuts", cfg.directorCuts, [&] { cfg.directorCuts = !cfg.directorCuts; }, a);
     c.option("st", 287, 177, 38, 13, "Tint", cfg.songTint, [&] { cfg.songTint = !cfg.songTint; }, a);
     c.option("so", 327.5f, 177, 38, 13, "Outro", cfg.songOutro, [&] { cfg.songOutro = !cfg.songOutro; }, a);
+    // [LyricsForge] the sky lights the world: its colour on the ground, drops flood it, dark moments dim it
+    c.toggle2("wl", 206, 193, 160, "Sky lights the world", cfg.worldLight, [&] { cfg.worldLight = !cfg.worldLight; }, a);
 }
 
 // [BF] FX page 4: Scene Studio - one tap sets the whole look (sky, letters, colours, motion, Director style)

@@ -147,6 +147,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(songScenes, true)                /* [BF] remember the scene picked for each song and bring it back */            \
     B(albumColors, false)              /* [BF] letter / glow / star colour from the album art (eased per song) */      \
     B(cinemaGrade, true)               /* [BF] Director colour grade + vignette of the world per scene (RF, D3D12) */  \
+    B(worldLight, true)                /* [LyricsForge] the sky's colour and light fall on the world; drops flood it (RF) */ \
     B(impactFrames, true)              /* [BF] a soft light flash + bloom / CA kick on drops and chorus hits (RF) */   \
     B(letterbox, true)                 /* [BF] cinema bars ease in during builds and big hooks (RF) */               \
     B(portals, false)                  /* [BF] a ring of light opens in the sky on choruses / drops (off: Moments) */ \

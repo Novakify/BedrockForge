@@ -15,7 +15,37 @@ uint32_t rgba(uint32_t rgb, float a) {
     uint32_t A = uint32_t(std::clamp(int(std::lround(a * 255.0f)), 0, 255));
     return (rgb >> 16 & 255) | (rgb >> 8 & 255) << 8 | (rgb & 255) << 16 | A << 24;
 }
+float chan(uint32_t c, int k) { return float((c >> (16 - 8 * k)) & 255) / 255.0f; }
+float lumOf(float const* c) { return 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2]; }
+float satOf(uint32_t c) {
+    float mx = std::max({chan(c, 0), chan(c, 1), chan(c, 2)}), mn = std::min({chan(c, 0), chan(c, 1), chan(c, 2)});
+    return mx > 0.01f ? (mx - mn) / mx : 0.0f;
+}
+float ease(float cur, float want, float dt, float tauUp, float tauDown) {
+    float const tau = want > cur ? tauUp : tauDown;
+    return cur + (want - cur) * (tau <= 0 ? 1.0f : 1.0f - std::exp(-std::max(0.0f, dt) / tau));
+}
 } // namespace
+
+WorldLight worldLightFor(Preset const& p, float visible, float brightness, float energy, float kick, float lightning) {
+    float const    kk  = std::clamp(kick, 0.0f, 1.0f), vis = std::clamp(visible, 0.0f, 1.0f);
+    uint32_t const acc = satOf(p.aurora1) >= satOf(p.aurora2) ? p.aurora1 : p.aurora2; // the sky's most colourful accent
+    float base[3], col[3];
+    for (int k = 0; k < 3; ++k) {
+        base[k] = 0.65f * chan(p.horizon, k) + 0.35f * chan(p.top, k); // the world mostly sees the horizon
+        col[k]  = base[k] + (chan(acc, k) - base[k]) * 0.6f * kk;       // the drop floods it with the accent
+    }
+    float const l = std::max(0.04f, lumOf(col));
+    WorldLight  w;
+    for (int k = 0; k < 3; ++k) w.tint[k] = 1.0f + (std::clamp(col[k] / l, 0.25f, 1.7f) - 1.0f) * 0.75f; // hue, same brightness
+    w.amount = vis * std::clamp(0.24f + 0.10f * energy + 0.36f * kk, 0.0f, 0.75f);
+    float e = 0.9f + 0.22f * lumOf(base);                                    // night skies a bit darker, bright days brighter
+    e *= 1.0f + 0.6f * (std::clamp(brightness, 0.3f, 1.6f) - 1.0f);          // the sky's breathing / dimming reaches the ground
+    e += 0.10f * kk + 0.45f * std::clamp(lightning, 0.0f, 1.0f);             // drops and lightning light it up
+    w.exposure = 1.0f + (std::clamp(e, 0.8f, 1.5f) - 1.0f) * vis;            // never darker than 80%: you still see in PvP
+    w.sat      = 1.0f + vis * (0.06f + 0.28f * kk);
+    return w;
+}
 
 void toVerts(std::vector<Quad> const& quads, std::vector<BfSkyVertV1>& out) {
     out.clear();
@@ -42,6 +72,19 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
             return (0.2126f * float((c >> 16) & 255) + 0.7152f * float((c >> 8) & 255) + 0.0722f * float(c & 255)) / 255.0f;
         };
         mLuma = 0.5f * (lum(p->top) + lum(p->horizon)) * mFrame.visible * std::min(1.0f, mFrame.bright);
+    }
+
+    { // [LyricsForge] world light: eased, fast in (drops, lightning) and slow out; underground it mostly fades
+        WorldLight want;
+        if (p) {
+            want = worldLightFor(*p, mFrame.visible * std::min(1.0f, mFrame.bright + 0.4f) * (in.skyOpen ? 1.0f : 0.3f),
+                                 mFrame.brightness, std::clamp(in.pulse - in.kick, 0.0f, 1.0f), in.kick, in.lightning);
+        }
+        float const dt = float(std::clamp(in.dtSec, 0.0, 0.25));
+        for (int k = 0; k < 3; ++k) mWorld.tint[k] = ease(mWorld.tint[k], want.tint[k], dt, 0.25f, 0.25f); // follows the kick
+        mWorld.amount   = ease(mWorld.amount, want.amount, dt, 0.10f, 0.7f);
+        mWorld.exposure = ease(mWorld.exposure, want.exposure, dt, 0.05f, 0.35f);
+        mWorld.sat      = ease(mWorld.sat, want.sat, dt, 0.08f, 0.8f);
     }
 
     FxIn fi;

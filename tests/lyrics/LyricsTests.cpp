@@ -1245,6 +1245,37 @@ TEST(quality_and_profiles) {
     CHECK_EQ(cfg.quality, 2);
 }
 
+TEST(world_light) { // [LyricsForge] the sky lights the world
+    using namespace bf::lyrics::sky;
+    Config cfg;
+    auto dusk = *find("dusk", cfg), night = *find("bright_night", cfg), summer = *find("summer", cfg);
+    auto w = worldLightFor(dusk, 1, 1, 0.3f, 0, 0);
+    CHECK(w.tint[0] > 1.0f && w.tint[2] < 1.0f);                       // dusk warms the ground
+    CHECK(worldLightFor(summer, 1, 1, 0.3f, 0, 0).tint[2] > 1.0f);     // a blue day cools it
+    for (auto const& p : {dusk, night, summer}) {                      // hue only: the tint keeps the brightness
+        auto x = worldLightFor(p, 1, 1, 0.3f, 1, 0);
+        CHECK_NEAR(0.2126f * x.tint[0] + 0.7152f * x.tint[1] + 0.0722f * x.tint[2], 1.0f, 0.2f);
+    }
+    auto drop = worldLightFor(night, 1, 1, 0.3f, 1, 0);
+    CHECK(drop.amount > worldLightFor(night, 1, 1, 0.3f, 0, 0).amount + 0.3f); // the drop floods it
+    CHECK(drop.sat > 1.25f && drop.exposure > worldLightFor(night, 1, 1, 0.3f, 0, 0).exposure);
+    CHECK(worldLightFor(night, 1, 1, 0.3f, 0, 0).exposure < worldLightFor(summer, 1, 1, 0.3f, 0, 0).exposure);
+    CHECK(worldLightFor(summer, 1, 0.4f, 0, 0, 0).exposure >= 0.8f);   // dimmed, never too dark to play
+    CHECK(worldLightFor(summer, 1, 0.4f, 0, 0, 0).exposure < 0.95f);
+    CHECK(worldLightFor(night, 1, 1, 0, 0, 1).exposure > 1.3f);        // lightning lights the ground
+    auto off = worldLightFor(dusk, 0, 1, 0.5f, 1, 1);                  // sky not visible: no change
+    CHECK(off.neutral());
+    System sys;                                                         // eased in over a few frames, out with the sky
+    SystemIn in; in.dtSec = 0.05; in.kick = 1; in.pulse = 1.3f;
+    cfg.skyPreset = "dusk";
+    AutoPerf perf;
+    for (int i = 0; i < 60; ++i) sys.step(true, cfg, perf, in);
+    CHECK(sys.world().amount > 0.3f && sys.world().tint[0] > 1.0f);
+    cfg.skyPreset = "off";
+    for (int i = 0; i < 120; ++i) sys.step(true, cfg, perf, in);
+    CHECK(sys.world().neutral());
+}
+
 TEST(live_sky_params) {
     using namespace bf::lyrics::sky;
     Config cfg;

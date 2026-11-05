@@ -818,6 +818,11 @@ void publishDirector(MusicState const& m, CinemaOut const& c) {
     d.gradeAmount = c.amount; d.saturation = c.saturation; d.contrast = c.contrast; d.vignette = c.vignette;
     d.flash = c.flash; d.letterbox = c.letterbox; d.bloomBoost = c.bloomBoost; d.caBoost = c.caBoost;
     d.showcase = c.showcase; d.orbitYaw = c.orbitYaw; d.orbitPitch = c.orbitPitch; d.orbitRadius = c.orbitRadius; d.focus = c.focus;
+    // [LyricsForge] world light: the sky's colour and brightness on the terrain (RF applies it below the horizon)
+    sky::WorldLight const w = gS->engine.config().worldLight ? gS->sky.world() : sky::WorldLight{};
+    for (int k = 0; k < 3; ++k) d.worldTint[k] = w.tint[k];
+    d.worldAmount = w.amount; d.exposure = w.exposure; d.worldSat = w.sat; d.skyKeep = 0.3f;
+    if (!w.neutral()) d.active = 1u;
     gBfDirector = d;
 }
 
@@ -872,6 +877,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         else if (m.active && m.chorusNow) sKick = std::max(sKick, 0.55f);
         sKick *= std::exp(-dt / 1.8f);
         in.pulse = cfg.director ? sEnergy + sKick : 0.4f * sEnergy;
+        in.kick  = cfg.director ? sKick : 0.0f;
     }
     { auto const& pu = gS->engine.pulse(); // [BF] the horizon equaliser is drawn by the sky (behind the terrain)
       if (!pu.barEl().empty()) { in.eq = &pu.barEl(); in.eqAlpha = pu.barAlpha(); in.eqColor = pu.barColor(); } }

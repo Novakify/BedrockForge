@@ -31,8 +31,17 @@ struct BfDirectorV1 {
     float orbitRadius;   // blocks behind the eyes
     float focus;         // 0..1 soft focus towards the screen edges (no depth buffer: a lens-style falloff)
     float reserved[1];
+    // [LyricsForge] world light (size >= 160; an RF that only knows 128 bytes ignores it): the sky lights the world.
+    // RF has no depth buffer in its post pass, so it applies this fully below the horizon line (ground, terrain),
+    // skyKeep of it above, and less on very bright pixels (the sky itself, highlights).
+    float worldTint[3];  // display-space rgb multiplier the sky casts (1,1,1 = none); luminance-neutral
+    float worldAmount;   // 0..1 mix towards the tinted world
+    float exposure;      // world brightness multiplier (1 = unchanged): dark moments dim it, lightning / drops lift it
+    float skyKeep;       // 0..1 share applied above the horizon
+    float worldSat;      // saturation of the lit world (1 = unchanged): drops make it vivid for a moment
+    float reserved2[1];
 };
-static_assert(sizeof(BfDirectorV1) == 128, "BfDirectorV1 layout is shared with RF");
+static_assert(sizeof(BfDirectorV1) == 160, "BfDirectorV1 layout is shared with RF");
 
 #if defined(_WIN32)
 __declspec(dllexport)

@@ -1,6 +1,7 @@
 // LyricsFlow port - the live sky per frame: clock + layers + parameter row -> the shared store RF reads with
 // BF_CopySkyFrame (BfLyrics.h). Original glue for Bedrock Forge around the 2.1 ports in Sky / SkyFx.
 #pragma once
+#include <cmath>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -29,11 +30,22 @@ struct SystemIn {
     float   dim = 0;                         // [BF] 0..1 darker (song outro, bridge, "night" moments)
     Weather burst = Weather::None;           // [BF] Moments
     float   burstAmt = 0, lightning = 0;
+    float   kick = 0;   // [LyricsForge] the drop / chorus kick alone (0..1, eases out): floods the world with the sky's colour
     float   pulse = 0;  // [LyricsForge] music energy + a kick on drops -> the realistic skies (wind, light, colour)
     std::vector<float> const* eq = nullptr;  // [BF] horizon equaliser (Pulse): bar elevations in degrees
     float   eqAlpha = 0;
     uint32_t eqColor = 0xFFFFFF;
 };
+
+/// [LyricsForge] the light the sky casts on the world (RF post pass, BfDirectorV1.world*). Neutral = no change.
+struct WorldLight {
+    float tint[3] = {1, 1, 1};
+    float amount = 0, exposure = 1, sat = 1;
+    bool  neutral() const { return amount < 0.005f && std::fabs(exposure - 1) < 0.005f && std::fabs(sat - 1) < 0.005f; }
+};
+/// The target for one sky: its colour (horizon-weighted, hue only) on the world, pushed towards its accent on a drop;
+/// exposure follows how bright the sky is and how bright it is right now (breathing, dimming, lightning).
+WorldLight worldLightFor(Preset const& p, float visible, float brightness, float energy, float kick, float lightning);
 
 class System {
 public:
@@ -42,6 +54,7 @@ public:
     Frame const&             frame() const { return mFrame; }
     /// [BF] how bright the sky behind the lyrics is right now, 0..1 (contrast guard)
     float                    luma() const { return mLuma; }
+    WorldLight const&        world() const { return mWorld; }
     std::vector<Quad> const& quads() const { return mQuads; }
 
 private:
@@ -51,6 +64,7 @@ private:
     std::vector<Quad> mQuads;
     uint32_t          mSeq = 0;
     float             mLuma = 0;
+    WorldLight        mWorld;
     float             mDomeYaw = 0;  // [BF] the dome's turn for the current preset
     std::string       mDomeFor;
 };
