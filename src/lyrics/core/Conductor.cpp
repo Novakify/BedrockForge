@@ -22,7 +22,7 @@ void Conductor::reset() {
     mSinceDrop = mSinceChorus = mSinceCalm = 1e9f;
     mBudgetTarget = 0.5f;
     mWasBuilding = mWasHook = false;
-    mLiftAge = 0;
+    mLiftAge = mLiftFade = 0;
     mPrevSection = MusicSection::Mid;
 }
 
@@ -206,11 +206,14 @@ void Conductor::update(ConductorIn const& in) {
     // ---- chorus look: in on a hit, held while the energy stays up, out on calm (min / max time)
     if (s.dropNow || s.chorusNow) {
         if (!s.lifted) s.liftNow = true;
-        s.lifted = true; mLiftAge = 0;
+        s.lifted = true; mLiftAge = 0; mLiftFade = 0;
     } else if (s.lifted) {
         mLiftAge += dt;
-        bool const fading = sec != MusicSection::High && s.inHook < 0.25f;
-        if (s.calmNow || (mLiftAge > kLiftMin && fading) || mLiftAge > kLiftMax) { s.lifted = false; s.liftEnd = true; }
+        // the energy has to stay down for a few seconds (in game: a drop in a quiet intro let go just as the
+        // loud part started - a short dip must not end it)
+        bool const fading = sec != MusicSection::High && s.inHook < 0.25f && s.energy < 0.6f;
+        mLiftFade = fading ? mLiftFade + dt : 0.0f;
+        if (s.calmNow || (mLiftAge > kLiftMin && mLiftFade > kLiftFade) || mLiftAge > kLiftMax) { s.lifted = false; s.liftEnd = true; }
     }
     s.lift += ((s.lifted ? 1.0f : 0.0f) - s.lift) * ease(dt, s.lifted ? 0.12f : 2.2f);
     s.build += (build - s.build) * ease(dt, build > s.build ? 0.2f : 0.6f);
