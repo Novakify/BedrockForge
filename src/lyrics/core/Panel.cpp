@@ -1040,8 +1040,8 @@ void Panel::hudPage(Ctx& c, Config& cfg) {
     c.option("tl", 206, 161, 52, 14, "Translate", cfg.translations, [&] { cfg.translations = !cfg.translations; }, a);
     c.option("pt", 260, 161, 52, 14, "Portals", cfg.portals, [&] { cfg.portals = !cfg.portals; }, a);
     c.option("sl", 314, 161, 52, 14, "Framing", cfg.shotLanguage, [&] { cfg.shotLanguage = !cfg.shotLanguage; }, a);
-    // [BF] Clip mode: the NVIDIA app saves the big moment for you (Instant Replay must be on there)
-    c.option("cm", 206, 178, 160, 14, cfg.clipMode ? "Clip mode: on (NVIDIA replay)" : "Clip mode: off", cfg.clipMode,
+    // [BF] Clip mode: OBS (Replay Buffer running) or NVIDIA saves the big moment - LyricsForge presses the save hotkey
+    c.option("cm", 206, 178, 160, 14, cfg.clipMode ? "Clip mode: on (saves a replay)" : "Clip mode: off", cfg.clipMode,
              [&] { cfg.clipMode = !cfg.clipMode; }, a);
 }
 

@@ -1,4 +1,5 @@
-// LyricsForge - [BF] Clip mode: after a song's big moment, ask NVIDIA Instant Replay to save the last minutes, so the
+// LyricsForge - [BF] Clip mode: after a song's big moment, ask the replay recorder (OBS Replay Buffer, or NVIDIA
+// Instant Replay) to save what it holds, so the
 // chorus / drop you just watched is on disk without you pressing anything. Original code for Bedrock Forge.
 //
 // Pure timing logic here (testable); the runtime presses the hotkey (cfg.clipHotkey, NVIDIA's default Alt+F10).
