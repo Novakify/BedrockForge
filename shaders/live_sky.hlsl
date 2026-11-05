@@ -370,6 +370,17 @@ void bodyGlow(float x, float y, float z, float az, float el) {
         }
     } else if (BKIND == MOON_K) {
         add(BCOL, exp(-ang / 5.0) * 0.32 + exp(-ang / 22.0) * 0.14);
+        // [BF] the moon itself (it was only a glow, so a Blood Moon by day / on servers showed no moon): a lit disc with
+        // soft limb darkening and faint maria, in the moon's own colour, over everything behind it
+        float disc = 1.0 - sm(rad * 0.96, rad * 1.04, ang);
+        if (disc > 0.001) {
+            float r = clamp(ang / rad, 0.0, 1.0);
+            float limb = sqrt(max(0.0, 1.0 - r * r));
+            float du = wrap180(az - BAZ) * cos(radians(el)) / rad, dv = (el - BEL) / rad;
+            float maria = lfNoise(du * 2.2 + 3.1, dv * 2.2 - 1.7, 2.4) * 0.6 + lfNoise(du * 5.0, dv * 5.0, 7.3) * 0.4;
+            vec3 moonC = BCOL * (0.62 + 0.38 * limb) * (0.82 + 0.3 * maria) * 1.15;
+            C = mix(C, moonC, disc * 0.96);
+        }
     } else if (BKIND == SYNTH_K) {
         float o = max(0.0, ang - rad);
         add(A1, exp(-o / 10.0) * 0.45 + exp(-o / 3.0) * 0.35);
