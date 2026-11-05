@@ -82,6 +82,10 @@ bool sameScript(std::string_view artist, std::string_view title, Lyrics const& l
 /// Disk cache form (MediaManager readCache/writeCache): exact lines + word timing, round-trips losslessly.
 std::string           toCacheJson(Lyrics const& l);
 std::optional<Lyrics> fromCacheJson(std::string_view json);
+/// [BF] tidy a result from any source: odd spaces (NBSP, ideographic, thin) become plain spaces, and a line timed as
+/// ONE word (some sources time lines only) is split into words with times shared out by their position - so word
+/// effects (keywords, kinetic words, hero words, the ribbon, the sky's constellations) work on every source.
+void normalizeWords(Lyrics& l);
 /// Cache file name for a track key (lower(artist + "\0" + title)): 16 hex digits of FNV-1a 64 + ".json".
 std::string           cacheFileName(std::string_view trackKey);
 /// [BF] NetEase "tlyric" (an LRC of translations): each line whose time matches a lyric line becomes its translation

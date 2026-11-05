@@ -432,6 +432,49 @@ std::string toCacheJson(Lyrics const& l) {
     return o + "}";
 }
 
+void normalizeWords(Lyrics& ly) {
+    auto fix = [](std::string& t) {
+        std::string o;
+        o.reserve(t.size());
+        for (size_t i = 0; i < t.size(); ++i) {
+            unsigned char const c = uint8_t(t[i]);
+            if (c == 0xC2 && i + 1 < t.size() && uint8_t(t[i + 1]) == 0xA0) { o += ' '; ++i; continue; }              // U+00A0
+            if (c == 0xE3 && i + 2 < t.size() && uint8_t(t[i + 1]) == 0x80 && uint8_t(t[i + 2]) == 0x80) { o += ' '; i += 2; continue; } // U+3000
+            if (c == 0xE2 && i + 2 < t.size() && uint8_t(t[i + 1]) == 0x80 &&
+                (uint8_t(t[i + 2]) == 0x89 || uint8_t(t[i + 2]) == 0xAF || uint8_t(t[i + 2]) == 0x8A)) { o += ' '; i += 2; continue; } // thin / narrow
+            o += char(c);
+        }
+        t.swap(o);
+    };
+    for (auto& l : ly.lines) {
+        fix(l.text);
+        for (auto& w : l.words) fix(w.text);
+        if (l.words.size() != 1 || l.words[0].text.find(' ') == std::string::npos) continue;
+        Word const one = l.words[0];
+        int64_t const t0 = one.start, t1 = std::max(one.end, one.start + 1);
+        size_t const n = one.text.size();
+        std::vector<Word> out;
+        for (size_t b = 0; b < n;) {
+            while (b < n && one.text[b] == ' ') ++b;
+            size_t e = b;
+            while (e < n && one.text[e] != ' ') ++e;
+            if (e == b) break;
+            Word w = one;
+            w.text  = one.text.substr(b, e - b);
+            w.start = t0 + int64_t(double(t1 - t0) * double(b) / double(n));
+            w.end   = t0 + int64_t(double(t1 - t0) * double(e) / double(n));
+            w.origStart = w.start; w.origEnd = w.end;
+            out.push_back(std::move(w));
+            b = e;
+        }
+        if (out.size() > 1) {
+            for (size_t i = 0; i + 1 < out.size(); ++i) out[i].end = out[i].origEnd = out[i + 1].start;
+            out.back().end = out.back().origEnd = t1;
+            l.words = std::move(out);
+        }
+    }
+}
+
 std::optional<Lyrics> fromCacheJson(std::string_view s) {
     auto d = json::parse(s);
     if (!d || (*d)["v"].asInt() != 1 || !(*d)["lines"].isArray()) return std::nullopt;
@@ -459,6 +502,7 @@ std::optional<Lyrics> fromCacheJson(std::string_view s) {
             if (!k.empty()) l.marks.push_back({m[0].asInt(), k[0]});
         }
     if (l.lines.empty()) return std::nullopt;
+    normalizeWords(l); // [BF]
     return l;
 }
 

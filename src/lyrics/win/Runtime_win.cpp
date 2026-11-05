@@ -439,6 +439,7 @@ void fetchFor(MediaSample s, int64_t seq) {
                 if (gS->clock.songSeq() != seq || !gS->running) return;
             }
         }
+        if (got) normalizeWords(*got); // [BF] odd spaces, line-timed sources -> words
         if (std::error_code e2; got && !fromOverride && !std::filesystem::exists(cacheFile, e2)) { // LyricsFlow writeCache (synced results only reach here)
             std::ofstream out(cacheFile, std::ios::binary);
             out << toCacheJson(*got);

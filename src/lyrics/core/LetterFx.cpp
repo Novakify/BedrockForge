@@ -35,7 +35,7 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
     c = c * (1.0 / double(quads.size()));
     int gx = 1, gy = 1;
     switch (mode) {
-    case ExitAnim::Shatter: gx = 3; gy = 3; break;
+    case ExitAnim::Shatter: gx = 2; gy = 3; break; // [BF] fewer, bigger shards read as glass; 3x3 + trails read as confetti in game
     case ExitAnim::Dissolve: gx = 6; gy = 6; break;
     case ExitAnim::Burn: gx = 4; gy = 5; break;
     case ExitAnim::Glitch: gx = 1; gy = 5; break;
@@ -219,7 +219,7 @@ void LetterFx::emit(Vec3 origin, std::vector<BfGlyphV1>& out) const {
         q.right[0] = float(r.x); q.right[1] = float(r.y); q.right[2] = float(r.z);
         q.up[0] = float(u.x); q.up[1] = float(u.y); q.up[2] = float(u.z);
         // [LyricsForge] motion trail: fast pieces leave two fading ghosts behind them (drawn first = underneath)
-        bool const trails = f.hasTrail && t > 0 && (f.mode == ExitAnim::Explode || f.mode == ExitAnim::Shatter || f.mode == ExitAnim::Vortex);
+        bool const trails = f.hasTrail && t > 0 && (f.mode == ExitAnim::Explode || f.mode == ExitAnim::Vortex);
         if (trails && (f.trail[1] - f.pos).length() > double(f.size) * 0.15) {
             for (int k = 1; k >= 0; --k) {
                 BfGlyphV1 g = q;

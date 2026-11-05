@@ -1410,7 +1410,7 @@ TEST(letter_fx_exits) {
     q.alpha = 1; q.fill = 0xFFFFFFFFu;
     std::vector<BfGlyphV1> word{q, q};
     word[1].pos[0] = 0.5f;
-    struct M { ExitAnim m; size_t frags; } const ms[] = {{ExitAnim::Shatter, 18}, {ExitAnim::Dissolve, 72}, {ExitAnim::Explode, 2},
+    struct M { ExitAnim m; size_t frags; } const ms[] = {{ExitAnim::Shatter, 12}, {ExitAnim::Dissolve, 72}, {ExitAnim::Explode, 2},
                                                           {ExitAnim::Burn, 40}, {ExitAnim::Glitch, 10},
                                                           {ExitAnim::Vortex, 8}};
     for (auto const& m : ms) {
@@ -2241,6 +2241,19 @@ TEST(song_arc_total_final_bridge) {
     CHECK_EQ(hits, 3);
     CHECK_EQ(finals, 1);                                              // only the last one
     CHECK(bridgeMax > 0.6f);                                          // between chorus 2 and the last
+}
+
+TEST(normalize_words_from_line_timed_sources) { // [BF] NetEase "words" can be one per line, with NBSP spaces (seen in game)
+    std::string const j = "{\"v\":1,\"source\":\"netease words\",\"synced\":true,\"lines\":[{\"t\":\"I\xC2\xA0was\xC2\xA0wandering in the rain\",\"s\":1000,\"e\":4600,\"est\":false,\"w\":[[\"I\xC2\xA0was\xC2\xA0wandering in the rain\",1000,4600]]}]}";
+    auto l = fromCacheJson(j);
+    CHECK(l.has_value());
+    if (!l) return;
+    auto const& ln = l->lines[0];
+    CHECK_EQ(ln.text, std::string("I was wandering in the rain"));
+    CHECK_EQ(ln.words.size(), size_t(6));
+    CHECK_EQ(ln.words.back().text, std::string("rain"));
+    CHECK(ln.words.back().start > 3500 && ln.words.back().end == 4600);
+    for (size_t i = 1; i < ln.words.size(); ++i) CHECK(ln.words[i].start >= ln.words[i - 1].start);
 }
 
 int main(int argc, char** argv) {
