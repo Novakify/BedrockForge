@@ -33,6 +33,7 @@
 #include "lyrics/core/LetterFx.h"
 #include "lyrics/core/SkyFx.h"
 #include "lyrics/core/SkySystem.h"
+#include "lyrics/core/SkyMood.h"
 #include "lyrics/core/Conductor.h"
 #include "lyrics/core/Cinema.h"
 #include "lyrics/core/Overrides.h"
@@ -1243,6 +1244,36 @@ TEST(quality_and_profiles) {
     applyProfile(cfg, 0);
     CHECK(!cfg.combatSafe);
     CHECK_EQ(cfg.quality, 2);
+}
+
+TEST(sky_mood) { // [LyricsForge] Random fits the song
+    using namespace bf::lyrics;
+    MoodIn hype; hype.highShare = 0.8f; hype.calmShare = 0.1f; hype.dropsPerMin = 1.6f; hype.cover = 0xFF4FA0;
+    auto const hm = moodOf(hype).mood;
+    CHECK(hm == SkyMood::Hype || hm == SkyMood::Bright);           // a loud, drop-heavy, colourful song
+    MoodIn sad; sad.highShare = 0.1f; sad.calmShare = 0.6f; sad.cover = 0x506070;
+    sad.words = {"I cry alone in the rain", "goodbye my love", "tears on the cold glass", "nothing left"};
+    CHECK(moodOf(sad).mood == SkyMood::Melancholy);
+    MoodIn love; love.highShare = 0.35f; love.calmShare = 0.3f; love.cover = 0xF0A0D0;
+    love.words = {"baby I love you", "hold my heart", "forever mine", "kiss me slow"};
+    CHECK(moodOf(love).mood == SkyMood::Dreamy);
+    MoodIn dark; dark.highShare = 0.7f; dark.calmShare = 0.1f; dark.cover = 0x200808;
+    dark.words = {"blood on the fire", "burn it all", "fight the devil", "scream"};
+    CHECK(moodOf(dark).mood == SkyMood::Dark);
+    MoodIn night; night.highShare = 0.35f; night.calmShare = 0.3f; night.cover = 0x1A2A6A;
+    night.words = {"under the moon tonight", "stars in the sky", "midnight dreams"};
+    CHECK(moodOf(night).mood == SkyMood::Night);
+    for (int m = 0; m < 6; ++m) {                                    // every pick is a curated sky that exists
+        Config cfg;
+        for (auto id : moodSkies(SkyMood(m))) { CHECK(isCurated(id)); CHECK(sky::find(id, cfg).has_value()); }
+        auto calm = pickMoodSky(SkyMood(m), 0.0f, {}, "", 7), peak = pickMoodSky(SkyMood(m), 1.0f, {}, "", 7);
+        auto const& l = moodSkies(SkyMood(m));
+        auto idx = [&](std::string const& id) { return int(std::find(l.begin(), l.end(), id) - l.begin()); };
+        CHECK(idx(calm) <= 1 && idx(peak) >= int(l.size()) - 2);    // quiet parts low on the list, drops at the top
+        CHECK(pickMoodSky(SkyMood(m), 1.0f, {}, peak, 7) != peak);  // never the same sky again on the next change
+    }
+    for (auto id : curatedSkies()) CHECK(sky::find(id, Config{}).has_value());
+    CHECK(!isCurated("matrix") && !isCurated("warp") && isCurated("cotton_candy"));
 }
 
 TEST(world_light) { // [LyricsForge] the sky lights the world

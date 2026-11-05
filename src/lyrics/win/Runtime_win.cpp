@@ -50,6 +50,7 @@
 #include "lyrics/core/SongMemory.h"
 #include "lyrics/core/Conductor.h"
 #include "lyrics/core/Cinema.h"
+#include "lyrics/core/SkyMood.h"
 #include "lyrics/core/Overrides.h"
 #include "lyrics/BfDirector.h"
 #include "lyrics/core/Studio.h"
@@ -122,6 +123,9 @@ struct State {
         double      since = 1e9;
         std::vector<std::string> recent;
         uint32_t    rng = 0x9E3779B9u;
+        SkyMood     mood = SkyMood::Bright; // [LyricsForge] the song's mood (Random fits the song)
+        std::string moodKey;                // what it was worked out from (song + memory / lyrics / cover known)
+        float       energySum = 0, energyN = 0;
     } shuffle;
     float                   waveT = -1;     // [BF] chorus light wave progress (< 0 none)
     int                     meteors = 0;    // [BF] meteor burst queued for the next sky frame
@@ -886,17 +890,40 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     if (cfg.skyShuffle && cfg.skyPreset != "off" && !cfg.skyImage) {
         auto& sh = gS->shuffle;
         sh.since += dt;
-        std::string const song = gS->clock.hasTrack() ? gS->clock.track().key() : std::string();
+        std::string const song = gS->demo.on ? "demo|" + gS->demo.title : gS->clock.hasTrack() ? gS->clock.track().key() : std::string();
         bool const newSong = song != sh.song;
         bool const bigMoment = m.bigDrop || (m.dropNow && sh.since > 45.0) || (m.liftNow && sh.since > 60.0);
-        if (sh.sky.empty() || newSong || bigMoment || sh.since > 120.0) {
+        bool const fit = cfg.skyFitSong;
+        bool const calmTurn = fit && m.calmNow && sh.since > 30.0; // [LyricsForge] the song goes quiet: so does the sky
+        if (newSong) { sh.energySum = 0; sh.energyN = 0; }
+        if (m.active) { sh.energySum += m.energy; sh.energyN += 1; }
+        if (fit) { // [LyricsForge] the song's mood, worked out again whenever we learn more about it
+            SongMemory const* mem = gS->demo.on ? &gS->demo.mem : (gS->memory.key().empty() ? nullptr : &gS->memory);
+            Lyrics const*     ly  = gS->demo.on ? gS->demo.lyrics.get() : gS->lyrics.get();
+            std::string const mk = song + '|' + (mem && !mem->sections.empty() ? "m" : "") + (ly ? "l" : "") + std::to_string(gS->coverAccent & 0xFFFFFF);
+            if (mk != sh.moodKey) {
+                sh.moodKey = mk;
+                float const live = sh.energyN > 40 ? sh.energySum / sh.energyN : -1.0f;
+                auto const ms = moodOf(moodInputs(mem, ly, gS->coverAccent, live));
+                if (ms.mood != sh.mood || newSong) gS->directorLines.push_back(std::string("   sky mood ") + moodName(ms.mood));
+                sh.mood = ms.mood;
+            }
+        }
+        if (sh.sky.empty() || newSong || bigMoment || calmTurn || sh.since > 120.0) {
             sh.song = song;
+            sh.rng = sh.rng * 1664525u + 1013904223u + uint32_t(nowMsWall());
+            if (fit) { // where on the mood's calm -> intense list: the quiet parts low, the big drops at the top
+                float const sec = m.section == MusicSection::High ? 0.7f : m.section == MusicSection::Calm ? 0.1f : 0.4f;
+                float const at = m.bigDrop ? 1.0f : m.dropNow ? 0.85f : m.liftNow ? 0.65f : calmTurn ? 0.05f : (newSong || sh.sky.empty()) ? 0.2f : sec;
+                sh.sky = pickMoodSky(sh.mood, at, sh.recent, sh.sky, sh.rng);
+            } else {
             std::vector<std::string> pool;
             for (auto id : sky::order())
-                if (id != "custom" && id != "off" && std::find(sh.recent.begin(), sh.recent.end(), id) == sh.recent.end()) pool.emplace_back(id);
-            if (pool.empty()) { sh.recent.clear(); for (auto id : sky::order()) if (id != "custom") pool.emplace_back(id); }
-            sh.rng = sh.rng * 1664525u + 1013904223u + uint32_t(nowMsWall());
+                if (id != "custom" && id != "off" && (!cfg.skyCurated || isCurated(id)) &&
+                    std::find(sh.recent.begin(), sh.recent.end(), id) == sh.recent.end()) pool.emplace_back(id);
+            if (pool.empty()) { sh.recent.clear(); for (auto id : sky::order()) if (id != "custom" && (!cfg.skyCurated || isCurated(id))) pool.emplace_back(id); }
             sh.sky = pool[size_t((sh.rng >> 8) % pool.size())];
+            }
             sh.recent.push_back(sh.sky);
             if (sh.recent.size() > 6) sh.recent.erase(sh.recent.begin());
             sh.since = 0;

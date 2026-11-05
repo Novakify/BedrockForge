@@ -102,6 +102,8 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     F(skySpeed, 1.0f)                  /* 0.25 .. 2 */                                                                 \
     F(skyPattern, 1.0f)                /* 0.2 .. 1.5 */                                                                \
     B(skyShuffle, false)               /* random sky per song */                                                       \
+    B(skyFitSong, true)                /* [LyricsForge] Random picks skies that fit the song (mood + its arc) */      \
+    B(skyCurated, true)                /* [LyricsForge] Random leaves out the effect-looking skies */                 \
     B(fxSkyMusic, true)                /* sky reacts to music */                                                       \
     F(skyLively, 0.6f)                 /* 0 .. 1 sky motion */                                                         \
     F(skyBreath, 1.0f)                 /* 0 = off, breathing glow speed */                                             \
