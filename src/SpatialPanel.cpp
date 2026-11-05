@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -368,6 +369,18 @@ void installSourceHooks();
 void tryGameMouse();
 void writeDiag();
 LARGE_INTEGER gOpenQpc{}, gCloseQpc{};
+// the open animation's clock: starts at the first frame that has the screen's picture (Bedrock builds a screen over a
+// few frames, the first one can take long), and a slow frame moves it on by one frame's worth at most - it was timed
+// from the toggle, so after a hitch the screen just appeared
+float         gAnimMs = 0.0f;
+bool          gAnimStarted = false;
+std::mutex    gHookM; // the input hooks: toggle or the prewarm worker
+void ensureInputHooks() {
+    std::lock_guard l(gHookM);
+    installCursorHook();
+    installSourceHooks();
+    tryGameMouse();
+}
 float         gCloseFromMs = 0.0f; // how far the open animation had got when the screen closed
 bool          gHaveLastGeom = false;
 float         gLastC[60]{};       // the last frame's panel constants (the close animation reuses its placement)
@@ -381,11 +394,12 @@ void toggle() {
         QueryPerformanceCounter(&gCloseQpc);
         QueryPerformanceFrequency(&fq);
         auto const& sc = spatialcam::cfg();
-        float ms       = float(double(gCloseQpc.QuadPart - gOpenQpc.QuadPart) * 1000.0 / double(fq.QuadPart));
+        (void)fq;
+        float ms       = gAnimMs; // how far the open animation had got (its own clock, see record)
         gCloseFromMs   = std::min(ms, float(std::max(sc.scaleAnim ? sc.openMs : 0, sc.fade ? sc.fadeMs : 0)));
         gClosingPanel  = gCloseFromMs > 1.0f;
     }
-    if (on) { installCursorHook(); installSourceHooks(); tryGameMouse(); }
+    if (on) { ensureInputHooks(); gAnimMs = 0.0f; gAnimStarted = false; }
     else writeDiag();
     gEnabled = on;
     if (on) uicapture::requestLearn(); // make sure the back-buffer RTV handles are known
@@ -620,6 +634,38 @@ void blurPasses(ID3D12GraphicsCommandList* list, float* c, float sigma) {
 }
 void blurDone(ID3D12GraphicsCommandList* list) { if (gBlurB) barrier(list, gBlurB.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET); }
 
+// ---------------------------------------------------------------- first-open cost, paid early (v0.13)
+// The first panel (or Cinematic scene) used to freeze the game for a second: the input hooks, GameInput's own instance
+// (tryGameMouse), the root signature, five pipeline states and four window-sized textures were all made at that moment,
+// and the open animation (timed from the toggle) was over before the first picture. A worker makes them all a few
+// seconds into the game instead; the hooks do nothing until the panel is on.
+std::mutex        gResM;   // the GPU objects: the worker or the render thread, never both
+std::atomic<int>  gPrewarm{0}; // 0 not yet, 1 running, 2 done
+long              gIdleFrames = 0;
+double            gPrewarmMs = -1;
+bool ensureResources(ID3D12Device* device, D3D12_RESOURCE_DESC const& bd) {
+    std::lock_guard l(gResM);
+    if (!gRoot && !createStatic(device)) return false;
+    return ensureSized(bd);
+}
+void prewarmTick(ID3D12Device* device, ID3D12Resource* bb) {
+    if (gPrewarm.load() != 0 || ++gIdleFrames < 240) return; // about 4 s of frames first (the game is still loading)
+    gPrewarm = 1;
+    D3D12_RESOURCE_DESC bd = bb->GetDesc();
+    ComPtr<ID3D12Device> dev(device);
+    std::thread([dev, bd] {
+        LARGE_INTEGER a, b, f;
+        QueryPerformanceCounter(&a);
+        ensureInputHooks();
+        ensureResources(dev.Get(), bd);
+        QueryPerformanceCounter(&b);
+        QueryPerformanceFrequency(&f);
+        gPrewarmMs = double(b.QuadPart - a.QuadPart) * 1000.0 / double(f.QuadPart);
+        gPrewarm   = 2;
+        ll_shim::info("[RF] spatial panel: prepared in the background (" + std::to_string(int(gPrewarmMs)) + " ms)");
+    }).detach();
+}
+
 bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv) {
     LARGE_INTEGER now, f;
     QueryPerformanceCounter(&now);
@@ -658,9 +704,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 uicapture::writeText("cine_frames.txt", text.c_str());
             }
         }
-        if (!gRoot && !createStatic(device)) return false;
         D3D12_RESOURCE_DESC bd = bb->GetDesc();
-        if (!ensureSized(bd)) return false;
+        if (!ensureResources(device, bd)) return false;
         {
             std::lock_guard l(gGeomMutex);
             gGeom.valid = false;
@@ -741,14 +786,14 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         }
     }
     if (!gEnabled && gT <= 0.0f) {
+        prewarmTick(device, bb);
         gStatus = "off";
         std::lock_guard l(gGeomMutex);
         gGeom.valid = false;
         return false;
     }
-    if (!gRoot && !createStatic(device)) return false;
     D3D12_RESOURCE_DESC bd = bb->GetDesc();
-    if (!ensureSized(bd)) return false;
+    if (!ensureResources(device, bd)) return false;
     if (redirected) ++gFramesShown;
     else ++gFramesNoUi;
 
@@ -757,7 +802,9 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     Geom  g;
     if (gS.javaStyle) {
         // AnimationUtil.calculateAnimatedScale (Back easing from 75 %) + fade-in
-        float ms    = float(double(now.QuadPart - gOpenQpc.QuadPart) * 1000.0 / double(f.QuadPart));
+        if (redirected) gAnimStarted = true;
+        if (gAnimStarted && gEnabled) gAnimMs += std::min(dt * 1000.0f, 34.0f);
+        float ms    = gAnimMs;
         auto const& sc  = spatialcam::cfg();
         float       tt  = std::min(1.0f, ms / float(std::max(1, sc.openMs)));
         float       s0  = sc.startScalePct / 100.0f;
