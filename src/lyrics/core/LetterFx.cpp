@@ -113,9 +113,13 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
                     f.jitter = float(intensity);
                     break;
                 case ExitAnim::Glitch:
-                    f.vel    = Vec3{};
-                    f.life   = 0.55f + 0.25f * float(r3);
-                    f.jitter = float(letterH) * (0.25f + 0.35f * float(r3)) * intensity;
+                    // [BF] audit: every slice of every letter hopping on its own scattered the word into confetti.
+                    // A real glitch tears whole rows of the word sideways together, briefly, then the word cuts out.
+                    f.vel      = Vec3{};
+                    f.life     = 0.5f;
+                    f.jitter   = float(letterH) * 0.32f * std::min(intensity, 1.2f);
+                    f.wordSeed = seed;
+                    f.row      = j;
                     break;
                 default: break;
                 }
@@ -204,13 +208,19 @@ void LetterFx::emit(Vec3 origin, std::vector<BfGlyphV1>& out) const {
             break;
         }
         case ExitAnim::Glitch: {
-            bool on  = f.seedF > 0.18f || k < 0.3f; // flickers off now and then
+            int64_t const step = int64_t(t / 0.06f);
+            float const h  = float(h01(f.wordSeed, int(step * 8 + f.row)));      // same for the whole row of the word
+            float const hw = float(h01(f.wordSeed, int(step * 8 + 7) + 9001));   // same for the whole word
+            bool const torn = h > 0.55f;                                         // only some rows tear each step
+            bool on  = hw > 0.15f || k < 0.3f;                                   // the word cuts out now and then
             a        = on ? 1 - anim::easeInCubic(k) : 0.0f;
-            double d = (double(f.seedF) * 2 - 1) * f.jitter;
+            double d = torn ? (double(h) * 2 - 1) * f.jitter * (0.4 + 0.6 * double(k)) : 0.0;
+            float const cast = h;
             Vec3   sideways = f.screen ? Vec3{1, 0, 0} : f.right.normalized();
             shift    = sideways * d;
-            q.fill   = f.seedF > 0.6f ? mixRgba(f.baseFill, 0xFFFFFF00u | 0xFF000000u, 0.6f)   // cyan cast
-                     : f.seedF < 0.3f ? mixRgba(f.baseFill, 0xFFFF00FFu, 0.6f) : f.baseFill;    // magenta cast
+            q.fill   = !torn ? f.baseFill
+                     : cast > 0.8f ? mixRgba(f.baseFill, 0xFFFFFF00u | 0xFF000000u, 0.45f)    // cyan cast on a torn row
+                                   : mixRgba(f.baseFill, 0xFFFF00FFu, 0.45f);                   // magenta cast
             break;
         }
         default: break;
