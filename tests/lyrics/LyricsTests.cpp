@@ -43,6 +43,7 @@
 #include "lyrics/core/Portal.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
+#include "lyrics/core/Clip.h"
 
 using namespace bf::lyrics;
 
@@ -1912,6 +1913,37 @@ TEST(only_big_drops_hold_their_breath) { // [BF] real-music tuning: Song Memory 
     CHECK_EQ(drops, 2);
     CHECK(h1 > 0.6f && big1);
     CHECK(h2 < 0.01f && !big2);
+}
+
+TEST(clip_mode_timing) { // [BF] NVIDIA Instant Replay after the big moment
+    auto hk = parseHotkey("Alt+F10");
+    CHECK_EQ(hk.count, 2); CHECK_EQ(hk.keys[0], 0x12); CHECK_EQ(hk.keys[1], 0x79);
+    CHECK_EQ(parseHotkey("ctrl+shift+s").count, 3);
+    CHECK_EQ(parseHotkey("alt+banana").count, 0);
+    ClipTimer t;
+    MusicState m; m.active = true;
+    int fired = 0; float at = -1, time = 0;
+    auto run = [&](float secs) {
+        for (float x = 0; x < secs; x += 1.0f / 60, time += 1.0f / 60) {
+            if (t.step(&m, true, 1.0f / 60, 1)) { fired++; if (at < 0) at = time; }
+            m.liftNow = m.dropNow = m.chorusNow = m.bigDrop = false;
+        }
+    };
+    run(5);
+    m.liftNow = m.dropNow = true; m.bigDrop = false; run(20); // a small drop: no clip
+    CHECK_EQ(fired, 0);
+    m.liftNow = m.chorusNow = true; run(20);                 // the first chorus: clip 8 s later
+    CHECK_EQ(fired, 1);
+    CHECK(at > 32.5f && at < 34.0f);                         // chorus at 25 s + 8 s
+    m.liftNow = m.dropNow = m.bigDrop = true; run(30);       // too soon after the last one
+    CHECK_EQ(fired, 1);
+    run(100);
+    m.liftNow = m.dropNow = m.bigDrop = true; run(20);       // a big drop, 2 min later: second clip
+    CHECK_EQ(fired, 2);
+    run(130);
+    m.liftNow = m.dropNow = m.bigDrop = true; run(20);       // max two per song
+    CHECK_EQ(fired, 2);
+    CHECK(!t.step(&m, false, 1.0f / 60, 2));                 // off: nothing
 }
 
 int main(int argc, char** argv) {

@@ -52,6 +52,7 @@
 #include "lyrics/core/Overrides.h"
 #include "lyrics/BfDirector.h"
 #include "lyrics/core/Studio.h"
+#include "lyrics/core/Clip.h"
 #include "lyrics/win/World_win.h"
 
 // [BF] the Director's full-screen look for RF (game thread writes, RF's render thread reads; floats only, a torn
@@ -101,6 +102,7 @@ struct State {
     int64_t                 memoryHooksSeq = -1; // song whose lyrics the memory's hooks were found from
     std::map<std::string, std::string> songScenes; // [BF] track key -> Scene Studio scene (config/lyricsflow_songscenes.json)
     std::string             lastScene;      // cfg.scene seen last frame (a change while a song plays = remember it)
+    ClipTimer               clip;           // [BF] Clip mode (NVIDIA Instant Replay)
     std::vector<StudioScene> userScenes;    // [BF] config/lyricsflow_scenes/*.json (Save as my scene)
     ChorusLook              chorus;         // [BF] the current scene's chorus look (cached per scene + sky)
     std::string             chorusKey = "\x01";
@@ -993,6 +995,11 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         if (m.chorusNow) stamp("CHORUS");
         if (m.calmNow) stamp("calm");
         if (m.liftNow) stamp("LIFT");
+        if (auto const& cc = gS->engine.config(); gS->clip.step(&m, cc.clipMode && cc.director, dt, in.songSeq)) {
+            Hotkey const hk = parseHotkey(cc.clipHotkey);
+            if (hk.count) pressHotkey(hk.keys, hk.count);
+            stamp(hk.count ? "CLIP" : "CLIP?key"); // the hotkey couldn't be read: nothing pressed
+        }
         if (m.liftEnd) stamp("unlift");
         { static bool held = false; // [BF] tuning log: when the held breath starts before a drop
           if (m.hold > 0.3f && !held) { held = true; stamp("hold"); } else if (m.hold < 0.05f) held = false; }

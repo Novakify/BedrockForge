@@ -153,6 +153,8 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(chorusLooks, true)               /* [BF] the world changes on a chorus: chorus sky, light wave, meteors, letters */ \
     B(dropMoment, true)                /* [BF] held breath before a known drop (dim, slow), then it all lands at once */ \
     B(autoScene, false)                /* [BF] Auto director: pick a scene for each song from its energy */          \
+    B(clipMode, false)                 /* [BF] Clip mode: save an NVIDIA Instant Replay clip after a song's big moment */ \
+    S(clipHotkey, "alt+f10")           /* [BF] the NVIDIA app's "save last minutes" hotkey */                         \
     F(intensity, 1.0f)                 /* [BF] Cinema home: one dial for how big the whole show is, 0.3 .. 1.6 */     \
     B(shotLanguage, true)              /* [BF] Director framing: calm = wide (far, smaller), high = close-up */      \
     B(translations, true)              /* [BF] show translations under the lines (NetEase / your override file) */  \

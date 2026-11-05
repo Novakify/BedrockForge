@@ -23,6 +23,8 @@ namespace bf::lyrics::win {
 
 /// [BF] open a file in Notepad (the lyric override editor). Shell_win.cpp
 void openInNotepad(std::filesystem::path const& p);
+/// [BF] Clip mode: press a key combo system-wide (virtual keys, modifiers first), on a short-lived thread. Shell_win.cpp
+void pressHotkey(int const* vks, int count);
 
 fetch::HttpResponse httpGet(std::string const& url, fetch::Headers const& headers, int64_t deadlineMs);
 
