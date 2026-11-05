@@ -19,6 +19,9 @@ cbuffer Params : register(b0) {
     float4 d1;   // x = saturation, y = contrast, z = vignette, w = impact flash
     float4 d2;   // xyz = flash colour, w = letterbox (fraction of the height, top and bottom)
     float4 d3;   // x = Showcase soft focus 0..1 (lens-style: sharp middle, blurred edges; no depth buffer here)
+                 // y = world saturation, z = world exposure, w = sky keep (share of the world light above the horizon)
+    float4 d4;   // xyz = world tint (the sky's colour on the world), w = world amount
+    float4 d5;   // x = camera pitch (radians, + = looking down)
 };
 
 Texture2D t0 : register(t0);
@@ -142,7 +145,25 @@ float3 cas(float2 uv, float sharp) {
 }
 
 // LyricsForge Director look, in display space (after bloom). Neutral constants (1,1,1,0 / 1,1,0,0 / -,0) = no-op.
+// LyricsForge world light: the sky's colour and brightness fall on the world. There is no depth buffer here, so the
+// horizon line decides: below it is ground, above it the sky (and trees, hills) get skyKeep of it; very bright
+// pixels (the sky itself, highlights) keep more of themselves. Neutral (tint 1, amount 0, exposure 1, sat 1) = no-op.
+float3 worldLight(float3 c, float2 uv) {
+    if (d4.w <= 0.0 && abs(d3.z - 1.0) < 0.002 && abs(d3.y - 1.0) < 0.002) return c;
+    float2 n  = uv * 2.0 - 1.0;
+    float3 r  = float3(n.x * p2.y * p2.z, -n.y * p2.z, 1.0);
+    float  up = (r.y * cos(d5.x) - r.z * sin(d5.x)) * rsqrt(dot(r, r));
+    float  below = smoothstep(0.05, -0.12, up);
+    float  l  = dot(c, float3(0.2126, 0.7152, 0.0722));
+    float  w  = lerp(d3.w, 1.0, below) * (1.0 - 0.45 * smoothstep(0.62, 0.95, l) * (1.0 - below));
+    float3 lit = c * lerp(float3(1.0, 1.0, 1.0), d4.xyz, saturate(d4.w)) * d3.z;
+    float  ll = dot(lit, float3(0.2126, 0.7152, 0.0722));
+    lit = max(lerp(ll.xxx, lit, d3.y), 0.0);
+    return lerp(c, saturate(lit), w);
+}
+
 float3 directorGrade(float3 c, float2 uv) {
+    c = worldLight(c, uv);
     c = lerp(c, saturate(c * d0.xyz), d0.w);
     float l = dot(c, float3(0.2126, 0.7152, 0.0722));
     c = max(lerp(l.xxx, c, d1.x), 0.0);

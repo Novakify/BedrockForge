@@ -3,6 +3,7 @@
 #include "PostFx.h"
 
 #include <algorithm>
+#include <cstring>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -53,11 +54,21 @@ DirFn dirGet() {
         fn = reinterpret_cast<DirFn>(reinterpret_cast<void*>(GetProcAddress(m, "BF_GetDirector")));
     return fn;
 }
+// a copy of BF's struct, as much of it as BF has (128 bytes before the world light); the rest neutral
+bool copyDirector(BfDirectorV1 const* b, BfDirectorV1& v) {
+    if (!b || b->version < 1 || b->size < 128) return false;
+    v = BfDirectorV1{};
+    for (int k = 0; k < 3; ++k) v.worldTint[k] = 1;
+    v.exposure = 1; v.worldSat = 1;
+    std::memcpy(&v, b, std::min<size_t>(b->size, sizeof v));
+    return true;
+}
 struct Dir {
     bool  on = false;
     float tint[3] = {1, 1, 1}, amount = 0, sat = 1, con = 1, vig = 0, flash = 0, flashCol[3] = {1, 1, 1}, box = 0;
     float bloom = 0, ca = 0;
     float focus = 0;
+    float world[3] = {1, 1, 1}, worldAmount = 0, exposure = 1, skyKeep = 0.3f, worldSat = 1; // [LyricsForge] world light
 };
 // a copy of BF's frame; inactive once BF stops publishing (no world on screen) for ~1/3 s
 Dir readDirector(bool allow) {
@@ -66,8 +77,8 @@ Dir readDirector(bool allow) {
     Dir d;
     DirFn fn = allow ? dirGet() : nullptr;
     BfDirectorV1 const* b = fn ? fn() : nullptr;
-    if (!b || b->version < 1 || b->size < sizeof(BfDirectorV1)) return d;
-    BfDirectorV1 const v = *b;
+    BfDirectorV1 v;
+    if (!copyDirector(b, v)) return d;
     if (v.frame != lastFrame) { lastFrame = v.frame; still = 0; } else if (still < 1000) ++still;
     if (!v.active || still > 20) return d;
     d.on = true;
@@ -81,6 +92,11 @@ Dir readDirector(bool allow) {
     d.bloom  = std::clamp(v.bloomBoost, 0.0f, 0.2f);
     d.ca     = std::clamp(v.caBoost, 0.0f, 0.004f);
     d.focus  = std::clamp(v.focus, 0.0f, 1.0f);
+    for (int k = 0; k < 3; ++k) d.world[k] = std::clamp(v.worldTint[k], 0.2f, 2.0f);
+    d.worldAmount = std::clamp(v.worldAmount, 0.0f, 0.8f);
+    d.exposure    = std::clamp(v.exposure, 0.75f, 1.6f);
+    d.skyKeep     = std::clamp(v.skyKeep, 0.0f, 1.0f);
+    d.worldSat    = std::clamp(v.worldSat, 0.5f, 1.6f);
     return d;
 }
 
@@ -164,7 +180,7 @@ bool createStatic(ID3D12Device* device) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 0, 0, 0};
     D3D12_ROOT_PARAMETER   params[2]{};
     params[0].ParameterType            = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[0].Constants                = {0, 0, 40};
+    params[0].Constants                = {0, 0, 48};
     params[0].ShaderVisibility         = D3D12_SHADER_VISIBILITY_PIXEL;
     params[1].ParameterType            = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[1].DescriptorTable          = {1, &range};
@@ -272,7 +288,7 @@ void barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STA
     l->ResourceBarrier(1, &x);
 }
 
-struct Consts { float v[40]; };
+struct Consts { float v[48]; };
 
 void draw(ID3D12GraphicsCommandList* l, ID3D12PipelineState* pso, D3D12_CPU_DESCRIPTOR_HANDLE rtv, UINT w, UINT h,
           UINT srcSlot, Consts const& c) {
@@ -282,7 +298,7 @@ void draw(ID3D12GraphicsCommandList* l, ID3D12PipelineState* pso, D3D12_CPU_DESC
     l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     l->RSSetViewports(1, &vp);
     l->RSSetScissorRects(1, &sc);
-    l->SetGraphicsRoot32BitConstants(0, 40, c.v, 0);
+    l->SetGraphicsRoot32BitConstants(0, 48, c.v, 0);
     l->SetGraphicsRootDescriptorTable(1, srvGpu(srcSlot));
     l->DrawInstanced(3, 1, 0, 0);
 }
@@ -326,8 +342,8 @@ bool showcasePose(float& blend, float& yaw, float& pitch, float& radius) {
         sFn.store(fn, std::memory_order_release);
     }
     BfDirectorV1 const* b = fn();
-    if (!b || b->version < 1 || b->size < sizeof(BfDirectorV1)) return false;
-    BfDirectorV1 const v = *b;
+    BfDirectorV1 v;
+    if (!copyDirector(b, v)) return false;
     static std::atomic<uint32_t> sLast{0};
     static std::atomic<int64_t>  sSeenMs{0};
     int64_t const nowMs = int64_t(GetTickCount64());
@@ -434,6 +450,11 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     c.v[28] = dir.on ? dir.sat : 1; c.v[29] = dir.on ? dir.con : 1; c.v[30] = dir.on ? dir.vig : 0; c.v[31] = dir.on ? dir.flash : 0;
     c.v[32] = dir.flashCol[0]; c.v[33] = dir.flashCol[1]; c.v[34] = dir.flashCol[2]; c.v[35] = dir.on ? dir.box : 0;
     c.v[36] = dir.on ? dir.focus : 0;
+    // [LyricsForge] world light (neutral: tint 1, amount 0, exposure 1, sat 1)
+    c.v[37] = dir.on ? dir.worldSat : 1; c.v[38] = dir.on ? dir.exposure : 1; c.v[39] = dir.skyKeep;
+    for (int k = 0; k < 3; ++k) c.v[40 + k] = dir.on ? dir.world[k] : 1;
+    c.v[43] = dir.on ? dir.worldAmount : 0;
+    c.v[44] = p.pitch * 0.01745329f; // camera pitch (radians, + = looking down): where the horizon is on screen
     gPrevYaw   = p.yaw;
     gPrevPitch = p.pitch;
     gHavePrev  = true;
