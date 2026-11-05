@@ -392,7 +392,7 @@ void registerBuiltins() {
 
     // ---------------- Camera
     r.add("zoom", "Zoom", Category::Camera, "Hold C to zoom", true)
-        .slider("factor", "Zoom factor", 4, 1.5f, 12, 0.5f).slider("key", "Key (VK code, 67 = C)", 0x43, 8, 254, 1)
+        .slider("factor", "Zoom factor", 4, 1.5f, 12, 0.5f).slider("key", "Key", 0x43, 8, 254, 1)
         .toggleSetting("smooth", "Smooth", true).toggleSetting("slow_turn", "Slower turning while zoomed", true);
     r.add("fov_changer", "FOV Changer", Category::Camera, "Scale the field of view beyond the settings range")
         .slider("scale", "FOV scale", 1.15f, 0.5f, 1.8f, 0.05f);

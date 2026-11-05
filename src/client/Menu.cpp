@@ -391,6 +391,25 @@ void row(UiFrame& f, float x, float y, float w, float h, std::string const& titl
     if (!desc.empty()) g.text(g.ellip(desc, w - 150, 11.5f), x + 14, y + 33, 11.5f, rgba(on ? kWhite : kLilac, on ? 0.82f : 0.62f), a);
 }
 
+// [BF] names for key-code sliders (Windows virtual-key codes), so "101" shows as "Numpad 5" and C shows as "C"
+std::vector<std::string> const& keyNames() {
+    static std::vector<std::string> const names = [] {
+        std::vector<std::string> n(256);
+        for (int k = 0; k < 256; ++k) n[size_t(k)] = "Key " + std::to_string(k);
+        for (int k = '0'; k <= '9'; ++k) n[size_t(k)] = std::string(1, char(k));
+        for (int k = 'A'; k <= 'Z'; ++k) n[size_t(k)] = std::string(1, char(k));
+        for (int k = 0; k < 10; ++k) n[size_t(0x60 + k)] = "Numpad " + std::to_string(k);
+        for (int k = 0; k < 24; ++k) n[size_t(0x70 + k)] = "F" + std::to_string(k + 1);
+        n[0x01] = "Left mouse"; n[0x02] = "Right mouse"; n[0x04] = "Middle mouse"; n[0x05] = "Mouse 4"; n[0x06] = "Mouse 5";
+        n[0x08] = "Backspace"; n[0x09] = "Tab"; n[0x0D] = "Enter"; n[0x10] = "Shift"; n[0x11] = "Ctrl"; n[0x12] = "Alt";
+        n[0x14] = "Caps Lock"; n[0x1B] = "Esc"; n[0x20] = "Space"; n[0x25] = "Left"; n[0x26] = "Up"; n[0x27] = "Right"; n[0x28] = "Down";
+        n[0xA0] = "Left Shift"; n[0xA1] = "Right Shift"; n[0xA2] = "Left Ctrl"; n[0xA3] = "Right Ctrl"; n[0xA4] = "Left Alt"; n[0xA5] = "Right Alt";
+        n[0xC0] = "`"; n[0xBD] = "-"; n[0xBB] = "="; n[0xDB] = "["; n[0xDD] = "]"; n[0xBA] = ";"; n[0xDE] = "'"; n[0xBC] = ","; n[0xBE] = "."; n[0xBF] = "/";
+        return n;
+    }();
+    return names;
+}
+
 void slider(UiFrame& f, std::string const& id, float x, float y, float w, std::string const& title, std::string const& desc, float& value,
             float mn, float mx, float step, std::string const& unit, float a, std::function<void()> const& changed,
             std::vector<std::string> const* names = nullptr) {
@@ -533,7 +552,8 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
             if (sc.fits(50)) toggleRow(f, x, sc.y, wd, s.label, "", s.on, a, [sp] { sp->on = !sp->on; Registry::get().save(); });
             sc.y += 60;
         } else {
-            if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); }, &s.choices);
+            if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); },
+                                    s.id == "key" ? &keyNames() : &s.choices); // [BF] key sliders show the key, not a code
             sc.y += 74;
         }
     }
