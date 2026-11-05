@@ -98,6 +98,10 @@ struct State {
         int64_t                       startNs = 0, startMs = 0, seq = 1000000, durMs = 0;
         float                         speed = 1, prevBass = 0;
         std::vector<std::string>      tour;      // [BF] visual audit: skies to cycle through ("tour": [...])
+        std::vector<std::string>      momentTour; // [BF] visual audit: moments to play in turn ("moments": [...])
+        int                           momentAt = -1;
+        bool                          instrumental = false, liveBands = false; // [BF] audit: no lyrics / the PC's real audio
+        std::string                   configPatch; // [BF] audit: config fields applied once ("config": {...})
         float                         tourSec = 8;
         int                           tourAt = -1;
     } demo;
@@ -620,6 +624,12 @@ void demoStep() {
     if (auto const& tv = (*j)["tour"]; tv.isArray())
         for (auto const& x : tv.items()) if (x.isString()) d.tour.push_back(x.asString());
     d.tourSec = float(std::clamp((*j)["tourSec"].asNumber(8), 2.0, 60.0));
+    d.momentTour.clear(); d.momentAt = -1;
+    if (auto const& mv = (*j)["moments"]; mv.isArray())
+        for (auto const& x : mv.items()) if (x.isString()) d.momentTour.push_back(x.asString());
+    d.instrumental = (*j)["instrumental"].asBool(false);
+    d.liveBands = (*j)["liveBands"].asBool(false);
+    if (auto const& cv = (*j)["config"]; cv.isObject()) applyJson(gS->engine.config(), cv); // in memory only (not saved)
     d.seq++;
     gS->directorLines.push_back("== demo " + artist + " - " + title + (known ? " (memory: " + std::to_string(d.mem.events.size()) + " events, " + std::to_string(d.mem.hooks.size()) + " hooks)" : " (no memory)") + (d.lyrics ? "" : " (no cached lyrics)"));
 }
@@ -975,8 +985,11 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             BandFrame const f = d.mem.frameAt(t);
             float const hit = std::clamp((f.bass - d.prevBass) * 6.0f, 0.0f, 1.0f);
             d.prevBass = f.bass;
-            in.beat  = std::max(hit, in.beat * 0.9f); in.beatLive = true;
-            ci.bands = f; ci.bandsLive = true; ci.memory = &d.mem;
+            if (!d.liveBands) { // [BF] audit option: the PC's real audio (equaliser, beat) instead of the song map
+                in.beat  = std::max(hit, in.beat * 0.9f); in.beatLive = true;
+                ci.bands = f; ci.bandsLive = true;
+            }
+            ci.memory = &d.mem;
             ci.marks = d.lyrics ? &d.lyrics->marks : nullptr;
         }
         ci.posMs   = in.t;
@@ -988,7 +1001,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.durationMs = gS->demo.on ? gS->demo.durMs : in.durationMs;
         { // [BF] is anybody singing? (instrumentals / beat breaks: the world performs)
             Lyrics const* ly = in.lyrics;
-            ci.hasLyrics = ly && !ly->lines.empty() && in.lyricsState == LyricsState::Found;
+            ci.hasLyrics = ly && !ly->lines.empty() && in.lyricsState == LyricsState::Found && !(gS->demo.on && gS->demo.instrumental);
             ci.vocals = false;
             if (ci.hasLyrics)
                 for (auto const& l : ly->lines) {
@@ -1018,6 +1031,14 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             mi.sky = skyNow; mi.variant = songVariant(song);
             mi.chorusVariety = variety; mi.keywords = c.lyricMoments && c.director;
             gS->moments.step(mi);
+            if (auto& d = gS->demo; d.on && !d.momentTour.empty()) { // [BF] visual audit: each moment in turn
+                int const i = int(double(nowNs() - d.startNs) / 1e9 / d.tourSec) % int(d.momentTour.size());
+                if (i != d.momentAt) {
+                    d.momentAt = i;
+                    gS->moments.force(momentByName(d.momentTour[size_t(i)]));
+                    gS->directorLines.push_back("   tour   moment " + d.momentTour[size_t(i)]);
+                }
+            }
             auto const& mo = gS->moments.out();
             if (mo.wave) gS->waveT = 0;
             gS->meteors = std::max(gS->meteors, mo.meteors);

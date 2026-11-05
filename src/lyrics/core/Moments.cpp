@@ -25,6 +25,11 @@ char const* familyName(SkyFamily f) {
     static char const* const n[] = {"space", "aurora", "warm", "storm", "neon", "water", "cold"};
     return n[int(f)];
 }
+Moment momentByName(std::string_view n) {
+    for (int i = 1; i <= int(Moment::Dim); ++i) if (n == momentName(Moment(i))) return Moment(i);
+    return Moment::None;
+}
+
 char const* momentName(Moment m) {
     static char const* const n[] = {"none", "light ring", "meteors", "starfall", "aurora burst", "lightning", "embers", "petals",
                                     "snow", "rain", "fireflies", "blizzard", "heartbeat", "dim"};

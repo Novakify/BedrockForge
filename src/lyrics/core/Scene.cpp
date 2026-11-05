@@ -646,7 +646,7 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
             }
             nearest = std::min(nearest, d);
         }
-        if (chunked(c) && !c.viewLock) { // words of the same line must not overlap each other
+        if (!c.viewLock) { // words / lines must not overlap what is already up (a line breaking apart included) [BF: all modes]
             float emB   = skyWords(c) ? em(p, c) : float(0.0765 * std::max(2.5, double(tSize))) * c.lyricsScale;
             int   chars = 0;
             for (int j = p.w0; j < p.w1; ++j) chars += int(text::length(p.line.words[size_t(j)].text)) + 1;

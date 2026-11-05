@@ -1257,8 +1257,8 @@ TEST(live_sky_params) {
     CHECK_EQ(int(q[5][2]), 217);                    // breath 0.85 + 0.15 sin(0)
     CHECK_EQ(int(q[5][3]), 255);
     CHECK_EQ((int(q[6][0]) << 8 | q[6][1]), 18000); // az 180 * 100
-    CHECK_EQ((int(q[6][2]) << 8 | q[6][3]), 10200); // (el 12 + 90) * 100
-    CHECK_EQ((int(q[7][0]) << 8 | q[7][1]), 12000); // radius 12 * 1000
+    CHECK_EQ((int(q[6][2]) << 8 | q[6][3]), 10700); // (el 17 + 90) * 100 [BF] raised
+    CHECK_EQ((int(q[7][0]) << 8 | q[7][1]), 10000); // radius 10 * 1000
     CHECK_EQ(int(q[7][2]), 0);                      // PRESET
     // identity matrix: enc(1) = 49151, enc(0) = 32768 (round(32767.5))
     CHECK_EQ((int(q[8][0]) << 8 | q[8][1]), 49151);

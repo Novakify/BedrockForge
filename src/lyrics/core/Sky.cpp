@@ -94,7 +94,7 @@ float frontAz(Preset const& p) {
 
 std::optional<Body> body(Preset const& p) {
     std::string_view id = p.id;
-    if (id == "synthwave") return Body{180, 12, 12, 0xFFD36B, BodyKind::Synth};
+    if (id == "synthwave") return Body{180, 17, 10, 0xFFD36B, BodyKind::Synth}; // [BF] higher: its striped half clears the trees
     if (id == "golden_hour") return Body{200, 4, 3.6, 0xFFC27A, BodyKind::Sun};
     if (id == "cotton_candy") return Body{120, 38, 2.4, 0xFFF4E0, BodyKind::Sun};
     if (id == "sakura") return Body{60, 9, 2.6, 0xFFE2EE, BodyKind::Sun};

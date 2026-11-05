@@ -31,6 +31,7 @@ char const* familyName(SkyFamily f);
 
 enum class Moment : uint8_t { None, Wave, Meteors, Starfall, AuroraBurst, Lightning, Embers, Petals, Snow, Rain, Fireflies, Blizzard, Heartbeat, Dim };
 char const* momentName(Moment m);
+Moment      momentByName(std::string_view name); // "petals", "light ring" ... (None = unknown)
 /// the chorus deck of a sky family, smallest moment first
 std::vector<Moment> const& chorusDeck(SkyFamily f);
 /// a sung word -> its moment in this sky's language (None = not a keyword)
@@ -65,6 +66,8 @@ public:
     void              step(MomentsIn const& in);
     MomentsOut const& out() const { return mOut; }
     int               active() const { return int(mFx.size()); }
+    /// [BF] visual audit (demo file "moments"): play one moment now, as a chorus would
+    void              force(Moment m, float amount = 1.0f) { start(m, amount, 6.0f, false, "audit"); }
 
     static constexpr float kKeyLife = 4.0f, kKeyCooldown = 14.0f, kKeyGap = 4.0f;
 
