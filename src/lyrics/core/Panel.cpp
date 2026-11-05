@@ -734,7 +734,11 @@ void Panel::skies(Ctx& c, Config& cfg) {
     auto const& ord = skyOrder();
     bool const  on  = cfg.skyPreset != "off";
     c.toggle2("skon", 206, 45, 78, "Sky", on, [&] { cfg.skyPreset = on ? "off" : ord[0].id; }, a);
-    c.toggle2("skpic", 288, 45, 78, "My picture", cfg.skyImage, [&] { cfg.skyImage = !cfg.skyImage; }, a);
+    // [BF] Random: the skies change by themselves (per song and on the big moments) instead of you picking one
+    c.toggle2("skrnd", 288, 45, 78, "Random", cfg.skyShuffle, [&] {
+        cfg.skyShuffle = !cfg.skyShuffle;
+        if (cfg.skyShuffle && cfg.skyPreset == "off") cfg.skyPreset = ord[0].id; // random needs the sky on
+    }, a);
     int const per = 6, pages = int((ord.size() + per - 1) / per);
     mSkyPage      = ((mSkyPage % pages) + pages) % pages;
     float const w = 48, h = 27;
@@ -751,7 +755,7 @@ void Panel::skies(Ctx& c, Config& cfg) {
         else if (hv > 0.01f) c.round(x - 1.5f, y - 1.5f - lift, w + 3, h + 3, 5.5f, WHITE, WHITE, 0.5f * hv * a);
         if (!c.image(std::string("sky.") + sp.id, x, y - lift, w, h, a)) c.round(x, y - lift, w, h, 4, sp.top, sp.horizon, a);
         c.text(c.ellip(sp.name, w, 0.56f), x + 1, y + h + 3, 0.56f, WHITE, (sel ? 1.0f : 0.75f + 0.25f * hv) * a);
-        if (c.clicked(id)) { cfg.skyPreset = sp.id; c.changed = true; }
+        if (c.clicked(id)) { cfg.skyPreset = sp.id; cfg.skyShuffle = false; c.changed = true; } // picking one = your sky
     }
     c.pager("sk", 146, mSkyPage, pages, mSkyPage, a);
     cfg.skyStrength = 0.1f + 0.9f * c.slider("str", "Strength", 162, (cfg.skyStrength - 0.1f) / 0.9f, a);
@@ -1144,7 +1148,7 @@ void Panel::more(Ctx& c, Config& cfg) {
     c.option("m0", 206, 128, 78, 15, "Full menu", false, [&] { c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0}); }, a);
     // [BF] your own lyrics for this song: written next to the config, opened in Notepad, picked up when you save
     c.option("m2", 288, 128, 78, 15, "Edit lyrics", false, [&] { c.actions.push_back({PanelAction::Kind::EditLyrics, 0}); }, a);
-    c.toggle2("m1", 206, 145, 78, "Random sky", cfg.skyShuffle, [&] { cfg.skyShuffle = !cfg.skyShuffle; }, a);
+    c.toggle2("m1", 206, 145, 78, "My picture", cfg.skyImage, [&] { cfg.skyImage = !cfg.skyImage; }, a); // [BF] moved here
     c.option("m4", 288, 145, 78, 16, "FPS & quality", false, [&] { mPage = 6; mPageTime = c.in.nowMs; }, a);
     // [BF] player card look (replaces a second "open the full menu" button)
     c.text("Player", 206, 166, 0.62f, WHITE, 0.6f * a);

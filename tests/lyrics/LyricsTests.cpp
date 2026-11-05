@@ -1160,14 +1160,16 @@ TEST(panel_widgets) {
     CHECK(r.p.tab() == Panel::Tab::Home); // [BF] the panel opens on the Cinema home
     r.click(206 + 27.17f + 12, 210);      // Sky tab (2nd pill)
     CHECK(r.p.tab() == Panel::Tab::Sky);
-    // Sky page: "My picture" toggle (288, 45, 78 x 16)
-    bool before = r.e.config().skyImage;
+    // Sky page: "Random" toggle (288, 45, 78 x 16) - the skies change by themselves
+    bool before = r.e.config().skyShuffle;
     auto a      = r.click(330, 52);
-    CHECK_EQ(r.e.config().skyImage, !before);
+    CHECK_EQ(r.e.config().skyShuffle, !before);
     CHECK(PanelRig::has(a, PanelAction::Kind::SaveConfig));
-    // sky tile 2 (Warp, LyricsFlow 2.2 order) at x 206 + 2 * 56, y 66
+    if (!before) CHECK(r.e.config().skyPreset != "off");     // random turns the sky on
+    // sky tile 2 (Warp, LyricsFlow 2.2 order) at x 206 + 2 * 56, y 66: picking one = your sky, random off
     r.click(206 + 2 * 56 + 20, 78);
     CHECK_EQ(r.e.config().skyPreset, std::string("warp"));
+    CHECK(!r.e.config().skyShuffle);
     // pager >, then the first tile of page 2 = Matrix
     r.click(358, 151);
     r.click(206 + 20, 78);

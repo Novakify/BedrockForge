@@ -117,6 +117,12 @@ struct State {
     ChorusLook              chorus;         // [BF] the current scene's chorus look (cached per scene + sky)
     std::string             chorusKey = "\x01";
     std::string             skyShown; // [BF] the sky actually drawn this frame (tour / chorus / yours)
+    struct Shuffle {          // [BF] Random sky: changes per song, on the big drops and now and then in long stretches
+        std::string sky, song;
+        double      since = 1e9;
+        std::vector<std::string> recent;
+        uint32_t    rng = 0x9E3779B9u;
+    } shuffle;
     float                   waveT = -1;     // [BF] chorus light wave progress (< 0 none)
     int                     meteors = 0;    // [BF] meteor burst queued for the next sky frame
     std::string             autoKey;        // [BF] Auto director: the song it last picked for
@@ -860,7 +866,29 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.burst = mo.weather; in.burstAmt = mo.weatherAmt; in.lightning = mo.lightning;
     { auto const& pu = gS->engine.pulse(); // [BF] the horizon equaliser is drawn by the sky (behind the terrain)
       if (!pu.barEl().empty()) { in.eq = &pu.barEl(); in.eqAlpha = pu.barAlpha(); in.eqColor = pu.barColor(); } }
-    std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" ? gS->chorus.sky : std::string();
+    std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" && !cfg.skyShuffle ? gS->chorus.sky : std::string();
+    std::string randomSky; // [BF] Random sky
+    if (cfg.skyShuffle && cfg.skyPreset != "off" && !cfg.skyImage) {
+        auto& sh = gS->shuffle;
+        sh.since += dt;
+        std::string const song = gS->clock.hasTrack() ? gS->clock.track().key() : std::string();
+        bool const newSong = song != sh.song;
+        bool const bigMoment = m.bigDrop || (m.dropNow && sh.since > 45.0) || (m.liftNow && sh.since > 60.0);
+        if (sh.sky.empty() || newSong || bigMoment || sh.since > 120.0) {
+            sh.song = song;
+            std::vector<std::string> pool;
+            for (auto id : sky::order())
+                if (id != "custom" && id != "off" && std::find(sh.recent.begin(), sh.recent.end(), id) == sh.recent.end()) pool.emplace_back(id);
+            if (pool.empty()) { sh.recent.clear(); for (auto id : sky::order()) if (id != "custom") pool.emplace_back(id); }
+            sh.rng = sh.rng * 1664525u + 1013904223u + uint32_t(nowMsWall());
+            sh.sky = pool[size_t((sh.rng >> 8) % pool.size())];
+            sh.recent.push_back(sh.sky);
+            if (sh.recent.size() > 6) sh.recent.erase(sh.recent.begin());
+            sh.since = 0;
+            gS->directorLines.push_back("   random sky " + sh.sky);
+        }
+        randomSky = sh.sky;
+    }
     if (auto pr = sky::find(wantSky.empty() ? std::string_view(cfg.skyPreset) : std::string_view(wantSky), cfg))
         in.waveColor = pr->lyricColor ? pr->lyricColor & 0xFFFFFF : pr->aurora1 & 0xFFFFFF;
     std::string tourSky; // [BF] visual audit tour (demo file): cycle the skies, nothing saved
@@ -869,8 +897,9 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         tourSky = d.tour[size_t(i)];
         if (i != d.tourAt) { d.tourAt = i; gS->directorLines.push_back("   tour   sky " + tourSky); }
     }
-    if (!wantSky.empty() || mo.skyBoost > 0.01f || !tourSky.empty()) {
+    if (!wantSky.empty() || mo.skyBoost > 0.01f || !tourSky.empty() || !randomSky.empty()) {
         Config eff = cfg;
+        if (!randomSky.empty()) eff.skyPreset = randomSky;
         if (!wantSky.empty()) eff.skyPreset = wantSky;
         if (!tourSky.empty()) eff.skyPreset = tourSky; // the tour wins (each sky seen as itself)
         gS->skyShown = eff.skyPreset;
