@@ -80,6 +80,18 @@ std::optional<Preset> find(std::string_view id, Config const& cfg) {
     return std::nullopt;
 }
 
+// [BF] where a sky's signature sits (deg az, the shader's / dirOf convention): the dome turns this to the player
+float frontAz(Preset const& p) {
+    std::string_view const id = p.id;
+    if (auto b = body(p)) return float(b->az);
+    struct F { char const* id; float az; };
+    static constexpr F kF[] = {{"warp", 0}, {"supernova", 200}, {"eclipse", 160}, {"rift", 180}, {"polar", 0}, {"galaxy", 10},
+                               {"ocean", 180}, {"ice", 0}, {"purple", 0}, {"sunset", 30}, {"cherry", 0}, {"crimson", 0},
+                               {"thunder", 0}, {"astral", 200}, {"eclipse_heart", 10}, {"dream_ocean", 0}, {"meteor", 0}};
+    for (auto const& f : kF) if (id == f.id) return f.az;
+    return p.painted() ? 0.0f : 180.0f;
+}
+
 std::optional<Body> body(Preset const& p) {
     std::string_view id = p.id;
     if (id == "synthwave") return Body{180, 12, 12, 0xFFD36B, BodyKind::Synth};

@@ -48,6 +48,7 @@ std::optional<Preset> find(std::string_view id, Config const& cfg);
 
 /// LiveSky.body(): sun/moon for the presets that have one.
 std::optional<Body> body(Preset const& p);
+float frontAz(Preset const& p); // [BF] the sky's signature direction (deg)
 /// WorldSky.aurora1/2 (palette override, else preset colours with LyricsFlow's fallbacks).
 uint32_t aurora1(Preset const& p, Config const& cfg);
 uint32_t aurora2(Preset const& p, Config const& cfg);
