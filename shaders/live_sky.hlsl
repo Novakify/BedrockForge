@@ -976,10 +976,10 @@ vec3 milky(vec3 d, float s, vec3 warm, vec3 cool) {
     float band = exp(-b * b / (width * width));
     if (band < 0.004) return v3(0.0);
     vec3 p = d * 4.0;
-    vec3 w = vec3(fbm3(p * 0.9 + 1.3, 3), fbm3(p * 0.9 + 7.1, 3), fbm3(p * 0.9 - 3.7, 3)) - 0.5;
-    float cl = fbm3(p * 1.8 + w * 1.3, 5);
+    vec3 w = vec3(fbm3(p * 0.9 + 1.3, 2), fbm3(p * 0.9 + 7.1, 2), fbm3(p * 0.9 - 3.7, 2)) - 0.5;
+    float cl = fbm3(p * 1.8 + w * 1.3, 4);
     float grain = noise3(d * 170.0) * noise3(d * 330.0 + 5.0);
-    float lane = rfbm(p * 2.4 + w * 0.9, 4);
+    float lane = rfbm(p * 2.4 + w * 0.9, 3);
     float bo = b + 0.02 * sin(dot(d, gc) * 9.0);
     float laneMask = exp(-bo * bo / (0.0016 + 0.004 * bulge));
     float dust = sm(0.42, 0.8, lane) * laneMask + 0.35 * sm(0.55, 0.9, lane) * band;
@@ -995,12 +995,12 @@ vec3 nebulaCloud(vec3 d, vec3 c, vec3 cA, vec3 cB, float size, float s) {
     float fall = exp(-a * a / (size * size));
     if (fall < 0.01) return v3(0.0);
     vec3 p = d * 2.4 + vec3(0.0, T * 0.003, 0.0);
-    vec3 w = (vec3(fbm3(p, 4), fbm3(p + 5.2, 4), fbm3(p - 3.1, 4)) - 0.5) * 1.5;
-    float gas = fbm3(p * 1.15 + w, 6);
+    vec3 w = (vec3(fbm3(p, 3), fbm3(p + 5.2, 3), fbm3(p - 3.1, 3)) - 0.5) * 1.5;
+    float gas = fbm3(p * 1.15 + w, 5);
     float neb = sm(0.40, 0.86, gas) * fall;                                  // the main glow: smooth, billowing
-    float fil = pow(rfbm(p * 2.0 + w * 1.3, 4), 4.0) * neb * 1.4;            // bright filaments, only inside the glow
-    float ox = sm(0.50, 0.86, fbm3(p * 0.95 - w + 9.0, 5)) * fall;          // a second gas (other colour), offset
-    float dust = sm(0.52, 0.80, fbm3(p * 1.7 + w * 0.6 + 20.0, 5));         // broad dark lanes, not a web
+    float fil = neb > 0.01 ? pow(rfbm(p * 2.0 + w * 1.3, 3), 4.0) * neb * 1.4 : 0.0; // filaments, only inside the glow
+    float ox = sm(0.50, 0.86, fbm3(p * 0.95 - w + 9.0, 4)) * fall;          // a second gas (other colour), offset
+    float dust = sm(0.52, 0.80, fbm3(p * 1.7 + w * 0.6 + 20.0, 4));         // broad dark lanes, not a web
     vec3 col = cA * (neb * 0.55 + fil * 0.9) + cB * ox * 0.45 * (1.1 - neb);
     col *= 1.0 - 0.8 * dust * sm(0.15, 0.6, fall);
     col += mix(cA, v3(1.0), 0.5) * exp(-a * a / (size * size * 0.04)) * 0.12;
@@ -1283,12 +1283,13 @@ vec3 auroraMarch(vec3 d, vec3 cLow, vec3 cHigh, float s, float silk) {
     vec3 acc = v3(0.0);
     float t = T * (0.035 + 0.045 * LIVELY) * (1.0 + 0.5 * clamp(PULSE, 0.0, 1.6));
     float jit = sh21(vec2(d.x * 1731.0 + d.y * 317.0, d.z * 1931.0)); // dither the layers: no stripes
-    for (int i = 0; i < 24; i++) {
-        float fi = float(i) + jit;
+    vec2 p0 = vec2(d.x, d.z) * (1.3 / (d.y * 1.5 + 0.10));
+    float w = fbm(p0.x * 0.22 + t, p0.y * 0.22 - t * 0.4, 1.7, 3);       // one warp for all layers (perf)
+    for (int i = 0; i < 18; i++) {
+        float fi = float(i) * 1.33 + jit;
         float h = 1.0 + fi * 0.037;
         float k = h / (d.y * 1.5 + 0.10);
         vec2 p = vec2(d.x, d.z) * k;
-        float w = fbm(p.x * 0.22 + t, p.y * 0.22 - t * 0.4, 1.7, 3);
         float lines = sin(p.y * 0.75 + w * 5.0 + p.x * 0.14 + t * 0.5);
         float curtain = pow(max(0.0, 1.0 - abs(lines)), mix(9.0, 3.5, silk));
         float rays = mix(0.3 + 0.7 * noise3(vec3(p.x * 2.6 + w * 4.0, p.y * 0.4, t * 2.0)), 1.0, silk * 0.8);
