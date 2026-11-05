@@ -232,8 +232,11 @@ LL_TYPE_INSTANCE_HOOK(BfSetupFogHook, ll::memory::HookPriority::Normal, LevelRen
         for (char& c : txt) if (c != 0 && (c < 32 || c > 126)) c = '.';
         fogLog().info("[BF] fog diag: {} text at +8: '{}'", what, txt);
     };
-    dump("FOG_COLOR", *pf->FOG_COLOR);
-    dump("FOG_CONTROL", *pf->FOG_CONTROL);
+    void const* fcp = nullptr; void const* fctl = nullptr; // the stored pointers, read as bytes (TypedStorage)
+    std::memcpy(&fcp, &pf->FOG_COLOR, sizeof fcp);
+    std::memcpy(&fctl, &pf->FOG_CONTROL, sizeof fctl);
+    dump("FOG_COLOR", fcp);
+    dump("FOG_CONTROL", fctl);
 }
 
 void installVisualHooks() {
