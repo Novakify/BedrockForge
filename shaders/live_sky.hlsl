@@ -384,7 +384,9 @@ void bodyGlow(float x, float y, float z, float az, float el) {
                 float band = fract(u * 5.0 - T * 0.05);
                 cut = step(0.16 + 0.42 * u, band);
             }
-            over(sunC, cut * sm(rad, rad * 0.94, ang));
+            float inside = sm(rad, rad * 0.94, ang);
+            over(sunC, cut * inside);
+            over(mix(TOP, HOR, 0.6) * 0.55, (1.0 - cut) * inside * 0.9); // the gaps show the sky behind, not the glow
         }
     } else {
         if (ang < rad) {
@@ -722,7 +724,7 @@ vec3 styledSky(vec3 d, int id, float t) {
         col = mix(vec3(1., .74, .62), vec3(.74, .60, .88), smoothstep(-.02, .30, y));
         col = mix(col, vec3(.20, .22, .50), smoothstep(.28, .85, y));
         col = mix(col, vec3(.07, .07, .22), smoothstep(.80, 1., y));
-        vec3 mc = sdir(0., 4.);
+        vec3 mc = sdir(0., 8.);
         float ma = acos(clamp(dot(d, mc), -1., 1.));
         col += vec3(1., .80, .62) * (exp(-ma * 3.5) * .35 + exp(-ma * 12.) * .45);       // the glare over the water
         col = mix(col, vec3(1., .93, .82), smoothstep(.05, .045, ma));                  // the sun, sitting on the sea
