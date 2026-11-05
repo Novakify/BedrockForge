@@ -721,24 +721,73 @@ ComPtr<ID3D12PipelineState> makeExtraPso(ID3D12Device* dev, GamePso const& g, in
 }
 
 /// get-or-make one of our pipelines for a tagged game pipeline (never while holding gPsoMutex, see afterGameSky)
+// [RF] Our pipelines are built from the game's sky / clouds pipeline state. They used to be made on the render thread
+// the first time each *game pipeline object* drew: on servers (Hive) the game keeps creating new pipeline objects with
+// the same state, and every new one cost a ~400 ms shader build mid-frame (seen in game as a freeze whenever the sky
+// or a weather moment changed). Now they are cached by the state that matters, built once on a worker thread, and
+// the frame never waits: until one is ready the game draws its own sky / no weather for those few frames.
+std::string psoKey(GamePso const& g, int which) {
+    std::string k;
+    auto put = [&](void const* p, size_t n) { k.append(static_cast<char const*>(p), n); };
+    put(&which, sizeof which);
+    ID3D12RootSignature* root = which == 2 ? nullptr : g.root.Get();
+    put(&root, sizeof root);
+    put(&g.numRt, sizeof g.numRt);
+    put(g.rtv, sizeof(DXGI_FORMAT) * g.numRt);
+    put(&g.dsv, sizeof g.dsv);
+    put(&g.sample, sizeof g.sample);
+    put(&g.dss, sizeof g.dss);
+    put(&g.vv, sizeof g.vv);
+    put(&g.farZ, sizeof g.farZ);
+    return k;
+}
+std::mutex                                                   gDerMutex;
+std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> gDer;     // key -> ready pipeline (null = failed)
+std::unordered_map<std::string, bool>                        gDerBusy;  // being built
+std::atomic<int>                                             gDerBuilt{0}, gDerMsMax{0};
+
+ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { // 0 dome, 1 quads, 2 picture, 3 weather
+    std::string const key = psoKey(g, which);
+    {
+        std::lock_guard l(gDerMutex);
+        if (auto it = gDer.find(key); it != gDer.end()) return it->second.Get();
+        if (gDerBusy.count(key)) return nullptr;
+        gDerBusy[key] = true;
+    }
+    ComPtr<ID3D12Device> d(dev);
+    std::thread([d, g, which, key] {
+        auto const t0 = std::chrono::steady_clock::now();
+        GamePso work = g;
+        std::vector<std::pair<std::string, ComPtr<ID3D12PipelineState>>> made;
+        if (which <= 1) {
+            work.dome.Reset(); work.quads.Reset();
+            bool const ok = makeGamePsos(d.Get(), work);
+            made.push_back({psoKey(g, 0), ok ? work.dome : nullptr});
+            made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
+        } else
+            made.push_back({key, makeExtraPso(d.Get(), g, which)});
+        int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+        {
+            std::lock_guard l(gDerMutex);
+            for (auto& [k, p] : made) { gDer[k] = p; gDerBusy.erase(k); }
+        }
+        ++gDerBuilt;
+        if (ms > gDerMsMax.load()) gDerMsMax = ms;
+        ll_shim::info("[RF] sky pipeline " + std::to_string(which) + " built on a worker in " + std::to_string(ms) + " ms (" +
+                      std::to_string(gDerBuilt.load()) + " so far)");
+    }).detach();
+    return nullptr;
+}
+
 ID3D12PipelineState* extraPso(ID3D12Device* dev, ID3D12PipelineState* game, int which) {
     GamePso g;
     {
         std::lock_guard l(gPsoMutex);
         auto it = gGame.find(game);
         if (it == gGame.end()) return nullptr;
-        auto& slot = which == 2 ? it->second.picture : it->second.weather;
-        if (slot) return slot.Get();
         g = it->second;
     }
-    auto made = makeExtraPso(dev, g, which);
-    if (!made) return nullptr;
-    std::lock_guard l(gPsoMutex);
-    auto it = gGame.find(game);
-    if (it == gGame.end()) return nullptr;
-    auto& slot = which == 2 ? it->second.picture : it->second.weather;
-    if (!slot) slot = made;
-    return slot.Get();
+    return derived(dev, g, which);
 }
 
 void vpRows(float const f[3], float const r[3], float const u[3], float const proj[16], float rows[4][4]) {
@@ -887,17 +936,9 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
         if (it == gGame.end() || it->second.failed) return false;
         g = it->second;
     }
-    if (!g.dome) {
-        bool ok = makeGamePsos(dev.Get(), g);
-        std::lock_guard l(gPsoMutex);
-        auto it = gGame.find(st.pso);
-        if (it == gGame.end()) return false;
-        if (!ok) { it->second.failed = true; return false; }
-        if (!it->second.dome) { it->second.dome = g.dome; it->second.quads = g.quads; }
-        g = it->second;
-    }
-    domePso = g.dome.Get();
-    quadPso = g.quads.Get();
+    domePso = derived(dev.Get(), g, 0);
+    quadPso = derived(dev.Get(), g, 1);
+    if (!domePso || !quadPso) { ++gSkipped; setStage2("preparing the sky pipeline (built in the background)"); return false; }
     {
         static std::mutex ringMutex;
         std::lock_guard   l(ringMutex);
