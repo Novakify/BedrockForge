@@ -1260,8 +1260,13 @@ TEST(world_light) { // [LyricsForge] the sky lights the world
     CHECK(drop.amount > worldLightFor(night, 1, 1, 0.3f, 0, 0).amount + 0.3f); // the drop floods it
     CHECK(drop.sat > 1.25f && drop.exposure > worldLightFor(night, 1, 1, 0.3f, 0, 0).exposure);
     CHECK(worldLightFor(night, 1, 1, 0.3f, 0, 0).exposure < worldLightFor(summer, 1, 1, 0.3f, 0, 0).exposure);
-    CHECK(worldLightFor(summer, 1, 0.4f, 0, 0, 0).exposure >= 0.8f);   // dimmed, never too dark to play
-    CHECK(worldLightFor(summer, 1, 0.4f, 0, 0, 0).exposure < 0.95f);
+    CHECK(worldLightFor(summer, 1, 0.4f, 0, 0, 0).exposure < 0.8f);    // dimmed hard...
+    CHECK(worldLightFor(night, 1, 0.3f, 0, 0, 0).exposure >= 0.6f);    // ...never below 60%
+    for (auto const& p : presets()) {                                   // every sky lights the world in its colour
+        auto x = worldLightFor(p, 1, 1, 0.3f, 0, 0);
+        float dev = 0; for (float v : x.tint) dev = std::max(dev, std::fabs(v - 1.0f));
+        CHECK(x.amount > 0.3f && dev >= 0.29f);
+    }
     CHECK(worldLightFor(night, 1, 1, 0, 0, 1).exposure > 1.3f);        // lightning lights the ground
     auto off = worldLightFor(dusk, 0, 1, 0.5f, 1, 1);                  // sky not visible: no change
     CHECK(off.neutral());
