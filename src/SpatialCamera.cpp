@@ -454,10 +454,24 @@ void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::ve
     if (!on) { // [LyricsForge] Showcase: the camera sways behind the player, looking at their eyes
         float blend = 0, sy = 0, sp = 0, sr = 0;
         if (rf::postfx::showcasePose(blend, sy, sp, sr)) {
+            // [LyricsForge] the player's feet position only moves 20 times a second (game ticks) while the body is
+            // drawn smoothly in between, so a camera hung off it stepped every tick and the player looked like they
+            // were vibrating. Follow the game's own smooth eye position when it's there (its first-person camera,
+            // which it rewrites every frame), otherwise glide after the tick position.
+            static glm::vec3          sEye{};
+            static Clock::time_point  sLast{};
+            auto const                nowT = Clock::now();
+            float const dtS = sLast.time_since_epoch().count() ? std::min(0.1f, std::chrono::duration<float>(nowT - sLast).count()) : 1.0f;
+            sLast = nowT;
+            glm::vec3 const gameEye = nComp > 0 ? glm::vec3(*comps[0]->mPosition) : eye;
+            glm::vec3 target = glm::length(gameEye - eye) < 0.9f ? gameEye : eye;
+            if (glm::length(target - sEye) > 4.0f || dtS >= 1.0f) sEye = target;            // teleport / first frame
+            else sEye += (target - sEye) * (1.0f - std::exp(-dtS / (target == gameEye ? 0.012f : 0.06f)));
+            glm::vec3 const eyeS = sEye;
             float const     e2 = blend * blend * (3.0f - 2.0f * blend);
             float const     y = sy * kDeg, pt = sp * kDeg;
             glm::vec3 const f(-std::sin(y) * std::cos(pt), -std::sin(pt), std::cos(y) * std::cos(pt));
-            glm::vec3 const cam = eye - f * (sr * e2);
+            glm::vec3 const cam = eyeS - f * (sr * e2);
             auto lerpAng = [](float a, float b, float t) { float d = std::remainder(b - a, 360.0f); return a + d * t; };
             p.pos[0] = cam.x; p.pos[1] = cam.y; p.pos[2] = cam.z;
             p.yaw    = lerpAng(yawP, sy, e2);
