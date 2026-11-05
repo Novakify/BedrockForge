@@ -76,7 +76,7 @@ Dir readDirector(bool allow) {
     d.sat    = std::clamp(v.saturation, 0.0f, 2.0f);
     d.con    = std::clamp(v.contrast, 0.5f, 1.6f);
     d.vig    = std::clamp(v.vignette, 0.0f, 0.7f);
-    d.flash  = std::clamp(v.flash, 0.0f, 0.2f);
+    d.flash  = std::clamp(v.flash, 0.0f, 0.25f); // BF caps drops at 0.24, everything else at 0.16
     d.box    = std::clamp(v.letterbox, 0.0f, 0.08f);
     d.bloom  = std::clamp(v.bloomBoost, 0.0f, 0.2f);
     d.ca     = std::clamp(v.caBoost, 0.0f, 0.004f);
