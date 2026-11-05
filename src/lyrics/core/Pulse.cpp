@@ -33,13 +33,13 @@ void Pulse::emit(In const& in, std::vector<BfGlyphV1>& out) const {
     MusicState const* m = in.music;
     float const bass = m ? m->bass : 0, mid = m ? m->mid : 0, treble = m ? m->treble : 0, energy = m ? m->energy : 0.5f;
     uint32_t const col = toRgba(in.color | 0xFF000000u), white = toRgba(0xFFFFFFFFu);
-    auto quad = [&](Vec3 p, Vec3 hr, Vec3 hu, uint32_t rgba, float alpha, float soft) {
+    auto quad = [&](Vec3 p, Vec3 hr, Vec3 hu, uint32_t rgba, float alpha, float soft, float round = 1.0f) {
         if (alpha <= 0.004f) return;
         BfGlyphV1 q{};
         q.pos[0] = float(p.x); q.pos[1] = float(p.y); q.pos[2] = float(p.z);
         q.right[0] = float(hr.x); q.right[1] = float(hr.y); q.right[2] = float(hr.z);
         q.up[0] = float(hu.x); q.up[1] = float(hu.y); q.up[2] = float(hu.z);
-        q.fill = q.fill2 = rgba; q.alpha = std::min(1.0f, alpha); q.outlineW = 1.0f; q.glowW = soft;
+        q.fill = q.fill2 = rgba; q.alpha = std::min(1.0f, alpha); q.outlineW = round; q.glowW = soft;
         q.uv[2] = q.uv[3] = 1.0f; q.flags = BF_GLYPH_SOLID;
         out.push_back(q);
     };
@@ -65,13 +65,13 @@ void Pulse::emit(In const& in, std::vector<BfGlyphV1>& out) const {
         float const swell  = float(0.5 + 0.5 * std::sin(az * 3.0 + t * 0.9));               // bass: slow, wide
         float const ripple = float(0.5 + 0.5 * std::sin(az * 11.0 - t * 3.1));              // mids
         float const sparkle = float(0.5 + 0.5 * std::sin(az * 29.0 + t * 7.3 + i * 0.37));  // treble: fast, fine
-        float const h = kHorizon * (0.03f + 0.10f * bass * swell + 0.06f * mid * ripple + 0.05f * treble * sparkle) *
+        float const h = kHorizon * (0.05f + 0.22f * bass * swell + 0.12f * mid * ripple + 0.08f * treble * sparkle) *
                         (0.6f + 0.5f * energy + 0.6f * mFlare);
         Vec3 const base{std::cos(az) * kHorizon, -kEye + 1.0, std::sin(az) * kHorizon};
         Vec3 const up{0, h * 0.5, 0};
-        Vec3 const side = Vec3{-std::sin(az), 0, std::cos(az)} * double(kHorizon * 3.14159 / bars * 0.42);
+        Vec3 const side = Vec3{-std::sin(az), 0, std::cos(az)} * double(kHorizon * 3.14159 / bars * 0.16);
         float const a = mOn * (0.30f + 0.35f * bass + 0.35f * mFlare);
-        quad(base + up, side, up, i % 6 ? col : white, a, 3.0f);
+        quad(base + up, side, up, i % 6 ? col : white, a, 3.0f, 0.15f); // thin, square-ish bars (seen in game: round = dots)
     }
 }
 
