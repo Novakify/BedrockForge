@@ -52,7 +52,7 @@ void Pulse::step(In const& in) {
             h = 0.03f + 0.30f * lift * lift * (0.8f + 0.4f * mFlare);
         } else
             h = (0.05f + 0.22f * bass * swell + 0.12f * mid * ripple + 0.08f * treble * sparkle) * (0.6f + 0.5f * energy + 0.6f * mFlare);
-        mBarEl[size_t(i)] = float(std::atan(double(h)) * 57.29578);
+        mBarEl[size_t(i)] = 2.5f + 1.5f * float(std::atan(double(h)) * 57.29578); // tall enough to clear a treeline
     }
     mBarA = std::min(1.0f, mOn * (0.45f + 0.35f * bass + 0.35f * mFlare));
 }

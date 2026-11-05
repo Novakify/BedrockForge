@@ -35,7 +35,7 @@ void LetterFx::spawn(std::vector<BfGlyphV1> const& quads, Vec3 origin, ExitAnim 
     c = c * (1.0 / double(quads.size()));
     int gx = 1, gy = 1;
     switch (mode) {
-    case ExitAnim::Shatter: gx = 2; gy = 3; break; // [BF] fewer, bigger shards read as glass; 3x3 + trails read as confetti in game
+    case ExitAnim::Shatter: gx = 1; gy = 2; break; // [BF] each letter cracks in two; any finer and thin glyph strokes read as confetti in game
     case ExitAnim::Dissolve: gx = 6; gy = 6; break;
     case ExitAnim::Burn: gx = 4; gy = 5; break;
     case ExitAnim::Glitch: gx = 1; gy = 5; break;

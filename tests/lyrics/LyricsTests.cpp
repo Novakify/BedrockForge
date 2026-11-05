@@ -1410,7 +1410,7 @@ TEST(letter_fx_exits) {
     q.alpha = 1; q.fill = 0xFFFFFFFFu;
     std::vector<BfGlyphV1> word{q, q};
     word[1].pos[0] = 0.5f;
-    struct M { ExitAnim m; size_t frags; } const ms[] = {{ExitAnim::Shatter, 12}, {ExitAnim::Dissolve, 72}, {ExitAnim::Explode, 2},
+    struct M { ExitAnim m; size_t frags; } const ms[] = {{ExitAnim::Shatter, 4}, {ExitAnim::Dissolve, 72}, {ExitAnim::Explode, 2},
                                                           {ExitAnim::Burn, 40}, {ExitAnim::Glitch, 10},
                                                           {ExitAnim::Vortex, 8}};
     for (auto const& m : ms) {
@@ -2136,7 +2136,7 @@ TEST(instrumentals_take_the_stage) { // [BF] no singing: the world performs the 
     CHECK(ground);
     CHECK(p.barEl().size() >= 48 && p.barAlpha() > 0.1f);         // the equaliser goes to the sky (behind the terrain)
     { float lo = 99, hi = 0; for (float e : p.barEl()) { lo = std::min(lo, e); hi = std::max(hi, e); }
-      CHECK(lo > 0.5f && hi < 20.0f && hi > lo); }
+      CHECK(lo > 2.5f && hi < 32.0f && hi > lo); }
     m.instrumental = 0;
     for (int i = 0; i < 240; ++i) p.step(pi);
     out.clear(); p.emit(pi, out);
