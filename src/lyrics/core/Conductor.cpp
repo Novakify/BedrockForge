@@ -141,7 +141,7 @@ void Conductor::update(ConductorIn const& in) {
     bool const manual = in.marks && !in.marks->empty();
     // [BF] the next known hit (held breath). Real songs: Song Memory finds 0..6 "drops" per song, many of them small
     // (strength ~0.5). Only the song's BIG drops get the hush and the hardest landing - at most its top three, and
-    // only strong ones - so the moment stays special; the rest are ordinary hits.
+    // within 85% of its strongest - so the moment stays special; the rest are ordinary hits.
     int64_t nextHit = -1; bool nextIsDrop = false, nextIsChorus = false;
     float bigAt = 2;
     if (mem) {

@@ -72,7 +72,7 @@ public:
     static constexpr float kChorusCooldown = 12.0f;
     static constexpr float kLiveDropCooldown = 30.0f; // live guesses are less sure: rarer
     static constexpr float kHoldLead = 0.6f;  // s of held breath before a known drop
-    static constexpr float kBigDrop  = 0.65f; // Song Memory strength a drop needs to be one of the big ones
+    static constexpr float kBigDrop  = 0.5f;  // floor: a drop needs at least this Song Memory strength to be a big one
     static constexpr float kLiftMin  = 10.0f; // the chorus look stays at least this long...
     static constexpr float kLiftMax  = 45.0f; // ...and never longer than this without a new hit
 
