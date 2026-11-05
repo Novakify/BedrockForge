@@ -102,14 +102,18 @@ void Moments::step(MomentsIn const& in) {
     float const dt = std::clamp(in.dt, 0.0f, 0.1f);
     MusicState const* m = in.music;
     mOut.meteors = 0; mOut.wave = false; mOut.starfall = false; mOut.event.clear();
-    if (in.songSeq != mSeq) { mSeq = in.songSeq; mFx.clear(); mLastT = -1; std::fill(std::begin(mCool), std::end(mCool), 0.0f); mStarfall = -1; }
+    if (in.songSeq != mSeq) { mSeq = in.songSeq; mFx.clear(); mSinceDeck = 99; mLastT = -1; std::fill(std::begin(mCool), std::end(mCool), 0.0f); mStarfall = -1; }
     mSinceKey += dt;
     for (auto& c : mCool) c = std::max(0.0f, c - dt);
     bool const on = m && m->active;
     SkyFamily const fam = skyFamily(in.sky);
 
     // ---- chorus variety + song arc
-    if (on && in.chorusVariety && m->liftNow) {
+    mSinceDeck += dt;
+    // a new chorus look, or a new big hit while the look is still on (choruses back to back): the next moment
+    bool const hit = m && (m->liftNow || ((m->dropNow || m->chorusNow) && m->lifted && mSinceDeck > 8.0f));
+    if (on && in.chorusVariety && hit) {
+        mSinceDeck = 0;
         auto const& deck = chorusDeck(fam);
         int const k = std::max(0, m->choruses - 1), total = std::max(1, m->chorusTotal);
         if (m->finalHit && total >= 2) { // the final chorus: everything this sky has, at full size

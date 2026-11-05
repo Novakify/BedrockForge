@@ -74,7 +74,7 @@ private:
     std::vector<Fx> mFx;
     MomentsOut      mOut;
     int64_t         mSeq = -1, mLastT = -1;
-    float           mSinceKey = 99;
+    float           mSinceKey = 99, mSinceDeck = 99;
     float           mCool[16] = {};
     float           mStarfall = -1; // s left of a running starfall
     float           mStarAcc = 0;
