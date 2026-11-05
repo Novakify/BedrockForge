@@ -551,6 +551,13 @@ TEST(lrclib_bestof_picks_synced_in_tolerance) {
     auto none = fetch::lrclibBestOf(r, 200000, {"Nobody", "Unrelated"}, 3.0);
     CHECK(!none.has_value());
 }
+TEST(lrclib_rejects_other_artist_short_title) { // [BF] in game: the instrumental "lit(var)" showed a rap song's lyrics
+    fetch::HttpResponse r{200, R"([{"id":1,"trackName":"Lit","artistName":"Some Rapper","duration":121,"instrumental":false,
+        "syncedLyrics":"[00:11.52] Pull up to the party\n[00:15.86] Looking like an army\n"}])"};
+    CHECK(!fetch::lrclibBestOf(r, 121000, {"kensuke ushio", "lit"}, 3.0).has_value());
+    CHECK(!fetch::lrclibBestByTitle(r, 121000, {"kensuke ushio", "lit"}, 3.0).has_value());
+    CHECK(fetch::lrclibBestOf(r, 121000, {"Some Rapper", "Lit"}, 3.0).has_value()); // the right artist still matches
+}
 TEST(fetch_prefers_musixmatch_word_sync) {
     fetch::resetMusixmatchToken();
     FakeHttp h;
