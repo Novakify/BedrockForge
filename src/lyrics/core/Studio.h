@@ -42,7 +42,9 @@ struct ChorusLook {
     std::string sky;
     int         letterFx = -1, exit = -1;
 };
-ChorusLook chorusLook(Config const& cfg, std::vector<StudioScene> const& user = {});
+/// variant: per-song variety (odd = the scene's second chorus sky), e.g. songVariant(trackKey)
+ChorusLook chorusLook(Config const& cfg, std::vector<StudioScene> const& user = {}, uint32_t variant = 0);
+inline uint32_t songVariant(std::string_view key) { uint32_t h = 2166136261u; for (char c : key) { h ^= uint8_t(c); h *= 16777619u; } return h >> 7; }
 /// [BF] Auto director: a scene for this song from its energy (0..1, < 0 = unknown -> balanced pool), stable per song
 /// (the same key always gets the same pick). "" = nothing to pick.
 std::string autoSceneFor(std::string_view songKey, float energy);

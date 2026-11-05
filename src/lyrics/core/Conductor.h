@@ -46,6 +46,7 @@ struct MusicState {
     float   lift = 0;           // 0..1 eased
     bool    lifted = false;     // in the chorus look now
     bool    liftNow = false, liftEnd = false; // events: entered / left the chorus look this frame
+    float   outro = 0;          // [BF] 0..1 eased over the song's last ~9 s (end credits, the sky dims)
 };
 
 struct ConductorIn {
@@ -59,6 +60,7 @@ struct ConductorIn {
     SongMemory const* memory = nullptr; // this song's memory (may be empty / not ready)
     std::vector<std::pair<int64_t, char>> const* marks = nullptr; // [BF] manual sections (win over the guesses)
     bool             enabled = true;
+    int64_t          durationMs = 0;   // [BF] song length (0 = unknown: no outro)
 };
 
 class Conductor {

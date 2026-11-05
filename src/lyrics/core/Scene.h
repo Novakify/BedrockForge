@@ -50,6 +50,10 @@ struct Placed {
     bool    lookedAway = false;
     int     occlTick = 0;
     std::vector<bool> dropped; // [BF] falling letters already spawned for word j
+    // [BF] kinetic words: how the line was staged when it appeared
+    bool    stacked = false;   // a short line in a big moment: one big word per row
+    bool    slam = false;      // the line that lands on a drop: its letters slam in one by one
+    std::vector<std::vector<std::pair<std::string, float>>> letters; // slam: per word, (letter, x offset in em)
 
     int     n() const { return w1 - w0; }
     int64_t lastEnd() const { return line.words[size_t(w1 - 1)].end; }
@@ -119,6 +123,10 @@ public:
 
 private:
     float mStereo = 0; // [BF] eased stereo drift
+    // [BF] kinetic words: the music when a line is placed + which lines repeat (hooks)
+    MusicState const*     mMusic = nullptr;
+    Lyrics const*         mHookFor = nullptr;
+    std::set<std::string> mHooks;
     void   place(Placed& p, Config const& c, CameraState const& cam, IWorld* w, TextWidthFn const& width);
     void   wallPlace(Placed& p, int64_t s, CameraState const& cam, IWorld* w);
     void   fitToSurface(Placed& p, Config const& c, IWorld* w);

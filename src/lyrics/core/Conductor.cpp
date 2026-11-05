@@ -45,6 +45,7 @@ void Conductor::update(ConductorIn const& in) {
         s.hold = 0; s.toDrop = -1;
         if (s.lifted) { s.lifted = false; s.liftEnd = true; }
         s.lift += (0.0f - s.lift) * ease(dt, 1.5f);
+        s.outro += (0.0f - s.outro) * ease(dt, 0.5f);
         return;
     }
     if (in.songSeq != mSeq) { // new song: per-song state starts over
@@ -58,7 +59,7 @@ void Conductor::update(ConductorIn const& in) {
         mWasBuilding = mWasHook = false;
         mLastPos = -1;
         mHold = 0;
-        s.hold = 0; s.toDrop = -1;
+        s.hold = 0; s.toDrop = -1; s.outro = 0;
         if (s.lifted) { s.lifted = false; s.liftEnd = true; }
         mLiftAge = 0;
     }
@@ -192,14 +193,17 @@ void Conductor::update(ConductorIn const& in) {
     if (drop && mSinceDrop < kDropCooldown) drop = false;
     if (chorus && (mSinceChorus < kChorusCooldown || mSinceDrop < 3.0f)) chorus = false;
     if (drop) { s.dropNow = true; s.bigDrop = bigNow; mSinceDrop = 0; mSinceChorus = 0; s.impact = 1.0f; s.choruses++; }
-    if (chorus) { s.chorusNow = true; mSinceChorus = 0; s.impact = std::max(s.impact, 0.75f); s.choruses++; }
+    if (chorus) { s.chorusNow = true; mSinceChorus = 0; s.impact = std::max(s.impact, s.known ? 0.75f : 1.0f); s.choruses++; }
     if (s.dropNow) build = 0;
     // ---- held breath: a known drop (or chorus, softer) right ahead - dim, slow, quiet; released on the hit
     s.toDrop = nextHit >= 0 ? float(nextHit - in.posMs) / 1000.0f : -1.0f;
     float holdT = 0;
     if (s.toDrop >= 0 && s.toDrop <= kHoldLead && in.enabled && (nextIsDrop || nextIsChorus) && (nextIsDrop || mSinceChorus > kChorusCooldown)) {
         float const x = 1.0f - s.toDrop / kHoldLead;
-        holdT = x * x * (3 - 2 * x) * (nextIsDrop ? 1.0f : 0.55f);
+        // [BF] first listen: no energy map yet, so the song's repeated lyric blocks (its choruses, known the moment
+        // the lyrics load) are its big moments - they get the full held breath
+        bool const firstListen = nextIsChorus && !s.known;
+        holdT = x * x * (3 - 2 * x) * (nextIsDrop || firstListen ? 1.0f : 0.55f);
     }
     if (s.dropNow || s.chorusNow) s.hold = 0; // the release: it all lands at once
     else s.hold += (holdT - s.hold) * ease(dt, holdT > s.hold ? 0.06f : 0.25f);
@@ -232,6 +236,11 @@ void Conductor::update(ConductorIn const& in) {
     // ---- speed ramp: fragments / sky motion hang in the air while it builds, then burst on the hit
     float const ramp = (1.0f - 0.6f * s.build) * (1.0f + 1.6f * s.impact) * (1.0f - 0.75f * s.hold);
     s.timeScale += (ramp - s.timeScale) * ease(dt, ramp > s.timeScale ? 0.05f : s.hold > 0.05f ? 0.08f : 0.35f);
+    // ---- outro: the last ~9 s of a song with a known length (end credits, the world winds down)
+    float outroT = 0;
+    if (in.durationMs > 30000 && in.posMs > in.durationMs - 9000)
+        outroT = clamp01(float(in.posMs - (in.durationMs - 9000)) / 3000.0f);
+    s.outro += (outroT - s.outro) * ease(dt, outroT > s.outro ? 0.8f : 0.3f);
     mLastPos = in.posMs;
 }
 

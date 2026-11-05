@@ -1946,6 +1946,162 @@ TEST(clip_mode_timing) { // [BF] NVIDIA Instant Replay after the big moment
     CHECK(!t.step(&m, false, 1.0f / 60, 2));                 // off: nothing
 }
 
+TEST(first_listen_sees_the_chorus_coming) { // [BF] no energy map yet: the lyrics' repeated block is the big moment
+    std::vector<Timing>      times{{10000, -1}, {14000, -1}, {30000, -1}, {34000, -1}, {38000, -1}, {50000, -1}, {70000, -1}, {74000, -1}, {78000, -1}};
+    std::vector<std::string> texts{"first verse line", "second verse line", "we light it up", "keep it going now", "never let it down",
+                                   "bridge part", "we light it up", "keep it going now", "never let it down"};
+    Lyrics lyr = Lyrics::build(times, texts, true, "test", 100000);
+    SongMemory m;
+    m.reset(SongMemory::keyFor("a\x01new song", 100000), 100000); // brand new: nothing recorded
+    m.analyze(&lyr);
+    CHECK(!m.ready());
+    int choruses = 0;
+    for (auto const& e : m.events) choruses += e.kind == SongMemory::Event::Kind::Chorus;
+    CHECK(choruses >= 1);
+    Conductor c;
+    ConductorIn in;
+    in.playing = true; in.songSeq = 1; in.dt = 1.0f / 60.0f; in.memory = &m;
+    float holdMax = 0, imp = 0; bool hit = false, lifted = false;
+    for (int64_t t = 0; t < 32000; t += 17) {
+        in.posMs = t;
+        c.update(in);
+        auto const& s = c.state();
+        if (t > 29000 && t < 30000) holdMax = std::max(holdMax, s.hold);
+        if (s.chorusNow) { hit = true; imp = s.impact; }
+        lifted |= s.lifted;
+    }
+    CHECK(hit);
+    CHECK(holdMax > 0.8f);   // the full held breath, first time hearing the song
+    CHECK(imp > 0.95f);
+    CHECK(lifted);           // and the chorus look
+}
+
+TEST(kinetic_words) { // [BF] lyric-video staging: stacked short lines, growing hook words, letters slamming in
+    std::vector<Timing>      times{{10000, -1}, {20000, -1}, {30000, -1}, {40000, -1}};
+    std::vector<std::string> texts{"we rise", "the night is ours forever", "the night is ours forever", "drop it"};
+    Lyrics lyr = Lyrics::build(times, texts, true, "test", 60000);
+    Config c; c.lyricsStyle = LyricsStyle::Sky; c.varySizes = false;
+    auto cam = testCam();
+    auto wfn = [](std::string_view s, std::string_view) { return 0.5f * float(text::length(s)); };
+    MusicState m; m.active = true; m.lifted = true; m.section = MusicSection::High;
+    SceneInput in;
+    in.lyrics = &lyr; in.lyricsState = LyricsState::Found; in.songSeq = 1; in.playing = true; in.music = &m;
+    Scene sc;
+    in.t = 10100;
+    sc.tick(in, c, cam, nullptr, wfn);
+    CHECK(!sc.visible().empty());
+    if (!sc.visible().empty()) {
+        auto const& p = sc.visible().back();
+        CHECK(p.stacked);
+        CHECK_EQ(p.rowsN, 2);                          // one big word per row
+        CHECK(p.wsize[0] > 1.4f);
+    }
+    in.t = 20100; m.lifted = false; m.section = MusicSection::Mid;
+    sc.tick(in, c, cam, nullptr, wfn);
+    if (!sc.visible().empty()) {
+        auto const& p = sc.visible().back();
+        CHECK(!p.stacked);
+        float mx = 0; int at = -1;
+        for (int j = 0; j < p.n(); ++j) if (p.wsize[size_t(j)] > mx) { mx = p.wsize[size_t(j)]; at = j; }
+        CHECK(mx > 1.3f);                              // the hook's strongest word grows
+        CHECK_EQ(at, 4);                               // "forever"
+    }
+    m.hold = 0.8f;                                     // the held breath right before the drop line
+    in.t = 40020;
+    sc.tick(in, c, cam, nullptr, wfn);
+    m.hold = 0; m.impact = 1;
+    in.t = 40060;
+    sc.tick(in, c, cam, nullptr, wfn);
+    auto words = sc.draw(in, c, cam, nullptr);
+    int singles = 0;
+    for (auto const& d : words) singles += text::length(d.text) == 1;
+    CHECK(singles >= 2);                               // "drop" arrives as flying letters
+    in.t = 41500;
+    sc.tick(in, c, cam, nullptr, wfn);
+    words = sc.draw(in, c, cam, nullptr);
+    bool whole = false;
+    for (auto const& d : words) whole |= d.text == "drop";
+    CHECK(whole);                                      // ...then the word settles
+    Config off = c; off.kineticWords = false;
+    Scene s2; MusicState m2; m2.active = true; m2.lifted = true;
+    in.music = &m2; in.t = 10100;
+    s2.tick(in, off, cam, nullptr, wfn);
+    if (!s2.visible().empty()) CHECK(!s2.visible().back().stacked);
+}
+
+TEST(showcase_director_cuts) {
+    Config cfg; cfg.director = true; cfg.showcase = true;
+    Cinema c;
+    MusicState m; m.active = true; m.budget = 0.5f;
+    for (int i = 0; i < 120; ++i) c.step(&m, cfg, 1.0f / 60, 10.0f);
+    CHECK_EQ(c.shot(), 0);
+    float const swayR = c.out().orbitRadius;
+    m.dropNow = m.liftNow = true; m.lifted = true;
+    c.step(&m, cfg, 1.0f / 60, 10.0f);
+    m.dropNow = m.liftNow = false;
+    CHECK_EQ(c.shot(), 1);                                    // the drop: instantly the low hero shot
+    CHECK(std::fabs(c.out().orbitYaw - (10.0f + 160.0f)) < 2.0f); // in front of you, looking back
+    CHECK(c.out().orbitRadius < swayR);
+    for (int i = 0; i < 60 * 8; ++i) { m.beat = (i % 30) == 0 ? 0.9f : 0.0f; c.step(&m, cfg, 1.0f / 60, 10.0f); }
+    CHECK(c.cuts() >= 2);                                     // keeps cutting on beats inside the chorus
+    m.lifted = false; m.liftEnd = true; m.beat = 0;
+    c.step(&m, cfg, 1.0f / 60, 10.0f); m.liftEnd = false;
+    for (int i = 0; i < 40; ++i) c.step(&m, cfg, 1.0f / 60, 10.0f);
+    CHECK_EQ(c.shot(), 0);                                    // back to the sway
+    cfg.directorCuts = false;
+    m.chorusNow = m.lifted = true;
+    c.step(&m, cfg, 1.0f / 60, 10.0f);
+    for (int i = 0; i < 40; ++i) c.step(&m, cfg, 1.0f / 60, 10.0f);
+    CHECK_EQ(c.shot(), 0);                                    // cuts off: no cut
+}
+
+TEST(per_song_identity) {
+    Config cfg; cfg.scene = "celestial_dream"; cfg.skyPreset = "aurora";
+    CHECK_EQ(chorusLook(cfg, {}, 0).sky, std::string("astral"));
+    CHECK_EQ(chorusLook(cfg, {}, 1).sky, std::string("prism"));
+    for (auto const& s : builtinScenes()) { cfg.scene = s.id; cfg.skyPreset = s.sky; CHECK(sky::find(chorusLook(cfg, {}, 1).sky, cfg).has_value()); }
+    int odd = 0;
+    for (int i = 0; i < 20; ++i) odd += songVariant("artist\x01song " + std::to_string(i)) & 1;
+    CHECK(odd > 3 && odd < 17);
+    // the cover tints the grade: a red cover vs a blue cover, same scene
+    Config c2; c2.director = true; c2.scene = "melancholy";
+    MusicState m; m.active = true; m.budget = 0.5f;
+    Cinema red, blue;
+    for (int i = 0; i < 300; ++i) { red.step(&m, c2, 1.0f / 60, 0, 0xFF2020); blue.step(&m, c2, 1.0f / 60, 0, 0x2040FF); }
+    CHECK(red.out().tint[0] > blue.out().tint[0] + 0.05f);
+    CHECK(blue.out().tint[2] > red.out().tint[2] + 0.05f);
+    c2.songTint = false;
+    Cinema a, b;
+    for (int i = 0; i < 300; ++i) { a.step(&m, c2, 1.0f / 60, 0, 0xFF2020); b.step(&m, c2, 1.0f / 60, 0, 0x2040FF); }
+    CHECK_NEAR(a.out().tint[0], b.out().tint[0], 1e-4);
+}
+
+TEST(song_outro_credits) {
+    Conductor c;
+    ConductorIn in;
+    in.playing = true; in.songSeq = 1; in.dt = 1.0f / 60.0f; in.durationMs = 120000;
+    float o100 = 1, o118 = 0;
+    for (int64_t t = 0; t < 120000; t += 17) {
+        in.posMs = t;
+        c.update(in);
+        if (std::llabs(t - 100000) < 9) o100 = c.state().outro;
+        if (std::llabs(t - 118000) < 9) o118 = c.state().outro;
+    }
+    CHECK(o100 < 0.01f);
+    CHECK(o118 > 0.8f);
+    in.songSeq = 2; in.posMs = 0; c.update(in);
+    CHECK_EQ(c.state().outro, 0.0f);                          // a new song starts clean
+    Config cfg; cfg.director = true;
+    Cinema cin;
+    MusicState m; m.active = true; m.budget = 0.5f;
+    for (int i = 0; i < 200; ++i) cin.step(&m, cfg, 1.0f / 60);
+    float const v0 = cin.out().vignette;
+    m.outro = 1;
+    for (int i = 0; i < 200; ++i) cin.step(&m, cfg, 1.0f / 60);
+    CHECK(cin.out().vignette > v0 + 0.2f);
+    CHECK(cin.out().letterbox > 0.05f);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) gDir = argv[1];
     else if (char const* e = std::getenv("LYRICS_FIXTURES")) gDir = e;

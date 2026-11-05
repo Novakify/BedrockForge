@@ -150,11 +150,18 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(impactFrames, true)              /* [BF] a soft light flash + bloom / CA kick on drops and chorus hits (RF) */   \
     B(letterbox, true)                 /* [BF] cinema bars ease in during builds and big hooks (RF) */               \
     B(portals, true)                   /* [BF] a ring of light opens in the sky on choruses / drops */               \
+    B(songOutro, true)                 /* [BF] end credits: the sky dims, title + artist + the last line rise and fade */ \
+    B(songTint, true)                  /* [BF] each song's cover colour tints the scene's grade a little */           \
+    B(directorCuts, true)              /* [BF] Showcase cuts to a new camera angle on drops / choruses / calm */     \
+    B(kineticWords, true)              /* [BF] lyric-video words: short lines stack big, hooks grow, drops slam in */ \
     B(chorusLooks, true)               /* [BF] the world changes on a chorus: chorus sky, light wave, meteors, letters */ \
     B(dropMoment, true)                /* [BF] held breath before a known drop (dim, slow), then it all lands at once */ \
     B(autoScene, false)                /* [BF] Auto director: pick a scene for each song from its energy */          \
     B(clipMode, false)                 /* [BF] Clip mode: save an NVIDIA Instant Replay clip after a song's big moment */ \
     S(clipHotkey, "ctrl+shift+f10")    /* [BF] the replay "save" hotkey: OBS Save Replay (bind it there), or NVIDIA alt+f10 */\
+    B(clipVertical, true)              /* [BF] also make a 1080x1920 TikTok copy of each clip (needs ffmpeg) */      \
+    S(clipFolder, "")                  /* [BF] where the recorder saves ("" = your Videos folder) */                \
+    S(ffmpegPath, "")                  /* [BF] ffmpeg.exe ("" = find it: tools folder, PATH, winget) */              \
     F(intensity, 1.0f)                 /* [BF] Cinema home: one dial for how big the whole show is, 0.3 .. 1.6 */     \
     B(shotLanguage, true)              /* [BF] Director framing: calm = wide (far, smaller), high = close-up */      \
     B(translations, true)              /* [BF] show translations under the lines (NetEase / your override file) */  \

@@ -49,6 +49,7 @@ private:
     float                  mShot = 1;   // [BF] shot language: eased framing (distance factor)
     void direct(std::vector<DrawWord>& words, MusicState const& m, Config const& cfg);
     void titleCard(std::vector<DrawWord>& words, SceneInput const& in, Config const& cfg, CameraState const& cam);
+    void endCredits(std::vector<DrawWord>& words, SceneInput const& in, Config const& cfg, CameraState const& cam);
 
     Config                 mCfg;
     FontSet                mFonts;

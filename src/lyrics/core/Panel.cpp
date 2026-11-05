@@ -947,7 +947,12 @@ void Panel::director(Ctx& c, Config& cfg) {
         c.option("rx" + std::to_string(i), 206 + float(i) * 40.5f, 148, 38, 13, r[i], cfg.reactivity == i, [&cfg, i] { cfg.reactivity = i; }, a);
     static char const* const tip[] = {"gentle: the lyrics stay the focus", "calm verses, full choruses",
                                       "big contrast between sections", "everything for the drop"};
-    c.text(tip[std::clamp(cfg.reactivity, 0, 3)], 206, 170, 0.55f, ACCENT2, 0.8f * a);
+    c.text(tip[std::clamp(cfg.reactivity, 0, 3)], 206, 166, 0.55f, ACCENT2, 0.8f * a);
+    // [BF] lyric-video words, Showcase camera cuts, cover colour in the grade, end credits
+    c.option("kw", 206, 177, 38, 13, "Words", cfg.kineticWords, [&] { cfg.kineticWords = !cfg.kineticWords; }, a);
+    c.option("dc", 246.5f, 177, 38, 13, "Cuts", cfg.directorCuts, [&] { cfg.directorCuts = !cfg.directorCuts; }, a);
+    c.option("st", 287, 177, 38, 13, "Tint", cfg.songTint, [&] { cfg.songTint = !cfg.songTint; }, a);
+    c.option("so", 327.5f, 177, 38, 13, "Outro", cfg.songOutro, [&] { cfg.songOutro = !cfg.songOutro; }, a);
 }
 
 // [BF] FX page 4: Scene Studio - one tap sets the whole look (sky, letters, colours, motion, Director style)

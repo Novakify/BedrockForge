@@ -15,6 +15,7 @@
 #include <chrono>
 #include <ctime>
 #include <cmath>
+#include <cstdlib>
 #include <utility>
 #include <fstream>
 #include <map>
@@ -826,6 +827,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     if (gS->waveT >= 0) { gS->waveT += dt / 2.6f; if (gS->waveT > 1) gS->waveT = -1; }
     in.wave = gS->waveT;
     in.meteors = std::exchange(gS->meteors, 0);
+    in.dim = cfg.songOutro && cfg.director ? m.outro : 0.0f;
     std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" ? gS->chorus.sky : std::string();
     if (auto pr = sky::find(wantSky.empty() ? std::string_view(cfg.skyPreset) : std::string_view(wantSky), cfg))
         in.waveColor = pr->lyricColor ? pr->lyricColor & 0xFFFFFF : pr->aurora1 & 0xFFFFFF;
@@ -955,12 +957,14 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.dt      = dt;
         ci.beat    = in.beat;
         ci.enabled = gS->engine.config().director;
+        ci.durationMs = gS->demo.on ? gS->demo.durMs : in.durationMs;
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
         { // [BF] chorus look of the scene (cached), and the one-shot chorus events for the sky
             auto const& c = gS->engine.config();
-            std::string key = c.scene + '|' + c.skyPreset;
-            if (key != gS->chorusKey) { gS->chorusKey = std::move(key); gS->chorus = chorusLook(c, gS->userScenes); }
+            std::string const song = gS->demo.on ? gS->demo.title : gS->clock.hasTrack() ? gS->clock.track().key() : std::string();
+            std::string key = c.scene + '|' + c.skyPreset + '|' + song;
+            if (key != gS->chorusKey) { gS->chorusKey = std::move(key); gS->chorus = chorusLook(c, gS->userScenes, songVariant(song)); }
             auto const& ms = gS->conductor.state();
             if (c.chorusLooks && c.director && ms.liftNow) {
                 gS->waveT = 0;
@@ -970,7 +974,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             in.chorusExit = gS->chorus.exit;
         }
         autoDirect(in);
-        gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt, cam.yaw);
+        gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt, cam.yaw, gS->coverAccent & 0xFFFFFF);
         publishDirector(gS->conductor.state(), gS->cinema.out());
         in.skyLuma = gS->sky.luma();
         in.albumAccent = gS->coverAccent;
@@ -998,6 +1002,13 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         if (auto const& cc = gS->engine.config(); gS->clip.step(&m, cc.clipMode && cc.director, dt, in.songSeq)) {
             Hotkey const hk = parseHotkey(cc.clipHotkey);
             if (hk.count) pressHotkey(hk.keys, hk.count);
+            if (hk.count && cc.clipVertical) { // [BF] Clip to TikTok
+                std::filesystem::path folder = u8p(cc.clipFolder);
+                if (cc.clipFolder.empty())
+                    if (wchar_t const* up = _wgetenv(L"USERPROFILE")) folder = std::filesystem::path(up) / L"Videos";
+                auto const base = gS->cfgFile.parent_path().parent_path();
+                verticalClip(folder, u8p(cc.ffmpegPath), base / "tools" / "ffmpeg.exe", base / "logs" / "clips.txt");
+            }
             stamp(hk.count ? "CLIP" : "CLIP?key"); // the hotkey couldn't be read: nothing pressed
         }
         if (m.liftEnd) stamp("unlift");

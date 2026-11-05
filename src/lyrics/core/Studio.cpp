@@ -91,27 +91,27 @@ void applyScene(Config& c, StudioScene const& s) {
 }
 
 namespace {
-struct ChorusDefault { char const* id; char const* sky; int fx; ExitAnim exit; };
+struct ChorusDefault { char const* id; char const* sky; int fx; ExitAnim exit; char const* alt; }; // alt: a second chorus sky (per-song variety)
 // a chorus sky per scene that belongs to the same world but is bigger / brighter / more alive
 constexpr ChorusDefault kChorus[] = {
-    {"celestial_dream", "astral", 10, X::Shatter},     {"cosmic_collapse", "supernova", 8, X::Vortex},
-    {"liquid_paradise", "dream_ocean", 3, X::Shatter}, {"neon_afterlife", "synthwave", 7, X::Explode},
-    {"dreamcore", "cotton_candy", 9, X::Shatter},      {"anime_impact", "inferno", 2, X::Explode},
-    {"cinematic_romance", "sakura", 1, X::Shatter},    {"melancholy", "aurora", 4, X::Shatter},
-    {"ethereal_fantasy", "silk", 10, X::Shatter},      {"dark_cosmic", "black_hole", 8, X::Vortex},
-    {"cyber_edit", "warp", 5, X::Explode},             {"blood_moon", "eclipse", 6, X::Explode},
-    {"album_glow", "supernova", -1, X::Shatter},       {"astral_symphony", "rift", 10, X::Shatter},
-    {"eclipse_heartbeat", "supernova", 6, X::Explode}, {"dream_ocean", "silk", 9, X::Shatter},
-    {"meteor_chorus", "warp", 1, X::Shatter},
+    {"celestial_dream", "astral", 10, X::Shatter, "prism"},     {"cosmic_collapse", "supernova", 8, X::Vortex, "warp"},
+    {"liquid_paradise", "dream_ocean", 3, X::Shatter, "polar"}, {"neon_afterlife", "synthwave", 7, X::Explode, "matrix"},
+    {"dreamcore", "cotton_candy", 9, X::Shatter, "sakura"},      {"anime_impact", "inferno", 2, X::Explode, "storm"},
+    {"cinematic_romance", "sakura", 1, X::Shatter, "sunset"},    {"melancholy", "aurora", 4, X::Shatter, "frost"},
+    {"ethereal_fantasy", "silk", 10, X::Shatter, "astral"},      {"dark_cosmic", "black_hole", 8, X::Vortex, "rift"},
+    {"cyber_edit", "warp", 5, X::Explode, "pulsar"},             {"blood_moon", "eclipse", 6, X::Explode, "crimson"},
+    {"album_glow", "supernova", -1, X::Shatter, "nebula"},       {"astral_symphony", "rift", 10, X::Shatter, "supernova"},
+    {"eclipse_heartbeat", "supernova", 6, X::Explode, "blood_moon"}, {"dream_ocean", "silk", 9, X::Shatter, "cotton_candy"},
+    {"meteor_chorus", "warp", 1, X::Shatter, "cosmos"},
 };
 } // namespace
 
-ChorusLook chorusLook(Config const& cfg, std::vector<StudioScene> const& user) {
+ChorusLook chorusLook(Config const& cfg, std::vector<StudioScene> const& user, uint32_t variant) {
     ChorusLook l;
     l.exit = xi(X::Shatter);
     if (cfg.scene.empty()) return l;
     for (auto const& d : kChorus)
-        if (cfg.scene == d.id) { l.sky = d.sky; l.letterFx = d.fx; l.exit = xi(d.exit); break; }
+        if (cfg.scene == d.id) { l.sky = (variant & 1) ? d.alt : d.sky; l.letterFx = d.fx; l.exit = xi(d.exit); break; }
     if (auto sc = findScene(cfg.scene, user)) { // a scene's own chorus fields win over the defaults
         if (!sc->chorusSky.empty()) l.sky = sc->chorusSky;
         if (sc->chorusFx >= 0) l.letterFx = sc->chorusFx;

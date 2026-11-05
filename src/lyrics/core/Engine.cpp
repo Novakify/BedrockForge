@@ -1,5 +1,6 @@
 // LyricsFlow port - frame builder + shared frame store. Original code for Bedrock Forge; see Engine.h.
 #include "lyrics/core/Engine.h"
+#include "lyrics/core/Text.h"
 
 #include <cstddef>
 
@@ -72,6 +73,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     auto words = mScene.draw(in, cfg, cam, world);
     if (m) direct(words, *m, cfg);
     if (cfg.titleCard && in.music && in.music->songAge < kTitleCardSec) titleCard(words, in, cfg, cam);
+    if (cfg.songOutro && in.music && in.music->outro > 0.01f) endCredits(words, in, cfg, cam);
 
     // painter's order: far words first (we draw without depth test, like the Java mod's SEE_THROUGH text)
     std::stable_sort(words.begin(), words.end(), [&](DrawWord const& a, DrawWord const& b) {
@@ -209,6 +211,32 @@ void Engine::titleCard(std::vector<DrawWord>& words, SceneInput const& in, Confi
     };
     card(in.title, 0.27f, 0.085f, a);
     if (!in.artist.empty()) card(in.artist, 0.36f, 0.042f, a * 0.8f);
+}
+
+// [BF] end credits: over the song's last seconds the title, the artist and its last lyric line rise slowly up the
+// screen and fade, like a film's credits; the Cinema dims and frames the world around them.
+void Engine::endCredits(std::vector<DrawWord>& words, SceneInput const& in, Config const& cfg, CameraState const& cam) {
+    if (in.title.empty()) return;
+    float const o = in.music->outro;
+    float const a = std::min(1.0f, o * 1.4f);
+    float const aspect = cam.screenAspect > 0 ? cam.screenAspect : 16.0f / 9.0f;
+    float const rise = 0.05f * o;                                  // drifting up as it ends
+    auto card = [&](std::string const& text, float y, float size, float alpha, uint32_t argb) {
+        DrawWord d;
+        d.text = text; d.font = cfg.font; d.screen = true;
+        d.origin = {double(aspect) * 0.5, double(y - rise), 0};
+        d.orient = Quat::rotationZ(0);
+        d.scale = size; d.alpha = alpha; d.glow = 0.5f; d.sung = true; d.argb = argb;
+        d.key = -177 - int64_t(y * 1000);
+        words.push_back(std::move(d));
+    };
+    std::string last; // the song's last lyric line lingers above the credits
+    if (in.lyrics)
+        for (auto it = in.lyrics->lines.rbegin(); it != in.lyrics->lines.rend(); ++it)
+            if (it->index >= 0 && !it->text.empty()) { last = it->text; break; }
+    if (!last.empty() && text::length(last) <= 48) card("\xE2\x80\x9C" + last + "\xE2\x80\x9D", 0.30f, 0.034f, a * 0.7f, 0xFFE8E4F0u);
+    card(in.title, 0.40f, 0.075f, a, 0);
+    if (!in.artist.empty()) card(in.artist, 0.48f, 0.038f, a * 0.8f, 0);
 }
 
 void Engine::publish(bool active, float fovY, std::vector<BfGlyphV1> const* extra) {

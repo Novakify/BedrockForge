@@ -26,6 +26,7 @@ struct SystemIn {
     float   wave = -1;                       // [BF] chorus light wave progress 0..1 (< 0 none)
     uint32_t waveColor = 0xFFFFFF;
     int     meteors = 0;                     // [BF] chorus meteor burst starting this frame
+    float   dim = 0;                         // [BF] 0..1 darker (song outro)
 };
 
 class System {

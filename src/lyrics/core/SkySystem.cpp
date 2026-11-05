@@ -35,6 +35,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     ci.dtSec = in.dtSec; ci.night = in.night; ci.beat = in.beat; ci.lineActive = in.lineActive; ci.playing = in.playing;
     ci.skyOpen = in.skyOpen; ci.picture = picture;
     mFrame = mClock.tick(p ? &*p : nullptr, cfg, ci);
+    mFrame.brightness *= 1.0f - 0.55f * std::clamp(in.dim, 0.0f, 1.0f); // [BF] the sky dims as the song ends
     mLuma  = 0;
     if (p) { // relative luminance of the preset's top + horizon, as visible as the sky is
         auto lum = [](uint32_t c) {

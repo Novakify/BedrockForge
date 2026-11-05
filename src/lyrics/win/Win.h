@@ -25,6 +25,9 @@ namespace bf::lyrics::win {
 void openInNotepad(std::filesystem::path const& p);
 /// [BF] Clip mode: press a key combo system-wide (virtual keys, modifiers first), on a short-lived thread. Shell_win.cpp
 void pressHotkey(int const* vks, int count);
+/// [BF] Clip to TikTok: wait for the recorder's new clip in `folder` (90 s), then make a vertical 1080x1920 copy next
+/// to it with ffmpeg (hint / local / PATH / winget), on a low-priority background process. Logged to logFile.
+void verticalClip(std::filesystem::path folder, std::filesystem::path ffmpegHint, std::filesystem::path localFfmpeg, std::filesystem::path logFile);
 
 fetch::HttpResponse httpGet(std::string const& url, fetch::Headers const& headers, int64_t deadlineMs);
 

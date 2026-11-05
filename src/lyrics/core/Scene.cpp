@@ -5,9 +5,23 @@
 #include "lyrics/core/Text.h"
 
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <cmath>
 
 namespace bf::lyrics {
+
+// [BF] kinetic words: a line's identity for "does it repeat" (lower-case letters / digits, single spaces)
+std::string kineticKey(std::string const& text) {
+    std::string k;
+    for (unsigned char ch : text) {
+        if (std::isalnum(ch) || ch >= 0x80) k += char(std::tolower(ch));
+        else if (!k.empty() && k.back() != ' ') k += ' ';
+    }
+    while (!k.empty() && k.back() == ' ') k.pop_back();
+    return k;
+}
+
 
 using anim::rnd;
 
@@ -214,6 +228,16 @@ void Scene::tick(SceneInput const& in, Config const& c, CameraState const& cam, 
         mShown.clear();
     }
     mLastT          = t;
+    mMusic          = in.music && in.music->active ? in.music : nullptr;
+    if (lyrics != mHookFor) { // [BF] kinetic words: lines that come back are hooks
+        mHookFor = lyrics;
+        mHooks.clear();
+        if (lyrics) {
+            std::map<std::string, int> n;
+            for (auto const& l : lyrics->lines) if (l.index >= 0) ++n[kineticKey(l.text)];
+            for (auto const& [k, v] : n) if (v >= 2 && k.find(' ') != std::string::npos) mHooks.insert(k);
+        }
+    }
     Line const* cur = noLyrics ? nullptr : lyrics->lastStartedBefore(t);
     bool skyPairs   = c.lyricsStyle == LyricsStyle::Sky && !c.skyWords;
     if (notesOk && in.playing && quiet(lyrics, cur, t)) cur = &noteLine(t);
@@ -686,6 +710,53 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
     }
     float const spaceEm = std::max(0.26f, space);
     float       maxRow  = sky ? 18.0f : (chunked(c) ? 99.0f : (c.wholeLine ? 16.0f : 9.5f));
+    // [BF] kinetic words, staged when the line appears (stable for its whole life, no re-layout jitter):
+    //  - the line that lands on a drop slams in letter by letter
+    //  - a short line (1..3 words) in a big moment stacks: one big word per row, like a lyric video
+    //  - in a hook (a line that repeats), its strongest word grows
+    p.stacked = p.slam = false;
+    p.letters.clear();
+    if (c.kineticWords && !c.wholeLine && p.line.index >= 0 && n > 0) {
+        MusicState const* m = mMusic;
+        bool const big = m && (m->lifted || m->section == MusicSection::High || m->impact > 0.5f);
+        p.slam = m && (m->hold > 0.3f || m->impact > 0.7f);
+        size_t chars = 0;
+        for (int j = 0; j < n; ++j) chars += text::length(p.line.words[size_t(p.w0 + j)].text);
+        if (big && n <= 3 && chars <= 20 && !chunked(c)) {
+            p.stacked = true;
+            float const k = n == 1 ? 1.7f : 1.45f;
+            for (int j = 0; j < n; ++j) { p.wsize[size_t(j)] *= k; p.widths[size_t(j)] *= k; }
+            maxRow = 0.01f; // every word its own row
+        } else if (big && chunked(c)) { // word-by-word modes: each word lands bigger in the big moments
+            for (int j = 0; j < n; ++j) { p.wsize[size_t(j)] *= 1.3f; p.widths[size_t(j)] *= 1.3f; }
+        }
+        if (mHooks.count(kineticKey(p.line.text))) {
+            int best = -1; size_t bl = 3;
+            for (int j = 0; j < n; ++j) {
+                size_t const L = text::length(p.line.words[size_t(p.w0 + j)].text);
+                if (L > bl) { bl = L; best = j; }
+            }
+            if (best >= 0) { p.wsize[size_t(best)] *= 1.35f; p.widths[size_t(best)] *= 1.35f; }
+        }
+        if (p.slam && width) // letter offsets inside each word (em of the word's own size)
+            for (int j = 0; j < n; ++j) {
+                std::string const shown = show(p.line.words[size_t(p.w0 + j)].text, c.allCaps);
+                std::vector<std::pair<std::string, float>> ls;
+                float const total = width(shown, font);
+                float x = -total / 2;
+                for (size_t b = 0; b < shown.size();) {
+                    size_t len = 1;
+                    unsigned char const ch = uint8_t(shown[b]);
+                    if (ch >= 0xF0) len = 4; else if (ch >= 0xE0) len = 3; else if (ch >= 0xC0) len = 2;
+                    std::string const g = shown.substr(b, len);
+                    float const gw = width(g, font);
+                    if (g != " ") ls.push_back({g, x + gw / 2});
+                    x += gw;
+                    b += len;
+                }
+                p.letters.push_back(std::move(ls));
+            }
+    }
     std::vector<std::pair<int, int>> rows;
     for (int pass = 0; pass < 20; ++pass) {
         rows.clear();
@@ -706,7 +777,12 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
         for (int j = a; j < b; ++j) wr += p.widths[size_t(j)] + (j > a ? spaceEm : 0.0f);
         widest = std::max(widest, wr);
     }
-    float const rowGap = sky ? 1.4f : 1.5f;
+    float rowGap = sky ? 1.4f : 1.5f;
+    if (p.stacked) { // rows as tall as their words
+        float mx = 1;
+        for (float z : p.wsize) mx = std::max(mx, z);
+        rowGap = 0.95f * mx;
+    }
     float const totalH = float(rows.size() - 1) * rowGap;
     for (size_t r = 0; r < rows.size(); ++r) {
         auto [a, b] = rows[r];
@@ -752,6 +828,37 @@ bool heroWord(Line const& l, int i) {
     return double(dur) >= 2.0 * avg;
 }
 } // namespace
+
+
+// [BF] kinetic words at draw time. Returns true when the word was drawn here (as slamming letters) or must not show
+// yet; false = draw the word normally. Also gives sung words in big moments a punch on the beat.
+bool kinetic(Placed const& p, int j, Word const& wd, int64_t t, MusicState const* m, float beat, bool screen,
+             DrawWord& d, std::vector<DrawWord>& out) {
+    if (m && d.sung && (m->lifted || m->section == MusicSection::High)) d.scale *= 1.0f + 0.10f * beat;
+    if (!p.slam || size_t(j) >= p.letters.size() || p.letters[size_t(j)].empty() || d.dropNow) return false;
+    auto const& ls = p.letters[size_t(j)];
+    int64_t const t0 = wd.start - 120, step = 35, life = 170;
+    int64_t const done = t0 + int64_t(ls.size()) * step + life;
+    if (t >= done) return false;            // all landed: the plain word takes over
+    for (size_t k = 0; k < ls.size(); ++k) {
+        float const u = float(t - (t0 + int64_t(k) * step)) / float(life);
+        if (u <= 0) continue;               // this letter hasn't been thrown yet
+        float const e = std::min(1.0f, u), back = 1.0f - (1.0f - e) * (1.0f - e) * (1.0f - e);
+        DrawWord L = d;
+        L.text   = ls[k].first;
+        L.x      = d.x + ls[k].second * d.scale;
+        float const fall = (1.0f - back) * 1.3f * d.scale;
+        L.y      = screen ? d.y - fall : d.y + fall;
+        L.scale  = d.scale * (1.0f + 0.8f * (1.0f - back));
+        L.alpha  = d.alpha * std::min(1.0f, e * 2.5f);
+        L.glow   = d.glow + 0.6f * (1.0f - e);
+        L.hero   = false;
+        L.dropNow = false;
+        L.key    = d.key + 1000000 * int64_t(k + 1);
+        out.push_back(std::move(L));
+    }
+    return true;
+}
 
 // [BF] duets + translations (override files): the second singer gets its own tint; a translation is one small line
 // centred under the first chunk of its lyric line, fading with it
@@ -843,6 +950,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.dropFx  = c.exitAnim;
                 if (p.line.voice == 1) d.argb = kVoice2;
                 if (j == 0 && !frag && c.translations) translationUnder(p, d, alpha * gA, true, emPx, out);
+                if (kinetic(p, j, wd, t, mMusic, in.beat, true, d, out)) continue;
                 out.push_back(std::move(d));
             }
         return out;
@@ -904,6 +1012,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             d.durMs     = std::max<int64_t>(1, wd.end - wd.start);
             if (p.line.voice == 1) d.argb = kVoice2;
             if (j == 0 && !falling && c.translations) translationUnder(p, d, alpha * gA, false, e, out);
+            if (kinetic(p, j, wd, t, mMusic, in.beat, false, d, out)) continue;
             out.push_back(std::move(d));
         }
     }

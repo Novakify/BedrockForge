@@ -2,6 +2,7 @@
 #include "lyrics/core/Cinema.h"
 
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 #include <cstring>
 
@@ -54,7 +55,7 @@ SceneGrade gradeForScene(std::string_view id) {
     return g(1, 1, 1, 0, 1.0f, 1.0f, 0.10f, 1, 1, 1);
 }
 
-void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw) {
+void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw, uint32_t accent) {
     dt = std::clamp(dt, 0.0f, 0.25f);
     int const  r      = std::clamp(cfg.reactivity, 0, 3);
     bool const on     = m && m->active && cfg.director;
@@ -107,6 +108,9 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     }
     if (on) vig = 0.18f * m->build + 0.08f * m->beat * m->budget + 0.05f * m->bass * m->budget; // the world breathes with the bass
     vig += 0.30f * hold;                                         // the edges close in while it holds its breath
+    float const outro = on && cfg.songOutro ? m->outro : 0.0f;   // [BF] end credits: the world winds down
+    vig += 0.40f * outro;
+    if (on && cfg.letterbox) box = std::max(box, kLetterMax * outro);
     if (on && cfg.letterbox) box = std::max(box, kLetterMax * 0.9f * hold);
     mBox += (box - mBox) * ease(dt, box > mBox ? 0.9f : 0.6f);
     mVig += (vig - mVig) * ease(dt, hold > 0.05f ? 0.08f : 0.25f);
@@ -114,12 +118,25 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     float const ga = cfg.cinemaGrade ? kGrade[r] * mOn * std::clamp(cfg.intensity, 0.3f, 1.3f) : 0.0f;
     CinemaOut o;
     o.active = mOn > 0.01f || mBox > 0.001f || mFlash > 0.01f;
-    for (int k = 0; k < 3; ++k) { o.tint[k] = mCur.tint[k]; o.flashColor[k] = mCur.flash[k]; }
+    { // [BF] per-song identity: the cover's colour pulls the scene's tint a little (two songs in one scene differ)
+        float want[3] = {1, 1, 1};
+        if (cfg.songTint && accent) {
+            float const r = float((accent >> 16) & 255) / 255.0f, g = float((accent >> 8) & 255) / 255.0f, b = float(accent & 255) / 255.0f;
+            float const mx = std::max({r, g, b, 0.05f});
+            want[0] = r / mx; want[1] = g / mx; want[2] = b / mx; // hue only, full brightness
+        }
+        for (int k = 0; k < 3; ++k) mAcc[k] += (want[k] - mAcc[k]) * ease(dt, 1.2f);
+    }
+    float const accMax = std::max({mAcc[0], mAcc[1], mAcc[2]});
+    for (int k = 0; k < 3; ++k) {
+        o.tint[k] = mCur.tint[k] * (0.82f + 0.18f * mAcc[k]) / (0.82f + 0.18f * accMax);
+        o.flashColor[k] = mCur.flash[k] * (0.7f + 0.3f * mAcc[k]);
+    }
     // music lifts saturation / contrast a touch with the budget, calm sections stay softer
     float const up = on ? (m->budget - 0.5f) * 0.12f + imp * 0.10f + lift * 0.07f : 0.0f;
     o.amount     = std::clamp(mCur.amount * ga * (1.0f + 0.35f * lift), 0.0f, 1.0f);
     // the hush drains colour (down to ~60%) and lifts contrast a touch; the chorus look is richer
-    o.saturation = (1.0f + (mCur.saturation - 1.0f) * ga + up * mv) * (1.0f - 0.4f * hold);
+    o.saturation = (1.0f + (mCur.saturation - 1.0f) * ga + up * mv) * (1.0f - 0.4f * hold) * (1.0f - 0.3f * outro);
     o.contrast   = 1.0f + (mCur.contrast - 1.0f) * ga + up * 0.6f * mv + 0.06f * hold;
     o.vignette   = std::clamp(mCur.vignette * ga + mVig * mv, 0.0f, 0.65f);
     o.flash      = std::min(mFlashCap, mFlash * mFlashCap * std::min(1.0f, mv));
@@ -138,10 +155,29 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
         mShowYaw += (camYaw - mShowYaw) * ease(dt, 2.5f);              // follows where you look, lazily
         float const sway = 48.0f * std::sin(mShowAge * 0.13f);          // a slow arc around your back
         float const breath = on ? 0.5f * m->budget + 0.4f * m->impact : 0.0f;
+        // [BF] Director cuts: a hard angle change on the hit - low hero shot on a drop, side / wide on a chorus,
+        // a calm wide shot when it calms down, back to the sway when the chorus look ends. Cut on a beat.
+        mCutT += dt;
+        if (on && cfg.directorCuts) {
+            int want = -1;
+            if (m->dropNow) want = (mCutSeq++ % 2) ? 2 : 1;
+            else if (m->chorusNow) want = (mCutSeq++ % 2) ? 3 : 4 + (mCutSeq % 2);
+            else if (m->calmNow) want = 6;
+            else if (m->liftEnd) want = 0;
+            else if (m->lifted && mCutT > 7.0f && m->beat > 0.6f) want = (mShot + 1 + (mCutSeq++ % 3)) % 6; // keep cutting in the chorus
+            if (want >= 0 && want != mShot) { mNextShot = want; mCutWait = 0; }
+        } else if (mShot != 0 && !(on && m->lifted)) { mNextShot = 0; mCutWait = 0; }
+        if (mCutWait >= 0) { // drops / chorus hits are already on the beat; other cuts wait for the next one (<= 0.5 s)
+            mCutWait += dt;
+            bool const onHit = on && (m->dropNow || m->chorusNow || m->beat > 0.55f);
+            if (onHit || mCutWait > 0.5f) { mShot = mNextShot; mCutT = 0; mCutWait = -1; mCuts++; }
+        }
+        Shot const& sh = kShots[std::clamp(mShot, 0, int(std::size(kShots)) - 1)];
+        float const dolly = std::min(1.0f, mCutT / 6.0f);              // each shot creeps in and around a little
         o.showcase    = mShow;
-        o.orbitYaw    = mShowYaw + sway;
-        o.orbitPitch  = 13.0f + 5.0f * std::sin(mShowAge * 0.21f);
-        o.orbitRadius = 3.6f + breath;
+        o.orbitYaw    = mShowYaw + (mShot == 0 ? sway : sh.yaw + 7.0f * dolly);
+        o.orbitPitch  = mShot == 0 ? 13.0f + 5.0f * std::sin(mShowAge * 0.21f) : sh.pitch;
+        o.orbitRadius = mShot == 0 ? 3.6f + breath : sh.radius * (1.0f - 0.08f * dolly) + 0.3f * breath;
         o.focus       = 0.55f * mShow;
         o.letterbox   = std::max(o.letterbox, 0.06f * mShow);
         o.active      = true;
