@@ -58,6 +58,7 @@ void Pulse::emit(In const& in, std::vector<BfGlyphV1>& out) const {
         }
     }
     // the horizon equaliser: thin standing bars all around you, heights from the bands
+    if (!in.bars) return;
     int const bars = std::max(40, int(120 * in.density));
     double const t = in.now;
     for (int i = 0; i < bars; ++i) {

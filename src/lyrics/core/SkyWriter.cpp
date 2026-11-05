@@ -82,28 +82,45 @@ void SkyWriter::write(Line const& l, In const& in) {
     static float const azOff[] = {-38, 30, -6, 56, -62, 12, -24};
     float const az   = in.camYaw + azOff[k % 7];
     float const elev = 46.0f - 8.0f * float(k % 3);
-    // letters laid out along a gentle arc; spaces start a new word (no line across words)
-    std::vector<int> chars;
-    for (size_t i = 0; i < l.text.size() && chars.size() < 40; ++i) chars.push_back(uint8_t(l.text[i]));
-    int const   n    = int(chars.size());
-    float const step = std::min(1.9f, 66.0f / float(std::max(1, n)));
-    int         word = 0, prevStar = -1;
+    // [BF] a real constellation: one star per word (brighter for longer words), long words get a companion star,
+    // linked in singing order - reworked after an in-game look (a star per LETTER read as strings of fairy lights)
+    std::vector<std::pair<size_t, size_t>> words; // [begin, end) of each word in the text
+    for (size_t i = 0; i < l.text.size();) {
+        while (i < l.text.size() && l.text[i] == ' ') ++i;
+        size_t j = i;
+        while (j < l.text.size() && l.text[j] != ' ') ++j;
+        size_t letters = 0;
+        for (size_t q = i; q < j; ++q) letters += std::isalnum(uint8_t(l.text[q])) || uint8_t(l.text[q]) >= 0x80;
+        if (letters) words.push_back({i, j});
+        i = j;
+    }
+    if (words.size() > 9) words.resize(9);
+    int const   n    = int(words.size());
+    float const step = std::min(9.0f, 54.0f / float(std::max(1, n)));
     uint32_t    seed = uint32_t(l.start) * 2654435761u + uint32_t(k);
+    int         prevStar = -1;
     for (int i = 0; i < n; ++i) {
-        int const ch = chars[size_t(i)];
-        if (ch == ' ') { ++word; prevStar = -1; continue; }
-        if (!std::isalnum(ch) && ch < 128) continue;
-        float const ax  = (float(i) - float(n) * 0.5f) * step;
-        float const jit = (hash01(seed + uint32_t(i) * 97u) - 0.5f) * 2.6f + std::sin(float(i) * 0.7f) * 1.2f;
-        float const e   = elev + jit;
+        size_t const len = words[size_t(i)].second - words[size_t(i)].first;
+        float const ax  = (float(i) - float(n - 1) * 0.5f) * step + (hash01(seed + uint32_t(i) * 131u) - 0.5f) * step * 0.5f;
+        float const e   = elev + (hash01(seed + uint32_t(i) * 97u) - 0.5f) * 9.0f;
         Star s;
         s.dir   = dir(az + ax / std::max(0.3f, std::cos(float(rad(e)))), -e);
-        s.delay = 0.04f * float(c.stars.size());
-        s.word  = word;
+        s.delay = 0.12f * float(c.stars.size());
+        s.word  = i;
+        s.mag   = std::clamp(0.65f + 0.09f * float(len), 0.65f, 1.35f);
         c.stars.push_back(s);
         int const idx = int(c.stars.size()) - 1;
         if (prevStar >= 0) c.links.emplace_back(prevStar, idx);
         prevStar = idx;
+        if (len >= 7) { // a faint companion off to the side, linked as a branch
+            Star b = s;
+            float const be = e + (hash01(seed + uint32_t(i) * 53u) > 0.5f ? 4.5f : -4.5f);
+            b.dir   = dir(az + (ax + step * 0.35f) / std::max(0.3f, std::cos(float(rad(be)))), -be);
+            b.delay = s.delay + 0.06f;
+            b.mag   = 0.55f;
+            c.stars.push_back(b);
+            c.links.emplace_back(idx, int(c.stars.size()) - 1);
+        }
     }
     if (c.stars.size() < 3) return;
     mCons.push_back(std::move(c));
@@ -155,7 +172,7 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
             Vec3 const A = pos[size_t(a)], B = A + (pos[size_t(b)] - A) * double(lp);
             Vec3 const mid = (A + B) * 0.5, axis = (B - A) * 0.5;
             Vec3 const n = (mid * -1.0).normalized();
-            Vec3 const thick = n.cross(axis.normalized()).normalized() * double(R * 0.0017f);
+            Vec3 const thick = n.cross(axis.normalized()).normalized() * double(R * 0.0011f);
             quad(mid, axis, thick, lineCol, lineA * bright, 1.0f, 1.5f);
         }
         for (size_t i = 0; i < c.stars.size(); ++i) {
@@ -165,7 +182,8 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
             float const tw = 0.8f + 0.2f * std::sin(float(in.now) * 2.3f + float(i) * 1.7f) +
                              0.35f * treble * hash01(uint32_t(i) * 31u + uint32_t(c.age * 4));
             float const a  = bright * tw * shown[i];
-            float const rc = R * 0.006f, rh = R * 0.017f * (1.0f + 0.5f * mFinale);
+            float const mg = c.stars[i].mag;
+            float const rc = R * 0.0048f * mg, rh = R * 0.014f * mg * (1.0f + 0.5f * mFinale);
             if (lightSky) quad(pos[i], r * double(rc * 1.9f), u * double(rc * 1.9f), darkCol, 0.55f * a, 1.0f, 3.0f); // dark ring
             quad(pos[i], r * double(rh), u * double(rh), in.color, (lightSky ? 0.3f : 0.22f) * a, 1.0f, 10.0f); // halo
             quad(pos[i], r * double(rc), u * double(rc), lightSky ? in.color : 0xFFFFFFFFu, a, 1.0f, 2.0f);   // core

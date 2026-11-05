@@ -47,6 +47,8 @@ private:
     std::vector<Quad> mQuads;
     uint32_t          mSeq = 0;
     float             mLuma = 0;
+    float             mDomeYaw = 0;  // [BF] the dome's turn for the current preset
+    std::string       mDomeFor;
 };
 
 /// Pack quads into the shared vertex layout (4 vertices per quad).

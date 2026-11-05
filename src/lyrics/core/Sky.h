@@ -58,7 +58,7 @@ using Params = std::array<Texel, 16>;
 
 /// LiveSkyShader.params(): `time` is WorldSky.skyTime (seconds, speed-scaled), `invRot` the inverse of the view
 /// rotation, row-major m00 m01 m02 m10 ... (identity when the dome is drawn in world axes).
-Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9]);
+Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9], float domeYaw = 0); // [BF] domeYaw: degrees the dome turns (signature in front of the player)
 
 /// WorldSky.initStars(): 1300 stars from java.util.Random(1337), same order of draws.
 struct Star {

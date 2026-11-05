@@ -20,7 +20,7 @@ namespace bf::lyrics {
 
 class SkyWriter {
 public:
-    struct Star { Vec3 dir; float delay = 0; int word = 0; };
+    struct Star { Vec3 dir; float delay = 0; int word = 0; float mag = 1; };
     struct Constellation {
         std::vector<Star> stars;
         std::vector<std::pair<int, int>> links;

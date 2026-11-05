@@ -60,7 +60,12 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     h.frame   = ++mSeq;
     if (p) {
         float id3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}; // the dome is drawn in world axes (RF builds rays from the camera)
-        auto  q      = pack(*p, aurora1(*p, cfg), aurora2(*p, cfg), mFrame.time, cfg, id3);
+        if (mDomeFor != p->id) { // [BF] a new sky: turn its signature (body / burst / eclipse, az ~180) to where you look
+            mDomeFor = p->id;
+            float const front = body(*p) ? float(body(*p)->az) : 180.0f;
+            mDomeYaw = float(in.yaw) - front;
+        }
+        auto  q      = pack(*p, aurora1(*p, cfg), aurora2(*p, cfg), mFrame.time, cfg, id3, mDomeYaw);
         for (int i = 0; i < 16; ++i) std::memcpy(h.params[i], q[size_t(i)].data(), 4);
     }
     h.info[0]       = mFrame.t;

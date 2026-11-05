@@ -1709,12 +1709,12 @@ TEST(sky_writes_the_song) { // [BF] hook lines become constellations, finale lig
     CHECK_EQ(afterFirst, size_t(1));                  // written when "we light it up" ended
     CHECK_EQ(w.constellations().size(), size_t(2));   // and again at the second hook
     auto const& c = w.constellations()[0];
-    CHECK(c.stars.size() >= 10);
+    CHECK(c.stars.size() >= 4 && c.stars.size() <= 18); // [BF] a star per word (not per letter)
     CHECK(!c.links.empty());
     for (auto const& s : c.stars) CHECK(s.dir.y > 0.4); // up in the sky
     std::vector<BfGlyphV1> q;
     w.emit(in, Vec3{}, q);
-    CHECK(q.size() > 20);
+    CHECK(q.size() > 8);
     in.songSeq = 2; in.t = 0;
     w.step(in);
     CHECK(w.constellations().empty()); // moved to dissolving
@@ -2213,6 +2213,12 @@ TEST(moments_fit_the_sky) { // [BF] chorus deck, song arc, lyric keywords
     }
     CHECK_EQ(embers, 1);                                              // the second "fire" is inside the cooldown
     CHECK_EQ(stars, 1);                                               // "stars" under a warm sky: golden fireflies
+    // line-timed sources (one "word" = the whole line, seen in game with NetEase): the keyword still lands in time
+    Lyrics one = lyr;
+    for (auto& l : one.lines) { if (l.words.empty()) continue; l.words.resize(1); l.words[0].text = l.text; l.words[0].end = l.end; }
+    Moments k3; int hits = 0;
+    for (int64_t t = 0; t < 9000; t += 17) { ki.t = t; ki.lyrics = &one; k3.step(ki); hits += !k3.out().event.empty(); }
+    CHECK(hits >= 2);
 }
 
 TEST(song_arc_total_final_bridge) {

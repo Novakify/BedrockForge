@@ -1,5 +1,6 @@
 // LyricsFlow port - frame builder + shared frame store. Original code for Bedrock Forge; see Engine.h.
 #include "lyrics/core/Engine.h"
+#include "lyrics/core/Moments.h"
 #include "lyrics/core/Text.h"
 
 #include <cstddef>
@@ -117,6 +118,10 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         Pulse::In ui; // instrumentals: ground rings on the kicks, the horizon equaliser
         ui.music = in.music; ui.dt = in.dt; ui.camYaw = cam.yaw; ui.now = in.nowSeconds; ui.color = tint;
         ui.enabled = cfg.instrumentalFx && cfg.director;
+        { // [BF] what fits the sky: a neon equaliser belongs to night / space / neon skies, not a pastel or storm sky
+            SkyFamily const f = skyFamily(cfg.skyPreset);
+            ui.bars = f != SkyFamily::Warm && f != SkyFamily::Storm;
+        }
         ui.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
         mPulse.step(ui);
         mPulse.emit(ui, mBack);
@@ -128,7 +133,11 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         SkyWriter::In si; // the sky writes the song
         si.t = in.t; si.songSeq = in.songSeq; si.playing = in.playing; si.lyrics = in.lyrics; si.music = in.music;
         si.dt = in.dt; si.camYaw = cam.yaw; si.camPitch = cam.pitch; si.camPos = cam.pos; si.now = in.nowSeconds; si.skyLuma = in.skyLuma;
-        si.enabled = cfg.constellations && cfg.showLyrics;
+        { // [BF] the sky writes in stars only where there are stars to write with (night / space / aurora / cold)
+            SkyFamily const f = skyFamily(cfg.skyPreset);
+            bool const starry = f == SkyFamily::Space || f == SkyFamily::Aurora || f == SkyFamily::Cold || f == SkyFamily::Neon;
+            si.enabled = cfg.constellations && cfg.showLyrics && starry;
+        }
         si.color = tint;
         mSkyWriter.step(si);
         mSkyWriter.emit(si, mOrigin, mBack);

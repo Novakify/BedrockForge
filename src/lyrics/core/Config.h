@@ -149,7 +149,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(cinemaGrade, true)               /* [BF] Director colour grade + vignette of the world per scene (RF, D3D12) */  \
     B(impactFrames, true)              /* [BF] a soft light flash + bloom / CA kick on drops and chorus hits (RF) */   \
     B(letterbox, true)                 /* [BF] cinema bars ease in during builds and big hooks (RF) */               \
-    B(portals, true)                   /* [BF] a ring of light opens in the sky on choruses / drops */               \
+    B(portals, false)                  /* [BF] a ring of light opens in the sky on choruses / drops (off: Moments) */ \
     B(chorusVariety, true)             /* [BF] each chorus gets its own moment from the sky's deck, the last one all */ \
     B(lyricMoments, true)              /* [BF] sung words about rain / fire / snow / stars / love ... touch the world */ \
     B(songArc, true)                   /* [BF] choruses grow through the song, the bridge goes quiet and strange */   \

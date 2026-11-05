@@ -130,13 +130,25 @@ void Moments::step(MomentsIn const& in) {
                 if (l.end < mLastT - 2000) continue;
                 if (l.start > in.t) break;
                 for (auto const& w : l.words) {
-                    if (w.start <= mLastT || w.start > in.t) continue;
-                    Moment const x = keywordMoment(w.text, fam);
-                    if (x == Moment::None || mSinceKey < kKeyGap || mCool[conceptSlot(x)] > 0) continue;
-                    float const amt = m->lifted ? 0.35f : 0.6f; // inside a chorus look: a softer accent
-                    start(x, amt, kKeyLife, false, "\"" + w.text + "\"");
-                    mCool[conceptSlot(x)] = kKeyCooldown;
-                    mSinceKey = 0;
+                    if (w.end <= mLastT || w.start > in.t) continue;
+                    // a timed "word" can be a whole line (some sources time lines only): each token gets its share
+                    size_t const n = w.text.size();
+                    for (size_t b = 0; b < n;) {
+                        while (b < n && w.text[b] == ' ') ++b;
+                        size_t e = b;
+                        while (e < n && w.text[e] != ' ') ++e;
+                        if (e == b) break;
+                        int64_t const at = w.start + int64_t(double(w.end - w.start) * double(b) / double(std::max<size_t>(1, n)));
+                        std::string_view const tok(w.text.data() + b, e - b);
+                        b = e;
+                        if (at <= mLastT || at > in.t) continue;
+                        Moment const x = keywordMoment(tok, fam);
+                        if (x == Moment::None || mSinceKey < kKeyGap || mCool[conceptSlot(x)] > 0) continue;
+                        float const amt = m->lifted ? 0.35f : 0.6f; // inside a chorus look: a softer accent
+                        start(x, amt, kKeyLife, false, "\"" + std::string(tok) + "\"");
+                        mCool[conceptSlot(x)] = kKeyCooldown;
+                        mSinceKey = 0;
+                    }
                 }
             }
         mLastT = in.t;

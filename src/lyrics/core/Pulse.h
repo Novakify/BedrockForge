@@ -26,6 +26,7 @@ public:
         uint32_t color = 0xFFB9A2FF; // ARGB
         bool     enabled = true;
         float    density = 1.0f;     // AutoPerf: 0.25 .. 1
+        bool     bars = true;        // the horizon equaliser (off for pastel / storm skies)
     };
     void step(In const& in);
     void emit(In const& in, std::vector<BfGlyphV1>& out) const;

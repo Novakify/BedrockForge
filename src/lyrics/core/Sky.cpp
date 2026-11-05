@@ -105,7 +105,7 @@ uint32_t aurora2(Preset const& p, Config const& cfg) {
     return p.aurora2 != 0 ? p.aurora2 : 0xFFFFFF;
 }
 
-Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9]) {
+Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9], float domeYaw) {
     float pattern = std::clamp(cfg.skyPattern, 0.2f, 1.5f);
     float lively  = std::clamp(cfg.skyLively, 0.0f, 1.0f);
     float breath  = cfg.skyBreath <= 0.01f
@@ -124,7 +124,8 @@ Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const
     o[6]   = b ? word(pair(b->az * 100.0, (b->el + 90.0) * 100.0)) : Texel{0, 0, 0, 0};
     uint32_t w7 = (b ? (pair(b->radius * 1000.0, 0) & 0xFFFF0000u) : 0u) | uint32_t(p.ordinal) << 8;
     o[7]   = word(w7);
-    float m[10] = {invRot[0], invRot[1], invRot[2], invRot[3], invRot[4], invRot[5], invRot[6], invRot[7], invRot[8], 0};
+    float const dy = float(std::remainder(double(domeYaw), 360.0)) / 360.0f; // [BF] -0.5..0.5 turns
+    float m[10] = {invRot[0], invRot[1], invRot[2], invRot[3], invRot[4], invRot[5], invRot[6], invRot[7], invRot[8], dy};
     for (int i = 0; i < 5; ++i) o[8 + i] = word(pair(enc(m[i * 2]), enc(m[i * 2 + 1])));
     return o;
 }
