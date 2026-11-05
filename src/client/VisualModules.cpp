@@ -28,6 +28,7 @@
 #include "mc/world/level/dimension/Dimension.h"
 #include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/deps/minecraft_renderer/constantbuffers/PerFrameConstants.h"
+#include "mc/deps/minecraft_renderer/objects/ViewRenderObject.h"
 #include "mc/deps/minecraft_renderer/constantbuffers/GlobalConstantBuffers.h"
 #include "mc/deps/minecraft_renderer/renderer/MeshContext.h"
 #include "mc/client/gui/screens/ScreenContext.h"
@@ -248,9 +249,29 @@ LL_TYPE_INSTANCE_HOOK(BfSetupFogHook, ll::memory::HookPriority::Normal, LevelRen
     dump("FOG_CONTROL", fctl);
 }
 
+// ---- [LyricsForge] sky -> world colours, step 1 (read-only): dump the game's ViewRenderData (camera pos, fog/sky/
+// zenith/horizon/sunrise colours) as floats so the layout can be checked before anything is written into it.
+namespace { std::atomic<int> gViewDiag{0}; std::atomic<int64_t> gViewDiagMs{0}; }
+LL_TYPE_INSTANCE_HOOK(BfViewDiagHook, ll::memory::HookPriority::Normal, LevelRendererPlayer,
+                      &LevelRendererPlayer::$callRenderNameTags, void, ScreenContext& screenContext,
+                      ViewRenderObject const& renderObj, Font& font) {
+    origin(screenContext, renderObj, font);
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (gViewDiag.load() >= 6 || now - gViewDiagMs.load() < 4000) return;
+    gViewDiagMs = now;
+    ++gViewDiag;
+    float f[35];
+    std::memcpy(f, &renderObj.mViewData, sizeof f);
+    char b[900];
+    int n = std::snprintf(b, sizeof b, "[BF] view diag:");
+    for (int i = 0; i < 35 && n < 860; ++i) n += std::snprintf(b + n, sizeof b - size_t(n), " %d:%.4g", i, double(f[i]));
+    fogLog().info("{}", b);
+}
+
 void installVisualHooks() {
     BfPerFrameInitHook::hook();
     BfSetupFogHook::hook();
+    BfViewDiagHook::hook();
     BfTessLightHook::hook();
     BfAmbientHook::hook();
     BfLightImageHook::hook();
@@ -265,6 +286,7 @@ void installVisualHooks() {
 void uninstallVisualHooks() {
     BfPerFrameInitHook::unhook();
     BfSetupFogHook::unhook();
+    BfViewDiagHook::unhook();
     BfTessLightHook::unhook();
     BfAmbientHook::unhook();
     BfLightImageHook::unhook();
