@@ -42,8 +42,12 @@ GLOBAL vec3 C;
 
 GCONST int SUN_K = 0, MOON_K = 1, ECLIPSE_K = 2, SYNTH_K = 3;
 
+GLOBAL int PXB; // [LyricsForge] which parameter row: 0 = the sky now, PX_PREV_BASE = the one being swept away
+#ifndef PX_PREV_BASE
+#define PX_PREV_BASE 16
+#endif
 vec4 px(int i) {
-    return PX_FETCH(i);
+    return PX_FETCH(i + PXB);
 }
 
 float u16(vec2 b) {
@@ -1500,7 +1504,7 @@ int realKind(int p) {
     return -1;
 }
 
-vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
+vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
     PULSE = skyInfo4.w;
     TOP = px(0).rgb;
@@ -1635,3 +1639,25 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     return vec4(col, a);
 }
 
+// [LyricsForge] sky transitions: while a new sky sweeps in, both are drawn and wiped along a front that rises from the
+// horizon over the zenith, a seam of the new sky's light riding on it (only during the ~1.6 s of the sweep)
+vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
+    PXB = 0;
+    vec4 cn = skyOne(skyDir, skyInfo4);
+    float swr = PX_FETCH(14).r;
+    if (swr < 0.002) return cn;
+    float sw = clamp((swr * 255.0 - 1.0) / 254.0, 0.0, 1.0);
+    vec3 seamC = mix(A1, HOR, 0.4);
+    if (lum3(seamC) < 0.05) seamC = v3(0.85);
+    float el = degrees(asin(clamp(normalize(skyDir).y, -1.0, 1.0)));
+    PXB = PX_PREV_BASE;
+    vec4 co = skyOne(skyDir, vec4(skyInfo4.xyz, 0.0));
+    PXB = 0;
+    float e = sw * sw * (3.0 - 2.0 * sw);
+    float front = -12.0 + 118.0 * e;
+    float m = 1.0 - sm(front - 7.0, front + 7.0, el);
+    vec4 c = mix(co, cn, m);
+    float seam = exp(-(el - front) * (el - front) / 10.0) * sin(3.14159265 * sw);
+    c.rgb = clamp(c.rgb + seamC * seam * 0.55, 0.0, 1.0);
+    return c;
+}

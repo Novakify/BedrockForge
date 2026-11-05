@@ -116,6 +116,9 @@ struct BfSkyFrameV1 {
     uint32_t vertTotal;   // vertices available
     char     spritesFile[260];
     char     pictureFile[260];
+    // [LyricsForge] sky transitions: the sky being replaced (same layout as params) while params[14].r says how far
+    // the new sky has swept in (0 = no transition, 1..255 = 0..1). RF draws both and wipes from the horizon up.
+    uint8_t  prevParams[16][4];
 };
 
 /// Copy the current sky frame. hdr may not be null; dst may be null (header only). Returns vertices copied.
