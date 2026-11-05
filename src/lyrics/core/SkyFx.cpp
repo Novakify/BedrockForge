@@ -366,6 +366,12 @@ void Fx::weather(Weather w, float amount, int quality, float outside, double dt,
     }
 }
 
+// [LyricsForge] lightning only belongs to dark / stormy skies (a bolt out of a clear blue day looked wrong)
+bool darkSky(Preset const& p) {
+    auto lum = [](uint32_t c) { return (0.2126f * float((c >> 16) & 255) + 0.7152f * float((c >> 8) & 255) + 0.0722f * float(c & 255)) / 255.0f; };
+    return 0.5f * (lum(p.top) + lum(p.horizon)) < 0.32f;
+}
+
 void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame const& f, FxIn const& in,
                std::vector<Quad>& out) {
     c_yaw = in.cam.yaw;
@@ -382,7 +388,7 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
     if (p->stars >= 0.8f && cfg.fxStars && cfg.fxConstellations && perf.allow(2)) // [BF] only real night skies
         constellations(f.visible * f.bright * std::clamp((p->stars - 0.8f) * 5.0f, 0.0f, 1.0f), in.cam, out);
     if (std::string_view(p->id) == "storm" && perf.allow(2)) storm(f.visible, f.time, in.cam, out);
-    else if (in.lightning > 0.05f && perf.allow(2)) storm(f.visible * in.lightning, f.time, in.cam, out, true); // [BF] Moments
+    else if (in.lightning > 0.05f && perf.allow(2) && darkSky(*p)) storm(f.visible * in.lightning, f.time, in.cam, out, true); // [BF] Moments (not on a clear day)
     if (in.meteors > 0) meteorBurst(in.meteors, in.nowMs);
     bool const spawn = (p->shootingStars || p->stars >= 0.8f) && perf.allow(3);
     if (spawn || !mShooting.empty()) shooting(f.visible, in.nowMs, in.cam, out, spawn);
