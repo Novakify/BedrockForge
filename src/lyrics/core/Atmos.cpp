@@ -19,7 +19,7 @@ void Atmos::respawn(Mote& m, Vec3 const& cam, bool anywhere) {
     double const az = rnd() * 6.2831853, el = (rnd() - 0.35) * 1.4;
     m.pos   = cam + Vec3{std::cos(az) * std::cos(el), std::sin(el) * 0.6 + 0.3, std::sin(az) * std::cos(el)} * r;
     m.vel   = Vec3{(rnd() - 0.5) * 0.25, 0.04 + rnd() * 0.12, (rnd() - 0.5) * 0.25};
-    m.size  = 0.06f + 0.08f * rnd();   // half size, blocks: visible specks at 3 .. 13 m
+    m.size  = 0.022f + 0.03f * rnd();  // [LyricsForge] half size, blocks: fine specks (the soft halo makes them read)
     m.phase = rnd() * 6.2831853f;
     m.seed  = rnd();
 }
@@ -55,7 +55,14 @@ void Atmos::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& out) 
     Vec3 const f{-std::sin(y) * std::cos(p), -std::sin(p), std::cos(y) * std::cos(p)};
     Vec3 const r = Vec3{-f.z, 0, f.x}.normalized();
     Vec3 const u = r.cross(f).normalized();
-    uint32_t const rgba = toRgba(in.color | 0xFF000000u);
+    // [LyricsForge] a bright speck (the tint pushed toward white) inside a soft halo of the tint: dust catching light,
+    // not flat discs
+    auto mixW = [](uint32_t c, float k) {
+        auto ch = [&](int s) { return uint32_t(float((c >> s) & 255) + (255.0f - float((c >> s) & 255)) * k) << s; };
+        return ch(16) | ch(8) | ch(0);
+    };
+    uint32_t const rgba = toRgba(mixW(in.color & 0xFFFFFF, 0.55f) | 0xFF000000u);
+    uint32_t const halo = toRgba((in.color & 0xFFFFFF) | 0xFF000000u);
     for (auto const& m : mMotes) {
         Vec3 const rel = m.pos - in.camPos;
         double const d = rel.length();
@@ -66,18 +73,22 @@ void Atmos::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& out) 
         float const a    = std::clamp(lvl, 0.0f, 0.9f) * edge * mOn;
         if (a < 0.01f) continue;
         float const s = m.size * (1.0f + 0.6f * treble + 0.8f * impact);
-        BfGlyphV1 q{};
         Vec3 const c = m.pos - origin;
-        q.pos[0] = float(c.x); q.pos[1] = float(c.y); q.pos[2] = float(c.z);
-        q.right[0] = float(r.x * s); q.right[1] = float(r.y * s); q.right[2] = float(r.z * s);
-        q.up[0] = float(u.x * s); q.up[1] = float(u.y * s); q.up[2] = float(u.z * s);
-        q.fill = q.fill2 = rgba;
-        q.alpha    = a;
-        q.outlineW = 1.0f;  // round
-        q.glowW    = 1.5f;  // soft edge, px
-        q.uv[2] = q.uv[3] = 1.0f;
-        q.flags = BF_GLYPH_SOLID;
-        out.push_back(q);
+        auto put = [&](float sz, uint32_t col, float alpha, float soft) {
+            BfGlyphV1 q{};
+            q.pos[0] = float(c.x); q.pos[1] = float(c.y); q.pos[2] = float(c.z);
+            q.right[0] = float(r.x * sz); q.right[1] = float(r.y * sz); q.right[2] = float(r.z * sz);
+            q.up[0] = float(u.x * sz); q.up[1] = float(u.y * sz); q.up[2] = float(u.z * sz);
+            q.fill = q.fill2 = col;
+            q.alpha    = alpha;
+            q.outlineW = 1.0f;  // round
+            q.glowW    = soft;  // soft edge, px
+            q.uv[2] = q.uv[3] = 1.0f;
+            q.flags = BF_GLYPH_SOLID;
+            out.push_back(q);
+        };
+        put(s * 4.0f, halo, a * 0.22f, 14.0f); // the halo
+        put(s, rgba, std::min(1.0f, a * 1.2f), 2.0f); // the speck
     }
 }
 

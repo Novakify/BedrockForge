@@ -33,7 +33,7 @@ void Pulse::step(In const& in) {
     mBarRgb = in.color & 0xFFFFFF;
     if (!in.bars || mOn < 0.01f) return;
     float const bass = m ? m->bass : 0, mid = m ? m->mid : 0, treble = m ? m->treble : 0, energy = m ? m->energy : 0.5f;
-    int const bars = std::max(48, int(120 * in.density));
+    int const bars = std::max(40, int(72 * in.density)); // [LyricsForge] fewer, softer pillars (120 read as a fence of wires)
     double const t = in.now;
     mBarEl.resize(size_t(bars));
     for (int i = 0; i < bars; ++i) {
@@ -73,8 +73,10 @@ void Pulse::emit(In const& in, std::vector<BfGlyphV1>& out) const {
     };
     // ground rings: a thin, soft pulse of light rolling outward along the ground (reworked after an in-game look: the
     // first version was a thick band with white dashes and read as a cheap hoop). One colour, smooth, faint.
+    // [LyricsForge] off: a flat ring at foot height can't follow the terrain (it sliced through blocks and broke into
+    // beads on slopes). The beat lives in the sky and the world light instead.
     int const seg = std::max(32, int(72 * in.density));
-    for (auto const& r : mRings) {
+    if (false) for (auto const& r : mRings) {
         float const k = r.age / kRingLife, e = 1.0f - (1.0f - k) * (1.0f - k);
         float const R = 0.8f + (kRingMax - 0.8f) * e * (0.7f + 0.3f * r.power);
         float const a = mOn * (1.0f - k) * (1.0f - k) * 0.38f * r.power;

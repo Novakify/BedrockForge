@@ -2235,11 +2235,8 @@ TEST(instrumentals_take_the_stage) { // [BF] no singing: the world performs the 
     CHECK(p.level() > 0.5f);
     std::vector<BfGlyphV1> out;
     p.emit(pi, out);
-    CHECK(out.size() > 100);
-    bool ground = false;
-    for (auto const& g : out) ground |= std::fabs(g.pos[1] + Pulse::kEye - 0.03f) < 0.01f;
-    CHECK(ground);
-    CHECK(p.barEl().size() >= 48 && p.barAlpha() > 0.1f);         // the equaliser goes to the sky (behind the terrain)
+    CHECK(out.empty());                                          // [LyricsForge] no ground rings (they cut through terrain)
+    CHECK(p.barEl().size() >= 40 && p.barAlpha() > 0.1f);         // the equaliser goes to the sky (behind the terrain)
     { float lo = 99, hi = 0; for (float e : p.barEl()) { lo = std::min(lo, e); hi = std::max(hi, e); }
       CHECK(lo > 2.5f && hi < 32.0f && hi > lo); }
     m.instrumental = 0;

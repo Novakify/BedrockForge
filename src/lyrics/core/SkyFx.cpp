@@ -391,10 +391,12 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
         float const a = in.eqAlpha * f.visible;
         uint32_t const tip = ((((in.eqColor >> 16) & 0xFF) * 2 + 255) / 3) << 16 | ((((in.eqColor >> 8) & 0xFF) * 2 + 255) / 3) << 8 |
                              ((in.eqColor & 0xFF) * 2 + 255) / 3;
-        for (size_t i = 0; i < n; ++i) {
+        uint32_t const glowC = lerpColor(in.eqColor, mTint, 0.4f);
+        for (size_t i = 0; i < n; ++i) { // [LyricsForge] pillars of light: bright on the skyline, fading as they rise
             double const az = double(i) * 360.0 / double(n), top = double((*in.eq)[i]);
-            streak(out, at(az, -0.4), at(az, top), 0.011, in.eqColor, 0.0f, a * 0.28f); // soft beam
-            streak(out, at(az, -0.4), at(az, top), 0.0035, tip, 0.0f, a);                // its bright core, fading to the ground
+            streak(out, at(az, -0.6), at(az, top), 0.024, glowC, a * 0.16f, 0.0f);   // the soft column
+            streak(out, at(az, -0.6), at(az, top), 0.0026, tip, a * 0.7f, a * 0.18f); // its core
+            softGlow(out, in.cam, at(az, top), 0.006, tip, a * 0.45f);               // a little light at the top
         }
     }
     // [LyricsForge] the chorus light wave is drawn by the sky shader now (a soft sweep in the sky's own colours)
