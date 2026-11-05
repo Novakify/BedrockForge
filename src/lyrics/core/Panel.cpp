@@ -1113,9 +1113,10 @@ void Panel::home(Ctx& c, Config& cfg) {
     c.pager("hp", 42, mHomePage, pages, mHomePage, a);
     float const iv = c.slider("hint", "Intensity", 142, (std::clamp(cfg.intensity, 0.3f, 1.6f) - 0.3f) / 1.3f, a);
     cfg.intensity = 0.3f + 1.3f * iv;
-    c.toggle2("hsc", 206, 156, 52, "Showcase", cfg.showcase, [&] { cfg.showcase = !cfg.showcase; }, a);
-    c.toggle2("hcl", 260, 156, 52, "Chorus", cfg.chorusLooks, [&] { cfg.chorusLooks = !cfg.chorusLooks; }, a);
-    c.toggle2("hdm", 314, 156, 52, "Drops", cfg.dropMoment, [&] { cfg.dropMoment = !cfg.dropMoment; }, a);
+    // lit pills (a toggle's switch leaves no room for the word at this width - seen in game)
+    c.option("hsc", 206, 156, 52, 15, "Showcase", cfg.showcase, [&] { cfg.showcase = !cfg.showcase; }, a);
+    c.option("hcl", 260, 156, 52, 15, "Chorus", cfg.chorusLooks, [&] { cfg.chorusLooks = !cfg.chorusLooks; }, a);
+    c.option("hdm", 314, 156, 52, 15, "Drops", cfg.dropMoment, [&] { cfg.dropMoment = !cfg.dropMoment; }, a);
     c.option("hsv", 206, 175, 78, 14, "Save as my scene", false, [&] { c.actions.push_back({PanelAction::Kind::SaveScene, 0}); }, a);
     c.option("hadv", 288, 175, 78, 14, "Advanced \xE2\x80\xBA", false, [&] { mPage = 4; mFxPage = 0; mPageTime = c.in.nowMs; }, a);
     std::string mood = cfg.autoScene ? "Auto: each song gets a scene that fits it" : "pick a scene: the whole world changes with it";
