@@ -369,7 +369,11 @@ void Fx::weather(Weather w, float amount, int quality, float outside, double dt,
 // [LyricsForge] lightning only belongs to dark / stormy skies (a bolt out of a clear blue day looked wrong)
 bool darkSky(Preset const& p) {
     auto lum = [](uint32_t c) { return (0.2126f * float((c >> 16) & 255) + 0.7152f * float((c >> 8) & 255) + 0.0722f * float(c & 255)) / 255.0f; };
-    return 0.5f * (lum(p.top) + lum(p.horizon)) < 0.32f;
+    if (0.5f * (lum(p.top) + lum(p.horizon)) >= 0.32f) return false;
+    // ...and to skies with weight in them: a bolt across a clear star field (galaxy, bright night) read as a glitch
+    bool const heavy = p.weather == Weather::Rain || p.weather == Weather::Thunder || p.weather == Weather::Embers ||
+                       p.weather == Weather::Blizzard;
+    return heavy || p.stars < 0.3f;
 }
 
 void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame const& f, FxIn const& in,

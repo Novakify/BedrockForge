@@ -28,6 +28,9 @@
 #include "mc/world/level/dimension/Dimension.h"
 #include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/deps/minecraft_renderer/constantbuffers/PerFrameConstants.h"
+#include "mc/deps/minecraft_renderer/constantbuffers/GlobalConstantBuffers.h"
+#include "mc/deps/minecraft_renderer/renderer/MeshContext.h"
+#include "mc/client/gui/screens/ScreenContext.h"
 #include "ll/api/mod/NativeMod.h"
 #include <chrono>
 #include <cstdio>
@@ -211,6 +214,12 @@ LL_TYPE_INSTANCE_HOOK(BfSetupFogHook, ll::memory::HookPriority::Normal, LevelRen
                       ScreenContext& screenContext, float const skyIntensityOverride) {
     origin(screenContext, skyIntensityOverride);
     auto* pf = gPerFrame.load();
+    if (!pf) { // $init runs before mods enable, so take it from the screen's GlobalConstantBuffers instead
+        mce::MeshContext& mc = screenContext;
+        mce::GlobalConstantBuffers* gcb = nullptr;
+        std::memcpy(&gcb, &mc.constantBuffers, sizeof gcb);
+        if (gcb) { pf = reinterpret_cast<mce::PerFrameConstants*>(&gcb->perFrameConstantBuffer); gPerFrame = pf; }
+    }
     int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (gFogDiag.load() >= 6 || now - gFogDiagMs.load() < 4000) return;
     gFogDiagMs = now;
