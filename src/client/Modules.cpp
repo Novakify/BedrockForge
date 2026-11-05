@@ -136,7 +136,10 @@ void keycap(MinecraftUIRenderContext& ctx, float x, float y, float w, float h, s
     bf::hud::drawLabel(ctx, x + w / 2 - textWidth(label) / 2 + 0.5f, y + h / 2 - 4.5f, label, down ? Rgba{0, 0, 0, 1} : Rgba{1, 1, 1, 1});
 }
 
-bool hudInputAllowed() { return w32::gameFocused() && nowMs() - gLastNonHudFrameMs.load() > 150; }
+// [BF] "in gameplay": the game hides the cursor while you play and shows it on every screen that takes the mouse.
+// (Checking "only the HUD screen drew" failed on Hive: its own overlay screens draw all the time, which silently turned
+// off Zoom, Auto Sprint and the other in-game keys.)
+bool hudInputAllowed() { return w32::gameFocused() && (w32::cursorHidden() || nowMs() - gLastNonHudFrameMs.load() > 150); }
 } // namespace
 
 // ============================================================================ hooks

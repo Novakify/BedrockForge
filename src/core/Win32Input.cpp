@@ -14,6 +14,12 @@ bool gameFocused() {
     return pid == GetCurrentProcessId();
 }
 
+bool cursorHidden() {
+    CURSORINFO ci{};
+    ci.cbSize = sizeof ci;
+    return GetCursorInfo(&ci) && !(ci.flags & CURSOR_SHOWING);
+}
+
 void localTime(int& hour, int& minute) {
     SYSTEMTIME t{};
     GetLocalTime(&t);
