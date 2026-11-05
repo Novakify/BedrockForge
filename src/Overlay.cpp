@@ -1,4 +1,5 @@
 // Renderer Foundation - ImGui overlay (see Overlay.h, Notice.h).
+#include <chrono>
 #include "D3D12Api.h"
 #include "Overlay.h"
 #include "SpatialConfigScreen.h"
@@ -218,13 +219,25 @@ void render(IDXGISwapChain3* sc) {
     bb.list->Reset(bb.allocator.Get(), nullptr);
     // full-screen post effects first (they leave the back buffer in RENDER_TARGET), then ImGui on top
     // Spatial GUI M1 panel replaces the post pass while it is shown (both read the back buffer as their source)
+    // [RF] hitch trace: any stage of our present that takes > 30 ms is logged (what froze the frame, and how long)
+    using SClock = std::chrono::steady_clock;
+    auto slow = [](char const* what, SClock::time_point t0) {
+        auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(SClock::now() - t0).count();
+        if (ms > 30) ll_shim::warn(std::string("[RF] slow frame: ") + what + " took " + std::to_string(ms) + " ms");
+    };
+    auto t0 = SClock::now();
     if (!rf::panel::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv)
         && !rf::postfx::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv))
         bb.list->ResourceBarrier(1, &barrier);
+    slow("panel / post effects", t0);
     // LyricsFlow port: lyric glyphs (+ the UI back on top when "under the HUD" redirected it), before ImGui
+    t0 = SClock::now();
     rf::lyrics::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv, sc->GetCurrentBackBufferIndex());
+    slow("lyrics pass", t0);
     // LyricsFlow port: live sky preview (F6, stage 1 - drawn over the frame, off by default)
+    t0 = SClock::now();
     rf::sky::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv, sc->GetCurrentBackBufferIndex());
+    slow("sky pass", t0);
     bb.list->OMSetRenderTargets(1, &bb.rtv, FALSE, nullptr);
     bb.list->SetDescriptorHeaps(1, heaps);
     {

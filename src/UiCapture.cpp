@@ -1,4 +1,5 @@
 // Renderer Foundation - Spatial GUI M0 capture spike (see UiCapture.h). Original code for Renderer Foundation.
+#include <chrono>
 #include "UiCapture.h"
 
 #include <algorithm>
@@ -370,7 +371,10 @@ HRESULT STDMETHODCALLTYPE createGpsHook(ID3D12Device* d, D3D12_GRAPHICS_PIPELINE
             }
         }
     }
+    auto const tPso = std::chrono::steady_clock::now();
     HRESULT hr = reinterpret_cast<CreateGps_t>(gOrig[0])(d, desc, riid, out);
+    if (auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tPso).count(); ms > 60)
+        ll_shim::warn("[RF] slow pipeline build (" + std::to_string(ms) + " ms) on thread " + std::to_string(GetCurrentThreadId()));
     if (SUCCEEDED(hr) && desc && out && *out && desc->PS.pShaderBytecode && desc->PS.BytecodeLength) {
         ++gPsoCreated;
         uint64_t h = fnv1a(desc->PS.pShaderBytecode, desc->PS.BytecodeLength);
@@ -657,9 +661,12 @@ void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa co
     st.rootKnown = rootKnown(list);
     rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
     gInSnapshot = true; // our calls bypass the hooks anyway; keep onDraw etc. out of it
+    auto const t0 = std::chrono::steady_clock::now();
     if (kind == 2) rf::sky::afterGameSky(list, st, c);
     else rf::sky::afterGameClouds(list, st, c);
     gInSnapshot = false;
+    auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    if (ms > 30) ll_shim::warn(std::string("[RF] slow frame: in-game ") + (kind == 2 ? "sky" : "weather") + " draw took " + std::to_string(ms) + " ms");
 }
 
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
