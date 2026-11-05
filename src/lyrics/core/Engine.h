@@ -39,6 +39,7 @@ public:
     LetterFx const&               fx() const { return mFx; }
     TopBar&                       topBar() { return mTopBar; }
     AutoPerf&                     perf() { return mPerf; }
+    Pulse const&                  pulse() const { return mPulse; } // [BF] the sky draws its equaliser
     void                          reset();
     /// [BF] An atlas slot is being reused for another font: drop falling letters / fragments still drawn from it.
     void forgetAtlas(uint32_t atlas) { mPhysics.dropAtlas(atlas); mFx.dropAtlas(atlas); }

@@ -2134,10 +2134,14 @@ TEST(instrumentals_take_the_stage) { // [BF] no singing: the world performs the 
     bool ground = false;
     for (auto const& g : out) ground |= std::fabs(g.pos[1] + Pulse::kEye - 0.03f) < 0.01f;
     CHECK(ground);
+    CHECK(p.barEl().size() >= 48 && p.barAlpha() > 0.1f);         // the equaliser goes to the sky (behind the terrain)
+    { float lo = 99, hi = 0; for (float e : p.barEl()) { lo = std::min(lo, e); hi = std::max(hi, e); }
+      CHECK(lo > 0.5f && hi < 20.0f && hi > lo); }
     m.instrumental = 0;
     for (int i = 0; i < 240; ++i) p.step(pi);
     out.clear(); p.emit(pi, out);
     CHECK(out.empty());                                          // the voice came back: it all fades away
+    CHECK(p.barEl().empty());
 }
 
 TEST(spectrum_16_bands) {

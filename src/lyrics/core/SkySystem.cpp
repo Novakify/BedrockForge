@@ -50,6 +50,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     fi.quality = perf.quality(cfg); fi.picture = picture;
     fi.wave = in.wave; fi.waveColor = in.waveColor; fi.meteors = in.meteors;
     fi.burst = in.burst; fi.burstAmt = in.burstAmt; fi.lightning = in.lightning;
+    fi.eq = in.eq; fi.eqAlpha = in.eqAlpha; fi.eqColor = in.eqColor;
     if (p) { // [BF] fireflies take the sky's light: warm gold at dusk, pale green-gold at night
         std::string_view const id = p->id;
         bool const warm = id == "golden_hour" || id == "sunset" || id == "sakura" || id == "cotton_candy" || id == "aquarell" ||

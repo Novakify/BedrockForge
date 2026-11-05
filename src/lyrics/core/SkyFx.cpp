@@ -375,6 +375,17 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
     if (in.meteors > 0) meteorBurst(in.meteors, in.nowMs);
     bool const spawn = (p->shootingStars || p->stars >= 0.8f) && perf.allow(3);
     if (spawn || !mShooting.empty()) shooting(f.visible, in.nowMs, in.cam, out, spawn);
+    if (in.eq && !in.eq->empty() && in.eqAlpha > 0.004f && perf.allow(3)) { // [BF] the horizon equaliser, on the skyline
+        size_t const n = in.eq->size();
+        float const a = in.eqAlpha * f.visible;
+        uint32_t const tip = ((((in.eqColor >> 16) & 0xFF) * 2 + 255) / 3) << 16 | ((((in.eqColor >> 8) & 0xFF) * 2 + 255) / 3) << 8 |
+                             ((in.eqColor & 0xFF) * 2 + 255) / 3;
+        for (size_t i = 0; i < n; ++i) {
+            double const az = double(i) * 360.0 / double(n), top = double((*in.eq)[i]);
+            streak(out, at(az, -0.4), at(az, top), 0.011, in.eqColor, 0.0f, a * 0.28f); // soft beam
+            streak(out, at(az, -0.4), at(az, top), 0.0035, tip, 0.0f, a);                // its bright core, fading to the ground
+        }
+    }
     if (in.wave >= 0 && perf.allow(2)) wave(in.wave, in.waveColor, f.visible * std::min(1.0f, 0.5f + f.bright), out);
     Weather wx = cfg.snowAnySky ? Weather::Snow : p->weather; // LyricsFlow 2.2: snow with any sky
     float   wa = cfg.weatherAmount;

@@ -858,6 +858,8 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.dim = std::min(1.0f, in.dim + mo.dim + 0.25f * bridge);
     in.dtSec *= 1.0 - 0.4 * bridge;
     in.burst = mo.weather; in.burstAmt = mo.weatherAmt; in.lightning = mo.lightning;
+    { auto const& pu = gS->engine.pulse(); // [BF] the horizon equaliser is drawn by the sky (behind the terrain)
+      if (!pu.barEl().empty()) { in.eq = &pu.barEl(); in.eqAlpha = pu.barAlpha(); in.eqColor = pu.barColor(); } }
     std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" ? gS->chorus.sky : std::string();
     if (auto pr = sky::find(wantSky.empty() ? std::string_view(cfg.skyPreset) : std::string_view(wantSky), cfg))
         in.waveColor = pr->lyricColor ? pr->lyricColor & 0xFFFFFF : pr->aurora1 & 0xFFFFFF;

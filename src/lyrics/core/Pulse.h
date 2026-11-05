@@ -31,6 +31,11 @@ public:
     void step(In const& in);
     void emit(In const& in, std::vector<BfGlyphV1>& out) const;
     int  rings() const { return int(mRings.size()); }
+    /// [BF] the horizon equaliser lives in the sky (SkyFx draws it behind the terrain): bar heights as elevation in
+    /// degrees, all around from az 0, plus its alpha and colour. Empty = no bars this frame.
+    std::vector<float> const& barEl() const { return mBarEl; }
+    float    barAlpha() const { return mBarA; }
+    uint32_t barColor() const { return mBarRgb; }
     float level() const { return mOn; }
 
     static constexpr float kRingLife = 1.25f, kRingMax = 15.0f, kHorizon = 70.0f, kEye = 1.58f;
@@ -39,6 +44,9 @@ private:
     struct Ring { float age = 0, power = 1; };
     std::vector<Ring> mRings;
     float mOn = 0, mPrevBeat = 0, mSince = 9, mFlare = 0;
+    std::vector<float> mBarEl;
+    float mBarA = 0;
+    uint32_t mBarRgb = 0xFFFFFF;
 };
 
 } // namespace bf::lyrics

@@ -56,6 +56,9 @@ struct FxIn {
     float   burstAmt = 0;
     float   lightning = 0;      // [BF] Moments: storm flashes in front of you, 0..1
     uint32_t fireflyRgb = 0xE2F2A0; // [BF] firefly colour (the sky's light)
+    std::vector<float> const* eq = nullptr; // [BF] horizon equaliser bar elevations (deg), all around from az 0
+    float    eqAlpha = 0;
+    uint32_t eqColor = 0xFFFFFF;
 };
 
 /// The weather particle textures (SkyPainter.sprites(), 256x64 RGBA): resources/lyricsflow/sky/sprites.png.

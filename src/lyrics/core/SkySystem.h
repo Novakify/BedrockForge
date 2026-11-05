@@ -29,6 +29,9 @@ struct SystemIn {
     float   dim = 0;                         // [BF] 0..1 darker (song outro, bridge, "night" moments)
     Weather burst = Weather::None;           // [BF] Moments
     float   burstAmt = 0, lightning = 0;
+    std::vector<float> const* eq = nullptr;  // [BF] horizon equaliser (Pulse): bar elevations in degrees
+    float   eqAlpha = 0;
+    uint32_t eqColor = 0xFFFFFF;
 };
 
 class System {
