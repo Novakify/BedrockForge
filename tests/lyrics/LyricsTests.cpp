@@ -45,6 +45,7 @@
 #include "lyrics/core/Studio.h"
 #include "lyrics/core/Clip.h"
 #include "lyrics/core/Pulse.h"
+#include "lyrics/core/Moments.h"
 
 using namespace bf::lyrics;
 
@@ -2137,6 +2138,103 @@ TEST(instrumentals_take_the_stage) { // [BF] no singing: the world performs the 
     for (int i = 0; i < 240; ++i) p.step(pi);
     out.clear(); p.emit(pi, out);
     CHECK(out.empty());                                          // the voice came back: it all fades away
+}
+
+TEST(spectrum_16_bands) {
+    auto run = [](double hz) {
+        BandAnalyzer a(48000);
+        std::vector<float> buf(4800);
+        for (int blk = 0; blk < 10; ++blk) {
+            for (size_t i = 0; i < buf.size(); ++i) buf[i] = float(0.5 * std::sin(6.283185307 * hz * double(blk * 4800 + int(i)) / 48000.0));
+            a.feed(buf.data(), buf.size(), int64_t(blk) * 100000000);
+        }
+        BandFrame f = a.latest();
+        int best = 0;
+        for (int b = 1; b < 16; ++b) if (f.spec[b] > f.spec[best]) best = b;
+        return std::pair<int, BandFrame>{best, f};
+    };
+    auto [lowB, lowF] = run(60);
+    auto [midB, midF] = run(1000);
+    auto [hiB, hiF] = run(8000);
+    std::printf("spectrum peaks: 60 Hz -> %d, 1 kHz -> %d, 8 kHz -> %d\n", lowB, midB, hiB);
+    CHECK(lowF.hasSpec);
+    CHECK(lowB <= 2);
+    CHECK(midB >= 7 && midB <= 10);
+    CHECK(hiB >= 12);
+    CHECK(midF.spec[midB] > midF.spec[2] + 0.2f);
+}
+
+TEST(moments_fit_the_sky) { // [BF] chorus deck, song arc, lyric keywords
+    // every sky the panel shows belongs to a family; every deck has 3 moments, smallest first
+    Config cfg;
+    for (auto id : sky::order()) { auto const& d = chorusDeck(skyFamily(id)); CHECK_EQ(d.size(), size_t(3)); }
+    CHECK(skyFamily("black_hole") == SkyFamily::Space);
+    CHECK(skyFamily("sakura") == SkyFamily::Warm);
+    // nothing that doesn't belong: no petals or rain in space, no snow in a storm
+    for (auto x : chorusDeck(SkyFamily::Space)) CHECK(x != Moment::Petals && x != Moment::Rain);
+    CHECK(keywordMoment("rain", SkyFamily::Space) == Moment::Starfall);   // rain in deep space falls as starlight
+    CHECK(keywordMoment("Rain,", SkyFamily::Warm) == Moment::Rain);
+    CHECK(keywordMoment("fire", SkyFamily::Cold) == Moment::Embers);
+    CHECK(keywordMoment("roses", SkyFamily::Space) == Moment::Fireflies);
+    CHECK(keywordMoment("heart", SkyFamily::Neon) == Moment::Heartbeat);
+    CHECK(keywordMoment("the", SkyFamily::Warm) == Moment::None);
+    // three choruses: different moments, the last one plays the whole deck
+    Moments mo;
+    MusicState m; m.active = true; m.chorusTotal = 3;
+    MomentsIn in; in.music = &m; in.sky = "sakura"; in.songSeq = 1; in.variant = 0;
+    std::vector<std::string> events;
+    for (int k = 1; k <= 3; ++k) {
+        m.choruses = k; m.liftNow = true; m.lifted = true; m.finalHit = k == 3;
+        mo.step(in);
+        events.push_back(mo.out().event);
+        m.liftNow = false; m.finalHit = false;
+        for (int i = 0; i < 120; ++i) mo.step(in);
+        if (k == 1) CHECK(mo.out().weather == Weather::Fireflies && mo.out().weatherAmt > 0.4f);
+        m.lifted = false; m.liftEnd = true; mo.step(in); m.liftEnd = false;
+        for (int i = 0; i < 300; ++i) mo.step(in);
+        CHECK(mo.active() == 0);                                     // each eases out after its chorus
+    }
+    CHECK(events[0] != events[1]);
+    CHECK(events[2].find("final chorus") != std::string::npos);
+    CHECK(std::count(events[2].begin(), events[2].end(), ',') >= 2); // everything at once
+    // keywords: "fire" sung -> embers, then a cooldown
+    Moments k2;
+    std::vector<Timing>      times{{1000, -1}, {3000, -1}, {5000, -1}};
+    std::vector<std::string> texts{"we set the fire", "fire again", "under the stars"};
+    Lyrics lyr = Lyrics::build(times, texts, true, "test", 10000);
+    MomentsIn ki; MusicState km; km.active = true;
+    ki.music = &km; ki.lyrics = &lyr; ki.sky = "aquarell"; ki.songSeq = 1;
+    int embers = 0, stars = 0;
+    for (int64_t t = 0; t < 9000; t += 17) {
+        ki.t = t; k2.step(ki);
+        auto const& e = k2.out().event;
+        embers += e.find("embers") != std::string::npos;
+        stars += e.find("fireflies") != std::string::npos;
+    }
+    CHECK_EQ(embers, 1);                                              // the second "fire" is inside the cooldown
+    CHECK_EQ(stars, 1);                                               // "stars" under a warm sky: golden fireflies
+}
+
+TEST(song_arc_total_final_bridge) {
+    SongMemory m;
+    m.reset(SongMemory::keyFor("arc\x01song", 200000), 200000);
+    for (int64_t at : {40000, 80000, 150000}) m.events.push_back({at, -1, SongMemory::Event::Kind::Chorus, 0.7f});
+    Conductor c;
+    ConductorIn in;
+    in.playing = true; in.songSeq = 1; in.dt = 1.0f / 60.0f; in.memory = &m; in.durationMs = 200000;
+    int finals = 0, hits = 0; float bridgeMax = 0; int total = 0;
+    for (int64_t t = 0; t < 160000; t += 17) {
+        in.posMs = t;
+        c.update(in);
+        auto const& s = c.state();
+        total = s.chorusTotal;
+        hits += s.chorusNow; finals += s.finalHit;
+        if (t > 110000 && t < 145000) bridgeMax = std::max(bridgeMax, s.bridge);
+    }
+    CHECK_EQ(total, 3);
+    CHECK_EQ(hits, 3);
+    CHECK_EQ(finals, 1);                                              // only the last one
+    CHECK(bridgeMax > 0.6f);                                          // between chorus 2 and the last
 }
 
 int main(int argc, char** argv) {

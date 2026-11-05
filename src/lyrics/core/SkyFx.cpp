@@ -230,12 +230,12 @@ void Fx::shooting(float alpha, int64_t nowMs, Cam const&, std::vector<Quad>& out
     }
 }
 
-void Fx::storm(float alpha, double time, Cam const& c, std::vector<Quad>& out) {
+void Fx::storm(float alpha, double time, Cam const& c, std::vector<Quad>& out, bool inView) {
     if (time >= mFlashNext) { // flashLevel
         mFlashT0   = time;
         mFlashNext = time + 0.5 + mRnd.nextDouble() * 2.0;
         int    n   = 10;
-        double az  = mRnd.nextDouble() * 360.0;
+        double az  = inView ? c_yaw + (mRnd.nextDouble() - 0.5) * 90.0 : mRnd.nextDouble() * 360.0; // [BF] Moments: where you look
         mBolt.assign(size_t(n) * 2, 0);
         for (int i = 0; i < n; ++i) {
             double t        = double(i) / (n - 1);
@@ -343,13 +343,16 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
         stars(*p, cfg, q, f.visible * f.bright * (0.85f + 0.3f * f.beat), f.time, in.cam, out);
     if (p->stars > 0 && cfg.fxStars && cfg.fxConstellations && perf.allow(2)) constellations(f.visible * f.bright, in.cam, out);
     if (std::string_view(p->id) == "storm" && perf.allow(2)) storm(f.visible, f.time, in.cam, out);
+    else if (in.lightning > 0.05f && perf.allow(2)) storm(f.visible * in.lightning, f.time, in.cam, out, true); // [BF] Moments
     if (in.meteors > 0) meteorBurst(in.meteors, in.nowMs);
     bool const spawn = (p->shootingStars || p->stars >= 0.8f) && perf.allow(3);
     if (spawn || !mShooting.empty()) shooting(f.visible, in.nowMs, in.cam, out, spawn);
     if (in.wave >= 0 && perf.allow(2)) wave(in.wave, in.waveColor, f.visible * std::min(1.0f, 0.5f + f.bright), out);
-    Weather const wx = cfg.snowAnySky ? Weather::Snow : p->weather; // LyricsFlow 2.2: snow with any sky
-    if (cfg.fxWeather && perf.allow(4) && cfg.weatherAmount > 0.01f && wx != Weather::None && f.outside > 0.01f)
-        weather(wx, cfg.weatherAmount * (perf.allow(3) ? 1.0f : 0.5f), q, f.outside, std::min(0.1, in.dtSec), f.time,
+    Weather wx = cfg.snowAnySky ? Weather::Snow : p->weather; // LyricsFlow 2.2: snow with any sky
+    float   wa = cfg.weatherAmount;
+    if (in.burst != Weather::None && in.burstAmt > 0.02f) { wx = in.burst; wa = std::max(0.15f, cfg.weatherAmount) * std::min(1.0f, in.burstAmt); } // [BF] Moments
+    if (cfg.fxWeather && perf.allow(4) && wa > 0.01f && wx != Weather::None && f.outside > 0.01f)
+        weather(wx, wa * (perf.allow(3) ? 1.0f : 0.5f), q, f.outside, std::min(0.1, in.dtSec), f.time,
                 in, out);
 }
 

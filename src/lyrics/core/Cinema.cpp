@@ -86,6 +86,7 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
         // a drop after a held breath lands hardest: the contrast between the hush and the hit is the moment
         mFlashCap = m->dropNow ? (m->bigDrop || mHold > 0.3f ? kDropFlashCap : 0.2f) : kFlashCap;
         mKick  = m->dropNow ? 1.0f : 0.6f;
+        if (m->finalHit && cfg.songArc) { mKick = 1.35f; mFlashCap = kDropFlashCap; mFlash = 1.0f; } // [BF] the last one is the biggest
         mSinceFlash = 0;
     }
     if (on && cfg.fovBreath && (m->dropNow || m->chorusNow)) mFovPunch = m->dropNow ? 1.0f : 0.5f;
@@ -110,6 +111,8 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     vig += 0.30f * hold;                                         // the edges close in while it holds its breath
     float const outro = on && cfg.songOutro ? m->outro : 0.0f;   // [BF] end credits: the world winds down
     vig += 0.40f * outro;
+    float const bridge = on && cfg.songArc ? m->bridge : 0.0f;  // [BF] the bridge: quiet, cooler, a little strange
+    vig += 0.12f * bridge + 0.22f * mHeart;
     if (on && cfg.letterbox) box = std::max(box, kLetterMax * outro);
     if (on && cfg.letterbox) box = std::max(box, kLetterMax * 0.9f * hold);
     mBox += (box - mBox) * ease(dt, box > mBox ? 0.9f : 0.6f);
@@ -132,11 +135,12 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
         o.tint[k] = mCur.tint[k] * (0.82f + 0.18f * mAcc[k]) / (0.82f + 0.18f * accMax);
         o.flashColor[k] = mCur.flash[k] * (0.7f + 0.3f * mAcc[k]);
     }
+    if (bridge > 0.001f) { o.tint[0] *= 1.0f - 0.05f * bridge; o.tint[2] *= 1.0f + 0.06f * bridge; } // cooler
     // music lifts saturation / contrast a touch with the budget, calm sections stay softer
     float const up = on ? (m->budget - 0.5f) * 0.12f + imp * 0.10f + lift * 0.07f : 0.0f;
     o.amount     = std::clamp(mCur.amount * ga * (1.0f + 0.35f * lift), 0.0f, 1.0f);
     // the hush drains colour (down to ~60%) and lifts contrast a touch; the chorus look is richer
-    o.saturation = (1.0f + (mCur.saturation - 1.0f) * ga + up * mv) * (1.0f - 0.4f * hold) * (1.0f - 0.3f * outro);
+    o.saturation = (1.0f + (mCur.saturation - 1.0f) * ga + up * mv) * (1.0f - 0.4f * hold) * (1.0f - 0.3f * outro) * (1.0f - 0.28f * bridge);
     o.contrast   = 1.0f + (mCur.contrast - 1.0f) * ga + up * 0.6f * mv + 0.06f * hold;
     o.vignette   = std::clamp(mCur.vignette * ga + mVig * mv, 0.0f, 0.65f);
     o.flash      = std::min(mFlashCap, mFlash * mFlashCap * std::min(1.0f, mv));

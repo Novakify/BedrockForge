@@ -45,6 +45,7 @@ inline constexpr Shot kShots[] = {
 
 class Cinema {
 public:
+    void setPulse(float heartbeat) { mHeart = heartbeat; } // [BF] Moments: lub-dub vignette
     int  shot() const { return mShot; }       // current Showcase shot (kShots index)
     int  cuts() const { return mCuts; }
     /// accent: the song cover colour (0xRRGGBB, 0 = none): each song tints the scene grade a little
@@ -62,6 +63,7 @@ private:
     bool       mHave = false;
     char       mScene[48] = {};
     float      mAcc[3] = {1, 1, 1};
+    float      mHeart = 0;
     int        mShot = 0, mNextShot = 0, mCuts = 0, mCutSeq = 0;
     float      mCutT = 99, mCutWait = -1, mCutPending = -1, mCutJitter = 0, mFlash = 0, mFlashCap = kFlashCap, mHold = 0, mSinceFlash = 99, mKick = 0, mBox = 0, mVig = 0, mOn = 0, mFov = 1, mFovPunch = 0, mShow = 0, mShowAge = 0, mShowYaw = 0, mWaitBeat = 0;
     bool       mPendingFade = false;

@@ -49,6 +49,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     fi.camX = in.camX; fi.camY = in.camY; fi.camZ = in.camZ;
     fi.quality = perf.quality(cfg); fi.picture = picture;
     fi.wave = in.wave; fi.waveColor = in.waveColor; fi.meteors = in.meteors;
+    fi.burst = in.burst; fi.burstAmt = in.burstAmt; fi.lightning = in.lightning;
     mQuads.clear();
     if (p) mFx.frame(&*p, cfg, perf, mFrame, fi, mQuads);
 

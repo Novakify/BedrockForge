@@ -65,8 +65,18 @@ void Pulse::emit(In const& in, std::vector<BfGlyphV1>& out) const {
         float const swell  = float(0.5 + 0.5 * std::sin(az * 3.0 + t * 0.9));               // bass: slow, wide
         float const ripple = float(0.5 + 0.5 * std::sin(az * 11.0 - t * 3.1));              // mids
         float const sparkle = float(0.5 + 0.5 * std::sin(az * 29.0 + t * 7.3 + i * 0.37));  // treble: fast, fine
-        float const h = kHorizon * (0.05f + 0.22f * bass * swell + 0.12f * mid * ripple + 0.08f * treble * sparkle) *
-                        (0.6f + 0.5f * energy + 0.6f * mFlare);
+        float h;
+        if (m && m->hasSpec) { // the real spectrum: two mirrored copies around you, lows in front and behind
+            double const rel = std::fmod(az - (90.0 + double(in.camYaw)) * 3.14159265 / 180.0 + 6.2831853 * 4, 3.14159265);
+            float const u = float(std::fabs(rel / 3.14159265 * 2.0 - 1.0));      // 0 (front / back) .. 1 (sides)
+            float const fb = u * 15.0f;
+            int const b0 = std::clamp(int(fb), 0, 15), b1 = std::min(15, b0 + 1);
+            float const v = m->spec[b0] + (m->spec[b1] - m->spec[b0]) * (fb - float(b0));
+            float const lift = std::clamp((v - 0.25f) / 0.6f, 0.0f, 1.0f);       // the floor of the mix stays low
+            h = kHorizon * (0.03f + 0.30f * lift * lift) * (0.8f + 0.4f * mFlare);
+        } else
+            h = kHorizon * (0.05f + 0.22f * bass * swell + 0.12f * mid * ripple + 0.08f * treble * sparkle) *
+                (0.6f + 0.5f * energy + 0.6f * mFlare);
         Vec3 const base{std::cos(az) * kHorizon, -kEye + 1.0, std::sin(az) * kHorizon};
         Vec3 const up{0, h * 0.5, 0};
         Vec3 const side = Vec3{-std::sin(az), 0, std::cos(az)} * double(kHorizon * 3.14159 / bars * 0.16);

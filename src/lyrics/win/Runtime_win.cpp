@@ -54,6 +54,7 @@
 #include "lyrics/BfDirector.h"
 #include "lyrics/core/Studio.h"
 #include "lyrics/core/Clip.h"
+#include "lyrics/core/Moments.h"
 #include "lyrics/win/World_win.h"
 
 // [BF] the Director's full-screen look for RF (game thread writes, RF's render thread reads; floats only, a torn
@@ -96,6 +97,9 @@ struct State {
         SongMemory                    mem;
         int64_t                       startNs = 0, startMs = 0, seq = 1000000, durMs = 0;
         float                         speed = 1, prevBass = 0;
+        std::vector<std::string>      tour;      // [BF] visual audit: skies to cycle through ("tour": [...])
+        float                         tourSec = 8;
+        int                           tourAt = -1;
     } demo;
     std::vector<std::string> directorLines;  // [BF] Director events for logs/director.txt (written by the media thread)
     std::vector<std::string> perfLines;      // [BF] logs/perf.txt: frame pacing + the mod's own cost, every 5 s
@@ -104,6 +108,7 @@ struct State {
     std::map<std::string, std::string> songScenes; // [BF] track key -> Scene Studio scene (config/lyricsflow_songscenes.json)
     std::string             lastScene;      // cfg.scene seen last frame (a change while a song plays = remember it)
     ClipTimer               clip;           // [BF] Clip mode (NVIDIA Instant Replay)
+    Moments                 moments;        // [BF] chorus deck, song arc, lyric keywords
     std::vector<StudioScene> userScenes;    // [BF] config/lyricsflow_scenes/*.json (Save as my scene)
     ChorusLook              chorus;         // [BF] the current scene's chorus look (cached per scene + sky)
     std::string             chorusKey = "\x01";
@@ -610,6 +615,10 @@ void demoStep() {
     d.speed   = float(std::clamp((*j)["speed"].asNumber(1), 0.25, 4.0));
     d.startNs = now;
     d.durMs   = d.mem.durationMs() > 0 ? d.mem.durationMs() : 240000;
+    d.tour.clear(); d.tourAt = -1;
+    if (auto const& tv = (*j)["tour"]; tv.isArray())
+        for (auto const& x : tv.items()) if (x.isString()) d.tour.push_back(x.asString());
+    d.tourSec = float(std::clamp((*j)["tourSec"].asNumber(8), 2.0, 60.0));
     d.seq++;
     gS->directorLines.push_back("== demo " + artist + " - " + title + (known ? " (memory: " + std::to_string(d.mem.events.size()) + " events, " + std::to_string(d.mem.hooks.size()) + " hooks)" : " (no memory)") + (d.lyrics ? "" : " (no cached lyrics)"));
 }
@@ -831,13 +840,28 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.wave = gS->waveT;
     in.meteors = std::exchange(gS->meteors, 0);
     in.dim = cfg.songOutro && cfg.director ? m.outro : 0.0f;
+    // [BF] Moments (chorus deck, final chorus, lyric keywords) and the bridge
+    auto const& mo = gS->moments.out();
+    float const bridge = cfg.songArc && cfg.director ? m.bridge : 0.0f;
+    in.dim = std::min(1.0f, in.dim + mo.dim + 0.25f * bridge);
+    in.dtSec *= 1.0 - 0.4 * bridge;
+    in.burst = mo.weather; in.burstAmt = mo.weatherAmt; in.lightning = mo.lightning;
     std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" ? gS->chorus.sky : std::string();
     if (auto pr = sky::find(wantSky.empty() ? std::string_view(cfg.skyPreset) : std::string_view(wantSky), cfg))
         in.waveColor = pr->lyricColor ? pr->lyricColor & 0xFFFFFF : pr->aurora1 & 0xFFFFFF;
-    if (!wantSky.empty()) {
-        Config lifted = cfg;
-        lifted.skyPreset = wantSky;
-        gS->sky.step(gS->moduleOn && cfg.enabled, lifted, gS->engine.perf(), in);
+    std::string tourSky; // [BF] visual audit tour (demo file): cycle the skies, nothing saved
+    if (auto& d = gS->demo; d.on && !d.tour.empty()) {
+        int const i = int(double(nowNs() - d.startNs) / 1e9 / d.tourSec) % int(d.tour.size());
+        tourSky = d.tour[size_t(i)];
+        if (i != d.tourAt) { d.tourAt = i; gS->directorLines.push_back("   tour   sky " + tourSky); }
+    }
+    if (!wantSky.empty() || mo.skyBoost > 0.01f || !tourSky.empty()) {
+        Config eff = cfg;
+        if (!tourSky.empty()) eff.skyPreset = tourSky;
+        if (!wantSky.empty()) eff.skyPreset = wantSky;
+        eff.skyStrength = std::min(1.0f, eff.skyStrength * (1.0f + 0.45f * mo.skyBoost)); // aurora burst: the sky's
+        eff.skySpeed *= 1.0f + 0.7f * mo.skyBoost;                                         // own layers, brighter + faster
+        gS->sky.step(gS->moduleOn && cfg.enabled, eff, gS->engine.perf(), in);
         return;
     }
     gS->sky.step(gS->moduleOn && cfg.enabled, cfg, gS->engine.perf(), in);
@@ -980,12 +1004,28 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             std::string key = c.scene + '|' + c.skyPreset + '|' + song;
             if (key != gS->chorusKey) { gS->chorusKey = std::move(key); gS->chorus = chorusLook(c, gS->userScenes, songVariant(song)); }
             auto const& ms = gS->conductor.state();
-            if (c.chorusLooks && c.director && ms.liftNow) {
+            bool const variety = c.chorusVariety && c.chorusLooks && c.director;
+            if (c.chorusLooks && c.director && ms.liftNow && !variety) { // the classic look: ring + meteors every time
                 gS->waveT = 0;
                 gS->meteors = ms.dropNow ? 9 : 6;
             }
             in.chorusFx = gS->chorus.letterFx;
             in.chorusExit = gS->chorus.exit;
+            MomentsIn mi; // [BF] what the world does at this beat, in the language of the sky showing now
+            mi.music = &ms; mi.lyrics = in.lyrics; mi.t = in.t; mi.songSeq = in.songSeq; mi.dt = dt;
+            std::string const skyNow = ms.lifted && c.chorusLooks && !gS->chorus.sky.empty() ? gS->chorus.sky : c.skyPreset;
+            mi.sky = skyNow; mi.variant = songVariant(song);
+            mi.chorusVariety = variety; mi.keywords = c.lyricMoments && c.director;
+            gS->moments.step(mi);
+            auto const& mo = gS->moments.out();
+            if (mo.wave) gS->waveT = 0;
+            gS->meteors = std::max(gS->meteors, mo.meteors);
+            gS->cinema.setPulse(mo.heartbeat);
+            if (!mo.event.empty()) {
+                char b[200];
+                std::snprintf(b, sizeof b, "%7.1fs moment  %s [%s sky]", double(in.t) / 1000.0, mo.event.c_str(), familyName(skyFamily(skyNow)));
+                gS->directorLines.emplace_back(b);
+            }
         }
         autoDirect(in);
         gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt, cam.yaw, gS->coverAccent & 0xFFFFFF);
@@ -1013,6 +1053,9 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         if (m.chorusNow) stamp("CHORUS");
         if (m.calmNow) stamp("calm");
         if (m.liftNow) stamp("LIFT");
+        if (m.finalHit) stamp("FINAL");
+        { static bool br = false; // [BF] tuning log: the bridge
+          if (m.bridge > 0.6f && !br) { br = true; stamp("bridge"); } else if (m.bridge < 0.1f && br) br = false; }
         { static bool inst = false; // [BF] tuning log: the beat takes the stage / the voice is back
           if (m.instrumental > 0.6f && !inst) { inst = true; stamp("BEATS"); } else if (m.instrumental < 0.2f && inst) { inst = false; stamp("voice"); } }
         if (auto const& cc = gS->engine.config(); gS->clip.step(&m, cc.clipMode && cc.director, dt, in.songSeq)) {

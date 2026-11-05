@@ -150,6 +150,9 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(impactFrames, true)              /* [BF] a soft light flash + bloom / CA kick on drops and chorus hits (RF) */   \
     B(letterbox, true)                 /* [BF] cinema bars ease in during builds and big hooks (RF) */               \
     B(portals, true)                   /* [BF] a ring of light opens in the sky on choruses / drops */               \
+    B(chorusVariety, true)             /* [BF] each chorus gets its own moment from the sky's deck, the last one all */ \
+    B(lyricMoments, true)              /* [BF] sung words about rain / fire / snow / stars / love ... touch the world */ \
+    B(songArc, true)                   /* [BF] choruses grow through the song, the bridge goes quiet and strange */   \
     B(instrumentalFx, true)            /* [BF] no singing: ground rings on the kicks, horizon equaliser, livelier sky */ \
     B(songOutro, true)                 /* [BF] end credits: the sky dims, title + artist + the last line rise and fade */ \
     B(songTint, true)                  /* [BF] each song's cover colour tints the scene's grade a little */           \

@@ -17,11 +17,17 @@ namespace bf::lyrics {
 struct BandFrame {
     float   bass = 0, mid = 0, treble = 0, loud = 0; // 0..1 (log loudness, -60..0 dBFS)
     float   onset = 0;                              // 0..1, energy rise inside the frame
+    // [BF] 16 log-spaced bands, ~40 Hz .. 16 kHz (FFT of the last 2048 samples at the frame end), 0..1 on the same
+    // -60..0 dB scale with a per-band tilt so a normal mix reads flat. Live only (Song Memory keeps the 3 above).
+    static constexpr int kSpec = 16;
+    float   spec[kSpec] = {};
+    bool    hasSpec = false;
     int64_t tNs   = 0;                              // steady-clock time of the frame's last sample
 };
 
 class BandAnalyzer {
 public:
+    static constexpr int kFft = 2048;
     static constexpr int kFrameMs = 50;
     explicit BandAnalyzer(float sampleRate = 48000.0f) { setRate(sampleRate); }
     void setRate(float sampleRate);
@@ -40,6 +46,9 @@ private:
     int    mCount = 0, mBlock = 480, mBlocks = 0;
     double fB = 0, fM = 0, fT = 0, fL = 0;  // sums over the frame's blocks
     float  mPrevBlockDb = -60, mOnset = 0;
+    std::vector<float> mRing;   // [BF] last kFft samples (spectrum)
+    size_t mRingPos = 0;
+    void   spectrum(BandFrame& fr);
     BandFrame              mLatest;
     std::vector<BandFrame> mOut;
 };

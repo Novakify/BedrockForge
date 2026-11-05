@@ -46,7 +46,13 @@ struct MusicState {
     float   lift = 0;           // 0..1 eased
     bool    lifted = false;     // in the chorus look now
     bool    liftNow = false, liftEnd = false; // events: entered / left the chorus look this frame
+    float   spec[16] = {};      // [BF] live 16-band spectrum, smoothed (fast up, ~0.2 s down); all 0 without it
+    bool    hasSpec = false;
     float   instrumental = 0;   // [BF] 0..1 eased: nobody is singing (no lyrics, or a long beat break) - the world performs
+    // [BF] song arc: how many big moments the song has (map / hooks / your marks), whether this hit is the last
+    int     chorusTotal = 0;
+    bool    finalHit = false;   // with dropNow / chorusNow: the song's final big moment
+    float   bridge = 0;         // 0..1 eased: between the late choruses, quiet and strange
     float   outro = 0;          // [BF] 0..1 eased over the song's last ~9 s (end credits, the sky dims)
 };
 
@@ -94,6 +100,7 @@ private:
     float      mBudgetTarget = 0.5f;
     bool       mWasBuilding = false, mWasHook = false;
     float      mLiftAge = 0, mLiftFade = 0, mNoVoice = 0;
+    void const* mTotalFor = nullptr; size_t mTotalN = 0;
     MusicSection mPrevSection = MusicSection::Mid;
 };
 

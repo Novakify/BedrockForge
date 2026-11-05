@@ -52,6 +52,9 @@ struct FxIn {
     float   wave = -1;          // [BF] chorus light wave: 0..1 progress (< 0 = none)
     uint32_t waveColor = 0xFFFFFF;
     int     meteors = 0;        // [BF] chorus meteor burst: this many big shooting stars start now
+    Weather burst = Weather::None; // [BF] Moments: weather that belongs to this moment (overrides the sky's own)
+    float   burstAmt = 0;
+    float   lightning = 0;      // [BF] Moments: storm flashes in front of you, 0..1
 };
 
 /// The weather particle textures (SkyPainter.sprites(), 256x64 RGBA): resources/lyricsflow/sky/sprites.png.
@@ -73,7 +76,7 @@ public:
     void wave(float t, uint32_t rgb, float alpha, std::vector<Quad>& out) const;
     /// [BF] n big meteors fanned out around where you look, a few ms apart
     void meteorBurst(int n, int64_t nowMs);
-    void storm(float alpha, double time, Cam const& c, std::vector<Quad>& out);
+    void storm(float alpha, double time, Cam const& c, std::vector<Quad>& out, bool inView = false);
     void weather(Weather w, float amount, int quality, float outside, double dt, double time, FxIn const& in,
                  std::vector<Quad>& out);
 

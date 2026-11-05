@@ -35,7 +35,7 @@ void Conductor::update(ConductorIn const& in) {
     float const dt = std::clamp(in.dt, 0.0f, 0.25f);
     auto&       s  = mS;
     s.dropNow = s.chorusNow = s.buildNow = s.calmNow = s.songStart = false;
-    s.liftNow = s.liftEnd = s.bigDrop = false;
+    s.liftNow = s.liftEnd = s.bigDrop = s.finalHit = false;
     s.impact *= 1.0f - ease(dt, 0.35f);
     s.beat = in.beat;
 
@@ -59,7 +59,7 @@ void Conductor::update(ConductorIn const& in) {
         mWasBuilding = mWasHook = false;
         mLastPos = -1;
         mHold = 0;
-        s.hold = 0; s.toDrop = -1; s.outro = 0; mNoVoice = 0;
+        s.hold = 0; s.toDrop = -1; s.outro = 0; mNoVoice = 0; s.bridge = 0; mTotalFor = nullptr;
         if (s.lifted) { s.lifted = false; s.liftEnd = true; }
         mLiftAge = 0;
     }
@@ -83,6 +83,12 @@ void Conductor::update(ConductorIn const& in) {
         s.treble += (b.treble - s.treble) * k;
         s.loud += (b.loud - s.loud) * k;
         s.onset = std::max(b.onset, s.onset * (1.0f - ease(dt, 0.12f)));
+        s.hasSpec = b.hasSpec;
+        if (b.hasSpec)
+            for (int i = 0; i < 16; ++i) {
+                float const v = b.spec[i];
+                s.spec[i] += (v - s.spec[i]) * ease(dt, v > s.spec[i] ? 0.03f : 0.2f);
+            }
         mShort += (b.loud - mShort) * ease(dt, 0.4f);
         mLong += (b.loud - mLong) * ease(dt, 6.0f);
         // slow percentile followers: snap out quickly, creep back in, so the range fits this song
@@ -194,6 +200,28 @@ void Conductor::update(ConductorIn const& in) {
     if (chorus && (mSinceChorus < kChorusCooldown || mSinceDrop < 3.0f)) chorus = false;
     if (drop) { s.dropNow = true; s.bigDrop = bigNow; mSinceDrop = 0; mSinceChorus = 0; s.impact = 1.0f; s.choruses++; }
     if (chorus) { s.chorusNow = true; mSinceChorus = 0; s.impact = std::max(s.impact, s.known ? 0.75f : 1.0f); s.choruses++; }
+    // ---- song arc: the number of big moments this song will have, the same way they get triggered
+    {
+        void const* key = manual ? static_cast<void const*>(in.marks) : static_cast<void const*>(mem);
+        size_t const n = manual ? in.marks->size() : mem ? mem->events.size() : 0;
+        if (key != mTotalFor || n != mTotalN) {
+            mTotalFor = key; mTotalN = n;
+            int total = 0;
+            if (manual) { for (auto const& [t, k] : *in.marks) total += k == 'd' || k == 'c'; }
+            else if (mem) {
+                double lastDrop = -1e9, lastAny = -1e9;
+                for (auto const& e : mem->events) {
+                    double const at = double(e.at) / 1000.0;
+                    bool const d = e.kind == SongMemory::Event::Kind::Drop;
+                    if (d ? at - lastDrop >= kDropCooldown : (at - lastAny >= kChorusCooldown && at - lastDrop >= 3.0)) {
+                        ++total; lastAny = at; if (d) lastDrop = at;
+                    }
+                }
+            }
+            s.chorusTotal = total;
+        }
+        if ((s.dropNow || s.chorusNow) && s.chorusTotal >= 2 && s.choruses >= s.chorusTotal) s.finalHit = true;
+    }
     if (s.dropNow) build = 0;
     // ---- held breath: a known drop (or chorus, softer) right ahead - dim, slow, quiet; released on the hit
     s.toDrop = nextHit >= 0 ? float(nextHit - in.posMs) / 1000.0f : -1.0f;
@@ -240,6 +268,12 @@ void Conductor::update(ConductorIn const& in) {
     mNoVoice = (in.hasLyrics && in.vocals) ? 0.0f : mNoVoice + dt;
     float const instT = !in.hasLyrics ? 1.0f : mNoVoice > kNoVoice ? clamp01((mNoVoice - kNoVoice) / 2.0f) : 0.0f;
     s.instrumental += (instT - s.instrumental) * ease(dt, instT > s.instrumental ? 1.2f : 0.35f);
+    // ---- bridge: after two big moments and before the last, a quiet stretch without the hook
+    float bridgeT = 0;
+    if (s.chorusTotal >= 3 && s.choruses >= 2 && s.choruses < s.chorusTotal && !s.lifted && s.inHook < 0.2f &&
+        sec != MusicSection::High && in.durationMs > 0 && in.posMs > in.durationMs * 2 / 5)
+        bridgeT = 1;
+    s.bridge += (bridgeT - s.bridge) * ease(dt, bridgeT > s.bridge ? 2.0f : 0.5f);
     // ---- outro: the last ~9 s of a song with a known length (end credits, the world winds down)
     float outroT = 0;
     if (in.durationMs > 30000 && in.posMs > in.durationMs - 9000)
