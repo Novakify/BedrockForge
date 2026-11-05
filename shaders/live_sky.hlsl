@@ -382,7 +382,7 @@ void bodyGlow(float x, float y, float z, float az, float el) {
             if (dy < 0.0) {
                 float u = -dy / rad;
                 float band = fract(u * 5.0 - T * 0.05);
-                cut = step(0.10 + 0.45 * u, band);
+                cut = step(0.16 + 0.42 * u, band);
             }
             over(sunC, cut * sm(rad, rad * 0.94, ang));
         }
@@ -621,19 +621,26 @@ vec3 styledSky(vec3 d, int id, float t) {
         col += vec3(.3, .2, .7) * hz * .35;
     } else if (id == 2) { // OCEAN
         col = mix(vec3(.15, .75, .9), vec3(.02, .2, .45), smoothstep(-.05, .7, y));
-        vec4 c = sClouds(d, sdir(180., 60.), 1.3, .55, t, .03);
-        vec3 cc = mix(vec3(.02, .25, .45), vec3(.5, .95, 1.), c.x) + vec3(.8, 1., 1.) * c.y * .6;
-        col = mix(col, cc, c.z * .9);
+        // [BF] a sea sky, not a stock day sky: high sun glare, lighter scattered clouds with turquoise undersides
+        vec3 sunO = sdir(180., 55.);
+        float so = max(dot(d, sunO), 0.);
+        col += vec3(1., .98, .9) * (pow(so, 40.) * .6 + pow(so, 600.) * 1.5);
+        vec4 c = sClouds(d, sunO, 1.3, .42, t, .03);
+        vec3 cc = mix(vec3(.10, .45, .60), vec3(.85, .97, 1.), c.x) + vec3(1., 1., 1.) * c.y * .45;
+        col = mix(col, cc, c.z * .82);
         float rays = pow(sn2(vec2(atan2(d.x, d.z) * 9., t * .1)), 3.) * smoothstep(.1, .7, y);
-        col += vec3(.5, .95, 1.) * rays * .35;
+        col += vec3(.5, .95, 1.) * rays * .16;
         col += vec3(.6, 1., 1.) * hz * .25;
     } else if (id == 3) { // ICE
-        col = mix(vec3(.35, .55, .9), vec3(.03, .08, .3), smoothstep(-.05, .8, y));
-        col += sStars(d, .5, t) * .5 * smoothstep(.3, .8, y);
+        // [BF] glacial, not electric blue: pale ice-white horizon, steel blue above, crystal sparkle
+        col = mix(vec3(.72, .86, .96), vec3(.06, .15, .34), smoothstep(-.05, .75, y));
+        col += sStars(d, .8, t) * .6 * smoothstep(.3, .8, y);
+        float glint = pow(sh21(floor(d.xz / max(d.y + .3, .2) * 90.) + floor(t * 1.5)), 60.) * smoothstep(.0, .5, y);
+        col += vec3(.9, .97, 1.) * glint * .8;
         float b = sBeam(d, 0., .05, t);
         vec4 c = sClouds(d, sdir(0., 20.), 1.0, .6, t, .02);
         float near = pow(max(dot(normalize(d.xz + 1e-4), vec2(0, 1)), 0.), 6.);
-        vec3 cc = mix(vec3(.05, .12, .35), vec3(.55, .75, 1.), c.x) + vec3(.9, .97, 1.) * c.y * (.5 + near * .5);
+        vec3 cc = mix(vec3(.10, .20, .38), vec3(.78, .88, .98), c.x) + vec3(.95, .98, 1.) * c.y * (.4 + near * .4);
         col = mix(col, cc, c.z * .92);
         col += vec3(.75, .9, 1.) * b * .35;
     } else if (id == 4) { // PURPLE
@@ -709,19 +716,24 @@ vec3 styledSky(vec3 d, int id, float t) {
         vec4 c = sClouds(d, mc, 1.0, .4, t, .015);
         col = mix(col, mix(vec3(.05, .0, .02), vec3(.55, .1, .12), c.x) + vec3(1., .4, .3) * c.y * .6, c.z * .6);
         col = mix(col, vec3(.005, 0., .005), smoothstep(r, r * .96, ma));       // the dark moon in front
-    } else if (id == 11) { // [LyricsForge] DREAM OCEAN: pastel dusk over a glassy sea, caustic light rippling overhead
-        col = mix(vec3(1., .78, .86), vec3(.30, .55, .85), smoothstep(-.02, .55, y));
-        col = mix(col, vec3(.10, .20, .45), smoothstep(.45, 1., y));
-        vec3 mc = sdir(150., 18.);
+    } else if (id == 11) { // [LyricsForge] DREAM OCEAN: pastel dusk over a glassy sea (reworked after an in-game look:
+        // it read as ordinary daytime clouds). Peach horizon, lilac middle, deep violet-blue above; a low, soft sun with
+        // its glare; few thin clouds lit gold-pink from below; slow caustic light overhead; first stars at the top
+        col = mix(vec3(1., .74, .62), vec3(.74, .60, .88), smoothstep(-.02, .30, y));
+        col = mix(col, vec3(.20, .22, .50), smoothstep(.28, .85, y));
+        col = mix(col, vec3(.07, .07, .22), smoothstep(.80, 1., y));
+        vec3 mc = sdir(0., 4.);
         float ma = acos(clamp(dot(d, mc), -1., 1.));
-        col += vec3(1., .95, .9) * (exp(-ma * 14.) * .5 + smoothstep(.045, .04, ma) * .8);
-        vec4 c = sClouds(d, mc, 1.2, .5, t, .02);
-        col = mix(col, mix(vec3(.55, .45, .75), vec3(1., .85, .92), c.x) + vec3(1., 1., 1.) * c.y * .5, c.z * .75);
+        col += vec3(1., .80, .62) * (exp(-ma * 3.5) * .35 + exp(-ma * 12.) * .45);       // the glare over the water
+        col = mix(col, vec3(1., .93, .82), smoothstep(.05, .045, ma));                  // the sun, sitting on the sea
+        vec4 c = sClouds(d, mc, 1.4, .32, t, .012);
+        vec3 lit = mix(vec3(.46, .38, .66), vec3(1., .72, .66), c.x);
+        col = mix(col, lit + vec3(1., .86, .7) * c.y * .7, c.z * .6);
         vec2 cp = d.xz / max(y + .35, .2) * 2.5;
-        float ca = pow(1. - abs(sn2(cp + vec2(t * .12, t * .07)) * 2. - 1.), 6.) * pow(1. - abs(sn2(cp * 1.7 - vec2(t * .09, 0.)) * 2. - 1.), 4.);
-        col += vec3(.6, 1., .95) * ca * smoothstep(.35, .9, y) * .35;
-        col += sStars(d, .6, t) * .5 * smoothstep(.55, .95, y);
-        col += vec3(.7, 1., .95) * hz * .3;
+        float ca = pow(1. - abs(sn2(cp + vec2(t * .08, t * .05)) * 2. - 1.), 7.) * pow(1. - abs(sn2(cp * 1.7 - vec2(t * .06, 0.)) * 2. - 1.), 5.);
+        col += vec3(.75, .95, 1.) * ca * smoothstep(.45, .95, y) * .18;
+        col += sStars(d, .7, t) * .6 * smoothstep(.62, .95, y);
+        col += vec3(1., .78, .7) * hz * .25;
     } else if (id == 12) { // [LyricsForge] METEOR CHORUS: a clear night where meteors sing across the sky in waves
         col = mix(vec3(.05, .09, .22), vec3(.0, .01, .05), smoothstep(-.05, .8, y));
         col += sStars(d, 1.4, t) * 1.1;
