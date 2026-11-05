@@ -835,7 +835,7 @@ void supernova(float x, float y, float z) {
         float ring = exp(-rd * rd) * (1.0 - R / 85.0);
         addMix(1.0 - float(i), ring * 0.55 * PATTERN);
     }
-    float n = fbm(x * 3.0 + 2.0, y * 3.0 + T * 0.01, z * 3.0, 4);
+    float n = fbm(x * 3.0 + 2.0, y * 3.0 + T * 0.01, z * 3.0, 3);
     float fil = pow(1.0 - abs(2.0 * n - 1.0), 6.0) * exp(-ang / 45.0);
     addMix(fbm(x * 1.5, y * 1.5, z * 1.5 + 5.0, 2), fil * 0.7 * PATTERN);
 }
@@ -993,14 +993,14 @@ vec3 milky(vec3 d, float s, vec3 warm, vec3 cool) {
 vec3 nebulaCloud(vec3 d, vec3 c, vec3 cA, vec3 cB, float size, float s) {
     float a = angTo(d, c);
     float fall = exp(-a * a / (size * size));
-    if (fall < 0.01) return v3(0.0);
+    if (fall < 0.02) return v3(0.0);
     vec3 p = d * 2.4 + vec3(0.0, T * 0.003, 0.0);
-    vec3 w = (vec3(fbm3(p, 3), fbm3(p + 5.2, 3), fbm3(p - 3.1, 3)) - 0.5) * 1.5;
+    vec3 w = (vec3(fbm3(p, 2), fbm3(p + 5.2, 2), fbm3(p - 3.1, 2)) - 0.5) * 1.5; // [perf] 2 octaves: the warp is low-frequency anyway
     float gas = fbm3(p * 1.15 + w, 5);
     float neb = sm(0.40, 0.86, gas) * fall;                                  // the main glow: smooth, billowing
     float fil = neb > 0.01 ? pow(rfbm(p * 2.0 + w * 1.3, 3), 4.0) * neb * 1.4 : 0.0; // filaments, only inside the glow
-    float ox = sm(0.50, 0.86, fbm3(p * 0.95 - w + 9.0, 4)) * fall;          // a second gas (other colour), offset
-    float dust = sm(0.52, 0.80, fbm3(p * 1.7 + w * 0.6 + 20.0, 4));         // broad dark lanes, not a web
+    float ox = fall > 0.05 ? sm(0.50, 0.86, fbm3(p * 0.95 - w + 9.0, 3)) * fall : 0.0;          // a second gas (other colour), offset
+    float dust = fall > 0.05 ? sm(0.52, 0.80, fbm3(p * 1.7 + w * 0.6 + 20.0, 3)) : 0.0;         // broad dark lanes, not a web
     vec3 col = cA * (neb * 0.55 + fil * 0.9) + cB * ox * 0.45 * (1.1 - neb);
     col *= 1.0 - 0.8 * dust * sm(0.15, 0.6, fall);
     col += mix(cA, v3(1.0), 0.5) * exp(-a * a / (size * size * 0.04)) * 0.12;
