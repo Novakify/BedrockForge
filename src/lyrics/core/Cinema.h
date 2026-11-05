@@ -40,6 +40,7 @@ public:
     CinemaOut const& out() const { return mOut; }
 
     static constexpr float kFlashCap  = 0.16f; // comfort: an impact frame never adds more than this much light
+    static constexpr float kDropFlashCap = 0.24f; // [BF] a known drop lands harder (still one soft frame, 20 s apart)
     static constexpr float kFlashGap  = 0.9f;  // s: at most one flash this often (no strobing)
     static constexpr float kLetterMax = 0.075f; // thin: the hotbar is still drawn under it on the HUD
 
@@ -48,7 +49,7 @@ private:
     float      mBlend = 1.0f;     // 0..1 crossfade progress mFrom -> mTo
     bool       mHave = false;
     char       mScene[48] = {};
-    float      mFlash = 0, mSinceFlash = 99, mKick = 0, mBox = 0, mVig = 0, mOn = 0, mFov = 1, mFovPunch = 0, mShow = 0, mShowAge = 0, mShowYaw = 0, mWaitBeat = 0;
+    float      mFlash = 0, mFlashCap = kFlashCap, mHold = 0, mSinceFlash = 99, mKick = 0, mBox = 0, mVig = 0, mOn = 0, mFov = 1, mFovPunch = 0, mShow = 0, mShowAge = 0, mShowYaw = 0, mWaitBeat = 0;
     bool       mPendingFade = false;
     CinemaOut  mOut;
 };

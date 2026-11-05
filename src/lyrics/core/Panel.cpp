@@ -699,11 +699,11 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     c.text(nrm, 352 - nw, 10.5f, 0.62f, WHITE, (0.8f + 0.2f * hn) * a);
     if (c.clicked("nrm")) c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0});
 
-    static char const* const tabs[] = {"Sky", "Lyrics", "Look", "FX", "FPS", "More"};
+    static char const* const tabs[] = {"Home", "Sky", "Lyrics", "Look", "FX", "More"};
     float const tw = (160.0f - 3.0f * 5) / 6;
     for (int i = 0; i < 6; ++i) {
         float       tx  = 206 + float(i) * (tw + 3);
-        bool        sel = mPage == i;
+        bool        sel = mPage == i || (i == 5 && mPage == 6); // FPS sits under More
         std::string id  = "tab" + std::to_string(i);
         float       h   = c.hit(id, tx, 203, tw, 14);
         c.box(tx, 203, tw, 14, 7, h, a, sel);
@@ -718,11 +718,12 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
 
     c.pageA = a * outCubic(clamp01(float(c.in.nowMs - mPageTime) / 220.0f));
     switch (mPage) {
-    case 0: skies(c, cfg); break;
-    case 1: lyrics(c, cfg); break;
-    case 2: look(c, cfg, c.fonts); break;
-    case 3: fx(c, cfg); break;
-    case 4: fps(c, cfg); break;
+    case 0: home(c, cfg); break;
+    case 1: skies(c, cfg); break;
+    case 2: lyrics(c, cfg); break;
+    case 3: look(c, cfg, c.fonts); break;
+    case 4: fx(c, cfg); break;
+    case 6: fps(c, cfg); break;
     default: more(c, cfg); break;
     }
 }
@@ -1067,6 +1068,61 @@ void Panel::fps(Ctx& c, Config& cfg) {
     c.text(b, 206, 177, 0.56f, WHITE, 0.6f * a);
 }
 
+// [BF] Cinema home: the first thing you see. Scene cards with a living preview, one Intensity dial, the big switches,
+// "Save as my scene". The small toggles live behind Advanced (the FX tab).
+void Panel::home(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    std::vector<StudioScene const*> all;
+    for (auto const& s : builtinScenes()) all.push_back(&s);
+    if (mMedia.userScenes)
+        for (auto const& s : *mMedia.userScenes) all.push_back(&s);
+    c.text("Scenes", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.option("hauto", 250, 42, 66, 12, cfg.autoScene ? "Auto: on" : "Auto: off", cfg.autoScene, [&] { cfg.autoScene = !cfg.autoScene; }, a);
+    int const per = 6, pages = std::max(1, int((all.size() + per - 1) / per));
+    mHomePage = ((mHomePage % pages) + pages) % pages;
+    auto const& ord = skyOrder();
+    auto skyInfo = [&](std::string const& id) -> SkyPresetInfo const* {
+        for (auto const& sp : ord) if (id == sp.id) return &sp;
+        return nullptr;
+    };
+    float const w = 50, h = 28, t = float(c.in.nowMs) / 1000.0f;
+    for (int i = 0; i < per; ++i) {
+        size_t idx = size_t(mHomePage * per + i);
+        if (idx >= all.size()) break;
+        StudioScene const& s = *all[idx];
+        float const x = 206 + float(i % 3) * (w + 5), y = 58 + float(i / 3) * (h + 12);
+        bool const  sel = cfg.scene == s.id;
+        std::string const id = "hs" + s.id;
+        float const hv = c.hit(id, x - 1, y - 1, w + 2, h + 11), lift = hv * 1.2f;
+        if (sel) c.round(x - 2, y - 2 - lift, w + 4, h + 4, 6, ACCENT, ACCENT2, a);
+        else if (hv > 0.01f) c.round(x - 1.5f, y - 1.5f - lift, w + 3, h + 3, 5.5f, WHITE, WHITE, 0.5f * hv * a);
+        // the living preview: the scene's sky (picture tile when there is one), light sweeping across it, the letter
+        // colour pulsing with the music - the selected card plays its chorus look when the song is in one
+        auto const* sp = skyInfo(s.sky);
+        if (!sp || !c.image(std::string("sky.") + s.sky, x, y - lift, w, h, a))
+            c.round(x, y - lift, w, h, 4, sp ? sp->top : 0x2A1F4A, sp ? sp->horizon : 0x6A4FB0, a);
+        float const ph = std::fmod(t * 0.35f + float(idx) * 0.37f, 1.6f) - 0.3f; // a soft band of light drifting over
+        if (ph > 0 && ph < 1) c.round(x + ph * (w - 10), y - lift + 2, 10, h - 4, 5, WHITE, WHITE, 0.10f * a * std::sin(ph * 3.14159f));
+        uint32_t const col = s.fxColor ? uint32_t(s.fxColor) & 0xFFFFFF : (sp ? sp->horizon : ACCENT2);
+        float const pulse = c.in.beatLive ? c.in.beat : 0.5f + 0.5f * std::sin(t * 2.0f + float(idx));
+        c.disc(x + w - 7, y - lift + 7, 2.4f + 1.2f * pulse, col, (0.6f + 0.4f * pulse) * a);
+        if (sel && mMedia.lifted) c.text("CHORUS", x + 3, y - lift + h - 8, 0.45f, WHITE, (0.6f + 0.4f * pulse) * a);
+        c.text(c.ellip(s.name, w, 0.52f), x + 1, y + h + 2.5f, 0.52f, WHITE, (sel ? 1.0f : 0.72f + 0.28f * hv) * a);
+        if (c.clicked(id)) { applyScene(cfg, s); c.changed = true; }
+    }
+    c.pager("hp", 42, mHomePage, pages, mHomePage, a);
+    float const iv = c.slider("hint", "Intensity", 142, (std::clamp(cfg.intensity, 0.3f, 1.6f) - 0.3f) / 1.3f, a);
+    cfg.intensity = 0.3f + 1.3f * iv;
+    c.toggle2("hsc", 206, 156, 52, "Showcase", cfg.showcase, [&] { cfg.showcase = !cfg.showcase; }, a);
+    c.toggle2("hcl", 260, 156, 52, "Chorus", cfg.chorusLooks, [&] { cfg.chorusLooks = !cfg.chorusLooks; }, a);
+    c.toggle2("hdm", 314, 156, 52, "Drops", cfg.dropMoment, [&] { cfg.dropMoment = !cfg.dropMoment; }, a);
+    c.option("hsv", 206, 175, 78, 14, "Save as my scene", false, [&] { c.actions.push_back({PanelAction::Kind::SaveScene, 0}); }, a);
+    c.option("hadv", 288, 175, 78, 14, "Advanced \xE2\x80\xBA", false, [&] { mPage = 4; mFxPage = 0; mPageTime = c.in.nowMs; }, a);
+    std::string mood = cfg.autoScene ? "Auto: each song gets a scene that fits it" : "pick a scene: the whole world changes with it";
+    if (auto sc = findScene(cfg.scene, mMedia.userScenes ? *mMedia.userScenes : std::vector<StudioScene>{})) mood = sc->mood;
+    c.text(c.ellip(mood, 160, 0.5f), 206, 193, 0.5f, ACCENT2, 0.8f * a);
+}
+
 void Panel::more(Ctx& c, Config& cfg) {
     float const a = c.pageA;
     c.toggle(0, "Top bar", cfg.showTopBar, [&] { cfg.showTopBar = !cfg.showTopBar; }, a);
@@ -1078,7 +1134,8 @@ void Panel::more(Ctx& c, Config& cfg) {
     c.option("m0", 206, 128, 78, 15, "Full menu", false, [&] { c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0}); }, a);
     // [BF] your own lyrics for this song: written next to the config, opened in Notepad, picked up when you save
     c.option("m2", 288, 128, 78, 15, "Edit lyrics", false, [&] { c.actions.push_back({PanelAction::Kind::EditLyrics, 0}); }, a);
-    c.toggle2("m1", 206, 145, 160, "Random sky", cfg.skyShuffle, [&] { cfg.skyShuffle = !cfg.skyShuffle; }, a);
+    c.toggle2("m1", 206, 145, 78, "Random sky", cfg.skyShuffle, [&] { cfg.skyShuffle = !cfg.skyShuffle; }, a);
+    c.option("m4", 288, 145, 78, 16, "FPS & quality", false, [&] { mPage = 6; mPageTime = c.in.nowMs; }, a);
     // [BF] player card look (replaces a second "open the full menu" button)
     c.text("Player", 206, 166, 0.62f, WHITE, 0.6f * a);
     static char const* const ps[] = {"Classic", "Glass", "Neon"};

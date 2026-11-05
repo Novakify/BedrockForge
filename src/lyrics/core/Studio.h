@@ -30,7 +30,22 @@ struct StudioScene {
     bool        constellations = true;
     float       glow = -1;             // glowStrength, -1 = keep
     bool        albumColors = false;   // colours from the album art
+    // [BF] chorus transformation: what the world turns into on a chorus / drop ("" / -1 = the scene's default)
+    std::string chorusSky;
+    int         chorusFx = -1, chorusExit = -1;
 };
+
+/// [BF] the chorus look of the current scene: sky to blend to (may be "" = keep), letter material and exit while
+/// lifted (-1 = keep). Built-in scenes have hand-picked defaults; a hand-made look (no scene) keeps its sky and
+/// just shatters its letters.
+struct ChorusLook {
+    std::string sky;
+    int         letterFx = -1, exit = -1;
+};
+ChorusLook chorusLook(Config const& cfg, std::vector<StudioScene> const& user = {});
+/// [BF] Auto director: a scene for this song from its energy (0..1, < 0 = unknown -> balanced pool), stable per song
+/// (the same key always gets the same pick). "" = nothing to pick.
+std::string autoSceneFor(std::string_view songKey, float energy);
 
 /// the built-in scenes (Celestial Dream first)
 std::vector<StudioScene> const& builtinScenes();

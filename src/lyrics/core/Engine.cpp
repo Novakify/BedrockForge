@@ -39,6 +39,18 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         cfg.lyricsDistance *= mShot;
         cfg.lyricsScale *= 1.0f + (1.0f - mShot) * 0.5f;
     }
+    if (m && cfg.chorusLooks) { // [BF] chorus transformation: the letters change material and break apart differently
+        if (m->lifted) {
+            if (in.chorusExit >= 0 && !cfg.fallingLetters) cfg.exitAnim = ExitAnim(std::clamp(in.chorusExit, 0, int(ExitAnim::Vortex)));
+            if (in.chorusFx >= 0) cfg.letterFx = std::clamp(in.chorusFx, 0, 10);
+        }
+        cfg.letterFxIntensity *= 1.0f + 0.3f * m->lift;
+        cfg.glowStrength = std::min(1.0f, cfg.glowStrength * (1.0f + 0.25f * m->lift));
+    }
+    if (m && cfg.dropMoment && m->hold > 0.01f) { // [BF] held breath: the letters go quiet too
+        cfg.letterFxIntensity *= 1.0f - 0.6f * m->hold;
+        cfg.glowStrength *= 1.0f - 0.5f * m->hold;
+    }
     if (cfg.albumColors && in.albumAccent != 0) { // [BF] album-art palette: colours ease to the new cover over ~1 s
         float const k = std::min(1.0f, in.dt * 2.5f);
         for (int c = 0; c < 3; ++c) {

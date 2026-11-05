@@ -76,6 +76,7 @@ struct SceneInput {
     std::string        title, artist;  // now playing (top bar)
     float              guiW = 427.0f, guiH = 240.0f; // UI size in GUI units (Bedrock ScreenView size)
     MusicState const*  music = nullptr; // [BF] the Conductor's state this frame (nullptr = no director)
+    int                chorusFx = -1, chorusExit = -1; // [BF] the scene's chorus look (letters) while lifted, -1 = keep
     float              skyLuma = 0;     // [BF] brightness of our sky behind the text (contrast guard)
     uint32_t           albumAccent = 0; // [BF] the cover art's accent colour (0 = none)
 };

@@ -79,9 +79,11 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
 
     // impact frames
     mSinceFlash += dt;
-    float const mv = kMove[r];
+    float const mv = kMove[r] * std::clamp(cfg.intensity, 0.3f, 1.6f); // [BF] Cinema home: one intensity dial
     if (on && cfg.impactFrames && mSinceFlash > kFlashGap && (m->dropNow || m->chorusNow)) {
         mFlash = m->dropNow ? 1.0f : 0.55f;
+        // a drop after a held breath lands hardest: the contrast between the hush and the hit is the moment
+        mFlashCap = m->dropNow ? (mHold > 0.3f || m->known ? kDropFlashCap : 0.2f) : kFlashCap;
         mKick  = m->dropNow ? 1.0f : 0.6f;
         mSinceFlash = 0;
     }
@@ -90,6 +92,10 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     mFovPunch *= std::exp(-dt / 0.45f);
     mKick  *= std::exp(-dt / 0.5f);
     float const imp = on && cfg.impactFrames ? std::max(mKick, m->impact * 0.6f) : 0.0f;
+    // held breath (Conductor.hold) and the chorus look (lift), both gated by the Drop moment / Chorus looks toggles
+    float const hold = on && cfg.dropMoment ? m->hold : 0.0f;
+    float const lift = on && cfg.chorusLooks ? m->lift : 0.0f;
+    mHold = std::max(hold, mHold * std::exp(-dt / 0.3f)); // remembered a moment so the release sees it
 
     // letterbox + vignette breathe with the build and big hooks
     float box = 0, vig = 0;
@@ -100,25 +106,28 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
         box = std::clamp(box * mv, 0.0f, 1.0f) * kLetterMax;
     }
     if (on) vig = 0.18f * m->build + 0.08f * m->beat * m->budget + 0.05f * m->bass * m->budget; // the world breathes with the bass
+    vig += 0.30f * hold;                                         // the edges close in while it holds its breath
+    if (on && cfg.letterbox) box = std::max(box, kLetterMax * 0.9f * hold);
     mBox += (box - mBox) * ease(dt, box > mBox ? 0.9f : 0.6f);
-    mVig += (vig - mVig) * ease(dt, 0.25f);
+    mVig += (vig - mVig) * ease(dt, hold > 0.05f ? 0.08f : 0.25f);
 
-    float const ga = cfg.cinemaGrade ? kGrade[r] * mOn : 0.0f;
+    float const ga = cfg.cinemaGrade ? kGrade[r] * mOn * std::clamp(cfg.intensity, 0.3f, 1.3f) : 0.0f;
     CinemaOut o;
     o.active = mOn > 0.01f || mBox > 0.001f || mFlash > 0.01f;
     for (int k = 0; k < 3; ++k) { o.tint[k] = mCur.tint[k]; o.flashColor[k] = mCur.flash[k]; }
     // music lifts saturation / contrast a touch with the budget, calm sections stay softer
-    float const lift = on ? (m->budget - 0.5f) * 0.12f + imp * 0.10f : 0.0f;
-    o.amount     = std::clamp(mCur.amount * ga, 0.0f, 1.0f);
-    o.saturation = 1.0f + (mCur.saturation - 1.0f) * ga + lift * mv;
-    o.contrast   = 1.0f + (mCur.contrast - 1.0f) * ga + lift * 0.6f * mv;
+    float const up = on ? (m->budget - 0.5f) * 0.12f + imp * 0.10f + lift * 0.07f : 0.0f;
+    o.amount     = std::clamp(mCur.amount * ga * (1.0f + 0.35f * lift), 0.0f, 1.0f);
+    // the hush drains colour (down to ~60%) and lifts contrast a touch; the chorus look is richer
+    o.saturation = (1.0f + (mCur.saturation - 1.0f) * ga + up * mv) * (1.0f - 0.4f * hold);
+    o.contrast   = 1.0f + (mCur.contrast - 1.0f) * ga + up * 0.6f * mv + 0.06f * hold;
     o.vignette   = std::clamp(mCur.vignette * ga + mVig * mv, 0.0f, 0.65f);
-    o.flash      = std::min(kFlashCap, mFlash * kFlashCap * std::min(1.0f, mv));
+    o.flash      = std::min(mFlashCap, mFlash * mFlashCap * std::min(1.0f, mv));
     o.letterbox  = mBox;
-    o.bloomBoost = imp * 0.10f * mv;
+    o.bloomBoost = imp * 0.10f * mv + 0.04f * lift;
     o.caBoost    = imp * 0.0022f * mv;
     // camera breath: a little tighter while a build holds its breath, a quick push out on the drop (max +-5%)
-    float const fovT = on && cfg.fovBreath ? 1.0f - 0.035f * m->build * mv + 0.05f * mFovPunch * std::min(1.0f, mv) : 1.0f;
+    float const fovT = on && cfg.fovBreath ? 1.0f - 0.035f * m->build * mv - 0.02f * hold + 0.05f * mFovPunch * std::min(1.0f, mv) : 1.0f;
     mFov += (fovT - mFov) * ease(dt, fovT > mFov ? 0.08f : 0.5f);
     o.fovScale = std::clamp(mFov, 0.94f, 1.06f);
     // Showcase: the camera leaves your eyes and sways in a slow arc behind you, soft focus at the edges, bars

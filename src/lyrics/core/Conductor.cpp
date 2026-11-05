@@ -22,6 +22,7 @@ void Conductor::reset() {
     mSinceDrop = mSinceChorus = mSinceCalm = 1e9f;
     mBudgetTarget = 0.5f;
     mWasBuilding = mWasHook = false;
+    mLiftAge = 0;
     mPrevSection = MusicSection::Mid;
 }
 
@@ -34,12 +35,16 @@ void Conductor::update(ConductorIn const& in) {
     float const dt = std::clamp(in.dt, 0.0f, 0.25f);
     auto&       s  = mS;
     s.dropNow = s.chorusNow = s.buildNow = s.calmNow = s.songStart = false;
+    s.liftNow = s.liftEnd = false;
     s.impact *= 1.0f - ease(dt, 0.35f);
     s.beat = in.beat;
 
     if (!in.enabled || in.posMs < 0) {
         s.active = false;
         s.budget += (0.5f - s.budget) * ease(dt, 1.0f);
+        s.hold = 0; s.toDrop = -1;
+        if (s.lifted) { s.lifted = false; s.liftEnd = true; }
+        s.lift += (0.0f - s.lift) * ease(dt, 1.5f);
         return;
     }
     if (in.songSeq != mSeq) { // new song: per-song state starts over
@@ -53,6 +58,9 @@ void Conductor::update(ConductorIn const& in) {
         mWasBuilding = mWasHook = false;
         mLastPos = -1;
         mHold = 0;
+        s.hold = 0; s.toDrop = -1;
+        if (s.lifted) { s.lifted = false; s.liftEnd = true; }
+        mLiftAge = 0;
     }
     s.active = in.playing;
     s.songAge += dt;
@@ -60,6 +68,7 @@ void Conductor::update(ConductorIn const& in) {
     mSinceChorus += dt;
     if (!in.playing) { // paused: hold the picture, let the budget settle low
         s.budget += (0.3f - s.budget) * ease(dt, 1.5f);
+        s.hold = 0; s.toDrop = -1;
         mLastPos = in.posMs;
         return;
     }
@@ -130,6 +139,13 @@ void Conductor::update(ConductorIn const& in) {
         s.inHook += ((hook ? 1.0f : 0.0f) - s.inHook) * ease(dt, hook ? 0.3f : 1.2f);
     }
     bool const manual = in.marks && !in.marks->empty();
+    int64_t nextHit = -1; bool nextIsDrop = false; // [BF] the next known hit (held breath)
+    if (mem && !manual)
+        for (auto const& e : mem->events)
+            if (e.at > in.posMs) {
+                if (e.at - in.posMs < 3000) { nextHit = e.at; nextIsDrop = e.kind == SongMemory::Event::Kind::Drop; }
+                break;
+            }
     if (manual) { // [BF] your own marks: they decide the moments, the guesses stand down
         drop = chorus = false;
         build = 0;
@@ -142,6 +158,7 @@ void Conductor::update(ConductorIn const& in) {
             }
             if (k == 'b' && t <= in.posMs) buildFrom = t;
             if (k == 'd' && t > in.posMs && nextDrop < 0) nextDrop = t;
+            if ((k == 'd' || k == 'c') && t > in.posMs && nextHit < 0 && t - in.posMs < 3000) { nextHit = t; nextIsDrop = k == 'd'; }
         }
         if (buildFrom >= 0 && nextDrop > buildFrom) build = clamp01(float(in.posMs - buildFrom) / float(nextDrop - buildFrom));
         mSinceDrop = drop ? 1e9f : mSinceDrop;     // manual hits ignore the cooldowns
@@ -156,6 +173,25 @@ void Conductor::update(ConductorIn const& in) {
     if (drop) { s.dropNow = true; mSinceDrop = 0; mSinceChorus = 0; s.impact = 1.0f; s.choruses++; }
     if (chorus) { s.chorusNow = true; mSinceChorus = 0; s.impact = std::max(s.impact, 0.75f); s.choruses++; }
     if (s.dropNow) build = 0;
+    // ---- held breath: a known drop (or chorus, softer) right ahead - dim, slow, quiet; released on the hit
+    s.toDrop = nextHit >= 0 ? float(nextHit - in.posMs) / 1000.0f : -1.0f;
+    float holdT = 0;
+    if (s.toDrop >= 0 && s.toDrop <= kHoldLead && in.enabled && (nextIsDrop || mSinceChorus > kChorusCooldown)) {
+        float const x = 1.0f - s.toDrop / kHoldLead;
+        holdT = x * x * (3 - 2 * x) * (nextIsDrop ? 1.0f : 0.55f);
+    }
+    if (s.dropNow || s.chorusNow) s.hold = 0; // the release: it all lands at once
+    else s.hold += (holdT - s.hold) * ease(dt, holdT > s.hold ? 0.06f : 0.25f);
+    // ---- chorus look: in on a hit, held while the energy stays up, out on calm (min / max time)
+    if (s.dropNow || s.chorusNow) {
+        if (!s.lifted) s.liftNow = true;
+        s.lifted = true; mLiftAge = 0;
+    } else if (s.lifted) {
+        mLiftAge += dt;
+        bool const fading = sec != MusicSection::High && s.inHook < 0.25f;
+        if (s.calmNow || (mLiftAge > kLiftMin && fading) || mLiftAge > kLiftMax) { s.lifted = false; s.liftEnd = true; }
+    }
+    s.lift += ((s.lifted ? 1.0f : 0.0f) - s.lift) * ease(dt, s.lifted ? 0.12f : 2.2f);
     s.build += (build - s.build) * ease(dt, build > s.build ? 0.2f : 0.6f);
     // a build is announced once the eased value is real (> 0.4), re-armed only after it has faded (< 0.05)
     if (s.build > 0.4f && !mWasBuilding) { s.buildNow = true; mWasBuilding = true; }
@@ -166,11 +202,12 @@ void Conductor::update(ConductorIn const& in) {
     t += 0.15f * s.inHook + 0.25f * s.build;
     if (sec == MusicSection::High || s.inHook > 0.5f) t += std::min(0.15f, 0.04f * float(s.choruses));
     if (mSinceDrop < 2.0f) t = 1.0f;
+    t += 0.08f * s.lift;
     mBudgetTarget = std::clamp(t, 0.15f, 1.0f);
     s.budget += (mBudgetTarget - s.budget) * ease(dt, mBudgetTarget > s.budget ? 0.25f : 1.5f);
     // ---- speed ramp: fragments / sky motion hang in the air while it builds, then burst on the hit
-    float const ramp = (1.0f - 0.6f * s.build) * (1.0f + 1.6f * s.impact);
-    s.timeScale += (ramp - s.timeScale) * ease(dt, ramp > s.timeScale ? 0.05f : 0.35f);
+    float const ramp = (1.0f - 0.6f * s.build) * (1.0f + 1.6f * s.impact) * (1.0f - 0.75f * s.hold);
+    s.timeScale += (ramp - s.timeScale) * ease(dt, ramp > s.timeScale ? 0.05f : s.hold > 0.05f ? 0.08f : 0.35f);
     mLastPos = in.posMs;
 }
 

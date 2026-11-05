@@ -167,9 +167,38 @@ void Fx::constellations(float alpha, Cam const& c, std::vector<Quad>& out) const
         }
 }
 
-void Fx::shooting(float alpha, int64_t nowMs, Cam const&, std::vector<Quad>& out) {
+void Fx::meteorBurst(int n, int64_t nowMs) {
     if (mT0 < 0) mT0 = nowMs;
-    if (nowMs > mNextShooting) {
+    n = std::clamp(n, 0, 16);
+    for (int i = 0; i < n; ++i) {
+        Shot s;
+        s.az   = float(c_yaw + (float(i) / std::max(1, n - 1) - 0.5f) * 110.0f + (mRnd.nextFloat() - 0.5f) * 14.0f);
+        s.el   = 38.0f + mRnd.nextFloat() * 32.0f;
+        s.born = float(nowMs - mT0 + int64_t(i) * 70 + mRnd.nextInt(60));
+        s.dir  = i % 2 ? 1.0f : -1.0f;
+        s.big  = 1;
+        mShooting.push_back(s);
+    }
+}
+
+void Fx::wave(float t, uint32_t rgb, float alpha, std::vector<Quad>& out) const {
+    if (t < 0 || t > 1 || alpha <= 0.004f) return;
+    float const e  = 1.0f - (1.0f - t) * (1.0f - t);              // fast out of the zenith, slowing at the horizon
+    double const el = 84.0 - 82.0 * double(e);
+    float const a  = alpha * std::sin(3.14159265f * std::min(1.0f, t * 1.15f)) * (1.0f - 0.5f * t);
+    int const   N  = 64;
+    for (int i = 0; i < N; ++i) {
+        double const a0 = i * 360.0 / N, a1 = (i + 1) * 360.0 / N;
+        V3 const p0 = at(a0, el), p1 = at(a1, el);
+        streak(out, p0, p1, 0.010, 0xFFFFFF, a, a);                                       // the bright edge
+        streak(out, at(a0, el + 2.2), at(a1, el + 2.2), 0.05, rgb, a * 0.45f, a * 0.45f); // its glow behind
+        streak(out, at(a0, el + 5.5), at(a1, el + 5.5), 0.09, rgb, a * 0.16f, a * 0.16f); // the trail
+    }
+}
+
+void Fx::shooting(float alpha, int64_t nowMs, Cam const&, std::vector<Quad>& out, bool spawn) {
+    if (mT0 < 0) mT0 = nowMs;
+    if (spawn && nowMs > mNextShooting) {
         mNextShooting = nowMs + 1200 + mRnd.nextInt(3500);
         Shot s;
         s.az   = float(c_yaw + (mRnd.nextFloat() - 0.5f) * 80.0f);
@@ -180,10 +209,21 @@ void Fx::shooting(float alpha, int64_t nowMs, Cam const&, std::vector<Quad>& out
     }
     std::erase_if(mShooting, [&](Shot const& s) {
         int64_t age = nowMs - (mT0 + int64_t(s.born));
-        return age > 900 || age < -1000;
+        return age > (s.big > 0 ? 1500 : 900) || age < -1000;
     });
     for (auto const& s : mShooting) {
-        float  t  = std::clamp(float(nowMs - (mT0 + int64_t(s.born))) / 900.0f, 0.0f, 1.0f);
+        float const life = s.big > 0 ? 1500.0f : 900.0f;
+        float  raw = float(nowMs - (mT0 + int64_t(s.born))) / life;
+        if (raw < 0) continue; // a burst meteor that has not started yet
+        float  t  = std::clamp(raw, 0.0f, 1.0f);
+        if (s.big > 0) { // [BF] chorus meteors: longer, wider, a warm head
+            double az = s.az + s.dir * t * 42.0f, el = s.el - t * 26.0f;
+            V3     head = at(az, el), tail = at(az - s.dir * 14.0f, el + 8.0);
+            float const a = alpha * (1 - t * t);
+            streak(out, tail, head, 0.009, 0xFFF2D8, 0.0f, a);
+            streak(out, at(az - s.dir * 6.0f, el + 3.4), head, 0.024, 0xFFC88A, 0.0f, a * 0.35f);
+            continue;
+        }
         double az = s.az + s.dir * t * 30.0f, el = s.el - t * 12.0f;
         V3     head = at(az, el), tail = at(az - s.dir * 6.0f, el + 2.4);
         streak(out, tail, head, 0.004, 0xFFFFFF, 0.0f, alpha * (1 - t));
@@ -303,7 +343,10 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
         stars(*p, cfg, q, f.visible * f.bright * (0.85f + 0.3f * f.beat), f.time, in.cam, out);
     if (p->stars > 0 && cfg.fxStars && cfg.fxConstellations && perf.allow(2)) constellations(f.visible * f.bright, in.cam, out);
     if (std::string_view(p->id) == "storm" && perf.allow(2)) storm(f.visible, f.time, in.cam, out);
-    if ((p->shootingStars || p->stars >= 0.8f) && perf.allow(3)) shooting(f.visible, in.nowMs, in.cam, out);
+    if (in.meteors > 0) meteorBurst(in.meteors, in.nowMs);
+    bool const spawn = (p->shootingStars || p->stars >= 0.8f) && perf.allow(3);
+    if (spawn || !mShooting.empty()) shooting(f.visible, in.nowMs, in.cam, out, spawn);
+    if (in.wave >= 0 && perf.allow(2)) wave(in.wave, in.waveColor, f.visible * std::min(1.0f, 0.5f + f.bright), out);
     Weather const wx = cfg.snowAnySky ? Weather::Snow : p->weather; // LyricsFlow 2.2: snow with any sky
     if (cfg.fxWeather && perf.allow(4) && cfg.weatherAmount > 0.01f && wx != Weather::None && f.outside > 0.01f)
         weather(wx, cfg.weatherAmount * (perf.allow(3) ? 1.0f : 0.5f), q, f.outside, std::min(0.1, in.dtSec), f.time,

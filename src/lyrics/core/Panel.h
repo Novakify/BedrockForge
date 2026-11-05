@@ -14,6 +14,7 @@
 
 #include "lyrics/BfLyrics.h"
 #include "lyrics/core/Config.h"
+#include "lyrics/core/Studio.h"
 #include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Math.h"
 
@@ -44,11 +45,13 @@ struct PanelMedia {
     int         taps = 0, marks = 0;
     std::string tapNext, tapLast; // the line the next tap starts, the line tapped last
     bool        hasLyrics = false;
+    std::vector<StudioScene> const* userScenes = nullptr; // [BF] your saved scenes (Cinema home)
+    bool        lifted = false;                            // [BF] the chorus look is on right now (home preview)
 };
 
 /// What the panel asks the game side to do (BF glue performs these on the media thread / config).
 struct PanelAction {
-    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics, TapStart, Tap, TapUndo, TapSave, TapCancel, PinHere, TapMark } kind;
+    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics, TapStart, Tap, TapUndo, TapSave, TapCancel, PinHere, TapMark, SaveScene } kind;
     int64_t ms = 0; // Seek target (TapMark: the section kind b / d / c / q)
 };
 
@@ -69,7 +72,8 @@ struct PanelInput {
 
 class Panel {
 public:
-    enum class Tab { Sky, Lyrics, Look, Fx, Fps, More }; // 2.1's Cosmetics slot is the FPS page; FX = [BF] effects
+    // [BF] Home = Cinema home (scene cards, intensity, the big switches); FPS lives behind More now
+    enum class Tab { Home, Sky, Lyrics, Look, Fx, More, Fps };
 
     /// Open in front of the camera (WorldPanel constructor). eye/look = camera at that moment.
     void open(Vec3 eye, Vec3 look, int64_t nowMs);
@@ -116,6 +120,7 @@ private:
     void cinema(Ctx& c, Config& cfg);
     void hudPage(Ctx& c, Config& cfg);  // [BF] FX page 6: corner music player (LyricsFlow 2.2 Extra)   // [BF] FX page 5: Cinema (ribbon, impacts, showcase, tap-sync, place)
     void fps(Ctx& c, Config& cfg);
+    void home(Ctx& c, Config& cfg);     // [BF] Cinema home
     void more(Ctx& c, Config& cfg);
 
     PanelMedia mMedia;         // [BF] this frame's media (Cinema page tap-sync)
@@ -123,7 +128,7 @@ private:
     float   mRx = 1, mRz = 0;  // panel +x (the player's right)
     float   mNx = 0, mNz = -1; // panel normal (toward the player)
     int64_t mBorn = -1, mClosing = -1, mPageTime = 0;
-    int     mPage = 0, mSkyPage = 0, mFontPage = 0, mFxPage = 0;
+    int     mPage = 0, mSkyPage = 0, mFontPage = 0, mFxPage = 0, mHomePage = 0;
     bool    mHovered = false;
     float   mHx = 0, mHy = 0;
     float   mSpin = 0;

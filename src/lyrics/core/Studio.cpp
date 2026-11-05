@@ -90,6 +90,50 @@ void applyScene(Config& c, StudioScene const& s) {
     c.scene          = s.id;
 }
 
+namespace {
+struct ChorusDefault { char const* id; char const* sky; int fx; ExitAnim exit; };
+// a chorus sky per scene that belongs to the same world but is bigger / brighter / more alive
+constexpr ChorusDefault kChorus[] = {
+    {"celestial_dream", "astral", 10, X::Shatter},     {"cosmic_collapse", "supernova", 8, X::Vortex},
+    {"liquid_paradise", "dream_ocean", 3, X::Shatter}, {"neon_afterlife", "synthwave", 7, X::Explode},
+    {"dreamcore", "cotton_candy", 9, X::Shatter},      {"anime_impact", "inferno", 2, X::Explode},
+    {"cinematic_romance", "sakura", 1, X::Shatter},    {"melancholy", "aurora", 4, X::Shatter},
+    {"ethereal_fantasy", "silk", 10, X::Shatter},      {"dark_cosmic", "black_hole", 8, X::Vortex},
+    {"cyber_edit", "warp", 5, X::Explode},             {"blood_moon", "eclipse", 6, X::Explode},
+    {"album_glow", "supernova", -1, X::Shatter},       {"astral_symphony", "rift", 10, X::Shatter},
+    {"eclipse_heartbeat", "supernova", 6, X::Explode}, {"dream_ocean", "silk", 9, X::Shatter},
+    {"meteor_chorus", "warp", 1, X::Shatter},
+};
+} // namespace
+
+ChorusLook chorusLook(Config const& cfg, std::vector<StudioScene> const& user) {
+    ChorusLook l;
+    l.exit = xi(X::Shatter);
+    if (cfg.scene.empty()) return l;
+    for (auto const& d : kChorus)
+        if (cfg.scene == d.id) { l.sky = d.sky; l.letterFx = d.fx; l.exit = xi(d.exit); break; }
+    if (auto sc = findScene(cfg.scene, user)) { // a scene's own chorus fields win over the defaults
+        if (!sc->chorusSky.empty()) l.sky = sc->chorusSky;
+        if (sc->chorusFx >= 0) l.letterFx = sc->chorusFx;
+        if (sc->chorusExit >= 0) l.exit = sc->chorusExit;
+    }
+    if (l.sky == cfg.skyPreset) l.sky.clear();
+    return l;
+}
+
+std::string autoSceneFor(std::string_view key, float energy) {
+    if (key.empty()) return {};
+    // three pools by how the song feels; within a pool the song's own hash picks (stable, but varied across songs)
+    static constexpr char const* kCalmPool[] = {"celestial_dream", "dreamcore", "melancholy", "dream_ocean", "cinematic_romance", "liquid_paradise"};
+    static constexpr char const* kMidPool[]  = {"ethereal_fantasy", "astral_symphony", "dark_cosmic", "album_glow", "meteor_chorus", "liquid_paradise"};
+    static constexpr char const* kHighPool[] = {"anime_impact", "cosmic_collapse", "neon_afterlife", "cyber_edit", "eclipse_heartbeat", "blood_moon"};
+    uint32_t h = 2166136261u; // FNV-1a
+    for (char c : key) { h ^= uint8_t(c); h *= 16777619u; }
+    if (energy < 0) energy = 0.5f;
+    auto const& pool = energy < 0.38f ? kCalmPool : energy > 0.62f ? kHighPool : kMidPool;
+    return pool[h % 6];
+}
+
 StudioScene captureScene(Config const& c, std::string id, std::string name) {
     StudioScene s;
     s.id = std::move(id);
@@ -109,6 +153,8 @@ StudioScene captureScene(Config const& c, std::string id, std::string name) {
     s.constellations = c.constellations;
     s.glow = c.glowStrength;
     s.albumColors = c.albumColors;
+    ChorusLook const lk = chorusLook(c); // keep the chorus look too
+    s.chorusSky = lk.sky; s.chorusFx = lk.letterFx; s.chorusExit = lk.exit;
     return s;
 }
 
@@ -131,8 +177,10 @@ std::string sceneToJson(StudioScene const& s) {
                   "  \"enter\": %d, \"exit\": %d, \"style\": %d, \"reactivity\": %d, \"constellations\": %s, \"glow\": %.3f, \"albumColors\": %s\n}\n",
                   s.letterFx, s.fxColor, s.rainbow ? "true" : "false", s.fxSpeed, s.fxStrength, s.enter, s.exit, s.style,
                   s.reactivity, s.constellations ? "true" : "false", s.glow, s.albumColors ? "true" : "false");
+    char c[96];
+    std::snprintf(c, sizeof c, ", \"chorusFx\": %d, \"chorusExit\": %d", s.chorusFx, s.chorusExit);
     return "{\n  \"id\": " + q(s.id) + ", \"name\": " + q(s.name) + ", \"mood\": " + q(s.mood) + ",\n  \"sky\": " + q(s.sky) +
-           ", \"theme\": " + q(s.theme) + b;
+           ", \"theme\": " + q(s.theme) + ", \"chorusSky\": " + q(s.chorusSky) + c + b;
 }
 
 std::optional<StudioScene> sceneFromJson(std::string_view text) {
@@ -157,6 +205,9 @@ std::optional<StudioScene> sceneFromJson(std::string_view text) {
     s.constellations = v["constellations"].asBool(true);
     s.glow = float(v["glow"].asNumber(-1));
     s.albumColors = v["albumColors"].asBool(false);
+    s.chorusSky = v["chorusSky"].asString();
+    s.chorusFx = std::clamp(int(v["chorusFx"].asInt(-1)), -1, 10);
+    s.chorusExit = std::clamp(int(v["chorusExit"].asInt(-1)), -1, int(ExitAnim::Vortex));
     // [BF] files from disk: keep every enum in range (-1 = keep)
     s.letterFx   = std::clamp(s.letterFx, -1, 10);
     s.enter      = std::clamp(s.enter, -1, int(EnterAnim::Glitch));

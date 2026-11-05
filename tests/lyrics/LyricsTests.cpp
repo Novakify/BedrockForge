@@ -193,7 +193,7 @@ TEST(cinema_grade_flash_letterbox) {
     CHECK(c.out().amount > 0.3f && c.out().tint[0] > 1.05f);      // red grade in
     CHECK(c.out().flash == 0.0f);
     m.dropNow = true; c.step(&m, cfg, 1.0f / 60); m.dropNow = false;
-    CHECK(c.out().flash > 0.1f && c.out().flash <= Cinema::kFlashCap + 1e-6f);
+    CHECK(c.out().flash > 0.1f && c.out().flash <= Cinema::kDropFlashCap + 1e-6f); // [BF] drops land a bit harder, still capped
     CHECK(c.out().bloomBoost > 0.0f && c.out().caBoost > 0.0f);
     m.chorusNow = true; c.step(&m, cfg, 1.0f / 60); m.chorusNow = false; // too soon: no second flash
     float f1 = c.out().flash;
@@ -1147,6 +1147,9 @@ TEST(panel_open_animation_and_close) {
 }
 TEST(panel_widgets) {
     PanelRig r;
+    CHECK(r.p.tab() == Panel::Tab::Home); // [BF] the panel opens on the Cinema home
+    r.click(206 + 27.17f + 12, 210);      // Sky tab (2nd pill)
+    CHECK(r.p.tab() == Panel::Tab::Sky);
     // Sky page: "My picture" toggle (288, 45, 78 x 16)
     bool before = r.e.config().skyImage;
     auto a      = r.click(330, 52);
@@ -1162,8 +1165,8 @@ TEST(panel_widgets) {
     // Strength slider: click at the far right of the track (258 + 108) -> 1.0
     r.click(369, 165);
     CHECK_NEAR(r.e.config().skyStrength, 1.0, 1e-3);
-    // tabs: Lyrics (2nd pill)
-    r.click(206 + 29.6f + 3 + 14, 210);
+    // tabs: Lyrics (3rd pill)
+    r.click(206 + 2 * 27.17f + 12, 210);
     CHECK(r.p.tab() == Panel::Tab::Lyrics);
     bool fl = r.e.config().lyricsStyle == LyricsStyle::Floating;
     r.click(300, 75); // "Floating words" (row 1: y 67)
@@ -1185,7 +1188,7 @@ TEST(panel_widgets) {
     r.click(287, 131); // 1 px left of it (3 px from "Spread out"): nearer wins
     CHECK_EQ(r.e.config().wholeLine, !wl);
     // ... and a point in the 2 px gap between FX rows goes to the nearer one (Drift row 94..107 vs Dissolve 109..122)
-    r.click(206 + 3 * 27.17f + 12, 210); // FX tab (4th pill)
+    r.click(206 + 4 * 27.17f + 12, 210); // FX tab (5th pill)
     CHECK(r.p.tab() == Panel::Tab::Fx);
     r.click(206 + 40.5f + 19, 107.6f);
     CHECK(r.e.config().exitAnim == ExitAnim::Drift);
@@ -1728,6 +1731,164 @@ TEST(studio_scenes) {
     auto back = sceneFromJson(j);
     CHECK(back.has_value());
     if (back) { CHECK_EQ(back->name, std::string("My \"scene\"")); CHECK_EQ(back->sky, std::string("aurora")); CHECK_EQ(back->letterFx, c.letterFx); }
+}
+
+TEST(drop_moment_and_chorus_look) { // [BF] held breath before a known drop, then the world turns into its chorus look
+    SongMemory m;
+    m.reset(SongMemory::keyFor("artist\x01song", 180000), 180000);
+    playFake(m, 0, 180000);
+    m.endPlay();
+    m.analyze(nullptr);
+    Conductor c;
+    ConductorIn in;
+    in.playing = true; in.songSeq = 1; in.dt = 1.0f / 60.0f; in.memory = &m; in.bandsLive = true;
+    int64_t dropAt = -1, liftAt = -1, endAt = -1;
+    float holdMax = 0, holdAtDrop = 1, tsMin = 9, liftMax = 0;
+    int lifts = 0;
+    std::vector<std::pair<int64_t, float>> holds;
+    for (int64_t t = 0; t < 130000; t += 17) {
+        in.posMs = t;
+        float v = fakeLevel(t);
+        in.bands.bass = in.bands.mid = in.bands.treble = in.bands.loud = v;
+        c.update(in);
+        auto const& s = c.state();
+        if (dropAt < 0) { holds.push_back({t, s.hold}); tsMin = std::min(tsMin, s.timeScale); }
+        if (s.dropNow && dropAt < 0) { dropAt = t; holdAtDrop = s.hold; }
+        if (s.liftNow) { lifts++; if (liftAt < 0) liftAt = t; }
+        if (s.liftEnd && endAt < 0) endAt = t;
+        liftMax = std::max(liftMax, s.lift);
+    }
+    CHECK(dropAt > 0);
+    int early = 0;
+    for (auto [t, h] : holds) {
+        if (t < dropAt - 700 && h >= 0.05f) early++;            // no hush long before the drop
+        if (t >= dropAt - 200) holdMax = std::max(holdMax, h);
+    }
+    CHECK_EQ(early, 0);
+    std::printf("drop moment: drop %lld hold max %.2f at-drop %.2f timeScale min %.2f lift at %lld end %lld lifts %d\n",
+                (long long)dropAt, holdMax, holdAtDrop, tsMin, (long long)liftAt, (long long)endAt, lifts);
+    CHECK(holdMax > 0.6f);                                       // it holds its breath right before
+    CHECK_EQ(holdAtDrop, 0.0f);                                  // ...and lets go exactly on the hit
+    CHECK(tsMin < 0.5f);                                         // motion slows nearly to a stop
+    CHECK_EQ(liftAt, dropAt);                                    // the chorus look starts on the drop
+    CHECK(liftMax > 0.9f);
+    CHECK(endAt > dropAt + 10000 && endAt < 125000);             // and eases back out in the calm after it
+    // Cinema: the hush drains colour, the drop flash may go to the drop cap
+    Config cfg; cfg.director = true; cfg.scene = "blood_moon"; cfg.reactivity = 3;
+    Cinema cin;
+    MusicState ms; ms.active = true; ms.budget = 0.6f;
+    for (int i = 0; i < 200; ++i) cin.step(&ms, cfg, 1.0f / 60);
+    float const sat0 = cin.out().saturation;
+    ms.hold = 1;
+    for (int i = 0; i < 40; ++i) cin.step(&ms, cfg, 1.0f / 60);
+    CHECK(cin.out().saturation < sat0 * 0.75f);
+    CHECK(cin.out().vignette > 0.25f);
+    ms.hold = 0; ms.dropNow = true; ms.known = true; cin.step(&ms, cfg, 1.0f / 60); ms.dropNow = false;
+    CHECK(cin.out().flash > Cinema::kFlashCap && cin.out().flash <= Cinema::kDropFlashCap + 1e-6f);
+    cfg.dropMoment = false; ms.hold = 1;
+    for (int i = 0; i < 120; ++i) cin.step(&ms, cfg, 1.0f / 60);
+    CHECK(cin.out().saturation > sat0 * 0.9f);                   // switched off: no hush
+}
+
+TEST(chorus_looks_and_auto_scene) {
+    Config cfg;
+    cfg.scene = "celestial_dream"; cfg.skyPreset = "aurora";
+    auto l = chorusLook(cfg);
+    CHECK_EQ(l.sky, std::string("astral"));
+    CHECK_EQ(l.letterFx, 10);
+    CHECK_EQ(l.exit, int(ExitAnim::Shatter));
+    for (auto const& s : builtinScenes()) { // every built-in scene has a chorus look whose sky exists
+        cfg.scene = s.id; cfg.skyPreset = s.sky;
+        auto k = chorusLook(cfg);
+        CHECK(!k.sky.empty());
+        CHECK(sky::find(k.sky, cfg).has_value());
+        CHECK(k.exit >= 0);
+    }
+    cfg.scene = ""; // a hand-made look keeps its sky, its letters just break apart
+    auto h = chorusLook(cfg);
+    CHECK(h.sky.empty());
+    CHECK_EQ(h.exit, int(ExitAnim::Shatter));
+    StudioScene mine = captureScene(cfg, "mine", "Mine");
+    mine.chorusSky = "warp"; mine.chorusFx = 7;
+    auto back = sceneFromJson(sceneToJson(mine));
+    CHECK(back.has_value());
+    CHECK_EQ(back->chorusSky, std::string("warp"));
+    CHECK_EQ(back->chorusFx, 7);
+    cfg.scene = "mine";
+    CHECK_EQ(chorusLook(cfg, {*back}).sky, std::string("warp"));
+    // Auto director: stable per song, pools by energy, always a real scene
+    std::string a1 = autoSceneFor("artist\x01song a", 0.8f), a2 = autoSceneFor("artist\x01song a", 0.8f);
+    CHECK_EQ(a1, a2);
+    CHECK(findScene(a1).has_value());
+    CHECK(findScene(autoSceneFor("x", 0.1f)).has_value());
+    CHECK(findScene(autoSceneFor("x", -1)).has_value());
+    CHECK(autoSceneFor("", 0.5f).empty());
+    int differ = 0;
+    for (int i = 0; i < 20; ++i) differ += autoSceneFor("song " + std::to_string(i), 0.8f) != a1;
+    CHECK(differ > 5);                                           // songs don't all get the same scene
+    bool calm = false;
+    for (auto id : {"celestial_dream", "dreamcore", "melancholy", "dream_ocean", "cinematic_romance", "liquid_paradise"})
+        calm |= autoSceneFor("quiet one", 0.1f) == id;
+    CHECK(calm);
+}
+
+TEST(sky_chorus_wave_and_meteors) {
+    using namespace bf::lyrics::sky;
+    Config cfg;
+    auto p = *find("aurora", cfg);
+    Fx fx;
+    FxIn in; in.nowMs = 1000; in.dtSec = 1.0 / 60;
+    Frame f; f.visible = 1; f.bright = 1;
+    AutoPerf perf;
+    std::vector<Quad> q0, q1, q2;
+    fx.frame(&p, cfg, perf, f, in, q0);
+    in.wave = 0.4f;
+    fx.frame(&p, cfg, perf, f, in, q1);
+    CHECK(q1.size() >= q0.size() + 64 * 3);                      // the ring of light
+    in.wave = -1; in.meteors = 6; in.nowMs = 1100;
+    fx.frame(&p, cfg, perf, f, in, q2);
+    in.meteors = 0;
+    size_t before = fx.shootingCount();
+    CHECK(before >= 6);
+    std::vector<Quad> q3;
+    in.nowMs = 1500;
+    fx.frame(&p, cfg, perf, f, in, q3);
+    CHECK(q3.size() >= q0.size() + 6);                          // they fly
+    in.nowMs = 4000;
+    std::vector<Quad> q4;
+    fx.frame(&p, cfg, perf, f, in, q4);
+    CHECK(fx.shootingCount() < before);                          // and burn out
+}
+
+TEST(panel_cinema_home) {
+    PanelRig r;
+    CHECK(r.p.tab() == Panel::Tab::Home);
+    // first card = Celestial Dream (206..256, 58..86)
+    r.click(206 + 25, 70);
+    CHECK_EQ(r.e.config().scene, std::string("celestial_dream"));
+    CHECK_EQ(r.e.config().skyPreset, std::string("aurora"));
+    // intensity: far right of the track -> 1.6
+    r.click(369, 145);
+    CHECK_NEAR(r.e.config().intensity, 1.6, 1e-3);
+    bool cl = r.e.config().chorusLooks;
+    r.click(260 + 40, 164);
+    CHECK_EQ(r.e.config().chorusLooks, !cl);
+    bool au = r.e.config().autoScene;
+    r.click(280, 47);
+    CHECK_EQ(r.e.config().autoScene, !au);
+    CHECK(PanelRig::has(r.click(240, 182), PanelAction::Kind::SaveScene));
+    r.click(320, 182); // Advanced -> FX tab
+    CHECK(r.p.tab() == Panel::Tab::Fx);
+    // More -> FPS & quality
+    r.click(206 + 5 * 27.17f + 12, 210);
+    CHECK(r.p.tab() == Panel::Tab::More);
+    r.click(320, 152);
+    CHECK(r.p.tab() == Panel::Tab::Fps);
+    // pager to page 2: the 7th scene
+    r.click(206 + 1 * 27.17f + 12, 210); r.click(206 + 12, 210); // Sky, back Home
+    r.click(358, 47);
+    r.click(206 + 25, 70);
+    CHECK_EQ(r.e.config().scene, builtinScenes()[6].id);
 }
 
 int main(int argc, char** argv) {

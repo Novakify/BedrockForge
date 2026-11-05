@@ -101,6 +101,12 @@ struct State {
     int64_t                 memoryHooksSeq = -1; // song whose lyrics the memory's hooks were found from
     std::map<std::string, std::string> songScenes; // [BF] track key -> Scene Studio scene (config/lyricsflow_songscenes.json)
     std::string             lastScene;      // cfg.scene seen last frame (a change while a song plays = remember it)
+    std::vector<StudioScene> userScenes;    // [BF] config/lyricsflow_scenes/*.json (Save as my scene)
+    ChorusLook              chorus;         // [BF] the current scene's chorus look (cached per scene + sky)
+    std::string             chorusKey = "\x01";
+    float                   waveT = -1;     // [BF] chorus light wave progress (< 0 none)
+    int                     meteors = 0;    // [BF] meteor burst queued for the next sky frame
+    std::string             autoKey;        // [BF] Auto director: the song it last picked for
     bool                    songScenesDirty = false;
     int64_t                 memorySeq = -1; // song the memory belongs to (clock.songSeq)
     std::string             memoryTitle;
@@ -176,6 +182,36 @@ void loadConfig() {
         if (auto j = json::parse(readAll(ss)); j && j->isObject())
             for (auto const& [k, v] : j->members()) if (v.isString()) gS->songScenes[k] = v.asString();
     gS->lastScene = gS->engine.config().scene;
+    // [BF] your saved scenes
+    std::error_code ec;
+    auto const dir = gS->cfgFile.parent_path() / "lyricsflow_scenes";
+    for (auto it = std::filesystem::directory_iterator(dir, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
+        if (it->path().extension() == ".json")
+            if (auto sc = sceneFromJson(readAll(it->path())); sc && !findScene(sc->id)) gS->userScenes.push_back(*sc);
+    std::sort(gS->userScenes.begin(), gS->userScenes.end(), [](auto const& a, auto const& b) { return a.id < b.id; });
+}
+
+/// [BF] "Save as my scene": the current look (+ its chorus look) as config/lyricsflow_scenes/my_scene_N.json.
+/// Caller holds gS->mutex; the file is small, written atomically (.tmp + rename).
+void saveMyScene() {
+    auto& cfg = gS->engine.config();
+    int n = 1;
+    auto taken = [&](std::string const& id) { return findScene(id, gS->userScenes).has_value(); };
+    while (taken("my_scene_" + std::to_string(n))) ++n;
+    std::string const id = "my_scene_" + std::to_string(n);
+    StudioScene sc = captureScene(cfg, id, "My scene " + std::to_string(n));
+    if (auto base = findScene(cfg.scene, gS->userScenes)) sc.mood = "yours, from " + base->name;
+    std::error_code ec;
+    auto const dir = gS->cfgFile.parent_path() / "lyricsflow_scenes";
+    std::filesystem::create_directories(dir, ec);
+    auto const file = dir / (id + ".json"), tmp = dir / (id + ".json.tmp");
+    { std::ofstream f(tmp, std::ios::binary); f << sceneToJson(sc); }
+    std::filesystem::rename(tmp, file, ec);
+    if (ec) return;
+    gS->userScenes.push_back(sc);
+    cfg.scene = id;           // the new scene is the current one (same look, now with a name)
+    gS->chorusKey = "\x01";  // re-read the chorus look
+    gS->cfgDirty = true;
 }
 
 void saveSongScenes() { // media thread, without gS->mutex: a copy is written
@@ -611,7 +647,7 @@ void mediaLoop() {
                     auto& cfg = gS->engine.config(); // [BF] this song's remembered scene comes back
                     if (cfg.songScenes)
                         if (auto it = gS->songScenes.find(gS->clock.track().key()); it != gS->songScenes.end())
-                            if (auto sc = findScene(it->second); sc && cfg.scene != sc->id) {
+                            if (auto sc = findScene(it->second, gS->userScenes); sc && cfg.scene != sc->id) {
                                 applyScene(cfg, *sc);
                                 gS->lastScene = cfg.scene;
                                 gS->cfgDirty = true; // [BF] saved by the game thread's flush, not here under the lock
@@ -782,7 +818,54 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.beat      = gS->bassLive ? std::max(gS->bass, gS->conductor.state().impact) : 0.0f; // [BF] sky breathes with the music
     in.spritesFile = gS->spritesFile;
     in.pictureFile = gS->pictureFile;
+    // [BF] chorus transformation: the sky blends into the scene's chorus sky, a wave of light rolls over, meteors
+    auto const& m = gS->conductor.state();
+    if (gS->waveT >= 0) { gS->waveT += dt / 2.6f; if (gS->waveT > 1) gS->waveT = -1; }
+    in.wave = gS->waveT;
+    in.meteors = std::exchange(gS->meteors, 0);
+    std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" ? gS->chorus.sky : std::string();
+    if (auto pr = sky::find(wantSky.empty() ? std::string_view(cfg.skyPreset) : std::string_view(wantSky), cfg))
+        in.waveColor = pr->lyricColor ? pr->lyricColor & 0xFFFFFF : pr->aurora1 & 0xFFFFFF;
+    if (!wantSky.empty()) {
+        Config lifted = cfg;
+        lifted.skyPreset = wantSky;
+        gS->sky.step(gS->moduleOn && cfg.enabled, lifted, gS->engine.perf(), in);
+        return;
+    }
     gS->sky.step(gS->moduleOn && cfg.enabled, cfg, gS->engine.perf(), in);
+}
+
+/// [BF] Auto director: once per song (1 s in, so the per-song memory has loaded), a scene that fits the song - unless
+/// you picked one for this song yourself (that one always wins). Uses the song's map (how much of it is calm / high /
+/// how many drops) when it is known, else the balanced pool. The pick is not saved as "your" scene for the song.
+void autoDirect(SceneInput const& in) {
+    auto& cfg = gS->engine.config();
+    if (!cfg.autoScene || gS->demo.on || !gS->clock.hasTrack() || !in.playing) return;
+    std::string const key = gS->clock.track().key();
+    if (key == gS->autoKey || gS->conductor.state().songAge < 1.0f) return;
+    gS->autoKey = key;
+    if (cfg.songScenes && gS->songScenes.count(key)) return; // your own pick for this song
+    float e = -1;
+    auto const& mem = gS->memory;
+    if (!mem.key().empty() && mem.ready() && mem.durationMs() > 0) {
+        double hi = 0, mid = 0, all = 0;
+        for (auto const& x : mem.sections) {
+            double const d = double(x.end - x.start);
+            all += d;
+            if (x.kind == SongMemory::Section::Kind::High) hi += d;
+            else if (x.kind == SongMemory::Section::Kind::Mid) mid += d;
+        }
+        if (all > 0) e = float((hi + 0.5 * mid) / all) + 0.06f * float(std::min<size_t>(3, mem.events.size()));
+    }
+    std::string const id = autoSceneFor(key, e);
+    if (auto sc = findScene(id); sc && cfg.scene != sc->id) {
+        applyScene(cfg, *sc);
+        gS->lastScene = cfg.scene; // not remembered as your pick
+        gS->cfgDirty = true;
+        char b[160];
+        std::snprintf(b, sizeof b, "%7.1fs auto    scene %s (energy %.2f)", double(in.t) / 1000.0, id.c_str(), double(e));
+        gS->directorLines.emplace_back(b);
+    }
 }
 
 std::atomic<bool> gPanelRequest{false}; // [BF] the client menu's "Open LyricsFlow panel" (opened on the next HUD frame)
@@ -871,6 +954,19 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.enabled = gS->engine.config().director;
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
+        { // [BF] chorus look of the scene (cached), and the one-shot chorus events for the sky
+            auto const& c = gS->engine.config();
+            std::string key = c.scene + '|' + c.skyPreset;
+            if (key != gS->chorusKey) { gS->chorusKey = std::move(key); gS->chorus = chorusLook(c, gS->userScenes); }
+            auto const& ms = gS->conductor.state();
+            if (c.chorusLooks && c.director && ms.liftNow) {
+                gS->waveT = 0;
+                gS->meteors = ms.dropNow ? 9 : 6;
+            }
+            in.chorusFx = gS->chorus.letterFx;
+            in.chorusExit = gS->chorus.exit;
+        }
+        autoDirect(in);
         gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt, cam.yaw);
         publishDirector(gS->conductor.state(), gS->cinema.out());
         in.skyLuma = gS->sky.luma();
@@ -895,6 +991,10 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         if (m.dropNow) stamp("DROP");
         if (m.chorusNow) stamp("CHORUS");
         if (m.calmNow) stamp("calm");
+        if (m.liftNow) stamp("LIFT");
+        if (m.liftEnd) stamp("unlift");
+        { static bool held = false; // [BF] tuning log: when the held breath starts before a drop
+          if (m.hold > 0.3f && !held) { held = true; stamp("hold"); } else if (m.hold < 0.05f) held = false; }
         static int64_t lastBeatLog = 0;
         if (m.active && now - lastBeatLog > 5000000000LL) { lastBeatLog = now; stamp("."); }
     }
@@ -1048,6 +1148,8 @@ void tapAction(PanelAction::Kind k, int64_t now) {
 PanelMedia panelMedia(int64_t now) { // caller holds gS->mutex
     PanelMedia m;
     m.hasLyrics = gS->lyrics && !gS->lyrics->empty();
+    m.userScenes = &gS->userScenes;
+    m.lifted = gS->conductor.state().lifted;
     if (gS->tap.on && gS->tap.seq != gS->clock.songSeq()) gS->tap = {}; // the song changed under us
     m.tapOn   = gS->tap.on;
     m.taps    = int(gS->tap.taps.size());
@@ -1103,6 +1205,7 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
                 gS->tapMarkKind = int(a.ms);
                 tapAction(a.kind, now); // game thread: the tap is stamped with this frame's song position
                 break;
+            case PanelAction::Kind::SaveScene: saveMyScene(); break;
             case PanelAction::Kind::PinHere: { // [BF] floating lyrics stand ~5 blocks in front of you from now on
                 auto& cfg = gS->engine.config();
                 Vec3 const p = gS->camPos + dir(gS->camYaw, std::clamp(gS->camPitch, -20.0f, 20.0f)) * 5.0;

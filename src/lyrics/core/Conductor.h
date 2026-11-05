@@ -37,6 +37,14 @@ struct MusicState {
     bool    dropNow = false, chorusNow = false, buildNow = false, calmNow = false, songStart = false;
     float   songAge = 0;        // seconds since the song started (title card)
     float   timeScale = 1;      // speed-ramp for cosmetic motion: < 1 suspended in a build, > 1 bursting after a drop
+    // [BF] the held breath: 0..1 in the last ~0.6 s before a KNOWN drop (memory / your marks) - the world dims,
+    // slows and goes quiet, then everything lands on the hit. toDrop = s to that drop (-1 = none in sight).
+    float   hold = 0;
+    float   toDrop = -1;
+    // [BF] chorus transformation: the world changes into its chorus look on a chorus / drop and eases back after
+    float   lift = 0;           // 0..1 eased
+    bool    lifted = false;     // in the chorus look now
+    bool    liftNow = false, liftEnd = false; // events: entered / left the chorus look this frame
 };
 
 struct ConductorIn {
@@ -62,6 +70,9 @@ public:
     static constexpr float kDropCooldown   = 20.0f; // s between drops
     static constexpr float kChorusCooldown = 12.0f;
     static constexpr float kLiveDropCooldown = 30.0f; // live guesses are less sure: rarer
+    static constexpr float kHoldLead = 0.6f;  // s of held breath before a known drop
+    static constexpr float kLiftMin  = 10.0f; // the chorus look stays at least this long...
+    static constexpr float kLiftMax  = 45.0f; // ...and never longer than this without a new hit
 
 private:
     MusicState mS;
@@ -73,6 +84,7 @@ private:
     float      mSinceDrop = 1e9f, mSinceChorus = 1e9f, mSinceCalm = 1e9f;
     float      mBudgetTarget = 0.5f;
     bool       mWasBuilding = false, mWasHook = false;
+    float      mLiftAge = 0;
     MusicSection mPrevSection = MusicSection::Mid;
 };
 

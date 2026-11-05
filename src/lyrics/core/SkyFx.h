@@ -49,6 +49,9 @@ struct FxIn {
     double  camX = 0, camY = 0, camZ = 0; // world position (weather wraps around it)
     int     quality = 2;        // AutoPerf.quality: 0..2
     bool    picture = false;    // "My picture" is on and loaded: it replaces the dome and every layer here
+    float   wave = -1;          // [BF] chorus light wave: 0..1 progress (< 0 = none)
+    uint32_t waveColor = 0xFFFFFF;
+    int     meteors = 0;        // [BF] chorus meteor burst: this many big shooting stars start now
 };
 
 /// The weather particle textures (SkyPainter.sprites(), 256x64 RGBA): resources/lyricsflow/sky/sprites.png.
@@ -65,7 +68,11 @@ public:
     void stars(Preset const& p, Config const& cfg, int quality, float alpha, double time, Cam const& c,
                std::vector<Quad>& out) const;
     void constellations(float alpha, Cam const& c, std::vector<Quad>& out) const;
-    void shooting(float alpha, int64_t nowMs, Cam const& c, std::vector<Quad>& out);
+    void shooting(float alpha, int64_t nowMs, Cam const& c, std::vector<Quad>& out, bool spawn = true);
+    /// [BF] a ring of light rolling from the zenith down to the horizon (t 0..1)
+    void wave(float t, uint32_t rgb, float alpha, std::vector<Quad>& out) const;
+    /// [BF] n big meteors fanned out around where you look, a few ms apart
+    void meteorBurst(int n, int64_t nowMs);
     void storm(float alpha, double time, Cam const& c, std::vector<Quad>& out);
     void weather(Weather w, float amount, int quality, float outside, double dt, double time, FxIn const& in,
                  std::vector<Quad>& out);
@@ -87,7 +94,7 @@ private:
         int    nextInt(int bound);
         double nextGaussian();
     };
-    struct Shot { float az, el, born, dir; };
+    struct Shot { float az, el, born, dir; float big = 0; };
     struct Part { double p[11]; };
 
     Rnd                  mRnd;
