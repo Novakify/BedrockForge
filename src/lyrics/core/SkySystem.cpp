@@ -37,9 +37,9 @@ WorldLight worldLightFor(Preset const& p, float visible, float brightness, float
     }
     float const l = std::max(0.04f, lumOf(col));
     WorldLight  w;
-    for (int k = 0; k < 3; ++k) w.tint[k] = 1.0f + (std::clamp(col[k] / l, 0.25f, 1.7f) - 1.0f) * 0.75f; // hue, same brightness
-    w.amount = vis * std::clamp(0.24f + 0.10f * energy + 0.36f * kk, 0.0f, 0.75f);
-    float e = 0.9f + 0.22f * lumOf(base);                                    // night skies a bit darker, bright days brighter
+    for (int k = 0; k < 3; ++k) w.tint[k] = 1.0f + (std::clamp(col[k] / l, 0.25f, 1.7f) - 1.0f) * 0.85f; // hue, same brightness
+    w.amount = vis * std::clamp(0.32f + 0.10f * energy + 0.34f * kk, 0.0f, 0.78f);
+    float e = 0.85f + 0.28f * lumOf(base);                                    // night skies a bit darker, bright days brighter
     e *= 1.0f + 0.6f * (std::clamp(brightness, 0.3f, 1.6f) - 1.0f);          // the sky's breathing / dimming reaches the ground
     e += 0.10f * kk + 0.45f * std::clamp(lightning, 0.0f, 1.0f);             // drops and lightning light it up
     w.exposure = 1.0f + (std::clamp(e, 0.8f, 1.5f) - 1.0f) * vis;            // never darker than 80%: you still see in PvP
