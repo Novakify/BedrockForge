@@ -666,7 +666,7 @@ vec3 styledSky(vec3 d, int id, float t) {
         float ring = exp(-pow((ma - r) * 90., 2.)) * 2.2 + exp(-max(ma - r, 0.) * 18.) * 1.1;
         float flame = .7 + .3 * sn2(vec2(atan2(slocal(d, mc).y, slocal(d, mc).x) * 6., t * .5));
         vec4 c = sClouds(d, mc, 1.1, .6, t, .02);
-        vec3 cc = mix(vec3(.05, .0, .015), vec3(.52, .06, .08), c.x) + vec3(.95, .38, .25) * c.y * .55;
+        vec3 cc = mix(vec3(.04, .0, .012), vec3(.40, .05, .07), c.x) + vec3(.95, .40, .28) * c.y * .45;
         col = mix(col, cc, c.z * .92);
         col += vec3(1., .15, .08) * ring * flame;
         col = mix(col, vec3(.01, 0., 0.), smoothstep(r, r * .97, ma));
@@ -941,8 +941,8 @@ vec4 skyMain(vec3 skyDir, vec3 skyInfo) {
         caustics(x, y, z, el);
         add(A2, 0.16 * lowGlow);
     } else if (PRESET == 12) {
-        add(vec3(1.0, 0.23, 0.16), 0.25 * lowGlow);
-        clouds(x, y, z, 0.6, 0.75, rgb(184.0, 48.0, 58.0), rgb(26.0, 4.0, 8.0), 0.03);
+        add(vec3(0.85, 0.22, 0.16), 0.16 * lowGlow); // [BF] Blood Moon: darker, the red lives in the moon and the cloud edges
+        clouds(x, y, z, 0.6, 0.75, rgb(128.0, 30.0, 40.0), rgb(16.0, 3.0, 6.0), 0.03);
     } else if (PRESET == 13) {
         clouds(x, y, z, 0.3, 0.97, rgb(90.0, 100.0, 120.0), rgb(18.0, 22.0, 31.0), 0.11);
     } else if (PRESET == 15) {
