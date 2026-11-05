@@ -899,7 +899,96 @@ vec3 rgb(float r, float g, float b) {
     return vec3(r, g, b) / 255.0;
 }
 
-vec4 skyMain(vec3 skyDir, vec3 skyInfo) {
+
+// ---------------------------------------------------------------- [LyricsForge] realistic skies (ordinals 38..42)
+// Real-sky look instead of painted fantasy: a Rayleigh-style blue that pales to the horizon, a Mie glow around the
+// sun, and a deck of real-shaped clouds (domain-warped fbm on a sky plane) that drift fast, self-shadow away from the
+// sun and get a silver lining toward it. PULSE (music energy + a kick on drops) speeds the wind, brightens the light
+// and pushes the colour; the world takes the sky's colour from the same palette.
+GLOBAL float PULSE;
+void realSky(float x, float y, float z, float el, int kind) {
+    vec3 zen, hor, sunC, lit, shade, accent;
+    float cover, speed, haze, opac;
+    if (kind == 0) {        // Summer Day: deep blue, big bright cumulus racing past
+        zen = rgb(28.0, 92.0, 214.0); hor = rgb(176.0, 214.0, 248.0); sunC = rgb(255.0, 244.0, 222.0);
+        lit = rgb(255.0, 255.0, 255.0); shade = rgb(132.0, 150.0, 184.0); accent = rgb(90.0, 190.0, 255.0);
+        cover = 0.50; speed = 0.050; haze = 0.55; opac = 0.96;
+    } else if (kind == 1) { // Pastel Dawn: the real version of Cotton Candy - blue up top, peach / pink low, pink-lit clouds
+        zen = rgb(70.0, 118.0, 230.0); hor = rgb(255.0, 196.0, 206.0); sunC = rgb(255.0, 214.0, 186.0);
+        lit = rgb(255.0, 226.0, 236.0); shade = rgb(150.0, 140.0, 196.0); accent = rgb(255.0, 140.0, 200.0);
+        cover = 0.53; speed = 0.042; haze = 0.65; opac = 0.92;
+    } else if (kind == 2) { // Wildfire Dusk: orange and magenta, cloud bellies glowing from below
+        zen = rgb(46.0, 40.0, 120.0); hor = rgb(255.0, 132.0, 72.0); sunC = rgb(255.0, 168.0, 96.0);
+        lit = rgb(255.0, 170.0, 120.0); shade = rgb(96.0, 52.0, 112.0); accent = rgb(255.0, 80.0, 150.0);
+        cover = 0.52; speed = 0.036; haze = 0.7; opac = 0.94;
+    } else if (kind == 3) { // Bright Night: a glowing blue night at eye level, a vivid Milky Way and nebula above
+        zen = rgb(20.0, 14.0, 70.0); hor = rgb(40.0, 96.0, 190.0); sunC = rgb(200.0, 220.0, 255.0);
+        lit = rgb(190.0, 206.0, 255.0); shade = rgb(30.0, 34.0, 80.0); accent = rgb(200.0, 90.0, 255.0);
+        cover = 0.66; speed = 0.03; haze = 0.5; opac = 0.7;
+    } else {                // Silver Lining: towering clouds, the sun breaking through with real rays
+        zen = rgb(40.0, 84.0, 170.0); hor = rgb(196.0, 214.0, 232.0); sunC = rgb(255.0, 236.0, 200.0);
+        lit = rgb(255.0, 250.0, 240.0); shade = rgb(92.0, 104.0, 130.0); accent = rgb(255.0, 210.0, 140.0);
+        cover = 0.42; speed = 0.04; haze = 0.5; opac = 1.0;
+    }
+    float pulse = clamp(PULSE, 0.0, 1.6);
+    // the drop pushes the whole palette toward its accent and saturates it; it eases back but never goes dull
+    zen = mix(zen, accent * 0.9, 0.22 * pulse);
+    hor = mix(hor, accent, 0.16 * pulse);
+    float yy = max(y, 0.0);
+    float mu = max(0.0, x * SUN.x + y * SUN.y + z * SUN.z);
+    // 1) sky: Rayleigh-ish gradient (bluer and darker up, paler and brighter near the horizon)
+    C = mix(hor, zen, pow(clamp(yy * 1.15, 0.0, 1.0), 0.42));
+    add(hor, 0.18 * exp(-yy * 9.0));
+    if (el < 0.0) C = mix(C, hor * 0.75, clamp(-el / 10.0, 0.0, 1.0));
+    // Mie glow around the sun / moon
+    add(sunC, (pow(mu, 6.0) * 0.28 + pow(mu, 64.0) * 0.45 + pow(mu, 900.0) * 1.2) * (1.0 + 0.4 * pulse));
+    if (kind == 3) { // the night sky itself
+        milkyWay(x, y, z, 0.9);
+        float neb = fbm(x * 2.2 + 4.0, y * 2.2 + T * 0.004, z * 2.2, 4);
+        float bd = x * 0.36 + y * 0.58 + z * 0.73;
+        float band = exp(-bd * bd / 0.06);
+        add(mix(accent, rgb(80.0, 200.0, 255.0), neb), sm(0.45, 0.85, neb) * band * 0.45 * (1.0 + 0.6 * pulse) * PATTERN);
+        add(rgb(60.0, 140.0, 255.0), 0.10 * exp(-yy * 5.0) * (1.0 + 0.5 * pulse)); // the bright night glow at eye level
+    }
+    if (kind == 4) { // crepuscular rays fanning out from the sun
+        float around = atan2(z * SUN.x - x * SUN.z, y - SUN.y);
+        float ray = pow(0.5 + 0.5 * sin(around * 14.0 + lfNoise(around * 3.0, T * 0.05, 1.0) * 4.0), 6.0);
+        add(sunC, ray * pow(mu, 3.0) * 0.22 * (1.0 + pulse));
+    }
+    // 2) clouds on a sky plane: real shapes from domain-warped fbm, moving with the wind (faster with the music)
+    if (y > 0.015) {
+        float s  = 1.0 / (y * 1.6 + 0.06);
+        float ux = x * s, uz = z * s;
+        float t  = T * speed * (1.0 + 1.2 * LIVELY) * (1.0 + 0.9 * pulse);
+        float wx = t * 1.0, wz = t * 0.35;
+        float w1 = fbm(ux * 0.22 + wx * 0.5, uz * 0.22 + wz * 0.5, 2.7, 3);
+        float cx = ux * 0.55 + wx + w1 * 1.1, cz = uz * 0.55 + wz + w1 * 0.8;
+        float n  = fbm(cx, cz, t * 0.12, 5);
+        float d  = sm(cover, cover + 0.22, n) * sm(0.015, 0.22, y);
+        if (d > 0.004) {
+            // light: how much cloud lies between this point and the sun (one extra sample toward the sun)
+            float sl = 0.35;
+            float sx = SUN.x, sz = SUN.z, sn = max(1e-3, sqrt(sx * sx + sz * sz));
+            float n2 = fbm(cx + sx / sn * sl, cz + sz / sn * sl, t * 0.12, 4);
+            float lightK = clamp(0.62 + (n - n2) * 3.2, 0.0, 1.0);
+            float thick = sm(cover, cover + 0.5, n);
+            vec3 cc = mix(shade, lit, lightK * (1.0 - 0.35 * thick));
+            cc += sunC * pow(mu, 5.0) * (1.0 - thick) * 0.9;            // silver lining toward the sun
+            if (kind == 2) cc += rgb(255.0, 110.0, 60.0) * (1.0 - lightK) * 0.35 * exp(-yy * 3.0); // glowing bellies
+            cc = mix(cc, hor, haze * (1.0 - sm(0.02, 0.4, y)));         // aerial perspective near the horizon
+            cc *= 1.0 + 0.18 * pulse;
+            over(cc, d * opac);
+        }
+        // 3) a thin high cirrus layer, slower, streaked by the wind
+        float ci = fbm(ux * 0.12 + t * 0.4, uz * 1.1 + t * 0.12, 9.1, 4);
+        float cd = sm(0.56, 0.8, ci) * sm(0.05, 0.4, y) * (kind == 3 ? 0.25 : 0.5);
+        if (cd > 0.004) over(mix(lit, hor, 0.35) * (1.0 + 0.2 * pulse), cd);
+    }
+}
+
+vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
+    vec3 skyInfo = skyInfo4.xyz;
+    PULSE = skyInfo4.w;
     TOP = px(0).rgb;
     HOR = px(1).rgb;
     A1 = px(2).rgb;
@@ -932,7 +1021,10 @@ vec4 skyMain(vec3 skyDir, vec3 skyInfo) {
     float az = degrees(atan2(-x, z));
     if (az < 0.0) az += 360.0;
 
-    if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34+: the LyricsForge skies)
+    if (PRESET >= 38) { // [LyricsForge] realistic skies
+        realSky(x, y, z, el, PRESET - 38);
+        if (BKIND >= 0) bodyGlow(x, y, z, az, el);
+    } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
         C = styledSky(dir, PRESET <= 28 ? PRESET - 20 : PRESET - 25, T / 2.2);
     } else {

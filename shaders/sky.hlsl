@@ -43,7 +43,7 @@ float4 PSSky(VOut i) : SV_Target {
         float  a  = saturate(gPic.x) * gInfo.w;
         return float4(c * a, a);
     }
-    float4 c = skyMain(i.dir, gInfo.xyz);
+    float4 c = skyMain(i.dir, float4(gInfo.xyz, 0.0));
     c.a *= gInfo.w;
     return float4(c.rgb * c.a, c.a); // premultiplied
 }

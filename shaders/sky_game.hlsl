@@ -38,7 +38,7 @@ static float4 gP[13];
 
 float4 PSSkyGame(GOut i) : SV_Target {
     [unroll] for (int k = 0; k < 13; ++k) gP[k] = i.p[k];
-    float4 c = skyMain(i.dir, i.info.xyz);
+    float4 c = skyMain(i.dir, i.info);
     c.rgb    = toTarget(c.rgb, i.extra);
     return c; // straight alpha, blended SRC_ALPHA / INV_SRC_ALPHA over Bedrock's own sky
 }

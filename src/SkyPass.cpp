@@ -968,7 +968,7 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
         for (int i = 0; i < 13; ++i) std::memcpy(&v.p[i], h.params[i], 4);
         std::memcpy(v.f, cam.f, 12); std::memcpy(v.r, cam.r, 12); std::memcpy(v.u, cam.u, 12);
         v.txy[0] = cam.tx; v.txy[1] = cam.ty;
-        v.info[0] = h.info[0]; v.info[1] = h.info[1]; v.info[2] = h.info[2]; v.info[3] = 0;
+        v.info[0] = h.info[0]; v.info[1] = h.info[1]; v.info[2] = h.info[2]; v.info[3] = h.info[3]; // w: music pulse
         v.extra[0] = g.vv ? g.farZ : 1.0f; v.extra[1] = g.vv ? gUi.vvGain : 1.0f; v.extra[2] = g.vv ? 1.0f : 0.0f; v.extra[3] = 0;
     }
     // sky-layer quads only (stars, constellations, shooting stars, lightning); weather needs depth: not here yet
