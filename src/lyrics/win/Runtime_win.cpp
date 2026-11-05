@@ -857,8 +857,8 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     }
     if (!wantSky.empty() || mo.skyBoost > 0.01f || !tourSky.empty()) {
         Config eff = cfg;
-        if (!tourSky.empty()) eff.skyPreset = tourSky;
         if (!wantSky.empty()) eff.skyPreset = wantSky;
+        if (!tourSky.empty()) eff.skyPreset = tourSky; // the tour wins (each sky seen as itself)
         eff.skyStrength = std::min(1.0f, eff.skyStrength * (1.0f + 0.45f * mo.skyBoost)); // aurora burst: the sky's
         eff.skySpeed *= 1.0f + 0.7f * mo.skyBoost;                                         // own layers, brighter + faster
         gS->sky.step(gS->moduleOn && cfg.enabled, eff, gS->engine.perf(), in);
