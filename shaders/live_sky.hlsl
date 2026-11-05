@@ -231,31 +231,36 @@ void lava(float x, float y, float z, float el) {
     float t = T * 0.03 * (0.6 + LIVELY);
     float w = fbm(x * 1.6 + 3.0, y * 1.6 - t, z * 1.6, 2);
     float n = fbm(x * 2.4 + w * 1.6 + t, y * 2.4 - t * 0.7, z * 2.4 - w * 1.2, 3);
-    float vein = pow(1.0 - abs(2.0 * n - 1.0), 6.0);
+    // [BF] toned down after an in-game look (veins over the whole dome read as a flat orange wash): thinner veins,
+    // glowing most near the horizon like a burning skyline, the zenith a smouldering dark
+    float vein = pow(1.0 - abs(2.0 * n - 1.0), 9.0);
     float pulse = 0.75 + 0.25 * sin(T * 1.3 + n * 12.0);
-    float k = vein * pulse * PATTERN * BREATH * (0.4 + 0.6 * sm(-2.0, 20.0, el));
-    add(A1, k * 1.1);
-    add(A2, vein * vein * vein * 0.8 * PATTERN);
-    add(vec3(0.5, 0.06, 0.02), sm(0.45, 0.8, n) * 0.18);
+    float low = 0.25 + 0.75 * sm(65.0, 5.0, el);
+    float k = vein * pulse * PATTERN * BREATH * low * (0.4 + 0.6 * sm(-2.0, 20.0, el));
+    add(A1, k * 0.7);
+    add(A2, vein * vein * vein * 0.35 * PATTERN * low);
+    add(vec3(0.5, 0.06, 0.02), sm(0.45, 0.8, n) * 0.12 * low);
 }
 
 void code(float az, float el) {
+    // [BF] digital rain, reworked after an in-game look: thin glowing lines made of glyph dashes, gaps between the
+    // columns, fading out before the zenith (the old 4-degree columns met overhead as wide green slabs)
     if (el < -2.0) return;
-    float colW = 4.0;
+    float colW = 1.6;
     float col = floor(az / colW);
     float h1 = hash3(int(col), 7, 3), h2 = hash3(int(col), 11, 5);
-    float speed = 0.25 + h1 * 0.5 * (0.5 + LIVELY);
-    float head = 90.0 - fract(T * speed * 0.35 + h2) * 110.0;
+    if (h1 < 0.35) return;
+    float speed = 0.25 + h2 * 0.6 * (0.5 + LIVELY);
+    float head = 85.0 - fract(T * speed * 0.3 + h2 * 3.7) * 100.0;
     float d = head - el;
-    float cell = floor(el / 3.0);
-    float flick = hash3(int(col), int(cell), int(floor(T * 3.0 + h1 * 7.0))) > 0.25 ? 1.0 : 0.35;
-    float edge = abs((az / colW - col) - 0.5) < 0.38 ? 1.0 : 0.2;
-    if (d < 0.0) {
-        float trail = exp(d / 14.0) * flick * edge;
-        add(A1, trail * 0.75 * PATTERN);
-    }
-    if (abs(d) < 2.2) add(A2, (1.0 - abs(d) / 2.2) * edge * PATTERN);
-    add(A1, 0.05 * flick * edge * (0.5 + 0.5 * sin(T + col)));
+    float u = abs((az / colW - col) - 0.5);
+    float edge = sm(0.22, 0.05, u);
+    float cellH = 2.2;
+    float cell = floor(el / cellH), cf = fract(el / cellH);
+    float glyph = step(0.18, cf) * step(cf, 0.86) * (hash3(int(col), int(cell), int(floor(T * 2.0 + h1 * 9.0))) > 0.3 ? 1.0 : 0.25);
+    float fadeTop = sm(72.0, 38.0, el);
+    if (d < 0.0) add(A1, exp(d / 12.0) * glyph * edge * fadeTop * 0.7 * PATTERN);
+    if (abs(d) < 1.6) add(A2, (1.0 - abs(d) / 1.6) * edge * fadeTop * 1.2 * PATTERN);
 }
 
 void prism(float az, float el) {
@@ -878,6 +883,11 @@ vec4 skyMain(vec3 skyDir, vec3 skyInfo) {
     SUN = vec3(-sin(ba) * cos(be), sin(be), cos(ba) * cos(be));
 
     vec3 dir = normalize(skyDir);
+    { // [BF] LyricsForge: the dome turns so a sky's signature (sun, black hole, eclipse, burst) starts in front of you
+        float yo = radians((u16(px(12).ba) - 32767.5) / 16383.5 * 360.0);
+        float cy = cos(-yo), sy = sin(-yo);
+        dir = vec3(dir.x * cy - dir.z * sy, dir.y, dir.z * cy + dir.x * sy);
+    }
     float x = dir.x, y = dir.y, z = dir.z;
     float el = degrees(asin(clamp(y, -1.0, 1.0)));
     float az = degrees(atan2(-x, z));
