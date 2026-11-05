@@ -94,7 +94,7 @@ Dir readDirector(bool allow) {
     d.focus  = std::clamp(v.focus, 0.0f, 1.0f);
     for (int k = 0; k < 3; ++k) d.world[k] = std::clamp(v.worldTint[k], 0.2f, 2.0f);
     d.worldAmount = std::clamp(v.worldAmount, 0.0f, 0.8f);
-    d.exposure    = std::clamp(v.exposure, 0.75f, 1.6f);
+    d.exposure    = std::clamp(v.exposure, 0.6f, 1.6f);
     d.skyKeep     = std::clamp(v.skyKeep, 0.0f, 1.0f);
     d.worldSat    = std::clamp(v.worldSat, 0.5f, 1.6f);
     return d;
