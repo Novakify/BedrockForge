@@ -124,20 +124,23 @@ MoodIn moodInputs(SongMemory const* mem, Lyrics const* lyrics, uint32_t cover, f
 
 std::vector<std::string_view> const& moodSkies(SkyMood m) {
     static std::vector<std::string_view> const lists[6] = {
-        {"dawn", "cotton_candy", "silver_lining", "summer", "golden_hour"},   // bright
-        {"summer", "golden_hour", "dusk", "bright_night", "supernova"},      // hype
-        {"dawn", "cotton_candy", "sakura", "golden_hour", "dusk"},           // dreamy
-        {"silver_lining", "storm", "midnight", "bright_night"},             // melancholy
-        {"storm", "eclipse", "dusk", "blood_moon"},                          // dark
-        {"midnight", "bright_night", "aurora", "nebula"},                    // night
+        {"dawn", "cotton_candy", "silver_lining", "ocean", "summer", "prism", "golden_hour"},      // bright
+        {"summer", "golden_hour", "sunset", "dusk", "bright_night", "supernova"},                 // hype
+        {"dawn", "cotton_candy", "aquarell", "dream_ocean", "sakura", "golden_hour", "dusk"},     // dreamy
+        {"silver_lining", "storm", "frost", "midnight", "thunder", "bright_night"},              // melancholy
+        {"storm", "crimson", "inferno", "eclipse", "blood_moon", "eclipse_heart"},               // dark
+        {"midnight", "cosmos", "aurora", "bright_night", "galaxy", "nebula"},                    // night
     };
     return lists[std::min<size_t>(size_t(m), 5)];
 }
 
-std::vector<std::string_view> const& curatedSkies() {
-    static std::vector<std::string_view> const c = {"summer", "dawn", "dusk", "bright_night", "silver_lining", "golden_hour",
-                                                     "cotton_candy", "sakura", "aurora", "midnight", "nebula", "eclipse",
-                                                     "blood_moon", "storm", "supernova"};
+std::vector<std::string_view> const& curatedSkies() { // [LyricsForge] after the polish pass: every sky but the gimmick
+    static std::vector<std::string_view> const c = {
+        "summer", "dawn", "dusk", "bright_night", "silver_lining", "golden_hour", "cotton_candy", "sakura", "aurora",
+        "midnight", "nebula", "eclipse", "blood_moon", "storm", "supernova", "synthwave", "black_hole", "cosmos",
+        "neon_city", "frost", "deep_sea", "inferno", "prism", "pulsar", "aquarell", "polar", "galaxy", "ocean", "ice",
+        "purple", "sunset", "cherry", "crimson", "thunder", "rift", "warp", "silk", "astral", "eclipse_heart",
+        "dream_ocean", "meteor"};
     return c;
 }
 bool isCurated(std::string_view id) {

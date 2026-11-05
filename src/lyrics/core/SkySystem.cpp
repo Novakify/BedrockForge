@@ -121,6 +121,9 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
             mDomeYaw = float(in.yaw) - front;
         }
         auto  q      = pack(*p, aurora1(*p, cfg), aurora2(*p, cfg), mFrame.time, cfg, id3, mDomeYaw);
+        // [LyricsForge] texel 13: what the music is doing right now, for every sky (the dome reacts, not just the quads)
+        auto b8 = [](float v) { return uint8_t(std::clamp(int(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)), 0, 255)); };
+        q[13] = {b8(in.lightning), b8(in.kick), b8(in.beat), in.wave < 0 ? uint8_t(0) : uint8_t(1 + int(std::clamp(in.wave, 0.0f, 1.0f) * 254.0f))};
         for (int i = 0; i < 16; ++i) std::memcpy(h.params[i], q[size_t(i)].data(), 4);
     }
     h.info[0]       = mFrame.t;

@@ -1292,7 +1292,7 @@ TEST(sky_mood) { // [LyricsForge] Random fits the song
         CHECK(pickMoodSky(SkyMood(m), 1.0f, {}, peak, 7) != peak);  // never the same sky again on the next change
     }
     for (auto id : curatedSkies()) CHECK(sky::find(id, Config{}).has_value());
-    CHECK(!isCurated("matrix") && !isCurated("warp") && isCurated("cotton_candy"));
+    CHECK(!isCurated("matrix") && !isCurated("custom") && isCurated("cotton_candy") && isCurated("prism"));
 }
 
 TEST(world_light) { // [LyricsForge] the sky lights the world
@@ -1479,10 +1479,16 @@ TEST(sky_system_store) {
     h.size = sizeof h;
     uint32_t n = BF_CopySkyFrame(&h, v.data(), uint32_t(v.size()));
     CHECK_EQ(h.active, 1u);
-    CHECK(n > 400 && n % 4 == 0 && n == h.vertTotal);
+    CHECK(n > 100 && n % 4 == 0 && n == h.vertTotal); // [LyricsForge] constellations; the stars are the shader's own now
     CHECK_EQ(int(h.params[7][2]), find("midnight", cfg)->ordinal);
     CHECK(h.info[2] > 0.5f && std::string(h.spritesFile) == "C:/x/sprites.png");
     CHECK_EQ((v[0].color >> 16) & 255, 0xFFu); // star 0xF4F0FF: R low byte 0xF4, B in bits 16..23 = 0xFF
+    in.wave = 0.5f; in.kick = 1.0f; in.lightning = 0.5f; in.nowMs += 50;  // [LyricsForge] the music reaches the shader
+    sys.step(true, cfg, perf, in);
+    BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK(h.params[13][0] > 100 && h.params[13][1] == 255 && h.params[13][3] > 100);
+    in.wave = -1; in.nowMs += 50; sys.step(true, cfg, perf, in); BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK_EQ(int(h.params[13][3]), 0);
     CHECK_EQ(v[0].color & 255, 0xF4u);
     uint32_t gen = h.imageGeneration;
     cfg.skyImage = true; in.pictureFile = "C:/x/sky/pano.jpg";
@@ -1946,7 +1952,7 @@ TEST(sky_chorus_wave_and_meteors) {
     fx.frame(&p, cfg, perf, f, in, q0);
     in.wave = 0.4f;
     fx.frame(&p, cfg, perf, f, in, q1);
-    CHECK(q1.size() >= q0.size() + 64 * 3);                      // the ring of light
+    CHECK(q1.size() == q0.size());                               // [LyricsForge] the wave is the shader's now
     in.wave = -1; in.meteors = 6; in.nowMs = 1100;
     fx.frame(&p, cfg, perf, f, in, q2);
     in.meteors = 0;

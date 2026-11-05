@@ -106,6 +106,7 @@ private:
 
     Rnd                  mRnd;
     std::vector<Shot>    mShooting;
+    uint32_t mTint = 0xFFE7C4; // [LyricsForge] meteor sheath colour: the sky's own accent
     int64_t              mNextShooting = 0, mT0 = -1;
     double               mFlashNext = 0, mFlashT0 = -10;
     std::vector<double>  mBolt; // az, el pairs

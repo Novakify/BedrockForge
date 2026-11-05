@@ -84,11 +84,12 @@ std::optional<Preset> find(std::string_view id, Config const& cfg) {
 // [BF] where a sky's signature sits (deg az, the shader's / dirOf convention): the dome turns this to the player
 float frontAz(Preset const& p) {
     std::string_view const id = p.id;
+    if (id == "prism") return 200; // [LyricsForge] the rainbow (opposite the sun) is the signature
     if (auto b = body(p)) return float(b->az);
     struct F { char const* id; float az; };
-    static constexpr F kF[] = {{"warp", 0}, {"supernova", 200}, {"eclipse", 160}, {"rift", 180}, {"polar", 0}, {"galaxy", 10},
-                               {"ocean", 180}, {"ice", 0}, {"purple", 0}, {"sunset", 30}, {"cherry", 0}, {"crimson", 0},
-                               {"thunder", 0}, {"astral", 200}, {"eclipse_heart", 10}, {"dream_ocean", 0}, {"meteor", 0}};
+    static constexpr F kF[] = {{"warp", 0}, {"pulsar", 30}, {"supernova", 200}, {"eclipse", 160}, {"rift", 180}, {"polar", 0}, {"galaxy", 190},
+                               {"ocean", 180}, {"ice", 0}, {"purple", 185}, {"sunset", 30}, {"cherry", 0}, {"crimson", 0},
+                               {"thunder", 0}, {"astral", 200}, {"eclipse_heart", 160}, {"dream_ocean", 0}, {"meteor", 0}};
     for (auto const& f : kF) if (id == f.id) return f.az;
     return p.painted() ? 0.0f : 180.0f;
 }
@@ -104,10 +105,18 @@ std::optional<Body> body(Preset const& p) {
     if (id == "golden_hour") return Body{200, 4, 3.6, 0xFFC27A, BodyKind::Sun};
     if (id == "cotton_candy") return Body{120, 38, 2.4, 0xFFF4E0, BodyKind::Sun};
     if (id == "sakura") return Body{60, 9, 2.6, 0xFFE2EE, BodyKind::Sun};
-    if (id == "cosmos") return Body{60, 28, 5, 0xB9A6FF, BodyKind::Moon};
+    if (id == "cosmos") return Body{60, 28, 4.2, 0xE8E4F2, BodyKind::Moon};
     if (id == "black_hole") return Body{165, 24, 5.2, 0xFFB45A, BodyKind::Eclipse};
     if (id == "blood_moon") return Body{200, 22, 4.4, 0xFF4038, BodyKind::Moon};
-    if (id == "frost") return Body{210, 30, 2.6, p.moon, BodyKind::Moon};
+    if (id == "frost") return Body{200, 18, 2.4, 0xFFF6EA, BodyKind::Sun};        // [LyricsForge] polar day: halo + sundogs
+    if (id == "prism") return Body{20, 16, 2.2, 0xFFF4E0, BodyKind::Sun};         // behind you: the rainbow is in front
+    if (id == "ocean") return Body{150, 48, 2.4, 0xFFF6E0, BodyKind::Sun};
+    if (id == "dream_ocean") return Body{120, 8, 3.0, 0xFFE0D0, BodyKind::Sun};
+    if (id == "sunset") return Body{200, 2, 4.0, 0xFFA050, BodyKind::Sun};
+    if (id == "crimson") return Body{200, 2, 4.2, 0xFF6040, BodyKind::Sun};
+    if (id == "cherry") return Body{200, 28, 2.6, 0xFFE0F0, BodyKind::Moon};
+    if (id == "ice") return Body{200, 26, 2.4, 0xEAF6FF, BodyKind::Moon};
+    if (id == "aquarell") return Body{200, -5, 2.4, 0xFFB080, BodyKind::Sun}; // just set: the clouds high up still catch it
     if (p.moon != 0) return Body{200, 26, 2.4, p.moon, BodyKind::Moon};
     return std::nullopt;
 }

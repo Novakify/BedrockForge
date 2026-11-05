@@ -224,15 +224,22 @@ void Fx::shooting(float alpha, int64_t nowMs, Cam const& c, std::vector<Quad>& o
             V3     head = at(az, el), tail = at(az - s.dir * 14.0f, el + 8.0);
             float const a = alpha * (1 - t * t);
             float const in = std::min(1.0f, t * 12.0f); // no pop-in
-            // [BF] audit: hairline core + faint warm sheath + a small head, not a white wedge
-            streak(out, tail, head, 0.0042, 0xFFF6E8, 0.0f, a * in);
-            streak(out, at(az - s.dir * 7.0f, el + 4.0), head, 0.011, 0xFFC88A, 0.0f, a * in * 0.22f);
-            softGlow(out, c, head, 0.035, 0xFFE7C4, a * in * 0.55f);
+            // [LyricsForge] a tapered white-hot core, a sheath in the sky's own colour, a lingering train, a bright head
+            V3 const mid = at(az - s.dir * 6.0f, el + 3.4);
+            streak(out, at(az - s.dir * 22.0f, el + 12.5), mid, 0.012, mTint, 0.0f, a * in * 0.10f);  // the fading train
+            streak(out, tail, head, 0.0058, 0xFFFBF2, 0.0f, a * in);
+            streak(out, mid, head, 0.0105, 0xFFFFFF, 0.0f, a * in * 0.45f);                            // brighter near the head
+            streak(out, at(az - s.dir * 9.0f, el + 5.2), head, 0.022, mTint, 0.0f, a * in * 0.30f);
+            softGlow(out, c, head, 0.016, 0xFFFFFF, a * in * 0.9f);
+            softGlow(out, c, head, 0.045, mTint, a * in * 0.35f);
             continue;
         }
         double az = s.az + s.dir * t * 30.0f, el = s.el - t * 12.0f;
         V3     head = at(az, el), tail = at(az - s.dir * 6.0f, el + 2.4);
-        streak(out, tail, head, 0.004, 0xFFFFFF, 0.0f, alpha * (1 - t));
+        float const a = alpha * (1 - t) * std::min(1.0f, t * 10.0f);
+        streak(out, tail, head, 0.0042, 0xFFFFFF, 0.0f, a);
+        streak(out, at(az - s.dir * 3.5f, el + 1.4), head, 0.011, mTint, 0.0f, a * 0.25f);
+        softGlow(out, c, head, 0.010, 0xFFFFFF, a * 0.7f);
     }
 }
 
@@ -363,10 +370,14 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
                std::vector<Quad>& out) {
     c_yaw = in.cam.yaw;
     if (!p) return;
+    mTint = lerpColor(p->aurora1 ? p->aurora1 : p->lyricColor, 0xFFFFFF, 0.25f);
     if (in.picture) return; // the picture replaces the whole sky (WorldSky skips everything else)
     if (f.visible <= 0.01f) return;
     int q = std::clamp(in.quality, 0, 2);
-    if (p->stars > 0 && cfg.fxStars && perf.allow(5))
+    // [LyricsForge] the reworked skies draw their own stars (real magnitudes, colours, the Milky Way); the old dot
+    // stars stay only on the skies that still use them
+    bool const ownStars = p->ordinal == 14 || p->ordinal == 16 || p->ordinal == 31;
+    if (ownStars && p->stars > 0 && cfg.fxStars && perf.allow(5))
         stars(*p, cfg, q, f.visible * f.bright * (0.85f + 0.3f * f.beat), f.time, in.cam, out);
     if (p->stars >= 0.8f && cfg.fxStars && cfg.fxConstellations && perf.allow(2)) // [BF] only real night skies
         constellations(f.visible * f.bright * std::clamp((p->stars - 0.8f) * 5.0f, 0.0f, 1.0f), in.cam, out);
@@ -386,7 +397,7 @@ void Fx::frame(Preset const* p, Config const& cfg, AutoPerf const& perf, Frame c
             streak(out, at(az, -0.4), at(az, top), 0.0035, tip, 0.0f, a);                // its bright core, fading to the ground
         }
     }
-    if (in.wave >= 0 && perf.allow(2)) wave(in.wave, in.waveColor, f.visible * std::min(1.0f, 0.5f + f.bright), out);
+    // [LyricsForge] the chorus light wave is drawn by the sky shader now (a soft sweep in the sky's own colours)
     Weather wx = cfg.snowAnySky ? Weather::Snow : p->weather; // LyricsFlow 2.2: snow with any sky
     float   wa = cfg.weatherAmount;
     if (in.burst != Weather::None && in.burstAmt > 0.02f) { wx = in.burst; wa = std::max(0.6f, cfg.weatherAmount) * std::min(1.0f, in.burstAmt); } // [BF] Moments
