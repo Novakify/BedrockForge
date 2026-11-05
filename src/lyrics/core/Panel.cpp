@@ -980,8 +980,9 @@ void Panel::cinema(Ctx& c, Config& cfg) {
     c.toggle2("mi", 288, 54, 78, "Impacts", cfg.materialImpacts, [&] { cfg.materialImpacts = !cfg.materialImpacts; }, a);
     c.toggle2("sd", 206, 70, 78, "Stereo drift", cfg.stereoDrift > 0.01f, [&] { cfg.stereoDrift = cfg.stereoDrift > 0.01f ? 0.0f : 0.5f; }, a);
     c.toggle2("sc", 288, 70, 78, "Showcase", cfg.showcase, [&] { cfg.showcase = !cfg.showcase; }, a);
-    c.toggle2("sn", 206, 86, 78, "Snow (any sky)", cfg.snowAnySky, [&] { cfg.snowAnySky = !cfg.snowAnySky; }, a);
-    c.toggle2("lo", 288, 86, 78, "Lyrics", cfg.showLyrics, [&] { cfg.showLyrics = !cfg.showLyrics; }, a);
+    c.option("sn", 206, 87, 52, 14, "Snow", cfg.snowAnySky, [&] { cfg.snowAnySky = !cfg.snowAnySky; }, a);
+    c.option("lo", 260, 87, 52, 14, "Lyrics", cfg.showLyrics, [&] { cfg.showLyrics = !cfg.showLyrics; }, a);
+    c.option("in", 314, 87, 52, 14, "Beats", cfg.instrumentalFx, [&] { cfg.instrumentalFx = !cfg.instrumentalFx; }, a); // [BF] instrumentals
     // tap-sync
     auto const& m = mMedia;
     c.text("Tap sync", 206, 104, 0.62f, WHITE, 0.55f * a);

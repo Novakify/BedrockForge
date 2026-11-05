@@ -114,6 +114,12 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         ai.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
         mAtmos.step(ai);
         mAtmos.emit(ai, mOrigin, mBack);
+        Pulse::In ui; // instrumentals: ground rings on the kicks, the horizon equaliser
+        ui.music = in.music; ui.dt = in.dt; ui.camYaw = cam.yaw; ui.now = in.nowSeconds; ui.color = tint;
+        ui.enabled = cfg.instrumentalFx && cfg.director;
+        ui.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
+        mPulse.step(ui);
+        mPulse.emit(ui, mBack);
         Portal::In pi; // musical portal
         pi.music = in.music; pi.dt = in.dt; pi.camYaw = cam.yaw; pi.camPitch = cam.pitch; pi.now = in.nowSeconds; pi.color = tint;
         pi.enabled = cfg.portals && cfg.director && cfg.showLyrics;

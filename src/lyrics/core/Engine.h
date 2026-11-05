@@ -17,6 +17,7 @@
 #include "lyrics/core/Ribbon.h"
 #include "lyrics/core/PlayerHud.h"
 #include "lyrics/core/Portal.h"
+#include "lyrics/core/Pulse.h"
 #include "lyrics/core/TopBar.h"
 
 namespace bf::lyrics {
@@ -59,6 +60,7 @@ private:
     std::vector<BfGlyphV1> mBack;        // [BF] reused: glyphs drawn behind the words
     Ribbon                 mRibbon;
     PlayerHud              mPlayer;
+    Pulse                  mPulse;       // [BF] the beat takes the stage when nobody sings
     Portal                 mPortal;      // [BF] a ring of light opens in the sky on choruses / drops      // [BF] corner music player      // [BF] light running under the line with the singing      // [BF] material-aware impact bits of falling letters       // [BF] music-reactive motes around the player
     SkyWriter              mSkyWriter;   // [BF] the sky writes the song (hook lines -> constellations)
     LetterPhysics          mPhysics;

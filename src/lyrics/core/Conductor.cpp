@@ -59,7 +59,7 @@ void Conductor::update(ConductorIn const& in) {
         mWasBuilding = mWasHook = false;
         mLastPos = -1;
         mHold = 0;
-        s.hold = 0; s.toDrop = -1; s.outro = 0;
+        s.hold = 0; s.toDrop = -1; s.outro = 0; mNoVoice = 0;
         if (s.lifted) { s.lifted = false; s.liftEnd = true; }
         mLiftAge = 0;
     }
@@ -236,6 +236,10 @@ void Conductor::update(ConductorIn const& in) {
     // ---- speed ramp: fragments / sky motion hang in the air while it builds, then burst on the hit
     float const ramp = (1.0f - 0.6f * s.build) * (1.0f + 1.6f * s.impact) * (1.0f - 0.75f * s.hold);
     s.timeScale += (ramp - s.timeScale) * ease(dt, ramp > s.timeScale ? 0.05f : s.hold > 0.05f ? 0.08f : 0.35f);
+    // ---- instrumental: no lyrics at all, or nobody has sung for a few seconds -> the beat takes the stage
+    mNoVoice = (in.hasLyrics && in.vocals) ? 0.0f : mNoVoice + dt;
+    float const instT = !in.hasLyrics ? 1.0f : mNoVoice > kNoVoice ? clamp01((mNoVoice - kNoVoice) / 2.0f) : 0.0f;
+    s.instrumental += (instT - s.instrumental) * ease(dt, instT > s.instrumental ? 1.2f : 0.35f);
     // ---- outro: the last ~9 s of a song with a known length (end credits, the world winds down)
     float outroT = 0;
     if (in.durationMs > 30000 && in.posMs > in.durationMs - 9000)

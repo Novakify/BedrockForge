@@ -44,6 +44,7 @@
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 #include "lyrics/core/Clip.h"
+#include "lyrics/core/Pulse.h"
 
 using namespace bf::lyrics;
 
@@ -2100,6 +2101,42 @@ TEST(song_outro_credits) {
     for (int i = 0; i < 200; ++i) cin.step(&m, cfg, 1.0f / 60);
     CHECK(cin.out().vignette > v0 + 0.2f);
     CHECK(cin.out().letterbox > 0.05f);
+}
+
+TEST(instrumentals_take_the_stage) { // [BF] no singing: the world performs the beat
+    Conductor c;
+    ConductorIn in;
+    in.playing = true; in.songSeq = 1; in.dt = 1.0f / 60.0f; in.hasLyrics = true; in.vocals = true;
+    for (int64_t t = 0; t < 10000; t += 17) { in.posMs = t; c.update(in); }
+    CHECK(c.state().instrumental < 0.01f);                       // singing: the words lead
+    in.vocals = false;
+    for (int64_t t = 10000; t < 12000; t += 17) { in.posMs = t; c.update(in); }
+    CHECK(c.state().instrumental < 0.05f);                       // a short breath between lines changes nothing
+    for (int64_t t = 12000; t < 20000; t += 17) { in.posMs = t; c.update(in); }
+    CHECK(c.state().instrumental > 0.8f);                        // a beat break: the beat takes the stage
+    in.vocals = true;
+    for (int64_t t = 20000; t < 21500; t += 17) { in.posMs = t; c.update(in); }
+    CHECK(c.state().instrumental < 0.1f);                        // the voice is back, quickly
+    Conductor c2; in.songSeq = 2; in.hasLyrics = false;
+    for (int64_t t = 0; t < 5000; t += 17) { in.posMs = t; c2.update(in); }
+    CHECK(c2.state().instrumental > 0.9f);                       // no lyrics at all: from the start
+    // Pulse: a ring per kick, the horizon equaliser
+    Pulse p;
+    MusicState m; m.active = true; m.instrumental = 1; m.bass = 0.8f; m.energy = 0.7f;
+    Pulse::In pi; pi.music = &m;
+    for (int i = 0; i < 120; ++i) { m.beat = (i % 30) < 3 ? 0.9f : 0.1f; pi.now = i / 60.0; p.step(pi); }
+    CHECK(p.rings() >= 1 && p.rings() <= 8);
+    CHECK(p.level() > 0.5f);
+    std::vector<BfGlyphV1> out;
+    p.emit(pi, out);
+    CHECK(out.size() > 100);
+    bool ground = false;
+    for (auto const& g : out) ground |= std::fabs(g.pos[1] + Pulse::kEye - 0.03f) < 0.01f;
+    CHECK(ground);
+    m.instrumental = 0;
+    for (int i = 0; i < 240; ++i) p.step(pi);
+    out.clear(); p.emit(pi, out);
+    CHECK(out.empty());                                          // the voice came back: it all fades away
 }
 
 int main(int argc, char** argv) {

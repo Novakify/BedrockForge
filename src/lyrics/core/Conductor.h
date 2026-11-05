@@ -46,6 +46,7 @@ struct MusicState {
     float   lift = 0;           // 0..1 eased
     bool    lifted = false;     // in the chorus look now
     bool    liftNow = false, liftEnd = false; // events: entered / left the chorus look this frame
+    float   instrumental = 0;   // [BF] 0..1 eased: nobody is singing (no lyrics, or a long beat break) - the world performs
     float   outro = 0;          // [BF] 0..1 eased over the song's last ~9 s (end credits, the sky dims)
 };
 
@@ -61,6 +62,8 @@ struct ConductorIn {
     std::vector<std::pair<int64_t, char>> const* marks = nullptr; // [BF] manual sections (win over the guesses)
     bool             enabled = true;
     int64_t          durationMs = 0;   // [BF] song length (0 = unknown: no outro)
+    bool             hasLyrics = true; // [BF] synced lyrics exist for this song
+    bool             vocals = true;    // [BF] a lyric line is being sung now (or starts within a second)
 };
 
 class Conductor {
@@ -77,7 +80,8 @@ public:
     static constexpr float kBigDrop  = 0.5f;  // floor: a drop needs at least this Song Memory strength to be a big one
     static constexpr float kLiftMin  = 10.0f; // the chorus look stays at least this long...
     static constexpr float kLiftMax  = 45.0f; // ...and never longer than this without a new hit
-    static constexpr float kLiftFade = 4.0f;  // s the energy must stay down before it lets go
+    static constexpr float kLiftFade = 4.0f;
+    static constexpr float kNoVoice  = 3.0f;  // s without singing before the beat takes the stage  // s the energy must stay down before it lets go
 
 private:
     MusicState mS;
@@ -89,7 +93,7 @@ private:
     float      mSinceDrop = 1e9f, mSinceChorus = 1e9f, mSinceCalm = 1e9f;
     float      mBudgetTarget = 0.5f;
     bool       mWasBuilding = false, mWasHook = false;
-    float      mLiftAge = 0, mLiftFade = 0;
+    float      mLiftAge = 0, mLiftFade = 0, mNoVoice = 0;
     MusicSection mPrevSection = MusicSection::Mid;
 };
 

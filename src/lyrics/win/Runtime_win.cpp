@@ -812,6 +812,8 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     sky::SystemIn in;
     in.nowMs = ms;
     in.dtSec = dt * std::clamp(gS->conductor.state().timeScale, 0.25f, 2.5f); // [BF] the sky rides the speed ramp too
+    float const inst = cfg.instrumentalFx && cfg.director ? gS->conductor.state().instrumental : 0.0f;
+    in.dtSec *= 1.0 + 0.9 * inst * gS->conductor.state().energy; // [BF] instrumentals: the sky moves with the energy
     in.yaw = cam.yaw; in.pitch = cam.pitch;
     in.camX = cam.pos.x; in.camY = cam.pos.y; in.camZ = cam.pos.z;
     in.overworld = static_cast<int>(a.getDimensionId()) == 0;
@@ -820,6 +822,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.night     = 1.0f; // TODO: level day time (only matters with Day/night dimming and "keep sky by day" off)
     in.playing   = gS->clock.playing();
     in.beat      = gS->bassLive ? std::max(gS->bass, gS->conductor.state().impact) : 0.0f; // [BF] sky breathes with the music
+    in.beat      = std::min(1.0f, in.beat * (1.0f + 1.5f * inst));                             // ...harder when nobody sings
     in.spritesFile = gS->spritesFile;
     in.pictureFile = gS->pictureFile;
     // [BF] chorus transformation: the sky blends into the scene's chorus sky, a wave of light rolls over, meteors
@@ -958,6 +961,17 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ci.beat    = in.beat;
         ci.enabled = gS->engine.config().director;
         ci.durationMs = gS->demo.on ? gS->demo.durMs : in.durationMs;
+        { // [BF] is anybody singing? (instrumentals / beat breaks: the world performs)
+            Lyrics const* ly = in.lyrics;
+            ci.hasLyrics = ly && !ly->lines.empty() && in.lyricsState == LyricsState::Found;
+            ci.vocals = false;
+            if (ci.hasLyrics)
+                for (auto const& l : ly->lines) {
+                    if (l.index < 0) continue;
+                    if (l.start - 1000 <= in.t && in.t <= l.end + 400) { ci.vocals = true; break; }
+                    if (l.start > in.t + 1000) break;
+                }
+        }
         gS->conductor.update(ci);
         in.music = &gS->conductor.state();
         { // [BF] chorus look of the scene (cached), and the one-shot chorus events for the sky
@@ -999,6 +1013,8 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         if (m.chorusNow) stamp("CHORUS");
         if (m.calmNow) stamp("calm");
         if (m.liftNow) stamp("LIFT");
+        { static bool inst = false; // [BF] tuning log: the beat takes the stage / the voice is back
+          if (m.instrumental > 0.6f && !inst) { inst = true; stamp("BEATS"); } else if (m.instrumental < 0.2f && inst) { inst = false; stamp("voice"); } }
         if (auto const& cc = gS->engine.config(); gS->clip.step(&m, cc.clipMode && cc.director, dt, in.songSeq)) {
             Hotkey const hk = parseHotkey(cc.clipHotkey);
             if (hk.count) pressHotkey(hk.keys, hk.count);

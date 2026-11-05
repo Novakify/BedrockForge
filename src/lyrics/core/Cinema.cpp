@@ -165,6 +165,8 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
             else if (m->calmNow) want = 6;
             else if (m->liftEnd) want = 0;
             else if (m->lifted && mCutT > 7.0f && m->beat > 0.6f) want = (mShot + 1 + (mCutSeq++ % 3)) % 6; // keep cutting in the chorus
+            else if (cfg.instrumentalFx && m->instrumental > 0.6f && mCutT > 5.5f && m->beat > 0.6f)
+                want = (mShot + 1 + (mCutSeq++ % 4)) % 7;                 // instrumentals: the camera is the dancer
             if (want >= 0 && want != mShot) { mNextShot = want; mCutWait = 0; }
         } else if (mShot != 0 && !(on && m->lifted)) { mNextShot = 0; mCutWait = 0; }
         if (mCutWait >= 0) { // drops / chorus hits are already on the beat; other cuts wait for the next one (<= 0.5 s)
