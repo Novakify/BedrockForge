@@ -26,6 +26,13 @@
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/level/dimension/Dimension.h"
+#include "mc/client/gui/screens/ScreenContext.h"
+#include "mc/deps/minecraft_renderer/constantbuffers/PerFrameConstants.h"
+#include "ll/api/mod/NativeMod.h"
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <string>
 
 #include "client/Module.h"
 
@@ -187,7 +194,51 @@ LL_TYPE_INSTANCE_HOOK(BfLightImageSplitHook, ll::memory::HookPriority::Normal, B
     return r;
 }
 
+// ---- [LyricsForge] sky fog, step 1 (read-only diagnostic): find the game's per-frame FOG_COLOR constant and log what
+// it holds right after setupFog, so the next build can write the sky's horizon colour into it at a verified offset.
+namespace {
+std::atomic<mce::PerFrameConstants*> gPerFrame{nullptr};
+std::atomic<int>                     gFogDiag{0};
+std::atomic<int64_t>                 gFogDiagMs{0};
+auto& fogLog() { return ll::mod::NativeMod::current()->getLogger(); }
+} // namespace
+LL_TYPE_INSTANCE_HOOK(BfPerFrameInitHook, ll::memory::HookPriority::Normal, mce::PerFrameConstants, &mce::PerFrameConstants::$init, void) {
+    origin();
+    gPerFrame = this;
+    fogLog().info("[BF] fog diag: PerFrameConstants::init captured {}", (void*)this);
+}
+LL_TYPE_INSTANCE_HOOK(BfSetupFogHook, ll::memory::HookPriority::Normal, LevelRendererPlayer, &LevelRendererPlayer::$setupFog, void,
+                      ScreenContext& screenContext, float const skyIntensityOverride) {
+    origin(screenContext, skyIntensityOverride);
+    auto* pf = gPerFrame.load();
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (gFogDiag.load() >= 6 || now - gFogDiagMs.load() < 4000) return;
+    gFogDiagMs = now;
+    ++gFogDiag;
+    if (!pf) { fogLog().info("[BF] fog diag: setupFog runs, no PerFrameConstants captured"); return; }
+    auto dump = [&](char const* what, void const* obj) {
+        if (!obj) { fogLog().info("[BF] fog diag: {} null", what); return; }
+        // raw bytes only (no pointer is followed): 24 words as hex + float, plus the 16 bytes of a small std::string
+        uint32_t const* w = reinterpret_cast<uint32_t const*>(obj);
+        char b[1400];
+        int n = std::snprintf(b, sizeof b, "[BF] fog diag: %s @%p |", what, obj);
+        for (int i = 0; i < 24 && n < 1350; ++i) {
+            float fv; std::memcpy(&fv, &w[i], 4);
+            n += std::snprintf(b + n, sizeof b - size_t(n), " %02d:%08x(%.3g)", i * 4, w[i], double(fv));
+        }
+        fogLog().info("{}", b);
+        char txt[17]{};
+        std::memcpy(txt, reinterpret_cast<char const*>(obj) + 8, 16);
+        for (char& c : txt) if (c != 0 && (c < 32 || c > 126)) c = '.';
+        fogLog().info("[BF] fog diag: {} text at +8: '{}'", what, txt);
+    };
+    dump("FOG_COLOR", *pf->FOG_COLOR);
+    dump("FOG_CONTROL", *pf->FOG_CONTROL);
+}
+
 void installVisualHooks() {
+    BfPerFrameInitHook::hook();
+    BfSetupFogHook::hook();
     BfTessLightHook::hook();
     BfAmbientHook::hook();
     BfLightImageHook::hook();
@@ -200,6 +251,8 @@ void installVisualHooks() {
     BfTimeHook::hook();
 }
 void uninstallVisualHooks() {
+    BfPerFrameInitHook::unhook();
+    BfSetupFogHook::unhook();
     BfTessLightHook::unhook();
     BfAmbientHook::unhook();
     BfLightImageHook::unhook();
