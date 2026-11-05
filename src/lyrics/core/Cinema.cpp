@@ -188,6 +188,18 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
         o.letterbox   = std::max(o.letterbox, 0.06f * mShow);
         o.active      = true;
     }
+    if (float const k = cfg.combatCalm ? std::clamp(mCombat, 0.0f, 1.0f) : 0.0f; k > 0.001f) {
+        // [LyricsForge] PvP calm: the camera is back in your eyes at once, no bars / flashes / FOV pulses / dark edges,
+        // the colour look stays at half strength so the world still looks like the song
+        float const off = 1.0f - k;
+        o.showcase *= off; o.focus *= off;
+        o.letterbox *= off; o.vignette *= off; o.flash *= off;
+        o.bloomBoost *= off; o.caBoost *= off;
+        o.fovScale = 1.0f + (o.fovScale - 1.0f) * off;
+        o.amount *= 1.0f - 0.5f * k;
+        o.saturation = 1.0f + (o.saturation - 1.0f) * (1.0f - 0.5f * k);
+        o.contrast = 1.0f + (o.contrast - 1.0f) * off;
+    }
     mOut = o;
 }
 

@@ -826,6 +826,11 @@ void publishDirector(MusicState const& m, CinemaOut const& c) {
     sky::WorldLight const w = gS->engine.config().worldLight ? gS->sky.world() : sky::WorldLight{};
     for (int k = 0; k < 3; ++k) d.worldTint[k] = w.tint[k];
     d.worldAmount = w.amount; d.exposure = w.exposure; d.worldSat = w.sat; d.skyKeep = 0.3f;
+    if (float const k = gS->engine.config().combatCalm ? gS->cinema.combat() : 0.0f; k > 0.001f) { // PvP calm: never darker in a fight
+        if (d.exposure < 1.0f) d.exposure = 1.0f - (1.0f - d.exposure) * (1.0f - k);
+        d.worldAmount *= 1.0f - 0.5f * k;
+        d.worldSat = 1.0f + (d.worldSat - 1.0f) * (1.0f - k);
+    }
     if (!w.neutral()) d.active = 1u;
     gBfDirector = d;
 }
@@ -1127,6 +1132,10 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             }
         }
         autoDirect(in);
+        { // [LyricsForge] PvP calm: full for 4 s after you hit or get hit, then the look comes back over 2.5 s
+            int64_t const since = nowNs() / 1000000 - gCombatAtMs.load();
+            gS->cinema.setCombat(since < 4000 ? 1.0f : std::max(0.0f, 1.0f - float(since - 4000) / 2500.0f));
+        }
         gS->cinema.step(&gS->conductor.state(), gS->engine.config(), dt, cam.yaw, gS->coverAccent & 0xFFFFFF);
         publishDirector(gS->conductor.state(), gS->cinema.out());
         in.skyLuma = gS->sky.luma();

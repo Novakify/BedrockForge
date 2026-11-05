@@ -1246,6 +1246,25 @@ TEST(quality_and_profiles) {
     CHECK_EQ(cfg.quality, 2);
 }
 
+TEST(pvp_calm) { // [LyricsForge] in a fight the look steps aside, then comes back
+    using namespace bf::lyrics;
+    Config cfg; cfg.director = true; cfg.showcase = true; cfg.letterbox = true; cfg.impactFrames = true;
+    MusicState m; m.active = true; m.budget = 1; m.build = 1; m.dropNow = true; m.bigDrop = true;
+    Cinema a, b;
+    for (int i = 0; i < 40; ++i) { a.step(&m, cfg, 0.05f); m.dropNow = false; }
+    m.dropNow = true;
+    b.setCombat(1.0f);
+    for (int i = 0; i < 40; ++i) { b.step(&m, cfg, 0.05f); m.dropNow = false; }
+    CHECK(a.out().showcase > 0.5f && a.out().letterbox > 0.01f);
+    CHECK(b.out().showcase < 0.001f && b.out().letterbox < 0.001f && b.out().flash < 0.001f);
+    CHECK_NEAR(b.out().fovScale, 1.0f, 0.001f);
+    CHECK(b.out().vignette < 0.001f);
+    cfg.combatCalm = false;                                            // the toggle turns it off
+    Cinema c; c.setCombat(1.0f);
+    for (int i = 0; i < 40; ++i) c.step(&m, cfg, 0.05f);
+    CHECK(c.out().showcase > 0.5f);
+}
+
 TEST(sky_mood) { // [LyricsForge] Random fits the song
     using namespace bf::lyrics;
     MoodIn hype; hype.highShare = 0.8f; hype.calmShare = 0.1f; hype.dropsPerMin = 1.6f; hype.cover = 0xFF4FA0;

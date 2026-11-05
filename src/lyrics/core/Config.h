@@ -210,6 +210,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     I(letterFadeMs, 1200)                                                                                              \
     I(maxLetters, 400)                                                                                                 \
     /* ---- [BF] combat safety (PvP on Hive / CubeCraft) */                                                            \
+    B(combatCalm, true)                /* [LyricsForge] PvP calm: in a fight the camera, bars, flashes and darkening step aside */ \
     B(combatSafe, false)                                                                                               \
     F(keepOutDeg, 14.0f)               /* no lyrics within this angle of the crosshair */                              \
     F(combatAlpha, 0.35f)              /* opacity cap for a while after hitting / being hit */                         \
