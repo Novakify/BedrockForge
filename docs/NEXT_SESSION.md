@@ -735,3 +735,9 @@ world card -> mouse down/up; hold_key rshift or key rshift opens the menu. Game 
 - Test harness: F9 needs hold_key (0.6 s). The world at x=90 has cows wandering over the table; use the table at 118.5 200 -109.6.
 - Device config is back to uiDebugUseKey 0, dumpUi false, hoverTargets false. Note: dumpUi true writes a 23 MB BMP every second, which stutters.
 - lyricsflow/rf-on-cinematic-v6 and clientui/rf are fast-forwarded to cinematic 1226f4d (LyricsFlow's 5f666ba merged in).
+
+## 2026-11-05 Spatial GUI first-open freeze (RF a9ab8bc on lyricsforge-cinematic/rf + cinematic)
+- The first panel froze the game for about a second because the input hooks, GameInput's instance (tryGameMouse), the root signature, five PSOs and four window-sized textures were all made at toggle. Now a worker makes them about 240 frames into the game (prewarmTick). The hooks stay no-ops while the panel is off. Log line: "[RF] spatial panel: prepared in the background (N ms)".
+- The open animation was timed from the toggle, so after a hitch it was over before the first picture (and on later opens Bedrock's few frames of screen building ate most of the 300 ms). It now runs on its own clock (gAnimMs) from the first redirected frame, advancing at most 34 ms per frame. The close animation uses that clock too.
+- Diag: "[RF] spatial panel: first picture N ms after opening, slowest frame N ms (prepared yes/no)" in latest.log.
+- Not tested in game yet: another Claude session was using the PC. The build is on the PC as mods/RendererFoundation/RF-spatial-fix-a9ab8bc.dll (not installed).
