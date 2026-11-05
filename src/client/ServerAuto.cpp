@@ -153,6 +153,7 @@ std::string messageOf(TextPacket const& p) {
     return std::visit([](auto const& b) { return std::string(b.mMessage.get()); }, p.mBody.get());
 }
 
+Clock::time_point gSprintPulse{};
 void applySprint(LocalPlayer* lp, bool playing) {
     bool want = Registry::get().on("toggle_sprint") && lp && playing;
     if (!want && !gSprintSet) return;
@@ -161,8 +162,18 @@ void applySprint(LocalPlayer* lp, bool playing) {
     if (!mi) return;
     size_t const bit = size_t(MoveInputState::Flag::SprintDown);
     if (want) {
-        mi->mRawInputState->mFlagValues->set(bit, true);
-        mi->mInputState->mFlagValues->set(bit, true);
+        // A sprint key held down the whole time only starts a sprint once: after a hit, a stop or a hunger / server
+        // reset (Hive resets it a lot) the game waits for a fresh press. So while walking forward and not sprinting,
+        // let go for one frame every 200 ms - a new press, like tapping Shift.
+        bool down = true;
+        bool const fwd = mi->mRawInputState->mFlagValues->test(size_t(MoveInputState::Flag::Up)) ||
+                         mi->mInputState->mFlagValues->test(size_t(MoveInputState::Flag::Up));
+        if (fwd && !lp->isSprinting()) {
+            auto const now = Clock::now();
+            if (now - gSprintPulse > std::chrono::milliseconds(200)) { down = false; gSprintPulse = now; }
+        }
+        mi->mRawInputState->mFlagValues->set(bit, down);
+        mi->mInputState->mFlagValues->set(bit, down);
         gSprintSet = true;
     } else { // let go once (a sprint key really held sets it again with its next event)
         mi->mRawInputState->mFlagValues->set(bit, false);
@@ -205,8 +216,8 @@ void runActions(IClientInstance& client, LocalPlayer* lp) {
 
 std::vector<std::string> const& ggMessages() { return kGgMessages; }
 
-void frame(IClientInstance& client, LocalPlayer* player, bool playing) {
-    applySprint(player, playing);
+void frame(IClientInstance& client, LocalPlayer* player, bool playing, bool sprintOk) {
+    applySprint(player, sprintOk); // [BF] not gated on "only the HUD drew": servers can keep extra screens up
     runActions(client, player);
 }
 

@@ -10,6 +10,6 @@ namespace bedrock_forge::client::serverauto {
 void install();
 void uninstall();
 /// every HUD frame (client thread): holds sprint, sends queued chat / commands
-void frame(IClientInstance& client, LocalPlayer* player, bool playing);
+void frame(IClientInstance& client, LocalPlayer* player, bool playing, bool sprintOk);
 std::vector<std::string> const& ggMessages();
 } // namespace bedrock_forge::client::serverauto
