@@ -1,6 +1,6 @@
 # Glass Armor (Bedrock Forge + Renderer Foundation) - plan
 
-Status 2026-11-06 03:15: **look approved** (preview v6); M0 + M0b probes run in game; **M1a built** (glass-armor/rf 79d6cdf, CI green, merged into the live RF line, off by default) - not yet tested in game (PC went offline).
+Status 2026-11-06 16:30: **M1a works in game** (glass-armor/rf 7551f30, live RF line): diamond recognised, 4 glass draws/frame, 0 failures, see-through glass + neon outline. M1b next.
 
 ## The look Fernando signed off (docs/glass_armor/preview_v6.html)
 - Shape and geometry **1-to-1 vanilla**: Mojang's `geometry.player.armor.*` cubes (helmet inflate 1.0 + hat layer
@@ -90,6 +90,15 @@ boots 72. Exactly the vanilla cube counts (12 triangles = 36 indices per cube).
 - F6 > Glass Armor > "Glass armor on" (saved in config/GlassArmor.txt). Counters show recognised textures,
   glass draws per frame, pipelines, failures.
 - Next: M1b = scene + depth copy before the first armor draw, extended root signature, the approved twist.
+
+## M1a in-game test (2026-11-06 16:30, My World, full diamond, F5 front + free camera)
+- Exact vanilla masks never matched in game (the shipped textures differ from bedrock-samples by a few texels);
+  fixed with a tolerant match (<= 40 texels off + mean colour). Readbacks are dumped to logs/glassarmor/readback_*.rgba.
+- Recognised diamond_1 + diamond_2; 4 glass draws per frame; no crash; FPS unchanged (~500).
+- Issue 1: the glass front faces are very faint - player-skin parts drawn **after** the armor (custom skin geometry,
+  180x2048 atlas) overwrite it because glass doesn't write depth. Fix in M1b: replay armor draws at the end of the
+  actor pass (save PSO/root args/IA, draw later) - also the point where the scene copy for the twist is taken.
+- Issue 2: look is still M1a (no twist, no lighting); M1b brings the approved shader.
 
 ## Milestones
 - **M0 probe (RF, F6 > Glass Armor)**: key press logs one frame - every PSO used with PS hash, material pass, VS
