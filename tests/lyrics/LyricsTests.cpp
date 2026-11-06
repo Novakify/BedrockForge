@@ -1281,7 +1281,7 @@ TEST(font_script_fallback) { // [LyricsForge] Japanese glyphs come from the cjk 
     fs.setAtlasIndex("poppins", 0);
     fs.setAtlasIndex("cjk_jp", FontSet::kNoAtlas);
     fs.linkFallbacks();
-    CHECK(std::fabs(fs.get("poppins")->width("\xe3\x81\x82") - 0.6f) < 1e-4f); // no slot yet: '?'
+    CHECK(std::fabs(fs.get("poppins")->width("\xe3\x81\x82") - 0.3f) < 1e-4f); // no slot yet: a small gap, no '?'
     fs.setAtlasIndex("cjk_jp", 1);
     fs.linkFallbacks();
     CHECK(std::fabs(fs.get("poppins")->width("A\xe3\x81\x82") - 1.6f) < 1e-4f); // A + the Japanese glyph
@@ -1290,6 +1290,22 @@ TEST(font_script_fallback) { // [LyricsForge] Japanese glyphs come from the cjk 
     Config c;
     buildWordGlyphs(w, *fs.get("poppins"), c, makeStyle(c, 0), Vec3{}, out, true);
     CHECK(!out.empty() && out.back().atlas == 1u);
+}
+
+TEST(fit_to_fonts) { // [LyricsForge] lines we can't draw: their translation, or nothing - never '????'
+    using namespace bf::lyrics::translate;
+    Lyrics l;
+    auto add = [&](std::string t, std::string tr, int64_t s0) { Line ln; ln.index = int(l.lines.size()); ln.text = t; ln.translation = tr; ln.start = s0; ln.end = s0 + 2000; ln.words = {Word::of(t, s0, s0 + 2000)}; l.lines.push_back(ln); };
+    add("\xea\xb0\x80\xeb\x82\x98\xeb\x8b\xa4", "Hello there friend", 0);   // Korean (not in the atlas), translated
+    add("\xea\xb0\x80\xeb\x82\x98", "", 3000);                              // Korean, no translation
+    add("You don't need to change", "", 6000);
+    auto canDraw = [](uint32_t c) { return c < 0x250; };
+    CHECK(fitToFonts(l, canDraw) == 2);
+    CHECK(l.lines.size() == 2);                                   // the untranslatable line is gone
+    CHECK(l.lines[0].text == "Hello there friend");               // the translation took its place
+    CHECK(l.lines[0].translation.empty());
+    CHECK(l.lines[0].words.size() == 3);                          // and has words again
+    CHECK(l.lines[1].text == "You don't need to change");
 }
 
 TEST(auto_translate) { // [LyricsForge] non-English lines get a small English line; English lines stay alone

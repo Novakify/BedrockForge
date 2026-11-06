@@ -109,6 +109,35 @@ bool needsTranslation(Lyrics const& l) {
     return any && latin.size() >= 12 && englishShare(latin) < 0.12f;
 }
 
+int fitToFonts(Lyrics& l, std::function<bool(uint32_t)> const& canDraw) {
+    int changed = 0;
+    std::vector<Line> keep;
+    keep.reserve(l.lines.size());
+    for (auto& ln : l.lines) {
+        if (ln.index >= 0 && !ln.text.empty()) {
+            int letters = 0, bad = 0;
+            for (uint32_t c : text::codepoints(ln.text)) {
+                if (c <= 0x40 || (c >= 0x2000 && c <= 0x206F) || c == 0x3000) continue; // spaces, digits, punctuation
+                ++letters;
+                bad += canDraw(c) ? 0 : 1;
+            }
+            if (letters > 0 && bad * 4 >= letters) {
+                ++changed;
+                if (ln.translation.empty()) continue; // nothing we can show for it: leave the line out
+                int64_t const end = ln.guessedEnd();
+                ln.text = ln.translation;
+                ln.translation.clear();
+                ln.words = {Word::of(ln.text, ln.start, end)};
+                ln.estimated = true;
+            }
+        }
+        keep.push_back(std::move(ln));
+    }
+    l.lines = std::move(keep);
+    if (changed) normalizeWords(l); // the English lines -> words
+    return changed;
+}
+
 std::string parseGtx(std::string_view body) {
     auto doc = json::parse(body);
     if (!doc || !doc->isArray() || doc->items().empty() || !doc->items()[0].isArray()) return {};

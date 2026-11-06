@@ -482,10 +482,25 @@ void fetchFor(MediaSample s, int64_t seq) {
                 appendLog("lyrics_translate", s.artist + " - " + s.title + ": " + std::to_string(n) + " lines translated\n");
             } catch (...) {}
         }
+        // [LyricsForge] the cache keeps the original lines; what's shown drops the ones no font can draw (or shows
+        // their English instead) - written after the cache below, so a future font can still draw them
+        auto fitShown = [](Lyrics& ly) {
+            std::vector<Font const*> fs;
+            {
+                std::lock_guard l(gS->mutex);
+                for (auto const& f : gS->engine.fonts().all())
+                    if (f.id == gS->engine.config().font || f.id == "outfit" || f.id.rfind("cjk_", 0) == 0) fs.push_back(&f);
+            }
+            translate::fitToFonts(ly, [&](uint32_t c) {
+                for (auto const* f : fs) if (f->find(c)) return true;
+                return false;
+            });
+        };
         if (std::error_code e2; got && !fromOverride && (translated || !std::filesystem::exists(cacheFile, e2))) { // LyricsFlow writeCache (synced results only reach here)
             std::ofstream out(cacheFile, std::ios::binary);
             out << toCacheJson(*got);
         }
+        if (got) { fitShown(*got); if (got->lines.empty()) got.reset(); } // nothing drawable = no lyrics (nothing on screen)
         std::lock_guard l(gS->mutex);
         if (gS->clock.songSeq() != seq) return;
         gS->lyrics      = got ? std::make_shared<Lyrics const>(std::move(*got)) : nullptr;

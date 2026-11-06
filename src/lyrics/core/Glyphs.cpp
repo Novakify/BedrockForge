@@ -20,8 +20,7 @@ float Font::width(std::string_view s) const {
     for (uint32_t cp : text::codepoints(s)) {
         GlyphMetrics const* g = find(cp);
         if (!g && fallback) g = fallback->find(cp);
-        if (!g) g = find('?');
-        w += g ? g->advance : 0.5f;
+        w += g ? g->advance : 0.3f; // [LyricsForge] a glyph no font has: a small gap, never a '?'
     }
     return w;
 }
@@ -267,8 +266,7 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
             GlyphMetrics const* g = font.find(cp);
             Font const* src = &font; // [LyricsForge] the atlas this glyph comes from (Japanese -> the cjk fallback)
             if (!g && font.fallback) { g = font.fallback->find(cp); if (g) src = font.fallback; }
-            if (!g) g = font.find('?');
-            float adv = g ? g->advance : 0.5f;
+            float adv = g ? g->advance : 0.3f; // missing everywhere: skipped (no '?')
             if (g && !g->empty) {
                 double   cx = double(pen) + (g->pl + g->pr) * 0.5, cy = double(baseline + ps.oy) + (g->pb + g->pt) * 0.5;
                 if (c.fxWave && !w.plain) // [BF] Wave: letters ripple along the word

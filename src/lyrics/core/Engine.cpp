@@ -153,8 +153,9 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
             w.glow += 0.35f * w.tintK;
         }
     if (m) direct(words, *m, cfg);
-    if (cfg.titleCard && in.music && in.music->songAge < kTitleCardSec) titleCard(words, in, cfg, cam);
-    if (cfg.songOutro && in.music && in.music->outro > 0.01f) endCredits(words, in, cfg, cam);
+    bool const haveLyrics = in.lyrics && !in.lyrics->lines.empty(); // [LyricsForge] no lyrics: nothing on screen at all
+    if (haveLyrics && cfg.titleCard && in.music && in.music->songAge < kTitleCardSec) titleCard(words, in, cfg, cam);
+    if (haveLyrics && cfg.songOutro && in.music && in.music->outro > 0.01f) endCredits(words, in, cfg, cam);
 
     // painter's order: far words first (we draw without depth test, like the Java mod's SEE_THROUGH text)
     std::stable_sort(words.begin(), words.end(), [&](DrawWord const& a, DrawWord const& b) {

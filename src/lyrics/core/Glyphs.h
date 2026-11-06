@@ -36,7 +36,7 @@ struct Font {
     Font const* fallback = nullptr; // [LyricsForge] another script's atlas (Japanese) for the glyphs this font lacks
 
     GlyphMetrics const* find(uint32_t cp) const;
-    /// Width of text in em (sum of advances). Missing glyphs fall back to '?' then 0.5 em.
+    /// Width of text in em (sum of advances). Missing glyphs (in this font and its fallback) count 0.3 em, drawn as nothing.
     float               width(std::string_view text) const;
 };
 
