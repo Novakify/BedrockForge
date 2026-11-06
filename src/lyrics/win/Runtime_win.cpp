@@ -1229,6 +1229,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         in.skyShown = gS->skyShown;
         in.albumAccent = gS->coverAccent;
         in.songFont    = gS->songFont;
+        in.awaken      = gS->engine.config().awaken ? gS->sky.awaken() : 1.0f;
         auto const& cfgNow = gS->engine.config(); // [BF] a scene picked while a song plays is remembered for it
         if (cfgNow.scene != gS->lastScene) {
             gS->lastScene = cfgNow.scene;

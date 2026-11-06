@@ -59,6 +59,9 @@ public:
     /// how much it should replace the game's own fog (0 = sky off / underground / another dimension)
     float const*             fog() const { return mFog; }
     float                    fogWeight() const { return mFogW; }
+    /// [LyricsForge] Awaken: 0 = the vanilla world (no music), rising to 1 over the ~5 s startup when a song starts
+    float                    awaken() const { return mAwakeLevel; }
+    static constexpr float   kAwakeSec = 5.0f;
     std::vector<Quad> const& quads() const { return mQuads; }
 
 private:
@@ -70,6 +73,11 @@ private:
     float             mLuma = 0;
     WorldLight        mWorld;
     float             mFog[3] = {0.67f, 0.82f, 1.0f}, mFogW = 0;
+    bool              mAwake = false;     // [LyricsForge] Awaken: music has been playing (cfg.awaken)
+    float             mAwakeT = -1;       //   seconds into the startup (-1 = none)
+    float             mSilent = 0;        //   seconds without music
+    float             mAwakeLevel = 0;    //   0..1 progress the effects follow
+    bool              mFromNothing = false, mAwakeMeteors = false; // the startup sweep rises over the vanilla sky
     float             mDomeYaw = 0;  // [BF] the dome's turn for the current preset
     std::string       mDomeFor;
     Params            mCurQ{}, mPrevQ{}; // [LyricsForge] the sky shown last frame / the one being swept away

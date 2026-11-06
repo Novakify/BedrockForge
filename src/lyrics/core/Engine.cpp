@@ -194,6 +194,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         ai.music = in.music; ai.dt = in.dt; ai.camPos = cam.pos; ai.camYaw = cam.yaw; ai.camPitch = cam.pitch;
         ai.color = tint; ai.now = in.nowSeconds; ai.enabled = cfg.atmosphere && cfg.director && cfg.showLyrics;
         ai.density = 1.0f - 0.25f * float(std::clamp(mPerf.level(), 0, 3));
+        ai.density *= std::clamp(in.awaken, 0.0f, 1.0f);
         mAtmos.step(ai);
         mAtmos.emit(ai, mOrigin, mBack);
         Pulse::In ui; // instrumentals: ground rings on the kicks, the horizon equaliser

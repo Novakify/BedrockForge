@@ -1413,6 +1413,7 @@ TEST(sky_mood) { // [LyricsForge] Random fits the song
 TEST(world_light) { // [LyricsForge] the sky lights the world
     using namespace bf::lyrics::sky;
     Config cfg;
+    cfg.awaken = false;
     auto dusk = *find("dusk", cfg), night = *find("bright_night", cfg), summer = *find("summer", cfg);
     auto w = worldLightFor(dusk, 1, 1, 0.3f, 0, 0);
     CHECK(w.tint[0] > 1.0f && w.tint[2] < 1.0f);                       // dusk warms the ground
@@ -1576,9 +1577,43 @@ TEST(sky_layers) {
     CHECK(std::abs(nightOf(18000) - 1) < 1e-6 && nightOf(6000) == 0 && std::abs(nightOf(12500) - 0.5f) < 1e-6);
 }
 
+TEST(awaken) { // [LyricsForge] no music = the vanilla world; a song starts = ~5 s of everything coming alive
+    using namespace bf::lyrics::sky;
+    Config cfg; cfg.skyPreset = "dusk";
+    AutoPerf perf;
+    System sys;
+    SystemIn in; in.dtSec = 0.05; in.pitch = -10;
+    BfSkyFrameV1 h{};
+    auto run = [&](float sec, bool playing) { in.playing = playing; for (int i = 0; i < int(sec / 0.05f); ++i) { in.nowMs += 50; sys.step(true, cfg, perf, in); } };
+    run(3.0f, false);
+    h.size = sizeof h; BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK_EQ(h.active, 0u);                                  // silence: vanilla
+    CHECK(sys.awaken() == 0.0f && sys.world().amount < 0.01f);
+    run(0.3f, true);                                         // the song starts
+    h.size = sizeof h; BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK_EQ(h.active, 1u);
+    CHECK(h.params[14][0] > 0 && h.params[14][1] == 255);    // the sky rises over the vanilla one
+    CHECK(sys.awaken() > 0.0f && sys.awaken() < 0.2f);
+    CHECK(sys.world().amount < 0.05f);                       // the world isn't lit yet
+    run(3.0f, true);
+    CHECK(sys.world().amount > 0.2f);                        // the light flooded in
+    run(3.0f, true);
+    CHECK(sys.awaken() == 1.0f);
+    h.size = sizeof h; BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK_EQ(int(h.params[14][0]), 0);                        // the startup is over
+    run(2.0f, false);                                        // a short pause: still alive
+    CHECK(sys.awaken() == 1.0f);
+    run(4.0f, false);                                        // real silence: back to vanilla
+    CHECK(sys.awaken() == 0.0f);
+    run(2.0f, false);
+    h.size = sizeof h; BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK_EQ(h.active, 0u);
+}
+
 TEST(sky_system_store) {
     using namespace bf::lyrics::sky;
     Config   cfg;
+    cfg.awaken = false; // the sky without music (Awaken has its own test)
     AutoPerf perf;
     System   sys;
     SystemIn in;

@@ -62,8 +62,30 @@ void toVerts(std::vector<Quad> const& quads, std::vector<BfSkyVertV1>& out) {
 }
 
 void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn const& in) {
+    // [LyricsForge] Awaken: no music = the plain vanilla world; when a song starts the whole look comes alive over
+    // ~5 s (the sky rises from the horizon, the light floods in, stars / meteors / motes bloom). A pause or a skip
+    // shorter than 4 s doesn't count as silence.
+    float const adt = float(std::clamp(in.dtSec, 0.0, 0.25));
+    bool startedNow = false;
+    if (cfg.awaken) {
+        if (in.playing) {
+            mSilent = 0;
+            if (!mAwake) { mAwake = true; mAwakeT = 0; startedNow = true; mAwakeMeteors = false; }
+        } else if ((mSilent += adt) > 4.0f && mAwake) {
+            mAwake = false; mAwakeT = -1;
+            mDomeFor.clear(); // when it wakes again, the sky's signature turns to wherever you're looking
+        }
+        if (mAwake && mAwakeT >= 0) mAwakeT = std::min(mAwakeT + adt, kAwakeSec + 1.0f);
+    } else {
+        mAwake = true; mAwakeT = -1;
+    }
+    float const A    = !mAwake ? 0.0f : mAwakeT < 0 ? 1.0f : std::clamp(mAwakeT / kAwakeSec, 0.0f, 1.0f);
+    auto  sstep      = [](float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3 - 2 * t); };
+    float const flood = A > 0.0f && A < 1.0f ? std::sin(3.14159265f * std::clamp((A - 0.52f) / 0.32f, 0.0f, 1.0f)) : 0.0f; // the light floods in as the front passes overhead
+    mAwakeLevel = A;
+    if (startedNow) { mSweep = 0; mFromNothing = true; } // the startup sweep rises over the vanilla sky (no old sky)
     std::optional<Preset> p;
-    if (on && in.overworld) p = find(cfg.skyPreset, cfg);
+    if (on && in.overworld && mAwake) p = find(cfg.skyPreset, cfg);
     bool picture = on && in.overworld && cfg.skyImage && !in.pictureFile.empty();
 
     Clock::In ci;
@@ -71,6 +93,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     ci.skyOpen = in.skyOpen; ci.picture = picture;
     mFrame = mClock.tick(p ? &*p : nullptr, cfg, ci);
     mFrame.brightness *= 1.0f - 0.55f * std::clamp(in.dim, 0.0f, 1.0f); // [BF] the sky dims as the song ends
+    mFrame.brightness *= 1.0f + 0.35f * flood;                            // [LyricsForge] Awaken: the sky blooms once
     mLuma  = 0;
     if (p) { // relative luminance of the preset's top + horizon, as visible as the sky is
         auto lum = [](uint32_t c) {
@@ -82,8 +105,9 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     { // [LyricsForge] world light: eased, fast in (drops, lightning) and slow out; underground it mostly fades
         WorldLight want;
         if (p) {
-            want = worldLightFor(*p, mFrame.visible * std::min(1.0f, mFrame.bright + 0.4f) * (in.skyOpen ? 1.0f : 0.3f),
-                                 mFrame.brightness, std::clamp(in.pulse - in.kick, 0.0f, 1.0f), in.kick, in.lightning);
+            float const aw = sstep(0.25f, 0.85f, A); // Awaken: the world takes the light after the sky has started rising
+            want = worldLightFor(*p, aw * mFrame.visible * std::min(1.0f, mFrame.bright + 0.4f) * (in.skyOpen ? 1.0f : 0.3f),
+                                 mFrame.brightness, std::clamp(in.pulse - in.kick, 0.0f, 1.0f), std::max(in.kick, 0.8f * flood), in.lightning);
         }
         float const dt = float(std::clamp(in.dtSec, 0.0, 0.25));
         float const tt = mSweep < 1.0f ? 0.7f : 0.25f; // during a sky sweep the light turns with it
@@ -98,7 +122,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         if (p) {
             float const b = std::clamp(mFrame.brightness, 0.25f, 1.4f);
             for (int k = 0; k < 3; ++k) want[k] = std::clamp((0.8f * chan(p->horizon, k) + 0.2f * chan(p->top, k)) * b, 0.0f, 1.0f);
-            wantW = std::clamp(mFrame.visible, 0.0f, 1.0f) * (in.skyOpen ? 1.0f : 0.25f);
+            wantW = std::clamp(mFrame.visible, 0.0f, 1.0f) * (in.skyOpen ? 1.0f : 0.25f) * sstep(0.3f, 0.9f, A);
         }
         float const dt = float(std::clamp(in.dtSec, 0.0, 0.25));
         float const tt = mSweep < 1.0f ? 0.8f : 0.35f;
@@ -119,8 +143,13 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
                           id == "cherry" || id == "dream_ocean" || id == "inferno" || id == "eclipse_heart";
         fi.fireflyRgb = warm ? 0xFFD58A : 0xE2F2A0;
     }
+    if (A < 1.0f && A > 0.62f && !mAwakeMeteors) { fi.meteors = std::max(fi.meteors, 8); mAwakeMeteors = true; } // Awaken: a shower
     mQuads.clear();
-    if (p) mFx.frame(&*p, cfg, perf, mFrame, fi, mQuads);
+    if (p) {
+        Frame ff = mFrame;
+        ff.visible *= sstep(0.3f, 1.0f, A); // Awaken: stars, weather, effects bloom in behind the rising sky
+        mFx.frame(&*p, cfg, perf, ff, fi, mQuads);
+    }
 
     BfSkyFrameV1 h{};
     h.size    = sizeof h;
@@ -130,7 +159,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     if (p) {
         float id3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}; // the dome is drawn in world axes (RF builds rays from the camera)
         if (mDomeFor != p->id) { // [BF] a new sky: turn its signature (body / burst / eclipse, az ~180) to where you look
-            if (mHaveQ && !mDomeFor.empty()) { mPrevQ = mCurQ; mSweep = 0; } // [LyricsForge] sweep the old one away
+            if (mHaveQ && !mDomeFor.empty() && !mFromNothing) { mPrevQ = mCurQ; mSweep = 0; } // [LyricsForge] sweep the old one away
             mDomeFor = p->id;
             float const front = frontAz(*p);
             mDomeYaw = float(in.yaw) - front;
@@ -138,11 +167,12 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         auto  q      = pack(*p, aurora1(*p, cfg), aurora2(*p, cfg), mFrame.time, cfg, id3, mDomeYaw);
         // [LyricsForge] texel 13: what the music is doing right now, for every sky (the dome reacts, not just the quads)
         auto b8 = [](float v) { return uint8_t(std::clamp(int(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)), 0, 255)); };
-        q[13] = {b8(in.lightning), b8(in.kick), b8(in.beat), in.wave < 0 ? uint8_t(0) : uint8_t(1 + int(std::clamp(in.wave, 0.0f, 1.0f) * 254.0f))};
+        q[13] = {b8(in.lightning), b8(std::max(in.kick, 0.8f * flood)), b8(in.beat), in.wave < 0 ? uint8_t(0) : uint8_t(1 + int(std::clamp(in.wave, 0.0f, 1.0f) * 254.0f))};
         mCurQ = q; mHaveQ = true;
-        mSweep = std::min(1.0f, mSweep + float(std::clamp(in.dtSec, 0.0, 0.1)) / 1.6f);
-        q[14] = {mSweep < 1.0f ? uint8_t(1 + int(mSweep * 254.0f)) : uint8_t(0), 0, 0, 0};
-        if (mSweep < 1.0f) for (int i = 0; i < 16; ++i) std::memcpy(h.prevParams[i], mPrevQ[size_t(i)].data(), 4);
+        mSweep = std::min(1.0f, mSweep + float(std::clamp(in.dtSec, 0.0, 0.1)) / (mFromNothing ? kAwakeSec * 0.9f : 1.6f));
+        if (mSweep >= 1.0f) mFromNothing = false;
+        q[14] = {mSweep < 1.0f ? uint8_t(1 + int(mSweep * 254.0f)) : uint8_t(0), uint8_t(mFromNothing && mSweep < 1.0f ? 255 : 0), 0, 0};
+        if (mSweep < 1.0f && !mFromNothing) for (int i = 0; i < 16; ++i) std::memcpy(h.prevParams[i], mPrevQ[size_t(i)].data(), 4);
         for (int i = 0; i < 16; ++i) std::memcpy(h.params[i], q[size_t(i)].data(), 4);
     }
     h.info[0]       = mFrame.t;
