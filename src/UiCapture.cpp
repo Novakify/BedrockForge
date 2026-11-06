@@ -329,10 +329,11 @@ using SetConst_t   = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, 
 using SetConsts_t  = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, void const*, UINT);
 using SetAddr_t    = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_GPU_VIRTUAL_ADDRESS);
 using SetIb_t      = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_INDEX_BUFFER_VIEW const*);
+using Close_t      = HRESULT(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*);
 using CreateDsv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_DEPTH_STENCIL_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
 using CreateRs_t   = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, void const*, SIZE_T, REFIID, void**);
 using CreateSrv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_SHADER_RESOURCE_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
-constexpr int kHooks = 25; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
+constexpr int kHooks = 26; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
@@ -569,6 +570,7 @@ struct ListRoot {
 std::unordered_map<ID3D12GraphicsCommandList*, ListRoot> gListRoot;
 bool rootTracking() { return !gInSnapshot && (rf::sky::wantRoot() || rf::glassarmor::wantRoot()); }
 void STDMETHODCALLTYPE setIbHook(ID3D12GraphicsCommandList* list, D3D12_INDEX_BUFFER_VIEW const* v);
+HRESULT STDMETHODCALLTYPE closeHook(ID3D12GraphicsCommandList* list);
 void STDMETHODCALLTYPE createDsvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_DEPTH_STENCIL_VIEW_DESC const* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
     reinterpret_cast<CreateDsv_t>(gOrig[23])(d, r, desc, h);
     rf::glassarmor::noteDsv(h.ptr, r);
@@ -587,6 +589,10 @@ HRESULT STDMETHODCALLTYPE createRsHook(ID3D12Device* d, UINT mask, void const* b
 void STDMETHODCALLTYPE createSrvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_SHADER_RESOURCE_VIEW_DESC const* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
     reinterpret_cast<CreateSrv_t>(gOrig[21])(d, r, desc, h);
     rf::glassarmor::noteSrv(h.ptr, r); // always: textures make their SRVs once, long before a capture
+}
+HRESULT STDMETHODCALLTYPE closeHook(ID3D12GraphicsCommandList* list) {
+    if (gaOn()) gaFlush(list); // the actor pass often ends the list: replay the held-back armor while its targets are bound
+    return reinterpret_cast<Close_t>(gOrig[25])(list);
 }
 void STDMETHODCALLTYPE setIbHook(ID3D12GraphicsCommandList* list, D3D12_INDEX_BUFFER_VIEW const* v) {
     reinterpret_cast<SetIb_t>(gOrig[22])(list, v);
@@ -1341,7 +1347,7 @@ bool install(Targets const& t) {
                          t.drawIndexed,       t.createHeap,      t.copyDescs, t.copyDescsSimple, t.resourceBarrier,
                          t.iaSetTopology,     t.iaSetVb,         t.setHeaps,  t.setRootSig,     t.setTable,
                          t.setConst,          t.setConsts,       t.setCbv,    t.setSrv,          t.setUav,
-                         t.createSrv,         t.iaSetIb,         t.createDsv, t.createRootSig};
+                         t.createSrv,         t.iaSetIb,         t.createDsv, t.createRootSig,   t.close};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
@@ -1354,7 +1360,7 @@ bool install(Targets const& t) {
                          reinterpret_cast<void*>(&setAddrHook<18, 3>), reinterpret_cast<void*>(&setAddrHook<19, 4>),
                          reinterpret_cast<void*>(&setAddrHook<20, 5>), reinterpret_cast<void*>(&createSrvHook),
                          reinterpret_cast<void*>(&setIbHook),     reinterpret_cast<void*>(&createDsvHook),
-                         reinterpret_cast<void*>(&createRsHook)};
+                         reinterpret_cast<void*>(&createRsHook),  reinterpret_cast<void*>(&closeHook)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;

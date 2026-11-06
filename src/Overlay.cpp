@@ -463,6 +463,7 @@ bool findTargets() {
             gUiTargets.iaSetTopology   = lv[20];
             gUiTargets.iaSetVb         = lv[44];
             gUiTargets.iaSetIb         = lv[43];
+            gUiTargets.close           = lv[9];
             gUiTargets.setHeaps        = lv[28];
             gUiTargets.setRootSig      = lv[30];
             gUiTargets.setTable        = lv[32];

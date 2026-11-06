@@ -50,6 +50,7 @@ struct Targets {
     void* iaSetIb           = nullptr; // ID3D12GraphicsCommandList::IASetIndexBuffer (43)
     void* createDsv         = nullptr; // ID3D12Device::CreateDepthStencilView (21)
     void* createRootSig     = nullptr; // ID3D12Device::CreateRootSignature (16)
+    void* close             = nullptr; // ID3D12GraphicsCommandList::Close (9): replay held-back armor before the list ends
 };
 
 /// Glass Armor probe helpers. Shader-visible GPU descriptor handle -> its CPU handle + increment (false if unknown).
