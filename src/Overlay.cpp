@@ -438,12 +438,11 @@ bool findTargets() {
     if (dev) { // Spatial GUI M0 spike targets (hooked only when uiCaptureSpike is on)
         void** dv = *reinterpret_cast<void***>(dev.Get());
         gUiTargets.createGraphicsPso = dv[10]; // CreateGraphicsPipelineState
-        gUiTargets.createRtv         = dv[20]; // CreateRenderTargetView
+        // createRtv: hooked at device creation by glassarmor::installEarly (forwards to uicapture::noteRtv)
         gUiTargets.createHeap        = dv[14]; // CreateDescriptorHeap
         gUiTargets.copyDescs         = dv[23]; // CopyDescriptors
         gUiTargets.copyDescsSimple   = dv[24]; // CopyDescriptorsSimple
         gUiTargets.createSrv         = dv[18]; // CreateShaderResourceView (Glass Armor probe)
-        gUiTargets.createDsv         = dv[21]; // CreateDepthStencilView (Glass Armor)
         // ID3D12Device2 by IID (30baa41e-b15b-475c-a0bb-1af5c5b64328): no dependency on the SDK header version
         static const GUID kIidDevice2 = {0x30baa41e, 0xb15b, 0x475c, {0xa0, 0xbb, 0x1a, 0xf5, 0xc5, 0xb6, 0x43, 0x28}};
         IUnknown*         dev2        = nullptr;

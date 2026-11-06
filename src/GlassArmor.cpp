@@ -291,8 +291,20 @@ void init(fs::path const& outDir, fs::path const& configDir) {
 namespace {
 using CreateDevice_t = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
 using CreateRs_t     = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, void const*, SIZE_T, REFIID, void**);
+using CreateRtv_t    = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_RENDER_TARGET_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
+using CreateDsv_t    = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_DEPTH_STENCIL_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
 void*            gOrigCreateDevice = nullptr;
 void*            gOrigCreateRs     = nullptr;
+void*            gOrigCreateRtv    = nullptr;
+void*            gOrigCreateDsv    = nullptr;
+void STDMETHODCALLTYPE createRtvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_RENDER_TARGET_VIEW_DESC const* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
+    reinterpret_cast<CreateRtv_t>(gOrigCreateRtv)(d, r, desc, h);
+    rf::uicapture::noteRtv(h.ptr, r);
+}
+void STDMETHODCALLTYPE createDsvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_DEPTH_STENCIL_VIEW_DESC const* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
+    reinterpret_cast<CreateDsv_t>(gOrigCreateDsv)(d, r, desc, h);
+    noteDsv(h.ptr, r);
+}
 std::atomic_bool gRsHooked{false};
 HRESULT STDMETHODCALLTYPE createRsHook(ID3D12Device* d, UINT mask, void const* blob, SIZE_T size, REFIID iid, void** out) {
     HRESULT hr = reinterpret_cast<CreateRs_t>(gOrigCreateRs)(d, mask, blob, size, iid, out);
@@ -312,8 +324,11 @@ HRESULT WINAPI createDeviceHook(IUnknown* adapter, D3D_FEATURE_LEVEL level, REFI
         if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&dev))) && dev) {
             void** vt = *reinterpret_cast<void***>(dev);
             if (!gRsHooked.exchange(true)) {
-                int rc = ll_shim::hook(vt[16], reinterpret_cast<void*>(&createRsHook), &gOrigCreateRs);
-                ll_shim::info("[RF] glass armor: CreateRootSignature hooked at device creation (rc " + std::to_string(rc) + ")");
+                int rc  = ll_shim::hook(vt[16], reinterpret_cast<void*>(&createRsHook), &gOrigCreateRs);
+                int rc2 = ll_shim::hook(vt[20], reinterpret_cast<void*>(&createRtvHook), &gOrigCreateRtv);
+                int rc3 = ll_shim::hook(vt[21], reinterpret_cast<void*>(&createDsvHook), &gOrigCreateDsv);
+                ll_shim::info("[RF] glass armor: CreateRootSignature / RTV / DSV hooked at device creation (rc " + std::to_string(rc) + "/" +
+                              std::to_string(rc2) + "/" + std::to_string(rc3) + ")");
                 if (rc != 0) gRsHooked = false;
             }
             dev->Release();

@@ -718,6 +718,7 @@ struct GaPending {
     ListRoot             root;
     GaIa                 ia;
     ID3D12PipelineState* glass = nullptr;
+    ID3D12PipelineState* game  = nullptr;
     UINT                 a = 0, b = 0, c = 0, e = 0;
     INT                  d = 0;
 };
@@ -806,7 +807,14 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
     for (auto const& p : pend) {
         unsigned             base = 0;
         ID3D12RootSignature* ext  = ok ? rf::glassarmor::extendedRoot(p.root.sig, &base) : nullptr;
-        if (!ext) { ++gGaFallback; continue; } // can't draw glass this time (armor invisible for one pass, no crash)
+        if (!ext) { // can't draw glass this time: draw the vanilla armor instead (never invisible)
+            ++gGaFallback;
+            gaSetRoot(l, p.root, p.root.sig);
+            gaSetIa(l, p.ia);
+            reinterpret_cast<SetPso_t>(gOrig[3])(l, p.game);
+            reinterpret_cast<DrawIdx_t>(gOrig[6])(l, p.a, p.b, p.c, p.d, p.e);
+            continue;
+        }
         gaSetRoot(l, p.root, ext);
         reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 0, fr.scene);
         reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 1, fr.depth);
@@ -895,6 +903,7 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
                 if (auto it = gListRoot.find(list); it != gListRoot.end()) p.root = it->second;
             }
             p.glass = glass;
+            p.game  = gamePso;
             p.a = a, p.b = b, p.c = c, p.d = d, p.e = e;
             std::lock_guard g(gGaMutex);
             auto& gl = gGa[list];
@@ -1474,6 +1483,14 @@ void drawUi() {
         if (!gVerdict.empty()) ImGui::TextWrapped("Result: %s", gVerdict.c_str());
     }
     ImGui::Unindent();
+}
+
+void noteRtv(size_t h, void* res) {
+    std::lock_guard l(gMutex);
+    ++gRtvCreated;
+    if (res) gRtvRes[h] = static_cast<ID3D12Resource*>(res);
+    else gRtvRes.erase(h);
+    gRtvGuess.erase(h);
 }
 
 bool gpuDescToCpu(unsigned long long gpu, size_t& cpu, unsigned& inc) {

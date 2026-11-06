@@ -54,6 +54,8 @@ struct Targets {
 
 /// Glass Armor probe helpers. Shader-visible GPU descriptor handle -> its CPU handle + increment (false if unknown).
 bool gpuDescToCpu(unsigned long long gpu, size_t& cpu, unsigned& inc);
+/// CreateRenderTargetView seen (hooked from device creation by glassarmor::installEarly).
+void noteRtv(size_t handle, void* resource);
 /// The descriptor tables (root index, GPU handle) currently bound on a list (root state is tracked while
 /// rf::glassarmor::wantRoot()).
 std::vector<std::pair<unsigned, unsigned long long>> rootTables(void* list);
