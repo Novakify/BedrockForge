@@ -172,6 +172,7 @@ struct State {
     // cover art: written by the media thread, picked up by the HUD frame (atlas list + panel asset)
     std::string                   coverPath, coverShown;
     uint32_t                      coverAccent = 0; // [BF] vivid colour of the cover (Neon player)
+    std::string                   songFont;        // [LyricsForge] the font picked for the playing song ("" = none)
     float                         bass = 0;        // [BF] bass hit level this frame (Audio_win.cpp)
     bool                          bassLive = false;
     int64_t                       coverSeq = -1;
@@ -301,6 +302,7 @@ bool syncFontSlots() {
             if (ly) for (auto const& ln : ly->lines) if (translate::nonLatin(ln.text)) { foreign = true; break; }
         }
         if (foreign) want.push_back("cjk_jp");
+        if (cfg.autoFont && !gS->songFont.empty()) want.push_back(gS->songFont); // the song's own font needs a slot too
     }
     bool changed = false;
     ++gS->slotClock;
@@ -955,6 +957,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
                 auto const ms = moodOf(moodInputs(mem, ly, songCover(), live));
                 if (ms.mood != sh.mood || newSong) gS->directorLines.push_back(std::string("   sky mood ") + moodName(ms.mood));
                 sh.mood = ms.mood;
+                gS->songFont = songFontFor(sh.mood, true, songCover());
             }
         }
         if (sh.sky.empty() || newSong || bigMoment || calmTurn || sh.since > 120.0) {
@@ -1195,6 +1198,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         in.skyLuma = gS->sky.luma();
         in.skyShown = gS->skyShown;
         in.albumAccent = gS->coverAccent;
+        in.songFont    = gS->songFont;
         auto const& cfgNow = gS->engine.config(); // [BF] a scene picked while a song plays is remembered for it
         if (cfgNow.scene != gS->lastScene) {
             gS->lastScene = cfgNow.scene;

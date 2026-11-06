@@ -48,6 +48,10 @@ bool isCurated(std::string_view id);
 /// avoiding `recent` (the last few shown) and the one showing now; rng varies the pick inside the window
 std::string pickMoodSky(SkyMood m, float intensity, std::vector<std::string> const& recent, std::string_view current, uint32_t rng);
 
+/// [LyricsForge] the lyric font that fits the song: a bright vivid pink cover -> Shrikhand (chunky retro script), else by
+/// mood (bright Shrikhand, hype Righteous, dreamy Pacifico, melancholy Kaushan, dark Abril, night Lobster)
+std::string songFontFor(SkyMood m, bool haveMood, uint32_t cover);
+
 /// [LyricsForge] the curated skies whose palette shares the cover's colour (a pink cover -> the pink skies), closest
 /// hue first; empty when the cover is grey / dark / missing (0). Pure, uses the built-in preset colours.
 std::vector<std::string> coverSkies(uint32_t cover);

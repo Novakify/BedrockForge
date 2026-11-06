@@ -201,6 +201,22 @@ std::vector<std::string> coverSkies(uint32_t cover) {
     return out;
 }
 
+std::string songFontFor(SkyMood m, bool haveMood, uint32_t cover) {
+    float h, sat, v;
+    hsv(cover & 0xFFFFFF, h, sat, v);
+    if (coverIsVividBright(cover) && h >= 285 && h < 345) return "shrikhand"; // bright pink: playful, bold, readable
+    if (!haveMood) return coverIsVividBright(cover) ? "shrikhand" : std::string();
+    switch (m) {
+    case SkyMood::Bright: return "shrikhand";
+    case SkyMood::Hype: return "righteous";
+    case SkyMood::Dreamy: return "pacifico";
+    case SkyMood::Melancholy: return "kaushan";
+    case SkyMood::Dark: return "abril";
+    case SkyMood::Night: return "lobster";
+    }
+    return {};
+}
+
 bool coverIsVividBright(uint32_t cover) {
     float h, sat, v;
     hsv(cover & 0xFFFFFF, h, sat, v);
