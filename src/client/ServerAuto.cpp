@@ -253,6 +253,13 @@ std::string line(char const* name, Phase& p) {
     return std::format("{} fps {:6.1f} 1%low {:6.1f} worst {:6.1f} ms >25ms {:4} >50ms {:3}", name, p.frames / p.secs,
                        slow > 0 ? 1000.0 / slow : 0.0, p.ms.back(), p.over25, p.over50);
 }
+void note(std::string const& text) { // every step, so a run that stalls shows where
+    std::error_code ec;
+    auto const logs = dir().parent_path() / "logs";
+    std::filesystem::create_directories(logs, ec);
+    std::ofstream out(logs / "bench.txt", std::ios::app | std::ios::binary);
+    out << stamp() << ' ' << text << '\n';
+}
 void poll(LocalPlayer* lp) {
     auto const t = Clock::now();
     if (g.active || t < gNextPoll || !lp) return;
@@ -270,7 +277,8 @@ void poll(LocalPlayer* lp) {
     g.active = true;
     g.tag = c.size() > 4 ? c.substr(4) : std::string("bench");
     g.start = g.last = Clock::now();
-    queue(0, true, "tp @s 0 140 0");
+    note("[" + g.tag + "] start (config " + dir().string() + ")");
+    queue(0, true, "/tp @s 0 140 0");
 }
 void step(LocalPlayer* lp) {
     poll(lp);
@@ -288,24 +296,22 @@ void step(LocalPlayer* lp) {
         p.ms.push_back(ms);
     }
     if (el >= kStand && now >= g.nextTp && el < kStand + kMove) {
-        queue(0, true, "tp @s ~64 140 ~");
+        queue(0, true, "/tp @s ~64 140 ~");
         g.nextTp = now + std::chrono::seconds(2);
-        ++g.tps;
+        if (++g.tps == 1) note("[" + g.tag + "] moving");
     }
     if (el >= kStand + kMove) {
         g.active = false;
-        std::error_code ec;
-        auto const logs = dir().parent_path() / "logs";
-        std::filesystem::create_directories(logs, ec);
-        std::ofstream out(logs / "bench.txt", std::ios::app | std::ios::binary);
-        out << stamp() << " [" << g.tag << "] " << line("stand", g.stand) << " | " << line("move", g.move) << " | tps " << g.tps << "\n";
+        std::string r;
+        try { r = line("stand", g.stand) + " | " + line("move", g.move); } catch (std::exception const& e) { r = std::string("format error: ") + e.what(); }
+        note("[" + g.tag + "] " + r + " | tps " + std::to_string(g.tps));
     }
 }
 } // namespace bench
 
 void frame(IClientInstance& client, LocalPlayer* player, bool playing, bool sprintOk) {
     applySprint(player, sprintOk); // [BF] not gated on "only the HUD drew": servers can keep extra screens up
-    try { bench::step(player); } catch (...) {}
+    try { bench::step(player); } catch (std::exception const& e) { bench::g.active = false; bench::note(std::string("bench error: ") + e.what()); } catch (...) { bench::g.active = false; }
     runActions(client, player);
 }
 
