@@ -221,7 +221,9 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     I(combatHoldMs, 2500)                                                                                              \
     B(combatAware, true)               /* [LyricsForge] in a fight: lyrics glide out of the crosshair + a clean font */ \
     S(combatFont, "outfit_bold")       /* the readable font while fighting */                                          \
-    I(combatCalmMs, 5000)              /* this long after the last hit = calm again (lyrics drift back) */
+    I(combatCalmMs, 5000)              /* this long after the last hit = calm again (lyrics drift back) */        \
+    B(finaleStars, true)               /* [LyricsForge] a song ends: its last line rises into the sky as stars */  \
+    B(chapterCover, true)              /* [LyricsForge] the next song's cover glows in the sky during its chapter */
 
 struct Config {
 #define BF_LC_B(n, d) bool n = d;

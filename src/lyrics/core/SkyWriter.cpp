@@ -48,6 +48,10 @@ void SkyWriter::step(In const& in) {
     for (auto& c : mDying) { c.fade -= dt / 3.0f; c.age += dt; }
     mDying.erase(std::remove_if(mDying.begin(), mDying.end(), [](Constellation const& c) { return c.fade <= 0; }), mDying.end());
     for (auto& c : mCons) c.age += dt;
+    for (auto& c : mEnd) c.age += dt;
+    for (auto& c : mEnd) // the finale has risen and held: it dissolves
+        if (c.age > kFinaleHold + (c.stars.empty() ? 0.0f : c.stars.back().delay)) mDying.push_back(std::move(c));
+    mEnd.erase(std::remove_if(mEnd.begin(), mEnd.end(), [&](Constellation const& c) { return c.stars.empty() || c.age > kFinaleHold + c.stars.back().delay; }), mEnd.end());
     mSinceWrite += dt;
     if (!in.enabled && !mCons.empty()) { // [BF] switched off: the sky lets them go instead of freezing them
         for (auto& c : mCons) mDying.push_back(std::move(c));
@@ -75,32 +79,35 @@ void SkyWriter::step(In const& in) {
     mFinale += ((finale ? 1.0f : 0.0f) - mFinale) * (1.0f - std::exp(-dt / (finale ? 0.6f : 2.0f)));
 }
 
-void SkyWriter::write(Line const& l, In const& in) {
-    Constellation c;
+bool SkyWriter::make(Line const& l, float az, float elev, uint32_t seedK, bool letters, Constellation& c) const {
     c.text = l.text;
-    int const k = int(mCons.size());
-    static float const azOff[] = {-38, 30, -6, 56, -62, 12, -24};
-    float const az   = in.camYaw + azOff[k % 7];
-    float const elev = 46.0f - 8.0f * float(k % 3);
-    // [BF] a real constellation: one star per word (brighter for longer words), long words get a companion star,
-    // linked in singing order - reworked after an in-game look (a star per LETTER read as strings of fairy lights)
-    std::vector<std::pair<size_t, size_t>> words; // [begin, end) of each word in the text
+    std::vector<std::pair<size_t, size_t>> words; // [begin, end) of each word (or letter) in the text
     for (size_t i = 0; i < l.text.size();) {
         while (i < l.text.size() && l.text[i] == ' ') ++i;
         size_t j = i;
         while (j < l.text.size() && l.text[j] != ' ') ++j;
-        size_t letters = 0;
-        for (size_t q = i; q < j; ++q) letters += std::isalnum(uint8_t(l.text[q])) || uint8_t(l.text[q]) >= 0x80;
-        if (letters) words.push_back({i, j});
+        if (letters) { // [LyricsForge] a short final line: one star per letter
+            for (size_t q = i; q < j;) {
+                unsigned char const ch = uint8_t(l.text[q]);
+                size_t const len = ch >= 0xF0 ? 4 : ch >= 0xE0 ? 3 : ch >= 0xC0 ? 2 : 1;
+                if (std::isalnum(ch) || ch >= 0x80) words.push_back({q, q + len});
+                q += len;
+            }
+            i = j;
+            continue;
+        }
+        size_t n = 0;
+        for (size_t q = i; q < j; ++q) n += std::isalnum(uint8_t(l.text[q])) || uint8_t(l.text[q]) >= 0x80;
+        if (n) words.push_back({i, j});
         i = j;
     }
-    if (words.size() > 9) words.resize(9);
+    if (words.size() > (letters ? 12u : 9u)) words.resize(letters ? 12 : 9);
     int const   n    = int(words.size());
-    float const step = std::min(9.0f, 54.0f / float(std::max(1, n)));
-    uint32_t    seed = uint32_t(l.start) * 2654435761u + uint32_t(k);
+    float const step = std::min(letters ? 6.0f : 9.0f, 54.0f / float(std::max(1, n)));
+    uint32_t    seed = uint32_t(l.start) * 2654435761u + seedK;
     int         prevStar = -1;
     for (int i = 0; i < n; ++i) {
-        size_t const len = words[size_t(i)].second - words[size_t(i)].first;
+        size_t const len = letters ? 4 : words[size_t(i)].second - words[size_t(i)].first;
         float const ax  = (float(i) - float(n - 1) * 0.5f) * step + (hash01(seed + uint32_t(i) * 131u) - 0.5f) * step * 0.5f;
         float const e   = elev + (hash01(seed + uint32_t(i) * 97u) - 0.5f) * 9.0f;
         Star s;
@@ -112,7 +119,7 @@ void SkyWriter::write(Line const& l, In const& in) {
         int const idx = int(c.stars.size()) - 1;
         if (prevStar >= 0) c.links.emplace_back(prevStar, idx);
         prevStar = idx;
-        if (len >= 7) { // a faint companion off to the side, linked as a branch
+        if (!letters && len >= 7) { // a faint companion off to the side, linked as a branch
             Star b = s;
             float const be = e + (hash01(seed + uint32_t(i) * 53u) > 0.5f ? 4.5f : -4.5f);
             b.dir   = dir(az + (ax + step * 0.35f) / std::max(0.3f, std::cos(float(rad(be)))), -be);
@@ -122,9 +129,23 @@ void SkyWriter::write(Line const& l, In const& in) {
             c.links.emplace_back(idx, int(c.stars.size()) - 1);
         }
     }
-    if (c.stars.size() < 3) return;
+    return c.stars.size() >= 3;
+}
+
+void SkyWriter::write(Line const& l, In const& in) {
+    int const k = int(mCons.size());
+    static float const azOff[] = {-38, 30, -6, 56, -62, 12, -24};
+    Constellation c;
+    if (!make(l, in.camYaw + azOff[k % 7], 46.0f - 8.0f * float(k % 3), uint32_t(k), false, c)) return;
     mCons.push_back(std::move(c));
     mSinceWrite = 0;
+}
+
+void SkyWriter::finale(Line const& l, In const& in) {
+    Constellation c;
+    if (!make(l, in.camYaw, 30.0f, 977u, false, c)) { c = {}; if (!make(l, in.camYaw, 30.0f, 977u, true, c)) return; }
+    mEnd.clear();
+    mEnd.push_back(std::move(c));
 }
 
 void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& out) const {
@@ -150,9 +171,9 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
         q.flags = BF_GLYPH_SOLID;
         out.push_back(q);
     };
-    auto draw = [&](Constellation const& c, bool dying) {
+    auto draw = [&](Constellation const& c, bool dying, bool hero = false) {
         float const life = std::min(1.0f, c.fade) * (dying ? 1.0f : 1.0f);
-        float const bright = life * (0.55f + 0.25f * budget + 0.35f * impact + 0.7f * mFinale);
+        float const bright = life * (hero ? 1.25f : 0.55f + 0.25f * budget + 0.35f * impact + 0.7f * mFinale);
         auto& pos = mPos;
         auto& shown = mShown;
         pos.assign(c.stars.size(), Vec3{});
@@ -195,6 +216,7 @@ void SkyWriter::emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& o
         }
     };
     for (auto const& c : mCons) draw(c, false);
+    for (auto const& c : mEnd) draw(c, false, true);
     for (auto const& c : mDying) draw(c, true);
 }
 

@@ -978,21 +978,22 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
         if (c.lyricsStyle == LyricsStyle::Floating) p.coverFade = anim::approach(p.coverFade, overPlayer(p, c, cam, w) ? 0.35f : 1.0f, 6.0f, in.dt);
         float gA = p.coverFade * mPauseFade * in.focusA * c.textOpacity * p.occlVis * (sky ? 1.0f : anim::easeInOut(p.viewVis)) * combatK;
         Vec3  a  = anchor(p, c, cam);
-        if (c.combatAware && in.fight > 0.001f) { // [LyricsForge] in a fight the line glides out of the crosshair cone
-            Vec3 const  d    = a - cam.pos;
-            double const dist = d.length();
-            float const want = std::max(8.0f, c.keepOutDeg * 2.0f) * anim::clamp01(in.fight);
-            if (dist > 0.1) {
-                float const ry = wrap(float(yawOf(d)) - cam.yaw), rp = float(pitchOf(d)) - cam.pitch;
-                float const ang = std::sqrt(ry * ry + rp * rp);
-                if (ang < want) {
-                    float ux = 0.0f, uy = -1.0f; // dead centre: up (negative pitch looks up)
-                    if (ang > 0.5f) { ux = ry / ang; uy = rp / ang; }
-                    if (uy > 0.35f) { uy = -uy; } // never push a line down into the fight; up / sideways instead
-                    double const np = std::clamp(double(cam.pitch) + double(uy * want), -85.0, 85.0);
-                    a = cam.pos + dir(double(cam.yaw) + double(ux * want), np) * dist;
-                }
-            }
+        // [LyricsForge] combat-aware: in a fight each line glides to a calm lane above the crosshair (stacked, a bit smaller
+        // and see-through) that moves WITH the view - it never chases the crosshair edge while you swing the camera
+        float fightScale = 1.0f, fightTurn = 0.0f;
+        double fightPitch = 0.0;
+        if (c.combatAware && in.fight > 0.001f) {
+            float const  k    = anim::clamp01(in.fight);
+            float const  ek   = k * k * (3.0f - 2.0f * k);
+            Vec3 const   d    = a - cam.pos;
+            double const dist = std::clamp(d.length(), 4.0, 14.0);
+            float const  lane = float(int(mVisible.size()) - 1 - int(&p - &mVisible.front())); // newest line lowest (nearest the action), older ones stacked above
+            double const pitch = std::clamp(double(cam.pitch) - (19.0 + 5.5 * lane), -80.0, 80.0); // negative = up
+            Vec3 const   calm = cam.pos + dir(double(cam.yaw), pitch) * dist;
+            a = a + (calm - a) * double(ek);
+            fightScale = 1.0f - 0.25f * ek;
+            fightTurn = ek; fightPitch = pitch;
+            gA *= 1.0f - 0.3f * ek;
         }
         if (c.combatSafe) { // [BF] fade text that drifts into the crosshair area
             Vec3  d   = a - cam.pos;
@@ -1001,8 +1002,10 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             gA *= 0.15f + 0.85f * anim::clamp01((ang - c.keepOutDeg * 0.5f) / std::max(1.0f, c.keepOutDeg * 0.5f));
         }
         if (gA < 0.02f) continue;
-        float e = em(p, c);
+        float e = em(p, c) * fightScale;
         Quat  q = facing(p, c, cam) * Quat::rotationZ(rad(-p.tilt));
+        if (fightTurn > 0.0f) // [LyricsForge] in the calm lane the line turns to face you (no edge-on wall text)
+            q = q.nlerp(Quat::rotationYXZ(kPi - rad(cam.yaw), -rad(std::clamp(fightPitch, -35.0, 35.0)), 0.0), double(fightTurn));
         for (int j = 0; j < p.n(); ++j) {
             Word const& wd = p.line.words[size_t(p.w0 + j)];
             auto        s  = wordAnim(p, j, wd, t, c, speed);

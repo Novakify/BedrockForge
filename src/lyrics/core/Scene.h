@@ -79,6 +79,8 @@ struct SceneInput {
     bool               beatLive = false; // [BF] the audio feed is running (beat is real, not just 0)
     float              combat = 0.0f;  // [BF] 0..1, raised by hits (combat-safe)
     float              fight  = 0.0f;  // [LyricsForge] 0..1 combat-aware: up fast on a hit, eases back after combatCalmMs
+    float              skyCard = -1.0f; // [LyricsForge] chapter cover card progress 0..1 (< 0 none)
+    float              skyCardYaw = 0;  //   the direction it was painted in (you were looking there when it began)
     std::string        title, artist;  // now playing (top bar)
     float              guiW = 427.0f, guiH = 240.0f; // UI size in GUI units (Bedrock ScreenView size)
     MusicState const*  music = nullptr; // [BF] the Conductor's state this frame (nullptr = no director)

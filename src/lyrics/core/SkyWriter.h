@@ -44,17 +44,23 @@ public:
     };
 
     void step(In const& in);
+    /// [LyricsForge] constellation outro: the song's final line rises into the sky ahead of you as stars (any sky), holds
+    /// kFinaleHold seconds - through the next song's chapter if one starts - then dissolves with the outro
+    void finale(Line const& l, In const& in);
+    bool finaleShowing() const { return !mEnd.empty(); }
     /// star + link quads (world positions relative to `origin`)
     void emit(In const& in, Vec3 const& origin, std::vector<BfGlyphV1>& out) const;
     std::vector<Constellation> const& constellations() const { return mCons; }
-    void clear() { mCons.clear(); mDying.clear(); mSeq = -2; mLastEnd = -1; mLastLine = -1; } // [BF] lyrics swapped: start over
+    void clear() { mCons.clear(); mDying.clear(); mEnd.clear(); mSeq = -2; mLastEnd = -1; mLastLine = -1; } // [BF] lyrics swapped: start over
 
     static constexpr int   kMaxPerSong = 7;
     static constexpr float kRadius     = 160.0f; // blocks: far, but inside the depth range
+    static constexpr float kFinaleHold = 4.5f;
 
 private:
     void write(Line const& l, In const& in);
-    std::vector<Constellation> mCons, mDying;
+    bool make(Line const& l, float az, float elev, uint32_t seedK, bool letters, Constellation& c) const;
+    std::vector<Constellation> mCons, mDying, mEnd; // mEnd: the finale (outlives the song change, not tied to the sky)
     int64_t mSeq = -2;
     int     mLastLine = -1;
     float   mSinceWrite = 1e9f;

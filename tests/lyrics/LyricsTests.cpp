@@ -1354,6 +1354,23 @@ TEST(color_words) { // [LyricsForge] colour words turn their colour
     CHECK(colorWord("\xe3\x83\x94\xe3\x83\xb3\xe3\x82\xaf\xe3\x81\xae\xe7\xa9\xba\xe3\x82\x92\xe8\xa6\x8b\xe4\xb8\x8a\xe3\x81\x92\xe3\x81\xa6\xe3\x81\x84\xe3\x81\x9f") == 0);
 }
 
+TEST(finale_constellation) { // [LyricsForge] the song's last line rises into the sky as stars, holds, dissolves
+    using bf::lyrics::SkyWriter;
+    SkyWriter sw;
+    SkyWriter::In in; in.dt = 0.1f; in.enabled = false; // any sky: the finale isn't tied to starry skies
+    Line l; l.index = 9; l.start = 1000; l.text = "Woah oh";  // short line: one star per letter
+    sw.finale(l, in);
+    CHECK(sw.finaleShowing());
+    std::vector<BfGlyphV1> out;
+    for (int i = 0; i < 20; ++i) sw.step(in);
+    sw.emit(in, Vec3{}, out);
+    CHECK(out.size() >= 6);                                  // stars (+ halos) drawn
+    in.songSeq = 5; for (int i = 0; i < 10; ++i) sw.step(in); // the next song started: the finale stays up
+    CHECK(sw.finaleShowing());
+    for (int i = 0; i < 40; ++i) sw.step(in);                 // held long enough: it dissolves
+    CHECK(!sw.finaleShowing());
+}
+
 TEST(audit_fixes) { // [LyricsForge] the review's findings, kept fixed
     using namespace bf::lyrics::translate;
     { // a cache with only some lines translated still asks for the rest

@@ -67,6 +67,10 @@ private:
     Pulse                  mPulse;       // [BF] the beat takes the stage when nobody sings
     Portal                 mPortal;      // [BF] a ring of light opens in the sky on choruses / drops      // [BF] corner music player      // [BF] light running under the line with the singing      // [BF] material-aware impact bits of falling letters       // [BF] music-reactive motes around the player
     SkyWriter              mSkyWriter;   // [BF] the sky writes the song (hook lines -> constellations)
+    // [LyricsForge] constellation outro: the song's final line, and what the last playing frame looked like
+    Line                   mFinalLine;
+    int64_t                mFinalFor = -2, mFinaled = -2, mPrevSeq = -1, mLastT = -1, mLastDur = 0;
+    bool                   mWasPlaying = false;
     LetterPhysics          mPhysics;
     LetterFx                      mFx; // [BF] break-apart exits
     TopBar                 mTopBar;

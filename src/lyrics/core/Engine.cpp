@@ -238,8 +238,56 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
             si.enabled = cfg.constellations && cfg.showLyrics && starry;
         }
         si.color = tint;
+        { // [LyricsForge] constellation outro: the song finished (stopped in its last seconds, or the next one started
+          // right after its end) -> its final line rises into the sky ahead of you as stars, whatever the sky
+            bool const finished = mLastDur > 0 && mLastT >= mLastDur - 3500 && mLastT >= mFinalLine.start;
+            bool const stopped  = mWasPlaying && !in.playing;
+            bool const nextSong = mPrevSeq >= 0 && in.songSeq != mPrevSeq;
+            int64_t const which = nextSong ? mPrevSeq : in.songSeq;
+            if (finished && (stopped || nextSong) && mFinalFor == which && mFinaled != which && cfg.finaleStars && cfg.showLyrics) {
+                SkyWriter::In fi = si;
+                fi.color = tint;
+                mSkyWriter.finale(mFinalLine, fi);
+                mFinaled = which;
+            }
+            if (in.lyrics && in.songSeq != mFinalFor) { // remember this song's final line (copied: it outlives the lyrics)
+                Line const* last = nullptr;
+                for (auto const& l : in.lyrics->lines) if (l.index >= 0 && !l.text.empty()) last = &l;
+                if (last) { mFinalLine = *last; mFinalFor = in.songSeq; }
+            }
+            if (in.playing) { mLastT = in.t; mLastDur = in.durationMs; }
+            if (nextSong && !in.playing) mLastT = -1;
+            mWasPlaying = in.playing;
+            mPrevSeq    = in.songSeq;
+        }
         mSkyWriter.step(si);
         mSkyWriter.emit(si, mOrigin, mBack);
+        if (cfg.chapterCover && in.skyCard >= 0.0f && in.coverAtlas >= 0) { // [LyricsForge] the new song's cover, painted in the sky
+            float const p   = std::clamp(in.skyCard, 0.0f, 1.0f);
+            auto  sm        = [](float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3 - 2 * t); };
+            float const env = sm(0.0f, 0.22f, p) * (1.0f - sm(0.68f, 1.0f, p));
+            float const el  = 24.0f + 4.0f * p;                              // it drifts up a little as it glows
+            double const R  = 70.0;
+            Vec3 const  d   = dir(double(in.skyCardYaw), double(-el));
+            Vec3 const  c0  = d * R;                                         // relative to the camera eye (mOrigin)
+            Vec3 const  n   = d * -1.0, up0{0, 1, 0};
+            Vec3 const  r   = up0.cross(n).normalized(), u = n.cross(r).normalized();
+            float const half = 8.5f * (0.94f + 0.08f * p);
+            auto quad = [&](double h, uint32_t argb, float alpha, uint32_t flags, float round, float soft, uint32_t atlas) {
+                BfGlyphV1 q{};
+                q.pos[0] = float(c0.x); q.pos[1] = float(c0.y); q.pos[2] = float(c0.z);
+                Vec3 const rr = r * h, uu = u * h;
+                q.right[0] = float(rr.x); q.right[1] = float(rr.y); q.right[2] = float(rr.z);
+                q.up[0] = float(uu.x); q.up[1] = float(uu.y); q.up[2] = float(uu.z);
+                q.uv[0] = 0; q.uv[1] = 0; q.uv[2] = 1; q.uv[3] = 1;
+                q.fill = q.fill2 = toRgba(argb | 0xFF000000u);
+                q.alpha = alpha; q.outlineW = round; q.glowW = soft; q.flags = flags; q.atlas = atlas;
+                mBack.push_back(q);
+            };
+            uint32_t const glowCol = in.albumAccent ? in.albumAccent : tint;
+            quad(half * 1.45, glowCol, 0.32f * env, BF_GLYPH_SOLID, 1.0f, 12.0f, 0);        // the halo in the cover's colour
+            quad(half, 0xFFFFFFFFu, 0.9f * env, BF_GLYPH_IMAGE, 0.12f, 0.0f, uint32_t(in.coverAtlas)); // the cover
+        }
     }
     if (cfg.fallingLetters || cfg.exitAnim == ExitAnim::Fall || !mPhysics.letters().empty() || mBursts.size()) {
         mPhysics.step(in.dt, world, pp);

@@ -1295,6 +1295,20 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         in.albumAccent = gS->coverAccent;
         in.songFont    = gS->songFont;
         in.awaken      = gS->engine.config().awaken ? gS->sky.awaken() : 1.0f;
+        { // [LyricsForge] chapter cover card: when a chapter starts (or the cover arrives up to 6 s into it), ~3.4 s,
+          // painted where you were looking at that moment
+            static bool    wasCh = false, cardDone = true;
+            static int64_t chAt = -1;
+            static float   cardT = -1, cardYaw = 0;
+            bool const    ch = gS->sky.inChapter();
+            int64_t const ms = now / 1000000;
+            if (ch && !wasCh) { chAt = ms; cardDone = false; }
+            wasCh = ch;
+            if (!cardDone && cardT < 0 && chAt > 0 && ms - chAt < 6000 && in.coverAtlas >= 0) { cardT = 0; cardYaw = cam.yaw; cardDone = true; }
+            if (cardT >= 0 && (cardT += dt) > 3.4f) cardT = -1;
+            in.skyCard = cardT >= 0 ? cardT / 3.4f : -1.0f;
+            in.skyCardYaw = cardYaw;
+        }
         auto const& cfgNow = gS->engine.config(); // [BF] a scene picked while a song plays is remembered for it
         if (cfgNow.scene != gS->lastScene) {
             gS->lastScene = cfgNow.scene;
