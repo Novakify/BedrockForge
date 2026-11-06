@@ -328,8 +328,11 @@ using SetTable_t   = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, 
 using SetConst_t   = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, UINT);
 using SetConsts_t  = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, void const*, UINT);
 using SetAddr_t    = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_GPU_VIRTUAL_ADDRESS);
+using SetIb_t      = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_INDEX_BUFFER_VIEW const*);
+using CreateDsv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_DEPTH_STENCIL_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
+using CreateRs_t   = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, void const*, SIZE_T, REFIID, void**);
 using CreateSrv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_SHADER_RESOURCE_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
-constexpr int kHooks = 22; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
+constexpr int kHooks = 25; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
@@ -487,8 +490,19 @@ void STDMETHODCALLTYPE setPsoHook(ID3D12GraphicsCommandList* list, ID3D12Pipelin
         gListPso[list] = pso;
     }
 }
+// Glass Armor M1b helpers (defined with the replay code below)
+bool gaOn();
+void gaFlush(ID3D12GraphicsCommandList* l);
+void gaNoteRts(ID3D12GraphicsCommandList* l, SIZE_T rt0, SIZE_T dsv);
+void gaNoteTopo(ID3D12GraphicsCommandList* l, D3D12_PRIMITIVE_TOPOLOGY t);
+void gaNoteVb(ID3D12GraphicsCommandList* l, UINT start, UINT n, D3D12_VERTEX_BUFFER_VIEW const* v);
+void gaNoteIb(ID3D12GraphicsCommandList* l, D3D12_INDEX_BUFFER_VIEW const* v);
 void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                                  D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
+    if (gaOn()) {
+        gaFlush(list); // pending armor belongs to the targets bound now
+        gaNoteRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
+    }
     if (gInSnapshot || !panelActive()) { reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds); return; }
     std::lock_guard l(gMutex);
     gListDsv[list] = ds ? ds->ptr : 0;
@@ -518,6 +532,7 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
 // thread recording this list, in order (setTopo/setVb precede the draw that reads them).
 void STDMETHODCALLTYPE topoHook(ID3D12GraphicsCommandList* list, D3D12_PRIMITIVE_TOPOLOGY t) {
     reinterpret_cast<Topo_t>(gOrig[11])(list, t);
+    if (gaOn()) gaNoteTopo(list, t);
     if (gInSnapshot || !rf::sky::wanted()) return;
     ListIa& s  = skyLS(list)->ia;
     s.haveTopo = true;
@@ -525,6 +540,7 @@ void STDMETHODCALLTYPE topoHook(ID3D12GraphicsCommandList* list, D3D12_PRIMITIVE
 }
 void STDMETHODCALLTYPE setVbHook(ID3D12GraphicsCommandList* list, UINT start, UINT n, D3D12_VERTEX_BUFFER_VIEW const* v) {
     reinterpret_cast<SetVb_t>(gOrig[12])(list, start, n, v);
+    if (gaOn()) gaNoteVb(list, start, n, v);
     if (gInSnapshot || !rf::sky::wanted()) return;
     ListIa& s = skyLS(list)->ia;
     if (start != 0 || !v || n == 0 || n > 8) { s.nVb = 0; return; } // only the common "all streams from slot 0" form
@@ -552,9 +568,29 @@ struct ListRoot {
 };
 std::unordered_map<ID3D12GraphicsCommandList*, ListRoot> gListRoot;
 bool rootTracking() { return !gInSnapshot && (rf::sky::wantRoot() || rf::glassarmor::wantRoot()); }
+void STDMETHODCALLTYPE setIbHook(ID3D12GraphicsCommandList* list, D3D12_INDEX_BUFFER_VIEW const* v);
+void STDMETHODCALLTYPE createDsvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_DEPTH_STENCIL_VIEW_DESC const* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
+    reinterpret_cast<CreateDsv_t>(gOrig[23])(d, r, desc, h);
+    rf::glassarmor::noteDsv(h.ptr, r);
+}
+HRESULT STDMETHODCALLTYPE createRsHook(ID3D12Device* d, UINT mask, void const* blob, SIZE_T size, REFIID iid, void** out) {
+    HRESULT hr = reinterpret_cast<CreateRs_t>(gOrig[24])(d, mask, blob, size, iid, out);
+    if (SUCCEEDED(hr) && out && *out) {
+        ID3D12RootSignature* rs = nullptr;
+        if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&rs))) && rs) {
+            rf::glassarmor::noteRootSig(rs, blob, size);
+            rs->Release();
+        }
+    }
+    return hr;
+}
 void STDMETHODCALLTYPE createSrvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_SHADER_RESOURCE_VIEW_DESC const* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
     reinterpret_cast<CreateSrv_t>(gOrig[21])(d, r, desc, h);
     rf::glassarmor::noteSrv(h.ptr, r); // always: textures make their SRVs once, long before a capture
+}
+void STDMETHODCALLTYPE setIbHook(ID3D12GraphicsCommandList* list, D3D12_INDEX_BUFFER_VIEW const* v) {
+    reinterpret_cast<SetIb_t>(gOrig[22])(list, v);
+    if (gaOn()) gaNoteIb(list, v);
 }
 void STDMETHODCALLTYPE setHeapsHook(ID3D12GraphicsCommandList* l, UINT n, ID3D12DescriptorHeap* const* h) {
     reinterpret_cast<SetHeaps_t>(gOrig[13])(l, n, h);
@@ -667,6 +703,125 @@ void restoreRoot(ID3D12GraphicsCommandList* l) {
     }
 }
 
+// ---------------------------------------------------------------- Glass Armor M1b: deferred armor draws
+// Armor draws are held back and replayed when the list leaves the actor pass (first non-Actor draw, a render target
+// change): by then every part of the player is drawn, so nothing paints over the glass, and the copy of the colour
+// + depth targets taken right there is what the glass bends.
+struct GaIa {
+    D3D12_PRIMITIVE_TOPOLOGY topo{};
+    UINT                     nVb = 0;
+    D3D12_VERTEX_BUFFER_VIEW vb[8]{};
+    bool                     haveIb = false;
+    D3D12_INDEX_BUFFER_VIEW  ib{};
+};
+struct GaPending {
+    ListRoot             root;
+    GaIa                 ia;
+    ID3D12PipelineState* glass = nullptr;
+    UINT                 a = 0, b = 0, c = 0, e = 0;
+    INT                  d = 0;
+};
+struct GaList {
+    GaIa                   ia;
+    SIZE_T                 rt0 = 0, dsv = 0;
+    std::vector<GaPending> pending;
+};
+std::mutex                                               gGaMutex;
+std::unordered_map<ID3D12GraphicsCommandList*, GaList>   gGa;
+std::atomic<long>                                        gGaFlushes{0}, gGaFallback{0};
+
+bool gaOn() { return !gInSnapshot && rf::glassarmor::enabled(); }
+void gaNoteRts(ID3D12GraphicsCommandList* l, SIZE_T rt0, SIZE_T dsv) {
+    std::lock_guard g(gGaMutex);
+    auto& gl = gGa[l];
+    gl.rt0   = rt0;
+    gl.dsv   = dsv;
+}
+void gaNoteTopo(ID3D12GraphicsCommandList* l, D3D12_PRIMITIVE_TOPOLOGY t) {
+    std::lock_guard g(gGaMutex);
+    gGa[l].ia.topo = t;
+}
+void gaNoteVb(ID3D12GraphicsCommandList* l, UINT start, UINT n, D3D12_VERTEX_BUFFER_VIEW const* v) {
+    std::lock_guard g(gGaMutex);
+    auto& ia = gGa[l].ia;
+    if (start == 0 && v && n > 0 && n <= 8) {
+        ia.nVb = n;
+        for (UINT k = 0; k < n; ++k) ia.vb[k] = v[k];
+    } else ia.nVb = 0;
+}
+void gaNoteIb(ID3D12GraphicsCommandList* l, D3D12_INDEX_BUFFER_VIEW const* v) {
+    std::lock_guard g(gGaMutex);
+    auto& ia  = gGa[l].ia;
+    ia.haveIb = v != nullptr;
+    if (v) ia.ib = *v;
+}
+bool gaHasPending(ID3D12GraphicsCommandList* l) {
+    std::lock_guard g(gGaMutex);
+    auto it = gGa.find(l);
+    return it != gGa.end() && !it->second.pending.empty();
+}
+void gaSetIa(ID3D12GraphicsCommandList* l, GaIa const& ia) {
+    reinterpret_cast<Topo_t>(gOrig[11])(l, ia.topo);
+    if (ia.nVb) reinterpret_cast<SetVb_t>(gOrig[12])(l, 0, ia.nVb, ia.vb);
+    if (ia.haveIb) reinterpret_cast<SetIb_t>(gOrig[22])(l, &ia.ib);
+}
+void gaSetRoot(ID3D12GraphicsCommandList* l, ListRoot const& r, ID3D12RootSignature* sig) {
+    reinterpret_cast<SetHeaps_t>(gOrig[13])(l, r.nHeaps, r.heaps);
+    reinterpret_cast<SetRootSig_t>(gOrig[14])(l, sig);
+    for (auto const& [i, a] : r.args) {
+        switch (a.type) {
+        case 1: reinterpret_cast<SetTable_t>(gOrig[15])(l, i, D3D12_GPU_DESCRIPTOR_HANDLE{a.v}); break;
+        case 2:
+            for (UINT k = 0; k < a.c.size(); ++k)
+                if (a.cSet[k]) reinterpret_cast<SetConst_t>(gOrig[16])(l, i, a.c[k], k);
+            break;
+        case 3: reinterpret_cast<SetAddr_t>(gOrig[18])(l, i, a.v); break;
+        case 4: reinterpret_cast<SetAddr_t>(gOrig[19])(l, i, a.v); break;
+        case 5: reinterpret_cast<SetAddr_t>(gOrig[20])(l, i, a.v); break;
+        default: break;
+        }
+    }
+}
+ID3D12Resource* rtvResource(SIZE_T h) {
+    std::lock_guard g(gMutex);
+    if (auto it = gRtvRes.find(h); it != gRtvRes.end()) return it->second;
+    if (auto it = gRtvGuess.find(h); it != gRtvGuess.end()) return it->second;
+    return nullptr;
+}
+void gaFlush(ID3D12GraphicsCommandList* l) {
+    std::vector<GaPending> pend;
+    GaList                 cur;
+    {
+        std::lock_guard g(gGaMutex);
+        auto it = gGa.find(l);
+        if (it == gGa.end() || it->second.pending.empty()) return;
+        pend.swap(it->second.pending);
+        cur.ia  = it->second.ia;
+        cur.rt0 = it->second.rt0;
+        cur.dsv = it->second.dsv;
+    }
+    ++gGaFlushes;
+    rf::glassarmor::FlushRes fr;
+    bool ok = rf::glassarmor::beginFlush(l, rtvResource(cur.rt0), rf::glassarmor::dsvResource(cur.dsv), fr);
+    for (auto const& p : pend) {
+        unsigned             base = 0;
+        ID3D12RootSignature* ext  = ok ? rf::glassarmor::extendedRoot(p.root.sig, &base) : nullptr;
+        if (!ext) { ++gGaFallback; continue; } // can't draw glass this time (armor invisible for one pass, no crash)
+        gaSetRoot(l, p.root, ext);
+        reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 0, fr.scene);
+        reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 1, fr.depth);
+        reinterpret_cast<SetAddr_t>(gOrig[18])(l, base + 2, fr.params);
+        gaSetIa(l, p.ia);
+        reinterpret_cast<SetPso_t>(gOrig[3])(l, p.glass);
+        reinterpret_cast<DrawIdx_t>(gOrig[6])(l, p.a, p.b, p.c, p.d, p.e);
+    }
+    if (ok) rf::glassarmor::endFlush(l, fr);
+    // put the game's state back exactly as it was before the trigger
+    restoreRoot(l);
+    gaSetIa(l, cur.ia);
+    if (auto* pso = rf::glassarmor::listPso(l)) reinterpret_cast<SetPso_t>(gOrig[3])(l, pso);
+}
+
 /// 0 = normal draw, 1 = skip it (vanilla sun / moon / stars), 2 = draw it, then our dome,
 /// 3 = clouds: draw them (unless hidden), then our weather particles (depth-tested against the terrain there)
 int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa& ia, bool& drawOrig) {
@@ -717,6 +872,7 @@ void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b,
     if (orig) {
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
+        if (gaOn() && gaHasPending(list) && !rf::glassarmor::isActorPso(rf::glassarmor::listPso(list))) gaFlush(list);
         reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
     }
     if (sk >= 2) afterSky(list, st, ia, sk);
@@ -731,13 +887,23 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
         ID3D12PipelineState* gamePso = nullptr;
-        ID3D12PipelineState* glass   = (!gInSnapshot && rf::glassarmor::enabled()) ? rf::glassarmor::glassPsoFor(list, &gamePso) : nullptr;
-        if (glass) { // Glass Armor: the game's own armor draw with our pixel shader, then the game's PSO back
-            origSetPso(list, glass);
+        ID3D12PipelineState* glass   = gaOn() ? rf::glassarmor::glassPsoFor(list, &gamePso) : nullptr;
+        if (glass) { // Glass Armor: hold the game's armor draw back, replay it with our shader after the actor pass
+            GaPending p;
+            {
+                std::lock_guard g(gMutex);
+                if (auto it = gListRoot.find(list); it != gListRoot.end()) p.root = it->second;
+            }
+            p.glass = glass;
+            p.a = a, p.b = b, p.c = c, p.d = d, p.e = e;
+            std::lock_guard g(gGaMutex);
+            auto& gl = gGa[list];
+            p.ia     = gl.ia;
+            if (p.root.sig && gl.ia.haveIb) gl.pending.push_back(std::move(p));
+        } else {
+            if (gaOn() && gaHasPending(list) && !rf::glassarmor::isActorPso(rf::glassarmor::listPso(list))) gaFlush(list);
             reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
-            origSetPso(list, gamePso);
-        } else
-            reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
+        }
     }
     if (sk >= 2) afterSky(list, st, ia, sk);
 }
@@ -1166,7 +1332,7 @@ bool install(Targets const& t) {
                          t.drawIndexed,       t.createHeap,      t.copyDescs, t.copyDescsSimple, t.resourceBarrier,
                          t.iaSetTopology,     t.iaSetVb,         t.setHeaps,  t.setRootSig,     t.setTable,
                          t.setConst,          t.setConsts,       t.setCbv,    t.setSrv,          t.setUav,
-                         t.createSrv};
+                         t.createSrv,         t.iaSetIb,         t.createDsv, t.createRootSig};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
@@ -1177,7 +1343,9 @@ bool install(Targets const& t) {
                          reinterpret_cast<void*>(&setRootSigHook), reinterpret_cast<void*>(&setTableHook),
                          reinterpret_cast<void*>(&setConstHook),  reinterpret_cast<void*>(&setConstsHook),
                          reinterpret_cast<void*>(&setAddrHook<18, 3>), reinterpret_cast<void*>(&setAddrHook<19, 4>),
-                         reinterpret_cast<void*>(&setAddrHook<20, 5>), reinterpret_cast<void*>(&createSrvHook)};
+                         reinterpret_cast<void*>(&setAddrHook<20, 5>), reinterpret_cast<void*>(&createSrvHook),
+                         reinterpret_cast<void*>(&setIbHook),     reinterpret_cast<void*>(&createDsvHook),
+                         reinterpret_cast<void*>(&createRsHook)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;

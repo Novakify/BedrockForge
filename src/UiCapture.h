@@ -46,6 +46,10 @@ struct Targets {
     void* setUav            = nullptr; // SetGraphicsRootUnorderedAccessView (42)
     // Glass Armor probe: which texture each draw binds (descriptor -> resource)
     void* createSrv         = nullptr; // ID3D12Device::CreateShaderResourceView (18)
+    // Glass Armor M1b: deferred armor draws need the index buffer, depth buffer and root signature blobs
+    void* iaSetIb           = nullptr; // ID3D12GraphicsCommandList::IASetIndexBuffer (43)
+    void* createDsv         = nullptr; // ID3D12Device::CreateDepthStencilView (21)
+    void* createRootSig     = nullptr; // ID3D12Device::CreateRootSignature (16)
 };
 
 /// Glass Armor probe helpers. Shader-visible GPU descriptor handle -> its CPU handle + increment (false if unknown).

@@ -34,4 +34,18 @@ inline HRESULT SerializeRootSignature(D3D12_ROOT_SIGNATURE_DESC const* desc, D3D
     return f ? f(desc, v, blob, err) : E_NOINTERFACE;
 }
 
+inline HRESULT SerializeVersionedRootSignature(D3D12_VERSIONED_ROOT_SIGNATURE_DESC const* desc, ID3DBlob** blob, ID3DBlob** err) {
+    auto f = module() ? reinterpret_cast<PFN_D3D12_SERIALIZE_VERSIONED_ROOT_SIGNATURE>(
+                            reinterpret_cast<void*>(GetProcAddress(module(), "D3D12SerializeVersionedRootSignature")))
+                      : nullptr;
+    return f ? f(desc, blob, err) : E_NOINTERFACE;
+}
+
+inline HRESULT CreateVersionedRootSignatureDeserializer(void const* data, SIZE_T size, REFIID riid, void** out) {
+    auto f = module() ? reinterpret_cast<PFN_D3D12_CREATE_VERSIONED_ROOT_SIGNATURE_DESERIALIZER>(
+                            reinterpret_cast<void*>(GetProcAddress(module(), "D3D12CreateVersionedRootSignatureDeserializer")))
+                      : nullptr;
+    return f ? f(data, size, riid, out) : E_NOINTERFACE;
+}
+
 } // namespace rf::d3d12api

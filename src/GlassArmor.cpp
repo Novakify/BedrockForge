@@ -27,6 +27,7 @@
 #include <imgui.h>
 
 #include "LLShim.h"
+#include "D3D12Api.h"
 #include "GlassArmorShaders.h"
 #include "SkyMaterialScan.h"
 #include "UiCapture.h"
@@ -91,6 +92,20 @@ ComPtr<ID3D12Fence>                gFence;
 UINT64                             gFenceVal = 0;
 std::atomic<long>                  gGlassDraws{0}, gGlassDrawsShown{0}, gArmorTex{0}, gNotArmor{0}, gPsoFail{0};
 std::string                        gLastClass, gLastClassInfo;
+// M1b
+std::unordered_map<size_t, ID3D12Resource*>                         gDsvRes;  // DSV handle -> depth resource
+std::unordered_map<ID3D12RootSignature*, std::vector<uint8_t>>      gRsBlob;  // game root signature blobs
+struct ExtRoot { ComPtr<ID3D12RootSignature> rs; unsigned base = 0; bool failed = false; };
+std::unordered_map<ID3D12RootSignature*, ExtRoot>                   gExt;
+struct FlushSlot { ComPtr<ID3D12Resource> scene, depth; UINT64 sceneSize = 0, depthSize = 0; };
+constexpr int                      kSlots = 8;
+FlushSlot                          gSlots[kSlots];
+ComPtr<ID3D12Resource>             gParams; // upload, kSlots x 256 B
+uint8_t*                           gParamsMap = nullptr;
+std::atomic<unsigned>              gSlotNext{0};
+std::atomic<long>                  gFlushOk{0}, gFlushFail{0};
+std::string                        gFlushWhy;
+LARGE_INTEGER                      gT0{};
 int                                gDumped = 0;
 std::string gLastReport;
 
@@ -464,19 +479,18 @@ int classify(uint8_t const* px, unsigned pitch) {
 
 ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad, int v) {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d = ad.d;
+    unsigned base = 0;
+    ID3D12RootSignature* ext = extendedRoot(ad.root.Get(), &base);
+    if (!ext) { ++gPsoFail; return nullptr; }
+    d.pRootSignature = ext;
     d.PS = {shaders::kVariant[v].ps, shaders::kVariant[v].psSize};
+    // the shader composites the copied scene itself: opaque output, written depth (drawn after every actor part)
     auto& rt = d.BlendState.RenderTarget[0];
-    rt.BlendEnable           = TRUE;
+    rt.BlendEnable           = FALSE;
     rt.LogicOpEnable         = FALSE;
-    rt.SrcBlend              = D3D12_BLEND_SRC_ALPHA;
-    rt.DestBlend             = D3D12_BLEND_INV_SRC_ALPHA;
-    rt.BlendOp               = D3D12_BLEND_OP_ADD;
-    rt.SrcBlendAlpha         = D3D12_BLEND_ONE;
-    rt.DestBlendAlpha        = D3D12_BLEND_INV_SRC_ALPHA;
-    rt.BlendOpAlpha          = D3D12_BLEND_OP_ADD;
     rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-    d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // glass: the world behind stays visible
-    d.RasterizerState.CullMode         = D3D12_CULL_MODE_NONE;
+    d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    d.RasterizerState.CullMode         = D3D12_CULL_MODE_BACK; // front glass only: the back is part of the bent scene
     ComPtr<ID3D12PipelineState> p;
     HRESULT hr = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&p));
     if (FAILED(hr)) {
@@ -593,7 +607,233 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
     q->ExecuteCommandLists(1, lists);
     q->Signal(gFence.Get(), ++gFenceVal);
 }
+
+/// Root signature blob embedded in a DXBC/DXIL container (RTS0 part), if the game compiled it in.
+bool rts0(std::vector<uint8_t> const& code, std::vector<uint8_t>& out) {
+    if (code.size() < 32 || std::memcmp(code.data(), "DXBC", 4) != 0) return false;
+    uint32_t parts = 0;
+    std::memcpy(&parts, code.data() + 28, 4);
+    for (uint32_t i = 0; i < parts && 32 + (i + 1) * 4 <= code.size(); ++i) {
+        uint32_t off = 0, size = 0;
+        std::memcpy(&off, code.data() + 32 + i * 4, 4);
+        if (size_t(off) + 8 > code.size()) continue;
+        std::memcpy(&size, code.data() + off + 4, 4);
+        if (std::memcmp(code.data() + off, "RTS0", 4) == 0 && size_t(off) + 8 + size <= code.size()) {
+            out.assign(code.data() + off + 8, code.data() + off + 8 + size);
+            return true;
+        }
+    }
+    return false;
+}
 } // namespace
+
+bool isActorPso(ID3D12PipelineState* pso) {
+    if (!pso) return false;
+    std::lock_guard l(gMutex);
+    return gActor.count(pso) != 0;
+}
+ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list) {
+    std::lock_guard l(gMutex);
+    auto it = gListPso.find(list);
+    return it == gListPso.end() ? nullptr : it->second;
+}
+void noteDsv(size_t h, ID3D12Resource* r) {
+    std::lock_guard l(gMutex);
+    if (r) gDsvRes[h] = r;
+    else gDsvRes.erase(h);
+}
+ID3D12Resource* dsvResource(size_t h) {
+    std::lock_guard l(gMutex);
+    auto it = gDsvRes.find(h);
+    return it == gDsvRes.end() ? nullptr : it->second;
+}
+void noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size) {
+    if (!rs || !blob || !size || size > 65536) return;
+    std::lock_guard l(gMutex);
+    gRsBlob[rs].assign(static_cast<uint8_t const*>(blob), static_cast<uint8_t const*>(blob) + size);
+}
+
+ID3D12RootSignature* extendedRoot(ID3D12RootSignature* game, unsigned* base) {
+    if (!game) return nullptr;
+    std::vector<uint8_t> blob;
+    {
+        std::lock_guard l(gMutex);
+        auto e = gExt.find(game);
+        if (e != gExt.end()) {
+            if (e->second.failed) return nullptr;
+            *base = e->second.base;
+            return e->second.rs.Get();
+        }
+        auto b = gRsBlob.find(game);
+        if (b != gRsBlob.end()) blob = b->second;
+        else
+            for (auto const& [p, ad] : gActor)
+                if (ad->root.Get() == game && rts0(ad->vs, blob)) break;
+    }
+    ExtRoot er;
+    auto    fail = [&](std::string why) {
+        er.failed = true;
+        gFlushWhy = "root signature: " + why;
+        ll_shim::warn("[RF] glass armor: " + gFlushWhy);
+    };
+    ComPtr<ID3D12Device> dev;
+    ComPtr<ID3D12VersionedRootSignatureDeserializer> des;
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC const* vd = nullptr;
+    if (blob.empty()) fail("game blob not seen (created before the hooks, none embedded in the shader)");
+    else if (FAILED(game->GetDevice(IID_PPV_ARGS(&dev)))) fail("no device");
+    else if (FAILED(rf::d3d12api::CreateVersionedRootSignatureDeserializer(blob.data(), blob.size(), IID_PPV_ARGS(&des))) ||
+             FAILED(des->GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_1, &vd)) || !vd)
+        fail("could not read the game blob");
+    else {
+        auto const& g = vd->Desc_1_1;
+        std::vector<D3D12_ROOT_PARAMETER1> params(g.pParameters, g.pParameters + g.NumParameters);
+        unsigned cost = 0;
+        for (auto const& p : params)
+            cost += p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ? 1
+                  : p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS ? p.Constants.Num32BitValues : 2;
+        if (cost + 6 > 64) fail("game signature too large (" + std::to_string(cost) + " DWORDs)");
+        else {
+            er.base = unsigned(params.size());
+            for (int k = 0; k < 3; ++k) {
+                D3D12_ROOT_PARAMETER1 p{};
+                p.ParameterType             = k < 2 ? D3D12_ROOT_PARAMETER_TYPE_SRV : D3D12_ROOT_PARAMETER_TYPE_CBV;
+                p.Descriptor.ShaderRegister = k < 2 ? UINT(k) : 0u;
+                p.Descriptor.RegisterSpace  = 9;
+                p.Descriptor.Flags          = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE;
+                p.ShaderVisibility          = D3D12_SHADER_VISIBILITY_PIXEL;
+                params.push_back(p);
+            }
+            D3D12_VERSIONED_ROOT_SIGNATURE_DESC nd{};
+            nd.Version                  = D3D_ROOT_SIGNATURE_VERSION_1_1;
+            nd.Desc_1_1                 = g;
+            nd.Desc_1_1.NumParameters   = UINT(params.size());
+            nd.Desc_1_1.pParameters     = params.data();
+            ComPtr<ID3DBlob> out, err;
+            if (FAILED(rf::d3d12api::SerializeVersionedRootSignature(&nd, &out, &err)))
+                fail(std::string("serialize: ") + (err ? static_cast<char const*>(err->GetBufferPointer()) : "?"));
+            else if (FAILED(dev->CreateRootSignature(0, out->GetBufferPointer(), out->GetBufferSize(), IID_PPV_ARGS(&er.rs))))
+                fail("create");
+        }
+    }
+    std::lock_guard l(gMutex);
+    auto& slot = gExt[game];
+    if (!slot.rs && !slot.failed) slot = er;
+    if (slot.failed) return nullptr;
+    *base = slot.base;
+    return slot.rs.Get();
+}
+
+namespace {
+void barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D12_RESOURCE_STATES b) {
+    if (a == b) return;
+    D3D12_RESOURCE_BARRIER x{};
+    x.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    x.Transition.pResource   = r;
+    x.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    x.Transition.StateBefore = a;
+    x.Transition.StateAfter  = b;
+    l->ResourceBarrier(1, &x);
+}
+D3D12_RESOURCE_STATES knownState(ID3D12Resource* r, D3D12_RESOURCE_STATES fallback) {
+    std::lock_guard l(gMutex);
+    auto it = gResState.find(r);
+    return it == gResState.end() ? fallback : D3D12_RESOURCE_STATES(it->second);
+}
+bool ensureBuffer(ID3D12Device* dev, ComPtr<ID3D12Resource>& b, UINT64& have, UINT64 need) {
+    if (b && have >= need) return true;
+    b.Reset();
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC   d{};
+    d.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+    d.Width            = need;
+    d.Height           = 1;
+    d.DepthOrArraySize = 1;
+    d.MipLevels        = 1;
+    d.SampleDesc.Count = 1;
+    d.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&b)))) return false;
+    have = need;
+    return true;
+}
+struct alignas(16) GaParams { // cbuffer GA (shaders/glass_armor.hlsl), 256-byte slot
+    float    res[2];
+    float    time, glint;
+    uint32_t scenePitch, depthPitch;
+    float    swirl, ripple;
+    float    lens, uiScale;
+    uint32_t sceneBgra, pad;
+};
+} // namespace
+
+bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource* ds, FlushRes& out) {
+    auto fail = [&](char const* why) { gFlushWhy = why; ++gFlushFail; return false; };
+    if (!rt) return fail("colour target unknown");
+    if (!ds) return fail("depth target unknown");
+    ComPtr<ID3D12Device> dev;
+    if (FAILED(l->GetDevice(IID_PPV_ARGS(&dev)))) return fail("no device");
+    auto rd = rt->GetDesc(), dd = ds->GetDesc();
+    if (rd.SampleDesc.Count > 1 || dd.SampleDesc.Count > 1) return fail("MSAA target");
+    if (rd.Format != DXGI_FORMAT_R8G8B8A8_UNORM && rd.Format != DXGI_FORMAT_B8G8R8A8_UNORM && rd.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS &&
+        rd.Format != DXGI_FORMAT_B8G8R8A8_TYPELESS && rd.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB && rd.Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
+        return fail("colour format not 8-bit RGBA yet (Vibrant Visuals is M3)");
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT rf{}, df{};
+    UINT64 rTot = 0, dTot = 0;
+    dev->GetCopyableFootprints(&rd, 0, 1, 0, &rf, nullptr, nullptr, &rTot);
+    dev->GetCopyableFootprints(&dd, 0, 1, 0, &df, nullptr, nullptr, &dTot);
+    if (!rTot || !dTot) return fail("footprint");
+    if (!gParams) {
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC   d{};
+        d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, d.Width = 256 * kSlots, d.Height = 1, d.DepthOrArraySize = 1, d.MipLevels = 1;
+        d.SampleDesc.Count = 1, d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&gParams))) ||
+            FAILED(gParams->Map(0, nullptr, reinterpret_cast<void**>(&gParamsMap))))
+            return fail("params buffer");
+        QueryPerformanceCounter(&gT0);
+    }
+    int   slot = int(gSlotNext++ % kSlots);
+    auto& S    = gSlots[slot];
+    if (!ensureBuffer(dev.Get(), S.scene, S.sceneSize, rTot) || !ensureBuffer(dev.Get(), S.depth, S.depthSize, dTot)) return fail("scene buffers");
+    auto const rtState = knownState(rt, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    auto const dsState = knownState(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    barrier(l, rt, rtState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    barrier(l, ds, dsState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.pResource = S.scene.Get(), dst.PlacedFootprint = rf, src.pResource = rt, src.SubresourceIndex = 0;
+    l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    dst.pResource = S.depth.Get(), dst.PlacedFootprint = df, src.pResource = ds, src.SubresourceIndex = 0;
+    l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    barrier(l, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, rtState);
+    barrier(l, ds, D3D12_RESOURCE_STATE_COPY_SOURCE, dsState);
+    barrier(l, S.scene.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    barrier(l, S.depth.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    LARGE_INTEGER now{}, f{};
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&f);
+    GaParams p{};
+    p.res[0] = float(rd.Width), p.res[1] = float(rd.Height);
+    p.time       = float(double(now.QuadPart - gT0.QuadPart) / double(f.QuadPart));
+    p.glint      = 0;
+    p.scenePitch = rf.Footprint.RowPitch, p.depthPitch = df.Footprint.RowPitch;
+    p.swirl = 0.9f, p.ripple = 0.09f, p.lens = 0.8f; // approved preview: Medium
+    p.uiScale   = float(rd.Height) / 760.f;
+    p.sceneBgra = rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM || rd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS || rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    std::memcpy(gParamsMap + slot * 256, &p, sizeof p);
+    out.scene  = S.scene->GetGPUVirtualAddress();
+    out.depth  = S.depth->GetGPUVirtualAddress();
+    out.params = gParams->GetGPUVirtualAddress() + slot * 256;
+    out.slot   = slot;
+    ++gFlushOk;
+    return true;
+}
+
+void endFlush(ID3D12GraphicsCommandList* l, FlushRes const& fr) {
+    if (fr.slot < 0) return;
+    auto& S = gSlots[fr.slot];
+    barrier(l, S.scene.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    barrier(l, S.depth.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+}
 
 ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState** game) {
     if (!shadersBuilt()) return nullptr;
@@ -666,7 +906,7 @@ void drawUi() {
     if (!ImGui::CollapsingHeader("Glass Armor")) return;
     ImGui::Indent();
     bool on = gEnabled.load();
-    if (ImGui::Checkbox("Glass armor on (M1a test: see-through + neon outline)", &on)) {
+    if (ImGui::Checkbox("Glass armor on", &on)) {
         gEnabled = on;
         std::error_code ec;
         fs::create_directories(gConfigFile.parent_path(), ec);
@@ -678,6 +918,7 @@ void drawUi() {
         ImGui::Text("Armor textures recognised: %ld (last: %s)  other: %ld  queued: %zu",
                     gArmorTex.load(), gLastClass.empty() ? "-" : gLastClass.c_str(), gNotArmor.load(), gPending.size() + gInFlight.size());
         ImGui::TextWrapped("Last texture: %s", gLastClassInfo.c_str());
+        ImGui::Text("Flushes ok: %ld  failed: %ld %s", gFlushOk.load(), gFlushFail.load(), gFlushWhy.c_str());
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
                     gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
     }

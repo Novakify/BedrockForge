@@ -20,6 +20,7 @@ struct D3D12_GRAPHICS_PIPELINE_STATE_DESC;
 struct D3D12_RESOURCE_BARRIER;
 struct ID3D12Device;
 struct ID3D12CommandQueue;
+struct ID3D12RootSignature;
 
 namespace rf::glassarmor {
 
@@ -46,6 +47,19 @@ void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso);
 void onDraw(ID3D12GraphicsCommandList* list, unsigned vertsOrIndices, unsigned instances);
 /// Once per Present (UiCapture::beforeOverlay).
 void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue);
+
+// ---- M1b: deferred armor draws (UiCapture replays them after the actor pass) ----
+bool                 isActorPso(ID3D12PipelineState* pso);
+ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list);
+void                 noteDsv(size_t handle, ID3D12Resource* res);
+ID3D12Resource*      dsvResource(size_t handle);
+void                 noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size);
+/// The game's root signature + 2 root SRVs (scene, depth: t0/t1 space9) + 1 root CBV (b0 space9), cached.
+ID3D12RootSignature* extendedRoot(ID3D12RootSignature* game, unsigned* firstExtra);
+struct FlushRes { unsigned long long scene = 0, depth = 0, params = 0; int slot = -1; };
+/// Copies the bound colour + depth targets into buffers the glass shader reads; false = can't this time.
+bool beginFlush(ID3D12GraphicsCommandList* list, ID3D12Resource* rt, ID3D12Resource* ds, FlushRes& out);
+void endFlush(ID3D12GraphicsCommandList* list, FlushRes const& fr);
 /// F6 section.
 void drawUi();
 

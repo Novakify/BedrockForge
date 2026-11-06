@@ -443,6 +443,8 @@ bool findTargets() {
         gUiTargets.copyDescs         = dv[23]; // CopyDescriptors
         gUiTargets.copyDescsSimple   = dv[24]; // CopyDescriptorsSimple
         gUiTargets.createSrv         = dv[18]; // CreateShaderResourceView (Glass Armor probe)
+        gUiTargets.createDsv         = dv[21]; // CreateDepthStencilView (Glass Armor)
+        gUiTargets.createRootSig     = dv[16]; // CreateRootSignature (Glass Armor)
         // ID3D12Device2 by IID (30baa41e-b15b-475c-a0bb-1af5c5b64328): no dependency on the SDK header version
         static const GUID kIidDevice2 = {0x30baa41e, 0xb15b, 0x475c, {0xa0, 0xbb, 0x1a, 0xf5, 0xc5, 0xb6, 0x43, 0x28}};
         IUnknown*         dev2        = nullptr;
@@ -462,6 +464,7 @@ bool findTargets() {
             gUiTargets.resourceBarrier = lv[26];
             gUiTargets.iaSetTopology   = lv[20];
             gUiTargets.iaSetVb         = lv[44];
+            gUiTargets.iaSetIb         = lv[43];
             gUiTargets.setHeaps        = lv[28];
             gUiTargets.setRootSig      = lv[30];
             gUiTargets.setTable        = lv[32];
