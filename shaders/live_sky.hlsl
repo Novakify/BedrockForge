@@ -1651,14 +1651,22 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     vec3 seamC = mix(A1, HOR, 0.4);
     if (lum3(seamC) < 0.05) seamC = v3(0.85);
     float el = degrees(asin(clamp(normalize(skyDir).y, -1.0, 1.0)));
-    PXB = PX_PREV_BASE;
-    vec4 co = skyOne(skyDir, vec4(skyInfo4.xyz, 0.0));
-    PXB = 0;
+    // [LyricsForge] Awaken (texel 14.g set): the startup rises over the vanilla sky - no old sky to draw (it stays
+    // transparent), a softer front and a brighter, wider ring of light that also glows over the vanilla sky
+    bool awake = PX_FETCH(14).g > 0.5;
+    vec4 co = vec4(cn.rgb, 0.0);
+    if (!awake) {
+        PXB = PX_PREV_BASE;
+        co = skyOne(skyDir, vec4(skyInfo4.xyz, 0.0));
+        PXB = 0;
+    }
     float e = sw * sw * (3.0 - 2.0 * sw);
     float front = -12.0 + 118.0 * e;
-    float m = 1.0 - sm(front - 7.0, front + 7.0, el);
+    float soft = awake ? 11.0 : 7.0;
+    float m = 1.0 - sm(front - soft, front + soft, el);
     vec4 c = mix(co, cn, m);
-    float seam = exp(-(el - front) * (el - front) / 10.0) * sin(3.14159265 * sw);
-    c.rgb = clamp(c.rgb + seamC * seam * 0.55, 0.0, 1.0);
+    float seam = exp(-(el - front) * (el - front) / (awake ? 26.0 : 10.0)) * sin(3.14159265 * sw);
+    c.rgb = clamp(c.rgb + seamC * seam * (awake ? 0.9 : 0.55), 0.0, 1.0);
+    if (awake) c.a = max(c.a, clamp(seam * 0.85, 0.0, 1.0) * cn.a);
     return c;
 }
