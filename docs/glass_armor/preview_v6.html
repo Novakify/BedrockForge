@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Novak Glass Armor — Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--accent:#b14cff;--lilac:#e9d5ff;--dark:rgba(19,10,36,.55);--rim:rgba(255,255,255,.22)}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#0b0716;color:#fff;font-family:Inter,system-ui,sans-serif;overflow:hidden}
+  canvas{display:block;touch-action:none}
+  .glass{background:var(--dark);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3);
+    border:1px solid var(--rim);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 0 22px rgba(177,76,255,.18),0 10px 30px rgba(0,0,0,.35)}
+  #title{position:fixed;top:12px;left:12px;right:12px;display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:16px;pointer-events:none}
+  #title b{font-size:15px}
+  #title span{font-size:11.5px;color:var(--lilac);opacity:.8}
+  #title .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent),0 0 22px var(--accent)}
+  #panel{position:fixed;left:10px;right:10px;bottom:10px;border-radius:20px;padding:10px 10px 6px;max-height:46vh;overflow:auto}
+  .row{margin-bottom:8px}
+  .lbl{font-size:10.5px;text-transform:uppercase;letter-spacing:1.2px;color:var(--lilac);opacity:.75;margin:0 4px 5px}
+  .chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:3px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;font:600 12.5px Inter,sans-serif;color:#fff;border-radius:14px;padding:7px 12px;cursor:pointer;
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.16);box-shadow:inset 0 1px 0 rgba(255,255,255,.12);display:flex;align-items:center;gap:6px;transition:.15s}
+  .chip:hover{background:rgba(255,255,255,.13)}
+  .chip.on{background:rgba(177,76,255,.82);border-color:rgba(255,255,255,.5);box-shadow:0 0 14px rgba(177,76,255,.7),inset 0 1px 0 rgba(255,255,255,.4)}
+  .sw{width:11px;height:11px;border-radius:4px;box-shadow:0 0 8px currentColor}
+  #note{font-size:11px;color:#d8c9f0;opacity:.75;margin:2px 4px 6px;line-height:1.35}
+  @media(min-width:900px){#panel{left:auto;right:16px;top:76px;bottom:16px;width:330px;max-height:none}.chips{flex-wrap:wrap;overflow:visible}}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<div id="title" class="glass"><div class="dot"></div><div><b>Glass Armor · v6</b><br><span>by Novak · drag to orbit · pinch to zoom</span></div></div>
+<div id="panel" class="glass">
+  <div id="note"></div>
+  <div class="row"><div class="lbl">Warp</div><div class="chips" id="warp"></div></div>
+  <div class="row"><div class="lbl">Material</div><div class="chips" id="mat"></div></div>
+  <div class="row" id="teamRow"><div class="lbl">Leather color (Hive team dye)</div><div class="chips" id="team"></div></div>
+  <div class="row"><div class="lbl">Enchanted</div><div class="chips" id="glint"></div></div>
+  <div class="row"><div class="lbl">Lighting</div><div class="chips" id="light"></div></div>
+  <div class="row"><div class="lbl">Extras</div><div class="chips" id="extra"></div></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {UnrealBloomPass} from 'three/addons/postprocessing/UnrealBloomPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+
+// tint = very light colour cast, edge = neon outline + the light it throws into the glass
+const MATS = {
+  leather:  {name:'Leather',  tint:'#8b5a2b', edge:'#ff9a3c'},
+  chain:    {name:'Chain',    tint:'#9aa3ad', edge:'#c9d8ea'},
+  iron:     {name:'Iron',     tint:'#dfe6f0', edge:'#eef4ff'},
+  copper:   {name:'Copper',   tint:'#e0784a', edge:'#ff7a3d'},
+  gold:     {name:'Gold',     tint:'#ffc83a', edge:'#ffd23a'},
+  diamond:  {name:'Diamond',  tint:'#4ff3ff', edge:'#38f2ff'},
+  netherite:{name:'Netherite',tint:'#4a3560', edge:'#b14cff'},
+};
+const TEAMS = {
+  brown:['Brown (undyed)','#8b5a2b','#ff9a3c'], red:['Red','#ff2e4d','#ff3b5c'], blue:['Blue','#2e6bff','#4a86ff'],
+  lime:['Lime','#7cff3a','#8dff4a'], yellow:['Yellow','#ffe03a','#ffe84a'], light_blue:['Light Blue','#4fd2ff','#5adcff'],
+  magenta:['Magenta','#ff3ad8','#ff4ee0'], orange:['Orange','#ff8a1f','#ff962e'], light_gray:['Light Gray','#cfd0e0','#ffffff'],
+  cyan:['Cyan','#18e0d0','#2cf0de'], gray:['Gray','#8a8aa0','#c8c8dc'],
+};
+// Menu.cpp presets {blur, refraction, frost}
+// warp levels: {swirl angle (rad), ripple, edge lens}
+const WARPS = {subtle:['Subtle',.5,.05,.6], medium:['Medium',.9,.09,.8], strong:['Strong',1.35,.13,1.0]};
+const LIGHTS = {
+  day:   {name:'Day',    amb:1.0, top:'#5f9cff', hor:'#cfe6ff', sun:'#fff4dd', sunDir:[.4,1,.3], torch:0, fog:'#b9d6ff'},
+  sunset:{name:'Sunset', amb:.7,  top:'#3b2a6e', hor:'#ff9a5c', sun:'#ffb070', sunDir:[-1,.25,.2], torch:0, fog:'#d98a6a'},
+  night: {name:'Night + torch', amb:.28, top:'#070a1c', hor:'#1b2140', sun:'#9fb0ff', sunDir:[.2,1,-.4], torch:1, fog:'#121630'},
+  cave:  {name:'Cave + torch',  amb:.06, top:'#020203', hor:'#07070a', sun:'#000000', sunDir:[0,1,0], torch:1, fog:'#040406'},
+};
+const S = {warp:'medium', mat:'diamond', team:'red', glint:'flow', light:'day', walk:false, spin:true};
+
+// ---------- renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.25;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, .5, 2000);
+camera.position.set(30,26,40);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0,16,0); controls.enableDamping = true; controls.minDistance = 18; controls.maxDistance = 120;
+controls.autoRotateSpeed = .8;
+
+const skyU = {top:{value:new THREE.Color()}, hor:{value:new THREE.Color()}};
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(900,32,16), new THREE.ShaderMaterial({side:THREE.BackSide, depthWrite:false, uniforms:skyU,
+  vertexShader:`varying vec3 p; void main(){p=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+  fragmentShader:`uniform vec3 top,hor; varying vec3 p; void main(){ gl_FragColor=vec4(mix(hor,top,pow(clamp(p.y*1.4+.15,0.,1.),.7)),1.);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+  }`})));
+
+function pixTex(base, vary=.12, seed=1, draw){
+  const c=document.createElement('canvas'); c.width=c.height=16; const g=c.getContext('2d');
+  const col=new THREE.Color(base); let s=seed*9301;
+  const rnd=()=> (s=(s*16807)%2147483647)/2147483647;
+  for(let y=0;y<16;y++)for(let x=0;x<16;x++){const k=1+(rnd()-.5)*vary*2; g.fillStyle=`rgb(${col.r*255*k|0},${col.g*255*k|0},${col.b*255*k|0})`; g.fillRect(x,y,1,1);}
+  if(draw) draw(g);
+  const t=new THREE.CanvasTexture(c); t.magFilter=THREE.NearestFilter; t.minFilter=THREE.NearestFilter; t.colorSpace=THREE.SRGBColorSpace; return t;
+}
+const lam = (t)=> new THREE.MeshLambertMaterial({map:t});
+const grassTop=lam(pixTex('#5a9a3c',.16,3)), dirt=lam(pixTex('#7a5636',.14,5)), stone=lam(pixTex('#7d7d84',.12,8));
+const blk = new THREE.BoxGeometry(16,16,16);
+for(let i=-4;i<=4;i++)for(let j=-4;j<=4;j++){const m=new THREE.Mesh(blk,[dirt,dirt,grassTop,dirt,dirt,dirt]); m.position.set(i*16,-8,j*16); scene.add(m);}
+[['#d8333f',-40,8,-40],['#3858d8',-24,8,-56],['#8fdc3a',24,8,-48],['#f0d23a',44,8,-28],['#c540c8',-52,24,-40],['#e98b2a',40,8,-56],['#d8333f',-8,8,-40],['#3858d8',8,24,-40]].forEach(([c,x,y,z],k)=>{
+  const m=new THREE.Mesh(blk,lam(pixTex(c,.09,k+11))); m.position.set(x,y,z); scene.add(m);
+  if(k%2==0){const m2=m.clone(); m2.position.y+=16; scene.add(m2);}
+});
+const st=new THREE.Mesh(blk,stone); st.position.set(-40,8,-24); scene.add(st);
+scene.fog = new THREE.Fog(0x000000, 160, 520);
+const amb = new THREE.AmbientLight(0xffffff,.6); scene.add(amb);
+const sun = new THREE.DirectionalLight(0xffffff,1.2); scene.add(sun);
+const torchL = new THREE.PointLight(0xffa64a, 0, 90, 1.6); scene.add(torchL);
+const torch = new THREE.Group();
+torch.add(new THREE.Mesh(new THREE.BoxGeometry(2,8,2), new THREE.MeshLambertMaterial({color:0x6b4a2a})));
+const flame = new THREE.Mesh(new THREE.BoxGeometry(2.2,2.2,2.2), new THREE.MeshBasicMaterial({color:new THREE.Color(4,2.4,1)}));
+flame.position.y=5; torch.add(flame); scene.add(torch);
+
+// ---------- generic mannequin ----------
+const skin=lam(pixTex('#c99a78',.05,22)), hair=lam(pixTex('#2a1a12',.1,23)), hood=lam(pixTex('#3d3560',.1,24)), pants=lam(pixTex('#2a2740',.1,25)), shoe=lam(pixTex('#3a3a46',.1,26));
+const face=lam(pixTex('#c99a78',.05,21,g=>{g.fillStyle='#fff';g.fillRect(3,7,3,2);g.fillRect(10,7,3,2);g.fillStyle='#4a2a7a';g.fillRect(5,7,1,2);g.fillRect(10,7,1,2);g.fillStyle='#8a5a44';g.fillRect(6,11,4,1);g.fillStyle='#2a1a12';g.fillRect(0,0,16,4);}));
+const rig = new THREE.Group(); scene.add(rig);
+const bone=(x,y,z)=>{const g=new THREE.Group(); g.position.set(x,y,z); rig.add(g); return g;};
+// pivots straight from Mojang's geometry.player.armor.base
+const B={root:bone(0,0,0), head:bone(0,24,0), armR:bone(-5,22,0), armL:bone(5,22,0), legR:bone(-1.9,12,0), legL:bone(1.9,12,0)};
+const PIV={root:[0,0,0],head:[0,24,0],armR:[-5,22,0],armL:[5,22,0],legR:[-1.9,12,0],legL:[1.9,12,0]};
+function part(b,size,center,mat){const m=new THREE.Mesh(new THREE.BoxGeometry(...size),mat); const P=PIV[b]; m.position.set(center[0]-P[0],center[1]-P[1],center[2]-P[2]); B[b].add(m);}
+part('head',[8,8,8],[0,28,0],[skin,skin,hair,skin,face,hair]);
+part('root',[8,12,4],[0,18,0],hood);
+part('armR',[4,9,4],[-6,19.5,0],hood); part('armR',[4,3,4],[-6,13.5,0],skin);
+part('armL',[4,9,4],[6,19.5,0],hood);  part('armL',[4,3,4],[6,13.5,0],skin);
+part('legR',[4,9,4],[-1.9,7.5,0],pants); part('legR',[4,3,4],[-1.9,1.5,0],shoe);
+part('legL',[4,9,4],[1.9,7.5,0],pants);  part('legL',[4,3,4],[1.9,1.5,0],shoe);
+
+// ---------- glass armor: port of Renderer Foundation's glassShade() (shaders/glyph.hlsl) onto every armor face ----------
+const U = {
+  uTint:{value:new THREE.Color()}, uEdge:{value:new THREE.Color()}, uMode:{value:1}, uTime:{value:0}, uGlint:{value:0},
+  uAmb:{value:1}, uSunDir:{value:new THREE.Vector3()}, uSunCol:{value:new THREE.Color()},
+  uTorchPos:{value:new THREE.Vector3()}, uTorchCol:{value:new THREE.Color(1,.62,.3)}, uTorchOn:{value:0},
+  uSkyTop:{value:new THREE.Color()}, uSkyHor:{value:new THREE.Color()},
+  uSwirl:{value:1.6}, uRipple:{value:.18}, uLens:{value:.9}, uLineW:{value:.22},
+  uScene:{value:null}, uBlurTex:{value:null}, uDepth:{value:null}, uNear:{value:.5}, uFar:{value:2000}, uRes:{value:new THREE.Vector2()},
+  uView:{value:new THREE.Matrix4()},
+};
+const armorMat = new THREE.ShaderMaterial({uniforms:U, transparent:true, depthWrite:false, fog:false,
+vertexShader:`
+attribute vec2 faceSize; attribute vec2 texUV; attribute vec2 faceTex;
+varying vec2 vUv, vFace, vTex, vFT; varying vec3 vPosW, vNW;
+void main(){ vUv=uv; vFace=faceSize; vTex=texUV; vFT=faceTex; vec4 wp=modelMatrix*vec4(position,1.); vPosW=wp.xyz;
+  vNW=normalize(mat3(modelMatrix)*normal); gl_Position=projectionMatrix*viewMatrix*wp; }`,
+fragmentShader:`
+uniform vec3 uTint,uEdge,uSunDir,uSunCol,uTorchPos,uTorchCol,uSkyTop,uSkyHor;
+uniform float uMode,uTime,uGlint,uAmb,uTorchOn,uSwirl,uRipple,uLens,uLineW;
+uniform sampler2D uScene,uBlurTex,uDepth,uSdf; uniform float uNear,uFar; uniform vec2 uRes; uniform mat4 uView;
+varying vec2 vUv, vFace, vTex, vFT; varying vec3 vPosW, vNW;
+vec3 sceneAt(vec2 px,float b){ vec2 uv=px/uRes; return mix(texture2D(uScene,uv).rgb,texture2D(uBlurTex,uv).rgb,b); }
+float linZ(float d){ float z=d*2.-1.; return 2.*uNear*uFar/(uFar+uNear-z*(uFar-uNear)); }
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float faceShade(vec3 n){ return n.y>.5?1.:(n.y<-.5?.5:(abs(n.x)>.5?.62:.82)); }
+void main(){
+  // signed distance to this face's edge (world px, + outside) -> screen px, exactly like the UI's rounded-rect SDF
+  // shape = Mojang's vanilla armor texture: distance (texels) to the edge of its painted pixels, per face
+  vec2 p=vUv*vFace;
+  float tex2w=.5*(vFace.x/vFT.x+vFace.y/vFT.y);
+  float dIn=texture2D(uSdf,vTex/vec2(64.,32.)).r*tex2w;   // world px, + inside
+  if(dIn<0.) discard;
+  float dW=-dIn;
+  vec2 gr=vec2(dFdx(dW),dFdy(dW)); float lg=max(length(gr),1e-4);
+  float d=dW/lg;                                    // screen px
+  vec2 n=gr/lg;                                     // outward, screen space (y up)
+  float halfPx=min(vFace.x,vFace.y)*.5/lg;
+  float S=uRes.y/760.;                              // design px -> screen px (menu is designed at 760 tall)
+  vec3 N=normalize(vNW), V=normalize(cameraPosition-vPosW);
+  float ndv=clamp(dot(N,V),0.,1.);
+  float tD=length(uTorchPos-vPosW), tA=uTorchOn*clamp(1.-tD/58.,0.,1.); tA*=tA;
+  float lightLv=clamp(uAmb*faceShade(N)+tA*.95,.04,1.);
+  // neon outline (the part you liked) + its light spilling into the glass
+  float aaW=fwidth(dIn)*1.1;
+  float line=1.-smoothstep(uLineW-aaW,uLineW+aaW,dIn);
+  // enchant: 1 = edge pulse (outline breathes brighter), 2 = edge flow (light travels round the outline)
+  float ench=0.;
+  if(uGlint>.5&&uGlint<1.5) ench=.5+.5*sin(uTime*2.4);
+  if(uGlint>1.5){ float per=(p.x+p.y)/ (vFace.x+vFace.y); ench=pow(.5+.5*sin((per*2.-uTime*.55)*6.2831),6.); }
+  vec3 edgeC=uEdge*(1.+ench*1.2);
+  // screen-space light direction for the rim (real sun / torch, not a fixed one)
+  vec3 Lw=normalize(mix(uSunDir,uTorchPos-vPosW,step(.5,uTorchOn)));
+  vec2 Ls=normalize((uView*vec4(Lw,0.)).xy+vec2(1e-4));
+  vec3 col; float a;
+  {
+    // ---- Bedrock Forge glass: RF glassShade() rim/lens + a clean swirl warp, almost no frost ----
+    float bevel=min(22.*S, halfPx*.85);
+    float x=clamp(-d/max(bevel,1.),0.,1.);
+    float edge=pow(1.-x,2.2);
+    vec2 px=gl_FragCoord.xy;
+    // swirl: rotate the world behind around each face's centre (strongest in the middle, calm at the edges), slowly breathing
+    vec2 ctr=vFace*.5, rel=p-ctr; float Rr=min(vFace.x,vFace.y)*.5;
+    float rr=length(rel)/max(Rr,1e-3);
+    float ph=fract(sin(dot(vFace+vNW.xy*3.1+vNW.z,vec2(12.9898,78.233)))*43758.5);
+    float ang=uSwirl*smoothstep(1.15,0.,rr)*(ph>.5?1.:-1.);   // fixed twist, no animation
+    float cs=cos(ang), sn=sin(ang);
+    vec2 fo=vec2(cs*rel.x-sn*rel.y, sn*rel.x+cs*rel.y)-rel;
+    // soft liquid ripple on top
+    fo+=uRipple*vec2(sin(p.y*.9+ph*6.),cos(p.x*.9+ph*4.));   // fixed gentle wave in the glass
+    mat2 J=mat2(dFdx(p),dFdy(p));                       // face units per screen px
+    vec2 off=inverse(J)*fo;                             // face offset -> screen px
+    off=clamp(off,vec2(-42.*S),vec2(42.*S));
+    off+=-n*16.*uLens*S*edge;                           // menu lens at the rim
+    // your own body sits right under the glass: leave it clean (no swimming), only twist the world further behind
+    float gapA=linZ(texture2D(uDepth,px/uRes).r)-linZ(gl_FragCoord.z);
+    float gapB=linZ(texture2D(uDepth,(px+off)/uRes).r)-linZ(gl_FragCoord.z);
+    float kw=smoothstep(4.,14.,min(gapA,gapB)); off*=kw;
+    vec3 c;
+    c.r=sceneAt(px+off,.0).r; c.g=sceneAt(px+off*1.04,.0).g; c.b=sceneAt(px+off*1.08,.0).b;   // chromatic split
+    c=mix(c,sceneAt(px+off,1.),.12*kw);                  // a touch of softness, stays clean
+    vec3 tintC=mix(vec3(.0065,.0032,.018),uTint,.35);
+    c=mix(c,tintC,.10);
+    // rim light: bright where the light hits the edge, like the menu (scaled by real light level)
+    float rim=1.-smoothstep(0.,1.6,abs(d+.9));
+    float lit=.45+.55*max(dot(n,Ls),0.);
+    c+=vec3(.9)*(rim*lit*.75+edge*.08)*(.35+.65*lightLv);
+    // inner edge glow = the neon outline lighting up the glass from inside
+    float sat=max(max(uEdge.r,uEdge.g),uEdge.b)-min(min(uEdge.r,uEdge.g),uEdge.b);
+    c+=edgeC*(.24+.30*ench)*mix(.45,1.,clamp(sat*1.5,0.,1.))*pow(clamp(1.+d/bevel,0.,1.),3.);
+    c+=edgeC*.015;
+    // reflections: frosted = broad highlights of sun / torch / sky
+    vec3 R=reflect(-V,N);
+    float fres=pow(1.-ndv,3.);
+    c+=mix(uSkyHor,uSkyTop,clamp(R.y*.5+.5,0.,1.))*fres*.10;
+    c+=uSunCol*pow(max(dot(R,normalize(uSunDir)),0.),40.)*.14*uAmb;
+    c+=uTorchCol*(pow(max(dot(R,normalize(uTorchPos-vPosW)),0.),30.)*.9+.035)*tA;
+    col=mix(c,edgeC*1.25,line); a=1.;
+  }
+  gl_FragColor=vec4(col,clamp(a,0.,1.));
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`});
+
+// ---- vanilla masks (alpha of Mojang's armor textures, layer _1 and _2) ----
+const MASKS={"leather": ["00ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00180000000000ff001800000000ffffffff00000000ffffffff00000000ffffffff00000000ff81ffff00000000f0000fff00000000000000ff000000000000003c00000000000000000000000000f00000000f000000f00000000f000000f00000000f000000f00000000f00000000fc3fc3ffff000000fe7fffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffffffffff00ffffffffff000000ffffffffff000000ffffffffff000000ffff07e07e000000ffff03c000000000ffff000000000000", "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f000000000000000f000000000000000f000000000000000f00000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffffffffff000000ffffffffff0000000000ffffff0000000000ffffff0000000000ffffff000000"], "chain": ["00aa000000000000005500000000000000be000000000000007d00000000000000be000000000000007d00000000000000aa0000000000000055000000000000ff5affff00000000aa81ffff000000005500555500000000aa00aaaa000000005500555500000000ab00aaaa000000005500555500000000a0000aaa00000000000000000005000000000000000a0000000000000005000000000000000a00000000fc3fc3ffff000000ae6ae6aaaa00000057d57d5555000000aaaaaaaaaa0000005555555555000000aaaaaaaaaa005555555555000000aaaaaaaaaa0000005555555555000000aaaa0000000000005555000000000000aaaa000000000000", "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f000000000000000f000000000000000f000000000000000f00000000000000ffff0000000000005555000000000000aaaa0000000000005555000000000000aaaa0000000000005555000000000000aaaa000000000000555580000000000000005555550000000000aaaaaa0000000000ffffff0000000000000000000000"], "iron": ["00ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff000000000000ffffffff00000000ffffffff00000000ffffffff00000000ff99ffff00000000f0180fff00000000000000ff000000000000003c00000000000000000000000000f00000000f000000f00000000f000000f00000000f000000f00000000f00000000fc3fc3ffff000000fe7fffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffff07e07e000000ffff03c000000000ffff000000000000", "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f000000000000000f000000000000000f000000000000000f00000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffffffffff000000ffffffffff0000000000ffffff0000000000ffffff0000000000ffffff000000"], "copper": ["00ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff000000000000ffffffff00000000ffffffff00000000ffffffff00000000ff99ffff00000000f0180fff00000000000000ff000000000000003c00000000000000000000000000f00000000f000000f00000000f000000f00000000f000000f00000000f00000000fc3fc3ffff000000fe7fffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffff07e07e000000ffff03c000000000ffff000000000000", "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f000000000000000f000000000000000f000000000000000f00000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffffffffff000000ffffffffff0000000000ffffff0000000000ffffff0000000000ffffff000000"], "gold": ["00ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff000000000000ffffffff00000000ffffffff00000000ffffffff00000000ff99ffff00000000f0180fff00000000000000ff000000000000003c00000000000000000000000000f00000000f000000f00000000f000000f00000000f000000f00000000f00000000fc3fc3ffff000000fe7fffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffff07e07e000000ffff03c000000000ffff000000000000", "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f000000000000000f000000000000000f000000000000000f00000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffffffffff000000ffffffffff0000000000ffffff0000000000ffffff0000000000ffffff000000"], "diamond": ["00ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff000000000000ffffffff00000000ffffffff00000000ffffffff00000000ff99ffff00000000f0180fff00000000000000ff000000000000003c00000000000000000000000000f00000000f000000f00000000f000000f00000000f000000f00000000f00000000fc3fc3ffff000000fe7fffffff000000ffffffffff000000fffffffc03000000fffffffc03000000ffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffff07e07e000000ffff03c000000000ffff000000000000", "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f000000000000000f000000000000000f000000000000000f00000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffffffffff000000ffffffffff0000000000ffffff0000000000ffffff0000000000ffffff000000"], "netherite": ["00ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff00000000000000ff000000000000ffffffff00000000ffffffff00000000ffffffff00000000ff99ffff00000000f399cfff00000000018180ff0000000001c3803c0000000001c380000000000000f00000000f000000f00000000f000000f00000000f000000f00000000f00000000fc3fffffff000000fc3fffffff000000fe7fffffff000000ffffffffff000000ffffffffff000000ffffffff9f001f80ffffff6a0400ffffffffff000000ffffffffff000000ffff0ff0ff000000ffff07e07e000000ffff03c03c000000", "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f000000000000000f000000000000000f000000000000000f00000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffff000000000000ffffc3c3ff000000ffffffffff0000000000ffffff0000000000ffffff0000000000ffffff000000"]};
+const F=8, SW=64*F, SH=32*F;
+const CUBES={1:[[0,0,8,8,8],[32,0,8,8,8],[16,16,8,12,4],[40,16,4,12,4],[0,16,4,12,4]], 2:[[16,16,8,12,4],[0,16,4,12,4]]};
+function faceRects(u,v,w,h,d){ return [[u+d,v,w,d],[u+d+w,v,w,d],[u,v+d,d,h],[u+d,v+d,w,h],[u+d+w,v+d,d,h],[u+2*d+w,v+d,w,h]]; }
+const sdfCache={};
+function buildSdf(mat,layer){
+  const key=mat+layer; if(sdfCache[key]) return sdfCache[key];
+  const hex=MASKS[mat][layer-1], bit=(x,y)=>{ const c=parseInt(hex[y*16+(x>>2)],16); return (c>>(3-(x&3)))&1; };
+  const fid=new Int16Array(64*32).fill(-1); let id=0;
+  CUBES[layer].forEach(c=>faceRects(...c).forEach(r=>{ for(let y=r[1];y<r[1]+r[3];y++)for(let x=r[0];x<r[0]+r[2];x++) fid[y*64+x]=id; id++; }));
+  const N=SW*SH, inside=new Uint8Array(N), f=new Int16Array(N);
+  for(let y=0;y<SH;y++)for(let x=0;x<SW;x++){ const tx=x/F|0, ty=y/F|0, i=y*SW+x; f[i]=fid[ty*64+tx]; inside[i]=(f[i]>=0&&bit(tx,ty))?1:0; }
+  const INF=1e9, dIn=new Float32Array(N).fill(INF), dOut=new Float32Array(N).fill(INF);
+  const same=(i,j)=>inside[i]===inside[j]&&(!inside[i]||f[i]===f[j]);
+  for(let y=0;y<SH;y++)for(let x=0;x<SW;x++){ const i=y*SW+x; let edge=false;
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){ const X=x+dx,Y=y+dy; if(X<0||Y<0||X>=SW||Y>=SH){edge=true;break;} if(!same(i,Y*SW+X)){edge=true;break;} }
+    if(edge){ if(inside[i]) dIn[i]=.5; else dOut[i]=.5; } }
+  const W8=[[-1,0,1],[-1,-1,1.4142],[0,-1,1],[1,-1,1.4142]];
+  const pass=(D,isIn)=>{
+    for(let y=0;y<SH;y++)for(let x=0;x<SW;x++){ const i=y*SW+x; if(inside[i]!==isIn) continue;
+      for(const [dx,dy,w] of W8){ const X=x+dx,Y=y+dy; if(X<0||Y<0||X>=SW) continue; const j=Y*SW+X; if(same(i,j)&&D[j]+w<D[i]) D[i]=D[j]+w; } }
+    for(let y=SH-1;y>=0;y--)for(let x=SW-1;x>=0;x--){ const i=y*SW+x; if(inside[i]!==isIn) continue;
+      for(const [dx,dy,w] of W8){ const X=x-dx,Y=y-dy; if(X<0||Y>=SH||X>=SW) continue; const j=Y*SW+X; if(same(i,j)&&D[j]+w<D[i]) D[i]=D[j]+w; } } };
+  pass(dIn,1); pass(dOut,0);
+  const out=new Uint16Array(N);
+  for(let i=0;i<N;i++){ const v=inside[i]? Math.min(dIn[i],64)/F : -Math.min(dOut[i],64)/F; out[i]=THREE.DataUtils.toHalfFloat(v); }
+  const t=new THREE.DataTexture(out,SW,SH,THREE.RedFormat,THREE.HalfFloatType);
+  t.magFilter=t.minFilter=THREE.LinearFilter; t.flipY=false; t.needsUpdate=true;
+  return sdfCache[key]=t;
+}
+const U1={...U, uSdf:{value:null}}, U2={...U, uSdf:{value:null}};
+const armorMat1=armorMat.clone(); armorMat1.uniforms=U1;
+const armorMat2=armorMat.clone(); armorMat2.uniforms=U2;
+// ---- exact geometry.player.armor.* cubes ----
+const armorMeshes=[];
+function armorCube(bone,origin,size,uv,inf,mirror,layer){
+  const [w,h,d]=size, W=w+2*inf, H=h+2*inf, D=d+2*inf;
+  const g=new THREE.BoxGeometry(W,H,D).toNonIndexed();
+  const pos=g.attributes.position, nrm=g.attributes.normal, n=pos.count;
+  const fs=new Float32Array(n*2), tu=new Float32Array(n*2), ft=new Float32Array(n*2);
+  const [U0,V0]=uv;
+  for(let i=0;i<n;i++){
+    let x=pos.getX(i)/W, y=pos.getY(i)/H, z=pos.getZ(i)/D, nx=nrm.getX(i), ny=nrm.getY(i), nz=nrm.getZ(i);
+    if(mirror){ x=-x; nx=-nx; }
+    let u,v,sz,tz;
+    if(nz>.5){ u=U0+d+(x+.5)*w; v=V0+d+(.5-y)*h; sz=[W,H]; tz=[w,h]; }
+    else if(nz<-.5){ u=U0+2*d+w+(.5-x)*w; v=V0+d+(.5-y)*h; sz=[W,H]; tz=[w,h]; }
+    else if(nx<-.5){ u=U0+(z+.5)*d; v=V0+d+(.5-y)*h; sz=[D,H]; tz=[d,h]; }
+    else if(nx>.5){ u=U0+d+w+(.5-z)*d; v=V0+d+(.5-y)*h; sz=[D,H]; tz=[d,h]; }
+    else if(ny>.5){ u=U0+d+(x+.5)*w; v=V0+(z+.5)*d; sz=[W,D]; tz=[w,d]; }
+    else { u=U0+d+w+(x+.5)*w; v=V0+(z+.5)*d; sz=[W,D]; tz=[w,d]; }
+    tu[i*2]=u; tu[i*2+1]=v; fs[i*2]=sz[0]; fs[i*2+1]=sz[1]; ft[i*2]=tz[0]; ft[i*2+1]=tz[1];
+  }
+  g.setAttribute('faceSize',new THREE.BufferAttribute(fs,2)); g.setAttribute('texUV',new THREE.BufferAttribute(tu,2)); g.setAttribute('faceTex',new THREE.BufferAttribute(ft,2));
+  const m=new THREE.Mesh(g, layer===1?armorMat1:armorMat2); const P=PIV[bone];
+  m.position.set(origin[0]+w/2-P[0], origin[1]+h/2-P[1], origin[2]+d/2-P[2]); m.renderOrder=2;
+  B[bone].add(m); armorMeshes.push(m);
+}
+// helmet = geometry.player.armor.helmet (head inflate 1.0, hat inflate 1.5)
+armorCube('head',[-4,24,-4],[8,8,8],[0,0],1.0,false,1);
+armorCube('head',[-4,24,-4],[8,8,8],[32,0],1.5,false,1);
+// chestplate = body inflate 1.01, arms inflate 1.0 (left mirrored)
+armorCube('root',[-4,12,-2],[8,12,4],[16,16],1.01,false,1);
+armorCube('armR',[-8,12,-2],[4,12,4],[40,16],1.0,false,1);
+armorCube('armL',[4,12,-2],[4,12,4],[40,16],1.0,true,1);
+// leggings = armor2: body inflate 0.5, legs inflate 0.49
+armorCube('root',[-4,12,-2],[8,12,4],[16,16],0.5,false,2);
+armorCube('legR',[-3.9,0,-2],[4,12,4],[0,16],0.49,false,2);
+armorCube('legL',[-0.1,0,-2],[4,12,4],[0,16],0.49,true,2);
+// boots = legs inflate 1.0
+armorCube('legR',[-3.9,0,-2],[4,12,4],[0,16],1.0,false,1);
+armorCube('legL',[-0.1,0,-2],[4,12,4],[0,16],1.0,true,1);
+
+// ---------- frame copy + quarter-res blur (2 gaussian rounds), same as RF's LyricsPass ----------
+const rtScene=new THREE.WebGLRenderTarget(1,1,{type:THREE.HalfFloatType}); rtScene.depthTexture=new THREE.DepthTexture(1,1);
+const rtA=new THREE.WebGLRenderTarget(1,1,{type:THREE.HalfFloatType}), rtB=rtA.clone();
+U.uScene.value=rtScene.texture; U.uDepth.value=rtScene.depthTexture; U.uBlurTex.value=rtA.texture;
+const fsCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1), fsScene=new THREE.Scene();
+const blurMat=new THREE.ShaderMaterial({uniforms:{t:{value:null},dir:{value:new THREE.Vector2()}},depthTest:false,
+  vertexShader:`varying vec2 uv0; void main(){uv0=uv; gl_Position=vec4(position.xy,0.,1.);}`,
+  fragmentShader:`uniform sampler2D t; uniform vec2 dir; varying vec2 uv0;
+  void main(){ float w[5]; w[0]=.227; w[1]=.1945; w[2]=.1216; w[3]=.054; w[4]=.0162;
+    vec3 c=texture2D(t,uv0).rgb*w[0]; for(int i=1;i<5;i++){ c+=texture2D(t,uv0+dir*float(i)).rgb*w[i]; c+=texture2D(t,uv0-dir*float(i)).rgb*w[i]; }
+    gl_FragColor=vec4(c,1.); }`});
+fsScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),blurMat));
+function blurPass(src,dst,dx,dy){ blurMat.uniforms.t.value=src.texture; blurMat.uniforms.dir.value.set(dx/src.width,dy/src.height); renderer.setRenderTarget(dst); renderer.render(fsScene,fsCam); }
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene,camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1,1), .45, .35, .92);
+composer.addPass(bloom); composer.addPass(new OutputPass());
+function resize(){
+  renderer.setSize(innerWidth,innerHeight); composer.setSize(innerWidth,innerHeight);
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  const v=new THREE.Vector2(); renderer.getDrawingBufferSize(v); rtScene.setSize(v.x,v.y); U.uRes.value.copy(v);
+  const qw=Math.max(1,Math.ceil(v.x/4)), qh=Math.max(1,Math.ceil(v.y/4)); rtA.setSize(qw,qh); rtB.setSize(qw,qh);
+}
+addEventListener('resize',resize); resize();
+
+// ---------- UI ----------
+function apply(){
+  const m=MATS[S.mat]; let tint=m.tint, edge=m.edge;
+  if(S.mat=='leather'){ const t=TEAMS[S.team]; tint=t[1]; edge=t[2]; }
+  U.uTint.value.set(tint); U.uEdge.value.set(edge);
+  U1.uSdf.value=buildSdf(S.mat,1); U2.uSdf.value=buildSdf(S.mat,2);
+  U.uGlint.value={off:0,pulse:1,flow:2}[S.glint];
+  const P=WARPS[S.warp]; U.uSwirl.value=P[1]; U.uRipple.value=P[2]; U.uLens.value=P[3];
+  const L=LIGHTS[S.light];
+  skyU.top.value.set(L.top); skyU.hor.value.set(L.hor); U.uSkyTop.value.set(L.top); U.uSkyHor.value.set(L.hor);
+  U.uSunCol.value.set(L.sun); U.uSunDir.value.set(...L.sunDir).normalize(); U.uAmb.value=L.amb; U.uTorchOn.value=L.torch;
+  amb.intensity=.3+L.amb*.9; sun.color.set(L.sun); sun.intensity=L.amb*1.3; sun.position.set(...L.sunDir).multiplyScalar(100);
+  torchL.intensity=L.torch*2200; torch.visible=!!L.torch; scene.fog.color.set(L.fog);
+  document.getElementById('teamRow').style.display=S.mat=='leather'?'':'none';
+  document.getElementById('note').textContent='Clear glass with a fixed twist baked in, so the world behind it looks bent like warped glass while your body underneath stays clean and still, white rim catching the real sun/torch, neon outline lighting it from inside.';
+  controls.autoRotate=S.spin; renderChips();
+}
+function chips(id,items,key,multi){
+  const el=document.getElementById(id); el.innerHTML='';
+  items.forEach(([k,label,sw])=>{
+    const b=document.createElement('div'); b.className='chip'+((multi?S[k]:S[key]==k)?' on':'');
+    if(sw){const s=document.createElement('span'); s.className='sw'; s.style.background=sw; s.style.color=sw; b.appendChild(s);}
+    b.appendChild(document.createTextNode(label));
+    b.onclick=()=>{ if(multi) S[k]=!S[k]; else S[key]=k; apply(); }; el.appendChild(b);
+  });
+}
+function renderChips(){
+  chips('warp',Object.entries(WARPS).map(([k,v])=>[k,v[0]]),'warp');
+  chips('mat',Object.entries(MATS).map(([k,v])=>[k,v.name,v.edge]),'mat');
+  chips('team',Object.entries(TEAMS).map(([k,v])=>[k,v[0],v[2]]),'team');
+  chips('glint',[['off','Off'],['pulse','Edge pulse'],['flow','Edge flow']],'glint');
+  chips('light',Object.entries(LIGHTS).map(([k,v])=>[k,v.name]),'light');
+  chips('extra',[['walk','Walk'],['spin','Auto-spin']],null,true);
+}
+apply();
+
+const clock=new THREE.Clock();
+renderer.setAnimationLoop(()=>{
+  const t=clock.getElapsedTime(); U.uTime.value=t;
+  const w=S.walk?1:0, ph=t*5.2;
+  B.legR.rotation.x=Math.sin(ph)*.55*w; B.legL.rotation.x=-Math.sin(ph)*.55*w;
+  B.armR.rotation.x=-Math.sin(ph)*.45*w; B.armL.rotation.x=Math.sin(ph)*.45*w;
+  B.armR.rotation.z=-.05; B.armL.rotation.z=.05;
+  B.head.rotation.y=w?Math.sin(t*.6)*.25:0; B.head.rotation.x=0;
+  rig.position.y=w?Math.abs(Math.sin(ph))*.4:0;
+  const ta=t*.7; torch.position.set(Math.cos(ta)*20,14+Math.sin(t*1.1)*3,Math.sin(ta)*20);
+  torchL.position.copy(torch.position).add(new THREE.Vector3(0,5,0)); U.uTorchPos.value.copy(torchL.position);
+  flame.scale.setScalar(1+Math.sin(t*17)*.08);
+  controls.update(); camera.updateMatrixWorld(); U.uView.value.copy(camera.matrixWorldInverse);
+  {
+    armorMeshes.forEach(m=>m.visible=false);
+    renderer.setRenderTarget(rtScene); renderer.render(scene,camera);
+    blurMat.uniforms.t.value=rtScene.texture; blurMat.uniforms.dir.value.set(0,0); renderer.setRenderTarget(rtA); renderer.render(fsScene,fsCam); // downsample
+    for(let r=0;r<2;r++){ blurPass(rtA,rtB,1.5,0); blurPass(rtB,rtA,0,1.5); }
+    renderer.setRenderTarget(null);
+    armorMeshes.forEach(m=>m.visible=true);
+    composer.render();
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+# Glass Armor (Bedrock Forge + Renderer Foundation) - plan
+
+Status 2026-11-05: **look approved** (preview v6), research + tooling on `research/glass-armor`, no engine code yet.
+
+## The look Fernando signed off (docs/glass_armor/preview_v6.html)
+- Shape and geometry **1-to-1 vanilla**: Mojang's `geometry.player.armor.*` cubes (helmet inflate 1.0 + hat layer
+  1.5, chest 1.01, arms 1.0, leggings 0.5 / legs 0.49, boots 1.0, mirrored left limbs) and the painted pixels of
+  the vanilla texture decide what shows (eye slits, neck notch, boot cut-outs). Each material has its own shape.
+- Clear glass (almost no frost) with a **fixed twist** baked into each face: what is behind is bent like warped
+  glass. No animation, no wobble. Warp levels Subtle / Medium (default) / Strong.
+- **Your own body under the glass is never warped** - only the world further behind (depth check). This was the
+  "my limbs are shaking" bug in preview v3-v4.
+- Client-menu glass details: lens bend + small chromatic split at the rim, white rim that brightens on the side the
+  real sun/torch is on, neon outline in the material colour that also glows into the glass from the edges.
+- Enchanted = **edge flow** (light travelling round the outline). The light-sweep glint was rejected.
+- Leather takes the item's dye colour (Hive team colours).
+- Server use (Hive) is the target; Fancy first, then Vibrant Visuals. No resource-pack-only fallback (rejected).
+
+## How it draws (design)
+Draw it **inside the game's frame, on the game's own armor draw**, not over the finished frame:
+1. RF already tags game pipelines by pixel-shader hash at `CreateGraphicsPipelineState` and hooks the command list
+   (UiCapture targets: SetPipelineState, OMSetRenderTargets, Draw*, root-signature state tracking + restore, barriers)
+   - sky stage 2 and Spatial GUI use this. Glass armor reuses it.
+2. Before the first armor draw of a frame: copy the bound render target (world + bodies so far) and the depth buffer.
+3. For each armor draw: bind our root signature = the game's root signature **+ one extra descriptor table**
+   (t0 scene, t1 depth, t2 sdf, t3 face map, b0 params), re-apply the game's root arguments, and draw with a PSO
+   made from **the game's own vertex shader** + `glass_armor.hlsl`. Same vertex buffers, same depth test ->
+   exact pose for every player wearing armor, first person sleeves included, occlusion correct.
+4. Restore the game's root signature / PSO / arguments so the rest of the frame is untouched.
+
+Why not over the finished frame (like LyricsPass / Cinematic)? No depth there: blocks in front of you in F5 and
+other players would be painted over, and the body-stays-clean check is impossible.
+
+## Open questions (M0 probe answers them in game)
+1. **Which pipelines draw armor?** Attachables use material `armor` / `armor_enchanted` (`armor_leather`,
+   `armor_leather_enchanted` for dyed leather). Find their Entity.material.bin pass/variant hashes on Fancy and VV.
+   If the same PSO also draws other entities, tell them apart by the bound texture (64x32 armor texture SRV) or by a
+   marker in our pack's armor textures.
+2. **Game VS outputs**: does the armor VS output the texture UV as a plain TEXCOORD we can read? (D3DReflect the
+   DXIL output signature.) Our PS must match the VS output signature.
+3. **Depth convention** (reversed Z?) and projection params for linear depth; RF already reads this for the sky.
+4. Dye colour + enchanted state per draw: from the material variant (`armor_leather*`, `*_enchanted`) and the
+   per-draw constants (the overlay / change colour the game passes for leather).
+5. Hive: does Hive's server pack replace player armor rendering (custom attachables / cosmetics)? Test in a lobby.
+
+## Milestones
+- **M0 probe (RF, F6 > Glass Armor)**: key press logs one frame - every PSO used with PS hash, material pass, VS
+  output signature, bound SRV sizes, RT / DSV formats, draw counts - with and without armor on. Output under
+  `mods/RendererFoundation/logs/glassarmor/`.
+- **M1 test world, Fancy**: diamond only, own player, no warp (scene copy straight through) -> proves the
+  in-frame swap + state restore. Then full shader.
+- **M2 all materials + leather dye + enchant edge flow**, BF menu toggle (glass armor on/off, warp level) in the
+  Visual page, same glass sliders as the rest of the menu.
+- **M3 Vibrant Visuals** (HDR target, deferred passes).
+- **M4 Hive**: lobby + Bed Wars match, first person + F5, FPS check on the RTX 4060.
+- Blockers outside this feature: Blueberry + LeviLauncher mods crash together; Hive's OK on visual DLLs.
+
+## Files
+- `tools/GlassArmor/gen_masks.py` - vanilla armor textures -> outline distance fields + face map (7 s, 15 textures)
+- `docs/glass_armor/glass_armor.hlsl` - pixel shader draft (port of the preview)
+- `docs/glass_armor/preview_v6.html` - the approved preview (three.js; open in a browser)
