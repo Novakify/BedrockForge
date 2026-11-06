@@ -111,5 +111,8 @@ float4 main(PSIn i) : SV_Target {
 
     c = llGrade(c);
     c = lerp(c, FogColor.rgb, i.color2.w);
+#ifdef LL_DEBUG_FOG
+    if (n.y > 0.9) c = saturate(FogColor.rgb * 2.5);   // debug: block tops show the FogColor this shader receives
+#endif
     return float4(c, a);
 }
