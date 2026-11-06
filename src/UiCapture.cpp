@@ -73,6 +73,7 @@ struct HeapInfo {
     D3D12_DESCRIPTOR_HEAP_TYPE type{};
     SIZE_T                     start = 0;
     UINT                       count = 0, inc = 0, flags = 0, order = 0;
+    UINT64                     gpuStart = 0; // shader-visible heaps only
 };
 std::vector<HeapInfo>                                            gHeaps;      // every heap created while hooked
 std::unordered_map<SIZE_T, ID3D12Resource*>                      gRtvGuess;   // handle -> resource guessed from barriers
@@ -327,7 +328,8 @@ using SetTable_t   = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, 
 using SetConst_t   = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, UINT);
 using SetConsts_t  = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, void const*, UINT);
 using SetAddr_t    = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, D3D12_GPU_VIRTUAL_ADDRESS);
-constexpr int kHooks = 21; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
+using CreateSrv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_SHADER_RESOURCE_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
+constexpr int kHooks = 22; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
@@ -549,7 +551,11 @@ struct ListRoot {
     std::unordered_map<UINT, RootArg> args;
 };
 std::unordered_map<ID3D12GraphicsCommandList*, ListRoot> gListRoot;
-bool rootTracking() { return !gInSnapshot && rf::sky::wantRoot(); }
+bool rootTracking() { return !gInSnapshot && (rf::sky::wantRoot() || rf::glassarmor::wantRoot()); }
+void STDMETHODCALLTYPE createSrvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_SHADER_RESOURCE_VIEW_DESC const* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
+    reinterpret_cast<CreateSrv_t>(gOrig[21])(d, r, desc, h);
+    if (rf::glassarmor::wantSrvs()) rf::glassarmor::noteSrv(h.ptr, r);
+}
 void STDMETHODCALLTYPE setHeapsHook(ID3D12GraphicsCommandList* l, UINT n, ID3D12DescriptorHeap* const* h) {
     reinterpret_cast<SetHeaps_t>(gOrig[13])(l, n, h);
     if (!rootTracking()) return;
@@ -717,6 +723,7 @@ HRESULT STDMETHODCALLTYPE createHeapHook(ID3D12Device* d, D3D12_DESCRIPTOR_HEAP_
             hi.count = desc->NumDescriptors;
             hi.inc   = d->GetDescriptorHandleIncrementSize(desc->Type);
             hi.flags = UINT(desc->Flags);
+            if (desc->Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) hi.gpuStart = heap->GetGPUDescriptorHandleForHeapStart().ptr;
             heap->Release(); // only described
             if (desc->Type == D3D12_DESCRIPTOR_HEAP_TYPE_RTV) ++gHeapsRtv;
             std::lock_guard l(gMutex);
@@ -1108,7 +1115,8 @@ bool install(Targets const& t) {
     void* tg[kHooks]  = {t.createGraphicsPso, t.createStreamPso, t.createRtv,  t.setPso,          t.omSetRts,     t.drawInstanced,
                          t.drawIndexed,       t.createHeap,      t.copyDescs, t.copyDescsSimple, t.resourceBarrier,
                          t.iaSetTopology,     t.iaSetVb,         t.setHeaps,  t.setRootSig,     t.setTable,
-                         t.setConst,          t.setConsts,       t.setCbv,    t.setSrv,          t.setUav};
+                         t.setConst,          t.setConsts,       t.setCbv,    t.setSrv,          t.setUav,
+                         t.createSrv};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
@@ -1119,7 +1127,7 @@ bool install(Targets const& t) {
                          reinterpret_cast<void*>(&setRootSigHook), reinterpret_cast<void*>(&setTableHook),
                          reinterpret_cast<void*>(&setConstHook),  reinterpret_cast<void*>(&setConstsHook),
                          reinterpret_cast<void*>(&setAddrHook<18, 3>), reinterpret_cast<void*>(&setAddrHook<19, 4>),
-                         reinterpret_cast<void*>(&setAddrHook<20, 5>)};
+                         reinterpret_cast<void*>(&setAddrHook<20, 5>), reinterpret_cast<void*>(&createSrvHook)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;
@@ -1248,6 +1256,27 @@ void drawUi() {
         if (!gVerdict.empty()) ImGui::TextWrapped("Result: %s", gVerdict.c_str());
     }
     ImGui::Unindent();
+}
+
+bool gpuDescToCpu(unsigned long long gpu, size_t& cpu, unsigned& inc) {
+    std::lock_guard l(gMutex);
+    for (auto const& hi : gHeaps)
+        if (hi.gpuStart && gpu >= hi.gpuStart && gpu < hi.gpuStart + UINT64(hi.count) * hi.inc) {
+            cpu = hi.start + SIZE_T(gpu - hi.gpuStart);
+            inc = hi.inc;
+            return true;
+        }
+    return false;
+}
+
+std::vector<std::pair<unsigned, unsigned long long>> rootTables(void* list) {
+    std::vector<std::pair<unsigned, unsigned long long>> out;
+    std::lock_guard l(gMutex);
+    auto it = gListRoot.find(static_cast<ID3D12GraphicsCommandList*>(list));
+    if (it == gListRoot.end()) return out;
+    for (auto const& [i, a] : it->second.args)
+        if (a.type == 1) out.emplace_back(i, a.v);
+    return out;
 }
 
 } // namespace rf::uicapture

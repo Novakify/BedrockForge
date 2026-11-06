@@ -9,6 +9,7 @@
 //     changed pixels + bounding box, verdict) to <mod>/logs/uicapture/<time>/
 // Everything is inert unless "uiCaptureSpike": true in RendererFoundation.json (the hooks aren't even installed).
 #pragma once
+#include <vector>
 #include <filesystem>
 #include <string>
 
@@ -43,7 +44,15 @@ struct Targets {
     void* setCbv            = nullptr; // SetGraphicsRootConstantBufferView (38)
     void* setSrv            = nullptr; // SetGraphicsRootShaderResourceView (40)
     void* setUav            = nullptr; // SetGraphicsRootUnorderedAccessView (42)
+    // Glass Armor probe: which texture each draw binds (descriptor -> resource)
+    void* createSrv         = nullptr; // ID3D12Device::CreateShaderResourceView (18)
 };
+
+/// Glass Armor probe helpers. Shader-visible GPU descriptor handle -> its CPU handle + increment (false if unknown).
+bool gpuDescToCpu(unsigned long long gpu, size_t& cpu, unsigned& inc);
+/// The descriptor tables (root index, GPU handle) currently bound on a list (root state is tracked while
+/// rf::glassarmor::wantRoot()).
+std::vector<std::pair<unsigned, unsigned long long>> rootTables(void* list);
 
 /// Load config/ui_shaders.txt; output goes under outDir.
 void init(std::filesystem::path const& configDir, std::filesystem::path const& outDir);

@@ -14,6 +14,7 @@
 #include <filesystem>
 
 struct ID3D12PipelineState;
+struct ID3D12Resource;
 struct ID3D12GraphicsCommandList;
 struct D3D12_GRAPHICS_PIPELINE_STATE_DESC;
 
@@ -24,6 +25,10 @@ void init(std::filesystem::path const& outDir);
 void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d, uint64_t psHash);
 /// true while a frame is being recorded (cheap, lock-free) - the command list hooks only call in then.
 bool capturing();
+/// M0b: while a capture is armed/recording, UiCapture tracks root tables + SRV creation for us.
+bool wantRoot();
+bool wantSrvs();
+void noteSrv(size_t cpuHandle, ID3D12Resource* res);
 void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso);
 void onDraw(ID3D12GraphicsCommandList* list, unsigned vertsOrIndices, unsigned instances);
 /// Once per Present (UiCapture::beforeOverlay).

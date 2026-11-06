@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -22,6 +23,7 @@
 
 #include "LLShim.h"
 #include "SkyMaterialScan.h"
+#include "UiCapture.h"
 
 namespace rf::glassarmor {
 namespace {
@@ -48,6 +50,11 @@ int               gWhich = 0; // 0 = ON (wearing armor), 1 = OFF
 struct DrawStat { long draws = 0; unsigned long long prims = 0; };
 std::unordered_map<ID3D12GraphicsCommandList*, ID3D12PipelineState*> gListPso;
 std::map<ID3D12PipelineState*, DrawStat> gFrame[2];
+// M0b: per-draw detail for actor-family shaders (Actor / Entity / Armor / ItemInHand): bound textures
+struct SrvInfo { ID3D12Resource* res = nullptr; unsigned w = 0, h = 0, fmt = 0, mips = 0; };
+std::unordered_map<size_t, SrvInfo> gSrvs; // CPU descriptor -> resource, recorded while a capture is armed
+std::vector<std::string>             gDetail[2];
+std::map<uint64_t, DrawStat>         gByPs[2];
 bool        gHave[2]{};
 std::string gStatus = "idle";
 std::string gLastReport;
@@ -187,6 +194,23 @@ void writeReport() {
         s << "\n    ps " << hex(i.ps) << "  " << nameOf(i.ps) << "\n    vs " << hex(i.vs) << "  " << nameOf(i.vs)
           << "\n    vs out: " << i.vsOut << "\n    in: " << i.inputs << "\n    " << i.targets << "  root " << i.root << "\n";
     };
+    s << "# M0b: totals per pixel shader, ON vs OFF (pipeline copies merged); '*' = differs\n";
+    {
+        std::map<uint64_t, int> all;
+        for (auto const& [h, d] : gByPs[0]) all[h] |= 1;
+        for (auto const& [h, d] : gByPs[1]) all[h] |= 2;
+        for (auto const& [h, m] : all) {
+            DrawStat on = gByPs[0].count(h) ? gByPs[0].at(h) : DrawStat{}, off = gByPs[1].count(h) ? gByPs[1].at(h) : DrawStat{};
+            bool diff = on.draws != off.draws || on.prims != off.prims;
+            s << (diff ? "* " : "  ") << hex(h) << " ON " << on.draws << "/" << on.prims << "  OFF " << off.draws << "/" << off.prims
+              << "  " << nameOf(h) << "\n";
+        }
+    }
+    for (int w = 0; w < 2; ++w) {
+        s << "\n# M0b: actor-family draws, " << (w ? "OFF" : "ON") << " frame, in order (shader | index count | bound textures)\n";
+        for (auto const& line : gDetail[w]) s << line << "\n";
+    }
+    s << "\n";
     long cand = 0;
     for (auto const& [p, d] : gFrame[0])
         if (!gFrame[1].count(p)) { line(p, d, "ARMOR?"); ++cand; }
@@ -240,13 +264,69 @@ void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
     gListPso[list] = pso;
 }
 
-void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
+bool wantRoot() { return gCap.load(std::memory_order_relaxed) != 0; }
+bool wantSrvs() { return gCap.load(std::memory_order_relaxed) != 0; }
+
+void noteSrv(size_t cpu, ID3D12Resource* r) {
+    SrvInfo i;
+    i.res = r;
+    if (r) {
+        auto d = r->GetDesc();
+        i.w    = unsigned(d.Width);
+        i.h    = d.Height;
+        i.fmt  = unsigned(d.Format);
+        i.mips = d.MipLevels;
+    }
     std::lock_guard l(gMutex);
-    auto it = gListPso.find(list);
-    if (it == gListPso.end()) return;
-    auto& d = gFrame[gWhich][it->second];
-    ++d.draws;
-    d.prims += static_cast<unsigned long long>(count / 3) * std::max(1u, inst);
+    if (gSrvs.size() < 200000) gSrvs[cpu] = i;
+}
+
+bool actorFamily(std::string const& n) {
+    return n.find("Actor") != std::string::npos || n.find("Entity") != std::string::npos ||
+           n.find("Armor") != std::string::npos || n.find("ItemInHand") != std::string::npos;
+}
+
+void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
+    ID3D12PipelineState* pso = nullptr;
+    uint64_t             ps  = 0;
+    bool                 detail = false;
+    {
+        std::lock_guard l(gMutex);
+        auto it = gListPso.find(list);
+        if (it == gListPso.end()) return;
+        pso = it->second;
+        auto& d = gFrame[gWhich][pso];
+        ++d.draws;
+        d.prims += static_cast<unsigned long long>(count / 3) * std::max(1u, inst);
+        if (auto p = gPsos.find(pso); p != gPsos.end()) {
+            ps = p->second.ps;
+            auto& b = gByPs[gWhich][ps];
+            ++b.draws;
+            b.prims += static_cast<unsigned long long>(count / 3) * std::max(1u, inst);
+            detail = actorFamily(nameOf(ps)) && gDetail[gWhich].size() < 600;
+        }
+    }
+    if (!detail) return;
+    // bound textures: every root descriptor table, first 4 descriptors of each (UiCapture lock, then ours)
+    auto tables = rf::uicapture::rootTables(list);
+    std::vector<std::tuple<unsigned, int, size_t>> cpus;
+    for (auto const& [ri, gpu] : tables) {
+        size_t   cpu = 0;
+        unsigned inc = 0;
+        if (rf::uicapture::gpuDescToCpu(gpu, cpu, inc))
+            for (int k = 0; k < 4; ++k) cpus.emplace_back(ri, k, cpu + size_t(k) * inc);
+    }
+    std::ostringstream s;
+    s << hex(ps) << " " << nameOf(ps) << " | idx " << count << " inst " << inst << " | tex:";
+    std::lock_guard l(gMutex);
+    for (auto const& [ri, k, cpu] : cpus) {
+        auto it = gSrvs.find(cpu);
+        if (it == gSrvs.end()) continue;
+        auto const& v = it->second;
+        s << " [r" << ri << "." << k << " " << v.w << "x" << v.h << " " << fmt(DXGI_FORMAT(v.fmt)) << " m" << v.mips << " " << v.res << "]";
+    }
+    if (tables.empty()) s << " (no root tables tracked)";
+    gDetail[gWhich].push_back(s.str());
 }
 
 void onPresent() {
@@ -254,6 +334,8 @@ void onPresent() {
     if (c == 1) { // start recording at a frame boundary
         std::lock_guard l(gMutex);
         gFrame[gWhich].clear();
+        gByPs[gWhich].clear();
+        gDetail[gWhich].clear();
         gListPso.clear();
         gCap = 2;
     } else if (c == 2) {
