@@ -25,6 +25,9 @@ struct ID3D12RootSignature;
 namespace rf::glassarmor {
 
 void init(std::filesystem::path const& outDir, std::filesystem::path const& configDir);
+/// At mod load, before the game makes its device: hook D3D12CreateDevice so the device's CreateRootSignature is
+/// hooked from the very first root signature (the game builds its Actor signature at startup).
+void installEarly();
 
 // ---- M1a: glass armor on the game's own armor draws (F6 > Glass Armor > "Glass armor on") ----
 bool enabled();

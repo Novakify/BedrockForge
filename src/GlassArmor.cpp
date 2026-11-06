@@ -288,6 +288,49 @@ void init(fs::path const& outDir, fs::path const& configDir) {
     if (in >> v) gEnabled = v == "1";
 }
 
+namespace {
+using CreateDevice_t = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
+using CreateRs_t     = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, void const*, SIZE_T, REFIID, void**);
+void*            gOrigCreateDevice = nullptr;
+void*            gOrigCreateRs     = nullptr;
+std::atomic_bool gRsHooked{false};
+HRESULT STDMETHODCALLTYPE createRsHook(ID3D12Device* d, UINT mask, void const* blob, SIZE_T size, REFIID iid, void** out) {
+    HRESULT hr = reinterpret_cast<CreateRs_t>(gOrigCreateRs)(d, mask, blob, size, iid, out);
+    if (SUCCEEDED(hr) && out && *out) {
+        ID3D12RootSignature* rs = nullptr;
+        if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&rs))) && rs) {
+            noteRootSig(rs, blob, size);
+            rs->Release();
+        }
+    }
+    return hr;
+}
+HRESULT WINAPI createDeviceHook(IUnknown* adapter, D3D_FEATURE_LEVEL level, REFIID riid, void** out) {
+    HRESULT hr = reinterpret_cast<CreateDevice_t>(gOrigCreateDevice)(adapter, level, riid, out);
+    if (SUCCEEDED(hr) && out && *out && !gRsHooked.load()) {
+        ID3D12Device* dev = nullptr;
+        if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&dev))) && dev) {
+            void** vt = *reinterpret_cast<void***>(dev);
+            if (!gRsHooked.exchange(true)) {
+                int rc = ll_shim::hook(vt[16], reinterpret_cast<void*>(&createRsHook), &gOrigCreateRs);
+                ll_shim::info("[RF] glass armor: CreateRootSignature hooked at device creation (rc " + std::to_string(rc) + ")");
+                if (rc != 0) gRsHooked = false;
+            }
+            dev->Release();
+        }
+    }
+    return hr;
+}
+} // namespace
+
+void installEarly() {
+    HMODULE m = rf::d3d12api::module();
+    void*   f = m ? reinterpret_cast<void*>(GetProcAddress(m, "D3D12CreateDevice")) : nullptr;
+    if (!f) { ll_shim::warn("[RF] glass armor: D3D12CreateDevice not found - root signatures won't be seen"); return; }
+    int rc = ll_shim::hook(f, reinterpret_cast<void*>(&createDeviceHook), &gOrigCreateDevice);
+    ll_shim::info("[RF] glass armor: D3D12CreateDevice hooked (rc " + std::to_string(rc) + ")");
+}
+
 bool enabled() { return gEnabled.load(std::memory_order_relaxed); }
 bool tracking() { return gEnabled.load(std::memory_order_relaxed) || gCap.load(std::memory_order_relaxed) != 0; }
 
