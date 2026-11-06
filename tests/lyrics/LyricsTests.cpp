@@ -1658,9 +1658,28 @@ TEST(awaken) { // [LyricsForge] no music = the vanilla world; a song starts = ~5
     CHECK_EQ(int(h.params[14][0]), 0);                        // the startup is over
     run(2.0f, false);                                        // a short pause: still alive
     CHECK(sys.awaken() == 1.0f);
-    run(4.0f, false);                                        // real silence: back to vanilla
-    CHECK(sys.awaken() == 0.0f);
-    run(2.0f, false);
+    run(4.0f, false);                                        // real silence: the outro (the world exhales)
+    CHECK(sys.inOutro());
+    CHECK(sys.awaken() > 0.0f && sys.awaken() < 1.0f);
+    h.size = sizeof h; BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK(h.params[14][0] > 0 && h.params[14][1] == 255);    // the sky sinks back over the vanilla one
+    float const mid = sys.awaken();
+    run(1.0f, true);                                         // the music comes back mid-outro: it rises again from there
+    CHECK(!sys.inOutro());
+    CHECK(sys.awaken() >= mid);
+    run(6.0f, true);
+    CHECK(sys.awaken() == 1.0f);
+    in.songSeq = 7; run(0.2f, true);                         // the next song with no gap: a chapter
+    in.songSeq = 8; run(0.5f, true);
+    CHECK(sys.inChapter());
+    CHECK(sys.awaken() == 1.0f);                             // the world stays alive through it
+    run(4.0f, true);
+    CHECK(!sys.inChapter());
+    run(4.5f, false);                                        // silence again: outro ...
+    CHECK(sys.inOutro());
+    run(4.5f, false);                                        // ... then vanilla
+    CHECK(sys.awaken() == 0.0f && !sys.inOutro());
+    run(1.0f, false);
     h.size = sizeof h; BF_CopySkyFrame(&h, nullptr, 0);
     CHECK_EQ(h.active, 0u);
 }

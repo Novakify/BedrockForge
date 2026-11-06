@@ -218,7 +218,10 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(combatSafe, false)                                                                                               \
     F(keepOutDeg, 14.0f)               /* no lyrics within this angle of the crosshair */                              \
     F(combatAlpha, 0.35f)              /* opacity cap for a while after hitting / being hit */                         \
-    I(combatHoldMs, 2500)
+    I(combatHoldMs, 2500)                                                                                              \
+    B(combatAware, true)               /* [LyricsForge] in a fight: lyrics glide out of the crosshair + a clean font */ \
+    S(combatFont, "outfit_bold")       /* the readable font while fighting */                                          \
+    I(combatCalmMs, 5000)              /* this long after the last hit = calm again (lyrics drift back) */
 
 struct Config {
 #define BF_LC_B(n, d) bool n = d;

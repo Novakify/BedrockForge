@@ -305,6 +305,7 @@ bool syncFontSlots() {
         }
         if (foreign) want.push_back("cjk_jp");
         if (cfg.autoFont && !gS->songFont.empty()) want.push_back(gS->songFont); // the song's own font needs a slot too
+        if (cfg.combatAware && !cfg.combatFont.empty()) want.push_back(cfg.combatFont); // [LyricsForge] the fight font, ready
     }
     bool changed = false;
     ++gS->slotClock;
@@ -949,6 +950,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.skyOpen   = world.canSeeSky(BlockPos::of(Vec3{feet.x, double(feet.y) + 1.0, feet.z})); // player.blockPos().above()
     in.night     = 1.0f; // TODO: level day time (only matters with Day/night dimming and "keep sky by day" off)
     in.playing   = gS->clock.playing();
+    in.songSeq   = gS->clock.songSeq(); // [LyricsForge] chapter transitions
     in.beat      = gS->bassLive ? std::max(gS->bass, gS->conductor.state().impact) : 0.0f; // [BF] sky breathes with the music
     in.beat      = std::min(1.0f, in.beat * (1.0f + 1.5f * inst));                             // ...harder when nobody sings
     in.spritesFile = gS->spritesFile;
@@ -1193,6 +1195,14 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         int64_t since = now / 1000000 - gCombatAtMs.load();
         int     hold  = std::max(1, gS->engine.config().combatHoldMs);
         in.combat     = since < hold ? 1.0f - float(since) / float(hold) * 0.5f : std::max(0.0f, 1.5f - float(since) / float(hold));
+    }
+    { // [LyricsForge] combat-aware: up within ~0.15 s of a hit, held while hits keep coming, back over ~1.2 s once calm
+        static float sFight = 0;
+        int64_t const since = now / 1000000 - gCombatAtMs.load();
+        float const   want  = gCombatAtMs.load() > 0 && since < std::max(500, gS->engine.config().combatCalmMs) ? 1.0f : 0.0f;
+        float const   dts   = float(std::clamp(dt, 0.0f, 0.25f));
+        sFight += (want - sFight) * std::min(1.0f, dts / (want > sFight ? 0.15f : 1.2f));
+        in.fight = sFight;
     }
     { // [BF] the Conductor: one music state for the Director (lyrics now, sky / grade through RF next)
         ConductorIn ci;

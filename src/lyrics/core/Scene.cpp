@@ -55,7 +55,7 @@ bool quiet(Lyrics const* lyrics, Line const* cur, int64_t t) {
 
 std::string const& fontOf(Placed const& p, Config const& c) {
     static std::string const mc = "minecraft";
-    return p.line.index < 0 ? mc : c.font;
+    return p.line.index < 0 ? mc : (p.font.empty() ? c.font : p.font);
 }
 
 bool inClouds(float pitch, double dist, double cloud, CameraState const& cam) {
@@ -691,7 +691,9 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
 
     // ---- word sizes, widths and rows
     int const          n    = p.n();
+    p.font.clear();
     std::string const& font = fontOf(p, c);
+    p.font = font; // [LyricsForge] laid out in this font: drawn in it for the line's whole life
     float const        space = width ? width(" ", font) : 0.3f;
     p.wx0.assign(size_t(n), 0); p.wy0.assign(size_t(n), 0); p.wsize.assign(size_t(n), 1); p.wrot.assign(size_t(n), 0); p.widths.assign(size_t(n), 0);
     p.dropped.assign(size_t(n), false);
@@ -976,6 +978,22 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
         if (c.lyricsStyle == LyricsStyle::Floating) p.coverFade = anim::approach(p.coverFade, overPlayer(p, c, cam, w) ? 0.35f : 1.0f, 6.0f, in.dt);
         float gA = p.coverFade * mPauseFade * in.focusA * c.textOpacity * p.occlVis * (sky ? 1.0f : anim::easeInOut(p.viewVis)) * combatK;
         Vec3  a  = anchor(p, c, cam);
+        if (c.combatAware && in.fight > 0.001f) { // [LyricsForge] in a fight the line glides out of the crosshair cone
+            Vec3 const  d    = a - cam.pos;
+            double const dist = d.length();
+            float const want = std::max(8.0f, c.keepOutDeg * 2.0f) * anim::clamp01(in.fight);
+            if (dist > 0.1) {
+                float const ry = wrap(float(yawOf(d)) - cam.yaw), rp = float(pitchOf(d)) - cam.pitch;
+                float const ang = std::sqrt(ry * ry + rp * rp);
+                if (ang < want) {
+                    float ux = 0.0f, uy = -1.0f; // dead centre: up (negative pitch looks up)
+                    if (ang > 0.5f) { ux = ry / ang; uy = rp / ang; }
+                    if (uy > 0.35f) { uy = -uy; } // never push a line down into the fight; up / sideways instead
+                    double const np = std::clamp(double(cam.pitch) + double(uy * want), -85.0, 85.0);
+                    a = cam.pos + dir(double(cam.yaw) + double(ux * want), np) * dist;
+                }
+            }
+        }
         if (c.combatSafe) { // [BF] fade text that drifts into the crosshair area
             Vec3  d   = a - cam.pos;
             float dyw = std::fabs(wrap(float(yawOf(d)) - cam.yaw)), dp = std::fabs(float(pitchOf(d)) - cam.pitch);

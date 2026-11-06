@@ -22,6 +22,7 @@ struct SystemIn {
     bool    overworld = true;                // Core.skyWorld: other dimensions keep their own sky
     float   beat = 0;
     bool    playing = false, lineActive = true;
+    int64_t songSeq = 0;                     // [LyricsForge] changes with every new track (chapter transitions)
     std::string pictureFile;                 // full path of the chosen picture, "" = none / not loaded
     std::string spritesFile;                 // resources/lyricsflow/sky/sprites.png
     float   wave = -1;                       // [BF] chorus light wave progress 0..1 (< 0 none)
@@ -61,7 +62,11 @@ public:
     float                    fogWeight() const { return mFogW; }
     /// [LyricsForge] Awaken: 0 = the vanilla world (no music), rising to 1 over the ~5 s startup when a song starts
     float                    awaken() const { return mAwakeLevel; }
+    bool                     inOutro() const { return mOutroT >= 0; }
+    bool                     inChapter() const { return mChapterT >= 0; }
     static constexpr float   kAwakeSec = 5.0f;
+    static constexpr float   kOutroSec = 4.0f;    // [LyricsForge] the music stops: the world exhales back to vanilla
+    static constexpr float   kChapterSec = 3.5f;  // [LyricsForge] the next song starts with no gap: a new chapter
     std::vector<Quad> const& quads() const { return mQuads; }
 
 private:
@@ -78,6 +83,10 @@ private:
     float             mSilent = 0;        //   seconds without music
     float             mAwakeLevel = 0;    //   0..1 progress the effects follow
     bool              mFromNothing = false, mAwakeMeteors = false; // the startup sweep rises over the vanilla sky
+    float             mOutroT = -1, mOutroFrom = 1; // [LyricsForge] outro: seconds in (-1 none), the level it started from
+    float             mChapterT = -1;              // [LyricsForge] chapter: seconds in (-1 none)
+    bool              mOutroMeteors = false, mChapterMeteors = false, mChapterSweep = false;
+    int64_t           mSongSeq = 0;
     float             mDomeYaw = 0;  // [BF] the dome's turn for the current preset
     std::string       mDomeFor;
     Params            mCurQ{}, mPrevQ{}; // [LyricsForge] the sky shown last frame / the one being swept away

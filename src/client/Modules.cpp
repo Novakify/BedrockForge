@@ -626,7 +626,10 @@ void installRuntime() {
         if (player) { // [BF] hitch log: health drops = you took a hit (servers send health to the client)
             static int lastHp = -1;
             int const hp = player->getHealth();
-            if (lastHp >= 0 && hp < lastHp && hp > 0) { try { hitch::mark(std::format("hit: hp {} -> {}", lastHp, hp).c_str()); } catch (...) {} }
+            if (lastHp >= 0 && hp < lastHp && hp > 0) {
+                ::bf::lyrics::win::noteCombat(); // [LyricsForge] servers don't fire the hurt event client-side: health drops do
+                try { hitch::mark(std::format("hit: hp {} -> {}", lastHp, hp).c_str()); } catch (...) {}
+            }
             else if (lastHp > 0 && hp <= 0) { try { hitch::mark("died"); } catch (...) {} }
             lastHp = hp;
         }

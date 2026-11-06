@@ -109,6 +109,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     // quality + Auto FPS: the frame renders with the costly effects dropped (the saved config is untouched)
     Config cfg = effectiveConfig(mCfg, mPerf);
     if (cfg.autoFont && !in.songFont.empty() && mFonts.has(in.songFont)) cfg.font = in.songFont; // [LyricsForge] per-song font
+    if (cfg.combatAware && in.fight > 0.5f && mFonts.has(cfg.combatFont)) cfg.font = cfg.combatFont; // [LyricsForge] fighting: clean font
     MusicState const* m = cfg.director && in.music && in.music->active ? in.music : nullptr;
     // [BF] reactivity preset: how far apart calm and full are (Soft .. Cinematic)
     static constexpr float kCalm[4] = {0.75f, 0.55f, 0.45f, 0.35f}, kFull[4] = {1.05f, 1.25f, 1.4f, 1.5f}, kImp[4] = {0.5f, 1.0f, 1.3f, 1.5f};

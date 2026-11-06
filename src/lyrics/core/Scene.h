@@ -58,6 +58,7 @@ struct Placed {
     int     n() const { return w1 - w0; }
     int64_t lastEnd() const { return line.words[size_t(w1 - 1)].end; }
     bool    sameLine(Line const& l) const { return line.index == l.index && line.start == l.start; }
+    std::string font;  // [LyricsForge] the font this line was laid out in (a font change only affects new lines)
 };
 
 enum class LyricsState { None, Searching, Found, NotFound };
@@ -77,6 +78,7 @@ struct SceneInput {
     float              beat = 0.0f;    // Hud.beat (beatGlow); [BF] bass hits from the PC's audio (0..1)
     bool               beatLive = false; // [BF] the audio feed is running (beat is real, not just 0)
     float              combat = 0.0f;  // [BF] 0..1, raised by hits (combat-safe)
+    float              fight  = 0.0f;  // [LyricsForge] 0..1 combat-aware: up fast on a hit, eases back after combatCalmMs
     std::string        title, artist;  // now playing (top bar)
     float              guiW = 427.0f, guiH = 240.0f; // UI size in GUI units (Bedrock ScreenView size)
     MusicState const*  music = nullptr; // [BF] the Conductor's state this frame (nullptr = no director)

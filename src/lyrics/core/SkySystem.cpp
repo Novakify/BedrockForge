@@ -66,22 +66,44 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     // ~5 s (the sky rises from the horizon, the light floods in, stars / meteors / motes bloom). A pause or a skip
     // shorter than 4 s doesn't count as silence.
     float const adt = float(std::clamp(in.dtSec, 0.0, 0.25));
+    auto  sstep      = [](float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3 - 2 * t); };
     bool startedNow = false;
     if (cfg.awaken) {
+        float const before = mAwakeLevel;
         if (in.playing) {
             mSilent = 0;
-            if (!mAwake) { mAwake = true; mAwakeT = 0; startedNow = true; mAwakeMeteors = false; }
-        } else if ((mSilent += adt) > 4.0f && mAwake) {
-            mAwake = false; mAwakeT = -1;
+            if (!mAwake) { mAwake = true; mAwakeT = 0; startedNow = true; mAwakeMeteors = false; mChapterT = -1; }
+            else if (mOutroT >= 0) { // [LyricsForge] the music came back during the outro: rise again from where it is
+                mOutroT = -1;
+                mAwakeT = std::clamp(before, 0.0f, 1.0f) * kAwakeSec;
+                mFromNothing = true; mSweep = std::min(mSweep, std::clamp(before, 0.0f, 0.999f));
+            } else if ((mAwakeT < 0 || mAwakeT >= kAwakeSec) && mSongSeq != 0 && in.songSeq != mSongSeq) { // [LyricsForge] next song, no gap: a chapter
+                mChapterT = 0; mChapterMeteors = false; mChapterSweep = true;
+            }
+        } else if ((mSilent += adt) > 4.0f && mAwake && mOutroT < 0) {
+            mOutroT = 0; mOutroFrom = std::max(0.05f, before); mOutroMeteors = false; mChapterT = -1;
+            if (mSweep >= 1.0f) mSweep = 0.999f; // the outro sinks the sky: the startup sweep in reverse
+            mFromNothing = true;
+        }
+        mSongSeq = in.songSeq;
+        if (mAwake && mAwakeT >= 0) mAwakeT = std::min(mAwakeT + adt, kAwakeSec + 1.0f);
+        if (mOutroT >= 0 && (mOutroT += adt) >= kOutroSec) {
+            mAwake = false; mAwakeT = -1; mOutroT = -1; mFromNothing = false; mSweep = 1;
             mDomeFor.clear(); // when it wakes again, the sky's signature turns to wherever you're looking
         }
-        if (mAwake && mAwakeT >= 0) mAwakeT = std::min(mAwakeT + adt, kAwakeSec + 1.0f);
+        if (mChapterT >= 0 && (mChapterT += adt) >= kChapterSec) mChapterT = -1;
     } else {
-        mAwake = true; mAwakeT = -1;
+        mAwake = true; mAwakeT = -1; mOutroT = -1; mChapterT = -1;
     }
-    float const A    = !mAwake ? 0.0f : mAwakeT < 0 ? 1.0f : std::clamp(mAwakeT / kAwakeSec, 0.0f, 1.0f);
-    auto  sstep      = [](float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3 - 2 * t); };
-    float const flood = A > 0.0f && A < 1.0f ? std::sin(3.14159265f * std::clamp((A - 0.52f) / 0.32f, 0.0f, 1.0f)) : 0.0f; // the light floods in as the front passes overhead
+    float const outro = mOutroT >= 0 ? std::clamp(mOutroT / kOutroSec, 0.0f, 1.0f) : -1.0f;
+    float const A = !mAwake ? 0.0f
+                  : outro >= 0 ? mOutroFrom * (1.0f - sstep(0.0f, 1.0f, outro))
+                  : mAwakeT < 0 ? 1.0f : std::clamp(mAwakeT / kAwakeSec, 0.0f, 1.0f);
+    // the light floods in as the front passes overhead (softer as the world exhales on the way out)
+    float flood = A > 0.0f && A < 1.0f ? std::sin(3.14159265f * std::clamp((A - 0.52f) / 0.32f, 0.0f, 1.0f)) : 0.0f;
+    if (outro >= 0) flood *= 0.6f;
+    float const chap = mChapterT >= 0 ? std::sin(3.14159265f * std::clamp(mChapterT / kChapterSec, 0.0f, 1.0f)) : 0.0f;
+    flood = std::max(flood, 0.75f * chap); // [LyricsForge] chapter: the world takes a breath with the new song
     mAwakeLevel = A;
     if (startedNow) { mSweep = 0; mFromNothing = true; } // the startup sweep rises over the vanilla sky (no old sky)
     std::optional<Preset> p;
@@ -144,6 +166,8 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         fi.fireflyRgb = warm ? 0xFFD58A : 0xE2F2A0;
     }
     if (A < 1.0f && A > 0.62f && !mAwakeMeteors) { fi.meteors = std::max(fi.meteors, 8); mAwakeMeteors = true; } // Awaken: a shower
+    if (outro > 0.08f && !mOutroMeteors) { fi.meteors = std::max(fi.meteors, 4); mOutroMeteors = true; }        // outro: a few falling stars
+    if (mChapterT > 0.5f && !mChapterMeteors) { fi.meteors = std::max(fi.meteors, 6); mChapterMeteors = true; } // chapter: a shower
     mQuads.clear();
     if (p) {
         Frame ff = mFrame;
@@ -169,9 +193,17 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         auto b8 = [](float v) { return uint8_t(std::clamp(int(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)), 0, 255)); };
         q[13] = {b8(in.lightning), b8(std::max(in.kick, 0.8f * flood)), b8(in.beat), in.wave < 0 ? uint8_t(0) : uint8_t(1 + int(std::clamp(in.wave, 0.0f, 1.0f) * 254.0f))};
         mCurQ = q; mHaveQ = true;
-        mSweep = std::min(1.0f, mSweep + float(std::clamp(in.dtSec, 0.0, 0.1)) / (mFromNothing ? kAwakeSec * 0.9f : 1.6f));
-        if (mSweep >= 1.0f) mFromNothing = false;
-        q[14] = {mSweep < 1.0f ? uint8_t(1 + int(mSweep * 254.0f)) : uint8_t(0), uint8_t(mFromNothing && mSweep < 1.0f ? 255 : 0), 0, 0};
+        if (outro >= 0) { // [LyricsForge] outro: the front sinks back to the horizon, taking the sky with it
+            mSweep = std::min(mSweep, 0.999f * (1.0f - sstep(0.0f, 1.0f, outro)));
+        } else {
+            float const secs = mFromNothing ? kAwakeSec * 0.9f : (mChapterSweep ? 3.0f : 1.6f); // a chapter sweeps slower
+            mSweep = std::min(1.0f, mSweep + float(std::clamp(in.dtSec, 0.0, 0.1)) / secs);
+            if (mSweep >= 1.0f) mFromNothing = false;
+        }
+        if (mChapterT < 0 && mSweep >= 1.0f) mChapterSweep = false;
+        // texel 14: r = sweep progress (0 none), g = over the vanilla sky (startup / outro), b = chapter (brighter, wider ring)
+        q[14] = {mSweep < 1.0f ? uint8_t(1 + int(mSweep * 254.0f)) : uint8_t(0), uint8_t(mFromNothing && mSweep < 1.0f ? 255 : 0),
+                 uint8_t(mChapterSweep && mSweep < 1.0f ? 255 : 0), 0};
         if (mSweep < 1.0f && !mFromNothing) for (int i = 0; i < 16; ++i) std::memcpy(h.prevParams[i], mPrevQ[size_t(i)].data(), 4);
         for (int i = 0; i < 16; ++i) std::memcpy(h.params[i], q[size_t(i)].data(), 4);
     }
