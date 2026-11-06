@@ -511,7 +511,7 @@ void tick(IClientInstance& c) {
 } // namespace pvppreset
 
 // ============================================================================ hitch recorder
-// [BF] logs/hitches.txt: every HUD-to-HUD frame over 50 ms, with what our code did in the frame before it (reports,
+// [BF] logs/hitches.txt: every HUD-to-HUD frame over 30 ms, with what our code did in the frame before it (reports,
 // fullbright, forgerender, serverauto, the slowest module hud + total, the panel) and how many tessellator calls ran
 // in between (chunk building). Our work small + many tess calls = chunks; both small = the game / GPU / the PC.
 namespace hitch {
@@ -534,7 +534,8 @@ void check(bool inGame) {
     double const dt = had ? std::chrono::duration<double, std::milli>(now - gPrev).count() : 0;
     if (!had) { std::ofstream(file(), std::ios::app | std::ios::binary) << "---- session (times local; ms = our work in the frame before the hitch)\n"; }
     // in a menu (cursor showing) a long frame isn't a gameplay hitch
-    if (had && dt > 50.0 && inGame && gLines < 3000) {
+    // 30 ms catches the small repeating hiccups too; over 3 s is a pause / loading gap (no HUD frames), not a hitch
+    if (had && dt > 30.0 && dt < 3000.0 && inGame && gLines < 5000) {
         std::time_t t = std::time(nullptr);
         std::tm tm{};
         localtime_s(&tm, &t);
