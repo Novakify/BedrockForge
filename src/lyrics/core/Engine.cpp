@@ -56,6 +56,17 @@ uint32_t colorWord(std::string_view text) {
         for (auto const& c : kColors) if (k == c.n) return c.c;
         return 0;
     };
+    if (w.empty()) { // [LyricsForge] Japanese / Chinese colour words (no spaces: the word can hold more than the colour)
+        static constexpr C kCjk[] = {
+            {"\xe3\x83\x94\xe3\x83\xb3\xe3\x82\xaf", 0xFF5FB4}, /* pinku */ {"\xe6\xa1\x83\xe8\x89\xb2", 0xFF7FBF}, /* momoiro */
+            {"\xe8\x99\xb9", 0xFF5FD0}, /* niji (rainbow) */ {"\xe8\xb5\xa4", 0xFF3B3B}, /* aka */
+            {"\xe9\x9d\x92", 0x3B8BFF}, /* ao */ {"\xe7\xb7\x91", 0x3BE26A}, /* midori */ {"\xe9\xbb\x84\xe8\x89\xb2", 0xFFE53B}, /* kiiro */
+            {"\xe7\xb4\xab", 0xA45BFF}, /* murasaki */ {"\xe7\x99\xbd\xe8\x89\xb2", 0xFFFFFF}, /* shiroiro */ {"\xe9\xbb\x92\xe8\x89\xb2", 0x2A2A34}, /* kuroiro */
+            {"\xe9\x87\x91\xe8\x89\xb2", 0xFFC93C}, /* kin-iro */ {"\xe9\x8a\x80\xe8\x89\xb2", 0xD8E0EA}, /* gin-iro */ {"\xe3\x82\xaa\xe3\x83\xac\xe3\x83\xb3\xe3\x82\xb8", 0xFF8A1E}, /* orenji */
+        };
+        for (auto const& c : kCjk) if (text.find(c.n) != std::string_view::npos) return c.c;
+        return 0;
+    }
     if (w.size() < 3) return 0;
     if (uint32_t c = look(w)) return c;
     if (w.back() == 's') return look(std::string_view(w).substr(0, w.size() - 1)); // "flamingos", "blues"

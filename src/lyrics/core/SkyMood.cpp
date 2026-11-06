@@ -193,7 +193,7 @@ std::vector<std::string> coverSkies(uint32_t cover) {
                                                        "crimson", "bright_night", "silk"};
     bool const bright = v >= 0.6f;
     // a bright pink cover = light, vibrant, daytime skies only (Flamingo: no night, no moon, no crimson)
-    static std::vector<std::string_view> const pinkBright = {"cotton_candy", "sakura", "dream_ocean", "aquarell", "dawn", "prism", "golden_hour"};
+    static std::vector<std::string_view> const pinkBright = {"cotton_candy", "sakura", "dream_ocean", "dawn", "prism", "golden_hour"};
     if (bright && &l == &pink) { for (auto id : pinkBright) if (isCurated(id)) out.emplace_back(id); return out; }
     for (auto id : l)
         if (isCurated(id) && !(bright && std::find(dark.begin(), dark.end(), id) != dark.end())) out.emplace_back(id);

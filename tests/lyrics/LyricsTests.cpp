@@ -1325,6 +1325,9 @@ TEST(color_words) { // [LyricsForge] colour words turn their colour
     CHECK(colorWord("the") == 0);
     CHECK(colorWord("predictable") == 0);
     CHECK(colorWord("") == 0);
+    CHECK(colorWord("\xe3\x83\x94\xe3\x83\xb3\xe3\x82\xaf\xe8\x89\xb2\xe3\x81\xab") == 0xFF5FB4u); // pinku-iro ni
+    CHECK(colorWord("\xe5\x8b\x95\xe7\x89\xa9\xe5\x9c\x92") == 0); // doubutsuen (zoo): no colour
+    CHECK(colorWord("\xe9\x9d\xa2\xe7\x99\xbd\xe3\x81\x84") == 0); // omoshiroi (interesting) is not white
 }
 
 TEST(cover_skies) { // [LyricsForge] the cover sets the sky colour: pink cover -> pink skies
