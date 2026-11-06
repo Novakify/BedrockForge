@@ -5,6 +5,8 @@
 
 #include "client/Module.h"
 #include "client/Diag.h"
+#include "client/AsyncFile.h"
+#include <sstream>
 #include <filesystem>
 #include <fstream>
 #include "ll/api/mod/NativeMod.h"
@@ -216,11 +218,7 @@ void noteScreen(std::string const& name) {
     if (gScreens.size() < 24 && std::find(gScreens.begin(), gScreens.end(), name) == gScreens.end()) gScreens.push_back(name);
 }
 void write() {
-    std::error_code ec;
-    auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
-    std::filesystem::create_directories(dir, ec);
-    std::ofstream out{dir / "diag.txt"};
-    if (!out) return;
+    std::ostringstream out; // [BF] built here, written off the game thread (asyncfile)
     out << "light hook " << lightHook.load() << " (brightened " << lightBrightened.load() << ", image " << lightImage.load() << ")\n"
         << "overlay hook " << overlayHook.load() << "\nbob hook " << bobHook.load() << "\ntime hook " << timeHook.load()
         << "\nfov hook " << fovHook.load() << "\nattack hook " << attackHook.load() << "\nchat hook " << chatHook.load()
@@ -229,9 +227,12 @@ void write() {
     for (auto& m : Registry::get().all())
         if (m->enabled && !m->planned) out << " " << m->id;
     out << "\nscreens under the menu:";
-    std::lock_guard lock(gScreensMutex);
-    for (auto& n : gScreens) out << " " << n;
+    {
+        std::lock_guard lock(gScreensMutex);
+        for (auto& n : gScreens) out << " " << n;
+    }
     out << "\n";
+    asyncfile::write(ll::mod::NativeMod::current()->getModDir() / "logs" / "diag.txt", out.str());
 }
 } // namespace diag
 
