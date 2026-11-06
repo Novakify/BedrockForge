@@ -1660,13 +1660,15 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
         co = skyOne(skyDir, vec4(skyInfo4.xyz, 0.0));
         PXB = 0;
     }
+    // [LyricsForge] chapter (texel 14.b): the next song's sky sweeps in slower with a startup-like ring
+    bool chap = PX_FETCH(14).b > 0.5;
     float e = sw * sw * (3.0 - 2.0 * sw);
     float front = -12.0 + 118.0 * e;
-    float soft = awake ? 11.0 : 7.0;
+    float soft = awake ? 11.0 : (chap ? 10.0 : 7.0);
     float m = 1.0 - sm(front - soft, front + soft, el);
     vec4 c = mix(co, cn, m);
-    float seam = exp(-(el - front) * (el - front) / (awake ? 26.0 : 10.0)) * sin(3.14159265 * sw);
-    c.rgb = clamp(c.rgb + seamC * seam * (awake ? 0.9 : 0.55), 0.0, 1.0);
+    float seam = exp(-(el - front) * (el - front) / (awake ? 26.0 : (chap ? 22.0 : 10.0))) * sin(3.14159265 * sw);
+    c.rgb = clamp(c.rgb + seamC * seam * (awake ? 0.9 : (chap ? 0.85 : 0.55)), 0.0, 1.0);
     if (awake) c.a = max(c.a, clamp(seam * 0.85, 0.0, 1.0) * cn.a);
     return c;
 }
