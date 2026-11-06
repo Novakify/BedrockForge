@@ -17,6 +17,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <intrin.h>
 #include <d3d12.h>
 #include <wrl/client.h>
 
@@ -89,7 +90,8 @@ ComPtr<ID3D12GraphicsCommandList>  gList;
 ComPtr<ID3D12Fence>                gFence;
 UINT64                             gFenceVal = 0;
 std::atomic<long>                  gGlassDraws{0}, gGlassDrawsShown{0}, gArmorTex{0}, gNotArmor{0}, gPsoFail{0};
-std::string                        gLastClass;
+std::string                        gLastClass, gLastClassInfo;
+int                                gDumped = 0;
 std::string gLastReport;
 
 char const* fmtName(DXGI_FORMAT f) {
@@ -442,16 +444,22 @@ int classify(uint8_t const* px, unsigned pitch) {
             bits[y * 2 + (x >> 5)] |= 1u << (31 - (x & 31));
             sum[0] += p[0], sum[1] += p[1], sum[2] += p[2], ++cnt;
         }
-    if (!cnt) return -1;
-    int best = -1;
+    if (!cnt) { gLastClassInfo = "empty (all alpha 0)"; return -1; }
+    // shape distance = differing texels (packs and versions move a few pixels); colour splits shared shapes
+    int best = -1, bestHam = 1 << 30;
     long bestD = 1L << 40;
     for (int v = 0; v < shaders::kVariants; ++v) {
-        if (std::memcmp(bits, shaders::kVariant[v].mask, sizeof bits) != 0) continue;
+        int ham = 0;
+        for (int k = 0; k < 64; ++k) ham += __popcnt(bits[k] ^ shaders::kVariant[v].mask[k]);
         long d = 0;
         for (int c = 0; c < 3; ++c) { long e = sum[c] / cnt - shaders::kVariant[v].avg[c]; d += e * e; }
-        if (d < bestD) { bestD = d; best = v; }
+        if (ham < bestHam || (ham == bestHam && d < bestD)) { bestHam = ham; bestD = d; best = v; }
     }
-    return best;
+    char b[160];
+    std::snprintf(b, sizeof b, "%ld painted, mean %ld,%ld,%ld, nearest %s_%d (%d texels off)", cnt, sum[0] / cnt, sum[1] / cnt, sum[2] / cnt,
+                  best >= 0 ? shaders::kVariant[best].mat : "-", best >= 0 ? shaders::kVariant[best].layer : 0, bestHam);
+    gLastClassInfo = b;
+    return bestHam <= 40 ? best : -1;
 }
 
 ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad, int v) {
@@ -492,6 +500,13 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
             D3D12_RANGE rr{0, 256 * 32};
             if (SUCCEEDED(r.buf->Map(0, &rr, &m)) && m) {
                 kind = classify(static_cast<uint8_t const*>(m), 256);
+                if (gDumped < 24) { // raw RGBA 64x32 (pitch 256) for diagnosis
+                    std::error_code ec;
+                    fs::create_directories(gOutDir, ec);
+                    std::ofstream(gOutDir / ("readback_" + std::to_string(gDumped++) + ".rgba"), std::ios::binary)
+                        .write(static_cast<char const*>(m), 256 * 32);
+                }
+                ll_shim::info("[RF] glass armor: readback " + gLastClassInfo);
                 D3D12_RANGE none{0, 0};
                 r.buf->Unmap(0, &none);
             }
@@ -662,6 +677,7 @@ void drawUi() {
         std::lock_guard l(gMutex);
         ImGui::Text("Armor textures recognised: %ld (last: %s)  other: %ld  queued: %zu",
                     gArmorTex.load(), gLastClass.empty() ? "-" : gLastClass.c_str(), gNotArmor.load(), gPending.size() + gInFlight.size());
+        ImGui::TextWrapped("Last texture: %s", gLastClassInfo.c_str());
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
                     gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
     }
