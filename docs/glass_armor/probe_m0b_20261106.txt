@@ -1,0 +1,514 @@
+# Glass Armor M0 probe 20261106-024815
+# pipelines that drew with armor ON but not with armor OFF (= armor candidates), then the full ON frame
+# M0b: totals per pixel shader, ON vs OFF (pipeline copies merged); '*' = differs
+  3eca37248f0cf8cd ON 7269/6681760  OFF 7269/6681760  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+  47dd6fb1f0fe31ac ON 15/388  OFF 15/388  UIBlit.material.bin Fragment Direct3D_SM65
+  58b1282fc2ca3f98 ON 1/2  OFF 1/2  SunMoon.material.bin Fragment Direct3D_SM65
+  6aa95fd22a117198 ON 1/10  OFF 1/10  ShadowOverlay.material.bin Fragment Direct3D_SM65
+  6c7a76d8c1a8a5e0 ON 1/496  OFF 1/496  ItemInHandColorGlint.material.bin Opaque Fragment Direct3D_SM65
+  6c7a8ea25291ca23 ON 10/2240  OFF 10/2240  Weather.material.bin Fragment Direct3D_SM65
+* 6f82e2f02ee87b3a ON 1/2  OFF 0/0  MeshFallbackPosUVNormalColor.material.bin Fragment Direct3D_SM65
+* 71f7073b9d471dae ON 19/808  OFF 17/880  Actor.material.bin Fragment Direct3D_SM65
+* 78b989ede66f0e28 ON 1/58  OFF 1/54  Particle.material.bin Fragment Direct3D_SM65
+* 8480faaf71cfdfca ON 1/4494  OFF 1/4342  Clouds.material.bin Fragment Direct3D_SM65
+  8815f779c724daec ON 4/568  OFF 4/568  RenderChunk.material.bin Fragment Direct3D_SM65
+  b4998623a8fb7998 ON 2300/1831088  OFF 2300/1831088  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+  bb54ba587839a52b ON 1/84  OFF 1/84  Actor.material.bin Opaque Fragment Direct3D_SM65
+  bbe3b4d95edc8ce0 ON 83/166  OFF 83/166  Flipbook.material.bin Fragment Direct3D_SM65
+* c1b4b5cef66b549e ON 2/104  OFF 2/208  ShadowVolume.material.bin Fragment Direct3D_SM65
+  dd754c1f0d27d99c ON 8/172  OFF 8/172  UIText.material.bin Fragment Direct3D_SM65
+  e12627ef9fbf72f5 ON 1/11  OFF 1/11  Sky.material.bin Opaque Fragment Direct3D_SM65
+
+# M0b: actor-family draws, ON frame, in order (shader | index count | bound textures)
+6c7a76d8c1a8a5e0 ItemInHandColorGlint.material.bin Opaque Fragment Direct3D_SM65 | idx 1488 inst 1 | tex: [r1.0 128x128 RGBA8 m1 000002268F0E5390] [r1.1 1024x512 RGBA8 m4 00000226AF763D50] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 128x128 RGBA8 m1 000002268F0E5390] [r4.1 1024x512 RGBA8 m4 00000226AF763D50] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a0000ff00->225a6c4ff00 r1:245678a01c10820->225a9600820 r4:245678a01c10820->225a9600820 | srvs known 5301
+bb54ba587839a52b Actor.material.bin Opaque Fragment Direct3D_SM65 | idx 252 inst 1 | tex: [r1.0 64x32 RGBA8 m1 00000226918BB890] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 64x32 RGBA8 m1 00000226918BB890] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:45678a00350820->225a3200820 r4:45678a00350820->225a3200820 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 64x32 RGBA8 m1 000002268F0E10A0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 64x32 RGBA8 m1 000002268F0E10A0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c11040->225a9601040 r4:245678a01c11040->225a9601040 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 108 inst 1 | tex: [r1.0 64x32 RGBA8 m1 000002268F0E10A0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 64x32 RGBA8 m1 000002268F0E10A0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c11040->225a9601040 r4:245678a01c11040->225a9601040 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 108 inst 1 | tex: [r1.0 64x32 RGBA8 m1 000002268F0E23C0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 64x32 RGBA8 m1 000002268F0E23C0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c11860->225a9601860 r4:245678a01c11860->225a9601860 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 64x32 RGBA8 m1 000002268F0E10A0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 64x32 RGBA8 m1 000002268F0E10A0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c11040->225a9601040 r4:245678a01c11040->225a9601040 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 192 inst 1 | tex: [r1.0 52x256 RGBA8 m1 00000226E5DED110] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 52x256 RGBA8 m1 00000226E5DED110] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c12080->225a9602080 r4:245678a01c12080->225a9602080 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 468 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 00000226E5DEA140] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 00000226E5DEA140] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c128a0->225a96028a0 r4:245678a01c128a0->225a96028a0 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 192 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 00000226E5DEA140] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 00000226E5DEA140] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c128a0->225a96028a0 r4:245678a01c128a0->225a96028a0 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 108 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 00000226E5DEA140] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 00000226E5DEA140] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c128a0->225a96028a0 r4:245678a01c128a0->225a96028a0 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 36 inst 1 | tex: [r1.0 32x512 RGBA8 m1 00000226E5DEDAA0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 32x512 RGBA8 m1 00000226E5DEDAA0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c130c0->225a96030c0 r4:245678a01c130c0->225a96030c0 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 36 inst 1 | tex: [r1.0 32x512 RGBA8 m1 00000226E5DEDAA0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 32x512 RGBA8 m1 00000226E5DEDAA0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c130c0->225a96030c0 r4:245678a01c130c0->225a96030c0 | srvs known 5301
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 156 inst 1 | tex: [r1.0 52x256 RGBA8 m1 000002280F25B580] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 52x256 RGBA8 m1 000002280F25B580] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c14920->225a9604920 r4:245678a01c14920->225a9604920 | srvs known 5302
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 36 inst 1 | tex: [r1.0 52x256 RGBA8 m1 000002280F25B580] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 52x256 RGBA8 m1 000002280F25B580] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c14920->225a9604920 r4:245678a01c14920->225a9604920 | srvs known 5302
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 384 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c15140->225a9605140 r4:245678a01c15140->225a9605140 | srvs known 5303
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c15140->225a9605140 r4:245678a01c15140->225a9605140 | srvs known 5303
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c15140->225a9605140 r4:245678a01c15140->225a9605140 | srvs known 5303
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 12 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c15140->225a9605140 r4:245678a01c15140->225a9605140 | srvs known 5303
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c15140->225a9605140 r4:245678a01c15140->225a9605140 | srvs known 5303
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 156 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c15140->225a9605140 r4:245678a01c15140->225a9605140 | srvs known 5303
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 32x512 RGBA8 m1 00000226D37F1150] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r4.0 32x512 RGBA8 m1 00000226D37F1150] [r4.1 1x1 RGBA8 m1 00000225B8C57160] | tables r0:225678a00010700->225a6c50700 r1:245678a01c15960->225a9605960 r4:245678a01c15960->225a9605960 | srvs known 5304
+
+# M0b: actor-family draws, OFF frame, in order (shader | index count | bound textures)
+6c7a76d8c1a8a5e0 ItemInHandColorGlint.material.bin Opaque Fragment Direct3D_SM65 | idx 1488 inst 1 | tex: [r1.0 128x128 RGBA8 m1 000002268F0E5390] [r1.1 1024x512 RGBA8 m4 00000226AF763D50] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r4.0 128x128 RGBA8 m1 000002268F0E5390] [r4.1 1024x512 RGBA8 m4 00000226AF763D50] [r4.2 1x1 RGBA8 m1 00000225B8C57160] | tables r0:325678a00010300->225a6de0300 r1:355678a01c10820->225aba00820 r4:355678a01c10820->225aba00820 | srvs known 5493
+bb54ba587839a52b Actor.material.bin Opaque Fragment Direct3D_SM65 | idx 252 inst 1 | tex: [r1.0 64x32 RGBA8 m1 00000226918BB890] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 32x32 RGBA8 m1 00000226918C6E40] [r4.0 64x32 RGBA8 m1 00000226918BB890] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 32x32 RGBA8 m1 00000226918C6E40] | tables r0:325678a00010500->225a6de0500 r1:355678a01c11040->225aba01040 r4:355678a01c11040->225aba01040 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 288 inst 1 | tex: [r1.0 64x64 RGBA8 m1 00000226C157F2D0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 64x64 RGBA8 m1 00000226C157F2D0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00590820->225a3600820 r4:55678a00590820->225a3600820 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 288 inst 1 | tex: [r1.0 64x64 RGBA8 m1 00000226B6D8C390] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 32x32 RGBA8 m1 00000226918C6E40] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 64x64 RGBA8 m1 00000226B6D8C390] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 32x32 RGBA8 m1 00000226918C6E40] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00591040->225a3601040 r4:55678a00591040->225a3601040 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 192 inst 1 | tex: [r1.0 52x256 RGBA8 m1 00000226E5DED110] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 52x256 RGBA8 m1 00000226E5DED110] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00591860->225a3601860 r4:55678a00591860->225a3601860 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 468 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 00000226E5DEA140] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 00000226E5DEA140] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00592080->225a3602080 r4:55678a00592080->225a3602080 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 192 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 00000226E5DEA140] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 00000226E5DEA140] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00592080->225a3602080 r4:55678a00592080->225a3602080 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 108 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 00000226E5DEA140] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 00000226E5DEA140] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00592080->225a3602080 r4:55678a00592080->225a3602080 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 36 inst 1 | tex: [r1.0 32x512 RGBA8 m1 00000226E5DEDAA0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 32x512 RGBA8 m1 00000226E5DEDAA0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a005928a0->225a36028a0 r4:55678a005928a0->225a36028a0 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 36 inst 1 | tex: [r1.0 32x512 RGBA8 m1 00000226E5DEDAA0] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 32x512 RGBA8 m1 00000226E5DEDAA0] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a005928a0->225a36028a0 r4:55678a005928a0->225a36028a0 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 156 inst 1 | tex: [r1.0 52x256 RGBA8 m1 000002280F25B580] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 52x256 RGBA8 m1 000002280F25B580] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00594100->225a3604100 r4:55678a00594100->225a3604100 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 36 inst 1 | tex: [r1.0 52x256 RGBA8 m1 000002280F25B580] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 52x256 RGBA8 m1 000002280F25B580] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00594100->225a3604100 r4:55678a00594100->225a3604100 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 384 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00594920->225a3604920 r4:55678a00594920->225a3604920 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00594920->225a3604920 r4:55678a00594920->225a3604920 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00594920->225a3604920 r4:55678a00594920->225a3604920 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 12 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00594920->225a3604920 r4:55678a00594920->225a3604920 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00594920->225a3604920 r4:55678a00594920->225a3604920 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 156 inst 1 | tex: [r1.0 180x2048 RGBA8 m1 000002280F25BF10] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 180x2048 RGBA8 m1 000002280F25BF10] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00594920->225a3604920 r4:55678a00594920->225a3604920 | srvs known 5493
+71f7073b9d471dae Actor.material.bin Fragment Direct3D_SM65 | idx 72 inst 1 | tex: [r1.0 32x512 RGBA8 m1 00000226D37F1150] [r1.1 1x1 RGBA8 m1 00000225B8C57160] [r1.2 1x1 RGBA8 m1 00000225B8C57160] [r1.3 1x1 RGBA8 m1 00000225B8C57160] [r4.0 32x512 RGBA8 m1 00000226D37F1150] [r4.1 1x1 RGBA8 m1 00000225B8C57160] [r4.2 1x1 RGBA8 m1 00000225B8C57160] [r4.3 1x1 RGBA8 m1 00000225B8C57160] | tables r0:25678a00010300->2265e8c5300 r1:55678a00595140->225a3605140 r4:55678a00595140->225a3605140 | srvs known 5493
+
+ARMOR? pso 0000022689381520 draws 1 prims 2
+    ps 6f82e2f02ee87b3a  MeshFallbackPosUVNormalColor.material.bin Fragment Direct3D_SM65
+    vs 00f93ff5c47cc07a  MeshFallbackPosUVNormalColor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR3.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR1.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 off | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 0000022689381EB0 draws 8 prims 172
+    ps dd754c1f0d27d99c  UIText.material.bin Fragment Direct3D_SM65
+    vs 71c74bc0e7545f90  UIText.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD1.xyzw@o2 TEXCOORD0.xy@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 off | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 000002268B288520 draws 83 prims 166
+    ps bbe3b4d95edc8ce0  Flipbook.material.bin Fragment Direct3D_SM65
+    vs 54383307aaecbe06  Flipbook.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 TEXCOORD0.xy@o1 TEXCOORD1.zw@o1
+    in: POSITION0:RGBA16F TEXCOORD0:fmt35
+    rt RGBA8 | ds - off | blend off | cull none  root 000002259CAC1C90
+ARMOR? pso 000002268B28BE80 draws 1 prims 52
+    ps c1b4b5cef66b549e  ShadowVolume.material.bin Fragment Direct3D_SM65
+    vs 6ef4824c0346fc44  ShadowVolume.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0
+    in: POSITION0:RGBA16F TEXCOORD5:RGBA32F TEXCOORD6:RGBA32F TEXCOORD7:RGBA32F
+    rt RGBA8 | ds D24S8 less nowrite | blend off | cull  root 000002259CAC1C90
+ARMOR? pso 000002268B28C810 draws 1 prims 52
+    ps c1b4b5cef66b549e  ShadowVolume.material.bin Fragment Direct3D_SM65
+    vs 6ef4824c0346fc44  ShadowVolume.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0
+    in: POSITION0:RGBA16F TEXCOORD5:RGBA32F TEXCOORD6:RGBA32F TEXCOORD7:RGBA32F
+    rt RGBA8 | ds D24S8 less nowrite | blend off | cull  root 000002259CAC1C90
+ARMOR? pso 000002268B28D1A0 draws 512 prims 403646
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 000002268BE4A170 draws 512 prims 399902
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 000002268BE4BE20 draws 4 prims 568
+    ps 8815f779c724daec  RenderChunk.material.bin Fragment Direct3D_SM65
+    vs 961d27c006af32f1  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull none  root 000002259CAC1C90
+ARMOR? pso 000002268BE4F780 draws 1 prims 58
+    ps 78b989ede66f0e28  Particle.material.bin Fragment Direct3D_SM65
+    vs c203d5b49570c2f5  Particle.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 COLOR1.xyzw@o2 TEXCOORD0.xy@o3 TEXCOORD3.xyz@o4
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+ARMOR? pso 00000226918D4170 draws 1 prims 10
+    ps 6aa95fd22a117198  ShadowOverlay.material.bin Fragment Direct3D_SM65
+    vs 8f039d224ec8eaff  ShadowOverlay.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1
+    in: POSITION0:RGBA16F COLOR0:RGBA8
+    rt RGBA8 | ds D24S8 off | blend on | cull none  root 000002259CAC1C90
+ARMOR? pso 00000226918D8460 draws 10 prims 2240
+    ps 6c7a8ea25291ca23  Weather.material.bin Fragment Direct3D_SM65
+    vs c9531cab41a66e4b  Weather.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 COLOR1.xyzw@o2 TEXCOORD2.x@o3 TEXCOORD1.yz@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull none  root 000002259CAC1C90
+ARMOR? pso 00000226918DAAA0 draws 10 prims 464
+    ps 71f7073b9d471dae  Actor.material.bin Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull none  root 000002259CAC1C90
+ARMOR? pso 00000226AA806AF0 draws 1 prims 496
+    ps 6c7a76d8c1a8a5e0  ItemInHandColorGlint.material.bin Opaque Fragment Direct3D_SM65
+    vs 95a95e959daf1072  ItemInHandColorGlint.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR3.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 TEXCOORD2.xyzw@o4 COLOR1.xyzw@o5 TEXCOORD0.xy@o6 TEXCOORD3.xyz@o7
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+ARMOR? pso 00000226AF33AE70 draws 15 prims 388
+    ps 47dd6fb1f0fe31ac  UIBlit.material.bin Fragment Direct3D_SM65
+    vs 14bfb7ccd37f59ac  Blit.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 TEXCOORD0.xy@o1
+    in: POSITION0:RGBA16F TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 off | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 00000226B71287F0 draws 1 prims 2
+    ps 58b1282fc2ca3f98  SunMoon.material.bin Fragment Direct3D_SM65
+    vs c19331b28518f54b  Stars.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD3.xyz@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 00000226C72BD960 draws 512 prims 428450
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 000002280C066060 draws 1 prims 84
+    ps bb54ba587839a52b  Actor.material.bin Opaque Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+ARMOR? pso 000002281724CFC0 draws 1 prims 4494
+    ps 8480faaf71cfdfca  Clouds.material.bin Fragment Direct3D_SM65
+    vs d3ae8557bbf2af08  Clouds.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD3.xyz@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 000002281781B5F0 draws 512 prims 359254
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+ARMOR? pso 00000228180AC310 draws 9 prims 344
+    ps 71f7073b9d471dae  Actor.material.bin Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull none  root 000002259CAC1C90
+
+# full frame, armor ON (35 pipelines)
+both   pso 00000226885C1390 draws 512 prims 551208
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+ON     pso 0000022689381520 draws 1 prims 2
+    ps 6f82e2f02ee87b3a  MeshFallbackPosUVNormalColor.material.bin Fragment Direct3D_SM65
+    vs 00f93ff5c47cc07a  MeshFallbackPosUVNormalColor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR3.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR1.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 off | blend on | cull  root 000002259CAC1C90
+ON     pso 0000022689381EB0 draws 8 prims 172
+    ps dd754c1f0d27d99c  UIText.material.bin Fragment Direct3D_SM65
+    vs 71c74bc0e7545f90  UIText.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD1.xyzw@o2 TEXCOORD0.xy@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 off | blend on | cull  root 000002259CAC1C90
+ON     pso 000002268B288520 draws 83 prims 166
+    ps bbe3b4d95edc8ce0  Flipbook.material.bin Fragment Direct3D_SM65
+    vs 54383307aaecbe06  Flipbook.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 TEXCOORD0.xy@o1 TEXCOORD1.zw@o1
+    in: POSITION0:RGBA16F TEXCOORD0:fmt35
+    rt RGBA8 | ds - off | blend off | cull none  root 000002259CAC1C90
+ON     pso 000002268B28BE80 draws 1 prims 52
+    ps c1b4b5cef66b549e  ShadowVolume.material.bin Fragment Direct3D_SM65
+    vs 6ef4824c0346fc44  ShadowVolume.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0
+    in: POSITION0:RGBA16F TEXCOORD5:RGBA32F TEXCOORD6:RGBA32F TEXCOORD7:RGBA32F
+    rt RGBA8 | ds D24S8 less nowrite | blend off | cull  root 000002259CAC1C90
+ON     pso 000002268B28C810 draws 1 prims 52
+    ps c1b4b5cef66b549e  ShadowVolume.material.bin Fragment Direct3D_SM65
+    vs 6ef4824c0346fc44  ShadowVolume.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0
+    in: POSITION0:RGBA16F TEXCOORD5:RGBA32F TEXCOORD6:RGBA32F TEXCOORD7:RGBA32F
+    rt RGBA8 | ds D24S8 less nowrite | blend off | cull  root 000002259CAC1C90
+ON     pso 000002268B28D1A0 draws 512 prims 403646
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+ON     pso 000002268BE4A170 draws 512 prims 399902
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+ON     pso 000002268BE4BE20 draws 4 prims 568
+    ps 8815f779c724daec  RenderChunk.material.bin Fragment Direct3D_SM65
+    vs 961d27c006af32f1  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull none  root 000002259CAC1C90
+both   pso 000002268BE4EDF0 draws 512 prims 347392
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+ON     pso 000002268BE4F780 draws 1 prims 58
+    ps 78b989ede66f0e28  Particle.material.bin Fragment Direct3D_SM65
+    vs c203d5b49570c2f5  Particle.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 COLOR1.xyzw@o2 TEXCOORD0.xy@o3 TEXCOORD3.xyz@o4
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+both   pso 0000022691361EF0 draws 512 prims 528800
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+ON     pso 00000226918D4170 draws 1 prims 10
+    ps 6aa95fd22a117198  ShadowOverlay.material.bin Fragment Direct3D_SM65
+    vs 8f039d224ec8eaff  ShadowOverlay.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1
+    in: POSITION0:RGBA16F COLOR0:RGBA8
+    rt RGBA8 | ds D24S8 off | blend on | cull none  root 000002259CAC1C90
+ON     pso 00000226918D8460 draws 10 prims 2240
+    ps 6c7a8ea25291ca23  Weather.material.bin Fragment Direct3D_SM65
+    vs c9531cab41a66e4b  Weather.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 COLOR1.xyzw@o2 TEXCOORD2.x@o3 TEXCOORD1.yz@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull none  root 000002259CAC1C90
+ON     pso 00000226918DAAA0 draws 10 prims 464
+    ps 71f7073b9d471dae  Actor.material.bin Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull none  root 000002259CAC1C90
+both   pso 0000022697C49440 draws 1 prims 11
+    ps e12627ef9fbf72f5  Sky.material.bin Opaque Fragment Direct3D_SM65
+    vs 42796b62d2eba694  Sky.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD3.xyz@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend off | cull  root 000002259CAC1C90
+ON     pso 00000226AA806AF0 draws 1 prims 496
+    ps 6c7a76d8c1a8a5e0  ItemInHandColorGlint.material.bin Opaque Fragment Direct3D_SM65
+    vs 95a95e959daf1072  ItemInHandColorGlint.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR3.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 TEXCOORD2.xyzw@o4 COLOR1.xyzw@o5 TEXCOORD0.xy@o6 TEXCOORD3.xyz@o7
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+ON     pso 00000226AF33AE70 draws 15 prims 388
+    ps 47dd6fb1f0fe31ac  UIBlit.material.bin Fragment Direct3D_SM65
+    vs 14bfb7ccd37f59ac  Blit.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 TEXCOORD0.xy@o1
+    in: POSITION0:RGBA16F TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 off | blend on | cull  root 000002259CAC1C90
+ON     pso 00000226B71287F0 draws 1 prims 2
+    ps 58b1282fc2ca3f98  SunMoon.material.bin Fragment Direct3D_SM65
+    vs c19331b28518f54b  Stars.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD3.xyz@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull  root 000002259CAC1C90
+both   pso 00000226B7129180 draws 512 prims 588214
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+ON     pso 00000226C72BD960 draws 512 prims 428450
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+both   pso 00000226ED0201D0 draws 1024 prims 813792
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+both   pso 00000226ED0231A0 draws 512 prims 456394
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+both   pso 00000226F5E65AA0 draws 512 prims 456428
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+ON     pso 000002280C066060 draws 1 prims 84
+    ps bb54ba587839a52b  Actor.material.bin Opaque Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+both   pso 000002280EFBDB80 draws 512 prims 391266
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+both   pso 000002280F257360 draws 512 prims 478754
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+both   pso 000002280F561460 draws 512 prims 555128
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+both   pso 0000022813422B30 draws 613 prims 577030
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+both   pso 0000022813426E20 draws 512 prims 556866
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+both   pso 0000022817247020 draws 512 prims 380488
+    ps 3eca37248f0cf8cd  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD2.xy@o2 TEXCOORD1.zw@o2 COLOR2.xyzw@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 000002259CAC1C90
+both   pso 000002281724C630 draws 252 prims 239836
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+ON     pso 000002281724CFC0 draws 1 prims 4494
+    ps 8480faaf71cfdfca  Clouds.material.bin Fragment Direct3D_SM65
+    vs d3ae8557bbf2af08  Clouds.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD3.xyz@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull  root 000002259CAC1C90
+ON     pso 000002281781B5F0 draws 512 prims 359254
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+ON     pso 00000228180AC310 draws 9 prims 344
+    ps 71f7073b9d471dae  Actor.material.bin Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull none  root 000002259CAC1C90
+
+# pipelines only in the OFF frame
+OFF    pso 00000225BB50D920 draws 1 prims 84
+    ps bb54ba587839a52b  Actor.material.bin Opaque Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+OFF    pso 00000225BC251560 draws 1 prims 2 (created before the hooks)
+OFF    pso 00000226885BD0A0 draws 10 prims 2240
+    ps 6c7a8ea25291ca23  Weather.material.bin Fragment Direct3D_SM65
+    vs c9531cab41a66e4b  Weather.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 COLOR1.xyzw@o2 TEXCOORD2.x@o3 TEXCOORD1.yz@o3 TEXCOORD0.xy@o4 TEXCOORD3.xyz@o5
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull none  root 000002259CAC1C90
+OFF    pso 000002268BE4D140 draws 512 prims 403646
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+OFF    pso 000002268BE51430 draws 512 prims 428450
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+OFF    pso 000002268CC3D9D0 draws 9 prims 344
+    ps 71f7073b9d471dae  Actor.material.bin Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull none  root 000002259CAC1C90
+OFF    pso 000002268D0E3AA0 draws 512 prims 359254
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+OFF    pso 000002269139E820 draws 1 prims 4342
+    ps 8480faaf71cfdfca  Clouds.material.bin Fragment Direct3D_SM65
+    vs d3ae8557bbf2af08  Clouds.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD3.xyz@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull  root 000002259CAC1C90
+OFF    pso 000002269139FB40 draws 252 prims 239836
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 000002259CAC1C90
+OFF    pso 000002269796C7C0 draws 15 prims 388
+    ps 47dd6fb1f0fe31ac  UIBlit.material.bin Fragment Direct3D_SM65
+    vs 14bfb7ccd37f59ac  Blit.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 TEXCOORD0.xy@o1
+    in: POSITION0:RGBA16F TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 off | blend on | cull  root 000002259CAC1C90
+OFF    pso 000002269796D150 draws 8 prims 172
+    ps dd754c1f0d27d99c  UIText.material.bin Fragment Direct3D_SM65
+    vs 71c74bc0e7545f90  UIText.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD1.xyzw@o2 TEXCOORD0.xy@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 off | blend on | cull  root 000002259CAC1C90
+OFF    pso 00000226AA806160 draws 4 prims 568
+    ps 8815f779c724daec  RenderChunk.material.bin Fragment Direct3D_SM65
+    vs 961d27c006af32f1  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull none  root 000002259CAC1C90
+OFF    pso 00000226AA809AC0 draws 1 prims 54
+    ps 78b989ede66f0e28  Particle.material.bin Fragment Direct3D_SM65
+    vs c203d5b49570c2f5  Particle.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 COLOR1.xyzw@o2 TEXCOORD0.xy@o3 TEXCOORD3.xyz@o4
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+OFF    pso 00000226AF6C7600 draws 83 prims 166
+    ps bbe3b4d95edc8ce0  Flipbook.material.bin Fragment Direct3D_SM65
+    vs 54383307aaecbe06  Flipbook.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 TEXCOORD0.xy@o1 TEXCOORD1.zw@o1
+    in: POSITION0:RGBA16F TEXCOORD0:fmt35
+    rt RGBA8 | ds - off | blend off | cull none  root 000002259CAC1C90
+OFF    pso 00000226B7129B10 draws 8 prims 536
+    ps 71f7073b9d471dae  Actor.material.bin Fragment Direct3D_SM65
+    vs 26002122658a193e  Actor.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 BLENDINDICES0:fmt57 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull none  root 000002259CAC1C90
+OFF    pso 00000226F43387D0 draws 1 prims 496
+    ps 6c7a76d8c1a8a5e0  ItemInHandColorGlint.material.bin Opaque Fragment Direct3D_SM65
+    vs 95a95e959daf1072  ItemInHandColorGlint.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR3.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 TEXCOORD2.xyzw@o4 COLOR1.xyzw@o5 TEXCOORD0.xy@o6 TEXCOORD3.xyz@o7
+    in: POSITION0:RGBA16F NORMAL0:fmt31 COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less write | blend off | cull  root 000002259CAC1C90
+OFF    pso 00000226F5E60490 draws 1 prims 2
+    ps 58b1282fc2ca3f98  SunMoon.material.bin Fragment Direct3D_SM65
+    vs c19331b28518f54b  Stars.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD3.xyz@o3
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35
+    rt RGBA8 | ds D24S8 less nowrite | blend on | cull  root 000002259CAC1C90
+OFF    pso 0000022817248340 draws 1 prims 104
+    ps c1b4b5cef66b549e  ShadowVolume.material.bin Fragment Direct3D_SM65
+    vs 6ef4824c0346fc44  ShadowVolume.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0
+    in: POSITION0:RGBA16F TEXCOORD5:RGBA32F TEXCOORD6:RGBA32F TEXCOORD7:RGBA32F
+    rt RGBA8 | ds D24S8 less nowrite | blend off | cull  root 000002259CAC1C90
+OFF    pso 000002281724A980 draws 1 prims 104
+    ps c1b4b5cef66b549e  ShadowVolume.material.bin Fragment Direct3D_SM65
+    vs 6ef4824c0346fc44  ShadowVolume.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0
+    in: POSITION0:RGBA16F TEXCOORD5:RGBA32F TEXCOORD6:RGBA32F TEXCOORD7:RGBA32F
+    rt RGBA8 | ds D24S8 less nowrite | blend off | cull  root 000002259CAC1C90
+OFF    pso 000002281724E2E0 draws 1 prims 10
+    ps 6aa95fd22a117198  ShadowOverlay.material.bin Fragment Direct3D_SM65
+    vs 8f039d224ec8eaff  ShadowOverlay.material.bin Vertex Direct3D_SM65
+    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1
+    in: POSITION0:RGBA16F COLOR0:RGBA8
+    rt RGBA8 | ds D24S8 off | blend on | cull none  root 000002259CAC1C90

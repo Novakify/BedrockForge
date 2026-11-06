@@ -1,6 +1,6 @@
 # Glass Armor (Bedrock Forge + Renderer Foundation) - plan
 
-Status 2026-11-06: **look approved** (preview v6); M0 probe run in game (results below); RF work on `glass-armor/rf`.
+Status 2026-11-06: **look approved** (preview v6); M0 + M0b probes run in game (armor draws identified); probe merged into the live RF line; M1 next.
 
 ## The look Fernando signed off (docs/glass_armor/preview_v6.html)
 - Shape and geometry **1-to-1 vanilla**: Mojang's `geometry.player.armor.*` cubes (helmet inflate 1.0 + hat layer
@@ -55,6 +55,29 @@ other players would be painted over, and the body-stays-clean check is impossibl
 - Probe lesson: the game keeps several identical PSO objects (frames in flight), so diffing by PSO pointer is noisy
   (chunks/clouds show up as "ARMOR?"). M0b diffs by shader hash + draw/triangle counts instead.
 - No crash, no FPS change from the probe.
+
+## M0b probe results (2026-11-06 02:48) - docs/glass_armor/probe_m0b_20261106.txt
+In-world armor (third person front, full diamond) = **4 draws on the alpha-test Actor PS `71f7073b9d471dae`**,
+each binding a **64x32 RGBA8** texture in root table 1 slot 0 (root table 4 mirrors it):
+helmet 72 indices (head + hat cubes), chestplate 108 (body + 2 arms), leggings 108 (own texture = layer 2),
+boots 72. Exactly the vanilla cube counts (12 triangles = 36 indices per cube).
+- Other actors on the same PS bind other textures (52x256, 180x2048, 32x512 atlases; player skin), so **the bound
+  texture identifies armor**. Many mobs are also 64x32, so the glass armor pack gives each armor texture a
+  **fingerprint size** (64k x 32k with an unusual k per material/layer); RF matches the bound SRV's size.
+- Descriptors: the game copies SRVs into a shader-visible heap it created before RF hooks in; RF now learns that
+  heap from SetDescriptorHeaps and follows CBV/SRV CopyDescriptors* (only while a capture is armed).
+- The pause screen's player preview draws armor too (an Opaque Actor draw of 360 indices = all 10 cubes at once).
+
+## M1 plan (next)
+1. Glass armor resource pack: vanilla armor textures upscaled to fingerprint sizes (looks vanilla without RF).
+2. RF: hook CreateRootSignature (keep the blob of the Actor root signature) + CreateDepthStencilView
+   (DSV handle -> depth resource) + CreateRenderTargetView (already tracked).
+3. On the first fingerprinted armor draw of a frame: copy RT + depth into RF textures (state transitions known:
+   RT in RENDER_TARGET, depth in DEPTH_WRITE).
+4. Armor draw: our root signature = game's + 1 table (scene, depth, SDF, face map, params) -> re-apply the
+   game's root args -> PSO = game VS bytecode (kept from notePso) + glass_armor PS (dxc, DXIL, input signature
+   matching the Actor VS output: SV_Position, COLOR1, COLOR0, COLOR2, COLOR3, TEXCOORD0.xy, TEXCOORD3.xyz)
+   -> draw -> restoreRoot().
 
 ## Milestones
 - **M0 probe (RF, F6 > Glass Armor)**: key press logs one frame - every PSO used with PS hash, material pass, VS
