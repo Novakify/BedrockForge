@@ -162,8 +162,8 @@ float3 worldLight(float3 c, float2 uv) {
     // shadows and midtones are also recoloured toward the sky's hue at the same brightness - like ambient skylight
     float3 hue  = d4.xyz / max(dot(d4.xyz, float3(0.2126, 0.7152, 0.0722)), 0.05);
     float  dev  = max(abs(hue.r - 1.0), max(abs(hue.g - 1.0), abs(hue.b - 1.0)));
-    float  amb  = saturate(d4.w) * 1.6 * (0.45 + 0.55 * (1.0 - smoothstep(0.12, 0.85, ll))) * smoothstep(0.02, 0.15, dev);
-    lit = lerp(lit, ll * hue, saturate(amb));
+    float  amb  = saturate(d4.w) * 0.85 * (0.45 + 0.55 * (1.0 - smoothstep(0.12, 0.85, ll))) * smoothstep(0.02, 0.15, dev);
+    lit = lerp(lit, ll * hue, min(amb, 0.42));   // light, not a filter: the ground keeps more than half its own colour
     ll  = dot(lit, float3(0.2126, 0.7152, 0.0722));
     lit = max(lerp(ll.xxx, lit, d3.y), 0.0);
     return lerp(c, saturate(lit), w);
