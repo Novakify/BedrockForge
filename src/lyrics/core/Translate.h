@@ -20,6 +20,8 @@ bool needsTranslation(Lyrics const& l);
 /// fills Line::translation for the lines whose English differs from the original (English lines stay as they are).
 /// Returns how many lines got one. http = the same GET the fetcher uses (Google's public gtx endpoint, sl=auto).
 int translateToEnglish(fetch::HttpGet const& http, Lyrics& l, int64_t deadlineMs);
+/// what the last translateToEnglish on this thread saw: lines sent, HTTP codes, mismatches (for the log)
+std::string lastDiag();
 /// [LyricsForge] lines the fonts can't draw (canDraw false for 25%+ of their letters): their English translation takes
 /// their place, or, with none, the line is dropped - never a row of '?'. Returns how many lines changed.
 int fitToFonts(Lyrics& l, std::function<bool(uint32_t)> const& canDraw);

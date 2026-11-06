@@ -84,12 +84,18 @@ std::vector<std::string> splitLines(std::string const& s) {
     return out;
 }
 
+thread_local std::string tDiag; // what the last translateToEnglish saw (HTTP codes, line counts) - for the log
+
 std::string request(fetch::HttpGet const& http, std::string const& text, int64_t deadline) {
     auto const r = http("https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=" + fetch::urlEncode(text),
                         {}, deadline);
+    tDiag += ' ' + std::to_string(r.code);
+    if (r.code == 200 && parseGtx(r.body).empty()) tDiag += "(unreadable)";
     return r.code == 200 ? parseGtx(r.body) : std::string();
 }
 } // namespace
+
+std::string lastDiag() { return tDiag; }
 
 bool nonLatin(std::string_view line) {
     for (uint32_t c : text::codepoints(line)) if (nonLatinCp(c)) return true;
@@ -161,9 +167,17 @@ std::string parseGtx(std::string_view body) {
 }
 
 int translateToEnglish(fetch::HttpGet const& http, Lyrics& l, int64_t deadlineMs) {
+    tDiag.clear();
+    // the song reads as English (a verse in another language): only the foreign lines go, not every English one
+    std::vector<std::string> all;
+    for (auto const& ln : l.lines) if (ln.index >= 0) for (auto& w : wordsLower(ln.text)) all.push_back(std::move(w));
+    bool const englishSong = all.size() >= 12 && englishShare(all) >= 0.12f;
     std::vector<Line*> lines;
     for (auto& ln : l.lines) // only the lines still without English (a partial cache from an earlier run keeps its own)
-        if (ln.index >= 0 && !trim(ln.text).empty() && ln.translation.empty()) lines.push_back(&ln);
+        if (ln.index >= 0 && !trim(ln.text).empty() && ln.translation.empty() &&
+            (!englishSong || nonLatin(ln.text) || englishShare(wordsLower(ln.text)) < 0.25f))
+            lines.push_back(&ln);
+    tDiag = std::to_string(lines.size()) + " sent, http";
     int got = 0;
     size_t i = 0;
     while (i < lines.size() && fetch::nowMs() < deadlineMs) {
@@ -179,6 +193,7 @@ int translateToEnglish(fetch::HttpGet const& http, Lyrics& l, int64_t deadlineMs
             ++j;
         }
         auto parts = splitLines(request(http, text, deadlineMs));
+        if (parts.size() != j - i) tDiag += "(" + std::to_string(parts.size()) + "/" + std::to_string(j - i) + " lines back)";
         if (parts.size() != j - i) { // the lines didn't come back one for one: ask for the foreign ones alone
             parts.assign(j - i, std::string());
             for (size_t k = i; k < j && fetch::nowMs() < deadlineMs; ++k)

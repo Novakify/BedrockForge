@@ -1376,6 +1376,25 @@ TEST(audit_fixes) { // [LyricsForge] the review's findings, kept fixed
         fitToFonts(l, [](uint32_t c) { return c < 0x80; });
         CHECK(l.lines.size() == 1);
     }
+    { // an English song with a Japanese verse: only the Japanese lines are sent (small batches), already-done ones skipped
+        Lyrics l; int k = 0;
+        auto add = [&](std::string t, std::string tr = "") { Line ln; ln.index = k; ln.start = 1000 * k++; ln.text = t; ln.translation = tr; l.lines.push_back(ln); };
+        for (int r = 0; r < 4; ++r) { add("How many shrimps do you have to eat"); add("Before you make your skin turn pink"); add("You don't need to change"); }
+        add("\xe3\x82\xa8\xe3\x83\x93", "Shrimp");                   // ebi, translated last time
+        add("\xe3\x83\x95\xe3\x83\xa9\xe3\x83\x9f\xe3\x83\xb3\xe3\x82\xb4"); // furamingo, still open
+        CHECK(needsTranslation(l));
+        std::string asked;
+        auto fake = [&](std::string const& url, bf::lyrics::fetch::Headers const&, int64_t) {
+            asked = url;
+            return bf::lyrics::fetch::HttpResponse{200, R"([[["Flamingo","x",null]],null,"ja"])"};
+        };
+        CHECK(translateToEnglish(fake, l, bf::lyrics::fetch::nowMs() + 5000) == 1);
+        CHECK(asked.find("How") == std::string::npos);             // no English line in the request
+        CHECK(asked.find("%E3%82%A8") == std::string::npos);        // the done line wasn't asked again
+        CHECK(l.lines.back().translation == "Flamingo");
+        CHECK(lastDiag().find("1 sent") == 0);
+        CHECK(!needsTranslation(l));
+    }
     { // a font filter: only fonts that draw the song's letters
         auto f = songFontFor(SkyMood::Hype, true, 0xFF5FA8, 12345u, "", [](std::string_view id) { return id == "bangers"; });
         CHECK(f == "bangers" || f.empty());

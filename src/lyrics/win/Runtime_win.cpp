@@ -523,7 +523,7 @@ void fetchFor(MediaSample s, int64_t seq) {
         }
         int n = 0;
         try { n = translate::translateToEnglish(&httpGet, *got, fetch::nowMs() + 9000); } catch (...) {}
-        appendLog("lyrics_translate", s.artist + " - " + s.title + ": " + std::to_string(n) + " lines translated\n");
+        appendLog("lyrics_translate", s.artist + " - " + s.title + ": " + std::to_string(n) + " lines translated (" + translate::lastDiag() + ")\n");
         {
             std::lock_guard fl(sFailMx);
             if (n > 0) sFailed.erase(key); else sFailed[key] = fetch::nowMs();
