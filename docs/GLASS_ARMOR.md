@@ -1,6 +1,6 @@
 # Glass Armor (Bedrock Forge + Renderer Foundation) - plan
 
-Status 2026-11-06: **look approved** (preview v6); M0 + M0b probes run in game (armor draws identified); probe merged into the live RF line; M1 next.
+Status 2026-11-06 03:15: **look approved** (preview v6); M0 + M0b probes run in game; **M1a built** (glass-armor/rf 79d6cdf, CI green, merged into the live RF line, off by default) - not yet tested in game (PC went offline).
 
 ## The look Fernando signed off (docs/glass_armor/preview_v6.html)
 - Shape and geometry **1-to-1 vanilla**: Mojang's `geometry.player.armor.*` cubes (helmet inflate 1.0 + hat layer
@@ -78,6 +78,18 @@ boots 72. Exactly the vanilla cube counts (12 triangles = 36 indices per cube).
    game's root args -> PSO = game VS bytecode (kept from notePso) + glass_armor PS (dxc, DXIL, input signature
    matching the Actor VS output: SV_Position, COLOR1, COLOR0, COLOR2, COLOR3, TEXCOORD0.xy, TEXCOORD3.xyz)
    -> draw -> restoreRoot().
+
+## M1a (built 2026-11-06, untested in game)
+- Armor textures are recognised **without a resource pack**: the first time an Actor draw binds an unknown 64x32
+  texture, RF reads it back once at Present and matches its alpha bits against Mojang's 14 armor masks
+  (tools/GlassArmor/vanilla_masks.json); materials that share a shape (iron/gold/copper, layer-2 leggings) are split
+  by mean colour. Works with any pack that keeps the vanilla 64x32 shape; HD armor packs come later.
+- Armor draws (Actor PSO + recognised texture) are drawn with our PSO: the game's Actor VS + `shaders/glass_armor.hlsl`
+  (one DXIL per material x layer, tools/gen_glassarmor.py in CI), alpha blend, no depth write, cull none.
+  M1a look: faint material tint, neon outline tracing the painted pixels / cube faces, outline glow into the glass.
+- F6 > Glass Armor > "Glass armor on" (saved in config/GlassArmor.txt). Counters show recognised textures,
+  glass draws per frame, pipelines, failures.
+- Next: M1b = scene + depth copy before the first armor draw, extended root signature, the approved twist.
 
 ## Milestones
 - **M0 probe (RF, F6 > Glass Armor)**: key press logs one frame - every PSO used with PS hash, material pass, VS
