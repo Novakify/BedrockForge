@@ -173,6 +173,7 @@ struct State {
     std::string                   coverPath, coverShown;
     uint32_t                      coverAccent = 0; // [BF] vivid colour of the cover (Neon player)
     std::string                   songFont;        // [LyricsForge] the font picked for the playing song ("" = none)
+    std::string                   songFontKey, lastSongFont; // the song it was picked for / the previous pick (not twice in a row)
     float                         bass = 0;        // [BF] bass hit level this frame (Audio_win.cpp)
     bool                          bassLive = false;
     int64_t                       coverSeq = -1;
@@ -957,7 +958,16 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
                 auto const ms = moodOf(moodInputs(mem, ly, songCover(), live));
                 if (ms.mood != sh.mood || newSong) gS->directorLines.push_back(std::string("   sky mood ") + moodName(ms.mood));
                 sh.mood = ms.mood;
-                gS->songFont = songFontFor(sh.mood, true, songCover());
+                { // [LyricsForge] a random font that fits, picked once per song (again only if the fit changed under it)
+                    auto const& fits = songFonts(sh.mood, true, songCover());
+                    bool const  ok   = std::find(fits.begin(), fits.end(), gS->songFont) != fits.end();
+                    if (gS->songFontKey != song || !ok) {
+                        sh.rng = sh.rng * 1664525u + 1013904223u + uint32_t(nowMsWall());
+                        gS->songFont = songFontFor(sh.mood, true, songCover(), sh.rng, gS->lastSongFont);
+                        gS->songFontKey = song;
+                        if (!gS->songFont.empty()) { gS->lastSongFont = gS->songFont; gS->directorLines.push_back("   font " + gS->songFont); }
+                    }
+                }
             }
         }
         if (sh.sky.empty() || newSong || bigMoment || calmTurn || sh.since > 120.0) {

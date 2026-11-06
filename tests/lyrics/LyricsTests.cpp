@@ -43,6 +43,8 @@
 #include "lyrics/core/PlayerHud.h"
 #include "lyrics/core/Portal.h"
 #include "lyrics/core/Translate.h"
+#include <set>
+#include <filesystem>
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 #include "lyrics/core/Clip.h"
@@ -1338,9 +1340,20 @@ TEST(cover_skies) { // [LyricsForge] the cover sets the sky colour: pink cover -
     CHECK(std::find(pink.begin(), pink.end(), "eclipse_heart") == pink.end()); // bright pink: no dark skies
     CHECK(std::find(pink.begin(), pink.end(), "cherry") == pink.end());
     CHECK(coverIsVividBright(0xFF5FA8));
-    CHECK(songFontFor(SkyMood::Hype, true, 0xFF5FA8) == "shrikhand"); // pink cover wins
-    CHECK(songFontFor(SkyMood::Dark, true, 0x202020) == "abril");
-    CHECK(songFontFor(SkyMood::Bright, false, 0).empty());
+    { // random fonts that fit: a pink cover's set, never the same one twice in a row, all of them real fonts
+        auto const& pf = songFonts(SkyMood::Hype, true, 0xFF5FA8);
+        CHECK(pf.size() >= 4 && pf.front() == "shrikhand");
+        std::set<std::string> seen;
+        for (uint32_t r = 0; r < 4000; r += 37) {
+            auto f = songFontFor(SkyMood::Hype, true, 0xFF5FA8, r * 2654435761u, "shrikhand");
+            CHECK(f != "shrikhand"); seen.insert(f);
+            CHECK(std::filesystem::exists("resources/lyricsflow/fonts/" + f + ".json"));
+        }
+        CHECK(seen.size() >= 4); // not predictable
+        for (int m = 0; m < 6; ++m) for (auto f : songFonts(SkyMood(m), true, 0x202020))
+            CHECK(std::filesystem::exists("resources/lyricsflow/fonts/" + std::string(f) + ".json"));
+        CHECK(songFontFor(SkyMood::Bright, false, 0, 1, "").empty());
+    }
     CHECK(!coverIsVividBright(0x402030));
     CHECK(std::find(pink.begin(), pink.end(), "storm") == pink.end());
     CHECK(coverSkies(0x808080).empty()); // grey cover: nothing to match

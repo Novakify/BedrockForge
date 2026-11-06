@@ -201,20 +201,29 @@ std::vector<std::string> coverSkies(uint32_t cover) {
     return out;
 }
 
-std::string songFontFor(SkyMood m, bool haveMood, uint32_t cover) {
+std::vector<std::string_view> const& songFonts(SkyMood m, bool haveMood, uint32_t cover) {
+    static std::vector<std::string_view> const none, pinkBright = {"shrikhand", "fredoka", "lobster", "pacifico", "caveatbrush", "righteous"};
+    static std::vector<std::string_view> const lists[6] = {
+        {"shrikhand", "fredoka", "lobster", "pacifico", "righteous", "caveatbrush", "comfortaa"},  // bright
+        {"bangers", "bebas", "righteous", "audiowide", "shrikhand", "marker", "orbitron"},         // hype
+        {"pacifico", "lobster", "dancing", "lyricsflow_script", "comfortaa", "kaushan"},          // dreamy
+        {"kaushan", "caveatbrush", "dancing", "abril", "comfortaa", "typewriter"},                 // melancholy
+        {"abril", "cinzel", "bebas", "marker", "kaushan"},                                         // dark
+        {"lobster", "abril", "comfortaa", "orbitron", "audiowide", "dancing"},                     // night
+    };
     float h, sat, v;
     hsv(cover & 0xFFFFFF, h, sat, v);
-    if (coverIsVividBright(cover) && h >= 285 && h < 345) return "shrikhand"; // bright pink: playful, bold, readable
-    if (!haveMood) return coverIsVividBright(cover) ? "shrikhand" : std::string();
-    switch (m) {
-    case SkyMood::Bright: return "shrikhand";
-    case SkyMood::Hype: return "righteous";
-    case SkyMood::Dreamy: return "pacifico";
-    case SkyMood::Melancholy: return "kaushan";
-    case SkyMood::Dark: return "abril";
-    case SkyMood::Night: return "lobster";
-    }
-    return {};
+    if (coverIsVividBright(cover) && h >= 285 && h < 345) return pinkBright;
+    if (!haveMood) return coverIsVividBright(cover) ? lists[0] : none;
+    return lists[std::min<size_t>(size_t(m), 5)];
+}
+
+std::string songFontFor(SkyMood m, bool haveMood, uint32_t cover, uint32_t rng, std::string_view avoid) {
+    auto const& l = songFonts(m, haveMood, cover);
+    std::vector<std::string_view> c;
+    for (auto f : l) if (f != avoid) c.push_back(f);
+    if (c.empty()) c = l;
+    return c.empty() ? std::string() : std::string(c[size_t((rng >> 7) % c.size())]);
 }
 
 bool coverIsVividBright(uint32_t cover) {
