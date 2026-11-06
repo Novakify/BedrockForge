@@ -480,24 +480,26 @@ std::chrono::steady_clock::time_point gPrev{};
 uint64_t gTessPrev = 0;
 int gLines = 0;
 double since(std::chrono::steady_clock::time_point t) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count(); }
-void check(int64_t lastNonHudMs) {
+std::filesystem::path file() {
+    std::error_code ec;
+    auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
+    std::filesystem::create_directories(dir, ec);
+    return dir / "hitches.txt";
+}
+void check(bool inGame) {
     auto const now = std::chrono::steady_clock::now();
     uint64_t const tess = diag::tessLight.load();
     bool const had = gPrev.time_since_epoch().count() != 0;
     double const dt = had ? std::chrono::duration<double, std::milli>(now - gPrev).count() : 0;
-    // a menu / loading screen in between isn't a hitch (those frames never reach the HUD)
-    bool const menuGap = lastNonHudMs > 0 && nowMs() - lastNonHudMs < int64_t(dt) + 50;
-    if (had && dt > 50.0 && !menuGap && gLines < 3000) {
+    if (!had) { std::ofstream(file(), std::ios::app | std::ios::binary) << "---- session (times local; ms = our work in the frame before the hitch)\n"; }
+    // in a menu (cursor showing) a long frame isn't a gameplay hitch
+    if (had && dt > 50.0 && inGame && gLines < 3000) {
         std::time_t t = std::time(nullptr);
         std::tm tm{};
         localtime_s(&tm, &t);
         auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() % 1000;
         double const ours = gLast.reports + gLast.fb + gLast.fr + gLast.sa + gLast.mods + gLast.panel;
-        std::error_code ec;
-        auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
-        std::filesystem::create_directories(dir, ec);
-        std::ofstream out(dir / "hitches.txt", std::ios::app | std::ios::binary);
-        if (gLines == 0) out << "---- session (times local; ms = our work in the frame before the hitch)\n";
+        std::ofstream out(file(), std::ios::app | std::ios::binary);
         out << std::format("{:02}:{:02}:{:02}.{:03} frame {:6.1f} ms | ours {:5.2f} (reports {:.2f} fb {:.2f} forgerender {:.2f} serverauto {:.2f} "
                            "modules {:.2f} max {} {:.2f} panel {:.2f}) | tess {}\n",
                            tm.tm_hour, tm.tm_min, tm.tm_sec, int(ms), dt, ours, gLast.reports, gLast.fb, gLast.fr, gLast.sa, gLast.mods,
@@ -553,7 +555,7 @@ void installRuntime() {
         }
         gFps.frame();
         noteRenderThread();
-        try { hitch::check(gLastNonHudFrameMs); } catch (...) {}
+        try { hitch::check(w32::cursorHidden() && !menu::isOpen()); } catch (...) {}
         hitch::gLast = hitch::gCur;
         hitch::gCur  = {};
         auto tSec = std::chrono::steady_clock::now();
