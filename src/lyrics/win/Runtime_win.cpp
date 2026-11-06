@@ -943,7 +943,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
                 // [LyricsForge] the cover sets the colour: a vivid cover (pink -> pink skies) wins most picks, the
                 // song's mood keeps the calm turns and some variety
                 std::string cov;
-                if (!calmTurn && (newSong || sh.sky.empty() || m.bigDrop || (sh.rng >> 4) % 10 < 7))
+                if (!calmTurn && (newSong || sh.sky.empty() || m.bigDrop || (sh.rng >> 4) % 10 < 9))
                     cov = pickCoverSky(songCover(), sh.recent, sh.sky, sh.rng);
                 if (!cov.empty()) gS->directorLines.push_back("   sky from the cover: " + cov);
                 sh.sky = !cov.empty() ? cov : pickMoodSky(sh.mood, at, sh.recent, sh.sky, sh.rng);

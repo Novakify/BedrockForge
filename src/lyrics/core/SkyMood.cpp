@@ -187,7 +187,14 @@ std::vector<std::string> coverSkies(uint32_t cover) {
     if ((cover & 0xFFFFFF) == 0 || sat < 0.35f || v < 0.35f) return out; // grey, dark or no cover: nothing to match
     auto const& l = h >= 285 && h < 345 ? pink : (h >= 345 || h < 15) ? red : h < 55 ? orange : h < 150 ? green
                   : h < 200 ? cyan : h < 250 ? blue : violet;
-    for (auto id : l) if (isCurated(id)) out.emplace_back(id);
+    // a bright cover (Flamingo's hot pink) wants bright, vibrant skies: leave out the night / dark ones while enough remain
+    static std::vector<std::string_view> const dark = {"eclipse_heart", "neon_city", "purple", "blood_moon", "midnight", "nebula",
+                                                       "galaxy", "astral", "cosmos", "rift", "pulsar", "deep_sea", "inferno",
+                                                       "crimson", "bright_night", "silk"};
+    bool const bright = v >= 0.6f;
+    for (auto id : l)
+        if (isCurated(id) && !(bright && std::find(dark.begin(), dark.end(), id) != dark.end())) out.emplace_back(id);
+    if (out.size() < 3) { out.clear(); for (auto id : l) if (isCurated(id)) out.emplace_back(id); }
     return out;
 }
 
