@@ -44,7 +44,7 @@ float3 llShoulder(float3 c) {
 float3 llGrade(float3 c) {
 #if LL_EXTREME
     c = llSat(c, 1.16);
-    c = lerp(c, c * c * (3.0 - 2.0 * c), 0.22);   // gentle S-curve: deeper shade, richer mids
+    c = lerp(c, c * c * (3.0 - 2.0 * c), 0.12);   // gentle S-curve: deeper shade, richer mids
 #else
     c = llSat(c, 1.07);
 #endif
@@ -69,7 +69,7 @@ LLDir llDir(float3 fog, float3 n, float skyLevel, float dayLevel) {
 // relative light shaping on top of the game's own sky light: lit faces warm and brighter, shaded faces cool
 float3 llSkyShape(LLDir d, float3 n) {
 #if LL_EXTREME
-    const float lo = 0.74, hi = 1.26, tintAmt = 0.55;
+    const float lo = 0.85, hi = 1.24, tintAmt = 0.45;
 #else
     const float lo = 0.84, hi = 1.16, tintAmt = 0.34;
 #endif
