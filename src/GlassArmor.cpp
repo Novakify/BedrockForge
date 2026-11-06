@@ -548,7 +548,7 @@ ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad,
     rt.LogicOpEnable         = FALSE;
     rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-    d.RasterizerState.CullMode         = D3D12_CULL_MODE_BACK; // front glass only: the back is part of the bent scene
+    d.RasterizerState.CullMode         = D3D12_CULL_MODE_NONE; // like the game's armor PSO (its winding varies); depth write keeps the nearest face
     ComPtr<ID3D12PipelineState> p;
     HRESULT hr = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&p));
     if (FAILED(hr)) {
