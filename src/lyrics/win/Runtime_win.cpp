@@ -970,7 +970,12 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
                 }
             }
         }
-        if (sh.sky.empty() || newSong || bigMoment || calmTurn || sh.since > 120.0) {
+        bool coverMiss = false; // [LyricsForge] the cover arrived after the first pick (YouTube / Apple send it late): if the
+        if (fit && coverIsVividBright(songCover()) && !sh.sky.empty()) { // sky on now doesn't match it, change straight away
+            auto const cs = coverSkies(songCover());
+            coverMiss = !cs.empty() && std::find(cs.begin(), cs.end(), sh.sky) == cs.end();
+        }
+        if (sh.sky.empty() || newSong || bigMoment || calmTurn || coverMiss || sh.since > 120.0) {
             sh.song = song;
             sh.rng = sh.rng * 1664525u + 1013904223u + uint32_t(nowMsWall());
             if (fit) { // where on the mood's calm -> intense list: the quiet parts low, the big drops at the top
@@ -980,7 +985,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
                 // song's mood keeps the calm turns and some variety
                 std::string cov;
                 bool const vividBright = coverIsVividBright(songCover()); // a bright vivid cover always sets the colour
-                if (vividBright || (!calmTurn && (newSong || sh.sky.empty() || m.bigDrop || (sh.rng >> 4) % 10 < 9)))
+                if (vividBright || coverMiss || (!calmTurn && (newSong || sh.sky.empty() || m.bigDrop || (sh.rng >> 4) % 10 < 9)))
                     cov = pickCoverSky(songCover(), sh.recent, sh.sky, sh.rng);
                 if (!cov.empty()) gS->directorLines.push_back("   sky from the cover: " + cov);
                 sh.sky = !cov.empty() ? cov : pickMoodSky(sh.mood, at, sh.recent, sh.sky, sh.rng);
