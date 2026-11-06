@@ -158,6 +158,13 @@ float3 worldLight(float3 c, float2 uv) {
     float  w  = lerp(d3.w, 1.0, below) * (1.0 - 0.45 * smoothstep(0.62, 0.95, l) * (1.0 - below));
     float3 lit = c * lerp(float3(1.0, 1.0, 1.0), d4.xyz, saturate(d4.w)) * d3.z;
     float  ll = dot(lit, float3(0.2126, 0.7152, 0.0722));
+    // sky light: a multiply alone can't make orange sand look purple under a purple sky (it only goes darker red), so
+    // shadows and midtones are also recoloured toward the sky's hue at the same brightness - like ambient skylight
+    float3 hue  = d4.xyz / max(dot(d4.xyz, float3(0.2126, 0.7152, 0.0722)), 0.05);
+    float  dev  = max(abs(hue.r - 1.0), max(abs(hue.g - 1.0), abs(hue.b - 1.0)));
+    float  amb  = saturate(d4.w) * 1.6 * (0.45 + 0.55 * (1.0 - smoothstep(0.12, 0.85, ll))) * smoothstep(0.02, 0.15, dev);
+    lit = lerp(lit, ll * hue, saturate(amb));
+    ll  = dot(lit, float3(0.2126, 0.7152, 0.0722));
     lit = max(lerp(ll.xxx, lit, d3.y), 0.0);
     return lerp(c, saturate(lit), w);
 }
