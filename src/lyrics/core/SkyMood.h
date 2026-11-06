@@ -48,4 +48,10 @@ bool isCurated(std::string_view id);
 /// avoiding `recent` (the last few shown) and the one showing now; rng varies the pick inside the window
 std::string pickMoodSky(SkyMood m, float intensity, std::vector<std::string> const& recent, std::string_view current, uint32_t rng);
 
+/// [LyricsForge] the curated skies whose palette shares the cover's colour (a pink cover -> the pink skies), closest
+/// hue first; empty when the cover is grey / dark / missing (0). Pure, uses the built-in preset colours.
+std::vector<std::string> coverSkies(uint32_t cover);
+/// one of coverSkies() that wasn't shown lately and isn't on now ("" = none fits)
+std::string pickCoverSky(uint32_t cover, std::vector<std::string> const& recent, std::string_view current, uint32_t rng);
+
 } // namespace bf::lyrics

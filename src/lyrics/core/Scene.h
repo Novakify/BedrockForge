@@ -110,6 +110,8 @@ struct DrawWord {
     bool        hero  = false;      // [BF] a held note (sustained word): the Director emphasises it while sung
     int64_t     sungMs = -1;        // [BF] ms since the word started being sung (-1 = not yet)
     int64_t     durMs = 0;          // [BF] how long the word is sung (ribbon progress)
+    uint32_t    tint  = 0;          // [LyricsForge] colour word ("pink", "blue"...): the word turns this colour when sung
+    float       tintK = 0;          //   how far it has turned, 0..1
 };
 
 class Scene {

@@ -22,6 +22,9 @@
 
 namespace bf::lyrics {
 
+/// [LyricsForge] the colour a lyric word names ("Pink!", "flamingos" -> pink), 0xRRGGBB, 0 = not a colour word
+uint32_t colorWord(std::string_view text);
+
 class Engine {
 public:
     Config&  config() { return mCfg; }

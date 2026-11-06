@@ -171,4 +171,33 @@ std::string pickMoodSky(SkyMood m, float intensity, std::vector<std::string> con
     return std::string(l.empty() ? std::string_view("summer") : l[0]);
 }
 
+std::vector<std::string> coverSkies(uint32_t cover) {
+    // colour families by how each sky LOOKS in game (its shader palette), most fitting first. A preset's stored base
+    // colours don't say it (cotton candy stores a blue zenith but reads pink), so this is curated by eye.
+    static std::vector<std::string_view> const pink   = {"cotton_candy", "sakura", "cherry", "dream_ocean", "aquarell", "synthwave", "eclipse_heart", "neon_city", "dusk", "purple"};
+    static std::vector<std::string_view> const red    = {"crimson", "sunset", "eclipse_heart", "blood_moon", "inferno", "cherry"};
+    static std::vector<std::string_view> const orange = {"golden_hour", "sunset", "summer", "dawn", "inferno", "dusk"};
+    static std::vector<std::string_view> const green  = {"aurora", "polar", "summer", "silver_lining", "prism", "ocean"};
+    static std::vector<std::string_view> const cyan   = {"ocean", "dream_ocean", "frost", "polar", "deep_sea", "aurora", "ice"};
+    static std::vector<std::string_view> const blue   = {"ocean", "summer", "frost", "prism", "bright_night", "ice", "silver_lining", "midnight"};
+    static std::vector<std::string_view> const violet = {"purple", "nebula", "galaxy", "astral", "cosmos", "rift", "pulsar", "silk"};
+    std::vector<std::string> out;
+    float h, sat, v;
+    hsv(cover & 0xFFFFFF, h, sat, v);
+    if ((cover & 0xFFFFFF) == 0 || sat < 0.35f || v < 0.35f) return out; // grey, dark or no cover: nothing to match
+    auto const& l = h >= 285 && h < 345 ? pink : (h >= 345 || h < 15) ? red : h < 55 ? orange : h < 150 ? green
+                  : h < 200 ? cyan : h < 250 ? blue : violet;
+    for (auto id : l) if (isCurated(id)) out.emplace_back(id);
+    return out;
+}
+
+std::string pickCoverSky(uint32_t cover, std::vector<std::string> const& recent, std::string_view current, uint32_t rng) {
+    auto const l = coverSkies(cover);
+    std::vector<std::string_view> c;
+    for (size_t i = 0; i < l.size() && i < 8; ++i) // the eight closest: enough variety, still clearly the cover's colour
+        if (l[i] != current && std::find(recent.begin(), recent.end(), l[i]) == recent.end()) c.push_back(l[i]);
+    if (c.empty()) for (size_t i = 0; i < l.size() && i < 8; ++i) if (l[i] != current) c.push_back(l[i]);
+    return c.empty() ? std::string() : std::string(c[size_t((rng >> 8) % c.size())]);
+}
+
 } // namespace bf::lyrics

@@ -177,10 +177,18 @@ Vec3 wordPoint(DrawWord const& w, double lx, double ly, Vec3 origin) {
 void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, GlyphStyle const& st, Vec3 origin, std::vector<BfGlyphV1>& out,
                      bool mainPassOnly) {
     if (w.alpha <= 0.01f || w.text.empty() || font.atlasIndex == FontSet::kNoAtlas) return; // [BF] no atlas slot (yet)
-    Theme const& th    = st.theme;
+    Theme        thW   = st.theme;
+    float const  tk    = w.tint ? std::clamp(w.tintK, 0.0f, 1.0f) : 0.0f;
+    if (tk > 0.0f) { // [LyricsForge] colour word: the whole word (letters, gradient, glow) turns its colour
+        uint32_t const t = w.tint | 0xFF000000u;
+        thW.main = colLerp(thW.main, colBrighten(t, 0.22f), tk);
+        thW.a    = colLerp(thW.a, t, tk);
+        thW.b    = colLerp(thW.b, hueRotate(t, -0.06f), tk);
+    }
+    Theme const& th    = thW;
     bool const   clean = c.textStyle == TextStyle::Clean;
     float const  o     = 0.055f; // Gfx.neon offset unit (h * 0.055)
-    float const  hue   = (c.fxRainbow && c.hueShiftSpeed == 0.0f ? 0.12f : c.hueShiftSpeed) * st.timeSeconds; // [BF] Rainbow
+    float const  hue   = (1.0f - tk) * (c.fxRainbow && c.hueShiftSpeed == 0.0f ? 0.12f : c.hueShiftSpeed) * st.timeSeconds; // [BF] Rainbow
 
     std::vector<Pass> passes;
     if (w.plain) mainPassOnly = true;
@@ -212,7 +220,7 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
     float const baseline = -(font.capHeight + font.xHeight) * 0.25f;
     uint32_t    flags    = font.flags | (w.screen ? BF_GLYPH_SCREEN : 0u) | (c.gradient ? BF_GLYPH_GRADIENT : 0u);
     uint32_t const outlineArgb = c.outlineColor != 0 ? uint32_t(c.outlineColor) : colDarken(th.a, 0.75f);
-    uint32_t const glowArgb    = c.glowColor != 0 ? uint32_t(c.glowColor) : th.a;
+    uint32_t const glowArgb    = colLerp(c.glowColor != 0 ? uint32_t(c.glowColor) : st.theme.a, th.a, tk);
     uint32_t const grad2Argb   = c.gradientColor != 0 ? uint32_t(c.gradientColor) : th.b;
     float const    glowK       = (c.glow && c.glowStrength > 0) ? std::min(1.0f, c.glowStrength * std::clamp(w.glow, 0.0f, 1.5f)) : 0.0f;
     float const    glowW       = c.glowWidth * (0.6f + 0.4f * std::min(1.0f, w.glow));
@@ -266,18 +274,18 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
                 q.up[0] = float(u.x); q.up[1] = float(u.y); q.up[2] = float(u.z);
                 q.uv[0] = g->u0; q.uv[1] = g->v0; q.uv[2] = g->u1; q.uv[3] = g->v1;
                 uint32_t fillArgb = ps.argb;
-                if (ps.main && c.perLetterColor && !clean && !w.argb) {
+                if (ps.main && c.perLetterColor && !clean && !w.argb && tk < 0.5f) {
                     uint32_t const cyc[3] = {th.main, th.a, th.b};
                     fillArgb              = hueRotate(cyc[letter % 3], hue);
                 }
                 // [BF] Rainbow: real colours per letter, running along the word. (Hue-rotating the theme did nothing
                 // on white / grey text and in Clean style.)
-                bool const rainbow = c.fxRainbow && ps.main && !w.argb && !w.plain;
+                bool const rainbow = c.fxRainbow && ps.main && !w.argb && !w.plain && tk < 0.5f;
                 float const rbH    = (c.hueShiftSpeed != 0.0f ? c.hueShiftSpeed : 0.12f) * st.timeSeconds + float(letter) * 0.07f
                                 + float(w.key % 31) * 0.13f;
                 if (rainbow) fillArgb = hsvArgb(rbH, 0.72f, 1.0f);
                 int const fx = (ps.main && !w.plain && !(font.flags & BF_GLYPH_BITMAP)) ? std::clamp(c.letterFx, 0, 8) : 0;
-                if (fx && c.letterFxColor != 0 && !rainbow && !w.argb) fillArgb = uint32_t(c.letterFxColor) | 0xFF000000u;
+                if (fx && c.letterFxColor != 0 && !rainbow && !w.argb && tk < 0.5f) fillArgb = uint32_t(c.letterFxColor) | 0xFF000000u;
                 q.fill    = toRgba(fillArgb);
                 q.fill2   = toRgba(rainbow ? hsvArgb(rbH + 0.15f, 0.72f, 1.0f) : ps.main ? hueRotate(grad2Argb, hue) : fillArgb);
                 if (fx) { // [BF] animated letters, see RF shaders/glyph.hlsl letterFx()

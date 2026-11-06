@@ -104,6 +104,7 @@ struct State {
         bool                          instrumental = false, liveBands = false; // [BF] audit: no lyrics / the PC's real audio
         std::string                   configPatch; // [BF] audit: config fields applied once ("config": {...})
         float                         tourSec = 8;
+        uint32_t                      cover = 0;  // [LyricsForge] audit: the cover's colour ("cover": "#RRGGBB"), demos have no art
         int                           tourAt = -1;
     } demo;
     std::vector<std::string> directorLines;  // [BF] Director events for logs/director.txt (written by the media thread)
@@ -638,6 +639,11 @@ void demoStep() {
     d.momentTour.clear(); d.momentAt = -1;
     if (auto const& mv = (*j)["moments"]; mv.isArray())
         for (auto const& x : mv.items()) if (x.isString()) d.momentTour.push_back(x.asString());
+    d.cover = 0;
+    if (auto const& cv = (*j)["cover"]; cv.isString()) {
+        std::string const hx = cv.asString();
+        if (hx.size() == 7 && hx[0] == '#') d.cover = uint32_t(std::strtoul(hx.c_str() + 1, nullptr, 16)) & 0xFFFFFF;
+    }
     d.instrumental = (*j)["instrumental"].asBool(false);
     d.liveBands = (*j)["liveBands"].asBool(false);
     if (auto const& cv = (*j)["config"]; cv.isObject()) applyJson(gS->engine.config(), cv); // in memory only (not saved)
@@ -837,6 +843,9 @@ void publishDirector(MusicState const& m, CinemaOut const& c) {
     gBfDirector = d;
 }
 
+/// [LyricsForge] the playing song's cover colour (a demo can name one); 0 = none yet. Caller holds gS->mutex.
+uint32_t songCover() { return gS->demo.on && gS->demo.cover ? gS->demo.cover : gS->coverAccent & 0xFFFFFF; }
+
 /// [LyricsForge] hand this frame's sky fog to the render thread (rgb8 + weight8, lock-free)
 void publishSkyFog() {
     auto b8 = [](float v) { return uint32_t(std::clamp(int(std::lround(v * 255.0f)), 0, 255)); };
@@ -916,11 +925,11 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         if (fit) { // [LyricsForge] the song's mood, worked out again whenever we learn more about it
             SongMemory const* mem = gS->demo.on ? &gS->demo.mem : (gS->memory.key().empty() ? nullptr : &gS->memory);
             Lyrics const*     ly  = gS->demo.on ? gS->demo.lyrics.get() : gS->lyrics.get();
-            std::string const mk = song + '|' + (mem && !mem->sections.empty() ? "m" : "") + (ly ? "l" : "") + std::to_string(gS->coverAccent & 0xFFFFFF);
+            std::string const mk = song + '|' + (mem && !mem->sections.empty() ? "m" : "") + (ly ? "l" : "") + std::to_string(songCover());
             if (mk != sh.moodKey) {
                 sh.moodKey = mk;
                 float const live = sh.energyN > 40 ? sh.energySum / sh.energyN : -1.0f;
-                auto const ms = moodOf(moodInputs(mem, ly, gS->coverAccent, live));
+                auto const ms = moodOf(moodInputs(mem, ly, songCover(), live));
                 if (ms.mood != sh.mood || newSong) gS->directorLines.push_back(std::string("   sky mood ") + moodName(ms.mood));
                 sh.mood = ms.mood;
             }
@@ -931,7 +940,13 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
             if (fit) { // where on the mood's calm -> intense list: the quiet parts low, the big drops at the top
                 float const sec = m.section == MusicSection::High ? 0.7f : m.section == MusicSection::Calm ? 0.1f : 0.4f;
                 float const at = m.bigDrop ? 1.0f : m.dropNow ? 0.85f : m.liftNow ? 0.65f : calmTurn ? 0.05f : (newSong || sh.sky.empty()) ? 0.2f : sec;
-                sh.sky = pickMoodSky(sh.mood, at, sh.recent, sh.sky, sh.rng);
+                // [LyricsForge] the cover sets the colour: a vivid cover (pink -> pink skies) wins most picks, the
+                // song's mood keeps the calm turns and some variety
+                std::string cov;
+                if (!calmTurn && (newSong || sh.sky.empty() || m.bigDrop || (sh.rng >> 4) % 10 < 7))
+                    cov = pickCoverSky(songCover(), sh.recent, sh.sky, sh.rng);
+                if (!cov.empty()) gS->directorLines.push_back("   sky from the cover: " + cov);
+                sh.sky = !cov.empty() ? cov : pickMoodSky(sh.mood, at, sh.recent, sh.sky, sh.rng);
             } else {
             std::vector<std::string> pool;
             for (auto id : sky::order())

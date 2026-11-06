@@ -1265,6 +1265,32 @@ TEST(pvp_calm) { // [LyricsForge] in a fight the look steps aside, then comes ba
     CHECK(c.out().showcase > 0.5f);
 }
 
+TEST(color_words) { // [LyricsForge] colour words turn their colour
+    CHECK(colorWord("pink") == 0xFF5FB4u);
+    CHECK(colorWord("Pink!") == 0xFF5FB4u);
+    CHECK(colorWord("flamingos") != 0);
+    CHECK(colorWord("blue,") == 0x3B8BFFu);
+    CHECK(colorWord("blue-eyed") == 0x3B8BFFu);
+    CHECK(colorWord("golden") != 0);
+    CHECK(colorWord("the") == 0);
+    CHECK(colorWord("predictable") == 0);
+    CHECK(colorWord("") == 0);
+}
+
+TEST(cover_skies) { // [LyricsForge] the cover sets the sky colour: pink cover -> pink skies
+    auto pink = coverSkies(0xFF5FA8);
+    CHECK(!pink.empty());
+    CHECK(pink.front() == "cotton_candy");
+    CHECK(std::find(pink.begin(), pink.end(), "sakura") != pink.end());
+    CHECK(std::find(pink.begin(), pink.end(), "storm") == pink.end());
+    CHECK(coverSkies(0x808080).empty()); // grey cover: nothing to match
+    CHECK(coverSkies(0).empty());
+    CHECK(coverSkies(0x2E86FF).front() == "ocean");
+    std::vector<std::string> recent = {"cotton_candy", "sakura"};
+    auto p = pickCoverSky(0xFF5FA8, recent, "cherry", 12345);
+    CHECK(!p.empty() && p != "cotton_candy" && p != "sakura" && p != "cherry");
+}
+
 TEST(sky_mood) { // [LyricsForge] Random fits the song
     using namespace bf::lyrics;
     MoodIn hype; hype.highShare = 0.8f; hype.calmShare = 0.1f; hype.dropsPerMin = 1.6f; hype.cover = 0xFF4FA0;

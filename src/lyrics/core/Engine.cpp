@@ -6,9 +6,62 @@
 #include <cstddef>
 
 #include <algorithm>
+#include <string_view>
+#include <cctype>
+#include <cmath>
 #include <cstring>
 
 namespace bf::lyrics {
+
+namespace {
+// [LyricsForge] the same colour turned around the hue wheel (degrees), saturation and brightness kept
+uint32_t hueTurn(uint32_t c, float deg) {
+    float r = float((c >> 16) & 255) / 255.0f, g = float((c >> 8) & 255) / 255.0f, b = float(c & 255) / 255.0f;
+    float const mx = std::max({r, g, b}), mn = std::min({r, g, b}), d = mx - mn;
+    if (d < 1e-4f) return c;
+    float h = mx == r ? 60.0f * std::fmod((g - b) / d + 6.0f, 6.0f) : mx == g ? 60.0f * ((b - r) / d + 2.0f) : 60.0f * ((r - g) / d + 4.0f);
+    h = std::fmod(h + deg + 360.0f, 360.0f);
+    float const s = d / mx, v = mx, x = v * s * (1.0f - std::fabs(std::fmod(h / 60.0f, 2.0f) - 1.0f)), m = v - v * s;
+    float rr = 0, gg = 0, bb = 0;
+    int const sec = int(h / 60.0f) % 6;
+    if (sec == 0) { rr = v * s; gg = x; } else if (sec == 1) { rr = x; gg = v * s; } else if (sec == 2) { gg = v * s; bb = x; }
+    else if (sec == 3) { gg = x; bb = v * s; } else if (sec == 4) { rr = x; bb = v * s; } else { rr = v * s; bb = x; }
+    auto q = [&](float f) { return uint32_t(std::clamp(int(std::lround((f + m) * 255.0f)), 0, 255)); };
+    return (c & 0xFF000000u) | q(rr) << 16 | q(gg) << 8 | q(bb);
+}
+} // namespace
+
+/// [LyricsForge] the colour a lyric word names ("Pink!", "blue", "golden", "flamingo" -> pink), 0 = not a colour word
+uint32_t colorWord(std::string_view text) {
+    std::string w;
+    for (char ch : text) {
+        unsigned char const u = static_cast<unsigned char>(ch);
+        if (std::isalpha(u)) w.push_back(char(std::tolower(u)));
+        else if (!w.empty() && u != '\'') break; // "pink," / "blue-eyed" -> the colour part
+    }
+    struct C { char const* n; uint32_t c; };
+    static constexpr C kColors[] = {
+        {"pink", 0xFF5FB4}, {"flamingo", 0xFF6FAE}, {"magenta", 0xFF2FD0}, {"fuchsia", 0xFF2FD0},
+        {"red", 0xFF3B3B}, {"crimson", 0xE8203C}, {"scarlet", 0xFF2A1A}, {"cherry", 0xE8183C}, {"ruby", 0xE0115F},
+        {"orange", 0xFF8A1E}, {"coral", 0xFF7F6A}, {"peach", 0xFFB08A}, {"amber", 0xFFB020},
+        {"yellow", 0xFFE53B}, {"gold", 0xFFC93C}, {"golden", 0xFFC93C}, {"lemon", 0xFFF04A},
+        {"green", 0x3BE26A}, {"lime", 0x9CFF3B}, {"emerald", 0x2ECC71}, {"mint", 0x7CFFC4},
+        {"teal", 0x1FC8C0}, {"cyan", 0x2FE8FF}, {"turquoise", 0x30E0D0}, {"aqua", 0x3FF0FF},
+        {"blue", 0x3B8BFF}, {"navy", 0x2A4BB8}, {"azure", 0x4FA8FF}, {"sapphire", 0x2F5FFF}, {"indigo", 0x5B4BFF},
+        {"purple", 0xA45BFF}, {"violet", 0x9B5BFF}, {"lilac", 0xC8A2FF}, {"lavender", 0xC4B0FF}, {"plum", 0xB04FC8},
+        {"white", 0xFFFFFF}, {"silver", 0xD8E0EA}, {"grey", 0xA8B0BC}, {"gray", 0xA8B0BC}, {"black", 0x2A2A34},
+        {"brown", 0xB07040}, {"rainbow", 0xFF5FD0},
+    };
+    auto look = [&](std::string_view k) -> uint32_t {
+        for (auto const& c : kColors) if (k == c.n) return c.c;
+        return 0;
+    };
+    if (w.size() < 3) return 0;
+    if (uint32_t c = look(w)) return c;
+    if (w.back() == 's') return look(std::string_view(w).substr(0, w.size() - 1)); // "flamingos", "blues"
+    return 0;
+}
+
 
 void Engine::reset() {
     mScene.clear();
@@ -62,6 +115,12 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         mAccent = 0xFF000000u | uint32_t(std::lround(mAccentF[0])) << 16 | uint32_t(std::lround(mAccentF[1])) << 8 | uint32_t(std::lround(mAccentF[2]));
         cfg.letterFxColor = int32_t(mAccent | 0xFF000000u);
         cfg.glowColor     = int32_t(mAccent | 0xFF000000u);
+        // [LyricsForge] the whole lyric palette from the cover, not just the glow: a light tint of it for the letters
+        // (readable), the cover colour itself and a neighbouring hue for the two-colour gradient
+        cfg.customTheme = true;
+        cfg.customMain  = int32_t(colBrighten(mAccent, 0.55f));
+        cfg.customA     = int32_t(mAccent);
+        cfg.customB     = int32_t(colBrighten(hueTurn(mAccent, -32.0f), 0.18f));
     }
     if (cfg.contrastGuard && in.skyLuma > 0.4f) { // [BF] light text on a light sky: give it a dark edge it can stand on
         float const k = std::clamp((in.skyLuma - 0.4f) / 0.35f, 0.0f, 1.0f);
@@ -72,6 +131,15 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
     auto width = [this](std::string_view s, std::string_view f) { return mFonts.width(s, f); };
     mScene.tick(in, cfg, cam, world, width);
     auto words = mScene.draw(in, cfg, cam, world);
+    if (cfg.colorWords) // [LyricsForge] "pink", "blue", "gold"...: the word turns that colour as it is sung
+        for (auto& w : words) {
+            if (w.plain || w.argb) continue;
+            uint32_t const t = colorWord(w.text);
+            if (!t) continue;
+            w.tint  = t;
+            w.tintK = w.sungMs < 0 ? 0.0f : std::clamp(float(w.sungMs) / 280.0f, 0.0f, 1.0f);
+            w.glow += 0.35f * w.tintK;
+        }
     if (m) direct(words, *m, cfg);
     if (cfg.titleCard && in.music && in.music->songAge < kTitleCardSec) titleCard(words, in, cfg, cam);
     if (cfg.songOutro && in.music && in.music->outro > 0.01f) endCredits(words, in, cfg, cam);
