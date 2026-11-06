@@ -17,10 +17,21 @@ struct ID3D12PipelineState;
 struct ID3D12Resource;
 struct ID3D12GraphicsCommandList;
 struct D3D12_GRAPHICS_PIPELINE_STATE_DESC;
+struct D3D12_RESOURCE_BARRIER;
+struct ID3D12Device;
+struct ID3D12CommandQueue;
 
 namespace rf::glassarmor {
 
-void init(std::filesystem::path const& outDir);
+void init(std::filesystem::path const& outDir, std::filesystem::path const& configDir);
+
+// ---- M1a: glass armor on the game's own armor draws (F6 > Glass Armor > "Glass armor on") ----
+bool enabled();
+/// enabled() or a probe capture is armed: UiCapture tracks list PSOs, root tables, SRV copies and barriers for us.
+bool tracking();
+void noteBarriers(unsigned n, D3D12_RESOURCE_BARRIER const* b);
+/// Called before every indexed draw while enabled: our glass PSO if this is an armor draw (game PSO in *game), else null.
+ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState** game);
 /// UiCapture's CreateGraphicsPipelineState hook, after a successful create.
 void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d, uint64_t psHash);
 /// true while a frame is being recorded (cheap, lock-free) - the command list hooks only call in then.
@@ -34,7 +45,7 @@ void copySrv(size_t dst, size_t src);
 void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso);
 void onDraw(ID3D12GraphicsCommandList* list, unsigned vertsOrIndices, unsigned instances);
 /// Once per Present (UiCapture::beforeOverlay).
-void onPresent();
+void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue);
 /// F6 section.
 void drawUi();
 

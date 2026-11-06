@@ -474,7 +474,7 @@ bool panelActive() {
 void STDMETHODCALLTYPE setPsoHook(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
     reinterpret_cast<SetPso_t>(gOrig[3])(list, pso);
     if (gInSnapshot) return;
-    if (rf::glassarmor::capturing()) rf::glassarmor::onSetPso(list, pso);
+    if (rf::glassarmor::tracking()) rf::glassarmor::onSetPso(list, pso);
     if (rf::sky::wanted()) { // lock-free: refresh the cached kind only when this list's PSO changes
         SkyLS* s = skyLS(list);
         if (s->pso != pso) {
@@ -730,7 +730,14 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
     if (orig) {
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
-        reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
+        ID3D12PipelineState* gamePso = nullptr;
+        ID3D12PipelineState* glass   = (!gInSnapshot && rf::glassarmor::enabled()) ? rf::glassarmor::glassPsoFor(list, &gamePso) : nullptr;
+        if (glass) { // Glass Armor: the game's own armor draw with our pixel shader, then the game's PSO back
+            origSetPso(list, glass);
+            reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
+            origSetPso(list, gamePso);
+        } else
+            reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
     }
     if (sk >= 2) afterSky(list, st, ia, sk);
 }
@@ -822,6 +829,7 @@ void STDMETHODCALLTYPE copySimpleHook(ID3D12Device* d, UINT n, D3D12_CPU_DESCRIP
 }
 void STDMETHODCALLTYPE barrierHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_RESOURCE_BARRIER const* b) {
     reinterpret_cast<Barrier_t>(gOrig[10])(list, n, b);
+    if (b && rf::glassarmor::tracking()) rf::glassarmor::noteBarriers(n, b);
     if (gInSnapshot || gState.load(std::memory_order_relaxed) == Idle || !b) return;
     std::lock_guard l(gMutex);
     auto& st = gListResState[list];
@@ -1227,7 +1235,7 @@ std::string leakNote() {
 }
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb) {
     if (!gInstalled || !device || !queue || !bb) return;
-    rf::glassarmor::onPresent();
+    rf::glassarmor::onPresent(device, queue);
     if (gLeakFrameNow.exchange(0)) ++gLeakFrames;
     {
         long n = gPanelUiDraws.exchange(0);

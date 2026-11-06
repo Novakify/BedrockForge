@@ -230,7 +230,23 @@ void writeReport() {
 
 } // namespace
 
-void init(fs::path const& outDir) { gOutDir = outDir; }
+void init(fs::path const& outDir, fs::path const& configDir) {
+    gOutDir     = outDir;
+    gConfigFile = configDir / "GlassArmor.txt";
+    std::ifstream in(gConfigFile);
+    std::string   v;
+    if (in >> v) gEnabled = v == "1";
+}
+
+bool enabled() { return gEnabled.load(std::memory_order_relaxed); }
+bool tracking() { return gEnabled.load(std::memory_order_relaxed) || gCap.load(std::memory_order_relaxed) != 0; }
+
+void noteBarriers(unsigned n, D3D12_RESOURCE_BARRIER const* b) {
+    std::lock_guard l(gMutex);
+    for (unsigned i = 0; i < n; ++i)
+        if (b[i].Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && b[i].Transition.pResource)
+            gResState[b[i].Transition.pResource] = unsigned(b[i].Transition.StateAfter);
+}
 
 void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d, uint64_t psHash) {
     PsoInfo i;
@@ -264,8 +280,8 @@ void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
     gListPso[list] = pso;
 }
 
-bool wantRoot() { return gCap.load(std::memory_order_relaxed) != 0; }
-bool wantSrvs() { return gCap.load(std::memory_order_relaxed) != 0; }
+bool wantRoot() { return tracking(); }
+bool wantSrvs() { return tracking(); }
 
 void noteSrv(size_t cpu, ID3D12Resource* r) {
     SrvInfo i;
@@ -342,7 +358,226 @@ void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
     gDetail[gWhich].push_back(s.str());
 }
 
-void onPresent() {
+namespace {
+bool shadersBuilt() { return shaders::kVariant[0].psSize > 64; }
+
+/// The armor texture (64x32, vanilla layout) this draw binds, if any: first table slot holding a 64x32 texture.
+ID3D12Resource* boundArmorTexture(ID3D12GraphicsCommandList* list) {
+    auto tables = rf::uicapture::rootTables(list);
+    std::vector<size_t> cpus;
+    for (auto const& [ri, gpu] : tables) {
+        size_t   cpu = 0;
+        unsigned inc = 0;
+        if (rf::uicapture::gpuDescToCpu(gpu, cpu, inc)) cpus.push_back(cpu);
+    }
+    std::lock_guard l(gMutex);
+    for (size_t cpu : cpus) {
+        auto it = gSrvs.find(cpu);
+        if (it != gSrvs.end() && it->second.res && it->second.w == 64 && it->second.h == 32) return it->second.res;
+    }
+    return nullptr;
+}
+
+/// Match a read-back 64x32 RGBA8 texture against the vanilla armor shapes (+ mean colour to split shared shapes).
+int classify(uint8_t const* px, unsigned pitch) {
+    uint32_t bits[64]{};
+    long     sum[3]{}, cnt = 0;
+    for (int y = 0; y < 32; ++y)
+        for (int x = 0; x < 64; ++x) {
+            uint8_t const* p = px + y * pitch + x * 4;
+            if (p[3] == 0) continue;
+            bits[y * 2 + (x >> 5)] |= 1u << (31 - (x & 31));
+            sum[0] += p[0], sum[1] += p[1], sum[2] += p[2], ++cnt;
+        }
+    if (!cnt) return -1;
+    int best = -1;
+    long bestD = 1L << 40;
+    for (int v = 0; v < shaders::kVariants; ++v) {
+        if (std::memcmp(bits, shaders::kVariant[v].mask, sizeof bits) != 0) continue;
+        long d = 0;
+        for (int c = 0; c < 3; ++c) { long e = sum[c] / cnt - shaders::kVariant[v].avg[c]; d += e * e; }
+        if (d < bestD) { bestD = d; best = v; }
+    }
+    return best;
+}
+
+ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad, int v) {
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d = ad.d;
+    d.PS = {shaders::kVariant[v].ps, shaders::kVariant[v].psSize};
+    auto& rt = d.BlendState.RenderTarget[0];
+    rt.BlendEnable           = TRUE;
+    rt.LogicOpEnable         = FALSE;
+    rt.SrcBlend              = D3D12_BLEND_SRC_ALPHA;
+    rt.DestBlend             = D3D12_BLEND_INV_SRC_ALPHA;
+    rt.BlendOp               = D3D12_BLEND_OP_ADD;
+    rt.SrcBlendAlpha         = D3D12_BLEND_ONE;
+    rt.DestBlendAlpha        = D3D12_BLEND_INV_SRC_ALPHA;
+    rt.BlendOpAlpha          = D3D12_BLEND_OP_ADD;
+    rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // glass: the world behind stays visible
+    d.RasterizerState.CullMode         = D3D12_CULL_MODE_NONE;
+    ComPtr<ID3D12PipelineState> p;
+    HRESULT hr = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&p));
+    if (FAILED(hr)) {
+        ++gPsoFail;
+        char b[16];
+        std::snprintf(b, sizeof b, "%08lx", static_cast<unsigned long>(hr));
+        ll_shim::warn(std::string("[RF] glass armor: pipeline for ") + shaders::kVariant[v].mat + " failed 0x" + b);
+        return nullptr;
+    }
+    return p;
+}
+
+/// Present: read back newly seen 64x32 actor textures (a few per frame) and classify the finished ones.
+void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
+    if (!gFence && FAILED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gFence)))) return;
+    if (!gInFlight.empty()) {
+        if (gFence->GetCompletedValue() < gFenceVal) return;
+        for (auto& r : gInFlight) {
+            int   kind = -1;
+            void* m    = nullptr;
+            D3D12_RANGE rr{0, 256 * 32};
+            if (SUCCEEDED(r.buf->Map(0, &rr, &m)) && m) {
+                kind = classify(static_cast<uint8_t const*>(m), 256);
+                D3D12_RANGE none{0, 0};
+                r.buf->Unmap(0, &none);
+            }
+            std::lock_guard l(gMutex);
+            gTexKind[r.tex.Get()] = kind;
+            if (kind >= 0) {
+                ++gArmorTex;
+                gLastClass = std::string(shaders::kVariant[kind].mat) + "_" + std::to_string(shaders::kVariant[kind].layer);
+                ll_shim::info("[RF] glass armor: recognised " + gLastClass + " texture");
+            } else ++gNotArmor;
+        }
+        gInFlight.clear();
+    }
+    std::vector<ComPtr<ID3D12Resource>> todo;
+    {
+        std::lock_guard l(gMutex);
+        while (!gPending.empty() && todo.size() < 8) {
+            todo.push_back(gPending.back());
+            gPending.pop_back();
+        }
+    }
+    if (todo.empty()) return;
+    if (!gAlloc && FAILED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&gAlloc)))) return;
+    if (!gList) {
+        if (FAILED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, gAlloc.Get(), nullptr, IID_PPV_ARGS(&gList)))) return;
+    } else {
+        gAlloc->Reset();
+        gList->Reset(gAlloc.Get(), nullptr);
+    }
+    for (auto& tex : todo) {
+        auto td = tex->GetDesc();
+        if (td.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || td.Width != 64 || td.Height != 32 ||
+            (td.Format != DXGI_FORMAT_R8G8B8A8_UNORM && td.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)) {
+            std::lock_guard l(gMutex);
+            gTexKind[tex.Get()] = -1;
+            continue;
+        }
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
+        D3D12_RESOURCE_DESC   bd{};
+        bd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        bd.Width            = 256 * 32;
+        bd.Height           = 1;
+        bd.DepthOrArraySize = 1;
+        bd.MipLevels        = 1;
+        bd.SampleDesc.Count = 1;
+        bd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> buf;
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&buf)))) continue;
+        unsigned st = 0;
+        {
+            std::lock_guard l(gMutex);
+            auto it = gResState.find(tex.Get());
+            st      = it == gResState.end() ? 0u : it->second; // unknown: COMMON (implicit promotion to COPY_SOURCE)
+        }
+        bool const barrier = st != 0 && st != unsigned(D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = tex.Get();
+        b.Transition.Subresource = 0;
+        b.Transition.StateBefore = D3D12_RESOURCE_STATES(st);
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        if (barrier) gList->ResourceBarrier(1, &b);
+        D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+        dst.pResource                          = buf.Get();
+        dst.Type                               = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dst.PlacedFootprint.Footprint.Format   = td.Format;
+        dst.PlacedFootprint.Footprint.Width    = 64;
+        dst.PlacedFootprint.Footprint.Height   = 32;
+        dst.PlacedFootprint.Footprint.Depth    = 1;
+        dst.PlacedFootprint.Footprint.RowPitch = 256;
+        src.pResource                          = tex.Get();
+        src.Type                               = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        src.SubresourceIndex                   = 0;
+        gList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        if (barrier) {
+            std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
+            gList->ResourceBarrier(1, &b);
+        }
+        gInFlight.push_back({tex, buf});
+    }
+    gList->Close();
+    if (gInFlight.empty()) return;
+    ID3D12CommandList* lists[] = {gList.Get()};
+    q->ExecuteCommandLists(1, lists);
+    q->Signal(gFence.Get(), ++gFenceVal);
+}
+} // namespace
+
+ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState** game) {
+    if (!shadersBuilt()) return nullptr;
+    ID3D12PipelineState*       pso = nullptr;
+    std::shared_ptr<ActorDesc> ad;
+    {
+        std::lock_guard l(gMutex);
+        auto it = gListPso.find(list);
+        if (it == gListPso.end()) return nullptr;
+        pso    = it->second;
+        auto a = gActor.find(pso);
+        if (a == gActor.end()) return nullptr;
+        ad = a->second;
+    }
+    ID3D12Resource* tex = boundArmorTexture(list);
+    if (!tex) return nullptr;
+    int kind;
+    {
+        std::lock_guard l(gMutex);
+        auto it = gTexKind.find(tex);
+        if (it == gTexKind.end()) { // first sight: queue a readback (kept alive by the queue)
+            gTexKind[tex] = -2;
+            gPending.emplace_back(tex);
+            return nullptr;
+        }
+        kind = it->second;
+        if (kind < 0) return nullptr;
+        auto g = gGlass.find({pso, kind});
+        if (g != gGlass.end()) {
+            *game = pso;
+            ++gGlassDraws;
+            return g->second.Get();
+        }
+    }
+    // build our pipeline outside the lock (CreateGraphicsPipelineState runs through our own create hook)
+    ComPtr<ID3D12Device> dev;
+    if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return nullptr;
+    ComPtr<ID3D12PipelineState> made = makeGlassPso(dev.Get(), *ad, kind);
+    std::lock_guard l(gMutex);
+    auto& slot = gGlass[{pso, kind}];
+    if (!slot) slot = made;
+    if (!slot) return nullptr;
+    *game = pso;
+    ++gGlassDraws;
+    return slot.Get();
+}
+
+void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
+    if (enabled() && device && queue) {
+        pumpReadbacks(device, queue);
+        gGlassDrawsShown = gGlassDraws.exchange(0);
+    }
     int c = gCap.load();
     if (c == 1) { // start recording at a frame boundary
         std::lock_guard l(gMutex);
@@ -360,8 +595,25 @@ void onPresent() {
 }
 
 void drawUi() {
-    if (!ImGui::CollapsingHeader("Glass Armor (M0 probe)")) return;
+    if (!ImGui::CollapsingHeader("Glass Armor")) return;
     ImGui::Indent();
+    bool on = gEnabled.load();
+    if (ImGui::Checkbox("Glass armor on (M1a test: see-through + neon outline)", &on)) {
+        gEnabled = on;
+        std::error_code ec;
+        fs::create_directories(gConfigFile.parent_path(), ec);
+        std::ofstream(gConfigFile) << (on ? "1" : "0");
+    }
+    if (!shadersBuilt()) ImGui::TextDisabled("glass shaders missing from this build");
+    {
+        std::lock_guard l(gMutex);
+        ImGui::Text("Armor textures recognised: %ld (last: %s)  other: %ld  queued: %zu",
+                    gArmorTex.load(), gLastClass.empty() ? "-" : gLastClass.c_str(), gNotArmor.load(), gPending.size() + gInFlight.size());
+        ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
+                    gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("M0 probe");
     if (!gNamesLearned && !gLearning) learnNames();
     ImGui::TextWrapped("Find the pipelines that draw armor: stand in third person (F5) with armor on, press "
                        "\"Capture ON\"; take the armor off, press \"Capture OFF\". The report lists the difference.");
