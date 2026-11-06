@@ -1,6 +1,6 @@
 # Glass Armor (Bedrock Forge + Renderer Foundation) - plan
 
-Status 2026-11-05: **look approved** (preview v6), research + tooling on `research/glass-armor`, no engine code yet.
+Status 2026-11-06: **look approved** (preview v6); M0 probe run in game (results below); RF work on `glass-armor/rf`.
 
 ## The look Fernando signed off (docs/glass_armor/preview_v6.html)
 - Shape and geometry **1-to-1 vanilla**: Mojang's `geometry.player.armor.*` cubes (helmet inflate 1.0 + hat layer
@@ -42,6 +42,19 @@ other players would be painted over, and the body-stays-clean check is impossibl
 4. Dye colour + enchanted state per draw: from the material variant (`armor_leather*`, `*_enchanted`) and the
    per-draw constants (the overlay / change colour the game passes for leather).
 5. Hive: does Hive's server pack replace player armor rendering (custom attachables / cosmetics)? Test in a lobby.
+
+## M0 probe results (2026-11-06, MC 1.26.51.01, Fancy, full diamond, F5 front) - docs/glass_armor/probe_m0_20261106.txt
+- **Armor draws on `Actor.material.bin`**, pixel shader `71f7073b9d471dae` / vertex shader `26002122658a193e`
+  (the alpha-test actor variant: cull none, depth less + write, blend off). The ON-only Actor pipeline drew
+  9 draws / 344 triangles. The same PS also draws other actors (mobs, the player), so the pipeline alone can't
+  single out armor -> M0b: tell armor draws apart per draw (bound texture size / descriptor, draw size).
+- **The VS hands the PS the texture UV as `TEXCOORD0.xy` (o5)** - exactly what glass_armor.hlsl needs.
+  Full output: SV_Position0, COLOR1, COLOR0, COLOR2, COLOR3, TEXCOORD0.xy, TEXCOORD3.xyz.
+- Fancy targets: colour RGBA8, depth **D24S8, standard Z (less)** -> zParams from a normal projection.
+- All world pipelines share one root signature (00000271D0E4E2F0) -> one extended root signature covers armor.
+- Probe lesson: the game keeps several identical PSO objects (frames in flight), so diffing by PSO pointer is noisy
+  (chunks/clouds show up as "ARMOR?"). M0b diffs by shader hash + draw/triangle counts instead.
+- No crash, no FPS change from the probe.
 
 ## Milestones
 - **M0 probe (RF, F6 > Glass Armor)**: key press logs one frame - every PSO used with PS hash, material pass, VS
