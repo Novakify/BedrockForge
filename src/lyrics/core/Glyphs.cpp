@@ -19,6 +19,7 @@ float Font::width(std::string_view s) const {
     float w = 0;
     for (uint32_t cp : text::codepoints(s)) {
         GlyphMetrics const* g = find(cp);
+        if (!g && fallback) g = fallback->find(cp);
         if (!g) g = find('?');
         w += g ? g->advance : 0.5f;
     }
@@ -79,6 +80,12 @@ Font const* FontSet::get(std::string_view id) const {
 void FontSet::setAtlasIndex(std::string_view id, uint32_t index) {
     for (auto& f : mFonts)
         if (f.id == id) f.atlasIndex = index;
+}
+void FontSet::linkFallbacks() {
+    Font const* fb = nullptr;
+    for (auto const& f : mFonts)
+        if (f.id.rfind("cjk_", 0) == 0 && f.atlasIndex != kNoAtlas) { fb = &f; break; }
+    for (auto& f : mFonts) f.fallback = f.id.rfind("cjk_", 0) == 0 ? nullptr : fb;
 }
 bool FontSet::has(std::string_view id) const {
     for (auto const& f : mFonts)
@@ -258,6 +265,8 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
         int   letter = 0;
         for (uint32_t cp : cps) {
             GlyphMetrics const* g = font.find(cp);
+            Font const* src = &font; // [LyricsForge] the atlas this glyph comes from (Japanese -> the cjk fallback)
+            if (!g && font.fallback) { g = font.fallback->find(cp); if (g) src = font.fallback; }
             if (!g) g = font.find('?');
             float adv = g ? g->advance : 0.5f;
             if (g && !g->empty) {
@@ -293,10 +302,10 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
                     q._pad3 = float((letter * 7 + int(uint64_t(w.key) % 97u) * 13) % 4096) + std::clamp(c.letterFxSpeed, 0.1f, 3.0f) / 4.0f;
                 }
                 q.alpha   = ps.alpha;
-                q.atlas   = font.atlasIndex;
-                q.flags   = flags;
+                q.atlas   = src->atlasIndex;
+                q.flags   = src == &font ? flags : (flags & ~uint32_t(BF_GLYPH_BITMAP | BF_GLYPH_MSDF)) | src->flags;
                 if (!ps.main) q.flags &= ~uint32_t(BF_GLYPH_GRADIENT);
-                q.pxRange = font.pxRange;
+                q.pxRange = src->pxRange;
                 if (w.plain) q.flags &= ~uint32_t(BF_GLYPH_GRADIENT);
                 if (ps.main && !w.plain) {
                     q.outline  = c.outlineWidth > 0 ? toRgba(outlineArgb) : 0u;

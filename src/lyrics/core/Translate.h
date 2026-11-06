@@ -1,0 +1,24 @@
+// LyricsForge - [LyricsForge] automatic translations: songs (or lines) that aren't English get a small English line
+// under the original (Scene's translationUnder, the same place override-file / NetEase translations go).
+// Original code for Bedrock Forge.
+#pragma once
+#include <string>
+#include <string_view>
+
+#include "lyrics/core/Fetcher.h"
+#include "lyrics/core/Lyrics.h"
+
+namespace bf::lyrics::translate {
+
+/// the line is in a non-Latin script (Japanese, Korean, Chinese, Cyrillic, Greek, Arabic, Hebrew, Thai, Devanagari)
+bool nonLatin(std::string_view line);
+/// the lyrics are worth sending to the translator: a non-Latin line, or Latin lines that don't read as English
+/// (few common English words), and not already translated
+bool needsTranslation(Lyrics const& l);
+/// fills Line::translation for the lines whose English differs from the original (English lines stay as they are).
+/// Returns how many lines got one. http = the same GET the fetcher uses (Google's public gtx endpoint, sl=auto).
+int translateToEnglish(fetch::HttpGet const& http, Lyrics& l, int64_t deadlineMs);
+/// the translated text from one gtx reply ([[["en","orig",...],...],...]); "" when it can't be read
+std::string parseGtx(std::string_view body);
+
+} // namespace bf::lyrics::translate

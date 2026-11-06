@@ -33,6 +33,7 @@ struct Font {
     float       pxRange    = 4.0f;
     float       ascender = 0.8f, descender = -0.2f, capHeight = 0.7f, xHeight = 0.5f, lineHeight = 1.2f;
     std::unordered_map<uint32_t, GlyphMetrics> glyphs;
+    Font const* fallback = nullptr; // [LyricsForge] another script's atlas (Japanese) for the glyphs this font lacks
 
     GlyphMetrics const* find(uint32_t cp) const;
     /// Width of text in em (sum of advances). Missing glyphs fall back to '?' then 0.5 em.
@@ -48,6 +49,8 @@ public:
     static constexpr uint32_t kNoAtlas = 0xFFFFFFFFu;
     void        setAtlasIndex(std::string_view id, uint32_t index);
     bool        has(std::string_view id) const;
+    /// [LyricsForge] point every font at the slotted script fallback ("cjk_*" atlases); call after slots change
+    void        linkFallbacks();
     size_t      size() const { return mFonts.size(); }
     std::vector<Font> const& all() const { return mFonts; }
     /// TextWidthFn for the Scene: width in units of the line height LyricsFlow uses (em).

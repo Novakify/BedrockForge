@@ -9,6 +9,7 @@
 //           HUD frame (render thread): camera + world -> Engine::frame -> publish for RF
 #ifdef _WIN32
 #include "lyrics/win/Win.h"
+#include "lyrics/core/Translate.h"
 
 #include <algorithm>
 #include <atomic>
@@ -290,7 +291,17 @@ void loadFonts(std::filesystem::path const& dir) {
 /// Make sure the fonts in use have atlas slots. Returns true when the atlas list changed. Caller holds gS->mutex.
 bool syncFontSlots() {
     auto const& cfg = gS->engine.config();
-    std::string const want[] = {cfg.font, cfg.topBarFont, gS->panelAssets.pixelFont, "minecraft", "outfit", "outfit_bold"}; // [BF] Outfit = client menu + player card
+    std::vector<std::string> want = {cfg.font, cfg.topBarFont, gS->panelAssets.pixelFont, "minecraft", "outfit", "outfit_bold"}; // [BF] Outfit = client menu + player card
+    { // [LyricsForge] a song with Japanese (etc.) lines: the script fallback atlas gets a slot too
+        static Lyrics const* seen = nullptr;
+        static bool          foreign = false;
+        Lyrics const* ly = gS->demo.on ? gS->demo.lyrics.get() : gS->lyrics.get();
+        if (ly != seen) {
+            seen = ly; foreign = false;
+            if (ly) for (auto const& ln : ly->lines) if (translate::nonLatin(ln.text)) { foreign = true; break; }
+        }
+        if (foreign) want.push_back("cjk_jp");
+    }
     bool changed = false;
     ++gS->slotClock;
     for (auto const& id : want) {
@@ -315,6 +326,7 @@ bool syncFontSlots() {
         changed = true;
     }
     if (changed) {
+        gS->engine.fonts().linkFallbacks();
         gS->fontAtlases.clear();
         for (auto const& f : gS->slotFont) gS->fontAtlases.push_back(gS->fontPng[f]);
         publishAtlases();
@@ -429,6 +441,7 @@ void overrideWatch() {
 }
 
 // LyricsFlow MediaManager.fetchLyrics: up to 5 attempts, waiting 1.5 s * attempt, abandoned when the song changes.
+void appendLog(char const* name, std::string const& text); // below
 void fetchFor(MediaSample s, int64_t seq) {
     std::thread([s, seq] { try {
         Track tk;
@@ -456,7 +469,17 @@ void fetchFor(MediaSample s, int64_t seq) {
             }
         }
         if (got) normalizeWords(*got); // [BF] odd spaces, line-timed sources -> words
-        if (std::error_code e2; got && !fromOverride && !std::filesystem::exists(cacheFile, e2)) { // LyricsFlow writeCache (synced results only reach here)
+        bool translated = false;      // [LyricsForge] not English (or partly): a small English line under each such line
+        bool wantTr = false;
+        { std::lock_guard l(gS->mutex); wantTr = gS->engine.config().translations; }
+        if (got && wantTr && translate::needsTranslation(*got)) {
+            try {
+                int const n = translate::translateToEnglish(&httpGet, *got, fetch::nowMs() + 9000);
+                translated = n > 0;
+                appendLog("lyrics_translate", s.artist + " - " + s.title + ": " + std::to_string(n) + " lines translated\n");
+            } catch (...) {}
+        }
+        if (std::error_code e2; got && !fromOverride && (translated || !std::filesystem::exists(cacheFile, e2))) { // LyricsFlow writeCache (synced results only reach here)
             std::ofstream out(cacheFile, std::ios::binary);
             out << toCacheJson(*got);
         }

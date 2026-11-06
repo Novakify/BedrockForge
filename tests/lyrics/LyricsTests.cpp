@@ -42,6 +42,7 @@
 #include "lyrics/core/Ribbon.h"
 #include "lyrics/core/PlayerHud.h"
 #include "lyrics/core/Portal.h"
+#include "lyrics/core/Translate.h"
 #include "lyrics/core/SkyWriter.h"
 #include "lyrics/core/Studio.h"
 #include "lyrics/core/Clip.h"
@@ -1263,6 +1264,55 @@ TEST(pvp_calm) { // [LyricsForge] in a fight the look steps aside, then comes ba
     Cinema c; c.setCombat(1.0f);
     for (int i = 0; i < 40; ++i) c.step(&m, cfg, 0.05f);
     CHECK(c.out().showcase > 0.5f);
+}
+
+TEST(font_script_fallback) { // [LyricsForge] Japanese glyphs come from the cjk atlas instead of '?'
+    auto js = [](std::vector<int> cps, double adv) {
+        std::string g;
+        for (int c : cps) g += (g.empty() ? "" : ",") + std::string("{\"unicode\":") + std::to_string(c) + ",\"advance\":" + std::to_string(adv) +
+             ",\"planeBounds\":{\"left\":0,\"bottom\":0,\"right\":0.5,\"top\":0.7},\"atlasBounds\":{\"left\":0,\"bottom\":10,\"right\":10,\"top\":0}}";
+        return "{\"atlas\":{\"type\":\"sdf\",\"distanceRange\":6,\"size\":48,\"width\":64,\"height\":64,\"yOrigin\":\"top\"},\"metrics\":{\"ascender\":0.8,\"descender\":-0.2,\"lineHeight\":1.2},\"glyphs\":[" + g + "]}";
+    };
+    FontSet fs;
+    CHECK(fs.loadFromJson("poppins", js({'A', '?'}, 0.6), "p.png"));
+    CHECK(fs.loadFromJson("cjk_jp", js({0x3042}, 1.0), "j.png"));
+    fs.setAtlasIndex("poppins", 0);
+    fs.setAtlasIndex("cjk_jp", FontSet::kNoAtlas);
+    fs.linkFallbacks();
+    CHECK(std::fabs(fs.get("poppins")->width("\xe3\x81\x82") - 0.6f) < 1e-4f); // no slot yet: '?'
+    fs.setAtlasIndex("cjk_jp", 1);
+    fs.linkFallbacks();
+    CHECK(std::fabs(fs.get("poppins")->width("A\xe3\x81\x82") - 1.6f) < 1e-4f); // A + the Japanese glyph
+    std::vector<BfGlyphV1> out;
+    DrawWord w; w.text = "\xe3\x81\x82"; w.alpha = 1; w.plain = true;
+    Config c;
+    buildWordGlyphs(w, *fs.get("poppins"), c, makeStyle(c, 0), Vec3{}, out, true);
+    CHECK(!out.empty() && out.back().atlas == 1u);
+}
+
+TEST(auto_translate) { // [LyricsForge] non-English lines get a small English line; English lines stay alone
+    using namespace bf::lyrics::translate;
+    auto mk = [](std::vector<std::string> ts) { Lyrics l; int k = 0; for (auto& t : ts) { Line ln; ln.index = k++; ln.text = t; l.lines.push_back(ln); } return l; };
+    Lyrics mixed = mk({"\xe3\x81\x8a\xe3\x81\xaf\xe3\x82\x88\xe3\x81\x86", "Flamingo, oh oh oh-woah", "You don't need to change"});
+    CHECK(nonLatin(mixed.lines[0].text));
+    CHECK(!nonLatin(mixed.lines[1].text));
+    CHECK(needsTranslation(mixed));
+    std::string asked;
+    auto fake = [&](std::string const& url, bf::lyrics::fetch::Headers const&, int64_t) {
+        asked = url;
+        return bf::lyrics::fetch::HttpResponse{200, R"([[["Good morning\n","x",null],["Flamingo, oh oh oh-woah\n","x",null],["You don't have to change","x",null]],null,"ja"])"};
+    };
+    CHECK(translateToEnglish(fake, mixed, bf::lyrics::fetch::nowMs() + 5000) == 1);
+    CHECK(mixed.lines[0].translation == "Good morning");
+    CHECK(mixed.lines[1].translation.empty());   // same words
+    CHECK(mixed.lines[2].translation.empty());   // already English, only reworded
+    CHECK(asked.find("translate.googleapis.com") != std::string::npos);
+    Lyrics english = mk({"I love you baby", "you are the one for me", "never let me go tonight", "oh yeah", "I want you now and here", "we are the night"});
+    CHECK(!needsTranslation(english));
+    Lyrics spanish = mk({"Quiero que te quedes conmigo", "Bailando bajo la luna", "Tu corazon es mio esta noche", "Mi amor no se va", "Dame tu mano y vamos"});
+    CHECK(needsTranslation(spanish));
+    CHECK(parseGtx("garbage").empty());
+    CHECK(parseGtx(R"([[["Hello","Hola",null]],null,"es"])") == "Hello");
 }
 
 TEST(color_words) { // [LyricsForge] colour words turn their colour
