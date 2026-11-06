@@ -552,6 +552,13 @@ void check(bool inGame) {
     gPrev = now;
     gTessPrev = tess;
 }
+void mark(char const* what) { // [BF] a gameplay moment (you got hit), so hitches around a fight can be lined up
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    localtime_s(&tm, &t);
+    auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() % 1000;
+    std::ofstream(file(), std::ios::app | std::ios::binary) << std::format("{:02}:{:02}:{:02}.{:03} ** {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec, int(ms), what);
+}
 } // namespace hitch
 
 // ============================================================================ runtime
@@ -616,6 +623,13 @@ void installRuntime() {
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
+        if (player) { // [BF] hitch log: health drops = you took a hit (servers send health to the client)
+            static int lastHp = -1;
+            int const hp = player->getHealth();
+            if (lastHp >= 0 && hp < lastHp && hp > 0) { try { hitch::mark(std::format("hit: hp {} -> {}", lastHp, hp).c_str()); } catch (...) {} }
+            else if (lastHp > 0 && hp <= 0) { try { hitch::mark("died"); } catch (...) {} }
+            lastHp = hp;
+        }
         tSec = std::chrono::steady_clock::now();
         try { serverauto::frame(ctx.mClient, player, hudInputAllowed() && !menu::isOpen(), w32::gameFocused() && !menu::isOpen()); } catch (...) {}
         hitch::gCur.sa = hitch::since(tSec);
