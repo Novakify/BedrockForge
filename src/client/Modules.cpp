@@ -27,6 +27,9 @@
 #include "ll/api/memory/Hook.h"
 
 #include "mc/client/game/IClientInstance.h"
+#include "mc/client/options/IOptionRegistry.h"
+#include "mc/options/option_types/BoolOption.h"
+#include "mc/options/option_types/OptionID.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/deps/input/MouseAction.h"
@@ -410,6 +413,9 @@ void registerBuiltins() {
     // ---------------- Visual
     r.add("fullbright", "Fullbright", Category::Visual, "See in the dark: lifts the light baked into nearby terrain (client-side, relights chunks on toggle)")
         .slider("strength", "Strength", 1.0f, 0.1f, 1.0f, 0.05f);
+    r.add("pvp_preset", "PvP Preset", Category::Visual,
+          "Turns Smooth Lighting off while on (cheaper chunk building: fewer stutters when chunks load); your own setting comes back when you turn it off")
+        .toggleSetting("restore_smooth", "Smooth Lighting when the preset is off", true);
     r.add("time_changer", "Time Changer", Category::Visual, "Client-side time of day (rendering only)")
         .slider("time", "Time of day (0-1)", 0.0f, 0, 1, 0.01f);
     r.plan("fog", "Fog", Category::Visual, "Remove or recolour fog");
@@ -468,6 +474,41 @@ void registerBuiltins() {
         .toggleSetting("worldblur", "Blur the world", true)
         .toggleSetting("camswing", "Camera swing", true);
 }
+
+// ============================================================================ PvP preset
+// [BF] manual toggle (never automatic): Smooth Lighting off while the module is on. The game option is set without
+// saving, so options.txt keeps your own value; what to restore is also kept in the module ("restore_smooth").
+namespace pvppreset {
+bool gApplied = false, gFirst = true;
+BoolOption* smooth(IClientInstance& c) {
+    auto o = c.getOptions().getIfValid(OptionID::SmoothLighting);
+    return o && *o ? static_cast<BoolOption*>(*o) : nullptr;
+}
+void tick(IClientInstance& c) {
+    auto* m = Registry::get().find("pvp_preset");
+    bool const want = m && m->enabled;
+    if (want == gApplied) {
+        if (want) if (auto* b = smooth(c); b && b->mValue.get()) b->set(false, false); // something turned it back on
+        gFirst = false;
+        return;
+    }
+    auto* b = smooth(c);
+    if (!b) return;
+    if (want) {
+        // turned on now: remember your setting. Already on at startup: the game may have saved our "off" last time,
+        // so the value kept from when you turned it on wins.
+        if (!gFirst) if (auto* st = m->setting("restore_smooth")) st->on = b->mValue.get();
+        Registry::get().save();
+        b->set(false, false);
+    } else {
+        bool back = true;
+        if (m) if (auto* st = m->setting("restore_smooth")) back = st->on;
+        b->set(back, false);
+    }
+    gApplied = want;
+    gFirst   = false;
+}
+} // namespace pvppreset
 
 // ============================================================================ hitch recorder
 // [BF] logs/hitches.txt: every HUD-to-HUD frame over 50 ms, with what our code did in the frame before it (reports,
@@ -565,6 +606,7 @@ void installRuntime() {
         hitch::gCur.reports = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto& ctx    = ev.uiRenderContext();
         fullbrightTick(ctx.mClient);
+        try { pvppreset::tick(ctx.mClient); } catch (...) {}
         hitch::gCur.fb = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         forgerender::tick();
         hitch::gCur.fr = hitch::since(tSec); tSec = std::chrono::steady_clock::now();

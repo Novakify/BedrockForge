@@ -272,6 +272,11 @@ void poll(LocalPlayer* lp) {
     std::filesystem::remove(dir() / "bench.done.txt", ec);
     std::filesystem::rename(f, dir() / "bench.done.txt", ec);
     while (!c.empty() && (c.back() == '\r' || c.back() == ' ')) c.pop_back();
+    if (c.rfind("cmd /", 0) == 0) { // [BF] test-only: send one command as if typed (e.g. "cmd /q sky" on The Hive)
+        queue(0, true, c.substr(4));
+        note("cmd sent: " + c.substr(4));
+        return;
+    }
     if (c.rfind("run", 0) != 0) return;
     g = {};
     g.active = true;
