@@ -86,6 +86,7 @@ float depthAt(float2 px) {
 float4 PSGlassArmor(PSIn i) : SV_Target {
     float2 t = i.uv * float2(64.0, 32.0); // armor texel space
     int2   b = int2(floor(t));
+    if (pad == 1u) return float4(1.0, 0.0, 1.0, 1.0); // debug: does the replayed draw land at all?
     if (!painted(b)) discard;             // vanilla shape
     int  fi = faceOf(b);
     int4 fr = faceRect(max(fi, 0));

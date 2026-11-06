@@ -105,6 +105,7 @@ uint8_t*                           gParamsMap = nullptr;
 std::atomic<unsigned>              gSlotNext{0};
 std::atomic<long>                  gFlushOk{0}, gFlushFail{0};
 std::string                        gFlushWhy;
+std::atomic_bool                   gDebugSolid{false};
 LARGE_INTEGER                      gT0{};
 int                                gDumped = 0;
 std::string gLastReport;
@@ -548,6 +549,7 @@ ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad,
     rt.LogicOpEnable         = FALSE;
     rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    d.DepthStencilState.StencilEnable  = FALSE; // replayed later: the game's stencil ref may have moved on
     d.RasterizerState.CullMode         = D3D12_CULL_MODE_NONE; // like the game's armor PSO (its winding varies); depth write keeps the nearest face
     ComPtr<ID3D12PipelineState> p;
     HRESULT hr = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&p));
@@ -876,6 +878,7 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.scenePitch = rf.Footprint.RowPitch, p.depthPitch = df.Footprint.RowPitch;
     p.swirl = 0.9f, p.ripple = 0.09f, p.lens = 0.8f; // approved preview: Medium
     p.uiScale   = float(rd.Height) / 760.f;
+    p.pad       = gDebugSolid ? 1u : 0u;
     p.sceneBgra = rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM || rd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS || rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
     std::memcpy(gParamsMap + slot * 256, &p, sizeof p);
     out.scene  = S.scene->GetGPUVirtualAddress();
@@ -977,6 +980,8 @@ void drawUi() {
                     gArmorTex.load(), gLastClass.empty() ? "-" : gLastClass.c_str(), gNotArmor.load(), gPending.size() + gInFlight.size());
         ImGui::TextWrapped("Last texture: %s", gLastClassInfo.c_str());
         ImGui::Text("Flushes ok: %ld  failed: %ld %s", gFlushOk.load(), gFlushFail.load(), gFlushWhy.c_str());
+        bool dbg = gDebugSolid.load();
+        if (ImGui::Checkbox("Debug: paint glass solid magenta", &dbg)) gDebugSolid = dbg;
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
                     gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
     }
