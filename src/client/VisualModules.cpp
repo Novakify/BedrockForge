@@ -264,8 +264,9 @@ LL_TYPE_INSTANCE_HOOK(BfViewDiagHook, ll::memory::HookPriority::Normal, LevelRen
     if (gViewDiag.load() < 8 && now - gViewDiagMs.load() >= 4000) {
         gViewDiagMs = now;
         ++gViewDiag;
-        float f[14];
+        float f[14], sky[3], w = 0;
         std::memcpy(f, &renderObj.mViewData, sizeof f);
+        if (!::bf::lyrics::win::skyFog(sky, w)) w = 0;
         fogLog().info("[BF] view: cam {:.1f} {:.1f} {:.1f} fog {:.3f} {:.3f} {:.3f} (sky w {:.2f}) skycol {:.3f} {:.3f} {:.3f}",
                       f[0], f[1], f[2], f[6], f[7], f[8], w, f[10], f[11], f[12]);
     }
