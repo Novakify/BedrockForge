@@ -21,6 +21,7 @@
 #include "SkyPass.h"
 #include "SpatialPanel.h"
 #include "UiCapture.h"
+#include "GlassArmor.h"
 
 namespace {
 void runOnClientThread() {
@@ -148,6 +149,7 @@ void updateImGui() {
             graphicsSection();
             rf::postfx::drawUi();
             rf::uicapture::drawUi();
+            rf::glassarmor::drawUi();
             rf::panel::drawUi();
             rf::lyrics::drawUi();
             rf::sky::drawUi();

@@ -180,3 +180,16 @@ jobs:
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" lyricsforge-cinematic-rf-builds
+      # Glass Armor (M0 probe on top of the live RF line): own builds branch, installed RF stays untouched
+      - name: Publish glass armor RF build to glass-armor-rf-builds
+        if: github.ref == 'refs/heads/glass-armor/rf' && github.event_name == 'push'
+        shell: bash
+        run: |
+          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/
+          cd out
+          git init -q -b glass-armor-rf-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
+          git add -A && git commit -qm "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" glass-armor-rf-builds
