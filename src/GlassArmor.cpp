@@ -18,10 +18,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <d3d12.h>
+#include <wrl/client.h>
+
+#include <deque>
+#include <memory>
 
 #include <imgui.h>
 
 #include "LLShim.h"
+#include "GlassArmorShaders.h"
 #include "SkyMaterialScan.h"
 #include "UiCapture.h"
 
@@ -57,6 +62,34 @@ std::vector<std::string>             gDetail[2];
 std::map<uint64_t, DrawStat>         gByPs[2];
 bool        gHave[2]{};
 std::string gStatus = "idle";
+
+// ---------------------------------------------------------------- M1a: glass armor
+using Microsoft::WRL::ComPtr;
+std::atomic_bool gEnabled{false};
+fs::path         gConfigFile;
+// the vertex shader output signature of the game's Actor shaders (probe M0) - our pixel shader is built to match it
+constexpr char const* kActorVsOut = "SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6";
+struct ActorDesc {
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC    d{};
+    std::vector<uint8_t>                  vs;
+    std::vector<D3D12_INPUT_ELEMENT_DESC> il;
+    std::deque<std::string>               names;
+    ComPtr<ID3D12RootSignature>           root;
+};
+std::unordered_map<ID3D12PipelineState*, std::shared_ptr<ActorDesc>> gActor;   // game Actor pipelines
+std::map<std::pair<ID3D12PipelineState*, int>, ComPtr<ID3D12PipelineState>> gGlass; // (game PSO, variant) -> ours
+std::unordered_map<ID3D12Resource*, unsigned>                    gResState; // last barrier StateAfter
+// armor texture recognition: -1 not armor, -2 queued for readback, >= 0 shaders::kVariant index
+std::unordered_map<ID3D12Resource*, int>                         gTexKind;
+std::vector<ComPtr<ID3D12Resource>>                               gPending;
+struct Readback { ComPtr<ID3D12Resource> tex, buf; };
+std::vector<Readback>              gInFlight;
+ComPtr<ID3D12CommandAllocator>     gAlloc;
+ComPtr<ID3D12GraphicsCommandList>  gList;
+ComPtr<ID3D12Fence>                gFence;
+UINT64                             gFenceVal = 0;
+std::atomic<long>                  gGlassDraws{0}, gGlassDrawsShown{0}, gArmorTex{0}, gNotArmor{0}, gPsoFail{0};
+std::string                        gLastClass;
 std::string gLastReport;
 
 char const* fmtName(DXGI_FORMAT f) {
@@ -269,8 +302,28 @@ void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const&
     t += d.RasterizerState.CullMode == D3D12_CULL_MODE_NONE ? " | cull none" : " | cull";
     i.targets = t;
     i.root    = d.pRootSignature;
+    std::shared_ptr<ActorDesc> ad;
+    if (i.vsOut == kActorVsOut && d.VS.pShaderBytecode && d.InputLayout.NumElements) {
+        ad    = std::make_shared<ActorDesc>();
+        ad->d = d;
+        ad->vs.assign(static_cast<uint8_t const*>(d.VS.pShaderBytecode), static_cast<uint8_t const*>(d.VS.pShaderBytecode) + d.VS.BytecodeLength);
+        for (UINT k = 0; k < d.InputLayout.NumElements; ++k) {
+            auto e = d.InputLayout.pInputElementDescs[k];
+            ad->names.emplace_back(e.SemanticName ? e.SemanticName : "");
+            e.SemanticName = ad->names.back().c_str();
+            ad->il.push_back(e);
+        }
+        ad->root             = d.pRootSignature;
+        ad->d.VS             = {ad->vs.data(), ad->vs.size()};
+        ad->d.InputLayout    = {ad->il.data(), UINT(ad->il.size())};
+        ad->d.pRootSignature = ad->root.Get();
+        ad->d.HS = ad->d.DS = ad->d.GS = {};
+        ad->d.StreamOutput = {};
+        ad->d.CachedPSO    = {};
+    }
     std::lock_guard l(gMutex);
     gPsos[pso] = std::move(i);
+    if (ad) gActor[pso] = std::move(ad);
 }
 
 bool capturing() { return gCap.load(std::memory_order_relaxed) == 2; }
