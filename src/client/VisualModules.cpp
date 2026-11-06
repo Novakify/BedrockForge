@@ -257,17 +257,9 @@ namespace { std::atomic<int> gViewDiag{0}; std::atomic<int64_t> gViewDiagMs{0}; 
 LL_TYPE_INSTANCE_HOOK(BfViewDiagHook, ll::memory::HookPriority::Normal, LevelRendererCamera,
                       &LevelRendererCamera::$render, void, BaseActorRenderContext& ctx,
                       ViewRenderObject const& renderObj, IClientInstance& ci) {
-    // [LyricsForge] sky fog (step 2): the layout was verified by the read-only diag (camera pos + fog/sky colours land
-    // on the expected floats), so the fog colour is blended toward the LyricsForge sky's horizon before the world draws.
-    // Every shader that reads FogColor (vanilla fog, LyricsLight's sky tint and water) follows the sky.
-    float sky[3], w = 0;
-    if (::bf::lyrics::win::skyFog(sky, w)) {
-        auto& vd = const_cast<ViewRenderData&>(*reinterpret_cast<ViewRenderData const*>(&renderObj.mViewData));
-        float fc[4];
-        std::memcpy(fc, &vd.mFogColor, sizeof fc);
-        for (int k = 0; k < 3; ++k) fc[k] += (sky[k] - fc[k]) * w;
-        std::memcpy(&vd.mFogColor, fc, sizeof fc);
-    }
+    // [LyricsForge] sky fog: writing mFogColor here lands in the game's memory but the shaders never see it (proven with
+    // the LyricsLight debug pack), and the in-place blend could stack if this runs twice a frame - so nothing is written;
+    // the sky colour reaches the world through Renderer Foundation's world light instead. Read-only diag below.
     int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (gViewDiag.load() < 8 && now - gViewDiagMs.load() >= 4000) {
         gViewDiagMs = now;

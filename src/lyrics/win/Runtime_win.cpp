@@ -173,7 +173,8 @@ struct State {
     std::string                   coverPath, coverShown;
     uint32_t                      coverAccent = 0; // [BF] vivid colour of the cover (Neon player)
     std::string                   songFont;        // [LyricsForge] the font picked for the playing song ("" = none)
-    std::string                   songFontKey, lastSongFont; // the song it was picked for / the previous pick (not twice in a row)
+    std::string                   songFontKey, lastSongFont; // what it was picked for (song + lyrics in) / the previous song's
+    std::string                   songFontSong;    // the song songFont belongs to
     float                         bass = 0;        // [BF] bass hit level this frame (Audio_win.cpp)
     bool                          bassLive = false;
     int64_t                       coverSeq = -1;
@@ -472,39 +473,64 @@ void fetchFor(MediaSample s, int64_t seq) {
             }
         }
         if (got) normalizeWords(*got); // [BF] odd spaces, line-timed sources -> words
-        bool translated = false;      // [LyricsForge] not English (or partly): a small English line under each such line
-        bool wantTr = false;
-        { std::lock_guard l(gS->mutex); wantTr = gS->engine.config().translations; }
-        if (got && wantTr && translate::needsTranslation(*got)) {
-            try {
-                int const n = translate::translateToEnglish(&httpGet, *got, fetch::nowMs() + 9000);
-                translated = n > 0;
-                appendLog("lyrics_translate", s.artist + " - " + s.title + ": " + std::to_string(n) + " lines translated\n");
-            } catch (...) {}
-        }
-        // [LyricsForge] the cache keeps the original lines; what's shown drops the ones no font can draw (or shows
-        // their English instead) - written after the cache below, so a future font can still draw them
+        // [LyricsForge] what's shown drops the lines no font can draw (or shows their English instead); the cache keeps
+        // the original lines, so a future font can still draw them. Checked against the fonts that really draw: the
+        // saved font and its Japanese fallback (a per-song font is only picked when it covers these lyrics too).
         auto fitShown = [](Lyrics& ly) {
             std::vector<Font const*> fs;
             {
                 std::lock_guard l(gS->mutex);
                 for (auto const& f : gS->engine.fonts().all())
-                    if (f.id == gS->engine.config().font || f.id == "outfit" || f.id.rfind("cjk_", 0) == 0) fs.push_back(&f);
+                    if (f.id == gS->engine.config().font || f.id.rfind("cjk_", 0) == 0) fs.push_back(&f);
             }
             translate::fitToFonts(ly, [&](uint32_t c) {
                 for (auto const* f : fs) if (f->find(c)) return true;
                 return false;
             });
         };
-        if (std::error_code e2; got && !fromOverride && (translated || !std::filesystem::exists(cacheFile, e2))) { // LyricsFlow writeCache (synced results only reach here)
-            std::ofstream out(cacheFile, std::ios::binary);
-            out << toCacheJson(*got);
+        // publishes `ly` as this song's lyrics (nothing drawable = no lyrics, nothing on screen); false = song changed
+        auto publish = [&](Lyrics ly, bool resetScene) {
+            fitShown(ly);
+            bool const any = !ly.lines.empty();
+            std::lock_guard l(gS->mutex);
+            if (gS->clock.songSeq() != seq) return false;
+            gS->lyrics      = any ? std::make_shared<Lyrics const>(std::move(ly)) : nullptr;
+            gS->lyricsState = any ? LyricsState::Found : LyricsState::NotFound;
+            if (resetScene) gS->engine.reset(); // the drawn lines pick up their new English rows
+            return true;
+        };
+        auto writeCache = [&](Lyrics const& ly) { // to a temp file, then renamed: a quit mid-write can't leave half a file
+            auto tmp = cacheFile;
+            tmp += ".tmp";
+            { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << toCacheJson(ly); if (!out) return; }
+            std::error_code e3;
+            std::filesystem::rename(tmp, cacheFile, e3);
+            if (e3) std::filesystem::remove(tmp, e3);
+        };
+        if (std::error_code e2; got && !fromOverride && !std::filesystem::exists(cacheFile, e2)) writeCache(*got); // LyricsFlow writeCache
+        // the lyrics go on screen now; an English translation (a network round trip) follows when it's back
+        if (!publish(got ? *got : Lyrics{}, false) || !got) return;
+        bool wantTr = false;
+        { std::lock_guard l(gS->mutex); wantTr = gS->engine.config().translations; }
+        if (!wantTr || !translate::needsTranslation(*got)) return;
+        static std::mutex sFailMx; // songs whose translation just failed (offline, rate-limited): not asked again for 10 min
+        static std::map<std::string, int64_t> sFailed;
+        std::string const key = s.artist + '\x1f' + s.title;
+        {
+            std::lock_guard fl(sFailMx);
+            auto const it = sFailed.find(key);
+            if (it != sFailed.end() && fetch::nowMs() - it->second < 600000) return;
         }
-        if (got) { fitShown(*got); if (got->lines.empty()) got.reset(); } // nothing drawable = no lyrics (nothing on screen)
-        std::lock_guard l(gS->mutex);
-        if (gS->clock.songSeq() != seq) return;
-        gS->lyrics      = got ? std::make_shared<Lyrics const>(std::move(*got)) : nullptr;
-        gS->lyricsState = got ? LyricsState::Found : LyricsState::NotFound;
+        int n = 0;
+        try { n = translate::translateToEnglish(&httpGet, *got, fetch::nowMs() + 9000); } catch (...) {}
+        appendLog("lyrics_translate", s.artist + " - " + s.title + ": " + std::to_string(n) + " lines translated\n");
+        {
+            std::lock_guard fl(sFailMx);
+            if (n > 0) sFailed.erase(key); else sFailed[key] = fetch::nowMs();
+        }
+        if (n <= 0) return;
+        if (!fromOverride) writeCache(*got); // the English is kept with the song (lines it missed are asked for next time)
+        publish(std::move(*got), true);
     } catch (...) {} }).detach(); // filesystem / stream errors in a detached thread would std::terminate the game
 }
 
@@ -951,6 +977,45 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     }
     { auto const& pu = gS->engine.pulse(); // [BF] the horizon equaliser is drawn by the sky (behind the terrain)
       if (!pu.barEl().empty()) { in.eq = &pu.barEl(); in.eqAlpha = pu.barAlpha(); in.eqColor = pu.barColor(); } }
+    if (cfg.autoFont) { // [LyricsForge] a random font that fits the song, picked once per song (again if the fit changed
+        // under it, or once the lyrics are in), whatever the sky does; only fonts that draw every letter these lyrics use
+        auto& sh = gS->shuffle;
+        std::string const song = gS->demo.on ? "demo|" + gS->demo.title : gS->clock.hasTrack() ? gS->clock.track().key() : std::string();
+        Lyrics const* ly = gS->demo.on ? gS->demo.lyrics.get() : gS->lyrics.get();
+        static Lyrics const* sCpFor = nullptr;
+        static std::vector<uint32_t> sCps; // the letters of these lyrics the saved font can draw (what fitShown kept)
+        if (ly != sCpFor) {
+            sCpFor = ly;
+            sCps.clear();
+            Font const* user = gS->engine.fonts().get(cfg.font);
+            if (ly) for (auto const& ln : ly->lines)
+                for (uint32_t c : text::codepoints(ln.text))
+                    if (translate::countsAsLetter(c) && (!user || user->find(c))) sCps.push_back(c);
+            std::sort(sCps.begin(), sCps.end());
+            sCps.erase(std::unique(sCps.begin(), sCps.end()), sCps.end());
+        }
+        auto covers = [&](std::string_view id) {
+            if (!gS->engine.fonts().has(id)) return false;
+            Font const* f = gS->engine.fonts().get(id);
+            if (!f) return false;
+            for (uint32_t c : sCps) if (!f->find(c) && !(f->fallback && f->fallback->find(c))) return false;
+            return true;
+        };
+        bool const haveMood = cfg.skyFitSong && !sh.moodKey.empty();
+        auto const& fits = songFonts(sh.mood, haveMood, songCover());
+        bool const ok = gS->songFont.empty() || (std::find(fits.begin(), fits.end(), gS->songFont) != fits.end() && covers(gS->songFont));
+        std::string const key = song + (ly ? "|l" : "") + '|' + std::to_string(int(sh.mood) * int(haveMood)) + '|' + std::to_string(songCover());
+        if (!song.empty() && (gS->songFontKey != key || !ok)) {
+            if (song != gS->songFontSong) { gS->lastSongFont = gS->songFont; gS->songFontSong = song; } // not twice in a row
+            sh.rng = sh.rng * 1664525u + 1013904223u + uint32_t(nowMsWall());
+            std::string const pick = songFontFor(sh.mood, haveMood, songCover(), sh.rng, gS->lastSongFont, covers);
+            gS->songFontKey = key;
+            if (pick != gS->songFont) {
+                gS->songFont = pick;
+                gS->directorLines.push_back(pick.empty() ? std::string("   font (saved font: none of the fitting ones draw these lyrics)") : "   font " + pick);
+            }
+        }
+    }
     std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" && !cfg.skyShuffle ? gS->chorus.sky : std::string();
     std::string randomSky; // [BF] Random sky
     if (cfg.skyShuffle && cfg.skyPreset != "off" && !cfg.skyImage) {
@@ -973,16 +1038,6 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
                 auto const ms = moodOf(moodInputs(mem, ly, songCover(), live));
                 if (ms.mood != sh.mood || newSong) gS->directorLines.push_back(std::string("   sky mood ") + moodName(ms.mood));
                 sh.mood = ms.mood;
-                { // [LyricsForge] a random font that fits, picked once per song (again only if the fit changed under it)
-                    auto const& fits = songFonts(sh.mood, true, songCover());
-                    bool const  ok   = std::find(fits.begin(), fits.end(), gS->songFont) != fits.end();
-                    if (gS->songFontKey != song || !ok) {
-                        sh.rng = sh.rng * 1664525u + 1013904223u + uint32_t(nowMsWall());
-                        gS->songFont = songFontFor(sh.mood, true, songCover(), sh.rng, gS->lastSongFont);
-                        gS->songFontKey = song;
-                        if (!gS->songFont.empty()) { gS->lastSongFont = gS->songFont; gS->directorLines.push_back("   font " + gS->songFont); }
-                    }
-                }
             }
         }
         bool coverMiss = false; // [LyricsForge] the cover arrived after the first pick (YouTube / Apple send it late): if the

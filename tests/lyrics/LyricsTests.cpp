@@ -1346,6 +1346,42 @@ TEST(color_words) { // [LyricsForge] colour words turn their colour
     CHECK(colorWord("\xe3\x83\x94\xe3\x83\xb3\xe3\x82\xaf\xe8\x89\xb2\xe3\x81\xab") == 0xFF5FB4u); // pinku-iro ni
     CHECK(colorWord("\xe5\x8b\x95\xe7\x89\xa9\xe5\x9c\x92") == 0); // doubutsuen (zoo): no colour
     CHECK(colorWord("\xe9\x9d\xa2\xe7\x99\xbd\xe3\x81\x84") == 0); // omoshiroi (interesting) is not white
+    CHECK(colorWord("\xe8\xb5\xa4\xe3\x81\xa1\xe3\x82\x83\xe3\x82\x93") == 0); // akachan (baby) is not red
+    CHECK(colorWord("\xe9\x9d\x92\xe6\x98\xa5") == 0);                         // seishun (youth) is not blue
+    CHECK(colorWord("\xe8\xb5\xa4\xe3\x81\x84") == 0xFF3B3Bu);                 // akai (red)
+    CHECK(colorWord("\xe7\x9c\x9f\xe3\x81\xa3\xe9\x9d\x92\xe3\x81\xaa") == 0x3B8BFFu); // massao na (deep blue)
+    // a whole unspaced line holding a colour is a phrase, not a word: no tint for the line
+    CHECK(colorWord("\xe3\x83\x94\xe3\x83\xb3\xe3\x82\xaf\xe3\x81\xae\xe7\xa9\xba\xe3\x82\x92\xe8\xa6\x8b\xe4\xb8\x8a\xe3\x81\x92\xe3\x81\xa6\xe3\x81\x84\xe3\x81\x9f") == 0);
+}
+
+TEST(audit_fixes) { // [LyricsForge] the review's findings, kept fixed
+    using namespace bf::lyrics::translate;
+    { // a cache with only some lines translated still asks for the rest
+        Lyrics l;
+        for (int i = 0; i < 6; ++i) {
+            Line ln; ln.index = i; ln.start = i * 1000;
+            ln.text = "\xe3\x81\x82\xe3\x81\x84\xe3\x81\x86"; // aiu
+            if (i < 3) ln.translation = "abc";
+            l.lines.push_back(ln);
+        }
+        CHECK(needsTranslation(l));
+        for (auto& ln : l.lines) ln.translation = "abc";
+        CHECK(!needsTranslation(l));
+    }
+    { // emoji / variation selectors / hearts are not letters: "I <heart> you" stays a line
+        CHECK(!countsAsLetter(0x2764)); CHECK(!countsAsLetter(0xFE0F)); CHECK(!countsAsLetter(0x1F496));
+        CHECK(countsAsLetter('I')); CHECK(countsAsLetter(0x3042));
+        Lyrics l; Line ln; ln.index = 0; ln.start = 0; ln.text = "I \xe2\x9d\xa4\xef\xb8\x8f you";
+        ln.words = {Word::of(ln.text, 0, 1000)}; l.lines.push_back(ln);
+        fitToFonts(l, [](uint32_t c) { return c < 0x80; });
+        CHECK(l.lines.size() == 1);
+    }
+    { // a font filter: only fonts that draw the song's letters
+        auto f = songFontFor(SkyMood::Hype, true, 0xFF5FA8, 12345u, "", [](std::string_view id) { return id == "bangers"; });
+        CHECK(f == "bangers" || f.empty());
+        auto none = songFontFor(SkyMood::Hype, true, 0xFF5FA8, 12345u, "", [](std::string_view) { return false; });
+        CHECK(none.empty());
+    }
 }
 
 TEST(cover_skies) { // [LyricsForge] the cover sets the sky colour: pink cover -> pink skies

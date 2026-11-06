@@ -7,6 +7,7 @@
 // drops climb to the intense end, so one song plays like a little arc. The lists lean on the realistic skies; the
 // skies that look like effects are left out of the automatic picks (you can still choose them yourself).
 #pragma once
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -51,8 +52,10 @@ std::string pickMoodSky(SkyMood m, float intensity, std::vector<std::string> con
 /// [LyricsForge] the lyric fonts that fit a song, from the whole built-in library (unique but readable; no gimmick
 /// fonts): a bright vivid pink cover -> its playful set (Shrikhand, Fredoka, Lobster...), else by mood. Empty = none.
 std::vector<std::string_view> const& songFonts(SkyMood m, bool haveMood, uint32_t cover);
-/// one of songFonts() at random (rng), not `avoid` (the last song's) when there is a choice; "" = none
-std::string songFontFor(SkyMood m, bool haveMood, uint32_t cover, uint32_t rng, std::string_view avoid);
+/// one of songFonts() at random (rng), not `avoid` (the last song's) when there is a choice; only fonts `usable` accepts
+/// (when given: the ones that draw the song's letters); "" = none
+std::string songFontFor(SkyMood m, bool haveMood, uint32_t cover, uint32_t rng, std::string_view avoid,
+                        std::function<bool(std::string_view)> const& usable = {});
 
 /// [LyricsForge] the curated skies whose palette shares the cover's colour (a pink cover -> the pink skies), closest
 /// hue first; empty when the cover is grey / dark / missing (0). Pure, uses the built-in preset colours.

@@ -97,16 +97,29 @@ bool nonLatin(std::string_view line) {
 }
 
 bool needsTranslation(Lyrics const& l) {
+    // [LyricsForge] per line, not per song: a cache with only some lines translated (the 9 s deadline ran out, or the
+    // network dropped mid-song) still asks for the rest next time
     std::vector<std::string> latin;
-    bool any = false;
+    bool open = false, foreignOpen = false;
     for (auto const& ln : l.lines) {
-        if (ln.index < 0 || ln.text.empty()) continue;
-        if (!ln.translation.empty()) return false; // a source / override already translated it
-        any = true;
-        if (nonLatin(ln.text)) return true;
+        if (ln.index < 0 || trim(ln.text).empty()) continue;
         for (auto& w : wordsLower(ln.text)) latin.push_back(std::move(w));
+        if (!ln.translation.empty()) continue; // a source / override / earlier run already translated it
+        open = true;
+        if (nonLatin(ln.text)) foreignOpen = true;
     }
-    return any && latin.size() >= 12 && englishShare(latin) < 0.12f;
+    if (foreignOpen) return true;
+    return open && latin.size() >= 12 && englishShare(latin) < 0.12f;
+}
+
+bool countsAsLetter(uint32_t c) {
+    if (c <= 0x40 || c == 0x3000) return false;                          // spaces, digits, ASCII punctuation
+    if (c >= 0x2000 && c <= 0x206F) return false;                        // general punctuation, ZWJ / ZWNJ
+    if (c >= 0x2190 && c <= 0x2BFF) return false;                        // arrows, symbols, dingbats (the heart), shapes
+    if (c >= 0xFE00 && c <= 0xFE0F) return false;                        // emoji variation selectors (invisible)
+    if (c >= 0x1F000 && c <= 0x1FAFF) return false;                      // emoji
+    if (c >= 0xE0000) return false;                                      // tags
+    return true;
 }
 
 int fitToFonts(Lyrics& l, std::function<bool(uint32_t)> const& canDraw) {
@@ -117,7 +130,7 @@ int fitToFonts(Lyrics& l, std::function<bool(uint32_t)> const& canDraw) {
         if (ln.index >= 0 && !ln.text.empty()) {
             int letters = 0, bad = 0;
             for (uint32_t c : text::codepoints(ln.text)) {
-                if (c <= 0x40 || (c >= 0x2000 && c <= 0x206F) || c == 0x3000) continue; // spaces, digits, punctuation
+                if (!countsAsLetter(c)) continue; // spaces, digits, punctuation, emoji (skipped when drawn)
                 ++letters;
                 bad += canDraw(c) ? 0 : 1;
             }
@@ -149,7 +162,8 @@ std::string parseGtx(std::string_view body) {
 
 int translateToEnglish(fetch::HttpGet const& http, Lyrics& l, int64_t deadlineMs) {
     std::vector<Line*> lines;
-    for (auto& ln : l.lines) if (ln.index >= 0 && !trim(ln.text).empty()) lines.push_back(&ln);
+    for (auto& ln : l.lines) // only the lines still without English (a partial cache from an earlier run keeps its own)
+        if (ln.index >= 0 && !trim(ln.text).empty() && ln.translation.empty()) lines.push_back(&ln);
     int got = 0;
     size_t i = 0;
     while (i < lines.size() && fetch::nowMs() < deadlineMs) {

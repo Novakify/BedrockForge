@@ -218,8 +218,10 @@ std::vector<std::string_view> const& songFonts(SkyMood m, bool haveMood, uint32_
     return lists[std::min<size_t>(size_t(m), 5)];
 }
 
-std::string songFontFor(SkyMood m, bool haveMood, uint32_t cover, uint32_t rng, std::string_view avoid) {
-    auto const& l = songFonts(m, haveMood, cover);
+std::string songFontFor(SkyMood m, bool haveMood, uint32_t cover, uint32_t rng, std::string_view avoid,
+                        std::function<bool(std::string_view)> const& usable) {
+    std::vector<std::string_view> l;
+    for (auto f : songFonts(m, haveMood, cover)) if (!usable || usable(f)) l.push_back(f);
     std::vector<std::string_view> c;
     for (auto f : l) if (f != avoid) c.push_back(f);
     if (c.empty()) c = l;

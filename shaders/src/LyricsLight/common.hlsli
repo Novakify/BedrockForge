@@ -23,7 +23,9 @@ float3 llUnitLuma(float3 c) { return c / max(llLuma(c), 1e-3); }
 
 // face normal from the world position; blocks snap to their axis (no edge noise), plants/mobs keep the true one
 float3 llNormal(float3 wp, float3 V, bool snap) {
-    float3 n = normalize(cross(ddx(wp), ddy(wp)));
+    float3 c = cross(ddx(wp), ddy(wp));
+    float  l = dot(c, c);
+    float3 n = l > 1e-20 ? c * rsqrt(l) : float3(0.0, 1.0, 0.0); // sliver / far / helper-lane pixels: no NaN, face up
     if (dot(n, V) < 0.0) n = -n;
     if (snap) {
         float3 a = abs(n);

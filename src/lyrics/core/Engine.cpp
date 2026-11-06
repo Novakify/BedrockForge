@@ -57,13 +57,29 @@ uint32_t colorWord(std::string_view text) {
         return 0;
     };
     if (w.empty()) { // [LyricsForge] Japanese / Chinese colour words (no spaces: the word can hold more than the colour)
+        // only forms that can't hide inside another word: bare 赤 / 青 are in 赤ちゃん (baby) / 青春 (youth), 白い in 面白い
         static constexpr C kCjk[] = {
-            {"\xe3\x83\x94\xe3\x83\xb3\xe3\x82\xaf", 0xFF5FB4}, /* pinku */ {"\xe6\xa1\x83\xe8\x89\xb2", 0xFF7FBF}, /* momoiro */
-            {"\xe8\x99\xb9", 0xFF5FD0}, /* niji (rainbow) */ {"\xe8\xb5\xa4", 0xFF3B3B}, /* aka */
-            {"\xe9\x9d\x92", 0x3B8BFF}, /* ao */ {"\xe7\xb7\x91", 0x3BE26A}, /* midori */ {"\xe9\xbb\x84\xe8\x89\xb2", 0xFFE53B}, /* kiiro */
-            {"\xe7\xb4\xab", 0xA45BFF}, /* murasaki */ {"\xe7\x99\xbd\xe8\x89\xb2", 0xFFFFFF}, /* shiroiro */ {"\xe9\xbb\x92\xe8\x89\xb2", 0x2A2A34}, /* kuroiro */
-            {"\xe9\x87\x91\xe8\x89\xb2", 0xFFC93C}, /* kin-iro */ {"\xe9\x8a\x80\xe8\x89\xb2", 0xD8E0EA}, /* gin-iro */ {"\xe3\x82\xaa\xe3\x83\xac\xe3\x83\xb3\xe3\x82\xb8", 0xFF8A1E}, /* orenji */
+            {"\xe3\x83\x94\xe3\x83\xb3\xe3\x82\xaf", 0xFF5FB4}, // pinku
+            {"\xe6\xa1\x83\xe8\x89\xb2", 0xFF7FBF}, // momoiro
+            {"\xe8\x99\xb9", 0xFF5FD0}, // niji (rainbow)
+            {"\xe8\xb5\xa4\xe3\x81\x84", 0xFF3B3B}, // akai
+            {"\xe8\xb5\xa4\xe8\x89\xb2", 0xFF3B3B}, // akairo
+            {"\xe7\x9c\x9f\xe3\x81\xa3\xe8\xb5\xa4", 0xFF3B3B}, // makka
+            {"\xe9\x9d\x92\xe3\x81\x84", 0x3B8BFF}, // aoi
+            {"\xe9\x9d\x92\xe8\x89\xb2", 0x3B8BFF}, // aoiro
+            {"\xe7\x9c\x9f\xe3\x81\xa3\xe9\x9d\x92", 0x3B8BFF}, // massao
+            {"\xe7\xb7\x91\xe8\x89\xb2", 0x3BE26A}, // midoriiro
+            {"\xe7\xb4\xab\xe8\x89\xb2", 0xA45BFF}, // murasakiiro
+            {"\xe9\xbb\x84\xe8\x89\xb2", 0xFFE53B}, // kiiro
+            {"\xe7\x99\xbd\xe8\x89\xb2", 0xFFFFFF}, // shiroiro
+            {"\xe7\x9c\x9f\xe3\x81\xa3\xe7\x99\xbd", 0xFFFFFF}, // masshiro
+            {"\xe9\xbb\x92\xe8\x89\xb2", 0x2A2A34}, // kuroiro
+            {"\xe7\x9c\x9f\xe3\x81\xa3\xe9\xbb\x92", 0x2A2A34}, // makkuro
+            {"\xe9\x87\x91\xe8\x89\xb2", 0xFFC93C}, // kin-iro
+            {"\xe9\x8a\x80\xe8\x89\xb2", 0xD8E0EA}, // gin-iro
+            {"\xe3\x82\xaa\xe3\x83\xac\xe3\x83\xb3\xe3\x82\xb8", 0xFF8A1E}, // orenji
         };
+        if (text::length(text) > 8) return 0; // a long unspaced run is a whole phrase: tinting it would colour the line
         for (auto const& c : kCjk) if (text.find(c.n) != std::string_view::npos) return c.c;
         return 0;
     }
