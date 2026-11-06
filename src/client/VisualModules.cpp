@@ -40,6 +40,8 @@
 
 #include "client/Module.h"
 
+namespace bf::lyrics::win { bool skyFog(float rgb[3], float& weight); } // LyricsForge sky fog (Runtime_win.cpp)
+
 namespace bedrock_forge::client {
 
 namespace {
@@ -255,23 +257,30 @@ namespace { std::atomic<int> gViewDiag{0}; std::atomic<int64_t> gViewDiagMs{0}; 
 LL_TYPE_INSTANCE_HOOK(BfViewDiagHook, ll::memory::HookPriority::Normal, LevelRendererCamera,
                       &LevelRendererCamera::$render, void, BaseActorRenderContext& ctx,
                       ViewRenderObject const& renderObj, IClientInstance& ci) {
+    // [LyricsForge] sky fog (step 2): the layout was verified by the read-only diag (camera pos + fog/sky colours land
+    // on the expected floats), so the fog colour is blended toward the LyricsForge sky's horizon before the world draws.
+    // Every shader that reads FogColor (vanilla fog, LyricsLight's sky tint and water) follows the sky.
+    float sky[3], w = 0;
+    if (::bf::lyrics::win::skyFog(sky, w)) {
+        auto& vd = const_cast<ViewRenderData&>(*reinterpret_cast<ViewRenderData const*>(&renderObj.mViewData));
+        float fc[4];
+        std::memcpy(fc, &vd.mFogColor, sizeof fc);
+        for (int k = 0; k < 3; ++k) fc[k] += (sky[k] - fc[k]) * w;
+        std::memcpy(&vd.mFogColor, fc, sizeof fc);
+    }
     int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (gViewDiag.load() < 8 && now - gViewDiagMs.load() >= 4000) {
         gViewDiagMs = now;
         ++gViewDiag;
-        float f[35];
+        float f[14];
         std::memcpy(f, &renderObj.mViewData, sizeof f);
-        char b[900];
-        int n = std::snprintf(b, sizeof b, "[BF] view diag:");
-        for (int i = 0; i < 35 && n < 860; ++i) n += std::snprintf(b + n, sizeof b - size_t(n), " %d:%.4g", i, double(f[i]));
-        fogLog().info("{}", b);
+        fogLog().info("[BF] view: cam {:.1f} {:.1f} {:.1f} fog {:.3f} {:.3f} {:.3f} (sky w {:.2f}) skycol {:.3f} {:.3f} {:.3f}",
+                      f[0], f[1], f[2], f[6], f[7], f[8], w, f[10], f[11], f[12]);
     }
     origin(ctx, renderObj, ci);
 }
 
 void installVisualHooks() {
-    BfPerFrameInitHook::hook();
-    BfSetupFogHook::hook();
     BfViewDiagHook::hook();
     BfTessLightHook::hook();
     BfAmbientHook::hook();
@@ -285,8 +294,6 @@ void installVisualHooks() {
     BfTimeHook::hook();
 }
 void uninstallVisualHooks() {
-    BfPerFrameInitHook::unhook();
-    BfSetupFogHook::unhook();
     BfViewDiagHook::unhook();
     BfTessLightHook::unhook();
     BfAmbientHook::unhook();

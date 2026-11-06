@@ -93,6 +93,19 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         mWorld.sat      = ease(mWorld.sat, want.sat, dt, 0.08f, 0.8f);
     }
 
+    { // [LyricsForge] fog: the far terrain fades into the sky's own horizon instead of the game's blue
+        float want[3] = {mFog[0], mFog[1], mFog[2]}, wantW = 0;
+        if (p) {
+            float const b = std::clamp(mFrame.brightness, 0.25f, 1.4f);
+            for (int k = 0; k < 3; ++k) want[k] = std::clamp((0.8f * chan(p->horizon, k) + 0.2f * chan(p->top, k)) * b, 0.0f, 1.0f);
+            wantW = std::clamp(mFrame.visible, 0.0f, 1.0f) * (in.skyOpen ? 1.0f : 0.25f);
+        }
+        float const dt = float(std::clamp(in.dtSec, 0.0, 0.25));
+        float const tt = mSweep < 1.0f ? 0.8f : 0.35f;
+        for (int k = 0; k < 3; ++k) mFog[k] = ease(mFog[k], want[k], dt, tt, tt);
+        mFogW = ease(mFogW, wantW, dt, 0.4f, 0.6f);
+    }
+
     FxIn fi;
     fi.nowMs = in.nowMs; fi.dtSec = in.dtSec; fi.cam = Cam::of(in.yaw, in.pitch);
     fi.camX = in.camX; fi.camY = in.camY; fi.camZ = in.camZ;

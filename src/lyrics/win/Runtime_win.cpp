@@ -809,6 +809,8 @@ void pollKeys(bedrock_forge::client::Frame& f) {
 }
 
 /// LyricsFlow 2.1 live sky: clock + stars / weather / picture -> BF_CopySkyFrame. Caller holds gS->mutex.
+std::atomic<uint32_t> gSkyFog{0};      // [LyricsForge] fog rgb8 + weight8 -> VisualModules (render thread)
+std::atomic<int64_t>  gSkyFogAtNs{0};
 std::atomic<float> gFovScale{1.0f}; // [BF] fovBreath -> the FOV hook (client/Modules.cpp)
 std::atomic<int64_t> gFovAtNs{0};   // when it was last published: a stale value (no HUD frames) falls back to 1
 void publishDirector(MusicState const& m, CinemaOut const& c) {
@@ -833,6 +835,15 @@ void publishDirector(MusicState const& m, CinemaOut const& c) {
     }
     if (!w.neutral()) d.active = 1u;
     gBfDirector = d;
+}
+
+/// [LyricsForge] hand this frame's sky fog to the render thread (rgb8 + weight8, lock-free)
+void publishSkyFog() {
+    auto b8 = [](float v) { return uint32_t(std::clamp(int(std::lround(v * 255.0f)), 0, 255)); };
+    float const* f = gS->sky.fog();
+    float const  w = gS->engine.config().skyFog ? gS->sky.fogWeight() : 0.0f;
+    gSkyFog.store(b8(f[0]) | b8(f[1]) << 8 | b8(f[2]) << 16 | b8(w) << 24, std::memory_order_relaxed);
+    gSkyFogAtNs.store(nowNs(), std::memory_order_relaxed);
 }
 
 void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
@@ -953,10 +964,14 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         eff.skyStrength = std::min(1.0f, eff.skyStrength * (1.0f + 0.45f * mo.skyBoost)); // aurora burst: the sky's
         eff.skySpeed *= 1.0f + 0.7f * mo.skyBoost;                                         // own layers, brighter + faster
         gS->sky.step(gS->moduleOn && cfg.enabled, eff, gS->engine.perf(), in);
+        publishSkyFog();
+
         return;
     }
     gS->skyShown = cfg.skyPreset;
     gS->sky.step(gS->moduleOn && cfg.enabled, cfg, gS->engine.perf(), in);
+    publishSkyFog();
+
 }
 
 /// [BF] Auto director: once per song (1 s in, so the per-song memory has loaded), a scene that fits the song - unless
@@ -1552,6 +1567,15 @@ void uninstall() {
         gS->engine.publish(false, 70.0f);
     }
     // State stays allocated on purpose: detached fetch threads may still be finishing and check gS->running.
+}
+
+/// [LyricsForge] the sky's fog for this frame: false when the sky isn't driving it (off, stale, other dimension)
+bool skyFog(float rgb[3], float& weight) {
+    if (nowNs() - gSkyFogAtNs.load(std::memory_order_relaxed) > 300000000LL) return false;
+    uint32_t const v = gSkyFog.load(std::memory_order_relaxed);
+    weight = float(v >> 24) / 255.0f;
+    for (int k = 0; k < 3; ++k) rgb[k] = float((v >> (8 * k)) & 255u) / 255.0f;
+    return weight > 0.004f;
 }
 
 float cinemaFovScale() {

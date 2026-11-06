@@ -55,6 +55,10 @@ public:
     /// [BF] how bright the sky behind the lyrics is right now, 0..1 (contrast guard)
     float                    luma() const { return mLuma; }
     WorldLight const&        world() const { return mWorld; }
+    /// [LyricsForge] the colour the world's fog should take (the sky's horizon, as bright as the sky is right now) and
+    /// how much it should replace the game's own fog (0 = sky off / underground / another dimension)
+    float const*             fog() const { return mFog; }
+    float                    fogWeight() const { return mFogW; }
     std::vector<Quad> const& quads() const { return mQuads; }
 
 private:
@@ -65,6 +69,7 @@ private:
     uint32_t          mSeq = 0;
     float             mLuma = 0;
     WorldLight        mWorld;
+    float             mFog[3] = {0.67f, 0.82f, 1.0f}, mFogW = 0;
     float             mDomeYaw = 0;  // [BF] the dome's turn for the current preset
     std::string       mDomeFor;
     Params            mCurQ{}, mPrevQ{}; // [LyricsForge] the sky shown last frame / the one being swept away
