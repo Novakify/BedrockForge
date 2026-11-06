@@ -488,7 +488,7 @@ void tick(IClientInstance& c) {
     auto* m = Registry::get().find("pvp_preset");
     bool const want = m && m->enabled;
     if (want == gApplied) {
-        if (want) if (auto* b = smooth(c); b && b->mValue.get()) b->set(false, false); // something turned it back on
+        if (want) if (auto* b = smooth(c); b && bool(b->mValue)) b->set(false, false); // something turned it back on
         gFirst = false;
         return;
     }
@@ -497,7 +497,7 @@ void tick(IClientInstance& c) {
     if (want) {
         // turned on now: remember your setting. Already on at startup: the game may have saved our "off" last time,
         // so the value kept from when you turned it on wins.
-        if (!gFirst) if (auto* st = m->setting("restore_smooth")) st->on = b->mValue.get();
+        if (!gFirst) if (auto* st = m->setting("restore_smooth")) st->on = bool(b->mValue);
         Registry::get().save();
         b->set(false, false);
     } else {
