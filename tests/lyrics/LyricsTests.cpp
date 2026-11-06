@@ -1282,6 +1282,10 @@ TEST(cover_skies) { // [LyricsForge] the cover sets the sky colour: pink cover -
     CHECK(!pink.empty());
     CHECK(pink.front() == "cotton_candy");
     CHECK(std::find(pink.begin(), pink.end(), "sakura") != pink.end());
+    CHECK(std::find(pink.begin(), pink.end(), "eclipse_heart") == pink.end()); // bright pink: no dark skies
+    CHECK(std::find(pink.begin(), pink.end(), "cherry") == pink.end());
+    CHECK(coverIsVividBright(0xFF5FA8));
+    CHECK(!coverIsVividBright(0x402030));
     CHECK(std::find(pink.begin(), pink.end(), "storm") == pink.end());
     CHECK(coverSkies(0x808080).empty()); // grey cover: nothing to match
     CHECK(coverSkies(0).empty());

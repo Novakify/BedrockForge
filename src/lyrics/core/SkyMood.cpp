@@ -192,10 +192,19 @@ std::vector<std::string> coverSkies(uint32_t cover) {
                                                        "galaxy", "astral", "cosmos", "rift", "pulsar", "deep_sea", "inferno",
                                                        "crimson", "bright_night", "silk"};
     bool const bright = v >= 0.6f;
+    // a bright pink cover = light, vibrant, daytime skies only (Flamingo: no night, no moon, no crimson)
+    static std::vector<std::string_view> const pinkBright = {"cotton_candy", "sakura", "dream_ocean", "aquarell", "dawn", "prism", "golden_hour"};
+    if (bright && &l == &pink) { for (auto id : pinkBright) if (isCurated(id)) out.emplace_back(id); return out; }
     for (auto id : l)
         if (isCurated(id) && !(bright && std::find(dark.begin(), dark.end(), id) != dark.end())) out.emplace_back(id);
     if (out.size() < 3) { out.clear(); for (auto id : l) if (isCurated(id)) out.emplace_back(id); }
     return out;
+}
+
+bool coverIsVividBright(uint32_t cover) {
+    float h, sat, v;
+    hsv(cover & 0xFFFFFF, h, sat, v);
+    return (cover & 0xFFFFFF) != 0 && sat >= 0.45f && v >= 0.6f;
 }
 
 std::string pickCoverSky(uint32_t cover, std::vector<std::string> const& recent, std::string_view current, uint32_t rng) {
