@@ -317,11 +317,16 @@ void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
     // bound textures: every root descriptor table, first 4 descriptors of each (UiCapture lock, then ours)
     auto tables = rf::uicapture::rootTables(list);
     std::vector<std::tuple<unsigned, int, size_t>> cpus;
+    std::string                                    dbg;
     for (auto const& [ri, gpu] : tables) {
         size_t   cpu = 0;
         unsigned inc = 0;
-        if (rf::uicapture::gpuDescToCpu(gpu, cpu, inc))
+        char     tb[64];
+        if (rf::uicapture::gpuDescToCpu(gpu, cpu, inc)) {
             for (int k = 0; k < 4; ++k) cpus.emplace_back(ri, k, cpu + size_t(k) * inc);
+            std::snprintf(tb, sizeof tb, " r%u:%llx->%zx", ri, gpu, cpu);
+        } else std::snprintf(tb, sizeof tb, " r%u:%llx->?", ri, gpu);
+        dbg += tb;
     }
     std::ostringstream s;
     s << hex(ps) << " " << nameOf(ps) << " | idx " << count << " inst " << inst << " | tex:";
@@ -333,6 +338,7 @@ void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
         s << " [r" << ri << "." << k << " " << v.w << "x" << v.h << " " << fmt(DXGI_FORMAT(v.fmt)) << " m" << v.mips << " " << v.res << "]";
     }
     if (tables.empty()) s << " (no root tables tracked)";
+    s << " | tables" << dbg << " | srvs known " << gSrvs.size();
     gDetail[gWhich].push_back(s.str());
 }
 

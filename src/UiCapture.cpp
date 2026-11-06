@@ -564,6 +564,30 @@ void STDMETHODCALLTYPE setHeapsHook(ID3D12GraphicsCommandList* l, UINT n, ID3D12
     r.heapsKnown = n <= 2 && (h || n == 0);
     r.nHeaps     = r.heapsKnown ? n : 0;
     for (UINT i = 0; i < r.nHeaps; ++i) r.heaps[i] = h[i];
+    // Glass Armor probe: shader-visible heaps made before the hooks went in are unknown to gHeaps - learn them here
+    if (rf::glassarmor::wantRoot())
+        for (UINT i = 0; i < r.nHeaps; ++i) {
+            ID3D12DescriptorHeap* hp = h[i];
+            if (!hp) continue;
+            auto const gs = hp->GetGPUDescriptorHandleForHeapStart().ptr;
+            bool known    = false;
+            for (auto const& hi : gHeaps) known |= hi.heap == hp && hi.gpuStart == gs;
+            if (known) continue;
+            auto        dsc = hp->GetDesc();
+            HeapInfo    hi;
+            ID3D12Device* dev = nullptr;
+            if (FAILED(hp->GetDevice(IID_PPV_ARGS(&dev))) || !dev) continue;
+            hi.inc = dev->GetDescriptorHandleIncrementSize(dsc.Type);
+            dev->Release();
+            hi.heap     = hp;
+            hi.type     = dsc.Type;
+            hi.start    = hp->GetCPUDescriptorHandleForHeapStart().ptr;
+            hi.count    = dsc.NumDescriptors;
+            hi.flags    = UINT(dsc.Flags);
+            hi.gpuStart = gs;
+            hi.order    = UINT(gHeaps.size());
+            if (gHeaps.size() < 4096) gHeaps.push_back(hi);
+        }
 }
 void STDMETHODCALLTYPE setRootSigHook(ID3D12GraphicsCommandList* l, ID3D12RootSignature* sig) {
     reinterpret_cast<SetRootSig_t>(gOrig[14])(l, sig);
