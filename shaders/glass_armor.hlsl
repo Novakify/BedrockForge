@@ -57,13 +57,13 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     }
 
     float aa   = max(fwidth(d), 1e-4) * 1.2;
-    float line = 1.0 - smoothstep(0.17 - aa, 0.17 + aa, d);          // neon outline
+    float ln   = 1.0 - smoothstep(0.17 - aa, 0.17 + aa, d);          // neon outline
     float glow = exp(-d / 0.42);                                       // outline light spilling into the glass
     float3 edge = GA_EDGE, tint = GA_TINT;
 
     float3 col = tint * 0.55 + edge * glow * 0.85 + 0.12 * glow;
     float  a   = saturate(0.09 + 0.38 * glow);
-    col = lerp(col, edge * 1.15, line);
-    a   = lerp(a, 0.96, line);
+    col = lerp(col, edge * 1.15, ln);
+    a   = lerp(a, 0.96, ln);
     return float4(col, a);
 }
