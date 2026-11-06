@@ -278,7 +278,14 @@ void noteSrv(size_t cpu, ID3D12Resource* r) {
         i.mips = d.MipLevels;
     }
     std::lock_guard l(gMutex);
-    if (gSrvs.size() < 200000) gSrvs[cpu] = i;
+    if (gSrvs.size() < 400000 || gSrvs.count(cpu)) gSrvs[cpu] = i;
+}
+
+void copySrv(size_t dst, size_t src) {
+    std::lock_guard l(gMutex);
+    auto it = gSrvs.find(src);
+    if (it != gSrvs.end()) { if (gSrvs.size() < 400000 || gSrvs.count(dst)) gSrvs[dst] = it->second; }
+    else gSrvs.erase(dst);
 }
 
 bool actorFamily(std::string const& n) {

@@ -554,7 +554,7 @@ std::unordered_map<ID3D12GraphicsCommandList*, ListRoot> gListRoot;
 bool rootTracking() { return !gInSnapshot && (rf::sky::wantRoot() || rf::glassarmor::wantRoot()); }
 void STDMETHODCALLTYPE createSrvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_SHADER_RESOURCE_VIEW_DESC const* desc, D3D12_CPU_DESCRIPTOR_HANDLE h) {
     reinterpret_cast<CreateSrv_t>(gOrig[21])(d, r, desc, h);
-    if (rf::glassarmor::wantSrvs()) rf::glassarmor::noteSrv(h.ptr, r);
+    rf::glassarmor::noteSrv(h.ptr, r); // always: textures make their SRVs once, long before a capture
 }
 void STDMETHODCALLTYPE setHeapsHook(ID3D12GraphicsCommandList* l, UINT n, ID3D12DescriptorHeap* const* h) {
     reinterpret_cast<SetHeaps_t>(gOrig[13])(l, n, h);
@@ -754,6 +754,19 @@ void STDMETHODCALLTYPE copyDescsHook(ID3D12Device* d, UINT nDst, D3D12_CPU_DESCR
                                      UINT nSrc, D3D12_CPU_DESCRIPTOR_HANDLE const* src, UINT const* srcSz,
                                      D3D12_DESCRIPTOR_HEAP_TYPE type) {
     reinterpret_cast<CopyDescs_t>(gOrig[8])(d, nDst, dst, dstSz, nSrc, src, srcSz, type);
+    if (type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV && dst && src && rf::glassarmor::wantSrvs()) {
+        static UINT sInc = d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        UINT di = 0, dOff = 0, si = 0, sOff = 0;
+        while (di < nDst && si < nSrc) {
+            UINT dN = dstSz ? dstSz[di] : 1, sN = srcSz ? srcSz[si] : 1;
+            if (dOff >= dN) { ++di; dOff = 0; continue; }
+            if (sOff >= sN) { ++si; sOff = 0; continue; }
+            rf::glassarmor::copySrv(dst[di].ptr + SIZE_T(dOff) * sInc, src[si].ptr + SIZE_T(sOff) * sInc);
+            ++dOff;
+            ++sOff;
+        }
+        return;
+    }
     if (type != D3D12_DESCRIPTOR_HEAP_TYPE_RTV || !dst || !src) return;
     ++gCopyCalls;
     UINT inc = rtvInc(d);
@@ -772,6 +785,11 @@ void STDMETHODCALLTYPE copyDescsHook(ID3D12Device* d, UINT nDst, D3D12_CPU_DESCR
 void STDMETHODCALLTYPE copySimpleHook(ID3D12Device* d, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE dst, D3D12_CPU_DESCRIPTOR_HANDLE src,
                                       D3D12_DESCRIPTOR_HEAP_TYPE type) {
     reinterpret_cast<CopySimple_t>(gOrig[9])(d, n, dst, src, type);
+    if (type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV && rf::glassarmor::wantSrvs()) {
+        static UINT sInc = d->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        for (UINT i = 0; i < n; ++i) rf::glassarmor::copySrv(dst.ptr + SIZE_T(i) * sInc, src.ptr + SIZE_T(i) * sInc);
+        return;
+    }
     if (type != D3D12_DESCRIPTOR_HEAP_TYPE_RTV) return;
     ++gCopyCalls;
     UINT inc = rtvInc(d);

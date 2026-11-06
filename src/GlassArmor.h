@@ -29,6 +29,8 @@ bool capturing();
 bool wantRoot();
 bool wantSrvs();
 void noteSrv(size_t cpuHandle, ID3D12Resource* res);
+/// CopyDescriptors* of CBV/SRV/UAV descriptors while a capture is armed: dst now views what src viewed.
+void copySrv(size_t dst, size_t src);
 void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso);
 void onDraw(ID3D12GraphicsCommandList* list, unsigned vertsOrIndices, unsigned instances);
 /// Once per Present (UiCapture::beforeOverlay).
