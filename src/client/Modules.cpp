@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <deque>
 #include <format>
 #include <mutex>
@@ -468,6 +469,46 @@ void registerBuiltins() {
         .toggleSetting("camswing", "Camera swing", true);
 }
 
+// ============================================================================ hitch recorder
+// [BF] logs/hitches.txt: every HUD-to-HUD frame over 50 ms, with what our code did in the frame before it (reports,
+// fullbright, forgerender, serverauto, the slowest module hud + total, the panel) and how many tessellator calls ran
+// in between (chunk building). Our work small + many tess calls = chunks; both small = the game / GPU / the PC.
+namespace hitch {
+struct Cost { double reports = 0, fb = 0, fr = 0, sa = 0, mods = 0, modMax = 0, panel = 0; std::string modName; };
+Cost gLast, gCur;
+std::chrono::steady_clock::time_point gPrev{};
+uint64_t gTessPrev = 0;
+int gLines = 0;
+double since(std::chrono::steady_clock::time_point t) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count(); }
+void check(int64_t lastNonHudMs) {
+    auto const now = std::chrono::steady_clock::now();
+    uint64_t const tess = diag::tessLight.load();
+    bool const had = gPrev.time_since_epoch().count() != 0;
+    double const dt = had ? std::chrono::duration<double, std::milli>(now - gPrev).count() : 0;
+    // a menu / loading screen in between isn't a hitch (those frames never reach the HUD)
+    bool const menuGap = lastNonHudMs > 0 && nowMs() - lastNonHudMs < int64_t(dt) + 50;
+    if (had && dt > 50.0 && !menuGap && gLines < 3000) {
+        std::time_t t = std::time(nullptr);
+        std::tm tm{};
+        localtime_s(&tm, &t);
+        auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() % 1000;
+        double const ours = gLast.reports + gLast.fb + gLast.fr + gLast.sa + gLast.mods + gLast.panel;
+        std::error_code ec;
+        auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
+        std::filesystem::create_directories(dir, ec);
+        std::ofstream out(dir / "hitches.txt", std::ios::app | std::ios::binary);
+        if (gLines == 0) out << "---- session (times local; ms = our work in the frame before the hitch)\n";
+        out << std::format("{:02}:{:02}:{:02}.{:03} frame {:6.1f} ms | ours {:5.2f} (reports {:.2f} fb {:.2f} forgerender {:.2f} serverauto {:.2f} "
+                           "modules {:.2f} max {} {:.2f} panel {:.2f}) | tess {}\n",
+                           tm.tm_hour, tm.tm_min, tm.tm_sec, int(ms), dt, ours, gLast.reports, gLast.fb, gLast.fr, gLast.sa, gLast.mods,
+                           gLast.modName.empty() ? "-" : gLast.modName, gLast.modMax, gLast.panel, tess - gTessPrev);
+        ++gLines;
+    }
+    gPrev = now;
+    gTessPrev = tess;
+}
+} // namespace hitch
+
 // ============================================================================ runtime
 void installRuntime() {
     installVisualHooks();
@@ -512,29 +553,44 @@ void installRuntime() {
         }
         gFps.frame();
         noteRenderThread();
+        try { hitch::check(gLastNonHudFrameMs); } catch (...) {}
+        hitch::gLast = hitch::gCur;
+        hitch::gCur  = {};
+        auto tSec = std::chrono::steady_clock::now();
         static int hudFrames = 0;
         if (++hudFrames == 120) shaderpacks::reportOnce(); // ~2 s into the first world
         if (hudFrames % 600 == 0) { diag::write(); shaderpacks::writeReport(); }
+        hitch::gCur.reports = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto& ctx    = ev.uiRenderContext();
         fullbrightTick(ctx.mClient);
+        hitch::gCur.fb = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         forgerender::tick();
+        hitch::gCur.fr = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
+        tSec = std::chrono::steady_clock::now();
         try { serverauto::frame(ctx.mClient, player, hudInputAllowed() && !menu::isOpen(), w32::gameFocused() && !menu::isOpen()); } catch (...) {}
+        hitch::gCur.sa = hitch::since(tSec);
 
         std::vector<std::string> info;
         Frame f{ctx, view, ctx.mClient, player, view.mSize->x, view.mSize->y, info};
         for (auto& m : Registry::get().all())
             if (m->enabled && !m->planned && m->hud) {
+                auto const tm0 = std::chrono::steady_clock::now();
                 try { m->hud(f); } catch (...) {}
+                double const c = hitch::since(tm0);
+                hitch::gCur.mods += c;
+                if (c > hitch::gCur.modMax) { hitch::gCur.modMax = c; hitch::gCur.modName = m->id; }
             }
+        tSec = std::chrono::steady_clock::now();
         auto* lay = Registry::get().find("hud_layout");
         float ix = lay ? lay->num("x", 4) : 4, iy = lay ? lay->num("y", 96) : 96;
         if (ix < 0) ix += view.mSize->x - 100;
         if (iy < 0) iy += view.mSize->y;
         panel(ctx, ix, iy, info, lay ? lay->num("opacity", 0.42f) : 0.42f, {1, 1, 1, 1});
+        hitch::gCur.panel = hitch::since(tSec);
     });
 }
 
