@@ -999,12 +999,12 @@ vec3 nebulaCloud(vec3 d, vec3 c, vec3 cA, vec3 cB, float size, float s) {
     float gas = fbm3(p * 1.15 + w, 5);
     float neb = sm(0.40, 0.86, gas) * fall;                                  // the main glow: smooth, billowing
     float fil = neb > 0.01 ? pow(rfbm(p * 2.0 + w * 1.3, 3), 4.0) * neb * 1.4 : 0.0; // filaments, only inside the glow
-    float ox = fall > 0.05 ? sm(0.50, 0.86, fbm3(p * 0.95 - w + 9.0, 3)) * fall : 0.0;          // a second gas (other colour), offset
+    float ox = fall > 0.05 ? sm(0.50, 0.86, fbm3(p * 0.95 - w + 9.0, 3)) * fall * sm(0.05, 0.10, fall) : 0.0; // a second gas (other colour), offset; faded in past the cut (no ring)
     float dust = fall > 0.05 ? sm(0.52, 0.80, fbm3(p * 1.7 + w * 0.6 + 20.0, 3)) : 0.0;         // broad dark lanes, not a web
     vec3 col = cA * (neb * 0.55 + fil * 0.9) + cB * ox * 0.45 * (1.1 - neb);
     col *= 1.0 - 0.8 * dust * sm(0.15, 0.6, fall);
     col += mix(cA, v3(1.0), 0.5) * exp(-a * a / (size * size * 0.04)) * 0.12;
-    return col * s;
+    return col * s * sm(0.02, 0.04, fall); // fades to 0 at the early-out: no faint edge on dark skies
 }
 
 // a cumulus deck on a sky plane (the realistic skies' clouds, shared). lit/shade: sunlit and shadowed colour;
