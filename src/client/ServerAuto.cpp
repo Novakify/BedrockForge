@@ -13,6 +13,10 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <format>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -44,6 +48,7 @@
 
 #include "client/Module.h"
 #include "client/ServerAuto.h"
+#include "client/ShaderPacks.h"
 
 namespace bedrock_forge::client::serverauto {
 namespace {
@@ -216,8 +221,91 @@ void runActions(IClientInstance& client, LocalPlayer* lp) {
 
 std::vector<std::string> const& ggMessages() { return kGgMessages; }
 
+namespace bench { // [BF] test-only fps bench: config/bench.txt ("run <tag>") -> stand 15 s, then 30 s of teleports 64
+// blocks along +x at y 140 from (0, 140, 0) - the same chunk-loading path every run, like sprinting / flying fast.
+// Results (fps, 1% low, frames over 25 / 50 ms per phase) go to logs/bench.txt. Single-player test worlds only.
+struct Phase { double secs = 0; int frames = 0, over25 = 0, over50 = 0; std::vector<float> ms; };
+struct State {
+    bool active = false;
+    std::string tag;
+    Clock::time_point start, last, nextTp;
+    int tps = 0;
+    Phase stand, move;
+} g;
+Clock::time_point gNextPoll{};
+constexpr double kStand = 15.0, kMove = 30.0;
+std::filesystem::path dir() { return shaderpacks::configFile().parent_path(); }
+std::string stamp() {
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    localtime_s(&tm, &t);
+    char b[16];
+    std::strftime(b, sizeof b, "%H:%M:%S", &tm);
+    return b;
+}
+std::string line(char const* name, Phase& p) {
+    if (p.frames == 0 || p.secs <= 0) return std::format("{} -", name);
+    std::sort(p.ms.begin(), p.ms.end());
+    size_t const k = std::max<size_t>(1, p.ms.size() / 100);
+    double slow = 0;
+    for (size_t i = p.ms.size() - k; i < p.ms.size(); ++i) slow += p.ms[i];
+    slow /= double(k);
+    return std::format("{} fps {:6.1f} 1%low {:6.1f} worst {:6.1f} ms >25ms {:4} >50ms {:3}", name, p.frames / p.secs,
+                       slow > 0 ? 1000.0 / slow : 0.0, p.ms.back(), p.over25, p.over50);
+}
+void poll(LocalPlayer* lp) {
+    auto const t = Clock::now();
+    if (g.active || t < gNextPoll || !lp) return;
+    gNextPoll = t + std::chrono::seconds(1);
+    std::error_code ec;
+    auto const f = dir() / "bench.txt";
+    if (!std::filesystem::exists(f, ec)) return;
+    std::string c;
+    { std::ifstream in(f, std::ios::binary); std::getline(in, c); }
+    std::filesystem::remove(dir() / "bench.done.txt", ec);
+    std::filesystem::rename(f, dir() / "bench.done.txt", ec);
+    while (!c.empty() && (c.back() == '\r' || c.back() == ' ')) c.pop_back();
+    if (c.rfind("run", 0) != 0) return;
+    g = {};
+    g.active = true;
+    g.tag = c.size() > 4 ? c.substr(4) : std::string("bench");
+    g.start = g.last = Clock::now();
+    queue(0, true, "tp @s 0 140 0");
+}
+void step(LocalPlayer* lp) {
+    poll(lp);
+    if (!g.active) return;
+    auto const now = Clock::now();
+    float const ms = std::chrono::duration<float, std::milli>(now - g.last).count();
+    g.last = now;
+    double const el = std::chrono::duration<double>(now - g.start).count();
+    if (el > 2.0) { // skip the first teleport's load
+        Phase& p = el < kStand ? g.stand : g.move;
+        p.secs += ms / 1000.0;
+        ++p.frames;
+        p.over25 += ms > 25.0f;
+        p.over50 += ms > 50.0f;
+        p.ms.push_back(ms);
+    }
+    if (el >= kStand && now >= g.nextTp && el < kStand + kMove) {
+        queue(0, true, "tp @s ~64 140 ~");
+        g.nextTp = now + std::chrono::seconds(2);
+        ++g.tps;
+    }
+    if (el >= kStand + kMove) {
+        g.active = false;
+        std::error_code ec;
+        auto const logs = dir().parent_path() / "logs";
+        std::filesystem::create_directories(logs, ec);
+        std::ofstream out(logs / "bench.txt", std::ios::app | std::ios::binary);
+        out << stamp() << " [" << g.tag << "] " << line("stand", g.stand) << " | " << line("move", g.move) << " | tps " << g.tps << "\n";
+    }
+}
+} // namespace bench
+
 void frame(IClientInstance& client, LocalPlayer* player, bool playing, bool sprintOk) {
     applySprint(player, sprintOk); // [BF] not gated on "only the HUD drew": servers can keep extra screens up
+    try { bench::step(player); } catch (...) {}
     runActions(client, player);
 }
 
