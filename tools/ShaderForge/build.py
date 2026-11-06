@@ -225,10 +225,12 @@ def impact_wrap(text: str, material: str) -> str:
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--impact", action="store_true"); ap.add_argument("materials", type=Path); ap.add_argument("pack", type=Path); ap.add_argument("-o", "--out", type=Path, required=True)
+    ap.add_argument("--impact", action="store_true"); ap.add_argument("-D", "--define", action="append", default=[], help="NAME=VALUE, prepended as #define to every shader of the pack"); ap.add_argument("materials", type=Path); ap.add_argument("pack", type=Path); ap.add_argument("-o", "--out", type=Path, required=True)
     a = ap.parse_args(argv)
     outdir = a.out / "renderer" / "materials"; outdir.mkdir(parents=True, exist_ok=True)
     common = (a.pack / "common.hlsli").read_text() if (a.pack / "common.hlsli").exists() else ""
+    # -D NAME=VALUE: one source, several packs (e.g. LyricsLight Soft / Extreme)
+    common = "".join(f"#define {d.split('=', 1)[0]} {d.split('=', 1)[1] if '=' in d else '1'}\n" for d in a.define) + common
     report = []
     for mat_dir in sorted(p for p in a.pack.iterdir() if p.is_dir()):
         name = mat_dir.name
