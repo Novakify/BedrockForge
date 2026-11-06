@@ -1,6 +1,6 @@
 # Glass Armor (Bedrock Forge + Renderer Foundation) - plan
 
-Status 2026-11-06 16:30: **M1a works in game** (glass-armor/rf 7551f30, live RF line): diamond recognised, 4 glass draws/frame, 0 failures, see-through glass + neon outline. M1b next.
+Status 2026-11-06 17:50: **M1b works in game** (3472f3f, live RF line): approved v6 look on the game's own armor draws - exact vanilla shape, glass over the body, twist on what's behind, rim, glow. Next: tuning + LyricsForge reactivity (M2).
 
 ## The look Fernando signed off (docs/glass_armor/preview_v6.html)
 - Shape and geometry **1-to-1 vanilla**: Mojang's `geometry.player.armor.*` cubes (helmet inflate 1.0 + hat layer
@@ -99,6 +99,20 @@ boots 72. Exactly the vanilla cube counts (12 triangles = 36 indices per cube).
   180x2048 atlas) overwrite it because glass doesn't write depth. Fix in M1b: replay armor draws at the end of the
   actor pass (save PSO/root args/IA, draw later) - also the point where the scene copy for the twist is taken.
 - Issue 2: look is still M1a (no twist, no lighting); M1b brings the approved shader.
+
+## M1b in-game (2026-11-06 17:50)
+Pipeline that works: armor draw recognised -> held back (root args, IA, IB snapshot) -> replayed at the first
+non-Actor draw / OMSetRenderTargets / **Close** (RenderDragon ends the actor list right after the armor) -> colour +
+depth copied into buffers right there -> extended root signature (game RS + root SRV scene/depth + root CBV) -> game
+VS + glass PS, cull none, depth write, no stencil. Fallback = vanilla armor draw, never invisible.
+Fixes needed on the way: D3D12CreateDevice hooked at mod load so CreateRootSignature / RTV / DSV views are seen from
+the start (the game makes them before RF's other hooks); F6 "debug: solid magenta" to check replays land.
+
+## M2 plan: LyricsForge reactive glass (Fernando, 2026-11-06)
+The glass already bends everything drawn in-world before it (in-frame sky, world, particles). LyricsForge lyrics and
+most FX are drawn over the finished frame, so: feed LyricsForge state into the glass params (beat pulse -> outline
+glow + edge flow speed, current lyric / album palette colour -> rim + glow tint, impact flashes, sky colour) and add a
+reflection term sampling the previous finished frame (lyrics included) so lyrics glint across the armor.
 
 ## Milestones
 - **M0 probe (RF, F6 > Glass Armor)**: key press logs one frame - every PSO used with PS hash, material pass, VS
