@@ -47,3 +47,5 @@
     // [LyricsForge] new space skies (ordinal 43+, drawn by live_sky's spaceSky)
     {"event_horizon", 0x000000, 0x05030A, 0.9f, 1.3f, false, 0xFFB45A, 0xFF6A2A, Weather::SpaceDust, 0x000000, true, 0xFFE2B8},
     {"deep_voyage", 0x000000, 0x020208, 0.9f, 1.4f, false, 0x34CCFF, 0xFF3A2E, Weather::SpaceDust, 0x000000, false, 0xBFEFFF},
+    // [LyricsForge] the salt-flat mirror: a realistic sky over a perfect mirror (ordinal 45, live_sky realSky kind 19)
+    {"mirror_sky", 0x0034F0, 0x96E8FF, 0.9f, 0.0f, false, 0x50C8FF, 0xFFFFFF, Weather::None, 0x000000, false, 0xFFFFFF},

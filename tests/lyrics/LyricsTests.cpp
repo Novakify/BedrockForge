@@ -1524,11 +1524,12 @@ TEST(world_light) { // [LyricsForge] the sky lights the world
 TEST(live_sky_params) {
     using namespace bf::lyrics::sky;
     Config cfg;
-    CHECK_EQ(int(presets().size()), 45); // [LyricsForge] + event_horizon (43), deep_voyage (44)
+    CHECK_EQ(int(presets().size()), 46); // [LyricsForge] + event_horizon (43), deep_voyage (44), mirror_sky (45)
     CHECK_EQ(int(order().size()), 30);
     CHECK_EQ(find("summer", cfg)->ordinal, 38);                    // [LyricsForge] realistic skies 38..42
     CHECK_EQ(find("event_horizon", cfg)->ordinal, 43);              // [LyricsForge] the first new space sky
     CHECK_EQ(find("deep_voyage", cfg)->ordinal, 44);
+    CHECK_EQ(find("mirror_sky", cfg)->ordinal, 45);
     CHECK_EQ(find("silver_lining", cfg)->ordinal, 42);
     CHECK(!find("summer", cfg)->painted());
     CHECK(body(*find("bright_night", cfg)).has_value());
