@@ -929,7 +929,7 @@ GLOBAL float PULSE;
 // lanes and star clouds, emission nebulae with filaments, a cumulus deck that can be lit from the sun, from below
 // (city, lava) or from inside (lightning), crepuscular rays in the sun's own frame (no seams at the zenith), ice
 // halos, rainbows, an eclipse corona and a filmic tone curve (bright stays bright without going flat white).
-GLOBAL float LIGHTNING, KICK, BEAT, WAVE;
+GLOBAL float LIGHTNING, KICK, BEAT, WAVE, WARP; // [LyricsForge] WARP: space skies' warp jump (texel 14 a)
 
 vec3 v3(float a) { return vec3(a, a, a); }
 float fbm3(vec3 p, int oct) { return fbm(p.x, p.y, p.z, oct); }
@@ -1614,6 +1614,26 @@ void eventHorizon(vec3 d, float el) {
         add(vec3(1.0, 0.97, 0.94), ring * (1.2 + 1.2 * kick)); // the true photon ring: a thin white line
         C += neon;                                                 // the music: neon rainbow strands round it
     }
+    // spaghettification: now and then a mote spirals in, stretches into a glowing thread along its orbit and is gone
+    {
+        float ts = T / 2.2;
+        for (int k = 0; k < 6; k++) {
+            float per = 7.0 + 3.0 * float(k);
+            float ph = fract(ts / per + float(k) * 0.173);           // 0 far out -> 1 at the ring
+            float rr = EH_BC * (1.02 + 2.2 * (1.0 - ph) * (1.0 - ph));
+            float ang0 = float(k) * 2.4 + floor(ts / per + float(k) * 0.173) * 1.7;
+            float spin = ang0 + 2.5 * ph * ph;                      // it speeds up as it falls
+            float len  = 0.04 + 0.9 * ph * ph * ph;                  // and gets pulled into a long thread
+            float dth  = atan2(sin(alpha - spin), cos(alpha - spin));
+            float along = clamp(-dth / max(len, 1e-3), 0.0, 1.0);   // the thread trails behind
+            float on = dth <= 0.0 && dth > -len ? 1.0 : 0.0;
+            float q = (b - rr * (1.0 + 0.04 * along)) / (EH_BC * 0.004);
+            float L = exp(-q * q) * on * (1.0 - along) * sm(0.0, 0.15, ph) * (1.0 - sm(0.9, 1.0, ph));
+            float hh = fract(float(k) * 0.37 + ts * 0.02);
+            vec3 hc = clamp(abs(fract(hh + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+            C += mix(hc, v3(1.0), 0.4) * L * 1.4;
+        }
+    }
     // (no warm haze: without the gas there is nothing to glow - space stays OLED black)
 }
 bool spaceSky(vec3 d, float az, float el) {
@@ -1719,6 +1739,53 @@ int realKind(int p) {
     return -1;
 }
 
+// [LyricsForge] space skies' effects: where each sky's centrepiece sits (the hole, the burst, the pulsar...)
+vec3 spaceCenter() {
+    if (PRESET == 43) return dirAE(170.0, 6.0);
+    if (BKIND >= 0) return SUN;
+    if (PRESET == 30) return dirAE(200.0, 30.0);
+    if (PRESET == 18) return dirAE(30.0, 50.0);
+    float az = PRESET == 21 ? 190.0 : (PRESET == 34 ? 200.0 : ((PRESET == 31 || PRESET == 37) ? 0.0 : 180.0));
+    return dirAE(az, 25.0);
+}
+// turn d towards (k > 0) or away from the centre c by angle k (radians)
+vec3 spaceTurn(vec3 d, vec3 c, float k) {
+    vec3 side = d - c * dot(d, c);
+    float l = length(side);
+    if (l < 1e-5) return d;
+    side /= l;
+    float a = acos(clamp(dot(d, c), -1.0, 1.0)) - k;
+    return normalize(c * cos(a) + side * sin(a));
+}
+// draw the space sky for one direction (az / el from it); body glow too
+void spaceAt(vec3 dd) {
+    float ae = degrees(asin(clamp(dd.y, -1.0, 1.0)));
+    float aa = degrees(atan2(-dd.x, dd.z));
+    if (aa < 0.0) aa += 360.0;
+    spaceSky(dd, aa, ae);
+    if (BKIND >= 0) bodyGlow(dd.x, dd.y, dd.z, aa, ae);
+}
+// neon sparks: on a hit they burst off the centre's ring and fly outward as the kick eases (stateless: KICK is the clock)
+vec3 spaceSparks(vec3 d, vec3 c, float r0) {
+    if (KICK < 0.03) return v3(0.0);
+    float a = acos(clamp(dot(d, c), -1.0, 1.0));
+    vec3 e1, e2;
+    frameOf(c, e1, e2);
+    float th = atan2(dot(d, e2), dot(d, e1));
+    vec3 acc = v3(0.0);
+    float fly = 1.0 - KICK;                                   // 0 at the hit -> 1 as it fades
+    for (int k = 0; k < 28; k++) {
+        float h1 = fract(sin(float(k) * 12.9898) * 43758.5453), h2 = fract(sin(float(k) * 78.233) * 12345.678);
+        float ang = h1 * 6.2831853, rr = r0 * (1.02 + (0.35 + 0.6 * h2) * fly);
+        float da = abs(atan2(sin(th - ang), cos(th - ang))) * sin(max(a, 1e-3));
+        float dr = (a - rr);
+        float L = exp(-(da * da) / 0.000012 - (dr * dr) / 0.00025);  // a short streak along its flight
+        float hh = fract(ang / 6.2831853 + T / 2.2 * 0.03);         // the strands' own rainbow
+        vec3 hc = clamp(abs(fract(hh + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+        acc += hc * L * KICK * 1.6;
+    }
+    return acc;
+}
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
     PULSE = skyInfo4.w;
@@ -1740,6 +1807,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     BRAD = u16(o7.rg) / 1000.0;
     PRESET = int(floor(o7.b * 255.0 + 0.5));
     T = skyInfo.x;
+    WARP = PX_FETCH(14).a;
     { vec4 m13 = px(13); LIGHTNING = m13.r; KICK = m13.g; BEAT = m13.b; WAVE = m13.a > 0.002 ? (m13.a * 255.0 - 1.0) / 254.0 : -1.0; }
     float ba = radians(BAZ), be = radians(BEL);
     SUN = vec3(-sin(ba) * cos(be), sin(be), cos(ba) * cos(be));
@@ -1756,7 +1824,26 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     if (az < 0.0) az += 360.0;
 
     int rk = realKind(PRESET);
-    if (rk < 0 && spaceSky(dir, az, el)) { // [LyricsForge] the reworked night / space / special skies
+    if (rk < 0 && deepSpace(PRESET) && PRESET != 31) { // [LyricsForge] space skies: gravitational wave, warp jump, neon sparks (warp keeps its own path)
+        vec3 cc = spaceCenter();
+        vec3 dw = dir;
+        if (WAVE >= 0.0) { // a big drop: a ripple of bent space rolls out from the centrepiece and the stars wobble
+            float ang = acos(clamp(dot(dir, cc), -1.0, 1.0));
+            float front = WAVE * 3.0;
+            float x0 = (ang - front) / 0.18;
+            dw = spaceTurn(dir, cc, 0.035 * sin(x0 * 6.0) * exp(-x0 * x0) * (1.0 - WAVE));
+        }
+        if (WARP > 0.02) { // warp jump: the sky streaks outward from the centre, as if you leapt at it
+            vec3 acc = v3(0.0);
+            for (int i = 0; i < 6; i++) {
+                spaceAt(spaceTurn(dw, cc, -WARP * 0.16 * float(i) / 5.0));
+                acc += C;
+            }
+            C = acc / 6.0 * (1.0 + 0.6 * WARP);
+        } else spaceAt(dw);
+        float r0 = PRESET == 43 ? 0.4834 : 0.10;                 // the hole's shadow edge, or a small ring round the rest
+        C += spaceSparks(dir, cc, r0);
+    } else if (rk < 0 && spaceSky(dir, az, el)) { // [LyricsForge] the reworked night / special skies
         if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     } else if (rk >= 0) { // [LyricsForge] realistic skies + the skies reworked onto the same engine
         realSky(x, y, z, el, rk);
@@ -1835,7 +1922,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     }
 
-    if (WAVE >= 0.0) { // [LyricsForge] the chorus light wave: a soft sweep down the dome in the sky's own colours
+    if (WAVE >= 0.0 && !deepSpace(PRESET)) { // [LyricsForge] the chorus light wave: a soft sweep down the dome in the sky's own colours
         float e = 1.0 - (1.0 - WAVE) * (1.0 - WAVE);
         float dd = el - (78.0 - 76.0 * e);
         float wa = sin(3.14159265 * min(1.0, WAVE * 1.05)) * min(1.0, WAVE * 6.0);
