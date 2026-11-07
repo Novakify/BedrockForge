@@ -875,7 +875,7 @@ namespace {
 void glassBlock(BfDirectorV1 const* b, bool fresh, GaParams& p) {
     using clk = std::chrono::steady_clock;
     static clk::time_point last = clk::now(), wordAt = clk::now() - std::chrono::seconds(100);
-    static float cover[3]{1, 1, 1}, coverK = 0, sky[3]{1, 1, 1}, skyK = 0, finale = 0, awaken = 0, wordColK = 0, wordCol[3]{};
+    static float cover[3]{1, 1, 1}, coverK = 0, sky[3]{1, 1, 1}, skyK = 0, finale = 0, awaken = 0, ramp = 0, wordColK = 0, wordCol[3]{};
     static uint32_t seq = 0;
     static bool     haveSeq = false;
     auto const now = clk::now();
@@ -885,6 +885,12 @@ void glassBlock(BfDirectorV1 const* b, bool fresh, GaParams& p) {
     gGlassLf = live;
     if (b->size < 256) return; // older BF: keep the M2 behaviour
     p.lf = 1;
+    if (!live) { // BF paused (chat, menus): hold the last look instead of fading out
+        for (int k = 0; k < 3; ++k) p.cover[k] = cover[k], p.sky[k] = sky[k], p.wordCol[k] = wordCol[k];
+        p.coverK = coverK, p.skyK = skyK, p.finale = finale, p.awaken = awaken, p.wordT = 99.f;
+        if (awaken > 0.01f) p.active = 1;
+        return;
+    }
     auto ease = [&](float& v, float want, float sec) { v += (want - v) * (1.f - std::exp(-dt / sec)); };
     bool const playing = live && b->playing;
     float const cK = playing ? std::clamp(b->coverAmount, 0.f, 1.f) : 0.f;
@@ -896,7 +902,11 @@ void glassBlock(BfDirectorV1 const* b, bool fresh, GaParams& p) {
     ease(finale, live && b->finale > 0.5f ? 1.f : 0.f, live && b->finale > 0.5f ? 0.6f : 1.2f);
     // Awaken drives the boot-up; it already falls back over the outro (the world exhales), so the pieces power
     // down in reverse. With the music stopped and Awaken off, it simply fades.
-    awaken = live ? std::clamp(b->awaken, 0.f, 1.f) : std::max(0.f, awaken - dt / 2.f);
+    // our own 5 s boot ramp from the song (BF's Awaken only runs with the LyricsForge sky on); the faster of the two
+    // wins, and the song's outro powers it back down (helmet first, boots last)
+    ramp   = b->playing ? std::min(1.f, ramp + dt / 5.f) : std::max(0.f, ramp - dt / 4.f);
+    float const o = std::clamp((b->outro - 0.25f) / 0.75f, 0.f, 1.f);
+    awaken = std::max(ramp, std::clamp(b->awaken, 0.f, 1.f)) * (1.f - o * o * (3.f - 2.f * o));
     if (live && b->playing) {
         if (!haveSeq) seq = b->wordSeq, haveSeq = true;
         if (b->wordSeq != seq) {
@@ -910,7 +920,8 @@ void glassBlock(BfDirectorV1 const* b, bool fresh, GaParams& p) {
     p.coverK = coverK, p.skyK = skyK, p.wordColK = wordColK, p.finale = finale, p.awaken = awaken;
     p.drop   = live ? std::clamp(b->drop, 0.f, 1.4f) : 0.f;
     p.wordT  = gWordSweep ? std::chrono::duration<float>(now - wordAt).count() : 99.f;
-    if (playing) { p.active = 1; p.beat = std::clamp(b->beat, 0.f, 1.f); } // follow the song even with the Director look off
+    if (playing) p.beat = std::clamp(b->beat, 0.f, 1.f);
+    if (playing || awaken > 0.01f) p.active = 1; // follow the song even with the Director look off (and while powering down)
     gShowAwaken = awaken, gShowCover = coverK;
 }
 } // namespace
