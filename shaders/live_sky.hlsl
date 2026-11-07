@@ -1604,17 +1604,27 @@ void eventHorizon(vec3 d, float el) {
         float f2 = f * f * (3.0 - 2.0 * f);
         float lv = mix(sb[i0], sb[min(i0 + 1, 7)], f2);
         vec3  neon = v3(0.0);
+        // [LyricsForge] ref 3: a filled ribbon, not loose strands - a band round the ring woven from super-fine lines
+        // (they twist along the circle like a mesh tube), swelling and pinching with the music, bright rims, soft glow
         float ca2 = cos(alpha) * 2.2, sa2 = sin(alpha) * 2.2, tt = T / 2.2 * 0.8;
-        for (int st = 0; st < 9; st++) {                                 // 9 strands that tangle and cross (ref 2)
-            float fs = float(st) / 8.0;
-            float nz = fbm(ca2 + float(st) * 1.7, sa2 - float(st) * 0.9, tt + float(st) * 0.37, 3); // own flowing wobble
-            float rr = EH_BC * (1.004 + (0.03 + 0.20 * fs) * lv * (0.15 + 1.7 * nz) + 0.004 * fs);
-            float w  = EH_BC * (0.0022 + 0.0012 * fs);              // sleek: thin neon lines
-            float q  = (b - rr) / w;
-            float L  = exp(-q * q) * (1.0 - 0.35 * fs);
-            float hh = fract(alpha / 6.2831853 + T / 2.2 * 0.03 + float(st) * 0.07); // a rainbow that slowly turns
+        float nz  = fbm(ca2, sa2, tt, 3);                                   // the band's own flowing swell
+        float nz2 = fbm(ca2 * 1.7 + 4.0, sa2 * 1.7 - 2.0, tt * 1.3 + 9.0, 3); // a second fold, offset
+        float r0  = EH_BC * 1.008;
+        float wid = EH_BC * (0.012 + 0.15 * lv * (0.25 + 1.5 * nz));        // thickness follows the spectrum
+        float off = EH_BC * 0.035 * lv * (nz2 - 0.5);                        // the whole ribbon sways in and out a little
+        float sN  = (b - r0 - off) / max(wid, 1e-4);                         // 0 inner edge .. 1 outer edge
+        if (sN > -0.6 && sN < 1.6) {
+            float inside = sm(-0.04, 0.04, sN) * (1.0 - sm(0.96, 1.04, sN));
+            float twist  = alpha * 3.0 + tt * 0.7 + nz2 * 4.0;                // lines wind round the band
+            float lines  = pow(0.5 + 0.5 * cos(6.2831853 * (sN * 16.0 + twist)), 6.0); // super-fine woven lines
+            float cross_ = pow(0.5 + 0.5 * cos(6.2831853 * (sN * 16.0 - twist * 0.6)), 6.0);
+            float weave  = 0.18 + 0.55 * lines + 0.35 * cross_;
+            float rim    = exp(-sN * sN / 0.004) + exp(-(sN - 1.0) * (sN - 1.0) / 0.004); // bright edges
+            float glow   = exp(-max(-sN, sN - 1.0) * 3.5) * (1.0 - inside) * 0.18;   // soft glow off both edges
+            float hh = fract(alpha / 6.2831853 + T / 2.2 * 0.03 + sN * 0.12);   // rainbow round (and slightly across) it
             vec3  hc = pow(clamp(abs(fract(hh + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0) - 1.0, 0.0, 1.0), v3(1.3));
-            neon += hc * (L * (0.7 + 1.8 * lv) + exp(-q * q / 9.0) * 0.08 * (0.5 + lv)); // + a soft neon bloom
+            float L = inside * weave * (0.55 + 1.2 * lv) + rim * (0.6 + 1.0 * lv) * 0.9 + glow;
+            neon += mix(hc, v3(1.0), 0.15) * L;
         }
         float rq = (b - EH_BC * 1.004) / (EH_BC * 0.006);
         float ring = exp(-rq * rq);
