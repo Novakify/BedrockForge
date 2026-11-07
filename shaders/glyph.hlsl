@@ -41,6 +41,7 @@ static const uint F_GLASS    = 256u;  // with SOLID / PETAL: glass (see BfLyrics
 static const uint F_PETAL    = 512u;  // ring sector inside the quad (the client wheel's buttons)
 static const uint F_BACKDROP = 1024u; // full-screen frosted copy of the frame with a clear circle in the middle
 static const uint F_BLUR     = 2048u; // [LyricsFlow player] with IMAGE: soft-blurred image, radius glowW (fraction), faded edges
+static const uint F_FEATHER  = 4096u; // [LyricsForge] with IMAGE: no frame - fades out over a rounded-square edge glowW wide
 static const uint kAtlases   = 16u;
 
 StructuredBuffer<Glyph> gGlyphs  : register(t0);
@@ -537,6 +538,12 @@ float4 PSGlyph(V2P i) : SV_Target {
             t = atlasSample(ai, sLin, i.uv);
         }
         t *= fillC;
+        if (g.flags & F_FEATHER) { // [LyricsForge] melt into the sky: superellipse (rounded square) distance, soft falloff
+            float2 c  = abs(local - 0.5) * 2.0;                       // 0 centre .. 1 edge
+            float  se = pow(pow(c.x, 4.0) + pow(c.y, 4.0), 0.25);
+            float  f  = saturate((1.0 - se) / max(g.glowW, 1e-3));
+            t.a *= f * f * (3.0 - 2.0 * f);
+        }
         if (g.outlineW > 0) { // [LyricsFlow player] rounded corners (outlineW = radius / smaller half-extent)
             float2 halfPx = 0.5 / max(fwidth(local), 1e-6);
             float  r      = min(halfPx.x, halfPx.y) * saturate(g.outlineW);
