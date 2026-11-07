@@ -376,6 +376,16 @@ void bodyGlow(float x, float y, float z, float az, float el) {
             add(BCOL, ray * exp(-ang / 26.0) * 0.28 * sm(rad, rad * 2.5, ang) * PATTERN);
         }
     } else if (BKIND == MOON_K) {
+        if (PRESET == 12) {
+            // [LyricsForge] Blood Moon: the dark eclipse ring is back - the sky goes near-black in a band right round
+            // the disc, a thin burning crimson rim sits on the edge, and the red glow only starts past the dark band
+            float o = max(ang - rad, 0.0);
+            add(BCOL, exp(-o / 9.0) * 0.16 * sm(rad * 1.6, rad * 2.6, ang));
+            C *= 1.0 - 0.85 * exp(-o / (rad * 0.55)) * sm(rad * 0.9, rad * 1.02, ang);
+            float rim = exp(-pow((ang - rad) / (rad * 0.07), 2.0));
+            float flame = 0.75 + 0.25 * lfNoise(cos(atan2(el - BEL, wrap180(az - BAZ))) * 4.0, T * 0.4, 6.1);
+            add(vec3(1.0, 0.16, 0.08), rim * 1.1 * flame);
+        } else
         add(BCOL, exp(-ang / 5.0) * 0.32 + exp(-ang / 22.0) * 0.14);
         // [BF] the moon itself (it was only a glow, so a Blood Moon by day / on servers showed no moon): a lit disc with
         // soft limb darkening and faint maria, in the moon's own colour, over everything behind it
@@ -385,7 +395,7 @@ void bodyGlow(float x, float y, float z, float az, float el) {
             float limb = sqrt(max(0.0, 1.0 - r * r));
             float du = wrap180(az - BAZ) * cos(radians(el)) / rad, dv = (el - BEL) / rad;
             float maria = lfNoise(du * 2.2 + 3.1, dv * 2.2 - 1.7, 2.4) * 0.6 + lfNoise(du * 5.0, dv * 5.0, 7.3) * 0.4;
-            vec3 moonC = PRESET == 12 ? eclipseMoon(du, dv, limb, maria) : BCOL * (0.62 + 0.38 * limb) * (0.82 + 0.3 * maria) * 1.15;
+            vec3 moonC = PRESET == 12 ? eclipseMoon(du, dv, limb, maria) * 0.55 : BCOL * (0.62 + 0.38 * limb) * (0.82 + 0.3 * maria) * 1.15;
             C = mix(C, moonC, disc * 0.96);
         }
     } else if (BKIND == SYNTH_K) {
@@ -1250,7 +1260,8 @@ void realSky(float x, float y, float z, float el, int kind) {
         searchlights(d, A2, rgb(255.0, 240.0, 255.0), 1.0 + 0.6 * pulse);
     }
     if (rays > 0.0 && hasSun) add(sunC, sunRays(d, SUN, 13.0, 5.0) * mu * rays * (1.0 + 0.35 * pulse));
-    if (kind == 10 && hasSun) rainbow(d, SUN, 0.9 + 0.3 * pulse);
+    // [LyricsForge] rainbow arch removed (read as an ugly stripe across the screen); Prism keeps its after-rain light
+    // if (kind == 10 && hasSun) rainbow(d, SUN, 0.9 + 0.3 * pulse);
     if (kind == 11 && hasSun) iceHalo(d, SUN, v3(1.0), 0.9 + 0.3 * pulse);
     if (flash > 0.0) add(rgb(200.0, 210.0, 255.0), LIGHTNING * 0.10 * (0.3 + 0.7 * sm(-2.0, 30.0, el)));
     add(accent, 0.10 * KICK * exp(-yy * 4.0)); // the drop: a breath of the sky's own colour along the horizon
@@ -1642,11 +1653,20 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
 
 // [LyricsForge] sky transitions: while a new sky sweeps in, both are drawn and wiped along a front that rises from the
 // horizon over the zenith, a seam of the new sky's light riding on it (only during the ~1.6 s of the sweep)
+// [LyricsForge] the void: looking down past an island edge (Hive / CubeCraft sky maps) shows pure OLED black instead of
+// the sky's colours smeared under the horizon. Fades from the horizon (-3 deg) to black by -14 deg.
+vec4 voidBlack(vec4 c, vec3 skyDir) {
+    float el = degrees(asin(clamp(normalize(skyDir).y, -1.0, 1.0)));
+    float k = sm(-14.0, -3.0, el);
+    c.rgb *= k;
+    c.a = max(c.a, (1.0 - k) * step(0.001, c.a)); // where our sky draws at all, the void below is solid black
+    return c;
+}
 vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     PXB = 0;
     vec4 cn = skyOne(skyDir, skyInfo4);
     float swr = PX_FETCH(14).r;
-    if (swr < 0.002) return cn;
+    if (swr < 0.002) return voidBlack(cn, skyDir);
     float sw = clamp((swr * 255.0 - 1.0) / 254.0, 0.0, 1.0);
     vec3 seamC = mix(A1, HOR, 0.4);
     if (lum3(seamC) < 0.05) seamC = v3(0.85);
@@ -1670,5 +1690,5 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     float seam = exp(-(el - front) * (el - front) / (awake ? 26.0 : (chap ? 22.0 : 10.0))) * sin(3.14159265 * sw);
     c.rgb = clamp(c.rgb + seamC * seam * (awake ? 0.9 : (chap ? 0.85 : 0.55)), 0.0, 1.0);
     if (awake) c.a = max(c.a, clamp(seam * 0.85, 0.0, 1.0) * cn.a);
-    return c;
+    return voidBlack(c, skyDir);
 }

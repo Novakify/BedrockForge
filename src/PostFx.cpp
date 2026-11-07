@@ -73,14 +73,17 @@ struct Dir {
 // a copy of BF's frame; inactive once BF stops publishing (no world on screen) for ~1/3 s
 Dir readDirector(bool allow) {
     static uint32_t lastFrame = 0;
-    static int      still     = 0;
+    static int64_t  seenMs    = 0;
     Dir d;
     DirFn fn = allow ? dirGet() : nullptr;
     BfDirectorV1 const* b = fn ? fn() : nullptr;
     BfDirectorV1 v;
     if (!copyDirector(b, v)) return d;
-    if (v.frame != lastFrame) { lastFrame = v.frame; still = 0; } else if (still < 1000) ++still;
-    if (!v.active || still > 20) return d;
+    // [LyricsForge] stale = BF hasn't published for 0.4 s of wall clock. It used to be 20 presents (~0.12 s at 170 fps):
+    // any short BF stall (song end, chapter, finale) dropped the whole look for a few frames -> bars and world tint flickered
+    int64_t const nowMs = int64_t(GetTickCount64());
+    if (v.frame != lastFrame) { lastFrame = v.frame; seenMs = nowMs; }
+    if (!v.active || nowMs - seenMs > 400) return d;
     d.on = true;
     for (int k = 0; k < 3; ++k) { d.tint[k] = std::clamp(v.tint[k], 0.0f, 2.0f); d.flashCol[k] = std::clamp(v.flashColor[k], 0.0f, 1.0f); }
     d.amount = std::clamp(v.gradeAmount, 0.0f, 1.0f);
