@@ -178,6 +178,13 @@ struct State {
     std::string                   songFontSong;    // the song songFont belongs to
     float                         bass = 0;        // [BF] bass hit level this frame (Audio_win.cpp)
     bool                          bassLive = false;
+    // [LyricsForge] silent-audio fallback: Apple Music (protected audio) reads as silence to the loopback, so the world
+    // went dead on those songs. While a track plays and nothing is heard, the song's saved map (or a built-in groove)
+    // stands in for the audio.
+    int64_t                       audioAliveNs = 0;
+    bool                          synthOn = false;
+    BandFrame                     synthFrame{};
+    float                         synthPrevBass = 0;
     int64_t                       coverSeq = -1;
     int                           coverTries = 0;
     // live sky (LyricsFlow 2.1 WorldSky): published every HUD frame for RF (BF_CopySkyFrame)
@@ -611,7 +618,10 @@ void songMemoryStep() {
                 gS->memoryTitle = tr.s.artist + " - " + tr.s.title;
             }
             if (!gS->memory.key().empty() && gS->clock.playing())
-                for (auto const& f : frames) gS->memory.record(gS->clock.position(f.tNs, cfg), f);
+                for (auto const& f : frames) {
+                    if (gS->synthOn && f.loud < 0.03f) continue; // [LyricsForge] the PC can't hear it: don't learn silence
+                    gS->memory.record(gS->clock.position(f.tNs, cfg), f);
+                }
         }
     }
     finishPlay(done, doneLyrics, doneTitle);
@@ -1200,6 +1210,41 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         auto const& c = gS->engine.config();
         bassWanted(c.playerStyle == 2 || c.beatGlow || c.fxBeatShake || c.director);
         gS->bass = bassLevel(dt, &gS->bassLive);
+        { // [LyricsForge] silent-audio fallback (see synthOn)
+            auto const& cf = gS->engine.config();
+            BandFrame const live = gS->bassLive ? audioLatest() : BandFrame{};
+            if (gS->bassLive && live.loud > 0.03f) gS->audioAliveNs = now;
+            bool const playingTrack = gS->clock.hasTrack() && gS->clock.playing() && !gS->demo.on;
+            if (!playingTrack) gS->audioAliveNs = now;
+            gS->synthOn = playingTrack && now - gS->audioAliveNs > 2500000000LL;
+            if (gS->synthOn) {
+                int64_t const t = gS->clock.position(now, cf);
+                BandFrame f{};
+                if (gS->memory.ready()) {
+                    f = gS->memory.frameAt(t); // learned on an earlier play the PC could hear
+                } else {
+                    // built-in groove: ~112 BPM kick locked to the song clock, a soft 16-beat swell, more while singing
+                    double const beatMs = 60000.0 / 112.0, ph = std::fmod(double(std::max<int64_t>(0, t)), beatMs) / beatMs;
+                    float const kick = float(std::exp(-ph * 7.0));
+                    float const swell = 0.5f + 0.5f * float(std::sin(double(t) / (beatMs * 16.0) * 6.2831853));
+                    bool sing = false;
+                    if (auto const* ly = gS->lyrics.get())
+                        for (auto const& l : ly->lines) {
+                            if (l.index < 0) continue;
+                            if (l.start - 500 <= t && t <= l.end + 300) { sing = true; break; }
+                            if (l.start > t + 1000) break;
+                        }
+                    float const e = std::clamp(0.40f + 0.12f * swell + (sing ? 0.14f : 0.0f), 0.0f, 0.8f);
+                    f.bass = std::clamp(e * (0.55f + 0.45f * kick), 0.0f, 1.0f);
+                    f.mid = e * 0.85f; f.treble = e * 0.6f; f.loud = e; f.onset = ph < 0.08 ? 0.7f : 0.0f;
+                }
+                f.tNs = now;
+                gS->synthFrame = f;
+                gS->bass = std::clamp((f.bass - gS->synthPrevBass) * 6.0f, 0.0f, 1.0f) * 0.8f + f.bass * 0.2f;
+                gS->synthPrevBass = f.bass;
+                gS->bassLive = true;
+            }
+        }
     }
 
     Actor&      a = *f.player;
@@ -1245,7 +1290,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     { // [BF] the Conductor: one music state for the Director (lyrics now, sky / grade through RF next)
         ConductorIn ci;
         ci.bandsLive = gS->bassLive;
-        ci.bands     = gS->bassLive ? audioLatest() : BandFrame{};
+        ci.bands     = gS->synthOn ? gS->synthFrame : gS->bassLive ? audioLatest() : BandFrame{};
         ci.memory    = gS->memory.key().empty() ? nullptr : &gS->memory;
         ci.marks     = gS->lyrics ? &gS->lyrics->marks : nullptr; // [BF] your section marks win
         if (auto& d = gS->demo; d.on) { // Director demo: a known song replayed from its memory map, no music needed
