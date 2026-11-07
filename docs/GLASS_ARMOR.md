@@ -114,6 +114,27 @@ most FX are drawn over the finished frame, so: feed LyricsForge state into the g
 glow + edge flow speed, current lyric / album palette colour -> rim + glow tint, impact flashes, sky colour) and add a
 reflection term sampling the previous finished frame (lyrics included) so lyrics glint across the armor.
 
+## M2 + M2.5 in-game (2026-11-06 19:30): LyricsForge-reactive glass
+Shipped on the live lines (RF `lyricsforge-cinematic/rf` b74f431, BF `lyricsforge-cinematic/bf` 3a7d36e).
+Contract: `BfDirectorV1` grew 160 -> 256 bytes (still v1; older readers stop at 160) with a glass block BF fills
+whatever the Director setting is: playing, wordSeq (+1 per newly sung word), awaken, outro, finale (constellation
+outro showing), drop (decaying hit, 1.35 on big drops), cover rgb, colour-word rgb, sky rgb (fog colour) + amount.
+The LyricsForge demo (`config/lyricsflow_demo.json`, `"cover": "#RRGGBB"`) counts as playing: silent test rig.
+- Beat pulse: outline brighter + thicker on the kick, flare on drops (F6 "Beat pulse" slider)
+- Cover glass: neon = vivid cover accent, glass = light colour cast of the cover (dark covers deepen it); eases ~1 s
+  on chapter changes
+- Awaken: no music = plain glass, faint outline (F6 "Outline with no music", 0.30); a song boots it over 5 s
+  boots -> leggings -> chest -> helmet with an ignition flash each; the outro powers it down in reverse. RF runs its
+  own 5 s ramp (BF's Awaken only moves with the LyricsForge sky on) and takes the faster of the two
+- Sky: rim + glow take the LyricsForge sky colour
+- Lyric glint: one light sweep across each plate per sung word; colour words flash the outline (verified: white,
+  green, blue in Flamingo)
+- Stars in the glass while the constellation outro shows (not yet seen in-game: needs a song to end)
+- Reflection of the last finished frame (lyrics, sky, FX) on the glass, F6 slider
+- While BF is paused (chat, menus) the glass holds its last look
+Untested in-game: kick / drop flare with real audio (the demo has no audio), sky colour with a LyricsForge sky on,
+the stars finale.
+
 ## Milestones
 - **M0 probe (RF, F6 > Glass Armor)**: key press logs one frame - every PSO used with PS hash, material pass, VS
   output signature, bound SRV sizes, RT / DSV formats, draw counts - with and without armor on. Output under
