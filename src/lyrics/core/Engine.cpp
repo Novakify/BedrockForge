@@ -284,9 +284,10 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
                 q.alpha = alpha; q.outlineW = round; q.glowW = soft; q.flags = flags; q.atlas = atlas;
                 mBack.push_back(q);
             };
-            uint32_t const glowCol = in.albumAccent ? in.albumAccent : tint;
-            quad(half * 1.45, glowCol, 0.32f * env, BF_GLYPH_SOLID, 1.0f, 12.0f, 0);        // the halo in the cover's colour
-            quad(half, 0xFFFFFFFFu, 0.9f * env, BF_GLYPH_IMAGE, 0.12f, 0.0f, uint32_t(in.coverAtlas)); // the cover
+            // no frame: a big soft-blurred copy of the cover bleeds its own colours into the sky (the aura), and the cover
+            // itself fades out over a wide rounded edge into that aura - painted in the sky, not a box stuck on it
+            quad(half * 2.1, 0xFFFFFFFFu, 0.42f * env, BF_GLYPH_IMAGE | BF_GLYPH_BLUR, 0.0f, 0.22f, uint32_t(in.coverAtlas));
+            quad(half, 0xFFFFFFFFu, 0.92f * env, BF_GLYPH_IMAGE | BF_GLYPH_FEATHER, 0.0f, 0.38f, uint32_t(in.coverAtlas));
         }
     }
     if (cfg.fallingLetters || cfg.exitAnim == ExitAnim::Fall || !mPhysics.letters().empty() || mBursts.size()) {

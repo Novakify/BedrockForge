@@ -38,6 +38,8 @@ enum BfGlyphFlags : uint32_t {
                                   // glowW = clear circle radius px around the quad centre, glowK = its feather px
     BF_GLYPH_BLUR     = 1u << 11, // [LyricsFlow player] with IMAGE: the image soft-blurred, radius glowW in uv (aura,
                                   // cover glow), edges faded. RF without it draws the sharp IMAGE.
+    BF_GLYPH_FEATHER  = 1u << 12, // [LyricsForge] with IMAGE: no frame - the image fades out over a rounded-square edge
+                                  // glowW (fraction of the half size) wide, so it melts into what's behind (sky cover card)
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the
