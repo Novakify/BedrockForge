@@ -455,6 +455,37 @@ void overrideWatch() {
 
 // LyricsFlow MediaManager.fetchLyrics: up to 5 attempts, waiting 1.5 s * attempt, abandoned when the song changes.
 void appendLog(char const* name, std::string const& text); // below
+// [LyricsForge] config/lyrics_aliases.txt: "<title as your player shows it> = <Artist> - <Title>", one per line, # comments.
+// For tracks the app sends with a missing artist or a custom mix name. Matches the title (or "artist - title"), any case.
+bool lyricsAlias(std::string const& artist, std::string const& title, std::string& outArtist, std::string& outTitle) {
+    auto const file = gS->cfgFile.parent_path() / "lyrics_aliases.txt";
+    std::error_code ec;
+    if (!std::filesystem::exists(file, ec)) {
+        std::ofstream o(file, std::ios::binary);
+        o << "# LyricsForge aliases: <title as your player shows it> = <Artist> - <Title>\n"
+             "# for songs with no artist or a custom mix name, so the lyrics search finds the real song\n"
+             "It's You CastelliMix3 = d4vd, Bryant Barnes - It's You\n";
+    }
+    auto low = [](std::string v) { for (auto& c : v) c = char(std::tolower(static_cast<unsigned char>(c))); return v; };
+    auto trim = [](std::string v) {
+        size_t a = v.find_first_not_of(" \t\r"), b = v.find_last_not_of(" \t\r");
+        return a == std::string::npos ? std::string() : v.substr(a, b - a + 1);
+    };
+    std::string const t = low(trim(title)), at = low(trim(artist) + " - " + trim(title));
+    std::istringstream in(readAll(file));
+    for (std::string line; std::getline(in, line);) {
+        if (line.empty() || line[0] == '#') continue;
+        auto const eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string const key = low(trim(line.substr(0, eq))), val = trim(line.substr(eq + 1));
+        if (key != t && key != at) continue;
+        auto const dash = val.find(" - ");
+        if (dash == std::string::npos) { outArtist.clear(); outTitle = val; }
+        else { outArtist = trim(val.substr(0, dash)); outTitle = trim(val.substr(dash + 3)); }
+        return !outTitle.empty();
+    }
+    return false;
+}
 void fetchFor(MediaSample s, int64_t seq) {
     std::thread([s, seq] { try {
         Track tk;
@@ -471,7 +502,9 @@ void fetchFor(MediaSample s, int64_t seq) {
                 if (gS->clock.songSeq() != seq || !gS->running) return;
             }
             try {
-                got = fetch::fetch(&httpGet, s.artist, s.title, s.album, s.durationMs);
+                std::string fa, ft;
+                if (lyricsAlias(s.artist, s.title, fa, ft)) got = fetch::fetch(&httpGet, fa, ft, std::string(), 0); // a mix: any length
+                else got = fetch::fetch(&httpGet, s.artist, s.title, s.album, s.durationMs);
             } catch (...) { got.reset(); }
             if (got) break;
             auto until = Clock::now() + std::chrono::milliseconds(1500 * attempt);
