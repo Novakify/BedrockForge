@@ -1088,6 +1088,15 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         else if (m.active && m.chorusNow) sKick = std::max(sKick, 0.55f);
         sKick *= std::exp(-dt / 1.8f);
         in.pulse = cfg.director ? sEnergy + sKick : 0.4f * sEnergy;
+        { // [LyricsForge] 16 FFT bands -> 8 for the sky (Event Horizon's ring); the backup groove makes its own from bass/mid/treble
+            BandFrame const f = gS->synthOn ? gS->synthFrame : (gS->bassLive ? audioLatest() : BandFrame{});
+            for (int k = 0; k < 8; ++k) {
+                float v;
+                if (f.hasSpec) v = 0.5f * (f.spec[2 * k] + f.spec[2 * k + 1]);
+                else v = k < 3 ? f.bass : (k < 6 ? f.mid : f.treble);
+                in.spec[k] = std::clamp((v - 0.15f) / 0.75f, 0.0f, 1.0f); // a quiet floor reads as a still ring
+            }
+        }
         in.kick  = cfg.director ? sKick : 0.0f;
     }
     { auto const& pu = gS->engine.pulse(); // [BF] the horizon equaliser is drawn by the sky (behind the terrain)

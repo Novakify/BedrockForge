@@ -130,6 +130,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         mKickSmooth = ease(mKickSmooth, want, dtk, 0.25f, 0.7f);
         mBeatSmooth = ease(mBeatSmooth, 0.6f * std::clamp(in.beat, 0.0f, 1.0f), dtk, 0.12f, 0.45f);
         mPulseSmooth = ease(mPulseSmooth, std::clamp(in.pulse, 0.0f, 1.6f), dtk, 0.6f, 1.2f);
+        for (int k = 0; k < 8; ++k) mSpec[k] = ease(mSpec[k], std::clamp(in.spec[k], 0.0f, 1.0f), dtk, 0.06f, 0.35f); // waves, not jitter
     }
     { // [LyricsForge] world light: eased, fast in (drops, lightning) and slow out; underground it mostly fades
         WorldLight want;
@@ -214,6 +215,10 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         // texel 14: r = sweep progress (0 none), g = over the vanilla sky (startup / outro), b = chapter (brighter, wider ring)
         q[14] = {mSweep < 1.0f ? uint8_t(1 + int(mSweep * 254.0f)) : uint8_t(0), uint8_t(mFromNothing && mSweep < 1.0f ? 255 : 0),
                  uint8_t(mChapterSweep && mSweep < 1.0f ? 255 : 0), 0};
+        { // [LyricsForge] texel 15: 8 spectrum bands, 4 bits each (bass in the low nibble of r ... treble in the high of a)
+            auto nib = [&](int k) { return uint8_t(std::clamp(int(std::lround(mSpec[k] * 15.0f)), 0, 15)); };
+            q[15] = {uint8_t(nib(0) | nib(1) << 4), uint8_t(nib(2) | nib(3) << 4), uint8_t(nib(4) | nib(5) << 4), uint8_t(nib(6) | nib(7) << 4)};
+        }
         if (mSweep < 1.0f && !mFromNothing) for (int i = 0; i < 16; ++i) std::memcpy(h.prevParams[i], mPrevQ[size_t(i)].data(), 4);
         for (int i = 0; i < 16; ++i) std::memcpy(h.params[i], q[size_t(i)].data(), 4);
     }
