@@ -986,7 +986,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             float const  k    = anim::clamp01(in.fight);
             float const  ek   = k * k * (3.0f - 2.0f * k);
             Vec3 const   d    = a - cam.pos;
-            double const dist = std::clamp(d.length(), 4.0, 14.0);
+            double const dist = std::max(2.0, d.length()); // keep the line's distance: same size, only the direction moves
             float const  lane = float(int(mVisible.size()) - 1 - int(&p - &mVisible.front())); // newest line lowest (nearest the action), older ones stacked above
             double const pitch = std::clamp(double(cam.pitch) - (19.0 + 5.5 * lane), -80.0, 80.0); // negative = up
             Vec3 const   calm = cam.pos + dir(double(cam.yaw), pitch) * dist;
