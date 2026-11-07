@@ -918,7 +918,7 @@ void publishDirector(MusicState const& m, CinemaOut const& c) {
         drop *= std::exp(-dt / 0.5f);
         if (m.dropNow) drop = std::max(drop, m.bigDrop || m.finalHit ? 1.35f : 1.0f);
         else if (m.chorusNow) drop = std::max(drop, 0.6f);
-        bool const playing = gS->clock.playing();
+        bool const playing = gS->clock.playing() || gS->demo.on; // the demo plays a song without audio
         d.playing = playing ? 1u : 0u;
         d.awaken  = gS->engine.config().awaken ? gS->sky.awaken() : (playing ? 1.0f : 0.0f);
         d.outro   = m.outro;
