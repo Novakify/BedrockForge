@@ -557,11 +557,14 @@ void songMemoryLog(std::string const& text) { appendLog("song_memory", text); }
 void finishPlay(SongMemory& m, std::shared_ptr<Lyrics const> const& lyrics, std::string const& title) {
     if (m.key().empty()) return;
     int64_t const heard   = m.heardThisPlayMs();
-    bool const    counted = m.endPlay();
+    // [LyricsForge] YouTube ads (Srixon, Disney Parks, ...) were being learned as songs: no lyrics found and under ~100 s
+    // heard -> don't keep a map for it (real instrumentals are longer; anything with lyrics always counts)
+    bool const    adLike  = (!lyrics || lyrics->lines.empty()) && heard < 100000;
+    bool const    counted = m.endPlay() && !adLike;
     if (counted) m.save(gS->memoryDir / SongMemory::fileNameFor(m.key()));
     m.analyze(lyrics.get());
     songMemoryLog("== " + title + "  (heard " + std::to_string(heard / 1000) + " s this play" +
-                  (counted ? ", saved)\n" : ", too short to save)\n") + m.describe() + "\n");
+                  (counted ? ", saved)\n" : adLike ? ", no lyrics + short: ad? not saved)\n" : ", too short to save)\n") + m.describe() + "\n");
 }
 void finishSongMemory() { // gS->mutex held - only at shutdown, where a short wait doesn't matter
     SongMemory m = std::move(gS->memory);
