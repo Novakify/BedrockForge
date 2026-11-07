@@ -115,7 +115,7 @@ std::atomic_int                    gDebugSolid{0}; // 0 off, 1 magenta, 2..5 sho
 std::atomic_bool                   gReact{true};
 float                              gReflect = 0.45f;
 float                              gShowBeat = 0;
-int                                gDyeRow = -1, gDyeRowGlint = -1; // M3: ChangeColor row (found in-game, see debug view 8)
+int                                gDyeRow = 5, gDyeRowGlint = 5; // M3: ChangeColor = row 5 of b1 (1.26.51: found with debug view 8; same uniform order in ActorGlint)
 int                                gDbgRow = 0;
 std::atomic_bool                   gEnchFlow{true};
 float                              gIdleEdge = 0.3f;  // M2.5: outline strength with no music (Awaken boots it to 1)
