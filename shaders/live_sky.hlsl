@@ -1433,9 +1433,37 @@ void pulsarSky(vec3 d, vec3 c) {
 //    redshift (g^4 beaming: the approaching side blazes white, the other glows dim and red). Inner gas orbits faster.
 //  - the music: the disk heats up on drops (PULSE), the photon ring flares on hits (KICK)
 static const float EH_BC = 5.196152;            // 3 sqrt(3)
-static const float EH_S  = 0.1142041;           // radians of sky per unit of b: shadow radius 34 deg (~68 across)
 static const float EH_INC = 1.43117;            // 82 deg inclination
 static const float EH_RIN = 4.2, EH_ROUT = 17.0; // [LyricsForge] spinning fast like Gargantua: the disk reaches in close, so the arc hugs the shadow
+// [LyricsForge] exact Schwarzschild light paths for an observer close in, at r_o = 8 M (the shadow is then 34 deg in
+// radius): phi(u) = int du / sqrt(1/b^2 - u^2 + 2u^3), traced outward from the eye (rays aimed at the hole swing round
+// their periapsis first). The far-field formula below over-bent this close and folded the sky into radial streaks.
+static const float EH_RO = 8.0;
+float ehF(float u, float bb) { return 1.0 / (bb * bb) - u * u + 2.0 * u * u * u; }
+float ehTurn(float ut, float bb) {   // int_0^ut, with u = ut (1 - x^2): no blow-up at a turning point
+    float acc = 0.0;
+    for (int k = 0; k < 12; k++) {
+        float x = (float(k) + 0.5) / 12.0, u = ut * (1.0 - x * x);
+        acc += 2.0 * ut * x * rsqrt(max(ehF(u, bb), 1e-12));
+    }
+    return acc / 12.0;
+}
+float ehPlain(float ut, float bb) {
+    float acc = 0.0;
+    for (int k = 0; k < 12; k++) acc += rsqrt(max(ehF(ut * (float(k) + 0.5) / 12.0, bb), 1e-12));
+    return acc * ut / 12.0;
+}
+float ehPeri(float bb) {             // periapsis: root of u^2 (1 - 2u) = 1 / b^2 in (0, 1/3)
+    float lo = 0.0, hi = 0.3333333, t = 1.0 / (bb * bb);
+    for (int i = 0; i < 24; i++) { float m = 0.5 * (lo + hi); if (m * m * (1.0 - 2.0 * m) > t) hi = m; else lo = m; }
+    return 0.5 * (lo + hi);
+}
+float ehImpact(float a) { return EH_RO * sin(a) / sqrt(1.0 - 2.0 / EH_RO); }
+float ehPhi(float a) {               // where the ray ends up (angle from the eye's own radial line, away from the hole)
+    float bb = ehImpact(a), uo = 1.0 / EH_RO;
+    if (a >= 1.5707963) return abs(cos(a)) < 0.15 ? ehTurn(uo, bb) : ehPlain(uo, bb);
+    return 2.0 * ehTurn(ehPeri(bb), bb) - ehPlain(uo, bb);
+}
 float ehDefl(float b) {
     if (b <= EH_BC) return 0.0;
     float weak = 4.0 / b + 11.780972 / (b * b);  // 15 pi / 4
@@ -1523,7 +1551,10 @@ void eventHorizon(vec3 d, float el) {
     frameOf(H, ex, ey);
     float cb = clamp(dot(d, H), -1.0, 1.0);
     float a  = acos(cb);
-    float b  = a / EH_S;
+    bool  inward = a < 1.5707963;                  // looking towards the hole (rays behind you never meet it)
+    float bI = ehImpact(a);
+    bool  cap = inward && bI < EH_BC;              // these rays fall in: the shadow
+    float b  = inward ? bI : 1e3;                  // impact parameter for the disk / ring (only on the hole's side)
     float alpha = atan2(dot(d, ey), dot(d, ex));
     float p = clamp(PULSE, 0.0, 1.6), kick = clamp(KICK, 0.0, 1.0);
     float heat = 1.0 + 0.30 * p + 0.15 * kick;
@@ -1531,18 +1562,17 @@ void eventHorizon(vec3 d, float el) {
 
     // 1) the sky behind, bent round the hole
     C = v3(0.0);
-    if (b > EH_BC) {
-        float dl = ehDefl(b), db = 1e-3;
-        float ang = a + min(dl, 40.0);
+    if (!cap) {
+        float PHI = ehPhi(a);
         vec3 side = normalize(d - H * cb + vec3(1e-6, 0.0, 0.0));
-        vec3 dB = normalize(H * cos(ang) + side * sin(ang));
-        float jr = abs(1.0 + (ehDefl(b + db) - dl) / db / EH_S);
-        float jt = sin(min(ang, 3.1405)) / max(sin(a), 1e-4);
-        C = ehStars(dB, H, max(jr, 1e-3), jt);         // pure black space behind, only the stars (no Milky Way haze)
+        vec3 dB = normalize(-H * cos(PHI) + side * sin(PHI));
+        float jr = abs((ehPhi(a + 1e-3) - PHI) / 1e-3);
+        float jt = abs(sin(PHI)) / max(sin(a), 1e-4);
+        C = ehStars(dB, H, max(jr, 1e-3), max(jt, 1e-3));         // pure black space behind, only the stars (no Milky Way haze)
     }
 
     else { // the shadow (ref): a deep navy that darkens to black at the centre - light from far away just grazing in
-        float k = clamp(b / EH_BC, 0.0, 1.0);
+        float k = clamp(a / 0.5973, 0.0, 1.0);    // 0.5973 rad = this observer's shadow radius (34.2 deg)
         C = mix(vec3(0.0, 0.002, 0.007), vec3(0.006, 0.016, 0.042), k * k);
     }
     // 2) the disk: primary + secondary image, optically thick (it hides what's behind)
