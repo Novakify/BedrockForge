@@ -1238,6 +1238,11 @@ void realSky(float x, float y, float z, float el, int kind) {
         zen = rgb(0.0, 58.0, 246.0); hor = rgb(130.0, 228.0, 255.0); sunC = rgb(255.0, 250.0, 240.0);
         lit = rgb(255.0, 255.0, 255.0); shade = rgb(222.0, 236.0, 252.0); accent = rgb(80.0, 200.0, 255.0);
         cover = 0.39; speed = 0.016; haze = 0.45; opac = 0.98; scale = 1.35;
+    } else if (kind == 20) { // [LyricsForge] Cloud Hill: deep blue, a few small fair-weather puffs (the tower and the hill
+                             // come from cloudHill())
+        zen = rgb(8.0, 58.0, 200.0); hor = rgb(110.0, 182.0, 255.0); sunC = rgb(255.0, 250.0, 240.0);
+        lit = rgb(255.0, 255.0, 255.0); shade = rgb(205.0, 222.0, 248.0); accent = rgb(140.0, 224.0, 74.0);
+        cover = 0.56; speed = 0.016; haze = 0.35; opac = 0.97; scale = 0.9;
     } else {                // 18 Neon City: a city night, low clouds lit from below, searchlights
         zen = rgb(10.0, 8.0, 28.0); hor = rgb(60.0, 20.0, 80.0); sunC = v3(0.0);
         lit = rgb(70.0, 40.0, 90.0); shade = rgb(14.0, 10.0, 26.0); accent = rgb(255.0, 60.0, 170.0);
@@ -1815,7 +1820,8 @@ bool spaceSky(vec3 d, float az, float el) {
 // which skies the realistic engine draws (and as which kind), -1 = their own code
 int realKind(int p) {
     if (p >= 38 && p <= 42) return p - 38; // [LyricsForge] 43, 44 are space skies (Event Horizon, Deep Voyage)
-    if (p == 45) return 19;                // [LyricsForge] Mirror Sky
+    if (p == 45) return 19;
+    if (p == 46) return 20;                // [LyricsForge] Cloud Hill                // [LyricsForge] Mirror Sky
     if (p == 6) return 5;   if (p == 7) return 6;   if (p == 8) return 7;   if (p == 13) return 8;
     if (p == 15) return 9;  if (p == 17) return 10; if (p == 9) return 11;  if (p == 22) return 12;
     if (p == 36) return 13; if (p == 25) return 14; if (p == 28) return 15; if (p == 26) return 16;
@@ -1908,6 +1914,95 @@ void mirrorFx(vec3 d) {
         add(rgb(255.0, 246.0, 220.0), ray * 0.5);
     }
 }
+// [LyricsForge] Cloud Hill: a towering cauliflower cumulus (two tiers of soft, z-blended lobes on a jittered grid, only the
+// lobes near this pixel are visited) over a wind-swept green hill; below the hill the usual void takes over
+float chH(float k, float s) { return fract(sin(k * 12.9898 + s * 78.233) * 43758.5453); }
+float chEnv(float u) {
+    return 0.74 * exp(-(u - 0.10) * (u - 0.10) / 0.15) + 0.30 * exp(-(u + 0.60) * (u + 0.60) / 0.07)
+         + 0.17 * exp(-(u - 0.78) * (u - 0.78) / 0.04) + 0.05;
+}
+void chLobe(float u, float v, float cu, float cv, float r, float fr, float zb, inout float W, inout vec3 N,
+            inout float HI, inout float AO, inout float HM) {
+    float dx = (u - cu) * cos(v) / r, dy = (v - cv) / r, q = dx * dx + dy * dy;
+    if (q >= 1.0) return;
+    float h = sqrt(1.0 - q);
+    float zz = fr * 0.5 + zb + h * r * 3.0;
+    float w = exp(clamp((zz - 0.6) * 60.0, -60.0, 60.0)) * sm(0.0, 0.25, h);
+    W += w; N += w * vec3(dx, dy, h); HI += w * fr; AO += w * sqrt(h); HM = max(HM, h);
+}
+void cloudHill(vec3 d, float az, float el) {
+    float tt = T / 2.2;
+    float u = radians(wrap180(az - 180.0)), v = radians(el);
+    // the hill: a gentle rolling crest all the way round
+    float ar = radians(az);
+    float hill = radians(2.0 + 3.2 * sin(ar + 0.6) + 1.4 * sin(ar * 2.0 + 2.1) + 0.6 * sin(ar * 5.0 + 0.4));
+    if (v < hill) {
+        float depth = clamp((hill - v) / radians(18.0), 0.0, 1.0);
+        float str = fbm(u * 7.0 - tt * 0.5, v * 260.0, tt * 0.3, 4);                 // long wind-combed streaks
+        float gust = 0.5 + 0.5 * sin(u * 6.0 - tt * 1.1 + fbm(u * 3.0, v * 20.0, tt * 0.1, 2) * 3.0); // gusts rolling over
+        vec3 gc = mix(rgb(120.0, 200.0, 30.0), rgb(60.0, 150.0, 16.0), sqrt(depth));
+        gc = mix(gc, rgb(22.0, 84.0, 10.0), 0.6 * sm(0.45, 0.8, str));
+        gc *= 0.85 + 0.3 * gust * (1.0 - depth * 0.5);
+        gc += rgb(180.0, 230.0, 90.0) * 0.25 * exp(-(hill - v) / radians(0.6));       // the sunlit crest
+        C = gc;
+        return;
+    }
+    if (abs(u) > 1.45 || v > 1.05) return;
+    float top = chEnv(u);
+    if (v > top + 0.22) return;
+    float W = 0.0, HI = 0.0, AO = 0.0, HM = 0.0;
+    vec3 N = v3(0.0);
+    float cv0 = max(cos(v), 0.3);
+    { // tier 1: the big lobes
+        int c0 = int(floor((u + 1.15) / 2.3 * 120.0));
+        int span = int(ceil(0.20 / cv0 / (2.3 / 120.0))) + 1;
+        for (int ci = max(c0 - span, 0); ci <= min(c0 + span, 119); ci++) {
+            for (int ri = 0; ri < 5; ri++) {
+                float k = float(ci * 5 + ri);
+                float a = chH(k, 1.0), b = chH(k, 2.0), c = chH(k, 3.0), e = chH(k, 4.0);
+                float cu = -1.15 + 2.3 * (float(ci) + a) / 120.0, tp = chEnv(cu);
+                if (tp < 0.065) continue;
+                float fr = sqrt((float(ri) + 0.3 + 0.6 * b) / 5.0);
+                float cv = tp * fr - 0.01 + 0.004 * sin(tt * 0.25 + k * 2.3);
+                float r = (0.022 + 0.075 * pow(c, 2.2)) * (1.4 - 0.6 * fr) * (0.6 + 0.8 * tp) * (1.0 + 0.08 * sin(tt * 0.3 + k * 1.7));
+                chLobe(u, v, cu, cv, r, fr, e * 0.08, W, N, HI, AO, HM);
+            }
+        }
+    }
+    { // tier 2: small lobes crowding the sunlit surface
+        int c0 = int(floor((u + 1.15) / 2.3 * 260.0));
+        int span = int(ceil(0.045 / cv0 / (2.3 / 260.0))) + 1;
+        for (int ci = max(c0 - span, 0); ci <= min(c0 + span, 259); ci++) {
+            for (int ri = 0; ri < 2; ri++) {
+                float k = 5000.0 + float(ci * 2 + ri);
+                float a = chH(k, 1.0), b = chH(k, 2.0), c = chH(k, 3.0), e = chH(k, 4.0);
+                float cu = -1.15 + 2.3 * (float(ci) + a) / 260.0, tp = chEnv(cu);
+                if (tp < 0.065) continue;
+                float fr = 0.86 + 0.16 * (float(ri) + b) / 2.0;
+                float r = (0.012 + 0.02 * c) * (0.6 + 0.8 * tp) * (1.0 + 0.1 * sin(tt * 0.4 + k * 1.3));
+                chLobe(u, v, cu, tp * fr, r, fr, 0.1 + e * 0.05, W, N, HI, AO, HM);
+            }
+        }
+    }
+    bool lobe = W > 1e-30;
+    bool body = v < top * 0.82 && v > -0.05;
+    if (!lobe && !body) return;
+    vec3 n; float hi, ao;
+    if (lobe) { n = N / W; n.z += 0.15; hi = HI / W; ao = 0.70 + 0.30 * AO / W; }
+    else { n = vec3(-0.2 * sign(u - 0.1), 0.2, 1.0); hi = clamp(v / 0.5, 0.0, 1.0); ao = 0.70; }
+    // fine billows on the lobes: bump the normal with a small noise gradient
+    float dt0 = fbm(u * 38.0, v * 38.0, tt * 0.05, 3), ee = 0.004;
+    float dU = (fbm((u + ee) * 38.0, v * 38.0, tt * 0.05, 3) - dt0) / ee;
+    float dV = (fbm(u * 38.0, (v + ee) * 38.0, tt * 0.05, 3) - dt0) / ee;
+    n = normalize(normalize(n) + vec3(-dU, -dV, 0.0) * 0.0035);
+    vec3 L = normalize(vec3(-0.55, 0.62, 0.56));                       // the sun high on the upper left
+    float lam = clamp(dot(n, L) * 0.75 + 0.25, 0.0, 1.0);
+    vec3 col = mix(rgb(132.0, 152.0, 210.0), v3(1.0), pow(clamp(lam * ao * 1.18, 0.0, 1.0), 1.1));
+    col = mix(col, rgb(240.0, 212.0, 234.0), 0.32 * (1.0 - lam) * (1.0 - hi)); // a warm pink bounce low in the shadows
+    col *= 0.86 + 0.14 * hi;
+    col += rgb(255.0, 250.0, 245.0) * 0.22 * clamp(lam - 0.7, 0.0, 1.0) / 0.3;
+    over(col, body ? 1.0 : sm(0.0, 0.18, HM));
+}
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
     PULSE = skyInfo4.w;
@@ -1996,6 +2091,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
         } else
         realSky(x, y, z, el, rk);
         if (PRESET == 45) mirrorFx(dir);
+        if (PRESET == 46) cloudHill(dir, az, el);
         if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
