@@ -1568,7 +1568,14 @@ void eventHorizon(vec3 d, float el) {
         vec3 dB = normalize(-H * cos(PHI) + side * sin(PHI));
         float jr = abs((ehPhi(a + 1e-3) - PHI) / 1e-3);
         float jt = abs(sin(PHI)) / max(sin(a), 1e-4);
-        C = ehStars(dB, H, max(jr, 1e-3), max(jt, 1e-3));         // pure black space behind, only the stars (no Milky Way haze)
+        // [LyricsForge] you're in a slow orbit round the hole: the starfield behind turns (about the world's up axis),
+        // so stars drift behind the hole, race round the ring in lensed arcs, duplicate onto both sides and slingshot
+        // back out. Sky time is integrated, so key moments speed the orbit up smoothly and it settles back.
+        float orb = T / 2.2 * 0.018;                   // rad/s: ~6 min per lap, calm
+        float co = cos(orb), so = sin(orb);
+        vec3 dBr = vec3(dB.x * co - dB.z * so, dB.y, dB.x * so + dB.z * co);
+        vec3 Hr  = vec3(H.x * co - H.z * so, H.y, H.x * so + H.z * co);
+        C = ehStars(dBr, Hr, max(jr, 1e-3), max(jt, 1e-3));         // pure black space behind, only the stars (no Milky Way haze)
     }
 
     else { // the shadow (ref): a deep navy that darkens to black at the centre - light from far away just grazing in
