@@ -1044,9 +1044,10 @@ void cumulus(float x, float y, float z, vec3 lit, vec3 shade, vec3 sunC, vec3 ho
     float occl = sm(cl, cl + 0.28, n2);
     float lightK = clamp(1.0 - occl * 0.5 * (0.4 + 0.6 * core), 0.0, 1.0);
     float base = sm(0.0, 0.25, n - n2 + 0.08);                     // the side away from the sun: a greyer base
-    vec3 cc = mix(shade, lit * 0.93, lightK) * (1.0 - 0.20 * core) * (1.0 - 0.12 * base);
+    float dk = PRESET == 45 ? 0.55 : 1.0; // [LyricsForge] Mirror Sky: almost-white clouds, only a hint of grey in the cores
+    vec3 cc = mix(shade, lit * 0.93, lightK) * (1.0 - 0.20 * dk * core) * (1.0 - 0.12 * dk * base);
     float back = pow(mu, 4.0);                                     // looking toward the sun: dense cores go dark,
-    cc = mix(cc, shade * 1.05, back * core * 0.65);                // only the thin edges catch the light
+    cc = mix(cc, shade * 1.05, back * core * 0.65 * dk);                // only the thin edges catch the light
     cc += sunC * pow(mu, 8.0) * (1.0 - core) * (1.0 - core) * 1.1;
     cc += glowBelow * (0.35 + 0.65 * core) * (1.0 - 0.5 * lightK);
     if (flash > 0.001) { // lightning: the cloud lights up from inside around a moving spot
@@ -1233,7 +1234,7 @@ void realSky(float x, float y, float z, float el, int kind) {
     } else if (kind == 19) { // [LyricsForge] Mirror Sky (the salt flat): electric blue up top, a glowing cyan horizon,
                              // big bright cumulus drifting slowly - the ground below is a mirror of all of it
         zen = rgb(0.0, 58.0, 246.0); hor = rgb(130.0, 228.0, 255.0); sunC = rgb(255.0, 250.0, 240.0);
-        lit = rgb(255.0, 255.0, 255.0); shade = rgb(218.0, 234.0, 252.0); accent = rgb(80.0, 200.0, 255.0);
+        lit = rgb(255.0, 255.0, 255.0); shade = rgb(222.0, 236.0, 252.0); accent = rgb(80.0, 200.0, 255.0);
         cover = 0.39; speed = 0.016; haze = 0.45; opac = 0.98; scale = 1.35;
     } else {                // 18 Neon City: a city night, low clouds lit from below, searchlights
         zen = rgb(10.0, 8.0, 28.0); hor = rgb(60.0, 20.0, 80.0); sunC = v3(0.0);
