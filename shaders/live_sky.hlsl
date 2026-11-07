@@ -1416,9 +1416,106 @@ void pulsarSky(vec3 d, vec3 c) {
     add(A1, exp(-a / 0.08) * 0.10 * (1.0 + flash));
 }
 
+
+// [LyricsForge] Event Horizon: a black hole right up close (shadow ~13 deg across). Everything is computed per pixel:
+//  - lensing: the stars and Milky Way behind are bent outward round the hole (an Einstein ring hugs the shadow)
+//  - the accretion disk seen nearly edge-on: the near half crosses in front of the shadow, the far half is lensed up
+//    over the top (and thinly under the bottom) - the Interstellar look
+//  - differential rotation (inner gas orbits faster), Doppler beaming (the approaching side is brighter and whiter)
+//  - a thin photon ring at the shadow's edge; the music heats the disk (PULSE) and flares the ring (KICK)
+float ehGas(float r, float phi, float t) {
+    float w  = 1.35 * pow(max(r, 0.5), -1.5);                     // Kepler-ish: the inner disk spins faster
+    float ph = phi - w * t;
+    float c = cos(ph), s = sin(ph);                               // on a circle: no seam at phi = +-pi
+    float streak = fbm(r * 5.5, c * 1.6, s * 1.6, 4);             // stretched along the orbit
+    float fine   = fbm(r * 17.0 + 3.0, c * 4.0, s * 4.0, 3);
+    float lanes  = sm(0.35, 0.75, fbm(r * 2.2 - 7.0, c * 0.9, s * 0.9, 3)); // darker dust lanes
+    return clamp((0.35 + 1.1 * streak) * (0.75 + 0.5 * fine) * (0.55 + 0.6 * lanes), 0.0, 2.0);
+}
+vec3 ehDiskCol(float r, float dop) {                               // hotter inside, Doppler shifts the colour
+    float k = clamp((r - 1.5) / 5.5, 0.0, 1.0);
+    vec3 hot = vec3(1.0, 0.93, 0.80), mid = vec3(1.0, 0.62, 0.26), cool = vec3(0.75, 0.20, 0.06);
+    vec3 c = k < 0.5 ? mix(hot, mid, k * 2.0) : mix(mid, cool, (k - 0.5) * 2.0);
+    c = mix(c, A1, 0.25);                                          // the preset palette tints it
+    return mix(c * vec3(1.0, 0.75, 0.6), mix(c, vec3(0.85, 0.92, 1.0), 0.35), clamp(dop * 0.5 + 0.5, 0.0, 1.0));
+}
+float ehDisk(float r, float phi, float t, float rin, float rout) {
+    if (r < rin * 0.92 || r > rout * 1.15) return 0.0;
+    float edge = sm(rin * 0.92, rin * 1.08, r) * (1.0 - sm(rout * 0.7, rout * 1.15, r));
+    return edge * pow(rin / r, 1.6) * ehGas(r, phi, t);
+}
+void eventHorizon(vec3 d, float el) {
+    vec3  H  = dirAE(170.0, 24.0);
+    float R  = radians(6.5);                                        // shadow radius (angle)
+    vec3  ex, ey;
+    frameOf(H, ex, ey);
+    float cb = clamp(dot(d, H), -1.0, 1.0);
+    float a  = acos(cb);
+    float b  = a / R;                                               // distance from the centre in shadow radii
+    float px_ = dot(d, ex), py_ = dot(d, ey);
+    float th = atan2(py_, px_);
+    float u = b * cos(th), v = b * sin(th);
+    float p = clamp(PULSE, 0.0, 1.6), kick = clamp(KICK, 0.0, 1.0);
+    float t = T * 0.55;
+    float up = sm(-25.0, 5.0, el);
+
+    // 1) the lensed sky behind: deflection grows towards the ring (1/(b - 0.75)); inside the shadow nothing gets out
+    C = vec3(0.004, 0.003, 0.010);
+    if (b > 1.0) {
+        float defl = min(1.6 / (b - 0.72), 9.0);
+        float ang  = a + R * defl;
+        vec3  side = normalize(d - H * cb + vec3(1e-5, 0.0, 0.0));
+        vec3  dB   = normalize(H * cos(ang) + side * sin(ang));
+        float mag  = 1.0 + 2.2 * exp(-(b - 1.0) * 3.0);             // the Einstein ring brightens what's behind
+        add(starField(dB, 1.35, 1.15) * mag, up);
+        add(milky(dB, 0.5, rgb(255.0, 210.0, 170.0), rgb(150.0, 160.0, 255.0)) * (0.6 + 0.4 * mag), up);
+        add(A2 * 0.06, exp(-(b - 1.0) * 0.55) * up);                 // a faint hot haze round the hole
+    } else {
+        C = v3(0.0);                                                 // the shadow: pure black
+    }
+
+    float rin = 2.3, rout = 8.5;
+    float heat = 1.0 + 0.45 * p + 0.25 * kick;
+
+    // 2) the far half of the disk, lensed up over the top of the shadow (and a thin copy under the bottom)
+    if (b > 1.0 && b < 2.6) {
+        float r2  = rin + (b - 1.02) / 1.55 * (rout - rin) * 0.55;   // squeezed: the light came round the hole
+        float phi = th + 1.5708;                                       // the far side, seen from above / below
+        float topW = sm(-0.35, 0.55, sin(th));
+        float botW = 0.28 * sm(-0.35, 0.55, -sin(th)) * exp(-(b - 1.0) * 4.0);
+        float dop  = -cos(th);                                         // left side comes towards us
+        float I    = ehDisk(r2, phi, t, rin, rout) * (topW + botW) * (1.0 - sm(1.6, 2.6, b));
+        add(ehDiskCol(r2, dop) * pow(1.0 + 0.45 * dop, 3.0) * 0.55, I * heat);
+    }
+
+    // 3) the near half: the bright band straight across, in front of the shadow
+    {
+        float tilt = 0.12;                                             // we sit ~7 deg above the disk plane
+        float X = u, Y = v / tilt;
+        float r = sqrt(X * X + Y * Y);
+        float phi = atan2(Y, X);
+        bool  behind = v > 0.0 && b < 1.0;                             // the far half of the band is hidden by the shadow
+        if (!behind && r > rin * 0.9 && r < rout * 1.2) {
+            float dop = -X / max(r, 1e-3);
+            float beam = pow(1.0 + 0.55 * dop, 3.0);
+            float I = ehDisk(r, phi, t, rin, rout) * beam;
+            float thick = exp(-abs(v) * abs(v) / (0.10 + 0.012 * r * r));  // a hair of vertical thickness, puffier outside
+            add(ehDiskCol(r, dop), I * (0.65 + 0.35 * thick) * heat * 0.9);
+        }
+    }
+
+    // 4) the photon ring: a razor-thin bright circle right at the edge of the black, flaring on the kick
+    float ring = exp(-pow((b - 1.035) / 0.016, 2.0)) * (1.0 + 0.6 * sm(-0.5, 0.5, -cos(th)));
+    add(mix(vec3(1.0, 0.86, 0.62), v3(1.0), 0.5), ring * (1.1 + 1.4 * kick));
+    add(A1 * 0.5, exp(-pow((b - 1.08) / 0.07, 2.0)) * 0.25 * (1.0 + kick));
+
+    // 5) bloom round the whole thing, so it glows into the sky instead of sitting on it
+    add(mix(A1, vec3(1.0, 0.7, 0.4), 0.5), 0.10 * exp(-max(0.0, b - 1.0) * 0.6) * heat * up);
+}
 bool spaceSky(vec3 d, float az, float el) {
     float yy = max(d.y, 0.0), p = clamp(PULSE, 0.0, 1.6);
     float up = sm(-2.0, 10.0, el);
+    if (PRESET == 43) { eventHorizon(d, el); return true; } // [LyricsForge] Event Horizon
     if (PRESET == 1 || PRESET == 20 || PRESET == 32 || PRESET == 23) { // auroras
         nightBase(d, el, TOP, HOR, 0.10);
         add(starField(d, 1.0, PRESET == 32 ? 0.7 : 1.0), up);
@@ -1510,7 +1607,7 @@ bool spaceSky(vec3 d, float az, float el) {
 
 // which skies the realistic engine draws (and as which kind), -1 = their own code
 int realKind(int p) {
-    if (p >= 38) return p - 38;
+    if (p >= 38 && p <= 42) return p - 38; // [LyricsForge] 43+ are space skies (Event Horizon), not realistic
     if (p == 6) return 5;   if (p == 7) return 6;   if (p == 8) return 7;   if (p == 13) return 8;
     if (p == 15) return 9;  if (p == 17) return 10; if (p == 9) return 11;  if (p == 22) return 12;
     if (p == 36) return 13; if (p == 25) return 14; if (p == 28) return 15; if (p == 26) return 16;
