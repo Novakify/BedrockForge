@@ -70,6 +70,10 @@ std::atomic<float> gAnim{0.0f};        // eased 0..1
 float              gT = 0.0f;          // linear 0..1
 LARGE_INTEGER      gLast{};
 long               gFramesShown = 0, gFramesNoUi = 0;
+// [LyricsForge] when the panel last really drew the captured UI: the cursor is only bent onto the panel while it is
+// visible. With the UI not captured (seen windowed: 0 frames with UI) the menu is drawn flat in place, and remapping the
+// pointer toward a panel that isn't there put it ~6 slots off in the Hive shop.
+std::atomic<int64_t> gUiShownMs{0};
 std::string        gStatus = "off";
 
 // geometry of the last composite (for ray-picking on the window thread)
@@ -796,7 +800,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     }
     D3D12_RESOURCE_DESC bd = bb->GetDesc();
     if (!ensureResources(device, bd)) return false;
-    if (redirected) ++gFramesShown;
+    if (redirected) { ++gFramesShown; gUiShownMs.store(int64_t(GetTickCount64()), std::memory_order_relaxed); }
     else ++gFramesNoUi;
 
     float aspect = float(bd.Width) / float(bd.Height);
@@ -1034,6 +1038,7 @@ bool remapClient(HWND hwnd, int& ix, int& iy) {
         return cine::mapClient(int(rc.right), int(rc.bottom), ix, iy, 0);
     }
     if (!gS.remap || !gEnabled || gAnim.load() < 0.5f || RfOptions::showImGui) return false;
+    if (int64_t(GetTickCount64()) - gUiShownMs.load(std::memory_order_relaxed) > 300) return false; // panel not drawn: leave the pointer alone
     Geom g;
     {
         std::lock_guard l(gGeomMutex);
