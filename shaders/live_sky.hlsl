@@ -1580,7 +1580,7 @@ void eventHorizon(vec3 d, float el) {
         float ring = exp(-rq * rq);
         add(vec3(1.0, 0.95, 0.90), ring * (1.2 + 1.2 * kick) + glowSum * (0.5 + 2.0 * lv)); // bright white strands, like the ref
     }
-    if (b > EH_BC) add(vec3(1.0, 0.72, 0.5), 0.05 * exp(-(b - EH_BC) / 2.0) * heat); // glow only near the hole: space stays black
+    if (b > EH_BC) add(vec3(1.0, 0.72, 0.5), 0.04 * exp(-(b - EH_BC) / 0.8) * heat); // glow hugs the hole: OLED black past the arc
 }
 bool spaceSky(vec3 d, float az, float el) {
     float yy = max(d.y, 0.0), p = clamp(PULSE, 0.0, 1.6);
