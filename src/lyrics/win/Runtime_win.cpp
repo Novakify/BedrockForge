@@ -464,6 +464,19 @@ void overrideWatch() {
 void appendLog(char const* name, std::string const& text); // below
 // [LyricsForge] config/lyrics_aliases.txt: "<title as your player shows it> = <Artist> - <Title>", one per line, # comments.
 // For tracks the app sends with a missing artist or a custom mix name. Matches the title (or "artist - title"), any case.
+// [LyricsForge] every sky Random may use: the classic list plus the newer presets (polar, galaxy, ocean, ice, purple,
+// sunset, cherry, crimson, thunder, astral, eclipse_heart, dream_ocean, meteor...) that were only reachable through a
+// cover colour or a mood list before
+std::vector<std::string> allSkies(bool curatedOnly) {
+    std::vector<std::string> v;
+    auto add = [&](std::string_view id) {
+        if (id == "custom" || id == "off" || (curatedOnly && !isCurated(id))) return;
+        if (std::find(v.begin(), v.end(), id) == v.end()) v.emplace_back(id);
+    };
+    for (auto id : sky::order()) add(id);
+    for (auto id : curatedSkies()) add(id);
+    return v;
+}
 bool lyricsAlias(std::string const& artist, std::string const& title, std::string& outArtist, std::string& outTitle) {
     auto const file = gS->cfgFile.parent_path() / "lyrics_aliases.txt";
     std::error_code ec;
@@ -1164,20 +1177,39 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
                 // song's mood keeps the calm turns and some variety
                 std::string cov;
                 bool const vividBright = coverIsVividBright(songCover()); // a bright vivid cover always sets the colour
-                if (vividBright || coverMiss || (!calmTurn && (newSong || sh.sky.empty() || m.bigDrop || (sh.rng >> 4) % 10 < 9)))
+                if (vividBright || coverMiss || (!calmTurn && (newSong ? (sh.rng >> 4) % 10 < 4 : (sh.sky.empty() || m.bigDrop || (sh.rng >> 4) % 10 < 4))))
                     cov = pickCoverSky(songCover(), sh.recent, sh.sky, sh.rng);
                 if (!cov.empty()) gS->directorLines.push_back("   sky from the cover: " + cov);
                 sh.sky = !cov.empty() ? cov : pickMoodSky(sh.mood, at, sh.recent, sh.sky, sh.rng);
             } else {
             std::vector<std::string> pool;
-            for (auto id : sky::order())
-                if (id != "custom" && id != "off" && (!cfg.skyCurated || isCurated(id)) &&
-                    std::find(sh.recent.begin(), sh.recent.end(), id) == sh.recent.end()) pool.emplace_back(id);
-            if (pool.empty()) { sh.recent.clear(); for (auto id : sky::order()) if (id != "custom" && (!cfg.skyCurated || isCurated(id))) pool.emplace_back(id); }
+            for (auto const& id : allSkies(cfg.skyCurated))
+                if (std::find(sh.recent.begin(), sh.recent.end(), id) == sh.recent.end()) pool.push_back(id);
+            if (pool.empty()) { sh.recent.clear(); pool = allSkies(cfg.skyCurated); }
             sh.sky = pool[size_t((sh.rng >> 8) % pool.size())];
             }
+            { // [LyricsForge] every sky gets its turn: about a third of the picks (never a vivid cover's) go to the
+              // skies seen least this session, so the same ~40% stop coming back over and over
+                static std::unordered_map<std::string, int> uses;
+                bool const coverWins = fit && coverIsVividBright(songCover());
+                if (!coverWins && (sh.rng >> 12) % 100 < 35) {
+                    int least = 1 << 30;
+                    std::vector<std::string> fresh;
+                    for (auto const& sid : allSkies(cfg.skyCurated)) {
+                        if (std::find(sh.recent.begin(), sh.recent.end(), sid) != sh.recent.end()) continue;
+                        int const u = uses.count(sid) ? uses[sid] : 0;
+                        if (u < least) { least = u; fresh.clear(); }
+                        if (u == least) fresh.push_back(sid);
+                    }
+                    if (!fresh.empty()) {
+                        sh.sky = fresh[size_t((sh.rng >> 16) % fresh.size())];
+                        gS->directorLines.push_back("   sky not seen in a while: " + sh.sky);
+                    }
+                }
+                ++uses[sh.sky];
+            }
             sh.recent.push_back(sh.sky);
-            if (sh.recent.size() > 6) sh.recent.erase(sh.recent.begin());
+            if (sh.recent.size() > 10) sh.recent.erase(sh.recent.begin());
             sh.since = 0;
             gS->directorLines.push_back("   random sky " + sh.sky);
         }
