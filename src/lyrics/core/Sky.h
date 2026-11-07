@@ -16,7 +16,7 @@ struct Config;
 
 namespace bf::lyrics::sky {
 
-enum class Weather : int { None, Rain, Snow, Blizzard, Thunder, Embers, Fireflies, Petals };
+enum class Weather : int { None, Rain, Snow, Blizzard, Thunder, Embers, Fireflies, Petals, SpaceDust }; // [LyricsForge] SpaceDust: motes round you on space skies
 enum class BodyKind : int { Sun = 0, Moon = 1, Eclipse = 2, Synth = 3 };
 
 struct Preset {

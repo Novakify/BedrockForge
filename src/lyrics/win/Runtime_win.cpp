@@ -135,6 +135,7 @@ struct State {
     float                   skyMoveAge = 99, skyMoveTo = 1; // [LyricsForge] the last key-moment sky move
     int                     skyMoveCount = 0;
     float                   waveT = -1;     // [BF] chorus light wave progress (< 0 none)
+    float                   warpT = -1;     // [LyricsForge] space skies' warp jump progress (< 0 none)
     int                     meteors = 0;    // [BF] meteor burst queued for the next sky frame
     std::string             autoKey;        // [BF] Auto director: the song it last picked for
     bool                    songScenesDirty = false;
@@ -1078,6 +1079,20 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.pictureFile = gS->pictureFile;
     // [BF] chorus transformation: the sky blends into the scene's chorus sky, a wave of light rolls over, meteors
     auto const& m = gS->conductor.state();
+    { // [LyricsForge] space skies: a big drop sends a gravitational wave through the sky (the wave slot is theirs);
+      // the final hit and every new song (chapter) make a warp jump - the stars streak for ~1.2 s and snap back
+        static constexpr std::string_view kSpace[] = {"nebula", "black_hole", "cosmos", "pulsar", "galaxy", "rift",
+                                                      "supernova", "warp", "astral", "meteor", "event_horizon"};
+        std::string_view const shown = gS->skyShown.empty() ? std::string_view(cfg.skyPreset) : std::string_view(gS->skyShown);
+        bool const space = std::find(std::begin(kSpace), std::end(kSpace), shown) != std::end(kSpace);
+        static int64_t sSeq = -1;
+        if (space && cfg.director && m.active && m.bigDrop && m.dropNow && gS->waveT < 0) gS->waveT = 0;
+        if (space && cfg.director && ((m.active && m.finalHit && (m.dropNow || m.chorusNow) && gS->warpT < 0) || (sSeq >= 0 && in.songSeq != sSeq))) gS->warpT = 0;
+        sSeq = in.songSeq;
+        if (gS->warpT >= 0) { gS->warpT += dt / 1.2f; if (gS->warpT > 1) gS->warpT = -1; }
+        float const w = gS->warpT < 0 ? 0.0f : gS->warpT;
+        in.warp = space ? std::sin(3.14159265f * std::sqrt(w)) * (gS->warpT < 0 ? 0.0f : 1.0f) : 0.0f; // quick in, eased out
+    }
     if (gS->waveT >= 0) { gS->waveT += dt / 2.6f; if (gS->waveT > 1) gS->waveT = -1; }
     in.wave = gS->waveT;
     in.meteors = std::exchange(gS->meteors, 0);

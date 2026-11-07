@@ -293,7 +293,7 @@ void Fx::weather(Weather w, float amount, int quality, float outside, double dt,
                  std::vector<Quad>& out) {
     static float const kQ[3] = {0.3f, 0.55f, 0.85f};
     int base = w == Weather::Blizzard ? 240 : w == Weather::Snow ? 200 : (w == Weather::Rain || w == Weather::Thunder) ? 220
-             : w == Weather::Petals ? 150 : w == Weather::Embers ? 80 : w == Weather::Fireflies ? 45 : 0;
+             : w == Weather::Petals ? 150 : w == Weather::Embers ? 80 : w == Weather::Fireflies ? 45 : w == Weather::SpaceDust ? 140 : 0;
     int n = int(float(base) * amount * kQ[std::clamp(quality, 0, 2)]);
     double const H = 14, V = 9;
     if (mPartType != int(w) || int(mParts.size()) != n) {
@@ -331,6 +331,9 @@ void Fx::weather(Weather w, float amount, int quality, float outside, double dt,
             break;
         case Weather::Embers:
             vx = 0.3 * std::sin(time * 1.3 + ph); vy = 0.9 * sp; vz = 0.3 * std::cos(time + ph); break;
+        case Weather::SpaceDust: // [LyricsForge] weightless motes: a slow 3D drift that curls, nothing falls
+            vx = 0.12 * std::sin(time * 0.21 + ph) * sp; vy = 0.08 * std::sin(time * 0.17 + ph * 2.0); vz = 0.12 * std::cos(time * 0.19 + ph) * sp;
+            break;
         default: // fireflies
             vx = 0.4 * std::sin(time * 0.5 + ph); vy = 0.25 * std::sin(time * 0.7 + ph * 2.0); vz = 0.4 * std::cos(time * 0.45 + ph);
         }
@@ -356,6 +359,12 @@ void Fx::weather(Weather w, float amount, int quality, float outside, double dt,
         case Weather::Embers: { // [BF] a slower, irregular flicker (9 Hz read as strobing sparks)
             float fl = float(0.5 + 0.5 * std::sin(time * 3.7 + ph * 3.0) * std::sin(time * 1.3 + ph));
             sprite(out, c, pos, 0.22 * p[9], 2, lerpColor(0xFF3B1F, 0xFFC04A, fl), outside * fade * (0.5f + 0.5f * fl));
+            break;
+        }
+        case Weather::SpaceDust: { // [LyricsForge] tiny coloured motes that twinkle; they read as being IN space
+            static uint32_t const kCol[6] = {0x9EC8FF, 0xFFFFFF, 0xFFD38A, 0xFF8A70, 0x8AF2FF, 0xD9A0FF};
+            float tw = float(0.35 + 0.65 * std::pow(0.5 + 0.5 * std::sin(time * (1.1 + p[9]) + ph * 5.0), 3.0));
+            sprite(out, c, pos, 0.035 + 0.04 * p[10], 2, kCol[int(p[10] * 5.999)], outside * fade * (0.25f + 0.6f * tw) * (0.5f + 0.5f * nearK));
             break;
         }
         default: { // [BF] fireflies: sizes vary, slow breathing glow, colour from the sky (gold under warm skies)

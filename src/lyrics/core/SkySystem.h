@@ -35,6 +35,7 @@ struct SystemIn {
     float   kick = 0;   // [LyricsForge] the drop / chorus kick alone (0..1, eases out): floods the world with the sky's colour
     float   pulse = 0;  // [LyricsForge] music energy + a kick on drops -> the realistic skies (wind, light, colour)
     float   spec[8] = {}; // [LyricsForge] 8 spectrum bands 0..1, bass -> treble (Event Horizon's visualizer ring)
+    float   warp = 0;      // [LyricsForge] space skies' warp jump envelope 0..1 (final hit / chapter)
     std::vector<float> const* eq = nullptr;  // [BF] horizon equaliser (Pulse): bar elevations in degrees
     float   eqAlpha = 0;
     uint32_t eqColor = 0xFFFFFF;

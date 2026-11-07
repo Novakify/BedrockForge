@@ -214,7 +214,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         if (mChapterT < 0 && mSweep >= 1.0f) mChapterSweep = false;
         // texel 14: r = sweep progress (0 none), g = over the vanilla sky (startup / outro), b = chapter (brighter, wider ring)
         q[14] = {mSweep < 1.0f ? uint8_t(1 + int(mSweep * 254.0f)) : uint8_t(0), uint8_t(mFromNothing && mSweep < 1.0f ? 255 : 0),
-                 uint8_t(mChapterSweep && mSweep < 1.0f ? 255 : 0), 0};
+                 uint8_t(mChapterSweep && mSweep < 1.0f ? 255 : 0), uint8_t(b8(in.warp))}; // a = warp jump
         { // [LyricsForge] texel 15: 8 spectrum bands, 4 bits each (bass in the low nibble of r ... treble in the high of a)
             auto nib = [&](int k) { return uint8_t(std::clamp(int(std::lround(mSpec[k] * 15.0f)), 0, 15)); };
             q[15] = {uint8_t(nib(0) | nib(1) << 4), uint8_t(nib(2) | nib(3) << 4), uint8_t(nib(4) | nib(5) << 4), uint8_t(nib(6) | nib(7) << 4)};
