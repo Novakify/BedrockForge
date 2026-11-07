@@ -16,6 +16,7 @@
 #include "lyrics/core/Config.h"
 #include "lyrics/core/Engine.h"
 #include "lyrics/core/Panel.h"
+#include "lyrics/core/VideoScreen.h"
 #include "lyrics/core/Fetcher.h"
 #include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Json.h"
@@ -2641,4 +2642,55 @@ TEST(tempo_from_lyrics) { // [LyricsForge] the backup groove locks to the words'
     CHECK(g.confidence > 0.3f);
     Lyrics few; few.lines.resize(3);
     CHECK(guessTempo(few).bpm == 0.0);
+}
+
+TEST(video_screen_places) { // [LyricsForge] the video screen: off = nothing, sky / pinned / beside, 16:9, fades in fights
+    Config cfg;
+    VideoScreen vs;
+    VideoScreenIn in;
+    in.eye    = {10, 70, -5};
+    in.origin = in.eye;
+    in.yaw    = 30;
+    in.dt     = 1.0f;
+    std::vector<BfGlyphV1> out;
+    vs.build(in, cfg, out);
+    CHECK(out.empty()); // off by default
+    cfg.screenOn = true;
+    VideoScreen::placeHere(cfg, in.eye, in.yaw, 0);
+    in.live = true;
+    for (int i = 0; i < 8; ++i) { out.clear(); vs.build(in, cfg, out); } // faded in (~0.45 s)
+    CHECK(out.size() == 4); // aura, rim, bezel, picture
+    CHECK_NEAR(out.back().alpha, 1.0, 1e-3);
+    BfGlyphV1 const& pic = out.back();
+    CHECK((pic.flags & BF_GLYPH_LIVE) && (pic.flags & BF_GLYPH_IMAGE));
+    Vec3 const r{pic.right[0], pic.right[1], pic.right[2]}, u{pic.up[0], pic.up[1], pic.up[2]};
+    CHECK_NEAR(r.length() / u.length(), 16.0 / 9.0, 1e-3);
+    Vec3 const c = Vec3{pic.pos[0], pic.pos[1], pic.pos[2]};
+    CHECK_NEAR(c.length(), 90.0, 0.01);                     // sky: 90 blocks out
+    CHECK(c.y > 0);                                          // above the horizon
+    CHECK_NEAR(yawOf(c), 30.0, 0.5);                         // where you looked when it was switched on
+    Vec3 const n = r.cross(u).normalized();                  // faces the player (picture not mirrored: n points back at the eye)
+    CHECK(n.dot(c.normalized()) < -0.99);
+    // fights: see-through
+    float const calm = pic.alpha;
+    out.clear();
+    in.fight = 1;
+    vs.build(in, cfg, out);
+    CHECK(out.back().alpha < calm * 0.3f);
+    // pinned: fixed spot ~8 blocks ahead; from behind it hides
+    in.fight = 0;
+    cfg.screenPlace = 1;
+    out.clear();
+    vs.build(in, cfg, out);
+    CHECK_NEAR(Vec3(out.back().pos[0], out.back().pos[1], out.back().pos[2]).length(), std::sqrt(64.0 + 1.44), 0.05);
+    in.eye = in.eye + dir(30, 0) * 16.0; // walked through it
+    in.origin = in.eye;
+    out.clear();
+    vs.build(in, cfg, out);
+    CHECK(out.empty());
+    // beside: small and close
+    cfg.screenPlace = 2;
+    out.clear();
+    vs.build(in, cfg, out);
+    CHECK(!out.empty() && Vec3(out.back().pos[0], out.back().pos[1], out.back().pos[2]).length() < 5.0);
 }

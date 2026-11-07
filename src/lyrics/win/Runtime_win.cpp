@@ -58,6 +58,7 @@
 #include "lyrics/core/TempoGuess.h"
 #include "lyrics/core/Clip.h"
 #include "lyrics/core/Moments.h"
+#include "lyrics/core/VideoScreen.h"
 #include "lyrics/win/World_win.h"
 
 // [BF] the Director's full-screen look for RF (game thread writes, RF's render thread reads; floats only, a torn
@@ -162,6 +163,13 @@ struct State {
     int                           iconAtlasIndex = -1;
     std::map<std::string, UiRect> iconRects;
     std::vector<BfGlyphV1>        panelGlyphs;
+    // [LyricsForge] video screen
+    VideoScreen                   screen;
+    std::vector<BfGlyphV1>        screenGlyphs;
+    std::vector<std::pair<std::string, std::string>> screenSources; // key, label (refreshed on the Screen page)
+    int64_t                       screenSourcesNs = 0, screenStepNs = 0;
+    std::string                   screenLabel;
+    float                         fight = 0;        // eased fight state of the last HUD frame (screen fades)
     Vec3                          camPos;           // last HUD-frame camera (panel placement + crosshair)
     float                         camYaw = 0, camPitch = 0;
     float                         fpsSmooth = 0;
@@ -1596,6 +1604,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     gS->engine.frame(in, cam, &world);
     gS->lastFov = fov;
     gS->camPos = cam.pos; gS->camYaw = cam.yaw; gS->camPitch = cam.pitch; gS->haveCam = true;
+    gS->fight = in.fight;
     panelStepAndPublish(now, true);
     skyStep(a, cam, dt, world);
     // Auto FPS (2.1 AutoPerf): frame rate from the HUD frame interval, the mod's own cost = this function's work
@@ -1743,6 +1752,9 @@ PanelMedia panelMedia(int64_t now) { // caller holds gS->mutex
     m.hasLyrics = gS->lyrics && !gS->lyrics->empty();
     m.userScenes = &gS->userScenes;
     m.lifted = gS->conductor.state().lifted;
+    m.screenSources = &gS->screenSources; // [LyricsForge] video screen page
+    m.screenSource  = gS->screenLabel;
+    m.screenStatus  = screenStatusLine();
     if (gS->tap.on && gS->tap.seq != gS->clock.songSeq()) gS->tap = {}; // the song changed under us
     m.tapOn   = gS->tap.on;
     m.taps    = int(gS->tap.taps.size());
@@ -1799,6 +1811,11 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
                 tapAction(a.kind, now); // game thread: the tap is stamped with this frame's song position
                 break;
             case PanelAction::Kind::SaveScene: saveMyScene(); break;
+            case PanelAction::Kind::ScreenHere: // [LyricsForge] the video screen goes where you look
+                VideoScreen::placeHere(gS->engine.config(), gS->camPos, gS->camYaw, gS->camPitch);
+                gS->cfgDirty = true;
+                break;
+            case PanelAction::Kind::ScreenRefresh: gS->screenSourcesNs = 0; break;
             case PanelAction::Kind::PinHere: { // [BF] floating lyrics stand ~5 blocks in front of you from now on
                 auto& cfg = gS->engine.config();
                 Vec3 const p = gS->camPos + dir(gS->camYaw, std::clamp(gS->camPitch, -20.0f, 20.0f)) * 5.0;
@@ -1818,7 +1835,31 @@ void panelStepAndPublish(int64_t now, bool lyricsActive) {
     host::hovered = gS->panel.hovered();
     host::open    = gS->panel.isOpen();
     gS->panelStepNs = now;
-    gS->engine.publish(lyricsActive, gS->lastFov, gS->panelGlyphs.empty() ? nullptr : &gS->panelGlyphs);
+    { // [LyricsForge] video screen: which window (for RF), the window list for the Screen page, the screen's quads
+        auto const& cfg = gS->engine.config();
+        bool const onPage = gS->panel.isOpen() && gS->panel.tab() == Panel::Tab::Screen;
+        if (onPage && (gS->screenSourcesNs == 0 || now - gS->screenSourcesNs > 3000000000LL)) {
+            gS->screenSources.clear();
+            for (auto const& s : screenSources()) gS->screenSources.emplace_back(s.key, s.label);
+            gS->screenSourcesNs = now;
+        }
+        gS->screenLabel = screenUpdate(cfg, true);
+        gS->screenGlyphs.clear();
+        if (gS->haveCam) {
+            VideoScreenIn vi;
+            vi.eye    = gS->camPos;
+            vi.yaw    = gS->camYaw;
+            vi.pitch  = gS->camPitch;
+            vi.origin = gS->engine.origin();
+            vi.dt     = gS->screenStepNs ? std::clamp(float(double(now - gS->screenStepNs) / 1e9), 0.0f, 0.1f) : 1.0f / 60.0f;
+            vi.fight  = gS->fight;
+            vi.live   = screenLive();
+            gS->screen.build(vi, cfg, gS->screenGlyphs);
+        }
+        gS->screenStepNs = now;
+    }
+    gS->engine.publish(lyricsActive, gS->lastFov, gS->panelGlyphs.empty() ? nullptr : &gS->panelGlyphs,
+                       gS->screenGlyphs.empty() ? nullptr : &gS->screenGlyphs);
 }
 
 void installPanelHost() {

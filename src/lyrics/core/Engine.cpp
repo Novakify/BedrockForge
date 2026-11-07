@@ -422,22 +422,24 @@ void Engine::endCredits(std::vector<DrawWord>& words, SceneInput const& in, Conf
     if (!in.artist.empty()) card(in.artist, 0.48f, 0.038f, a * 0.8f, 0);
 }
 
-void Engine::publish(bool active, float fovY, std::vector<BfGlyphV1> const* extra) {
+void Engine::publish(bool active, float fovY, std::vector<BfGlyphV1> const* extra, std::vector<BfGlyphV1> const* under) {
     BfLyricFrameV1 h{};
     bool const lyricsOn = active && mCfg.enabled && mCfg.showLyrics;
     bool const panelOn  = extra && !extra->empty();
-    h.active    = lyricsOn || panelOn ? 1u : 0u;
+    bool const underOn  = under && !under->empty();
+    h.active    = lyricsOn || panelOn || underOn ? 1u : 0u;
     h.origin[0] = mOrigin.x;
     h.origin[1] = mOrigin.y;
     h.origin[2] = mOrigin.z;
     h.camYaw    = mCam.yaw;
     h.camPitch  = mCam.pitch;
     h.camFovY   = fovY;
-    if (!panelOn) { FrameStore::get().publish(h, lyricsOn ? mGlyphs : std::vector<BfGlyphV1>{}); return; }
+    if (!panelOn && !underOn) { FrameStore::get().publish(h, lyricsOn ? mGlyphs : std::vector<BfGlyphV1>{}); return; }
     std::vector<BfGlyphV1> all;
-    all.reserve((lyricsOn ? mGlyphs.size() : 0) + extra->size());
-    if (lyricsOn) all = mGlyphs;
-    all.insert(all.end(), extra->begin(), extra->end()); // the panel draws last = on top
+    all.reserve((lyricsOn ? mGlyphs.size() : 0) + (panelOn ? extra->size() : 0) + (underOn ? under->size() : 0));
+    if (underOn) all.insert(all.end(), under->begin(), under->end()); // [LyricsForge] the video screen sits behind the words
+    if (lyricsOn) all.insert(all.end(), mGlyphs.begin(), mGlyphs.end());
+    if (panelOn) all.insert(all.end(), extra->begin(), extra->end()); // the panel draws last = on top
     FrameStore::get().publish(h, all);
 }
 

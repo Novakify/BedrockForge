@@ -47,11 +47,15 @@ struct PanelMedia {
     bool        hasLyrics = false;
     std::vector<StudioScene> const* userScenes = nullptr; // [BF] your saved scenes (Cinema home)
     bool        lifted = false;                            // [BF] the chorus look is on right now (home preview)
+    // [LyricsForge] video screen page
+    std::vector<std::pair<std::string, std::string>> const* screenSources = nullptr; // key, label
+    std::string screenSource;  // label of the window the screen shows now ("" = none found)
+    std::string screenStatus;  // what Renderer Foundation reports
 };
 
 /// What the panel asks the game side to do (BF glue performs these on the media thread / config).
 struct PanelAction {
-    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics, TapStart, Tap, TapUndo, TapSave, TapCancel, PinHere, TapMark, SaveScene } kind;
+    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics, TapStart, Tap, TapUndo, TapSave, TapCancel, PinHere, TapMark, SaveScene, ScreenHere, ScreenRefresh } kind;
     int64_t ms = 0; // Seek target (TapMark: the section kind b / d / c / q)
 };
 
@@ -73,7 +77,7 @@ struct PanelInput {
 class Panel {
 public:
     // [BF] Home = Cinema home (scene cards, intensity, the big switches); FPS lives behind More now
-    enum class Tab { Home, Sky, Lyrics, Look, Fx, More, Fps };
+    enum class Tab { Home, Sky, Lyrics, Look, Fx, More, Fps, Screen };
 
     /// Open in front of the camera (WorldPanel constructor). eye/look = camera at that moment.
     void open(Vec3 eye, Vec3 look, int64_t nowMs);
@@ -120,6 +124,7 @@ private:
     void cinema(Ctx& c, Config& cfg);
     void hudPage(Ctx& c, Config& cfg);  // [BF] FX page 6: corner music player (LyricsFlow 2.2 Extra)   // [BF] FX page 5: Cinema (ribbon, impacts, showcase, tap-sync, place)
     void fps(Ctx& c, Config& cfg);
+    void screen(Ctx& c, Config& cfg); // [LyricsForge] video screen (under More)
     void home(Ctx& c, Config& cfg);     // [BF] Cinema home
     void more(Ctx& c, Config& cfg);
 

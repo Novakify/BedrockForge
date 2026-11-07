@@ -223,7 +223,21 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     S(combatFont, "outfit_bold")       /* the readable font while fighting */                                          \
     I(combatCalmMs, 5000)              /* this long after the last hit = calm again (lyrics drift back) */        \
     B(finaleStars, true)               /* [LyricsForge] a song ends: its last line rises into the sky as stars */  \
-    B(chapterCover, true)              /* [LyricsForge] the next song's cover glows in the sky during its chapter */
+    B(chapterCover, true)              /* [LyricsForge] the next song's cover glows in the sky during its chapter */ \
+    /* ---- [LyricsForge] video screen: a window from your PC (browser, video player) playing in the world */          \
+    B(screenOn, false)                                                                                                 \
+    S(screenWindow, "")                /* "exe|title" of the window, or "@monitor:N" for a whole monitor */             \
+    I(screenPlace, 0)                  /* 0 sky, 1 pinned in the world, 2 beside you */                                 \
+    F(screenSize, 1.0f)                                                                                                \
+    F(screenOpacity, 1.0f)                                                                                             \
+    I(screenUpscale, 1)                /* 0 plain, 1 Anime4K Sharp, 2 Anime4K Max (D3D12) */                            \
+    B(screenCrop, true)                /* only the window's inside (no title bar / borders) */                          \
+    B(screenCombatFade, true)          /* see-through while fighting */                                                 \
+    F(screenYaw, 0.0f)                 /* sky: the direction it hangs in */                                             \
+    F(screenPinX, 0.0f)                                                                                                \
+    F(screenPinY, 80.0f)                                                                                               \
+    F(screenPinZ, 0.0f)                                                                                                \
+    F(screenPinYaw, 0.0f)
 
 struct Config {
 #define BF_LC_B(n, d) bool n = d;

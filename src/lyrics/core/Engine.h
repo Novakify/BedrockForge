@@ -40,7 +40,8 @@ public:
     /// Advance one frame and rebuild the glyph list. world may be null (no placement raycasts / physics collisions).
     void frame(SceneInput const& in, CameraState const& cam, IWorld* world);
     /// Publish the last frame() to the shared store (what BF_CopyLyricFrame returns).
-    void publish(bool active, float fovY, std::vector<BfGlyphV1> const* extra = nullptr);
+    /// extra = drawn on top of the lyrics (the panel); under = drawn before them ([LyricsForge] the video screen).
+    void publish(bool active, float fovY, std::vector<BfGlyphV1> const* extra = nullptr, std::vector<BfGlyphV1> const* under = nullptr);
 
     std::vector<BfGlyphV1> const& glyphs() const { return mGlyphs; }
     Vec3                          origin() const { return mOrigin; }

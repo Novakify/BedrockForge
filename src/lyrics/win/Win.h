@@ -89,6 +89,21 @@ struct ClientUiAssets {
 ClientUiAssets clientUiAssets();
 /// Open the LyricsFlow world panel on the next HUD frame (the menu closes first, the panel needs the HUD view).
 void requestPanel();
+/// [LyricsForge] Video screen (Screen_win.cpp). A window the screen can show: key = "exe|title" (or "@monitor:N").
+struct ScreenSource {
+    std::string key, label;
+    uint64_t    hwnd = 0;
+    int         monitor = -1;
+};
+/// Visible top-level windows with a title (not Minecraft's own, not tool windows) + one entry per monitor. ~1 ms.
+std::vector<ScreenSource> screenSources();
+/// Every HUD frame: what RF should capture (BF_GetScreenConfig). Resolves cfg.screenWindow to a window (keeps the same
+/// window while it lives, else the same title, else the same app); returns the label of what it found ("" = none).
+std::string screenUpdate(Config const& cfg, bool inWorld);
+/// What RF reports (BF_PutScreenStatus): one short line for the panel, and whether a picture is coming in.
+std::string screenStatusLine();
+bool        screenLive();
+
 /// LyricsFlow's own on/off (the O key): lyrics drawn or not, independent of the module.
 bool lyricsShown();
 void setLyricsShown(bool on);

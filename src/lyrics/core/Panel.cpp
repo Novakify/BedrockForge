@@ -706,7 +706,7 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     float const tw = (160.0f - 3.0f * 5) / 6;
     for (int i = 0; i < 6; ++i) {
         float       tx  = 206 + float(i) * (tw + 3);
-        bool        sel = mPage == i || (i == 5 && mPage == 6); // FPS sits under More
+        bool        sel = mPage == i || (i == 5 && (mPage == 6 || mPage == 7)); // FPS + Video screen sit under More
         std::string id  = "tab" + std::to_string(i);
         float       h   = c.hit(id, tx, 203, tw, 14);
         c.box(tx, 203, tw, 14, 7, h, a, sel);
@@ -727,6 +727,7 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     case 3: look(c, cfg, c.fonts); break;
     case 4: fx(c, cfg); break;
     case 6: fps(c, cfg); break;
+    case 7: screen(c, cfg); break;
     default: more(c, cfg); break;
     }
 }
@@ -1161,7 +1162,57 @@ void Panel::more(Ctx& c, Config& cfg) {
     static char const* const ps[] = {"Classic", "Glass", "Neon"};
     for (int i = 0; i < 3; ++i)
         c.option("ps" + std::to_string(i), 238 + float(i) * 43, 162, 41, 15, ps[i], cfg.playerStyle == i, [&cfg, i] { cfg.playerStyle = i; }, a);
-    c.option("m3", 206, 179, 160, 15, "Close", false, [&] { c.actions.push_back({PanelAction::Kind::Close, 0}); }, a);
+    // [LyricsForge] video screen page (a window from your PC playing in the world)
+    c.option("m5", 206, 179, 78, 15, cfg.screenOn ? "Video screen (on)" : "Video screen", cfg.screenOn,
+             [&] { mPage = 7; mPageTime = c.in.nowMs; c.actions.push_back({PanelAction::Kind::ScreenRefresh, 0}); }, a);
+    c.option("m3", 288, 179, 78, 15, "Close", false, [&] { c.actions.push_back({PanelAction::Kind::Close, 0}); }, a);
+}
+
+// [LyricsForge] Video screen: pick a window (browser, video player, a whole monitor), where it stands, how big, Anime4K.
+void Panel::screen(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.toggle2("vs", 206, 45, 78, "Screen", cfg.screenOn, [&] {
+        cfg.screenOn = !cfg.screenOn;
+        if (cfg.screenOn) c.actions.push_back({PanelAction::Kind::ScreenHere, 0}); // switched on: in front of you
+    }, a);
+    c.toggle2("vsf", 288, 45, 78, "Fade in fights", cfg.screenCombatFade, [&] { cfg.screenCombatFade = !cfg.screenCombatFade; }, a);
+
+    // window picker: < name > (click the name = next), the list is refreshed when the page opens / on Refresh
+    c.text("Window", 206, 65, 0.62f, WHITE, 0.55f * a);
+    auto const* src = mMedia.screenSources;
+    int const   n   = src ? int(src->size()) : 0;
+    int         cur = -1;
+    for (int i = 0; i < n; ++i)
+        if ((*src)[size_t(i)].first == cfg.screenWindow) { cur = i; break; }
+    auto pick = [&cfg, src, n](int i) {
+        if (n <= 0) return;
+        i = ((i % n) + n) % n;
+        cfg.screenWindow = (*src)[size_t(i)].first;
+    };
+    c.option("vs<", 206, 74, 16, 15, "\xE2\x80\xB9", false, [&] { pick(cur < 0 ? n - 1 : cur - 1); }, a);
+    std::string const shown = !mMedia.screenSource.empty() ? mMedia.screenSource
+                            : cur >= 0                     ? (*src)[size_t(cur)].second
+                            : n > 0                        ? std::string("Pick a window \xE2\x80\xBA")
+                                                           : std::string("No windows found");
+    c.option("vsn", 224, 74, 124, 15, shown, false, [&] { pick(cur + 1); }, a);
+    c.option("vs>", 350, 74, 16, 15, "\xE2\x80\xBA", false, [&] { pick(cur + 1); }, a);
+
+    c.text("Place", 206, 95, 0.62f, WHITE, 0.55f * a);
+    static char const* const where[] = {"Sky", "Pinned", "Beside"};
+    for (int i = 0; i < 3; ++i)
+        c.option("vp" + std::to_string(i), 234 + float(i) * 44, 92, 42, 13, where[i], cfg.screenPlace == i, [&cfg, i] { cfg.screenPlace = i; }, a);
+    c.option("vh", 206, 109, 78, 14, "Put it here", false, [&] { c.actions.push_back({PanelAction::Kind::ScreenHere, 0}); }, a);
+    c.option("vr", 288, 109, 78, 14, "Refresh list", false, [&] { c.actions.push_back({PanelAction::Kind::ScreenRefresh, 0}); }, a);
+
+    cfg.screenSize    = 0.3f + 2.7f * c.slider("vsz", "Size", 131, (std::clamp(cfg.screenSize, 0.3f, 3.0f) - 0.3f) / 2.7f, a);
+    cfg.screenOpacity = 0.1f + 0.9f * c.slider("vop", "Opacity", 146, (std::clamp(cfg.screenOpacity, 0.1f, 1.0f) - 0.1f) / 0.9f, a);
+
+    c.text("Anime4K", 206, 165, 0.62f, WHITE, 0.55f * a);
+    static char const* const up[] = {"Off", "Sharp", "Max"};
+    for (int i = 0; i < 3; ++i)
+        c.option("vu" + std::to_string(i), 250 + float(i) * 39, 162, 37, 13, up[i], cfg.screenUpscale == i, [&cfg, i] { cfg.screenUpscale = i; }, a);
+    std::string const st = cfg.screenOn ? mMedia.screenStatus : std::string("off");
+    c.text(c.ellip(st, 160, 0.55f), 206, 182, 0.55f, ACCENT2, 0.8f * a);
 }
 
 } // namespace bf::lyrics
