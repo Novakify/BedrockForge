@@ -1210,6 +1210,11 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         auto const& c = gS->engine.config();
         bassWanted(c.playerStyle == 2 || c.beatGlow || c.fxBeatShake || c.director);
         gS->bass = bassLevel(dt, &gS->bassLive);
+        { // [LyricsForge] which output we hear (the loopback hunts across outputs when one is silent)
+            static std::string sDev;
+            std::string const d = audioDevice();
+            if (d != sDev && gS->bassLive && !gS->synthOn) { sDev = d; if (!d.empty()) gS->directorLines.push_back("   audio from: " + d); } // only once it hears
+        }
         { // [LyricsForge] silent-audio fallback (see synthOn)
             auto const& cf = gS->engine.config();
             BandFrame const live = gS->bassLive ? audioLatest() : BandFrame{};

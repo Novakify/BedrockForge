@@ -67,6 +67,7 @@ float bassLevel(float dt, bool* live);
 void      memoryWanted(bool on);
 void      audioFrames(std::vector<BandFrame>& out);
 BandFrame audioLatest();
+std::string audioDevice(); // [LyricsForge] the output the loopback listens to
 /// [BF] stereo balance of what is playing, -1 left .. +1 right (0 when silent / mono)
 float audioBalance();
 
