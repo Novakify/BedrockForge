@@ -128,8 +128,8 @@ std::vector<std::string_view> const& moodSkies(SkyMood m) {
         {"summer", "golden_hour", "sunset", "dusk", "bright_night", "supernova"},                 // hype
         {"dawn", "cotton_candy", "aquarell", "dream_ocean", "sakura", "golden_hour", "dusk"},     // dreamy
         {"silver_lining", "storm", "frost", "midnight", "thunder", "bright_night"},              // melancholy
-        {"storm", "crimson", "inferno", "eclipse", "blood_moon", "eclipse_heart", "event_horizon"}, // dark
-        {"midnight", "cosmos", "aurora", "bright_night", "galaxy", "nebula", "event_horizon"},   // night
+        {"storm", "crimson", "inferno", "eclipse", "blood_moon", "eclipse_heart", "event_horizon", "deep_voyage"}, // dark
+        {"midnight", "cosmos", "aurora", "bright_night", "galaxy", "nebula", "event_horizon", "deep_voyage"}, // night
     };
     return lists[std::min<size_t>(size_t(m), 5)];
 }
@@ -140,7 +140,7 @@ std::vector<std::string_view> const& curatedSkies() { // [LyricsForge] after the
         "midnight", "nebula", "eclipse", "blood_moon", "storm", "supernova", "synthwave", "black_hole", "cosmos",
         "neon_city", "frost", "deep_sea", "inferno", "prism", "pulsar", "aquarell", "polar", "galaxy", "ocean", "ice",
         "purple", "sunset", "cherry", "crimson", "thunder", "rift", "warp", "silk", "astral", "eclipse_heart",
-        "dream_ocean", "meteor", "event_horizon"};
+        "dream_ocean", "meteor", "event_horizon", "deep_voyage"};
     return c;
 }
 bool isCurated(std::string_view id) {

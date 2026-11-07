@@ -1082,7 +1082,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     { // [LyricsForge] space skies: a big drop sends a gravitational wave through the sky (the wave slot is theirs);
       // the final hit and every new song (chapter) make a warp jump - the stars streak for ~1.2 s and snap back
         static constexpr std::string_view kSpace[] = {"nebula", "black_hole", "cosmos", "pulsar", "galaxy", "rift",
-                                                      "supernova", "warp", "astral", "meteor", "event_horizon"};
+                                                      "supernova", "warp", "astral", "meteor", "event_horizon", "deep_voyage"};
         std::string_view const shown = gS->skyShown.empty() ? std::string_view(cfg.skyPreset) : std::string_view(gS->skyShown);
         bool const space = std::find(std::begin(kSpace), std::end(kSpace), shown) != std::end(kSpace);
         static int64_t sSeq = -1;

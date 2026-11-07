@@ -46,3 +46,4 @@
     {"silver_lining", 0x2854AA, 0xC4D6E8, 0.9f, 0.0f, false, 0xFFD28C, 0xFFFFFF, Weather::None, 0x000000, false, 0xFFF6E6},
     // [LyricsForge] new space skies (ordinal 43+, drawn by live_sky's spaceSky)
     {"event_horizon", 0x000000, 0x05030A, 0.9f, 1.3f, false, 0xFFB45A, 0xFF6A2A, Weather::SpaceDust, 0x000000, true, 0xFFE2B8},
+    {"deep_voyage", 0x000000, 0x020208, 0.9f, 1.4f, false, 0x34CCFF, 0xFF3A2E, Weather::SpaceDust, 0x000000, false, 0xBFEFFF},
