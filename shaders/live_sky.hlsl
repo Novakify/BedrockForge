@@ -1232,9 +1232,9 @@ void realSky(float x, float y, float z, float el, int kind) {
         below = rgb(255.0, 60.0, 40.0) * 0.35 * exp(-yy * 3.0);
     } else if (kind == 19) { // [LyricsForge] Mirror Sky (the salt flat): electric blue up top, a glowing cyan horizon,
                              // big bright cumulus drifting slowly - the ground below is a mirror of all of it
-        zen = rgb(0.0, 52.0, 240.0); hor = rgb(150.0, 232.0, 255.0); sunC = rgb(255.0, 250.0, 240.0);
-        lit = rgb(255.0, 255.0, 255.0); shade = rgb(150.0, 188.0, 236.0); accent = rgb(80.0, 200.0, 255.0);
-        cover = 0.47; speed = 0.016; haze = 0.75; opac = 0.97; scale = 0.72;
+        zen = rgb(0.0, 58.0, 246.0); hor = rgb(130.0, 228.0, 255.0); sunC = rgb(255.0, 250.0, 240.0);
+        lit = rgb(255.0, 255.0, 255.0); shade = rgb(198.0, 222.0, 250.0); accent = rgb(80.0, 200.0, 255.0);
+        cover = 0.43; speed = 0.016; haze = 0.45; opac = 0.98; scale = 1.35;
     } else {                // 18 Neon City: a city night, low clouds lit from below, searchlights
         zen = rgb(10.0, 8.0, 28.0); hor = rgb(60.0, 20.0, 80.0); sunC = v3(0.0);
         lit = rgb(70.0, 40.0, 90.0); shade = rgb(14.0, 10.0, 26.0); accent = rgb(255.0, 60.0, 170.0);
