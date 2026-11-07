@@ -1286,7 +1286,7 @@ void realSky(float x, float y, float z, float el, int kind) {
 // [LyricsForge] the deep space skies are the whole sphere: on sky-island maps you float in space, stars and all
 // below your feet (nebula, black hole, cosmos, pulsar, galaxy, rift, supernova, warp, astral, meteor, Event Horizon)
 bool deepSpace(int p) {
-    return p == 2 || p == 3 || p == 4 || p == 18 || p == 21 || p == 29 || p == 30 || p == 31 || p == 34 || p == 37 || p == 43;
+    return p == 2 || p == 3 || p == 4 || p == 18 || p == 21 || p == 29 || p == 30 || p == 31 || p == 34 || p == 37 || p == 43 || p == 44;
 }
 void nightBase(vec3 d, float el, vec3 zen, vec3 hor, float glow) {
     bool sp = deepSpace(PRESET);
@@ -1636,10 +1636,63 @@ void eventHorizon(vec3 d, float el) {
     }
     // (no warm haze: without the gas there is nothing to glow - space stays OLED black)
 }
+// [LyricsForge] Deep Voyage: you're in a ship flying through deep space. A real 3D star tunnel per pixel: stars sit at
+// depths along the flight path and come at you - out of the vanishing point ahead they stream outward, grow and blaze
+// as they pass, behind you they shrink away into it. Red / cyan / teal / white / green / violet on OLED black, some
+// flicker in and out, a few giants flare; faint red and teal dust drifts by. Music: drops brighten the field, hits
+// make the near stars flash; key moments surge the ship (the sky's drift rate) and the warp jump streaks it all.
+vec3 dvPal(float h) {
+    return h < 0.22 ? vec3(1.0, 0.16, 0.12) : h < 0.46 ? vec3(0.12, 0.80, 1.0) : h < 0.60 ? vec3(0.10, 1.0, 0.78)
+         : h < 0.76 ? vec3(1.0, 0.98, 0.95) : h < 0.85 ? vec3(0.35, 1.0, 0.40) : h < 0.93 ? vec3(0.72, 0.45, 1.0)
+         : vec3(1.0, 0.40, 0.62);
+}
+float dvHash(float x, float y, float s) { return fract(sin(x * 127.1 + y * 311.7 + s * 74.7) * 43758.5453); }
+void deepVoyage(vec3 d) {
+    vec3 F = dirAE(180.0, 8.0);                       // where the ship is heading
+    vec3 e1, e2;
+    frameOf(F, e1, e2);
+    float f = dot(d, F), af = max(abs(f), 0.02);
+    float u = dot(d, e1) / af, v = dot(d, e2) / af;
+    float sg = f >= 0.0 ? 1.0 : -1.0;                 // behind you the field recedes
+    float ts = T / 2.2 * 0.06;                        // integrated sky time: the music surges it smoothly (no jumps)
+    float p = clamp(PULSE, 0.0, 1.6), kick = clamp(KICK, 0.0, 1.0);
+    C = v3(0.0);
+    for (int L = 0; L < 10; L++) {
+        float lz = float(L) / 10.0 + sg * ts;
+        float z = fract(lz), pass = floor(lz);        // 0 = right at you .. 1 = deep; each pass reseeds the field
+        float D = 0.02 + z * 1.6, K = 9.0;
+        float Xw = u * D * K, Yw = v * D * K;
+        float cx = floor(Xw), cy = floor(Yw), sd = float(L) * 3.1 + pass * 7.7;
+        if (dvHash(cx, cy, sd) > 0.28) continue;      // most cells are empty
+        float sx = cx + 0.2 + 0.6 * dvHash(cx, cy, sd + 1.3), sy = cy + 0.2 + 0.6 * dvHash(cx, cy, sd + 5.7);
+        float dist = length(vec2(Xw - sx, Yw - sy)) / (D * K);
+        float nearK = 1.0 - z;
+        bool  giant = dvHash(cx, cy, sd + 9.1) > 0.94;
+        float size = (0.0012 + 0.0030 * pow(nearK, 2.2)) * (giant ? 2.2 : 1.0);
+        float cellR = 0.42 / (D * K);                  // keep every glow inside its own cell (no square edges)
+        float gr = min(size * 3.0, cellR * 0.5);
+        float ph = dvHash(cx, cy, sd + 2.2);
+        float tw = 0.55 + 0.45 * sin(T / 2.2 * (2.0 + 5.0 * ph) + ph * 40.0);           // flicker in and out
+        float fade = sm(1.0, 0.75, z) * sm(0.0, 0.06, z);
+        float bright = (0.10 + 1.8 * pow(nearK, 2.6)) * (giant ? 2.5 : 1.0) * fade * tw;
+        bright *= 1.0 + 0.35 * p + 1.2 * kick * pow(nearK, 3.0);                        // drops / hits: the near ones flash
+        vec3 col = dvPal(dvHash(cx, cy, sd + 4.4));
+        float core = exp(-dist * dist / (size * size));
+        float glow = exp(-dist / max(gr, 1e-5)) * 0.12 * sm(cellR, cellR * 0.6, dist);
+        C += col * (core * 0.85 + glow) * bright;
+    }
+    for (int k = 0; k < 2; k++) {                     // faint dust clouds drifting past (red, teal)
+        float z = fract(0.5 * float(k) + ts * 0.5), D = 0.3 + z * 2.0;
+        float n = fbm(u * D * 1.4 + float(k) * 7.0, v * D * 1.4 - float(k) * 3.0, z * 2.0, 4);
+        vec3 c0 = k == 0 ? vec3(0.5, 0.06, 0.05) : vec3(0.03, 0.25, 0.3);
+        C += c0 * sm(0.62, 0.92, n) * 0.06 * sm(1.0, 0.6, z) * sm(0.0, 0.2, z) * (1.0 + 0.5 * p);
+    }
+}
 bool spaceSky(vec3 d, float az, float el) {
     float yy = max(d.y, 0.0), p = clamp(PULSE, 0.0, 1.6);
     float up = deepSpace(PRESET) ? 1.0 : sm(-2.0, 10.0, el); // [LyricsForge] deep space: stars below the horizon too
     if (PRESET == 43) { eventHorizon(d, el); return true; } // [LyricsForge] Event Horizon
+    if (PRESET == 44) { deepVoyage(d); return true; }       // [LyricsForge] Deep Voyage
     if (PRESET == 1 || PRESET == 20 || PRESET == 32 || PRESET == 23) { // auroras
         nightBase(d, el, TOP, HOR, 0.10);
         add(starField(d, 1.0, PRESET == 32 ? 0.7 : 1.0), up);
@@ -1742,6 +1795,7 @@ int realKind(int p) {
 // [LyricsForge] space skies' effects: where each sky's centrepiece sits (the hole, the burst, the pulsar...)
 vec3 spaceCenter() {
     if (PRESET == 43) return dirAE(170.0, 6.0);
+    if (PRESET == 44) return dirAE(180.0, 8.0);   // Deep Voyage: the vanishing point
     if (BKIND >= 0) return SUN;
     if (PRESET == 30) return dirAE(200.0, 30.0);
     if (PRESET == 18) return dirAE(30.0, 50.0);
