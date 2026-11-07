@@ -1459,9 +1459,17 @@ vec3 ehStars(vec3 dd, vec3 H, float jr, float jt) {
         float dist = sqrt(qr * qr + qt * qt) * K;
         float mag = l == 0 ? 0.55 + 0.6 * j.y * j.y : (l == 1 ? 0.22 + 0.3 * j.y : 0.10 + 0.12 * j.y);
         float sz = l == 0 ? 0.075 : (l == 1 ? 0.10 : 0.14);
-        float tw = 0.8 + 0.2 * sin(T * (1.5 + 3.0 * j.z) + j.y * 40.0);
-        vec3 col = j.z < 0.33 ? vec3(0.72, 0.82, 1.0) : (j.z < 0.8 ? vec3(1.0, 0.97, 0.92) : vec3(1.0, 0.8, 0.6));
-        acc += col * exp(-dist * dist / (sz * sz)) * mag * tw * sqrt(clamp(jr * jt, 0.2, 3.0));
+        // [LyricsForge] OLED space: vivid star colours and a real twinkle (each star its own rhythm)
+        float ts = T / 2.2;
+        float tw = 0.55 + 0.45 * sin(ts * (2.0 + 5.0 * j.z) + j.y * 40.0) * sin(ts * (0.7 + 1.3 * j.x) + j.z * 17.0);
+        float hue = fract(j.z * 7.31);
+        vec3 col = hue < 0.30 ? vec3(0.62, 0.78, 1.0)       // blue-white
+                 : hue < 0.52 ? vec3(1.0, 0.97, 0.92)       // white
+                 : hue < 0.70 ? vec3(1.0, 0.80, 0.45)       // gold
+                 : hue < 0.82 ? vec3(1.0, 0.48, 0.30)       // orange-red
+                 : hue < 0.92 ? vec3(0.45, 0.95, 1.0)       // cyan
+                 :              vec3(0.85, 0.55, 1.0);      // violet
+        acc += col * exp(-dist * dist / (sz * sz)) * mag * 1.6 * tw * sqrt(clamp(jr * jt, 0.2, 3.0));
     }
     return acc;
 }
@@ -1530,8 +1538,7 @@ void eventHorizon(vec3 d, float el) {
         vec3 dB = normalize(H * cos(ang) + side * sin(ang));
         float jr = abs(1.0 + (ehDefl(b + db) - dl) / db / EH_S);
         float jt = sin(min(ang, 3.1405)) / max(sin(a), 1e-4);
-        C = ehStars(dB, H, max(jr, 1e-3), jt) + milky(dB, 0.28, rgb(240.0, 205.0, 180.0), rgb(140.0, 150.0, 240.0));
-        C += A2 * 0.02 * exp(-(b - EH_BC) / 3.0);
+        C = ehStars(dB, H, max(jr, 1e-3), jt);         // pure black space behind, only the stars (no Milky Way haze)
     }
 
     else { // the shadow (ref): a deep navy that darkens to black at the centre - light from far away just grazing in
@@ -1573,7 +1580,7 @@ void eventHorizon(vec3 d, float el) {
         float ring = exp(-rq * rq);
         add(vec3(1.0, 0.95, 0.90), ring * (1.2 + 1.2 * kick) + glowSum * (0.5 + 2.0 * lv)); // bright white strands, like the ref
     }
-    if (b > EH_BC) add(vec3(1.0, 0.72, 0.5), 0.09 * exp(-(b - EH_BC) / 3.5) * heat);
+    if (b > EH_BC) add(vec3(1.0, 0.72, 0.5), 0.05 * exp(-(b - EH_BC) / 2.0) * heat); // glow only near the hole: space stays black
 }
 bool spaceSky(vec3 d, float az, float el) {
     float yy = max(d.y, 0.0), p = clamp(PULSE, 0.0, 1.6);
