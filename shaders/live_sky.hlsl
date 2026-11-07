@@ -1242,7 +1242,7 @@ void realSky(float x, float y, float z, float el, int kind) {
                              // come from cloudHill())
         zen = rgb(6.0, 52.0, 190.0); hor = rgb(100.0, 170.0, 250.0); sunC = rgb(255.0, 250.0, 240.0);
         lit = rgb(255.0, 255.0, 255.0); shade = rgb(205.0, 222.0, 248.0); accent = rgb(140.0, 224.0, 74.0);
-        cover = 0.60; speed = 0.02; haze = 0.35; opac = 0.97; scale = 0.9;
+        cover = 0.58; speed = 0.02; haze = 0.35; opac = 0.97; scale = 1.9;
     } else {                // 18 Neon City: a city night, low clouds lit from below, searchlights
         zen = rgb(10.0, 8.0, 28.0); hor = rgb(60.0, 20.0, 80.0); sunC = v3(0.0);
         lit = rgb(70.0, 40.0, 90.0); shade = rgb(14.0, 10.0, 26.0); accent = rgb(255.0, 60.0, 170.0);
