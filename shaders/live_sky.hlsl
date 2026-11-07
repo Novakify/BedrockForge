@@ -929,6 +929,7 @@ GLOBAL float PULSE;
 // lanes and star clouds, emission nebulae with filaments, a cumulus deck that can be lit from the sun, from below
 // (city, lava) or from inside (lightning), crepuscular rays in the sun's own frame (no seams at the zenith), ice
 // halos, rainbows, an eclipse corona and a filmic tone curve (bright stays bright without going flat white).
+GLOBAL float MBASS, MHIGH, MAVG; // [LyricsForge] Mirror Sky: eased bass / treble / overall loudness from texel 15
 GLOBAL float LIGHTNING, KICK, BEAT, WAVE, WARP; // [LyricsForge] WARP: space skies' warp jump (texel 14 a)
 
 vec3 v3(float a) { return vec3(a, a, a); }
@@ -1055,6 +1056,7 @@ void cumulus(float x, float y, float z, vec3 lit, vec3 shade, vec3 sunC, vec3 ho
         float near = exp(-((px_ - t - fx) * (px_ - t - fx) + (pz - t * 0.35 - fz) * (pz - t * 0.35 - fz)) / 6.0);
         cc += flashC * flash * (0.10 + 1.1 * near) * (0.45 + 0.55 * core);
     }
+    if (PRESET == 45) cc += rgb(255.0, 248.0, 232.0) * MBASS * 0.38 * (1.0 - core) * (1.0 - core); // silver linings breathe with the bass
     cc = mix(cc, hor, haze * (1.0 - sm(0.0, 0.3, y)));
     cc *= 1.0 + 0.12 * pulse;
     over(cc, d * opac);
@@ -1873,6 +1875,39 @@ vec3 spaceSparks(vec3 d, vec3 c, float r0) {
     }
     return acc;
 }
+// [LyricsForge] Mirror Sky's music package: glints dancing on the water, motes of light in the air, sun rays on the drop
+void mirrorFx(vec3 d) {
+    float tt = T / 2.2;
+    if (d.y < 0.0) { // water glints: tiny sparkles on the salt-flat film that twinkle with the highs
+        float ry = max(-d.y, 1e-3);
+        vec2 P = vec2(d.x, d.z) / ry;
+        float dist = length(P - vec2(0.0, -7.0));
+        vec2 g = P * 2.2, cell = floor(g), f = g - cell - 0.5;
+        float h = sh21(cell), h2 = sh21(cell + 17.31);
+        vec2 off = (vec2(h2, sh21(cell + 41.7)) - 0.5) * 0.6;
+        float tw = pow(0.5 + 0.5 * sin(tt * 4.0 + h * 60.0), 8.0);
+        float sp = exp(-dot(f - off, f - off) / 0.004) * step(0.82, h) * tw;
+        add(v3(1.0), sp * (0.25 + 1.6 * MHIGH) * MHIGH * (1.0 - sm(8.0, 26.0, length(P))));
+    }
+    { // floating light motes: soft glowing dust, calm in quiet parts, busier as the song builds
+        vec3 q = d * 22.0 + vec3(tt * 0.08, tt * 0.03, tt * 0.05);
+        vec3 cell = floor(q), f = q - cell;
+        vec3 h3 = sh33(cell);
+        float h = sh31(cell + 5.1);
+        if (h < 0.04 + 0.22 * MAVG) {
+            vec3 dd = f - (0.2 + 0.6 * h3);
+            float gl = exp(-dot(dd, dd) / 0.0025) * (0.6 + 0.4 * sin(tt * 2.0 + h * 50.0));
+            add(mix(rgb(255.0, 244.0, 214.0), rgb(170.0, 240.0, 255.0), h3.x), gl * 0.55 * (0.35 + 0.65 * MAVG));
+        }
+    }
+    if (WAVE >= 0.0) { // the drop: light beams break through the cloud gaps - and shine back up out of the mirror
+        float env = sm(0.0, 0.12, WAVE) * (1.0 - sm(0.45, 1.0, WAVE));
+        vec3 rdir = BKIND >= 0 ? SUN : dirAE(180.0, 35.0);
+        vec3 dm = d.y < 0.0 ? vec3(d.x, -d.y, d.z) : d;
+        float ray = sunRays(dm, rdir, 7.0, 4.0) * env * (d.y < 0.0 ? 0.6 : 1.0);
+        add(rgb(255.0, 246.0, 220.0), ray * 0.5);
+    }
+}
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
     PULSE = skyInfo4.w;
@@ -1911,6 +1946,14 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     if (az < 0.0) az += 360.0;
 
     int rk = realKind(PRESET);
+    MBASS = 0.0; MHIGH = 0.0; MAVG = 0.0;
+    if (PRESET == 45) {
+        vec4 sp4 = px(15) * 255.0;
+        float sb[8];
+        for (int k = 0; k < 4; k++) { float v = sp4[k]; float hi = floor(v / 16.0); sb[2 * k] = (v - hi * 16.0) / 15.0; sb[2 * k + 1] = hi / 15.0; }
+        MBASS = (sb[0] + sb[1]) * 0.5; MHIGH = (sb[5] + sb[6] + sb[7]) / 3.0;
+        MAVG = (sb[0] + sb[1] + sb[2] + sb[3] + sb[4] + sb[5] + sb[6] + sb[7]) / 8.0;
+    }
     if (rk < 0 && deepSpace(PRESET)) { // [LyricsForge] space skies: gravitational wave, warp jump, neon sparks
         vec3 cc = spaceCenter();
         vec3 dw = dir;
@@ -1939,12 +1982,20 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
             float ry = -y;
             float rip = 0.002 * sin(x * 140.0 / max(ry + 0.05, 0.05) * 0.02 + T / 2.2 * 0.3)
                       + 0.0015 * (noise3(vec3(x * 22.0 / (ry + 0.08), z * 22.0 / (ry + 0.08), T / 2.2 * 0.175)) - 0.5);
-            vec3 rd = normalize(vec3(x + rip, ry, z - rip));
+            // ripple rings: every kick drops a soft ring that spreads over the mirror; a drop sends one huge ring
+            vec2 P = vec2(x, z) / max(ry, 1e-3), Q = P - vec2(0.0, -7.0);
+            float dist = length(Q), ringH = 0.0;
+            if (KICK > 0.03) { float qq = (dist - (0.6 + (1.0 - KICK) * 7.0)) / 0.35; ringH += KICK * exp(-qq * qq) * sin(qq * 5.0); }
+            if (WAVE >= 0.0) { float qq = (dist - WAVE * 22.0) / 0.9; ringH += 2.2 * (1.0 - WAVE) * exp(-qq * qq) * sin(qq * 4.0); }
+            vec2 rn = Q / max(dist, 1e-3) * 0.008 * ringH;
+            vec3 rd = normalize(vec3(x + rip + rn.x, ry, z - rip + rn.y));
             realSky(rd.x, rd.y, rd.z, degrees(asin(clamp(rd.y, -1.0, 1.0))), rk);
             C = C * vec3(0.90, 0.98, 1.04) + vec3(0.02, 0.05, 0.07) * exp(-ry * 6.0); // the film glows at the horizon
             add(v3(1.0), 0.10 * exp(-ry * 60.0));                                   // a bright line where they meet
+            add(v3(1.0), 0.05 * abs(ringH));                                        // the rings catch the light
         } else
         realSky(x, y, z, el, rk);
+        if (PRESET == 45) mirrorFx(dir);
         if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
