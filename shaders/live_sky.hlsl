@@ -1240,9 +1240,9 @@ void realSky(float x, float y, float z, float el, int kind) {
         cover = 0.39; speed = 0.016; haze = 0.45; opac = 0.98; scale = 1.35;
     } else if (kind == 20) { // [LyricsForge] Cloud Hill: deep blue, a few small fair-weather puffs (the tower and the hill
                              // come from cloudHill())
-        zen = rgb(8.0, 58.0, 200.0); hor = rgb(110.0, 182.0, 255.0); sunC = rgb(255.0, 250.0, 240.0);
+        zen = rgb(6.0, 52.0, 190.0); hor = rgb(100.0, 170.0, 250.0); sunC = rgb(255.0, 250.0, 240.0);
         lit = rgb(255.0, 255.0, 255.0); shade = rgb(205.0, 222.0, 248.0); accent = rgb(140.0, 224.0, 74.0);
-        cover = 0.56; speed = 0.016; haze = 0.35; opac = 0.97; scale = 0.9;
+        cover = 0.60; speed = 0.02; haze = 0.35; opac = 0.97; scale = 0.9;
     } else {                // 18 Neon City: a city night, low clouds lit from below, searchlights
         zen = rgb(10.0, 8.0, 28.0); hor = rgb(60.0, 20.0, 80.0); sunC = v3(0.0);
         lit = rgb(70.0, 40.0, 90.0); shade = rgb(14.0, 10.0, 26.0); accent = rgb(255.0, 60.0, 170.0);
@@ -1914,94 +1914,81 @@ void mirrorFx(vec3 d) {
         add(rgb(255.0, 246.0, 220.0), ray * 0.5);
     }
 }
-// [LyricsForge] Cloud Hill: a towering cauliflower cumulus (two tiers of soft, z-blended lobes on a jittered grid, only the
-// lobes near this pixel are visited) over a wind-swept green hill; below the hill the usual void takes over
-float chH(float k, float s) { return fract(sin(k * 12.9898 + s * 78.233) * 43758.5453); }
-float chEnv(float u) {
-    return 0.74 * exp(-(u - 0.10) * (u - 0.10) / 0.15) + 0.30 * exp(-(u + 0.60) * (u + 0.60) / 0.07)
-         + 0.17 * exp(-(u - 0.78) * (u - 0.78) / 0.04) + 0.05;
+// [LyricsForge] Cloud Hill: a real volumetric cumulus tower (ray-marched 3D noise: cauliflower billows, light marched
+// toward the sun, powder-bright edges, blue-grey shade, a pink bounce under it) over a wind-combed green field; the
+// tower boils upward slowly. Below the field the usual void takes over.
+GCONST int CH_N = 9;
+GCONST vec3 CH_C[9] = { vec3(0.8, 5.5, 15.0), vec3(-0.4, 11.5, 15.5), vec3(-7.5, 3.2, 14.0), vec3(8.8, 4.0, 16.0), vec3(0.5, 0.8, 15.0),
+                  vec3(4.0, 8.6, 14.5), vec3(-3.6, 7.8, 14.8), vec3(13.5, 1.8, 16.5), vec3(-13.0, 1.6, 15.5) };
+GCONST vec3 CH_R[9] = { vec3(6.0, 6.8, 4.6), vec3(4.6, 4.2, 4.0), vec3(5.4, 3.8, 4.0), vec3(6.0, 4.4, 4.4), vec3(16.0, 2.8, 6.0),
+                  vec3(3.6, 3.4, 3.2), vec3(3.2, 3.0, 3.0), vec3(4.2, 2.4, 3.4), vec3(4.0, 2.2, 3.2) };
+float chShape(vec3 p) {
+    float s = -1.0;
+    for (int k = 0; k < CH_N; k++) s = max(s, 1.0 - length((p - CH_C[k]) / CH_R[k]));
+    return s;
 }
-void chLobe(float u, float v, float cu, float cv, float r, float fr, float zb, inout float W, inout vec3 N,
-            inout float HI, inout float AO, inout float HM) {
-    float dx = (u - cu) * cos(v) / r, dy = (v - cv) / r, q = dx * dx + dy * dy;
-    if (q >= 1.0) return;
-    float h = sqrt(1.0 - q);
-    float zz = fr * 0.5 + zb + h * r * 3.0;
-    float w = exp(clamp((zz - 0.6) * 60.0, -60.0, 60.0)) * sm(0.0, 0.25, h);
-    W += w; N += w * vec3(dx, dy, h); HI += w * fr; AO += w * sqrt(h); HM = max(HM, h);
+float chDens(vec3 p, float tt, bool detail) {
+    float s = chShape(p);
+    if (s < -0.35) return 0.0;
+    float n = fbm(p.x * 0.30 - tt * 0.012, p.y * 0.30 - tt * 0.022, p.z * 0.30, detail ? 4 : 2);
+    float b2 = 1.0;
+    if (detail) b2 = 1.0 - abs(2.0 * fbm(p.x * 0.75 - tt * 0.03, p.y * 0.75 - tt * 0.055, p.z * 0.75 + tt * 0.02, 3) - 1.0);
+    float dd = s * 1.6 - 0.45 * (1.0 - n) - 0.38 * (1.0 - b2) + 0.36;
+    return clamp(dd, 0.0, 1.0) * sm(-0.6, 0.4, p.y);
 }
 void cloudHill(vec3 d, float az, float el) {
     float tt = T / 2.2;
     float u = radians(wrap180(az - 180.0)), v = radians(el);
-    // the hill: a gentle rolling crest all the way round
     float ar = radians(az);
-    float hill = radians(2.0 + 3.2 * sin(ar + 0.6) + 1.4 * sin(ar * 2.0 + 2.1) + 0.6 * sin(ar * 5.0 + 0.4));
-    if (v < hill) {
-        float depth = clamp((hill - v) / radians(18.0), 0.0, 1.0);
-        float str = fbm(u * 7.0 - tt * 0.5, v * 260.0, tt * 0.3, 4);                 // long wind-combed streaks
-        float gust = 0.5 + 0.5 * sin(u * 6.0 - tt * 1.1 + fbm(u * 3.0, v * 20.0, tt * 0.1, 2) * 3.0); // gusts rolling over
-        vec3 gc = mix(rgb(120.0, 200.0, 30.0), rgb(60.0, 150.0, 16.0), sqrt(depth));
-        gc = mix(gc, rgb(22.0, 84.0, 10.0), 0.6 * sm(0.45, 0.8, str));
-        gc *= 0.85 + 0.3 * gust * (1.0 - depth * 0.5);
-        gc += rgb(180.0, 230.0, 90.0) * 0.25 * exp(-(hill - v) / radians(0.6));       // the sunlit crest
+    float hill = radians(2.2 + 1.4 * sin(ar + 0.6) + 0.6 * sin(ar * 2.0 + 2.1) + 0.25 * sin(ar * 5.0 + 0.4));
+    if (v < hill) { // the field in perspective: wind-combed streaks, clumps, blades; gusts roll over it
+        float D = 1.6 / (tan(clamp(radians(2.2) - v, 0.0, 1.4)) + 0.012);
+        float Px = tan(clamp(u, -1.4, 1.4)) * D * 0.9, Pz = D;
+        float far = sm(10.0, 120.0, D), w = tt * 1.1;
+        float s1 = fbm(Px * 0.22 - w * 0.6, Pz * 1.6, tt * 0.05, 4);
+        float s2 = fbm(Px * 0.9 - w * 1.4, Pz * 7.0, 3.3, 3);
+        float blade = fbm(Px * 4.0 - w * 2.0, Pz * 26.0, 7.7, 2);
+        float clump = fbm(Px * 0.45, Pz * 1.4, 11.0, 4);
+        float gust = sm(0.55, 0.95, 0.5 + 0.5 * sin(Px * 0.12 + Pz * 0.35 - tt * 1.3 + fbm(Px * 0.05, Pz * 0.1, tt * 0.05, 2) * 4.0));
+        float tone = 0.30 * s1 + 0.20 * s2 * (1.0 - far) + 0.25 * blade * (1.0 - far) * (1.0 - far) + 0.45 * clump + 0.10 * far;
+        vec3 gc = mix(rgb(22.0, 82.0, 10.0), rgb(58.0, 144.0, 18.0), sm(0.28, 0.46, tone));
+        gc = mix(gc, rgb(112.0, 192.0, 34.0), sm(0.56, 0.74, tone));
+        gc = mix(gc, rgb(150.0, 215.0, 70.0), 0.28 * gust);
+        gc = mix(gc, rgb(120.0, 185.0, 90.0), 0.30 * far);
         C = gc;
         return;
     }
-    if (abs(u) > 1.45 || v > 1.05) return;
-    float top = chEnv(u);
-    if (v > top + 0.22) return;
-    float W = 0.0, HI = 0.0, AO = 0.0, HM = 0.0;
-    vec3 N = v3(0.0);
-    float cv0 = max(cos(v), 0.3);
-    { // tier 1: the big lobes
-        int c0 = int(floor((u + 1.15) / 2.3 * 120.0));
-        int span = int(ceil(0.20 / cv0 / (2.3 / 120.0))) + 1;
-        for (int ci = max(c0 - span, 0); ci <= min(c0 + span, 119); ci++) {
-            for (int ri = 0; ri < 5; ri++) {
-                float k = float(ci * 5 + ri);
-                float a = chH(k, 1.0), b = chH(k, 2.0), c = chH(k, 3.0), e = chH(k, 4.0);
-                float cu = -1.15 + 2.3 * (float(ci) + a) / 120.0, tp = chEnv(cu);
-                if (tp < 0.065) continue;
-                float fr = sqrt((float(ri) + 0.3 + 0.6 * b) / 5.0);
-                float cv = tp * fr - 0.01 + 0.004 * sin(tt * 0.25 + k * 2.3);
-                float r = (0.022 + 0.075 * pow(c, 2.2)) * (1.4 - 0.6 * fr) * (0.6 + 0.8 * tp) * (1.0 + 0.08 * sin(tt * 0.3 + k * 1.7));
-                chLobe(u, v, cu, cv, r, fr, e * 0.08, W, N, HI, AO, HM);
-            }
+    // the tower: march the box in front of you (z 8..23 ahead)
+    vec3 rd = vec3(d.x, d.y, -d.z);
+    if (rd.z < 0.2) return;
+    float t0 = 8.0 / rd.z, t1 = 23.0 / rd.z;
+    if (abs(rd.x * t1) > 40.0 || rd.y * t1 < -1.5 || rd.y * t0 > 17.0) return;
+    vec3 Ls = normalize(vec3(-0.5, 0.62, -0.6));
+    const int STEPS = 40;
+    float dt = (t1 - t0) / float(STEPS);
+    float jit = fract(sin(dot(d.xy, vec2(12.9898, 78.233)) * 43758.5453));
+    vec3 acc = v3(0.0);
+    float Tr = 1.0;
+    for (int i = 0; i < STEPS; i++) {
+        if (Tr < 0.02) break;
+        vec3 p = rd * (t0 + dt * (float(i) + jit));
+        float D = chDens(p, tt, true);
+        if (D < 0.003) continue;
+        float ls = 0.0;
+        for (int j = 0; j < 4; j++) {
+            float st = 0.55 * pow(float(j) + 0.5, 1.3);
+            ls += chDens(p + Ls * st, tt, false) * 0.55 * pow(1.3, float(j));
         }
+        float sig = 7.0;
+        float Tl = exp(-ls * sig * 0.9), powder = 1.0 - exp(-D * sig * 2.5);
+        float hf = clamp(p.y / 14.0, 0.0, 1.0);
+        vec3 Lc = rgb(255.0, 251.0, 245.0) * Tl * (0.45 + 0.55 * powder) * 2.1
+                + (rgb(120.0, 150.0, 215.0) * (0.55 + 0.45 * hf) + rgb(235.0, 200.0, 222.0) * 0.30 * (1.0 - hf)) * 0.55;
+        float a = 1.0 - exp(-D * sig * dt);
+        acc += Tr * a * Lc;
+        Tr *= 1.0 - a;
     }
-    { // tier 2: small lobes crowding the sunlit surface
-        int c0 = int(floor((u + 1.15) / 2.3 * 260.0));
-        int span = int(ceil(0.045 / cv0 / (2.3 / 260.0))) + 1;
-        for (int ci = max(c0 - span, 0); ci <= min(c0 + span, 259); ci++) {
-            for (int ri = 0; ri < 2; ri++) {
-                float k = 5000.0 + float(ci * 2 + ri);
-                float a = chH(k, 1.0), b = chH(k, 2.0), c = chH(k, 3.0), e = chH(k, 4.0);
-                float cu = -1.15 + 2.3 * (float(ci) + a) / 260.0, tp = chEnv(cu);
-                if (tp < 0.065) continue;
-                float fr = 0.86 + 0.16 * (float(ri) + b) / 2.0;
-                float r = (0.012 + 0.02 * c) * (0.6 + 0.8 * tp) * (1.0 + 0.1 * sin(tt * 0.4 + k * 1.3));
-                chLobe(u, v, cu, tp * fr, r, fr, 0.1 + e * 0.05, W, N, HI, AO, HM);
-            }
-        }
-    }
-    bool lobe = W > 1e-30;
-    bool body = v < top * 0.82 && v > -0.05;
-    if (!lobe && !body) return;
-    vec3 n; float hi, ao;
-    if (lobe) { n = N / W; n.z += 0.15; hi = HI / W; ao = 0.70 + 0.30 * AO / W; }
-    else { n = vec3(-0.2 * sign(u - 0.1), 0.2, 1.0); hi = clamp(v / 0.5, 0.0, 1.0); ao = 0.70; }
-    // fine billows on the lobes: bump the normal with a small noise gradient
-    float dt0 = fbm(u * 38.0, v * 38.0, tt * 0.05, 3), ee = 0.004;
-    float dU = (fbm((u + ee) * 38.0, v * 38.0, tt * 0.05, 3) - dt0) / ee;
-    float dV = (fbm(u * 38.0, (v + ee) * 38.0, tt * 0.05, 3) - dt0) / ee;
-    n = normalize(normalize(n) + vec3(-dU, -dV, 0.0) * 0.0035);
-    vec3 L = normalize(vec3(-0.55, 0.62, 0.56));                       // the sun high on the upper left
-    float lam = clamp(dot(n, L) * 0.75 + 0.25, 0.0, 1.0);
-    vec3 col = mix(rgb(132.0, 152.0, 210.0), v3(1.0), pow(clamp(lam * ao * 1.18, 0.0, 1.0), 1.1));
-    col = mix(col, rgb(240.0, 212.0, 234.0), 0.32 * (1.0 - lam) * (1.0 - hi)); // a warm pink bounce low in the shadows
-    col *= 0.86 + 0.14 * hi;
-    col += rgb(255.0, 250.0, 245.0) * 0.22 * clamp(lam - 0.7, 0.0, 1.0) / 0.3;
-    over(col, body ? 1.0 : sm(0.0, 0.18, HM));
+    C = C * Tr + acc;
 }
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
