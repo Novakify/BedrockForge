@@ -1435,7 +1435,7 @@ void pulsarSky(vec3 d, vec3 c) {
 static const float EH_BC = 5.196152;            // 3 sqrt(3)
 static const float EH_S  = 0.1142041;           // radians of sky per unit of b: shadow radius 34 deg (~68 across)
 static const float EH_INC = 1.43117;            // 82 deg inclination
-static const float EH_RIN = 6.0, EH_ROUT = 17.0;
+static const float EH_RIN = 4.2, EH_ROUT = 17.0; // [LyricsForge] spinning fast like Gargantua: the disk reaches in close, so the arc hugs the shadow
 float ehDefl(float b) {
     if (b <= EH_BC) return 0.0;
     float weak = 4.0 / b + 11.780972 / (b * b);  // 15 pi / 4
@@ -1478,14 +1478,15 @@ float ehRofB(float bimg, float psi) {           // Beloborodov: 1 - cos a = (1 -
 float ehGas(float r, float phi, float t) {
     float ph = phi - 8.0 * pow(r, -1.5) * t;    // Kepler: the inner gas laps the outer
     float c = cos(ph), s = sin(ph);             // on a circle: no seam
-    float streak = fbm(r * 1.1, c * 1.7, s * 1.7, 5);
-    float fine   = fbm(r * 3.5 + 3.0, c * 5.0, s * 5.0, 3);
-    float lanes  = sm(0.3, 0.75, fbm(r * 0.5 - 7.0, c * 1.1, s * 1.1, 3));
-    return clamp((0.25 + 1.2 * streak) * (0.7 + 0.6 * fine) * (0.45 + 0.7 * lanes), 0.0, 2.2);
+    // [LyricsForge] ref: hundreds of fine glowing filaments flowing round the orbit (high radial, low angular frequency)
+    float streak = fbm(r * 3.4, c * 1.25, s * 1.25, 5);
+    float fine   = fbm(r * 11.0 + 3.0, c * 2.2, s * 2.2, 3);
+    float lanes  = sm(0.25, 0.7, fbm(r * 0.8 - 7.0, c * 1.0, s * 1.0, 3));
+    return clamp((0.35 + 1.15 * streak) * (0.62 + 0.75 * fine) * (0.62 + 0.5 * lanes), 0.0, 2.4);
 }
 vec3 ehTempCol(float x) {                       // 1 = the disk's typical temperature
-    vec3 deep = vec3(0.55, 0.08, 0.02), org = vec3(1.0, 0.42, 0.10), gold = vec3(1.0, 0.78, 0.42);
-    vec3 wht = vec3(1.0, 0.96, 0.90), blu = vec3(0.80, 0.88, 1.0);
+    vec3 deep = vec3(0.70, 0.24, 0.07), org = vec3(1.0, 0.58, 0.30), gold = vec3(1.0, 0.82, 0.62);
+    vec3 wht = vec3(1.0, 0.95, 0.88), blu = vec3(0.86, 0.92, 1.0);
     vec3 c = x < 0.6 ? mix(deep, org, x / 0.6) : (x < 1.0 ? mix(org, gold, (x - 0.6) / 0.4)
            : (x < 1.4 ? mix(gold, wht, (x - 1.0) / 0.4) : mix(wht, blu, clamp((x - 1.4) / 0.6, 0.0, 1.0))));
     return mix(c, c * (A1 / max(max(A1.r, A1.g), max(A1.b, 0.01))), 0.25); // the preset palette tints it a little
@@ -1498,14 +1499,15 @@ vec3 ehDiskImage(float b, float alpha, int n, float t, float heat) {
     if (n == 1 && (b <= EH_BC || b > EH_BC * 1.6)) return v3(0.0);
     float r = ehRofB(max(b, 0.01), psi);
     if (r < EH_RIN * 0.98 || r > EH_ROUT) return v3(0.0);
-    float beta = min(sqrt(1.0 / max(r - 2.0, 1e-3)), 0.99), gam = 1.0 / sqrt(1.0 - beta * beta);
-    float g = sqrt(clamp(1.0 - 3.0 / max(r, 3.01), 1e-4, 1.0)) / (gam * (1.0 + beta * sin(EH_INC) * ca));
-    float F = (1.0 - sqrt(EH_RIN / r)) / (r * r * r) / 0.0002517; // normalised to r = 9
+    // a fast-spinning (Kerr-like) hole: orbits stay sub-luminal close in and the gravity redshift is gentler
+    float beta = min(sqrt(1.0 / max(r - 1.5, 0.5)), 0.6), gam = 1.0 / sqrt(1.0 - beta * beta);
+    float g = sqrt(clamp(1.0 - 2.4 / r, 0.05, 1.0)) / (gam * (1.0 + beta * sin(EH_INC) * ca));
+    float F = (1.0 - sqrt(EH_RIN / r)) / (r * r * r) / 0.000756;   // normalised to r = 6
     float Tobs = g * 8.0 * pow(max(F, 0.0), 0.25);
     float phi = atan2(sa, ca) + (n == 1 ? 3.14159265 : 0.0);
-    float I = F * g * g * g * g * ehGas(r, phi, t) * (n == 0 ? 1.0 : 0.6);
+    float I = F * g * g * g * ehGas(r, phi, t) * (n == 0 ? 1.0 : 0.6);
     float edge = sm(EH_RIN, EH_RIN * 1.15, r) * (1.0 - sm(EH_ROUT * 0.6, EH_ROUT, r));
-    return ehTempCol(clamp(Tobs / 9.0 * (0.92 + 0.12 * heat), 0.0, 2.0)) * I * edge * 0.62 * heat;
+    return ehTempCol(clamp(Tobs / 9.0 * (0.92 + 0.12 * heat), 0.0, 2.0)) * I * edge * 0.95 * heat;
 }
 void eventHorizon(vec3 d, float el) {
     vec3  H = dirAE(170.0, 6.0);                  // sat right on the horizon: it rises out of the world
@@ -1532,16 +1534,46 @@ void eventHorizon(vec3 d, float el) {
         C += A2 * 0.02 * exp(-(b - EH_BC) / 3.0);
     }
 
+    else { // the shadow (ref): a deep navy that darkens to black at the centre - light from far away just grazing in
+        float k = clamp(b / EH_BC, 0.0, 1.0);
+        C = mix(vec3(0.0, 0.002, 0.007), vec3(0.006, 0.016, 0.042), k * k);
+    }
     // 2) the disk: primary + secondary image, optically thick (it hides what's behind)
     vec3 img = ehDiskImage(b, alpha, 0, t, heat) + ehDiskImage(b, alpha, 1, t, heat);
     float occ = 1.0 - exp(-clamp(max(img.r, max(img.g, img.b)), 0.0, 10.0) * 3.0);
     C = C * (1.0 - occ) + img;
 
     // 3) the photon ring (the n >= 2 images pile up at b_c), flaring on the kick; a soft warm haze outside
-    float rq = (b - EH_BC * 1.004) / (EH_BC * 0.006);
-    float ring = exp(-rq * rq);
-    add(vec3(1.0, 0.85, 0.65), ring * (1.4 + 1.6 * kick));
-    if (b > EH_BC) add(vec3(1.0, 0.6, 0.3), 0.05 * exp(-(b - EH_BC) / 3.0) * heat);
+    // the photon ring as a music visualizer (ref 2): thin strands round the hole ripple with the spectrum - 8 bands,
+    // mirrored left / right (bass at the bottom, treble at the top), smooth between bands; a still ring when quiet
+    {
+        vec4 sp4 = px(15) * 255.0;
+        float sb[8];
+        for (int k = 0; k < 4; k++) {
+            float v = sp4[k];
+            float hi = floor(v / 16.0);
+            sb[2 * k] = (v - hi * 16.0) / 15.0;
+            sb[2 * k + 1] = hi / 15.0;
+        }
+        float u = clamp((sin(alpha) * 0.5 + 0.5) * 7.0, 0.0, 6.999);   // -90 deg (bottom) = bass .. +90 (top) = treble
+        int i0 = int(floor(u));
+        float f = u - float(i0);
+        float f2 = f * f * (3.0 - 2.0 * f);
+        float lv = mix(sb[i0], sb[min(i0 + 1, 7)], f2);
+        float wob = 0.5 + 0.5 * sin(alpha * 9.0 + T * 0.9);              // a little organic wobble along the ring
+        float glowSum = 0.0;
+        for (int st = 0; st < 5; st++) {                                 // 5 strands, each pushed out a little more
+            float fs = float(st) / 4.0;
+            float rr = EH_BC * (1.004 + (0.012 + 0.10 * fs) * lv * (0.75 + 0.5 * wob) + 0.003 * fs);
+            float w  = EH_BC * (0.0035 + 0.002 * fs);
+            float q  = (b - rr) / w;
+            glowSum += exp(-q * q) * (1.0 - 0.55 * fs);
+        }
+        float rq = (b - EH_BC * 1.004) / (EH_BC * 0.006);
+        float ring = exp(-rq * rq);
+        add(vec3(1.0, 0.92, 0.80), ring * (1.2 + 1.2 * kick) + glowSum * (0.35 + 1.4 * lv));
+    }
+    if (b > EH_BC) add(vec3(1.0, 0.72, 0.5), 0.09 * exp(-(b - EH_BC) / 3.5) * heat);
 }
 bool spaceSky(vec3 d, float az, float el) {
     float yy = max(d.y, 0.0), p = clamp(PULSE, 0.0, 1.6);
