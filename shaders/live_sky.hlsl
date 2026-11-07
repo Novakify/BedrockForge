@@ -1230,6 +1230,11 @@ void realSky(float x, float y, float z, float el, int kind) {
         lit = rgb(220.0, 76.0, 58.0); shade = rgb(40.0, 8.0, 14.0); accent = rgb(255.0, 40.0, 40.0);
         cover = 0.5; speed = 0.035; haze = 0.6; opac = 0.95; scale = 0.85;
         below = rgb(255.0, 60.0, 40.0) * 0.35 * exp(-yy * 3.0);
+    } else if (kind == 19) { // [LyricsForge] Mirror Sky (the salt flat): electric blue up top, a glowing cyan horizon,
+                             // big bright cumulus drifting slowly - the ground below is a mirror of all of it
+        zen = rgb(0.0, 52.0, 240.0); hor = rgb(150.0, 232.0, 255.0); sunC = rgb(255.0, 250.0, 240.0);
+        lit = rgb(255.0, 255.0, 255.0); shade = rgb(150.0, 188.0, 236.0); accent = rgb(80.0, 200.0, 255.0);
+        cover = 0.47; speed = 0.016; haze = 0.75; opac = 0.97; scale = 0.72;
     } else {                // 18 Neon City: a city night, low clouds lit from below, searchlights
         zen = rgb(10.0, 8.0, 28.0); hor = rgb(60.0, 20.0, 80.0); sunC = v3(0.0);
         lit = rgb(70.0, 40.0, 90.0); shade = rgb(14.0, 10.0, 26.0); accent = rgb(255.0, 60.0, 170.0);
@@ -1806,7 +1811,8 @@ bool spaceSky(vec3 d, float az, float el) {
 
 // which skies the realistic engine draws (and as which kind), -1 = their own code
 int realKind(int p) {
-    if (p >= 38 && p <= 42) return p - 38; // [LyricsForge] 43+ are space skies (Event Horizon), not realistic
+    if (p >= 38 && p <= 42) return p - 38; // [LyricsForge] 43, 44 are space skies (Event Horizon, Deep Voyage)
+    if (p == 45) return 19;                // [LyricsForge] Mirror Sky
     if (p == 6) return 5;   if (p == 7) return 6;   if (p == 8) return 7;   if (p == 13) return 8;
     if (p == 15) return 9;  if (p == 17) return 10; if (p == 9) return 11;  if (p == 22) return 12;
     if (p == 36) return 13; if (p == 25) return 14; if (p == 28) return 15; if (p == 26) return 16;
@@ -1926,6 +1932,17 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     } else if (rk < 0 && spaceSky(dir, az, el)) { // [LyricsForge] the reworked night / special skies
         if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     } else if (rk >= 0) { // [LyricsForge] realistic skies + the skies reworked onto the same engine
+        if (PRESET == 45 && y < 0.0) {
+            // Mirror Sky: below the horizon the ground is a perfect mirror - the same sky, flipped, with a faint
+            // shimmer of ripples across the water film and a touch brighter / more cyan, like the salt flat
+            float ry = -y;
+            float rip = 0.004 * sin(x * 140.0 / max(ry + 0.05, 0.05) * 0.02 + T / 2.2 * 0.6)
+                      + 0.003 * (noise3(vec3(x * 22.0 / (ry + 0.08), z * 22.0 / (ry + 0.08), T / 2.2 * 0.35)) - 0.5);
+            vec3 rd = normalize(vec3(x + rip, ry, z - rip));
+            realSky(rd.x, rd.y, rd.z, degrees(asin(clamp(rd.y, -1.0, 1.0))), rk);
+            C = C * vec3(0.90, 0.98, 1.04) + vec3(0.02, 0.05, 0.07) * exp(-ry * 6.0); // the film glows at the horizon
+            add(v3(1.0), 0.10 * exp(-ry * 60.0));                                   // a bright line where they meet
+        } else
         realSky(x, y, z, el, rk);
         if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
@@ -2028,7 +2045,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
 // the sky's colours smeared under the horizon. Sky colour to ~-20 deg, then quickly pure black by ~-32 deg.
 vec4 voidBlack(vec4 c, vec3 skyDir) {
     float el = degrees(asin(clamp(normalize(skyDir).y, -1.0, 1.0)));
-    if (deepSpace(PRESET)) return c; // space all the way round: no void cutoff
+    if (deepSpace(PRESET) || PRESET == 45) return c; // space / the mirror all the way round: no void cutoff
     float k = sm(-32.0, -20.0, el); // [LyricsForge] sky colour down to ~-20 deg (where you look over an island edge), black by ~-32
     c.rgb *= k;
     return c;
