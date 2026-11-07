@@ -118,6 +118,12 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float2 t = i.uv * float2(64.0, 32.0); // armor texel space
     int2   b = int2(floor(t));
     if (pad == 1u) return float4(1.0, 0.0, 1.0, 1.0); // debug: does the replayed draw land at all?
+    if (pad == 2u) return float4(saturate(i.c1.rgb), 1); // debug: what the game's vertex shader hands us
+    if (pad == 3u) return float4(saturate(i.c0.rgb), 1);
+    if (pad == 4u) return float4(saturate(i.c2.rgb), 1);
+    if (pad == 5u) return float4(saturate(i.c3.rgb), 1);
+    if (pad == 6u) return float4(saturate(float3(i.c0.a, i.c2.a, i.c3.a)), 1);
+    if (pad == 7u) return float4(frac(i.t3), 1);
     if (!painted(b)) discard;             // vanilla shape
     int  fi = faceOf(b);
     int4 fr = faceRect(max(fi, 0));

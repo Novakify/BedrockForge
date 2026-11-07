@@ -108,7 +108,7 @@ uint8_t*                           gParamsMap = nullptr;
 std::atomic<unsigned>              gSlotNext{0};
 std::atomic<long>                  gFlushOk{0}, gFlushFail{0};
 std::string                        gFlushWhy;
-std::atomic_bool                   gDebugSolid{false};
+std::atomic_int                    gDebugSolid{0}; // 0 off, 1 magenta, 2..5 show COLOR1/0/2/3, 6 alphas, 7 texel
 std::atomic_bool                   gReact{true};
 float                              gReflect = 0.45f;
 float                              gShowBeat = 0;
@@ -979,7 +979,7 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.scenePitch = rf.Footprint.RowPitch, p.depthPitch = df.Footprint.RowPitch;
     p.swirl = 0.9f, p.ripple = 0.09f, p.lens = 0.8f; // approved preview: Medium
     p.uiScale   = float(rd.Height) / 760.f;
-    p.pad       = gDebugSolid ? 1u : 0u;
+    p.pad       = uint32_t(gDebugSolid.load());
     p.sceneBgra = rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM || rd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS || rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
     // M2: LyricsForge state (neutral when no song / Director off / reacting switched off)
     p.exposure = 1;
@@ -1146,8 +1146,8 @@ void drawUi() {
         ImGui::SliderFloat("Beat pulse", &gBeatK, 0.f, 2.f, "%.2f");
         bool sw = gWordSweep.load();
         if (ImGui::Checkbox("Light sweep on each sung word", &sw)) gWordSweep = sw;
-        bool dbg = gDebugSolid.load();
-        if (ImGui::Checkbox("Debug: paint glass solid magenta", &dbg)) gDebugSolid = dbg;
+        int dbg = gDebugSolid.load();
+        if (ImGui::Combo("Debug view", &dbg, "off\0solid magenta\0COLOR1\0COLOR0\0COLOR2\0COLOR3\0alphas (c0, c2, c3)\0TEXCOORD3\0")) gDebugSolid = dbg;
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
                     gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
     }
