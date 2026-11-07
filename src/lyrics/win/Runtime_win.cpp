@@ -55,6 +55,7 @@
 #include "lyrics/core/Overrides.h"
 #include "lyrics/BfDirector.h"
 #include "lyrics/core/Studio.h"
+#include "lyrics/core/TempoGuess.h"
 #include "lyrics/core/Clip.h"
 #include "lyrics/core/Moments.h"
 #include "lyrics/win/World_win.h"
@@ -174,6 +175,8 @@ struct State {
     std::string                   coverPath, coverShown;
     uint32_t                      coverAccent = 0; // [BF] vivid colour of the cover (Neon player)
     std::string                   songFont;        // [LyricsForge] the font picked for the playing song ("" = none)
+    std::vector<std::string>      recentFonts, recentScenes; // [LyricsForge] variety: the last few songs' picks are avoided
+    std::vector<int>              recentFx;
     std::string                   songFontKey, lastSongFont; // what it was picked for (song + lyrics in) / the previous song's
     std::string                   songFontSong;    // the song songFont belongs to
     float                         bass = 0;        // [BF] bass hit level this frame (Audio_win.cpp)
@@ -185,6 +188,8 @@ struct State {
     bool                          synthOn = false;
     BandFrame                     synthFrame{};
     float                         synthPrevBass = 0;
+    Lyrics const*                 tempoFor = nullptr; // [LyricsForge] the lyrics `tempo` was read from
+    TempoGuess                    tempo;
     int64_t                       coverSeq = -1;
     int                           coverTries = 0;
     // live sky (LyricsFlow 2.1 WorldSky): published every HUD frame for RF (BF_CopySkyFrame)
@@ -1089,9 +1094,16 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         bool const ok = gS->songFont.empty() || (std::find(fits.begin(), fits.end(), gS->songFont) != fits.end() && covers(gS->songFont));
         std::string const key = song + (ly ? "|l" : "") + '|' + std::to_string(int(sh.mood) * int(haveMood)) + '|' + std::to_string(songCover());
         if (!song.empty() && (gS->songFontKey != key || !ok)) {
-            if (song != gS->songFontSong) { gS->lastSongFont = gS->songFont; gS->songFontSong = song; } // not twice in a row
+            if (song != gS->songFontSong) { // not twice in a row - [LyricsForge] and none of the last four songs' fonts
+                gS->lastSongFont = gS->songFont; gS->songFontSong = song;
+                if (!gS->songFont.empty()) { gS->recentFonts.push_back(gS->songFont); if (gS->recentFonts.size() > 4) gS->recentFonts.erase(gS->recentFonts.begin()); }
+            }
             sh.rng = sh.rng * 1664525u + 1013904223u + uint32_t(nowMsWall());
-            std::string const pick = songFontFor(sh.mood, haveMood, songCover(), sh.rng, gS->lastSongFont, covers);
+            auto const fresh = [&](std::string_view f) {
+                return covers(f) && std::find(gS->recentFonts.begin(), gS->recentFonts.end(), f) == gS->recentFonts.end();
+            };
+            std::string pick = songFontFor(sh.mood, haveMood, songCover(), sh.rng, gS->lastSongFont, fresh);
+            if (pick.empty()) pick = songFontFor(sh.mood, haveMood, songCover(), sh.rng, gS->lastSongFont, covers);
             gS->songFontKey = key;
             if (pick != gS->songFont) {
                 gS->songFont = pick;
@@ -1172,7 +1184,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         if (!tourSky.empty()) eff.skyPreset = tourSky; // the tour wins (each sky seen as itself)
         gS->skyShown = eff.skyPreset;
         eff.skyStrength = std::min(1.0f, eff.skyStrength * (1.0f + 0.45f * mo.skyBoost)); // aurora burst: the sky's
-        eff.skySpeed *= 1.0f + 0.7f * mo.skyBoost;                                         // own layers, brighter + faster
+        eff.skySpeed *= 1.0f + 0.2f * mo.skyBoost; /* [LyricsForge] was 0.7: clouds zipped */                                         // own layers, brighter + faster
         gS->sky.step(gS->moduleOn && cfg.enabled, eff, gS->engine.perf(), in);
         publishSkyFog();
 
@@ -1206,9 +1218,32 @@ void autoDirect(SceneInput const& in) {
         }
         if (all > 0) e = float((hi + 0.5 * mid) / all) + 0.06f * float(std::min<size_t>(3, mem.events.size()));
     }
-    std::string const id = autoSceneFor(key, e);
+    // [LyricsForge] variety: with no energy reading (Apple Music) every song landed in the same pool. Unknown energy now
+    // draws from every pool, and the last four songs' scenes are skipped (salted re-picks keep it stable per song).
+    std::string id;
+    for (int salt = 0; salt < 12; ++salt) {
+        std::string const k2 = salt ? key + '#' + std::to_string(salt) : key;
+        float const e2 = e >= 0 ? e : float((songVariant(k2) >> 3) % 3) * 0.5f; // 0 / 0.5 / 1: calm, mid or high pool
+        id = autoSceneFor(k2, e2);
+        if (std::find(gS->recentScenes.begin(), gS->recentScenes.end(), id) == gS->recentScenes.end()) break;
+    }
+    gS->recentScenes.push_back(id);
+    if (gS->recentScenes.size() > 4) gS->recentScenes.erase(gS->recentScenes.begin());
     if (auto sc = findScene(id); sc && cfg.scene != sc->id) {
         applyScene(cfg, *sc);
+        { // [LyricsForge] the letter effect too: never the same one as the last three songs (water kept coming back)
+            static constexpr int kFx[] = {1, 2, 3, 4, 5, 6, 8, 9, 10}; // neon fire water ice electric lava galaxy ink holo
+            bool const repeat = std::find(gS->recentFx.begin(), gS->recentFx.end(), cfg.letterFx) != gS->recentFx.end();
+            if (cfg.letterFx > 0 && repeat) {
+                uint32_t const h = songVariant(key);
+                for (int i = 0; i < 9; ++i) {
+                    int const f = kFx[(h + uint32_t(i)) % 9];
+                    if (std::find(gS->recentFx.begin(), gS->recentFx.end(), f) == gS->recentFx.end() && f != cfg.letterFx) { cfg.letterFx = f; break; }
+                }
+            }
+            gS->recentFx.push_back(cfg.letterFx);
+            if (gS->recentFx.size() > 3) gS->recentFx.erase(gS->recentFx.begin());
+        }
         gS->lastScene = cfg.scene; // not remembered as your pick
         gS->cfgDirty = true;
         char b[160];
@@ -1262,7 +1297,18 @@ void hudFrame(bedrock_forge::client::Frame& f) {
                     f = gS->memory.frameAt(t); // learned on an earlier play the PC could hear
                 } else {
                     // built-in groove: ~112 BPM kick locked to the song clock, a soft 16-beat swell, more while singing
-                    double const beatMs = 60000.0 / 112.0, ph = std::fmod(double(std::max<int64_t>(0, t)), beatMs) / beatMs;
+                    // the song's own tempo, read from when the words are sung (TempoGuess); ~112 BPM when unsure
+                    if (gS->lyrics.get() != gS->tempoFor) {
+                        gS->tempoFor = gS->lyrics.get();
+                        gS->tempo = gS->tempoFor ? guessTempo(*gS->tempoFor) : TempoGuess{};
+                        char b[120];
+                        std::snprintf(b, sizeof b, "   tempo from lyrics: %.1f bpm (confidence %.2f)", gS->tempo.bpm, double(gS->tempo.confidence));
+                        if (gS->tempoFor) gS->directorLines.emplace_back(b);
+                    }
+                    bool const sure = gS->tempo.bpm > 0 && gS->tempo.confidence > 0.3f;
+                    double const beatMs = 60000.0 / (sure ? gS->tempo.bpm : 112.0);
+                    double const rel = double(std::max<int64_t>(0, t)) - (sure ? gS->tempo.phaseMs : 0.0);
+                    double const ph = std::fmod(std::fmod(rel, beatMs) + beatMs, beatMs) / beatMs;
                     float const kick = float(std::exp(-ph * 7.0));
                     float const swell = 0.5f + 0.5f * float(std::sin(double(t) / (beatMs * 16.0) * 6.2831853));
                     bool sing = false;

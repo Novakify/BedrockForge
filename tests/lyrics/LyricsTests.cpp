@@ -50,6 +50,7 @@
 #include "lyrics/core/Clip.h"
 #include "lyrics/core/Pulse.h"
 #include "lyrics/core/Moments.h"
+#include "lyrics/core/TempoGuess.h"
 
 using namespace bf::lyrics;
 
@@ -200,12 +201,12 @@ TEST(cinema_grade_flash_letterbox) {
     CHECK(c.out().amount > 0.3f && c.out().tint[0] > 1.05f);      // red grade in
     CHECK(c.out().flash == 0.0f);
     m.dropNow = true; c.step(&m, cfg, 1.0f / 60); m.dropNow = false;
-    CHECK(c.out().flash > 0.1f && c.out().flash <= Cinema::kDropFlashCap + 1e-6f); // [BF] drops land a bit harder, still capped
+    CHECK(c.out().flash > 0.05f && c.out().flash <= Cinema::kDropFlashCap + 1e-6f); // [LyricsForge] a soft swell, capped low
     CHECK(c.out().bloomBoost > 0.0f && c.out().caBoost > 0.0f);
     m.chorusNow = true; c.step(&m, cfg, 1.0f / 60); m.chorusNow = false; // too soon: no second flash
     float f1 = c.out().flash;
     for (int i = 0; i < 30; ++i) c.step(&m, cfg, 1.0f / 60);
-    CHECK(c.out().flash < f1 * 0.2f);                              // decays fast
+    CHECK(c.out().flash < f1 * 0.45f);                             // fades (softly: 0.45 s)
     m.build = 1.0f;
     for (int i = 0; i < 400; ++i) c.step(&m, cfg, 1.0f / 60);
     CHECK(c.out().letterbox > 0.05f && c.out().letterbox <= Cinema::kLetterMax + 1e-6f);
@@ -1727,7 +1728,7 @@ TEST(sky_system_store) {
     in.wave = 0.5f; in.kick = 1.0f; in.lightning = 0.5f; in.nowMs += 50;  // [LyricsForge] the music reaches the shader
     sys.step(true, cfg, perf, in);
     BF_CopySkyFrame(&h, nullptr, 0);
-    CHECK(h.params[13][0] > 100 && h.params[13][1] == 255 && h.params[13][3] > 100);
+    CHECK(h.params[13][0] > 100 && h.params[13][1] > 0 && h.params[13][1] < 128 && h.params[13][3] > 100); // [LyricsForge] kick eased + halved
     in.wave = -1; in.nowMs += 50; sys.step(true, cfg, perf, in); BF_CopySkyFrame(&h, nullptr, 0);
     CHECK_EQ(int(h.params[13][3]), 0);
     CHECK_EQ(v[0].color & 255, 0xF4u);
@@ -2614,4 +2615,29 @@ int main(int argc, char** argv) {
     }
     std::printf("\n%d checks, %d failed\n", gChecks, gFails);
     return gFails ? 1 : 0;
+}
+
+TEST(tempo_from_lyrics) { // [LyricsForge] the backup groove locks to the words' beat grid
+    Lyrics ly;
+    double const beat = 60000.0 / 96.0, phase = 140;
+    uint32_t r = 12345;
+    for (int li = 0; li < 24; ++li) {
+        Line l; l.index = li; l.estimated = false;
+        for (int w = 0; w < 6; ++w) {
+            r = r * 1103515245u + 12345u;
+            int const slot = li * 8 + w + int((r >> 16) % 2);               // on beats, sometimes skipping one
+            double const half = ((r >> 20) & 3) == 0 ? beat / 2 : 0;          // a few syllables on the off-beat
+            int64_t const t = int64_t(phase + slot * beat + half + double(int((r >> 8) % 41) - 20)); // +-20 ms sloppy
+            l.words.push_back(Word::of("w", t, t + 200));
+        }
+        l.start = l.words.front().start; l.end = l.words.back().end;
+        ly.lines.push_back(l);
+    }
+    auto g = guessTempo(ly);
+    CHECK_NEAR(float(g.bpm), 96.0f, 0.6f);
+    double d = std::fmod(std::fabs(g.phaseMs - phase), beat); d = std::min(d, beat - d);
+    CHECK(d < 40.0);
+    CHECK(g.confidence > 0.3f);
+    Lyrics few; few.lines.resize(3);
+    CHECK(guessTempo(few).bpm == 0.0);
 }

@@ -124,6 +124,13 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         mLuma = 0.5f * (lum(p->top) + lum(p->horizon)) * mFrame.visible * std::min(1.0f, mFrame.bright);
     }
 
+    { // [LyricsForge] the kick the dome shader sees: eased (0.25 s in, 0.7 s out) and halved - raw, it blinked every beat
+        float const want = 0.5f * std::max(in.kick, 0.8f * flood);
+        float const dtk = float(std::clamp(in.dtSec, 0.0, 0.25));
+        mKickSmooth = ease(mKickSmooth, want, dtk, 0.25f, 0.7f);
+        mBeatSmooth = ease(mBeatSmooth, 0.6f * std::clamp(in.beat, 0.0f, 1.0f), dtk, 0.12f, 0.45f);
+        mPulseSmooth = ease(mPulseSmooth, std::clamp(in.pulse, 0.0f, 1.6f), dtk, 0.6f, 1.2f);
+    }
     { // [LyricsForge] world light: eased, fast in (drops, lightning) and slow out; underground it mostly fades
         WorldLight want;
         if (p) {
@@ -194,7 +201,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
         auto  q      = pack(*p, aurora1(*p, cfg), aurora2(*p, cfg), mFrame.time, cfg, id3, mDomeYaw);
         // [LyricsForge] texel 13: what the music is doing right now, for every sky (the dome reacts, not just the quads)
         auto b8 = [](float v) { return uint8_t(std::clamp(int(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)), 0, 255)); };
-        q[13] = {b8(in.lightning), b8(std::max(in.kick, 0.8f * flood)), b8(in.beat), in.wave < 0 ? uint8_t(0) : uint8_t(1 + int(std::clamp(in.wave, 0.0f, 1.0f) * 254.0f))};
+        q[13] = {b8(in.lightning), b8(mKickSmooth), b8(mBeatSmooth), in.wave < 0 ? uint8_t(0) : uint8_t(1 + int(std::clamp(in.wave, 0.0f, 1.0f) * 254.0f))};
         mCurQ = q; mHaveQ = true;
         if (outro >= 0) { // [LyricsForge] outro: the front sinks back to the horizon, taking the sky with it
             mSweep = std::min(mSweep, 0.999f * (1.0f - sstep(0.0f, 1.0f, outro)));
@@ -213,7 +220,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
     h.info[0]       = mFrame.t;
     h.info[1]       = mFrame.brightness;
     h.info[2]       = picture ? 0.0f : mFrame.alpha;
-    h.info[3]       = std::clamp(in.pulse, 0.0f, 1.6f);
+    h.info[3]       = mPulseSmooth; // [LyricsForge] eased (see the kick block): raw, the sky's colour pumped every beat
     h.picture       = picture ? 1u : 0u;
     h.pictureAlpha  = mFrame.picture;
     h.pictureBright = mFrame.picBright;

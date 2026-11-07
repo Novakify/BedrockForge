@@ -45,7 +45,7 @@ inline constexpr Shot kShots[] = {
 
 class Cinema {
 public:
-    void setPulse(float heartbeat) { mHeart = heartbeat; } // [BF] Moments: lub-dub vignette
+    void setPulse(float heartbeat) { mHeartIn = heartbeat; } // [BF] Moments: lub-dub vignette
     /// [LyricsForge] PvP calm, 0..1 (1 = in a fight right now): the look steps aside while you fight
     void setCombat(float calm) { mCombat = calm; }
     float combat() const { return mCombat; }
@@ -55,9 +55,9 @@ public:
     void             step(MusicState const* m, Config const& cfg, float dt, float camYaw = 0, uint32_t accent = 0);
     CinemaOut const& out() const { return mOut; }
 
-    static constexpr float kFlashCap  = 0.16f; // comfort: an impact frame never adds more than this much light
-    static constexpr float kDropFlashCap = 0.24f; // [BF] a known drop lands harder (still one soft frame, 20 s apart)
-    static constexpr float kFlashGap  = 0.9f;  // s: at most one flash this often (no strobing)
+    static constexpr float kFlashCap  = 0.07f; /* [LyricsForge] was 0.16: read as strobing */ // comfort: an impact frame never adds more than this much light
+    static constexpr float kDropFlashCap = 0.11f; /* [LyricsForge] was 0.24 */ // [BF] a known drop lands harder (still one soft frame, 20 s apart)
+    static constexpr float kFlashGap  = 8.0f; /* [LyricsForge] was 0.9 s */  // s: at most one flash this often (no strobing)
     static constexpr float kLetterMax = 0.075f; // thin: the hotbar is still drawn under it on the HUD
 
 private:
@@ -66,7 +66,7 @@ private:
     bool       mHave = false;
     char       mScene[48] = {};
     float      mAcc[3] = {1, 1, 1};
-    float      mHeart = 0;
+    float      mHeart = 0, mHeartIn = 0;
     float      mCombat = 0;
     int        mShot = 0, mNextShot = 0, mCuts = 0, mCutSeq = 0;
     float      mCutT = 99, mCutWait = -1, mCutPending = -1, mCutJitter = 0, mFlash = 0, mFlashCap = kFlashCap, mHold = 0, mSinceFlash = 99, mKick = 0, mBox = 0, mVig = 0, mOn = 0, mFov = 1, mFovPunch = 0, mShow = 0, mShowAge = 0, mShowYaw = 0, mWaitBeat = 0;

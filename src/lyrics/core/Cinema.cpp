@@ -84,13 +84,14 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     if (on && cfg.impactFrames && mSinceFlash > kFlashGap && (m->dropNow || m->chorusNow)) {
         mFlash = m->dropNow ? 1.0f : 0.55f;
         // a drop after a held breath lands hardest: the contrast between the hush and the hit is the moment
-        mFlashCap = m->dropNow ? (m->bigDrop || mHold > 0.3f ? kDropFlashCap : 0.2f) : kFlashCap;
+        mFlashCap = m->dropNow ? (m->bigDrop || mHold > 0.3f ? kDropFlashCap : 0.09f) : kFlashCap;
         mKick  = m->dropNow ? 1.0f : 0.6f;
         if (m->finalHit && cfg.songArc) { mKick = 1.35f; mFlashCap = kDropFlashCap; mFlash = 1.0f; } // [BF] the last one is the biggest
         mSinceFlash = 0;
     }
     if (on && cfg.fovBreath && (m->dropNow || m->chorusNow)) mFovPunch = m->dropNow ? 1.0f : 0.5f;
-    mFlash *= std::exp(-dt / 0.22f);
+    mFlash *= std::exp(-dt / 0.45f); // [LyricsForge] a soft swell of light, not a pop
+    mHeart += (mHeartIn - mHeart) * ease(dt, 0.35f); // [LyricsForge] heartbeat as a slow breath, never a blink
     mFovPunch *= std::exp(-dt / 0.45f);
     mKick  *= std::exp(-dt / 0.5f);
     float const imp = on && cfg.impactFrames ? std::max(mKick, m->impact * 0.6f) : 0.0f;
@@ -112,7 +113,7 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     float const outro = on && cfg.songOutro ? m->outro : 0.0f;   // [BF] end credits: the world winds down
     vig += 0.40f * outro;
     float const bridge = on && cfg.songArc ? m->bridge : 0.0f;  // [BF] the bridge: quiet, cooler, a little strange
-    vig += 0.12f * bridge + 0.22f * mHeart;
+    vig += 0.12f * bridge + 0.07f * mHeart;
     if (on && cfg.letterbox) box = std::max(box, kLetterMax * outro);
     if (on && cfg.letterbox) box = std::max(box, kLetterMax * 0.9f * hold);
     mBox += (box - mBox) * ease(dt, box > mBox ? 0.9f : 0.6f);

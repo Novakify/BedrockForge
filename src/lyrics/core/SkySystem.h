@@ -83,6 +83,7 @@ private:
     float             mSilent = 0;        //   seconds without music
     float             mAwakeLevel = 0;    //   0..1 progress the effects follow
     bool              mFromNothing = false, mAwakeMeteors = false; // the startup sweep rises over the vanilla sky
+    float             mKickSmooth = 0, mBeatSmooth = 0, mPulseSmooth = 0; // [LyricsForge] eased kick for the dome
     float             mOutroT = -1, mOutroFrom = 1; // [LyricsForge] outro: seconds in (-1 none), the level it started from
     float             mChapterT = -1;              // [LyricsForge] chapter: seconds in (-1 none)
     bool              mOutroMeteors = false, mChapterMeteors = false, mChapterSweep = false;
