@@ -37,6 +37,12 @@ cbuffer GA : register(b0, space9) {
     float  prevW, prevH;
     uint   prevBgra, havePrev;
     float  reflectAmt, react;
+    // M2.5: LyricsForge glass block (all neutral when lf = 0)
+    float3 cover;  float coverK;   // song / chapter cover colour
+    float3 skyC;   float skyK;     // LyricsForge sky colour
+    float3 wordCol; float wordColK;// colour word flash
+    float  awaken, drop, finale, wordT;
+    float  idleEdge, lf, beatK, pad2;
 };
 ByteAddressBuffer gPrev : register(t2, space9); // last finished frame (lyrics, sky, post) for reflections
 
@@ -138,19 +144,42 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float2   n  = gr / max(length(gr), 1e-6);      // outward, screen space (y down)
     float    halfPx = min(fs.x, fs.y) * 0.5 * pxPerTexel;
 
+    // M2.5 Awaken: the neon boots piece by piece over the ~5 s startup (boots, leggings, chest, helmet) and powers
+    // down in reverse when the world exhales at the end. No music = plain clear glass with a faint outline.
+#if GA_LAYER == 1
+    float stage = fi < 12 ? 3.0 : (fi < 24 ? 2.0 : 0.0);
+#else
+    float stage = 1.0;
+#endif
+    float th     = stage * 0.19;
+    float boot   = lf > 0.5 ? smoothstep(th, th + 0.22, awaken) : 1.0;
+    float ignite = lf > 0.5 ? exp(-pow((awaken - th - 0.2) / 0.045, 2.0)) : 0.0; // the moment a piece lights
+    float edgeLv = lf > 0.5 ? lerp(idleEdge, 1.0, boot) + ignite * 1.5 : 1.0;
+
     // enchant: edge flow (light travelling round the outline)
     float ench = 0;
     if (glint > 0.5 && glint < 1.5) ench = 0.5 + 0.5 * sin(time * 2.4);
     if (glint > 1.5) { float per = (p.x + p.y) / (fs.x + fs.y); ench = pow(0.5 + 0.5 * sin((per * 2.0 - time * 0.55) * 6.2831), 6.0); }
     // LyricsForge: the outline light runs round the edges with the music and pulses on the beat
-    float mus = active * react;
+    float mus = active * react * boot;
     if (mus > 0.5) {
         float per  = (p.x + p.y) / (fs.x + fs.y);
         float flow = pow(0.5 + 0.5 * sin((per * 2.0 - time * (0.45 + 1.6 * bass)) * 6.2831), 5.0);
         ench = max(ench, flow * (0.35 + 0.65 * beat) + impact * 0.8);
     }
-    float3 edgeC = GA_EDGE * (1.0 + ench * 1.2 + mus * beat * 0.6);
+    // cover-coloured glass: the neon takes the cover's accent (a vivid version of it), the frost takes the cover itself
+    float  cMix = saturate(coverK * mus);
+    float  cMax = max(max(cover.r, cover.g), max(cover.b, 1e-3));
+    float3 acc  = cover / cMax;
+    acc = saturate(lerp(dot(acc, float3(0.299, 0.587, 0.114)).xxx, acc, 1.35));
+    float3 edgeB = lerp(GA_EDGE, acc, cMix * 0.85);
+    edgeB = lerp(edgeB, wordCol * 1.2, saturate(wordColK * boot) * 0.85); // colour words flash the outline
+    // beat-pulse: brighter on every kick, a big flare on the drop
+    float kick  = mus * beat * beatK;
+    float flare = drop * boot * react;
+    float3 edgeC = edgeB * (1.0 + ench * 1.2 + kick * 0.9 + flare * 1.4 + ignite * 1.2);
     float3 palC  = lerp(float3(1, 1, 1), pal, saturate(palAmount * mus));
+    palC = lerp(palC, skyC, saturate(skyK * boot * react) * 0.75); // the rim reflects the LyricsForge sky above you
 
     // fixed twist around the face centre + gentle fixed wave
     float  bevel = min(22.0 * S, halfPx * 0.85);
@@ -176,7 +205,8 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     c.r = sceneAt(px + off).r;
     c.g = sceneAt(px + off * 1.04).g;
     c.b = sceneAt(px + off * 1.08).b;
-    c   = lerp(c, lerp(float3(0.0065, 0.0032, 0.018), GA_TINT, 0.35), 0.10);
+    float3 frost = lerp(lerp(float3(0.0065, 0.0032, 0.018), GA_TINT, 0.35), cover * 0.85, cMix);
+    c   = lerp(c, frost, 0.10 + 0.12 * cMix); // a dark cover gives deep glass, a bright one glows through
 
     // reflection of the last finished frame: lyrics, sky and LyricsForge effects glint across the glass, strongest at
     // the rims (fresnel-like) - sampled mirrored around the face and pushed outwards along the edge normal
@@ -188,6 +218,27 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
         c = 1.0 - (1.0 - c) * (1.0 - refl * w);                                          // screen blend
     }
 
+    // lyric glint: one light sweep across each plate per sung word, like a reflection passing over it
+    if (wordT < 0.6) {
+        float sp   = (p.x / fs.x) * 0.65 + (p.y / fs.y) * 0.35;
+        float pos  = wordT / 0.34 * 1.5 - 0.25;
+        float band = exp(-pow((sp - pos) / 0.07, 2.0)) * (1.0 - saturate(wordT / 0.6)) * mus;
+        c += band * 0.32 * lerp(float3(1, 1, 1), edgeB, 0.35);
+    }
+    // stars in the glass during the constellation outro
+    if (finale > 0.01) {
+        float2 sc = t * 3.0;
+        float2 g  = floor(sc);
+        float  h  = frac(sin(dot(g, float2(12.9898, 78.233))) * 43758.5453);
+        if (h > 0.9) {
+            float tw = 0.5 + 0.5 * sin(time * (2.0 + h * 3.0) + h * 40.0);
+            float sd = length(frac(sc) - 0.5);
+            float st = smoothstep(0.24, 0.0, sd) * tw * finale;
+            c += st * lerp(float3(1.0, 0.97, 0.9), acc, 0.25 * cMix) * 1.3;
+        }
+        c *= 1.0 - 0.18 * finale * (1.0 - e); // the glass darkens a little, like the night the stars sit in
+    }
+
     // menu rim: white, brighter on the side facing the light (top-left, like the client menu)
     float  rim = 1.0 - smoothstep(0.0, 1.6, abs(d + 0.9));
     float2 Ls  = normalize(float2(-0.45, -0.89));
@@ -197,10 +248,11 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     // neon outline + its light glowing into the glass
     float3 E   = GA_EDGE;
     float  sat = max(max(E.r, E.g), E.b) - min(min(E.r, E.g), E.b);
-    c += lerp(edgeC, edgeC * palC, 0.5) * (0.24 + 0.30 * ench) * lerp(0.45, 1.0, saturate(sat * 1.5)) * pow(saturate(1.0 + d / max(bevel, 1.0)), 3.0);
-    c += edgeC * 0.015;
+    c += lerp(edgeC, edgeC * palC, 0.5) * (0.24 + 0.30 * ench + 0.25 * kick + 0.4 * flare) * edgeLv * lerp(0.45, 1.0, saturate(sat * 1.5)) * pow(saturate(1.0 + d / max(bevel, 1.0)), 3.0);
+    c += edgeC * 0.015 * edgeLv;
     float aa = max(fwidth(dIn), 1e-4) * 1.1;
-    float ln = 1.0 - smoothstep(0.19 - aa, 0.19 + aa, dIn);
-    c = lerp(c, edgeC * 1.25, ln);
+    float lw = 0.19 + 0.07 * kick + 0.10 * min(flare, 1.0);  // a touch thicker on the kick, thicker still on the drop
+    float ln = 1.0 - smoothstep(lw - aa, lw + aa, dIn);
+    c = lerp(c, edgeC * 1.25, ln * saturate(edgeLv));
     return float4(saturate(c), 1.0);
 }

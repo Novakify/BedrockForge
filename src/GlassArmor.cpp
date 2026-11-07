@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 #include <fstream>
@@ -110,6 +112,11 @@ std::atomic_bool                   gDebugSolid{false};
 std::atomic_bool                   gReact{true};
 float                              gReflect = 0.45f;
 float                              gShowBeat = 0;
+float                              gIdleEdge = 0.3f;  // M2.5: outline strength with no music (Awaken boots it to 1)
+float                              gBeatK    = 1.0f;  // M2.5: how hard the outline breathes with the kick
+std::atomic_bool                   gWordSweep{true};  // M2.5: a light sweep per sung word
+bool                               gGlassLf = false;
+float                              gShowAwaken = 0, gShowCover = 0;
 LARGE_INTEGER                      gT0{};
 int                                gDumped = 0;
 std::string gLastReport;
@@ -835,6 +842,12 @@ struct alignas(16) GaParams { // cbuffer GA (shaders/glass_armor.hlsl), 256-byte
     float    prevW, prevH;
     uint32_t prevBgra, havePrev;
     float    reflect, react;
+    // M2.5: LyricsForge glass block (BfDirectorV1 size >= 256)
+    float    cover[3], coverK;    // song / chapter cover colour, eased
+    float    sky[3], skyK;        // LyricsForge sky colour, eased
+    float    wordCol[3], wordColK;// colour word flash
+    float    awaken, drop, finale, wordT; // wordT: seconds since the last sung word started (big = none)
+    float    idleEdge, lf, beatK, pad2;   // lf: 1 when the glass block is live (else the M2 behaviour)
 };
 static_assert(sizeof(GaParams) <= 256, "one 256-byte slot");
 
@@ -854,6 +867,52 @@ ComPtr<ID3D12Resource> gPrev;
 UINT64                 gPrevSize = 0;
 uint32_t               gPrevPitch = 0, gPrevW = 0, gPrevH = 0, gPrevBgra = 0;
 std::atomic_bool       gPrevValid{false};
+} // namespace
+
+namespace {
+// M2.5: the LyricsForge glass block -> eased shader params. Called once per flush (several per frame is fine:
+// everything eases on wall time).
+void glassBlock(BfDirectorV1 const* b, bool fresh, GaParams& p) {
+    using clk = std::chrono::steady_clock;
+    static clk::time_point last = clk::now(), wordAt = clk::now() - std::chrono::seconds(100);
+    static float cover[3]{1, 1, 1}, coverK = 0, sky[3]{1, 1, 1}, skyK = 0, finale = 0, awaken = 0, wordColK = 0, wordCol[3]{};
+    static uint32_t seq = 0;
+    static bool     haveSeq = false;
+    auto const now = clk::now();
+    float const dt = std::clamp(std::chrono::duration<float>(now - last).count(), 0.f, 0.25f);
+    last = now;
+    bool const live = b->size >= 256 && fresh;
+    gGlassLf = live;
+    if (b->size < 256) return; // older BF: keep the M2 behaviour
+    p.lf = 1;
+    auto ease = [&](float& v, float want, float sec) { v += (want - v) * (1.f - std::exp(-dt / sec)); };
+    bool const playing = live && b->playing;
+    float const cK = playing ? std::clamp(b->coverAmount, 0.f, 1.f) : 0.f;
+    if (cK > 0.f) for (int k = 0; k < 3; ++k) ease(cover[k], std::clamp(b->cover[k], 0.f, 1.f), 0.45f); // chapter: ~1 s blend
+    ease(coverK, cK, 0.6f);
+    float const sK = live ? std::clamp(b->skyAmount, 0.f, 1.f) : 0.f;
+    if (sK > 0.f) for (int k = 0; k < 3; ++k) ease(sky[k], std::clamp(b->sky[k], 0.f, 1.f), 0.5f);
+    ease(skyK, sK, 0.6f);
+    ease(finale, live && b->finale > 0.5f ? 1.f : 0.f, live && b->finale > 0.5f ? 0.6f : 1.2f);
+    // Awaken drives the boot-up; it already falls back over the outro (the world exhales), so the pieces power
+    // down in reverse. With the music stopped and Awaken off, it simply fades.
+    awaken = live ? std::clamp(b->awaken, 0.f, 1.f) : std::max(0.f, awaken - dt / 2.f);
+    if (live && b->playing) {
+        if (!haveSeq) seq = b->wordSeq, haveSeq = true;
+        if (b->wordSeq != seq) {
+            seq    = b->wordSeq;
+            wordAt = now;
+            if (b->wordColorAmount > 0.5f) { for (int k = 0; k < 3; ++k) wordCol[k] = std::clamp(b->wordColor[k], 0.f, 1.f); wordColK = 1; }
+        }
+    }
+    wordColK *= std::exp(-dt / 0.7f);
+    for (int k = 0; k < 3; ++k) p.cover[k] = cover[k], p.sky[k] = sky[k], p.wordCol[k] = wordCol[k];
+    p.coverK = coverK, p.skyK = skyK, p.wordColK = wordColK, p.finale = finale, p.awaken = awaken;
+    p.drop   = live ? std::clamp(b->drop, 0.f, 1.4f) : 0.f;
+    p.wordT  = gWordSweep ? std::chrono::duration<float>(now - wordAt).count() : 99.f;
+    if (playing) { p.active = 1; p.beat = std::clamp(b->beat, 0.f, 1.f); } // follow the song even with the Director look off
+    gShowAwaken = awaken, gShowCover = coverK;
+}
 } // namespace
 
 bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource* ds, FlushRes& out) {
@@ -916,6 +975,7 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.pal[0] = p.pal[1] = p.pal[2] = 1;
     p.react   = gReact ? 1.f : 0.f;
     p.reflect = gReflect;
+    p.awaken = 1, p.wordT = 99.f, p.idleEdge = gIdleEdge, p.beatK = gBeatK;
     if (gReact) {
         static uint32_t lastFrame = 0;
         static int      still     = 0;
@@ -936,6 +996,7 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
                 }
                 gShowBeat = p.beat;
             }
+            glassBlock(b, still <= 20, p);
         }
     }
     if (gPrevValid) {
@@ -1069,6 +1130,11 @@ void drawUi() {
         if (ImGui::Checkbox("React to LyricsForge (beat, sky colour, flashes)", &react)) gReact = react;
         ImGui::SliderFloat("Reflection of lyrics / effects", &gReflect, 0.f, 1.f, "%.2f");
         ImGui::Text("Beat now: %.2f   last frame for reflections: %s", gShowBeat, gPrevValid ? "yes" : "no");
+        ImGui::Text("LyricsForge glass link: %s   Awaken %.2f   cover colour %.2f", gGlassLf ? "live" : "waiting for a song", gShowAwaken, gShowCover);
+        ImGui::SliderFloat("Outline with no music", &gIdleEdge, 0.f, 1.f, "%.2f");
+        ImGui::SliderFloat("Beat pulse", &gBeatK, 0.f, 2.f, "%.2f");
+        bool sw = gWordSweep.load();
+        if (ImGui::Checkbox("Light sweep on each sung word", &sw)) gWordSweep = sw;
         bool dbg = gDebugSolid.load();
         if (ImGui::Checkbox("Debug: paint glass solid magenta", &dbg)) gDebugSolid = dbg;
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
