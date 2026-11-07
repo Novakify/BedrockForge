@@ -99,6 +99,7 @@ class Clock {
 public:
     struct In {
         double dtSec      = 0;     // real frame time (clamped to 0.1 like Java)
+        double rate       = 1;     // [LyricsForge] sky drift rate (can be negative: the sky turns back for a moment)
         float  night      = 1;     // 0 day .. 1 night (Minecraft time 13000..23000 = 1, 1000-tick ramps)
         float  beat       = 0;     // NowPlaying.beatPulse
         bool   lineActive = true;  // a lyric line is playing (else "calm" eases to 0.7)

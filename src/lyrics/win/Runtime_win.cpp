@@ -131,6 +131,8 @@ struct State {
         float       energySum = 0, energyN = 0;
     } shuffle;
     float                   skyTimeScale = 1; // [LyricsForge] eased sky speed (see sky step)
+    float                   skyMoveAge = 99, skyMoveTo = 1; // [LyricsForge] the last key-moment sky move
+    int                     skyMoveCount = 0;
     float                   waveT = -1;     // [BF] chorus light wave progress (< 0 none)
     int                     meteors = 0;    // [BF] meteor burst queued for the next sky frame
     std::string             autoKey;        // [BF] Auto director: the song it last picked for
@@ -1022,12 +1024,24 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     sky::SystemIn in;
     in.nowMs = ms;
     float const inst = cfg.instrumentalFx && cfg.director ? gS->conductor.state().instrumental : 0.0f;
-    { // [BF] the sky rides the speed ramp too - [LyricsForge] but only as a slow drift: hits used to snap it to ~2.6x in
-      // 50 ms and back, which read as the sky lurching fast / slow every couple of seconds. Narrow range, ~3 s glide.
-        float want = std::clamp(gS->conductor.state().timeScale, 0.8f, 1.25f) * (1.0f + 0.25f * inst * gS->conductor.state().energy);
-        want = std::clamp(want, 0.8f, 1.3f);
-        gS->skyTimeScale += (want - gS->skyTimeScale) * (1.0f - std::exp(-dt / 3.0f));
-        in.dtSec = dt * gS->skyTimeScale;
+    (void)inst;
+    { // [LyricsForge] the sky drifts slowly and steadily; only a key moment (a drop, the first chorus lift, the final hit)
+      // moves it: one gentle surge forward or a turn back, then it settles into the drift again. At most every 25 s.
+        auto const& ms = gS->conductor.state();
+        float const dts = std::clamp(dt, 0.0f, 0.1f);
+        gS->skyMoveAge += dts;
+        bool const key = cfg.director && (ms.finalHit || ms.dropNow || (ms.liftNow && ms.choruses <= 1));
+        if (key && gS->skyMoveAge > 25.0f) {
+            gS->skyMoveAge = 0;
+            gS->skyMoveCount++;
+            gS->skyMoveTo = (ms.finalHit || gS->skyMoveCount % 3 == 0) ? -0.6f : 2.0f; // every third (and the last) turns back
+        }
+        float target = 1.0f;
+        if (gS->skyMoveAge < 3.0f) target = gS->skyMoveTo; // ~1.5 s in, a moment held, then ~4 s back to the drift
+        float const tau = gS->skyMoveAge < 3.0f ? 0.75f : 2.0f;
+        gS->skyTimeScale += (target - gS->skyTimeScale) * (1.0f - std::exp(-dts / tau));
+        in.dtSec = dt;
+        in.rate  = gS->skyTimeScale;
     }
     in.yaw = cam.yaw; in.pitch = cam.pitch;
     in.camX = cam.pos.x; in.camY = cam.pos.y; in.camZ = cam.pos.z;
@@ -1184,7 +1198,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         if (!tourSky.empty()) eff.skyPreset = tourSky; // the tour wins (each sky seen as itself)
         gS->skyShown = eff.skyPreset;
         eff.skyStrength = std::min(1.0f, eff.skyStrength * (1.0f + 0.45f * mo.skyBoost)); // aurora burst: the sky's
-        eff.skySpeed *= 1.0f + 0.2f * mo.skyBoost; /* [LyricsForge] was 0.7: clouds zipped */                                         // own layers, brighter + faster
+        /* [LyricsForge] no speed boost: the sky only moves at key moments (sky drift) */                                         // own layers, brighter + faster
         gS->sky.step(gS->moduleOn && cfg.enabled, eff, gS->engine.perf(), in);
         publishSkyFog();
 

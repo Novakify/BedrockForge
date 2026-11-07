@@ -15,6 +15,7 @@ namespace bf::lyrics::sky {
 struct SystemIn {
     int64_t nowMs = 0;
     double  dtSec = 0;
+    double  rate  = 1; // [LyricsForge] sky drift rate (Clock::In::rate)
     double  yaw = 0, pitch = 0;              // camera, Minecraft degrees
     double  camX = 0, camY = 0, camZ = 0;    // camera world position
     float   night = 1;                       // nightOf(dayTime); 1 when unknown

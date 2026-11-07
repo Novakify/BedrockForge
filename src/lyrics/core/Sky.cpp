@@ -219,7 +219,7 @@ float nightOf(long long dayTime) {
 
 Frame Clock::tick(Preset const* p, Config const& cfg, In const& in) {
     double dt = std::min(0.1, std::max(0.0, in.dtSec));
-    mTime += dt * std::clamp(cfg.skySpeed, 0.1f, 3.0f);
+    mTime += dt * std::clamp(cfg.skySpeed, 0.1f, 3.0f) * std::clamp(in.rate, -1.5, 2.5);
     mBreath += dt * cfg.skyBreath * 1.3;
     mVisible = ease(mVisible, p ? 1.0f : 0.0f, dt, 3.0);
     mOutside = ease(mOutside, in.skyOpen ? 1.0f : 0.0f, dt, 2.0);
