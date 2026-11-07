@@ -1914,81 +1914,161 @@ void mirrorFx(vec3 d) {
         add(rgb(255.0, 246.0, 220.0), ray * 0.5);
     }
 }
-// [LyricsForge] Cloud Hill: a real volumetric cumulus tower (ray-marched 3D noise: cauliflower billows, light marched
-// toward the sun, powder-bright edges, blue-grey shade, a pink bounce under it) over a wind-combed green field; the
-// tower boils upward slowly. Below the field the usual void takes over.
-GCONST int CH_N = 9;
-GCONST vec3 CH_C[9] = { vec3(0.8, 5.5, 15.0), vec3(-0.4, 11.5, 15.5), vec3(-7.5, 3.2, 14.0), vec3(8.8, 4.0, 16.0), vec3(0.5, 0.8, 15.0),
-                  vec3(4.0, 8.6, 14.5), vec3(-3.6, 7.8, 14.8), vec3(13.5, 1.8, 16.5), vec3(-13.0, 1.6, 15.5) };
-GCONST vec3 CH_R[9] = { vec3(6.0, 6.8, 4.6), vec3(4.6, 4.2, 4.0), vec3(5.4, 3.8, 4.0), vec3(6.0, 4.4, 4.4), vec3(16.0, 2.8, 6.0),
-                  vec3(3.6, 3.4, 3.2), vec3(3.2, 3.0, 3.0), vec3(4.2, 2.4, 3.4), vec3(4.0, 2.2, 3.2) };
-float chShape(vec3 p) {
-    float s = -1.0;
-    for (int k = 0; k < CH_N; k++) s = max(s, 1.0 - length((p - CH_C[k]) / CH_R[k]));
-    return s;
+// [LyricsForge] Cloud Hill (v3): a whole sky of real cumulus - a volumetric field of convective cells drifting with the wind,
+// each one growing from a flat-based body into sprouting bubbles (cumulus -> congestus) and fading away again, carved by
+// inverted Worley billows, lit by a light march to the sun - over a grass field: shell-textured blades near you that sway
+// in rolling gusts, a wind-sheened field further out, hazy at the horizon. Below that the usual void.
+GCONST float CH_HB = 2.6, CH_HMAX = 12.0, CH_G = 15.0, CH_PER = 140.0;
+GCONST vec2 CH_WIND = vec2(0.10, 0.035);
+float chh(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + s * 74.7) * 43758.5453); }
+float chCells(vec3 p, float tt) {
+    float qx = p.x - CH_WIND.x * tt, qz = p.z - CH_WIND.y * tt, py = p.y;
+    float cx0 = floor(qx / CH_G - 0.5), cz0 = floor(qz / CH_G - 0.5);
+    float best = -1.0;
+    for (int o = 0; o < 4; o++) {
+        float cx = cx0 + float(o & 1), cz = cz0 + float(o >> 1);
+        float f = tt / CH_PER + chh(cx, cz, 1.0), gen = floor(f);
+        f -= gen;
+        if (chh(cx + gen * 13.1, cz, 2.0) >= 0.75) continue;              // this cell is clear sky this time round
+        float L = pow(clamp(f / 0.45, 0.0, 1.0), 0.8) * (1.0 - clamp((f - 0.75) / 0.25, 0.0, 1.0)); // grow .. live .. fade
+        if (L <= 0.02) continue;
+        float ccx = (cx + 0.35 + 0.3 * chh(cx, cz + gen * 7.7, 3.0)) * CH_G, ccz = (cz + 0.35 + 0.3 * chh(cx, cz + gen * 7.7, 4.0)) * CH_G;
+        float R = CH_G * (0.22 + 0.14 * chh(cx, cz + gen, 5.0)) * (0.7 + 0.3 * L);
+        float hv = chh(cx + gen, cz, 6.0);
+        float H = CH_HMAX * (0.22 + 0.35 * hv + 0.55 * pow(hv, 6.0)) * pow(max(L, 0.12), 0.6); // a few grow into towers
+        float dx = qx - ccx, dz = qz - ccz;
+        if (dx * dx + dz * dz > R * R * 2.2) continue;
+        float hn = (py - CH_HB) / max(H * 0.45, 1e-3);
+        float sc = 1.0 - sqrt((dx * dx + dz * dz) / (R * R) + hn * hn);    // the wide, flat-bottomed body
+        for (int k = 0; k < 6; k++) {                                       // bubbles sprouting from it
+            float fk = float(k);
+            float ka = chh(cx + fk * 3.7, cz + gen, 7.0 + fk), kb = chh(cx, cz + fk * 5.3 + gen, 8.0 + fk), kc = chh(cx + fk, cz + fk, 9.0 + fk);
+            float hk = (fk + 0.5) / 6.0, ang = ka * 6.2832, rad = R * (0.55 - 0.4 * hk) * sqrt(kb);
+            vec3 bc = vec3(ccx + cos(ang) * rad, CH_HB + H * (0.25 + 0.6 * hk * (0.6 + 0.4 * kc)), ccz + sin(ang) * rad);
+            float br = R * (0.62 - 0.32 * hk) * (0.7 + 0.4 * kc) * (0.85 + 0.15 * L);
+            vec3 e = vec3(qx, py, qz) - bc;
+            sc = max(sc, 1.0 - sqrt(e.x * e.x + e.z * e.z + e.y * e.y * 1.1025) / br);
+        }
+        best = max(best, sc);
+    }
+    return best;
 }
-float chDens(vec3 p, float tt, bool detail) {
-    float s = chShape(p);
-    if (s < -0.35) return 0.0;
-    float n = fbm(p.x * 0.30 - tt * 0.012, p.y * 0.30 - tt * 0.022, p.z * 0.30, detail ? 4 : 2);
-    float b2 = 1.0;
-    if (detail) b2 = 1.0 - abs(2.0 * fbm(p.x * 0.75 - tt * 0.03, p.y * 0.75 - tt * 0.055, p.z * 0.75 + tt * 0.02, 3) - 1.0);
-    float dd = s * 1.6 - 0.45 * (1.0 - n) - 0.38 * (1.0 - b2) + 0.36;
-    return clamp(dd, 0.0, 1.0) * sm(-0.6, 0.4, p.y);
+float chWorley(vec3 p) {
+    vec3 i = floor(p), f = p - i;
+    float dm = 9.0;
+    for (int a = -1; a <= 1; a++) for (int b = -1; b <= 1; b++) for (int c = -1; c <= 1; c++) {
+        vec3 cc = i + vec3(float(a), float(b), float(c));
+        vec3 h = vec3(fract(sin(cc.x * 127.1 + cc.y * 311.7 + cc.z * 74.7) * 43758.5453),
+                      fract(sin(cc.x * 269.5 + cc.y * 183.3 + cc.z * 246.1) * 43758.5453),
+                      fract(sin(cc.x * 113.5 + cc.y * 271.9 + cc.z * 124.6) * 43758.5453));
+        vec3 dd = vec3(float(a), float(b), float(c)) + h - f;
+        dm = min(dm, dot(dd, dd));
+    }
+    return sqrt(dm);
+}
+// density; s is the cell shape there (pass it in when already known)
+float chDens(vec3 p, float s, float tt, bool detail) {
+    if (s < -0.12 || p.y < CH_HB - 0.05) return 0.0;
+    float wv = 0.55, pn = 0.5;
+    if (detail) {
+        float wx = fbm(p.x * 0.12 + 3.1, p.y * 0.12 - tt * 0.01, p.z * 0.12, 2) - 0.5;
+        vec3 q = vec3(p.x * 0.42 + wx * 1.5 - tt * 0.015, p.y * 0.42 - tt * 0.04, p.z * 0.42 + wx * 1.5);
+        wv = (1.0 - clamp(chWorley(q), 0.0, 1.0)) * 0.625;
+        wv += (s < 0.35 ? 1.0 - clamp(chWorley(q * 2.0 + vec3(5.3, -1.7, 2.9)), 0.0, 1.0) : 0.6) * 0.375; // fine billows near the edge
+        pn = fbm(p.x * 0.2 - tt * 0.01, p.y * 0.2 - tt * 0.02, p.z * 0.2, 2);
+    }
+    float dd = s * 1.25 - 0.85 * (1.0 - wv) + 0.35 * (pn - 0.5) + 0.36;
+    float base = sm(CH_HB - 0.02, CH_HB + 0.25 + 0.6 * (fbm(p.x * 0.3, p.z * 0.3, 1.0, 2) - 0.5), p.y); // a flat, slightly ragged base
+    return clamp(dd, 0.0, 1.0) * base * sm(-0.12, 0.18, s);
 }
 void cloudHill(vec3 d, float az, float el) {
     float tt = T / 2.2;
-    float u = radians(wrap180(az - 180.0)), v = radians(el);
-    float ar = radians(az);
-    float hill = radians(2.2 + 1.4 * sin(ar + 0.6) + 0.6 * sin(ar * 2.0 + 2.1) + 0.25 * sin(ar * 5.0 + 0.4));
-    if (v < hill) { // the field in perspective: wind-combed streaks, clumps, blades; gusts roll over it
-        float D = 1.6 / (tan(clamp(radians(2.2) - v, 0.0, 1.4)) + 0.012);
-        float Px = tan(clamp(u, -1.4, 1.4)) * D * 0.9, Pz = D;
-        float far = sm(10.0, 120.0, D), w = tt * 1.1;
-        float s1 = fbm(Px * 0.22 - w * 0.6, Pz * 1.6, tt * 0.05, 4);
-        float s2 = fbm(Px * 0.9 - w * 1.4, Pz * 7.0, 3.3, 3);
-        float blade = fbm(Px * 4.0 - w * 2.0, Pz * 26.0, 7.7, 2);
-        float clump = fbm(Px * 0.45, Pz * 1.4, 11.0, 4);
-        float gust = sm(0.55, 0.95, 0.5 + 0.5 * sin(Px * 0.12 + Pz * 0.35 - tt * 1.3 + fbm(Px * 0.05, Pz * 0.1, tt * 0.05, 2) * 4.0));
-        float tone = 0.30 * s1 + 0.20 * s2 * (1.0 - far) + 0.25 * blade * (1.0 - far) * (1.0 - far) + 0.45 * clump + 0.10 * far;
-        vec3 gc = mix(rgb(22.0, 82.0, 10.0), rgb(58.0, 144.0, 18.0), sm(0.28, 0.46, tone));
-        gc = mix(gc, rgb(112.0, 192.0, 34.0), sm(0.56, 0.74, tone));
-        gc = mix(gc, rgb(150.0, 215.0, 70.0), 0.28 * gust);
-        gc = mix(gc, rgb(120.0, 185.0, 90.0), 0.30 * far);
-        C = gc;
+    float x = d.x, y = d.y, z = d.z, yy = max(y, 0.0);
+    vec3 zen = rgb(10.0, 50.0, 170.0), hor = rgb(150.0, 200.0, 245.0);
+    if (y >= 0.0) {
+        C = mix(hor, zen, pow(clamp(yy * 1.6, 0.0, 1.0), 0.45));
+        float ci = fbm(x / (y + 0.1) * 0.6 + tt * 0.004, z / (y + 0.1) * 3.0, 2.0, 5); // high cirrus wisps
+        C += rgb(235.0, 242.0, 255.0) * 0.35 * sm(0.55, 0.8, ci) * sm(0.05, 0.3, y);
+        if (y <= 0.012) return;
+        float t0 = CH_HB / y, t1 = min((CH_HB + CH_HMAX) / y, 200.0);
+        if (t0 >= 200.0) return;
+        vec3 Ls = normalize(vec3(-0.5, 0.6, 0.62));                      // the sun high behind you, on the left
+        const int ST = 64;
+        float dt = (t1 - t0) / float(ST);
+        float jit = fract(sin(dot(d.xz, vec2(12.9898, 78.233)) * 43758.5453 + T * 7.13));
+        vec3 acc = v3(0.0);
+        float Tr = 1.0;
+        for (int i = 0; i < ST; i++) {
+            if (Tr < 0.02) break;
+            float tc = t0 + dt * (float(i) + jit);
+            vec3 p = d * tc;
+            float s = chCells(p, tt);
+            if (s < -0.12) continue;                                     // clear air: skip the expensive part
+            float D = chDens(p, s, tt, true);
+            if (D < 0.003) continue;
+            float ls = 0.0;
+            for (int j = 0; j < 4; j++) {
+                float st = 0.6 * pow(float(j) + 0.5, 1.6);
+                vec3 q = p + Ls * st;
+                ls += chDens(q, chCells(q, tt), tt, false) * 0.6 * pow(1.6, float(j));
+            }
+            float sig = 9.0;
+            float Tl = exp(-ls * sig * 0.55), powder = 1.0 - exp(-D * sig * 2.0);
+            float hf = clamp((p.y - CH_HB) / 9.0, 0.0, 1.0);
+            vec3 Lc = rgb(255.0, 251.0, 245.0) * Tl * (0.35 + 0.65 * powder) * 2.5
+                    + (rgb(130.0, 155.0, 205.0) * (0.45 + 0.55 * hf) + rgb(165.0, 168.0, 175.0) * 0.45) * 0.68;
+            float fog = exp(-tc / 260.0);
+            Lc = Lc * fog + hor * (1.0 - fog);
+            float a = 1.0 - exp(-D * sig * dt);
+            acc += Tr * a * Lc;
+            Tr *= 1.0 - a;
+        }
+        C = C * Tr + acc;
         return;
     }
-    // the tower: march the box in front of you (z 8..23 ahead)
-    vec3 rd = vec3(d.x, d.y, -d.z);
-    if (rd.z < 0.2) return;
-    float t0 = 8.0 / rd.z, t1 = 23.0 / rd.z;
-    if (abs(rd.x * t1) > 40.0 || rd.y * t1 < -1.5 || rd.y * t0 > 17.0) return;
-    vec3 Ls = normalize(vec3(-0.5, 0.62, -0.6));
-    const int STEPS = 40;
-    float dt = (t1 - t0) / float(STEPS);
-    float jit = fract(sin(dot(d.xy, vec2(12.9898, 78.233)) * 43758.5453));
-    vec3 acc = v3(0.0);
-    float Tr = 1.0;
-    for (int i = 0; i < STEPS; i++) {
-        if (Tr < 0.02) break;
-        vec3 p = rd * (t0 + dt * (float(i) + jit));
-        float D = chDens(p, tt, true);
-        if (D < 0.003) continue;
-        float ls = 0.0;
-        for (int j = 0; j < 4; j++) {
-            float st = 0.55 * pow(float(j) + 0.5, 1.3);
-            ls += chDens(p + Ls * st, tt, false) * 0.55 * pow(1.3, float(j));
+    // ---- the grass field
+    const float CAMH = 1.0, HG = 0.55, CS = 0.032;
+    const int NS = 28;
+    float dy = min(y, -1e-4);
+    vec2 wd = vec2(0.8, 0.6);
+    float tg = -CAMH / dy, fx = x * tg, fz = z * tg;
+    float sheen = 0.5 + 0.5 * sin((fx * wd.x + fz * wd.y) * 0.35 - tt * 1.6 + fbm(fx * 0.05, fz * 0.05, tt * 0.05, 3) * 5.0);
+    float pat = fbm(fx * 0.25, fz * 0.6, 2.0, 4);
+    vec3 fc = mix(rgb(40.0, 112.0, 22.0), rgb(92.0, 165.0, 44.0), sm(0.35, 0.7, pat));
+    fc = mix(fc, rgb(130.0, 190.0, 70.0), 0.30 * sm(0.5, 1.0, sheen));
+    fc = mix(fc, rgb(150.0, 195.0, 150.0), 0.55 * sm(25.0, 260.0, min(tg, 400.0)));
+    float tTop = (-CAMH + HG) / dy;
+    float lod = sm(3.5, 8.5, tTop);
+    vec3 nearc = fc * 0.42;                                              // the dark tangle at the roots
+    if (lod < 0.999) {
+        float sj = fract(sin(x * 9131.7 + y * 7123.3) * 43758.5453);
+        for (int i = 0; i < NS; i++) {
+            float hgt = HG * (1.0 - (float(i) + sj) / float(NS));
+            float t = (-CAMH + hgt) / dy;
+            if (t > 9.0) continue;
+            float px0 = x * t, pz0 = z * t;
+            float px = px0 * 0.8 - pz0 * 0.6, pz = px0 * 0.6 + pz0 * 0.8; // the blade grid turned off the view axis
+            float cx = floor(px / CS) + 37.0, cz = floor(pz / CS) + 91.0;
+            float h1 = fract(sin(cx * 127.1 + cz * 311.7) * 43758.5453), h2 = fract(sin(cx * 269.5 + cz * 183.3) * 43758.5453);
+            float h3 = fract(sin(cx * 419.2 + cz * 371.9) * 43758.5453);
+            float clump = fbm(px * 1.3, pz * 1.3, 4.0, 2);
+            float Hb = HG * (0.45 + 0.45 * h3) * (0.6 + 0.7 * clump);
+            float hn = hgt / max(Hb, 1e-3);
+            if (hn >= 1.0) continue;
+            float gust = 0.5 + 0.5 * sin((px * wd.x + pz * wd.y) * 1.6 - tt * 2.4 + fbm(px * 0.4, pz * 0.4, tt * 0.1, 2) * 4.0);
+            float bend = (0.10 + 0.10 * gust + 0.04 * h1) * hn * hn, lean = (h2 - 0.5) * 0.05 * hn;
+            float rx = (cx - 37.0 + 0.15 + 0.7 * h1) * CS + wd.x * bend + lean, rz = (cz - 91.0 + 0.15 + 0.7 * h2) * CS + wd.y * bend;
+            float r = CS * 0.55 * pow(clamp(1.0 - hn, 0.0, 1.0), 0.65);
+            if ((px - rx) * (px - rx) + (pz - rz) * (pz - rz) < r * r) {
+                vec3 midc = mix(rgb(52.0, 128.0, 26.0), rgb(70.0, 140.0, 20.0), h3), tipc = mix(rgb(140.0, 196.0, 70.0), rgb(170.0, 205.0, 90.0), h3);
+                vec3 c = mix(rgb(18.0, 58.0, 12.0), midc, sm(0.0, 0.45, hn));
+                c = mix(c, tipc, sm(0.45, 1.0, hn));
+                nearc = c * (0.85 + 0.3 * gust);
+                break;
+            }
         }
-        float sig = 7.0;
-        float Tl = exp(-ls * sig * 0.9), powder = 1.0 - exp(-D * sig * 2.5);
-        float hf = clamp(p.y / 14.0, 0.0, 1.0);
-        vec3 Lc = rgb(255.0, 251.0, 245.0) * Tl * (0.45 + 0.55 * powder) * 2.1
-                + (rgb(120.0, 150.0, 215.0) * (0.55 + 0.45 * hf) + rgb(235.0, 200.0, 222.0) * 0.30 * (1.0 - hf)) * 0.55;
-        float a = 1.0 - exp(-D * sig * dt);
-        acc += Tr * a * Lc;
-        Tr *= 1.0 - a;
     }
-    C = C * Tr + acc;
+    C = mix(nearc, fc, lod);
 }
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
@@ -2075,10 +2155,10 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
             C = C * vec3(0.90, 0.98, 1.04) + vec3(0.02, 0.05, 0.07) * exp(-ry * 6.0); // the film glows at the horizon
             add(v3(1.0), 0.10 * exp(-ry * 60.0));                                   // a bright line where they meet
             add(v3(1.0), 0.05 * abs(ringH));                                        // the rings catch the light
-        } else
+        } else if (PRESET == 46) cloudHill(dir, az, el); // [LyricsForge] Cloud Hill draws its whole sphere itself
+        else
         realSky(x, y, z, el, rk);
         if (PRESET == 45) mirrorFx(dir);
-        if (PRESET == 46) cloudHill(dir, az, el);
         if (BKIND >= 0) bodyGlow(x, y, z, az, el);
     } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
