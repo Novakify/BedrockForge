@@ -233,7 +233,12 @@ float4 PSComposite(V2P i) : SV_Target {
         if (n > 4) b += t6.SampleLevel(sLinear, uv, 0).rgb;
         if (n > 5) b += t7.SampleLevel(sLinear, uv, 0).rgb;
         b /= float(n);
-        col = lerp(col, b, p0.z);
+        // [LyricsForge] was lerp(col, b, mix): every dark pixel was pulled toward the screen-wide blur, so a burst of bright
+        // letters lifted the whole dark floor at once (strobing on fast songs at night). Now the glow only lifts a pixel
+        // where the blur itself is bright (near the light), and highlights still soften toward it as before.
+        float3 dlt = b - col;
+        float  bl  = dot(b, float3(0.2126, 0.7152, 0.0722));
+        col += (max(dlt, 0.0) * smoothstep(0.30, 0.80, bl) + min(dlt, 0.0)) * p0.z;
     }
     float3 o = p2.w > 0.5 ? toSrgb(col) : saturate(col);
     return float4(directorGrade(o, uv), 1.0);
