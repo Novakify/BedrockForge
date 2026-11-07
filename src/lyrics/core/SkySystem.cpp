@@ -157,7 +157,7 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
             wantW = std::clamp(mFrame.visible, 0.0f, 1.0f) * (in.skyOpen ? 1.0f : 0.25f) * sstep(0.3f, 0.9f, A);
         }
         float const dt = float(std::clamp(in.dtSec, 0.0, 0.25));
-        float const tt = mSweep < 1.0f ? 0.8f : 0.35f;
+        float const tt = 0.9f; // [LyricsForge] was 0.35 s: the fog (and the ground light that reads it) pumped with the sky
         for (int k = 0; k < 3; ++k) mFog[k] = ease(mFog[k], want[k], dt, tt, tt);
         mFogW = ease(mFogW, wantW, dt, 0.4f, 0.6f);
     }

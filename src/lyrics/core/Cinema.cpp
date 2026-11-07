@@ -94,7 +94,11 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     mHeart += (mHeartIn - mHeart) * ease(dt, 0.35f); // [LyricsForge] heartbeat as a slow breath, never a blink
     mFovPunch *= std::exp(-dt / 0.45f);
     mKick  *= std::exp(-dt / 0.5f);
-    float const imp = on && cfg.impactFrames ? std::max(mKick, m->impact * 0.6f) : 0.0f;
+    // [LyricsForge] the hits reach bloom / contrast / saturation as a slow swell (0.35 s in, 1 s out), at half strength:
+    // the raw kick pumped the whole floor's glow on every hit, which read as flicker on dark maps
+    float const impRaw = on && cfg.impactFrames ? std::max(mKick, m->impact * 0.6f) : 0.0f;
+    mImpS += (0.5f * impRaw - mImpS) * ease(dt, 0.5f * impRaw > mImpS ? 0.35f : 1.0f);
+    float const imp = mImpS;
     // held breath (Conductor.hold) and the chorus look (lift), both gated by the Drop moment / Chorus looks toggles
     float const hold = on && cfg.dropMoment ? m->hold : 0.0f;
     float const lift = on && cfg.chorusLooks ? m->lift : 0.0f;

@@ -17,7 +17,10 @@ static const float3 LL_KEY = float3(-0.4376, 0.8127, 0.3845);
 float3 llSkyHue(float3 fog) {
     float m = llMax3(fog);
     float3 h = m > 1e-3 ? fog / m : float3(0.62, 0.76, 1.0);
-    return lerp(float3(0.62, 0.76, 1.0), h, 0.72);
+    // [LyricsForge] a nearly black fog (dark skies) has no reliable hue: stretching it to full brightness turned tiny
+    // changes (and 8-bit steps) into big colour swings on the ground. Below ~6% brightness the hue fades to neutral.
+    float trust = smoothstep(0.01, 0.06, m);
+    return lerp(float3(0.62, 0.76, 1.0), h, 0.72 * trust);
 }
 float3 llUnitLuma(float3 c) { return c / max(llLuma(c), 1e-3); }
 
@@ -85,7 +88,7 @@ float3 llSkyShape(LLDir d, float3 n) {
 float3 llBlock(float level, float t) {
     float b = pow(saturate(level), 1.7);
 #if LL_EXTREME
-    b *= 1.22 * (1.0 + 0.035 * sin(t * 9.1) + 0.025 * sin(t * 13.7 + 1.3));
+    b *= 1.22 * (1.0 + 0.008 * sin(t * 2.3) + 0.005 * sin(t * 3.7 + 1.3)); // [LyricsForge] was +-6% at ~2 Hz: read as the floor flickering on dark maps
 #else
     b *= 1.06;
 #endif
