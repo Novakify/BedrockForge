@@ -205,8 +205,11 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     c.r = sceneAt(px + off).r;
     c.g = sceneAt(px + off * 1.04).g;
     c.b = sceneAt(px + off * 1.08).b;
-    float3 frost = lerp(lerp(float3(0.0065, 0.0032, 0.018), GA_TINT, 0.35), cover * 0.85, cMix);
-    c   = lerp(c, frost, 0.10 + 0.12 * cMix); // a dark cover gives deep glass, a bright one glows through
+    c   = lerp(c, lerp(float3(0.0065, 0.0032, 0.018), GA_TINT, 0.35), 0.10);
+    // cover-coloured glass: a light colour cast through the glass (it stays see-through); a dark cover deepens it
+    float cLum = dot(cover, float3(0.299, 0.587, 0.114));
+    c *= lerp(float3(1, 1, 1), lerp(float3(1, 1, 1), acc, 0.30) * lerp(1.0, 0.72, saturate(1.0 - cLum * 1.6)), cMix);
+    c += acc * 0.025 * cMix;
 
     // reflection of the last finished frame: lyrics, sky and LyricsForge effects glint across the glass, strongest at
     // the rims (fresnel-like) - sampled mirrored around the face and pushed outwards along the edge normal
