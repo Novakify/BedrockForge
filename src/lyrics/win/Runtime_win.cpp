@@ -1500,9 +1500,11 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         }
         auto const& m = gS->conductor.state();
         auto stamp = [&](char const* what) {
-            char b[160];
-            std::snprintf(b, sizeof b, "%7.1fs %-7s budget %.2f energy %.2f section %d build %.2f hook %.2f choruses %d %s", double(in.t) / 1000.0,
-                          what, m.budget, m.energy, int(m.section), m.build, m.inHook, m.choruses, m.known ? "memory" : "live");
+            char b[320];
+            // [LyricsForge] what drives it: "heard" = the PC's real audio (input level lvl), "groove" = the backup groove
+            std::snprintf(b, sizeof b, "%7.1fs %-7s budget %.2f energy %.2f section %d build %.2f hook %.2f choruses %d %s | %s lvl %.2f on %s", double(in.t) / 1000.0,
+                          what, m.budget, m.energy, int(m.section), m.build, m.inHook, m.choruses, m.known ? "memory" : "live",
+                          gS->synthOn ? "groove" : "heard", double(audioLatest().loud), audioDevice().c_str());
             gS->directorLines.emplace_back(b);
         };
         if (m.songStart) stamp("start");
