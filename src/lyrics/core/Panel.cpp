@@ -84,7 +84,7 @@ std::vector<Panel::SkyPresetInfo> const& Panel::skyOrder() { // SkyPreset.order(
         {"prism", "Prism", 0x070414, 0x1A1036},               {"pulsar", "Pulsar", 0x02030C, 0x0A1430},
         {"aquarell", "Watercolor", 0xE6C8E8, 0xFFE4D2},        {"synthwave", "Synthwave", 0x0B0524, 0x5A1A6E},
         {"aurora", "Aurora", 0x020A14, 0x0B2A33},             {"nebula", "Nebula", 0x07031A, 0x1E0A3A},
-        {"black_hole", "Black hole", 0x010005, 0x0B0618},     {"event_horizon", "Event Horizon", 0x000000, 0x2A1206}, {"deep_voyage", "Deep Voyage", 0x000000, 0x0A1E2A}, {"mirror_sky", "Mirror Sky", 0x0034F0, 0x96E8FF},     {"cosmos", "Cosmos", 0x03020C, 0x12092C},
+        {"black_hole", "Black hole", 0x010005, 0x0B0618},     {"event_horizon", "Event Horizon", 0x000000, 0x2A1206}, {"deep_voyage", "Deep Voyage", 0x000000, 0x0A1E2A}, {"mirror_sky", "Mirror Sky", 0x0034F0, 0x96E8FF}, {"cloud_hill", "Cloud Hill", 0x0A3FD0, 0x7CC0FF},     {"cosmos", "Cosmos", 0x03020C, 0x12092C},
         {"neon_city", "Neon City", 0x050816, 0x2A0E4A},       {"golden_hour", "Golden Hour", 0x2A2350, 0xFF9C5C},
         {"cotton_candy", "Cotton candy", 0x4F90F5, 0xFFC8E4}, {"sakura", "Sakura", 0x3A1A4C, 0xFFB4D9},
         {"frost", "Frost night", 0x0A1A30, 0x5F94C8},         {"midnight", "Midnight", 0x02030A, 0x101A3A},
