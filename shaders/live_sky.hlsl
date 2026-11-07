@@ -1424,7 +1424,7 @@ void pulsarSky(vec3 d, vec3 c) {
 
 
 // [LyricsForge] Event Horizon: a black hole right up close - real Schwarzschild optics (units M = 1, r_s = 2), drawn
-// live per pixel. The shadow is ~68 deg across, sat on the horizon; the disk spans most of the sky.
+// live per pixel. The shadow is ~55 deg across, sat on the horizon, with a snug golden disk round it.
 //  - background: the ray is turned by the true deflection angle (weak field 4/b + 15pi/4b^2, Bozza strong field near
 //    the photon sphere b_c = 3 sqrt3) - stars crowd into an Einstein ring, the Milky Way bends round the hole.
 //    Stars are sized on SCREEN (the lens's radial / tangential stretch is undone), so they stay points.
@@ -1434,11 +1434,11 @@ void pulsarSky(vec3 d, vec3 c) {
 //  - the music: the disk heats up on drops (PULSE), the photon ring flares on hits (KICK)
 static const float EH_BC = 5.196152;            // 3 sqrt(3)
 static const float EH_INC = 1.43117;            // 82 deg inclination
-static const float EH_RIN = 4.2, EH_ROUT = 17.0; // [LyricsForge] spinning fast like Gargantua: the disk reaches in close, so the arc hugs the shadow
+static const float EH_RIN = 4.2, EH_ROUT = 8.0; // [LyricsForge] snug: the disk stays inside the eye's own orbit // [LyricsForge] spinning fast like Gargantua: the disk reaches in close, so the arc hugs the shadow
 // [LyricsForge] exact Schwarzschild light paths for an observer close in, at r_o = 8 M (the shadow is then 34 deg in
 // radius): phi(u) = int du / sqrt(1/b^2 - u^2 + 2u^3), traced outward from the eye (rays aimed at the hole swing round
 // their periapsis first). The far-field formula below over-bent this close and folded the sky into radial streaks.
-static const float EH_RO = 8.0;
+static const float EH_RO = 10.0;                // the eye hovers at r = 10 M: shadow ~55 deg across
 float ehF(float u, float bb) { return 1.0 / (bb * bb) - u * u + 2.0 * u * u * u; }
 float ehTurn(float ut, float bb) {   // int_0^ut, with u = ut (1 - x^2): no blow-up at a turning point
     float acc = 0.0;
@@ -1521,8 +1521,8 @@ float ehGas(float r, float phi, float t) {
     return clamp((0.35 + 1.15 * streak) * (0.62 + 0.75 * fine) * (0.62 + 0.5 * lanes), 0.0, 2.4);
 }
 vec3 ehTempCol(float x) {                       // 1 = the disk's typical temperature
-    vec3 deep = vec3(0.70, 0.24, 0.07), org = vec3(1.0, 0.58, 0.30), gold = vec3(1.0, 0.82, 0.62);
-    vec3 wht = vec3(1.0, 0.95, 0.88), blu = vec3(0.86, 0.92, 1.0);
+    vec3 deep = vec3(0.42, 0.10, 0.02), org = vec3(0.92, 0.32, 0.05), gold = vec3(1.0, 0.52, 0.10); // rich gold / amber
+    vec3 wht = vec3(1.0, 0.70, 0.32), blu = vec3(1.0, 0.86, 0.60);
     vec3 c = x < 0.6 ? mix(deep, org, x / 0.6) : (x < 1.0 ? mix(org, gold, (x - 0.6) / 0.4)
            : (x < 1.4 ? mix(gold, wht, (x - 1.0) / 0.4) : mix(wht, blu, clamp((x - 1.4) / 0.6, 0.0, 1.0))));
     return mix(c, c * (A1 / max(max(A1.r, A1.g), max(A1.b, 0.01))), 0.25); // the preset palette tints it a little
@@ -1543,7 +1543,7 @@ vec3 ehDiskImage(float b, float alpha, int n, float t, float heat) {
     float phi = atan2(sa, ca) + (n == 1 ? 3.14159265 : 0.0);
     float I = F * g * g * g * ehGas(r, phi, t) * (n == 0 ? 1.0 : 0.6);
     float edge = sm(EH_RIN, EH_RIN * 1.15, r) * (1.0 - sm(EH_ROUT * 0.6, EH_ROUT, r));
-    return ehTempCol(clamp(Tobs / 9.0 * (0.92 + 0.12 * heat), 0.0, 2.0)) * I * edge * 0.95 * heat;
+    return ehTempCol(clamp(Tobs / 9.0 * (0.92 + 0.12 * heat), 0.0, 2.0)) * I * edge * 0.85 * heat;
 }
 void eventHorizon(vec3 d, float el) {
     vec3  H = dirAE(170.0, 6.0);                  // sat right on the horizon: it rises out of the world
@@ -1572,7 +1572,7 @@ void eventHorizon(vec3 d, float el) {
     }
 
     else { // the shadow (ref): a deep navy that darkens to black at the centre - light from far away just grazing in
-        float k = clamp(a / 0.5973, 0.0, 1.0);    // 0.5973 rad = this observer's shadow radius (34.2 deg)
+        float k = clamp(a / 0.4834, 0.0, 1.0);    // 0.4834 rad = this observer's shadow radius (27.7 deg)
         C = mix(vec3(0.0, 0.002, 0.007), vec3(0.006, 0.016, 0.042), k * k);
     }
     // 2) the disk: primary + secondary image, optically thick (it hides what's behind)
