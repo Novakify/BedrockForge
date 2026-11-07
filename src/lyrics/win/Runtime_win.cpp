@@ -1244,7 +1244,9 @@ void autoDirect(SceneInput const& in) {
     gS->recentScenes.push_back(id);
     if (gS->recentScenes.size() > 4) gS->recentScenes.erase(gS->recentScenes.begin());
     if (auto sc = findScene(id); sc && cfg.scene != sc->id) {
+        LyricsStyle const keepStyle = cfg.lyricsStyle;
         applyScene(cfg, *sc);
+        cfg.lyricsStyle = keepStyle; // [LyricsForge] Auto Scene never changes where the lyrics sit (no surprise floating)
         { // [LyricsForge] the letter effect too: never the same one as the last three songs (water kept coming back)
             static constexpr int kFx[] = {1, 2, 3, 4, 5, 6, 8, 9, 10}; // neon fire water ice electric lava galaxy ink holo
             // [LyricsForge] every song draws its effect at random (a fresh roll each play), never one of the last three

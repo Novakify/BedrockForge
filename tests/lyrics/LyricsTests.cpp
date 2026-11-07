@@ -711,7 +711,7 @@ TEST(scene_floating_places_words_in_front) {
     FakeWorld  w;
     Lyrics     l = testLyrics();
     Scene      sc;
-    Config     c; // FLOATING, randomPosition on
+    Config     c; c.lyricsStyle = LyricsStyle::Floating; // FLOATING (default is Sky now), randomPosition on
     SceneInput in;
     in.lyrics = &l; in.lyricsState = LyricsState::Found; in.songSeq = 1; in.playing = true;
     auto cam = testCam();

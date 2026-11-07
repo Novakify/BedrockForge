@@ -124,6 +124,8 @@ class Scene {
 public:
     void clear();
     void tick(SceneInput const& in, Config const& cfg, CameraState const& cam, IWorld* world, TextWidthFn const& width);
+    /// [LyricsForge] font id -> size factor, so every font reads the same height (script fonts have tiny lowercase)
+    void setFontScale(std::function<float(std::string_view)> f) { mFontScale = std::move(f); }
     /// Words to draw this frame (call after tick).
     std::vector<DrawWord> draw(SceneInput const& in, Config const& cfg, CameraState const& cam, IWorld* world);
 
@@ -145,6 +147,7 @@ private:
     Vec3   anchor(Placed const& p, Config const& c, CameraState const& cam) const;
     Quat   facing(Placed const& p, Config const& c, CameraState const& cam) const;
     float  em(Placed const& p, Config const& c) const;
+    std::function<float(std::string_view)> mFontScale; // [LyricsForge] per-font size match (see setFontScale)
     double clearance(float yaw, float pitch, double dist, CameraState const& cam, IWorld* w) const;
     int    blocked(float yaw, float pitch, double dist, float halfWidthDeg, CameraState const& cam, IWorld* w) const;
     float  crowd(Vec3 at) const;

@@ -29,7 +29,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     E(Source, source, Source::Any) /* [BF] Java default is SPOTIFY; ANY so Apple Music works out of the box */                                                                                 \
     I(syncOffsetMs, 0)                                                                                                 \
     B(showLyrics, true)                                                                                                \
-    E(LyricsStyle, lyricsStyle, LyricsStyle::Floating)                                                                 \
+    E(LyricsStyle, lyricsStyle, LyricsStyle::Sky)                                                                 \
     B(skyWords, false)                                                                                                 \
     B(followView, false)                                                                                               \
     B(viewLock, false)                                                                                                 \

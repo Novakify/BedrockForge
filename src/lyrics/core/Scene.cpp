@@ -341,9 +341,10 @@ Quat Scene::facing(Placed const& p, Config const& c, CameraState const& cam) con
 }
 
 float Scene::em(Placed const& p, Config const& c) const {
-    if (c.lyricsStyle == LyricsStyle::Sky) return float(150.0 * std::tan(rad(3.1))) * c.lyricsScale;
-    if (c.lyricsStyle == LyricsStyle::Floating) return float(0.0765 * std::max(2.5, double(p.sizeDist))) * c.lyricsScale * p.fit;
-    return float(0.085 * std::max(2.5, p.dist)) * c.lyricsScale * p.fit;
+    float const fs = mFontScale ? mFontScale(fontOf(p, c)) : 1.0f; // [LyricsForge] same letter height in every font
+    if (c.lyricsStyle == LyricsStyle::Sky) return float(150.0 * std::tan(rad(3.1))) * c.lyricsScale * fs;
+    if (c.lyricsStyle == LyricsStyle::Floating) return float(0.0765 * std::max(2.5, double(p.sizeDist))) * c.lyricsScale * p.fit * fs;
+    return float(0.085 * std::max(2.5, p.dist)) * c.lyricsScale * p.fit * fs;
 }
 
 double Scene::clearance(float yaw, float pitch, double dist, CameraState const& cam, IWorld* w) const {

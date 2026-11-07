@@ -158,6 +158,13 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
         cfg.textShadow = std::max(cfg.textShadow, k > 0.5f ? 2 : 1);
     }
     auto width = [this](std::string_view s, std::string_view f) { return mFonts.width(s, f); };
+    // [LyricsForge] the random per-song font changed how big the words read (script fonts' lowercase is ~half the
+    // height of a block font's at the same size): scale each font so its x-height matches a reference of 0.5 em
+    mScene.setFontScale([this](std::string_view f) {
+        Font const* fn = mFonts.get(f);
+        float const xh = fn ? std::max(0.05f, fn->xHeight) : 0.5f;
+        return std::clamp(0.5f / xh, 0.85f, 1.6f);
+    });
     mScene.tick(in, cfg, cam, world, width);
     auto words = mScene.draw(in, cfg, cam, world);
     if (cfg.colorWords) // [LyricsForge] "pink", "blue", "gold"...: the word turns that colour as it is sung
