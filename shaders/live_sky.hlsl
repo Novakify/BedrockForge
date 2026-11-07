@@ -1233,8 +1233,8 @@ void realSky(float x, float y, float z, float el, int kind) {
     } else if (kind == 19) { // [LyricsForge] Mirror Sky (the salt flat): electric blue up top, a glowing cyan horizon,
                              // big bright cumulus drifting slowly - the ground below is a mirror of all of it
         zen = rgb(0.0, 58.0, 246.0); hor = rgb(130.0, 228.0, 255.0); sunC = rgb(255.0, 250.0, 240.0);
-        lit = rgb(255.0, 255.0, 255.0); shade = rgb(198.0, 222.0, 250.0); accent = rgb(80.0, 200.0, 255.0);
-        cover = 0.43; speed = 0.016; haze = 0.45; opac = 0.98; scale = 1.35;
+        lit = rgb(255.0, 255.0, 255.0); shade = rgb(218.0, 234.0, 252.0); accent = rgb(80.0, 200.0, 255.0);
+        cover = 0.39; speed = 0.016; haze = 0.45; opac = 0.98; scale = 1.35;
     } else {                // 18 Neon City: a city night, low clouds lit from below, searchlights
         zen = rgb(10.0, 8.0, 28.0); hor = rgb(60.0, 20.0, 80.0); sunC = v3(0.0);
         lit = rgb(70.0, 40.0, 90.0); shade = rgb(14.0, 10.0, 26.0); accent = rgb(255.0, 60.0, 170.0);
@@ -1936,8 +1936,8 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
             // Mirror Sky: below the horizon the ground is a perfect mirror - the same sky, flipped, with a faint
             // shimmer of ripples across the water film and a touch brighter / more cyan, like the salt flat
             float ry = -y;
-            float rip = 0.004 * sin(x * 140.0 / max(ry + 0.05, 0.05) * 0.02 + T / 2.2 * 0.6)
-                      + 0.003 * (noise3(vec3(x * 22.0 / (ry + 0.08), z * 22.0 / (ry + 0.08), T / 2.2 * 0.35)) - 0.5);
+            float rip = 0.002 * sin(x * 140.0 / max(ry + 0.05, 0.05) * 0.02 + T / 2.2 * 0.3)
+                      + 0.0015 * (noise3(vec3(x * 22.0 / (ry + 0.08), z * 22.0 / (ry + 0.08), T / 2.2 * 0.175)) - 0.5);
             vec3 rd = normalize(vec3(x + rip, ry, z - rip));
             realSky(rd.x, rd.y, rd.z, degrees(asin(clamp(rd.y, -1.0, 1.0))), rk);
             C = C * vec3(0.90, 0.98, 1.04) + vec3(0.02, 0.05, 0.07) * exp(-ry * 6.0); // the film glows at the horizon
