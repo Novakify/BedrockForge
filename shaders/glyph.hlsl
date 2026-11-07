@@ -83,6 +83,12 @@ float4 atlasSample(uint ai, SamplerState s, float2 uv) { return gAtlas[NonUnifor
 float4 atlasSampleLevel(uint ai, SamplerState s, float2 uv, float lod) { return gAtlas[NonUniformResourceIndex(ai)].SampleLevel(s, uv, lod); }
 float2 atlasSize(uint ai) { float w, h; gAtlas[NonUniformResourceIndex(ai)].GetDimensions(w, h); return float2(w, h); }
 #endif
+// [LyricsForge] the live video screen (t21); SM5 takes explicit gradients like atlasSample does
+#ifdef RF_SM5
+float4 liveSample(float2 uv) { return gLive.SampleGrad(sLin, uv, ddx(uv), ddy(uv)); }
+#else
+float4 liveSample(float2 uv) { return gLive.Sample(sLin, uv); }
+#endif
 
 struct V2P {
     float4 pos  : SV_Position;
@@ -539,7 +545,7 @@ float4 PSGlyph(V2P i) : SV_Target {
             float e = min(min(local.x, 1.0 - local.x), min(local.y, 1.0 - local.y));
             t.a *= pow(saturate(e / max(r * 1.6, 1e-3)), 1.5);
         } else {
-            t = ((g.flags & F_LIVE) != 0) ? gLive.Sample(sLin, i.uv) : atlasSample(ai, sLin, i.uv);
+            t = ((g.flags & F_LIVE) != 0) ? liveSample(i.uv) : atlasSample(ai, sLin, i.uv);
         }
         t *= fillC;
         if (g.flags & F_FEATHER) { // [LyricsForge] melt into the sky: superellipse (rounded square) distance, soft falloff

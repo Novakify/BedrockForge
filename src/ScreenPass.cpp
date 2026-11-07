@@ -375,13 +375,13 @@ void buildFrame(ID3D12GraphicsCommandList* l, UINT slot) {
     gRan     = BF_SCREEN_PLAIN;
     uint32_t const mode = std::min<uint32_t>(gCfg.upscale, BF_SCREEN_MAX);
     if (mode != BF_SCREEN_PLAIN) {
-        bool const small = std::min(float(kOutW) / float(w), float(kOutH) / float(h)) > 1.2f;
+        bool const lowRes = std::min(float(kOutW) / float(w), float(kOutH) / float(h)) > 1.2f;
         char const* restore = mode == BF_SCREEN_MAX ? "RM" : "RS";
         char const* up      = mode == BF_SCREEN_MAX ? "UM" : "US";
         if (Tex* r = stage(l, restore, pic, slot)) {
             pic  = r;
             gRan = mode;
-            if (small)
+            if (lowRes)
                 if (Tex* u = stage(l, up, pic, slot)) { pic = u; gRan += 4; }
         }
         if (g.broken) return;
