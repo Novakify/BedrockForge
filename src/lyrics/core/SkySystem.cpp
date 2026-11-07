@@ -33,7 +33,7 @@ WorldLight worldLightFor(Preset const& p, float visible, float brightness, float
     float base[3], col[3];
     for (int k = 0; k < 3; ++k) {
         base[k] = 0.65f * chan(p.horizon, k) + 0.35f * chan(p.top, k); // the world mostly sees the horizon
-        col[k]  = base[k] + (chan(acc, k) - base[k]) * 0.6f * kk;       // the drop floods it with the accent
+        col[k]  = base[k] + (chan(acc, k) - base[k]) * 0.3f * kk;       // the drop floods it with the accent
     }
     float const l = std::max(0.04f, lumOf(col));
     WorldLight  w;
@@ -43,12 +43,12 @@ WorldLight worldLightFor(Preset const& p, float visible, float brightness, float
         for (float t : w.tint) dev = std::max(dev, std::fabs(t - 1.0f));
         if (dev > 0.01f && dev < 0.3f) { float const g = std::min(0.3f / dev, 4.0f); for (float& t : w.tint) t = 1.0f + (t - 1.0f) * g; }
     }
-    w.amount = vis * std::clamp(0.32f + 0.10f * energy + 0.34f * kk, 0.0f, 0.78f);
+    w.amount = vis * std::clamp(0.32f + 0.06f * energy + 0.10f * kk, 0.0f, 0.6f);
     float e = 0.85f + 0.28f * lumOf(base);                                    // night skies a bit darker, bright days brighter
-    e *= 1.0f + 0.6f * (std::clamp(brightness, 0.3f, 1.6f) - 1.0f);          // the sky's breathing / dimming reaches the ground
-    e += 0.10f * kk + 0.45f * std::clamp(lightning, 0.0f, 1.0f);             // drops and lightning light it up
+    e *= 1.0f + 0.35f * (std::clamp(brightness, 0.3f, 1.6f) - 1.0f);          // the sky's breathing / dimming reaches the ground
+    e += 0.03f * kk + 0.45f * std::clamp(lightning, 0.0f, 1.0f);             // drops and lightning light it up
     w.exposure = 1.0f + (std::clamp(e, 0.6f, 1.5f) - 1.0f) * vis;            // never darker than 60%
-    w.sat      = 1.0f + vis * (0.06f + 0.28f * kk);
+    w.sat      = 1.0f + vis * (0.06f + 0.08f * kk);
     return w;
 }
 
@@ -132,11 +132,14 @@ void System::step(bool on, Config const& cfg, AutoPerf const& perf, SystemIn con
                                  mFrame.brightness, std::clamp(in.pulse - in.kick, 0.0f, 1.0f), std::max(in.kick, 0.8f * flood), in.lightning);
         }
         float const dt = float(std::clamp(in.dtSec, 0.0, 0.25));
-        float const tt = mSweep < 1.0f ? 0.7f : 0.25f; // during a sky sweep the light turns with it
-        for (int k = 0; k < 3; ++k) mWorld.tint[k] = ease(mWorld.tint[k], want.tint[k], dt, tt, tt); // follows the kick
-        mWorld.amount   = ease(mWorld.amount, want.amount, dt, 0.10f, 0.7f);
-        mWorld.exposure = ease(mWorld.exposure, want.exposure, dt, 0.05f, 0.35f);
-        mWorld.sat      = ease(mWorld.sat, want.sat, dt, 0.08f, 0.8f);
+        // [LyricsForge] no more strobing: the ground used to follow every kick in 50-100 ms, which on fast songs looked
+        // like the world glitching. Now it glides (~0.8 s in, ~1.5 s out); only lightning still flashes it quickly.
+        float const tt = mSweep < 1.0f ? 0.9f : 0.8f;
+        bool const  bolt = in.lightning > 0.05f;
+        for (int k = 0; k < 3; ++k) mWorld.tint[k] = ease(mWorld.tint[k], want.tint[k], dt, tt, tt);
+        mWorld.amount   = ease(mWorld.amount, want.amount, dt, 0.8f, 1.5f);
+        mWorld.exposure = ease(mWorld.exposure, want.exposure, dt, bolt ? 0.05f : 0.8f, bolt ? 0.35f : 1.5f);
+        mWorld.sat      = ease(mWorld.sat, want.sat, dt, 0.8f, 1.5f);
     }
 
     { // [LyricsForge] fog: the far terrain fades into the sky's own horizon instead of the game's blue

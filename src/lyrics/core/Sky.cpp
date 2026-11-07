@@ -246,7 +246,7 @@ Frame Clock::tick(Preset const* p, Config const& cfg, In const& in) {
     f.alpha      = mVisible * outCubic(mLiveFade);
     // [BF] a scene change: the new sky emerges from a soft burst of light instead of popping in
     float const burst = mLiveFade < 1 ? std::sin(3.14159265f * mLiveFade) * 0.6f : 0.0f;
-    f.brightness = f.bright * (0.92f + 0.08f * mCalm) * (1 + 0.12f * f.beat) * (1 + burst);
+    f.brightness = f.bright * (0.92f + 0.08f * mCalm) * (1 + 0.03f * f.beat) /* [LyricsForge] was 0.12: the dome blinked on every beat */ * (1 + burst);
     f.time       = mTime;
     f.t          = float(mTime * 2.2);
     return f;

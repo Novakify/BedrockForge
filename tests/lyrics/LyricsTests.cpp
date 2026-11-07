@@ -1495,10 +1495,10 @@ TEST(world_light) { // [LyricsForge] the sky lights the world
         CHECK_NEAR(0.2126f * x.tint[0] + 0.7152f * x.tint[1] + 0.0722f * x.tint[2], 1.0f, 0.2f);
     }
     auto drop = worldLightFor(night, 1, 1, 0.3f, 1, 0);
-    CHECK(drop.amount > worldLightFor(night, 1, 1, 0.3f, 0, 0).amount + 0.3f); // the drop floods it
-    CHECK(drop.sat > 1.25f && drop.exposure > worldLightFor(night, 1, 1, 0.3f, 0, 0).exposure);
+    CHECK(drop.amount > worldLightFor(night, 1, 1, 0.3f, 0, 0).amount + 0.08f); // the drop lifts it (gently, no strobe)
+    CHECK(drop.sat > 1.1f && drop.exposure > worldLightFor(night, 1, 1, 0.3f, 0, 0).exposure);
     CHECK(worldLightFor(night, 1, 1, 0.3f, 0, 0).exposure < worldLightFor(summer, 1, 1, 0.3f, 0, 0).exposure);
-    CHECK(worldLightFor(summer, 1, 0.4f, 0, 0, 0).exposure < 0.8f);    // dimmed hard...
+    CHECK(worldLightFor(summer, 1, 0.4f, 0, 0, 0).exposure < 0.9f);    // dimmed...
     CHECK(worldLightFor(night, 1, 0.3f, 0, 0, 0).exposure >= 0.6f);    // ...never below 60%
     for (auto const& p : presets()) {                                   // every sky lights the world in its colour
         auto x = worldLightFor(p, 1, 1, 0.3f, 0, 0);
@@ -1515,7 +1515,7 @@ TEST(world_light) { // [LyricsForge] the sky lights the world
     for (int i = 0; i < 60; ++i) sys.step(true, cfg, perf, in);
     CHECK(sys.world().amount > 0.3f && sys.world().tint[0] > 1.0f);
     cfg.skyPreset = "off";
-    for (int i = 0; i < 120; ++i) sys.step(true, cfg, perf, in);
+    for (int i = 0; i < 240; ++i) sys.step(true, cfg, perf, in);
     CHECK(sys.world().neutral());
 }
 
@@ -1668,7 +1668,7 @@ TEST(awaken) { // [LyricsForge] no music = the vanilla world; a song starts = ~5
     CHECK(sys.awaken() > 0.0f && sys.awaken() < 0.2f);
     CHECK(sys.world().amount < 0.05f);                       // the world isn't lit yet
     run(3.0f, true);
-    CHECK(sys.world().amount > 0.2f);                        // the light flooded in
+    CHECK(sys.world().amount > 0.12f);                       // the light flowed in (glides now, ~0.8 s)
     run(3.0f, true);
     CHECK(sys.awaken() == 1.0f);
     h.size = sizeof h; BF_CopySkyFrame(&h, nullptr, 0);

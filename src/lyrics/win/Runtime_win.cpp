@@ -129,6 +129,7 @@ struct State {
         std::string moodKey;                // what it was worked out from (song + memory / lyrics / cover known)
         float       energySum = 0, energyN = 0;
     } shuffle;
+    float                   skyTimeScale = 1; // [LyricsForge] eased sky speed (see sky step)
     float                   waveT = -1;     // [BF] chorus light wave progress (< 0 none)
     int                     meteors = 0;    // [BF] meteor burst queued for the next sky frame
     std::string             autoKey;        // [BF] Auto director: the song it last picked for
@@ -969,9 +970,14 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     }
     sky::SystemIn in;
     in.nowMs = ms;
-    in.dtSec = dt * std::clamp(gS->conductor.state().timeScale, 0.25f, 2.5f); // [BF] the sky rides the speed ramp too
-    float const inst = cfg.instrumentalFx && cfg.director ? gS->conductor.state().instrumental : 0.0f;
-    in.dtSec *= 1.0 + 0.9 * inst * gS->conductor.state().energy; // [BF] instrumentals: the sky moves with the energy
+    { // [BF] the sky rides the speed ramp too - [LyricsForge] but only as a slow drift: hits used to snap it to ~2.6x in
+      // 50 ms and back, which read as the sky lurching fast / slow every couple of seconds. Narrow range, ~3 s glide.
+        float const inst = cfg.instrumentalFx && cfg.director ? gS->conductor.state().instrumental : 0.0f;
+        float want = std::clamp(gS->conductor.state().timeScale, 0.8f, 1.25f) * (1.0f + 0.25f * inst * gS->conductor.state().energy);
+        want = std::clamp(want, 0.8f, 1.3f);
+        gS->skyTimeScale += (want - gS->skyTimeScale) * (1.0f - std::exp(-dt / 3.0f));
+        in.dtSec = dt * gS->skyTimeScale;
+    }
     in.yaw = cam.yaw; in.pitch = cam.pitch;
     in.camX = cam.pos.x; in.camY = cam.pos.y; in.camZ = cam.pos.z;
     in.overworld = static_cast<int>(a.getDimensionId()) == 0;

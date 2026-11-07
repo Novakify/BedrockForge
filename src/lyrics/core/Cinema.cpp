@@ -107,7 +107,7 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
         if (m->section == MusicSection::Calm) box *= 0.5f;
         box = std::clamp(box * mv, 0.0f, 1.0f) * kLetterMax;
     }
-    if (on) vig = 0.18f * m->build + 0.08f * m->beat * m->budget + 0.05f * m->bass * m->budget; // the world breathes with the bass
+    if (on) vig = 0.18f * m->build + 0.02f * m->beat * m->budget + 0.02f * m->bass * m->budget; // [LyricsForge] a faint breath, not a per-beat blink
     vig += 0.30f * hold;                                         // the edges close in while it holds its breath
     float const outro = on && cfg.songOutro ? m->outro : 0.0f;   // [BF] end credits: the world winds down
     vig += 0.40f * outro;
@@ -116,7 +116,7 @@ void Cinema::step(MusicState const* m, Config const& cfg, float dt, float camYaw
     if (on && cfg.letterbox) box = std::max(box, kLetterMax * outro);
     if (on && cfg.letterbox) box = std::max(box, kLetterMax * 0.9f * hold);
     mBox += (box - mBox) * ease(dt, box > mBox ? 0.9f : 0.6f);
-    mVig += (vig - mVig) * ease(dt, hold > 0.05f ? 0.08f : 0.25f);
+    mVig += (vig - mVig) * ease(dt, hold > 0.05f ? 0.3f : 0.8f);
 
     float const ga = cfg.cinemaGrade ? kGrade[r] * mOn * std::clamp(cfg.intensity, 0.3f, 1.3f) : 0.0f;
     CinemaOut o;
