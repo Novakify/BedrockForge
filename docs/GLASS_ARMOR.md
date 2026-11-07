@@ -135,6 +135,20 @@ The LyricsForge demo (`config/lyricsflow_demo.json`, `"cover": "#RRGGBB"`) count
 Untested in-game: kick / drop flare with real audio (the demo has no audio), sky colour with a LyricsForge sky on,
 the stars finale.
 
+## M3: leather team colour + enchant edge flow (2026-11-06 20:40)
+- **Enchanted armor draws on `ActorGlint.material.bin`**, whose VS adds the glint layer UVs:
+  `SV_Position0 COLOR1 COLOR0 COLOR2 TEXCOORD2.xyzw COLOR3 TEXCOORD0.xy TEXCOORD3.xyz` (from the 1.26.51 material
+  files, tools: docs/glass_armor/matscan.py). Before M3 those draws were not recognised, so enchanted pieces stayed
+  vanilla. Now every glass variant is built twice (plain / GA_GLINT with the extra input) and a draw through an
+  ActorGlint pipeline = enchanted -> edge flow (F6 "Enchanted pieces: edge flow"). Plain pieces never flow.
+- **Leather dye** = the game's `ChangeColor` uniform, PS constant buffer **b1 space0, float4 row 5** on Actor's
+  Change_Color variant (PS `e3d66d4b385b6e14`). Found in-game with F6 debug view "game PS buffer row" (undyed leather
+  shows its default brown on row 5). ActorGlint declares its uniforms in the same order -> row 5 assumed for
+  enchanted leather (F6 override). Leather glass: neon = vivid dye, glass cast = dye; LyricsForge cover colour only
+  nudges it so team colours stay readable.
+- Not verified in-game yet: enchanted pieces (my synthetic input can't equip armor or reach gameplay keys), a dyed
+  colour other than the default brown (Hive teams / cauldron dye).
+
 ## Milestones
 - **M0 probe (RF, F6 > Glass Armor)**: key press logs one frame - every PSO used with PS hash, material pass, VS
   output signature, bound SRV sizes, RT / DSV formats, draw counts - with and without armor on. Output under
