@@ -1026,7 +1026,9 @@ void cumulus(float x, float y, float z, vec3 lit, vec3 shade, vec3 sunC, vec3 ho
     float pulse = clamp(PULSE, 0.0, 1.6);
     float s = 1.0 / (y + 0.08);
     float ux = x * s, uz = z * s;
-    float t = T * speed * (1.0 + 1.2 * LIVELY) * (1.0 + 0.9 * pulse);
+    // [LyricsForge] no music factor on absolute time: T is thousands of seconds, so (1 + 0.9 * pulse) made the clouds
+    // leap to a different place on every pulse. The music already speeds the wind smoothly through the sky clock (T).
+    float t = T * speed * (1.0 + 1.2 * LIVELY);
     float sc = scale * 1.5;
     float px_ = ux * sc + t, pz = uz * sc + t * 0.35;
     float w1 = fbm(px_ * 0.35, pz * 0.35, 2.7, 3);
@@ -1269,7 +1271,7 @@ void realSky(float x, float y, float z, float el, int kind) {
     if (y > 0.015) {
         float s  = 1.0 / (y + 0.08);
         float ux = x * s, uz = z * s;
-        float t  = T * speed * (1.0 + 1.2 * LIVELY) * (1.0 + 0.9 * pulse);
+        float t  = T * speed * (1.0 + 1.2 * LIVELY); // [LyricsForge] see cumulus(): no pulse factor on absolute time
         // a thin high cirrus layer first (it is higher, so the cumulus passes in front of it), streaked by the wind
         float ci = fbm(ux * 0.12 + t * 0.4, uz * 1.1 + t * 0.12, 9.1, 4);
         float cd = sm(0.56, 0.8, ci) * sm(0.05, 0.4, y) * (stars > 0.0 ? 0.25 : 0.5) * (flash > 0.0 ? 0.3 : 1.0);
@@ -1292,7 +1294,7 @@ void nightBase(vec3 d, float el, vec3 zen, vec3 hor, float glow) {
 vec3 auroraMarch(vec3 d, vec3 cLow, vec3 cHigh, float s, float silk) {
     if (d.y < 0.01) return v3(0.0);
     vec3 acc = v3(0.0);
-    float t = T * (0.035 + 0.045 * LIVELY) * (1.0 + 0.5 * clamp(PULSE, 0.0, 1.6));
+    float t = T * (0.035 + 0.045 * LIVELY); // [LyricsForge] no pulse factor on absolute time (aurora leapt on the beat)
     float jit = sh21(vec2(d.x * 1731.0 + d.y * 317.0, d.z * 1931.0)); // dither the layers: no stripes
     vec2 p0 = vec2(d.x, d.z) * (1.3 / (d.y * 1.5 + 0.10));
     float w = fbm(p0.x * 0.22 + t, p0.y * 0.22 - t * 0.4, 1.7, 3);       // one warp for all layers (perf)
@@ -1645,8 +1647,9 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 col = toneMap(C); // [LyricsForge] filmic shoulder (was a per-channel clip: drops went flat white)
     col = clamp(col * skyInfo.y, 0.0, 1.0);
     // deckend bis weit unter den Horizont (kein heller Minecraft-Nebel dazwischen), ganz unten weich aus
-    float ht = clamp((el + 30.0) / 6.0, 0.0, 1.0);
-    float a = skyInfo.z * ht * ht * (3.0 - 2.0 * ht);
+    // [LyricsForge] the dome now covers all the way down (it used to fade out under -24..-30 deg, so the game's navy void
+    // fog showed through below sky islands); voidBlack() in skyMain turns the deep part pure black
+    float a = skyInfo.z;
     if (a <= 0.002) discard;
     return vec4(col, a);
 }
@@ -1654,12 +1657,11 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
 // [LyricsForge] sky transitions: while a new sky sweeps in, both are drawn and wiped along a front that rises from the
 // horizon over the zenith, a seam of the new sky's light riding on it (only during the ~1.6 s of the sweep)
 // [LyricsForge] the void: looking down past an island edge (Hive / CubeCraft sky maps) shows pure OLED black instead of
-// the sky's colours smeared under the horizon. Fades from the horizon (-3 deg) to black by -14 deg.
+// the sky's colours smeared under the horizon. Sky colour to ~-20 deg, then quickly pure black by ~-32 deg.
 vec4 voidBlack(vec4 c, vec3 skyDir) {
     float el = degrees(asin(clamp(normalize(skyDir).y, -1.0, 1.0)));
-    float k = sm(-14.0, -3.0, el);
+    float k = sm(-32.0, -20.0, el); // [LyricsForge] sky colour down to ~-20 deg (where you look over an island edge), black by ~-32
     c.rgb *= k;
-    c.a = max(c.a, (1.0 - k) * step(0.001, c.a)); // where our sky draws at all, the void below is solid black
     return c;
 }
 vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
