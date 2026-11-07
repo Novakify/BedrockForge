@@ -1619,7 +1619,12 @@ void eventHorizon(vec3 d, float el) {
         float rq = (b - EH_BC * 1.004) / (EH_BC * 0.006);
         float ring = exp(-rq * rq);
         add(vec3(1.0, 0.97, 0.94), ring * (1.2 + 1.2 * kick)); // the true photon ring: a thin white line
-        C += neon;                                                 // the music: neon rainbow strands round it
+        // the strands are released by the music: silence = no strands (just the white ring); as the song comes in they
+        // fade up and spread out (spectrum loudness, eased in the BF so they glide in, not pop)
+        float act = 0.0;
+        for (int k2 = 0; k2 < 8; k2++) act += sb[k2];
+        act = sm(0.04, 0.22, act / 8.0);
+        C += neon * act;                                           // the music: neon rainbow strands round it
     }
     // spaghettification: now and then a mote spirals in, stretches into a glowing thread along its orbit and is gone
     {
