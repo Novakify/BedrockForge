@@ -74,12 +74,15 @@ std::atomic_bool gEnabled{false};
 fs::path         gConfigFile;
 // the vertex shader output signature of the game's Actor shaders (probe M0) - our pixel shader is built to match it
 constexpr char const* kActorVsOut = "SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR3.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6";
+// ActorGlint (enchanted armor): the same plus the glint layer UVs in TEXCOORD2 (from the 1.26.51 material files)
+constexpr char const* kGlintVsOut = "SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 TEXCOORD2.xyzw@o4 COLOR3.xyzw@o5 TEXCOORD0.xy@o6 TEXCOORD3.xyz@o7";
 struct ActorDesc {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC    d{};
     std::vector<uint8_t>                  vs;
     std::vector<D3D12_INPUT_ELEMENT_DESC> il;
     std::deque<std::string>               names;
     ComPtr<ID3D12RootSignature>           root;
+    bool                                  glint = false; // ActorGlint pipeline = enchanted armor
 };
 std::unordered_map<ID3D12PipelineState*, std::shared_ptr<ActorDesc>> gActor;   // game Actor pipelines
 std::map<std::pair<ID3D12PipelineState*, int>, ComPtr<ID3D12PipelineState>> gGlass; // (game PSO, variant) -> ours
@@ -112,6 +115,9 @@ std::atomic_int                    gDebugSolid{0}; // 0 off, 1 magenta, 2..5 sho
 std::atomic_bool                   gReact{true};
 float                              gReflect = 0.45f;
 float                              gShowBeat = 0;
+int                                gDyeRow = -1, gDyeRowGlint = -1; // M3: ChangeColor row (found in-game, see debug view 8)
+int                                gDbgRow = 0;
+std::atomic_bool                   gEnchFlow{true};
 float                              gIdleEdge = 0.3f;  // M2.5: outline strength with no music (Awaken boots it to 1)
 float                              gBeatK    = 1.0f;  // M2.5: how hard the outline breathes with the kick
 std::atomic_bool                   gWordSweep{true};  // M2.5: a light sweep per sung word
@@ -390,9 +396,11 @@ void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const&
     i.targets = t;
     i.root    = d.pRootSignature;
     std::shared_ptr<ActorDesc> ad;
-    if (i.vsOut == kActorVsOut && d.VS.pShaderBytecode && d.InputLayout.NumElements) {
-        ad    = std::make_shared<ActorDesc>();
-        ad->d = d;
+    bool const glintVs = i.vsOut == kGlintVsOut;
+    if ((i.vsOut == kActorVsOut || glintVs) && d.VS.pShaderBytecode && d.InputLayout.NumElements) {
+        ad        = std::make_shared<ActorDesc>();
+        ad->d     = d;
+        ad->glint = glintVs;
         ad->vs.assign(static_cast<uint8_t const*>(d.VS.pShaderBytecode), static_cast<uint8_t const*>(d.VS.pShaderBytecode) + d.VS.BytecodeLength);
         for (UINT k = 0; k < d.InputLayout.NumElements; ++k) {
             auto e = d.InputLayout.pInputElementDescs[k];
@@ -553,7 +561,8 @@ ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad,
     ID3D12RootSignature* ext = extendedRoot(ad.root.Get(), &base);
     if (!ext) { ++gPsoFail; return nullptr; }
     d.pRootSignature = ext;
-    d.PS = {shaders::kVariant[v].ps, shaders::kVariant[v].psSize};
+    d.PS = ad.glint ? D3D12_SHADER_BYTECODE{shaders::kVariant[v].psGlint, shaders::kVariant[v].psGlintSize}
+                   : D3D12_SHADER_BYTECODE{shaders::kVariant[v].ps, shaders::kVariant[v].psSize};
     // the shader composites the copied scene itself: opaque output, written depth (drawn after every actor part)
     auto& rt = d.BlendState.RenderTarget[0];
     rt.BlendEnable           = FALSE;
@@ -848,6 +857,10 @@ struct alignas(16) GaParams { // cbuffer GA (shaders/glass_armor.hlsl), 256-byte
     float    wordCol[3], wordColK;// colour word flash
     float    awaken, drop, finale, wordT; // wordT: seconds since the last sung word started (big = none)
     float    idleEdge, lf, beatK, pad2;   // lf: 1 when the glass block is live (else the M2 behaviour)
+    // M3: leather dye (the game's ChangeColor, read from its own pixel constant buffer b1) + enchant
+    int32_t  dyeRow, dyeRowGlint;         // float4 row of ChangeColor in the Actor / ActorGlint PS buffer (-1 = unknown)
+    uint32_t dbgRow;                      // debug view 8: which row to show
+    float    enchFlow;                    // 1 = enchanted pieces get the edge flow
 };
 static_assert(sizeof(GaParams) <= 256, "one 256-byte slot");
 
@@ -976,6 +989,7 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.res[0] = float(rd.Width), p.res[1] = float(rd.Height);
     p.time       = float(double(now.QuadPart - gT0.QuadPart) / double(f.QuadPart));
     p.glint      = 0;
+    p.dyeRow = gDyeRow, p.dyeRowGlint = gDyeRowGlint, p.dbgRow = uint32_t(std::max(gDbgRow, 0)), p.enchFlow = gEnchFlow ? 1.f : 0.f;
     p.scenePitch = rf.Footprint.RowPitch, p.depthPitch = df.Footprint.RowPitch;
     p.swirl = 0.9f, p.ripple = 0.09f, p.lens = 0.8f; // approved preview: Medium
     p.uiScale   = float(rd.Height) / 760.f;
@@ -1147,7 +1161,12 @@ void drawUi() {
         bool sw = gWordSweep.load();
         if (ImGui::Checkbox("Light sweep on each sung word", &sw)) gWordSweep = sw;
         int dbg = gDebugSolid.load();
-        if (ImGui::Combo("Debug view", &dbg, "off\0solid magenta\0COLOR1\0COLOR0\0COLOR2\0COLOR3\0alphas (c0, c2, c3)\0TEXCOORD3\0")) gDebugSolid = dbg;
+        if (ImGui::Combo("Debug view", &dbg, "off\0solid magenta\0COLOR1\0COLOR0\0COLOR2\0COLOR3\0alphas (c0, c2, c3)\0TEXCOORD3\0game PS buffer row\0")) gDebugSolid = dbg;
+        ImGui::InputInt("Buffer row (debug view 8)", &gDbgRow);
+        ImGui::InputInt("Leather dye row (Actor)", &gDyeRow);
+        ImGui::InputInt("Leather dye row (enchanted)", &gDyeRowGlint);
+        bool ef = gEnchFlow.load();
+        if (ImGui::Checkbox("Enchanted pieces: edge flow", &ef)) gEnchFlow = ef;
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
                     gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
     }

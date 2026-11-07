@@ -43,7 +43,20 @@ cbuffer GA : register(b0, space9) {
     float3 wordCol; float wordColK;// colour word flash
     float  awaken, drop, finale, wordT;
     float  idleEdge, lf, beatK, pad2;
+    // M3: leather dye + enchant
+    int    dyeRow, dyeRowGlint;
+    uint   dbgRow;
+    float  enchFlow;
 };
+#ifndef GA_GLINT
+#define GA_GLINT 0
+#endif
+#ifndef GA_LEATHER
+#define GA_LEATHER 0
+#endif
+// the game's own pixel constant buffer (Actor / ActorGlint: b1 space0, bound by the game's root arguments we
+// re-apply): leather's dye (ChangeColor) lives there
+cbuffer GameActor : register(b1, space0) { float4 gGame[32]; };
 ByteAddressBuffer gPrev : register(t2, space9); // last finished frame (lyrics, sky, post) for reflections
 
 // Must match the Actor vertex shader's output signature exactly (probe M0):
@@ -53,6 +66,9 @@ struct PSIn {
     float4 c1  : COLOR1;
     float4 c0  : COLOR0;
     float4 c2  : COLOR2;
+#if GA_GLINT
+    float4 lu  : TEXCOORD2; // ActorGlint: glint layer UVs (unused, here so the signature matches)
+#endif
     float4 c3  : COLOR3;
     float2 uv  : TEXCOORD0;
     float3 t3  : TEXCOORD3;
@@ -124,6 +140,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     if (pad == 5u) return float4(saturate(i.c3.rgb), 1);
     if (pad == 6u) return float4(saturate(float3(i.c0.a, i.c2.a, i.c3.a)), 1);
     if (pad == 7u) return float4(frac(i.t3), 1);
+    if (pad == 8u) return float4(saturate(gGame[min(dbgRow, 31u)].rgb), 1);
     if (!painted(b)) discard;             // vanilla shape
     int  fi = faceOf(b);
     int4 fr = faceRect(max(fi, 0));
@@ -164,8 +181,9 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
 
     // enchant: edge flow (light travelling round the outline)
     float ench = 0;
-    if (glint > 0.5 && glint < 1.5) ench = 0.5 + 0.5 * sin(time * 2.4);
-    if (glint > 1.5) { float per = (p.x + p.y) / (fs.x + fs.y); ench = pow(0.5 + 0.5 * sin((per * 2.0 - time * 0.55) * 6.2831), 6.0); }
+#if GA_GLINT
+    if (enchFlow > 0.5) { float per = (p.x + p.y) / (fs.x + fs.y); ench = pow(0.5 + 0.5 * sin((per * 2.0 - time * 0.55) * 6.2831), 6.0); }
+#endif
     // LyricsForge: the outline light runs round the edges with the music and pulses on the beat
     float mus = active * react * boot;
     if (mus > 0.5) {
@@ -178,7 +196,24 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float  cMax = max(max(cover.r, cover.g), max(cover.b, 1e-3));
     float3 acc  = cover / cMax;
     acc = saturate(lerp(dot(acc, float3(0.299, 0.587, 0.114)).xxx, acc, 1.35));
-    float3 edgeB = lerp(GA_EDGE, acc, cMix * 0.85);
+    // leather: the item's dye (Hive team colour) is the neon and the glass colour
+    float3 baseEdge = GA_EDGE, baseTint = GA_TINT;
+    float  dyeK = 0;
+#if GA_LEATHER
+    {
+        int row = GA_GLINT ? dyeRowGlint : dyeRow;
+        if (row >= 0) {
+            float3 dye = saturate(gGame[min(row, 31)].rgb);
+            float  dm  = max(max(dye.r, dye.g), max(dye.b, 1e-3));
+            float3 dv  = dye / dm;                                         // vivid: brightest channel = 1
+            dv = saturate(lerp(dot(dv, float3(0.299, 0.587, 0.114)).xxx, dv, 1.3));
+            baseEdge = dv;
+            baseTint = dye;
+            dyeK     = 1;
+        }
+    }
+#endif
+    float3 edgeB = lerp(baseEdge, acc, cMix * 0.85 * (1.0 - 0.6 * dyeK)); // team colour stays readable over the cover
     edgeB = lerp(edgeB, wordCol * 1.2, saturate(wordColK * boot) * 0.85); // colour words flash the outline
     // beat-pulse: brighter on every kick, a big flare on the drop
     float kick  = mus * beat * beatK;
@@ -211,7 +246,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     c.r = sceneAt(px + off).r;
     c.g = sceneAt(px + off * 1.04).g;
     c.b = sceneAt(px + off * 1.08).b;
-    c   = lerp(c, lerp(float3(0.0065, 0.0032, 0.018), GA_TINT, 0.35), 0.10);
+    c   = lerp(c, lerp(float3(0.0065, 0.0032, 0.018), baseTint, 0.35 + 0.25 * dyeK), 0.10 + 0.06 * dyeK);
     // cover-coloured glass: a light colour cast through the glass (it stays see-through); a dark cover deepens it
     float cLum = dot(cover, float3(0.299, 0.587, 0.114));
     c *= lerp(float3(1, 1, 1), lerp(float3(1, 1, 1), acc, 0.30) * lerp(1.0, 0.72, saturate(1.0 - cLum * 1.6)), cMix);
@@ -255,7 +290,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     c += 0.9 * palC * (rim * lit * 0.75 + e * 0.08) * lerp(1.0, exposure, 0.5 * mus);
     c += flashCol * flash * mus * (0.6 + 1.2 * e);   // impact frames light the glass up
     // neon outline + its light glowing into the glass
-    float3 E   = GA_EDGE;
+    float3 E   = baseEdge;
     float  sat = max(max(E.r, E.g), E.b) - min(min(E.r, E.g), E.b);
     c += lerp(edgeC, edgeC * palC, 0.5) * (0.24 + 0.30 * ench + 0.25 * kick + 0.4 * flare) * edgeLv * lerp(0.45, 1.0, saturate(sat * 1.5)) * pow(saturate(1.0 + d / max(bevel, 1.0)), 3.0);
     c += edgeC * 0.015 * edgeLv;

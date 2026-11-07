@@ -64,26 +64,31 @@ with tempfile.TemporaryDirectory() as td:
     for idx, v in enumerate(V):
         name = f"PS_{v['mat']}_{v['layer']}"
         tint, edge = (lin(x) for x in LOOK[v["mat"]])
-        if compile_:
-            o = pathlib.Path(td) / f"{name}.dxil"
-            subprocess.run([dxc, "-T", "ps_6_0", "-E", "PSGlassArmor", "-O3", "-I", str(root / "shaders"),
-                            f"-DGA_VARIANT={idx}", f"-DGA_LAYER={v['layer']}",
-                            f"-DGA_TINT=float3({tint[0]},{tint[1]},{tint[2]})",
-                            f"-DGA_EDGE=float3({edge[0]},{edge[1]},{edge[2]})",
-                            "-Fo", str(o), str(root / "shaders/glass_armor.hlsl")], check=True)
-            b = o.read_bytes()
-            assert b[4:20] != bytes(16), f"{name}: unsigned DXIL (dxc without libdxil)"
-        else:
-            b = b"\0"
-        rows = [", ".join(f"0x{x:02x}" for x in b[i:i + 20]) for i in range(0, len(b), 20)]
-        out.append(f"inline constexpr uint8_t {name}[{len(b)}] = {{\n    " + ",\n    ".join(rows) + "\n};")
+        # two builds per variant: plain Actor draws, and ActorGlint draws (enchanted: one more interpolant, the glint
+        # layer UVs in TEXCOORD2, so the input signature differs)
+        for glint in (0, 1):
+            nm = name + ("_glint" if glint else "")
+            if compile_:
+                o = pathlib.Path(td) / f"{nm}.dxil"
+                subprocess.run([dxc, "-T", "ps_6_0", "-E", "PSGlassArmor", "-O3", "-I", str(root / "shaders"),
+                                f"-DGA_VARIANT={idx}", f"-DGA_LAYER={v['layer']}", f"-DGA_GLINT={glint}",
+                                f"-DGA_LEATHER={1 if v['mat'] == 'leather' else 0}",
+                                f"-DGA_TINT=float3({tint[0]},{tint[1]},{tint[2]})",
+                                f"-DGA_EDGE=float3({edge[0]},{edge[1]},{edge[2]})",
+                                "-Fo", str(o), str(root / "shaders/glass_armor.hlsl")], check=True)
+                b = o.read_bytes()
+                assert b[4:20] != bytes(16), f"{nm}: unsigned DXIL (dxc without libdxil)"
+            else:
+                b = b"\0"
+            rows = [", ".join(f"0x{x:02x}" for x in b[i:i + 20]) for i in range(0, len(b), 20)]
+            out.append(f"inline constexpr uint8_t {nm}[{len(b)}] = {{\n    " + ",\n    ".join(rows) + "\n};")
         blobs.append((name, v))
-out.append("struct Variant { char const* mat; int layer; uint32_t mask[64]; uint8_t avg[3]; uint8_t const* ps; uint32_t psSize; };")
+out.append("struct Variant { char const* mat; int layer; uint32_t mask[64]; uint8_t avg[3]; uint8_t const* ps; uint32_t psSize; uint8_t const* psGlint; uint32_t psGlintSize; };")
 out.append(f"inline constexpr int kVariants = {len(V)};")
 out.append("inline constexpr Variant kVariant[kVariants] = {")
 for name, v in blobs:
     m = ", ".join(f"0x{w:08x}u" for w in words(v["mask"]))
-    out.append(f"    {{\"{v['mat']}\", {v['layer']}, {{{m}}}, {{{v['avg'][0]}, {v['avg'][1]}, {v['avg'][2]}}}, {name}, sizeof({name})}},")
+    out.append(f"    {{\"{v['mat']}\", {v['layer']}, {{{m}}}, {{{v['avg'][0]}, {v['avg'][1]}, {v['avg'][2]}}}, {name}, sizeof({name}), {name}_glint, sizeof({name}_glint)}},")
 out.append("};")
 out.append("} // namespace rf::glassarmor::shaders\n")
 (root / "src/GlassArmorShaders.h").write_text("\n".join(out))
