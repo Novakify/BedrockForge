@@ -1573,12 +1573,11 @@ void eventHorizon(vec3 d, float el) {
 
     else { // the shadow (ref): a deep navy that darkens to black at the centre - light from far away just grazing in
         float k = clamp(a / 0.4834, 0.0, 1.0);    // 0.4834 rad = this observer's shadow radius (27.7 deg)
-        C = mix(vec3(0.0, 0.002, 0.007), vec3(0.006, 0.016, 0.042), k * k);
+        C = vec3(0.009, 0.009, 0.011) * k * k * k; // [LyricsForge] OLED black at the centre, easing to soft blacks at the ring
     }
     // 2) the disk: primary + secondary image, optically thick (it hides what's behind)
-    vec3 img = ehDiskImage(b, alpha, 0, t, heat) + ehDiskImage(b, alpha, 1, t, heat);
-    float occ = 1.0 - exp(-clamp(max(img.r, max(img.g, img.b)), 0.0, 10.0) * 3.0);
-    C = C * (1.0 - occ) + img;
+    // [LyricsForge] the gas disk is off (it never looked right up close): the hole, its ring and the bent sky carry it.
+    // ehDiskImage() is kept for a later rework.
 
     // 3) the photon ring (the n >= 2 images pile up at b_c), flaring on the kick; a soft warm haze outside
     // the photon ring as a music visualizer (ref 2): thin strands round the hole ripple with the spectrum - 8 bands,
@@ -1597,20 +1596,25 @@ void eventHorizon(vec3 d, float el) {
         float f = u - float(i0);
         float f2 = f * f * (3.0 - 2.0 * f);
         float lv = mix(sb[i0], sb[min(i0 + 1, 7)], f2);
-        float glowSum = 0.0, ca2 = cos(alpha) * 2.2, sa2 = sin(alpha) * 2.2, tt = T / 2.2 * 0.8;
+        vec3  neon = v3(0.0);
+        float ca2 = cos(alpha) * 2.2, sa2 = sin(alpha) * 2.2, tt = T / 2.2 * 0.8;
         for (int st = 0; st < 9; st++) {                                 // 9 strands that tangle and cross (ref 2)
             float fs = float(st) / 8.0;
             float nz = fbm(ca2 + float(st) * 1.7, sa2 - float(st) * 0.9, tt + float(st) * 0.37, 3); // own flowing wobble
             float rr = EH_BC * (1.004 + (0.03 + 0.20 * fs) * lv * (0.15 + 1.7 * nz) + 0.004 * fs);
-            float w  = EH_BC * (0.003 + 0.0025 * fs);
+            float w  = EH_BC * (0.0022 + 0.0012 * fs);              // sleek: thin neon lines
             float q  = (b - rr) / w;
-            glowSum += exp(-q * q) * (1.0 - 0.4 * fs);
+            float L  = exp(-q * q) * (1.0 - 0.35 * fs);
+            float hh = fract(alpha / 6.2831853 + T / 2.2 * 0.03 + float(st) * 0.07); // a rainbow that slowly turns
+            vec3  hc = pow(clamp(abs(fract(hh + vec3(0.0, 0.6666667, 0.3333333)) * 6.0 - 3.0) - 1.0, 0.0, 1.0), v3(1.3));
+            neon += hc * (L * (0.7 + 1.8 * lv) + exp(-q * q / 9.0) * 0.08 * (0.5 + lv)); // + a soft neon bloom
         }
         float rq = (b - EH_BC * 1.004) / (EH_BC * 0.006);
         float ring = exp(-rq * rq);
-        add(vec3(1.0, 0.95, 0.90), ring * (1.2 + 1.2 * kick) + glowSum * (0.5 + 2.0 * lv)); // bright white strands, like the ref
+        add(vec3(1.0, 0.97, 0.94), ring * (1.2 + 1.2 * kick)); // the true photon ring: a thin white line
+        C += neon;                                                 // the music: neon rainbow strands round it
     }
-    if (b > EH_BC) add(vec3(1.0, 0.72, 0.5), 0.04 * exp(-(b - EH_BC) / 0.8) * heat); // glow hugs the hole: OLED black past the arc
+    // (no warm haze: without the gas there is nothing to glow - space stays OLED black)
 }
 bool spaceSky(vec3 d, float az, float el) {
     float yy = max(d.y, 0.0), p = clamp(PULSE, 0.0, 1.6);
