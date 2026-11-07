@@ -1762,7 +1762,11 @@ void spaceAt(vec3 dd) {
     float ae = degrees(asin(clamp(dd.y, -1.0, 1.0)));
     float aa = degrees(atan2(-dd.x, dd.z));
     if (aa < 0.0) aa += 360.0;
-    spaceSky(dd, aa, ae);
+    if (!spaceSky(dd, aa, ae) && PRESET == 31) { // warp is drawn by the classic path: its gradient + streaks
+        float k = pow(clamp(abs(ae) / 72.0, 0.0, 1.0), 0.55); // mirrored below the horizon (deep space)
+        C = mix(HOR, TOP, k);
+        warp(dd.x, dd.y, dd.z);
+    }
     if (BKIND >= 0) bodyGlow(dd.x, dd.y, dd.z, aa, ae);
 }
 // neon sparks: on a hit they burst off the centre's ring and fly outward as the kick eases (stateless: KICK is the clock)
@@ -1824,7 +1828,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     if (az < 0.0) az += 360.0;
 
     int rk = realKind(PRESET);
-    if (rk < 0 && deepSpace(PRESET) && PRESET != 31) { // [LyricsForge] space skies: gravitational wave, warp jump, neon sparks (warp keeps its own path)
+    if (rk < 0 && deepSpace(PRESET)) { // [LyricsForge] space skies: gravitational wave, warp jump, neon sparks
         vec3 cc = spaceCenter();
         vec3 dw = dir;
         if (WAVE >= 0.0) { // a big drop: a ripple of bent space rolls out from the centrepiece and the stars wobble
