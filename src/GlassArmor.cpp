@@ -27,6 +27,7 @@
 #include <imgui.h>
 
 #include "LLShim.h"
+#include "BfDirector.h"
 #include "D3D12Api.h"
 #include "GlassArmorShaders.h"
 #include "SkyMaterialScan.h"
@@ -106,6 +107,9 @@ std::atomic<unsigned>              gSlotNext{0};
 std::atomic<long>                  gFlushOk{0}, gFlushFail{0};
 std::string                        gFlushWhy;
 std::atomic_bool                   gDebugSolid{false};
+std::atomic_bool                   gReact{true};
+float                              gReflect = 0.45f;
+float                              gShowBeat = 0;
 LARGE_INTEGER                      gT0{};
 int                                gDumped = 0;
 std::string gLastReport;
@@ -751,13 +755,13 @@ ID3D12RootSignature* extendedRoot(ID3D12RootSignature* game, unsigned* base) {
         for (auto const& p : params)
             cost += p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ? 1
                   : p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS ? p.Constants.Num32BitValues : 2;
-        if (cost + 6 > 64) fail("game signature too large (" + std::to_string(cost) + " DWORDs)");
+        if (cost + 8 > 64) fail("game signature too large (" + std::to_string(cost) + " DWORDs)");
         else {
             er.base = unsigned(params.size());
-            for (int k = 0; k < 3; ++k) {
+            for (int k = 0; k < 4; ++k) { // +0 scene t0, +1 depth t1, +2 params b0, +3 last finished frame t2
                 D3D12_ROOT_PARAMETER1 p{};
-                p.ParameterType             = k < 2 ? D3D12_ROOT_PARAMETER_TYPE_SRV : D3D12_ROOT_PARAMETER_TYPE_CBV;
-                p.Descriptor.ShaderRegister = k < 2 ? UINT(k) : 0u;
+                p.ParameterType             = k == 2 ? D3D12_ROOT_PARAMETER_TYPE_CBV : D3D12_ROOT_PARAMETER_TYPE_SRV;
+                p.Descriptor.ShaderRegister = k < 2 ? UINT(k) : k == 2 ? 0u : 2u;
                 p.Descriptor.RegisterSpace  = 9;
                 p.Descriptor.Flags          = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE;
                 p.ShaderVisibility          = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -822,7 +826,34 @@ struct alignas(16) GaParams { // cbuffer GA (shaders/glass_armor.hlsl), 256-byte
     float    swirl, ripple;
     float    lens, uiScale;
     uint32_t sceneBgra, pad;
+    // M2: LyricsForge
+    float    beat, bass, impact, flash;
+    float    flashCol[3], active;
+    float    pal[3], palAmount;
+    float    exposure;
+    uint32_t prevPitch;
+    float    prevW, prevH;
+    uint32_t prevBgra, havePrev;
+    float    reflect, react;
 };
+static_assert(sizeof(GaParams) <= 256, "one 256-byte slot");
+
+// LyricsForge Director (BF): music + light state, same source as the post pass
+using DirFn = BfDirectorV1 const* (*)();
+DirFn dirGet() {
+    static DirFn fn    = nullptr;
+    static int   delay = 0;
+    if (fn || delay-- > 0) return fn;
+    delay = 240;
+    if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll"))
+        fn = reinterpret_cast<DirFn>(reinterpret_cast<void*>(GetProcAddress(m, "BF_GetDirector")));
+    return fn;
+}
+// last finished frame (lyrics + sky + post included), copied at present for the reflections
+ComPtr<ID3D12Resource> gPrev;
+UINT64                 gPrevSize = 0;
+uint32_t               gPrevPitch = 0, gPrevW = 0, gPrevH = 0, gPrevBgra = 0;
+std::atomic_bool       gPrevValid{false};
 } // namespace
 
 bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource* ds, FlushRes& out) {
@@ -880,6 +911,38 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.uiScale   = float(rd.Height) / 760.f;
     p.pad       = gDebugSolid ? 1u : 0u;
     p.sceneBgra = rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM || rd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS || rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    // M2: LyricsForge state (neutral when no song / Director off / reacting switched off)
+    p.exposure = 1;
+    p.pal[0] = p.pal[1] = p.pal[2] = 1;
+    p.react   = gReact ? 1.f : 0.f;
+    p.reflect = gReflect;
+    if (gReact) {
+        static uint32_t lastFrame = 0;
+        static int      still     = 0;
+        DirFn fn = dirGet();
+        BfDirectorV1 const* b = fn ? fn() : nullptr;
+        if (b && b->version >= 1 && b->size >= 128) {
+            if (b->frame != lastFrame) { lastFrame = b->frame; still = 0; } else if (still < 1000) ++still;
+            if (b->active && still <= 20) {
+                auto c01 = [](float v) { return std::clamp(v, 0.f, 1.f); };
+                p.active = 1, p.beat = c01(b->beat), p.bass = c01(b->bass), p.impact = c01(b->impact), p.flash = std::clamp(b->flash, 0.f, 0.25f);
+                for (int k = 0; k < 3; ++k) p.flashCol[k] = c01(b->flashColor[k]);
+                if (b->size >= 160) {
+                    float t[3]{std::clamp(b->worldTint[0], .2f, 2.f), std::clamp(b->worldTint[1], .2f, 2.f), std::clamp(b->worldTint[2], .2f, 2.f)};
+                    float m = std::max({t[0], t[1], t[2], 1e-3f});
+                    for (int k = 0; k < 3; ++k) p.pal[k] = t[k] / m; // the sky's light colour, brightest channel = 1
+                    p.palAmount = c01(b->worldAmount);
+                    p.exposure  = std::clamp(b->exposure, .4f, 1.8f);
+                }
+                gShowBeat = p.beat;
+            }
+        }
+    }
+    if (gPrevValid) {
+        p.havePrev = 1, p.prevPitch = gPrevPitch, p.prevW = float(gPrevW), p.prevH = float(gPrevH), p.prevBgra = gPrevBgra;
+        barrier(l, gPrev.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        out.prev = gPrev->GetGPUVirtualAddress();
+    } else out.prev = S.scene->GetGPUVirtualAddress(); // bound but unused (havePrev = 0)
     std::memcpy(gParamsMap + slot * 256, &p, sizeof p);
     out.scene  = S.scene->GetGPUVirtualAddress();
     out.depth  = S.depth->GetGPUVirtualAddress();
@@ -894,6 +957,28 @@ void endFlush(ID3D12GraphicsCommandList* l, FlushRes const& fr) {
     auto& S = gSlots[fr.slot];
     barrier(l, S.scene.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     barrier(l, S.depth.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    if (fr.prev && gPrev && fr.prev == gPrev->GetGPUVirtualAddress())
+        barrier(l, gPrev.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+}
+
+void afterLyrics(ID3D12Device* dev, ID3D12GraphicsCommandList* l, ID3D12Resource* bb) {
+    if (!enabled() || !dev || !l || !bb) return;
+    auto d = bb->GetDesc();
+    bool const bgra = d.Format == DXGI_FORMAT_B8G8R8A8_UNORM || d.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || d.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    bool const rgba = d.Format == DXGI_FORMAT_R8G8B8A8_UNORM || d.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || d.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
+    if ((!bgra && !rgba) || d.SampleDesc.Count > 1) { gPrevValid = false; return; }
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+    UINT64 tot = 0;
+    dev->GetCopyableFootprints(&d, 0, 1, 0, &fp, nullptr, nullptr, &tot);
+    if (!tot || !ensureBuffer(dev, gPrev, gPrevSize, tot)) { gPrevValid = false; return; }
+    barrier(l, bb, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.pResource = gPrev.Get(), dst.PlacedFootprint = fp;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.pResource = bb, src.SubresourceIndex = 0;
+    l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    barrier(l, bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    gPrevPitch = fp.Footprint.RowPitch, gPrevW = UINT(d.Width), gPrevH = d.Height, gPrevBgra = bgra ? 1u : 0u;
+    gPrevValid = true;
 }
 
 ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState** game) {
@@ -980,6 +1065,10 @@ void drawUi() {
                     gArmorTex.load(), gLastClass.empty() ? "-" : gLastClass.c_str(), gNotArmor.load(), gPending.size() + gInFlight.size());
         ImGui::TextWrapped("Last texture: %s", gLastClassInfo.c_str());
         ImGui::Text("Flushes ok: %ld  failed: %ld %s", gFlushOk.load(), gFlushFail.load(), gFlushWhy.c_str());
+        bool react = gReact.load();
+        if (ImGui::Checkbox("React to LyricsForge (beat, sky colour, flashes)", &react)) gReact = react;
+        ImGui::SliderFloat("Reflection of lyrics / effects", &gReflect, 0.f, 1.f, "%.2f");
+        ImGui::Text("Beat now: %.2f   last frame for reflections: %s", gShowBeat, gPrevValid ? "yes" : "no");
         bool dbg = gDebugSolid.load();
         if (ImGui::Checkbox("Debug: paint glass solid magenta", &dbg)) gDebugSolid = dbg;
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",

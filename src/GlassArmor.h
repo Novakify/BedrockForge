@@ -57,12 +57,17 @@ ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list);
 void                 noteDsv(size_t handle, ID3D12Resource* res);
 ID3D12Resource*      dsvResource(size_t handle);
 void                 noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size);
-/// The game's root signature + 2 root SRVs (scene, depth: t0/t1 space9) + 1 root CBV (b0 space9), cached.
+/// The game's root signature + root SRVs scene/depth (t0/t1 space9) + root CBV (b0 space9) + root SRV last frame (t2), cached.
 ID3D12RootSignature* extendedRoot(ID3D12RootSignature* game, unsigned* firstExtra);
-struct FlushRes { unsigned long long scene = 0, depth = 0, params = 0; int slot = -1; };
+struct FlushRes { unsigned long long scene = 0, depth = 0, params = 0, prev = 0; int slot = -1; };
 /// Copies the bound colour + depth targets into buffers the glass shader reads; false = can't this time.
 bool beginFlush(ID3D12GraphicsCommandList* list, ID3D12Resource* rt, ID3D12Resource* ds, FlushRes& out);
 void endFlush(ID3D12GraphicsCommandList* list, FlushRes const& fr);
+
+// ---- M2: LyricsForge-reactive glass ----
+/// Overlay present, right after the lyric glyphs / sky pass, before ImGui: copy the finished frame (lyrics included)
+/// so the glass can reflect it next frame. bb is in RENDER_TARGET state and stays so.
+void afterLyrics(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb);
 /// F6 section.
 void drawUi();
 

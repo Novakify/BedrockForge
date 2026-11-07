@@ -825,6 +825,7 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
         reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 0, fr.scene);
         reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 1, fr.depth);
         reinterpret_cast<SetAddr_t>(gOrig[18])(l, base + 2, fr.params);
+        reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 3, fr.prev);
         gaSetIa(l, p.ia);
         reinterpret_cast<SetPso_t>(gOrig[3])(l, p.glass);
         reinterpret_cast<DrawIdx_t>(gOrig[6])(l, p.a, p.b, p.c, p.d, p.e);

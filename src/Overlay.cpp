@@ -26,6 +26,7 @@
 #include "Cinematic.h"
 #include "LLShim.h"
 #include "PostFx.h"
+#include "GlassArmor.h"
 #include "LyricsPass.h"
 #include "SkyPass.h"
 #include "SpatialPanel.h"
@@ -238,6 +239,7 @@ void render(IDXGISwapChain3* sc) {
     t0 = SClock::now();
     rf::sky::record(device.Get(), bb.list.Get(), bb.resource.Get(), bb.rtv, sc->GetCurrentBackBufferIndex());
     slow("sky pass", t0);
+    rf::glassarmor::afterLyrics(device.Get(), bb.list.Get(), bb.resource.Get()); // finished frame -> glass reflections
     bb.list->OMSetRenderTargets(1, &bb.rtv, FALSE, nullptr);
     bb.list->SetDescriptorHeaps(1, heaps);
     {

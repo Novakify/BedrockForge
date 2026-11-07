@@ -25,8 +25,20 @@ cbuffer GA : register(b0, space9) {
     float  lens;
     float  uiScale;    // res.y / 760 (menu design px -> px)
     uint   sceneBgra;
-    uint   pad;
+    uint   pad;        // 1 = debug solid colour
+    // M2: LyricsForge (BF Director), neutral when no song plays
+    float  beat, bass, impact, flash;
+    float3 flashCol;
+    float  active;
+    float3 pal;        // the sky's light colour (brightest channel 1)
+    float  palAmount;
+    float  exposure;
+    uint   prevPitch;
+    float  prevW, prevH;
+    uint   prevBgra, havePrev;
+    float  reflectAmt, react;
 };
+ByteAddressBuffer gPrev : register(t2, space9); // last finished frame (lyrics, sky, post) for reflections
 
 // Must match the Actor vertex shader's output signature exactly (probe M0):
 // SV_Position o0, COLOR1 o1, COLOR0 o2, COLOR2 o3, COLOR3 o4, TEXCOORD0.xy o5, TEXCOORD3.xyz o6
@@ -78,6 +90,19 @@ float3 sceneAt(float2 px) {
     float2 f = q - float2(i);
     return lerp(lerp(texel(i), texel(i + int2(1, 0)), f.x), lerp(texel(i + int2(0, 1)), texel(i + int2(1, 1)), f.x), f.y);
 }
+float3 prevTexel(int2 p) {
+    p      = clamp(p, int2(0, 0), int2(prevW, prevH) - 1);
+    uint v = gPrev.Load(uint(p.y) * prevPitch + uint(p.x) * 4);
+    float3 c = float3(v & 255u, (v >> 8) & 255u, (v >> 16) & 255u) / 255.0;
+    return prevBgra ? c.bgr : c;
+}
+float3 prevAt(float2 px) { // the frame is the same size as the world target in practice; scale if it isn't
+    px *= float2(prevW, prevH) / res;
+    float2 q = px - 0.5;
+    int2   i = int2(floor(q));
+    float2 f = q - float2(i);
+    return lerp(lerp(prevTexel(i), prevTexel(i + int2(1, 0)), f.x), lerp(prevTexel(i + int2(0, 1)), prevTexel(i + int2(1, 1)), f.x), f.y);
+}
 float depthAt(float2 px) {
     int2 p = clamp(int2(px), int2(0, 0), int2(res) - 1);
     return float(gDepth.Load(uint(p.y) * depthPitch + uint(p.x) * 4) & 0xFFFFFFu) / 16777215.0;
@@ -117,7 +142,15 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float ench = 0;
     if (glint > 0.5 && glint < 1.5) ench = 0.5 + 0.5 * sin(time * 2.4);
     if (glint > 1.5) { float per = (p.x + p.y) / (fs.x + fs.y); ench = pow(0.5 + 0.5 * sin((per * 2.0 - time * 0.55) * 6.2831), 6.0); }
-    float3 edgeC = GA_EDGE * (1.0 + ench * 1.2);
+    // LyricsForge: the outline light runs round the edges with the music and pulses on the beat
+    float mus = active * react;
+    if (mus > 0.5) {
+        float per  = (p.x + p.y) / (fs.x + fs.y);
+        float flow = pow(0.5 + 0.5 * sin((per * 2.0 - time * (0.45 + 1.6 * bass)) * 6.2831), 5.0);
+        ench = max(ench, flow * (0.35 + 0.65 * beat) + impact * 0.8);
+    }
+    float3 edgeC = GA_EDGE * (1.0 + ench * 1.2 + mus * beat * 0.6);
+    float3 palC  = lerp(float3(1, 1, 1), pal, saturate(palAmount * mus));
 
     // fixed twist around the face centre + gentle fixed wave
     float  bevel = min(22.0 * S, halfPx * 0.85);
@@ -145,15 +178,26 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     c.b = sceneAt(px + off * 1.08).b;
     c   = lerp(c, lerp(float3(0.0065, 0.0032, 0.018), GA_TINT, 0.35), 0.10);
 
+    // reflection of the last finished frame: lyrics, sky and LyricsForge effects glint across the glass, strongest at
+    // the rims (fresnel-like) - sampled mirrored around the face and pushed outwards along the edge normal
+    if (havePrev) {
+        float2 rp   = px - off * 1.6 + n * (24.0 * S) - fo * 0.0;
+        float3 refl = (prevAt(rp) + prevAt(rp + float2(3, 0) * S) + prevAt(rp + float2(0, 3) * S)) / 3.0;
+        float  lumR = dot(refl, float3(0.299, 0.587, 0.114));
+        float  w    = reflectAmt * (0.10 + 0.55 * e) * smoothstep(0.25, 0.85, lumR + 0.25); // bright things reflect most
+        c = 1.0 - (1.0 - c) * (1.0 - refl * w);                                          // screen blend
+    }
+
     // menu rim: white, brighter on the side facing the light (top-left, like the client menu)
     float  rim = 1.0 - smoothstep(0.0, 1.6, abs(d + 0.9));
     float2 Ls  = normalize(float2(-0.45, -0.89));
     float  lit = 0.45 + 0.55 * max(dot(n, Ls), 0.0);
-    c += 0.9 * (rim * lit * 0.75 + e * 0.08);
+    c += 0.9 * palC * (rim * lit * 0.75 + e * 0.08) * lerp(1.0, exposure, 0.5 * mus);
+    c += flashCol * flash * mus * (0.6 + 1.2 * e);   // impact frames light the glass up
     // neon outline + its light glowing into the glass
     float3 E   = GA_EDGE;
     float  sat = max(max(E.r, E.g), E.b) - min(min(E.r, E.g), E.b);
-    c += edgeC * (0.24 + 0.30 * ench) * lerp(0.45, 1.0, saturate(sat * 1.5)) * pow(saturate(1.0 + d / max(bevel, 1.0)), 3.0);
+    c += lerp(edgeC, edgeC * palC, 0.5) * (0.24 + 0.30 * ench) * lerp(0.45, 1.0, saturate(sat * 1.5)) * pow(saturate(1.0 + d / max(bevel, 1.0)), 3.0);
     c += edgeC * 0.015;
     float aa = max(fwidth(dIn), 1e-4) * 1.1;
     float ln = 1.0 - smoothstep(0.19 - aa, 0.19 + aa, dIn);
