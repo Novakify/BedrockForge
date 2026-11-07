@@ -1560,18 +1560,18 @@ void eventHorizon(vec3 d, float el) {
         float f = u - float(i0);
         float f2 = f * f * (3.0 - 2.0 * f);
         float lv = mix(sb[i0], sb[min(i0 + 1, 7)], f2);
-        float wob = 0.5 + 0.5 * sin(alpha * 9.0 + T * 0.9);              // a little organic wobble along the ring
-        float glowSum = 0.0;
-        for (int st = 0; st < 5; st++) {                                 // 5 strands, each pushed out a little more
-            float fs = float(st) / 4.0;
-            float rr = EH_BC * (1.004 + (0.012 + 0.10 * fs) * lv * (0.75 + 0.5 * wob) + 0.003 * fs);
-            float w  = EH_BC * (0.0035 + 0.002 * fs);
+        float glowSum = 0.0, ca2 = cos(alpha) * 2.2, sa2 = sin(alpha) * 2.2, tt = T / 2.2 * 0.8;
+        for (int st = 0; st < 9; st++) {                                 // 9 strands that tangle and cross (ref 2)
+            float fs = float(st) / 8.0;
+            float nz = fbm(ca2 + float(st) * 1.7, sa2 - float(st) * 0.9, tt + float(st) * 0.37, 3); // own flowing wobble
+            float rr = EH_BC * (1.004 + (0.03 + 0.20 * fs) * lv * (0.15 + 1.7 * nz) + 0.004 * fs);
+            float w  = EH_BC * (0.003 + 0.0025 * fs);
             float q  = (b - rr) / w;
-            glowSum += exp(-q * q) * (1.0 - 0.55 * fs);
+            glowSum += exp(-q * q) * (1.0 - 0.4 * fs);
         }
         float rq = (b - EH_BC * 1.004) / (EH_BC * 0.006);
         float ring = exp(-rq * rq);
-        add(vec3(1.0, 0.92, 0.80), ring * (1.2 + 1.2 * kick) + glowSum * (0.35 + 1.4 * lv));
+        add(vec3(1.0, 0.95, 0.90), ring * (1.2 + 1.2 * kick) + glowSum * (0.5 + 2.0 * lv)); // bright white strands, like the ref
     }
     if (b > EH_BC) add(vec3(1.0, 0.72, 0.5), 0.09 * exp(-(b - EH_BC) / 3.5) * heat);
 }
