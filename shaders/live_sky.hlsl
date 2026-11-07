@@ -1283,11 +1283,17 @@ void realSky(float x, float y, float z, float el, int kind) {
 
 // ==== LF SPACE BEGIN
 // ---------------------------------------------------------------- [LyricsForge] night, space and special skies
+// [LyricsForge] the deep space skies are the whole sphere: on sky-island maps you float in space, stars and all
+// below your feet (nebula, black hole, cosmos, pulsar, galaxy, rift, supernova, warp, astral, meteor, Event Horizon)
+bool deepSpace(int p) {
+    return p == 2 || p == 3 || p == 4 || p == 18 || p == 21 || p == 29 || p == 30 || p == 31 || p == 34 || p == 37 || p == 43;
+}
 void nightBase(vec3 d, float el, vec3 zen, vec3 hor, float glow) {
-    float yy = max(d.y, 0.0);
+    bool sp = deepSpace(PRESET);
+    float yy = sp ? abs(d.y) : max(d.y, 0.0); // [LyricsForge] deep space mirrors below the horizon
     C = mix(hor, zen, pow(clamp(yy * 1.1, 0.0, 1.0), 0.55));
     add(hor, glow * exp(-yy * 8.0));
-    if (el < 0.0) C = mix(C, hor * 0.6, clamp(-el / 10.0, 0.0, 1.0));
+    if (el < 0.0 && !sp) C = mix(C, hor * 0.6, clamp(-el / 10.0, 0.0, 1.0));
 }
 
 // aurora: curtains as stacked glowing layers (the layers line up into vertical rays), green low, violet high
@@ -1539,7 +1545,7 @@ void eventHorizon(vec3 d, float el) {
 }
 bool spaceSky(vec3 d, float az, float el) {
     float yy = max(d.y, 0.0), p = clamp(PULSE, 0.0, 1.6);
-    float up = sm(-2.0, 10.0, el);
+    float up = deepSpace(PRESET) ? 1.0 : sm(-2.0, 10.0, el); // [LyricsForge] deep space: stars below the horizon too
     if (PRESET == 43) { eventHorizon(d, el); return true; } // [LyricsForge] Event Horizon
     if (PRESET == 1 || PRESET == 20 || PRESET == 32 || PRESET == 23) { // auroras
         nightBase(d, el, TOP, HOR, 0.10);
@@ -1782,6 +1788,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
 // the sky's colours smeared under the horizon. Sky colour to ~-20 deg, then quickly pure black by ~-32 deg.
 vec4 voidBlack(vec4 c, vec3 skyDir) {
     float el = degrees(asin(clamp(normalize(skyDir).y, -1.0, 1.0)));
+    if (deepSpace(PRESET)) return c; // space all the way round: no void cutoff
     float k = sm(-32.0, -20.0, el); // [LyricsForge] sky colour down to ~-20 deg (where you look over an island edge), black by ~-32
     c.rgb *= k;
     return c;
