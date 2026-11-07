@@ -29,6 +29,7 @@
 #include "LLShim.h"
 #include "LyricsCamera.h"
 #include "Options.h"
+#include "ScreenPass.h"
 #include "SpatialPanel.h"
 
 #if __has_include("GlyphShaders.h")
@@ -44,10 +45,11 @@ using Microsoft::WRL::ComPtr;
 
 constexpr UINT     kSlots     = 4;     // ring of upload buffers (>= swap chain buffers)
 constexpr UINT     kCap       = 16384; // glyphs per frame
-constexpr UINT     kTable     = 2 + kBfLyricsMaxAtlases + 3; // t0 glyphs, t1..t16 atlases, t17 UI target, t18 frame copy, t19/t20 blur
+constexpr UINT     kTable     = 2 + kBfLyricsMaxAtlases + 4; // t0 glyphs, t1..t16 atlases, t17 UI target, t18 frame copy, t19/t20 blur, t21 video screen
 constexpr UINT     kUiSrv     = 1 + kBfLyricsMaxAtlases;     // 17
 constexpr UINT     kSceneSrv  = kUiSrv + 1;                  // 18 (glass)
 constexpr UINT     kBlurSrv   = kUiSrv + 2;                  // 19 (final blur), 20 = ping-pong
+constexpr UINT     kLiveSrv   = kUiSrv + 4;                  // 21 [LyricsForge] video screen (ScreenPass.cpp)
 constexpr uint32_t kMaxAtlas  = kBfLyricsMaxAtlases;
 
 // ---------------------------------------------------------------- settings (F6, not persisted yet)
@@ -530,6 +532,7 @@ bool   tracking() { return gUi.enabled && gUi.underHud; }
 void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb, D3D12_CPU_DESCRIPTOR_HANDLE const& bbRtv, unsigned slotIn) {
     bool const redirected = gRedirected.exchange(false);
     ++gPresents;
+    rf::screen::poll(false); // [LyricsForge] video screen settings -> capture, status -> BF (every Present)
     while (!gUiGrave.empty() && gPresents - gUiGrave.front().second > kSlots + 2) gUiGrave.erase(gUiGrave.begin());
     if (gBroken || !gUi.enabled || rf::panel::enabled()) { setCameraWanted(false); return; }
     UINT const slot = slotIn % kSlots;
@@ -543,6 +546,17 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     if (!ensureSized(bd)) return;
     (void)copy;
     uploadAtlases(list);
+    { // [LyricsForge] video screen: new captured frame -> (Anime4K) -> 1920x1080 texture, sampled at t21 by LIVE glyphs
+        ID3D12Resource* live = rf::screen::record12(device, list, slot, gPresents);
+        if (live) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+            sv.Format                  = DXGI_FORMAT_R8G8B8A8_UNORM;
+            sv.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
+            sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            sv.Texture2D.MipLevels     = rf::screen::kOutMips;
+            gDevice->CreateShaderResourceView(live, &sv, srvCpu(slot * kTable + kLiveSrv));
+        } else nullTextureSrv(srvCpu(slot * kTable + kLiveSrv));
+    }
     // Atlas descriptors are written per ring slot, only for the slot being recorded now (the other slots' tables
     // may still be read by frames in flight). Missing / failed atlases get a null SRV (never a stale pointer).
     if (gSlotGen[slot] != gUploadedGen) {
@@ -839,6 +853,7 @@ struct Saved11 {
 
 void record11(ID3D11Device* device, ID3D11DeviceContext* ctx, ID3D11RenderTargetView* bbRtv) {
     ++gPresents;
+    rf::screen::poll(true); // [LyricsForge] video screen (every Present)
     if (gBroken || !gUi.enabled || !bbRtv) { setCameraWanted(false); return; }
     bool           draw = false;
     uint32_t const n    = fetchFrame(draw);
@@ -856,6 +871,7 @@ void record11(ID3D11Device* device, ID3D11DeviceContext* ctx, ID3D11RenderTarget
     upload11();
 
     Saved11 saved(ctx);
+    ID3D11ShaderResourceView* const liveSrv = rf::screen::record11(device, ctx); // [LyricsForge] video screen (t21)
     D3D11_MAPPED_SUBRESOURCE m{};
     if (FAILED(ctx->Map(g11.glyphs.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) return;
     std::memcpy(m.pData, gHost.data(), size_t(n) * sizeof(BfGlyphV1));
@@ -918,6 +934,7 @@ void record11(ID3D11Device* device, ID3D11DeviceContext* ctx, ID3D11RenderTarget
     srvs[kSceneSrv]   = g11.sceneSrv.Get();
     srvs[kBlurSrv]    = g11.blurASrv.Get();
     srvs[kBlurSrv + 1] = g11.blurBSrv.Get();
+    srvs[kLiveSrv]     = liveSrv;
     ctx->VSSetShaderResources(0, 1, srvs);
     ctx->PSSetShaderResources(0, kTable, srvs);
     D3D11_VIEWPORT vp{0, 0, float(gW), float(gH), 0, 1};
@@ -956,6 +973,7 @@ void drawUi() {
     ImGui::Text("BF frame %u, active %u, %u/%u glyphs", gHdr.frame, gHdr.active, gHdr.count, gHdr.total);
     CameraSnap s = camera();
     ImGui::Text("Camera hook: %llu calls, %llu world", (unsigned long long)s.calls, (unsigned long long)s.chosen);
+    rf::screen::drawUi();
 }
 
 void install() { installCamera(); }

@@ -38,6 +38,10 @@ enum BfGlyphFlags : uint32_t {
                                   // glowW = clear circle radius px around the quad centre, glowK = its feather px
     BF_GLYPH_BLUR     = 1u << 11, // [LyricsFlow player] with IMAGE: the image soft-blurred, radius glowW in uv (aura,
                                   // cover glow), edges faded. RF without it draws the sharp IMAGE.
+    BF_GLYPH_FEATHER  = 1u << 12, // [LyricsForge] with IMAGE: no frame - the image fades out over a rounded-square edge
+                                  // glowW (fraction of the half size) wide, so it melts into what's behind (sky cover card)
+    BF_GLYPH_LIVE     = 1u << 13, // [LyricsForge screen] with IMAGE: sample RF's live video screen (1920x1080, t21) instead
+                                  // of an atlas; uv 0..1 = the whole 16:9 screen (letterbox bars included). atlas ignored
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the
@@ -124,4 +128,35 @@ struct BfSkyFrameV1 {
 /// Copy the current sky frame. hdr may not be null; dst may be null (header only). Returns vertices copied.
 BF_LYRICS_EXPORT uint32_t BF_CopySkyFrame(BfSkyFrameV1* hdr, BfSkyVertV1* dst, uint32_t capacity);
 typedef uint32_t (*BF_CopySkyFrame_t)(BfSkyFrameV1*, BfSkyVertV1*, uint32_t);
+// ---------------------------------------------------------------- video screen (LyricsForge), v1
+// BF owns the settings (LyricsForge panel -> Screen) and places the screen as glyph quads with BF_GLYPH_LIVE. RF pulls
+// the settings once per Present, captures the window itself (Windows.Graphics.Capture), optionally runs Anime4K on the
+// picture, letterboxes it into a 1920x1080 texture and reports back what it is doing (shown on the panel).
+enum BfScreenUpscale : uint32_t { BF_SCREEN_PLAIN = 0, BF_SCREEN_SHARP = 1, BF_SCREEN_MAX = 2 }; // Anime4K S / M
+struct BfScreenConfigV1 {
+    uint32_t size;      // sizeof(BfScreenConfigV1) (caller sets it)
+    uint32_t version;   // 1
+    uint32_t enabled;   // 1 = capture wanted
+    uint32_t upscale;   // BfScreenUpscale
+    uint64_t hwnd;      // window to capture (0 = none / the whole monitor, see monitor)
+    int32_t  monitor;   // >= 0 and hwnd == 0: capture this monitor (EnumDisplayMonitors order); -1 = nothing
+    uint32_t cropClient; // 1 = only the window's client area (cuts the title bar / borders)
+    uint32_t maxFps;    // capture rate cap (0 = 60)
+    uint32_t _pad;
+};
+enum BfScreenState : uint32_t { BF_SCREEN_IDLE = 0, BF_SCREEN_STARTING = 1, BF_SCREEN_LIVE = 2, BF_SCREEN_ERROR = 3 };
+struct BfScreenStatusV1 {
+    uint32_t size, version;
+    uint32_t state;     // BfScreenState
+    uint32_t srcW, srcH; // captured picture size (px)
+    uint32_t fpsX10;    // new frames per second x10
+    uint32_t upscaled;  // what ran on the last frame: BfScreenUpscale (+4 when the x2 stage ran)
+    float    gpuMs;     // reserved
+    char     message[160]; // short UTF-8 status for the panel ("window minimised - restore it" ...)
+};
+/// RF calls these: settings in, status out. Both are cheap (a copy under a lock).
+BF_LYRICS_EXPORT void BF_GetScreenConfig(BfScreenConfigV1* out);
+BF_LYRICS_EXPORT void BF_PutScreenStatus(BfScreenStatusV1 const* in);
+typedef void (*BF_GetScreenConfig_t)(BfScreenConfigV1*);
+typedef void (*BF_PutScreenStatus_t)(BfScreenStatusV1 const*);
 }

@@ -9,6 +9,7 @@
 //   c5      x: screen aspect (width / height), y: global opacity, z: debug (1 = show quad bounds), w: screen height (px)
 // t0 = StructuredBuffer<Glyph>, t1..t16 = atlases (index = Glyph.atlas), t17 = S2 UI target, s0 = linear clamp, s1 = point clamp
 // t18 = copy of the frame (glass), t19 / t20 = quarter-res blur ping-pong (t19 holds the final blur)
+// t21 = [LyricsForge] the live video screen (1920x1080, ScreenPass.cpp), sampled by IMAGE | LIVE glyphs
 //
 // Glass (Bedrock Forge client UI + LyricsFlow panel, 2026-10-31): BF_GLYPH_GLASS surfaces show the frame behind them
 // frosted (blur mix) and bent like a lens near the edge (refraction), with a bright rim and a coloured inner edge glow.
@@ -42,6 +43,7 @@ static const uint F_PETAL    = 512u;  // ring sector inside the quad (the client
 static const uint F_BACKDROP = 1024u; // full-screen frosted copy of the frame with a clear circle in the middle
 static const uint F_BLUR     = 2048u; // [LyricsFlow player] with IMAGE: soft-blurred image, radius glowW (fraction), faded edges
 static const uint F_FEATHER  = 4096u; // [LyricsForge] with IMAGE: no frame - fades out over a rounded-square edge glowW wide
+static const uint F_LIVE     = 8192u; // [LyricsForge screen] with IMAGE: sample the live video screen (t21), not an atlas
 static const uint kAtlases   = 16u;
 
 StructuredBuffer<Glyph> gGlyphs  : register(t0);
@@ -51,6 +53,7 @@ SamplerState            sPoint   : register(s1);
 Texture2D               gScene   : register(t18);
 Texture2D               gBlur    : register(t19);
 Texture2D               gBlurB   : register(t20);
+Texture2D               gLive    : register(t21);
 
 // Atlas access. SM6 (D3D12) indexes the texture array directly; SM5 (D3D11, compiled with fxc /D RF_SM5) cannot index
 // resources at run time, so it switches over the 16 slots. The atlas index is per glyph (nointerpolation), so every
@@ -528,14 +531,15 @@ float4 PSGlyph(V2P i) : SV_Target {
                 float  rr = sqrt((s + 0.5) / 32.0);
                 float  an = s * 2.39996323;
                 float  w  = 1.0 - 0.6 * rr;
-                t += atlasSampleLevel(ai, sLin, i.uv + float2(cos(an), sin(an)) * rr * r * span, 0) * w;
+                float2 tuv = i.uv + float2(cos(an), sin(an)) * rr * r * span;
+                t += (((g.flags & F_LIVE) != 0) ? gLive.SampleLevel(sLin, tuv, 2.0) : atlasSampleLevel(ai, sLin, tuv, 0)) * w;
                 wsum += w;
             }
             t /= wsum;
             float e = min(min(local.x, 1.0 - local.x), min(local.y, 1.0 - local.y));
             t.a *= pow(saturate(e / max(r * 1.6, 1e-3)), 1.5);
         } else {
-            t = atlasSample(ai, sLin, i.uv);
+            t = ((g.flags & F_LIVE) != 0) ? gLive.Sample(sLin, i.uv) : atlasSample(ai, sLin, i.uv);
         }
         t *= fillC;
         if (g.flags & F_FEATHER) { // [LyricsForge] melt into the sky: superellipse (rounded square) distance, soft falloff
