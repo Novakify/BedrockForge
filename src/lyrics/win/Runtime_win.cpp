@@ -887,6 +887,7 @@ std::atomic<uint32_t> gSkyFog{0};      // [LyricsForge] fog rgb8 + weight8 -> Vi
 std::atomic<int64_t>  gSkyFogAtNs{0};
 std::atomic<float> gFovScale{1.0f}; // [BF] fovBreath -> the FOV hook (client/Modules.cpp)
 std::atomic<int64_t> gFovAtNs{0};   // when it was last published: a stale value (no HUD frames) falls back to 1
+uint32_t songCover(); // below
 void publishDirector(MusicState const& m, CinemaOut const& c) {
     gFovScale.store(c.fovScale, std::memory_order_relaxed);
     gFovAtNs.store(nowNs(), std::memory_order_relaxed);
@@ -908,6 +909,34 @@ void publishDirector(MusicState const& m, CinemaOut const& c) {
         d.worldSat = 1.0f + (d.worldSat - 1.0f) * (1.0f - k);
     }
     if (!w.neutral()) d.active = 1u;
+    { // [LyricsForge] Glass Armor: filled whatever the Director setting is, so the armor follows the music on its own
+        static float   drop = 0;
+        static int64_t lastNs = 0;
+        int64_t const  ns = nowNs();
+        float const    dt = lastNs ? std::clamp(float(double(ns - lastNs) / 1e9), 0.0f, 0.25f) : 0.0f;
+        lastNs = ns;
+        drop *= std::exp(-dt / 0.5f);
+        if (m.dropNow) drop = std::max(drop, m.bigDrop || m.finalHit ? 1.35f : 1.0f);
+        else if (m.chorusNow) drop = std::max(drop, 0.6f);
+        bool const playing = gS->clock.playing();
+        d.playing = playing ? 1u : 0u;
+        d.awaken  = gS->engine.config().awaken ? gS->sky.awaken() : (playing ? 1.0f : 0.0f);
+        d.outro   = m.outro;
+        d.drop    = drop;
+        GlassCue const& g = gS->engine.glassCue();
+        d.finale  = g.finale ? 1.0f : 0.0f;
+        d.wordSeq = g.wordSeq;
+        auto rgb = [](uint32_t c, float* o) { for (int k = 0; k < 3; ++k) o[k] = float((c >> (16 - 8 * k)) & 0xFF) / 255.0f; };
+        uint32_t const cover = songCover();
+        rgb(cover, d.cover);
+        d.coverAmount = cover ? 1.0f : 0.0f;
+        rgb(g.wordColor, d.wordColor);
+        d.wordColorAmount = g.wordColor ? 1.0f : 0.0f;
+        float const* f  = gS->sky.fog();
+        float const  mx = std::max({f[0], f[1], f[2], 1e-3f});
+        for (int k = 0; k < 3; ++k) d.sky[k] = f[k] / mx;
+        d.skyAmount = std::clamp(gS->sky.frame().visible, 0.0f, 1.0f);
+    }
     gBfDirector = d;
 }
 

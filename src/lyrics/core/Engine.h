@@ -25,6 +25,13 @@ namespace bf::lyrics {
 /// [LyricsForge] the colour a lyric word names ("Pink!", "flamingos" -> pink), 0xRRGGBB, 0 = not a colour word
 uint32_t colorWord(std::string_view text);
 
+/// [LyricsForge] what the Glass Armor reacts to from the lyrics (BfDirectorV1 glass block)
+struct GlassCue {
+    uint32_t wordSeq   = 0; // bumps on every newly sung word
+    uint32_t wordColor = 0; // 0xRRGGBB the newest word names, 0 = not a colour word
+    bool     finale    = false; // the constellation outro is showing
+};
+
 class Engine {
 public:
     Config&  config() { return mCfg; }
@@ -44,6 +51,7 @@ public:
     AutoPerf&                     perf() { return mPerf; }
     Pulse const&                  pulse() const { return mPulse; } // [BF] the sky draws its equaliser
     void                          reset();
+    GlassCue const&               glassCue() const { return mGlass; }
     /// [BF] An atlas slot is being reused for another font: drop falling letters / fragments still drawn from it.
     void forgetAtlas(uint32_t atlas) { mPhysics.dropAtlas(atlas); mFx.dropAtlas(atlas); }
 
@@ -79,6 +87,9 @@ private:
     Vec3                   mOrigin;
     CameraState            mCam;
     int64_t                mSongSeq = -1;
+    GlassCue               mGlass;
+    int64_t                mGlassKeys[16] = {}; // recently sung word keys (one sweep per word)
+    int                    mGlassKeyAt = 0;
 };
 
 /// The shared frame store behind BF_CopyLyricFrame (thread-safe: BF writes on its frame, RF reads at its draw point).

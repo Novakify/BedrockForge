@@ -169,6 +169,18 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
             w.tintK = w.sungMs < 0 ? 0.0f : std::clamp(float(w.sungMs) / 280.0f, 0.0f, 1.0f);
             w.glow += 0.35f * w.tintK;
         }
+    { // [LyricsForge] Glass Armor: one light sweep per newly sung word; colour words flash the outline
+        for (auto const& w : words) {
+            if (w.screen || w.plain || w.sungMs < 0 || w.sungMs > 250 || w.key == 0) continue;
+            bool seen = false;
+            for (int64_t k : mGlassKeys) seen = seen || k == (w.key ^ (mSongSeq << 20));
+            if (seen) continue;
+            mGlassKeys[mGlassKeyAt] = w.key ^ (mSongSeq << 20);
+            mGlassKeyAt = (mGlassKeyAt + 1) % 16;
+            ++mGlass.wordSeq;
+            mGlass.wordColor = colorWord(w.text) & 0xFFFFFF;
+        }
+    }
     if (m) direct(words, *m, cfg);
     bool const haveLyrics = in.lyrics && !in.lyrics->lines.empty(); // [LyricsForge] no lyrics: nothing on screen at all
     if (haveLyrics && cfg.titleCard && in.music && in.music->songAge < kTitleCardSec) titleCard(words, in, cfg, cam);
@@ -261,6 +273,7 @@ void Engine::frame(SceneInput const& in, CameraState const& cam, IWorld* world) 
             mPrevSeq    = in.songSeq;
         }
         mSkyWriter.step(si);
+        mGlass.finale = mSkyWriter.finaleShowing();
         mSkyWriter.emit(si, mOrigin, mBack);
         if (cfg.chapterCover && in.skyCard >= 0.0f && in.coverAtlas >= 0) { // [LyricsForge] the new song's cover, painted in the sky
             float const p   = std::clamp(in.skyCard, 0.0f, 1.0f);

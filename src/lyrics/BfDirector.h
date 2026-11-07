@@ -40,8 +40,23 @@ struct BfDirectorV1 {
     float skyKeep;       // 0..1 share applied above the horizon
     float worldSat;      // saturation of the lit world (1 = unchanged): drops make it vivid for a moment
     float reserved2[1];
+    // [LyricsForge] Glass Armor (size >= 256; older readers stop at 160): what the glass reflects and reacts to.
+    // Filled whatever the Director look setting is, so the armor follows the music even with the grade off.
+    uint32_t playing;     // 1 while a song plays
+    uint32_t wordSeq;     // bumps each time a new lyric word starts being sung (RF runs one light sweep per bump)
+    float awaken;         // 0..1 Awaken progress: 0 = no music (plain glass), rising over the ~5 s startup
+    float outro;          // 0..1 the song's outro (the armor powers down in reverse)
+    float finale;         // 1 while the constellation outro (the final line rising as stars) is showing
+    float drop;           // 1 on a drop / chorus hit, decaying (~0.5 s); bigger on the song's big drops (up to 1.35)
+    float cover[3];       // the song / chapter cover colour, display rgb 0..1 (coverAmount 0 = none)
+    float coverAmount;    // 0..1
+    float wordColor[3];   // the colour the newest sung word names ("pink", "blue"), display rgb 0..1
+    float wordColorAmount;// 1 when the newest word is a colour word, else 0
+    float sky[3];         // the LyricsForge sky's colour (hue, brightest channel = 1)
+    float skyAmount;      // 0..1 (0 = vanilla sky / no LyricsForge sky)
+    float reserved3[6];
 };
-static_assert(sizeof(BfDirectorV1) == 160, "BfDirectorV1 layout is shared with RF");
+static_assert(sizeof(BfDirectorV1) == 256, "BfDirectorV1 layout is shared with RF");
 
 #if defined(_WIN32)
 __declspec(dllexport)
