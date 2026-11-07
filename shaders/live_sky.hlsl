@@ -1918,9 +1918,10 @@ void mirrorFx(vec3 d) {
 // each one growing from a flat-based body into sprouting bubbles (cumulus -> congestus) and fading away again, carved by
 // inverted Worley billows, lit by a light march to the sun - over a grass field: shell-textured blades near you that sway
 // in rolling gusts, a wind-sheened field further out, hazy at the horizon. Below that the usual void.
-GCONST float CH_HB = 2.6, CH_HMAX = 12.0, CH_G = 15.0, CH_PER = 140.0;
+GCONST float CH_HB = 3.0, CH_HMAX = 11.0, CH_G = 13.0, CH_PER = 140.0;
 GCONST vec2 CH_WIND = vec2(0.10, 0.035);
 float chh(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + s * 74.7) * 43758.5453); }
+float chr(float h0, float i) { return fract(h0 * (97.13 + i * 31.7) + i * 0.371); } // cheap extra randoms from one cell hash
 float chCells(vec3 p, float tt) {
     float qx = p.x - CH_WIND.x * tt, qz = p.z - CH_WIND.y * tt, py = p.y;
     float cx0 = floor(qx / CH_G - 0.5), cz0 = floor(qz / CH_G - 0.5);
@@ -1929,94 +1930,109 @@ float chCells(vec3 p, float tt) {
         float cx = cx0 + float(o & 1), cz = cz0 + float(o >> 1);
         float f = tt / CH_PER + chh(cx, cz, 1.0), gen = floor(f);
         f -= gen;
-        if (chh(cx + gen * 13.1, cz, 2.0) >= 0.75) continue;              // this cell is clear sky this time round
+        float h0 = chh(cx + gen * 13.1, cz - gen * 7.3, 2.0);
+        if (chr(h0, 0.0) >= 0.8) continue;                                   // clear sky in this cell this time round
         float L = pow(clamp(f / 0.45, 0.0, 1.0), 0.8) * (1.0 - clamp((f - 0.75) / 0.25, 0.0, 1.0)); // grow .. live .. fade
         if (L <= 0.02) continue;
-        float ccx = (cx + 0.35 + 0.3 * chh(cx, cz + gen * 7.7, 3.0)) * CH_G, ccz = (cz + 0.35 + 0.3 * chh(cx, cz + gen * 7.7, 4.0)) * CH_G;
-        float R = CH_G * (0.22 + 0.14 * chh(cx, cz + gen, 5.0)) * (0.7 + 0.3 * L);
-        float hv = chh(cx + gen, cz, 6.0);
-        float H = CH_HMAX * (0.22 + 0.35 * hv + 0.55 * pow(hv, 6.0)) * pow(max(L, 0.12), 0.6); // a few grow into towers
-        float dx = qx - ccx, dz = qz - ccz;
-        if (dx * dx + dz * dz > R * R * 2.2) continue;
-        float hn = (py - CH_HB) / max(H * 0.45, 1e-3);
-        float sc = 1.0 - sqrt((dx * dx + dz * dz) / (R * R) + hn * hn);    // the wide, flat-bottomed body
-        for (int k = 0; k < 6; k++) {                                       // bubbles sprouting from it
+        float ccx = (cx + 0.35 + 0.3 * chr(h0, 1.0)) * CH_G, ccz = (cz + 0.35 + 0.3 * chr(h0, 2.0)) * CH_G;
+        float R = CH_G * (0.22 + 0.14 * chr(h0, 3.0)) * (0.7 + 0.3 * L);
+        float hv = chr(h0, 4.0);
+        float H = CH_HMAX * (0.22 + 0.35 * hv + 0.55 * pow(hv, 6.0)) * pow(max(L, 0.12), 0.6); // a few grow into congestus
+        float dx = qx - ccx, dz = qz - ccz, r2 = dx * dx + dz * dz;
+        if (r2 > R * R * 2.0) continue;
+        float hn = (py - CH_HB - 0.22 * H) / max(H * 0.36, 1e-3);
+        float sc = 1.0 - sqrt(r2 / (R * R * 0.6084) + hn * hn);            // the body, widest a little above its flat base
+        for (int k = 0; k < 9; k++) {                                       // bubbles sprouting from it
             float fk = float(k);
-            float ka = chh(cx + fk * 3.7, cz + gen, 7.0 + fk), kb = chh(cx, cz + fk * 5.3 + gen, 8.0 + fk), kc = chh(cx + fk, cz + fk, 9.0 + fk);
-            float hk = (fk + 0.5) / 6.0, ang = ka * 6.2832, rad = R * (0.55 - 0.4 * hk) * sqrt(kb);
-            vec3 bc = vec3(ccx + cos(ang) * rad, CH_HB + H * (0.25 + 0.6 * hk * (0.6 + 0.4 * kc)), ccz + sin(ang) * rad);
+            float ka = chr(h0, 5.0 + 3.0 * fk), kb = chr(h0, 6.0 + 3.0 * fk), kc = chr(h0, 7.0 + 3.0 * fk);
+            float hk = (fk + 0.5) / 9.0, ang = ka * 6.2832, rad = R * (0.55 - 0.4 * hk) * sqrt(kb);
+            vec3 e = vec3(qx - ccx - cos(ang) * rad, py - CH_HB - H * (0.25 + 0.6 * hk * (0.6 + 0.4 * kc)), qz - ccz - sin(ang) * rad);
             float br = R * (0.62 - 0.32 * hk) * (0.7 + 0.4 * kc) * (0.85 + 0.15 * L);
-            vec3 e = vec3(qx, py, qz) - bc;
             sc = max(sc, 1.0 - sqrt(e.x * e.x + e.z * e.z + e.y * e.y * 1.1025) / br);
         }
         best = max(best, sc);
     }
-    return best;
+    float nr = length(p.xz);
+    return best - 0.8 * (1.0 - clamp((nr - 3.0) / 5.0, 0.0, 1.0));
 }
 float chWorley(vec3 p) {
     vec3 i = floor(p), f = p - i;
     float dm = 9.0;
     for (int a = -1; a <= 1; a++) for (int b = -1; b <= 1; b++) for (int c = -1; c <= 1; c++) {
-        vec3 cc = i + vec3(float(a), float(b), float(c));
-        vec3 h = vec3(fract(sin(cc.x * 127.1 + cc.y * 311.7 + cc.z * 74.7) * 43758.5453),
-                      fract(sin(cc.x * 269.5 + cc.y * 183.3 + cc.z * 246.1) * 43758.5453),
-                      fract(sin(cc.x * 113.5 + cc.y * 271.9 + cc.z * 124.6) * 43758.5453));
-        vec3 dd = vec3(float(a), float(b), float(c)) + h - f;
-        dm = min(dm, dot(dd, dd));
+        vec3 o = vec3(float(a), float(b), float(c));
+        vec3 q = fract((i + o) * vec3(0.1031, 0.1030, 0.0973));
+        float dd = q.x * (q.y + 33.33) + q.y * (q.x + 33.33) + q.z * (q.z + 33.33);
+        q += dd;
+        vec3 h = fract(vec3((q.x + q.y) * q.z, (q.x + q.x) * q.y, (q.y + q.x) * q.x));
+        vec3 v = o + h - f;
+        dm = min(dm, dot(v, v));
     }
     return sqrt(dm);
 }
-// density; s is the cell shape there (pass it in when already known)
 float chDens(vec3 p, float s, float tt, bool detail) {
-    if (s < -0.12 || p.y < CH_HB - 0.05) return 0.0;
-    float wv = 0.55, pn = 0.5;
+    if (s < -0.15 || p.y < CH_HB - 0.05) return 0.0;
+    float wv = 0.58;
     if (detail) {
         float wx = fbm(p.x * 0.12 + 3.1, p.y * 0.12 - tt * 0.01, p.z * 0.12, 2) - 0.5;
-        vec3 q = vec3(p.x * 0.42 + wx * 1.5 - tt * 0.015, p.y * 0.42 - tt * 0.04, p.z * 0.42 + wx * 1.5);
-        wv = (1.0 - clamp(chWorley(q), 0.0, 1.0)) * 0.625;
-        wv += (s < 0.35 ? 1.0 - clamp(chWorley(q * 2.0 + vec3(5.3, -1.7, 2.9)), 0.0, 1.0) : 0.6) * 0.375; // fine billows near the edge
-        pn = fbm(p.x * 0.2 - tt * 0.01, p.y * 0.2 - tt * 0.02, p.z * 0.2, 2);
+        vec3 X1 = vec3(p.x * 0.5 + wx * 1.5 - tt * 0.015, p.y * 0.5 - tt * 0.04, p.z * 0.5 + wx * 1.5);
+        wv = (1.0 - clamp(chWorley(X1), 0.0, 1.0)) * 0.5;
+        if (s < 0.45) { // near the surface: finer billows (and the finest only up close)
+            wv += (1.0 - clamp(chWorley(X1 * 2.1 + vec3(5.3, -1.7, 2.9)), 0.0, 1.0)) * 0.30;
+            wv += (1.0 - clamp(chWorley(X1 * 4.3 + vec3(-2.1, 3.3, -4.7)), 0.0, 1.0)) * 0.12;
+            wv += (length(p.xz) < 40.0 ? 1.0 - clamp(chWorley(X1 * 9.1 + vec3(1.3, -2.2, 0.7)), 0.0, 1.0) : 0.62) * 0.08;
+        } else wv += 0.62 * 0.5;
     }
-    float dd = s * 1.25 - 0.85 * (1.0 - wv) + 0.35 * (pn - 0.5) + 0.36;
-    float base = sm(CH_HB - 0.02, CH_HB + 0.25 + 0.6 * (fbm(p.x * 0.3, p.z * 0.3, 1.0, 2) - 0.5), p.y); // a flat, slightly ragged base
-    return clamp(dd, 0.0, 1.0) * base * sm(-0.12, 0.18, s);
+    float dd = s - (1.0 - wv) + 0.42;
+    float base = sm(CH_HB - 0.05, CH_HB + 0.45 + 0.5 * (fbm(p.x * 0.3, p.z * 0.3, 1.0, 2) - 0.5), p.y); // flat, slightly ragged base
+    return clamp(dd * 3.0, 0.0, 1.0) * base * sm(-0.15, 0.15, s);
 }
 void cloudHill(vec3 d, float az, float el) {
     float tt = T / 2.2;
     float x = d.x, y = d.y, z = d.z, yy = max(y, 0.0);
-    vec3 zen = rgb(10.0, 50.0, 170.0), hor = rgb(150.0, 200.0, 245.0);
+    vec3 zen = rgb(28.0, 96.0, 204.0), hor = rgb(172.0, 212.0, 242.0);
     if (y >= 0.0) {
-        C = mix(hor, zen, pow(clamp(yy * 1.6, 0.0, 1.0), 0.45));
+        C = mix(hor, zen, pow(clamp(yy * 1.4, 0.0, 1.0), 0.5));
         float ci = fbm(x / (y + 0.1) * 0.6 + tt * 0.004, z / (y + 0.1) * 3.0, 2.0, 5); // high cirrus wisps
         C += rgb(235.0, 242.0, 255.0) * 0.35 * sm(0.55, 0.8, ci) * sm(0.05, 0.3, y);
         if (y <= 0.012) return;
-        float t0 = CH_HB / y, t1 = min((CH_HB + CH_HMAX) / y, 200.0);
+        float t0 = CH_HB / y;
         if (t0 >= 200.0) return;
-        vec3 Ls = normalize(vec3(-0.5, 0.6, 0.62));                      // the sun high behind you, on the left
-        const int ST = 64;
-        float dt = (t1 - t0) / float(ST);
-        float jit = fract(sin(dot(d.xz, vec2(12.9898, 78.233)) * 43758.5453 + T * 7.13));
+        float t1 = min(min((CH_HB + CH_HMAX) / y, 200.0), t0 + 70.0);
+        float jit = fract(sin(dot(d, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        // pass 1: find where the ray first reaches a cloud cell (cell shapes only - cheap)
+        float dtc = (t1 - t0) / 32.0, tf = -1.0;
+        for (int i = 0; i < 32; i++) {
+            float tc = t0 + dtc * (float(i) + jit);
+            if (chCells(d * tc, tt) > -0.15) { tf = tc - dtc; break; }
+        }
+        if (tf < 0.0) return;
+        float a0 = max(tf, t0), a1 = min(t1, a0 + 22.0);
+        // pass 2: march the cloud itself in fine steps
+        vec3 Ls = normalize(vec3(-0.5, 0.6, 0.62));                          // the sun high behind you, on the left
+        const int ST = 96;
+        float dt = (a1 - a0) / float(ST);
         vec3 acc = v3(0.0);
         float Tr = 1.0;
         for (int i = 0; i < ST; i++) {
             if (Tr < 0.02) break;
-            float tc = t0 + dt * (float(i) + jit);
+            float tc = a0 + dt * (float(i) + jit);
             vec3 p = d * tc;
             float s = chCells(p, tt);
-            if (s < -0.12) continue;                                     // clear air: skip the expensive part
+            if (s < -0.15) continue;
             float D = chDens(p, s, tt, true);
             if (D < 0.003) continue;
             float ls = 0.0;
-            for (int j = 0; j < 4; j++) {
-                float st = 0.6 * pow(float(j) + 0.5, 1.6);
+            for (int j = 0; j < 3; j++) {
+                float st = 0.7 * pow(float(j) + 0.5, 1.7);
                 vec3 q = p + Ls * st;
-                ls += chDens(q, chCells(q, tt), tt, false) * 0.6 * pow(1.6, float(j));
+                ls += chDens(q, chCells(q, tt), tt, false) * 0.7 * pow(1.7, float(j));
             }
-            float sig = 9.0;
-            float Tl = exp(-ls * sig * 0.55), powder = 1.0 - exp(-D * sig * 2.0);
+            float sig = 12.0;
+            float Tl = 0.62 * exp(-ls * sig * 0.42) + 0.38 * exp(-ls * sig * 0.08); // + multiple scattering
+            float powder = 1.0 - exp(-D * sig * 2.0);
             float hf = clamp((p.y - CH_HB) / 9.0, 0.0, 1.0);
-            vec3 Lc = rgb(255.0, 251.0, 245.0) * Tl * (0.35 + 0.65 * powder) * 2.5
-                    + (rgb(130.0, 155.0, 205.0) * (0.45 + 0.55 * hf) + rgb(165.0, 168.0, 175.0) * 0.45) * 0.68;
+            vec3 Lc = rgb(255.0, 252.0, 248.0) * Tl * (0.4 + 0.6 * powder) * 2.4
+                    + (rgb(178.0, 192.0, 215.0) * (0.6 + 0.4 * hf) + rgb(196.0, 196.0, 198.0) * 0.3) * 0.66;
             float fog = exp(-tc / 260.0);
             Lc = Lc * fog + hor * (1.0 - fog);
             float a = 1.0 - exp(-D * sig * dt);
