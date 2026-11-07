@@ -1247,12 +1247,12 @@ void autoDirect(SceneInput const& in) {
         applyScene(cfg, *sc);
         { // [LyricsForge] the letter effect too: never the same one as the last three songs (water kept coming back)
             static constexpr int kFx[] = {1, 2, 3, 4, 5, 6, 8, 9, 10}; // neon fire water ice electric lava galaxy ink holo
-            bool const repeat = std::find(gS->recentFx.begin(), gS->recentFx.end(), cfg.letterFx) != gS->recentFx.end();
-            if (cfg.letterFx > 0 && repeat) {
-                uint32_t const h = songVariant(key);
+            // [LyricsForge] every song draws its effect at random (a fresh roll each play), never one of the last three
+            if (cfg.letterFx > 0) {
+                uint32_t const h = songVariant(key) ^ uint32_t(nowNs() / 1000003);
                 for (int i = 0; i < 9; ++i) {
                     int const f = kFx[(h + uint32_t(i)) % 9];
-                    if (std::find(gS->recentFx.begin(), gS->recentFx.end(), f) == gS->recentFx.end() && f != cfg.letterFx) { cfg.letterFx = f; break; }
+                    if (std::find(gS->recentFx.begin(), gS->recentFx.end(), f) == gS->recentFx.end()) { cfg.letterFx = f; break; }
                 }
             }
             gS->recentFx.push_back(cfg.letterFx);
@@ -1430,7 +1430,19 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             auto const& c = gS->engine.config();
             std::string const song = gS->demo.on ? gS->demo.title : gS->clock.hasTrack() ? gS->clock.track().key() : std::string();
             std::string key = c.scene + '|' + c.skyPreset + '|' + song;
-            if (key != gS->chorusKey) { gS->chorusKey = std::move(key); gS->chorus = chorusLook(c, gS->userScenes, songVariant(song)); }
+            if (key != gS->chorusKey) {
+                gS->chorusKey = std::move(key);
+                gS->chorus = chorusLook(c, gS->userScenes, songVariant(song));
+                // [LyricsForge] the chorus gets its own random effect too (a fresh roll per song), never the verse's
+                if (gS->chorus.letterFx > 0) {
+                    static constexpr int kFx[] = {1, 2, 3, 4, 5, 6, 8, 9, 10};
+                    uint32_t const h = songVariant(song + "|chorus") ^ uint32_t(nowNs() / 1000003);
+                    for (int i = 0; i < 9; ++i) {
+                        int const f = kFx[(h + uint32_t(i)) % 9];
+                        if (f != c.letterFx) { gS->chorus.letterFx = f; break; }
+                    }
+                }
+            }
             auto const& ms = gS->conductor.state();
             bool const variety = c.chorusVariety && c.chorusLooks && c.director;
             if (c.chorusLooks && c.director && ms.liftNow && !variety) { // the classic look: ring + meteors every time
