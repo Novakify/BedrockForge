@@ -44,3 +44,5 @@
     {"dusk", 0x2E2878, 0xFF8448, 0.9f, 0.1f, false, 0xFF5096, 0xFFA860, Weather::None, 0x000000, false, 0xFFD2B0},
     {"bright_night", 0x140E46, 0x2860BE, 0.9f, 1.6f, false, 0xC85AFF, 0x50C8FF, Weather::None, 0xEAF0FF, true, 0xD6E4FF},
     {"silver_lining", 0x2854AA, 0xC4D6E8, 0.9f, 0.0f, false, 0xFFD28C, 0xFFFFFF, Weather::None, 0x000000, false, 0xFFF6E6},
+    // [LyricsForge] new space skies (ordinal 43+, drawn by live_sky's spaceSky)
+    {"event_horizon", 0x000000, 0x05030A, 0.9f, 1.3f, false, 0xFFB45A, 0xFF6A2A, Weather::None, 0x000000, true, 0xFFE2B8},

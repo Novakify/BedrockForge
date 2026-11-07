@@ -128,8 +128,8 @@ std::vector<std::string_view> const& moodSkies(SkyMood m) {
         {"summer", "golden_hour", "sunset", "dusk", "bright_night", "supernova"},                 // hype
         {"dawn", "cotton_candy", "aquarell", "dream_ocean", "sakura", "golden_hour", "dusk"},     // dreamy
         {"silver_lining", "storm", "frost", "midnight", "thunder", "bright_night"},              // melancholy
-        {"storm", "crimson", "inferno", "eclipse", "blood_moon", "eclipse_heart"},               // dark
-        {"midnight", "cosmos", "aurora", "bright_night", "galaxy", "nebula"},                    // night
+        {"storm", "crimson", "inferno", "eclipse", "blood_moon", "eclipse_heart", "event_horizon"}, // dark
+        {"midnight", "cosmos", "aurora", "bright_night", "galaxy", "nebula", "event_horizon"},   // night
     };
     return lists[std::min<size_t>(size_t(m), 5)];
 }
@@ -140,7 +140,7 @@ std::vector<std::string_view> const& curatedSkies() { // [LyricsForge] after the
         "midnight", "nebula", "eclipse", "blood_moon", "storm", "supernova", "synthwave", "black_hole", "cosmos",
         "neon_city", "frost", "deep_sea", "inferno", "prism", "pulsar", "aquarell", "polar", "galaxy", "ocean", "ice",
         "purple", "sunset", "cherry", "crimson", "thunder", "rift", "warp", "silk", "astral", "eclipse_heart",
-        "dream_ocean", "meteor"};
+        "dream_ocean", "meteor", "event_horizon"};
     return c;
 }
 bool isCurated(std::string_view id) {
@@ -176,7 +176,7 @@ std::vector<std::string> coverSkies(uint32_t cover) {
     // colours don't say it (cotton candy stores a blue zenith but reads pink), so this is curated by eye.
     static std::vector<std::string_view> const pink   = {"cotton_candy", "sakura", "cherry", "dream_ocean", "aquarell", "synthwave", "eclipse_heart", "neon_city", "dusk", "purple"};
     static std::vector<std::string_view> const red    = {"crimson", "sunset", "eclipse_heart", "blood_moon", "inferno", "cherry"};
-    static std::vector<std::string_view> const orange = {"golden_hour", "sunset", "summer", "dawn", "inferno", "dusk"};
+    static std::vector<std::string_view> const orange = {"golden_hour", "sunset", "summer", "dawn", "inferno", "dusk", "event_horizon"};
     static std::vector<std::string_view> const green  = {"aurora", "polar", "summer", "silver_lining", "prism", "ocean"};
     static std::vector<std::string_view> const cyan   = {"ocean", "dream_ocean", "frost", "polar", "deep_sea", "aurora", "ice"};
     static std::vector<std::string_view> const blue   = {"ocean", "summer", "frost", "prism", "bright_night", "ice", "silver_lining", "midnight"};
