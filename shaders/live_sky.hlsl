@@ -1941,14 +1941,17 @@ float chCells(vec3 p, float tt) {
         float H = CH_HMAX * (0.22 + 0.35 * hv + 0.55 * pow(hv, 6.0)) * pow(max(L, 0.12), 0.6); // a few grow into congestus
         float dx = qx - ccx, dz = qz - ccz, r2 = dx * dx + dz * dz;
         if (r2 > R * R * 2.0) continue;
-        float hn = (py - CH_HB - 0.22 * H) / max(H * 0.36, 1e-3);
-        float sc = 1.0 - sqrt(r2 / (R * R * 0.6084) + hn * hn);            // the body, widest a little above its flat base
-        for (int k = 0; k < 9; k++) {                                       // bubbles sprouting from it
+        H = max(H, R * 0.95);                                               // never a flat saucer
+        // one lumpy dome: a flattened body on the base, bubbles sitting on its surface
+        float hn = (py - CH_HB) / max(H * 0.62, 1e-3);
+        float sc = 1.0 - sqrt(r2 / (R * R * 0.81) + hn * hn);
+        for (int k = 0; k < 11; k++) {
             float fk = float(k);
             float ka = chr(h0, 5.0 + 3.0 * fk), kb = chr(h0, 6.0 + 3.0 * fk), kc = chr(h0, 7.0 + 3.0 * fk);
-            float hk = (fk + 0.5) / 9.0, ang = ka * 6.2832, rad = R * (0.55 - 0.4 * hk) * sqrt(kb);
-            vec3 e = vec3(qx - ccx - cos(ang) * rad, py - CH_HB - H * (0.25 + 0.6 * hk * (0.6 + 0.4 * kc)), qz - ccz - sin(ang) * rad);
-            float br = R * (0.62 - 0.32 * hk) * (0.7 + 0.4 * kc) * (0.85 + 0.15 * L) * 1.3;
+            float ang = ka * 6.2832, rr = sqrt(kb) * 0.8;
+            float hs = H * sqrt(max(1.0 - rr * rr, 0.0)) * 0.62;
+            vec3 e = vec3(dx - cos(ang) * rr * R * 0.9, py - CH_HB - hs * (0.62 + 0.25 * kc), dz - sin(ang) * rr * R * 0.9);
+            float br = R * (0.30 + 0.16 * kc) * (1.0 - 0.35 * rr) * (0.85 + 0.15 * L);
             sc = max(sc, 1.0 - sqrt(e.x * e.x + e.z * e.z + e.y * e.y * 1.1025) / br);
         }
         best = max(best, sc);
@@ -1983,8 +1986,10 @@ float chDens(vec3 p, float s, float tt, bool detail) {
         } else wv += 0.62 * 0.5;
     }
     float dd = s - (1.0 - wv) + 0.42;
-    float base = sm(CH_HB - 0.05, CH_HB + 0.45 + 0.5 * (fbm(p.x * 0.3, p.z * 0.3, 1.0, 2) - 0.5), p.y); // flat, slightly ragged base
-    return clamp(dd * 3.0, 0.0, 1.0) * base * sm(-0.15, 0.15, s);
+    float rr = length(p.xz);
+    float base = sm(CH_HB - 0.05, CH_HB + 0.45 + 0.012 * rr + 0.5 * (fbm(p.x * 0.3, p.z * 0.3, 1.0, 2) - 0.5), p.y); // flat ragged base, softer far out
+    float kk = 3.0 * clamp(30.0 / length(p), 0.3, 1.0);                     // far clouds: softer edges, no stair steps
+    return clamp(dd * kk, 0.0, 1.0) * base * sm(-0.15, 0.15, s);
 }
 void cloudHill(vec3 d, float az, float el) {
     float tt = T / 2.2;
@@ -1997,48 +2002,40 @@ void cloudHill(vec3 d, float az, float el) {
         if (y <= 0.012) return;
         float t0 = CH_HB / y;
         if (t0 >= 200.0) return;
-        float t1 = min(min((CH_HB + CH_HMAX) / y, 200.0), t0 + 70.0);
+        float t1 = min((CH_HB + CH_HMAX) / y, 200.0);
         float jit = fract(sin(dot(d, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-        // pass 1: find where the ray first reaches a cloud cell (cell shapes only - cheap)
-        float dtc = (t1 - t0) / 32.0, tf = -1.0;
-        for (int i = 0; i < 32; i++) {
-            float tc = t0 + dtc * (float(i) + jit);
-            if (chCells(d * tc, tt) > -0.15) { tf = tc - dtc; break; }
-        }
-        if (tf < 0.0) return;
-        float a0 = max(tf, t0), a1 = min(t1, a0 + 22.0);
-        // pass 2: march the cloud itself in fine steps
+        // one march all the way: big steps through clear air, small steps inside the clouds, never giving up early
         vec3 Ls = normalize(vec3(-0.5, 0.6, 0.62));                          // the sun high behind you, on the left
-        const int ST = 96;
-        float dt = (a1 - a0) / float(ST);
         vec3 acc = v3(0.0);
-        float Tr = 1.0;
-        for (int i = 0; i < ST; i++) {
-            if (Tr < 0.02) break;
-            float tc = a0 + dt * (float(i) + jit);
+        float Tr = 1.0, tc = t0 + jit * 0.4;
+        for (int i = 0; i < 160; i++) {
+            if (Tr < 0.02 || tc >= t1) break;
             vec3 p = d * tc;
             float s = chCells(p, tt);
-            if (s < -0.15) continue;
+            float fine = 0.16 + tc * 0.004;
+            if (s <= -0.15) { tc += max(0.45, (-s - 0.15) * 3.0); continue; }
             float D = chDens(p, s, tt, true);
-            if (D < 0.003) continue;
-            float ls = 0.0;
-            { // light march to the sun: the first sample right at the surface (so each lobe shades itself), then further out
-                vec3 q = p + Ls * 0.18; ls += chDens(q, chCells(q, tt), tt, true) * 0.25;
-                q = p + Ls * 0.55;      ls += chDens(q, chCells(q, tt), tt, false) * 0.5;
-                q = p + Ls * 1.3;       ls += chDens(q, chCells(q, tt), tt, false) * 1.0;
-                q = p + Ls * 2.8;       ls += chDens(q, chCells(q, tt), tt, false) * 1.8;
+            if (D > 0.003) {
+                float ls = 0.0;
+                { // light march to the sun: the first sample right at the surface (so each lobe shades itself), then further out
+                    vec3 q = p + Ls * 0.18; ls += chDens(q, chCells(q, tt), tt, true) * 0.25;
+                    q = p + Ls * 0.55;      ls += chDens(q, chCells(q, tt), tt, false) * 0.5;
+                    q = p + Ls * 1.3;       ls += chDens(q, chCells(q, tt), tt, false) * 1.0;
+                    q = p + Ls * 2.8;       ls += chDens(q, chCells(q, tt), tt, false) * 1.8;
+                }
+                float sig = 12.0;
+                float Tl = 0.7 * exp(-ls * sig * 0.45) + 0.3 * exp(-ls * sig * 0.08); // + multiple scattering
+                float powder = 1.0 - exp(-D * sig * 2.0);
+                float hf = clamp((p.y - CH_HB) / 13.0, 0.0, 1.0);
+                vec3 Lc = rgb(255.0, 252.0, 248.0) * Tl * (0.4 + 0.6 * powder) * 2.7
+                        + (rgb(170.0, 186.0, 214.0) * (0.55 + 0.45 * hf) + rgb(190.0, 190.0, 194.0) * 0.3) * (0.58 + 0.25 * sm(40.0, 120.0, tc));
+                float fog = exp(-tc / 105.0);
+                Lc = Lc * fog + hor * (1.0 - fog);
+                float a = 1.0 - exp(-D * sig * fine);
+                acc += Tr * a * Lc;
+                Tr *= 1.0 - a;
             }
-            float sig = 12.0;
-            float Tl = 0.7 * exp(-ls * sig * 0.45) + 0.3 * exp(-ls * sig * 0.08); // + multiple scattering
-            float powder = 1.0 - exp(-D * sig * 2.0);
-            float hf = clamp((p.y - CH_HB) / 13.0, 0.0, 1.0);
-            vec3 Lc = rgb(255.0, 252.0, 248.0) * Tl * (0.4 + 0.6 * powder) * 2.4
-                    + (rgb(178.0, 192.0, 215.0) * (0.6 + 0.4 * hf) + rgb(196.0, 196.0, 198.0) * 0.3) * 0.66;
-            float fog = exp(-tc / 260.0);
-            Lc = Lc * fog + hor * (1.0 - fog);
-            float a = 1.0 - exp(-D * sig * dt);
-            acc += Tr * a * Lc;
-            Tr *= 1.0 - a;
+            tc += fine;
         }
         C = C * Tr + acc;
         return;
