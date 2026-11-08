@@ -1974,7 +1974,7 @@ float chCells(vec3 p, float tt) {
         // one lumpy dome: a flattened body on the base, bubbles sitting on its surface
         float hn = (py - CH_HB) / max(H * 0.62, 1e-3);
         float sc = 1.0 - sqrt(r2 / (R * R * 0.81) + hn * hn);
-        for (int k = 0; k < 11; k++) {
+        for (int k = 0; k < 7; k++) {                                        // [perf] 7 bubbles (was 11)
             float fk = float(k);
             float ka = chr(h0, 5.0 + 3.0 * fk), kb = chr(h0, 6.0 + 3.0 * fk), kc = chr(h0, 7.0 + 3.0 * fk);
             float ang = ka * 6.2832, rr = sqrt(kb) * 0.8;
@@ -2037,9 +2037,8 @@ float chDens(vec3 p, float s, float tt, bool detail) {
         float w2 = 0.62, w3 = 0.62, w4 = 0.62;
         if (nearS > 0.0) {
             w2 = mix(0.62, 1.0 - clamp(chWorley(X1 * 2.1 + vec3(5.3, -1.7, 2.9)), 0.0, 1.0), nearS);
-            w3 = mix(0.62, 1.0 - clamp(chWorley(X1 * 4.3 + vec3(-2.1, 3.3, -4.7)), 0.0, 1.0), nearS);
-            float cl = 1.0 - sm(34.0, 40.0, length(p.xz));                   // the finest only up close
-            if (cl > 0.0) w4 = mix(0.62, 1.0 - clamp(chWorley(X1 * 9.1 + vec3(1.3, -2.2, 0.7)), 0.0, 1.0), nearS * cl);
+            // [perf] the two finest Worley octaves are now a cheap value-noise billow
+            w3 = mix(0.62, 1.0 - abs(2.0 * noise3(X1 * 4.3 + vec3(-2.1, 3.3, -4.7)) - 1.0), nearS);
         }
         wv += w2 * 0.30 + w3 * 0.12 + w4 * 0.08;
     }
@@ -2134,20 +2133,18 @@ void cloudHill(vec3 d, float az, float el) {
         // one march all the way: big steps through clear air, small steps inside the clouds, never giving up early
         vec3 Ls = CH_SUN_DIR;                                                // the sun in front, just behind the hero cloud's towers
         float tc = t0 + jit * 0.4;
-        [loop] for (int i = 0; i < 160; i++) {
-            if (Tr < 0.02 || tc >= t1) break;
+        [loop] for (int i = 0; i < 96; i++) {
+            if (Tr < 0.04 || tc >= t1) break;
             vec3 p = d * tc;
             float s = chCells(p, tt);
-            float fine = 0.16 + tc * 0.004;
-            if (s <= -0.15) { tc += clamp((-s - 0.15) * 3.0, 0.45, 1.2); continue; }
+            float fine = 0.26 + tc * 0.008;                                     // [perf] coarser steps inside, finer up close
+            if (s <= -0.15) { tc += clamp((-s - 0.15) * 3.0, 0.6, 1.6); continue; }
             float D = chDens(p, s, tt, true);
             if (D > 0.003) {
                 float ls = 0.0;
-                { // light march to the sun: the first sample right at the surface (so each lobe shades itself), then further out
-                    vec3 q = p + Ls * 0.18; ls += chDens(q, chCells(q, tt), tt, true) * 0.25;
-                    q = p + Ls * 0.55;      ls += chDens(q, chCells(q, tt), tt, false) * 0.5;
-                    q = p + Ls * 1.3;       ls += chDens(q, chCoarse(q, tt), tt, false) * 1.0;
-                    q = p + Ls * 2.8;       ls += chDens(q, chCoarse(q, tt), tt, false) * 1.8;
+                { // [perf] light march to the sun: two cheap samples (was four, one with full detail)
+                    vec3 q = p + Ls * 0.5;  ls += chDens(q, chCells(q, tt), tt, false) * 0.9;
+                    q = p + Ls * 2.0;       ls += chDens(q, chCoarse(q, tt), tt, false) * 2.4;
                 }
                 float sig = 12.0;
                 float Tl = 0.7 * exp(-ls * sig * 0.45) + 0.3 * exp(-ls * sig * 0.08); // + multiple scattering
@@ -2181,16 +2178,14 @@ void cloudHill(vec3 d, float az, float el) {
             float mu = dot(d, CH_SUN_DIR);
             float rays = (0.35 + 0.65 * max(WAVE >= 0.0 ? sm(0.0, 0.12, WAVE) * (1.0 - sm(0.6, 1.0, WAVE)) : 0.0, MAVG)); // chorus / loud parts
             float gr = 0.0, ws = 0.0;
-            if (mu > -0.2) [loop] for (int i = 0; i < 16; i++) {
-                float f = (float(i) + 0.5) / 16.0;
+            if (mu > 0.72) [loop] for (int i = 0; i < 10; i++) {               // [perf] only looking toward the sun, 10 samples
+                float f = (float(i) + 0.5) / 10.0;
                 vec3 q = normalize(mix(d, CH_SUN_DIR, f));
                 float oc = 0.0;
-                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 26.0, tt)));
-                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 44.0, tt)));
-                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 54.0, tt)));
-                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 62.0, tt)));
+                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 34.0, tt)));
+                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 56.0, tt)));
                 oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 85.0, tt)));
-                float w = pow(0.95, 16.0 - float(i));
+                float w = pow(0.92, 10.0 - float(i));
                 gr += (1.0 - oc) * exp(-(1.0 - dot(q, CH_SUN_DIR)) * 140.0) * w; // only light leaking right round the sun
                 ws += w;
             }
@@ -2207,7 +2202,7 @@ void cloudHill(vec3 d, float az, float el) {
     // ---- the grass field (below ~-32 deg the void takes over anyway)
     if (y < -0.53) { C = v3(0.0); return; }
     const float CAMH = 1.0, HG = 0.55, CS = 0.032;
-    const int NS = 28;
+    const int NS = 18; // [perf] was 28
     float dy = min(y, -1e-4);
     float tg = -CAMH / dy, fx = x * tg, fz = z * tg;
     float gf;
@@ -2223,14 +2218,14 @@ void cloudHill(vec3 d, float az, float el) {
     fc = mix(fc, rgb(140.0, 198.0, 78.0), 0.45 * sm(0.35, 1.3, sheen));
     fc = mix(fc, rgb(150.0, 195.0, 150.0), 0.55 * sm(25.0, 260.0, min(tg, 400.0)));
     float tTop = (-CAMH + HG) / dy;
-    float lod = sm(3.5, 8.5, tTop);
+    float lod = sm(3.0, 6.5, tTop); // [perf] blades only up close
     vec3 nearc = fc * (0.42 + 0.5 * sm(2.0, 7.0, (-CAMH + HG * 0.5) / dy)); // the dark tangle at the roots (lighter further out)
     if (lod < 0.999) {
         float sj = fract(sin(x * 9131.7 + y * 7123.3) * 43758.5453);
         [loop] for (int i = 0; i < NS; i++) {
             float hgt = HG * (1.0 - (float(i) + sj) / float(NS));
             float t = (-CAMH + hgt) / dy;
-            if (t > 9.0) break;
+            if (t > 6.5) break;
             float px0 = x * t, pz0 = z * t;
             float gust;
             vec2 wv = chWind(vec2(px0, pz0), tt, gust);
