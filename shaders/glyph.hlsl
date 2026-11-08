@@ -43,6 +43,7 @@ static const uint F_PETAL    = 512u;  // ring sector inside the quad (the client
 static const uint F_BACKDROP = 1024u; // full-screen frosted copy of the frame with a clear circle in the middle
 static const uint F_BLUR     = 2048u; // [LyricsFlow player] with IMAGE: soft-blurred image, radius glowW (fraction), faded edges
 static const uint F_FEATHER  = 4096u; // [LyricsForge] with IMAGE: no frame - fades out over a rounded-square edge glowW wide
+static const uint F_EYE      = 16384u; // [LyricsForge screen] pos relative to the render camera (rides with it smoothly)
 static const uint F_LIVE     = 8192u; // [LyricsForge screen] with IMAGE: sample the live video screen (t21), not an atlas
 static const uint kAtlases   = 16u;
 
@@ -143,7 +144,7 @@ V2P VSGlyph(uint vid : SV_VertexID, uint iid : SV_InstanceID) {
     else if (g.flags & F_SCREEN) // x 0..aspect, y 0..1 downwards
         o.pos = float4(p.x / max(misc.x, 1e-3) * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);
     else
-        o.pos = mul(viewProj, float4(p + originTime.xyz, 1.0));
+        o.pos = mul(viewProj, float4(p + ((g.flags & F_EYE) ? float3(0, 0, 0) : originTime.xyz), 1.0));
     o.uv   = lerp(g.uv.xy, g.uv.zw, lc);
     o.grad = lc.y;
     o.inst = iid;
