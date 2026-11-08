@@ -1924,16 +1924,17 @@ float chh(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + 
 float chr(float h0, float i) { return fract(h0 * (97.13 + i * 31.7) + i * 0.371); } // cheap extra randoms from one cell hash
 // the hero congestus parked in front of the sun: a wide base with three towers and clear gaps between them - the sun
 // sits just behind their tops, so its light streams out through the gaps as sun shafts
-GCONST vec3 CH_SUN_DIR = vec3(-0.0240, 0.3827, -0.9236);                 // az 181.5, el 22.5
+GCONST vec3 CH_SUN_DIR = vec3(-0.0240, 0.3987, -0.9168);                 // az 178.5, el 23.5: peeking over the middle tower
 float chHero(vec3 p) {
     vec2 H2 = vec2(-0.0262, -0.9997) * 58.0;
     vec2 dd = p.xz - H2;
     vec2 rg = vec2(H2.y, -H2.x) / 58.0, fw = H2 / 58.0;
     float u = dot(dd, rg), w = dot(dd, fw), hn = (p.y - CH_HB) / 7.0;
+    if (abs(w) > 20.0 || abs(u) > 22.0 || p.y > CH_HB + 30.0) return -1.0;
     float s = 1.0 - sqrt((u / 16.0) * (u / 16.0) + (w / 9.0) * (w / 9.0) + hn * hn);
     for (int t = 0; t < 3; t++) {
         float tu = t == 0 ? -8.5 : (t == 1 ? 0.8 : 9.5), tw = t == 0 ? 0.0 : (t == 1 ? 1.0 : -1.0);
-        float top = t == 0 ? 19.0 : (t == 1 ? 25.0 : 16.0), r0 = t == 0 ? 4.6 : (t == 1 ? 5.0 : 4.2);
+        float top = t == 0 ? 19.0 : (t == 1 ? 15.0 : 16.0), r0 = t == 0 ? 4.6 : (t == 1 ? 5.0 : 4.2);
         for (int j = 0; j < 5; j++) {
             float f = (float(j) + 0.5) / 5.0;
             float by = CH_HB + 3.0 + f * (top - 3.0), br = r0 * (1.0 - 0.35 * f);
@@ -1982,6 +1983,7 @@ float chCells(vec3 p, float tt) {
 }
 // cheap cloud occupancy for the sun shafts: each cloud's dome body only (plus the hero)
 float chCoarse(vec3 p, float tt) {
+    if (p.y < CH_HB - 1.0 || p.y > CH_HB + 30.0) return -1.0;
     float qx = p.x - CH_WIND.x * tt, qz = p.z - CH_WIND.y * tt, py = p.y;
     float cx0 = floor(qx / CH_G), cz0 = floor(qz / CH_G);
     float best = chHero(p);
@@ -2025,11 +2027,15 @@ float chDens(vec3 p, float s, float tt, bool detail) {
         float wx = fbm(p.x * 0.12 + 3.1, p.y * 0.12 - tt * 0.01, p.z * 0.12, 2) - 0.5;
         vec3 X1 = vec3(p.x * 0.5 + wx * 1.5 - tt * 0.012, p.y * 0.5 - tt * 0.035, p.z * 0.5 + wx * 1.5 + tt * 0.005); // slow boiling, rising
         wv = (1.0 - clamp(chWorley(X1), 0.0, 1.0)) * 0.5;
-        if (s < 0.45) { // near the surface: finer billows (and the finest only up close)
-            wv += (1.0 - clamp(chWorley(X1 * 2.1 + vec3(5.3, -1.7, 2.9)), 0.0, 1.0)) * 0.30;
-            wv += (1.0 - clamp(chWorley(X1 * 4.3 + vec3(-2.1, 3.3, -4.7)), 0.0, 1.0)) * 0.12;
-            wv += (length(p.xz) < 40.0 ? 1.0 - clamp(chWorley(X1 * 9.1 + vec3(1.3, -2.2, 0.7)), 0.0, 1.0) : 0.62) * 0.08;
-        } else wv += 0.62 * 0.5;
+        float nearS = 1.0 - sm(0.35, 0.55, s);                            // near the surface: finer billows, blended in (no seams)
+        float w2 = 0.62, w3 = 0.62, w4 = 0.62;
+        if (nearS > 0.0) {
+            w2 = mix(0.62, 1.0 - clamp(chWorley(X1 * 2.1 + vec3(5.3, -1.7, 2.9)), 0.0, 1.0), nearS);
+            w3 = mix(0.62, 1.0 - clamp(chWorley(X1 * 4.3 + vec3(-2.1, 3.3, -4.7)), 0.0, 1.0), nearS);
+            float cl = 1.0 - sm(34.0, 40.0, length(p.xz));                   // the finest only up close
+            if (cl > 0.0) w4 = mix(0.62, 1.0 - clamp(chWorley(X1 * 9.1 + vec3(1.3, -2.2, 0.7)), 0.0, 1.0), nearS * cl);
+        }
+        wv += w2 * 0.30 + w3 * 0.12 + w4 * 0.08;
     }
     float dd = s - (1.0 - wv) + 0.42;
     float rr = length(p.xz);
@@ -2050,13 +2056,13 @@ vec2 chWind(vec2 w, float tt, out float gust) {
     vec2 gd = vec2(cos(ga), sin(ga));
     float front = -18.0 + (tl - 2.0 * gh2) * 7.0;                       // the front sweeps across at ~7 m/s
     float q = (dot(w, gd) - front) / 6.0;
-    gust = (0.6 + 0.4 * gh2) * exp(-q * q) * exp(-max(q, 0.0) * 0.6); // sharp leading edge, a softer tail
+    gust = (0.6 + 0.4 * gh2) * exp(-q * q) * exp(-max(q, 0.0) * 0.6) * sm(0.0, 2.0, tl) * (1.0 - sm(17.0, 20.0, tl)); // sharp front, soft tail
     vec2 wv = bd * breeze + gd * gust;
     if (WAVE >= 0.0) { // the drop / chorus: one big gust front tears across the whole field
         float da = ang + 0.5;
         vec2 dg = vec2(cos(da), sin(da));
         float q2 = (dot(w, dg) - (-25.0 + WAVE * 80.0)) / 7.0;
-        float g2 = 1.4 * exp(-q2 * q2) * exp(-max(q2, 0.0) * 0.4) * (1.0 - sm(0.7, 1.0, WAVE));
+        float g2 = 1.4 * exp(-q2 * q2) * exp(-max(q2, 0.0) * 0.4) * sm(0.0, 0.05, WAVE) * (1.0 - sm(0.7, 1.0, WAVE));
         wv += dg * g2; gust += g2;
     }
     if (KICK > 0.03) { // every kick: a soft ring wave rolls outward through the grass in front of you
@@ -2076,7 +2082,7 @@ float chBirds(float az, float el, float tt) {
     float dirn = h2 < 0.5 ? 1.0 : -1.0;
     float faz = 180.0 + dirn * (-55.0 + lt * 5.0), fel = 14.0 + 18.0 * h1 + sin(lt * 0.4) * 1.5;
     float fade = sm(0.0, 2.0, lt) * (1.0 - sm(19.0, 22.0, lt));
-    vec2 p = vec2(wrap180(az - faz) * cos(radians(el)) * dirn, el - fel);    // degrees round the flock, +x = ahead
+    vec2 p = vec2(wrap180(az - faz) * cos(radians(el)) * dirn, el - fel) / 1.8; // degrees round the flock (scaled), +x = ahead
     if (abs(p.x) > 9.0 || abs(p.y) > 6.0) return 0.0;
     float a = 0.0;
     for (int k = 0; k < 9; k++) {
@@ -2093,9 +2099,7 @@ float chBirds(float az, float el, float tt) {
 // floating fluff: dandelion seeds and pollen drifting on the breeze, catching the sun; a few in calm parts, thicker as
 // the song builds
 void chFluff(vec3 d, float tt) {
-    float g;
-    vec2 wv = chWind(vec2(0.0, 0.0), tt, g);
-    vec3 q = d * 24.0 + vec3(tt * 0.35 * wv.x, tt * 0.05 + sin(tt * 0.3) * 0.2, tt * 0.35 * wv.y);
+    vec3 q = d * 15.0 + vec3(tt * 0.06 + sin(tt * 0.21) * 0.3, tt * 0.05 + sin(tt * 0.3) * 0.2, tt * 0.025 + cos(tt * 0.17) * 0.3);
     vec3 cell = floor(q), f = q - cell;
     vec3 h3 = sh33(cell);
     float h = sh31(cell + 5.1);
@@ -2104,7 +2108,7 @@ void chFluff(vec3 d, float tt) {
         vec3 dd = f - o;
         float r2 = dot(dd, dd);
         float sun = 0.6 + 0.8 * pow(max(dot(d, CH_SUN_DIR), 0.0), 4.0);         // brighter against the light
-        C += rgb(255.0, 250.0, 236.0) * (exp(-r2 / 0.0009) * 0.9 + exp(-r2 / 0.006) * 0.12) * sun * (0.5 + 0.5 * h3.z);
+        C += rgb(255.0, 250.0, 236.0) * (exp(-r2 / 0.0011) * 1.3 + exp(-r2 / 0.008) * 0.2) * sun * (0.5 + 0.5 * h3.z);
     }
 }
 void cloudHill(vec3 d, float az, float el) {
@@ -2115,29 +2119,29 @@ void cloudHill(vec3 d, float az, float el) {
         C = mix(hor, zen, pow(clamp(yy * 1.4, 0.0, 1.0), 0.5));
         float ci = fbm(x / (y + 0.1) * 0.6 + tt * 0.004, z / (y + 0.1) * 3.0, 2.0, 5); // high cirrus wisps
         C += rgb(235.0, 242.0, 255.0) * 0.35 * sm(0.55, 0.8, ci) * sm(0.05, 0.3, y);
-        if (y <= 0.012) return;
-        float t0 = CH_HB / y;
-        if (t0 >= 200.0) return;
-        float t1 = min((CH_HB + CH_HMAX) / y, 200.0);
+        float t0 = CH_HB / max(y, 1e-3);
+        vec3 acc = v3(0.0);
+        float Tr = 1.0;
+        if (y > 0.012 && t0 < 200.0) {
+        float t1 = min((CH_HB + 27.0) / y, 200.0);                       // high enough for the hero's towers
         float jit = fract(sin(dot(d, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
         // one march all the way: big steps through clear air, small steps inside the clouds, never giving up early
         vec3 Ls = CH_SUN_DIR;                                                // the sun in front, just behind the hero cloud's towers
-        vec3 acc = v3(0.0);
-        float Tr = 1.0, tc = t0 + jit * 0.4;
-        for (int i = 0; i < 160; i++) {
+        float tc = t0 + jit * 0.4;
+        [loop] for (int i = 0; i < 160; i++) {
             if (Tr < 0.02 || tc >= t1) break;
             vec3 p = d * tc;
             float s = chCells(p, tt);
             float fine = 0.16 + tc * 0.004;
-            if (s <= -0.15) { tc += max(0.45, (-s - 0.15) * 3.0); continue; }
+            if (s <= -0.15) { tc += clamp((-s - 0.15) * 3.0, 0.45, 1.2); continue; }
             float D = chDens(p, s, tt, true);
             if (D > 0.003) {
                 float ls = 0.0;
                 { // light march to the sun: the first sample right at the surface (so each lobe shades itself), then further out
                     vec3 q = p + Ls * 0.18; ls += chDens(q, chCells(q, tt), tt, true) * 0.25;
                     q = p + Ls * 0.55;      ls += chDens(q, chCells(q, tt), tt, false) * 0.5;
-                    q = p + Ls * 1.3;       ls += chDens(q, chCells(q, tt), tt, false) * 1.0;
-                    q = p + Ls * 2.8;       ls += chDens(q, chCells(q, tt), tt, false) * 1.8;
+                    q = p + Ls * 1.3;       ls += chDens(q, chCoarse(q, tt), tt, false) * 1.0;
+                    q = p + Ls * 2.8;       ls += chDens(q, chCoarse(q, tt), tt, false) * 1.8;
                 }
                 float sig = 12.0;
                 float Tl = 0.7 * exp(-ls * sig * 0.45) + 0.3 * exp(-ls * sig * 0.08); // + multiple scattering
@@ -2154,6 +2158,7 @@ void cloudHill(vec3 d, float az, float el) {
             }
             tc += fine;
         }
+        }
         C = C * Tr + acc;
         { // the sun (mostly hidden behind the hero) and its glow through the thin edges
             float mu = dot(d, CH_SUN_DIR);
@@ -2164,7 +2169,7 @@ void cloudHill(vec3 d, float az, float el) {
             float mu = dot(d, CH_SUN_DIR);
             float rays = (0.35 + 0.65 * max(WAVE >= 0.0 ? sm(0.0, 0.12, WAVE) * (1.0 - sm(0.6, 1.0, WAVE)) : 0.0, MAVG)); // chorus / loud parts
             float gr = 0.0, ws = 0.0;
-            for (int i = 0; i < 16; i++) {
+            if (mu > -0.2) [loop] for (int i = 0; i < 16; i++) {
                 float f = (float(i) + 0.5) / 16.0;
                 vec3 q = normalize(mix(d, CH_SUN_DIR, f));
                 float oc = 0.0;
@@ -2177,7 +2182,7 @@ void cloudHill(vec3 d, float az, float el) {
                 gr += (1.0 - oc) * exp(-(1.0 - dot(q, CH_SUN_DIR)) * 55.0) * w;
                 ws += w;
             }
-            gr /= ws;
+            gr /= max(ws, 1e-4);
             float shafts = clamp(gr * exp(-(1.0 - mu) * 3.0) * 3.2, 0.0, 2.5);
             float lanes = exp(-(1.0 - mu) * 1.5) * (1.0 - clamp(gr * 3.0, 0.0, 1.0)); // the lanes between go a touch darker
             C *= 1.0 - 0.22 * lanes * rays;
@@ -2187,15 +2192,18 @@ void cloudHill(vec3 d, float az, float el) {
         chFluff(d, tt);
         return;
     }
-    // ---- the grass field
+    // ---- the grass field (below ~-32 deg the void takes over anyway)
+    if (y < -0.53) { C = v3(0.0); return; }
     const float CAMH = 1.0, HG = 0.55, CS = 0.032;
     const int NS = 28;
     float dy = min(y, -1e-4);
     float tg = -CAMH / dy, fx = x * tg, fz = z * tg;
     float gf;
     vec2 wf = chWind(vec2(fx, fz), tt, gf);
-    vec2 wn = wf / max(length(wf), 1e-3);
-    float ripple = 0.5 + 0.5 * sin(dot(vec2(fx, fz), wn) * 0.35 - tt * 1.6 + fbm(fx * 0.05, fz * 0.05, tt * 0.05, 3) * 5.0);
+    float bang = 0.7 + 3.2 * (fbm(tt * 0.015, 3.3, 7.7, 2) - 0.5);
+    vec2 wn = vec2(cos(bang), sin(bang));                                   // the steady breeze direction (no shimmer far out)
+    float ripple = 0.5 + 0.5 * sin(dot(vec2(fx, fz), wn) * 0.35 - tt * 1.6 + (tg < 40.0 ? fbm(fx * 0.05, fz * 0.05, tt * 0.05, 3) * 5.0 : 2.5));
+    ripple = mix(ripple, 0.5, sm(60.0, 200.0, tg));
     float sheen = ripple * (0.35 + length(wf)) + 1.4 * gf;               // a gust shows as a bright wave: the blades bow and flash
     float pat = fbm(fx * 0.25, fz * 0.6, 2.0, 4);
     pat += (fbm(fx * 1.6 - tt * 0.8, fz * 4.0, 5.0, 3) - 0.5) * 0.35 * (1.0 - sm(10.0, 40.0, min(tg, 400.0))); // finer mid-field detail
@@ -2207,12 +2215,20 @@ void cloudHill(vec3 d, float az, float el) {
     vec3 nearc = fc * (0.42 + 0.5 * sm(2.0, 7.0, (-CAMH + HG * 0.5) / dy)); // the dark tangle at the roots (lighter further out)
     if (lod < 0.999) {
         float sj = fract(sin(x * 9131.7 + y * 7123.3) * 43758.5453);
-        for (int i = 0; i < NS; i++) {
+        [loop] for (int i = 0; i < NS; i++) {
             float hgt = HG * (1.0 - (float(i) + sj) / float(NS));
             float t = (-CAMH + hgt) / dy;
-            if (t > 9.0) continue;
+            if (t > 9.0) break;
             float px0 = x * t, pz0 = z * t;
-            float px = px0 * 0.8 - pz0 * 0.6, pz = px0 * 0.6 + pz0 * 0.8; // the blade grid turned off the view axis
+            float gust;
+            vec2 wv = chWind(vec2(px0, pz0), tt, gust);
+            wv = vec2(wv.x * 0.8 - wv.y * 0.6, wv.x * 0.6 + wv.y * 0.8);        // into the blade grid's frame
+            float wl = length(wv);
+            vec2 wn2 = wv / max(wl, 1e-3);
+            float hq = hgt / HG;
+            float swayC = sin(tt * 2.2 + dot(vec2(px0, pz0), wn) * 0.8) * (0.02 + 0.04 * wl); // the breeze rolling through
+            vec2 off = wn2 * (0.38 * wl * hq * hq) + vec2(-wn2.y, wn2.x) * swayC * hq * hq;
+            float px = px0 * 0.8 - pz0 * 0.6 - off.x, pz = px0 * 0.6 + pz0 * 0.8 - off.y; // look up where this blade's root is
             float cx = floor(px / CS) + 37.0, cz = floor(pz / CS) + 91.0;
             float h1 = fract(sin(cx * 127.1 + cz * 311.7) * 43758.5453), h2 = fract(sin(cx * 269.5 + cz * 183.3) * 43758.5453);
             float h3 = fract(sin(cx * 419.2 + cz * 371.9) * 43758.5453);
@@ -2220,15 +2236,9 @@ void cloudHill(vec3 d, float az, float el) {
             float Hb = HG * (0.45 + 0.45 * h3) * (0.6 + 0.7 * clump);
             float hn = hgt / max(Hb, 1e-3);
             if (hn >= 1.0) continue;
-            float gust;
-            vec2 wv = chWind(vec2(px0, pz0), tt, gust);
-            wv = vec2(wv.x * 0.8 - wv.y * 0.6, wv.x * 0.6 + wv.y * 0.8);        // into the blade grid's frame
-            float wl = length(wv);
-            vec2 wn2 = wv / max(wl, 1e-3);
-            float sway = sin(tt * 2.2 + h1 * 6.2832 + dot(vec2(px, pz), wn2) * 0.8) * (0.025 + 0.05 * wl); // each blade's own flutter
-            float bend = (0.38 * wl + 0.04 * h1) * hn * hn, lean = (h2 - 0.5) * 0.05 * hn;
-            vec2 off = wn2 * bend + vec2(-wn2.y, wn2.x) * sway * hn * hn;
-            float rx = (cx - 37.0 + 0.15 + 0.7 * h1) * CS + off.x + lean, rz = (cz - 91.0 + 0.15 + 0.7 * h2) * CS + off.y;
+            float flut = sin(tt * 3.1 + h1 * 6.2832) * 0.006 * (0.5 + wl) * hn;  // each blade's own small flutter (stays in its cell)
+            float lean = (h2 - 0.5) * 0.012 * hn;
+            float rx = (cx - 37.0 + 0.15 + 0.7 * h1) * CS + lean - wn2.y * flut, rz = (cz - 91.0 + 0.15 + 0.7 * h2) * CS + wn2.x * flut;
             float r = CS * 0.55 * pow(clamp(1.0 - hn, 0.0, 1.0), 0.65);
             if ((px - rx) * (px - rx) + (pz - rz) * (pz - rz) < r * r) {
                 vec3 midc = mix(rgb(52.0, 128.0, 26.0), rgb(70.0, 140.0, 20.0), h3), tipc = mix(rgb(140.0, 196.0, 70.0), rgb(170.0, 205.0, 90.0), h3);
@@ -2336,7 +2346,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
         else
         realSky(x, y, z, el, rk);
         if (PRESET == 45) mirrorFx(dir);
-        if (BKIND >= 0) bodyGlow(x, y, z, az, el);
+        if (BKIND >= 0 && PRESET != 46) bodyGlow(x, y, z, az, el);       // Cloud Hill has its own sun
     } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
         C = styledSky(dir, PRESET <= 28 ? PRESET - 20 : PRESET - 25, T / 2.2);
@@ -2435,18 +2445,18 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
 // horizon over the zenith, a seam of the new sky's light riding on it (only during the ~1.6 s of the sweep)
 // [LyricsForge] the void: looking down past an island edge (Hive / CubeCraft sky maps) shows pure OLED black instead of
 // the sky's colours smeared under the horizon. Sky colour to ~-20 deg, then quickly pure black by ~-32 deg.
-vec4 voidBlack(vec4 c, vec3 skyDir) {
+vec4 voidBlack(vec4 c, vec3 skyDir, int p) {
     float el = degrees(asin(clamp(normalize(skyDir).y, -1.0, 1.0)));
-    if (deepSpace(PRESET) || PRESET == 45) return c; // space / the mirror all the way round: no void cutoff
+    if (deepSpace(p) || p == 45) return c; // space / the mirror all the way round: no void cutoff
     float k = sm(-32.0, -20.0, el); // [LyricsForge] sky colour down to ~-20 deg (where you look over an island edge), black by ~-32
     c.rgb *= k;
     return c;
 }
 vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     PXB = 0;
-    vec4 cn = skyOne(skyDir, skyInfo4);
+    vec4 cn = voidBlack(skyOne(skyDir, skyInfo4), skyDir, PRESET);        // each sky gets its own void (its own preset)
     float swr = PX_FETCH(14).r;
-    if (swr < 0.002) return voidBlack(cn, skyDir);
+    if (swr < 0.002) return cn;
     float sw = clamp((swr * 255.0 - 1.0) / 254.0, 0.0, 1.0);
     vec3 seamC = mix(A1, HOR, 0.4);
     if (lum3(seamC) < 0.05) seamC = v3(0.85);
@@ -2457,7 +2467,7 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     vec4 co = vec4(cn.rgb, 0.0);
     if (!awake) {
         PXB = PX_PREV_BASE;
-        co = skyOne(skyDir, vec4(skyInfo4.xyz, 0.0));
+        co = voidBlack(skyOne(skyDir, vec4(skyInfo4.xyz, 0.0)), skyDir, PRESET);
         PXB = 0;
     }
     // [LyricsForge] chapter (texel 14.b): the next song's sky sweeps in slower with a startup-like ring
@@ -2470,5 +2480,5 @@ vec4 skyMain(vec3 skyDir, vec4 skyInfo4) {
     float seam = exp(-(el - front) * (el - front) / (awake ? 26.0 : (chap ? 22.0 : 10.0))) * sin(3.14159265 * sw);
     c.rgb = clamp(c.rgb + seamC * seam * (awake ? 0.9 : (chap ? 0.85 : 0.55)), 0.0, 1.0);
     if (awake) c.a = max(c.a, clamp(seam * 0.85, 0.0, 1.0) * cn.a);
-    return voidBlack(c, skyDir);
+    return c;
 }
