@@ -1922,6 +1922,28 @@ GCONST float CH_HB = 6.5, CH_HMAX = 17.0, CH_G = 13.0, CH_PER = 100.0;
 GCONST vec2 CH_WIND = vec2(0.16, 0.055);
 float chh(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + s * 74.7) * 43758.5453); }
 float chr(float h0, float i) { return fract(h0 * (97.13 + i * 31.7) + i * 0.371); } // cheap extra randoms from one cell hash
+// the hero congestus parked in front of the sun: a wide base with three towers and clear gaps between them - the sun
+// sits just behind their tops, so its light streams out through the gaps as sun shafts
+GCONST vec3 CH_SUN_DIR = vec3(-0.0240, 0.3827, -0.9236);                 // az 181.5, el 22.5
+float chHero(vec3 p) {
+    vec2 H2 = vec2(-0.0262, -0.9997) * 58.0;
+    vec2 dd = p.xz - H2;
+    vec2 rg = vec2(H2.y, -H2.x) / 58.0, fw = H2 / 58.0;
+    float u = dot(dd, rg), w = dot(dd, fw), hn = (p.y - CH_HB) / 7.0;
+    float s = 1.0 - sqrt((u / 16.0) * (u / 16.0) + (w / 9.0) * (w / 9.0) + hn * hn);
+    for (int t = 0; t < 3; t++) {
+        float tu = t == 0 ? -8.5 : (t == 1 ? 0.8 : 9.5), tw = t == 0 ? 0.0 : (t == 1 ? 1.0 : -1.0);
+        float top = t == 0 ? 19.0 : (t == 1 ? 25.0 : 16.0), r0 = t == 0 ? 4.6 : (t == 1 ? 5.0 : 4.2);
+        for (int j = 0; j < 5; j++) {
+            float f = (float(j) + 0.5) / 5.0;
+            float by = CH_HB + 3.0 + f * (top - 3.0), br = r0 * (1.0 - 0.35 * f);
+            float ou = tu + sin(float(j) * 2.3 + tu) * 1.1, ow = tw + cos(float(j) * 1.7 + tu) * 1.0;
+            vec3 e = vec3(u - ou, (p.y - by) * 1.05, w - ow);
+            s = max(s, 1.0 - length(e) / br);
+        }
+    }
+    return s;
+}
 float chCells(vec3 p, float tt) {
     float qx = p.x - CH_WIND.x * tt, qz = p.z - CH_WIND.y * tt, py = p.y;
     float cx0 = floor(qx / CH_G), cz0 = floor(qz / CH_G);
@@ -1955,6 +1977,30 @@ float chCells(vec3 p, float tt) {
             sc = max(sc, 1.0 - sqrt(e.x * e.x + e.z * e.z + e.y * e.y * 1.1025) / br);
         }
         best = max(best, sc - (1.0 - sm(0.0, 0.7, L)) * 1.3);              // forming / dissolving: eaten away from the edges in
+    }
+    return max(best, chHero(p));
+}
+// cheap cloud occupancy for the sun shafts: each cloud's dome body only (plus the hero)
+float chCoarse(vec3 p, float tt) {
+    float qx = p.x - CH_WIND.x * tt, qz = p.z - CH_WIND.y * tt, py = p.y;
+    float cx0 = floor(qx / CH_G), cz0 = floor(qz / CH_G);
+    float best = chHero(p);
+    for (int o = 0; o < 9; o++) {
+        float cx = cx0 + float(o % 3) - 1.0, cz = cz0 + float(o / 3) - 1.0;
+        float f = tt / CH_PER + chh(cx, cz, 1.0), gen = floor(f);
+        f -= gen;
+        float h0 = chh(cx + gen * 13.1, cz - gen * 7.3, 2.0);
+        if (chr(h0, 0.0) >= 0.8) continue;
+        float L = sm(0.0, 0.45, f) * (1.0 - sm(0.6, 1.0, f));
+        float ccx = (cx + 0.35 + 0.3 * chr(h0, 1.0)) * CH_G, ccz = (cz + 0.35 + 0.3 * chr(h0, 2.0)) * CH_G;
+        L *= sm(13.0, 19.0, length(vec2(ccx + CH_WIND.x * tt, ccz + CH_WIND.y * tt)));
+        if (L <= 0.005) continue;
+        float R = CH_G * (0.25 + 0.16 * chr(h0, 3.0)) * (0.7 + 0.3 * L);
+        float hv = chr(h0, 4.0);
+        float H = max(CH_HMAX * (0.22 + 0.35 * hv + 0.55 * pow(hv, 6.0)) * pow(max(L, 0.12), 0.6), R * 0.95);
+        float hn = (py - CH_HB) / max(H * 0.7, 1e-3);
+        vec2 e = vec2(qx - ccx, qz - ccz) / (R * 1.1);
+        best = max(best, 1.0 - sqrt(dot(e, e) + hn * hn) - (1.0 - sm(0.0, 0.7, L)) * 1.3);
     }
     return best;
 }
@@ -2021,7 +2067,7 @@ void cloudHill(vec3 d, float az, float el) {
         float t1 = min((CH_HB + CH_HMAX) / y, 200.0);
         float jit = fract(sin(dot(d, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
         // one march all the way: big steps through clear air, small steps inside the clouds, never giving up early
-        vec3 Ls = normalize(vec3(-0.5, 0.6, 0.62));                          // the sun high behind you, on the left
+        vec3 Ls = CH_SUN_DIR;                                                // the sun in front, just behind the hero cloud's towers
         vec3 acc = v3(0.0);
         float Tr = 1.0, tc = t0 + jit * 0.4;
         for (int i = 0; i < 160; i++) {
@@ -2044,6 +2090,7 @@ void cloudHill(vec3 d, float az, float el) {
                 float powder = 1.0 - exp(-D * sig * 2.0);
                 float hf = clamp((p.y - CH_HB) / 13.0, 0.0, 1.0);
                 vec3 Lc = rgb(255.0, 252.0, 248.0) * Tl * (0.4 + 0.6 * powder) * 2.7
+                        + rgb(255.0, 246.0, 225.0) * Tl * (1.0 - powder) * MBASS * 1.4   // edges glow brighter with the bass
                         + (rgb(170.0, 186.0, 214.0) * (0.55 + 0.45 * hf) + rgb(190.0, 190.0, 194.0) * 0.3) * (0.58 + 0.25 * sm(40.0, 120.0, tc));
                 float fog = exp(-tc / 105.0);
                 Lc = Lc * fog + hor * (1.0 - fog);
@@ -2054,6 +2101,34 @@ void cloudHill(vec3 d, float az, float el) {
             tc += fine;
         }
         C = C * Tr + acc;
+        { // the sun (mostly hidden behind the hero) and its glow through the thin edges
+            float mu = dot(d, CH_SUN_DIR);
+            C += rgb(255.0, 250.0, 235.0) * (exp(-(1.0 - mu) * 2500.0) * 6.0 + exp(-(1.0 - mu) * 60.0) * 0.35) * Tr;
+        }
+        { // sun shafts: from this pixel look back toward the sun and add up the bright, unblocked sky along the way -
+          // the hero's towers (and any cloud near the sun) cut dark lanes that fan out from behind them
+            float mu = dot(d, CH_SUN_DIR);
+            float rays = (0.35 + 0.65 * max(WAVE >= 0.0 ? sm(0.0, 0.12, WAVE) * (1.0 - sm(0.6, 1.0, WAVE)) : 0.0, MAVG)); // chorus / loud parts
+            float gr = 0.0, ws = 0.0;
+            for (int i = 0; i < 16; i++) {
+                float f = (float(i) + 0.5) / 16.0;
+                vec3 q = normalize(mix(d, CH_SUN_DIR, f));
+                float oc = 0.0;
+                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 26.0, tt)));
+                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 44.0, tt)));
+                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 54.0, tt)));
+                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 62.0, tt)));
+                oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 85.0, tt)));
+                float w = pow(0.91, 16.0 - float(i));
+                gr += (1.0 - oc) * exp(-(1.0 - dot(q, CH_SUN_DIR)) * 55.0) * w;
+                ws += w;
+            }
+            gr /= ws;
+            float shafts = clamp(gr * exp(-(1.0 - mu) * 3.0) * 3.2, 0.0, 2.5);
+            float lanes = exp(-(1.0 - mu) * 1.5) * (1.0 - clamp(gr * 3.0, 0.0, 1.0)); // the lanes between go a touch darker
+            C *= 1.0 - 0.22 * lanes * rays;
+            C += rgb(255.0, 247.0, 230.0) * shafts * 1.15 * rays;
+        }
         return;
     }
     // ---- the grass field
@@ -2149,7 +2224,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
 
     int rk = realKind(PRESET);
     MBASS = 0.0; MHIGH = 0.0; MAVG = 0.0;
-    if (PRESET == 45) {
+    if (PRESET == 45 || PRESET == 46) {
         vec4 sp4 = px(15) * 255.0;
         float sb[8];
         for (int k = 0; k < 4; k++) { float v = sp4[k]; float hi = floor(v / 16.0); sb[2 * k] = (v - hi * 16.0) / 15.0; sb[2 * k + 1] = hi / 15.0; }
