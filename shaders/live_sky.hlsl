@@ -1924,8 +1924,9 @@ float chh(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + 
 float chr(float h0, float i) { return fract(h0 * (97.13 + i * 31.7) + i * 0.371); } // cheap extra randoms from one cell hash
 // the hero congestus parked in front of the sun: a wide base with three towers and clear gaps between them - the sun
 // sits just behind their tops, so its light streams out through the gaps as sun shafts
-GCONST vec3 CH_SUN_DIR = vec3(-0.0240, 0.3987, -0.9168);                 // az 178.5, el 23.5: peeking over the middle tower
+GCONST vec3 CH_SUN_DIR = vec3(-0.6287, 0.2079, -0.7493);                 // az 140, el 12: low, off to the side, among the clouds
 float chHero(vec3 p) {
+    return -1.0;                                                         // (retired: the drifting clouds cross the sun instead)
     vec2 H2 = vec2(-0.0262, -0.9997) * 58.0;
     vec2 dd = p.xz - H2;
     vec2 rg = vec2(H2.y, -H2.x) / 58.0, fw = H2 / 58.0;
@@ -2146,10 +2147,16 @@ void cloudHill(vec3 d, float az, float el) {
                 float sig = 12.0;
                 float Tl = 0.7 * exp(-ls * sig * 0.45) + 0.3 * exp(-ls * sig * 0.08); // + multiple scattering
                 float powder = 1.0 - exp(-D * sig * 2.0);
+                float muv = dot(d, Ls);
+                float hgF = (1.0 - 0.5625) / pow(1.5625 - 1.5 * muv, 1.5), hgB = (1.0 - 0.04) / pow(1.04 + 0.4 * muv, 1.5);
+                Tl *= 0.35 + 0.65 * (0.55 * hgF + 0.45 * hgB) / 1.6;              // strong forward scatter
+                float back = sm(0.75, 0.97, muv);
+                float hgR = (1.0 - 0.7225) / pow(1.7225 - 1.7 * muv, 1.5);
                 float hf = clamp((p.y - CH_HB) / 13.0, 0.0, 1.0);
                 vec3 Lc = rgb(255.0, 252.0, 248.0) * Tl * (0.4 + 0.6 * powder) * 2.7
                         + rgb(255.0, 246.0, 225.0) * Tl * (1.0 - powder) * MBASS * 1.4   // edges glow brighter with the bass
                         + (rgb(170.0, 186.0, 214.0) * (0.55 + 0.45 * hf) + rgb(190.0, 190.0, 194.0) * 0.3) * (0.58 + 0.25 * sm(40.0, 120.0, tc));
+                Lc = Lc * (1.0 - 0.5 * back) + rgb(255.0, 244.0, 220.0) * (1.0 - powder) * (1.0 - powder) * hgR * 0.05 * back; // backlit body, silver rim
                 float fog = exp(-tc / 105.0);
                 Lc = Lc * fog + hor * (1.0 - fog);
                 float a = 1.0 - exp(-D * sig * fine);
@@ -2162,7 +2169,7 @@ void cloudHill(vec3 d, float az, float el) {
         C = C * Tr + acc;
         { // the sun (mostly hidden behind the hero) and its glow through the thin edges
             float mu = dot(d, CH_SUN_DIR);
-            C += rgb(255.0, 250.0, 235.0) * (exp(-(1.0 - mu) * 2500.0) * 6.0 + exp(-(1.0 - mu) * 60.0) * 0.35) * Tr;
+            C += rgb(255.0, 250.0, 235.0) * (exp(-(1.0 - mu) * 2500.0) * 6.0 + exp(-(1.0 - mu) * 60.0) * 0.12) * Tr;
         }
         { // sun shafts: from this pixel look back toward the sun and add up the bright, unblocked sky along the way -
           // the hero's towers (and any cloud near the sun) cut dark lanes that fan out from behind them
@@ -2178,13 +2185,13 @@ void cloudHill(vec3 d, float az, float el) {
                 oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 54.0, tt)));
                 oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 62.0, tt)));
                 oc = max(oc, sm(-0.2, 0.25, chCoarse(q * 85.0, tt)));
-                float w = pow(0.91, 16.0 - float(i));
-                gr += (1.0 - oc) * exp(-(1.0 - dot(q, CH_SUN_DIR)) * 55.0) * w;
+                float w = pow(0.95, 16.0 - float(i));
+                gr += (1.0 - oc) * exp(-(1.0 - dot(q, CH_SUN_DIR)) * 140.0) * w; // only light leaking right round the sun
                 ws += w;
             }
             gr /= max(ws, 1e-4);
-            float shafts = clamp(gr * exp(-(1.0 - mu) * 3.0) * 3.2, 0.0, 2.5);
-            float lanes = exp(-(1.0 - mu) * 1.5) * (1.0 - clamp(gr * 3.0, 0.0, 1.0)); // the lanes between go a touch darker
+            float shafts = clamp(gr * exp(-(1.0 - mu) * 3.0) * 6.0, 0.0, 2.0) * (0.25 + 0.75 * Tr); // in the open sky, not painted over clouds
+            float lanes = exp(-(1.0 - mu) * 1.5) * (1.0 - clamp(gr * 8.0, 0.0, 1.0)) * Tr; // the lanes between go a touch darker
             C *= 1.0 - 0.22 * lanes * rays;
             C += rgb(255.0, 247.0, 230.0) * shafts * 1.15 * rays;
         }
