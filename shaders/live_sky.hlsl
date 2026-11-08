@@ -2051,7 +2051,61 @@ vec2 chWind(vec2 w, float tt, out float gust) {
     float front = -18.0 + (tl - 2.0 * gh2) * 7.0;                       // the front sweeps across at ~7 m/s
     float q = (dot(w, gd) - front) / 6.0;
     gust = (0.6 + 0.4 * gh2) * exp(-q * q) * exp(-max(q, 0.0) * 0.6); // sharp leading edge, a softer tail
-    return bd * breeze + gd * gust;
+    vec2 wv = bd * breeze + gd * gust;
+    if (WAVE >= 0.0) { // the drop / chorus: one big gust front tears across the whole field
+        float da = ang + 0.5;
+        vec2 dg = vec2(cos(da), sin(da));
+        float q2 = (dot(w, dg) - (-25.0 + WAVE * 80.0)) / 7.0;
+        float g2 = 1.4 * exp(-q2 * q2) * exp(-max(q2, 0.0) * 0.4) * (1.0 - sm(0.7, 1.0, WAVE));
+        wv += dg * g2; gust += g2;
+    }
+    if (KICK > 0.03) { // every kick: a soft ring wave rolls outward through the grass in front of you
+        vec2 c = w - vec2(0.0, -9.0);
+        float dist = length(c), R = 1.0 + (1.0 - KICK) * 12.0;
+        float ring = KICK * exp(-((dist - R) / 1.2) * ((dist - R) / 1.2));
+        wv += c / max(dist, 1e-3) * ring * 0.6; gust += ring * 0.5;
+    }
+    return wv;
+}
+// birds: every ~40 s (most of the time) a small flock crosses the sky in a loose V, wings flapping
+float chSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
+float chBirds(float az, float el, float tt) {
+    float P = 40.0, gi = floor(tt / P), lt = tt - gi * P;
+    float h1 = fract(sin(gi * 71.3 + 2.1) * 43758.5453), h2 = fract(sin(gi * 13.7 + 5.3) * 43758.5453);
+    if (h1 > 0.75 || lt > 22.0) return 0.0;
+    float dirn = h2 < 0.5 ? 1.0 : -1.0;
+    float faz = 180.0 + dirn * (-55.0 + lt * 5.0), fel = 14.0 + 18.0 * h1 + sin(lt * 0.4) * 1.5;
+    float fade = sm(0.0, 2.0, lt) * (1.0 - sm(19.0, 22.0, lt));
+    vec2 p = vec2(wrap180(az - faz) * cos(radians(el)) * dirn, el - fel);    // degrees round the flock, +x = ahead
+    if (abs(p.x) > 9.0 || abs(p.y) > 6.0) return 0.0;
+    float a = 0.0;
+    for (int k = 0; k < 9; k++) {
+        float fk = float(k), side = (k % 2 == 0) ? 1.0 : -1.0, rank = floor((fk + 1.0) / 2.0);
+        vec2 o = vec2(-rank * 1.1, side * rank * 0.65) + vec2(sin(tt * 0.7 + fk * 1.3), cos(tt * 0.9 + fk * 2.1)) * 0.18;
+        vec2 q = p - o;
+        float flap = sin(tt * 7.5 + fk * 1.9);
+        vec2 tipL = vec2(-0.38, 0.08 + 0.2 * flap), tipR = vec2(0.38, 0.08 + 0.2 * flap); // a little 'v', wings beating
+        float dist = min(chSeg(q, vec2(0.0, -0.02), tipL), chSeg(q, vec2(0.0, -0.02), tipR));
+        a = max(a, sm(0.07, 0.025, dist));
+    }
+    return a * fade;
+}
+// floating fluff: dandelion seeds and pollen drifting on the breeze, catching the sun; a few in calm parts, thicker as
+// the song builds
+void chFluff(vec3 d, float tt) {
+    float g;
+    vec2 wv = chWind(vec2(0.0, 0.0), tt, g);
+    vec3 q = d * 24.0 + vec3(tt * 0.35 * wv.x, tt * 0.05 + sin(tt * 0.3) * 0.2, tt * 0.35 * wv.y);
+    vec3 cell = floor(q), f = q - cell;
+    vec3 h3 = sh33(cell);
+    float h = sh31(cell + 5.1);
+    if (h < 0.025 + 0.12 * MAVG) {
+        vec3 o = 0.2 + 0.6 * h3 + vec3(sin(tt * 1.3 + h * 40.0), cos(tt * 1.1 + h * 30.0), 0.0) * 0.08; // a little bob and tumble
+        vec3 dd = f - o;
+        float r2 = dot(dd, dd);
+        float sun = 0.6 + 0.8 * pow(max(dot(d, CH_SUN_DIR), 0.0), 4.0);         // brighter against the light
+        C += rgb(255.0, 250.0, 236.0) * (exp(-r2 / 0.0009) * 0.9 + exp(-r2 / 0.006) * 0.12) * sun * (0.5 + 0.5 * h3.z);
+    }
 }
 void cloudHill(vec3 d, float az, float el) {
     float tt = T / 2.2;
@@ -2129,6 +2183,8 @@ void cloudHill(vec3 d, float az, float el) {
             C *= 1.0 - 0.22 * lanes * rays;
             C += rgb(255.0, 247.0, 230.0) * shafts * 1.15 * rays;
         }
+        C = mix(C, rgb(36.0, 42.0, 54.0), chBirds(az, el, tt) * 0.85);
+        chFluff(d, tt);
         return;
     }
     // ---- the grass field
@@ -2184,6 +2240,12 @@ void cloudHill(vec3 d, float az, float el) {
         }
     }
     C = mix(nearc, fc, lod);
+    { // cloud shadows sliding over the field as the clouds drift
+        vec3 G = vec3(fx, -CAMH, fz);
+        vec3 Q = G + CH_SUN_DIR * ((CH_HB + 5.0 + CAMH) / CH_SUN_DIR.y);
+        C *= 1.0 - 0.35 * sm(-0.2, 0.3, chCoarse(Q, tt)) * (1.0 - sm(150.0, 400.0, tg));
+    }
+    chFluff(d, tt);
 }
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
