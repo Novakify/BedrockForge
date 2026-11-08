@@ -1918,8 +1918,8 @@ void mirrorFx(vec3 d) {
 // each one growing from a flat-based body into sprouting bubbles (cumulus -> congestus) and fading away again, carved by
 // inverted Worley billows, lit by a light march to the sun - over a grass field: shell-textured blades near you that sway
 // in rolling gusts, a wind-sheened field further out, hazy at the horizon. Below that the usual void.
-GCONST float CH_HB = 6.5, CH_HMAX = 17.0, CH_G = 13.0, CH_PER = 140.0;
-GCONST vec2 CH_WIND = vec2(0.10, 0.035);
+GCONST float CH_HB = 6.5, CH_HMAX = 17.0, CH_G = 13.0, CH_PER = 100.0;
+GCONST vec2 CH_WIND = vec2(0.16, 0.055);
 float chh(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + s * 74.7) * 43758.5453); }
 float chr(float h0, float i) { return fract(h0 * (97.13 + i * 31.7) + i * 0.371); } // cheap extra randoms from one cell hash
 float chCells(vec3 p, float tt) {
@@ -1976,8 +1976,8 @@ float chDens(vec3 p, float s, float tt, bool detail) {
     if (s < -0.15 || p.y < CH_HB - 0.05) return 0.0;
     float wv = 0.58;
     if (detail) {
-        float wx = fbm(p.x * 0.12 + 3.1, p.y * 0.12 - tt * 0.01, p.z * 0.12, 2) - 0.5;
-        vec3 X1 = vec3(p.x * 0.5 + wx * 1.5 - tt * 0.015, p.y * 0.5 - tt * 0.04, p.z * 0.5 + wx * 1.5);
+        float wx = fbm(p.x * 0.12 + 3.1, p.y * 0.12 - tt * 0.025, p.z * 0.12, 2) - 0.5;
+        vec3 X1 = vec3(p.x * 0.5 + wx * 1.5 - tt * 0.03, p.y * 0.5 - tt * 0.085, p.z * 0.5 + wx * 1.5 + tt * 0.012); // boiling, rising
         wv = (1.0 - clamp(chWorley(X1), 0.0, 1.0)) * 0.5;
         if (s < 0.45) { // near the surface: finer billows (and the finest only up close)
             wv += (1.0 - clamp(chWorley(X1 * 2.1 + vec3(5.3, -1.7, 2.9)), 0.0, 1.0)) * 0.30;
@@ -1990,6 +1990,22 @@ float chDens(vec3 p, float s, float tt, bool detail) {
     float base = sm(CH_HB - 0.05, CH_HB + 0.45 + 0.012 * rr + 0.5 * (fbm(p.x * 0.3, p.z * 0.3, 1.0, 2) - 0.5), p.y); // flat ragged base, softer far out
     float kk = 3.0 * clamp(30.0 / length(p), 0.3, 1.0);                     // far clouds: softer edges, no stair steps
     return clamp(dd * kk, 0.0, 1.0) * base * sm(-0.15, 0.15, s);
+}
+// the wind over the field: a light breeze whose direction wanders over the minutes, and every ~20 s a stronger gust that
+// rolls across the field as a front, each one from its own direction. Returns the bend (direction * strength) at a ground
+// point (world xz, metres) and how much of the gust is passing there.
+vec2 chWind(vec2 w, float tt, out float gust) {
+    float ang = 0.7 + 3.2 * (fbm(tt * 0.015, 3.3, 7.7, 2) - 0.5);
+    vec2 bd = vec2(cos(ang), sin(ang));
+    float breeze = 0.22 + 0.08 * sin(tt * 0.37) + 0.05 * sin(tt * 1.13 + 1.7);
+    float P = 20.0, gi = floor(tt / P), tl = tt - gi * P;
+    float gh = fract(sin(gi * 91.7 + 3.1) * 43758.5453), gh2 = fract(sin(gi * 47.3 + 8.9) * 43758.5453);
+    float ga = ang + (gh - 0.5) * 2.6;                                  // each gust comes from its own direction
+    vec2 gd = vec2(cos(ga), sin(ga));
+    float front = -18.0 + (tl - 2.0 * gh2) * 7.0;                       // the front sweeps across at ~7 m/s
+    float q = (dot(w, gd) - front) / 6.0;
+    gust = (0.6 + 0.4 * gh2) * exp(-q * q) * exp(-max(q, 0.0) * 0.6); // sharp leading edge, a softer tail
+    return bd * breeze + gd * gust;
 }
 void cloudHill(vec3 d, float az, float el) {
     float tt = T / 2.2;
@@ -2044,13 +2060,16 @@ void cloudHill(vec3 d, float az, float el) {
     const float CAMH = 1.0, HG = 0.55, CS = 0.032;
     const int NS = 28;
     float dy = min(y, -1e-4);
-    vec2 wd = vec2(0.8, 0.6);
     float tg = -CAMH / dy, fx = x * tg, fz = z * tg;
-    float sheen = 0.5 + 0.5 * sin((fx * wd.x + fz * wd.y) * 0.35 - tt * 1.6 + fbm(fx * 0.05, fz * 0.05, tt * 0.05, 3) * 5.0);
+    float gf;
+    vec2 wf = chWind(vec2(fx, fz), tt, gf);
+    vec2 wn = wf / max(length(wf), 1e-3);
+    float ripple = 0.5 + 0.5 * sin(dot(vec2(fx, fz), wn) * 0.35 - tt * 1.6 + fbm(fx * 0.05, fz * 0.05, tt * 0.05, 3) * 5.0);
+    float sheen = ripple * (0.35 + length(wf)) + 1.4 * gf;               // a gust shows as a bright wave: the blades bow and flash
     float pat = fbm(fx * 0.25, fz * 0.6, 2.0, 4);
     pat += (fbm(fx * 1.6 - tt * 0.8, fz * 4.0, 5.0, 3) - 0.5) * 0.35 * (1.0 - sm(10.0, 40.0, min(tg, 400.0))); // finer mid-field detail
     vec3 fc = mix(rgb(40.0, 112.0, 22.0), rgb(92.0, 165.0, 44.0), sm(0.35, 0.7, pat));
-    fc = mix(fc, rgb(130.0, 190.0, 70.0), 0.30 * sm(0.5, 1.0, sheen));
+    fc = mix(fc, rgb(140.0, 198.0, 78.0), 0.45 * sm(0.35, 1.3, sheen));
     fc = mix(fc, rgb(150.0, 195.0, 150.0), 0.55 * sm(25.0, 260.0, min(tg, 400.0)));
     float tTop = (-CAMH + HG) / dy;
     float lod = sm(3.5, 8.5, tTop);
@@ -2070,15 +2089,21 @@ void cloudHill(vec3 d, float az, float el) {
             float Hb = HG * (0.45 + 0.45 * h3) * (0.6 + 0.7 * clump);
             float hn = hgt / max(Hb, 1e-3);
             if (hn >= 1.0) continue;
-            float gust = 0.5 + 0.5 * sin((px * wd.x + pz * wd.y) * 1.6 - tt * 2.4 + fbm(px * 0.4, pz * 0.4, tt * 0.1, 2) * 4.0);
-            float bend = (0.10 + 0.10 * gust + 0.04 * h1) * hn * hn, lean = (h2 - 0.5) * 0.05 * hn;
-            float rx = (cx - 37.0 + 0.15 + 0.7 * h1) * CS + wd.x * bend + lean, rz = (cz - 91.0 + 0.15 + 0.7 * h2) * CS + wd.y * bend;
+            float gust;
+            vec2 wv = chWind(vec2(px0, pz0), tt, gust);
+            wv = vec2(wv.x * 0.8 - wv.y * 0.6, wv.x * 0.6 + wv.y * 0.8);        // into the blade grid's frame
+            float wl = length(wv);
+            vec2 wn2 = wv / max(wl, 1e-3);
+            float sway = sin(tt * 2.2 + h1 * 6.2832 + dot(vec2(px, pz), wn2) * 0.8) * (0.025 + 0.05 * wl); // each blade's own flutter
+            float bend = (0.38 * wl + 0.04 * h1) * hn * hn, lean = (h2 - 0.5) * 0.05 * hn;
+            vec2 off = wn2 * bend + vec2(-wn2.y, wn2.x) * sway * hn * hn;
+            float rx = (cx - 37.0 + 0.15 + 0.7 * h1) * CS + off.x + lean, rz = (cz - 91.0 + 0.15 + 0.7 * h2) * CS + off.y;
             float r = CS * 0.55 * pow(clamp(1.0 - hn, 0.0, 1.0), 0.65);
             if ((px - rx) * (px - rx) + (pz - rz) * (pz - rz) < r * r) {
                 vec3 midc = mix(rgb(52.0, 128.0, 26.0), rgb(70.0, 140.0, 20.0), h3), tipc = mix(rgb(140.0, 196.0, 70.0), rgb(170.0, 205.0, 90.0), h3);
                 vec3 c = mix(rgb(18.0, 58.0, 12.0), midc, sm(0.0, 0.45, hn));
                 c = mix(c, tipc, sm(0.45, 1.0, hn));
-                nearc = c * (0.85 + 0.3 * gust);
+                nearc = c * (0.9 + 0.35 * gust);                         // a passing gust flashes the blades
                 break;
             }
         }
