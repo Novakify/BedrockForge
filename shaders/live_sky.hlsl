@@ -1976,8 +1976,8 @@ float chDens(vec3 p, float s, float tt, bool detail) {
     if (s < -0.15 || p.y < CH_HB - 0.05) return 0.0;
     float wv = 0.58;
     if (detail) {
-        float wx = fbm(p.x * 0.12 + 3.1, p.y * 0.12 - tt * 0.025, p.z * 0.12, 2) - 0.5;
-        vec3 X1 = vec3(p.x * 0.5 + wx * 1.5 - tt * 0.03, p.y * 0.5 - tt * 0.085, p.z * 0.5 + wx * 1.5 + tt * 0.012); // boiling, rising
+        float wx = fbm(p.x * 0.12 + 3.1, p.y * 0.12 - tt * 0.01, p.z * 0.12, 2) - 0.5;
+        vec3 X1 = vec3(p.x * 0.5 + wx * 1.5 - tt * 0.012, p.y * 0.5 - tt * 0.035, p.z * 0.5 + wx * 1.5 + tt * 0.005); // slow boiling, rising
         wv = (1.0 - clamp(chWorley(X1), 0.0, 1.0)) * 0.5;
         if (s < 0.45) { // near the surface: finer billows (and the finest only up close)
             wv += (1.0 - clamp(chWorley(X1 * 2.1 + vec3(5.3, -1.7, 2.9)), 0.0, 1.0)) * 0.30;
