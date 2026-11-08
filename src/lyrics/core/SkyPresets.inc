@@ -53,3 +53,5 @@
     {"cloud_hill", 0x0A3FD0, 0x7CC0FF, 0.9f, 0.0f, false, 0x8CE04A, 0xFFFFFF, Weather::None, 0x000000, false, 0xFFFFFF},
     // [LyricsForge] a lake at sunset: lavender sky, glowing orange clouds, mountains, pines, all mirrored in rippling water (ordinal 47)
     {"lake_sunset", 0x42488C, 0xFF7820, 0.9f, 0.0f, false, 0xFF9030, 0xFFD080, Weather::None, 0x000000, false, 0xFFFFFF},
+    // [LyricsForge] a lupine meadow at sunset: violet sky, pink-lit streaks, a blazing sun, 3D lupines (ordinal 48)
+    {"lupine_sunset", 0x52288C, 0xFF7A2A, 0.9f, 0.0f, false, 0xFF64AA, 0xB478F0, Weather::None, 0x000000, false, 0xFFFFFF},
