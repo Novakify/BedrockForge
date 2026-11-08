@@ -2269,20 +2269,25 @@ void cloudHill(vec3 d, float az, float el) {
     }
     chFluff(d, tt);
 }
+// [LyricsForge] fbm along the azimuth, sampled on a circle so it wraps seamlessly at 0/360 (k = cycles per degree)
+float fbmAz(float aDeg, float k, float zz, float off, int oct) {
+    float R = k * 57.2957795, a = radians(aDeg);
+    return fbm(cos(a) * R + off, sin(a) * R, zz, oct);
+}
 // ==================================================================== [LyricsForge] Lake Sunset (preset 47)
 // a lake at sunset: slate-blue sky melting into a blazing orange horizon, broken altocumulus with dark maroon bodies whose
 // edges and undersides catch the low sun, a small hot sun in a mountain saddle, pines on the far left - all of it mirrored
 // in calm water with a glittering sun path. Music: the sun breathes with the bass and flares on drops (clouds light up
 // hotter, rays fan out), kicks drop soft rings on the water, the highs make the glitter dance, fireflies over the water
 // thicken as the song builds, and now and then a flock crosses the sunset.
-GCONST vec3 LS_SUN = vec3(0.0, 0.02094, -0.99978);                       // az 180, el 1.2
-float lsCloudD(float u, float v, float tt, int o) {
+GCONST vec3 LS_SUN = vec3(0.0, 0.05234, -0.99863);                       // az 180, el 3: just above the saddle
+float lsCloudD(float u, float v, float tt, int o, float fd) {
     float w1 = fbm(u * 0.35, v * 0.35, 1.7, 3) - 0.5;
     float n = fbm(u * 1.3 + w1 * 1.6, v * 2.0 + w1 * 1.0, tt * 0.004, o);
     float cell = fbm(u * 5.5 + w1 * 2.5, v * 7.0, 5.1, 4);
     float m = fbm(u * 0.18 + 4.0, v * 0.18, 2.2, 3);
     float cov = 0.46 + (0.5 - m) * 0.4;
-    return clamp((n - cov) * 5.0 + (cell - 0.5) * 2.2, 0.0, 1.0);
+    return clamp((n - cov) * 5.0 + (cell - 0.5) * 2.2 * fd, 0.0, 1.0);
 }
 vec3 lsSky(vec3 d, float tt, float flare) {
     float y = d.y, yy = max(y, 0.0), eld = degrees(asin(clamp(y, -1.0, 1.0))), ep = max(eld, 0.0);
@@ -2296,9 +2301,10 @@ vec3 lsSky(vec3 d, float tt, float flare) {
     if (y > 0.004) { // clouds on a plane: dark bodies, edges and undersides lit by the low sun
         float s = 1.0 / (yy + 0.05);
         float u = d.x * s * 0.7 + tt * 0.008, v = d.z * s * 0.7;
-        float D = lsCloudD(u, v, tt, 6);
+        float fd = sm(0.01, 0.06, y);                                            // fine detail fades low down (no crawl)
+        float D = lsCloudD(u, v, tt, y > 0.03 ? 6 : 4, fd);
         if (D > 0.001) {
-            float D2 = lsCloudD(u, v - 0.07, tt, 4);
+            float D2 = lsCloudD(u, v - 0.07, tt, 3, fd);
             float hk0 = exp(-ep / 10.0) * (0.5 + 0.5 * side);
             float lit = clamp(0.45 + (D - D2) * 2.4, 0.0, 1.0) * (1.0 - D * 0.6) + pow(clamp(1.0 - D, 0.0, 1.0), 2.0) * 0.6;
             lit = clamp(lit + hk0 * 0.45 + 0.25 * flare * side, 0.0, 1.0);               // drops light them hotter
@@ -2309,11 +2315,14 @@ vec3 lsSky(vec3 d, float tt, float flare) {
             c = mix(c, mix(shC, litC, pow(lit, 1.4)), clamp(D * 2.2, 0.0, 1.0) * sm(0.004, 0.05, y));
         }
         float st = fbm(d.x * s * 0.3, d.z * s * 6.0, 9.0, 4);                          // thin glowing streaks low down
-        c += rgb(255.0, 120.0, 40.0) * sm(0.55, 0.75, st) * exp(-ep / 3.0) * 0.5 * side;
+        c += rgb(255.0, 120.0, 40.0) * mix(0.5, sm(0.55, 0.75, st), sm(0.004, 0.05, y)) * exp(-ep / 3.0) * 0.5 * side * sm(0.0, 0.02, y);
     }
     // the sun: a small blazing disc with a star; it breathes with the bass and flares on drops
-    float az = atan2(-d.x, d.z);
-    float rays = pow(0.5 + 0.5 * cos((az - 3.14159265) * 30.0), 12.0);
+    vec3 st1, st2;
+    frameOf(LS_SUN, st1, st2);
+    vec3 qs = d - LS_SUN * mu;
+    float around = atan2(dot(qs, st2), dot(qs, st1));                          // the angle round the sun (a real star)
+    float rays = pow(0.5 + 0.5 * cos(around * 15.0), 12.0);
     float pb = 1.0 + 0.5 * MBASS + 0.8 * flare;
     c += rgb(255.0, 245.0, 200.0) * exp(-(1.0 - mu) * 6000.0) * 5.0;
     c += rgb(255.0, 200.0, 90.0) * (exp(-ang / 0.025) * 1.2 + rays * exp(-ang / (0.05 + 0.03 * flare)) * 1.0) * pb;
@@ -2321,7 +2330,7 @@ vec3 lsSky(vec3 d, float tt, float flare) {
 }
 bool lsPines(float a, float e, int row) {
     // a row of pine silhouettes: spire tip, stacked branch tiers flaring at their bottoms, ragged needles, a trunk
-    if (a < 202.0) return false;
+    if (a < 202.0 || a > 358.0) return false;                              // the forest ends before the wrap at 360
     float sp = row == 0 ? 1.5 : (row == 1 ? 1.0 : 0.7), base = row == 0 ? 0.2 : (row == 1 ? 0.45 : 0.65);
     float slope = sm(203.0, 245.0, a);
     if (e < base + 0.15 + 0.25 * slope) return true;                       // the forest floor
@@ -2339,36 +2348,40 @@ bool lsPines(float a, float e, int row) {
         if (hn >= 1.0) continue;
         float nt = 6.0 + floor(h3 * 3.0), tf = fract(hn * nt);
         float wid = pow(max(1.0 - hn, 0.0), 0.95) * ht * (0.26 + 0.08 * h2) * (0.5 + 0.5 * pow(1.0 - tf, 0.7));
+        if (abs(a - ac) > wid * 1.2 && hn >= 0.06) continue;                   // clearly outside: skip the needle noise
         wid *= 1.0 + 0.18 * (fbm(e * 18.0 + c, a * 6.0, fr * 3.0, 2) - 0.5);
         if (hn < 0.06) wid = max(wid, ht * 0.035);
         if (abs(a - ac) < wid) return true;
     }
     return false;
 }
-vec3 lsLand(vec3 c, float a, float e) {
-    // mountains through the middle and right (the sun sets in a saddle), then the pines over them
-    float rid = fbm(a * 0.045, 1.0, 0.0, 5);
-    float h1 = (0.9 + 12.0 * pow(max(rid - 0.38, 0.0), 1.1) * 2.0) * (1.0 - 0.75 * exp(-((a - 180.0) / 4.0) * ((a - 180.0) / 4.0)));
-    float h2 = 0.45 + 0.4 * fbm(a * 0.15, 7.0, 0.0, 3);
-    if (e < h1) c = rgb(58.0, 54.0, 80.0);
-    if (e < h2) c = rgb(34.0, 32.0, 48.0);
-    if (lsPines(a, e, 2)) c = rgb(36.0, 28.0, 40.0);
-    if (lsPines(a, e, 1)) c = rgb(17.0, 13.0, 20.0);
-    if (lsPines(a, e, 0)) c = rgb(5.0, 4.0, 6.0);
+vec3 lsLand(vec3 c, float a, float e, out float land) {
+    // mountains through the middle and right (the sun sets in a saddle), then the pines over them (front row first)
+    land = 1.0;
+    if (lsPines(a, e, 0)) return rgb(5.0, 4.0, 6.0);
+    if (lsPines(a, e, 1)) return rgb(17.0, 13.0, 20.0);
+    if (lsPines(a, e, 2)) return rgb(36.0, 28.0, 40.0);
+    float rid = fbmAz(a, 0.045, 0.0, 1.0, 5);
+    float h1 = (0.9 + 12.0 * pow(max(rid - 0.38, 0.0), 1.1) * 2.0) * (1.0 - 0.9 * exp(-((a - 180.0) / 7.0) * ((a - 180.0) / 7.0)));
+    float h2 = 0.45 + 0.4 * fbmAz(a, 0.15, 0.0, 7.0, 3);
+    if (e < h2) return rgb(34.0, 32.0, 48.0);
+    if (e < h1) return rgb(58.0, 54.0, 80.0);
+    land = 0.0;
     return c;
 }
 void lakeSunset(vec3 d, float az, float el) {
     float tt = T / 2.2;
     float flare = WAVE >= 0.0 ? sm(0.0, 0.08, WAVE) * (1.0 - sm(0.5, 1.0, WAVE)) : 0.0;
     if (d.y >= 0.0) {
-        C = lsLand(lsSky(d, tt, flare), az, el);
-        if (flare > 0.001) add(rgb(255.0, 210.0, 140.0), sunRays(d, LS_SUN, 11.0, 4.0) * 0.55 * flare); // drop: god rays fan out
+        float land;
+        C = lsLand(lsSky(d, tt, flare), az, el, land);
+        if (flare > 0.001) add(rgb(255.0, 210.0, 140.0), sunRays(d, LS_SUN, 11.0, 4.0) * 0.55 * flare * (1.0 - land)); // drop: god rays fan out (not over the land)
         C = mix(C, rgb(28.0, 18.0, 26.0), chBirds(az, el, tt) * 0.9);
     } else {
         if (d.y < -0.53) { C = v3(0.0); return; }                             // the void takes over down there anyway
         // calm water: a gentle ripple, glassy near the horizon, a little livelier toward you
-        float ry = max(-d.y, 1e-4), PP = 1.0 / ry;
-        float rip = fbm(d.x * PP * 0.8 - tt * 0.05, d.z * PP * 2.5 + tt * 0.12, tt * 0.2, 4) - 0.5;
+        float ry = max(-d.y, 1e-4), PP = 1.0 / ry, PN = min(PP, 60.0);           // PN: noise scale capped near the horizon
+        float rip = fbm(d.x * PN * 0.8 - tt * 0.05, d.z * PN * 2.5 + tt * 0.12, tt * 0.2, 4) - 0.5;
         float amp = 0.002 + 0.022 * sm(0.0, 0.6, ry);
         // kicks: a soft ring spreads over the water ahead and wobbles the reflection
         vec2 Q = vec2(d.x, d.z) * PP - vec2(0.0, -6.0);
@@ -2377,8 +2390,9 @@ void lakeSunset(vec3 d, float az, float el) {
         vec2 rn = Q / max(dist, 1e-3) * 0.006 * ringH;
         vec3 rd = normalize(vec3(d.x + rip * amp * 0.5 + rn.x, ry + rip * amp, d.z + rn.y));
         float raz = degrees(atan2(-rd.x, rd.z)); if (raz < 0.0) raz += 360.0;
-        vec3 R = lsLand(lsSky(rd, tt, flare), raz, degrees(asin(clamp(rd.y, -1.0, 1.0))));
-        float band = fbm(d.x * PP * 0.5 - tt * 0.04, d.z * PP * 1.8 + tt * 0.1, 5.5, 3);
+        float rland;
+        vec3 R = lsLand(lsSky(rd, tt, flare), raz, degrees(asin(clamp(rd.y, -1.0, 1.0))), rland);
+        float band = mix(0.6, fbm(d.x * PN * 0.5 - tt * 0.04, d.z * PN * 1.8 + tt * 0.1, 5.5, 3), sm(0.0, 0.05, ry));
         R *= (0.62 + 0.5 * pow(band, 1.5)) * vec3(0.95, 0.9, 1.0);              // soft ripple light and shade
         R *= 1.0 + 0.5 * exp(-ry / 0.03);                                         // the glow on the far water
         R *= 0.8 + 0.2 * sm(0.0, 0.03, ry);
@@ -2386,21 +2400,23 @@ void lakeSunset(vec3 d, float az, float el) {
         // the sun's glitter path: sparkles that dance with the highs
         float sx = radians(wrap180(az - 180.0));
         float gl = exp(-(sx / (0.02 + 0.25 * ry)) * (sx / (0.02 + 0.25 * ry)))
-                 * sm(0.45 - 0.08 * MHIGH, 0.8, fbm(d.x * PP * 3.0, d.z * PP * 8.0 - tt * 0.4, tt * 0.6, 3));
+                 * sm(0.45 - 0.08 * MHIGH, 0.8, fbm(d.x * PN * 3.0, d.z * PN * 8.0 - tt * 0.4, tt * 0.6, 3)) * sm(0.005, 0.04, ry);
         R += rgb(255.0, 200.0, 90.0) * gl * (1.2 + 1.2 * MHIGH + 0.8 * flare) * exp(-ry * 2.5);
         C = R;
     }
     // fireflies: tiny warm specks drifting over the water by the trees, more as the song builds
-    if (az > 200.0 && el > -9.0 && el < 4.0) {
+    if (az > 200.0 && az < 359.0 && el > -9.0 && el < 4.0) {
         vec3 q = d * 40.0 + vec3(sin(tt * 0.23) * 0.4, tt * 0.04 + sin(tt * 0.31) * 0.3, cos(tt * 0.19) * 0.4);
         vec3 cell = floor(q), f = q - cell;
         vec3 h3 = sh33(cell);
         float h = sh31(cell + 5.1);
-        if (h < 0.02 + 0.10 * MAVG) {
+        float thr = 0.02 + 0.10 * MAVG;
+        if (h < thr) {
             vec3 o = 0.2 + 0.6 * h3 + vec3(sin(tt * 1.7 + h * 40.0), cos(tt * 1.3 + h * 30.0), 0.0) * 0.1;
             vec3 dd = f - o;
             float r2 = dot(dd, dd), blink = 0.5 + 0.5 * sin(tt * (1.5 + 2.0 * h3.z) + h * 60.0);
-            C += rgb(255.0, 215.0, 120.0) * (exp(-r2 / 0.0012) * 1.2 + exp(-r2 / 0.01) * 0.15) * blink * sm(200.0, 215.0, az);
+            C += rgb(255.0, 215.0, 120.0) * (exp(-r2 / 0.0012) * 1.2 + exp(-r2 / 0.01) * 0.15) * blink * sm(200.0, 215.0, az)
+               * sm(359.0, 345.0, az) * clamp((thr - h) / 0.01, 0.0, 1.0);         // fade in/out, no pops
         }
     }
 }
@@ -2424,13 +2440,15 @@ vec3 lpRamp(float r) {
     c = mix(c, rgb(82.0, 40.0, 140.0),   clamp((r - 40.0) / 30.0, 0.0, 1.0));
     return c;
 }
-vec3 lpSky(vec3 d, float az, float ep, float tt, float flare) {
+vec3 lpSky(vec3 d, float az, float ep, float tt, float flare, out float land) {
+    land = 0.0;
     float daz = wrap180(az - 182.0), adz = abs(daz);
     float r = sqrt((daz * 0.2) * (daz * 0.2) + ep * ep) * 0.72;
     vec3 c = lpRamp(r);
     c = mix(c, rgb(232.0, 82.0, 92.0), exp(-ep / 3.5) * sm(20.0, 70.0, adz) * 0.8);  // far round the horizon: red-pink
-    c = mix(c, rgb(70.0, 46.0, 150.0), sm(15.0, 60.0, ep) * sm(0.0, 90.0, daz) * 0.35); // bluer violet up right
-    c = mix(c, rgb(98.0, 42.0, 128.0), sm(20.0, 70.0, ep) * sm(0.0, -90.0, daz) * 0.3); // deeper magenta up left
+    float sd = sin(radians(daz));
+    c = mix(c, rgb(70.0, 46.0, 150.0), sm(15.0, 60.0, ep) * max(sd, 0.0) * 0.35);   // bluer violet up right (no flip behind you)
+    c = mix(c, rgb(98.0, 42.0, 128.0), sm(20.0, 70.0, ep) * max(-sd, 0.0) * 0.3);  // deeper magenta up left
     float yy = max(d.y, 0.0);
     c *= 1.0 + 0.12 * (fbm(d.x / (yy + 0.3) * 0.3, d.z / (yy + 0.3) * 0.3, 8.0, 3) - 0.5);
     float glowAt = exp(-r / 14.0);
@@ -2442,10 +2460,11 @@ vec3 lpSky(vec3 d, float az, float ep, float tt, float flare) {
         float mask = fbm(ux * 0.07 + 3.0, uz * 0.25, 2.0, 3);
         float cov = 0.43 + (0.5 - mask) * 0.4 - 0.06 * exp(-ep / 14.0);
         float fib = fbm(ux * 1.6 + w, uz * 16.0, 4.4, 4), fib2 = fbm(ux * 4.0, uz * 38.0, 7.7, 3);
-        float dens = (fbm(ux * 0.30 + w * 0.9, uz * 2.2 + w * 1.8, 0.0, 5) - cov) * 3.2 + (fib - 0.5) * 1.1 + (fib2 - 0.5) * 0.45;
+        float fd = sm(0.01, 0.06, d.y);                                          // the finest fibres fade low down (no crawl)
+        float dens = (fbm(ux * 0.30 + w * 0.9, uz * 2.2 + w * 1.8, 0.0, 5) - cov) * 3.2 + (fib - 0.5) * 1.1 + (fib2 - 0.5) * 0.45 * fd;
         float D = sm(0.0, 0.35, dens);
         if (D > 0.001) {
-            float dens2 = (fbm(ux * 0.30 + w * 0.9, (uz + 0.06) * 2.2 + w * 1.8, 0.0, 5) - cov) * 3.2 + (fib - 0.5) * 1.1;
+            float dens2 = (fbm(ux * 0.30 + w * 0.9, (uz + 0.06) * 2.2 + w * 1.8, 0.0, 3) - cov) * 3.2 + (fib - 0.5) * 1.1;
             float under = clamp(0.55 + (dens - dens2) * 1.4, 0.0, 1.0);
             vec3 litC = mix(rgb(235.0, 95.0, 170.0), rgb(255.0, 95.0, 120.0), clamp(exp(-ep / 10.0) * 1.2, 0.0, 1.0));
             litC = mix(litC, rgb(255.0, 150.0, 110.0), pow(glowAt, 1.5) * 0.7);
@@ -2457,8 +2476,8 @@ vec3 lpSky(vec3 d, float az, float ep, float tt, float flare) {
         }
     }
     { // thin dark streaks just above the horizon, their tops lit
-        float lbh = 1.6 + 1.6 * fbm(daz * 0.02, 5.0, 0.0, 3);
-        float lband = exp(-((ep - lbh) / 0.35) * ((ep - lbh) / 0.35)) * sm(0.47, 0.62, fbm(daz * 0.05, 1.0, tt * 0.003, 4)) * sm(4.0, 14.0, adz);
+        float lbh = 1.6 + 1.6 * fbmAz(az, 0.02, 0.0, 5.0, 3);
+        float lband = exp(-((ep - lbh) / 0.35) * ((ep - lbh) / 0.35)) * sm(0.47, 0.62, fbmAz(az, 0.05, tt * 0.003, 1.0, 4)) * sm(4.0, 14.0, adz);
         c = mix(c, mix(rgb(120.0, 48.0, 100.0), rgb(255.0, 110.0, 90.0), clamp((ep - lbh) / 0.35 + 0.3, 0.0, 1.0)), lband * 0.85);
     }
     // the sun: a big blazing disc, a gold rim and a wide orange bloom; drops make it flare
@@ -2468,37 +2487,56 @@ vec3 lpSky(vec3 d, float az, float ep, float tt, float flare) {
     c += rgb(255.0, 150.0, 70.0) * (exp(-ang / 1.6) * 1.0 + exp(-ang / (5.0 + 3.0 * flare)) * 0.45) * fl;
     // land: far hazy hills, nearer rolling hills with tree clumps, both sides higher
     if (d.y >= 0.0) {
-        float fh = 0.35 + 0.45 * fbm(az * 0.15, 2.0, 0.0, 4);
-        float mh = max(0.45 + 3.6 * sm(-4.0, -45.0, daz) * (0.7 + (fbm(az * 0.05, 3.0, 0.0, 4) - 0.5)),
-                       0.45 + 2.6 * sm(5.0, 45.0, daz) * (0.7 + (fbm(az * 0.05, 9.0, 0.0, 4) - 0.5)));
-        mh += 0.35 * sm(0.6, 0.72, fbm(az * 1.6, 4.0, 0.0, 2)) * sm(0.8, 1.4, mh);
+        float fh = 0.35 + 0.45 * fbmAz(az, 0.15, 0.0, 2.0, 4);
+        float mh = max(0.45 + 3.6 * sm(-4.0, -45.0, daz) * (0.7 + (fbmAz(az, 0.05, 0.0, 3.0, 4) - 0.5)),
+                       0.45 + 2.6 * sm(5.0, 45.0, daz) * (0.7 + (fbmAz(az, 0.05, 0.0, 9.0, 4) - 0.5)));
+        mh += 0.35 * sm(0.6, 0.72, fbmAz(az, 1.6, 0.0, 4.0, 2)) * sm(0.8, 1.4, mh);
         float hazeK = exp(-r / 18.0);
-        if (ep < fh) c = mix(rgb(128.0, 72.0, 104.0), rgb(200.0, 110.0, 110.0), hazeK);
-        if (ep < mh) c = mix(rgb(44.0, 22.0, 34.0), rgb(96.0, 46.0, 62.0), hazeK * exp(-max(ep - 0.3, 0.0) / 1.5));
+        if (ep < fh) { c = mix(rgb(128.0, 72.0, 104.0), rgb(200.0, 110.0, 110.0), hazeK); land = 1.0; }
+        if (ep < mh) { c = mix(rgb(44.0, 22.0, 34.0), rgb(96.0, 46.0, 62.0), hazeK * exp(-max(ep - 0.3, 0.0) / 1.5)); land = 1.0; }
     }
     return c;
 }
 float lpH(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + s * 74.7) * 43758.5453); }
+void lpSpecks(vec3 d, float el, float tt) {
+// petals and fireflies drifting low over the meadow, more as the song builds
+    if (el > -10.0 && el < 5.0) {
+        vec3 q = d * 34.0 + vec3(tt * 0.05 + sin(tt * 0.23) * 0.4, tt * 0.03 + sin(tt * 0.31) * 0.3, cos(tt * 0.19) * 0.4);
+        vec3 cell = floor(q), f = q - cell;
+        vec3 hc = sh33(cell);
+        float h = sh31(cell + 5.1);
+        float thr = 0.018 + 0.09 * MAVG;
+        if (h < thr) {
+            vec3 o = 0.2 + 0.6 * hc + vec3(sin(tt * 1.7 + h * 40.0), cos(tt * 1.3 + h * 30.0), 0.0) * 0.1;
+            vec3 dd2 = f - o;
+            float r2 = dot(dd2, dd2), blink = 0.5 + 0.5 * sin(tt * (1.5 + 2.0 * hc.z) + h * 60.0);
+            if (hc.x < 0.5) C += rgb(255.0, 215.0, 150.0) * (exp(-r2 / 0.0012) * 1.1 + exp(-r2 / 0.01) * 0.15) * blink * clamp((thr - h) / 0.01, 0.0, 1.0); // fireflies
+            else C = mix(C, mix(rgb(190.0, 120.0, 230.0), rgb(255.0, 150.0, 200.0), hc.y), exp(-r2 / 0.0025) * 0.9 * clamp((thr - h) / 0.01, 0.0, 1.0));     // petals
+        }
+    }
+}
 void lupineSunset(vec3 d, float az, float el) {
     float tt = T / 2.2;
     float flare = WAVE >= 0.0 ? sm(0.0, 0.08, WAVE) * (1.0 - sm(0.5, 1.0, WAVE)) : 0.0;
     float ep = max(el, 0.0);
     if (d.y >= 0.0) {
-        C = lpSky(d, az, ep, tt, flare);
-        if (flare > 0.001) add(rgb(255.0, 190.0, 170.0), sunRays(d, LP_SUN, 12.0, 4.0) * 0.6 * flare); // drop: rays fan out
+        float land;
+        C = lpSky(d, az, ep, tt, flare, land);
+        if (flare > 0.001) add(rgb(255.0, 190.0, 170.0), sunRays(d, LP_SUN, 12.0, 4.0) * 0.6 * flare * (1.0 - land)); // drop: rays fan out (not over the hills)
         { // a shooting star now and then across the violet up top
             float P = 14.0, gi = floor(tt / P), lt = tt - gi * P;
             float h1 = fract(sin(gi * 51.7) * 43758.5453), h2 = fract(sin(gi * 23.1 + 4.0) * 43758.5453);
-            if (h1 < 0.55 + 0.3 * MAVG && lt < 1.1) {
+            if (h1 < 0.7 && lt < 1.1) {
                 vec3 a0 = dirAE(120.0 + 120.0 * h2, 38.0 + 20.0 * h1), a1 = dirAE(120.0 + 120.0 * h2 + 18.0, 30.0 + 20.0 * h1);
                 float f = lt / 1.1;
                 vec3 head = normalize(mix(a0, a1, f));
                 vec3 tail = normalize(mix(a0, a1, max(f - 0.25, 0.0)));
                 vec3 ab = head - tail; float hh = clamp(dot(d - tail, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
                 float dist = length(d - tail - ab * hh);
-                add(rgb(255.0, 235.0, 245.0), exp(-dist * dist / 0.0000012) * hh * sin(3.14159 * f) * 1.6);
+                add(rgb(255.0, 235.0, 245.0), exp(-dist * dist / 0.000004) * hh * sin(3.14159 * f) * (1.2 + 0.6 * MAVG));
             }
         }
+        lpSpecks(d, el, tt);
         return;
     }
     if (d.y < -0.53) { C = v3(0.0); return; }                                // the void takes over down there anyway
@@ -2512,7 +2550,7 @@ void lupineSunset(vec3 d, float az, float el) {
     vec3 farM = mix(rgb(128.0, 70.0, 136.0), rgb(72.0, 36.0, 74.0), clamp(swell * 0.7 + bands * 0.5 - 0.1, 0.0, 1.0));
     farM = mix(farM, rgb(40.0, 26.0, 36.0), sm(0.6, 0.68, fbm(fx * 0.03, fz * 0.08, 9.0, 3)) * sm(40.0, 120.0, tg) * 0.8);
     farM = mix(farM, rgb(170.0, 96.0, 120.0), hazeK * 0.4 * sm(100.0, 600.0, tg));
-    farM = mix(farM, mix(rgb(58.0, 30.0, 48.0), rgb(120.0, 58.0, 70.0), hazeK * 0.6), sm(160.0, 700.0, tg));
+    farM = mix(farM, mix(rgb(44.0, 22.0, 34.0), rgb(96.0, 46.0, 62.0), hazeK), sm(160.0, 700.0, tg)); // same colours as the hills above
     // the mid meadow: purple drifts in the green, detail fading with distance (no shimmer)
     float fq = 1.0 / (1.0 + tg / 25.0);
     float dt_ = sm(0.42, 0.62, fbm(fx * 0.7 * fq + 3.0, fz * 1.6 * fq, 4.0, 4)) * 0.8 + 0.2 * sm(0.5, 0.7, fbm(fx * 0.15, fz * 0.4, 9.0, 3));
@@ -2520,8 +2558,8 @@ void lupineSunset(vec3 d, float az, float el) {
     vec3 midM = mix(mix(rgb(8.0, 16.0, 8.0), rgb(56.0, 34.0, 80.0), sm(20.0, 90.0, tg)), rgb(104.0, 62.0, 176.0),
                     clamp(dt_ * (0.35 + 0.4 * gpat) * (0.55 + 0.45 * sm(12.0, 60.0, tg)) + 0.5 * sm(25.0, 140.0, tg), 0.0, 1.0));
     vec3 M = mix(midM, farM, sm(120.0, 500.0, tg));
-    float lod = sm(11.0, 16.0, tg);
-    vec3 nearc = rgb(4.0, 8.0, 4.0);
+    float lod = sm(5.5, 8.5, tg);
+    vec3 nearc = M;
     if (lod < 0.999) {
         // near lupines: few, each a real 3D raceme. Shells from the top down; the first thing hit is what you see.
         const float HG = 0.95, CS = 0.42, GA = 2.39996;
@@ -2531,7 +2569,8 @@ void lupineSunset(vec3 d, float az, float el) {
         [loop] for (int i = 0; i < NS; i++) {
             float hgt = HG * (1.0 - (float(i) + 0.5) / float(NS));
             float t = (-CAMH + hgt) / dy;
-            if (t > 16.0) break;
+            if (t > 9.0) break;
+            float fp = 0.5 * (HG / float(NS)) * t * length(d.xz);              // this sample's footprint: thin parts never blink
             float p0x = d.x * t, p0z = d.z * t;
             // the breeze, plus a wave rolled out by each kick
             float sway = (0.02 * sin(tt * 1.6 + p0x * 0.5 + p0z * 0.35)) * (hgt / HG) * (hgt / HG);
@@ -2560,7 +2599,7 @@ void lupineSunset(vec3 d, float az, float el) {
                                      : vec3(ex - cth.x * (Rk + rf * 0.35), hgt - hk, ez - cth.y * (Rk + rf * 0.35));
                         float rr = isB ? rf * 0.95 : rf;
                         float dist = isB ? sqrt(o.x * o.x * 1.6 + o.z * o.z * 1.6 + o.y * o.y * 0.64) : sqrt(o.x * o.x + o.z * o.z + o.y * o.y * 1.69);
-                        if (dist >= rr * (isB ? open_ : 1.0)) continue;
+                        if (dist >= rr * (isB ? open_ : 1.0) + fp) continue;
                         float facing = dot(cth, vdir) + (1.0 - dist / rr) * 0.3;
                         if (facing <= best) continue;
                         best = facing;
@@ -2580,38 +2619,25 @@ void lupineSunset(vec3 d, float az, float el) {
                 }
                 if (!got && hgt > s0 && hgt < H0 && dd < (0.075 * pow(1.0 - u0, 0.7) + 0.008) * 0.85) { col = rgb(30.0, 22.0, 48.0); got = true; }
             }
-            if (!got && flower && hgt < H0 && dd < 0.008) { col = rgb(36.0, 58.0, 26.0); got = true; }   // stem
+            if (!got && flower && hgt < H0 && dd < 0.008 + fp) { col = rgb(36.0, 58.0, 26.0); got = true; }   // stem
             if (!got) { // palmate leaves: 7-9 narrow leaflets fanning out low on the plant
-                float an = atan2(ez, ex), nl_ = 7.0 + floor(h2 * 3.0), lr = 0.17 * (0.7 + 0.3 * h3);
+                float an = atan2(ez, ex), nl_ = 7.0 + floor(h2 * 3.0), lr = 0.12 * (0.75 + 0.25 * h3); // stays inside its cell
                 float lfa = abs(fract(an / 6.2832 * nl_ + h1 * 3.0) - 0.5);
                 float dyl = hgt - (0.18 + 0.12 * h1 + 0.05 * (dd / lr) * (dd / lr));
-                if (dd < lr && lfa < 0.16 * (1.0 - pow(dd / lr, 1.5)) + 0.02 && abs(dyl) < 0.012) {
+                if (dd < lr && lfa < 0.16 * (1.0 - pow(dd / lr, 1.5)) + 0.02 && abs(dyl) < 0.012 + fp) {
                     col = mix(rgb(12.0, 26.0, 10.0), rgb(40.0, 66.0, 28.0), clamp(1.0 - lfa * 6.0, 0.0, 1.0)) * (0.7 + 0.4 * h2);
                     col = mix(col, rgb(140.0, 110.0, 80.0), sm(0.8, 1.0, dd / lr) * 0.3);
                     got = true;
                 }
             }
-            if (!got && hgt < 0.22 && abs(sin(qx * 55.0 + qz * 17.0 + sin(qz * 41.0 + qx * 7.0) * 2.5)) > 0.93 - 0.6 * pow(1.0 - hgt / 0.22, 2.0)) {
+            if (!got && hgt < 0.22 && t < 5.0 && abs(sin(qx * 55.0 + qz * 17.0 + sin(qz * 41.0 + qx * 7.0) * 2.5)) > 0.93 - 0.6 * pow(1.0 - hgt / 0.22, 2.0) + 0.1 * sm(3.0, 5.0, t)) {
                 col = mix(rgb(6.0, 12.0, 5.0), rgb(22.0, 36.0, 16.0), hgt / 0.22); got = true;    // low undergrowth
             }
             if (got) { nearc = col; break; }
         }
     }
     C = mix(nearc, M, lod);
-    // petals and fireflies drifting low over the meadow, more as the song builds
-    if (el > -10.0 && el < 5.0) {
-        vec3 q = d * 34.0 + vec3(tt * 0.05 + sin(tt * 0.23) * 0.4, tt * 0.03 + sin(tt * 0.31) * 0.3, cos(tt * 0.19) * 0.4);
-        vec3 cell = floor(q), f = q - cell;
-        vec3 hc = sh33(cell);
-        float h = sh31(cell + 5.1);
-        if (h < 0.018 + 0.09 * MAVG) {
-            vec3 o = 0.2 + 0.6 * hc + vec3(sin(tt * 1.7 + h * 40.0), cos(tt * 1.3 + h * 30.0), 0.0) * 0.1;
-            vec3 dd2 = f - o;
-            float r2 = dot(dd2, dd2), blink = 0.5 + 0.5 * sin(tt * (1.5 + 2.0 * hc.z) + h * 60.0);
-            if (hc.x < 0.5) C += rgb(255.0, 215.0, 150.0) * (exp(-r2 / 0.0012) * 1.1 + exp(-r2 / 0.01) * 0.15) * blink; // fireflies
-            else C = mix(C, mix(rgb(190.0, 120.0, 230.0), rgb(255.0, 150.0, 200.0), hc.y), exp(-r2 / 0.0025) * 0.9);     // petals
-        }
-    }
+    lpSpecks(d, el, tt);
 }
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
