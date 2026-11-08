@@ -515,10 +515,74 @@ bool lyricsAlias(std::string const& artist, std::string const& title, std::strin
     }
     return false;
 }
+// [LyricsForge] config/song_rules.txt: per-song rules, one per line, # comments:
+//   <part of the title (or "artist - title")> = nolyrics; skies: event_horizon deep_voyage
+// "nolyrics" shows no lyrics for that song (no search at all); "skies:" plays only those skies while it's on.
+struct SongRule { bool hit = false, noLyrics = false; std::vector<std::string> skies; };
+SongRule songRule(std::string const& artist, std::string const& title) {
+    auto const file = gS->cfgFile.parent_path() / "song_rules.txt";
+    std::error_code ec;
+    if (!std::filesystem::exists(file, ec)) {
+        std::ofstream o(file, std::ios::binary);
+        o << "# LyricsForge song rules: <part of the title (or \"artist - title\")> = nolyrics; skies: <sky> <sky> ...\n"
+             "# nolyrics = no lyrics for that song; skies = only those skies while it plays\n"
+             "We're Finally Landing = nolyrics; skies: event_horizon deep_voyage\n";
+    }
+    auto low = [](std::string v) {
+        for (auto& c : v) c = char(std::tolower(static_cast<unsigned char>(c)));
+        std::string o; // curly apostrophes etc. count as plain ones
+        for (size_t i = 0; i < v.size(); ++i) {
+            if (i + 2 < v.size() && (unsigned char)v[i] == 0xE2 && (unsigned char)v[i + 1] == 0x80 && ((unsigned char)v[i + 2] == 0x98 || (unsigned char)v[i + 2] == 0x99)) { o += '\''; i += 2; }
+            else o += v[i];
+        }
+        return o;
+    };
+    auto trim = [](std::string v) {
+        size_t a = v.find_first_not_of(" \t\r"), b = v.find_last_not_of(" \t\r");
+        return a == std::string::npos ? std::string() : v.substr(a, b - a + 1);
+    };
+    SongRule r;
+    std::string const t = low(title), at = low(artist + " - " + title);
+    if (t.empty()) return r;
+    std::istringstream in(readAll(file));
+    for (std::string line; std::getline(in, line);) {
+        if (line.empty() || line[0] == '#') continue;
+        auto const eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string const key = low(trim(line.substr(0, eq)));
+        if (key.empty() || (t.find(key) == std::string::npos && at.find(key) == std::string::npos)) continue;
+        r.hit = true;
+        std::string const val = low(line.substr(eq + 1));
+        if (val.find("nolyrics") != std::string::npos || val.find("no lyrics") != std::string::npos) r.noLyrics = true;
+        if (auto const k = val.find("skies:"); k != std::string::npos) {
+            std::istringstream ss(val.substr(k + 6));
+            for (std::string id; ss >> id;) {
+                if (id.find(';') != std::string::npos) break;
+                if (id.find(',') != std::string::npos) id.erase(std::remove(id.begin(), id.end(), ','), id.end());
+                if (!id.empty()) r.skies.push_back(id);
+            }
+        }
+        return r;
+    }
+    return r;
+}
+SongRule const& currentRule() { // cached per song
+    static std::string key;
+    static SongRule r;
+    std::string const k = gS->clock.hasTrack() ? gS->clock.track().key() : std::string();
+    if (k != key) { key = k; r = k.empty() ? SongRule{} : songRule(gS->clock.track().s.artist, gS->clock.track().s.title); }
+    return r;
+}
 void fetchFor(MediaSample s, int64_t seq) {
     std::thread([s, seq] { try {
         Track tk;
         tk.s = s;
+        if (songRule(s.artist, s.title).noLyrics) { // [LyricsForge] song_rules.txt: this one plays with no lyrics
+            std::lock_guard l(gS->mutex);
+            if (gS->clock.songSeq() == seq) { gS->lyrics = nullptr; gS->lyricsState = LyricsState::NotFound; }
+            appendLog("lyrics_fetch", s.artist + " - " + s.title + ": no lyrics (song_rules.txt)\n");
+            return;
+        }
         auto const cacheFile = gS->cacheDir / cacheFileName(tk.key());
         std::optional<Lyrics> got;
         bool fromOverride = false;
@@ -1170,7 +1234,8 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
             }
         }
     }
-    std::string const wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" && !cfg.skyShuffle ? gS->chorus.sky : std::string();
+    bool wantSkyRule = false;
+    std::string wantSky = cfg.chorusLooks && cfg.director && m.lifted && cfg.skyPreset != "off" && !cfg.skyShuffle ? gS->chorus.sky : std::string();
     std::string randomSky; // [BF] Random sky
     if (cfg.skyShuffle && cfg.skyPreset != "off" && !cfg.skyImage) {
         auto& sh = gS->shuffle;
@@ -1247,6 +1312,23 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         }
         randomSky = sh.sky;
     }
+    { // [LyricsForge] song_rules.txt: this song plays only its own skies - one at the start, the next at each big moment
+        auto const& rule = currentRule();
+        if (!rule.skies.empty() && cfg.skyPreset != "off" && !cfg.skyImage) {
+            static std::string rSong, rSky;
+            static float rSince = 0;
+            static uint32_t rIdx = 0;
+            rSince += dt;
+            std::string const song = gS->clock.hasTrack() ? gS->clock.track().key() : std::string();
+            bool const big = m.bigDrop || (m.dropNow && rSince > 40.0f) || rSince > 150.0f;
+            if (song != rSong) { rSong = song; rIdx = uint32_t(nowMsWall()) % uint32_t(rule.skies.size()); rSince = 0; rSky.clear(); }
+            else if (big && rule.skies.size() > 1 && rSince > 8.0f) { rIdx = (rIdx + 1) % uint32_t(rule.skies.size()); rSince = 0; }
+            std::string const want = rule.skies[rIdx % rule.skies.size()];
+            if (want != rSky) { rSky = want; gS->directorLines.push_back("   song rule sky " + want); }
+            if (sky::find(want, cfg)) { randomSky = want; wantSkyRule = true; }
+        }
+    }
+    if (wantSkyRule) wantSky.clear(); // a song rule's skies win over the chorus look
     if (auto pr = sky::find(wantSky.empty() ? std::string_view(cfg.skyPreset) : std::string_view(wantSky), cfg))
         in.waveColor = pr->lyricColor ? pr->lyricColor & 0xFFFFFF : pr->aurora1 & 0xFFFFFF;
     std::string tourSky; // [BF] visual audit tour (demo file): cycle the skies, nothing saved
