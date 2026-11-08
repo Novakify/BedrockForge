@@ -1918,7 +1918,7 @@ void mirrorFx(vec3 d) {
 // each one growing from a flat-based body into sprouting bubbles (cumulus -> congestus) and fading away again, carved by
 // inverted Worley billows, lit by a light march to the sun - over a grass field: shell-textured blades near you that sway
 // in rolling gusts, a wind-sheened field further out, hazy at the horizon. Below that the usual void.
-GCONST float CH_HB = 3.0, CH_HMAX = 11.0, CH_G = 13.0, CH_PER = 140.0;
+GCONST float CH_HB = 6.5, CH_HMAX = 17.0, CH_G = 13.0, CH_PER = 140.0;
 GCONST vec2 CH_WIND = vec2(0.10, 0.035);
 float chh(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + s * 74.7) * 43758.5453); }
 float chr(float h0, float i) { return fract(h0 * (97.13 + i * 31.7) + i * 0.371); } // cheap extra randoms from one cell hash
@@ -1933,9 +1933,10 @@ float chCells(vec3 p, float tt) {
         float h0 = chh(cx + gen * 13.1, cz - gen * 7.3, 2.0);
         if (chr(h0, 0.0) >= 0.8) continue;                                   // clear sky in this cell this time round
         float L = pow(clamp(f / 0.45, 0.0, 1.0), 0.8) * (1.0 - clamp((f - 0.75) / 0.25, 0.0, 1.0)); // grow .. live .. fade
-        if (L <= 0.02) continue;
         float ccx = (cx + 0.35 + 0.3 * chr(h0, 1.0)) * CH_G, ccz = (cz + 0.35 + 0.3 * chr(h0, 2.0)) * CH_G;
-        float R = CH_G * (0.22 + 0.14 * chr(h0, 3.0)) * (0.7 + 0.3 * L);
+        L *= sm(13.0, 19.0, length(vec2(ccx + CH_WIND.x * tt, ccz + CH_WIND.y * tt))); // drifting right over you it evaporates
+        if (L <= 0.02) continue;
+        float R = CH_G * (0.25 + 0.16 * chr(h0, 3.0)) * (0.7 + 0.3 * L);
         float hv = chr(h0, 4.0);
         float H = CH_HMAX * (0.22 + 0.35 * hv + 0.55 * pow(hv, 6.0)) * pow(max(L, 0.12), 0.6); // a few grow into congestus
         float dx = qx - ccx, dz = qz - ccz, r2 = dx * dx + dz * dz;
@@ -1947,13 +1948,12 @@ float chCells(vec3 p, float tt) {
             float ka = chr(h0, 5.0 + 3.0 * fk), kb = chr(h0, 6.0 + 3.0 * fk), kc = chr(h0, 7.0 + 3.0 * fk);
             float hk = (fk + 0.5) / 9.0, ang = ka * 6.2832, rad = R * (0.55 - 0.4 * hk) * sqrt(kb);
             vec3 e = vec3(qx - ccx - cos(ang) * rad, py - CH_HB - H * (0.25 + 0.6 * hk * (0.6 + 0.4 * kc)), qz - ccz - sin(ang) * rad);
-            float br = R * (0.62 - 0.32 * hk) * (0.7 + 0.4 * kc) * (0.85 + 0.15 * L);
+            float br = R * (0.62 - 0.32 * hk) * (0.7 + 0.4 * kc) * (0.85 + 0.15 * L) * 1.3;
             sc = max(sc, 1.0 - sqrt(e.x * e.x + e.z * e.z + e.y * e.y * 1.1025) / br);
         }
         best = max(best, sc);
     }
-    float nr = length(p.xz);
-    return best - 0.8 * (1.0 - clamp((nr - 3.0) / 5.0, 0.0, 1.0));
+    return best;
 }
 float chWorley(vec3 p) {
     vec3 i = floor(p), f = p - i;
@@ -2022,15 +2022,16 @@ void cloudHill(vec3 d, float az, float el) {
             float D = chDens(p, s, tt, true);
             if (D < 0.003) continue;
             float ls = 0.0;
-            for (int j = 0; j < 3; j++) {
-                float st = 0.7 * pow(float(j) + 0.5, 1.7);
-                vec3 q = p + Ls * st;
-                ls += chDens(q, chCells(q, tt), tt, false) * 0.7 * pow(1.7, float(j));
+            { // light march to the sun: the first sample right at the surface (so each lobe shades itself), then further out
+                vec3 q = p + Ls * 0.18; ls += chDens(q, chCells(q, tt), tt, true) * 0.25;
+                q = p + Ls * 0.55;      ls += chDens(q, chCells(q, tt), tt, false) * 0.5;
+                q = p + Ls * 1.3;       ls += chDens(q, chCells(q, tt), tt, false) * 1.0;
+                q = p + Ls * 2.8;       ls += chDens(q, chCells(q, tt), tt, false) * 1.8;
             }
             float sig = 12.0;
-            float Tl = 0.62 * exp(-ls * sig * 0.42) + 0.38 * exp(-ls * sig * 0.08); // + multiple scattering
+            float Tl = 0.7 * exp(-ls * sig * 0.45) + 0.3 * exp(-ls * sig * 0.08); // + multiple scattering
             float powder = 1.0 - exp(-D * sig * 2.0);
-            float hf = clamp((p.y - CH_HB) / 9.0, 0.0, 1.0);
+            float hf = clamp((p.y - CH_HB) / 13.0, 0.0, 1.0);
             vec3 Lc = rgb(255.0, 252.0, 248.0) * Tl * (0.4 + 0.6 * powder) * 2.4
                     + (rgb(178.0, 192.0, 215.0) * (0.6 + 0.4 * hf) + rgb(196.0, 196.0, 198.0) * 0.3) * 0.66;
             float fog = exp(-tc / 260.0);
@@ -2050,12 +2051,13 @@ void cloudHill(vec3 d, float az, float el) {
     float tg = -CAMH / dy, fx = x * tg, fz = z * tg;
     float sheen = 0.5 + 0.5 * sin((fx * wd.x + fz * wd.y) * 0.35 - tt * 1.6 + fbm(fx * 0.05, fz * 0.05, tt * 0.05, 3) * 5.0);
     float pat = fbm(fx * 0.25, fz * 0.6, 2.0, 4);
+    pat += (fbm(fx * 1.6 - tt * 0.8, fz * 4.0, 5.0, 3) - 0.5) * 0.35 * (1.0 - sm(10.0, 40.0, min(tg, 400.0))); // finer mid-field detail
     vec3 fc = mix(rgb(40.0, 112.0, 22.0), rgb(92.0, 165.0, 44.0), sm(0.35, 0.7, pat));
     fc = mix(fc, rgb(130.0, 190.0, 70.0), 0.30 * sm(0.5, 1.0, sheen));
     fc = mix(fc, rgb(150.0, 195.0, 150.0), 0.55 * sm(25.0, 260.0, min(tg, 400.0)));
     float tTop = (-CAMH + HG) / dy;
     float lod = sm(3.5, 8.5, tTop);
-    vec3 nearc = fc * 0.42;                                              // the dark tangle at the roots
+    vec3 nearc = fc * (0.42 + 0.5 * sm(2.0, 7.0, (-CAMH + HG * 0.5) / dy)); // the dark tangle at the roots (lighter further out)
     if (lod < 0.999) {
         float sj = fract(sin(x * 9131.7 + y * 7123.3) * 43758.5453);
         for (int i = 0; i < NS; i++) {
