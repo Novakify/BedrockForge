@@ -1824,7 +1824,8 @@ bool spaceSky(vec3 d, float az, float el) {
 int realKind(int p) {
     if (p >= 38 && p <= 42) return p - 38; // [LyricsForge] 43, 44 are space skies (Event Horizon, Deep Voyage)
     if (p == 45) return 19;
-    if (p == 46) return 20;                // [LyricsForge] Cloud Hill                // [LyricsForge] Mirror Sky
+    if (p == 46) return 20;                // [LyricsForge] Cloud Hill
+    if (p == 47) return 21;                // [LyricsForge] Lake Sunset                // [LyricsForge] Mirror Sky
     if (p == 6) return 5;   if (p == 7) return 6;   if (p == 8) return 7;   if (p == 13) return 8;
     if (p == 15) return 9;  if (p == 17) return 10; if (p == 9) return 11;  if (p == 22) return 12;
     if (p == 36) return 13; if (p == 25) return 14; if (p == 28) return 15; if (p == 26) return 16;
@@ -2267,6 +2268,141 @@ void cloudHill(vec3 d, float az, float el) {
     }
     chFluff(d, tt);
 }
+// ==================================================================== [LyricsForge] Lake Sunset (preset 47)
+// a lake at sunset: slate-blue sky melting into a blazing orange horizon, broken altocumulus with dark maroon bodies whose
+// edges and undersides catch the low sun, a small hot sun in a mountain saddle, pines on the far left - all of it mirrored
+// in calm water with a glittering sun path. Music: the sun breathes with the bass and flares on drops (clouds light up
+// hotter, rays fan out), kicks drop soft rings on the water, the highs make the glitter dance, fireflies over the water
+// thicken as the song builds, and now and then a flock crosses the sunset.
+GCONST vec3 LS_SUN = vec3(0.0, 0.02094, -0.99978);                       // az 180, el 1.2
+float lsCloudD(float u, float v, float tt, int o) {
+    float w1 = fbm(u * 0.35, v * 0.35, 1.7, 3) - 0.5;
+    float n = fbm(u * 1.3 + w1 * 1.6, v * 2.0 + w1 * 1.0, tt * 0.004, o);
+    float cell = fbm(u * 5.5 + w1 * 2.5, v * 7.0, 5.1, 4);
+    float m = fbm(u * 0.18 + 4.0, v * 0.18, 2.2, 3);
+    float cov = 0.46 + (0.5 - m) * 0.4;
+    return clamp((n - cov) * 5.0 + (cell - 0.5) * 2.2, 0.0, 1.0);
+}
+vec3 lsSky(vec3 d, float tt, float flare) {
+    float y = d.y, yy = max(y, 0.0), eld = degrees(asin(clamp(y, -1.0, 1.0))), ep = max(eld, 0.0);
+    float mu = clamp(dot(d, LS_SUN), -1.0, 1.0), ang = acos(mu);
+    float side = exp(-ang / 0.9);
+    vec3 c = mix(rgb(62.0, 74.0, 120.0), rgb(118.0, 96.0, 140.0), exp(-ep / 22.0));          // slate blue -> dusty violet
+    c = mix(c, rgb(205.0, 105.0, 95.0), exp(-ep / (6.0 + 6.0 * side)) * (0.5 + 0.5 * side));
+    c = mix(c, rgb(245.0, 105.0, 25.0), exp(-ep / (3.0 + 5.0 * side)) * (0.55 + 0.45 * side)); // the blazing band
+    c += rgb(255.0, 140.0, 30.0) * 0.35 * exp(-ep / 1.5) * (0.4 + 0.6 * side);
+    c += rgb(255.0, 170.0, 40.0) * 0.5 * exp(-ang / 0.12) * (1.0 + 0.6 * flare);
+    if (y > 0.004) { // clouds on a plane: dark bodies, edges and undersides lit by the low sun
+        float s = 1.0 / (yy + 0.05);
+        float u = d.x * s * 0.7 + tt * 0.008, v = d.z * s * 0.7;
+        float D = lsCloudD(u, v, tt, 6);
+        if (D > 0.001) {
+            float D2 = lsCloudD(u, v - 0.07, tt, 4);
+            float hk0 = exp(-ep / 10.0) * (0.5 + 0.5 * side);
+            float lit = clamp(0.45 + (D - D2) * 2.4, 0.0, 1.0) * (1.0 - D * 0.6) + pow(clamp(1.0 - D, 0.0, 1.0), 2.0) * 0.6;
+            lit = clamp(lit + hk0 * 0.45 + 0.25 * flare * side, 0.0, 1.0);               // drops light them hotter
+            float hk = exp(-ep / 14.0);
+            vec3 litC = mix(rgb(235.0, 125.0, 110.0), rgb(255.0, 120.0, 40.0), clamp(hk * 0.6 + side * 0.5, 0.0, 1.0));
+            litC = mix(litC, rgb(255.0, 190.0, 90.0), exp(-ang / 0.35) * 0.6);
+            vec3 shC = mix(rgb(70.0, 62.0, 104.0), rgb(104.0, 52.0, 62.0), clamp(hk + side * 0.4, 0.0, 1.0));
+            c = mix(c, mix(shC, litC, pow(lit, 1.4)), clamp(D * 2.2, 0.0, 1.0) * sm(0.004, 0.05, y));
+        }
+        float st = fbm(d.x * s * 0.3, d.z * s * 6.0, 9.0, 4);                          // thin glowing streaks low down
+        c += rgb(255.0, 120.0, 40.0) * sm(0.55, 0.75, st) * exp(-ep / 3.0) * 0.5 * side;
+    }
+    // the sun: a small blazing disc with a star; it breathes with the bass and flares on drops
+    float az = atan2(-d.x, d.z);
+    float rays = pow(0.5 + 0.5 * cos((az - 3.14159265) * 30.0), 12.0);
+    float pb = 1.0 + 0.5 * MBASS + 0.8 * flare;
+    c += rgb(255.0, 245.0, 200.0) * exp(-(1.0 - mu) * 6000.0) * 5.0;
+    c += rgb(255.0, 200.0, 90.0) * (exp(-ang / 0.025) * 1.2 + rays * exp(-ang / (0.05 + 0.03 * flare)) * 1.0) * pb;
+    return c;
+}
+bool lsPines(float a, float e, int row) {
+    // a row of pine silhouettes: spire tip, stacked branch tiers flaring at their bottoms, ragged needles, a trunk
+    if (a < 202.0) return false;
+    float sp = row == 0 ? 1.5 : (row == 1 ? 1.0 : 0.7), base = row == 0 ? 0.2 : (row == 1 ? 0.45 : 0.65);
+    float slope = sm(203.0, 245.0, a);
+    if (e < base + 0.15 + 0.25 * slope) return true;                       // the forest floor
+    if (e > 9.5) return false;
+    float fr = float(row);
+    float k = a / sp + fr * 0.37, c0 = floor(k);
+    for (int o = -1; o <= 1; o++) {
+        float c = c0 + float(o);
+        float h1 = fract(sin(c * 91.7 + fr * 13.1) * 43758.5453), h2 = fract(sin(c * 47.3 + fr * 7.7) * 43758.5453);
+        float h3 = fract(sin(c * 12.9 + fr * 3.3) * 43758.5453);
+        if (h3 <= 0.12) continue;
+        float ac = (c + 0.5 + (h2 - 0.5) * 0.6 - fr * 0.37) * sp;
+        float ht = ((row == 0 ? 2.4 : (row == 1 ? 1.8 : 1.3)) + 2.6 * h1) * (0.35 + 1.25 * sm(203.0, 250.0, ac));
+        float hn = (e - base) / ht;
+        if (hn >= 1.0) continue;
+        float nt = 6.0 + floor(h3 * 3.0), tf = fract(hn * nt);
+        float wid = pow(max(1.0 - hn, 0.0), 0.95) * ht * (0.26 + 0.08 * h2) * (0.5 + 0.5 * pow(1.0 - tf, 0.7));
+        wid *= 1.0 + 0.18 * (fbm(e * 18.0 + c, a * 6.0, fr * 3.0, 2) - 0.5);
+        if (hn < 0.06) wid = max(wid, ht * 0.035);
+        if (abs(a - ac) < wid) return true;
+    }
+    return false;
+}
+vec3 lsLand(vec3 c, float a, float e) {
+    // mountains through the middle and right (the sun sets in a saddle), then the pines over them
+    float rid = fbm(a * 0.045, 1.0, 0.0, 5);
+    float h1 = (0.9 + 12.0 * pow(max(rid - 0.38, 0.0), 1.1) * 2.0) * (1.0 - 0.75 * exp(-((a - 180.0) / 4.0) * ((a - 180.0) / 4.0)));
+    float h2 = 0.45 + 0.4 * fbm(a * 0.15, 7.0, 0.0, 3);
+    if (e < h1) c = rgb(58.0, 54.0, 80.0);
+    if (e < h2) c = rgb(34.0, 32.0, 48.0);
+    if (lsPines(a, e, 2)) c = rgb(36.0, 28.0, 40.0);
+    if (lsPines(a, e, 1)) c = rgb(17.0, 13.0, 20.0);
+    if (lsPines(a, e, 0)) c = rgb(5.0, 4.0, 6.0);
+    return c;
+}
+void lakeSunset(vec3 d, float az, float el) {
+    float tt = T / 2.2;
+    float flare = WAVE >= 0.0 ? sm(0.0, 0.08, WAVE) * (1.0 - sm(0.5, 1.0, WAVE)) : 0.0;
+    if (d.y >= 0.0) {
+        C = lsLand(lsSky(d, tt, flare), az, el);
+        if (flare > 0.001) add(rgb(255.0, 210.0, 140.0), sunRays(d, LS_SUN, 11.0, 4.0) * 0.55 * flare); // drop: god rays fan out
+        C = mix(C, rgb(28.0, 18.0, 26.0), chBirds(az, el, tt) * 0.9);
+    } else {
+        if (d.y < -0.53) { C = v3(0.0); return; }                             // the void takes over down there anyway
+        // calm water: a gentle ripple, glassy near the horizon, a little livelier toward you
+        float ry = max(-d.y, 1e-4), PP = 1.0 / ry;
+        float rip = fbm(d.x * PP * 0.8 - tt * 0.05, d.z * PP * 2.5 + tt * 0.12, tt * 0.2, 4) - 0.5;
+        float amp = 0.002 + 0.022 * sm(0.0, 0.6, ry);
+        // kicks: a soft ring spreads over the water ahead and wobbles the reflection
+        vec2 Q = vec2(d.x, d.z) * PP - vec2(0.0, -6.0);
+        float dist = length(Q), ringH = 0.0;
+        if (KICK > 0.03) { float qq = (dist - (0.5 + (1.0 - KICK) * 6.0)) / 0.45; ringH = KICK * exp(-qq * qq) * sin(qq * 4.0); }
+        vec2 rn = Q / max(dist, 1e-3) * 0.006 * ringH;
+        vec3 rd = normalize(vec3(d.x + rip * amp * 0.5 + rn.x, ry + rip * amp, d.z + rn.y));
+        float raz = degrees(atan2(-rd.x, rd.z)); if (raz < 0.0) raz += 360.0;
+        vec3 R = lsLand(lsSky(rd, tt, flare), raz, degrees(asin(clamp(rd.y, -1.0, 1.0))));
+        float band = fbm(d.x * PP * 0.5 - tt * 0.04, d.z * PP * 1.8 + tt * 0.1, 5.5, 3);
+        R *= (0.62 + 0.5 * pow(band, 1.5)) * vec3(0.95, 0.9, 1.0);              // soft ripple light and shade
+        R *= 1.0 + 0.5 * exp(-ry / 0.03);                                         // the glow on the far water
+        R *= 0.8 + 0.2 * sm(0.0, 0.03, ry);
+        R += v3(1.0) * 0.04 * abs(ringH);
+        // the sun's glitter path: sparkles that dance with the highs
+        float sx = radians(wrap180(az - 180.0));
+        float gl = exp(-(sx / (0.02 + 0.25 * ry)) * (sx / (0.02 + 0.25 * ry)))
+                 * sm(0.45 - 0.08 * MHIGH, 0.8, fbm(d.x * PP * 3.0, d.z * PP * 8.0 - tt * 0.4, tt * 0.6, 3));
+        R += rgb(255.0, 200.0, 90.0) * gl * (1.2 + 1.2 * MHIGH + 0.8 * flare) * exp(-ry * 2.5);
+        C = R;
+    }
+    // fireflies: tiny warm specks drifting over the water by the trees, more as the song builds
+    if (az > 200.0 && el > -9.0 && el < 4.0) {
+        vec3 q = d * 40.0 + vec3(sin(tt * 0.23) * 0.4, tt * 0.04 + sin(tt * 0.31) * 0.3, cos(tt * 0.19) * 0.4);
+        vec3 cell = floor(q), f = q - cell;
+        vec3 h3 = sh33(cell);
+        float h = sh31(cell + 5.1);
+        if (h < 0.02 + 0.10 * MAVG) {
+            vec3 o = 0.2 + 0.6 * h3 + vec3(sin(tt * 1.7 + h * 40.0), cos(tt * 1.3 + h * 30.0), 0.0) * 0.1;
+            vec3 dd = f - o;
+            float r2 = dot(dd, dd), blink = 0.5 + 0.5 * sin(tt * (1.5 + 2.0 * h3.z) + h * 60.0);
+            C += rgb(255.0, 215.0, 120.0) * (exp(-r2 / 0.0012) * 1.2 + exp(-r2 / 0.01) * 0.15) * blink * sm(200.0, 215.0, az);
+        }
+    }
+}
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
     PULSE = skyInfo4.w;
@@ -2306,7 +2442,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
 
     int rk = realKind(PRESET);
     MBASS = 0.0; MHIGH = 0.0; MAVG = 0.0;
-    if (PRESET == 45 || PRESET == 46) {
+    if (PRESET == 45 || PRESET == 46 || PRESET == 47) {
         vec4 sp4 = px(15) * 255.0;
         float sb[8];
         for (int k = 0; k < 4; k++) { float v = sp4[k]; float hi = floor(v / 16.0); sb[2 * k] = (v - hi * 16.0) / 15.0; sb[2 * k + 1] = hi / 15.0; }
@@ -2353,10 +2489,11 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
             add(v3(1.0), 0.10 * exp(-ry * 60.0));                                   // a bright line where they meet
             add(v3(1.0), 0.05 * abs(ringH));                                        // the rings catch the light
         } else if (PRESET == 46) cloudHill(dir, az, el); // [LyricsForge] Cloud Hill draws its whole sphere itself
+        else if (PRESET == 47) lakeSunset(dir, az, el); // [LyricsForge] Lake Sunset too
         else
         realSky(x, y, z, el, rk);
         if (PRESET == 45) mirrorFx(dir);
-        if (BKIND >= 0 && PRESET != 46) bodyGlow(x, y, z, az, el);       // Cloud Hill has its own sun
+        if (BKIND >= 0 && PRESET != 46 && PRESET != 47) bodyGlow(x, y, z, az, el); // Cloud Hill / Lake Sunset have their own sun
     } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
         C = styledSky(dir, PRESET <= 28 ? PRESET - 20 : PRESET - 25, T / 2.2);
