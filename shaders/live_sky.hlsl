@@ -1924,18 +1924,18 @@ float chh(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + 
 float chr(float h0, float i) { return fract(h0 * (97.13 + i * 31.7) + i * 0.371); } // cheap extra randoms from one cell hash
 float chCells(vec3 p, float tt) {
     float qx = p.x - CH_WIND.x * tt, qz = p.z - CH_WIND.y * tt, py = p.y;
-    float cx0 = floor(qx / CH_G - 0.5), cz0 = floor(qz / CH_G - 0.5);
+    float cx0 = floor(qx / CH_G), cz0 = floor(qz / CH_G);
     float best = -1.0;
-    for (int o = 0; o < 4; o++) {
-        float cx = cx0 + float(o & 1), cz = cz0 + float(o >> 1);
+    for (int o = 0; o < 9; o++) {                                           // the 3x3 cells round the point: no cloud gets cut off
+        float cx = cx0 + float(o % 3) - 1.0, cz = cz0 + float(o / 3) - 1.0;
         float f = tt / CH_PER + chh(cx, cz, 1.0), gen = floor(f);
         f -= gen;
         float h0 = chh(cx + gen * 13.1, cz - gen * 7.3, 2.0);
         if (chr(h0, 0.0) >= 0.8) continue;                                   // clear sky in this cell this time round
-        float L = pow(clamp(f / 0.45, 0.0, 1.0), 0.8) * (1.0 - clamp((f - 0.75) / 0.25, 0.0, 1.0)); // grow .. live .. fade
+        float L = sm(0.0, 0.45, f) * (1.0 - sm(0.6, 1.0, f));                 // grows ~45 s, lives, dissolves ~40 s
         float ccx = (cx + 0.35 + 0.3 * chr(h0, 1.0)) * CH_G, ccz = (cz + 0.35 + 0.3 * chr(h0, 2.0)) * CH_G;
         L *= sm(13.0, 19.0, length(vec2(ccx + CH_WIND.x * tt, ccz + CH_WIND.y * tt))); // drifting right over you it evaporates
-        if (L <= 0.02) continue;
+        if (L <= 0.005) continue;
         float R = CH_G * (0.25 + 0.16 * chr(h0, 3.0)) * (0.7 + 0.3 * L);
         float hv = chr(h0, 4.0);
         float H = CH_HMAX * (0.22 + 0.35 * hv + 0.55 * pow(hv, 6.0)) * pow(max(L, 0.12), 0.6); // a few grow into congestus
@@ -1954,7 +1954,7 @@ float chCells(vec3 p, float tt) {
             float br = R * (0.30 + 0.16 * kc) * (1.0 - 0.35 * rr) * (0.85 + 0.15 * L);
             sc = max(sc, 1.0 - sqrt(e.x * e.x + e.z * e.z + e.y * e.y * 1.1025) / br);
         }
-        best = max(best, sc);
+        best = max(best, sc - (1.0 - sm(0.0, 0.7, L)) * 1.3);              // forming / dissolving: eaten away from the edges in
     }
     return best;
 }
