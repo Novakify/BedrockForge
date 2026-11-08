@@ -1825,7 +1825,8 @@ int realKind(int p) {
     if (p >= 38 && p <= 42) return p - 38; // [LyricsForge] 43, 44 are space skies (Event Horizon, Deep Voyage)
     if (p == 45) return 19;
     if (p == 46) return 20;                // [LyricsForge] Cloud Hill
-    if (p == 47) return 21;                // [LyricsForge] Lake Sunset                // [LyricsForge] Mirror Sky
+    if (p == 47) return 21;                // [LyricsForge] Lake Sunset
+    if (p == 48) return 22;                // [LyricsForge] Lupine Sunset                // [LyricsForge] Mirror Sky
     if (p == 6) return 5;   if (p == 7) return 6;   if (p == 8) return 7;   if (p == 13) return 8;
     if (p == 15) return 9;  if (p == 17) return 10; if (p == 9) return 11;  if (p == 22) return 12;
     if (p == 36) return 13; if (p == 25) return 14; if (p == 28) return 15; if (p == 26) return 16;
@@ -2403,6 +2404,215 @@ void lakeSunset(vec3 d, float az, float el) {
         }
     }
 }
+// ==================================================================== [LyricsForge] Lupine Sunset (preset 48)
+// a lupine meadow at sunset: the sun's glow floods the lower sky (white-gold, orange, peach, pink, lavender, violet),
+// crisp fibrous streaks lit hot pink from below, a big blazing sun, hazy hills with tree clumps, a purple meadow rolling
+// up to them and, up close, a few lupines built as real 3D racemes (pea-flowers on a golden-angle spiral, each lit and
+// rimmed pink by the sunset) among palmate leaves. Music: the streaks breathe pinker with the bass, drops flare the sun
+// and fan out rays, kicks roll a breeze wave through the flowers, petals and fireflies thicken as the song builds,
+// and now and then a shooting star crosses the violet up top.
+GCONST vec3 LP_SUN = vec3(0.0349, 0.02269, -0.99913);                     // az 182, el 1.3
+vec3 lpRamp(float r) {
+    vec3 c = rgb(255.0, 236.0, 170.0);
+    c = mix(c, rgb(255.0, 170.0, 70.0),  sm(0.0, 1.2, r));
+    c = mix(c, rgb(254.0, 122.0, 42.0),  clamp((r - 1.2) / 1.8, 0.0, 1.0));
+    c = mix(c, rgb(255.0, 140.0, 100.0), clamp((r - 3.0) / 3.0, 0.0, 1.0));
+    c = mix(c, rgb(244.0, 140.0, 150.0), clamp((r - 6.0) / 4.0, 0.0, 1.0));
+    c = mix(c, rgb(200.0, 128.0, 200.0), clamp((r - 10.0) / 6.0, 0.0, 1.0));
+    c = mix(c, rgb(150.0, 108.0, 205.0), clamp((r - 16.0) / 10.0, 0.0, 1.0));
+    c = mix(c, rgb(100.0, 64.0, 165.0),  clamp((r - 26.0) / 14.0, 0.0, 1.0));
+    c = mix(c, rgb(82.0, 40.0, 140.0),   clamp((r - 40.0) / 30.0, 0.0, 1.0));
+    return c;
+}
+vec3 lpSky(vec3 d, float az, float ep, float tt, float flare) {
+    float daz = wrap180(az - 182.0), adz = abs(daz);
+    float r = sqrt((daz * 0.2) * (daz * 0.2) + ep * ep) * 0.72;
+    vec3 c = lpRamp(r);
+    c = mix(c, rgb(232.0, 82.0, 92.0), exp(-ep / 3.5) * sm(20.0, 70.0, adz) * 0.8);  // far round the horizon: red-pink
+    c = mix(c, rgb(70.0, 46.0, 150.0), sm(15.0, 60.0, ep) * sm(0.0, 90.0, daz) * 0.35); // bluer violet up right
+    c = mix(c, rgb(98.0, 42.0, 128.0), sm(20.0, 70.0, ep) * sm(0.0, -90.0, daz) * 0.3); // deeper magenta up left
+    float yy = max(d.y, 0.0);
+    c *= 1.0 + 0.12 * (fbm(d.x / (yy + 0.3) * 0.3, d.z / (yy + 0.3) * 0.3, 8.0, 3) - 0.5);
+    float glowAt = exp(-r / 14.0);
+    if (d.y > 0.004) { // crisp fibrous streaks, lit hot pink from below
+        float s = 1.0 / (yy + 0.07);
+        float px_ = d.x * s, pz = d.z * s;
+        float ux = px_ * 0.9135 - pz * 0.4067 + tt * 0.012, uz = px_ * 0.4067 + pz * 0.9135; // turned 24 deg: diagonal
+        float w = fbm(ux * 0.15, uz * 0.5, 1.1, 3) - 0.5;
+        float mask = fbm(ux * 0.07 + 3.0, uz * 0.25, 2.0, 3);
+        float cov = 0.43 + (0.5 - mask) * 0.4 - 0.06 * exp(-ep / 14.0);
+        float fib = fbm(ux * 1.6 + w, uz * 16.0, 4.4, 4), fib2 = fbm(ux * 4.0, uz * 38.0, 7.7, 3);
+        float dens = (fbm(ux * 0.30 + w * 0.9, uz * 2.2 + w * 1.8, 0.0, 5) - cov) * 3.2 + (fib - 0.5) * 1.1 + (fib2 - 0.5) * 0.45;
+        float D = sm(0.0, 0.35, dens);
+        if (D > 0.001) {
+            float dens2 = (fbm(ux * 0.30 + w * 0.9, (uz + 0.06) * 2.2 + w * 1.8, 0.0, 5) - cov) * 3.2 + (fib - 0.5) * 1.1;
+            float under = clamp(0.55 + (dens - dens2) * 1.4, 0.0, 1.0);
+            vec3 litC = mix(rgb(235.0, 95.0, 170.0), rgb(255.0, 95.0, 120.0), clamp(exp(-ep / 10.0) * 1.2, 0.0, 1.0));
+            litC = mix(litC, rgb(255.0, 150.0, 110.0), pow(glowAt, 1.5) * 0.7);
+            vec3 shC = mix(rgb(120.0, 52.0, 140.0), rgb(150.0, 50.0, 105.0), clamp(exp(-ep / 12.0), 0.0, 1.0));
+            vec3 cc = mix(shC, litC, clamp(under * (0.55 + 0.6 * exp(-ep / 25.0)) + 0.1 * fib2, 0.0, 1.0));
+            cc *= (1.0 + 0.25 * glowAt) * (1.0 + 0.35 * MBASS + 0.3 * flare);               // the bass makes them breathe pinker
+            cc = mix(cc, cc * vec3(1.08, 0.9, 1.05), MBASS * 0.5);
+            c = mix(c, cc, D * sm(0.004, 0.035, d.y) * 0.97);
+        }
+    }
+    { // thin dark streaks just above the horizon, their tops lit
+        float lbh = 1.6 + 1.6 * fbm(daz * 0.02, 5.0, 0.0, 3);
+        float lband = exp(-((ep - lbh) / 0.35) * ((ep - lbh) / 0.35)) * sm(0.47, 0.62, fbm(daz * 0.05, 1.0, tt * 0.003, 4)) * sm(4.0, 14.0, adz);
+        c = mix(c, mix(rgb(120.0, 48.0, 100.0), rgb(255.0, 110.0, 90.0), clamp((ep - lbh) / 0.35 + 0.3, 0.0, 1.0)), lband * 0.85);
+    }
+    // the sun: a big blazing disc, a gold rim and a wide orange bloom; drops make it flare
+    float ang = degrees(acos(clamp(dot(d, LP_SUN), -1.0, 1.0)));
+    float fl = 1.0 + 0.6 * flare + 0.25 * MBASS;
+    c += rgb(255.0, 252.0, 240.0) * sm(1.05, 0.85, ang) * 3.2 + rgb(255.0, 215.0, 120.0) * sm(1.35, 1.0, ang) * 0.9;
+    c += rgb(255.0, 150.0, 70.0) * (exp(-ang / 1.6) * 1.0 + exp(-ang / (5.0 + 3.0 * flare)) * 0.45) * fl;
+    // land: far hazy hills, nearer rolling hills with tree clumps, both sides higher
+    if (d.y >= 0.0) {
+        float fh = 0.35 + 0.45 * fbm(az * 0.15, 2.0, 0.0, 4);
+        float mh = max(0.45 + 3.6 * sm(-4.0, -45.0, daz) * (0.7 + (fbm(az * 0.05, 3.0, 0.0, 4) - 0.5)),
+                       0.45 + 2.6 * sm(5.0, 45.0, daz) * (0.7 + (fbm(az * 0.05, 9.0, 0.0, 4) - 0.5)));
+        mh += 0.35 * sm(0.6, 0.72, fbm(az * 1.6, 4.0, 0.0, 2)) * sm(0.8, 1.4, mh);
+        float hazeK = exp(-r / 18.0);
+        if (ep < fh) c = mix(rgb(128.0, 72.0, 104.0), rgb(200.0, 110.0, 110.0), hazeK);
+        if (ep < mh) c = mix(rgb(44.0, 22.0, 34.0), rgb(96.0, 46.0, 62.0), hazeK * exp(-max(ep - 0.3, 0.0) / 1.5));
+    }
+    return c;
+}
+float lpH(float a, float b, float s) { return fract(sin(a * 127.1 + b * 311.7 + s * 74.7) * 43758.5453); }
+void lupineSunset(vec3 d, float az, float el) {
+    float tt = T / 2.2;
+    float flare = WAVE >= 0.0 ? sm(0.0, 0.08, WAVE) * (1.0 - sm(0.5, 1.0, WAVE)) : 0.0;
+    float ep = max(el, 0.0);
+    if (d.y >= 0.0) {
+        C = lpSky(d, az, ep, tt, flare);
+        if (flare > 0.001) add(rgb(255.0, 190.0, 170.0), sunRays(d, LP_SUN, 12.0, 4.0) * 0.6 * flare); // drop: rays fan out
+        { // a shooting star now and then across the violet up top
+            float P = 14.0, gi = floor(tt / P), lt = tt - gi * P;
+            float h1 = fract(sin(gi * 51.7) * 43758.5453), h2 = fract(sin(gi * 23.1 + 4.0) * 43758.5453);
+            if (h1 < 0.55 + 0.3 * MAVG && lt < 1.1) {
+                vec3 a0 = dirAE(120.0 + 120.0 * h2, 38.0 + 20.0 * h1), a1 = dirAE(120.0 + 120.0 * h2 + 18.0, 30.0 + 20.0 * h1);
+                float f = lt / 1.1;
+                vec3 head = normalize(mix(a0, a1, f));
+                vec3 tail = normalize(mix(a0, a1, max(f - 0.25, 0.0)));
+                vec3 ab = head - tail; float hh = clamp(dot(d - tail, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+                float dist = length(d - tail - ab * hh);
+                add(rgb(255.0, 235.0, 245.0), exp(-dist * dist / 0.0000012) * hh * sin(3.14159 * f) * 1.6);
+            }
+        }
+        return;
+    }
+    if (d.y < -0.53) { C = v3(0.0); return; }                                // the void takes over down there anyway
+    const float CAMH = 1.0;
+    float dy = min(d.y, -1e-4), tg = -CAMH / dy, fx = d.x * tg, fz = d.z * tg;
+    float daz = wrap180(az - 182.0);
+    float r = sqrt((daz * 0.2) * (daz * 0.2)) * 0.72, hazeK = exp(-r / 18.0);
+    // the far meadow: a purple haze with darker rolling swells and bushes, climbing into the dark hills
+    float swell = fbm(fx * 0.015, fz * 0.06, 3.0, 4);
+    float bands = 0.5 + 0.5 * sin(fz * 0.012 + fbm(fx * 0.004, fz * 0.004, 1.0, 2) * 6.0);
+    vec3 farM = mix(rgb(128.0, 70.0, 136.0), rgb(72.0, 36.0, 74.0), clamp(swell * 0.7 + bands * 0.5 - 0.1, 0.0, 1.0));
+    farM = mix(farM, rgb(40.0, 26.0, 36.0), sm(0.6, 0.68, fbm(fx * 0.03, fz * 0.08, 9.0, 3)) * sm(40.0, 120.0, tg) * 0.8);
+    farM = mix(farM, rgb(170.0, 96.0, 120.0), hazeK * 0.4 * sm(100.0, 600.0, tg));
+    farM = mix(farM, mix(rgb(58.0, 30.0, 48.0), rgb(120.0, 58.0, 70.0), hazeK * 0.6), sm(160.0, 700.0, tg));
+    // the mid meadow: purple drifts in the green, detail fading with distance (no shimmer)
+    float fq = 1.0 / (1.0 + tg / 25.0);
+    float dt_ = sm(0.42, 0.62, fbm(fx * 0.7 * fq + 3.0, fz * 1.6 * fq, 4.0, 4)) * 0.8 + 0.2 * sm(0.5, 0.7, fbm(fx * 0.15, fz * 0.4, 9.0, 3));
+    float gpat = fbm(fx * 0.05, fz * 0.12, 6.0, 3);
+    vec3 midM = mix(mix(rgb(8.0, 16.0, 8.0), rgb(56.0, 34.0, 80.0), sm(20.0, 90.0, tg)), rgb(104.0, 62.0, 176.0),
+                    clamp(dt_ * (0.35 + 0.4 * gpat) * (0.55 + 0.45 * sm(12.0, 60.0, tg)) + 0.5 * sm(25.0, 140.0, tg), 0.0, 1.0));
+    vec3 M = mix(midM, farM, sm(120.0, 500.0, tg));
+    float lod = sm(11.0, 16.0, tg);
+    vec3 nearc = rgb(4.0, 8.0, 4.0);
+    if (lod < 0.999) {
+        // near lupines: few, each a real 3D raceme. Shells from the top down; the first thing hit is what you see.
+        const float HG = 0.95, CS = 0.42, GA = 2.39996;
+        const int NS = 64;
+        vec3 Lq = normalize(vec3(0.6, 0.12, -0.8));                               // the sun, in the field's turned frame
+        vec2 vdir = normalize(-vec2(d.x * 0.8 - d.z * 0.6, d.x * 0.6 + d.z * 0.8));
+        [loop] for (int i = 0; i < NS; i++) {
+            float hgt = HG * (1.0 - (float(i) + 0.5) / float(NS));
+            float t = (-CAMH + hgt) / dy;
+            if (t > 16.0) break;
+            float p0x = d.x * t, p0z = d.z * t;
+            // the breeze, plus a wave rolled out by each kick
+            float sway = (0.02 * sin(tt * 1.6 + p0x * 0.5 + p0z * 0.35)) * (hgt / HG) * (hgt / HG);
+            if (KICK > 0.03) { float R = 1.0 + (1.0 - KICK) * 14.0, dd0 = length(vec2(p0x, p0z)); sway += 0.07 * KICK * exp(-(dd0 - R) * (dd0 - R) / 3.0) * (hgt / HG) * (hgt / HG); }
+            float qx = p0x * 0.8 - p0z * 0.6 - sway, qz = p0x * 0.6 + p0z * 0.8;
+            float cx = floor(qx / CS) + 31.0, cz = floor(qz / CS) + 77.0;
+            float h1 = fract(sin(cx * 127.1 + cz * 311.7) * 43758.5453), h2 = fract(sin(cx * 269.5 + cz * 183.3) * 43758.5453);
+            float h3 = fract(sin(cx * 419.2 + cz * 371.9) * 43758.5453);
+            float ex = qx - (cx - 31.0 + 0.3 + 0.4 * h1) * CS, ez = qz - (cz - 77.0 + 0.3 + 0.4 * h2) * CS;
+            float dd = sqrt(ex * ex + ez * ez);
+            bool flower = h3 > 0.6;
+            float H0 = HG * (0.7 + 0.3 * h1), s0 = 0.42 * H0, L = H0 - s0;
+            bool got = false; vec3 col = v3(0.0);
+            if (flower && hgt > s0 - 0.03 && hgt < H0 + 0.02 && dd < 0.11) {
+                float u0 = clamp((hgt - s0) / L, 0.0, 1.0), k0 = floor(u0 * 46.0), best = -9.0;
+                for (int dk = -3; dk <= 3; dk++) {
+                    float k = k0 + float(dk);
+                    if (k < 0.0 || k >= 46.0) continue;
+                    float uk = (k + 0.5) / 46.0, hk = s0 + uk * L, th = k * GA + h2 * 6.28;
+                    float Rk = 0.075 * pow(1.0 - uk, 0.7) + 0.008;
+                    float open_ = 1.0 - sm(0.55, 0.9, uk), rf = 0.020 * (0.55 + 0.45 * open_) + 0.006 * (1.0 - open_);
+                    vec2 cth = vec2(cos(th), sin(th));
+                    for (int part = 0; part < 2; part++) {
+                        bool isB = part == 1;                                         // banner (upright petal) / wings + keel
+                        vec3 o = isB ? vec3(ex - cth.x * (Rk + rf * 0.75), hgt - (hk + rf * 0.55), ez - cth.y * (Rk + rf * 0.75))
+                                     : vec3(ex - cth.x * (Rk + rf * 0.35), hgt - hk, ez - cth.y * (Rk + rf * 0.35));
+                        float rr = isB ? rf * 0.95 : rf;
+                        float dist = isB ? sqrt(o.x * o.x * 1.6 + o.z * o.z * 1.6 + o.y * o.y * 0.64) : sqrt(o.x * o.x + o.z * o.z + o.y * o.y * 1.69);
+                        if (dist >= rr * (isB ? open_ : 1.0)) continue;
+                        float facing = dot(cth, vdir) + (1.0 - dist / rr) * 0.3;
+                        if (facing <= best) continue;
+                        best = facing;
+                        vec3 n = o / rr;
+                        float nl = length(n) + 1e-6;
+                        float lam = clamp(dot(n, Lq) / nl * 0.6 + 0.4, 0.0, 1.0);
+                        vec3 c2 = isB ? mix(rgb(130.0, 100.0, 225.0), rgb(205.0, 185.0, 250.0), pow(clamp(1.0 - dist / rr, 0.0, 1.0), 0.7))
+                                      : mix(rgb(52.0, 30.0, 150.0), rgb(118.0, 76.0, 215.0), lam);
+                        if (isB && n.y > 0.0) c2 = mix(c2, rgb(250.0, 245.0, 255.0), sm(0.6, 0.85, 1.0 - dist / rr) * 0.6); // the white eye
+                        c2 = mix(c2, rgb(200.0, 150.0, 230.0), sm(0.5, 1.0, uk) * 0.55);       // paler, pinker buds up top
+                        c2 = mix(c2, rgb(160.0, 190.0, 140.0), sm(0.92, 1.0, uk) * 0.4);      // the green-lilac tip
+                        c2 *= 0.45 + 0.75 * lam;
+                        c2 = mix(c2, rgb(255.0, 120.0, 175.0), sm(0.7, 1.0, dist / rr) * clamp(-(n.z / nl) * 0.7 + 0.3, 0.0, 1.0) * 0.6); // sunset rim
+                        col = c2 * (0.75 + 0.25 * h3) * (1.0 + 0.4 * flare);
+                        got = true;
+                    }
+                }
+                if (!got && hgt > s0 && hgt < H0 && dd < (0.075 * pow(1.0 - u0, 0.7) + 0.008) * 0.85) { col = rgb(30.0, 22.0, 48.0); got = true; }
+            }
+            if (!got && flower && hgt < H0 && dd < 0.008) { col = rgb(36.0, 58.0, 26.0); got = true; }   // stem
+            if (!got) { // palmate leaves: 7-9 narrow leaflets fanning out low on the plant
+                float an = atan2(ez, ex), nl_ = 7.0 + floor(h2 * 3.0), lr = 0.17 * (0.7 + 0.3 * h3);
+                float lfa = abs(fract(an / 6.2832 * nl_ + h1 * 3.0) - 0.5);
+                float dyl = hgt - (0.18 + 0.12 * h1 + 0.05 * (dd / lr) * (dd / lr));
+                if (dd < lr && lfa < 0.16 * (1.0 - pow(dd / lr, 1.5)) + 0.02 && abs(dyl) < 0.012) {
+                    col = mix(rgb(12.0, 26.0, 10.0), rgb(40.0, 66.0, 28.0), clamp(1.0 - lfa * 6.0, 0.0, 1.0)) * (0.7 + 0.4 * h2);
+                    col = mix(col, rgb(140.0, 110.0, 80.0), sm(0.8, 1.0, dd / lr) * 0.3);
+                    got = true;
+                }
+            }
+            if (!got && hgt < 0.22 && abs(sin(qx * 55.0 + qz * 17.0 + sin(qz * 41.0 + qx * 7.0) * 2.5)) > 0.93 - 0.6 * pow(1.0 - hgt / 0.22, 2.0)) {
+                col = mix(rgb(6.0, 12.0, 5.0), rgb(22.0, 36.0, 16.0), hgt / 0.22); got = true;    // low undergrowth
+            }
+            if (got) { nearc = col; break; }
+        }
+    }
+    C = mix(nearc, M, lod);
+    // petals and fireflies drifting low over the meadow, more as the song builds
+    if (el > -10.0 && el < 5.0) {
+        vec3 q = d * 34.0 + vec3(tt * 0.05 + sin(tt * 0.23) * 0.4, tt * 0.03 + sin(tt * 0.31) * 0.3, cos(tt * 0.19) * 0.4);
+        vec3 cell = floor(q), f = q - cell;
+        vec3 hc = sh33(cell);
+        float h = sh31(cell + 5.1);
+        if (h < 0.018 + 0.09 * MAVG) {
+            vec3 o = 0.2 + 0.6 * hc + vec3(sin(tt * 1.7 + h * 40.0), cos(tt * 1.3 + h * 30.0), 0.0) * 0.1;
+            vec3 dd2 = f - o;
+            float r2 = dot(dd2, dd2), blink = 0.5 + 0.5 * sin(tt * (1.5 + 2.0 * hc.z) + h * 60.0);
+            if (hc.x < 0.5) C += rgb(255.0, 215.0, 150.0) * (exp(-r2 / 0.0012) * 1.1 + exp(-r2 / 0.01) * 0.15) * blink; // fireflies
+            else C = mix(C, mix(rgb(190.0, 120.0, 230.0), rgb(255.0, 150.0, 200.0), hc.y), exp(-r2 / 0.0025) * 0.9);     // petals
+        }
+    }
+}
 vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
     vec3 skyInfo = skyInfo4.xyz;
     PULSE = skyInfo4.w;
@@ -2442,7 +2652,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
 
     int rk = realKind(PRESET);
     MBASS = 0.0; MHIGH = 0.0; MAVG = 0.0;
-    if (PRESET == 45 || PRESET == 46 || PRESET == 47) {
+    if (PRESET >= 45 && PRESET <= 48) {
         vec4 sp4 = px(15) * 255.0;
         float sb[8];
         for (int k = 0; k < 4; k++) { float v = sp4[k]; float hi = floor(v / 16.0); sb[2 * k] = (v - hi * 16.0) / 15.0; sb[2 * k + 1] = hi / 15.0; }
@@ -2490,10 +2700,11 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
             add(v3(1.0), 0.05 * abs(ringH));                                        // the rings catch the light
         } else if (PRESET == 46) cloudHill(dir, az, el); // [LyricsForge] Cloud Hill draws its whole sphere itself
         else if (PRESET == 47) lakeSunset(dir, az, el); // [LyricsForge] Lake Sunset too
+        else if (PRESET == 48) lupineSunset(dir, az, el); // [LyricsForge] Lupine Sunset too
         else
         realSky(x, y, z, el, rk);
         if (PRESET == 45) mirrorFx(dir);
-        if (BKIND >= 0 && PRESET != 46 && PRESET != 47) bodyGlow(x, y, z, az, el); // Cloud Hill / Lake Sunset have their own sun
+        if (BKIND >= 0 && (PRESET < 46 || PRESET > 48)) bodyGlow(x, y, z, az, el); // Cloud Hill / Lake Sunset have their own sun
     } else if ((PRESET >= 20 && PRESET <= 28) || PRESET >= 34) { // painted (34..37: the LyricsForge skies)
         // gemalte Himmel: komplett eigene Rechnung (Zeit in Sekunden)
         C = styledSky(dir, PRESET <= 28 ? PRESET - 20 : PRESET - 25, T / 2.2);
