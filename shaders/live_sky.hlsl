@@ -1714,7 +1714,7 @@ void deepVoyage(vec3 d) {
         vec3 col = dvPal(dvHash(cx, cy, sd + 4.4));
         float core = exp(-dist * dist / (size * size));
         float glow = exp(-dist / max(gr, 1e-5)) * 0.12 * sm(cellR, cellR * 0.6, dist);
-        C += col * (core * 0.85 + glow) * bright;
+        C += col * (core * 0.85 + glow) * bright * sm(0.02, 0.12, abs(f)); // no seam / sparkle where the front and back fields meet
     }
     for (int k = 0; k < 2; k++) {                     // faint dust clouds drifting past (red, teal)
         float z = fract(0.5 * float(k) + ts * 0.5), D = 0.3 + z * 2.0;
@@ -2335,7 +2335,7 @@ vec4 skyOne(vec3 skyDir, vec4 skyInfo4) {
             vec2 P = vec2(x, z) / max(ry, 1e-3), Q = P - vec2(0.0, -7.0);
             float dist = length(Q), ringH = 0.0;
             if (KICK > 0.03) { float qq = (dist - (0.6 + (1.0 - KICK) * 7.0)) / 0.35; ringH += KICK * exp(-qq * qq) * sin(qq * 5.0); }
-            if (WAVE >= 0.0) { float qq = (dist - WAVE * 22.0) / 0.9; ringH += 2.2 * (1.0 - WAVE) * exp(-qq * qq) * sin(qq * 4.0); }
+            if (WAVE >= 0.0) { float qq = (dist - WAVE * 22.0) / 0.9; ringH += 2.2 * sm(0.0, 0.05, WAVE) * (1.0 - WAVE) * exp(-qq * qq) * sin(qq * 4.0); } // ramps in, no pop
             vec2 rn = Q / max(dist, 1e-3) * 0.008 * ringH;
             vec3 rd = normalize(vec3(x + rip + rn.x, ry, z - rip + rn.y));
             realSky(rd.x, rd.y, rd.z, degrees(asin(clamp(rd.y, -1.0, 1.0))), rk);
