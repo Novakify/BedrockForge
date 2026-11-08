@@ -8,6 +8,7 @@ struct GIn {
     float4 p8   : PARAM8;  float4 p9  : PARAM9;  float4 p10 : PARAM10; float4 p11 : PARAM11; float4 p12 : PARAM12;
     float4 p13  : PARAM13;      // [LyricsForge] the music right now: lightning, drop kick, beat, chorus wave
     float4 p14  : PARAM14;      // [LyricsForge] r: how far a new sky has swept in (0 = no transition)
+    float4 p15  : PARAM15;      // [LyricsForge] the 8-band spectrum (4 bits each): Event Horizon's strands, Mirror / Cloud Hill / Lake / Lupine
     uint4  q0 : PREV0; uint4 q1 : PREV1; uint4 q2 : PREV2; uint4 q3 : PREV3; // the sky being swept away (texels 0..15 packed)
     float3 f    : CAMF;    float3 r   : CAMR;    float3 u   : CAMU;
     float2 txy  : CAMT;         // tan(hfov/2), tan(vfov/2)
@@ -20,6 +21,7 @@ struct GOut {
     nointerpolation float4 info : TEXCOORD1;
     nointerpolation float4 extra : TEXCOORD21;
     nointerpolation float4 p[15] : TEXCOORD2;
+    nointerpolation float4 p15 : TEXCOORD22; // texel 15 (spectrum)
     nointerpolation uint4  q[4]  : TEXCOORD17;
 };
 // Vibrant Visuals renders in linear HDR: our colours are display (sRGB-ish) values -> linear, then the gain
@@ -32,21 +34,22 @@ GOut VSSkyGame(GIn i) {
     o.info = i.info;
     o.extra = i.extra;
     o.p[0] = i.p0; o.p[1] = i.p1; o.p[2] = i.p2; o.p[3] = i.p3; o.p[4] = i.p4; o.p[5] = i.p5; o.p[6] = i.p6;
-    o.p[7] = i.p7; o.p[8] = i.p8; o.p[9] = i.p9; o.p[10] = i.p10; o.p[11] = i.p11; o.p[12] = i.p12; o.p[13] = i.p13; o.p[14] = i.p14;
+    o.p[7] = i.p7; o.p[8] = i.p8; o.p[9] = i.p9; o.p[10] = i.p10; o.p[11] = i.p11; o.p[12] = i.p12; o.p[13] = i.p13; o.p[14] = i.p14; o.p15 = i.p15;
     o.q[0] = i.q0; o.q[1] = i.q1; o.q[2] = i.q2; o.q[3] = i.q3;
     return o;
 }
 
-static float4 gP[31];
+static float4 gP[32];
 #define PX_FETCH(i) gP[i]
-#define PX_PREV_BASE 15
+#define PX_PREV_BASE 16
 #include "live_sky.hlsl"
 
 float4 PSSkyGame(GOut i) : SV_Target {
     [unroll] for (int k = 0; k < 15; ++k) gP[k] = i.p[k];
+    gP[15] = i.p15;
     [unroll] for (int j = 0; j < 16; ++j) { // the previous sky's texels, unpacked from 4 x uint4 (RGBA8, r in the low byte)
         uint w = i.q[j / 4][j % 4];
-        gP[15 + j] = float4(w & 255u, (w >> 8) & 255u, (w >> 16) & 255u, w >> 24) / 255.0;
+        gP[16 + j] = float4(w & 255u, (w >> 8) & 255u, (w >> 16) & 255u, w >> 24) / 255.0;
     }
     float4 c = skyMain(i.dir, i.info);
     c.rgb    = toTarget(c.rgb, i.extra);
