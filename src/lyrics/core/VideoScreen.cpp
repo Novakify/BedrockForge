@@ -86,7 +86,11 @@ void VideoScreen::build(VideoScreenIn const& in, Config const& cfg, std::vector<
 
     Vec3 const n = look * -1.0, up0{0, 1, 0};
     Vec3 const r = up0.cross(n).normalized(), u = n.cross(r).normalized();
-    Vec3 const c = centre - in.origin;
+    // Sky / Beside ride with the player: place them relative to the render camera (BF_GLYPH_EYE) so they follow its
+    // smooth motion; BF's eye position only moves in ticks and a screen 4.5 blocks away visibly stepped while sprinting.
+    bool const     eyeRel = cfg.screenPlace != 1;
+    uint32_t const eyeF   = eyeRel ? uint32_t(BF_GLYPH_EYE) : 0u;
+    Vec3 const c = eyeRel ? centre - in.eye : centre - in.origin;
     double const hw = width * 0.5, hh = width * 9.0 / 32.0; // 16:9
     auto quad = [&](double kx, double ky, Vec3 push, uint32_t argb, float alpha, uint32_t flags, float corner, float soft) {
         BfGlyphV1 q{};
@@ -107,11 +111,11 @@ void VideoScreen::build(VideoScreenIn const& in, Config const& cfg, std::vector<
     double const border = std::max(width * 0.012, 0.02); // bezel thickness (world)
     double const bx = (hw + border) / hw, by = (hh + border) / hh;
     // the screen's own light on its surroundings: a big blurred copy of the picture behind it
-    if (in.live) quad(1.32, 1.42, {}, 0xFFFFFFFFu, 0.30f * a, BF_GLYPH_IMAGE | BF_GLYPH_LIVE | BF_GLYPH_BLUR, 0.0f, 0.16f);
+    if (in.live) quad(1.32, 1.42, {}, 0xFFFFFFFFu, 0.30f * a, BF_GLYPH_IMAGE | BF_GLYPH_LIVE | BF_GLYPH_BLUR | eyeF, 0.0f, 0.16f);
     // neon rim glow, then the dark bezel, then the picture with slightly rounded corners
-    quad(bx * 1.03, by * 1.055, {}, kRim, 0.55f * a, BF_GLYPH_SOLID, 0.10f, 14.0f);
-    quad(bx, by, {}, kBezel, 0.95f * a, BF_GLYPH_SOLID, 0.06f, 1.0f);
-    quad(1.0, 1.0, {}, 0xFFFFFFFFu, a, BF_GLYPH_IMAGE | BF_GLYPH_LIVE, 0.035f, 0.0f);
+    quad(bx * 1.03, by * 1.055, {}, kRim, 0.55f * a, BF_GLYPH_SOLID | eyeF, 0.10f, 14.0f);
+    quad(bx, by, {}, kBezel, 0.95f * a, BF_GLYPH_SOLID | eyeF, 0.06f, 1.0f);
+    quad(1.0, 1.0, {}, 0xFFFFFFFFu, a, BF_GLYPH_IMAGE | BF_GLYPH_LIVE | eyeF, 0.035f, 0.0f);
 }
 
 } // namespace bf::lyrics

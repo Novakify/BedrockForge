@@ -42,6 +42,9 @@ enum BfGlyphFlags : uint32_t {
                                   // glowW (fraction of the half size) wide, so it melts into what's behind (sky cover card)
     BF_GLYPH_LIVE     = 1u << 13, // [LyricsForge screen] with IMAGE: sample RF's live video screen (1920x1080, t21) instead
                                   // of an atlas; uv 0..1 = the whole 16:9 screen (letterbox bars included). atlas ignored
+    BF_GLYPH_EYE      = 1u << 14, // [LyricsForge screen] pos is relative to RF's render camera, not the frame origin: things
+                                  // that ride with the player (video screen Beside / Sky) move with the smooth camera
+                                  // instead of BF's tick-stepped eye position (no stutter while sprinting)
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the

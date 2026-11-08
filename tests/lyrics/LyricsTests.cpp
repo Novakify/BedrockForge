@@ -2666,6 +2666,7 @@ TEST(video_screen_places) { // [LyricsForge] the video screen: off = nothing, sk
     CHECK_NEAR(out.back().alpha, 1.0, 1e-3);
     BfGlyphV1 const& pic = out.back();
     CHECK((pic.flags & BF_GLYPH_LIVE) && (pic.flags & BF_GLYPH_IMAGE));
+    CHECK(pic.flags & BF_GLYPH_EYE); // sky rides with the render camera (smooth while sprinting)
     Vec3 const r{pic.right[0], pic.right[1], pic.right[2]}, u{pic.up[0], pic.up[1], pic.up[2]};
     CHECK_NEAR(r.length() / u.length(), 16.0 / 9.0, 1e-3);
     Vec3 const c = Vec3{pic.pos[0], pic.pos[1], pic.pos[2]};
@@ -2686,6 +2687,7 @@ TEST(video_screen_places) { // [LyricsForge] the video screen: off = nothing, sk
     out.clear();
     vs.build(in, cfg, out);
     CHECK_NEAR(Vec3(out.back().pos[0], out.back().pos[1], out.back().pos[2]).length(), std::sqrt(64.0 + 1.44), 0.05);
+    CHECK(!(out.back().flags & BF_GLYPH_EYE)); // pinned stays a world position
     in.eye = in.eye + dir(30, 0) * 16.0; // walked through it
     in.origin = in.eye;
     out.clear();
@@ -2696,4 +2698,5 @@ TEST(video_screen_places) { // [LyricsForge] the video screen: off = nothing, sk
     out.clear();
     vs.build(in, cfg, out);
     CHECK(!out.empty() && Vec3(out.back().pos[0], out.back().pos[1], out.back().pos[2]).length() < 5.0);
+    CHECK(out.back().flags & BF_GLYPH_EYE); // beside: camera-relative, no tick stepping
 }
