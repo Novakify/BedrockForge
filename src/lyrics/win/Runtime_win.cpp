@@ -596,8 +596,8 @@ void fetchFor(MediaSample s, int64_t seq) {
             }
             try {
                 std::string fa, ft;
-                if (lyricsAlias(s.artist, s.title, fa, ft)) got = fetch::fetch(&httpGet, fa, ft, std::string(), 0); // a mix: any length
-                else got = fetch::fetch(&httpGet, s.artist, s.title, s.album, s.durationMs);
+                got = fetch::fetch(&httpGet, s.artist, s.title, s.album, s.durationMs);   // the player's own names first
+                if (!got && lyricsAlias(s.artist, s.title, fa, ft)) got = fetch::fetch(&httpGet, fa, ft, std::string(), 0); // then the alias (any length)
             } catch (...) { got.reset(); }
             if (got) break;
             auto until = Clock::now() + std::chrono::milliseconds(1500 * attempt);
