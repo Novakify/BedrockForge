@@ -109,6 +109,26 @@ def main() -> int:
             fails += 1
     print(f"1. {len(tex)} textures carry their own id: {'ok' if not fails else 'FAILED'}")
 
+    # 1b. alpha tags (v0.2): every texel carries the tag except the 4 texels of the hard stamp (forced to 255)
+    bad_tags = 0
+    n_tags = 0
+    for i, t in tex.items():
+        tag = ids[i].get("alpha_tag")
+        if tag is None:
+            continue
+        n_tags += 1
+        vals, cnt = np.unique(t[..., 3], return_counts=True)
+        got = dict(zip(vals.tolist(), cnt.tolist()))
+        if got != {tag: t.shape[0] * t.shape[1] - 4, 255: 4}:
+            print(f"FAIL alpha tag {ids[i]['name']}: {got}")
+            bad_tags += 1
+        soft = [h for h in wfx_stamps.find(t) if h["corner"] == "tl"]
+        if not soft or soft[0]["alpha"] != [tag] * 4:
+            print(f"FAIL alpha tag not reported by the soft stamp of {ids[i]['name']}: {soft}")
+            bad_tags += 1
+    print(f"1b. {n_tags} alpha-tagged textures carry their tag (and the soft stamp reports it): {'ok' if not bad_tags else 'FAILED'}")
+    fails += bad_tags
+
     # 2. fake atlas
     atlas, where = fake_atlas(tex)
     hits = wfx_stamps.find(atlas)
@@ -130,9 +150,9 @@ def main() -> int:
     r_pm = wfx_stamps.rects(wfx_stamps.find(pm), ids)
     soft_ok = sum(1 for i in where if r_pm.get(i, {}).get("tl"))
     hard_ok = sum(1 for i in where if r_pm.get(i, {}).get("br"))
-    translucent = [i for i in where if ids[i]["min_alpha"] < 255 and ids[i]["max_alpha"] < 255]
+    translucent = [i for i in where if ids[i]["min_alpha"] < 255]
     print(f"3. if the game premultiplied alpha: soft stamps left {soft_ok}/{len(where)}, hard {hard_ok}/{len(where)} "
-          f"({len(translucent)} fully translucent textures, e.g. stained glass) - informative")
+          f"({len(translucent)} textures have alpha < 255 somewhere: stained glass, alpha-tagged concrete) - informative")
 
     # 4. BGRA
     bg = atlas[..., [2, 1, 0, 3]].copy()

@@ -4,6 +4,11 @@
 Vanilla block textures (Mojang bedrock-samples) with invisible WFX1 stamps (wfx_stamps.py) so Renderer Foundation's
 World FX probe can find each of them in the game's terrain atlas. Looks exactly like vanilla in game.
 
+v0.2 adds a second experiment: ALPHA TAGS. Team concrete gets its alpha channel set to 224..239 (one value per
+colour). Opaque blocks ignore alpha, so it should look unchanged - and if the atlas keeps the value, a block shader
+can read "what am I" straight from the texture it already samples (no atlas lookup table), and write it into the
+frame's unused alpha channel for the screen pass. Team wool stays untouched as the control group.
+
     python3 -I tools/WorldFx/make_tag_pack.py                 # fetches bedrock-samples into ~/.cache if needed
     python3 -I tools/WorldFx/make_tag_pack.py --vanilla <bedrock-samples>/resource_pack/textures/blocks
 
@@ -32,6 +37,9 @@ COLOURS = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink",
            "blue", "brown", "green", "red", "black"]
 
 # group -> texture names (Bedrock texture file names under textures/blocks)
+ALPHA_TAG_GROUP = "team_concrete"  # alpha = ALPHA_TAG_BASE + index in COLOURS
+ALPHA_TAG_BASE = 224
+
 GROUPS: dict[str, list[str]] = {
     "glass": ["glass"] + [f"glass_{c}" for c in COLOURS] + ["tinted_glass"],
     "glass_pane": ["glass_pane_top"] + [f"glass_pane_top_{c}" for c in COLOURS],
@@ -109,12 +117,21 @@ def main() -> int:
                 print(f"missing vanilla texture {src}", file=sys.stderr)
                 return 1
             img = np.array(Image.open(src).convert("RGBA"))
-            st = wfx_stamps.stamp(img, next_id)
+            tagged = img.copy()
+            alpha_tag = None
+            if group == ALPHA_TAG_GROUP:
+                if img[..., 3].min() != 255:
+                    print(f"{name}: not fully opaque in vanilla, cannot carry an alpha tag", file=sys.stderr)
+                    return 1
+                alpha_tag = ALPHA_TAG_BASE + names.index(name)
+                tagged[..., 3] = alpha_tag
+            st = wfx_stamps.stamp(tagged, next_id)
             diff = np.abs(st[..., :3].astype(int) - img[..., :3].astype(int)).max()
             worst = max(worst, int(diff))
             Image.fromarray(st, "RGBA").save(out / "textures" / "blocks" / f"{name}.png", optimize=True)
             ids[str(next_id)] = {"name": name, "group": group, "w": int(img.shape[1]), "h": int(img.shape[0]),
-                                 "min_alpha": int(img[..., 3].min()), "max_alpha": int(img[..., 3].max())}
+                                 "min_alpha": int(tagged[..., 3].min()), "max_alpha": int(tagged[..., 3].max()),
+                                 "alpha_tag": alpha_tag}
             next_id += 1
 
     u = load_uuids()
@@ -124,10 +141,10 @@ def main() -> int:
             "name": "World FX Tag Test",
             "description": "by Novak - Bedrock Forge World FX test pack (vanilla look, invisible texture tags)",
             "uuid": u["header"],
-            "version": [0, 1, 0],
+            "version": [0, 2, 0],
             "min_engine_version": [1, 21, 0],
         },
-        "modules": [{"type": "resources", "uuid": u["module"], "version": [0, 1, 0]}],
+        "modules": [{"type": "resources", "uuid": u["module"], "version": [0, 2, 0]}],
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     icon().save(out / "pack_icon.png")

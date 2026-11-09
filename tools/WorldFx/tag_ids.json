@@ -8,7 +8,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 0,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "2": {
    "name": "glass_white",
@@ -16,7 +17,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "3": {
    "name": "glass_orange",
@@ -24,7 +26,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "4": {
    "name": "glass_magenta",
@@ -32,7 +35,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "5": {
    "name": "glass_light_blue",
@@ -40,7 +44,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "6": {
    "name": "glass_yellow",
@@ -48,7 +53,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "7": {
    "name": "glass_lime",
@@ -56,7 +62,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "8": {
    "name": "glass_pink",
@@ -64,7 +71,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "9": {
    "name": "glass_gray",
@@ -72,7 +80,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "10": {
    "name": "glass_silver",
@@ -80,7 +89,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "11": {
    "name": "glass_cyan",
@@ -88,7 +98,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "12": {
    "name": "glass_purple",
@@ -96,7 +107,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "13": {
    "name": "glass_blue",
@@ -104,7 +116,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "14": {
    "name": "glass_brown",
@@ -112,7 +125,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "15": {
    "name": "glass_green",
@@ -120,7 +134,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "16": {
    "name": "glass_red",
@@ -128,7 +143,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "17": {
    "name": "glass_black",
@@ -136,7 +152,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 102,
-   "max_alpha": 163
+   "max_alpha": 163,
+   "alpha_tag": null
   },
   "18": {
    "name": "tinted_glass",
@@ -144,7 +161,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 110,
-   "max_alpha": 200
+   "max_alpha": 200,
+   "alpha_tag": null
   },
   "19": {
    "name": "glass_pane_top",
@@ -152,7 +170,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "20": {
    "name": "glass_pane_top_white",
@@ -160,7 +179,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "21": {
    "name": "glass_pane_top_orange",
@@ -168,7 +188,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "22": {
    "name": "glass_pane_top_magenta",
@@ -176,7 +197,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "23": {
    "name": "glass_pane_top_light_blue",
@@ -184,7 +206,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "24": {
    "name": "glass_pane_top_yellow",
@@ -192,7 +215,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "25": {
    "name": "glass_pane_top_lime",
@@ -200,7 +224,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "26": {
    "name": "glass_pane_top_pink",
@@ -208,7 +233,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "27": {
    "name": "glass_pane_top_gray",
@@ -216,7 +242,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "28": {
    "name": "glass_pane_top_silver",
@@ -224,7 +251,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "29": {
    "name": "glass_pane_top_cyan",
@@ -232,7 +260,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "30": {
    "name": "glass_pane_top_purple",
@@ -240,7 +269,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "31": {
    "name": "glass_pane_top_blue",
@@ -248,7 +278,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "32": {
    "name": "glass_pane_top_brown",
@@ -256,7 +287,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "33": {
    "name": "glass_pane_top_green",
@@ -264,7 +296,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "34": {
    "name": "glass_pane_top_red",
@@ -272,7 +305,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "35": {
    "name": "glass_pane_top_black",
@@ -280,7 +314,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 230,
-   "max_alpha": 230
+   "max_alpha": 230,
+   "alpha_tag": null
   },
   "36": {
    "name": "wool_colored_white",
@@ -288,7 +323,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "37": {
    "name": "wool_colored_orange",
@@ -296,7 +332,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "38": {
    "name": "wool_colored_magenta",
@@ -304,7 +341,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "39": {
    "name": "wool_colored_light_blue",
@@ -312,7 +350,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "40": {
    "name": "wool_colored_yellow",
@@ -320,7 +359,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "41": {
    "name": "wool_colored_lime",
@@ -328,7 +368,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "42": {
    "name": "wool_colored_pink",
@@ -336,7 +377,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "43": {
    "name": "wool_colored_gray",
@@ -344,7 +386,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "44": {
    "name": "wool_colored_silver",
@@ -352,7 +395,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "45": {
    "name": "wool_colored_cyan",
@@ -360,7 +404,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "46": {
    "name": "wool_colored_purple",
@@ -368,7 +413,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "47": {
    "name": "wool_colored_blue",
@@ -376,7 +422,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "48": {
    "name": "wool_colored_brown",
@@ -384,7 +431,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "49": {
    "name": "wool_colored_green",
@@ -392,7 +440,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "50": {
    "name": "wool_colored_red",
@@ -400,7 +449,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "51": {
    "name": "wool_colored_black",
@@ -408,135 +458,152 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "52": {
    "name": "concrete_white",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 224,
+   "max_alpha": 224,
+   "alpha_tag": 224
   },
   "53": {
    "name": "concrete_orange",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 225,
+   "max_alpha": 225,
+   "alpha_tag": 225
   },
   "54": {
    "name": "concrete_magenta",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 226,
+   "max_alpha": 226,
+   "alpha_tag": 226
   },
   "55": {
    "name": "concrete_light_blue",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 227,
+   "max_alpha": 227,
+   "alpha_tag": 227
   },
   "56": {
    "name": "concrete_yellow",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 228,
+   "max_alpha": 228,
+   "alpha_tag": 228
   },
   "57": {
    "name": "concrete_lime",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 229,
+   "max_alpha": 229,
+   "alpha_tag": 229
   },
   "58": {
    "name": "concrete_pink",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 230,
+   "max_alpha": 230,
+   "alpha_tag": 230
   },
   "59": {
    "name": "concrete_gray",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 231,
+   "max_alpha": 231,
+   "alpha_tag": 231
   },
   "60": {
    "name": "concrete_silver",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 232,
+   "max_alpha": 232,
+   "alpha_tag": 232
   },
   "61": {
    "name": "concrete_cyan",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 233,
+   "max_alpha": 233,
+   "alpha_tag": 233
   },
   "62": {
    "name": "concrete_purple",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 234,
+   "max_alpha": 234,
+   "alpha_tag": 234
   },
   "63": {
    "name": "concrete_blue",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 235,
+   "max_alpha": 235,
+   "alpha_tag": 235
   },
   "64": {
    "name": "concrete_brown",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 236,
+   "max_alpha": 236,
+   "alpha_tag": 236
   },
   "65": {
    "name": "concrete_green",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 237,
+   "max_alpha": 237,
+   "alpha_tag": 237
   },
   "66": {
    "name": "concrete_red",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 238,
+   "max_alpha": 238,
+   "alpha_tag": 238
   },
   "67": {
    "name": "concrete_black",
    "group": "team_concrete",
    "w": 16,
    "h": 16,
-   "min_alpha": 255,
-   "max_alpha": 255
+   "min_alpha": 239,
+   "max_alpha": 239,
+   "alpha_tag": 239
   },
   "68": {
    "name": "planks_oak",
@@ -544,7 +611,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "69": {
    "name": "end_stone",
@@ -552,7 +620,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "70": {
    "name": "obsidian",
@@ -560,7 +629,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "71": {
    "name": "diamond_block",
@@ -568,7 +638,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   },
   "72": {
    "name": "emerald_block",
@@ -576,7 +647,8 @@
    "w": 16,
    "h": 16,
    "min_alpha": 255,
-   "max_alpha": 255
+   "max_alpha": 255,
+   "alpha_tag": null
   }
  }
 }

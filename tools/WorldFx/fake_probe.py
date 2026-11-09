@@ -2,13 +2,16 @@
 """Write a FAKE World FX probe folder (same files src/WorldFx.cpp writes) to test analyze_probe.py without the game.
 
 A small voxel Bed Wars island (end stone, team wool, concrete pillars, a glass wall, an oak bridge) is ray-cast with
-the tag pack's real textures: colour_at_ui (BGRA8, like the swap chain), world_depth (D24, standard Z), a fake
-terrain atlas holding every tagged texture (RGBA8) + stamps.json, and a report.txt in the probe's format.
+the tag pack's real textures, then written in the probe's v2 layout: two stage snapshots (before the first Actor draw,
+before the hand pass), the HUD boundary (colour_at_ui BGRA8 like the swap chain, world_depth D24 standard Z), a fake
+terrain atlas holding every tagged texture (RGBA8) + stamps.json, and a report.txt with a frame timeline.
 
     python3 -I tools/WorldFx/fake_probe.py /tmp/fakeprobe && python3 -I tools/WorldFx/analyze_probe.py /tmp/fakeprobe
+    python3 -I tools/WorldFx/fake_probe.py /tmp/fp2 --hand-clears-depth --no-atlas-picture   # the awkward cases
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -108,55 +111,103 @@ def render(w=960, h=540):
     return colour.reshape(h, w, 3).clip(0, 255).astype(np.uint8), depth.reshape(h, w)
 
 
-def write_raw(folder: Path, name: str, rows: np.ndarray, layout: str, fmt: str, w: int, h: int, atlas=False):
+def write_raw(folder: Path, name: str, rows: np.ndarray, layout: str, fmt: str, w: int, h: int, atlas=False, saved=True):
     rb = rows.shape[1]
-    (folder / f"{name}.raw").write_bytes(np.ascontiguousarray(rows).tobytes())
+    if saved:
+        (folder / f"{name}.raw").write_bytes(np.ascontiguousarray(rows).tobytes())
     (folder / f"{name}.json").write_text(json.dumps({"name": name, "width": w, "height": h, "rowBytes": rb, "rows": h,
                                                      "copyFormat": fmt, "resourceFormat": fmt, "layout": layout, "mips": 5 if atlas else 1,
-                                                     "array": 1, "slice": 0, "atlas": atlas}) + "\n")
+                                                     "array": 1, "slice": 0, "atlas": atlas, "saved": saved}) + "\n")
+
+
+def d24(depth: np.ndarray) -> np.ndarray:
+    h, w = depth.shape
+    return (np.clip(depth, 0, 1) * 16777215).astype(np.uint32).view(np.uint8).reshape(h, w * 4)
+
+
+def bgra(rgb: np.ndarray) -> np.ndarray:
+    h, w = rgb.shape[:2]
+    return np.dstack([rgb[..., 2], rgb[..., 1], rgb[..., 0], np.full((h, w), 255, np.uint8)]).reshape(h, w * 4)
 
 
 def main() -> int:
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/fakeprobe")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("out", nargs="?", default="/tmp/fakeprobe")
+    ap.add_argument("--hand-clears-depth", action="store_true",
+                    help="simulate a hand pass that clears depth first: the HUD-boundary depth then only holds the hand")
+    ap.add_argument("--no-atlas-picture", action="store_true", help="like the probe's default: stamps.json only, no atlas pixels")
+    a = ap.parse_args()
+    out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     rgb, depth = render()
     h, w = depth.shape
-    bgra = np.dstack([rgb[..., 2], rgb[..., 1], rgb[..., 0], np.full((h, w), 255, np.uint8)])
-    write_raw(out, "colour_at_ui", bgra.reshape(h, w * 4), "bgra8", "BGRA8", w, h)
-    d24 = (np.clip(depth, 0, 1) * 16777215).astype(np.uint32)
-    write_raw(out, "world_depth", d24.view(np.uint8).reshape(h, w * 4), "depth24", "D24S8", w, h)
+    # the hand: a slab in the lower right, very near
+    hand = np.zeros((h, w), bool)
+    hand[int(h * 0.62):, int(w * 0.70): int(w * 0.92)] = True
+    rgb_hand = rgb.copy()
+    rgb_hand[hand] = (201, 150, 120)
+    cleared = np.ones_like(depth)
+    depth_hud = np.where(hand, 0.02, cleared if a.hand_clears_depth else depth)
+    depth_before_hand = cleared if a.hand_clears_depth else depth
+    # stage 1: before the first Actor draw (terrain done) | stage 2: before the hand | then the HUD boundary
+    write_raw(out, "stage1_before_Actor_colour", bgra(rgb), "bgra8", "BGRA8", w, h)
+    write_raw(out, "stage1_before_Actor_depth", d24(depth), "depth24", "D24S8", w, h)
+    write_raw(out, "stage2_before_ItemInHand_colour", bgra(rgb), "bgra8", "BGRA8", w, h)
+    write_raw(out, "stage2_before_ItemInHand_depth", d24(depth_before_hand), "depth24", "D24S8", w, h)
+    write_raw(out, "colour_at_ui", bgra(rgb_hand), "bgra8", "BGRA8", w, h)
+    write_raw(out, "world_depth", d24(depth_hud), "depth24", "D24S8", w, h)
     ids, tex = test_stamps.load()
     atlas, _ = test_stamps.fake_atlas(tex)
-    write_raw(out, "atlas0", atlas.reshape(atlas.shape[0], -1), "rgba8", "RGBA8", atlas.shape[1], atlas.shape[0], atlas=True)
+    write_raw(out, "atlas0", atlas.reshape(atlas.shape[0], -1), "rgba8", "RGBA8", atlas.shape[1], atlas.shape[0], atlas=True,
+              saved=not a.no_atlas_picture)
     hits = wfx_stamps.find(atlas)
     for x in hits:
         x["copy"] = "atlas0"
     (out / "stamps.json").write_text(json.dumps(hits, indent=1) + "\n")
-    (out / "report.txt").write_text(f"""# World FX M0 probe (FAKE, tools/WorldFx/fake_probe.py)
+    vs_out = "SV_Position0.xyzw@o0 COLOR1.xyzw@o1 COLOR0.xyzw@o2 TEXCOORD2.xy@o3 TEXCOORD1.zw@o3 COLOR2.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6 COLOR3.xyzw@o7"
+    (out / "report.txt").write_text(f"""# World FX M0 probe v2 (FAKE, tools/WorldFx/fake_probe.py{', hand clears depth' if a.hand_clears_depth else ''})
 draws 5120 | UI draws 310 (0 before any terrain draw) | terrain draws 2900 | draws with an unknown pipeline 0 | terrain draws without root tables 0
-UI shader list loaded: yes | shader names: ready
+UI shader list loaded: yes | shader names: ready | atlas picture: {'not saved' if a.no_atlas_picture else 'saved (single-player test)'}
 
 ## World -> UI boundary
-first UI draw after the world: UIFill.material.bin Fragment (fake)
+first UI draw after the world: UIText.material.bin Fragment  ps dd754c1f0d27d99c
   UI target: {w}x{h} BGRA8 mips 1 array 1  0000FAKE
+
+## Stage snapshots (colour + depth before the first draw of a material family that follows the terrain)
+stage1_before_Actor: first draw of Actor.material.bin Fragment  ps 71f7073b9d471dae after the terrain began
+stage2_before_ItemInHand: first draw of ItemInHandColor.material.bin Opaque Fragment  ps 4d2dcb73efb8abd3 after the terrain began
+
+## Frame timeline (7 runs; a run = consecutive draws on one command list with the same shader, state and targets)
+#1 list 0000A001 t100  RT1 DS1  x2 (4 tris)  Sky.material.bin Opaque Fragment  ps 1111111111111111  | rt RGBA8 | ds D24S8 off | blend off | cull
+#2 list 0000A001 t100  RT1 DS1  x2400 (900000 tris)  RenderChunk.material.bin Vertex + REPLACED pixel shader  ps 3eca37248f0cf8cd  | rt RGBA8 | ds D24S8 less_eq write | blend off | cull
+#3 list 0000A001 t100  RT1 DS1  x40 (9000 tris)  Actor.material.bin Fragment  ps 71f7073b9d471dae  | rt RGBA8 | ds D24S8 less write | blend off | cull none
+#4 list 0000A001 t100  RT1 DS1  x500 (40000 tris)  RenderChunk.material.bin Opaque Fragment  ps b4998623a8fb7998  | rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull
+#5 list 0000A001 t100  RT1 DS1  x1 (444 tris)  ItemInHandColor.material.bin Opaque Fragment  ps 4d2dcb73efb8abd3  | rt RGBA8 | ds D24S8 less write | blend off | cull
+#6 list 0000A002 t101  RT2 DS-  x1 (1 tris)  Blit.material.bin Fragment  ps 2222222222222222  | rt BGRA8 | ds - off | blend off | cull none
+#7 list 0000A002 t101  RT2 DS-  x310 (620 tris)  UIText.material.bin Fragment  ps dd754c1f0d27d99c  | rt BGRA8 | ds - off | blend on | cull none
+targets:
+  RT1 = view 0x0000000000001000  0000F0A0  {w}x{h} RGBA8 mips 1 array 1
+  RT2 = view 0x0000000000002000  0000F0B0  {w}x{h} BGRA8 mips 1 array 1
+  DS1 = view 0x0000000000003000  0000F0C0  {w}x{h} D24S8 mips 1 array 1
 
 ## Terrain (RenderChunk) pipelines this frame: 2
 pso 0000F001  draws 2400  prims 900000
-    ps 1111111111111111  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
-    vs 2222222222222222  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
-    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD1.xy@o3
-    in: POSITION0:RGBA32F COLOR0:RGBA8 TEXCOORD0:RG32F TEXCOORD1:RG16
-    rt RGBA8 | ds D24S8 less write | blend off | cull  root 0000ROOT
+    ps 3eca37248f0cf8cd  REPLACED by a pack (not one of the game's shaders)
+    vs 7d32a84a551fadfe  RenderChunk.material.bin Vertex Direct3D_SM65
+    vs out: {vs_out}
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq write | blend off | cull  root 0000ROOT
 pso 0000F002  draws 500  prims 40000
-    ps 3333333333333333  RenderChunk.material.bin Transparent Fragment Direct3D_SM65
-    vs 4444444444444444  RenderChunk.material.bin Transparent Vertex Direct3D_SM65
-    vs out: SV_Position0.xyzw@o0 COLOR0.xyzw@o1 TEXCOORD0.xy@o2 TEXCOORD1.xy@o3
-    in: POSITION0:RGBA32F COLOR0:RGBA8 TEXCOORD0:RG32F TEXCOORD1:RG16
-    rt RGBA8 | ds D24S8 less nowrite | blend on | cull  root 0000ROOT
+    ps b4998623a8fb7998  RenderChunk.material.bin Opaque Fragment Direct3D_SM65
+    vs bf04858d24cd90c0  RenderChunk.material.bin Opaque Vertex Direct3D_SM65
+    vs out: {vs_out}
+    in: POSITION0:RGBA16F COLOR0:RGBA8 TEXCOORD0:fmt35 TEXCOORD1:fmt35
+    rt RGBA8 | ds D24S8 less_eq nowrite | blend on | cull  root 0000ROOT
 
-## Every material this frame
+## Every material this frame (material file -> draws / prims / pipelines)
 """)
-    print(f"fake probe written to {out} ({w}x{h}, atlas {atlas.shape[1]}x{atlas.shape[0]}, {len(hits)} stamps)")
+    print(f"fake probe written to {out} ({w}x{h}, atlas {atlas.shape[1]}x{atlas.shape[0]}, {len(hits)} stamps"
+          f"{', hand clears depth' if a.hand_clears_depth else ''}{', no atlas picture' if a.no_atlas_picture else ''})")
     return 0
 
 
