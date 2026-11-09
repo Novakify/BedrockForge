@@ -126,6 +126,9 @@ bool                               gGlassLf = false;
 float                              gShowAwaken = 0, gShowCover = 0;
 LARGE_INTEGER                      gT0{};
 int                                gDumped = 0;
+// Diagnosis only (F6, off by default, not saved): write the first newly seen 64x32 textures to logs/glassarmor. On a
+// server those can be the server pack's textures, so this stays off there (The Hive bans "asset downloaders").
+std::atomic_bool                   gDumpReadbacks{false};
 std::string gLastReport;
 
 char const* fmtName(DXGI_FORMAT f) {
@@ -597,7 +600,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
             D3D12_RANGE rr{0, 256 * 32};
             if (SUCCEEDED(r.buf->Map(0, &rr, &m)) && m) {
                 kind = classify(static_cast<uint8_t const*>(m), 256);
-                if (gDumped < 24) { // raw RGBA 64x32 (pitch 256) for diagnosis
+                if (gDumpReadbacks.load(std::memory_order_relaxed) && gDumped < 24) { // raw RGBA 64x32 (pitch 256) for diagnosis
                     std::error_code ec;
                     fs::create_directories(gOutDir, ec);
                     std::ofstream(gOutDir / ("readback_" + std::to_string(gDumped++) + ".rgba"), std::ios::binary)
@@ -1165,6 +1168,8 @@ void drawUi() {
         if (ImGui::Checkbox("Light sweep on each sung word", &sw)) gWordSweep = sw;
         int dbg = gDebugSolid.load();
         if (ImGui::Combo("Debug view", &dbg, "off\0solid magenta\0COLOR1\0COLOR0\0COLOR2\0COLOR3\0alphas (c0, c2, c3)\0TEXCOORD3\0game PS buffer row\0")) gDebugSolid = dbg;
+        bool dump = gDumpReadbacks.load();
+        if (ImGui::Checkbox("Debug: save newly seen 64x32 textures to logs (single-player only)", &dump)) gDumpReadbacks = dump;
         ImGui::InputInt("Buffer row (debug view 8)", &gDbgRow);
         ImGui::InputInt("Leather dye row (Actor)", &gDyeRow);
         ImGui::InputInt("Leather dye row (enchanted)", &gDyeRowGlint);

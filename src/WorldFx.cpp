@@ -11,6 +11,7 @@
 #include <ctime>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -27,6 +28,8 @@
 
 #include "GlassArmor.h"
 #include "LLShim.h"
+#include "LyricsCamera.h"
+#include "MaterialLoader.h"
 #include "UiCapture.h"
 
 namespace rf::worldfx {
@@ -45,8 +48,14 @@ constexpr int stampCheck(int id) { return (id * 37 + 11) & 511; }
 
 enum Phase : int { Idle = 0, Warm = 1, Rec = 2, Wait = 3, Write = 4 };
 std::atomic<int> gPhase{Idle};
-int              gWarmFrames = 0, gWaitFrames = 0;
+int              gWarmFrames = 0, gWarmWait = 0, gWaitFrames = 0;
 fs::path         gOutDir;
+// The terrain atlas is always searched for our own stamps in memory, but its PICTURE is only written to disk when this
+// is ticked (F6, not saved): on a server the atlas holds the server pack's textures, and saving those is the server's
+// call, not ours (The Hive bans "asset downloaders"). Single-player test worlds only.
+std::atomic_bool gSaveAtlas{false};
+bool             gSaveAtlasRun = false; // latched when the probe is pressed
+std::atomic<int> gKeepFrames{0};        // Presents until the last probe's readback buffers are released
 
 std::mutex  gMutex; // everything below
 std::string gStatus = "idle", gLastDir, gLastSummary;
@@ -55,14 +64,19 @@ struct Stat { long draws = 0; unsigned long long prims = 0; };
 struct Rts { size_t rt0 = 0, dsv = 0; };
 struct Cls {
     uint64_t    ps = 0;
-    std::string name;  // pixel shader: "RenderChunk.material.bin Transparent Fragment ..." or "?"
-    bool        terrain = false, ui = false;
+    std::string name;  // pixel shader: "RenderChunk.material.bin Opaque Fragment Direct3D_SM65"; "?" = not one of the game's
+    std::string vsName;
+    std::string file;  // the material file the pipeline belongs to, from the pixel shader or else the vertex shader
+    std::string label; // short text for the report
+    std::string key;   // label + pipeline state: consecutive draws with the same key form one timeline run
+    bool        terrain = false, ui = false, known = false;
+    bool        psReplaced = false; // a shaderpack / resource pack replaced the pixel shader (the VS still names it)
     glassarmor::PsoView v;
-    bool        known = false;
 };
+using ClsPtr = std::shared_ptr<Cls const>;
 std::unordered_map<ID3D12GraphicsCommandList*, ID3D12PipelineState*> gListPso;
 std::unordered_map<ID3D12GraphicsCommandList*, Rts>                  gListRts;
-std::unordered_map<ID3D12PipelineState*, Cls>                        gCls;
+std::unordered_map<ID3D12PipelineState*, ClsPtr>                     gCls;
 std::unordered_map<ID3D12PipelineState*, Stat>                       gPsoStat;
 long gDraws = 0, gUiDraws = 0, gTerrainDraws = 0, gUiBeforeTerrain = 0, gUnknownPso = 0, gTerrainNoTables = 0;
 
@@ -82,6 +96,36 @@ ID3D12Resource*  gLastRt = nullptr; // RT0 / depth of the last terrain draw (in 
 ID3D12Resource*  gLastDs = nullptr;
 std::atomic_bool gBoundary{false};
 std::string      gBoundaryText;
+
+// Frame timeline: runs of consecutive draws with the same shader + state + targets, per command list, numbered in the
+// order they began. It shows where the world ends (hand pass, the game's blit, the HUD) - the hook points World FX needs.
+struct Run {
+    ID3D12PipelineState* pso = nullptr;
+    std::string          key;
+    Rts                  rts;
+    long                 draws = 0;
+    unsigned long long   prims = 0;
+    uint64_t             seq = 0;
+    unsigned             tid = 0;
+};
+struct Ev {
+    uint64_t                   seq = 0;
+    ID3D12GraphicsCommandList* list = nullptr;
+    unsigned                   tid = 0;
+    Rts                        rts;
+    std::string                text;
+};
+std::unordered_map<ID3D12GraphicsCommandList*, Run> gRun;
+std::vector<Ev>                                     gTimeline;
+uint64_t                                            gSeq = 0;
+long                                                gTimelineDropped = 0;
+constexpr size_t                                    kMaxTimeline = 700;
+// Stage snapshots: colour + depth right before the first draw of a material family that follows the terrain. The hand
+// pass and the game's own blit always get one; up to kMaxOtherStages other families show how the frame builds up.
+std::vector<std::string> gStageFamilies;
+int                      gStagesOther = 0;
+std::string              gStageText;
+constexpr int            kMaxOtherStages = 3;
 
 struct Copy {
     std::string                        name, note;
@@ -273,16 +317,65 @@ bool queueCopy(ID3D12Device* dev, ID3D12GraphicsCommandList* l, ComPtr<ID3D12Res
 }
 
 // ---------------------------------------------------------------- per-draw classification
-Cls classify(ID3D12PipelineState* pso) {
-    Cls c;
-    if (glassarmor::psoView(pso, c.v)) {
-        c.known = true;
-        c.ps    = c.v.ps;
-        c.name  = glassarmor::shaderName(c.ps);
-    } else c.name = "(pipeline made before the hooks)";
-    c.terrain = isTerrain(c.name);
-    c.ui      = uicapture::isUiPipeline(pso) || (!uicapture::haveUiShaderList() && looksUi(c.name));
+std::string stripPlatform(std::string n) { // "X.material.bin Opaque Fragment Direct3D_SM65" -> "X.material.bin Opaque Fragment"
+    auto p = n.rfind(" Direct3D");
+    return p == std::string::npos ? n : n.substr(0, p);
+}
+ClsPtr classify(ID3D12PipelineState* pso) {
+    auto c = std::make_shared<Cls>();
+    c->name = c->vsName = "?";
+    if (glassarmor::psoView(pso, c->v)) {
+        c->known  = true;
+        c->ps     = c->v.ps;
+        c->name   = glassarmor::shaderName(c->ps);
+        c->vsName = glassarmor::shaderName(c->v.vs);
+    }
+    // A shaderpack or resource pack that replaces a pixel shader changes its hash, so the game's material files no
+    // longer name it (LyricsForge's lighting pack does this to RenderChunk). Vertex shaders are not replaced by
+    // ShaderForge packs: the VS still says which material the pipeline belongs to.
+    std::string const& fam = c->name != "?" ? c->name : c->vsName;
+    c->psReplaced = c->known && c->name == "?" && c->vsName != "?";
+    c->file       = fam == "?" ? std::string() : fam.substr(0, fam.find(' '));
+    c->terrain    = isTerrain(fam);
+    c->ui         = uicapture::isUiPipeline(pso) || looksUi(c->name) || looksUi(c->vsName);
+    if (!c->known) c->label = "(pipeline made before the hooks)";
+    else if (c->name != "?") c->label = stripPlatform(c->name) + "  ps " + hex(c->ps);
+    else if (c->vsName != "?") c->label = stripPlatform(c->vsName) + " + REPLACED pixel shader  ps " + hex(c->ps);
+    else c->label = "unnamed shaders  ps " + hex(c->ps);
+    c->key = c->label + "  | " + c->v.targets;
     return c;
+}
+
+// ---- timeline (gMutex held)
+void closeRun(ID3D12GraphicsCommandList* list, Run const& r) {
+    if (r.draws <= 0) return;
+    if (gTimeline.size() >= kMaxTimeline) { ++gTimelineDropped; return; }
+    Ev e;
+    e.seq = r.seq, e.list = list, e.tid = r.tid, e.rts = r.rts;
+    e.text = "x" + std::to_string(r.draws) + " (" + std::to_string(r.prims) + " tris)  " + r.key;
+    gTimeline.push_back(std::move(e));
+}
+void noteRun(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso, Cls const& c, Rts rts, unsigned long long prims) {
+    auto&      r    = gRun[list];
+    bool const same = r.draws > 0 && r.rts.rt0 == rts.rt0 && r.rts.dsv == rts.dsv && (r.pso == pso || r.key == c.key);
+    if (!same) {
+        closeRun(list, r);
+        r     = Run{};
+        r.key = c.key, r.rts = rts, r.seq = ++gSeq, r.tid = GetCurrentThreadId();
+    }
+    r.pso = pso;
+    ++r.draws;
+    r.prims += prims;
+}
+/// 0 = no snapshot for this material file, 1 = always (the likely "world is finished" moments), 2 = while budget is left.
+int stageKind(std::string const& file) {
+    if (file.empty()) return 0;
+    if (file.rfind("ItemInHand", 0) == 0 || file.rfind("Blit", 0) == 0) return 1;
+    return 2;
+}
+std::string stageFamily(std::string const& file) { // ItemInHandColor / ItemInHandColorGlint / ... are one family
+    if (file.rfind("ItemInHand", 0) == 0) return "ItemInHand";
+    return file.substr(0, file.find('.'));
 }
 
 void noteTextures(ID3D12GraphicsCommandList* list) {
@@ -357,7 +450,7 @@ void boundary(ID3D12GraphicsCommandList* list, Cls const& c) {
     if (lastRt && !hold(lastRt, worldRt, worldRtDesc)) worldRt.Reset();
     if (lastDs && !hold(lastDs, worldDs, worldDsDesc)) worldDs.Reset();
     std::ostringstream s;
-    s << "first UI draw after the world: " << c.name << " (ps " << hex(c.ps) << ")\n";
+    s << "first UI draw after the world: " << c.label << "\n";
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) {
         s << "  no device - nothing copied\n";
@@ -403,6 +496,41 @@ void boundary(ID3D12GraphicsCommandList* list, Cls const& c) {
     } else s << "  world depth: none seen (no terrain draw with a known DSV)\n";
     std::lock_guard l(gMutex);
     gBoundaryText = s.str();
+    for (auto& m : made) gCopies.push_back(std::move(m));
+}
+
+/// Colour + depth bound right now, copied before the first draw of a material family that follows the terrain.
+/// Comparing the stages shows how far the world's depth survives (does the hand pass clear it?) and what the game's
+/// blit reads - so the World FX pass can be placed where the world is complete and its depth still intact.
+void snapshotStage(ID3D12GraphicsCommandList* list, Cls const& c, Rts rts, int n, std::string const& family) {
+    std::string const  base = "stage" + std::to_string(n) + "_before_" + family;
+    std::ostringstream s;
+    s << base << ": first draw of " << c.label << " after the terrain began\n";
+    std::vector<Copy>    made;
+    ComPtr<ID3D12Device> dev;
+    if (SUCCEEDED(list->GetDevice(IID_PPV_ARGS(&dev)))) {
+        ComPtr<ID3D12Resource> rt, ds;
+        D3D12_RESOURCE_DESC    rd{}, dd{};
+        ID3D12Resource*        rtRaw = rts.rt0 ? uicapture::rtvResourceOf(rts.rt0) : nullptr;
+        ID3D12Resource*        dsRaw = rts.dsv ? glassarmor::dsvResource(rts.dsv) : nullptr;
+        if (rtRaw && hold(rtRaw, rt, rd)) { // bound and about to be drawn into: it is in RENDER_TARGET state
+            s << "  colour bound: " << descStr(rd) << "  " << ptr(rtRaw) << "\n";
+            Copy cp;
+            cp.name = base + "_colour";
+            queueCopy(dev.Get(), list, rt, rd, 0, unsigned(D3D12_RESOURCE_STATE_RENDER_TARGET), true, cp);
+            made.push_back(std::move(cp));
+        } else s << "  colour: " << (rts.rt0 ? "unknown RTV handle 0x" + hex(rts.rt0) : std::string("none bound")) << " - not copied\n";
+        if (dsRaw && hold(dsRaw, ds, dd)) {
+            unsigned st = glassarmor::stateOf(dsRaw, unsigned(D3D12_RESOURCE_STATE_DEPTH_WRITE));
+            s << "  depth bound: " << descStr(dd) << "  " << ptr(dsRaw) << "  state 0x" << std::hex << st << std::dec << "\n";
+            Copy cp;
+            cp.name = base + "_depth";
+            queueCopy(dev.Get(), list, ds, dd, 0, st, true, cp);
+            made.push_back(std::move(cp));
+        } else s << "  depth: " << (rts.dsv ? "unknown DSV handle 0x" + hex(rts.dsv) : std::string("none bound")) << " - not copied\n";
+    } else s << "  no device - nothing copied\n";
+    std::lock_guard l(gMutex);
+    gStageText += s.str();
     for (auto& m : made) gCopies.push_back(std::move(m));
 }
 
@@ -498,7 +626,7 @@ std::vector<Hit> findStamps(uint8_t const* data, UINT64 pitch, unsigned w, unsig
     return hits;
 }
 
-void writeFiles(fs::path dir, std::vector<Copy> copies, std::string report) {
+void writeFiles(fs::path dir, std::vector<Copy> copies, std::string report, bool saveAtlas) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     std::ostringstream s;
@@ -518,18 +646,22 @@ void writeFiles(fs::path dir, std::vector<Copy> copies, std::string report) {
         UINT64       pitch = c.fp.Footprint.RowPitch;
         Layout       L     = layoutOf(c.desc.Format); // the resource decides (D24S8's depth plane copies as a 32-bit footprint)
         if (L == Layout::Other) L = layoutOf(c.fp.Footprint.Format);
+        bool const save = !c.atlas || saveAtlas; // an atlas is searched for our stamps below, its picture stays in memory
         { // raw, rows packed (rowBytes each) + header
-            std::ofstream f(dir / (c.name + ".raw"), std::ios::binary);
-            for (unsigned y = 0; y < c.rows; ++y) f.write(reinterpret_cast<char const*>(base + size_t(y) * pitch), std::streamsize(c.rowBytes));
+            if (save) {
+                std::ofstream f(dir / (c.name + ".raw"), std::ios::binary);
+                for (unsigned y = 0; y < c.rows; ++y) f.write(reinterpret_cast<char const*>(base + size_t(y) * pitch), std::streamsize(c.rowBytes));
+            }
             std::ofstream(dir / (c.name + ".json")) << "{\"name\": \"" << c.name << "\", \"width\": " << w << ", \"height\": " << h
                                                     << ", \"rowBytes\": " << c.rowBytes << ", \"rows\": " << c.rows << ", \"copyFormat\": \""
                                                     << fmtStr(c.fp.Footprint.Format) << "\", \"resourceFormat\": \"" << fmtStr(c.desc.Format)
                                                     << "\", \"layout\": \"" << layoutName(L) << "\", \"mips\": " << c.desc.MipLevels
                                                     << ", \"array\": " << c.desc.DepthOrArraySize << ", \"slice\": " << c.slice
-                                                    << ", \"atlas\": " << (c.atlas ? "true" : "false") << "}\n";
+                                                    << ", \"atlas\": " << (c.atlas ? "true" : "false") << ", \"saved\": " << (save ? "true" : "false")
+                                                    << "}\n";
         }
         // preview (skipped for huge atlases: the raw file has everything)
-        bool const           preview = uint64_t(w) * h <= uint64_t(4096) * 4096 && L != Layout::Other;
+        bool const           preview = save && uint64_t(w) * h <= uint64_t(4096) * 4096 && L != Layout::Other;
         std::vector<uint8_t> rgb(preview ? size_t(w) * h * 3 : 0, 0);
         if (!preview) {
         } else if (L == Layout::Depth24 || L == Layout::Depth32f) {
@@ -558,7 +690,8 @@ void writeFiles(fs::path dir, std::vector<Copy> copies, std::string report) {
                 for (unsigned x = 0; x < w; ++x) texel(L, base + size_t(y) * pitch, x, &rgb[(size_t(y) * w + x) * 3]);
         }
         if (preview) writeBmp(dir / (c.name + ".bmp"), w, h, rgb);
-        s << " | written " << c.name << (preview ? ".raw/.json/.bmp (" : ".raw/.json (") << layoutName(L) << ")";
+        if (save) s << " | written " << c.name << (preview ? ".raw/.json/.bmp (" : ".raw/.json (") << layoutName(L) << ")";
+        else s << " | picture NOT saved (tick the box in F6 for single-player tests), header only (" << layoutName(L) << ")";
         if (c.atlas && (L == Layout::Rgba8 || L == Layout::Bgra8)) {
             auto hits = findStamps(base, pitch, w, h, L == Layout::Bgra8, c.slice);
             s << " | WFX1 stamps: " << hits.size();
@@ -582,45 +715,93 @@ void writeFiles(fs::path dir, std::vector<Copy> copies, std::string report) {
     std::ofstream(dir / "report.txt") << s.str();
     std::lock_guard l(gMutex);
     gLastDir     = dir.string();
-    gLastSummary = "stamps found: " + std::to_string(nHits);
+    gLastSummary = "stamps found: " + std::to_string(nHits) + (saveAtlas ? " (atlas picture saved)" : " (atlas picture not saved)");
     gStatus      = "done - report written";
-    gKeep = std::move(copies); // readback buffers stay alive until the next probe (a late game list may still copy)
-    gPhase = Idle;
+    gKeep        = std::move(copies); // released a few seconds later on the render thread (a late game list may still copy)
+    gKeepFrames  = 300;
+    gPhase       = Idle;
     ll_shim::info("[RF] world fx probe: report " + (dir / "report.txt").string());
 }
 
-/// End of the recording frame: the report body (everything but the copies, which come back later).
+/// End of the recording frame: the report body (everything but the copies, which come back later). gMutex held.
 std::string buildReport() {
     std::ostringstream s;
     std::time_t        now = std::time(nullptr);
     char               ts[32];
     std::strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-    s << "# World FX M0 probe " << ts << "\n";
+    s << "# World FX M0 probe v2 " << ts << "\n";
     s << "draws " << gDraws << " | UI draws " << gUiDraws << " (" << gUiBeforeTerrain << " before any terrain draw) | terrain draws " << gTerrainDraws
       << " | draws with an unknown pipeline " << gUnknownPso << " | terrain draws without root tables " << gTerrainNoTables << "\n";
     s << "UI shader list loaded: " << (uicapture::haveUiShaderList() ? "yes" : "NO (UI found by material name)") << " | shader names: "
-      << (glassarmor::shaderNamesReady() ? "ready" : "NOT READY (press the probe again in a few seconds)") << "\n";
+      << (glassarmor::shaderNamesReady() ? "ready" : "NOT READY (probe again in a few seconds)") << " | atlas picture: "
+      << (gSaveAtlasRun ? "saved (single-player test)" : "not saved") << "\n";
+    s << "(one frame = the draws RECORDED between two Presents; RenderDragon records ahead on several threads, so a frame\n"
+         " can hold the tail of the previous one or the head of the next)\n";
     s << "\n## World -> UI boundary\n" << (gBoundaryText.empty() ? "no UI draw after a terrain draw this frame - nothing copied\n" : gBoundaryText);
+    s << "\n## Stage snapshots (colour + depth before the first draw of a material family that follows the terrain)\n"
+      << (gStageText.empty() ? "none\n" : gStageText);
+    // timeline
+    std::sort(gTimeline.begin(), gTimeline.end(), [](Ev const& a, Ev const& b) { return a.seq < b.seq; });
+    std::vector<size_t> rtIds, dsIds;
+    auto idOf = [](std::vector<size_t>& v, size_t h) {
+        if (!h) return size_t(0);
+        auto it = std::find(v.begin(), v.end(), h);
+        if (it == v.end()) { v.push_back(h); return v.size(); }
+        return size_t(it - v.begin()) + 1;
+    };
+    s << "\n## Frame timeline (" << gTimeline.size() << " runs" << (gTimelineDropped ? ", " + std::to_string(gTimelineDropped) + " more dropped" : std::string())
+      << "; a run = consecutive draws on one command list with the same shader, state and targets)\n";
+    for (auto const& e : gTimeline) {
+        size_t const r = idOf(rtIds, e.rts.rt0), d = idOf(dsIds, e.rts.dsv);
+        s << "#" << e.seq << " list " << ptr(e.list) << " t" << e.tid << "  " << (r ? "RT" + std::to_string(r) : std::string("RT-")) << " "
+          << (d ? "DS" + std::to_string(d) : std::string("DS-")) << "  " << e.text << "\n";
+    }
+    s << "targets:\n";
+    for (size_t i = 0; i < rtIds.size(); ++i) {
+        ID3D12Resource*     r = uicapture::rtvResourceOf(rtIds[i]);
+        D3D12_RESOURCE_DESC d{};
+        s << "  RT" << i + 1 << " = view 0x" << hex(rtIds[i]) << "  " << ptr(r) << "  " << (r && safeDescInner(r, &d) ? descStr(d) : std::string("unknown resource")) << "\n";
+    }
+    for (size_t i = 0; i < dsIds.size(); ++i) {
+        ID3D12Resource*     r = glassarmor::dsvResource(dsIds[i]);
+        D3D12_RESOURCE_DESC d{};
+        s << "  DS" << i + 1 << " = view 0x" << hex(dsIds[i]) << "  " << ptr(r) << "  " << (r && safeDescInner(r, &d) ? descStr(d) : std::string("unknown resource")) << "\n";
+    }
     // pipelines
     std::vector<std::pair<ID3D12PipelineState*, Stat>> terr;
     std::map<std::string, std::pair<Stat, int>>        fam; // material file -> draws, pipelines
+    struct PsRow { ClsPtr c; Stat st; int psos = 0; };
+    std::map<std::string, PsRow> byKey; // every other pipeline, merged by shader + state
     for (auto const& [p, st] : gPsoStat) {
-        auto        it   = gCls.find(p);
-        std::string name = it == gCls.end() ? "?" : it->second.name;
-        std::string file = name.substr(0, name.find(' '));
+        auto it = gCls.find(p);
+        if (it == gCls.end()) continue;
+        Cls const&  c    = *it->second;
+        std::string file = c.file.empty() ? (c.known ? "(not a game material)" : "(pipeline made before the hooks)") : c.file;
         auto&       f    = fam[file];
         f.first.draws += st.draws, f.first.prims += st.prims, ++f.second;
-        if (it != gCls.end() && it->second.terrain) terr.emplace_back(p, st);
+        if (c.terrain) terr.emplace_back(p, st);
+        else {
+            auto& row = byKey[c.key];
+            row.c     = it->second;
+            row.st.draws += st.draws, row.st.prims += st.prims, ++row.psos;
+        }
     }
     std::sort(terr.begin(), terr.end(), [](auto const& a, auto const& b) { return a.second.draws > b.second.draws; });
     s << "\n## Terrain (RenderChunk) pipelines this frame: " << terr.size() << "\n";
     for (auto const& [p, st] : terr) {
-        auto const& c = gCls[p];
-        s << "pso " << ptr(p) << "  draws " << st.draws << "  prims " << st.prims << "\n    ps " << hex(c.ps) << "  " << c.name << "\n    vs "
-          << hex(c.v.vs) << "  " << glassarmor::shaderName(c.v.vs) << "\n    vs out: " << c.v.vsOut << "\n    in: " << c.v.inputs << "\n    "
-          << c.v.targets << "  root " << c.v.root << "\n";
+        Cls const& c = *gCls[p];
+        s << "pso " << ptr(p) << "  draws " << st.draws << "  prims " << st.prims << "\n    ps " << hex(c.ps) << "  "
+          << (c.psReplaced ? "REPLACED by a pack (not one of the game's shaders)" : c.name) << "\n    vs " << hex(c.v.vs) << "  " << c.vsName
+          << "\n    vs out: " << c.v.vsOut << "\n    in: " << c.v.inputs << "\n    " << c.v.targets << "  root " << c.v.root << "\n";
     }
-    s << "\n## Every material this frame (pixel shader's .material.bin -> draws / prims / pipelines)\n";
+    s << "\n## Other pipelines this frame (merged by shader + state): " << byKey.size() << "\n";
+    for (auto const& [k, row] : byKey) {
+        Cls const& c = *row.c;
+        s << c.label << "  draws " << row.st.draws << "  prims " << row.st.prims << "  pipelines " << row.psos << (c.ui ? "  [UI]" : "") << "\n    vs "
+          << hex(c.v.vs) << "  " << c.vsName << "\n    vs out: " << c.v.vsOut << "\n    in: " << c.v.inputs << "\n    " << c.v.targets << "  root "
+          << c.v.root << "\n";
+    }
+    s << "\n## Every material this frame (material file -> draws / prims / pipelines)\n";
     for (auto const& [f, v] : fam) s << "  " << f << "  " << v.first.draws << " / " << v.first.prims << " / " << v.second << "\n";
     // textures
     std::vector<TexUse const*> tex;
@@ -637,6 +818,19 @@ std::string buildReport() {
     for (auto const& [r, u] : gRt) s << "  " << ptr(r) << "  " << descStr(u.desc) << "  draws " << u.draws << (r == gLastRt ? "  (last)" : "") << "\n";
     s << "\n## Depth buffers of terrain draws\n";
     for (auto const& [r, u] : gDs) s << "  " << ptr(r) << "  " << descStr(u.desc) << "  draws " << u.draws << (r == gLastDs ? "  (last)" : "") << "\n";
+    // camera + replaced materials: what a look needs to rebuild world positions, and which shaders are not vanilla
+    auto const cam = rf::lyrics::camera();
+    s << "\n## Camera (RF's world camera capture - only valid while LyricsForge draws lyrics)\n";
+    if (cam.valid) {
+        s << "pos " << cam.pos[0] << " " << cam.pos[1] << " " << cam.pos[2] << " | forward " << cam.forward[0] << " " << cam.forward[1] << " "
+          << cam.forward[2] << " | up " << cam.up[0] << " " << cam.up[1] << " " << cam.up[2] << " | right " << cam.right[0] << " " << cam.right[1]
+          << " " << cam.right[2] << "\nfovY " << cam.fovYDeg << " aspect " << cam.aspect << "\nproj (column-major):";
+        for (float v : cam.proj) s << " " << v;
+        s << "\n";
+    } else s << "not valid\n";
+    auto const ms = rf::materials::stats();
+    s << "\n## Materials served by RF (seen " << ms.seen << ", from resource packs " << ms.fromPacks << ", from the shaderpack " << ms.fromShaderpack << ")\n";
+    for (auto const& l : rf::materials::lastServed()) s << "  " << l << "\n";
     return s.str();
 }
 
@@ -658,7 +852,7 @@ void queueAtlas(ID3D12Device* dev) {
         gAlloc->Reset();
         gList->Reset(gAlloc.Get(), nullptr);
     }
-    UINT64 budget = UINT64(1) << 30;
+    UINT64 budget = UINT64(512) << 20;
     int    n      = 0;
     for (auto const* u : tex) {
         unsigned slices = std::min<unsigned>(u->desc.DepthOrArraySize, 4u);
@@ -700,10 +894,10 @@ void onSetRts(ID3D12GraphicsCommandList* list, size_t rt0, size_t dsv) {
 }
 
 void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
-    ID3D12PipelineState* pso = nullptr;
-    Cls                  c;
-    bool                 have = false;
-    Rts                  rts;
+    ID3D12PipelineState*     pso = nullptr;
+    ClsPtr                   c;
+    Rts                      rts;
+    unsigned long long const prims = static_cast<unsigned long long>(count / 3) * std::max(1u, inst);
     {
         std::lock_guard l(gMutex);
         ++gDraws;
@@ -712,46 +906,81 @@ void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
         pso = it->second;
         auto& st = gPsoStat[pso];
         ++st.draws;
-        st.prims += static_cast<unsigned long long>(count / 3) * std::max(1u, inst);
-        if (auto ci = gCls.find(pso); ci != gCls.end()) c = ci->second, have = true;
+        st.prims += prims;
+        if (auto ci = gCls.find(pso); ci != gCls.end()) c = ci->second;
         if (auto ri = gListRts.find(list); ri != gListRts.end()) rts = ri->second;
     }
-    if (!have) { // first sight of this pipeline this probe (outside our lock: the views take their own locks)
+    if (!c) { // first sight of this pipeline this probe (outside our lock: the views take their own locks)
         c = classify(pso);
         std::lock_guard l(gMutex);
         gCls.emplace(pso, c);
     }
-    if (c.ui) {
-        bool afterWorld;
-        {
-            std::lock_guard l(gMutex);
-            ++gUiDraws;
-            afterWorld = gTerrainDraws > 0;
-            if (!afterWorld) ++gUiBeforeTerrain;
-        }
-        if (afterWorld && !gBoundary.exchange(true)) boundary(list, c);
-        return;
-    }
-    if (!c.terrain) return;
+    bool        afterWorld = false, stage = false;
+    int         stageNo = 0;
+    std::string family;
     {
         std::lock_guard l(gMutex);
-        ++gTerrainDraws;
+        noteRun(list, pso, *c, rts, prims);
+        afterWorld = gTerrainDraws > 0;
+        if (c->ui) {
+            ++gUiDraws;
+            if (!afterWorld) ++gUiBeforeTerrain;
+        } else if (c->terrain) ++gTerrainDraws;
+        else if (afterWorld) {
+            if (int const kind = stageKind(c->file)) {
+                family = stageFamily(c->file);
+                if (std::find(gStageFamilies.begin(), gStageFamilies.end(), family) == gStageFamilies.end() &&
+                    (kind == 1 || gStagesOther < kMaxOtherStages)) {
+                    gStageFamilies.push_back(family);
+                    if (kind == 2) ++gStagesOther;
+                    stageNo = int(gStageFamilies.size());
+                    stage   = true;
+                }
+            }
+        }
     }
+    if (c->ui) {
+        if (afterWorld && !gBoundary.exchange(true)) boundary(list, *c);
+        return;
+    }
+    if (stage) snapshotStage(list, *c, rts, stageNo, family);
+    if (!c->terrain) return;
     noteTextures(list);
     if (rts.rt0) noteTarget(gRt, uicapture::rtvResourceOf(rts.rt0), gLastRt);
     if (rts.dsv) noteTarget(gDs, glassarmor::dsvResource(rts.dsv), gLastDs);
 }
 
+namespace {
+/// gMutex held: forget what a probe frame collected (and the references it holds on game textures).
+/// listsToo = also the per-list pipeline / target state the warm-up frames learned (kept when recording starts:
+/// a list that bound its pipeline or targets before that moment keeps drawing with them).
+void dropFrame(bool copiesToo, bool listsToo) {
+    gPsoStat.clear(), gTex.clear(), gRt.clear(), gDs.clear(), gCls.clear(), gRun.clear();
+    if (listsToo) gListPso.clear(), gListRts.clear();
+    gLastRt = gLastDs = nullptr;
+    if (copiesToo) gCopies.clear();
+}
+} // namespace
+
 void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
     int p = gPhase.load();
-    if (p == Idle || p == Write || !device || !queue) return;
+    if (p == Idle) { // a finished probe's readback buffers go a few seconds after the files were written
+        if (gKeepFrames.load(std::memory_order_relaxed) > 0 && --gKeepFrames == 0) {
+            std::lock_guard l(gMutex);
+            gKeep.clear();
+        }
+        return;
+    }
+    if (p == Write || !device || !queue) return;
     if (p == Warm) { // trackers learn heaps / descriptor copies / list targets for a couple of frames first
+        // without the shader names nothing can be told apart: wait for them (a few seconds at most, then go anyway)
+        if (!glassarmor::shaderNamesReady() && ++gWarmWait < 900) return;
         if (++gWarmFrames < 3) return;
         std::lock_guard l(gMutex);
-        gPsoStat.clear(), gTex.clear(), gRt.clear(), gDs.clear(), gCopies.clear(), gCls.clear();
-        gLastRt = gLastDs = nullptr;
+        dropFrame(true, false);
+        gTimeline.clear(), gStageFamilies.clear(), gStageText.clear(), gBoundaryText.clear();
+        gSeq = 0, gTimelineDropped = 0, gStagesOther = 0;
         gDraws = gUiDraws = gTerrainDraws = gUiBeforeTerrain = gUnknownPso = gTerrainNoTables = 0;
-        gBoundaryText.clear();
         gBoundary = false;
         gStatus   = "recording one frame...";
         gPhase    = Rec;
@@ -760,6 +989,8 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
     if (p == Rec) { // the frame is recorded: stop listening, queue the atlas readback, wait for the GPU
         gPhase = Wait;
         std::lock_guard l(gMutex);
+        for (auto const& [list, r] : gRun) closeRun(list, r);
+        gRun.clear();
         gReport = buildReport();
         queueAtlas(device);
         if (gList) {
@@ -773,9 +1004,9 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
         std::time_t now = std::time(nullptr);
         char        ts[32];
         std::strftime(ts, sizeof ts, "%Y%m%d-%H%M%S", std::localtime(&now));
-        gRunDir      = gOutDir / ts;
-        gWaitFrames  = 0;
-        gStatus      = "waiting for the GPU copies...";
+        gRunDir     = gOutDir / ts;
+        gWaitFrames = 0;
+        gStatus     = "waiting for the GPU copies...";
         return;
     }
     if (p == Wait) {
@@ -784,7 +1015,7 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
         if (!gFence && FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gFence)))) {
             std::lock_guard l(gMutex);
             gStatus = "no fence - probe abandoned";
-            gCopies.clear();
+            dropFrame(true, true);
             gPhase = Idle;
             return;
         }
@@ -798,7 +1029,10 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
             if (gWaitFrames > 600) {
                 std::lock_guard l(gMutex);
                 gStatus = "GPU copies never finished - probe abandoned";
+                gKeep.swap(gCopies); // the game's lists may still write into them: release later, not now
                 gCopies.clear();
+                gKeepFrames = 600;
+                dropFrame(false, true);
                 gPhase = Idle;
             }
             return;
@@ -806,36 +1040,41 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
         std::vector<Copy> copies;
         std::string       report;
         fs::path          dir;
+        bool              saveAtlas = false;
         {
             std::lock_guard l(gMutex);
             copies.swap(gCopies);
-            report = gReport;
-            dir    = gRunDir;
-            gStatus = "writing files...";
-            // drop the frame's references to game resources now (copies keep what they still need)
-            gTex.clear(), gRt.clear(), gDs.clear();
-            gLastRt = gLastDs = nullptr;
-            gListPso.clear(), gListRts.clear();
+            report    = gReport;
+            dir       = gRunDir;
+            saveAtlas = gSaveAtlasRun;
+            gStatus   = "writing files...";
+            dropFrame(false, true); // the frame's references to game resources go now (the copies are ours)
         }
         gPhase = Write;
-        std::thread(writeFiles, dir, std::move(copies), std::move(report)).detach();
+        std::thread(writeFiles, dir, std::move(copies), std::move(report), saveAtlas).detach();
     }
 }
 
 void drawUi() {
     if (!ImGui::CollapsingHeader("World FX")) return;
     ImGui::Indent();
-    ImGui::TextWrapped("M0 probe: what cel outlines, refraction glass and the other World FX looks need from one frame - the "
-                       "pipelines that draw blocks, the terrain atlas (searched for the World FX tag test pack) and the world's "
-                       "colour + depth right before the HUD. Stand in a world with glass in view, HUD on, then probe.");
+    ImGui::TextWrapped("M0 probe: what the World FX looks need from one frame - the pipelines that draw blocks, the order the frame "
+                       "is drawn in, the world's colour + depth at each stage (before the hand, the game's blit and the HUD), and "
+                       "where the World FX tag test pack's textures sit in the terrain atlas. Stand in a world with glass in view, "
+                       "HUD on, then probe.");
     glassarmor::learnShaderNames();
     int  p    = gPhase.load();
     bool busy = p != Idle;
+    bool save = gSaveAtlas.load();
+    if (ImGui::Checkbox("Also save the block texture sheet as a picture", &save)) gSaveAtlas = save;
+    ImGui::TextDisabled("Single-player test worlds only. Leave it OFF on servers: a server pack's textures are the server's.");
     if (busy) ImGui::BeginDisabled();
     if (ImGui::Button("Probe the next frame")) {
         std::lock_guard l(gMutex);
         gKeep.clear();
-        gWarmFrames = 0;
+        gKeepFrames   = 0;
+        gSaveAtlasRun = gSaveAtlas.load();
+        gWarmFrames = gWarmWait = 0;
         gStatus     = "warming up the trackers...";
         gPhase      = Warm;
     }
