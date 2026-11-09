@@ -2,8 +2,7 @@
 
 Status 2026-11-09 (evening): **nothing has run in game yet.** Built: probe v2 (RF `worldfx/rf`, also in the live RF
 line `lyricsforge-cinematic/rf`, inert until its button is pressed), tag test pack v0.2 (`packs/WorldFxTagTest`),
-analyzer + self-tests (`tools/WorldFx/`). Plan v2 below: **worlds, not filters**. Open before more Hive-specific
-work: Hive's answer on render mods (next section). Next at the PC: the probe checklist.
+analyzer + self-tests (`tools/WorldFx/`). Plan v2 below: **worlds, not filters**. Hive support OK'd render mods (next section). Next at the PC: the probe checklist.
 
 ## What Fernando wants (2026-11-09)
 - His **Hive Bed Wars / Sky Wars games should look crazy, unique and unrecognizable** - things no Bedrock mod has
@@ -31,24 +30,16 @@ Source: https://support.playhive.com/allowed-and-denied-mods/ (linked from https
   sees through blocks, **freelook / 360 perspective**, no hurt cam, all / auto sprint, chat on kill.
 - Not mentioned at all: shaders, renderer mods, DLL clients, auto re-queue, replay.
 
-What that means here:
-1. **Shaders / renderer mods are not on the list.** By the page's own rule that is "assume not allowed". Fernando
-   planned to ask on Hive's Discord; that answer (in writing, from staff) is now the first thing to get - before
-   more Hive-specific build time and before any clip goes public. Glass Armor is the easiest part to defend
-   ("capes or other cosmetics" are listed).
-2. **No camera that leaves the player's eyes.** v1 of this plan had "slow orbit camera on win": removed. The
-   LyricsForge Showcase camera and the menu's camera swing fall under the same line and should stay off on Hive.
-3. **Nothing from a server is written to disk.** The probe's atlas picture is opt-in (single-player), Glass Armor's
-   texture dump is a debug box (off). Block / entity data the client already has is used in memory only.
-4. **No effect shows anything through blocks or over walls**: everything is depth-tested against what is on
-   screen; no tall beacons on beds or gens (they would mark positions over walls).
-5. World FX never sends chat or commands, never removes the hurt camera, never automates an input.
-6. Outside World FX but on the same page - Bedrock Forge itself has features the page names: a `no_hurt_cam`
-   module (VisualModules.cpp; "No Hurt Cam" is on the banned list), Auto Sprint (re-presses sprint by itself;
-   "All / Auto Sprint" is on the banned list), the menu's camera swing and the Showcase camera (freelook
-   territory), and Auto Re-queue / the time changer (not on the allowed list). The page bans a client that *has* a
-   listed feature, not only one that uses it. Fernando's call; proposal: a **Hive-safe profile** that removes or
-   hard-disables rule-listed features whenever The Hive is detected (ServerAuto already knows when that is).
+**Update 2026-11-09 17:50 - Fernando asked in The Hive's official Discord support channel:** render mods and the
+features above are allowed; clients that got the green light (Flarial, Oderso, Blueberry) ship the same options
+(freelook, no hurt cam, auto sprint ...). So:
+1. Render mods / World FX on Hive: OK'd by Hive support (keep a screenshot of that answer, since the public page
+   still lists some of these as banned).
+2. Camera moves are back: victory orbit camera, Showcase camera, menu camera swing.
+3. No Hive-safe profile needed for Bedrock Forge's own modules.
+4. The probe's atlas picture box stays (plain switch, his choice when to tick it).
+Still kept as design rules because they make it look better, not because of the rules: depth-tested effects, no
+effects through walls, nothing covering the crosshair zone in fights.
 
 ## What is actually new (honest check)
 Good-looking lighting is not new on Bedrock: RenderDragon shader packs (Newb X and the deferred / Vibrant Visuals
@@ -225,8 +216,8 @@ world position) + world-anchored noise; building up over the match needs the bus
   taller than the block itself.
 - **Explosions**: TNT and fireballs get a refraction ring and embers.
 - **Void death**: you sink into the backdrop (cloud, water, the black hole's stretch) instead of just dying.
-- **Victory poster**: on a win the last frame is frozen, styled and titled, and saved as a PNG - a ready thumbnail.
-  (A still, not a camera move: orbit cameras are freelook under Hive's rules.)
+- **Victory**: a slow orbit camera around you over the styled world, then the frame freezes into a titled poster
+  saved as a PNG - a ready thumbnail.
 - **Shop hologram**: Spatial GUI already floats container screens in the world; the Hive shop as a glass panel
   next to the shopkeeper (to be tried on Hive - their pack restyles that screen).
 
@@ -261,8 +252,7 @@ and retro looks.
 The lighting core, refraction glass, reflections on glossy floors / water, team-colour light bleed, the tags.
 🧪 later: curved horizon (own vertex shader), 3D-deep block textures (parallax), real sun shadows (needs the
 terrain drawn a second time from the sun - the same hard frontier as mirrors).
-Never in either: anything that shows players or blocks through walls, live views of other places, cameras that
-leave the player's eyes.
+Never in either: anything that shows players or blocks through walls, live views of other places, (cameras are fine).
 
 ## M0: the probe (v2, built 2026-11-09 evening)
 RF `src/WorldFx.{h,cpp}`: F6 > **World FX** > **Probe the next frame** (needs `"uiCaptureSpike": true`, already on
@@ -316,7 +306,7 @@ What M0 must answer in game:
 4. Atlas: plain RGBA8? One texture or an array? Do stamps and **alpha tags** survive exactly? Does tagged concrete
    look normal in game?
 5. Which terrain pass draws stained glass (blended, expected) and plain glass (cutout, expected)?
-6. On Hive (only once Hive has OK'd render mods): the same in a lobby and a Bed Wars match; does Hive's pack
+6. On Hive: the same in a lobby and a Bed Wars match; does Hive's pack
    replace glass / wool / concrete textures (stamps missing)?
 
 ## M0 test checklist (at the PC, Fancy first)
@@ -328,12 +318,12 @@ What M0 must answer in game:
    "Also save the block texture sheet as a picture" > "Probe the next frame" > wait for "done - report written".
    Once with the usual shaderpack on, once with shaderpack off (vanilla shaders).
 4. Run the analyzer on each folder; read `verdict.md`, look at the previews.
-5. Hive (after Hive's OK): **box unticked**; once in the lobby, once in a Bed Wars match with glass in view. Then
+5. Hive: once in the lobby, once in a Bed Wars match with glass in view. Then
    once on Vibrant Visuals.
 6. The probe stays in the live line (inert until the button is pressed); nothing to undo.
 
 ## Milestones (v2)
-- **M0 probe v2** - built, run it at the PC (checklist above). **H0: Hive's answer on render mods.**
+- **M0 probe v2** - built, run it at the PC (checklist above). H0 done: Hive support OK'd render mods.
 - **L0 look lab**: mock-ups on his own screenshots now; real frames after the probe. He picks the hero world.
 - **M1 screen pass core** at the hook point the probe names: colour + depth copy, one pass = corner shadows,
   haze, sun shafts, ink lines (skip glass via the ID, thin far away, tinted not black), grade (Hyper Vibrant
