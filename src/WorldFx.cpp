@@ -330,16 +330,17 @@ ClsPtr classify(ID3D12PipelineState* pso) {
         c->name   = glassarmor::shaderName(c->ps);
         c->vsName = glassarmor::shaderName(c->v.vs);
     }
-    // A shaderpack or resource pack that replaces a pixel shader changes its hash, so the game's material files no
-    // longer name it (LyricsForge's lighting pack does this to RenderChunk). Vertex shaders are not replaced by
-    // ShaderForge packs: the VS still says which material the pipeline belongs to.
+    // A shaderpack or resource pack that replaces a shader changes its hash, so the game's own material files no
+    // longer name it (LyricsLight replaces RenderChunk's pixel and vertex shaders). MaterialLoader names the shaders
+    // of every material it serves (" [shaderpack]" / " [pack]"); failing that, an unreplaced vertex shader still
+    // says which material the pipeline belongs to.
     std::string const& fam = c->name != "?" ? c->name : c->vsName;
-    c->psReplaced = c->known && c->name == "?" && c->vsName != "?";
+    c->psReplaced = c->known && (c->name.find(" [") != std::string::npos || (c->name == "?" && c->vsName != "?"));
     c->file       = fam == "?" ? std::string() : fam.substr(0, fam.find(' '));
     c->terrain    = isTerrain(fam);
     c->ui         = uicapture::isUiPipeline(pso) || looksUi(c->name) || looksUi(c->vsName);
     if (!c->known) c->label = "(pipeline made before the hooks)";
-    else if (c->name != "?") c->label = stripPlatform(c->name) + "  ps " + hex(c->ps);
+    else if (c->name != "?") c->label = stripPlatform(c->name) + (c->psReplaced ? " (REPLACED by a pack)" : "") + "  ps " + hex(c->ps);
     else if (c->vsName != "?") c->label = stripPlatform(c->vsName) + " + REPLACED pixel shader  ps " + hex(c->ps);
     else c->label = "unnamed shaders  ps " + hex(c->ps);
     c->key = c->label + "  | " + c->v.targets;
@@ -791,7 +792,7 @@ std::string buildReport() {
     for (auto const& [p, st] : terr) {
         Cls const& c = *gCls[p];
         s << "pso " << ptr(p) << "  draws " << st.draws << "  prims " << st.prims << "\n    ps " << hex(c.ps) << "  "
-          << (c.psReplaced ? "REPLACED by a pack (not one of the game's shaders)" : c.name) << "\n    vs " << hex(c.v.vs) << "  " << c.vsName
+          << (c.name == "?" ? std::string("REPLACED by a pack (not one of the game's shaders)") : c.name) << "\n    vs " << hex(c.v.vs) << "  " << c.vsName
           << "\n    vs out: " << c.v.vsOut << "\n    in: " << c.v.inputs << "\n    " << c.v.targets << "  root " << c.v.root << "\n";
     }
     s << "\n## Other pipelines this frame (merged by shader + state): " << byKey.size() << "\n";

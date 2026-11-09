@@ -80,8 +80,12 @@ struct PsoView {
     void*       root = nullptr;
 };
 bool psoView(ID3D12PipelineState* pso, PsoView& out);
-/// "RenderChunk.material.bin Transparent Fragment Direct3D_SM65", or "?" until the names are learned.
+/// "RenderChunk.material.bin Transparent Fragment Direct3D_SM65", or "?" until the names are learned / when the shader
+/// is not one of the game's. Shaders of materials RF served from a pack end in " [pack]" / " [shaderpack]".
 std::string shaderName(uint64_t hash);
+/// MaterialLoader served a replaced .material.bin (resource pack / shaderpack): name its shaders too, so a pipeline
+/// whose shaders were replaced (LyricsLight replaces RenderChunk's pixel AND vertex shaders) can still be told apart.
+void learnServedMaterial(std::filesystem::path const& file, std::wstring_view fileName, char const* source);
 void        learnShaderNames(); // on a worker thread, once
 bool        shaderNamesReady();
 struct SrvView {

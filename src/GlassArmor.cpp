@@ -52,6 +52,7 @@ struct PsoInfo {
 std::mutex                                       gMutex;
 std::unordered_map<ID3D12PipelineState*, PsoInfo> gPsos;
 std::unordered_map<uint64_t, std::string>        gShaderNames; // ps/vs hash -> "File.material.bin pass stage"
+std::unordered_map<uint64_t, std::string>        gServedNames; // the same for materials RF served from a pack / shaderpack
 std::atomic_bool                                 gNamesLearned{false}, gLearning{false};
 fs::path                                         gOutDir;
 
@@ -240,9 +241,10 @@ void learnNames() {
     }).detach();
 }
 
-std::string nameOf(uint64_t h) {
-    auto it = gShaderNames.find(h);
-    return it == gShaderNames.end() ? std::string("?") : it->second;
+std::string nameOf(uint64_t h) { // the game's own name first: a served file can still carry unchanged vanilla blobs
+    if (auto it = gShaderNames.find(h); it != gShaderNames.end()) return it->second;
+    auto s = gServedNames.find(h);
+    return s == gServedNames.end() ? std::string("?") : s->second;
 }
 std::string hex(uint64_t h) {
     char b[20];
@@ -1209,9 +1211,19 @@ bool psoView(ID3D12PipelineState* pso, PsoView& out) {
     return true;
 }
 std::string shaderName(uint64_t hash) {
-    if (!gNamesLearned.load()) return "?";
     std::lock_guard l(gMutex);
-    return nameOf(hash);
+    return nameOf(hash); // "?" for the game's own shaders until learnShaderNames() has finished
+}
+void learnServedMaterial(std::filesystem::path const& file, std::wstring_view fileName, char const* source) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return;
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+    auto const           shaders = rf::skyscan::scan(bytes.data(), bytes.size());
+    std::string          name;
+    for (wchar_t c : fileName) name += c < 128 ? char(c) : '?';
+    std::lock_guard l(gMutex);
+    for (auto const& s : shaders)
+        gServedNames[s.hash] = name + (s.pass.empty() ? "" : " " + s.pass) + " " + s.stage + " " + s.platform + " [" + (source ? source : "pack") + "]";
 }
 void learnShaderNames() {
     if (!gNamesLearned && !gLearning) learnNames();

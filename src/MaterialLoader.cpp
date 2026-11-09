@@ -22,6 +22,7 @@
 #include "mc/deps/core/resource/ResourceLocation.h"
 #include "mc/resources/ResourcePackManager.h"
 
+#include "GlassArmor.h"
 #include "Options.h"
 #include "SkyPass.h"
 
@@ -112,6 +113,7 @@ bool redirect(wchar_t const* path, wchar_t* out, size_t outLen) {
     bool pack = fromResourcePacks(*st, name, out, outLen);
     bool hit  = pack || fromShaderpack(*st, name, out, outLen);
     if (hit) rf::sky::learnMaterialFile(out, name, pack ? "pack" : "shaderpack"); // a replaced sky material: learn its shaders
+    if (hit) rf::glassarmor::learnServedMaterial(out, name, pack ? "pack" : "shaderpack"); // and name every replaced shader for the probes
     --tInHook;
     return hit;
 }
