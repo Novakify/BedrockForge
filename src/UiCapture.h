@@ -16,6 +16,7 @@
 struct ID3D12Device;
 struct ID3D12CommandQueue;
 struct ID3D12Resource;
+struct ID3D12PipelineState;
 
 namespace rf::uicapture {
 
@@ -85,5 +86,11 @@ long lastFrameUiDraws();
 /// RF's own overlay list is being recorded on this thread: its binds and draws are never taken to the panel target (the
 /// game's next frame may start its UI on another thread meanwhile - the scene's own drawing flickered away).
 void ownDraws(bool on);
+/// World FX probe: one of the game's UI pipelines (tagged at creation from config/ui_shaders.txt)?
+bool isUiPipeline(ID3D12PipelineState* pso);
+/// config/ui_shaders.txt was loaded (otherwise isUiPipeline is always false).
+bool haveUiShaderList();
+/// RTV descriptor -> resource (seen at creation, copied, or guessed from barriers); null if unknown. Not owned.
+ID3D12Resource* rtvResourceOf(size_t handle);
 
 } // namespace rf::uicapture

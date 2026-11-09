@@ -12,6 +12,8 @@
 #pragma once
 #include <cstdint>
 #include <filesystem>
+#include <string>
+#include <vector>
 
 struct ID3D12PipelineState;
 struct ID3D12Resource;
@@ -70,5 +72,26 @@ void endFlush(ID3D12GraphicsCommandList* list, FlushRes const& fr);
 void afterLyrics(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resource* bb);
 /// F6 section.
 void drawUi();
+
+// ---- shared with World FX (rf::worldfx, WorldFx.h): read-only views of what the probe trackers know ----
+struct PsoView {
+    uint64_t    ps = 0, vs = 0;
+    std::string vsOut, inputs, targets;
+    void*       root = nullptr;
+};
+bool psoView(ID3D12PipelineState* pso, PsoView& out);
+/// "RenderChunk.material.bin Transparent Fragment Direct3D_SM65", or "?" until the names are learned.
+std::string shaderName(uint64_t hash);
+void        learnShaderNames(); // on a worker thread, once
+bool        shaderNamesReady();
+struct SrvView {
+    ID3D12Resource* res = nullptr; // not owned
+    unsigned        w = 0, h = 0, fmt = 0, mips = 0;
+};
+bool srvView(size_t cpuHandle, SrvView& out);
+/// The biggest textures that ever got an SRV (by area, one entry per resource) - report only, may be stale.
+std::vector<SrvView> largestTextures(size_t n);
+/// Last transition StateAfter seen for a resource (barriers are noted while tracking()), else `fallback`.
+unsigned stateOf(ID3D12Resource* r, unsigned fallback);
 
 } // namespace rf::glassarmor

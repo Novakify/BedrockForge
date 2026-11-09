@@ -33,6 +33,7 @@
 #include "SkyPass.h"
 #include "SpatialPanel.h"
 #include "GlassArmor.h"
+#include "WorldFx.h"
 
 namespace rf::uicapture {
 namespace {
@@ -479,6 +480,7 @@ void STDMETHODCALLTYPE setPsoHook(ID3D12GraphicsCommandList* list, ID3D12Pipelin
     reinterpret_cast<SetPso_t>(gOrig[3])(list, pso);
     if (gInSnapshot) return;
     if (rf::glassarmor::tracking()) rf::glassarmor::onSetPso(list, pso);
+    if (rf::worldfx::tracking()) rf::worldfx::onSetPso(list, pso);
     if (rf::sky::wanted()) { // lock-free: refresh the cached kind only when this list's PSO changes
         SkyLS* s = skyLS(list);
         if (s->pso != pso) {
@@ -500,6 +502,7 @@ void gaNoteVb(ID3D12GraphicsCommandList* l, UINT start, UINT n, D3D12_VERTEX_BUF
 void gaNoteIb(ID3D12GraphicsCommandList* l, D3D12_INDEX_BUFFER_VIEW const* v);
 void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                                  D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
+    if (!gInSnapshot && rf::worldfx::tracking()) rf::worldfx::onSetRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
     if (gaOn()) {
         gaFlush(list); // pending armor belongs to the targets bound now
         gaNoteRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
@@ -887,6 +890,7 @@ void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b,
     if (orig) {
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
+        if (!gInSnapshot && rf::worldfx::recording()) rf::worldfx::onDraw(list, a, b); // may copy targets first (world -> UI)
         if (gaOn() && gaHasPending(list) && !rf::glassarmor::isActorPso(rf::glassarmor::listPso(list))) gaFlush(list);
         reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
     }
@@ -901,6 +905,7 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
     if (orig) {
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
+        if (!gInSnapshot && rf::worldfx::recording()) rf::worldfx::onDraw(list, a, b); // may copy targets first (world -> UI)
         ID3D12PipelineState* gamePso = nullptr;
         ID3D12PipelineState* glass   = gaOn() ? rf::glassarmor::glassPsoFor(list, &gamePso) : nullptr;
         if (glass) { // Glass Armor: hold the game's armor draw back, replay it with our shader after the actor pass
@@ -1405,6 +1410,15 @@ void requestLearn() {
 }
 
 void ownDraws(bool on) { gInSnapshot = on; }
+bool isUiPipeline(ID3D12PipelineState* pso) {
+    std::lock_guard l(gMutex);
+    return gUiPso.count(pso) != 0;
+}
+bool haveUiShaderList() {
+    std::lock_guard l(gMutex);
+    return !gUiHashes.empty();
+}
+ID3D12Resource* rtvResourceOf(size_t handle) { return rtvResource(SIZE_T(handle)); }
 long lastFrameUiDraws() { return gLastFrameUiDraws.load(); }
 std::string leakNote() {
     char b[400];
@@ -1420,6 +1434,7 @@ std::string leakNote() {
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb) {
     if (!gInstalled || !device || !queue || !bb) return;
     rf::glassarmor::onPresent(device, queue);
+    rf::worldfx::onPresent(device, queue);
     if (gLeakFrameNow.exchange(0)) ++gLeakFrames;
     {
         long n = gPanelUiDraws.exchange(0);

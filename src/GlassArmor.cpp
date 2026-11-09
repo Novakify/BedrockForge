@@ -34,6 +34,7 @@
 #include "GlassArmorShaders.h"
 #include "SkyMaterialScan.h"
 #include "UiCapture.h"
+#include "WorldFx.h"
 
 namespace rf::glassarmor {
 namespace {
@@ -365,7 +366,9 @@ void installEarly() {
 }
 
 bool enabled() { return gEnabled.load(std::memory_order_relaxed); }
-bool tracking() { return gEnabled.load(std::memory_order_relaxed) || gCap.load(std::memory_order_relaxed) != 0; }
+bool tracking() {
+    return gEnabled.load(std::memory_order_relaxed) || gCap.load(std::memory_order_relaxed) != 0 || rf::worldfx::tracking();
+}
 
 void noteBarriers(unsigned n, D3D12_RESOURCE_BARRIER const* b) {
     std::lock_guard l(gMutex);
@@ -1189,5 +1192,47 @@ void drawUi() {
     if (!gLastReport.empty()) ImGui::TextWrapped("Report: %s", gLastReport.c_str());
     ImGui::Unindent();
 }
+
+// ---------------------------------------------------------------- World FX probe views (read-only)
+bool psoView(ID3D12PipelineState* pso, PsoView& out) {
+    std::lock_guard l(gMutex);
+    auto it = gPsos.find(pso);
+    if (it == gPsos.end()) return false;
+    out.ps = it->second.ps, out.vs = it->second.vs;
+    out.vsOut = it->second.vsOut, out.inputs = it->second.inputs, out.targets = it->second.targets;
+    out.root = it->second.root;
+    return true;
+}
+std::string shaderName(uint64_t hash) {
+    if (!gNamesLearned.load()) return "?";
+    std::lock_guard l(gMutex);
+    return nameOf(hash);
+}
+void learnShaderNames() {
+    if (!gNamesLearned && !gLearning) learnNames();
+}
+bool shaderNamesReady() { return gNamesLearned.load(); }
+bool srvView(size_t cpu, SrvView& out) {
+    std::lock_guard l(gMutex);
+    auto it = gSrvs.find(cpu);
+    if (it == gSrvs.end() || !it->second.res) return false;
+    out.res = it->second.res, out.w = it->second.w, out.h = it->second.h, out.fmt = it->second.fmt, out.mips = it->second.mips;
+    return true;
+}
+std::vector<SrvView> largestTextures(size_t n) {
+    std::unordered_map<ID3D12Resource*, SrvView> by;
+    {
+        std::lock_guard l(gMutex);
+        for (auto const& [cpu, i] : gSrvs)
+            if (i.res && i.w >= 16 && i.h >= 16) by[i.res] = SrvView{i.res, i.w, i.h, i.fmt, i.mips};
+    }
+    std::vector<SrvView> v;
+    v.reserve(by.size());
+    for (auto const& [r, s] : by) v.push_back(s);
+    std::sort(v.begin(), v.end(), [](SrvView const& a, SrvView const& b) { return uint64_t(a.w) * a.h > uint64_t(b.w) * b.h; });
+    if (v.size() > n) v.resize(n);
+    return v;
+}
+unsigned stateOf(ID3D12Resource* r, unsigned fallback) { return unsigned(knownState(r, D3D12_RESOURCE_STATES(fallback))); }
 
 } // namespace rf::glassarmor

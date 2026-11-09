@@ -22,6 +22,7 @@
 #include "SpatialPanel.h"
 #include "UiCapture.h"
 #include "GlassArmor.h"
+#include "WorldFx.h"
 
 namespace {
 void runOnClientThread() {
@@ -150,6 +151,7 @@ void updateImGui() {
             rf::postfx::drawUi();
             rf::uicapture::drawUi();
             rf::glassarmor::drawUi();
+            rf::worldfx::drawUi();
             rf::panel::drawUi();
             rf::lyrics::drawUi();
             rf::sky::drawUi();
