@@ -1,0 +1,29 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "World FX Tag Test",
+    "description": "by Novak - Bedrock Forge World FX test pack (vanilla look, invisible texture tags)",
+    "uuid": "ffb51446-c16a-4fcf-9dff-5ad3b1b79c55",
+    "version": [
+      0,
+      1,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "d808a7fb-9b3e-4ebd-8663-440faab83f63",
+      "version": [
+        0,
+        1,
+        0
+      ]
+    }
+  ]
+}

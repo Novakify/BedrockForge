@@ -1,0 +1,582 @@
+{
+ "stamp": "WFX1",
+ "pack": "WorldFxTagTest",
+ "ids": {
+  "1": {
+   "name": "glass",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 0,
+   "max_alpha": 255
+  },
+  "2": {
+   "name": "glass_white",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "3": {
+   "name": "glass_orange",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "4": {
+   "name": "glass_magenta",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "5": {
+   "name": "glass_light_blue",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "6": {
+   "name": "glass_yellow",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "7": {
+   "name": "glass_lime",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "8": {
+   "name": "glass_pink",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "9": {
+   "name": "glass_gray",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "10": {
+   "name": "glass_silver",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "11": {
+   "name": "glass_cyan",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "12": {
+   "name": "glass_purple",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "13": {
+   "name": "glass_blue",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "14": {
+   "name": "glass_brown",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "15": {
+   "name": "glass_green",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "16": {
+   "name": "glass_red",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "17": {
+   "name": "glass_black",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 102,
+   "max_alpha": 163
+  },
+  "18": {
+   "name": "tinted_glass",
+   "group": "glass",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 110,
+   "max_alpha": 200
+  },
+  "19": {
+   "name": "glass_pane_top",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "20": {
+   "name": "glass_pane_top_white",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "21": {
+   "name": "glass_pane_top_orange",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "22": {
+   "name": "glass_pane_top_magenta",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "23": {
+   "name": "glass_pane_top_light_blue",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "24": {
+   "name": "glass_pane_top_yellow",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "25": {
+   "name": "glass_pane_top_lime",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "26": {
+   "name": "glass_pane_top_pink",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "27": {
+   "name": "glass_pane_top_gray",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "28": {
+   "name": "glass_pane_top_silver",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "29": {
+   "name": "glass_pane_top_cyan",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "30": {
+   "name": "glass_pane_top_purple",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "31": {
+   "name": "glass_pane_top_blue",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "32": {
+   "name": "glass_pane_top_brown",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "33": {
+   "name": "glass_pane_top_green",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "34": {
+   "name": "glass_pane_top_red",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "35": {
+   "name": "glass_pane_top_black",
+   "group": "glass_pane",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 230,
+   "max_alpha": 230
+  },
+  "36": {
+   "name": "wool_colored_white",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "37": {
+   "name": "wool_colored_orange",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "38": {
+   "name": "wool_colored_magenta",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "39": {
+   "name": "wool_colored_light_blue",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "40": {
+   "name": "wool_colored_yellow",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "41": {
+   "name": "wool_colored_lime",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "42": {
+   "name": "wool_colored_pink",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "43": {
+   "name": "wool_colored_gray",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "44": {
+   "name": "wool_colored_silver",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "45": {
+   "name": "wool_colored_cyan",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "46": {
+   "name": "wool_colored_purple",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "47": {
+   "name": "wool_colored_blue",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "48": {
+   "name": "wool_colored_brown",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "49": {
+   "name": "wool_colored_green",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "50": {
+   "name": "wool_colored_red",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "51": {
+   "name": "wool_colored_black",
+   "group": "team_wool",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "52": {
+   "name": "concrete_white",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "53": {
+   "name": "concrete_orange",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "54": {
+   "name": "concrete_magenta",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "55": {
+   "name": "concrete_light_blue",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "56": {
+   "name": "concrete_yellow",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "57": {
+   "name": "concrete_lime",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "58": {
+   "name": "concrete_pink",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "59": {
+   "name": "concrete_gray",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "60": {
+   "name": "concrete_silver",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "61": {
+   "name": "concrete_cyan",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "62": {
+   "name": "concrete_purple",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "63": {
+   "name": "concrete_blue",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "64": {
+   "name": "concrete_brown",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "65": {
+   "name": "concrete_green",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "66": {
+   "name": "concrete_red",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "67": {
+   "name": "concrete_black",
+   "group": "team_concrete",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "68": {
+   "name": "planks_oak",
+   "group": "hive_blocks",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "69": {
+   "name": "end_stone",
+   "group": "hive_blocks",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "70": {
+   "name": "obsidian",
+   "group": "hive_blocks",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "71": {
+   "name": "diamond_block",
+   "group": "hive_blocks",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  },
+  "72": {
+   "name": "emerald_block",
+   "group": "hive_blocks",
+   "w": 16,
+   "h": 16,
+   "min_alpha": 255,
+   "max_alpha": 255
+  }
+ }
+}
