@@ -8,7 +8,7 @@ struct GIn {
     float4 p8   : PARAM8;  float4 p9  : PARAM9;  float4 p10 : PARAM10; float4 p11 : PARAM11; float4 p12 : PARAM12;
     float4 p13  : PARAM13;      // [LyricsForge] the music right now: lightning, drop kick, beat, chorus wave
     float4 p14  : PARAM14;      // [LyricsForge] r: how far a new sky has swept in (0 = no transition)
-    float4 p15  : PARAM15;      // [LyricsForge] the 8-band spectrum (4 bits each): Event Horizon's strands, Mirror / Cloud Hill / Lake / Lupine
+    float4 p15  : PARAM15;      // [LyricsForge] the 8-band spectrum (4 bits each): Event Horizon's strands, Mirror / Lake / Lupine
     uint4  q0 : PREV0; uint4 q1 : PREV1; uint4 q2 : PREV2; uint4 q3 : PREV3; // the sky being swept away (texels 0..15 packed)
     float3 f    : CAMF;    float3 r   : CAMR;    float3 u   : CAMU;
     float2 txy  : CAMT;         // tan(hfov/2), tan(vfov/2)
