@@ -68,7 +68,7 @@ and a song plays, otherwise the standalone look (if on).
 
 ### World FX standalone (no LyricsForge, no sound)
 - **Style modes, one key each**: Anime cel, Manga (screentone + ink), Neon grid (dark surfaces, every block edge a neon
-  line in your team colour), Oil paint, Toy world (tilt-shift: Sky Wars islands look like dioramas).
+  line in your team colour), Oil paint, Toy world (tilt-shift: Sky Wars islands look like dioramas) + the style bank below.
 - **Living match**: the map's mood escalates by itself - calm at the start, each destroyed bed darkens the sky, the last
   fight gets an apocalypse sky. Read from Hive's own chat (bed destroyed, kills, game end).
 - **Event cinematics**: bed destroyed = world drains to grey except team colours + letterbox + shake; your kill = the
@@ -77,6 +77,30 @@ and a song plays, otherwise the standalone look (if on).
 - **Movement**: sprint speed lines; every block you place materialises with a hologram scan line; Sky Wars "danger
   lens": the void warps more the closer you are to an edge.
 - **Ambient life**: cloud shadows drifting across the map, moving glass caustics, heat haze over the gens.
+
+### Style bank (shared engine: standalone picks one with a key, Reactive Maps switches them with the song)
+All post passes on the world's colour + depth before the HUD (+ world position from depth and RF's camera for
+patterns that must stick to blocks). Fernando asked 2026-11-09 for a super vibrant look and retro looks.
+- **Hyper Vibrant** (his idea): vibrance (dull colours boosted most, team colours protected from clipping), local
+  contrast on luminance, shadows leaning violet / highlights warm, bloom on saturated colours, distance haze tinted
+  pastel instead of grey. Pixar / Fortnite-level pop without the cheap blown-out look.
+- **16-Bit** (Sonic CD era inspiration, nothing copied): low internal resolution, limited vibrant palette with ordered
+  dithering, 1-px outlines at that resolution, depth quantised into parallax-style layers, banded gradient sky.
+- **Handheld** (Super Mario Land era inspiration): 4-shade green or grey palette, chunky pixel grid + LCD cell lines,
+  dithering, a touch of LCD ghosting (blend with the last frame).
+- **CRT Arcade**: scanlines, slight curvature, phosphor glow, colour bleed, vignette; stacks on 16-Bit.
+- **Comic** (Spider-Verse vibe): bold ink, halftone dots in shadows, CMY misregistration that grows with distance.
+- **Cinematic Film**: teal-orange grade, halation (red glow round highlights), anamorphic streaks on bright lights,
+  grain, optional letterbox.
+- **Storybook**: painterly (Kuwahara) shapes, soft watercolour edges, paper grain - hand-painted anime backgrounds.
+- **HD-2D**: crisp pixels + strong depth of field + bloom + light shafts (Octopath-style diorama).
+- **Stained Glass**: the world split into glowing world-anchored cells with dark lead lines (fits the glass theme).
+- **Blueprint**: the map becomes a technical drawing - white edge + grid lines on blue.
+- **Cotton Candy**: soft pastel grade, bloom, slow sparkles.
+- **Matrix / ASCII** (fun mode): the frame drawn as glyphs (LyricsForge's glyph atlas).
+Polish that makes them special: patterns anchored to world space (no "shower door" swimming when you move), a new
+style sweeps out from the player like a shockwave instead of popping, the HUD / hotbar and kill effects match the
+style (pixel bursts in 16-Bit, ink splashes in Comic), PvP-safe strength so the crosshair area and players stay clear.
 
 ### Shared by both
 Refraction glass, the cel outline core, reflections on glossy floors / water, gen heat haze, team-colour light bleed,
