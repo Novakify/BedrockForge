@@ -15,6 +15,7 @@ analyzer + self-tests (`tools/WorldFx/`). Plan v2 below: **worlds, not filters**
      and never seen before.
 - Styles he asked for (16:01): a super vibrant world; retro looks (Sonic CD / Super Mario Land era inspiration).
 - 17:02: re-think the whole approach, best scenery ideas, make it ground-breaking.
+- Dropped (17:55): the Flow State kill-streak aura. Every earlier look stays in the style bank.
 - Standing tastes that apply here: no strobing or flicker, nothing cluttered, premium not cheap, previews before
   installs, skies / looks rotate by themselves instead of being picked each time, effects must not get in the way
   of fights (he asked for combat-aware lyrics for the same reason).
@@ -210,8 +211,6 @@ world position) + world-anchored noise; building up over the match needs the bus
 - **Your kill**: the victim bursts into glass shards (matches the armor) with an air shockwave.
 - **Words in the world** (the lyric text engine): comic "KRAK!" when a bed breaks in Comic, score popups on kills in
   16-Bit, clean neon in the glass look. Cinematic title cards replace the plain "BED DESTROYED" text.
-- **Flow State**: a kill streak brings an aura on your own arms and sword, speed lines and deeper ink - a nod to
-  his Blue Lock pack. Fades when the streak ends.
 - **Gens and beds**: gens shimmer with heat and glow; your bed glows like a hearth and cracks when it goes. Nothing
   taller than the block itself.
 - **Explosions**: TNT and fireballs get a refraction ring and embers.
