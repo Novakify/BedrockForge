@@ -1469,9 +1469,10 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
     ID3D12PipelineState* pso = derived(dev.Get(), g, 4);
     if (!pso) { wsStatus("building the sky pipeline (in the background)"); return false; }
-    // the deck sits ~56 blocks under where you first stood in this world; a new world (big jump) re-anchors it
     double const* pos = snap.pos;
-    if (!gAnchored || std::fabs(pos[1] - gAnchor[1]) > 140.0 || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) {
+    // anchored where you first stand in a world (your island); only a new world / game (a big sideways jump, e.g. Hive
+    // sending you to a match) moves it. Never on a vertical teleport or a fall into the void.
+    if (!gAnchored || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) {
         gAnchor[0] = pos[0]; gAnchor[1] = pos[1]; gAnchor[2] = pos[2];
         gAnchored  = true;
     }
