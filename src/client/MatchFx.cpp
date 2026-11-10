@@ -297,7 +297,14 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
                 if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { same = true; break; }
         if (!same) newPlace = true;
     }
-    if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0 || now - last > 20000) resetMatch(pos);
+    // a long time away from the HUD (a death screen, a menu) is only a new match when you came back somewhere else
+    if (last && now - last > 20000 && !newPlace) {
+        bool same = false;
+        for (auto const& b : gBeds)
+            if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { same = true; break; }
+        newPlace = !same;
+    }
+    if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
     retarget();
     // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night
