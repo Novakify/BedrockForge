@@ -235,7 +235,7 @@ float4 shards(float3 rd, float sceneT) {
             float  ndl = saturate(dot(nw, SUN));
             float3 amb = lerp(float3(0.40, 0.37, 0.52), float3(0.22, 0.28, 0.55), NIGHT) * (0.70 + 0.30 * nw.y);
             float3 sunC = lerp(float3(1.05, 0.74, 0.52), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
-            float3 world = lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.50, 0.58, 0.86), NIGHT); // same grade as the terrain
+            float3 world = lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // same grade as the terrain
             best = tN, lim = tN, col = alb * grain * rim * (amb + sunC * ndl) * world, hit = true;
         }
     }
@@ -380,7 +380,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         lin += lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT) * open * near * c6.y * 0.55 * LIGHTK;
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
-    lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.50, 0.58, 0.86), NIGHT); // the world follows the sky
+    lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
