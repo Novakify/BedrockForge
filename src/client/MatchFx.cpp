@@ -85,12 +85,17 @@ void onBroken(int x, int y, int z) {
     }
 }
 
-void pushEvent(int x, int y, int z, uint32_t kind, Block const& b) {
+void pushEvent(BlockSource& bs, int x, int y, int z, uint32_t kind, Block const& b) {
     auto& e = gFx.events[gFx.nEvents % 64];
     e.x = x, e.y = y, e.z = z, e.kind = kind, e.atMs = nowMs();
     mce::Color c = b.getBlockType().mMapColor;
     e.col[0] = c.r, e.col[1] = c.g, e.col[2] = c.b, e.col[3] = 1;
     e.seed = uint32_t(x * 73856093) ^ uint32_t(y * 19349663) ^ uint32_t(z * 83492791) ^ uint32_t(e.atMs);
+    e.floorDy = 255;
+    for (int d = 1; d <= 6; ++d) { // what the pieces will land on
+        Block const& below = bs.getBlock(BlockPos{x, y - d, z});
+        if (!below.isAir() && !boring(below.getTypeName())) { e.floorDy = uint32_t(d - 1); break; }
+    }
     ++gFx.nEvents;
 }
 
@@ -115,8 +120,8 @@ void onChange(ll::event::BlockChangedEvent& ev) {
     std::string const& pn = prev.getTypeName();
     std::string const& nn = next.getTypeName();
     if (!near) return;
-    if (!boring(pn) && nn == "minecraft:air") pushEvent(p.x, p.y, p.z, 1, prev);
-    else if (pn == "minecraft:air" && !boring(nn)) pushEvent(p.x, p.y, p.z, 2, next);
+    if (!boring(pn) && nn == "minecraft:air") pushEvent(ev.blockSource(), p.x, p.y, p.z, 1, prev);
+    else if (pn == "minecraft:air" && !boring(nn)) pushEvent(ev.blockSource(), p.x, p.y, p.z, 2, next);
 }
 
 void resetMatch(double const* pos) {

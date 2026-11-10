@@ -23,7 +23,7 @@ struct BfMatchEventV1 {
     int64_t  atMs;     // steady-clock ms
     float    col[4];   // the block's map colour (linear-ish 0..1), a = 1
     uint32_t seed;     // stable per event (shard layout)
-    uint32_t pad;
+    uint32_t floorDy;  // the shards land this many blocks below the block (0 = on the block under it); 255 = nothing: they fall away
 };
 struct BfMatchFxV1 {
     uint32_t size, version; // sizeof, 1
