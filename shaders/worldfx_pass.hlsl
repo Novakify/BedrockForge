@@ -13,11 +13,15 @@ cbuffer C : register(b0) {
     float4 c4; // xy = target size, z = scene row pitch (bytes), w = depth row pitch (bytes)
     float4 c5; // xyz = sun direction (world), w = shadow strength
     float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = 0
+    float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
+    float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
 };
+#define CS_NOISE_REG t2
+#define CS_PUFF_REG t3
+#include "cloud_sea_common.hlsli"
 ByteAddressBuffer gScene : register(t0); // the colour target, rows of c4.z bytes
 ByteAddressBuffer gDepth : register(t1); // D24 in the low 24 bits, rows of c4.w bytes
 
-float  hash12(float2 p) { p = frac(p * float2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return frac((p.x + p.y) * p.x); }
 int2   clampPx(int2 p) { return clamp(p, int2(0, 0), int2(c4.xy) - 1); }
 float  rawDepth(int2 p) { p = clampPx(p); return float(gDepth.Load(uint(p.y) * uint(c4.w) + uint(p.x) * 4u) & 0xFFFFFFu) / 16777215.0; }
 bool   isSky(float d) { return d >= 0.99999; }
@@ -55,6 +59,24 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float3 col = sceneAt(px);
     float  z   = viewZ(d);
     float3 P   = posAt(float2(px) + 0.5, z);
+    // ---- the cloud sea is a real surface: ground below the cloud deck goes under it, peaks above it rise out of it
+    //      (the sky pass only draws it where nothing else is; without this the loaded terrain shows as a square)
+    [branch] if (c8.w > 0.5) {
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
+        float  dist = length(P);
+        float3 rd   = P / dist;
+        float  yTop = SEA_Y + SEA_AMP * 7.6;
+        float  tTop = rd.y < 0.0 ? (CAM.y - yTop) / -rd.y : 1e9;
+        if (CAM.y <= yTop) tTop = 0.0;
+        if (rd.y < 0.02 && tTop < dist) {
+            float  tHit;
+            float4 sea = cloudSea(CAM, rd, dist, tHit);
+            if (sea.a > 0.0 && tHit < dist) {
+                float3 o = toDisplay(sea.rgb) + (hash12(float2(px)) - 0.5) / 255.0;
+                return float4(o, 1.0);
+            }
+        }
+    }
     // normal from the depth buffer: the flatter neighbour on each axis (no halos at block edges)
     float3 pl = posPx(px - int2(1, 0)), pr = posPx(px + int2(1, 0)), pu = posPx(px - int2(0, 1)), pd = posPx(px + int2(0, 1));
     float3 dx = abs(dot(pr - P, c0.xyz)) < abs(dot(P - pl, c0.xyz)) ? pr - P : P - pl;

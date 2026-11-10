@@ -978,9 +978,9 @@ void wfxStatus(std::string s) { std::lock_guard l(gWfxMutex); gWfxStatus = std::
 bool makeWfxRoot(ID3D12Device* dev) {
     std::lock_guard l(gWfxMutex);
     if (gWfxRoot) return true;
-    D3D12_ROOT_PARAMETER prm[3]{};
+    D3D12_ROOT_PARAMETER prm[4]{};
     prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    prm[0].Constants        = {0, 0, 28};
+    prm[0].Constants        = {0, 0, 36};
     prm[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     prm[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
     prm[1].Descriptor       = {0, 0};
@@ -988,7 +988,16 @@ bool makeWfxRoot(ID3D12Device* dev) {
     prm[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
     prm[2].Descriptor       = {1, 0};
     prm[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_ROOT_SIGNATURE_DESC rs{3, prm, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures)
+    prm[3].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    prm[3].DescriptorTable  = {1, &range};
+    prm[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_STATIC_SAMPLER_DESC smp{};
+    smp.Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    smp.AddressU = smp.AddressV = smp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    smp.MaxLOD           = D3D12_FLOAT32_MAX;
+    smp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC rs{4, prm, 1, &smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob>          blob, err;
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
@@ -1522,6 +1531,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     WorldFxLook const look = gLook;
     if (!look.shadows) { wfxStatus("off (shadows unticked)"); return false; }
     if (!st.rootKnown) { wfxStatus("waiting for the game's root state"); return false; }
+    if (!gWsTexUp.load() || !gWsHeap) { wfxStatus("waiting for the cloud textures"); return false; }
     GamePso g;
     {
         std::lock_guard l(gPsoMutex);
@@ -1575,7 +1585,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-    float c[28]{};
+    float c[36]{};
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
@@ -1583,8 +1593,17 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadow;
     c[24] = look.ao; c[25] = look.rim; c[26] = float(look.debug); c[27] = 0;
+    // the cloud sea, depth-tested against the terrain: same deck + clock as the sky pass (drawWorldSky)
+    c[28] = float(snap.pos[0]); c[29] = float(snap.pos[1]); c[30] = float(snap.pos[2]);
+    c[31] = float(std::floor(gAnchor[1]) - 56.0 + gDeckOffset.load());
+    c[32] = float(gAnchor[0]); c[33] = float(gAnchor[2] - 25.0);
+    c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
+    c[35] = gAnchored ? 1.0f : 0.0f;
+    ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
+    calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
-    calls.setConsts(list, 0, 28, c, 0);
+    calls.setConsts(list, 0, 36, c, 0);
+    calls.setTable(list, 3, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
     list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
     list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
     calls.setPso(list, pso);
