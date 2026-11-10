@@ -72,22 +72,23 @@ float4 highClouds(float3 d, float mu) {
     float  fade = smoothstep(0.012, 0.085, d.y);
     float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
     float  dn = hcDens(p, 5);
-    float  fine = fbm(p * 21.0, 3);
+    float  fine = fbm(p * 21.0, 2);
     float  near = smoothstep(0.05, 0.30, d.y);
     float  dens = smoothstep(0.765, 0.830, dn - (fine - 0.5) * 0.10 * near);
     float  tau = smoothstep(0.765, 0.965, dn);
-    float  shadeS = smoothstep(0.765, 0.93, hcDens(p + sunXZ * 0.040, 4));
+    float  shadeS = smoothstep(0.765, 0.93, hcDens(p + sunXZ * 0.040, 3));
     float2 along = float2(dot(q, sunXZ), dot(q, float2(-sunXZ.y, sunXZ.x)));
     float2 pc = float2(along.x / 3400.0, along.y / 760.0) + TIME * float2(0.0015, 0.0);
-    pc += (float2(fbm(pc * 1.7 + 9.0, 3), fbm(pc * 1.7 + 23.0, 3)) - 0.5) * 0.9;
-    float cir = smoothstep(0.46, 0.80, fbm(pc * float2(1.0, 2.2), 5));
+    float  wq = fbm(pc * 1.7 + 9.0, 3);
+    pc += (float2(wq, 0.5 + 0.5 * sin(wq * 9.0 + 1.3)) - 0.5) * 0.9;
+    float cir = smoothstep(0.46, 0.80, fbm(pc * float2(1.0, 2.2), 4));
     cir *= cir * smoothstep(0.40, 0.66, fbm(q / 2300.0 + 40.0, 3));
 
     float  sunSide = mu * 0.5 + 0.5;
     float3 lit = lerp(float3(0.46, 0.130, 0.170), float3(1.10, 0.300, 0.050), pow(sunSide, 2.0));
     lit = lerp(lit, float3(1.55, 0.74, 0.20), pow(max(mu, 0.0), 9.0));
     float3 shade = lerp(float3(0.062, 0.052, 0.120), float3(0.120, 0.070, 0.135), sunSide);
-    float  ripple = fbm(rot(p) * float2(9.0, 15.0), 3) - 0.5;
+    float  ripple = (vnoise(rot(p) * float2(9.0, 15.0)) - 0.5) * 0.75;
     float  back = exp(-2.6 * tau) * (1.0 - 0.65 * shadeS);
     float  front = 0.92 - 0.46 * tau - 0.20 * shadeS;
     float  litF = saturate(lerp(front, back, smoothstep(0.25, 0.80, sunSide)) * (1.0 + 0.7 * ripple * near));
@@ -104,8 +105,10 @@ float seaH(float2 w, float lod) {
     float  big = gPuff.SampleLevel(gSmp, rot(p) * 0.31 + 0.37, max(lod - 1.7, 0.0)).r;
     float  h = gPuff.SampleLevel(gSmp, p, lod).r;
     float  far = smoothstep(240.0, 520.0, length(w - MAP_C));
+    float  base = h * (0.42 + 0.55 * big) + big * 0.55;
+    [branch] if (far <= 0.0) return base;                            // no towers near the map: skip their noise
     float  tw = smoothstep(0.56, 0.78, vnoise(w / 760.0 + 2.7)) * far;
-    return h * (0.42 + 0.55 * big) + big * 0.55 + tw * (1.6 + 3.6 * big + 1.5 * h);
+    return base + tw * (1.6 + 3.6 * big + 1.5 * h);
 }
 float seaY(float2 w, float lod) { return SEA_Y + SEA_AMP * seaH(w, lod); }
 
@@ -118,17 +121,17 @@ float4 cloudSea(float3 ro, float3 rd) {
     if (t > 3400.0) return float4(0.0, 0.0, 0.0, 0.0);
     bool  hit = false;
     float lod = 0.0, tPrev = t;
-    [loop] for (int i = 0; i < 80; i++) {
+    [loop] for (int i = 0; i < 44; i++) {
         float3 p = ro + rd * t;
         lod = max(log2(t * 0.011), 0.0);
         float dh = p.y - seaY(p.xz, lod);
         if (dh < 0.004 * t + 0.03) { hit = true; break; }
         tPrev = t;
-        t += max(dh * 0.40, 0.008 * t + 0.30);
+        t += max(dh * 0.62, 0.016 * t + 0.45);
         if (t > 3400.0 || (rd.y > 0.0 && p.y > yTop)) break;
     }
     if (!hit) return float4(0.0, 0.0, 0.0, 0.0);
-    [unroll] for (int k = 0; k < 6; k++) {
+    [unroll] for (int k = 0; k < 5; k++) {
         float  tm = 0.5 * (tPrev + t);
         float3 pm = ro + rd * tm;
         if (pm.y - seaY(pm.xz, lod) < 0.0) t = tm; else tPrev = tm;
@@ -142,14 +145,15 @@ float4 cloudSea(float3 ro, float3 rd) {
     float2 l2 = normalize(SUN.xz);
     float  slope = SUN.y / length(SUN.xz);
     float  sh = 1.0;
-    [unroll] for (int j = 0; j < 5; j++) {
-        float s = 7.0 * pow(2.3, float(j));
-        float over = seaY(p.xz + l2 * s, lod + 1.0 + float(j) * 0.6) - (h0 + slope * s);
-        sh *= 1.0 - smoothstep(-0.05 * s, 0.20 * s, over) * 0.78;
+    [unroll] for (int j = 0; j < 3; j++) {
+        float s = 9.0 * pow(3.4, float(j));
+        float over = seaY(p.xz + l2 * s, lod + 1.2 + float(j) * 0.9) - (h0 + slope * s);
+        sh *= 1.0 - smoothstep(-0.05 * s, 0.20 * s, over) * 0.80;
     }
     float ndl = dot(n, SUN);
-    float grain = fbm(p.xz / 5.0 + 3.0, 4) + 0.5 * vnoiseG(p.xz / 1.3);
-    grain = lerp(0.75, grain, exp(-t / 260.0));
+    float near = exp(-t / 260.0);
+    float grain = 0.75;
+    [branch] if (near > 0.02) grain = lerp(0.75, fbm(p.xz / 5.0 + 3.0, 3) + 0.5 * vnoiseG(p.xz / 1.3), near); // far away the grain is too small to see
     float cav = saturate((h0 - seaY(p.xz, lod + 3.4)) / (SEA_AMP * 0.13) + 0.55);
     float lit = sh * (0.30 + 0.70 * smoothstep(-0.35, 0.55, ndl)) * (0.72 + 0.38 * grain) * (0.34 + 0.66 * cav);
     float crease = smoothstep(0.05, 0.85, (h0 - SEA_Y) / SEA_AMP);
