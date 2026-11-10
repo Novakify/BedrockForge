@@ -33,6 +33,7 @@
 #include "mc/world/level/block/actor/BlockActor.h"
 
 #include "bf/Events.h"
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey);
 #include "ll/api/mod/NativeMod.h"
 
 namespace {
@@ -461,6 +462,18 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
     if (gIsMap) trackPlayers(*lp, now);
+    {   // F8: a test kill 5 blocks in front of you (normal / final alternate) - to see the animation without a fight
+        static bool down = false;
+        static bool fin  = false;
+        bool const k = (GetAsyncKeyState(0x77) & 0x8000) != 0; // VK_F8
+        if (k && !down) {
+            float const yaw = lp->getRotation().y * 3.14159265f / 180.0f;
+            Gone g{"test", {float(pos[0]) - std::sin(yaw) * 5.0f, float(pos[1]) - 1.62f, float(pos[2]) + std::cos(yaw) * 5.0f}, fin ? 14 : 3, now, false};
+            pushKill(g, fin);
+            fin = !fin;
+        }
+        down = k;
+    }
     retarget();
     // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night
     float const rate = gTarget > gPhase ? (gPhase < 1.0f ? 1.0f / 20.0f : 1.0f / 25.0f) : 1.0f / 3.0f;
