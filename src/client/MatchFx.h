@@ -40,6 +40,8 @@ struct BfMatchFxV1 {
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);
+/// RF's F6 "preview sky phase": the game's time of day follows this phase instead of the match (< 0 = the match)
+__declspec(dllexport) void               BF_MatchFxPreview(float phase);
 }
 
 class IClientInstance;

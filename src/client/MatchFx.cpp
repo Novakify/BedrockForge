@@ -33,6 +33,7 @@ BfMatchFxV1          gFx{};
 std::mutex           gMutex; // block events arrive on the server thread too (single-player)
 std::atomic<int64_t> gConsumerMs{0};
 std::atomic<int64_t> gHudMs{0};
+std::atomic<float>   gPreview{-1.0f};
 bf::events::Subscriptions gSubs;
 
 // Bedrock dye order (bed colour data): white, orange, magenta, light blue, yellow, lime, pink, gray, light gray,
@@ -162,6 +163,7 @@ extern "C" __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx() {
     return &gFx;
 }
 extern "C" __declspec(dllexport) void BF_MatchFxConsumer(int on) { gConsumerMs = on ? nowMs() : 0; }
+extern "C" __declspec(dllexport) void BF_MatchFxPreview(float phase) { gPreview = phase; }
 
 namespace bedrock_forge::client::matchfx {
 
@@ -196,7 +198,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     }
     ++gFx.frame;
     // the game's own time of day follows: golden hour, sunset, moonlit night (vanilla: 0 noon, 0.25 sunset, 0.5 midnight)
-    float const k = gPhase;
+    float const k = gPreview.load() >= 0.0f ? std::min(gPreview.load(), 2.0f) : gPhase;
     gFx.timeOfDay = k < 1.0f ? 0.205f + 0.065f * k : 0.27f + 0.08f * (k - 1.0f);
 }
 
