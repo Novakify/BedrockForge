@@ -1105,24 +1105,24 @@ void drawUi() {
     if (ImGui::Checkbox("Cloud Sea sky", &cs)) { rf::sky::setWorldSky(cs ? 1 : 0); rf::sky::saveWorldFxSettings(); }
     ImGui::SameLine();
     ImGui::TextDisabled("(sunset sky + sea of clouds under the map; works without LyricsForge)");
-    bool save = false;
+    bool saveFx = false;
     float deck = rf::sky::worldSkyDeck();
     if (ImGui::SliderFloat("Cloud deck height", &deck, -80.0f, 80.0f, "%+.0f blocks")) rf::sky::setWorldSkyDeck(deck);
-    save |= ImGui::IsItemDeactivatedAfterEdit();
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::Text("Sky: %s", rf::sky::worldSkyStatus().c_str());
     auto& look = rf::sky::worldFxLook();
-    save |= ImGui::Checkbox("Sun shadows + soft occlusion", &look.shadows);
+    saveFx |= ImGui::Checkbox("Sun shadows + soft occlusion", &look.shadows);
     ImGui::SliderFloat("Shadow strength", &look.shadow, 0.0f, 1.0f, "%.2f");
-    save |= ImGui::IsItemDeactivatedAfterEdit();
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Occlusion strength", &look.ao, 0.0f, 1.0f, "%.2f");
-    save |= ImGui::IsItemDeactivatedAfterEdit();
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Rim light", &look.rim, 0.0f, 2.0f, "%.2f");
-    save |= ImGui::IsItemDeactivatedAfterEdit();
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::RadioButton("Normal", &look.debug, 0); ImGui::SameLine();
     ImGui::RadioButton("Show shadows", &look.debug, 1); ImGui::SameLine();
     ImGui::RadioButton("Show occlusion", &look.debug, 2);
     ImGui::Text("Pass: %s", rf::sky::worldFxStatus().c_str());
-    if (save) rf::sky::saveWorldFxSettings();
+    if (saveFx) rf::sky::saveWorldFxSettings();
     ImGui::Unindent();
 }
 
