@@ -93,6 +93,36 @@ def blocks(m):
 EXT = {"grass_side": ".tga", "leaves_oak": ".tga"}
 
 
+FAITHFUL = Path("/tmp/fb")   # git clone --depth 1 -b bedrock-latest https://github.com/Faithful-Resource-Pack/Faithful-Bedrock-32x
+
+
+def faithful_base(pack, grade_fn, sub, classify_ids):
+    """every Faithful 32x texture under textures/<sub>, colour-graded for the atmosphere; opaque blocks get their
+    World FX material id in alpha. Returns names written."""
+    import grade
+    src = FAITHFUL / "textures" / sub
+    out = []
+    for f in sorted(src.rglob("*")):
+        if f.suffix.lower() not in (".png", ".tga") or not f.is_file():
+            continue
+        st = f.stem
+        if st.endswith(("_mers", "_mer", "_normal", "_heightmap")) and not st.endswith("sandstone_normal"):
+            continue
+        im = np.array(Image.open(f).convert("RGBA"))
+        rgb = grade_fn(im[..., :3])
+        al = im[..., 3].copy()
+        rel = f.relative_to(src).with_suffix("").as_posix()
+        if classify_ids and al.min() == 255:
+            cid = classify(rel) or (5 if rel.startswith("log_") else 0)
+            if cid:
+                al[:] = 255 - STEP * cid
+        dst = pack / "textures" / sub / f.relative_to(src)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.dstack([rgb, al]), "RGBA").save(dst)
+        out.append(rel)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("atmosphere", choices=sorted(ATMOS))
@@ -105,7 +135,14 @@ def main():
     tdir.mkdir(parents=True, exist_ok=True)
     items = []
     ids = {}
-    for name, (rgb, alpha) in blocks(m).items():
+    if getattr(m, "BASE", None) == "faithful":
+        import grade
+        g = lambda rgb: grade.grade(rgb, **getattr(m, "GRADE", {}))
+        n = faithful_base(pack, g, "blocks", True)
+        faithful_base(pack, g, "entity/bed", False)
+        faithful_base(pack, g, "items", False)
+        print(f"{len(n)} Faithful block textures graded")
+    for name, (rgb, alpha) in (blocks(m).items() if getattr(m, "BASE", None) != "faithful" else []):
         if alpha is None:
             cid = classify(name) or (5 if name.startswith("log_") else 0)
             al = np.full(rgb.shape[:2], 255 - STEP * cid if cid else 255)
@@ -120,11 +157,20 @@ def main():
         items.append((name, np.dstack([rgb, np.asarray(al) if alpha is not None and not isinstance(alpha, str) else np.full(rgb.shape[:2], 255)])))
     manifest = {
         "format_version": 2,
-        "header": {"name": f"{cfg['name']} by Novak", "description": f"World FX atmosphere: {cfg['name']}",
+        "header": {"name": f"{cfg['name']} by Novak",
+                   "description": f"World FX atmosphere: {cfg['name']}. Block, item and bed art: Faithful 32x by the Faithful team (faithfulpack.net, graded) - see CREDITS.txt",
                    "uuid": cfg["uuid"], "version": [0, 1, 0], "min_engine_version": [1, 21, 0]},
         "modules": [{"type": "resources", "uuid": cfg["module_uuid"], "version": [0, 1, 0]}],
     }
     (pack / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    if getattr(m, "BASE", None) == "faithful":
+        (pack / "CREDITS.txt").write_text(
+            "Cloud Sea by Novak\n\nBlock, item and bed textures: Faithful 32x (Bedrock) by the Faithful team,\n"
+            "https://faithfulpack.net - colour-graded for the Cloud Sea atmosphere, material ids added in alpha.\n"
+            "License: https://faithfulpack.net/license (copy in FAITHFUL_LICENSE.txt)\n")
+        lic = FAITHFUL / "LICENSE.txt"
+        if lic.exists():
+            (pack / "FAITHFUL_LICENSE.txt").write_text(lic.read_text())
     if hasattr(m, "equipment"):
         m.equipment(pack)
     if a.sheet:

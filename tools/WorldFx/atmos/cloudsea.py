@@ -1,16 +1,26 @@
 """Cloud Sea atmosphere: block textures (by Novak).
 
 Light: low warm sun, violet sky fill (docs/WORLDFX_ART_BIBLE.md). Ramps lean violet in shade, warm in light.
-Each painter returns an RGB(A) uint8 array; build_pack.py names them and adds the material ids.
+
+Every texture is DESIGNED on a 32-unit grid (the structure: stitches, boards, stones, facets) and PAINTED natively at
+RES (128 px): shapes are evaluated in continuous design coordinates, so lines stay one or two real pixels thin and
+edges stay sharp, and each material gets its own fine detail (yarn fibres, wood grain, grit, pores) at full
+resolution. Nothing is upscaled. Each painter returns an RGB(A) uint8 array; build_pack.py names them and adds the
+material ids.
 """
 from __future__ import annotations
 
 import numpy as np
 
-from tex import (normalize, poisson_points, quantize, clean_isolated, ramp, rng, shift_light, value_noise, voronoi)
+from tex import normalize, poisson_points, quantize, clean_isolated, ramp, rng, value_noise
 
-S = 32  # texture size (2x vanilla: room for real structure, still reads as Minecraft)
+S = 32            # design grid units per block
+RES = 128         # painted pixels per block
+K = RES / S       # pixels per design unit
+LW = 0.42         # a fine line, in design units (~1.7 px at 128)
 SHADOW_HUE, LIGHT_HUE = 292.0, 62.0
+BASE = "faithful"          # hand-painted base art (graded); the painters below stay for later atmospheres / tests
+GRADE = {"shadow_amt": 0.032, "light_amt": 0.016, "contrast": 0.08}
 
 # Hive team colours stay instantly readable: vanilla hues, tuned values (no neon, no mud)
 DYES = {
@@ -21,375 +31,390 @@ DYES = {
 }
 
 
-def R(base, **kw):
+def R(base, n=6, **kw):
+    """the ramp for a material; at RES the ramp gets about twice the steps (smooth form, still no gradients)"""
     kw.setdefault("shadow_hue", SHADOW_HUE)
     kw.setdefault("light_hue", LIGHT_HUE)
-    return ramp(base, **kw)
+    return ramp(base, n=max(n, int(n * 1.8)), **kw)
 
 
-def _ss(fn, s=S, k=6):
-    """supersample a shape function f(u, v) (pixel coords, floats) -> 0..1, k*k samples per pixel"""
+def grid():
+    """(y, x) in design units at every painted pixel centre"""
+    y, x = np.mgrid[0:RES, 0:RES].astype(float)
+    return (y + 0.5) / K, (x + 0.5) / K
+
+
+def vn(cells, seed, octaves=1, persist=0.5):
+    return value_noise(RES, cells, seed, octaves, persist)
+
+
+def rnd(r):
+    return r.random((RES, RES))
+
+
+def vor(pts):
+    """tileable Voronoi at RES for points given in design units; distances returned in design units"""
+    p = np.asarray(pts, float)
+    y, x = grid()
+    b1 = np.full((RES, RES), 1e9)
+    b2 = np.full((RES, RES), 1e9)
+    idx = np.zeros((RES, RES), int)
+    for i, (px, py) in enumerate(p):
+        dx = np.abs(x - px); dx = np.minimum(dx, S - dx)
+        dy = np.abs(y - py); dy = np.minimum(dy, S - dy)
+        d = np.sqrt(dx * dx + dy * dy)
+        c = d < b1
+        b2 = np.where(c, b1, np.minimum(b2, d))
+        idx = np.where(c, i, idx)
+        b1 = np.where(c, d, b1)
+    return b1, b2, idx
+
+
+def emboss(h, d=1.0):
+    """baked light from the top-left: h minus h shifted toward the light by d design units (tileable)"""
+    s = max(1, int(round(d * K)))
+    return h - np.roll(np.roll(h, s, 0), s, 1)
+
+
+def Q(f, pal, clean=True):
+    img, idx = quantize(np.clip(f, 0, 1), pal)
+    if clean:
+        img, _ = clean_isolated(idx, pal)
+    return img
+
+
+def _ss(fn, k=3):
+    """supersample a shape function f(x, y) in design units -> RES x RES"""
     o = (np.arange(k) + 0.5) / k
-    y, x = np.mgrid[0:s, 0:s].astype(float)
-    acc = np.zeros((s, s))
+    y, x = np.mgrid[0:RES, 0:RES].astype(float)
+    acc = np.zeros((RES, RES))
     for oy in o:
         for ox in o:
-            acc += fn(x + ox, y + oy)
+            acc += fn((x + ox) / K, (y + oy) / K)
     return acc / (k * k)
 
 
 # ------------------------------------------------------------------ wool: chunky knit (stockinette chevrons), soft and matte
-def wool(colour, seed=1, stitch=8.0, size=None):
-    cw, ch = stitch, stitch                                # chunky sweater knit: a "V" 8 px wide, 8 px tall (4x4 per block)
+def wool(colour, seed=1, stitch=8.0):
+    cw = ch = stitch
 
-    def stitch(x, y):
-        u, v = np.mod(x, cw), np.mod(y + 2.0, ch)      # +2: the V's of the next row tuck under this one
-        # left leg "\": centre line from (1.3, 0) to (3.6, 8); right leg "/" mirrored about x = 4
+    def legs(x, y):
+        u, v = np.mod(x, cw), np.mod(y + 2.0, ch)
         out = np.zeros_like(u)
+        tw = np.zeros_like(u)
         for side in (-1.0, 1.0):
             uu = u if side < 0 else cw - u
             cx = 1.3 + v * 0.29
-            d = (uu - cx) * 0.96                         # ~perpendicular distance to the slanted leg
+            d = (uu - cx) * 0.96
             body = np.clip(1.0 - (np.abs(d) / 2.25) ** 2.6, 0, 1)
-            light = 0.80 + 0.20 * np.clip(-d / 2.25, -1, 1)   # the outer-upper side of each leg catches light
-            tuck = 0.62 + 0.38 * np.sin(np.pi * np.clip(v / 8.0 * 0.92 + 0.06, 0, 1))
-            out = np.maximum(out, body * light * tuck)
-        return out
+            light = 0.80 + 0.20 * np.clip(-d / 2.25, -1, 1)
+            tuck = 0.62 + 0.38 * np.sin(np.pi * np.clip(v / ch * 0.92 + 0.06, 0, 1))
+            val = body * light * tuck
+            # the ply twist: fine diagonal grooves across each leg (what makes it read as yarn up close)
+            twist = 0.5 + 0.5 * np.sin((d * 2.2 + v * 1.9) * np.pi)
+            tw = np.where(val > out, twist, tw)
+            out = np.maximum(out, val)
+        return out, tw
 
-    h = _ss(stitch)
+    y, x = grid()
+    h, tw = legs(x, y)
     r = rng(seed)
     st = r.normal(0, 0.035, (int(S / ch), int(S / cw)))
-    yy, xx = np.mgrid[0:S, 0:S]
-    h += st[(yy // int(ch)) % st.shape[0], (xx // int(cw)) % st.shape[1]]
-    lit = h
-    f = normalize(lit)
-    fuzz = (r.random((S, S)) < 0.012) & (f > 0.45) & (f < 0.75)
-    f = np.where(fuzz, f + 0.16, f)
-    pal = R(colour, n=5, lo=-0.12, hi=0.05, shadow_shift=0.18)
-    img, idx = quantize(np.clip(f, 0, 1) ** 0.75, pal)
-    img, _ = clean_isolated(idx, pal)
-    return img
+    h = h + st[(y // ch).astype(int) % st.shape[0], (x // cw).astype(int) % st.shape[1]]
+    h = h - (1 - tw) * 0.09 * (h > 0.3)
+    f = normalize(h)
+    fz = rnd(r)
+    f = np.where((fz < 0.02) & (f > 0.4) & (f < 0.8), f + 0.12, f)      # stray fibres catching light
+    return Q(np.clip(f, 0, 1) ** 0.75, R(colour, n=6, lo=-0.12, hi=0.05, shadow_shift=0.18))
 
 
 # ------------------------------------------------------------------ concrete: dense, clean, cast panel
 def concrete(colour, seed=2):
-    m = value_noise(S, 2, seed, octaves=3, persist=0.6)
-    f = 0.48 + (m - 0.5) * 0.16                       # cast surface: barely-there clouding, never a stain
-    y, x = np.mgrid[0:S, 0:S]
-    f = np.where((y == 0) | (x == 0), 0.70, f)        # a soft chamfer: one shade up on the lit edges
-    f = np.where((y == S - 1) | (x == S - 1), 0.28, f)  # one shade down on the far ones
+    y, x = grid()
+    f = 0.48 + (vn(2, seed, 3, 0.6) - 0.5) * 0.14 + (vn(48, seed + 7) - 0.5) * 0.05   # cast clouding + fine aggregate
+    f = np.where((y < LW) | (x < LW), 0.70, f)
+    f = np.where((y > S - LW) | (x > S - LW), 0.28, f)
     r = rng(seed + 3)
-    agg = r.random((S, S))
-    inner = (x > 0) & (y > 0) & (x < S - 1) & (y < S - 1)
-    f = np.where((agg < 0.012) & inner, f - 0.20, f)  # rare air pores
-    f = np.where((agg > 0.992) & inner, f + 0.20, f)  # and a fleck of aggregate
-    pal = R(colour, n=5, lo=-0.09, hi=0.05, shadow_shift=0.18)
-    img, _ = quantize(np.clip(f, 0, 1), pal)
-    return img
+    a = rnd(r)
+    inner = (x > 1) & (y > 1) & (x < S - 1) & (y < S - 1)
+    pore = (vn(40, seed + 9) < 0.08) & inner                                      # small air pores, a few px each
+    f = np.where(pore, f - 0.18, f)
+    f = np.where(pore & (np.roll(np.roll(pore, -1, 0), -1, 1) == 0), f + 0.10, f)
+    f = np.where((a > 0.9985) & inner, f + 0.2, f)
+    return Q(f, R(colour, n=5, lo=-0.09, hi=0.05, shadow_shift=0.18))
 
 
-# ------------------------------------------------------------------ terracotta: fired clay, strata + speckle
+# ------------------------------------------------------------------ terracotta: fired clay, sediment lines + speckle
 def terracotta(colour, seed=3):
-    """fired clay: calm, matte, with thin near-straight sediment lines (one shade apart) and rare dark iron specks"""
     r = rng(seed)
-    y, x = np.mgrid[0:S, 0:S].astype(float)
-    drift = (value_noise(S, 2, seed, 1) - 0.5) * 1.6
-    yy = (y + drift) % S
+    y, x = grid()
+    yy = (y + (vn(2, seed) - 0.5) * 1.6) % S
     lines = np.sort(r.choice(np.arange(2, S - 1), 5, replace=False)).astype(float)
     band = np.searchsorted(lines, yy)
     tone = r.uniform(-0.06, 0.06, len(lines) + 1)
     tone[-1] = tone[0]
-    f = 0.48 + tone[band] + (value_noise(S, 16, seed + 1) - 0.5) * 0.06
+    f = 0.48 + tone[band] + (vn(16, seed + 1) - 0.5) * 0.06 + (vn(64, seed + 2) - 0.5) * 0.05
     for c in lines:
-        f = np.where(np.abs(yy - c) < 0.5, f - 0.14, f)
-    sp = r.random((S, S))
-    f = np.where(sp < 0.010, f - 0.25, f)
-    f = np.where(sp > 0.992, f + 0.18, f)
-    pal = R(colour, n=6, lo=-0.12, hi=0.06, shadow_shift=0.2)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+        f = np.where(np.abs(yy - c) < LW * 0.6, f - 0.14, f)
+    sp = vn(50, seed + 5)
+    f = np.where(sp < 0.05, f - 0.22, f)
+    f = np.where(sp > 0.96, f + 0.16, f)
+    return Q(f, R(colour, n=6, lo=-0.12, hi=0.06, shadow_shift=0.2))
 
 
 # ------------------------------------------------------------------ oak planks: four boards, real grain
 def planks(base=(176, 132, 82), seed=4):
     boards = 4
-    bh = S // boards
+    bh = S / boards
     r = rng(seed)
-    y, x = np.mgrid[0:S, 0:S].astype(float)
-    f = np.zeros((S, S))
+    y, x = grid()
+    f = np.zeros((RES, RES))
     for b in range(boards):
         rows = (y >= b * bh) & (y < (b + 1) * bh)
-        joint = r.integers(6, S - 6)
+        joint = float(r.integers(6, S - 6))
         off = r.random() * 100
-        # grain: long lines along x, gently waving, with one knot per board that bends them
         kx, ky = r.uniform(4, S - 4), b * bh + r.uniform(2, bh - 2)
         dx = np.minimum(np.abs(x - kx), S - np.abs(x - kx))
         dk = np.sqrt((dx / 2.2) ** 2 + (y - ky) ** 2)
         bend = 1.6 * np.exp(-dk / 2.0)
-        g = np.sin((y + bend + (value_noise(S, 2, seed + b, 2) - 0.5) * 2.5) * 2.2 + off) * 0.5 + 0.5
+        warp = (vn(2, seed + b, 2) - 0.5) * 2.5
+        g = np.sin((y + bend + warp) * 2.2 + off) * 0.5 + 0.5                       # growth rings across the board
+        fine = np.sin((y + bend + warp) * 9.0 + off * 3) * 0.5 + 0.5                # fine grain lines between them
+        pores = vn(90, seed + 20 + b) < 0.12                                         # open pores, stretched along x
         tone = 0.50 + r.uniform(-0.07, 0.07)
-        fb = tone + (g - 0.5) * 0.24
-        fb = np.where(dk < 1.1, tone - 0.30, fb)                                # the knot itself
-        fb = np.where((dk >= 1.1) & (dk < 1.8), tone - 0.12, fb)
-        # board edges: lit top lip, dark seam at the bottom, end joint
-        fb = np.where(y == b * bh, fb + 0.20, fb)
-        fb = np.where(y == (b + 1) * bh - 1, 0.04, fb)
-        fb = np.where((x == joint) & rows, 0.06, fb)
-        fb = np.where((x == (joint + 1) % S) & rows, fb + 0.14, fb)
+        fb = tone + (g - 0.5) * 0.24 + (fine - 0.5) * 0.06 - pores * 0.06
+        knot = np.sin(dk * 6.0) * 0.5 + 0.5
+        fb = np.where(dk < 1.2, tone - 0.22 - knot * 0.1, fb)
+        fb = np.where((dk >= 1.2) & (dk < 1.9), tone - 0.10, fb)
+        top, bot = b * bh, (b + 1) * bh
+        fb = np.where(y - top < LW, fb + 0.20, fb)
+        fb = np.where(bot - y < LW * 1.2, 0.04, fb)
+        jd = (x - joint) % S
+        fb = np.where(rows & (jd < LW), 0.06, fb)
+        fb = np.where(rows & (jd >= LW) & (jd < LW * 2.2), fb + 0.14, fb)
+        nail = (np.abs(x - (joint + 1.6)) % S < 0.45) & (np.abs(y - (top + bh / 2)) < 0.45)   # a nail head by the joint
+        fb = np.where(nail, 0.10, fb)
         f = np.where(rows, fb, f)
-    pal = R(base, n=7, lo=-0.24, hi=0.10, shadow_shift=0.25)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    img, _ = clean_isolated(idx, pal)
-    return img
+    return Q(f, R(base, n=7, lo=-0.24, hi=0.10, shadow_shift=0.25))
 
 
 # ------------------------------------------------------------------ end stone: pale pumice, lavender pores
 def end_stone(base=(226, 222, 168), seed=5):
-    """pale pumice: crisp pores of a few sizes, each with a lavender inner shadow on its lit side and a pale lip on
-    the far side (light from the top-left), on a calm, slightly lumpy body"""
     pts = poisson_points(S, 18, 5.5, seed)
-    d1, d2, idx = voronoi(S, pts)
+    d1, d2, idx = vor(pts)
     r = rng(seed)
     radius = r.choice([0.7, 1.0, 1.5, 2.1], len(pts), p=[0.35, 0.35, 0.2, 0.1])[idx]
     pit = d1 < radius
-    body = 0.62 + (value_noise(S, 3, seed + 1, 2) - 0.5) * 0.18
-    h = np.where(pit, 0.0, 1.0)
-    sh = shift_light(h, 1, 1)                           # >0: lip facing the light; <0: shadowed inner wall
-    f = body.copy()
-    f = np.where(pit, 0.10, f)
-    f = np.where(pit & (np.roll(np.roll(~pit, 1, 0), 1, 1)), 0.26, f)    # far wall of the pore, lit
-    f = np.where(~pit & (sh > 0.5), f + 0.16, f)
-    # hand-set ramp: pores sink to a cool olive-lavender, never pink
-    pal = [(96, 92, 92), (134, 130, 118), (178, 174, 140), (206, 202, 158), (226, 222, 172), (240, 236, 192)]
-    img, idx2 = quantize(np.clip(f, 0, 1), pal)
-    img, _ = clean_isolated(idx2, pal)
-    return img
+    body = 0.62 + (vn(3, seed + 1, 2) - 0.5) * 0.18 + (vn(70, seed + 3) - 0.5) * 0.08
+    micro = vn(48, seed + 4) < 0.07                                                 # tiny pinholes everywhere
+    f = np.where(pit, 0.10, body)
+    lit_wall = pit & (np.roll(np.roll(~pit, int(K), 0), int(K), 1))
+    f = np.where(lit_wall, 0.26, f)
+    rim = ~pit & np.roll(np.roll(pit, -int(K * 0.6), 0), -int(K * 0.6), 1)
+    f = np.where(rim, f + 0.14, f)
+    f = np.where(micro & ~pit, f - 0.2, f)
+    pal = [(96, 92, 92), (116, 112, 106), (134, 130, 118), (156, 152, 128), (178, 174, 140), (194, 190, 150),
+           (206, 202, 158), (216, 212, 165), (226, 222, 172), (234, 230, 182), (242, 238, 194)]
+    return Q(f, pal)
 
 
 # ------------------------------------------------------------------ obsidian: black glass, conchoidal facets
 def obsidian(seed=6):
-    """volcanic glass: a few broad planes in near-black violet, edges between them a touch darker; light only as a
-    handful of short glint streaks on the planes that face it, plus rare deep-violet specks"""
     pts = poisson_points(S, 6, 11.0, seed)
-    d1, d2, idx = voronoi(S, pts)
+    d1, d2, idx = vor(pts)
     r = rng(seed)
-    y, x = np.mgrid[0:S, 0:S].astype(float)
+    y, x = grid()
     n = len(pts)
     ang = r.uniform(0, 2 * np.pi, n)
     ca, sa = np.cos(ang)[idx], np.sin(ang)[idx]
     cx = np.array([p[0] for p in pts])[idx]; cy = np.array([p[1] for p in pts])[idx]
-    ddx = (x + 0.5 - cx + S / 2) % S - S / 2; ddy = (y + 0.5 - cy + S / 2) % S - S / 2   # wrap-aware: no tile seams
+    ddx = (x - cx + S / 2) % S - S / 2; ddy = (y - cy + S / 2) % S - S / 2
     grad = (ddx * ca + ddy * sa) / 12.0
-    f = r.uniform(0.18, 0.40, n)[idx] + grad * 0.14
-    f = np.where((d2 - d1) < 0.8, f - 0.10, f)
+    ripple = np.sin(np.sqrt(ddx ** 2 + ddy ** 2) * 2.4) * 0.5 + 0.5               # conchoidal ripple rings
+    f = r.uniform(0.18, 0.36, n)[idx] + grad * 0.14 + (ripple - 0.5) * 0.06
+    f = np.where((d2 - d1) < 0.35, f - 0.10, f)
     facing = r.random(n) < 0.5
-    for i in range(n):                                    # glint streaks: 2-4 px diagonals, only on lit planes
+    for i in range(n):
         if not facing[i]:
             continue
         px, py = pts[i]
-        L = int(r.integers(2, 5))
-        for k in range(L):
-            xx, yy = int(px - 2 + k) % S, int(py - 2 + k) % S
-            f[yy, xx] = 0.95 if k in (1, 2) else 0.78
-    sp = r.random((S, S)) < 0.012
-    f = np.where(sp, 0.66, f)
-    pal = [(12, 9, 19), (19, 13, 31), (28, 19, 45), (40, 27, 64), (64, 42, 100), (118, 92, 168), (190, 170, 232)]
-    img, idx2 = quantize(np.clip(f, 0, 1), pal)
-    return img
+        L = r.uniform(2.0, 4.0)
+        t = ((x - (px - 2)) + (y - (py - 2))) / 2
+        dist = np.abs((x - (px - 2)) - (y - (py - 2))) / 1.414
+        streak = (dist < 0.22) & (t > 0) & (t < L)
+        f = np.where(streak, 0.80 + 0.15 * np.sin(np.pi * np.clip(t / L, 0, 1)), f)
+    sp = vn(60, seed + 2) > 0.985
+    f = np.where(sp, 0.62, f)
+    pal = [(10, 8, 16), (14, 10, 22), (19, 13, 31), (24, 16, 38), (30, 20, 47), (38, 26, 60), (48, 32, 76),
+           (64, 42, 100), (90, 66, 140), (130, 104, 184), (196, 178, 236)]
+    return Q(f, pal, clean=False)
 
 
 # ------------------------------------------------------------------ stone family
 def stone(base=(128, 126, 128), seed=7):
-    """weathered smooth stone: a few large soft plates in close tones, some of their edges open into thin cracks
-    with a lit lip; calm surface, rare flecks"""
     pts = poisson_points(S, 6, 11.0, seed)
-    d1, d2, idx = voronoi(S, pts)
+    d1, d2, idx = vor(pts)
     r = rng(seed)
     n = len(pts)
-    f = r.uniform(0.49, 0.56, n)[idx] + (value_noise(S, 4, seed + 1, 2) - 0.5) * 0.20
-    gap = d2 - d1
-    j = np.minimum(idx, np.roll(idx, 1, 1))
-    open_edge = r.random(n * n).reshape(n, n) < 0.30
-    nb = np.where(gap < 2.0, 1, 0)
-    # which neighbour: approximate by the second-nearest site - recompute cheaply
-    crack = np.zeros((S, S), bool)
+    f = r.uniform(0.49, 0.56, n)[idx] + (vn(4, seed + 1, 2) - 0.5) * 0.20 + (vn(64, seed + 5, 2) - 0.5) * 0.10
+    y, x = grid()
+    crack = np.zeros((RES, RES), bool)
     for _ in range(3):
-        cx0, cy0 = int(r.integers(0, S)), int(r.integers(0, S))
-        for k in range(int(r.integers(3, 6))):
-            crack[(cy0 + k) % S, (cx0 + k // 2) % S] = True
-    lip = np.roll(np.roll(crack, 1, 0), 1, 1) & ~crack
+        cx0, cy0 = r.uniform(0, S), r.uniform(0, S)
+        L = r.uniform(3, 6)
+        t = (y - cy0) % S
+        crack |= (t < L) & (np.abs(((x - cx0) % S) - t * 0.45 - 0.2 * np.sin(t * 2)) < 0.22)
     f = np.where(crack, 0.08, f)
-    f = np.where(lip, f + 0.14, f)
-    fl = r.random((S, S))
-    f = np.where((fl < 0.015) & ~crack, f + 0.18, f)
-    f = np.where((fl > 0.988) & ~crack, f - 0.16, f)
-    pal = R(base, n=6, lo=-0.24, hi=0.09, shadow_shift=0.4)
-    img, idx2 = quantize(np.clip(f, 0, 1), pal)
-    img, _ = clean_isolated(idx2, pal)
-    return img
+    f = np.where(np.roll(np.roll(crack, int(K * 0.5), 0), int(K * 0.5), 1) & ~crack, f + 0.12, f)
+    fl = vn(70, seed + 8)
+    f = np.where(fl > 0.97, f + 0.16, f)
+    f = np.where(fl < 0.03, f - 0.14, f)
+    return Q(f, R(base, n=6, lo=-0.24, hi=0.09, shadow_shift=0.4))
 
 
 def cobblestone(base=(126, 122, 120), seed=8):
     pts = poisson_points(S, 11, 8.2, seed)
-    d1, d2, idx = voronoi(S, pts)
+    d1, d2, idx = vor(pts)
     r = rng(seed)
     gap = d2 - d1
     dome = np.clip(gap / 4.0, 0, 1) ** 0.6
     tone = r.uniform(-0.12, 0.12, len(pts))[idx]
-    h = dome * 0.85 + tone + (value_noise(S, 6, seed + 2) - 0.5) * 0.18
-    lit = h + shift_light(h, 1, 1) * 1.2
+    h = dome * 0.85 + tone + (vn(6, seed + 2) - 0.5) * 0.18 + (vn(56, seed + 3, 2) - 0.5) * 0.10
+    lit = h + emboss(h, 1.0) * 1.2
     f = normalize(lit)
-    f = np.where(gap < 0.9, 0.02, f)                                          # mortar: deep violet shade
-    pal = R(base, n=7, lo=-0.30, hi=0.10, shadow_shift=0.5)
-    img, idx2 = quantize(f, pal)
-    img, _ = clean_isolated(idx2, pal)
-    return img
+    f = np.where(gap < 0.8, 0.02, f)
+    f = np.where((gap >= 0.8) & (gap < 1.2), f * 0.7, f)
+    return Q(f, R(base, n=7, lo=-0.30, hi=0.10, shadow_shift=0.5))
 
 
 def stone_bricks(base=(124, 122, 124), seed=9):
-    y, x = np.mgrid[0:S, 0:S]
-    bh, bw = 8, 16
-    row = y // bh
-    xs = (x + (row % 2) * (bw // 2)) % S
+    y, x = grid()
+    bh, bw = 8.0, 16.0
+    row = (y // bh).astype(int)
+    xs = (x + (row % 2) * (bw / 2)) % S
     u, v = xs % bw, y % bh
-    h = 0.55 + (value_noise(S, 4, seed, 3) - 0.5) * 0.35
+    h = 0.55 + (vn(4, seed, 3) - 0.5) * 0.30 + (vn(60, seed + 1, 2) - 0.5) * 0.10
     r = rng(seed)
-    bt = r.uniform(-0.08, 0.08, (S // bh, S // bw + 1))
-    h += bt[row % bt.shape[0], (xs // bw) % bt.shape[1]]
-    h = np.where((v == 0) | (u == 0), h + 0.22, h)
-    h = np.where((v == bh - 1) | (u == bw - 1), 0.02, h)
-    pal = R(base, n=6, lo=-0.28, hi=0.10, shadow_shift=0.45)
-    img, idx = quantize(np.clip(h, 0, 1), pal)
-    return img
+    bt = r.uniform(-0.08, 0.08, (int(S // bh), int(S // bw) + 1))
+    h += bt[row % bt.shape[0], (xs // bw).astype(int) % bt.shape[1]]
+    chip = vn(24, seed + 4) < 0.06
+    h = np.where(chip, h - 0.12, h)
+    h = np.where((v < LW * 1.6) | (u < LW * 1.6), h + 0.20, h)
+    h = np.where((v > bh - LW * 2) | (u > bw - LW * 2), 0.02, h)
+    return Q(h, R(base, n=6, lo=-0.28, hi=0.10, shadow_shift=0.45))
 
 
 # ------------------------------------------------------------------ glass: a clean pane, light on the frame
 def glass(tint=None, seed=10):
-    y, x = np.mgrid[0:S, 0:S]
-    a = np.zeros((S, S))
-    rgb = np.zeros((S, S, 3))
-    frame = (x == 0) | (y == 0) | (x == S - 1) | (y == S - 1)
-    inner = (x == 1) | (y == 1)
+    y, x = grid()
+    frame = (x < 1) | (y < 1) | (x > S - 1) | (y > S - 1)
+    lit_frame = frame & ((x < 1) | (y < 1))
+    inner = ((x < 1.6) | (y < 1.6)) & ~frame
+    d = (x - y)
+    streak = ((np.abs(d - 6) < 0.35) & (x > 3) & (x < 13)) | ((np.abs(d - 9.5) < 0.22) & (x > 8) & (x < 14))
+    a = np.zeros((RES, RES))
+    rgb = np.zeros((RES, RES, 3))
     if tint is None:
-        base = np.array([214, 226, 236])
-        rgb[:] = base
-        a[:] = 0
-        a[frame] = 200
-        a[inner & ~frame] = 70
-        streak = (np.abs((x - y) - 6) < 1) & (x > 3) & (x < 13)
-        streak2 = (np.abs((x - y) - 10) < 1) & (x > 8) & (x < 14)
-        a[streak | streak2] = 95
-        rgb[frame & ((x == 0) | (y == 0))] = [246, 244, 240]
+        rgb[:] = [214, 226, 236]
+        a[frame] = 205
+        a[inner] = 70
+        a[streak] = 110
+        rgb[lit_frame] = [248, 246, 240]
+        rgb[streak] = [250, 250, 248]
     else:
-        pal = R(tint, n=4, lo=-0.12, hi=0.10)
+        pal = ramp(tint, n=4, lo=-0.12, hi=0.10, shadow_hue=SHADOW_HUE, light_hue=LIGHT_HUE)
         rgb[:] = pal[2]
         a[:] = 92
-        a[frame] = 225
+        a[frame] = 228
         rgb[frame] = pal[1]
-        rgb[frame & ((x == 0) | (y == 0))] = pal[3]
-        a[inner & ~frame] = 140
-        rgb[inner & ~frame] = pal[3]
-        streak = (np.abs((x - y) - 6) < 1) & (x > 3) & (x < 13)
+        rgb[lit_frame] = pal[3]
+        a[inner] = 140
+        rgb[inner] = pal[3]
         rgb[streak] = pal[3]
-        a[streak] = 150
+        a[streak] = 160
     return rgb.astype(np.uint8), a
 
 
 # ------------------------------------------------------------------ sand / sandstone
 def sand(base=(222, 206, 160), seed=11):
-    """fine grains: a calm body, single bright quartz grains and a few dark ones, faint ripples"""
-    y, x = np.mgrid[0:S, 0:S].astype(float)
-    rip = np.sin((x * 0.35 + y + (value_noise(S, 2, seed, 2) - 0.5) * 6) / S * 2 * np.pi * 3) * 0.5 + 0.5
-    r = rng(seed)
-    g = r.random((S, S))
-    f = 0.48 + (rip - 0.5) * 0.12 + (value_noise(S, 16, seed + 1) - 0.5) * 0.16
-    f = np.where(g < 0.07, f + 0.22, f)
-    f = np.where(g > 0.95, f - 0.22, f)
-    pal = R(base, n=5, lo=-0.12, hi=0.05, shadow_shift=0.15)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+    y, x = grid()
+    rip = np.sin((x * 0.35 + y + (vn(2, seed, 2) - 0.5) * 6) / S * 2 * np.pi * 3) * 0.5 + 0.5
+    g = vn(90, seed + 2)
+    f = 0.48 + (rip - 0.5) * 0.12 + (vn(16, seed + 1) - 0.5) * 0.12
+    f = np.where(g > 0.88, f + 0.20, f)                                              # bright quartz grains
+    f = np.where(g < 0.07, f - 0.20, f)
+    return Q(f, R(base, n=5, lo=-0.12, hi=0.05, shadow_shift=0.15))
 
 
 def sandstone(base=(218, 202, 150), seed=12):
-    y, x = np.mgrid[0:S, 0:S].astype(float)
-    bands = np.sin((y + (value_noise(S, 2, seed, 2) - 0.5) * 3) / S * 2 * np.pi * 4) * 0.5 + 0.5
-    f = 0.45 + (bands - 0.5) * 0.35 + (value_noise(S, 6, seed + 1) - 0.5) * 0.2
-    f = np.where(y % 8 == 7, f - 0.30, f)
-    f = np.where(y % 8 == 0, f + 0.15, f)
-    pal = R(base, n=6, lo=-0.20, hi=0.06, shadow_shift=0.35)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+    y, x = grid()
+    bands = np.sin((y + (vn(2, seed, 2) - 0.5) * 3) / S * 2 * np.pi * 4) * 0.5 + 0.5
+    f = 0.45 + (bands - 0.5) * 0.30 + (vn(6, seed + 1) - 0.5) * 0.16 + (vn(80, seed + 3) - 0.5) * 0.08
+    f = np.where((y % 8) > 8 - LW * 1.4, f - 0.30, f)
+    f = np.where((y % 8) < LW, f + 0.15, f)
+    return Q(f, R(base, n=6, lo=-0.20, hi=0.06, shadow_shift=0.35))
 
 
 # ------------------------------------------------------------------ soil and plants
 def dirt(base=(134, 96, 66), seed=13):
-    """loam: soft clods (rounded, lit on top) with small pale pebbles and dark root-holes"""
     pts = poisson_points(S, 20, 5.2, seed)
-    d1, d2, idx = voronoi(S, pts)
+    d1, d2, idx = vor(pts)
     r = rng(seed)
     clod = np.clip((d2 - d1) / 2.2, 0, 1) ** 0.45
-    h = clod * 0.35 + r.uniform(-0.1, 0.1, len(pts))[idx]
-    lit = h + shift_light(h, 0, 1) * 0.8
+    h = clod * 0.35 + r.uniform(-0.1, 0.1, len(pts))[idx] + (vn(64, seed + 2, 2) - 0.5) * 0.12
+    lit = h + emboss(h, 1.0) * 0.8
     f = 0.25 + normalize(lit) * 0.55
-    g = r.random((S, S))
-    f = np.where(g < 0.025, 0.95, f)
-    f = np.where(g > 0.985, 0.02, f)
-    pal = R(base, n=6, lo=-0.22, hi=0.10, shadow_shift=0.3)
-    img, idx2 = quantize(np.clip(f, 0, 1), pal)
-    img, _ = clean_isolated(idx2, pal)
-    return img
+    g = vn(60, seed + 5)
+    f = np.where(g > 0.95, 0.92, f)                                                   # pale pebbles
+    f = np.where(g < 0.04, 0.03, f)                                                   # root holes
+    return Q(f, R(base, n=6, lo=-0.22, hi=0.10, shadow_shift=0.3))
 
 
-def _blades(seed, density=0.9):
-    """grayscale blade field for tinted grass: short upright strokes, lit tips, dark roots"""
+def _blades(seed, count=360):
+    """grayscale grass for biome tint: long thin blades (1-2 px wide at 128), lit tips, dark roots, a few leaning"""
     r = rng(seed)
-    f = np.full((S, S), 0.42) + (value_noise(S, 4, seed, 2) - 0.5) * 0.18
-    n = int(S * S * density / 6)
-    for _ in range(n):
-        x, y = r.integers(0, S), r.integers(0, S)
-        L = int(r.integers(2, 5))
-        lean = 1 if r.random() < 0.3 else 0
-        for k in range(L):
-            t = k / max(L - 1, 1)
-            f[(y - k) % S, (x + (lean if k == L - 1 else 0)) % S] = 0.40 + 0.40 * t
-        f[(y + 1) % S, x] = min(f[(y + 1) % S, x], 0.26)
+    f = 0.40 + (vn(4, seed, 2) - 0.5) * 0.14 + (vn(64, seed + 1) - 0.5) * 0.06
+    y, x = grid()
+    for _ in range(count):
+        bx, by = r.uniform(0, S), r.uniform(0, S)
+        L = r.uniform(2.0, 4.5)
+        lean = r.uniform(-0.35, 0.35)
+        t = (by - y) % S
+        on = (t < L) & (np.abs(((x - bx - lean * t + S / 2) % S) - S / 2) < 0.20 + 0.1 * (1 - t / L))
+        f = np.where(on, 0.36 + 0.5 * (t / L), f)
     return np.clip(f, 0, 1)
 
 
 def grass_top(seed=14):
-    f = _blades(seed)
-    pal = [(96, 96, 96), (118, 118, 118), (138, 138, 138), (156, 156, 156), (174, 174, 174), (194, 194, 194)]
-    img, idx = quantize(f, pal)
+    pal = [(int(v), int(v), int(v)) for v in np.linspace(92, 200, 10)]
+    img, idx = quantize(_blades(seed), pal)
     return img
 
 
 def grass_side(seed=15):
-    """dirt with a grass lip: tint mask in alpha (255 = grass, tinted by the biome; 0 = dirt), like vanilla"""
     d = dirt(seed=seed + 1)
     g = grass_top(seed + 2)
     r = rng(seed)
-    y, x = np.mgrid[0:S, 0:S]
-    edge = 5 + (value_noise(S, 6, seed, 1)[0] * 4).astype(int)            # ragged lip, 5-9 px deep
-    drip = r.random(S) < 0.25
-    depth = edge + np.where(drip, r.integers(1, 4, S), 0)
-    mask = y < depth[x]
+    y, x = grid()
+    edge = 5 + vn(6, seed)[0] * 4
+    drip = vn(10, seed + 3)[0]
+    depth = edge + np.where(drip > 0.7, (drip - 0.7) * 10, 0)
+    col = depth[(x * K).astype(int).clip(0, RES - 1)]
+    mask = y < col
     img = np.where(mask[..., None], g, d)
-    # the dirt right under the lip sits in the grass's shadow
-    under = (y >= depth[x]) & (y < depth[x] + 2)
+    under = (y >= col) & (y < col + 1.5)
     img = np.where(under[..., None], (img * 0.78).astype(np.uint8), img)
     alpha = np.where(mask, 255, 0)
     return img, alpha
 
 
 def leaves(seed=16):
-    """layered foliage: ~70 small leaves (3-4 px ovals at random angles) splatted back to front; back leaves darker,
-    front ones lit on their upper edge; the gaps that no leaf covers are real holes (alpha)"""
     r = rng(seed)
-    f = np.full((S, S), -1.0)
-    y, x = np.mgrid[0:S, 0:S].astype(float) + 0.5
+    f = np.full((RES, RES), -1.0)
+    y, x = grid()
     n = 170
     for k in range(n):
-        depth = k / n                                   # later = closer = brighter
+        depth = k / n
         cx, cy = r.random() * S, r.random() * S
         ang = r.uniform(0, np.pi)
         a_, b_ = r.uniform(1.6, 2.4), r.uniform(0.9, 1.3)
@@ -399,59 +424,65 @@ def leaves(seed=16):
         v = -dx * np.sin(ang) + dy * np.cos(ang)
         e = (u / a_) ** 2 + (v / b_) ** 2
         inside = e < 1.0
-        shade = 0.25 + depth * 0.45 + np.where(dy < -0.3, 0.18, 0.0) - np.where(dy > 0.6, 0.12, 0.0)
-        vein = inside & (np.abs(v) < 0.35) & (np.abs(u) < a_ * 0.7)
+        shade = 0.25 + depth * 0.45 + np.where(v < -0.25, 0.14, 0.0) - np.where(v > 0.45, 0.10, 0.0)
+        vein = inside & (np.abs(v) < 0.12) & (np.abs(u) < a_ * 0.75)
+        edge = inside & (e > 0.72)
         f = np.where(inside, shade, f)
-        f = np.where(vein, shade - 0.08, f)
+        f = np.where(edge, shade - 0.07, f)
+        f = np.where(vein, shade + 0.06, f)
     hole = f < 0
     f = np.where(hole, 0.0, f)
-    pal = [(46, 46, 46), (72, 72, 72), (98, 98, 98), (124, 124, 124), (152, 152, 152), (182, 182, 182)]
+    pal = [(int(v), int(v), int(v)) for v in np.linspace(46, 190, 11)]
     img, idx = quantize(np.clip(f, 0, 1), pal)
     alpha = np.where(hole, 0, 255)
     return img, alpha
 
 
 def log_side(bark=(104, 80, 52), seed=17, birch=False):
-    """bark: vertical plates split by deep fissures (lit lip on one side), plate tone varies"""
     r = rng(seed)
-    y, x = np.mgrid[0:S, 0:S].astype(float)
+    y, x = grid()
     if birch:
-        f = np.full((S, S), 0.80) + (value_noise(S, 4, seed, 2) - 0.5) * 0.10
-        for _ in range(9):                                   # dark lenticels: short horizontal dashes
-            cx, cy, L = r.integers(0, S), r.integers(0, S), r.integers(2, 6)
-            for k in range(L):
-                f[cy, (cx + k) % S] = 0.08 if k not in (0, L - 1) else 0.30
+        f = 0.80 + (vn(4, seed, 2) - 0.5) * 0.08 + (vn(70, seed + 1) - 0.5) * 0.05
+        for _ in range(10):
+            cx, cy, L = r.uniform(0, S), r.uniform(0, S), r.uniform(2, 6)
+            t = (x - cx) % S
+            on = (t < L) & (np.abs(y - cy) < 0.32)
+            f = np.where(on, 0.10 + 0.25 * (np.abs(t - L / 2) > L / 2 - 0.6), f)
+        papery = vn(30, seed + 4) > 0.92                                              # peeling curls
+        f = np.where(papery, f + 0.10, f)
         pal = R((214, 210, 196), n=6, lo=-0.55, hi=0.06, shadow_shift=0.25)
     else:
-        warp = (value_noise(S, 3, seed, 2) - 0.5) * 3.0
+        warp = (vn(3, seed, 2) - 0.5) * 3.0
         cols = np.sort(r.choice(np.arange(S), 6, replace=False)).astype(float)
         xx = (x + warp) % S
         d = np.min(np.stack([np.minimum(np.abs(xx - c), S - np.abs(xx - c)) for c in cols]), 0)
-        fis = d < 0.75
+        fis = d < 0.55
         plate = np.clip(d / 3.0, 0, 1)
-        f = 0.35 + plate * 0.35 + (value_noise(S, 6, seed + 3) - 0.5) * 0.15
+        ridges = np.sin((y + warp * 2) * 3.0) * 0.5 + 0.5
+        f = 0.35 + plate * 0.35 + (vn(6, seed + 3) - 0.5) * 0.12 + (ridges - 0.5) * 0.06 + (vn(80, seed + 6) - 0.5) * 0.08
         f = np.where(fis, 0.04, f)
-        lip = np.roll(fis, -1, 1) & ~fis
-        f = np.where(lip, f + 0.22, f)
+        lip = (d >= 0.55) & (d < 0.95) & (((xx - 0.7) % S) > 0)
+        f = np.where(lip, f + 0.16, f)
         pal = R(bark, n=6, lo=-0.24, hi=0.10, shadow_shift=0.3)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+    return Q(f, pal)
 
 
 def log_top(wood=(176, 140, 90), bark=(104, 80, 52), seed=18):
-    y, x = np.mgrid[0:S, 0:S].astype(float) + 0.5
+    y, x = grid()
     cx, cy = S / 2 + 0.7, S / 2 - 0.4
-    rr = np.sqrt((x - cx) ** 2 + (y - cy) ** 2) + (value_noise(S, 3, seed, 2) - 0.5) * 1.6
-    rings = (np.sin(rr * 1.35) * 0.5 + 0.5)
-    f = 0.45 + rings * 0.25 - rr / S * 0.12
-    f = np.where(rr < 1.3, 0.20, f)
-    bark_band = (x < 2) | (y < 2) | (x > S - 2) | (y > S - 2)
-    pal = R(wood, n=6, lo=-0.20, hi=0.08, shadow_shift=0.3)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
+    rr = np.sqrt((x - cx) ** 2 + (y - cy) ** 2) + (vn(3, seed, 2) - 0.5) * 1.6
+    rings = np.sin(rr * 1.35) * 0.5 + 0.5
+    fine = np.sin(rr * 5.2) * 0.5 + 0.5
+    rays = np.sin(np.arctan2(y - cy, x - cx) * 23) > 0.96                            # medullary rays
+    f = 0.45 + rings * 0.22 + (fine - 0.5) * 0.05 - rr / S * 0.12 - rays * 0.05
+    checks = (np.abs(np.sin(np.arctan2(y - cy, x - cx) * 3 + 1.1)) < 0.03) & (rr > 3) & (rr < 11)   # drying cracks
+    f = np.where(checks, 0.08, f)
+    f = np.where(rr < 1.2, 0.20, f)
+    bark_band = (x < 1.6) | (y < 1.6) | (x > S - 1.6) | (y > S - 1.6)
+    img = Q(f, R(wood, n=6, lo=-0.20, hi=0.08, shadow_shift=0.3))
     bk = np.array(R(bark, n=4, lo=-0.2, hi=0.04))
-    bf = ((value_noise(S, 6, seed + 2) * 3.99).astype(int))
-    img = np.where(bark_band[..., None], bk[bf], img)
-    return img
+    bf = (vn(24, seed + 2) * (len(bk) - 0.01)).astype(int)
+    return np.where(bark_band[..., None], bk[bf], img)
 
 
 PLANKS = {"oak": (176, 132, 82), "spruce": (120, 86, 54), "birch": (206, 186, 130), "jungle": (170, 118, 84),
@@ -467,9 +498,9 @@ EQUIP_PAL = {
     "silver": [(62, 66, 84), (104, 110, 130), (150, 156, 172), (192, 198, 210), (226, 230, 236), (252, 250, 246)],
     "gold": [(112, 62, 22), (164, 104, 30), (206, 150, 44), (232, 190, 74), (246, 222, 128), (255, 244, 196)],
     "netherite": [(26, 22, 28), (40, 34, 42), (56, 48, 58), (74, 64, 76), (100, 88, 100), (150, 132, 140)],
-    "wood": R((168, 128, 80), n=6, lo=-0.24, hi=0.10),
-    "leather": R((92, 58, 40), n=5, lo=-0.12, hi=0.08),
-    "cord": R((176, 150, 104), n=5, lo=-0.18, hi=0.06),
+    "wood": ramp((168, 128, 80), n=6, lo=-0.24, hi=0.10, shadow_hue=SHADOW_HUE, light_hue=LIGHT_HUE),
+    "leather": ramp((92, 58, 40), n=5, lo=-0.12, hi=0.08, shadow_hue=SHADOW_HUE, light_hue=LIGHT_HUE),
+    "cord": ramp((176, 150, 104), n=5, lo=-0.18, hi=0.06, shadow_hue=SHADOW_HUE, light_hue=LIGHT_HUE),
     "flint": [(46, 44, 52), (70, 68, 76), (96, 94, 100), (122, 120, 124), (150, 148, 150), (196, 194, 192)],
     "crystal": [(20, 92, 112), (34, 150, 166), (64, 200, 206), (118, 228, 226), (186, 246, 240), (240, 255, 252)],
     "gem": [(80, 10, 30), (140, 24, 52), (196, 48, 76), (232, 104, 122), (252, 190, 196)],
@@ -477,87 +508,117 @@ EQUIP_PAL = {
 
 
 def equipment(pack):
-    import os
-    from pathlib import Path
-    import armor
     import equip
-    equip.export(pack, EQUIP_PAL)
-    van = Path(os.environ.get("BEDROCK_SAMPLES", "/home/claude/ext/bedrock-samples")) / "resource_pack/textures/models/armor"
-    if van.exists():
-        armor.export(pack, van, EQUIP_PAL)
     import particles
+    equip.export(pack, EQUIP_PAL)
     particles.export(pack)
-    import beds
-    bed_dir = van.parent.parent / "entity" / "bed"
-    if (bed_dir / "red.png").exists():
-        beds.export(pack, bed_dir, DYES, EQUIP_PAL["wood"], knit_fn=lambda col, i: wool(col, seed=100 + i))
+    _faithful_armor(pack)
+
+
+def _faithful_armor(pack):
+    """Faithful 32x armor, graded, with the World FX material id in alpha (metal / crystal) for the actor shader;
+    leather keeps its dye mask in alpha."""
+    from pathlib import Path
+    from PIL import Image
+    import grade
+    src = Path("/tmp/fb/textures/models/armor")
+    if not src.exists():
+        return
+    dst = pack / "textures" / "models" / "armor"
+    dst.mkdir(parents=True, exist_ok=True)
+    ids = {"iron": 12, "gold": 12, "netherite": 12, "chain": 12, "diamond": 13}
+    for f in sorted(src.glob("*")):
+        if f.suffix.lower() not in (".png", ".tga") or f.stem.endswith(("_mers", "_normal")):
+            continue
+        im = np.array(Image.open(f).convert("RGBA"))
+        rgb = grade.grade(im[..., :3], **GRADE)
+        al = im[..., 3].copy()
+        mid = ids.get(f.stem.split("_")[0], 0)
+        if mid and not f.stem.startswith("leather"):
+            al = np.where(al > 0, 255 - 4 * mid, 0).astype(np.uint8)
+        Image.fromarray(np.dstack([rgb, al]), "RGBA").save(dst / f.name)
 
 
 # ------------------------------------------------------------------ mineral blocks (Bed Wars generators sit on these)
 def metal_block(pal, seed=40, kind="iron"):
-    """iron: four brushed plates with rivets; gold: stacked cast ingots with a lit bevel"""
-    y, x = np.mgrid[0:S, 0:S]
-    streak = value_noise(S, 8, seed, 1)[:1].repeat(S, 0)
-    f = 0.48 + (streak - 0.5) * 0.22
+    y, x = grid()
+    streak = vn(64, seed)[:1].repeat(RES, 0)
+    f = 0.48 + (streak - 0.5) * 0.22 + (vn(8, seed + 3) - 0.5) * 0.06
     if kind == "iron":
         u, v = x % 16, y % 16
-        f = np.where((u == 0) | (v == 0), f + 0.26, f)
-        f = np.where((u == 15) | (v == 15), 0.10, f)
-        for cx, cy in ((2, 2), (13, 2), (2, 13), (13, 13)):
-            f = np.where((u == cx) & (v == cy), 0.97, f)
-            f = np.where((u == cx + 1) & (v == cy + 1), 0.18, f)
+        f = np.where((u < LW * 1.4) | (v < LW * 1.4), f + 0.26, f)
+        f = np.where((u > 16 - LW * 1.6) | (v > 16 - LW * 1.6), 0.10, f)
+        for cx, cy in ((2.5, 2.5), (13.5, 2.5), (2.5, 13.5), (13.5, 13.5)):
+            d = np.sqrt((u - cx) ** 2 + (v - cy) ** 2)
+            f = np.where(d < 0.75, 0.62 - (u - cx + v - cy) * 0.3, f)                 # domed rivet, lit top-left
+            f = np.where((d >= 0.75) & (d < 1.0) & (u - cx + v - cy > 0), 0.15, f)
     else:
-        row = y // 8
+        row = (y // 8).astype(int)
         xs = (x + (row % 2) * 8) % S
         u, v = xs % 16, y % 8
-        f = 0.50 + (value_noise(S, 4, seed + 1) - 0.5) * 0.12
-        f = np.where((v == 0) | (u == 0), 0.88, f)
-        f = np.where((v == 1) & (u > 0), f + 0.12, f)
-        f = np.where((v == 7) | (u == 15), 0.12, f)
-        f = np.where((v == 6) & (u < 15), f - 0.12, f)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+        f = 0.50 + (vn(16, seed + 1) - 0.5) * 0.10 + (vn(80, seed + 2) - 0.5) * 0.05
+        f = np.where((v < LW * 1.4) | (u < LW * 1.4), 0.88, f)
+        f = np.where((v >= LW * 1.4) & (v < 1.4), f + 0.12, f)
+        f = np.where((v > 8 - LW * 1.6) | (u > 16 - LW * 1.6), 0.12, f)
+        f = np.where((v > 6.3) & (v <= 8 - LW * 1.6), f - 0.12, f)
+        stamp = (np.abs(u - 8) < 2.2) & (np.abs(v - 4) < 1.1) & ~((np.abs(u - 8) < 1.6) & (np.abs(v - 4) < 0.5))
+        f = np.where(stamp, f - 0.10, f)                                              # foundry stamp on each ingot
+    return Q(f, ramp(pal[2], n=11, lo=-0.38, hi=0.22, shadow_hue=SHADOW_HUE, light_hue=LIGHT_HUE, shadow_shift=0.1) if False else _expand(pal), clean=False)
+
+
+def _expand(pal, n=11):
+    """interpolate a short hand palette into n steps (OK space would be nicer; these ramps are already smooth)"""
+    p = np.array(pal, float)
+    t = np.linspace(0, len(p) - 1, n)
+    i = np.floor(t).astype(int).clip(0, len(p) - 2)
+    w = (t - i)[:, None]
+    return [tuple(int(v) for v in c) for c in (p[i] * (1 - w) + p[i + 1] * w)]
 
 
 def gem_block(pal, seed=41):
-    """four big cut gems (16 px), brilliant-style: a flat table, crown facets lit from the top-left and shaded on the
-    far side, star lines to the corners, a dark setting between stones and one hot glint per stone"""
-    y, x = np.mgrid[0:S, 0:S]
-    u, v = x % 16 - 7.5, y % 16 - 7.5
+    y, x = grid()
+    u, v = x % 16 - 8.0, y % 16 - 8.0
     au, av = np.abs(u), np.abs(v)
-    f = np.full((S, S), 0.55)
     oct_ = np.maximum(au, av) + 0.45 * np.minimum(au, av)
     table = oct_ < 3.6
     ang = np.arctan2(v, u)
     sector = ((ang + np.pi) / (np.pi / 4)).astype(int) % 8
     lightness = np.array([0.42, 0.30, 0.38, 0.62, 0.84, 0.74, 0.56, 0.48])
     f = np.where(~table, lightness[sector], 0.66)
+    f = f + np.where(~table, (oct_ - 3.6) / 4.4 * 0.08, 0)                         # facets darken toward the girdle
     f = np.where(table & (u + v < -1.5), 0.80, f)
-    edge = np.abs(np.abs(u) - np.abs(v)) < 0.55
+    edge = np.abs(au - av) < 0.18
     f = np.where(edge & ~table, f + 0.12, f)
+    tedge = np.abs(oct_ - 3.6) < 0.16
+    f = np.where(tedge, f + 0.14, f)
     f = np.where(oct_ > 8.6, 0.06, f)
-    f = np.where((oct_ > 7.8) & (oct_ <= 8.6), 0.20, f)
-    f = np.where((u == -2.5) & (v == -2.5), 0.99, f)
-    f = np.where((u == -1.5) & (v == -2.5), 0.92, f)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+    f = np.where((oct_ > 7.9) & (oct_ <= 8.6), 0.22, f)
+    gl = np.sqrt((u + 2.5) ** 2 + (v + 2.5) ** 2)
+    f = np.where(gl < 0.7, 0.99, f)
+    f = np.where((np.abs(u + 2.5) < 0.12) & (np.abs(v + 2.5) < 1.8), 0.95, f)       # a four-point star glint
+    f = np.where((np.abs(v + 2.5) < 0.12) & (np.abs(u + 2.5) < 1.8), 0.95, f)
+    return Q(f, _expand(pal), clean=False)
 
 
 def ore(gem_pal, seed=42):
     base = stone(seed=seed)
     r = rng(seed)
+    y, x = grid()
     out = base.copy()
-    pal = np.array(gem_pal, np.uint8)
-    for _ in range(4):                                     # crystal clusters: 3x3 chips with a lit corner + dark base
-        cx, cy = int(r.integers(3, S - 4)), int(r.integers(3, S - 4))
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                if abs(dx) + abs(dy) < 2 or r.random() < 0.5:
-                    out[(cy + dy) % S, (cx + dx) % S] = pal[2]
-        out[cy - 1, cx - 1] = pal[-1]
-        out[cy, cx - 1] = pal[3]
-        out[(cy + 1) % S, (cx + 1) % S] = pal[0]
-        out[(cy + 2) % S, (cx + 1) % S] = (40, 36, 44)
+    pal = np.array(_expand(gem_pal, 7), np.uint8)
+    for _ in range(4):
+        cx, cy = r.uniform(3, S - 4), r.uniform(3, S - 4)
+        for _k in range(int(r.integers(3, 6))):
+            px, py = cx + r.uniform(-1.4, 1.4), cy + r.uniform(-1.4, 1.4)
+            s = r.uniform(0.6, 1.1)
+            u, v = x - px, y - py
+            gem = (np.abs(u) + np.abs(v)) < s
+            lit = gem & (u + v < -s * 0.2)
+            out[gem] = pal[3]
+            out[lit] = pal[5]
+            out[gem & (u + v > s * 0.5)] = pal[1]
+            shadow = ~gem & ((np.abs(u - 0.4) + np.abs(v - 0.4)) < s) & (u + v > 0)
+            out[shadow] = (out[shadow] * 0.55).astype(np.uint8)
     return out
 
 
@@ -569,107 +630,107 @@ MINERALS = {"iron": [(70, 76, 92), (110, 118, 132), (150, 158, 170), (190, 196, 
 
 # ------------------------------------------------------------------ more building blocks
 def quartz(seed=50):
-    """polished quartz: near-white, a few long soft cream veins, a crisp bevel"""
-    y, x = np.mgrid[0:S, 0:S].astype(float)
-    w = value_noise(S, 3, seed, 3)
+    y, x = grid()
+    w = vn(3, seed, 3)
     vein = np.abs(np.sin((x * 0.6 + y + w * 14) / S * 2 * np.pi * 1.5))
-    f = 0.62 + (value_noise(S, 4, seed + 1) - 0.5) * 0.08
-    f = np.where(vein < 0.07, 0.38, f)
-    f = np.where((vein >= 0.07) & (vein < 0.13), 0.50, f)
-    f = np.where((y == 0) | (x == 0), 0.86, f)
-    f = np.where((y == S - 1) | (x == S - 1), 0.30, f)
-    pal = R((232, 226, 216), n=6, lo=-0.16, hi=0.04, shadow_shift=0.4)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+    hair = np.abs(np.sin((x * -0.4 + y * 0.9 + vn(5, seed + 4, 2) * 10) / S * 2 * np.pi * 3.0))
+    f = 0.62 + (vn(4, seed + 1) - 0.5) * 0.06 + (vn(90, seed + 2) - 0.5) * 0.03
+    f = np.where(vein < 0.025, 0.38, f)
+    f = np.where((vein >= 0.025) & (vein < 0.06), 0.50, f)
+    f = np.where(hair < 0.012, 0.52, f)
+    f = np.where((y < LW) | (x < LW), 0.86, f)
+    f = np.where((y > S - LW) | (x > S - LW), 0.30, f)
+    return Q(f, R((232, 226, 216), n=6, lo=-0.16, hi=0.04, shadow_shift=0.4))
 
 
 def bricks(base=(150, 74, 58), mortar=(170, 160, 150), seed=51, bw=16, bh=8):
-    y, x = np.mgrid[0:S, 0:S]
-    row = y // bh
-    xs = (x + (row % 2) * (bw // 2)) % S
+    y, x = grid()
+    row = (y // bh).astype(int)
+    xs = (x + (row % 2) * (bw / 2)) % S
     u, v = xs % bw, y % bh
     r = rng(seed)
     tone = r.uniform(-0.1, 0.1, (S // bh, S // bw + 1))
-    f = 0.52 + tone[row % tone.shape[0], (xs // bw) % tone.shape[1]] + (value_noise(S, 6, seed) - 0.5) * 0.16
-    f = np.where((v == 1) & (u > 0), f + 0.16, f)
-    f = np.where((v == bh - 2), f - 0.12, f)
-    pal = R(base, n=6, lo=-0.20, hi=0.08, shadow_shift=0.3)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
+    f = 0.52 + tone[row % tone.shape[0], (xs // bw).astype(int) % tone.shape[1]] + (vn(6, seed) - 0.5) * 0.14
+    f += (vn(70, seed + 3) - 0.5) * 0.10                                            # fired-clay grit
+    f = np.where((v > 1) & (v < 1.0 + LW * 1.6) & (u > 1), f + 0.16, f)
+    f = np.where((v > bh - 1.6), f - 0.12, f)
+    img = Q(f, R(base, n=6, lo=-0.20, hi=0.08, shadow_shift=0.3))
     mp = np.array(R(mortar, n=3, lo=-0.12, hi=0.0, shadow_shift=0.4), np.uint8)
-    joint = (v == 0) | (u == 0)
-    img = np.where(joint[..., None], mp[((x + y) % 3 == 0).astype(int)], img)
-    return img
+    joint = (v < 1.0) | (u < 1.0)
+    grain = (vn(60, seed + 4) * (len(mp) - 0.01)).astype(int)
+    return np.where(joint[..., None], mp[grain], img)
 
 
 def clay(seed=52):
     pts = poisson_points(S, 12, 7.0, seed)
-    d1, d2, idx = voronoi(S, pts)
-    h = np.clip(d1 / 5.0, 0, 1)
-    lit = h + shift_light(h, 1, 1) * 1.5
+    d1, d2, idx = vor(pts)
+    h = np.clip(d1 / 5.0, 0, 1) + (vn(60, seed + 1) - 0.5) * 0.08
+    lit = h + emboss(h, 1.0) * 1.5
     f = 0.45 + (normalize(lit) - 0.5) * 0.30
-    pal = R((160, 166, 180), n=5, lo=-0.12, hi=0.06, shadow_shift=0.2)
-    img, idx2 = quantize(np.clip(f, 0, 1), pal)
-    return img
+    return Q(f, R((160, 166, 180), n=5, lo=-0.12, hi=0.06, shadow_shift=0.2))
 
 
 def snow(seed=53):
-    h = value_noise(S, 4, seed, 3)
-    lit = h + shift_light(h, 1, 1) * 2.0
+    h = vn(4, seed, 3) + (vn(40, seed + 2) - 0.5) * 0.1
+    lit = h + emboss(h, 1.0) * 2.0
     f = 0.60 + (normalize(lit) - 0.5) * 0.30
-    r = rng(seed)
-    f = np.where(r.random((S, S)) < 0.012, 0.98, f)
-    pal = [(176, 184, 214), (204, 210, 232), (226, 230, 244), (240, 242, 250), (252, 252, 255)]
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+    f = np.where(vn(80, seed + 3) > 0.97, 0.98, f)                                   # ice crystals catching light
+    pal = [(176, 184, 214), (192, 198, 224), (204, 210, 232), (216, 220, 238), (226, 230, 244), (234, 236, 247),
+           (240, 242, 250), (247, 248, 253), (252, 252, 255)]
+    return Q(f, pal)
 
 
 def purpur(seed=54):
-    y, x = np.mgrid[0:S, 0:S]
+    y, x = grid()
     u, v = x % 16, y % 16
-    f = 0.50 + (value_noise(S, 4, seed) - 0.5) * 0.18
-    f = np.where((u == 0) | (v == 0), 0.82, f)
-    f = np.where((u == 15) | (v == 15), 0.10, f)
-    f = np.where((u == 1) | (v == 1), f + 0.08, f)
-    pal = R((170, 122, 170), n=6, lo=-0.22, hi=0.08, shadow_shift=0.15)
-    img, idx = quantize(np.clip(f, 0, 1), pal)
-    return img
+    f = 0.50 + (vn(4, seed) - 0.5) * 0.16 + (vn(70, seed + 1) - 0.5) * 0.08
+    f = np.where((u < LW * 1.5) | (v < LW * 1.5), 0.82, f)
+    f = np.where((u > 16 - LW * 1.6) | (v > 16 - LW * 1.6), 0.10, f)
+    f = np.where(((u >= LW * 1.5) & (u < 1.3)) | ((v >= LW * 1.5) & (v < 1.3)), f + 0.08, f)
+    return Q(f, R((170, 122, 170), n=6, lo=-0.22, hi=0.08, shadow_shift=0.15))
 
 
 def tnt(seed=60):
-    """side: four paper-wrapped sticks, a cream band with a dark stencilled stripe; top: stick ends + fuse"""
-    y, x = np.mgrid[0:S, 0:S]
+    y, x = grid()
     stick = x % 8
-    f = 0.50 + np.where(stick == 0, -0.30, 0.0) + np.where(stick == 1, 0.18, 0.0) + np.where(stick == 7, -0.12, 0.0)
-    f += (value_noise(S, 4, seed) - 0.5) * 0.10
+    f = 0.50 + np.where(stick < 0.6, -0.30, 0.0) + np.where((stick >= 0.6) & (stick < 1.6), 0.16, 0.0)
+    f += np.where(stick > 6.8, -0.12, 0.0) + (np.cos((stick - 4) / 4 * np.pi / 2) - 0.7) * 0.15   # round sticks
+    f += (vn(12, seed) - 0.5) * 0.08 + (vn(70, seed + 4) - 0.5) * 0.05
     red = R((182, 46, 38), n=6, lo=-0.22, hi=0.08, shadow_shift=0.25)
-    img, _ = quantize(np.clip(f, 0, 1), red)
-    band = (y >= 11) & (y <= 20)
-    cream = np.array(R((226, 214, 186), n=4, lo=-0.12, hi=0.04), np.uint8)
-    bf = np.clip((0.5 + np.where(y == 11, 0.4, 0) + np.where(y == 20, -0.4, 0) + (value_noise(S, 6, seed + 1) - 0.5) * 0.2) * 4, 0, 3.99).astype(int)
-    img = np.where(band[..., None], cream[bf], img)
-    stripe = band & (y >= 14) & (y <= 17) & (x >= 6) & (x <= 25) & ((x // 3) % 2 == 0)
-    img = np.where(stripe[..., None], np.array([46, 34, 40], np.uint8), img)
-    side = img
-    yy, xx = np.mgrid[0:S, 0:S]
-    cu, cv = (xx % 8) - 3.5, (yy % 8) - 3.5
+    img = Q(f, red)
+    band = (y >= 11) & (y <= 21)
+    cream = R((226, 214, 186), n=4, lo=-0.12, hi=0.04)
+    bf = 0.5 + np.where(y < 11.5, 0.4, 0) + np.where(y > 20.5, -0.4, 0) + (vn(30, seed + 1) - 0.5) * 0.2
+    cimg = Q(bf, cream, clean=False)
+    img = np.where(band[..., None], cimg, img)
+    # stencilled letters T N T
+    lx = x - 7.0
+    ly = y - 13.0
+    T1 = ((ly < 1.2) & (lx > 0) & (lx < 5)) | ((np.abs(lx - 2.5) < 0.7) & (ly < 6))
+    N = ((np.abs(lx - 7) < 0.7) | (np.abs(lx - 11) < 0.7) | (np.abs((lx - 7) - (ly * 0.66)) < 0.75)) & (lx > 6.3) & (lx < 11.7)
+    T2 = ((ly < 1.2) & (lx > 13) & (lx < 18)) | ((np.abs(lx - 15.5) < 0.7) & (ly < 6))
+    letters = (T1 | N | T2) & (ly >= 0) & (ly < 6)
+    img = np.where(letters[..., None], np.array([46, 34, 40], np.uint8), img)
+    yy, xx = y, x
+    cu, cv = (xx % 8) - 4, (yy % 8) - 4
     d = np.sqrt(cu ** 2 + cv ** 2)
-    ft = np.where(d < 3.2, 0.62 - d * 0.06, 0.12)
-    ft = np.where((d < 3.2) & (cu + cv < -2), 0.85, ft)
-    top, _ = quantize(np.clip(ft, 0, 1), red)
-    fuse = (np.abs(xx - 15.5) < 1) & (np.abs(yy - 15.5) < 1)
+    ft = np.where(d < 3.4, 0.62 - d * 0.06 + (np.sin(d * 4) * 0.03), 0.12)
+    ft = np.where((d < 3.4) & (cu + cv < -2), 0.85, ft)
+    top = Q(ft, red, clean=False)
+    fuse = (np.abs(xx - 16) < 0.9) & (np.abs(yy - 16) < 0.9)
     top = np.where(fuse[..., None], np.array([60, 52, 50], np.uint8), top)
-    bottom, _ = quantize(np.clip(ft * 0.8, 0, 1), red)
-    return side, top, bottom
+    bottom = Q(ft * 0.8, red, clean=False)
+    return img, top, bottom
 
 
 def ladder(seed=61):
-    """two rails and five rungs, each rung lit on top; everything else is open (alpha)"""
-    y, x = np.mgrid[0:S, 0:S]
-    rail = ((x >= 3) & (x <= 5)) | ((x >= 26) & (x <= 28))
-    rung = ((y % 7) >= 2) & ((y % 7) <= 3) & (x > 5) & (x < 26)
+    y, x = grid()
+    rail = ((x >= 3) & (x <= 5.5)) | ((x >= 26.5) & (x <= 29))
+    rung = ((y % 7) >= 2) & ((y % 7) <= 3.6) & (x > 5.5) & (x < 26.5)
     wood = R((168, 128, 80), n=5, lo=-0.22, hi=0.08)
-    f = 0.5 + np.where(rail & ((x == 3) | (x == 26)), 0.25, 0) + np.where(rail & ((x == 5) | (x == 28)), -0.25, 0)
-    f = np.where(rung & ((y % 7) == 2), 0.80, np.where(rung, 0.35, f))
-    img, _ = quantize(np.clip(f, 0, 1), wood)
+    grain = (vn(60, seed) - 0.5) * 0.1
+    f = 0.5 + grain + np.where(rail & ((x < 3.5) | ((x >= 26.5) & (x < 27))), 0.25, 0) + np.where(rail & ((x > 5) | (x > 28.5)), -0.25, 0)
+    f = np.where(rung & ((y % 7) < 2.5), 0.80, np.where(rung & ((y % 7) > 3.1), 0.20, np.where(rung, 0.45 + grain, f)))
+    img = Q(f, wood, clean=False)
     alpha = np.where(rail | rung, 255, 0)
     return img, alpha
