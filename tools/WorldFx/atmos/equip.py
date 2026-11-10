@@ -105,7 +105,9 @@ def paint(mat, role, face, w, h, seed, pal):
         f[:, 0] = np.maximum(f[:, 0], 0.85)
         f[-1, :] = 0.3
     rgb = _rampf(f, pal)
-    a = np.full((h, w), 255, np.uint8)
+    # World FX material id in alpha (Actor AlphaTest shader): 0.5..1 survives the alpha test
+    mid = {"steel": 12, "silver": 12, "gold": 12, "netherite": 12, "crystal": 13, "gem": 13}.get(mat, 0)
+    a = np.full((h, w), 255 - 4 * mid, np.uint8)
     return np.dstack([rgb, a])
 
 

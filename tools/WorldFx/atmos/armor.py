@@ -93,6 +93,9 @@ def paint_layer(vanilla_rgba, layer, tier, pal, seed=0):
     if tier == "leather":                                 # only the dyed (alpha 255) pixels; trims keep vanilla
         sel = sel & (a[..., 3] == 255)
     out[..., :3] = np.where(sel[..., None], rgb, a[..., :3])
+    mid = {"iron": 12, "gold": 12, "netherite": 12, "diamond": 13}.get(tier, 0)
+    if mid:                                               # material id for the Cloud Sea actor shader (leather keeps its tint mask)
+        out[..., 3] = np.where(out[..., 3] > 0, 255 - 4 * mid, 0)
     return out
 
 
