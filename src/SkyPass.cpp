@@ -1397,6 +1397,8 @@ static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& c
     return gMcb->GetGPUVirtualAddress() + UINT64(slot) * kMcbStride;
 }
 
+std::atomic<float> gQuality{1.0f}; // World FX quality 0..1 (adaptQuality, set from the World FX pass)
+
 // The cloud deck: under the map. Anchored where you stand when you arrive in a world; a teleport (a new world, a server
 // sending you to a match, a respawn) re-anchors it, a fall into the void never does (falls are continuous).
 double  gLastPos[3]{};
@@ -1657,7 +1659,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     c[12] = float(pos[0]); c[13] = float(pos[1]); c[14] = float(pos[2]);
     MatchFrame const mfs = matchFrame(worldFxLook());
     deckOf(mfs, c[15], c[16], c[17]);
-    c[18] = 1.0f; c[19] = mfs.phase;
+    c[18] = gQuality.load(); c[19] = mfs.phase;
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
@@ -1703,7 +1705,6 @@ void wfxBarrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_
 
 // The pass gives back quality to hold ~150+ FPS: frame time measured between our own draws (one per frame); above
 // 1/150 s the quality falls quickly, under 1/175 s it creeps back. 0 = cheapest look, 1 = full.
-std::atomic<float> gQuality{1.0f};
 float adaptQuality() {
     static int64_t lastUs = 0;
     static float   ema = 1.0f / 160.0f;

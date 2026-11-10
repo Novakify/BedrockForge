@@ -13,6 +13,7 @@ static float2 MAP_C;
 static float  PHASE = 0.0, DUSK = 0.0, NIGHT = 0.0;
 static float3 SUNDISC = float3(0.17605, 0.11247, -0.97794);
 static float  SUNUP = 1.0;  // the sun disc and its warm glow (gone once it has set)
+static float  QUALITY = 1.0; // 0..1: Renderer Foundation lowers it to hold the frame rate
 static float  LIGHTK = 1.0; // strength of the key light on the world: sun -> nothing at deep dusk -> moonlight
 static const float2 SUN_AZ = float2(0.17717, -0.98418);  // the sun's compass direction (xz)
 static const float2 MOON_AZ = float2(-0.85671, 0.51580); // the moon rises on the other side, over the south-west
@@ -82,12 +83,12 @@ float4 highClouds(float3 d, float mu) {
     float2 q = CAM.xz + d.xz * ((900.0 - CAM.y) / d.y);
     float  fade = smoothstep(0.012, 0.085, d.y);
     float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
-    float  dn = hcDens(p, 5);
+    float  dn = hcDens(p, QUALITY > 0.5 ? 5 : 3);
     float  fine = fbm(p * 21.0, 2);
     float  near = smoothstep(0.05, 0.30, d.y);
     float  dens = smoothstep(0.765, 0.830, dn - (fine - 0.5) * 0.10 * near);
     float  tau = smoothstep(0.765, 0.965, dn);
-    float  shadeS = smoothstep(0.765, 0.93, hcDens(p + sunXZ * 0.040, 3));
+    float  shadeS = QUALITY > 0.3 ? smoothstep(0.765, 0.93, hcDens(p + sunXZ * 0.040, 3)) : 0.5;
     float2 along = float2(dot(q, sunXZ), dot(q, float2(-sunXZ.y, sunXZ.x)));
     float2 pc = float2(along.x / 3400.0, along.y / 760.0) + TIME * float2(0.0015, 0.0);
     float  wq = fbm(pc * 1.7 + 9.0, 3);
@@ -148,7 +149,8 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     if (t > tLimit) return float4(0.0, 0.0, 0.0, 0.0);
     bool  hit = false;
     float lod = 0.0, tPrev = t;
-    [loop] for (int i = 0; i < 44; i++) {
+    int steps = int(lerp(22.0, 44.0, QUALITY));
+    [loop] for (int i = 0; i < steps; i++) {
         float3 p = ro + rd * t;
         lod = max(log2(t * 0.011), 0.0);
         float dh = p.y - seaY(p.xz, lod);
@@ -173,7 +175,8 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     float2 l2 = normalize(SUN.xz);
     float  slope = SUN.y / length(SUN.xz);
     float  sh = 1.0;
-    [unroll] for (int j = 0; j < 3; j++) {
+    int nShadow = QUALITY > 0.5 ? 3 : (QUALITY > 0.15 ? 1 : 0);
+    [loop] for (int j = 0; j < nShadow; j++) {
         float s = 9.0 * pow(3.4, float(j));
         float over = seaY(p.xz + l2 * s, lod + 1.2 + float(j) * 0.9) - (h0 + slope * s);
         sh *= 1.0 - smoothstep(-0.05 * s, 0.20 * s, over) * 0.80;
@@ -181,7 +184,7 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     float ndl = dot(n, SUN);
     float near = exp(-t / 260.0);
     float grain = 0.75;
-    [branch] if (near > 0.02) grain = lerp(0.75, fbm(p.xz / 5.0 + 3.0, 3) + 0.5 * vnoiseG(p.xz / 1.3), near); // far away the grain is too small to see
+    [branch] if (near > 0.02 && QUALITY > 0.3) grain = lerp(0.75, fbm(p.xz / 5.0 + 3.0, 3) + 0.5 * vnoiseG(p.xz / 1.3), near); // far away the grain is too small to see
     float cav = saturate((h0 - seaY(p.xz, lod + 3.4)) / (SEA_AMP * 0.13) + 0.55);
     float lit = sh * (0.30 + 0.70 * smoothstep(-0.35, 0.55, ndl)) * (0.72 + 0.38 * grain) * (0.34 + 0.66 * cav);
     float crease = smoothstep(0.05, 0.85, (h0 - SEA_Y) / SEA_AMP);
