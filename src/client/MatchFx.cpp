@@ -245,7 +245,7 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
                 note("a bed by the spawn");
             }
         }
-        if (auto* ba = tn == "minecraft:bed" ? bs.getBlockEntity(bp) : nullptr) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15);
+        if (auto* ba = tn == "minecraft:bed" ? bs.getBlockEntity(bp) : nullptr) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15), bed->dyeKnown = true;
         else if (tn != "minecraft:bed" && !bed->dyeKnown) {
             int d = dyeAround(bs, x, y, z);
             if (d >= 0) { bed->dye = d; bed->dyeKnown = true; note("bed at {} {} {}: team colour {} (from the blocks around it)", x, y, z, d); }
@@ -361,20 +361,25 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     if (!gIsMap && gSpawnBed) {
         for (size_t i = 0; i < gBeds.size() && !gIsMap; ++i)
             for (size_t j = i + 1; j < gBeds.size(); ++j)
-                if (std::hypot(double(gBeds[i].x - gBeds[j].x), double(gBeds[i].z - gBeds[j].z)) >= 20.0) {
+                // two teams: beds far apart AND of two known, different colours (the Hive hub's decoration beds have no team
+                // blocks around them, a lobby's beds share one colour)
+                if (gBeds[i].dyeKnown && gBeds[j].dyeKnown && gBeds[i].dye != gBeds[j].dye
+                    && std::hypot(double(gBeds[i].x - gBeds[j].x), double(gBeds[i].z - gBeds[j].z)) >= 20.0) {
                     gIsMap = true;
-                    note("beds on islands apart - this is a Bed Wars map");
+                    note("beds of two teams on islands apart - this is a Bed Wars map");
                     break;
                 }
     }
-    gFx.nTeams = gIsMap ? uint32_t(std::min<size_t>(gBeds.size(), 16)) : 0u;
-    for (uint32_t i = 0; i < gFx.nTeams; ++i) {
-        auto const& b = gBeds[i];
-        auto&       t = gFx.teams[i];
-        t.pos[0] = b.x + 0.5f, t.pos[1] = b.y + 0.6f, t.pos[2] = b.z + 0.5f;
-        std::memcpy(t.col, kDye[b.dye], sizeof t.col);
-        t.alive = b.alive ? 1u : 0u, t.changedMs = b.changed;
-    }
+    uint32_t nt = 0;
+    if (gIsMap)
+        for (auto const& b : gBeds) {
+            if (!b.dyeKnown || nt >= 16) continue; // a bed with no team colour is decoration, not a team
+            auto& t = gFx.teams[nt++];
+            t.pos[0] = b.x + 0.5f, t.pos[1] = b.y + 0.6f, t.pos[2] = b.z + 0.5f;
+            std::memcpy(t.col, kDye[b.dye], sizeof t.col);
+            t.alive = b.alive ? 1u : 0u, t.changedMs = b.changed;
+        }
+    gFx.nTeams = nt;
     ++gFx.frame;
     static int64_t lastNote = 0;
     if (now - lastNote > 10000) {
