@@ -60,9 +60,9 @@ float3 csSky(float3 d) {
 float3 csLight(float3 alb, float3 n, float sunVis, float sky, float leaf, float3 V) {
     float green = saturate((alb.g - max(alb.r, alb.b)) * 5.0);   // pure greens refuse to sit in a sunset: toward olive
     alb = lerp(alb, csLuma(alb) * float3(1.22, 0.98, 0.42) * 1.0, green * 0.42);
-    float3 sunC = float3(1.00, 0.66, 0.40) * 2.35;
+    float3 sunC = float3(1.00, 0.72, 0.50) * 1.85;              // soft gold: lit faces glow, they don't turn into orange paint
     float  ndl  = max(dot(n, CS_SUN), 0.0);
-    float3 amb  = lerp(float3(0.255, 0.135, 0.140), float3(0.160, 0.150, 0.300), smoothstep(-1.0, 1.0, n.y));
+    float3 amb  = lerp(float3(0.255, 0.140, 0.150), float3(0.200, 0.190, 0.330), smoothstep(-1.0, 1.0, n.y));
     float  toSun = dot(n.xz, normalize(CS_SUN.xz));
     float  side  = 1.0 - abs(n.y);
     amb += float3(0.40, 0.165, 0.070) * max(toSun, 0.0) * side;
@@ -76,7 +76,11 @@ float3 csLight(float3 alb, float3 n, float sunVis, float sky, float leaf, float3
         dir = (sunC * wrap * 0.55 + float3(1.15, 0.80, 0.32) * 2.1 * trans) * sunVis;
         amb *= 1.7;
     }
-    return alb * (amb + dir);
+    float3 c = alb * (amb + dir);
+    // keep strongly lit warm colours from going neon: past ~70% saturation, ease back toward the luma
+    float mx = csMax3(c), mn = min(c.r, min(c.g, c.b));
+    float sat = mx > 1e-4 ? (mx - mn) / mx : 0.0;
+    return lerp(csLuma(c).xxx, c, 1.0 - 0.28 * smoothstep(0.62, 0.95, sat));
 }
 
 // air: far blocks drift into the sky behind them; toward the sun the air glows warm
