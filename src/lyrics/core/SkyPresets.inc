@@ -49,9 +49,7 @@
     {"deep_voyage", 0x000000, 0x020208, 0.9f, 1.4f, false, 0x34CCFF, 0xFF3A2E, Weather::SpaceDust, 0x000000, false, 0xBFEFFF},
     // [LyricsForge] the salt-flat mirror: a realistic sky over a perfect mirror (ordinal 45, live_sky realSky kind 19)
     {"mirror_sky", 0x0034F0, 0x96E8FF, 0.9f, 0.0f, false, 0x50C8FF, 0xFFFFFF, Weather::None, 0x000000, false, 0xFFFFFF},
-    // [LyricsForge] a towering cauliflower cumulus over a wind-swept green hill (ordinal 46, live_sky realSky kind 20)
-    {"cloud_hill", 0x0A3FD0, 0x7CC0FF, 0.9f, 0.0f, false, 0x8CE04A, 0xFFFFFF, Weather::None, 0x000000, false, 0xFFFFFF},
-    // [LyricsForge] a lake at sunset: lavender sky, glowing orange clouds, mountains, pines, all mirrored in rippling water (ordinal 47)
+    // [LyricsForge] a lake at sunset: lavender sky, glowing orange clouds, mountains, pines, all mirrored in rippling water (ordinal 46; Cloud Hill, the old 46, was removed 2026-11-09)
     {"lake_sunset", 0x42488C, 0xFF7820, 0.9f, 0.0f, false, 0xFF9030, 0xFFD080, Weather::None, 0x000000, false, 0xFFFFFF},
-    // [LyricsForge] a lupine meadow at sunset: violet sky, pink-lit streaks, a blazing sun, 3D lupines (ordinal 48)
+    // [LyricsForge] a lupine meadow at sunset: violet sky, pink-lit streaks, a blazing sun, 3D lupines (ordinal 47)
     {"lupine_sunset", 0x52288C, 0xFF7A2A, 0.9f, 0.0f, false, 0xFF64AA, 0xB478F0, Weather::None, 0x000000, false, 0xFFFFFF},

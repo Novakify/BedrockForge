@@ -187,7 +187,6 @@ struct State {
     uint32_t                      coverAccent = 0; // [BF] vivid colour of the cover (Neon player)
     std::string                   songFont;        // [LyricsForge] the font picked for the playing song ("" = none)
     std::vector<std::string>      recentFonts, recentScenes; // [LyricsForge] variety: the last few songs' picks are avoided
-    std::vector<int>              recentFx;
     std::string                   songFontKey, lastSongFont; // what it was picked for (song + lyrics in) / the previous song's
     std::string                   songFontSong;    // the song songFont belongs to
     float                         bass = 0;        // [BF] bass hit level this frame (Audio_win.cpp)
@@ -1391,21 +1390,15 @@ void autoDirect(SceneInput const& in) {
     if (gS->recentScenes.size() > 4) gS->recentScenes.erase(gS->recentScenes.begin());
     if (auto sc = findScene(id); sc && cfg.scene != sc->id) {
         LyricsStyle const keepStyle = cfg.lyricsStyle;
+        // [LyricsForge] the letter effect is yours: Auto Scene never changes it (Fernando 2026-11-09 - the random
+        // per-song effects looked ugly; he picks the effect in the panel himself)
+        int const   keepFx = cfg.letterFx, keepFxColor = cfg.letterFxColor;
+        bool const  keepRainbow = cfg.fxRainbow;
+        float const keepFxSpeed = cfg.letterFxSpeed, keepFxStrength = cfg.letterFxIntensity;
         applyScene(cfg, *sc);
         cfg.lyricsStyle = keepStyle; // [LyricsForge] Auto Scene never changes where the lyrics sit (no surprise floating)
-        { // [LyricsForge] the letter effect too: never the same one as the last three songs (water kept coming back)
-            static constexpr int kFx[] = {1, 2, 3, 4, 5, 6, 8, 9, 10}; // neon fire water ice electric lava galaxy ink holo
-            // [LyricsForge] every song draws its effect at random (a fresh roll each play), never one of the last three
-            if (cfg.letterFx > 0) {
-                uint32_t const h = songVariant(key) ^ uint32_t(nowNs() / 1000003);
-                for (int i = 0; i < 9; ++i) {
-                    int const f = kFx[(h + uint32_t(i)) % 9];
-                    if (std::find(gS->recentFx.begin(), gS->recentFx.end(), f) == gS->recentFx.end()) { cfg.letterFx = f; break; }
-                }
-            }
-            gS->recentFx.push_back(cfg.letterFx);
-            if (gS->recentFx.size() > 3) gS->recentFx.erase(gS->recentFx.begin());
-        }
+        cfg.letterFx = keepFx, cfg.letterFxColor = keepFxColor, cfg.fxRainbow = keepRainbow;
+        cfg.letterFxSpeed = keepFxSpeed, cfg.letterFxIntensity = keepFxStrength;
         gS->lastScene = cfg.scene; // not remembered as your pick
         gS->cfgDirty = true;
         char b[160];
@@ -1581,15 +1574,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             if (key != gS->chorusKey) {
                 gS->chorusKey = std::move(key);
                 gS->chorus = chorusLook(c, gS->userScenes, songVariant(song));
-                // [LyricsForge] the chorus gets its own random effect too (a fresh roll per song), never the verse's
-                if (gS->chorus.letterFx > 0) {
-                    static constexpr int kFx[] = {1, 2, 3, 4, 5, 6, 8, 9, 10};
-                    uint32_t const h = songVariant(song + "|chorus") ^ uint32_t(nowNs() / 1000003);
-                    for (int i = 0; i < 9; ++i) {
-                        int const f = kFx[(h + uint32_t(i)) % 9];
-                        if (f != c.letterFx) { gS->chorus.letterFx = f; break; }
-                    }
-                }
+                gS->chorus.letterFx = -1; // [LyricsForge] the chorus keeps your letter effect too (no swap, no random roll)
             }
             auto const& ms = gS->conductor.state();
             bool const variety = c.chorusVariety && c.chorusLooks && c.director;

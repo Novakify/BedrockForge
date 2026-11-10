@@ -89,7 +89,7 @@ float frontAz(Preset const& p) {
     struct F { char const* id; float az; };
     static constexpr F kF[] = {{"warp", 0}, {"pulsar", 30}, {"supernova", 200}, {"eclipse", 160}, {"rift", 180}, {"polar", 0}, {"galaxy", 190},
                                {"ocean", 180}, {"ice", 0}, {"purple", 185}, {"sunset", 30}, {"cherry", 0}, {"crimson", 0},
-                               {"thunder", 0}, {"astral", 200}, {"eclipse_heart", 160}, {"dream_ocean", 0}, {"meteor", 0}, {"event_horizon", 170}, {"deep_voyage", 180}, {"mirror_sky", 180}, {"cloud_hill", 180}, {"lake_sunset", 180}, {"lupine_sunset", 182}};
+                               {"thunder", 0}, {"astral", 200}, {"eclipse_heart", 160}, {"dream_ocean", 0}, {"meteor", 0}, {"event_horizon", 170}, {"deep_voyage", 180}, {"mirror_sky", 180}, {"lake_sunset", 180}, {"lupine_sunset", 182}};
     for (auto const& f : kF) if (id == f.id) return f.az;
     return p.painted() ? 0.0f : 180.0f;
 }

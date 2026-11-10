@@ -124,7 +124,7 @@ MoodIn moodInputs(SongMemory const* mem, Lyrics const* lyrics, uint32_t cover, f
 
 std::vector<std::string_view> const& moodSkies(SkyMood m) {
     static std::vector<std::string_view> const lists[6] = {
-        {"dawn", "cotton_candy", "silver_lining", "ocean", "summer", "prism", "golden_hour", "mirror_sky", "cloud_hill", "lake_sunset"}, // bright
+        {"dawn", "cotton_candy", "silver_lining", "ocean", "summer", "prism", "golden_hour", "mirror_sky", "lake_sunset"}, // bright
         {"summer", "golden_hour", "sunset", "dusk", "bright_night", "lupine_sunset", "supernova"}, // hype
         {"dawn", "cotton_candy", "aquarell", "dream_ocean", "sakura", "golden_hour", "dusk", "mirror_sky", "lake_sunset", "lupine_sunset"}, // dreamy
         {"silver_lining", "storm", "frost", "midnight", "thunder", "bright_night"},              // melancholy
@@ -140,7 +140,7 @@ std::vector<std::string_view> const& curatedSkies() { // [LyricsForge] after the
         "midnight", "nebula", "eclipse", "blood_moon", "storm", "supernova", "synthwave", "black_hole", "cosmos",
         "neon_city", "frost", "deep_sea", "inferno", "prism", "pulsar", "aquarell", "polar", "galaxy", "ocean", "ice",
         "purple", "sunset", "cherry", "crimson", "thunder", "rift", "warp", "silk", "astral", "eclipse_heart",
-        "dream_ocean", "meteor", "event_horizon", "deep_voyage", "mirror_sky", "cloud_hill", "lake_sunset", "lupine_sunset"};
+        "dream_ocean", "meteor", "event_horizon", "deep_voyage", "mirror_sky", "lake_sunset", "lupine_sunset"};
     return c;
 }
 bool isCurated(std::string_view id) {
@@ -177,9 +177,9 @@ std::vector<std::string> coverSkies(uint32_t cover) {
     static std::vector<std::string_view> const pink   = {"cotton_candy", "lupine_sunset", "sakura", "cherry", "dream_ocean", "aquarell", "synthwave", "eclipse_heart", "neon_city", "dusk", "purple"};
     static std::vector<std::string_view> const red    = {"crimson", "sunset", "eclipse_heart", "blood_moon", "inferno", "cherry"};
     static std::vector<std::string_view> const orange = {"golden_hour", "sunset", "summer", "dawn", "inferno", "dusk", "event_horizon", "lake_sunset"};
-    static std::vector<std::string_view> const green  = {"aurora", "polar", "summer", "silver_lining", "prism", "ocean", "cloud_hill"};
+    static std::vector<std::string_view> const green  = {"aurora", "polar", "summer", "silver_lining", "prism", "ocean"};
     static std::vector<std::string_view> const cyan   = {"ocean", "dream_ocean", "frost", "polar", "deep_sea", "aurora", "ice", "mirror_sky"};
-    static std::vector<std::string_view> const blue   = {"ocean", "summer", "frost", "prism", "bright_night", "ice", "silver_lining", "midnight", "mirror_sky", "cloud_hill"};
+    static std::vector<std::string_view> const blue   = {"ocean", "summer", "frost", "prism", "bright_night", "ice", "silver_lining", "midnight", "mirror_sky"};
     static std::vector<std::string_view> const violet = {"lupine_sunset", "purple", "nebula", "galaxy", "astral", "cosmos", "rift", "pulsar", "silk"};
     std::vector<std::string> out;
     float h, sat, v;
