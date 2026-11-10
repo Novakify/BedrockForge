@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -20,6 +21,9 @@
 
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
+#include "mc/world/actor/Actor.h"
+#include "mc/world/actor/player/Player.h"
+#include "mc/world/level/Level.h"
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/BlockSource.h"
@@ -195,6 +199,102 @@ void onChange(ll::event::BlockChangedEvent& ev) {
     else if (pn == "minecraft:air" && !boring(nn)) pushEvent(ev.blockSource(), p.x, p.y, p.z, 2, next);
 }
 
+// ---- kills. A remote server only tells the client two things: a chat line ("FINAL KILL! a eliminated b", "b was
+// killed by a", "You were killed by a") and the victim being moved (respawn / spectator teleport) or removed. Neither
+// alone is enough (names come in any order; pearls teleport too), together they are: the player named in a kill line
+// who jumped or vanished within ~2 s is the victim, and where they stood just before is where they died.
+struct Track { std::string name; float pos[3]; float prev[3]; int dye = -1; int64_t seen = 0; bool local = false; };
+struct Gone { std::string name; float pos[3]; int dye; int64_t at; bool local; };
+struct KillLine { std::string text; bool fin; bool you; int64_t at; };
+std::vector<Track>    gTracks;
+std::vector<Gone>     gGone;  // players that jumped / vanished in the last ~2.5 s
+std::vector<KillLine> gKills; // kill lines in the last ~2.5 s, not matched yet
+
+std::string lower(std::string const& m) {
+    std::string s;
+    for (size_t i = 0; i < m.size(); ++i) {
+        if (uint8_t(m[i]) == 0xC2 && i + 1 < m.size() && uint8_t(m[i + 1]) == 0xA7) { i += 2; continue; }
+        if (uint8_t(m[i]) == 0xA7) { ++i; continue; }
+        s += char(std::tolower(uint8_t(m[i])));
+    }
+    return s;
+}
+// the team colour a name tag is drawn in (The Hive colours names by team): its first colour code -> dye
+int dyeOfTag(std::string const& t) {
+    for (size_t i = 0; i + 1 < t.size(); ++i) {
+        char c = 0;
+        if (uint8_t(t[i]) == 0xC2 && i + 2 < t.size() && uint8_t(t[i + 1]) == 0xA7) c = char(std::tolower(uint8_t(t[i + 2])));
+        else continue;
+        switch (c) {
+        case '0': return 15; case '1': return 11; case '2': return 13; case '3': return 9; case '4': return 14;
+        case '5': return 10; case '6': return 1;  case '7': return 8;  case '8': return 7; case '9': return 11;
+        case 'a': return 5;  case 'b': return 3;  case 'c': return 14; case 'd': return 6; case 'e': return 4;
+        case 'f': return 0;  default: break;
+        }
+    }
+    return -1;
+}
+void pushKill(Gone const& g, bool fin) {
+    auto& e = gFx.events[gFx.nEvents % 256];
+    e.x = int32_t(std::floor(g.pos[0])), e.y = int32_t(std::floor(g.pos[1])), e.z = int32_t(std::floor(g.pos[2]));
+    e.kind = fin ? 4u : 3u, e.atMs = nowMs();
+    int const d = g.dye >= 0 ? g.dye : 0;
+    e.col[0] = kDye[d][0], e.col[1] = kDye[d][1], e.col[2] = kDye[d][2], e.col[3] = g.local ? 1.0f : 0.0f;
+    e.seed = uint32_t(e.atMs) * 2654435761u;
+    e.floorDy = 255;
+    ++gFx.nEvents;
+    note("{} at {:.0f} {:.0f} {:.0f}: {} (team colour {})", fin ? "FINAL KILL" : "kill", g.pos[0], g.pos[1], g.pos[2], g.name, g.dye);
+}
+void matchKills(int64_t now) {
+    for (auto k = gKills.begin(); k != gKills.end();) {
+        bool done = false;
+        for (auto g = gGone.begin(); g != gGone.end() && !done; ++g) {
+            if (std::llabs(g->at - k->at) > 2500) continue;
+            bool const named = g->local ? k->you : (!g->name.empty() && k->text.find(g->name) != std::string::npos);
+            if (!named) continue;
+            pushKill(*g, k->fin);
+            gGone.erase(g);
+            done = true;
+        }
+        if (done || now - k->at > 2500) k = gKills.erase(k);
+        else ++k;
+    }
+    std::erase_if(gGone, [&](Gone const& g) { return now - g.at > 2500; });
+}
+void trackPlayers(LocalPlayer& lp, int64_t now) {
+    auto const& me = lp.getPosition();
+    for (auto& t : gTracks) t.prev[0] = t.pos[0], t.prev[1] = t.pos[1], t.prev[2] = t.pos[2];
+    std::vector<char> hit(gTracks.size(), 0);
+    lp.getLevel().forEachPlayer([&](Player& pl) {
+        auto const& q = static_cast<Actor&>(pl).getPosition();
+        bool const local = static_cast<Actor*>(&pl) == static_cast<Actor*>(&lp);
+        if (!local && std::hypot(q.x - me.x, q.z - me.z) > 96.0) return true;
+        std::string name;
+        try { name = lower(pl.getRealName()); } catch (...) {}
+        Track* t = nullptr;
+        for (size_t i = 0; i < gTracks.size(); ++i)
+            if (gTracks[i].name == name && gTracks[i].local == local) { t = &gTracks[i]; hit[i] = 1; break; }
+        if (!t) {
+            if (gTracks.size() >= 64) return true;
+            gTracks.push_back({name, {q.x, q.y, q.z}, {q.x, q.y, q.z}, -1, now, local});
+            hit.push_back(1);
+            t = &gTracks.back();
+        }
+        if (t->dye < 0) try { t->dye = dyeOfTag(static_cast<Actor&>(pl).getNameTag()); } catch (...) {}
+        float const j = std::sqrt((q.x - t->pos[0]) * (q.x - t->pos[0]) + (q.y - t->pos[1]) * (q.y - t->pos[1]) + (q.z - t->pos[2]) * (q.z - t->pos[2]));
+        if (j > 10.0f && now - t->seen < 400) gGone.push_back({t->name, {t->pos[0], t->pos[1], t->pos[2]}, t->dye, now, local}); // moved away at once
+        t->pos[0] = q.x, t->pos[1] = q.y, t->pos[2] = q.z, t->seen = now;
+        return true;
+    });
+    for (size_t i = 0; i < gTracks.size();) { // gone from the world (a spectator is hidden / removed)
+        if (!hit[i]) {
+            if (now - gTracks[i].seen < 400) gGone.push_back({gTracks[i].name, {gTracks[i].pos[0], gTracks[i].pos[1], gTracks[i].pos[2]}, gTracks[i].dye, now, gTracks[i].local});
+            gTracks.erase(gTracks.begin() + long(i)), hit.erase(hit.begin() + long(i));
+        } else ++i;
+    }
+    matchKills(now);
+}
+
 void resetMatch(double const* pos) {
     note("new match at {:.0f} {:.0f} {:.0f} (had {} beds, {} broken)", pos[0], pos[1], pos[2], gBeds.size(), gBroken);
     gBeds.clear();
@@ -206,6 +306,7 @@ void resetMatch(double const* pos) {
     gScanI  = 0;
     gScanPaused = false;
     gFx.nEvents = 0;
+    gTracks.clear(); gGone.clear(); gKills.clear();
     gAnchor[0] = pos[0], gAnchor[1] = pos[1], gAnchor[2] = pos[2];
     gAnchored = true;
 }
@@ -352,6 +453,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     }
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
+    if (gIsMap) trackPlayers(*lp, now);
     retarget();
     // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night
     float const rate = gTarget > gPhase ? (gPhase < 1.0f ? 1.0f / 20.0f : 1.0f / 25.0f) : 1.0f / 3.0f;
@@ -402,6 +504,17 @@ void onText(std::string const& m) {
         s += char(std::tolower(uint8_t(m[i])));
     }
     std::lock_guard l(gMutex);
+    {   // a kill line (not a bed / team line)
+        bool const killy = s.find("kill") != std::string::npos || s.find("slain") != std::string::npos || s.find("died") != std::string::npos ||
+                           s.find("fell") != std::string::npos || s.find("void") != std::string::npos ||
+                           (s.find("eliminated") != std::string::npos && s.find("team") == std::string::npos);
+        if (killy && s.find("bed") == std::string::npos && gIsMap) {
+            bool const you = s.find("you were") != std::string::npos || s.find("you died") != std::string::npos || s.find("you fell") != std::string::npos;
+            gKills.push_back({s, s.find("final") != std::string::npos, you, nowMs()});
+            if (gKills.size() > 16) gKills.erase(gKills.begin());
+            matchKills(nowMs());
+        }
+    }
     bool const bedGone = s.find("bed") != std::string::npos && (s.find("destroy") != std::string::npos || s.find("broke") != std::string::npos);
     bool const teamOut = s.find("team") != std::string::npos && s.find("eliminated") != std::string::npos && s.find("final kill") == std::string::npos;
     if (bedGone || teamOut) {
