@@ -12,6 +12,7 @@
 
 #include "ll/api/event/EventBus.h"
 #include "ll/api/event/world/BlockChangedEvent.h"
+#include "ll/api/event/client/ClientJoinLevelEvent.h"
 
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
@@ -36,6 +37,7 @@ std::mutex           gMutex; // block events arrive on the server thread too (si
 std::atomic<int64_t> gConsumerMs{0};
 std::atomic<int64_t> gHudMs{0};
 std::atomic<float>   gPreview{-1.0f};
+std::atomic<bool>    gNewLevel{false}; // joined a world (Hive moves you hub -> lobby -> map this way)
 bf::events::Subscriptions gSubs;
 
 // Bedrock dye order (bed colour data): white, orange, magenta, light blue, yellow, lime, pink, gray, light gray,
@@ -51,6 +53,7 @@ float const kDye[16][3] = {
 struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; };
 std::vector<Bed> gBeds;
 uint32_t         gBroken = 0;
+int64_t          gResetMs = 0;
 bool             gIsMap = false; // a Bed Wars map: a bed next to where you arrived (your island), or a bed broke
 float            gTarget = 0, gPhase = 0;
 double           gAnchor[3]{};
@@ -135,6 +138,7 @@ void resetMatch(double const* pos) {
     gBeds.clear();
     gBroken = 0;
     gIsMap  = false;
+    gResetMs = nowMs();
     gTarget = gPhase = 0;
     gScanI  = 0;
     gFx.nEvents = 0;
@@ -163,7 +167,9 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
             gBeds.push_back({x, y, z, 14, true, nowMs()});
             bed = &gBeds.back();
             mlog().info("[BF] matchfx: bed at {} {} {}", x, y, z);
-            if (!gIsMap && std::hypot(x + 0.5 - gAnchor[0], z + 0.5 - gAnchor[2]) < 24.0) {
+            bool const byAnchor = std::hypot(x + 0.5 - gAnchor[0], z + 0.5 - gAnchor[2]) < 24.0;
+            bool const byYou    = nowMs() - gResetMs < 15000 && std::hypot(x + 0.5 - gScanC[0], z + 0.5 - gScanC[2]) < 24.0;
+            if (!gIsMap && (byAnchor || byYou)) {
                 gIsMap = true; // the hub's decoration beds never light up; a map's do
                 mlog().info("[BF] matchfx: a bed by the spawn - this is a Bed Wars map");
             }
@@ -186,7 +192,10 @@ extern "C" __declspec(dllexport) void BF_MatchFxPreview(float phase) { gPreview 
 
 namespace bedrock_forge::client::matchfx {
 
-void install() { gSubs.on<ll::event::BlockChangedEvent>([](ll::event::BlockChangedEvent& ev) { try { onChange(ev); } catch (...) {} }); }
+void install() {
+    gSubs.on<ll::event::BlockChangedEvent>([](ll::event::BlockChangedEvent& ev) { try { onChange(ev); } catch (...) {} });
+    gSubs.on<ll::event::ClientJoinLevelEvent>([](ll::event::ClientJoinLevelEvent&) { gNewLevel = true; });
+}
 void uninstall() { gSubs.clear(); }
 
 void frame(IClientInstance& client, LocalPlayer* lp) {
@@ -211,6 +220,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { newPlace = false; break; }
     }
     lastPos[0] = pos[0], lastPos[1] = pos[1], lastPos[2] = pos[2];
+    if (gNewLevel.exchange(false)) newPlace = true;
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0 || now - last > 20000) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
     retarget();
