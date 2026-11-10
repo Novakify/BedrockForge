@@ -1122,6 +1122,10 @@ void drawUi() {
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Cloud shadows", &look.clouds, 0.0f, 1.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SliderFloat("Ink look", &look.ink, 0.0f, 1.0f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(inked block lines, painted flats, cel light)");
     ImGui::SeparatorText("The match (Bedrock Forge)");
     saveFx |= ImGui::Checkbox("Living match sky", &look.living);
     ImGui::SameLine();

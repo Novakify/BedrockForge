@@ -15,7 +15,7 @@ cbuffer C : register(b0) {
     float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = match phase
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
-    float4 c9; // x = god ray strength, y = cloud shadow strength, z = quality 0..1 (RF lowers it to hold the frame rate), w = 0
+    float4 c9; // x = god ray strength, y = cloud shadow strength, z = quality 0..1 (RF lowers it to hold the frame rate), w = ink look strength
 };
 // the match (Bedrock Forge MatchFx, filled per frame by SkyPass): team lights + bed beacons, block shards, placement pop
 cbuffer M : register(b1) {
@@ -386,7 +386,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         }
     }
     // block look off (shadows unticked): only the far-edge fade into the sky is left to do
-    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5) {
+    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5 && c9.w <= 0.0) {
         if ((fogVis >= 0.995 || c8.w < 0.5) && !matchActive()) discard;
         float3 o0 = col;
         if (fogVis < 0.995 && c8.w > 0.5 && length(P) > 40.0) o0 = lerp(toDisplay(csBackground(rdT, true)), col, smoothstep(0.0, 1.0, fogVis));
@@ -445,6 +445,38 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float ao = nAo > 0 ? 1.0 - occ / float(nAo) : 1.0;
     ao = lerp(1.0, ao, saturate(1.0 - (z - 45.0) / 25.0));
 
+    // ---- ink look: the world drawn like an animated film, not lit like a shader pack. Hand-inked lines on every block
+    //      silhouette and corner (from the depth buffer: two blocks side by side on one face get no line, so the line
+    //      follows the shapes - islands, bridges, players), the noisy texture calmed into painted flats, cel light
+    float ink = 0.0;
+    [branch] if (c9.w > 0.0 && z < 160.0) {
+        int   r  = int(max(1.0, c4.y / 1100.0) + 0.5);              // ~2 px at 4K, 1 px at 1080p
+        float zl = viewZ(rawDepth(px - int2(r, 0))), zr = viewZ(rawDepth(px + int2(r, 0)));
+        float zu = viewZ(rawDepth(px - int2(0, r))), zd = viewZ(rawDepth(px + int2(0, r)));
+        // silhouette: something clearly in front right next to this pixel (or open sky beside it)
+        float zn   = min(min(zl, zr), min(zu, zd));
+        float sil  = smoothstep(0.035, 0.09, (z - zn) / z);
+        // crease: on a flat face 1/z is linear across the screen, so its second difference is ~0; a block corner breaks it
+        float cr   = max(abs(z / zl + z / zr - 2.0), abs(z / zu + z / zd - 2.0));
+        float crease = smoothstep(0.010, 0.030, cr);
+        float far  = saturate(1.0 - (z - 70.0) / 90.0);             // far terrain: fewer, softer lines (no hatched mush)
+        ink = max(sil, crease * 0.85) * far * c9.w;
+        // painted flats: average the colour across this face only (neighbours on the same plane), keeps texture shape,
+        // loses the per-pixel noise that makes Minecraft read as Minecraft
+        float3 acc = col; float wsum = 1.0;
+        [unroll] for (int k4 = 0; k4 < 4; k4++) {
+            int2   o2 = k4 == 0 ? int2(-r, -r) : (k4 == 1 ? int2(r, -r) : (k4 == 2 ? int2(-r, r) : int2(r, r)));
+            float  zq = viewZ(rawDepth(px + o2 * 2));
+            float  wq = abs(zq - z) < 0.02 * z ? 1.0 : 0.0;
+            acc += sceneAt(px + o2 * 2).rgb * wq; wsum += wq;
+        }
+        float3 flat = acc / wsum;
+        col = lerp(col, flat, 0.55 * c9.w * far);
+        // a touch more colour in the flats (animated films are saturated where light falls)
+        float  lum = dot(col, float3(0.299, 0.587, 0.114));
+        col = saturate(lerp(lum.xxx, col, 1.0 + 0.22 * c9.w));
+    }
+
     // ---- apply (linear light). Shadowed sunlit faces fall to the violet sky light; occlusion darkens gently
     float3 lin = pow(col, 2.2);
     CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
@@ -453,6 +485,13 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float3 shadeCol = lerp(float3(0.46, 0.44, 0.62), float3(0.48, 0.54, 0.76), NIGHT); // without the key light: violet sky / blue night (light enough to fight in)
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
     lin *= lerp(1.0, ao, c6.x);
+    // cel light: the shadow terminator gets a thin painted band of warm light on the lit side
+    [branch] if (c9.w > 0.0) {
+        float band = saturate(ndl * 6.0) * (1.0 - saturate(ndl * 6.0 - 1.0)) * (1.0 - sh) * LIGHTK;
+        lin *= 1.0 + band * 0.35 * c9.w * lerp(float3(1.0, 0.72, 0.45), float3(0.6, 0.7, 1.0), NIGHT);
+        // top faces read as lit from the sky (the "painted" key/fill split of a film frame)
+        lin *= lerp(1.0, n.y > 0.7 ? 1.10 : 0.94, c9.w);
+    }
 
     // ---- rim: an edge with open sky right behind it, on the sun's side, catches a thin warm line
     float3 sp = toPx(L * 1000.0);
@@ -475,6 +514,11 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
         float3 bg = toDisplay(csBackground(normalize(P), true));
         o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
+    }
+    // the ink: deep, coloured (the darkest tone of the frame, not black), drawn over everything near
+    [branch] if (ink > 0.0) {
+        float3 inkCol = lerp(lerp(float3(0.10, 0.05, 0.10), float3(0.16, 0.07, 0.16), DUSK), float3(0.03, 0.04, 0.10), NIGHT);
+        o = lerp(o, inkCol + o * 0.12, saturate(ink) * 0.92);
     }
     if (c6.z > 0.5 && c6.z < 1.5) o = lerp(float3(1, 0.85, 0.6), float3(0.2, 0.2, 0.45), sh);
     if (c6.z > 1.5) o = ao.xxx;

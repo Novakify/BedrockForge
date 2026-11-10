@@ -1798,7 +1798,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     deckOf(mf, c[31], c[32], c[33]);
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     c[35] = gAnchored ? 1.0f : 0.0f;
-    c[36] = look.rays; c[37] = look.clouds; c[38] = adaptQuality();
+    c[36] = look.rays; c[37] = look.clouds; c[38] = adaptQuality(); c[39] = look.ink;
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
@@ -1837,6 +1837,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "deck") gDeckOffset = std::clamp(v, -80.f, 80.f);
         else if (k == "rays") gLook.rays = std::clamp(v, 0.f, 3.f);
         else if (k == "clouds") gLook.clouds = std::clamp(v, 0.f, 1.f);
+        else if (k == "ink") gLook.ink = std::clamp(v, 0.f, 1.f);
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
@@ -1848,7 +1849,7 @@ void saveWorldFxSettings() {
     if (gWfxConfig.empty()) return;
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
-        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds
+        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink
         << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\n";
 }
 
