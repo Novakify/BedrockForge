@@ -81,6 +81,7 @@ double           gAnchor[3]{};
 bool             gAnchored = false;
 // incremental scan for beds around the player (a few thousand blocks per frame)
 int gScanI = 0;
+bool gScanPaused = false;
 double gScanC[3]{}; // centre of the current scan pass (the player's position when it started)
 constexpr int kScanR = 160, kScanDown = 40, kScanUp = 24, kPerFrame = 12000;
 
@@ -203,12 +204,14 @@ void resetMatch(double const* pos) {
     gResetMs = nowMs();
     gTarget = gPhase = 0;
     gScanI  = 0;
+    gScanPaused = false;
     gFx.nEvents = 0;
     gAnchor[0] = pos[0], gAnchor[1] = pos[1], gAnchor[2] = pos[2];
     gAnchored = true;
 }
 
 void scan(BlockSource& bs, double const* pos) { // walk a box around the player a slice at a time, note every bed (and its dye)
+    if (gScanPaused) return;
     int const sx = 2 * kScanR + 1, sy = kScanDown + kScanUp + 1;
     long const total = long(sx) * sx * sy;
     if (gScanI == 0) std::memcpy(gScanC, pos, sizeof gScanC);
@@ -296,16 +299,23 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     // the server re-sent the world (a respawn / spectating on the same map, or a new world - The Hive's hub, lobby and
     // maps share coordinates, so distance can't tell): 3 s later, are this match's standing beds still there?
     static int64_t verifyAt = 0;
+    static std::vector<BlockPos> verifyBeds; // the standing beds as they were before the re-send
     if (gNewLevel.exchange(false)) {
         if (!gIsMap) newPlace = true;
-        else verifyAt = now + 3000;
+        else {
+            verifyAt = now + 3000;
+            verifyBeds.clear();
+            for (auto const& b : gBeds)
+                if (b.alive) verifyBeds.push_back(BlockPos{b.x, b.y, b.z});
+            gScanPaused = true; // don't mix another world's beds (the hub's) into this match while we look
+        }
     }
     if (verifyAt && now >= verifyAt) {
         verifyAt = 0;
+        gScanPaused = false;
         int known = 0, still = 0;
         BlockSource& bs = lp->getDimensionBlockSource();
-        for (auto const& b : gBeds)
-            if (b.alive) { ++known; still += isBed(bs.getBlock(BlockPos{b.x, b.y, b.z})) ? 1 : 0; }
+        for (auto const& b : verifyBeds) { ++known; still += isBed(bs.getBlock(b)) ? 1 : 0; }
         if (known == 0 || still == 0) newPlace = true;
         note("world re-sent: {} of {} standing beds still there -> {}", still, known, newPlace ? "new match" : "same match");
     }
@@ -330,7 +340,16 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
         } else
             for (Bed* b : gone) { b->alive = false, b->changed = now, ++gBroken; note("bed at {} {} {} gone (no block update seen)", b->x, b->y, b->z); }
     }
-    if (last && now - last > 20000 && !newPlace) verifyAt = gIsMap ? now + 3000 : 0, newPlace = !gIsMap;
+    if (last && now - last > 20000 && !newPlace) {
+        if (!gIsMap) newPlace = true;
+        else {
+            verifyAt = now + 3000;
+            verifyBeds.clear();
+            for (auto const& b : gBeds)
+                if (b.alive) verifyBeds.push_back(BlockPos{b.x, b.y, b.z});
+            gScanPaused = true;
+        }
+    }
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
     retarget();
