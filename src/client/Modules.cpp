@@ -54,6 +54,7 @@
 #include "client/ShaderPacks.h"
 #include "client/PostFx.h"
 #include "client/ServerAuto.h"
+#include "client/MatchFx.h"
 #include "core/Win32Input.h"
 #include "lyrics/win/Win.h"
 namespace bf::lyrics::win { float cinemaFovScale(); } // LyricsForge Director "FOV breath" (1 = off)
@@ -566,6 +567,7 @@ void installRuntime() {
     installVisualHooks();
     installChatHooks();
     serverauto::install();
+    matchfx::install();
     BfFovHook::hook();
     BfTurnHook::hook();
     BfAttackHook::hook();
@@ -634,6 +636,7 @@ void installRuntime() {
             lastHp = hp;
         }
         tSec = std::chrono::steady_clock::now();
+        try { matchfx::frame(ctx.mClient, player); } catch (...) {}
         try { serverauto::frame(ctx.mClient, player, hudInputAllowed() && !menu::isOpen(), w32::gameFocused() && !menu::isOpen()); } catch (...) {}
         hitch::gCur.sa = hitch::since(tSec);
 

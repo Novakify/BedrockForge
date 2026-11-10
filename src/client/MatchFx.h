@@ -1,0 +1,57 @@
+#pragma once
+// Bedrock Forge -> Renderer Foundation: the MATCH, for game-aware visuals (World FX atmospheres).
+// A shader only sees pixels; BF sees the game. This bridge hands RF what happened in the match so the look can react:
+//   * phase      living match sky: 0 golden hour (match start) -> 1 dusk (first bed broken) -> 2 night (final fight)
+//   * teams      every bed in range with its team (dye) colour and whether it still stands: team-lit islands
+//   * events     blocks broken / placed near the player, with the block's colour: real block shards, placement pop
+// Same pattern as BF_GetPostFx: BF owns the data, RF pulls it once per frame. RF calls BF_MatchFxConsumer(1) every
+// frame it uses it; only then does BF also move the game's own time of day with the phase (so vanilla lighting,
+// torches and block light follow the sky).
+#include <cstdint>
+#include <string>
+
+extern "C" {
+struct BfMatchTeamV1 {
+    float    pos[3];   // bed centre (world)
+    float    col[3];   // team colour, linear 0..1
+    uint32_t alive;    // 1 = bed stands
+    int64_t  changedMs; // steady-clock ms of the last change (bed found / broken): RF fades from it
+};
+struct BfMatchEventV1 {
+    int32_t  x, y, z;
+    uint32_t kind;     // 1 broken, 2 placed
+    int64_t  atMs;     // steady-clock ms
+    float    col[4];   // the block's map colour (linear-ish 0..1), a = 1
+    uint32_t seed;     // stable per event (shard layout)
+    uint32_t pad;
+};
+struct BfMatchFxV1 {
+    uint32_t size, version; // sizeof, 1
+    uint32_t active;        // 1 while a world is on screen
+    uint32_t frame;
+    float    phase;         // smoothed 0..2
+    float    phaseTarget;   // 0, 1 or 2
+    float    timeOfDay;     // what BF tells the game (when a consumer is attached)
+    uint32_t bedsBroken;    // this match
+    int64_t  nowMs;         // BF's steady clock when filled (RF ages events against it)
+    uint32_t nTeams, nEvents; // nEvents = total written; ring index = n % 64
+    BfMatchTeamV1  teams[16];
+    BfMatchEventV1 events[64];
+};
+__declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
+__declspec(dllexport) void               BF_MatchFxConsumer(int on);
+}
+
+class IClientInstance;
+class LocalPlayer;
+
+namespace bedrock_forge::client::matchfx {
+void install();   // block-change listener
+void uninstall();
+/// every HUD frame (client thread)
+void frame(IClientInstance& client, LocalPlayer* player);
+/// chat / title text (fallback for servers that remove beds without a block update we see)
+void onText(std::string const& message);
+/// the time of day the game should render while a consumer is attached; false = leave the game's own
+bool timeOverride(float& t);
+} // namespace bedrock_forge::client::matchfx

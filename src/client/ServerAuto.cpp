@@ -48,6 +48,7 @@
 
 #include "client/Module.h"
 #include "client/ServerAuto.h"
+#include "client/MatchFx.h"
 #include "client/ShaderPacks.h"
 
 namespace bedrock_forge::client::serverauto {
@@ -320,8 +321,9 @@ void frame(IClientInstance& client, LocalPlayer* player, bool playing, bool spri
     runActions(client, player);
 }
 
-bool handleText(std::string const& message) { return onText(message); }
+bool handleText(std::string const& message) { matchfx::onText(message); return onText(message); }
 void handleTitle(std::string const& title) {
+    matchfx::onText(title);
     if (int e = endFromTitle(title)) onGameEnd(e);
 }
 } // namespace bedrock_forge::client::serverauto

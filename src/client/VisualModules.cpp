@@ -39,6 +39,7 @@
 #include <string>
 
 #include "client/Module.h"
+#include "client/MatchFx.h"
 
 namespace bf::lyrics::win { bool skyFog(float rgb[3], float& weight); } // LyricsForge sky fog (Runtime_win.cpp)
 
@@ -182,6 +183,7 @@ LL_TYPE_INSTANCE_HOOK(BfTimeHook, ll::memory::HookPriority::Normal, Dimension, &
     ++diag::timeHook;
     if (Registry::get().on("time_changer") && std::this_thread::get_id() == gRenderThread.load())
         return Registry::get().find("time_changer")->num("time", 0.0f);
+    if (float t; std::this_thread::get_id() == gRenderThread.load() && bedrock_forge::client::matchfx::timeOverride(t)) return t;
     return origin(a);
 }
 

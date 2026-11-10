@@ -150,7 +150,7 @@ jobs:
 
       # LyricsForge cinematic work (pairs with Renderer Foundation lyricsforge-cinematic/rf)
       - name: Publish LyricsForge cinematic BF build
-        if: (github.ref == 'refs/heads/lyricsforge-cinematic/bf' || github.ref == 'refs/heads/glass-armor/bf') && github.event_name == 'push'
+        if: (github.ref == 'refs/heads/lyricsforge-cinematic/bf' || github.ref == 'refs/heads/glass-armor/bf' || github.ref == 'refs/heads/worldfx-cloudsea/bf') && github.event_name == 'push'
         shell: bash
         run: |
           grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
@@ -161,6 +161,7 @@ jobs:
           mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
           cd out
           DEST=lyricsforge-cinematic-bf-builds; [ "${GITHUB_REF}" = refs/heads/glass-armor/bf ] && DEST=glass-armor-bf-builds
+          [ "${GITHUB_REF}" = refs/heads/worldfx-cloudsea/bf ] && DEST=worldfx-bf-builds
           git init -q -b "$DEST"
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
