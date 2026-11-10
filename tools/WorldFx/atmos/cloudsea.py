@@ -375,17 +375,31 @@ def grass_side(seed=15):
 
 
 def leaves(seed=16):
-    """leaf clusters: rounded clumps of 3-5 px leaves, lit tops, dark interior, real holes (alpha) at the gaps"""
-    pts = poisson_points(S, 22, 5.2, seed)
-    d1, d2, idx = voronoi(S, pts)
+    """layered foliage: ~70 small leaves (3-4 px ovals at random angles) splatted back to front; back leaves darker,
+    front ones lit on their upper edge; the gaps that no leaf covers are real holes (alpha)"""
     r = rng(seed)
-    leaf = np.clip(1 - d1 / 3.2, 0, 1)
-    h = leaf + r.uniform(-0.15, 0.15, len(pts))[idx]
-    lit = h + shift_light(h, 0, 1) * 0.9
-    f = normalize(lit)
-    hole = (d1 > 3.3) & ((d2 - d1) < 1.2)
-    pal = [(46, 46, 46), (74, 74, 74), (102, 102, 102), (130, 130, 130), (160, 160, 160), (190, 190, 190)]
-    img, idx2 = quantize(f, pal)
+    f = np.full((S, S), -1.0)
+    y, x = np.mgrid[0:S, 0:S].astype(float) + 0.5
+    n = 170
+    for k in range(n):
+        depth = k / n                                   # later = closer = brighter
+        cx, cy = r.random() * S, r.random() * S
+        ang = r.uniform(0, np.pi)
+        a_, b_ = r.uniform(1.6, 2.4), r.uniform(0.9, 1.3)
+        dx = (x - cx + S / 2) % S - S / 2
+        dy = (y - cy + S / 2) % S - S / 2
+        u = dx * np.cos(ang) + dy * np.sin(ang)
+        v = -dx * np.sin(ang) + dy * np.cos(ang)
+        e = (u / a_) ** 2 + (v / b_) ** 2
+        inside = e < 1.0
+        shade = 0.25 + depth * 0.45 + np.where(dy < -0.3, 0.18, 0.0) - np.where(dy > 0.6, 0.12, 0.0)
+        vein = inside & (np.abs(v) < 0.35) & (np.abs(u) < a_ * 0.7)
+        f = np.where(inside, shade, f)
+        f = np.where(vein, shade - 0.08, f)
+    hole = f < 0
+    f = np.where(hole, 0.0, f)
+    pal = [(46, 46, 46), (72, 72, 72), (98, 98, 98), (124, 124, 124), (152, 152, 152), (182, 182, 182)]
+    img, idx = quantize(np.clip(f, 0, 1), pal)
     alpha = np.where(hole, 0, 255)
     return img, alpha
 
@@ -610,3 +624,43 @@ def purpur(seed=54):
     pal = R((170, 122, 170), n=6, lo=-0.22, hi=0.08, shadow_shift=0.15)
     img, idx = quantize(np.clip(f, 0, 1), pal)
     return img
+
+
+def tnt(seed=60):
+    """side: four paper-wrapped sticks, a cream band with a dark stencilled stripe; top: stick ends + fuse"""
+    y, x = np.mgrid[0:S, 0:S]
+    stick = x % 8
+    f = 0.50 + np.where(stick == 0, -0.30, 0.0) + np.where(stick == 1, 0.18, 0.0) + np.where(stick == 7, -0.12, 0.0)
+    f += (value_noise(S, 4, seed) - 0.5) * 0.10
+    red = R((182, 46, 38), n=6, lo=-0.22, hi=0.08, shadow_shift=0.25)
+    img, _ = quantize(np.clip(f, 0, 1), red)
+    band = (y >= 11) & (y <= 20)
+    cream = np.array(R((226, 214, 186), n=4, lo=-0.12, hi=0.04), np.uint8)
+    bf = np.clip((0.5 + np.where(y == 11, 0.4, 0) + np.where(y == 20, -0.4, 0) + (value_noise(S, 6, seed + 1) - 0.5) * 0.2) * 4, 0, 3.99).astype(int)
+    img = np.where(band[..., None], cream[bf], img)
+    stripe = band & (y >= 14) & (y <= 17) & (x >= 6) & (x <= 25) & ((x // 3) % 2 == 0)
+    img = np.where(stripe[..., None], np.array([46, 34, 40], np.uint8), img)
+    side = img
+    yy, xx = np.mgrid[0:S, 0:S]
+    cu, cv = (xx % 8) - 3.5, (yy % 8) - 3.5
+    d = np.sqrt(cu ** 2 + cv ** 2)
+    ft = np.where(d < 3.2, 0.62 - d * 0.06, 0.12)
+    ft = np.where((d < 3.2) & (cu + cv < -2), 0.85, ft)
+    top, _ = quantize(np.clip(ft, 0, 1), red)
+    fuse = (np.abs(xx - 15.5) < 1) & (np.abs(yy - 15.5) < 1)
+    top = np.where(fuse[..., None], np.array([60, 52, 50], np.uint8), top)
+    bottom, _ = quantize(np.clip(ft * 0.8, 0, 1), red)
+    return side, top, bottom
+
+
+def ladder(seed=61):
+    """two rails and five rungs, each rung lit on top; everything else is open (alpha)"""
+    y, x = np.mgrid[0:S, 0:S]
+    rail = ((x >= 3) & (x <= 5)) | ((x >= 26) & (x <= 28))
+    rung = ((y % 7) >= 2) & ((y % 7) <= 3) & (x > 5) & (x < 26)
+    wood = R((168, 128, 80), n=5, lo=-0.22, hi=0.08)
+    f = 0.5 + np.where(rail & ((x == 3) | (x == 26)), 0.25, 0) + np.where(rail & ((x == 5) | (x == 28)), -0.25, 0)
+    f = np.where(rung & ((y % 7) == 2), 0.80, np.where(rung, 0.35, f))
+    img, _ = quantize(np.clip(f, 0, 1), wood)
+    alpha = np.where(rail | rung, 255, 0)
+    return img, alpha

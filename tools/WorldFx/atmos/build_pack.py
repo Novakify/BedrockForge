@@ -72,6 +72,11 @@ def blocks(m):
         out["clay"] = (m.clay(), None)
         out["snow"] = (m.snow(), None)
         out["purpur_block"] = (m.purpur(), None)
+        side, top, bottom = m.tnt()
+        out["tnt_side"] = (side, "keep")
+        out["tnt_top"] = (top, "keep")
+        out["tnt_bottom"] = (bottom, "keep")
+        out["ladder"] = m.ladder()
     if hasattr(m, "MINERALS"):
         M = m.MINERALS
         out["iron_block"] = (m.metal_block(M["iron"], kind="iron"), None)
