@@ -63,7 +63,14 @@ int gScanI = 0;
 double gScanC[3]{}; // centre of the current scan pass (the player's position when it started)
 constexpr int kScanR = 112, kScanDown = 40, kScanUp = 24, kPerFrame = 12000;
 
-bool isBed(Block const& b) { return b.getTypeName() == "minecraft:bed"; }
+// a bed: vanilla's, or a server's own bed block (any "...bed..." block that is not bedrock)
+bool isBedName(std::string const& n) {
+    if (n == "minecraft:bed") return true;
+    if (n.find("bed") == std::string::npos || n.find("bedrock") != std::string::npos) return false;
+    return n.find("minecraft:") != 0; // vanilla's flower beds etc. are not team beds
+}
+bool isBed(Block const& b) { return isBedName(b.getTypeName()); }
+std::vector<std::string> gSeenNames; // diagnostics: every bed-like block name seen (logged once each)
 bool boring(std::string const& n) {
     return n == "minecraft:air" || n.find("water") != std::string::npos || n.find("lava") != std::string::npos ||
            n == "minecraft:fire" || n == "minecraft:soul_fire" || n.find("structure_void") != std::string::npos;
@@ -160,6 +167,12 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
         if (y < -64 || y > 319) continue;
         BlockPos const bp{x, y, z};
         Block const&   b = bs.getBlock(bp);
+        std::string const& tn = b.getTypeName();
+        if (tn.find("bed") != std::string::npos && tn != "minecraft:bedrock" &&
+            std::find(gSeenNames.begin(), gSeenNames.end(), tn) == gSeenNames.end() && gSeenNames.size() < 64) {
+            gSeenNames.push_back(tn);
+            mlog().info("[BF] matchfx: block name seen: {} at {} {} {}", tn, x, y, z);
+        }
         if (!isBed(b)) continue;
         Bed* bed = bedNear(x, y, z);
         if (!bed) {
@@ -174,7 +187,7 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
                 mlog().info("[BF] matchfx: a bed by the spawn - this is a Bed Wars map");
             }
         }
-        if (auto* ba = bs.getBlockEntity(bp)) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15);
+        if (auto* ba = tn == "minecraft:bed" ? bs.getBlockEntity(bp) : nullptr) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15);
         if (!bed->alive) { bed->alive = true, bed->changed = nowMs(); } // a new map reused the spot
     }
 }
