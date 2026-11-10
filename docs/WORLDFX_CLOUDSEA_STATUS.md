@@ -44,4 +44,12 @@ every frame (SkyPass `matchFrame`, cbuffer b1 of worldfx_pass.hlsl).
 - **Block shards** - a broken block bursts into 8 pieces of its colour with a pixel grain, lands on what was under it,
   settles; over the void they fall away. Verified in game.
 - Offline sky review: `tools/skypreview/preview.js` in RF renders the real HLSL at any phase.
-- Not yet checked: The Hive (chat fallback, many team colours, real bridges), placement pop, perf in a full match.
+- **The Hive (verified 2026-11-10, several Bed Wars matches):** Hive beds are `hive:bed_hitbox` blocks (the bed you see
+  is an entity); team colour comes from the carpet / wool around them. Beds found, colours right, bed breaks by other
+  players detected from block updates, sky goes golden -> dusk -> night, beacons go out. The hub / pre-game lobby
+  (decoration beds clustered together) stays dark; dying / spectating keeps the match; a new world is told apart by
+  whether this match's standing beds are still there (Hive's hub and maps share coordinates).
+  Diagnostics: `<BedrockForgeCore>/logs/matchfx.txt`.
+- Fixed on the way: the cloud deck stayed at the last world's height (swallowed everything below the horizon on Hive);
+  shadows were near-black pits; night left Hive maps too bright.
+- Not yet checked: placement pop, perf with many players (FPS 105-160 seen in matches, 200+ before).
