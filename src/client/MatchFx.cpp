@@ -70,7 +70,7 @@ float const kDye[16][3] = {
     {0.62f, 0.38f, 0.20f}, {0.22f, 0.70f, 0.18f}, {1.00f, 0.16f, 0.12f}, {0.34f, 0.30f, 0.44f},
 };
 
-struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; };
+struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; bool dyeKnown = false; };
 std::vector<Bed> gBeds;
 uint32_t         gBroken = 0;
 int64_t          gResetMs = 0;
@@ -87,9 +87,40 @@ constexpr int kScanR = 112, kScanDown = 40, kScanUp = 24, kPerFrame = 12000;
 bool isBedName(std::string const& n) {
     if (n == "minecraft:bed") return true;
     if (n.find("bed") == std::string::npos || n.find("bedrock") != std::string::npos) return false;
-    return n.find("minecraft:") != 0; // vanilla's flower beds etc. are not team beds
+    if (n.find("gen") != std::string::npos) return false;  // The Hive: hive:bed_gen_hitbox is the generator by the bed
+    return n.find("minecraft:") != 0; // vanilla's flower beds etc. are not team beds; The Hive's is hive:bed_hitbox
 }
 bool isBed(Block const& b) { return isBedName(b.getTypeName()); }
+// a server bed that is not vanilla's has no dye: take the team colour from the coloured blocks around it (The Hive lays
+// the team's carpet / wool under and around the bed)
+int dyeOfName(std::string const& n) {
+    static char const* kNames[16] = {"white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                                     "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+    auto c = n.find(':');
+    std::string base = c == std::string::npos ? n : n.substr(c + 1);
+    for (char const* suffix : {"_carpet", "_wool", "_concrete", "_stained_glass", "_terracotta"}) {
+        auto k = base.rfind(suffix);
+        if (k == std::string::npos || k + std::strlen(suffix) != base.size()) continue;
+        std::string col = base.substr(0, k);
+        if (col == "silver") col = "light_gray";
+        for (int i = 0; i < 16; ++i)
+            if (col == kNames[i]) return i;
+    }
+    return -1;
+}
+int dyeAround(BlockSource& bs, int x, int y, int z) {
+    int votes[16]{};
+    for (int dy = -2; dy <= 1; ++dy)
+        for (int dz = -3; dz <= 3; ++dz)
+            for (int dx = -3; dx <= 3; ++dx) {
+                int d = dyeOfName(bs.getBlock(BlockPos{x + dx, y + dy, z + dz}).getTypeName());
+                if (d >= 0) ++votes[d];
+            }
+    int best = -1, n = 0;
+    for (int i = 0; i < 16; ++i)
+        if (votes[i] > n) n = votes[i], best = i;
+    return best;
+}
 std::vector<std::string> gSeenNames; // diagnostics: every bed-like block name seen (logged once each)
 bool boring(std::string const& n) {
     return n == "minecraft:air" || n.find("water") != std::string::npos || n.find("lava") != std::string::npos ||
@@ -208,6 +239,10 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
             }
         }
         if (auto* ba = tn == "minecraft:bed" ? bs.getBlockEntity(bp) : nullptr) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15);
+        else if (tn != "minecraft:bed" && !bed->dyeKnown) {
+            int d = dyeAround(bs, x, y, z);
+            if (d >= 0) { bed->dye = d; bed->dyeKnown = true; note("bed at {} {} {}: team colour {} (from the blocks around it)", x, y, z, d); }
+        }
         if (!bed->alive) { bed->alive = true, bed->changed = nowMs(); } // a new map reused the spot
     }
 }
