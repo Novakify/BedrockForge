@@ -9,7 +9,7 @@ cbuffer C : register(b0) {
     float4 c0; // xyz = camera forward, w = tan(fovx/2)
     float4 c1; // xyz = camera right,   w = tan(fovy/2)
     float4 c2; // xyz = camera up,      w = time
-    float4 c3; // x = A, y = B, z = Wz (projection terms: d = (A z + B) / (Wz z)), w = flags (1 = scene is BGRA)
+    float4 c3; // x = near plane (0.025), y = z = 0, w = flags (1 = scene is BGRA)
     float4 c4; // xy = target size, z = scene row pitch (bytes), w = depth row pitch (bytes)
     float4 c5; // xyz = sun direction (world), w = shadow strength
     float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = 0
@@ -25,7 +25,9 @@ ByteAddressBuffer gDepth : register(t1); // D24 in the low 24 bits, rows of c4.w
 int2   clampPx(int2 p) { return clamp(p, int2(0, 0), int2(c4.xy) - 1); }
 float  rawDepth(int2 p) { p = clampPx(p); return float(gDepth.Load(uint(p.y) * uint(c4.w) + uint(p.x) * 4u) & 0xFFFFFFu) / 16777215.0; }
 bool   isSky(float d) { return d >= 0.99999; }
-float  viewZ(float d) { return abs(c3.y / (d * c3.z - c3.x)); } // distance along the camera's forward axis
+// distance along the camera's forward axis. Bedrock's world depth is standard 0..1 with near = c3.x (0.025): checked
+// against a probe frame (ground rows fit n / (1 - d) exactly); the camera snapshot's projection is not the world's.
+float  viewZ(float d) { return c3.x / max(1.0 - d, 1e-7); }
 float3 sceneAt(int2 p) {
     p = clampPx(p);
     uint  v = gScene.Load(uint(p.y) * uint(c4.z) + uint(p.x) * 4u);

@@ -1589,7 +1589,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
-    c[12] = snap.proj[10]; c[13] = snap.proj[14]; c[14] = snap.proj[11] != 0 ? snap.proj[11] : -1.0f; c[15] = bgra ? 1.0f : 0.0f;
+    c[12] = 0.025f; c[13] = 0; c[14] = 0; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified)
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadow;
     c[24] = look.ao; c[25] = look.rim; c[26] = float(look.debug); c[27] = 0;
