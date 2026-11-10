@@ -62,6 +62,16 @@ def blocks(m):
     out["grass_top"] = (m.grass_top(), "keep")
     out["grass_side"] = m.grass_side()
     out["leaves_oak"] = m.leaves()
+    if hasattr(m, "quartz"):
+        q = m.quartz()
+        for n in ("quartz_block_side", "quartz_block_top", "quartz_block_bottom"):
+            out[n] = (q, None)
+        out["brick"] = (m.bricks(), None)
+        out["nether_brick"] = (m.bricks((70, 30, 36), (40, 22, 28), seed=55), None)
+        out["red_nether_brick"] = (m.bricks((112, 20, 22), (52, 10, 14), seed=56), None)
+        out["clay"] = (m.clay(), None)
+        out["snow"] = (m.snow(), None)
+        out["purpur_block"] = (m.purpur(), None)
     if hasattr(m, "MINERALS"):
         M = m.MINERALS
         out["iron_block"] = (m.metal_block(M["iron"], kind="iron"), None)

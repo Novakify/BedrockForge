@@ -542,3 +542,71 @@ MINERALS = {"iron": [(70, 76, 92), (110, 118, 132), (150, 158, 170), (190, 196, 
             "gold": [(124, 70, 24), (176, 116, 32), (214, 160, 50), (236, 196, 80), (248, 226, 136), (255, 246, 200)],
             "diamond": [(16, 80, 100), (30, 136, 152), (60, 190, 198), (120, 226, 224), (196, 248, 242), (244, 255, 253)],
             "emerald": [(10, 70, 36), (20, 120, 58), (34, 170, 84), (80, 210, 120), (160, 240, 176), (232, 255, 236)]}
+
+
+# ------------------------------------------------------------------ more building blocks
+def quartz(seed=50):
+    """polished quartz: near-white, a few long soft cream veins, a crisp bevel"""
+    y, x = np.mgrid[0:S, 0:S].astype(float)
+    w = value_noise(S, 3, seed, 3)
+    vein = np.abs(np.sin((x * 0.6 + y + w * 14) / S * 2 * np.pi * 1.5))
+    f = 0.62 + (value_noise(S, 4, seed + 1) - 0.5) * 0.08
+    f = np.where(vein < 0.07, 0.38, f)
+    f = np.where((vein >= 0.07) & (vein < 0.13), 0.50, f)
+    f = np.where((y == 0) | (x == 0), 0.86, f)
+    f = np.where((y == S - 1) | (x == S - 1), 0.30, f)
+    pal = R((232, 226, 216), n=6, lo=-0.16, hi=0.04, shadow_shift=0.4)
+    img, idx = quantize(np.clip(f, 0, 1), pal)
+    return img
+
+
+def bricks(base=(150, 74, 58), mortar=(170, 160, 150), seed=51, bw=16, bh=8):
+    y, x = np.mgrid[0:S, 0:S]
+    row = y // bh
+    xs = (x + (row % 2) * (bw // 2)) % S
+    u, v = xs % bw, y % bh
+    r = rng(seed)
+    tone = r.uniform(-0.1, 0.1, (S // bh, S // bw + 1))
+    f = 0.52 + tone[row % tone.shape[0], (xs // bw) % tone.shape[1]] + (value_noise(S, 6, seed) - 0.5) * 0.16
+    f = np.where((v == 1) & (u > 0), f + 0.16, f)
+    f = np.where((v == bh - 2), f - 0.12, f)
+    pal = R(base, n=6, lo=-0.20, hi=0.08, shadow_shift=0.3)
+    img, idx = quantize(np.clip(f, 0, 1), pal)
+    mp = np.array(R(mortar, n=3, lo=-0.12, hi=0.0, shadow_shift=0.4), np.uint8)
+    joint = (v == 0) | (u == 0)
+    img = np.where(joint[..., None], mp[((x + y) % 3 == 0).astype(int)], img)
+    return img
+
+
+def clay(seed=52):
+    pts = poisson_points(S, 12, 7.0, seed)
+    d1, d2, idx = voronoi(S, pts)
+    h = np.clip(d1 / 5.0, 0, 1)
+    lit = h + shift_light(h, 1, 1) * 1.5
+    f = 0.45 + (normalize(lit) - 0.5) * 0.30
+    pal = R((160, 166, 180), n=5, lo=-0.12, hi=0.06, shadow_shift=0.2)
+    img, idx2 = quantize(np.clip(f, 0, 1), pal)
+    return img
+
+
+def snow(seed=53):
+    h = value_noise(S, 4, seed, 3)
+    lit = h + shift_light(h, 1, 1) * 2.0
+    f = 0.60 + (normalize(lit) - 0.5) * 0.30
+    r = rng(seed)
+    f = np.where(r.random((S, S)) < 0.012, 0.98, f)
+    pal = [(176, 184, 214), (204, 210, 232), (226, 230, 244), (240, 242, 250), (252, 252, 255)]
+    img, idx = quantize(np.clip(f, 0, 1), pal)
+    return img
+
+
+def purpur(seed=54):
+    y, x = np.mgrid[0:S, 0:S]
+    u, v = x % 16, y % 16
+    f = 0.50 + (value_noise(S, 4, seed) - 0.5) * 0.18
+    f = np.where((u == 0) | (v == 0), 0.82, f)
+    f = np.where((u == 15) | (v == 15), 0.10, f)
+    f = np.where((u == 1) | (v == 1), f + 0.08, f)
+    pal = R((170, 122, 170), n=6, lo=-0.22, hi=0.08, shadow_shift=0.15)
+    img, idx = quantize(np.clip(f, 0, 1), pal)
+    return img
