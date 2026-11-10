@@ -182,7 +182,7 @@ float4 shards(float3 rd, float sceneT) {
         float3 corner = eA[i].xyz - CAM;
         float3 alb = pow(max(eB[i].rgb, 0.0), 2.2);
         float  seed = eC[i].x;
-        if (kind > 1.5) { // placed: the block lands with a quick overshoot (only the part bigger than the block shows)
+        if (kind > 1.5 && kind < 2.5) { // placed: the block lands with a quick overshoot (only the part bigger than the block shows)
             if (age > 0.4) continue;
             float  sc = 1.0 + 0.13 * exp(-age * 8.0) * cos(age * 24.0);
             float  tN; float3 nl, lp;
