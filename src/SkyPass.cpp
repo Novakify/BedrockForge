@@ -1530,7 +1530,7 @@ void wfxBarrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_
 
 bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     WorldFxLook const look = gLook;
-    if (!look.shadows) { wfxStatus("off (shadows unticked)"); return false; }
+    // the pass also carries the cloud sea (sky pixels + terrain under the deck), so it runs with the block look off too
     if (!st.rootKnown) { wfxStatus("waiting for the game's root state"); return false; }
     if (!gWsTexUp.load() || !gWsHeap) { wfxStatus("waiting for the cloud textures"); return false; }
     GamePso g;
@@ -1592,8 +1592,8 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
     c[12] = 0.025f; c[13] = 0; c[14] = 0; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified)
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
-    c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadow;
-    c[24] = look.ao; c[25] = look.rim; c[26] = float(look.debug); c[27] = 0;
+    c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
+    c[24] = look.shadows ? look.ao : 0.0f; c[25] = look.shadows ? look.rim : 0.0f; c[26] = float(look.debug); c[27] = 0;
     // the cloud sea, depth-tested against the terrain: same deck + clock as the sky pass (drawWorldSky)
     c[28] = float(snap.pos[0]); c[29] = float(snap.pos[1]); c[30] = float(snap.pos[2]);
     c[31] = float(std::floor(gAnchor[1]) - 56.0 + gDeckOffset.load());

@@ -25,7 +25,7 @@ VSOut VSCloudSea(uint id : SV_VertexID) {
 float4 PSCloudSea(VSOut i) : SV_Target {
     CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy;
     float3 rd = normalize(i.dir);
-    float3 col = csBackground(rd);
+    float3 col = csBackground(rd, false); // the sea comes in the World FX pass, on sky pixels only
     float3 o = toDisplay(col);
     o += (hash12(i.pos.xy) - 0.5) / 255.0 + (hash12(i.pos.yx + 7.0) - 0.5) / 255.0; // dither: no banding
     return float4(o, 1.0);

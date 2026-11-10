@@ -57,7 +57,18 @@ VSOut VSWorldFx(uint id : SV_VertexID) {
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
-    if (isSky(d)) discard;                                   // the sky is the sky pass's business
+    // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
+    // still sky after the world is drawn pay for its ray march
+    [branch] if (isSky(d)) {
+        if (c8.w < 0.5) discard;
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
+        float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
+        if (rd.y > 0.02) discard;
+        float4 sea = csSeaPixel(rd);
+        if (sea.a <= 0.0) discard;
+        float3 o = toDisplay(sea.rgb) + (hash12(float2(px)) - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
+        return float4(o, 1.0);
+    }
     float4 sc  = sceneAt(px);
     float3 col = sc.rgb;
     float  fogVis = sc.a;                                     // Cloud Sea blocks write 1 - the game's fog here
@@ -72,7 +83,10 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float  yTop = SEA_Y + SEA_AMP * 7.6;
         float  tTop = rd.y < 0.0 ? (CAM.y - yTop) / -rd.y : 1e9;
         if (CAM.y <= yTop) tTop = 0.0;
-        if (rd.y < 0.02 && tTop < dist) {
+        // both ends of the view segment above the sea's local top -> the whole segment is (skips the march for
+        // nearly every map pixel; only ground that dips toward the deck pays for it)
+        bool above = min(CAM.y, CAM.y + P.y) > seaTopAlong(CAM.xz, CAM.xz + P.xz);
+        if (rd.y < 0.02 && tTop < dist && !above) {
             float  tHit;
             float4 sea = cloudSea(CAM, rd, dist, tHit);
             if (sea.a > 0.0 && tHit < dist) {
@@ -80,6 +94,13 @@ float4 PSWorldFx(VSOut i) : SV_Target {
                 return float4(o, 1.0);
             }
         }
+    }
+    // block look off (shadows unticked): only the far-edge fade into the sky is left to do
+    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5) {
+        if (fogVis >= 0.995 || c8.w < 0.5) discard;
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
+        float3 bg0 = toDisplay(csBackground(normalize(P), true));
+        return float4(lerp(bg0, col, smoothstep(0.0, 1.0, fogVis)) + (hash12(float2(px)) - 0.5) / 255.0, 1.0);
     }
     // normal from the depth buffer: the flatter neighbour on each axis (no halos at block edges)
     float3 pl = posPx(px - int2(1, 0)), pr = posPx(px + int2(1, 0)), pu = posPx(px - int2(0, 1)), pd = posPx(px + int2(0, 1));
@@ -154,7 +175,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
     [branch] if (fogVis < 0.995 && c8.w > 0.5) {
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
-        float3 bg = toDisplay(csBackground(normalize(P)));
+        float3 bg = toDisplay(csBackground(normalize(P), true));
         o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
     }
     if (c6.z > 0.5 && c6.z < 1.5) o = lerp(float3(1, 0.85, 0.6), float3(0.2, 0.2, 0.45), sh);

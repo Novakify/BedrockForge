@@ -102,6 +102,14 @@ float seaH(float2 w, float lod) {
 }
 float seaY(float2 w, float lod) { return SEA_Y + SEA_AMP * seaH(w, lod); }
 
+// conservative top of the cloud sea over the straight segment a->b. Towers only grow 240+ blocks from MAP_C; inside
+// that disk the sea never rises above SEA_AMP * 1.52 (base max), and a segment with both ends in the disk stays in it.
+static const float CS_DISK = 232.0;
+float seaTopAlong(float2 a, float2 b) {
+    bool inDisk = length(a - MAP_C) < CS_DISK && length(b - MAP_C) < CS_DISK;
+    return SEA_Y + SEA_AMP * (inDisk ? 1.56 : 7.6);
+}
+
 float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     tHit = -1.0;
     float yTop = SEA_Y + SEA_AMP * 7.6;
@@ -109,6 +117,13 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     if (rd.y > 0.02) return float4(0.0, 0.0, 0.0, 0.0); // looking up: nothing tall enough out there to hit
     float t = 0.0;
     if (ro.y > yTop) t = (ro.y - yTop) / -rd.y;
+    // inside the tower-free disk the sea is low: skip straight down to its real top (most of the screen from a map)
+    float yNear = SEA_Y + SEA_AMP * 1.56;
+    if (rd.y < 0.0 && ro.y > yNear) {
+        float  tN = (ro.y - yNear) / -rd.y;
+        float3 pN = ro + rd * tN;
+        if (seaTopAlong(ro.xz, pN.xz) < yNear + 0.5) t = max(t, tN);
+    }
     if (t > tLimit) return float4(0.0, 0.0, 0.0, 0.0);
     bool  hit = false;
     float lod = 0.0, tPrev = t;
@@ -172,8 +187,11 @@ float3 toDisplay(float3 c) {
 float hash12(float2 p) { p = frac(p * float2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return frac((p.x + p.y) * p.x); }
 
 
-// everything the sky pass draws along one view ray (linear colour): gradient, sun, high clouds, the cloud sea
-float3 csBackground(float3 rd) {
+// the sky along one view ray (linear colour): gradient, sun, high clouds, and - when withSea - the cloud sea.
+// The sky pass draws it without the sea (it runs under the whole screen, before the terrain exists); the World FX pass
+// adds the sea only on pixels that are still sky after the world is drawn (csSeaPixel), so terrain never pays for it.
+float3 csGlow(float ang, float hcA) { return float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * (1.0 - 0.5 * hcA); }
+float3 csBackground(float3 rd, bool withSea) {
     float  mu = dot(rd, SUN);
     float  ang = acos(clamp(mu, -1.0, 1.0));
     float3 col = skyBase(rd);
@@ -182,9 +200,19 @@ float3 csBackground(float3 rd) {
     float3 sun = float3(3.2, 2.3, 1.25) * disc + float3(1.5, 0.78, 0.30) * exp(-ang * 38.0) * 0.8;
     col += sun * (1.0 - hc.a * 0.85);
     col = col * (1.0 - hc.a) + hc.rgb;
+    [branch] if (withSea) {
+        float  tHit;
+        float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
+        if (sea.a > 0.0) col = sea.rgb;
+    }
+    col += csGlow(ang, hc.a);
+    return col;
+}
+// the cloud sea alone for a sky pixel: a = 0 where the ray misses it (keep the sky pass's colour)
+float4 csSeaPixel(float3 rd) {
     float  tHit;
     float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
-    if (sea.a > 0.0) col = sea.rgb;
-    col += float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * (1.0 - 0.5 * hc.a);
-    return col;
+    if (sea.a <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    float  ang = acos(clamp(dot(rd, SUN), -1.0, 1.0));
+    return float4(sea.rgb + csGlow(ang, 0.0), 1.0);
 }
