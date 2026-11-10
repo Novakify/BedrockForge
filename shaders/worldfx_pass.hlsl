@@ -28,11 +28,11 @@ bool   isSky(float d) { return d >= 0.99999; }
 // distance along the camera's forward axis. Bedrock's world depth is standard 0..1 with near = c3.x (0.025): checked
 // against a probe frame (ground rows fit n / (1 - d) exactly); the camera snapshot's projection is not the world's.
 float  viewZ(float d) { return c3.x / max(1.0 - d, 1e-7); }
-float3 sceneAt(int2 p) {
+float4 sceneAt(int2 p) {
     p = clampPx(p);
     uint  v = gScene.Load(uint(p.y) * uint(c4.z) + uint(p.x) * 4u);
-    float3 c = float3(v & 255u, (v >> 8) & 255u, (v >> 16) & 255u) / 255.0;
-    return c3.w > 0.5 ? c.bgr : c;
+    float4 c = float4(v & 255u, (v >> 8) & 255u, (v >> 16) & 255u, v >> 24) / 255.0;
+    return c3.w > 0.5 ? c.bgra : c;
 }
 // camera-relative position of pixel p (centre) at view distance z
 float3 posAt(float2 p, float z) {
@@ -58,7 +58,9 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
     if (isSky(d)) discard;                                   // the sky is the sky pass's business
-    float3 col = sceneAt(px);
+    float4 sc  = sceneAt(px);
+    float3 col = sc.rgb;
+    float  fogVis = sc.a;                                     // Cloud Sea blocks write 1 - the game's fog here
     float  z   = viewZ(d);
     float3 P   = posAt(float2(px) + 0.5, z);
     // ---- the cloud sea is a real surface: ground below the cloud deck goes under it, peaks above it rise out of it
@@ -148,6 +150,13 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         lin += float3(1.5, 0.74, 0.30) * open * near * c6.y * 0.55;
     }
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
+    // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
+    // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
+    [branch] if (fogVis < 0.995 && c8.w > 0.5) {
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
+        float3 bg = toDisplay(csBackground(normalize(P)));
+        o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
+    }
     if (c6.z > 0.5 && c6.z < 1.5) o = lerp(float3(1, 0.85, 0.6), float3(0.2, 0.2, 0.45), sh);
     if (c6.z > 1.5) o = ao.xxx;
     o += (j - 0.5) / 255.0;

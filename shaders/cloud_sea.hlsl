@@ -25,19 +25,7 @@ VSOut VSCloudSea(uint id : SV_VertexID) {
 float4 PSCloudSea(VSOut i) : SV_Target {
     CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy;
     float3 rd = normalize(i.dir);
-    float  mu = dot(rd, SUN);
-    float  ang = acos(clamp(mu, -1.0, 1.0));
-    float3 col = skyBase(rd);
-    float4 hc = highClouds(rd, mu);
-    float  disc = smoothstep(0.0125, 0.0095, ang);
-    float3 sun = float3(3.2, 2.3, 1.25) * disc + float3(1.5, 0.78, 0.30) * exp(-ang * 38.0) * 0.8;
-    col += sun * (1.0 - hc.a * 0.85);
-    col = col * (1.0 - hc.a) + hc.rgb;
-    float  tHit;
-    float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
-    if (sea.a > 0.0) col = sea.rgb;
-    // the wide sun glow (the lab draws it in its light-shaft pass; until the in-game shaft pass exists it lives here)
-    col += float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * (1.0 - 0.5 * hc.a);
+    float3 col = csBackground(rd);
     float3 o = toDisplay(col);
     o += (hash12(i.pos.xy) - 0.5) / 255.0 + (hash12(i.pos.yx + 7.0) - 0.5) / 255.0; // dither: no banding
     return float4(o, 1.0);
