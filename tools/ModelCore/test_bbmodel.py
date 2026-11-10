@@ -66,6 +66,22 @@ check(figura_parent_type("HeadsUpDisplayThing") == "Head" and figura_parent_type
 check(r4.source_meta["animations"][0]["name"] == "wave", "animations kept raw for F2")
 check(roundtrip_equal(g4), "Bedrock geo from a .bbmodel round-trips through rig.py")
 
+# [BF] opt-in smooth normals (imported organic meshes). Two triangles share the edge a-b: a gentle 20 deg fold must
+# share one averaged normal along that edge; with no bf_smooth_angle every face keeps its own flat normal (unchanged).
+import math
+from ModelCore.bbmodel import _mesh
+s20 = math.sin(math.radians(20)) * 4
+def fold(extra):
+    el = {"origin": [0, 0, 0], "rotation": [0, 0, 0], "vertices": {"a": [0, 0, 0], "b": [0, 0, 4], "c": [4, 0, 0], "d": [-4, s20, 0]},
+          "faces": {"f1": {"vertices": ["a", "b", "c"], "uv": {}, "texture": 0}, "f2": {"vertices": ["b", "a", "d"], "uv": {}, "texture": 0}}}
+    el.update(extra)
+    return _mesh(el, 16, 16, (1, 1))
+flat, smooth, sharp = fold({}), fold({"bf_smooth_angle": 60}), fold({"bf_smooth_angle": 10})
+check(len(flat["normals"]) == 2 and flat["polys"][0][0][1] != flat["polys"][1][0][1], "default mesh: one flat normal per face")
+check(len({p[1] for poly in smooth["polys"] for p in poly if p[0] in (0, 1)}) == 1, "bf_smooth_angle 60: shared edge gets one averaged normal")
+check(len(smooth["normals"]) == 3, f"bf_smooth_angle 60: edge + two outer corners ({len(smooth['normals'])} normals)")
+check(len(sharp["normals"]) == 2, "bf_smooth_angle 10: a 20 deg fold stays hard")
+
 for arg in sys.argv[1:]:
     p = Path(arg)
     for f in ([p] if p.is_file() else sorted(p.rglob("*.bbmodel"))):

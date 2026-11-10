@@ -131,16 +131,40 @@ def _mesh(el, tex_w, tex_h, uv_scale):
     pos_i, positions, normals, uvs, polys = {}, [], [], [], []
     for k, p in world.items():
         pos_i[k] = len(positions); positions.append(_clean(p))
+    faces = []  # (face, ordered vertex keys, raw area-weighted normal)
     for fk, f in (el.get("faces") or {}).items():
         vk = list(f.get("vertices", []))
         if len(vk) < 3 or f.get("texture") is None: continue
         if len(vk) == 4: vk = _sort_quad(vk, world)
         a, b, c = (world[x] for x in vk[:3])
-        n = _cross([b[i] - a[i] for i in range(3)], [c[i] - a[i] for i in range(3)])
-        ln = math.sqrt(sum(x * x for x in n)) or 1.0
-        n_i = len(normals); normals.append(_clean([x / ln for x in n]))
+        faces.append((f, vk, _cross([b[i] - a[i] for i in range(3)], [c[i] - a[i] for i in range(3)])))
+    # [BF] opt-in smooth shading for organic meshes (imported models): per-corner normals averaged over the faces that
+    # meet at that position within bf_smooth_angle degrees (auto-smooth). Unset = one flat normal per face, exactly as
+    # Blockbench exports it, so existing conversions are unchanged.
+    smooth = el.get("bf_smooth_angle")
+    if smooth:
+        cos_t = math.cos(math.radians(float(smooth)))
+        unit = [(lambda n, ln: [x / ln for x in n])(n, math.sqrt(sum(x * x for x in n)) or 1.0) for _, _, n in faces]
+        q = lambda p: tuple(round(x, 4) for x in p)
+        at = {}
+        for fi, (_, vk, _) in enumerate(faces):
+            for x in vk: at.setdefault(q(world[x]), []).append(fi)
+        n_cache = {}
+    for fi, (f, vk, n) in enumerate(faces):
+        if not smooth:
+            ln = math.sqrt(sum(x * x for x in n)) or 1.0
+            n_i = len(normals); normals.append(_clean([x / ln for x in n]))
         poly = []
         for x in vk:
+            if smooth:
+                s = [0.0, 0.0, 0.0]
+                for fj in at[q(world[x])]:
+                    if sum(p * r for p, r in zip(unit[fi], unit[fj])) >= cos_t:
+                        s = [s[i] + faces[fj][2][i] for i in range(3)]  # area-weighted
+                ln = math.sqrt(sum(v * v for v in s)) or 1.0
+                key = tuple(_clean([v / ln for v in s]))
+                n_i = n_cache.get(key)
+                if n_i is None: n_i = n_cache[key] = len(normals); normals.append(list(key))
             u, v = (float(t) * s for t, s in zip(f.get("uv", {}).get(x, [0, 0]), uv_scale))
             uv_i = len(uvs); uvs.append(_clean([u / tex_w, 1 - v / tex_h]))
             poly.append([pos_i[x], n_i, uv_i])
@@ -180,6 +204,10 @@ def load_bbmodel(data: dict, name: str = "model") -> Rig:
     groups_v5 = {g.get("uuid"): g for g in data.get("groups", []) if isinstance(g, dict)}
 
     rig = Rig(identifier=f"geometry.figura.{name}", texture_width=tex_w, texture_height=tex_h, source_format="bbmodel")
+    vb = data.get("visible_box")  # [width, height, y] in blocks, written by Blockbench's Bedrock exporter as visible_bounds_*
+    if isinstance(vb, list) and len(vb) == 3:
+        rig.description_extra.update({"visible_bounds_width": vb[0], "visible_bounds_height": vb[1],
+                                      "visible_bounds_offset": [0, vb[2], 0]})
     used = set()
 
     def unique(n):
