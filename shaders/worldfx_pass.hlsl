@@ -68,11 +68,12 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float vis = 1.0;
     float ndl = dot(n, L);
     // cost scales with distance: near pixels get the full walk, far ones a short one, past 140 blocks none
-    int   nSh = z < 25.0 ? 20 : (z < 60.0 ? 12 : 7);
+    int   nSh = z < 25.0 ? 26 : (z < 60.0 ? 16 : 9);
+    float tMax = z < 25.0 ? 30.0 : (z < 60.0 ? 26.0 : 18.0);   // the low sun throws long shadows: ~1 block steps
     [branch] if (ndl > 0.02 && c5.w > 0.0 && z < 140.0) {
         [loop] for (int k = 0; k < nSh; k++) {
             float f = (float(k) + j) / float(nSh);
-            float t = 0.04 + 42.0 * f * f;
+            float t = 0.04 + tMax * f * sqrt(f);
             float3 q = P + n * (0.03 + 0.002 * z) + L * t;
             float3 s = toPx(q);
             if (s.z <= 0.05 || s.x < 0.0 || s.y < 0.0 || s.x >= c4.x || s.y >= c4.y) break;
