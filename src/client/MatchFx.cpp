@@ -422,15 +422,23 @@ void onText(std::string const& m) {
             size_t k = s.find(w.w);
             if (k != std::string::npos && (at == std::string::npos || k < at)) at = k, first = &w;
         }
+        // its bed: the first dye that any bed of this match has (alive or not); if that bed already went down (the block
+        // update came first), this message is about it - nothing more to break
         if (!hit && first)
-            for (int k = 0; k < 2 && !hit; ++k)
+            for (int k = 0; k < 2 && !hit; ++k) {
+                bool any = false;
                 for (auto& b : gBeds)
-                    if (b.alive && b.dye == first->d[k]) { hit = &b; break; }
+                    if (b.dye == first->d[k]) {
+                        any = true;
+                        if (b.alive) { hit = &b; break; }
+                    }
+                if (any) break;
+            }
         if (hit) {
             hit->alive = false, hit->changed = nowMs();
             ++gBroken;
             note("bed at {} {} {} broken (the server said: {})", hit->x, hit->y, hit->z, s.substr(0, 80));
-        } else if (bedGone && gBroken == 0) gBroken = 1; // a bed we couldn't see went down
+        } else if (bedGone && gBroken == 0 && !first) gBroken = 1; // a bed we couldn't see went down
         gIsMap = true;
         retarget();
     }
