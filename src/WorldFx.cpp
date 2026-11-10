@@ -1,5 +1,6 @@
 // Renderer Foundation - World FX M0 world probe (see WorldFx.h). Original code for Renderer Foundation.
 #include "WorldFx.h"
+#include "SkyPass.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1086,6 +1087,14 @@ void drawUi() {
     ImGui::Text("Status: %s", gStatus.c_str());
     if (!gLastSummary.empty()) ImGui::Text("Last probe: %s", gLastSummary.c_str());
     if (!gLastDir.empty()) ImGui::TextWrapped("Folder: %s", gLastDir.c_str());
+    ImGui::SeparatorText("Cloud Sea");
+    bool cs = rf::sky::worldSky() == 1;
+    if (ImGui::Checkbox("Cloud Sea sky", &cs)) rf::sky::setWorldSky(cs ? 1 : 0);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(sunset sky + sea of clouds under the map; works without LyricsForge)");
+    float deck = rf::sky::worldSkyDeck();
+    if (ImGui::SliderFloat("Cloud deck height", &deck, -80.0f, 80.0f, "%+.0f blocks")) rf::sky::setWorldSkyDeck(deck);
+    ImGui::Text("Sky: %s", rf::sky::worldSkyStatus().c_str());
     ImGui::Unindent();
 }
 

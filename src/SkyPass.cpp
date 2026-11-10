@@ -35,6 +35,13 @@
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"
 #endif
+#if __has_include("WorldFxShaders.h")
+#include "WorldFxShaders.h"
+#define RF_HAVE_WORLDFX_SHADERS 1
+#else
+#define RF_HAVE_WORLDFX_SHADERS 0
+#endif
+#include <memory>
 
 namespace rf::sky {
 namespace {
@@ -59,6 +66,8 @@ struct Ui {
 std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one dome per frame
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
+std::atomic<int> gWorldSky{0};     // World FX standalone sky (0 off, 1 Cloud Sea), see the World FX section below
+void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list);
 // sky shaders learned from the game's own materials (learnGameMaterials / learnMaterialFile)
 std::mutex                        gLearnMutex;
 std::unordered_map<uint64_t, int> gLearned;            // pixel-shader hash -> Kind
@@ -364,6 +373,7 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         if (h.frame != lf) { lf = h.frame; st = 0; } else if (st < 1000) ++st;
         gActive = c && h.active && st < 30;
         if (gActive && gUi.replace) rf::lyrics::setCameraWanted(true);
+        if (gWorldSky.load()) { rf::lyrics::setCameraWanted(true); worldSkyPrepare(device, list); }
         gPictureOn = gActive && h.picture;
         // stage 2 "My picture" needs the decoded panorama even with the preview off
         if (!gUi.enabled && !gBroken && gUi.replace && gPictureOn) {
@@ -724,6 +734,239 @@ ComPtr<ID3D12PipelineState> makeExtraPso(ID3D12Device* dev, GamePso const& g, in
     return out;
 }
 
+// ================================================================ World FX: standalone sky (Cloud Sea)
+// Textures are made once on a worker (same maths as the Cloud Sea lab), uploaded at the next Present on the overlay's
+// list, then the sky is drawn with its own root signature (16+4 constants, 2 SRVs, linear wrap sampler).
+std::atomic<float> gDeckOffset{0.0f};
+std::mutex         gWsMutex;
+std::string        gWsStatus = "off";
+void wsStatus(std::string s) { std::lock_guard l(gWsMutex); gWsStatus = std::move(s); }
+struct WsTexData {
+    std::vector<uint8_t>               noise; // 256 x 256 RGBA8
+    std::vector<std::vector<uint16_t>> puff;  // 1024 x 1024 R16, all mips
+};
+std::mutex                   gWsTexMutex;
+std::unique_ptr<WsTexData>   gWsTexReady;
+std::atomic_bool             gWsTexStarted{false}, gWsTexUp{false};
+ComPtr<ID3D12Resource>       gWsNoise, gWsPuff;
+ComPtr<ID3D12RootSignature>  gWsRoot;
+ComPtr<ID3D12DescriptorHeap> gWsHeap;
+std::atomic<long>            gWsFrames{0};
+auto const                   gWsT0 = std::chrono::steady_clock::now();
+double                       gAnchor[3]{};
+bool                         gAnchored = false;
+
+std::unique_ptr<WsTexData> makeWsTextures() {
+    auto d = std::make_unique<WsTexData>();
+    uint32_t seed = 1234567u; // the lab's noise: same generator, same bytes
+    d->noise.resize(256 * 256 * 4);
+    for (auto& b : d->noise) { seed = seed * 1664525u + 1013904223u; b = uint8_t(seed >> 24); }
+    constexpr int PN = 1024;
+    auto domes = [](int N, double rMin, double rMax, uint32_t sd) {
+        struct P { double x, y, r, h; };
+        std::vector<P> pts;
+        uint32_t s2 = sd;
+        auto r2 = [&] { s2 = s2 * 1664525u + 1013904223u; return s2 / 4294967296.0; };
+        for (int j = 0; j < N; ++j)
+            for (int i = 0; i < N; ++i) {
+                P p;
+                p.x = (i + 0.15 + 0.7 * r2()) / N;
+                p.y = (j + 0.15 + 0.7 * r2()) / N;
+                p.r = (rMin + (rMax - rMin) * r2()) / N;
+                p.h = 0.55 + 0.45 * r2();
+                pts.push_back(p);
+            }
+        std::vector<float> o(size_t(PN) * PN);
+        for (int y = 0; y < PN; ++y)
+            for (int x = 0; x < PN; ++x) {
+                double u = (x + 0.5) / PN, v = (y + 0.5) / PN, m = 0;
+                int    ci = int(std::floor(u * N)), cj = int(std::floor(v * N));
+                for (int dj = -1; dj <= 1; ++dj)
+                    for (int di = -1; di <= 1; ++di) {
+                        P const& p = pts[size_t(((cj + dj + N) % N) * N + ((ci + di + N) % N))];
+                        double dx = std::fabs(u - p.x), dy = std::fabs(v - p.y);
+                        if (dx > 0.5) dx = 1 - dx;
+                        if (dy > 0.5) dy = 1 - dy;
+                        double q = (dx * dx + dy * dy) / (p.r * p.r);
+                        if (q < 1) m = std::max(m, std::pow(1 - q, 0.8) * p.h);
+                    }
+                o[size_t(y) * PN + x] = float(m);
+            }
+        return o;
+    };
+    auto d1 = domes(6, 0.62, 0.98, 11), d2 = domes(15, 0.60, 0.95, 23), d3 = domes(37, 0.55, 0.95, 37), d4 = domes(83, 0.5, 0.95, 51);
+    std::vector<float> cur(size_t(PN) * PN);
+    for (size_t i = 0; i < cur.size(); ++i)
+        cur[i] = d1[i] * 0.60f + d2[i] * 0.26f * (0.35f + 0.65f * d1[i]) + d3[i] * 0.10f * (0.3f + 0.7f * d2[i]) + d4[i] * 0.04f;
+    for (int n = PN;; n >>= 1) {
+        std::vector<uint16_t> lv(cur.size());
+        for (size_t i = 0; i < cur.size(); ++i) lv[i] = uint16_t(std::lround(std::clamp(cur[i], 0.0f, 1.0f) * 65535.0f));
+        d->puff.push_back(std::move(lv));
+        if (n == 1) break;
+        int const          m = n >> 1;
+        std::vector<float> nx(size_t(m) * m);
+        for (int y = 0; y < m; ++y)
+            for (int x = 0; x < m; ++x)
+                nx[size_t(y) * m + x] = (cur[size_t(2 * y) * n + 2 * x] + cur[size_t(2 * y) * n + 2 * x + 1] +
+                                         cur[size_t(2 * y + 1) * n + 2 * x] + cur[size_t(2 * y + 1) * n + 2 * x + 1]) * 0.25f;
+        cur = std::move(nx);
+    }
+    return d;
+}
+
+/// texture with all its mips in one copy (levels[i] = tightly packed rows, bpp bytes per texel)
+ComPtr<ID3D12Resource> uploadLevels(ID3D12Device* dev, ID3D12GraphicsCommandList* list, DXGI_FORMAT fmt, UINT w, UINT h, UINT bpp,
+                                    std::vector<uint8_t const*> const& levels) {
+    D3D12_HEAP_PROPERTIES def{D3D12_HEAP_TYPE_DEFAULT}, up{D3D12_HEAP_TYPE_UPLOAD};
+    D3D12_RESOURCE_DESC   td{};
+    td.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    td.Width            = w;
+    td.Height           = h;
+    td.DepthOrArraySize = 1;
+    td.MipLevels        = UINT16(levels.size());
+    td.Format           = fmt;
+    td.SampleDesc.Count = 1;
+    ComPtr<ID3D12Resource> tex, staging;
+    if (FAILED(dev->CreateCommittedResource(&def, D3D12_HEAP_FLAG_NONE, &td, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex)))) return nullptr;
+    UINT const n = UINT(levels.size());
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> fp(n);
+    std::vector<UINT>   rows(n);
+    std::vector<UINT64> rowBytes(n);
+    UINT64              total = 0;
+    dev->GetCopyableFootprints(&td, 0, n, 0, fp.data(), rows.data(), rowBytes.data(), &total);
+    D3D12_RESOURCE_DESC bd{};
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bd.Width = total; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1;
+    bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(dev->CreateCommittedResource(&up, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&staging)))) return nullptr;
+    uint8_t* p = nullptr;
+    if (FAILED(staging->Map(0, nullptr, reinterpret_cast<void**>(&p)))) return nullptr;
+    for (UINT m = 0; m < n; ++m) {
+        UINT const lw = std::max(1u, w >> m);
+        for (UINT y = 0; y < rows[m]; ++y)
+            std::memcpy(p + fp[m].Offset + UINT64(y) * fp[m].Footprint.RowPitch, levels[m] + size_t(y) * lw * bpp, size_t(lw) * bpp);
+    }
+    staging->Unmap(0, nullptr);
+    for (UINT m = 0; m < n; ++m) {
+        D3D12_TEXTURE_COPY_LOCATION dst{tex.Get(), D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+        dst.SubresourceIndex = m;
+        D3D12_TEXTURE_COPY_LOCATION src{staging.Get(), D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+        src.PlacedFootprint = fp[m];
+        list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    }
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource   = tex.Get();
+    b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    b.Transition.StateAfter  = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    list->ResourceBarrier(1, &b);
+    gGrave.push_back(staging);
+    return tex;
+}
+
+bool makeWsRoot(ID3D12Device* dev) {
+    if (gWsRoot) return true;
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0, 0, 0};
+    D3D12_ROOT_PARAMETER   prm[2]{};
+    prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    prm[0].Constants        = {0, 0, 20};
+    prm[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    prm[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    prm[1].DescriptorTable  = {1, &range};
+    prm[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_STATIC_SAMPLER_DESC smp{};
+    smp.Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    smp.AddressU = smp.AddressV = smp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    smp.MaxLOD           = D3D12_FLOAT32_MAX;
+    smp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC rs{2, prm, 1, &smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    ComPtr<ID3DBlob>          blob, err;
+    if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
+    return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWsRoot)));
+}
+
+/// once per Present while the Cloud Sea is on (overlay thread): textures, heap, root signature
+void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
+    if (gWsTexUp.load()) return;
+    if (!gWsTexStarted.exchange(true)) {
+        wsStatus("making the cloud textures");
+        std::thread([] {
+            auto t = makeWsTextures();
+            std::lock_guard l(gWsTexMutex);
+            gWsTexReady = std::move(t);
+        }).detach();
+        return;
+    }
+    std::unique_ptr<WsTexData> d;
+    {
+        std::lock_guard l(gWsTexMutex);
+        d = std::move(gWsTexReady);
+    }
+    if (!d) return;
+    if (!makeWsRoot(dev)) { wsStatus("root signature failed"); return; }
+    gWsNoise = uploadLevels(dev, list, DXGI_FORMAT_R8G8B8A8_UNORM, 256, 256, 4, {d->noise.data()});
+    std::vector<uint8_t const*> lv;
+    for (auto& l : d->puff) lv.push_back(reinterpret_cast<uint8_t const*>(l.data()));
+    gWsPuff = uploadLevels(dev, list, DXGI_FORMAT_R16_UNORM, 1024, 1024, 2, lv);
+    if (!gWsNoise || !gWsPuff) { wsStatus("texture upload failed"); return; }
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gWsHeap)))) { wsStatus("descriptor heap failed"); return; }
+    UINT const inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    auto       h   = gWsHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+    sv.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sv.Format                  = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sv.Texture2D.MipLevels     = 1;
+    dev->CreateShaderResourceView(gWsNoise.Get(), &sv, h);
+    h.ptr += inc;
+    sv.Format              = DXGI_FORMAT_R16_UNORM;
+    sv.Texture2D.MipLevels = UINT(lv.size());
+    dev->CreateShaderResourceView(gWsPuff.Get(), &sv, h);
+    gWsTexUp = true;
+    wsStatus("ready - waiting for the game's sky draw");
+}
+
+ComPtr<ID3D12PipelineState> makeWsPso(ID3D12Device* dev, GamePso const& g) {
+    ComPtr<ID3D12PipelineState> out;
+#if RF_HAVE_WORLDFX_SHADERS
+    if (!gWsRoot) return out;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
+    d.pRootSignature = gWsRoot.Get();
+    d.VS = {rf::worldfx::shaders::VSCloudSea, sizeof rf::worldfx::shaders::VSCloudSea};
+    d.PS = {rf::worldfx::shaders::PSCloudSea, sizeof rf::worldfx::shaders::PSCloudSea};
+    for (UINT i = 0; i < 8; ++i) {
+        auto& rt = d.BlendState.RenderTarget[i];
+        rt.RenderTargetWriteMask = i == 0 ? D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE : 0;
+        rt.SrcBlend = D3D12_BLEND_ONE; rt.DestBlend = D3D12_BLEND_ZERO; rt.BlendOp = D3D12_BLEND_OP_ADD;
+        rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_ZERO; rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        rt.LogicOp = D3D12_LOGIC_OP_NOOP;
+    }
+    d.BlendState.IndependentBlendEnable = g.numRt > 1;
+    d.SampleMask                        = UINT_MAX;
+    d.RasterizerState.FillMode          = D3D12_FILL_MODE_SOLID;
+    d.RasterizerState.CullMode          = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable   = FALSE;
+    d.PrimitiveTopologyType             = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.NumRenderTargets                  = g.numRt;
+    for (UINT i = 0; i < g.numRt; ++i) d.RTVFormats[i] = g.rtv[i];
+    d.DSVFormat  = g.dsv;
+    d.SampleDesc = g.sample;
+    HRESULT hr   = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&out));
+    if (FAILED(hr)) {
+        char b[16];
+        snprintf(b, sizeof b, "%08X", uint32_t(hr));
+        wsStatus(std::string("pipeline failed (hr=0x") + b + ")");
+        out.Reset();
+    }
+#else
+    (void)dev; (void)g;
+    wsStatus("World FX shaders not in this build (CI generates WorldFxShaders.h)");
+#endif
+    return out;
+}
+
 /// get-or-make one of our pipelines for a tagged game pipeline (never while holding gPsoMutex, see afterGameSky)
 // [RF] Our pipelines are built from the game's sky / clouds pipeline state. They used to be made on the render thread
 // the first time each *game pipeline object* drew: on servers (Hive) the game keeps creating new pipeline objects with
@@ -734,7 +977,7 @@ std::string psoKey(GamePso const& g, int which) {
     std::string k;
     auto put = [&](void const* p, size_t n) { k.append(static_cast<char const*>(p), n); };
     put(&which, sizeof which);
-    ID3D12RootSignature* root = which == 2 ? nullptr : g.root.Get();
+    ID3D12RootSignature* root = (which == 2 || which == 4) ? nullptr : g.root.Get();
     put(&root, sizeof root);
     put(&g.numRt, sizeof g.numRt);
     put(g.rtv, sizeof(DXGI_FORMAT) * g.numRt);
@@ -750,7 +993,7 @@ std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> gDer;     // key ->
 std::unordered_map<std::string, bool>                        gDerBusy;  // being built
 std::atomic<int>                                             gDerBuilt{0}, gDerMsMax{0};
 
-ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { // 0 dome, 1 quads, 2 picture, 3 weather
+ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { // 0 dome, 1 quads, 2 picture, 3 weather, 4 World FX sky
     std::string const key = psoKey(g, which);
     {
         std::lock_guard l(gDerMutex);
@@ -769,7 +1012,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 0), ok ? work.dome : nullptr});
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
-            made.push_back({key, makeExtraPso(d.Get(), g, which)});
+            made.push_back({key, which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -917,16 +1160,18 @@ int kindOf(ID3D12PipelineState* pso) {
     return it->second.kind;
 }
 
-bool wanted() { return gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken; }
-bool wantRoot() { return wanted() && gPictureOn.load(std::memory_order_relaxed); }
-bool hideClouds() { return gUi.hideClouds; }
+bool wanted() { return (gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken) || gWorldSky.load(std::memory_order_relaxed) != 0; }
+bool wantRoot() { return wanted() && (gPictureOn.load(std::memory_order_relaxed) || gWorldSky.load(std::memory_order_relaxed) != 0); }
+bool hideClouds() { return gUi.hideClouds || gWorldSky.load(std::memory_order_relaxed) != 0; }
 
 namespace {
 bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, ID3D12Device* dev, GamePso const& g,
                  BfSkyFrameV1 const& h);
 } // namespace
 
+bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldSky(list, st, calls);
     if (!st.nVb || !st.vb || !st.haveTopo) { ++gSkipped; setStage2("skipped a sky draw (list state not tracked yet)"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
@@ -1072,6 +1317,7 @@ bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls con
 } // namespace
 
 bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    if (gWorldSky.load(std::memory_order_relaxed)) return false; // the World FX sky has no weather layer
     if (!st.nVb || !st.vb || !st.haveTopo) return false;
     auto copy = bfCopy();
     if (!copy) return false;
@@ -1130,7 +1376,66 @@ bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 }
 
 void noteHidden() { ++gHidden; }
-bool vvWanted() { return gUi.vv; }
+
+bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    GamePso g;
+    {
+        std::lock_guard l(gPsoMutex);
+        auto it = gGame.find(st.pso);
+        if (it == gGame.end()) return false;
+        g = it->second;
+    }
+    if (g.vv) { wsStatus("Vibrant Visuals is on: the Cloud Sea draws on the classic renderer for now (turn VV off)"); return false; }
+    if (!st.rootKnown) { wsStatus("waiting for the game's root state"); return false; }
+    if (!gWsTexUp.load()) return false;
+    auto    snap = rf::lyrics::camera();
+    int64_t now  = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wsStatus("waiting for the game camera"); return false; }
+    ComPtr<ID3D12Device> dev;
+    if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
+    ID3D12PipelineState* pso = derived(dev.Get(), g, 4);
+    if (!pso) { wsStatus("building the sky pipeline (in the background)"); return false; }
+    // the deck sits ~56 blocks under where you first stood in this world; a new world (big jump) re-anchors it
+    double const* pos = snap.pos;
+    if (!gAnchored || std::fabs(pos[1] - gAnchor[1]) > 140.0 || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) {
+        gAnchor[0] = pos[0]; gAnchor[1] = pos[1]; gAnchor[2] = pos[2];
+        gAnchored  = true;
+    }
+    float const t = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
+    float c[20]{};
+    std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
+    std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
+    std::memcpy(c + 8, snap.up, 12);      c[11] = t;
+    c[12] = float(pos[0]); c[13] = float(pos[1]); c[14] = float(pos[2]);
+    c[15] = float(std::floor(gAnchor[1]) - 56.0 + gDeckOffset.load());
+    c[16] = float(gAnchor[0]); c[17] = float(gAnchor[2] - 25.0);
+    c[18] = 1.0f; c[19] = 0.0f;
+    ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
+    calls.setHeaps(list, 1, heaps);
+    calls.setRootSig(list, gWsRoot.Get());
+    calls.setConsts(list, 0, 20, c, 0);
+    calls.setTable(list, 1, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
+    calls.setPso(list, pso);
+    calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    calls.draw(list, 3, 1, 0, 0);
+    calls.restoreRoot(list);
+    calls.setPso(list, st.pso);
+    if (st.haveTopo) calls.setTopo(list, st.topo);
+    long const n = ++gWsFrames;
+    if ((n & 63) == 1) wsStatus("drawing (" + std::to_string(n) + " frames, deck at y " + std::to_string(int(c[15])) + ")");
+    return true;
+}
+
+void setWorldSky(int kind) {
+    gWorldSky = kind;
+    if (!kind) wsStatus("off");
+    else if (!gWsTexUp.load()) wsStatus("starting (textures are made at the next frame)");
+}
+int         worldSky() { return gWorldSky.load(); }
+void        setWorldSkyDeck(float o) { gDeckOffset = o; }
+float       worldSkyDeck() { return gDeckOffset.load(); }
+std::string worldSkyStatus() { std::lock_guard l(gWsMutex); return gWsStatus; }
+bool vvWanted() { return gUi.vv && gWorldSky.load(std::memory_order_relaxed) == 0; }
 bool claimVvFrame() {
     uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
     return gVvClaimed.exchange(now) != now;

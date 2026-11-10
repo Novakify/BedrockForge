@@ -9,6 +9,7 @@
 #pragma once
 #include <cstdint>
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 struct ID3D12Device;
@@ -72,5 +73,13 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
 /// Called at Bedrock's cloud draw (after the opaque terrain, depth bound): weather particles, depth-tested.
 bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void noteHidden(); // a vanilla sun / moon / stars / clouds draw was skipped
+
+// ---- World FX standalone sky (no LyricsForge needed): drawn through the same stage-2 hooks.
+// 0 = off, 1 = Cloud Sea (shaders/cloud_sea.hlsl). Wins over a LyricsForge sky while on.
+void        setWorldSky(int kind);
+int         worldSky();
+void        setWorldSkyDeck(float offsetBlocks); // cloud deck height, relative to the automatic one
+float       worldSkyDeck();
+std::string worldSkyStatus();
 
 } // namespace rf::sky
