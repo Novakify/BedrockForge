@@ -10,6 +10,7 @@
 //   LyricsFlow full-screen menu in the port yet).
 // - Sliders also follow a held click ([BF] drag); Java sets them on the click only.
 #include "lyrics/core/Panel.h"
+#include "lyrics/core/Studio.h"
 
 #include <algorithm>
 #include <cmath>
@@ -63,7 +64,9 @@ std::string fontName(std::string const& id) {
                                                           {"orbitron", "Sci-Fi"}, {"marker", "Marker"}, {"glitch", "Glitch"},
                                                           {"typewriter", "Typewriter"}, {"abril", "Fat Serif"}, {"fredoka", "Bubble"},
                                                           {"righteous", "Retro"}, {"rocksalt", "Scribble"}, {"nosifer", "Blood Drip"},
-                                                          {"audiowide", "Racing"}, {"shrikhand", "Groovy"}, {"cinzel", "Royal"}};
+                                                          {"audiowide", "Racing"}, {"shrikhand", "Groovy"}, {"cinzel", "Royal"},
+                                                          // [BF] LyricsFlow 2.2
+                                                          {"caveatbrush", "Brush"}, {"comfortaa", "Comfortaa"}, {"lobster", "Lobster"}};
     auto it = names.find(id);
     return it == names.end() ? id : it->second;
 }
@@ -71,11 +74,17 @@ std::string fontName(std::string const& id) {
 
 std::vector<Panel::SkyPresetInfo> const& Panel::skyOrder() { // SkyPreset.order() + enum colours (top, horizon)
     static std::vector<SkyPresetInfo> const v{
+        {"summer", "Summer Day", 0x1C5CD6, 0xB0D6F8},         {"dawn", "Pastel Dawn", 0x4676E6, 0xFFC4CE}, // realistic
+        {"dusk", "Wildfire Dusk", 0x2E2878, 0xFF8448},        {"bright_night", "Bright Night", 0x140E46, 0x2860BE},
+        {"silver_lining", "Silver Lining", 0x2854AA, 0xC4D6E8},
+        {"rift", "Rift", 0x03030C, 0x1A0B2E},                 {"supernova", "Supernova", 0x040612, 0x101A3A}, // LyricsFlow 2.2
+        {"warp", "Warp", 0x020512, 0x0A1C40},                 {"silk", "Silk", 0x02100E, 0x0B3A3A},
+        {"eclipse", "Eclipse", 0x050A1E, 0x7A3A1C},
         {"inferno", "Inferno", 0x1A0402, 0x7A1C06},           {"matrix", "Matrix", 0x000804, 0x021C0C},
         {"prism", "Prism", 0x070414, 0x1A1036},               {"pulsar", "Pulsar", 0x02030C, 0x0A1430},
         {"aquarell", "Watercolor", 0xE6C8E8, 0xFFE4D2},        {"synthwave", "Synthwave", 0x0B0524, 0x5A1A6E},
         {"aurora", "Aurora", 0x020A14, 0x0B2A33},             {"nebula", "Nebula", 0x07031A, 0x1E0A3A},
-        {"black_hole", "Black hole", 0x010005, 0x0B0618},     {"cosmos", "Cosmos", 0x03020C, 0x12092C},
+        {"black_hole", "Black hole", 0x010005, 0x0B0618},     {"event_horizon", "Event Horizon", 0x000000, 0x2A1206}, {"deep_voyage", "Deep Voyage", 0x000000, 0x0A1E2A}, {"mirror_sky", "Mirror Sky", 0x0034F0, 0x96E8FF}, {"lake_sunset", "Lake Sunset", 0x42488C, 0xFF7820}, {"lupine_sunset", "Lupine Sunset", 0x52288C, 0xFF7A2A},     {"cosmos", "Cosmos", 0x03020C, 0x12092C},
         {"neon_city", "Neon City", 0x050816, 0x2A0E4A},       {"golden_hour", "Golden Hour", 0x2A2350, 0xFF9C5C},
         {"cotton_candy", "Cotton candy", 0x4F90F5, 0xFFC8E4}, {"sakura", "Sakura", 0x3A1A4C, 0xFFB4D9},
         {"frost", "Frost night", 0x0A1A30, 0x5F94C8},         {"midnight", "Midnight", 0x02030A, 0x101A3A},
@@ -391,6 +400,7 @@ std::vector<PanelAction> Panel::frame(PanelInput const& in, Vec3 origin, Config&
         mHovered = false;
         return {};
     }
+    mMedia = media;
     float const age = float(in.nowMs - mBorn), ca = mClosing >= 0 ? float(in.nowMs - mClosing) : -1.0f;
     float t9, t10, t11, t12; // record flight, panel unfold, body fade, record content (WorldPanel.render)
     if (ca < 0) {
@@ -692,11 +702,11 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
     c.text(nrm, 352 - nw, 10.5f, 0.62f, WHITE, (0.8f + 0.2f * hn) * a);
     if (c.clicked("nrm")) c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0});
 
-    static char const* const tabs[] = {"Sky", "Lyrics", "Look", "FX", "FPS", "More"};
+    static char const* const tabs[] = {"Home", "Sky", "Lyrics", "Look", "FX", "More"};
     float const tw = (160.0f - 3.0f * 5) / 6;
     for (int i = 0; i < 6; ++i) {
         float       tx  = 206 + float(i) * (tw + 3);
-        bool        sel = mPage == i;
+        bool        sel = mPage == i || (i == 5 && (mPage == 6 || mPage == 7)); // FPS + Video screen sit under More
         std::string id  = "tab" + std::to_string(i);
         float       h   = c.hit(id, tx, 203, tw, 14);
         c.box(tx, 203, tw, 14, 7, h, a, sel);
@@ -711,11 +721,13 @@ void Panel::body(Ctx& c, Config& cfg, PanelMedia const& np) {
 
     c.pageA = a * outCubic(clamp01(float(c.in.nowMs - mPageTime) / 220.0f));
     switch (mPage) {
-    case 0: skies(c, cfg); break;
-    case 1: lyrics(c, cfg); break;
-    case 2: look(c, cfg, c.fonts); break;
-    case 3: fx(c, cfg); break;
-    case 4: fps(c, cfg); break;
+    case 0: home(c, cfg); break;
+    case 1: skies(c, cfg); break;
+    case 2: lyrics(c, cfg); break;
+    case 3: look(c, cfg, c.fonts); break;
+    case 4: fx(c, cfg); break;
+    case 6: fps(c, cfg); break;
+    case 7: screen(c, cfg); break;
     default: more(c, cfg); break;
     }
 }
@@ -726,7 +738,11 @@ void Panel::skies(Ctx& c, Config& cfg) {
     auto const& ord = skyOrder();
     bool const  on  = cfg.skyPreset != "off";
     c.toggle2("skon", 206, 45, 78, "Sky", on, [&] { cfg.skyPreset = on ? "off" : ord[0].id; }, a);
-    c.toggle2("skpic", 288, 45, 78, "My picture", cfg.skyImage, [&] { cfg.skyImage = !cfg.skyImage; }, a);
+    // [BF] Random: the skies change by themselves (per song and on the big moments) instead of you picking one
+    c.toggle2("skrnd", 288, 45, 78, "Random", cfg.skyShuffle, [&] {
+        cfg.skyShuffle = !cfg.skyShuffle;
+        if (cfg.skyShuffle && cfg.skyPreset == "off") cfg.skyPreset = ord[0].id; // random needs the sky on
+    }, a);
     int const per = 6, pages = int((ord.size() + per - 1) / per);
     mSkyPage      = ((mSkyPage % pages) + pages) % pages;
     float const w = 48, h = 27;
@@ -743,7 +759,7 @@ void Panel::skies(Ctx& c, Config& cfg) {
         else if (hv > 0.01f) c.round(x - 1.5f, y - 1.5f - lift, w + 3, h + 3, 5.5f, WHITE, WHITE, 0.5f * hv * a);
         if (!c.image(std::string("sky.") + sp.id, x, y - lift, w, h, a)) c.round(x, y - lift, w, h, 4, sp.top, sp.horizon, a);
         c.text(c.ellip(sp.name, w, 0.56f), x + 1, y + h + 3, 0.56f, WHITE, (sel ? 1.0f : 0.75f + 0.25f * hv) * a);
-        if (c.clicked(id)) { cfg.skyPreset = sp.id; c.changed = true; }
+        if (c.clicked(id)) { cfg.skyPreset = sp.id; cfg.skyShuffle = false; c.changed = true; } // picking one = your sky
     }
     c.pager("sk", 146, mSkyPage, pages, mSkyPage, a);
     cfg.skyStrength = 0.1f + 0.9f * c.slider("str", "Strength", 162, (cfg.skyStrength - 0.1f) / 0.9f, a);
@@ -815,7 +831,12 @@ void Panel::look(Ctx& c, Config& cfg, FontSet const& fonts) {
     c.toggle2("caps", 206, 148, 78, "Capitals", cfg.allCaps, [&] { cfg.allCaps = !cfg.allCaps; }, a);
     c.toggle2("glow", 288, 148, 78, "Glow", cfg.glow, [&] { cfg.glow = !cfg.glow; }, a);
     bool const typed = cfg.enterAnim == EnterAnim::Neon;
-    c.toggle2("typed", 206, 167, 160, "Typed out", typed, [&] { cfg.enterAnim = typed ? EnterAnim::Word : EnterAnim::Neon; }, a);
+    c.toggle2("typed", 206, 167, 78, "Typed out", typed, [&] { cfg.enterAnim = typed ? EnterAnim::Word : EnterAnim::Neon; }, a);
+    bool const threeD = cfg.twoColor && cfg.textStyle == TextStyle::Neon; // the blue/red offset look of the first fonts
+    c.toggle2("twoc", 288, 167, 78, "3D colours", threeD, [&] {
+        if (threeD) cfg.twoColor = false;
+        else { cfg.twoColor = true; cfg.textStyle = TextStyle::Neon; }
+    }, a);
     static char const* const sh[] = {"No shadow", "Soft", "Strong"};
     for (int i = 0; i < 3; ++i)
         c.option("sh" + std::to_string(i), 206 + float(i) * 54, 186, 50, 13, sh[i], cfg.textShadow == i, [&, i] { cfg.textShadow = i; }, a);
@@ -836,6 +857,12 @@ void applyGroundLook(Config& cfg) {
 // effects that run while a line is up.
 void Panel::fx(Ctx& c, Config& cfg) {
     float const a = c.pageA;
+    c.pager("fxp", 43, mFxPage, 6, mFxPage, a); // 2: animated letters, 3: Director, 4: scenes, 5: cinema, 6: player
+    if (mFxPage == 4) { cinema(c, cfg); return; }
+    if (mFxPage == 5) { hudPage(c, cfg); return; }
+    if (mFxPage == 1) { letterFx(c, cfg); return; }
+    if (mFxPage == 2) { director(c, cfg); return; }
+    if (mFxPage == 3) { scenes(c, cfg); return; }
     c.text("Words come in", 206, 45, 0.62f, WHITE, 0.55f * a);
     static std::pair<EnterAnim, char const*> const ins[] = {{EnterAnim::Word, "Pop"},   {EnterAnim::Fade, "Fade"}, {EnterAnim::Rise, "Rise"},
                                                             {EnterAnim::Drop, "Drop"},  {EnterAnim::Spin, "Spin"}, {EnterAnim::Zoom, "Zoom"},
@@ -848,10 +875,11 @@ void Panel::fx(Ctx& c, Config& cfg) {
     c.text("Words leave", 206, 86, 0.62f, WHITE, 0.55f * a);
     static std::pair<ExitAnim, char const*> const outs[] = {{ExitAnim::FloatUp, "Float up"}, {ExitAnim::Drift, "Drift"},     {ExitAnim::Fade, "Fade"},
                                                             {ExitAnim::Fall, "Fall"}, {ExitAnim::Shatter, "Shatter"}, {ExitAnim::Dissolve, "Dissolve"},
-                                                            {ExitAnim::Explode, "Explode"},  {ExitAnim::Burn, "Burn"},       {ExitAnim::Glitch, "Glitch"}};
-    for (int i = 0; i < 9; ++i) {
+                                                            {ExitAnim::Explode, "Explode"},  {ExitAnim::Burn, "Burn"},       {ExitAnim::Glitch, "Glitch"},
+                                                            {ExitAnim::Vortex, "Vortex"}};
+    for (int i = 0; i < 10; ++i) {
         auto [v, lab] = outs[i];
-        c.option("fo" + std::to_string(i), 206 + float(i % 3) * 54, 94 + float(i / 3) * 15, 51, 13, lab, cfg.exitAnim == v,
+        c.option("fo" + std::to_string(i), 206 + float(i % 4) * 40.5f, 94 + float(i / 4) * 15, 38, 13, lab, cfg.exitAnim == v,
                  [&cfg, v = v] {
                      cfg.exitAnim       = v;
                      cfg.fallingLetters = v == ExitAnim::Fall; // the old toggle follows the choice
@@ -868,6 +896,170 @@ void Panel::fx(Ctx& c, Config& cfg) {
         c.toggle2("fxg", 206, 182, 160, "Ground look (video)", on, [&cfg] { applyGroundLook(cfg); }, a);
     } else
         cfg.fxIntensity = 0.2f + 1.8f * c.slider("fxi", "Break power", 186, (std::clamp(cfg.fxIntensity, 0.2f, 2.0f) - 0.2f) / 1.8f, a);
+}
+
+// [BF] FX page 2: animated letters (fire, water, ice ... drawn per letter by RF's glyph shader), their colour,
+// rainbow, speed and strength.
+void Panel::letterFx(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Animated letters", 206, 45, 0.62f, WHITE, 0.55f * a);
+    static char const* const names[] = {"None", "Neon", "Fire", "Water", "Ice", "Electric", "Lava", "Glitch", "Galaxy", "Ink", "Holo"};
+    for (int i = 0; i < 11; ++i)
+        c.option("lx" + std::to_string(i), 206 + float(i % 4) * 40.5f, 56 + float(i / 4) * 15, 38, 13, names[i], cfg.letterFx == i,
+                 [&cfg, i] { cfg.letterFx = i; }, a);
+    c.text("Colour", 206, 104, 0.62f, WHITE, 0.55f * a);
+    static uint32_t const cols[] = {0, 0xFFFFFF, 0xFF3B3B, 0xFF8A1E, 0xFFE03A, 0x3BFF6A, 0x2EE6FF, 0x3B6BFF, 0xA64BFF, 0xFF4FD8};
+    for (int i = 0; i < 10; ++i) {
+        float       x = 212 + float(i) * 16, y = 118;
+        bool        sel = (cols[i] == 0 && cfg.letterFxColor == 0) || (cols[i] != 0 && (uint32_t(cfg.letterFxColor) & 0xFFFFFFu) == cols[i] && cfg.letterFxColor != 0);
+        std::string id  = "lxc" + std::to_string(i);
+        float       hv  = c.hit(id, x - 6, y - 6, 12, 12);
+        if (sel) { c.disc(x, y, 6.6f, WHITE, a); c.disc(x, y, 5.2f, BOTTOM, a); }
+        float r = 4.6f + hv * 0.6f;
+        if (cols[i] == 0) { // "text colour": the theme's two colours
+            auto const th = currentTheme(cfg);
+            c.disc(x, y, r, th.a & 0xFFFFFF, a);
+            c.disc(x, y, r * 0.55f, th.main & 0xFFFFFF, a);
+        } else
+            c.disc(x, y, r, cols[i], a);
+        if (c.clicked(id)) { cfg.letterFxColor = cols[i] == 0 ? 0 : int32_t(0xFF000000u | cols[i]); c.changed = true; }
+    }
+    c.toggle2("lxr", 206, 128, 78, "Rainbow", cfg.fxRainbow, [&] { cfg.fxRainbow = !cfg.fxRainbow; }, a);
+    cfg.letterFxSpeed = 0.25f + 2.75f * c.slider("lxs", "Speed", 152, (std::clamp(cfg.letterFxSpeed, 0.25f, 3.0f) - 0.25f) / 2.75f, a);
+    cfg.letterFxIntensity =
+        0.2f + 1.8f * c.slider("lxi", "Strength", 168, (std::clamp(cfg.letterFxIntensity, 0.2f, 2.0f) - 0.2f) / 1.8f, a);
+    if (cfg.letterFx != 0 && cfg.font == "minecraft")
+        c.text("Pixel font: pick another font to see it", 206, 184, 0.55f, ACCENT2, 0.8f * a);
+}
+
+// [BF] FX page 3: the Director (Conductor) - what reacts to the song, and how strongly
+void Panel::director(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Director", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.toggle2("dr", 206, 54, 78, "Director", cfg.director, [&] { cfg.director = !cfg.director; }, a);
+    c.toggle2("tc", 288, 54, 78, "Title card", cfg.titleCard, [&] { cfg.titleCard = !cfg.titleCard; }, a);
+    c.toggle2("hw", 206, 70, 78, "Hero words", cfg.heroWords, [&] { cfg.heroWords = !cfg.heroWords; }, a);
+    c.toggle2("cg", 288, 70, 78, "Contrast", cfg.contrastGuard, [&] { cfg.contrastGuard = !cfg.contrastGuard; }, a);
+    c.toggle2("cs", 206, 86, 78, "Sky writes", cfg.constellations, [&] { cfg.constellations = !cfg.constellations; }, a);
+    c.toggle2("sm", 206, 102, 52, "Memory", cfg.songMemory, [&] { cfg.songMemory = !cfg.songMemory; }, a);
+    c.toggle2("ac", 260, 102, 52, "Album", cfg.albumColors, [&] { cfg.albumColors = !cfg.albumColors; }, a);
+    c.toggle2("at", 314, 102, 52, "Motes", cfg.atmosphere, [&] { cfg.atmosphere = !cfg.atmosphere; }, a);
+    // [BF] the full-screen look (RF on D3D12): grade per scene, impact frames on drops, cinema bars in builds
+    c.toggle2("gr", 206, 118, 52, "Grade", cfg.cinemaGrade, [&] { cfg.cinemaGrade = !cfg.cinemaGrade; }, a);
+    c.toggle2("if", 260, 118, 52, "Impact", cfg.impactFrames, [&] { cfg.impactFrames = !cfg.impactFrames; }, a);
+    c.toggle2("lb", 314, 118, 52, "Bars", cfg.letterbox, [&] { cfg.letterbox = !cfg.letterbox; }, a);
+    c.toggle2("fb", 288, 86, 78, "FOV breath", cfg.fovBreath, [&] { cfg.fovBreath = !cfg.fovBreath; }, a);
+    c.text("Reactivity", 206, 140, 0.62f, WHITE, 0.55f * a);
+    static char const* const r[] = {"Soft", "Balanced", "Dynamic", "Cinema"};
+    for (int i = 0; i < 4; ++i)
+        c.option("rx" + std::to_string(i), 206 + float(i) * 40.5f, 148, 38, 13, r[i], cfg.reactivity == i, [&cfg, i] { cfg.reactivity = i; }, a);
+    static char const* const tip[] = {"gentle: the lyrics stay the focus", "calm verses, full choruses",
+                                      "big contrast between sections", "everything for the drop"};
+    c.text(tip[std::clamp(cfg.reactivity, 0, 3)], 206, 166, 0.55f, ACCENT2, 0.8f * a);
+    // [BF] lyric-video words, Showcase camera cuts, cover colour in the grade, end credits
+    c.option("kw", 206, 177, 38, 13, "Words", cfg.kineticWords, [&] { cfg.kineticWords = !cfg.kineticWords; }, a);
+    c.option("dc", 246.5f, 177, 38, 13, "Cuts", cfg.directorCuts, [&] { cfg.directorCuts = !cfg.directorCuts; }, a);
+    c.option("st", 287, 177, 38, 13, "Tint", cfg.songTint, [&] { cfg.songTint = !cfg.songTint; }, a);
+    c.option("so", 327.5f, 177, 38, 13, "Outro", cfg.songOutro, [&] { cfg.songOutro = !cfg.songOutro; }, a);
+    // [LyricsForge] the sky lights the world: its colour on the ground, drops flood it, dark moments dim it
+    c.toggle2("wl", 206, 193, 78, "Sky light", cfg.worldLight, [&] { cfg.worldLight = !cfg.worldLight; }, a);
+    c.toggle2("pc", 288, 193, 78, "PvP calm", cfg.combatCalm, [&] { cfg.combatCalm = !cfg.combatCalm; }, a);
+}
+
+// [BF] FX page 4: Scene Studio - one tap sets the whole look (sky, letters, colours, motion, Director style)
+void Panel::scenes(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Scenes", 206, 45, 0.62f, WHITE, 0.55f * a);
+    auto const& all = builtinScenes();
+    for (size_t i = 0; i < all.size() && i < 18; ++i) { // 2 columns x 9 rows
+        auto const& s = all[i];
+        c.option("sc" + std::to_string(i), 206 + float(i % 2) * 81, 52 + float(i / 2) * 11, 78, 10, s.name, cfg.scene == s.id,
+                 [&cfg, &s] { applyScene(cfg, s); }, a);
+    }
+    c.toggle2("ss", 206, 153, 160, "Remember per song", cfg.songScenes, [&] { cfg.songScenes = !cfg.songScenes; }, a);
+    std::string mood = "pick a scene: sky, letters and Director move together";
+    if (auto s = findScene(cfg.scene)) mood = s->mood;
+    c.text(mood, 206, 172, 0.52f, ACCENT2, 0.8f * a);
+}
+
+// [BF] FX page 5: Cinema - the newest touches, Showcase, tap-sync (fix a song's timing by clicking on each line) and
+// placing the lyrics by hand
+void Panel::cinema(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Cinema", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.toggle2("rb", 206, 54, 78, "Ribbon", cfg.wordRibbon, [&] { cfg.wordRibbon = !cfg.wordRibbon; }, a);
+    c.toggle2("mi", 288, 54, 78, "Impacts", cfg.materialImpacts, [&] { cfg.materialImpacts = !cfg.materialImpacts; }, a);
+    c.toggle2("sd", 206, 70, 78, "Stereo drift", cfg.stereoDrift > 0.01f, [&] { cfg.stereoDrift = cfg.stereoDrift > 0.01f ? 0.0f : 0.5f; }, a);
+    c.toggle2("sc", 288, 70, 78, "Showcase", cfg.showcase, [&] { cfg.showcase = !cfg.showcase; }, a);
+    c.option("sn", 206, 87, 52, 14, "Snow", cfg.snowAnySky, [&] { cfg.snowAnySky = !cfg.snowAnySky; }, a);
+    c.option("lo", 260, 87, 52, 14, "Lyrics", cfg.showLyrics, [&] { cfg.showLyrics = !cfg.showLyrics; }, a);
+    c.option("in", 314, 87, 52, 14, "Beats", cfg.instrumentalFx, [&] { cfg.instrumentalFx = !cfg.instrumentalFx; }, a); // [BF] instrumentals
+    // tap-sync
+    auto const& m = mMedia;
+    c.text("Tap sync", 206, 104, 0.62f, WHITE, 0.55f * a);
+    if (!m.tapOn) {
+        c.option("ts0", 206, 112, 160, 14, m.hasLyrics ? "Start tap sync" : "Tap sync (needs lyrics)", false, [&] {
+            if (m.hasLyrics) c.actions.push_back({PanelAction::Kind::TapStart, 0});
+        }, a);
+        c.text("click TAP as each line starts", 206, 130, 0.5f, ACCENT2, 0.7f * a);
+    } else {
+        std::string const next = m.tapNext.empty() ? "(last line)" : m.tapNext;
+        c.text("next: " + next.substr(0, std::min<size_t>(next.size(), 34)), 206, 112, 0.52f, ACCENT2, 0.85f * a);
+        c.option("ts1", 206, 119, 160, 15, "TAP  (" + std::to_string(m.taps) + ")", true, [&] { c.actions.push_back({PanelAction::Kind::Tap, 0}); }, a);
+        c.option("ts2", 206, 136, 52, 12, "Undo", false, [&] { c.actions.push_back({PanelAction::Kind::TapUndo, 0}); }, a);
+        c.option("ts3", 260, 136, 52, 12, "Save", false, [&] { c.actions.push_back({PanelAction::Kind::TapSave, 0}); }, a);
+        c.option("ts4", 314, 136, 52, 12, "Cancel", false, [&] { c.actions.push_back({PanelAction::Kind::TapCancel, 0}); }, a);
+        // mark the song's moments while it plays: the Director hits exactly there from now on
+        c.text("mark now (" + std::to_string(m.marks) + "):", 206, 153, 0.5f, ACCENT2, 0.8f * a);
+        static char const* const mk[] = {"Build", "Drop", "Chorus", "Calm"};
+        static char const kk[] = {'b', 'd', 'c', 'q'};
+        for (int i = 0; i < 4; ++i)
+            c.option("tm" + std::to_string(i), 206 + float(i) * 40.5f, 161, 38, 12, mk[i], false,
+                     [&c, i] { c.actions.push_back({PanelAction::Kind::TapMark, int64_t(kk[i])}); }, a);
+        return; // the place-lyrics block comes back after tap-sync
+    }
+    // place by hand (floating lyrics)
+    c.text("Place lyrics", 206, 153, 0.62f, WHITE, 0.55f * a);
+    c.option("pn0", 206, 161, 78, 13, "Pin here", cfg.pinned, [&] { c.actions.push_back({PanelAction::Kind::PinHere, 0}); }, a);
+    c.option("pn1", 288, 161, 78, 13, "Unpin", false, [&] { cfg.pinned = false; }, a);
+    if (cfg.pinned) {
+        double const yr = cfg.pinYaw * kPi / 180.0;
+        float const  fx = float(-std::sin(yr)), fz = float(std::cos(yr)); // the way you faced when pinning
+        c.option("pn2", 206, 176, 38, 12, "Up", false, [&] { cfg.pinY += 0.25f; }, a);
+        c.option("pn3", 246.5f, 176, 38, 12, "Down", false, [&] { cfg.pinY -= 0.25f; }, a);
+        c.option("pn4", 287, 176, 38, 12, "Closer", false, [&] { cfg.pinX -= fx * 0.5f; cfg.pinZ -= fz * 0.5f; }, a);
+        c.option("pn5", 327.5f, 176, 38, 12, "Farther", false, [&] { cfg.pinX += fx * 0.5f; cfg.pinZ += fz * 0.5f; }, a);
+    } else if (cfg.lyricsStyle != LyricsStyle::Floating)
+        c.text("pinning moves Floating lyrics", 206, 178, 0.5f, ACCENT2, 0.7f * a);
+}
+
+// [BF] FX page 6: the corner music player (LyricsFlow 2.2's Extra tab idea)
+void Panel::hudPage(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.text("Music player", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.toggle2("hp", 206, 54, 78, "Show it", cfg.hudPlayer, [&] { cfg.hudPlayer = !cfg.hudPlayer; }, a);
+    c.toggle2("hl", 288, 54, 78, "Lyrics in it", cfg.hudPlayerLyrics, [&] { cfg.hudPlayerLyrics = !cfg.hudPlayerLyrics; }, a);
+    c.toggle2("hr", 206, 70, 78, "Rounded", cfg.hudRound, [&] { cfg.hudRound = !cfg.hudRound; }, a);
+    c.toggle2("hc", 288, 70, 78, "Cover colour", cfg.hudColorFromCover, [&] { cfg.hudColorFromCover = !cfg.hudColorFromCover; }, a);
+    c.text("Place", 206, 92, 0.62f, WHITE, 0.55f * a);
+    static char const* const where[] = {"Top left", "Top right", "Low left", "Low right"};
+    static float const wx[] = {0.01f, 0.99f, 0.01f, 0.99f}, wy[] = {0.12f, 0.12f, 0.62f, 0.62f};
+    for (int i = 0; i < 4; ++i) {
+        bool const sel = std::fabs(cfg.hudPlayerX - wx[i]) < 0.02f && std::fabs(cfg.hudPlayerY - wy[i]) < 0.02f;
+        c.option("hw" + std::to_string(i), 206 + float(i % 2) * 82, 100 + float(i / 2) * 15, 78, 13, where[i], sel,
+                 [&cfg, i] { cfg.hudPlayerX = wx[i]; cfg.hudPlayerY = wy[i]; }, a);
+    }
+    c.option("hu", 206, 133, 38, 12, "Up", false, [&] { cfg.hudPlayerY = std::max(0.0f, cfg.hudPlayerY - 0.04f); }, a);
+    c.option("hd", 246.5f, 133, 38, 12, "Down", false, [&] { cfg.hudPlayerY = std::min(1.0f, cfg.hudPlayerY + 0.04f); }, a);
+    c.option("hs", 287, 133, 38, 12, "Smaller", false, [&] { cfg.hudPlayerScale = std::max(0.5f, cfg.hudPlayerScale - 0.1f); }, a);
+    c.option("hb", 327.5f, 133, 38, 12, "Bigger", false, [&] { cfg.hudPlayerScale = std::min(2.0f, cfg.hudPlayerScale + 0.1f); }, a);
+    c.text("More", 206, 152, 0.62f, WHITE, 0.55f * a);
+    c.option("tl", 206, 161, 52, 14, "Translate", cfg.translations, [&] { cfg.translations = !cfg.translations; }, a);
+    c.option("pt", 260, 161, 52, 14, "Portals", cfg.portals, [&] { cfg.portals = !cfg.portals; }, a);
+    c.option("sl", 314, 161, 52, 14, "Framing", cfg.shotLanguage, [&] { cfg.shotLanguage = !cfg.shotLanguage; }, a);
+    // [BF] Clip mode: OBS (Replay Buffer running) or NVIDIA saves the big moment - LyricsForge presses the save hotkey
+    c.option("cm", 206, 178, 160, 14, cfg.clipMode ? "Clip mode: on (saves a replay)" : "Clip mode: off", cfg.clipMode,
+             [&] { cfg.clipMode = !cfg.clipMode; }, a);
 }
 
 // [BF] The 4th tab: LyricsFlow 2.1's performance settings (Profiles, quality, Auto FPS, FPS boost) laid out with the
@@ -896,6 +1088,62 @@ void Panel::fps(Ctx& c, Config& cfg) {
     c.text(b, 206, 177, 0.56f, WHITE, 0.6f * a);
 }
 
+// [BF] Cinema home: the first thing you see. Scene cards with a living preview, one Intensity dial, the big switches,
+// "Save as my scene". The small toggles live behind Advanced (the FX tab).
+void Panel::home(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    std::vector<StudioScene const*> all;
+    for (auto const& s : builtinScenes()) all.push_back(&s);
+    if (mMedia.userScenes)
+        for (auto const& s : *mMedia.userScenes) all.push_back(&s);
+    c.text("Scenes", 206, 45, 0.62f, WHITE, 0.55f * a);
+    c.option("hauto", 250, 42, 66, 12, cfg.autoScene ? "Auto: on" : "Auto: off", cfg.autoScene, [&] { cfg.autoScene = !cfg.autoScene; }, a);
+    int const per = 6, pages = std::max(1, int((all.size() + per - 1) / per));
+    mHomePage = ((mHomePage % pages) + pages) % pages;
+    auto const& ord = skyOrder();
+    auto skyInfo = [&](std::string const& id) -> SkyPresetInfo const* {
+        for (auto const& sp : ord) if (id == sp.id) return &sp;
+        return nullptr;
+    };
+    float const w = 50, h = 28, t = float(c.in.nowMs) / 1000.0f;
+    for (int i = 0; i < per; ++i) {
+        size_t idx = size_t(mHomePage * per + i);
+        if (idx >= all.size()) break;
+        StudioScene const& s = *all[idx];
+        float const x = 206 + float(i % 3) * (w + 5), y = 58 + float(i / 3) * (h + 12);
+        bool const  sel = cfg.scene == s.id;
+        std::string const id = "hs" + s.id;
+        float const hv = c.hit(id, x - 1, y - 1, w + 2, h + 11), lift = hv * 1.2f;
+        if (sel) c.round(x - 2, y - 2 - lift, w + 4, h + 4, 6, ACCENT, ACCENT2, a);
+        else if (hv > 0.01f) c.round(x - 1.5f, y - 1.5f - lift, w + 3, h + 3, 5.5f, WHITE, WHITE, 0.5f * hv * a);
+        // the living preview: the scene's sky (picture tile when there is one), light sweeping across it, the letter
+        // colour pulsing with the music - the selected card plays its chorus look when the song is in one
+        auto const* sp = skyInfo(s.sky);
+        if (!sp || !c.image(std::string("sky.") + s.sky, x, y - lift, w, h, a))
+            c.round(x, y - lift, w, h, 4, sp ? sp->top : 0x2A1F4A, sp ? sp->horizon : 0x6A4FB0, a);
+        float const ph = std::fmod(t * 0.35f + float(idx) * 0.37f, 1.6f) - 0.3f; // a soft band of light drifting over
+        if (ph > 0 && ph < 1) c.round(x + ph * (w - 10), y - lift + 2, 10, h - 4, 5, WHITE, WHITE, 0.10f * a * std::sin(ph * 3.14159f));
+        uint32_t const col = s.fxColor ? uint32_t(s.fxColor) & 0xFFFFFF : (sp ? sp->horizon : ACCENT2);
+        float const pulse = c.in.beatLive ? c.in.beat : 0.5f + 0.5f * std::sin(t * 2.0f + float(idx));
+        c.disc(x + w - 7, y - lift + 7, 2.4f + 1.2f * pulse, col, (0.6f + 0.4f * pulse) * a);
+        if (sel && mMedia.lifted) c.text("CHORUS", x + 3, y - lift + h - 8, 0.45f, WHITE, (0.6f + 0.4f * pulse) * a);
+        c.text(c.ellip(s.name, w, 0.52f), x + 1, y + h + 2.5f, 0.52f, WHITE, (sel ? 1.0f : 0.72f + 0.28f * hv) * a);
+        if (c.clicked(id)) { applyScene(cfg, s); c.changed = true; }
+    }
+    c.pager("hp", 42, mHomePage, pages, mHomePage, a);
+    float const iv = c.slider("hint", "Intensity", 142, (std::clamp(cfg.intensity, 0.3f, 1.6f) - 0.3f) / 1.3f, a);
+    cfg.intensity = 0.3f + 1.3f * iv;
+    // lit pills (a toggle's switch leaves no room for the word at this width - seen in game)
+    c.option("hsc", 206, 156, 52, 15, "Showcase", cfg.showcase, [&] { cfg.showcase = !cfg.showcase; }, a);
+    c.option("hcl", 260, 156, 52, 15, "Chorus", cfg.chorusLooks, [&] { cfg.chorusLooks = !cfg.chorusLooks; }, a);
+    c.option("hdm", 314, 156, 52, 15, "Drops", cfg.dropMoment, [&] { cfg.dropMoment = !cfg.dropMoment; }, a);
+    c.option("hsv", 206, 175, 78, 14, "Save as my scene", false, [&] { c.actions.push_back({PanelAction::Kind::SaveScene, 0}); }, a);
+    c.option("hadv", 288, 175, 78, 14, "Advanced \xE2\x80\xBA", false, [&] { mPage = 4; mFxPage = 0; mPageTime = c.in.nowMs; }, a);
+    std::string mood = cfg.autoScene ? "Auto: each song gets a scene that fits it" : "pick a scene: the whole world changes with it";
+    if (auto sc = findScene(cfg.scene, mMedia.userScenes ? *mMedia.userScenes : std::vector<StudioScene>{})) mood = sc->mood;
+    c.text(c.ellip(mood, 160, 0.5f), 206, 193, 0.5f, ACCENT2, 0.8f * a);
+}
+
 void Panel::more(Ctx& c, Config& cfg) {
     float const a = c.pageA;
     c.toggle(0, "Top bar", cfg.showTopBar, [&] { cfg.showTopBar = !cfg.showTopBar; }, a);
@@ -904,14 +1152,67 @@ void Panel::more(Ctx& c, Config& cfg) {
     c.toggle2("png", 288, 87, 78, "Ping", cfg.ping, [&] { cfg.ping = !cfg.ping; }, a);
     c.toggle2("hb", 206, 107, 78, "Glass hotbar", cfg.customHotbar, [&] { cfg.customHotbar = !cfg.customHotbar; }, a);
     c.toggle2("snd", 288, 107, 78, "Menu sounds", cfg.uiSounds, [&] { cfg.uiSounds = !cfg.uiSounds; }, a);
-    c.option("m0", 206, 128, 160, 15, "Open full menu", false, [&] { c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0}); }, a);
-    c.toggle2("m1", 206, 145, 160, "Random sky", cfg.skyShuffle, [&] { cfg.skyShuffle = !cfg.skyShuffle; }, a);
+    c.option("m0", 206, 128, 78, 15, "Full menu", false, [&] { c.actions.push_back({PanelAction::Kind::OpenFullMenu, 0}); }, a);
+    // [BF] your own lyrics for this song: written next to the config, opened in Notepad, picked up when you save
+    c.option("m2", 288, 128, 78, 15, "Edit lyrics", false, [&] { c.actions.push_back({PanelAction::Kind::EditLyrics, 0}); }, a);
+    c.toggle2("m1", 206, 145, 78, "My picture", cfg.skyImage, [&] { cfg.skyImage = !cfg.skyImage; }, a); // [BF] moved here
+    c.option("m4", 288, 145, 78, 16, "FPS & quality", false, [&] { mPage = 6; mPageTime = c.in.nowMs; }, a);
     // [BF] player card look (replaces a second "open the full menu" button)
     c.text("Player", 206, 166, 0.62f, WHITE, 0.6f * a);
     static char const* const ps[] = {"Classic", "Glass", "Neon"};
     for (int i = 0; i < 3; ++i)
         c.option("ps" + std::to_string(i), 238 + float(i) * 43, 162, 41, 15, ps[i], cfg.playerStyle == i, [&cfg, i] { cfg.playerStyle = i; }, a);
-    c.option("m3", 206, 179, 160, 15, "Close", false, [&] { c.actions.push_back({PanelAction::Kind::Close, 0}); }, a);
+    // [LyricsForge] video screen page (a window from your PC playing in the world)
+    c.option("m5", 206, 179, 78, 15, cfg.screenOn ? "Video screen (on)" : "Video screen", cfg.screenOn,
+             [&] { mPage = 7; mPageTime = c.in.nowMs; c.actions.push_back({PanelAction::Kind::ScreenRefresh, 0}); }, a);
+    c.option("m3", 288, 179, 78, 15, "Close", false, [&] { c.actions.push_back({PanelAction::Kind::Close, 0}); }, a);
+}
+
+// [LyricsForge] Video screen: pick a window (browser, video player, a whole monitor), where it stands, how big, Anime4K.
+void Panel::screen(Ctx& c, Config& cfg) {
+    float const a = c.pageA;
+    c.toggle2("vs", 206, 45, 78, "Screen", cfg.screenOn, [&] {
+        cfg.screenOn = !cfg.screenOn;
+        if (cfg.screenOn) c.actions.push_back({PanelAction::Kind::ScreenHere, 0}); // switched on: in front of you
+    }, a);
+    c.toggle2("vsf", 288, 45, 78, "Fade in fights", cfg.screenCombatFade, [&] { cfg.screenCombatFade = !cfg.screenCombatFade; }, a);
+
+    // window picker: < name > (click the name = next), the list is refreshed when the page opens / on Refresh
+    c.text("Window", 206, 65, 0.62f, WHITE, 0.55f * a);
+    auto const* src = mMedia.screenSources;
+    int const   n   = src ? int(src->size()) : 0;
+    int         cur = -1;
+    for (int i = 0; i < n; ++i)
+        if ((*src)[size_t(i)].first == cfg.screenWindow) { cur = i; break; }
+    auto pick = [&cfg, src, n](int i) {
+        if (n <= 0) return;
+        i = ((i % n) + n) % n;
+        cfg.screenWindow = (*src)[size_t(i)].first;
+    };
+    c.option("vs<", 206, 74, 16, 15, "\xE2\x80\xB9", false, [&] { pick(cur < 0 ? n - 1 : cur - 1); }, a);
+    std::string const shown = !mMedia.screenSource.empty() ? mMedia.screenSource
+                            : cur >= 0                     ? (*src)[size_t(cur)].second
+                            : n > 0                        ? std::string("Pick a window \xE2\x80\xBA")
+                                                           : std::string("No windows found");
+    c.option("vsn", 224, 74, 124, 15, shown, false, [&] { pick(cur + 1); }, a);
+    c.option("vs>", 350, 74, 16, 15, "\xE2\x80\xBA", false, [&] { pick(cur + 1); }, a);
+
+    c.text("Place", 206, 95, 0.62f, WHITE, 0.55f * a);
+    static char const* const where[] = {"Sky", "Pinned", "Beside"};
+    for (int i = 0; i < 3; ++i)
+        c.option("vp" + std::to_string(i), 234 + float(i) * 44, 92, 42, 13, where[i], cfg.screenPlace == i, [&cfg, i] { cfg.screenPlace = i; }, a);
+    c.option("vh", 206, 109, 78, 14, "Put it here", false, [&] { c.actions.push_back({PanelAction::Kind::ScreenHere, 0}); }, a);
+    c.option("vr", 288, 109, 78, 14, "Refresh list", false, [&] { c.actions.push_back({PanelAction::Kind::ScreenRefresh, 0}); }, a);
+
+    cfg.screenSize    = 0.3f + 2.7f * c.slider("vsz", "Size", 131, (std::clamp(cfg.screenSize, 0.3f, 3.0f) - 0.3f) / 2.7f, a);
+    cfg.screenOpacity = 0.1f + 0.9f * c.slider("vop", "Opacity", 146, (std::clamp(cfg.screenOpacity, 0.1f, 1.0f) - 0.1f) / 0.9f, a);
+
+    c.text("Anime4K", 206, 165, 0.62f, WHITE, 0.55f * a);
+    static char const* const up[] = {"Off", "Sharp", "Max"};
+    for (int i = 0; i < 3; ++i)
+        c.option("vu" + std::to_string(i), 250 + float(i) * 39, 162, 37, 13, up[i], cfg.screenUpscale == i, [&cfg, i] { cfg.screenUpscale = i; }, a);
+    std::string const st = cfg.screenOn ? mMedia.screenStatus : std::string("off");
+    c.text(c.ellip(st, 160, 0.55f), 206, 182, 0.55f, ACCENT2, 0.8f * a);
 }
 
 } // namespace bf::lyrics

@@ -16,7 +16,7 @@ struct Config;
 
 namespace bf::lyrics::sky {
 
-enum class Weather : int { None, Rain, Snow, Blizzard, Thunder, Embers, Fireflies, Petals };
+enum class Weather : int { None, Rain, Snow, Blizzard, Thunder, Embers, Fireflies, Petals, SpaceDust }; // [LyricsForge] SpaceDust: motes round you on space skies
 enum class BodyKind : int { Sun = 0, Moon = 1, Eclipse = 2, Synth = 3 };
 
 struct Preset {
@@ -30,7 +30,7 @@ struct Preset {
     bool        shootingStars;
     uint32_t    lyricColor;
     int         ordinal; // enum ordinal = shader PRESET (>= 20 painted)
-    bool painted() const { return ordinal >= 20; }
+    bool painted() const { return ordinal >= 20 && ordinal <= 37; } // 38+: the realistic skies draw their own way
 };
 
 struct Body {
@@ -39,15 +39,16 @@ struct Body {
     BodyKind kind;
 };
 
-/// All 29 presets in enum order (index == ordinal).
+/// All 38 presets in enum order (index == ordinal).
 std::vector<Preset> const& presets();
-/// SkyPreset.order(): the 20 presets the menu shows.
+/// SkyPreset.order(): the 25 presets the menu shows (LyricsFlow 2.2).
 std::vector<std::string_view> const& order();
 /// By id; "custom" gets the CUSTOM colours from cfg (SkyPreset.applyCustom). nullopt for "off"/unknown.
 std::optional<Preset> find(std::string_view id, Config const& cfg);
 
 /// LiveSky.body(): sun/moon for the presets that have one.
 std::optional<Body> body(Preset const& p);
+float frontAz(Preset const& p); // [BF] the sky's signature direction (deg)
 /// WorldSky.aurora1/2 (palette override, else preset colours with LyricsFlow's fallbacks).
 uint32_t aurora1(Preset const& p, Config const& cfg);
 uint32_t aurora2(Preset const& p, Config const& cfg);
@@ -58,7 +59,7 @@ using Params = std::array<Texel, 16>;
 
 /// LiveSkyShader.params(): `time` is WorldSky.skyTime (seconds, speed-scaled), `invRot` the inverse of the view
 /// rotation, row-major m00 m01 m02 m10 ... (identity when the dome is drawn in world axes).
-Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9]);
+Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9], float domeYaw = 0); // [BF] domeYaw: degrees the dome turns (signature in front of the player)
 
 /// WorldSky.initStars(): 1300 stars from java.util.Random(1337), same order of draws.
 struct Star {
@@ -98,6 +99,7 @@ class Clock {
 public:
     struct In {
         double dtSec      = 0;     // real frame time (clamped to 0.1 like Java)
+        double rate       = 1;     // [LyricsForge] sky drift rate (can be negative: the sky turns back for a moment)
         float  night      = 1;     // 0 day .. 1 night (Minecraft time 13000..23000 = 1, 1000-tick ramps)
         float  beat       = 0;     // NowPlaying.beatPulse
         bool   lineActive = true;  // a lyric line is playing (else "calm" eases to 0.7)

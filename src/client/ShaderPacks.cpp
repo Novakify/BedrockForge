@@ -1,4 +1,6 @@
 #include "client/ShaderPacks.h"
+#include "client/AsyncFile.h"
+#include <sstream>
 
 #include <algorithm>
 #include <atomic>
@@ -199,11 +201,7 @@ void install(fs::path const& modDir) {
 void writeReport() {
     static char const* api[4] = {"CreateFileW", "CreateFile2", "NtCreateFile", "NtOpenFile"};
     std::lock_guard lock(gNamesMutex);
-    std::error_code ec;
-    auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
-    fs::create_directories(dir, ec);
-    std::ofstream out{dir / "shaderpacks.txt"};
-    if (!out) return;
+    std::ostringstream out; // [BF] built here, written off the game thread (asyncfile)
     for (int i = 0; i < 4; ++i) out << api[i] << ": saw " << gSeen[i].load() << " material opens, redirected " << gRedirected[i].load() << "\n";
     auto st = gState.load();
     out << "active shaderpack: " << gActiveName << "\nresource-pack shaders: " << (st->rpDir.empty() ? "off" : fs::path(st->rpDir).string())
@@ -213,6 +211,7 @@ void writeReport() {
     forgerender::writeReport(out);
     out << "all material opens (api path):\n";
     for (auto& n : gSeenPaths) out << "  " << fs::path(n).string() << "\n";
+    asyncfile::write(ll::mod::NativeMod::current()->getModDir() / "logs" / "shaderpacks.txt", out.str());
 }
 
 void reportOnce() {

@@ -13,12 +13,21 @@
 
 #include <map>
 
+#include "lyrics/core/Bands.h"
 #include "lyrics/core/Fetcher.h"
 #include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Media.h"
 #include "lyrics/core/Panel.h"
 
 namespace bf::lyrics::win {
+
+/// [BF] open a file in Notepad (the lyric override editor). Shell_win.cpp
+void openInNotepad(std::filesystem::path const& p);
+/// [BF] Clip mode: press a key combo system-wide (virtual keys, modifiers first), on a short-lived thread. Shell_win.cpp
+void pressHotkey(int const* vks, int count);
+/// [BF] Clip to TikTok: wait for the recorder's new clip in `folder` (90 s), then make a vertical 1080x1920 copy next
+/// to it with ffmpeg (hint / local / PATH / winget), on a low-priority background process. Logged to logFile.
+void verticalClip(std::filesystem::path folder, std::filesystem::path ffmpegHint, std::filesystem::path localFfmpeg, std::filesystem::path logFile);
 
 fetch::HttpResponse httpGet(std::string const& url, fetch::Headers const& headers, int64_t deadlineMs);
 
@@ -54,6 +63,13 @@ void  bassStop();
 void  bassWanted(bool on);
 /// 0..1, 1 on a hard bass hit, decaying; *live = audio is coming in right now.
 float bassLevel(float dt, bool* live);
+/// [BF] Song Memory: keep the loopback open while a song plays, and the 50 ms band frames it produced since the last call
+void      memoryWanted(bool on);
+void      audioFrames(std::vector<BandFrame>& out);
+BandFrame audioLatest();
+std::string audioDevice(); // [LyricsForge] the output the loopback listens to
+/// [BF] stereo balance of what is playing, -1 left .. +1 right (0 when silent / mono)
+float audioBalance();
 
 /// Called from Core::enable(): registers the "lyricsflow" module (off by default), keybinds and threads.
 /// modDir = mods/BedrockForgeCore (fonts under resources/lyricsflow/fonts), configDir = its config folder.
@@ -73,6 +89,21 @@ struct ClientUiAssets {
 ClientUiAssets clientUiAssets();
 /// Open the LyricsFlow world panel on the next HUD frame (the menu closes first, the panel needs the HUD view).
 void requestPanel();
+/// [LyricsForge] Video screen (Screen_win.cpp). A window the screen can show: key = "exe|title" (or "@monitor:N").
+struct ScreenSource {
+    std::string key, label;
+    uint64_t    hwnd = 0;
+    int         monitor = -1;
+};
+/// Visible top-level windows with a title (not Minecraft's own, not tool windows) + one entry per monitor. ~1 ms.
+std::vector<ScreenSource> screenSources();
+/// Every HUD frame: what RF should capture (BF_GetScreenConfig). Resolves cfg.screenWindow to a window (keeps the same
+/// window while it lives, else the same title, else the same app); returns the label of what it found ("" = none).
+std::string screenUpdate(Config const& cfg, bool inWorld);
+/// What RF reports (BF_PutScreenStatus): one short line for the panel, and whether a picture is coming in.
+std::string screenStatusLine();
+bool        screenLive();
+
 /// LyricsFlow's own on/off (the O key): lyrics drawn or not, independent of the module.
 bool lyricsShown();
 void setLyricsShown(bool on);

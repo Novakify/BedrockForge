@@ -26,8 +26,21 @@
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/actor/Actor.h"
 #include "mc/world/level/dimension/Dimension.h"
+#include "mc/client/gui/screens/ScreenContext.h"
+#include "mc/deps/minecraft_renderer/constantbuffers/PerFrameConstants.h"
+#include "mc/deps/minecraft_renderer/objects/ViewRenderObject.h"
+#include "mc/deps/minecraft_renderer/constantbuffers/GlobalConstantBuffers.h"
+#include "mc/deps/minecraft_renderer/renderer/MeshContext.h"
+#include "mc/client/gui/screens/ScreenContext.h"
+#include "ll/api/mod/NativeMod.h"
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <string>
 
 #include "client/Module.h"
+
+namespace bf::lyrics::win { bool skyFog(float rgb[3], float& weight); } // LyricsForge sky fog (Runtime_win.cpp)
 
 namespace bedrock_forge::client {
 
@@ -89,7 +102,10 @@ int fullbrightLevel() {
 
 LL_TYPE_INSTANCE_HOOK(BfTessLightHook, ll::memory::HookPriority::Normal, BlockTessellatorCache, &BlockTessellatorCache::getLightColor,
                       BrightnessPair, BlockPos const& p, Block const* blockHint) {
-    diag::tessLight.fetch_add(1, std::memory_order_relaxed);
+    // counted in batches of 4096 per chunk-build thread: one shared atomic per vertex had every worker fighting over a
+    // single cache line (137 M calls in a few minutes of building)
+    thread_local uint32_t n = 0;
+    if ((++n & 4095u) == 0) diag::tessLight.fetch_add(4096, std::memory_order_relaxed);
     BrightnessPair r = origin(p, blockHint);
     int lv = gFbLevel.load(std::memory_order_relaxed);
     if (lv >= 0) {
@@ -184,7 +200,81 @@ LL_TYPE_INSTANCE_HOOK(BfLightImageSplitHook, ll::memory::HookPriority::Normal, B
     return r;
 }
 
+// ---- [LyricsForge] sky fog, step 1 (read-only diagnostic): find the game's per-frame FOG_COLOR constant and log what
+// it holds right after setupFog, so the next build can write the sky's horizon colour into it at a verified offset.
+namespace {
+std::atomic<mce::PerFrameConstants*> gPerFrame{nullptr};
+std::atomic<int>                     gFogDiag{0};
+std::atomic<int64_t>                 gFogDiagMs{0};
+auto& fogLog() { return ll::mod::NativeMod::current()->getLogger(); }
+} // namespace
+LL_TYPE_INSTANCE_HOOK(BfPerFrameInitHook, ll::memory::HookPriority::Normal, mce::PerFrameConstants, &mce::PerFrameConstants::$init, void) {
+    origin();
+    gPerFrame = this;
+    fogLog().info("[BF] fog diag: PerFrameConstants::init captured {}", (void*)this);
+}
+LL_TYPE_INSTANCE_HOOK(BfSetupFogHook, ll::memory::HookPriority::Normal, LevelRendererPlayer, &LevelRendererPlayer::$setupFog, void,
+                      ScreenContext& screenContext, float const skyIntensityOverride) {
+    origin(screenContext, skyIntensityOverride);
+    auto* pf = gPerFrame.load();
+    if (!pf) { // $init runs before mods enable, so take it from the screen's GlobalConstantBuffers instead
+        mce::MeshContext& mc = screenContext;
+        mce::GlobalConstantBuffers* gcb = nullptr;
+        std::memcpy(&gcb, &mc.constantBuffers, sizeof gcb);
+        if (gcb) { pf = reinterpret_cast<mce::PerFrameConstants*>(&gcb->perFrameConstantBuffer); gPerFrame = pf; }
+    }
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (gFogDiag.load() >= 6 || now - gFogDiagMs.load() < 4000) return;
+    gFogDiagMs = now;
+    ++gFogDiag;
+    if (!pf) { fogLog().info("[BF] fog diag: setupFog runs, no PerFrameConstants captured"); return; }
+    auto dump = [&](char const* what, void const* obj) {
+        if (!obj) { fogLog().info("[BF] fog diag: {} null", what); return; }
+        // raw bytes only (no pointer is followed): 24 words as hex + float, plus the 16 bytes of a small std::string
+        uint32_t const* w = reinterpret_cast<uint32_t const*>(obj);
+        char b[1400];
+        int n = std::snprintf(b, sizeof b, "[BF] fog diag: %s @%p |", what, obj);
+        for (int i = 0; i < 24 && n < 1350; ++i) {
+            float fv; std::memcpy(&fv, &w[i], 4);
+            n += std::snprintf(b + n, sizeof b - size_t(n), " %02d:%08x(%.3g)", i * 4, w[i], double(fv));
+        }
+        fogLog().info("{}", b);
+        char txt[17]{};
+        std::memcpy(txt, reinterpret_cast<char const*>(obj) + 8, 16);
+        for (char& c : txt) if (c != 0 && (c < 32 || c > 126)) c = '.';
+        fogLog().info("[BF] fog diag: {} text at +8: '{}'", what, txt);
+    };
+    void const* fcp = nullptr; void const* fctl = nullptr; // the stored pointers, read as bytes (TypedStorage)
+    std::memcpy(&fcp, &pf->FOG_COLOR, sizeof fcp);
+    std::memcpy(&fctl, &pf->FOG_CONTROL, sizeof fctl);
+    dump("FOG_COLOR", fcp);
+    dump("FOG_CONTROL", fctl);
+}
+
+// ---- [LyricsForge] sky -> world colours, step 1 (read-only): dump the game's ViewRenderData (camera pos, fog/sky/
+// zenith/horizon/sunrise colours) as floats so the layout can be checked before anything is written into it.
+namespace { std::atomic<int> gViewDiag{0}; std::atomic<int64_t> gViewDiagMs{0}; }
+LL_TYPE_INSTANCE_HOOK(BfViewDiagHook, ll::memory::HookPriority::Normal, LevelRendererCamera,
+                      &LevelRendererCamera::$render, void, BaseActorRenderContext& ctx,
+                      ViewRenderObject const& renderObj, IClientInstance& ci) {
+    // [LyricsForge] sky fog: writing mFogColor here lands in the game's memory but the shaders never see it (proven with
+    // the LyricsLight debug pack), and the in-place blend could stack if this runs twice a frame - so nothing is written;
+    // the sky colour reaches the world through Renderer Foundation's world light instead. Read-only diag below.
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (gViewDiag.load() < 8 && now - gViewDiagMs.load() >= 4000) {
+        gViewDiagMs = now;
+        ++gViewDiag;
+        float f[14], sky[3], w = 0;
+        std::memcpy(f, &renderObj.mViewData, sizeof f);
+        if (!::bf::lyrics::win::skyFog(sky, w)) w = 0;
+        fogLog().info("[BF] view: cam {:.1f} {:.1f} {:.1f} fog {:.3f} {:.3f} {:.3f} (sky w {:.2f}) skycol {:.3f} {:.3f} {:.3f}",
+                      f[0], f[1], f[2], f[6], f[7], f[8], w, f[10], f[11], f[12]);
+    }
+    origin(ctx, renderObj, ci);
+}
+
 void installVisualHooks() {
+    BfViewDiagHook::hook();
     BfTessLightHook::hook();
     BfAmbientHook::hook();
     BfLightImageHook::hook();
@@ -197,6 +287,7 @@ void installVisualHooks() {
     BfTimeHook::hook();
 }
 void uninstallVisualHooks() {
+    BfViewDiagHook::unhook();
     BfTessLightHook::unhook();
     BfAmbientHook::unhook();
     BfLightImageHook::unhook();

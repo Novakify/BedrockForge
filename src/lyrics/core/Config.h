@@ -18,7 +18,7 @@ enum class Source : int { Spotify, Youtube, Any, AppleMusic }; // [BF] AppleMusi
 enum class LyricsStyle : int { Sky, Floating, Screen, Wall };
 enum class TextStyle : int { Neon, Clean };
 enum class EnterAnim : int { Word, Fade, Rise, Neon, Drop, Spin, Zoom, Glitch }; // Neon = 2.1 "Typed out"; Drop..Glitch [BF]
-enum class ExitAnim : int { FloatUp, Drift, Fade, Fall, Shatter, Dissolve, Explode, Burn, Glitch }; // Fall..Glitch [BF]
+enum class ExitAnim : int { FloatUp, Drift, Fade, Fall, Shatter, Dissolve, Explode, Burn, Glitch, Vortex }; // Fall..Vortex [BF]
 enum class TopBarStyle : int { Karaoke, Simple };
 enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat as decals (video A) or full rigid tumble
 
@@ -29,7 +29,7 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     E(Source, source, Source::Any) /* [BF] Java default is SPOTIFY; ANY so Apple Music works out of the box */                                                                                 \
     I(syncOffsetMs, 0)                                                                                                 \
     B(showLyrics, true)                                                                                                \
-    E(LyricsStyle, lyricsStyle, LyricsStyle::Floating)                                                                 \
+    E(LyricsStyle, lyricsStyle, LyricsStyle::Sky)                                                                 \
     B(skyWords, false)                                                                                                 \
     B(followView, false)                                                                                               \
     B(viewLock, false)                                                                                                 \
@@ -102,6 +102,8 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     F(skySpeed, 1.0f)                  /* 0.25 .. 2 */                                                                 \
     F(skyPattern, 1.0f)                /* 0.2 .. 1.5 */                                                                \
     B(skyShuffle, false)               /* random sky per song */                                                       \
+    B(skyFitSong, true)                /* [LyricsForge] Random picks skies that fit the song (mood + its arc) */      \
+    B(skyCurated, true)                /* [LyricsForge] Random leaves out the effect-looking skies */                 \
     B(fxSkyMusic, true)                /* sky reacts to music */                                                       \
     F(skyLively, 0.6f)                 /* 0 .. 1 sky motion */                                                         \
     F(skyBreath, 1.0f)                 /* 0 = off, breathing glow speed */                                             \
@@ -136,6 +138,68 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     B(fxWave, false)                   /* [BF] letters ripple in a wave */                                             \
     B(fxRainbow, false)                /* [BF] colours cycle (hueShiftSpeed 0.12 when that is 0) */                    \
     B(fxBeatShake, false)              /* [BF] words shake a little on the beat */                                     \
+    B(songMemory, true)                /* [BF] remember each song's energy map (lyricsflow_memory, never audio) */     \
+    B(director, true)                  /* [BF] Conductor: section-aware glow / punch / letter fx budget */             \
+    B(titleCard, true)                 /* [BF] movie-style title + artist card when a song starts */                   \
+    B(heroWords, true)                 /* [BF] held notes get the hero treatment (bigger, brighter) */                 \
+    B(contrastGuard, true)             /* [BF] dark outline + shadow when the sky behind the words is bright */        \
+    B(constellations, true)            /* [BF] the sky writes the song: hook lines become constellations */           \
+    I(reactivity, 1)                   /* [BF] Director: 0 soft, 1 balanced, 2 dynamic, 3 cinematic */                 \
+    S(scene, "")                       /* [BF] Scene Studio scene id last applied ("" = hand-made look) */          \
+    B(songScenes, true)                /* [BF] remember the scene picked for each song and bring it back */            \
+    B(albumColors, false)              /* [BF] letter / glow / star colour from the album art (eased per song) */      \
+    B(cinemaGrade, true)               /* [BF] Director colour grade + vignette of the world per scene (RF, D3D12) */  \
+    B(awaken, true)                    /* [LyricsForge] no music = vanilla world; a song starts = ~5 s of everything coming alive */ \
+    B(autoFont, true)                  /* [LyricsForge] each song gets a font that fits it (mood + cover); off = your font */ \
+    B(colorWords, true)                /* [LyricsForge] colour words in the lyrics (pink, blue) turn that colour when sung */ \
+    B(skyFog, true)                    /* [LyricsForge] far terrain fades into the sky's horizon colour (BF fog hook) */ \
+    B(worldLight, true)                /* [LyricsForge] the sky's colour and light fall on the world; drops flood it (RF) */ \
+    B(impactFrames, true)              /* [BF] a soft light flash + bloom / CA kick on drops and chorus hits (RF) */   \
+    B(letterbox, true)                 /* [BF] cinema bars ease in during builds and big hooks (RF) */               \
+    B(portals, false)                  /* [BF] a ring of light opens in the sky on choruses / drops (off: Moments) */ \
+    B(chorusVariety, true)             /* [BF] each chorus gets its own moment from the sky's deck, the last one all */ \
+    B(lyricMoments, true)              /* [BF] sung words about rain / fire / snow / stars / love ... touch the world */ \
+    B(songArc, true)                   /* [BF] choruses grow through the song, the bridge goes quiet and strange */   \
+    B(instrumentalFx, true)            /* [BF] no singing: ground rings on the kicks, horizon equaliser, livelier sky */ \
+    B(songOutro, true)                 /* [BF] end credits: the sky dims, title + artist + the last line rise and fade */ \
+    B(songTint, true)                  /* [BF] each song's cover colour tints the scene's grade a little */           \
+    B(directorCuts, true)              /* [BF] Showcase cuts to a new camera angle on drops / choruses / calm */     \
+    B(kineticWords, true)              /* [BF] lyric-video words: short lines stack big, hooks grow, drops slam in */ \
+    B(chorusLooks, true)               /* [BF] the world changes on a chorus: chorus sky, light wave, meteors, letters */ \
+    B(dropMoment, true)                /* [BF] held breath before a known drop (dim, slow), then it all lands at once */ \
+    B(autoScene, false)                /* [BF] Auto director: pick a scene for each song from its energy */          \
+    B(clipMode, false)                 /* [BF] Clip mode: save an NVIDIA Instant Replay clip after a song's big moment */ \
+    S(clipHotkey, "ctrl+shift+f10")    /* [BF] the replay "save" hotkey: OBS Save Replay (bind it there), or NVIDIA alt+f10 */\
+    B(clipVertical, true)              /* [BF] also make a 1080x1920 TikTok copy of each clip (needs ffmpeg) */      \
+    S(clipFolder, "")                  /* [BF] where the recorder saves ("" = your Videos folder) */                \
+    S(ffmpegPath, "")                  /* [BF] ffmpeg.exe ("" = find it: tools folder, PATH, winget) */              \
+    F(intensity, 1.0f)                 /* [BF] Cinema home: one dial for how big the whole show is, 0.3 .. 1.6 */     \
+    B(shotLanguage, true)              /* [BF] Director framing: calm = wide (far, smaller), high = close-up */      \
+    B(translations, true)              /* [BF] show translations under the lines (NetEase / your override file) */  \
+    B(hudPlayer, false)                /* [BF] corner music player (LyricsFlow 2.2 Extra): cover, time, controls */  \
+    B(hudPlayerLyrics, true)           /* [BF] ... with the line being sung and the next two */                     \
+    B(hudRound, true)                  /* [BF] rounded LyricsForge look (off = square Minecraft look) */            \
+    B(hudColorFromCover, false)        /* [BF] highlights follow the song cover instead of the lyrics colour */     \
+    F(hudPlayerX, 0.01f)               /* [BF] 0 left .. 1 right */                                                 \
+    F(hudPlayerY, 0.62f)               /* [BF] 0 top .. 1 bottom */                                                 \
+    F(hudPlayerScale, 1.0f)                                                                                            \
+    B(snowAnySky, false)               /* [BF] LyricsFlow 2.2 "Snow": snow falls around you with any sky */          \
+    B(showcase, false)                 /* [BF] Showcase: camera sways behind you, soft focus, bars (RF, D3D12) */    \
+    B(pinned, false)                   /* [BF] floating lyrics stay where you pinned them */                        \
+    F(pinX, 0.0f)                                                                                                      \
+    F(pinY, 0.0f)                                                                                                      \
+    F(pinZ, 0.0f)                                                                                                      \
+    F(pinYaw, 0.0f)                                                                                                    \
+    F(stereoDrift, 0.5f)               /* [BF] lyrics lean toward the side the sound is on, 0 off .. 1 */           \
+    B(wordRibbon, true)                /* [BF] a ribbon of light runs under the line with the singing */             \
+    B(materialImpacts, true)           /* [BF] falling letters kick up what they land on (chips, puffs, splashes) */ \
+    B(atmosphere, true)                /* [BF] glowing motes around you that sparkle with the treble, flare on drops */ \
+    B(fovBreath, false)                /* [BF] camera FOV tightens in builds, punches out on drops (changes the view) */ \
+    I(letterFx, 0)                     /* [BF] animated letters: 0 none, 1 neon, 2 fire, 3 water, 4 ice, 5 electric,   \
+                                          6 lava, 7 glitch, 8 galaxy, 9 liquid ink, 10 holographic (RF glyph shader) */                   \
+    C(letterFxColor, 0)                /* [BF] effect colour, 0 = the text colour */                                   \
+    F(letterFxSpeed, 1.0f)             /* [BF] 0.25 .. 3 */                                                            \
+    F(letterFxIntensity, 1.0f)         /* [BF] 0.2 .. 2 */                                                             \
     F(fxIntensity, 1.0f)               /* [BF] strength of the break-apart exits 0.2 .. 2 */                           \
     B(spreadOut, false)                /* [BF] more room between lyric lines/words (floating + sky) */                 \
     B(wholeLine, false)                /* [BF] floating: the line stays one readable row (reference fall video) */     \
@@ -150,10 +214,30 @@ enum class LetterLand : int { Flat, Tumble }; // [BF] falling letters: lie flat 
     I(letterFadeMs, 1200)                                                                                              \
     I(maxLetters, 400)                                                                                                 \
     /* ---- [BF] combat safety (PvP on Hive / CubeCraft) */                                                            \
+    B(combatCalm, true)                /* [LyricsForge] PvP calm: in a fight the camera, bars, flashes and darkening step aside */ \
     B(combatSafe, false)                                                                                               \
     F(keepOutDeg, 14.0f)               /* no lyrics within this angle of the crosshair */                              \
     F(combatAlpha, 0.35f)              /* opacity cap for a while after hitting / being hit */                         \
-    I(combatHoldMs, 2500)
+    I(combatHoldMs, 2500)                                                                                              \
+    B(combatAware, true)               /* [LyricsForge] in a fight: lyrics glide out of the crosshair + a clean font */ \
+    S(combatFont, "outfit_bold")       /* the readable font while fighting */                                          \
+    I(combatCalmMs, 5000)              /* this long after the last hit = calm again (lyrics drift back) */        \
+    B(finaleStars, true)               /* [LyricsForge] a song ends: its last line rises into the sky as stars */  \
+    B(chapterCover, true)              /* [LyricsForge] the next song's cover glows in the sky during its chapter */ \
+    /* ---- [LyricsForge] video screen: a window from your PC (browser, video player) playing in the world */          \
+    B(screenOn, false)                                                                                                 \
+    S(screenWindow, "")                /* "exe|title" of the window, or "@monitor:N" for a whole monitor */             \
+    I(screenPlace, 0)                  /* 0 sky, 1 pinned in the world, 2 beside you */                                 \
+    F(screenSize, 1.0f)                                                                                                \
+    F(screenOpacity, 1.0f)                                                                                             \
+    I(screenUpscale, 1)                /* 0 plain, 1 Anime4K Sharp, 2 Anime4K Max (D3D12) */                            \
+    B(screenCrop, true)                /* only the window's inside (no title bar / borders) */                          \
+    B(screenCombatFade, true)          /* see-through while fighting */                                                 \
+    F(screenYaw, 0.0f)                 /* sky: the direction it hangs in */                                             \
+    F(screenPinX, 0.0f)                                                                                                \
+    F(screenPinY, 80.0f)                                                                                               \
+    F(screenPinZ, 0.0f)                                                                                                \
+    F(screenPinYaw, 0.0f)
 
 struct Config {
 #define BF_LC_B(n, d) bool n = d;

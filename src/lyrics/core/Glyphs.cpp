@@ -19,8 +19,8 @@ float Font::width(std::string_view s) const {
     float w = 0;
     for (uint32_t cp : text::codepoints(s)) {
         GlyphMetrics const* g = find(cp);
-        if (!g) g = find('?');
-        w += g ? g->advance : 0.5f;
+        if (!g && fallback) g = fallback->find(cp);
+        w += g ? g->advance : 0.3f; // [LyricsForge] a glyph no font has: a small gap, never a '?'
     }
     return w;
 }
@@ -80,6 +80,12 @@ void FontSet::setAtlasIndex(std::string_view id, uint32_t index) {
     for (auto& f : mFonts)
         if (f.id == id) f.atlasIndex = index;
 }
+void FontSet::linkFallbacks() {
+    Font const* fb = nullptr;
+    for (auto const& f : mFonts)
+        if (f.id.rfind("cjk_", 0) == 0 && f.atlasIndex != kNoAtlas) { fb = &f; break; }
+    for (auto& f : mFonts) f.fallback = f.id.rfind("cjk_", 0) == 0 ? nullptr : fb;
+}
 bool FontSet::has(std::string_view id) const {
     for (auto const& f : mFonts)
         if (f.id == id) return true;
@@ -125,6 +131,18 @@ uint32_t hueRotate(uint32_t c, float turns) {
     return (c & 0xFF000000u) | (to8(rr) << 16) | (to8(gg) << 8) | to8(bb);
 }
 
+namespace {
+uint32_t hsvArgb(float h, float s, float v) {
+    h -= std::floor(h);
+    auto ch = [&](float n) {
+        float k = std::fmod(n + h * 6.0f, 6.0f);
+        return v - v * s * std::clamp(std::min(k, 4.0f - k), 0.0f, 1.0f);
+    };
+    auto to8 = [](float x) { return uint32_t(std::clamp(x, 0.0f, 1.0f) * 255.0f + 0.5f); };
+    return 0xFF000000u | (to8(ch(5)) << 16) | (to8(ch(3)) << 8) | to8(ch(1));
+}
+} // namespace
+
 GlyphStyle makeStyle(Config const& c, float timeSeconds) {
     GlyphStyle st;
     st.theme       = currentTheme(c);
@@ -148,13 +166,35 @@ struct Pass {
 };
 } // namespace
 
+Vec3 wordPoint(DrawWord const& w, double lx, double ly, Vec3 origin) {
+    double const sinR = std::sin(double(w.rotZ)), cosR = std::cos(double(w.rotZ));
+    double const s    = double(w.scale);
+    if (w.screen) {
+        double const tilt = 2.0 * std::atan2(w.orient.z, w.orient.w), sinT = std::sin(tilt), cosT = std::cos(tilt);
+        double gx = lx * s, gy = -ly * s;
+        double rx = gx * cosR - gy * sinR + w.x, ry = gx * sinR + gy * cosR + w.y;
+        return Vec3{w.origin.x + rx * cosT - ry * sinT, w.origin.y + rx * sinT + ry * cosT, 0};
+    }
+    double gx = lx * s, gy = ly * s;
+    Vec3   local{gx * cosR - gy * sinR + w.x, gx * sinR + gy * cosR + w.y, 0};
+    return w.origin + w.orient.rotate(local) - origin;
+}
+
 void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, GlyphStyle const& st, Vec3 origin, std::vector<BfGlyphV1>& out,
                      bool mainPassOnly) {
     if (w.alpha <= 0.01f || w.text.empty() || font.atlasIndex == FontSet::kNoAtlas) return; // [BF] no atlas slot (yet)
-    Theme const& th    = st.theme;
+    Theme        thW   = st.theme;
+    float const  tk    = w.tint ? std::clamp(w.tintK, 0.0f, 1.0f) : 0.0f;
+    if (tk > 0.0f) { // [LyricsForge] colour word: the whole word (letters, gradient, glow) turns its colour
+        uint32_t const t = w.tint | 0xFF000000u;
+        thW.main = colLerp(thW.main, colBrighten(t, 0.22f), tk);
+        thW.a    = colLerp(thW.a, t, tk);
+        thW.b    = colLerp(thW.b, hueRotate(t, -0.06f), tk);
+    }
+    Theme const& th    = thW;
     bool const   clean = c.textStyle == TextStyle::Clean;
     float const  o     = 0.055f; // Gfx.neon offset unit (h * 0.055)
-    float const  hue   = (c.fxRainbow && c.hueShiftSpeed == 0.0f ? 0.12f : c.hueShiftSpeed) * st.timeSeconds; // [BF] Rainbow
+    float const  hue   = (1.0f - tk) * (c.fxRainbow && c.hueShiftSpeed == 0.0f ? 0.12f : c.hueShiftSpeed) * st.timeSeconds; // [BF] Rainbow
 
     std::vector<Pass> passes;
     if (w.plain) mainPassOnly = true;
@@ -186,7 +226,7 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
     float const baseline = -(font.capHeight + font.xHeight) * 0.25f;
     uint32_t    flags    = font.flags | (w.screen ? BF_GLYPH_SCREEN : 0u) | (c.gradient ? BF_GLYPH_GRADIENT : 0u);
     uint32_t const outlineArgb = c.outlineColor != 0 ? uint32_t(c.outlineColor) : colDarken(th.a, 0.75f);
-    uint32_t const glowArgb    = c.glowColor != 0 ? uint32_t(c.glowColor) : th.a;
+    uint32_t const glowArgb    = colLerp(c.glowColor != 0 ? uint32_t(c.glowColor) : st.theme.a, th.a, tk);
     uint32_t const grad2Argb   = c.gradientColor != 0 ? uint32_t(c.gradientColor) : th.b;
     float const    glowK       = (c.glow && c.glowStrength > 0) ? std::min(1.0f, c.glowStrength * std::clamp(w.glow, 0.0f, 1.5f)) : 0.0f;
     float const    glowW       = c.glowWidth * (0.6f + 0.4f * std::min(1.0f, w.glow));
@@ -224,8 +264,9 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
         int   letter = 0;
         for (uint32_t cp : cps) {
             GlyphMetrics const* g = font.find(cp);
-            if (!g) g = font.find('?');
-            float adv = g ? g->advance : 0.5f;
+            Font const* src = &font; // [LyricsForge] the atlas this glyph comes from (Japanese -> the cjk fallback)
+            if (!g && font.fallback) { g = font.fallback->find(cp); if (g) src = font.fallback; }
+            float adv = g ? g->advance : 0.3f; // missing everywhere: skipped (no '?')
             if (g && !g->empty) {
                 double   cx = double(pen) + (g->pl + g->pr) * 0.5, cy = double(baseline + ps.oy) + (g->pb + g->pt) * 0.5;
                 if (c.fxWave && !w.plain) // [BF] Wave: letters ripple along the word
@@ -240,17 +281,29 @@ void buildWordGlyphs(DrawWord const& w, Font const& font, Config const& c, Glyph
                 q.up[0] = float(u.x); q.up[1] = float(u.y); q.up[2] = float(u.z);
                 q.uv[0] = g->u0; q.uv[1] = g->v0; q.uv[2] = g->u1; q.uv[3] = g->v1;
                 uint32_t fillArgb = ps.argb;
-                if (ps.main && c.perLetterColor && !clean && !w.argb) {
+                if (ps.main && c.perLetterColor && !clean && !w.argb && tk < 0.5f) {
                     uint32_t const cyc[3] = {th.main, th.a, th.b};
                     fillArgb              = hueRotate(cyc[letter % 3], hue);
                 }
+                // [BF] Rainbow: real colours per letter, running along the word. (Hue-rotating the theme did nothing
+                // on white / grey text and in Clean style.)
+                bool const rainbow = c.fxRainbow && ps.main && !w.argb && !w.plain && tk < 0.5f;
+                float const rbH    = (c.hueShiftSpeed != 0.0f ? c.hueShiftSpeed : 0.12f) * st.timeSeconds + float(letter) * 0.07f
+                                + float(w.key % 31) * 0.13f;
+                if (rainbow) fillArgb = hsvArgb(rbH, 0.72f, 1.0f);
+                int const fx = (ps.main && !w.plain && !(font.flags & BF_GLYPH_BITMAP)) ? std::clamp(c.letterFx, 0, 8) : 0;
+                if (fx && c.letterFxColor != 0 && !rainbow && !w.argb && tk < 0.5f) fillArgb = uint32_t(c.letterFxColor) | 0xFF000000u;
                 q.fill    = toRgba(fillArgb);
-                q.fill2   = toRgba(ps.main ? hueRotate(grad2Argb, hue) : fillArgb);
+                q.fill2   = toRgba(rainbow ? hsvArgb(rbH + 0.15f, 0.72f, 1.0f) : ps.main ? hueRotate(grad2Argb, hue) : fillArgb);
+                if (fx) { // [BF] animated letters, see RF shaders/glyph.hlsl letterFx()
+                    q._pad2 = float(uint32_t(fx) | (c.fxRainbow ? 32u : 0u)) + std::clamp(c.letterFxIntensity, 0.2f, 2.0f) / 2.5f;
+                    q._pad3 = float((letter * 7 + int(uint64_t(w.key) % 97u) * 13) % 4096) + std::clamp(c.letterFxSpeed, 0.1f, 3.0f) / 4.0f;
+                }
                 q.alpha   = ps.alpha;
-                q.atlas   = font.atlasIndex;
-                q.flags   = flags;
+                q.atlas   = src->atlasIndex;
+                q.flags   = src == &font ? flags : (flags & ~uint32_t(BF_GLYPH_BITMAP | BF_GLYPH_MSDF)) | src->flags;
                 if (!ps.main) q.flags &= ~uint32_t(BF_GLYPH_GRADIENT);
-                q.pxRange = font.pxRange;
+                q.pxRange = src->pxRange;
                 if (w.plain) q.flags &= ~uint32_t(BF_GLYPH_GRADIENT);
                 if (ps.main && !w.plain) {
                     q.outline  = c.outlineWidth > 0 ? toRgba(outlineArgb) : 0u;

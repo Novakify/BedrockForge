@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "lyrics/core/Config.h"
+#include "lyrics/core/Conductor.h"
 #include "lyrics/core/Lyrics.h"
 #include "lyrics/core/World.h"
 
@@ -49,15 +50,23 @@ struct Placed {
     bool    lookedAway = false;
     int     occlTick = 0;
     std::vector<bool> dropped; // [BF] falling letters already spawned for word j
+    // [BF] kinetic words: how the line was staged when it appeared
+    bool    stacked = false;   // a short line in a big moment: one big word per row
+    bool    slam = false;      // the line that lands on a drop: its letters slam in one by one
+    std::vector<std::vector<std::pair<std::string, float>>> letters; // slam: per word, (letter, x offset in em)
 
     int     n() const { return w1 - w0; }
     int64_t lastEnd() const { return line.words[size_t(w1 - 1)].end; }
     bool    sameLine(Line const& l) const { return line.index == l.index && line.start == l.start; }
+    std::string font;  // [LyricsForge] the font this line was laid out in (a font change only affects new lines)
 };
 
 enum class LyricsState { None, Searching, Found, NotFound };
 
 struct SceneInput {
+    float stereo = 0; // [BF] stereo drift: -1 left .. +1 right
+    int64_t durationMs = 0; // [BF] corner player
+    int     coverAtlas = -1;
     int64_t            t = -1;       // song position (ms) incl. offsets, -1 = no track
     bool               playing = false;
     Lyrics const*      lyrics = nullptr;
@@ -69,8 +78,18 @@ struct SceneInput {
     float              beat = 0.0f;    // Hud.beat (beatGlow); [BF] bass hits from the PC's audio (0..1)
     bool               beatLive = false; // [BF] the audio feed is running (beat is real, not just 0)
     float              combat = 0.0f;  // [BF] 0..1, raised by hits (combat-safe)
+    float              fight  = 0.0f;  // [LyricsForge] 0..1 combat-aware: up fast on a hit, eases back after combatCalmMs
+    float              skyCard = -1.0f; // [LyricsForge] chapter cover card progress 0..1 (< 0 none)
+    float              skyCardYaw = 0;  //   the direction it was painted in (you were looking there when it began)
     std::string        title, artist;  // now playing (top bar)
     float              guiW = 427.0f, guiH = 240.0f; // UI size in GUI units (Bedrock ScreenView size)
+    MusicState const*  music = nullptr; // [BF] the Conductor's state this frame (nullptr = no director)
+    int                chorusFx = -1, chorusExit = -1; // [BF] the scene's chorus look (letters) while lifted, -1 = keep
+    float              skyLuma = 0;     // [BF] brightness of our sky behind the text (contrast guard)
+    uint32_t           albumAccent = 0; // [BF] the cover art's accent colour (0 = none)
+    float              awaken = 1;      // [LyricsForge] Awaken progress (0 vanilla .. 1 alive): motes bloom with it
+    std::string        songFont;        // [LyricsForge] the font that fits this song ("" = the chosen font)
+    std::string        skyShown;        // [BF] the sky actually on screen (tour / chorus sky), empty = cfg.skyPreset
 };
 
 /// One word ready to draw. World mode: origin + orient (+X right, +Y up, +Z toward the viewer side the Java mod
@@ -94,12 +113,19 @@ struct DrawWord {
     int64_t     key = 0;            // stable id of (line, word) for the physics hand-off
     uint32_t    argb  = 0;          // [BF] fixed colour (0 = theme) - top bar text
     bool        plain = false;      // [BF] main pass only (no shadow / offset passes / glow)
+    bool        hero  = false;      // [BF] a held note (sustained word): the Director emphasises it while sung
+    int64_t     sungMs = -1;        // [BF] ms since the word started being sung (-1 = not yet)
+    int64_t     durMs = 0;          // [BF] how long the word is sung (ribbon progress)
+    uint32_t    tint  = 0;          // [LyricsForge] colour word ("pink", "blue"...): the word turns this colour when sung
+    float       tintK = 0;          //   how far it has turned, 0..1
 };
 
 class Scene {
 public:
     void clear();
     void tick(SceneInput const& in, Config const& cfg, CameraState const& cam, IWorld* world, TextWidthFn const& width);
+    /// [LyricsForge] font id -> size factor, so every font reads the same height (script fonts have tiny lowercase)
+    void setFontScale(std::function<float(std::string_view)> f) { mFontScale = std::move(f); }
     /// Words to draw this frame (call after tick).
     std::vector<DrawWord> draw(SceneInput const& in, Config const& cfg, CameraState const& cam, IWorld* world);
 
@@ -107,6 +133,11 @@ public:
     float                      pauseFade() const { return mPauseFade; }
 
 private:
+    float mStereo = 0; // [BF] eased stereo drift
+    // [BF] kinetic words: the music when a line is placed + which lines repeat (hooks)
+    MusicState const*     mMusic = nullptr;
+    Lyrics const*         mHookFor = nullptr;
+    std::set<std::string> mHooks;
     void   place(Placed& p, Config const& c, CameraState const& cam, IWorld* w, TextWidthFn const& width);
     void   wallPlace(Placed& p, int64_t s, CameraState const& cam, IWorld* w);
     void   fitToSurface(Placed& p, Config const& c, IWorld* w);
@@ -116,6 +147,7 @@ private:
     Vec3   anchor(Placed const& p, Config const& c, CameraState const& cam) const;
     Quat   facing(Placed const& p, Config const& c, CameraState const& cam) const;
     float  em(Placed const& p, Config const& c) const;
+    std::function<float(std::string_view)> mFontScale; // [LyricsForge] per-font size match (see setFontScale)
     double clearance(float yaw, float pitch, double dist, CameraState const& cam, IWorld* w) const;
     int    blocked(float yaw, float pitch, double dist, float halfWidthDeg, CameraState const& cam, IWorld* w) const;
     float  crowd(Vec3 at) const;

@@ -454,10 +454,16 @@ void samplePlayer(State& s, LocalPlayer& lp, bool tick) {
             auto vp = veh->getFeetPos();
             p.vehicle.pos = {vp.x, vp.y, vp.z};
         }
-        bool sw = false;
+        bool  sw = false;
+        float aa = 0;
         try { sw = lp.mSwinging; } catch (...) {}
-        if (sw && !p.swinging) p.swingTime = 0;
-        p.swinging   = sw;
+        try { aa = float(lp.mAttackAnim); } catch (...) {}
+        // Spam-clicking (10+ CPS) restarts the swing while it is still running, so mSwinging never drops back to false
+        // and swingTime would count past 1 forever - scripts testing getSwingTime() == 1 then play the swing once and
+        // never again. A restart resets the attack progress (mAttackAnim falls), so treat a fall as a new swing too.
+        if (sw && (!p.swinging || aa + 0.05f < p.swingAnimPrev)) p.swingTime = 0;
+        p.swinging      = sw;
+        p.swingAnimPrev = sw ? aa : 0.0f;
         if (sw) p.swingTime++;
     }
     // test knobs (config/figura/tuning.json): fake movement so animations can be checked without holding keys

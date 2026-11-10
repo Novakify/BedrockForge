@@ -24,6 +24,8 @@ struct Line {
     int64_t           start = 0, end = 0;
     std::vector<Word> words;
     bool              estimated = true; // words were spread by syllables, not real word timing
+    std::string       translation;      // [BF] override files: a translation shown small under the line
+    uint8_t           voice = 0;        // [BF] override files: 0 lead, 1 second singer (duets, "v2:" lines)
 
     /// LyricsFlow Line.retime: AudioSync's k stretches estimated word timing inside the line.
     void    retime(double k);
@@ -46,6 +48,8 @@ struct Lyrics {
     bool              synced     = false;
     bool              wordSynced = false; // every line carries real word timing
     std::string       source;
+    /// [BF] manual sections (override files "[mm:ss.xx]@drop"): time + kind 'b' build, 'd' drop, 'c' chorus, 'q' calm
+    std::vector<std::pair<int64_t, char>> marks;
 
     /// Java Lyrics(times, texts, synced, source, durationMs, words). `words` may be empty (no word timing) or have
     /// one entry per line (an empty entry = that line has none -> its words are estimated).
@@ -78,8 +82,14 @@ bool sameScript(std::string_view artist, std::string_view title, Lyrics const& l
 /// Disk cache form (MediaManager readCache/writeCache): exact lines + word timing, round-trips losslessly.
 std::string           toCacheJson(Lyrics const& l);
 std::optional<Lyrics> fromCacheJson(std::string_view json);
+/// [BF] tidy a result from any source: odd spaces (NBSP, ideographic, thin) become plain spaces, and a line timed as
+/// ONE word (some sources time lines only) is split into words with times shared out by their position - so word
+/// effects (keywords, kinetic words, hero words, the ribbon, the sky's constellations) work on every source.
+void normalizeWords(Lyrics& l);
 /// Cache file name for a track key (lower(artist + "\0" + title)): 16 hex digits of FNV-1a 64 + ".json".
 std::string           cacheFileName(std::string_view trackKey);
+/// [BF] NetEase "tlyric" (an LRC of translations): each line whose time matches a lyric line becomes its translation
+int                   attachTranslations(Lyrics& l, std::string_view translationLrc);
 /// Lyrics.show(): upper-case when allCaps is on.
 std::string show(std::string_view s, bool allCaps);
 

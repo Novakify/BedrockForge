@@ -9,6 +9,7 @@ bool keyDown(int vk);
 bool keyDownSync(int vk);
 /// True when the game window has keyboard focus (we don't count keys typed into other apps).
 bool gameFocused();
+bool cursorHidden(); // [BF] the game hides the cursor while you play (any screen that takes the mouse shows it)
 /// Local wall-clock time as "HH:MM".
 void localTime(int& hour, int& minute);
 

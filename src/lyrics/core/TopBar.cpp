@@ -59,7 +59,7 @@ void TopBar::build(SceneInput const& in, Config const& c, FontSet const& fonts, 
     if (mPhase == Phase::Resumed && mPhaseAge > 1.3f) { mPhase = haveLyrics ? Phase::Lyrics : Phase::Title; mPhaseAge = 0; }
     if (mPhase == Phase::Paused && in.playing) { mPhase = Phase::Resumed; mPhaseAge = 0; }
 
-    bool want = !in.title.empty() && c.showTopBar && c.enabled;
+    bool want = !in.title.empty() && c.showTopBar && c.enabled && in.lyrics && !in.lyrics->lines.empty(); // [LyricsForge] no lyrics: no bar
     mVis      = anim::approach(mVis, want ? 1.0f : 0.0f, want ? 7.0f : 5.0f, dt);
     if (mVis < 0.01f) return;
     float dim = (!in.playing && mPausedFor > 2.0f) ? 0.6f : 1.0f;

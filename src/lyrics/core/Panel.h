@@ -14,6 +14,7 @@
 
 #include "lyrics/BfLyrics.h"
 #include "lyrics/core/Config.h"
+#include "lyrics/core/Studio.h"
 #include "lyrics/core/Glyphs.h"
 #include "lyrics/core/Math.h"
 
@@ -39,12 +40,23 @@ struct PanelMedia {
     int64_t     positionMs = 0, durationMs = 0;
     bool        playing = false, hasTrack = false;
     int         repeat = 0; // 0 off, 1 one, 2 all (SMTC AutoRepeatMode: None / Track / List)
+    // [BF] tap-sync state (Cinema page)
+    bool        tapOn = false;
+    int         taps = 0, marks = 0;
+    std::string tapNext, tapLast; // the line the next tap starts, the line tapped last
+    bool        hasLyrics = false;
+    std::vector<StudioScene> const* userScenes = nullptr; // [BF] your saved scenes (Cinema home)
+    bool        lifted = false;                            // [BF] the chorus look is on right now (home preview)
+    // [LyricsForge] video screen page
+    std::vector<std::pair<std::string, std::string>> const* screenSources = nullptr; // key, label
+    std::string screenSource;  // label of the window the screen shows now ("" = none found)
+    std::string screenStatus;  // what Renderer Foundation reports
 };
 
 /// What the panel asks the game side to do (BF glue performs these on the media thread / config).
 struct PanelAction {
-    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu } kind;
-    int64_t ms = 0; // Seek target
+    enum class Kind { PlayPause, Next, Prev, Seek, Repeat, Close, SaveConfig, OpenFullMenu, EditLyrics, TapStart, Tap, TapUndo, TapSave, TapCancel, PinHere, TapMark, SaveScene, ScreenHere, ScreenRefresh } kind;
+    int64_t ms = 0; // Seek target (TapMark: the section kind b / d / c / q)
 };
 
 struct PanelInput {
@@ -64,7 +76,8 @@ struct PanelInput {
 
 class Panel {
 public:
-    enum class Tab { Sky, Lyrics, Look, Fx, Fps, More }; // 2.1's Cosmetics slot is the FPS page; FX = [BF] effects
+    // [BF] Home = Cinema home (scene cards, intensity, the big switches); FPS lives behind More now
+    enum class Tab { Home, Sky, Lyrics, Look, Fx, More, Fps, Screen };
 
     /// Open in front of the camera (WorldPanel constructor). eye/look = camera at that moment.
     void open(Vec3 eye, Vec3 look, int64_t nowMs);
@@ -92,7 +105,7 @@ public:
         char const* name;         // en_us lyricsflow.sky.<id>
         uint32_t    top, horizon; // RGB
     };
-    /// SkyPreset.order(): the 20 skies of the grid, in LyricsFlow 2.1's order.
+    /// SkyPreset.order(): the 25 skies of the grid, in LyricsFlow 2.2's order.
     static std::vector<SkyPresetInfo> const& skyOrder();
 
 private:
@@ -105,14 +118,22 @@ private:
     void offset(Ctx& c, Config& cfg, float y);
     void look(Ctx& c, Config& cfg, FontSet const& fonts);
     void fx(Ctx& c, Config& cfg);
+    void letterFx(Ctx& c, Config& cfg); // [BF] FX page 2: animated letters
+    void director(Ctx& c, Config& cfg); // [BF] FX page 3: the Director's switches + reactivity
+    void scenes(Ctx& c, Config& cfg);   // [BF] FX page 4: Scene Studio
+    void cinema(Ctx& c, Config& cfg);
+    void hudPage(Ctx& c, Config& cfg);  // [BF] FX page 6: corner music player (LyricsFlow 2.2 Extra)   // [BF] FX page 5: Cinema (ribbon, impacts, showcase, tap-sync, place)
     void fps(Ctx& c, Config& cfg);
+    void screen(Ctx& c, Config& cfg); // [LyricsForge] video screen (under More)
+    void home(Ctx& c, Config& cfg);     // [BF] Cinema home
     void more(Ctx& c, Config& cfg);
 
+    PanelMedia mMedia;         // [BF] this frame's media (Cinema page tap-sync)
     Vec3    mPos;              // panel centre (px 190, 111), world
     float   mRx = 1, mRz = 0;  // panel +x (the player's right)
     float   mNx = 0, mNz = -1; // panel normal (toward the player)
     int64_t mBorn = -1, mClosing = -1, mPageTime = 0;
-    int     mPage = 0, mSkyPage = 0, mFontPage = 0;
+    int     mPage = 0, mSkyPage = 0, mFontPage = 0, mFxPage = 0, mHomePage = 0;
     bool    mHovered = false;
     float   mHx = 0, mHy = 0;
     float   mSpin = 0;

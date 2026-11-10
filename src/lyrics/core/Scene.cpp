@@ -5,9 +5,23 @@
 #include "lyrics/core/Text.h"
 
 #include <algorithm>
+#include <cctype>
+#include <map>
 #include <cmath>
 
 namespace bf::lyrics {
+
+// [BF] kinetic words: a line's identity for "does it repeat" (lower-case letters / digits, single spaces)
+std::string kineticKey(std::string const& text) {
+    std::string k;
+    for (unsigned char ch : text) {
+        if (std::isalnum(ch) || ch >= 0x80) k += char(std::tolower(ch));
+        else if (!k.empty() && k.back() != ' ') k += ' ';
+    }
+    while (!k.empty() && k.back() == ' ') k.pop_back();
+    return k;
+}
+
 
 using anim::rnd;
 
@@ -41,7 +55,7 @@ bool quiet(Lyrics const* lyrics, Line const* cur, int64_t t) {
 
 std::string const& fontOf(Placed const& p, Config const& c) {
     static std::string const mc = "minecraft";
-    return p.line.index < 0 ? mc : c.font;
+    return p.line.index < 0 ? mc : (p.font.empty() ? c.font : p.font);
 }
 
 bool inClouds(float pitch, double dist, double cloud, CameraState const& cam) {
@@ -79,7 +93,12 @@ bool rtl(std::string_view s) {
 
 // ---------------------------------------------------------------- word animation
 std::optional<std::array<float, 5>> wordAnim(Placed const& p, int j, Word const& w, int64_t t, Config const& c, float speed) {
-    float ein = anim::progress(double(t), double(w.start - 40), double(float(w.start - 40) + kEnterMs / speed));
+    // [BF] fast words (rap) pop in as fast as they're sung: the 300 ms entrance shrinks to ~1.1x the word's length
+    // (min 110 ms) and starts a little earlier, so a word is readable while it's being sung, not after it.
+    float const dur   = float(std::max<int64_t>(1, w.end - w.start));
+    float const enter = std::clamp(dur * 1.1f, 110.0f, kEnterMs) / speed;
+    float const lead  = enter < kEnterMs * 0.8f ? 70.0f : 40.0f;
+    float ein = anim::progress(double(t), double(float(w.start) - lead), double(float(w.start) - lead + enter));
     if (ein <= 0.0f) return std::nullopt;
     float dx = 0, dy = 0, sc = 1, alpha, rot = 0;
     switch (c.enterAnim) {
@@ -209,6 +228,16 @@ void Scene::tick(SceneInput const& in, Config const& c, CameraState const& cam, 
         mShown.clear();
     }
     mLastT          = t;
+    mMusic          = in.music && in.music->active ? in.music : nullptr;
+    if (lyrics != mHookFor) { // [BF] kinetic words: lines that come back are hooks
+        mHookFor = lyrics;
+        mHooks.clear();
+        if (lyrics) {
+            std::map<std::string, int> n;
+            for (auto const& l : lyrics->lines) if (l.index >= 0) ++n[kineticKey(l.text)];
+            for (auto const& [k, v] : n) if (v >= 2 && k.find(' ') != std::string::npos) mHooks.insert(k);
+        }
+    }
     Line const* cur = noLyrics ? nullptr : lyrics->lastStartedBefore(t);
     bool skyPairs   = c.lyricsStyle == LyricsStyle::Sky && !c.skyWords;
     if (notesOk && in.playing && quiet(lyrics, cur, t)) cur = &noteLine(t);
@@ -312,9 +341,10 @@ Quat Scene::facing(Placed const& p, Config const& c, CameraState const& cam) con
 }
 
 float Scene::em(Placed const& p, Config const& c) const {
-    if (c.lyricsStyle == LyricsStyle::Sky) return float(150.0 * std::tan(rad(3.1))) * c.lyricsScale;
-    if (c.lyricsStyle == LyricsStyle::Floating) return float(0.0765 * std::max(2.5, double(p.sizeDist))) * c.lyricsScale * p.fit;
-    return float(0.085 * std::max(2.5, p.dist)) * c.lyricsScale * p.fit;
+    float const fs = mFontScale ? mFontScale(fontOf(p, c)) : 1.0f; // [LyricsForge] same letter height in every font
+    if (c.lyricsStyle == LyricsStyle::Sky) return float(150.0 * std::tan(rad(3.1))) * c.lyricsScale * fs;
+    if (c.lyricsStyle == LyricsStyle::Floating) return float(0.0765 * std::max(2.5, double(p.sizeDist))) * c.lyricsScale * p.fit * fs;
+    return float(0.085 * std::max(2.5, p.dist)) * c.lyricsScale * p.fit * fs;
 }
 
 double Scene::clearance(float yaw, float pitch, double dist, CameraState const& cam, IWorld* w) const {
@@ -617,7 +647,7 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
             }
             nearest = std::min(nearest, d);
         }
-        if (chunked(c) && !c.viewLock) { // words of the same line must not overlap each other
+        if (!c.viewLock) { // words / lines must not overlap what is already up (a line breaking apart included) [BF: all modes]
             float emB   = skyWords(c) ? em(p, c) : float(0.0765 * std::max(2.5, double(tSize))) * c.lyricsScale;
             int   chars = 0;
             for (int j = p.w0; j < p.w1; ++j) chars += int(text::length(p.line.words[size_t(j)].text)) + 1;
@@ -644,6 +674,16 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
     if (c.lyricsStyle == LyricsStyle::Wall) wallPlace(p, s, cam, w);
     if ((c.lyricsStyle == LyricsStyle::Floating || c.lyricsStyle == LyricsStyle::Sky) && !c.viewLock) p.a = cam.pos + dir(bYaw, bPitch) * bDist;
     if (c.lyricsStyle == LyricsStyle::Floating && !c.viewLock) p.a.y += double(c.floatHeight);
+    bool const pinned = c.pinned && c.lyricsStyle == LyricsStyle::Floating && !c.viewLock;
+    if (pinned) { // [BF] moved by hand: every line stands at the pin, facing where you stood; lines alternate a row
+        Vec3 const pin{double(c.pinX), double(c.pinY), double(c.pinZ)};
+        int const  slot = p.line.index >= 0 ? p.line.index % 2 : 0;
+        p.yaw  = c.pinYaw;
+        p.pitch = 0;
+        p.dist = std::max(1.0, pin.dist(cam.pos));
+        p.sizeDist = float(std::clamp(p.dist, 3.0, 12.0));
+        p.a    = pin + Vec3{0, slot == 0 ? 0.55 : -0.55, 0} * double(std::clamp(c.lyricsScale, 0.3f, 3.0f));
+    }
 
     bool const sky = c.lyricsStyle == LyricsStyle::Sky;
     p.turn = sky && c.arcLayout ? (rnd(s, 5) > 0.5f ? 1.0f : -1.0f) * (c.skyWords ? 8.0f + rnd(s, 6) * 16.0f : 3.0f + rnd(s, 6) * 4.0f) : 0.0f;
@@ -652,7 +692,9 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
 
     // ---- word sizes, widths and rows
     int const          n    = p.n();
+    p.font.clear();
     std::string const& font = fontOf(p, c);
+    p.font = font; // [LyricsForge] laid out in this font: drawn in it for the line's whole life
     float const        space = width ? width(" ", font) : 0.3f;
     p.wx0.assign(size_t(n), 0); p.wy0.assign(size_t(n), 0); p.wsize.assign(size_t(n), 1); p.wrot.assign(size_t(n), 0); p.widths.assign(size_t(n), 0);
     p.dropped.assign(size_t(n), false);
@@ -671,6 +713,53 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
     }
     float const spaceEm = std::max(0.26f, space);
     float       maxRow  = sky ? 18.0f : (chunked(c) ? 99.0f : (c.wholeLine ? 16.0f : 9.5f));
+    // [BF] kinetic words, staged when the line appears (stable for its whole life, no re-layout jitter):
+    //  - the line that lands on a drop slams in letter by letter
+    //  - a short line (1..3 words) in a big moment stacks: one big word per row, like a lyric video
+    //  - in a hook (a line that repeats), its strongest word grows
+    p.stacked = p.slam = false;
+    p.letters.clear();
+    if (c.kineticWords && !c.wholeLine && p.line.index >= 0 && n > 0) {
+        MusicState const* m = mMusic;
+        bool const big = m && (m->lifted || m->section == MusicSection::High || m->impact > 0.5f);
+        p.slam = m && (m->hold > 0.3f || m->impact > 0.7f);
+        size_t chars = 0;
+        for (int j = 0; j < n; ++j) chars += text::length(p.line.words[size_t(p.w0 + j)].text);
+        if (big && n <= 3 && chars <= 20 && !chunked(c)) {
+            p.stacked = true;
+            float const k = n == 1 ? 1.7f : 1.45f;
+            for (int j = 0; j < n; ++j) { p.wsize[size_t(j)] *= k; p.widths[size_t(j)] *= k; }
+            maxRow = 0.01f; // every word its own row
+        } else if (big && chunked(c)) { // word-by-word modes: each word lands bigger in the big moments
+            for (int j = 0; j < n; ++j) { p.wsize[size_t(j)] *= 1.3f; p.widths[size_t(j)] *= 1.3f; }
+        }
+        if (mHooks.count(kineticKey(p.line.text))) {
+            int best = -1; size_t bl = 3;
+            for (int j = 0; j < n; ++j) {
+                size_t const L = text::length(p.line.words[size_t(p.w0 + j)].text);
+                if (L > bl) { bl = L; best = j; }
+            }
+            if (best >= 0) { p.wsize[size_t(best)] *= 1.35f; p.widths[size_t(best)] *= 1.35f; }
+        }
+        if (p.slam && width) // letter offsets inside each word (em of the word's own size)
+            for (int j = 0; j < n; ++j) {
+                std::string const shown = show(p.line.words[size_t(p.w0 + j)].text, c.allCaps);
+                std::vector<std::pair<std::string, float>> ls;
+                float const total = width(shown, font);
+                float x = -total / 2;
+                for (size_t b = 0; b < shown.size();) {
+                    size_t len = 1;
+                    unsigned char const ch = uint8_t(shown[b]);
+                    if (ch >= 0xF0) len = 4; else if (ch >= 0xE0) len = 3; else if (ch >= 0xC0) len = 2;
+                    std::string const g = shown.substr(b, len);
+                    float const gw = width(g, font);
+                    if (g != " ") ls.push_back({g, x + gw / 2});
+                    x += gw;
+                    b += len;
+                }
+                p.letters.push_back(std::move(ls));
+            }
+    }
     std::vector<std::pair<int, int>> rows;
     for (int pass = 0; pass < 20; ++pass) {
         rows.clear();
@@ -691,7 +780,12 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
         for (int j = a; j < b; ++j) wr += p.widths[size_t(j)] + (j > a ? spaceEm : 0.0f);
         widest = std::max(widest, wr);
     }
-    float const rowGap = sky ? 1.4f : 1.5f;
+    float rowGap = sky ? 1.4f : 1.5f;
+    if (p.stacked) { // rows as tall as their words
+        float mx = 1;
+        for (float z : p.wsize) mx = std::max(mx, z);
+        rowGap = 0.95f * mx;
+    }
     float const totalH = float(rows.size() - 1) * rowGap;
     for (size_t r = 0; r < rows.size(); ++r) {
         auto [a, b] = rows[r];
@@ -717,13 +811,103 @@ void Scene::place(Placed& p, Config const& c, CameraState const& cam, IWorld* w,
             p.pitch += float(mate->rowsN - 1 + p.rowsN - 1) * rowGap * 0.5f * emDeg;
             p.a = cam.pos + dir(p.yaw, p.pitch) * p.dist;
         }
+    // [BF] busy lyrics: the second line of a pair is placed beside its mate without the overlap search, so a big
+    // (kinetic / stacked / still breaking apart) mate could sit right under it. Slide it below the mate until clear.
+    if (sky && !c.viewLock && !c.skyWords && p.line.index >= 0 && p.line.index % 2 == 1)
+        if (Placed* mate = findIndex(p.line.index - 1)) {
+            Vec3 const e = mate->a - cam.pos;
+            double const len = e.length();
+            if (len > 0.001) {
+                float const k  = float(mate->dist / len);
+                float const my = float(yawOf(e)), mp = float(-deg(std::asin(e.y / len)));
+                float const needW = p.angW + mate->angW * k + 1.5f, needH = p.angH + mate->angH * k + 1.2f;
+                if (std::fabs(wrap(my - p.yaw)) < needW && std::fabs(p.pitch - mp) < needH) {
+                    p.pitch = std::min(mp + needH, 40.0f);
+                    p.a     = cam.pos + dir(p.yaw, p.pitch) * p.dist;
+                }
+            }
+        }
     if (rtl(p.line.text))
         for (auto& x : p.wx0) x = -x;
     if (c.lyricsStyle == LyricsStyle::Wall) fitToSurface(p, c, w);
-    if (c.lyricsStyle == LyricsStyle::Floating && !c.viewLock) keepOutOfBlocks(p, c, cam, w);
+    if (c.lyricsStyle == LyricsStyle::Floating && !c.viewLock && !pinned) keepOutOfBlocks(p, c, cam, w);
 }
 
 // ---------------------------------------------------------------- draw
+
+namespace {
+// [BF] hero words: a sung word held well past the line's typical word (a sustained note), at least 650 ms
+bool heroWord(Line const& l, int i) {
+    auto const& w = l.words[size_t(i)];
+    int64_t const dur = w.end - w.start;
+    if (dur < 650 || l.words.size() < 2) return dur >= 900;
+    int64_t sum = 0;
+    for (auto const& x : l.words) sum += std::max<int64_t>(0, x.end - x.start);
+    double const avg = double(sum) / double(l.words.size());
+    return double(dur) >= 2.0 * avg;
+}
+} // namespace
+
+
+// [BF] kinetic words at draw time. Returns true when the word was drawn here (as slamming letters) or must not show
+// yet; false = draw the word normally. Also gives sung words in big moments a punch on the beat.
+bool kinetic(Placed const& p, int j, Word const& wd, int64_t t, MusicState const* m, float beat, bool screen,
+             DrawWord& d, std::vector<DrawWord>& out) {
+    if (m && d.sung && (m->lifted || m->section == MusicSection::High)) d.scale *= 1.0f + 0.10f * beat;
+    if (!p.slam || size_t(j) >= p.letters.size() || p.letters[size_t(j)].empty() || d.dropNow) return false;
+    auto const& ls = p.letters[size_t(j)];
+    int64_t const t0 = wd.start - 120, step = 35, life = 170;
+    int64_t const done = t0 + int64_t(ls.size()) * step + life;
+    if (t >= done) return false;            // all landed: the plain word takes over
+    for (size_t k = 0; k < ls.size(); ++k) {
+        float const u = float(t - (t0 + int64_t(k) * step)) / float(life);
+        if (u <= 0) continue;               // this letter hasn't been thrown yet
+        float const e = std::min(1.0f, u), back = 1.0f - (1.0f - e) * (1.0f - e) * (1.0f - e);
+        DrawWord L = d;
+        L.text   = ls[k].first;
+        L.x      = d.x + ls[k].second * d.scale;
+        float const fall = (1.0f - back) * 1.3f * d.scale;
+        L.y      = screen ? d.y - fall : d.y + fall;
+        L.scale  = d.scale * (1.0f + 0.8f * (1.0f - back));
+        L.alpha  = d.alpha * std::min(1.0f, e * 2.5f);
+        L.glow   = d.glow + 0.6f * (1.0f - e);
+        L.hero   = false;
+        L.dropNow = false;
+        L.key    = d.key + 1000000 * int64_t(k + 1);
+        out.push_back(std::move(L));
+    }
+    return true;
+}
+
+// [BF] duets + translations (override files): the second singer gets its own tint; a translation is one small line
+// centred under the first chunk of its lyric line, fading with it
+constexpr uint32_t kVoice2 = 0xFFFFD27A; // warm gold: reads apart from the pink / blue themes
+void translationUnder(Placed const& p, DrawWord const& first, float lineAlpha, bool screen, float emScale, std::vector<DrawWord>& out) {
+    if (p.line.translation.empty() || p.w0 != 0 || p.n() == 0) return;
+    float x0 = 1e9f, x1 = -1e9f, yMax = -1e9f;
+    for (int j = 0; j < p.n(); ++j) {
+        x0 = std::min(x0, p.wx0[size_t(j)] - p.widths[size_t(j)] / 2);
+        x1 = std::max(x1, p.wx0[size_t(j)] + p.widths[size_t(j)] / 2);
+        yMax = std::max(yMax, p.wy0[size_t(j)] + 0.5f * p.wsize[size_t(j)]);
+    }
+    DrawWord d = first;
+    d.text    = p.line.translation;
+    d.x       = (x0 + x1) * 0.5f * emScale;
+    float const yy = (yMax + 0.45f) * emScale;
+    d.y       = screen ? yy : -yy;
+    d.rotZ    = 0;
+    d.scale   = first.scale / std::max(0.01f, p.wsize[0]) * 0.52f;
+    d.alpha   = lineAlpha * 0.78f;
+    d.sung    = false;
+    d.glow    = first.glow * 0.4f;
+    d.argb    = 0xFFE8E4F0;
+    d.dropNow = false;
+    d.hero    = false;
+    d.sungMs  = -1;
+    d.key     = int64_t(p.line.index) * 1000 + 999;
+    out.push_back(std::move(d));
+}
+
 std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraState const& cam, IWorld* w) {
     std::vector<DrawWord> out;
     if (!c.enabled || !c.showLyrics || mVisible.empty() || mPauseFade < 0.01f) return out;
@@ -741,6 +925,9 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 if (d >= 0 && d < 600) shake = std::max(shake, float(std::exp(-double(d) / 140.0)));
             }
     float const   combatK  = c.combatSafe ? 1.0f - (1.0f - c.combatAlpha) * anim::clamp01(in.combat) : 1.0f;
+    // [BF] stereo drift: the words lean toward the side the sound comes from (eased, at most ~0.45 em)
+    mStereo += (std::clamp(in.stereo, -1.0f, 1.0f) * std::clamp(c.stereoDrift, 0.0f, 1.0f) - mStereo) * float(1.0 - std::exp(-double(in.dt) / 0.35));
+    float const   drift    = mStereo * 0.9f;
 
     if (!inWorld(c)) { // SCREEN mode (WorldLyrics.drawScreen), in screen-height units
         float const emPx = 15.0f * c.lyricsScale / 240.0f; // Java: 15 GUI px at a ~240 px tall GUI
@@ -755,6 +942,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 if (!s && !frag) continue;
                 if (frag) p.dropped[size_t(j)] = true;
                 auto [alpha, dx, dy, sc, rot] = s ? *s : std::array<float, 5>{1.0f, 0, 0, 1, 0};
+                dx += drift;
                 if (c.fxBeatShake && shake > 0.05f) { // [BF]
                     dx += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7) - 0.5f) * 0.12f * shake;
                     dy += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7 + 3) - 0.5f) * 0.12f * shake;
@@ -774,8 +962,14 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 d.sung   = t >= wd.start && t < wd.end + 80;
                 d.glow   = glowBase + (d.sung ? 0.35f : 0.0f) + beat * 0.5f;
                 d.key    = int64_t(p.line.index) * 1000 + p.w0 + j;
+                d.hero   = heroWord(p.line, p.w0 + j);
+                d.sungMs = t >= wd.start ? t - wd.start : -1;
+                d.durMs  = std::max<int64_t>(1, wd.end - wd.start);
                 d.dropNow = frag; // [BF] screen words break apart too (fragments in screen space)
                 d.dropFx  = c.exitAnim;
+                if (p.line.voice == 1) d.argb = kVoice2;
+                if (j == 0 && !frag && c.translations) translationUnder(p, d, alpha * gA, true, emPx, out);
+                if (kinetic(p, j, wd, t, mMusic, in.beat, true, d, out)) continue;
                 out.push_back(std::move(d));
             }
         return out;
@@ -785,6 +979,23 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
         if (c.lyricsStyle == LyricsStyle::Floating) p.coverFade = anim::approach(p.coverFade, overPlayer(p, c, cam, w) ? 0.35f : 1.0f, 6.0f, in.dt);
         float gA = p.coverFade * mPauseFade * in.focusA * c.textOpacity * p.occlVis * (sky ? 1.0f : anim::easeInOut(p.viewVis)) * combatK;
         Vec3  a  = anchor(p, c, cam);
+        // [LyricsForge] combat-aware: in a fight each line glides to a calm lane above the crosshair (stacked, a bit smaller
+        // and see-through) that moves WITH the view - it never chases the crosshair edge while you swing the camera
+        float fightScale = 1.0f, fightTurn = 0.0f;
+        double fightPitch = 0.0;
+        if (c.combatAware && in.fight > 0.001f) {
+            float const  k    = anim::clamp01(in.fight);
+            float const  ek   = k * k * (3.0f - 2.0f * k);
+            Vec3 const   d    = a - cam.pos;
+            double const dist = std::max(2.0, d.length()); // keep the line's distance: same size, only the direction moves
+            float const  lane = float(int(mVisible.size()) - 1 - int(&p - &mVisible.front())); // newest line lowest (nearest the action), older ones stacked above
+            double const pitch = std::clamp(double(cam.pitch) - (19.0 + 5.5 * lane), -80.0, 80.0); // negative = up
+            Vec3 const   calm = cam.pos + dir(double(cam.yaw), pitch) * dist;
+            a = a + (calm - a) * double(ek);
+            fightScale = 1.0f - 0.25f * ek;
+            fightTurn = ek; fightPitch = pitch;
+            gA *= 1.0f - 0.3f * ek;
+        }
         if (c.combatSafe) { // [BF] fade text that drifts into the crosshair area
             Vec3  d   = a - cam.pos;
             float dyw = std::fabs(wrap(float(yawOf(d)) - cam.yaw)), dp = std::fabs(float(pitchOf(d)) - cam.pitch);
@@ -792,8 +1003,10 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             gA *= 0.15f + 0.85f * anim::clamp01((ang - c.keepOutDeg * 0.5f) / std::max(1.0f, c.keepOutDeg * 0.5f));
         }
         if (gA < 0.02f) continue;
-        float e = em(p, c);
+        float e = em(p, c) * fightScale;
         Quat  q = facing(p, c, cam) * Quat::rotationZ(rad(-p.tilt));
+        if (fightTurn > 0.0f) // [LyricsForge] in the calm lane the line turns to face you (no edge-on wall text)
+            q = q.nlerp(Quat::rotationYXZ(kPi - rad(cam.yaw), -rad(std::clamp(fightPitch, -35.0, 35.0)), 0.0), double(fightTurn));
         for (int j = 0; j < p.n(); ++j) {
             Word const& wd = p.line.words[size_t(p.w0 + j)];
             auto        s  = wordAnim(p, j, wd, t, c, speed);
@@ -809,6 +1022,7 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
                 if (frag) st = {1.0f, 0, 0, 1, 0};
             }
             auto [alpha, dx, dy, sc, rot] = st;
+            dx += drift;
             if (c.fxBeatShake && shake > 0.05f) { // [BF]
                 dx += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7) - 0.5f) * 0.12f * shake;
                 dy += (rnd(p.seed, int(in.nowSeconds * 30.0) + j * 7 + 3) - 0.5f) * 0.12f * shake;
@@ -831,6 +1045,12 @@ std::vector<DrawWord> Scene::draw(SceneInput const& in, Config const& c, CameraS
             d.dropNow   = falling;
             d.dropFx    = frag ? c.exitAnim : ExitAnim::Fall;
             d.key       = int64_t(p.line.index) * 1000 + p.w0 + j;
+            d.hero      = heroWord(p.line, p.w0 + j);
+            d.sungMs    = t >= wd.start ? t - wd.start : -1;
+            d.durMs     = std::max<int64_t>(1, wd.end - wd.start);
+            if (p.line.voice == 1) d.argb = kVoice2;
+            if (j == 0 && !falling && c.translations) translationUnder(p, d, alpha * gA, false, e, out);
+            if (kinetic(p, j, wd, t, mMusic, in.beat, false, d, out)) continue;
             out.push_back(std::move(d));
         }
     }

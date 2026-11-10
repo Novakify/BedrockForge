@@ -146,6 +146,23 @@ void LetterPhysics::substep(Letter& l, float dt, IWorld* w, PhysicsParams const&
     if (prm.land == LetterLand::Flat) // video A look: they tip over backwards while falling
         l.orient = slerp(l.orient, l.hasTarget ? l.target : flatTarget(l.orient), std::min(1.0, 7.0 * dt));
     if (!w) return;
+    if (!l.wet) { // [BF] into water: a splash, then it sinks slowly instead of dropping like a stone
+        BlockPos const bp{int(std::floor(l.pos.x)), int(std::floor(l.pos.y)), int(std::floor(l.pos.z))};
+        if (w->hasFluid(bp)) {
+            l.wet = true;
+            Landing ld;
+            ld.pos      = {l.pos.x, std::floor(l.pos.y) + 0.9, l.pos.z};
+            std::string const n = w->blockName(bp);
+            ld.surface  = n.empty() ? Surface::Water : surfaceOf(n);
+            ld.strength = float(std::clamp(-l.vel.y / 6.0, 0.2, 2.0));
+            ld.size     = l.halfH * 2.0f;
+            if (mLandings.size() < 64) mLandings.push_back(ld);
+        }
+    }
+    if (l.wet) { // buoyant + heavy drag
+        l.vel.y += double(prm.gravity) * 0.8 * dt;
+        l.vel = l.vel * std::exp(-3.0 * dt);
+    }
 
     // walls: center inside a block that isn't "below us" -> bounce off horizontally
     BlockPos          bp = BlockPos::of(l.pos);
@@ -173,6 +190,15 @@ void LetterPhysics::substep(Letter& l, float dt, IWorld* w, PhysicsParams const&
     // contact
     l.pos.y += ground - lowest + (prm.land == LetterLand::Flat ? double(l.restLift) : 0.001);
     double impact = -l.vel.y;
+    if (impact > 1.2 && l.hits < 2 && mLandings.size() < 64) { // [BF] what did it hit? throw a little of it up
+        ++l.hits;
+        Landing ld;
+        ld.pos      = {l.pos.x, ground, l.pos.z};
+        ld.surface  = surfaceOf(w->blockName(BlockPos{int(std::floor(l.pos.x)), int(std::floor(ground - 0.01)), int(std::floor(l.pos.z))}));
+        ld.strength = float(std::clamp(impact / 6.0, 0.2, 2.0)) * (l.hits == 1 ? 1.0f : 0.5f);
+        ld.size     = l.halfH * 2.0f;
+        mLandings.push_back(ld);
+    }
     if (impact > 2.0 && prm.bounce > 0.01) {
         l.vel.y = impact * prm.bounce;
         l.vel.x *= 1.0 - prm.friction * 0.5;

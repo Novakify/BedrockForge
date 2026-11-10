@@ -5,6 +5,8 @@
 
 #include "client/Module.h"
 #include "client/Diag.h"
+#include "client/AsyncFile.h"
+#include <sstream>
 #include <filesystem>
 #include <fstream>
 #include "ll/api/mod/NativeMod.h"
@@ -14,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <deque>
 #include <format>
 #include <mutex>
@@ -26,6 +29,9 @@
 #include "ll/api/memory/Hook.h"
 
 #include "mc/client/game/IClientInstance.h"
+#include "mc/client/options/IOptionRegistry.h"
+#include "mc/options/option_types/BoolOption.h"
+#include "mc/options/option_types/OptionID.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
 #include "mc/deps/input/MouseAction.h"
@@ -47,8 +53,10 @@
 #include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
 #include "client/PostFx.h"
+#include "client/ServerAuto.h"
 #include "core/Win32Input.h"
 #include "lyrics/win/Win.h"
+namespace bf::lyrics::win { float cinemaFovScale(); } // LyricsForge Director "FOV breath" (1 = off)
 
 namespace bedrock_forge::client {
 
@@ -134,7 +142,10 @@ void keycap(MinecraftUIRenderContext& ctx, float x, float y, float w, float h, s
     bf::hud::drawLabel(ctx, x + w / 2 - textWidth(label) / 2 + 0.5f, y + h / 2 - 4.5f, label, down ? Rgba{0, 0, 0, 1} : Rgba{1, 1, 1, 1});
 }
 
-bool hudInputAllowed() { return w32::gameFocused() && nowMs() - gLastNonHudFrameMs.load() > 150; }
+// [BF] "in gameplay": the game hides the cursor while you play and shows it on every screen that takes the mouse.
+// (Checking "only the HUD screen drew" failed on Hive: its own overlay screens draw all the time, which silently turned
+// off Zoom, Auto Sprint and the other in-game keys.)
+bool hudInputAllowed() { return w32::gameFocused() && (w32::cursorHidden() || nowMs() - gLastNonHudFrameMs.load() > 150); }
 } // namespace
 
 // ============================================================================ hooks
@@ -152,6 +163,7 @@ LL_TYPE_INSTANCE_HOOK(BfFovHook, ll::memory::HookPriority::Normal, LevelRenderer
     now += (target - now) * lerp;
     if (std::abs(now - target) < 0.01f) now = target;
     gZoomNow = now;
+    fov *= ::bf::lyrics::win::cinemaFovScale();
     postfx::noteFov(fov / now);
     return fov / now;
 }
@@ -206,11 +218,7 @@ void noteScreen(std::string const& name) {
     if (gScreens.size() < 24 && std::find(gScreens.begin(), gScreens.end(), name) == gScreens.end()) gScreens.push_back(name);
 }
 void write() {
-    std::error_code ec;
-    auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
-    std::filesystem::create_directories(dir, ec);
-    std::ofstream out{dir / "diag.txt"};
-    if (!out) return;
+    std::ostringstream out; // [BF] built here, written off the game thread (asyncfile)
     out << "light hook " << lightHook.load() << " (brightened " << lightBrightened.load() << ", image " << lightImage.load() << ")\n"
         << "overlay hook " << overlayHook.load() << "\nbob hook " << bobHook.load() << "\ntime hook " << timeHook.load()
         << "\nfov hook " << fovHook.load() << "\nattack hook " << attackHook.load() << "\nchat hook " << chatHook.load()
@@ -219,9 +227,12 @@ void write() {
     for (auto& m : Registry::get().all())
         if (m->enabled && !m->planned) out << " " << m->id;
     out << "\nscreens under the menu:";
-    std::lock_guard lock(gScreensMutex);
-    for (auto& n : gScreens) out << " " << n;
+    {
+        std::lock_guard lock(gScreensMutex);
+        for (auto& n : gScreens) out << " " << n;
+    }
     out << "\n";
+    asyncfile::write(ll::mod::NativeMod::current()->getModDir() / "logs" / "diag.txt", out.str());
 }
 } // namespace diag
 
@@ -386,7 +397,7 @@ void registerBuiltins() {
 
     // ---------------- Camera
     r.add("zoom", "Zoom", Category::Camera, "Hold C to zoom", true)
-        .slider("factor", "Zoom factor", 4, 1.5f, 12, 0.5f).slider("key", "Key (VK code, 67 = C)", 0x43, 8, 254, 1)
+        .slider("factor", "Zoom factor", 4, 1.5f, 12, 0.5f).slider("key", "Key", 0x43, 8, 254, 1)
         .toggleSetting("smooth", "Smooth", true).toggleSetting("slow_turn", "Slower turning while zoomed", true);
     r.add("fov_changer", "FOV Changer", Category::Camera, "Scale the field of view beyond the settings range")
         .slider("scale", "FOV scale", 1.15f, 0.5f, 1.8f, 0.05f);
@@ -397,11 +408,15 @@ void registerBuiltins() {
     r.add("view_bobbing", "No View Bobbing", Category::Camera, "Turn off the walking camera bob");
     r.plan("view_model", "View Model", Category::Camera, "Move / scale the held item");
     r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
-    r.plan("motion_blur", "Motion Blur", Category::Camera, "Frame blending (shader pipeline)");
+    r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth blur when you turn the camera (drawn by Renderer Foundation)")
+        .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f);
 
     // ---------------- Visual
     r.add("fullbright", "Fullbright", Category::Visual, "See in the dark: lifts the light baked into nearby terrain (client-side, relights chunks on toggle)")
         .slider("strength", "Strength", 1.0f, 0.1f, 1.0f, 0.05f);
+    r.add("pvp_preset", "PvP Preset", Category::Visual,
+          "Turns Smooth Lighting off while on (cheaper chunk building: fewer stutters when chunks load); your own setting comes back when you turn it off")
+        .toggleSetting("restore_smooth", "Smooth Lighting when the preset is off", true);
     r.add("time_changer", "Time Changer", Category::Visual, "Client-side time of day (rendering only)")
         .slider("time", "Time of day (0-1)", 0.0f, 0, 1, 0.01f);
     r.plan("fog", "Fog", Category::Visual, "Remove or recolour fog");
@@ -409,7 +424,11 @@ void registerBuiltins() {
     r.plan("block_outline", "Block Outline", Category::Visual, "Custom selection outline colour / width");
     r.plan("better_nametags", "Better Nametags", Category::Visual, "Health and distance under names");
     r.plan("chunk_borders", "Chunk Borders", Category::Visual, "Chunk edges (Lamium has this today)");
-    r.plan("post_processing", "Post Processing", Category::Visual, "Shader effects from shaderpacks");
+    r.add("post_processing", "Post Processing", Category::Visual, "Bloom, colour fringe and sharpening on the whole frame (overrides the shaderpack's)")
+        .slider("bloom", "Bloom", 0.12f, 0.0f, 0.5f, 0.01f)
+        .slider("sharpen", "Sharpen", 0.5f, 0.0f, 1.0f, 0.05f)
+        .slider("ca", "Colour fringe", 0.0f, 0.0f, 10.0f, 0.5f)
+        .choice("ca_style", "Fringe style", {"Edges", "Toward centre"}, 0);
     r.plan("dark_mode", "Dark Mode", Category::Visual, "Dark UI theme");
     r.plan("gui_scale", "GUI Scale", Category::Visual, "Finer GUI scale steps");
     r.plan("projectile_scaler", "Projectile Scaler", Category::Visual, "Bigger arrows / pearls / snowballs");
@@ -418,7 +437,7 @@ void registerBuiltins() {
 
     // ---------------- Movement / input
     r.add("scroll_disabler", "Scroll Wheel Disabler", Category::Movement, "Stop the wheel changing hotbar slots");
-    r.plan("toggle_sprint", "Toggle Sprint", Category::Movement, "Sprint without holding the key (Lamium: Permanent Sprint)");
+    r.add("toggle_sprint", "Auto Sprint", Category::Movement, "Always sprint when you walk forward (same as holding the sprint key)");
     r.plan("toggle_sneak", "Auto Sneak", Category::Movement, "Toggle sneaking (Lamium: Permanent Sneak)");
     r.plan("null_movement", "Null Movement", Category::Movement, "Last pressed of A/D (W/S) wins");
     r.plan("modern_keyboard", "Modern Keyboard Handling", Category::Movement, "Java-like key repeat / chat input");
@@ -428,6 +447,12 @@ void registerBuiltins() {
     r.plan("pack_switcher", "Pack Switcher", Category::World, "Switch resource packs without leaving the world");
     r.plan("waypoints", "Waypoints", Category::World, "Saved points in the world (Lamium has this today)");
     r.plan("minimap", "Minimap", Category::World, "Minimap + radar (Lamium has this today)");
+    r.add("auto_gg", "Auto GG", Category::World, "Says gg in chat when a game ends (Hive, CubeCraft, Lifeboat, Zeqa, Galaxite, Mineville)")
+        .choice("message", "Message", serverauto::ggMessages(), 0)
+        .slider("delay", "Delay (s)", 1.0f, 0.0f, 5.0f, 0.5f);
+    r.add("auto_requeue", "Auto Re-queue", Category::World, "Joins the next game of the same mode when one ends (The Hive)")
+        .slider("delay", "Delay (s)", 2.0f, 0.5f, 10.0f, 0.5f)
+        .toggleSetting("ondeath", "Also when you die", false);
     r.plan("replay", "Replay", Category::World, "Record and replay gameplay");
     r.plan("proximity_chat", "Proximity Chat", Category::World, "Voice/text by distance");
 
@@ -451,10 +476,96 @@ void registerBuiltins() {
         .toggleSetting("camswing", "Camera swing", true);
 }
 
+// ============================================================================ PvP preset
+// [BF] manual toggle (never automatic): Smooth Lighting off while the module is on. The game option is set without
+// saving, so options.txt keeps your own value; what to restore is also kept in the module ("restore_smooth").
+namespace pvppreset {
+bool gApplied = false, gFirst = true;
+BoolOption* smooth(IClientInstance& c) {
+    auto o = c.getOptions().getIfValid(OptionID::SmoothLighting);
+    return o && *o ? static_cast<BoolOption*>(*o) : nullptr;
+}
+void tick(IClientInstance& c) {
+    auto* m = Registry::get().find("pvp_preset");
+    bool const want = m && m->enabled;
+    if (want == gApplied) {
+        if (want) if (auto* b = smooth(c); b && bool(b->mValue)) b->set(false, false); // something turned it back on
+        gFirst = false;
+        return;
+    }
+    auto* b = smooth(c);
+    if (!b) return;
+    if (want) {
+        // turned on now: remember your setting. Already on at startup: the game may have saved our "off" last time,
+        // so the value kept from when you turned it on wins.
+        if (!gFirst) if (auto* st = m->setting("restore_smooth")) st->on = bool(b->mValue);
+        Registry::get().save();
+        b->set(false, false);
+    } else {
+        bool back = true;
+        if (m) if (auto* st = m->setting("restore_smooth")) back = st->on;
+        b->set(back, false);
+    }
+    gApplied = want;
+    gFirst   = false;
+}
+} // namespace pvppreset
+
+// ============================================================================ hitch recorder
+// [BF] logs/hitches.txt: every HUD-to-HUD frame over 30 ms, with what our code did in the frame before it (reports,
+// fullbright, forgerender, serverauto, the slowest module hud + total, the panel) and how many tessellator calls ran
+// in between (chunk building). Our work small + many tess calls = chunks; both small = the game / GPU / the PC.
+namespace hitch {
+struct Cost { double reports = 0, fb = 0, fr = 0, sa = 0, mods = 0, modMax = 0, panel = 0; std::string modName; };
+Cost gLast, gCur;
+std::chrono::steady_clock::time_point gPrev{};
+uint64_t gTessPrev = 0;
+int gLines = 0;
+double since(std::chrono::steady_clock::time_point t) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count(); }
+std::filesystem::path file() {
+    std::error_code ec;
+    auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
+    std::filesystem::create_directories(dir, ec);
+    return dir / "hitches.txt";
+}
+void check(bool inGame) {
+    auto const now = std::chrono::steady_clock::now();
+    uint64_t const tess = diag::tessLight.load();
+    bool const had = gPrev.time_since_epoch().count() != 0;
+    double const dt = had ? std::chrono::duration<double, std::milli>(now - gPrev).count() : 0;
+    if (!had) { std::ofstream(file(), std::ios::app | std::ios::binary) << "---- session (times local; ms = our work in the frame before the hitch)\n"; }
+    // in a menu (cursor showing) a long frame isn't a gameplay hitch
+    // 30 ms catches the small repeating hiccups too; over 3 s is a pause / loading gap (no HUD frames), not a hitch
+    if (had && dt > 30.0 && dt < 3000.0 && inGame && gLines < 5000) {
+        std::time_t t = std::time(nullptr);
+        std::tm tm{};
+        localtime_s(&tm, &t);
+        auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() % 1000;
+        double const ours = gLast.reports + gLast.fb + gLast.fr + gLast.sa + gLast.mods + gLast.panel;
+        std::ofstream out(file(), std::ios::app | std::ios::binary);
+        out << std::format("{:02}:{:02}:{:02}.{:03} frame {:6.1f} ms | ours {:5.2f} (reports {:.2f} fb {:.2f} forgerender {:.2f} serverauto {:.2f} "
+                           "modules {:.2f} max {} {:.2f} panel {:.2f}) | tess {}\n",
+                           tm.tm_hour, tm.tm_min, tm.tm_sec, int(ms), dt, ours, gLast.reports, gLast.fb, gLast.fr, gLast.sa, gLast.mods,
+                           gLast.modName.empty() ? "-" : gLast.modName, gLast.modMax, gLast.panel, tess - gTessPrev);
+        ++gLines;
+    }
+    gPrev = now;
+    gTessPrev = tess;
+}
+void mark(char const* what) { // [BF] a gameplay moment (you got hit), so hitches around a fight can be lined up
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    localtime_s(&tm, &t);
+    auto const ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count() % 1000;
+    std::ofstream(file(), std::ios::app | std::ios::binary) << std::format("{:02}:{:02}:{:02}.{:03} ** {}\n", tm.tm_hour, tm.tm_min, tm.tm_sec, int(ms), what);
+}
+} // namespace hitch
+
 // ============================================================================ runtime
 void installRuntime() {
     installVisualHooks();
     installChatHooks();
+    serverauto::install();
     BfFovHook::hook();
     BfTurnHook::hook();
     BfAttackHook::hook();
@@ -494,34 +605,62 @@ void installRuntime() {
         }
         gFps.frame();
         noteRenderThread();
+        try { hitch::check(w32::cursorHidden() && !menu::isOpen()); } catch (...) {}
+        hitch::gLast = hitch::gCur;
+        hitch::gCur  = {};
+        auto tSec = std::chrono::steady_clock::now();
         static int hudFrames = 0;
         if (++hudFrames == 120) shaderpacks::reportOnce(); // ~2 s into the first world
         if (hudFrames % 600 == 0) { diag::write(); shaderpacks::writeReport(); }
+        hitch::gCur.reports = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto& ctx    = ev.uiRenderContext();
         fullbrightTick(ctx.mClient);
+        try { pvppreset::tick(ctx.mClient); } catch (...) {}
+        hitch::gCur.fb = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         forgerender::tick();
+        hitch::gCur.fr = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
+        if (player) { // [BF] hitch log: health drops = you took a hit (servers send health to the client)
+            static int lastHp = -1;
+            int const hp = player->getHealth();
+            if (lastHp >= 0 && hp < lastHp && hp > 0) {
+                ::bf::lyrics::win::noteCombat(); // [LyricsForge] servers don't fire the hurt event client-side: health drops do
+                try { hitch::mark(std::format("hit: hp {} -> {}", lastHp, hp).c_str()); } catch (...) {}
+            }
+            else if (lastHp > 0 && hp <= 0) { try { hitch::mark("died"); } catch (...) {} }
+            lastHp = hp;
+        }
+        tSec = std::chrono::steady_clock::now();
+        try { serverauto::frame(ctx.mClient, player, hudInputAllowed() && !menu::isOpen(), w32::gameFocused() && !menu::isOpen()); } catch (...) {}
+        hitch::gCur.sa = hitch::since(tSec);
 
         std::vector<std::string> info;
         Frame f{ctx, view, ctx.mClient, player, view.mSize->x, view.mSize->y, info};
         for (auto& m : Registry::get().all())
             if (m->enabled && !m->planned && m->hud) {
+                auto const tm0 = std::chrono::steady_clock::now();
                 try { m->hud(f); } catch (...) {}
+                double const c = hitch::since(tm0);
+                hitch::gCur.mods += c;
+                if (c > hitch::gCur.modMax) { hitch::gCur.modMax = c; hitch::gCur.modName = m->id; }
             }
+        tSec = std::chrono::steady_clock::now();
         auto* lay = Registry::get().find("hud_layout");
         float ix = lay ? lay->num("x", 4) : 4, iy = lay ? lay->num("y", 96) : 96;
         if (ix < 0) ix += view.mSize->x - 100;
         if (iy < 0) iy += view.mSize->y;
         panel(ctx, ix, iy, info, lay ? lay->num("opacity", 0.42f) : 0.42f, {1, 1, 1, 1});
+        hitch::gCur.panel = hitch::since(tSec);
     });
 }
 
 void uninstallRuntime() {
     uninstallVisualHooks();
     uninstallChatHooks();
+    serverauto::uninstall();
     gSubs.clear();
     BfFovHook::unhook();
     BfTurnHook::unhook();

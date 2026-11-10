@@ -37,6 +37,11 @@ private:
         ExitAnim  mode = ExitAnim::Shatter;
         float     seedF = 0;
         bool      screen = false;
+        Vec3      center, axis, r0;    // [LyricsForge] Vortex: spiral centre, spin axis, start offset
+        Vec3      trail[2];            // [LyricsForge] motion trail: where it was ~40 / ~80 ms ago
+        float     trailT = 0;
+        bool      hasTrail = false;
+        int64_t   wordSeed = 0; int row = 0; // [BF] Glitch: whole rows of the word glitch together
     };
     std::vector<Frag> mFrags;
     static constexpr size_t kMaxFrags = 6000;

@@ -123,7 +123,8 @@ int64_t neteasePick(HttpResponse const& r, Variant const& v, int64_t durationMs,
             if (!artistOk || dd > std::min(maxDiff, 6.0)) continue;
             score = dd * 4.0 + (name == wantTitle ? 0 : 20);
         } else {
-            if ((!artistOk && dd > 2.5) || dd > maxDiff) continue;
+            if ((!artistOk && dd > 1.5) || dd > maxDiff) continue;
+        if (!artistOk && (wantTitle.size() < 6 || durationMs <= 0)) continue; // [BF] short titles are too common to trust alone
             score = dd * 4.0 + (artistOk ? 0 : 50) + (name == wantTitle ? 0 : 20);
         }
         if (score < bestScore) {
@@ -241,8 +242,11 @@ std::optional<Lyrics> lrclibBestOf(HttpResponse const& r, int64_t durationMs, Va
         std::string name = text::norm(sv(o, "trackName")), art = text::norm(sv(o, "artistName"));
         bool titleOk  = !name.empty() && (text::contains(name, wantTitle) || text::contains(wantTitle, name));
         bool artistOk = wantArtist.empty() || (!art.empty() && (text::contains(art, wantArtist) || text::contains(wantArtist, art)));
-        if (!titleOk && !artistOk) continue;
-        if (!titleOk) score += 200.0;
+        // [BF] a different artist's song with a similar title is not this song (an instrumental "lit(var)" got a rap
+        // song called "Lit"): the title must match, and another artist only passes on an exact title + duration
+        if (!titleOk) continue;
+        if (!artistOk && !(name == wantTitle && wantTitle.size() >= 6 && durationMs > 0 && o.hasValue("duration") &&
+                           std::fabs(o["duration"].asNumber() - double(durationMs) / 1000.0) <= 1.5)) continue;
         if (!artistOk) score += 300.0;
         if (score < bestScore) { bestScore = score; best = &o; }
     }
@@ -261,7 +265,8 @@ std::optional<Lyrics> lrclibBestByTitle(HttpResponse const& r, int64_t durationM
         if (!(name == wantTitle || text::startsWith(name, wantTitle))) continue;
         bool   artistOk = wantArtist.empty() || text::contains(art, wantArtist) || text::contains(wantArtist, art);
         double dd       = durationMs > 0 && o.hasValue("duration") ? std::fabs(o["duration"].asNumber() - double(durationMs) / 1000.0) : 0.0;
-        if ((!artistOk && dd > 2.5) || dd > maxDiff) continue;
+        if ((!artistOk && dd > 1.5) || dd > maxDiff) continue;
+        if (!artistOk && (wantTitle.size() < 6 || durationMs <= 0)) continue; // [BF] short titles are too common to trust alone
         double score = (o.hasValue("syncedLyrics") ? 0 : 500) + dd * 4.0 + (artistOk ? 0 : 50);
         if (score < bestScore) { bestScore = score; best = &o; }
     }
@@ -317,6 +322,7 @@ std::optional<Lyrics> netease(HttpGet const& http, Variant const& v, int64_t dur
         clean += line + "\n";
     }
     auto l = parseLrc(clean, durationMs);
+    if (l && (*lo)["tlyric"].has("lyric")) attachTranslations(*l, (*lo)["tlyric"]["lyric"].str()); // [BF] translations
     return (l && l->lines.size() >= 3) ? l : std::nullopt;
 }
 std::optional<Lyrics> neteaseWords(HttpGet const& http, Variant const& v, int64_t durationMs, double maxDiff, int64_t deadline) {
