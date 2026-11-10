@@ -32,3 +32,16 @@ Offline review renders: `atmos/diorama.py` (island), `atmos/preview3d.py` (model
 2. Art reviews 2 and 3 on in-game frames; fix what fails.
 3. Hive test (global packs on Hive maps; the cloud sea needs the vanilla clouds setting on).
 4. Glass refraction (RF), hit particles, the second atmosphere (Novak Glass) through the same formula.
+
+## Game-aware World FX (2026-11-10) - what no pack can do
+A pack can only key its look on time of day and biome. Bedrock Forge knows the match, so the atmosphere reacts to it.
+BF `src/client/MatchFx.cpp` exports `BF_GetMatchFx` (phase, beds + team colours, nearby block events); RF reads it
+every frame (SkyPass `matchFrame`, cbuffer b1 of worldfx_pass.hlsl).
+- **Living match sky** - golden hour at the start, dusk after the first bed breaks, moonlit night with stars when one
+  bed (or none) is left. The game's own time of day follows (vanilla lighting / torches). Verified in game.
+- **Team beacons + island light** - every bed throws a column of its team colour; a broken bed's beacon flares,
+  gutters and goes out. Verified in game (single player, red beds).
+- **Block shards** - a broken block bursts into 8 pieces of its colour with a pixel grain, lands on what was under it,
+  settles; over the void they fall away. Verified in game.
+- Offline sky review: `tools/skypreview/preview.js` in RF renders the real HLSL at any phase.
+- Not yet checked: The Hive (chat fallback, many team colours, real bridges), placement pop, perf in a full match.
