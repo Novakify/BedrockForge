@@ -366,7 +366,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
     float  cs  = c8.w > 0.5 ? cloudShadow(CAM + P) * c9.y : 0.0;
     float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55 * (1.0 - NIGHT)) * min(LIGHTK, 1.0);
-    float3 shadeCol = lerp(float3(0.30, 0.29, 0.46), float3(0.36, 0.42, 0.66), NIGHT); // without the key light: violet sky / blue night
+    float3 shadeCol = lerp(float3(0.46, 0.44, 0.62), float3(0.48, 0.54, 0.76), NIGHT); // without the key light: violet sky / blue night (light enough to fight in)
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
     lin *= lerp(1.0, ao, c6.x);
 
