@@ -141,7 +141,7 @@ float3 beacons(float3 rd, float tMax) {
         float3 hot = lerp(tCol[i].rgb, float3(1, 1, 1), 0.45);
         acc += (hot * core * flow * 0.30 + tCol[i].rgb * haze * 0.20) * prof * path * (st + 2.0 * fl) + tCol[i].rgb * orb * 0.35 * (st + fl);
     }
-    return acc * m0.z * (0.35 + 0.95 * darkK());
+    return acc * m0.z * (0.60 + 0.80 * darkK());
 }
 // ---- shards: a broken block bursts into 8 tumbling pieces of itself (its colour, a pixel grain like its texture)
 float3x3 rotAxis(float3 a, float ang) {
@@ -184,14 +184,14 @@ float4 shards(float3 rd, float sceneT) {
             best = tN, col = lit, hit = true;
             continue;
         }
-        if (age > 2.6) continue;
+        if (age > 4.2) continue;
         float  floorY = eC[i].y >= 0.0 ? corner.y - eC[i].y : -1e6;   // the top of what is under the block
         // a rough bound for the whole burst first (most pixels never see one)
         float3 bc = corner + 0.5 + float3(0, max(1.0 * age - 7.0 * age * age, floorY - corner.y - 0.5), 0);
         float  br = 1.2 + 2.8 * min(age, 0.8);
         float  tb = dot(bc, rd);
         if (tb < -br || dot(bc, bc) - tb * tb > br * br) continue;
-        float  fade = 1.0 - smoothstep(1.9, 2.6, age);
+        float  fade = 1.0 - smoothstep(3.2, 4.2, age);           // they lie there a moment, then shrink away
         [loop] for (int k = 0; k < 8; k++) {
             float  sk = seed * 0.001 + float(k) * 7.31;
             float3 o0 = float3(((k & 1) ? 0.70 : 0.30), ((k & 2) ? 0.70 : 0.30), ((k & 4) ? 0.70 : 0.30)) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 0.14;
@@ -227,9 +227,10 @@ float4 shards(float3 rd, float sceneT) {
             float  grain = 0.84 + 0.30 * hash12(cell + float2(k * 13, seed * 0.01));
             float  rim = 1.0 - 0.28 * smoothstep(0.70, 1.0, max(abs(fuv.x), abs(fuv.y)));
             float  ndl = saturate(dot(nw, SUN));
-            float3 amb = lerp(float3(0.55, 0.50, 0.70), float3(0.22, 0.28, 0.55), NIGHT) * (0.75 + 0.25 * nw.y);
-            float3 sunC = lerp(float3(1.25, 0.86, 0.60), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
-            best = tN, col = alb * grain * rim * (amb + sunC * ndl), hit = true;
+            float3 amb = lerp(float3(0.40, 0.37, 0.52), float3(0.22, 0.28, 0.55), NIGHT) * (0.70 + 0.30 * nw.y);
+            float3 sunC = lerp(float3(1.05, 0.74, 0.52), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
+            float3 world = lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.50, 0.58, 0.86), NIGHT); // same grade as the terrain
+            best = tN, col = alb * grain * rim * (amb + sunC * ndl) * world, hit = true;
         }
     }
     return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);

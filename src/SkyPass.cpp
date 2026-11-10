@@ -1324,8 +1324,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             auto const& e = b->events[(total - 1 - j) % 64];
             float const age = float(now - e.atMs) / 1000.0f;
             if (age < 0) continue;
-            if (age > 2.0f) break; // older ones are older still
-            if ((e.kind == 2 && age > 0.4f) || (e.kind == 1 && age > 1.9f)) continue;
+            if (age > 4.3f) break; // older ones are older still
+            if ((e.kind == 2 && age > 0.4f) || (e.kind == 1 && age > 4.2f)) continue;
             auto& c = f.cb;
             c.eA[ne][0] = float(e.x); c.eA[ne][1] = float(e.y); c.eA[ne][2] = float(e.z); c.eA[ne][3] = age;
             std::memcpy(c.eB[ne], e.col, 12); c.eB[ne][3] = float(e.kind);
