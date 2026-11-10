@@ -82,7 +82,7 @@ bool             gAnchored = false;
 // incremental scan for beds around the player (a few thousand blocks per frame)
 int gScanI = 0;
 double gScanC[3]{}; // centre of the current scan pass (the player's position when it started)
-constexpr int kScanR = 112, kScanDown = 40, kScanUp = 24, kPerFrame = 12000;
+constexpr int kScanR = 160, kScanDown = 40, kScanUp = 24, kPerFrame = 12000;
 
 // a bed: vanilla's, or a server's own bed block (any "...bed..." block that is not bedrock)
 bool isBedName(std::string const& n) {
@@ -378,8 +378,40 @@ void onText(std::string const& m) {
         s += char(std::tolower(uint8_t(m[i])));
     }
     std::lock_guard l(gMutex);
-    if (s.find("bed") != std::string::npos && (s.find("destroy") != std::string::npos || s.find("broke") != std::string::npos)) {
-        if (gBroken == 0) gBroken = 1; // a bed we couldn't see went down
+    bool const bedGone = s.find("bed") != std::string::npos && (s.find("destroy") != std::string::npos || s.find("broke") != std::string::npos);
+    bool const teamOut = s.find("team") != std::string::npos && s.find("eliminated") != std::string::npos && s.find("final kill") == std::string::npos;
+    if (bedGone || teamOut) {
+        // which team? the server names its colour (The Hive: "BLUE BED DESTROYED", "Aqua Team has been eliminated!")
+        struct W { char const* w; int d[2]; };
+        static W const kWords[] = {{"red", {14, -1}}, {"blue", {11, 3}}, {"green", {13, 5}}, {"lime", {5, 13}}, {"yellow", {4, 1}},
+                                   {"aqua", {9, 3}}, {"cyan", {9, 3}}, {"white", {0, 8}}, {"pink", {6, 2}}, {"gray", {7, 8}},
+                                   {"grey", {7, 8}}, {"orange", {1, 4}}, {"magenta", {2, 10}}, {"purple", {10, 2}}, {"black", {15, 7}},
+                                   {"brown", {12, 1}}};
+        Bed* hit = nullptr;
+        if (s.find("your bed") != std::string::npos) { // ours: the bed by where we arrived
+            double best = 1e9;
+            for (auto& b : gBeds)
+                if (b.alive) {
+                    double d = std::hypot(b.x + 0.5 - gAnchor[0], b.z + 0.5 - gAnchor[2]);
+                    if (d < best) best = d, hit = &b;
+                }
+        }
+        // the colour word that comes first (a player name after "by" may hold one too)
+        W const* first = nullptr;
+        size_t   at    = std::string::npos;
+        for (auto const& w : kWords) {
+            size_t k = s.find(w.w);
+            if (k != std::string::npos && (at == std::string::npos || k < at)) at = k, first = &w;
+        }
+        if (!hit && first)
+            for (int k = 0; k < 2 && !hit; ++k)
+                for (auto& b : gBeds)
+                    if (b.alive && b.dye == first->d[k]) { hit = &b; break; }
+        if (hit) {
+            hit->alive = false, hit->changed = nowMs();
+            ++gBroken;
+            note("bed at {} {} {} broken (the server said: {})", hit->x, hit->y, hit->z, s.substr(0, 80));
+        } else if (bedGone && gBroken == 0) gBroken = 1; // a bed we couldn't see went down
         gIsMap = true;
         retarget();
     }
