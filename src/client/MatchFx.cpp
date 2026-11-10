@@ -185,7 +185,19 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     double const  pos[3]{p.x, p.y, p.z};
     std::lock_guard l(gMutex);
     // a new match / world: a big sideways jump (Hive sends you to a new map) or a long time out of the world
-    if (!gAnchored || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0 || now - last > 20000) resetMatch(pos);
+    // or a teleport (> 30 blocks in one frame) to somewhere with none of this match's beds nearby (a respawn on the
+    // same map keeps the match; a server moving you to the next map / the lobby starts a new one)
+    static double lastPos[3]{};
+    double const  jump = std::sqrt((pos[0] - lastPos[0]) * (pos[0] - lastPos[0]) + (pos[1] - lastPos[1]) * (pos[1] - lastPos[1]) +
+                                   (pos[2] - lastPos[2]) * (pos[2] - lastPos[2]));
+    bool newPlace = false;
+    if (last && now - last < 1000 && jump > 30.0) {
+        newPlace = true;
+        for (auto const& b : gBeds)
+            if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { newPlace = false; break; }
+    }
+    lastPos[0] = pos[0], lastPos[1] = pos[1], lastPos[2] = pos[2];
+    if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0 || now - last > 20000) resetMatch(pos);
     scan(lp->getDimensionBlockSource());
     retarget();
     // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night
