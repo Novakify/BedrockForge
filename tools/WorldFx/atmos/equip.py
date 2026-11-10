@@ -150,7 +150,7 @@ HAND_ROT = (125.0, 0.0, 0.0)
 SWAP = {"north": "east", "south": "west", "east": "north", "west": "south", "up": "up", "down": "down"}
 
 
-def geometry(parts, uvs, tex_w, tex_h, ident, scale=1.0):
+def geometry(parts, uvs, tex_w, tex_h, ident, scale=1.0, rot=None):
     """our parts: blade along +y, flat facing +-z. In the held frame the flat must face +-x (the side the player
     sees), so x and z swap on export."""
     cubes = []
@@ -163,12 +163,35 @@ def geometry(parts, uvs, tex_w, tex_h, ident, scale=1.0):
         for f, (x, y, w, h) in uvs[id(p)].items():
             uv[SWAP[f]] = {"uv": [x, y], "uv_size": [w, h]}
         cubes.append({"origin": o, "size": sz2, "uv": uv})
-    bones = [{"name": "wfx_item", "pivot": list(HAND), "rotation": list(HAND_ROT),
+    bones = [{"name": "wfx_item", "pivot": list(HAND), "rotation": list(rot or HAND_ROT),
               "binding": "q.item_slot_to_bone_name(context.item_slot)", "cubes": cubes}]
     return {"format_version": "1.16.0", "minecraft:geometry": [{
         "description": {"identifier": ident, "texture_width": tex_w, "texture_height": tex_h,
                         "visible_bounds_width": 3, "visible_bounds_height": 4, "visible_bounds_offset": [0, 1, 0]},
         "bones": bones}]}
+
+
+def geometry_trident(parts, uvs, tex_w, tex_h, ident, grip_y=24.0):
+    """Mojang's trident frame: bone pivot (0, 24, 0) bound to the item slot, the item standing along +y, flat facing
+    +-z; held by the trident's own first/third person transforms (animation.wfx.hold_*). grip_y = where the grip
+    centre sits on that pole."""
+    cubes = []
+    for p in parts:
+        ox, oy, oz = p.origin
+        uv = {f: {"uv": [x, y], "uv_size": [w, h]} for f, (x, y, w, h) in uvs[id(p)].items()}
+        cubes.append({"origin": [ox, oy + grip_y, oz], "size": list(p.size), "uv": uv})
+    bones = [{"name": "wfx_item", "pivot": [0, 24, 0], "binding": "q.item_slot_to_bone_name(c.item_slot)", "cubes": cubes}]
+    return {"format_version": "1.16.0", "minecraft:geometry": [{
+        "description": {"identifier": ident, "texture_width": tex_w, "texture_height": tex_h,
+                        "visible_bounds_width": 3, "visible_bounds_height": 4, "visible_bounds_offset": [0, 1, 0]},
+        "bones": bones}]}
+
+
+HOLD_ANIM = {"format_version": "1.10.0", "animations": {
+    "animation.wfx.hold_first_person": {"loop": True, "bones": {"wfx_item": {
+        "position": [-7.0, -3.0, -2.0], "rotation": [152.0, -9.0, -5.0], "scale": 0.55}}},   # chosen in game 2026-11-10
+    "animation.wfx.hold_third_person": {"loop": True, "bones": {"wfx_item": {
+        "position": [1.5, -2.5, -10.5], "rotation": [97.0, -1.5, -49.0]}}}}}
 
 
 def preview_cubes(parts, uvs):
@@ -282,6 +305,13 @@ TOOL_ITEMS = {
 }
 
 
+FP_TEST = {"wood": [152, -9, 25], "stone": [152, -9, 55], "iron": [152, -9, -5], "gold": [152, 21, 25],
+           "diamond": [152, -39, 25], "netherite": [122, -9, 25]}
+TEST_GRIP = {}
+TEST_ROT = {"wood": (125, 90, 0), "stone": (125, -90, 0), "iron": (125, 0, 90), "gold": (125, 0, -90),
+            "diamond": (35, 0, 0), "netherite": (-55, 0, 0)}   # placement test: one candidate per sword tier
+
+
 def export(pack, palettes, prefix="wfx"):
     import json
     from PIL import Image
@@ -290,6 +320,9 @@ def export(pack, palettes, prefix="wfx"):
     (pack / "models" / "entity").mkdir(parents=True, exist_ok=True)
     (pack / "textures" / "worldfx").mkdir(parents=True, exist_ok=True)
     (pack / "textures" / "items").mkdir(parents=True, exist_ok=True)
+    (pack / "animations").mkdir(parents=True, exist_ok=True)
+    anim = json.loads(json.dumps(HOLD_ANIM))
+    (pack / "animations" / "wfx_hold.animation.json").write_text(json.dumps(anim, indent=1))
     jobs = [("sword", t, it, ic, sword) for t, (it, ic) in SWORD_ITEMS.items()]
     jobs += [("pickaxe", t, it, ic, pickaxe) for t, (it, ic) in TOOL_ITEMS["pickaxe"].items()]
     jobs += [("axe", t, it, ic, axe) for t, (it, ic) in TOOL_ITEMS["axe"].items()]
@@ -298,13 +331,16 @@ def export(pack, palettes, prefix="wfx"):
         atlas, uvs, tw, th = build(parts, palettes, tier)
         name = f"{prefix}_{tier}_{kind}"
         Image.fromarray(atlas, "RGBA").save(pack / "textures" / "worldfx" / f"{name}.png")
-        geo = geometry(parts, uvs, tw, th, f"geometry.{name}")
+        geo = geometry_trident(parts, uvs, tw, th, f"geometry.{name}", grip_y=TEST_GRIP.get(tier, 24.0))
         (pack / "models" / "entity" / f"{name}.geo.json").write_text(json.dumps(geo, indent=1))
         att = {"format_version": "1.10.0", "minecraft:attachable": {"description": {
             "identifier": f"minecraft:{item}",
             "materials": {"default": "entity_alphatest", "enchanted": "entity_alphatest_glint"},
             "textures": {"default": f"textures/worldfx/{name}", "enchanted": "textures/misc/enchanted_item_glint"},
             "geometry": {"default": f"geometry.{name}"},
+            "animations": {"hold_first_person": "animation.wfx.hold_first_person",
+                           "hold_third_person": "animation.wfx.hold_third_person"},
+            "scripts": {"animate": [{"hold_first_person": "c.is_first_person"}, {"hold_third_person": "!c.is_first_person"}]},
             "render_controllers": ["controller.render.item_default"]}}}
         (pack / "attachables" / f"{item}.json").write_text(json.dumps(att, indent=1))
         ic = pv.render(preview_cubes(parts, uvs), atlas, size=32, yaw=0.0, pitch=0.0, roll=-0.785, alpha=True, flat=True)

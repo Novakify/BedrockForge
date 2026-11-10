@@ -14,6 +14,20 @@
    "geometry": {
     "default": "geometry.wfx_diamond_pickaxe"
    },
+   "animations": {
+    "hold_first_person": "animation.wfx.hold_first_person",
+    "hold_third_person": "animation.wfx.hold_third_person"
+   },
+   "scripts": {
+    "animate": [
+     {
+      "hold_first_person": "c.is_first_person"
+     },
+     {
+      "hold_third_person": "!c.is_first_person"
+     }
+    ]
+   },
    "render_controllers": [
     "controller.render.item_default"
    ]

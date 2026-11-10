@@ -159,8 +159,8 @@ def main():
         "format_version": 2,
         "header": {"name": f"{cfg['name']} by Novak",
                    "description": f"World FX atmosphere: {cfg['name']}. Block, item and bed art: Faithful 32x by the Faithful team (faithfulpack.net, graded) - see CREDITS.txt",
-                   "uuid": cfg["uuid"], "version": [0, 1, 0], "min_engine_version": [1, 21, 0]},
-        "modules": [{"type": "resources", "uuid": cfg["module_uuid"], "version": [0, 1, 0]}],
+                   "uuid": cfg["uuid"], "version": [0, 2, 0], "min_engine_version": [1, 21, 0]},
+        "modules": [{"type": "resources", "uuid": cfg["module_uuid"], "version": [0, 2, 0]}],
     }
     (pack / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     if getattr(m, "BASE", None) == "faithful":
