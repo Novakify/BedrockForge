@@ -978,9 +978,12 @@ void wfxStatus(std::string s) { std::lock_guard l(gWfxMutex); gWfxStatus = std::
 bool makeWfxRoot(ID3D12Device* dev) {
     std::lock_guard l(gWfxMutex);
     if (gWfxRoot) return true;
-    D3D12_ROOT_PARAMETER prm[4]{};
+    D3D12_ROOT_PARAMETER prm[5]{};
     prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     prm[0].Constants        = {0, 0, 40};
+    prm[4].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_CBV; // b1: the match (team lights, beacons, shards)
+    prm[4].Descriptor       = {1, 0};
+    prm[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     prm[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     prm[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
     prm[1].Descriptor       = {0, 0};
@@ -997,7 +1000,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     smp.AddressU = smp.AddressV = smp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     smp.MaxLOD           = D3D12_FLOAT32_MAX;
     smp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_ROOT_SIGNATURE_DESC rs{4, prm, 1, &smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    D3D12_ROOT_SIGNATURE_DESC rs{5, prm, 1, &smp, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob>          blob, err;
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
@@ -1242,6 +1245,123 @@ bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls con
                  BfSkyFrameV1 const& h);
 } // namespace
 
+// ---- the match (Bedrock Forge MatchFx, BF_GetMatchFx): must match src/client/MatchFx.h in Bedrock Forge
+namespace {
+struct BfMatchTeamV1 { float pos[3]; float col[3]; uint32_t alive; int64_t changedMs; };
+struct BfMatchEventV1 { int32_t x, y, z; uint32_t kind; int64_t atMs; float col[4]; uint32_t seed; uint32_t pad; };
+struct BfMatchFxV1 {
+    uint32_t size, version, active, frame;
+    float phase, phaseTarget, timeOfDay;
+    uint32_t bedsBroken;
+    int64_t nowMs;
+    uint32_t nTeams, nEvents;
+    BfMatchTeamV1 teams[16];
+    BfMatchEventV1 events[64];
+};
+using MatchGet = BfMatchFxV1 const* (*)();
+using MatchUse = void (*)(int);
+struct MatchCb { float m0[4]; float tPos[16][4]; float tCol[16][4]; float eA[8][4]; float eB[8][4]; float eC[8][4]; };
+static_assert(sizeof(MatchCb) == 57 * 16, "cbuffer M layout");
+struct MatchFrame { float phase = 0; MatchCb cb{}; };
+std::mutex  gMatchMutex;
+MatchFrame  gMatch;
+int64_t     gMatchAt = -1;
+std::string gMatchStatus = "Bedrock Forge not found (living sky stays golden)";
+void matchFns(MatchGet& g, MatchUse& u) {
+    static MatchGet sg = nullptr;
+    static MatchUse su = nullptr;
+    static int      delay = 0;
+    if (!sg && delay-- <= 0) {
+        delay = 240;
+        if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll")) {
+            sg = reinterpret_cast<MatchGet>(reinterpret_cast<void*>(GetProcAddress(m, "BF_GetMatchFx")));
+            su = reinterpret_cast<MatchUse>(reinterpret_cast<void*>(GetProcAddress(m, "BF_MatchFxConsumer")));
+        }
+    }
+    g = sg, u = su;
+}
+int64_t steadyMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+} // namespace
+// once per frame (cheap after the first call): the match as the World FX shaders want it
+static MatchFrame matchFrame(WorldFxLook const& look) {
+    int64_t const now = steadyMs();
+    std::lock_guard l(gMatchMutex);
+    if (gMatchAt >= 0 && now - gMatchAt < 4) return gMatch;
+    gMatchAt = now;
+    MatchFrame f;
+    MatchGet get; MatchUse use;
+    matchFns(get, use);
+    BfMatchFxV1 const* b = get ? get() : nullptr;
+    bool const ok = b && b->version >= 1 && b->size >= sizeof(BfMatchFxV1);
+    if (use) use(look.living && ok && gWorldSky.load() != 0 ? 1 : 0);
+    if (ok) {
+        f.phase = look.living ? std::clamp(b->phase, 0.0f, 2.0f) : 0.0f;
+        uint32_t nt = std::min<uint32_t>(b->nTeams, 16), k = 0;
+        for (uint32_t i = 0; i < nt; ++i) {
+            auto const& t = b->teams[i];
+            float const a = float(now - t.changedMs) / 1000.0f;
+            float st = 0, fl = 0;
+            if (t.alive) st = std::clamp(a / 1.5f, 0.0f, 1.0f);
+            else {
+                st = std::max(0.0f, 1.0f - a / 1.4f) * (0.75f + 0.25f * std::sin(a * 41.0f)); // the light gutters out
+                fl = a < 0.18f ? a / 0.18f : std::exp(-(a - 0.18f) * 3.2f);
+                if (a > 3.0f) continue;
+            }
+            auto& c = f.cb;
+            std::memcpy(c.tPos[k], t.pos, 12); c.tPos[k][3] = st;
+            std::memcpy(c.tCol[k], t.col, 12); c.tCol[k][3] = fl;
+            ++k;
+        }
+        f.cb.m0[0] = float(k);
+        // the newest block events that are still playing (8 at most)
+        uint32_t ne = 0;
+        uint32_t const total = b->nEvents;
+        for (uint32_t j = 0; j < 64 && j < total && ne < 8; ++j) {
+            auto const& e = b->events[(total - 1 - j) % 64];
+            float const age = float(now - e.atMs) / 1000.0f;
+            if (age < 0) continue;
+            if (age > 2.0f) break; // older ones are older still
+            if ((e.kind == 2 && age > 0.4f) || (e.kind == 1 && age > 1.9f)) continue;
+            auto& c = f.cb;
+            c.eA[ne][0] = float(e.x); c.eA[ne][1] = float(e.y); c.eA[ne][2] = float(e.z); c.eA[ne][3] = age;
+            std::memcpy(c.eB[ne], e.col, 12); c.eB[ne][3] = float(e.kind);
+            c.eC[ne][0] = float(e.seed % 100000u);
+            ++ne;
+        }
+        f.cb.m0[1] = float(ne);
+        gMatchStatus = "phase " + std::to_string(b->phase).substr(0, 4) + " (target " + std::to_string(int(b->phaseTarget)) + "), beds " +
+                       std::to_string(b->nTeams) + " (" + std::to_string(b->bedsBroken) + " broken), block events " + std::to_string(total);
+    } else if (get) gMatchStatus = "Bedrock Forge has no match bridge (old build)";
+    if (look.phase >= 0) f.phase = std::clamp(look.phase, 0.0f, 2.0f);
+    f.cb.m0[2] = look.teams;
+    f.cb.m0[3] = look.shards;
+    gMatch = f;
+    return f;
+}
+std::string matchStatus() { std::lock_guard l(gMatchMutex); return gMatchStatus; }
+// per-frame constant buffer ring (upload heap) for cbuffer M
+constexpr UINT kMcbSlots = 16, kMcbStride = 1024;
+ComPtr<ID3D12Resource> gMcb;
+uint8_t*               gMcbMap = nullptr;
+UINT                   gMcbNext = 0;
+static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& cb) {
+    std::lock_guard l(gMatchMutex);
+    if (!gMcb) {
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC   d{};
+        d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, d.Width = kMcbSlots * kMcbStride, d.Height = 1, d.DepthOrArraySize = 1, d.MipLevels = 1;
+        d.SampleDesc.Count = 1, d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&gMcb)))) return 0;
+        void* p = nullptr;
+        D3D12_RANGE none{0, 0};
+        if (FAILED(gMcb->Map(0, &none, &p))) { gMcb.Reset(); return 0; }
+        gMcbMap = static_cast<uint8_t*>(p);
+    }
+    UINT const slot = gMcbNext++ % kMcbSlots;
+    std::memcpy(gMcbMap + slot * kMcbStride, &cb, sizeof cb);
+    return gMcb->GetGPUVirtualAddress() + UINT64(slot) * kMcbStride;
+}
+
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldSky(list, st, calls);
@@ -1484,7 +1604,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     c[12] = float(pos[0]); c[13] = float(pos[1]); c[14] = float(pos[2]);
     c[15] = float(std::floor(gAnchor[1]) - 56.0 + gDeckOffset.load());
     c[16] = float(gAnchor[0]); c[17] = float(gAnchor[2] - 25.0);
-    c[18] = 1.0f; c[19] = 0.0f;
+    c[18] = 1.0f; c[19] = matchFrame(worldFxLook()).phase;
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
@@ -1593,7 +1713,10 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     c[12] = 0.025f; c[13] = 0; c[14] = 0; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified)
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
-    c[24] = look.shadows ? look.ao : 0.0f; c[25] = look.shadows ? look.rim : 0.0f; c[26] = float(look.debug); c[27] = 0;
+    MatchFrame const mf = matchFrame(look);
+    D3D12_GPU_VIRTUAL_ADDRESS const mcb = uploadMatch(dev.Get(), mf.cb);
+    if (!mcb) { wfxStatus("match buffer failed"); return false; }
+    c[24] = look.shadows ? look.ao : 0.0f; c[25] = look.shadows ? look.rim : 0.0f; c[26] = float(look.debug); c[27] = mf.phase;
     // the cloud sea, depth-tested against the terrain: same deck + clock as the sky pass (drawWorldSky)
     c[28] = float(snap.pos[0]); c[29] = float(snap.pos[1]); c[30] = float(snap.pos[2]);
     c[31] = float(std::floor(gAnchor[1]) - 56.0 + gDeckOffset.load());
@@ -1608,6 +1731,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     calls.setTable(list, 3, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
     list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
     list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
+    list->SetGraphicsRootConstantBufferView(4, mcb);
     calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     calls.draw(list, 3, 1, 0, 0);
@@ -1637,13 +1761,17 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "deck") gDeckOffset = std::clamp(v, -80.f, 80.f);
         else if (k == "rays") gLook.rays = std::clamp(v, 0.f, 3.f);
         else if (k == "clouds") gLook.clouds = std::clamp(v, 0.f, 1.f);
+        else if (k == "living") gLook.living = v != 0;
+        else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
+        else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
     }
 }
 void saveWorldFxSettings() {
     if (gWfxConfig.empty()) return;
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
-        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\n";
+        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds
+        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\n";
 }
 
 void setWorldSky(int kind) {

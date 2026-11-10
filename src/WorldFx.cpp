@@ -1122,6 +1122,16 @@ void drawUi() {
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Cloud shadows", &look.clouds, 0.0f, 1.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SeparatorText("The match (Bedrock Forge)");
+    saveFx |= ImGui::Checkbox("Living match sky", &look.living);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(golden hour -> dusk at the first bed -> night for the final fight)");
+    ImGui::SliderFloat("Preview sky phase", &look.phase, -1.0f, 2.0f, look.phase < 0 ? "follow the match" : "%.2f");
+    ImGui::SliderFloat("Team lights + bed beacons", &look.teams, 0.0f, 2.0f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SliderFloat("Block shards", &look.shards, 0.0f, 1.0f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::Text("Match: %s", rf::sky::matchStatus().c_str());
     ImGui::RadioButton("Normal", &look.debug, 0); ImGui::SameLine();
     ImGui::RadioButton("Show shadows", &look.debug, 1); ImGui::SameLine();
     ImGui::RadioButton("Show occlusion", &look.debug, 2);

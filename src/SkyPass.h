@@ -83,7 +83,13 @@ float       worldSkyDeck();
 std::string worldSkyStatus();
 /// World FX screen pass (shaders/worldfx_pass.hlsl) at Bedrock's cloud draw while the Cloud Sea is on:
 /// sun shadows from the depth buffer, soft occlusion, the warm rim. Strengths 0..1; debug 0 off, 1 shadows, 2 occlusion.
-struct WorldFxLook { bool shadows = true; float shadow = 0.85f; float ao = 0.55f; float rim = 1.0f; int debug = 0; float rays = 1.0f; float clouds = 1.0f; };
+struct WorldFxLook {
+    bool shadows = true; float shadow = 0.85f; float ao = 0.55f; float rim = 1.0f; int debug = 0; float rays = 1.0f; float clouds = 1.0f;
+    // the match (Bedrock Forge MatchFx): living sky, team lights + bed beacons, block shards. phase < 0 = follow the match
+    bool living = true; float teams = 1.0f; float shards = 1.0f; float phase = -1.0f;
+};
+/// what RF last read from Bedrock Forge's match bridge (for the F6 panel)
+std::string matchStatus();
 WorldFxLook& worldFxLook();
 std::string  worldFxStatus();
 void         loadWorldFxSettings(std::filesystem::path const& configDir);
