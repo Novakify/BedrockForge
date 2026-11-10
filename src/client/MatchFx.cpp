@@ -507,7 +507,8 @@ void onText(std::string const& m) {
     }
     std::lock_guard l(gMutex);
     {   // a kill line (not a bed / team line)
-        bool const killy = s.find("kill") != std::string::npos || s.find("slain") != std::string::npos || s.find("died") != std::string::npos ||
+        if (gIsMap) note("text: {}", s.substr(0, 120)); // (finding the server's kill lines)
+        bool const killy = s.find("death.") != std::string::npos || s.find("kill") != std::string::npos || s.find("slain") != std::string::npos || s.find("died") != std::string::npos ||
                            s.find("fell") != std::string::npos || s.find("void") != std::string::npos ||
                            (s.find("eliminated") != std::string::npos && s.find("team") == std::string::npos);
         if (killy && s.find("bed") == std::string::npos && gIsMap) {

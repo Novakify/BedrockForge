@@ -156,7 +156,18 @@ bool onText(std::string const& m) {
 }
 
 std::string messageOf(TextPacket const& p) {
-    return std::visit([](auto const& b) { return std::string(b.mMessage.get()); }, p.mBody.get());
+    // a translated line (vanilla death messages, many server lines) is a key + parameters: keep the parameters (names)
+    return std::visit([](auto const& b) {
+        std::string out(b.mMessage.get());
+        if constexpr (requires { b.mParams; }) {
+            auto const& prm = [&]() -> decltype(auto) {
+                if constexpr (requires { b.mParams.get(); }) return b.mParams.get();
+                else return (b.mParams);
+            }();
+            for (auto const& x : prm) out += ' ' + std::string(x);
+        }
+        return out;
+    }, p.mBody.get());
 }
 
 Clock::time_point gSprintPulse{};
