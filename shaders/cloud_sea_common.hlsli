@@ -4,12 +4,33 @@ Texture2D    gNoise : register(CS_NOISE_REG); // 256x256 RGBA8 value noise (4 in
 Texture2D    gPuff  : register(CS_PUFF_REG);  // 1024x1024 R16 cloud-top height with mips (domes riding on domes)
 SamplerState gSmp   : register(s0); // linear, wrap
 
-static const float3 SUN     = float3(0.17605, 0.11247, -0.97794); // low sun, ~6.5 degrees up (north)
+static float3 SUN = float3(0.17605, 0.11247, -0.97794); // the key light: low sun ~6.5 degrees up (north); the moon at night
 static const float  SEA_AMP = 24.0;
 static float3 CAM;
 static float  TIME, SEA_Y;
 static float2 MAP_C;
+// ---- living match sky (Bedrock Forge MatchFx): phase 0 golden hour -> 1 dusk (first bed down) -> 2 night (final fight)
+static float  PHASE = 0.0, DUSK = 0.0, NIGHT = 0.0;
+static float3 SUNDISC = float3(0.17605, 0.11247, -0.97794);
+static float  SUNUP = 1.0;  // the sun disc and its warm glow (gone once it has set)
+static float  LIGHTK = 1.0; // strength of the key light on the world: sun -> nothing at deep dusk -> moonlight
+static const float2 SUN_AZ = float2(0.17717, -0.98418);  // the sun's compass direction (xz)
+static const float2 MOON_AZ = float2(-0.85671, 0.51580); // the moon rises on the other side, over the south-west
+float3 dirAzEl(float2 az, float el) { return float3(az.x * cos(el), sin(el), az.y * cos(el)); }
+void csSetPhase(float k) {
+    PHASE = k;
+    DUSK  = smoothstep(0.0, 1.0, k);
+    NIGHT = smoothstep(1.15, 1.9, k);
+    float3 disc = dirAzEl(SUN_AZ, radians(lerp(6.5, -4.5, DUSK)));   // where the sun disc is (it sets)
+    float3 sun  = dirAzEl(SUN_AZ, radians(lerp(6.5, 1.5, DUSK)));    // the light: the afterglow still comes from there
+    float3 moon = dirAzEl(MOON_AZ, radians(31.0));
+    SUN    = normalize(lerp(sun, moon, smoothstep(1.3, 1.6, k)));     // swaps while it is darkest: no shadow jump to see
+    SUNDISC = disc;
+    SUNUP  = smoothstep(-0.075, 0.03, disc.y) * (1.0 - smoothstep(1.0, 1.3, k));
+    LIGHTK = lerp(lerp(1.0, 0.40, smoothstep(0.25, 1.0, k)), 0.62, NIGHT) * (1.0 - 0.75 * smoothstep(1.1, 1.45, k) * (1.0 - smoothstep(1.45, 1.8, k)));
+}
 
+float3 csGrade(float3 c, float3 rd); // below (the sea uses it)
 float2 rot(float2 p) { return float2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y); }
 float vnoise(float2 p) {
     float2 i = floor(p), f = frac(p);
@@ -169,13 +190,17 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     amb += float3(0.22, 0.075, 0.040) * max(dot(normalize(n.xz + 1e-4), l2), 0.0) * (1.0 - n.y) * 0.5 * crease;
     float  phase = lerp(0.60, 1.0, smoothstep(-1.0, 0.35, mu));
     float3 direct = lerp(float3(0.95, 0.36, 0.20), float3(1.00, 0.335, 0.105), smoothstep(-1.0, 0.35, mu)) * 1.02 * lit * phase;
+    // the sun gone: tops fall into shade, only the slopes facing the afterglow keep a pink edge; moonlight after
+    float  dk = DUSK * (1.0 - NIGHT);
+    direct *= lerp(1.0, LIGHTK, DUSK) * lerp(float3(1, 1, 1), float3(0.95, 0.80, 1.55), dk); // rose afterglow light
+    amb *= lerp(float3(1, 1, 1), float3(1.25, 1.15, 1.55), dk);
     float  crest = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
-    float3 through = float3(1.5, 0.62, 0.18) * crest * pow(max(mu, 0.0), 5.0) * sh * 0.9;
+    float3 through = float3(1.5, 0.62, 0.18) * crest * pow(max(mu, 0.0), 5.0) * sh * 0.9 * (SUNUP + NIGHT * 0.5);
     float3 col = amb + direct + through;
     float  f = saturate((1.0 - exp(-t / 1000.0)) / (1.0 - exp(-3.4)));
     float3 hz = skyBase(normalize(float3(rd.x, max(rd.y, 0.0) + 0.030, rd.z)));
     col = lerp(col, hz, f * f * (3.0 - 2.0 * f));
-    return float4(col, 1.0);
+    return float4(csGrade(col, rd), 1.0);
 }
 
 float3 toDisplay(float3 c) {
@@ -190,16 +215,81 @@ float hash12(float2 p) { p = frac(p * float2(0.1031, 0.1030)); p += dot(p, p.yx 
 // the sky along one view ray (linear colour): gradient, sun, high clouds, and - when withSea - the cloud sea.
 // The sky pass draws it without the sea (it runs under the whole screen, before the terrain exists); the World FX pass
 // adds the sea only on pixels that are still sky after the world is drawn (csSeaPixel), so terrain never pays for it.
-float3 csGlow(float ang, float hcA) { return float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * (1.0 - 0.5 * hcA); }
+float3 csGlow(float ang, float hcA) {
+    float3 warm = float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * lerp(1.0, 0.45, DUSK) * (1.0 - NIGHT);
+    float3 cool = float3(0.55, 0.68, 1.0) * 0.050 * exp(-ang * 4.0) * NIGHT;   // moon haze
+    return (warm + cool) * (1.0 - 0.5 * hcA);
+}
+
+// ---- the light leaving: dusk keeps a warm afterglow under where the sun went, the rest sinks to violet and indigo;
+//      night turns everything to moonlight (silver tops, deep blue shade). One grade for sky, clouds and sea.
+float3 csGrade(float3 c, float3 rd) {
+    float  dn = DUSK * (1.0 - NIGHT);
+    [branch] if (dn > 0.001) {
+        float  toward = pow(saturate(dot(normalize(rd.xz + 1e-4), SUN_AZ) * 0.5 + 0.5), 6.0) * exp(-max(rd.y, 0.0) * 5.0);
+        float3 dk = c * lerp(float3(0.42, 0.34, 0.86) * 0.70, float3(1.05, 0.52, 0.48), toward * 0.85);
+        c = lerp(c, dk, dn);
+    }
+    [branch] if (NIGHT > 0.001) {
+        float  lum = dot(c, float3(0.2126, 0.7152, 0.0722));
+        float  l2  = pow(lum / 0.45, 1.8) * 0.45;            // moonlight is contrasty: silver tops, deep shade
+        float3 cn  = l2 * lerp(float3(0.10, 0.18, 0.62), float3(0.82, 0.92, 1.12), smoothstep(0.05, 0.50, l2)) * 0.80;
+        cn += float3(0.003, 0.005, 0.014);
+        c = lerp(c, cn, NIGHT);
+    }
+    return c;
+}
+float hash13(float3 p) { p = frac(p * 0.1031); p += dot(p, p.zyx + 31.32); return frac((p.x + p.y) * p.z); }
+// stars: one possible star per cell of a 3D grid on the unit sphere; a faint band of them (and its glow) across the sky
+float3 csStars(float3 rd) {
+    float3 band = normalize(float3(0.35, 0.42, 0.84));
+    float  inBand = exp(-pow(dot(rd, band) / 0.22, 2.0));
+    float3 acc = float3(0.0, 0.0, 0.0);
+    [unroll] for (int layer = 0; layer < 2; layer++) {
+        float  sc = layer == 0 ? 150.0 : 330.0;
+        float3 g = rd * sc, cell = floor(g);
+        float  h = hash13(cell + 17.0 * float(layer));
+        float  thr = layer == 0 ? 0.955 : lerp(0.985, 0.90, inBand);
+        if (h > thr) {
+            float3 sp = normalize(cell + 0.5 + (float3(hash13(cell + 3.1), hash13(cell + 7.7), hash13(cell + 11.3)) - 0.5) * 0.7);
+            float  a = length(rd - sp) * sc;
+            float  mag = pow((h - thr) / (1.0 - thr), 2.2) * (layer == 0 ? 2.6 : 0.9);
+            float  tw = 0.70 + 0.30 * sin(TIME * (1.3 + 3.0 * h) + h * 61.0);
+            float3 tint = lerp(float3(0.75, 0.84, 1.10), float3(1.10, 0.92, 0.78), frac(h * 37.0));
+            acc += tint * mag * tw * exp(-a * a * 28.0);
+        }
+    }
+    float glow = inBand * (0.55 + 0.45 * fbm(rd.xz / (rd.y + 1.2) * 6.0 + 4.0, 3));
+    acc += float3(0.020, 0.022, 0.040) * glow;
+    return acc * smoothstep(0.0, 0.18, rd.y);
+}
+float3 csMoon(float3 rd) { // a small cool moon with a little surface, a halo
+    float  ang = acos(clamp(dot(rd, SUN), -1.0, 1.0));
+    float3 t1 = normalize(cross(SUN, float3(0, 1, 0))), t2 = cross(t1, SUN);
+    float2 q = float2(dot(rd, t1), dot(rd, t2)) / 0.016;
+    float  disc = smoothstep(1.0, 0.86, length(q));
+    float  mare = fbm(q * 2.2 + 5.0, 3);
+    float3 m = float3(1.05, 1.07, 1.12) * (0.95 + 0.5 * smoothstep(0.35, 0.7, mare)) * 1.7 * disc;
+    return m + float3(0.55, 0.66, 1.0) * (exp(-ang * 26.0) * 0.16 + exp(-ang * 6.0) * 0.030);
+}
 float3 csBackground(float3 rd, bool withSea) {
     float  mu = dot(rd, SUN);
     float  ang = acos(clamp(mu, -1.0, 1.0));
     float3 col = skyBase(rd);
     float4 hc = highClouds(rd, mu);
-    float  disc = smoothstep(0.0125, 0.0095, ang);
-    float3 sun = float3(3.2, 2.3, 1.25) * disc + float3(1.5, 0.78, 0.30) * exp(-ang * 38.0) * 0.8;
+    float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
+    float  disc = smoothstep(0.0125, 0.0095, angD);
+    float3 sun = (float3(3.2, 2.3, 1.25) * disc + float3(1.5, 0.78, 0.30) * exp(-angD * 38.0) * 0.8) * SUNUP;
     col += sun * (1.0 - hc.a * 0.85);
-    col = col * (1.0 - hc.a) + hc.rgb;
+    col = csGrade(col * (1.0 - hc.a) + hc.rgb, rd);
+    [branch] if (NIGHT > 0.001) {
+        float  e = max(rd.y, 0.0);
+        float3 nb = lerp(float3(0.040, 0.055, 0.110), float3(0.006, 0.010, 0.032), smoothstep(0.0, 0.45, e));
+        nb = lerp(nb, float3(0.020, 0.030, 0.075), smoothstep(0.0, 0.02, e) * (1.0 - smoothstep(0.02, 0.2, e)) * 0.5);
+        float3 hcN = csGrade(hc.rgb, rd);                   // clouds keep their moonlit shapes over the night gradient
+        col = lerp(col, nb * (1.0 - hc.a) + hcN, NIGHT);
+    }
+    [branch] if (NIGHT > 0.001) col += (csStars(rd) * (1.0 - hc.a) + csMoon(rd) * (1.0 - hc.a * 0.8)) * NIGHT;
     [branch] if (withSea) {
         float  tHit;
         float4 sea = cloudSea(CAM, rd, 3400.0, tHit);

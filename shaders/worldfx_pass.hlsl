@@ -12,10 +12,19 @@ cbuffer C : register(b0) {
     float4 c3; // x = near plane (0.025), y = z = 0, w = flags (1 = scene is BGRA)
     float4 c4; // xy = target size, z = scene row pitch (bytes), w = depth row pitch (bytes)
     float4 c5; // xyz = sun direction (world), w = shadow strength
-    float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = 0
+    float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = match phase
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
     float4 c9; // x = god ray strength, y = cloud shadow strength, zw = 0
+};
+// the match (Bedrock Forge MatchFx, filled per frame by SkyPass): team lights + bed beacons, block shards, placement pop
+cbuffer M : register(b1) {
+    float4 m0;       // x = teams, y = block events, z = team light strength (F6), w = shard strength (F6)
+    float4 tPos[16]; // bed centre (world), w = strength 0..1 (fades in, dies when the bed breaks)
+    float4 tCol[16]; // team colour (linear), w = break flare
+    float4 eA[8];    // block corner (world, min), w = age (s)
+    float4 eB[8];    // block colour (sRGB 0..1), w = kind (1 broken, 2 placed)
+    float4 eC[8];    // x = seed
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
@@ -58,7 +67,7 @@ VSOut VSWorldFx(uint id : SV_VertexID) {
 // ---- god rays: march from the pixel toward the sun on screen; every step that sees open sky lets light through.
 //      Islands, players and trees cut real shadow wedges into the beams. Returns linear light to add.
 float3 sunShafts(int2 px, float j) {
-    float3 sp = toPx(c5.xyz * 4000.0);
+    float3 sp = toPx(SUN * 4000.0);
     if (sp.z <= 0.0 || c8.w < 0.5) return float3(0, 0, 0);
     float2 d  = sp.xy - float2(px);
     float  dl = length(d);
@@ -77,16 +86,148 @@ float3 sunShafts(int2 px, float j) {
     }
     float open = acc / max(wsum, 1e-4);
     float beam = open * near * near * (0.6 + 0.4 * near);
-    return float3(1.00, 0.58, 0.26) * beam * c9.x;
+    return lerp(float3(1.00, 0.58, 0.26), float3(0.45, 0.56, 0.85), NIGHT) * beam * c9.x;
 }
 
 // cloud shadows: the high cloud deck (y 900) seen from this point toward the low sun
 float cloudShadow(float3 W) {
-    float  t = (900.0 - W.y) / max(c5.y, 0.03);
-    float2 q = W.xz + c5.xz * t;
+    float  t = (900.0 - W.y) / max(SUN.y, 0.03);
+    float2 q = W.xz + SUN.xz * t;
     float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
     return smoothstep(0.74, 0.86, hcDens(p, 3));
 }
+
+// ================================================================ the match
+// how dark the scene is: team light reads more as the sky goes
+float darkK() { return saturate(DUSK * 0.55 + NIGHT * 0.45); }
+// team light falling on a terrain point W (world) with normal n: islands glow in their team colour
+float3 teamLight(float3 W, float3 n) {
+    float3 acc = 0.0;
+    int nt = int(m0.x);
+    [loop] for (int i = 0; i < nt; i++) {
+        float  st = tPos[i].w + tCol[i].w * 0.6;
+        if (st <= 0.002) continue;
+        float3 v = tPos[i].xyz + float3(0, 1.2, 0) - W;
+        float  d = length(v);
+        if (d > 24.0) continue;
+        float  f = pow(saturate(1.0 - d / 24.0), 2.0) / (1.0 + 0.030 * d * d);
+        float  wrap = saturate(dot(n, v / max(d, 1e-3)) * 0.6 + 0.4);
+        acc += tCol[i].rgb * f * wrap * st;
+    }
+    return acc * m0.z * (0.30 + 1.10 * darkK());
+}
+// bed beacons: a soft column of team light rising from every standing bed (read the map at a glance); a bed that
+// breaks flares, then its beacon falls back into the island and goes out. Ray from the camera (rd), up to tMax.
+float3 beacons(float3 rd, float tMax) {
+    float3 acc = 0.0;
+    int nt = int(m0.x);
+    float2 rxz = rd.xz;
+    float  r2 = max(dot(rxz, rxz), 1e-5);
+    [loop] for (int i = 0; i < nt; i++) {
+        float st = tPos[i].w, fl = tCol[i].w;
+        if (st + fl <= 0.002) continue;
+        float3 b = tPos[i].xyz - CAM;
+        float  t = clamp(dot(b.xz, rxz) / r2, 0.0, tMax);
+        float2 q = rxz * t - b.xz;
+        float  r = length(q);
+        float  h = rd.y * t - b.y;                       // height above the bed where the ray passes the column
+        float  top = lerp(3.0, 110.0, st) + fl * 40.0;
+        float  prof = smoothstep(-0.4, 0.6, h) * exp(-max(h, 0.0) / (0.32 * top)) * smoothstep(top, top * 0.55, h);
+        float  w = 0.45 + 0.9 * fl;                       // core half-width (blocks)
+        float  core = exp(-r * r / (w * w)), haze = exp(-r * r / (9.0 * w * w)) * 0.22;
+        float  path = 1.0 / max(sqrt(r2), 0.25);          // looking along the column you see more of it
+        float  dist = length(float2(r, h));
+        float  orb = exp(-pow(length(float3(q.x, h - 0.4, q.y)) / 0.9, 2.0)) * 0.9;
+        acc += tCol[i].rgb * ((core + haze) * prof * path * 0.16 + orb * 0.25) * (st + 2.0 * fl);
+    }
+    return acc * m0.z * (0.35 + 0.95 * darkK());
+}
+// ---- shards: a broken block bursts into 8 tumbling pieces of itself (its colour, a pixel grain like its texture)
+float3x3 rotAxis(float3 a, float ang) {
+    float s = sin(ang), c = cos(ang), t = 1.0 - c;
+    return float3x3(t * a.x * a.x + c, t * a.x * a.y - s * a.z, t * a.x * a.z + s * a.y,
+                    t * a.x * a.y + s * a.z, t * a.y * a.y + c, t * a.y * a.z - s * a.x,
+                    t * a.x * a.z - s * a.y, t * a.y * a.z + s * a.x, t * a.z * a.z + c);
+}
+float h1(float x) { return frac(sin(x * 91.3458) * 47453.5453); }
+// ray (camera-relative origin 0, dir rd) against a box (centre p, half size e, rotation R): t of entry, local normal
+bool hitBox(float3 rd, float3 p, float3 e, float3x3 R, out float tN, out float3 nl, out float3 lp) {
+    float3 o = mul(-p, R), d = mul(rd, R);              // into the box frame (R columns = box axes)
+    float3 inv = 1.0 / select(abs(d) > 1e-6, d, 1e-6);
+    float3 t0 = (-e - o) * inv, t1 = (e - o) * inv;
+    float3 tmin = min(t0, t1), tmax = max(t0, t1);
+    tN = max(max(tmin.x, tmin.y), tmin.z);
+    float tF = min(min(tmax.x, tmax.y), tmax.z);
+    nl = tmin.x >= tN ? float3(-sign(d.x), 0, 0) : (tmin.y >= tN ? float3(0, -sign(d.y), 0) : float3(0, 0, -sign(d.z)));
+    lp = (o + d * tN) / e;
+    return tN < tF && tN > 0.05;
+}
+// returns rgb (display) + a (1 = covered), sceneT = how far the scene is along rd
+float4 shards(float3 rd, float sceneT) {
+    float  best = sceneT;
+    float3 col = 0.0;
+    bool   hit = false;
+    int ne = int(m0.y);
+    [loop] for (int i = 0; i < ne; i++) {
+        float  age = eA[i].w, kind = eB[i].w;
+        float3 corner = eA[i].xyz - CAM;
+        float3 alb = pow(max(eB[i].rgb, 0.0), 2.2);
+        float  seed = eC[i].x;
+        if (kind > 1.5) { // placed: the block lands with a quick overshoot (only the part bigger than the block shows)
+            if (age > 0.4) continue;
+            float  sc = 1.0 + 0.13 * exp(-age * 8.0) * cos(age * 24.0);
+            float  tN; float3 nl, lp;
+            if (!hitBox(rd, corner + 0.5, 0.5 * sc, float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), tN, nl, lp) || tN >= best) continue;
+            float  edge = smoothstep(0.80, 1.0, max(max(abs(lp.x) * (1 - abs(nl.x)), abs(lp.y) * (1 - abs(nl.y))), abs(lp.z) * (1 - abs(nl.z))));
+            float3 lit = alb * (0.55 + 0.75 * LIGHTK * saturate(dot(nl, SUN))) + exp(-age * 9.0) * edge * 0.6;
+            best = tN, col = lit, hit = true;
+            continue;
+        }
+        if (age > 1.9) continue;
+        // a rough bound for the whole burst first (most pixels never see one)
+        float3 bc = corner + 0.5 + float3(0, 1.4 * age - 9.0 * age * age, 0);
+        float  br = 1.0 + 4.2 * age;
+        float  tb = dot(bc, rd);
+        if (tb < -br || dot(bc, bc) - tb * tb > br * br) continue;
+        float  fade = 1.0 - smoothstep(1.35, 1.9, age);
+        [loop] for (int k = 0; k < 8; k++) {
+            float  sk = seed * 0.001 + float(k) * 7.31;
+            float3 o0 = float3(((k & 1) ? 0.72 : 0.28), ((k & 2) ? 0.72 : 0.28), ((k & 4) ? 0.72 : 0.28)) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 0.18;
+            float3 dir = normalize(o0 - 0.5 + float3(0, 0.55, 0));
+            float3 v = dir * (2.6 + 2.2 * h1(sk + 3)) + float3(0, 1.8, 0);
+            float3 p = corner + o0 + v * age + float3(0, -11.0 * age * age, 0);
+            float3 e = float3(0.10 + 0.07 * h1(sk + 4), 0.09 + 0.06 * h1(sk + 5), 0.10 + 0.07 * h1(sk + 6)) * fade;
+            float3 ax = normalize(float3(h1(sk + 7), h1(sk + 8), h1(sk + 9)) - 0.5 + 1e-3);
+            float3x3 R = rotAxis(ax, age * (7.0 + 9.0 * h1(sk + 10)) + h1(sk + 11) * 6.28);
+            float  tN; float3 nl, lp;
+            if (!hitBox(rd, p, e, R, tN, nl, lp) || tN >= best) continue;
+            float3 nw = mul(R, nl);
+            // the face as a little piece of texture: 8x8 "pixels" of the block's colour, a darker rim
+            float2 fuv = abs(nl.x) > 0.5 ? lp.yz : (abs(nl.y) > 0.5 ? lp.xz : lp.xy);
+            float2 cell = floor((fuv * 0.5 + 0.5) * 6.0);
+            float  grain = 0.84 + 0.30 * hash12(cell + float2(k * 13, seed * 0.01));
+            float  rim = 1.0 - 0.28 * smoothstep(0.70, 1.0, max(abs(fuv.x), abs(fuv.y)));
+            float  ndl = saturate(dot(nw, SUN));
+            float3 amb = lerp(float3(0.55, 0.50, 0.70), float3(0.22, 0.28, 0.55), NIGHT) * (0.75 + 0.25 * nw.y);
+            float3 sunC = lerp(float3(1.25, 0.86, 0.60), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
+            best = tN, col = alb * grain * rim * (amb + sunC * ndl), hit = true;
+        }
+    }
+    return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);
+}
+// everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
+float3 matchOver(float3 o, float3 rd, float sceneT) {
+    [branch] if (m0.y > 0.5 && m0.w > 0.0) {
+        float4 sh = shards(rd, sceneT);
+        if (sh.w > 0.0) { o = sh.rgb; sceneT = sh.w; }
+    }
+    [branch] if (m0.x > 0.5 && m0.z > 0.0) {
+        float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0));
+        o = pow(lin, 1.0 / 2.2);
+    }
+    return o;
+}
+bool matchActive() { return (m0.x > 0.5 && m0.z > 0.0) || (m0.y > 0.5 && m0.w > 0.0); }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
@@ -94,16 +235,17 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
     [branch] if (isSky(d)) {
-        if (c8.w < 0.5) discard;
-        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w);
         float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
+        if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
         float  js = hash12(float2(px));
-        float3 rays = sunShafts(px, js) * 0.55;                   // over open sky the beams are subtler (it is already bright)
+        float3 rays = sunShafts(px, js) * 0.55 * LIGHTK;                  // over open sky the beams are subtler (it is already bright)
         float4 sea = rd.y > 0.02 ? float4(0, 0, 0, 0) : csSeaPixel(rd);
         float3 base = sea.a > 0.0 ? toDisplay(sea.rgb) : sceneAt(px).rgb;
-        if (sea.a <= 0.0 && dot(rays, 1) < 0.002) discard;
+        if (sea.a <= 0.0 && dot(rays, 1) < 0.002 && !matchActive()) discard;
         float3 lb = pow(max(base, 0.0), 2.2) + rays * (sea.a > 0.0 ? 1.0 : 0.6);
-        float3 o = pow(max(lb, 0.0), 1.0 / 2.2) + (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
+        float3 o = pow(max(lb, 0.0), 1.0 / 2.2);
+        o = matchOver(o, rd, 1e9) + (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
         return float4(o, 1.0);
     }
     float4 sc  = sceneAt(px);
@@ -111,6 +253,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float  fogVis = sc.a;                                     // Cloud Sea blocks write 1 - the game's fog here
     float  z   = viewZ(d);
     float3 P   = posAt(float2(px) + 0.5, z);
+    CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w);
+    float3 rdT = P / max(length(P), 1e-4);
     // ---- the cloud sea is a real surface: ground below the cloud deck goes under it, peaks above it rise out of it
     //      (the sky pass only draws it where nothing else is; without this the loaded terrain shows as a square)
     [branch] if (c8.w > 0.5) {
@@ -127,17 +271,17 @@ float4 PSWorldFx(VSOut i) : SV_Target {
             float  tHit;
             float4 sea = cloudSea(CAM, rd, dist, tHit);
             if (sea.a > 0.0 && tHit < dist) {
-                float3 o = toDisplay(sea.rgb) + (hash12(float2(px)) - 0.5) / 255.0;
+                float3 o = matchOver(toDisplay(sea.rgb), rd, tHit) + (hash12(float2(px)) - 0.5) / 255.0;
                 return float4(o, 1.0);
             }
         }
     }
     // block look off (shadows unticked): only the far-edge fade into the sky is left to do
     [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5) {
-        if (fogVis >= 0.995 || c8.w < 0.5) discard;
-        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
-        float3 bg0 = toDisplay(csBackground(normalize(P), true));
-        return float4(lerp(bg0, col, smoothstep(0.0, 1.0, fogVis)) + (hash12(float2(px)) - 0.5) / 255.0, 1.0);
+        if ((fogVis >= 0.995 || c8.w < 0.5) && !matchActive()) discard;
+        float3 o0 = col;
+        if (fogVis < 0.995 && c8.w > 0.5) o0 = lerp(toDisplay(csBackground(rdT, true)), col, smoothstep(0.0, 1.0, fogVis));
+        return float4(matchOver(o0, rdT, length(P)) + (hash12(float2(px)) - 0.5) / 255.0, 1.0);
     }
     // normal from the depth buffer: the flatter neighbour on each axis (no halos at block edges)
     float3 pl = posPx(px - int2(1, 0)), pr = posPx(px + int2(1, 0)), pu = posPx(px - int2(0, 1)), pd = posPx(px + int2(0, 1));
@@ -145,7 +289,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float3 dy = abs(dot(pd - P, c0.xyz)) < abs(dot(P - pu, c0.xyz)) ? pd - P : P - pu;
     float3 n  = normalize(cross(dy, dx));
     if (dot(n, -P) < 0.0) n = -n;
-    float3 L  = c5.xyz;
+    float3 L  = SUN;                                         // the living sky's key light (sun, or the moon at night)
     float  j  = hash12(float2(px)), j2 = hash12(float2(px.yx) + 13.1);
 
     // ---- sun shadow: walk toward the sun; anything in front of the ray on screen blocks it
@@ -154,7 +298,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // cost scales with distance: near pixels get the full walk, far ones a short one, past 140 blocks none
     int   nSh = z < 25.0 ? 26 : (z < 60.0 ? 16 : 9);
     float tMax = z < 25.0 ? 30.0 : (z < 60.0 ? 26.0 : 18.0);   // the low sun throws long shadows: ~1 block steps
-    [branch] if (ndl > 0.02 && c5.w > 0.0 && z < 140.0) {
+    [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 140.0) {
         [loop] for (int k = 0; k < nSh; k++) {
             float f = (float(k) + j) / float(nSh);
             float t = 0.04 + tMax * f * sqrt(f);
@@ -195,8 +339,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float3 lin = pow(col, 2.2);
     CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
     float  cs  = c8.w > 0.5 ? cloudShadow(CAM + P) * c9.y : 0.0;
-    float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55);
-    float3 shadeCol = float3(0.30, 0.29, 0.46);               // what is left without the sun: the violet sky
+    float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55 * (1.0 - NIGHT)) * min(LIGHTK, 1.0);
+    float3 shadeCol = lerp(float3(0.30, 0.29, 0.46), float3(0.36, 0.42, 0.66), NIGHT); // without the key light: violet sky / blue night
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
     lin *= lerp(1.0, ao, c6.x);
 
@@ -207,9 +351,10 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float open = 0.0;
         [unroll] for (int k3 = 1; k3 <= 2; k3++) if (isSky(rawDepth(int2(float2(px) + to * (1.5 * k3))))) open += 0.5;
         float near = exp(-length((sp.xy - float2(px)) / c4.y) * 2.4);
-        lin += float3(1.5, 0.74, 0.30) * open * near * c6.y * 0.55;
+        lin += lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT) * open * near * c6.y * 0.55 * LIGHTK;
     }
-    lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0));   // air close to you holds less light
+    lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
+    [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 1.6 + 0.030) * teamLight(CAM + P, n);
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
@@ -220,6 +365,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     if (c6.z > 0.5 && c6.z < 1.5) o = lerp(float3(1, 0.85, 0.6), float3(0.2, 0.2, 0.45), sh);
     if (c6.z > 1.5) o = ao.xxx;
+    o = matchOver(o, rdT, length(P));
     o += (j - 0.5) / 255.0;
     return float4(o, 1.0);
 }

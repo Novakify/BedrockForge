@@ -8,7 +8,7 @@ cbuffer C : register(b0) {
     float4 c1; // xyz = camera right,   w = tan(fovy/2)
     float4 c2; // xyz = camera up,      w = time (seconds)
     float4 c3; // xyz = camera position (world), w = cloud deck base (world y)
-    float4 c4; // xy = map centre (world xz: the towers keep clear of it), z = far depth, w = 0
+    float4 c4; // xy = map centre (world xz: the towers keep clear of it), z = far depth, w = match phase (0 golden, 1 dusk, 2 night)
 };
 #define CS_NOISE_REG t0
 #define CS_PUFF_REG t1
@@ -23,7 +23,7 @@ VSOut VSCloudSea(uint id : SV_VertexID) {
     return o;
 }
 float4 PSCloudSea(VSOut i) : SV_Target {
-    CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy;
+    CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy; csSetPhase(c4.w);
     float3 rd = normalize(i.dir);
     float3 col = csBackground(rd, false); // the sea comes in the World FX pass, on sky pixels only
     float3 o = toDisplay(col);
