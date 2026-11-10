@@ -1131,6 +1131,10 @@ void drawUi() {
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Block shards", &look.shards, 0.0f, 1.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SliderFloat("Bed-break shockwave", &look.waves, 0.0f, 2.0f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SliderFloat("Fresh-block trails", &look.trails, 0.0f, 1.0f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::Text("Match: %s", rf::sky::matchStatus().c_str());
     ImGui::RadioButton("Normal", &look.debug, 0); ImGui::SameLine();
     ImGui::RadioButton("Show shadows", &look.debug, 1); ImGui::SameLine();

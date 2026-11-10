@@ -15,7 +15,7 @@ cbuffer C : register(b0) {
     float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = match phase
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
-    float4 c9; // x = god ray strength, y = cloud shadow strength, zw = 0
+    float4 c9; // x = god ray strength, y = cloud shadow strength, z = quality 0..1 (RF lowers it to hold the frame rate), w = 0
 };
 // the match (Bedrock Forge MatchFx, filled per frame by SkyPass): team lights + bed beacons, block shards, placement pop
 cbuffer M : register(b1) {
@@ -25,6 +25,11 @@ cbuffer M : register(b1) {
     float4 eA[8];    // block corner (world, min), w = age (s)
     float4 eB[8];    // block colour (sRGB 0..1), w = kind (1 broken, 2 placed)
     float4 eC[8];    // x = seed, y = blocks below the block the pieces land on (-1 = nothing: they fall away)
+    float4 m1;       // x = trail blocks, y = shockwave strength (F6)
+    float4 tAge[16]; // x = seconds since that bed broke (-1 = standing)
+    float4 trMin, trMax; // bounds of the trail blocks (world)
+    float4 gA[48];   // trail block corner (world, min), w = age (s)
+    float4 gB[48];   // its colour (sRGB)
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
@@ -73,16 +78,17 @@ float3 sunShafts(int2 px, float j) {
     float  dl = length(d);
     float  reach = c4.y * 0.85;                                // beams fade out ~a screen height from the sun
     float  near = saturate(1.0 - dl / reach);
-    if (near <= 0.0) return float3(0, 0, 0);
-    const int N = 22;
+    if (near <= 0.0 || c9.x <= 0.0) return float3(0, 0, 0);
+    int    N = int(lerp(7.0, 16.0, c9.z));                    // jittered per pixel: few taps read as many
     float2 stepv = d / float(N) * min(1.0, reach / max(dl, 1.0));
     float  acc = 0.0, wsum = 0.0, w = 1.0;
+    float  decay = pow(0.93, 22.0 / float(N));
     [loop] for (int k = 0; k < N; k++) {
         float2 q = float2(px) + stepv * (float(k) + j);
-        if (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) { acc += w; wsum += w; w *= 0.93; continue; }  // off screen toward the sun: assume sky
+        if (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) { acc += w; wsum += w; w *= decay; continue; }  // off screen toward the sun: assume sky
         acc += isSky(rawDepth(int2(q))) ? w : 0.0;
         wsum += w;
-        w *= 0.93;
+        w *= decay;
     }
     float open = acc / max(wsum, 1e-4);
     float beam = open * near * near * (0.6 + 0.4 * near);
@@ -94,7 +100,7 @@ float cloudShadow(float3 W) {
     float  t = (900.0 - W.y) / max(SUN.y, 0.03);
     float2 q = W.xz + SUN.xz * t;
     float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
-    return smoothstep(0.74, 0.86, hcDens(p, 3));
+    return smoothstep(0.74, 0.86, hcDens(p, c9.z > 0.6 ? 3 : 1));
 }
 
 // ================================================================ the match
@@ -127,7 +133,9 @@ float3 beacons(float3 rd, float tMax) {
         float st = tPos[i].w, fl = tCol[i].w;
         if (st + fl <= 0.002) continue;
         float3 b = tPos[i].xyz - CAM;
-        float  t = clamp(dot(b.xz, rxz) / r2, 0.0, tMax);
+        float  t0 = dot(b.xz, rxz) / r2;
+        if (t0 > tMax + 0.75) continue;                    // the column passes behind what this pixel shows (a roof)
+        float  t = clamp(t0, 0.0, tMax);
         float2 q = rxz * t - b.xz;
         float  r = length(q);
         float  h = rd.y * t - b.y;                       // height above the bed where the ray passes the column
@@ -241,19 +249,77 @@ float4 shards(float3 rd, float sceneT) {
     }
     return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);
 }
+// ---- bed-break shockwave: when a bed falls a ring of its team's light races out over the cloud sea and across the
+//      islands, and the sky flashes with it - the whole map sees which island just lost its bed
+float waveRing(float d, float age) {
+    float R = 10.0 + 120.0 * age, w = 3.0 + 5.0 * age;
+    float fade = pow(saturate(1.0 - age / 4.5), 1.6);
+    return exp(-pow((d - R) / w, 2.0)) * fade;
+}
+float3 shockwaves(float3 rd, float sceneT, bool sky) {
+    float3 acc = 0.0;
+    int nt = int(m0.x);
+    float  seaTop = SEA_Y + SEA_AMP * 1.1;
+    [loop] for (int i = 0; i < nt; i++) {
+        float age = tAge[i].x;
+        if (age < 0.0 || age > 4.5) continue;
+        float3 col = tCol[i].rgb;
+        // on the cloud sea (a plane at its tops)
+        if (rd.y < -0.005) {
+            float t = (CAM.y - seaTop) / -rd.y;
+            if (t > 0.0 && t < sceneT) {
+                float2 h = CAM.xz + rd.xz * t - tPos[i].xz;
+                acc += col * waveRing(length(h), age) * 1.6;
+            }
+        }
+        if (sky) acc += col * 0.22 * exp(-age * 2.4) * exp(-max(rd.y, 0.0) * 3.0); // the horizon flashes
+    }
+    return acc * m1.y;
+}
+// the same ring passing over the islands (terrain point W)
+float3 shockwaveOn(float3 W) {
+    float3 acc = 0.0;
+    int nt = int(m0.x);
+    [loop] for (int i = 0; i < nt; i++) {
+        float age = tAge[i].x;
+        if (age < 0.0 || age > 4.5) continue;
+        acc += tCol[i].rgb * waveRing(length(W.xz - tPos[i].xz), age);
+    }
+    return acc * m1.y;
+}
+// ---- fresh blocks: what was just placed glows along its edges in its own colour, fading over ~8 s. Bridges light up
+//      as they are built - a rush across the map is a line of team colour you can read from your island
+float3 trails(float3 W) {
+    if (m1.x < 0.5 || any(W < trMin.xyz - 0.05) || any(W > trMax.xyz + 0.05)) return 0.0;
+    float3 acc = 0.0;
+    int n = int(m1.x);
+    [loop] for (int i = 0; i < n; i++) {
+        float3 l = W - gA[i].xyz;
+        if (any(l < -0.02) || any(l > 1.02)) continue;
+        float3 e3 = min(saturate(l), 1.0 - saturate(l));          // distance to each pair of faces
+        float  a = min(e3.x, min(e3.y, e3.z)), c = max(e3.x, max(e3.y, e3.z));
+        float  edge = (e3.x + e3.y + e3.z) - a - c;                  // the middle one: distance to the face's edge
+        float  age = gA[i].w;
+        float  fade = age < 0.6 ? smoothstep(0.0, 0.15, age) : exp(-(age - 0.6) * 0.38);
+        float3 col = pow(max(gB[i].rgb, 0.0), 2.2);
+        col = col / max(max(col.r, max(col.g, col.b)), 0.05);       // its hue at full brightness
+        acc += col * (exp(-edge * 26.0) * 1.1 + 0.10) * fade;
+    }
+    return acc;
+}
 // everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m0.y > 0.5 && m0.w > 0.0) {
         float4 sh = shards(rd, sceneT);
         if (sh.w > 0.0) { o = sh.rgb; sceneT = sh.w; }
     }
-    [branch] if (m0.x > 0.5 && m0.z > 0.0) {
-        float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0));
+    [branch] if (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) {
+        float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0)) + shockwaves(rd, sceneT, sceneT > 1e8);
         o = pow(lin, 1.0 / 2.2);
     }
     return o;
 }
-bool matchActive() { return (m0.x > 0.5 && m0.z > 0.0) || (m0.y > 0.5 && m0.w > 0.0); }
+bool matchActive() { return (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) || (m0.y > 0.5 && m0.w > 0.0); }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
@@ -322,7 +388,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float vis = 1.0;
     float ndl = dot(n, L);
     // cost scales with distance: near pixels get the full walk, far ones a short one, past 140 blocks none
-    int   nSh = z < 25.0 ? 26 : (z < 60.0 ? 16 : 9);
+    float qs = lerp(0.45, 1.0, c9.z);
+    int   nSh = int((z < 25.0 ? 20.0 : (z < 60.0 ? 12.0 : 7.0)) * qs);
     float tMax = z < 25.0 ? 30.0 : (z < 60.0 ? 26.0 : 18.0);   // the low sun throws long shadows: ~1 block steps
     [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 140.0) {
         [loop] for (int k = 0; k < nSh; k++) {
@@ -344,7 +411,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float occ = 0.0;
     float3 tA = normalize(abs(n.y) > 0.5 ? cross(n, float3(1, 0, 0)) : cross(n, float3(0, 1, 0)));
     float3 tB = cross(n, tA);
-    int   nAo = c6.x <= 0.0 ? 0 : (z < 30.0 ? 8 : (z < 70.0 ? 4 : 0));
+    int   nAo = c6.x <= 0.0 ? 0 : (z < 30.0 ? (c9.z > 0.5 ? 6 : 4) : (z < 70.0 ? 3 : 0));
     [loop] for (int k2 = 0; k2 < nAo; k2++) {
         float a = (float(k2) + j) * 2.39996;
         float r = sqrt((float(k2) + j2) / float(nAo));
@@ -364,7 +431,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // ---- apply (linear light). Shadowed sunlit faces fall to the violet sky light; occlusion darkens gently
     float3 lin = pow(col, 2.2);
     CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
-    float  cs  = c8.w > 0.5 ? cloudShadow(CAM + P) * c9.y : 0.0;
+    float  cs  = (c8.w > 0.5 && c9.y > 0.0 && c9.z > 0.25) ? cloudShadow(CAM + P) * c9.y : 0.0;
     float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55 * (1.0 - NIGHT)) * min(LIGHTK, 1.0);
     float3 shadeCol = lerp(float3(0.46, 0.44, 0.62), float3(0.48, 0.54, 0.76), NIGHT); // without the key light: violet sky / blue night (light enough to fight in)
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
@@ -382,6 +449,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
     lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
+    [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
+    [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.5 + 0.8 * darkK());
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square

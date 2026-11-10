@@ -1256,13 +1256,16 @@ struct BfMatchFxV1 {
     int64_t nowMs;
     uint32_t nTeams, nEvents;
     BfMatchTeamV1 teams[16];
-    BfMatchEventV1 events[64];
+    BfMatchEventV1 events[256];
 };
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
 using MatchPreview = void (*)(float);
-struct MatchCb { float m0[4]; float tPos[16][4]; float tCol[16][4]; float eA[8][4]; float eB[8][4]; float eC[8][4]; };
-static_assert(sizeof(MatchCb) == 57 * 16, "cbuffer M layout");
+struct MatchCb {
+    float m0[4]; float tPos[16][4]; float tCol[16][4]; float eA[8][4]; float eB[8][4]; float eC[8][4];
+    float m1[4]; float tAge[16][4]; float trMin[4], trMax[4]; float gA[48][4]; float gB[48][4];
+};
+static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96) * 16, "cbuffer M layout");
 struct MatchFrame { float phase = 0; MatchCb cb{}; int beds = 0; float bedMinY = 0, bedCx = 0, bedCz = 0; };
 std::mutex  gMatchMutex;
 MatchFrame  gMatch;
@@ -1295,7 +1298,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     MatchGet get; MatchUse use;
     matchFns(get, use);
     BfMatchFxV1 const* b = get ? get() : nullptr;
-    bool const ok = b && b->version >= 1 && b->size >= sizeof(BfMatchFxV1);
+    bool const ok = b && b->version >= 2 && b->size >= sizeof(BfMatchFxV1);
     if (use) use(look.living && ok && gWorldSky.load() != 0 ? 1 : 0);
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
     if (ok) {
@@ -1309,11 +1312,12 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             else {
                 st = std::max(0.0f, 1.0f - a / 1.4f) * (0.75f + 0.25f * std::sin(a * 41.0f)); // the light gutters out
                 fl = a < 0.18f ? a / 0.18f : std::exp(-(a - 0.18f) * 3.2f);
-                if (a > 3.0f) continue;
+                if (a > 5.0f) continue;
             }
             auto& c = f.cb;
             std::memcpy(c.tPos[k], t.pos, 12); c.tPos[k][3] = st;
             std::memcpy(c.tCol[k], t.col, 12); c.tCol[k][3] = fl;
+            c.tAge[k][0] = t.alive ? -1.0f : a;
             ++k;
         }
         f.cb.m0[0] = float(k);
@@ -1327,8 +1331,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         // the newest block events that are still playing (8 at most)
         uint32_t ne = 0;
         uint32_t const total = b->nEvents;
-        for (uint32_t j = 0; j < 64 && j < total && ne < 8; ++j) {
-            auto const& e = b->events[(total - 1 - j) % 64];
+        for (uint32_t j = 0; j < 256 && j < total && ne < 8; ++j) {
+            auto const& e = b->events[(total - 1 - j) % 256];
             float const age = float(now - e.atMs) / 1000.0f;
             if (age < 0) continue;
             if (age > 4.3f) break; // older ones are older still
@@ -1341,18 +1345,37 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             ++ne;
         }
         f.cb.m0[1] = float(ne);
+        // fresh blocks for the trails: the newest 48 placements younger than 9 s
+        uint32_t ng = 0;
+        float    lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
+        for (uint32_t j = 0; j < 256 && j < total && ng < 48; ++j) {
+            auto const& e = b->events[(total - 1 - j) % 256];
+            float const age = float(now - e.atMs) / 1000.0f;
+            if (age > 9.0f) break;
+            if (e.kind != 2 || age < 0) continue;
+            auto& c = f.cb;
+            c.gA[ng][0] = float(e.x); c.gA[ng][1] = float(e.y); c.gA[ng][2] = float(e.z); c.gA[ng][3] = age;
+            std::memcpy(c.gB[ng], e.col, 12);
+            float const p[3] = {float(e.x), float(e.y), float(e.z)};
+            for (int a = 0; a < 3; ++a) lo[a] = std::min(lo[a], p[a]), hi[a] = std::max(hi[a], p[a] + 1.0f);
+            ++ng;
+        }
+        f.cb.m1[0] = float(ng);
+        std::memcpy(f.cb.trMin, lo, 12); std::memcpy(f.cb.trMax, hi, 12);
         gMatchStatus = "phase " + std::to_string(b->phase).substr(0, 4) + " (target " + std::to_string(int(b->phaseTarget)) + "), beds " +
                        std::to_string(b->nTeams) + " (" + std::to_string(b->bedsBroken) + " broken), block events " + std::to_string(total);
     } else if (get) gMatchStatus = "Bedrock Forge has no match bridge (old build)";
     if (look.phase >= 0) f.phase = std::clamp(look.phase, 0.0f, 2.0f);
     f.cb.m0[2] = look.teams;
     f.cb.m0[3] = look.shards;
+    f.cb.m1[1] = look.waves;
+    if (look.trails <= 0.0f) f.cb.m1[0] = 0;
     gMatch = f;
     return f;
 }
 std::string matchStatus() { std::lock_guard l(gMatchMutex); return gMatchStatus; }
 // per-frame constant buffer ring (upload heap) for cbuffer M
-constexpr UINT kMcbSlots = 16, kMcbStride = 1024;
+constexpr UINT kMcbSlots = 16, kMcbStride = 4096;
 ComPtr<ID3D12Resource> gMcb;
 uint8_t*               gMcbMap = nullptr;
 UINT                   gMcbNext = 0;
@@ -1678,6 +1701,27 @@ void wfxBarrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_
 }
 } // namespace
 
+// The pass gives back quality to hold ~150+ FPS: frame time measured between our own draws (one per frame); above
+// 1/150 s the quality falls quickly, under 1/175 s it creeps back. 0 = cheapest look, 1 = full.
+std::atomic<float> gQuality{1.0f};
+float adaptQuality() {
+    static int64_t lastUs = 0;
+    static float   ema = 1.0f / 160.0f;
+    int64_t const  now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    float q = gQuality.load();
+    if (lastUs) {
+        float dt = float(now - lastUs) * 1e-6f;
+        if (dt > 0.0f && dt < 0.25f) {
+            ema = ema * 0.95f + dt * 0.05f;
+            if (ema > 1.0f / 150.0f) q = std::max(0.0f, q - 0.01f);
+            else if (ema < 1.0f / 175.0f) q = std::min(1.0f, q + 0.002f);
+        }
+    }
+    lastUs = now;
+    gQuality = q;
+    return q;
+}
+
 bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     WorldFxLook const look = gLook;
     // the pass also carries the cloud sea (sky pixels + terrain under the deck), so it runs with the block look off too
@@ -1753,7 +1797,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     deckOf(mf, c[31], c[32], c[33]);
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     c[35] = gAnchored ? 1.0f : 0.0f;
-    c[36] = look.rays; c[37] = look.clouds;
+    c[36] = look.rays; c[37] = look.clouds; c[38] = adaptQuality();
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
@@ -1771,7 +1815,8 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     calls.setPso(list, st.pso);
     if (st.haveTopo) calls.setTopo(list, st.topo);
     long const n = ++gWfxFrames;
-    if ((n & 63) == 1) wfxStatus("drawing (" + std::to_string(n) + " frames, " + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) + ")");
+    if ((n & 63) == 1) wfxStatus("drawing (" + std::to_string(n) + " frames, " + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) +
+                                 ", quality " + std::to_string(int(gQuality.load() * 100.0f)) + "%)");
     return true;
 }
 
@@ -1794,6 +1839,8 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
+        else if (k == "waves") gLook.waves = std::clamp(v, 0.f, 2.f);
+        else if (k == "trails") gLook.trails = std::clamp(v, 0.f, 1.f);
     }
 }
 void saveWorldFxSettings() {
@@ -1801,7 +1848,7 @@ void saveWorldFxSettings() {
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds
-        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\n";
+        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\n";
 }
 
 void setWorldSky(int kind) {
