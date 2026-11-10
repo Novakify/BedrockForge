@@ -6,6 +6,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <format>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -29,7 +33,23 @@
 
 namespace {
 using namespace std::chrono;
-auto& mlog() { return ll::mod::NativeMod::current()->getLogger(); }
+// diagnostics straight to <mod>/logs/matchfx.txt, flushed per line (the game's log is buffered and loses its tail)
+template <class... A>
+void note(std::format_string<A...> f, A&&... a) {
+    try {
+        std::string line = std::format(f, std::forward<A>(a)...);
+        static std::filesystem::path file = [] {
+            auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            return dir / "matchfx.txt";
+        }();
+        std::time_t t = std::time(nullptr);
+        std::tm tm{};
+        localtime_s(&tm, &t);
+        std::ofstream(file, std::ios::app | std::ios::binary) << std::format("{:02}:{:02}:{:02} ", tm.tm_hour, tm.tm_min, tm.tm_sec) << line << "\n";
+    } catch (...) {}
+}
 int64_t nowMs() { return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); }
 
 BfMatchFxV1          gFx{};
@@ -96,7 +116,7 @@ void onBroken(int x, int y, int z) {
         b->alive = false, b->changed = nowMs();
         ++gBroken;
         gIsMap = true;
-        mlog().info("[BF] matchfx: bed at {} {} {} broken ({} so far)", b->x, b->y, b->z, gBroken);
+        note("bed at {} {} {} broken ({} so far)", b->x, b->y, b->z, gBroken);
         retarget();
     }
 }
@@ -141,7 +161,7 @@ void onChange(ll::event::BlockChangedEvent& ev) {
 }
 
 void resetMatch(double const* pos) {
-    mlog().info("[BF] matchfx: new match at {:.0f} {:.0f} {:.0f} (had {} beds, {} broken)", pos[0], pos[1], pos[2], gBeds.size(), gBroken);
+    note("new match at {:.0f} {:.0f} {:.0f} (had {} beds, {} broken)", pos[0], pos[1], pos[2], gBeds.size(), gBroken);
     gBeds.clear();
     gBroken = 0;
     gIsMap  = false;
@@ -171,7 +191,7 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
         if (tn.find("bed") != std::string::npos && tn != "minecraft:bedrock" &&
             std::find(gSeenNames.begin(), gSeenNames.end(), tn) == gSeenNames.end() && gSeenNames.size() < 64) {
             gSeenNames.push_back(tn);
-            mlog().info("[BF] matchfx: block name seen: {} at {} {} {}", tn, x, y, z);
+            note("block name seen: {} at {} {} {}", tn, x, y, z);
         }
         if (!isBed(b)) continue;
         Bed* bed = bedNear(x, y, z);
@@ -179,12 +199,12 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
             if (gBeds.size() >= 16) continue;
             gBeds.push_back({x, y, z, 14, true, nowMs()});
             bed = &gBeds.back();
-            mlog().info("[BF] matchfx: bed at {} {} {}", x, y, z);
+            note("bed at {} {} {}", x, y, z);
             bool const byAnchor = std::hypot(x + 0.5 - gAnchor[0], z + 0.5 - gAnchor[2]) < 24.0;
             bool const byYou    = nowMs() - gResetMs < 15000 && std::hypot(x + 0.5 - gScanC[0], z + 0.5 - gScanC[2]) < 24.0;
             if (!gIsMap && (byAnchor || byYou)) {
                 gIsMap = true; // the hub's decoration beds never light up; a map's do
-                mlog().info("[BF] matchfx: a bed by the spawn - this is a Bed Wars map");
+                note("a bed by the spawn - this is a Bed Wars map");
             }
         }
         if (auto* ba = tn == "minecraft:bed" ? bs.getBlockEntity(bp) : nullptr) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15);
@@ -251,6 +271,14 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
         t.alive = b.alive ? 1u : 0u, t.changedMs = b.changed;
     }
     ++gFx.frame;
+    static int64_t lastNote = 0;
+    if (now - lastNote > 10000) {
+        lastNote = now;
+        int alive = 0;
+        for (auto& b : gBeds) alive += b.alive ? 1 : 0;
+        note("status: at {:.0f} {:.0f} {:.0f}, map {}, beds {} ({} alive), broken {}, phase {:.2f} -> {:.0f}, events {}", pos[0], pos[1], pos[2],
+             gIsMap, gBeds.size(), alive, gBroken, gPhase, gTarget, gFx.nEvents);
+    }
     // the game's own time of day follows: golden hour, sunset, moonlit night (vanilla: 0 noon, 0.25 sunset, 0.5 midnight)
     float const k = gPreview.load() >= 0.0f ? std::min(gPreview.load(), 2.0f) : gPhase;
     gFx.timeOfDay = k < 1.0f ? 0.205f + 0.065f * k : 0.27f + 0.08f * (k - 1.0f);
