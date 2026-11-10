@@ -62,6 +62,16 @@ def blocks(m):
     out["grass_top"] = (m.grass_top(), "keep")
     out["grass_side"] = m.grass_side()
     out["leaves_oak"] = m.leaves()
+    if hasattr(m, "MINERALS"):
+        M = m.MINERALS
+        out["iron_block"] = (m.metal_block(M["iron"], kind="iron"), None)
+        out["gold_block"] = (m.metal_block(M["gold"], kind="gold"), None)
+        out["diamond_block"] = (m.gem_block(M["diamond"]), None)
+        out["emerald_block"] = (m.gem_block(M["emerald"], seed=43), None)
+        out["diamond_ore"] = (m.ore(M["diamond"], seed=44), None)
+        out["emerald_ore"] = (m.ore(M["emerald"], seed=45), None)
+        out["gold_ore"] = (m.ore(M["gold"], seed=46), None)
+        out["iron_ore"] = (m.ore([(120, 90, 70), (170, 130, 100), (206, 170, 136), (230, 204, 176)], seed=47), None)
     return out
 
 

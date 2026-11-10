@@ -39,8 +39,8 @@ def _ss(fn, s=S, k=6):
 
 
 # ------------------------------------------------------------------ wool: chunky knit (stockinette chevrons), soft and matte
-def wool(colour, seed=1):
-    cw, ch = 8.0, 8.0                                # chunky sweater knit: a "V" 8 px wide, 8 px tall (4x4 per block)
+def wool(colour, seed=1, stitch=8.0, size=None):
+    cw, ch = stitch, stitch                                # chunky sweater knit: a "V" 8 px wide, 8 px tall (4x4 per block)
 
     def stitch(x, y):
         u, v = np.mod(x, cw), np.mod(y + 2.0, ch)      # +2: the V's of the next row tuck under this one
@@ -52,7 +52,7 @@ def wool(colour, seed=1):
             d = (uu - cx) * 0.96                         # ~perpendicular distance to the slanted leg
             body = np.clip(1.0 - (np.abs(d) / 2.25) ** 2.6, 0, 1)
             light = 0.80 + 0.20 * np.clip(-d / 2.25, -1, 1)   # the outer-upper side of each leg catches light
-            tuck = 0.62 + 0.38 * np.sin(np.pi * np.clip(v / ch * 0.92 + 0.06, 0, 1))
+            tuck = 0.62 + 0.38 * np.sin(np.pi * np.clip(v / 8.0 * 0.92 + 0.06, 0, 1))
             out = np.maximum(out, body * light * tuck)
         return out
 
@@ -464,3 +464,81 @@ def equipment(pack):
     van = Path(os.environ.get("BEDROCK_SAMPLES", "/home/claude/ext/bedrock-samples")) / "resource_pack/textures/models/armor"
     if van.exists():
         armor.export(pack, van, EQUIP_PAL)
+    import beds
+    bed_dir = van.parent.parent / "entity" / "bed"
+    if (bed_dir / "red.png").exists():
+        beds.export(pack, bed_dir, DYES, EQUIP_PAL["wood"], knit_fn=lambda col, i: wool(col, seed=100 + i))
+
+
+# ------------------------------------------------------------------ mineral blocks (Bed Wars generators sit on these)
+def metal_block(pal, seed=40, kind="iron"):
+    """iron: four brushed plates with rivets; gold: stacked cast ingots with a lit bevel"""
+    y, x = np.mgrid[0:S, 0:S]
+    streak = value_noise(S, 8, seed, 1)[:1].repeat(S, 0)
+    f = 0.48 + (streak - 0.5) * 0.22
+    if kind == "iron":
+        u, v = x % 16, y % 16
+        f = np.where((u == 0) | (v == 0), f + 0.26, f)
+        f = np.where((u == 15) | (v == 15), 0.10, f)
+        for cx, cy in ((2, 2), (13, 2), (2, 13), (13, 13)):
+            f = np.where((u == cx) & (v == cy), 0.97, f)
+            f = np.where((u == cx + 1) & (v == cy + 1), 0.18, f)
+    else:
+        row = y // 8
+        xs = (x + (row % 2) * 8) % S
+        u, v = xs % 16, y % 8
+        f = 0.50 + (value_noise(S, 4, seed + 1) - 0.5) * 0.12
+        f = np.where((v == 0) | (u == 0), 0.88, f)
+        f = np.where((v == 1) & (u > 0), f + 0.12, f)
+        f = np.where((v == 7) | (u == 15), 0.12, f)
+        f = np.where((v == 6) & (u < 15), f - 0.12, f)
+    img, idx = quantize(np.clip(f, 0, 1), pal)
+    return img
+
+
+def gem_block(pal, seed=41):
+    """four big cut gems (16 px), brilliant-style: a flat table, crown facets lit from the top-left and shaded on the
+    far side, star lines to the corners, a dark setting between stones and one hot glint per stone"""
+    y, x = np.mgrid[0:S, 0:S]
+    u, v = x % 16 - 7.5, y % 16 - 7.5
+    au, av = np.abs(u), np.abs(v)
+    f = np.full((S, S), 0.55)
+    oct_ = np.maximum(au, av) + 0.45 * np.minimum(au, av)
+    table = oct_ < 3.6
+    ang = np.arctan2(v, u)
+    sector = ((ang + np.pi) / (np.pi / 4)).astype(int) % 8
+    lightness = np.array([0.42, 0.30, 0.38, 0.62, 0.84, 0.74, 0.56, 0.48])
+    f = np.where(~table, lightness[sector], 0.66)
+    f = np.where(table & (u + v < -1.5), 0.80, f)
+    edge = np.abs(np.abs(u) - np.abs(v)) < 0.55
+    f = np.where(edge & ~table, f + 0.12, f)
+    f = np.where(oct_ > 8.6, 0.06, f)
+    f = np.where((oct_ > 7.8) & (oct_ <= 8.6), 0.20, f)
+    f = np.where((u == -2.5) & (v == -2.5), 0.99, f)
+    f = np.where((u == -1.5) & (v == -2.5), 0.92, f)
+    img, idx = quantize(np.clip(f, 0, 1), pal)
+    return img
+
+
+def ore(gem_pal, seed=42):
+    base = stone(seed=seed)
+    r = rng(seed)
+    out = base.copy()
+    pal = np.array(gem_pal, np.uint8)
+    for _ in range(4):                                     # crystal clusters: 3x3 chips with a lit corner + dark base
+        cx, cy = int(r.integers(3, S - 4)), int(r.integers(3, S - 4))
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if abs(dx) + abs(dy) < 2 or r.random() < 0.5:
+                    out[(cy + dy) % S, (cx + dx) % S] = pal[2]
+        out[cy - 1, cx - 1] = pal[-1]
+        out[cy, cx - 1] = pal[3]
+        out[(cy + 1) % S, (cx + 1) % S] = pal[0]
+        out[(cy + 2) % S, (cx + 1) % S] = (40, 36, 44)
+    return out
+
+
+MINERALS = {"iron": [(70, 76, 92), (110, 118, 132), (150, 158, 170), (190, 196, 204), (226, 228, 230), (248, 246, 240)],
+            "gold": [(124, 70, 24), (176, 116, 32), (214, 160, 50), (236, 196, 80), (248, 226, 136), (255, 246, 200)],
+            "diamond": [(16, 80, 100), (30, 136, 152), (60, 190, 198), (120, 226, 224), (196, 248, 242), (244, 255, 253)],
+            "emerald": [(10, 70, 36), (20, 120, 58), (34, 170, 84), (80, 210, 120), (160, 240, 176), (232, 255, 236)]}
