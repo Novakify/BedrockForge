@@ -78,7 +78,7 @@ float3 sunShafts(int2 px, float j) {
     float  dl = length(d);
     float  reach = c4.y * 0.85;                                // beams fade out ~a screen height from the sun
     float  near = saturate(1.0 - dl / reach);
-    if (near <= 0.0 || c9.x <= 0.0) return float3(0, 0, 0);
+    if (near <= 0.0 || c9.x <= 0.0 || c9.z < 0.12) return float3(0, 0, 0);
     int    N = int(lerp(7.0, 16.0, c9.z));                    // jittered per pixel: few taps read as many
     float2 stepv = d / float(N) * min(1.0, reach / max(dl, 1.0));
     float  acc = 0.0, wsum = 0.0, w = 1.0;
@@ -349,8 +349,9 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float  js = hash12(float2(px));
         float3 rays = sunShafts(px, js) * 0.55 * LIGHTK;                  // over open sky the beams are subtler (it is already bright)
         float4 sea = rd.y > 0.02 ? float4(0, 0, 0, 0) : csSeaPixel(rd);
-        float3 base = sea.a > 0.0 ? toDisplay(sea.rgb) : sceneAt(px).rgb;
-        if (sea.a <= 0.0 && dot(rays, 1) < 0.002 && !matchActive()) discard;
+        // the full sky (high clouds, stars, moon) is drawn here, on pixels that are really sky - the sky pass only lays a
+        // cheap gradient under the whole screen (most of it is covered by the world afterwards)
+        float3 base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));
         float3 lb = pow(max(base, 0.0), 2.2) + rays * (sea.a > 0.0 ? 1.0 : 0.6);
         float3 o = pow(max(lb, 0.0), 1.0 / 2.2);
         o = matchOver(o, rd, 1e9) + (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
@@ -427,7 +428,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float occ = 0.0;
     float3 tA = normalize(abs(n.y) > 0.5 ? cross(n, float3(1, 0, 0)) : cross(n, float3(0, 1, 0)));
     float3 tB = cross(n, tA);
-    int   nAo = c6.x <= 0.0 ? 0 : (z < 30.0 ? (c9.z > 0.5 ? 6 : 4) : (z < 70.0 ? 3 : 0));
+    int   nAo = (c6.x <= 0.0 || c9.z < 0.2) ? 0 : (z < 30.0 ? (c9.z > 0.5 ? 6 : 4) : (z < 70.0 ? 3 : 0));
     [loop] for (int k2 = 0; k2 < nAo; k2++) {
         float a = (float(k2) + j) * 2.39996;
         float r = sqrt((float(k2) + j2) / float(nAo));
