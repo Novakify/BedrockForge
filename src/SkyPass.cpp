@@ -1263,7 +1263,7 @@ using MatchUse = void (*)(int);
 using MatchPreview = void (*)(float);
 struct MatchCb { float m0[4]; float tPos[16][4]; float tCol[16][4]; float eA[8][4]; float eB[8][4]; float eC[8][4]; };
 static_assert(sizeof(MatchCb) == 57 * 16, "cbuffer M layout");
-struct MatchFrame { float phase = 0; MatchCb cb{}; };
+struct MatchFrame { float phase = 0; MatchCb cb{}; int beds = 0; float bedMinY = 0, bedCx = 0, bedCz = 0; };
 std::mutex  gMatchMutex;
 MatchFrame  gMatch;
 int64_t     gMatchAt = -1;
@@ -1317,6 +1317,13 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             ++k;
         }
         f.cb.m0[0] = float(k);
+        // the map, from its beds (every Bed Wars island has one): the cloud deck goes under the lowest island
+        for (uint32_t i = 0; i < nt; ++i) {
+            auto const& t = b->teams[i];
+            f.bedMinY = f.beds ? std::min(f.bedMinY, t.pos[1]) : t.pos[1];
+            f.bedCx += t.pos[0], f.bedCz += t.pos[2], ++f.beds;
+        }
+        if (f.beds) f.bedCx /= float(f.beds), f.bedCz /= float(f.beds);
         // the newest block events that are still playing (8 at most)
         uint32_t ne = 0;
         uint32_t const total = b->nEvents;
@@ -1365,6 +1372,29 @@ static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& c
     UINT const slot = gMcbNext++ % kMcbSlots;
     std::memcpy(gMcbMap + slot * kMcbStride, &cb, sizeof cb);
     return gMcb->GetGPUVirtualAddress() + UINT64(slot) * kMcbStride;
+}
+
+// The cloud deck: under the map. Anchored where you stand when you arrive in a world; a teleport (a new world, a server
+// sending you to a match, a respawn) re-anchors it, a fall into the void never does (falls are continuous).
+double  gLastPos[3]{};
+int64_t gLastPosMs = 0;
+static void updateAnchor(double const* pos) {
+    int64_t const now = steadyMs();
+    double const  jump = std::sqrt((pos[0] - gLastPos[0]) * (pos[0] - gLastPos[0]) + (pos[1] - gLastPos[1]) * (pos[1] - gLastPos[1]) +
+                                   (pos[2] - gLastPos[2]) * (pos[2] - gLastPos[2]));
+    bool const tp = gLastPosMs != 0 && now - gLastPosMs < 1000 && jump > 30.0;
+    if (!gAnchored || tp || now - gLastPosMs > 5000 || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) {
+        gAnchor[0] = pos[0]; gAnchor[1] = pos[1]; gAnchor[2] = pos[2];
+        gAnchored  = true;
+    }
+    std::memcpy(gLastPos, pos, sizeof gLastPos);
+    gLastPosMs = now;
+}
+// a Bed Wars map (beds known): the deck sits under the lowest island and the towers keep clear of the map's centre
+static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
+    if (m.beds >= 2) { y = float(std::floor(m.bedMinY) - 55.0 + gDeckOffset.load()); cx = m.bedCx; cz = m.bedCz; return; }
+    y  = float(std::floor(gAnchor[1]) - 56.0 + gDeckOffset.load());
+    cx = float(gAnchor[0]); cz = float(gAnchor[2] - 25.0);
 }
 
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
@@ -1595,21 +1625,16 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     ID3D12PipelineState* pso = derived(dev.Get(), g, 4);
     if (!pso) { wsStatus("building the sky pipeline (in the background)"); return false; }
     double const* pos = snap.pos;
-    // anchored where you first stand in a world (your island); only a new world / game (a big sideways jump, e.g. Hive
-    // sending you to a match) moves it. Never on a vertical teleport or a fall into the void.
-    if (!gAnchored || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) {
-        gAnchor[0] = pos[0]; gAnchor[1] = pos[1]; gAnchor[2] = pos[2];
-        gAnchored  = true;
-    }
+    updateAnchor(pos);
     float const t = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     float c[20]{};
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = t;
     c[12] = float(pos[0]); c[13] = float(pos[1]); c[14] = float(pos[2]);
-    c[15] = float(std::floor(gAnchor[1]) - 56.0 + gDeckOffset.load());
-    c[16] = float(gAnchor[0]); c[17] = float(gAnchor[2] - 25.0);
-    c[18] = 1.0f; c[19] = matchFrame(worldFxLook()).phase;
+    MatchFrame const mfs = matchFrame(worldFxLook());
+    deckOf(mfs, c[15], c[16], c[17]);
+    c[18] = 1.0f; c[19] = mfs.phase;
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
@@ -1719,13 +1744,13 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
     MatchFrame const mf = matchFrame(look);
+    updateAnchor(snap.pos);
     D3D12_GPU_VIRTUAL_ADDRESS const mcb = uploadMatch(dev.Get(), mf.cb);
     if (!mcb) { wfxStatus("match buffer failed"); return false; }
     c[24] = look.shadows ? look.ao : 0.0f; c[25] = look.shadows ? look.rim : 0.0f; c[26] = float(look.debug); c[27] = mf.phase;
     // the cloud sea, depth-tested against the terrain: same deck + clock as the sky pass (drawWorldSky)
     c[28] = float(snap.pos[0]); c[29] = float(snap.pos[1]); c[30] = float(snap.pos[2]);
-    c[31] = float(std::floor(gAnchor[1]) - 56.0 + gDeckOffset.load());
-    c[32] = float(gAnchor[0]); c[33] = float(gAnchor[2] - 25.0);
+    deckOf(mf, c[31], c[32], c[33]);
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     c[35] = gAnchored ? 1.0f : 0.0f;
     c[36] = look.rays; c[37] = look.clouds;
