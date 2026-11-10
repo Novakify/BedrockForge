@@ -143,6 +143,13 @@ float4 main(PSIn i) : SV_Target {
         a    = saturate(max(aOut, csLuma(glint) * 0.8));
     }
 #endif
+#if defined(PASS_TRANSPARENT)
     lit = csHaze(lit, wp, cam, i.color2.w);
     return float4(csEnc(lit), a);
+#else
+    // the game's fog is NOT painted here: its amount goes out in alpha (opaque blocks ignore alpha) and the World FX
+    // pass fades the block into whatever the Cloud Sea sky shows behind it (clouds or sky), so the render edge is soft
+    lit = csHaze(lit, wp, cam, 0.0);
+    return float4(csEnc(lit), 1.0 - i.color2.w);
+#endif
 }
