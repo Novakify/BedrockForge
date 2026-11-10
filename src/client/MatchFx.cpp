@@ -205,7 +205,7 @@ void onChange(ll::event::BlockChangedEvent& ev) {
 // who jumped or vanished within ~2 s is the victim, and where they stood just before is where they died.
 struct Track { std::string name; float pos[3]; float prev[3]; int dye = -1; int64_t seen = 0; bool local = false; };
 struct Gone { std::string name; float pos[3]; int dye; int64_t at; bool local; };
-struct KillLine { std::string text; bool fin; bool you; int64_t at; };
+struct KillLine { std::string text; bool fin; bool you; int64_t at; std::vector<Gone> cands; }; // cands: players it names, where they stood
 std::vector<Track>    gTracks;
 std::vector<Gone>     gGone;  // players that jumped / vanished in the last ~2.5 s
 std::vector<KillLine> gKills; // kill lines in the last ~2.5 s, not matched yet
@@ -248,6 +248,7 @@ void pushKill(Gone const& g, bool fin) {
 void matchKills(int64_t now) {
     for (auto k = gKills.begin(); k != gKills.end();) {
         bool done = false;
+        // the named player who jumped away / vanished around the line is the victim, where they stood before
         for (auto g = gGone.begin(); g != gGone.end() && !done; ++g) {
             if (std::llabs(g->at - k->at) > 2500) continue;
             bool const named = g->local ? k->you : (!g->name.empty() && k->text.find(g->name) != std::string::npos);
@@ -256,6 +257,10 @@ void matchKills(int64_t now) {
             gGone.erase(g);
             done = true;
         }
+        // one player named (the killer is out of range, or "you were killed"): that is the victim, now
+        if (!done && k->cands.size() == 1) { pushKill(k->cands[0], k->fin); done = true; }
+        // two named and nobody moved yet: after 1.5 s take the one named first ("b was killed by a")
+        if (!done && k->cands.size() > 1 && now - k->at > 1500) { pushKill(k->cands[0], k->fin); done = true; }
         if (done || now - k->at > 2500) k = gKills.erase(k);
         else ++k;
     }
@@ -514,7 +519,15 @@ void onText(std::string const& m) {
         if (killy && s.find("bed") == std::string::npos && gIsMap) {
             bool const you = s.find("you were") != std::string::npos || s.find("you died") != std::string::npos || s.find("you fell") != std::string::npos;
             note("kill line: {}", s.substr(0, 160));
-            gKills.push_back({s, s.find("final") != std::string::npos, you, nowMs()});
+            KillLine kl{s, s.find("final") != std::string::npos, you, nowMs(), {}};
+            std::vector<std::pair<size_t, Gone>> named;
+            for (auto const& t : gTracks) {
+                size_t at = t.local ? (you ? 0 : std::string::npos) : (t.name.size() >= 3 ? s.find(t.name) : std::string::npos);
+                if (at != std::string::npos) named.push_back({at, Gone{t.name, {t.pos[0], t.pos[1], t.pos[2]}, t.dye, kl.at, t.local}});
+            }
+            std::sort(named.begin(), named.end(), [](auto const& x, auto const& y) { return x.first < y.first; });
+            for (auto& n : named) kl.cands.push_back(n.second);
+            gKills.push_back(std::move(kl));
             if (gKills.size() > 16) gKills.erase(gKills.begin());
             matchKills(nowMs());
         }
