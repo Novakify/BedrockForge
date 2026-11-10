@@ -19,7 +19,9 @@ float4 main(PSIn i) : SV_Target {
     float3 V   = normalize(cam - wp);
     float3 n   = csNormal(wp, V, false);
     float  sky = smoothstep(0.30, 0.80, lv);
-    float3 lit = csLight(csLin(c), n, sky, sky * 0.9 + 0.1, 0.0, V);
+    CsMat  m   = csMat(MAT_NONE);
+    m.bump = 0.0; m.spec = 0.08; m.rough = 24.0;              // skin and cloth: a soft sheen, no texel relief
+    float3 lit = csLight(csLin(c), n, n, sky, sky * 0.9 + 0.1, 0.0, V, m, 1.0, n, 0.0);
     lit = csHaze(lit, wp, cam, i.color2.a);
     return float4(csEnc(lit), 1.0);
 }

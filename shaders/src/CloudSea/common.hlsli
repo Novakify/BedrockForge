@@ -55,19 +55,96 @@ float3 csSky(float3 d) {
     return c;
 }
 
-// alb linear (corner shade already in it), n = face normal, sunVis = open sky toward the sun, sky = sky light 0..1,
-// leaf = foliage (light passes through), V = toward the eye
-float3 csLight(float3 alb, float3 n, float sunVis, float sky, float leaf, float3 V) {
+// ---------------------------------------------------------------- materials
+// Material ids come from the World FX Materials pack (tools/WorldFx/make_material_pack.py): alpha = 255 - 4 * id.
+// Keep this table in step with CLASSES there.
+#define MAT_NONE 0
+#define MAT_WOOL 1
+#define MAT_CONCRETE 2
+#define MAT_POWDER 3
+#define MAT_PLANKS 4
+#define MAT_LOG 5
+#define MAT_STONE 6
+#define MAT_CUTSTONE 7
+#define MAT_ENDSTONE 8
+#define MAT_OBSIDIAN 9
+#define MAT_TERRACOTTA 10
+#define MAT_GLAZED 11
+#define MAT_METAL 12
+#define MAT_GEM 13
+#define MAT_ORE 14
+#define MAT_SAND 15
+#define MAT_SOIL 16
+#define MAT_BRICKS 17
+#define MAT_QUARTZ 18
+#define MAT_SNOW 19
+struct CsMat {
+    float bump;    // relief from the texture's own light/dark pattern (0 = flat)
+    float detail;  // 1 = full texture detail, lower = softer / calmer
+    float spec;    // sun highlight strength
+    float rough;   // highlight tightness (bigger = smaller, sharper)
+    float refl;    // sky reflection at grazing angles
+    float metal;   // reflection and highlight take the surface colour
+    float wrap;    // light wraps round the surface (fabric)
+    float velvet;  // fabric rim glow at grazing angles
+    float sparkle; // texel glints (gems, sand grains, snow)
+    float sat;     // colour richness
+    float violet;  // obsidian's cold sheen
+};
+CsMat csMat(int id) {
+    CsMat m;
+    m.bump = 0.35; m.detail = 0.85; m.spec = 0.03; m.rough = 20.0; m.refl = 0.0; m.metal = 0.0;
+    m.wrap = 0.0; m.velvet = 0.0; m.sparkle = 0.0; m.sat = 1.0; m.violet = 0.0;
+    switch (id) {
+    case MAT_WOOL:       m.bump = 0.18; m.detail = 0.62; m.spec = 0.0;  m.wrap = 0.45; m.velvet = 0.32; m.sat = 1.06; break;
+    case MAT_CONCRETE:   m.bump = 0.0;  m.detail = 0.45; m.spec = 0.10; m.rough = 36.0; m.refl = 0.06; m.sat = 1.12; break;
+    case MAT_POWDER:     m.bump = 0.30; m.detail = 0.95; m.spec = 0.0;  m.wrap = 0.12; m.sparkle = 0.10; break;
+    case MAT_PLANKS:     m.bump = 0.55; m.detail = 1.0;  m.spec = 0.05; m.rough = 18.0; break;
+    case MAT_LOG:        m.bump = 0.85; m.detail = 1.0;  m.spec = 0.02; break;
+    case MAT_STONE:      m.bump = 0.95; m.detail = 1.0;  m.spec = 0.04; m.rough = 14.0; break;
+    case MAT_CUTSTONE:   m.bump = 0.70; m.detail = 0.95; m.spec = 0.07; m.rough = 30.0; m.refl = 0.03; break;
+    case MAT_ENDSTONE:   m.bump = 0.80; m.detail = 1.0;  m.spec = 0.04; break;
+    case MAT_OBSIDIAN:   m.bump = 0.30; m.detail = 1.0;  m.spec = 0.55; m.rough = 110.0; m.refl = 0.40; m.sparkle = 0.35; m.violet = 1.0; break;
+    case MAT_TERRACOTTA: m.bump = 0.28; m.detail = 0.75; m.spec = 0.02; m.sat = 1.05; break;
+    case MAT_GLAZED:     m.bump = 0.22; m.detail = 1.0;  m.spec = 0.45; m.rough = 140.0; m.refl = 0.24; break;
+    case MAT_METAL:      m.bump = 0.35; m.detail = 0.9;  m.spec = 0.85; m.rough = 60.0; m.refl = 0.60; m.metal = 1.0; break;
+    case MAT_GEM:        m.bump = 0.40; m.detail = 1.0;  m.spec = 0.60; m.rough = 90.0; m.refl = 0.30; m.sparkle = 1.0; m.sat = 1.08; break;
+    case MAT_ORE:        m.bump = 0.90; m.detail = 1.0;  m.spec = 0.04; m.rough = 14.0; m.sparkle = 0.8; break;
+    case MAT_SAND:       m.bump = 0.38; m.detail = 0.9;  m.spec = 0.02; m.sparkle = 0.18; break;
+    case MAT_SOIL:       m.bump = 0.60; m.detail = 1.0;  m.spec = 0.0;  break;
+    case MAT_BRICKS:     m.bump = 0.90; m.detail = 1.0;  m.spec = 0.04; m.rough = 16.0; break;
+    case MAT_QUARTZ:     m.bump = 0.25; m.detail = 0.8;  m.spec = 0.32; m.rough = 70.0; m.refl = 0.14; break;
+    case MAT_SNOW:       m.bump = 0.25; m.detail = 0.7;  m.spec = 0.10; m.rough = 24.0; m.wrap = 0.30; m.sparkle = 0.6; break;
+    }
+    return m;
+}
+float csHash(float2 p) { p = frac(p * float2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return frac((p.x + p.y) * p.x); }
+float3 csHash3(float2 p) { return float3(csHash(p), csHash(p + 17.13), csHash(p + 41.71)); }
+
+// what a reflective surface sees: the Cloud Sea sky above, the lit cloud tops below
+float3 csReflect(float3 r) {
+    if (r.y >= 0.0) return csSky(r);
+    float3 sea = lerp(float3(0.62, 0.34, 0.36), float3(0.95, 0.42, 0.18), pow(saturate(dot(normalize(float3(r.x, 0.0, r.z)), CS_SUN) * 0.5 + 0.5), 3.0));
+    return lerp(csSky(normalize(float3(r.x, 0.02, r.z))), sea, smoothstep(0.0, -0.12, r.y));
+}
+
+// alb linear (corner shade already in it), n = shading normal (relief), ng = face normal, sunVis = open sky toward
+// the sun, sky = sky light 0..1, leaf = foliage (light passes through), V = toward the eye, cav = texture cavity 0..1,
+// glintN = per-texel tilted normal (sparkle), fade = 1 near, 0 where texels get smaller than pixels
+float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float leaf, float3 V, CsMat m, float cav, float3 glintN, float fade) {
     float green = saturate((alb.g - max(alb.r, alb.b)) * 5.0);   // pure greens refuse to sit in a sunset: toward olive
-    alb = lerp(alb, csLuma(alb) * float3(1.22, 0.98, 0.42) * 1.0, green * 0.42);
+    alb = lerp(alb, csLuma(alb) * float3(1.22, 0.98, 0.42), green * 0.42);
+    alb = max(lerp(csLuma(alb).xxx, alb, m.sat), 0.0);
     float3 sunC = float3(1.00, 0.72, 0.50) * 1.85;              // soft gold: lit faces glow, they don't turn into orange paint
-    float  ndl  = max(dot(n, CS_SUN), 0.0);
+    float  ndlRaw = dot(n, CS_SUN);
+    float  ndl = saturate((ndlRaw + m.wrap) / (1.0 + m.wrap)) * step(-0.02, dot(ng, CS_SUN) + m.wrap); // relief never lights a face turned away
     float3 amb  = lerp(float3(0.255, 0.140, 0.150), float3(0.200, 0.190, 0.330), smoothstep(-1.0, 1.0, n.y));
     float  toSun = dot(n.xz, normalize(CS_SUN.xz));
     float  side  = 1.0 - abs(n.y);
     amb += float3(0.40, 0.165, 0.070) * max(toSun, 0.0) * side;
     amb += float3(0.105, 0.085, 0.150) * max(-toSun, 0.0) * side;
     amb *= lerp(0.08, 1.0, sky * sky);                             // caves and covered spots lose the sky
+    amb *= lerp(1.0, cav, m.bump * 0.55 * fade);                   // texture cavities hold a little shade
     float3 dir = sunC * (ndl + 0.035 * max(n.y, 0.0)) * sunVis;
     if (leaf > 0.5) {
         float mu    = max(dot(-V, CS_SUN), 0.0);
@@ -76,11 +153,36 @@ float3 csLight(float3 alb, float3 n, float sunVis, float sky, float leaf, float3
         dir = (sunC * wrap * 0.55 + float3(1.15, 0.80, 0.32) * 2.1 * trans) * sunVis;
         amb *= 1.7;
     }
-    float3 c = alb * (amb + dir);
+    float3 c = alb * (amb + dir) * (1.0 - 0.72 * m.metal);         // metals have almost no diffuse: their reflections carry them
+    float  ndv = saturate(dot(n, V));
+    float  fres = pow(1.0 - ndv, 5.0);
+    // fabric: a soft glow where the surface turns away from you (light caught in the fibres)
+    c += alb * (amb * 0.8 + dir * 0.6) * m.velvet * pow(1.0 - ndv, 3.0);
+    // sun highlight (normalised Blinn-Phong); metals tint it with their own colour
+    float3 H = normalize(CS_SUN + V);
+    float3 tintS = lerp(float3(1.0, 1.0, 1.0), sqrt(alb / max(csMax3(alb), 1e-3)), m.metal);   // sqrt: gold stays gold, not neon
+    float  spec = pow(saturate(dot(n, H)), m.rough) * (m.rough + 8.0) / 25.0;
+    c += sunC * tintS * spec * m.spec * (0.04 + 0.96 * pow(1.0 - saturate(dot(H, V)), 5.0) + m.metal * 0.5) * sunVis * step(0.0, ndlRaw);
+    // sky reflection: the Cloud Sea on polished surfaces
+    if (m.refl > 0.0) {
+        float3 R = reflect(-V, n);
+        float  f0 = lerp(0.04, 0.6, m.metal);
+        float  F  = f0 + (1.0 - f0) * fres;
+        float3 rc = csReflect(R) * lerp(float3(1.0, 1.0, 1.0), sqrt(alb / max(csMax3(alb), 1e-3)), m.metal);
+        rc *= lerp(1.0, 0.45 + 1.1 * smoothstep(-0.05, 0.25, R.y) * (1.0 - 0.5 * smoothstep(0.25, 0.8, R.y)), m.metal); // contrast: dark below the horizon line, bright band, dimmer zenith
+        c = lerp(c, rc * lerp(0.35, 1.0, sky), saturate(F * m.refl * 1.6)) + rc * m.metal * m.refl * 0.55 * sky;
+    }
+    // sparkle: single texels catch the sun as you move (texel-locked, so it never crawls or flickers on its own)
+    if (m.sparkle > 0.0) {
+        float g = pow(saturate(dot(reflect(-V, glintN), CS_SUN)), 260.0);
+        c += float3(1.6, 1.25, 0.95) * g * m.sparkle * sunVis * fade * 3.0;
+    }
+    // obsidian: a cold violet sheen at grazing angles
+    c += float3(0.22, 0.10, 0.42) * fres * 0.5 * m.violet * lerp(0.3, 1.0, sky);
     // keep strongly lit warm colours from going neon: past ~70% saturation, ease back toward the luma
     float mx = csMax3(c), mn = min(c.r, min(c.g, c.b));
     float sat = mx > 1e-4 ? (mx - mn) / mx : 0.0;
-    return lerp(csLuma(c).xxx, c, 1.0 - 0.28 * smoothstep(0.62, 0.95, sat));
+    return lerp(csLuma(c).xxx, c, 1.0 - 0.28 * smoothstep(0.62, 0.95, sat) * (1.0 - m.metal));
 }
 
 // air: far blocks drift into the sky behind them; toward the sun the air glows warm
