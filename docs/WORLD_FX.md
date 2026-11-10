@@ -16,6 +16,9 @@ analyzer + self-tests (`tools/WorldFx/`). Plan v2 below: **worlds, not filters**
 - Styles he asked for (16:01): a super vibrant world; retro looks (Sonic CD / Super Mario Land era inspiration).
 - 17:02: re-think the whole approach, best scenery ideas, make it ground-breaking.
 - Dropped (17:55): the Flow State kill-streak aura. Every earlier look stays in the style bank.
+- 17:57: the LyricsForge Cloud Hill sky was deleted (~20 fps even after its perf pass). Cloud Sea is built new, not
+  from Cloud Hill's code, with a measured budget (PvP tier ~1.5 ms) and a cheap 2D cloud layer instead of a
+  volumetric march.
 - Standing tastes that apply here: no strobing or flicker, nothing cluttered, premium not cheap, previews before
   installs, skies / looks rotate by themselves instead of being picked each time, effects must not get in the way
   of fights (he asked for combat-aware lyrics for the same reason).
