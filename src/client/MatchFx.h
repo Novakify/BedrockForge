@@ -26,7 +26,7 @@ struct BfMatchEventV1 {
     uint32_t floorDy;  // the shards land this many blocks below the block (0 = on the block under it); 255 = nothing: they fall away
 };
 struct BfMatchFxV1 {
-    uint32_t size, version; // sizeof, 1
+    uint32_t size, version; // sizeof, 2
     uint32_t active;        // 1 while a world is on screen
     uint32_t frame;
     float    phase;         // smoothed 0..2
@@ -34,9 +34,9 @@ struct BfMatchFxV1 {
     float    timeOfDay;     // what BF tells the game (when a consumer is attached)
     uint32_t bedsBroken;    // this match
     int64_t  nowMs;         // BF's steady clock when filled (RF ages events against it)
-    uint32_t nTeams, nEvents; // nEvents = total written; ring index = n % 64
+    uint32_t nTeams, nEvents; // nEvents = total written; ring index = n % 256
     BfMatchTeamV1  teams[16];
-    BfMatchEventV1 events[64];
+    BfMatchEventV1 events[256]; // v2: 256 (a bridge is dozens of placements)
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);

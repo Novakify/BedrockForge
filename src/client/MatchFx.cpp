@@ -154,7 +154,7 @@ void onBroken(int x, int y, int z) {
 }
 
 void pushEvent(BlockSource& bs, int x, int y, int z, uint32_t kind, Block const& b) {
-    auto& e = gFx.events[gFx.nEvents % 64];
+    auto& e = gFx.events[gFx.nEvents % 256];
     e.x = x, e.y = y, e.z = z, e.kind = kind, e.atMs = nowMs();
     mce::Color c = b.getBlockType().mMapColor;
     e.col[0] = c.r, e.col[1] = c.g, e.col[2] = c.b, e.col[3] = 1;
@@ -174,12 +174,14 @@ void onChange(ll::event::BlockChangedEvent& ev) {
     auto const& next = ev.newBlock();
     std::lock_guard l(gMutex);
     if (!gAnchored) return;
-    double const dx = p.x + 0.5 - gAnchor[0], dy = p.y + 0.5 - gAnchor[1], dz = p.z + 0.5 - gAnchor[2];
-    bool const near = dx * dx + dy * dy + dz * dz < 64.0 * 64.0;
+    double const dx = p.x + 0.5 - gScanC[0], dy = p.y + 0.5 - gScanC[1], dz = p.z + 0.5 - gScanC[2];
+    double const d2 = dx * dx + dy * dy + dz * dz;
+    bool const near = d2 < 72.0 * 72.0;     // shards: only what you can see break
+    bool const seen = d2 < 220.0 * 220.0;   // placements: the whole map (bridge trails show rushes coming)
     // single-player fires twice (server + client BlockSource): one event per block per 150 ms
     int64_t const now = nowMs();
     for (uint32_t k = 0; k < 64 && k < gFx.nEvents; ++k) {
-        auto const& e = gFx.events[(gFx.nEvents - 1 - k) % 64];
+        auto const& e = gFx.events[(gFx.nEvents - 1 - k) % 256];
         if (now - e.atMs > 150) break;
         if (e.x == p.x && e.y == p.y && e.z == p.z) return;
     }
@@ -187,8 +189,8 @@ void onChange(ll::event::BlockChangedEvent& ev) {
     if (isBed(next) && !bedNear(p.x, p.y, p.z) && gBeds.size() < 16) gBeds.push_back({p.x, p.y, p.z, 14, true, now});
     std::string const& pn = prev.getTypeName();
     std::string const& nn = next.getTypeName();
-    if (!near) return;
-    if (!boring(pn) && nn == "minecraft:air") pushEvent(ev.blockSource(), p.x, p.y, p.z, 1, prev);
+    if (!seen) return;
+    if (near && !boring(pn) && nn == "minecraft:air") pushEvent(ev.blockSource(), p.x, p.y, p.z, 1, prev);
     else if (pn == "minecraft:air" && !boring(nn)) pushEvent(ev.blockSource(), p.x, p.y, p.z, 2, next);
 }
 
@@ -252,7 +254,7 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
 
 extern "C" __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx() {
     std::lock_guard l(gMutex);
-    gFx.size = sizeof gFx, gFx.version = 1;
+    gFx.size = sizeof gFx, gFx.version = 2;
     gFx.active = nowMs() - gHudMs.load() < 250 ? 1u : 0u;
     gFx.nowMs  = nowMs();
     return &gFx;
