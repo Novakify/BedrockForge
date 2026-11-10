@@ -456,5 +456,11 @@ EQUIP_PAL = {
 
 
 def equipment(pack):
+    import os
+    from pathlib import Path
+    import armor
     import equip
     equip.export(pack, EQUIP_PAL)
+    van = Path(os.environ.get("BEDROCK_SAMPLES", "/home/claude/ext/bedrock-samples")) / "resource_pack/textures/models/armor"
+    if van.exists():
+        armor.export(pack, van, EQUIP_PAL)

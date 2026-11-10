@@ -53,6 +53,11 @@ def paint(mat, role, face, w, h, seed, pal):
             f = np.full((h, w), 0.90)                    # looking at the edge: it is the bright bit
         if role == "tip":
             f = np.where((u == 0) | (u == w - 1) | (v == 0), 0.93, f)
+        if role == "edge":
+            f = np.full((h, w), 0.93)
+        if role == "head":
+            f = np.where((v == 0), f + 0.25, f)
+            f = np.where((v == h - 1), f - 0.18, f)
         if role in ("guard", "pommel"):
             f = np.where((v == 0), f + 0.25, f)
             f = np.where((v == h - 1), f - 0.22, f)
@@ -226,10 +231,53 @@ def sword(tier):
     return P
 
 
+HEAD_MAT = {"wood": "wood", "stone": "flint", "iron": "steel", "gold": "gold", "diamond": "crystal", "netherite": "netherite"}
+
+
+def pickaxe(tier):
+    """haft along +y (grip at the origin), head across x at the top; the head arcs down at the tips"""
+    m = HEAD_MAT[tier]
+    hm = "wood" if tier != "netherite" else "netherite"
+    P = [Part("haft", [-0.75, -5, -0.75], [1.5, 17, 1.5], "wood" if tier in ("wood", "stone") else hm, "grip"),
+         Part("wrap", [-1, -5.5, -1], [2, 4, 2], "leather", "grip"),
+         Part("collar", [-1.25, 10, -1.25], [2.5, 3, 2.5], m if tier != "stone" else "cord", "guard"),
+         Part("head", [-4.5, 11, -1], [9, 2, 2], m, "head"),
+         Part("arm_l", [-7, 10, -0.75], [2.5, 1.5, 1.5], m, "head"),
+         Part("arm_r", [4.5, 10, -0.75], [2.5, 1.5, 1.5], m, "head"),
+         Part("tip_l", [-8.5, 8.5, -0.5], [1.5, 2, 1], m, "tip"),
+         Part("tip_r", [7, 8.5, -0.5], [1.5, 2, 1], m, "tip")]
+    return P
+
+
+def axe(tier):
+    m = HEAD_MAT[tier]
+    hm = "wood" if tier != "netherite" else "netherite"
+    P = [Part("haft", [-0.75, -5, -0.75], [1.5, 17, 1.5], "wood" if tier in ("wood", "stone") else hm, "grip"),
+         Part("wrap", [-1, -5.5, -1], [2, 4, 2], "leather", "grip"),
+         Part("socket", [-1.25, 8.5, -1.25], [2.5, 4, 2.5], m if tier != "stone" else "cord", "guard"),
+         Part("cheek", [1.25, 8, -0.75], [2.5, 5, 1.5], m, "head"),
+         Part("bit", [3.75, 6.5, -0.6], [2.5, 8, 1.2], m, "head"),
+         Part("edge", [6.25, 6, -0.4], [0.75, 9, 0.8], m, "edge"),
+         Part("bit_hi", [3.75, 14.5, -0.5], [2, 1, 1], m, "head"),
+         Part("bit_lo", [3.75, 5.5, -0.5], [2, 1, 1], m, "head"),
+         Part("poll", [-3, 9.5, -1], [1.75, 2.5, 2], m, "guard")]
+    return P
+
+
 # ------------------------------------------------------------------ pack export
 SWORD_ITEMS = {"wood": ("wooden_sword", "wood_sword"), "stone": ("stone_sword", "stone_sword"),
                "iron": ("iron_sword", "iron_sword"), "gold": ("golden_sword", "gold_sword"),
                "diamond": ("diamond_sword", "diamond_sword"), "netherite": ("netherite_sword", "netherite_sword")}
+
+
+TOOL_ITEMS = {
+    "pickaxe": {"wood": ("wooden_pickaxe", "wood_pickaxe"), "stone": ("stone_pickaxe", "stone_pickaxe"),
+                "iron": ("iron_pickaxe", "iron_pickaxe"), "gold": ("golden_pickaxe", "gold_pickaxe"),
+                "diamond": ("diamond_pickaxe", "diamond_pickaxe"), "netherite": ("netherite_pickaxe", "netherite_pickaxe")},
+    "axe": {"wood": ("wooden_axe", "wood_axe"), "stone": ("stone_axe", "stone_axe"), "iron": ("iron_axe", "iron_axe"),
+            "gold": ("golden_axe", "gold_axe"), "diamond": ("diamond_axe", "diamond_axe"),
+            "netherite": ("netherite_axe", "netherite_axe")},
+}
 
 
 def export(pack, palettes, prefix="wfx"):
@@ -240,10 +288,13 @@ def export(pack, palettes, prefix="wfx"):
     (pack / "models" / "entity").mkdir(parents=True, exist_ok=True)
     (pack / "textures" / "worldfx").mkdir(parents=True, exist_ok=True)
     (pack / "textures" / "items").mkdir(parents=True, exist_ok=True)
-    for tier, (item, icon) in SWORD_ITEMS.items():
-        parts = sword(tier)
+    jobs = [("sword", t, it, ic, sword) for t, (it, ic) in SWORD_ITEMS.items()]
+    jobs += [("pickaxe", t, it, ic, pickaxe) for t, (it, ic) in TOOL_ITEMS["pickaxe"].items()]
+    jobs += [("axe", t, it, ic, axe) for t, (it, ic) in TOOL_ITEMS["axe"].items()]
+    for kind, tier, item, icon, shape in jobs:
+        parts = shape(tier)
         atlas, uvs, tw, th = build(parts, palettes, tier)
-        name = f"{prefix}_{tier}_sword"
+        name = f"{prefix}_{tier}_{kind}"
         Image.fromarray(atlas, "RGBA").save(pack / "textures" / "worldfx" / f"{name}.png")
         geo = geometry(parts, uvs, tw, th, f"geometry.{name}")
         (pack / "models" / "entity" / f"{name}.geo.json").write_text(json.dumps(geo, indent=1))
