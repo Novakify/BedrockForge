@@ -291,21 +291,24 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
                 if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { newPlace = false; break; }
     }
     lastPos[0] = pos[0], lastPos[1] = pos[1], lastPos[2] = pos[2];
-    if (gNewLevel.exchange(false)) { // the server re-sent the world: same map (a respawn / spectating) or a new one?
-        bool same = false;
-        if (gIsMap)
-            for (auto const& b : gBeds)
-                if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { same = true; break; }
-        if (!same) newPlace = true;
+    // the server re-sent the world (a respawn / spectating on the same map, or a new world - The Hive's hub, lobby and
+    // maps share coordinates, so distance can't tell): 3 s later, are this match's standing beds still there?
+    static int64_t verifyAt = 0;
+    if (gNewLevel.exchange(false)) {
+        if (!gIsMap) newPlace = true;
+        else verifyAt = now + 3000;
+    }
+    if (verifyAt && now >= verifyAt) {
+        verifyAt = 0;
+        int known = 0, still = 0;
+        BlockSource& bs = lp->getDimensionBlockSource();
+        for (auto const& b : gBeds)
+            if (b.alive) { ++known; still += isBed(bs.getBlock(BlockPos{b.x, b.y, b.z})) ? 1 : 0; }
+        if (known == 0 || still == 0) newPlace = true;
+        note("world re-sent: {} of {} standing beds still there -> {}", still, known, newPlace ? "new match" : "same match");
     }
     // a long time away from the HUD (a death screen, a menu) is only a new match when you came back somewhere else
-    if (last && now - last > 20000 && !newPlace) {
-        bool same = false;
-        if (gIsMap)
-            for (auto const& b : gBeds)
-                if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { same = true; break; }
-        newPlace = !same;
-    }
+    if (last && now - last > 20000 && !newPlace) verifyAt = gIsMap ? now + 3000 : 0, newPlace = !gIsMap;
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
     retarget();
