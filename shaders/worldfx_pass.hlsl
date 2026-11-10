@@ -264,15 +264,31 @@ float3 shockwaves(float3 rd, float sceneT, bool sky) {
         float age = tAge[i].x;
         if (age < 0.0 || age > 4.5) continue;
         float3 col = tCol[i].rgb;
-        // on the cloud sea (a plane at its tops)
+        float  R = 10.0 + 120.0 * age, fade = pow(saturate(1.0 - age / 4.5), 1.6);
+        // on the cloud sea (a plane at its tops): a bright ring
         if (rd.y < -0.005) {
             float t = (CAM.y - seaTop) / -rd.y;
             if (t > 0.0 && t < sceneT) {
                 float2 h = CAM.xz + rd.xz * t - tPos[i].xz;
-                acc += col * waveRing(length(h), age) * 1.6;
+                acc += col * waveRing(length(h), age) * 4.0;
             }
         }
-        if (sky) acc += col * 0.22 * exp(-age * 2.4) * exp(-max(rd.y, 0.0) * 3.0); // the horizon flashes
+        // and a wall of light rising from it: a cylinder of radius R round the bed, brightest at the bottom
+        float2 o = CAM.xz - tPos[i].xz, d = rd.xz;
+        float  a = dot(d, d), b = dot(o, d), c = dot(o, o) - R * R;
+        float  disc = b * b - a * c;
+        if (disc > 0.0 && a > 1e-5) {
+            float sq = sqrt(disc);
+            [unroll] for (int s2 = 0; s2 < 2; s2++) {
+                float t = (-b + (s2 == 0 ? -sq : sq)) / a;
+                if (t <= 0.0 || t >= sceneT) continue;
+                float h = CAM.y + rd.y * t - (seaTop - 4.0);
+                float2 nxz = (o + d * t) / R;
+                float graze = min(1.0 / max(abs(dot(nxz, normalize(d))), 0.12), 8.0);   // seen edge-on it is brighter
+                acc += col * fade * smoothstep(-2.0, 2.0, h) * exp(-max(h, 0.0) / 34.0) * graze * 0.10;
+            }
+        }
+        if (sky) acc += col * 0.30 * exp(-age * 2.0) * exp(-max(rd.y, 0.0) * 3.0); // the horizon flashes
     }
     return acc * m1.y;
 }
@@ -450,7 +466,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
     [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
-    [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.5 + 0.8 * darkK());
+    [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
