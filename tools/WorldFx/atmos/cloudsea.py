@@ -485,6 +485,8 @@ def equipment(pack):
     van = Path(os.environ.get("BEDROCK_SAMPLES", "/home/claude/ext/bedrock-samples")) / "resource_pack/textures/models/armor"
     if van.exists():
         armor.export(pack, van, EQUIP_PAL)
+    import particles
+    particles.export(pack)
     import beds
     bed_dir = van.parent.parent / "entity" / "bed"
     if (bed_dir / "red.png").exists():
