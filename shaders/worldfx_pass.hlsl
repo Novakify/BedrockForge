@@ -252,7 +252,7 @@ float4 shards(float3 rd, float sceneT) {
 // ---- bed-break shockwave: when a bed falls a ring of its team's light races out over the cloud sea and across the
 //      islands, and the sky flashes with it - the whole map sees which island just lost its bed
 float waveRing(float d, float age) {
-    float R = 10.0 + 120.0 * age, w = 3.0 + 5.0 * age;
+    float R = 6.0 + 48.0 * age, w = 2.0 + 3.0 * age;
     float fade = pow(saturate(1.0 - age / 4.5), 1.6);
     return exp(-pow((d - R) / w, 2.0)) * fade;
 }
@@ -264,7 +264,7 @@ float3 shockwaves(float3 rd, float sceneT, bool sky) {
         float age = tAge[i].x;
         if (age < 0.0 || age > 4.5) continue;
         float3 col = tCol[i].rgb;
-        float  R = 10.0 + 120.0 * age, fade = pow(saturate(1.0 - age / 4.5), 1.6);
+        float  R = 6.0 + 48.0 * age, fade = pow(saturate(1.0 - age / 4.5), 1.6);
         // on the cloud sea (a plane at its tops): a bright ring
         if (rd.y < -0.005) {
             float t = (CAM.y - seaTop) / -rd.y;
@@ -282,10 +282,10 @@ float3 shockwaves(float3 rd, float sceneT, bool sky) {
             [unroll] for (int s2 = 0; s2 < 2; s2++) {
                 float t = (-b + (s2 == 0 ? -sq : sq)) / a;
                 if (t <= 0.0 || t >= sceneT) continue;
-                float h = CAM.y + rd.y * t - (seaTop - 4.0);
+                float h = CAM.y + rd.y * t - (tPos[i].y - 8.0);              // rises from just under the islands
                 float2 nxz = (o + d * t) / R;
                 float graze = min(1.0 / max(abs(dot(nxz, normalize(d))), 0.12), 8.0);   // seen edge-on it is brighter
-                acc += col * fade * smoothstep(-2.0, 2.0, h) * exp(-max(h, 0.0) / 34.0) * graze * 0.10;
+                acc += col * fade * smoothstep(-2.0, 2.0, h) * exp(-max(h, 0.0) / 22.0) * graze * 0.16;
             }
         }
         if (sky) acc += col * 0.30 * exp(-age * 2.0) * exp(-max(rd.y, 0.0) * 3.0); // the horizon flashes
