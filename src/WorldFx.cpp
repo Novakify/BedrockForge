@@ -1118,6 +1118,10 @@ void drawUi() {
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Rim light", &look.rim, 0.0f, 2.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SliderFloat("God rays", &look.rays, 0.0f, 3.0f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SliderFloat("Cloud shadows", &look.clouds, 0.0f, 1.0f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::RadioButton("Normal", &look.debug, 0); ImGui::SameLine();
     ImGui::RadioButton("Show shadows", &look.debug, 1); ImGui::SameLine();
     ImGui::RadioButton("Show occlusion", &look.debug, 2);

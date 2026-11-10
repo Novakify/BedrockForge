@@ -980,7 +980,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (gWfxRoot) return true;
     D3D12_ROOT_PARAMETER prm[4]{};
     prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    prm[0].Constants        = {0, 0, 36};
+    prm[0].Constants        = {0, 0, 40};
     prm[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     prm[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
     prm[1].Descriptor       = {0, 0};
@@ -1586,7 +1586,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-    float c[36]{};
+    float c[40]{};
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
@@ -1600,10 +1600,11 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     c[32] = float(gAnchor[0]); c[33] = float(gAnchor[2] - 25.0);
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     c[35] = gAnchored ? 1.0f : 0.0f;
+    c[36] = look.rays; c[37] = look.clouds;
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
-    calls.setConsts(list, 0, 36, c, 0);
+    calls.setConsts(list, 0, 40, c, 0);
     calls.setTable(list, 3, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
     list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
     list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
@@ -1634,13 +1635,15 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "ao") gLook.ao = std::clamp(v, 0.f, 1.f);
         else if (k == "rim") gLook.rim = std::clamp(v, 0.f, 2.f);
         else if (k == "deck") gDeckOffset = std::clamp(v, -80.f, 80.f);
+        else if (k == "rays") gLook.rays = std::clamp(v, 0.f, 3.f);
+        else if (k == "clouds") gLook.clouds = std::clamp(v, 0.f, 1.f);
     }
 }
 void saveWorldFxSettings() {
     if (gWfxConfig.empty()) return;
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
-        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\n";
+        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\n";
 }
 
 void setWorldSky(int kind) {

@@ -15,6 +15,7 @@ cbuffer C : register(b0) {
     float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = 0
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
+    float4 c9; // x = god ray strength, y = cloud shadow strength, zw = 0
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
@@ -54,6 +55,39 @@ VSOut VSWorldFx(uint id : SV_VertexID) {
     return o;
 }
 
+// ---- god rays: march from the pixel toward the sun on screen; every step that sees open sky lets light through.
+//      Islands, players and trees cut real shadow wedges into the beams. Returns linear light to add.
+float3 sunShafts(int2 px, float j) {
+    float3 sp = toPx(c5.xyz * 4000.0);
+    if (sp.z <= 0.0 || c8.w < 0.5) return float3(0, 0, 0);
+    float2 d  = sp.xy - float2(px);
+    float  dl = length(d);
+    float  reach = c4.y * 0.85;                                // beams fade out ~a screen height from the sun
+    float  near = saturate(1.0 - dl / reach);
+    if (near <= 0.0) return float3(0, 0, 0);
+    const int N = 22;
+    float2 stepv = d / float(N) * min(1.0, reach / max(dl, 1.0));
+    float  acc = 0.0, wsum = 0.0, w = 1.0;
+    [loop] for (int k = 0; k < N; k++) {
+        float2 q = float2(px) + stepv * (float(k) + j);
+        if (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) { acc += w; wsum += w; w *= 0.93; continue; }  // off screen toward the sun: assume sky
+        acc += isSky(rawDepth(int2(q))) ? w : 0.0;
+        wsum += w;
+        w *= 0.93;
+    }
+    float open = acc / max(wsum, 1e-4);
+    float beam = open * near * near * (0.6 + 0.4 * near);
+    return float3(1.00, 0.58, 0.26) * beam * c9.x;
+}
+
+// cloud shadows: the high cloud deck (y 900) seen from this point toward the low sun
+float cloudShadow(float3 W) {
+    float  t = (900.0 - W.y) / max(c5.y, 0.03);
+    float2 q = W.xz + c5.xz * t;
+    float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
+    return smoothstep(0.74, 0.86, hcDens(p, 3));
+}
+
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
@@ -63,10 +97,13 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         if (c8.w < 0.5) discard;
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
         float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
-        if (rd.y > 0.02) discard;
-        float4 sea = csSeaPixel(rd);
-        if (sea.a <= 0.0) discard;
-        float3 o = toDisplay(sea.rgb) + (hash12(float2(px)) - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
+        float  js = hash12(float2(px));
+        float3 rays = sunShafts(px, js) * 0.55;                   // over open sky the beams are subtler (it is already bright)
+        float4 sea = rd.y > 0.02 ? float4(0, 0, 0, 0) : csSeaPixel(rd);
+        float3 base = sea.a > 0.0 ? toDisplay(sea.rgb) : sceneAt(px).rgb;
+        if (sea.a <= 0.0 && dot(rays, 1) < 0.002) discard;
+        float3 lb = pow(max(base, 0.0), 2.2) + rays * (sea.a > 0.0 ? 1.0 : 0.6);
+        float3 o = pow(max(lb, 0.0), 1.0 / 2.2) + (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
         return float4(o, 1.0);
     }
     float4 sc  = sceneAt(px);
@@ -156,7 +193,9 @@ float4 PSWorldFx(VSOut i) : SV_Target {
 
     // ---- apply (linear light). Shadowed sunlit faces fall to the violet sky light; occlusion darkens gently
     float3 lin = pow(col, 2.2);
-    float  sh  = (1.0 - vis) * lit * c5.w;
+    CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
+    float  cs  = c8.w > 0.5 ? cloudShadow(CAM + P) * c9.y : 0.0;
+    float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55);
     float3 shadeCol = float3(0.30, 0.29, 0.46);               // what is left without the sun: the violet sky
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
     lin *= lerp(1.0, ao, c6.x);
@@ -170,6 +209,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float near = exp(-length((sp.xy - float2(px)) / c4.y) * 2.4);
         lin += float3(1.5, 0.74, 0.30) * open * near * c6.y * 0.55;
     }
+    lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0));   // air close to you holds less light
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
