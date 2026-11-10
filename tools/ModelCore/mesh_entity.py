@@ -5,6 +5,8 @@
         [--mer bon_mer.png] [--icon icon.png] [--width 0.8] [--height 2.4] [--smooth 60] [--credits "..."]
         [--target-height 4]   (resize the model; set --height/--width for the hitbox to match)
         [--emit mask.png [--emit-gain 1.4]]   (glowing parts: fullbright via entity_emissive_alpha, Fancy + VV)
+        [--anim animatronic] [--ai stalker]   (presets/: keyframe-free Molang animations, behaviour components)
+    Rigged meshes (blender/bone_split.py adds "bones" + per-face "bone") become one poly_mesh per bone.
 
 MESH.json is what an importer exports (tools for glTF/OBJ via Blender): {"resolution": [w, h],
 "vertices": {id: [x, y, z]} in Blockbench pixel space (16 = 1 block, y up), "faces": {id: {"vertices": [...],
@@ -34,15 +36,42 @@ def to_bbmodel(mesh: dict, name: str, smooth: float | None) -> dict:
     xs, ys, zs = zip(*mesh["vertices"].values())
     span = max(max(xs) - min(xs), max(zs) - min(zs)) / 16.0
     height = (max(ys) - min(ys)) / 16.0
-    el = {"type": "mesh", "uuid": f"{name}_mesh", "name": name, "origin": [0, 0, 0], "rotation": [0, 0, 0],
-          "vertices": mesh["vertices"], "faces": mesh["faces"]}
-    if smooth: el["bf_smooth_angle"] = float(smooth)
+    bones = mesh.get("bones")
+    if bones:   # rigged mesh (blender/bone_split.py): one mesh element per bone, nested groups = Bedrock bones
+        elements, groups = [], {}
+        bn = lambda b: b.replace(".", "_").replace(" ", "_")   # Bedrock bone names: no dots
+        for b, info in bones.items():
+            fs = {fid: f for fid, f in mesh["faces"].items() if f.get("bone") == b}
+            used = {v for f in fs.values() for v in f["vertices"]}
+            g = {"name": bn(b), "origin": list(info["pivot"]),   # same Blockbench space as the vertices
+                 "uuid": f"{name}_{b}_grp", "children": []}
+            if fs:
+                el = {"type": "mesh", "uuid": f"{name}_{b}_mesh", "name": bn(b), "origin": [0, 0, 0], "rotation": [0, 0, 0],
+                      "vertices": {v: mesh["vertices"][v] for v in used}, "faces": fs}
+                if smooth: el["bf_smooth_angle"] = float(smooth)
+                elements.append(el); g["children"].append(el["uuid"])
+            groups[b] = g
+        outliner = []
+        for b, info in bones.items():
+            (groups[info["parent"]]["children"] if info.get("parent") in groups else outliner).append(groups[b])
+    else:
+        el = {"type": "mesh", "uuid": f"{name}_mesh", "name": name, "origin": [0, 0, 0], "rotation": [0, 0, 0],
+              "vertices": mesh["vertices"], "faces": mesh["faces"]}
+        if smooth: el["bf_smooth_angle"] = float(smooth)
+        elements, outliner = [el], [{"name": name, "origin": [0, 0, 0], "uuid": f"{name}_grp", "children": [el["uuid"]]}]
     return {"meta": {"format_version": "4.5", "model_format": "free", "box_uv": False}, "name": name,
             "resolution": {"width": tw, "height": th},
             # whole model must stay drawn when its origin (the feet) leaves the screen
             "visible_box": [round(span + 1.0, 2), round(height + 1.0, 2), round(min(ys) / 16.0 + height / 2, 2)],
-            "elements": [el], "outliner": [{"name": name, "origin": [0, 0, 0], "uuid": f"{name}_grp", "children": [el["uuid"]]}],
+            "elements": elements, "outliner": outliner,
             "textures": [{"name": name, "id": "0", "width": tw, "height": th, "uv_width": tw, "uv_height": th}]}
+
+
+def load_preset(name: str, kind: str) -> dict:
+    """A preset path, or a name from presets/ (anim_<name>.json / ai_<name>.json)."""
+    p = Path(name)
+    if not p.exists(): p = Path(__file__).resolve().parent / "presets" / f"{kind}_{name}.json"
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 def write(path: Path, data):
@@ -58,6 +87,7 @@ def build(a):
         ys = [v[1] for v in mesh["vertices"].values()]
         k = a.target_height * 16.0 / (max(ys) - min(ys))
         mesh["vertices"] = {i: [v[0] * k, v[1] * k, v[2] * k] for i, v in mesh["vertices"].items()}
+        for info in mesh.get("bones", {}).values(): info["pivot"] = [c * k for c in info["pivot"]]
         print(f"scaled x{k:.3f} -> {a.target_height} blocks tall")
     out = Path(a.out); title = a.name
     rp, bp = out / f"{title} RP", out / f"{title} BP"
@@ -97,10 +127,20 @@ def build(a):
     materials = {"default": "entity_emissive_alpha" if a.emit else "entity_alphatest"}
     textures, rc_list = {"default": tex}, [rc]
     write(rp / f"render_controllers/{ns}.{n}.rc.json", {"format_version": "1.8.0", "render_controllers": rcs})
-    write(rp / f"entity/{ns}/{n}.entity.json", {"format_version": "1.10.0", "minecraft:client_entity": {"description": {
-        "identifier": a.id, "materials": materials, "textures": textures,
-        "geometry": {"default": rig.identifier}, "render_controllers": rc_list,
-        "spawn_egg": {"base_color": "#2b3a4a", "overlay_color": "#8b1010"}}}})
+    desc = {"identifier": a.id, "materials": materials, "textures": textures,
+            "geometry": {"default": rig.identifier}, "render_controllers": rc_list,
+            "spawn_egg": {"base_color": "#2b3a4a", "overlay_color": "#8b1010"}}
+    if a.anim:   # preset: {"animations": {short: bedrock anim}, "animate": [...], "pre_animation": [...]}
+        pre = load_preset(a.anim, "anim")
+        bones_in_geo = {b.name for b in rig.bones}
+        missing = sorted({bn for an in pre["animations"].values() for bn in an.get("bones", {})} - bones_in_geo)
+        if missing: print(f"note: preset animates bones this model lacks (ignored in game): {', '.join(missing)}")
+        write(rp / f"animations/{ns}.{n}.animation.json", {"format_version": "1.8.0", "animations": {
+            f"animation.{ns}.{n}.{k}": v for k, v in pre["animations"].items()}})
+        desc["animations"] = {k: f"animation.{ns}.{n}.{k}" for k in pre["animations"]}
+        desc["scripts"] = {"animate": pre["animate"]}
+        if pre.get("pre_animation"): desc["scripts"]["pre_animation"] = pre["pre_animation"]
+    write(rp / f"entity/{ns}/{n}.entity.json", {"format_version": "1.10.0", "minecraft:client_entity": {"description": desc}})
     write(rp / "texts/languages.json", ["en_US"])
     write(rp / "texts/en_US.lang", f"entity.{a.id}.name={title}\nitem.spawn_egg.entity.{a.id}.name=Spawn {title}\n")
 
@@ -112,7 +152,8 @@ def build(a):
             "minecraft:collision_box": {"width": a.width, "height": a.height},
             "minecraft:physics": {}, "minecraft:persistent": {}, "minecraft:nameable": {},
             "minecraft:pushable": {"is_pushable": False, "is_pushable_by_piston": True},
-            "minecraft:knockback_resistance": {"value": 1.0}}}})
+            "minecraft:knockback_resistance": {"value": 1.0},
+            **(load_preset(a.ai, "ai")["components"] if a.ai else {})}}})
 
     rp_id, bp_id, ver = u5(a.id, "rp"), u5(a.id, "bp"), [0, 1, 0]
     write(rp / "manifest.json", {"format_version": 2, "header": {"name": f"§c{title} §7(ModelCore test)", "description": f"{a.id} - mesh entity",
@@ -125,8 +166,9 @@ def build(a):
     for d in (rp, bp):
         if a.icon: shutil.copyfile(a.icon, d / "pack_icon.png")
         if a.credits: write(d / "CREDITS.txt", a.credits + "\n\nPrivate personal use only. Not for redistribution.\n")
-    pm = next(b.poly_mesh for b in rig.bones if b.poly_mesh)
-    print(f"{a.id}: {len(pm['polys'])} polys, {len(pm['positions'])} positions, {len(pm['normals'])} normals, "
+    pms = [b.poly_mesh for b in rig.bones if b.poly_mesh]
+    print(f"{a.id}: {len(pms)} mesh bones, {sum(len(p['polys']) for p in pms)} polys, "
+          f"{sum(len(p['positions']) for p in pms)} positions, {sum(len(p['normals']) for p in pms)} normals, "
           f"bounds {rig.description_extra} -> {rp.name} + {bp.name}")
 
 
@@ -140,4 +182,6 @@ if __name__ == "__main__":
     ap.add_argument("--target-height", type=float, help="resize the model to this many blocks tall")
     ap.add_argument("--emit", help="greyscale emissive mask (white = glows); glowing texels drawn fullbright")
     ap.add_argument("--emit-gain", type=float, default=1.0, help="brighten the glowing pixels (e.g. 1.4)")
+    ap.add_argument("--anim", help="animation preset (presets/anim_<name>.json or a path); needs a rigged mesh")
+    ap.add_argument("--ai", help="behaviour preset (presets/ai_<name>.json or a path); default: statue, no AI")
     build(ap.parse_args())

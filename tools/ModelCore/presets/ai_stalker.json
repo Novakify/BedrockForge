@@ -1,0 +1,20 @@
+{
+ "_doc": "Slow horror stalker: wanders, locks onto players it can see within 32 blocks, closes in faster and hits hard. No fall damage, doesn't drown, can't open doors.",
+ "components": {
+  "minecraft:movement": {"value": 0.2},
+  "minecraft:movement.basic": {},
+  "minecraft:jump.static": {},
+  "minecraft:navigation.walk": {"can_path_over_water": true, "avoid_water": true, "avoid_damage_blocks": true, "can_open_doors": false},
+  "minecraft:follow_range": {"value": 40, "max": 40},
+  "minecraft:attack": {"damage": 9},
+  "minecraft:breathable": {"breathes_air": true, "breathes_water": true},
+  "minecraft:damage_sensor": {"triggers": [{"cause": "fall", "deals_damage": "no"}]},
+  "minecraft:behavior.hurt_by_target": {"priority": 1},
+  "minecraft:behavior.nearest_attackable_target": {"priority": 2, "must_see": true, "reselect_targets": true, "within_radius": 32,
+   "entity_types": [{"filters": {"test": "is_family", "subject": "other", "value": "player"}, "max_dist": 32}]},
+  "minecraft:behavior.melee_attack": {"priority": 3, "speed_multiplier": 1.4, "track_target": true},
+  "minecraft:behavior.random_stroll": {"priority": 6, "speed_multiplier": 0.6},
+  "minecraft:behavior.look_at_player": {"priority": 7, "look_distance": 16, "probability": 0.05},
+  "minecraft:behavior.random_look_around": {"priority": 8}
+ }
+}
