@@ -131,14 +131,15 @@ float3 beacons(float3 rd, float tMax) {
         float2 q = rxz * t - b.xz;
         float  r = length(q);
         float  h = rd.y * t - b.y;                       // height above the bed where the ray passes the column
-        float  top = lerp(3.0, 110.0, st) + fl * 40.0;
-        float  prof = smoothstep(-0.4, 0.6, h) * exp(-max(h, 0.0) / (0.32 * top)) * smoothstep(top, top * 0.55, h);
-        float  w = 0.45 + 0.9 * fl;                       // core half-width (blocks)
-        float  core = exp(-r * r / (w * w)), haze = exp(-r * r / (9.0 * w * w)) * 0.22;
+        float  top = lerp(3.0, 120.0, st) + fl * 40.0;
+        float  prof = smoothstep(-0.4, 0.6, h) * exp(-max(h, 0.0) / (0.30 * top)) * smoothstep(top, top * 0.5, h);
+        float  w = 0.22 + 0.6 * fl;                       // a tight bright core...
+        float  core = exp(-r * r / (w * w)), haze = exp(-r * r / (16.0 * w * w)) * 0.16; // ...in a soft glow
+        float  flow = 0.78 + 0.22 * sin(h * 0.45 - TIME * 3.2 + float(i) * 2.1);           // light rising up the column
         float  path = 1.0 / max(sqrt(r2), 0.25);          // looking along the column you see more of it
-        float  dist = length(float2(r, h));
-        float  orb = exp(-pow(length(float3(q.x, h - 0.4, q.y)) / 0.9, 2.0)) * 0.9;
-        acc += tCol[i].rgb * ((core + haze) * prof * path * 0.16 + orb * 0.25) * (st + 2.0 * fl);
+        float  orb = exp(-pow(length(float3(q.x, h - 0.4, q.y)) / 0.8, 2.0));
+        float3 hot = lerp(tCol[i].rgb, float3(1, 1, 1), 0.45);
+        acc += (hot * core * flow * 0.30 + tCol[i].rgb * haze * 0.20) * prof * path * (st + 2.0 * fl) + tCol[i].rgb * orb * 0.35 * (st + fl);
     }
     return acc * m0.z * (0.35 + 0.95 * darkK());
 }

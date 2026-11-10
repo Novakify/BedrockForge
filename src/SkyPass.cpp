@@ -1260,6 +1260,7 @@ struct BfMatchFxV1 {
 };
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
+using MatchPreview = void (*)(float);
 struct MatchCb { float m0[4]; float tPos[16][4]; float tCol[16][4]; float eA[8][4]; float eB[8][4]; float eC[8][4]; };
 static_assert(sizeof(MatchCb) == 57 * 16, "cbuffer M layout");
 struct MatchFrame { float phase = 0; MatchCb cb{}; };
@@ -1267,6 +1268,7 @@ std::mutex  gMatchMutex;
 MatchFrame  gMatch;
 int64_t     gMatchAt = -1;
 std::string gMatchStatus = "Bedrock Forge not found (living sky stays golden)";
+MatchPreview gMatchPreview = nullptr;
 void matchFns(MatchGet& g, MatchUse& u) {
     static MatchGet sg = nullptr;
     static MatchUse su = nullptr;
@@ -1276,6 +1278,7 @@ void matchFns(MatchGet& g, MatchUse& u) {
         if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll")) {
             sg = reinterpret_cast<MatchGet>(reinterpret_cast<void*>(GetProcAddress(m, "BF_GetMatchFx")));
             su = reinterpret_cast<MatchUse>(reinterpret_cast<void*>(GetProcAddress(m, "BF_MatchFxConsumer")));
+            gMatchPreview = reinterpret_cast<MatchPreview>(reinterpret_cast<void*>(GetProcAddress(m, "BF_MatchFxPreview")));
         }
     }
     g = sg, u = su;
@@ -1294,6 +1297,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     BfMatchFxV1 const* b = get ? get() : nullptr;
     bool const ok = b && b->version >= 1 && b->size >= sizeof(BfMatchFxV1);
     if (use) use(look.living && ok && gWorldSky.load() != 0 ? 1 : 0);
+    if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
     if (ok) {
         f.phase = look.living ? std::clamp(b->phase, 0.0f, 2.0f) : 0.0f;
         uint32_t nt = std::min<uint32_t>(b->nTeams, 16), k = 0;
