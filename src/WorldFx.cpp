@@ -1131,6 +1131,9 @@ void drawUi() {
     ImGui::SameLine();
     ImGui::TextDisabled("(golden hour -> dusk at the first bed -> night for the final fight)");
     ImGui::SliderFloat("Preview sky phase", &look.phase, -1.0f, 2.0f, look.phase < 0 ? "follow the match" : "%.2f");
+    if (ImGui::Button("Test kill")) rf::sky::testKill();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(a kill 6 blocks ahead; press again for a final kill)");
     ImGui::SliderFloat("Team lights + bed beacons", &look.teams, 0.0f, 2.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Block shards", &look.shards, 0.0f, 1.0f, "%.2f");

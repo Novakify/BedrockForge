@@ -89,6 +89,7 @@ struct WorldFxLook {
     bool living = true; float teams = 1.0f; float shards = 1.0f; float phase = -1.0f; float waves = 1.0f; float trails = 1.0f;
 };
 /// what RF last read from Bedrock Forge's match bridge (for the F6 panel)
+void testKill(); // F6: play a fake kill in front of you (normal / final alternate)
 std::string matchStatus();
 WorldFxLook& worldFxLook();
 std::string  worldFxStatus();

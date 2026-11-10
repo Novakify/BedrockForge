@@ -1289,6 +1289,10 @@ void matchFns(MatchGet& g, MatchUse& u) {
 int64_t steadyMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 } // namespace
 // once per frame (cheap after the first call): the match as the World FX shaders want it
+// F6 "Test kill": a fake kill 6 blocks in front of you (normal / final kill alternate)
+std::atomic<int> gTestKillReq{0};
+struct TestKill { float p[3]; int64_t at = -100000; int kind = 3; } gTestKill;
+void testKill() { ++gTestKillReq; }
 static MatchFrame matchFrame(WorldFxLook const& look) {
     int64_t const now = steadyMs();
     std::lock_guard l(gMatchMutex);
@@ -1336,12 +1340,21 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             float const age = float(now - e.atMs) / 1000.0f;
             if (age < 0) continue;
             if (age > 4.3f) break; // older ones are older still
-            if ((e.kind == 2 && age > 0.4f) || (e.kind == 1 && age > 4.2f)) continue;
+            if ((e.kind == 2 && age > 0.4f) || (e.kind == 1 && age > 4.2f) || (e.kind == 3 && age > 3.6f) || (e.kind > 3 && age > 4.2f)) continue;
+            if (e.kind >= 3) f.cb.m1[2] = 1.0f;
             auto& c = f.cb;
             c.eA[ne][0] = float(e.x); c.eA[ne][1] = float(e.y); c.eA[ne][2] = float(e.z); c.eA[ne][3] = age;
             std::memcpy(c.eB[ne], e.col, 12); c.eB[ne][3] = float(e.kind);
             c.eC[ne][0] = float(e.seed % 100000u);
             c.eC[ne][1] = e.floorDy > 64 ? -1.0f : float(e.floorDy);
+            ++ne;
+        }
+        if (float const ta = float(now - gTestKill.at) / 1000.0f; ta >= 0.0f && ta < 4.2f && ne < 8) {
+            auto& c = f.cb;
+            c.eA[ne][0] = std::floor(gTestKill.p[0]); c.eA[ne][1] = std::floor(gTestKill.p[1]); c.eA[ne][2] = std::floor(gTestKill.p[2]); c.eA[ne][3] = ta;
+            c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = float(gTestKill.kind);
+            c.eC[ne][0] = 4242.0f; c.eC[ne][1] = -1.0f;
+            f.cb.m1[2] = 1.0f;
             ++ne;
         }
         f.cb.m0[1] = float(ne);
@@ -1788,6 +1801,12 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     c[12] = 0.025f; c[13] = 0; c[14] = 0; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified)
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
+    if (gTestKillReq.exchange(0)) {
+        for (int a = 0; a < 3; ++a) gTestKill.p[a] = float(snap.pos[a]) + snap.forward[a] * 6.0f;
+        gTestKill.p[1] = float(snap.pos[1]) - 1.62f;
+        gTestKill.kind = gTestKill.kind == 3 ? 4 : 3;
+        gTestKill.at = steadyMs();
+    }
     MatchFrame const mf = matchFrame(look);
     updateAnchor(snap.pos);
     D3D12_GPU_VIRTUAL_ADDRESS const mcb = uploadMatch(dev.Get(), mf.cb);
