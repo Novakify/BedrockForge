@@ -90,15 +90,22 @@ def concrete(colour, seed=2):
 
 # ------------------------------------------------------------------ terracotta: fired clay, strata + speckle
 def terracotta(colour, seed=3):
+    """fired clay: calm, matte, with thin near-straight sediment lines (one shade apart) and rare dark iron specks"""
+    r = rng(seed)
     y, x = np.mgrid[0:S, 0:S].astype(float)
-    warp = (value_noise(S, 2, seed, octaves=2) - 0.5) * 5.0
-    band = np.sin((y + warp) / S * 2 * np.pi * 3.0) * 0.5 + 0.5
-    f = 0.42 + band * 0.20 + (value_noise(S, 6, seed + 1) - 0.5) * 0.18
-    r = rng(seed + 2)
+    drift = (value_noise(S, 2, seed, 1) - 0.5) * 1.6
+    yy = (y + drift) % S
+    lines = np.sort(r.choice(np.arange(2, S - 1), 5, replace=False)).astype(float)
+    band = np.searchsorted(lines, yy)
+    tone = r.uniform(-0.06, 0.06, len(lines) + 1)
+    tone[-1] = tone[0]
+    f = 0.48 + tone[band] + (value_noise(S, 16, seed + 1) - 0.5) * 0.06
+    for c in lines:
+        f = np.where(np.abs(yy - c) < 0.5, f - 0.14, f)
     sp = r.random((S, S))
-    f = np.where(sp < 0.018, f + 0.22, f)
-    f = np.where(sp > 0.985, f - 0.22, f)
-    pal = R(colour, n=6, lo=-0.12, hi=0.07, shadow_shift=0.2)
+    f = np.where(sp < 0.010, f - 0.25, f)
+    f = np.where(sp > 0.992, f + 0.18, f)
+    pal = R(colour, n=6, lo=-0.12, hi=0.06, shadow_shift=0.2)
     img, idx = quantize(np.clip(f, 0, 1), pal)
     return img
 
