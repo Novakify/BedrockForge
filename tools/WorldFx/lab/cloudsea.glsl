@@ -67,17 +67,18 @@ vec4 highClouds(vec3 d, float mu) {
     float fade = smoothstep(0.012, 0.085, d.y);
     vec2 p = q / 520.0 + TIME * vec2(0.0030, 0.0011);
     float dn = hcDens(p, 5);
-    float fine = fbm(p * 21.0, 3);
+    float fine = fbm(p * 21.0, 2);
     float near = smoothstep(0.05, 0.30, d.y);                                   // far cloud is too small to show its ragged edge
     float dens = smoothstep(0.765, 0.830, dn - (fine - 0.5) * 0.10 * near);
     float tau = smoothstep(0.765, 0.965, dn);                                   // how thick the cloud is here
-    float dnS = hcDens(p + sunXZ * 0.040, 4);                                   // one tap toward the sun
+    float dnS = hcDens(p + sunXZ * 0.040, 3);                                   // one tap toward the sun
     float shadeS = smoothstep(0.765, 0.93, dnS);
     // cirrus: long streaks that converge on the sun
     vec2 along = vec2(dot(q, sunXZ), dot(q, vec2(-sunXZ.y, sunXZ.x)));
     vec2 pc = vec2(along.x / 3400.0, along.y / 760.0) + TIME * vec2(0.0015, 0.0);
-    pc += (vec2(fbm(pc * 1.7 + 9.0, 3), fbm(pc * 1.7 + 23.0, 3)) - 0.5) * 0.9;      // combed, then curled
-    float wisp = fbm(pc * vec2(1.0, 2.2), 5);
+    float wq = fbm(pc * 1.7 + 9.0, 3);
+    pc += (vec2(wq, 0.5 + 0.5 * sin(wq * 9.0 + 1.3)) - 0.5) * 0.9;      // combed, then curled
+    float wisp = fbm(pc * vec2(1.0, 2.2), 4);
     float cir = smoothstep(0.46, 0.80, wisp);
     cir *= cir * smoothstep(0.40, 0.66, fbm(q / 2300.0 + 40.0, 3));
 
@@ -85,7 +86,7 @@ vec4 highClouds(vec3 d, float mu) {
     vec3 lit = mix(vec3(0.46, 0.130, 0.170), vec3(1.10, 0.300, 0.050), pow(sunSide, 2.0));   // dusty rose far off, orange near
     lit = mix(lit, vec3(1.55, 0.74, 0.20), pow(max(mu, 0.0), 9.0));                          // gold right by the sun
     vec3 shade = mix(vec3(0.062, 0.052, 0.120), vec3(0.120, 0.070, 0.135), sunSide);          // purple-grey bodies
-    float ripple = fbm(ROT * p * vec2(9.0, 15.0), 3) - 0.5;                    // the rippled underside of altocumulus
+    float ripple = (vnoise(ROT * p * vec2(9.0, 15.0)) - 0.5) * 0.75;                    // the rippled underside of altocumulus
     float back = exp(-2.6 * tau) * (1.0 - 0.65 * shadeS);
     float front = 0.92 - 0.46 * tau - 0.20 * shadeS;                            // thin parts glow, heavy parts go mauve
     float litF = clamp(mix(front, back, smoothstep(0.25, 0.80, sunSide)) * (1.0 + 0.7 * ripple * near), 0.0, 1.0);
@@ -103,8 +104,10 @@ float seaH(vec2 w, float lod) {
     float big = textureLod(PUFF, ROT * p * 0.31 + 0.37, max(lod - 1.7, 0.0)).r;      // slow swells, ~150 blocks across
     float h = textureLod(PUFF, p, lod).r;                                            // puffs, ~45 blocks, with smaller ones riding on them
     float far = smoothstep(240.0, 520.0, length(w - MAP_C));
+    float base = h * (0.42 + 0.55 * big) + big * 0.55;
+    if (far <= 0.0) return base;
     float tw = smoothstep(0.56, 0.78, vnoise(w / 760.0 + 2.7)) * far;
-    return h * (0.42 + 0.55 * big) + big * 0.55 + tw * (1.6 + 3.6 * big + 1.5 * h);
+    return base + tw * (1.6 + 3.6 * big + 1.5 * h);
 }
 float seaY(vec2 w, float lod) { return SEA_Y + SEA_AMP * seaH(w, lod); }
 
@@ -119,17 +122,17 @@ vec4 cloudSea(vec3 ro, vec3 rd, out float tHit) {
     bool hit = false;
     float lod = 0.0;
     float tPrev = t;
-    for (int i = 0; i < 80; i++) {
+    for (int i = 0; i < 44; i++) {
         vec3 p = ro + rd * t;
         lod = max(log2(t * 0.011), 0.0);
         float dh = p.y - seaY(p.xz, lod);
         if (dh < 0.004 * t + 0.03) { hit = true; break; }
         tPrev = t;
-        t += max(dh * 0.40, 0.008 * t + 0.30);
+        t += max(dh * 0.62, 0.016 * t + 0.45);
         if (t > tMax || (rd.y > 0.0 && p.y > yTop)) break;
     }
     if (!hit) return vec4(0.0);
-    for (int i = 0; i < 6; i++) {                                     // pin the surface down (no terracing)
+    for (int i = 0; i < 5; i++) {                                     // pin the surface down (no terracing)
         float tm = 0.5 * (tPrev + t);
         vec3 pm = ro + rd * tm;
         if (pm.y - seaY(pm.xz, lod) < 0.0) t = tm; else tPrev = tm;
@@ -145,14 +148,15 @@ vec4 cloudSea(vec3 ro, vec3 rd, out float tHit) {
     float slope = SUN.y / length(SUN.xz);
     // how much sun reaches this spot: walk toward the sun and see how much cloud stands in the way
     float sh = 1.0;
-    for (int i = 0; i < 5; i++) {
-        float s = 7.0 * pow(2.3, float(i));
-        float over = seaY(p.xz + l2 * s, lod + 1.0 + float(i) * 0.6) - (h0 + slope * s);
-        sh *= 1.0 - smoothstep(-0.05 * s, 0.20 * s, over) * 0.78;
+    for (int i = 0; i < 3; i++) {
+        float s = 9.0 * pow(3.4, float(i));
+        float over = seaY(p.xz + l2 * s, lod + 1.2 + float(i) * 0.9) - (h0 + slope * s);
+        sh *= 1.0 - smoothstep(-0.05 * s, 0.20 * s, over) * 0.80;
     }
     float ndl = dot(n, SUN);
-    float grain = fbm(p.xz / 5.0 + 3.0, 4) + 0.5 * vnoiseG(p.xz / 1.3);               // cloud is never smooth
-    grain = mix(0.75, grain, exp(-t / 260.0));
+    float nearG = exp(-t / 260.0);
+    float grain = 0.75;
+    if (nearG > 0.02) grain = mix(0.75, fbm(p.xz / 5.0 + 3.0, 3) + 0.5 * vnoiseG(p.xz / 1.3), nearG);   // cloud is never smooth
     float cav = clamp((h0 - seaY(p.xz, lod + 3.4)) / (SEA_AMP * 0.13) + 0.55, 0.0, 1.0);   // bumps bright, hollows dark
     float lit = sh * (0.30 + 0.70 * smoothstep(-0.35, 0.55, ndl)) * (0.72 + 0.38 * grain) * (0.34 + 0.66 * cav);
     float hRel = (h0 - SEA_Y) / SEA_AMP;
