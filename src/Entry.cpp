@@ -16,6 +16,7 @@
 #include "SpatialPanel.h"
 #include "UiCapture.h"
 #include "WorldFx.h"
+#include "SkyPass.h"
 
 namespace rf {
 
@@ -38,6 +39,7 @@ public:
         glassarmor::init(mSelf.getModDir() / "logs" / "glassarmor", mSelf.getConfigDir());
         glassarmor::installEarly();
         worldfx::init(mSelf.getModDir() / "logs" / "worldfx");
+        sky::loadWorldFxSettings(mSelf.getConfigDir());
         spatialcam::loadConfig(mSelf.getConfigDir()); // Spatial GUI (Java mod options)
         cine::loadConfig(mSelf.getConfigDir());       // Cinematic Interactions (per-station mode + Java settings)
         rf::panel::installEarly(); // v0.8: catch the game's own GameInput before it creates its mouse readings

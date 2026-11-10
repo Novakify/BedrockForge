@@ -81,5 +81,12 @@ int         worldSky();
 void        setWorldSkyDeck(float offsetBlocks); // cloud deck height, relative to the automatic one
 float       worldSkyDeck();
 std::string worldSkyStatus();
+/// World FX screen pass (shaders/worldfx_pass.hlsl) at Bedrock's cloud draw while the Cloud Sea is on:
+/// sun shadows from the depth buffer, soft occlusion, the warm rim. Strengths 0..1; debug 0 off, 1 shadows, 2 occlusion.
+struct WorldFxLook { bool shadows = true; float shadow = 0.85f; float ao = 0.55f; float rim = 1.0f; int debug = 0; };
+WorldFxLook& worldFxLook();
+std::string  worldFxStatus();
+void         loadWorldFxSettings(std::filesystem::path const& configDir);
+void         saveWorldFxSettings();
 
 } // namespace rf::sky

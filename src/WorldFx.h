@@ -33,6 +33,10 @@ bool tracking();
 bool recording();
 void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso);
 void onSetRts(ID3D12GraphicsCommandList* list, size_t rt0, size_t dsv);
+/// The World FX screen pass wants every list's colour / depth target handles (cheap: one map write per bind).
+void setTargetsWanted(bool on);
+bool targetsWanted();
+bool listTargets(ID3D12GraphicsCommandList* list, size_t& rt0, size_t& dsv);
 /// Before every game draw while recording.
 void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned instances);
 /// Once per Present (UiCapture::beforeOverlay).

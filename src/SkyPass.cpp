@@ -31,6 +31,9 @@
 #include <iterator>
 
 #include "SkyMaterialScan.h"
+#include "UiCapture.h"
+#include "GlassArmor.h"
+#include "WorldFx.h"
 
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"
@@ -967,6 +970,67 @@ ComPtr<ID3D12PipelineState> makeWsPso(ID3D12Device* dev, GamePso const& g) {
     return out;
 }
 
+// ---------------------------------------------------------------- World FX screen pass (shadows, occlusion, rim)
+ComPtr<ID3D12RootSignature> gWfxRoot;
+std::mutex                  gWfxMutex;
+std::string                 gWfxStatus = "off";
+void wfxStatus(std::string s) { std::lock_guard l(gWfxMutex); gWfxStatus = std::move(s); }
+bool makeWfxRoot(ID3D12Device* dev) {
+    std::lock_guard l(gWfxMutex);
+    if (gWfxRoot) return true;
+    D3D12_ROOT_PARAMETER prm[3]{};
+    prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    prm[0].Constants        = {0, 0, 28};
+    prm[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    prm[1].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    prm[1].Descriptor       = {0, 0};
+    prm[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    prm[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
+    prm[2].Descriptor       = {1, 0};
+    prm[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC rs{3, prm, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    ComPtr<ID3DBlob>          blob, err;
+    if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
+    return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
+}
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g) {
+    ComPtr<ID3D12PipelineState> out;
+#if RF_HAVE_WORLDFX_SHADERS
+    if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
+    d.pRootSignature = gWfxRoot.Get();
+    d.VS = {rf::worldfx::shaders::VSWorldFx, sizeof rf::worldfx::shaders::VSWorldFx};
+    d.PS = {rf::worldfx::shaders::PSWorldFx, sizeof rf::worldfx::shaders::PSWorldFx};
+    for (UINT i = 0; i < 8; ++i) {
+        auto& rt = d.BlendState.RenderTarget[i];
+        rt.RenderTargetWriteMask = i == 0 ? D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE : 0;
+        rt.SrcBlend = D3D12_BLEND_ONE; rt.DestBlend = D3D12_BLEND_ZERO; rt.BlendOp = D3D12_BLEND_OP_ADD;
+        rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_ZERO; rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        rt.LogicOp = D3D12_LOGIC_OP_NOOP;
+    }
+    d.BlendState.IndependentBlendEnable = g.numRt > 1;
+    d.SampleMask                        = UINT_MAX;
+    d.RasterizerState.FillMode          = D3D12_FILL_MODE_SOLID;
+    d.RasterizerState.CullMode          = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable   = FALSE;
+    d.PrimitiveTopologyType             = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.NumRenderTargets                  = g.numRt;
+    for (UINT i = 0; i < g.numRt; ++i) d.RTVFormats[i] = g.rtv[i];
+    d.DSVFormat  = g.dsv;
+    d.SampleDesc = g.sample;
+    HRESULT hr   = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&out));
+    if (FAILED(hr)) {
+        char b[16];
+        snprintf(b, sizeof b, "%08X", uint32_t(hr));
+        wfxStatus(std::string("pipeline failed (hr=0x") + b + ")");
+        out.Reset();
+    }
+#else
+    (void)dev; (void)g;
+#endif
+    return out;
+}
+
 /// get-or-make one of our pipelines for a tagged game pipeline (never while holding gPsoMutex, see afterGameSky)
 // [RF] Our pipelines are built from the game's sky / clouds pipeline state. They used to be made on the render thread
 // the first time each *game pipeline object* drew: on servers (Hive) the game keeps creating new pipeline objects with
@@ -977,7 +1041,7 @@ std::string psoKey(GamePso const& g, int which) {
     std::string k;
     auto put = [&](void const* p, size_t n) { k.append(static_cast<char const*>(p), n); };
     put(&which, sizeof which);
-    ID3D12RootSignature* root = (which == 2 || which == 4) ? nullptr : g.root.Get();
+    ID3D12RootSignature* root = (which == 2 || which >= 4) ? nullptr : g.root.Get();
     put(&root, sizeof root);
     put(&g.numRt, sizeof g.numRt);
     put(g.rtv, sizeof(DXGI_FORMAT) * g.numRt);
@@ -1012,7 +1076,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 0), ok ? work.dome : nullptr});
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
-            made.push_back({key, which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
+            made.push_back({key, which == 5 ? makeWfxPso(d.Get(), g) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -1316,8 +1380,9 @@ bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls con
 }
 } // namespace
 
+bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
-    if (gWorldSky.load(std::memory_order_relaxed)) return false; // the World FX sky has no weather layer
+    if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldFxPass(list, st, calls); // the World FX look rides here
     if (!st.nVb || !st.vb || !st.haveTopo) return false;
     auto copy = bfCopy();
     if (!copy) return false;
@@ -1426,8 +1491,141 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     return true;
 }
 
+namespace {
+WorldFxLook           gLook;
+std::filesystem::path gWfxConfig;
+struct WfxBufs { ComPtr<ID3D12Resource> scene, depth; UINT64 sceneSize = 0, depthSize = 0; } gWfxBufs;
+std::atomic<long>     gWfxFrames{0};
+bool wfxBuffer(ID3D12Device* dev, ComPtr<ID3D12Resource>& b, UINT64& have, UINT64 need) {
+    if (b && have >= need) return true;
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC   d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, d.Width = need, d.Height = 1, d.DepthOrArraySize = 1, d.MipLevels = 1;
+    d.SampleDesc.Count = 1, d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    ComPtr<ID3D12Resource> nb;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&nb)))) return false;
+    if (b) gGrave.push_back(b); // still referenced by frames in flight
+    b = nb, have = need;
+    return true;
+}
+void wfxBarrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D12_RESOURCE_STATES b) {
+    if (a == b) return;
+    D3D12_RESOURCE_BARRIER x{};
+    x.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    x.Transition.pResource = r, x.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    x.Transition.StateBefore = a, x.Transition.StateAfter = b;
+    l->ResourceBarrier(1, &x);
+}
+} // namespace
+
+bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    WorldFxLook const look = gLook;
+    if (!look.shadows) { wfxStatus("off (shadows unticked)"); return false; }
+    if (!st.rootKnown) { wfxStatus("waiting for the game's root state"); return false; }
+    GamePso g;
+    {
+        std::lock_guard l(gPsoMutex);
+        auto it = gGame.find(st.pso);
+        if (it == gGame.end()) return false;
+        g = it->second;
+    }
+    if (g.vv) { wfxStatus("Vibrant Visuals: not yet (classic renderer only)"); return false; }
+    size_t rt0 = 0, dsv = 0;
+    if (!rf::worldfx::listTargets(list, rt0, dsv)) { wfxStatus("waiting for the frame's targets"); return false; }
+    ID3D12Resource* rt = rf::uicapture::rtvResourceOf(rt0);
+    ID3D12Resource* ds = rf::glassarmor::dsvResource(dsv);
+    if (!rt || !ds) { wfxStatus("frame targets unknown"); return false; }
+    auto rd = rt->GetDesc(), dd = ds->GetDesc();
+    if (rd.SampleDesc.Count > 1 || dd.SampleDesc.Count > 1) { wfxStatus("MSAA target: not supported"); return false; }
+    bool const bgra = rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM || rd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS || rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    bool const rgba = rd.Format == DXGI_FORMAT_R8G8B8A8_UNORM || rd.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS || rd.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    if (!bgra && !rgba) { wfxStatus("colour target is not 8-bit RGBA"); return false; }
+    if (dd.Format != DXGI_FORMAT_D24_UNORM_S8_UINT && dd.Format != DXGI_FORMAT_R24G8_TYPELESS) { wfxStatus("depth is not D24S8"); return false; }
+    auto    snap = rf::lyrics::camera();
+    int64_t now  = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
+    ComPtr<ID3D12Device> dev;
+    if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
+    ID3D12PipelineState* pso = derived(dev.Get(), g, 5);
+    if (!pso) { wfxStatus("building the pass pipeline (in the background)"); return false; }
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
+    UINT64 rTot = 0, dTot = 0;
+    dev->GetCopyableFootprints(&rd, 0, 1, 0, &fpC, nullptr, nullptr, &rTot);
+    dev->GetCopyableFootprints(&dd, 0, 1, 0, &df, nullptr, nullptr, &dTot);
+    {
+        std::lock_guard l(gWfxMutex);
+        if (!wfxBuffer(dev.Get(), gWfxBufs.scene, gWfxBufs.sceneSize, rTot) || !wfxBuffer(dev.Get(), gWfxBufs.depth, gWfxBufs.depthSize, dTot)) {
+            gWfxStatus = "buffers failed"; return false;
+        }
+    }
+    ID3D12Resource* sb = gWfxBufs.scene.Get();
+    ID3D12Resource* db = gWfxBufs.depth.Get();
+    auto const rtState = D3D12_RESOURCE_STATES(rf::glassarmor::stateOf(rt, D3D12_RESOURCE_STATE_RENDER_TARGET));
+    auto const dsState = D3D12_RESOURCE_STATES(rf::glassarmor::stateOf(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE));
+    wfxBarrier(list, rt, rtState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    wfxBarrier(list, ds, dsState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.pResource = sb, dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
+    list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    dst.pResource = db, dst.PlacedFootprint = df, src.pResource = ds, src.SubresourceIndex = 0;
+    list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    wfxBarrier(list, ds, D3D12_RESOURCE_STATE_COPY_SOURCE, dsState);
+    wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    wfxBarrier(list, db, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    float c[28]{};
+    std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
+    std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
+    std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
+    c[12] = snap.proj[10]; c[13] = snap.proj[14]; c[14] = snap.proj[11] != 0 ? snap.proj[11] : -1.0f; c[15] = bgra ? 1.0f : 0.0f;
+    c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
+    c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadow;
+    c[24] = look.ao; c[25] = look.rim; c[26] = float(look.debug); c[27] = 0;
+    calls.setRootSig(list, gWfxRoot.Get());
+    calls.setConsts(list, 0, 28, c, 0);
+    list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
+    list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
+    calls.setPso(list, pso);
+    calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    calls.draw(list, 3, 1, 0, 0);
+    wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    calls.restoreRoot(list);
+    calls.setPso(list, st.pso);
+    if (st.haveTopo) calls.setTopo(list, st.topo);
+    long const n = ++gWfxFrames;
+    if ((n & 63) == 1) wfxStatus("drawing (" + std::to_string(n) + " frames, " + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) + ")");
+    return true;
+}
+
+WorldFxLook& worldFxLook() { return gLook; }
+std::string  worldFxStatus() { std::lock_guard l(gWfxMutex); return gWfxStatus; }
+void loadWorldFxSettings(std::filesystem::path const& configDir) {
+    gWfxConfig = configDir / "WorldFx.txt";
+    std::ifstream in(gWfxConfig);
+    std::string   k;
+    float         v;
+    while (in >> k >> v) {
+        if (k == "cloudsea") { gWorldSky = int(v); rf::worldfx::setTargetsWanted(v != 0); }
+        else if (k == "shadows") gLook.shadows = v != 0;
+        else if (k == "shadow") gLook.shadow = std::clamp(v, 0.f, 1.f);
+        else if (k == "ao") gLook.ao = std::clamp(v, 0.f, 1.f);
+        else if (k == "rim") gLook.rim = std::clamp(v, 0.f, 2.f);
+        else if (k == "deck") gDeckOffset = std::clamp(v, -80.f, 80.f);
+    }
+}
+void saveWorldFxSettings() {
+    if (gWfxConfig.empty()) return;
+    std::ofstream out(gWfxConfig);
+    out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
+        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\n";
+}
+
 void setWorldSky(int kind) {
     gWorldSky = kind;
+    rf::worldfx::setTargetsWanted(kind != 0);
     if (!kind) wsStatus("off");
     else if (!gWsTexUp.load()) wsStatus("starting (textures are made at the next frame)");
 }

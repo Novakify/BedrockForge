@@ -894,6 +894,19 @@ void onSetRts(ID3D12GraphicsCommandList* list, size_t rt0, size_t dsv) {
     std::lock_guard l(gMutex);
     gListRts[list] = {rt0, dsv};
 }
+namespace {
+std::atomic_bool gTargetsWanted{false};
+}
+void setTargetsWanted(bool on) { gTargetsWanted = on; }
+bool targetsWanted() { return gTargetsWanted.load(std::memory_order_relaxed); }
+bool listTargets(ID3D12GraphicsCommandList* list, size_t& rt0, size_t& dsv) {
+    std::lock_guard l(gMutex);
+    auto it = gListRts.find(list);
+    if (it == gListRts.end()) return false;
+    rt0 = it->second.rt0;
+    dsv = it->second.dsv;
+    return rt0 && dsv;
+}
 
 void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
     ID3D12PipelineState*     pso = nullptr;
@@ -1089,12 +1102,27 @@ void drawUi() {
     if (!gLastDir.empty()) ImGui::TextWrapped("Folder: %s", gLastDir.c_str());
     ImGui::SeparatorText("Cloud Sea");
     bool cs = rf::sky::worldSky() == 1;
-    if (ImGui::Checkbox("Cloud Sea sky", &cs)) rf::sky::setWorldSky(cs ? 1 : 0);
+    if (ImGui::Checkbox("Cloud Sea sky", &cs)) { rf::sky::setWorldSky(cs ? 1 : 0); rf::sky::saveWorldFxSettings(); }
     ImGui::SameLine();
     ImGui::TextDisabled("(sunset sky + sea of clouds under the map; works without LyricsForge)");
+    bool save = false;
     float deck = rf::sky::worldSkyDeck();
     if (ImGui::SliderFloat("Cloud deck height", &deck, -80.0f, 80.0f, "%+.0f blocks")) rf::sky::setWorldSkyDeck(deck);
+    save |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::Text("Sky: %s", rf::sky::worldSkyStatus().c_str());
+    auto& look = rf::sky::worldFxLook();
+    save |= ImGui::Checkbox("Sun shadows + soft occlusion", &look.shadows);
+    ImGui::SliderFloat("Shadow strength", &look.shadow, 0.0f, 1.0f, "%.2f");
+    save |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SliderFloat("Occlusion strength", &look.ao, 0.0f, 1.0f, "%.2f");
+    save |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SliderFloat("Rim light", &look.rim, 0.0f, 2.0f, "%.2f");
+    save |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::RadioButton("Normal", &look.debug, 0); ImGui::SameLine();
+    ImGui::RadioButton("Show shadows", &look.debug, 1); ImGui::SameLine();
+    ImGui::RadioButton("Show occlusion", &look.debug, 2);
+    ImGui::Text("Pass: %s", rf::sky::worldFxStatus().c_str());
+    if (save) rf::sky::saveWorldFxSettings();
     ImGui::Unindent();
 }
 
