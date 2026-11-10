@@ -19,6 +19,11 @@ analyzer + self-tests (`tools/WorldFx/`). Plan v2 below: **worlds, not filters**
 - 17:57: the LyricsForge Cloud Hill sky was deleted (~20 fps even after its perf pass). Cloud Sea is built new, not
   from Cloud Hill's code, with a measured budget (PvP tier ~1.5 ms) and a cheap 2D cloud layer instead of a
   volumetric march.
+- Look lab round 1 (18:21, 8 filter mock-ups on his Bed Wars screenshot): **Cloud Sea approved as the hero ("looks
+  amazing")**. Every other sky read as ugly / AI-looking. **Handheld and CRT Arcade: killed.** 16-Bit: idea not bad,
+  execution ugly - parked. Biggest miss: the mock-ups only filtered the picture; he expects the **blocks themselves**
+  to change, not just the sky. Bar from here: meticulous, hand-crafted, nothing plastic or AI-slop; no more flat
+  filter mock-ups - previews must show real block-level changes (3D preview like Glass Armor's preview_v6).
 - Standing tastes that apply here: no strobing or flicker, nothing cluttered, premium not cheap, previews before
   installs, skies / looks rotate by themselves instead of being picked each time, effects must not get in the way
   of fights (he asked for combat-aware lyrics for the same reason).
