@@ -74,7 +74,8 @@ struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; 
 std::vector<Bed> gBeds;
 uint32_t         gBroken = 0;
 int64_t          gResetMs = 0;
-bool             gIsMap = false; // a Bed Wars map: a bed next to where you arrived (your island), or a bed broke
+bool             gIsMap = false;   // a Bed Wars map: a bed by where you arrived + beds spread over islands, or a bed broke
+bool             gSpawnBed = false; // a bed next to where you arrived
 float            gTarget = 0, gPhase = 0;
 double           gAnchor[3]{};
 bool             gAnchored = false;
@@ -196,6 +197,7 @@ void resetMatch(double const* pos) {
     gBeds.clear();
     gBroken = 0;
     gIsMap  = false;
+    gSpawnBed = false;
     gResetMs = nowMs();
     gTarget = gPhase = 0;
     gScanI  = 0;
@@ -233,9 +235,9 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
             note("bed at {} {} {}", x, y, z);
             bool const byAnchor = std::hypot(x + 0.5 - gAnchor[0], z + 0.5 - gAnchor[2]) < 24.0;
             bool const byYou    = nowMs() - gResetMs < 15000 && std::hypot(x + 0.5 - gScanC[0], z + 0.5 - gScanC[2]) < 24.0;
-            if (!gIsMap && (byAnchor || byYou)) {
-                gIsMap = true; // the hub's decoration beds never light up; a map's do
-                note("a bed by the spawn - this is a Bed Wars map");
+            if (!gSpawnBed && (byAnchor || byYou)) {
+                gSpawnBed = true; // a map has beds on islands far apart; a lobby's decoration beds sit together
+                note("a bed by the spawn");
             }
         }
         if (auto* ba = tn == "minecraft:bed" ? bs.getBlockEntity(bp) : nullptr) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15);
@@ -288,7 +290,13 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { newPlace = false; break; }
     }
     lastPos[0] = pos[0], lastPos[1] = pos[1], lastPos[2] = pos[2];
-    if (gNewLevel.exchange(false)) newPlace = true;
+    if (gNewLevel.exchange(false)) { // the server re-sent the world: same map (a respawn / spectating) or a new one?
+        bool same = false;
+        if (gIsMap)
+            for (auto const& b : gBeds)
+                if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { same = true; break; }
+        if (!same) newPlace = true;
+    }
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0 || now - last > 20000) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
     retarget();
@@ -297,6 +305,15 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     if (gPhase < gTarget) gPhase = std::min(gTarget, gPhase + rate * dt);
     else gPhase = std::max(gTarget, gPhase - rate * dt);
     gFx.phase = gPhase, gFx.phaseTarget = gTarget, gFx.bedsBroken = gBroken;
+    if (!gIsMap && gSpawnBed) {
+        for (size_t i = 0; i < gBeds.size() && !gIsMap; ++i)
+            for (size_t j = i + 1; j < gBeds.size(); ++j)
+                if (std::hypot(double(gBeds[i].x - gBeds[j].x), double(gBeds[i].z - gBeds[j].z)) >= 20.0) {
+                    gIsMap = true;
+                    note("beds on islands apart - this is a Bed Wars map");
+                    break;
+                }
+    }
     gFx.nTeams = gIsMap ? uint32_t(std::min<size_t>(gBeds.size(), 16)) : 0u;
     for (uint32_t i = 0; i < gFx.nTeams; ++i) {
         auto const& b = gBeds[i];
