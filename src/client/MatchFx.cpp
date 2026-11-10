@@ -24,9 +24,11 @@
 #include "mc/world/level/block/actor/BlockActor.h"
 
 #include "bf/Events.h"
+#include "ll/api/mod/NativeMod.h"
 
 namespace {
 using namespace std::chrono;
+auto& mlog() { return ll::mod::NativeMod::current()->getLogger(); }
 int64_t nowMs() { return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); }
 
 BfMatchFxV1          gFx{};
@@ -54,6 +56,7 @@ double           gAnchor[3]{};
 bool             gAnchored = false;
 // incremental scan for beds around the player (a few thousand blocks per frame)
 int gScanI = 0;
+double gScanC[3]{}; // centre of the current scan pass (the player's position when it started)
 constexpr int kScanR = 112, kScanDown = 40, kScanUp = 24, kPerFrame = 12000;
 
 bool isBed(Block const& b) { return b.getTypeName() == "minecraft:bed"; }
@@ -81,6 +84,7 @@ void onBroken(int x, int y, int z) {
     if (Bed* b = bedNear(x, y, z); b && b->alive) {
         b->alive = false, b->changed = nowMs();
         ++gBroken;
+        mlog().info("[BF] matchfx: bed at {} {} {} broken ({} so far)", b->x, b->y, b->z, gBroken);
         retarget();
     }
 }
@@ -125,6 +129,7 @@ void onChange(ll::event::BlockChangedEvent& ev) {
 }
 
 void resetMatch(double const* pos) {
+    mlog().info("[BF] matchfx: new match at {:.0f} {:.0f} {:.0f} (had {} beds, {} broken)", pos[0], pos[1], pos[2], gBeds.size(), gBroken);
     gBeds.clear();
     gBroken = 0;
     gTarget = gPhase = 0;
@@ -134,10 +139,11 @@ void resetMatch(double const* pos) {
     gAnchored = true;
 }
 
-void scan(BlockSource& bs) { // walk a box around the anchor a slice at a time, note every bed (and its dye)
+void scan(BlockSource& bs, double const* pos) { // walk a box around the player a slice at a time, note every bed (and its dye)
     int const sx = 2 * kScanR + 1, sy = kScanDown + kScanUp + 1;
     long const total = long(sx) * sx * sy;
-    int const ax = int(std::floor(gAnchor[0])), ay = int(std::floor(gAnchor[1])), az = int(std::floor(gAnchor[2]));
+    if (gScanI == 0) std::memcpy(gScanC, pos, sizeof gScanC);
+    int const ax = int(std::floor(gScanC[0])), ay = int(std::floor(gScanC[1])), az = int(std::floor(gScanC[2]));
     for (int n = 0; n < kPerFrame; ++n) {
         long i = gScanI;
         gScanI = int((gScanI + 1) % total);
@@ -153,6 +159,7 @@ void scan(BlockSource& bs) { // walk a box around the anchor a slice at a time, 
             if (gBeds.size() >= 16) continue;
             gBeds.push_back({x, y, z, 14, true, nowMs()});
             bed = &gBeds.back();
+            mlog().info("[BF] matchfx: bed at {} {} {}", x, y, z);
         }
         if (auto* ba = bs.getBlockEntity(bp)) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15);
         if (!bed->alive) { bed->alive = true, bed->changed = nowMs(); } // a new map reused the spot
@@ -191,14 +198,14 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     double const  jump = std::sqrt((pos[0] - lastPos[0]) * (pos[0] - lastPos[0]) + (pos[1] - lastPos[1]) * (pos[1] - lastPos[1]) +
                                    (pos[2] - lastPos[2]) * (pos[2] - lastPos[2]));
     bool newPlace = false;
-    if (last && now - last < 1000 && jump > 30.0) {
+    if (last && now - last < 20000 && jump > 30.0) { // (a loading screen in between is still a teleport)
         newPlace = true;
         for (auto const& b : gBeds)
             if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { newPlace = false; break; }
     }
     lastPos[0] = pos[0], lastPos[1] = pos[1], lastPos[2] = pos[2];
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0 || now - last > 20000) resetMatch(pos);
-    scan(lp->getDimensionBlockSource());
+    scan(lp->getDimensionBlockSource(), pos);
     retarget();
     // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night
     float const rate = gTarget > gPhase ? (gPhase < 1.0f ? 1.0f / 20.0f : 1.0f / 25.0f) : 1.0f / 3.0f;
