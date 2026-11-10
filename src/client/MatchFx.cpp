@@ -310,6 +310,26 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
         note("world re-sent: {} of {} standing beds still there -> {}", still, known, newPlace ? "new match" : "same match");
     }
     // a long time away from the HUD (a death screen, a menu) is only a new match when you came back somewhere else
+    // every 3 s: the standing beds near you must still be beds. All of them gone without a break = you are somewhere
+    // else (Hive moves you between hub, lobby and maps on the same coordinates, not always with a world change);
+    // one gone while others stand = it broke without a block update we saw
+    static int64_t lastCheck = 0;
+    if (gIsMap && !newPlace && now - lastCheck > 3000) {
+        lastCheck = now;
+        BlockSource& bs = lp->getDimensionBlockSource();
+        int checked = 0, missing = 0;
+        std::vector<Bed*> gone;
+        for (auto& b : gBeds) {
+            if (!b.alive || std::hypot(b.x + 0.5 - pos[0], b.z + 0.5 - pos[2]) > 48.0) continue;
+            ++checked;
+            if (!isBed(bs.getBlock(BlockPos{b.x, b.y, b.z}))) { ++missing; gone.push_back(&b); }
+        }
+        if (checked >= 1 && missing == checked && (checked >= 2 || !gSpawnBed || gBroken == 0)) {
+            newPlace = true;
+            note("none of the {} standing beds near you are there any more -> new place", checked);
+        } else
+            for (Bed* b : gone) { b->alive = false, b->changed = now, ++gBroken; note("bed at {} {} {} gone (no block update seen)", b->x, b->y, b->z); }
+    }
     if (last && now - last > 20000 && !newPlace) verifyAt = gIsMap ? now + 3000 : 0, newPlace = !gIsMap;
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
