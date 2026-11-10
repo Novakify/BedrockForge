@@ -189,9 +189,10 @@ def geometry_trident(parts, uvs, tex_w, tex_h, ident, grip_y=24.0):
 
 HOLD_ANIM = {"format_version": "1.10.0", "animations": {
     "animation.wfx.hold_first_person": {"loop": True, "bones": {"wfx_item": {
-        "position": [-7.0, -3.0, -2.0], "rotation": [152.0, -9.0, -5.0], "scale": 0.55}}},   # chosen in game 2026-11-10
+        "position": [-7.0, -3.0, -2.0], "rotation": [152.0, -9.0, -5.0], "scale": 0.5}}},   # chosen in game 2026-11-10
     "animation.wfx.hold_third_person": {"loop": True, "bones": {"wfx_item": {
-        "position": [1.5, -2.5, -10.5], "rotation": [97.0, -1.5, -49.0]}}}}}
+        "position": [1.5, -2.5, -10.5], "rotation": [97.0, -1.5, -49.0]},
+        "wfx_tilt": {"rotation": [0.0, 0.0, 90.0]}}}}}   # icon models: +45 net in third person (seen in game)
 
 
 def preview_cubes(parts, uvs):
@@ -323,15 +324,22 @@ def export(pack, palettes, prefix="wfx"):
     (pack / "animations").mkdir(parents=True, exist_ok=True)
     anim = json.loads(json.dumps(HOLD_ANIM))
     (pack / "animations" / "wfx_hold.animation.json").write_text(json.dumps(anim, indent=1))
-    jobs = [("sword", t, it, ic, sword) for t, (it, ic) in SWORD_ITEMS.items()]
-    jobs += [("pickaxe", t, it, ic, pickaxe) for t, (it, ic) in TOOL_ITEMS["pickaxe"].items()]
-    jobs += [("axe", t, it, ic, axe) for t, (it, ic) in TOOL_ITEMS["axe"].items()]
-    for kind, tier, item, icon, shape in jobs:
-        parts = shape(tier)
-        atlas, uvs, tw, th = build(parts, palettes, tier)
+    import grade
+    import iconmodel
+    from pathlib import Path
+    fb = Path("/tmp/fb/textures/items")
+    jobs = [("sword", t, it, ic) for t, (it, ic) in SWORD_ITEMS.items()]
+    jobs += [("pickaxe", t, it, ic) for t, (it, ic) in TOOL_ITEMS["pickaxe"].items()]
+    jobs += [("axe", t, it, ic) for t, (it, ic) in TOOL_ITEMS["axe"].items()]
+    for kind, tier, item, icon in jobs:
+        src = fb / f"{icon}.png"
+        if not src.exists():
+            continue
+        im = np.array(Image.open(src).convert("RGBA"))
+        im[..., :3] = grade.grade(im[..., :3], **(palettes.get("_grade") or {}))
         name = f"{prefix}_{tier}_{kind}"
-        Image.fromarray(atlas, "RGBA").save(pack / "textures" / "worldfx" / f"{name}.png")
-        geo = geometry_trident(parts, uvs, tw, th, f"geometry.{name}", grip_y=TEST_GRIP.get(tier, 24.0))
+        Image.fromarray(iconmodel.material_alpha(im, tier), "RGBA").save(pack / "textures" / "worldfx" / f"{name}.png")
+        geo = iconmodel.model(im, f"geometry.{name}")
         (pack / "models" / "entity" / f"{name}.geo.json").write_text(json.dumps(geo, indent=1))
         att = {"format_version": "1.10.0", "minecraft:attachable": {"description": {
             "identifier": f"minecraft:{item}",
@@ -343,5 +351,3 @@ def export(pack, palettes, prefix="wfx"):
             "scripts": {"animate": [{"hold_first_person": "c.is_first_person"}, {"hold_third_person": "!c.is_first_person"}]},
             "render_controllers": ["controller.render.item_default"]}}}
         (pack / "attachables" / f"{item}.json").write_text(json.dumps(att, indent=1))
-        ic = pv.render(preview_cubes(parts, uvs), atlas, size=32, yaw=0.0, pitch=0.0, roll=-0.785, alpha=True, flat=True)
-        ic.save(pack / "textures" / "items" / f"{icon}.png")
