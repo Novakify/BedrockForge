@@ -214,6 +214,34 @@ vec3 blockLight(vec3 alb, vec3 n, float ao, vec3 wp) {
     vec3 c = alb * (direct * mix(0.55, 1.0, ao) + amb * aoA);
     return c;
 }
+// Split lighting: ambient (sky + bounce) and direct sun kept apart so the screen pass can shadow only the sun.
+// leaf = foliage (the game's cutout pass); v = view direction.
+void blockLightSplit(vec3 alb, vec3 n, float ao, vec3 wp, float leaf, vec3 tileMean, out vec3 ambC, out vec3 dirC) {
+    alb = mix(tileMean, alb, 0.78);   // calm the pixel noise of the texture a little (mean colour of the tile = its last mip)
+    float green = clamp((alb.g - max(alb.r, alb.b)) * 5.0, 0.0, 1.0);
+    alb = mix(alb, dot(alb, vec3(0.30, 0.59, 0.11)) * vec3(1.22, 0.98, 0.42), green * 0.42);
+    float ndl = max(dot(n, SUN), 0.0);
+    vec3 sunC = vec3(1.00, 0.66, 0.40) * 2.35;          // golden, not orange paint
+    // sky dome: violet from above; bounce from the sunlit cloud sea from below (soft rose, not grey)
+    vec3 up = vec3(0.160, 0.150, 0.300);
+    vec3 down = vec3(0.255, 0.135, 0.140);
+    vec3 amb = mix(down, up, smoothstep(-1.0, 1.0, n.y));
+    float toSun = dot(n.xz, normalize(SUN.xz));
+    float side = 1.0 - abs(n.y);
+    amb += vec3(0.40, 0.165, 0.070) * max(toSun, 0.0) * side;          // the bright horizon under the sun
+    amb += vec3(0.105, 0.085, 0.150) * max(-toSun, 0.0) * side;        // the cool horizon behind you
+    ambC = alb * amb * mix(0.25, 1.0, ao * ao);
+    dirC = alb * sunC * (ndl + 0.035 * max(n.y, 0.0)) * mix(0.6, 1.0, ao);
+    if (leaf > 0.5) {
+        // foliage lets light through: backlit leaves glow gold, and they never go fully flat-dark
+        vec3 v = normalize(wp - CAM);
+        float mu = max(dot(v, SUN), 0.0);
+        float trans = pow(mu, 4.0) * 0.9 + 0.12;
+        float wrap = max(dot(n, SUN) * 0.5 + 0.5, 0.0);                      // light reaches round the leaf, not just its face
+        dirC = alb * sunC * wrap * 0.55 * mix(0.6, 1.0, ao) + alb * vec3(1.15, 0.80, 0.32) * 2.1 * trans * mix(0.5, 1.0, ao);
+        ambC *= 1.7;
+    }
+}
 // air between the camera and the block: far things drift toward the sky behind them
 vec3 blockHaze(vec3 c, vec3 wp) {
     vec3 v = wp - CAM;
@@ -221,7 +249,11 @@ vec3 blockHaze(vec3 c, vec3 wp) {
     vec3 d = v / max(dist, 0.001);
     float f = 1.0 - exp(-dist / 520.0);
     vec3 hz = skyBase(normalize(vec3(d.x, max(d.y, 0.0) * 0.5 + 0.03, d.z)));
-    return mix(c, hz, f * 0.85);
+    c = mix(c, hz, f * 0.85);
+    float mu = max(dot(d, SUN), 0.0);
+    float g = 1.0 - exp(-dist / 160.0);
+    c += vec3(1.0, 0.45, 0.16) * (pow(mu, 6.0) * 0.36 + pow(mu, 40.0) * 0.5) * g;
+    return c;
 }
 
 vec3 toDisplay(vec3 c) {

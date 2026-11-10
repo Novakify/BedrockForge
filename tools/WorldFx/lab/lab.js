@@ -10,39 +10,114 @@ const HEAD = '#version 300 es\nprecision highp float;\nprecision highp int;\npre
 
 const bgVS = HEAD + `in vec2 P; uniform vec3 F, R, U; uniform float TX, TY; out vec3 dir;
 void main(){ gl_Position = vec4(P, 0.9999, 1.0); dir = F + R * (P.x * TX) + U * (P.y * TY); }`;
-const bgFS = HEAD + glsl + `in vec3 dir; out vec4 o;
-void main(){ vec4 b = background(CAM, normalize(dir)); o = vec4(toDisplay(b.rgb), b.a); }`;
+
 const blkVS = HEAD + `in vec3 POS; in vec4 DAT; in vec2 UV; uniform mat4 VP; out vec3 wp; out vec2 uv; flat out float layer; flat out float nid; out float ao;
 void main(){ wp = POS; uv = UV; layer = DAT.x; nid = DAT.y; ao = DAT.z; gl_Position = VP * vec4(POS, 1.0); }`;
-const blkFS = HEAD + glsl + `uniform sampler2DArray TILES; uniform float VANILLA;
-in vec3 wp; in vec2 uv; flat in float layer; flat in float nid; in float ao; out vec4 o;
+// block pass: writes ambient light, direct sun and a small info target (what the game's terrain shader would write)
+const blkFS = HEAD + glsl + `uniform sampler2DArray TILES; uniform float VANILLA; uniform float LEAF;
+in vec3 wp; in vec2 uv; flat in float layer; flat in float nid; in float ao;
+layout(location = 0) out vec4 oAmb; layout(location = 1) out vec4 oDir; layout(location = 2) out vec4 oInfo;
 const vec3 NRM[6] = vec3[6](vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1));
+vec3 enc(vec3 x) { return pow(clamp(x * 0.25, 0.0, 1.0), vec3(1.0 / 2.2)); }
 void main(){
   vec4 t = texture(TILES, vec3(uv, layer));
   if (t.a < 0.5) discard;
   vec3 n = NRM[int(nid)];
   vec3 alb = fromDisplay(t.rgb);
-  vec3 c;
   if (VANILLA > 0.5) { // the game's own look: fixed face shades, no sun
     float sh = n.y > 0.5 ? 1.0 : (n.y < -0.5 ? 0.5 : (abs(n.x) > 0.5 ? 0.6 : 0.8));
-    c = alb * sh * sh * mix(0.35, 1.0, ao) * 1.0;
-    o = vec4(pow(c, vec3(1.0 / 2.2)), 0.0); return;
+    oAmb = vec4(pow(alb * sh * sh * mix(0.35, 1.0, ao), vec3(1.0 / 2.2)), 0.0); oDir = vec4(0.0); oInfo = vec4(0.0); return;
   }
-  c = blockHaze(blockLight(alb, n, ao, wp), wp);
-  o = vec4(toDisplay(c), 0.0);
+  float leaf = abs(layer - LEAF) < 0.5 ? 1.0 : 0.0;
+  vec3 a, d;
+  vec3 tm = fromDisplay(textureLod(TILES, vec3(uv, layer), 4.0).rgb);
+  blockLightSplit(alb, n, ao, wp, leaf, tm, a, d);
+  oAmb = vec4(enc(a), 0.0);
+  oDir = vec4(enc(d), 1.0);
+  oInfo = vec4(leaf, nid / 5.0, 1.0, 1.0);
 }`;
+const bgFS = HEAD + glsl + `in vec3 dir; layout(location = 0) out vec4 o; layout(location = 1) out vec4 o1; layout(location = 2) out vec4 o2;
+void main(){ vec4 b = background(CAM, normalize(dir)); o = vec4(toDisplay(b.rgb), b.a); o1 = vec4(0.0); o2 = vec4(0.0); }`;
 const postVS = HEAD + `in vec2 P; out vec2 uv; void main(){ gl_Position = vec4(P, 0.0, 1.0); uv = P * 0.5 + 0.5; }`;
-const postFS = HEAD + `uniform sampler2D SCENE, DEPTH; uniform vec3 SUNSCR; uniform vec2 RES; uniform float VANILLA;
-in vec2 uv; out vec4 o;
+const COMMON = `uniform sampler2D DEPTH, INFO; uniform mat4 VP, IVP; uniform vec2 RES;
 float hash(vec2 p){ p = fract(p * vec2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return fract((p.x + p.y) * p.x); }
+const float ZN = 0.1, ZF = 1500.0;
+float linZ(float d) { float z = d * 2.0 - 1.0; return 2.0 * ZF * ZN / ((ZF + ZN) - z * (ZF - ZN)); }
+vec3 worldAt(vec2 uv, float d) { vec4 w = IVP * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0); return w.xyz / w.w; }
+const vec3 NRM[6] = vec3[6](vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1));
+`;
+// light pass: sun visibility (screen-space shadow march) + soft ambient occlusion, from depth only
+const lfxFS = HEAD + glsl + COMMON + `in vec2 uv; out vec4 o;
+void main(){
+  float d = texture(DEPTH, uv).r;
+  if (d >= 0.99999) { o = vec4(1.0); return; }
+  vec3 w = worldAt(uv, d);
+  vec3 n = NRM[int(texture(INFO, uv).g * 5.0 + 0.5)];
+  float j = hash(gl_FragCoord.xy), j2 = hash(gl_FragCoord.yx + 13.1);
+  // shadow: walk toward the sun; anything in front of the ray on screen blocks it
+  float vis = 1.0;
+  if (dot(n, SUN) > 0.0 || texture(INFO, uv).r > 0.5) {
+    for (int i = 0; i < 24; i++) {
+      float f = (float(i) + j) / 24.0;
+      float t = 0.04 + 40.0 * f * f;
+      vec3 q = w + n * 0.04 + SUN * t;
+      vec4 c = VP * vec4(q, 1.0);
+      if (c.w <= 0.0) break;
+      vec3 nd = c.xyz / c.w; vec2 su = nd.xy * 0.5 + 0.5;
+      if (su.x < 0.0 || su.x > 1.0 || su.y < 0.0 || su.y > 1.0) break;
+      float sd = texture(DEPTH, su).r;
+      if (sd >= 0.99999) continue;
+      float diff = c.w - linZ(sd);
+      if (diff > 0.03 + 0.015 * t && diff < 3.0 + 0.08 * t) { vis = 0.0; break; }
+    }
+  }
+  // ambient occlusion: how much of the open sky around this point is hidden by nearby blocks
+  vec3 tA = normalize(abs(n.y) > 0.5 ? cross(n, vec3(1, 0, 0)) : cross(n, vec3(0, 1, 0)));
+  vec3 tB = cross(n, tA);
+  float occ = 0.0;
+  float lz = linZ(d);
+  for (int k = 0; k < 12; k++) {
+    float a = (float(k) + j) * 2.39996;
+    float r = sqrt((float(k) + j2) / 12.0);
+    float h = sqrt(1.0 - r * r);
+    float rad = 1.8 * mix(0.15, 1.0, float(k) / 11.0);
+    vec3 s = w + n * 0.03 + (tA * cos(a) * r + tB * sin(a) * r + n * h) * rad;
+    vec4 c = VP * vec4(s, 1.0);
+    vec2 su = c.xy / c.w * 0.5 + 0.5;
+    float sd = linZ(texture(DEPTH, su).r);
+    float dz = c.w - sd;
+    if (dz > 0.02) occ += smoothstep(0.0, 1.0, 1.8 / max(dz, 1.8)) ;
+  }
+  float aoS = 1.0 - occ / 12.0;
+  o = vec4(vis, aoS, 0.0, 1.0);
+}`;
+// final pass: soften the light pass (depth-aware), light the blocks, haze, tone, light shafts, rim
+const postFS = HEAD + glsl + COMMON + `uniform sampler2D SCENE, DIRT, LFX; uniform vec3 SUNSCR; uniform float VANILLA;
+in vec2 uv; out vec4 o;
+vec3 dec(vec3 e) { return pow(e, vec3(2.2)) * 4.0; }
 void main(){
   vec4 s = texture(SCENE, uv);
-  vec3 c = s.rgb;
-  if (VANILLA > 0.5) { o = vec4(c, 1.0); return; }
+  if (VANILLA > 0.5) { o = vec4(s.rgb, 1.0); return; }
   float d = texture(DEPTH, uv).r;
   float j = hash(gl_FragCoord.xy);
+  vec3 c;
+  if (d < 0.99999) {
+    float lz = linZ(d);
+    vec2 acc = vec2(0.0); float ws = 0.0;
+    for (int y = -2; y <= 2; y++) for (int x = -2; x <= 2; x++) {
+      vec2 q = uv + vec2(x, y) * 1.5 / RES;
+      float qz = linZ(texture(DEPTH, q).r);
+      float wgt = exp(-abs(qz - lz) / (0.02 * lz + 0.05)) * exp(-float(x * x + y * y) * 0.18);
+      acc += texture(LFX, q).rg * wgt; ws += wgt;
+    }
+    acc /= max(ws, 1e-4);
+    float sun = acc.r, aoS = acc.g;
+    vec3 amb = dec(s.rgb), dirc = dec(texture(DIRT, uv).rgb);
+    vec3 lin = amb * aoS + dirc * sun * mix(1.0, aoS, 0.35);
+    vec3 w = worldAt(uv, d);
+    c = toDisplay(blockHaze(lin, w));
+  } else c = s.rgb;
   vec2 asp = vec2(RES.x / RES.y, 1.0);
-  // light shafts: walk toward the sun through a blurred copy of "how much glow gets through"
   if (SUNSCR.z > 0.0) {
     vec2 to = SUNSCR.xy - uv;
     float acc = 0.0, wsum = 0.0;
@@ -50,9 +125,9 @@ void main(){
     for (int i = 0; i < N; i++) {
       float f = (float(i) + j) / float(N);
       vec2 q = uv + to * f;
-      float w = 1.0 - f * 0.35;
+      float wq = 1.0 - f * 0.35;
       float m = (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) ? 0.30 : textureLod(SCENE, q, 4.6).a;
-      acc += m * w; wsum += w;
+      acc += m * wq; wsum += wq;
     }
     acc /= wsum;
     float dist = length(to * asp);
@@ -60,7 +135,6 @@ void main(){
     vec3 shaft = vec3(1.0, 0.47, 0.17) * acc * fall * 0.80 * SUNSCR.z;
     vec3 lin = pow(c, vec3(2.2));
     lin += shaft * (1.0 - lin * 0.55);
-    // rim: a block edge with open sky right behind it, sunward, catches a thin line of light
     if (d < 0.99999) {
       vec2 dir = normalize(to * asp) / asp;
       float open = 0.0;
@@ -69,7 +143,7 @@ void main(){
     }
     c = pow(lin, vec3(1.0 / 2.2));
   }
-  c += (j - 0.5) / 255.0 + (hash(gl_FragCoord.yx + 7.0) - 0.5) / 255.0; // dither: no banding in the gradients
+  c += (j - 0.5) / 255.0 + (hash(gl_FragCoord.yx + 7.0) - 0.5) / 255.0;
   o = vec4(c, 1.0);
 }`;
 
@@ -122,9 +196,10 @@ function pageMain(a) {
   // ---- tiles
   const names = Object.keys(tiles), L = {}; names.forEach((n, i) => L[n] = i);
   const arr = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D_ARRAY, arr);
-  gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, 16, 16, names.length);
+  gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 5, gl.RGBA8, 16, 16, names.length);
   names.forEach((n, i) => gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, 16, 16, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(a.tilePx[n])));
-  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST_MIPMAP_NEAREST); gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT);
 
   // ---- world
@@ -239,47 +314,62 @@ function pageMain(a) {
   const nVerts = v.length / 8;
   const qb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, qb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
 
-  const pBg = prog(src.bgVS, src.bgFS), pBlk = prog(src.blkVS, src.blkFS), pPost = prog(src.postVS, src.postFS);
+  const pBg = prog(src.bgVS, src.bgFS), pBlk = prog(src.blkVS, src.blkFS), pLfx = prog(src.postVS, src.lfxFS), pPost = prog(src.postVS, src.postFS);
   // ---- targets
-  const scene = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, scene);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  const depth = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, depth);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT32F, W, H, 0, gl.DEPTH_COMPONENT, gl.FLOAT, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const mkT = (fmt, f, t, mip) => { const x = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, x); gl.texImage2D(gl.TEXTURE_2D, 0, fmt, W, H, 0, f, t, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, mip ? gl.LINEAR_MIPMAP_LINEAR : gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, mip ? gl.LINEAR : gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return x; };
+  const scene = mkT(gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, true), dirT = mkT(gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, false), info = mkT(gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, false);
+  const lfx = mkT(gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, false);
+  gl.bindTexture(gl.TEXTURE_2D, lfx); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  const depth = mkT(gl.DEPTH_COMPONENT32F, gl.DEPTH_COMPONENT, gl.FLOAT, false);
   const fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, scene, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, dirT, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, info, 0);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depth, 0);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+  const fbo2 = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo2);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, lfx, 0);
 
   const SUN = [0.17605, 0.11247, -0.97794];
   const norm = a => { const l = Math.hypot(...a); return a.map(x => x / l); };
   const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  function inv(m) { const a = m, o = new Float32Array(16);
+    const b00 = a[0]*a[5]-a[1]*a[4], b01 = a[0]*a[6]-a[2]*a[4], b02 = a[0]*a[7]-a[3]*a[4], b03 = a[1]*a[6]-a[2]*a[5], b04 = a[1]*a[7]-a[3]*a[5], b05 = a[2]*a[7]-a[3]*a[6];
+    const b06 = a[8]*a[13]-a[9]*a[12], b07 = a[8]*a[14]-a[10]*a[12], b08 = a[8]*a[15]-a[11]*a[12], b09 = a[9]*a[14]-a[10]*a[13], b10 = a[9]*a[15]-a[11]*a[13], b11 = a[10]*a[15]-a[11]*a[14];
+    const det = 1 / (b00*b11 - b01*b10 + b02*b09 + b03*b08 - b04*b07 + b05*b06);
+    o[0]=(a[5]*b11-a[6]*b10+a[7]*b09)*det; o[1]=(a[2]*b10-a[1]*b11-a[3]*b09)*det; o[2]=(a[13]*b05-a[14]*b04+a[15]*b03)*det; o[3]=(a[10]*b04-a[9]*b05-a[11]*b03)*det;
+    o[4]=(a[6]*b08-a[4]*b11-a[7]*b07)*det; o[5]=(a[0]*b11-a[2]*b08+a[3]*b07)*det; o[6]=(a[14]*b02-a[12]*b05-a[15]*b01)*det; o[7]=(a[8]*b05-a[10]*b02+a[11]*b01)*det;
+    o[8]=(a[4]*b10-a[5]*b08+a[7]*b06)*det; o[9]=(a[1]*b08-a[0]*b10-a[3]*b06)*det; o[10]=(a[12]*b04-a[13]*b02+a[15]*b00)*det; o[11]=(a[9]*b02-a[8]*b04-a[11]*b00)*det;
+    o[12]=(a[5]*b07-a[4]*b09-a[6]*b06)*det; o[13]=(a[0]*b09-a[1]*b07+a[2]*b06)*det; o[14]=(a[13]*b01-a[12]*b03-a[14]*b00)*det; o[15]=(a[8]*b03-a[9]*b01+a[10]*b00)*det; return o; }
+  const quad = p => { gl.bindBuffer(gl.ARRAY_BUFFER, qb); const l = gl.getAttribLocation(p, 'P'); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.disableVertexAttribArray(l); };
   function render(shot, vanilla) {
     const eye = shot.eye.slice(); if (shot.stand) { const g = topY(Math.floor(eye[0]), Math.floor(eye[2])); if (g > 0) eye[1] = g + 1 + 1.62; }
     const F = norm([shot.at[0] - eye[0], shot.at[1] - eye[1], shot.at[2] - eye[2]]);
     const R = norm(cross(F, [0, 1, 0])), Uv = cross(R, F);
     const ty = Math.tan((shot.fov || 70) * Math.PI / 360), tx = ty * W / H, nr = 0.1, fr = 1500;
-    // VP (column-major)
     const view = [R[0], Uv[0], -F[0], 0, R[1], Uv[1], -F[1], 0, R[2], Uv[2], -F[2], 0, -dot(R, eye), -dot(Uv, eye), dot(F, eye), 1];
     const proj = [1 / tx, 0, 0, 0, 0, 1 / ty, 0, 0, 0, 0, -(fr + nr) / (fr - nr), -1, 0, 0, -2 * fr * nr / (fr - nr), 0];
     const VP = new Float32Array(16);
     for (let cI = 0; cI < 4; cI++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += proj[k * 4 + r] * view[cI * 4 + k]; VP[cI * 4 + r] = s; }
+    const IVP = inv(VP);
+    const T0 = shot.t !== undefined ? shot.t : T;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); gl.viewport(0, 0, W, H);
-    gl.clearColor(0, 0, 0, 0); gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.clearColor(0.47, 0.65, 1.0, 0); gl.clearDepth(1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
-    const bindCommon = p => { gl.useProgram(p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, noise); gl.uniform1i(U(p, 'NOISE'), 0); gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, puffT); gl.uniform1i(U(p, 'PUFF'), 3);
-      gl.uniform1f(U(p, 'TIME'), shot.t !== undefined ? shot.t : T); gl.uniform3fv(U(p, 'CAM'), eye); };
+    const bindCommon = p => { gl.useProgram(p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, noise); gl.uniform1i(U(p, 'NOISE'), 0);
+      gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, puffT); gl.uniform1i(U(p, 'PUFF'), 3);
+      gl.uniform1f(U(p, 'TIME'), T0); gl.uniform3fv(U(p, 'CAM'), eye); };
     if (!vanilla) {
       bindCommon(pBg);
       gl.uniform3fv(U(pBg, 'F'), F); gl.uniform3fv(U(pBg, 'R'), R); gl.uniform3fv(U(pBg, 'U'), Uv); gl.uniform1f(U(pBg, 'TX'), tx); gl.uniform1f(U(pBg, 'TY'), ty);
-      gl.bindBuffer(gl.ARRAY_BUFFER, qb); const l = gl.getAttribLocation(pBg, 'P'); gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, 2, gl.FLOAT, false, 0, 0);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.disableVertexAttribArray(l);
-    } else { gl.clearColor(0.47, 0.65, 1.0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+      quad(pBg);
+    }
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
-    bindCommon(pBlk); gl.uniformMatrix4fv(U(pBlk, 'VP'), false, VP); gl.uniform1f(U(pBlk, 'VANILLA'), vanilla ? 1 : 0);
+    bindCommon(pBlk); gl.uniformMatrix4fv(U(pBlk, 'VP'), false, VP); gl.uniform1f(U(pBlk, 'VANILLA'), vanilla ? 1 : 0); gl.uniform1f(U(pBlk, 'LEAF'), L['leaves_oak_carried']);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D_ARRAY, arr); gl.uniform1i(U(pBlk, 'TILES'), 1);
     gl.bindBuffer(gl.ARRAY_BUFFER, vb);
     const aP = gl.getAttribLocation(pBlk, 'POS'), aU = gl.getAttribLocation(pBlk, 'UV'), aD = gl.getAttribLocation(pBlk, 'DAT');
@@ -288,16 +378,20 @@ function pageMain(a) {
     gl.enableVertexAttribArray(aD); gl.vertexAttribPointer(aD, 3, gl.FLOAT, false, 32, 20);
     gl.drawArrays(gl.TRIANGLES, 0, nVerts);
     gl.disableVertexAttribArray(aP); gl.disableVertexAttribArray(aU); gl.disableVertexAttribArray(aD);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
     gl.bindTexture(gl.TEXTURE_2D, scene); gl.generateMipmap(gl.TEXTURE_2D);
-    gl.useProgram(pPost);
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, scene); gl.uniform1i(U(pPost, 'SCENE'), 0);
-    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, depth); gl.uniform1i(U(pPost, 'DEPTH'), 1);
+    const bindPost = p => { gl.useProgram(p);
+      const tx2 = [['SCENE', scene], ['DIRT', dirT], ['INFO', info], ['DEPTH', depth], ['LFX', lfx], ['NOISE', noise], ['PUFF', puffT]];
+      tx2.forEach(([n, t], i) => { gl.activeTexture(gl.TEXTURE4 + i); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(U(p, n), 4 + i); });
+      gl.uniformMatrix4fv(U(p, 'VP'), false, VP); gl.uniformMatrix4fv(U(p, 'IVP'), false, IVP); gl.uniform2f(U(p, 'RES'), W, H);
+      gl.uniform3fv(U(p, 'CAM'), eye); gl.uniform1f(U(p, 'TIME'), T0); };
+    if (!vanilla) { gl.bindFramebuffer(gl.FRAMEBUFFER, fbo2); bindPost(pLfx); quad(pLfx); }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    bindPost(pPost);
     const sf = dot(SUN, F); let sx = 0.5, sy = 0.5, sv = 0;
     if (sf > 0.05) { sx = 0.5 + 0.5 * dot(SUN, R) / (sf * tx); sy = 0.5 + 0.5 * dot(SUN, Uv) / (sf * ty); sv = Math.min(1, (sf - 0.05) / 0.35); }
-    gl.uniform3f(U(pPost, 'SUNSCR'), sx, sy, sv); gl.uniform2f(U(pPost, 'RES'), W, H); gl.uniform1f(U(pPost, 'VANILLA'), vanilla ? 1 : 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, qb); const l2 = gl.getAttribLocation(pPost, 'P'); gl.enableVertexAttribArray(l2); gl.vertexAttribPointer(l2, 2, gl.FLOAT, false, 0, 0);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); gl.finish();
+    gl.uniform3f(U(pPost, 'SUNSCR'), sx, sy, sv); gl.uniform1f(U(pPost, 'VANILLA'), vanilla ? 1 : 0);
+    quad(pPost); gl.finish();
     return c.toDataURL('image/png');
   }
   const out = {};
@@ -336,7 +430,7 @@ const SHOTS = {
   const names = which === 'all' ? Object.keys(SHOTS) : which.split(',').filter(n => SHOTS[n]);
   const shots = names.map(n => ({ name: n, ...SHOTS[n] }));
   const t0 = Date.now();
-  const res = await page.evaluate(pageMain, { W: +W, H: +H, tiles, tilePx, src: { bgVS, bgFS, blkVS, blkFS, postVS, postFS }, shots, T: +tArg, orbitN: +orbitN });
+  const res = await page.evaluate(pageMain, { W: +W, H: +H, tiles, tilePx, src: { bgVS, bgFS, blkVS, blkFS, postVS, postFS, lfxFS }, shots, T: +tArg, orbitN: +orbitN });
   if (res.err) throw new Error(res.err);
   fs.mkdirSync(outDir, { recursive: true });
   for (const [k, url] of Object.entries(res.out)) fs.writeFileSync(path.join(outDir, k + '.png'), Buffer.from(url.split(',')[1], 'base64'));
