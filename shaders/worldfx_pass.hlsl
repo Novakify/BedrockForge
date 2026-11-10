@@ -192,6 +192,11 @@ float4 shards(float3 rd, float sceneT) {
         float  tb = dot(bc, rd);
         if (tb < -br || dot(bc, bc) - tb * tb > br * br) continue;
         float  fade = 1.0 - smoothstep(3.2, 4.2, age);           // they lie there a moment, then shrink away
+        // the game rebuilds the chunk a few frames after the break, so the block can still be in the depth buffer:
+        // pieces inside its cell must not be cut by it
+        float3 S = rd * sceneT;
+        bool   ghost = age < 0.6 && all(S > corner - 0.03) && all(S < corner + 1.03);
+        float  lim = (ghost && best >= sceneT) ? 1e9 : best;
         [loop] for (int k = 0; k < 8; k++) {
             float  sk = seed * 0.001 + float(k) * 7.31;
             float3 o0 = float3(((k & 1) ? 0.70 : 0.30), ((k & 2) ? 0.70 : 0.30), ((k & 4) ? 0.70 : 0.30)) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 0.14;
@@ -218,8 +223,9 @@ float4 shards(float3 rd, float sceneT) {
             float  ang = spin * (6.0 + 7.0 * h1(sk + 10)) + h1(sk + 11) * 6.28;
             if (age > tl + 0.25) ang = round(ang / 1.5708) * 1.5708;            // lie flat once settled
             float3x3 R = rotAxis(ax, lerp(ang, round(ang / 1.5708) * 1.5708, smoothstep(tl, tl + 0.25, age)));
+            if (age > tl) p.y += dot(abs(R[1]), e) - e.y;   // resting on its real lowest point, not sunk into the ground
             float  tN; float3 nl, lp;
-            if (!hitBox(rd, p, e, R, tN, nl, lp) || tN >= best) continue;
+            if (!hitBox(rd, p, e, R, tN, nl, lp) || tN >= lim) continue;
             float3 nw = mul(R, nl);
             // the face as a little piece of texture: 8x8 "pixels" of the block's colour, a darker rim
             float2 fuv = abs(nl.x) > 0.5 ? lp.yz : (abs(nl.y) > 0.5 ? lp.xz : lp.xy);
@@ -230,7 +236,7 @@ float4 shards(float3 rd, float sceneT) {
             float3 amb = lerp(float3(0.40, 0.37, 0.52), float3(0.22, 0.28, 0.55), NIGHT) * (0.70 + 0.30 * nw.y);
             float3 sunC = lerp(float3(1.05, 0.74, 0.52), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
             float3 world = lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.50, 0.58, 0.86), NIGHT); // same grade as the terrain
-            best = tN, col = alb * grain * rim * (amb + sunC * ndl) * world, hit = true;
+            best = tN, lim = tN, col = alb * grain * rim * (amb + sunC * ndl) * world, hit = true;
         }
     }
     return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);
