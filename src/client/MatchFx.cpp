@@ -286,8 +286,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     bool newPlace = false;
     if (last && now - last < 20000 && jump > 30.0) { // (a loading screen in between is still a teleport)
         newPlace = true;
-        for (auto const& b : gBeds)
-            if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { newPlace = false; break; }
+        if (gIsMap)
+            for (auto const& b : gBeds)
+                if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { newPlace = false; break; }
     }
     lastPos[0] = pos[0], lastPos[1] = pos[1], lastPos[2] = pos[2];
     if (gNewLevel.exchange(false)) { // the server re-sent the world: same map (a respawn / spectating) or a new one?
@@ -300,8 +301,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     // a long time away from the HUD (a death screen, a menu) is only a new match when you came back somewhere else
     if (last && now - last > 20000 && !newPlace) {
         bool same = false;
-        for (auto const& b : gBeds)
-            if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { same = true; break; }
+        if (gIsMap)
+            for (auto const& b : gBeds)
+                if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { same = true; break; }
         newPlace = !same;
     }
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
