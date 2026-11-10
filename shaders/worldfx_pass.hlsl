@@ -536,7 +536,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
 
     // ---- ink look: the world drawn like an animated film, not lit like a shader pack. Hand-inked lines on every block
     //      silhouette and corner (from the depth buffer: two blocks side by side on one face get no line, so the line
-    //      follows the shapes - islands, bridges, players), the noisy texture calmed into painted flats, cel light
+    //      follows the shapes - islands, bridges, players), cel light (no blur: smeared texture is the generic look)
     float ink = 0.0;
     [branch] if (c9.w > 0.0 && z < 160.0) {
         int   r  = int(max(1.0, c4.y / 1100.0) + 0.5);              // ~2 px at 4K, 1 px at 1080p
@@ -550,17 +550,6 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float crease = smoothstep(0.010, 0.030, cr);
         float far  = saturate(1.0 - (z - 70.0) / 90.0);             // far terrain: fewer, softer lines (no hatched mush)
         ink = max(sil, crease * 0.85) * far * c9.w;
-        // painted flats: average the colour across this face only (neighbours on the same plane), keeps texture shape,
-        // loses the per-pixel noise that makes Minecraft read as Minecraft
-        float3 acc = col; float wsum = 1.0;
-        [unroll] for (int k4 = 0; k4 < 4; k4++) {
-            int2   o2 = k4 == 0 ? int2(-r, -r) : (k4 == 1 ? int2(r, -r) : (k4 == 2 ? int2(-r, r) : int2(r, r)));
-            float  zq = viewZ(rawDepth(px + o2 * 2));
-            float  wq = abs(zq - z) < 0.02 * z ? 1.0 : 0.0;
-            acc += sceneAt(px + o2 * 2).rgb * wq; wsum += wq;
-        }
-        float3 flat = acc / wsum;
-        col = lerp(col, flat, 0.55 * c9.w * far);
         // a touch more colour in the flats (animated films are saturated where light falls)
         float  lum = dot(col, float3(0.299, 0.587, 0.114));
         col = saturate(lerp(lum.xxx, col, 1.0 + 0.22 * c9.w));
