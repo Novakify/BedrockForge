@@ -51,6 +51,7 @@ float const kDye[16][3] = {
 struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; };
 std::vector<Bed> gBeds;
 uint32_t         gBroken = 0;
+bool             gIsMap = false; // a Bed Wars map: a bed next to where you arrived (your island), or a bed broke
 float            gTarget = 0, gPhase = 0;
 double           gAnchor[3]{};
 bool             gAnchored = false;
@@ -75,7 +76,7 @@ void retarget() { // living match sky: start golden, first bed down -> dusk, one
     int alive = 0;
     for (auto& b : gBeds) alive += b.alive ? 1 : 0;
     float t = 0;
-    if (gBroken >= 1) t = 1;
+    if (gBroken >= 1 && gIsMap) t = 1;
     if (gBroken >= 1 && gBeds.size() >= 2 && alive <= 1) t = 2;
     gTarget = std::max(gTarget, t); // never back to day inside one match
 }
@@ -84,6 +85,7 @@ void onBroken(int x, int y, int z) {
     if (Bed* b = bedNear(x, y, z); b && b->alive) {
         b->alive = false, b->changed = nowMs();
         ++gBroken;
+        gIsMap = true;
         mlog().info("[BF] matchfx: bed at {} {} {} broken ({} so far)", b->x, b->y, b->z, gBroken);
         retarget();
     }
@@ -132,6 +134,7 @@ void resetMatch(double const* pos) {
     mlog().info("[BF] matchfx: new match at {:.0f} {:.0f} {:.0f} (had {} beds, {} broken)", pos[0], pos[1], pos[2], gBeds.size(), gBroken);
     gBeds.clear();
     gBroken = 0;
+    gIsMap  = false;
     gTarget = gPhase = 0;
     gScanI  = 0;
     gFx.nEvents = 0;
@@ -160,6 +163,10 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
             gBeds.push_back({x, y, z, 14, true, nowMs()});
             bed = &gBeds.back();
             mlog().info("[BF] matchfx: bed at {} {} {}", x, y, z);
+            if (!gIsMap && std::hypot(x + 0.5 - gAnchor[0], z + 0.5 - gAnchor[2]) < 24.0) {
+                gIsMap = true; // the hub's decoration beds never light up; a map's do
+                mlog().info("[BF] matchfx: a bed by the spawn - this is a Bed Wars map");
+            }
         }
         if (auto* ba = bs.getBlockEntity(bp)) bed->dye = std::clamp(int(static_cast<BedBlockActor*>(ba)->mDyeColor), 0, 15);
         if (!bed->alive) { bed->alive = true, bed->changed = nowMs(); } // a new map reused the spot
@@ -212,7 +219,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     if (gPhase < gTarget) gPhase = std::min(gTarget, gPhase + rate * dt);
     else gPhase = std::max(gTarget, gPhase - rate * dt);
     gFx.phase = gPhase, gFx.phaseTarget = gTarget, gFx.bedsBroken = gBroken;
-    gFx.nTeams = uint32_t(std::min<size_t>(gBeds.size(), 16));
+    gFx.nTeams = gIsMap ? uint32_t(std::min<size_t>(gBeds.size(), 16)) : 0u;
     for (uint32_t i = 0; i < gFx.nTeams; ++i) {
         auto const& b = gBeds[i];
         auto&       t = gFx.teams[i];
@@ -236,6 +243,7 @@ void onText(std::string const& m) {
     std::lock_guard l(gMutex);
     if (s.find("bed") != std::string::npos && (s.find("destroy") != std::string::npos || s.find("broke") != std::string::npos)) {
         if (gBroken == 0) gBroken = 1; // a bed we couldn't see went down
+        gIsMap = true;
         retarget();
     }
     if (s.find("all beds") != std::string::npos || s.find("bed destruction") != std::string::npos ||
