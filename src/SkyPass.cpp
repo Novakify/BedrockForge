@@ -1248,7 +1248,7 @@ bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls con
 // ---- the match (Bedrock Forge MatchFx, BF_GetMatchFx): must match src/client/MatchFx.h in Bedrock Forge
 namespace {
 struct BfMatchTeamV1 { float pos[3]; float col[3]; uint32_t alive; int64_t changedMs; };
-struct BfMatchEventV1 { int32_t x, y, z; uint32_t kind; int64_t atMs; float col[4]; uint32_t seed; uint32_t pad; };
+struct BfMatchEventV1 { int32_t x, y, z; uint32_t kind; int64_t atMs; float col[4]; uint32_t seed; uint32_t floorDy; };
 struct BfMatchFxV1 {
     uint32_t size, version, active, frame;
     float phase, phaseTarget, timeOfDay;
@@ -1330,6 +1330,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eA[ne][0] = float(e.x); c.eA[ne][1] = float(e.y); c.eA[ne][2] = float(e.z); c.eA[ne][3] = age;
             std::memcpy(c.eB[ne], e.col, 12); c.eB[ne][3] = float(e.kind);
             c.eC[ne][0] = float(e.seed % 100000u);
+            c.eC[ne][1] = e.floorDy > 64 ? -1.0f : float(e.floorDy);
             ++ne;
         }
         f.cb.m0[1] = float(ne);

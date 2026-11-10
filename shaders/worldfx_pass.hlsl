@@ -24,7 +24,7 @@ cbuffer M : register(b1) {
     float4 tCol[16]; // team colour (linear), w = break flare
     float4 eA[8];    // block corner (world, min), w = age (s)
     float4 eB[8];    // block colour (sRGB 0..1), w = kind (1 broken, 2 placed)
-    float4 eC[8];    // x = seed
+    float4 eC[8];    // x = seed, y = blocks below the block the pieces land on (-1 = nothing: they fall away)
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
@@ -184,22 +184,40 @@ float4 shards(float3 rd, float sceneT) {
             best = tN, col = lit, hit = true;
             continue;
         }
-        if (age > 1.9) continue;
+        if (age > 2.6) continue;
+        float  floorY = eC[i].y >= 0.0 ? corner.y - eC[i].y : -1e6;   // the top of what is under the block
         // a rough bound for the whole burst first (most pixels never see one)
-        float3 bc = corner + 0.5 + float3(0, 1.4 * age - 9.0 * age * age, 0);
-        float  br = 1.0 + 4.2 * age;
+        float3 bc = corner + 0.5 + float3(0, max(1.0 * age - 7.0 * age * age, floorY - corner.y - 0.5), 0);
+        float  br = 1.2 + 2.8 * min(age, 0.8);
         float  tb = dot(bc, rd);
         if (tb < -br || dot(bc, bc) - tb * tb > br * br) continue;
-        float  fade = 1.0 - smoothstep(1.35, 1.9, age);
+        float  fade = 1.0 - smoothstep(1.9, 2.6, age);
         [loop] for (int k = 0; k < 8; k++) {
             float  sk = seed * 0.001 + float(k) * 7.31;
-            float3 o0 = float3(((k & 1) ? 0.72 : 0.28), ((k & 2) ? 0.72 : 0.28), ((k & 4) ? 0.72 : 0.28)) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 0.18;
-            float3 dir = normalize(o0 - 0.5 + float3(0, 0.55, 0));
-            float3 v = dir * (2.6 + 2.2 * h1(sk + 3)) + float3(0, 1.8, 0);
-            float3 p = corner + o0 + v * age + float3(0, -11.0 * age * age, 0);
-            float3 e = float3(0.10 + 0.07 * h1(sk + 4), 0.09 + 0.06 * h1(sk + 5), 0.10 + 0.07 * h1(sk + 6)) * fade;
+            float3 o0 = float3(((k & 1) ? 0.70 : 0.30), ((k & 2) ? 0.70 : 0.30), ((k & 4) ? 0.70 : 0.30)) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 0.14;
+            float3 dir = normalize(o0 - 0.5 + float3(0, 0.45, 0));
+            float3 v = dir * (1.4 + 1.3 * h1(sk + 3)) + float3(0, 1.6, 0);
+            float3 e = float3(0.13 + 0.07 * h1(sk + 4), 0.11 + 0.06 * h1(sk + 5), 0.13 + 0.07 * h1(sk + 6)) * fade;
+            const float G = 14.0;
+            // fly, land on what was under the block (bounce once, slide a little, lie still); nothing under: fall away
+            float y0 = corner.y + o0.y, yF = floorY + e.y;
+            float tl = (v.y + sqrt(max(v.y * v.y + 2.0 * G * (y0 - yF), 0.0))) / G;   // when it reaches the floor
+            float ta = min(age, tl);
+            float3 p = corner + o0 + float3(v.x, 0, v.z) * ta + float3(0, v.y * ta - 0.5 * G * ta * ta, 0);
+            float  spin = ta;
+            if (age > tl) {
+                float  a2 = age - tl, vb = 0.28 * (G * tl - v.y);                    // one small bounce
+                float  tb2 = 2.0 * vb / G;
+                float  ab = min(a2, tb2);
+                p.y = yF + max(vb * ab - 0.5 * G * ab * ab, 0.0);
+                float  slide = 0.35 * (1.0 - exp(-a2 * 5.0));
+                p.xz += v.xz * slide * 0.5;
+                spin = tl + 0.4 * min(a2, tb2);
+            }
             float3 ax = normalize(float3(h1(sk + 7), h1(sk + 8), h1(sk + 9)) - 0.5 + 1e-3);
-            float3x3 R = rotAxis(ax, age * (7.0 + 9.0 * h1(sk + 10)) + h1(sk + 11) * 6.28);
+            float  ang = spin * (6.0 + 7.0 * h1(sk + 10)) + h1(sk + 11) * 6.28;
+            if (age > tl + 0.25) ang = round(ang / 1.5708) * 1.5708;            // lie flat once settled
+            float3x3 R = rotAxis(ax, lerp(ang, round(ang / 1.5708) * 1.5708, smoothstep(tl, tl + 0.25, age)));
             float  tN; float3 nl, lp;
             if (!hitBox(rd, p, e, R, tN, nl, lp) || tN >= best) continue;
             float3 nw = mul(R, nl);
@@ -355,7 +373,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         lin += lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT) * open * near * c6.y * 0.55 * LIGHTK;
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
-    [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 1.6 + 0.030) * teamLight(CAM + P, n);
+    lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.50, 0.58, 0.86), NIGHT); // the world follows the sky
+    [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
