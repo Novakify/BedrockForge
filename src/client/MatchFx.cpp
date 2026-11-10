@@ -351,7 +351,9 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
             int d = dyeAround(bs, x, y, z);
             if (d >= 0) { bed->dye = d; bed->dyeKnown = true; note("bed at {} {} {}: team colour {} (from the blocks around it)", x, y, z, d); }
         }
-        if (!bed->alive) { bed->alive = true, bed->changed = nowMs(); } // a new map reused the spot
+        // a broken bed seen standing again: only a long time later (a new map reusing the spot); The Hive leaves the hitbox
+        // a moment after the 'bed destroyed' line, which must not bring it back
+        if (!bed->alive && nowMs() - bed->changed > 90000) { bed->alive = true, bed->changed = nowMs(); }
     }
 }
 } // namespace
@@ -510,6 +512,7 @@ void onText(std::string const& m) {
                            (s.find("eliminated") != std::string::npos && s.find("team") == std::string::npos);
         if (killy && s.find("bed") == std::string::npos && gIsMap) {
             bool const you = s.find("you were") != std::string::npos || s.find("you died") != std::string::npos || s.find("you fell") != std::string::npos;
+            note("kill line: {}", s.substr(0, 160));
             gKills.push_back({s, s.find("final") != std::string::npos, you, nowMs()});
             if (gKills.size() > 16) gKills.erase(gKills.begin());
             matchKills(nowMs());
