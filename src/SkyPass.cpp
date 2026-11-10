@@ -1312,7 +1312,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             else {
                 st = std::max(0.0f, 1.0f - a / 1.4f) * (0.75f + 0.25f * std::sin(a * 41.0f)); // the light gutters out
                 fl = a < 0.18f ? a / 0.18f : std::exp(-(a - 0.18f) * 3.2f);
-                if (a > 5.0f) continue;
+                if (a > 7.5f) continue;
             }
             auto& c = f.cb;
             std::memcpy(c.tPos[k], t.pos, 12); c.tPos[k][3] = st;
