@@ -67,9 +67,11 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // ---- sun shadow: walk toward the sun; anything in front of the ray on screen blocks it
     float vis = 1.0;
     float ndl = dot(n, L);
-    [branch] if (ndl > 0.02 && c5.w > 0.0) {
-        [loop] for (int k = 0; k < 24; k++) {
-            float f = (float(k) + j) / 24.0;
+    // cost scales with distance: near pixels get the full walk, far ones a short one, past 140 blocks none
+    int   nSh = z < 25.0 ? 20 : (z < 60.0 ? 12 : 7);
+    [branch] if (ndl > 0.02 && c5.w > 0.0 && z < 140.0) {
+        [loop] for (int k = 0; k < nSh; k++) {
+            float f = (float(k) + j) / float(nSh);
             float t = 0.04 + 42.0 * f * f;
             float3 q = P + n * (0.03 + 0.002 * z) + L * t;
             float3 s = toPx(q);
@@ -87,11 +89,12 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float occ = 0.0;
     float3 tA = normalize(abs(n.y) > 0.5 ? cross(n, float3(1, 0, 0)) : cross(n, float3(0, 1, 0)));
     float3 tB = cross(n, tA);
-    [unroll] for (int k2 = 0; k2 < 10; k2++) {
+    int   nAo = c6.x <= 0.0 ? 0 : (z < 30.0 ? 8 : (z < 70.0 ? 4 : 0));
+    [loop] for (int k2 = 0; k2 < nAo; k2++) {
         float a = (float(k2) + j) * 2.39996;
-        float r = sqrt((float(k2) + j2) / 10.0);
+        float r = sqrt((float(k2) + j2) / float(nAo));
         float h = sqrt(max(1.0 - r * r, 0.0));
-        float rad = 1.5 * lerp(0.2, 1.0, float(k2) / 9.0);
+        float rad = 1.5 * lerp(0.2, 1.0, float(k2) / float(max(nAo - 1, 1)));
         float3 q = P + n * 0.03 + (tA * cos(a) * r + tB * sin(a) * r + n * h) * rad;
         float3 s = toPx(q);
         if (s.z <= 0.05) continue;
@@ -100,8 +103,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float dz = s.z - viewZ(sd);
         occ += dz > 0.02 ? saturate(1.6 / max(dz, 1.6)) : 0.0;
     }
-    float ao = 1.0 - occ / 10.0;
-    ao = lerp(1.0, ao, saturate(1.0 - (z - 40.0) / 40.0));
+    float ao = nAo > 0 ? 1.0 - occ / float(nAo) : 1.0;
+    ao = lerp(1.0, ao, saturate(1.0 - (z - 45.0) / 25.0));
 
     // ---- apply (linear light). Shadowed sunlit faces fall to the violet sky light; occlusion darkens gently
     float3 lin = pow(col, 2.2);
