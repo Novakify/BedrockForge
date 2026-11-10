@@ -272,7 +272,7 @@ void trackPlayers(LocalPlayer& lp, int64_t now) {
     for (auto& t : gTracks) t.prev[0] = t.pos[0], t.prev[1] = t.pos[1], t.prev[2] = t.pos[2];
     std::vector<char> hit(gTracks.size(), 0);
     lp.getLevel().forEachPlayer([&](Player& pl) {
-        auto const& q = static_cast<Actor&>(pl).getPosition();
+        auto const q = static_cast<Actor&>(pl).getFeetPos(); // (getPosition is the eyes)
         bool const local = static_cast<Actor*>(&pl) == static_cast<Actor*>(&lp);
         if (!local && std::hypot(q.x - me.x, q.z - me.z) > 96.0) return true;
         std::string name;
