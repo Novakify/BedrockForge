@@ -167,7 +167,9 @@ float3 beacons(float3 rd, float tMax) {
         if (t0 > tMax + 0.75) continue;                    // the column passes behind what this pixel shows (a roof)
         float  t = clamp(t0, 0.0, tMax);
         float2 q = rxz * t - b.xz;
-        float  r = length(q);
+        float  r2q = dot(q, q);
+        if (r2q > (st + fl > 0.0 ? 110.0 : 0.0)) continue;   // more than ~10 blocks off the column: none of its light reaches this pixel
+        float  r = sqrt(r2q);
         float  h = rd.y * t - b.y;                       // height above the bed where the ray passes the column
         float  top = lerp(3.0, 120.0, st) + fl * 40.0;
         float  prof = smoothstep(-0.4, 0.6, h) * exp(-max(h, 0.0) / (0.30 * top)) * smoothstep(top, top * 0.5, h);
@@ -452,10 +454,13 @@ float4 cosmeticBeds(float3 rd, float sceneT) {
     float best = sceneT; float3 col = 0.0; bool hit = false;
     [loop] for (int i = 0; i < nt; i++) {
         if (bVis[i].w < -50.0) continue;
+        float3 bc = bVis[i].xyz - CAM;
+        float  bt = dot(bc, rd);
+        if (bt < -3.0 || dot(bc, bc) - bt * bt > 3.1 * 3.1) continue;    // nowhere near this pixel (before any trig)
         float  yaw0 = bVis[i].w;
-        float3 o = bVis[i].xyz + float3(-sin(yaw0), 0.0, cos(yaw0)) * 0.5 - CAM;   // the two blocks' centre
+        float3 o = bc + float3(-sin(yaw0), 0.0, cos(yaw0)) * 0.5;        // the two blocks' centre
         float  tb = dot(o, rd);
-        if (tb < -2.5 || dot(o, o) - tb * tb > 2.6 * 2.6) continue;      // nowhere near this pixel
+        if (tb < -2.5 || dot(o, o) - tb * tb > 2.6 * 2.6) continue;
         float  yaw = bVis[i].w;
         float  cy = cos(yaw), sy = sin(yaw);
         float3x3 R = float3x3(cy, 0, -sy, 0, 1, 0, sy, 0, cy);          // columns: local axes in world
@@ -554,13 +559,16 @@ float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
     float best = sceneT; float3 col = 0.0; bool hit = false;
     [loop] for (int i = 0; i < nt; i++) {
         if (bVis[i].w < -50.0) continue;
+        float  brk  = tAge[i].x;                                         // >= 0: the bed broke this long ago
+        float  bound = brk >= 0.0 ? 5.5 : 2.4;
+        float3 bc = bVis[i].xyz - CAM;                                   // nowhere near this pixel? (before any trig: most pixels stop here)
+        float  bt = dot(bc, rd);
+        if (bt < -(bound + 0.5) || dot(bc, bc) - bt * bt > (bound + 0.5) * (bound + 0.5)) continue;
         float  yaw = bVis[i].w;
         float3 F = float3(-sin(yaw), 0.0, cos(yaw));                    // towards the foot of the bed
         float3 Rt = float3(-F.z, 0.0, F.x);                              // the figure's right
-        float3 ctr = bVis[i].xyz + F * 0.5 - CAM;                        // the two blocks' centre (camera-relative)
+        float3 ctr = bc + F * 0.5;                                       // the two blocks' centre (camera-relative)
         float  tb = dot(ctr, rd);
-        float  brk  = tAge[i].x;                                         // >= 0: the bed broke this long ago
-        float  bound = brk >= 0.0 ? 5.5 : 2.4;
         if (tb < -bound || dot(ctr, ctr) - tb * tb > bound * bound) continue;
         float3 team = tCol[i].rgb;
         float  thr  = tAge[i].y;
@@ -1045,7 +1053,7 @@ float3 tensionOver(float3 o, float3 rd, float sceneT) {
 //      thing you must react to.
 float3 airLife(float3 rd, float sceneT) {
     float K = c3.y;
-    if (K <= 0.0 || c9.z < 0.45) return 0.0;
+    if (K <= 0.0 || c9.z < 0.12) return 0.0;
     float wGold = (1.0 - DUSK) * (1.0 - NIGHT), wDusk = DUSK * (1.0 - NIGHT), wNight = NIGHT;
     static const float S = 3.4;                                 // at most one to an S-block cell
     float3 wind = float3(0.42, 0.0, 0.26) * (1.0 + 3.5 * m2.w) + float3(0.0, lerp(0.05, -0.28, wNight), 0.0);
@@ -1053,8 +1061,8 @@ float3 airLife(float3 rd, float sceneT) {
     float  tMax = min(sceneT, 17.5);
     float  pxA = 2.0 * c0.w / c4.x;
     float3 best = 0.0;
-    [loop] for (int k = 0; k < 9; k++) {
-        float t = 3.2 + float(k) * 1.7;
+    [loop] for (int k = 0; k < 7; k++) {
+        float t = 3.4 + float(k) * 2.1;
         if (t > tMax) break;
         float3 cell = floor((CAM + rd * t - drift) / S);
         float  h = hash13(cell + 17.3);
