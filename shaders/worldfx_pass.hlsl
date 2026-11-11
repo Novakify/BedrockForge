@@ -1204,7 +1204,62 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
         float  hy = W.y - c.y;
         float  body = (sceneT < 500.0 && dot(dxz, dxz) < 0.70 * 0.70 && hy > 0.20 && hy < 2.1) ? 1.0 : 0.0;   // (above the floor: the ground under them read as a black disc)
         float  flip = age < 0.25 ? 0.0 : 1.0;
-        float  v = 1.0 - abs(body - flip);                            // 1 = white: world white + victim black first, then flipped
+        // ---- the blow itself, as ink (hard edges, no glow, no gradient - cut paper, like a manga impact panel):
+        //      a burst of tapered spikes snaps out from the point of impact and opens up as its tips fly on, and the
+        //      game's own crit sparks (the little pixel crosses) scatter from it. Ink is drawn by exclusion: black on
+        //      the white world, white where it crosses the black silhouette - so it inverts with the frame on the flip.
+        float ink = 0.0;
+        {
+            float3 Fw = c0.xyz, Uw = c2.xyz;
+            float3 Rw = normalize(cross(Uw, Fw));
+            float3 hp = c + float3(0.0, 1.15, 0.0);
+            hp += normalize(CAM - hp) * 0.45;                           // on the near side of the body
+            float3 dh = hp - CAM;
+            float  dz = dot(dh, Fw);
+            if (dz > 0.3) {
+                float2 sp = float2(dot(dh, Rw), dot(dh, Uw)) / dz;
+                float2 sq = float2(dot(rd, Rw), dot(rd, Uw)) / max(dot(rd, Fw), 0.2);
+                float2 q = (sq - sp) * dz;                              // blocks, in the plane of the blow
+                float  seed = frac(dot(eA[i].xyz, float3(0.371, 0.713, 0.537)));
+                // the burst: 14 thin spikes, uneven angles, a few long and most short; out in 0.045 s, then it tears
+                // open from the middle, each spike letting go at its own moment (a ragged opening, not a ring)
+                float  grow = smoothstep(0.0, 0.045, age);
+                float  r0 = 1.05 * smoothstep(0.07, 0.5, age);
+                if (dot(q, q) < 2.1 * 2.1) {
+                    [unroll] for (int j = 0; j < 14; j++) {
+                        float h1 = frac(sin(float(j) * 127.1 + seed * 311.7) * 43758.5453);
+                        float h2 = frac(sin(float(j) * 269.5 + seed * 183.3) * 43758.5453);
+                        float a = (float(j) + (h1 - 0.5) * 0.7) * (6.2831853 / 14.0) + seed * 6.28;
+                        float2 dir = float2(cos(a), sin(a));
+                        float  L = (0.6 + 1.35 * h2 * h2 * h2) * grow;
+                        float  rj = r0 * (0.45 + 1.1 * h1);
+                        float  t = dot(q, dir), pp = abs(q.x * dir.y - q.y * dir.x);
+                        float  u = (t - rj) / max(L - rj, 1e-3);
+                        float  w = (0.03 + 0.045 * h2) * (1.0 - u);          // straight taper to a point
+                        if (t > rj && u < 1.0 && pp < w) ink = 1.0;
+                    }
+                }
+                // crit sparks: 14 of the game's little crosses thrown out - stretched along their flight while fast,
+                // settling into the cross as they slow, dropping a little, each gone at its own time
+                [unroll] for (int k = 0; k < 14; k++) {
+                    float h1 = frac(sin(float(k) * 78.233 + seed * 157.3) * 43758.5453);
+                    float h2 = frac(sin(float(k) * 39.346 + seed * 271.9) * 43758.5453);
+                    float h3 = frac(sin(float(k) * 93.989 + seed * 91.7) * 43758.5453);
+                    float life = 0.26 + 0.24 * h3;
+                    if (age > life) continue;
+                    float a = (float(k) + h1 * 1.6) * (6.2831853 / 14.0) + 0.4;
+                    float v0 = 1.2 + 4.2 * h2 * h2;
+                    float d = 0.3 + v0 * (1.0 - exp(-6.0 * age)) / 6.0 * 2.4;
+                    float spd = v0 * exp(-6.0 * age);
+                    float2 dr = float2(cos(a), sin(a));
+                    float2 rel = q - (dr * d - float2(0.0, 1.8 * age * age));
+                    float sz = (0.016 + 0.014 * h3) * (age > life * 0.7 ? 0.6 : 1.0);   // shrinks in one step, like the sprite
+                    float rx = abs(dot(rel, dr)), ry = abs(rel.y * dr.x - rel.x * dr.y);
+                    if ((rx < sz * (3.0 + spd * 4.0) && ry < sz) || (ry < sz * 3.0 && rx < sz)) ink = 1.0;
+                }
+            }
+        }
+        float  v = 1.0 - abs(abs(body - ink) - flip);                 // 1 = white: world white + victim black first, then flipped; ink by exclusion
         // a sliver of the scene's own shading survives in the white (so it is a frame of THIS fight, not a blank)
         float  l = dot(o, float3(0.299, 0.587, 0.114));
         float3 tone = v > 0.5 ? lerp(float3(1.0, 1.0, 1.0), float3(0.86, 0.86, 0.88), 1.0 - l) : float3(0.02, 0.02, 0.025);
