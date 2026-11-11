@@ -37,6 +37,10 @@ cbuffer M : register(b1) {
     float4 pInfo[8];   // projectile trails: rgb = shooter's team colour, w = kind + 8 * points
     float4 pPts[96];   // 8 x 12 points, newest first: xyz world, w = seconds ago
     float4 m3;         // you: x = health 0..1 (-1 unknown), y = heartbeat 0..1, z = kill run 0..1, w = seconds since your last kill
+    float4 m4;         // x = fireworks shells in the air this frame (fwS)
+    float4 fwS[120];   // the shells in the air (worked out once per frame on the CPU - SkyPass fwcpu::shells), 3 each:
+                       // [0] xyz = direction (world), w = radius; [1] rgb = colour, w = glow; [2] x = seconds since the burst,
+                       // y = type, z = draw seed, w = a hash of the shell
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3

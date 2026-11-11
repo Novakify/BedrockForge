@@ -366,21 +366,24 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
     float  smoke = 0.0;
     bool   below = rd.y < 0.0;                                   // the cloud sea: it only takes the glow, mirrored
     float3 rv = below ? float3(rd.x, -rd.y, rd.z) : rd;
-    [loop] for (int b = 0; b < FW_SHELLS; b++) {
-        float a0 = age - fwT0(b) - 0.55;
-        if (a0 < -0.80 || a0 > 7.5) continue;                    // not up yet, or long gone: skip it before any real work
-        float tb, R; int type, tier;
-        fwShellKind(b, seed, tb, R, type, tier);
-        float a = age - tb;
-        if (a < -0.56 || a > kFwLife[type] + 3.0) continue;
-        float3 dir = fwShellDir(b, seed, yaw, tier);
+    int nS = int(m4.x);
+    [loop] for (int k = 0; k < nS; k++) {                       // only the shells in the air (the CPU set them up this frame)
+        float4 s0 = fwS[k * 3], s1 = fwS[k * 3 + 1], s2 = fwS[k * 3 + 2];
+        float3 dir = s0.xyz;
         float cd = dot(rv, dir);
         if (cd < 0.2) continue;
+        float  R = s0.w, a = s2.x, bh = s2.w;
+        int    type = int(s2.y + 0.5);
         float3 ex = normalize(float3(dir.z, 0.0, -dir.x)), ey = cross(dir, ex);
         float3 pr = rv / cd - dir;
         float2 pa = float2(dot(pr, ex), dot(pr, ey));           // radians-ish around the burst point
-        float3 col = fwColour(type, b, team);
-        float  gI = fwGlow(a, type);
+        float2 pq = pa / R;
+        if (dot(pq, pq) > 40.0 && a > 0.0) {                     // far outside it: only its faint light (in the air / on the sea)
+            glow += s1.rgb * s1.w * (below ? exp(-dot(pq, pq) / 22.0) * 0.016 * (R / 0.2) : exp(-dot(pq, pq) / 14.0) * 0.0015);
+            continue;
+        }
+        float3 col = s1.rgb;
+        float  gI = s1.w;
         if (below) {                                             // light on the cloud sea under it
             glow += col * gI * exp(-dot(pa, pa) / (R * R * 22.0)) * 0.016 * (R / 0.2);
             continue;
@@ -388,7 +391,7 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
         glow += col * gI * (exp(-dot(pa, pa) / (R * R * 2.2)) * 0.008 + exp(-dot(pa, pa) / (R * R * 14.0)) * 0.0015);   // the air around it lights up
         if (a < 0.0) {                                           // the climb: a spark on a short gold tail, slowing as it tops out
             float u = (a + 0.55) / 0.55, d0 = (1.0 - u) * (1.0 - u) * dir.y * 0.9;
-            float2 hd = float2(sin(u * 22.0 + float(b)) * 0.004 * (1.0 - u), -d0), tl = float2(0.0, -d0 - 0.035 * (1.0 - u) - 0.006);
+            float2 hd = float2(sin(u * 22.0 + bh * 50.0) * 0.004 * (1.0 - u), -d0), tl = float2(0.0, -d0 - 0.035 * (1.0 - u) - 0.006);
             float2 sg = hd - tl, ap = pa - tl;
             float  tt = saturate(dot(ap, sg) / max(dot(sg, sg), 1e-9));
             float2 dv = ap - sg * tt;
@@ -400,14 +403,14 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
             float  rs = R * (0.50 + 0.16 * a);
             float  dn = exp(-dot(ps, ps) / (rs * rs));
             if (dn > 0.01) {
-                float n = gNoise.SampleLevel(gSmp, ps * (1.4 / R) * 0.11 + float2(fwH(float(b)), a * 0.012), 0).r;
+                float n = gNoise.SampleLevel(gSmp, ps * (1.4 / R) * 0.11 + float2(bh, a * 0.012), 0).r;
                 smoke += dn * (0.35 + 1.1 * n) * smoothstep(0.15, 0.7, a) * (1.0 - smoothstep(kFwLife[type], kFwLife[type] + 3.0, a)) * 0.20;
             }
         }
         if (a < kFwLife[type]) {
             float2 P = pa / R;
-            stars += fwShellDraw(P, a, type, col, seed * 0.011 + float(b) * 7.77, wAng / R, maxPieces) * (type == 2 ? 0.62 : 1.5);
-            if (type == 0 && R > 0.16 && !lean) stars += fwShellDraw(P / 0.42, a, 6, FW_GOLD, seed * 0.013 + float(b) * 5.31, wAng / (R * 0.42), maxPieces);
+            stars += fwShellDraw(P, a, type, col, s2.z, wAng / R, maxPieces) * (type == 2 ? 0.62 : 1.5);
+            if (type == 0 && R > 0.16 && !lean) stars += fwShellDraw(P / 0.42, a, 6, FW_GOLD, s2.z * 1.1818 + 3.1, wAng / (R * 0.42), maxPieces);
             stars += lerp(col, FW_WHITE, 0.75) * exp(-dot(pa, pa) / (R * R * 0.010)) * exp(-a * 11.0) * 1.6;   // the pop
         }
     }

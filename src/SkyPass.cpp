@@ -1289,8 +1289,10 @@ struct MatchCb {
     float pInfo[8][4];  // projectile trails: rgb = team colour, w = kind (0 none) + 8 * points
     float pPts[8][12][4]; // their points, newest first: xyz world, w = seconds ago
     float m3[4];          // you: x = health 0..1 (-1 unknown), y = heartbeat 0..1, z = kill run 0..1, w = seconds since your last kill
+    float m4[4];          // x = fireworks shells in fwS
+    float fwS[40][3][4];  // the shells in the air this frame (fwcpu::shells)
 };
-static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96 + 16 + 24 + 1 + 24 + 8 + 96 + 1) * 16 && sizeof(MatchCb) <= 8192, "cbuffer M layout");
+static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96 + 16 + 24 + 1 + 24 + 8 + 96 + 1 + 1 + 120) * 16 && sizeof(MatchCb) <= 8192, "cbuffer M layout");
 BfMatchFxV1 const* gSkinSrc = nullptr; // skins to upload (drawWorldFxPass)
 struct MatchFrame { float phase = 0; MatchCb cb{}; int beds = 0; float bedMinY = 0, bedCx = 0, bedCz = 0; };
 std::mutex  gMatchMutex;
@@ -1384,6 +1386,66 @@ void light(float age, float const srgb[3], float seed, float out[3]) {
             float const as = as0 - (float(si) * 0.24f + H(seed * 0.0017f + float(si) * 2.3f) * 0.1f);
             if (as > 0.0f && as < 0.6f) { float const k = 3.0f * std::exp(-as * 12.0f); out[0] += 1.0f * k; out[1] += 0.96f * k; out[2] += 0.88f * k; }
         }
+}
+// The shells in the air at this moment, set up once per frame for every sky pixel (fireworks.hlsli fwShellKind /
+// fwShellDir / fwColour / fwGlow, same numbers): the shader then only loops over these instead of all 52 with their
+// hashes and trig. out[i] = {dir.xyz, R}, {colour, glow}, {a, type, draw seed, hash}. Returns how many.
+int shells(float age, float const srgb[3], float seed, float yaw, float (*out)[3][4], int maxN) {
+    float team[3], mx = 0.05f;
+    for (int k = 0; k < 3; ++k) { team[k] = std::pow(std::max(srgb[k], 0.0f), 2.2f); mx = std::max(mx, team[k]); }
+    for (int k = 0; k < 3; ++k) team[k] /= mx;
+    int n = 0;
+    for (int b = 0; b < 52 && n < maxN; ++b) {
+        float const a0 = age - T0(b) - 0.55f;
+        if (a0 < -0.80f || a0 > 7.5f) continue;
+        float const sb = seed * 0.0013f + float(b) * 1.731f;
+        int const pr = b >> 1;
+        float const sp = seed * 0.0013f + float(pr) * 3.117f;
+        float t0 = T0(b);
+        int type, tier;
+        if (b < 24) { type = kBodyType[pr]; tier = kBodyTier[pr]; t0 += H(sp) * 0.16f + ((b & 1) ? 0.06f : 0.0f); }
+        else if (b < 47) {
+            float const hh = H(sb + 5.0f);
+            type = hh < 0.50f ? 2 : (hh < 0.80f ? 0 : (hh < 0.86f ? 3 : (hh < 0.95f ? 1 : 5)));
+            tier = type == 2 ? (H(sb + 6.0f) < 0.6f ? 2 : 1) : (type == 3 ? 0 : (H(sb + 6.0f) < 0.5f ? 1 : 0));
+            t0 += H(sb) * 0.05f;
+        } else { type = 2; tier = 2; }
+        float const hv = H(sb + 3.0f);
+        float R = tier == 0 ? 0.105f + 0.04f * hv : (tier == 1 ? 0.17f + 0.05f * hv : 0.25f + 0.07f * hv);
+        if (type == 2) R *= 1.15f;
+        if (b >= 47) R = 0.34f;
+        float const a = age - (t0 + 0.55f);
+        float const life = kLife[type];
+        if (a < -0.56f || a > life + 3.0f) continue;
+        // direction
+        float const side = (b & 1) ? 1.0f : -1.0f;
+        float az = b < 24 ? side * (0.15f + (tier == 2 ? 0.34f : 0.62f) * H(sp + 1.0f))
+                 : (b < 47 ? (H(sb + 2.0f) - 0.5f) * 2.5f : (float(b - 47) - 2.0f) * 0.36f + (H(sb + 2.0f) - 0.5f) * 0.08f);
+        float el = tier == 0 ? 0.13f + 0.05f * hv : (tier == 1 ? 0.25f + 0.09f * hv : 0.40f + 0.10f * hv);
+        if (b >= 47) el = 0.50f + 0.05f * hv;
+        az += yaw;
+        // colour + glow
+        float col[3];
+        if (type == 2 || type == 5 || type == 6) { col[0] = 1.25f; col[1] = 0.70f; col[2] = 0.22f; }
+        else if (type == 3) { col[0] = 1.0f; col[1] = 0.96f; col[2] = 0.88f; }
+        else {
+            int const v = b % 4;
+            float c[3];
+            for (int k = 0; k < 3; ++k) {
+                float const gbr = team[(k + 1) % 3], brg = team[(k + 2) % 3];
+                c[k] = v == 1 ? team[k] + (gbr - team[k]) * 0.26f : (v == 3 ? team[k] + (brg - team[k]) * 0.26f : team[k]);
+            }
+            float const m = std::max(std::max(c[0], std::max(c[1], c[2])), 0.05f);
+            for (int k = 0; k < 3; ++k) col[k] = c[k] / m * 1.15f;
+        }
+        float const glow = a <= 0.0f ? 0.0f
+            : 2.4f * std::exp(-a * 5.5f) + (type == 2 ? 0.62f : 0.42f) * smooth(life, life * 0.5f, a) * smooth(0.0f, 0.25f, a);
+        auto& o = out[n++];
+        o[0][0] = std::cos(az) * std::cos(el); o[0][1] = std::sin(el); o[0][2] = std::sin(az) * std::cos(el); o[0][3] = R;
+        o[1][0] = col[0]; o[1][1] = col[1]; o[1][2] = col[2]; o[1][3] = glow;
+        o[2][0] = a; o[2][1] = float(type); o[2][2] = seed * 0.011f + float(b) * 7.77f; o[2][3] = H(float(b));
+    }
+    return n;
 }
 } // namespace fwcpu
 
@@ -1513,6 +1575,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
                 if (winAt != e.atMs) { winAt = e.atMs; winYaw = gViewYaw.load(std::memory_order_relaxed); }
                 c.eC[ne][3] = winYaw;
                 fwcpu::light(age, e.col, c.eC[ne][0], c.eA[ne]);   // the show's light on the world, once per frame
+                if (c.m4[0] == 0.0f) c.m4[0] = float(fwcpu::shells(age, e.col, c.eC[ne][0], winYaw, c.fwS, 40));
             } else c.eC[ne][3] = 0.0f;
             ++ne;
         }
@@ -1532,6 +1595,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eA[ne][3] = tw; c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = 6.0f; c.eC[ne][0] = 777.0f;
             c.eC[ne][3] = testYaw;
             fwcpu::light(tw, c.eB[ne], c.eC[ne][0], c.eA[ne]);
+            if (c.m4[0] == 0.0f) c.m4[0] = float(fwcpu::shells(tw, c.eB[ne], c.eC[ne][0], testYaw, c.fwS, 40));
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
