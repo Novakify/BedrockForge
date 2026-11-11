@@ -373,15 +373,15 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
         float cd = dot(rv, dir);
         if (cd < 0.2) continue;
         float  R = s0.w, a = s2.x, bh = s2.w;
+        float  q2 = (1.0 / (cd * cd) - 1.0) / (R * R);           // (distance from the burst point / radius)^2, from the angle alone
+        if (q2 > 40.0 && a > 0.0) {                              // far outside it: only its faint light (in the air / on the sea)
+            glow += s1.rgb * s1.w * (below ? exp(-q2 / 22.0) * 0.016 * (R / 0.2) : exp(-q2 / 14.0) * 0.0015);
+            continue;
+        }
         int    type = int(s2.y + 0.5);
         float3 ex = normalize(float3(dir.z, 0.0, -dir.x)), ey = cross(dir, ex);
         float3 pr = rv / cd - dir;
         float2 pa = float2(dot(pr, ex), dot(pr, ey));           // radians-ish around the burst point
-        float2 pq = pa / R;
-        if (dot(pq, pq) > 40.0 && a > 0.0) {                     // far outside it: only its faint light (in the air / on the sea)
-            glow += s1.rgb * s1.w * (below ? exp(-dot(pq, pq) / 22.0) * 0.016 * (R / 0.2) : exp(-dot(pq, pq) / 14.0) * 0.0015);
-            continue;
-        }
         float3 col = s1.rgb;
         float  gI = s1.w;
         if (below) {                                             // light on the cloud sea under it
