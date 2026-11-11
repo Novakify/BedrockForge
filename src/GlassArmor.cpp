@@ -2,6 +2,7 @@
 #include "GlassArmor.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -563,20 +564,22 @@ int classify(uint8_t const* px, unsigned pitch) {
     // A pack can draw one armour on another's shape (Cloud Sea's netherite has diamond's outline - it was classified
     // as diamond, seen in game 2026-11-11): every shape within 6 texels of the nearest is a candidate, and the
     // mean colour picks among them.
+    static_assert(shaders::kVariants <= 32, "classify: variant arrays");
+    constexpr int kN = shaders::kVariants;
     int  ham[32]{};
-    long dist[32]{};
+    int64_t dist[32]{};
     int  bestHam = 1 << 30;
-    for (int v = 0; v < shaders::kVariants && v < 32; ++v) {
+    for (int v = 0; v < kN; ++v) {
         for (int k = 0; k < 64; ++k) ham[v] += __popcnt(bits[k] ^ shaders::kVariant[v].mask[k]);
-        for (int c = 0; c < 3; ++c) { long e = sum[c] / cnt - shaders::kVariant[v].avg[c]; dist[v] += e * e; }
+        for (int c = 0; c < 3; ++c) { int64_t const e = sum[c] / cnt - shaders::kVariant[v].avg[c]; dist[v] += e * e; }
         bestHam = std::min(bestHam, ham[v]);
     }
     int  best = -1;
-    long bestD = 1L << 40;
-    for (int v = 0; v < shaders::kVariants && v < 32; ++v)
+    int64_t bestD = INT64_MAX;   // (was 1L << 40: long is 32-bit on Windows - undefined, and the optimiser took the loop's end out)
+    for (int v = 0; v < kN; ++v)
         if (ham[v] <= bestHam + 6 && dist[v] < bestD) { bestD = dist[v]; best = v; }
     if (bestD > 3 * 50 * 50)   // the nearest shapes are all the wrong colour: a repaint on another armour's shape
-        for (int v = 0; v < shaders::kVariants && v < 32; ++v)
+        for (int v = 0; v < kN; ++v)
             if (ham[v] <= 100 && dist[v] < bestD) { bestD = dist[v]; best = v; }
     bestHam = best >= 0 ? ham[best] : bestHam;
     char b[160];
