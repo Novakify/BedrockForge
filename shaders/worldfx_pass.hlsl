@@ -1202,9 +1202,9 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
         float3 c = eA[i].xyz + float3(0.5, 0.0, 0.5);
         float2 dxz = W.xz - c.xz;
         float  hy = W.y - c.y;
-        float  body = (sceneT < 500.0 && dot(dxz, dxz) < 0.70 * 0.70 && hy > 0.08 && hy < 2.1) ? 1.0 : 0.0;   // (above the floor: the ground under them read as a black disc)
+        float  body = (sceneT < 500.0 && dot(dxz, dxz) < 0.70 * 0.70 && hy > 0.20 && hy < 2.1) ? 1.0 : 0.0;   // (above the floor: the ground under them read as a black disc)
         float  flip = age < 0.25 ? 0.0 : 1.0;
-        float  v = abs(body - flip);                                  // 1 = white
+        float  v = 1.0 - abs(body - flip);                            // 1 = white: world white + victim black first, then flipped
         // a sliver of the scene's own shading survives in the white (so it is a frame of THIS fight, not a blank)
         float  l = dot(o, float3(0.299, 0.587, 0.114));
         float3 tone = v > 0.5 ? lerp(float3(1.0, 1.0, 1.0), float3(0.86, 0.86, 0.88), 1.0 - l) : float3(0.02, 0.02, 0.025);
