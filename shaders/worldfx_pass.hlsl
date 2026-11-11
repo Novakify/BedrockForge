@@ -1202,7 +1202,7 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
         float3 c = eA[i].xyz + float3(0.5, 0.0, 0.5);
         float2 dxz = W.xz - c.xz;
         float  hy = W.y - c.y;
-        float  body = (sceneT < 500.0 && dot(dxz, dxz) < 0.70 * 0.70 && hy > -0.05 && hy < 2.1) ? 1.0 : 0.0;
+        float  body = (sceneT < 500.0 && dot(dxz, dxz) < 0.70 * 0.70 && hy > 0.08 && hy < 2.1) ? 1.0 : 0.0;   // (above the floor: the ground under them read as a black disc)
         float  flip = age < 0.25 ? 0.0 : 1.0;
         float  v = abs(body - flip);                                  // 1 = white
         // a sliver of the scene's own shading survives in the white (so it is a frame of THIS fight, not a blank)
