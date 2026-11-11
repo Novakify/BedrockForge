@@ -108,6 +108,12 @@ float cloudShadow(float3 W) {
     float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
     return smoothstep(0.74, 0.86, hcDens(p, c9.z > 0.6 ? 3 : 1));
 }
+// the same shadows for when the frame rate needs the time: only the deck's big cover shapes (2 taps, not 7)
+float cloudShadowLite(float3 W) {
+    float  t = (900.0 - W.y) / max(SUN.y, 0.03);
+    float2 p = (W.xz + SUN.xz * t) / 520.0 + TIME * float2(0.0030, 0.0011);
+    return smoothstep(0.74, 0.86, fbm(p * 0.30 + 3.1, 2) * 1.05 + 0.30);
+}
 
 // ================================================================ the match
 // how dark the scene is: team light reads more as the sky goes
@@ -1331,7 +1337,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // ---- apply (linear light). Shadowed sunlit faces fall to the violet sky light; occlusion darkens gently
     float3 lin = pow(col, 2.2);
     CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
-    float  cs  = (c8.w > 0.5 && c9.y > 0.0 && c9.z > 0.25) ? cloudShadow(CAM + P) * c9.y : 0.0;
+    float  cs  = (c8.w > 0.5 && c9.y > 0.0) ? (c9.z > 0.25 ? cloudShadow(CAM + P) : cloudShadowLite(CAM + P)) * c9.y : 0.0;
     float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55 * (1.0 - NIGHT)) * min(LIGHTK, 1.0);
     float3 shadeCol = lerp(float3(0.46, 0.44, 0.62), float3(0.48, 0.54, 0.76), NIGHT); // without the key light: violet sky / blue night (light enough to fight in)
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
