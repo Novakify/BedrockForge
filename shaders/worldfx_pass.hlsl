@@ -461,20 +461,38 @@ float3 shockwaveOn(float3 W) {
 // ---- fresh blocks: what was just placed glows along its edges in its own colour, fading over ~8 s. Bridges light up
 //      as they are built - a rush across the map is a line of team colour you can read from your island
 float3 trails(float3 W) {
+    // the fuse: a bridge is drawn in light as it is built. Each block's edges light from the side of the block placed
+    // before it (the line travels the way you build), the shared edge between them is a bright stitch, and a pulse
+    // runs down the chain at the builder's own pace. After ~1 s it calms to a soft edge glow, gone by ~9 s.
     if (m1.x < 0.5 || any(W < trMin.xyz - 0.05) || any(W > trMax.xyz + 0.05)) return 0.0;
     float3 acc = 0.0;
     int n = int(m1.x);
     [loop] for (int i = 0; i < n; i++) {
         float3 l = W - gA[i].xyz;
         if (any(l < -0.02) || any(l > 1.02)) continue;
-        float3 e3 = min(saturate(l), 1.0 - saturate(l));          // distance to each pair of faces
-        float  a = min(e3.x, min(e3.y, e3.z)), c = max(e3.x, max(e3.y, e3.z));
-        float  edge = (e3.x + e3.y + e3.z) - a - c;                  // the middle one: distance to the face's edge
         float  age = gA[i].w;
-        float  fade = age < 0.6 ? smoothstep(0.0, 0.15, age) : exp(-(age - 0.6) * 0.38);
+        float  code = gB[i].w;
+        int    side = int(fmod(code, 8.0) + 0.5);
+        float  chainN = floor(code / 8.0);
+        float3 e3 = min(saturate(l), 1.0 - saturate(l));
+        float  a = min(e3.x, min(e3.y, e3.z)), c = max(e3.x, max(e3.y, e3.z));
+        float  edge = (e3.x + e3.y + e3.z) - a - c;                 // distance to the nearest edge of this face
         float3 col = pow(max(gB[i].rgb, 0.0), 2.2);
-        col = col / max(max(col.r, max(col.g, col.b)), 0.05);       // its hue at full brightness
-        acc += col * (exp(-edge * 26.0) * 1.1 + 0.10) * fade;
+        col = col / max(max(col.r, max(col.g, col.b)), 0.05);
+        // how far along the block the light has travelled from the stitched side (0..1 over 0.12 s)
+        float  along = 0.5;
+        if (side == 1) along = l.x; else if (side == 2) along = 1.0 - l.x; else if (side == 3) along = l.y;
+        else if (side == 4) along = 1.0 - l.y; else if (side == 5) along = l.z; else if (side == 6) along = 1.0 - l.z;
+        float  drawn = side > 0 ? step(along, age / 0.12) : smoothstep(0.0, 0.10, age);
+        // the stitch: the edges of the face it shares with the block before it
+        float  stitchD = side == 1 ? l.x : side == 2 ? 1.0 - l.x : side == 3 ? l.y : side == 4 ? 1.0 - l.y : side == 5 ? l.z : side == 6 ? 1.0 - l.z : 1.0;
+        float  stitch = side > 0 ? exp(-stitchD * 40.0) * exp(-edge * 30.0) : 0.0;
+        // the pulse down the chain: one bright band every ~6 blocks, moving forward
+        float  pulse = 0.5 + 0.5 * cos((chainN - (TIME - 0.0) * 9.0) * 1.05);
+        float  fresh = exp(-age * 2.2);                              // the first second is the show
+        float  calm  = (age < 0.6 ? 1.0 : exp(-(age - 0.6) * 0.38));
+        float  edgeL = exp(-edge * 32.0);
+        acc += col * drawn * (edgeL * (0.55 + 1.6 * fresh + 0.7 * pulse * fresh) * calm + stitch * 2.2 * fresh + 0.05 * calm);
     }
     return acc;
 }

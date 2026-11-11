@@ -1410,6 +1410,37 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             for (int a = 0; a < 3; ++a) lo[a] = std::min(lo[a], p[a]), hi[a] = std::max(hi[a], p[a] + 1.0f);
             ++ng;
         }
+        // the fuse: each fresh block is stitched to the block placed just before it next to it (a bridge being built,
+        // 0.03-0.6 s apart, sharing a face). gB.w = side the stitch comes from (1..6: -x +x -y +y -z +z, 0 none)
+        // + 8 * its place along the chain (the pulse runs down the chain at the builder's pace)
+        {
+            auto& c = f.cb;
+            int prev[48]; int chainN[48];
+            for (uint32_t i = 0; i < ng; ++i) {
+                prev[i] = -1; float bestGap = 1e9f;
+                for (uint32_t k = 0; k < ng; ++k) {
+                    float const gap = c.gA[k][3] - c.gA[i][3];             // older by
+                    if (k == i || gap < 0.03f || gap > 0.6f) continue;
+                    int const dx = int(c.gA[i][0] - c.gA[k][0]), dy = int(c.gA[i][1] - c.gA[k][1]), dz = int(c.gA[i][2] - c.gA[k][2]);
+                    if (std::abs(dx) + std::abs(dy) + std::abs(dz) != 1) continue;
+                    if (gap < bestGap) bestGap = gap, prev[i] = int(k);
+                }
+            }
+            for (uint32_t i = 0; i < ng; ++i) { // chain position: steps back to the start (bounded)
+                int n = 0, q = prev[i];
+                while (q >= 0 && n < 64) ++n, q = prev[q];
+                chainN[i] = n;
+            }
+            for (uint32_t i = 0; i < ng; ++i) {
+                int side = 0;
+                if (prev[i] >= 0) {
+                    int const k = prev[i];
+                    int const dx = int(c.gA[i][0] - c.gA[k][0]), dy = int(c.gA[i][1] - c.gA[k][1]), dz = int(c.gA[i][2] - c.gA[k][2]);
+                    side = dx < 0 ? 2 : dx > 0 ? 1 : dy < 0 ? 4 : dy > 0 ? 3 : dz < 0 ? 6 : 5;   // the face toward the previous block
+                }
+                c.gB[i][3] = float(side + 8 * chainN[i]);
+            }
+        }
         f.cb.m1[0] = float(ng);
         std::memcpy(f.cb.trMin, lo, 12); std::memcpy(f.cb.trMax, hi, 12);
         gMatchStatus = "phase " + std::to_string(b->phase).substr(0, 4) + " (target " + std::to_string(int(b->phaseTarget)) + "), beds " +
