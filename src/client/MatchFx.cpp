@@ -22,7 +22,6 @@
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/world/actor/Actor.h"
-#include "mc/world/actor/ActorFlags.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/level/Level.h"
 #include "mc/deps/core/math/Color.h"
@@ -540,8 +539,15 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
         try {
             for (Actor* a : lp->getLevel().getRuntimeActorList()) {
                 if (!a || a->isPlayer()) continue;
-                auto const p2 = a->getPosition();
+                auto p2 = a->getPosition();
+                bool const parked = p2.y < -400.0f;             // ours: moved out of sight (below), its real spot is kept
                 for (auto& b : gBeds) {
+                    if (parked) { // a model we moved: find its bed by x/z
+                        if (std::abs(p2.x - b.vis[0]) > 0.01f || std::abs(p2.z - b.vis[2]) > 0.01f) continue;
+                        if (!hide || !b.alive) { a->setPos(Vec3{b.vis[0], b.vis[1], b.vis[2]}); } // give it back
+                        else b.visMs = now;
+                        continue;
+                    }
                     if (std::abs(p2.x - (b.x + 0.5)) > 2.0 || std::abs(p2.z - (b.z + 0.5)) > 2.0 || std::abs(p2.y - b.y) > 2.5) continue;
                     std::string t;
                     try { t = a->getTypeName(); } catch (...) {}
@@ -552,7 +558,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
                     }
                     if (t.find("bed") == std::string::npos) continue; // only the bed model (not a generator, a hologram)
                     b.vis[0] = p2.x, b.vis[1] = p2.y, b.vis[2] = p2.z, b.yaw = a->getRotation().y, b.visMs = now;
-                    if (hide && b.alive) a->setStatusFlag(ActorFlags::Invisible, true);
+                    // hide it on this screen: move the model out of sight (client side only - the server never hears of
+                    // it, the bed's hitbox block is where it always was)
+                    if (hide && b.alive) a->setPos(Vec3{p2.x, -500.0f, p2.z});
                 }
             }
         } catch (...) {}
