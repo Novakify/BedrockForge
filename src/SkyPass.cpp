@@ -1306,6 +1306,25 @@ void testKill() { ++gTestKillReq; }
 std::atomic<int> gTestBedReq{0};
 struct TestBed { float p[3]; float yaw = 0; int64_t at = -1000000; } gTestBed;
 void testBed() { ++gTestBedReq; }
+// death scenes (LyricsFlow's death animations, by 374m): each kill gets one, dealt from a shuffled bag of all seven
+// (a new shuffle when it runs out, never the same one twice in a row)
+static int deathSceneFor(uint64_t key) {
+    static uint64_t keys[32]{}; static int vals[32]{}; static int nk = 0;
+    for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
+    static int bag[7]; static int left = 0, last = -1;
+    static uint32_t rng = 0x9E3779B9u ^ uint32_t(steadyMs());
+    auto rnd = [&] { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; };
+    if (left == 0) {
+        for (int i = 0; i < 7; ++i) bag[i] = i;
+        for (int i = 6; i > 0; --i) std::swap(bag[i], bag[rnd() % uint32_t(i + 1)]);
+        if (bag[6] == last) std::swap(bag[6], bag[0]);   // the next one dealt is bag[left - 1] = bag[6]
+        left = 7;
+    }
+    int const v = bag[--left];
+    last = v;
+    keys[nk % 32] = key; vals[nk % 32] = v; ++nk;
+    return v;
+}
 static MatchFrame matchFrame(WorldFxLook const& look) {
     int64_t const now = steadyMs();
     std::lock_guard l(gMatchMutex);
@@ -1388,7 +1407,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             float const age = float(now - e.atMs) / 1000.0f;
             if (age < 0) continue;
             if (age > 6.5f) break; // older ones are older still
-            if ((e.kind == 2 && age > 0.5f) || (e.kind == 1 && age > 4.2f) || (e.kind == 3 && age > 3.6f) || (e.kind == 4 && age > 4.2f) ||
+            if ((e.kind == 2 && age > 0.5f) || (e.kind == 1 && age > 4.2f) || (e.kind == 3 && age > 3.9f) || (e.kind == 4 && age > 4.0f) ||
                 (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 6.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
             if (e.kind >= 3 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
@@ -1398,6 +1417,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eC[ne][0] = float(e.seed % 100000u);
             c.eC[ne][1] = e.kind == 8 ? float(e.floorDy) * 0.1f : (e.floorDy > 64 ? -1.0f : float(e.floorDy));   // hits: view yaw
             c.eC[ne][2] = e.col[3];   // hits: 2 you were hit, 1 your hit, 0 someone else's
+            c.eC[ne][3] = (e.kind == 3 || e.kind == 4) ? float(deathSceneFor(uint64_t(e.atMs) * 31u + uint64_t(e.seed))) : 0.0f;
             ++ne;
         }
         if (float const ta = float(now - gTestKill.at) / 1000.0f; ta >= 0.0f && ta < 4.2f && ne < 8) {
@@ -1405,6 +1425,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eA[ne][0] = std::floor(gTestKill.p[0]); c.eA[ne][1] = std::floor(gTestKill.p[1]); c.eA[ne][2] = std::floor(gTestKill.p[2]); c.eA[ne][3] = ta;
             c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = float(gTestKill.kind);
             c.eC[ne][0] = 4242.0f; c.eC[ne][1] = -1.0f;
+            c.eC[ne][3] = float(deathSceneFor(uint64_t(gTestKill.at) + 7u));
             f.cb.m1[2] = 1.0f;
             ++ne;
         }

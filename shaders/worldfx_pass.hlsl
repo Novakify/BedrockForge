@@ -508,6 +508,7 @@ float figSegDist(float3 ro, float3 rd, float3 a, float3 b, out float tRay) { // 
     tRay = max(dot(q - ro, rd), 0.0);
     return length(ro + rd * tRay - q);
 }
+#include "death_scenes.hlsli"
 float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
     int nt = int(m0.x);
     float best = sceneT; float3 col = 0.0; bool hit = false;
@@ -969,11 +970,14 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
         float4 sh = shards(rd, sceneT);
         if (sh.w > 0.0) { o = sh.rgb; sceneT = sh.w; }
     }
+    [branch] if (m0.y > 0.5 && m1.z > 0.5) {   // a kill: its death scene
+        float4 ds = deathScenes(rd, sceneT);
+        if (ds.w > 0.0) { o = ds.rgb; sceneT = ds.w; }
+    }
     [branch] if (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) {
         float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0)) + shockwaves(rd, sceneT, sceneT > 1e8);
         o = pow(lin, 1.0 / 2.2);
     }
-    [branch] if (m0.y > 0.5 && m0.w > 0.0 && m1.z > 0.5) o = pow(pow(max(o, 0.0), 2.2) + killLight(rd, sceneT), 1.0 / 2.2);
     [branch] if (sceneT > 1e8 && m2.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + fallenStars(rd), 1.0 / 2.2);
     [branch] if (m2.y > 0.5) o = pow(pow(max(o, 0.0), 2.2) + projTrails(rd, sceneT), 1.0 / 2.2);
     [branch] if (m1.z > 0.5) {
