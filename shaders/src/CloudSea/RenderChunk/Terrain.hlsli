@@ -138,12 +138,18 @@ float4 main(PSIn i) : SV_Target {
             float3 vt = float3(dot(Vw, Tp), dot(Vw, Bp), max(dot(Vw, nP), 0.25));
             float2 stepT = -vt.xy / vt.z * (2.6 / 6.0) * near;          // texels per layer
             float2 q = float2(ti - tile) + 0.5;
+            // (seen in game: marching off the tile smeared its border ring into glowing seams between blocks - the
+            //  march now fades out within 2 texels of the block's edge and never leaves the tile)
+            float2 e2 = min(q, 32.0 - q);
+            stepT *= saturate((min(e2.x, e2.y) - 1.0) / 2.0);
             float  layer = 0.0, hgt = 0.0;
             [unroll] for (int k = 0; k < 6; k++) {
                 int2 tq = tile + int2(clamp(floor(q), 0.0, 31.0));
                 hgt = 1.0 - csLuma(s_MatTextureTexture.Load(int3(tq, 0)).rgb) * 1.25;   // dark = deep
                 if (layer >= hgt) break;
-                q += stepT; layer += 1.0 / 6.0;
+                float2 qn = q + stepT;
+                if (any(qn < 0.5) || any(qn > 31.5)) break;
+                q = qn; layer += 1.0 / 6.0;
             }
             int2 tn = tile + int2(clamp(floor(q), 0.0, 31.0));
             if (any(tn != ti)) {
