@@ -221,6 +221,7 @@ float4 shards(float3 rd, float sceneT) {
             best = tN, col = lit, hit = true;
             continue;
         }
+        if (kind > 4.5) continue;   // respawn / victory: screen and sky effects, not pieces
         if (kind > 2.5) { // a kill: the player's body, in voxels of their team colour, holds for a beat, then bursts
             if (age > 3.6) continue;
             float3 base = corner + float3(0.5, 0.0, 0.5);                  // feet
@@ -409,7 +410,7 @@ float3 killLight(float3 rd, float sceneT) {
     int ne = int(m0.y);
     [loop] for (int i = 0; i < ne; i++) {
         float kind = eB[i].w, age = eA[i].w;
-        if (kind < 2.5 || age > 4.2) continue;
+        if (kind < 2.5 || kind > 4.5 || age > 4.2) continue;
         bool  fin = kind > 3.5;
         float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
         team = team / max(max(team.r, max(team.g, team.b)), 0.05);
@@ -454,7 +455,7 @@ float3 killGlow(float3 W) {
     int ne = int(m0.y);
     [loop] for (int i = 0; i < ne; i++) {
         float kind = eB[i].w, age = eA[i].w;
-        if (kind < 2.5 || age > 4.2) continue;
+        if (kind < 2.5 || kind > 4.5 || age > 4.2) continue;
         float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
         team = team / max(max(team.r, max(team.g, team.b)), 0.05);
         float3 d = W - (eA[i].xyz + float3(0.5, 0.9, 0.5));
@@ -463,6 +464,43 @@ float3 killGlow(float3 W) {
         acc += team * flash * exp(-r2 / (kind > 3.5 ? 9.0 : 5.0));
     }
     return acc * m0.w;
+}
+// ---- you respawn: the world comes back from the middle of your view outward, a ring of your team's colour on the
+//      front, behind it everything still grey (you were not there yet)
+float3 respawnFx(float3 o, float3 rd, float age, float3 team) {
+    float a  = acos(clamp(dot(rd, c0.xyz), -1.0, 1.0));          // angle from the centre of the view
+    float R  = age * 1.6;                                        // radians: the whole view in ~0.8 s
+    float back = smoothstep(R, R - 0.12, a);                     // already back
+    float l  = dot(o, float3(0.299, 0.587, 0.114));
+    float3 grey = l * float3(0.55, 0.58, 0.68);
+    float3 r = lerp(grey, o, back);
+    r += team * exp(-pow((a - R) / 0.05, 2.0)) * 0.9 * saturate(1.4 - age);
+    return r;
+}
+// ---- a team wins: fireworks of their colour over the map - bursts of sparks that bloom, fall and fade
+float3 victory(float3 rd, float age, float3 team, float seed) {
+    float3 acc = 0.0;
+    [loop] for (int b = 0; b < 7; b++) {
+        float sb = seed * 0.0007 + float(b) * 3.91;
+        float t0 = float(b) * 0.75 + h1(sb) * 0.4;               // one after another
+        float ab = age - t0;
+        if (ab < 0.0 || ab > 2.6) continue;
+        float az = h1(sb + 1.0) * 6.2832, el = 0.35 + 0.45 * h1(sb + 2.0);
+        float3 dir = float3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
+        float3 col = b % 3 == 2 ? lerp(team, float3(1, 1, 1), 0.6) : team;
+        float rad = 0.16 * (1.0 - exp(-ab * 3.0));               // the shell opens fast then hangs
+        float3 dd = rd - dir;
+        float drop = 0.035 * ab * ab;                            // and sags as it falls
+        dd.y += drop;
+        float r = length(dd);
+        // sparks: the shell broken into points (angle-hashed)
+        float2 uv = float2(atan2(dd.z, dd.x), dd.y / max(r, 1e-4));
+        float  spark = step(0.82, hash12(floor(uv * float2(9.0, 7.0)) + float2(b, b * 3)));
+        float  shell = exp(-pow((r - rad) / 0.010, 2.0)) * (0.35 + 1.6 * spark);
+        float  flash = exp(-r * r / 0.0009) * exp(-ab * 8.0) * 2.0;
+        acc += col * (shell + flash) * pow(saturate(1.0 - ab / 2.6), 1.5);
+    }
+    return acc;
 }
 // everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
 float3 matchOver(float3 o, float3 rd, float sceneT) {
@@ -476,6 +514,16 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     }
     [branch] if (m0.y > 0.5 && m0.w > 0.0 && m1.z > 0.5) o = pow(pow(max(o, 0.0), 2.2) + killLight(rd, sceneT), 1.0 / 2.2);
     [branch] if (m0.x > 0.5 && m0.z > 0.0) o = pow(pow(max(o, 0.0), 2.2) + bedAlarm(rd) * m0.z, 1.0 / 2.2);
+    [branch] if (m1.z > 0.5) {
+        int ne = int(m0.y);
+        [loop] for (int i = 0; i < ne; i++) {
+            float kind = eB[i].w, age = eA[i].w;
+            float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
+            team = team / max(max(team.r, max(team.g, team.b)), 0.05);
+            if (kind > 4.5 && kind < 5.5 && age < 1.6) o = respawnFx(o, rd, age, team);
+            if (kind > 5.5 && sceneT > 1e8) o = pow(pow(max(o, 0.0), 2.2) + victory(rd, age, team, eC[i].x), 1.0 / 2.2);
+        }
+    }
     return o;
 }
 bool matchActive() { return (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) || (m0.y > 0.5 && m0.w > 0.0); }
