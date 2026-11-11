@@ -559,15 +559,25 @@ int classify(uint8_t const* px, unsigned pitch) {
         }
     if (!cnt) { gLastClassInfo = "empty (all alpha 0)"; return -1; }
     // shape distance = differing texels (packs and versions move a few pixels); colour splits shared shapes
-    int best = -1, bestHam = 1 << 30;
-    long bestD = 1L << 40;
-    for (int v = 0; v < shaders::kVariants; ++v) {
-        int ham = 0;
-        for (int k = 0; k < 64; ++k) ham += __popcnt(bits[k] ^ shaders::kVariant[v].mask[k]);
-        long d = 0;
-        for (int c = 0; c < 3; ++c) { long e = sum[c] / cnt - shaders::kVariant[v].avg[c]; d += e * e; }
-        if (ham < bestHam || (ham == bestHam && d < bestD)) { bestHam = ham; bestD = d; best = v; }
+    // A pack can draw one armour on another's shape (Cloud Sea's netherite has diamond's outline - it was classified
+    // as diamond, seen in game 2026-11-11): every shape within 6 texels of the nearest is a candidate, and the
+    // mean colour picks among them.
+    int  ham[32]{};
+    long dist[32]{};
+    int  bestHam = 1 << 30;
+    for (int v = 0; v < shaders::kVariants && v < 32; ++v) {
+        for (int k = 0; k < 64; ++k) ham[v] += __popcnt(bits[k] ^ shaders::kVariant[v].mask[k]);
+        for (int c = 0; c < 3; ++c) { long e = sum[c] / cnt - shaders::kVariant[v].avg[c]; dist[v] += e * e; }
+        bestHam = std::min(bestHam, ham[v]);
     }
+    int  best = -1;
+    long bestD = 1L << 40;
+    for (int v = 0; v < shaders::kVariants && v < 32; ++v)
+        if (ham[v] <= bestHam + 6 && dist[v] < bestD) { bestD = dist[v]; best = v; }
+    if (bestD > 3 * 50 * 50)   // the nearest shapes are all the wrong colour: a repaint on another armour's shape
+        for (int v = 0; v < shaders::kVariants && v < 32; ++v)
+            if (ham[v] <= 100 && dist[v] < bestD) { bestD = dist[v]; best = v; }
+    bestHam = best >= 0 ? ham[best] : bestHam;
     char b[160];
     std::snprintf(b, sizeof b, "%ld painted, mean %ld,%ld,%ld, nearest %s_%d (%d texels off)", cnt, sum[0] / cnt, sum[1] / cnt, sum[2] / cnt,
                   best >= 0 ? shaders::kVariant[best].mat : "-", best >= 0 ? shaders::kVariant[best].layer : 0, bestHam);
