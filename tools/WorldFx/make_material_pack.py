@@ -59,8 +59,20 @@ CLASSES: list[tuple[int, str, str]] = [
                  r"muddy_mangrove_roots_(side|top))$"),
     (17, "bricks", r"^(brick|nether_brick|red_nether_brick|mud_bricks)$"),
     (18, "quartz", r"^quartz_block_(bottom|chiseled|chiseled_top|lines|lines_top|side|top)$"),
-    (19, "snow", r"^(snow|powder_snow|ice_packed|blue_ice)$"),
+    (19, "snow", r"^(snow|powder_snow)$"),
+    # living blocks (2026-11-11): ice with depth, grass and leaves in the wind, lights that breathe, flowers that glow.
+    # Leaves / plants / lamps keep their cut-out: only their opaque texels get the id (alpha 255 - 4 * id stays > 0.5).
+    (20, "ice", r"^(ice_packed|blue_ice)$"),
+    (21, "grass", r"^(grass_top|grass_carried|moss_block|pale_moss_block)$"),
+    (22, "lamp", r"^(glowstone|sea_lantern|shroomlight|redstone_lamp_on|\w*froglight\w*|pumpkin_face_on|lantern|soul_lantern|"
+                 r"torch_on|soul_torch|end_rod|magma|beacon|campfire_log_lit|soul_campfire_log_lit)$"),
+    (23, "leaves", r"^(leaves_\w+|\w+_leaves(_opaque)?)$"),
+    (24, "plant", r"^(tallgrass|fern|double_plant_(grass|fern)_(bottom|top)|vine|seagrass\w*|deadbush|sweet_berry_bush_stage\d|"
+                  r"azalea_plant|waterlily)$"),
+    (25, "flower", r"^(flower_\w+|red_flower\w*|double_plant_(paeonia|rose|syringa|sunflower)_\w+|torchflower|"
+                   r"azalea_leaves_flowers\w*|flowering_azalea_\w+|pink_petals|wildflowers)$"),
 ]
+CUTOUT = {"leaves", "plant", "flower", "lamp"}   # tagged texel by texel (their transparent texels stay transparent)
 STEP = 4
 
 
@@ -93,7 +105,21 @@ def main():
         im = Image.open(f)
         rgba = np.array(im.convert("RGBA"))
         if rgba[..., 3].min() < 255:
-            skipped_alpha.append(rel)
+            if CLASSES[cid - 1][1] not in CUTOUT:
+                skipped_alpha.append(rel)
+                continue
+            if rgba[..., 3].max() < 255 or ((rgba[..., 3] > 0) & (rgba[..., 3] < 255)).any():
+                skipped_alpha.append(rel)   # soft edges: not a clean cut-out
+                continue
+            rgba[..., 3] = np.where(rgba[..., 3] > 0, 255 - STEP * cid, 0)
+            key = (rel, f.suffix.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            dst = out_tex / f.relative_to(src)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(rgba, "RGBA").save(dst)
+            found[cid].append(rel)
             continue
         key = (rel, f.suffix.lower())
         if key in seen:

@@ -48,6 +48,20 @@ float3 wvHysWind(float3 wp, float t, float strength) {                          
     return strength * (gust + 0.1 * wobble);
 }
 
+#ifdef WAVE_LIVING
+// Living world (Cloud Sea): gust fronts. The game gives this shader chunk-local positions only (the camera-relative
+// world position slides as you walk), so the field is built from travelling waves that repeat every 16 blocks: seamless
+// across chunk borders, stable as you move. u = x, v = z + 16 y (both chunk-local; a chunk step changes them by a
+// multiple of 16). The fragment shader gets (gust, u, v) in color2.rgb - the game sends FogColor there, which the
+// fragment cbuffer already has.
+float wvGust(float u, float v, float t) {
+    const float k = 6.2831853 / 16.0;
+    float s = 0.50 * sin(k * (u + v) - t * 2.6)                 // fronts from the south-west
+            + 0.30 * sin(k * (2.0 * u + v) - t * 3.3 + 1.7)
+            + 0.20 * sin(k * (u - 2.0 * v) - t * 1.9 + 4.1);
+    return smoothstep(0.30, 0.95, s * 0.5 + 0.5);
+}
+#endif
 VSOut main(VSIn i) {
     VSOut o = (VSOut)0;
     uint2 u   = (uint2)round(i.texcoord0 * 65535.0);
@@ -71,7 +85,12 @@ VSOut main(VSIn i) {
         float  t = ViewPositionAndTime.w;
   #if WAVE_STYLE == 1
         float sky = lm.y;
-        worldPos += wvHysWind(p, t, sky * sky * 0.25 * (leaf ? 0.5 : 1.0)) * WAVE_STRENGTH;
+    #ifdef WAVE_LIVING
+        float gk = 0.45 + 1.25 * wvGust(p.x, p.z + 16.0 * p.y, t);
+    #else
+        float gk = 1.0;
+    #endif
+        worldPos += wvHysWind(p, t, sky * sky * 0.25 * (leaf ? 0.5 : 1.0) * gk) * WAVE_STRENGTH;
   #elif WAVE_STYLE == 2
         worldPos += (leaf ? wvCalcMove(p, t, 0.25, 1.0, float2(0.28, 0.18))
                           : wvCalcMove(p, t, 1.35, 1.0, float2(0.25, 0.06))) * WAVE_STRENGTH;
@@ -99,7 +118,12 @@ VSOut main(VSIn i) {
     o.texcoord2 = flags;
 #endif
 #ifdef HAS_OUT_COLOR2
+  #ifdef WAVE_LIVING
+    o.color2    = float4(wvGust(i.position0.x, i.position0.z + 16.0 * i.position0.y, ViewPositionAndTime.w),
+                         i.position0.x, i.position0.z + 16.0 * i.position0.y, fog);
+  #else
     o.color2    = float4(FogColor.rgb, fog);
+  #endif
 #endif
 #ifdef HAS_OUT_TEXCOORD1
     o.texcoord1 = lm;

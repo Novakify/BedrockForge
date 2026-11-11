@@ -45,11 +45,34 @@ float3 csVoid(float2 f, float3 vt, float t) {   // f: 0..1 across the face, vt: 
     return acc;
 }
 
+// value noise that repeats every `per` cells (so a field over chunk-local coordinates is seamless across chunks)
+float csPVN(float2 p, float per) {
+    float2 i0 = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float2 a = fmod(i0 + per * 64.0, per), b = fmod(i0 + 1.0 + per * 64.0, per);
+    return lerp(lerp(csHash(a), csHash(float2(b.x, a.y)), f.x), lerp(csHash(float2(a.x, b.y)), csHash(b), f.x), f.y);
+}
+// water height: three octaves drifting with the wind; 16 blocks = 8, 20 and 40 cells (whole numbers: seamless)
+float csRipple(float2 uv, float t) {
+    return csPVN(uv * 0.5 + float2(t * 0.30, t * 0.18), 8.0) * 0.55
+         + csPVN(uv * 1.25 - float2(t * 0.42, -t * 0.27), 20.0) * 0.30
+         + csPVN(uv * 2.5 + float2(t * 0.65, t * 0.50), 40.0) * 0.15;
+}
+
 float4 main(PSIn i) : SV_Target {
     csBegin(csLuma(s_LightMapTextureTexture.SampleLevel(s_LightMapTextureSampler, float2(0.0, 1.0), 0.0).rgb), ViewPositionAndTime);
     float4 d = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0);
 #if defined(PASS_ALPHATEST)
-    bool kill = d.a < 0.5;
+    // cut-outs carrying a material id (leaves, plants, flowers, lamps: alpha 255 - 4 * id on their solid texels) keep
+    // the same coverage as vanilla: the test is against half of that texel's own solid alpha
+    float aId;
+    {
+        uint aw0, ah0;
+        s_MatTextureTexture.GetDimensions(aw0, ah0);
+        float a0 = s_MatTextureTexture.Load(int3(int2(floor(i.texcoord0 * float2(aw0, ah0))), 0)).a;
+        aId = a0 > 0.5 ? a0 : 0.62;
+    }
+    bool kill = d.a < 0.5 * aId;
 #if defined(FLAG_DITHERING_ON)
     if (i.texcoord2.x > 0.5)
         kill = kill || bfDitherKill(i.color3.xyz, ViewPositionAndTime.xyz, u_view[2].xyz, i.color1, DitherParams2[2], DitherParams);
@@ -91,7 +114,7 @@ float4 main(PSIn i) : SV_Target {
     int    mid  = 0;
 #else
     int    mid  = int(round((1.0 - t0.a) * 255.0 / 4.0));
-    if (mid > 19) mid = 0;
+    if (mid > MAT_LAST) mid = 0;
 #endif
     CsMat  m    = csMat(mid);
     // obsidian: the polished streaks catch the sky, the dark body stays dark (the void lives there) - one even mirror
@@ -152,6 +175,76 @@ float4 main(PSIn i) : SV_Target {
     float blk = pow(saturate(lm.x), 1.7);
     float flick = 0.90 + 0.10 * csVN(float2(CS_TIME * 2.3, dot(floor(wp * 0.25), float3(1.7, 9.1, 4.3))));
     lit += alb * float3(1.0, 0.62, 0.32) * blk * 1.4 * flick * (1.0 - 0.6 * saturate(lm.y));
+    // ---- living blocks: the wind, light that breathes, depth (a per-block id and the gust come from the vertex
+    //      shader in color2: x = gust 0..1, yz = chunk-local u, v - see _shared/RenderChunkWave.vertex.hlsli)
+    float  gust = saturate(i.color2.x);
+    float2 bcell = floor(i.color2.yz - float2(n.x, n.z + 16.0 * n.y) * 0.5);   // this block, inside its subchunk
+    float  bh = csHash(bcell * float2(1.31, 0.73) + 11.0);
+    float  skyK = saturate(lm.y);
+#if !defined(PASS_TRANSPARENT)
+    [branch] if (mid == MAT_LEAVES || mid == MAT_GRASS || mid == MAT_PLANT || (mid == 0 && leaf > 0.5)) {
+        // a gust flips leaves and blades over: their pale undersides show, the wind visibly rolls across the island
+        float k = gust * skyK * skyK * (mid == MAT_GRASS ? 0.22 : 0.34);
+        lit = lerp(lit, csLuma(lit) * float3(1.04, 1.12, 1.10) * 1.30 + lit * 0.10, k);
+        // single leaves catch the sun as they turn (each block, each texel its own rhythm; more inside a gust)
+        [branch] if (mid != MAT_GRASS && fade > 0.0) {
+            float h  = csHash(float2(ti) * 0.917 + bcell * 7.31);
+            float on = step(0.935, h);
+            float fl = pow(saturate(sin(CS_TIME * (1.8 + 2.6 * frac(h * 13.7)) + h * 40.0)), 14.0) * (0.35 + 0.9 * gust);
+            lit += CS_SUNC * float3(1.0, 0.92, 0.62) * 0.55 * fl * on * sunVis * fade * (1.0 - CS_NIGHT);
+        }
+        // grass: dew. A few blades hold a drop that winks as you move (cool white, more after the sun goes)
+        [branch] if (mid == MAT_GRASS && n.y > 0.5 && fade > 0.0) {
+            float h  = csHash(float2(ti) * 1.37 + bcell * 3.17);
+            float on = step(0.982, h);
+            float tw = pow(saturate(0.5 + 0.5 * sin(dot(V, float3(23.0, 17.0, 29.0)) + h * 90.0 + CS_TIME * 0.6)), 24.0);
+            lit += lerp(float3(1.0, 0.95, 0.85), float3(0.75, 0.85, 1.15), CS_NIGHT) * on * tw * fade * skyK * lerp(0.35, 1.0, max(CS_DUSK, CS_NIGHT));
+        }
+    }
+    [branch] if (mid == MAT_FLOWER) {
+        // petals (the texels that aren't stem green) hold the light: backlit by day, a soft glow of their own after dusk
+        float pet = smoothstep(0.04, 0.16, max(alb.r, alb.b) - alb.g) + smoothstep(0.55, 0.75, csLuma(alb)) * 0.6;
+        pet = saturate(pet);
+        float breath = 0.80 + 0.20 * sin(CS_TIME * 1.3 + bh * 6.28);
+        lit += alb * CS_SUNC * pow(saturate(dot(-V, CS_SUN)), 4.0) * 0.9 * pet * sunVis;
+        lit += alb * float3(1.0, 0.92, 1.05) * (0.05 + 0.55 * max(CS_DUSK, CS_NIGHT)) * pet * breath * lerp(0.5, 1.0, skyK);
+    }
+    [branch] if (mid == MAT_LAMP) {
+        // lights breathe: a slow swell, and a flame's quick flutter on top (each lamp its own)
+        float bright = smoothstep(0.30, 0.65, csLuma(c));
+        float breath = 0.93 + 0.07 * sin(CS_TIME * 1.1 + bh * 6.28) + 0.06 * (csVN(float2(CS_TIME * 9.0, bh * 50.0)) - 0.5);
+        lit = lit * (1.0 + 0.30 * bright * breath) + alb * float3(1.0, 0.80, 0.55) * 0.22 * bright * breath;
+    }
+    [branch] if (mid == MAT_SNOW && fade > 0.0) {
+        // diamond dust: a few crystals flash when YOUR eye lines up with them (not only the sun's), each its own colour
+        float3 hh = csHash3(float2(ti) * 1.11 + bcell * 5.7);
+        float on = step(0.955, hh.x);
+        float3 dR = normalize(hh - 0.5 + n * 1.1);
+        float g2 = pow(saturate(dot(reflect(-V, n), dR)), 500.0);
+        float3 fire = saturate(abs(frac(hh.y + float3(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0);
+        lit += (0.55 + 0.9 * fire) * g2 * on * fade * 1.6 * lerp(0.35, 1.0, skyK);
+        // snow in shade goes blue (the sky's light), in the sun it stays warm
+        float sunlit = sunVis * saturate(dot(n, CS_SUN) * 5.0);
+        lit = lerp(lit, lit * float3(0.84, 0.95, 1.22), (1.0 - sunlit) * 0.45 * (1.0 - CS_NIGHT));
+    }
+    [branch] if (mid == MAT_ICE && fade > 0.0 && dot(T, T) > 0.5) {
+        // looking INTO ice: its own pattern twice more, deeper down, cold and dim, with trapped bubbles
+        float2 f  = float2(ti - tile) / 32.0;
+        float3 vt = float3(dot(V, T), dot(V, B), dot(V, n));
+        float  inv = 1.0 / max(vt.z, 0.25);
+        float3 deep = float3(0, 0, 0);
+        [unroll] for (int L = 1; L <= 2; L++) {
+            float2 q = frac(f - vt.xy * inv * (0.28 * float(L)));
+            float3 tc = s_MatTextureTexture.Load(int3(tile + int2(q * 32.0), 0)).rgb;
+            deep += csLin(tc) * float3(0.45, 0.78, 1.10) * (L == 1 ? 0.55 : 0.35);
+            float hb = csHash(floor(q * 32.0) + 7.0 * float(L));
+            deep += float3(0.75, 0.90, 1.0) * step(0.992, hb) * 0.9 * (1.0 / float(L));
+        }
+        float3 amb = lerp(float3(0.20, 0.19, 0.33), CS_SUNC * 0.35, 0.4) * lerp(0.15, 1.0, skyK);
+        float  F = pow(1.0 - saturate(vt.z), 3.0);
+        lit = lit * (0.62 + 0.38 * F) + deep * amb * 1.6 * (1.0 - F);
+    }
+#endif
 #if !defined(PASS_TRANSPARENT)
     // obsidian: the void inside (strongest at night, never on the surface streaks)
     [branch] if (mid == MAT_OBSIDIAN && fade > 0.0 && dot(T, T) > 0.5) {
@@ -174,14 +267,19 @@ float4 main(PSIn i) : SV_Target {
         bool  water = n.y > 0.9 && i.color0.b > i.color0.r + 0.06 && a < 0.99;
         float3 nw = n;
         if (water) {
-            float ripple = csLuma(d.rgb) - 0.5;      // the animated water texture gives world-stable ripples
-            nw = normalize(float3(ripple * 0.22, 1.0, ripple * 0.14));
+            // ripples: wind-driven little waves (three octaves, seamless across chunks), the sun breaks into a glittering
+            // path on them
+            float2 p0 = i.color2.yz;
+            float  e = 0.06;
+            float  h0 = csRipple(p0, CS_TIME), hx = csRipple(p0 + float2(e, 0), CS_TIME), hz = csRipple(p0 + float2(0, e), CS_TIME);
+            float  amp = 0.55 * lerp(0.6, 1.0, gust);
+            nw = normalize(float3(-(hx - h0) / e * amp, 1.0, -(hz - h0) / e * amp));
         }
         float3 R    = reflect(-V, nw);
         float  ndv  = saturate(dot(nw, V));
         float  F    = (water ? 0.02 : 0.05) + (water ? 0.98 : 0.95) * pow(1.0 - ndv, 5.0);
         float3 refl = csReflect(R) * lerp(0.35, 1.0, lm.y);
-        float3 glint = float3(1.6, 1.15, 0.75) * pow(saturate(dot(R, CS_SUN)), water ? 240.0 : 400.0) * (water ? 2.2 : 3.0) * sunVis;
+        float3 glint = float3(1.6, 1.15, 0.75) * pow(saturate(dot(R, CS_SUN)), water ? 600.0 : 400.0) * (water ? 3.0 : 3.0) * sunVis;
         float  k    = saturate(F * (water ? 0.85 : 0.7));
         // straight-alpha blend: put the reflection in without darkening what is behind the glass
         float  aOut = a + k * (1.0 - a);

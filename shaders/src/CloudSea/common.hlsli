@@ -123,6 +123,13 @@ float3 csSky(float3 d) {
 #define MAT_BRICKS 17
 #define MAT_QUARTZ 18
 #define MAT_SNOW 19
+#define MAT_ICE 20      // packed ice, blue ice: depth inside
+#define MAT_GRASS 21    // grass block tops, moss: the wind rolls over them
+#define MAT_LAMP 22     // glowstone, sea lanterns, lanterns, torches: they breathe
+#define MAT_LEAVES 23   // leaves: gusts, fluttering glints
+#define MAT_PLANT 24    // tall grass, ferns, vines
+#define MAT_FLOWER 25   // flowers: petals hold the light, glow softly after dusk
+#define MAT_LAST 25
 struct CsMat {
     float bump;    // relief from the texture's own light/dark pattern (0 = flat)
     float detail;  // 1 = full texture detail, lower = softer / calmer
@@ -159,7 +166,13 @@ CsMat csMat(int id) {
     case MAT_SOIL:       m.bump = 0.60; m.detail = 1.0;  m.spec = 0.0;  break;
     case MAT_BRICKS:     m.bump = 0.90; m.detail = 1.0;  m.spec = 0.04; m.rough = 16.0; break;
     case MAT_QUARTZ:     m.bump = 0.25; m.detail = 0.92;  m.spec = 0.32; m.rough = 70.0; m.refl = 0.14; break;
-    case MAT_SNOW:       m.bump = 0.25; m.detail = 0.9;  m.spec = 0.10; m.rough = 24.0; m.wrap = 0.30; m.sparkle = 0.6; break;
+    case MAT_SNOW:       m.bump = 0.45; m.detail = 0.95; m.spec = 0.10; m.rough = 24.0; m.wrap = 0.30; m.sparkle = 0.9; break;
+    case MAT_ICE:        m.bump = 0.18; m.detail = 1.0;  m.spec = 0.70; m.rough = 160.0; m.refl = 0.26; m.sparkle = 0.5; break;
+    case MAT_GRASS:      m.bump = 0.55; m.detail = 1.0;  m.spec = 0.03; m.wrap = 0.10; break;
+    case MAT_LAMP:       m.bump = 0.20; m.detail = 1.0;  m.spec = 0.10; m.rough = 40.0; break;
+    case MAT_LEAVES:     m.bump = 0.30; m.detail = 1.0;  m.spec = 0.06; m.rough = 30.0; break;
+    case MAT_PLANT:      m.bump = 0.0;  m.detail = 1.0;  m.spec = 0.04; break;
+    case MAT_FLOWER:     m.bump = 0.0;  m.detail = 1.0;  m.spec = 0.05; m.sat = 1.05; break;
     }
     return m;
 }
@@ -170,6 +183,14 @@ float csVN(float2 p) {   // value noise (no texture in these materials)
     float2 i = floor(p), f = frac(p);
     f = f * f * (3.0 - 2.0 * f);
     return lerp(lerp(csHash(i), csHash(i + float2(1, 0)), f.x), lerp(csHash(i + float2(0, 1)), csHash(i + float2(1, 1)), f.x), f.y);
+}
+// ---- wind: gust fronts roll across the map from the south-west (~12 blocks a second). The block vertex shader sways
+//      leaves and plants harder inside a gust (same field: _shared/RenderChunkWave.vertex.hlsli csGustV); here the
+//      gust turns leaves and grass a little silver (their undersides, flipped up), so you SEE the wind cross an island.
+float csGust(float2 xz, float t) {
+    float2 p = xz * 0.045 - float2(0.8660254, 0.5) * t * 0.55;
+    float  g = csVN(p) * 0.65 + csVN(p * 2.1 + 5.3) * 0.35;
+    return smoothstep(0.42, 0.86, g);
 }
 // the high clouds as a polished surface sees them: they drift with the wind and take the hour's light (sun side lit,
 // the rest in shade), so every reflection in the world moves with the sky
@@ -256,8 +277,13 @@ float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float l
     }
     // sparkle: single texels catch the sun as you move (texel-locked, so it never crawls or flickers on its own)
     if (m.sparkle > 0.0) {
-        float g = pow(saturate(dot(reflect(-V, glintN), CS_SUN)), 260.0);
-        c += lerp(float3(1.6, 1.25, 0.95), float3(0.9, 1.05, 1.5), CS_NIGHT) * g * m.sparkle * sunVis * fade * 3.0 * max(CS_LIGHTK, 0.35);
+        float3 Rg = reflect(-V, glintN);
+        float g = pow(saturate(dot(Rg, CS_SUN)), 260.0);
+        // a crystal splits the light: each glint has its own hue (a texel-locked rainbow 'fire', strongest on gems)
+        float  hue = frac(dot(glintN, float3(7.13, 3.71, 5.29)) * 3.0);
+        float3 fire = saturate(abs(frac(hue + float3(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0);
+        float3 gc = lerp(lerp(float3(1.6, 1.25, 0.95), float3(0.9, 1.05, 1.5), CS_NIGHT), 0.5 + fire * 1.6, saturate(m.sparkle - 0.55) * 0.9);
+        c += gc * g * m.sparkle * sunVis * fade * 3.0 * max(CS_LIGHTK, 0.35);
     }
     // obsidian: a cold violet sheen at grazing angles
     c += float3(0.22, 0.10, 0.42) * fres * 0.5 * m.violet * lerp(0.3, 1.0, sky);
