@@ -75,7 +75,7 @@ float const kDye[16][3] = {
     {0.62f, 0.38f, 0.20f}, {0.22f, 0.70f, 0.18f}, {1.00f, 0.16f, 0.12f}, {0.34f, 0.30f, 0.44f},
 };
 
-struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; bool dyeKnown = false; };
+struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; bool dyeKnown = false; bool elim = false; int64_t elimMs = 0; float threat = 0; };
 std::vector<Bed> gBeds;
 uint32_t         gBroken = 0;
 int64_t          gResetMs = 0;
@@ -397,7 +397,7 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
 
 extern "C" __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx() {
     std::lock_guard l(gMutex);
-    gFx.size = sizeof gFx, gFx.version = 2;
+    gFx.size = sizeof gFx, gFx.version = 3;
     gFx.active = nowMs() - gHudMs.load() < 250 ? 1u : 0u;
     gFx.nowMs  = nowMs();
     return &gFx;
@@ -492,7 +492,20 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     }
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
-    if (gIsMap) trackPlayers(*lp, now);
+    if (gIsMap) {
+        trackPlayers(*lp, now);
+        // threat: players of another team close to a bed (a rush on it) - the beacon and, for yours, the screen react
+        for (auto& b : gBeds) {
+            float n = 0;
+            if (b.alive && b.dyeKnown)
+                for (auto const& t : gTracks) {
+                    if (t.dye < 0 || t.dye == b.dye || now - t.seen > 500) continue;
+                    if (std::hypot(t.pos[0] - (b.x + 0.5), t.pos[2] - (b.z + 0.5)) < 14.0 && std::abs(t.pos[1] - b.y) < 9.0) n += 1;
+                }
+            float const want = std::min(1.0f, n * 0.6f);
+            b.threat += (want - b.threat) * std::min(1.0f, dt * (want > b.threat ? 6.0f : 1.5f));
+        }
+    }
     {   // F8: a test kill 5 blocks in front of you (normal / final alternate) - to see the animation without a fight
         static bool down = false;
         static bool fin  = false;
@@ -527,6 +540,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     if (gIsMap)
         for (auto const& b : gBeds) {
             if (!b.dyeKnown || nt >= 16) continue; // a bed with no team colour is decoration, not a team
+            auto& x = gFx.teamEx[nt];
+            x.threat = b.threat, x.elim = b.elim ? 1u : 0u, x.elimMs = b.elimMs;
+            x.mine = std::hypot(b.x + 0.5 - gAnchor[0], b.z + 0.5 - gAnchor[2]) < 30.0 ? 1u : 0u; // the bed by where you arrived
             auto& t = gFx.teams[nt++];
             t.pos[0] = b.x + 0.5f, t.pos[1] = b.y + 0.6f, t.pos[2] = b.z + 0.5f;
             std::memcpy(t.col, kDye[b.dye], sizeof t.col);
@@ -588,6 +604,22 @@ void onText(std::string const& m) {
     }
     bool const bedGone = s.find("bed") != std::string::npos && (s.find("destroy") != std::string::npos || s.find("broke") != std::string::npos);
     bool const teamOut = s.find("team") != std::string::npos && s.find("eliminated") != std::string::npos && s.find("final kill") == std::string::npos;
+    if (teamOut) { // the team is out: its island goes dark (its bed may have broken long before)
+        struct W2 { char const* w; int d[2]; };
+        static W2 const kW[] = {{"red", {14, -1}}, {"blue", {11, 3}}, {"green", {13, 5}}, {"lime", {5, 13}}, {"yellow", {4, 1}},
+                                {"aqua", {9, 3}}, {"cyan", {9, 3}}, {"white", {0, 8}}, {"pink", {6, 2}}, {"gray", {7, 8}},
+                                {"grey", {7, 8}}, {"orange", {1, 4}}, {"magenta", {2, 10}}, {"purple", {10, 2}}, {"black", {15, 7}},
+                                {"brown", {12, 1}}};
+        W2 const* fw = nullptr; size_t at = std::string::npos;
+        for (auto const& w : kW) { size_t k = s.find(w.w); if (k != std::string::npos && (at == std::string::npos || k < at)) at = k, fw = &w; }
+        if (fw)
+            for (int k = 0; k < 2; ++k) {
+                bool any = false;
+                for (auto& b : gBeds)
+                    if (b.dyeKnown && b.dye == fw->d[k] && !b.elim) { b.elim = true, b.elimMs = nowMs(), any = true; note("team out: bed at {} {} {}", b.x, b.y, b.z); }
+                if (any) break;
+            }
+    }
     if (bedGone || teamOut) {
         // which team? the server names its colour (The Hive: "BLUE BED DESTROYED", "Aqua Team has been eliminated!")
         struct W { char const* w; int d[2]; };

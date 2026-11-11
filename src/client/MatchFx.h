@@ -26,7 +26,7 @@ struct BfMatchEventV1 {
     uint32_t floorDy;  // the shards land this many blocks below the block (0 = on the block under it); 255 = nothing: they fall away
 };
 struct BfMatchFxV1 {
-    uint32_t size, version; // sizeof, 2
+    uint32_t size, version; // sizeof, 3
     uint32_t active;        // 1 while a world is on screen
     uint32_t frame;
     float    phase;         // smoothed 0..2
@@ -37,6 +37,13 @@ struct BfMatchFxV1 {
     uint32_t nTeams, nEvents; // nEvents = total written; ring index = n % 256
     BfMatchTeamV1  teams[16];
     BfMatchEventV1 events[256]; // v2: 256 (a bridge is dozens of placements)
+    // v3: per team, what the players are doing around it (same index as teams[])
+    struct TeamEx {
+        float    threat;  // 0..1 enemies near this bed (smoothed)
+        uint32_t elim;    // 1 = the team is out (the server said so)
+        uint32_t mine;    // 1 = your team
+        int64_t  elimMs;  // when it went out
+    } teamEx[16];
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);
