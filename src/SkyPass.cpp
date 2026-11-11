@@ -1266,8 +1266,11 @@ struct MatchCb {
     float m0[4]; float tPos[16][4]; float tCol[16][4]; float eA[8][4]; float eB[8][4]; float eC[8][4];
     float m1[4]; float tAge[16][4]; float trMin[4], trMax[4]; float gA[48][4]; float gB[48][4];
     float bVis[16][4]; // the server's bed model per team: xyz feet (world), w = yaw (radians); w = -100: none
+    float fallen[24][4]; // the fallen: one star per final kill this match - xyz = sky direction, w = age (s); m0.y... count in m2.x
+    float m2[4];
+    float gColF[24][4]; // their colours
 };
-static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96) * 16, "cbuffer M layout");
+static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96 + 16 + 24 + 1 + 24) * 16 && sizeof(MatchCb) <= 4096, "cbuffer M layout");
 struct MatchFrame { float phase = 0; MatchCb cb{}; int beds = 0; float bedMinY = 0, bedCx = 0, bedCz = 0; };
 std::mutex  gMatchMutex;
 MatchFrame  gMatch;
@@ -1342,6 +1345,31 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         // the newest block events that are still playing (8 at most)
         uint32_t ne = 0;
         uint32_t const total = b->nEvents;
+        // the fallen: every final kill this match leaves a star in its team colour (they gather as the match goes on)
+        {
+            static uint32_t seenTo = 0;
+            struct Star { float d[3]; float col[3]; int64_t at; };
+            static std::vector<Star> stars;
+            if (total < seenTo) { stars.clear(); seenTo = 0; }            // a new match (BF reset its events)
+            for (uint32_t j = seenTo; j < total; ++j) {
+                if (total - j > 256) continue;
+                auto const& e = b->events[j % 256];
+                if (e.kind != 4 || stars.size() >= 24) continue;
+                float const h1v = float((e.seed * 2654435761u) % 10007u) / 10007.0f, h2v = float((e.seed * 40503u) % 9973u) / 9973.0f;
+                float const az = h1v * 6.2831853f, el = 0.30f + 0.75f * h2v;   // high in the sky
+                Star st{{std::cos(az) * std::cos(el), std::sin(el), std::sin(az) * std::cos(el)}, {e.col[0], e.col[1], e.col[2]}, e.atMs};
+                stars.push_back(st);
+            }
+            seenTo = total;
+            auto& c = f.cb;
+            uint32_t ns = 0;
+            for (auto const& st : stars) {
+                std::memcpy(c.fallen[ns], st.d, 12); c.fallen[ns][3] = float(now - st.at) / 1000.0f;
+                c.gColF[ns][0] = st.col[0], c.gColF[ns][1] = st.col[1], c.gColF[ns][2] = st.col[2], c.gColF[ns][3] = 1;
+                ++ns;
+            }
+            c.m2[0] = float(ns);
+        }
         for (uint32_t j = 0; j < 256 && j < total && ne < 8; ++j) {
             auto const& e = b->events[(total - 1 - j) % 256];
             float const age = float(now - e.atMs) / 1000.0f;

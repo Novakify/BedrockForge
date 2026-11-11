@@ -31,6 +31,9 @@ cbuffer M : register(b1) {
     float4 gA[48];   // trail block corner (world, min), w = age (s)
     float4 gB[48];   // its colour (sRGB)
     float4 bVis[16]; // the server's bed model per team: xyz feet (world), w = yaw (radians), w = -100: none
+    float4 fallen[24]; // one star per final kill this match: xyz = sky direction, w = age (s)
+    float4 m2;         // x = fallen stars
+    float4 fCol[24];   // their team colours
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
@@ -606,6 +609,28 @@ float3 storm(float3 rd) {
     float bolt = along > 0.9 && h > -0.02 && h < 0.32 ? exp(-pow((side - jag) / 0.0018, 2.0)) : 0.0;
     return col * (glow + bolt * 3.0) * flick * saturate((NIGHT - 0.6) / 0.3);
 }
+// ---- the fallen: every player knocked out of the match leaves a star of their colour in the sky. It falls into place
+//      as a streak, then stays and twinkles - by the final fight the sky holds everyone who is gone
+float3 fallenStars(float3 rd) {
+    float3 acc = 0.0;
+    int n = int(m2.x);
+    [loop] for (int i = 0; i < n; i++) {
+        float3 d = fallen[i].xyz; float age = fallen[i].w;
+        float3 col = fCol[i].rgb / max(max(fCol[i].r, max(fCol[i].g, fCol[i].b)), 0.05);
+        // arriving: it comes down from the zenith side over 1.2 s, a short streak behind it
+        float  k = saturate(age / 1.2);
+        float3 from = normalize(d + float3(0, 0.6, 0) * (1.0 - k));
+        float  ang = acos(clamp(dot(rd, from), -1.0, 1.0));
+        float  tw = 0.75 + 0.25 * sin(TIME * (2.0 + 0.7 * float(i)) + float(i) * 3.7);
+        float  star = exp(-pow(ang / 0.0016, 2.0)) * 3.0 + exp(-ang / 0.006) * 0.25;
+        float3 tail = normalize(d + float3(0, 0.6, 0) * (1.0 - k + 0.08));
+        float3 ab3 = tail - from, ap = rd - from;
+        float  tt = saturate(dot(ap, ab3) / max(dot(ab3, ab3), 1e-8));
+        float  streak = k < 1.0 ? exp(-pow(length(ap - ab3 * tt) / 0.0012, 2.0)) * (1.0 - tt) * 1.5 : 0.0;
+        acc += lerp(col, float3(1, 1, 1), 0.35) * (star * tw * (0.5 + 0.5 * NIGHT + 0.3 * DUSK) + streak);
+    }
+    return acc;
+}
 // everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
@@ -623,6 +648,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m0.y > 0.5 && m0.w > 0.0 && m1.z > 0.5) o = pow(pow(max(o, 0.0), 2.2) + killLight(rd, sceneT), 1.0 / 2.2);
     [branch] if (m0.x > 0.5 && m0.z > 0.0) o = pow(pow(max(o, 0.0), 2.2) + bedAlarm(rd) * m0.z, 1.0 / 2.2);
     [branch] if (sceneT > 1e8 && NIGHT > 0.6 && m0.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + storm(rd), 1.0 / 2.2);
+    [branch] if (sceneT > 1e8 && m2.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + fallenStars(rd), 1.0 / 2.2);
     [branch] if (m1.z > 0.5) {
         int ne = int(m0.y);
         [loop] for (int i = 0; i < ne; i++) {
@@ -640,7 +666,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     }
     return o;
 }
-bool matchActive() { return (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
+bool matchActive() { return m2.x > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
