@@ -101,6 +101,53 @@ float3 fwShellDraw(float2 P, float a, int type, float3 col, float sd, float w, i
     w *= kFwW[type];
     float  fade = smoothstep(life, life * 0.55, a);
     float  hot = exp(-a * 7.0);
+    if (type == 2 && a > L + 0.6) {                             // (before that the tails still reach back to the burst)
+        // A crown that has opened and hangs: its stars have all but stopped moving outward, so each trail is one
+        // near-vertical curve. The stars whose trail could cross this pixel sit on a short line of directions - walk
+        // that line a grid row at a time (two stars a row), and for each star solve where on ITS trail the pixel is.
+        float sA = max(a - L, 0.0);
+        float rA = 1.0 - exp(-k * a), rB = 1.0 - exp(-k * sA);
+        float2 qT = float2(P.x, P.y + Ga) / rA, qB = float2(P.x, P.y + g * sA * sA) / rB;
+        if (abs(qT.x) > 1.06 || qB.y > 1.06 || qT.y < -1.06) return 0.0;
+        float lT = min(length(qT), 1.0), lB = min(length(qB), 1.0);
+        float2 wT = qT * (sqrt(max(1.0 - sqrt(max(1.0 - lT * lT, 0.0)), 0.0)) / max(length(qT), 1e-5));
+        float2 wB = qB * (sqrt(max(1.0 - sqrt(max(1.0 - lB * lB, 0.0)), 0.0)) / max(length(qB), 1e-5));
+        int   r1 = int(floor(wT.y / h)), r0 = max(int(floor(wB.y / h)), r1 - (maxPieces + 1));
+        float3 acc2 = 0.0;
+        float  w2 = w * w;
+        [loop] for (int r = r0; r <= r1; r++) {
+            float tr = saturate(((float(r) + 0.5) * h - wB.y) / max(wT.y - wB.y, 1e-4));
+            float c0 = floor(lerp(wB.x, wT.x, tr) / h - 0.5);
+            [unroll] for (int c3 = 0; c3 < 2; c3++) {
+                float2 cell = float2(c0 + float(c3), float(r));
+                float2 jt = fwH2(cell, sd);
+                float2 ws = (cell + jt) * h;
+                float  wl2 = dot(ws, ws);
+                if (wl2 >= 1.0) continue;
+                float2 qs = ws * sqrt(2.0 - wl2);
+                float  id = jt.x * 91.7 + jt.y * 37.3 + sd;
+                float  bv = fwH(id * 3.71);
+                float  bri = 0.38 + 0.62 * bv * bv + (bv > 0.93 ? 0.6 : 0.0);
+                // the star itself
+                float2 dh = P - (qs * rA - float2(0.0, Ga));
+                float  hd = exp(-dot(dh, dh) / (w2 * 2.2)) + 0.05 * exp(-dot(dh, dh) / (w2 * 12.0));
+                acc2 += lerp(FW_GOLD, FW_WHITE, 0.40) * hd * bri * 0.8;
+                // its trail: when did it pass this height?
+                float s1 = sqrt(max((qs.y * rA - P.y) / g, 0.0));
+                float s2 = sqrt(max((qs.y * (1.0 - exp(-k * s1)) - P.y) / g, 0.0));
+                if (s2 <= sA || s2 >= a) continue;
+                float dx = P.x - qs.x * (1.0 - exp(-k * s2));
+                float d2 = dx * dx;
+                if (d2 > w2 * 16.0) continue;
+                float del = a - s2;
+                float prof = pow(saturate(1.0 - del / L), kFwPw[2]);
+                float gl = step(0.80, fwH(id * 7.13 + floor(s2 * 46.0) * 1.37 + floor(TIME * 19.0) * 0.731));
+                prof *= lerp(1.0, 0.42 + 2.6 * gl, smoothstep(0.05, 0.22, del));
+                acc2 += lerp(FW_GOLD, FW_EMBER, pow(saturate(del / L), 0.6)) * (exp(-d2 / w2) + 0.05 * exp(-d2 / (w2 * 6.0))) * prof * bri;
+            }
+        }
+        return acc2 * fade;
+    }
     float  ds = (type == 2 || type == 5) ? 0.19 : 0.11;        // long trails are laid in longer pieces
     int    j1 = int(floor(fwSeqJ(a, k, ds)));
     int    j0 = max(max(int(floor(fwSeqJ(max(a - L, 0.0), k, ds))), j1 - (maxPieces - 1)), 0);
@@ -313,7 +360,8 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
     if (age >= FW_LEN) return lin;
     float  pxA = 2.0 * c0.w / c4.x;
     float  wAng = max(1.55 * pxA, 0.0015);
-    int    maxPieces = quality > 0.6 ? 10 : 6;
+    int    maxPieces = quality > 0.6 ? 10 : (quality > 0.25 ? 7 : 5);
+    bool   lean = quality < 0.25;                              // the frame rate is hurting: stars only
     float3 stars = 0.0, glow = 0.0;
     float  smoke = 0.0;
     bool   below = rd.y < 0.0;                                   // the cloud sea: it only takes the glow, mirrored
@@ -347,7 +395,7 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
             stars += FW_GOLD * exp(-dot(dv, dv) / (wAng * wAng)) * tt * tt * 1.2;
             continue;
         }
-        if (a > 0.15) {                                          // its smoke: drifts, thins, takes the light of what bursts next
+        if (a > 0.15 && !lean) {                                 // its smoke: drifts, thins, takes the light of what bursts next
             float2 ps = pa - float2(0.012, -0.004) * a;
             float  rs = R * (0.50 + 0.16 * a);
             float  dn = exp(-dot(ps, ps) / (rs * rs));
@@ -359,7 +407,7 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
         if (a < kFwLife[type]) {
             float2 P = pa / R;
             stars += fwShellDraw(P, a, type, col, seed * 0.011 + float(b) * 7.77, wAng / R, maxPieces) * (type == 2 ? 0.62 : 1.5);
-            if (type == 0 && R > 0.16) stars += fwShellDraw(P / 0.42, a, 6, FW_GOLD, seed * 0.013 + float(b) * 5.31, wAng / (R * 0.42), maxPieces);
+            if (type == 0 && R > 0.16 && !lean) stars += fwShellDraw(P / 0.42, a, 6, FW_GOLD, seed * 0.013 + float(b) * 5.31, wAng / (R * 0.42), maxPieces);
             stars += lerp(col, FW_WHITE, 0.75) * exp(-dot(pa, pa) / (R * R * 0.010)) * exp(-a * 11.0) * 1.6;   // the pop
         }
     }

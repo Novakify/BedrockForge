@@ -209,11 +209,11 @@ float3 fusedPlate(int m, float3 glass, float2 t, int2 b, int fi, float2 p, float
         g.g = sceneAt(px + off + fo * 1.14).g;
         g.b = sceneAt(px + off + fo * 1.30).b;
     }
-    float thick = role == 1 ? 1.45 : (role == 3 ? 0.50 : 1.0);   // drawn shade = thicker crystal, drawn highlight = polished thin
+    float thick = role == 1 ? 1.45 : (role == 3 ? (m == 5 ? 0.85 : 0.50) : 1.0);   // drawn shade = thicker crystal, drawn highlight = polished thin
     g = lerp(g, g * tint * 1.30 + tint * 0.07, saturate(tintK * thick));
-    float selfK = m == 5 ? 0.46 : (m == 4 ? 0.34 : (m == 3 ? 0.28 : (m == 0 ? 0.30 : (m == 6 ? 0.55 : 0.10))));
+    float selfK = m == 5 ? 0.46 : (m == 4 ? 0.34 : (m == 3 ? 0.28 : (m == 0 ? 0.30 : (m == 6 ? 0.55 : (m == 2 ? 0.30 : 0.10)))));   // iron: frosted steel-white
     float3 own = tint * (m == 5 ? (role == 1 ? 0.42 : 0.62) + 0.34 * fh : (role == 1 ? 0.50 : 0.72));
-    g = lerp(g, own, selfK * (role == 3 ? 0.6 : 1.0));
+    g = lerp(g, own, selfK * (role == 3 ? (m == 5 ? 0.85 : 0.6) : 1.0));
     // the metal stands proud of the glass: it shades the crystal under it and lights the crystal over it
     float up = float(metalAt(b + int2(0, -1), fi, m)), dn = float(metalAt(b + int2(0, 1), fi, m));
     float lf2 = float(metalAt(b + int2(-1, 0), fi, m));
