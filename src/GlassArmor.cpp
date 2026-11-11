@@ -342,8 +342,17 @@ HRESULT STDMETHODCALLTYPE createRsHook(ID3D12Device* d, UINT mask, void const* b
     }
     return hr;
 }
+std::atomic<ID3D12Device*> gGameDev{nullptr};   // the game's own device (kept alive): hook targets are read from IT, not a probe
+thread_local bool          gProbing = false;      // RF's own probe device is not the game's
 HRESULT WINAPI createDeviceHook(IUnknown* adapter, D3D_FEATURE_LEVEL level, REFIID riid, void** out) {
     HRESULT hr = reinterpret_cast<CreateDevice_t>(gOrigCreateDevice)(adapter, level, riid, out);
+    if (SUCCEEDED(hr) && out && *out && !gProbing && !gGameDev.load()) {
+        ID3D12Device* d = nullptr;
+        if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&d))) && d) {
+            ID3D12Device* none = nullptr;
+            if (!gGameDev.compare_exchange_strong(none, d)) d->Release();   // keep the first one (with our reference)
+        }
+    }
     if (SUCCEEDED(hr) && out && *out && !gRsHooked.load()) {
         ID3D12Device* dev = nullptr;
         if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&dev))) && dev) {
@@ -363,6 +372,8 @@ HRESULT WINAPI createDeviceHook(IUnknown* adapter, D3D_FEATURE_LEVEL level, REFI
 }
 } // namespace
 
+ID3D12Device* gameDevice() { return gGameDev.load(); }
+void          setProbing(bool on) { gProbing = on; }
 void installEarly() {
     HMODULE m = rf::d3d12api::module();
     void*   f = m ? reinterpret_cast<void*>(GetProcAddress(m, "D3D12CreateDevice")) : nullptr;

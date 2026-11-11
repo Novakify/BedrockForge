@@ -9,7 +9,7 @@ cbuffer C : register(b0) {
     float4 c0; // xyz = camera forward, w = tan(fovx/2)
     float4 c1; // xyz = camera right,   w = tan(fovy/2)
     float4 c2; // xyz = camera up,      w = time
-    float4 c3; // x = near plane (0.025), y = z = 0, w = flags (1 = scene is BGRA)
+    float4 c3; // x = near plane (0.025), y = living world strength (sea light, the air: F6), z = 0, w = flags (1 = scene is BGRA)
     float4 c4; // xy = target size, z = scene row pitch (bytes), w = depth row pitch (bytes)
     float4 c5; // xyz = sun direction (world), w = shadow strength
     float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = match phase
@@ -564,7 +564,7 @@ float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
         if (tb < -bound || dot(ctr, ctr) - tb * tb > bound * bound) continue;
         float3 team = tCol[i].rgb;
         float  thr  = tAge[i].y;
-        float  gone = brk >= 0.0 ? saturate((brk - 2.1) / 0.8) : 0.0;
+        float  gone = brk >= 0.0 ? saturate((brk - 2.7) / 0.9) : 0.0;   // the pieces lie where they fell a moment, then go
         if (gone >= 1.0) continue;
         float  tm = TIME + float(i) * 7.3;
         // idle life: breath (arms and head rise a little), the head drifting as it looks around; fidgety when attacked
@@ -886,84 +886,8 @@ float3 respawnFx(float3 o, float3 rd, float age, float3 team) {
     r += lerp(team, float3(1, 1, 1), 0.4) * exp(-pow((up - H) / 0.012, 2.0)) * 0.55 * saturate(1.4 - age);
     return r;
 }
-// ---- a team wins: a fireworks show over the map, in front of you. 13 shells over ~8 s, each launched on a thin
-//      rising trail, then a burst of 64 sparks on a sphere: peony (team colour), chrysanthemum (gold, long trails),
-//      willow (gold, droops and hangs), two-tone (a white heart inside the team colour) and a ring. Sparks start
-//      white-hot, cool to their colour, then crackle out. No glow discs: only the sparks themselves are light.
-float3 victory(float3 rd, float age, float3 team, float seed) {
-    float3 acc = 0.0;
-    float  fa = atan2(c0.z, c0.x);
-    float  pxA = 2.0 * c0.w / c4.x;                              // one pixel, in the units sparks are measured in
-    [loop] for (int b = 0; b < 13; b++) {
-        float sb = seed * 0.0007 + float(b) * 3.91;
-        float t0 = float(b) * 0.55 + h1(sb) * 0.35 - (b >= 10 ? 0.5 * float(b - 10) + 0.2 : 0.0);   // the last three go up together
-        float ab = age - t0;
-        float launch = 0.60;
-        if (ab < 0.0 || ab > launch + 2.9) continue;
-        bool  hero = (b == 2 || b == 6 || b >= 10);
-        float az = fa + (h1(sb + 1.0) - 0.5) * 1.5, el = 0.26 + 0.34 * h1(sb + 2.0);
-        float3 dir = float3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
-        int   type = int(h1(sb + 5.0) * 5.0);
-        float3 gold = float3(1.25, 0.92, 0.42);
-        float3 pal = (type == 1 || type == 2) ? gold : team;
-        if (ab < launch) {   // the climb: one spark on a short fading tail, slowing as it tops out
-            float  u = ab / launch, h0 = (1.0 - u) * (1.0 - u) * 0.32;
-            float3 head = -float3(0, h0, 0), tail = -float3(0, h0 + 0.05 * (1.0 - u) + 0.008, 0);
-            float3 sg = head - tail, ap = (rd / max(dot(rd, dir), 0.2) - dir) - tail;
-            float  tt = saturate(dot(ap, sg) / max(dot(sg, sg), 1e-8));
-            float3 dv = ap - sg * tt;
-            float  w = max(pxA * 0.9, 0.0012);
-            acc += float3(1.0, 0.85, 0.6) * exp(-dot(dv, dv) / (w * w)) * tt * tt * 1.4;
-            continue;
-        }
-        float a2 = ab - launch;
-        float R = (hero ? 0.36 : 0.24) * (type == 2 ? 0.8 : 1.0);
-        float rad = R * (1.0 - exp(-a2 * 3.4));                     // opens fast, then hangs
-        float drop = (type == 2 ? 0.060 : 0.022) * a2 * a2;        // and sags (the willow droops)
-        // the burst is drawn on the plane facing you through its centre: every spark shows, near side and far side
-        float3 pr = rd / max(dot(rd, dir), 0.2) - dir;
-        if (dot(rd, dir) < 0.3) continue;
-        float3 dq = pr + float3(0, drop * 0.7, 0);
-        if (dot(dq, dq) > (rad + 0.04 + drop * 0.5) * (rad + 0.04 + drop * 0.5)) continue;
-        float fade = pow(saturate(1.0 - a2 / 2.9), 1.4);
-        float hot = exp(-a2 * 3.0);
-        float trailK = type == 1 ? 0.45 : (type == 2 ? 0.30 : 0.72);   // where each spark's tail starts (fraction of its reach)
-        float w = max(pxA * 1.25, 0.0020);
-        float3 sum = 0.0;
-        [loop] for (int j = 0; j < 64; j++) {
-            float  sj = sb * 7.3 + float(j) * 1.618;
-            float3 sd;
-            if (type == 4) {   // a ring, tilted toward the viewer
-                float aa = float(j) * 0.0981748;
-                float3 r1 = normalize(cross(dir, float3(0.3, 1.0, 0.1))), r2 = cross(dir, r1);
-                sd = normalize(r1 * cos(aa) + r2 * sin(aa) + dir * 0.25);
-            } else {           // a sphere (golden spiral)
-                float y = 1.0 - (float(j) + 0.5) / 32.0, rr = sqrt(saturate(1.0 - y * y)), th = 2.39996 * float(j);
-                sd = float3(rr * cos(th), y, rr * sin(th));
-            }
-            float  sp = 0.88 + 0.12 * h1(sj + 1.3);
-            bool   heart = type == 3 && (j % 3) == 0;                // two-tone: every third spark is a short white one inside
-            float  reach = rad * sp * (heart ? 0.5 : 1.0);
-            sd -= dir * dot(sd, dir);
-            float3 head = sd * reach - float3(0, drop, 0);
-            float3 tail = sd * reach * trailK - float3(0, drop * trailK * trailK, 0);
-            float3 sg = head - tail, ap = pr - tail;
-            float  tt = saturate(dot(ap, sg) / max(dot(sg, sg), 1e-8));
-            float3 dv = ap - sg * tt;
-            float  d2 = dot(dv, dv);
-            if (d2 > w * w * 9.0) continue;
-            float  crackle = a2 > 1.5 ? step(0.5, h1(floor(TIME * 22.0) * 0.37 + sj)) : 1.0;   // the last of it crackles
-            float3 dh = ap - sg;                                     // its head: a brighter point
-            float  I = (exp(-d2 / (w * w)) * (0.10 + 0.90 * tt * tt * tt) + exp(-dot(dh, dh) / (w * w * 2.2)) * 0.9) * crackle;
-            float3 c = heart ? float3(1.0, 0.95, 0.85) : lerp(pal, float3(1, 1, 1), hot * 0.6 + 0.18 * tt * tt * tt * (1.0 - smoothstep(0.8, 1.8, a2)));
-            c = lerp(c, pal * float3(1.0, 0.5, 0.25), smoothstep(1.7, 2.9, a2) * 0.6);          // dying embers
-            sum += c * I;
-        }
-        acc += sum * fade * 2.2;
-        acc += lerp(pal, float3(1, 1, 1), 0.7) * exp(-dot(dq, dq) / (0.012 * 0.012)) * exp(-a2 * 12.0) * 2.0;   // the pop: a point, for an instant
-    }
-    return acc;
-}
+// ---- a team wins: the fireworks show (fireworks.hlsli)
+#include "fireworks.hlsli"
 // ---- the final fight (night): a storm far out over the cloud sea - silent bolts on the horizon now and then, the
 //      sky lighting up behind the clouds with them (makes the last minutes feel like the end of something)
 float3 storm(float3 rd) {
@@ -1054,13 +978,21 @@ float3 projTrails(float3 rd, float sceneT) {
 //      heat lightning inside the horizon clouds, more often the fewer teams are left; the frame closes in a little
 //      (edges darken, contrast firms). When exactly two teams remain a line of light arcs over the map from one
 //      bed to the other, each team's colour running toward the middle: the duel.
-float3 farStorm(float3 rd, float T) {
+// the storm's lightning: x = how bright this instant (0 = none), y = which way it is (azimuth), z = seconds into the strike
+float3 stormStrike(float T) {
     float period = lerp(8.0, 2.6, T);
     float cyc = floor(TIME / period), ph = TIME - cyc * period;
     float a = ph - (0.3 + (period - 1.3) * h1(cyc * 1.7));        // a random moment in each cycle
-    if (a < 0.0 || a > 0.9) return 0.0;
+    if (a < 0.0 || a > 0.9) return float3(0.0, 0.0, a);
     float flick = exp(-a * 7.0) + 0.6 * exp(-max(a - 0.18, 0.0) * 9.0) * step(0.18, a);  // a double strike
-    float az = h1(cyc * 3.1) * 6.2832;
+    return float3(flick, h1(cyc * 3.1) * 6.2832, a);
+}
+float3 farStorm(float3 rd, float T) {
+    float period = lerp(8.0, 2.6, T);
+    float cyc = floor(TIME / period);
+    float3 st = stormStrike(T);
+    float flick = st.x, az = st.y, a = st.z;
+    if (flick <= 0.0) return 0.0;
     float3 dir = float3(cos(az), 0.0, sin(az));
     float3 fl = normalize(float3(rd.x, 0.0, rd.z));
     float along = dot(fl, dir);
@@ -1106,6 +1038,56 @@ float3 tensionOver(float3 o, float3 rd, float sceneT) {
     float v = saturate(1.0 - dot(rd, c0.xyz));
     o *= 1.0 - 0.20 * T * smoothstep(0.25, 0.75, v);
     return lerp(o, o * o * (3.0 - 2.0 * o), 0.20 * T);
+}
+// ---- the air is alive, and it changes with the sky: pollen drifting in the golden hour's light, fireflies at dusk,
+//      stardust sifting down at night; the wind picks up as teams go out. They live in the world (you walk through
+//      them), are a pixel or two across, and none comes within 3 blocks of your eyes - nothing to mistake for a
+//      thing you must react to.
+float3 airLife(float3 rd, float sceneT) {
+    float K = c3.y;
+    if (K <= 0.0 || c9.z < 0.45) return 0.0;
+    float wGold = (1.0 - DUSK) * (1.0 - NIGHT), wDusk = DUSK * (1.0 - NIGHT), wNight = NIGHT;
+    static const float S = 3.4;                                 // at most one to an S-block cell
+    float3 wind = float3(0.42, 0.0, 0.26) * (1.0 + 3.5 * m2.w) + float3(0.0, lerp(0.05, -0.28, wNight), 0.0);
+    float3 drift = wind * TIME;
+    float  tMax = min(sceneT, 17.5);
+    float  pxA = 2.0 * c0.w / c4.x;
+    float3 best = 0.0;
+    [loop] for (int k = 0; k < 9; k++) {
+        float t = 3.2 + float(k) * 1.7;
+        if (t > tMax) break;
+        float3 cell = floor((CAM + rd * t - drift) / S);
+        float  h = hash13(cell + 17.3);
+        float  pop = wGold * 0.50 + wDusk * 0.28 + wNight * 0.55;                    // how many cells hold one
+        if (h > pop) continue;
+        float  h2 = hash13(cell + 41.7), h3 = hash13(cell + 5.9);
+        float3 wob = float3(sin(TIME * (0.5 + h2) + h * 40.0), sin(TIME * (0.4 + h3) + h2 * 40.0), cos(TIME * (0.45 + h) + h3 * 40.0)) * lerp(0.10, 0.55, wDusk);
+        float3 d = (cell + 0.22 + 0.56 * float3(h2, h3, frac(h * 7.31))) * S + drift + wob - CAM;
+        float  tt = dot(d, rd);
+        if (tt < 3.0 || tt > sceneT) continue;
+        float3 off = d - rd * tt;
+        float  sz = max(0.016 + 0.012 * h2, tt * pxA * 1.25);                        // never thinner than a pixel and a bit
+        float  I = exp(-dot(off, off) / (sz * sz)) * saturate((tt - 3.0) / 1.5) * saturate((17.5 - tt) / 4.0);
+        if (I < 0.003) continue;
+        float  tw = 0.5 + 0.5 * sin(TIME * (1.2 + 2.5 * h3) + h2 * 60.0);
+        float3 cG = float3(1.00, 0.80, 0.48) * (0.20 + 1.3 * pow(saturate(dot(rd, SUN)), 3.0)) * (0.6 + 0.4 * tw);   // pollen: it is the sun in it you see
+        float3 cD = float3(1.00, 0.72, 0.26) * pow(tw, 3.0) * 1.25;                                                   // fireflies: slow pulses
+        float3 cN = float3(0.72, 0.84, 1.00) * (0.25 + 0.9 * pow(tw, 6.0));                                           // stardust: glints
+        float3 c = (cG * wGold + cD * wDusk + cN * wNight) * I;
+        best = max(best, c);
+    }
+    return best * K * 0.55;
+}
+// a player lost to the void: where they went under, the cloud sea opens in a ring of their team's colour
+float3 voidSplash(float3 rd, float sceneT, float3 at, float age, float3 team) {
+    if (c8.w < 0.5 || at.y > SEA_Y + 9.0 || age > 2.6 || rd.y > -0.02) return 0.0;
+    float t = (SEA_Y + 2.0 - CAM.y) / rd.y;
+    if (t <= 0.0 || t > sceneT) return 0.0;
+    float2 q = (CAM + rd * t).xz - (at.xz + 0.5);
+    float  r = length(q), R = 1.5 + 13.0 * (1.0 - exp(-age * 1.6));
+    float  ring = exp(-pow((r - R) / (0.55 + 0.5 * age), 2.0)) + 0.5 * exp(-pow((r - R * 0.55) / (0.4 + 0.4 * age), 2.0));
+    float  core = exp(-r * r / 9.0) * exp(-age * 3.5) * 1.6;
+    return lerp(team, float3(1, 1, 1), 0.35) * (ring * exp(-age * 1.5) * 0.85 + core) * exp(-t / 260.0);
 }
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
@@ -1171,8 +1153,12 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
             float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
             team = team / max(max(team.r, max(team.g, team.b)), 0.05);
             if (kind > 4.5 && kind < 5.5 && age < 1.6) o = respawnFx(o, rd, age, team);
-            if (kind > 5.5 && kind < 6.5 && age < 9.5 && sceneT > 60.0)   // a win: the fireworks show (sky only)
-                o = pow(pow(max(o, 0.0), 2.2) + victory(rd, age, team, eC[i].x) * (0.7 + 0.5 * darkK()), 1.0 / 2.2);
+            if (kind > 2.5 && kind < 4.5) o = pow(pow(max(o, 0.0), 2.2) + voidSplash(rd, sceneT, eA[i].xyz, age, team), 1.0 / 2.2);
+            if (kind > 5.5 && kind < 6.5 && age < FW_LEN) {   // a win: the fireworks show - in the sky, on the cloud sea, and its light on the islands
+                float3 l = pow(max(o, 0.0), 2.2);
+                l = sceneT > 500.0 ? fwSky(l, rd, age, team, eC[i].x, eC[i].w, c9.z, 0.75 + 0.45 * darkK()) : fwWorld(l, age, team, eC[i].x, eC[i].w);
+                o = pow(max(l, 0.0), 1.0 / 2.2);
+            }
             if (kind > 6.5 && age < 0.7) { // your kill: a hard beat - the frame punches bright and warm at the edges, then settles
                 float edge = smoothstep(0.92, 0.55, dot(rd, c0.xyz));
                 float k = exp(-age * 7.0);
@@ -1181,9 +1167,10 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
         }
     }
     o = tensionOver(o, rd, sceneT);
+    [branch] if (c3.y > 0.0) o = pow(pow(max(o, 0.0), 2.2) + airLife(rd, sceneT), 1.0 / 2.2);
     return o;
 }
-bool matchActive() { return m2.w > 0.01 || m2.x > 0.5 || m2.y > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
+bool matchActive() { return c3.y > 0.0 || m2.w > 0.01 || m2.x > 0.5 || m2.y > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
@@ -1297,18 +1284,40 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     //      silhouette and corner (from the depth buffer: two blocks side by side on one face get no line, so the line
     //      follows the shapes - islands, bridges, players), cel light (no blur: smeared texture is the generic look)
     float ink = 0.0;
-    [branch] if (c9.w > 0.0 && z < 160.0) {
-        int   r  = 1;                                                // one pixel: a fine line, not a marker
-        float zl = viewZ(rawDepth(px - int2(r, 0))), zr = viewZ(rawDepth(px + int2(r, 0)));
-        float zu = viewZ(rawDepth(px - int2(0, r))), zd = viewZ(rawDepth(px + int2(0, r)));
-        // silhouettes only (a clear step in depth: a player, an island edge, a bridge against the void) - no lines on
-        // block corners or inside foliage, that is what turned leaves into noise
-        float rel[4] = {(z - zl) / z, (z - zr) / z, (z - zu) / z, (z - zd) / z};
-        float sil = 0.0, steps = 0.0;
-        [unroll] for (int q4 = 0; q4 < 4; q4++) { sil = max(sil, smoothstep(0.12, 0.30, rel[q4])); steps += abs(rel[q4]) > 0.08 ? 1.0 : 0.0; }
-        float busy = steps >= 3.0 ? 0.0 : 1.0;                     // depth jumping on most sides: leaves / grass, skip
-        float far  = saturate(1.0 - (z - 50.0) / 60.0);
-        ink = sil * busy * far * c9.w;
+    [branch] if (c9.w > 0.0 && z < 120.0) {
+        // An outline that is always there: every shape's silhouette gets one line, drawn on the shape itself (on its
+        // own edge pixel, against whatever is behind it - terrain or open sky), and every outer block corner a lighter
+        // one. Depth alone decides it, so it cannot flicker with the light. Leaves and grass (depth jumping on most
+        // sides) are left alone: lines there are noise.
+        float thr = 0.22 + 0.022 * z;                                // how far behind counts as "behind" (blocks)
+        // the line keeps its weight on any screen: 1 px at 1080p, 2 at 1440p, 3 at 4K (a 1 px line at 4K is a hair -
+        // there some frames, gone the next)
+        int   r  = clamp(int(c4.x / 1400.0 + 0.5), 1, 4);
+        int   r2 = (r + 1) / 2;
+        float pxK = float(r) * (2.0 * c0.w / c4.x) / 0.003;           // the same corner bends 1/z less across a smaller pixel
+        float w0 = 1.0 / z;
+        float sil = 0.0, silIn = 0.0, steps = 0.0, wn[4];
+        static const int2 kO[4] = {int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1)};
+        [unroll] for (int q4 = 0; q4 < 4; q4++) {
+            float dn = rawDepth(px + kO[q4] * r);
+            float zn = viewZ(dn);
+            bool  sk = isSky(dn);
+            float gap = sk ? 1e3 : zn - z;                            // > 0: the neighbour is behind this pixel
+            sil = max(sil, smoothstep(thr, thr * 1.5, gap));
+            steps += abs(gap) > thr ? 1.0 : 0.0;
+            wn[q4] = sk || abs(gap) > thr ? w0 : 1.0 / zn;
+            if (r2 < r) {                                             // the line's core: full weight right at the edge, softer further in
+                float d2 = rawDepth(px + kO[q4] * r2);
+                silIn = max(silIn, smoothstep(thr, thr * 1.5, isSky(d2) ? 1e3 : viewZ(d2) - z));
+            } else silIn = sil;
+        }
+        sil = 0.62 * sil + 0.38 * silIn;
+        // outer corners: 1/z is a straight line across a flat face, so where it bends toward the camera two faces meet
+        float bend = max(-(wn[0] + wn[1] - 2.0 * w0), -(wn[2] + wn[3] - 2.0 * w0)) / w0;
+        float crease = smoothstep(0.0035 * pxK, 0.0075 * pxK, bend) * saturate(1.0 - (z - 22.0) / 14.0) * (1.0 - sil);
+        float busy = steps >= 3.0 ? 0.0 : 1.0;
+        float far  = saturate(1.0 - (z - 60.0) / 60.0);
+        ink = max(sil, crease * 0.5) * busy * far * c9.w;
     }
 
     // ---- apply (linear light). Shadowed sunlit faces fall to the violet sky light; occlusion darkens gently
@@ -1338,6 +1347,20 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
     lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
+    // ---- sea light: the cloud sea under the map glows with the hour, and everything is lit by it from below - the
+    //      undersides of bridges and islands most, walls a little. It moves, slowly, like light off water. When the
+    //      storm of the last teams breaks, its lightning comes up through the sea too.
+    [branch] if (c3.y > 0.0 && c8.w > 0.5) {
+        float3 W = CAM + P;
+        float  under = saturate(-n.y) * 1.0 + (1.0 - abs(n.y)) * 0.20;
+        float  hgt = saturate(1.0 - (W.y - SEA_Y) / 90.0);
+        float  mv = 0.72 + 0.56 * vnoise(W.xz * 0.11 + float2(TIME * 0.21, -TIME * 0.13));
+        float3 seaC = lerp(lerp(float3(1.00, 0.68, 0.38), float3(1.00, 0.46, 0.60), DUSK), float3(0.34, 0.52, 1.00), NIGHT);
+        float3 add = seaC * under * (0.30 + 0.70 * hgt) * mv * lerp(0.85, 1.9, NIGHT);
+        float3 st = m2.w > 0.01 ? stormStrike(m2.w) : float3(0, 0, 0);
+        add += lerp(float3(0.62, 0.70, 1.0), float3(1.0, 0.72, 0.62), DUSK * (1.0 - NIGHT)) * st.x * m2.w * (0.30 + 1.2 * under);
+        lin *= 1.0 + add * lerp(1.0, ao, 0.6) * c3.y;
+    }
     [branch] if (m0.x > 0.5) { // your bed is gone: the whole world loses some warmth - you are on your last life
         int nt2 = int(m0.x);
         float lost = 0.0;

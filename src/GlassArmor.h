@@ -30,6 +30,8 @@ void init(std::filesystem::path const& outDir, std::filesystem::path const& conf
 /// At mod load, before the game makes its device: hook D3D12CreateDevice so the device's CreateRootSignature is
 /// hooked from the very first root signature (the game builds its Actor signature at startup).
 void installEarly();
+ID3D12Device* gameDevice(); // the game's own D3D12 device once it exists (not owned by the caller), else null
+void          setProbing(bool on); // RF is creating its own probe device on this thread
 
 // ---- M1a: glass armor on the game's own armor draws (F6 > Glass Armor > "Glass armor on") ----
 bool enabled();

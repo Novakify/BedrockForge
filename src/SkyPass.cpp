@@ -1321,6 +1321,7 @@ void testVictory() { gTestWinAt = steadyMs(); }
 // F6 "Test bed": a bed 3 blocks in front of you, lying towards you, that plays its life: 10 s standing, 10 s under
 // attack, then it breaks (any world - for judging the cosmetic beds without a match)
 std::atomic<int> gTestBedReq{0};
+std::atomic<float> gViewYaw{0.0f};   // where the camera looks (atan2(forward.z, forward.x)), for the fireworks
 struct TestBed { float p[3]; float yaw = 0; int64_t at = -1000000; } gTestBed;
 void testBed() { ++gTestBedReq; }
 // death scenes (LyricsFlow's death animations, by 374m): each kill gets one, dealt from a shuffled bag of all seven
@@ -1423,11 +1424,11 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         }
         for (uint32_t j = 0; j < 256 && j < total && ne < 8; ++j) {
             auto const& e = b->events[(total - 1 - j) % 256];
-            float const age = float(now - e.atMs) / 1000.0f;
+            float const age = float(now - e.atMs) / 1000.0f * look.slow;   // F6 review: slow motion
             if (age < 0) continue;
-            if (age > 6.5f) break; // older ones are older still
+            if (age > 16.0f) break; // older ones are older still (a win's fireworks run 15.5 s)
             if ((e.kind == 2 && age > 0.72f) || (e.kind == 1 && age > 2.4f) || (e.kind == 3 && age > 4.8f) || (e.kind == 4 && age > 4.8f) ||
-                (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 9.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
+                (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 15.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
             if (e.kind >= 3 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
             auto& c = f.cb;
@@ -1440,10 +1441,14 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
                 int const sc = look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(e.atMs) * 31u + uint64_t(e.seed));
                 uint32_t const slot1 = v6 && e.floorDy >= 1 && e.floorDy <= 16 && b->skins[e.floorDy - 1].ok ? e.floorDy : 0;
                 c.eC[ne][3] = float(sc) + 16.0f * float(slot1);
+            } else if (e.kind == 6) {   // the fireworks go up where you were looking when the win came, and stay there
+                static int64_t winAt = -1; static float winYaw = 0.0f;
+                if (winAt != e.atMs) { winAt = e.atMs; winYaw = gViewYaw.load(std::memory_order_relaxed); }
+                c.eC[ne][3] = winYaw;
             } else c.eC[ne][3] = 0.0f;
             ++ne;
         }
-        if (float const ta = float(now - gTestKill.at) / 1000.0f; ta >= 0.0f && ta < 4.8f && ne < 8) {
+        if (float const ta = float(now - gTestKill.at) / 1000.0f * look.slow; ta >= 0.0f && ta < 4.8f && ne < 8) {
             auto& c = f.cb;
             c.eA[ne][0] = std::floor(gTestKill.p[0]); c.eA[ne][1] = std::floor(gTestKill.p[1]); c.eA[ne][2] = std::floor(gTestKill.p[2]); c.eA[ne][3] = ta;
             c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = float(gTestKill.kind);
@@ -1452,9 +1457,12 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
-        if (float const tw = float(now - gTestWinAt.load()) / 1000.0f; tw >= 0.0f && tw < 9.5f && ne < 8) {
+        if (float const tw = float(now - gTestWinAt.load()) / 1000.0f * look.slow; tw >= 0.0f && tw < 15.5f && ne < 8) {
             auto& c = f.cb;
+            static int64_t testAt = -1; static float testYaw = 0.0f;
+            if (testAt != gTestWinAt.load()) { testAt = gTestWinAt.load(); testYaw = gViewYaw.load(std::memory_order_relaxed); }
             c.eA[ne][3] = tw; c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = 6.0f; c.eC[ne][0] = 777.0f;
+            c.eC[ne][3] = testYaw;
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
@@ -1464,7 +1472,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         float    lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
         for (uint32_t j = 0; j < 256 && j < total && ng < 48; ++j) {
             auto const& e = b->events[(total - 1 - j) % 256];
-            float const age = float(now - e.atMs) / 1000.0f;
+            float const age = float(now - e.atMs) / 1000.0f * look.slow;
             if (age > 9.0f) break;
             if (e.kind != 2 || age < 0) continue;
             auto& c = f.cb;
@@ -1529,7 +1537,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     f.cb.m0[2] = look.teams;
     f.cb.m0[3] = look.shards;
     f.cb.m1[1] = look.waves;
-    if (float const ta = float(now - gTestBed.at) / 1000.0f; ta >= 0.0f && ta < 26.0f && f.cb.m0[0] < 15.5f) {
+    if (float const ta = float(now - gTestBed.at) / 1000.0f; ta >= 0.0f && ta < 27.0f && f.cb.m0[0] < 15.5f) {
         int const k = int(f.cb.m0[0]);
         auto& c = f.cb;
         std::memcpy(c.tPos[k], gTestBed.p, 12); c.tPos[k][3] = ta < 23.0f ? 1.0f : 0.0f;
@@ -2013,9 +2021,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
-    c[12] = 0.025f; c[13] = 0; c[14] = 0; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified)
+    c[12] = 0.025f; c[13] = look.air; c[14] = 0; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified); the living world's strength
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
+    gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
     if (gTestBedReq.exchange(0)) {
         float fx = snap.forward[0], fz = snap.forward[2], fl = std::sqrt(fx * fx + fz * fz);
         if (fl < 1e-3f) fx = 0, fz = 1, fl = 1;
@@ -2102,6 +2111,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "rays") gLook.rays = std::clamp(v, 0.f, 3.f);
         else if (k == "clouds") gLook.clouds = std::clamp(v, 0.f, 1.f);
         else if (k == "ink") gLook.ink = std::clamp(v, 0.f, 1.f);
+        else if (k == "air") gLook.air = std::clamp(v, 0.f, 1.5f);
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
@@ -2119,7 +2129,7 @@ void saveWorldFxSettings() {
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nbeds " << (gLook.beds ? 1 : 0)
         << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
-        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\n";
+        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\n";
 }
 
 void setWorldSky(int kind) {

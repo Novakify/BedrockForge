@@ -88,7 +88,7 @@ std::string worldSkyStatus();
 struct WorldFxLook {
     bool shadows = true; float shadow = 0.70f; float ao = 0.55f; float rim = 1.0f; int debug = 0; float rays = 1.0f; float clouds = 1.0f; float ink = 0.0f;
     // the match (Bedrock Forge MatchFx): living sky, team lights + bed beacons, block shards. phase < 0 = follow the match
-    bool living = true; float teams = 1.0f; float shards = 1.0f; float phase = -1.0f; float waves = 1.0f; float trails = 1.0f; bool beds = true; bool kills = true; int bedStyle = 0; int deathScene = -1; float tension = -1.0f; /* < 0: follow the match */ /* -1 shuffle, 0..6 one scene */ // 0 Novak bed, 1 your Figura sitting on it
+    bool living = true; float teams = 1.0f; float shards = 1.0f; float phase = -1.0f; float waves = 1.0f; float trails = 1.0f; bool beds = true; bool kills = true; int bedStyle = 0; int deathScene = -1; float tension = -1.0f; float slow = 1.0f; float air = 1.0f; /* living world: sea light from below, pollen / fireflies / stardust */ /* review: block / kill / win moments play this much slower (1 = real time) */ /* < 0: follow the match */ /* -1 shuffle, 0..6 one scene */ // 0 Novak bed, 1 your Figura sitting on it
 };
 /// what RF last read from Bedrock Forge's match bridge (for the F6 panel)
 void testKill();

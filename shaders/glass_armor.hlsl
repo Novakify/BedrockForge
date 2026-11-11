@@ -132,52 +132,100 @@ float depthAt(float2 px) {
     return float(gDepth.Load(uint(p.y) * depthPitch + uint(p.x) * 4) & 0xFFFFFFu) / 16777215.0;
 }
 
-// ---- Fused glass (by Novak): the glass keeps its refraction, rim lens and neon outline, and the armour's real
-//      material lives INSIDE it - brushed iron, rolling gold, faceted diamond, ember-cracked netherite, copper with
-//      patina, chain rings - strongest towards the plate's rim, clearer in the middle, with a thin-film shimmer that
-//      shifts hue as the plate turns (the trippy part). Material from the variant: 0 leather 1 chain 2 iron 3 copper
-//      4 gold 5 diamond 6 netherite.
+// ---- Fused glass v2 (by Novak): the glass armour and the real material are one piece. Mojang's armour art says
+//      what goes where (tools/GlassArmor/make_roles.py: the class of every texel - line work, shade, fill, highlight):
+//        * where the artist drew LINES (rims, seams, the outline of each plate) there is polished METAL set into the
+//          glass - round wire that mirrors the world around you (the sky you stand under is in it) and catches a light
+//        * where they drew FILLS the plate is cut CRYSTAL in the material's colour - still see-through, still bending
+//          what is behind it, thicker where the art is shaded
+//        * where they drew HIGHLIGHTS the crystal is polished thin and flashes as you turn
+//      Per material: iron = steel filigree in clear plate glass; gold = gold leaf in amber with gold flake; diamond =
+//      every texel a cut facet (each bends the world its own way, splits it into colour, throws star glints);
+//      netherite = smoked black glass with ember running in the seams; copper = copper wire, amber glass, verdigris;
+//      chain = a mesh of steel beads, open between; leather = frosted glass in the team's dye with a stitched seam.
 float gaHash(float2 q) { return frac(sin(dot(q, float2(127.1, 311.7))) * 43758.5453); }
 float3 gaHue(float h) { return saturate(abs(frac(h + float3(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0); }
-// rgb = material colour (linear), a = how much of it shows here (0 = clear glass)
-float4 fusedMaterial(int m, float2 t, float2 p, float2 fs, float2 px, float e, float3 dye) {
-    float2 sub = floor(t * 4.0);                 // 4 detail texels per armour texel (still pixel-art, never smooth)
-    float  h   = gaHash(sub);
-    float  view = px.x / res.x * 1.3 + px.y / res.y * 0.7;   // turns with the plate on screen
-    if (m == 2) { // iron: brushed steel, a light streak slides along as you turn
-        float brush = 0.86 + 0.14 * gaHash(float2(sub.y, floor(sub.x / 6.0)));
-        float band  = exp(-pow(frac(p.x / max(fs.x, 1.0) * 0.6 + view * 0.8 - time * 0.04) - 0.5, 2.0) / 0.012);
-        return float4(float3(0.62, 0.65, 0.70) * brush + band * 0.55, 0.55);
+int roleAt(int2 t) {
+    t = clamp(t, int2(0, 0), int2(63, 31));
+    int  i = t.y * 64 + t.x;
+    uint w = kRoles[GA_VARIANT][i >> 4];
+    return int((w >> uint(30 - 2 * (i & 15))) & 3u);
+}
+bool metalAt(int2 t, int fi, int m) { return painted(t) && faceOf(t) == fi && (m == 1 || roleAt(t) == 0); }
+
+// glass: the plate as plain glass armour draws it (the world behind, bent). Returns the fused plate
+float3 fusedPlate(int m, float3 glass, float2 t, int2 b, int fi, float2 p, float2 fs, float2 px, float2 off, float e, float S,
+                  float pxPerTexel, float3 dye) {
+    int    role = roleAt(b);
+    float2 f = frac(t) - 0.5;
+    float  h = gaHash(float2(b));
+    float  view = px.x / res.x * 1.3 + px.y / res.y * 0.7;      // turns with the plate on screen
+    float  nearK = smoothstep(0.9, 2.6, pxPerTexel);             // far away a texel is a pixel: no fine relief there
+    float3 metal, tint;
+    float  tintK;
+    if (m == 2)      { metal = float3(0.82, 0.85, 0.90); tint = float3(0.82, 0.90, 1.00); tintK = 0.18; }   // iron
+    else if (m == 4) { metal = float3(1.00, 0.72, 0.24); tint = float3(1.00, 0.74, 0.28); tintK = 0.40; }   // gold
+    else if (m == 5) { metal = float3(0.88, 0.97, 1.00); tint = float3(0.22, 0.93, 1.00); tintK = 0.46; }   // diamond (set in white metal)
+    else if (m == 6) { metal = float3(0.34, 0.29, 0.33); tint = float3(0.13, 0.09, 0.17); tintK = 0.80; }   // netherite
+    else if (m == 3) { metal = float3(0.95, 0.52, 0.30); tint = float3(1.00, 0.58, 0.32); tintK = 0.34; }   // copper
+    else if (m == 1) { metal = float3(0.80, 0.83, 0.88); tint = float3(0.85, 0.90, 1.00); tintK = 0.10; }   // chain
+    else             { metal = dye * 0.50 + 0.04;        tint = dye;                      tintK = 0.50; }   // leather: the dye
+
+    if (m == 1 || role == 0) {
+        // ---- metal: a round wire (curved across its width only; chain = a bead per link)
+        float lx = m == 1 ? 0.0 : 0.5 * (float(metalAt(b + int2(-1, 0), fi, m)) + float(metalAt(b + int2(1, 0), fi, m)));
+        float ly = m == 1 ? 0.0 : 0.5 * (float(metalAt(b + int2(0, -1), fi, m)) + float(metalAt(b + int2(0, 1), fi, m)));
+        if (lx > 0.75 && ly > 0.75) { lx = 0.6; ly = 0.6; }      // a solid patch of line work: a low dome, not a flat spot
+        float2 nn = f * 2.0 * float2(1.0 - lx, 1.0 - ly) * nearK;
+        float3 N  = normalize(float3(nn * 0.95, 0.60));
+        // it mirrors what is really around it: the frame, up and away from the plate (so mostly the sky above you)
+        float3 env = (sceneAt(px + nn * 120.0 * S + float2(0.0, -90.0 * S)) + sceneAt(px + nn * 64.0 * S + float2(22.0 * S, -150.0 * S))) * 0.5;
+        float  spec = pow(saturate(dot(N, normalize(float3(-0.36, -0.72, 0.60)))), 26.0);
+        float  band = exp(-pow(frac((p.x + p.y * 0.6) / max(fs.x + fs.y, 1.0) * 0.8 + view * 0.9 - time * 0.05) - 0.5, 2.0) / 0.006);
+        float3 c = metal * (0.20 + 1.10 * env) * (1.0 - 0.38 * dot(nn, nn));
+        c += (spec * 0.85 + band * 0.30) * lerp(float3(1, 1, 1), metal, 0.35);
+        if (m == 6) {   // netherite: ember runs in the seams and breathes
+            float pulse = 0.55 + 0.45 * sin(time * 1.3 + h * 6.0 + (p.x + p.y) * 0.5);
+            c = c * 0.55 + float3(1.60, 0.42, 0.07) * pulse * saturate(1.0 - dot(nn, nn) * 1.4) * 0.9;
+        }
+        if (m == 3 && h > 0.80) c = lerp(c, float3(0.30, 0.78, 0.66) * (0.35 + 0.8 * env), 0.75);   // copper: verdigris here and there
+        return c;
     }
-    if (m == 4) { // gold: warm mirror, a slow gleam rolling across
-        float gleam = exp(-pow(frac((p.x + p.y) / max(fs.x + fs.y, 1.0) + view * 0.5 - time * 0.07) - 0.5, 2.0) / 0.02);
-        return float4(float3(0.95, 0.62, 0.16) * (0.85 + 0.15 * h) + gleam * float3(1.0, 0.85, 0.5) * 0.7, 0.60);
+    // ---- crystal
+    float3 g = glass;
+    if (m == 5) {   // diamond: every texel is a facet - it bends the world its own way and splits it into colour
+        float2 fo = (float2(gaHash(float2(b) + 3.1), gaHash(float2(b) + 7.7)) - 0.5) * 38.0 * S * nearK;
+        g.r = sceneAt(px + off + fo).r;
+        g.g = sceneAt(px + off + fo * 1.14).g;
+        g.b = sceneAt(px + off + fo * 1.30).b;
     }
-    if (m == 5) { // diamond: facets - each 2x2-texel cell a facet that flashes when it faces the light
-        float2 cell = floor(t * 0.5);
-        float  fa   = gaHash(cell);
-        float  flash = pow(saturate(sin(fa * 40.0 + view * 9.0 + time * 0.6) ), 24.0);
-        float3 base = lerp(float3(0.18, 0.80, 0.78), float3(0.45, 0.98, 0.95), fa);
-        return float4(base * 0.7 + flash * 1.4, 0.38 + 0.25 * flash);   // mostly glass: diamond is clear
+    float thick = role == 1 ? 1.40 : (role == 3 ? 0.45 : 1.0);   // drawn shade = thicker crystal, drawn highlight = polished thin
+    g = lerp(g, g * tint * 1.30 + tint * 0.07, saturate(tintK * thick));
+    // the metal stands proud of the glass: it shades the crystal under it and lights the crystal over it
+    float up = float(metalAt(b + int2(0, -1), fi, m)), dn = float(metalAt(b + int2(0, 1), fi, m));
+    float lf2 = float(metalAt(b + int2(-1, 0), fi, m));
+    g *= 1.0 - 0.30 * nearK * max(up * smoothstep(0.15, -0.5, f.y), lf2 * smoothstep(0.15, -0.5, f.x) * 0.6);
+    g += 0.07 * nearK * dn * smoothstep(-0.1, 0.5, f.y) * tint;
+    if (role == 3) {   // polished: it flashes when it turns to the light
+        float tw = pow(saturate(sin(h * 40.0 + view * 9.0 + time * 0.8)), 16.0);
+        g += (0.07 + 0.50 * tw) * lerp(float3(1, 1, 1), tint, 0.30);
+        if (m == 5) {  // and a diamond throws a star
+            float2 a = abs(f);
+            g += tw * tw * (exp(-a.x * 26.0) * exp(-a.y * 5.0) + exp(-a.y * 26.0) * exp(-a.x * 5.0)) * 0.9 * nearK;
+        }
     }
-    if (m == 6) { // netherite: near-black plate with ember cracks that breathe
-        float2 q = t * 0.75;
-        float  cr = abs(frac(q.x + 0.35 * sin(q.y * 1.7 + gaHash(floor(q)) * 6.0)) - 0.5);
-        float  crack = smoothstep(0.06, 0.0, cr) * step(0.45, gaHash(floor(q * 0.5)));
-        float  pulse = 0.65 + 0.35 * sin(time * 1.4 + gaHash(floor(q)) * 6.0);
-        return float4(float3(0.07, 0.06, 0.07) * (0.8 + 0.4 * h) + crack * pulse * float3(1.6, 0.45, 0.10), 0.78 - 0.2 * crack);
+    if (m == 4) {      // gold flake hanging in the amber
+        float2 sub = floor(t * 3.0);
+        float  hf = gaHash(sub + 11.0);
+        if (hf > 0.93) g += float3(1.0, 0.80, 0.35) * pow(saturate(sin(hf * 60.0 + view * 12.0 + time * 0.5)), 6.0) * 0.55 * nearK;
     }
-    if (m == 3) { // copper: warm metal, teal patina freckles
-        float pat = step(0.86, h);
-        return float4(lerp(float3(0.78, 0.36, 0.20), float3(0.25, 0.70, 0.60), pat) * (0.85 + 0.15 * h), 0.58);
+    if (m == 6) g += float3(1.0, 0.30, 0.05) * 0.05 * (0.5 + 0.5 * sin(time * 1.3 + h * 6.0));   // the ember's glow inside the dark glass
+    if (m == 0) {      // leather: frosted, with a stitched seam one texel in from the rim
+        g = lerp(g, tint * 0.75 + 0.05, 0.22);
+        float st = step(0.5, frac((p.x + p.y) * 0.5)) * smoothstep(0.55, 0.35, e) * smoothstep(0.15, 0.3, e);
+        g = lerp(g, tint * 0.35, st * 0.5 * nearK);
     }
-    if (m == 1) { // chain: rings of metal, glass between them
-        float2 r = frac(t * 0.5) - 0.5;
-        float ring = smoothstep(0.08, 0.0, abs(length(r) - 0.32));
-        return float4(float3(0.70, 0.72, 0.76) * (0.8 + 0.2 * h), 0.70 * ring);
-    }
-    // leather: the dye (Hive team colour) as a soft frosted body
-    return float4(dye * (0.75 + 0.25 * h), 0.40);
+    return g;
 }
 
 float4 PSGlassArmor(PSIn i) : SV_Target {
@@ -302,16 +350,14 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     c *= lerp(float3(1, 1, 1), lerp(float3(1, 1, 1), acc, 0.30) * lerp(1.0, 0.72, saturate(1.0 - cLum * 1.6)), cMix);
     c += acc * 0.025 * cMix;
 
-    // fused material: the armour's own metal inside the glass, strongest towards the rim of each plate
+    // fused: the armour's own material and the glass, one piece (fusedPlate)
     {
-        int    gm  = GA_VARIANT / 2;
-        float4 fm  = fusedMaterial(gm, t, p, fs, px, e, baseTint);
-        float  rimK = lerp(0.55, 1.0, e);                       // the middle stays clearer glass
-        float  k = saturate(fm.a * rimK * fusedK);
-        c = lerp(c, fm.rgb, k);
+        int    gm = GA_VARIANT / 2;
+        float3 fp = fusedPlate(gm, c, t, b, fi, p, fs, px, off, e, S, pxPerTexel, baseTint);
+        c = lerp(c, fp, saturate(fusedK));
         // thin-film shimmer: the hue slides with the plate's turn and the bevel - a soap-bubble skin on the glass
         float  film = frac(e * 1.6 + (px.x / res.x) * 0.9 - (px.y / res.y) * 0.6 + time * 0.035 + float(fi) * 0.11);
-        c += gaHue(film) * (0.05 + 0.20 * e) * filmK;
+        c += gaHue(film) * (0.03 + 0.14 * e) * filmK * (gm == 1 || roleAt(b) == 0 ? 0.35 : 1.0);
     }
 
     // reflection of the last finished frame: lyrics, sky and LyricsForge effects glint across the glass, strongest at

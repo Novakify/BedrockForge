@@ -1423,6 +1423,7 @@ void writeText(char const* name, char const* text) {
 }
 
 long uiAlphaFixedCount() { return gUiAlphaFixed.load(); }
+long pipelinesSeen() { return gPsoCreated.load() + gPsoStream.load(); }
 void requestLearn() {
     if (!gInstalled) return;
     {

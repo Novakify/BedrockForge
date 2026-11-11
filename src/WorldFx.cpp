@@ -1110,6 +1110,8 @@ void drawUi() {
     if (ImGui::SliderFloat("Cloud deck height", &deck, -80.0f, 80.0f, "%+.0f blocks")) rf::sky::setWorldSkyDeck(deck);
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::Text("Sky: %s", rf::sky::worldSkyStatus().c_str());
+    if (rf::uicapture::pipelinesSeen() == 0)
+        ImGui::TextColored(ImVec4(1, .55f, .3f, 1), "RF saw none of the game's pipelines this launch: no sky, no World FX. Restart Minecraft.");
     auto& look = rf::sky::worldFxLook();
     saveFx |= ImGui::Checkbox("Sun shadows + soft occlusion", &look.shadows);
     ImGui::SliderFloat("Shadow strength", &look.shadow, 0.0f, 1.0f, "%.2f");
@@ -1126,6 +1128,10 @@ void drawUi() {
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
     ImGui::TextDisabled("(inked block lines, painted flats, cel light)");
+    ImGui::SliderFloat("Living world", &look.air, 0.0f, 1.5f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(the cloud sea lights the islands from below; pollen, fireflies, stardust with the hour)");
     ImGui::SeparatorText("The match (Bedrock Forge)");
     saveFx |= ImGui::Checkbox("Living match sky", &look.living);
     ImGui::SameLine();
@@ -1134,6 +1140,10 @@ void drawUi() {
     ImGui::SliderFloat("Preview tension", &look.tension, -0.05f, 1.0f, look.tension < 0 ? "follow the match" : "%.2f");
     ImGui::SameLine();
     ImGui::TextDisabled("(teams going out: far storm, the frame closes in)");
+    {   // review: watch the fast moments (a block placed, a hit, a kill, the fireworks) slowed down. Not saved.
+        static int slowSel = 0;
+        if (ImGui::Combo("Review speed", &slowSel, "Real time\0Slow motion 1/4\0Slow motion 1/10\0")) look.slow = slowSel == 0 ? 1.0f : (slowSel == 1 ? 0.25f : 0.1f);
+    }
     saveFx |= ImGui::Checkbox("Cosmetic beds", &look.beds);
     ImGui::SameLine();
     ImGui::TextDisabled("(drawn over the server's bed, on your screen only)");

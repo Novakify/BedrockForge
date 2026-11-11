@@ -436,9 +436,22 @@ bool findTargets() {
     ComPtr<ID3D12Device>       dev;
     ComPtr<ID3D12CommandQueue> q;
     D3D12_COMMAND_QUEUE_DESC   qd{};
-    if (FAILED(hr = rf::d3d12api::CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev)))) probeNote("D3D12CreateDevice", hr);
+    rf::glassarmor::setProbing(true);
+    hr = rf::d3d12api::CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&dev));
+    rf::glassarmor::setProbing(false);
+    if (FAILED(hr)) probeNote("D3D12CreateDevice", hr);
     else if (FAILED(hr = dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q)))) probeNote("CreateCommandQueue", hr);
     if (q) gTargets[3] = (*reinterpret_cast<void***>(q.Get()))[10]; // ID3D12CommandQueue::ExecuteCommandLists
+    // The device / command-list functions RF hooks are read from the GAME's device when it exists: on 2026-11-11 one
+    // launch hooked 24 functions that the game then never called (0 pipelines seen all session, so no sky, no World
+    // FX) - a probe device is not guaranteed to share the game's code. Said in the log when the two differ.
+    if (ID3D12Device* gd = rf::glassarmor::gameDevice()) {
+        if (dev && (*reinterpret_cast<void***>(gd))[10] != (*reinterpret_cast<void***>(dev.Get()))[10])
+            ll_shim::warn("[RF] the game's D3D12 device runs different code than RF's probe device - hooking the game's");
+        dev = gd;
+        ComPtr<ID3D12CommandQueue> q2;
+        if (SUCCEEDED(dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&q2))) && q2) gTargets[3] = (*reinterpret_cast<void***>(q2.Get()))[10];
+    } else ll_shim::warn("[RF] the game's D3D12 device was not seen yet - hook targets come from a probe device");
     if (dev) { // Spatial GUI M0 spike targets (hooked only when uiCaptureSpike is on)
         void** dv = *reinterpret_cast<void***>(dev.Get());
         gUiTargets.createGraphicsPso = dv[10]; // CreateGraphicsPipelineState
