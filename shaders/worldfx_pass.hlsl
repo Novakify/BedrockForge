@@ -430,8 +430,8 @@ float3 killGlow(float3 W) {
         team = team / max(max(team.r, max(team.g, team.b)), 0.05);
         float3 d = W - (eA[i].xyz + float3(0.5, 0.9, 0.5));
         float  r2 = dot(d, d);
-        float  flash = (age < 0.22 ? 1.6 : 1.6 * exp(-(age - 0.22) * 5.0)) + 0.35 * exp(-age * 0.7);
-        acc += team * flash * exp(-r2 / (kind > 3.5 ? 22.0 : 10.0));
+        float  flash = (age < 0.22 ? 1.0 : exp(-(age - 0.22) * 5.0)) + 0.25 * exp(-age * 0.7);
+        acc += team * flash * exp(-r2 / (kind > 3.5 ? 9.0 : 5.0));
     }
     return acc * m0.w;
 }
