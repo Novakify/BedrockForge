@@ -22,7 +22,31 @@ cbuffer FragmentUniforms : register(b1) {
 cbuffer FragmentUniforms : register(b1) { float4 FogColor; float4 ViewPositionAndTime; };
 #endif
 
+// ---- living blocks ----------------------------------------------------------------------------------------------
+// Obsidian is a window into the void: three layers of pixel stars deep inside the block slide with parallax as you
+// move and twinkle; a faint violet nebula drifts behind them. The texture's bright streaks stay on top (the polished
+// surface), the stars live in its dark body. Pixel-sized like the texture, so it reads as part of the art.
+float3 csVoid(float2 f, float3 vt, float t) {   // f: 0..1 across the face, vt: the eye in face space (z out of the face)
+    float3 acc = float3(0, 0, 0);
+    float  inv = 1.0 / max(vt.z, 0.22);
+    [unroll] for (int L = 0; L < 3; L++) {
+        float  depth = 0.30 + 0.45 * float(L);
+        float2 q  = f - vt.xy * inv * depth + float2(0.37, 0.71) * float(L);
+        float2 cell = floor(q * 32.0);                                 // one texel of the 32x pack
+        float  h  = csHash(cell + 17.0 * float(L));
+        float  on = step(0.9935 - 0.002 * float(L), h);                 // a few, not glitter
+        float  tw = 0.55 + 0.45 * sin(t * (0.9 + 2.3 * frac(h * 91.7)) + h * 60.0);
+        float3 sc = lerp(float3(0.62, 0.45, 1.00), float3(1.00, 0.92, 0.95), frac(h * 13.1));
+        acc += sc * on * tw * (1.0 - 0.30 * float(L)) * 1.1;
+    }
+    float2 qn = f - vt.xy * inv * 1.6;
+    float  neb = csVN(qn * 3.0 + t * float2(0.015, 0.006)) * 0.6 + csVN(qn * 7.0 - t * 0.01) * 0.4;
+    acc += float3(0.16, 0.04, 0.28) * smoothstep(0.50, 0.90, neb) * 0.35;
+    return acc;
+}
+
 float4 main(PSIn i) : SV_Target {
+    csBegin(csLuma(s_LightMapTextureTexture.SampleLevel(s_LightMapTextureSampler, float2(0.0, 1.0), 0.0).rgb), ViewPositionAndTime);
     float4 d = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0);
 #if defined(PASS_ALPHATEST)
     bool kill = d.a < 0.5;
@@ -61,7 +85,7 @@ float4 main(PSIn i) : SV_Target {
     s_MatTextureTexture.GetDimensions(aw, ah);
     float2 tx   = i.texcoord0 * float2(aw, ah);
     int2   ti   = int2(floor(tx));
-    int2   tile = (ti / 16) * 16;                  // vanilla tiles are 16x16 texels
+    int2   tile = (ti / 32) * 32;                  // the pack's tiles are 32x32 texels (Faithful 32x, flipbook frames too)
     float4 t0   = s_MatTextureTexture.Load(int3(ti, 0));
 #if defined(PASS_TRANSPARENT)
     int    mid  = 0;
@@ -77,8 +101,9 @@ float4 main(PSIn i) : SV_Target {
     float3 nS = n;
     float  cav = 1.0;
     float3 glintN = n;
+    float3 T = float3(0, 0, 0), B = float3(0, 0, 0);
     [branch] if ((m.bump > 0.0 || m.sparkle > 0.0) && fade > 0.0) {
-        int2 lo = tile, hi = tile + 15;
+        int2 lo = tile, hi = tile + 31;
         float hC = csLuma(t0.rgb);
         float hL = csLuma(s_MatTextureTexture.Load(int3(clamp(ti - int2(1, 0), lo, hi), 0)).rgb);
         float hR = csLuma(s_MatTextureTexture.Load(int3(clamp(ti + int2(1, 0), lo, hi), 0)).rgb);
@@ -88,8 +113,8 @@ float4 main(PSIn i) : SV_Target {
         float3 dpx = ddx(wp), dpy = ddy(wp);
         float2 dtx = ddx(tx), dty = ddy(tx);
         float  det = dtx.x * dty.y - dtx.y * dty.x;
-        float3 T = (dpx * dty.y - dpy * dtx.y) * (det != 0.0 ? 1.0 / det : 0.0);   // world per texel along u
-        float3 B = (dpy * dtx.x - dpx * dty.x) * (det != 0.0 ? 1.0 / det : 0.0);   // world per texel along v
+        T = (dpx * dty.y - dpy * dtx.y) * (det != 0.0 ? 1.0 / det : 0.0);   // world per texel along u
+        B = (dpy * dtx.x - dpx * dty.x) * (det != 0.0 ? 1.0 / det : 0.0);   // world per texel along v
         T -= n * dot(T, n); B -= n * dot(B, n);
         float3 aT = abs(T), aB = abs(B);
         T = aT.x >= max(aT.y, aT.z) ? float3(sign(T.x), 0, 0) : (aT.y >= aT.z ? float3(0, sign(T.y), 0) : float3(0, 0, sign(T.z)));
@@ -119,9 +144,26 @@ float4 main(PSIn i) : SV_Target {
 #endif
     float sunVis = smoothstep(0.78, 0.97, lm.y);
     float3 lit = csLight(alb, nS, n, sunVis, lm.y, leaf, V, m, cav, glintN, fade);
-    // torches and lamps: warm, soft
+    // torches and lamps: warm, soft, and alive (a slow flame breathing, each light its own)
     float blk = pow(saturate(lm.x), 1.7);
-    lit += alb * float3(1.0, 0.62, 0.32) * blk * 1.4 * (1.0 - 0.6 * saturate(lm.y));
+    float flick = 0.90 + 0.10 * csVN(float2(CS_TIME * 2.3, dot(floor(wp * 0.25), float3(1.7, 9.1, 4.3))));
+    lit += alb * float3(1.0, 0.62, 0.32) * blk * 1.4 * flick * (1.0 - 0.6 * saturate(lm.y));
+#if !defined(PASS_TRANSPARENT)
+    // obsidian: the void inside (strongest at night, never on the surface streaks)
+    [branch] if (mid == MAT_OBSIDIAN && fade > 0.0 && dot(T, T) > 0.5) {
+        float2 f  = float2(ti - tile) / 32.0;
+        float3 vt = float3(dot(V, T), dot(V, B), dot(V, n));
+        float  body = 1.0 - smoothstep(0.06, 0.14, csLuma(t0.rgb));
+        lit += csVoid(f, vt, CS_TIME) * body * fade * lerp(0.6, 1.0, max(CS_DUSK, CS_NIGHT)) * lerp(0.6, 1.0, lm.y);
+    }
+    // end stone: a few of its flecks are stars - they twinkle, more as the sky darkens
+    [branch] if (mid == MAT_ENDSTONE && fade > 0.0) {
+        float h = csHash(float2(ti) + 3.7);
+        float on = step(0.975, h) * smoothstep(0.55, 0.75, csLuma(t0.rgb));
+        float tw = pow(0.5 + 0.5 * sin(CS_TIME * (0.7 + 1.6 * frac(h * 37.0)) + h * 80.0), 6.0);
+        lit += lerp(float3(1.0, 0.92, 0.70), float3(0.80, 0.86, 1.15), CS_NIGHT) * on * tw * fade * lerp(0.35, 1.1, max(CS_DUSK, CS_NIGHT)) * lm.y;
+    }
+#endif
 #if defined(PASS_TRANSPARENT)
     // ---- glass, ice and water: they reflect the Cloud Sea (fresnel), and catch the sun
     {

@@ -17,6 +17,7 @@ cbuffer FragmentUniforms : register(b1) {
 };
 
 float4 main(PSIn i) : SV_Target {
+    csBeginActor(FogColor, ViewPositionAndTime);
     float4 t = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0);
     if (t.a < 0.5) discard;
     uint tw, th, lv0;
@@ -38,6 +39,7 @@ float4 main(PSIn i) : SV_Target {
     else { m = csMat(MAT_NONE); m.bump = 0.0; m.spec = 0.08; m.rough = 24.0; }
     float3 gn  = normalize(n + (csHash3(float2(tx)) - 0.5) * 0.9);
     float3 lit = csLight(csLin(c), n, n, sky, sky * 0.9 + 0.1, 0.0, V, m, 1.0, gn, 1.0);
+    float  fp  = csViewModel(lit, csLin(c), n, V, m, gn, sky, length(cam - wp), u_view[0].xyz, u_view[1].xyz);
     // the enchantment: two slow layers of the vanilla glint pattern, kept as a thin pale-gold sheen
     float g1 = s_MatTexture1Texture.Sample(s_MatTexture1Sampler, i.texcoord2.xy).r;
     float g2 = s_MatTexture1Texture.Sample(s_MatTexture1Sampler, i.texcoord2.zw).r;
@@ -45,7 +47,7 @@ float4 main(PSIn i) : SV_Target {
     float rim = pow(1.0 - saturate(dot(n, V)), 1.6);
     float bright = smoothstep(0.35, 0.9, csLuma(csLin(c)));
     float k  = g * (0.35 + 0.65 * max(rim, bright)) * saturate(csLuma(GlintColor.rgb) * 3.0 + 0.4);
-    lit += float3(1.00, 0.84, 0.62) * k * 0.9;
-    lit = csHaze(lit, wp, cam, i.color2.a);
+    lit += lerp(float3(1.00, 0.84, 0.62), float3(0.75, 0.85, 1.10), CS_NIGHT) * k * 0.9;
+    lit = csHaze(lit, wp, cam, i.color2.a * (1.0 - fp));
     return float4(csEnc(lit), 1.0);
 }

@@ -15,6 +15,7 @@ cbuffer FragmentUniforms : register(b1) {   // the AlphaTest pass's own layout (
 };
 
 float4 main(PSIn i) : SV_Target {
+    csBeginActor(FogColor, ViewPositionAndTime);
     float4 t = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0);
     if (t.a < 0.5) discard;
     uint tw, th, lv0;
@@ -42,6 +43,10 @@ float4 main(PSIn i) : SV_Target {
     }
     float3 gn  = normalize(n + (csHash3(float2(tx)) - 0.5) * 0.9);  // each texel its own tiny facet
     float3 lit = csLight(csLin(c), n, n, sky, sky * 0.9 + 0.1, 0.0, V, m, 1.0, gn, 1.0);
-    lit = csHaze(lit, wp, cam, i.color2.a);
+    // ---- the item in your own hand: lit like a film's view model, not by where the sun happens to be. A key light
+    //      high over your right shoulder in the hour's colour, a cool fill from the left, and the real sun (or moon)
+    //      as a rim when it is behind the blade - so the sword always reads, and still belongs to the scene.
+    float  fp  = csViewModel(lit, csLin(c), n, V, m, gn, sky, length(cam - wp), u_view[0].xyz, u_view[1].xyz);
+    lit = csHaze(lit, wp, cam, i.color2.a * (1.0 - fp));
     return float4(csEnc(lit), 1.0);
 }

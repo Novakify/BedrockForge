@@ -10,6 +10,7 @@ SamplerState s_MatTextureSampler : register(s0);
 cbuffer FragmentUniforms : register(b1) { float4 OverlayColor; float4 ColorBased; float4 MatColor; float4 FogColor; float4 ViewPositionAndTime; };
 
 float4 main(PSIn i) : SV_Target {
+    csBeginActor(FogColor, ViewPositionAndTime);
     float3 c = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0).rgb * MatColor.rgb;
     c *= (i.color0.rgb - 1.0) * ColorBased.x + 1.0;
     c  = lerp(c, OverlayColor.rgb, OverlayColor.a);         // hurt flash etc. stay vanilla

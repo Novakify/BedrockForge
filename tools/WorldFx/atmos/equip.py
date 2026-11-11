@@ -188,11 +188,14 @@ def geometry_trident(parts, uvs, tex_w, tex_h, ident, grip_y=24.0):
 
 
 HOLD_ANIM = {"format_version": "1.10.0", "animations": {
+    # first person: "classic, smaller" - picked by Fernando in game 2026-11-11 from 6 holds (Java-style diagonal,
+    # whole sword in view, hilt in the corner)
     "animation.wfx.hold_first_person": {"loop": True, "bones": {"wfx_item": {
-        "position": [-7.0, -3.0, -2.0], "rotation": [152.0, -9.0, -5.0], "scale": 0.5}}},   # chosen in game 2026-11-10
+        "position": [-4.65, 0.8, -1.0], "rotation": [150.0, 0.0, -12.0], "scale": 0.55}}},
+    # third person: in the fist, blade forward-up ~45 degrees with its flat to the side, like a vanilla tool
+    # (swept in game 2026-11-11: [90, b, 90] puts the flat sideways, b sets the angle, y -1 seats the grip in the hand)
     "animation.wfx.hold_third_person": {"loop": True, "bones": {"wfx_item": {
-        "position": [1.5, -2.5, -10.5], "rotation": [97.0, -1.5, -49.0]},
-        "wfx_tilt": {"rotation": [0.0, 0.0, 90.0]}}}}}   # icon models: +45 net in third person (seen in game)
+        "position": [0.0, -1.0, 0.0], "rotation": [90.0, 15.0, 90.0]}}}}}
 
 
 def preview_cubes(parts, uvs):
