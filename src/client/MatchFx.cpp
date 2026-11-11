@@ -843,23 +843,13 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             playedTo = t;
         }
     }
-    {   // you: health and the kills of this life. Under ~40% health a heartbeat plays (the Warden's, quiet), faster as
-        // it drops; RF pulls the colour out of the edges of the frame on each beat (beatMs keeps the two in step)
+    {   // you: health (only to see a death, which ends the kill run). The low-health heartbeat was removed (not liked).
         float hp = 0.0f, hpMax = 0.0f;
         try { hp = float(lp->getHealth()); hpMax = float(lp->getMaxHealth()); } catch (...) {}
         static float lastHp = -1.0f;
         if (lastHp > 0.0f && hp <= 0.0f) gFx.streak = 0;             // died: the run is over
         lastHp = hp;
         gFx.hp = hp, gFx.hpMax = hpMax;
-        float const frac = hpMax > 0.0f ? hp / hpMax : 1.0f;
-        if (hp > 0.0f && frac < 0.40f) {
-            float const danger = std::clamp((0.40f - frac) / 0.30f, 0.0f, 1.0f);
-            int64_t const gap = int64_t(1000.0f / (1.0f + 1.1f * danger));   // 60 -> 126 beats a minute
-            if (now - gFx.beatMs >= gap) {
-                gFx.beatMs = now;
-                client.playUI("mob.warden.heartbeat", 0.30f + 0.35f * danger, 1.0f + 0.12f * danger);
-            }
-        }
     }
     trackProjectiles(*lp, now); // (any world: arrows look the same in single player)
     resolveHits(*lp, now);
