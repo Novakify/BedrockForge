@@ -504,6 +504,28 @@ float3 victory(float3 rd, float age, float3 team, float seed) {
     }
     return acc;
 }
+// ---- the final fight (night): a storm far out over the cloud sea - silent bolts on the horizon now and then, the
+//      sky lighting up behind the clouds with them (makes the last minutes feel like the end of something)
+float3 storm(float3 rd) {
+    if (NIGHT < 0.6) return 0.0;
+    float period = 7.0;
+    float cyc = floor(TIME / period), ph = TIME - cyc * period;
+    float when = 1.0 + 4.0 * h1(cyc * 1.7);                       // a random moment in each cycle
+    float a = ph - when;
+    if (a < 0.0 || a > 0.9) return 0.0;
+    float flick = exp(-a * 7.0) + 0.6 * exp(-max(a - 0.18, 0.0) * 9.0) * step(0.18, a);  // a double strike
+    float az = h1(cyc * 3.1) * 6.2832;
+    float3 dir = normalize(float3(cos(az), 0.0, sin(az)));
+    float along = dot(normalize(float3(rd.x, 0.0, rd.z)), dir);
+    float3 col = float3(0.62, 0.70, 1.0);
+    float glow = pow(saturate(along), 18.0) * exp(-max(rd.y, 0.0) * 6.0) * 0.9;   // the clouds lit from inside
+    // the bolt: a jagged line from high in the sky down to the sea, in the storm's direction
+    float side = dot(normalize(float3(rd.x, 0.0, rd.z)), normalize(float3(-dir.z, 0.0, dir.x)));
+    float h = rd.y;
+    float jag = (h1(floor(h * 40.0) + cyc) - 0.5) * 0.012 + (h1(floor(h * 9.0) + cyc * 2.0) - 0.5) * 0.02;
+    float bolt = along > 0.9 && h > -0.02 && h < 0.32 ? exp(-pow((side - jag) / 0.0018, 2.0)) : 0.0;
+    return col * (glow + bolt * 3.0) * flick * saturate((NIGHT - 0.6) / 0.3);
+}
 // everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m0.y > 0.5 && m0.w > 0.0) {
@@ -516,6 +538,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     }
     [branch] if (m0.y > 0.5 && m0.w > 0.0 && m1.z > 0.5) o = pow(pow(max(o, 0.0), 2.2) + killLight(rd, sceneT), 1.0 / 2.2);
     [branch] if (m0.x > 0.5 && m0.z > 0.0) o = pow(pow(max(o, 0.0), 2.2) + bedAlarm(rd) * m0.z, 1.0 / 2.2);
+    [branch] if (sceneT > 1e8 && NIGHT > 0.6 && m0.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + storm(rd), 1.0 / 2.2);
     [branch] if (m1.z > 0.5) {
         int ne = int(m0.y);
         [loop] for (int i = 0; i < ne; i++) {
