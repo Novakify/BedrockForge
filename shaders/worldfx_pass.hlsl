@@ -518,12 +518,12 @@ float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
         float3 Rt = float3(-F.z, 0.0, F.x);                              // the figure's right
         float3 ctr = bVis[i].xyz + F * 0.5 - CAM;                        // the two blocks' centre (camera-relative)
         float  tb = dot(ctr, rd);
-        if (tb < -2.5 || dot(ctr, ctr) - tb * tb > 2.4 * 2.4) continue;
+        float  brk  = tAge[i].x;                                         // >= 0: the bed broke this long ago
+        float  bound = brk >= 0.0 ? 5.5 : 2.4;
+        if (tb < -bound || dot(ctr, ctr) - tb * tb > bound * bound) continue;
         float3 team = tCol[i].rgb;
         float  thr  = tAge[i].y;
-        float  brk  = tAge[i].x;                                         // >= 0: the bed broke this long ago
-        float  fall = brk >= 0.0 ? saturate(brk / 0.55) : 0.0;  fall *= fall;
-        float  gone = brk >= 0.0 ? saturate((brk - 1.4) / 1.4) : 0.0;
+        float  gone = brk >= 0.0 ? saturate((brk - 1.1) / 0.9) : 0.0;
         if (gone >= 1.0) continue;
         float  tm = TIME + float(i) * 7.3;
         // idle life: breath (arms and head rise a little), the head drifting as it looks around; fidgety when attacked
@@ -531,41 +531,60 @@ float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
         float  look = 1.0 + 3.5 * thr;
         float3 headOff = float3(sin(tm * 0.43 * look) * 0.55 + sin(tm * 1.31 * look) * 0.2, breath * 1.2, sin(tm * 0.29 * look) * 0.35);
         float3 jit = float3(sin(TIME * 47.0), 0.0, cos(TIME * 41.0)) * 0.18 * thr;
-        float  ca = cos(fall * 1.45), sa = sin(fall * 1.45);           // topple backwards about the seat
-        float3 base = ctr - F * 0.42 - float3(0.0, gone * 0.6, 0.0);  // seat point (sinks as it goes)
+        float3 base = ctr - F * 0.42;                                  // seat point
         // into figure space (pixels): x right, y up, z back (the figure faces -z = the foot of the bed)
         float3 ro = float3(dot(-base, Rt), -base.y, dot(-base, -F)) * 16.0;
         float3 dl = float3(dot(rd, Rt), rd.y, dot(rd, -F));
+        int    nPc = brk >= 0.0 ? 3 : 1;                                // the bed breaks: every limb bursts into 3 pieces
+        float  flash = brk >= 0.0 ? exp(-brk * 14.0) : 0.0;
         [unroll] for (int c = 0; c < FIG_N; c++) {
             float4 A = kFigA[c], B = kFigB[c];
-            float3 pa = A.xyz, pb = B.xyz;
+            float3 qa = A.xyz, qb = B.xyz;
             int part = int(B.w);
-            if (part == 0) { pa += headOff; pb += headOff; }
-            if (part == 2) { pa.y += breath * saturate(pa.y / 10.0); pb.y += breath * saturate(pb.y / 10.0); }
-            if (part == 1) pb.y += breath * 0.5 * saturate(pb.y / 10.7) * step(9.0, pb.y);
-            pa += jit; pb += jit;
-            // the fall: rotate y towards +z (backwards) about the seat (0, 0, 1)
-            pa = float3(pa.x, pa.y * ca - (pa.z - 1.0) * sa, pa.y * sa + (pa.z - 1.0) * ca + 1.0);
-            pb = float3(pb.x, pb.y * ca - (pb.z - 1.0) * sa, pb.y * sa + (pb.z - 1.0) * ca + 1.0);
-            float  t = figCap(ro, dl, pa, pb, A.w);
-            float  tw = t / 16.0;
-            if (t > 0.0 && tw < best) {
-                float3 nl = figCapN(ro + dl * t, pa, pb, A.w);
-                float3 nw = normalize(nl.x * Rt + float3(0.0, nl.y, 0.0) - nl.z * F);
-                float  fr = pow(1.0 - saturate(dot(-rd, nw)), 2.5);
-                float  ndl = saturate(dot(nw, SUN));
-                float3 amb = lerp(float3(0.40, 0.37, 0.52), float3(0.22, 0.28, 0.55), NIGHT) * (0.75 + 0.25 * nw.y);
-                float3 sunC = lerp(float3(1.05, 0.74, 0.52), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
-                float  spec = pow(saturate(dot(reflect(rd, nw), SUN)), 24.0) * 0.25 * LIGHTK;
-                float  pulse = 0.85 + 0.15 * sin(tm * (1.6 + 8.0 * thr));
-                float  gutter = brk >= 0.0 ? (1.0 - gone) * (0.7 + 0.3 * sin(brk * 37.0)) : 1.0;
-                col = float3(0.022, 0.022, 0.026) * (amb + sunC * ndl) + spec
-                    + team * fr * 1.9 * pulse * gutter * (0.7 + 0.6 * darkK());
-                best = tw; hit = true;
+            if (part == 0) { qa += headOff; qb += headOff; }
+            if (part == 2) { qa.y += breath * saturate(qa.y / 10.0); qb.y += breath * saturate(qb.y / 10.0); }
+            if (part == 1) qb.y += breath * 0.5 * saturate(qb.y / 10.7) * step(9.0, qb.y);
+            qa += jit; qb += jit;
+            [loop] for (int pc = 0; pc < nPc; pc++) {
+                float3 pa = lerp(qa, qb, float(pc) / float(nPc)), pb = lerp(qa, qb, float(pc + 1) / float(nPc));
+                float  rad = A.w;
+                if (brk >= 0.0) {   // the burst: out from the chest, up, tumbling, down onto the ground
+                    float  sk = float(c) * 7.13 + float(pc) * 2.71 + float(i) * 1.9;
+                    float3 m = (pa + pb) * 0.5;
+                    float3 dir = normalize(m - float3(0.0, 6.0, -4.0) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 6.0);
+                    float3 v = dir * (30.0 + 26.0 * h1(sk + 3)) + float3(0.0, 34.0 + 20.0 * h1(sk + 4), 0.0);
+                    const float G = 150.0;
+                    float  tl = (v.y + sqrt(max(v.y * v.y + 2.0 * G * max(m.y - rad, 0.0), 0.0))) / G;   // lands
+                    float  ta = min(brk, tl);
+                    float3 off = float3(v.x * ta, v.y * ta - 0.5 * G * ta * ta, v.z * ta);
+                    if (brk > tl) off.xz += v.xz * 0.12 * (1.0 - exp(-(brk - tl) * 6.0));   // a short slide
+                    float3 ax = normalize(float3(h1(sk + 5), h1(sk + 6), h1(sk + 7)) - 0.5 + 1e-3);
+                    float3x3 Rr = rotAxis(ax, ta * (9.0 + 8.0 * h1(sk + 8)));
+                    float3 hh = mul(Rr, (pb - pa) * 0.5);
+                    pa = m + off - hh; pb = m + off + hh;
+                    rad *= 1.0 - gone;
+                    if (rad < 0.02) continue;
+                }
+                float  t = figCap(ro, dl, pa, pb, rad);
+                float  tw = t / 16.0;
+                if (t > 0.0 && tw < best) {
+                    float3 nl = figCapN(ro + dl * t, pa, pb, rad);
+                    float3 nw = normalize(nl.x * Rt + float3(0.0, nl.y, 0.0) - nl.z * F);
+                    float  fr = pow(1.0 - saturate(dot(-rd, nw)), 2.5);
+                    float  ndl = saturate(dot(nw, SUN));
+                    float3 amb = lerp(float3(0.40, 0.37, 0.52), float3(0.22, 0.28, 0.55), NIGHT) * (0.75 + 0.25 * nw.y);
+                    float3 sunC = lerp(float3(1.05, 0.74, 0.52), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
+                    float  spec = pow(saturate(dot(reflect(rd, nw), SUN)), 24.0) * 0.25 * LIGHTK;
+                    float  pulse = 0.85 + 0.15 * sin(tm * (1.6 + 8.0 * thr));
+                    float  hot = brk >= 0.0 ? 1.0 + 1.5 * exp(-brk * 3.0) : 1.0;   // the pieces fly out burning, then cool
+                    col = float3(0.022, 0.022, 0.026) * (amb + sunC * ndl) + spec
+                        + team * fr * 1.9 * pulse * hot * (0.7 + 0.6 * darkK()) + float3(1, 1, 1) * flash * 2.0;
+                    best = tw; hit = true;
+                }
+                // a soft halo of team light round the limbs
+                float tr; float dd = figSegDist(ro, dl, pa, pb, tr) - rad;
+                if (tr / 16.0 < best) halo += team * exp(-max(dd, 0.0) * 0.9) * 0.022 * (1.0 - gone) * (0.6 + 0.8 * darkK()) * (1.0 + 6.0 * flash);
             }
-            // a soft halo of team light round the limbs
-            float tr; float dd = figSegDist(ro, dl, pa, pb, tr) - A.w;
-            if (tr / 16.0 < best) halo += team * exp(-max(dd, 0.0) * 0.9) * 0.022 * (1.0 - gone) * (0.6 + 0.8 * darkK());
         }
         // the footprint: a fine line of team light round the server's bed (two blocks), on the ground
         if (rd.y < -0.01 && brk < 0.0) {
