@@ -120,6 +120,7 @@ float                              gShowBeat = 0;
 int                                gDyeRow = 5, gDyeRowGlint = 5; // M3: ChangeColor = row 5 of b1 (1.26.51: found with debug view 8; same uniform order in ActorGlint)
 int                                gDbgRow = 0;
 std::atomic_bool                   gEnchFlow{true};
+std::atomic<float>                 gFusedK{1.0f}, gFilmK{1.0f}; // fused glass (F6)
 float                              gIdleEdge = 0.3f;  // M2.5: outline strength with no music (Awaken boots it to 1)
 float                              gBeatK    = 1.0f;  // M2.5: how hard the outline breathes with the kick
 std::atomic_bool                   gWordSweep{true};  // M2.5: a light sweep per sung word
@@ -869,6 +870,7 @@ struct alignas(16) GaParams { // cbuffer GA (shaders/glass_armor.hlsl), 256-byte
     int32_t  dyeRow, dyeRowGlint;         // float4 row of ChangeColor in the Actor / ActorGlint PS buffer (-1 = unknown)
     uint32_t dbgRow;                      // debug view 8: which row to show
     float    enchFlow;                    // 1 = enchanted pieces get the edge flow
+    float    fusedK, filmK, pad3, pad4;   // fused glass: the armour's real material inside the glass, thin-film shimmer
 };
 static_assert(sizeof(GaParams) <= 256, "one 256-byte slot");
 
@@ -998,6 +1000,7 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.time       = float(double(now.QuadPart - gT0.QuadPart) / double(f.QuadPart));
     p.glint      = 0;
     p.dyeRow = gDyeRow, p.dyeRowGlint = gDyeRowGlint, p.dbgRow = uint32_t(std::max(gDbgRow, 0)), p.enchFlow = gEnchFlow ? 1.f : 0.f;
+    p.fusedK = gFusedK.load(), p.filmK = gFilmK.load();
     p.scenePitch = rf.Footprint.RowPitch, p.depthPitch = df.Footprint.RowPitch;
     p.swirl = 0.9f, p.ripple = 0.09f, p.lens = 0.8f; // approved preview: Medium
     p.uiScale   = float(rd.Height) / 760.f;
@@ -1177,6 +1180,9 @@ void drawUi() {
         ImGui::InputInt("Leather dye row (enchanted)", &gDyeRowGlint);
         bool ef = gEnchFlow.load();
         if (ImGui::Checkbox("Enchanted pieces: edge flow", &ef)) gEnchFlow = ef;
+        float fk = gFusedK.load(), fl = gFilmK.load();
+        if (ImGui::SliderFloat("Fused material", &fk, 0.0f, 1.0f, "%.2f")) gFusedK = fk;
+        if (ImGui::SliderFloat("Thin-film shimmer", &fl, 0.0f, 2.0f, "%.2f")) gFilmK = fl;
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
                     gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
     }

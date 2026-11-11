@@ -47,6 +47,8 @@ cbuffer GA : register(b0, space9) {
     int    dyeRow, dyeRowGlint;
     uint   dbgRow;
     float  enchFlow;
+    // fused glass: how much of the real material shows (0 = pure glass), thin-film shimmer strength
+    float  fusedK, filmK, pad3, pad4;
 };
 #ifndef GA_GLINT
 #define GA_GLINT 0
@@ -128,6 +130,54 @@ float3 prevAt(float2 px) { // the frame is the same size as the world target in 
 float depthAt(float2 px) {
     int2 p = clamp(int2(px), int2(0, 0), int2(res) - 1);
     return float(gDepth.Load(uint(p.y) * depthPitch + uint(p.x) * 4) & 0xFFFFFFu) / 16777215.0;
+}
+
+// ---- Fused glass (by Novak): the glass keeps its refraction, rim lens and neon outline, and the armour's real
+//      material lives INSIDE it - brushed iron, rolling gold, faceted diamond, ember-cracked netherite, copper with
+//      patina, chain rings - strongest towards the plate's rim, clearer in the middle, with a thin-film shimmer that
+//      shifts hue as the plate turns (the trippy part). Material from the variant: 0 leather 1 chain 2 iron 3 copper
+//      4 gold 5 diamond 6 netherite.
+float gaHash(float2 q) { return frac(sin(dot(q, float2(127.1, 311.7))) * 43758.5453); }
+float3 gaHue(float h) { return saturate(abs(frac(h + float3(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0); }
+// rgb = material colour (linear), a = how much of it shows here (0 = clear glass)
+float4 fusedMaterial(int m, float2 t, float2 p, float2 fs, float2 px, float e, float3 dye) {
+    float2 sub = floor(t * 4.0);                 // 4 detail texels per armour texel (still pixel-art, never smooth)
+    float  h   = gaHash(sub);
+    float  view = px.x / res.x * 1.3 + px.y / res.y * 0.7;   // turns with the plate on screen
+    if (m == 2) { // iron: brushed steel, a light streak slides along as you turn
+        float brush = 0.86 + 0.14 * gaHash(float2(sub.y, floor(sub.x / 6.0)));
+        float band  = exp(-pow(frac(p.x / max(fs.x, 1.0) * 0.6 + view * 0.8 - time * 0.04) - 0.5, 2.0) / 0.012);
+        return float4(float3(0.62, 0.65, 0.70) * brush + band * 0.55, 0.55);
+    }
+    if (m == 4) { // gold: warm mirror, a slow gleam rolling across
+        float gleam = exp(-pow(frac((p.x + p.y) / max(fs.x + fs.y, 1.0) + view * 0.5 - time * 0.07) - 0.5, 2.0) / 0.02);
+        return float4(float3(0.95, 0.62, 0.16) * (0.85 + 0.15 * h) + gleam * float3(1.0, 0.85, 0.5) * 0.7, 0.60);
+    }
+    if (m == 5) { // diamond: facets - each 2x2-texel cell a facet that flashes when it faces the light
+        float2 cell = floor(t * 0.5);
+        float  fa   = gaHash(cell);
+        float  flash = pow(saturate(sin(fa * 40.0 + view * 9.0 + time * 0.6) ), 24.0);
+        float3 base = lerp(float3(0.18, 0.80, 0.78), float3(0.45, 0.98, 0.95), fa);
+        return float4(base * 0.7 + flash * 1.4, 0.38 + 0.25 * flash);   // mostly glass: diamond is clear
+    }
+    if (m == 6) { // netherite: near-black plate with ember cracks that breathe
+        float2 q = t * 0.75;
+        float  cr = abs(frac(q.x + 0.35 * sin(q.y * 1.7 + gaHash(floor(q)) * 6.0)) - 0.5);
+        float  crack = smoothstep(0.06, 0.0, cr) * step(0.45, gaHash(floor(q * 0.5)));
+        float  pulse = 0.65 + 0.35 * sin(time * 1.4 + gaHash(floor(q)) * 6.0);
+        return float4(float3(0.07, 0.06, 0.07) * (0.8 + 0.4 * h) + crack * pulse * float3(1.6, 0.45, 0.10), 0.78 - 0.2 * crack);
+    }
+    if (m == 3) { // copper: warm metal, teal patina freckles
+        float pat = step(0.86, h);
+        return float4(lerp(float3(0.78, 0.36, 0.20), float3(0.25, 0.70, 0.60), pat) * (0.85 + 0.15 * h), 0.58);
+    }
+    if (m == 1) { // chain: rings of metal, glass between them
+        float2 r = frac(t * 0.5) - 0.5;
+        float ring = smoothstep(0.08, 0.0, abs(length(r) - 0.32));
+        return float4(float3(0.70, 0.72, 0.76) * (0.8 + 0.2 * h), 0.70 * ring);
+    }
+    // leather: the dye (Hive team colour) as a soft frosted body
+    return float4(dye * (0.75 + 0.25 * h), 0.40);
 }
 
 float4 PSGlassArmor(PSIn i) : SV_Target {
@@ -251,6 +301,18 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float cLum = dot(cover, float3(0.299, 0.587, 0.114));
     c *= lerp(float3(1, 1, 1), lerp(float3(1, 1, 1), acc, 0.30) * lerp(1.0, 0.72, saturate(1.0 - cLum * 1.6)), cMix);
     c += acc * 0.025 * cMix;
+
+    // fused material: the armour's own metal inside the glass, strongest towards the rim of each plate
+    {
+        int    gm  = GA_VARIANT / 2;
+        float4 fm  = fusedMaterial(gm, t, p, fs, px, e, baseTint);
+        float  rimK = lerp(0.55, 1.0, e);                       // the middle stays clearer glass
+        float  k = saturate(fm.a * rimK * fusedK);
+        c = lerp(c, fm.rgb, k);
+        // thin-film shimmer: the hue slides with the plate's turn and the bevel - a soap-bubble skin on the glass
+        float  film = frac(e * 1.6 + (px.x / res.x) * 0.9 - (px.y / res.y) * 0.6 + time * 0.035 + float(fi) * 0.11);
+        c += gaHue(film) * (0.05 + 0.20 * e) * filmK;
+    }
 
     // reflection of the last finished frame: lyrics, sky and LyricsForge effects glint across the glass, strongest at
     // the rims (fresnel-like) - sampled mirrored around the face and pushed outwards along the edge normal
