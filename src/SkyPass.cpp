@@ -1390,11 +1390,15 @@ void light(float age, float const srgb[3], float seed, float out[3]) {
 // The shells in the air at this moment, set up once per frame for every sky pixel (fireworks.hlsli fwShellKind /
 // fwShellDir / fwColour / fwGlow, same numbers): the shader then only loops over these instead of all 52 with their
 // hashes and trig. out[i] = {dir.xyz, R}, {colour, glow}, {a, type, draw seed, hash}. Returns how many.
+constexpr int kFwMaxShells = 26;   // at once (was 40)
 int shells(float age, float const srgb[3], float seed, float yaw, float (*out)[3][4], int maxN) {
     float team[3], mx = 0.05f;
     for (int k = 0; k < 3; ++k) { team[k] = std::pow(std::max(srgb[k], 0.0f), 2.2f); mx = std::max(mx, team[k]); }
     for (int k = 0; k < 3; ++k) team[k] /= mx;
     int n = 0;
+    // two passes: shells still bursting / burning first, then the fading glitter while there is room - at the finale's
+    // peak (~70 FPS at 4K with every shell in the air) the oldest glitter is what gives way
+    for (int pass = 0; pass < 2; ++pass)
     for (int b = 0; b < 52 && n < maxN; ++b) {
         float const a0 = age - T0(b) - 0.55f;
         if (a0 < -0.80f || a0 > 7.5f) continue;
@@ -1417,6 +1421,7 @@ int shells(float age, float const srgb[3], float seed, float yaw, float (*out)[3
         float const a = age - (t0 + 0.55f);
         float const life = kLife[type];
         if (a < -0.56f || a > life + 3.0f) continue;
+        if ((a > life + 0.4f) != (pass == 1)) continue;
         // direction
         float const side = (b & 1) ? 1.0f : -1.0f;
         float az = b < 24 ? side * (0.15f + (tier == 2 ? 0.34f : 0.62f) * H(sp + 1.0f))
@@ -1575,7 +1580,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
                 if (winAt != e.atMs) { winAt = e.atMs; winYaw = gViewYaw.load(std::memory_order_relaxed); }
                 c.eC[ne][3] = winYaw;
                 fwcpu::light(age, e.col, c.eC[ne][0], c.eA[ne]);   // the show's light on the world, once per frame
-                if (c.m4[0] == 0.0f) c.m4[0] = float(fwcpu::shells(age, e.col, c.eC[ne][0], winYaw, c.fwS, 40));
+                if (c.m4[0] == 0.0f) c.m4[0] = float(fwcpu::shells(age, e.col, c.eC[ne][0], winYaw, c.fwS, fwcpu::kFwMaxShells));
             } else c.eC[ne][3] = 0.0f;
             ++ne;
         }
@@ -1595,7 +1600,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eA[ne][3] = tw; c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = 6.0f; c.eC[ne][0] = 777.0f;
             c.eC[ne][3] = testYaw;
             fwcpu::light(tw, c.eB[ne], c.eC[ne][0], c.eA[ne]);
-            if (c.m4[0] == 0.0f) c.m4[0] = float(fwcpu::shells(tw, c.eB[ne], c.eC[ne][0], testYaw, c.fwS, 40));
+            if (c.m4[0] == 0.0f) c.m4[0] = float(fwcpu::shells(tw, c.eB[ne], c.eC[ne][0], testYaw, c.fwS, fwcpu::kFwMaxShells));
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
