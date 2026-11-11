@@ -75,7 +75,7 @@ float const kDye[16][3] = {
     {0.62f, 0.38f, 0.20f}, {0.22f, 0.70f, 0.18f}, {1.00f, 0.16f, 0.12f}, {0.34f, 0.30f, 0.44f},
 };
 
-struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; bool dyeKnown = false; bool elim = false; int64_t elimMs = 0; float threat = 0; };
+struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; bool dyeKnown = false; bool elim = false; int64_t elimMs = 0; float threat = 0; int64_t hitMs = 0; };
 std::vector<Bed> gBeds;
 uint32_t         gBroken = 0;
 int64_t          gResetMs = 0;
@@ -192,6 +192,9 @@ void onChange(ll::event::BlockChangedEvent& ev) {
         if (e.x == p.x && e.y == p.y && e.z == p.z) return;
     }
     if (isBed(prev) && !isBed(next)) onBroken(p.x, p.y, p.z);
+    else if (!boring(prev.getTypeName()) && next.getTypeName() == "minecraft:air")
+        for (auto& b : gBeds) // a block of a bed's defence broken
+            if (b.alive && std::abs(b.x - p.x) <= 4 && std::abs(b.z - p.z) <= 4 && p.y - b.y >= -1 && p.y - b.y <= 4) b.hitMs = now;
     if (isBed(next) && !bedNear(p.x, p.y, p.z) && gBeds.size() < 16) gBeds.push_back({p.x, p.y, p.z, 14, true, now});
     std::string const& pn = prev.getTypeName();
     std::string const& nn = next.getTypeName();
@@ -523,15 +526,10 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     scan(lp->getDimensionBlockSource(), pos);
     if (gIsMap) {
         trackPlayers(*lp, now);
-        // threat: players of another team close to a bed (a rush on it) - the beacon and, for yours, the screen react
+        // threat: the bed's defence is being broken (blocks right around it going down) - something everyone could see
+        // happen, not where players are (that would be an unfair wallhack)
         for (auto& b : gBeds) {
-            float n = 0;
-            if (b.alive && b.dyeKnown)
-                for (auto const& t : gTracks) {
-                    if (t.dye < 0 || t.dye == b.dye || now - t.seen > 500) continue;
-                    if (std::hypot(t.pos[0] - (b.x + 0.5), t.pos[2] - (b.z + 0.5)) < 14.0 && std::abs(t.pos[1] - b.y) < 9.0) n += 1;
-                }
-            float const want = std::min(1.0f, n * 0.6f);
+            float const want = b.alive && b.hitMs && now - b.hitMs < 6000 ? 1.0f : 0.0f;
             b.threat += (want - b.threat) * std::min(1.0f, dt * (want > b.threat ? 6.0f : 1.5f));
         }
     }
