@@ -693,7 +693,7 @@ void onText(std::string const& m) {
         retarget();
     }
     if ((s.find("champion") != std::string::npos || s.find("victory") != std::string::npos || s.find(" won") != std::string::npos ||
-         s.find(" wins") != std::string::npos) && gIsMap) {
+         s.find(" wins") != std::string::npos) && s.find("vote") == std::string::npos && gIsMap) {
         static int64_t lastWin = 0;
         if (nowMs() - lastWin > 20000) {
             lastWin = nowMs();
