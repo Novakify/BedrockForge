@@ -1333,8 +1333,13 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.tAge[k][1] = x.threat;                                                            // enemies at this bed
             c.tAge[k][2] = x.elim ? std::clamp(float(now - x.elimMs) / 4000.0f, 0.0f, 1.0f) : 0.0f; // the island going dark
             c.tAge[k][3] = x.mine ? 1.0f : 0.0f;
-            if (x.hasVis && t.alive) { std::memcpy(c.bVis[k], x.vis, 12); c.bVis[k][3] = x.yaw * 3.14159265f / 180.0f; }
-            else c.bVis[k][3] = -100.0f;
+            // the last place we saw this team's bed model, so the bed can play its fall for a moment after it breaks
+            static float lastVis[16][4]; static bool lastOk[16];
+            if (x.hasVis && t.alive) {
+                std::memcpy(c.bVis[k], x.vis, 12); c.bVis[k][3] = x.yaw * 3.14159265f / 180.0f;
+                std::memcpy(lastVis[i & 15], c.bVis[k], 16); lastOk[i & 15] = true;
+            } else if (!t.alive && lastOk[i & 15] && a >= 0.0f && a < 3.0f) std::memcpy(c.bVis[k], lastVis[i & 15], 16);
+            else { c.bVis[k][3] = -100.0f; if (t.alive) lastOk[i & 15] = false; }
             ++k;
         }
         f.cb.m0[0] = float(k);
@@ -1470,6 +1475,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     f.cb.m0[3] = look.shards;
     f.cb.m1[1] = look.waves;
     f.cb.m1[3] = look.beds ? 1.0f : 0.0f;
+    f.cb.m2[2] = float(look.bedStyle);
     if (look.trails <= 0.0f) f.cb.m1[0] = 0;
     gMatch = f;
     return f;
@@ -1947,6 +1953,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "ink") gLook.ink = std::clamp(v, 0.f, 1.f);
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
+        else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
@@ -1959,6 +1966,7 @@ void saveWorldFxSettings() {
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nbeds " << (gLook.beds ? 1 : 0)
+        << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle
         << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\n";
 }
 

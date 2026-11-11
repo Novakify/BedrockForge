@@ -1132,9 +1132,13 @@ void drawUi() {
     ImGui::TextDisabled("(golden hour -> dusk at the first bed -> night for the final fight)");
     ImGui::SliderFloat("Preview sky phase", &look.phase, -1.0f, 2.0f, look.phase < 0 ? "follow the match" : "%.2f");
     saveFx |= ImGui::Checkbox("Cosmetic beds", &look.beds);
-    saveFx |= ImGui::Checkbox("Kill and respawn moments", &look.kills);
     ImGui::SameLine();
-    ImGui::TextDisabled("(our own 3D bed over the server's, on your screen only)");
+    ImGui::TextDisabled("(drawn over the server's bed, on your screen only)");
+    if (look.beds) {
+        ImGui::SetNextItemWidth(200.0f);
+        saveFx |= ImGui::Combo("Bed style", &look.bedStyle, "Novak bed\0Your Figura, sitting on it\0");
+    }
+    saveFx |= ImGui::Checkbox("Kill and respawn moments", &look.kills);
     if (ImGui::Button("Test kill")) rf::sky::testKill();
     ImGui::SameLine();
     ImGui::TextDisabled("(a kill 6 blocks ahead; press again for a final kill)");

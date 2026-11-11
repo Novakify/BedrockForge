@@ -435,6 +435,120 @@ float4 cosmeticBeds(float3 rd, float sceneT) {
     }
     return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);
 }
+// ---- "Your Figura" bed (by Novak): the player's own Figura stick figure sits where the bed stands, on its sitdown
+//      pose, instead of a bed. Black body, a rim of team light (the avatar's own look); it breathes, looks around,
+//      fidgets fast while the bed is under attack, and when the bed breaks it topples over backwards and gutters out.
+//      Footprint: a fine line of team light on the ground round the two blocks the server's bed occupies (so its
+//      hitbox stays readable now that the bed itself is not drawn).
+#include "figura_bed.hlsli"
+float figCap(float3 ro, float3 rd, float3 pa, float3 pb, float r) {   // ray vs capsule (Inigo Quilez), t or -1
+    float3 ba = pb - pa, oa = ro - pa;
+    float baba = dot(ba, ba), bard = dot(ba, rd), baoa = dot(ba, oa), rdoa = dot(rd, oa), oaoa = dot(oa, oa);
+    float a = baba - bard * bard, b = baba * rdoa - baoa * bard, c = baba * oaoa - baoa * baoa - r * r * baba;
+    float h = b * b - a * c;
+    if (h >= 0.0 && a > 1e-6) {
+        float t = (-b - sqrt(h)) / a, y = baoa + t * bard;
+        if (y > 0.0 && y < baba) return t;
+        float3 oc = (y <= 0.0) ? oa : ro - pb;
+        b = dot(rd, oc); c = dot(oc, oc) - r * r; h = b * b - c;
+        if (h > 0.0) return -b - sqrt(h);
+    } else if (baba < 1e-6) {
+        float bb = dot(rd, oa), cc = oaoa - r * r, hh = bb * bb - cc;
+        if (hh > 0.0) return -bb - sqrt(hh);
+    }
+    return -1.0;
+}
+float3 figCapN(float3 p, float3 a, float3 b, float r) {
+    float3 ba = b - a, pa = p - a;
+    float  h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-6));
+    return (pa - h * ba) / r;
+}
+float figSegDist(float3 ro, float3 rd, float3 a, float3 b, out float tRay) { // closest approach, ray to segment
+    float3 ba = b - a, oa = ro - a;
+    float  bb = dot(ba, ba), bd = dot(ba, rd), bo = dot(ba, oa), dO = dot(rd, oa);
+    float  den = bb - bd * bd;
+    float  s = den > 1e-6 ? saturate((bo - bd * dO) / den) : 0.0;   // param on segment (rd normalised)
+    float3 q = a + ba * s;
+    tRay = max(dot(q - ro, rd), 0.0);
+    return length(ro + rd * tRay - q);
+}
+float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
+    int nt = int(m0.x);
+    float best = sceneT; float3 col = 0.0; bool hit = false;
+    [loop] for (int i = 0; i < nt; i++) {
+        if (bVis[i].w < -50.0) continue;
+        float  yaw = bVis[i].w;
+        float3 F = float3(-sin(yaw), 0.0, cos(yaw));                    // towards the foot of the bed
+        float3 Rt = float3(-F.z, 0.0, F.x);                              // the figure's right
+        float3 ctr = bVis[i].xyz + F * 0.5 - CAM;                        // the two blocks' centre (camera-relative)
+        float  tb = dot(ctr, rd);
+        if (tb < -2.5 || dot(ctr, ctr) - tb * tb > 2.4 * 2.4) continue;
+        float3 team = tCol[i].rgb;
+        float  thr  = tAge[i].y;
+        float  brk  = tAge[i].x;                                         // >= 0: the bed broke this long ago
+        float  fall = brk >= 0.0 ? saturate(brk / 0.55) : 0.0;  fall *= fall;
+        float  gone = brk >= 0.0 ? saturate((brk - 1.4) / 1.4) : 0.0;
+        if (gone >= 1.0) continue;
+        float  tm = TIME + float(i) * 7.3;
+        // idle life: breath (arms and head rise a little), the head drifting as it looks around; fidgety when attacked
+        float  breath = sin(tm * 1.9) * 0.22;
+        float  look = 1.0 + 3.5 * thr;
+        float3 headOff = float3(sin(tm * 0.43 * look) * 0.55 + sin(tm * 1.31 * look) * 0.2, breath * 1.2, sin(tm * 0.29 * look) * 0.35);
+        float3 jit = float3(sin(TIME * 47.0), 0.0, cos(TIME * 41.0)) * 0.18 * thr;
+        float  ca = cos(fall * 1.45), sa = sin(fall * 1.45);           // topple backwards about the seat
+        float3 base = ctr - F * 0.42 - float3(0.0, gone * 0.6, 0.0);  // seat point (sinks as it goes)
+        // into figure space (pixels): x right, y up, z back (the figure faces -z = the foot of the bed)
+        float3 ro = float3(dot(-base, Rt), -base.y, dot(-base, -F)) * 16.0;
+        float3 dl = float3(dot(rd, Rt), rd.y, dot(rd, -F));
+        [unroll] for (int c = 0; c < FIG_N; c++) {
+            float4 A = kFigA[c], B = kFigB[c];
+            float3 pa = A.xyz, pb = B.xyz;
+            int part = int(B.w);
+            if (part == 0) { pa += headOff; pb += headOff; }
+            if (part == 2) { pa.y += breath * saturate(pa.y / 10.0); pb.y += breath * saturate(pb.y / 10.0); }
+            if (part == 1) pb.y += breath * 0.5 * saturate(pb.y / 10.7) * step(9.0, pb.y);
+            pa += jit; pb += jit;
+            // the fall: rotate y towards +z (backwards) about the seat (0, 0, 1)
+            pa = float3(pa.x, pa.y * ca - (pa.z - 1.0) * sa, pa.y * sa + (pa.z - 1.0) * ca + 1.0);
+            pb = float3(pb.x, pb.y * ca - (pb.z - 1.0) * sa, pb.y * sa + (pb.z - 1.0) * ca + 1.0);
+            float  t = figCap(ro, dl, pa, pb, A.w);
+            float  tw = t / 16.0;
+            if (t > 0.0 && tw < best) {
+                float3 nl = figCapN(ro + dl * t, pa, pb, A.w);
+                float3 nw = normalize(nl.x * Rt + float3(0.0, nl.y, 0.0) - nl.z * F);
+                float  fr = pow(1.0 - saturate(dot(-rd, nw)), 2.5);
+                float  ndl = saturate(dot(nw, SUN));
+                float3 amb = lerp(float3(0.40, 0.37, 0.52), float3(0.22, 0.28, 0.55), NIGHT) * (0.75 + 0.25 * nw.y);
+                float3 sunC = lerp(float3(1.05, 0.74, 0.52), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
+                float  spec = pow(saturate(dot(reflect(rd, nw), SUN)), 24.0) * 0.25 * LIGHTK;
+                float  pulse = 0.85 + 0.15 * sin(tm * (1.6 + 8.0 * thr));
+                float  gutter = brk >= 0.0 ? (1.0 - gone) * (0.7 + 0.3 * sin(brk * 37.0)) : 1.0;
+                col = float3(0.022, 0.022, 0.026) * (amb + sunC * ndl) + spec
+                    + team * fr * 1.9 * pulse * gutter * (0.7 + 0.6 * darkK());
+                best = tw; hit = true;
+            }
+            // a soft halo of team light round the limbs
+            float tr; float dd = figSegDist(ro, dl, pa, pb, tr) - A.w;
+            if (tr / 16.0 < best) halo += team * exp(-max(dd, 0.0) * 0.9) * 0.022 * (1.0 - gone) * (0.6 + 0.8 * darkK());
+        }
+        // the footprint: a fine line of team light round the server's bed (two blocks), on the ground
+        if (rd.y < -0.01 && brk < 0.0) {
+            float tg = (bVis[i].y + 0.01 - CAM.y) / rd.y;                // the ground under the bed
+            if (tg > 0.0 && tg < best + 0.05) {
+                float3 g = CAM + rd * tg - (bVis[i].xyz + F * 0.5);
+                float2 q = float2(dot(g, Rt), dot(g, F));
+                float2 dq = abs(q) - float2(0.5, 1.0);
+                float  ed = abs(max(dq.x, dq.y));
+                if (max(dq.x, dq.y) < 0.02) {
+                    float corner = (abs(q.x) > 0.27 && abs(q.y) > 0.77) ? 1.0 : 0.12;   // brackets at the corners
+                    float L = exp(-ed * 160.0) * corner;
+                    halo += team * L * 0.8 * (0.75 + 0.25 * sin(tm * 1.6)) * (0.6 + 0.8 * darkK());
+                }
+            }
+        }
+    }
+    return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);
+}
 // ---- bed-break shockwave: when a bed falls a ring of its team's light races out over the cloud sea and across the
 //      islands, and the sky flashes with it - the whole map sees which island just lost its bed
 float waveRing(float d, float age) {
@@ -786,8 +900,15 @@ float3 projTrails(float3 rd, float sceneT) {
 // everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
-        float4 bd = cosmeticBeds(rd, sceneT);
-        if (bd.w > 0.0) { o = bd.rgb; sceneT = bd.w; }
+        if (m2.z > 0.5) {
+            float3 halo = 0.0;
+            float4 bd = figuraBeds(rd, sceneT, halo);
+            if (bd.w > 0.0) { o = bd.rgb; sceneT = bd.w; }
+            o = pow(pow(max(o, 0.0), 2.2) + halo, 1.0 / 2.2);
+        } else {
+            float4 bd = cosmeticBeds(rd, sceneT);
+            if (bd.w > 0.0) { o = bd.rgb; sceneT = bd.w; }
+        }
     }
     [branch] if (m0.y > 0.5 && m0.w > 0.0) {
         float4 sh = shards(rd, sceneT);
