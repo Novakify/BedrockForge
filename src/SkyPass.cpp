@@ -1694,7 +1694,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         f.cb.m2[3] = look.living || look.tension >= 0.0f ? gT : 0.0f;
     }
     if (look.trails <= 0.0f) f.cb.m1[0] = 0;
-    {   // you: health -> the heartbeat edges (in step with the beat BF plays), kills this life -> warmth
+    {   // you: kills this life -> warmth at the edges
         float hp = -1.0f, beat = 0.0f, run = 0.0f, sinceKill = 99.0f;
         if (v7 && b->hpMax > 0.0f && b->hp > 0.0f) {
             hp = std::clamp(b->hp / b->hpMax, 0.0f, 1.0f);
@@ -1706,12 +1706,9 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             if (b->killMs > 0) sinceKill = float(now - b->killMs) / 1000.0f;
         }
         if (float const tv = float(now - gTestVitalsAt.load()) / 1000.0f; tv >= 0.0f && tv < 10.0f) {   // F6 test
-            hp = std::clamp(0.42f - tv * 0.035f, 0.05f, 1.0f);
-            float const gap = 1.0f / (1.0f + 1.1f * std::clamp((0.40f - hp) / 0.30f, 0.0f, 1.0f));
-            float const t = std::fmod(tv, gap);
-            beat = std::exp(-t * t * 90.0f) + 0.6f * std::exp(-(t - 0.20f) * (t - 0.20f) * 110.0f);
             run = 0.75f; sinceKill = std::fmod(tv, 3.0f);
         }
+        hp = -1.0f, beat = 0.0f;   // the low-health edges are gone (Fernando didn't like them); only the kill run is drawn
         if (!look.vitals) hp = -1.0f, run = 0.0f;
         f.cb.m3[0] = hp; f.cb.m3[1] = std::min(beat, 1.0f); f.cb.m3[2] = run; f.cb.m3[3] = sinceKill;
     }
