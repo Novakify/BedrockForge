@@ -1257,7 +1257,7 @@ struct BfMatchFxV1 {
     uint32_t nTeams, nEvents;
     BfMatchTeamV1 teams[16];
     BfMatchEventV1 events[256];
-    struct TeamEx { float threat; uint32_t elim; uint32_t mine; int64_t elimMs; } teamEx[16]; // v3
+    struct TeamEx { float threat; uint32_t elim; uint32_t mine; int64_t elimMs; float vis[3]; float yaw; uint32_t hasVis; } teamEx[16]; // v3, v4
 };
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
@@ -1265,6 +1265,7 @@ using MatchPreview = void (*)(float);
 struct MatchCb {
     float m0[4]; float tPos[16][4]; float tCol[16][4]; float eA[8][4]; float eB[8][4]; float eC[8][4];
     float m1[4]; float tAge[16][4]; float trMin[4], trMax[4]; float gA[48][4]; float gB[48][4];
+    float bVis[16][4]; // the server's bed model per team: xyz feet (world), w = yaw (radians); w = -100: none
 };
 static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96) * 16, "cbuffer M layout");
 struct MatchFrame { float phase = 0; MatchCb cb{}; int beds = 0; float bedMinY = 0, bedCx = 0, bedCz = 0; };
@@ -1303,8 +1304,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     MatchGet get; MatchUse use;
     matchFns(get, use);
     BfMatchFxV1 const* b = get ? get() : nullptr;
-    bool const ok = b && b->version >= 3 && b->size >= sizeof(BfMatchFxV1);
-    if (use) use(look.living && ok && gWorldSky.load() != 0 ? 1 : 0);
+    bool const ok = b && b->version >= 4 && b->size >= sizeof(BfMatchFxV1);
+    if (use) use((look.living && ok && gWorldSky.load() != 0 ? 1 : 0) | (look.beds && ok ? 2 : 0)); // 2: we draw the beds
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
     if (ok) {
         f.phase = look.living ? std::clamp(b->phase, 0.0f, 2.0f) : 0.0f;
@@ -1326,6 +1327,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.tAge[k][1] = x.threat;                                                            // enemies at this bed
             c.tAge[k][2] = x.elim ? std::clamp(float(now - x.elimMs) / 4000.0f, 0.0f, 1.0f) : 0.0f; // the island going dark
             c.tAge[k][3] = x.mine ? 1.0f : 0.0f;
+            if (x.hasVis && t.alive) { std::memcpy(c.bVis[k], x.vis, 12); c.bVis[k][3] = x.yaw * 3.14159265f / 180.0f; }
+            else c.bVis[k][3] = -100.0f;
             ++k;
         }
         f.cb.m0[0] = float(k);
@@ -1387,6 +1390,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     f.cb.m0[2] = look.teams;
     f.cb.m0[3] = look.shards;
     f.cb.m1[1] = look.waves;
+    f.cb.m1[3] = look.beds ? 1.0f : 0.0f;
     if (look.trails <= 0.0f) f.cb.m1[0] = 0;
     gMatch = f;
     return f;
@@ -1862,6 +1866,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "rays") gLook.rays = std::clamp(v, 0.f, 3.f);
         else if (k == "clouds") gLook.clouds = std::clamp(v, 0.f, 1.f);
         else if (k == "ink") gLook.ink = std::clamp(v, 0.f, 1.f);
+        else if (k == "beds") gLook.beds = v != 0;
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
@@ -1873,7 +1878,7 @@ void saveWorldFxSettings() {
     if (gWfxConfig.empty()) return;
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
-        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink
+        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nbeds " << (gLook.beds ? 1 : 0)
         << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\n";
 }
 

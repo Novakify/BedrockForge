@@ -25,11 +25,12 @@ cbuffer M : register(b1) {
     float4 eA[8];    // block corner (world, min), w = age (s)
     float4 eB[8];    // block colour (sRGB 0..1), w = kind (1 broken, 2 placed)
     float4 eC[8];    // x = seed, y = blocks below the block the pieces land on (-1 = nothing: they fall away)
-    float4 m1;       // x = trail blocks, y = shockwave strength (F6), z = 1: a kill is playing
+    float4 m1;       // x = trail blocks, y = shockwave strength (F6), z = 1: a kill is playing, w = 1: cosmetic beds
     float4 tAge[16]; // x = seconds since that bed broke (-1 = standing), y = enemies at the bed 0..1, z = team out 0..1 (fades in), w = 1: your team
     float4 trMin, trMax; // bounds of the trail blocks (world)
     float4 gA[48];   // trail block corner (world, min), w = age (s)
     float4 gB[48];   // its colour (sRGB)
+    float4 bVis[16]; // the server's bed model per team: xyz feet (world), w = yaw (radians), w = -100: none
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
@@ -329,6 +330,77 @@ float4 shards(float3 rd, float sceneT) {
     }
     return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);
 }
+// ---- cosmetic beds (by Novak): our own bed model drawn where the server's bed model stands (BF hides theirs on this
+//      screen only). Built from boxes like a Bedrock .geo model, pixel-art materials at 16 texels per block (so it sits
+//      in the world's own resolution, nothing smooth or "rendered"), team-coloured blanket and a glowing crest.
+//      Box: local min, local max (x across, y up, z along the bed; origin = the model's feet), material id.
+static const float3 kBedMin[7] = {float3(-0.50, 0.00, -1.00), float3(-0.45, 0.19, -0.94), float3(-0.47, 0.31, -0.30),
+                                  float3(-0.36, 0.40, -0.90), float3(-0.50, 0.00, -1.06), float3(-0.50, 0.00, 0.94),
+                                  float3(-0.18, 0.56, -1.07)};
+static const float3 kBedMax[7] = {float3(0.50, 0.19, 1.00), float3(0.45, 0.40, 0.94), float3(0.47, 0.45, 0.96),
+                                  float3(0.36, 0.53, -0.56), float3(0.50, 0.88, -0.94), float3(0.50, 0.44, 1.06),
+                                  float3(0.18, 0.80, -1.05)};
+static const int kBedMat[7] = {0, 1, 2, 1, 0, 0, 3};   // 0 dark wood, 1 linen, 2 team blanket, 3 crest
+float3 bedMaterial(int m, float3 lp, float3 nl, float3 team, float thr, float age) {
+    float3 t = floor(lp * 16.0);                                     // texel (1/16 block)
+    float  h = hash12(t.xz * 1.7 + t.y * 3.1);
+    if (m == 0) { // dark stained wood: planks along the bed, a darker groove every 4 texels, team trim along the top edge
+        float plank = frac(t.y / 4.0) < 0.26 ? 0.72 : 1.0;
+        float3 c = float3(0.20, 0.12, 0.09) * (0.82 + 0.30 * h) * plank;
+        return c;
+    }
+    if (m == 1) { // linen: off-white weave
+        float weave = ((int(t.x) + int(t.z)) & 1) == 0 ? 0.94 : 1.0;
+        return float3(0.86, 0.84, 0.80) * weave * (0.92 + 0.10 * h);
+    }
+    if (m == 2) { // blanket: the team colour, quilted squares with a stitched seam
+        float2 q = frac(float2(t.x, t.z) / 5.0);
+        float seam = (q.x < 0.2 || q.y < 0.2) ? 0.62 : 1.0;
+        return lerp(team * 0.85, team, h) * seam;
+    }
+    return team;   // crest: its own light (added by the caller)
+}
+float4 cosmeticBeds(float3 rd, float sceneT) {
+    int nt = int(m0.x);
+    float best = sceneT; float3 col = 0.0; bool hit = false;
+    [loop] for (int i = 0; i < nt; i++) {
+        if (bVis[i].w < -50.0) continue;
+        float3 o = bVis[i].xyz - CAM;
+        float  tb = dot(o, rd);
+        if (tb < -2.5 || dot(o, o) - tb * tb > 2.6 * 2.6) continue;      // nowhere near this pixel
+        float  yaw = bVis[i].w;
+        float  cy = cos(yaw), sy = sin(yaw);
+        float3x3 R = float3x3(cy, 0, -sy, 0, 1, 0, sy, 0, cy);          // columns: local axes in world
+        float3 team = pow(max(tCol[i].rgb, 0.0), 1.0);
+        float  thr = tAge[i].y;
+        // when its defence is being broken the bed trembles (a little, fast)
+        float3 shake = float3(sin(TIME * 61.0), 0.0, cos(TIME * 53.0)) * 0.012 * thr;
+        [loop] for (int b = 0; b < 7; b++) {
+            float3 e = (kBedMax[b] - kBedMin[b]) * 0.5;
+            float3 c = (kBedMax[b] + kBedMin[b]) * 0.5;
+            float3 p = o + mul(R, c) + shake;
+            float  tN; float3 nl, lp;
+            if (!hitBox(rd, p, e, R, tN, nl, lp) || tN >= best) continue;
+            float3 local = c + lp * e - kBedMin[b];                        // texel space from the box corner
+            float3 nw = mul(R, nl);
+            float3 alb = bedMaterial(kBedMat[b], local, nl, team, thr, 0.0);
+            float  ndl = saturate(dot(nw, SUN));
+            float3 amb = lerp(float3(0.40, 0.37, 0.52), float3(0.22, 0.28, 0.55), NIGHT) * (0.75 + 0.25 * nw.y);
+            float3 sunC = lerp(float3(1.05, 0.74, 0.52), float3(0.70, 0.80, 1.05), NIGHT) * LIGHTK;
+            float3 world = lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT);
+            float3 lit = alb * (amb + sunC * ndl) * world;
+            if (kBedMat[b] == 3) {   // the crest: a round emblem that breathes in the team colour (fast when attacked)
+                float2 uv = (lp.xy);
+                float  ring = smoothstep(0.95, 0.80, length(uv)) * (1.0 - smoothstep(0.55, 0.40, length(uv)) * 0.6);
+                float  beat = 0.65 + 0.35 * sin(TIME * (2.0 + 9.0 * thr));
+                lit = alb * 0.25 + team * ring * (1.2 + 0.8 * beat) * (0.6 + 0.8 * darkK());
+            }
+            if (kBedMat[b] == 2) lit += team * 0.06 * (0.6 + darkK());         // the blanket holds a little of its glow
+            best = tN, col = lit, hit = true;
+        }
+    }
+    return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);
+}
 // ---- bed-break shockwave: when a bed falls a ring of its team's light races out over the cloud sea and across the
 //      islands, and the sky flashes with it - the whole map sees which island just lost its bed
 float waveRing(float d, float age) {
@@ -536,6 +608,10 @@ float3 storm(float3 rd) {
 }
 // everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
 float3 matchOver(float3 o, float3 rd, float sceneT) {
+    [branch] if (m1.w > 0.5 && m0.x > 0.5) {
+        float4 bd = cosmeticBeds(rd, sceneT);
+        if (bd.w > 0.0) { o = bd.rgb; sceneT = bd.w; }
+    }
     [branch] if (m0.y > 0.5 && m0.w > 0.0) {
         float4 sh = shards(rd, sceneT);
         if (sh.w > 0.0) { o = sh.rgb; sceneT = sh.w; }
@@ -564,7 +640,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     }
     return o;
 }
-bool matchActive() { return (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) || (m0.y > 0.5 && m0.w > 0.0); }
+bool matchActive() { return (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
