@@ -572,7 +572,16 @@ void onText(std::string const& m) {
             }
             std::sort(named.begin(), named.end(), [](auto const& x, auto const& y) { return x.first < y.first; });
             for (auto& n : named) kl.cands.push_back(n.second);
-            gKills.push_back(std::move(kl));
+            // the wording names the victim: "b was killed by a" first, "final kill! a eliminated b" / "a killed b" last.
+            // Decide now (the HUD frames that run the matcher stop under the death / game-over screens)
+            if (!kl.cands.empty()) {
+                bool const passive = s.find(" by ") != std::string::npos;
+                Gone v = passive ? kl.cands.front() : kl.cands.back();
+                for (auto const& g : gGone) // they were already moved (respawn / spectator): where they stood before
+                    if (g.name == v.name && g.local == v.local && kl.at - g.at < 2500) { v.pos[0] = g.pos[0], v.pos[1] = g.pos[1], v.pos[2] = g.pos[2]; }
+                pushKill(v, kl.fin);
+            } else
+                gKills.push_back(std::move(kl));
             if (gKills.size() > 16) gKills.erase(gKills.begin());
             matchKills(nowMs());
         }
