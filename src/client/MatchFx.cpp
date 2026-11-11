@@ -680,7 +680,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     float const   dt   = last ? std::clamp(float(now - last) / 1000.0f, 0.0f, 0.1f) : 0.0f;
     auto const&   p    = lp->getPosition();
     double const  pos[3]{p.x, p.y, p.z};
-    {   // look helper (only with config/lookkeys.txt present): numpad 4/6/8/2 turn the view, for looking around a map
+    {   // look helper (only with config/lookkeys.txt present): numpad 4/6/8/2 or the arrow keys turn the view, for looking around a map
         //  when no mouse is at hand. Off for players: nothing reads the numpad unless that file is there.
         static int64_t checkedAt = 0; static bool on = false;
         if (now - checkedAt > 5000) {
@@ -689,8 +689,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             on = std::filesystem::exists(ll::mod::NativeMod::current()->getModDir() / "config" / "lookkeys.txt", ec);
         }
         if (on && dt > 0.0f) {
-            float const yawV = ((GetAsyncKeyState(0x66) & 0x8000) ? 1.0f : 0.0f) - ((GetAsyncKeyState(0x64) & 0x8000) ? 1.0f : 0.0f);
-            float const pitV = ((GetAsyncKeyState(0x62) & 0x8000) ? 1.0f : 0.0f) - ((GetAsyncKeyState(0x68) & 0x8000) ? 1.0f : 0.0f);
+            auto const down = [](int a, int b) { return ((GetAsyncKeyState(a) & 0x8000) || (GetAsyncKeyState(b) & 0x8000)) ? 1.0f : 0.0f; };
+            float const yawV = down(0x66, 0x27) - down(0x64, 0x25);   // numpad 6 / right arrow, numpad 4 / left arrow
+            float const pitV = down(0x62, 0x28) - down(0x68, 0x26);   // numpad 2 / down arrow, numpad 8 / up arrow
             if (yawV != 0.0f || pitV != 0.0f) {
                 auto& r = const_cast<Vec2&>(lp->getRotation());
                 r.y = std::fmod(r.y + yawV * 90.0f * dt + 540.0f, 360.0f) - 180.0f;
