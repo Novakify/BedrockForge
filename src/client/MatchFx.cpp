@@ -1,3 +1,4 @@
+#include <cctype>
 #include <array>
 #include <unordered_map>
 // Bedrock Forge - MatchFx: the match state World FX reacts to (see MatchFx.h). Original code for Bedrock Forge.
@@ -36,6 +37,8 @@
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/BlockSource.h"
+#include "mc/world/item/ItemStack.h"
+#include "mc/world/actor/player/Player.h"
 #include "mc/world/level/block/Block.h"
 #include "mc/world/level/block/BlockType.h"
 #include "mc/world/level/block/actor/BedBlockActor.h"
@@ -537,6 +540,14 @@ void resolveHits(LocalPlayer& lp, int64_t now) {
     auto const me = lp.getPosition();
     float const yaw = lp.getRotation().y * 3.14159265f / 180.0f, pitch = lp.getRotation().x * 3.14159265f / 180.0f;
     float const fx = -std::sin(yaw) * std::cos(pitch), fy = -std::sin(pitch), fz = std::cos(yaw) * std::cos(pitch);
+    // a critical hit (falling, off the ground) or a mace hit: World FX draws its impact frame only for these
+    bool heavy = false;
+    try {
+        heavy = !lp.isOnGround() && lp.getPosDelta().y < -0.02f;
+        std::string nm = lp.getSelectedItem().getName();
+        std::transform(nm.begin(), nm.end(), nm.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+        heavy = heavy || nm.find("mace") != std::string::npos;
+    } catch (...) {}
     try {
         for (Actor* a : lp.getLevel().getRuntimeActorList()) {
             if (!a) continue;
@@ -558,7 +569,7 @@ void resolveHits(LocalPlayer& lp, int64_t now) {
                 e.kind = 8, e.atMs = now;
                 int const d = dye >= 0 ? dye : 0;
                 e.col[0] = kDye[d][0], e.col[1] = kDye[d][1], e.col[2] = kDye[d][2];
-                e.col[3] = self ? 2.0f : (mine ? 1.0f : 0.0f);          // 2 you were hit, 1 your hit, 0 someone else's
+                e.col[3] = self ? 2.0f : (mine ? (heavy ? 1.25f : 1.0f) : 0.0f);   // 2 you were hit, 1 your hit (1.25 crit / mace), 0 someone else's
                 e.seed = uint32_t(now) * 2654435761u;
                 e.floorDy = uint32_t(std::lround((std::fmod(lp.getRotation().y + 720.0f, 360.0f)) * 10.0f)); // your view yaw x10
                 ++gFx.nEvents;
