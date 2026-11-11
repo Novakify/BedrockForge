@@ -1321,6 +1321,67 @@ void testVictory() { gTestWinAt = steadyMs(); }
 // F6 "Test bed": a bed 3 blocks in front of you, lying towards you, that plays its life: 10 s standing, 10 s under
 // attack, then it breaks (any world - for judging the cosmetic beds without a match)
 std::atomic<int> gTestBedReq{0};
+// The light of the victory fireworks on the world (shaders/fireworks.hlsli fwLight, same numbers): the sum of every
+// burning shell. It is one value per frame, so it is worked out here once instead of in every pixel of the world.
+namespace fwcpu {
+float H(float x) { float v = std::sin(x * 12.9898f + 4.1414f) * 43758.5453f; return v - std::floor(v); }
+float T0(int b) { return b < 24 ? 0.55f + float(b >> 1) * 0.56f : (b < 47 ? 7.35f + float(b - 24) * 0.15f : 10.95f + float(b - 47) * 0.035f); }
+constexpr int   kBodyType[12] = {0, 0, 4, 1, 0, 2, 1, 5, 0, 4, 3, 2};
+constexpr int   kBodyTier[12] = {0, 1, 1, 2, 0, 2, 1, 0, 1, 2, 0, 2};
+constexpr float kLife[7] = {2.4f, 2.9f, 4.4f, 3.2f, 2.3f, 3.5f, 1.9f};
+float smooth(float e0, float e1, float x) { float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); }
+void light(float age, float const srgb[3], float seed, float out[3]) {
+    float team[3], mx = 0.05f;
+    for (int k = 0; k < 3; ++k) { team[k] = std::pow(std::max(srgb[k], 0.0f), 2.2f); mx = std::max(mx, team[k]); }
+    for (int k = 0; k < 3; ++k) team[k] /= mx;
+    out[0] = out[1] = out[2] = 0.0f;
+    for (int b = 0; b < 52; ++b) {
+        float const a0 = age - T0(b) - 0.55f;
+        if (a0 < -0.25f || a0 > 4.8f) continue;
+        float const sb = seed * 0.0013f + float(b) * 1.731f;
+        int const pr = b >> 1;
+        float const sp = seed * 0.0013f + float(pr) * 3.117f;
+        float t0 = T0(b);
+        int type, tier;
+        if (b < 24) { type = kBodyType[pr]; tier = kBodyTier[pr]; t0 += H(sp) * 0.16f + ((b & 1) ? 0.06f : 0.0f); }
+        else if (b < 47) {
+            float const hh = H(sb + 5.0f);
+            type = hh < 0.50f ? 2 : (hh < 0.80f ? 0 : (hh < 0.86f ? 3 : (hh < 0.95f ? 1 : 5)));
+            tier = type == 2 ? (H(sb + 6.0f) < 0.6f ? 2 : 1) : (type == 3 ? 0 : (H(sb + 6.0f) < 0.5f ? 1 : 0));
+            t0 += H(sb) * 0.05f;
+        } else { type = 2; tier = 2; }
+        float const hv = H(sb + 3.0f);
+        float R = tier == 0 ? 0.105f + 0.04f * hv : (tier == 1 ? 0.17f + 0.05f * hv : 0.25f + 0.07f * hv);
+        if (type == 2) R *= 1.15f;
+        if (b >= 47) R = 0.34f;
+        float const a = age - (t0 + 0.55f);
+        if (a <= 0.0f) continue;
+        float const life = kLife[type];
+        float const glow = 2.4f * std::exp(-a * 5.5f) + (type == 2 ? 0.62f : 0.42f) * smooth(life, life * 0.5f, a) * smooth(0.0f, 0.25f, a);
+        float col[3];
+        if (type == 2 || type == 5 || type == 6) { col[0] = 1.25f; col[1] = 0.70f; col[2] = 0.22f; }
+        else if (type == 3) { col[0] = 1.0f; col[1] = 0.96f; col[2] = 0.88f; }
+        else {
+            int const v = b % 4;
+            float c[3];
+            for (int k = 0; k < 3; ++k) {
+                float const gbr = team[(k + 1) % 3], brg = team[(k + 2) % 3];
+                c[k] = v == 1 ? team[k] + (gbr - team[k]) * 0.26f : (v == 3 ? team[k] + (brg - team[k]) * 0.26f : team[k]);
+            }
+            float const m = std::max(std::max(c[0], std::max(c[1], c[2])), 0.05f);
+            for (int k = 0; k < 3; ++k) col[k] = c[k] / m * 1.15f;
+        }
+        for (int k = 0; k < 3; ++k) out[k] += col[k] * glow * (R / 0.2f);
+    }
+    float const as0 = age - 8.1f;
+    if (as0 > 0.0f && as0 < 3.6f)
+        for (int si = 0; si < 12; ++si) {
+            float const as = as0 - (float(si) * 0.24f + H(seed * 0.0017f + float(si) * 2.3f) * 0.1f);
+            if (as > 0.0f && as < 0.6f) { float const k = 3.0f * std::exp(-as * 12.0f); out[0] += 1.0f * k; out[1] += 0.96f * k; out[2] += 0.88f * k; }
+        }
+}
+} // namespace fwcpu
+
 std::atomic<float> gViewYaw{0.0f};   // where the camera looks (atan2(forward.z, forward.x)), for the fireworks
 struct TestBed { float p[3]; float yaw = 0; int64_t at = -1000000; } gTestBed;
 void testBed() { ++gTestBedReq; }
@@ -1445,6 +1506,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
                 static int64_t winAt = -1; static float winYaw = 0.0f;
                 if (winAt != e.atMs) { winAt = e.atMs; winYaw = gViewYaw.load(std::memory_order_relaxed); }
                 c.eC[ne][3] = winYaw;
+                fwcpu::light(age, e.col, c.eC[ne][0], c.eA[ne]);   // the show's light on the world, once per frame
             } else c.eC[ne][3] = 0.0f;
             ++ne;
         }
@@ -1463,6 +1525,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             if (testAt != gTestWinAt.load()) { testAt = gTestWinAt.load(); testYaw = gViewYaw.load(std::memory_order_relaxed); }
             c.eA[ne][3] = tw; c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = 6.0f; c.eC[ne][0] = 777.0f;
             c.eC[ne][3] = testYaw;
+            fwcpu::light(tw, c.eB[ne], c.eC[ne][0], c.eA[ne]);
             f.cb.m1[2] = 1.0f;
             ++ne;
         }

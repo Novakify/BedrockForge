@@ -448,8 +448,8 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
 }
 
 // the show's light on the islands and everything on them (lin: the pixel, linear)
-float3 fwWorld(float3 lin, float age, float3 team, float seed) {
+// L: the show's light this frame (fwLight, worked out once per frame by Renderer Foundation - SkyPass fwcpu::light)
+float3 fwWorld(float3 lin, float age, float3 L) {
     if (age >= FW_LEN) return lin;
-    float3 L = fwLight(age, team, seed);
     return lin * (1.0 + L * 0.034) + L * 0.0015;
 }
