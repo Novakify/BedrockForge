@@ -1257,6 +1257,7 @@ struct BfMatchFxV1 {
     uint32_t nTeams, nEvents;
     BfMatchTeamV1 teams[16];
     BfMatchEventV1 events[256];
+    struct TeamEx { float threat; uint32_t elim; uint32_t mine; int64_t elimMs; } teamEx[16]; // v3
 };
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
@@ -1302,7 +1303,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     MatchGet get; MatchUse use;
     matchFns(get, use);
     BfMatchFxV1 const* b = get ? get() : nullptr;
-    bool const ok = b && b->version >= 2 && b->size >= sizeof(BfMatchFxV1);
+    bool const ok = b && b->version >= 3 && b->size >= sizeof(BfMatchFxV1);
     if (use) use(look.living && ok && gWorldSky.load() != 0 ? 1 : 0);
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
     if (ok) {
@@ -1316,12 +1317,15 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             else {
                 st = std::max(0.0f, 1.0f - a / 1.4f) * (0.75f + 0.25f * std::sin(a * 41.0f)); // the light gutters out
                 fl = a < 0.18f ? a / 0.18f : std::exp(-(a - 0.18f) * 3.2f);
-                if (a > 7.5f) continue;
             }
+            auto const& x = b->teamEx[i];
             auto& c = f.cb;
             std::memcpy(c.tPos[k], t.pos, 12); c.tPos[k][3] = st;
             std::memcpy(c.tCol[k], t.col, 12); c.tCol[k][3] = fl;
             c.tAge[k][0] = t.alive ? -1.0f : a;
+            c.tAge[k][1] = x.threat;                                                            // enemies at this bed
+            c.tAge[k][2] = x.elim ? std::clamp(float(now - x.elimMs) / 4000.0f, 0.0f, 1.0f) : 0.0f; // the island going dark
+            c.tAge[k][3] = x.mine ? 1.0f : 0.0f;
             ++k;
         }
         f.cb.m0[0] = float(k);
@@ -1377,7 +1381,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         std::memcpy(f.cb.trMin, lo, 12); std::memcpy(f.cb.trMax, hi, 12);
         gMatchStatus = "phase " + std::to_string(b->phase).substr(0, 4) + " (target " + std::to_string(int(b->phaseTarget)) + "), beds " +
                        std::to_string(b->nTeams) + " (" + std::to_string(b->bedsBroken) + " broken), block events " + std::to_string(total);
-    } else if (get) gMatchStatus = "Bedrock Forge has no match bridge (old build)";
+    } else if (get) gMatchStatus = "Bedrock Forge match bridge is older than this RF (update Bedrock Forge)";
     if (look.phase >= 0) f.phase = std::clamp(look.phase, 0.0f, 2.0f);
     f.cb.m0[2] = look.teams;
     f.cb.m0[3] = look.shards;

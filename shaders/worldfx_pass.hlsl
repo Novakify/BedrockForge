@@ -26,7 +26,7 @@ cbuffer M : register(b1) {
     float4 eB[8];    // block colour (sRGB 0..1), w = kind (1 broken, 2 placed)
     float4 eC[8];    // x = seed, y = blocks below the block the pieces land on (-1 = nothing: they fall away)
     float4 m1;       // x = trail blocks, y = shockwave strength (F6), z = 1: a kill is playing
-    float4 tAge[16]; // x = seconds since that bed broke (-1 = standing)
+    float4 tAge[16]; // x = seconds since that bed broke (-1 = standing), y = enemies at the bed 0..1, z = team out 0..1 (fades in), w = 1: your team
     float4 trMin, trMax; // bounds of the trail blocks (world)
     float4 gA[48];   // trail block corner (world, min), w = age (s)
     float4 gB[48];   // its colour (sRGB)
@@ -122,6 +122,30 @@ float3 teamLight(float3 W, float3 n) {
     }
     return acc * m0.z * (0.30 + 1.10 * darkK());
 }
+// a team that is out: its island loses its colour and light, as if the island itself died (0..1 at terrain point W)
+float islandOut(float3 W) {
+    float k = 0.0;
+    int nt = int(m0.x);
+    [loop] for (int i = 0; i < nt; i++) {
+        float e = tAge[i].z;
+        if (e <= 0.0) continue;
+        float d = length((W - tPos[i].xyz) * float3(1.0, 0.6, 1.0));
+        k = max(k, e * smoothstep(30.0, 16.0, d));
+    }
+    return k;
+}
+// your bed is being rushed: the edge of the screen beats in your team's colour (0 when it is safe)
+float3 bedAlarm(float3 rd) {
+    int nt = int(m0.x);
+    float3 acc = 0.0;
+    [loop] for (int i = 0; i < nt; i++) {
+        if (tAge[i].w < 0.5 || tAge[i].y < 0.02 || tAge[i].x >= 0.0) continue;
+        float beat = pow(0.5 + 0.5 * sin(TIME * 7.0), 4.0);
+        float edge = smoothstep(0.80, 0.45, dot(rd, c0.xyz));      // the rim of the view, not the middle
+        acc += lerp(tCol[i].rgb, float3(1.0, 0.25, 0.15), 0.35) * edge * beat * tAge[i].y * 0.55;
+    }
+    return acc;
+}
 // bed beacons: a soft column of team light rising from every standing bed (read the map at a glance); a bed that
 // breaks flares, then its beacon falls back into the island and goes out. Ray from the camera (rd), up to tMax.
 float3 beacons(float3 rd, float tMax) {
@@ -147,6 +171,11 @@ float3 beacons(float3 rd, float tMax) {
         float  path = 1.0 / max(sqrt(r2), 0.25);          // looking along the column you see more of it
         float  orb = exp(-pow(length(float3(q.x, h - 0.4, q.y)) / 0.8, 2.0));
         float3 hot = lerp(tCol[i].rgb, float3(1, 1, 1), 0.45);
+        // under attack: the beacon beats like an alarm (fast, hard) - you can see a rush on any island from yours
+        float thr = tAge[i].y;
+        float beat = pow(0.5 + 0.5 * sin(TIME * 9.0 + float(i)), 6.0);
+        core *= 1.0 + thr * (2.2 * beat - 0.4);
+        hot = lerp(hot, float3(1.0, 0.95, 0.9), thr * beat * 0.5);
         acc += (hot * core * flow * 0.30 + tCol[i].rgb * haze * 0.20) * prof * path * (st + 2.0 * fl) + tCol[i].rgb * orb * 0.35 * (st + fl);
     }
     return acc * m0.z * (0.60 + 0.80 * darkK());
@@ -446,6 +475,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
         o = pow(lin, 1.0 / 2.2);
     }
     [branch] if (m0.y > 0.5 && m0.w > 0.0 && m1.z > 0.5) o = pow(pow(max(o, 0.0), 2.2) + killLight(rd, sceneT), 1.0 / 2.2);
+    [branch] if (m0.x > 0.5 && m0.z > 0.0) o = pow(pow(max(o, 0.0), 2.2) + bedAlarm(rd) * m0.z, 1.0 / 2.2);
     return o;
 }
 bool matchActive() { return (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) || (m0.y > 0.5 && m0.w > 0.0); }
@@ -603,6 +633,13 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
     lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
+    [branch] if (m0.x > 0.5) { // an eliminated team's island: grey, cold, dim
+        float io = islandOut(CAM + P);
+        if (io > 0.0) {
+            float  l = dot(lin, float3(0.2126, 0.7152, 0.0722));
+            lin = lerp(lin, l * float3(0.55, 0.60, 0.72), io * 0.85);
+        }
+    }
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
     [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
     [branch] if (m1.z > 0.5 && m0.w > 0.0) lin += (lin * 2.2 + 0.02) * killGlow(CAM + P);
