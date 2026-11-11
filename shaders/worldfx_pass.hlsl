@@ -490,17 +490,25 @@ float3 victory(float3 rd, float age, float3 team, float seed) {
         float az = fa + (h1(sb + 1.0) - 0.5) * 1.9, el = 0.22 + 0.40 * h1(sb + 2.0);
         float3 dir = float3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
         float3 col = b % 3 == 2 ? lerp(team, float3(1, 1, 1), 0.6) : team;
-        float rad = 0.16 * (1.0 - exp(-ab * 3.0));               // the shell opens fast then hangs
-        float3 dd = rd - dir;
-        float drop = 0.035 * ab * ab;                            // and sags as it falls
-        dd.y += drop;
-        float r = length(dd);
-        // sparks: the shell broken into points (angle-hashed)
-        float2 uv = float2(atan2(dd.z, dd.x), dd.y / max(r, 1e-4));
-        float  spark = step(0.82, hash12(floor(uv * float2(9.0, 7.0)) + float2(b, b * 3)));
-        float  shell = exp(-pow((r - rad) / 0.010, 2.0)) * (0.35 + 1.6 * spark);
-        float  flash = exp(-r * r / 0.0009) * exp(-ab * 8.0) * 2.0;
-        acc += col * (shell + flash) * pow(saturate(1.0 - ab / 2.6), 1.5);
+        float rad = 0.15 * (1.0 - exp(-ab * 2.6));               // the burst opens fast then hangs
+        float drop = 0.03 * ab * ab;                             // and sags as it falls
+        // cheap reject: is this pixel anywhere near the burst
+        if (length(rd - dir) > rad + 0.03 + drop) { continue; }
+        float shell = 0.0;
+        [loop] for (int j = 0; j < 36; j++) {
+            float sj = sb * 7.3 + float(j) * 1.618;
+            float3 sd = normalize(float3(h1(sj), h1(sj + 0.37), h1(sj + 0.71)) - 0.5 + 1e-3);
+            float  sp = 0.75 + 0.25 * h1(sj + 1.3);                // sparks at slightly different speeds
+            float3 head = dir + sd * rad * sp - float3(0, drop, 0);
+            float3 tail = dir + sd * rad * sp * 0.55 - float3(0, drop * 0.6, 0);   // a short streak behind it
+            float3 ab3 = head - tail, ap = rd - tail;
+            float  tt = saturate(dot(ap, ab3) / max(dot(ab3, ab3), 1e-8));
+            float  d = length(ap - ab3 * tt);
+            float  twinkle = ab > 1.2 ? step(0.45, h1(floor(TIME * 18.0) + sj)) : 1.0;  // the last of it crackles
+            shell += exp(-pow(d / 0.0022, 2.0)) * (0.35 + 0.65 * tt) * twinkle;
+        }
+        float  flash = exp(-length(rd - dir) * length(rd - dir) / 0.0009) * exp(-ab * 8.0) * 2.0;
+        acc += col * (shell * 1.4 + flash) * pow(saturate(1.0 - ab / 2.6), 1.5);
     }
     return acc;
 }
