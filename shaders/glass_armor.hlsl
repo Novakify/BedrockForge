@@ -76,7 +76,19 @@ struct PSIn {
     float3 t3  : TEXCOORD3;
 };
 
+// chain: drawn as a steel mesh set in a whole glass plate (iron's shape) - its own texture is rings and holes, which
+// as glass read as a checkerboard of outlines over the skin (seen in game 2026-11-11)
+#if GA_VARIANT == 2 || GA_VARIANT == 3
+#define GA_SHAPE (GA_VARIANT + 2)
+#else
+#define GA_SHAPE GA_VARIANT
+#endif
 bool painted(int2 t) {
+    if (t.x < 0 || t.y < 0 || t.x > 63 || t.y > 31) return false;
+    uint w = kMasks[GA_SHAPE][t.y * 2 + (t.x >> 5)];
+    return ((w >> (31 - (t.x & 31))) & 1u) != 0;
+}
+bool ringAt(int2 t) {   // chain: a ring of the mesh (the texels Mojang drew)
     if (t.x < 0 || t.y < 0 || t.x > 63 || t.y > 31) return false;
     uint w = kMasks[GA_VARIANT][t.y * 2 + (t.x >> 5)];
     return ((w >> (31 - (t.x & 31))) & 1u) != 0;
@@ -151,7 +163,7 @@ int roleAt(int2 t) {
     uint w = kRoles[GA_VARIANT][i >> 4];
     return int((w >> uint(30 - 2 * (i & 15))) & 3u);
 }
-bool metalAt(int2 t, int fi, int m) { return painted(t) && faceOf(t) == fi && (m == 1 || roleAt(t) == 0); }
+bool metalAt(int2 t, int fi, int m) { return painted(t) && faceOf(t) == fi && (m == 1 ? ringAt(t) : roleAt(t) == 0); }
 
 // glass: the plate as plain glass armour draws it (the world behind, bent). Returns the fused plate
 float3 fusedPlate(int m, float3 glass, float2 t, int2 b, int fi, float2 p, float2 fs, float2 px, float2 off, float e, float S,
@@ -168,10 +180,10 @@ float3 fusedPlate(int m, float3 glass, float2 t, int2 b, int fi, float2 p, float
     else if (m == 5) { metal = float3(0.90, 0.98, 1.00); tint = float3(0.16, 0.90, 0.98); tintK = 0.62; }   // diamond (set in white metal)
     else if (m == 6) { metal = float3(0.34, 0.29, 0.33); tint = float3(0.13, 0.09, 0.17); tintK = 0.80; }   // netherite
     else if (m == 3) { metal = float3(0.95, 0.52, 0.30); tint = float3(1.00, 0.58, 0.32); tintK = 0.34; }   // copper
-    else if (m == 1) { metal = float3(0.80, 0.83, 0.88); tint = float3(0.85, 0.90, 1.00); tintK = 0.10; }   // chain
+    else if (m == 1) { metal = float3(0.80, 0.83, 0.88); tint = float3(0.80, 0.86, 0.96); tintK = 0.28; }   // chain
     else             { metal = dye * 0.50 + 0.04;        tint = dye;                      tintK = 0.50; }   // leather: the dye
 
-    bool wire  = m == 1 || role == 0;
+    bool wire  = m == 1 ? ringAt(b) : role == 0;
     bool plate = !wire && role == 1 && (m == 2 || m == 3 || m == 4 || m == 6);   // a metal armour's drawn shade: brushed plate
     if (wire || plate) {
         // ---- metal. Line work is round wire standing proud (curved across its width only; chain = a bead per link);
@@ -211,7 +223,7 @@ float3 fusedPlate(int m, float3 glass, float2 t, int2 b, int fi, float2 p, float
     }
     float thick = role == 1 ? 1.45 : (role == 3 ? (m == 5 ? 0.85 : 0.50) : 1.0);   // drawn shade = thicker crystal, drawn highlight = polished thin
     g = lerp(g, g * tint * 1.30 + tint * 0.07, saturate(tintK * thick));
-    float selfK = m == 5 ? 0.46 : (m == 4 ? 0.34 : (m == 3 ? 0.28 : (m == 0 ? 0.30 : (m == 6 ? 0.55 : (m == 2 ? 0.30 : 0.10)))));   // iron: frosted steel-white
+    float selfK = m == 5 ? 0.46 : (m == 4 ? 0.34 : (m == 3 ? 0.28 : (m == 0 ? 0.30 : (m == 6 ? 0.55 : (m == 2 ? 0.30 : 0.36)))));   // iron: frosted steel-white; chain: frosted steel between the rings
     float3 own = tint * (m == 5 ? (role == 1 ? 0.42 : 0.62) + 0.34 * fh : (role == 1 ? 0.50 : 0.72));
     g = lerp(g, own, selfK * (role == 3 ? (m == 5 ? 0.85 : 0.6) : 1.0));
     // the metal stands proud of the glass: it shades the crystal under it and lights the crystal over it
