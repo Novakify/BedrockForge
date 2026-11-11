@@ -1,0 +1,960 @@
+[
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_white",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 0
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_white",
+  "atlas_tile": "wool_colored_white",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_white",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 0
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_white",
+  "atlas_tile": "white_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_white",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 0
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_white",
+  "atlas_tile": "white_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_white",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 0
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_white",
+  "atlas_tile": "white_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_orange",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 1
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_orange",
+  "atlas_tile": "wool_colored_orange",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_orange",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 1
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_orange",
+  "atlas_tile": "orange_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_orange",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 1
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_orange",
+  "atlas_tile": "orange_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_orange",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 1
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_orange",
+  "atlas_tile": "orange_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_magenta",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 2
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_magenta",
+  "atlas_tile": "wool_colored_magenta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_magenta",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 2
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_magenta",
+  "atlas_tile": "magenta_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_magenta",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 2
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_magenta",
+  "atlas_tile": "magenta_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_magenta",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 2
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_magenta",
+  "atlas_tile": "magenta_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_light_blue",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 3
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_light_blue",
+  "atlas_tile": "wool_colored_light_blue",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_light_blue",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 3
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_light_blue",
+  "atlas_tile": "light_blue_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_light_blue",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 3
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_light_blue",
+  "atlas_tile": "light_blue_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_light_blue",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 3
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_light_blue",
+  "atlas_tile": "light_blue_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_yellow",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 4
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_yellow",
+  "atlas_tile": "wool_colored_yellow",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_yellow",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 4
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_yellow",
+  "atlas_tile": "yellow_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_yellow",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 4
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_yellow",
+  "atlas_tile": "yellow_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_yellow",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 4
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_yellow",
+  "atlas_tile": "yellow_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_lime",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 5
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_lime",
+  "atlas_tile": "wool_colored_lime",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_lime",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 5
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_lime",
+  "atlas_tile": "lime_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_lime",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 5
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_lime",
+  "atlas_tile": "lime_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_lime",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 5
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_lime",
+  "atlas_tile": "lime_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_pink",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 6
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_pink",
+  "atlas_tile": "wool_colored_pink",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_pink",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 6
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_pink",
+  "atlas_tile": "pink_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_pink",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 6
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_pink",
+  "atlas_tile": "pink_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_pink",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 6
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_pink",
+  "atlas_tile": "pink_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_gray",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 7
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_gray",
+  "atlas_tile": "wool_colored_gray",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_gray",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 7
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_gray",
+  "atlas_tile": "gray_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_gray",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 7
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_gray",
+  "atlas_tile": "gray_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_gray",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 7
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_gray",
+  "atlas_tile": "gray_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_silver",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 8
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_silver",
+  "atlas_tile": "wool_colored_silver",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_silver",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 8
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_silver",
+  "atlas_tile": "light_gray_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_silver",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 8
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_silver",
+  "atlas_tile": "light_gray_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_silver",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 8
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_silver",
+  "atlas_tile": "light_gray_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_cyan",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 9
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_cyan",
+  "atlas_tile": "wool_colored_cyan",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_cyan",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 9
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_cyan",
+  "atlas_tile": "cyan_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_cyan",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 9
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_cyan",
+  "atlas_tile": "cyan_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_cyan",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 9
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_cyan",
+  "atlas_tile": "cyan_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_purple",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 10
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_purple",
+  "atlas_tile": "wool_colored_purple",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_purple",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 10
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_purple",
+  "atlas_tile": "purple_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_purple",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 10
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_purple",
+  "atlas_tile": "purple_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_purple",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 10
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_purple",
+  "atlas_tile": "purple_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_blue",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 11
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_blue",
+  "atlas_tile": "wool_colored_blue",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_blue",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 11
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_blue",
+  "atlas_tile": "blue_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_blue",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 11
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_blue",
+  "atlas_tile": "blue_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_blue",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 11
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_blue",
+  "atlas_tile": "blue_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_brown",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 12
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_brown",
+  "atlas_tile": "wool_colored_brown",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_brown",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 12
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_brown",
+  "atlas_tile": "brown_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_brown",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 12
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_brown",
+  "atlas_tile": "brown_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_brown",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 12
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_brown",
+  "atlas_tile": "brown_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_green",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 13
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_green",
+  "atlas_tile": "wool_colored_green",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_green",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 13
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_green",
+  "atlas_tile": "green_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_green",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 13
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_green",
+  "atlas_tile": "green_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_green",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 13
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_green",
+  "atlas_tile": "green_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_red",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 14
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_red",
+  "atlas_tile": "wool_colored_red",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_red",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 14
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_red",
+  "atlas_tile": "red_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_red",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 14
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_red",
+  "atlas_tile": "red_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_red",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 14
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_red",
+  "atlas_tile": "red_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_black",
+  "atlas_tile": "wool",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 15
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/wool_colored_black",
+  "atlas_tile": "wool_colored_black",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_black",
+  "atlas_tile": "concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 15
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/concrete_black",
+  "atlas_tile": "black_concrete",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_black",
+  "atlas_tile": "stained_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 15
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay_stained_black",
+  "atlas_tile": "black_terracotta",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_black",
+  "atlas_tile": "stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 15
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass_black",
+  "atlas_tile": "black_stained_glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/hardened_clay",
+  "atlas_tile": "hardened_clay",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/glass",
+  "atlas_tile": "glass",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_oak",
+  "atlas_tile": "planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 0
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_oak",
+  "atlas_tile": "oak_planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_spruce",
+  "atlas_tile": "planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 1
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_spruce",
+  "atlas_tile": "spruce_planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_birch",
+  "atlas_tile": "planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 2
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_birch",
+  "atlas_tile": "birch_planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_jungle",
+  "atlas_tile": "planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 3
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_jungle",
+  "atlas_tile": "jungle_planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_acacia",
+  "atlas_tile": "planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 4
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_acacia",
+  "atlas_tile": "acacia_planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_big_oak",
+  "atlas_tile": "planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true,
+  "atlas_index": 5
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/planks_big_oak",
+  "atlas_tile": "dark_oak_planks",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/end_stone",
+  "atlas_tile": "end_stone",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/obsidian",
+  "atlas_tile": "obsidian",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/diamond_block",
+  "atlas_tile": "diamond_block",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/emerald_block",
+  "atlas_tile": "emerald_block",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/gold_block",
+  "atlas_tile": "gold_block",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ },
+ {
+  "flipbook_texture": "textures/blocks/wfx_live/iron_block",
+  "atlas_tile": "iron_block",
+  "ticks_per_frame": 3,
+  "blend_frames": true
+ }
+]

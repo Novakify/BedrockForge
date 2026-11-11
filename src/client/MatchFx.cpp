@@ -316,7 +316,9 @@ void grabSkin(Player& pl, std::string const& name, bool local) {
     } catch (...) {}
 }
 
+int64_t gShowAt = 0; // when the fireworks show last started (a win): frame() plays its sound
 void pushFx(float const* pos, uint32_t kind, int dye) { // 5 = you respawned, 6 = a team won
+    if (kind == 6) gShowAt = nowMs();
     auto& e = gFx.events[gFx.nEvents % 256];
     e.x = int32_t(std::floor(pos[0])), e.y = int32_t(std::floor(pos[1])), e.z = int32_t(std::floor(pos[2]));
     e.kind = kind, e.atMs = nowMs();
@@ -648,7 +650,6 @@ void install() {
 void uninstall() { gSubs.clear(); }
 
 void frame(IClientInstance& client, LocalPlayer* lp) {
-    (void)client;
     if (!lp) return;
     int64_t const now  = nowMs();
     int64_t const last = gHudMs.exchange(now);
@@ -813,6 +814,33 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             }
         }
         down = k;
+    }
+    {   // the fireworks show has a sound: the programme RF draws (Renderer Foundation shaders/fireworks.hlsli) - each
+        // pair of shells whistles up and bursts, the finale is a barrage, the last crowns go together, then the glitter
+        static int64_t showOf = 0, playedTo = -1;
+        if (gShowAt != showOf) { showOf = gShowAt; playedTo = -1; }
+        if (showOf && now - showOf < 16000) {
+            int64_t const t = now - showOf;
+            auto cue = [&](int64_t at, char const* name, float vol, float pitch) {
+                if (at > playedTo && at <= t) client.playUI(name, vol, pitch);
+            };
+            static int const kTier[12] = {0, 1, 1, 2, 0, 2, 1, 0, 1, 2, 0, 2};
+            for (int pr = 0; pr < 12; ++pr) {
+                int64_t const t0 = 600 + pr * 560;
+                cue(t0, "firework.launch", 0.28f, 0.92f + 0.05f * float(pr % 3));
+                cue(t0 + 560, kTier[pr] == 2 ? "firework.large_blast" : "firework.blast", kTier[pr] == 2 ? 0.62f : 0.48f, 0.94f + 0.04f * float(pr % 4));
+                cue(t0 + 625, kTier[pr] == 2 ? "firework.large_blast" : "firework.blast", 0.34f, 1.02f + 0.03f * float(pr % 3));
+                if (kTier[pr] == 2) cue(t0 + 1500, "firework.twinkle", 0.40f, 1.0f);
+            }
+            for (int i = 0; i < 23; ++i)
+                cue(7900 + i * 150, i % 3 == 0 ? "firework.large_blast" : "firework.blast", 0.42f + 0.03f * float(i % 5), 0.84f + 0.035f * float(i % 7));
+            cue(11500, "firework.large_blast", 0.80f, 0.80f);
+            cue(11560, "firework.large_blast", 0.70f, 0.92f);
+            cue(11650, "firework.large_blast", 0.70f, 0.70f);
+            cue(12400, "firework.twinkle", 0.60f, 1.00f);
+            cue(13300, "firework.twinkle", 0.42f, 0.90f);
+            playedTo = t;
+        }
     }
     trackProjectiles(*lp, now); // (any world: arrows look the same in single player)
     resolveHits(*lp, now);
