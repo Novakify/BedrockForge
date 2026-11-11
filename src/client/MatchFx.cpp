@@ -272,6 +272,10 @@ void clearSkins() {
     gFx.mySkin = 0;
     gSkinFailed.clear();
 }
+template <class T> decltype(auto) skinUnwrap(T& v) {
+    if constexpr (requires { v.get(); }) return (v.get());
+    else return (v);
+}
 void grabSkin(Player& pl, std::string const& name, bool local) {
     if (skinSlotOf(name, local) >= 0) return;
     if (std::find(gSkinFailed.begin(), gSkinFailed.end(), name) != gSkinFailed.end()) return;
@@ -280,11 +284,11 @@ void grabSkin(Player& pl, std::string const& name, bool local) {
         if (!gFx.skins[i].ok) slot = i;
     if (slot < 0) return; // full (more than 16 players seen): the rest get the team-colour figure
     try {
-        auto& up = pl.mSkin.get();
+        auto* up = pl.mSkin.get();
         if (!up) return;
-        auto& sp = up->mSkinImpl.get();
+        auto* sp = up->mSkinImpl.get();
         if (!sp) return;
-        mce::Image const& img = sp->mObject.mSkinImage.get();
+        mce::Image const& img = skinUnwrap(sp->mObject.mSkinImage);
         uint32_t const w = img.mWidth, h = img.mHeight;
         auto const*    src = reinterpret_cast<uint8_t const*>(img.mImageBytes.data());
         size_t const   n = img.mImageBytes.size();
