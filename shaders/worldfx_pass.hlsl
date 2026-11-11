@@ -1120,7 +1120,7 @@ float3 vitals(float3 o, float3 rd) {
         float k = saturate(edge * edge * danger * (0.62 + 0.38 * m3.y) * 1.3);
         lin = lerp(lin, l * float3(0.72, 0.64, 0.88), saturate(k * 1.4));   // cold first (the night's violet)
         lin *= 1.0 - 0.55 * k;                                             // then the corners darken
-        lin += float3(0.20, 0.010, 0.030) * k * m3.y * 0.35 * edge;        // a thin dark wine bite on the beat
+        lin += float3(0.035, 0.003, 0.010) * k * m3.y * edge;              // a faint dark wine bite on the beat (seen in game: stronger read as a red filter)
     }
     if (m3.z > 0.0) {
         float flare = exp(-m3.w * 2.2);
