@@ -313,6 +313,7 @@ void trackPlayers(LocalPlayer& lp, int64_t now) {
         if (!t) {
             if (gTracks.size() >= 64) return true;
             gTracks.push_back({name, {q.x, q.y, q.z}, {q.x, q.y, q.z}, -1, now, local});
+            note("player '{}'{}", name, local ? " (you)" : "");
             hit.push_back(1);
             t = &gTracks.back();
         }
