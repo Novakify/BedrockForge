@@ -894,6 +894,23 @@ float3 stepRings(float3 W, float3 lin) {
     }
     return lin;
 }
+// ---- a generator drops something (BF kind 10: a fresh item on a 'hivebed:generator'): the generator breathes out a
+//      soft swell of light round itself - you see the drop from across the map, like the island exhaling
+float3 genPulse(float3 W, float3 lin, float3 nrm) {
+    int ne = int(m0.y);
+    [loop] for (int i = 0; i < ne; i++) {
+        if (eB[i].w < 9.5 || eB[i].w > 10.5) continue;
+        float  age = eA[i].w;
+        float3 g = eA[i].xyz + eB[i].xyz + float3(0.0, 0.6, 0.0);
+        float3 d = W - g;
+        float  r2 = dot(d, d);
+        if (r2 > 30.0) continue;
+        float  swell = smoothstep(0.0, 0.12, age) * exp(-age * 3.2);
+        float  face = saturate(dot(nrm, -normalize(d)) * 0.7 + 0.3);
+        lin += (lin * 2.2 + 0.03) * float3(1.0, 0.88, 0.62) * swell * exp(-r2 / 5.0) * face * 0.55;
+    }
+    return lin;
+}
 // the kill lights the ground around it: a flash in the team's colour, then the embers' glow
 float3 killGlow(float3 W) {
     float3 acc = 0.0;
@@ -1467,6 +1484,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // (killGlow is gone: the death scenes light their own ground)
     [branch] if (m1.z > 0.5) lin = hitOn(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
+    [branch] if (m1.z > 0.5) lin = genPulse(CAM + P, lin, n);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
