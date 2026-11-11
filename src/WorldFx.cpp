@@ -1173,6 +1173,11 @@ void drawUi() {
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Fresh-block trails", &look.trails, 0.0f, 1.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    saveFx |= ImGui::Checkbox("Your vitals", &look.vitals);
+    ImGui::SameLine();
+    if (ImGui::Button("Test vitals")) rf::sky::testVitals();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(low health: the edges drain on a heartbeat; a kill run warms them)");
     ImGui::Text("Match: %s", rf::sky::matchStatus().c_str());
     ImGui::RadioButton("Normal", &look.debug, 0); ImGui::SameLine();
     ImGui::RadioButton("Show shadows", &look.debug, 1); ImGui::SameLine();

@@ -1272,8 +1272,10 @@ struct BfMatchFxV1 {
     struct Proj { uint32_t kind, n; int64_t lastMs; float col[3]; float pts[12][4]; } proj[16]; // v5
     struct Skin { uint32_t gen, ok; uint8_t px[64 * 64 * 4]; } skins[16]; // v6: classic 64x64 skins (kill events: floorDy = slot + 1)
     uint32_t mySkin; // v6: your own skin's slot + 1 (0 = none)
+    float hp, hpMax; uint32_t streak, pad7; int64_t beatMs, killMs; // v7: you (health, kills this life, the heartbeat BF plays)
 };
 constexpr size_t kMatchV5Size = offsetof(BfMatchFxV1, skins);
+constexpr size_t kMatchV6Size = offsetof(BfMatchFxV1, mySkin) + sizeof(uint32_t);
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
 using MatchPreview = void (*)(float);
@@ -1286,8 +1288,9 @@ struct MatchCb {
     float gColF[24][4]; // their colours
     float pInfo[8][4];  // projectile trails: rgb = team colour, w = kind (0 none) + 8 * points
     float pPts[8][12][4]; // their points, newest first: xyz world, w = seconds ago
+    float m3[4];          // you: x = health 0..1 (-1 unknown), y = heartbeat 0..1, z = kill run 0..1, w = seconds since your last kill
 };
-static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96 + 16 + 24 + 1 + 24 + 8 + 96) * 16 && sizeof(MatchCb) <= 8192, "cbuffer M layout");
+static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96 + 16 + 24 + 1 + 24 + 8 + 96 + 1) * 16 && sizeof(MatchCb) <= 8192, "cbuffer M layout");
 BfMatchFxV1 const* gSkinSrc = nullptr; // skins to upload (drawWorldFxPass)
 struct MatchFrame { float phase = 0; MatchCb cb{}; int beds = 0; float bedMinY = 0, bedCx = 0, bedCz = 0; };
 std::mutex  gMatchMutex;
@@ -1318,6 +1321,8 @@ struct TestKill { float p[3]; int64_t at = -100000; int kind = 3; } gTestKill;
 void testKill() { ++gTestKillReq; }
 std::atomic<int64_t> gTestWinAt{-1000000};
 void testVictory() { gTestWinAt = steadyMs(); }
+std::atomic<int64_t> gTestVitalsAt{-1000000};
+void testVitals() { gTestVitalsAt = steadyMs(); }
 // F6 "Test bed": a bed 3 blocks in front of you, lying towards you, that plays its life: 10 s standing, 10 s under
 // attack, then it breaks (any world - for judging the cosmetic beds without a match)
 std::atomic<int> gTestBedReq{0};
@@ -1414,7 +1419,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     matchFns(get, use);
     BfMatchFxV1 const* b = get ? get() : nullptr;
     bool const ok = b && b->version >= 5 && b->size >= kMatchV5Size;
-    bool const v6 = ok && b->version >= 6 && b->size >= sizeof(BfMatchFxV1);
+    bool const v6 = ok && b->version >= 6 && b->size >= kMatchV6Size;
+    bool const v7 = ok && b->version >= 7 && b->size >= sizeof(BfMatchFxV1);
     gSkinSrc = v6 ? b : nullptr;
     if (use) use((look.living && ok && gWorldSky.load() != 0 ? 1 : 0) | (look.beds && ok ? 2 : 0)); // 2: we draw the beds
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
@@ -1624,6 +1630,27 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         f.cb.m2[3] = look.living || look.tension >= 0.0f ? gT : 0.0f;
     }
     if (look.trails <= 0.0f) f.cb.m1[0] = 0;
+    {   // you: health -> the heartbeat edges (in step with the beat BF plays), kills this life -> warmth
+        float hp = -1.0f, beat = 0.0f, run = 0.0f, sinceKill = 99.0f;
+        if (v7 && b->hpMax > 0.0f && b->hp > 0.0f) {
+            hp = std::clamp(b->hp / b->hpMax, 0.0f, 1.0f);
+            if (b->beatMs > 0) {
+                float const t = float(now - b->beatMs) / 1000.0f;   // lub ... dub
+                beat = std::exp(-t * t * 90.0f) + 0.6f * std::exp(-(t - 0.20f) * (t - 0.20f) * 110.0f);
+            }
+            run = b->streak >= 2 ? std::clamp(float(b->streak - 1) / 4.0f, 0.0f, 1.0f) : 0.0f;
+            if (b->killMs > 0) sinceKill = float(now - b->killMs) / 1000.0f;
+        }
+        if (float const tv = float(now - gTestVitalsAt.load()) / 1000.0f; tv >= 0.0f && tv < 10.0f) {   // F6 test
+            hp = std::clamp(0.42f - tv * 0.035f, 0.05f, 1.0f);
+            float const gap = 1.0f / (1.0f + 1.1f * std::clamp((0.40f - hp) / 0.30f, 0.0f, 1.0f));
+            float const t = std::fmod(tv, gap);
+            beat = std::exp(-t * t * 90.0f) + 0.6f * std::exp(-(t - 0.20f) * (t - 0.20f) * 110.0f);
+            run = 0.75f; sinceKill = std::fmod(tv, 3.0f);
+        }
+        if (!look.vitals) hp = -1.0f, run = 0.0f;
+        f.cb.m3[0] = hp; f.cb.m3[1] = std::min(beat, 1.0f); f.cb.m3[2] = run; f.cb.m3[3] = sinceKill;
+    }
     gMatch = f;
     return f;
 }
@@ -2175,6 +2202,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "clouds") gLook.clouds = std::clamp(v, 0.f, 1.f);
         else if (k == "ink") gLook.ink = std::clamp(v, 0.f, 1.f);
         else if (k == "air") gLook.air = std::clamp(v, 0.f, 1.5f);
+        else if (k == "vitals") gLook.vitals = v != 0;
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
@@ -2192,7 +2220,7 @@ void saveWorldFxSettings() {
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nbeds " << (gLook.beds ? 1 : 0)
         << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
-        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\n";
+        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\n";
 }
 
 void setWorldSky(int kind) {

@@ -36,6 +36,7 @@ cbuffer M : register(b1) {
     float4 fCol[24];   // their team colours
     float4 pInfo[8];   // projectile trails: rgb = shooter's team colour, w = kind + 8 * points
     float4 pPts[96];   // 8 x 12 points, newest first: xyz world, w = seconds ago
+    float4 m3;         // you: x = health 0..1 (-1 unknown), y = heartbeat 0..1, z = kill run 0..1, w = seconds since your last kill
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
@@ -1103,6 +1104,27 @@ float3 voidSplash(float3 rd, float sceneT, float3 at, float age, float3 team) {
     float  core = exp(-r * r / 9.0) * exp(-age * 3.5) * 1.6;
     return lerp(team, float3(1, 1, 1), 0.35) * (ring * exp(-age * 1.5) * 0.85 + core) * exp(-t / 260.0);
 }
+// ---- you (Bedrock Forge: your health, your kills this life). Low health: the colour drains out of the edges of the
+//      frame, the corners close in on each heartbeat (BF plays it, in step) - your pulse, not a red filter over the game.
+//      A run of kills: the edges warm, and flare when another one lands. Drawn before the hand and the HUD.
+float3 vitals(float3 o, float3 rd) {
+    float  edge = smoothstep(0.95, 0.52, dot(rd, c0.xyz));   // 0 where you look, 1 in the corners
+    float3 lin = pow(max(o, 0.0), 2.2);
+    float  l = dot(lin, float3(0.2126, 0.7152, 0.0722));
+    if (m3.x >= 0.0 && m3.x < 0.40) {
+        float danger = smoothstep(0.40, 0.08, m3.x);
+        float k = saturate(edge * edge * danger * (0.62 + 0.38 * m3.y) * 1.3);
+        lin = lerp(lin, l * float3(0.72, 0.64, 0.88), saturate(k * 1.4));   // cold first (the night's violet)
+        lin *= 1.0 - 0.55 * k;                                             // then the corners darken
+        lin += float3(0.20, 0.010, 0.030) * k * m3.y * 0.35 * edge;        // a thin dark wine bite on the beat
+    }
+    if (m3.z > 0.0) {
+        float flare = exp(-m3.w * 2.2);
+        float k = edge * edge * m3.z;
+        lin = lerp(lin, lin * float3(1.10, 0.98, 0.86) + float3(0.030, 0.016, 0.004), k * (0.45 + 0.55 * flare));
+    }
+    return pow(max(lin, 0.0), 1.0 / 2.2);
+}
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
         if (m2.z > 0.5) {
@@ -1182,9 +1204,10 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     }
     o = tensionOver(o, rd, sceneT);
     [branch] if (c3.y > 0.0) o = pow(pow(max(o, 0.0), 2.2) + airLife(rd, sceneT), 1.0 / 2.2);
+    [branch] if ((m3.x >= 0.0 && m3.x < 0.40) || m3.z > 0.0) o = vitals(o, rd);
     return o;
 }
-bool matchActive() { return c3.y > 0.0 || m2.w > 0.01 || m2.x > 0.5 || m2.y > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
+bool matchActive() { return (m3.x >= 0.0 && m3.x < 0.40) || m3.z > 0.0 || c3.y > 0.0 || m2.w > 0.01 || m2.x > 0.5 || m2.y > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
