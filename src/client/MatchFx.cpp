@@ -25,6 +25,11 @@
 #include "mc/legacy/ActorRuntimeID.h"
 #include "mc/deps/vanilla_components/StateVectorComponent.h"
 #include "mc/world/actor/player/Player.h"
+#include "mc/world/actor/player/SerializedSkinRef.h"
+#include "mc/world/actor/player/SerializedSkinImpl.h"
+#include "mc/world/actor/player/SkinImage.h"
+#include "mc/util/ThreadOwner.h"
+#include "mc/deps/core/image/Image.h"
 #include "mc/world/level/Level.h"
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/level/BlockPos.h"
@@ -253,6 +258,60 @@ int dyeOfTag(std::string const& t) {
 }
 int64_t gLocalDeadAt = 0; // when you last died (a respawn follows)
 float   gMe[3]{};         // your feet, last frame
+// ---- skins for RF's death scenes: each player's skin image, once, into one of 16 slots (64x64 classic layout)
+struct SkinSlot { std::string name; bool local = false; };
+SkinSlot gSkinSlots[16];
+std::vector<std::string> gSkinFailed; // tried, not usable (odd size / format): don't look again this match
+int skinSlotOf(std::string const& name, bool local) {
+    for (int i = 0; i < 16; ++i)
+        if (gFx.skins[i].ok && gSkinSlots[i].local == local && gSkinSlots[i].name == name) return i;
+    return -1;
+}
+void clearSkins() {
+    for (int i = 0; i < 16; ++i) { gFx.skins[i].ok = 0, ++gFx.skins[i].gen; gSkinSlots[i] = {}; }
+    gFx.mySkin = 0;
+    gSkinFailed.clear();
+}
+void grabSkin(Player& pl, std::string const& name, bool local) {
+    if (skinSlotOf(name, local) >= 0) return;
+    if (std::find(gSkinFailed.begin(), gSkinFailed.end(), name) != gSkinFailed.end()) return;
+    int slot = -1;
+    for (int i = 0; i < 16 && slot < 0; ++i)
+        if (!gFx.skins[i].ok) slot = i;
+    if (slot < 0) return; // full (more than 16 players seen): the rest get the team-colour figure
+    try {
+        auto& up = pl.mSkin.get();
+        if (!up) return;
+        auto& sp = up->mSkinImpl.get();
+        if (!sp) return;
+        mce::Image const& img = sp->mObject.mSkinImage.get();
+        uint32_t const w = img.mWidth, h = img.mHeight;
+        auto const*    src = reinterpret_cast<uint8_t const*>(img.mImageBytes.data());
+        size_t const   n = img.mImageBytes.size();
+        int const      step = (w == 64 && (h == 64 || h == 32)) ? 1 : ((w == 128 && h == 128) ? 2 : 0);
+        if (!step || img.imageFormat != mce::ImageFormat::RGBA8Unorm || !src || n < size_t(w) * h * 4) {
+            if (gSkinFailed.size() < 64) gSkinFailed.push_back(name);
+            note("skin of '{}': {}x{} format {} ({} bytes) - not usable, team-colour figure instead", name, w, h, int(img.imageFormat), n);
+            return;
+        }
+        auto& s = gFx.skins[slot];
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 64; ++x) {
+                int sx = x, sy = y;
+                if (h == 32 && y >= 32) { // a legacy 64x32 skin has no left limbs: they wear the right ones
+                    if (y >= 48 && x >= 16 && x < 32) sx = x - 16, sy = y - 32;
+                    else if (y >= 48 && x >= 32 && x < 48) sx = x + 8, sy = y - 32;
+                    else { std::memset(s.px + (y * 64 + x) * 4, 0, 4); continue; }
+                }
+                std::memcpy(s.px + (y * 64 + x) * 4, src + (size_t(sy) * step * w + size_t(sx) * step) * 4, 4);
+            }
+        gSkinSlots[slot] = {name, local};
+        ++s.gen, s.ok = 1;
+        if (local) gFx.mySkin = uint32_t(slot + 1);
+        note("skin of '{}' -> slot {} ({}x{})", name, slot, w, h);
+    } catch (...) {}
+}
+
 void pushFx(float const* pos, uint32_t kind, int dye) { // 5 = you respawned, 6 = a team won
     auto& e = gFx.events[gFx.nEvents % 256];
     e.x = int32_t(std::floor(pos[0])), e.y = int32_t(std::floor(pos[1])), e.z = int32_t(std::floor(pos[2]));
@@ -295,6 +354,10 @@ void pushKill(Gone const& g0, bool fin) {
     e.col[0] = kDye[d][0], e.col[1] = kDye[d][1], e.col[2] = kDye[d][2], e.col[3] = g.local ? 1.0f : 0.0f;
     e.seed = uint32_t(e.atMs) * 2654435761u;
     e.floorDy = 255;
+    {   // the victim's skin, for the death scene (a test kill wears yours)
+        int const slot = (g.local || g.name.rfind("test", 0) == 0) ? int(gFx.mySkin) - 1 : skinSlotOf(g.name, false);
+        if (slot >= 0) e.floorDy = uint32_t(slot + 1);
+    }
     ++gFx.nEvents;
     note("{} at {:.0f} {:.0f} {:.0f}: {} (team colour {})", fin ? "FINAL KILL" : "kill", g.pos[0], g.pos[1], g.pos[2], g.name, g.dye);
 }
@@ -355,6 +418,7 @@ void trackPlayers(LocalPlayer& lp, int64_t now) {
             t = &gTracks.back();
         }
         if (t->dye < 0) try { t->dye = dyeOfTag(static_cast<Actor&>(pl).getNameTag()); } catch (...) {}
+        if (!local) grabSkin(pl, name, false);
         float const j = std::sqrt((q.x - t->pos[0]) * (q.x - t->pos[0]) + (q.y - t->pos[1]) * (q.y - t->pos[1]) + (q.z - t->pos[2]) * (q.z - t->pos[2]));
         if (j > 10.0f && now - t->seen < 400) {
             gGone.push_back({t->name, {t->pos[0], t->pos[1], t->pos[2]}, t->dye, now, local}); // moved away at once
@@ -506,6 +570,7 @@ void resetMatch(double const* pos) {
     gScanPaused = false;
     gFx.nEvents = 0;
     gTracks.clear(); gGone.clear(); gKills.clear();
+    clearSkins();
     gAnchor[0] = pos[0], gAnchor[1] = pos[1], gAnchor[2] = pos[2];
     gAnchored = true;
 }
@@ -559,7 +624,7 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
 
 extern "C" __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx() {
     std::lock_guard l(gMutex);
-    gFx.size = sizeof gFx, gFx.version = 5;
+    gFx.size = sizeof gFx, gFx.version = 6;
     gFx.active = nowMs() - gHudMs.load() < 250 ? 1u : 0u;
     gFx.nowMs  = nowMs();
     return &gFx;
@@ -727,6 +792,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             bx += sx, bz += sz, --left, nextAt = now + 150;
         }
     }
+    grabSkin(*lp, "\x01me", true); // your own skin (any world: test kills wear it)
     {   // F8: test the match moments in turn - kill, final kill, respawn, victory (to see them without a fight)
         static bool down = false;
         static int  step = 0;

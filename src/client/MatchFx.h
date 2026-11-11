@@ -26,7 +26,7 @@ struct BfMatchEventV1 {
     uint32_t floorDy;  // the shards land this many blocks below the block (0 = on the block under it); 255 = nothing: they fall away
 };
 struct BfMatchFxV1 {
-    uint32_t size, version; // sizeof, 5
+    uint32_t size, version; // sizeof, 6
     uint32_t active;        // 1 while a world is on screen
     uint32_t frame;
     float    phase;         // smoothed 0..2
@@ -56,6 +56,13 @@ struct BfMatchFxV1 {
         float    col[3];      // the shooter's team colour if known, else white
         float    pts[12][4];  // xyz world, w = seconds ago
     } proj[16];
+    // v6: the players' skins (classic 64x64 layout, RGBA, top row first) for RF's death scenes: a kill event's floorDy
+    // is the victim's slot + 1 (255 / 0 = none). gen changes whenever a slot's pixels change.
+    struct Skin {
+        uint32_t gen, ok;
+        uint8_t  px[64 * 64 * 4];
+    } skins[16];
+    uint32_t mySkin; // your own skin's slot + 1 (0 = none)
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);
