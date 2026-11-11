@@ -494,7 +494,17 @@ float3 trails(float3 W) {
         float  pulse = 0.5 + 0.5 * cos((chainN - (TIME - 0.0) * 9.0) * 1.05);
         float  fresh = exp(-age * 2.2);                              // the first second is the show
         float  calm  = (age < 0.6 ? 1.0 : exp(-(age - 0.6) * 0.38));
+        // rails: on a chained block the light runs along the edges PARALLEL to the build direction, so a bridge reads
+        // as two continuous filaments of light, not a ladder of squares; the cross edges only flash as the stitch
         float  edgeL = exp(-edge * 32.0);
+        if (side > 0) {
+            int ax = (side + 1) / 2;                                   // 1 x, 2 y, 3 z: the chain's axis
+            float3 ea = e3;
+            if (ax == 1) ea.x = 1.0; else if (ax == 2) ea.y = 1.0; else ea.z = 1.0;   // ignore distance to cross edges
+            float a2 = min(ea.x, min(ea.y, ea.z)), c2 = max(ea.x, max(ea.y, ea.z));
+            float railD = (ea.x + ea.y + ea.z) - a2 - c2;
+            edgeL = exp(-railD * 32.0);
+        }
         acc += col * drawn * (edgeL * (0.55 + 1.6 * fresh + 0.7 * pulse * fresh) * calm + stitch * 2.2 * fresh + 0.05 * calm);
     }
     return acc;
