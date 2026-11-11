@@ -527,6 +527,28 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
     if (gIsMap) {
+        // (finding how the server draws its beds) every few seconds: the actors standing on a bed, by type - once each
+        static int64_t lastScan = 0;
+        static std::vector<std::string> seenTypes;
+        if (now - lastScan > 4000) {
+            lastScan = now;
+            try {
+                for (Actor* a : lp->getLevel().getRuntimeActorList()) {
+                    if (!a) continue;
+                    auto const p2 = a->getPosition();
+                    for (auto const& b : gBeds)
+                        if (std::abs(p2.x - (b.x + 0.5)) < 2.5 && std::abs(p2.z - (b.z + 0.5)) < 2.5 && std::abs(p2.y - b.y) < 3.0) {
+                            std::string t;
+                            try { t = a->getTypeName(); } catch (...) { t = "?"; }
+                            if (std::find(seenTypes.begin(), seenTypes.end(), t) == seenTypes.end()) {
+                                seenTypes.push_back(t);
+                                auto const r = a->getRotation();
+                                note("actor on a bed: '{}' at {:.2f} {:.2f} {:.2f} rot {:.1f} {:.1f} (bed {} {} {})", t, p2.x, p2.y, p2.z, r.x, r.y, b.x, b.y, b.z);
+                            }
+                        }
+                }
+            } catch (...) {}
+        }
         trackPlayers(*lp, now);
         // threat: the bed's defence is being broken (blocks right around it going down) - something everyone could see
         // happen, not where players are (that would be an unfair wallhack)
