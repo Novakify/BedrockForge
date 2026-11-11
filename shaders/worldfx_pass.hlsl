@@ -871,8 +871,8 @@ float3 hitOn(float3 W, float3 lin) {
         float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
         team = team / max(max(team.r, max(team.g, team.b)), 0.05);
         float k = who > 0.5 ? 1.0 : 0.6;
-        if (age < 0.045) lin = lerp(lin, float3(2.2, 2.1, 2.0), 0.75 * k);                 // the strike
-        else if (age < 0.16) lin += team * (lin * 2.5 + 0.06) * k * (1.0 - (age - 0.045) / 0.115);
+        // (the white strike frame on every hit is gone - Fernando: impact frames only on crits / mace hits, see impactFrame)
+        if (age > 0.02 && age < 0.16) lin += team * (lin * 2.5 + 0.06) * k * (1.0 - (age - 0.045) / 0.115);
     }
     return lin;
 }
@@ -1189,6 +1189,29 @@ float3 slashFx(float3 o, float3 rd) {
     }
     return pow(max(lin, 0.0), 1.0 / 2.2);
 }
+// ---- impact frame, ONLY for your critical or mace hits (BF: kind 8, who 1.25): for half a second the frame turns to
+//      two tones - the world white and whoever you hit a black silhouette, then flipped (world black, them white).
+//      The silhouette is every pixel whose surface sits inside the victim's body column (the world pass sees depth).
+float3 impactFrame(float3 o, float3 rd, float sceneT) {
+    int ne = int(m0.y);
+    [loop] for (int i = 0; i < ne; i++) {
+        if (eB[i].w < 7.5 || eB[i].w > 8.5) continue;
+        float age = eA[i].w, who = eC[i].z;
+        if (who < 1.1 || who > 1.4 || age > 0.5) continue;
+        float3 W = CAM + rd * min(sceneT, 4000.0);
+        float3 c = eA[i].xyz + float3(0.5, 0.0, 0.5);
+        float2 dxz = W.xz - c.xz;
+        float  hy = W.y - c.y;
+        float  body = (sceneT < 500.0 && dot(dxz, dxz) < 0.70 * 0.70 && hy > -0.05 && hy < 2.1) ? 1.0 : 0.0;
+        float  flip = age < 0.25 ? 0.0 : 1.0;
+        float  v = abs(body - flip);                                  // 1 = white
+        // a sliver of the scene's own shading survives in the white (so it is a frame of THIS fight, not a blank)
+        float  l = dot(o, float3(0.299, 0.587, 0.114));
+        float3 tone = v > 0.5 ? lerp(float3(1.0, 1.0, 1.0), float3(0.86, 0.86, 0.88), 1.0 - l) : float3(0.02, 0.02, 0.025);
+        return tone;
+    }
+    return o;
+}
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
         if (m2.z > 0.5) {
@@ -1268,6 +1291,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     }
     o = tensionOver(o, rd, sceneT);
     [branch] if (m1.z > 0.5) o = slashFx(o, rd);
+    [branch] if (m1.z > 0.5) o = impactFrame(o, rd, sceneT);
     [branch] if (c3.y > 0.0) o = pow(pow(max(o, 0.0), 2.2) + airLife(rd, sceneT), 1.0 / 2.2);
     [branch] if (m3.z > 0.0) o = vitals(o, rd);
     return o;
