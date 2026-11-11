@@ -536,9 +536,9 @@ float3 killLight(float3 rd, float sceneT) {
             float a    = age - born;
             if (a < 0.0) continue;
             float lift = max(a - 0.35, 0.0);
-            float y    = hk + lift * lift * (0.9 + 0.25 * float(k)) + lift * 0.4;
-            float r    = 0.36 * (1.0 - 0.55 * saturate(lift / 1.6)) * (1.0 + 0.25 * exp(-a * 9.0));
-            float life = (1.0 - smoothstep(1.2, 2.4, lift)) * (fin && k == 6 ? 1.0 - smoothstep(0.3, 0.5, lift) : 1.0);
+            float y    = hk + lift * (0.7 + 0.12 * float(k)) + lift * lift * 0.35;   // a slow drift up, not a launch
+            float r    = 0.36 * (1.0 + 0.30 * saturate(lift / 1.2)) * (1.0 + 0.25 * exp(-a * 9.0));
+            float life = (1.0 - smoothstep(0.7, 1.5, lift)) * (fin && k == 6 ? 1.0 - smoothstep(0.3, 0.5, lift) : 1.0);
             if (life <= 0.0 || abs(rd.y) < 1e-4) continue;
             float t = (base.y + y) / rd.y;                             // the ring's horizontal plane
             if (t <= 0.05 || t > sceneT + 0.2) continue;
@@ -546,7 +546,13 @@ float3 killLight(float3 rd, float sceneT) {
             float  d = abs(length(q) - r);
             float  w = 0.012 + 0.0009 * t;
             float  flash = a < 0.06 ? 2.5 : 1.0;                       // the 2-frame strike
-            acc += lerp(team, hot, exp(-a * 5.0)) * exp(-pow(d / w, 2.0)) * 1.6 * life * flash;
+            // as it rises the ring comes apart: 8 arcs, more of them gone the higher it gets
+            float  th = atan2(q.y, q.x) / 6.2831853 + 0.5 + 0.07 * float(k);
+            float  arc = floor(th * 8.0);
+            float  keep = step(saturate(lift * 0.9), h1(arc * 1.37 + float(k) * 7.1 + eC[i].x * 0.01));
+            float  arcEnd = smoothstep(0.0, 0.06, frac(th * 8.0)) * smoothstep(1.0, 0.94, frac(th * 8.0));
+            float  ringK = lift > 0.0 ? keep * lerp(1.0, arcEnd, saturate(lift * 3.0)) : 1.0;
+            acc += lerp(team, hot, exp(-a * 5.0)) * (exp(-pow(d / w, 2.0)) * 1.6 + exp(-d / (w * 4.0)) * 0.12) * life * flash * ringK;
         }
         // the strike: for a moment the whole body is a column of white-hot light
         if (age < 0.18) {
@@ -569,8 +575,8 @@ float3 killLight(float3 rd, float sceneT) {
                 float r2  = length(o + d2 * t);
                 float yy  = rd.y * t - base.y;
                 float ab  = age - 0.5;
-                float top = 2.0 + 140.0 * ab * ab;
-                float tail = max(top - 30.0 - 60.0 * ab, 1.8);
+                float top = 2.0 + 18.0 * ab + 90.0 * ab * ab;            // it climbs out of the body, then speeds up
+                float tail = max(top - 25.0 - 40.0 * ab, 1.8);
                 float on = smoothstep(tail - 1.0, tail, yy) * smoothstep(top + 0.5, top, yy);
                 float w = 0.05 + 0.0015 * t;
                 acc += hot * exp(-pow(r2 / w, 2.0)) * on * 2.0 * (1.0 - smoothstep(1.6, 2.5, ab));
