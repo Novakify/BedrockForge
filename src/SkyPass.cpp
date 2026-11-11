@@ -1388,7 +1388,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             float const age = float(now - e.atMs) / 1000.0f;
             if (age < 0) continue;
             if (age > 6.5f) break; // older ones are older still
-            if ((e.kind == 2 && age > 0.4f) || (e.kind == 1 && age > 4.2f) || (e.kind == 3 && age > 3.6f) || (e.kind == 4 && age > 4.2f) ||
+            if ((e.kind == 2 && age > 0.5f) || (e.kind == 1 && age > 4.2f) || (e.kind == 3 && age > 3.6f) || (e.kind == 4 && age > 4.2f) ||
                 (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 6.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
             if (e.kind >= 3 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
@@ -1846,7 +1846,44 @@ float adaptQuality() {
     return q;
 }
 
+// looking down, Bedrock culls its cloud draw - the draw the World FX pass rides on - so the pass (cloud sea, beds,
+// effects) would vanish. Then it runs at the frame's first UI draw instead, on the same targets (one per frame, never both)
+std::atomic<uint64_t> gFxRanNo{~0ull}, gFxFallbackNo{~0ull};
+std::atomic<size_t>   gFxRt{0}, gFxDs{0};
+std::atomic<ID3D12PipelineState*> gFxPso{nullptr};
+static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
+    if (gFxFallbackNo.load() == now) return false; // this frame already got it at the UI
+    bool const ok = drawWorldFxPassImpl(list, st, calls);
+    if (ok) {
+        size_t rt0 = 0, dsv = 0;
+        if (rf::worldfx::listTargets(list, rt0, dsv)) gFxRt = rt0, gFxDs = dsv;
+        gFxPso = st.pso;
+        gFxRanNo = now;
+    }
+    return ok;
+}
+bool fxFallbackWanted() {
+    if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed)) return false;
+    uint64_t const now = gPresentNo.load(std::memory_order_relaxed), ran = gFxRanNo.load(std::memory_order_relaxed);
+    return ran != now && ran + 1 != now && gFxFallbackNo.load(std::memory_order_relaxed) != now;
+}
+bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    if (!fxFallbackWanted()) return false;
+    size_t rt0 = 0, dsv = 0;
+    if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != gFxRt.load() || dsv != gFxDs.load()) return false; // not the world's targets
+    uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
+    uint64_t prev = gFxFallbackNo.load();
+    if (prev == now || !gFxFallbackNo.compare_exchange_strong(prev, now)) return false;
+    GameState s2 = st;
+    s2.pso = gFxPso.load();
+    bool const ok = drawWorldFxPassImpl(list, s2, calls);
+    calls.setPso(list, st.pso);                     // the UI draw goes on with its own pipeline
+    if (st.haveTopo) calls.setTopo(list, st.topo);
+    return ok;
+}
+static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     WorldFxLook const look = gLook;
     // the pass also carries the cloud sea (sky pixels + terrain under the deck), so it runs with the block look off too
     if (!st.rootKnown) { wfxStatus("waiting for the game's root state"); return false; }

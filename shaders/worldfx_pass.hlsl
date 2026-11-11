@@ -217,14 +217,50 @@ float4 shards(float3 rd, float sceneT) {
         float3 corner = eA[i].xyz - CAM;
         float3 alb = pow(max(eB[i].rgb, 0.0), 2.2);
         float  seed = eC[i].x;
-        if (kind > 1.5 && kind < 2.5) { // placed: the block lands with a quick overshoot (only the part bigger than the block shows)
-            if (age > 0.4) continue;
-            float  sc = 1.0 + 0.13 * exp(-age * 8.0) * cos(age * 24.0);
-            float  tN; float3 nl, lp;
-            if (!hitBox(rd, corner + 0.5, 0.5 * sc, float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), tN, nl, lp) || tN >= best) continue;
-            float  edge = smoothstep(0.80, 1.0, max(max(abs(lp.x) * (1 - abs(nl.x)), abs(lp.y) * (1 - abs(nl.y))), abs(lp.z) * (1 - abs(nl.z))));
-            float3 lit = alb * (0.55 + 0.75 * LIGHTK * saturate(dot(nl, SUN))) + exp(-age * 9.0) * edge * 0.6;
-            best = tN, col = lit, hit = true;
+        if (kind > 1.5 && kind < 2.5) { // placed: it materializes - a hologram of the block, built bottom-up by its own
+            // pieces shooting in from nowhere (27 cubelets, a layer at a time); the scan front burns white as it climbs
+            if (age > 0.5) continue;
+            float3 bc = corner + 0.5;
+            float  tb = dot(bc, rd);
+            if (tb < -2.5 || dot(bc, bc) - tb * tb > 2.4 * 2.4) continue;
+            float  front = saturate((age - 0.06) / 0.34);                    // 0..1 up the block: built below, hologram above
+            float3 S = rd * sceneT - corner;                                   // the scene point, in the block's cell
+            float3 hue = lerp(float3(0.35, 0.85, 1.0), alb / max(max(alb.r, max(alb.g, alb.b)), 0.05), 0.35);
+            if (all(S > -0.02) && all(S < 1.02) && sceneT <= best) {
+                float3 q = saturate(S);
+                float3 ad = min(q, 1.0 - q);
+                float  m1 = min(ad.x, min(ad.y, ad.z)), m3 = max(ad.x, max(ad.y, ad.z));
+                float  ed = (ad.x + ad.y + ad.z) - m1 - m3;                   // to this face's nearest edge
+                float  wire = exp(-ed * 70.0);
+                float  fl = exp(-pow((q.y - front) * 30.0, 2.0)) * (front < 1.0 ? 1.0 : exp(-(age - 0.4) * 30.0));
+                if (q.y > front - 0.035) {   // not built yet: a hologram (dark glass, scanlines, its wireframe); the front burns
+                    float scan = 0.55 + 0.45 * step(0.5, frac(q.y * 16.0 - age * 9.0));
+                    float flick = 0.85 + 0.15 * sin(age * 120.0 + q.y * 30.0);
+                    col = alb * 0.10 + hue * (0.10 * scan + 1.4 * wire) * flick + float3(1, 1, 1) * fl * 1.6;
+                    if (q.y <= front) col = alb + float3(1, 1, 1) * fl * 1.6;
+                    best = sceneT; hit = true;
+                }
+            }
+            [loop] for (int k = 0; k < 27; k++) {     // the pieces: each shoots in to its cell and snaps into place
+                float  sk = seed * 0.001 + float(k) * 3.71;
+                int    lx = k % 3, ly = (k / 3) % 3, lz = k / 9;
+                float3 cellc = float3(lx, ly, lz) / 3.0 + 1.0 / 6.0;
+                float  arrive = 0.06 + 0.34 * (float(ly) + 0.85) / 3.0 - 0.05 * h1(sk);
+                float  u = (age - (arrive - 0.12)) / 0.12;                     // 0..1 in flight
+                if (u < 0.0 || u > 1.0) continue;
+                float3 from = normalize(float3(h1(sk + 1), h1(sk + 2) * 0.7 + 0.15, h1(sk + 3)) - float3(0.5, 0.0, 0.5)) * (1.4 + 0.8 * h1(sk + 4));
+                float  ease = 1.0 - pow(1.0 - u, 3.0);
+                float3 p = corner + cellc + from * (1.0 - ease);
+                float3 ax = normalize(float3(h1(sk + 5), h1(sk + 6), h1(sk + 7)) - 0.5 + 1e-3);
+                float3x3 R = rotAxis(ax, (1.0 - ease) * 7.0);
+                float  e1 = (1.0 / 6.0) * (0.55 + 0.45 * ease);
+                float  tN; float3 nl, lp;
+                if (!hitBox(rd, p, float3(e1, e1, e1), R, tN, nl, lp) || tN >= best) continue;
+                float3 nw = mul(R, nl);
+                float  edge = smoothstep(0.70, 1.0, max(max(abs(lp.x) * (1 - abs(nl.x)), abs(lp.y) * (1 - abs(nl.y))), abs(lp.z) * (1 - abs(nl.z))));
+                float3 c = alb * (0.45 + 0.7 * LIGHTK * saturate(dot(nw, SUN))) + hue * edge * 1.5 + float3(1, 1, 1) * (1.0 - u) * 0.5;
+                best = tN, col = c, hit = true;
+            }
             continue;
         }
         if (kind > 4.5) continue;   // respawn / victory: screen and sky effects, not pieces

@@ -881,12 +881,35 @@ void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa co
     if (ms > 30) ll_shim::warn(std::string("[RF] slow frame: in-game ") + (kind == 2 ? "sky" : "weather") + " draw took " + std::to_string(ms) + " ms");
 }
 
+// looking down there is no cloud draw: the World FX pass runs at the first UI draw instead (rf::sky::fallbackWorldFx)
+void fxFallback(ID3D12GraphicsCommandList* list) {
+    if (gInSnapshot || !rf::sky::fxFallbackWanted()) return;
+    SkyLS* s = skyLS(list);
+    if (!s->pso) return;
+    {
+        std::lock_guard l(gMutex);
+        if (!gUiPso.count(s->pso)) return;
+    }
+    rf::sky::GameState st;
+    st.pso       = s->pso;
+    st.haveTopo  = s->ia.haveTopo;
+    st.topo      = int(s->ia.topo);
+    st.nVb       = s->ia.nVb;
+    st.vb        = s->ia.vb;
+    st.rootKnown = rootKnown(list);
+    rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
+    gInSnapshot = true;
+    rf::sky::fallbackWorldFx(list, st, c);
+    gInSnapshot = false;
+}
+
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
     rf::sky::GameState st;
     ListIa             ia;
     bool               orig = true;
     int                sk   = gInSnapshot ? 0 : skyDrawKind(list, st, ia, orig);
     if (!orig) rf::sky::noteHidden();
+    if (orig && sk == 0) fxFallback(list);
     if (orig) {
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
@@ -902,6 +925,7 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
     bool               orig = true;
     int                sk   = gInSnapshot ? 0 : skyDrawKind(list, st, ia, orig);
     if (!orig) rf::sky::noteHidden();
+    if (orig && sk == 0) fxFallback(list);
     if (orig) {
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
