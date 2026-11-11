@@ -530,6 +530,8 @@ def _faithful_armor(pack):
     for f in sorted(src.glob("*")):
         if f.suffix.lower() not in (".png", ".tga") or f.stem.endswith(("_mers", "_normal")):
             continue
+        if f.stem.startswith("chain"):   # Faithful's chain is a solid checker (no holes): Glass Armor can't tell it from leather
+            continue                     # by shape or colour, so the game keeps vanilla chain (seen in game 2026-11-11)
         im = np.array(Image.open(f).convert("RGBA"))
         rgb = grade.grade(im[..., :3], **GRADE)
         al = im[..., 3].copy()
