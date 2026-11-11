@@ -228,7 +228,8 @@ float4 shards(float3 rd, float sceneT) {
             continue;
         }
         if (kind > 4.5) continue;   // respawn / victory: screen and sky effects, not pieces
-        if (kind > 2.5) { // a kill: the player's body, in voxels of their team colour, holds for a beat, then bursts
+        if (kind > 2.5 && kind < 4.5) continue;   // kills are drawn as light (killLight), not pieces
+        if (kind > 2.5) { // a kill (old voxel body, unused): the player's body, in voxels of their team colour, holds for a beat, then bursts
             if (age > 3.6) continue;
             float3 base = corner + float3(0.5, 0.0, 0.5);                  // feet
             float  up2 = 2.5 * saturate((age - 1.7) / 1.9);
@@ -501,6 +502,10 @@ float3 trails(float3 W) {
 // ---- final kill: the player's soul leaves as a streak of team light shooting into the sky, and a ring runs out over
 //      the cloud sea under it. A normal kill gets a short, low flare.
 float3 killLight(float3 rd, float sceneT) {
+    // a kill, written in light: the player is "unwritten" - rings of their team's light trace their body from the
+    // feet up in 0.2 s (a 2-frame white flash on the first), then lift off and drift upward, thinning out, like the
+    // lines that drew them coming apart. A final kill sends the last ring up as a thin beam that pins their star into
+    // the sky (the fallen). Everything is additive light: the fight behind it stays readable.
     float3 acc = 0.0;
     int ne = int(m0.y);
     [loop] for (int i = 0; i < ne; i++) {
@@ -509,37 +514,57 @@ float3 killLight(float3 rd, float sceneT) {
         bool  fin = kind > 3.5;
         float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
         team = team / max(max(team.r, max(team.g, team.b)), 0.05);
-        float3 b = eA[i].xyz + float3(0.5, 1.0, 0.5) - CAM;
-        // closest approach of the view ray to the vertical line through the body
-        float2 o = -b.xz, d = rd.xz;
-        float  dd = max(dot(d, d), 1e-6);
-        float  t = -dot(o, d) / dd;
-        float2 q = o + d * t;
-        float  r = length(q);
-        float  tr = t;                                   // the ray's distance at the line
-        if (tr > 0.0 && tr < sceneT + 0.5) {
-            float y = rd.y * tr - b.y;                   // height on the line, relative to the body
-            // final: the soul climbs out of the body slowly, then shoots up (the column stays joined to the body a moment)
-            float la = saturate((age - 0.22) / 1.6);
-            float top = fin ? 2.0 + 240.0 * la * la * la + 6.0 * saturate(age * 4.0) : 2.5 + 4.0 * saturate(age * 3.0);
-            float tail = fin ? max(top - 12.0 - 90.0 * la, -1.0) : -1.0;
-            float on = smoothstep(-1.0, 0.0, y - tail) * smoothstep(0.5, 0.0, y - top);
-            float w  = (fin ? 0.30 : 0.18) * (1.0 + 0.004 * tr);
-            float head = exp(-pow((y - top) / (fin ? 6.0 : 1.5), 2.0));
-            float life = fin ? exp(-max(age - 1.1, 0.0) * 1.6) : exp(-age * 3.5);
-            acc += team * on * (exp(-r * r / (w * w)) * 3.0 + exp(-r / (w * 6.0)) * 0.35) * life * (1.0 + 2.0 * head);
+        float3 hot = lerp(team, float3(1, 1, 1), 0.55);
+        float3 base = eA[i].xyz + float3(0.5, 0.0, 0.5) - CAM;   // feet
+        // quick reject: a 3-block column around the body (rings rise up to ~4 blocks)
+        float2 o2 = base.xz;
+        float  tb = dot(float3(o2.x, 0, o2.y), rd) / max(dot(rd.xz, rd.xz), 1e-5);
+        // rings
+        [loop] for (int k = 0; k < 7; k++) {
+            float hk   = 0.15 + 0.27 * float(k);                       // feet .. head
+            float born = 0.028 * float(k);                             // written upward in ~0.2 s
+            float a    = age - born;
+            if (a < 0.0) continue;
+            float lift = max(a - 0.35, 0.0);
+            float y    = hk + lift * lift * (0.9 + 0.25 * float(k)) + lift * 0.4;
+            float r    = 0.36 * (1.0 - 0.55 * saturate(lift / 1.6)) * (1.0 + 0.25 * exp(-a * 9.0));
+            float life = (1.0 - smoothstep(1.2, 2.4, lift)) * (fin && k == 6 ? 1.0 - smoothstep(0.3, 0.5, lift) : 1.0);
+            if (life <= 0.0 || abs(rd.y) < 1e-4) continue;
+            float t = (base.y + y) / rd.y;                             // the ring's horizontal plane
+            if (t <= 0.05 || t > sceneT + 0.2) continue;
+            float2 q = rd.xz * t - base.xz;
+            float  d = abs(length(q) - r);
+            float  w = 0.012 + 0.0009 * t;
+            float  flash = a < 0.06 ? 2.5 : 1.0;                       // the 2-frame strike
+            acc += lerp(team, hot, exp(-a * 5.0)) * exp(-pow(d / w, 2.0)) * 1.6 * life * flash;
         }
-        if (fin) { // a ring on the cloud sea, and the sky flashes once
-            float seaTop = SEA_Y + SEA_AMP * 1.1;
-            if (rd.y < -0.005) {
-                float t2 = (CAM.y - seaTop) / -rd.y;
-                if (t2 > 0.0 && t2 < sceneT) {
-                    float dd2 = length(CAM.xz + rd.xz * t2 - eA[i].xz);
-                    float R = 4.0 + 40.0 * age, w2 = 1.5 + 2.0 * age;
-                    acc += team * exp(-pow((dd2 - R) / w2, 2.0)) * pow(saturate(1.0 - age / 4.2), 1.3) * 3.0;
-                }
+        // the strike: for a moment the whole body is a column of white-hot light
+        if (age < 0.18) {
+            float2 o = -base.xz, d2 = rd.xz;
+            float  dd = max(dot(d2, d2), 1e-6);
+            float  t = -dot(o, d2) / dd;
+            if (t > 0.05 && t < sceneT + 0.3) {
+                float r2 = length(o + d2 * t);
+                float yy = rd.y * t - base.y;
+                float body = smoothstep(-0.05, 0.1, yy) * smoothstep(1.95, 1.75, yy);
+                acc += hot * exp(-pow(r2 / 0.28, 2.0)) * body * (1.0 - age / 0.18) * 2.2;
             }
-            if (sceneT > 1e8) acc += team * 0.25 * exp(-age * 3.0);
+        }
+        // final: the beam that carries them up to their star
+        if (fin && age > 0.5 && age < 3.0) {
+            float2 o = -base.xz, d2 = rd.xz;
+            float  dd = max(dot(d2, d2), 1e-6);
+            float  t = -dot(o, d2) / dd;
+            if (t > 0.05 && t < sceneT + 0.3) {
+                float r2  = length(o + d2 * t);
+                float yy  = rd.y * t - base.y;
+                float ab  = age - 0.5;
+                float top = 2.0 + 140.0 * ab * ab;
+                float tail = max(top - 30.0 - 60.0 * ab, 1.8);
+                float on = smoothstep(tail - 1.0, tail, yy) * smoothstep(top + 0.5, top, yy);
+                float w = 0.05 + 0.0015 * t;
+                acc += hot * exp(-pow(r2 / w, 2.0)) * on * 2.0 * (1.0 - smoothstep(1.6, 2.5, ab));
+            }
         }
     }
     return acc * m0.w;
@@ -563,13 +588,14 @@ float3 killGlow(float3 W) {
 // ---- you respawn: the world comes back from the middle of your view outward, a ring of your team's colour on the
 //      front, behind it everything still grey (you were not there yet)
 float3 respawnFx(float3 o, float3 rd, float age, float3 team) {
-    float a  = acos(clamp(dot(rd, c0.xyz), -1.0, 1.0));          // angle from the centre of the view
-    float R  = age * 0.95;                                       // radians: the whole view in ~1.2 s
-    float back = smoothstep(R, R - 0.12, a);                     // already back
+    // you are written back in: a line of your team's light sweeps from the ground up through the view in ~0.7 s,
+    // the world below it already in colour, above it still grey (you were not here yet)
+    float up = dot(rd, c2.xyz) / max(dot(rd, c0.xyz), 0.2);          // screen height, -1..1 (roughly)
+    float H  = -1.1 + age * 3.2;                                      // the sweep line
+    float back = smoothstep(H + 0.06, H - 0.06, up);
     float l  = dot(o, float3(0.299, 0.587, 0.114));
-    float3 grey = l * float3(0.55, 0.58, 0.68);
-    float3 r = lerp(grey, o, back);
-    r += lerp(team, float3(1, 1, 1), 0.45) * exp(-pow((a - R) / 0.025, 2.0)) * 0.30 * saturate(1.5 - age);  // a fine bright edge
+    float3 r = lerp(l * float3(0.55, 0.58, 0.68), o, back);
+    r += lerp(team, float3(1, 1, 1), 0.4) * exp(-pow((up - H) / 0.012, 2.0)) * 0.55 * saturate(1.4 - age);
     return r;
 }
 // ---- a team wins: fireworks of their colour over the map - bursts of sparks that bloom, fall and fade
@@ -738,7 +764,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
         float  js = hash12(float2(px));
         float3 rays = sunShafts(px, js) * 0.55 * LIGHTK;                  // over open sky the beams are subtler (it is already bright)
-        float4 sea = rd.y > 0.02 ? float4(0, 0, 0, 0) : csSeaPixel(rd);
+        float4 sea = (rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
         // the full sky (high clouds, stars, moon) is drawn here, on pixels that are really sky - the sky pass only lays a
         // cheap gradient under the whole screen (most of it is covered by the world afterwards)
         float3 base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));

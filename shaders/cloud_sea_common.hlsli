@@ -136,7 +136,10 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     tHit = -1.0;
     float yTop = SEA_Y + SEA_AMP * 7.6;
     if (rd.y >= 0.0 && ro.y > yTop) return float4(0.0, 0.0, 0.0, 0.0);
-    if (rd.y > 0.02) return float4(0.0, 0.0, 0.0, 0.0); // looking up: nothing tall enough out there to hit
+    // looking up: only the tall cloud towers out past the islands can rise above your eye line - march just the rays
+    // that could reach one (this used to stop at 0.02 for everything, which sliced the tops off the towers in a
+    // perfectly straight line round the horizon)
+    if (rd.y > 0.02 && rd.y > (yTop - ro.y) / 180.0) return float4(0.0, 0.0, 0.0, 0.0);
     float t = 0.0;
     if (ro.y > yTop) t = (ro.y - yTop) / -rd.y;
     // inside the tower-free disk the sea is low: skip straight down to its real top (most of the screen from a map)
