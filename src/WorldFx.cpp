@@ -1131,6 +1131,9 @@ void drawUi() {
     ImGui::SameLine();
     ImGui::TextDisabled("(golden hour -> dusk at the first bed -> night for the final fight)");
     ImGui::SliderFloat("Preview sky phase", &look.phase, -1.0f, 2.0f, look.phase < 0 ? "follow the match" : "%.2f");
+    ImGui::SliderFloat("Preview tension", &look.tension, -0.05f, 1.0f, look.tension < 0 ? "follow the match" : "%.2f");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(teams going out: far storm, the frame closes in)");
     saveFx |= ImGui::Checkbox("Cosmetic beds", &look.beds);
     ImGui::SameLine();
     ImGui::TextDisabled("(drawn over the server's bed, on your screen only)");
@@ -1142,9 +1145,16 @@ void drawUi() {
         ImGui::TextDisabled("(3 blocks ahead: stands 10 s, attacked 10 s, then breaks)");
     }
     saveFx |= ImGui::Checkbox("Kill and respawn moments", &look.kills);
+    ImGui::SetNextItemWidth(200.0f);
+    {
+        int ds = look.deathScene + 1;
+        if (ImGui::Combo("Death scene", &ds, "Shuffle (never the same twice)\0Chains of the Deep\0Blackjack\0Tentacles\0Lightning Ash\0Giant Hand\0Hungry Chest\0Executioner\0")) { look.deathScene = ds - 1; saveFx = true; }
+    }
     if (ImGui::Button("Test kill")) rf::sky::testKill();
     ImGui::SameLine();
-    ImGui::TextDisabled("(a kill 6 blocks ahead; press again for a final kill)");
+    if (ImGui::Button("Test victory")) rf::sky::testVictory();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(a kill 6 blocks ahead / the fireworks)");
     ImGui::SliderFloat("Team lights + bed beacons", &look.teams, 0.0f, 2.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Block shards", &look.shards, 0.0f, 1.0f, "%.2f");

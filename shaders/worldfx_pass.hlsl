@@ -207,7 +207,18 @@ bool hitBox(float3 rd, float3 p, float3 e, float3x3 R, out float tN, out float3 
     return tN < tF && tN > 0.05;
 }
 // returns rgb (display) + a (1 = covered), sceneT = how far the scene is along rd
-float4 shards(float3 rd, float sceneT) {
+bool  nearRay2(float3 rd, float3 C, float r) { float tc = dot(C, rd); return tc > -r && dot(C, C) - tc * tc < r * r; }
+float segGlow(float3 rd, float3 a, float3 b, float w, float tMax) {   // light along a segment (camera at 0), depth-tested
+    float3 ba = b - a;
+    float  bb = dot(ba, ba), bd = dot(ba, rd), bo = dot(ba, -a), dO = dot(rd, -a);
+    float  den = bb - bd * bd;
+    float  sP = den > 1e-6 ? saturate((bo - bd * dO) / den) : 0.0;
+    float3 q = a + ba * sP;
+    float  tr = max(dot(q, rd), 0.0);
+    float3 dd = rd * tr - q;
+    return tr < tMax + 0.05 ? exp(-dot(dd, dd) / (w * w)) : 0.0;
+}
+float4 shards(float3 col0, float3 rd, float sceneT) {
     float  best = sceneT;
     float3 col = 0.0;
     bool   hit = false;
@@ -217,49 +228,78 @@ float4 shards(float3 rd, float sceneT) {
         float3 corner = eA[i].xyz - CAM;
         float3 alb = pow(max(eB[i].rgb, 0.0), 2.2);
         float  seed = eC[i].x;
-        if (kind > 1.5 && kind < 2.5) { // placed: it materializes - a hologram of the block, built bottom-up by its own
-            // pieces shooting in from nowhere (27 cubelets, a layer at a time); the scan front burns white as it climbs
-            if (age > 0.5) continue;
+        if (kind > 1.5 && kind < 2.5) {
+            // placed: it MATERIALIZES. For 0.42 s the block is not there - its cell is a hologram: you see through it
+            // (dark glass, scanlines, a wireframe), while the block builds itself inside out of 512 small voxels of
+            // light that arrive bottom-up, each flashing as it lands, fed by thin sparks streaking in. Then one flash
+            // and the real block stands there, its edges glinting for a moment.
+            const float DUR = 0.42;
+            if (age > DUR + 0.30) continue;
             float3 bc = corner + 0.5;
-            float  tb = dot(bc, rd);
-            if (tb < -2.5 || dot(bc, bc) - tb * tb > 2.4 * 2.4) continue;
-            float  front = saturate((age - 0.06) / 0.34);                    // 0..1 up the block: built below, hologram above
-            float3 S = rd * sceneT - corner;                                   // the scene point, in the block's cell
-            float3 hue = lerp(float3(0.35, 0.85, 1.0), alb / max(max(alb.r, max(alb.g, alb.b)), 0.05), 0.35);
-            if (all(S > -0.02) && all(S < 1.02) && sceneT <= best) {
-                float3 q = saturate(S);
-                float3 ad = min(q, 1.0 - q);
+            if (!nearRay2(rd, bc, 2.0)) continue;
+            float3 hue = alb / max(max(alb.r, max(alb.g, alb.b)), 0.05);
+            hue = lerp(hue, float3(0.75, 0.95, 1.0), 0.35);
+            float3 I0 = float3(1, 0, 0), I1 = float3(0, 1, 0), I2 = float3(0, 0, 1);
+            float  tN; float3 nl, lp;
+            bool   inCell = hitBox(rd, bc, float3(0.503, 0.503, 0.503), float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), tN, nl, lp) && tN <= min(sceneT, best) + 0.03;
+            if (inCell) {
+                float3 ad = (1.0 - abs(lp)) * 0.5;                              // blocks to each pair of faces
                 float  m1 = min(ad.x, min(ad.y, ad.z)), m3 = max(ad.x, max(ad.y, ad.z));
-                float  ed = (ad.x + ad.y + ad.z) - m1 - m3;                   // to this face's nearest edge
-                float  wire = exp(-ed * 70.0);
-                float  fl = exp(-pow((q.y - front) * 30.0, 2.0)) * (front < 1.0 ? 1.0 : exp(-(age - 0.4) * 30.0));
-                if (q.y > front - 0.035) {   // not built yet: a hologram (dark glass, scanlines, its wireframe); the front burns
-                    float scan = 0.55 + 0.45 * step(0.5, frac(q.y * 16.0 - age * 9.0));
-                    float flick = 0.85 + 0.15 * sin(age * 120.0 + q.y * 30.0);
-                    col = alb * 0.10 + hue * (0.10 * scan + 1.4 * wire) * flick + float3(1, 1, 1) * fl * 1.6;
-                    if (q.y <= front) col = alb + float3(1, 1, 1) * fl * 1.6;
-                    best = sceneT; hit = true;
+                float  ed = (ad.x + ad.y + ad.z) - m1 - m3;                    // to this face's nearest edge
+                float  wire = step(ed, 1.0 / 32.0);                            // a half-texel line: crisp, not a glow
+                if (age >= DUR) {                                              // done: the real block, a glint on its edges
+                    if (sceneT <= tN + 0.03) {
+                        float3 lin = pow(max(col0, 0.0), 2.2) + hue * wire * exp(-(age - DUR) * 13.0) * 1.1;
+                        best = sceneT; col = lin; hit = true;
+                    }
+                } else {
+                    // what is behind the cell: the world if the block is not in the frame yet, else the sky (it is hidden)
+                    float3 inv = 1.0 / select(abs(rd) > 1e-6, rd, 1e-6);
+                    float3 t1 = (corner + 1.0) * inv, t0 = corner * inv;
+                    float  tF = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
+                    float3 bg = sceneT > tF + 0.02 ? pow(max(col0, 0.0), 2.2) : pow(max(toDisplay(csBackground(rd, true)), 0.0), 2.2);
+                    // march the 8x8x8 voxels of the block: the first one that has arrived is what you see
+                    float3 pe = saturate(rd * tN - corner) * 8.0;
+                    float3 st = sign(rd), td = abs(inv);
+                    float3 vx = clamp(floor(pe + rd * 1e-3), 0.0, 7.0);
+                    float3 tm = (vx + max(st, 0.0) - pe) * inv;
+                    float3 vn = nl; float got = 0.0, born = 0.0;
+                    [loop] for (int q = 0; q < 22; q++) {
+                        float ta = vx.y * (0.24 / 8.0) + hash13(vx + seed * 0.01) * 0.12;      // bottom-up, ragged
+                        if (age >= ta) { got = 1.0; born = age - ta; break; }
+                        if (tm.x < tm.y && tm.x < tm.z) { vx.x += st.x; tm.x += td.x; vn = float3(-st.x, 0, 0); }
+                        else if (tm.y < tm.z)           { vx.y += st.y; tm.y += td.y; vn = float3(0, -st.y, 0); }
+                        else                            { vx.z += st.z; tm.z += td.z; vn = float3(0, 0, -st.z); }
+                        if (any(vx < 0.0) || any(vx > 7.0)) break;
+                    }
+                    float  scan = step(0.5, frac((rd.y * tN + CAM.y) * 16.0 - TIME * 3.0));    // scanlines, a texel high
+                    float3 c = bg * 0.42 + hue * (0.020 + 0.030 * scan);                       // the empty hologram: dark glass
+                    if (got > 0.5) {
+                        float shade = 0.55 + 0.25 * vn.y + 0.12 * abs(vn.x);
+                        float3 vox = lerp(alb, hue, 0.22) * shade * (0.80 + 0.30 * scan) + hue * exp(-born * 20.0) * 0.7;
+                        c = lerp(c, vox, 0.86);
+                    }
+                    c += hue * wire * (0.55 + 0.25 * sin(TIME * 30.0));
+                    c = lerp(c, lerp(alb, hue, 0.5) * 1.5, 0.75 * smoothstep(DUR - 0.05, DUR, age));              // the flash it becomes real in
+                    best = min(sceneT, tN); col = c; hit = true;
                 }
             }
-            [loop] for (int k = 0; k < 27; k++) {     // the pieces: each shoots in to its cell and snaps into place
-                float  sk = seed * 0.001 + float(k) * 3.71;
-                int    lx = k % 3, ly = (k / 3) % 3, lz = k / 9;
-                float3 cellc = float3(lx, ly, lz) / 3.0 + 1.0 / 6.0;
-                float  arrive = 0.06 + 0.34 * (float(ly) + 0.85) / 3.0 - 0.05 * h1(sk);
-                float  u = (age - (arrive - 0.12)) / 0.12;                     // 0..1 in flight
-                if (u < 0.0 || u > 1.0) continue;
-                float3 from = normalize(float3(h1(sk + 1), h1(sk + 2) * 0.7 + 0.15, h1(sk + 3)) - float3(0.5, 0.0, 0.5)) * (1.4 + 0.8 * h1(sk + 4));
-                float  ease = 1.0 - pow(1.0 - u, 3.0);
-                float3 p = corner + cellc + from * (1.0 - ease);
-                float3 ax = normalize(float3(h1(sk + 5), h1(sk + 6), h1(sk + 7)) - 0.5 + 1e-3);
-                float3x3 R = rotAxis(ax, (1.0 - ease) * 7.0);
-                float  e1 = (1.0 / 6.0) * (0.55 + 0.45 * ease);
-                float  tN; float3 nl, lp;
-                if (!hitBox(rd, p, float3(e1, e1, e1), R, tN, nl, lp) || tN >= best) continue;
-                float3 nw = mul(R, nl);
-                float  edge = smoothstep(0.70, 1.0, max(max(abs(lp.x) * (1 - abs(nl.x)), abs(lp.y) * (1 - abs(nl.y))), abs(lp.z) * (1 - abs(nl.z))));
-                float3 c = alb * (0.45 + 0.7 * LIGHTK * saturate(dot(nw, SUN))) + hue * edge * 1.5 + float3(1, 1, 1) * (1.0 - u) * 0.5;
-                best = tN, col = c, hit = true;
+            if (age < DUR) {   // the sparks that feed it: thin streaks arriving from all around
+                float3 addS = 0.0;
+                [loop] for (int k = 0; k < 7; k++) {
+                    float  sk = seed * 0.001 + float(k) * 3.71;
+                    float3 tgt = corner + float3(h1(sk), h1(sk + 1.0), h1(sk + 2.0));
+                    float  ta = (tgt.y - corner.y) * 0.24 + 0.04 + 0.08 * h1(sk + 3.0);
+                    float  u = (age - (ta - 0.11)) / 0.11;
+                    if (u < 0.0 || u > 1.0) continue;
+                    float3 from = normalize(float3(h1(sk + 4.0), h1(sk + 5.0) * 0.8 + 0.1, h1(sk + 6.0)) - float3(0.5, 0.0, 0.5)) * (0.9 + 0.5 * h1(sk + 7.0));
+                    float3 a0 = tgt + from * (1.0 - u * u), a1 = tgt + from * (1.0 - min(u * u + 0.30, 1.0));
+                    addS += hue * segGlow(rd, a0, a1, 0.010, min(sceneT, best)) * 0.9;
+                }
+                if (dot(addS, addS) > 1e-6) {
+                    if (!hit) { col = pow(max(col0, 0.0), 2.2); best = sceneT; hit = true; }
+                    col += addS;
+                }
             }
             continue;
         }
@@ -315,25 +355,25 @@ float4 shards(float3 rd, float sceneT) {
             }
             continue;
         }
-        if (age > 4.2) continue;
+        if (age > 2.4) continue;
         float  floorY = eC[i].y >= 0.0 ? corner.y - eC[i].y : -1e6;   // the top of what is under the block
         // a rough bound for the whole burst first (most pixels never see one)
         float3 bc = corner + 0.5 + float3(0, max(1.0 * age - 7.0 * age * age, floorY - corner.y - 0.5), 0);
         float  br = 1.2 + 2.8 * min(age, 0.8);
         float  tb = dot(bc, rd);
         if (tb < -br || dot(bc, bc) - tb * tb > br * br) continue;
-        float  fade = 1.0 - smoothstep(3.2, 4.2, age);           // they lie there a moment, then shrink away
+        float  fade = 1.0 - smoothstep(1.5, 2.4, age);           // they lie there a moment, then shrink away
         // the game rebuilds the chunk a few frames after the break, so the block can still be in the depth buffer:
         // pieces inside its cell must not be cut by it
         float3 S = rd * sceneT;
         bool   ghost = age < 0.6 && all(S > corner - 0.03) && all(S < corner + 1.03);
         float  lim = (ghost && best >= sceneT) ? 1e9 : best;
-        [loop] for (int k = 0; k < 8; k++) {
+        [loop] for (int k = 0; k < 12; k++) {     // small pieces: a fight must stay readable through them
             float  sk = seed * 0.001 + float(k) * 7.31;
-            float3 o0 = float3(((k & 1) ? 0.70 : 0.30), ((k & 2) ? 0.70 : 0.30), ((k & 4) ? 0.70 : 0.30)) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 0.14;
+            float3 o0 = float3(((k & 1) ? 0.70 : 0.30), ((k & 2) ? 0.70 : 0.30), ((k & 4) ? 0.70 : 0.30)) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * (k < 8 ? 0.14 : 0.6);
             float3 dir = normalize(o0 - 0.5 + float3(0, 0.45, 0));
             float3 v = dir * (1.4 + 1.3 * h1(sk + 3)) + float3(0, 1.6, 0);
-            float3 e = float3(0.13 + 0.07 * h1(sk + 4), 0.11 + 0.06 * h1(sk + 5), 0.13 + 0.07 * h1(sk + 6)) * fade;
+            float3 e = float3(0.050 + 0.035 * h1(sk + 4), 0.045 + 0.030 * h1(sk + 5), 0.050 + 0.035 * h1(sk + 6)) * fade;
             const float G = 14.0;
             // fly, land on what was under the block (bounce once, slide a little, lie still); nothing under: fall away
             float y0 = corner.y + o0.y, yF = floorY + e.y;
@@ -524,7 +564,7 @@ float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
         if (tb < -bound || dot(ctr, ctr) - tb * tb > bound * bound) continue;
         float3 team = tCol[i].rgb;
         float  thr  = tAge[i].y;
-        float  gone = brk >= 0.0 ? saturate((brk - 1.1) / 0.9) : 0.0;
+        float  gone = brk >= 0.0 ? saturate((brk - 2.1) / 0.8) : 0.0;
         if (gone >= 1.0) continue;
         float  tm = TIME + float(i) * 7.3;
         // idle life: breath (arms and head rise a little), the head drifting as it looks around; fidgety when attacked
@@ -536,7 +576,7 @@ float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
         // into figure space (pixels): x right, y up, z back (the figure faces -z = the foot of the bed)
         float3 ro = float3(dot(-base, Rt), -base.y, dot(-base, -F)) * 16.0;
         float3 dl = float3(dot(rd, Rt), rd.y, dot(rd, -F));
-        int    nPc = brk >= 0.0 ? 3 : 1;                                // the bed breaks: every limb bursts into 3 pieces
+        int    nPc = 1;                                                 // the bed breaks: he comes apart at the joints - head, body, each arm and leg bone whole
         float  flash = brk >= 0.0 ? exp(-brk * 14.0) : 0.0;
         [unroll] for (int c = 0; c < FIG_N; c++) {
             float4 A = kFigA[c], B = kFigB[c];
@@ -549,20 +589,33 @@ float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
             [loop] for (int pc = 0; pc < nPc; pc++) {
                 float3 pa = lerp(qa, qb, float(pc) / float(nPc)), pb = lerp(qa, qb, float(pc + 1) / float(nPc));
                 float  rad = A.w;
-                if (brk >= 0.0) {   // the burst: out from the chest, up, tumbling, down onto the ground
-                    float  sk = float(c) * 7.13 + float(pc) * 2.71 + float(i) * 1.9;
+                if (brk >= 0.0) {   // each bone is thrown from the chest, tumbles, bounces once and lies where it lands
+                    float  sk = float(c) * 7.13 + float(i) * 1.9;
                     float3 m = (pa + pb) * 0.5;
-                    float3 dir = normalize(m - float3(0.0, 6.0, -4.0) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 6.0);
-                    float3 v = dir * (30.0 + 26.0 * h1(sk + 3)) + float3(0.0, 34.0 + 20.0 * h1(sk + 4), 0.0);
-                    const float G = 150.0;
-                    float  tl = (v.y + sqrt(max(v.y * v.y + 2.0 * G * max(m.y - rad, 0.0), 0.0))) / G;   // lands
-                    float  ta = min(brk, tl);
-                    float3 off = float3(v.x * ta, v.y * ta - 0.5 * G * ta * ta, v.z * ta);
-                    if (brk > tl) off.xz += v.xz * 0.12 * (1.0 - exp(-(brk - tl) * 6.0));   // a short slide
-                    float3 ax = normalize(float3(h1(sk + 5), h1(sk + 6), h1(sk + 7)) - 0.5 + 1e-3);
-                    float3x3 Rr = rotAxis(ax, ta * (9.0 + 8.0 * h1(sk + 8)));
-                    float3 hh = mul(Rr, (pb - pa) * 0.5);
-                    pa = m + off - hh; pb = m + off + hh;
+                    float3 dir = normalize(m - float3(0.0, 6.0, -1.0) + (float3(h1(sk), h1(sk + 1), h1(sk + 2)) - 0.5) * 3.0);
+                    float3 v = float3(dir.x, 0.0, dir.z) * (11.0 + 12.0 * h1(sk + 3)) + float3(0.0, 26.0 + 22.0 * h1(sk + 4) + (part == 0 ? 14.0 : 0.0), 0.0);
+                    const float G = 130.0;
+                    float  yF = rad + 0.2;                                                       // lying on the ground
+                    float  tl = (v.y + sqrt(max(v.y * v.y + 2.0 * G * max(m.y - yF, 0.0), 0.0))) / G;
+                    float3 off; float spin;
+                    if (brk < tl) { off = float3(v.x * brk, v.y * brk - 0.5 * G * brk * brk, v.z * brk); spin = brk; }
+                    else {
+                        float u2 = brk - tl, vb = 0.32 * (G * tl - v.y), tb2 = 2.0 * vb / G, ub = min(u2, tb2);
+                        float roll = (part == 0 ? 0.9 : 0.35) * (1.0 - exp(-u2 * 3.0));           // the head rolls on a little
+                        off = float3(v.x * (tl + roll * 0.4), yF - m.y + max(vb * ub - 0.5 * G * ub * ub, 0.0), v.z * (tl + roll * 0.4));
+                        spin = tl + 0.5 * ub + roll * 0.3;
+                    }
+                    float3 ax = normalize(float3(h1(sk + 5), h1(sk + 6) * 0.3, h1(sk + 7)) - float3(0.5, 0.0, 0.5) + 1e-3);
+                    float  ang = spin * (5.0 + 6.0 * h1(sk + 8));
+                    if (brk > tl + 0.2) {   // settled: a bone lies flat
+                        float3 hh0 = mul(rotAxis(ax, ang), (pb - pa) * 0.5);
+                        hh0.y *= saturate(1.0 - (brk - tl - 0.2) * 5.0);
+                        pa = m + off - hh0; pb = m + off + hh0;
+                    } else {
+                        float3 hh = mul(rotAxis(ax, ang), (pb - pa) * 0.5);
+                        pa = m + off - hh; pb = m + off + hh;
+                    }
+                    pa.y = max(pa.y, rad); pb.y = max(pb.y, rad);
                     rad *= 1.0 - gone;
                     if (rad < 0.02) continue;
                 }
@@ -584,7 +637,7 @@ float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
                 }
                 // a soft halo of team light round the limbs
                 float tr; float dd = figSegDist(ro, dl, pa, pb, tr) - rad;
-                if (tr / 16.0 < best) halo += team * exp(-max(dd, 0.0) * 0.9) * 0.022 * (1.0 - gone) * (0.6 + 0.8 * darkK()) * (1.0 + 6.0 * flash);
+                if (tr / 16.0 < best) halo += team * exp(-max(dd, 0.0) * 1.3) * 0.012 * (1.0 - gone) * (0.6 + 0.8 * darkK()) * (1.0 + 6.0 * flash);
             }
         }
         // the footprint: a fine line of team light round the server's bed (two blocks), on the ground
@@ -833,84 +886,81 @@ float3 respawnFx(float3 o, float3 rd, float age, float3 team) {
     r += lerp(team, float3(1, 1, 1), 0.4) * exp(-pow((up - H) / 0.012, 2.0)) * 0.55 * saturate(1.4 - age);
     return r;
 }
-// ---- a team wins: a fireworks show over the map, in front of you. 14 shells over ~7 s, each launched on a fading
-//      trail, then one of five kinds: peony (team colour, white-hot cores cooling to colour), gold chrysanthemum
-//      with long streaks, willow (gold that droops and hangs), ring, and crossette (sparks that split again);
-//      the last sparks crackle; each burst lights the sky around it
+// ---- a team wins: a fireworks show over the map, in front of you. 13 shells over ~8 s, each launched on a thin
+//      rising trail, then a burst of 64 sparks on a sphere: peony (team colour), chrysanthemum (gold, long trails),
+//      willow (gold, droops and hangs), two-tone (a white heart inside the team colour) and a ring. Sparks start
+//      white-hot, cool to their colour, then crackle out. No glow discs: only the sparks themselves are light.
 float3 victory(float3 rd, float age, float3 team, float seed) {
     float3 acc = 0.0;
     float  fa = atan2(c0.z, c0.x);
-    [loop] for (int b = 0; b < 14; b++) {
+    float  pxA = 2.0 * c0.w / c4.x;                              // one pixel, in the units sparks are measured in
+    [loop] for (int b = 0; b < 13; b++) {
         float sb = seed * 0.0007 + float(b) * 3.91;
-        float t0 = float(b) * 0.42 + h1(sb) * 0.35 + (b >= 11 ? 0.6 : 0.0);   // a finale volley at the end
+        float t0 = float(b) * 0.55 + h1(sb) * 0.35 - (b >= 10 ? 0.5 * float(b - 10) + 0.2 : 0.0);   // the last three go up together
         float ab = age - t0;
-        float launch = 0.55;
-        if (ab < 0.0 || ab > launch + 3.0) continue;
-        float az = fa + (h1(sb + 1.0) - 0.5) * 1.7, el = 0.20 + 0.36 * h1(sb + 2.0);
+        float launch = 0.60;
+        if (ab < 0.0 || ab > launch + 2.9) continue;
+        bool  hero = (b == 2 || b == 6 || b >= 10);
+        float az = fa + (h1(sb + 1.0) - 0.5) * 1.5, el = 0.26 + 0.34 * h1(sb + 2.0);
         float3 dir = float3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
         int   type = int(h1(sb + 5.0) * 5.0);
-        float3 pal = type == 1 || type == 2 ? float3(1.0, 0.72, 0.32) : (type == 3 ? lerp(team, float3(1, 1, 1), 0.45) : team);
-        if (b % 4 == 3 && type == 0) pal = float3(1.0, 1.0, 1.0) - team * 0.6 + 0.15;   // now and then the complement
-        if (ab < launch) {   // the climb: a spark rising on a fading trail
-            float  u = ab / launch;
-            float3 head = normalize(dir - float3(0, (1.0 - u) * 0.28, 0));
-            float3 tail = normalize(dir - float3(0, min((1.0 - u) * 0.28 + 0.09, 0.4), 0));
-            float3 sg = head - tail, ap = rd - tail;
+        float3 gold = float3(1.25, 0.92, 0.42);
+        float3 pal = (type == 1 || type == 2) ? gold : team;
+        if (ab < launch) {   // the climb: one spark on a short fading tail, slowing as it tops out
+            float  u = ab / launch, h0 = (1.0 - u) * (1.0 - u) * 0.32;
+            float3 head = -float3(0, h0, 0), tail = -float3(0, h0 + 0.05 * (1.0 - u) + 0.008, 0);
+            float3 sg = head - tail, ap = (rd / max(dot(rd, dir), 0.2) - dir) - tail;
             float  tt = saturate(dot(ap, sg) / max(dot(sg, sg), 1e-8));
-            float  d = length(ap - sg * tt);
-            acc += float3(1.0, 0.82, 0.55) * exp(-pow(d / 0.0016, 2.0)) * tt * tt * 1.6;
+            float3 dv = ap - sg * tt;
+            float  w = max(pxA * 0.9, 0.0012);
+            acc += float3(1.0, 0.85, 0.6) * exp(-dot(dv, dv) / (w * w)) * tt * tt * 1.4;
             continue;
         }
         float a2 = ab - launch;
-        float fade = pow(saturate(1.0 - a2 / 3.0), 1.3);
-        float speed = type == 2 ? 0.11 : (type == 1 ? 0.17 : 0.14);
-        float rad = speed * (1.0 - exp(-a2 * 3.2));                 // opens fast, then hangs
-        float drop = (type == 2 ? 0.07 : 0.028) * a2 * a2;          // and sags (willow sags far)
-        if (length(rd - dir) > rad * 1.25 + 0.05 + drop) {          // only the sky glow, far from it
-            acc += pal * exp(-length(rd - dir) * 9.0) * exp(-a2 * 2.0) * 0.06;
-            continue;
-        }
-        float shell = 0.0, core = 0.0;
-        int   n = type == 3 ? 40 : 56;
-        [loop] for (int j = 0; j < n; j++) {
+        float R = (hero ? 0.36 : 0.24) * (type == 2 ? 0.8 : 1.0);
+        float rad = R * (1.0 - exp(-a2 * 3.4));                     // opens fast, then hangs
+        float drop = (type == 2 ? 0.060 : 0.022) * a2 * a2;        // and sags (the willow droops)
+        // the burst is drawn on the plane facing you through its centre: every spark shows, near side and far side
+        float3 pr = rd / max(dot(rd, dir), 0.2) - dir;
+        if (dot(rd, dir) < 0.3) continue;
+        float3 dq = pr + float3(0, drop * 0.7, 0);
+        if (dot(dq, dq) > (rad + 0.04 + drop * 0.5) * (rad + 0.04 + drop * 0.5)) continue;
+        float fade = pow(saturate(1.0 - a2 / 2.9), 1.4);
+        float hot = exp(-a2 * 3.0);
+        float trailK = type == 1 ? 0.45 : (type == 2 ? 0.30 : 0.72);   // where each spark's tail starts (fraction of its reach)
+        float w = max(pxA * 1.25, 0.0020);
+        float3 sum = 0.0;
+        [loop] for (int j = 0; j < 64; j++) {
             float  sj = sb * 7.3 + float(j) * 1.618;
             float3 sd;
-            if (type == 3) {   // a ring, tilted
-                float aa = float(j) / float(n) * 6.2832;
-                sd = mul(rotAxis(normalize(float3(h1(sb + 8.0) - 0.5, 1.0, h1(sb + 9.0) - 0.5)), 0.0), float3(cos(aa), 0.25 * (h1(sb + 7.0) - 0.5), sin(aa)));
-                sd = normalize(sd);
-            } else {           // a sphere (golden spiral), a little jitter
-                float k = (float(j) + 0.5) / float(n);
-                float ph = acos(1.0 - 2.0 * k), th = 3.88322 * float(j);
-                sd = normalize(float3(sin(ph) * cos(th), cos(ph), sin(ph) * sin(th)) + (float3(h1(sj), h1(sj + 0.3), h1(sj + 0.6)) - 0.5) * 0.15);
+            if (type == 4) {   // a ring, tilted toward the viewer
+                float aa = float(j) * 0.0981748;
+                float3 r1 = normalize(cross(dir, float3(0.3, 1.0, 0.1))), r2 = cross(dir, r1);
+                sd = normalize(r1 * cos(aa) + r2 * sin(aa) + dir * 0.25);
+            } else {           // a sphere (golden spiral)
+                float y = 1.0 - (float(j) + 0.5) / 32.0, rr = sqrt(saturate(1.0 - y * y)), th = 2.39996 * float(j);
+                sd = float3(rr * cos(th), y, rr * sin(th));
             }
-            float  sp = 0.85 + 0.15 * h1(sj + 1.3);
-            float3 head = dir + sd * rad * sp - float3(0, drop, 0);
-            float  trailK = type == 1 ? 0.35 : (type == 2 ? 0.25 : 0.62);   // gold and willow leave long streaks
-            float3 tail = dir + sd * rad * sp * trailK - float3(0, drop * trailK, 0);
-            float3 sg = head - tail, ap = rd - tail;
+            float  sp = 0.88 + 0.12 * h1(sj + 1.3);
+            bool   heart = type == 3 && (j % 3) == 0;                // two-tone: every third spark is a short white one inside
+            float  reach = rad * sp * (heart ? 0.5 : 1.0);
+            sd -= dir * dot(sd, dir);
+            float3 head = sd * reach - float3(0, drop, 0);
+            float3 tail = sd * reach * trailK - float3(0, drop * trailK * trailK, 0);
+            float3 sg = head - tail, ap = pr - tail;
             float  tt = saturate(dot(ap, sg) / max(dot(sg, sg), 1e-8));
-            float  d = length(ap - sg * tt);
-            float  twinkle = a2 > 1.4 ? step(0.5, h1(floor(TIME * 20.0) + sj)) : 1.0;
-            float  w = type == 2 ? 0.0028 : 0.0021;
-            shell += exp(-pow(d / w, 2.0)) * (0.25 + 0.75 * tt * tt) * twinkle;
-            if (type == 4 && a2 > 0.55) {   // crossette: each spark splits into four more
-                float a3 = a2 - 0.55;
-                [unroll] for (int q = 0; q < 4; q++) {
-                    float3 sd2 = normalize(cross(sd, q < 2 ? float3(0, 1, 0) : float3(1, 0, 0)) * (q & 1 ? 1.0 : -1.0));
-                    float3 h2 = head + sd2 * 0.05 * (1.0 - exp(-a3 * 4.0));
-                    float  d2 = length(rd - h2);
-                    shell += exp(-pow(d2 / 0.0019, 2.0)) * 0.9 * twinkle;
-                }
-            }
-            core += exp(-pow(d / 0.0011, 2.0)) * tt;
+            float3 dv = ap - sg * tt;
+            float  d2 = dot(dv, dv);
+            if (d2 > w * w * 9.0) continue;
+            float  crackle = a2 > 1.5 ? step(0.5, h1(floor(TIME * 22.0) * 0.37 + sj)) : 1.0;   // the last of it crackles
+            float3 dh = ap - sg;                                     // its head: a brighter point
+            float  I = (exp(-d2 / (w * w)) * (0.10 + 0.90 * tt * tt * tt) + exp(-dot(dh, dh) / (w * w * 2.2)) * 0.9) * crackle;
+            float3 c = heart ? float3(1.0, 0.95, 0.85) : lerp(pal, float3(1, 1, 1), hot * 0.6 + 0.18 * tt * tt * tt * (1.0 - smoothstep(0.8, 1.8, a2)));
+            c = lerp(c, pal * float3(1.0, 0.5, 0.25), smoothstep(1.7, 2.9, a2) * 0.6);          // dying embers
+            sum += c * I;
         }
-        float  hot = exp(-a2 * 2.4);                                  // white-hot, cooling to its colour, then ember
-        float3 c = lerp(pal, float3(1, 1, 1), hot * 0.7);
-        c = lerp(c, pal * float3(1.0, 0.55, 0.3), smoothstep(1.6, 3.0, a2) * 0.6);
-        float  flash = exp(-length(rd - dir) * length(rd - dir) / 0.0016) * exp(-a2 * 7.0) * 3.0;
-        acc += (c * shell * 1.5 + float3(1, 1, 1) * core * hot * 1.2 + pal * flash) * fade;
-        acc += pal * exp(-length(rd - dir) * 7.0) * exp(-a2 * 2.0) * 0.08;   // the sky lit around it
+        acc += sum * fade * 2.2;
+        acc += lerp(pal, float3(1, 1, 1), 0.7) * exp(-dot(dq, dq) / (0.012 * 0.012)) * exp(-a2 * 12.0) * 2.0;   // the pop: a point, for an instant
     }
     return acc;
 }
@@ -1000,6 +1050,63 @@ float3 projTrails(float3 rd, float sceneT) {
     return acc;
 }
 // everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
+// ---- the match tightening (m2.w = tension 0..1: how many teams are out). Far out over the cloud sea a storm gathers -
+//      heat lightning inside the horizon clouds, more often the fewer teams are left; the frame closes in a little
+//      (edges darken, contrast firms). When exactly two teams remain a line of light arcs over the map from one
+//      bed to the other, each team's colour running toward the middle: the duel.
+float3 farStorm(float3 rd, float T) {
+    float period = lerp(8.0, 2.6, T);
+    float cyc = floor(TIME / period), ph = TIME - cyc * period;
+    float a = ph - (0.3 + (period - 1.3) * h1(cyc * 1.7));        // a random moment in each cycle
+    if (a < 0.0 || a > 0.9) return 0.0;
+    float flick = exp(-a * 7.0) + 0.6 * exp(-max(a - 0.18, 0.0) * 9.0) * step(0.18, a);  // a double strike
+    float az = h1(cyc * 3.1) * 6.2832;
+    float3 dir = float3(cos(az), 0.0, sin(az));
+    float3 fl = normalize(float3(rd.x, 0.0, rd.z));
+    float along = dot(fl, dir);
+    float glow = pow(saturate(along), 22.0) * exp(-max(rd.y, 0.0) * 9.0) * exp(-max(-rd.y - 0.10, 0.0) * 14.0);   // the far clouds lit from inside
+    float side = dot(fl, float3(-dir.z, 0.0, dir.x));
+    float jag = (h1(floor(rd.y * 40.0) + cyc) - 0.5) * 0.012 + (h1(floor(rd.y * 9.0) + cyc * 2.0) - 0.5) * 0.02;
+    float bolt = along > 0.9 && rd.y > -0.01 && rd.y < 0.22 ? exp(-pow((side - jag) / 0.0015, 2.0)) * step(a, 0.25) : 0.0;
+    return lerp(float3(0.62, 0.70, 1.0), float3(1.0, 0.72, 0.62), DUSK * (1.0 - NIGHT)) * (glow * 0.55 + bolt * 2.2) * flick * T;
+}
+float3 duelArc(float3 rd, float sceneT) {
+    int nt = int(m0.x);
+    if (nt < 3) return 0.0;
+    int ia = -1, ib = -1, left = 0;
+    [loop] for (int i = 0; i < nt; i++)
+        if (tAge[i].z < 0.5) { left++; if (ia < 0) ia = i; else ib = i; }
+    if (left != 2 || ib < 0) return 0.0;
+    float3 A = tPos[ia].xyz + float3(0, 2, 0) - CAM, B = tPos[ib].xyz + float3(0, 2, 0) - CAM;
+    float  H = 12.0 + 0.16 * length(B - A);
+    float3 acc = 0.0, prev = A;
+    [loop] for (int k = 1; k <= 20; k++) {
+        float  u = float(k) / 20.0, um = u - 0.025;
+        float3 P = lerp(A, B, u) + float3(0, 4.0 * H * u * (1.0 - u), 0);
+        float  w = max(0.07, 0.0022 * length(P));
+        float  run = frac(TIME * 0.30);                                              // both colours run to the middle and meet
+        float  pulse = exp(-pow((um - run * 0.5) * 16.0, 2.0)) + exp(-pow((um - (1.0 - run * 0.5)) * 16.0, 2.0));
+        float3 c = um < 0.5 ? tCol[ia].rgb : tCol[ib].rgb;
+        acc += c * segGlow(rd, prev, P, w, sceneT) * (0.22 + 1.1 * pulse);
+        prev = P;
+    }
+    float3 M = (A + B) * 0.5 + float3(0, H, 0);                                      // where they meet: a spark
+    float3 mq = M - rd * dot(M, rd);
+    float  mw = max(0.25, 0.008 * length(M));
+    if (dot(M, rd) > 0.0 && dot(M, rd) < sceneT) acc += float3(1, 1, 1) * exp(-dot(mq, mq) / (mw * mw)) * exp(-pow((frac(TIME * 0.30) - 0.98) * 9.0, 2.0)) * 1.5;
+    return acc * (0.6 + 0.6 * darkK());
+}
+float3 tensionOver(float3 o, float3 rd, float sceneT) {
+    float T = m2.w;
+    if (T <= 0.01) return o;
+    float3 lin = pow(max(o, 0.0), 2.2);
+    if (sceneT > 1e8) lin += farStorm(rd, T);
+    if (m0.x > 2.5) lin += duelArc(rd, sceneT);
+    o = pow(lin, 1.0 / 2.2);
+    float v = saturate(1.0 - dot(rd, c0.xyz));
+    o *= 1.0 - 0.20 * T * smoothstep(0.25, 0.75, v);
+    return lerp(o, o * o * (3.0 - 2.0 * o), 0.20 * T);
+}
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
         if (m2.z > 0.5) {
@@ -1013,15 +1120,14 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
         }
     }
     [branch] if (m0.y > 0.5 && m0.w > 0.0) {
-        float4 sh = shards(rd, sceneT);
+        float4 sh = shards(o, rd, sceneT);
         if (sh.w > 0.0) { o = sh.rgb; sceneT = sh.w; }
     }
     [branch] if (m0.y > 0.5 && m1.z > 0.5) {   // a kill: its death scene
-        float4 ds = deathScenes(rd, sceneT);
-        if (ds.w > 0.0) { o = ds.rgb; sceneT = ds.w; }
+        o = deathScenes(o, rd, sceneT);
     }
     [branch] if (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) {
-        float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0)) + shockwaves(rd, sceneT, sceneT > 1e8);
+        float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0)) * (1.0 + 0.6 * m2.w) + shockwaves(rd, sceneT, sceneT > 1e8);
         o = pow(lin, 1.0 / 2.2);
     }
     [branch] if (sceneT > 1e8 && m2.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + fallenStars(rd), 1.0 / 2.2);
@@ -1074,9 +1180,10 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
             }
         }
     }
+    o = tensionOver(o, rd, sceneT);
     return o;
 }
-bool matchActive() { return m2.x > 0.5 || m2.y > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
+bool matchActive() { return m2.w > 0.01 || m2.x > 0.5 || m2.y > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
@@ -1249,7 +1356,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
     [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
-    [branch] if (m1.z > 0.5 && m0.w > 0.0) lin += (lin * 2.2 + 0.02) * killGlow(CAM + P);
+    // (killGlow is gone: the death scenes light their own ground)
     [branch] if (m1.z > 0.5) lin = hitOn(CAM + P, lin);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);

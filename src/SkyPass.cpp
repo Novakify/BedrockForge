@@ -4,6 +4,8 @@
 #include "D3D12Api.h"
 #include "SkyPass.h"
 
+#include <cstddef>
+#include <deque>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -751,7 +753,9 @@ struct WsTexData {
 std::mutex                   gWsTexMutex;
 std::unique_ptr<WsTexData>   gWsTexReady;
 std::atomic_bool             gWsTexStarted{false}, gWsTexUp{false};
-ComPtr<ID3D12Resource>       gWsNoise, gWsPuff;
+ComPtr<ID3D12Resource>       gWsNoise, gWsPuff, gWsSkins;
+std::deque<ComPtr<ID3D12Resource>> gSkinGrave; // replaced skin textures, kept while frames in flight may use them
+uint64_t                     gSkinGen = ~0ull;
 ComPtr<ID3D12RootSignature>  gWsRoot;
 ComPtr<ID3D12DescriptorHeap> gWsHeap;
 std::atomic<long>            gWsFrames{0};
@@ -913,7 +917,7 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     for (auto& l : d->puff) lv.push_back(reinterpret_cast<uint8_t const*>(l.data()));
     gWsPuff = uploadLevels(dev, list, DXGI_FORMAT_R16_UNORM, 1024, 1024, 2, lv);
     if (!gWsNoise || !gWsPuff) { wsStatus("texture upload failed"); return; }
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 3, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gWsHeap)))) { wsStatus("descriptor heap failed"); return; }
     UINT const inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     auto       h   = gWsHeap->GetCPUDescriptorHandleForHeapStart();
@@ -927,6 +931,13 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     sv.Format              = DXGI_FORMAT_R16_UNORM;
     sv.Texture2D.MipLevels = UINT(lv.size());
     dev->CreateShaderResourceView(gWsPuff.Get(), &sv, h);
+    {   // t4: the players' skins for the death scenes (empty until Bedrock Forge sends some)
+        std::vector<uint8_t> blank(64 * 1024 * 4, 0);
+        gWsSkins = uploadLevels(dev, list, DXGI_FORMAT_R8G8B8A8_UNORM, 64, 1024, 4, {blank.data()});
+        h.ptr += inc;
+        sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sv.Texture2D.MipLevels = 1;
+        if (gWsSkins) dev->CreateShaderResourceView(gWsSkins.Get(), &sv, h);
+    }
     gWsTexUp = true;
     wsStatus("ready - waiting for the game's sky draw");
 }
@@ -991,7 +1002,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     prm[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
     prm[2].Descriptor       = {1, 0};
     prm[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures)
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures), t4 skins
     prm[3].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     prm[3].DescriptorTable  = {1, &range};
     prm[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1259,7 +1270,10 @@ struct BfMatchFxV1 {
     BfMatchEventV1 events[256];
     struct TeamEx { float threat; uint32_t elim; uint32_t mine; int64_t elimMs; float vis[3]; float yaw; uint32_t hasVis; } teamEx[16]; // v3, v4
     struct Proj { uint32_t kind, n; int64_t lastMs; float col[3]; float pts[12][4]; } proj[16]; // v5
+    struct Skin { uint32_t gen, ok; uint8_t px[64 * 64 * 4]; } skins[16]; // v6: classic 64x64 skins (kill events: floorDy = slot + 1)
+    uint32_t mySkin; // v6: your own skin's slot + 1 (0 = none)
 };
+constexpr size_t kMatchV5Size = offsetof(BfMatchFxV1, skins);
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
 using MatchPreview = void (*)(float);
@@ -1274,6 +1288,7 @@ struct MatchCb {
     float pPts[8][12][4]; // their points, newest first: xyz world, w = seconds ago
 };
 static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96 + 16 + 24 + 1 + 24 + 8 + 96) * 16 && sizeof(MatchCb) <= 8192, "cbuffer M layout");
+BfMatchFxV1 const* gSkinSrc = nullptr; // skins to upload (drawWorldFxPass)
 struct MatchFrame { float phase = 0; MatchCb cb{}; int beds = 0; float bedMinY = 0, bedCx = 0, bedCz = 0; };
 std::mutex  gMatchMutex;
 MatchFrame  gMatch;
@@ -1301,6 +1316,8 @@ int64_t steadyMs() { return std::chrono::duration_cast<std::chrono::milliseconds
 std::atomic<int> gTestKillReq{0};
 struct TestKill { float p[3]; int64_t at = -100000; int kind = 3; } gTestKill;
 void testKill() { ++gTestKillReq; }
+std::atomic<int64_t> gTestWinAt{-1000000};
+void testVictory() { gTestWinAt = steadyMs(); }
 // F6 "Test bed": a bed 3 blocks in front of you, lying towards you, that plays its life: 10 s standing, 10 s under
 // attack, then it breaks (any world - for judging the cosmetic beds without a match)
 std::atomic<int> gTestBedReq{0};
@@ -1334,7 +1351,9 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     MatchGet get; MatchUse use;
     matchFns(get, use);
     BfMatchFxV1 const* b = get ? get() : nullptr;
-    bool const ok = b && b->version >= 5 && b->size >= sizeof(BfMatchFxV1);
+    bool const ok = b && b->version >= 5 && b->size >= kMatchV5Size;
+    bool const v6 = ok && b->version >= 6 && b->size >= sizeof(BfMatchFxV1);
+    gSkinSrc = v6 ? b : nullptr;
     if (use) use((look.living && ok && gWorldSky.load() != 0 ? 1 : 0) | (look.beds && ok ? 2 : 0)); // 2: we draw the beds
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
     if (ok) {
@@ -1407,7 +1426,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             float const age = float(now - e.atMs) / 1000.0f;
             if (age < 0) continue;
             if (age > 6.5f) break; // older ones are older still
-            if ((e.kind == 2 && age > 0.5f) || (e.kind == 1 && age > 4.2f) || (e.kind == 3 && age > 3.9f) || (e.kind == 4 && age > 4.0f) ||
+            if ((e.kind == 2 && age > 0.72f) || (e.kind == 1 && age > 2.4f) || (e.kind == 3 && age > 4.8f) || (e.kind == 4 && age > 4.8f) ||
                 (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 9.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
             if (e.kind >= 3 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
@@ -1417,15 +1436,25 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eC[ne][0] = float(e.seed % 100000u);
             c.eC[ne][1] = e.kind == 8 ? float(e.floorDy) * 0.1f : (e.floorDy > 64 ? -1.0f : float(e.floorDy));   // hits: view yaw
             c.eC[ne][2] = e.col[3];   // hits: 2 you were hit, 1 your hit, 0 someone else's
-            c.eC[ne][3] = (e.kind == 3 || e.kind == 4) ? float(deathSceneFor(uint64_t(e.atMs) * 31u + uint64_t(e.seed))) : 0.0f;
+            if (e.kind == 3 || e.kind == 4) {
+                int const sc = look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(e.atMs) * 31u + uint64_t(e.seed));
+                uint32_t const slot1 = v6 && e.floorDy >= 1 && e.floorDy <= 16 && b->skins[e.floorDy - 1].ok ? e.floorDy : 0;
+                c.eC[ne][3] = float(sc) + 16.0f * float(slot1);
+            } else c.eC[ne][3] = 0.0f;
             ++ne;
         }
-        if (float const ta = float(now - gTestKill.at) / 1000.0f; ta >= 0.0f && ta < 4.2f && ne < 8) {
+        if (float const ta = float(now - gTestKill.at) / 1000.0f; ta >= 0.0f && ta < 4.8f && ne < 8) {
             auto& c = f.cb;
             c.eA[ne][0] = std::floor(gTestKill.p[0]); c.eA[ne][1] = std::floor(gTestKill.p[1]); c.eA[ne][2] = std::floor(gTestKill.p[2]); c.eA[ne][3] = ta;
             c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = float(gTestKill.kind);
             c.eC[ne][0] = 4242.0f; c.eC[ne][1] = -1.0f;
-            c.eC[ne][3] = float(deathSceneFor(uint64_t(gTestKill.at) + 7u));
+            c.eC[ne][3] = float(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u)) + 16.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
+            f.cb.m1[2] = 1.0f;
+            ++ne;
+        }
+        if (float const tw = float(now - gTestWinAt.load()) / 1000.0f; tw >= 0.0f && tw < 9.5f && ne < 8) {
+            auto& c = f.cb;
+            c.eA[ne][3] = tw; c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = 6.0f; c.eC[ne][0] = 777.0f;
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
@@ -1513,6 +1542,16 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     }
     f.cb.m1[3] = look.beds ? 1.0f : 0.0f;
     f.cb.m2[2] = float(look.bedStyle);
+    {   // tension: the share of teams that are out (3+ teams known), eased so the world tightens over a few seconds
+        static float gT = 0.0f; static int64_t gTAt = 0;
+        int known = 0, out = 0;
+        if (ok) for (uint32_t i = 0; i < std::min<uint32_t>(b->nTeams, 16); ++i) { ++known; out += b->teamEx[i].elim ? 1 : 0; }
+        float const target = look.tension >= 0.0f ? look.tension : (known >= 3 ? std::clamp(float(out) / float(known - 1), 0.0f, 1.0f) : 0.0f);
+        float const dt = gTAt ? std::clamp(float(now - gTAt) / 1000.0f, 0.0f, 0.2f) : 0.0f;
+        gTAt = now;
+        gT += (target - gT) * std::min(1.0f, dt * (look.tension >= 0.0f ? 6.0f : 0.45f));
+        f.cb.m2[3] = look.living || look.tension >= 0.0f ? gT : 0.0f;
+    }
     if (look.trails <= 0.0f) f.cb.m1[0] = 0;
     gMatch = f;
     return f;
@@ -1989,6 +2028,27 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     }
     MatchFrame const mf = matchFrame(look);
     updateAnchor(snap.pos);
+    if (BfMatchFxV1 const* sb2 = gSkinSrc) {   // new skins from Bedrock Forge: one 64 x 1024 texture, slot by slot
+        uint64_t gen = 0;
+        for (int i = 0; i < 16; ++i) gen = gen * 1315423911ull + sb2->skins[i].gen * 2ull + sb2->skins[i].ok;
+        if (gen != gSkinGen) {
+            gSkinGen = gen;
+            std::vector<uint8_t> px(64 * 1024 * 4, 0);
+            for (int i = 0; i < 16; ++i)
+                if (sb2->skins[i].ok) std::memcpy(px.data() + size_t(i) * 64 * 64 * 4, sb2->skins[i].px, 64 * 64 * 4);
+            if (auto tex = uploadLevels(dev.Get(), list, DXGI_FORMAT_R8G8B8A8_UNORM, 64, 1024, 4, {px.data()})) {
+                if (gWsSkins) gSkinGrave.push_back(gWsSkins);
+                while (gSkinGrave.size() > 4) gSkinGrave.pop_front();
+                gWsSkins = tex;
+                D3D12_SHADER_RESOURCE_VIEW_DESC sv{};
+                sv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; sv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sv.Texture2D.MipLevels = 1;
+                auto hh = gWsHeap->GetCPUDescriptorHandleForHeapStart();
+                hh.ptr += 2 * size_t(dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
+                dev->CreateShaderResourceView(gWsSkins.Get(), &sv, hh);
+            }
+        }
+    }
     D3D12_GPU_VIRTUAL_ADDRESS const mcb = uploadMatch(dev.Get(), mf.cb);
     if (!mcb) { wfxStatus("match buffer failed"); return false; }
     c[24] = look.shadows ? look.ao : 0.0f; c[25] = look.shadows ? look.rim : 0.0f; c[26] = float(look.debug); c[27] = mf.phase;
@@ -2040,6 +2100,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
+        else if (k == "deathscene") gLook.deathScene = std::clamp(int(v), -1, 6);
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
@@ -2052,7 +2113,7 @@ void saveWorldFxSettings() {
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nbeds " << (gLook.beds ? 1 : 0)
-        << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle
+        << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
         << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\n";
 }
 
