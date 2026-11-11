@@ -87,12 +87,12 @@ def wool(a, f, salt):
     r = rank(a)
     w = wave(*a.shape[:2], f, 1, 1, salt * 0.13, 2.0)
     fibre = np.clip((r - 0.45) / 0.4, 0, 1)                       # the light fibres answer, the dark weave holds
-    return relight(a, w * (0.03 + 0.12 * fibre) - 0.035 * (1 - w) * (1 - fibre))
+    return relight(a, (w - 0.45) * (0.07 + 0.17 * fibre))      # centred: bright wool has no headroom, so it also dips
 
 
 def concrete(a, f, salt):
     w = wave(*a.shape[:2], f, 1, -1, salt * 0.17, 2.0)
-    o = relight(a, w * 0.05 - 0.015)
+    o = relight(a, (w - 0.4) * 0.10)
     r = rank(a)
     for (y, x) in picks(r > 0.55, 5, salt + 3):                    # a few grains catch the light as it passes
         k = float(w[y, x]) ** 6
@@ -102,7 +102,7 @@ def concrete(a, f, salt):
 
 def terracotta(a, f, salt):
     w = wave(*a.shape[:2], f, 1, 1, 0.5 + salt * 0.11, 1.6)
-    return relight(a, w * 0.085 - 0.03, (1.0, 0.82, 0.62))         # it warms as the light crosses it
+    return relight(a, (w - 0.4) * 0.15, (1.0, 0.80, 0.58))         # it warms as the light crosses it
 
 
 def planks(a, f, salt):
@@ -110,7 +110,7 @@ def planks(a, f, salt):
     w = wave(*a.shape[:2], f, 1, 0, salt * 0.21, 2.2)              # along the grain
     grain = np.clip((r - 0.35) / 0.45, 0, 1)
     seam = r < 0.12                                                # the gaps between boards stay dark
-    g = w * (0.02 + 0.11 * grain) - 0.025
+    g = (w - 0.4) * (0.05 + 0.15 * grain)
     g[seam] = 0.0
     return relight(a, g, (1.0, 0.92, 0.78))
 
@@ -118,12 +118,12 @@ def planks(a, f, salt):
 def end_stone(a, f, salt):
     r = rank(a)
     w = wave(*a.shape[:2], f, 1, 1, 0.25, 1.5)
-    o = relight(a, w * 0.05 - 0.02)
+    o = relight(a, (w - 0.45) * 0.10)
     for i, (y, x) in enumerate(picks(r > 0.72, 9, 7)):             # flecks that twinkle, each in its own time
         t = (f / N + hash01(i, 5)) % 1.0
         k = max(0.0, 1.0 - abs(t - 0.5) * 7.0) ** 2                # a short, soft blink once a loop
         px = o[y, x, :3].astype(np.float32)
-        o[y, x, :3] = np.clip(px * (1 + 0.20 * k) + np.array([26, 30, 38]) * k, 0, 255)   # cool, like starlight
+        o[y, x, :3] = np.clip(px * (1 + 0.12 * k) + np.array([30, 36, 46]) * k, 0, 255)   # cool, like starlight
     return o
 
 
@@ -132,10 +132,10 @@ def obsidian(a, f, salt):
     vein = np.clip((l - np.percentile(l, 55)) / max(np.percentile(l, 97) - np.percentile(l, 55), 1), 0, 1)
     w = wave(*a.shape[:2], f, 1, 1, 0.6, 1.4)
     o = a.astype(np.float32).copy()
-    k = (w * 0.75 + 0.05) * vein
-    o[..., 0] += k * 34
-    o[..., 1] += k * 10
-    o[..., 2] += k * 62                                            # the violet in it breathes
+    k = (w * 0.85 + 0.05) * vein
+    o[..., 0] += k * 46
+    o[..., 1] += k * 12
+    o[..., 2] += k * 84                                            # the violet in it breathes
     o[..., :3] = np.clip(np.rint(o[..., :3]), 0, 255)
     return o.astype(np.uint8)
 
@@ -145,9 +145,9 @@ def mineral(a, f, salt):
     w = wave(*a.shape[:2], f, 1, 1, salt * 0.19, 5.0)              # a tight flash running along the cut
     edge = np.zeros(a.shape[:2], bool)
     edge[:2, :] = edge[-2:, :] = edge[:, :2] = edge[:, -2:] = True
-    g = w * (0.04 + 0.22 * np.clip((r - 0.4) / 0.5, 0, 1))
+    g = w * (0.05 + 0.30 * np.clip((r - 0.4) / 0.5, 0, 1)) - 0.05
     g[edge] *= 0.35
-    return relight(a, g - 0.015)
+    return relight(a, g)
 
 
 def glass(a, f, salt):
