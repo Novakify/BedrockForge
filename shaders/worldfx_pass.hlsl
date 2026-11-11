@@ -340,14 +340,19 @@ float4 shards(float3 rd, float sceneT) {
 //      screen only). Built from boxes like a Bedrock .geo model, pixel-art materials at 16 texels per block (so it sits
 //      in the world's own resolution, nothing smooth or "rendered"), team-coloured blanket and a glowing crest.
 //      Box: local min, local max (x across, y up, z along the bed; origin = the model's feet), material id.
-static const float3 kBedMin[7] = {float3(-0.50, 0.00, -1.00), float3(-0.45, 0.19, -0.94), float3(-0.47, 0.31, -0.30),
-                                  float3(-0.36, 0.40, -0.90), float3(-0.50, 0.00, -1.06), float3(-0.50, 0.00, 0.94),
-                                  float3(-0.18, 0.56, -1.07)};
-static const float3 kBedMax[7] = {float3(0.50, 0.19, 1.00), float3(0.45, 0.40, 0.94), float3(0.47, 0.45, 0.96),
-                                  float3(0.36, 0.53, -0.56), float3(0.50, 0.88, -0.94), float3(0.50, 0.44, 1.06),
-                                  float3(0.18, 0.80, -1.05)};
-static const int kBedMat[7] = {0, 1, 2, 1, 0, 0, 3};   // 0 dark wood, 1 linen, 2 team blanket, 3 crest
+static const float3 kBedMin[11] = {
+    float3(-0.50, 0.10, -1.00), float3(-0.50, 0.00, -1.00), float3(-0.45, 0.28, -0.95), float3(-0.48, 0.36, -0.25),
+    float3(-0.48, 0.50, -0.30), float3(-0.34, 0.46, -0.90), float3(-0.50, 0.10, -1.08), float3(-0.56, 0.95, -1.12),
+    float3(-0.58, 0.00, -1.12), float3(-0.50, 0.10, 0.96),  float3(-0.18, 0.52, -1.11)};
+static const float3 kBedMax[11] = {
+    float3(0.50, 0.28, 1.00),   float3(0.50, 0.10, 1.00),   float3(0.45, 0.46, 0.95),   float3(0.48, 0.50, 0.97),
+    float3(0.48, 0.54, -0.12),  float3(0.34, 0.58, -0.55),  float3(0.50, 0.95, -0.96),  float3(0.56, 1.02, -0.94),
+    float3(0.58, 1.12, -0.94),  float3(0.50, 0.52, 1.08),   float3(0.18, 0.88, -1.08)};
+// 0 dark wood, 1 linen, 2 team blanket, 3 crest, 4 wood with a glowing team trim on its edges
+// (frame, legs block, mattress, blanket, blanket fold, pillow, headboard, cap, head posts, footboard, crest)
+static const int kBedMat[11] = {4, 0, 1, 2, 1, 1, 4, 4, 4, 4, 3};
 float3 bedMaterial(int m, float3 lp, float3 nl, float3 team, float thr, float age) {
+    if (m == 4) m = 0;                                               // (the trim is added by the caller)
     float3 t = floor(lp * 16.0);                                     // texel (1/16 block)
     float  h = hash12(t.xz * 1.7 + t.y * 3.1);
     if (m == 0) { // dark stained wood: planks along the bed, a darker groove every 4 texels, team trim along the top edge
@@ -371,7 +376,8 @@ float4 cosmeticBeds(float3 rd, float sceneT) {
     float best = sceneT; float3 col = 0.0; bool hit = false;
     [loop] for (int i = 0; i < nt; i++) {
         if (bVis[i].w < -50.0) continue;
-        float3 o = bVis[i].xyz - CAM;
+        float  yaw0 = bVis[i].w;
+        float3 o = bVis[i].xyz + float3(-sin(yaw0), 0.0, cos(yaw0)) * 0.5 - CAM;   // the two blocks' centre
         float  tb = dot(o, rd);
         if (tb < -2.5 || dot(o, o) - tb * tb > 2.6 * 2.6) continue;      // nowhere near this pixel
         float  yaw = bVis[i].w;
@@ -381,7 +387,7 @@ float4 cosmeticBeds(float3 rd, float sceneT) {
         float  thr = tAge[i].y;
         // when its defence is being broken the bed trembles (a little, fast)
         float3 shake = float3(sin(TIME * 61.0), 0.0, cos(TIME * 53.0)) * 0.012 * thr;
-        [loop] for (int b = 0; b < 7; b++) {
+        [loop] for (int b = 0; b < 11; b++) {
             float3 e = (kBedMax[b] - kBedMin[b]) * 0.5;
             float3 c = (kBedMax[b] + kBedMin[b]) * 0.5;
             float3 p = o + mul(R, c) + shake;
@@ -402,7 +408,29 @@ float4 cosmeticBeds(float3 rd, float sceneT) {
                 lit = alb * 0.25 + team * ring * (1.2 + 0.8 * beat) * (0.6 + 0.8 * darkK());
             }
             if (kBedMat[b] == 2) lit += team * 0.06 * (0.6 + darkK());         // the blanket holds a little of its glow
+            if (kBedMat[b] == 4) {   // a fine line of team light along the frame's edges, breathing slowly
+                float3 ad = 1.0 - abs(lp);                                     // 0 at the box's faces
+                ad = ad * e;                                                   // in blocks
+                float  m1v = min(ad.x, min(ad.y, ad.z)), m3v = max(ad.x, max(ad.y, ad.z));
+                float  ed  = (ad.x + ad.y + ad.z) - m1v - m3v;                 // distance to this face's edge
+                float  br  = 0.75 + 0.25 * sin(TIME * (1.6 + 7.0 * thr) + float(i));
+                lit += team * exp(-ed * 90.0) * 1.3 * br * (0.6 + 0.8 * darkK());
+            }
             best = tN, col = lit, hit = true;
+        }
+        // the ornament: a small crystal of team light floating over the headboard, turning and bobbing
+        {
+            float3 cpos = o + mul(R, float3(0.0, 1.38 + 0.06 * sin(TIME * 1.7 + float(i)), -1.02));
+            float  spin = TIME * (0.9 + 3.0 * thr);
+            float3x3 Rc = mul(R, rotAxis(normalize(float3(0.0, 1.0, 0.0)), spin));
+            Rc = mul(Rc, rotAxis(normalize(float3(1.0, 0.0, 1.0)), 0.6155));       // stood on a corner
+            float  tN; float3 nl, lp;
+            if (hitBox(rd, cpos, float3(0.09, 0.09, 0.09), Rc, tN, nl, lp) && tN < best) {
+                float3 nw = mul(Rc, nl);
+                float  fr = pow(1.0 - saturate(dot(-rd, nw)), 2.0);
+                col = team * (0.9 + 0.6 * fr) + float3(1, 1, 1) * fr * 0.5;
+                best = tN; hit = true;
+            }
         }
     }
     return hit ? float4(pow(max(col, 0.0), 1.0 / 2.2), best) : float4(0, 0, 0, -1.0);
