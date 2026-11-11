@@ -149,7 +149,7 @@ CsMat csMat(int id) {
     case MAT_STONE:      m.bump = 0.95; m.detail = 1.0;  m.spec = 0.04; m.rough = 14.0; break;
     case MAT_CUTSTONE:   m.bump = 0.70; m.detail = 0.95; m.spec = 0.07; m.rough = 30.0; m.refl = 0.03; break;
     case MAT_ENDSTONE:   m.bump = 0.80; m.detail = 1.0;  m.spec = 0.04; break;
-    case MAT_OBSIDIAN:   m.bump = 0.30; m.detail = 1.0;  m.spec = 0.55; m.rough = 110.0; m.refl = 0.40; m.sparkle = 0.35; m.violet = 1.0; break;
+    case MAT_OBSIDIAN:   m.bump = 0.30; m.detail = 1.0;  m.spec = 0.55; m.rough = 110.0; m.refl = 0.30; m.sparkle = 0.35; m.violet = 1.0; break;
     case MAT_TERRACOTTA: m.bump = 0.30; m.detail = 0.94; m.spec = 0.02; m.sat = 1.05; break;
     case MAT_GLAZED:     m.bump = 0.22; m.detail = 1.0;  m.spec = 0.45; m.rough = 140.0; m.refl = 0.24; break;
     case MAT_METAL:      m.bump = 0.35; m.detail = 0.9;  m.spec = 0.85; m.rough = 60.0; m.refl = 0.60; m.metal = 1.0; break;
@@ -249,6 +249,7 @@ float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float l
         float3 rc = csReflect(R);
         rc = lerp(rc, csLuma(rc).xxx, 0.45 * m.metal);   // brushed metal scatters the sky's colour: steel, not pink chrome
         rc *= lerp(float3(1.0, 1.0, 1.0), sqrt(alb / max(csMax3(alb), 1e-3)), m.metal);
+        rc *= lerp(float3(1.0, 1.0, 1.0), float3(0.55, 0.45, 0.80), m.violet);   // obsidian: dark violet glass mirrors the sky darker
         CS_CLOUDREFL = 1.0;
         rc *= lerp(1.0, 0.45 + 1.1 * smoothstep(-0.05, 0.25, R.y) * (1.0 - 0.5 * smoothstep(0.25, 0.8, R.y)), m.metal); // contrast: dark below the horizon line, bright band, dimmer zenith
         c = lerp(c, rc * lerp(0.35, 1.0, sky), saturate(F * m.refl * 1.6)) + rc * m.metal * m.refl * 0.55 * sky;
