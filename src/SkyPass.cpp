@@ -1379,14 +1379,15 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             if (age < 0) continue;
             if (age > 6.5f) break; // older ones are older still
             if ((e.kind == 2 && age > 0.4f) || (e.kind == 1 && age > 4.2f) || (e.kind == 3 && age > 3.6f) || (e.kind == 4 && age > 4.2f) ||
-                (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 6.5f) || (e.kind == 7 && age > 0.7f) || e.kind > 7) continue;
+                (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 6.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
             if (e.kind >= 3 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
             auto& c = f.cb;
             c.eA[ne][0] = float(e.x); c.eA[ne][1] = float(e.y); c.eA[ne][2] = float(e.z); c.eA[ne][3] = age;
             std::memcpy(c.eB[ne], e.col, 12); c.eB[ne][3] = float(e.kind);
             c.eC[ne][0] = float(e.seed % 100000u);
-            c.eC[ne][1] = e.floorDy > 64 ? -1.0f : float(e.floorDy);
+            c.eC[ne][1] = e.kind == 8 ? float(e.floorDy) * 0.1f : (e.floorDy > 64 ? -1.0f : float(e.floorDy));   // hits: view yaw
+            c.eC[ne][2] = e.col[3];   // hits: 2 you were hit, 1 your hit, 0 someone else's
             ++ne;
         }
         if (float const ta = float(now - gTestKill.at) / 1000.0f; ta >= 0.0f && ta < 4.2f && ne < 8) {

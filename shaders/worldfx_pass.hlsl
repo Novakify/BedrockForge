@@ -613,6 +613,27 @@ float3 killLight(float3 rd, float sceneT) {
     }
     return acc * m0.w;
 }
+// ---- a hit lands: the victim's own pixels (the world pass runs after players are drawn) flash white-hot for two
+//      frames, then their team's colour rims them for ~0.12 s, then nothing. Yours hit harder; hits you take show
+//      only as a thin edge flash (bedAlarm-free: see matchOver).
+float3 hitOn(float3 W, float3 lin) {
+    int ne = int(m0.y);
+    [loop] for (int i = 0; i < ne; i++) {
+        if (eB[i].w < 7.5 || eB[i].w > 8.5) continue;
+        float age = eA[i].w, who = eC[i].z;
+        if (who > 1.5) continue;                                     // you: you are not on your own screen
+        float3 c = eA[i].xyz + float3(0.5, 0.0, 0.5);
+        float2 dxz = W.xz - c.xz;
+        float  hy = W.y - c.y;
+        if (dot(dxz, dxz) > 0.75 * 0.75 || hy < -0.1 || hy > 2.05) continue;   // the body's column
+        float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
+        team = team / max(max(team.r, max(team.g, team.b)), 0.05);
+        float k = who > 0.5 ? 1.0 : 0.6;
+        if (age < 0.045) lin = lerp(lin, float3(2.2, 2.1, 2.0), 0.75 * k);                 // the strike
+        else if (age < 0.16) lin += team * (lin * 2.5 + 0.06) * k * (1.0 - (age - 0.045) / 0.115);
+    }
+    return lin;
+}
 // the kill lights the ground around it: a flash in the team's colour, then the embers' glow
 float3 killGlow(float3 W) {
     float3 acc = 0.0;
@@ -779,6 +800,38 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m0.y > 0.5 && m0.w > 0.0 && m1.z > 0.5) o = pow(pow(max(o, 0.0), 2.2) + killLight(rd, sceneT), 1.0 / 2.2);
     [branch] if (sceneT > 1e8 && m2.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + fallenStars(rd), 1.0 / 2.2);
     [branch] if (m2.y > 0.5) o = pow(pow(max(o, 0.0), 2.2) + projTrails(rd, sceneT), 1.0 / 2.2);
+    [branch] if (m1.z > 0.5) {
+        int ne = int(m0.y);
+        float3 add = 0.0;
+        [loop] for (int i = 0; i < ne; i++) {
+            if (eB[i].w < 7.5 || eB[i].w > 8.5) continue;
+            float age = eA[i].w, who = eC[i].z;
+            float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
+            team = team / max(max(team.r, max(team.g, team.b)), 0.05);
+            if (who > 1.5) {   // you were hit: a thin flash on the edge of the view
+                float edge = smoothstep(0.86, 0.62, dot(rd, c0.xyz));
+                add += lerp(team, float3(1, 0.3, 0.2), 0.5) * edge * exp(-age * 14.0) * 0.45;
+                continue;
+            }
+            if (who < 0.5 || age > 0.2) continue;
+            // your hit: a crescent of light across the victim, angled by your swing (view yaw), drawn in 0.08 s
+            float3 c = eA[i].xyz + float3(0.5, 1.15, 0.5) - CAM;
+            float  tc = dot(c, rd);
+            if (tc <= 0.1 || tc > sceneT + 1.0) continue;
+            float3 q = rd * tc - c;                                  // offset in the plane through the victim
+            float3 right = c1.xyz, up = c2.xyz;
+            float2 p2 = float2(dot(q, right), dot(q, up));
+            float  ang = eC[i].y * 0.0174533 * 0.0 + (h1(eC[i].x * 0.37) - 0.5) * 1.2;   // a slant that varies per hit
+            float2 r2 = float2(cos(ang) * p2.x - sin(ang) * p2.y, sin(ang) * p2.x + cos(ang) * p2.y);
+            float  R = 0.75, a = atan2(r2.y, r2.x);
+            float  sweep = saturate(age / 0.08);
+            float  arcOn = smoothstep(-2.4, -2.2, a) * smoothstep(-2.4 + 3.6 * sweep + 0.2, -2.4 + 3.6 * sweep, a);
+            float  w = 0.035 * (1.0 - saturate((a + 2.4) / 3.6) * 0.8);  // tapering
+            float  d = abs(length(r2) - R);
+            add += lerp(float3(1, 1, 1), team, 0.35) * exp(-pow(d / w, 2.0)) * arcOn * (1.0 - saturate((age - 0.08) / 0.12)) * 1.8;
+        }
+        o = pow(pow(max(o, 0.0), 2.2) + add, 1.0 / 2.2);
+    }
     [branch] if (m1.z > 0.5) {
         int ne = int(m0.y);
         [loop] for (int i = 0; i < ne; i++) {
@@ -969,6 +1022,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
     [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
     [branch] if (m1.z > 0.5 && m0.w > 0.0) lin += (lin * 2.2 + 0.02) * killGlow(CAM + P);
+    [branch] if (m1.z > 0.5) lin = hitOn(CAM + P, lin);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
