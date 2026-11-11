@@ -628,6 +628,8 @@ void onText(std::string const& m) {
                 for (auto const& g : gGone) // they were already moved (respawn / spectator): where they stood before
                     if (g.name == v.name && g.local == v.local && kl.at - g.at < 2500) { v.pos[0] = g.pos[0], v.pos[1] = g.pos[1], v.pos[2] = g.pos[2]; }
                 pushKill(v, kl.fin);
+                for (auto const& c : kl.cands) // you got the kill: a beat for you
+                    if (c.local && !v.local) { float const at[3] = {c.pos[0], c.pos[1], c.pos[2]}; pushFx(at, 7, myDye()); note("your kill"); break; }
             } else
                 gKills.push_back(std::move(kl));
             if (gKills.size() > 16) gKills.erase(gKills.begin());
