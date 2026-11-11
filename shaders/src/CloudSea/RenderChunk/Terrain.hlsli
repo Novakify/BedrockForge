@@ -94,6 +94,9 @@ float4 main(PSIn i) : SV_Target {
     if (mid > 19) mid = 0;
 #endif
     CsMat  m    = csMat(mid);
+    // obsidian: the polished streaks catch the sky, the dark body stays dark (the void lives there) - one even mirror
+    // over the whole face read as a muddy haze in game
+    if (mid == MAT_OBSIDIAN) m.refl *= 0.25 + 1.3 * smoothstep(0.08, 0.22, csLuma(t0.rgb));
     // texels get smaller than pixels far away: relief and glints fade out there instead of sparkling
     float  tpp  = max(fwidth(tx.x), fwidth(tx.y));
     float  fade = 1.0 - smoothstep(0.55, 1.25, tpp);
