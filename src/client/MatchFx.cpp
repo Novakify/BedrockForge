@@ -239,6 +239,7 @@ int dyeOfTag(std::string const& t) {
     return -1;
 }
 int64_t gLocalDeadAt = 0; // when you last died (a respawn follows)
+float   gMe[3]{};         // your feet, last frame
 void pushFx(float const* pos, uint32_t kind, int dye) { // 5 = you respawned, 6 = a team won
     auto& e = gFx.events[gFx.nEvents % 256];
     e.x = int32_t(std::floor(pos[0])), e.y = int32_t(std::floor(pos[1])), e.z = int32_t(std::floor(pos[2]));
@@ -468,6 +469,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
                 if (std::hypot(b.x - pos[0], b.z - pos[2]) < 160.0) { newPlace = false; break; }
     }
     lastPos[0] = pos[0], lastPos[1] = pos[1], lastPos[2] = pos[2];
+    gMe[0] = float(pos[0]), gMe[1] = float(pos[1]) - 1.62f, gMe[2] = float(pos[2]);
     // the server re-sent the world (a respawn / spectating on the same map, or a new world - The Hive's hub, lobby and
     // maps share coordinates, so distance can't tell): 3 s later, are this match's standing beds still there?
     static int64_t verifyAt = 0;
@@ -696,6 +698,10 @@ void onText(std::string const& m) {
         } else if (bedGone && gBroken == 0 && !first) gBroken = 1; // a bed we couldn't see went down
         gIsMap = true;
         retarget();
+    }
+    if (s.find("respawned") != std::string::npos && gIsMap) { // the server says you are back
+        static int64_t lastRs = 0;
+        if (nowMs() - lastRs > 3000) { lastRs = nowMs(); gLocalDeadAt = 0; pushFx(gMe, 5, myDye()); note("you respawned (server)"); }
     }
     if ((s.find("champion") != std::string::npos || s.find("victory") != std::string::npos || s.find(" won") != std::string::npos ||
          s.find(" wins") != std::string::npos) && s.find("vote") == std::string::npos && gIsMap) {
