@@ -428,7 +428,7 @@ void trackProjectiles(LocalPlayer& lp, int64_t now) {
 
 // move an actor on this client only (its render position): the server never hears of it
 void moveLocal(Actor* a, float x, float y, float z) {
-    if (auto* sv = a->getEntityContext().tryGetComponent<StateVectorComponent>()) {
+    if (auto sv = a->getEntityContext().tryGetComponent<StateVectorComponent>()) {
         sv->mPos.get()     = Vec3{x, y, z};
         sv->mPosPrev.get() = Vec3{x, y, z};
     }
