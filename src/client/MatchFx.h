@@ -26,7 +26,7 @@ struct BfMatchEventV1 {
     uint32_t floorDy;  // the shards land this many blocks below the block (0 = on the block under it); 255 = nothing: they fall away
 };
 struct BfMatchFxV1 {
-    uint32_t size, version; // sizeof, 4
+    uint32_t size, version; // sizeof, 5
     uint32_t active;        // 1 while a world is on screen
     uint32_t frame;
     float    phase;         // smoothed 0..2
@@ -48,6 +48,14 @@ struct BfMatchFxV1 {
         float    yaw;     // degrees
         uint32_t hasVis;  // 1 = found (and hidden on this screen while RF draws the cosmetic bed)
     } teamEx[16];
+    // v5: projectiles in flight (arrows, pearls, fireballs, snowballs, eggs): the last 12 positions each, newest first
+    struct Proj {
+        uint32_t kind;        // 0 empty, 1 arrow, 2 ender pearl, 3 fireball, 4 snowball / egg, 5 other
+        uint32_t n;           // points used
+        int64_t  lastMs;      // last seen (steady ms); RF fades a trail out after it stops being seen
+        float    col[3];      // the shooter's team colour if known, else white
+        float    pts[12][4];  // xyz world, w = seconds ago
+    } proj[16];
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);

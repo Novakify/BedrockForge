@@ -366,6 +366,65 @@ void trackPlayers(LocalPlayer& lp, int64_t now) {
     matchKills(now);
 }
 
+// ---- projectiles: everything flying (client actor list), a short history of where it was, for RF's trails
+struct ProjT { Actor const* a; uint32_t kind; float col[3]; struct P { float x, y, z; int64_t t; } pts[12]; uint32_t n; int64_t seen; };
+std::vector<ProjT> gProj;
+uint32_t projKind(std::string const& t) {
+    if (t.find("arrow") != std::string::npos) return 1;
+    if (t.find("ender_pearl") != std::string::npos || t.find("pearl") != std::string::npos) return 2;
+    if (t.find("fireball") != std::string::npos) return 3;
+    if (t.find("snowball") != std::string::npos || t.find("egg") != std::string::npos) return 4;
+    if (t.find("trident") != std::string::npos || t.find("projectile") != std::string::npos) return 5;
+    return 0;
+}
+void trackProjectiles(LocalPlayer& lp, int64_t now) {
+    std::vector<char> hit(gProj.size(), 0);
+    try {
+        for (Actor* a : lp.getLevel().getRuntimeActorList()) {
+            if (!a || a->isPlayer()) continue;
+            std::string t;
+            try { t = a->getTypeName(); } catch (...) { continue; }
+            uint32_t const k = projKind(t);
+            if (!k) continue;
+            auto const p = a->getPosition();
+            ProjT* pr = nullptr;
+            for (size_t i = 0; i < gProj.size(); ++i) if (gProj[i].a == a) { pr = &gProj[i]; hit[i] = 1; break; }
+            if (!pr) {
+                if (gProj.size() >= 16) continue;
+                ProjT n{}; n.a = a; n.kind = k; n.col[0] = n.col[1] = n.col[2] = 1.0f;
+                // the shooter's team: the nearest tracked player at launch, by their name-tag colour
+                float bd = 9.0f;
+                for (auto const& tr : gTracks)
+                    if (tr.dye >= 0) {
+                        float d = std::hypot(tr.pos[0] - p.x, tr.pos[2] - p.z) + std::abs(tr.pos[1] + 1.4f - p.y);
+                        if (d < bd) bd = d, n.col[0] = kDye[tr.dye][0], n.col[1] = kDye[tr.dye][1], n.col[2] = kDye[tr.dye][2];
+                    }
+                gProj.push_back(n); hit.push_back(1); pr = &gProj.back();
+            }
+            // a new point when it moved (a stuck arrow stops adding points and its trail fades)
+            auto const& last = pr->pts[0];
+            if (pr->n == 0 || std::abs(last.x - p.x) + std::abs(last.y - p.y) + std::abs(last.z - p.z) > 0.05f) {
+                for (int i = 11; i > 0; --i) pr->pts[i] = pr->pts[i - 1];
+                pr->pts[0] = {p.x, p.y, p.z, now};
+                pr->n = std::min<uint32_t>(pr->n + 1, 12);
+                pr->seen = now;
+            }
+        }
+    } catch (...) {}
+    for (size_t i = 0; i < gProj.size();) { // gone (hit something / despawned) or stuck: keep 1.5 s for the fade
+        if (now - gProj[i].seen > 1500) { gProj.erase(gProj.begin() + long(i)); hit.erase(hit.begin() + long(i)); }
+        else { if (!hit[i]) gProj[i].a = nullptr; ++i; }
+    }
+    for (size_t i = 0; i < 16; ++i) {
+        auto& o = gFx.proj[i];
+        if (i >= gProj.size()) { o.kind = 0; o.n = 0; continue; }
+        auto const& pr = gProj[i];
+        o.kind = pr.kind, o.n = pr.n, o.lastMs = pr.seen;
+        std::memcpy(o.col, pr.col, 12);
+        for (uint32_t j = 0; j < pr.n; ++j) o.pts[j][0] = pr.pts[j].x, o.pts[j][1] = pr.pts[j].y, o.pts[j][2] = pr.pts[j].z, o.pts[j][3] = float(now - pr.pts[j].t) / 1000.0f;
+    }
+}
+
 void resetMatch(double const* pos) {
     note("new match at {:.0f} {:.0f} {:.0f} (had {} beds, {} broken)", pos[0], pos[1], pos[2], gBeds.size(), gBroken);
     gBeds.clear();
@@ -431,7 +490,7 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
 
 extern "C" __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx() {
     std::lock_guard l(gMutex);
-    gFx.size = sizeof gFx, gFx.version = 4;
+    gFx.size = sizeof gFx, gFx.version = 5;
     gFx.active = nowMs() - gHudMs.load() < 250 ? 1u : 0u;
     gFx.nowMs  = nowMs();
     return &gFx;
@@ -589,6 +648,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
         }
         down = k;
     }
+    trackProjectiles(*lp, now); // (any world: arrows look the same in single player)
     retarget();
     // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night
     float const rate = gTarget > gPhase ? (gPhase < 1.0f ? 1.0f / 20.0f : 1.0f / 25.0f) : 1.0f / 3.0f;
