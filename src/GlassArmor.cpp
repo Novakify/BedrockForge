@@ -92,7 +92,7 @@ std::unordered_map<ID3D12Resource*, unsigned>                    gResState; // l
 // armor texture recognition: -1 not armor, -2 queued for readback, >= 0 shaders::kVariant index
 std::unordered_map<ID3D12Resource*, int>                         gTexKind;
 std::vector<ComPtr<ID3D12Resource>>                               gPending;
-struct Readback { ComPtr<ID3D12Resource> tex, buf; };
+struct Readback { ComPtr<ID3D12Resource> tex, buf; int scale = 1; }; // scale 2: a 128x64 (32x pack) texture, read at full size
 std::vector<Readback>              gInFlight;
 ComPtr<ID3D12CommandAllocator>     gAlloc;
 ComPtr<ID3D12GraphicsCommandList>  gList;
@@ -541,7 +541,8 @@ ID3D12Resource* boundArmorTexture(ID3D12GraphicsCommandList* list) {
     std::lock_guard l(gMutex);
     for (size_t cpu : cpus) {
         auto it = gSrvs.find(cpu);
-        if (it != gSrvs.end() && it->second.res && it->second.w == 64 && it->second.h == 32) return it->second.res;
+        if (it != gSrvs.end() && it->second.res && ((it->second.w == 64 && it->second.h == 32) || (it->second.w == 128 && it->second.h == 64)))
+            return it->second.res;   // 128x64: a 32x pack's armour (Cloud Sea's leather is one)
     }
     return nullptr;
 }
@@ -621,9 +622,16 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
         for (auto& r : gInFlight) {
             int   kind = -1;
             void* m    = nullptr;
-            D3D12_RANGE rr{0, 256 * 32};
+            D3D12_RANGE rr{0, size_t(256 * r.scale) * size_t(32 * r.scale)};
             if (SUCCEEDED(r.buf->Map(0, &rr, &m)) && m) {
-                kind = classify(static_cast<uint8_t const*>(m), 256);
+                if (r.scale == 1) kind = classify(static_cast<uint8_t const*>(m), 256);
+                else {   // a 32x pack: every second texel of every second row is the 64x32 layout
+                    static uint8_t half[256 * 32];
+                    auto const* src = static_cast<uint8_t const*>(m);
+                    for (int y = 0; y < 32; ++y)
+                        for (int x = 0; x < 64; ++x) std::memcpy(half + y * 256 + x * 4, src + (y * 2) * 512 + (x * 2) * 4, 4);
+                    kind = classify(half, 256);
+                }
                 if (gDumpReadbacks.load(std::memory_order_relaxed) && gDumped < 24) { // raw RGBA 64x32 (pitch 256) for diagnosis
                     std::error_code ec;
                     fs::create_directories(gOutDir, ec);
@@ -662,7 +670,8 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
     }
     for (auto& tex : todo) {
         auto td = tex->GetDesc();
-        if (td.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || td.Width != 64 || td.Height != 32 ||
+        int const sc = td.Width == 128 && td.Height == 64 ? 2 : 1;
+        if (td.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || td.Width != 64u * sc || td.Height != 32u * sc ||
             (td.Format != DXGI_FORMAT_R8G8B8A8_UNORM && td.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB)) {
             std::lock_guard l(gMutex);
             gTexKind[tex.Get()] = -1;
@@ -671,7 +680,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
         D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
         D3D12_RESOURCE_DESC   bd{};
         bd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
-        bd.Width            = 256 * 32;
+        bd.Width            = UINT64(256 * sc) * UINT64(32 * sc);
         bd.Height           = 1;
         bd.DepthOrArraySize = 1;
         bd.MipLevels        = 1;
@@ -697,10 +706,10 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
         dst.pResource                          = buf.Get();
         dst.Type                               = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
         dst.PlacedFootprint.Footprint.Format   = td.Format;
-        dst.PlacedFootprint.Footprint.Width    = 64;
-        dst.PlacedFootprint.Footprint.Height   = 32;
+        dst.PlacedFootprint.Footprint.Width    = 64 * sc;
+        dst.PlacedFootprint.Footprint.Height   = 32 * sc;
         dst.PlacedFootprint.Footprint.Depth    = 1;
-        dst.PlacedFootprint.Footprint.RowPitch = 256;
+        dst.PlacedFootprint.Footprint.RowPitch = 256 * sc;
         src.pResource                          = tex.Get();
         src.Type                               = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
         src.SubresourceIndex                   = 0;
@@ -709,7 +718,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
             std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
             gList->ResourceBarrier(1, &b);
         }
-        gInFlight.push_back({tex, buf});
+        gInFlight.push_back({tex, buf, sc});
     }
     gList->Close();
     if (gInFlight.empty()) return;
