@@ -1156,7 +1156,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
             if (kind > 2.5 && kind < 4.5) o = pow(pow(max(o, 0.0), 2.2) + voidSplash(rd, sceneT, eA[i].xyz, age, team), 1.0 / 2.2);
             if (kind > 5.5 && kind < 6.5 && age < FW_LEN) {   // a win: the fireworks show - in the sky, on the cloud sea, and its light on the islands
                 float3 l = pow(max(o, 0.0), 2.2);
-                l = sceneT > 500.0 ? fwSky(l, rd, age, team, eC[i].x, eC[i].w, c9.z, 0.75 + 0.45 * darkK()) : fwWorld(l, age, team, eC[i].x, eC[i].w);
+                l = sceneT > 500.0 ? fwSky(l, rd, age, team, eC[i].x, eC[i].w, c9.z, 0.75 + 0.45 * darkK()) : fwWorld(l, age, team, eC[i].x);
                 o = pow(max(l, 0.0), 1.0 / 2.2);
             }
             if (kind > 6.5 && age < 0.7) { // your kill: a hard beat - the frame punches bright and warm at the edges, then settles

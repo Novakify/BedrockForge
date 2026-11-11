@@ -202,13 +202,13 @@ class Lab:
             vertex={"module": self.vs, "entry_point": "VSWorldFx"},
             fragment={"module": self.ps, "entry_point": "PSWorldFx", "targets": [{"format": "rgba8unorm"}]},
             primitive={"topology": "triangle-list"})
-    def render(self, cam, scene, match=None, time=10.0, phase=0.0, deck=None, quality=1.0, ink=0.0, anchored=1.0, skytime=None):
+    def render(self, cam, scene, match=None, time=10.0, phase=0.0, deck=None, quality=1.0, ink=0.0, anchored=1.0, skytime=None, air=0.0):
         W, H = self.W, self.H
         sc, d24, (tx, ty) = scene.trace(cam, W, H)
         f, r, u = cam.axes()
         c = np.zeros(40, np.float32)
         c[0:3] = f; c[3] = tx; c[4:7] = r; c[7] = ty; c[8:11] = u; c[11] = time
-        c[12] = 0.025; c[15] = 0.0
+        c[12] = 0.025; c[13] = air; c[15] = 0.0
         c[16] = W; c[17] = H; c[18] = W * 4; c[19] = W * 4
         c[20:23] = (0.17605, 0.11247, -0.97794); c[23] = 0.7
         c[24] = 0.55; c[25] = 1.0; c[26] = 0; c[27] = phase

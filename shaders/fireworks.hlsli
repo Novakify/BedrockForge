@@ -12,7 +12,8 @@
 static const float3 FW_GOLD  = float3(1.25, 0.70, 0.22);
 static const float3 FW_EMBER = float3(0.95, 0.22, 0.04);
 static const float3 FW_WHITE = float3(1.00, 0.96, 0.88);
-static const int    FW_SHELLS = 58;      // 24 in the body of the show (12 pairs), 34 in the finale
+static const int    FW_SHELLS = 52;      // 24 in the body of the show (12 pairs), 23 in the finale, the last five together
+static const float  FW_FIN_DT = 0.15;    // the finale: one shell every this many seconds
 static const float  FW_LEN = 15.5;       // seconds, the last glitter gone
 
 float  fwH(float x) { return frac(sin(x * 12.9898 + 4.1414) * 43758.5453); }
@@ -27,7 +28,7 @@ static const float kFwK[7]    = {3.6, 3.2, 2.5, 3.6, 3.6, 2.3, 3.8};        // h
 static const float kFwG[7]    = {0.030, 0.050, 0.082, 0.026, 0.030, 0.070, 0.030}; // sag (shell radii / s^2)
 static const float kFwL[7]    = {0.34, 0.62, 1.75, 0.07, 0.11, 1.25, 0.20}; // seconds of trail behind each star
 static const float kFwCell[7] = {0.086, 0.096, 0.104, 0.118, 0.0, 0.0, 0.170}; // star grid (smaller = more stars)
-static const float kFwLife[7] = {2.4, 2.9, 4.7, 3.2, 2.3, 3.5, 1.9};
+static const float kFwLife[7] = {2.4, 2.9, 4.4, 3.2, 2.3, 3.5, 1.9};
 static const float kFwW[7]    = {1.0, 0.9, 0.85, 0.80, 1.35, 1.9, 1.0};      // line width
 static const float kFwPw[7]   = {1.7, 1.8, 1.25, 3.0, 1.8, 1.4, 2.0};       // how the trail fades along its length
 
@@ -35,14 +36,13 @@ static const float kFwPw[7]   = {1.7, 1.8, 1.25, 3.0, 1.8, 1.4, 2.0};       // h
 // fly out, then one every FW_DS seconds while they hang
 static const float FW_DR = 0.07;
 static const float FW_J0 = 13.0;
-static const float FW_DS = 0.11;
-float fwSeqT(float j, float k) {
+float fwSeqT(float j, float k, float ds) {
     float s0 = -log(1.0 - FW_J0 * FW_DR) / k;
-    return j <= FW_J0 ? -log(1.0 - j * FW_DR) / k : s0 + (j - FW_J0) * FW_DS;
+    return j <= FW_J0 ? -log(1.0 - j * FW_DR) / k : s0 + (j - FW_J0) * ds;
 }
-float fwSeqJ(float s, float k) {
+float fwSeqJ(float s, float k, float ds) {
     float s0 = -log(1.0 - FW_J0 * FW_DR) / k;
-    return s <= s0 ? (1.0 - exp(-k * s)) / FW_DR : FW_J0 + (s - s0) / FW_DS;
+    return s <= s0 ? (1.0 - exp(-k * s)) / FW_DR : FW_J0 + (s - s0) / ds;
 }
 
 // one piece of one star's trail (A older end, B newer end), seen from P. del0/del1: how long ago each end was laid
@@ -101,8 +101,9 @@ float3 fwShellDraw(float2 P, float a, int type, float3 col, float sd, float w, i
     w *= kFwW[type];
     float  fade = smoothstep(life, life * 0.55, a);
     float  hot = exp(-a * 7.0);
-    int    j1 = int(floor(fwSeqJ(a, k)));
-    int    j0 = max(max(int(floor(fwSeqJ(max(a - L, 0.0), k))), j1 - (maxPieces - 1)), 0);
+    float  ds = (type == 2 || type == 5) ? 0.19 : 0.11;        // long trails are laid in longer pieces
+    int    j1 = int(floor(fwSeqJ(a, k, ds)));
+    int    j0 = max(max(int(floor(fwSeqJ(max(a - L, 0.0), k, ds))), j1 - (maxPieces - 1)), 0);
     bool   line1 = type == 4 || type == 5;                     // rings and palms: stars on a line of directions, not a sphere
     float  n1 = type == 4 ? 46.0 : 11.0;
     float  tilt = type == 4 ? 0.30 + 0.5 * fwH(sd + 2.2) : 1.0;
@@ -110,7 +111,7 @@ float3 fwShellDraw(float2 P, float a, int type, float3 col, float sd, float w, i
     float  cr = cos(rot), sr = sin(rot);
     float3 acc = 0.0;
     [loop] for (int j = j0; j <= j1; j++) {
-        float s0 = fwSeqT(float(j), k), s1 = j == j1 ? a : fwSeqT(float(j + 1), k);
+        float s0 = fwSeqT(float(j), k, ds), s1 = j == j1 ? a : fwSeqT(float(j + 1), k, ds);
         if (s1 - s0 < 1e-4) continue;
         float sm = 0.5 * (s0 + s1);
         float r0 = 1.0 - exp(-k * s0), r1 = 1.0 - exp(-k * s1), rm = 1.0 - exp(-k * sm);
@@ -156,37 +157,46 @@ float3 fwShellDraw(float2 P, float a, int type, float3 col, float sd, float w, i
 // the programme: shell b of the show - when it bursts, where, how big, what kind
 static const int kFwBodyType[12] = {0, 0, 4, 1, 0, 2, 1, 5, 0, 4, 3, 2};
 static const int kFwBodyTier[12] = {0, 1, 1, 2, 0, 2, 1, 0, 1, 2, 0, 2};
-void fwShell(int b, float seed, float yaw, out float tb, out float3 dir, out float R, out int type) {
+// when shell b goes up, give or take its small random delay (cheap: used to skip the shells that are not burning)
+float fwT0(int b) {
+    return b < 24 ? 0.55 + float(b >> 1) * 0.56 : (b < 47 ? 7.35 + float(b - 24) * FW_FIN_DT : 10.95 + float(b - 47) * 0.035);
+}
+// its burst time, kind and size (no direction: the light of the show needs no more)
+void fwShellKind(int b, float seed, out float tb, out float R, out int type, out int tier) {
     float sb = seed * 0.0013 + float(b) * 1.731;
     int   pr = b >> 1;
-    float side = (b & 1) ? 1.0 : -1.0;                          // pairs go up left and right of the centre line together
     float sp = seed * 0.0013 + float(pr) * 3.117;
-    float az, t0;
-    int   tier;
+    float t0 = fwT0(b);
     if (b < 24) {
         type = kFwBodyType[pr];
         tier = kFwBodyTier[pr];
-        t0 = 0.55 + float(pr) * 0.56 + fwH(sp) * 0.16 + (side > 0.0 ? 0.06 : 0.0);
-        az = side * (0.15 + (tier == 2 ? 0.34 : 0.62) * fwH(sp + 1.0));
-    } else if (b < 53) {                                        // the finale: one every tenth of a second, all over
+        t0 += fwH(sp) * 0.16 + ((b & 1) ? 0.06 : 0.0);
+    } else if (b < 47) {                                        // the finale: one after another, all over
         float hh = fwH(sb + 5.0);
         type = hh < 0.50 ? 2 : (hh < 0.80 ? 0 : (hh < 0.86 ? 3 : (hh < 0.95 ? 1 : 5)));
         tier = type == 2 ? (fwH(sb + 6.0) < 0.6 ? 2 : 1) : (type == 3 ? 0 : (fwH(sb + 6.0) < 0.5 ? 1 : 0));
-        t0 = 7.35 + float(b - 24) * 0.112 + fwH(sb) * 0.05;
-        az = (fwH(sb + 2.0) - 0.5) * 2.5;
+        t0 += fwH(sb) * 0.05;
     } else {                                                    // and the last five crowns together, wall to wall
         type = 2; tier = 2;
-        t0 = 10.75 + float(b - 53) * 0.035;
-        az = (float(b - 53) - 2.0) * 0.36 + (fwH(sb + 2.0) - 0.5) * 0.08;
     }
     float hv = fwH(sb + 3.0);
-    float el = tier == 0 ? 0.13 + 0.05 * hv : (tier == 1 ? 0.25 + 0.09 * hv : 0.40 + 0.10 * hv);
     R = tier == 0 ? 0.105 + 0.04 * hv : (tier == 1 ? 0.17 + 0.05 * hv : 0.25 + 0.07 * hv);
     if (type == 2) R *= 1.15;
-    if (b >= 53) { el = 0.50 + 0.05 * hv; R = 0.37; }
-    az += yaw;
-    dir = float3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
+    if (b >= 47) R = 0.34;
     tb = t0 + 0.55;                                             // it climbs for 0.55 s first
+}
+// where it bursts
+float3 fwShellDir(int b, float seed, float yaw, int tier) {
+    float sb = seed * 0.0013 + float(b) * 1.731;
+    float sp = seed * 0.0013 + float(b >> 1) * 3.117;
+    float side = (b & 1) ? 1.0 : -1.0;                          // pairs go up left and right of the centre line together
+    float az = b < 24 ? side * (0.15 + (tier == 2 ? 0.34 : 0.62) * fwH(sp + 1.0))
+             : (b < 47 ? (fwH(sb + 2.0) - 0.5) * 2.5 : (float(b - 47) - 2.0) * 0.36 + (fwH(sb + 2.0) - 0.5) * 0.08);
+    float hv = fwH(sb + 3.0);
+    float el = tier == 0 ? 0.13 + 0.05 * hv : (tier == 1 ? 0.25 + 0.09 * hv : 0.40 + 0.10 * hv);
+    if (b >= 47) el = 0.50 + 0.05 * hv;
+    az += yaw;
+    return float3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
 }
 float3 fwColour(int type, int b, float3 team) {
     if (type == 2 || type == 5 || type == 6) return FW_GOLD;
@@ -204,18 +214,23 @@ float fwGlow(float a, int type) {
 }
 
 // the light of the whole show at this moment (for the islands, the smoke): the sum of every burning shell
-float3 fwLight(float age, float3 team, float seed, float yaw) {
+float3 fwLight(float age, float3 team, float seed) {
     float3 L = 0.0;
     [loop] for (int b = 0; b < FW_SHELLS; b++) {
-        float tb, R; float3 dir; int type;
-        fwShell(b, seed, yaw, tb, dir, R, type);
+        float a0 = age - fwT0(b) - 0.55;
+        if (a0 < -0.25 || a0 > 4.8) continue;                    // not burning: skip it before any real work
+        float tb, R; int type, tier;
+        fwShellKind(b, seed, tb, R, type, tier);
         float a = age - tb;
-        if (a <= 0.0 || a > 4.8) continue;
+        if (a <= 0.0) continue;
         L += fwColour(type, b, team) * fwGlow(a, type) * (R / 0.2);
     }
-    [loop] for (int s = 0; s < 12; s++) {                        // the salutes
-        float as = age - (8.1 + float(s) * 0.24 + fwH(seed * 0.0017 + float(s) * 2.3) * 0.1);
-        if (as > 0.0 && as < 0.6) L += FW_WHITE * 3.0 * exp(-as * 12.0);
+    float as0 = age - 8.1;
+    if (as0 > 0.0 && as0 < 3.6) {
+        [loop] for (int s = 0; s < 12; s++) {                    // the salutes
+            float as = as0 - (float(s) * 0.24 + fwH(seed * 0.0017 + float(s) * 2.3) * 0.1);
+            if (as > 0.0 && as < 0.6) L += FW_WHITE * 3.0 * exp(-as * 12.0);
+        }
     }
     return L;
 }
@@ -298,17 +313,19 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
     if (age >= FW_LEN) return lin;
     float  pxA = 2.0 * c0.w / c4.x;
     float  wAng = max(1.55 * pxA, 0.0015);
-    int    maxPieces = quality > 0.6 ? 12 : 7;
-    float3 light = fwLight(age, team, seed, yaw);
+    int    maxPieces = quality > 0.6 ? 10 : 6;
     float3 stars = 0.0, glow = 0.0;
     float  smoke = 0.0;
     bool   below = rd.y < 0.0;                                   // the cloud sea: it only takes the glow, mirrored
     float3 rv = below ? float3(rd.x, -rd.y, rd.z) : rd;
     [loop] for (int b = 0; b < FW_SHELLS; b++) {
-        float tb, R; float3 dir; int type;
-        fwShell(b, seed, yaw, tb, dir, R, type);
+        float a0 = age - fwT0(b) - 0.55;
+        if (a0 < -0.80 || a0 > 7.5) continue;                    // not up yet, or long gone: skip it before any real work
+        float tb, R; int type, tier;
+        fwShellKind(b, seed, tb, R, type, tier);
         float a = age - tb;
         if (a < -0.56 || a > kFwLife[type] + 3.0) continue;
+        float3 dir = fwShellDir(b, seed, yaw, tier);
         float cd = dot(rv, dir);
         if (cd < 0.2) continue;
         float3 ex = normalize(float3(dir.z, 0.0, -dir.x)), ey = cross(dir, ex);
@@ -353,7 +370,7 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
     if (!below) {
         stars += fwComets(pe, age, seed);
         stars += fwFountains(pe, age, seed);
-        [loop] for (int s = 0; s < 12; s++) {
+        [loop] for (int s = 0; s < 12 && age > 8.1 && age < 12.5 && pe.y < 0.5; s++) {
             float hs = seed * 0.0017 + float(s) * 2.3;
             float as = age - (8.1 + float(s) * 0.24 + fwH(hs) * 0.1);
             if (as <= 0.0 || as > 1.3) continue;
@@ -376,15 +393,15 @@ float3 fwSky(float3 lin, float3 rd, float age, float3 team, float seed, float ya
     if (below) return 1.0 - (1.0 - saturate(lin)) * exp(-glow * end * gain * smoothstep(0.0, -0.10, rd.y));   // none at the horizon line, most where the sea is under the burst
     // smoke first (it hides a little of the sky and carries the show's light), then the glow in the air, then the stars
     float  sm = saturate(smoke);
-    float3 smokeCol = float3(0.030, 0.028, 0.040) + light * 0.010 + glow * 0.6;
+    float3 smokeCol = float3(0.032, 0.030, 0.042) + glow * 0.7;
     lin = lerp(lin, smokeCol, sm * 0.5);
     // light adds up like light on film: a spark is its own colour, a pile of them goes pale, nothing clips flat
     return 1.0 - (1.0 - saturate(lin)) * exp(-(glow + stars * 0.9) * end * gain);
 }
 
 // the show's light on the islands and everything on them (lin: the pixel, linear)
-float3 fwWorld(float3 lin, float age, float3 team, float seed, float yaw) {
+float3 fwWorld(float3 lin, float age, float3 team, float seed) {
     if (age >= FW_LEN) return lin;
-    float3 L = fwLight(age, team, seed, yaw);
+    float3 L = fwLight(age, team, seed);
     return lin * (1.0 + L * 0.034) + L * 0.0015;
 }

@@ -163,44 +163,57 @@ float3 fusedPlate(int m, float3 glass, float2 t, int2 b, int fi, float2 p, float
     float  nearK = smoothstep(0.9, 2.6, pxPerTexel);             // far away a texel is a pixel: no fine relief there
     float3 metal, tint;
     float  tintK;
-    if (m == 2)      { metal = float3(0.82, 0.85, 0.90); tint = float3(0.82, 0.90, 1.00); tintK = 0.18; }   // iron
-    else if (m == 4) { metal = float3(1.00, 0.72, 0.24); tint = float3(1.00, 0.74, 0.28); tintK = 0.40; }   // gold
-    else if (m == 5) { metal = float3(0.88, 0.97, 1.00); tint = float3(0.22, 0.93, 1.00); tintK = 0.46; }   // diamond (set in white metal)
+    if (m == 2)      { metal = float3(0.88, 0.90, 0.95); tint = float3(0.84, 0.91, 1.00); tintK = 0.20; }   // iron
+    else if (m == 4) { metal = float3(1.00, 0.74, 0.22); tint = float3(1.00, 0.70, 0.20); tintK = 0.50; }   // gold
+    else if (m == 5) { metal = float3(0.90, 0.98, 1.00); tint = float3(0.16, 0.90, 0.98); tintK = 0.62; }   // diamond (set in white metal)
     else if (m == 6) { metal = float3(0.34, 0.29, 0.33); tint = float3(0.13, 0.09, 0.17); tintK = 0.80; }   // netherite
     else if (m == 3) { metal = float3(0.95, 0.52, 0.30); tint = float3(1.00, 0.58, 0.32); tintK = 0.34; }   // copper
     else if (m == 1) { metal = float3(0.80, 0.83, 0.88); tint = float3(0.85, 0.90, 1.00); tintK = 0.10; }   // chain
     else             { metal = dye * 0.50 + 0.04;        tint = dye;                      tintK = 0.50; }   // leather: the dye
 
-    if (m == 1 || role == 0) {
-        // ---- metal: a round wire (curved across its width only; chain = a bead per link)
-        float lx = m == 1 ? 0.0 : 0.5 * (float(metalAt(b + int2(-1, 0), fi, m)) + float(metalAt(b + int2(1, 0), fi, m)));
-        float ly = m == 1 ? 0.0 : 0.5 * (float(metalAt(b + int2(0, -1), fi, m)) + float(metalAt(b + int2(0, 1), fi, m)));
-        if (lx > 0.75 && ly > 0.75) { lx = 0.6; ly = 0.6; }      // a solid patch of line work: a low dome, not a flat spot
-        float2 nn = f * 2.0 * float2(1.0 - lx, 1.0 - ly) * nearK;
+    bool wire  = m == 1 || role == 0;
+    bool plate = !wire && role == 1 && (m == 2 || m == 3 || m == 4 || m == 6);   // a metal armour's drawn shade: brushed plate
+    if (wire || plate) {
+        // ---- metal. Line work is round wire standing proud (curved across its width only; chain = a bead per link);
+        //      shade is flat brushed plate. Both mirror what is really around them: the frame, up and away from the
+        //      plate - so mostly the sky you stand under.
+        float2 nn = float2(0.0, 0.0);
+        if (wire) {
+            float lx = m == 1 ? 0.0 : 0.5 * (float(metalAt(b + int2(-1, 0), fi, m)) + float(metalAt(b + int2(1, 0), fi, m)));
+            float ly = m == 1 ? 0.0 : 0.5 * (float(metalAt(b + int2(0, -1), fi, m)) + float(metalAt(b + int2(0, 1), fi, m)));
+            if (lx > 0.75 && ly > 0.75) { lx = 0.6; ly = 0.6; }      // a solid patch of line work: a low dome, not a flat spot
+            nn = f * 2.0 * float2(1.0 - lx, 1.0 - ly) * nearK;
+        }
         float3 N  = normalize(float3(nn * 0.95, 0.60));
-        // it mirrors what is really around it: the frame, up and away from the plate (so mostly the sky above you)
-        float3 env = (sceneAt(px + nn * 120.0 * S + float2(0.0, -90.0 * S)) + sceneAt(px + nn * 64.0 * S + float2(22.0 * S, -150.0 * S))) * 0.5;
-        float  spec = pow(saturate(dot(N, normalize(float3(-0.36, -0.72, 0.60)))), 26.0);
+        float  brush = gaHash(float2(float(b.y) * 3.0 + floor(t.y * 3.0), floor(float(b.x) / 5.0)));   // fine horizontal grain
+        float2 bo = plate ? float2((brush - 0.5) * 26.0 * S, 0.0) : float2(0.0, 0.0);
+        float3 env = (sceneAt(px + nn * 120.0 * S + bo + float2(0.0, -90.0 * S)) + sceneAt(px + nn * 64.0 * S + bo + float2(22.0 * S, -150.0 * S))) * 0.5;
+        float  spec = wire ? pow(saturate(dot(N, normalize(float3(-0.36, -0.72, 0.60)))), 22.0) : 0.0;
         float  band = exp(-pow(frac((p.x + p.y * 0.6) / max(fs.x + fs.y, 1.0) * 0.8 + view * 0.9 - time * 0.05) - 0.5, 2.0) / 0.006);
-        float3 c = metal * (0.20 + 1.10 * env) * (1.0 - 0.38 * dot(nn, nn));
-        c += (spec * 0.85 + band * 0.30) * lerp(float3(1, 1, 1), metal, 0.35);
+        float3 c = metal * (wire ? 0.24 + 1.05 * env : (0.40 + 0.75 * env) * (0.90 + 0.14 * brush)) * (1.0 - 0.38 * dot(nn, nn));
+        c += (spec * 0.32 + band * (plate ? 0.50 : 0.30)) * lerp(float3(1, 1, 1), metal, 0.35);
         if (m == 6) {   // netherite: ember runs in the seams and breathes
             float pulse = 0.55 + 0.45 * sin(time * 1.3 + h * 6.0 + (p.x + p.y) * 0.5);
-            c = c * 0.55 + float3(1.60, 0.42, 0.07) * pulse * saturate(1.0 - dot(nn, nn) * 1.4) * 0.9;
+            if (wire) c = c * 0.55 + float3(1.60, 0.42, 0.07) * pulse * saturate(1.0 - dot(nn, nn) * 1.4) * 0.9;
         }
         if (m == 3 && h > 0.80) c = lerp(c, float3(0.30, 0.78, 0.66) * (0.35 + 0.8 * env), 0.75);   // copper: verdigris here and there
         return c;
     }
-    // ---- crystal
+    // ---- crystal: the world behind, bent, soaked in the material's colour - and holding enough colour of its own
+    //      that a diamond chestplate is aqua and a gold one is amber whatever stands behind it
     float3 g = glass;
+    float  fh = gaHash(floor(float2(b) * 0.5) + 2.3);              // a 2x2-texel facet
     if (m == 5) {   // diamond: every texel is a facet - it bends the world its own way and splits it into colour
         float2 fo = (float2(gaHash(float2(b) + 3.1), gaHash(float2(b) + 7.7)) - 0.5) * 38.0 * S * nearK;
         g.r = sceneAt(px + off + fo).r;
         g.g = sceneAt(px + off + fo * 1.14).g;
         g.b = sceneAt(px + off + fo * 1.30).b;
     }
-    float thick = role == 1 ? 1.40 : (role == 3 ? 0.45 : 1.0);   // drawn shade = thicker crystal, drawn highlight = polished thin
+    float thick = role == 1 ? 1.45 : (role == 3 ? 0.50 : 1.0);   // drawn shade = thicker crystal, drawn highlight = polished thin
     g = lerp(g, g * tint * 1.30 + tint * 0.07, saturate(tintK * thick));
+    float selfK = m == 5 ? 0.46 : (m == 4 ? 0.34 : (m == 3 ? 0.28 : (m == 0 ? 0.30 : (m == 6 ? 0.55 : 0.10))));
+    float3 own = tint * (m == 5 ? (role == 1 ? 0.42 : 0.62) + 0.34 * fh : (role == 1 ? 0.50 : 0.72));
+    g = lerp(g, own, selfK * (role == 3 ? 0.6 : 1.0));
     // the metal stands proud of the glass: it shades the crystal under it and lights the crystal over it
     float up = float(metalAt(b + int2(0, -1), fi, m)), dn = float(metalAt(b + int2(0, 1), fi, m));
     float lf2 = float(metalAt(b + int2(-1, 0), fi, m));
