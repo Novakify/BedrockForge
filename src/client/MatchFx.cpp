@@ -533,6 +533,7 @@ void moveLocal(Actor* a, float x, float y, float z) {
 // ---- hits: the server shows a hurt animation on someone (ActorEvent 2) -> impact light on them (kind 8)
 struct PendingHit { uint64_t rid; int64_t at; };
 std::vector<PendingHit> gHits;
+int64_t gLastClickMs = -100000;   // your last attack click (left mouse): only a hit right after one is yours
 void resolveHits(LocalPlayer& lp, int64_t now) {
     if (gHits.empty()) return;
     std::vector<PendingHit> hits;
@@ -543,7 +544,8 @@ void resolveHits(LocalPlayer& lp, int64_t now) {
     // a critical hit (falling, off the ground) or a mace hit: World FX draws its impact frame only for these
     bool heavy = false;
     try {
-        heavy = !lp.isOnGround() && lp.getPosDelta().y < -0.02f;
+        float const vy = lp.getPosDelta().y;
+        heavy = !lp.isOnGround() && vy < -0.02f && vy > -3.0f;   // (a teleport is not a fall)
         std::string nm = lp.getSelectedItem().getName();
         std::transform(nm.begin(), nm.end(), nm.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
         heavy = heavy || nm.find("mace") != std::string::npos;
@@ -562,7 +564,9 @@ void resolveHits(LocalPlayer& lp, int64_t now) {
                 // yours: right in front of you, within reach
                 float const dx = f.x - me.x, dy = f.y + 1.0f - me.y, dz = f.z - me.z;
                 float const dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-                bool const mine = a != static_cast<Actor*>(&lp) && dist < 5.0f && (dx * fx + dy * fy + dz * fz) / std::max(dist, 0.01f) > 0.75f;
+                // (seen in game: a mob burning in the sun in front of you counted as your hit - and as a mace hit while
+                //  you held one. Yours = you clicked within 0.4 s.)
+                bool const mine = a != static_cast<Actor*>(&lp) && now - gLastClickMs < 400 && dist < 5.0f && (dx * fx + dy * fy + dz * fz) / std::max(dist, 0.01f) > 0.75f;
                 bool const self = a == static_cast<Actor*>(&lp);
                 auto& e = gFx.events[gFx.nEvents % 256];
                 e.x = int32_t(std::floor(f.x)), e.y = int32_t(std::floor(f.y)), e.z = int32_t(std::floor(f.z));
@@ -962,6 +966,12 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
                 ++gFx.nEvents;
             }
         } catch (...) {}
+    }
+    {
+        static bool wasDown = false;
+        bool const down = (GetAsyncKeyState(0x01) & 0x8000) != 0;
+        if (down && !wasDown) gLastClickMs = now;
+        wasDown = down;
     }
     trackProjectiles(*lp, now); // (any world: arrows look the same in single player)
     resolveHits(*lp, now);
