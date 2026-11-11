@@ -334,7 +334,7 @@ using Close_t      = HRESULT(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*);
 using CreateDsv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_DEPTH_STENCIL_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
 using CreateRs_t   = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, void const*, SIZE_T, REFIID, void**);
 using CreateSrv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_SHADER_RESOURCE_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
-constexpr int kHooks = 26; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
+constexpr int kHooks = 27; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
@@ -881,26 +881,26 @@ void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa co
     if (ms > 30) ll_shim::warn(std::string("[RF] slow frame: in-game ") + (kind == 2 ? "sky" : "weather") + " draw took " + std::to_string(ms) + " ms");
 }
 
-// looking down there is no cloud draw: the World FX pass runs at the first UI draw instead (rf::sky::fallbackWorldFx)
-void fxFallback(ID3D12GraphicsCommandList* list) {
-    if (gInSnapshot || !rf::sky::fxFallbackWanted()) return;
-    SkyLS* s = skyLS(list);
-    if (!s->pso) return;
-    {
-        std::lock_guard l(gMutex);
-        if (!gUiPso.count(s->pso)) return;
+// looking down there is no cloud draw: the World FX pass runs right before the game's post-world depth clear instead
+// (rf::sky::fallbackWorldFx)
+using ClearDsv_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_CLEAR_FLAGS, FLOAT, UINT8, UINT, D3D12_RECT const*);
+void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE dsv, D3D12_CLEAR_FLAGS flags, FLOAT depth, UINT8 stencil,
+                                    UINT n, D3D12_RECT const* rects) {
+    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::fxFallbackWanted(dsv.ptr)) {
+        SkyLS* s = skyLS(list);
+        rf::sky::GameState st;
+        st.pso       = s->pso;
+        st.haveTopo  = s->ia.haveTopo;
+        st.topo      = int(s->ia.topo);
+        st.nVb       = s->ia.nVb;
+        st.vb        = s->ia.vb;
+        st.rootKnown = rootKnown(list);
+        rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
+        gInSnapshot = true;
+        rf::sky::fallbackWorldFx(list, st, c);
+        gInSnapshot = false;
     }
-    rf::sky::GameState st;
-    st.pso       = s->pso;
-    st.haveTopo  = s->ia.haveTopo;
-    st.topo      = int(s->ia.topo);
-    st.nVb       = s->ia.nVb;
-    st.vb        = s->ia.vb;
-    st.rootKnown = rootKnown(list);
-    rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
-    gInSnapshot = true;
-    rf::sky::fallbackWorldFx(list, st, c);
-    gInSnapshot = false;
+    reinterpret_cast<ClearDsv_t>(gOrig[26])(list, dsv, flags, depth, stencil, n, rects);
 }
 
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
@@ -909,7 +909,6 @@ void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b,
     bool               orig = true;
     int                sk   = gInSnapshot ? 0 : skyDrawKind(list, st, ia, orig);
     if (!orig) rf::sky::noteHidden();
-    if (orig && sk == 0) fxFallback(list);
     if (orig) {
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
@@ -925,7 +924,6 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
     bool               orig = true;
     int                sk   = gInSnapshot ? 0 : skyDrawKind(list, st, ia, orig);
     if (!orig) rf::sky::noteHidden();
-    if (orig && sk == 0) fxFallback(list);
     if (orig) {
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
@@ -1377,7 +1375,8 @@ bool install(Targets const& t) {
                          t.drawIndexed,       t.createHeap,      t.copyDescs, t.copyDescsSimple, t.resourceBarrier,
                          t.iaSetTopology,     t.iaSetVb,         t.setHeaps,  t.setRootSig,     t.setTable,
                          t.setConst,          t.setConsts,       t.setCbv,    t.setSrv,          t.setUav,
-                         t.createSrv,         t.iaSetIb,         t.createDsv, t.createRootSig,   t.close};
+                         t.createSrv,         t.iaSetIb,         t.createDsv, t.createRootSig,   t.close,
+                         t.clearDsv};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
@@ -1390,7 +1389,8 @@ bool install(Targets const& t) {
                          reinterpret_cast<void*>(&setAddrHook<18, 3>), reinterpret_cast<void*>(&setAddrHook<19, 4>),
                          reinterpret_cast<void*>(&setAddrHook<20, 5>), reinterpret_cast<void*>(&createSrvHook),
                          reinterpret_cast<void*>(&setIbHook),     reinterpret_cast<void*>(&createDsvHook),
-                         reinterpret_cast<void*>(&createRsHook),  reinterpret_cast<void*>(&closeHook)};
+                         reinterpret_cast<void*>(&createRsHook),  reinterpret_cast<void*>(&closeHook),
+                         reinterpret_cast<void*>(&clearDsvHook)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;

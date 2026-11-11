@@ -463,6 +463,7 @@ bool findTargets() {
             gUiTargets.drawIndexed   = lv[13];
             gUiTargets.setPso        = lv[25];
             gUiTargets.omSetRts      = lv[46];
+            gUiTargets.clearDsv      = lv[47];
             gUiTargets.resourceBarrier = lv[26];
             gUiTargets.iaSetTopology   = lv[20];
             gUiTargets.iaSetVb         = lv[44];

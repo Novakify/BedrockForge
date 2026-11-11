@@ -1924,16 +1924,19 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     }
     return ok;
 }
-bool fxFallbackWanted() {
-    // OFF: by the first UI draw Bedrock has cleared the depth buffer, so the pass drew the cloud sea over everything
-    // (seen in game 2026-11-11). Needs an anchor that still has the world's depth.
-    return false;
-    if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed)) return false;
-    uint64_t const now = gPresentNo.load(std::memory_order_relaxed), ran = gFxRanNo.load(std::memory_order_relaxed);
-    return ran != now && ran + 1 != now && gFxFallbackNo.load(std::memory_order_relaxed) != now;
+// The fallback anchor: the game's second depth clear of the frame on the world's depth buffer (it clears once at the
+// start of the frame, and again after the world - before the hand). If the cloud draw (and so the pass) has not come
+// by then, the pass runs right before that clear, while the world's depth is still there.
+std::atomic<uint64_t> gClearFrame{~0ull};
+std::atomic<int>      gClearsInFrame{0};
+bool fxFallbackWanted(size_t dsv) {
+    if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
+    uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
+    if (gClearFrame.exchange(now) != now) { gClearsInFrame = 1; return false; }   // the frame's first clear: nothing drawn yet
+    if (gClearsInFrame.fetch_add(1) != 1) return false;                            // only the second
+    return gFxRanNo.load(std::memory_order_relaxed) != now && gFxFallbackNo.load(std::memory_order_relaxed) != now;
 }
 bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
-    if (!fxFallbackWanted()) return false;
     size_t rt0 = 0, dsv = 0;
     if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != gFxRt.load() || dsv != gFxDs.load()) return false; // not the world's targets
     uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
@@ -1942,8 +1945,10 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     GameState s2 = st;
     s2.pso = gFxPso.load();
     bool const ok = drawWorldFxPassImpl(list, s2, calls);
-    calls.setPso(list, st.pso);                     // the UI draw goes on with its own pipeline
+    if (st.pso) calls.setPso(list, st.pso);         // the game goes on with its own pipeline
     if (st.haveTopo) calls.setTopo(list, st.topo);
+    static std::atomic<long> nFb{0};
+    if ((nFb.fetch_add(1) & 255) == 0) ll_shim::info(std::string("[RF] World FX: no cloud draw this frame (looking down) - pass run at the depth clear: ") + (ok ? "ok" : "skipped"));
     return ok;
 }
 static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
