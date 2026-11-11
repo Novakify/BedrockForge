@@ -578,15 +578,18 @@ int classify(uint8_t const* px, unsigned pitch) {
     int64_t bestD = INT64_MAX;   // (was 1L << 40: long is 32-bit on Windows - undefined, and the optimiser took the loop's end out)
     for (int v = 0; v < kN; ++v)
         if (ham[v] <= bestHam + 6 && dist[v] < bestD) { bestD = dist[v]; best = v; }
-    if (bestD > 3 * 50 * 50)   // the nearest shapes are all the wrong colour: a repaint on another armour's shape
+    int limit = 40;
+    if (bestD > 3 * 50 * 50) { // the nearest shapes are all the wrong colour: a repaint on another armour's shape
         for (int v = 0; v < kN; ++v)
             if (ham[v] <= 100 && dist[v] < bestD) { bestD = dist[v]; best = v; }
+        if (best >= 0 && dist[best] <= 3 * 30 * 30) limit = 100;   // the colour is that armour's: its shape may differ more
+    }
     bestHam = best >= 0 ? ham[best] : bestHam;
     char b[160];
     std::snprintf(b, sizeof b, "%ld painted, mean %ld,%ld,%ld, nearest %s_%d (%d texels off)", cnt, sum[0] / cnt, sum[1] / cnt, sum[2] / cnt,
                   best >= 0 ? shaders::kVariant[best].mat : "-", best >= 0 ? shaders::kVariant[best].layer : 0, bestHam);
     gLastClassInfo = b;
-    return bestHam <= 40 ? best : -1;
+    return bestHam <= limit ? best : -1;
 }
 
 ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad, int v) {

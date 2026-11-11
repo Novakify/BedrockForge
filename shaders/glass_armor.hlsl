@@ -202,7 +202,7 @@ float3 fusedPlate(int m, float3 glass, float2 t, int2 b, int fi, float2 p, float
         float3 env = (sceneAt(px + nn * 120.0 * S + bo + float2(0.0, -90.0 * S)) + sceneAt(px + nn * 64.0 * S + bo + float2(22.0 * S, -150.0 * S))) * 0.5;
         float  spec = wire ? pow(saturate(dot(N, normalize(float3(-0.36, -0.72, 0.60)))), 22.0) : 0.0;
         float  band = exp(-pow(frac((p.x + p.y * 0.6) / max(fs.x + fs.y, 1.0) * 0.8 + view * 0.9 - time * 0.05) - 0.5, 2.0) / 0.006);
-        float3 c = metal * (wire ? 0.24 + 1.05 * env : (0.40 + 0.75 * env) * (0.90 + 0.14 * brush)) * (1.0 - 0.38 * dot(nn, nn));
+        float3 c = metal * (wire ? (m == 1 ? 0.38 + 0.55 * dot(env, float3(0.3, 0.4, 0.3)) : 0.24 + 1.05 * env) : (0.40 + 0.75 * env) * (0.90 + 0.14 * brush)) * (1.0 - 0.38 * dot(nn, nn));   // chain: steel-grey beads, not the colour behind
         c += (spec * 0.32 + band * (plate ? 0.50 : 0.30)) * lerp(float3(1, 1, 1), metal, 0.35);
         if (m == 6) {   // netherite: ember runs in the seams and breathes
             float pulse = 0.55 + 0.45 * sin(time * 1.3 + h * 6.0 + (p.x + p.y) * 0.5);
@@ -223,7 +223,7 @@ float3 fusedPlate(int m, float3 glass, float2 t, int2 b, int fi, float2 p, float
     }
     float thick = role == 1 ? 1.45 : (role == 3 ? (m == 5 ? 0.85 : 0.50) : 1.0);   // drawn shade = thicker crystal, drawn highlight = polished thin
     g = lerp(g, g * tint * 1.30 + tint * 0.07, saturate(tintK * thick));
-    float selfK = m == 5 ? 0.46 : (m == 4 ? 0.34 : (m == 3 ? 0.28 : (m == 0 ? 0.30 : (m == 6 ? 0.55 : (m == 2 ? 0.30 : 0.36)))));   // iron: frosted steel-white; chain: frosted steel between the rings
+    float selfK = m == 5 ? 0.46 : (m == 4 ? 0.34 : (m == 3 ? 0.28 : (m == 0 ? 0.30 : (m == 6 ? 0.55 : (m == 2 ? 0.30 : 0.62)))));   // iron: frosted steel-white; chain: frosted steel between the rings (lighter: the skin behind made a checkerboard)
     float3 own = tint * (m == 5 ? (role == 1 ? 0.42 : 0.62) + 0.34 * fh : (role == 1 ? 0.50 : 0.72));
     g = lerp(g, own, selfK * (role == 3 ? (m == 5 ? 0.85 : 0.6) : 1.0));
     // the metal stands proud of the glass: it shades the crystal under it and lights the crystal over it
