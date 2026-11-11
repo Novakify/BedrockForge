@@ -63,6 +63,13 @@ struct BfMatchFxV1 {
         uint8_t  px[64 * 64 * 4];
     } skins[16];
     uint32_t mySkin; // your own skin's slot + 1 (0 = none)
+    // v7: you - your health (RF: low health drains the edges of the frame in time with a heartbeat BF plays) and your
+    // kills since you last died (RF: a run of kills warms the frame)
+    float    hp, hpMax;  // hpMax 0 = not known
+    uint32_t streak;     // kills this life
+    uint32_t pad7;
+    int64_t  beatMs;     // the last heartbeat (BF's clock), 0 = none
+    int64_t  killMs;     // your last kill
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);
