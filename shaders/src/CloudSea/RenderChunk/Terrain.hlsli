@@ -184,14 +184,17 @@ float4 main(PSIn i) : SV_Target {
 #if !defined(PASS_TRANSPARENT)
     [branch] if (mid == MAT_LEAVES || mid == MAT_GRASS || mid == MAT_PLANT || (mid == 0 && leaf > 0.5)) {
         // a gust flips leaves and blades over: their pale undersides show, the wind visibly rolls across the island
-        float k = gust * skyK * skyK * (mid == MAT_GRASS ? 0.22 : 0.34);
-        lit = lerp(lit, csLuma(lit) * float3(1.04, 1.12, 1.10) * 1.30 + lit * 0.10, k);
+        // (seen in game: a grey wash read as dead leaves - the gust is a lift of light, a touch toward sage, colour kept)
+        float k = gust * skyK * skyK * (mid == MAT_GRASS ? 0.55 : 0.75);
+        lit *= 1.0 + 0.22 * k;
+        lit = lerp(lit, lit * float3(1.02, 1.04, 0.96) + csLuma(lit) * float3(0.03, 0.05, 0.04), k * 0.5);
         // single leaves catch the sun as they turn (each block, each texel its own rhythm; more inside a gust)
         [branch] if (mid != MAT_GRASS && fade > 0.0) {
             float h  = csHash(float2(ti) * 0.917 + bcell * 7.31);
-            float on = step(0.935, h);
-            float fl = pow(saturate(sin(CS_TIME * (1.8 + 2.6 * frac(h * 13.7)) + h * 40.0)), 14.0) * (0.35 + 0.9 * gust);
-            lit += CS_SUNC * float3(1.0, 0.92, 0.62) * 0.55 * fl * on * sunVis * fade * (1.0 - CS_NIGHT);
+            // (seen in game: 7% of texels read as gold noise, also inside the canopy - now a few, on the sunny outside)
+            float on = step(0.975, h) * smoothstep(0.15, 0.45, dot(n, CS_SUN)) * smoothstep(0.92, 1.0, skyK);
+            float fl = pow(saturate(sin(CS_TIME * (1.4 + 2.0 * frac(h * 13.7)) + h * 40.0)), 18.0) * (0.25 + 1.0 * gust);
+            lit += CS_SUNC * float3(1.0, 0.92, 0.66) * 0.40 * fl * on * sunVis * fade * (1.0 - CS_NIGHT);
         }
         // grass: dew. A few blades hold a drop that winks as you move (cool white, more after the sun goes)
         [branch] if (mid == MAT_GRASS && n.y > 0.5 && fade > 0.0) {
