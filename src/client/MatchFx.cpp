@@ -22,6 +22,7 @@
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/world/actor/Actor.h"
+#include "mc/world/actor/ActorFlags.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/level/Level.h"
 #include "mc/deps/core/math/Color.h"
@@ -60,6 +61,7 @@ int64_t nowMs() { return duration_cast<milliseconds>(steady_clock::now().time_si
 BfMatchFxV1          gFx{};
 std::mutex           gMutex; // block events arrive on the server thread too (single-player)
 std::atomic<int64_t> gConsumerMs{0};
+std::atomic<int64_t> gBedsWantedMs{0}; // RF draws cosmetic beds (consumer bit 2)
 std::atomic<int64_t> gHudMs{0};
 std::atomic<float>   gPreview{-1.0f};
 std::atomic<bool>    gNewLevel{false}; // joined a world (Hive moves you hub -> lobby -> map this way)
@@ -75,7 +77,7 @@ float const kDye[16][3] = {
     {0.62f, 0.38f, 0.20f}, {0.22f, 0.70f, 0.18f}, {1.00f, 0.16f, 0.12f}, {0.34f, 0.30f, 0.44f},
 };
 
-struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; bool dyeKnown = false; bool elim = false; int64_t elimMs = 0; float threat = 0; int64_t hitMs = 0; };
+struct Bed { int x, y, z; int dye = 14; bool alive = true; int64_t changed = 0; bool dyeKnown = false; bool elim = false; int64_t elimMs = 0; float threat = 0; int64_t hitMs = 0; float vis[3]{}; float yaw = 0; int64_t visMs = 0; };
 std::vector<Bed> gBeds;
 uint32_t         gBroken = 0;
 int64_t          gResetMs = 0;
@@ -430,12 +432,15 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
 
 extern "C" __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx() {
     std::lock_guard l(gMutex);
-    gFx.size = sizeof gFx, gFx.version = 3;
+    gFx.size = sizeof gFx, gFx.version = 4;
     gFx.active = nowMs() - gHudMs.load() < 250 ? 1u : 0u;
     gFx.nowMs  = nowMs();
     return &gFx;
 }
-extern "C" __declspec(dllexport) void BF_MatchFxConsumer(int on) { gConsumerMs = on ? nowMs() : 0; }
+extern "C" __declspec(dllexport) void BF_MatchFxConsumer(int on) {
+    gConsumerMs   = (on & 1) ? nowMs() : 0; // bit 1: living sky (BF moves the time of day)
+    gBedsWantedMs = (on & 2) ? nowMs() : 0; // bit 2: RF draws cosmetic beds (BF hides the server's bed models)
+}
 extern "C" __declspec(dllexport) void BF_MatchFxPreview(float phase) { gPreview = phase; }
 
 namespace bedrock_forge::client::matchfx {
@@ -527,28 +532,30 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
     scan(lp->getDimensionBlockSource(), pos);
     if (gIsMap) {
-        // (finding how the server draws its beds) every few seconds: the actors standing on a bed, by type - once each
-        static int64_t lastScan = 0;
+        // the server's bed models: an entity standing on each bed (The Hive draws its bed as an entity over an invisible
+        // hitbox block). Track where it stands; while RF draws a cosmetic bed, hide it on this screen only (the block,
+        // the hitbox and the server are untouched)
         static std::vector<std::string> seenTypes;
-        if (now - lastScan > 4000) {
-            lastScan = now;
-            try {
-                for (Actor* a : lp->getLevel().getRuntimeActorList()) {
-                    if (!a) continue;
-                    auto const p2 = a->getPosition();
-                    for (auto const& b : gBeds)
-                        if (std::abs(p2.x - (b.x + 0.5)) < 2.5 && std::abs(p2.z - (b.z + 0.5)) < 2.5 && std::abs(p2.y - b.y) < 3.0) {
-                            std::string t;
-                            try { t = a->getTypeName(); } catch (...) { t = "?"; }
-                            if (std::find(seenTypes.begin(), seenTypes.end(), t) == seenTypes.end()) {
-                                seenTypes.push_back(t);
-                                auto const r = a->getRotation();
-                                note("actor on a bed: '{}' at {:.2f} {:.2f} {:.2f} rot {:.1f} {:.1f} (bed {} {} {})", t, p2.x, p2.y, p2.z, r.x, r.y, b.x, b.y, b.z);
-                            }
-                        }
+        bool const hide = now - gBedsWantedMs.load() < 600;
+        try {
+            for (Actor* a : lp->getLevel().getRuntimeActorList()) {
+                if (!a || a->isPlayer()) continue;
+                auto const p2 = a->getPosition();
+                for (auto& b : gBeds) {
+                    if (std::abs(p2.x - (b.x + 0.5)) > 2.0 || std::abs(p2.z - (b.z + 0.5)) > 2.0 || std::abs(p2.y - b.y) > 2.5) continue;
+                    std::string t;
+                    try { t = a->getTypeName(); } catch (...) {}
+                    if (std::find(seenTypes.begin(), seenTypes.end(), t) == seenTypes.end()) {
+                        seenTypes.push_back(t);
+                        auto const r = a->getRotation();
+                        note("actor on a bed: '{}' at {:.2f} {:.2f} {:.2f} rot {:.1f} {:.1f} (bed {} {} {})", t, p2.x, p2.y, p2.z, r.x, r.y, b.x, b.y, b.z);
+                    }
+                    if (t.find("bed") == std::string::npos) continue; // only the bed model (not a generator, a hologram)
+                    b.vis[0] = p2.x, b.vis[1] = p2.y, b.vis[2] = p2.z, b.yaw = a->getRotation().y, b.visMs = now;
+                    if (hide && b.alive) a->setStatusFlag(ActorFlags::Invisible, true);
                 }
-            } catch (...) {}
-        }
+            }
+        } catch (...) {}
         trackPlayers(*lp, now);
         // threat: the bed's defence is being broken (blocks right around it going down) - something everyone could see
         // happen, not where players are (that would be an unfair wallhack)
@@ -599,6 +606,8 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             auto& x = gFx.teamEx[nt];
             x.threat = b.threat, x.elim = b.elim ? 1u : 0u, x.elimMs = b.elimMs;
             x.mine = std::hypot(b.x + 0.5 - gAnchor[0], b.z + 0.5 - gAnchor[2]) < 30.0 ? 1u : 0u; // the bed by where you arrived
+            x.hasVis = now - b.visMs < 1500 ? 1u : 0u;
+            x.vis[0] = b.vis[0], x.vis[1] = b.vis[1], x.vis[2] = b.vis[2], x.yaw = b.yaw;
             auto& t = gFx.teams[nt++];
             t.pos[0] = b.x + 0.5f, t.pos[1] = b.y + 0.6f, t.pos[2] = b.z + 0.5f;
             std::memcpy(t.col, kDye[b.dye], sizeof t.col);

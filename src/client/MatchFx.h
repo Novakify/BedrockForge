@@ -26,7 +26,7 @@ struct BfMatchEventV1 {
     uint32_t floorDy;  // the shards land this many blocks below the block (0 = on the block under it); 255 = nothing: they fall away
 };
 struct BfMatchFxV1 {
-    uint32_t size, version; // sizeof, 3
+    uint32_t size, version; // sizeof, 4
     uint32_t active;        // 1 while a world is on screen
     uint32_t frame;
     float    phase;         // smoothed 0..2
@@ -43,6 +43,10 @@ struct BfMatchFxV1 {
         uint32_t elim;    // 1 = the team is out (the server said so)
         uint32_t mine;    // 1 = your team
         int64_t  elimMs;  // when it went out
+        // v4: the server's own bed model (an entity on the bed): where it stands and faces - RF draws the cosmetic bed there
+        float    vis[3];
+        float    yaw;     // degrees
+        uint32_t hasVis;  // 1 = found (and hidden on this screen while RF draws the cosmetic bed)
     } teamEx[16];
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
