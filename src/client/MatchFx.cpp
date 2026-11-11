@@ -659,6 +659,10 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             float const fx = -std::sin(yaw), fz = std::cos(yaw);
             if (std::abs(fx) > std::abs(fz)) sx = fx > 0 ? 1 : -1, sz = 0; else sx = 0, sz = fz > 0 ? 1 : -1;
             bx = int(std::floor(pos[0])) + sx * 2, by = int(std::floor(pos[1] - 1.62)) - 1, bz = int(std::floor(pos[2])) + sz * 2;
+            {   // the ground under the start (you may be flying)
+                BlockSource& bs = lp->getDimensionBlockSource();
+                for (int d = 0; d < 40 && bs.getBlock(BlockPos{bx, by, bz}).isAir(); ++d) --by;
+            }
             left = 14, nextAt = now;
         }
         down9 = k9;
