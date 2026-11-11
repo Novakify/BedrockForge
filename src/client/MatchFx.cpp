@@ -1,3 +1,4 @@
+#include <unordered_map>
 // Bedrock Forge - MatchFx: the match state World FX reacts to (see MatchFx.h). Original code for Bedrock Forge.
 #include "client/MatchFx.h"
 
@@ -136,6 +137,8 @@ int dyeAround(BlockSource& bs, int x, int y, int z) {
         if (votes[i] > n) n = votes[i], best = i;
     return best;
 }
+std::unordered_map<std::string, uint32_t> gCensus; // diagnostics: exposed blocks of this map by name (one full scan pass)
+bool                     gCensusDone = false;
 std::vector<std::string> gSeenNames; // diagnostics: every bed-like block name seen (logged once each)
 bool boring(std::string const& n) {
     return n == "minecraft:air" || n.find("water") != std::string::npos || n.find("lava") != std::string::npos ||
@@ -575,6 +578,7 @@ void resetMatch(double const* pos) {
     gTarget = gPhase = 0;
     gScanI  = 0;
     gScanPaused = false;
+    gCensus.clear(), gCensusDone = false;
     gFx.nEvents = 0;
     gTracks.clear(); gGone.clear(); gKills.clear();
     clearSkins();
@@ -598,6 +602,25 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
         BlockPos const bp{x, y, z};
         Block const&   b = bs.getBlock(bp);
         std::string const& tn = b.getTypeName();
+        if (!gCensusDone && !b.isAir()) { // a block anyone can see: one side open to air
+            static constexpr int kN[6][3]{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+            for (auto const& d : kN)
+                if (bs.getBlock(BlockPos{x + d[0], y + d[1], z + d[2]}).isAir()) { ++gCensus[tn]; break; }
+        }
+        if (gScanI == 0 && !gCensusDone && !gCensus.empty()) { // a full pass: write this map's palette once
+            gCensusDone = true;
+            std::vector<std::pair<std::string, uint32_t>> v(gCensus.begin(), gCensus.end());
+            std::sort(v.begin(), v.end(), [](auto const& a, auto const& b) { return a.second > b.second; });
+            try {
+                auto dir = ll::mod::NativeMod::current()->getModDir() / "logs" / "census";
+                std::error_code ec;
+                std::filesystem::create_directories(dir, ec);
+                std::ofstream o(dir / std::format("census_{}_{}_{}.txt", int(gScanC[0]), int(gScanC[2]), nowMs() / 1000), std::ios::binary);
+                o << std::format("# exposed blocks within {} blocks of {:.0f} {:.0f} {:.0f}; map={} beds={}\n", kScanR, gScanC[0], gScanC[1], gScanC[2], gIsMap ? 1 : 0, gBeds.size());
+                for (auto const& [n, c] : v) o << c << " " << n << "\n";
+            } catch (...) {}
+            note("census written ({} block types)", v.size());
+        }
         if (tn.find("bed") != std::string::npos && tn != "minecraft:bedrock" &&
             std::find(gSeenNames.begin(), gSeenNames.end(), tn) == gSeenNames.end() && gSeenNames.size() < 64) {
             gSeenNames.push_back(tn);
@@ -657,6 +680,24 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     float const   dt   = last ? std::clamp(float(now - last) / 1000.0f, 0.0f, 0.1f) : 0.0f;
     auto const&   p    = lp->getPosition();
     double const  pos[3]{p.x, p.y, p.z};
+    {   // look helper (only with config/lookkeys.txt present): numpad 4/6/8/2 turn the view, for looking around a map
+        //  when no mouse is at hand. Off for players: nothing reads the numpad unless that file is there.
+        static int64_t checkedAt = 0; static bool on = false;
+        if (now - checkedAt > 5000) {
+            checkedAt = now;
+            std::error_code ec;
+            on = std::filesystem::exists(ll::mod::NativeMod::current()->getModDir() / "config" / "lookkeys.txt", ec);
+        }
+        if (on && dt > 0.0f) {
+            float const yawV = ((GetAsyncKeyState(0x66) & 0x8000) ? 1.0f : 0.0f) - ((GetAsyncKeyState(0x64) & 0x8000) ? 1.0f : 0.0f);
+            float const pitV = ((GetAsyncKeyState(0x62) & 0x8000) ? 1.0f : 0.0f) - ((GetAsyncKeyState(0x68) & 0x8000) ? 1.0f : 0.0f);
+            if (yawV != 0.0f || pitV != 0.0f) {
+                auto& r = const_cast<Vec2&>(lp->getRotation());
+                r.y = std::fmod(r.y + yawV * 90.0f * dt + 540.0f, 360.0f) - 180.0f;
+                r.x = std::clamp(r.x + pitV * 60.0f * dt, -89.0f, 89.0f);
+            }
+        }
+    }
     std::lock_guard l(gMutex);
     // a new match / world: a big sideways jump (Hive sends you to a new map) or a long time out of the world
     // or a teleport (> 30 blocks in one frame) to somewhere with none of this match's beds nearby (a respawn on the
