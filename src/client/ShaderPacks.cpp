@@ -170,8 +170,20 @@ void install(fs::path const& modDir) {
             for (auto& e : fs::directory_iterator(fs::path(exe).parent_path() / "logs" / "crash", ec))
                 if (e.is_regular_file(ec) && e.last_write_time(ec) > since) realCrash = true;
         }
-        if (!realCrash) log.info("[BF] shaderpacks: last run ended without a clean shutdown but no crash report -> keeping '{}'", active);
+        if (!realCrash) {
+            log.info("[BF] shaderpacks: last run ended without a clean shutdown but no crash report -> keeping '{}'", active);
+            fs::remove(gCfg.parent_path() / "shaderpack.crashstreak", ec);
+        }
+        // One crash is not proof: the game also crashes on its own (a shutdown fail-fast seen 2026-11-10/11 with the
+        // pack on AND off - same stack). Only the second crash in a row with the same pack falls back.
+        int streak = 0;
         if (realCrash && !crashed.empty() && crashed == active && active != "off") {
+            if (std::ifstream in{gCfg.parent_path() / "shaderpack.crashstreak"}; in) in >> streak;
+            ++streak;
+            std::ofstream{gCfg.parent_path() / "shaderpack.crashstreak"} << streak << "\n";
+            if (streak < 2) log.warn("[BF] shaderpacks: the last run crashed while '{}' was active - keeping it (a second crash in a row turns it off)", active);
+        }
+        if (realCrash && streak >= 2 && !crashed.empty() && crashed == active && active != "off") {
             std::string fb = "off";
             if (std::ifstream in{gCfg.parent_path() / "shaderpack.fallback"}; in) std::getline(in, fb);
             while (!fb.empty() && (fb.back() == '\r' || fb.back() == ' ')) fb.pop_back();
@@ -226,6 +238,7 @@ void reportOnce() {
 void uninstall() {
     std::error_code ec;
     fs::remove(gCfg.parent_path() / "shaderpack.running", ec); // clean shutdown
+    fs::remove(gCfg.parent_path() / "shaderpack.crashstreak", ec);
     win32::files::setRedirect(nullptr);
     for (auto& s : gSites) ll::memory::unhook(s.target, s.detour);
     gSites.clear();
