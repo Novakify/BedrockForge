@@ -195,43 +195,49 @@ float4 shards(float3 rd, float sceneT) {
         if (kind > 2.5) { // a kill: the player's body, in voxels of their team colour, holds for a beat, then bursts
             if (age > 3.6) continue;
             float3 base = corner + float3(0.5, 0.0, 0.5);                  // feet
-            float3 bc2 = base + float3(0, 0.9, 0);
-            float  br2 = 1.4 + 3.5 * min(age, 0.9);
+            float  up2 = 2.5 * saturate((age - 1.7) / 1.9);
+            float3 bc2 = base + float3(0, 0.9 + up2, 0);
+            float  br2 = 1.6 + 2.0 * min(age, 0.9) + up2;
             float  tb3 = dot(bc2, rd);
             if (tb3 < -br2 || dot(bc2, bc2) - tb3 * tb3 > br2 * br2) continue;
-            float  hold = 0.14;                                           // the hit-stop: the body freezes, white-hot
+            float  hold = 0.22;                                           // the hit-stop: the body freezes, white-hot
             float  ab = max(age - hold, 0.0);
-            float  fade = 1.0 - smoothstep(2.6, 3.6, age);
             float3 team = alb / max(max(alb.r, max(alb.g, alb.b)), 0.05);
             [loop] for (int k = 0; k < 20; k++) {
-                // 20 voxels make a figure: 2 legs (2x3), body (2x2x... ), arms, head (2x2)
+                // 20 voxels make the figure: legs (2x3), body (2x3), arms (2x2), head (2x2)
                 float  sk = seed * 0.001 + float(k) * 5.17;
-                float3 cell = k < 6 ? float3((k & 1) ? 0.15 : -0.15, 0.15 + 0.3 * float(k >> 1), 0)                 // legs
-                            : (k < 12 ? float3(((k - 6) & 1) ? 0.15 : -0.15, 1.05 + 0.3 * float((k - 6) >> 1) - 0.15, 0) // body
-                            : (k < 16 ? float3(((k - 12) & 1) ? 0.45 : -0.45, 1.05 + 0.3 * float((k - 12) >> 1), 0)    // arms
-                                      : float3(((k - 16) & 1) ? 0.12 : -0.12, 1.62 + 0.24 * float((k - 16) >> 1), 0))); // head
-                float3 dir = normalize(float3(cell.x, 0.0, 0.0) + (float3(h1(sk), h1(sk + 1) * 0.6, h1(sk + 2)) - 0.5) * 1.6 + float3(0, 0.55, 0));
-                float3 v = dir * (3.0 + 3.0 * h1(sk + 3));
-                const float G = 11.0;
+                float3 cell = k < 6 ? float3((k & 1) ? 0.15 : -0.15, 0.15 + 0.3 * float(k >> 1), 0)
+                            : (k < 12 ? float3(((k - 6) & 1) ? 0.15 : -0.15, 0.90 + 0.3 * float((k - 6) >> 1), 0)
+                            : (k < 16 ? float3(((k - 12) & 1) ? 0.45 : -0.45, 1.05 + 0.3 * float((k - 12) >> 1), 0)
+                                      : float3(((k - 16) & 1) ? 0.12 : -0.12, 1.62 + 0.24 * float((k - 16) >> 1), 0)));
+                // the burst: out from the body's middle, a body-sized blast (not confetti across the island)
+                float3 dir = normalize(float3(cell.x * 2.0, 0.0, 0.0) + (float3(h1(sk), h1(sk + 1) * 0.5, h1(sk + 2)) - 0.5) * 1.4 + float3(0, 0.6, 0));
+                float3 v = dir * (1.5 + 1.5 * h1(sk + 3)) + float3(0, 1.4, 0);
+                const float G = 9.0;
                 float y0 = cell.y;
                 float tl = (v.y + sqrt(max(v.y * v.y + 2.0 * G * y0, 0.0))) / G;
                 float ta = min(ab, tl);
                 float3 p = base + cell + float3(v.x, 0, v.z) * ta + float3(0, v.y * ta - 0.5 * G * ta * ta, 0);
-                if (ab > tl) { p.y = base.y; p.xz += v.xz * 0.12 * (1.0 - exp(-(ab - tl) * 6.0)); }
-                float  e1 = (k >= 16 ? 0.12 : 0.15) * fade * (1.0 - 0.35 * smoothstep(0.0, 1.5, ab));
+                float  e1 = (k >= 16 ? 0.12 : 0.15);
+                if (ab > tl) { p.y = base.y; p.xz += v.xz * 0.10 * (1.0 - exp(-(ab - tl) * 6.0)); }
+                // then they leave: each piece lifts off the ground and drifts up, shrinking to a spark
+                float  rise = saturate((age - 1.7 - 0.6 * h1(sk + 12)) / 1.3);
+                p.y += rise * rise * (2.5 + 2.0 * h1(sk + 13));
+                e1 *= 1.0 - rise;
+                if (e1 < 0.004) continue;
                 float3 ax = normalize(float3(h1(sk + 7), h1(sk + 8), h1(sk + 9)) - 0.5 + 1e-3);
-                float  ang = min(ab, tl) * (8.0 + 6.0 * h1(sk + 10));
-                if (ab > tl) ang = round(ang / 1.5708) * 1.5708;
+                float  ang = min(ab, tl) * (8.0 + 6.0 * h1(sk + 10)) + rise * 6.0;
+                if (ab > tl && rise <= 0.0) ang = round(ang / 1.5708) * 1.5708;
                 float3x3 R = rotAxis(ax, ang);
-                if (ab > tl) p.y += dot(abs(R[1]), float3(e1, e1, e1));
+                if (ab > tl && rise <= 0.0) p.y += dot(abs(R[1]), float3(e1, e1, e1));
                 float  tN; float3 nl, lp;
                 if (!hitBox(rd, p, float3(e1, e1, e1), R, tN, nl, lp) || tN >= best) continue;
                 float3 nw = mul(R, nl);
-                float  edge = smoothstep(0.72, 1.0, max(max(abs(lp.x) * (1 - abs(nl.x)), abs(lp.y) * (1 - abs(nl.y))), abs(lp.z) * (1 - abs(nl.z))));
-                // white-hot at the moment of death, cooling to the team's colour, glowing edges, ember afterward
-                float  heat = exp(-ab * 3.0);
-                float3 c = lerp(team * (0.35 + 0.45 * saturate(dot(nw, SUN)) * LIGHTK + 0.15 * nw.y), float3(1.6, 1.5, 1.4), heat * 0.85)
-                         + team * edge * (0.9 + 1.5 * heat) + (age < hold ? 1.2 : 0.0);
+                float  edge = smoothstep(0.62, 1.0, max(max(abs(lp.x) * (1 - abs(nl.x)), abs(lp.y) * (1 - abs(nl.y))), abs(lp.z) * (1 - abs(nl.z))));
+                // white-hot at the moment of death, cooling into the team's colour; the edges keep burning
+                float  heat = age < hold ? 1.0 : exp(-ab * 4.0);
+                float3 body = team * (0.30 + 0.45 * saturate(dot(nw, SUN)) * LIGHTK + 0.12 * nw.y);
+                float3 c = lerp(body, float3(1.7, 1.6, 1.5), heat * 0.9) + team * edge * (1.1 + 1.6 * heat + 1.2 * rise);
                 best = tN, col = c, hit = true;
             }
             continue;
@@ -388,8 +394,10 @@ float3 killLight(float3 rd, float sceneT) {
         float  tr = t;                                   // the ray's distance at the line
         if (tr > 0.0 && tr < sceneT + 0.5) {
             float y = rd.y * tr - b.y;                   // height on the line, relative to the body
-            float top = fin ? 260.0 * pow(saturate(age / 1.1), 0.55) : 3.0 + 6.0 * saturate(age * 3.0);
-            float tail = fin ? max(top - 70.0, -1.0) : -1.0;
+            // final: the soul climbs out of the body slowly, then shoots up (the column stays joined to the body a moment)
+            float la = saturate((age - 0.22) / 1.6);
+            float top = fin ? 2.0 + 240.0 * la * la * la + 6.0 * saturate(age * 4.0) : 2.5 + 4.0 * saturate(age * 3.0);
+            float tail = fin ? max(top - 12.0 - 90.0 * la, -1.0) : -1.0;
             float on = smoothstep(-1.0, 0.0, y - tail) * smoothstep(0.5, 0.0, y - top);
             float w  = (fin ? 0.30 : 0.18) * (1.0 + 0.004 * tr);
             float head = exp(-pow((y - top) / (fin ? 6.0 : 1.5), 2.0));
@@ -408,6 +416,22 @@ float3 killLight(float3 rd, float sceneT) {
             }
             if (sceneT > 1e8) acc += team * 0.25 * exp(-age * 3.0);
         }
+    }
+    return acc * m0.w;
+}
+// the kill lights the ground around it: a flash in the team's colour, then the embers' glow
+float3 killGlow(float3 W) {
+    float3 acc = 0.0;
+    int ne = int(m0.y);
+    [loop] for (int i = 0; i < ne; i++) {
+        float kind = eB[i].w, age = eA[i].w;
+        if (kind < 2.5 || age > 4.2) continue;
+        float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
+        team = team / max(max(team.r, max(team.g, team.b)), 0.05);
+        float3 d = W - (eA[i].xyz + float3(0.5, 0.9, 0.5));
+        float  r2 = dot(d, d);
+        float  flash = (age < 0.22 ? 1.6 : 1.6 * exp(-(age - 0.22) * 5.0)) + 0.35 * exp(-age * 0.7);
+        acc += team * flash * exp(-r2 / (kind > 3.5 ? 22.0 : 10.0));
     }
     return acc * m0.w;
 }
@@ -584,6 +608,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
     [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
+    [branch] if (m1.z > 0.5 && m0.w > 0.0) lin += (lin * 2.2 + 0.02) * killGlow(CAM + P);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
