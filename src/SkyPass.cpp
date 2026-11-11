@@ -1562,8 +1562,9 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             if (age < 0) continue;
             if (age > 16.0f) break; // older ones are older still (a win's fireworks run 15.5 s)
             if ((e.kind == 2 && age > 0.72f) || (e.kind == 1 && age > 2.4f) || (e.kind == 3 && age > 4.8f) || (e.kind == 4 && age > 4.8f) ||
-                (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 15.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
-            if (e.kind >= 3 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
+                (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 15.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || (e.kind == 9 && age > 0.6f) || e.kind > 9) continue;
+            if (e.kind == 9 && !look.living) continue;   // your footsteps: part of the living world
+            if (e.kind >= 3 && e.kind <= 8 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
             auto& c = f.cb;
             c.eA[ne][0] = float(e.x); c.eA[ne][1] = float(e.y); c.eA[ne][2] = float(e.z); c.eA[ne][3] = age;

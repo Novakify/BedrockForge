@@ -876,6 +876,24 @@ float3 hitOn(float3 W, float3 lin) {
     }
     return lin;
 }
+// ---- your footsteps (BF kind 9: walking or running on the ground, never sneaking or looking down): a faint ring of
+//      the sky's light spreads from where your foot landed, over the block top, and is gone in 0.6 s
+float3 stepRings(float3 W, float3 lin) {
+    int ne = int(m0.y);
+    [loop] for (int i = 0; i < ne; i++) {
+        if (eB[i].w < 8.5 || eB[i].w > 9.5) continue;
+        float age = eA[i].w;
+        float top = eA[i].y + 1.0;
+        if (abs(W.y - top) > 0.07) continue;
+        float2 foot = eA[i].xz + eB[i].xz;
+        float  r = length(W.xz - foot);
+        float  R = 0.20 + 1.6 * sqrt(age / 0.6);
+        float  band = exp(-pow((r - R) / (0.05 + 0.06 * age), 2.0));
+        float  k = pow(1.0 - age / 0.6, 2.0) * 0.16 * saturate(eC[i].z / 5.0 + 0.4);
+        lin += (lin * 1.6 + 0.012) * lerp(float3(1.0, 0.86, 0.68), float3(0.65, 0.78, 1.0), NIGHT) * band * k;
+    }
+    return lin;
+}
 // the kill lights the ground around it: a flash in the team's colour, then the embers' glow
 float3 killGlow(float3 W) {
     float3 acc = 0.0;
@@ -1448,6 +1466,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
     // (killGlow is gone: the death scenes light their own ground)
     [branch] if (m1.z > 0.5) lin = hitOn(CAM + P, lin);
+    [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
