@@ -1120,6 +1120,40 @@ float3 vitals(float3 o, float3 rd) {
     }
     return pow(max(lin, 0.0), 1.0 / 2.2);
 }
+// ---- your sword swing lands: a thin crescent of light cuts across the middle of the view along the swing (upper right
+//      to lower left, like the arm), white-hot at its head, the victim's team colour along the tail, gone in 0.16 s.
+//      Only on YOUR hits (BF: kind 8, who = 1) - a miss draws nothing, so it tells you the hit counted.
+float3 slashFx(float3 o, float3 rd) {
+    int ne = int(m0.y);
+    float3 F = c0.xyz, U = c2.xyz;
+    float3 Rt = normalize(cross(U, F));
+    float  fz = max(dot(rd, F), 0.2);
+    float2 s = float2(dot(rd, Rt), dot(rd, U)) / fz;               // screen-ish (tan) coordinates
+    float3 lin = pow(max(o, 0.0), 2.2);
+    [loop] for (int i = 0; i < ne; i++) {
+        if (eB[i].w < 7.5 || eB[i].w > 8.5) continue;
+        float age = eA[i].w, who = eC[i].z;
+        if (who < 0.5 || who > 1.5 || age > 0.16) continue;
+        float  h = frac(eC[i].w * 0.0001 + eA[i].x * 0.37 + eA[i].z * 0.71);
+        float2 ctr = float2(-0.30 - 0.10 * h, 0.42 + 0.08 * h);     // the arc's centre: up and to the left of the view
+        float  R = 0.62 + 0.06 * h;
+        float2 q = s - ctr;
+        float  r = length(q);
+        float  ang = atan2(q.y, q.x);                               // -pi..pi; the arc runs from ~0.1 (right) down to ~-1.3
+        float  head = 0.15 - 1.55 * smoothstep(0.0, 0.10, age);      // the swing's front, sweeping round
+        float  tailLen = 0.9;
+        float  along = (ang - head) / tailLen;                        // 0 at the head, 1 at the end of the tail
+        if (along < 0.0 || along > 1.0) continue;
+        float  w = 0.010 * (1.0 - along) + 0.002;                     // thin, tapering
+        float  band = exp(-pow((r - R) / w, 2.0));
+        float  fade = (1.0 - smoothstep(0.10, 0.16, age)) * pow(1.0 - along, 1.6);
+        float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
+        team = team / max(max(team.r, max(team.g, team.b)), 0.05);
+        float3 col = lerp(float3(2.4, 2.25, 2.0), lerp(team, float3(1.0, 0.9, 0.7), 0.35) * 1.4, smoothstep(0.0, 0.5, along));
+        lin += col * band * fade;
+    }
+    return pow(max(lin, 0.0), 1.0 / 2.2);
+}
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
         if (m2.z > 0.5) {
@@ -1198,6 +1232,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
         }
     }
     o = tensionOver(o, rd, sceneT);
+    [branch] if (m1.z > 0.5) o = slashFx(o, rd);
     [branch] if (c3.y > 0.0) o = pow(pow(max(o, 0.0), 2.2) + airLife(rd, sceneT), 1.0 / 2.2);
     [branch] if (m3.z > 0.0) o = vitals(o, rd);
     return o;
