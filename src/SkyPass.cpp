@@ -1301,6 +1301,11 @@ int64_t steadyMs() { return std::chrono::duration_cast<std::chrono::milliseconds
 std::atomic<int> gTestKillReq{0};
 struct TestKill { float p[3]; int64_t at = -100000; int kind = 3; } gTestKill;
 void testKill() { ++gTestKillReq; }
+// F6 "Test bed": a bed 3 blocks in front of you, lying towards you, that plays its life: 10 s standing, 10 s under
+// attack, then it breaks (any world - for judging the cosmetic beds without a match)
+std::atomic<int> gTestBedReq{0};
+struct TestBed { float p[3]; float yaw = 0; int64_t at = -1000000; } gTestBed;
+void testBed() { ++gTestBedReq; }
 static MatchFrame matchFrame(WorldFxLook const& look) {
     int64_t const now = steadyMs();
     std::lock_guard l(gMatchMutex);
@@ -1474,6 +1479,17 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     f.cb.m0[2] = look.teams;
     f.cb.m0[3] = look.shards;
     f.cb.m1[1] = look.waves;
+    if (float const ta = float(now - gTestBed.at) / 1000.0f; ta >= 0.0f && ta < 26.0f && f.cb.m0[0] < 15.5f) {
+        int const k = int(f.cb.m0[0]);
+        auto& c = f.cb;
+        std::memcpy(c.tPos[k], gTestBed.p, 12); c.tPos[k][3] = ta < 23.0f ? 1.0f : 0.0f;
+        c.tCol[k][0] = 0.12f; c.tCol[k][1] = 0.38f; c.tCol[k][2] = 1.0f; c.tCol[k][3] = 0.0f;
+        c.tAge[k][0] = ta < 23.0f ? -1.0f : ta - 23.0f;
+        c.tAge[k][1] = ta > 10.0f && ta < 20.0f ? 1.0f : 0.0f;
+        c.tAge[k][2] = 0.0f; c.tAge[k][3] = 1.0f;
+        std::memcpy(c.bVis[k], gTestBed.p, 12); c.bVis[k][3] = gTestBed.yaw;
+        c.m0[0] = float(k + 1);
+    }
     f.cb.m1[3] = look.beds ? 1.0f : 0.0f;
     f.cb.m2[2] = float(look.bedStyle);
     if (look.trails <= 0.0f) f.cb.m1[0] = 0;
@@ -1895,6 +1911,15 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     c[12] = 0.025f; c[13] = 0; c[14] = 0; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified)
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
+    if (gTestBedReq.exchange(0)) {
+        float fx = snap.forward[0], fz = snap.forward[2], fl = std::sqrt(fx * fx + fz * fz);
+        if (fl < 1e-3f) fx = 0, fz = 1, fl = 1;
+        fx /= fl, fz /= fl;
+        gTestBed.p[0] = float(snap.pos[0]) + fx * 3.5f; gTestBed.p[2] = float(snap.pos[2]) + fz * 3.5f;
+        gTestBed.p[1] = float(snap.pos[1]) - 1.62f;
+        gTestBed.yaw = std::atan2(fx, -fz);   // its foot towards you: (-sin yaw, cos yaw) = -forward
+        gTestBed.at = steadyMs();
+    }
     if (gTestKillReq.exchange(0)) {
         for (int a = 0; a < 3; ++a) gTestKill.p[a] = float(snap.pos[a]) + snap.forward[a] * 6.0f;
         gTestKill.p[1] = float(snap.pos[1]) - 1.62f;

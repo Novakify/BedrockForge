@@ -1137,6 +1137,9 @@ void drawUi() {
     if (look.beds) {
         ImGui::SetNextItemWidth(200.0f);
         saveFx |= ImGui::Combo("Bed style", &look.bedStyle, "Novak bed\0Your Figura, sitting on it\0");
+        if (ImGui::Button("Test bed")) rf::sky::testBed();
+        ImGui::SameLine();
+        ImGui::TextDisabled("(3 blocks ahead: stands 10 s, attacked 10 s, then breaks)");
     }
     saveFx |= ImGui::Checkbox("Kill and respawn moments", &look.kills);
     if (ImGui::Button("Test kill")) rf::sky::testKill();
