@@ -250,6 +250,12 @@ float4 main(PSIn i) : SV_Target {
 #endif
 #if !defined(PASS_TRANSPARENT)
     // obsidian: the void inside (strongest at night, never on the surface streaks)
+    // obsidian's dark body under the golden light read grey-brown (dark x warm = mud): the light on it goes cold and
+    // glassy, the polished streaks keep the sun's colour
+    if (mid == MAT_OBSIDIAN) {
+        float body0 = 1.0 - smoothstep(0.06, 0.16, csLuma(t0.rgb));
+        lit = lerp(lit, csLuma(lit) * float3(0.70, 0.62, 1.10), 0.75 * body0);
+    }
     [branch] if (mid == MAT_OBSIDIAN && fade > 0.0 && dot(T, T) > 0.5) {
         float2 f  = float2(ti - tile) / 32.0;
         float3 vt = float3(dot(V, T), dot(V, B), dot(V, n));

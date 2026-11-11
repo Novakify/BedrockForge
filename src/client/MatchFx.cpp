@@ -781,6 +781,15 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             for (Actor* a : lp->getLevel().getRuntimeActorList()) {
                 if (!a || a->isPlayer()) continue;
                 auto p2 = a->getPosition();
+                {   // census: every kind of entity on this map, once (finding The Hive's generators)
+                    static std::vector<std::string> allTypes;
+                    std::string t0;
+                    try { t0 = a->getTypeName(); } catch (...) {}
+                    if (allTypes.size() < 96 && std::find(allTypes.begin(), allTypes.end(), t0) == allTypes.end()) {
+                        allTypes.push_back(t0);
+                        note("entity kind: '{}' at {:.1f} {:.1f} {:.1f}", t0, p2.x, p2.y, p2.z);
+                    }
+                }
                 bool const parked = p2.y < -400.0f;             // ours: moved out of sight (below), its real spot is kept
                 for (auto& b : gBeds) {
                     if (parked) { // a model we moved: find its bed by x/z
