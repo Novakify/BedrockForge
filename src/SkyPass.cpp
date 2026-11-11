@@ -1886,6 +1886,9 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     return ok;
 }
 bool fxFallbackWanted() {
+    // OFF: by the first UI draw Bedrock has cleared the depth buffer, so the pass drew the cloud sea over everything
+    // (seen in game 2026-11-11). Needs an anchor that still has the world's depth.
+    return false;
     if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed)) return false;
     uint64_t const now = gPresentNo.load(std::memory_order_relaxed), ran = gFxRanNo.load(std::memory_order_relaxed);
     return ran != now && ran + 1 != now && gFxFallbackNo.load(std::memory_order_relaxed) != now;
