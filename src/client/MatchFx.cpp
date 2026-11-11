@@ -260,8 +260,13 @@ void matchKills(int64_t now) {
         }
         // one player named (the killer is out of range, or "you were killed"): that is the victim, now
         if (!done && k->cands.size() == 1) { pushKill(k->cands[0], k->fin); done = true; }
-        // two named and nobody moved yet: after 1.5 s take the one named first ("b was killed by a")
-        if (!done && k->cands.size() > 1 && now - k->at > 1500) { pushKill(k->cands[0], k->fin); done = true; }
+        // two named and nobody moved yet: after 1 s go by the wording - "b was killed by a" names the victim first,
+        // "final kill! a eliminated b" / "a killed b" names them last
+        if (!done && k->cands.size() > 1 && now - k->at > 1000) {
+            bool const passive = k->text.find(" by ") != std::string::npos;
+            pushKill(passive ? k->cands.front() : k->cands.back(), k->fin);
+            done = true;
+        }
         if (done || now - k->at > 2500) k = gKills.erase(k);
         else ++k;
     }
@@ -274,7 +279,7 @@ void trackPlayers(LocalPlayer& lp, int64_t now) {
     lp.getLevel().forEachPlayer([&](Player& pl) {
         auto const q = static_cast<Actor&>(pl).getFeetPos(); // (getPosition is the eyes)
         bool const local = static_cast<Actor*>(&pl) == static_cast<Actor*>(&lp);
-        if (!local && std::hypot(q.x - me.x, q.z - me.z) > 96.0) return true;
+        if (!local && std::hypot(q.x - me.x, q.z - me.z) > 180.0) return true; // the whole map (islands are far apart)
         std::string name;
         try { name = lower(pl.getRealName()); } catch (...) {}
         Track* t = nullptr;
