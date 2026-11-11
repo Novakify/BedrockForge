@@ -523,7 +523,12 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
             float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
             team = team / max(max(team.r, max(team.g, team.b)), 0.05);
             if (kind > 4.5 && kind < 5.5 && age < 1.6) o = respawnFx(o, rd, age, team);
-            if (kind > 5.5 && sceneT > 1e8) o = pow(pow(max(o, 0.0), 2.2) + victory(rd, age, team, eC[i].x), 1.0 / 2.2);
+            if (kind > 6.5 && age < 0.7) { // your kill: a hard beat - the frame punches bright and warm at the edges, then settles
+                float edge = smoothstep(0.92, 0.55, dot(rd, c0.xyz));
+                float k = exp(-age * 7.0);
+                o = lerp(o, saturate(o * 1.25 + 0.04), k * 0.6) + lerp(team, float3(1.0, 0.85, 0.55), 0.5) * edge * k * 0.35;
+            }
+            if (kind > 5.5 && kind < 6.5 && sceneT > 1e8) o = pow(pow(max(o, 0.0), 2.2) + victory(rd, age, team, eC[i].x), 1.0 / 2.2);
         }
     }
     return o;
@@ -683,6 +688,15 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
     lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
+    [branch] if (m0.x > 0.5) { // your bed is gone: the whole world loses some warmth - you are on your last life
+        int nt2 = int(m0.x);
+        float lost = 0.0;
+        [loop] for (int i2 = 0; i2 < nt2; i2++) if (tAge[i2].w > 0.5 && tAge[i2].x >= 0.0) lost = saturate((tAge[i2].x - 1.0) / 4.0);
+        if (lost > 0.0) {
+            float l2 = dot(lin, float3(0.2126, 0.7152, 0.0722));
+            lin = lerp(lin, lerp(lin, l2 * float3(0.85, 0.90, 1.05), 0.35), lost);
+        }
+    }
     [branch] if (m0.x > 0.5) { // an eliminated team's island: grey, cold, dim
         float io = islandOut(CAM + P);
         if (io > 0.0) {
