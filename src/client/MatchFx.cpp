@@ -22,6 +22,7 @@
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/world/actor/Actor.h"
+#include "mc/entity/components/StateVectorComponent.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/level/Level.h"
 #include "mc/deps/core/math/Color.h"
@@ -425,6 +426,14 @@ void trackProjectiles(LocalPlayer& lp, int64_t now) {
     }
 }
 
+// move an actor on this client only (its render position): the server never hears of it
+void moveLocal(Actor* a, float x, float y, float z) {
+    if (auto* sv = a->getEntityContext().tryGetComponent<StateVectorComponent>()) {
+        sv->mPos.get()     = Vec3{x, y, z};
+        sv->mPosPrev.get() = Vec3{x, y, z};
+    }
+}
+
 void resetMatch(double const* pos) {
     note("new match at {:.0f} {:.0f} {:.0f} (had {} beds, {} broken)", pos[0], pos[1], pos[2], gBeds.size(), gBroken);
     gBeds.clear();
@@ -603,7 +612,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
                 for (auto& b : gBeds) {
                     if (parked) { // a model we moved: find its bed by x/z
                         if (std::abs(p2.x - b.vis[0]) > 0.01f || std::abs(p2.z - b.vis[2]) > 0.01f) continue;
-                        if (!hide || !b.alive) { a->setPos(Vec3{b.vis[0], b.vis[1], b.vis[2]}); } // give it back
+                        if (!hide || !b.alive) { moveLocal(a, b.vis[0], b.vis[1], b.vis[2]); } // give it back
                         else b.visMs = now;
                         continue;
                     }
@@ -619,7 +628,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
                     b.vis[0] = p2.x, b.vis[1] = p2.y, b.vis[2] = p2.z, b.yaw = a->getRotation().y, b.visMs = now;
                     // hide it on this screen: move the model out of sight (client side only - the server never hears of
                     // it, the bed's hitbox block is where it always was)
-                    if (hide && b.alive) a->setPos(Vec3{p2.x, -500.0f, p2.z});
+                    if (hide && b.alive) moveLocal(a, p2.x, -500.0f, p2.z);
                 }
             }
         } catch (...) {}
