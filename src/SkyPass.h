@@ -92,6 +92,7 @@ struct WorldFxLook {
 };
 /// what RF last read from Bedrock Forge's match bridge (for the F6 panel)
 void testKill();
+void testImpact();  // F6: a critical hit's impact frame on whatever stands 3 blocks ahead
 void testVictory(); // F6: the fireworks show
 void testVitals();  // F6: 10 s of falling health and a kill run (the look only - the heartbeat sound is Bedrock Forge's)
 void testBed();  // F6: a test bed in front of you that stands, is attacked and breaks (26 s)

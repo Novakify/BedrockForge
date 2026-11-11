@@ -1290,7 +1290,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
         }
     }
     o = tensionOver(o, rd, sceneT);
-    [branch] if (m1.z > 0.5) o = slashFx(o, rd);
+    // (slashFx: off - Fernando: it gets in the way in PvP)
     [branch] if (m1.z > 0.5) o = impactFrame(o, rd, sceneT);
     [branch] if (c3.y > 0.0) o = pow(pow(max(o, 0.0), 2.2) + airLife(rd, sceneT), 1.0 / 2.2);
     [branch] if (m3.z > 0.0) o = vitals(o, rd);

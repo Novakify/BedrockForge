@@ -1162,6 +1162,8 @@ void drawUi() {
     }
     if (ImGui::Button("Test kill")) rf::sky::testKill();
     ImGui::SameLine();
+    if (ImGui::Button("Test crit")) rf::sky::testImpact();
+    ImGui::SameLine();
     if (ImGui::Button("Test victory")) rf::sky::testVictory();
     ImGui::SameLine();
     ImGui::TextDisabled("(a kill 6 blocks ahead / the fireworks)");

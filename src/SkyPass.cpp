@@ -1321,6 +1321,9 @@ int64_t steadyMs() { return std::chrono::duration_cast<std::chrono::milliseconds
 std::atomic<int> gTestKillReq{0};
 struct TestKill { float p[3]; int64_t at = -100000; int kind = 3; } gTestKill;
 void testKill() { ++gTestKillReq; }
+std::atomic<int> gTestImpactReq{0};
+struct TestImpact { float p[3]; int64_t at = -100000; } gTestImpact;
+void testImpact() { ++gTestImpactReq; }
 std::atomic<int64_t> gTestWinAt{-1000000};
 void testVictory() { gTestWinAt = steadyMs(); }
 std::atomic<int64_t> gTestVitalsAt{-1000000};
@@ -1591,6 +1594,14 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = float(gTestKill.kind);
             c.eC[ne][0] = 4242.0f; c.eC[ne][1] = -1.0f;
             c.eC[ne][3] = float(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u)) + 16.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
+            f.cb.m1[2] = 1.0f;
+            ++ne;
+        }
+        if (float const ti = float(now - gTestImpact.at) / 1000.0f * look.slow; ti >= 0.0f && ti < 0.55f && ne < 8) {   // F6: a crit lands
+            auto& c = f.cb;
+            c.eA[ne][0] = std::floor(gTestImpact.p[0]); c.eA[ne][1] = std::floor(gTestImpact.p[1]); c.eA[ne][2] = std::floor(gTestImpact.p[2]); c.eA[ne][3] = ti;
+            c.eB[ne][0] = 1.0f; c.eB[ne][1] = 1.0f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = 8.0f;
+            c.eC[ne][0] = 4343.0f; c.eC[ne][1] = 0.0f; c.eC[ne][2] = 1.25f; c.eC[ne][3] = 0.0f;
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
@@ -2190,6 +2201,11 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         gTestBed.p[1] = float(snap.pos[1]) - 1.62f;
         gTestBed.yaw = std::atan2(fx, -fz);   // its foot towards you: (-sin yaw, cos yaw) = -forward
         gTestBed.at = steadyMs();
+    }
+    if (gTestImpactReq.exchange(0)) {   // the victim stands 3 blocks ahead (put a mob there to see its silhouette)
+        for (int a = 0; a < 3; ++a) gTestImpact.p[a] = float(snap.pos[a]) + snap.forward[a] * 3.0f;
+        gTestImpact.p[1] = float(snap.pos[1]) - 1.62f;
+        gTestImpact.at = steadyMs();
     }
     if (gTestKillReq.exchange(0)) {
         for (int a = 0; a < 3; ++a) gTestKill.p[a] = float(snap.pos[a]) + snap.forward[a] * 6.0f;
