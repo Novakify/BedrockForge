@@ -535,15 +535,20 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             b.threat += (want - b.threat) * std::min(1.0f, dt * (want > b.threat ? 6.0f : 1.5f));
         }
     }
-    {   // F8: a test kill 5 blocks in front of you (normal / final alternate) - to see the animation without a fight
+    {   // F8: test the match moments in turn - kill, final kill, respawn, victory (to see them without a fight)
         static bool down = false;
-        static bool fin  = false;
+        static int  step = 0;
         bool const k = (GetAsyncKeyState(0x77) & 0x8000) != 0; // VK_F8
         if (k && !down) {
             float const yaw = lp->getRotation().y * 3.14159265f / 180.0f;
-            Gone g{"test", {float(pos[0]) - std::sin(yaw) * 5.0f, float(pos[1]) - 1.62f, float(pos[2]) + std::cos(yaw) * 5.0f}, fin ? 14 : 3, now, false};
-            pushKill(g, fin);
-            fin = !fin;
+            float const ahead[3] = {float(pos[0]) - std::sin(yaw) * 5.0f, float(pos[1]) - 1.62f, float(pos[2]) + std::cos(yaw) * 5.0f};
+            float const here[3]  = {float(pos[0]), float(pos[1]) - 1.62f, float(pos[2])};
+            switch (step++ % 4) {
+            case 0: pushKill(Gone{"test" + std::to_string(step), {ahead[0], ahead[1], ahead[2]}, 3, now, false}, false); break;
+            case 1: pushKill(Gone{"test" + std::to_string(step), {ahead[0], ahead[1], ahead[2]}, 14, now, false}, true); break;
+            case 2: pushFx(here, 5, 5); break;
+            default: pushFx(here, 6, 4); break;
+            }
         }
         down = k;
     }
