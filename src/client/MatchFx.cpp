@@ -22,7 +22,7 @@
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/player/LocalPlayer.h"
 #include "mc/world/actor/Actor.h"
-#include "mc/entity/components/StateVectorComponent.h"
+#include "mc/deps/vanilla_components/StateVectorComponent.h"
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/level/Level.h"
 #include "mc/deps/core/math/Color.h"
