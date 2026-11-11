@@ -902,6 +902,23 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
         lastHp = hp;
         gFx.hp = hp, gFx.hpMax = hpMax;
     }
+    {   // your steps (kind 9): a faint ring where your foot lands - only walking / running on the ground, not sneaking and
+        // not looking down (bridging: nothing flashes under you), at most one every 0.38 s
+        static int64_t lastStep = 0;
+        try {
+            Vec3 const pd = lp->getPosDelta();
+            float const sp = std::sqrt(pd.x * pd.x + pd.z * pd.z) * 20.0f;   // blocks a second
+            if (lp->isOnGround() && !lp->isSneaking() && sp > 2.5f && lp->getRotation().x < 35.0f && now - lastStep > 380) {
+                lastStep = now;
+                auto& e = gFx.events[gFx.nEvents % 256];
+                e.x = int32_t(std::floor(pos[0])), e.y = int32_t(std::floor(pos[1] - 1.62 - 0.05)), e.z = int32_t(std::floor(pos[2]));
+                e.kind = 9, e.atMs = now;
+                e.col[0] = float(pos[0] - std::floor(pos[0])), e.col[1] = 0.0f, e.col[2] = float(pos[2] - std::floor(pos[2])), e.col[3] = sp;
+                e.seed = uint32_t(now), e.floorDy = 0;
+                ++gFx.nEvents;
+            }
+        } catch (...) {}
+    }
     trackProjectiles(*lp, now); // (any world: arrows look the same in single player)
     resolveHits(*lp, now);
     retarget();
