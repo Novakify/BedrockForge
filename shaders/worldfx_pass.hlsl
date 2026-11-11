@@ -563,20 +563,17 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     //      follows the shapes - islands, bridges, players), cel light (no blur: smeared texture is the generic look)
     float ink = 0.0;
     [branch] if (c9.w > 0.0 && z < 160.0) {
-        int   r  = int(max(1.0, c4.y / 1100.0) + 0.5);              // ~2 px at 4K, 1 px at 1080p
+        int   r  = 1;                                                // one pixel: a fine line, not a marker
         float zl = viewZ(rawDepth(px - int2(r, 0))), zr = viewZ(rawDepth(px + int2(r, 0)));
         float zu = viewZ(rawDepth(px - int2(0, r))), zd = viewZ(rawDepth(px + int2(0, r)));
-        // silhouette: something clearly in front right next to this pixel (or open sky beside it)
-        float zn   = min(min(zl, zr), min(zu, zd));
-        float sil  = smoothstep(0.035, 0.09, (z - zn) / z);
-        // crease: on a flat face 1/z is linear across the screen, so its second difference is ~0; a block corner breaks it
-        float cr   = max(abs(z / zl + z / zr - 2.0), abs(z / zu + z / zd - 2.0));
-        float crease = smoothstep(0.010, 0.030, cr);
-        float far  = saturate(1.0 - (z - 70.0) / 90.0);             // far terrain: fewer, softer lines (no hatched mush)
-        ink = max(sil, crease * 0.85) * far * c9.w;
-        // a touch more colour in the flats (animated films are saturated where light falls)
-        float  lum = dot(col, float3(0.299, 0.587, 0.114));
-        col = saturate(lerp(lum.xxx, col, 1.0 + 0.22 * c9.w));
+        // silhouettes only (a clear step in depth: a player, an island edge, a bridge against the void) - no lines on
+        // block corners or inside foliage, that is what turned leaves into noise
+        float rel[4] = {(z - zl) / z, (z - zr) / z, (z - zu) / z, (z - zd) / z};
+        float sil = 0.0, steps = 0.0;
+        [unroll] for (int q4 = 0; q4 < 4; q4++) { sil = max(sil, smoothstep(0.12, 0.30, rel[q4])); steps += abs(rel[q4]) > 0.08 ? 1.0 : 0.0; }
+        float busy = steps >= 3.0 ? 0.0 : 1.0;                     // depth jumping on most sides: leaves / grass, skip
+        float far  = saturate(1.0 - (z - 50.0) / 60.0);
+        ink = sil * busy * far * c9.w;
     }
 
     // ---- apply (linear light). Shadowed sunlit faces fall to the violet sky light; occlusion darkens gently
@@ -619,9 +616,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
     }
     // the ink: deep, coloured (the darkest tone of the frame, not black), drawn over everything near
-    [branch] if (ink > 0.0) {
-        float3 inkCol = lerp(lerp(float3(0.10, 0.05, 0.10), float3(0.16, 0.07, 0.16), DUSK), float3(0.03, 0.04, 0.10), NIGHT);
-        o = lerp(o, inkCol + o * 0.12, saturate(ink) * 0.92);
+    [branch] if (ink > 0.0) {   // the line is the surface's own colour, deepened (never a flat black stroke)
+        o = lerp(o, o * float3(0.42, 0.40, 0.48), saturate(ink) * 0.85);
     }
     if (c6.z > 0.5 && c6.z < 1.5) o = lerp(float3(1, 0.85, 0.6), float3(0.2, 0.2, 0.45), sh);
     if (c6.z > 1.5) o = ao.xxx;
