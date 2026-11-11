@@ -1258,6 +1258,7 @@ struct BfMatchFxV1 {
     BfMatchTeamV1 teams[16];
     BfMatchEventV1 events[256];
     struct TeamEx { float threat; uint32_t elim; uint32_t mine; int64_t elimMs; float vis[3]; float yaw; uint32_t hasVis; } teamEx[16]; // v3, v4
+    struct Proj { uint32_t kind, n; int64_t lastMs; float col[3]; float pts[12][4]; } proj[16]; // v5
 };
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
@@ -1269,8 +1270,10 @@ struct MatchCb {
     float fallen[24][4]; // the fallen: one star per final kill this match - xyz = sky direction, w = age (s); m0.y... count in m2.x
     float m2[4];
     float gColF[24][4]; // their colours
+    float pInfo[8][4];  // projectile trails: rgb = team colour, w = kind (0 none) + 8 * points
+    float pPts[8][12][4]; // their points, newest first: xyz world, w = seconds ago
 };
-static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96 + 16 + 24 + 1 + 24) * 16 && sizeof(MatchCb) <= 4096, "cbuffer M layout");
+static_assert(sizeof(MatchCb) == (57 + 1 + 16 + 2 + 96 + 16 + 24 + 1 + 24 + 8 + 96) * 16 && sizeof(MatchCb) <= 8192, "cbuffer M layout");
 struct MatchFrame { float phase = 0; MatchCb cb{}; int beds = 0; float bedMinY = 0, bedCx = 0, bedCz = 0; };
 std::mutex  gMatchMutex;
 MatchFrame  gMatch;
@@ -1307,7 +1310,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     MatchGet get; MatchUse use;
     matchFns(get, use);
     BfMatchFxV1 const* b = get ? get() : nullptr;
-    bool const ok = b && b->version >= 4 && b->size >= sizeof(BfMatchFxV1);
+    bool const ok = b && b->version >= 5 && b->size >= sizeof(BfMatchFxV1);
     if (use) use((look.living && ok && gWorldSky.load() != 0 ? 1 : 0) | (look.beds && ok ? 2 : 0)); // 2: we draw the beds
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
     if (ok) {
@@ -1441,6 +1444,21 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
                 c.gB[i][3] = float(side + 8 * chainN[i]);
             }
         }
+        // projectile trails (the 8 most recently seen)
+        {
+            uint32_t np = 0;
+            for (uint32_t i = 0; i < 16 && np < 8; ++i) {
+                auto const& pr = b->proj[i];
+                if (!pr.kind || pr.n < 2 || now - pr.lastMs > 1500) continue;
+                auto& c = f.cb;
+                std::memcpy(c.pInfo[np], pr.col, 12);
+                c.pInfo[np][3] = float(pr.kind + 8 * pr.n);
+                float const extra = float(now - pr.lastMs) / 1000.0f - pr.pts[0][3]; // BF filled ages at its frame
+                for (uint32_t j = 0; j < pr.n; ++j) { std::memcpy(c.pPts[np][j], pr.pts[j], 12); c.pPts[np][j][3] = pr.pts[j][3] + std::max(0.0f, extra); }
+                ++np;
+            }
+            f.cb.m2[1] = float(np);
+        }
         f.cb.m1[0] = float(ng);
         std::memcpy(f.cb.trMin, lo, 12); std::memcpy(f.cb.trMax, hi, 12);
         gMatchStatus = "phase " + std::to_string(b->phase).substr(0, 4) + " (target " + std::to_string(int(b->phaseTarget)) + "), beds " +
@@ -1457,7 +1475,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
 }
 std::string matchStatus() { std::lock_guard l(gMatchMutex); return gMatchStatus; }
 // per-frame constant buffer ring (upload heap) for cbuffer M
-constexpr UINT kMcbSlots = 16, kMcbStride = 4096;
+constexpr UINT kMcbSlots = 16, kMcbStride = 8192;
 ComPtr<ID3D12Resource> gMcb;
 uint8_t*               gMcbMap = nullptr;
 UINT                   gMcbNext = 0;

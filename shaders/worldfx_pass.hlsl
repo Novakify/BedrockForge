@@ -32,8 +32,10 @@ cbuffer M : register(b1) {
     float4 gB[48];   // its colour (sRGB)
     float4 bVis[16]; // the server's bed model per team: xyz feet (world), w = yaw (radians), w = -100: none
     float4 fallen[24]; // one star per final kill this match: xyz = sky direction, w = age (s)
-    float4 m2;         // x = fallen stars
+    float4 m2;         // x = fallen stars, y = projectile trails
     float4 fCol[24];   // their team colours
+    float4 pInfo[8];   // projectile trails: rgb = shooter's team colour, w = kind + 8 * points
+    float4 pPts[96];   // 8 x 12 points, newest first: xyz world, w = seconds ago
 };
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
@@ -649,6 +651,47 @@ float3 fallenStars(float3 rd) {
     }
     return acc;
 }
+// ---- the arrow writes its path: a thin ribbon of light behind every projectile, hanging ~0.6 s, never over the
+//      arrow itself (trajectory stays readable). Shooter's team colour; pearls violet, fireballs ember
+float3 projTrails(float3 rd, float sceneT) {
+    float3 acc = 0.0;
+    int np = int(m2.y);
+    [loop] for (int i = 0; i < np; i++) {
+        float  w4 = pInfo[i].w;
+        int    kind = int(fmod(w4, 8.0) + 0.5);
+        int    n = int(w4 / 8.0);
+        float3 col = pInfo[i].rgb;
+        if (kind == 2) col = float3(0.62, 0.30, 1.0);
+        if (kind == 3) col = float3(1.0, 0.45, 0.12);
+        if (kind == 4) col = float3(0.92, 0.95, 1.0);
+        float3 core = lerp(col, float3(1, 1, 1), 0.55);
+        float  along = 0.0;                                          // distance from the head, along the trail
+        [loop] for (int j = 0; j + 1 < n; j++) {
+            float4 A = pPts[i * 12 + j], B = pPts[i * 12 + j + 1];
+            float3 a = A.xyz - CAM, b = B.xyz - CAM;
+            float  segL = length(b - a);
+            if (segL < 1e-3) continue;
+            // closest points between the view ray (0 + rd t) and the segment a..b
+            float3 u = rd, v = (b - a) / segL, w0 = -a;
+            float  bb = dot(u, v), dd = dot(u, w0), ee = dot(v, w0);
+            float  den = 1.0 - bb * bb;
+            float  s1 = den > 1e-5 ? (ee - bb * dd) / den : 0.0;    // along the segment (closest to the ray)
+            s1 = clamp(s1, 0.0, segL);
+            float3 q = a + v * s1;
+            float  tq = dot(q, rd);
+            if (tq <= 0.05 || tq > sceneT + 0.3) { along += segL; continue; }
+            float  dist = length(q - rd * tq);
+            float  pos = along + s1;                                 // blocks behind the head
+            float  age = lerp(A.w, B.w, s1 / segL);
+            float  w = (0.018 + 0.0012 * tq) * (1.0 + 1.5 * saturate(pos / 6.0));   // thin at the head, wider behind
+            float  life = exp(-age * 4.5) * smoothstep(0.25, 0.7, pos);              // starts behind the arrow
+            float  c1 = exp(-pow(dist / (w * 0.35), 2.0)), halo = exp(-dist / (w * 1.6)) * 0.25;
+            acc += (core * c1 * 1.4 + col * halo) * life;
+            along += segL;
+        }
+    }
+    return acc;
+}
 // everything the match adds over a finished pixel (display colour o) along view ray rd, scene at distance sceneT
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
@@ -665,6 +708,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     }
     [branch] if (m0.y > 0.5 && m0.w > 0.0 && m1.z > 0.5) o = pow(pow(max(o, 0.0), 2.2) + killLight(rd, sceneT), 1.0 / 2.2);
     [branch] if (sceneT > 1e8 && m2.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + fallenStars(rd), 1.0 / 2.2);
+    [branch] if (m2.y > 0.5) o = pow(pow(max(o, 0.0), 2.2) + projTrails(rd, sceneT), 1.0 / 2.2);
     [branch] if (m1.z > 0.5) {
         int ne = int(m0.y);
         [loop] for (int i = 0; i < ne; i++) {
@@ -681,7 +725,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     }
     return o;
 }
-bool matchActive() { return m2.x > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
+bool matchActive() { return m2.x > 0.5 || m2.y > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
