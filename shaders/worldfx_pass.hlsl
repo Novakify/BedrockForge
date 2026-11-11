@@ -469,12 +469,12 @@ float3 killGlow(float3 W) {
 //      front, behind it everything still grey (you were not there yet)
 float3 respawnFx(float3 o, float3 rd, float age, float3 team) {
     float a  = acos(clamp(dot(rd, c0.xyz), -1.0, 1.0));          // angle from the centre of the view
-    float R  = age * 1.6;                                        // radians: the whole view in ~0.8 s
+    float R  = age * 0.95;                                       // radians: the whole view in ~1.2 s
     float back = smoothstep(R, R - 0.12, a);                     // already back
     float l  = dot(o, float3(0.299, 0.587, 0.114));
     float3 grey = l * float3(0.55, 0.58, 0.68);
     float3 r = lerp(grey, o, back);
-    r += team * exp(-pow((a - R) / 0.05, 2.0)) * 0.9 * saturate(1.4 - age);
+    r += lerp(team, float3(1, 1, 1), 0.45) * exp(-pow((a - R) / 0.025, 2.0)) * 0.30 * saturate(1.5 - age);  // a fine bright edge
     return r;
 }
 // ---- a team wins: fireworks of their colour over the map - bursts of sparks that bloom, fall and fade
@@ -485,7 +485,9 @@ float3 victory(float3 rd, float age, float3 team, float seed) {
         float t0 = float(b) * 0.75 + h1(sb) * 0.4;               // one after another
         float ab = age - t0;
         if (ab < 0.0 || ab > 2.6) continue;
-        float az = h1(sb + 1.0) * 6.2832, el = 0.35 + 0.45 * h1(sb + 2.0);
+        // in front of you (you are looking at the map): within ~55 degrees of where the camera faces
+        float  fa = atan2(c0.z, c0.x);
+        float az = fa + (h1(sb + 1.0) - 0.5) * 1.9, el = 0.22 + 0.40 * h1(sb + 2.0);
         float3 dir = float3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
         float3 col = b % 3 == 2 ? lerp(team, float3(1, 1, 1), 0.6) : team;
         float rad = 0.16 * (1.0 - exp(-ab * 3.0));               // the shell opens fast then hangs
