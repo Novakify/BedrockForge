@@ -833,38 +833,84 @@ float3 respawnFx(float3 o, float3 rd, float age, float3 team) {
     r += lerp(team, float3(1, 1, 1), 0.4) * exp(-pow((up - H) / 0.012, 2.0)) * 0.55 * saturate(1.4 - age);
     return r;
 }
-// ---- a team wins: fireworks of their colour over the map - bursts of sparks that bloom, fall and fade
+// ---- a team wins: a fireworks show over the map, in front of you. 14 shells over ~7 s, each launched on a fading
+//      trail, then one of five kinds: peony (team colour, white-hot cores cooling to colour), gold chrysanthemum
+//      with long streaks, willow (gold that droops and hangs), ring, and crossette (sparks that split again);
+//      the last sparks crackle; each burst lights the sky around it
 float3 victory(float3 rd, float age, float3 team, float seed) {
     float3 acc = 0.0;
-    [loop] for (int b = 0; b < 7; b++) {
+    float  fa = atan2(c0.z, c0.x);
+    [loop] for (int b = 0; b < 14; b++) {
         float sb = seed * 0.0007 + float(b) * 3.91;
-        float t0 = float(b) * 0.75 + h1(sb) * 0.4;               // one after another
+        float t0 = float(b) * 0.42 + h1(sb) * 0.35 + (b >= 11 ? 0.6 : 0.0);   // a finale volley at the end
         float ab = age - t0;
-        if (ab < 0.0 || ab > 2.6) continue;
-        // in front of you (you are looking at the map): within ~55 degrees of where the camera faces
-        float  fa = atan2(c0.z, c0.x);
-        float az = fa + (h1(sb + 1.0) - 0.5) * 1.9, el = 0.22 + 0.40 * h1(sb + 2.0);
+        float launch = 0.55;
+        if (ab < 0.0 || ab > launch + 3.0) continue;
+        float az = fa + (h1(sb + 1.0) - 0.5) * 1.7, el = 0.20 + 0.36 * h1(sb + 2.0);
         float3 dir = float3(cos(az) * cos(el), sin(el), sin(az) * cos(el));
-        float3 col = b % 3 == 2 ? lerp(team, float3(1, 1, 1), 0.6) : team;
-        float rad = 0.15 * (1.0 - exp(-ab * 2.6));               // the burst opens fast then hangs
-        float drop = 0.03 * ab * ab;                             // and sags as it falls
-        // cheap reject: is this pixel anywhere near the burst
-        if (length(rd - dir) > rad + 0.03 + drop) { continue; }
-        float shell = 0.0;
-        [loop] for (int j = 0; j < 36; j++) {
-            float sj = sb * 7.3 + float(j) * 1.618;
-            float3 sd = normalize(float3(h1(sj), h1(sj + 0.37), h1(sj + 0.71)) - 0.5 + 1e-3);
-            float  sp = 0.75 + 0.25 * h1(sj + 1.3);                // sparks at slightly different speeds
-            float3 head = dir + sd * rad * sp - float3(0, drop, 0);
-            float3 tail = dir + sd * rad * sp * 0.55 - float3(0, drop * 0.6, 0);   // a short streak behind it
-            float3 ab3 = head - tail, ap = rd - tail;
-            float  tt = saturate(dot(ap, ab3) / max(dot(ab3, ab3), 1e-8));
-            float  d = length(ap - ab3 * tt);
-            float  twinkle = ab > 1.2 ? step(0.45, h1(floor(TIME * 18.0) + sj)) : 1.0;  // the last of it crackles
-            shell += exp(-pow(d / 0.0022, 2.0)) * (0.35 + 0.65 * tt) * twinkle;
+        int   type = int(h1(sb + 5.0) * 5.0);
+        float3 pal = type == 1 || type == 2 ? float3(1.0, 0.72, 0.32) : (type == 3 ? lerp(team, float3(1, 1, 1), 0.45) : team);
+        if (b % 4 == 3 && type == 0) pal = float3(1.0, 1.0, 1.0) - team * 0.6 + 0.15;   // now and then the complement
+        if (ab < launch) {   // the climb: a spark rising on a fading trail
+            float  u = ab / launch;
+            float3 head = normalize(dir - float3(0, (1.0 - u) * 0.28, 0));
+            float3 tail = normalize(dir - float3(0, min((1.0 - u) * 0.28 + 0.09, 0.4), 0));
+            float3 sg = head - tail, ap = rd - tail;
+            float  tt = saturate(dot(ap, sg) / max(dot(sg, sg), 1e-8));
+            float  d = length(ap - sg * tt);
+            acc += float3(1.0, 0.82, 0.55) * exp(-pow(d / 0.0016, 2.0)) * tt * tt * 1.6;
+            continue;
         }
-        float  flash = exp(-length(rd - dir) * length(rd - dir) / 0.0009) * exp(-ab * 8.0) * 2.0;
-        acc += col * (shell * 1.4 + flash) * pow(saturate(1.0 - ab / 2.6), 1.5);
+        float a2 = ab - launch;
+        float fade = pow(saturate(1.0 - a2 / 3.0), 1.3);
+        float speed = type == 2 ? 0.11 : (type == 1 ? 0.17 : 0.14);
+        float rad = speed * (1.0 - exp(-a2 * 3.2));                 // opens fast, then hangs
+        float drop = (type == 2 ? 0.07 : 0.028) * a2 * a2;          // and sags (willow sags far)
+        if (length(rd - dir) > rad * 1.25 + 0.05 + drop) {          // only the sky glow, far from it
+            acc += pal * exp(-length(rd - dir) * 9.0) * exp(-a2 * 2.0) * 0.06;
+            continue;
+        }
+        float shell = 0.0, core = 0.0;
+        int   n = type == 3 ? 40 : 56;
+        [loop] for (int j = 0; j < n; j++) {
+            float  sj = sb * 7.3 + float(j) * 1.618;
+            float3 sd;
+            if (type == 3) {   // a ring, tilted
+                float aa = float(j) / float(n) * 6.2832;
+                sd = mul(rotAxis(normalize(float3(h1(sb + 8.0) - 0.5, 1.0, h1(sb + 9.0) - 0.5)), 0.0), float3(cos(aa), 0.25 * (h1(sb + 7.0) - 0.5), sin(aa)));
+                sd = normalize(sd);
+            } else {           // a sphere (golden spiral), a little jitter
+                float k = (float(j) + 0.5) / float(n);
+                float ph = acos(1.0 - 2.0 * k), th = 3.88322 * float(j);
+                sd = normalize(float3(sin(ph) * cos(th), cos(ph), sin(ph) * sin(th)) + (float3(h1(sj), h1(sj + 0.3), h1(sj + 0.6)) - 0.5) * 0.15);
+            }
+            float  sp = 0.85 + 0.15 * h1(sj + 1.3);
+            float3 head = dir + sd * rad * sp - float3(0, drop, 0);
+            float  trailK = type == 1 ? 0.35 : (type == 2 ? 0.25 : 0.62);   // gold and willow leave long streaks
+            float3 tail = dir + sd * rad * sp * trailK - float3(0, drop * trailK, 0);
+            float3 sg = head - tail, ap = rd - tail;
+            float  tt = saturate(dot(ap, sg) / max(dot(sg, sg), 1e-8));
+            float  d = length(ap - sg * tt);
+            float  twinkle = a2 > 1.4 ? step(0.5, h1(floor(TIME * 20.0) + sj)) : 1.0;
+            float  w = type == 2 ? 0.0028 : 0.0021;
+            shell += exp(-pow(d / w, 2.0)) * (0.25 + 0.75 * tt * tt) * twinkle;
+            if (type == 4 && a2 > 0.55) {   // crossette: each spark splits into four more
+                float a3 = a2 - 0.55;
+                [unroll] for (int q = 0; q < 4; q++) {
+                    float3 sd2 = normalize(cross(sd, q < 2 ? float3(0, 1, 0) : float3(1, 0, 0)) * (q & 1 ? 1.0 : -1.0));
+                    float3 h2 = head + sd2 * 0.05 * (1.0 - exp(-a3 * 4.0));
+                    float  d2 = length(rd - h2);
+                    shell += exp(-pow(d2 / 0.0019, 2.0)) * 0.9 * twinkle;
+                }
+            }
+            core += exp(-pow(d / 0.0011, 2.0)) * tt;
+        }
+        float  hot = exp(-a2 * 2.4);                                  // white-hot, cooling to its colour, then ember
+        float3 c = lerp(pal, float3(1, 1, 1), hot * 0.7);
+        c = lerp(c, pal * float3(1.0, 0.55, 0.3), smoothstep(1.6, 3.0, a2) * 0.6);
+        float  flash = exp(-length(rd - dir) * length(rd - dir) / 0.0016) * exp(-a2 * 7.0) * 3.0;
+        acc += (c * shell * 1.5 + float3(1, 1, 1) * core * hot * 1.2 + pal * flash) * fade;
+        acc += pal * exp(-length(rd - dir) * 7.0) * exp(-a2 * 2.0) * 0.08;   // the sky lit around it
     }
     return acc;
 }
@@ -1019,6 +1065,8 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
             float3 team = pow(max(eB[i].rgb, 0.0), 2.2);
             team = team / max(max(team.r, max(team.g, team.b)), 0.05);
             if (kind > 4.5 && kind < 5.5 && age < 1.6) o = respawnFx(o, rd, age, team);
+            if (kind > 5.5 && kind < 6.5 && age < 9.5 && sceneT > 60.0)   // a win: the fireworks show (sky only)
+                o = pow(pow(max(o, 0.0), 2.2) + victory(rd, age, team, eC[i].x) * (0.7 + 0.5 * darkK()), 1.0 / 2.2);
             if (kind > 6.5 && age < 0.7) { // your kill: a hard beat - the frame punches bright and warm at the edges, then settles
                 float edge = smoothstep(0.92, 0.55, dot(rd, c0.xyz));
                 float k = exp(-age * 7.0);

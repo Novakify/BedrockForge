@@ -1408,7 +1408,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             if (age < 0) continue;
             if (age > 6.5f) break; // older ones are older still
             if ((e.kind == 2 && age > 0.5f) || (e.kind == 1 && age > 4.2f) || (e.kind == 3 && age > 3.9f) || (e.kind == 4 && age > 4.0f) ||
-                (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 6.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
+                (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 9.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.4f) || e.kind > 8) continue;
             if (e.kind >= 3 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
             auto& c = f.cb;
