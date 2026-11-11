@@ -55,7 +55,7 @@ CLASSES: list[tuple[int, str, str]] = [
     (14, "ore", r"^(deepslate/)?(deepslate_)?\w*_ore$"),
     (15, "sand", r"^(sand|red_sand|(red_)?sandstone_(bottom|carved|smooth|top|normal)|red_sandstone(_normal)?|"
                  r"sandstone)$"),
-    (16, "soil", r"^(dirt|coarse_dirt|dirt_podzol_top|dirt_with_roots|mud|packed_mud|clay|gravel|farmland_dry|"
+    (16, "soil", r"^(dirt|coarse_dirt|grass_path_top|grass_path_side|dirt_podzol_top|dirt_with_roots|mud|packed_mud|clay|gravel|farmland_dry|"
                  r"muddy_mangrove_roots_(side|top))$"),
     (17, "bricks", r"^(brick|nether_brick|red_nether_brick|mud_bricks)$"),
     (18, "quartz", r"^quartz_block_(bottom|chiseled|chiseled_top|lines|lines_top|side|top)$"),

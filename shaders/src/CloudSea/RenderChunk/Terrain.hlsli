@@ -182,7 +182,16 @@ float4 main(PSIn i) : SV_Target {
     float  bh = csHash(bcell * float2(1.31, 0.73) + 11.0);
     float  skyK = saturate(lm.y);
 #if !defined(PASS_TRANSPARENT)
-    [branch] if (mid == MAT_LEAVES || mid == MAT_GRASS || mid == MAT_PLANT || (mid == 0 && leaf > 0.5)) {
+    // The Hive's own blocks (hive:red_oak_leaves, hive:small_dried_grass...) carry no material id (their art is the
+    // server's): an untagged cut-out with a natural colour outdoors is taken for foliage
+    float folk = 0.0;
+#if defined(PASS_ALPHATEST)
+    if (mid == 0) {
+        float mx = csMax3(c), mn = min(c.r, min(c.g, c.b));
+        folk = (mx - mn) / max(mx, 1e-3) > 0.22 && mx > 0.08 && skyK > 0.6 ? 1.0 : 0.0;
+    }
+#endif
+    [branch] if (mid == MAT_LEAVES || mid == MAT_GRASS || mid == MAT_PLANT || (mid == 0 && (leaf > 0.5 || folk > 0.5))) {
         // a gust flips leaves and blades over: their pale undersides show, the wind visibly rolls across the island
         // (seen in game: a grey wash read as dead leaves - the gust is a lift of light, a touch toward sage, colour kept)
         float k = gust * skyK * skyK * (mid == MAT_GRASS ? 0.55 : 0.75);

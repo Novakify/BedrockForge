@@ -1,3 +1,4 @@
+#include <array>
 #include <unordered_map>
 // Bedrock Forge - MatchFx: the match state World FX reacts to (see MatchFx.h). Original code for Bedrock Forge.
 #include "client/MatchFx.h"
@@ -781,6 +782,37 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             for (Actor* a : lp->getLevel().getRuntimeActorList()) {
                 if (!a || a->isPlayer()) continue;
                 auto p2 = a->getPosition();
+                {   // generators: The Hive's 'hivebed:generator' entities; a fresh item appearing on one is a drop -> kind 10
+                    //  (World FX lights the generator for a moment: something everyone sees happen, nothing hidden)
+                    static std::vector<std::array<float, 3>> gens;
+                    static std::vector<uint64_t> seenItems;
+                    static int64_t genReset = 0;
+                    if (gResetMs != genReset) { genReset = gResetMs; gens.clear(); seenItems.clear(); }
+                    std::string tk;
+                    try { tk = a->getTypeName(); } catch (...) {}
+                    if (tk == "hivebed:generator") {
+                        bool known = false;
+                        for (auto const& g : gens) known |= std::abs(g[0] - p2.x) < 0.6f && std::abs(g[2] - p2.z) < 0.6f && std::abs(g[1] - p2.y) < 1.5f;
+                        if (!known && gens.size() < 48) gens.push_back({p2.x, p2.y, p2.z});
+                    } else if (tk == "minecraft:item") {
+                        uint64_t rid = 0;
+                        try { rid = uint64_t(a->getRuntimeID().rawID); } catch (...) {}
+                        if (rid && std::find(seenItems.begin(), seenItems.end(), rid) == seenItems.end()) {
+                            if (seenItems.size() > 4096) seenItems.erase(seenItems.begin(), seenItems.begin() + 2048);
+                            seenItems.push_back(rid);
+                            for (auto const& g : gens) {
+                                if (std::abs(g[0] - p2.x) > 1.6f || std::abs(g[2] - p2.z) > 1.6f || std::abs(g[1] - p2.y) > 3.0f) continue;
+                                auto& e = gFx.events[gFx.nEvents % 256];
+                                e.x = int32_t(std::floor(g[0])), e.y = int32_t(std::floor(g[1])), e.z = int32_t(std::floor(g[2]));
+                                e.kind = 10, e.atMs = now;
+                                e.col[0] = g[0] - std::floor(g[0]), e.col[1] = g[1] - std::floor(g[1]), e.col[2] = g[2] - std::floor(g[2]), e.col[3] = 1.0f;
+                                e.seed = uint32_t(rid), e.floorDy = 0;
+                                ++gFx.nEvents;
+                                break;
+                            }
+                        }
+                    }
+                }
                 {   // census: every kind of entity on this map, once (finding The Hive's generators)
                     static std::vector<std::string> allTypes;
                     std::string t0;
