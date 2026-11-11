@@ -162,6 +162,15 @@ void onBroken(int x, int y, int z) {
     }
 }
 
+// the server put a bed back (you hit your own bed: the client breaks it, the server says no and re-sends it)
+void revive(Bed* b, char const* why) {
+    if (!b || b->alive || nowMs() - b->changed > 15000) return;
+    b->alive = true, b->changed = nowMs() - 100000; // (no "just placed" fade)
+    if (gBroken > 0) --gBroken;
+    if (gBroken == 0) gTarget = 0;
+    note("bed at {} {} {} is back ({})", b->x, b->y, b->z, why);
+}
+
 void pushEvent(BlockSource& bs, int x, int y, int z, uint32_t kind, Block const& b) {
     auto& e = gFx.events[gFx.nEvents % 256];
     e.x = x, e.y = y, e.z = z, e.kind = kind, e.atMs = nowMs();
@@ -198,6 +207,7 @@ void onChange(ll::event::BlockChangedEvent& ev) {
     else if (!boring(prev.getTypeName()) && next.getTypeName() == "minecraft:air")
         for (auto& b : gBeds) // a block of a bed's defence broken
             if (b.alive && std::abs(b.x - p.x) <= 4 && std::abs(b.z - p.z) <= 4 && p.y - b.y >= -1 && p.y - b.y <= 4) b.hitMs = now;
+    if (isBed(next)) revive(bedNear(p.x, p.y, p.z), "its block came back");
     if (isBed(next) && !bedNear(p.x, p.y, p.z) && gBeds.size() < 16) gBeds.push_back({p.x, p.y, p.z, 14, true, now});
     std::string const& pn = prev.getTypeName();
     std::string const& nn = next.getTypeName();
@@ -791,6 +801,12 @@ void onText(std::string const& m) {
         s += char(std::tolower(uint8_t(m[i])));
     }
     std::lock_guard l(gMutex);
+    if (s.find("destroy your own bed") != std::string::npos) { // the server refused: the bed you hit is still standing
+        Bed* best = nullptr; double bd = 1e9;
+        for (auto& b : gBeds)
+            if (!b.alive) { double d = std::hypot(b.x - gMe[0], b.z - gMe[2]); if (d < bd) bd = d, best = &b; }
+        revive(best, "the server said it's your own");
+    }
     {   // a kill line (not a bed / team line)
         if (gIsMap) note("text: {}", s.substr(0, 120)); // (finding the server's kill lines)
         bool const killy = s.find("death.") != std::string::npos || s.find("kill") != std::string::npos || s.find("slain") != std::string::npos || s.find("died") != std::string::npos ||
