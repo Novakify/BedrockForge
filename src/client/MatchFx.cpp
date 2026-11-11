@@ -235,12 +235,32 @@ int dyeOfTag(std::string const& t) {
     }
     return -1;
 }
+int64_t gLocalDeadAt = 0; // when you last died (a respawn follows)
+void pushFx(float const* pos, uint32_t kind, int dye) { // 5 = you respawned, 6 = a team won
+    auto& e = gFx.events[gFx.nEvents % 256];
+    e.x = int32_t(std::floor(pos[0])), e.y = int32_t(std::floor(pos[1])), e.z = int32_t(std::floor(pos[2]));
+    e.kind = kind, e.atMs = nowMs();
+    int const d = dye >= 0 ? dye : 0;
+    e.col[0] = kDye[d][0], e.col[1] = kDye[d][1], e.col[2] = kDye[d][2], e.col[3] = 1;
+    e.seed = uint32_t(e.atMs) * 2246822519u, e.floorDy = 255;
+    ++gFx.nEvents;
+}
+int myDye() { // your team: the bed by where you arrived
+    int d = -1; double best = 30.0 * 30.0;
+    for (auto const& b : gBeds)
+        if (b.dyeKnown) {
+            double q = (b.x + 0.5 - gAnchor[0]) * (b.x + 0.5 - gAnchor[0]) + (b.z + 0.5 - gAnchor[2]) * (b.z + 0.5 - gAnchor[2]);
+            if (q < best) best = q, d = b.dye;
+        }
+    return d;
+}
 void pushKill(Gone const& g0, bool fin) {
     static std::string lastName;
     static int64_t     lastAt = 0;
     int64_t const      t0 = nowMs();
     if (g0.name == lastName && t0 - lastAt < 3000) return; // "you died!" + "final kill! a eliminated you": one death
     lastName = g0.name, lastAt = t0;
+    if (g0.local) gLocalDeadAt = t0;
     Gone g = g0;
     if (g.dye < 0) { // no colour on the name tag: the team whose bed is nearest (for you: the one by where you arrived)
         double best = 1e18;
@@ -319,7 +339,16 @@ void trackPlayers(LocalPlayer& lp, int64_t now) {
         }
         if (t->dye < 0) try { t->dye = dyeOfTag(static_cast<Actor&>(pl).getNameTag()); } catch (...) {}
         float const j = std::sqrt((q.x - t->pos[0]) * (q.x - t->pos[0]) + (q.y - t->pos[1]) * (q.y - t->pos[1]) + (q.z - t->pos[2]) * (q.z - t->pos[2]));
-        if (j > 10.0f && now - t->seen < 400) gGone.push_back({t->name, {t->pos[0], t->pos[1], t->pos[2]}, t->dye, now, local}); // moved away at once
+        if (j > 10.0f && now - t->seen < 400) {
+            gGone.push_back({t->name, {t->pos[0], t->pos[1], t->pos[2]}, t->dye, now, local}); // moved away at once
+            // you, moved 2.5-15 s after dying: that is the respawn (the first move is to the spectator spot)
+            if (local && gLocalDeadAt && now - gLocalDeadAt > 2500 && now - gLocalDeadAt < 15000) {
+                float const at[3] = {q.x, q.y, q.z};
+                pushFx(at, 5, myDye());
+                gLocalDeadAt = 0;
+                note("you respawned");
+            }
+        }
         t->pos[0] = q.x, t->pos[1] = q.y, t->pos[2] = q.z, t->seen = now;
         return true;
     });
@@ -662,6 +691,21 @@ void onText(std::string const& m) {
         } else if (bedGone && gBroken == 0 && !first) gBroken = 1; // a bed we couldn't see went down
         gIsMap = true;
         retarget();
+    }
+    if ((s.find("champion") != std::string::npos || s.find("victory") != std::string::npos || s.find(" won") != std::string::npos ||
+         s.find(" wins") != std::string::npos) && gIsMap) {
+        static int64_t lastWin = 0;
+        if (nowMs() - lastWin > 20000) {
+            lastWin = nowMs();
+            static char const* kN[16] = {"white", "orange", "magenta", "aqua", "yellow", "lime", "pink", "gray",
+                                         "light gray", "cyan", "purple", "blue", "brown", "green", "red", "black"};
+            int d = -1; size_t at = std::string::npos;
+            for (int i = 0; i < 16; ++i) { size_t k = s.find(kN[i]); if (k != std::string::npos && k < at) at = k, d = i; }
+            if (s.find("you") != std::string::npos && d < 0) d = myDye();
+            float const p[3] = {float(gAnchor[0]), float(gAnchor[1]), float(gAnchor[2])};
+            pushFx(p, 6, d);
+            note("a team won (colour {}): {}", d, s.substr(0, 60));
+        }
     }
     if (s.find("all beds") != std::string::npos || s.find("bed destruction") != std::string::npos ||
         s.find("sudden death") != std::string::npos)
