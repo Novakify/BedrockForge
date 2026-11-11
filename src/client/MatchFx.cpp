@@ -640,6 +640,29 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             b.threat += (want - b.threat) * std::min(1.0f, dt * (want > b.threat ? 6.0f : 1.5f));
         }
     }
+    {   // F9: a test bridge - 14 placements along the ground in front of you, one every 150 ms (the fuse, without a mouse)
+        static bool    down9 = false;
+        static int     left = 0;
+        static int64_t nextAt = 0;
+        static int     bx = 0, by = 0, bz = 0, sx = 0, sz = 0;
+        bool const k9 = (GetAsyncKeyState(0x78) & 0x8000) != 0; // VK_F9
+        if (k9 && !down9) {
+            float const yaw = lp->getRotation().y * 3.14159265f / 180.0f;
+            float const fx = -std::sin(yaw), fz = std::cos(yaw);
+            if (std::abs(fx) > std::abs(fz)) sx = fx > 0 ? 1 : -1, sz = 0; else sx = 0, sz = fz > 0 ? 1 : -1;
+            bx = int(std::floor(pos[0])) + sx * 2, by = int(std::floor(pos[1] - 1.62)) - 1, bz = int(std::floor(pos[2])) + sz * 2;
+            left = 14, nextAt = now;
+        }
+        down9 = k9;
+        if (left > 0 && now >= nextAt) {
+            auto& e = gFx.events[gFx.nEvents % 256];
+            e.x = bx, e.y = by, e.z = bz, e.kind = 2, e.atMs = now;
+            e.col[0] = kDye[11][0], e.col[1] = kDye[11][1], e.col[2] = kDye[11][2], e.col[3] = 1;
+            e.seed = uint32_t(now), e.floorDy = 0;
+            ++gFx.nEvents;
+            bx += sx, bz += sz, --left, nextAt = now + 150;
+        }
+    }
     {   // F8: test the match moments in turn - kill, final kill, respawn, victory (to see them without a fight)
         static bool down = false;
         static int  step = 0;
