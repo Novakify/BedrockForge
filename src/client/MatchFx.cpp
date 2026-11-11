@@ -235,7 +235,22 @@ int dyeOfTag(std::string const& t) {
     }
     return -1;
 }
-void pushKill(Gone const& g, bool fin) {
+void pushKill(Gone const& g0, bool fin) {
+    static std::string lastName;
+    static int64_t     lastAt = 0;
+    int64_t const      t0 = nowMs();
+    if (g0.name == lastName && t0 - lastAt < 3000) return; // "you died!" + "final kill! a eliminated you": one death
+    lastName = g0.name, lastAt = t0;
+    Gone g = g0;
+    if (g.dye < 0) { // no colour on the name tag: the team whose bed is nearest (for you: the one by where you arrived)
+        double best = 1e18;
+        double const cx = g.local ? gAnchor[0] : g.pos[0], cz = g.local ? gAnchor[2] : g.pos[2];
+        for (auto const& b : gBeds)
+            if (b.dyeKnown) {
+                double d = (b.x - cx) * (b.x - cx) + (b.z - cz) * (b.z - cz);
+                if (d < best) best = d, g.dye = b.dye;
+            }
+    }
     auto& e = gFx.events[gFx.nEvents % 256];
     e.x = int32_t(std::floor(g.pos[0])), e.y = int32_t(std::floor(g.pos[1])), e.z = int32_t(std::floor(g.pos[2]));
     e.kind = fin ? 4u : 3u, e.atMs = nowMs();
@@ -252,7 +267,7 @@ void matchKills(int64_t now) {
         // the named player who jumped away / vanished around the line is the victim, where they stood before
         for (auto g = gGone.begin(); g != gGone.end() && !done; ++g) {
             if (std::llabs(g->at - k->at) > 2500) continue;
-            bool const named = g->local ? k->you : (!g->name.empty() && k->text.find(g->name) != std::string::npos);
+            bool const named = (g->local && k->you) || (g->name.size() >= 3 && k->text.find(g->name) != std::string::npos);
             if (!named) continue;
             pushKill(*g, k->fin);
             gGone.erase(g);
@@ -280,8 +295,18 @@ void trackPlayers(LocalPlayer& lp, int64_t now) {
         auto const q = static_cast<Actor&>(pl).getFeetPos(); // (getPosition is the eyes)
         bool const local = static_cast<Actor*>(&pl) == static_cast<Actor*>(&lp);
         if (!local && std::hypot(q.x - me.x, q.z - me.z) > 180.0) return true; // the whole map (islands are far apart)
+        // the name chat uses: the real (gamer) name; a remote player may not carry it on the client, then the name tag
+        // (first line, without a "[rank]" in front)
         std::string name;
         try { name = lower(pl.getRealName()); } catch (...) {}
+        if (name.empty()) {
+            try { name = lower(static_cast<Actor&>(pl).getNameTag()); } catch (...) {}
+            if (auto nl = name.find('\n'); nl != std::string::npos) name.resize(nl);
+            if (auto rb = name.rfind(']'); rb != std::string::npos) name = name.substr(rb + 1);
+            while (!name.empty() && uint8_t(name.front()) <= ' ') name.erase(name.begin());
+            while (!name.empty() && uint8_t(name.back()) <= ' ') name.pop_back();
+        }
+        if (name.empty() && !local) return true; // nameless: nothing in chat can point at it
         Track* t = nullptr;
         for (size_t i = 0; i < gTracks.size(); ++i)
             if (gTracks[i].name == name && gTracks[i].local == local) { t = &gTracks[i]; hit[i] = 1; break; }
@@ -540,7 +565,8 @@ void onText(std::string const& m) {
             KillLine kl{s, s.find("final") != std::string::npos, you, nowMs(), {}};
             std::vector<std::pair<size_t, Gone>> named;
             for (auto const& t : gTracks) {
-                size_t at = t.local ? (you ? 0 : std::string::npos) : (t.name.size() >= 3 ? s.find(t.name) : std::string::npos);
+                size_t at = t.name.size() >= 3 ? s.find(t.name) : std::string::npos;
+                if (t.local && you) at = 0;
                 if (at != std::string::npos) named.push_back({at, Gone{t.name, {t.pos[0], t.pos[1], t.pos[2]}, t.dye, kl.at, t.local}});
             }
             std::sort(named.begin(), named.end(), [](auto const& x, auto const& y) { return x.first < y.first; });
