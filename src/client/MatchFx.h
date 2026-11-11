@@ -73,6 +73,8 @@ void uninstall();
 void frame(IClientInstance& client, LocalPlayer* player);
 /// chat / title text (fallback for servers that remove beds without a block update we see)
 void onText(std::string const& message);
+/// the server played an actor event (2 = hurt) on runtime id `rid` (network thread)
+void onActorEvent(uint64_t rid, int event);
 /// the time of day the game should render while a consumer is attached; false = leave the game's own
 bool timeOverride(float& t);
 } // namespace bedrock_forge::client::matchfx

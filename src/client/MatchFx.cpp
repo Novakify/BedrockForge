@@ -442,6 +442,47 @@ void moveLocal(Actor* a, float x, float y, float z) {
     }
 }
 
+// ---- hits: the server shows a hurt animation on someone (ActorEvent 2) -> impact light on them (kind 8)
+struct PendingHit { uint64_t rid; int64_t at; };
+std::vector<PendingHit> gHits;
+void resolveHits(LocalPlayer& lp, int64_t now) {
+    if (gHits.empty()) return;
+    std::vector<PendingHit> hits;
+    hits.swap(gHits);
+    auto const me = lp.getPosition();
+    float const yaw = lp.getRotation().y * 3.14159265f / 180.0f, pitch = lp.getRotation().x * 3.14159265f / 180.0f;
+    float const fx = -std::sin(yaw) * std::cos(pitch), fy = -std::sin(pitch), fz = std::cos(yaw) * std::cos(pitch);
+    try {
+        for (Actor* a : lp.getLevel().getRuntimeActorList()) {
+            if (!a) continue;
+            uint64_t id = 0;
+            try { id = uint64_t(a->getRuntimeID().rawID); } catch (...) { continue; }
+            for (auto const& h : hits) {
+                if (h.rid != id || now - h.at > 500) continue;
+                auto const f = a->getFeetPos();
+                if (std::hypot(f.x - me.x, f.z - me.z) > 64.0) break;
+                int dye = -1;
+                try { dye = dyeOfTag(a->getNameTag()); } catch (...) {}
+                // yours: right in front of you, within reach
+                float const dx = f.x - me.x, dy = f.y + 1.0f - me.y, dz = f.z - me.z;
+                float const dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                bool const mine = a != static_cast<Actor*>(&lp) && dist < 5.0f && (dx * fx + dy * fy + dz * fz) / std::max(dist, 0.01f) > 0.75f;
+                bool const self = a == static_cast<Actor*>(&lp);
+                auto& e = gFx.events[gFx.nEvents % 256];
+                e.x = int32_t(std::floor(f.x)), e.y = int32_t(std::floor(f.y)), e.z = int32_t(std::floor(f.z));
+                e.kind = 8, e.atMs = now;
+                int const d = dye >= 0 ? dye : 0;
+                e.col[0] = kDye[d][0], e.col[1] = kDye[d][1], e.col[2] = kDye[d][2];
+                e.col[3] = self ? 2.0f : (mine ? 1.0f : 0.0f);          // 2 you were hit, 1 your hit, 0 someone else's
+                e.seed = uint32_t(now) * 2654435761u;
+                e.floorDy = uint32_t(std::lround((std::fmod(lp.getRotation().y + 720.0f, 360.0f)) * 10.0f)); // your view yaw x10
+                ++gFx.nEvents;
+                break;
+            }
+        }
+    } catch (...) {}
+}
+
 void resetMatch(double const* pos) {
     note("new match at {:.0f} {:.0f} {:.0f} (had {} beds, {} broken)", pos[0], pos[1], pos[2], gBeds.size(), gBroken);
     gBeds.clear();
@@ -693,6 +734,7 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
         down = k;
     }
     trackProjectiles(*lp, now); // (any world: arrows look the same in single player)
+    resolveHits(*lp, now);
     retarget();
     // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night
     float const rate = gTarget > gPhase ? (gPhase < 1.0f ? 1.0f / 20.0f : 1.0f / 25.0f) : 1.0f / 3.0f;
@@ -864,6 +906,12 @@ void onText(std::string const& m) {
     if (s.find("all beds") != std::string::npos || s.find("bed destruction") != std::string::npos ||
         s.find("sudden death") != std::string::npos)
         gTarget = 2;
+}
+
+void onActorEvent(uint64_t rid, int event) {
+    if (event != 2 || !rid) return;   // 2 = hurt
+    std::lock_guard l(gMutex);
+    if (gHits.size() < 32) gHits.push_back({rid, nowMs()});
 }
 
 bool timeOverride(float& t) {

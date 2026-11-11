@@ -35,6 +35,7 @@
 #include "mc/network/MinecraftPackets.h"
 #include "mc/network/NetworkIdentifier.h"
 #include "mc/network/PacketSender.h"
+#include "mc/network/packet/ActorEventPacket.h"
 #include "mc/network/packet/CommandRequestPacket.h"
 #include "mc/network/packet/CommandRequestPacketPayload.h"
 #include "mc/network/packet/SetTitlePacket.h"
@@ -345,6 +346,24 @@ LL_TYPE_INSTANCE_HOOK(BfTextPacketHook, ll::memory::HookPriority::Normal, Client
     try { show = bedrock_forge::client::serverauto::handleText(bedrock_forge::client::serverauto::messageOf(packet)); } catch (...) {}
     if (show) origin(source, packet);
 }
+// a hit on someone: the server plays the hurt animation on them (ActorEvent 2) - MatchFx turns it into impact light
+LL_TYPE_INSTANCE_HOOK(BfActorEventHook, ll::memory::HookPriority::Normal, ClientNetworkHandler, &ClientNetworkHandler::$handle, void,
+                      NetworkIdentifier const& source, ActorEventPacket const& packet) {
+    try {
+        auto raw = [](auto const& f) -> uint64_t {
+            if constexpr (requires { f.get().rawID; }) return uint64_t(f.get().rawID);
+            else if constexpr (requires { f->rawID; }) return uint64_t(f->rawID);
+            else if constexpr (requires { f.rawID; }) return uint64_t(f.rawID);
+            else return 0;
+        };
+        auto num = [](auto const& f) -> int {
+            if constexpr (requires { f.get(); }) return int(f.get());
+            else return int(f);
+        };
+        bedrock_forge::client::matchfx::onActorEvent(raw(packet.mRuntimeId), num(packet.mEventId));
+    } catch (...) {}
+    origin(source, packet);
+}
 LL_TYPE_INSTANCE_HOOK(BfTitlePacketHook, ll::memory::HookPriority::Normal, ClientNetworkHandler, &ClientNetworkHandler::$handle, void,
                       NetworkIdentifier const& source, SetTitlePacket const& packet) {
     try { bedrock_forge::client::serverauto::handleTitle(packet.mTitleText.get()); } catch (...) {}
@@ -355,9 +374,11 @@ namespace bedrock_forge::client::serverauto {
 void install() {
     BfTextPacketHook::hook();
     BfTitlePacketHook::hook();
+    BfActorEventHook::hook();
 }
 void uninstall() {
     BfTextPacketHook::unhook();
     BfTitlePacketHook::unhook();
+    BfActorEventHook::unhook();
 }
 } // namespace bedrock_forge::client::serverauto
