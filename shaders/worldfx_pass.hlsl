@@ -646,8 +646,6 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
         o = pow(lin, 1.0 / 2.2);
     }
     [branch] if (m0.y > 0.5 && m0.w > 0.0 && m1.z > 0.5) o = pow(pow(max(o, 0.0), 2.2) + killLight(rd, sceneT), 1.0 / 2.2);
-    [branch] if (m0.x > 0.5 && m0.z > 0.0) o = pow(pow(max(o, 0.0), 2.2) + bedAlarm(rd) * m0.z, 1.0 / 2.2);
-    [branch] if (sceneT > 1e8 && NIGHT > 0.6 && m0.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + storm(rd), 1.0 / 2.2);
     [branch] if (sceneT > 1e8 && m2.x > 0.5) o = pow(pow(max(o, 0.0), 2.2) + fallenStars(rd), 1.0 / 2.2);
     [branch] if (m1.z > 0.5) {
         int ne = int(m0.y);
@@ -661,7 +659,6 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
                 float k = exp(-age * 7.0);
                 o = lerp(o, saturate(o * 1.25 + 0.04), k * 0.6) + lerp(team, float3(1.0, 0.85, 0.55), 0.5) * edge * k * 0.35;
             }
-            if (kind > 5.5 && kind < 6.5 && sceneT > 1e8) o = pow(pow(max(o, 0.0), 2.2) + victory(rd, age, team, eC[i].x), 1.0 / 2.2);
         }
     }
     return o;
