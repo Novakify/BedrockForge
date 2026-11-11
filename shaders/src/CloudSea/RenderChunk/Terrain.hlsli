@@ -117,6 +117,44 @@ float4 main(PSIn i) : SV_Target {
     if (mid > MAT_LAST) mid = 0;
 #endif
     CsMat  m    = csMat(mid);
+#if !defined(PASS_TRANSPARENT)
+    // carved blocks: real depth. A short march into the face (the texel's darkness = how deep it is cut), pixel-art
+    // exact (whole texels, no smear), up to ~2.5 texels of shift; the cut walls fall into shade. Near blocks only.
+    float pxShade = 1.0;
+    [branch] if (mid == MAT_CARVED) {
+        float tppP = max(fwidth(tx.x), fwidth(tx.y));
+        float near = 1.0 - smoothstep(0.35, 0.8, tppP);
+        if (near > 0.0) {
+            float3 nP = csNormal(i.texcoord3, normalize(ViewPositionAndTime.xyz - i.texcoord3), true);
+            float3 dpx = ddx(i.texcoord3), dpy = ddy(i.texcoord3);
+            float2 dtx = ddx(tx), dty = ddy(tx);
+            float  det = dtx.x * dty.y - dtx.y * dty.x;
+            float3 Tp = (dpx * dty.y - dpy * dtx.y) * (det != 0.0 ? 1.0 / det : 0.0);
+            float3 Bp = (dpy * dtx.x - dpx * dty.x) * (det != 0.0 ? 1.0 / det : 0.0);
+            float3 aT = abs(Tp), aB = abs(Bp);
+            Tp = aT.x >= max(aT.y, aT.z) ? float3(sign(Tp.x), 0, 0) : (aT.y >= aT.z ? float3(0, sign(Tp.y), 0) : float3(0, 0, sign(Tp.z)));
+            Bp = aB.x >= max(aB.y, aB.z) ? float3(sign(Bp.x), 0, 0) : (aB.y >= aB.z ? float3(0, sign(Bp.y), 0) : float3(0, 0, sign(Bp.z)));
+            float3 Vw = normalize(ViewPositionAndTime.xyz - i.texcoord3);
+            float3 vt = float3(dot(Vw, Tp), dot(Vw, Bp), max(dot(Vw, nP), 0.25));
+            float2 stepT = -vt.xy / vt.z * (2.6 / 6.0) * near;          // texels per layer
+            float2 q = float2(ti - tile) + 0.5;
+            float  layer = 0.0, hgt = 0.0;
+            [unroll] for (int k = 0; k < 6; k++) {
+                int2 tq = tile + int2(clamp(floor(q), 0.0, 31.0));
+                hgt = 1.0 - csLuma(s_MatTextureTexture.Load(int3(tq, 0)).rgb) * 1.25;   // dark = deep
+                if (layer >= hgt) break;
+                q += stepT; layer += 1.0 / 6.0;
+            }
+            int2 tn = tile + int2(clamp(floor(q), 0.0, 31.0));
+            if (any(tn != ti)) {
+                float4 tN = s_MatTextureTexture.Load(int3(tn, 0));
+                c = tN.rgb * tint;
+                ti = tn; t0 = float4(tN.rgb, t0.a);
+            }
+            pxShade = lerp(1.0, 0.72 + 0.28 * saturate(1.0 - layer * 1.4), near);   // the deeper it is cut, the less light
+        }
+    }
+#endif
     // obsidian: the polished streaks catch the sky, the dark body stays dark (the void lives there) - one even mirror
     // over the whole face read as a muddy haze in game
     if (mid == MAT_OBSIDIAN) m.refl *= 0.25 + 1.3 * smoothstep(0.08, 0.22, csLuma(t0.rgb));
@@ -161,6 +199,9 @@ float4 main(PSIn i) : SV_Target {
 #if defined(PASS_OPAQUE)
     float3 mean = s_MatTextureTexture.SampleLevel(s_MatTextureSampler, i.texcoord0, 3.0).rgb * tint;
     c = lerp(mean, c, lerp(0.78, m.detail, step(0.5, float(mid))));
+#endif
+#if !defined(PASS_TRANSPARENT)
+    c *= pxShade;
 #endif
     float3 alb = csLin(c / csVanillaShade(n));
     if (mid == MAT_OBSIDIAN) alb *= 0.55;           // volcanic glass: dark in any light, its reflections and the void carry it

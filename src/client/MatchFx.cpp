@@ -569,6 +569,7 @@ void resolveHits(LocalPlayer& lp, int64_t now) {
                 e.kind = 8, e.atMs = now;
                 int const d = dye >= 0 ? dye : 0;
                 e.col[0] = kDye[d][0], e.col[1] = kDye[d][1], e.col[2] = kDye[d][2];
+                if (mine) note("your hit{} on '{}'", heavy ? " (crit / mace: impact frame)" : "", [&] { try { return a->getTypeName(); } catch (...) { return std::string(); } }());
                 e.col[3] = self ? 2.0f : (mine ? (heavy ? 1.25f : 1.0f) : 0.0f);   // 2 you were hit, 1 your hit (1.25 crit / mace), 0 someone else's
                 e.seed = uint32_t(now) * 2654435761u;
                 e.floorDy = uint32_t(std::lround((std::fmod(lp.getRotation().y + 720.0f, 360.0f)) * 10.0f)); // your view yaw x10

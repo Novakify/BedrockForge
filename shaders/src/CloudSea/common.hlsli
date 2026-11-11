@@ -129,7 +129,8 @@ float3 csSky(float3 d) {
 #define MAT_LEAVES 23   // leaves: gusts, fluttering glints
 #define MAT_PLANT 24    // tall grass, ferns, vines
 #define MAT_FLOWER 25   // flowers: petals hold the light, glow softly after dusk
-#define MAT_LAST 25
+#define MAT_CARVED 26   // chiseled / carved blocks: parallax depth (the only ordinary blocks that get it)
+#define MAT_LAST 26
 struct CsMat {
     float bump;    // relief from the texture's own light/dark pattern (0 = flat)
     float detail;  // 1 = full texture detail, lower = softer / calmer
@@ -172,6 +173,7 @@ CsMat csMat(int id) {
     case MAT_LAMP:       m.bump = 0.20; m.detail = 1.0;  m.spec = 0.10; m.rough = 40.0; break;
     case MAT_LEAVES:     m.bump = 0.30; m.detail = 1.0;  m.spec = 0.06; m.rough = 30.0; break;
     case MAT_PLANT:      m.bump = 0.0;  m.detail = 1.0;  m.spec = 0.04; break;
+    case MAT_CARVED:     m.bump = 0.55; m.detail = 1.0;  m.spec = 0.06; m.rough = 24.0; break;
     case MAT_FLOWER:     m.bump = 0.0;  m.detail = 1.0;  m.spec = 0.05; m.sat = 1.05; break;
     }
     return m;

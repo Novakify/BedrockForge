@@ -71,12 +71,17 @@ CLASSES: list[tuple[int, str, str]] = [
                   r"azalea_plant|waterlily)$"),
     (25, "flower", r"^(flower_\w+|red_flower\w*|double_plant_(paeonia|rose|syringa|sunflower)_\w+|torchflower|"
                    r"azalea_leaves_flowers\w*|flowering_azalea_\w+|pink_petals|wildflowers)$"),
+    # carved / chiseled blocks: the unique ones that get parallax depth (checked before the classes above - see classify)
+    (26, "carved", r"^(stonebrick_carved|quartz_block_chiseled(_top)?|(red_)?sandstone_carved|chiseled_\w+|"
+                   r"(deepslate/)?chiseled_deepslate|\w+_chiseled)$"),
 ]
 CUTOUT = {"leaves", "plant", "flower", "lamp"}   # tagged texel by texel (their transparent texels stay transparent)
 STEP = 4
 
 
 def classify(rel: str) -> int:
+    if re.match(CLASSES[25][2], rel):   # carved first: they also match cut stone / quartz / sand
+        return 26
     for cid, _name, rx in CLASSES:
         if re.match(rx, rel):
             return cid
