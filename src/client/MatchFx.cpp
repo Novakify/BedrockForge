@@ -401,13 +401,21 @@ void trackProjectiles(LocalPlayer& lp, int64_t now) {
                         if (d < bd) bd = d, n.col[0] = kDye[tr.dye][0], n.col[1] = kDye[tr.dye][1], n.col[2] = kDye[tr.dye][2];
                     }
                 gProj.push_back(n); hit.push_back(1); pr = &gProj.back();
+                static std::vector<std::string> seenP;
+                if (std::find(seenP.begin(), seenP.end(), t) == seenP.end()) { seenP.push_back(t); note("projectile type '{}' (kind {})", t, k); }
             }
-            // a new point when it moved (a stuck arrow stops adding points and its trail fades)
-            auto const& last = pr->pts[0];
-            if (pr->n == 0 || std::abs(last.x - p.x) + std::abs(last.y - p.y) + std::abs(last.z - p.z) > 0.05f) {
-                for (int i = 11; i > 0; --i) pr->pts[i] = pr->pts[i - 1];
+            // the head follows it every frame; a new point is laid every ~0.6 blocks (so 12 points cover a few metres
+            // of flight). A stuck arrow stops moving: its trail fades out
+            auto& head = pr->pts[0];
+            bool const moved = pr->n == 0 || std::abs(head.x - p.x) + std::abs(head.y - p.y) + std::abs(head.z - p.z) > 0.02f;
+            if (moved) {
+                auto const& anchor = pr->pts[pr->n > 1 ? 1 : 0];
+                float const d = std::sqrt((anchor.x - p.x) * (anchor.x - p.x) + (anchor.y - p.y) * (anchor.y - p.y) + (anchor.z - p.z) * (anchor.z - p.z));
+                if (pr->n < 2 || d > 0.6f) {
+                    for (int i = 11; i > 0; --i) pr->pts[i] = pr->pts[i - 1];
+                    pr->n = std::min<uint32_t>(pr->n + 1, 12);
+                }
                 pr->pts[0] = {p.x, p.y, p.z, now};
-                pr->n = std::min<uint32_t>(pr->n + 1, 12);
                 pr->seen = now;
             }
         }
