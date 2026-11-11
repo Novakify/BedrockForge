@@ -137,6 +137,7 @@ float4 main(PSIn i) : SV_Target {
     c = lerp(mean, c, lerp(0.78, m.detail, step(0.5, float(mid))));
 #endif
     float3 alb = csLin(c / csVanillaShade(n));
+    if (mid == MAT_OBSIDIAN) alb *= 0.55;           // volcanic glass: dark in any light, its reflections and the void carry it
 #if defined(PASS_ALPHATEST)
     float leaf = (CS_SEASONS || csMax3(tint) - min(tint.r, min(tint.g, tint.b)) > 0.04) ? 1.0 : 0.0;
 #else
