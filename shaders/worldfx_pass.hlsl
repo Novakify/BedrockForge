@@ -877,7 +877,7 @@ float3 hitOn(float3 W, float3 lin) {
     return lin;
 }
 // ---- your footsteps (BF kind 9: walking or running on the ground, never sneaking or looking down): a faint ring of
-//      the sky's light spreads from where your foot landed, over the block top, and is gone in 0.6 s
+//      the sky's light spreads from where your foot landed, over the block top, and is gone in 0.8 s
 float3 stepRings(float3 W, float3 lin) {
     int ne = int(m0.y);
     [loop] for (int i = 0; i < ne; i++) {
@@ -887,9 +887,9 @@ float3 stepRings(float3 W, float3 lin) {
         if (abs(W.y - top) > 0.07) continue;
         float2 foot = eA[i].xz + eB[i].xz;
         float  r = length(W.xz - foot);
-        float  R = 0.20 + 1.6 * sqrt(age / 0.6);
+        float  R = 0.30 + 2.6 * sqrt(age / 0.8);   // out past where your view meets the ground (seen in game: 1.8 stayed under you)
         float  band = exp(-pow((r - R) / (0.05 + 0.06 * age), 2.0));
-        float  k = pow(1.0 - age / 0.6, 2.0) * 0.16 * saturate(eC[i].z / 5.0 + 0.4);
+        float  k = pow(saturate(1.0 - age / 0.8), 2.0) * 0.16 * saturate(eC[i].z / 5.0 + 0.4);
         lin += (lin * 1.6 + 0.012) * lerp(float3(1.0, 0.86, 0.68), float3(0.65, 0.78, 1.0), NIGHT) * band * k;
     }
     return lin;
