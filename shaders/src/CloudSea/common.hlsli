@@ -10,6 +10,7 @@
 static float3 CS_SUN   = float3(0.17605, 0.11247, -0.97794);   // toward the sun (the moon at night)
 static float3 CS_SUNC  = float3(1.00, 0.72, 0.50) * 1.85;      // its light on the world
 static float  CS_DUSK  = 0.0, CS_NIGHT = 0.0, CS_PHASE = 0.0, CS_TIME = 0.0, CS_LIGHTK = 1.0;
+static float  CS_CLOUDREFL = 1.0;   // how sharp the clouds are in a reflection (matte surfaces: none - they smear into streaks)
 static const float2 CS_SUN_AZ  = float2(0.17717, -0.98418);
 static const float2 CS_MOON_AZ = float2(-0.85671, 0.51580);
 float3 csDirAzEl(float2 az, float el) { return float3(az.x * cos(el), sin(el), az.y * cos(el)); }
@@ -177,7 +178,7 @@ float3 csSkyMoving(float3 r) {
     float  e = max(r.y, 0.0);
     float2 p = r.xz / max(r.y, 0.07) * 0.85 + CS_TIME * float2(0.016, 0.006);
     float  n = csVN(p) * 0.55 + csVN(p * 2.3 + 7.1) * 0.30 + csVN(p * 5.3 + 3.3) * 0.15;
-    float  cl = smoothstep(0.52, 0.78, n) * smoothstep(0.01, 0.16, e) * (1.0 - smoothstep(0.55, 0.95, e) * 0.6);
+    float  cl = smoothstep(0.52, 0.78, n) * smoothstep(0.06, 0.26, e) * (1.0 - smoothstep(0.55, 0.95, e) * 0.6) * CS_CLOUDREFL;   // low clouds stretch into streaks: fade them
     float  toSun = pow(saturate(dot(normalize(float3(r.x, 0.0, r.z)), normalize(float3(CS_SUN.x, 0.0, CS_SUN.z))) * 0.5 + 0.5), 2.0);
     float3 lit = lerp(lerp(float3(1.25, 0.66, 0.48), float3(0.95, 0.42, 0.48), CS_DUSK), float3(0.20, 0.24, 0.36), CS_NIGHT);
     float3 shd = lerp(lerp(float3(0.42, 0.28, 0.42), float3(0.24, 0.16, 0.30), CS_DUSK), float3(0.05, 0.06, 0.11), CS_NIGHT);
@@ -244,7 +245,11 @@ float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float l
         float3 R = reflect(-V, n);
         float  f0 = lerp(0.04, 0.6, m.metal);
         float  F  = f0 + (1.0 - f0) * fres;
-        float3 rc = csReflect(R) * lerp(float3(1.0, 1.0, 1.0), sqrt(alb / max(csMax3(alb), 1e-3)), m.metal);
+        CS_CLOUDREFL = smoothstep(0.12, 0.30, m.refl);
+        float3 rc = csReflect(R);
+        rc = lerp(rc, csLuma(rc).xxx, 0.45 * m.metal);   // brushed metal scatters the sky's colour: steel, not pink chrome
+        rc *= lerp(float3(1.0, 1.0, 1.0), sqrt(alb / max(csMax3(alb), 1e-3)), m.metal);
+        CS_CLOUDREFL = 1.0;
         rc *= lerp(1.0, 0.45 + 1.1 * smoothstep(-0.05, 0.25, R.y) * (1.0 - 0.5 * smoothstep(0.25, 0.8, R.y)), m.metal); // contrast: dark below the horizon line, bright band, dimmer zenith
         c = lerp(c, rc * lerp(0.35, 1.0, sky), saturate(F * m.refl * 1.6)) + rc * m.metal * m.refl * 0.55 * sky;
     }
