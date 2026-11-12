@@ -373,7 +373,11 @@ float ngAcField(float2 q, float cov) {
     float fr = fbm(q * 7.0, 3) * 0.7 + fbm(q * 19.0, 2) * 0.3;   // a frayed outline
     return saturate((cov * 2.1 - 0.80) - b * 0.90 - fr * 0.36 + 0.33);
 }
-float4 ngAlto(float3 rd, float3 Ld) {
+// the same field, coarse (the big lumps only): enough for the light march (cost: seen 5.3 ms for the pass at 4K)
+float ngAcFieldLo(float2 q, float cov) {
+    return saturate((cov * 2.1 - 0.80) - ngWor(q * float2(2.9, 2.1)) * 0.72 - 0.10 + 0.30);
+}
+float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float e = rd.y;
     [branch] if (e < 0.015) return float4(0, 0, 0, 0);
     float2 P = rd.xz / (e * 0.55 + 0.16) * 1.5 + TIME * float2(0.006, 0.002);   // (overhead a little denser: seen in game, huge soft blobs up there)
@@ -383,13 +387,16 @@ float4 ngAlto(float3 rd, float3 Ld) {
     float cov = fbm(P * 0.20 + float2(5.1, 1.3), 4);
     cov *= 0.85 + 0.30 * smoothstep(-0.6, 0.6, sin(q.y * 6.5 + fbm(P * 0.7, 2) * 4.0));   // banded into rows
     [branch] if (cov < 0.30) return float4(0, 0, 0, 0);                         // open sky: nothing to draw (cheap)
-    float d = ngAcField(q, cov);
+    float d = cheap ? ngAcFieldLo(q, cov) : ngAcField(q, cov);
     [branch] if (d <= 0.002) return float4(0, 0, 0, 0);
     float dSoft = smoothstep(0.0, 0.45, d);                // for the light
     d = smoothstep(0.0, 0.26, d);                          // the outline: crisp (seen in game: soft edges read as smeared)
     float2 sd = normalize(float2(dot(Ld.xz, W), dot(Ld.xz, float2(-W.y, W.x))) + 1e-4);
     float occ = 0.0;
-    [unroll] for (int k = 1; k <= 3; k++) occ += smoothstep(0.0, 0.45, ngAcField(q + sd * 0.028 * k, cov)) * (1.0 - 0.22 * k);
+    [branch] if (!cheap) {
+        occ  = smoothstep(0.0, 0.45, ngAcFieldLo(q + sd * 0.030, cov)) * 0.85;
+        occ += smoothstep(0.0, 0.45, ngAcFieldLo(q + sd * 0.070, cov)) * 0.55;
+    } else occ = 0.6;
     float lit = saturate(exp(-occ * 1.25) * 1.25 * (0.75 + 0.5 * (1.0 - dSoft)));   // thin parts let the light through
     float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float fwd = exp(-ang * 3.0);
@@ -491,14 +498,17 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     // (seen in game: a flat navy void under a busy sky read as unfinished)
     {
         float  tW = (ro.y - (SEA_Y - 120.0)) / max(dn, 0.01);
-        float2 wq = (ro.xz + rd.xz * tW) / 90.0;
-        float2 sw = float2(fbm(wq * 0.6 + TIME * 0.02, 3), fbm(wq * 0.6 + 7.7 - TIME * 0.015, 3)) - 0.5;
-        float3 rr = normalize(float3(rd.x + sw.x * 0.05, dn, rd.z + sw.y * 0.05));
-        float3 m  = ngSkyBase(rr);
-        float4 a  = ngAlto(rr, Ld);
-        m = lerp(m, a.rgb * lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT), a.a * 0.6);
-        float  F = 0.04 + 0.96 * pow(1.0 - dn, 5.0);
-        col = lerp(col, m * 0.55, min(F * 1.6, 0.75) * exp(-tW / 2200.0) * smoothstep(0.0, 0.02, dn));
+        float  F  = 0.04 + 0.96 * pow(1.0 - dn, 5.0);
+        float  wM = min(F * 1.6, 0.75) * exp(-tW / 2200.0) * smoothstep(0.0, 0.02, dn);
+        [branch] if (wM > 0.03) {                              // looking steeply down it is too faint to pay for
+            float2 wq = (ro.xz + rd.xz * tW) / 90.0;
+            float2 sw = float2(fbm(wq * 0.6 + TIME * 0.02, 2), fbm(wq * 0.6 + 7.7 - TIME * 0.015, 2)) - 0.5;
+            float3 rr = normalize(float3(rd.x + sw.x * 0.05, dn, rd.z + sw.y * 0.05));
+            float3 m  = ngSkyBase(rr);
+            float4 a  = ngAlto(rr, Ld, true);
+            m = lerp(m, a.rgb * lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT), a.a * 0.6);
+            col = lerp(col, m * 0.55, wM);
+        }
     }
     // the floor of the void, far below: light through the dome draws moving patches of caustic net on it
     float  tF = (ro.y - (SEA_Y - 260.0)) / max(dn, 0.02);
@@ -555,7 +565,7 @@ float3 ngBackground(float3 rd) {
     float4 ci = ngCirrus(rf, Ld);
     float3 ciC = ci.rgb * lerp(lerp(float3(0.95, 0.97, 1.0), float3(0.95, 0.60, 0.70), DUSK), float3(0.10, 0.10, 0.22), NIGHT);
     col = lerp(col, ciC, ci.a * lerp(0.55, 0.18, NIGHT));
-    float4 ac = ngAlto(rf, Ld);
+    float4 ac = ngAlto(rf, Ld, false);
     float3 acT = lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT);   // night: dark shapes that hide the stars
     col = lerp(col, ac.rgb * acT, ac.a * lerp(1.0, 0.75, NIGHT));
     float  angD = acos(clamp(dot(rf, SUNDISC), -1.0, 1.0));
