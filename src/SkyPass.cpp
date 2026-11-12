@@ -2236,6 +2236,16 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     if (prev == now || !gFxFallbackNo.compare_exchange_strong(prev, now)) return false;
     GameState s2 = st;
     s2.pso = gFxPso.load();
+    // At this depth clear the game is often on a fresh command list: it has set the targets but not yet a viewport or
+    // a scissor (D3D12 starts a list with an empty scissor), so the pass ran and drew nothing - the cloud sea vanished
+    // while looking down. Give it the whole target; the game sets its own before its next draw.
+    if (ID3D12Resource* rt = rf::uicapture::rtvResourceOf(rt0)) {
+        auto const rd = rt->GetDesc();
+        D3D12_VIEWPORT vp{0.0f, 0.0f, float(rd.Width), float(rd.Height), 0.0f, 1.0f};
+        D3D12_RECT     sc{0, 0, LONG(rd.Width), LONG(rd.Height)};
+        list->RSSetViewports(1, &vp);
+        list->RSSetScissorRects(1, &sc);
+    }
     bool const ok = drawWorldFxPassImpl(list, s2, calls);
     if (st.pso) calls.setPso(list, st.pso);         // the game goes on with its own pipeline
     if (st.haveTopo) calls.setTopo(list, st.topo);
