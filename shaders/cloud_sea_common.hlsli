@@ -308,9 +308,9 @@ float3 ngSkyBase(float3 d) {
     float  sunSide = mu * 0.5 + 0.5;
     float3 cD = lerp(lerp(float3(0.34, 0.50, 0.80), float3(0.72, 0.78, 0.86), pow(sunSide, 8.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.13, e));
     cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
-    float3 cK = lerp(lerp(float3(0.28, 0.15, 0.40), float3(0.95, 0.40, 0.38), pow(sunSide, 3.0)), float3(0.125, 0.058, 0.255), smoothstep(0.0, 0.17, e));
-    cK = lerp(cK, float3(0.020, 0.017, 0.100), smoothstep(0.10, 0.70, e));
-    float3 cN = lerp(float3(0.066, 0.038, 0.155), float3(0.017, 0.013, 0.068), smoothstep(0.0, 0.14, e));
+    float3 cK = lerp(lerp(float3(0.19, 0.115, 0.33), float3(1.00, 0.45, 0.36), pow(sunSide, 3.0)), float3(0.072, 0.040, 0.180), smoothstep(0.0, 0.15, e));
+    cK = lerp(cK, float3(0.014, 0.012, 0.074), smoothstep(0.10, 0.70, e));   // seen in game: one flat lavender - now a deep violet over the band
+    float3 cN = lerp(float3(0.044, 0.027, 0.112), float3(0.015, 0.012, 0.062), smoothstep(0.0, 0.14, e));
     cN = lerp(cN, float3(0.0035, 0.0035, 0.018), smoothstep(0.08, 0.60, e));
     return lerp(lerp(cD, cK, DUSK), cN, NIGHT);
 }

@@ -1636,7 +1636,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         lin += (NG_IS ? lerp(float3(1.15, 1.08, 0.98), float3(0.70, 0.66, 1.10), NIGHT) : lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT)) * open * near * c6.y * 0.55 * LIGHTK;
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
-    lin *= NG_IS ? lerp(lerp(float3(1, 1, 1), float3(0.80, 0.70, 0.96), DUSK), float3(0.36, 0.38, 0.78), NIGHT)
+    lin *= NG_IS ? lerp(lerp(float3(1, 1, 1), float3(0.90, 0.78, 0.92), DUSK), float3(0.38, 0.39, 0.78), NIGHT)
                  : lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
     // ---- sea light: the cloud sea under the map glows with the hour, and everything is lit by it from below - the
     //      undersides of bridges and islands most, walls a little. It moves, slowly, like light off water. When the
