@@ -1402,8 +1402,13 @@ float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float 
     float3 o1 = t1 * (a1 < 0.5 ? -1.0 : 1.0), o2 = t2 * (a2 < 0.5 ? -1.0 : 1.0);
     float3 q1 = toPx(P + o1 * 0.20 * K), q2 = toPx(P + o2 * 0.20 * K);
     if (q1.z <= 0.0 || q2.z <= 0.0) return lin;
-    float  r1 = (isSky(rawDepth(int2(q1.xy))) || abs(dot(posPx(int2(q1.xy)) - P, n)) > 0.06) ? 1.0 : 0.0;
-    float  r2 = (isSky(rawDepth(int2(q2.xy))) || abs(dot(posPx(int2(q2.xy)) - P, n)) > 0.06) ? 1.0 : 0.0;
+    // a real edge = past it there is nothing of this plane and what shows there is FARTHER away (sky, a drop, the
+    // next face round a corner). Something NEARER there is only an occluder (a block standing on this floor, a wall):
+    // that used to count as an edge too and drew the line on past the corners of whatever stood on the plane.
+    float  dq1 = rawDepth(int2(q1.xy)), dq2 = rawDepth(int2(q2.xy));
+    float  thr = 0.05 + 0.012 * z;
+    float  r1 = (isSky(dq1) || viewZ(dq1) > q1.z + thr) ? 1.0 : 0.0;
+    float  r2 = (isSky(dq2) || viewZ(dq2) > q2.z + thr) ? 1.0 : 0.0;
     bool   first = (r1 > 0.5 && r2 < 0.5) ? d1 < 0.11 : ((r2 > 0.5 && r1 < 0.5) ? !(d2 < 0.11) : d1 < d2);   // a real edge wins over a seam
     float3 outw = first ? o1 : o2;
     float2 q = first ? q1.xy : q2.xy;
