@@ -305,8 +305,10 @@ float3 ngSpecS(float t) { t = saturate(t); return saturate(float3(1.5 - abs(t * 
 float3 ngSkyBase(float3 d) {
     float  e = max(d.y, 0.0);
     float  sunSide = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUN) * 0.5 + 0.5;
-    float3 cD = lerp(lerp(float3(0.24, 0.44, 0.74), float3(0.62, 0.70, 0.84), pow(sunSide, 8.0)), float3(0.105, 0.215, 0.520), smoothstep(0.0, 0.11, e));
-    cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
+    // day: an aqua glow low down (the glass of the dome lit edge-on), a pearl haze round the sun, cerulean, then a
+    // deep ultramarine zenith (seen in game: one even mid-blue read as the vanilla sky)
+    float3 cD = lerp(lerp(float3(0.26, 0.52, 0.72), float3(0.80, 0.78, 0.74), pow(sunSide, 6.0)), float3(0.060, 0.230, 0.560), smoothstep(0.0, 0.09, e));
+    cD = lerp(cD, float3(0.030, 0.036, 0.205), smoothstep(0.18, 0.90, e));
     float3 cK = lerp(lerp(float3(0.19, 0.115, 0.33), float3(1.00, 0.45, 0.36), pow(sunSide, 3.0)), float3(0.072, 0.040, 0.180), smoothstep(0.0, 0.15, e));
     cK = lerp(cK, float3(0.014, 0.012, 0.074), smoothstep(0.10, 0.70, e));
     float3 cN = lerp(float3(0.044, 0.027, 0.112), float3(0.015, 0.012, 0.062), smoothstep(0.0, 0.14, e));
@@ -352,6 +354,52 @@ float3 ngCza(float3 rd, float3 Ld, float k) {
 }
 // thin iridescent cirrus: fibres (ridged noise: mares' tails, not soft blobs), white away from the sun, mother-of-pearl
 // colours within ~25 degrees of it
+// ---- pearl altocumulus: fields of small rounded cloudlets in rows (a mackerel sky) - the day sky's body. Each one
+//      is lit from the sun's side (a short march toward the sun over its own density), lavender in its shade, and near
+//      the sun its thin edges break into mother-of-pearl colour. (Seen in game: cirrus alone left most of the sky an
+//      empty vanilla blue.)
+float ngWor(float2 p) {
+    float2 g = floor(p), f = frac(p); float d = 9.0;
+    [unroll] for (int y = -1; y <= 1; y++) [unroll] for (int x = -1; x <= 1; x++) {
+        float2 o = float2(x, y);
+        float2 h = float2(hash12(g + o + 3.7), hash12(g + o + 11.3));
+        float2 c = o + 0.5 + (h - 0.5) * 0.80 - f;
+        d = min(d, dot(c, c));
+    }
+    return sqrt(d);
+}
+float ngAcField(float2 q, float cov) {
+    float b  = ngWor(q * float2(2.9, 2.1)) * 0.80 + ngWor(q * float2(6.6, 4.8) + 3.1) * 0.32;   // lumps, smaller ones on them
+    float fr = fbm(q * 7.0, 3);
+    return saturate((cov * 2.1 - 0.80) - b * 0.90 - fr * 0.28 + 0.30);
+}
+float4 ngAlto(float3 rd, float3 Ld) {
+    float e = rd.y;
+    [branch] if (e < 0.015) return float4(0, 0, 0, 0);
+    float2 P = rd.xz / (e + 0.16) * 1.5 + TIME * float2(0.006, 0.002);
+    float2 W = float2(0.92, 0.39);
+    float2 q = float2(dot(P, W), dot(P, float2(-W.y, W.x)));
+    q.y += 0.22 * sin(q.x * 1.3 + fbm(P * 0.5, 2) * 3.0);                       // the rows ripple
+    float cov = fbm(P * 0.20 + float2(5.1, 1.3), 4);
+    cov *= 0.85 + 0.30 * smoothstep(-0.6, 0.6, sin(q.y * 6.5 + fbm(P * 0.7, 2) * 4.0));   // banded into rows
+    [branch] if (cov < 0.30) return float4(0, 0, 0, 0);                         // open sky: nothing to draw (cheap)
+    float d = ngAcField(q, cov);
+    [branch] if (d <= 0.002) return float4(0, 0, 0, 0);
+    d = smoothstep(0.0, 0.45, d);
+    float2 sd = normalize(float2(dot(Ld.xz, W), dot(Ld.xz, float2(-W.y, W.x))) + 1e-4);
+    float occ = 0.0;
+    [unroll] for (int k = 1; k <= 3; k++) occ += smoothstep(0.0, 0.45, ngAcField(q + sd * 0.028 * k, cov)) * (1.0 - 0.22 * k);
+    float lit = saturate(exp(-occ * 1.25) * 1.25 * (0.75 + 0.5 * (1.0 - d)));   // thin parts let the light through
+    float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
+    float fwd = exp(-ang * 3.0);
+    float edge = saturate(1.0 - d * 1.6);
+    float3 c = lerp(float3(0.40, 0.45, 0.66), float3(1.04, 1.00, 0.94), lit);
+    c += float3(1.0, 0.96, 0.88) * edge * fwd * 1.4;                            // silver lining toward the sun
+    float3 iri = ngFilm(0.30 + (1.0 - d) * 1.2 + ang * 0.7);
+    c = lerp(c, c * 0.5 + iri, saturate(edge * exp(-ang * 2.4) * 1.4));
+    float fade = smoothstep(0.015, 0.12, e) * (1.0 - 0.35 * smoothstep(0.6, 1.0, e));
+    return float4(c, d * fade * 0.95);
+}
 float4 ngCirrus(float3 rd, float3 Ld) {
     float e = max(rd.y, 0.0);
     if (e < 0.02) return float4(0.0, 0.0, 0.0, 0.0);
@@ -490,6 +538,9 @@ float3 ngBackground(float3 rd) {
     float4 ci = ngCirrus(rf, Ld);
     float3 ciC = ci.rgb * lerp(lerp(float3(0.95, 0.97, 1.0), float3(0.95, 0.60, 0.70), DUSK), float3(0.10, 0.10, 0.22), NIGHT);
     col = lerp(col, ciC, ci.a * lerp(0.55, 0.18, NIGHT));
+    float4 ac = ngAlto(rf, Ld);
+    float3 acT = lerp(lerp(float3(1.0, 1.0, 1.0), float3(1.0, 0.66, 0.62), DUSK), float3(0.16, 0.16, 0.30), NIGHT);
+    col = lerp(col, ac.rgb * acT * lerp(1.0, 0.8, DUSK), ac.a * lerp(1.0, 0.5, NIGHT));
     float  angD = acos(clamp(dot(rf, SUNDISC), -1.0, 1.0));
     float  disc = smoothstep(0.0125, 0.0095, angD);
     col += (float3(6.0, 5.6, 5.0) * disc + float3(1.0, 0.95, 0.86) * (exp(-angD * 30.0) * 1.1 + exp(-angD * 6.0) * 0.20)) * SUNUP * (1.0 - ci.a * 0.5);
