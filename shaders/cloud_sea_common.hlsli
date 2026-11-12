@@ -486,6 +486,19 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z)));
     float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0030, 0.0022, 0.012), NIGHT);
     float3 col = lerp(hor, deep, smoothstep(0.0, 0.07, dn));   // (seen in game: a wider fade read as a fog wall)
+    // the void is a still, dark glass sea far below: a dim mirror of the sky and its clouds, broken by slow swells
+    // (seen in game: a flat navy void under a busy sky read as unfinished)
+    {
+        float  tW = (ro.y - (SEA_Y - 120.0)) / max(dn, 0.01);
+        float2 wq = (ro.xz + rd.xz * tW) / 90.0;
+        float2 sw = float2(fbm(wq * 0.6 + TIME * 0.02, 3), fbm(wq * 0.6 + 7.7 - TIME * 0.015, 3)) - 0.5;
+        float3 rr = normalize(float3(rd.x + sw.x * 0.05, dn, rd.z + sw.y * 0.05));
+        float3 m  = ngSkyBase(rr);
+        float4 a  = ngAlto(rr, Ld);
+        m = lerp(m, a.rgb * lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT), a.a);
+        float  F = 0.04 + 0.96 * pow(1.0 - dn, 5.0);
+        col = lerp(col, m * 0.55, min(F * 1.6, 0.75) * exp(-tW / 2200.0) * smoothstep(0.0, 0.02, dn));
+    }
     // the floor of the void, far below: light through the dome draws moving patches of caustic net on it
     float  tF = (ro.y - (SEA_Y - 260.0)) / max(dn, 0.02);
     float2 fp = (ro.xz + rd.xz * tF) / 55.0;
