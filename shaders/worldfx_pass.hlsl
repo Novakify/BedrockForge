@@ -1386,19 +1386,20 @@ bool matchActive() { return m3.z > 0.0 || c3.y > 0.0 || m2.w > 0.01 || m2.x > 0.
 // light (day) or is the light (night). Real edges (silhouettes, cube corners) carry it; seams between blocks in one
 // plane stay faint. Only pixels within ~1/14 of a block of an edge pay for it; entities (not axis-aligned) are skipped.
 float3 ngSpec(float t) { t = saturate(t); return saturate(float3(1.5 - abs(t * 4.0 - 1.0) * 1.2, 1.5 - abs(t * 4.0 - 2.0) * 1.2, 1.5 - abs(t * 4.0 - 3.2) * 1.2)); }
-float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float K) {
+bool ngRimParts(float3 P, float3 nr, int2 px, float z, float3 L, float K, out float w, out float3 rfc, out float3 add) {
+    w = 0.0; rfc = 0; add = 0;
     float3 an = abs(nr);
     float  mx = max(an.x, max(an.y, an.z));
-    if (mx < 0.985) return lin;
+    if (mx < 0.985) return false;
     float3 n  = an.y >= mx ? float3(0, sign(nr.y), 0) : (an.x >= mx ? float3(sign(nr.x), 0, 0) : float3(0, 0, sign(nr.z)));
     float  texPx = z * c0.w * 2.0 / c4.x * 16.0;                     // block texels (16 to a block) under one pixel
     float  near = 1.0 - smoothstep(0.55, 1.3, texPx);
-    if (near <= 0.0) return lin;
+    if (near <= 0.0) return false;
     float3 fp = frac(CAM + P - n * 0.002);
     float3 t1 = abs(n.y) > 0.5 ? float3(1, 0, 0) : (abs(n.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0));
     float3 t2 = abs(n.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
     float  a1 = dot(fp, t1), a2 = dot(fp, t2), d1 = min(a1, 1.0 - a1), d2 = min(a2, 1.0 - a2);
-    if (min(d1, d2) > 0.072) return lin;
+    if (min(d1, d2) > 0.072) return false;
     float3 o1 = t1 * (a1 < 0.5 ? -1.0 : 1.0), o2 = t2 * (a2 < 0.5 ? -1.0 : 1.0);
     // a real edge = past it there is nothing of this plane and what shows there is FARTHER away (sky, a drop, the
     // next face round a corner). Something NEARER there is only an occluder (a block standing on this floor, a wall):
@@ -1410,13 +1411,13 @@ float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float 
     float2 q1 = 0, q2 = 0;
     [branch] if (in1) {
         float3 s1 = toPx(P + o1 * 0.20 * K);
-        if (s1.z <= 0.0) return lin;
+        if (s1.z <= 0.0) return false;
         float dq = rawDepth(int2(s1.xy));
         r1 = (isSky(dq) || viewZ(dq) > s1.z + thr) ? 1.0 : 0.0; q1 = s1.xy;
     }
     [branch] if (in2) {
         float3 s2 = toPx(P + o2 * 0.20 * K);
-        if (s2.z <= 0.0) return lin;
+        if (s2.z <= 0.0) return false;
         float dq = rawDepth(int2(s2.xy));
         r2 = (isSky(dq) || viewZ(dq) > s2.z + thr) ? 1.0 : 0.0; q2 = s2.xy;
     }
@@ -1426,24 +1427,23 @@ float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float 
     float  realEdge = first ? r1 : r2;
     float  e = floor((first ? d1 : d2) * 32.0) * 0.5;               // texels, in half-texel steps (pixel-exact on a 32x pack)
     float  rim = step(e, 1.1) * near, eln = step(e, 0.3) * near;
-    if (rim <= 0.0) return lin;
+    if (rim <= 0.0) return false;
     // seams (not a real edge) get no refraction: the glass there only shows the same plane again (and it saves the
     // three colour reads on most rim pixels)
     [branch] if (realEdge > 0.5) {
         float2 p0 = float2(px) + 0.5;
         float3 rf = float3(pow(max(sceneAt(int2(lerp(p0, q, 0.55))).r, 0.0), 2.2), pow(max(sceneAt(int2(lerp(p0, q, 0.85))).g, 0.0), 2.2), pow(max(sceneAt(int2(lerp(p0, q, 1.2))).b, 0.0), 2.2));
-        lin = lerp(lin, rf * 1.04, rim * lerp(0.62, 0.5, NIGHT));
-        lin *= 1.0 - 0.14 * step(1.4, e) * step(e, 1.6) * near;                                   // inner bevel: the glass has thickness
+        rfc = rf * 1.04; w = rim * lerp(0.62, 0.5, NIGHT);
     }
     float  along = first ? a2 + dot(floor(CAM + P), t2) : a1 + dot(floor(CAM + P), t1);
     float3 fringe = ngSpec(frac(along * 0.23 + TIME * 0.02));
     float  sunF = 0.25 + 0.75 * max(dot(outw, L), 0.0) + 0.4 * max(n.y, 0.0);
     float  dayK = 1.0 - NIGHT;
-    lin += float3(1.0, 0.98, 0.95) * eln * realEdge * sunF * 0.42 * dayK * min(LIGHTK, 1.0);
-    lin += fringe * (rim - eln) * realEdge * 0.10 * dayK;
-    lin += float3(1.0, 0.97, 1.0) * eln * lerp(0.05, 1.0, realEdge) * NIGHT;
-    lin += lerp(fringe, float3(1.0, 0.97, 1.0), 0.35) * (rim - eln) * realEdge * 0.20 * NIGHT;
-    return lin;
+    add += float3(1.0, 0.98, 0.95) * eln * realEdge * sunF * 0.42 * dayK * min(LIGHTK, 1.0);
+    add += fringe * (rim - eln) * realEdge * 0.10 * dayK;
+    add += float3(1.0, 0.97, 1.0) * eln * lerp(0.05, 1.0, realEdge) * NIGHT;
+    add += lerp(fringe, float3(1.0, 0.97, 1.0), 0.35) * (rim - eln) * realEdge * 0.20 * NIGHT;
+    return false;
 }
 
 float4 PSWorldFx(VSOut i) : SV_Target {
@@ -1502,11 +1502,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         }
     }
     // block look off (shadows unticked): only the far-edge fade into the sky is left to do
-    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5 && c9.w <= 0.0
-#if NG_RIM
-        && c3.z <= 0.0
-#endif
-        ) {
+    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5 && c9.w <= 0.0) {
         if ((fogVis >= 0.995 || c8.w < 0.5) && !matchActive()) discard;
         float3 o0 = col;
         if (fogVis < 0.995 && c8.w > 0.5 && length(P) > 40.0) o0 = lerp(toDisplay(csBackground(rdT, true)), col, smoothstep(0.0, 1.0, fogVis));
@@ -1669,9 +1665,6 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = genPulse(CAM + P, lin, n);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
-#if NG_RIM
-    [branch] if (c3.z > 0.0 && z < 90.0) lin = ngRim(lin, P, n, px, z, L, c3.z);
-#endif
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
@@ -1689,4 +1682,34 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     o = matchOver(o, rdT, length(P));
     o += (j - 0.5) / 255.0;
     return float4(o, 1.0);
+}
+
+// ==== Novak Glass rim: its own small pass, drawn right after the World FX pass and blended over it (premultiplied:
+//      out = rim colour + what is there x (1 - a)). Inline in the World FX pass it cost ~1.7 ms at 4K: its registers
+//      slowed the whole pass (shadow walk, occlusion...), not just the edge pixels. Here nearly every pixel leaves after
+//      one depth read and three fracs, before the normal is even worked out.
+float4 PSGlassRim(VSOut i) : SV_Target {
+    int2  px = int2(i.pos.xy);
+    float d  = rawDepth(px);
+    if (c3.z <= 0.0 || isSky(d)) discard;
+    float z  = viewZ(d);
+    if (z >= 90.0 || z * c0.w * 2.0 / c4.x * 16.0 >= 1.3) discard;   // far: texels smaller than pixels, no rim
+    CAM = c7.xyz; TIME = c8.z; csSetPhase(c6.w);
+    float3 P  = posAt(float2(px) + 0.5, z);
+    // on a block face one axis sits on a whole number (the face's plane); the pixel is in the rim band only if a
+    // second axis is near one too (an edge of that face)
+    float3 fw = frac(CAM + P), dw = min(fw, 1.0 - fw);
+    if (dot(step(dw, 0.075), 1.0) < 2.0) discard;
+    float3 pl = posPx(px - int2(1, 0)), pr = posPx(px + int2(1, 0)), pu = posPx(px - int2(0, 1)), pd = posPx(px + int2(0, 1));
+    float3 dx = abs(dot(pr - P, c0.xyz)) < abs(dot(P - pl, c0.xyz)) ? pr - P : P - pl;
+    float3 dy = abs(dot(pd - P, c0.xyz)) < abs(dot(P - pu, c0.xyz)) ? pd - P : P - pu;
+    float3 n  = normalize(cross(dy, dx));
+    if (dot(n, -P) < 0.0) n = -n;
+    float  w; float3 rfc, add;
+    if (!ngRimParts(P, n, px, z, SUN, c3.z, w, rfc, add)) discard;
+    float3 dstD = sceneAt(px).rgb;                                    // what the pass is drawing over (before its light)
+    float3 dstL = pow(max(dstD, 0.0), 2.2);
+    float3 addD = max(pow(dstL + add, 1.0 / 2.2) - dstD, 0.0);        // the light lines, as display-space amounts
+    float3 rfD  = pow(max(rfc, 0.0), 1.0 / 2.2);
+    return float4(rfD * w + addD, w);
 }
