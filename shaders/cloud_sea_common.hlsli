@@ -774,20 +774,26 @@ float3 layerGlow(float3 rd, float L){
   float u=az*R/260.0+L*7.0; float i=floor(u), f=frac(u); f=f*f*(3.-2.*f);
   return lerp(signCol(hb(i,L+3.)),signCol(hb(i+1.,L+3.)),f)*exp(-ym/150.0)*0.030;
 }
+// (front to back: the first building hit hides the rings behind it, so only one face is ever shaded - drawing all
+//  five back to front cost the pass ~6 ms at 4K, seen in game)
 float3 cityAt(float3 rd, float3 bg){
-  float3 col=bg;
-  for(int L=4;L>=0;L--){ float4 b=cityLayer(rd,float(L)); col=lerp(col,b.rgb,b.a); if(L<3) col+=layerGlow(rd,float(L))*LIT; }
-  return col;
+  float3 col=bg; float3 glow=((float3)(0.0));
+  [loop] for(int L=0;L<5;L++){
+    float4 b=cityLayer(rd,float(L));
+    if(b.a>0.5){ col=b.rgb; break; }
+    if(L<3) glow+=layerGlow(rd,float(L))*LIT;
+  }
+  return col+glow;
 }
 float3 cityMirror(float3 rd, float elv){
   float az=atan2(rd.z,rd.x)+(vnoise(float2(rd.x*500.0+rd.z*310.0,elv*260.0+TIME*1.2))-0.5)*0.004;
   float3 col=((float3)(0.0)); float t=SEA_D/elv;
-  for(int L=4;L>=0;L--){ float R=420.0*pow(1.6,float(L));
+  [loop] for(int L=0;L<5;L++){ float R=420.0*pow(1.6,float(L));
     if(R<t) continue;
-    float ymr=(R-t)*elv; float3 acc=((float3)(0)); float a=0.;
-    for(int k=0;k<3;k++){ float ym=ymr*(1.0+float(k)*0.5);
-      float4 b=cityLayer(float3(cos(az),(ym-SEA_D)/R,sin(az)),float(L)); acc+=b.rgb*b.a; a+=b.a; }
-    col=lerp(col,acc/max(a,1e-3),clamp(a/3.0,0.,1.)); }
+    float ymr=(R-t)*elv;
+    float4 b=cityLayer(float3(cos(az),(ymr*1.3-SEA_D)/R,sin(az)),float(L));   // one tap, a little up the face: the streak
+    if(b.a>0.5){ col=b.rgb; break; }
+  }
   return col;
 }
 // ---- the city UNDER the islands: real blocks on a street grid (the ray walks the grid cell by cell), roofs with
@@ -909,16 +915,19 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float3 col = lerp(hor, deep, smoothstep(0.0, 0.07, dn));
     // the void is the city: its wet glass ground holds the city's lights (long streaks at night), its towers stand all
     // round, and right under the islands its blocks and streets
-    {
+    setCity();                                                     // (the sea pass calls this directly, not via ngBackground)
+    GPX = max(length(fwidth(rd)), 1e-5);
+    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), 60.0, 420.0);
+    float4 cb = cityBelow(float3(ro.x, SEA_D, ro.z), rd);          // under the islands: the city itself
+    [branch] if (cb.a > 0.5) col = cb.rgb;
+    else {
         float3 base = lerp(dayAir(atan2(rd.z, rd.x)) * 0.35, float3(0.006, 0.008, 0.022) + voidCity(ro, rd) * 0.35, LIT);
         float  elv = dn / max(length(rd.xz), 1e-3);
         float3 refl = cityMirror(rd, elv);
         float  rip = 0.60 + 0.40 * vnoise(float2(rd.x * 240.0 + rd.z * 130.0, elv * 900.0 - TIME * 2.0));
         float  F = 0.40 + 0.60 * pow(1.0 - dn, 3.0);
         float3 nc = base * 0.6 + refl * rip * F;
-        nc = cityAt(rd, nc);                                        // the buildings' feet stand in front of it
-        float4 cb = cityBelow(float3(ro.x, SEA_D, ro.z), rd);       // under the islands: the city itself
-        col = lerp(nc, cb.rgb, cb.a);
+        col = cityAt(rd, nc);                                       // the buildings' feet stand in front of it
     }
     float  fadeH = smoothstep(0.015, 0.09, dn);
     [branch] if (fadeH > 0.0) {
