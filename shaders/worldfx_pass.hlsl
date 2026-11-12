@@ -97,6 +97,23 @@ float3 sunShafts(int2 px, float j) {
     float2 stepv = d / float(N) * min(1.0, reach / max(dl, 1.0));
     float  acc = 0.0, wsum = 0.0, w = 1.0;
     float  decay = pow(0.93, 22.0 / float(N));
+    [branch] if (NG_IS) {
+        // Novak: the beams come through glass - red and blue reach a little further / shorter than green, so the edge
+        // of every shaft splits into colour (prism beams)
+        float3 a3 = 0.0;
+        [loop] for (int k = 0; k < N; k++) {
+            float t = float(k) + j;
+            [unroll] for (int ch = 0; ch < 3; ch++) {
+                float2 q = float2(px) + stepv * t * (1.0 + (float(ch) - 1.0) * 0.045);
+                bool open = (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) ? true : isSky(rawDepth(int2(q)));
+                a3[ch] += open ? w : 0.0;
+            }
+            wsum += w; w *= decay;
+        }
+        float3 open3 = a3 / max(wsum, 1e-4);
+        float3 beam3 = open3 * near * near * (0.6 + 0.4 * near);
+        return lerp(lerp(float3(1.00, 0.96, 0.88) * 0.55, float3(0.95, 0.50, 0.60) * 0.6, DUSK), float3(0.50, 0.48, 0.95) * 0.8, NIGHT) * beam3 * c9.x;
+    }
     [loop] for (int k = 0; k < N; k++) {
         float2 q = float2(px) + stepv * (float(k) + j);
         if (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) { acc += w; wsum += w; w *= decay; continue; }  // off screen toward the sun: assume sky
