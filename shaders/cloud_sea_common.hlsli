@@ -676,7 +676,7 @@ float3 facade(float lx, float ym, float Hr, float Wm, float pxm, float az, float
 //      bronze, violet), framed by fine mullions; the sun glints off it and splits into colour at the frames; the screens
 //      still play, dimmer against the day; the far city sinks into blue air.
 static float LIT = 0.0;                                               // how lit the city is: 0 day .. 1 night (set in setCity)
-void setCity(){ LIT=max(NIGHT,smoothstep(0.55,1.0,DUSK)*0.70); }
+void setCity(){ LIT=max(NIGHT,smoothstep(0.45,1.20,PHASE)); }   // (Fernando: by the time the sky is half way to night, every building is a night building - no blue glass left)
 float3 dayAir(float az){ return ngSkyBase(normalize(float3(cos(az),0.06,sin(az))))*1.05; }
 static const float CELL = 54.0, STREET = 7.5, RIN = 440.0;
 // ---- DAY: a Frutiger Aero / Japanese "city of the future" (reference: Fernando's bubble-era future city painting).
