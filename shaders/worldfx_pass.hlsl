@@ -1245,16 +1245,17 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
                 float  sl = floor(a01 * N), sf = frac(a01 * N);
                 float  h1 = ifH(sl, sd + band * 1.7), h2 = ifH(sl + 11.0, sd + band * 2.3), h3 = ifH(sl + 23.0, sd + band * 0.9);
                 float  env = 0.25 + 1.25 * smoothstep(0.12, 0.62, ifVN(a01 * 7.0, 7.0, sd)) * (0.6 + 0.4 * ifVN(a01 * 19.0 + 3.0, 19.0, sd + 2.0));
-                float  Rg = (0.5 + 2.3 * smoothstep(0.0, 0.05, a0) + 0.9 * smoothstep(0.05, 0.25, a0)) * (beat < 0.5 ? 1.0 : 0.8);
+                float  Rg = (0.5 + 1.5 * smoothstep(0.0, 0.05, a0) + 0.7 * smoothstep(0.05, 0.25, a0)) * (beat < 0.5 ? 1.0 : 0.8);
                 float  inner = (0.16 + 1.7 * pow(smoothstep(0.03, 0.25, a0), 1.5)) * (0.7 + 0.6 * h2);
-                bool   stroke = h3 < 0.55 && abs(sf - 0.5) < 0.27;
+                bool   stroke = h3 < 0.44 && abs(sf - 0.5) < 0.27;   // (in game 0.55 flooded the frame)
                 bool   hatch = stroke && r > inner && r < Rg * env * (0.7 + 0.6 * h1);
                 // short dense spikes right off the core
                 float  cr = 0.30 * (1.0 - 0.5 * smoothstep(0.0, 0.25, a0));
                 float  cq = ifH(floor(a01 * 56.0), sd + 9.0);
                 hatch = hatch || (abs(frac(a01 * 56.0) - 0.5) < 0.30 && r > cr * 0.8 && r < cr * (1.2 + 2.2 * cq * cq) * (1.0 - 0.6 * smoothstep(0.08, 0.25, a0)));
                 // masses pushing in from the frame's edge in the first instants of each beat
-                float  edge = 4.6 - 2.3 * smoothstep(0.45, 0.75, ifVN(a01 * 5.0 + 1.0, 5.0, sd + 5.0)) * smoothstep(0.0, 0.03, a0) + 3.0 * smoothstep(0.06, 0.14, a0);
+                // (only in 2-3 lobes, and from further out: everywhere at once buried the hit)
+                float  edge = 30.0 - 27.2 * smoothstep(0.50, 0.80, ifVN(a01 * 5.0 + 1.0, 5.0, sd + 5.0)) * smoothstep(0.0, 0.03, a0) + 3.0 * smoothstep(0.06, 0.14, a0);
                 hatch = hatch || (stroke && r > edge * (0.85 + 0.3 * h1));
                 // the cross: long thin flare lines through the hit
                 float  ck = 1.0 - smoothstep(0.06, 0.16, a0);
@@ -1275,8 +1276,8 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
                     halo = true;
                     float lf = ak / life;
                     int fi = lf > 0.7 ? 4 - max(0, int(lf * 8.0) - 5) : min(int(lf * 5.999), 4);
-                    static const uint kLo[5] = {0x28000000u, 0x38000000u, 0x38440000u, 0x7c6c0000u, 0x7c6c8200u};
-                    static const uint kHi[5] = {0x2810u, 0x3838u, 0x443838u, 0x6c7c38u, 0x826c7c38u};
+                    static const uint kLo[5] = {0x28000000u, 0x38440000u, 0x38440000u, 0x7c6c0000u, 0x7c6c8200u};
+                    static const uint kHi[5] = {0x2810u, 0x443838u, 0x443838u, 0x6c7c38u, 0x826c7c38u};
                     uint bit = uint(7.0 - cc.y) * 8u + uint(cc.x);
                     if ((((bit < 32u) ? (kLo[fi] >> bit) : (kHi[fi] >> (bit - 32u))) & 1u) != 0u) ink = 1.0;
                 }
@@ -1385,8 +1386,9 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // an impact frame replaces the picture: skip the sky, shadows and every other effect while it is up
     [branch] if (m1.z > 0.5 && impactLive()) {
         CAM = c7.xyz;
-        float3 rdI = normalize(posAt(float2(px) + 0.5, 1.0));
-        return float4(impactFrame(sceneAt(px).rgb, rdI, isSky(d) ? 1e9 : length(posPx(px))), 1.0);
+        bool   skyI = isSky(d);
+        float3 PI = skyI ? posAt(float2(px) + 0.5, 1.0) : posPx(px);   // the same position the world pass shades
+        return float4(impactFrame(sceneAt(px).rgb, normalize(PI), skyI ? 1e9 : length(PI)), 1.0);
     }
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
