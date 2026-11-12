@@ -155,11 +155,14 @@ Bed* bedNear(int x, int y, int z) { // a bed is two blocks: both halves are one 
     return nullptr;
 }
 
-void retarget() { // living match sky: start golden, first bed down -> dusk, one (or no) bed left -> night
+void retarget() { // living match sky: start golden, 4 beds down -> dusk, one (or no) bed left -> night
     int alive = 0;
     for (auto& b : gBeds) alive += b.alive ? 1 : 0;
     float t = 0;
-    if (gBroken >= 1 && gIsMap) t = 1;
+    // (Fernando: on The Hive the first bed goes in the first 30-40 s - far too soon for the sky to turn. Dusk waits
+    //  for 4 broken beds; on maps with fewer than 8 beds, for half of them, at least 2.)
+    uint32_t const need = gBeds.size() >= 8 ? 4u : std::max<uint32_t>(2u, uint32_t(gBeds.size() + 1) / 2u);
+    if (gBroken >= need && gIsMap) t = 1;
     if (gBroken >= 1 && gBeds.size() >= 2 && alive <= 1) t = 2;
     gTarget = std::max(gTarget, t); // never back to day inside one match
 }
