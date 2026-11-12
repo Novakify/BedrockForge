@@ -97,9 +97,9 @@ float3 csSky(float3 d) {
         float  sunSide = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), CS_SUN) * 0.5 + 0.5;
         float3 cD = lerp(lerp(float3(0.34, 0.50, 0.80), float3(0.72, 0.78, 0.86), pow(sunSide, 8.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.13, e));
         cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
-        float3 cK = lerp(lerp(float3(0.28, 0.15, 0.40), float3(0.95, 0.40, 0.38), pow(sunSide, 3.0)), float3(0.125, 0.058, 0.255), smoothstep(0.0, 0.17, e));
-        cK = lerp(cK, float3(0.020, 0.017, 0.100), smoothstep(0.10, 0.70, e));
-        float3 cN = lerp(float3(0.066, 0.038, 0.155), float3(0.017, 0.013, 0.068), smoothstep(0.0, 0.14, e));
+        float3 cK = lerp(lerp(float3(0.19, 0.115, 0.33), float3(1.00, 0.45, 0.36), pow(sunSide, 3.0)), float3(0.072, 0.040, 0.180), smoothstep(0.0, 0.15, e));
+        cK = lerp(cK, float3(0.014, 0.012, 0.074), smoothstep(0.10, 0.70, e));
+        float3 cN = lerp(float3(0.044, 0.027, 0.112), float3(0.015, 0.012, 0.062), smoothstep(0.0, 0.14, e));
         cN = lerp(cN, float3(0.0035, 0.0035, 0.018), smoothstep(0.08, 0.60, e));
         return lerp(lerp(cD, cK, CS_DUSK), cN, CS_NIGHT);
     }
@@ -301,7 +301,7 @@ float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float l
     // dusk: the light goes rose and violet; night: a cool blue sky light, bright enough to fight in
     amb *= lerp(float3(1.0, 1.0, 1.0), float3(0.92, 0.78, 1.05), CS_DUSK);
 #if defined(CS_NOVAK)
-    amb *= lerp(float3(1.0, 1.0, 1.0), float3(0.95, 0.82, 1.06), CS_DUSK);
+    amb *= lerp(float3(1.0, 1.0, 1.0), float3(0.98, 0.86, 1.00), CS_DUSK);
     amb  = lerp(amb, lerp(float3(0.115, 0.105, 0.210), float3(0.185, 0.175, 0.340), smoothstep(-1.0, 1.0, n.y)), CS_NIGHT);   // indigo night
 #else
     amb  = lerp(amb, lerp(float3(0.12, 0.13, 0.20), float3(0.19, 0.21, 0.31), smoothstep(-1.0, 1.0, n.y)), CS_NIGHT);   // RF tints the night blue on top
