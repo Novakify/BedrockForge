@@ -2189,7 +2189,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
-    c[12] = 0.025f; c[13] = look.air; c[14] = 0; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified); the living world's strength
+    c[12] = 0.025f; c[13] = look.air; c[14] = look.glass; c[15] = bgra ? 1.0f : 0.0f; // Bedrock world near plane (probe-verified); the living world's strength
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
     gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
@@ -2284,6 +2284,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "rays") gLook.rays = std::clamp(v, 0.f, 3.f);
         else if (k == "clouds") gLook.clouds = std::clamp(v, 0.f, 1.f);
         else if (k == "ink") gLook.ink = std::clamp(v, 0.f, 1.f);
+        else if (k == "glass") gLook.glass = std::clamp(v, 0.f, 1.5f);
         else if (k == "air") gLook.air = std::clamp(v, 0.f, 1.5f);
         else if (k == "vitals") gLook.vitals = v != 0;
         else if (k == "beds") gLook.beds = v != 0;
@@ -2301,7 +2302,7 @@ void saveWorldFxSettings() {
     if (gWfxConfig.empty()) return;
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
-        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nbeds " << (gLook.beds ? 1 : 0)
+        << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nglass " << gLook.glass << "\nbeds " << (gLook.beds ? 1 : 0)
         << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
         << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\n";
 }

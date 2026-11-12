@@ -9,7 +9,7 @@ cbuffer C : register(b0) {
     float4 c0; // xyz = camera forward, w = tan(fovx/2)
     float4 c1; // xyz = camera right,   w = tan(fovy/2)
     float4 c2; // xyz = camera up,      w = time
-    float4 c3; // x = near plane (0.025), y = living world strength (sea light, the air: F6), z = 0, w = flags (1 = scene is BGRA)
+    float4 c3; // x = near plane (0.025), y = living world strength (sea light, the air: F6), z = Novak Glass rim strength (0 off), w = flags (1 = scene is BGRA)
     float4 c4; // xy = target size, z = scene row pitch (bytes), w = depth row pitch (bytes)
     float4 c5; // xyz = sun direction (world), w = shadow strength
     float4 c6; // x = occlusion strength, y = rim strength, z = debug view (0 off, 1 shadows, 2 occlusion), w = match phase
@@ -1380,6 +1380,52 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
 }
 bool matchActive() { return m3.z > 0.0 || c3.y > 0.0 || m2.w > 0.01 || m2.x > 0.5 || m2.y > 0.5 || (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0 || m1.w > 0.5)) || (m0.y > 0.5 && m0.w > 0.0); }
 
+// ==== Novak Glass, step 1: the glass rim (design: docs / the "Novak Glass: design" doc; look target: preview 2) ====
+// Every block reads as a solid core cast inside a clear glass cube: the outer texel of each block face is glass - it
+// shows what is beside / behind the edge, bent and split into colour - with a white line where the edge catches the
+// light (day) or is the light (night). Real edges (silhouettes, cube corners) carry it; seams between blocks in one
+// plane stay faint. Only pixels within ~1/14 of a block of an edge pay for it; entities (not axis-aligned) are skipped.
+float3 ngSpec(float t) { t = saturate(t); return saturate(float3(1.5 - abs(t * 4.0 - 1.0) * 1.2, 1.5 - abs(t * 4.0 - 2.0) * 1.2, 1.5 - abs(t * 4.0 - 3.2) * 1.2)); }
+float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float K) {
+    float3 an = abs(nr);
+    float  mx = max(an.x, max(an.y, an.z));
+    if (mx < 0.985) return lin;
+    float3 n  = an.y >= mx ? float3(0, sign(nr.y), 0) : (an.x >= mx ? float3(sign(nr.x), 0, 0) : float3(0, 0, sign(nr.z)));
+    float  texPx = z * c0.w * 2.0 / c4.x * 16.0;                     // block texels (16 to a block) under one pixel
+    float  near = 1.0 - smoothstep(0.55, 1.3, texPx);
+    if (near <= 0.0) return lin;
+    float3 fp = frac(CAM + P - n * 0.002);
+    float3 t1 = abs(n.y) > 0.5 ? float3(1, 0, 0) : (abs(n.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0));
+    float3 t2 = abs(n.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+    float  a1 = dot(fp, t1), a2 = dot(fp, t2), d1 = min(a1, 1.0 - a1), d2 = min(a2, 1.0 - a2);
+    if (min(d1, d2) > 0.072) return lin;
+    float3 o1 = t1 * (a1 < 0.5 ? -1.0 : 1.0), o2 = t2 * (a2 < 0.5 ? -1.0 : 1.0);
+    float3 q1 = toPx(P + o1 * 0.20 * K), q2 = toPx(P + o2 * 0.20 * K);
+    if (q1.z <= 0.0 || q2.z <= 0.0) return lin;
+    float  r1 = (isSky(rawDepth(int2(q1.xy))) || abs(dot(posPx(int2(q1.xy)) - P, n)) > 0.06) ? 1.0 : 0.0;
+    float  r2 = (isSky(rawDepth(int2(q2.xy))) || abs(dot(posPx(int2(q2.xy)) - P, n)) > 0.06) ? 1.0 : 0.0;
+    bool   first = (r1 > 0.5 && r2 < 0.5) ? d1 < 0.11 : ((r2 > 0.5 && r1 < 0.5) ? !(d2 < 0.11) : d1 < d2);   // a real edge wins over a seam
+    float3 outw = first ? o1 : o2;
+    float2 q = first ? q1.xy : q2.xy;
+    float  realEdge = first ? r1 : r2;
+    float  e = floor((first ? d1 : d2) * 32.0) * 0.5;               // texels, in half-texel steps (pixel-exact on a 32x pack)
+    float  rim = step(e, 1.1) * near, eln = step(e, 0.3) * near;
+    if (rim <= 0.0) return lin;
+    float  along = first ? a2 + dot(floor(CAM + P), t2) : a1 + dot(floor(CAM + P), t1);
+    float2 p0 = float2(px) + 0.5;
+    float3 rf = float3(pow(max(sceneAt(int2(lerp(p0, q, 0.55))).r, 0.0), 2.2), pow(max(sceneAt(int2(lerp(p0, q, 0.85))).g, 0.0), 2.2), pow(max(sceneAt(int2(lerp(p0, q, 1.2))).b, 0.0), 2.2));
+    lin = lerp(lin, rf * 1.04, rim * lerp(0.62, 0.5, NIGHT) * lerp(0.15, 1.0, realEdge));
+    lin *= 1.0 - 0.14 * step(1.4, e) * step(e, 1.6) * near * realEdge;                              // inner bevel: the glass has thickness
+    float3 fringe = ngSpec(frac(along * 0.23 + TIME * 0.02));
+    float  sunF = 0.25 + 0.75 * max(dot(outw, L), 0.0) + 0.4 * max(n.y, 0.0);
+    float  dayK = 1.0 - NIGHT;
+    lin += float3(1.0, 0.98, 0.95) * eln * realEdge * sunF * 0.42 * dayK * min(LIGHTK, 1.0);
+    lin += fringe * (rim - eln) * realEdge * 0.10 * dayK;
+    lin += float3(1.0, 0.97, 1.0) * eln * lerp(0.05, 1.0, realEdge) * NIGHT;
+    lin += lerp(fringe, float3(1.0, 0.97, 1.0), 0.35) * (rim - eln) * realEdge * 0.20 * NIGHT;
+    return lin;
+}
+
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
@@ -1436,7 +1482,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         }
     }
     // block look off (shadows unticked): only the far-edge fade into the sky is left to do
-    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5 && c9.w <= 0.0) {
+    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5 && c9.w <= 0.0 && c3.z <= 0.0) {
         if ((fogVis >= 0.995 || c8.w < 0.5) && !matchActive()) discard;
         float3 o0 = col;
         if (fogVis < 0.995 && c8.w > 0.5 && length(P) > 40.0) o0 = lerp(toDisplay(csBackground(rdT, true)), col, smoothstep(0.0, 1.0, fogVis));
@@ -1599,6 +1645,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = genPulse(CAM + P, lin, n);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
+    [branch] if (c3.z > 0.0 && z < 90.0) lin = ngRim(lin, P, n, px, z, L, c3.z);
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square

@@ -1125,6 +1125,9 @@ void drawUi() {
     ImGui::SliderFloat("Cloud shadows", &look.clouds, 0.0f, 1.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Ink look", &look.ink, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Novak Glass rim", &look.glass, 0.0f, 1.5f, "%.2f");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(step 1: every block cast in glass; 0 = off, 1 = the preview's Medium)");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
     ImGui::TextDisabled("(inked block lines, painted flats, cel light)");
