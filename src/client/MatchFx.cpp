@@ -3,6 +3,7 @@
 #include <unordered_map>
 // Bedrock Forge - MatchFx: the match state World FX reacts to (see MatchFx.h). Original code for Bedrock Forge.
 #include "client/MatchFx.h"
+#include "client/ShaderPacks.h"
 
 #include <algorithm>
 #include <atomic>
@@ -979,8 +980,14 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     trackProjectiles(*lp, now); // (any world: arrows look the same in single player)
     resolveHits(*lp, now);
     retarget();
-    // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night
-    float const rate = gTarget > gPhase ? (gPhase < 1.0f ? 1.0f / 20.0f : 1.0f / 25.0f) : 1.0f / 3.0f;
+    // the light leaves slowly: ~20 s golden -> dusk, ~25 s dusk -> night. Novak Glass much slower (Fernando: the
+    // glass city must not flash into its night; it sinks into the dark, building after building lighting up):
+    // ~75 s to dusk, ~100 s to night
+    static bool    novak = false;
+    static int64_t novakAt = 0;
+    if (now - novakAt > 2000) { novakAt = now; novak = shaderpacks::activePack() == "NovakGlass"; }
+    float const up0 = novak ? 1.0f / 75.0f : 1.0f / 20.0f, up1 = novak ? 1.0f / 100.0f : 1.0f / 25.0f;
+    float const rate = gTarget > gPhase ? (gPhase < 1.0f ? up0 : up1) : 1.0f / 3.0f;
     if (gPhase < gTarget) gPhase = std::min(gTarget, gPhase + rate * dt);
     else gPhase = std::max(gTarget, gPhase - rate * dt);
     gFx.phase = gPhase, gFx.phaseTarget = gTarget, gFx.bedsBroken = gBroken;
