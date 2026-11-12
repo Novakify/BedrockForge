@@ -22,6 +22,7 @@
 #include "SpatialPanel.h"
 #include "UiCapture.h"
 #include "GlassArmor.h"
+#include "IrisBridge.h"
 #include "WorldFx.h"
 
 namespace {
@@ -152,6 +153,7 @@ void updateImGui() {
             rf::uicapture::drawUi();
             rf::glassarmor::drawUi();
             rf::worldfx::drawUi();
+            rf::iris::drawUi();
             rf::panel::drawUi();
             rf::lyrics::drawUi();
             rf::sky::drawUi();

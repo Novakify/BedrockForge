@@ -15,6 +15,7 @@
 #include "SpatialCamera.h"
 #include "SpatialPanel.h"
 #include "UiCapture.h"
+#include "IrisBridge.h"
 #include "WorldFx.h"
 #include "SkyPass.h"
 
@@ -39,6 +40,7 @@ public:
         glassarmor::init(mSelf.getModDir() / "logs" / "glassarmor", mSelf.getConfigDir());
         glassarmor::installEarly();
         worldfx::init(mSelf.getModDir() / "logs" / "worldfx");
+        rf::iris::init(mSelf.getModDir());
         sky::loadWorldFxSettings(mSelf.getConfigDir());
         spatialcam::loadConfig(mSelf.getConfigDir()); // Spatial GUI (Java mod options)
         cine::loadConfig(mSelf.getConfigDir());       // Cinematic Interactions (per-station mode + Java settings)

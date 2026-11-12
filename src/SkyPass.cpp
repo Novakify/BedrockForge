@@ -38,6 +38,7 @@
 #include "UiCapture.h"
 #include "GlassArmor.h"
 #include "WorldFx.h"
+#include "IrisBridge.h"
 
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"
@@ -1255,9 +1256,9 @@ int kindOf(ID3D12PipelineState* pso) {
     return it->second.kind;
 }
 
-bool wanted() { return (gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken) || gWorldSky.load(std::memory_order_relaxed) != 0; }
-bool wantRoot() { return wanted() && (gPictureOn.load(std::memory_order_relaxed) || gWorldSky.load(std::memory_order_relaxed) != 0); }
-bool hideClouds() { return gUi.hideClouds || gWorldSky.load(std::memory_order_relaxed) != 0; }
+bool wanted() { return (gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken) || gWorldSky.load(std::memory_order_relaxed) != 0 || rf::iris::enabled(); }
+bool wantRoot() { return wanted() && (gPictureOn.load(std::memory_order_relaxed) || gWorldSky.load(std::memory_order_relaxed) != 0 || rf::iris::enabled()); }
+bool hideClouds() { return gUi.hideClouds || gWorldSky.load(std::memory_order_relaxed) != 0 || rf::iris::enabled(); } // an Iris pack draws its own
 
 namespace {
 bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, ID3D12Device* dev, GamePso const& g,
@@ -1792,6 +1793,7 @@ static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldSky(list, st, calls);
+    if (rf::iris::enabled()) { gSkySinceClear = true; if (!gUi.replace || !gActive.load(std::memory_order_relaxed)) return true; } // IrisBridge: the pack's sky is in its composite chain
     if (!st.nVb || !st.vb || !st.haveTopo) { ++gSkipped; setStage2("skipped a sky draw (list state not tracked yet)"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
@@ -1937,7 +1939,9 @@ bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls con
 } // namespace
 
 bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
+static bool drawIrisPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    if (rf::iris::enabled()) return drawIrisPass(list, st, calls);                         // IrisBridge (Java shaderpack) wins
     if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldFxPass(list, st, calls); // the World FX look rides here
     if (!st.nVb || !st.vb || !st.haveTopo) return false;
     auto copy = bfCopy();
@@ -2224,7 +2228,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // (the game clears once at the start of the frame, and again after the world - before the hand). If the cloud draw
 // (and so the pass) has not come by then, the pass runs right before that clear, while the world's depth is still there.
 bool fxFallbackWanted(size_t dsv) {
-    if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
+    if ((!gWorldSky.load(std::memory_order_relaxed) && !rf::iris::enabled()) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
     return sky && !done;
@@ -2243,13 +2247,35 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
         list->RSSetViewports(1, &vp);
         list->RSSetScissorRects(1, &sc);
     }
-    bool const ok = drawWorldFxPassImpl(list, s2, calls);
+    bool const ok = rf::iris::enabled() ? drawIrisPass(list, s2, calls) : drawWorldFxPassImpl(list, s2, calls);
     if (st.pso) calls.setPso(list, st.pso);         // the game goes on with its own pipeline
     if (st.haveTopo) calls.setTopo(list, st.topo);
     static std::atomic<long> nFb{0};
     if ((nFb.fetch_add(1) & 255) == 0) ll_shim::info(std::string("[RF] World FX: no cloud draw this frame (looking down) - pass run at the depth clear: ") + (ok ? "ok" : "skipped"));
     return ok;
 }
+// IrisBridge at the World FX hook point: the world's opaque blocks + mobs are done and its depth is intact.
+static bool drawIrisPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    if (gFxSinceClear.load()) return false; // once per world
+    size_t rt0 = 0, dsv = 0;
+    if (!rf::worldfx::listTargets(list, rt0, dsv)) return false;
+    ID3D12Resource* rt = rf::uicapture::rtvResourceOf(rt0);
+    ID3D12Resource* ds = rf::glassarmor::dsvResource(dsv);
+    if (!rt || !ds) return false;
+    {
+        std::lock_guard l(gPsoMutex);
+        auto it = gGame.find(st.pso);
+        if (it != gGame.end() && it->second.vv) return false; // Vibrant Visuals: not in M1
+    }
+    rf::iris::FrameTargets t;
+    t.rt = rt; t.rtv = rt0; t.ds = ds; t.dsv = dsv;
+    t.rtState = rf::glassarmor::stateOf(rt, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    t.dsState = rf::glassarmor::stateOf(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    bool const ok = rf::iris::run(list, st, calls, t);
+    if (ok) { gFxRt = rt0; gFxDs = dsv; gFxPso = st.pso; gFxSinceClear = true; }
+    return ok;
+}
+
 static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     WorldFxLook const look = gLook;
     // the pass also carries the cloud sea (sky pixels + terrain under the deck), so it runs with the block look off too
