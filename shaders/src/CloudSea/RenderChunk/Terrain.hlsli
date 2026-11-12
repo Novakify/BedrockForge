@@ -304,6 +304,30 @@ float4 main(PSIn i) : SV_Target {
         lit = lit * (0.62 + 0.38 * F) + deep * amb * 1.6 * (1.0 - F);
     }
 #endif
+#if defined(CS_NOVAK) && !defined(PASS_TRANSPARENT)
+    // ---- Novak Glass, real glass: gem blocks, ice and quartz are cast glass. You look INTO the block: the far inner
+    //      walls and their edges show through the face and slide as you move, the sky comes in through the side walls
+    //      tinted by the glass it crossed, and the inner edges split into colour (three bends, one per channel).
+    [branch] if ((mid == MAT_GEM || mid == MAT_QUARTZ || mid == MAT_ICE) && fade > 0.0 && dot(T, T) > 0.5) {
+        // face coordinates from the tile's own texels (the world position here is camera-relative: no block grid in it)
+        float2 f  = (tx - float2(tile)) / 32.0;
+        float3 vt = float3(dot(V, T), dot(V, B), dot(V, n));
+        float  trans = mid == MAT_GEM ? 0.55 : (mid == MAT_ICE ? 0.40 : 0.22);
+        float3 bodyC = csLin(s_MatTextureTexture.SampleLevel(s_MatTextureSampler, i.texcoord0, 3.0).rgb * tint);
+        float3 hue = bodyC / max(csMax3(bodyC), 1e-3);
+        float4 ex = ngExit(f, vt, 0.66);
+        float3 dw = normalize(-(vt.x * T + vt.y * B) * 0.66 - n * max(vt.z, 0.05));
+        float3 ambN = lerp(float3(0.20, 0.19, 0.33), CS_SUNC * 0.35, 0.4) * lerp(0.15, 1.0, skyK);
+        float  cellv = 0.86 + 0.28 * csHash(floor(ex.xy * 16.0) + bcell * 3.1 + 5.0);
+        // the far wall: the glass's own colour, deeper the more glass the light crossed; a side wall lets some sky in
+        float3 absorb = pow(hue, 0.8 + ex.w * (mid == MAT_QUARTZ ? 0.8 : 2.4));
+        float3 back = bodyC * absorb * ambN * 2.6 * cellv;
+        float3 through = ex.z < 0.995 ? lerp(back, csReflect(dw) * absorb * lerp(0.25, 1.0, skyK), 0.42) : back;
+        float3 lines = float3(ngInnerEdge(ngExit(f, vt, 0.63).xyz), ngInnerEdge(ex.xyz), ngInnerEdge(ngExit(f, vt, 0.69).xyz));
+        float3 inner = through + lines * lerp(float3(1, 1, 1), hue, 0.25) * (0.10 + 0.50 * skyK * (1.0 - 0.5 * CS_NIGHT) + 0.16 * CS_NIGHT);
+        lit = lerp(lit, inner, trans * fade);
+    }
+#endif
 #if !defined(PASS_TRANSPARENT)
     // obsidian: the void inside (strongest at night, never on the surface streaks)
     // obsidian's dark body under the golden light read grey-brown (dark x warm = mud): the light on it goes cold and
@@ -345,11 +369,39 @@ float4 main(PSIn i) : SV_Target {
         float  F    = (water ? 0.02 : 0.05) + (water ? 0.98 : 0.95) * pow(1.0 - ndv, 5.0);
         float3 refl = csReflect(R) * lerp(0.35, 1.0, lm.y);
         float3 glint = float3(1.6, 1.15, 0.75) * pow(saturate(dot(R, CS_SUN)), water ? 600.0 : 400.0) * (water ? 3.0 : 3.0) * sunVis;
+#if defined(CS_NOVAK)
+        glint *= lerp(1.0, 0.25, CS_NIGHT);   // the moon in glass: a glint, not a white square
+#endif
         float  k    = saturate(F * (water ? 0.85 : 0.7));
         // straight-alpha blend: put the reflection in without darkening what is behind the glass
         float  aOut = a + k * (1.0 - a);
         lit  = (lit * a * (1.0 - k) + refl * k) / max(aOut, 1e-3) + glint / max(aOut, 0.05);
         a    = saturate(max(aOut, csLuma(glint) * 0.8));
+#if defined(CS_NOVAK)
+        // Novak Glass: a glass block is a solid cube, not a film - its far inner edges show through the face (colour
+        // split), on full-block faces only (panes and slabs' cut faces are skipped)
+        [branch] if (!water && csMax3(abs(n)) > 0.98 && fade > 0.0) {
+            // texture axes in the world (from derivatives) and the tile size (1 / world size of a texel: 16x or 32x packs)
+            float3 dpx = ddx(wp), dpy = ddy(wp);
+            float2 dtx = ddx(tx), dty = ddy(tx);
+            float  det = dtx.x * dty.y - dtx.y * dty.x;
+            float3 Tg = (dpx * dty.y - dpy * dtx.y) * (det != 0.0 ? 1.0 / det : 0.0);
+            float3 Bg = (dpy * dtx.x - dpx * dty.x) * (det != 0.0 ? 1.0 / det : 0.0);
+            float  S  = exp2(round(log2(clamp(1.0 / max(length(Tg), 1e-4), 8.0, 128.0))));
+            float3 aT = abs(Tg), aB = abs(Bg);
+            Tg = aT.x >= max(aT.y, aT.z) ? float3(sign(Tg.x), 0, 0) : (aT.y >= aT.z ? float3(0, sign(Tg.y), 0) : float3(0, 0, sign(Tg.z)));
+            Bg = aB.x >= max(aB.y, aB.z) ? float3(sign(Bg.x), 0, 0) : (aB.y >= aB.z ? float3(0, sign(Bg.y), 0) : float3(0, 0, sign(Bg.z)));
+            float2 f  = frac(tx / S);
+            float3 vt = float3(dot(V, Tg), dot(V, Bg), abs(dot(V, n)));
+            float3 gl = csLin(c);
+            float3 hue = gl / max(csMax3(gl), 1e-3);
+            float3 lines = float3(ngInnerEdge(ngExit(f, vt, 0.63).xyz), ngInnerEdge(ngExit(f, vt, 0.66).xyz), ngInnerEdge(ngExit(f, vt, 0.69).xyz));
+            float3 Lc = lines * lerp(float3(1, 1, 1), hue, 0.4) * (0.06 + 0.42 * skyK * (1.0 - 0.5 * CS_NIGHT) + 0.14 * CS_NIGHT) * fade;
+            float  a2 = saturate(max(a, csLuma(Lc)));
+            lit = (lit * a + Lc) / max(a2, 0.05);
+            a = a2;
+        }
+#endif
     }
 #endif
 #if defined(PASS_TRANSPARENT)

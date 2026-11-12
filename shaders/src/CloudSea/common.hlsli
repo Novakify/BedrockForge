@@ -189,6 +189,25 @@ float csVN(float2 p) {   // value noise (no texture in these materials)
 // ---- wind: gust fronts roll across the map from the south-west (~12 blocks a second). The block vertex shader sways
 //      leaves and plants harder inside a gust (same field: _shared/RenderChunkWave.vertex.hlsli csGustV); here the
 //      gust turns leaves and grass a little silver (their undersides, flipped up), so you SEE the wind cross an island.
+#if defined(CS_NOVAK)
+// ---- Novak Glass: a block of cast glass. Looking into a face, the ray bends in and leaves through a side wall or the
+//      back wall of the cube: xyz = where it leaves (face u, v, depth 0..1 going in), w = how far it went through glass.
+float4 ngExit(float2 f, float3 vt, float bend) {
+    float3 rd = normalize(float3(-vt.xy * bend, -max(vt.z, 0.05)));
+    float2 sd = float2(abs(rd.x) > 1e-4 ? rd.x : 1e-4, abs(rd.y) > 1e-4 ? rd.y : 1e-4);
+    float2 ts = (step(0.0, sd) - f) / sd;
+    float  t  = min(min(ts.x, ts.y), 1.0 / -rd.z);
+    return float4(f + rd.xy * t, -rd.z * t, t);
+}
+// 1 on the outer texel ring of the inner wall the ray leaves through: the cube's far edges, seen through the glass
+// (whole 1/16 texels, so they stay pixel art and slide as you move)
+float ngInnerEdge(float3 h) {
+    float3 q = (floor(saturate(h) * 15.999) + 0.5) / 16.0;
+    float3 e = min(q, 1.0 - q);
+    float  mid = e.x + e.y + e.z - min(e.x, min(e.y, e.z)) - max(e.x, max(e.y, e.z));
+    return step(mid, 0.04);
+}
+#endif
 float csGust(float2 xz, float t) {
     float2 p = xz * 0.045 - float2(0.8660254, 0.5) * t * 0.55;
     float  g = csVN(p) * 0.65 + csVN(p * 2.1 + 5.3) * 0.35;
