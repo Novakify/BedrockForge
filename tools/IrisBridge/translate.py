@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+"""IrisBridge translator (prototype) - Iris/OptiFine GLSL program -> HLSL SM6 -> DXIL.
+
+  python translate.py <pack>/shaders <world0|world-1|world1> <program> [-o outdir] [-D NAME=VAL ...]
+
+Pipeline (all open tools): our include resolver + Iris-style compat patcher -> glslang (GLSL 460 -> SPIR-V, OpenGL
+semantics) -> spirv-opt -> SPIRV-Cross (HLSL SM6) -> dxc (DXIL). Writes <program>.<stage>.{glsl,spv,hlsl,dxil,log}.
+Our own code (BedrockForge); pack sources are only read, never redistributed.
+"""
+from __future__ import annotations
+import argparse, re, subprocess, sys
+from pathlib import Path
+
+DXC = "/opt/dxc/bin/dxc"
+STAGES = {"vsh": ("vert", "vs_6_0"), "fsh": ("frag", "ps_6_0"), "gsh": ("geom", "gs_6_0"), "csh": ("comp", "cs_6_0")}
+RENDER_STAGES = ["NONE", "SKY", "SUNSET", "CUSTOM_SKY", "SUN", "MOON", "STARS", "VOID", "TERRAIN_SOLID",
+                 "TERRAIN_CUTOUT_MIPPED", "TERRAIN_CUTOUT", "ENTITIES", "BLOCK_ENTITIES", "DESTROY", "OUTLINE", "DEBUG",
+                 "HAND_SOLID", "TERRAIN_TRANSLUCENT", "TRIPWIRE", "PARTICLES", "CLOUDS", "RAIN_SNOW", "WORLD_BORDER",
+                 "HAND_TRANSLUCENT"]  # Iris renderStage values
+# Iris core-profile uniforms a program may use without declaring
+IMPLICIT_UNIFORMS = {"modelViewMatrix": "mat4", "projectionMatrix": "mat4", "normalMatrix": "mat3",
+                     "textureMatrix": "mat4", "chunkOffset": "vec3", "modelViewMatrixInverse": "mat4",
+                     "projectionMatrixInverse": "mat4"}
+BASE_DEFINES = {"MC_VERSION": "12101", "MC_GL_VERSION": "460", "MC_GLSL_VERSION": "460", "IS_IRIS": "",
+                "IRIS_VERSION": "10800", "IS_BEDROCK_FORGE": "", "MC_RENDER_QUALITY": "1.0", "MC_SHADOW_QUALITY": "1.0",
+                "MC_TEXTURE_FORMAT_LAB_PBR": "", "MC_NORMAL_MAP": "", "MC_SPECULAR_MAP": "",
+                "IRIS_FEATURE_SEPARATE_HARDWARE_SAMPLERS": "", "IRIS_FEATURE_CUSTOM_IMAGES": "", "IRIS_FEATURE_COMPUTE": ""}
+
+
+def resolve(path: Path, root: Path, seen: list[str], depth=0) -> str:
+    if depth > 40: raise RuntimeError("include depth")
+    out = []
+    for i, line in enumerate(path.read_text(errors="replace").splitlines()):
+        m = re.match(r'\s*#\s*include\s+"([^"]+)"', line)
+        if m:
+            inc = m[1]
+            p = (root / inc.lstrip("/")) if inc.startswith("/") else (path.parent / inc)
+            seen.append(str(p.relative_to(root)) if p.is_relative_to(root) else str(p))
+            out.append(resolve(p.resolve(), root, seen, depth + 1))
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+def patch(src: str, stage: str) -> tuple[str, list[str]]:
+    """Iris-style compatibility transform: legacy GLSL 1.x built-ins -> explicit GLSL 460 declarations."""
+    notes = []
+    src = re.sub(r"^\s*#\s*version[^\n]*", "", src, flags=re.M)
+    src = re.sub(r"^\s*#\s*extension[^\n]*", "", src, flags=re.M)
+    head = []
+    # texture functions
+    for old, new in [("texture2DLod", "textureLod"), ("texture2DGradARB", "textureGrad"), ("texture2DGrad", "textureGrad"),
+                     ("texture3DLod", "textureLod"), ("texture2D", "texture"), ("texture3D", "texture"), ("textureCube", "texture")]:
+        src = re.sub(rf"\b{old}\s*\(", f"{new}(", src)
+    if re.search(r"\bshadow2D(Lod)?\s*\(", src):
+        head.append("vec4 bf_shadow2D(sampler2DShadow s, vec3 c) { return vec4(texture(s, c)); }")
+        head.append("vec4 bf_shadow2DLod(sampler2DShadow s, vec3 c, float l) { return vec4(textureLod(s, c, l)); }")
+        src = re.sub(r"\bshadow2D(Lod)?\s*\(", lambda m: f"bf_shadow2D{m[1] or ''}(", src)
+    # legacy matrices / attributes -> Iris-named uniforms & inputs
+    rep = {"gl_ModelViewMatrix": "iris_ModelViewMat", "gl_ProjectionMatrix": "iris_ProjMat",
+           "gl_NormalMatrix": "iris_NormalMat", "gl_ModelViewProjectionMatrix": "(iris_ProjMat * iris_ModelViewMat)"}
+    for k, v in rep.items():
+        if re.search(rf"\b{k}\b", src): src = re.sub(rf"\b{k}\b", v, src)
+    head += ["uniform mat4 iris_ModelViewMat;", "uniform mat4 iris_ProjMat;", "uniform mat3 iris_NormalMat;"]
+    src = re.sub(r"\bgl_TextureMatrix\s*\[\s*(\d)\s*\]", r"iris_TextureMat\1", src)
+    head += ["uniform mat4 iris_TextureMat0;", "uniform mat4 iris_TextureMat1;"]
+    if stage == "vert":
+        src = re.sub(r"\bftransform\s*\(\s*\)", "(iris_ProjMat * iris_ModelViewMat * gl_Vertex)", src)
+        ins = {"gl_Vertex": "vec4 iris_Position", "gl_Color": "vec4 iris_Color", "gl_Normal": "vec3 iris_Normal",
+               "gl_MultiTexCoord0": "vec4 iris_UV0", "gl_MultiTexCoord1": "vec4 iris_UV1", "gl_MultiTexCoord2": "vec4 iris_UV2"}
+        loc = 0
+        for k, v in ins.items():
+            if re.search(rf"\b{k}\b", src):
+                head.append(f"layout(location={16 + loc}) in {v};"); loc += 1  # 16+: the pack's own attributes auto-map from 0
+                src = re.sub(rf"\b{k}\b", v.split()[1], src)
+        for i, (name, ty) in enumerate({"vaPosition": "vec3", "vaColor": "vec4", "vaUV0": "vec2", "vaUV1": "ivec2",
+                                         "vaUV2": "ivec2", "vaNormal": "vec3"}.items()):  # Iris core-profile attributes
+            if re.search(rf"\b{name}\b", src) and not re.search(rf"\bin\s+\w+\s+{name}\b", src):
+                head.append(f"layout(location={24 + i}) in {ty} {name};")
+        src = re.sub(r"\battribute\b", "in", src)
+        src = re.sub(r"\bvarying\b", "out", src)
+    else:
+        src = re.sub(r"\bvarying\b", "in", src)
+        src = re.sub(r"\bgl_Color\b", "vec4(1.0)", src)
+        # gl_FragData[n] / gl_FragColor -> explicit outputs (DRAWBUFFERS / RENDERTARGETS order)
+        idx = sorted({int(x) for x in re.findall(r"\bgl_FragData\s*\[\s*(\d+)\s*\]", src)})
+        if re.search(r"\bgl_FragColor\b", src): idx = sorted(set(idx) | {0}); src = re.sub(r"\bgl_FragColor\b", "gl_FragData[0]", src)
+        for n in idx: head.append(f"layout(location={n}) out vec4 iris_FragData{n};")
+        src = re.sub(r"\bgl_FragData\s*\[\s*(\d+)\s*\]", r"iris_FragData\1", src)
+        if idx: notes.append(f"outputs: {idx}")
+    if re.search(r"\bgl_Fog\b", src):
+        head.append("struct bf_Fog { vec4 color; float density, start, end, scale; }; uniform bf_Fog iris_Fog;")
+        src = re.sub(r"\bgl_Fog\b", "iris_Fog", src)
+    for name, ty in IMPLICIT_UNIFORMS.items():
+        if re.search(rf"\b{name}\b", src) and not re.search(rf"\b(uniform|in)\s+\w+\s+{name}\b", src):
+            head.append(f"uniform {ty} {name};"); notes.append(f"implicit uniform {name}")
+    head = [f"#define MC_RENDER_STAGE_{n} {i}" for i, n in enumerate(RENDER_STAGES)] + head
+    return "\n".join(head) + "\n" + src, notes
+
+
+def run(cmd, log):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    log.append("$ " + " ".join(map(str, cmd)) + "\n" + r.stdout + r.stderr)
+    return r.returncode == 0
+
+
+def translate(shaders: Path, world: str, prog: str, out: Path, defines: dict) -> dict:
+    res = {}
+    for ext, (stage, prof) in STAGES.items():
+        f = shaders / world / f"{prog}.{ext}"
+        if not f.exists(): continue
+        log, seen = [], []
+        src, notes = patch(resolve(f, shaders, seen), stage)
+        dfs = {**BASE_DEFINES, **defines}
+        hdr = "#version 460 core\n#extension GL_GOOGLE_include_directive : enable\n" + \
+              "".join(f"#define {k} {v}\n" for k, v in dfs.items())
+        glsl = out / f"{prog}.{stage}.glsl"; glsl.write_text(hdr + src)
+        spv, opt, hlsl, dxil = (out / f"{prog}.{stage}.{e}" for e in ("spv", "opt.spv", "hlsl", "dxil"))
+        ok = run(["glslangValidator", "-G", "--auto-map-locations", "--auto-map-bindings", "-S", stage, "-o", spv, glsl], log)
+        ok = ok and run(["spirv-opt", "-O", spv, "-o", opt], log)
+        ok = ok and run(["spirv-cross", "--hlsl", "--shader-model", "60", "--hlsl-enable-compat", opt, "--output", hlsl], log)
+        ok = ok and run([DXC, "-T", prof, "-E", "main", "-Fo", dxil, hlsl], log)
+        stepfail = None if ok else log[-1].splitlines()[0][2:].split()[0]
+        (out / f"{prog}.{stage}.log").write_text("\n".join(log))
+        res[f"{prog}.{ext}"] = {"ok": ok, "failed_at": stepfail, "includes": len(seen), "notes": notes,
+                                "error": None if ok else next((l for l in log[-1].splitlines() if "ERROR" in l or "error" in l), log[-1][-300:])}
+    return res
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("shaders"); ap.add_argument("world"); ap.add_argument("program")
+    ap.add_argument("-o", default="out"); ap.add_argument("-D", action="append", default=[])
+    a = ap.parse_args()
+    out = Path(a.o); out.mkdir(parents=True, exist_ok=True)
+    d = dict((x.split("=", 1) + [""])[:2] for x in a.D)
+    for k, v in translate(Path(a.shaders), a.world, a.program, out, d).items():
+        print(k, "OK" if v["ok"] else f"FAIL @ {v['failed_at']}: {v['error']}")

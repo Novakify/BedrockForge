@@ -45,3 +45,42 @@ Spec source = Iris (LGPL-3.0, open) + OptiFine's shaders documentation.
 
 Order: 1-4 offline first (translate a pack and diff the HLSL), then composite/final in RF, then gbuffers, shadows last.
 Vibrant Visuals: Iris packs assume a forward/deferred Java pipeline, so target Fancy first (matches the existing Fancy-first rule).
+
+## Test 1: Spooklementary v2.0.4 offline translation (2026-11-12)
+Pack: Spooklementary by SpacEagle17, on Complementary by EminGT. Private use with permission reported by Novak; the pack
+files are never committed or shared. Tool: `tools/IrisBridge/translate.py` + `batch.py` (ours: include resolver,
+Iris-style compat patcher, then glslang -> spirv-opt -> SPIRV-Cross -> dxc).
+
+| Dimension | Stages compiled to DXIL |
+|---|---|
+| world0 (overworld) | 59 / 67 |
+| world-1 (nether) | 59 / 67 |
+| world1 (end) | 59 / 67 |
+
+The 8 failures per dimension are all things Bedrock doesn't have or that are off by default:
+- `dh_terrain`, `dh_water` (Distant Horizons mod)
+- `clrwl_*` (Colorwheel mod)
+- `shadowcomp` (the colored-lighting voxel pass, only when COLORED_LIGHTING > 0, which needs the custom `image.*` 3D textures)
+
+So every gbuffers, shadow, deferred, composite and final stage of the default profile translates. About 1 MB of DXIL per dimension.
+
+Patcher handles: `texture2D*`/`shadow2D` -> modern, `gl_FragData`/`gl_FragColor` -> located outputs, legacy matrices and
+vertex attributes (`gl_Vertex`, `gl_MultiTexCoordN`, ...), Iris core attributes (`vaPosition`...), `MC_RENDER_STAGE_*`,
+implicit core uniforms, `gl_Fog`. Pack attributes (`mc_Entity`, `at_tangent`, `at_midBlock`, `mc_midTexCoord`) auto-map from location 0.
+
+### What the runtime must feed it (from the generated HLSL)
+- **18 textures:** colortex0-7, depthtex0/1, shadowtex0/1, shadowcolor0/1, noisetex, gaux2/gaux4 (aliases), tex/atlas.
+- **52 standard Iris uniforms:** camera and matrices (gbufferModelView/Projection plus inverses and previous; shadowModelView/Projection),
+  time (worldTime, worldDay, frameCounter, frameTimeCounter, sunAngle, moonPhase), weather (rainStrength, wetness),
+  player state (eyeBrightness, isEyeInWater, blindness, darknessFactor, nightVision, playerMood, heldItemId, heldBlockLightValue),
+  screen (viewWidth/Height, aspectRatio, near, far), entity/block ids, skyColor, fogColor, cloudHeight, lightningBoltPosition.
+- **11 pack-computed uniforms**, defined as expressions in shaders.properties (e.g. inSnowy, rainFactorUniform, waterAltitude, framemod8).
+  So we need an Iris custom-uniform expression evaluator.
+- **Vertex attributes:** mc_Entity (block ID, which needs the Java -> Bedrock block mapping from block.properties), at_tangent, at_midBlock, mc_midTexCoord.
+
+### Next steps
+1. Parse shaders.properties: option defaults/profiles, `program.*.enabled`, render target formats (`colortexNFormat`),
+   `image.*`, `uniform.*` expressions, blend/alpha modes, DRAWBUFFERS/RENDERTARGETS.
+2. Bake the inputs into a per-program table (register slot -> uniform/texture) that RF can bind.
+3. RF: the post chain first (deferred1 -> composite..composite7 -> final) on Bedrock's colour + depth buffer. That's the first in-game test.
+4. gbuffers through material remap, then the shadow pass.
