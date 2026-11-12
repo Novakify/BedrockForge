@@ -2026,7 +2026,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     c[12] = float(pos[0]); c[13] = float(pos[1]); c[14] = float(pos[2]);
     MatchFrame const mfs = matchFrame(worldFxLook());
     deckOf(mfs, c[15], c[16], c[17]);
-    c[18] = gQuality.load(); c[19] = mfs.phase;
+    c[18] = gQuality.load() + (worldFxLook().glass > 0.0f ? 2.0f : 0.0f); c[19] = mfs.phase;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());

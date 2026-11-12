@@ -14,6 +14,19 @@ static float  PHASE = 0.0, DUSK = 0.0, NIGHT = 0.0;
 static float3 SUNDISC = float3(0.17605, 0.11247, -0.97794);
 static float  SUNUP = 1.0;  // the sun disc and its warm glow (gone once it has set)
 static float  QUALITY = 1.0; // 0..1: Renderer Foundation lowers it to hold the frame rate
+// ---- which atmosphere: Cloud Sea (default) or Novak Glass. NG_ATMOS 1 = always Novak Glass (the World FX pass built
+//      for it), 2 = chosen at run time (ATMOS; the cheap sky pass), 0 = Cloud Sea only (no Novak Glass code in the build)
+#ifndef NG_ATMOS
+#define NG_ATMOS 0
+#endif
+static float  ATMOS = 0.0;
+#if NG_ATMOS == 1
+#define NG_IS (true)
+#elif NG_ATMOS == 2
+#define NG_IS (ATMOS > 0.5)
+#else
+#define NG_IS (false)
+#endif
 static float  LIGHTK = 1.0; // strength of the key light on the world: sun -> nothing at deep dusk -> moonlight
 static const float2 SUN_AZ = float2(0.17717, -0.98418);  // the sun's compass direction (xz)
 static const float2 MOON_AZ = float2(-0.85671, 0.51580); // the moon rises on the other side, over the south-west
@@ -50,7 +63,9 @@ float fbm(float2 p, int oct) {
 }
 
 // ---------------------------------------------------------------- sky gradient
+float3 ngSkyBase(float3 d);
 float3 skyBase(float3 d) {
+    if (NG_IS) return ngSkyBase(d);
     float  e = max(d.y, 0.0);
     float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUN);
     float  sunSide = mu * 0.5 + 0.5;
@@ -222,6 +237,7 @@ float hash12(float2 p) { p = frac(p * float2(0.1031, 0.1030)); p += dot(p, p.yx 
 // The sky pass draws it without the sea (it runs under the whole screen, before the terrain exists); the World FX pass
 // adds the sea only on pixels that are still sky after the world is drawn (csSeaPixel), so terrain never pays for it.
 float3 csGlow(float ang, float hcA) {
+    if (NG_IS) return float3(0.0, 0.0, 0.0);   // Novak Glass has its own light round the sun (the halo)
     float3 warm = float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * lerp(1.0, 0.45, DUSK) * (1.0 - NIGHT);
     float3 cool = float3(0.55, 0.68, 1.0) * 0.050 * exp(-ang * 4.0) * NIGHT;   // moon haze
     return (warm + cool) * (1.0 - 0.5 * hcA);
@@ -230,6 +246,7 @@ float3 csGlow(float ang, float hcA) {
 // ---- the light leaving: dusk keeps a warm afterglow under where the sun went, the rest sinks to violet and indigo;
 //      night turns everything to moonlight (silver tops, deep blue shade). One grade for sky, clouds and sea.
 float3 csGrade(float3 c, float3 rd) {
+    if (NG_IS) return c;                        // its sky is already written per phase
     float  dn = DUSK * (1.0 - NIGHT);
     [branch] if (dn > 0.001) {
         float  toward = pow(saturate(dot(normalize(rd.xz + 1e-4), SUN_AZ) * 0.5 + 0.5), 6.0) * exp(-max(rd.y, 0.0) * 5.0);
@@ -278,7 +295,111 @@ float3 csMoon(float3 rd) { // a small cool moon with a little surface, a halo
     float3 m = float3(1.05, 1.07, 1.12) * (0.95 + 0.5 * smoothstep(0.35, 0.7, mare)) * 1.7 * disc;
     return m + float3(0.55, 0.66, 1.0) * (exp(-ang * 26.0) * 0.16 + exp(-ang * 6.0) * 0.030);
 }
+// ================================================================ Novak Glass: the sky and the crystal void
+// A clear, cold, high sky - no weather in it, only light: deep cobalt overhead, pale ice at the horizon. The low sun
+// stands in a 22 degree ice halo with a sundog on each side (the sky's own glass). Dusk: violet over a rose band.
+// Night: indigo to black-violet, stars, a moon ring. Under the map there is no cloud: a void that falls from the
+// horizon's colour into black-violet, with sheets of glass adrift in it, their edges catching the light.
+float3 ngSpecS(float t) { t = saturate(t); return saturate(float3(1.5 - abs(t * 4.0 - 1.0) * 1.2, 1.5 - abs(t * 4.0 - 2.0) * 1.2, 1.5 - abs(t * 4.0 - 3.2) * 1.2)); }
+float3 ngSkyBase(float3 d) {
+    float  e = max(d.y, 0.0);
+    float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUN);
+    float  sunSide = mu * 0.5 + 0.5;
+    float3 cD = lerp(lerp(float3(0.50, 0.62, 0.80), float3(0.88, 0.80, 0.70), pow(sunSide, 4.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.24, e));
+    cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
+    float3 cK = lerp(lerp(float3(0.28, 0.15, 0.40), float3(0.95, 0.40, 0.38), pow(sunSide, 3.0)), float3(0.125, 0.058, 0.255), smoothstep(0.0, 0.17, e));
+    cK = lerp(cK, float3(0.020, 0.017, 0.100), smoothstep(0.10, 0.70, e));
+    float3 cN = lerp(float3(0.066, 0.038, 0.155), float3(0.017, 0.013, 0.068), smoothstep(0.0, 0.14, e));
+    cN = lerp(cN, float3(0.0035, 0.0035, 0.018), smoothstep(0.08, 0.60, e));
+    return lerp(lerp(cD, cK, DUSK), cN, NIGHT);
+}
+// the halo: a 22 degree ring (hard red inner edge, soft blue outside), a sundog each side at the light's height with
+// its tail pointing away, a short pillar when the sun is on the horizon
+float3 ngHalo(float3 rd, float3 Ld, float k, float dogs) {
+    float  ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
+    float  x = (ang - 0.3840) / 0.01745;                              // degrees outside the ring
+    float  ring = x < 0.0 ? exp(-x * x * 2.2) : exp(-x * 0.55);
+    float3 ringC = lerp(float3(1.00, 0.50, 0.30), float3(0.72, 0.84, 1.00), saturate(x * 0.5 + 0.25));
+    float3 c = ringC * ring * 0.085;
+    float3 t1 = normalize(cross(Ld, float3(0.0, 1.0, 0.0)));
+    [unroll] for (int s = 0; s < 2; s++) {
+        float  sg = s == 0 ? -1.0 : 1.0;
+        float3 Sd = normalize(Ld * 0.9239 + t1 * (0.3827 * sg));       // 22.5 degrees to the side
+        float  dh = dot(rd - Sd, t1) * sg;                             // > 0: further from the sun
+        float  dv = rd.y - Sd.y;
+        float  dog = exp(-dv * dv / 0.00045) * (dh < 0.0 ? exp(-dh * dh / 0.00030) : exp(-dh / 0.045)) * step(0.5, dot(rd, Sd));
+        c += lerp(float3(1.10, 0.55, 0.30), float3(0.85, 0.93, 1.05), saturate(dh * 30.0 + 0.35)) * dog * 0.55 * dogs;
+    }
+    return c * k * smoothstep(-0.02, 0.05, rd.y);
+}
+// one layer of glass sheets adrift in the void: rgb = light added, a = how much of what is behind it is covered
+float4 ngShards(float3 ro, float3 rd, float planeY, float cellS, float seed, float3 Ld) {
+    float  t = (planeY - ro.y) / rd.y;
+    if (t <= 0.0 || t > 2600.0) return float4(0.0, 0.0, 0.0, 0.0);
+    float2 p = ro.xz + rd.xz * t;
+    float2 cell = floor(p / cellS);
+    float  h = hash12(cell + seed);
+    if (h < 0.60) return float4(0.0, 0.0, 0.0, 0.0);
+    float  h2 = hash12(cell * 1.7 + seed + 9.1), h3 = hash12(cell * 2.3 + seed + 4.7);
+    float2 q = p - (cell + 0.5 + (float2(h2, h3) - 0.5) * 0.44) * cellS;
+    float  a = h * 41.0 + TIME * 0.02 * (h2 - 0.5);
+    float  ca = cos(a), sa = sin(a);
+    q = float2(ca * q.x - sa * q.y, sa * q.x + ca * q.y);
+    float  w = cellS * lerp(0.07, 0.13, h3), l = cellS * lerp(0.20, 0.34, h2);
+    float  k = 1.0 - (abs(q.x) / w + abs(q.y) / l);                   // a long kite: 1 at the heart, 0 on its edge
+    if (k <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    // two facets meeting along the spine; each tilts its own way and holds a different part of the sky
+    float  side = q.x < 0.0 ? -1.0 : 1.0;
+    float3 n = normalize(float3((ca * side) * 0.55, 1.0, (-sa * side) * 0.55));
+    float3 R = reflect(rd, n);
+    float  F = 0.06 + 0.94 * pow(1.0 - saturate(dot(-rd, n)), 4.0);
+    float3 refl = ngSkyBase(normalize(float3(R.x, abs(R.y) + 0.02, R.z)));
+    float  glint = pow(saturate(dot(R, Ld)), 220.0);
+    float  edge = smoothstep(0.10, 0.0, k) + smoothstep(0.035, 0.0, abs(q.x) / w) * 0.55;   // rim + spine
+    float  far = exp(-t / 1100.0);
+    float3 lineC = lerp(float3(1.0, 1.0, 1.0), ngSpecS(frac(q.y / l * 0.5 + h * 3.0)), 0.55) * lerp(0.55, 0.30, DUSK * (1.0 - NIGHT));
+    lineC = lerp(lineC, lerp(float3(0.80, 0.72, 1.15), ngSpecS(frac(q.y / l * 0.5 + h * 3.0)), 0.30) * 0.60, NIGHT);   // night: the edges are the light
+    float3 c = refl * F * 0.9 + float3(1.0, 0.97, 0.92) * glint * 1.6 * (1.0 - NIGHT) + lineC * edge;
+    return float4(c * far, saturate(0.22 + 0.5 * F + edge * 0.6) * far);
+}
+// the void for a ray going down: from the horizon's colour into the deep, the sheets on four levels
+float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
+    float  dn = saturate(-rd.y);
+    float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z)));
+    float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0030, 0.0022, 0.012), NIGHT);
+    float3 col = lerp(hor, deep, smoothstep(0.0, 0.42, dn));
+    // a slow breath of light far down, under the map: the void is not dead
+    float2 gp = (ro.xz + rd.xz * ((ro.y - SEA_Y + 260.0) / max(dn, 0.02)) - MAP_C) / 420.0;
+    float  glow = exp(-dot(gp, gp) * 1.6) * (0.75 + 0.25 * sin(TIME * 0.23));
+    col += lerp(float3(0.060, 0.110, 0.300), float3(0.200, 0.070, 0.380), max(DUSK, NIGHT)) * glow * smoothstep(0.05, 0.5, dn) * lerp(0.6, 1.0, NIGHT);
+    float  fadeH = smoothstep(0.015, 0.09, dn);                       // none right at the horizon: they would shimmer
+    [branch] if (fadeH > 0.0) {
+        [unroll] for (int L = 3; L >= 0; L--) {                        // far level first, nearer ones over it
+            float4 sh = ngShards(ro, rd, SEA_Y + 14.0 - 34.0 * float(L), 58.0 + 26.0 * float(L), 13.0 * float(L) + 2.0, Ld);
+            col = col * (1.0 - sh.a * fadeH) + sh.rgb * fadeH;
+        }
+    }
+    return col;
+}
+float3 ngBackground(float3 rd) {
+    float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
+    float3 col;
+    [branch] if (rd.y < 0.0) col = ngVoid(CAM, rd, Ld);
+    else {
+        col = ngSkyBase(rd);
+        float4 hc = highClouds(rd, dot(rd, SUN));                     // only their shapes: thin ice cirrus, lit cold
+        float3 hcC = lerp(lerp(float3(0.80, 0.86, 0.95), float3(0.70, 0.36, 0.50), DUSK), float3(0.060, 0.060, 0.150), NIGHT);
+        col = lerp(col, hcC, hc.a * 0.30);
+        float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
+        float  disc = smoothstep(0.0125, 0.0095, angD);
+        col += (float3(3.6, 3.4, 3.0) * disc + float3(1.0, 0.94, 0.84) * (exp(-angD * 30.0) * 0.9 + exp(-angD * 5.0) * 0.16)) * SUNUP * (1.0 - hc.a * 0.5);
+        col += ngHalo(rd, SUNDISC, SUNUP * lerp(1.0, 1.5, DUSK), 1.0);
+        [branch] if (NIGHT > 0.001) col += (csStars(rd) * 1.25 + csMoon(rd) + ngHalo(rd, SUN, 0.55, 0.0)) * NIGHT;
+    }
+    return col;
+}
 float3 csBackground(float3 rd, bool withSea) {
+    if (NG_IS) return ngBackground(rd);
     float  mu = dot(rd, SUN);
     float  ang = acos(clamp(mu, -1.0, 1.0));
     float3 col = skyBase(rd);
@@ -306,6 +427,7 @@ float3 csBackground(float3 rd, bool withSea) {
 }
 // the cloud sea alone for a sky pixel: a = 0 where the ray misses it (keep the sky pass's colour)
 float4 csSeaPixel(float3 rd) {
+    if (NG_IS) { if (rd.y >= 0.0) return float4(0.0, 0.0, 0.0, 0.0); return float4(ngVoid(CAM, rd, PHASE > 1.45 ? SUN : SUNDISC), 1.0); }
     float  tHit;
     float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
     if (sea.a <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);

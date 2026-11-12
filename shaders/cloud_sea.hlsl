@@ -10,6 +10,7 @@ cbuffer C : register(b0) {
     float4 c3; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c4; // xy = map centre (world xz: the towers keep clear of it), z = quality 0..1, w = match phase (0 golden, 1 dusk, 2 night)
 };
+#define NG_ATMOS 2
 #define CS_NOISE_REG t0
 #define CS_PUFF_REG t1
 #include "cloud_sea_common.hlsli"
@@ -23,7 +24,9 @@ VSOut VSCloudSea(uint id : SV_VertexID) {
     return o;
 }
 float4 PSCloudSea(VSOut i) : SV_Target {
-    CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy; csSetPhase(c4.w); QUALITY = c4.z;
+    CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy; csSetPhase(c4.w);
+    ATMOS = c4.z >= 1.5 ? 1.0 : 0.0;   // quality + 2 = the Novak Glass atmosphere
+    QUALITY = c4.z - 2.0 * ATMOS;
     float3 rd = normalize(i.dir);
     float3 col = csGrade(skyBase(rd), rd); // just the gradient: the World FX pass draws the real sky on pixels still sky
     float3 o = toDisplay(col);

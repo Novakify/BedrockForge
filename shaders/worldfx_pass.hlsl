@@ -42,6 +42,9 @@ cbuffer M : register(b1) {
                        // [0] xyz = direction (world), w = radius; [1] rgb = colour, w = glow; [2] x = seconds since the burst,
                        // y = type, z = draw seed, w = a hash of the shell
 };
+#if NG_RIM
+#define NG_ATMOS 1   // the pass built with the rim is the Novak Glass atmosphere: its sky, its void, its light
+#endif
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
 #include "cloud_sea_common.hlsli"
@@ -103,6 +106,7 @@ float3 sunShafts(int2 px, float j) {
     }
     float open = acc / max(wsum, 1e-4);
     float beam = open * near * near * (0.6 + 0.4 * near);
+    if (NG_IS) return lerp(lerp(float3(1.00, 0.96, 0.88) * 0.55, float3(0.95, 0.50, 0.60) * 0.6, DUSK), float3(0.50, 0.48, 0.95) * 0.8, NIGHT) * beam * c9.x;   // few, pale, clean
     return lerp(float3(1.00, 0.58, 0.26), float3(0.45, 0.56, 0.85), NIGHT) * beam * c9.x;
 }
 
@@ -1464,7 +1468,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
         float  js = hash12(float2(px));
         float3 rays = sunShafts(px, js) * 0.55 * LIGHTK;                  // over open sky the beams are subtler (it is already bright)
-        float4 sea = (rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
+        float4 sea = (!NG_IS && rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
         // the full sky (high clouds, stars, moon) is drawn here, on pixels that are really sky - the sky pass only lays a
         // cheap gradient under the whole screen (most of it is covered by the world afterwards)
         float3 base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));
@@ -1482,7 +1486,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float3 rdT = P / max(length(P), 1e-4);
     // ---- the cloud sea is a real surface: ground below the cloud deck goes under it, peaks above it rise out of it
     //      (the sky pass only draws it where nothing else is; without this the loaded terrain shows as a square)
-    [branch] if (c8.w > 0.5) {
+    [branch] if (c8.w > 0.5 && !NG_IS) {
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
         float  dist = length(P);
         float3 rd   = P / dist;
@@ -1608,9 +1612,10 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // ---- apply (linear light). Shadowed sunlit faces fall to the violet sky light; occlusion darkens gently
     float3 lin = pow(col, 2.2);
     CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
-    float  cs  = (c8.w > 0.5 && c9.y > 0.0) ? (c9.z > 0.25 ? cloudShadow(CAM + P) : cloudShadowLite(CAM + P)) * c9.y : 0.0;
+    float  cs  = (c8.w > 0.5 && c9.y > 0.0 && !NG_IS) ? (c9.z > 0.25 ? cloudShadow(CAM + P) : cloudShadowLite(CAM + P)) * c9.y : 0.0;
     float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55 * (1.0 - NIGHT)) * min(LIGHTK, 1.0);
-    float3 shadeCol = lerp(float3(0.46, 0.44, 0.62), float3(0.48, 0.54, 0.76), NIGHT); // without the key light: violet sky / blue night (light enough to fight in)
+    float3 shadeCol = lerp(float3(0.46, 0.44, 0.62), float3(0.48, 0.54, 0.76), NIGHT);
+    if (NG_IS) shadeCol = lerp(lerp(float3(0.50, 0.57, 0.76), float3(0.48, 0.42, 0.72), DUSK), float3(0.44, 0.46, 0.84), NIGHT);   // Novak Glass: cold, clean shade // without the key light: violet sky / blue night (light enough to fight in)
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
     lin *= lerp(1.0, ao, c6.x);
     // cel light: the shadow terminator gets a thin painted band of warm light on the lit side
@@ -1628,10 +1633,11 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float open = 0.0;
         [unroll] for (int k3 = 1; k3 <= 2; k3++) if (isSky(rawDepth(int2(float2(px) + to * (1.5 * k3))))) open += 0.5;
         float near = exp(-length((sp.xy - float2(px)) / c4.y) * 2.4);
-        lin += lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT) * open * near * c6.y * 0.55 * LIGHTK;
+        lin += (NG_IS ? lerp(float3(1.15, 1.08, 0.98), float3(0.70, 0.66, 1.10), NIGHT) : lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT)) * open * near * c6.y * 0.55 * LIGHTK;
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
-    lin *= lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
+    lin *= NG_IS ? lerp(lerp(float3(1, 1, 1), float3(0.80, 0.70, 0.96), DUSK), float3(0.36, 0.38, 0.78), NIGHT)
+                 : lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
     // ---- sea light: the cloud sea under the map glows with the hour, and everything is lit by it from below - the
     //      undersides of bridges and islands most, walls a little. It moves, slowly, like light off water. When the
     //      storm of the last teams breaks, its lightning comes up through the sea too.
@@ -1641,6 +1647,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float  hgt = saturate(1.0 - (W.y - SEA_Y) / 90.0);
         float  mv = 0.72 + 0.56 * vnoise(W.xz * 0.11 + float2(TIME * 0.21, -TIME * 0.13));
         float3 seaC = lerp(lerp(float3(1.00, 0.68, 0.38), float3(1.00, 0.46, 0.60), DUSK), float3(0.34, 0.52, 1.00), NIGHT);
+        if (NG_IS) seaC = lerp(lerp(float3(0.40, 0.56, 0.90) * 0.55, float3(0.70, 0.36, 0.95) * 0.8, DUSK), float3(0.50, 0.36, 1.00), NIGHT);   // the void's light from below
         float3 add = seaC * under * (0.30 + 0.70 * hgt) * mv * lerp(0.85, 1.9, NIGHT);
         float3 st = m2.w > 0.01 ? stormStrike(m2.w) : float3(0, 0, 0);
         add += lerp(float3(0.62, 0.70, 1.0), float3(1.0, 0.72, 0.62), DUSK * (1.0 - NIGHT)) * st.x * m2.w * (0.30 + 1.2 * under);
@@ -1680,6 +1687,17 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float3 bg = toDisplay(csBackground(normalize(P), true));
         o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
     }
+#if NG_ATMOS == 1
+    // Novak Glass: there is no cloud deck to hide what lies under the map - the world below sinks into the void
+    {
+        float kv = saturate((SEA_Y + 26.0 - (CAM.y + P.y)) / 30.0);
+        [branch] if (kv > 0.0) {
+            float3 rdv = normalize(P);
+            rdv.y = min(rdv.y, -0.02);
+            o = lerp(o, toDisplay(ngVoid(CAM, normalize(rdv), PHASE > 1.45 ? SUN : SUNDISC)), kv);
+        }
+    }
+#endif
     // the ink: deep, coloured (the darkest tone of the frame, not black), drawn over everything near
     [branch] if (ink > 0.0) {   // the line is the surface's own colour, deepened (never a flat black stroke)
         o = lerp(o, o * float3(0.42, 0.40, 0.48), saturate(ink) * 0.85);
