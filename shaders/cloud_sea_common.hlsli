@@ -35,8 +35,9 @@ void csSetPhase(float k) {
     PHASE = k;
     DUSK  = smoothstep(0.0, 1.0, k);
     NIGHT = smoothstep(1.15, 1.9, k);
-    float3 disc = dirAzEl(SUN_AZ, radians(lerp(6.5, -4.5, DUSK)));   // where the sun disc is (it sets)
-    float3 sun  = dirAzEl(SUN_AZ, radians(lerp(6.5, 1.5, DUSK)));    // the light: the afterglow still comes from there
+    float  elDay = NG_IS ? 26.0 : 6.5;                                // Novak Glass: a higher, cleaner sun (its whole halo fits in the sky)
+    float3 disc = dirAzEl(SUN_AZ, radians(lerp(elDay, -4.5, DUSK)));   // where the sun disc is (it sets)
+    float3 sun  = dirAzEl(SUN_AZ, radians(lerp(elDay, 1.5, DUSK)));    // the light: the afterglow still comes from there
     float3 moon = dirAzEl(MOON_AZ, radians(31.0));
     SUN    = normalize(lerp(sun, moon, smoothstep(1.3, 1.6, k)));     // swaps while it is darkest: no shadow jump to see
     SUNDISC = disc;
@@ -305,7 +306,7 @@ float3 ngSkyBase(float3 d) {
     float  e = max(d.y, 0.0);
     float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUN);
     float  sunSide = mu * 0.5 + 0.5;
-    float3 cD = lerp(lerp(float3(0.50, 0.62, 0.80), float3(0.88, 0.80, 0.70), pow(sunSide, 4.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.24, e));
+    float3 cD = lerp(lerp(float3(0.34, 0.50, 0.80), float3(0.72, 0.78, 0.86), pow(sunSide, 8.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.13, e));
     cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
     float3 cK = lerp(lerp(float3(0.28, 0.15, 0.40), float3(0.95, 0.40, 0.38), pow(sunSide, 3.0)), float3(0.125, 0.058, 0.255), smoothstep(0.0, 0.17, e));
     cK = lerp(cK, float3(0.020, 0.017, 0.100), smoothstep(0.10, 0.70, e));
@@ -320,7 +321,7 @@ float3 ngHalo(float3 rd, float3 Ld, float k, float dogs) {
     float  x = (ang - 0.3840) / 0.01745;                              // degrees outside the ring
     float  ring = x < 0.0 ? exp(-x * x * 2.2) : exp(-x * 0.55);
     float3 ringC = lerp(float3(1.00, 0.50, 0.30), float3(0.72, 0.84, 1.00), saturate(x * 0.5 + 0.25));
-    float3 c = ringC * ring * 0.085;
+    float3 c = ringC * ring * 0.15;
     float3 t1 = normalize(cross(Ld, float3(0.0, 1.0, 0.0)));
     [unroll] for (int s = 0; s < 2; s++) {
         float  sg = s == 0 ? -1.0 : 1.0;
@@ -328,7 +329,7 @@ float3 ngHalo(float3 rd, float3 Ld, float k, float dogs) {
         float  dh = dot(rd - Sd, t1) * sg;                             // > 0: further from the sun
         float  dv = rd.y - Sd.y;
         float  dog = exp(-dv * dv / 0.00045) * (dh < 0.0 ? exp(-dh * dh / 0.00030) : exp(-dh / 0.045)) * step(0.5, dot(rd, Sd));
-        c += lerp(float3(1.10, 0.55, 0.30), float3(0.85, 0.93, 1.05), saturate(dh * 30.0 + 0.35)) * dog * 0.55 * dogs;
+        c += lerp(float3(1.10, 0.55, 0.30), float3(0.85, 0.93, 1.05), saturate(dh * 30.0 + 0.35)) * dog * 0.90 * dogs;
     }
     return c * k * smoothstep(-0.02, 0.05, rd.y);
 }
@@ -355,19 +356,19 @@ float4 ngShards(float3 ro, float3 rd, float planeY, float cellS, float seed, flo
     float  F = 0.06 + 0.94 * pow(1.0 - saturate(dot(-rd, n)), 4.0);
     float3 refl = ngSkyBase(normalize(float3(R.x, abs(R.y) + 0.02, R.z)));
     float  glint = pow(saturate(dot(R, Ld)), 220.0);
-    float  edge = smoothstep(0.10, 0.0, k) + smoothstep(0.035, 0.0, abs(q.x) / w) * 0.55;   // rim + spine
+    float  edge = smoothstep(0.13, 0.0, k) + smoothstep(0.045, 0.0, abs(q.x) / w) * 0.55;   // rim + spine
     float  far = exp(-t / 1100.0);
     float3 lineC = lerp(float3(1.0, 1.0, 1.0), ngSpecS(frac(q.y / l * 0.5 + h * 3.0)), 0.55) * lerp(0.55, 0.30, DUSK * (1.0 - NIGHT));
     lineC = lerp(lineC, lerp(float3(0.80, 0.72, 1.15), ngSpecS(frac(q.y / l * 0.5 + h * 3.0)), 0.30) * 0.60, NIGHT);   // night: the edges are the light
-    float3 c = refl * F * 0.9 + float3(1.0, 0.97, 0.92) * glint * 1.6 * (1.0 - NIGHT) + lineC * edge;
-    return float4(c * far, saturate(0.22 + 0.5 * F + edge * 0.6) * far);
+    float3 c = refl * (F * 1.2 + 0.10 + 0.10 * side) + float3(1.0, 0.97, 0.92) * glint * 1.6 * (1.0 - NIGHT) + lineC * edge;   // the two facets differ: it has a spine
+    return float4(c * far, saturate(0.34 + 0.5 * F + edge * 0.6) * far);
 }
 // the void for a ray going down: from the horizon's colour into the deep, the sheets on four levels
 float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float  dn = saturate(-rd.y);
     float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z)));
     float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0030, 0.0022, 0.012), NIGHT);
-    float3 col = lerp(hor, deep, smoothstep(0.0, 0.42, dn));
+    float3 col = lerp(hor, deep, smoothstep(0.0, 0.26, dn));
     // a slow breath of light far down, under the map: the void is not dead
     float2 gp = (ro.xz + rd.xz * ((ro.y - SEA_Y + 260.0) / max(dn, 0.02)) - MAP_C) / 420.0;
     float  glow = exp(-dot(gp, gp) * 1.6) * (0.75 + 0.25 * sin(TIME * 0.23));
@@ -389,10 +390,10 @@ float3 ngBackground(float3 rd) {
         col = ngSkyBase(rd);
         float4 hc = highClouds(rd, dot(rd, SUN));                     // only their shapes: thin ice cirrus, lit cold
         float3 hcC = lerp(lerp(float3(0.80, 0.86, 0.95), float3(0.70, 0.36, 0.50), DUSK), float3(0.060, 0.060, 0.150), NIGHT);
-        col = lerp(col, hcC, hc.a * 0.30);
+        col = lerp(col, hcC, hc.a * 0.20);
         float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
         float  disc = smoothstep(0.0125, 0.0095, angD);
-        col += (float3(3.6, 3.4, 3.0) * disc + float3(1.0, 0.94, 0.84) * (exp(-angD * 30.0) * 0.9 + exp(-angD * 5.0) * 0.16)) * SUNUP * (1.0 - hc.a * 0.5);
+        col += (float3(6.0, 5.6, 5.0) * disc + float3(1.0, 0.95, 0.86) * (exp(-angD * 30.0) * 1.1 + exp(-angD * 6.0) * 0.20)) * SUNUP * (1.0 - hc.a * 0.5);
         col += ngHalo(rd, SUNDISC, SUNUP * lerp(1.0, 1.5, DUSK), 1.0);
         [branch] if (NIGHT > 0.001) col += (csStars(rd) * 1.25 + csMoon(rd) + ngHalo(rd, SUN, 0.55, 0.0)) * NIGHT;
     }

@@ -24,8 +24,8 @@ VSOut VSCloudSea(uint id : SV_VertexID) {
     return o;
 }
 float4 PSCloudSea(VSOut i) : SV_Target {
-    CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy; csSetPhase(c4.w);
-    ATMOS = c4.z >= 1.5 ? 1.0 : 0.0;   // quality + 2 = the Novak Glass atmosphere
+    CAM = c3.xyz; TIME = c2.w; SEA_Y = c3.w; MAP_C = c4.xy; ATMOS = c4.z >= 1.5 ? 1.0 : 0.0;   // quality + 2 = the Novak Glass atmosphere
+    csSetPhase(c4.w);
     QUALITY = c4.z - 2.0 * ATMOS;
     float3 rd = normalize(i.dir);
     float3 col = csGrade(skyBase(rd), rd); // just the gradient: the World FX pass draws the real sky on pixels still sky
