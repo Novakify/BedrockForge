@@ -193,7 +193,7 @@ float4 main(PSIn i) : SV_Target {
             float  sinV = min(length(vt.xy), 0.999);
             float2 dirV = -vt.xy / max(sinV, 1e-4);
             float3 sinG = sinV / float3(1.36, 1.50, 1.68);
-            float3 tanG = sinG / sqrt(1.0 - sinG * sinG) * (2.0 * u) * nearN;
+            float3 tanG = sinG / sqrt(1.0 - sinG * sinG) * (1.3 * u) * nearN;   // the core sits 1.3/16 behind the face
             float2 qR = floor(q + dirV * tanG.r) + 0.5, qG = floor(q + dirV * tanG.g) + 0.5, qB = floor(q + dirV * tanG.b) + 0.5;
             // the joint between two blocks is 2 texels on a 32x pack, 1 on a 16x one (a whole texel is the least there
             // is: there the core is set in on its low sides only). Seen in game: a 1/8-block joint read as bathroom grout.
@@ -208,7 +208,7 @@ float4 main(PSIn i) : SV_Target {
                 ti = tn; t0 = float4(tN.rgb, t0.a);
             }
             ngOn = nearN;
-            pxShade *= lerp(1.0, lerp(0.86, 1.0, ngIn.g), nearN);  // glass, not grout: the joint stays light
+            // (no shade on the joint: seen in game, any darkening there read as a dirty band beside every block)
         }
     }
 #endif
@@ -364,7 +364,7 @@ float4 main(PSIn i) : SV_Target {
         bool   wood = mid == MAT_PLANKS || mid == MAT_LOG;
         float  clar = mid == MAT_WOOL ? 0.62 : (wood ? 0.46 : 0.50);
         float3 gt = wood ? float3(1.0, 0.78, 0.48) : (mid == MAT_WOOL ? float3(1.0, 0.98, 0.96) : float3(0.88, 0.95, 1.0));
-        float3 glassC = lit * (mid == MAT_WOOL ? 0.95 : 0.92) + gt * ambG * (mid == MAT_WOOL ? 0.85 : 0.55);
+        float3 glassC = lit * 1.04 + gt * (ambG * (mid == MAT_WOOL ? 1.0 : 0.80) + CS_SUNC * 0.10 * sunVis);   // glass is lighter than what it holds
         lit = lerp(lit, glassC, shell * clar);
         // the inner corner, where the shell meets the core: it catches the light by day and holds its own at night
         float3 hueG = alb / max(csMax3(alb), 1e-3);
