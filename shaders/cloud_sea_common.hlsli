@@ -304,18 +304,84 @@ float3 csMoon(float3 rd) { // a small cool moon with a little surface, a halo
 float3 ngSpecS(float t) { t = saturate(t); return saturate(float3(1.5 - abs(t * 4.0 - 1.0) * 1.2, 1.5 - abs(t * 4.0 - 2.0) * 1.2, 1.5 - abs(t * 4.0 - 3.2) * 1.2)); }
 float3 ngSkyBase(float3 d) {
     float  e = max(d.y, 0.0);
-    float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUN);
-    float  sunSide = mu * 0.5 + 0.5;
-    float3 cD = lerp(lerp(float3(0.34, 0.50, 0.80), float3(0.72, 0.78, 0.86), pow(sunSide, 8.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.13, e));
+    float  sunSide = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUN) * 0.5 + 0.5;
+    float3 cD = lerp(lerp(float3(0.24, 0.44, 0.74), float3(0.62, 0.70, 0.84), pow(sunSide, 8.0)), float3(0.105, 0.215, 0.520), smoothstep(0.0, 0.11, e));
     cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
     float3 cK = lerp(lerp(float3(0.19, 0.115, 0.33), float3(1.00, 0.45, 0.36), pow(sunSide, 3.0)), float3(0.072, 0.040, 0.180), smoothstep(0.0, 0.15, e));
-    cK = lerp(cK, float3(0.014, 0.012, 0.074), smoothstep(0.10, 0.70, e));   // seen in game: one flat lavender - now a deep violet over the band
+    cK = lerp(cK, float3(0.014, 0.012, 0.074), smoothstep(0.10, 0.70, e));
     float3 cN = lerp(float3(0.044, 0.027, 0.112), float3(0.015, 0.012, 0.062), smoothstep(0.0, 0.14, e));
     cN = lerp(cN, float3(0.0035, 0.0035, 0.018), smoothstep(0.08, 0.60, e));
     return lerp(lerp(cD, cK, DUSK), cN, NIGHT);
 }
-// the halo: a 22 degree ring (hard red inner edge, soft blue outside), a sundog each side at the light's height with
-// its tail pointing away, a short pillar when the sun is on the horizon
+float3 ngHash3(float3 p) { return float3(hash13(p), hash13(p + 17.13), hash13(p + 41.71)); }
+float3 ngFilm(float d) { return 0.5 + 0.5 * cos(6.2832 * (d * float3(1.0, 1.18, 1.42) + float3(0.0, 0.08, 0.20))); }   // thin-film colours
+// ---- the dome: the sky is seen through a geodesic glass dome. Directions map stereographically onto a plane (panes
+//      shrink toward the horizon like a real dome); a triangular lattice there = the panes. Each pane bends the view a
+//      little its own way (the sun and its halo break up across them). The edges are NOT a wireframe: an edge only
+//      catches the light in places - a few long glints, colour-split near the light, most of the lattice invisible.
+struct NgDome { float3 rdF; float edge; float edgeC; float3 hcell; };
+NgDome ngDome(float3 rd) {
+    NgDome D;
+    float  e = max(rd.y, 0.0);
+    float2 p = rd.xz / (1.0 + max(rd.y, 0.02)) * 3.6;
+    const float2 a0 = float2(1.0, 0.0), a1 = float2(0.5, 0.8660254), a2 = float2(-0.5, 0.8660254);
+    float3 g = float3(dot(p, a0), dot(p, a1), dot(p, a2));
+    float3 fr = frac(g), dl = min(fr, 1.0 - fr);
+    D.hcell = ngHash3(floor(g) + 7.0);
+    float2 jit = (D.hcell.xy - 0.5) * 0.030;
+    D.rdF = normalize(rd + float3(jit.x, (D.hcell.z - 0.5) * 0.020, jit.y));
+    float  px = length(fwidth(p)) + 1e-4;
+    float  d = min(dl.x, min(dl.y, dl.z));
+    float  fam = dl.x <= min(dl.y, dl.z) ? 0.0 : (dl.y <= dl.z ? 1.0 : 2.0);
+    float  lineId = fam == 0.0 ? floor(g.x + 0.5) : (fam == 1.0 ? floor(g.y + 0.5) : floor(g.z + 0.5));
+    float  along = fam == 0.0 ? dot(p, float2(-a0.y, a0.x)) : (fam == 1.0 ? dot(p, float2(-a1.y, a1.x)) : dot(p, float2(-a2.y, a2.x)));
+    float  gl = smoothstep(0.70, 0.97, vnoise(float2(along * 1.1 + lineId * 7.1, fam * 13.0 + TIME * 0.05)));
+    float  fade = smoothstep(0.03, 0.22, e);
+    D.edge  = (1.0 - smoothstep(0.0, px * 1.2, d)) * gl * fade;
+    D.edgeC = (1.0 - smoothstep(0.0, px * 5.0, d)) * gl * fade;
+    return D;
+}
+// circumzenithal arc: an upside-down rainbow round the zenith, ~46 degrees over a low sun
+float3 ngCza(float3 rd, float3 Ld, float k) {
+    float sunEl = asin(clamp(Ld.y, -1.0, 1.0));
+    if (sunEl > 0.56 || sunEl < 0.0 || k <= 0.0) return float3(0.0, 0.0, 0.0);
+    float colat = acos(clamp(rd.y, -1.0, 1.0));
+    float x = (colat - (1.5708 - (sunEl + 0.80))) / 0.030;
+    float wnd = smoothstep(0.25, 0.85, dot(normalize(rd.xz + 1e-4), normalize(Ld.xz)));
+    return ngSpecS(saturate(0.5 + x * 0.42)) * exp(-x * x * 0.9) * wnd * 0.32 * k;
+}
+// thin iridescent cirrus: fibres (ridged noise: mares' tails, not soft blobs), white away from the sun, mother-of-pearl
+// colours within ~25 degrees of it
+float4 ngCirrus(float3 rd, float3 Ld) {
+    float e = max(rd.y, 0.0);
+    if (e < 0.02) return float4(0.0, 0.0, 0.0, 0.0);
+    float2 p = rd.xz / (e + 0.30) * 2.4 + TIME * float2(0.004, 0.0015);
+    float2 q = float2(p.x * 0.55 + p.y * 0.83, p.y * 0.55 - p.x * 0.83);
+    float2 w = float2(fbm(q * 0.8 + 1.7, 3), fbm(q * 0.8 + 8.3, 3));
+    float2 qq = q * float2(1.3, 4.0) + w * 1.6 + 3.0;
+    float  r = 0.0, amp = 0.55;
+    [loop] for (int i = 0; i < (QUALITY > 0.3 ? 5 : 3); i++) { float v = 1.0 - abs(2.0 * vnoise(qq) - 1.0); r += amp * v * v; qq = mul(float2x2(1.6, 1.2, -1.2, 1.6), qq) * float2(1.0, 1.15); amp *= 0.5; }
+    float m = fbm(q * 0.30 + 11.0, 3);
+    float dens = smoothstep(0.56, 0.80, r) * smoothstep(0.50, 0.68, m) * smoothstep(0.04, 0.22, e) * (1.0 - smoothstep(0.75, 1.0, e) * 0.6);
+    float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
+    float3 c = lerp(float3(0.92, 0.95, 1.0), ngFilm(r * 2.2 + ang * 0.8), 0.75 * exp(-ang * 2.6));
+    return float4(c, dens);
+}
+// caustics: light through the dome falling on a floor far under the void (a two-scale moving cell net)
+float ngCaustic(float2 p) {
+    float2 q = p; float t = TIME * 0.15; float v = 0.0;
+    [unroll] for (int i = 0; i < 2; i++) {
+        float2 g = floor(q), f = frac(q); float d1 = 9.0, d2 = 9.0;
+        [unroll] for (int y = -1; y <= 1; y++) [unroll] for (int x = -1; x <= 1; x++) {
+            float2 o = float2(x, y); float2 h = float2(hash12(g + o), hash12(g + o + 19.1));
+            float2 r = o + 0.5 + 0.42 * sin(t + 6.2832 * h) - f; float d = dot(r, r);
+            if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+        }
+        v += pow(1.0 - smoothstep(0.0, 0.06, sqrt(d2) - sqrt(d1)), 3.0) * (i == 0 ? 1.0 : 0.5);
+        q = q * 2.03 + 7.3;
+    }
+    return v;
+}
 float3 ngHalo(float3 rd, float3 Ld, float k, float dogs) {
     float  ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float  x = (ang - 0.3840) / 0.01745;                              // degrees outside the ring
@@ -368,14 +434,27 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float  dn = saturate(-rd.y);
     float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z)));
     float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0030, 0.0022, 0.012), NIGHT);
-    float3 col = lerp(hor, deep, smoothstep(0.0, 0.26, dn));
-    // a slow breath of light far down, under the map: the void is not dead
-    float2 gp = (ro.xz + rd.xz * ((ro.y - SEA_Y + 260.0) / max(dn, 0.02)) - MAP_C) / 420.0;
-    float  glow = exp(-dot(gp, gp) * 1.6) * (0.75 + 0.25 * sin(TIME * 0.23));
-    col += lerp(float3(0.060, 0.110, 0.300), float3(0.200, 0.070, 0.380), max(DUSK, NIGHT)) * glow * smoothstep(0.05, 0.5, dn) * lerp(0.6, 1.0, NIGHT);
-    float  fadeH = smoothstep(0.015, 0.09, dn);                       // none right at the horizon: they would shimmer
+    float3 col = lerp(hor, deep, smoothstep(0.0, 0.13, dn));
+    // the floor of the void, far below: light through the dome draws moving patches of caustic net on it
+    float  tF = (ro.y - (SEA_Y - 260.0)) / max(dn, 0.02);
+    float2 fp = (ro.xz + rd.xz * tF) / 55.0;
+    float  fadeF = exp(-tF / 1500.0) * smoothstep(0.10, 0.45, dn);
+    [branch] if (fadeF > 0.01 && QUALITY > 0.15) {
+        float cs = ngCaustic(fp) * smoothstep(0.35, 0.75, fbm(fp * 0.25 + 3.0, 3));
+        float3 cc = lerp(lerp(float3(0.30, 0.62, 1.00), float3(0.85, 0.40, 0.95), DUSK), float3(0.45, 0.30, 1.00), NIGHT);
+        col += cc * cs * fadeF * lerp(0.16, 0.30, NIGHT);
+    }
+    // glitter: motes of glass hanging in the void, catching the light
+    float3 gq = rd * 260.0, gc = floor(gq);
+    float  hh = hash13(gc + 5.0);
+    if (hh > 0.985) {
+        float3 sp = normalize(gc + 0.5 + (ngHash3(gc) - 0.5) * 0.6);
+        float  a = length(rd - sp) * 260.0;
+        col += lerp(float3(0.75, 0.88, 1.0), ngSpecS(frac(hh * 91.0)), 0.5) * exp(-a * a * 6.0) * (0.5 + 0.5 * sin(TIME * (1.0 + 3.0 * hh) + hh * 40.0)) * smoothstep(0.03, 0.2, dn) * 0.9;
+    }
+    float  fadeH = smoothstep(0.015, 0.09, dn);
     [branch] if (fadeH > 0.0) {
-        [unroll] for (int L = 3; L >= 0; L--) {                        // far level first, nearer ones over it
+        [unroll] for (int L = 3; L >= 0; L--) {
             float4 sh = ngShards(ro, rd, SEA_Y + 14.0 - 34.0 * float(L), 58.0 + 26.0 * float(L), 13.0 * float(L) + 2.0, Ld);
             col = col * (1.0 - sh.a * fadeH) + sh.rgb * fadeH;
         }
@@ -384,18 +463,29 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
 }
 float3 ngBackground(float3 rd) {
     float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
-    float3 col;
-    [branch] if (rd.y < 0.0) col = ngVoid(CAM, rd, Ld);
-    else {
-        col = ngSkyBase(rd);
-        float4 hc = highClouds(rd, dot(rd, SUN));                     // only their shapes: thin ice cirrus, lit cold
-        float3 hcC = lerp(lerp(float3(0.80, 0.86, 0.95), float3(0.70, 0.36, 0.50), DUSK), float3(0.060, 0.060, 0.150), NIGHT);
-        col = lerp(col, hcC, hc.a * 0.20);
-        float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
-        float  disc = smoothstep(0.0125, 0.0095, angD);
-        col += (float3(6.0, 5.6, 5.0) * disc + float3(1.0, 0.95, 0.86) * (exp(-angD * 30.0) * 1.1 + exp(-angD * 6.0) * 0.20)) * SUNUP * (1.0 - hc.a * 0.5);
-        col += ngHalo(rd, SUNDISC, SUNUP * lerp(1.0, 1.5, DUSK), 1.0);
-        [branch] if (NIGHT > 0.001) col += (csStars(rd) * 1.25 + csMoon(rd) + ngHalo(rd, SUN, 0.55, 0.0)) * NIGHT;
+    [branch] if (rd.y < 0.0) return ngVoid(CAM, rd, Ld);
+    NgDome D  = ngDome(rd);
+    float3 rf = D.rdF;
+    float3 col = ngSkyBase(rf) * (0.965 + 0.07 * D.hcell.x);          // each pane a breath brighter or darker
+    float  e = rd.y;
+    col += ngSpecS(saturate(0.5 - e * 90.0)) * exp(-pow(e * 110.0 - 0.6, 2.0)) * lerp(0.06, 0.12, NIGHT) * (1.0 - 0.5 * DUSK);   // the dome's base ring
+    float4 ci = ngCirrus(rf, Ld);
+    float3 ciC = ci.rgb * lerp(lerp(float3(0.95, 0.97, 1.0), float3(0.95, 0.60, 0.70), DUSK), float3(0.10, 0.10, 0.22), NIGHT);
+    col = lerp(col, ciC, ci.a * lerp(0.55, 0.18, NIGHT));
+    float  angD = acos(clamp(dot(rf, SUNDISC), -1.0, 1.0));
+    float  disc = smoothstep(0.0125, 0.0095, angD);
+    col += (float3(6.0, 5.6, 5.0) * disc + float3(1.0, 0.95, 0.86) * (exp(-angD * 30.0) * 1.1 + exp(-angD * 6.0) * 0.20)) * SUNUP * (1.0 - ci.a * 0.5);
+    col += ngHalo(rf, SUNDISC, SUNUP * lerp(1.0, 1.5, DUSK), 1.0);
+    col += ngCza(rd, SUNDISC, SUNUP * (1.0 - DUSK));
+    float  angL = acos(clamp(dot(rd, Ld), -1.0, 1.0));
+    float  nearL = exp(-angL * 2.2);
+    float3 lineDay = lerp(float3(0.85, 0.92, 1.0) * 0.06, lerp(float3(1.0, 1.0, 1.0), ngSpecS(frac(angL * 2.2 + D.hcell.y * 0.3)), 0.65) * 0.75, nearL);
+    float3 lineC = lerp(lerp(lineDay, lineDay * float3(1.0, 0.70, 0.85), DUSK), float3(0.50, 0.42, 0.95) * 0.045, NIGHT);
+    col += lineC * (D.edge + D.edgeC * 0.35);
+    [branch] if (NIGHT > 0.001) {
+        col += csStars(rd) * 1.25 * NIGHT + csMoon(rd) * NIGHT;
+        float am = acos(clamp(dot(rd, SUN), -1.0, 1.0)), x2 = (am - 0.384) / 0.0175;
+        col += float3(0.62, 0.66, 0.95) * (x2 < 0.0 ? exp(-x2 * x2 * 2.0) : exp(-x2 * 0.6)) * 0.035 * NIGHT * smoothstep(-0.02, 0.05, rd.y);   // the moon's ring
     }
     return col;
 }
