@@ -362,7 +362,7 @@ float4 ngCirrus(float3 rd, float3 Ld) {
     float  r = 0.0, amp = 0.55;
     [loop] for (int i = 0; i < (QUALITY > 0.3 ? 5 : 3); i++) { float v = 1.0 - abs(2.0 * vnoise(qq) - 1.0); r += amp * v * v; qq = mul(float2x2(1.6, 1.2, -1.2, 1.6), qq) * float2(1.0, 1.15); amp *= 0.5; }
     float m = fbm(q * 0.30 + 11.0, 3);
-    float dens = smoothstep(0.56, 0.80, r) * smoothstep(0.50, 0.68, m) * smoothstep(0.04, 0.22, e) * (1.0 - smoothstep(0.75, 1.0, e) * 0.6);
+    float dens = smoothstep(0.54, 0.80, r) * smoothstep(0.40, 0.62, m) * smoothstep(0.04, 0.22, e) * (1.0 - smoothstep(0.75, 1.0, e) * 0.6);
     float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float3 c = lerp(float3(0.92, 0.95, 1.0), ngFilm(r * 2.2 + ang * 0.8), 0.75 * exp(-ang * 2.6));
     return float4(c, dens);
@@ -434,7 +434,7 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float  dn = saturate(-rd.y);
     float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z)));
     float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0030, 0.0022, 0.012), NIGHT);
-    float3 col = lerp(hor, deep, smoothstep(0.0, 0.13, dn));
+    float3 col = lerp(hor, deep, smoothstep(0.0, 0.07, dn));   // (seen in game: a wider fade read as a fog wall)
     // the floor of the void, far below: light through the dome draws moving patches of caustic net on it
     float  tF = (ro.y - (SEA_Y - 260.0)) / max(dn, 0.02);
     float2 fp = (ro.xz + rd.xz * tF) / 55.0;
@@ -461,6 +461,24 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     }
     return col;
 }
+// the night's veil: prismatic curtains (an aurora seen through glass) - violet, cyan, a breath of green, drawn as
+// stacked sheets so they hang in folds with fine vertical rays
+float3 ngVeil(float3 rd) {
+    float e = rd.y;
+    if (e < 0.03) return float3(0.0, 0.0, 0.0);
+    float3 acc = float3(0.0, 0.0, 0.0);
+    float  t = TIME * 0.035;
+    [loop] for (int k = 0; k < 6; k++) {
+        float  hk = 1.0 + float(k) * 0.16;                          // stacked sheets: the folds hang down
+        float2 p = rd.xz / (e + 0.05) * (0.55 / hk);
+        float  v = p.y + 0.9 * sin(p.x * 0.55 + t * 2.0) + fbm(p * 0.45 + float2(t, 0.0), 3) * 1.6;
+        float  band = exp(-pow(sin(v * 0.9) / 0.20, 2.0));
+        float  rays = 0.55 + 0.45 * vnoise(float2(p.x * 9.0 + v * 2.0, t * 3.0));
+        float3 c = lerp(float3(0.45, 0.30, 1.00), ngFilm(v * 0.12 + 0.35 + float(k) * 0.03) * float3(0.70, 1.00, 1.00), 0.55);
+        acc += c * band * rays * (1.0 - float(k) / 6.0);
+    }
+    return acc * 0.055 * smoothstep(0.03, 0.20, e) * (1.0 - smoothstep(0.55, 0.95, e));
+}
 float3 ngBackground(float3 rd) {
     float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
     [branch] if (rd.y < 0.0) return ngVoid(CAM, rd, Ld);
@@ -477,6 +495,15 @@ float3 ngBackground(float3 rd) {
     col += (float3(6.0, 5.6, 5.0) * disc + float3(1.0, 0.95, 0.86) * (exp(-angD * 30.0) * 1.1 + exp(-angD * 6.0) * 0.20)) * SUNUP * (1.0 - ci.a * 0.5);
     col += ngHalo(rf, SUNDISC, SUNUP * lerp(1.0, 1.5, DUSK), 1.0);
     col += ngCza(rd, SUNDISC, SUNUP * (1.0 - DUSK));
+    // the parhelic circle: a thin white ring at the sun's height all the way round the sky, with the anthelion (a
+    // soft bright spot) opposite the sun - so the sky away from the sun has its own ice-light too
+    {
+        float  dv = (rd.y - SUNDISC.y) / 0.0085;
+        float  opp = saturate(-dot(normalize(rd.xz + 1e-4), normalize(SUNDISC.xz + 1e-4)));
+        float  ring = exp(-dv * dv) * (0.035 + 0.030 * opp);
+        float  anth = exp(-dv * dv * 0.5) * exp(-pow(acos(saturate(opp)) / 0.05, 2.0)) * 0.12;
+        col += float3(0.92, 0.95, 1.0) * (ring + anth) * SUNUP * (1.0 - DUSK) * smoothstep(0.02, 0.08, rd.y);
+    }
     float  angL = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float  nearL = exp(-angL * 2.2);
     float3 lineDay = lerp(float3(0.85, 0.92, 1.0) * 0.06, lerp(float3(1.0, 1.0, 1.0), ngSpecS(frac(angL * 2.2 + D.hcell.y * 0.3)), 0.65) * 0.75, nearL);
@@ -484,6 +511,7 @@ float3 ngBackground(float3 rd) {
     col += lineC * (D.edge + D.edgeC * 0.35);
     [branch] if (NIGHT > 0.001) {
         col += csStars(rd) * 1.25 * NIGHT + csMoon(rd) * NIGHT;
+        col += ngVeil(rd) * NIGHT;
         float am = acos(clamp(dot(rd, SUN), -1.0, 1.0)), x2 = (am - 0.384) / 0.0175;
         col += float3(0.62, 0.66, 0.95) * (x2 < 0.0 ? exp(-x2 * x2 * 2.0) : exp(-x2 * 0.6)) * 0.035 * NIGHT * smoothstep(-0.02, 0.05, rd.y);   // the moon's ring
     }
