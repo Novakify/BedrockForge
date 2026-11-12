@@ -766,7 +766,8 @@ float4 cityLayer(float3 rd, float L){
   float3 tg=float3(-cn.z,0.0,cn.x); float3 nF=normalize(lerp(cn,cn*0.7+tg*0.7,farF));
   float3 cDay=dayGlass(rd,nF,lx,ym,Hr,Wm,pxm,sd,c*(1.0-LIT)*0.0+c);
   cDay=lerp(cDay,dayAir(az)*0.90,hzK*0.50);
-  return float4(lerp(cDay,lerp(c,hazeC,hzK*0.62),LIT),1.0);
+  float LITb=smoothstep(0.0,0.20,LIT*1.25-hb(sd,61.)*1.0);     // the city lights up building after building as the dark comes
+  return float4(lerp(cDay,lerp(c,hazeC,hzK*0.62),LITb),1.0);
 }
 float3 layerGlow(float3 rd, float L){
   float az=atan2(rd.z,rd.x), el=rd.y/max(length(rd.xz),1e-3), R=420.0*pow(1.6,L);
@@ -868,7 +869,8 @@ float4 cityBelow(float3 ro, float3 rd){
           cD=dayGlass(d,float3(0.,0.,-sign(d.z)),(q.x-bmin.x)/sz.x,q.y,H,sz.x,pxm,sd+2.0,c); }
         float fog=1.0-exp(-tn/1100.0);
         float3 cn2=lerp(c,float3(0.012,0.016,0.050)+cityHaze(az)*0.06,fog);
-        return float4(lerp(lerp(cD,dayAir(az)*0.85,(1.0-exp(-tn/2600.0))*0.85),cn2,LIT),1.0);
+        float LITb=smoothstep(0.0,0.20,LIT*1.25-ngH12(id+61.0));
+        return float4(lerp(lerp(cD,dayAir(az)*0.85,(1.0-exp(-tn/2600.0))*0.85),cn2,LITb),1.0);
       }
     }
     if(tG<tExit){
