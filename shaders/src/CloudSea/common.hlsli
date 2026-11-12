@@ -23,8 +23,14 @@ void csSetPhase(float k) {
     float3 moon = csDirAzEl(CS_MOON_AZ, radians(31.0));
     CS_SUN = normalize(lerp(sun, moon, smoothstep(1.3, 1.6, k)));
     CS_LIGHTK = lerp(lerp(1.0, 0.40, smoothstep(0.25, 1.0, k)), 0.62, CS_NIGHT) * (1.0 - 0.75 * smoothstep(1.1, 1.45, k) * (1.0 - smoothstep(1.45, 1.8, k)));
+#if defined(CS_NOVAK)
+    // Novak Glass: clean light. A white sun with only a breath of warmth, rose at dusk, a violet-white moon
+    float3 gold = float3(1.00, 0.95, 0.87), dusk = float3(1.00, 0.58, 0.62), moonC = float3(0.66, 0.63, 1.00);
+    CS_SUNC = lerp(lerp(gold, dusk, CS_DUSK), moonC, smoothstep(1.3, 1.6, k)) * 1.62 * CS_LIGHTK;
+#else
     float3 gold = float3(1.00, 0.72, 0.50), dusk = float3(1.00, 0.50, 0.40), moonC = float3(0.58, 0.70, 1.00);
     CS_SUNC = lerp(lerp(gold, dusk, CS_DUSK), moonC, smoothstep(1.3, 1.6, k)) * 1.85 * CS_LIGHTK;
+#endif
 }
 // The phase from the game's daylight: the light map's full-sky texel (no block light) - measured in game 2026-11-11:
 // 1.0 at noon and at Bedrock Forge's golden hour (tick 10920), ~0.85 at its dusk (12480), ~0.55 later, ~0.3 at night
@@ -81,6 +87,19 @@ float csVanillaShade(float3 n) {
 
 // the sky (same gradient the Cloud Sea sky draws), used for the haze on far blocks
 float3 csSky(float3 d) {
+#if defined(CS_NOVAK)
+    {   // the Novak Glass sky (Renderer Foundation cloud_sea_common.hlsli ngSkyBase - same numbers)
+        float  e = max(d.y, 0.0);
+        float  sunSide = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), CS_SUN) * 0.5 + 0.5;
+        float3 cD = lerp(lerp(float3(0.50, 0.62, 0.80), float3(0.88, 0.80, 0.70), pow(sunSide, 4.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.24, e));
+        cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
+        float3 cK = lerp(lerp(float3(0.28, 0.15, 0.40), float3(0.95, 0.40, 0.38), pow(sunSide, 3.0)), float3(0.125, 0.058, 0.255), smoothstep(0.0, 0.17, e));
+        cK = lerp(cK, float3(0.020, 0.017, 0.100), smoothstep(0.10, 0.70, e));
+        float3 cN = lerp(float3(0.066, 0.038, 0.155), float3(0.017, 0.013, 0.068), smoothstep(0.0, 0.14, e));
+        cN = lerp(cN, float3(0.0035, 0.0035, 0.018), smoothstep(0.08, 0.60, e));
+        return lerp(lerp(cD, cK, CS_DUSK), cN, CS_NIGHT);
+    }
+#endif
     float  e = max(d.y, 0.0);
     float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), CS_SUN);
     float  sunSide = mu * 0.5 + 0.5;
@@ -224,7 +243,11 @@ float3 csSkyMoving(float3 r) {
     float  toSun = pow(saturate(dot(normalize(float3(r.x, 0.0, r.z)), normalize(float3(CS_SUN.x, 0.0, CS_SUN.z))) * 0.5 + 0.5), 2.0);
     float3 lit = lerp(lerp(float3(1.25, 0.66, 0.48), float3(0.95, 0.42, 0.48), CS_DUSK), float3(0.20, 0.24, 0.36), CS_NIGHT);
     float3 shd = lerp(lerp(float3(0.42, 0.28, 0.42), float3(0.24, 0.16, 0.30), CS_DUSK), float3(0.05, 0.06, 0.11), CS_NIGHT);
+#if defined(CS_NOVAK)
+    c = lerp(c, lerp(lerp(float3(0.80, 0.86, 0.95), float3(0.70, 0.36, 0.50), CS_DUSK), float3(0.06, 0.06, 0.15), CS_NIGHT), cl * 0.28);   // thin ice cirrus
+#else
     c = lerp(c, lerp(shd, lit, toSun), cl * 0.85);
+#endif
     // stars between the clouds at night (one direction cell each, they don't crawl)
     if (CS_NIGHT > 0.01) {
         float3 a = abs(r);
@@ -241,6 +264,9 @@ float3 csReflect(float3 r) {
     if (r.y >= 0.0) return csSkyMoving(r);
     float3 sea = lerp(float3(0.62, 0.34, 0.36), float3(0.95, 0.42, 0.18), pow(saturate(dot(normalize(float3(r.x, 0.0, r.z)), CS_SUN) * 0.5 + 0.5), 3.0));
     sea = lerp(lerp(sea, float3(0.55, 0.30, 0.46), CS_DUSK), float3(0.10, 0.14, 0.30), CS_NIGHT);
+#if defined(CS_NOVAK)
+    sea = lerp(lerp(float3(0.045, 0.075, 0.230), float3(0.060, 0.030, 0.150), CS_DUSK), float3(0.010, 0.008, 0.034), CS_NIGHT);   // the void under the map
+#endif
     return lerp(csSky(normalize(float3(r.x, 0.02, r.z))), sea, smoothstep(0.0, -0.12, r.y));
 }
 
@@ -249,7 +275,9 @@ float3 csReflect(float3 r) {
 // glintN = per-texel tilted normal (sparkle), fade = 1 near, 0 where texels get smaller than pixels
 float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float leaf, float3 V, CsMat m, float cav, float3 glintN, float fade) {
     float green = saturate((alb.g - max(alb.r, alb.b)) * 5.0);   // pure greens refuse to sit in a sunset: toward olive
+#if !defined(CS_NOVAK)
     alb = lerp(alb, csLuma(alb) * float3(1.22, 0.98, 0.42), green * 0.42);
+#endif
     alb = max(lerp(csLuma(alb).xxx, alb, m.sat), 0.0);
     float3 sunC = CS_SUNC;                                       // soft gold (the hour's key light): lit faces glow, never orange paint
     float  ndlRaw = dot(n, CS_SUN);
@@ -257,11 +285,23 @@ float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float l
     float3 amb  = lerp(float3(0.255, 0.140, 0.150), float3(0.200, 0.190, 0.330), smoothstep(-1.0, 1.0, n.y));
     float  toSun = dot(n.xz, normalize(CS_SUN.xz));
     float  side  = 1.0 - abs(n.y);
+#if defined(CS_NOVAK)
+    // Novak Glass: the sky's own cold light from above, the void's from below; a little bounce toward the sun
+    amb  = lerp(float3(0.150, 0.165, 0.250), float3(0.230, 0.285, 0.430), smoothstep(-1.0, 1.0, n.y));
+    amb += float3(0.200, 0.180, 0.150) * max(toSun, 0.0) * side * (1.0 - 0.55 * CS_DUSK);
+    amb += float3(0.070, 0.090, 0.160) * max(-toSun, 0.0) * side;
+#else
     amb += float3(0.40, 0.165, 0.070) * max(toSun, 0.0) * side * (1.0 - 0.55 * CS_DUSK);
     amb += float3(0.105, 0.085, 0.150) * max(-toSun, 0.0) * side;
+#endif
     // dusk: the light goes rose and violet; night: a cool blue sky light, bright enough to fight in
     amb *= lerp(float3(1.0, 1.0, 1.0), float3(0.92, 0.78, 1.05), CS_DUSK);
+#if defined(CS_NOVAK)
+    amb *= lerp(float3(1.0, 1.0, 1.0), float3(0.95, 0.82, 1.06), CS_DUSK);
+    amb  = lerp(amb, lerp(float3(0.115, 0.105, 0.210), float3(0.185, 0.175, 0.340), smoothstep(-1.0, 1.0, n.y)), CS_NIGHT);   // indigo night
+#else
     amb  = lerp(amb, lerp(float3(0.12, 0.13, 0.20), float3(0.19, 0.21, 0.31), smoothstep(-1.0, 1.0, n.y)), CS_NIGHT);   // RF tints the night blue on top
+#endif
     amb *= lerp(0.08, 1.0, sky * sky);                             // caves and covered spots lose the sky
     amb *= lerp(1.0, cav, m.bump * 0.55 * fade);                   // texture cavities hold a little shade
     float3 dir = sunC * (ndl + 0.035 * max(n.y, 0.0)) * sunVis;
@@ -269,7 +309,11 @@ float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float l
         float mu    = max(dot(-V, CS_SUN), 0.0);
         float trans = pow(mu, 4.0) * 0.9 + 0.12;
         float wrap  = max(dot(n, CS_SUN) * 0.5 + 0.5, 0.0);
+#if defined(CS_NOVAK)
+        dir = (sunC * wrap * 0.55 + float3(0.92, 1.00, 0.50) * 1.7 * trans) * sunVis;   // leaves glow green-gold, not sunset orange
+#else
         dir = (sunC * wrap * 0.55 + float3(1.15, 0.80, 0.32) * 2.1 * trans) * sunVis;
+#endif
         amb *= 1.7;
     }
     float3 c = alb * (amb + dir) * (1.0 - 0.72 * m.metal);         // metals have almost no diffuse: their reflections carry them
@@ -348,6 +392,9 @@ float3 csHaze(float3 c, float3 wp, float3 cam, float vanillaFog) {
     float3 hz = csSky(normalize(float3(d.x, max(d.y, 0.0) * 0.5 + 0.03, d.z)));
     c = lerp(c, hz, f);
     float mu = max(dot(d, CS_SUN), 0.0);
+#if defined(CS_NOVAK)
+    return c + lerp(float3(0.55, 0.55, 0.52), float3(0.18, 0.17, 0.36), CS_NIGHT) * (pow(mu, 6.0) * 0.22 + pow(mu, 40.0) * 0.35) * (1.0 - exp(-dist / 160.0)) * (1.0 - 0.6 * CS_DUSK);
+#endif
     c += lerp(float3(1.0, 0.45, 0.16), float3(0.20, 0.26, 0.42), CS_NIGHT) * (pow(mu, 6.0) * 0.36 + pow(mu, 40.0) * 0.5) * (1.0 - exp(-dist / 160.0)) * (1.0 - 0.6 * CS_DUSK);
     return c;
 }
