@@ -2,6 +2,7 @@
 // STAGED, UNVERIFIED IN GAME. Same world-camera test as SpatialCamera::onCamera (perspective projection, camera within
 // 8 blocks of the local player's eyes) so the UI / item cameras are ignored.
 #include "LyricsCamera.h"
+#include "LLShim.h"
 
 #include <chrono>
 #include <cmath>
@@ -47,7 +48,20 @@ void onCamera(mce::Camera& cam) {
     Vec3      feet  = actor.getFeetPos();
     glm::vec3 eye(feet.x, feet.y + 1.62f, feet.z);
     glm::vec3 pos = *cam.mPosition;
-    if (glm::length(pos - eye) >= 8.0f) return; // not the world camera
+    if (glm::length(pos - eye) >= 8.0f) { // not the world camera
+        // diagnosis (cloud sea gone while the HUD is hidden): which perspective cameras still update when ours goes stale?
+        static std::atomic<int64_t> lastLog{0};
+        int64_t const t = nowMs();
+        int64_t const last = [] { std::lock_guard l(gMutex); return gSnap.atMs; }();
+        if (t - last > 1000 && t - lastLog.load() > 3000) {
+            lastLog = t;
+            glm::vec3 f2 = *cam.mForward;
+            ll_shim::info("[RF] camera: ours is stale " + std::to_string(t - last) + " ms; another perspective camera at " + std::to_string(pos.x) + " " +
+                          std::to_string(pos.y) + " " + std::to_string(pos.z) + " fwd " + std::to_string(f2.x) + " " + std::to_string(f2.y) + " " + std::to_string(f2.z) +
+                          " P11 " + std::to_string(P[1][1]) + " eye " + std::to_string(eye.x) + " " + std::to_string(eye.y) + " " + std::to_string(eye.z));
+        }
+        return;
+    }
     CameraSnap s;
     s.valid = true;
     s.pos[0] = pos.x; s.pos[1] = pos.y; s.pos[2] = pos.z;
