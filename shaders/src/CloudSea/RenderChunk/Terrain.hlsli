@@ -161,6 +161,50 @@ float4 main(PSIn i) : SV_Target {
         }
     }
 #endif
+#if defined(CS_NOVAK) && defined(PASS_OPAQUE)
+    // ---- Novak Glass, ordinary blocks: the block is a solid core sealed inside a clear glass cube. The core sits 1/16
+    //      in from every edge and 2/16 behind the face, so as you move it slides behind the shell (whole texels: it
+    //      stays pixel art). Red, green and blue bend by different amounts, so the core's edge splits into colour on
+    //      the side you look past. Works on any pack (the tile size comes from the texel's size in the world).
+    float3 ngIn = float3(1, 1, 1);   // per channel: 1 = the core shows here, 0 = the glass shell
+    float  ngOn = 0.0, ngLine = 0.0;
+    [branch] if (mid != MAT_GEM && mid != MAT_QUARTZ && mid != MAT_ICE && mid != MAT_LAMP && mid != MAT_CARVED) {
+        float  tppN = max(fwidth(tx.x), fwidth(tx.y));
+        float  nearN = 1.0 - smoothstep(0.45, 1.0, tppN);
+        float3 VwN = normalize(ViewPositionAndTime.xyz - i.texcoord3);
+        float3 nN = csNormal(i.texcoord3, VwN, true);
+        [branch] if (nearN > 0.0 && csMax3(abs(nN)) > 0.98) {
+            float3 dpx = ddx(i.texcoord3), dpy = ddy(i.texcoord3);
+            float2 dtx = ddx(tx), dty = ddy(tx);
+            float  det = dtx.x * dty.y - dtx.y * dty.x;
+            float3 Tn = (dpx * dty.y - dpy * dtx.y) * (det != 0.0 ? 1.0 / det : 0.0);
+            float3 Bn = (dpy * dtx.x - dpx * dty.x) * (det != 0.0 ? 1.0 / det : 0.0);
+            float  S  = exp2(round(log2(clamp(1.0 / max(length(Tn), 1e-4), 8.0, 128.0))));
+            float3 aT = abs(Tn), aB = abs(Bn);
+            Tn = aT.x >= max(aT.y, aT.z) ? float3(sign(Tn.x), 0, 0) : (aT.y >= aT.z ? float3(0, sign(Tn.y), 0) : float3(0, 0, sign(Tn.z)));
+            Bn = aB.x >= max(aB.y, aB.z) ? float3(sign(Bn.x), 0, 0) : (aB.y >= aB.z ? float3(0, sign(Bn.y), 0) : float3(0, 0, sign(Bn.z)));
+            float3 vt = float3(dot(VwN, Tn), dot(VwN, Bn), max(dot(VwN, nN), 0.22));
+            float2 org = floor(tx / S) * S;
+            float2 q = tx - org;                                   // texels inside the tile
+            float  u = S / 16.0;                                   // 1/16 of a block, in texels
+            float2 sh = -vt.xy / vt.z * (2.0 * u) * nearN;         // how far the view slides over the core
+            float2 qR = floor(q + sh * 0.50) + 0.5, qG = floor(q + sh * 0.66) + 0.5, qB = floor(q + sh * 0.82) + 0.5;
+            ngIn = float3(all(qR > u) && all(qR < S - u) ? 1.0 : 0.0, all(qG > u) && all(qG < S - u) ? 1.0 : 0.0, all(qB > u) && all(qB < S - u) ? 1.0 : 0.0);
+            float2 dq = max(u - qG, qG - (S - u));                 // > 0: outside the core, by this many texels
+            float  dOut = max(dq.x, dq.y);
+            ngLine = (dOut > 0.0 && dOut <= max(1.0, u * 0.5)) ? 1.0 : 0.0;   // the shell texel right against the core
+            float2 qc = clamp(qG, u + 0.5, S - u - 0.5);           // shell pixels see the core's side wall: its edge texel
+            int2 tn = int2(org) + int2(floor(qc));
+            if (any(tn != ti)) {
+                float4 tN = s_MatTextureTexture.Load(int3(tn, 0));
+                c = tN.rgb * tint;
+                ti = tn; t0 = float4(tN.rgb, t0.a);
+            }
+            ngOn = nearN;
+            pxShade *= lerp(1.0, lerp(0.58, 1.0, ngIn.g), nearN);  // the side wall of the core is in its own shade
+        }
+    }
+#endif
     // obsidian: the polished streaks catch the sky, the dark body stays dark (the void lives there) - one even mirror
     // over the whole face read as a muddy haze in game
     if (mid == MAT_OBSIDIAN) m.refl *= 0.25 + 1.3 * smoothstep(0.08, 0.22, csLuma(t0.rgb));
@@ -302,6 +346,26 @@ float4 main(PSIn i) : SV_Target {
         float3 amb = lerp(float3(0.20, 0.19, 0.33), CS_SUNC * 0.35, 0.4) * lerp(0.15, 1.0, skyK);
         float  F = pow(1.0 - saturate(vt.z), 3.0);
         lit = lit * (0.62 + 0.38 * F) + deep * amb * 1.6 * (1.0 - F);
+    }
+#endif
+#if defined(CS_NOVAK) && defined(PASS_OPAQUE)
+    [branch] if (ngOn > 0.0) {
+        float3 shell = (1.0 - ngIn) * ngOn;                        // per channel: where they disagree is the colour fringe
+        float3 ambG = lerp(float3(0.20, 0.19, 0.33), CS_SUNC * 0.35, 0.4) * lerp(0.15, 1.0, skyK);
+        // the glass round the core: each material has its own - wool is frosted (milky, soft), wood is amber, the rest
+        // clear and cold
+        bool   wood = mid == MAT_PLANKS || mid == MAT_LOG;
+        float  clar = mid == MAT_WOOL ? 0.62 : (wood ? 0.46 : 0.50);
+        float3 gt = wood ? float3(1.0, 0.78, 0.48) : (mid == MAT_WOOL ? float3(1.0, 0.98, 0.96) : float3(0.88, 0.95, 1.0));
+        float3 glassC = lit * (mid == MAT_WOOL ? 0.85 : 0.70) + gt * ambG * (mid == MAT_WOOL ? 0.80 : 0.50);
+        lit = lerp(lit, glassC, shell * clar);
+        // the inner corner, where the shell meets the core: it catches the light by day and holds its own at night
+        float3 hueG = alb / max(csMax3(alb), 1e-3);
+        lit += ngLine * ngOn * lerp(float3(1, 1, 1), hueG, 0.35) * (ambG * 0.80 * (1.0 - CS_NIGHT) + 0.07 * CS_NIGHT);
+        // the glass face over the whole block: the sky lies in it at grazing angles
+        float  Fg = 0.02 + 0.98 * pow(1.0 - saturate(dot(n, V)), 5.0);
+        float  kG = saturate(Fg * 0.60) * ngOn;
+        lit = lit * (1.0 - kG) + csReflect(reflect(-V, n)) * lerp(0.30, 1.0, skyK) * kG;
     }
 #endif
 #if defined(CS_NOVAK) && !defined(PASS_TRANSPARENT)
