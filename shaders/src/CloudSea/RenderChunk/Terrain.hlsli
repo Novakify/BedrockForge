@@ -108,7 +108,19 @@ float4 main(PSIn i) : SV_Target {
     s_MatTextureTexture.GetDimensions(aw, ah);
     float2 tx   = i.texcoord0 * float2(aw, ah);
     int2   ti   = int2(floor(tx));
-    int2   tile = (ti / 32) * 32;                  // the pack's tiles are 32x32 texels (Faithful 32x, flipbook frames too)
+#if defined(CS_NOVAK)
+    // the tile's real size: 1 / the world size of one texel (16 or 32). (Seen in game: the atlas here holds 16x tiles;
+    // taking every tile as 32 put half the joints mid-"tile", so relief read across into the NEXT block's texture and
+    // one side of those joints fell into a dark strip.)
+    float3 dpT = ddx(i.texcoord3), dqT = ddy(i.texcoord3);
+    float2 dtT = ddx(tx), duT = ddy(tx);
+    float  dtD = dtT.x * duT.y - dtT.y * duT.x;
+    float3 TT  = (dpT * duT.y - dqT * dtT.y) * (dtD != 0.0 ? 1.0 / dtD : 0.0);
+    int    TS  = 1.0 / max(length(TT), 1e-4) > 24.0 ? 32 : 16;
+#else
+    const int TS = 32;
+#endif
+    int2   tile = (ti / TS) * TS;                  // the pack's tiles (Faithful 32x, flipbook frames too)
     float4 t0   = s_MatTextureTexture.Load(int3(ti, 0));
 #if defined(PASS_TRANSPARENT)
     int    mid  = 0;
@@ -117,6 +129,12 @@ float4 main(PSIn i) : SV_Target {
     if (mid > MAT_LAST) mid = 0;
 #endif
     CsMat  m    = csMat(mid);
+#if defined(CS_NOVAK)
+    // Novak Glass: the sun stands higher (26 degrees, not 6.5), so the relief read from the texture's light/dark pattern
+    // lights up on floors - a pack's darker border row turned into a dark strip beside every joint. Blocks sealed in
+    // glass are smoother anyway: a third of the relief.
+    m.bump *= 0.35;
+#endif
 #if !defined(PASS_TRANSPARENT)
     // carved blocks: real depth. A short march into the face (the texel's darkness = how deep it is cut), pixel-art
     // exact (whole texels, no smear), up to ~2.5 texels of shift; the cut walls fall into shade. Near blocks only.
@@ -140,18 +158,18 @@ float4 main(PSIn i) : SV_Target {
             float2 q = float2(ti - tile) + 0.5;
             // (seen in game: marching off the tile smeared its border ring into glowing seams between blocks - the
             //  march now fades out within 2 texels of the block's edge and never leaves the tile)
-            float2 e2 = min(q, 32.0 - q);
+            float2 e2 = min(q, float(TS) - q);
             stepT *= saturate((min(e2.x, e2.y) - 1.0) / 2.0);
             float  layer = 0.0, hgt = 0.0;
             [unroll] for (int k = 0; k < 6; k++) {
-                int2 tq = tile + int2(clamp(floor(q), 0.0, 31.0));
+                int2 tq = tile + int2(clamp(floor(q), 0.0, float(TS - 1)));
                 hgt = 1.0 - csLuma(s_MatTextureTexture.Load(int3(tq, 0)).rgb) * 1.25;   // dark = deep
                 if (layer >= hgt) break;
                 float2 qn = q + stepT;
-                if (any(qn < 0.5) || any(qn > 31.5)) break;
+                if (any(qn < 0.5) || any(qn > float(TS) - 0.5)) break;
                 q = qn; layer += 1.0 / 6.0;
             }
-            int2 tn = tile + int2(clamp(floor(q), 0.0, 31.0));
+            int2 tn = tile + int2(clamp(floor(q), 0.0, float(TS - 1)));
             if (any(tn != ti)) {
                 float4 tN = s_MatTextureTexture.Load(int3(tn, 0));
                 c = tN.rgb * tint;
@@ -167,7 +185,7 @@ float4 main(PSIn i) : SV_Target {
     //      stays pixel art). Red, green and blue bend by different amounts, so the core's edge splits into colour on
     //      the side you look past. Works on any pack (the tile size comes from the texel's size in the world).
     float3 ngIn = float3(1, 1, 1);   // per channel: 1 = the core shows here, 0 = the glass shell
-    float  ngOn = 0.0, ngLine = 0.0;
+    float  ngOn = 0.0, ngLine = 0.0, ngDbg = 0.0;
     [branch] if (mid != MAT_GEM && mid != MAT_QUARTZ && mid != MAT_ICE && mid != MAT_LAMP && mid != MAT_CARVED) {
         float  tppN = max(fwidth(tx.x), fwidth(tx.y));
         float  nearN = 1.0 - smoothstep(0.45, 1.0, tppN);
@@ -198,14 +216,20 @@ float4 main(PSIn i) : SV_Target {
             // the joint between two blocks is 2 texels on a 32x pack, 1 on a 16x one (a whole texel is the least there
             // is: there the core is set in on its low sides only). Seen in game: a 1/8-block joint read as bathroom grout.
             float  wLo = max(1.0, S / 32.0), wHi = S >= 32.0 ? S / 32.0 : 0.0;
-            ngIn = float3(all(qR > wLo) && all(qR < S - wHi) ? 1.0 : 0.0, all(qG > wLo) && all(qG < S - wHi) ? 1.0 : 0.0, all(qB > wLo) && all(qB < S - wHi) ? 1.0 : 0.0);
+            float inG = all(qG > wLo) && all(qG < S - wHi) ? 1.0 : 0.0;
+            ngIn = float3(all(qR > wLo) && all(qR < S - wHi) ? 1.0 : 0.0, inG, all(qB > wLo) && all(qB < S - wHi) ? 1.0 : 0.0);
             ngLine = 1.0 - ngIn.g;                                  // the joint itself carries the light
             float2 qc = clamp(qG, wLo + 0.5, S - wHi - 0.5);       // shell pixels see the core's side wall: its edge texel
             int2 tn = int2(org) + int2(floor(qc));
-            if (any(tn != ti)) {
+            if (inG < 0.5) {
+                // a shell pixel sees the core's side wall. Not the core's edge texel repeated across the gap (a pack's
+                // darker border row smeared into a dark strip beside every joint): the block's own average colour.
+                c = s_MatTextureTexture.SampleLevel(s_MatTextureSampler, (float2(org) + S * 0.5) / float2(aw, ah), 4.0).rgb * tint;
+            } else if (any(tn != ti)) {
                 float4 tN = s_MatTextureTexture.Load(int3(tn, 0));
                 c = tN.rgb * tint;
                 ti = tn; t0 = float4(tN.rgb, t0.a);
+                ngDbg = 1.0;
             }
             ngOn = nearN;
             // (no shade on the joint: seen in game, any darkening there read as a dirty band beside every block)
@@ -224,7 +248,7 @@ float4 main(PSIn i) : SV_Target {
     float3 glintN = n;
     float3 T = float3(0, 0, 0), B = float3(0, 0, 0);
     [branch] if ((m.bump > 0.0 || m.sparkle > 0.0) && fade > 0.0) {
-        int2 lo = tile, hi = tile + 31;
+        int2 lo = tile, hi = tile + TS - 1;
         float hC = csLuma(t0.rgb);
         float hL = csLuma(s_MatTextureTexture.Load(int3(clamp(ti - int2(1, 0), lo, hi), 0)).rgb);
         float hR = csLuma(s_MatTextureTexture.Load(int3(clamp(ti + int2(1, 0), lo, hi), 0)).rgb);
@@ -241,6 +265,11 @@ float4 main(PSIn i) : SV_Target {
         T = aT.x >= max(aT.y, aT.z) ? float3(sign(T.x), 0, 0) : (aT.y >= aT.z ? float3(0, sign(T.y), 0) : float3(0, 0, sign(T.z)));
         B = aB.x >= max(aB.y, aB.z) ? float3(sign(B.x), 0, 0) : (aB.y >= aB.z ? float3(0, sign(B.y), 0) : float3(0, 0, sign(B.z)));
         float2 g = float2(hR - hL, hD - hU) * 0.5;
+#if defined(CS_NOVAK)
+        // no relief on a tile's outer 3 texels: the pack's darker border row read as a groove, and under the higher sun
+        // one side of every joint fell into a dark strip (seen in game on end stone floors)
+        { int2 ql = ti - tile; int e2 = min(min(ql.x, ql.y), min(TS - 1 - ql.x, TS - 1 - ql.y)); if (e2 < 3) g = 0.0; }
+#endif
         nS  = normalize(n - (g.x * T + g.y * B) * (3.2 * m.bump * fade));
         float mean4 = (hL + hR + hU + hD) * 0.25;
         cav = saturate(1.0 - (mean4 - hC) * 3.0);    // a texel darker than its neighbours sits in a dip
@@ -252,9 +281,15 @@ float4 main(PSIn i) : SV_Target {
             if (chroma > 0.25) { m.spec = 0.6; m.rough = 90.0; }
         }
     }
+#if defined(CS_NOVAK)
+    // the far mip is sampled inside the texel's own tile: at a tile's edge it blended in the NEXT tile of the atlas
+    float2 meanUV = clamp(tx, float2(tile) + 4.0, float2(tile + TS) - 4.0) / float2(aw, ah);
+#else
+    float2 meanUV = i.texcoord0;
+#endif
     // calm the texture's pixel noise per material: pull toward the tile's average (its far mip)
 #if defined(PASS_OPAQUE)
-    float3 mean = s_MatTextureTexture.SampleLevel(s_MatTextureSampler, i.texcoord0, 3.0).rgb * tint;
+    float3 mean = s_MatTextureTexture.SampleLevel(s_MatTextureSampler, meanUV, 3.0).rgb * tint;
     c = lerp(mean, c, lerp(0.78, m.detail, step(0.5, float(mid))));
 #endif
 #if !defined(PASS_TRANSPARENT)
@@ -339,15 +374,15 @@ float4 main(PSIn i) : SV_Target {
     }
     [branch] if (mid == MAT_ICE && fade > 0.0 && dot(T, T) > 0.5) {
         // looking INTO ice: its own pattern twice more, deeper down, cold and dim, with trapped bubbles
-        float2 f  = float2(ti - tile) / 32.0;
+        float2 f  = float2(ti - tile) / float(TS);
         float3 vt = float3(dot(V, T), dot(V, B), dot(V, n));
         float  inv = 1.0 / max(vt.z, 0.25);
         float3 deep = float3(0, 0, 0);
         [unroll] for (int L = 1; L <= 2; L++) {
             float2 q = frac(f - vt.xy * inv * (0.28 * float(L)));
-            float3 tc = s_MatTextureTexture.Load(int3(tile + int2(q * 32.0), 0)).rgb;
+            float3 tc = s_MatTextureTexture.Load(int3(tile + int2(q * float(TS)), 0)).rgb;
             deep += csLin(tc) * float3(0.45, 0.78, 1.10) * (L == 1 ? 0.55 : 0.35);
-            float hb = csHash(floor(q * 32.0) + 7.0 * float(L));
+            float hb = csHash(floor(q * float(TS)) + 7.0 * float(L));
             deep += float3(0.75, 0.90, 1.0) * step(0.992, hb) * 0.9 * (1.0 / float(L));
         }
         float3 amb = lerp(float3(0.20, 0.19, 0.33), CS_SUNC * 0.35, 0.4) * lerp(0.15, 1.0, skyK);
@@ -381,10 +416,10 @@ float4 main(PSIn i) : SV_Target {
     //      tinted by the glass it crossed, and the inner edges split into colour (three bends, one per channel).
     [branch] if ((mid == MAT_GEM || mid == MAT_QUARTZ || mid == MAT_ICE) && fade > 0.0 && dot(T, T) > 0.5) {
         // face coordinates from the tile's own texels (the world position here is camera-relative: no block grid in it)
-        float2 f  = (tx - float2(tile)) / 32.0;
+        float2 f  = (tx - float2(tile)) / float(TS);
         float3 vt = float3(dot(V, T), dot(V, B), dot(V, n));
         float  trans = mid == MAT_GEM ? 0.55 : (mid == MAT_ICE ? 0.40 : 0.22);
-        float3 bodyC = csLin(s_MatTextureTexture.SampleLevel(s_MatTextureSampler, i.texcoord0, 3.0).rgb * tint);
+        float3 bodyC = csLin(s_MatTextureTexture.SampleLevel(s_MatTextureSampler, meanUV, 3.0).rgb * tint);
         float3 hue = bodyC / max(csMax3(bodyC), 1e-3);
         float4 ex = ngExit(f, vt, 0.66);
         float3 dw = normalize(-(vt.x * T + vt.y * B) * 0.66 - n * max(vt.z, 0.05));
@@ -408,7 +443,7 @@ float4 main(PSIn i) : SV_Target {
         lit = lerp(lit, csLuma(lit) * float3(0.70, 0.62, 1.10), 0.75 * body0);
     }
     [branch] if (mid == MAT_OBSIDIAN && fade > 0.0 && dot(T, T) > 0.5) {
-        float2 f  = float2(ti - tile) / 32.0;
+        float2 f  = float2(ti - tile) / float(TS);
         float3 vt = float3(dot(V, T), dot(V, B), dot(V, n));
         float  body = 1.0 - smoothstep(0.06, 0.14, csLuma(t0.rgb));
         lit += csVoid(f, vt, CS_TIME) * body * fade * lerp(0.6, 1.0, max(CS_DUSK, CS_NIGHT)) * lerp(0.6, 1.0, lm.y);
@@ -482,6 +517,16 @@ float4 main(PSIn i) : SV_Target {
     // the game's fog is NOT painted here: its amount goes out in alpha (opaque blocks ignore alpha) and the World FX
     // pass fades the block into whatever the Cloud Sea sky shows behind it (clouds or sky), so the render edge is soft
     lit = csHaze(lit, wp, cam, 0.0);
+#if defined(NG_DEBUG) && NG_DEBUG == 2 && defined(CS_NOVAK) && defined(PASS_OPAQUE)
+    if (ngOn > 0.0) lit = float3(saturate((1.0 - dot(nS, n)) * 40.0), csLuma(alb) * 1.4, ngIn.g < 0.5 ? 0.6 : 0.0);
+#elif defined(NG_DEBUG) && defined(CS_NOVAK) && defined(PASS_OPAQUE)
+    if (ngOn > 0.0) {
+        float L = csLuma(lit);
+        if (ngIn.g < 0.5) lit = float3(L, 0, L);
+        else if (ngDbg > 0.5) lit = float3(0, L, 0);
+        if (cav < 0.95) lit = lerp(lit, float3(0, 0, 1), 0.7);
+    }
+#endif
     return float4(csEnc(lit), 1.0 - i.color2.w);
 #endif
 }
