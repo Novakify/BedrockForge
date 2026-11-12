@@ -183,12 +183,18 @@ float4 main(PSIn i) : SV_Target {
             float3 aT = abs(Tn), aB = abs(Bn);
             Tn = aT.x >= max(aT.y, aT.z) ? float3(sign(Tn.x), 0, 0) : (aT.y >= aT.z ? float3(0, sign(Tn.y), 0) : float3(0, 0, sign(Tn.z)));
             Bn = aB.x >= max(aB.y, aB.z) ? float3(sign(Bn.x), 0, 0) : (aB.y >= aB.z ? float3(0, sign(Bn.y), 0) : float3(0, 0, sign(Bn.z)));
-            float3 vt = float3(dot(VwN, Tn), dot(VwN, Bn), max(dot(VwN, nN), 0.22));
+            float3 vt = float3(dot(VwN, Tn), dot(VwN, Bn), dot(VwN, nN));
             float2 org = floor(tx / S) * S;
             float2 q = tx - org;                                   // texels inside the tile
             float  u = S / 16.0;                                   // 1/16 of a block, in texels
-            float2 sh = -vt.xy / vt.z * (2.0 * u) * nearN;         // how far the view slides over the core
-            float2 qR = floor(q + sh * 0.50) + 0.5, qG = floor(q + sh * 0.66) + 0.5, qB = floor(q + sh * 0.82) + 0.5;
+            // how far the view slides over the core: the ray bends into the glass (Snell), so even at a grazing look it
+            // travels at most ~0.9 of the depth sideways. (Seen in game: with no bend the far side of every block grew
+            // a band a third of a block wide.) Each colour bends a little differently: the fringe.
+            float  sinV = min(length(vt.xy), 0.999);
+            float2 dirV = -vt.xy / max(sinV, 1e-4);
+            float3 sinG = sinV / float3(1.36, 1.50, 1.68);
+            float3 tanG = sinG / sqrt(1.0 - sinG * sinG) * (2.0 * u) * nearN;
+            float2 qR = floor(q + dirV * tanG.r) + 0.5, qG = floor(q + dirV * tanG.g) + 0.5, qB = floor(q + dirV * tanG.b) + 0.5;
             // the joint between two blocks is 2 texels on a 32x pack, 1 on a 16x one (a whole texel is the least there
             // is: there the core is set in on its low sides only). Seen in game: a 1/8-block joint read as bathroom grout.
             float  wLo = max(1.0, S / 32.0), wHi = S >= 32.0 ? S / 32.0 : 0.0;
@@ -358,7 +364,7 @@ float4 main(PSIn i) : SV_Target {
         bool   wood = mid == MAT_PLANKS || mid == MAT_LOG;
         float  clar = mid == MAT_WOOL ? 0.62 : (wood ? 0.46 : 0.50);
         float3 gt = wood ? float3(1.0, 0.78, 0.48) : (mid == MAT_WOOL ? float3(1.0, 0.98, 0.96) : float3(0.88, 0.95, 1.0));
-        float3 glassC = lit * (mid == MAT_WOOL ? 0.90 : 0.82) + gt * ambG * (mid == MAT_WOOL ? 0.85 : 0.60);
+        float3 glassC = lit * (mid == MAT_WOOL ? 0.95 : 0.92) + gt * ambG * (mid == MAT_WOOL ? 0.85 : 0.55);
         lit = lerp(lit, glassC, shell * clar);
         // the inner corner, where the shell meets the core: it catches the light by day and holds its own at night
         float3 hueG = alb / max(csMax3(alb), 1e-3);
