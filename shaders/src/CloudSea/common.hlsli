@@ -95,7 +95,7 @@ float3 csSky(float3 d) {
     {   // the Novak Glass sky (Renderer Foundation cloud_sea_common.hlsli ngSkyBase - same numbers)
         float  e = max(d.y, 0.0);
         float  sunSide = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), CS_SUN) * 0.5 + 0.5;
-        float3 cD = lerp(lerp(float3(0.34, 0.50, 0.80), float3(0.72, 0.78, 0.86), pow(sunSide, 8.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.13, e));
+        float3 cD = lerp(lerp(float3(0.24, 0.44, 0.74), float3(0.62, 0.70, 0.84), pow(sunSide, 8.0)), float3(0.105, 0.215, 0.520), smoothstep(0.0, 0.11, e));
         cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
         float3 cK = lerp(lerp(float3(0.19, 0.115, 0.33), float3(1.00, 0.45, 0.36), pow(sunSide, 3.0)), float3(0.072, 0.040, 0.180), smoothstep(0.0, 0.15, e));
         cK = lerp(cK, float3(0.014, 0.012, 0.074), smoothstep(0.10, 0.70, e));
