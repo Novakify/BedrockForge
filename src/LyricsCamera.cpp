@@ -25,7 +25,7 @@
 namespace rf::lyrics {
 namespace {
 std::mutex gMutex;
-CameraSnap gSnap;
+CameraSnap gSnap, gWorldSnap;   // the camera at the eye; the world's own (origin) camera as a stand-in
 bool       gHooked = false;
 
 int64_t nowMs() {
@@ -48,17 +48,25 @@ void onCamera(mce::Camera& cam) {
     Vec3      feet  = actor.getFeetPos();
     glm::vec3 eye(feet.x, feet.y + 1.62f, feet.z);
     glm::vec3 pos = *cam.mPosition;
-    if (glm::length(pos - eye) >= 8.0f) { // not the world camera
-        // diagnosis (cloud sea gone while the HUD is hidden): which perspective cameras still update when ours goes stale?
-        static std::atomic<int64_t> lastLog{0};
-        int64_t const t = nowMs();
-        int64_t const last = [] { std::lock_guard l(gMutex); return gSnap.atMs; }();
-        if (t - last > 1000 && t - lastLog.load() > 3000) {
-            lastLog = t;
-            glm::vec3 f2 = *cam.mForward;
-            ll_shim::info("[RF] camera: ours is stale " + std::to_string(t - last) + " ms; another perspective camera at " + std::to_string(pos.x) + " " +
-                          std::to_string(pos.y) + " " + std::to_string(pos.z) + " fwd " + std::to_string(f2.x) + " " + std::to_string(f2.y) + " " + std::to_string(f2.z) +
-                          " P11 " + std::to_string(P[1][1]) + " eye " + std::to_string(eye.x) + " " + std::to_string(eye.y) + " " + std::to_string(eye.z));
+    if (glm::length(pos - eye) >= 8.0f) { // not the camera at the eye
+        // The world itself is drawn camera-relative: its camera sits at the origin and carries the real view. The
+        // camera at the eye (the one used below) stops updating whenever the HUD is not drawn (F1, chat open, some
+        // screens) - then the sky and the World FX pass lost their camera and vanished. Keep the origin camera as the
+        // stand-in: its axes and projection, with the player's eye as the position.
+        if (glm::length(pos) < 0.5f) {
+            CameraSnap w;
+            w.valid = true;
+            w.pos[0] = eye.x; w.pos[1] = eye.y; w.pos[2] = eye.z;
+            glm::vec3 r2 = *cam.mRight, u2 = *cam.mUp, f2 = *cam.mForward;
+            std::memcpy(w.right, &r2[0], sizeof w.right);
+            std::memcpy(w.up, &u2[0], sizeof w.up);
+            std::memcpy(w.forward, &f2[0], sizeof w.forward);
+            std::memcpy(w.proj, &P[0][0], sizeof w.proj);
+            w.fovYDeg = 2.0f * std::atan(1.0f / P[1][1]) * 57.2957795f;
+            w.aspect  = P[1][1] / P[0][0];
+            w.atMs    = nowMs();
+            std::lock_guard l(gMutex);
+            gWorldSnap = w;
         }
         return;
     }
@@ -82,6 +90,13 @@ void onCamera(mce::Camera& cam) {
 
 CameraSnap camera() {
     std::lock_guard l(gMutex);
+    int64_t const now = nowMs();
+    if (gSnap.valid && now - gSnap.atMs <= 120) return gSnap;
+    if (gWorldSnap.valid && now - gWorldSnap.atMs <= 250) {   // the eye camera is stale: the HUD is hidden
+        CameraSnap w = gWorldSnap;
+        w.calls = gSnap.calls; w.chosen = gSnap.chosen;
+        return w;
+    }
     return gSnap;
 }
 } // namespace rf::lyrics
