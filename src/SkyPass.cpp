@@ -1025,8 +1025,8 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
     d.pRootSignature = gWfxRoot.Get();
     d.VS = {rf::worldfx::shaders::VSWorldFx, sizeof rf::worldfx::shaders::VSWorldFx};
-    // glass = the Novak Glass rim pass (drawn after the World FX pass, premultiplied over it)
-    if (glass) d.PS = {rf::worldfx::shaders::PSGlassRim, sizeof rf::worldfx::shaders::PSGlassRim};
+    // two builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it
+    if (glass) d.PS = {rf::worldfx::shaders::PSWorldFxGlass, sizeof rf::worldfx::shaders::PSWorldFxGlass};
     else       d.PS = {rf::worldfx::shaders::PSWorldFx, sizeof rf::worldfx::shaders::PSWorldFx};
     for (UINT i = 0; i < 8; ++i) {
         auto& rt = d.BlendState.RenderTarget[i];
@@ -1034,7 +1034,6 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
         rt.SrcBlend = D3D12_BLEND_ONE; rt.DestBlend = D3D12_BLEND_ZERO; rt.BlendOp = D3D12_BLEND_OP_ADD;
         rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_ZERO; rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
         rt.LogicOp = D3D12_LOGIC_OP_NOOP;
-        if (glass && i == 0) { rt.BlendEnable = TRUE; rt.DestBlend = D3D12_BLEND_INV_SRC_ALPHA; }
     }
     d.BlendState.IndependentBlendEnable = g.numRt > 1;
     d.SampleMask                        = UINT_MAX;
@@ -2273,8 +2272,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
-    ID3D12PipelineState* pso = derived(dev.Get(), g, 5);
-    ID3D12PipelineState* rimPso = look.glass > 0.0f ? derived(dev.Get(), g, 6) : nullptr;   // built in the background; skipped until ready
+    ID3D12PipelineState* pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
     if (!pso) { wfxStatus("building the pass pipeline (in the background)"); return false; }
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
     UINT64 rTot = 0, dTot = 0;
@@ -2377,7 +2375,6 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     calls.draw(list, 3, 1, 0, 0);
-    if (rimPso) { calls.setPso(list, rimPso); calls.draw(list, 3, 1, 0, 0); }
     if (timed) wfxperf::end(list, tsFrame);
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
