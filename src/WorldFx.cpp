@@ -1135,7 +1135,7 @@ void drawUi() {
     ImGui::SeparatorText("The match (Bedrock Forge)");
     saveFx |= ImGui::Checkbox("Living match sky", &look.living);
     ImGui::SameLine();
-    ImGui::TextDisabled("(golden hour -> dusk at the first bed -> night for the final fight)");
+    ImGui::TextDisabled("(golden hour -> dusk after 4 beds -> night for the final fight)");
     ImGui::SliderFloat("Preview sky phase", &look.phase, -1.0f, 2.0f, look.phase < 0 ? "follow the match" : "%.2f");
     ImGui::SliderFloat("Preview tension", &look.tension, -0.05f, 1.0f, look.tension < 0 ? "follow the match" : "%.2f");
     ImGui::SameLine();
