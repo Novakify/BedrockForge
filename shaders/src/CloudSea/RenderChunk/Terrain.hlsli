@@ -189,11 +189,12 @@ float4 main(PSIn i) : SV_Target {
             float  u = S / 16.0;                                   // 1/16 of a block, in texels
             float2 sh = -vt.xy / vt.z * (2.0 * u) * nearN;         // how far the view slides over the core
             float2 qR = floor(q + sh * 0.50) + 0.5, qG = floor(q + sh * 0.66) + 0.5, qB = floor(q + sh * 0.82) + 0.5;
-            ngIn = float3(all(qR > u) && all(qR < S - u) ? 1.0 : 0.0, all(qG > u) && all(qG < S - u) ? 1.0 : 0.0, all(qB > u) && all(qB < S - u) ? 1.0 : 0.0);
-            float2 dq = max(u - qG, qG - (S - u));                 // > 0: outside the core, by this many texels
-            float  dOut = max(dq.x, dq.y);
-            ngLine = (dOut > 0.0 && dOut <= max(1.0, u * 0.5)) ? 1.0 : 0.0;   // the shell texel right against the core
-            float2 qc = clamp(qG, u + 0.5, S - u - 0.5);           // shell pixels see the core's side wall: its edge texel
+            // the joint between two blocks is 2 texels on a 32x pack, 1 on a 16x one (a whole texel is the least there
+            // is: there the core is set in on its low sides only). Seen in game: a 1/8-block joint read as bathroom grout.
+            float  wLo = max(1.0, S / 32.0), wHi = S >= 32.0 ? S / 32.0 : 0.0;
+            ngIn = float3(all(qR > wLo) && all(qR < S - wHi) ? 1.0 : 0.0, all(qG > wLo) && all(qG < S - wHi) ? 1.0 : 0.0, all(qB > wLo) && all(qB < S - wHi) ? 1.0 : 0.0);
+            ngLine = 1.0 - ngIn.g;                                  // the joint itself carries the light
+            float2 qc = clamp(qG, wLo + 0.5, S - wHi - 0.5);       // shell pixels see the core's side wall: its edge texel
             int2 tn = int2(org) + int2(floor(qc));
             if (any(tn != ti)) {
                 float4 tN = s_MatTextureTexture.Load(int3(tn, 0));
@@ -201,7 +202,7 @@ float4 main(PSIn i) : SV_Target {
                 ti = tn; t0 = float4(tN.rgb, t0.a);
             }
             ngOn = nearN;
-            pxShade *= lerp(1.0, lerp(0.58, 1.0, ngIn.g), nearN);  // the side wall of the core is in its own shade
+            pxShade *= lerp(1.0, lerp(0.86, 1.0, ngIn.g), nearN);  // glass, not grout: the joint stays light
         }
     }
 #endif
@@ -357,11 +358,11 @@ float4 main(PSIn i) : SV_Target {
         bool   wood = mid == MAT_PLANKS || mid == MAT_LOG;
         float  clar = mid == MAT_WOOL ? 0.62 : (wood ? 0.46 : 0.50);
         float3 gt = wood ? float3(1.0, 0.78, 0.48) : (mid == MAT_WOOL ? float3(1.0, 0.98, 0.96) : float3(0.88, 0.95, 1.0));
-        float3 glassC = lit * (mid == MAT_WOOL ? 0.85 : 0.70) + gt * ambG * (mid == MAT_WOOL ? 0.80 : 0.50);
+        float3 glassC = lit * (mid == MAT_WOOL ? 0.90 : 0.82) + gt * ambG * (mid == MAT_WOOL ? 0.85 : 0.60);
         lit = lerp(lit, glassC, shell * clar);
         // the inner corner, where the shell meets the core: it catches the light by day and holds its own at night
         float3 hueG = alb / max(csMax3(alb), 1e-3);
-        lit += ngLine * ngOn * lerp(float3(1, 1, 1), hueG, 0.35) * (ambG * 0.80 * (1.0 - CS_NIGHT) + 0.07 * CS_NIGHT);
+        lit += ngLine * ngOn * lerp(float3(1, 1, 1), hueG, 0.35) * (ambG * 0.30 * (1.0 - CS_NIGHT) + 0.06 * CS_NIGHT);
         // the glass face over the whole block: the sky lies in it at grazing angles
         float  Fg = 0.02 + 0.98 * pow(1.0 - saturate(dot(n, V)), 5.0);
         float  kG = saturate(Fg * 0.60) * ngOn;

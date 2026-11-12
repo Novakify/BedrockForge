@@ -19,7 +19,11 @@ void csSetPhase(float k) {
     CS_PHASE = k;
     CS_DUSK  = smoothstep(0.0, 1.0, k);
     CS_NIGHT = smoothstep(1.15, 1.9, k);
+#if defined(CS_NOVAK)
+    float3 sun  = csDirAzEl(CS_SUN_AZ, radians(lerp(26.0, 1.5, CS_DUSK)));   // Novak Glass: a higher sun (Renderer Foundation csSetPhase: same)
+#else
     float3 sun  = csDirAzEl(CS_SUN_AZ, radians(lerp(6.5, 1.5, CS_DUSK)));
+#endif
     float3 moon = csDirAzEl(CS_MOON_AZ, radians(31.0));
     CS_SUN = normalize(lerp(sun, moon, smoothstep(1.3, 1.6, k)));
     CS_LIGHTK = lerp(lerp(1.0, 0.40, smoothstep(0.25, 1.0, k)), 0.62, CS_NIGHT) * (1.0 - 0.75 * smoothstep(1.1, 1.45, k) * (1.0 - smoothstep(1.45, 1.8, k)));
@@ -91,7 +95,7 @@ float3 csSky(float3 d) {
     {   // the Novak Glass sky (Renderer Foundation cloud_sea_common.hlsli ngSkyBase - same numbers)
         float  e = max(d.y, 0.0);
         float  sunSide = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), CS_SUN) * 0.5 + 0.5;
-        float3 cD = lerp(lerp(float3(0.50, 0.62, 0.80), float3(0.88, 0.80, 0.70), pow(sunSide, 4.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.24, e));
+        float3 cD = lerp(lerp(float3(0.34, 0.50, 0.80), float3(0.72, 0.78, 0.86), pow(sunSide, 8.0)), float3(0.115, 0.225, 0.520), smoothstep(0.0, 0.13, e));
         cD = lerp(cD, float3(0.028, 0.058, 0.235), smoothstep(0.15, 0.85, e));
         float3 cK = lerp(lerp(float3(0.28, 0.15, 0.40), float3(0.95, 0.40, 0.38), pow(sunSide, 3.0)), float3(0.125, 0.058, 0.255), smoothstep(0.0, 0.17, e));
         cK = lerp(cK, float3(0.020, 0.017, 0.100), smoothstep(0.10, 0.70, e));
