@@ -97,11 +97,7 @@ float3 sunShafts(int2 px, float j) {
     float2 stepv = d / float(N) * min(1.0, reach / max(dl, 1.0));
     float  acc = 0.0, wsum = 0.0, w = 1.0;
     float  decay = pow(0.93, 22.0 / float(N));
-    [branch] if (NG_IS) {
-        // Novak: the beams come through glass - red and blue reach a little further / shorter than green, so the edge
-        // of every shaft splits into colour (prism beams)
-        float3 a3 = 0.0;
-        [loop] for (int k = 0; k < N; k++) {
+    [loop] for (int k = 0; k < N; k++) {
             float t = float(k) + j;
             [unroll] for (int ch = 0; ch < 3; ch++) {
                 float2 q = float2(px) + stepv * t * (1.0 + (float(ch) - 1.0) * 0.045);
