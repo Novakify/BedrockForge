@@ -518,51 +518,413 @@ float4 ngShards(float3 ro, float3 rd, float planeY, float cellS, float seed, flo
     return float4(c * far, saturate(0.34 + 0.5 * F + edge * 0.6) * far);
 }
 // the void for a ray going down: from the horizon's colour into the deep, the sheets on four levels
+// ======================================================================== the NEON GLASS CITY (Novak Glass)
+// Below and around the islands: a futuristic glass city - prism-edged towers, stacked advertising, wet glass streets.
+// By day a city of tinted glass mirroring the sky; at night Tokyo / Cyberpunk neon. (Designed in the sky lab with
+// Fernando, Nov 2026; this is that code.)
+static float GPX = 0.001;                                     // the view ray's angular size of one pixel (set per pixel)
+float ngH12(float2 p) { float3 q = frac(((float3)(p.xyx)) * 0.1031); q += dot(q, q.yzx + 33.33); return frac((q.x + q.y) * q.z); }
+static const float3 NC=float3(0.10,0.95,1.00), NM=float3(1.00,0.18,0.80), NV=float3(0.55,0.25,1.00);
+float3 neonPal(float h){ h=frac(h); return h<0.45?lerp(NC,NV,h/0.45):(h<0.8?lerp(NV,NM,(h-0.45)/0.35):lerp(NM,NC,(h-0.8)/0.2)); }
+// ---- the city at night. Studied from the references (Kabukicho / Shibuya streets, a cyberpunk skyline):
+//  * the base is near BLACK-NAVY: the colour lives in the lights, so they read as bright
+//  * buildings stand shoulder to shoulder and tower over you, layer behind layer - and the city runs on UNDER the
+//    islands: you float over its roofs and streets
+//  * every face carries advertising: stacked vertical boards, big panels, screens - each its own size and colour
+//  * towers: dark glass with LED strips up their edges, bands of light, whole faces that are screens
+//  * everything is glazed: a sheen over each face, edges that split light into colour, wet glass streets
+float hb(float a, float b){ return ngH12(float2(a,b)); }
+float3 signCol(float h){
+  if(h<0.22) return float3(1.00,0.06,0.55);
+  if(h<0.40) return float3(0.05,0.78,1.00);
+  if(h<0.56) return float3(1.00,0.08,0.08);
+  if(h<0.68) return float3(1.00,0.96,0.90);
+  if(h<0.80) return float3(1.00,0.74,0.05);
+  if(h<0.91) return float3(0.20,0.28,1.00);
+  return float3(0.15,1.00,0.42);
+}
+float glyph(float2 uv, float seed){
+  float2 gi=floor(uv), gf=frac(uv);
+  if(gf.x<0.12||gf.x>0.88||gf.y<0.10||gf.y>0.90) return 0.;
+  float2 q=(gf-float2(0.12,0.10))/float2(0.76,0.80);
+  float2 b=floor(q*float2(7.,8.));
+  float hs=ngH12(gi*7.3+seed);
+  float row=step(0.50,ngH12(float2(b.y,hs*91.+gi.x*3.+gi.y*17.)));
+  float colm=step(0.58,ngH12(float2(b.x+9.,hs*57.+gi.x*5.+gi.y*13.)));
+  return max(row,colm)*step(0.30,ngH12(b+gi*13.+seed));
+}
+float3 cityHaze(float az){ return lerp(float3(0.85,0.12,0.60),float3(0.10,0.45,1.00),0.5+0.5*sin(az*1.3+2.0)); }
+static float SEA_D = 175.0;                                      // the city's streets lie this far under the islands
+// one advertisement: pn = 0..1 across the panel, sz = its size in metres. A lightbox behind glass (rounded, brightest
+// at its heart, a highlight along the top), neon tubes on a dark board, or a picture ad (shapes, a line of script)
+float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
+  float3 bg=signCol(frac(hp*7.31)), a2=signCol(frac(hp*7.31+0.31+0.3*frac(hp*3.)));
+  float gw=min(sz.x,sz.y), gn=gw>9.0?2.0:1.0;
+  float res=1.-smoothstep(0.5,1.5,pxm/(gw/gn/7.));
+  float lum=lerp(0.85,1.20,frac(hp*3.7))*(0.93+0.07*sin(TIME*(2.+6.*frac(hp*13.))+hp*50.));
+  float dE=min(min(pn.x,1.-pn.x)*sz.x,min(pn.y,1.-pn.y)*sz.y);
+  float tube=lerp(1.0,smoothstep(0.0,1.1,dE),res);
+  float kind=frac(hp*11.3);
+  float3 ink=(bg.r+bg.g+bg.b>2.5)?(frac(hp*41.)<0.5?float3(0.90,0.04,0.08):((float3)(0.02))):((bg.g>0.7&&bg.b<0.2)||frac(hp*43.)<0.55?((float3)(0.015)):((float3)(1.5)));
+  float3 c;
+  if(kind<0.22){                                              // neon tubes on a dark board
+    float g=lerp(0.20,glyph(pn*sz/gw*gn,hp*100.),res);
+    c=float3(0.010,0.008,0.020)+bg*1.5*max(g,step(dE,0.45)*res);
+  } else if(kind<0.50&&gw>5.0){                               // a picture ad
+    float2 q=(pn-0.5)*sz/gw; float t=TIME*0.3+hp*20.;
+    float shape=frac(hp*29.)<0.5?step(length(q-float2(0.,0.08)),0.30):step(0.5,frac((q.x+q.y)*2.2+t*0.2));
+    c=lerp(bg,a2,shape)*lum;
+    float strip=step(pn.y,0.20);                              // a line of script along the bottom
+    float g=lerp(0.36,glyph(float2(pn.x*sz.x/(sz.y*0.20),pn.y/0.20),hp*61.),1.-smoothstep(0.5,1.5,pxm/(sz.y*0.20/7.)));
+    c=lerp(c,lerp(((float3)(0.02)),((float3)(1.5)),g),strip);
+    c=c*(0.55+0.45*tube);
+  } else {                                                    // a lightbox with script
+    float g=lerp(0.20,glyph(pn*sz/gw*gn,hp*100.),res);
+    c=lerp(bg*lum,ink,g)*(0.55+0.45*tube);
+  }
+  return c+((float3)(1.0))*0.20*smoothstep(0.80,0.97,pn.y)*tube*res*step(0.22,kind);
+}
+// a building face. lx 0..1 across it, ym metres above the street, Hr its height, Wm its width; sd = its seed
+float3 facade(float lx, float ym, float Hr, float Wm, float pxm, float az, float sd, float tall, float nearK){
+  float h=hb(sd,1.), h2=hb(sd,2.), h4=hb(sd,4.), ht=hb(sd,5.);
+  float yTop=Hr-ym;
+  float3 face=float3(0.012,0.013,0.028)+cityHaze(az)*0.035*exp(-ym/120.0);
+  float floorH=lerp(3.4,4.4,h4), cols=floor(Wm/lerp(2.8,4.5,h2));
+  float2 wg=float2(lx*cols,ym/floorH); float2 wi=floor(wg), wf=frac(wg);
+  float wRes=1.-smoothstep(0.35,1.0,max(pxm/floorH,pxm/(Wm/cols)));
+  float flOn=step(lerp(0.40,0.80,hb(sd,7.)),hb(wi.y,sd*3.7));     // floors lit in bands; some buildings nearly dark
+  float wr=hb(wi.x+wi.y*37.,sd+91.);
+  float wOn=max(flOn*step(0.25,wr),step(0.93,wr))*lerp(0.35,1.0,hb(wi.x*3.1,wi.y+sd));   // and the odd light left on
+  float wMask=smoothstep(0.10,0.18,wf.x)*smoothstep(0.90,0.82,wf.x)*smoothstep(0.14,0.24,wf.y)*smoothstep(0.86,0.76,wf.y);
+  float win=lerp(0.13,wOn*wMask,wRes);
+  bool office=h4>0.4;
+  float3 wc=office?lerp(float3(0.78,0.90,1.08),float3(0.45,0.85,1.10),step(0.7,h)):float3(1.08,0.70,0.38);
+  wc=lerp(wc,float3(1.1,0.55,0.75),step(0.90,hb(wi.x*1.7,wi.y*2.3+sd))*wRes);   // a window lit pink by a screen inside
+  float stair=step(abs(lx-lerp(0.2,0.8,h2)),0.5/cols)*step(0.5,h);            // a lit stair core up the face
+  float3 c;
+  if(ht<0.42&&tall<0.5){
+    // a sign building: columns of stacked boards
+    c=face+wc*win*0.30;
+    float ncol=floor(lerp(2.,4.99,h2));
+    float cx=lx*ncol, cix=floor(cx), cfx=frac(cx), colW=Wm/ncol;
+    float hc=hb(cix+sd*3.1,41.);
+    float ph=lerp(6.,17.,hc*hc);
+    float yy=ym+hc*50.; float pi=floor(yy/ph), pf=frac(yy/ph);
+    float hp=hb(pi+cix*17.,sd*7.+5.);
+    float mx=0.07+0.09*frac(hp*5.3), my=0.5/ph;
+    if(cfx>mx&&cfx<1.-mx&&pf>my&&pf<1.-my&&hp>0.12+0.62*smoothstep(35.,130.,ym)&&yTop>3.0)
+      c=signPanel(float2((cfx-mx)/(1.-2.*mx),(pf-my)/(1.-2.*my)),float2(colW*(1.-2.*mx),ph-1.0),hp,pxm);
+  } else if(ht<0.74||tall<0.25){
+    // offices and flats, with big advertisements hung on them
+    c=face+wc*win*(office?0.55:0.38)+wc*0.4*stair*wRes;
+    c+=signCol(frac(h*5.7))*1.3*(1.-smoothstep(0.,max(pxm,0.6),abs(yTop-1.0)))*step(0.3,h2);
+    for(int k=0;k<2;k++){ float fk=float(k);
+      float hk=hb(sd,11.+fk*5.); if(hk<0.42) continue;
+      float ah=lerp(7.,20.,hb(sd,12.+fk*5.)), a0=lerp(4.,max(Hr*0.55,12.),hb(sd,13.+fk*5.))+fk*Hr*0.3;
+      float x0=lerp(0.04,0.30,hb(sd,14.+fk*5.)), x1=lerp(0.70,0.96,hb(sd,15.+fk*5.));
+      if(yTop>a0&&yTop<a0+ah&&lx>x0&&lx<x1) c=signPanel(float2((lx-x0)/(x1-x0),1.-(yTop-a0)/ah),float2((x1-x0)*Wm,ah),hk,pxm);
+    }
+    // and a vertical board down one side
+    float vx=h>0.5?0.03:0.84; float vl=min(Hr*0.6,lerp(20.,60.,h2));
+    if(hb(sd,31.)>0.50&&lx>vx&&lx<vx+0.13&&yTop>5.0&&yTop<5.0+vl){
+      float seg=floor((yTop-5.0)/8.0), sf=frac((yTop-5.0)/8.0);
+      c=signPanel(float2((lx-vx)/0.13,1.-sf),float2(0.13*Wm,8.0),hb(seg,sd+33.),pxm);
+    }
+  } else if(ht<0.89){
+    // a dark glass tower: LED strips up its ribs, bands of light, a long banner
+    float3 tint=signCol(frac(h*4.3+0.2));
+    c=float3(0.006,0.008,0.022)+cityHaze(az)*0.05*(0.4+0.6*lx)+wc*win*0.20;
+    float ribs=floor(lerp(2.,6.,h2)); float rx=frac(lx*ribs);
+    float wpx=max(pxm/Wm*ribs,0.012);
+    for(int k=0;k<3;k++){ float o=(float(k)-1.)*wpx*0.9;
+      c[k]+=tint[k]*1.5*(1.-smoothstep(0.,wpx*1.2,abs(min(rx,1.-rx)-abs(o)))); }
+    float bs=lerp(38.,70.,h4);
+    c+=lerp(tint,((float3)(1.0)),0.4)*(1.-smoothstep(0.,max(pxm,1.2),abs(frac(ym/bs)-0.5)*bs))*1.1;
+    c+=ngFilm(yTop*0.02+lx)*1.6*smoothstep(14.,0.,yTop);
+    float bl=min(Hr*0.5,lerp(40.,120.,h));
+    if(hb(sd,35.)>0.3&&abs(lx-0.5)<0.16&&yTop>24.0&&yTop<24.0+bl){
+      float seg=floor((yTop-24.0)/14.0), sf=frac((yTop-24.0)/14.0);
+      c=signPanel(float2((lx-0.34)/0.32,1.-sf),float2(0.32*Wm,14.0),hb(seg,sd+37.),pxm);
+    }
+  } else {
+    // a tower whose face is a screen
+    c=face+wc*win*0.5;
+    float s0=lerp(14.,40.,h2), sh=min(lerp(50.,150.,h4),Hr*0.55);
+    if(yTop>s0&&yTop<s0+sh&&abs(lx-0.5)<0.44){
+      float2 sp=float2((lx-0.06)/0.88*Wm/sh,(yTop-s0)/sh); float t=TIME*0.2+h*10.;
+      float3 a1=signCol(frac(h*3.3)), a2=signCol(frac(h*3.3+0.37)); float3 vid;
+      float pat=frac(h*17.);
+      if(pat<0.3){ float r=length(sp-float2(Wm/sh*0.5,0.5)); vid=lerp(a1,a2,step(0.5,frac(r*5.0-t)))*step(r,0.46)+a2*0.15; }
+      else if(pat<0.6){ vid=lerp(a1,a2,step(0.5,frac((sp.x+sp.y)*4.0+t)))*0.9; }
+      else { float n=vnoise(sp*3.0+t); vid=lerp(a1,a2,smoothstep(0.35,0.65,n))+((float3)(1.0))*smoothstep(0.78,0.9,vnoise(sp*6.0-t)); }
+      float scan=lerp(1.0,0.72+0.28*step(0.5,frac(ym/1.6)),1.-smoothstep(0.3,0.8,pxm/1.6));
+      c=vid*1.15*scan;
+    }
+    c+=signCol(frac(h*3.3))*1.4*(1.-smoothstep(0.,max(pxm/Wm,0.01)*1.3,min(lx,1.-lx)));
+  }
+  // glass: a sheen slides over the face, its edges split the light
+  float sh2=exp(-pow((lx-0.10-(ym/Hr)*0.55-0.25*sin(h*6.28))/0.09,2.0));
+  c+=(float3(0.08,0.11,0.26)+cityHaze(az)*0.12)*sh2*0.20;
+  float ew=max(pxm/Wm,0.007);
+  for(int k=0;k<3;k++){ float o=(float(k)-1.)*ew*1.3;
+    c[k]+=0.80*(1.-smoothstep(0.,ew*1.1,min(abs(lx-ew-o),abs(1.-lx-ew+o))))*(0.35+0.65*ym/Hr); }
+  c+=cityHaze(az)*0.22*exp(-ym/45.0)+signCol(h)*0.20*exp(-ym/14.0);     // the glow of the street and its shopfronts
+  return c;
+}
+
+// ---- the city by DAY: the same glass city in sunlight. Every face is a mirror of the sky (tinted glass: teal, silver,
+//      bronze, violet), framed by fine mullions; the sun glints off it and splits into colour at the frames; the screens
+//      still play, dimmer against the day; the far city sinks into blue air.
+static float LIT = 0.0;                                               // how lit the city is: 0 day .. 1 night (set in setCity)
+void setCity(){ LIT=max(NIGHT,smoothstep(0.35,1.0,DUSK)*0.85); }
+float3 dayAir(float az){ return ngSkyBase(normalize(float3(cos(az),0.02,sin(az)))); }
+float3 dayGlass(float3 rd, float3 n, float lx, float ym, float Hr, float Wm, float pxm, float sd, float3 cNight){
+  float h=hb(sd,1.), h2=hb(sd,2.), h4=hb(sd,4.);
+  float tk=frac(h*3.7+h4);
+  float3 tint=tk<0.30?float3(0.40,0.85,0.95):(tk<0.52?float3(0.55,0.70,1.05):(tk<0.68?float3(0.90,0.92,0.96):(tk<0.84?float3(1.05,0.78,0.48):float3(0.80,0.62,1.05))));
+  float3 r=reflect(rd,n);
+  float3 sky=ngSkyBase(normalize(float3(r.x,abs(r.y)+0.04,r.z)));
+  sky=lerp(sky,dayAir(atan2(r.z,r.x))*0.55,smoothstep(0.0,0.0,0.0)*0.0+exp(-max(r.y,0.)*6.0)*0.6);   // low in it: the city opposite
+  float F=0.30+0.70*pow(1.0-abs(dot(rd,n)),3.0);
+  float3 c=sky*tint*lerp(0.40,1.00,F);
+  // the canyon: lower down the glass mirrors the dark towers opposite, not the sky
+  float canyon=smoothstep(0.85,0.15,ym/Hr)*lerp(0.5,0.85,h2);
+  c=lerp(c,float3(0.05,0.07,0.12)*tint+sky*0.08,canyon);
+  // the towers opposite, seen in the glass: dark slabs with a lit window here and there
+  float opp=step(0.45,vnoise(float2(lx*3.0+sd,ym/40.0)))*step(ym/Hr,0.9);
+  c=lerp(c,float3(0.06,0.08,0.13)*tint,opp*0.55);
+  c*=lerp(0.55,1.0,max(dot(n,SUN),0.0)+0.25);                 // faces away from the sun are deeper
+  // high up the glass holds the sky and its clouds (bright, soft), sliding as you move
+  float up=smoothstep(0.35,0.95,ym/Hr);
+  float cl=smoothstep(0.50,0.80,vnoise(float2(lx*1.6+sd*3.1+rd.x*2.0,ym/55.0+rd.z*2.0)));
+  c=lerp(c,ngSkyBase(normalize(float3(r.x,0.25,r.z)))*tint*1.25,up*0.55);
+  c=lerp(c,float3(0.95,0.96,1.0)*lerp(((float3)(1.0)),tint,0.3),cl*up*0.55);
+  float sunF=max(dot(n,SUN),0.0);
+  c+=tint*float3(1.0,0.96,0.88)*sunF*0.10;                      // the sunlit face is a breath brighter
+  // mullions: floors and panels framed in light metal
+  float floorH=lerp(3.4,4.4,h4)*lerp(1.0,2.0,step(0.5,h)), cols=floor(Wm/lerp(4.0,9.0,h2));
+  float2 g=float2(lx*cols,ym/floorH); float2 gf=abs(frac(g)-0.5);
+  float res=1.-smoothstep(0.3,1.0,max(pxm/floorH,pxm/(Wm/cols)));
+  float mul=max(1.-smoothstep(0.0,max(pxm/(Wm/cols),0.04),0.5-gf.x),1.-smoothstep(0.0,max(pxm/floorH,0.04),0.5-gf.y));
+  c=lerp(c,float3(0.50,0.53,0.58)*(0.55+0.45*sunF),mul*0.40*res+0.04*(1.-res));
+  // the sun in the glass: a sharp glint, a broad sheen, the frames split it into colour
+  float sp=max(dot(r,SUN),0.0);
+  float3 glint=float3(1.0,0.97,0.9)*(pow(sp,600.0)*14.0+pow(sp,30.0)*0.70+pow(max(dot(n,SUN),0.),3.0)*0.10)+ngFilm(lx*2.0+ym*0.01+h)*pow(sp,90.0)*mul*3.0;
+  c+=glint*SUNUP;
+  // what is lit inside still shows: screens and boards, dimmer against the day
+  // only what truly glows shows by day (screens and boards), not the night's dim windows and edge light
+  float glowM=smoothstep(0.55,1.1,max(cNight.r,max(cNight.g,cNight.b)));
+  c=lerp(c,cNight,glowM*lerp(0.55,1.0,LIT));
+  return c;
+}
+float3 dayRoof(float2 r, float2 sz, float2 id, float3 rd, float3 cNight){
+  float h=ngH12(id+71.0), ty=ngH12(id+13.0);
+  float3 c=lerp(float3(0.30,0.32,0.36),float3(0.42,0.44,0.48),ngH12(floor(r/4.0)+id))*(0.75+0.25*max(SUN.y,0.0)*2.0);
+  float dE=min(min(r.x,sz.x-r.x),min(r.y,sz.y-r.y));
+  c*=lerp(0.70,1.0,smoothstep(0.0,2.5,dE));
+  if(ty<0.30){ float3 rr=reflect(rd,float3(0,1,0)); c=lerp(c,ngSkyBase(normalize(float3(rr.x,abs(rr.y)+0.05,rr.z)))*float3(0.6,0.85,0.95),step(4.0,dE)*0.8); }
+  else if(ty>=0.66&&ty<0.80) c=lerp(c,float3(0.18,0.40,0.22),step(3.0,dE)*0.8);
+  float glowM=smoothstep(0.55,1.1,max(cNight.r,max(cNight.g,cNight.b)));
+  return lerp(c,cNight,glowM*0.6);
+}
+float3 dayStreet(float2 pw, float3 rd, float3 cNight){
+  float3 rr=reflect(rd,float3(0,1,0));
+  float3 c=float3(0.07,0.08,0.10)+ngSkyBase(normalize(float3(rr.x,abs(rr.y)+0.05,rr.z)))*0.18;
+  float glowM=smoothstep(0.45,1.0,max(cNight.r,max(cNight.g,cNight.b)));
+  return lerp(c,cNight,glowM*0.5);
+}
+float4 cityLayer(float3 rd, float L){
+  float az=atan2(rd.z,rd.x), el=rd.y/max(length(rd.xz),1e-3);
+  float R=420.0*pow(1.6,L);
+  float lotW=lerp(46.,72.,L/4.);
+  float cells=floor(6.2832*R/lotW);
+  float u=az/6.2832*cells+L*13.37; float ci=floor(u), fu=frac(u);
+  float sd=ci+L*917.0;
+  float h=hb(sd,1.), h3=hb(sd,3.), h4=hb(sd,4.);
+  float dist=vnoise(float2(ci*lotW/900.0,L*5.0));
+  float tall=pow(h3,2.5)*smoothstep(0.25,0.75,dist);
+  float Hr=lerp(110.,330.,h*h)+tall*lerp(220.,620.,L/4.);
+  float ym=el*R+SEA_D;
+  float gap=0.03+0.05*h4;
+  if(fu<gap||ym<0.0||ym>Hr+16.0) return ((float4)(0));
+  float lx=(fu-gap)/(1.-gap), Wm=lotW*(1.-gap);
+  float pxm=GPX*R*(1.0+el*el)+1e-3;
+  float hzK=1.0-exp(-R/2400.0);
+  float3 hazeC=float3(0.012,0.016,0.050)+cityHaze(az)*0.10*exp(-max(ym,0.)/260.0);
+  if(ym>Hr){
+    float bbH=lerp(7.,14.,h);
+    if(h4>0.40&&tall<0.3&&ym<Hr+bbH&&abs(lx-0.5)<0.44)
+      return float4(lerp(signPanel(float2((lx-0.06)/0.88,(ym-Hr)/bbH),float2(Wm*0.88,bbH),hb(sd,21.),pxm),hazeC,hzK*0.6),1.0);
+    if(tall>0.3&&ym<Hr+12.0&&abs(lx-0.5)*Wm<max(pxm,0.5)) return float4(float3(3.0,0.12,0.10)*(0.35+0.65*step(0.5,frac(TIME*0.45+h*7.))),1.0);
+    return ((float4)(0));
+  }
+  float3 c=facade(lx,ym,Hr,Wm,pxm,az,sd,tall,1.0);
+  float cornerX=lerp(0.22,0.78,hb(sd,2.));
+  float farF=step(cornerX,lx)*step(0.35,h4);
+  c*=lerp(1.0,0.60,farF);                                     // a corner: its far face sits in shade
+  float3 cn=-normalize(float3(cos(az),0.0,sin(az)));             // the face looks back toward the islands
+  float3 tg=float3(-cn.z,0.0,cn.x); float3 nF=normalize(lerp(cn,cn*0.7+tg*0.7,farF));
+  float3 cDay=dayGlass(rd,nF,lx,ym,Hr,Wm,pxm,sd,c*(1.0-LIT)*0.0+c);
+  cDay=lerp(cDay,dayAir(az)*0.90,hzK*0.50);
+  return float4(lerp(cDay,lerp(c,hazeC,hzK*0.62),LIT),1.0);
+}
+float3 layerGlow(float3 rd, float L){
+  float az=atan2(rd.z,rd.x), el=rd.y/max(length(rd.xz),1e-3), R=420.0*pow(1.6,L);
+  float ym=el*R+SEA_D; if(ym<0.0) return ((float3)(0));
+  float u=az*R/260.0+L*7.0; float i=floor(u), f=frac(u); f=f*f*(3.-2.*f);
+  return lerp(signCol(hb(i,L+3.)),signCol(hb(i+1.,L+3.)),f)*exp(-ym/150.0)*0.030;
+}
+float3 cityAt(float3 rd, float3 bg){
+  float3 col=bg;
+  for(int L=4;L>=0;L--){ float4 b=cityLayer(rd,float(L)); col=lerp(col,b.rgb,b.a); if(L<3) col+=layerGlow(rd,float(L))*LIT; }
+  return col;
+}
+float3 cityMirror(float3 rd, float elv){
+  float az=atan2(rd.z,rd.x)+(vnoise(float2(rd.x*500.0+rd.z*310.0,elv*260.0+TIME*1.2))-0.5)*0.004;
+  float3 col=((float3)(0.0)); float t=SEA_D/elv;
+  for(int L=4;L>=0;L--){ float R=420.0*pow(1.6,float(L));
+    if(R<t) continue;
+    float ymr=(R-t)*elv; float3 acc=((float3)(0)); float a=0.;
+    for(int k=0;k<3;k++){ float ym=ymr*(1.0+float(k)*0.5);
+      float4 b=cityLayer(float3(cos(az),(ym-SEA_D)/R,sin(az)),float(L)); acc+=b.rgb*b.a; a+=b.a; }
+    col=lerp(col,acc/max(a,1e-3),clamp(a/3.0,0.,1.)); }
+  return col;
+}
+// ---- the city UNDER the islands: real blocks on a street grid (the ray walks the grid cell by cell), roofs with
+//      their lit parapets, glass roofs and pads, walls with the same advertising, wet streets with traffic
+static const float CELL=54.0, STREET=7.5, RIN=440.0;
+float bldH(float2 id){
+  float h=ngH12(id*1.37+5.0), d=vnoise(id*0.23+3.0);
+  
+  return min(lerp(30.,112.,h*h)+smoothstep(0.50,0.85,d)*42.0*ngH12(id+9.0),148.0);
+}
+float3 roofCol(float2 r, float2 sz, float2 id, float pxm){
+  float h=ngH12(id+71.0), ty=ngH12(id+13.0); float3 tint=signCol(h);
+  float3 c=float3(0.014,0.016,0.034);
+  float dE=min(min(r.x,sz.x-r.x),min(r.y,sz.y-r.y));
+  float res=1.-smoothstep(0.4,1.2,pxm/1.5);
+  for(int k=0;k<3;k++) c[k]+=tint[k]*1.25*(1.-smoothstep(0.,max(pxm,0.55),abs(dE-1.0-(float(k)-1.)*0.4)));   // the parapet's light, split
+  c+=float3(0.020,0.022,0.040)*step(0.70,ngH12(floor(r/4.0)+id*3.0))*step(3.0,dE);     // plant and ducts
+  if(ty<0.30){ float2 w=frac(r/3.0);                              // a glass roof, lit from inside
+    c+=lerp(float3(0.45,0.85,1.10),float3(1.05,0.72,0.42),step(0.5,h))*0.22*lerp(0.5,step(0.35,ngH12(floor(r/3.0)+id))*step(0.12,w.x)*step(0.12,w.y),res)*step(4.0,dE); }
+  else if(ty<0.42){ float rr=length(r-sz*0.5);                   // a landing pad
+    c+=float3(1.0,0.74,0.05)*0.9*(1.-smoothstep(0.,max(pxm,0.5),abs(rr-8.0)))+float3(3.0,0.1,0.1)*step(rr,1.0)*step(0.5,frac(TIME*0.5+h)); }
+  else if(ty<0.66){ float bx=abs(r.y-sz.y*0.25);                 // a billboard stands on it: its light spills over the roof
+    float3 bc=signCol(ngH12(id+19.0)); c+=bc*0.45*exp(-bx/5.0)+bc*1.3*step(bx,max(pxm,0.6))*step(4.0,r.x)*step(r.x,sz.x-4.0); }
+  else if(ty<0.80){ c+=float3(0.05,0.55,0.35)*0.20*step(3.0,dE)*(0.5+0.5*vnoise(r*0.8+id)); }   // a roof garden under glass
+  return c;
+}
+float3 streetCol(float2 pw, float pxm){
+  float2 id=floor(pw/CELL), f=pw-id*CELL;
+  float2 dB=min(f,CELL-f);                                       // distance to the two street centre lines
+  float dx=dB.x, dz=dB.y;                                      // dx small: on a z-running street; dz small: x-running
+  float3 c=float3(0.006,0.008,0.020);
+  // shopfront light on the wet road: this block's colours, strongest at the kerb, smeared (wet glass)
+  float kerb=STREET-min(dx,dz);
+  float3 shop=lerp(signCol(ngH12(id+3.0)),signCol(ngH12(id+17.0)),step(0.5,vnoise(pw*0.07)));
+  c+=shop*0.80*exp(-max(kerb,0.)/3.5)*(0.6+0.4*vnoise(pw*float2(0.9,0.15)+TIME*0.3));
+  bool xs=dz<dx;                                               // on an x-running street?
+  float along=xs?pw.x:pw.y, across=xs?(f.y<CELL*0.5?f.y:f.y-CELL):(f.x<CELL*0.5?f.x:f.x-CELL);
+  float lane=floor(xs?pw.y/CELL+0.5:pw.x/CELL+0.5);
+  float res=1.-smoothstep(0.3,1.0,pxm/0.8);
+  c+=float3(0.9,0.75,0.3)*0.25*step(abs(across),0.2)*step(0.5,frac(along/6.0))*res;      // the centre line
+  for(int k=0;k<2;k++){ float sg=k==0?1.0:-1.0;                 // traffic: white ahead, red behind
+    float car=frac(along/46.0*sg-TIME*0.22+hb(lane,float(k)+3.0));
+    float on=step(0.86,car)*step(abs(across-sg*2.6),0.9);
+    c+=(k==0?float3(1.3,1.25,1.1):float3(1.5,0.08,0.05))*on*(0.4+0.6*smoothstep(0.86,1.0,car)); }
+  float xw=step(dx,STREET+3.0)*step(dz,STREET+3.0);            // crossings at the junctions
+  c+=((float3)(0.5))*0.35*xw*step(0.5,frac((xs?across:along)/1.6))*step(STREET-0.5,max(dx,dz))*res;
+  return c;
+}
+float4 cityBelow(float3 ro, float3 rd){
+  float dn=-rd.y; if(dn<0.015) return ((float4)(0));
+  float3 d=rd; if(abs(d.x)<1e-4) d.x=1e-4; if(abs(d.z)<1e-4) d.z=1e-4;
+  float t=max((ro.y-150.0)/dn,0.0), tG=ro.y/dn;
+  float2 p=ro.xz+d.xz*t; float2 id=floor(p/CELL);
+  float2 stp=sign(d.xz);
+  float2 tMax=t+((id+max(stp,0.0))*CELL-p)/d.xz, tDel=CELL/abs(d.xz);
+  for(int i=0;i<44;i++){
+    if(length((id+0.5)*CELL-ro.xz)>RIN) return ((float4)(0));        // past the inner city: the far rings take over
+    float tExit=min(tMax.x,tMax.y), H=bldH(id);
+    float2 bmin=id*CELL+STREET, bmax=(id+1.0)*CELL-STREET;
+    if(H>1.0){
+      float3 ta=(float3(bmin.x,0.,bmin.y)-ro)/d, tb=(float3(bmax.x,H,bmax.y)-ro)/d;
+      float3 tmn=min(ta,tb), tmx=max(ta,tb);
+      float tn=max(max(tmn.x,tmn.y),tmn.z), tf=min(min(tmx.x,tmx.y),tmx.z);
+      if(tn<tf&&tf>0.0){
+        float3 q=ro+d*tn; float pxm=GPX*tn+1e-3; float3 c; float2 sz=bmax-bmin;
+        float az=atan2(q.z,q.x), sd=id.x*31.7+id.y*57.3;
+        float3 cD;
+        if(tmn.y>=tmn.x&&tmn.y>=tmn.z){ c=roofCol(q.xz-bmin,sz,id,pxm/max(dn,0.15)); cD=dayRoof(q.xz-bmin,sz,id,d,c); }
+        else if(tmn.x>=tmn.z){ c=facade((q.z-bmin.y)/sz.y,q.y,H,sz.y,pxm,az,sd+1.0,0.0,1.0)*0.85;
+          cD=dayGlass(d,float3(-sign(d.x),0.,0.),(q.z-bmin.y)/sz.y,q.y,H,sz.y,pxm,sd+1.0,c); }
+        else { c=facade((q.x-bmin.x)/sz.x,q.y,H,sz.x,pxm,az,sd+2.0,0.0,1.0);
+          cD=dayGlass(d,float3(0.,0.,-sign(d.z)),(q.x-bmin.x)/sz.x,q.y,H,sz.x,pxm,sd+2.0,c); }
+        float fog=1.0-exp(-tn/1100.0);
+        float3 cn2=lerp(c,float3(0.012,0.016,0.050)+cityHaze(az)*0.06,fog);
+        return float4(lerp(lerp(cD,dayAir(az)*0.85,(1.0-exp(-tn/2600.0))*0.85),cn2,LIT),1.0);
+      }
+    }
+    if(tG<tExit){
+      float3 q=ro+d*tG; float3 c=streetCol(q.xz,GPX*tG/max(dn,0.15));
+      float fog=1.0-exp(-tG/1100.0);
+      float3 cD=lerp(dayStreet(q.xz,d,c),dayAir(atan2(q.z,q.x))*0.85,(1.0-exp(-tG/2600.0))*0.85);
+      return float4(lerp(cD,lerp(c,float3(0.012,0.016,0.050),fog),LIT),1.0);
+    }
+    if(tMax.x<tMax.y){ tMax.x+=tDel.x; id.x+=stp.x; } else { tMax.y+=tDel.y; id.y+=stp.y; }
+  }
+  return ((float4)(0));
+}
+// the city far below in the void, seen down through haze: blocks of light of every size, bright avenues, traffic
+float3 voidCity(float3 ro, float3 rd){
+  float dn=max(-rd.y,0.0); if(dn<0.003) return ((float3)(0));
+  float t=(ro.y-(SEA_Y-520.0))/dn; float2 p=(ro.xz+rd.xz*t);
+  float dist=exp(-t/3200.);
+  float3 c=((float3)(0));
+  // avenues: a coarse irregular grid (every ~6 blocks), bright; small streets: only their lights
+  float2 g=p/180.0; float2 jf=g+float2(vnoise(float2(floor(g.y),3.))*0.3,vnoise(float2(floor(g.x),7.))*0.3);
+  float2 f=abs(frac(jf)-0.5); float pxw=length(fwidth(g))+1e-4;
+  // avenues glow as soft bands of light (a sharp line per street read as a synthwave grid)
+  float wav=max(0.018,pxw*2.0);
+  float major=step(0.55,ngH12(float2(floor(jf.x),11.))), major2=step(0.55,ngH12(float2(floor(jf.y),13.)));
+  float av=max(exp(-pow((0.5-f.x)/wav,2.0))*major,exp(-pow((0.5-f.y)/wav,2.0))*major2);
+  float3 avC=neonPal(ngH12(floor(jf))*0.6+0.15);
+  c+=avC*av*0.30;
+  // the blocks between: light points (windows and lamps), clustered, warm and neon
+  float2 q=p/9.0; float2 qi=floor(q), qf=frac(q)-0.5;
+  float dens=smoothstep(0.35,0.75,vnoise(p/260.0))*0.8+0.15;
+  float on=step(1.0-dens*0.45,ngH12(qi));
+  float pt=exp(-dot(qf,qf)*40.0)*on;
+  c+=lerp(float3(1.0,0.82,0.6),neonPal(ngH12(qi+2.)),step(0.6,ngH12(qi+9.)))*pt*0.55;
+  // traffic: light moving along the avenues
+  float tr=pow(frac(jf.x*3.0+TIME*0.08+ngH12(float2(floor(jf.y),1.))),40.)*(1.-smoothstep(0.,0.02,0.5-f.y));
+  c+=float3(1.0,0.35,0.25)*tr*1.2;
+  return c*dist;
+}
+
 float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float  dn = saturate(-rd.y);
     float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z)));
     float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0030, 0.0022, 0.012), NIGHT);
-    float3 col = lerp(hor, deep, smoothstep(0.0, 0.07, dn));   // (seen in game: a wider fade read as a fog wall)
-    // the void is a still, dark glass sea far below: a dim mirror of the sky and its clouds, broken by slow swells
-    // (seen in game: a flat navy void under a busy sky read as unfinished)
+    float3 col = lerp(hor, deep, smoothstep(0.0, 0.07, dn));
+    // the void is the city: its wet glass ground holds the city's lights (long streaks at night), its towers stand all
+    // round, and right under the islands its blocks and streets
     {
-        float  tW = (ro.y - (SEA_Y - 120.0)) / max(dn, 0.01);
-        float  F  = 0.04 + 0.96 * pow(1.0 - dn, 5.0);
-        float  wM = min(F * 1.6, 0.75) * exp(-tW / 2200.0) * smoothstep(0.0, 0.02, dn);
-        [branch] if (wM > 0.03) {                              // looking steeply down it is too faint to pay for
-            float2 wq = (ro.xz + rd.xz * tW) / 90.0;
-            float2 sw = float2(fbm(wq * 0.6 + TIME * 0.02, 2), fbm(wq * 0.6 + 7.7 - TIME * 0.015, 2)) - 0.5;
-            float3 rr = normalize(float3(rd.x + sw.x * 0.05, dn, rd.z + sw.y * 0.05));
-            float3 m  = ngSkyBase(rr);
-            float4 a  = NG_CLOUDS > 0.0 ? ngAlto(rr, Ld, true) : float4(0, 0, 0, 0);
-            a.a *= NG_CLOUDS;
-            m = lerp(m, a.rgb * lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT), a.a * 0.6);
-            col = lerp(col, m * 0.55, wM);
-        }
-    }
-    // the floor of the void, far below: light through the dome draws moving patches of caustic net on it
-    float  tF = (ro.y - (SEA_Y - 260.0)) / max(dn, 0.02);
-    float2 fp = (ro.xz + rd.xz * tF) / 55.0;
-    float  fadeF = exp(-tF / 1500.0) * smoothstep(0.10, 0.45, dn);
-    [branch] if (fadeF > 0.01 && QUALITY > 0.15) {
-        float cs = ngCaustic(fp) * smoothstep(0.35, 0.75, fbm(fp * 0.25 + 3.0, 3));
-        float3 cc = lerp(lerp(float3(0.30, 0.62, 1.00), float3(0.85, 0.40, 0.95), DUSK), float3(0.45, 0.30, 1.00), NIGHT);
-        cc = lerp(cc, lerp(float3(0.05, 0.90, 1.00), float3(1.00, 0.20, 0.85), smoothstep(0.3, 0.7, fbm(fp * 0.12 + 9.0, 2))), NG_NEON * 0.75);
-        col += cc * cs * fadeF * lerp(0.16, 0.30, NIGHT) * (1.0 + 1.4 * NG_NEON);
-    }
-    // glitter: motes of glass hanging in the void, catching the light
-    float3 gq = rd * 260.0, gc = floor(gq);
-    float  hh = hash13(gc + 5.0);
-    if (hh > 0.985) {
-        float3 sp = normalize(gc + 0.5 + (ngHash3(gc) - 0.5) * 0.6);
-        float  a = length(rd - sp) * 260.0;
-        col += lerp(float3(0.75, 0.88, 1.0), ngSpecS(frac(hh * 91.0)), 0.5) * exp(-a * a * 6.0) * (0.5 + 0.5 * sin(TIME * (1.0 + 3.0 * hh) + hh * 40.0)) * smoothstep(0.03, 0.2, dn) * 0.9;
+        float3 base = lerp(dayAir(atan2(rd.z, rd.x)) * 0.35, float3(0.006, 0.008, 0.022) + voidCity(ro, rd) * 0.35, LIT);
+        float  elv = dn / max(length(rd.xz), 1e-3);
+        float3 refl = cityMirror(rd, elv);
+        float  rip = 0.60 + 0.40 * vnoise(float2(rd.x * 240.0 + rd.z * 130.0, elv * 900.0 - TIME * 2.0));
+        float  F = 0.40 + 0.60 * pow(1.0 - dn, 3.0);
+        float3 nc = base * 0.6 + refl * rip * F;
+        nc = cityAt(rd, nc);                                        // the buildings' feet stand in front of it
+        float4 cb = cityBelow(float3(ro.x, SEA_D, ro.z), rd);       // under the islands: the city itself
+        col = lerp(nc, cb.rgb, cb.a);
     }
     float  fadeH = smoothstep(0.015, 0.09, dn);
     [branch] if (fadeH > 0.0) {
         [unroll] for (int L = 3; L >= 0; L--) {
             float4 sh = ngShards(ro, rd, SEA_Y + 14.0 - 34.0 * float(L), 58.0 + 26.0 * float(L), 13.0 * float(L) + 2.0, Ld);
-            col = col * (1.0 - sh.a * fadeH) + sh.rgb * fadeH;
+            col = lerp(col * (1.0 - sh.a * fadeH) + sh.rgb * fadeH, col, 0.80);
         }
     }
     return col;
@@ -588,6 +950,9 @@ float3 ngVeil(float3 rd) {
     return acc * 0.055 * (1.0 + 1.6 * NG_NEON) * smoothstep(0.03, 0.20, e) * (1.0 - smoothstep(0.55, 0.95, e));
 }
 float3 ngBackground(float3 rd) {
+    setCity();
+    GPX = max(length(fwidth(rd)), 1e-5);
+    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), 60.0, 420.0);           // the city's streets lie ~175 under the islands
     float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
     [branch] if (rd.y < 0.0) return ngVoid(CAM, rd, Ld);
     NgDome D  = ngDome(rd);
@@ -600,7 +965,7 @@ float3 ngBackground(float3 rd) {
     col = lerp(col, ciC, ci.a * lerp(0.38, 0.18, NIGHT));   // (quieter: the altocumulus is the body now)
     float4 ac = NG_CLOUDS > 0.0 ? ngAlto(rf, Ld, false) : float4(0, 0, 0, 0);
     ac.a *= NG_CLOUDS;
-    float3 acT = lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT);   // night: dark shapes that hide the stars
+    float3 acT = lerp(float3(1.0, 1.0, 1.0), float3(0.05, 0.05, 0.11) + cityHaze(atan2(rf.z, rf.x)) * 0.30 * exp(-rf.y * 3.0), NIGHT);   // night: clouds lit from below by the city
     col = lerp(col, ac.rgb * acT, ac.a * lerp(1.0, 0.75, NIGHT));
     float  angD = acos(clamp(dot(rf, SUNDISC), -1.0, 1.0));
     float  disc = smoothstep(0.0125, 0.0095, angD);
@@ -635,11 +1000,15 @@ float3 ngBackground(float3 rd) {
         col += lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), 0.5 + 0.5 * sin(az * 3.0 + TIME * 0.2)) * exp(-pow(e * 60.0 - 0.6, 2.0)) * 0.16 * k;   // the base ring goes neon
     }
     [branch] if (NIGHT > 0.001) {
-        col += (csStars(rd) * 1.25 * (1.0 - ac.a) + csMoon(rd) * (1.0 - ac.a * 0.85)) * NIGHT;   // clouds hide them
+        float azN = atan2(rd.z, rd.x);
+        col *= lerp(1.0, 0.26, NIGHT);                                // a deep navy night: the colour lives in the lights
+        col += (cityHaze(azN) * (exp(-max(rd.y, 0.0) * 9.0) * 0.09 + exp(-max(rd.y, 0.0) * 2.5) * 0.015) + float3(0.012, 0.02, 0.07) * exp(-max(rd.y, 0.0) * 3.0)) * NIGHT;
+        col += (csStars(rd) * 0.45 * (1.0 - ac.a) + csMoon(rd) * (1.0 - ac.a * 0.85)) * NIGHT;   // the city's light drowns most stars
         col += ngVeil(rd) * NIGHT;
         float am = acos(clamp(dot(rd, SUN), -1.0, 1.0)), x2 = (am - 0.384) / 0.0175;
         col += float3(0.62, 0.66, 0.95) * (x2 < 0.0 ? exp(-x2 * x2 * 2.0) : exp(-x2 * 0.6)) * 0.035 * NIGHT * smoothstep(-0.02, 0.05, rd.y);   // the moon's ring
     }
+    col = cityAt(rd, col);                                            // the city all round, day and night
     return col;
 }
 float3 csBackground(float3 rd, bool withSea) {
