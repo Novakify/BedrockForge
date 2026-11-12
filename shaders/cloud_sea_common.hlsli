@@ -578,7 +578,7 @@ float3 ngBackground(float3 rd) {
     float3 lineC = lerp(lerp(lineDay, lineDay * float3(1.0, 0.70, 0.85), DUSK), float3(0.50, 0.42, 0.95) * 0.045, NIGHT);
     col += lineC * (D.edge + D.edgeC * 0.35);
     [branch] if (NIGHT > 0.001) {
-        col += csStars(rd) * 1.25 * NIGHT + csMoon(rd) * NIGHT;
+        col += (csStars(rd) * 1.25 * (1.0 - ac.a) + csMoon(rd) * (1.0 - ac.a * 0.85)) * NIGHT;   // clouds hide them
         col += ngVeil(rd) * NIGHT;
         float am = acos(clamp(dot(rd, SUN), -1.0, 1.0)), x2 = (am - 0.384) / 0.0175;
         col += float3(0.62, 0.66, 0.95) * (x2 < 0.0 ? exp(-x2 * x2 * 2.0) : exp(-x2 * 0.6)) * 0.035 * NIGHT * smoothstep(-0.02, 0.05, rd.y);   // the moon's ring
