@@ -1192,6 +1192,18 @@ float3 slashFx(float3 o, float3 rd) {
 // ---- impact frame, ONLY for your critical or mace hits (BF: kind 8, who 1.25): for half a second the frame turns to
 //      two tones - the world white and whoever you hit a black silhouette, then flipped (world black, them white).
 //      The silhouette is every pixel whose surface sits inside the victim's body column (the world pass sees depth).
+float ifH(float a, float b) { return frac(sin(a * 12.9898 + b * 78.233) * 43758.5453); }
+float ifVN(float x, float per, float sd) {   // value noise over an angle, wrapping every `per`
+    float i0 = floor(x), f = frac(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(ifH(fmod(i0, per), sd), ifH(fmod(i0 + 1.0, per), sd), f);
+}
+bool impactLive() {
+    int ne = int(m0.y);
+    for (int i = 0; i < ne; i++)
+        if (eB[i].w > 7.5 && eB[i].w < 8.5 && eC[i].z > 1.1 && eC[i].z < 1.4 && eA[i].w <= 0.5) return true;
+    return false;
+}
 float3 impactFrame(float3 o, float3 rd, float sceneT) {
     int ne = int(m0.y);
     [loop] for (int i = 0; i < ne; i++) {
@@ -1208,7 +1220,7 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
         //      a burst of tapered spikes snaps out from the point of impact and opens up as its tips fly on, and the
         //      game's own crit sparks (the little pixel crosses) scatter from it. Ink is drawn by exclusion: black on
         //      the white world, white where it crosses the black silhouette - so it inverts with the frame on the flip.
-        float ink = 0.0;
+        float ink = 0.0, core = 0.0;
         {
             float3 Fw = c0.xyz, Uw = c2.xyz;
             float3 Rw = normalize(cross(Uw, Fw));
@@ -1221,66 +1233,59 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
                 float2 sq = float2(dot(rd, Rw), dot(rd, Uw)) / max(dot(rd, Fw), 0.2);
                 float2 q = (sq - sp) * dz;                              // blocks, in the plane of the blow
                 float  seed = frac(dot(eA[i].xyz, float3(0.371, 0.713, 0.537)));
-                // References: anime impact frames (monochrome, a starburst at the contact point, centralized focus
-                // lines) and Minecraft's own crit (a checkered pixel X, ~48 flung out with heavy drag). Everything in
-                // the plane of the blow snaps to a 32x texel grid, so the ink is pixel art, like the world it hits.
+                // v5 (Fernando's references): hand-inked anime impact frames - scratchy radial hatching in ragged
+                // masses, a white-hot core with a long cross flare - with Minecraft's own crit sprite (the real frames
+                // from particles.png) thrown out by the game's own numbers. All of it on a 32x texel grid in the plane
+                // of the blow, so the ink is pixel art. The victim's silhouette stays clean in front of the hatching.
                 float2 qg = (floor(q * 32.0) + 0.5) / 32.0;
-                [unroll] for (int beat = 0; beat < 2; beat++) {
-                    float a0 = age - 0.25 * float(beat);
-                    if (a0 < 0.0) continue;
-                    float sd = seed + 0.5 * float(beat), big = beat == 0 ? 1.0 : 0.7;
-                    // starburst: 12 tapered spikes, uneven, out in 0.035 s, then torn open from the middle
-                    float grow = smoothstep(0.0, 0.035, a0), r0 = 1.05 * smoothstep(0.05, 0.30, a0);
-                    if (dot(qg, qg) < 4.4) {
-                        [unroll] for (int j = 0; j < 12; j++) {
-                            float h1 = frac(sin(float(j) * 12.9898 + sd * 78.233) * 43758.5453);
-                            float h2 = frac(sin(float(j + 40) * 12.9898 + sd * 78.233) * 43758.5453);
-                            float an = (float(j) + (h1 - 0.5) * 0.75) * (6.2831853 / 12.0) + sd * 6.28;
-                            float2 dir = float2(cos(an), sin(an));
-                            float L = (0.55 + 1.5 * h2 * h2 * h2) * grow * big, rj = r0 * (0.45 + 1.1 * h1);
-                            float t = dot(qg, dir), pp = abs(qg.x * dir.y - qg.y * dir.x);
-                            float u = (t - rj) / max(L - rj, 1e-3);
-                            if (t > rj && u < 1.0 && pp < (0.035 + 0.05 * h2) * (1.0 - u) * big) ink = 1.0;
-                        }
-                    }
-                    // focus lines: 120 angle slots, ~half drawn, from the frame edge in toward the hit (screen space)
-                    if (a0 < 0.10) {
-                        float2 dv = sq - sp;
-                        float  rr = length(dv);
-                        float  fa = (atan2(dv.y, dv.x) / 6.2831853 + 0.5) * 120.0;
-                        float  bi = floor(fa), ff = frac(fa);
-                        float  k  = 1.0 - 0.2 * float(beat);
-                        float  on = frac(sin(bi * 12.9898 + (seed + k) * 78.233) * 43758.5453);
-                        float  inner = 0.30 + 0.35 * frac(sin((bi + 7.0) * 12.9898 + (seed + k) * 78.233) * 43758.5453) + 0.25 * smoothstep(0.0, 0.10, a0);
-                        float  wid = 0.10 + 0.28 * frac(sin((bi + 3.0) * 12.9898 + (seed + k) * 78.233) * 43758.5453);
-                        if (on > 0.45 && rr > inner && abs(ff - 0.5) < 0.5 * wid * saturate((rr - inner) / 0.4)) ink = 1.0;
-                    }
-                }
-                // crit sparks: 22 of Minecraft's checkered X (5x5, then 3x3), born over 0.15 s, heavy drag, a little
-                // gravity, a dotted trail behind while fast
-                [loop] for (int k2 = 0; k2 < 22; k2++) {
-                    float h1 = frac(sin(float(k2) * 12.9898 + (seed + 1.0) * 78.233) * 43758.5453);
-                    float h2 = frac(sin(float(k2) * 12.9898 + (seed + 2.0) * 78.233) * 43758.5453);
-                    float h3 = frac(sin(float(k2) * 12.9898 + (seed + 3.0) * 78.233) * 43758.5453);
-                    float h4 = frac(sin(float(k2) * 12.9898 + (seed + 4.0) * 78.233) * 43758.5453);
-                    float ak = age - 0.15 * h4, life = 0.22 + 0.28 * h3;
+                float  r = length(qg), a01 = atan2(qg.y, qg.x) / 6.2831853 + 0.5;
+                float  beat = age >= 0.25 ? 1.0 : 0.0, a0 = age - 0.25 * beat, sd = seed + 0.5 * beat;
+                // hatching: thin strokes in angle slots; the slot count doubles with each radius band (layers of strokes)
+                float  band = floor(log2(max(r, 0.125) / 0.125)), N = 12.0 * exp2(band);
+                float  sl = floor(a01 * N), sf = frac(a01 * N);
+                float  h1 = ifH(sl, sd + band * 1.7), h2 = ifH(sl + 11.0, sd + band * 2.3), h3 = ifH(sl + 23.0, sd + band * 0.9);
+                float  env = 0.25 + 1.25 * smoothstep(0.12, 0.62, ifVN(a01 * 7.0, 7.0, sd)) * (0.6 + 0.4 * ifVN(a01 * 19.0 + 3.0, 19.0, sd + 2.0));
+                float  Rg = (0.5 + 2.3 * smoothstep(0.0, 0.05, a0) + 0.9 * smoothstep(0.05, 0.25, a0)) * (beat < 0.5 ? 1.0 : 0.8);
+                float  inner = (0.16 + 1.7 * pow(smoothstep(0.03, 0.25, a0), 1.5)) * (0.7 + 0.6 * h2);
+                bool   stroke = h3 < 0.55 && abs(sf - 0.5) < 0.27;
+                bool   hatch = stroke && r > inner && r < Rg * env * (0.7 + 0.6 * h1);
+                // short dense spikes right off the core
+                float  cr = 0.30 * (1.0 - 0.5 * smoothstep(0.0, 0.25, a0));
+                float  cq = ifH(floor(a01 * 56.0), sd + 9.0);
+                hatch = hatch || (abs(frac(a01 * 56.0) - 0.5) < 0.30 && r > cr * 0.8 && r < cr * (1.2 + 2.2 * cq * cq) * (1.0 - 0.6 * smoothstep(0.08, 0.25, a0)));
+                // masses pushing in from the frame's edge in the first instants of each beat
+                float  edge = 4.6 - 2.3 * smoothstep(0.45, 0.75, ifVN(a01 * 5.0 + 1.0, 5.0, sd + 5.0)) * smoothstep(0.0, 0.03, a0) + 3.0 * smoothstep(0.06, 0.14, a0);
+                hatch = hatch || (stroke && r > edge * (0.85 + 0.3 * h1));
+                // the cross: long thin flare lines through the hit
+                float  ck = 1.0 - smoothstep(0.06, 0.16, a0);
+                if (ck > 0.02 && (abs(qg.y) < (0.016 + 0.07 * exp(-abs(qg.x) * 1.6)) * ck
+                               || (abs(qg.x) < (0.016 + 0.05 * exp(-abs(qg.y) * 2.2)) * ck && abs(qg.y) < 4.0 * ck + 0.5))) ink = 1.0;
+                // crit stars: 18, Minecraft's speeds / drag / gravity, three sizes (nearer ones bigger); hatching keeps clear of them
+                bool halo = false;
+                [loop] for (int k2 = 0; k2 < 18; k2++) {
+                    float g1 = ifH(float(k2), seed + 1.0), g2 = ifH(float(k2), seed + 2.0), g3 = ifH(float(k2), seed + 3.0), g4 = ifH(float(k2), seed + 4.0);
+                    float ak = age - 0.06 * g1, life = 0.25 + 0.25 * g3;
                     if (ak < 0.0 || ak > life) continue;
-                    float an = (float(k2) + h1 * 0.8) / 22.0 * 6.2831853, v0 = 14.0 + 16.0 * h2;
-                    float d = 0.35 + v0 * (1.0 - exp(-7.0 * ak)) / 7.0 * 0.6;
-                    float2 dr = float2(cos(an), sin(an) * 0.8);
-                    float2 rel = q - float2(dr.x * d, (-0.4 + 0.9 * h3) * 0.6 + dr.y * d - 3.0 * ak * ak);
-                    float2 cc = floor(rel * 32.0);
-                    float  n = ak < life * 0.55 ? 2.0 : 1.0;
-                    if (all(abs(cc) <= n) && abs(cc.x) == abs(cc.y)) ink = 1.0;
-                    float spd = v0 * exp(-7.0 * ak);
-                    if (spd > 1.5) {
-                        float t = -dot(rel, dr), pp = abs(rel.x * dr.y - rel.y * dr.x);
-                        if (t > 0.05 && t < min(spd * 0.035, 0.6) && pp < 0.6 / 32.0 && fmod(floor(t * 32.0), 2.0) < 0.5) ink = 1.0;
-                    }
+                    float an = (float(k2) + g1 * 0.9) / 18.0 * 6.2831853, v0 = (10.0 + 10.0 * g2) * (0.45 + 0.55 * g3);
+                    float e = (1.0 - exp(-10.0 * ak)) / 10.0;
+                    float2 pc = float2(cos(an) * (0.3 + v0 * e), -0.2 + sin(an) * (0.45 + v0 * e * 0.85) - 1.2 * (ak - e));
+                    float sc = g4 < 0.2 ? 3.0 : (g4 < 0.65 ? 2.0 : 1.0);
+                    float2 cc = floor((q - pc) * (32.0 / sc)) + 4.0;
+                    if (any(cc < 0.0) || any(cc > 7.0)) continue;
+                    halo = true;
+                    float lf = ak / life;
+                    int fi = lf > 0.7 ? 4 - max(0, int(lf * 8.0) - 5) : min(int(lf * 5.999), 4);
+                    static const uint kLo[5] = {0x28000000u, 0x38000000u, 0x38440000u, 0x7c6c0000u, 0x7c6c8200u};
+                    static const uint kHi[5] = {0x2810u, 0x3838u, 0x443838u, 0x6c7c38u, 0x826c7c38u};
+                    uint bit = uint(7.0 - cc.y) * 8u + uint(cc.x);
+                    if ((((bit < 32u) ? (kLo[fi] >> bit) : (kHi[fi] >> (bit - 32u))) & 1u) != 0u) ink = 1.0;
                 }
+                if (hatch && body < 0.5 && !halo) ink = 1.0;
+                float cx = qg.x / 1.25, cR = 0.34 * (1.0 - 0.55 * smoothstep(0.0, 0.25, a0));
+                core = cx * cx + qg.y * qg.y < cR * cR ? 1.0 : 0.0;
             }
         }
-        float  v = 1.0 - abs(abs(body - ink) - flip);                 // 1 = white: world white + victim black first, then flipped; ink by exclusion
+        float  v = max(1.0 - abs(abs(body - ink) - flip), core);                 // 1 = white: world white + victim black first, then flipped; ink by exclusion
         // a sliver of the scene's own shading survives in the white (so it is a frame of THIS fight, not a blank)
         float  l = dot(o, float3(0.299, 0.587, 0.114));
         float3 tone = v > 0.5 ? lerp(float3(1.0, 1.0, 1.0), float3(0.86, 0.86, 0.88), 1.0 - l) : float3(0.02, 0.02, 0.025);
@@ -1377,6 +1382,12 @@ bool matchActive() { return m3.z > 0.0 || c3.y > 0.0 || m2.w > 0.01 || m2.x > 0.
 float4 PSWorldFx(VSOut i) : SV_Target {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
+    // an impact frame replaces the picture: skip the sky, shadows and every other effect while it is up
+    [branch] if (m1.z > 0.5 && impactLive()) {
+        CAM = c7.xyz;
+        float3 rdI = normalize(posAt(float2(px) + 0.5, 1.0));
+        return float4(impactFrame(sceneAt(px).rgb, rdI, isSky(d) ? 1e9 : length(posPx(px))), 1.0);
+    }
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
     [branch] if (isSky(d)) {
