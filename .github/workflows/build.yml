@@ -213,7 +213,7 @@ jobs:
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" worldfx-rf-builds
 
-      - name: Publish World FX RF build to irisbridge-rf-builds
+      - name: Publish IrisBridge RF build to irisbridge-rf-builds
         if: github.ref == 'refs/heads/irisbridge/rf' && github.event_name == 'push'
         shell: bash
         run: |
