@@ -36,6 +36,38 @@ def reflect(dxil: Path) -> dict:
     return {"globals": cb, "globals_size": locals().get("cb_size", 0), "resources": res, "inputs": ins, "outputs": outs}
 
 
+def emit_runtime(man: dict) -> str:
+    """Line format read by RF (src/IrisBundle.h): one record per line, space separated, no JSON parser needed in RF."""
+    L = [f"irisbridge 1", f"pack {man['pack']}"]
+    for k, v in man["consts"].items(): L.append(f"const {k} {v}")
+    u = man["uniforms"]
+    L.append(f"funcs {' '.join(u['funcs'])}")
+    L.append(f"smooth {u['smooth_states']}")
+    for i, n in enumerate(u["inputs"]): L.append(f"uinput {i} {n}")
+    for i, sl in enumerate(u["slots"]):
+        L.append(f"uslot {i} {sl['name']} {sl['uniform']} {sl['comp']} {int(sl['export'])}")
+        L.append(f"ucode {i} {len(u['code'][i])} " + " ".join(f"{op} {repr(float(a))}" for op, a in u["code"][i]))
+    for world, progs in man["worlds"].items():
+        for p in progs:
+            kind = "final" if p["program"] == "final" else "composite" if p["program"].startswith("composite") else \
+                   "deferred" if p["program"].startswith("deferred") else "prepare" if p["program"].startswith("prepare") else \
+                   "shadowcomp" if p["program"].startswith("shadowcomp") else "shadow" if p["program"].startswith("shadow") else "gbuffers"
+            if not all(st["ok"] for st in p["stages"].values()): continue
+            L.append(f"pass {world} {p['program']} {kind} {p['source']}")
+            if p.get("targets") is not None: L.append("targets " + " ".join(map(str, p["targets"])) if p["targets"] else "targets")
+            for k, v in (p.get("blend") or {}).items(): L.append(f"blend {k} {v}")
+            if p.get("alphaTest"): L.append(f"alphatest {p['alphaTest']}")
+            for sname, st in p["stages"].items():
+                L.append(f"stage {sname} {st['dxil']} {st.get('globals_size', 0)}")
+                for g in st["globals"]: L.append(f"g {g['name']} {g['type']} {g['offset']}")
+                for r in st["resources"]: L.append(f"res {r['name']} {r['kind']} {r['reg']} {r['slot']}")
+                for i in st["inputs"]:
+                    if sname == "vert": L.append(f"in {i['sem']} {i['index']} {i['mask']} {i['fmt']}")
+                for k, v in (st.get("defaults") or {}).items(): L.append(f"def {k} {v.replace(' ', '')}")
+            L.append("end")
+    return "\n".join(L) + "\n"
+
+
 def find_program(shaders: Path, world: str, prog: str):
     """Iris lookup: world folder first, then the pack root; then the fallback chain."""
     p = prog
@@ -94,6 +126,8 @@ def main():
                     dx = wdir / f"{prog}.{stage}.dxil"
                     st.update(reflect(dx)); st["dxil"] = f"{world}/{dx.name}"
                     if r.get("defaults"): st["defaults"] = r["defaults"]
+                    for rr in st["resources"]:      # comparison samplers (hardware shadow filtering) need their own static sampler kind
+                        if rr["kind"] == "sampler" and rr["slot"] in r.get("cmp", []): rr["kind"] = "samplercmp"
                     pre = preprocess((wdir / f"{prog}.{stage}.src").read_text(), BASE_DEFINES)
                     man["consts"].update(pipeline_consts(pre))
                     if stage == "frag":
@@ -108,6 +142,7 @@ def main():
             if f.suffix not in (".dxil",): f.unlink()
     man["uniforms"] = build_uniforms(pk.uniforms)
     (out / "manifest.json").write_text(json.dumps(man, indent=1))
+    (out / "runtime.txt").write_text(emit_runtime(man))
     print(f"{ok}/{total} stages -> DXIL; {sum(len(v) for v in man['worlds'].values())} programs; "
           f"{len(man['uniforms']['slots'])} custom uniform slots; consts: {len(man['consts'])}")
     for w, ps in man["worlds"].items():

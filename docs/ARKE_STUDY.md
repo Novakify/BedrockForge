@@ -84,3 +84,38 @@ implicit core uniforms, `gl_Fog`. Pack attributes (`mc_Entity`, `at_tangent`, `a
 2. Bake the inputs into a per-program table (register slot -> uniform/texture) that RF can bind.
 3. RF: the post chain first (deferred1 -> composite..composite7 -> final) on Bedrock's colour + depth buffer. That's the first in-game test.
 4. gbuffers through material remap, then the shadow pass.
+
+## Progress 2026-11-12 (later): the full offline pipeline + RF runtime M1
+
+### Bedrock Forge `tools/IrisBridge/` (research/iris-bridge)
+- `pack.py`: options (431 in Spooklementary: sliders, toggles, consts), profiles, `shaders.properties` with Iris-style
+  conditional-only preprocessing, program enable rules, blend / alphaTest, `image.*`, custom uniforms; program lookup with
+  Iris fallbacks (world folder -> root -> fallback chain).
+- `expr.py`: custom-uniform language -> bytecode + reference VM. `smooth()` matches Iris exactly (checked against Iris's
+  open source: half-life = fade time / 10).
+- `translate.py`: Iris compat patcher, option overrides by rewriting the pack's own `#define` / `const` lines, **fixed
+  texture slots** (one root signature for every pass of every pack: our upgrade over auto-mapping), SSBO / image slots,
+  integer-texture sampling, a SPIRV-Cross storage-buffer store bug worked around in our HLSL post-fix, uniform defaults
+  kept, comparison samplers marked, fixed vertex-attribute locations.
+- `bundle.py`: whole pack -> DXIL (signed by DXC 1.8's validator) + `manifest.json` (human) + `runtime.txt` (RF).
+- Results: default profile 168/168 stages over 3 dimensions; every profile POTATO..ULTRA 100% (incl. colored lighting:
+  voxel images + storage buffers). Tests: `test_irisbridge.py` 28/28.
+
+### Renderer Foundation `irisbridge/rf` (built on worldfx/rf)
+- `src/IrisBridge.{h,cpp}`: runs the pack's deferred*, composite*, final at the World FX hook (opaque world done, depth
+  intact). Iris semantics: colortex ping-pong, RENDERTARGETS, buffer formats + clears, noisetex, world colour imported
+  into colortex0 (gamma -> linear), depth -> depthtex0/1, Iris built-in uniforms from the game camera, custom uniforms.
+- Orientation: buffers are stored top-down (D3D); the pack gets Y-flipped projection matrices + flipped quad UVs, so its
+  uv <-> NDC <-> view maths stays consistent. Bedrock depth (1 - near/z) == GL window depth with an infinite projection.
+- `src/IrisBundle.h` + `IrisUniformVM.h`: header-only; C++ vs Python VM parity 66/66 on Spooklementary's 30 uniforms.
+- F6 > IrisBridge. Install: put a bundle folder in `mods/RendererFoundation/irisbridge/<name>/`.
+
+### Honest limits of M1 (next milestones)
+- No gbuffers / shadow pass yet: normals, material masks and shadow maps read empty (shadows = fully lit). Packs that
+  light the world in deferred from gbuffer data will look different until M2.
+- Bedrock's colour is LDR 8-bit; the pack tonemaps it again (we decode gamma first; exposure slider in F6).
+- No real time of day / weather / biome bridge yet (F6 time slider). Fancy renderer only. colortex sizes full screen,
+  no mipmaps. Varying locations are matched by declaration order (fine for Complementary; name-pinning is next).
+- M2: gbuffers via ShaderForge material remap (normals + material IDs from Bedrock's terrain), mc_Entity block IDs from
+  block.properties mapped to Bedrock blocks. M3: the shadow pass (re-draw terrain from the sun). M4: time/weather/biome bridge
+  from Bedrock Forge, packs' options in the glass menu, Vibrant Visuals.

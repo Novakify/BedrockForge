@@ -90,10 +90,9 @@ def patch(src: str, stage: str) -> tuple[str, list[str]]:
         src = re.sub(r"\bftransform\s*\(\s*\)", "(iris_ProjMat * iris_ModelViewMat * gl_Vertex)", src)
         ins = {"gl_Vertex": "vec4 iris_Position", "gl_Color": "vec4 iris_Color", "gl_Normal": "vec3 iris_Normal",
                "gl_MultiTexCoord0": "vec4 iris_UV0", "gl_MultiTexCoord1": "vec4 iris_UV1", "gl_MultiTexCoord2": "vec4 iris_UV2"}
-        loc = 0
-        for k, v in ins.items():
+        for loc, (k, v) in enumerate(ins.items()):   # fixed: Position 16, Color 17, Normal 18, UV0 19, UV1 20, UV2 21 (RF knows them)
             if re.search(rf"\b{k}\b", src):
-                head.append(f"layout(location={16 + loc}) in {v};"); loc += 1  # 16+: the pack's own attributes auto-map from 0
+                head.append(f"layout(location={16 + loc}) in {v};")  # the pack's own attributes auto-map from 0
                 src = re.sub(rf"\b{k}\b", v.split()[1], src)
         for i, (name, ty) in enumerate({"vaPosition": "vec3", "vaColor": "vec4", "vaUV0": "vec2", "vaUV1": "ivec2",
                                          "vaUV2": "ivec2", "vaNormal": "vec3"}.items()):  # Iris core-profile attributes
@@ -185,11 +184,12 @@ def translate(shaders: Path, world: str, prog: str, out: Path, defines: dict, ov
         if ok:
             fixed, nfix = fix_hlsl(hlsl.read_text())
             if nfix: hlsl.write_text(fixed); notes.append(f"spirv-cross store fix x{nfix}")
+            cmp = sorted({int(x) for x in re.findall(r"SamplerComparisonState\s+\w+\s*:\s*register\(s(\d+)", fixed)})
             defaults = dict(re.findall(r"^uniform\s+\w+\s+(\w+)\s*=\s*([^;]+);", fixed, re.M))
         ok = ok and run([DXC, "-T", prof, "-E", "main", "-Fo", dxil, hlsl], log)
         stepfail = None if ok else log[-1].splitlines()[0][2:].split()[0]
         (out / f"{prog}.{stage}.log").write_text("\n".join(log))
-        res[f"{prog}.{ext}"] = {"defaults": defaults, "ok": ok, "failed_at": stepfail, "includes": len(seen), "notes": notes,
+        res[f"{prog}.{ext}"] = {"defaults": defaults, "cmp": locals().get("cmp", []) if ok else [], "ok": ok, "failed_at": stepfail, "includes": len(seen), "notes": notes,
                                 "error": None if ok else next((l for l in log[-1].splitlines() if "ERROR" in l or "error" in l), log[-1][-300:])}
     return res
 
