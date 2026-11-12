@@ -1400,27 +1400,42 @@ float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float 
     float  a1 = dot(fp, t1), a2 = dot(fp, t2), d1 = min(a1, 1.0 - a1), d2 = min(a2, 1.0 - a2);
     if (min(d1, d2) > 0.072) return lin;
     float3 o1 = t1 * (a1 < 0.5 ? -1.0 : 1.0), o2 = t2 * (a2 < 0.5 ? -1.0 : 1.0);
-    float3 q1 = toPx(P + o1 * 0.20 * K), q2 = toPx(P + o2 * 0.20 * K);
-    if (q1.z <= 0.0 || q2.z <= 0.0) return lin;
     // a real edge = past it there is nothing of this plane and what shows there is FARTHER away (sky, a drop, the
     // next face round a corner). Something NEARER there is only an occluder (a block standing on this floor, a wall):
     // that used to count as an edge too and drew the line on past the corners of whatever stood on the plane.
-    float  dq1 = rawDepth(int2(q1.xy)), dq2 = rawDepth(int2(q2.xy));
+    // Perf: only the axes whose edge is inside the band are tested (one test for most pixels, two only at corners).
     float  thr = 0.05 + 0.012 * z;
-    float  r1 = (isSky(dq1) || viewZ(dq1) > q1.z + thr) ? 1.0 : 0.0;
-    float  r2 = (isSky(dq2) || viewZ(dq2) > q2.z + thr) ? 1.0 : 0.0;
-    bool   first = (r1 > 0.5 && r2 < 0.5) ? d1 < 0.11 : ((r2 > 0.5 && r1 < 0.5) ? !(d2 < 0.11) : d1 < d2);   // a real edge wins over a seam
+    bool   in1 = d1 <= 0.072, in2 = d2 <= 0.072;
+    float  r1 = 0.0, r2 = 0.0;
+    float2 q1 = 0, q2 = 0;
+    [branch] if (in1) {
+        float3 s1 = toPx(P + o1 * 0.20 * K);
+        if (s1.z <= 0.0) return lin;
+        float dq = rawDepth(int2(s1.xy));
+        r1 = (isSky(dq) || viewZ(dq) > s1.z + thr) ? 1.0 : 0.0; q1 = s1.xy;
+    }
+    [branch] if (in2) {
+        float3 s2 = toPx(P + o2 * 0.20 * K);
+        if (s2.z <= 0.0) return lin;
+        float dq = rawDepth(int2(s2.xy));
+        r2 = (isSky(dq) || viewZ(dq) > s2.z + thr) ? 1.0 : 0.0; q2 = s2.xy;
+    }
+    bool   first = !in2 ? true : (!in1 ? false : ((r1 > 0.5 && r2 < 0.5) ? d1 < 0.11 : ((r2 > 0.5 && r1 < 0.5) ? !(d2 < 0.11) : d1 < d2)));   // a real edge wins over a seam
     float3 outw = first ? o1 : o2;
-    float2 q = first ? q1.xy : q2.xy;
+    float2 q = first ? q1 : q2;
     float  realEdge = first ? r1 : r2;
     float  e = floor((first ? d1 : d2) * 32.0) * 0.5;               // texels, in half-texel steps (pixel-exact on a 32x pack)
     float  rim = step(e, 1.1) * near, eln = step(e, 0.3) * near;
     if (rim <= 0.0) return lin;
+    // seams (not a real edge) get no refraction: the glass there only shows the same plane again (and it saves the
+    // three colour reads on most rim pixels)
+    [branch] if (realEdge > 0.5) {
+        float2 p0 = float2(px) + 0.5;
+        float3 rf = float3(pow(max(sceneAt(int2(lerp(p0, q, 0.55))).r, 0.0), 2.2), pow(max(sceneAt(int2(lerp(p0, q, 0.85))).g, 0.0), 2.2), pow(max(sceneAt(int2(lerp(p0, q, 1.2))).b, 0.0), 2.2));
+        lin = lerp(lin, rf * 1.04, rim * lerp(0.62, 0.5, NIGHT));
+        lin *= 1.0 - 0.14 * step(1.4, e) * step(e, 1.6) * near;                                   // inner bevel: the glass has thickness
+    }
     float  along = first ? a2 + dot(floor(CAM + P), t2) : a1 + dot(floor(CAM + P), t1);
-    float2 p0 = float2(px) + 0.5;
-    float3 rf = float3(pow(max(sceneAt(int2(lerp(p0, q, 0.55))).r, 0.0), 2.2), pow(max(sceneAt(int2(lerp(p0, q, 0.85))).g, 0.0), 2.2), pow(max(sceneAt(int2(lerp(p0, q, 1.2))).b, 0.0), 2.2));
-    lin = lerp(lin, rf * 1.04, rim * lerp(0.62, 0.5, NIGHT) * lerp(0.15, 1.0, realEdge));
-    lin *= 1.0 - 0.14 * step(1.4, e) * step(e, 1.6) * near * realEdge;                              // inner bevel: the glass has thickness
     float3 fringe = ngSpec(frac(along * 0.23 + TIME * 0.02));
     float  sunF = 0.25 + 0.75 * max(dot(outw, L), 0.0) + 0.4 * max(n.y, 0.0);
     float  dayK = 1.0 - NIGHT;
@@ -1487,7 +1502,11 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         }
     }
     // block look off (shadows unticked): only the far-edge fade into the sky is left to do
-    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5 && c9.w <= 0.0 && c3.z <= 0.0) {
+    [branch] if (c5.w <= 0.0 && c6.x <= 0.0 && c6.y <= 0.0 && c6.z < 0.5 && c9.w <= 0.0
+#if NG_RIM
+        && c3.z <= 0.0
+#endif
+        ) {
         if ((fogVis >= 0.995 || c8.w < 0.5) && !matchActive()) discard;
         float3 o0 = col;
         if (fogVis < 0.995 && c8.w > 0.5 && length(P) > 40.0) o0 = lerp(toDisplay(csBackground(rdT, true)), col, smoothstep(0.0, 1.0, fogVis));
@@ -1650,7 +1669,9 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = genPulse(CAM + P, lin, n);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
+#if NG_RIM
     [branch] if (c3.z > 0.0 && z < 90.0) lin = ngRim(lin, P, n, px, z, L, c3.z);
+#endif
     float3 o = pow(max(lin, 0.0), 1.0 / 2.2);
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square

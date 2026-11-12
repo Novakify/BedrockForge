@@ -1018,14 +1018,16 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
     d.pRootSignature = gWfxRoot.Get();
     d.VS = {rf::worldfx::shaders::VSWorldFx, sizeof rf::worldfx::shaders::VSWorldFx};
-    d.PS = {rf::worldfx::shaders::PSWorldFx, sizeof rf::worldfx::shaders::PSWorldFx};
+    // two builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it
+    if (glass) d.PS = {rf::worldfx::shaders::PSWorldFxGlass, sizeof rf::worldfx::shaders::PSWorldFxGlass};
+    else       d.PS = {rf::worldfx::shaders::PSWorldFx, sizeof rf::worldfx::shaders::PSWorldFx};
     for (UINT i = 0; i < 8; ++i) {
         auto& rt = d.BlendState.RenderTarget[i];
         rt.RenderTargetWriteMask = i == 0 ? D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE : 0;
@@ -1101,7 +1103,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 0), ok ? work.dome : nullptr});
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
-            made.push_back({key, which == 5 ? makeWfxPso(d.Get(), g) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
+            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which == 6) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -2254,7 +2256,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
-    ID3D12PipelineState* pso = derived(dev.Get(), g, 5);
+    ID3D12PipelineState* pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
     if (!pso) { wfxStatus("building the pass pipeline (in the background)"); return false; }
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
     UINT64 rTot = 0, dTot = 0;
