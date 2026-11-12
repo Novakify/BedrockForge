@@ -369,13 +369,13 @@ float ngWor(float2 p) {
     return sqrt(d);
 }
 float ngAcField(float2 q, float cov) {
-    float b  = ngWor(q * float2(2.9, 2.1)) * 0.80 + ngWor(q * float2(6.6, 4.8) + 3.1) * 0.32;   // lumps, smaller ones on them
+    float b  = ngWor(q * float2(2.9, 2.1)) * 0.80 + (1.0 - vnoise(q * float2(11.2, 8.2) + 3.1)) * 0.30;   // lumps, smaller ones on them
     float fr = fbm(q * 7.0, 3) * 0.7 + fbm(q * 19.0, 2) * 0.3;   // a frayed outline
     return saturate((cov * 2.1 - 0.80) - b * 0.90 - fr * 0.36 + 0.33);
 }
 // the same field, coarse (the big lumps only): enough for the light march (cost: seen 5.3 ms for the pass at 4K)
 float ngAcFieldLo(float2 q, float cov) {
-    return saturate((cov * 2.1 - 0.80) - ngWor(q * float2(2.9, 2.1)) * 0.72 - 0.10 + 0.30);
+    return saturate((cov * 2.1 - 0.80) - (1.0 - vnoise(q * float2(4.9, 3.6))) * 0.68 - 0.10 + 0.30);   // one fetch, no cells
 }
 float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float e = rd.y;
@@ -416,11 +416,12 @@ float4 ngCirrus(float3 rd, float3 Ld) {
     if (e < 0.02) return float4(0.0, 0.0, 0.0, 0.0);
     float2 p = rd.xz / (e + 0.30) * 2.4 + TIME * float2(0.004, 0.0015);
     float2 q = float2(p.x * 0.55 + p.y * 0.83, p.y * 0.55 - p.x * 0.83);
+    float m = fbm(q * 0.30 + 11.0, 3);
+    [branch] if (m < 0.40) return float4(0.0, 0.0, 0.0, 0.0);   // no cirrus here: skip the fibres (cost)
     float2 w = float2(fbm(q * 0.8 + 1.7, 3), fbm(q * 0.8 + 8.3, 3));
     float2 qq = q * float2(1.3, 4.0) + w * 1.6 + 3.0;
     float  r = 0.0, amp = 0.55;
     [loop] for (int i = 0; i < (QUALITY > 0.3 ? 5 : 3); i++) { float v = 1.0 - abs(2.0 * vnoise(qq) - 1.0); r += amp * v * v; qq = mul(float2x2(1.6, 1.2, -1.2, 1.6), qq) * float2(1.0, 1.15); amp *= 0.5; }
-    float m = fbm(q * 0.30 + 11.0, 3);
     float dens = smoothstep(0.54, 0.80, r) * smoothstep(0.40, 0.62, m) * smoothstep(0.04, 0.22, e) * (1.0 - smoothstep(0.75, 1.0, e) * 0.6);
     float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float3 c = lerp(float3(0.92, 0.95, 1.0), ngFilm(r * 2.2 + ang * 0.8), 0.75 * exp(-ang * 2.6));
