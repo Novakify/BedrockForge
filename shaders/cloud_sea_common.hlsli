@@ -416,6 +416,23 @@ float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float fade = smoothstep(0.015, 0.12, e) * (1.0 - 0.35 * smoothstep(0.6, 1.0, e));
     return float4(c, d * fade * 0.95);
 }
+// prism beams: a few broad shafts of light fanning out from the sun, each split into colour along its edges (the
+// dome's glass works as a prism) - the signed-off "prism beams + clean sky" day. Faint, slow, in the open sky only.
+float3 ngPrismBeams(float3 rd, float3 Ld) {
+    float3 t1 = normalize(cross(Ld, float3(0, 1, 0))), t2 = cross(t1, Ld);
+    float  a = atan2(dot(rd, t2), dot(rd, t1));
+    float  dist = acos(clamp(dot(rd, Ld), -1.0, 1.0));
+    float  fall = exp(-dist * 2.4) * (1.0 - exp(-dist * 9.0));     // not on the disc itself, gone ~60 degrees out
+    [branch] if (fall < 0.01) return float3(0, 0, 0);
+    float3 c;
+    [unroll] for (int i = 0; i < 3; i++) {
+        float sh = (float(i) - 1.0) * 0.020 * (0.4 + dist * 2.2);    // red / green / blue fan apart with distance
+        float x  = a * 7.0 / 6.2832 + sh * 7.0 + TIME * 0.004;
+        float v  = vnoise(float2(x, 3.7)) * 0.65 + vnoise(float2(x * 2.3, 9.1)) * 0.35;
+        c[i] = smoothstep(0.62, 0.80, v);
+    }
+    return c * fall;
+}
 float4 ngCirrus(float3 rd, float3 Ld) {
     float e = max(rd.y, 0.0);
     if (e < 0.02) return float4(0.0, 0.0, 0.0, 0.0);
@@ -579,6 +596,7 @@ float3 ngBackground(float3 rd) {
     float  angD = acos(clamp(dot(rf, SUNDISC), -1.0, 1.0));
     float  disc = smoothstep(0.0125, 0.0095, angD);
     col += (float3(6.0, 5.6, 5.0) * disc + float3(1.0, 0.95, 0.86) * (exp(-angD * 30.0) * 1.1 + exp(-angD * 6.0) * 0.20)) * SUNUP * (1.0 - ci.a * 0.5);
+    col += ngPrismBeams(rf, SUNDISC) * float3(1.0, 0.97, 0.92) * 0.42 * SUNUP * (1.0 - DUSK * 0.4) * (1.0 - ac.a * 0.85) * (1.0 - ci.a * 0.6);
     col += ngHalo(rf, SUNDISC, SUNUP * lerp(1.0, 1.5, DUSK), 1.0);
     col += ngCza(rd, SUNDISC, SUNUP * (1.0 - DUSK));
     // the parhelic circle: a thin white ring at the sun's height all the way round the sky, with the anthelion (a
