@@ -393,7 +393,10 @@ float4 ngAlto(float3 rd, float3 Ld) {
     float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float fwd = exp(-ang * 3.0);
     float edge = saturate(1.0 - d * 1.6);
-    float3 c = lerp(float3(0.40, 0.45, 0.66), float3(1.04, 1.00, 0.94), lit);
+    // dusk: gold-salmon where the low sun reaches, violet in the shade (the sky's own colours, not grey)
+    float3 cSh = lerp(float3(0.40, 0.45, 0.66), float3(0.30, 0.22, 0.42), DUSK);
+    float3 cLt = lerp(float3(1.04, 1.00, 0.94), lerp(float3(0.95, 0.62, 0.66), float3(1.25, 0.70, 0.45), fwd), DUSK);
+    float3 c = lerp(cSh, cLt, lit);
     c += float3(1.0, 0.96, 0.88) * edge * fwd * 1.4;                            // silver lining toward the sun
     float3 iri = ngFilm(0.30 + (1.0 - d) * 1.2 + ang * 0.7);
     c = lerp(c, c * 0.5 + iri, saturate(edge * exp(-ang * 2.4) * 1.4));
@@ -539,8 +542,8 @@ float3 ngBackground(float3 rd) {
     float3 ciC = ci.rgb * lerp(lerp(float3(0.95, 0.97, 1.0), float3(0.95, 0.60, 0.70), DUSK), float3(0.10, 0.10, 0.22), NIGHT);
     col = lerp(col, ciC, ci.a * lerp(0.55, 0.18, NIGHT));
     float4 ac = ngAlto(rf, Ld);
-    float3 acT = lerp(lerp(float3(1.0, 1.0, 1.0), float3(1.0, 0.66, 0.62), DUSK), float3(0.16, 0.16, 0.30), NIGHT);
-    col = lerp(col, ac.rgb * acT * lerp(1.0, 0.8, DUSK), ac.a * lerp(1.0, 0.5, NIGHT));
+    float3 acT = lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT);   // night: dark shapes that hide the stars
+    col = lerp(col, ac.rgb * acT, ac.a * lerp(1.0, 0.75, NIGHT));
     float  angD = acos(clamp(dot(rf, SUNDISC), -1.0, 1.0));
     float  disc = smoothstep(0.0125, 0.0095, angD);
     col += (float3(6.0, 5.6, 5.0) * disc + float3(1.0, 0.95, 0.86) * (exp(-angD * 30.0) * 1.1 + exp(-angD * 6.0) * 0.20)) * SUNUP * (1.0 - ci.a * 0.5);
