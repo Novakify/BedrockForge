@@ -27,7 +27,16 @@ BASE_DEFINES = {"MC_VERSION": "12101", "MC_GL_VERSION": "460", "MC_GLSL_VERSION"
                 "IRIS_FEATURE_SEPARATE_HARDWARE_SAMPLERS": "", "IRIS_FEATURE_CUSTOM_IMAGES": "", "IRIS_FEATURE_COMPUTE": ""}
 
 
-def resolve(path: Path, root: Path, seen: list[str], depth=0) -> str:
+# Fixed texture slots: t<N>/s<N> are the same for every program of every pack, so RF binds one descriptor table.
+SLOTS = {**{f"colortex{i}": i for i in range(16)}, "gcolor": 0, "gdepth": 1, "gnormal": 2, "composite": 3,
+         "gaux1": 4, "gaux2": 5, "gaux3": 6, "gaux4": 7, "depthtex0": 16, "depthtex1": 17, "depthtex2": 18,
+         "shadowtex0": 19, "shadowtex1": 20, "shadowcolor0": 21, "shadowcolor1": 22, "shadow": 19, "watershadow": 19,
+         "noisetex": 23, "gtexture": 24, "tex": 24, "texture": 24, "normals": 25, "specular": 26, "lightmap": 27,
+         "shadowtex0HW": 28, "shadowtex1HW": 29}
+CUSTOM_SLOT0 = 32   # pack custom textures / samplers of image.* from here
+
+
+def resolve(path: Path, root: Path, seen: list[str], depth=0, overrides: dict | None = None) -> str:
     if depth > 40: raise RuntimeError("include depth")
     out = []
     for i, line in enumerate(path.read_text(errors="replace").splitlines()):
@@ -36,7 +45,20 @@ def resolve(path: Path, root: Path, seen: list[str], depth=0) -> str:
             inc = m[1]
             p = (root / inc.lstrip("/")) if inc.startswith("/") else (path.parent / inc)
             seen.append(str(p.relative_to(root)) if p.is_relative_to(root) else str(p))
-            out.append(resolve(p.resolve(), root, seen, depth + 1))
+            out.append(resolve(p.resolve(), root, seen, depth + 1, overrides))
+        elif overrides:
+            # options are set by rewriting their own #define line (like Iris / OptiFine)
+            m = re.match(r"(\s*)(//)?\s*#define\s+(\w+)(\s+[^/\s][^/]*?)?(\s*//.*)?$", line)
+            if m and m[3] in overrides:
+                v = overrides[m[3]]
+                if m[4] is None:   # toggle
+                    line = f"{m[1]}{'' if v == 'true' else '//'}#define {m[3]}{m[5] or ''}"
+                else:
+                    line = f"{m[1]}#define {m[3]} {v}{m[5] or ''}"
+            else:
+                mc = re.match(r"(\s*const\s+(?:int|float|bool)\s+(\w+)\s*=\s*)([^;]+)(;.*)$", line)
+                if mc and mc[2] in overrides: line = f"{mc[1]}{overrides[mc[2]]}{mc[4]}"
+            out.append(line)
         else:
             out.append(line)
     return "\n".join(out)
@@ -88,6 +110,32 @@ def patch(src: str, stage: str) -> tuple[str, list[str]]:
         for n in idx: head.append(f"layout(location={n}) out vec4 iris_FragData{n};")
         src = re.sub(r"\bgl_FragData\s*\[\s*(\d+)\s*\]", r"iris_FragData\1", src)
         if idx: notes.append(f"outputs: {idx}")
+    custom = [CUSTOM_SLOT0]
+    def bind(m):
+        name = m[3]
+        slot = SLOTS.get(name)
+        if slot is None: slot = custom[0]; custom[0] += 1
+        return f"{m[1]}layout(binding={slot}) uniform {m[2]} {name};"
+    src = re.sub(r"^(\s*)uniform\s+((?:i|u)?sampler\w+)\s+(\w+)\s*;", bind, src, flags=re.M)
+    # storage buffers (bufferObject.N) -> slot 48+N; images -> 64+ (UAV registers, never overlapping textures)
+    src = re.sub(r"layout\s*\(([^)]*?)\bbinding\s*=\s*(\d+)([^)]*)\)(\s*(?:(?:readonly|writeonly|coherent|restrict|volatile)\s+)*buffer\b)",
+                 lambda m: f"layout({m[1]}binding = {48 + int(m[2])}{m[3]}){m[4]}", src)
+    img = [64]
+    def bind_img(m):
+        k = img[0]; img[0] += 1
+        q = m[2].strip()
+        return f"{m[1]}layout({q + ', ' if q else ''}binding = {k}) uniform {m[3]} {m[4]};"
+    src = re.sub(r"^(\s*)(?:uniform\s+)?layout\s*\(([^)]*)\)\s*(?:uniform\s+)?((?:i|u)?image\w+)\s+(\w+)\s*;", bind_img, src, flags=re.M)
+    # integer textures can't be filtered: texture()/textureLod() on them == texelFetch at the texel (HLSL can't Sample them)
+    ints = re.findall(r"uniform\s+([iu]sampler(?:2D|3D))\s+(\w+)\s*;", src)
+    if ints:
+        for t in {t for t, _ in ints}:
+            dim = t[-2:].lower(); v = "vec2" if dim == "2d" else "vec3"; iv = "i" + v
+            r = "uvec4" if t.startswith("u") else "ivec4"
+            head.append(f"{r} bf_texi({t} s, {v} c) {{ return texelFetch(s, {iv}(c * {v}(textureSize(s, 0))), 0); }}")
+            head.append(f"{r} bf_texi({t} s, {v} c, float l) {{ return texelFetch(s, {iv}(c * {v}(textureSize(s, 0))), 0); }}")
+        for _, name in ints:
+            src = re.sub(rf"\btexture(?:Lod)?\(\s*{name}\s*,", f"bf_texi({name},", src)
     if re.search(r"\bgl_Fog\b", src):
         head.append("struct bf_Fog { vec4 color; float density, start, end, scale; }; uniform bf_Fog iris_Fog;")
         src = re.sub(r"\bgl_Fog\b", "iris_Fog", src)
@@ -98,19 +146,34 @@ def patch(src: str, stage: str) -> tuple[str, list[str]]:
     return "\n".join(head) + "\n" + src, notes
 
 
+def fix_hlsl(text: str) -> tuple[str, int]:
+    """Work around SPIRV-Cross mis-flattening an array-of-vec4 store into a storage buffer:
+         for (A < N) { for (B < M) { buf.Store4(B * 16 + A * 16 + base, asuint(arr[A][B])); } }
+       -> for (A < N) { buf.Store4(A * 16 + base, asuint(arr[A])); }"""
+    rx = re.compile(r"(\[unroll\]\s*)?for \(int (\w+) = 0; \2 < (\d+); \2\+\+\)\s*\{\s*"
+                    r"(?:\[unroll\]\s*)?for \(int (\w+) = 0; \4 < \d+; \4\+\+\)\s*\{\s*"
+                    r"(\w+)\.Store4\(\4 \* 16 \+ \2 \* 16 \+ ([^;]*?), asuint\((\w+)\[\2\]\[\4\]\)\);\s*\}\s*\}")
+    out, n = rx.subn(lambda m: f"{m[1] or ''}for (int {m[2]} = 0; {m[2]} < {m[3]}; {m[2]}++)\n{{\n"
+                               f"    {m[5]}.Store4({m[2]} * 16 + {m[6]}, asuint({m[7]}[{m[2]}]));\n}}", text)
+    return out, n
+
+
 def run(cmd, log):
     r = subprocess.run(cmd, capture_output=True, text=True)
     log.append("$ " + " ".join(map(str, cmd)) + "\n" + r.stdout + r.stderr)
     return r.returncode == 0
 
 
-def translate(shaders: Path, world: str, prog: str, out: Path, defines: dict) -> dict:
+def translate(shaders: Path, world: str, prog: str, out: Path, defines: dict, overrides: dict | None = None,
+              src_file: Path | None = None) -> dict:
     res = {}
     for ext, (stage, prof) in STAGES.items():
-        f = shaders / world / f"{prog}.{ext}"
+        f = (src_file or shaders / world / prog).with_suffix(f".{ext}")
         if not f.exists(): continue
-        log, seen = [], []
-        src, notes = patch(resolve(f, shaders, seen), stage)
+        log, seen, defaults = [], [], {}
+        raw = resolve(f, shaders, seen, 0, overrides)
+        src, notes = patch(raw, stage)
+        (out / f"{prog}.{stage}.src").write_text(raw)
         dfs = {**BASE_DEFINES, **defines}
         hdr = "#version 460 core\n#extension GL_GOOGLE_include_directive : enable\n" + \
               "".join(f"#define {k} {v}\n" for k, v in dfs.items())
@@ -119,10 +182,14 @@ def translate(shaders: Path, world: str, prog: str, out: Path, defines: dict) ->
         ok = run(["glslangValidator", "-G", "--auto-map-locations", "--auto-map-bindings", "-S", stage, "-o", spv, glsl], log)
         ok = ok and run(["spirv-opt", "-O", spv, "-o", opt], log)
         ok = ok and run(["spirv-cross", "--hlsl", "--shader-model", "60", "--hlsl-enable-compat", opt, "--output", hlsl], log)
+        if ok:
+            fixed, nfix = fix_hlsl(hlsl.read_text())
+            if nfix: hlsl.write_text(fixed); notes.append(f"spirv-cross store fix x{nfix}")
+            defaults = dict(re.findall(r"^uniform\s+\w+\s+(\w+)\s*=\s*([^;]+);", fixed, re.M))
         ok = ok and run([DXC, "-T", prof, "-E", "main", "-Fo", dxil, hlsl], log)
         stepfail = None if ok else log[-1].splitlines()[0][2:].split()[0]
         (out / f"{prog}.{stage}.log").write_text("\n".join(log))
-        res[f"{prog}.{ext}"] = {"ok": ok, "failed_at": stepfail, "includes": len(seen), "notes": notes,
+        res[f"{prog}.{ext}"] = {"defaults": defaults, "ok": ok, "failed_at": stepfail, "includes": len(seen), "notes": notes,
                                 "error": None if ok else next((l for l in log[-1].splitlines() if "ERROR" in l or "error" in l), log[-1][-300:])}
     return res
 
