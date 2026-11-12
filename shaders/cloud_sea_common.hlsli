@@ -574,15 +574,16 @@ float3 ngVeil(float3 rd) {
     if (e < 0.03) return float3(0.0, 0.0, 0.0);
     float3 acc = float3(0.0, 0.0, 0.0);
     float  t = TIME * 0.035;
-    [loop] for (int k = 0; k < 6; k++) {
-        float  hk = 1.0 + float(k) * 0.16;                          // stacked sheets: the folds hang down
+    int    nK = QUALITY > 0.5 ? 4 : 3;                              // (was 6 sheets: night cost 6.6 ms at 4K looking up)
+    [loop] for (int k = 0; k < nK; k++) {
+        float  hk = 1.0 + float(k) * 0.24;                          // stacked sheets: the folds hang down
         float2 p = rd.xz / (e + 0.05) * (0.55 / hk);
-        float  v = p.y + 0.9 * sin(p.x * 0.55 + t * 2.0) + fbm(p * 0.45 + float2(t, 0.0), 3) * 1.6;
+        float  v = p.y + 0.9 * sin(p.x * 0.55 + t * 2.0) + fbm(p * 0.45 + float2(t, 0.0), 2) * 1.6;
         float  band = exp(-pow(sin(v * 0.9) / 0.20, 2.0));
         float  rays = 0.55 + 0.45 * vnoise(float2(p.x * 9.0 + v * 2.0, t * 3.0));
         float3 c = lerp(float3(0.45, 0.30, 1.00), ngFilm(v * 0.12 + 0.35 + float(k) * 0.03) * float3(0.70, 1.00, 1.00), 0.55);
         c = lerp(c, lerp(float3(0.05, 0.95, 1.00), float3(1.00, 0.18, 0.85), 0.5 + 0.5 * sin(v * 0.35 + float(k))), NG_NEON * 0.6);   // neon night
-        acc += c * band * rays * (1.0 - float(k) / 6.0);
+        acc += c * band * rays * (1.0 - float(k) / float(nK)) * 1.35;
     }
     return acc * 0.055 * (1.0 + 1.6 * NG_NEON) * smoothstep(0.03, 0.20, e) * (1.0 - smoothstep(0.55, 0.95, e));
 }
