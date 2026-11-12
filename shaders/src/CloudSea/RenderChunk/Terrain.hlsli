@@ -364,11 +364,11 @@ float4 main(PSIn i) : SV_Target {
         bool   wood = mid == MAT_PLANKS || mid == MAT_LOG;
         float  clar = mid == MAT_WOOL ? 0.62 : (wood ? 0.46 : 0.50);
         float3 gt = wood ? float3(1.0, 0.78, 0.48) : (mid == MAT_WOOL ? float3(1.0, 0.98, 0.96) : float3(0.88, 0.95, 1.0));
-        float3 glassC = lit * 1.04 + gt * (ambG * (mid == MAT_WOOL ? 1.0 : 0.80) + CS_SUNC * 0.10 * sunVis);   // glass is lighter than what it holds
+        float3 glassC = lit * 1.03 + gt * (ambG * (mid == MAT_WOOL ? 0.70 : 0.50) + CS_SUNC * 0.05 * sunVis);   // glass is a little lighter than what it holds
         lit = lerp(lit, glassC, shell * clar);
         // the inner corner, where the shell meets the core: it catches the light by day and holds its own at night
         float3 hueG = alb / max(csMax3(alb), 1e-3);
-        lit += ngLine * ngOn * lerp(float3(1, 1, 1), hueG, 0.35) * (ambG * 0.30 * (1.0 - CS_NIGHT) + 0.06 * CS_NIGHT);
+        lit += ngLine * ngOn * lerp(float3(1, 1, 1), hueG, 0.35) * (ambG * 0.10 * (1.0 - CS_NIGHT) + 0.055 * CS_NIGHT);
         // the glass face over the whole block: the sky lies in it at grazing angles
         float  Fg = 0.02 + 0.98 * pow(1.0 - saturate(dot(n, V)), 5.0);
         float  kG = saturate(Fg * 0.60) * ngOn;
