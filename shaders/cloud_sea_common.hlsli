@@ -409,6 +409,8 @@ float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     // dusk: gold-salmon where the low sun reaches, violet in the shade (the sky's own colours, not grey)
     float3 cSh = lerp(float3(0.40, 0.45, 0.66), float3(0.30, 0.22, 0.42), DUSK);
     float3 cLt = lerp(float3(1.04, 1.00, 0.94), lerp(float3(0.95, 0.62, 0.66), float3(1.25, 0.70, 0.45), fwd), DUSK);
+    cSh = lerp(cSh, float3(0.45, 0.50, 0.85), NIGHT);   // night: moonlit blue-grey (seen in game: the dusk colours turned muddy brown)
+    cLt = lerp(cLt, float3(0.80, 0.86, 1.10), NIGHT);
     float3 c = lerp(cSh, cLt, lit);
     // toward the sun the clouds are backlit: thick bodies go grey, the thin edges glow silver (seen in game: lit white
     // cut-outs round the sun, with green-cyan fringes that read as cheap)
@@ -624,8 +626,8 @@ float3 ngBackground(float3 rd) {
     [branch] if (NG_NEON > 0.01) {
         float  hueN = 0.5 + 0.5 * sin(D.fam * 2.1 + D.lineId * 0.7 + TIME * 0.3);
         float3 neonC = lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), hueN);
-        float  run = abs(frac(D.along * 0.08 - TIME * lerp(0.10, 0.28, NG_NEON) + D.lineId * 0.37) - 0.5) * 2.0;
-        float  pulse = pow(saturate(run), 14.0);
+        float  run = abs(frac(D.along * 0.12 - TIME * lerp(0.10, 0.28, NG_NEON) + D.lineId * 0.37) - 0.5) * 2.0;
+        float  pulse = pow(saturate(run), 48.0);   // short bursts of light, not laser lines (seen in game)
         float  k = NG_NEON * lerp(0.45, 1.0, NIGHT);
         col += neonC * k * (D.lnM * (0.035 + 0.75 * pulse) + D.lnC * 0.20 * pulse);
         float  az = atan2(rd.z, rd.x);
