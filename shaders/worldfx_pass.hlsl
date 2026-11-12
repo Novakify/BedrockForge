@@ -1221,41 +1221,62 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
                 float2 sq = float2(dot(rd, Rw), dot(rd, Uw)) / max(dot(rd, Fw), 0.2);
                 float2 q = (sq - sp) * dz;                              // blocks, in the plane of the blow
                 float  seed = frac(dot(eA[i].xyz, float3(0.371, 0.713, 0.537)));
-                // the burst: 14 thin spikes, uneven angles, a few long and most short; out in 0.045 s, then it tears
-                // open from the middle, each spike letting go at its own moment (a ragged opening, not a ring)
-                float  grow = smoothstep(0.0, 0.045, age);
-                float  r0 = 1.05 * smoothstep(0.07, 0.5, age);
-                if (dot(q, q) < 2.1 * 2.1) {
-                    [unroll] for (int j = 0; j < 14; j++) {
-                        float h1 = frac(sin(float(j) * 127.1 + seed * 311.7) * 43758.5453);
-                        float h2 = frac(sin(float(j) * 269.5 + seed * 183.3) * 43758.5453);
-                        float a = (float(j) + (h1 - 0.5) * 0.7) * (6.2831853 / 14.0) + seed * 6.28;
-                        float2 dir = float2(cos(a), sin(a));
-                        float  L = (0.6 + 1.35 * h2 * h2 * h2) * grow;
-                        float  rj = r0 * (0.45 + 1.1 * h1);
-                        float  t = dot(q, dir), pp = abs(q.x * dir.y - q.y * dir.x);
-                        float  u = (t - rj) / max(L - rj, 1e-3);
-                        float  w = (0.03 + 0.045 * h2) * (1.0 - u);          // straight taper to a point
-                        if (t > rj && u < 1.0 && pp < w) ink = 1.0;
+                // References: anime impact frames (monochrome, a starburst at the contact point, centralized focus
+                // lines) and Minecraft's own crit (a checkered pixel X, ~48 flung out with heavy drag). Everything in
+                // the plane of the blow snaps to a 32x texel grid, so the ink is pixel art, like the world it hits.
+                float2 qg = (floor(q * 32.0) + 0.5) / 32.0;
+                [unroll] for (int beat = 0; beat < 2; beat++) {
+                    float a0 = age - 0.25 * float(beat);
+                    if (a0 < 0.0) continue;
+                    float sd = seed + 0.5 * float(beat), big = beat == 0 ? 1.0 : 0.7;
+                    // starburst: 12 tapered spikes, uneven, out in 0.035 s, then torn open from the middle
+                    float grow = smoothstep(0.0, 0.035, a0), r0 = 1.05 * smoothstep(0.05, 0.30, a0);
+                    if (dot(qg, qg) < 4.4) {
+                        [unroll] for (int j = 0; j < 12; j++) {
+                            float h1 = frac(sin(float(j) * 12.9898 + sd * 78.233) * 43758.5453);
+                            float h2 = frac(sin(float(j + 40) * 12.9898 + sd * 78.233) * 43758.5453);
+                            float an = (float(j) + (h1 - 0.5) * 0.75) * (6.2831853 / 12.0) + sd * 6.28;
+                            float2 dir = float2(cos(an), sin(an));
+                            float L = (0.55 + 1.5 * h2 * h2 * h2) * grow * big, rj = r0 * (0.45 + 1.1 * h1);
+                            float t = dot(qg, dir), pp = abs(qg.x * dir.y - qg.y * dir.x);
+                            float u = (t - rj) / max(L - rj, 1e-3);
+                            if (t > rj && u < 1.0 && pp < (0.035 + 0.05 * h2) * (1.0 - u) * big) ink = 1.0;
+                        }
+                    }
+                    // focus lines: 120 angle slots, ~half drawn, from the frame edge in toward the hit (screen space)
+                    if (a0 < 0.10) {
+                        float2 dv = sq - sp;
+                        float  rr = length(dv);
+                        float  fa = (atan2(dv.y, dv.x) / 6.2831853 + 0.5) * 120.0;
+                        float  bi = floor(fa), ff = frac(fa);
+                        float  k  = 1.0 - 0.2 * float(beat);
+                        float  on = frac(sin(bi * 12.9898 + (seed + k) * 78.233) * 43758.5453);
+                        float  inner = 0.30 + 0.35 * frac(sin((bi + 7.0) * 12.9898 + (seed + k) * 78.233) * 43758.5453) + 0.25 * smoothstep(0.0, 0.10, a0);
+                        float  wid = 0.10 + 0.28 * frac(sin((bi + 3.0) * 12.9898 + (seed + k) * 78.233) * 43758.5453);
+                        if (on > 0.45 && rr > inner && abs(ff - 0.5) < 0.5 * wid * saturate((rr - inner) / 0.4)) ink = 1.0;
                     }
                 }
-                // crit sparks: 14 of the game's little crosses thrown out - stretched along their flight while fast,
-                // settling into the cross as they slow, dropping a little, each gone at its own time
-                [unroll] for (int k = 0; k < 14; k++) {
-                    float h1 = frac(sin(float(k) * 78.233 + seed * 157.3) * 43758.5453);
-                    float h2 = frac(sin(float(k) * 39.346 + seed * 271.9) * 43758.5453);
-                    float h3 = frac(sin(float(k) * 93.989 + seed * 91.7) * 43758.5453);
-                    float life = 0.26 + 0.24 * h3;
-                    if (age > life) continue;
-                    float a = (float(k) + h1 * 1.6) * (6.2831853 / 14.0) + 0.4;
-                    float v0 = 1.2 + 4.2 * h2 * h2;
-                    float d = 0.3 + v0 * (1.0 - exp(-6.0 * age)) / 6.0 * 2.4;
-                    float spd = v0 * exp(-6.0 * age);
-                    float2 dr = float2(cos(a), sin(a));
-                    float2 rel = q - (dr * d - float2(0.0, 1.8 * age * age));
-                    float sz = (0.016 + 0.014 * h3) * (age > life * 0.7 ? 0.6 : 1.0);   // shrinks in one step, like the sprite
-                    float rx = abs(dot(rel, dr)), ry = abs(rel.y * dr.x - rel.x * dr.y);
-                    if ((rx < sz * (3.0 + spd * 4.0) && ry < sz) || (ry < sz * 3.0 && rx < sz)) ink = 1.0;
+                // crit sparks: 22 of Minecraft's checkered X (5x5, then 3x3), born over 0.15 s, heavy drag, a little
+                // gravity, a dotted trail behind while fast
+                [loop] for (int k2 = 0; k2 < 22; k2++) {
+                    float h1 = frac(sin(float(k2) * 12.9898 + (seed + 1.0) * 78.233) * 43758.5453);
+                    float h2 = frac(sin(float(k2) * 12.9898 + (seed + 2.0) * 78.233) * 43758.5453);
+                    float h3 = frac(sin(float(k2) * 12.9898 + (seed + 3.0) * 78.233) * 43758.5453);
+                    float h4 = frac(sin(float(k2) * 12.9898 + (seed + 4.0) * 78.233) * 43758.5453);
+                    float ak = age - 0.15 * h4, life = 0.22 + 0.28 * h3;
+                    if (ak < 0.0 || ak > life) continue;
+                    float an = (float(k2) + h1 * 0.8) / 22.0 * 6.2831853, v0 = 14.0 + 16.0 * h2;
+                    float d = 0.35 + v0 * (1.0 - exp(-7.0 * ak)) / 7.0 * 0.6;
+                    float2 dr = float2(cos(an), sin(an) * 0.8);
+                    float2 rel = q - float2(dr.x * d, (-0.4 + 0.9 * h3) * 0.6 + dr.y * d - 3.0 * ak * ak);
+                    float2 cc = floor(rel * 32.0);
+                    float  n = ak < life * 0.55 ? 2.0 : 1.0;
+                    if (all(abs(cc) <= n) && abs(cc.x) == abs(cc.y)) ink = 1.0;
+                    float spd = v0 * exp(-7.0 * ak);
+                    if (spd > 1.5) {
+                        float t = -dot(rel, dr), pp = abs(rel.x * dr.y - rel.y * dr.x);
+                        if (t > 0.05 && t < min(spd * 0.035, 0.6) && pp < 0.6 / 32.0 && fmod(floor(t * 32.0), 2.0) < 0.5) ink = 1.0;
+                    }
                 }
             }
         }
