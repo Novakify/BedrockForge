@@ -370,13 +370,13 @@ float ngWor(float2 p) {
 }
 float ngAcField(float2 q, float cov) {
     float b  = ngWor(q * float2(2.9, 2.1)) * 0.80 + ngWor(q * float2(6.6, 4.8) + 3.1) * 0.32;   // lumps, smaller ones on them
-    float fr = fbm(q * 7.0, 3);
-    return saturate((cov * 2.1 - 0.80) - b * 0.90 - fr * 0.28 + 0.30);
+    float fr = fbm(q * 7.0, 3) * 0.7 + fbm(q * 19.0, 2) * 0.3;   // a frayed outline
+    return saturate((cov * 2.1 - 0.80) - b * 0.90 - fr * 0.36 + 0.33);
 }
 float4 ngAlto(float3 rd, float3 Ld) {
     float e = rd.y;
     [branch] if (e < 0.015) return float4(0, 0, 0, 0);
-    float2 P = rd.xz / (e + 0.16) * 1.5 + TIME * float2(0.006, 0.002);
+    float2 P = rd.xz / (e * 0.55 + 0.16) * 1.5 + TIME * float2(0.006, 0.002);   // (overhead a little denser: seen in game, huge soft blobs up there)
     float2 W = float2(0.92, 0.39);
     float2 q = float2(dot(P, W), dot(P, float2(-W.y, W.x)));
     q.y += 0.22 * sin(q.x * 1.3 + fbm(P * 0.5, 2) * 3.0);                       // the rows ripple
@@ -385,20 +385,21 @@ float4 ngAlto(float3 rd, float3 Ld) {
     [branch] if (cov < 0.30) return float4(0, 0, 0, 0);                         // open sky: nothing to draw (cheap)
     float d = ngAcField(q, cov);
     [branch] if (d <= 0.002) return float4(0, 0, 0, 0);
-    d = smoothstep(0.0, 0.45, d);
+    float dSoft = smoothstep(0.0, 0.45, d);                // for the light
+    d = smoothstep(0.0, 0.26, d);                          // the outline: crisp (seen in game: soft edges read as smeared)
     float2 sd = normalize(float2(dot(Ld.xz, W), dot(Ld.xz, float2(-W.y, W.x))) + 1e-4);
     float occ = 0.0;
     [unroll] for (int k = 1; k <= 3; k++) occ += smoothstep(0.0, 0.45, ngAcField(q + sd * 0.028 * k, cov)) * (1.0 - 0.22 * k);
-    float lit = saturate(exp(-occ * 1.25) * 1.25 * (0.75 + 0.5 * (1.0 - d)));   // thin parts let the light through
+    float lit = saturate(exp(-occ * 1.25) * 1.25 * (0.75 + 0.5 * (1.0 - dSoft)));   // thin parts let the light through
     float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float fwd = exp(-ang * 3.0);
-    float edge = saturate(1.0 - d * 1.6);
+    float edge = saturate(1.0 - dSoft * 1.6);
     // dusk: gold-salmon where the low sun reaches, violet in the shade (the sky's own colours, not grey)
     float3 cSh = lerp(float3(0.40, 0.45, 0.66), float3(0.30, 0.22, 0.42), DUSK);
     float3 cLt = lerp(float3(1.04, 1.00, 0.94), lerp(float3(0.95, 0.62, 0.66), float3(1.25, 0.70, 0.45), fwd), DUSK);
     float3 c = lerp(cSh, cLt, lit);
     c += float3(1.0, 0.96, 0.88) * edge * fwd * 1.4;                            // silver lining toward the sun
-    float3 iri = ngFilm(0.30 + (1.0 - d) * 1.2 + ang * 0.7);
+    float3 iri = ngFilm(0.30 + (1.0 - dSoft) * 1.2 + ang * 0.7);
     c = lerp(c, c * 0.5 + iri, saturate(edge * exp(-ang * 2.4) * 1.4));
     float fade = smoothstep(0.015, 0.12, e) * (1.0 - 0.35 * smoothstep(0.6, 1.0, e));
     return float4(c, d * fade * 0.95);
@@ -495,7 +496,7 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
         float3 rr = normalize(float3(rd.x + sw.x * 0.05, dn, rd.z + sw.y * 0.05));
         float3 m  = ngSkyBase(rr);
         float4 a  = ngAlto(rr, Ld);
-        m = lerp(m, a.rgb * lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT), a.a);
+        m = lerp(m, a.rgb * lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT), a.a * 0.6);
         float  F = 0.04 + 0.96 * pow(1.0 - dn, 5.0);
         col = lerp(col, m * 0.55, min(F * 1.6, 0.75) * exp(-tW / 2200.0) * smoothstep(0.0, 0.02, dn));
     }
