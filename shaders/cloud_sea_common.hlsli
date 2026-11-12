@@ -13,6 +13,7 @@ static float2 MAP_C;
 static float  PHASE = 0.0, DUSK = 0.0, NIGHT = 0.0;
 static float3 SUNDISC = float3(0.17605, 0.11247, -0.97794);
 static float  SUNUP = 1.0;  // the sun disc and its warm glow (gone once it has set)
+static float  NG_NEON = 0.0;   // Novak: the match tightening (teams out) -> the neon night; 1 = the finale
 static float  NG_CLOUDS = 1.0; // Novak: how much of the pearl altocumulus field (the F6 "clouds" amount)
 static float  QUALITY = 1.0; // 0..1: Renderer Foundation lowers it to hold the frame rate
 // ---- which atmosphere: Cloud Sea (default) or Novak Glass. NG_ATMOS 1 = always Novak Glass (the World FX pass built
@@ -322,7 +323,7 @@ float3 ngFilm(float d) { return 0.5 + 0.5 * cos(6.2832 * (d * float3(1.0, 1.18, 
 //      shrink toward the horizon like a real dome); a triangular lattice there = the panes. Each pane bends the view a
 //      little its own way (the sun and its halo break up across them). The edges are NOT a wireframe: an edge only
 //      catches the light in places - a few long glints, colour-split near the light, most of the lattice invisible.
-struct NgDome { float3 rdF; float edge; float edgeC; float3 hcell; };
+struct NgDome { float3 rdF; float edge; float edgeC; float3 hcell; float lnM, lnC, along, lineId, fam; };
 NgDome ngDome(float3 rd) {
     NgDome D;
     float  e = max(rd.y, 0.0);
@@ -338,10 +339,13 @@ NgDome ngDome(float3 rd) {
     float  fam = dl.x <= min(dl.y, dl.z) ? 0.0 : (dl.y <= dl.z ? 1.0 : 2.0);
     float  lineId = fam == 0.0 ? floor(g.x + 0.5) : (fam == 1.0 ? floor(g.y + 0.5) : floor(g.z + 0.5));
     float  along = fam == 0.0 ? dot(p, float2(-a0.y, a0.x)) : (fam == 1.0 ? dot(p, float2(-a1.y, a1.x)) : dot(p, float2(-a2.y, a2.x)));
-    float  gl = smoothstep(0.70, 0.97, vnoise(float2(along * 1.1 + lineId * 7.1, fam * 13.0 + TIME * 0.05)));
+    float  gl = smoothstep(lerp(0.70, 0.46, NG_NEON), lerp(0.97, 0.80, NG_NEON), vnoise(float2(along * 1.1 + lineId * 7.1, fam * 13.0 + TIME * 0.05)));
     float  fade = smoothstep(0.03, 0.22, e);
-    D.edge  = (1.0 - smoothstep(0.0, px * 1.2, d)) * gl * fade;
+    D.lnM  = (1.0 - smoothstep(0.0, px * 1.2, d)) * fade;   // the whole lattice (the neon night lights it)
+    D.lnC = (1.0 - smoothstep(0.0, px * 6.0, d)) * fade;
+    D.edge  = D.lnM * gl;
     D.edgeC = (1.0 - smoothstep(0.0, px * 5.0, d)) * gl * fade;
+    D.along = along; D.lineId = lineId; D.fam = fam;
     return D;
 }
 // circumzenithal arc: an upside-down rainbow round the zenith, ~46 degrees over a low sun
@@ -541,7 +545,8 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     [branch] if (fadeF > 0.01 && QUALITY > 0.15) {
         float cs = ngCaustic(fp) * smoothstep(0.35, 0.75, fbm(fp * 0.25 + 3.0, 3));
         float3 cc = lerp(lerp(float3(0.30, 0.62, 1.00), float3(0.85, 0.40, 0.95), DUSK), float3(0.45, 0.30, 1.00), NIGHT);
-        col += cc * cs * fadeF * lerp(0.16, 0.30, NIGHT);
+        cc = lerp(cc, lerp(float3(0.05, 0.90, 1.00), float3(1.00, 0.20, 0.85), smoothstep(0.3, 0.7, fbm(fp * 0.12 + 9.0, 2))), NG_NEON * 0.75);
+        col += cc * cs * fadeF * lerp(0.16, 0.30, NIGHT) * (1.0 + 1.4 * NG_NEON);
     }
     // glitter: motes of glass hanging in the void, catching the light
     float3 gq = rd * 260.0, gc = floor(gq);
@@ -574,9 +579,10 @@ float3 ngVeil(float3 rd) {
         float  band = exp(-pow(sin(v * 0.9) / 0.20, 2.0));
         float  rays = 0.55 + 0.45 * vnoise(float2(p.x * 9.0 + v * 2.0, t * 3.0));
         float3 c = lerp(float3(0.45, 0.30, 1.00), ngFilm(v * 0.12 + 0.35 + float(k) * 0.03) * float3(0.70, 1.00, 1.00), 0.55);
+        c = lerp(c, lerp(float3(0.05, 0.95, 1.00), float3(1.00, 0.18, 0.85), 0.5 + 0.5 * sin(v * 0.35 + float(k))), NG_NEON * 0.6);   // neon night
         acc += c * band * rays * (1.0 - float(k) / 6.0);
     }
-    return acc * 0.055 * smoothstep(0.03, 0.20, e) * (1.0 - smoothstep(0.55, 0.95, e));
+    return acc * 0.055 * (1.0 + 1.6 * NG_NEON) * smoothstep(0.03, 0.20, e) * (1.0 - smoothstep(0.55, 0.95, e));
 }
 float3 ngBackground(float3 rd) {
     float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
@@ -613,6 +619,18 @@ float3 ngBackground(float3 rd) {
     float3 lineDay = lerp(float3(0.85, 0.92, 1.0) * 0.06, lerp(float3(1.0, 1.0, 1.0), ngSpecS(frac(angL * 2.2 + D.hcell.y * 0.3)), 0.65) * 0.75, nearL);
     float3 lineC = lerp(lerp(lineDay, lineDay * float3(1.0, 0.70, 0.85), DUSK), float3(0.50, 0.42, 0.95) * 0.045, NIGHT);
     col += lineC * (D.edge + D.edgeC * 0.35);
+    // the neon night (teams going out): the dome's lattice lights up in cyan and magenta, light running along its lines,
+    // faster and fuller toward the finale. (Strongest at night, which the match brings on as beds break.)
+    [branch] if (NG_NEON > 0.01) {
+        float  hueN = 0.5 + 0.5 * sin(D.fam * 2.1 + D.lineId * 0.7 + TIME * 0.3);
+        float3 neonC = lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), hueN);
+        float  run = abs(frac(D.along * 0.08 - TIME * lerp(0.10, 0.28, NG_NEON) + D.lineId * 0.37) - 0.5) * 2.0;
+        float  pulse = pow(saturate(run), 14.0);
+        float  k = NG_NEON * lerp(0.45, 1.0, NIGHT);
+        col += neonC * k * (D.lnM * (0.035 + 0.75 * pulse) + D.lnC * 0.20 * pulse);
+        float  az = atan2(rd.z, rd.x);
+        col += lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), 0.5 + 0.5 * sin(az * 3.0 + TIME * 0.2)) * exp(-pow(e * 60.0 - 0.6, 2.0)) * 0.16 * k;   // the base ring goes neon
+    }
     [branch] if (NIGHT > 0.001) {
         col += (csStars(rd) * 1.25 * (1.0 - ac.a) + csMoon(rd) * (1.0 - ac.a * 0.85)) * NIGHT;   // clouds hide them
         col += ngVeil(rd) * NIGHT;

@@ -1091,7 +1091,8 @@ float3 farStorm(float3 rd, float T) {
     float side = dot(fl, float3(-dir.z, 0.0, dir.x));
     float jag = (h1(floor(rd.y * 40.0) + cyc) - 0.5) * 0.012 + (h1(floor(rd.y * 9.0) + cyc * 2.0) - 0.5) * 0.02;
     float bolt = along > 0.9 && rd.y > -0.01 && rd.y < 0.22 ? exp(-pow((side - jag) / 0.0015, 2.0)) * step(a, 0.25) : 0.0;
-    return lerp(float3(0.62, 0.70, 1.0), float3(1.0, 0.72, 0.62), DUSK * (1.0 - NIGHT)) * (glow * 0.55 + bolt * 2.2) * flick * T;
+    float3 stC = NG_IS ? float3(0.35, 0.90, 1.0) : lerp(float3(0.62, 0.70, 1.0), float3(1.0, 0.72, 0.62), DUSK * (1.0 - NIGHT));   // Novak: neon heat lightning
+    return stC * (glow * 0.55 + bolt * 2.2) * flick * T;
 }
 float3 duelArc(float3 rd, float sceneT) {
     int nt = int(m0.x);
@@ -1496,7 +1497,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
     [branch] if (isSky(d)) {
-        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y;
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = NG_IS ? m2.w : 0.0;
         float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
         if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
         float  js = hash12(float2(px));
@@ -1681,9 +1682,10 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float  mv = 0.72 + 0.56 * vnoise(W.xz * 0.11 + float2(TIME * 0.21, -TIME * 0.13));
         float3 seaC = lerp(lerp(float3(1.00, 0.68, 0.38), float3(1.00, 0.46, 0.60), DUSK), float3(0.34, 0.52, 1.00), NIGHT);
         if (NG_IS) seaC = lerp(lerp(float3(0.40, 0.56, 0.90) * 0.55, float3(0.70, 0.36, 0.95) * 0.8, DUSK), float3(0.50, 0.36, 1.00), NIGHT);   // the void's light from below
+        if (NG_IS) seaC = lerp(seaC, lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.22, 0.85), 0.5 + 0.5 * sin(W.x * 0.02 + W.z * 0.015 + TIME * 0.15)), m2.w * 0.7);   // neon from below
         float3 add = seaC * under * (0.30 + 0.70 * hgt) * mv * lerp(0.85, 1.9, NIGHT);
         float3 st = m2.w > 0.01 ? stormStrike(m2.w) : float3(0, 0, 0);
-        add += lerp(float3(0.62, 0.70, 1.0), float3(1.0, 0.72, 0.62), DUSK * (1.0 - NIGHT)) * st.x * m2.w * (0.30 + 1.2 * under);
+        add += (NG_IS ? float3(0.35, 0.90, 1.0) : lerp(float3(0.62, 0.70, 1.0), float3(1.0, 0.72, 0.62), DUSK * (1.0 - NIGHT))) * st.x * m2.w * (0.30 + 1.2 * under);
         lin *= 1.0 + add * lerp(1.0, ao, 0.6) * c3.y;
     }
     [branch] if (m0.x > 0.5) { // your bed is gone: the whole world loses some warmth - you are on your last life
@@ -1716,7 +1718,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
     [branch] if (fogVis < 0.995 && c8.w > 0.5 && z > 40.0) {   // only far pixels can be fogged (entities may not write the alpha)
-        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; NG_CLOUDS = c9.y;
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; NG_CLOUDS = c9.y; NG_NEON = NG_IS ? m2.w : 0.0;
         float3 bg = toDisplay(csBackground(normalize(P), true));
         o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
     }
