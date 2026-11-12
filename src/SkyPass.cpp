@@ -2069,7 +2069,9 @@ void wfxBarrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_
 
 // The pass gives back quality to hold ~150+ FPS: frame time measured between our own draws (one per frame); above
 // 1/150 s the quality falls quickly, under 1/175 s it creeps back. 0 = cheapest look, 1 = full.
+namespace wfxperf { extern std::atomic<float> qualityPin; }
 float adaptQuality() {
+    if (float const pin = wfxperf::qualityPin.load(); pin >= 0.0f) { gQuality = pin; return pin; }
     static int64_t lastUs = 0;
     static float   ema = 1.0f / 160.0f;
     int64_t const  now = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -2104,8 +2106,18 @@ float                   ema = 0.0f;
 std::filesystem::path   logDir;
 // A/B bench: config/wfxbench.txt = "glass A B [phase P] [seconds S]" -> the pass alternates glass A / B every 2 s for
 // S seconds (default 30) and writes the average GPU ms of each to logs/worldfx/bench.txt
-struct Bench { bool on = false; float a = 0, b = 1, phase = -2, savedGlass = 0, savedPhase = -1; int64_t t0 = 0, len = 30000;
-               double sum[2]{}; int n[2]{}; } bench;
+struct Bench { bool on = false; std::string key = "glass"; float a = 0, b = 1, phase = -2, quality = -1; WorldFxLook saved{};
+               int64_t t0 = 0, len = 30000; double sum[2]{}; int n[2]{}; } bench;
+std::atomic<float> qualityPin{-1.0f};   // >= 0: the bench holds the quality still (no adapting while it measures)
+// the look field a bench compares (one at a time); false if the name is unknown
+bool setField(WorldFxLook& l, std::string const& k, float v) {
+    if (k == "glass") l.glass = v; else if (k == "shadow") { l.shadow = v; l.shadows = true; } else if (k == "shadows") l.shadows = v != 0;
+    else if (k == "ao") l.ao = v; else if (k == "rim") l.rim = v; else if (k == "rays") l.rays = v; else if (k == "clouds") l.clouds = v;
+    else if (k == "ink") l.ink = v; else if (k == "air") l.air = v; else if (k == "living") l.living = v != 0;
+    else if (k == "quality") qualityPin = v;
+    else return false;
+    return true;
+}
 int64_t lastPoll = 0, lastLog = 0;
 double  logSum = 0; int logN = 0;
 
@@ -2146,14 +2158,16 @@ void end(ID3D12GraphicsCommandList* list, uint64_t frame) {
         int64_t const t = now - bench.t0;
         if (t >= bench.len) {
             bench.on = false;
-            gLook.glass = bench.savedGlass; gLook.phase = bench.savedPhase;
+            gLook = bench.saved;
+            qualityPin = -1.0f;
             std::ofstream o2(logDir / "bench.txt", std::ios::app);
-            o2 << "glass " << bench.a << ": " << (bench.n[0] ? bench.sum[0] / bench.n[0] : 0.0) << " ms (" << bench.n[0] << " frames) | glass "
-               << bench.b << ": " << (bench.n[1] ? bench.sum[1] / bench.n[1] : 0.0) << " ms (" << bench.n[1] << " frames) | phase " << bench.phase
-               << " | quality " << gQuality.load() << "\n";
+            o2 << bench.key << " " << bench.a << ": " << (bench.n[0] ? bench.sum[0] / bench.n[0] : 0.0) << " ms (" << bench.n[0] << " frames) | "
+               << bench.key << " " << bench.b << ": " << (bench.n[1] ? bench.sum[1] / bench.n[1] : 0.0) << " ms (" << bench.n[1] << " frames) | phase "
+               << bench.phase << " | quality " << gQuality.load() << (bench.quality >= 0 ? " (held)" : "") << "\n";
         } else {
             int const which = int(t / 2000) & 1;
-            gLook.glass = which ? bench.b : bench.a;
+            setField(gLook, bench.key, which ? bench.b : bench.a);
+            if (bench.key != "quality") qualityPin = bench.quality;
             if (bench.phase > -1.5f) gLook.phase = bench.phase;
             if (t % 2000 > 400) { bench.sum[which] += v; ++bench.n[which]; }   // skip the switch-over frames
         }
@@ -2173,10 +2187,12 @@ void pollBench() {
     if (!std::filesystem::exists(f, ec)) return;
     std::ifstream in(f);
     std::string k; float v, w;
-    Bench b; b.savedGlass = gLook.glass; b.savedPhase = gLook.phase;
+    Bench b; b.saved = gLook;
     while (in >> k) {
-        if (k == "glass" && in >> v >> w) { b.a = v; b.b = w; }
-        else if (k == "phase" && in >> v) b.phase = v;
+        WorldFxLook probe{};
+        if (k == "phase" && in >> v) b.phase = v;
+        else if (k == "hold" && in >> v) b.quality = std::clamp(v, 0.0f, 1.0f);   // hold the quality here while measuring
+        else if (setField(probe, k, 0.0f) && in >> v >> w) { b.key = k; b.a = v; b.b = w; qualityPin = -1.0f; }
         else if (k == "seconds" && in >> v) b.len = int64_t(std::clamp(v, 4.0f, 300.0f) * 1000.0f);
     }
     in.close();
