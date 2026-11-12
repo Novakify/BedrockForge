@@ -99,6 +99,8 @@ void testBed();  // F6: a test bed in front of you that stands, is attacked and 
 std::string matchStatus();
 WorldFxLook& worldFxLook();
 std::string  worldFxStatus();
+float        worldFxGpuMs();        // GPU time of the World FX pass (smoothed), 0 until measured
+bool         worldFxBenchRunning(); // the A/B bench (config/wfxbench.txt) is running
 void         loadWorldFxSettings(std::filesystem::path const& configDir);
 void         saveWorldFxSettings();
 

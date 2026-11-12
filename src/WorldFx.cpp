@@ -1125,12 +1125,14 @@ void drawUi() {
     ImGui::SliderFloat("Cloud shadows", &look.clouds, 0.0f, 1.0f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SliderFloat("Ink look", &look.ink, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Novak Glass rim", &look.glass, 0.0f, 1.5f, "%.2f");
-    ImGui::SameLine();
-    ImGui::TextDisabled("(step 1: every block cast in glass; 0 = off, 1 = the preview's Medium)");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
     ImGui::TextDisabled("(inked block lines, painted flats, cel light)");
+    ImGui::SliderFloat("Novak Glass rim", &look.glass, 0.0f, 1.5f, "%.2f");
+    saveFx |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SameLine();
+    ImGui::TextDisabled("(step 1: every block cast in glass; 0 = off, 1 = the preview's Medium)");
+    ImGui::Text("World FX pass: %.2f ms on the GPU%s", rf::sky::worldFxGpuMs(), rf::sky::worldFxBenchRunning() ? "  (A/B bench running)" : "");
     ImGui::SliderFloat("Living world", &look.air, 0.0f, 1.5f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();

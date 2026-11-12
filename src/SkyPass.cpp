@@ -33,6 +33,8 @@
 #include <iterator>
 
 #include "SkyMaterialScan.h"
+#include "Overlay.h"
+#include <filesystem>
 #include "UiCapture.h"
 #include "GlassArmor.h"
 #include "WorldFx.h"
@@ -2087,6 +2089,102 @@ float adaptQuality() {
 std::atomic<uint64_t> gFxRanNo{~0ull}, gFxFallbackNo{~0ull};
 std::atomic<size_t>   gFxRt{0}, gFxDs{0};
 std::atomic<ID3D12PipelineState*> gFxPso{nullptr};
+// ---- GPU time of the World FX pass (timestamps round the copies + the draw), for the F6 readout and the A/B bench.
+// An 8-frame ring: frame n writes slot n % 8 and reads the slot written 7 frames ago (long finished on the GPU).
+namespace wfxperf {
+ComPtr<ID3D12QueryHeap> heap;
+ComPtr<ID3D12Resource>  buf;
+uint64_t const*         map = nullptr;
+bool                    failed = false;
+std::atomic<float>      ms{0.0f};       // smoothed pass time
+float                   ema = 0.0f;
+std::filesystem::path   logDir;
+// A/B bench: config/wfxbench.txt = "glass A B [phase P] [seconds S]" -> the pass alternates glass A / B every 2 s for
+// S seconds (default 30) and writes the average GPU ms of each to logs/worldfx/bench.txt
+struct Bench { bool on = false; float a = 0, b = 1, phase = -2, savedGlass = 0, savedPhase = -1; int64_t t0 = 0, len = 30000;
+               double sum[2]{}; int n[2]{}; } bench;
+int64_t lastPoll = 0, lastLog = 0;
+double  logSum = 0; int logN = 0;
+
+bool begin(ID3D12Device* dev, ID3D12GraphicsCommandList* list, uint64_t frame) {
+    if (failed) return false;
+    if (!heap) {
+        D3D12_QUERY_HEAP_DESC qd{}; qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; qd.Count = 16;
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = 16 * 8; rd.Height = 1;
+        rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&heap))) ||
+            FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&buf)))) {
+            failed = true; heap.Reset(); buf.Reset(); return false;
+        }
+        void* p = nullptr;
+        D3D12_RANGE r{0, 16 * 8};
+        if (FAILED(buf->Map(0, &r, &p))) { failed = true; return false; }
+        map = static_cast<uint64_t const*>(p);
+    }
+    list->EndQuery(heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, UINT(frame % 8) * 2);
+    return true;
+}
+void end(ID3D12GraphicsCommandList* list, uint64_t frame) {
+    UINT const k = UINT(frame % 8);
+    list->EndQuery(heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, k * 2 + 1);
+    list->ResolveQueryData(heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, k * 2, 2, buf.Get(), UINT64(k) * 16);
+    if (frame < 8) return;
+    UINT const  o = UINT((frame + 1) % 8);
+    uint64_t const a = map[o * 2], b = map[o * 2 + 1], f = rf::overlay::timestampFrequency();
+    if (!f || b <= a) return;
+    float const v = float(double(b - a) * 1000.0 / double(f));
+    if (v > 100.0f) return;
+    ema = ema <= 0.0f ? v : ema * 0.95f + v * 0.05f;
+    ms = ema;
+    logSum += v; ++logN;
+    int64_t const now = steadyMs();
+    if (bench.on) {
+        int64_t const t = now - bench.t0;
+        if (t >= bench.len) {
+            bench.on = false;
+            gLook.glass = bench.savedGlass; gLook.phase = bench.savedPhase;
+            std::ofstream o2(logDir / "bench.txt", std::ios::app);
+            o2 << "glass " << bench.a << ": " << (bench.n[0] ? bench.sum[0] / bench.n[0] : 0.0) << " ms (" << bench.n[0] << " frames) | glass "
+               << bench.b << ": " << (bench.n[1] ? bench.sum[1] / bench.n[1] : 0.0) << " ms (" << bench.n[1] << " frames) | phase " << bench.phase
+               << " | quality " << gQuality.load() << "\n";
+        } else {
+            int const which = int(t / 2000) & 1;
+            gLook.glass = which ? bench.b : bench.a;
+            if (bench.phase > -1.5f) gLook.phase = bench.phase;
+            if (t % 2000 > 400) { bench.sum[which] += v; ++bench.n[which]; }   // skip the switch-over frames
+        }
+    }
+    if (now - lastLog >= 5000 && logN) {
+        std::ofstream o2(logDir / "pass_ms.txt", std::ios::app);
+        o2 << now / 1000 << " pass " << logSum / logN << " ms | glass " << gLook.glass << " | phase " << gLook.phase << " | quality " << gQuality.load() << "\n";
+        logSum = 0; logN = 0; lastLog = now;
+    }
+}
+void pollBench() {
+    int64_t const now = steadyMs();
+    if (bench.on || now - lastPoll < 1000 || logDir.empty()) return;
+    lastPoll = now;
+    std::error_code ec;
+    auto const f = logDir.parent_path().parent_path() / "config" / "wfxbench.txt";
+    if (!std::filesystem::exists(f, ec)) return;
+    std::ifstream in(f);
+    std::string k; float v, w;
+    Bench b; b.savedGlass = gLook.glass; b.savedPhase = gLook.phase;
+    while (in >> k) {
+        if (k == "glass" && in >> v >> w) { b.a = v; b.b = w; }
+        else if (k == "phase" && in >> v) b.phase = v;
+        else if (k == "seconds" && in >> v) b.len = int64_t(std::clamp(v, 4.0f, 300.0f) * 1000.0f);
+    }
+    in.close();
+    std::filesystem::remove(f, ec);
+    b.t0 = now; b.on = true;
+    bench = b;
+}
+} // namespace wfxperf
+float worldFxGpuMs() { return wfxperf::ms.load(); }
+bool  worldFxBenchRunning() { return wfxperf::bench.on; }
+
 static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
@@ -2172,6 +2270,9 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     ID3D12Resource* db = gWfxBufs.depth.Get();
     auto const rtState = D3D12_RESOURCE_STATES(rf::glassarmor::stateOf(rt, D3D12_RESOURCE_STATE_RENDER_TARGET));
     auto const dsState = D3D12_RESOURCE_STATES(rf::glassarmor::stateOf(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE));
+    wfxperf::pollBench();
+    uint64_t const tsFrame = uint64_t(gWfxFrames.load());
+    bool const timed = wfxperf::begin(dev.Get(), list, tsFrame);
     wfxBarrier(list, rt, rtState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     wfxBarrier(list, ds, dsState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
@@ -2256,6 +2357,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     calls.draw(list, 3, 1, 0, 0);
+    if (timed) wfxperf::end(list, tsFrame);
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     calls.restoreRoot(list);
@@ -2271,6 +2373,7 @@ WorldFxLook& worldFxLook() { return gLook; }
 std::string  worldFxStatus() { std::lock_guard l(gWfxMutex); return gWfxStatus; }
 void loadWorldFxSettings(std::filesystem::path const& configDir) {
     gWfxConfig = configDir / "WorldFx.txt";
+    wfxperf::logDir = configDir.parent_path() / "logs" / "worldfx";
     std::ifstream in(gWfxConfig);
     std::string   k;
     float         v;

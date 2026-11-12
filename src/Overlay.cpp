@@ -562,6 +562,12 @@ void uninstall() {
 }
 
 std::string gpuName() { return gGpuName; }
+// GPU timestamp ticks per second on the game's DIRECT queue (0 until the queue is captured)
+uint64_t timestampFrequency() {
+    static uint64_t f = 0;
+    if (!f) if (auto* q = d3d12::queue.load()) { UINT64 v = 0; if (SUCCEEDED(q->GetTimestampFrequency(&v))) f = v; }
+    return f;
+}
 std::string rendererType() { return gRendererType; }
 
 } // namespace rf::overlay

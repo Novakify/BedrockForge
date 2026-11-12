@@ -5,6 +5,7 @@
 //   * the D3D12 command queue is captured from ID3D12CommandQueue::ExecuteCommandLists
 //   * input comes from a Win32 window-procedure subclass (imgui_impl_win32) instead of imgui_impl_winrt
 #pragma once
+#include <cstdint>
 #include <string>
 
 namespace rf::overlay {
@@ -12,4 +13,5 @@ bool        install();
 void        uninstall();
 std::string gpuName();
 std::string rendererType();
+uint64_t    timestampFrequency();
 } // namespace rf::overlay
