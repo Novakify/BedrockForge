@@ -406,9 +406,13 @@ float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float3 cSh = lerp(float3(0.40, 0.45, 0.66), float3(0.30, 0.22, 0.42), DUSK);
     float3 cLt = lerp(float3(1.04, 1.00, 0.94), lerp(float3(0.95, 0.62, 0.66), float3(1.25, 0.70, 0.45), fwd), DUSK);
     float3 c = lerp(cSh, cLt, lit);
-    c += float3(1.0, 0.96, 0.88) * edge * fwd * 1.4;                            // silver lining toward the sun
-    float3 iri = ngFilm(0.30 + (1.0 - dSoft) * 1.2 + ang * 0.7);
-    c = lerp(c, c * 0.5 + iri, saturate(edge * exp(-ang * 2.4) * 1.4));
+    // toward the sun the clouds are backlit: thick bodies go grey, the thin edges glow silver (seen in game: lit white
+    // cut-outs round the sun, with green-cyan fringes that read as cheap)
+    float back = fwd * (1.0 - DUSK * 0.5);
+    c *= lerp(1.0, 0.62 + 0.38 * edge, back);
+    c += float3(1.0, 0.96, 0.88) * edge * fwd * 1.6;                            // silver lining
+    float3 iri = ngFilm(0.45 + (1.0 - dSoft) * 0.9 + ang * 0.5);
+    c = lerp(c, c * 0.65 + iri * 0.55, saturate(edge * smoothstep(0.40, 0.08, ang) * 0.8));   // mother-of-pearl, close in only
     float fade = smoothstep(0.015, 0.12, e) * (1.0 - 0.35 * smoothstep(0.6, 1.0, e));
     return float4(c, d * fade * 0.95);
 }
@@ -423,7 +427,7 @@ float4 ngCirrus(float3 rd, float3 Ld) {
     float2 qq = q * float2(1.3, 4.0) + w * 1.6 + 3.0;
     float  r = 0.0, amp = 0.55;
     [loop] for (int i = 0; i < (QUALITY > 0.3 ? 5 : 3); i++) { float v = 1.0 - abs(2.0 * vnoise(qq) - 1.0); r += amp * v * v; qq = mul(float2x2(1.6, 1.2, -1.2, 1.6), qq) * float2(1.0, 1.15); amp *= 0.5; }
-    float dens = smoothstep(0.54, 0.80, r) * smoothstep(0.40, 0.62, m) * smoothstep(0.04, 0.22, e) * (1.0 - smoothstep(0.75, 1.0, e) * 0.6);
+    float dens = smoothstep(0.54, 0.80, r) * smoothstep(0.40, 0.62, m) * smoothstep(0.04, 0.22, e) * (1.0 - smoothstep(0.45, 0.90, e) * 0.85);   // overhead it streaked like motion blur
     float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float3 c = lerp(float3(0.92, 0.95, 1.0), ngFilm(r * 2.2 + ang * 0.8), 0.75 * exp(-ang * 2.6));
     return float4(c, dens);
@@ -567,7 +571,7 @@ float3 ngBackground(float3 rd) {
     col += ngSpecS(saturate(0.5 - e * 90.0)) * exp(-pow(e * 110.0 - 0.6, 2.0)) * lerp(0.06, 0.12, NIGHT) * (1.0 - 0.5 * DUSK);   // the dome's base ring
     float4 ci = ngCirrus(rf, Ld);
     float3 ciC = ci.rgb * lerp(lerp(float3(0.95, 0.97, 1.0), float3(0.95, 0.60, 0.70), DUSK), float3(0.10, 0.10, 0.22), NIGHT);
-    col = lerp(col, ciC, ci.a * lerp(0.55, 0.18, NIGHT));
+    col = lerp(col, ciC, ci.a * lerp(0.38, 0.18, NIGHT));   // (quieter: the altocumulus is the body now)
     float4 ac = NG_CLOUDS > 0.0 ? ngAlto(rf, Ld, false) : float4(0, 0, 0, 0);
     ac.a *= NG_CLOUDS;
     float3 acT = lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT);   // night: dark shapes that hide the stars
