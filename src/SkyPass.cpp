@@ -2426,6 +2426,20 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "trails") gLook.trails = std::clamp(v, 0.f, 1.f);
     }
 }
+// One switch for the whole look: the Renderer Foundation side (sky, void, light, rim: the glass strength) and Bedrock
+// Forge's block shaders (its config/shaderpack.txt names the pack: BF picks the change up while the game runs; the
+// blocks follow when a world is next joined). Returns false if that pack is not installed (the RF side still switches).
+bool setAtmosphere(int which) {
+    gLook.glass = which == 1 ? (gLook.glass > 0.0f ? gLook.glass : 1.0f) : 0.0f;
+    saveWorldFxSettings();
+    if (gWfxConfig.empty()) return false;
+    std::error_code ec;
+    auto const bf   = gWfxConfig.parent_path().parent_path().parent_path() / "BedrockForgeCore";
+    char const* name = which == 1 ? "NovakGlass" : "CloudSea";
+    if (!std::filesystem::is_directory(bf / "shaderpacks" / name, ec)) return false;
+    std::ofstream(bf / "config" / "shaderpack.txt") << name << "\n";
+    return true;
+}
 void saveWorldFxSettings() {
     if (gWfxConfig.empty()) return;
     std::ofstream out(gWfxConfig);

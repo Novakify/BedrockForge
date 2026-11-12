@@ -276,27 +276,44 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                     float  tF = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
                     float3 bg = sceneT > tF + 0.02 ? pow(max(col0, 0.0), 2.2) : pow(max(toDisplay(csBackground(rd, true)), 0.0), 2.2);
                     // march the 8x8x8 voxels of the block: the first one that has arrived is what you see
-                    float3 pe = saturate(rd * tN - corner) * 8.0;
+                    // Novak Glass: 16 x 16 x 16 micro-cubes of clear glass (4096 of them) instead of 512 solid voxels
+                    const float VN = NG_IS ? 16.0 : 8.0;
+                    float3 pe = saturate(rd * tN - corner) * VN;
                     float3 st = sign(rd), td = abs(inv);
-                    float3 vx = clamp(floor(pe + rd * 1e-3), 0.0, 7.0);
+                    float3 vx = clamp(floor(pe + rd * 1e-3), 0.0, VN - 1.0);
                     float3 tm = (vx + max(st, 0.0) - pe) * inv;
-                    float3 vn = nl; float got = 0.0, born = 0.0;
-                    [loop] for (int q = 0; q < 22; q++) {
-                        float ta = vx.y * (0.24 / 8.0) + hash13(vx + seed * 0.01) * 0.12;      // bottom-up, ragged
+                    float3 vn = nl; float got = 0.0, born = 0.0, tcur = 0.0;
+                    [loop] for (int q = 0; q < (NG_IS ? 44 : 22); q++) {
+                        float ta = vx.y * (0.24 / VN) + hash13(vx + seed * 0.01) * 0.12;      // bottom-up, ragged
                         if (age >= ta) { got = 1.0; born = age - ta; break; }
-                        if (tm.x < tm.y && tm.x < tm.z) { vx.x += st.x; tm.x += td.x; vn = float3(-st.x, 0, 0); }
-                        else if (tm.y < tm.z)           { vx.y += st.y; tm.y += td.y; vn = float3(0, -st.y, 0); }
-                        else                            { vx.z += st.z; tm.z += td.z; vn = float3(0, 0, -st.z); }
-                        if (any(vx < 0.0) || any(vx > 7.0)) break;
+                        if (tm.x < tm.y && tm.x < tm.z) { tcur = tm.x; vx.x += st.x; tm.x += td.x; vn = float3(-st.x, 0, 0); }
+                        else if (tm.y < tm.z)           { tcur = tm.y; vx.y += st.y; tm.y += td.y; vn = float3(0, -st.y, 0); }
+                        else                            { tcur = tm.z; vx.z += st.z; tm.z += td.z; vn = float3(0, 0, -st.z); }
+                        if (any(vx < 0.0) || any(vx > VN - 1.0)) break;
                     }
                     float  scan = step(0.5, frac((rd.y * tN + CAM.y) * 16.0 - TIME * 3.0));    // scanlines, a texel high
                     float3 c = bg * 0.42 + hue * (0.020 + 0.030 * scan);                       // the empty hologram: dark glass
+                    if (NG_IS) c = bg * 0.86 + float3(0.55, 0.80, 1.0) * (0.012 + 0.020 * scan);   // Novak Glass: clear, barely there
                     if (got > 0.5) {
                         float shade = 0.55 + 0.25 * vn.y + 0.12 * abs(vn.x);
                         float3 vox = lerp(alb, hue, 0.22) * shade * (0.80 + 0.30 * scan) + hue * exp(-born * 20.0) * 0.7;
+                        if (NG_IS) {
+                            // a micro-cube of glass: you still see through it, the block's colour is only a tint in it,
+                            // its face holds the sky and its edges are lit lines (colour-split along the block)
+                            float3 fv = frac(pe + rd * tcur + vn * 1e-3);
+                            float3 ev = min(fv, 1.0 - fv) + abs(vn);                         // the face's own axis out of the way
+                            float  edgeV = step(min(ev.x, min(ev.y, ev.z)), 0.14);
+                            float  Fv = 0.05 + 0.95 * pow(1.0 - saturate(dot(-rd, vn)), 4.0);
+                            float3 sp3 = ngSpecS(frac((vx.x + vx.y * 0.7 + vx.z * 0.4) / VN * 1.6 + TIME * 0.6));
+                            vox = bg * lerp(float3(1, 1, 1), hue, 0.45) * 0.80 + alb * 0.16 * shade
+                                + ngSkyBase(normalize(reflect(rd, vn) * float3(1, 1, 1) + float3(0, 0.3, 0))) * Fv * 0.55
+                                + (float3(0.90, 0.96, 1.0) * 0.42 + sp3 * 0.30) * edgeV * (0.6 + 0.4 * scan)
+                                + float3(1.0, 1.0, 1.0) * exp(-born * 22.0) * 0.85;           // it lands with a flash
+                            c = vox;
+                        } else
                         c = lerp(c, vox, 0.86);
                     }
-                    c += hue * wire * (0.55 + 0.25 * sin(TIME * 30.0));
+                    c += (NG_IS ? lerp(float3(1, 1, 1), hue, 0.3) : hue) * wire * (0.55 + 0.25 * sin(TIME * 30.0));
                     c = lerp(c, lerp(alb, hue, 0.5) * 1.5, 0.75 * smoothstep(DUR - 0.05, DUR, age));              // the flash it becomes real in
                     best = min(sceneT, tN); col = c; hit = true;
                 }

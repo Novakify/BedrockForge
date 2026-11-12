@@ -1100,6 +1100,15 @@ void drawUi() {
     ImGui::Text("Status: %s", gStatus.c_str());
     if (!gLastSummary.empty()) ImGui::Text("Last probe: %s", gLastSummary.c_str());
     if (!gLastDir.empty()) ImGui::TextWrapped("Folder: %s", gLastDir.c_str());
+    ImGui::SeparatorText("Atmosphere");
+    {
+        static bool packMissing = false;
+        int atmos = rf::sky::worldFxLook().glass > 0.0f ? 1 : 0;
+        char const* names[] = {"Cloud Sea", "Novak Glass"};
+        if (ImGui::Combo("World look", &atmos, names, 2)) packMissing = !rf::sky::setAtmosphere(atmos);
+        ImGui::SameLine();
+        ImGui::TextDisabled(packMissing ? "(sky switched; that block shaderpack is not installed)" : "(sky and light switch now; the blocks follow when you next join a world)");
+    }
     ImGui::SeparatorText("Cloud Sea");
     bool cs = rf::sky::worldSky() == 1;
     if (ImGui::Checkbox("Cloud Sea sky", &cs)) { rf::sky::setWorldSky(cs ? 1 : 0); rf::sky::saveWorldFxSettings(); }
