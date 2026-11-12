@@ -13,6 +13,7 @@ static float2 MAP_C;
 static float  PHASE = 0.0, DUSK = 0.0, NIGHT = 0.0;
 static float3 SUNDISC = float3(0.17605, 0.11247, -0.97794);
 static float  SUNUP = 1.0;  // the sun disc and its warm glow (gone once it has set)
+static float  NG_CLOUDS = 1.0; // Novak: how much of the pearl altocumulus field (the F6 "clouds" amount)
 static float  QUALITY = 1.0; // 0..1: Renderer Foundation lowers it to hold the frame rate
 // ---- which atmosphere: Cloud Sea (default) or Novak Glass. NG_ATMOS 1 = always Novak Glass (the World FX pass built
 //      for it), 2 = chosen at run time (ATMOS; the cheap sky pass), 0 = Cloud Sea only (no Novak Glass code in the build)
@@ -506,7 +507,8 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
             float2 sw = float2(fbm(wq * 0.6 + TIME * 0.02, 2), fbm(wq * 0.6 + 7.7 - TIME * 0.015, 2)) - 0.5;
             float3 rr = normalize(float3(rd.x + sw.x * 0.05, dn, rd.z + sw.y * 0.05));
             float3 m  = ngSkyBase(rr);
-            float4 a  = ngAlto(rr, Ld, true);
+            float4 a  = NG_CLOUDS > 0.0 ? ngAlto(rr, Ld, true) : float4(0, 0, 0, 0);
+            a.a *= NG_CLOUDS;
             m = lerp(m, a.rgb * lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT), a.a * 0.6);
             col = lerp(col, m * 0.55, wM);
         }
@@ -566,7 +568,8 @@ float3 ngBackground(float3 rd) {
     float4 ci = ngCirrus(rf, Ld);
     float3 ciC = ci.rgb * lerp(lerp(float3(0.95, 0.97, 1.0), float3(0.95, 0.60, 0.70), DUSK), float3(0.10, 0.10, 0.22), NIGHT);
     col = lerp(col, ciC, ci.a * lerp(0.55, 0.18, NIGHT));
-    float4 ac = ngAlto(rf, Ld, false);
+    float4 ac = NG_CLOUDS > 0.0 ? ngAlto(rf, Ld, false) : float4(0, 0, 0, 0);
+    ac.a *= NG_CLOUDS;
     float3 acT = lerp(float3(1.0, 1.0, 1.0), float3(0.075, 0.075, 0.15), NIGHT);   // night: dark shapes that hide the stars
     col = lerp(col, ac.rgb * acT, ac.a * lerp(1.0, 0.75, NIGHT));
     float  angD = acos(clamp(dot(rf, SUNDISC), -1.0, 1.0));

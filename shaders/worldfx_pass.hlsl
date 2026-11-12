@@ -1480,7 +1480,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
     [branch] if (isSky(d)) {
-        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z;
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y;
         float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
         if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
         float  js = hash12(float2(px));
@@ -1700,7 +1700,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // the edge of the render distance: fade into what the sky pass shows behind this pixel (clouds / sky), not into
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
     [branch] if (fogVis < 0.995 && c8.w > 0.5 && z > 40.0) {   // only far pixels can be fogged (entities may not write the alpha)
-        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy;
+        CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; NG_CLOUDS = c9.y;
         float3 bg = toDisplay(csBackground(normalize(P), true));
         o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
     }
