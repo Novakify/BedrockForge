@@ -375,8 +375,8 @@ float ngWor(float2 p) {
 }
 float ngAcField(float2 q, float cov) {
     float b  = ngWor(q * float2(2.9, 2.1)) * 0.80 + (1.0 - vnoise(q * float2(11.2, 8.2) + 3.1)) * 0.30;   // lumps, smaller ones on them
-    float fr = fbm(q * 7.0, 3) * 0.7 + fbm(q * 19.0, 2) * 0.3;   // a frayed outline
-    return saturate((cov * 2.1 - 0.80) - b * 0.90 - fr * 0.36 + 0.33);
+    float fr = fbm(q * 5.0, 3) * 0.8 + fbm(q * 14.0, 2) * 0.2;   // a frayed outline
+    return saturate((cov * 2.1 - 0.80) - b * 0.90 - fr * 0.26 + 0.30);
 }
 // the same field, coarse (the big lumps only): enough for the light march (cost: seen 5.3 ms for the pass at 4K)
 float ngAcFieldLo(float2 q, float cov) {
@@ -385,7 +385,7 @@ float ngAcFieldLo(float2 q, float cov) {
 float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float e = rd.y;
     [branch] if (e < 0.015) return float4(0, 0, 0, 0);
-    float2 P = rd.xz / (e * 0.55 + 0.16) * 1.5 + TIME * float2(0.006, 0.002);   // (overhead a little denser: seen in game, huge soft blobs up there)
+    float2 P = rd.xz / (e * 0.55 + 0.16) * 0.95 + TIME * float2(0.006, 0.002);   // big, clean, puffy (the Aero sky)   // (overhead a little denser: seen in game, huge soft blobs up there)
     float2 W = float2(0.92, 0.39);
     float2 q = float2(dot(P, W), dot(P, float2(-W.y, W.x)));
     q.y += 0.22 * sin(q.x * 1.3 + fbm(P * 0.5, 2) * 3.0);                       // the rows ripple
@@ -676,63 +676,85 @@ float3 facade(float lx, float ym, float Hr, float Wm, float pxm, float az, float
 //      bronze, violet), framed by fine mullions; the sun glints off it and splits into colour at the frames; the screens
 //      still play, dimmer against the day; the far city sinks into blue air.
 static float LIT = 0.0;                                               // how lit the city is: 0 day .. 1 night (set in setCity)
-void setCity(){ LIT=max(NIGHT,smoothstep(0.35,1.0,DUSK)*0.85); }
-float3 dayAir(float az){ return ngSkyBase(normalize(float3(cos(az),0.02,sin(az)))); }
+void setCity(){ LIT=max(NIGHT,smoothstep(0.55,1.0,DUSK)*0.70); }
+float3 dayAir(float az){ return ngSkyBase(normalize(float3(cos(az),0.06,sin(az))))*1.05; }
+static const float CELL = 54.0, STREET = 7.5, RIN = 440.0;
+// ---- DAY: a Frutiger Aero / Japanese "city of the future" (reference: Fernando's bubble-era future city painting).
+//      Deep cobalt and teal glass towers, polished and glossy, set in white structural frames; white crowns and helipad
+//      tops; green parks and roof gardens; canals and a bay of blue water; clean white plazas. Optimistic, bright.
+float3 aeroGlass(float tk){ return tk<0.40?float3(0.06,0.20,0.62):(tk<0.62?float3(0.04,0.38,0.55):(tk<0.80?float3(0.10,0.30,0.75):float3(0.30,0.52,0.70))); }
 float3 dayGlass(float3 rd, float3 n, float lx, float ym, float Hr, float Wm, float pxm, float sd, float3 cNight){
   float h=hb(sd,1.), h2=hb(sd,2.), h4=hb(sd,4.);
-  float tk=frac(h*3.7+h4);
-  float3 tint=tk<0.30?float3(0.40,0.85,0.95):(tk<0.52?float3(0.55,0.70,1.05):(tk<0.68?float3(0.90,0.92,0.96):(tk<0.84?float3(1.05,0.78,0.48):float3(0.80,0.62,1.05))));
-  float3 r=reflect(rd,n);
+  float3 g0=aeroGlass(frac(h*3.7+h4));
+  float round=step(0.62,h2);                                  // some towers are round: the face turns across its width
+  float3 nn=n;
+  if(round>0.5){ float3 t=normalize(float3(-n.z,0.,n.x)); float a=(lx-0.5)*2.2; nn=normalize(n*cos(a)+t*sin(a)); }
+  float3 r=reflect(rd,nn);
   float3 sky=ngSkyBase(normalize(float3(r.x,abs(r.y)+0.04,r.z)));
-  sky=lerp(sky,dayAir(atan2(r.z,r.x))*0.55,smoothstep(0.0,0.0,0.0)*0.0+exp(-max(r.y,0.)*6.0)*0.6);   // low in it: the city opposite
-  float F=0.30+0.70*pow(1.0-abs(dot(rd,n)),3.0);
-  float3 c=sky*tint*lerp(0.40,1.00,F);
-  // the canyon: lower down the glass mirrors the dark towers opposite, not the sky
-  float canyon=smoothstep(0.85,0.15,ym/Hr)*lerp(0.5,0.85,h2);
-  c=lerp(c,float3(0.05,0.07,0.12)*tint+sky*0.08,canyon);
-  // the towers opposite, seen in the glass: dark slabs with a lit window here and there
-  float opp=step(0.45,vnoise(float2(lx*3.0+sd,ym/40.0)))*step(ym/Hr,0.9);
-  c=lerp(c,float3(0.06,0.08,0.13)*tint,opp*0.55);
-  c*=lerp(0.55,1.0,max(dot(n,SUN),0.0)+0.25);                 // faces away from the sun are deeper
-  // high up the glass holds the sky and its clouds (bright, soft), sliding as you move
-  float up=smoothstep(0.35,0.95,ym/Hr);
-  float cl=smoothstep(0.50,0.80,vnoise(float2(lx*1.6+sd*3.1+rd.x*2.0,ym/55.0+rd.z*2.0)));
-  c=lerp(c,ngSkyBase(normalize(float3(r.x,0.25,r.z)))*tint*1.25,up*0.55);
-  c=lerp(c,float3(0.95,0.96,1.0)*lerp(((float3)(1.0)),tint,0.3),cl*up*0.55);
-  float sunF=max(dot(n,SUN),0.0);
-  c+=tint*float3(1.0,0.96,0.88)*sunF*0.10;                      // the sunlit face is a breath brighter
-  // mullions: floors and panels framed in light metal
-  float floorH=lerp(3.4,4.4,h4)*lerp(1.0,2.0,step(0.5,h)), cols=floor(Wm/lerp(4.0,9.0,h2));
-  float2 g=float2(lx*cols,ym/floorH); float2 gf=abs(frac(g)-0.5);
+  float F=0.20+0.80*pow(1.0-abs(dot(rd,nn)),4.0);
+  // polished glass: its own deep colour, the sky and the sun in it, a soft cloud sliding across
+  float3 c=g0*0.55+sky*lerp(0.18,0.85,F)*lerp(((float3)(1.0)),g0*2.2,0.45);
+  float cl=smoothstep(0.52,0.78,vnoise(float2(lx*1.5+sd*3.1+r.x*2.0,ym/48.0+r.z*2.0)));
+  c=lerp(c,float3(0.92,0.95,1.0),cl*smoothstep(0.30,0.95,ym/Hr)*0.40);
+  // the Aero gloss: a bright band near the top of every pane run, a vertical sheen down the turn of round towers
+  c+=float3(0.85,0.93,1.0)*0.22*smoothstep(0.80,0.98,frac(ym/lerp(18.,32.,h4)))*(1.-round);
+  c+=float3(0.9,0.96,1.0)*0.35*exp(-pow((lx-0.30)/0.06,2.0))*round;
+  // panes: fine dark joints (most towers), white bands every few floors
+  float floorH=lerp(3.4,4.4,h4), cols=floor(Wm/lerp(1.8,3.0,h2));
+  float2 gg=float2(lx*cols,ym/floorH); float2 gf=abs(frac(gg)-0.5);
   float res=1.-smoothstep(0.3,1.0,max(pxm/floorH,pxm/(Wm/cols)));
-  float mul=max(1.-smoothstep(0.0,max(pxm/(Wm/cols),0.04),0.5-gf.x),1.-smoothstep(0.0,max(pxm/floorH,0.04),0.5-gf.y));
-  c=lerp(c,float3(0.50,0.53,0.58)*(0.55+0.45*sunF),mul*0.40*res+0.04*(1.-res));
-  // the sun in the glass: a sharp glint, a broad sheen, the frames split it into colour
+  float joint=max(1.-smoothstep(0.0,max(pxm/(Wm/cols),0.03),0.5-gf.x),1.-smoothstep(0.0,max(pxm/floorH,0.03),0.5-gf.y));
+  c=lerp(c,c*0.55,joint*0.6*res);
+  float band=step(0.5,h)*(1.-smoothstep(0.0,max(pxm,0.6),abs(frac(ym/lerp(14.,28.,h2))*lerp(14.,28.,h2)-1.0)));
+  // the white frame: corner piers and a crown (structural white, catching the sun)
+  float pier=max(pxm,lerp(1.2,2.6,h4));
+  float edgeW=step(lx*Wm,pier)+step((1.-lx)*Wm,pier);
+  float crown=step(Hr-ym,lerp(3.,9.,h));
+  float sunF=max(dot(nn,SUN),0.0);
+  float3 white=float3(0.86,0.89,0.94)*(0.55+0.55*sunF)+float3(0.05,0.08,0.14);
+  c=lerp(c,white,max(max(edgeW,crown),band*0.9)*step(0.25,h4));
+  // the sun in the glass: a sharp glint and a broad sheen, split into colour at the joints (prism)
   float sp=max(dot(r,SUN),0.0);
-  float3 glint=float3(1.0,0.97,0.9)*(pow(sp,600.0)*14.0+pow(sp,30.0)*0.70+pow(max(dot(n,SUN),0.),3.0)*0.10)+ngFilm(lx*2.0+ym*0.01+h)*pow(sp,90.0)*mul*3.0;
-  c+=glint*SUNUP;
-  // what is lit inside still shows: screens and boards, dimmer against the day
-  // only what truly glows shows by day (screens and boards), not the night's dim windows and edge light
-  float glowM=smoothstep(0.55,1.1,max(cNight.r,max(cNight.g,cNight.b)));
-  c=lerp(c,cNight,glowM*lerp(0.55,1.0,LIT));
-  return c;
+  c+=float3(1.0,0.97,0.9)*(pow(sp,700.0)*16.0+pow(sp,28.0)*0.55)*SUNUP+ngFilm(lx*2.0+ym*0.01+h)*pow(sp,80.0)*joint*2.5*SUNUP;
+  c*=lerp(0.70,1.0,smoothstep(0.0,0.30,ym/Hr));               // the foot of the canyon is in shade
+  // screens still play on the towers that carry them, softer by day
+  float glowM=smoothstep(0.55,1.1,max(cNight.r,max(cNight.g,cNight.b)))*step(0.80,hb(sd,5.));
+  return lerp(c,cNight,glowM*0.45);
 }
 float3 dayRoof(float2 r, float2 sz, float2 id, float3 rd, float3 cNight){
   float h=ngH12(id+71.0), ty=ngH12(id+13.0);
-  float3 c=lerp(float3(0.30,0.32,0.36),float3(0.42,0.44,0.48),ngH12(floor(r/4.0)+id))*(0.75+0.25*max(SUN.y,0.0)*2.0);
   float dE=min(min(r.x,sz.x-r.x),min(r.y,sz.y-r.y));
-  c*=lerp(0.70,1.0,smoothstep(0.0,2.5,dE));
-  if(ty<0.30){ float3 rr=reflect(rd,float3(0,1,0)); c=lerp(c,ngSkyBase(normalize(float3(rr.x,abs(rr.y)+0.05,rr.z)))*float3(0.6,0.85,0.95),step(4.0,dE)*0.8); }
-  else if(ty>=0.66&&ty<0.80) c=lerp(c,float3(0.18,0.40,0.22),step(3.0,dE)*0.8);
-  float glowM=smoothstep(0.55,1.1,max(cNight.r,max(cNight.g,cNight.b)));
-  return lerp(c,cNight,glowM*0.6);
+  float3 white=float3(0.84,0.87,0.92)*(0.75+0.35*max(SUN.y,0.0)*2.0);
+  float3 c=white;
+  float3 rr=reflect(rd,float3(0,1,0)); float3 sky=ngSkyBase(normalize(float3(rr.x,abs(rr.y)+0.05,rr.z)));
+  if(ty<0.35){                                                // a glass roof / helipad deck in blue glass, white rim
+    c=lerp(aeroGlass(h)*0.6+sky*0.45,white,1.-smoothstep(1.5,2.5,dE));
+    float rad=length(r-sz*0.5); c=lerp(c,((float3)(0.95)),(1.-smoothstep(0.,0.8,abs(rad-7.0)))*step(0.5,h));   // a pad's ring
+  } else if(ty<0.70){                                         // a roof garden: lawn, trees, a pool
+    float2 q=r/5.0; float tr=step(0.62,ngH12(floor(q)+id))*smoothstep(0.45,0.2,length(frac(q)-0.5));
+    c=lerp(float3(0.30,0.62,0.22),float3(0.10,0.38,0.12),tr);
+    float pool=step(abs(r.x-sz.x*0.5),sz.x*0.18)*step(abs(r.y-sz.y*0.6),sz.y*0.12)*step(0.5,h);
+    c=lerp(c,float3(0.25,0.70,0.95)+sky*0.3,pool);
+    c=lerp(c,white,1.-smoothstep(1.0,2.0,dE));
+  } else {                                                    // white roof, plant in pale grey
+    c*=0.85+0.15*step(0.5,ngH12(floor(r/4.0)+id));
+  }
+  c*=lerp(0.78,1.0,smoothstep(0.0,2.0,dE));
+  return c;
 }
 float3 dayStreet(float2 pw, float3 rd, float3 cNight){
-  float3 rr=reflect(rd,float3(0,1,0));
-  float3 c=float3(0.07,0.08,0.10)+ngSkyBase(normalize(float3(rr.x,abs(rr.y)+0.05,rr.z)))*0.18;
-  float glowM=smoothstep(0.45,1.0,max(cNight.r,max(cNight.g,cNight.b)));
-  return lerp(c,cNight,glowM*0.5);
+  float2 id=floor(pw/CELL), f=pw-id*CELL;
+  float2 dB=min(f,CELL-f); float m=min(dB.x,dB.y);
+  float3 rr=reflect(rd,float3(0,1,0)); float3 sky=ngSkyBase(normalize(float3(rr.x,abs(rr.y)+0.05,rr.z)));
+  float3 c=float3(0.62,0.66,0.72);                                // pale roads
+  c=lerp(c,float3(0.90,0.92,0.95),step(STREET-2.0,m));           // white pavements at the kerb
+  c=lerp(c,((float3)(0.95)),step(abs(m-1.2),0.12)*step(0.5,frac((dB.x<dB.y?pw.y:pw.x)/5.0)));   // lane marks
+  float tr=step(STREET-1.6,m)*step(0.55,ngH12(floor(pw/4.0)));  // trees along the street
+  c=lerp(c,float3(0.16,0.45,0.18),tr*smoothstep(0.5,0.2,length(frac(pw/4.0)-0.5)));
+  return c;
 }
+// the ground between the blocks: green parks and blue canals, by district
+float districtK(float2 id){ return vnoise(id*0.21+7.0); }
 float4 cityLayer(float3 rd, float L){
   float az=atan2(rd.z,rd.x), el=rd.y/max(length(rd.xz),1e-3);
   float R=420.0*pow(1.6,L);
@@ -746,7 +768,7 @@ float4 cityLayer(float3 rd, float L){
   float Hr=lerp(110.,330.,h*h)+tall*lerp(220.,620.,L/4.);
   float ym=el*R+SEA_D;
   float gap=0.03+0.05*h4;
-  if(fu<gap||ym<0.0||ym>Hr+16.0) return ((float4)(0));
+  if(fu<gap||ym<0.0||ym>Hr+130.0) return ((float4)(0));
   float lx=(fu-gap)/(1.-gap), Wm=lotW*(1.-gap);
   float pxm=GPX*R*(1.0+el*el)+1e-3;
   float hzK=1.0-exp(-R/2400.0);
@@ -755,7 +777,17 @@ float4 cityLayer(float3 rd, float L){
     float bbH=lerp(7.,14.,h);
     if(h4>0.40&&tall<0.3&&ym<Hr+bbH&&abs(lx-0.5)<0.44)
       return float4(lerp(signPanel(float2((lx-0.06)/0.88,(ym-Hr)/bbH),float2(Wm*0.88,bbH),hb(sd,21.),pxm),hazeC,hzK*0.6),1.0);
-    if(tall>0.3&&ym<Hr+12.0&&abs(lx-0.5)*Wm<max(pxm,0.5)) return float4(float3(3.0,0.12,0.10)*(0.35+0.65*step(0.5,frac(TIME*0.45+h*7.))),1.0);
+    float spH=lerp(30.,110.,h)*step(0.35,tall);                // a glass spire on the tall ones (the reference's pointed crowns)
+    if(spH>0.&&ym<Hr+spH&&abs(lx-0.5)<0.42*(1.0-(ym-Hr)/spH)){
+      float k=(ym-Hr)/spH; float3 rr=reflect(rd,-normalize(float3(cos(az),0.,sin(az))));
+      float3 dG=aeroGlass(frac(h*5.1))*0.6+ngSkyBase(normalize(float3(rr.x,abs(rr.y)+0.05,rr.z)))*0.6;
+      dG=lerp(dG,float3(0.88,0.91,0.96),step(abs(lx-0.5),0.04));                       // a white rib up its middle
+      dG+=float3(1.0,0.97,0.9)*pow(max(dot(rr,SUN),0.),40.)*0.6*SUNUP;
+      float3 nG=signCol(frac(h*4.3+0.2))*1.4*step(abs(lx-0.5),0.05)+float3(0.02,0.02,0.05);
+      float3 cs=lerp(dG,nG,smoothstep(0.0,0.2,LIT*1.25-hb(sd,61.)));
+      return float4(lerp(cs,lerp(dayAir(az)*0.9,hazeC,LIT),hzK*0.55),1.0);
+    }
+    if(tall>0.3&&ym<Hr+spH+12.0&&ym>Hr+spH&&abs(lx-0.5)*Wm<max(pxm,0.5)) return float4(float3(3.0,0.12,0.10)*(0.35+0.65*step(0.5,frac(TIME*0.45+h*7.))),1.0);
     return ((float4)(0));
   }
   float3 c=facade(lx,ym,Hr,Wm,pxm,az,sd,tall,1.0);
@@ -766,7 +798,7 @@ float4 cityLayer(float3 rd, float L){
   float3 tg=float3(-cn.z,0.0,cn.x); float3 nF=normalize(lerp(cn,cn*0.7+tg*0.7,farF));
   float3 cDay=dayGlass(rd,nF,lx,ym,Hr,Wm,pxm,sd,c*(1.0-LIT)*0.0+c);
   cDay=lerp(cDay,dayAir(az)*0.90,hzK*0.50);
-  float LITb=smoothstep(0.0,0.20,LIT*1.25-hb(sd,61.)*1.0);     // the city lights up building after building as the dark comes
+  float LITb=smoothstep(0.0,0.20,LIT*1.25-hb(sd,61.));
   return float4(lerp(cDay,lerp(c,hazeC,hzK*0.62),LITb),1.0);
 }
 float3 layerGlow(float3 rd, float L){
@@ -775,8 +807,6 @@ float3 layerGlow(float3 rd, float L){
   float u=az*R/260.0+L*7.0; float i=floor(u), f=frac(u); f=f*f*(3.-2.*f);
   return lerp(signCol(hb(i,L+3.)),signCol(hb(i+1.,L+3.)),f)*exp(-ym/150.0)*0.030;
 }
-// (front to back: the first building hit hides the rings behind it, so only one face is ever shaded - drawing all
-//  five back to front cost the pass ~6 ms at 4K, seen in game)
 float3 cityAt(float3 rd, float3 bg){
   float3 col=bg; float3 glow=((float3)(0.0));
   [loop] for(int L=0;L<5;L++){
@@ -789,19 +819,19 @@ float3 cityAt(float3 rd, float3 bg){
 float3 cityMirror(float3 rd, float elv){
   float az=atan2(rd.z,rd.x)+(vnoise(float2(rd.x*500.0+rd.z*310.0,elv*260.0+TIME*1.2))-0.5)*0.004;
   float3 col=((float3)(0.0)); float t=SEA_D/elv;
-  [loop] for(int L=0;L<5;L++){ float R=420.0*pow(1.6,float(L));
+  for(int L=0;L<5;L++){ float R=420.0*pow(1.6,float(L));
     if(R<t) continue;
     float ymr=(R-t)*elv;
-    float4 b=cityLayer(float3(cos(az),(ymr*1.3-SEA_D)/R,sin(az)),float(L));   // one tap, a little up the face: the streak
+    float4 b=cityLayer(float3(cos(az),(ymr*1.3-SEA_D)/R,sin(az)),float(L));
     if(b.a>0.5){ col=b.rgb; break; }
   }
   return col;
 }
 // ---- the city UNDER the islands: real blocks on a street grid (the ray walks the grid cell by cell), roofs with
 //      their lit parapets, glass roofs and pads, walls with the same advertising, wet streets with traffic
-static const float CELL=54.0, STREET=7.5, RIN=440.0;
 float bldH(float2 id){
   float h=ngH12(id*1.37+5.0), d=vnoise(id*0.23+3.0);
+  if(districtK(id)<0.30) return 0.0;                         // a park or a canal: open ground
   
   return min(lerp(30.,112.,h*h)+smoothstep(0.50,0.85,d)*42.0*ngH12(id+9.0),148.0);
 }
@@ -876,7 +906,18 @@ float4 cityBelow(float3 ro, float3 rd){
     if(tG<tExit){
       float3 q=ro+d*tG; float3 c=streetCol(q.xz,GPX*tG/max(dn,0.15));
       float fog=1.0-exp(-tG/1100.0);
-      float3 cD=lerp(dayStreet(q.xz,d,c),dayAir(atan2(q.z,q.x))*0.85,(1.0-exp(-tG/2600.0))*0.85);
+      float2 cid=floor(q.xz/CELL); float2 ff=q.xz-cid*CELL; float inBlk=step(STREET,min(min(ff.x,CELL-ff.x),min(ff.y,CELL-ff.y)));
+      float3 gd=dayStreet(q.xz,d,c);
+      if(inBlk>0.5&&bldH(cid)<1.0){
+        float dk=districtK(cid);
+        float3 rr=reflect(d,float3(0,1,0)); float3 sky=ngSkyBase(normalize(float3(rr.x,abs(rr.y)+0.05,rr.z)));
+        if(dk<0.16){ float rip=vnoise(q.xz*0.3+TIME*0.3); gd=float3(0.03,0.30,0.62)+sky*0.55+((float3)(1.0))*pow(max(dot(normalize(rr),SUN),0.),300.)*4.0*rip; }   // water
+        else { float2 qq=q.xz/6.0; float tr=step(0.45,ngH12(floor(qq)+cid))*smoothstep(0.45,0.15,length(frac(qq)-0.5));
+          gd=lerp(float3(0.34,0.66,0.24),float3(0.10,0.40,0.14),tr);                          // park: lawn and trees
+          float path=1.-smoothstep(0.,1.0,abs(frac((ff.x+ff.y)/22.0)-0.5)*22.0);
+          gd=lerp(gd,float3(0.90,0.90,0.86),path*0.9); }
+      }
+      float3 cD=lerp(gd,dayAir(atan2(q.z,q.x))*0.85,(1.0-exp(-tG/2600.0))*0.85);
       return float4(lerp(cD,lerp(c,float3(0.012,0.016,0.050),fog),LIT),1.0);
     }
     if(tMax.x<tMax.y){ tMax.x+=tDel.x; id.x+=stp.x; } else { tMax.y+=tDel.y; id.y+=stp.y; }
@@ -973,7 +1014,7 @@ float3 ngBackground(float3 rd) {
     col += ngSpecS(saturate(0.5 - e * 90.0)) * exp(-pow(e * 110.0 - 0.6, 2.0)) * lerp(0.06, 0.12, NIGHT) * (1.0 - 0.5 * DUSK);   // the dome's base ring
     float4 ci = ngCirrus(rf, Ld);
     float3 ciC = ci.rgb * lerp(lerp(float3(0.95, 0.97, 1.0), float3(0.95, 0.60, 0.70), DUSK), float3(0.10, 0.10, 0.22), NIGHT);
-    col = lerp(col, ciC, ci.a * lerp(0.38, 0.18, NIGHT));   // (quieter: the altocumulus is the body now)
+    col = lerp(col, ciC, ci.a * 0.18);   // (quieter: the altocumulus is the body now)
     float4 ac = NG_CLOUDS > 0.0 ? ngAlto(rf, Ld, false) : float4(0, 0, 0, 0);
     ac.a *= NG_CLOUDS;
     float3 acT = lerp(float3(1.0, 1.0, 1.0), float3(0.05, 0.05, 0.11) + cityHaze(atan2(rf.z, rf.x)) * 0.30 * exp(-rf.y * 3.0), NIGHT);   // night: clouds lit from below by the city
