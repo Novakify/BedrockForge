@@ -71,6 +71,10 @@ struct Ui {
     float vvGain     = 1.0f;  // Vibrant Visuals: brightness of our (sRGB -> linear) sky in the game's HDR target
 } gUi;
 std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one dome per frame
+// World FX fallback bookkeeping, per depth clear of the world's depth buffer (not per Present: the game records a
+// frame's lists out of step with Present, so counting clears per present number fired the fallback at the wrong clear -
+// before the world was drawn - and the real pass was then skipped: the cloud sea vanished looking down / at high FPS)
+std::atomic<bool> gSkySinceClear{false}, gFxSinceClear{false};
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
 std::atomic<int> gWorldSky{0};     // World FX standalone sky (0 off, 1 Cloud Sea), see the World FX section below
@@ -2034,6 +2038,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     calls.restoreRoot(list);
     calls.setPso(list, st.pso);
     if (st.haveTopo) calls.setTopo(list, st.topo);
+    gSkySinceClear = true;   // this frame's world is being drawn into the buffer now
     long const n = ++gWsFrames;
     if ((n & 63) == 1) wsStatus("drawing (" + std::to_string(n) + " frames, deck at y " + std::to_string(int(c[15])) + ")");
     return true;
@@ -2205,40 +2210,32 @@ bool  worldFxBenchRunning() { return wfxperf::bench.on; }
 
 static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
-    uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
-    if (gFxFallbackNo.load() == now) return false; // this frame already got it at the UI
+    if (gFxSinceClear.load()) return false; // once per world
     bool const ok = drawWorldFxPassImpl(list, st, calls);
     if (ok) {
         size_t rt0 = 0, dsv = 0;
         if (rf::worldfx::listTargets(list, rt0, dsv)) gFxRt = rt0, gFxDs = dsv;
         gFxPso = st.pso;
-        gFxRanNo = now;
+        gFxSinceClear = true;
     }
     return ok;
 }
-// The fallback anchor: the game's second depth clear of the frame on the world's depth buffer (it clears once at the
-// start of the frame, and again after the world - before the hand). If the cloud draw (and so the pass) has not come
-// by then, the pass runs right before that clear, while the world's depth is still there.
-std::atomic<uint64_t> gClearFrame{~0ull};
-std::atomic<int>      gClearsInFrame{0};
+// The fallback anchor: a depth clear of the world's depth buffer that comes AFTER this frame's sky was drawn into it
+// (the game clears once at the start of the frame, and again after the world - before the hand). If the cloud draw
+// (and so the pass) has not come by then, the pass runs right before that clear, while the world's depth is still there.
 bool fxFallbackWanted(size_t dsv) {
     if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
-    uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
-    if (gClearFrame.exchange(now) != now) { gClearsInFrame = 1; return false; }   // the frame's first clear: nothing drawn yet
-    if (gClearsInFrame.fetch_add(1) != 1) return false;                            // only the second
-    return gFxRanNo.load(std::memory_order_relaxed) != now && gFxFallbackNo.load(std::memory_order_relaxed) != now;
+    bool const sky  = gSkySinceClear.exchange(false);
+    bool const done = gFxSinceClear.exchange(false);
+    return sky && !done;
 }
 bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     size_t rt0 = 0, dsv = 0;
     if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != gFxRt.load() || dsv != gFxDs.load()) return false; // not the world's targets
-    uint64_t const now = gPresentNo.load(std::memory_order_relaxed);
-    uint64_t prev = gFxFallbackNo.load();
-    if (prev == now || !gFxFallbackNo.compare_exchange_strong(prev, now)) return false;
     GameState s2 = st;
     s2.pso = gFxPso.load();
-    // At this depth clear the game is often on a fresh command list: it has set the targets but not yet a viewport or
-    // a scissor (D3D12 starts a list with an empty scissor), so the pass ran and drew nothing - the cloud sea vanished
-    // while looking down. Give it the whole target; the game sets its own before its next draw.
+    // At this depth clear the game can be on a fresh command list: targets set, but no viewport or scissor yet (D3D12
+    // starts a list with an empty scissor). Give the pass the whole target; the game sets its own before its next draw.
     if (ID3D12Resource* rt = rf::uicapture::rtvResourceOf(rt0)) {
         auto const rd = rt->GetDesc();
         D3D12_VIEWPORT vp{0.0f, 0.0f, float(rd.Width), float(rd.Height), 0.0f, 1.0f};
