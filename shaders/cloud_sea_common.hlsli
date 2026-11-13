@@ -560,7 +560,7 @@ static float SEA_D = 175.0;                                      // the city's s
 float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
   float3 bg=signCol(frac(hp*7.31)), a2=signCol(frac(hp*7.31+0.31+0.3*frac(hp*3.)));
   float gw=min(sz.x,sz.y), gn=gw>9.0?2.0:1.0;
-  float res=(1.-smoothstep(0.5,1.5,pxm/(gw/gn/7.)))*step(0.30,QUALITY);   // (low quality: boards keep their colour, no script)
+  float res=(1.-smoothstep(0.5,1.5,pxm/(gw/gn/7.)))*step(0.08,QUALITY);   // (only at the very floor of the quality do boards lose their script)
   float lum=lerp(0.85,1.20,frac(hp*3.7))*(0.93+0.07*sin(TIME*(2.+6.*frac(hp*13.))+hp*50.));
   float dE=min(min(pn.x,1.-pn.x)*sz.x,min(pn.y,1.-pn.y)*sz.y);
   float tube=lerp(1.0,smoothstep(0.0,1.1,dE),res);

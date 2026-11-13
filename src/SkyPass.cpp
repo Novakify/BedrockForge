@@ -2090,7 +2090,7 @@ float adaptQuality() {
         if (dt > 0.0f && dt < 0.25f) {
             ema = ema * 0.95f + dt * 0.05f;
             if (ema > 1.0f / 150.0f) q = std::max(0.0f, q - 0.01f);
-            else if (ema < 1.0f / 175.0f) q = std::min(1.0f, q + 0.002f);
+            else if (ema < 1.0f / 160.0f) q = std::min(1.0f, q + 0.002f);   // (was 175: at 160-170 FPS the quality sat at its floor for good)
         }
     }
     lastUs = now;
