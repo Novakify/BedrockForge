@@ -52,6 +52,14 @@ float4 main(PSIn i) : SV_Target {
     //      pearls, fireballs - held or dropped) is glass that follows the match: Future Aero at the start, neon by the
     //      endgame (ngItemGlass). Mob and player skins are small textures and stay as they are.
     [branch] if (tw <= 32 && th <= 32) lit = ngItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);
+    // glassy players: a thin glass rim on skins (64 / 128 px) - clean white-aqua at the start, cyan / magenta neon by
+    // the endgame (never on your own arm in first person)
+    [branch] if (tw >= 64 && tw <= 128 && th >= 64 && th <= 128) {
+        float  pk = smoothstep(0.30, 0.95, saturate(CS_PHASE * 0.5));
+        float  rimP = pow(1.0 - saturate(dot(n, V)), 3.0);
+        float3 rc = lerp(float3(0.85, 0.95, 1.00) * 0.30, lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(ViewPositionAndTime.w * 0.7 + wp.y * 2.0)) * 0.85, pk);
+        lit += rc * rimP * (1.0 - fp);
+    }
 #if defined(NG_DBG_TEX)
     lit = tw >= 256 ? float3(4, 0, 4) : (tw >= 64 ? float3(0, 4, 4) : float3(4, 4, 0));
 #endif
