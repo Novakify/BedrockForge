@@ -440,11 +440,13 @@ float4 main(PSIn i) : SV_Target {
             lit += gl * bevel * (0.10 + 0.34 * lightSide) * ngOn * (1.0 - 0.5 * CS_NIGHT);
             // the glint: two crisp diagonal bars (a wide one and a hairline), sliding across the face as you move
             // (seen in game: a soft blob read as a smudge)
-            float  dg = (ngPc.x + ngPc.y) * 0.7071 + 0.55 + dot(ngVxy, float2(0.9, 0.9));
+            // (each block its own: where the bars sit, which way they lean, some blocks none - a wall of blocks must not look stamped)
+            float  gFlip = bh > 0.5 ? 1.0 : -1.0;
+            float  dg = (ngPc.x * gFlip + ngPc.y) * 0.7071 + (frac(bh * 7.3) - 0.5) * 1.3 + dot(ngVxy, float2(0.9 * gFlip, 0.9));
             float  aw2 = max(fwidth(dg), 0.004);
             float  bar = smoothstep(-aw2, aw2, 0.085 - abs(dg)) + 0.8 * smoothstep(-aw2, aw2, 0.022 - abs(dg - 0.17));
             float  inF = smoothstep(0.10, 0.14, e);                              // inside the bevel only
-            lit += gl * bar * inF * 0.20 * ngOn * (1.0 - 0.5 * CS_NIGHT);
+            lit += gl * bar * inF * 0.20 * step(0.25, frac(bh * 3.1)) * ngOn * (1.0 - 0.5 * CS_NIGHT);
         }
     }
 #endif
@@ -564,8 +566,8 @@ float4 main(PSIn i) : SV_Target {
         bool  keep = team || mid == MAT_LAMP || mid == MAT_FLOWER || mid == MAT_GEM || blk > 0.55;   // (anything giving light keeps its colour: seen in game, glowstone went lavender)
         [branch] if (NK > 0.001) {
             float  L = csLuma(lit);
-            lit = lit * (1.0 + 0.9 * NK) + alb * float3(0.08, 0.09, 0.15) * NK * skyK;   // the city lights the islands: its night is not dark (seen in game: blocks sank into one dark mass)
-            if (!keep) lit = lerp(lit, L * float3(0.78, 0.84, 1.04) + lit * 0.30, 0.32 * NK);   // cool steel (seen in game: a stronger shift made every block the same lavender)
+            lit = lit * (1.0 + 0.3 * NK) + alb * float3(0.07, 0.07, 0.09) * NK * skyK;   // the city lights the islands: its night is not dark (seen in game: blocks sank into one dark mass)
+            if (!keep) lit = lerp(lit, L * float3(0.88, 0.90, 1.00) + lit * 0.30, 0.25 * NK);   // cool steel (seen in game: a stronger shift made every block the same lavender)
             if (team) lit += alb * 0.16 * NK;                                                // team colours hold up in the dark: you must read them
             float  azS = atan2(n.z, n.x);
             float3 street = lerp(float3(1.00, 0.10, 0.62), float3(0.08, 0.72, 1.00), 0.5 + 0.5 * sin(azS * 1.0 + 2.0));
