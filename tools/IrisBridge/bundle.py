@@ -20,10 +20,14 @@ STAGE_EXT = {"vert": "vsh", "frag": "fsh", "geom": "gsh", "comp": "csh"}
 
 def reflect(dxil: Path) -> dict:
     out = subprocess.run([DXC, "-dumpbin", str(dxil)], capture_output=True, text=True).stdout
-    cb, res, outs, ins, sec = [], [], [], [], None
+    cb, res, outs, ins, sec, cbuf = [], [], [], [], None, None
     for line in out.splitlines():
+        m = re.match(r";\s+cbuffer\s+(\S+)\s*$", line)
+        if m: cbuf = m[1]; continue
         m = re.match(r";\s+(?:column_major\s+|row_major\s+)?(\w+)\s+(\w+)(\[\d+\])?;\s*; Offset:\s*(\d+)", line)
-        if m: cb.append({"name": m[2], "type": m[1] + (m[3] or ""), "offset": int(m[4])}); continue
+        if m:  # only $Globals members: other cbuffers (the game's BfGameVS at b8) are bound by RF, not written
+            if cbuf == "$Globals": cb.append({"name": m[2], "type": m[1] + (m[3] or ""), "offset": int(m[4])})
+            continue
         m = re.match(r";\s+\} \$Globals;\s+; Offset:\s+\d+ Size:\s+(\d+)", line)
         if m: cb_size = int(m[1])
         m = re.match(r";\s+(\S+)\s+(cbuffer|sampler|texture|UAV)\s+\S+\s+\S+\s+\S+\s+([a-z]+)(\d+)", line)
