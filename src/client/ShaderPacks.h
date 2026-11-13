@@ -20,6 +20,7 @@ void uninstall();
 /// Folder names under mods/BedrockForgeCore/shaderpacks (sorted).
 std::vector<std::string> listPacks();
 std::string              activePack(); // "off" when none
+std::string              noteWorldJoined();   // a world was joined: its block look is the active pack (returns a log line)
 int                      loadedAtmosphere(); // the block shader the game really loaded: 0 Cloud Sea, 1 Novak Glass, 2 other, -1 not yet
 /// Switch the active pack (writes config/shaderpack.txt). Takes effect for every material opened afterwards.
 bool setActivePack(std::string const& name);

@@ -70,6 +70,8 @@ std::atomic<bool> gYield{false}; // Renderer Foundation is loaded: it owns mater
 // (0 Cloud Sea, 1 Novak Glass, 2 another pack / vanilla, -1 not seen yet). Renderer Foundation's sky follows it, so
 // sky and blocks never show two atmospheres at once (the game takes new block shaders only when it loads a world).
 std::atomic<int> gLoadedAtmos{-1};
+std::atomic<long> gRcOpens{0};   // RenderChunk.material.bin opens seen (when does the game really take block shaders?)
+int atmosOf(std::string const& pack) { return pack == "NovakGlass" ? 1 : pack == "CloudSea" ? 0 : 2; }
 
 bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) {
     if (gYield.load(std::memory_order_relaxed)) return false;
@@ -92,9 +94,7 @@ bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) 
     if (!hit && !st->packDir.empty())
         hit = tryCandidate(st->packDir + L"\\renderer\\materials\\" + name, out, outLen)
            || tryCandidate(st->packDir + L"\\" + name, out, outLen);
-    if (endsWithI(name, L"RenderChunk.material.bin"))
-        gLoadedAtmos = !hit || fromRp ? 2 : endsWithI(st->packDir, L"\\NovakGlass") || endsWithI(st->packDir, L"/NovakGlass") ? 1
-                     : endsWithI(st->packDir, L"\\CloudSea") || endsWithI(st->packDir, L"/CloudSea") ? 0 : 2;
+    if (endsWithI(name, L"RenderChunk.material.bin")) ++gRcOpens;
     if (!hit) return false;
     ++gRedirects;
     if (fromRp) ++gRpRedirects;
@@ -120,6 +120,12 @@ std::vector<std::string> listPacks() {
 
 std::string activePack() { return gActiveName; }
 int         loadedAtmosphere() { return gLoadedAtmos.load(); }
+std::string noteWorldJoined() {
+    // the game takes its block shaders when it loads (and, as far as seen, when it loads a world): the pack active now
+    // is the one the world shows
+    gLoadedAtmos = atmosOf(gActiveName);
+    return gActiveName + " (block shader opens so far: " + std::to_string(gRcOpens.load()) + ")";
+}
 
 // E-024: with Renderer Foundation loaded, BF stopped redirecting and RF's own loader served nothing (vanilla terrain on
 // Fancy). BF's loader is the proven one, so it keeps serving; it only yields if config/yield_to_rf exists.
@@ -140,6 +146,7 @@ bool setActivePack(std::string const& name) {
     std::string use = name;
     if (use.empty() || use == "off" || !fs::is_directory(gPacksDir / use, ec)) use = "off";
     gActiveName = use;
+    if (gLoadedAtmos.load() < 0) gLoadedAtmos = atmosOf(use);   // the first pack (at startup) is the one the game loads
     std::ofstream{gCfg} << use << "\n";
     if (!gCfg.empty()) std::ofstream{gCfg.parent_path() / "shaderpack.running"} << use << "\n";
     auto st = gState.load();
