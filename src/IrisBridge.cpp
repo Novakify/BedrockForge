@@ -918,11 +918,31 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
         for (auto const& [i, v] : d.cbvs) if (int(i) == ri.vsCbv) cbv = v;
         for (auto const& [i, v] : d.tables) if (int(i) == ri.psTable) table = v;
         if (!cbv) { ++noCbv; continue; }
+        // block atlas: the biggest texture among the draw's tables (RenderChunk also binds the 16x16 lightmap, seasons map...)
         UINT atlas = Gpu::kCpuWhite;
-        if (table) {
-            size_t cpu = 0; unsigned inc = 0;
-            if (rf::uicapture::gpuDescToCpu(table, cpu, inc)) atlas = atlasStaging(cpu + size_t(ri.psOffset) * inc);
+        {
+            static std::unordered_map<unsigned long long, UINT> byTables; // first-table handle -> staging slot
+            unsigned long long key = 0;
+            for (auto const& [i, v] : d.tables) key = key * 1315423911ull + v;
+            if (auto it = byTables.find(key); it != byTables.end()) atlas = it->second;
+            else {
+                size_t best = 0, bestArea = 0;
+                for (auto const& [i, v] : d.tables) {
+                    size_t cpu = 0; unsigned inc = 0;
+                    if (!rf::uicapture::gpuDescToCpu(v, cpu, inc)) continue;
+                    for (int k = 0; k < 4; ++k) {
+                        rf::glassarmor::SrvView sv;
+                        if (!rf::glassarmor::srvView(cpu + size_t(k) * inc, sv) || !sv.res) continue;
+                        size_t const area = size_t(sv.w) * sv.h;
+                        if (area > bestArea) { bestArea = area; best = cpu + size_t(k) * inc; }
+                    }
+                }
+                if (best) atlas = atlasStaging(best);
+                if (byTables.size() > 4096) byTables.clear();
+                byTables[key] = atlas;
+            }
         }
+        (void)table;
         auto tf = tableFor.find(atlas);
         if (tf == tableFor.end()) {
             if (srvNext + kSlots > (ring + 1) * kSrvPerFrame) break;
