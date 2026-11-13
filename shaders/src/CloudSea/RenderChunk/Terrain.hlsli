@@ -433,11 +433,14 @@ float4 main(PSIn i) : SV_Target {
             float3 Tl = float3(0, 0, 0);
             float2 sunF = normalize(float2(dot(CS_SUN, cross(n, float3(0.0, 1.0, 0.0)) + float3(1e-3, 0, 0)), CS_SUN.y) + 1e-3);
             float  lightSide = saturate(dot(normalize(ngPc + 1e-3), sunF) * 0.5 + 0.5);
-            float  bevel = smoothstep(0.14, 0.03, e);
+            // (seen on a real Hive map: a wide bright bevel on every block turned whole builds into a white wire grid -
+            //  the rim is a hairline now, and it steps back with distance so only the blocks near you carry it)
+            float  ngFar = lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));
+            float  bevel = smoothstep(0.07, 0.02, e) * ngFar;
             float  inner = smoothstep(0.10, 0.20, e) * smoothstep(0.42, 0.20, e);
             float3 gl = lerp(float3(0.85, 0.93, 1.0), CS_SUNC, 0.4) * lerp(0.25, 1.0, skyK);
-            lit *= 1.0 - 0.16 * inner * ngOn;
-            lit += gl * bevel * (0.10 + 0.34 * lightSide) * ngOn * (1.0 - 0.5 * CS_NIGHT);
+            lit *= 1.0 - 0.10 * inner * ngOn;
+            lit += gl * bevel * (0.04 + 0.20 * lightSide) * ngOn * (1.0 - 0.5 * CS_NIGHT);
             // the glint: two crisp diagonal bars (a wide one and a hairline), sliding across the face as you move
             // (seen in game: a soft blob read as a smudge)
             // (each block its own: where the bars sit, which way they lean, some blocks none - a wall of blocks must not look stamped)
@@ -448,8 +451,8 @@ float4 main(PSIn i) : SV_Target {
             float  dg = (ngPc.x * gFlip + ngPc.y) * 0.7071 + (frac(gh * 7.3) - 0.5) * 1.3 + dot(ngVxy, float2(0.9 * gFlip, 0.9));
             float  aw2 = max(fwidth(dg), 0.004);
             float  bar = smoothstep(-aw2, aw2, 0.085 - abs(dg)) + 0.8 * smoothstep(-aw2, aw2, 0.022 - abs(dg - 0.17));
-            float  inF = smoothstep(0.10, 0.14, e);                              // inside the bevel only
-            lit += gl * bar * inF * 0.20 * step(0.25, frac(gh * 3.1)) * ngOn * (1.0 - 0.5 * CS_NIGHT);
+            float  inF = smoothstep(0.07, 0.11, e);                              // inside the bevel only
+            lit += gl * bar * inF * 0.14 * step(0.25, frac(gh * 3.1)) * ngOn * (1.0 - 0.5 * CS_NIGHT);
         }
     }
 #endif
@@ -582,7 +585,7 @@ float4 main(PSIn i) : SV_Target {
             {   // the rim of every block's glass carries a neon line that glows into the glass (the armor's outline)
                 float2 ap = abs(ngPc); float e = 1.0 - max(ap.x, ap.y);
                 float3 neon = team ? alb / max(csMax3(alb), 1e-3) : street;
-                lit += neon * (smoothstep(0.10, 0.0, e) * 0.85 + exp(-e * 7.0) * 0.16) * NK * ngOn;
+                lit += neon * (smoothstep(0.05, 0.0, e) * 0.50 + exp(-e * 9.0) * 0.08) * NK * ngOn * lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));   // (a hairline, near you: see the bevel)
             }
 #endif
             [branch] if (n.y > 0.5) {                                                               // rain-slick tops
