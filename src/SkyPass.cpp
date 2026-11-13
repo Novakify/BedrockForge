@@ -2230,21 +2230,13 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // The fallback anchor: a depth clear of the world's depth buffer that comes AFTER this frame's sky was drawn into it
 // (the game clears once at the start of the frame, and again after the world - before the hand). If the cloud draw
 // (and so the pass) has not come by then, the pass runs right before that clear, while the world's depth is still there.
-// Looking steeply down the game does not draw its sky dome either (seen on a Hive map: every other frame showed the
-// plain clear colour and no World FX at all). The world's depth buffer is cleared twice a frame - at the start and
-// after the world - so the clears are counted: a clear after a sky draw is the post-world one, and that fixes which
-// count is which. With no sky, the clear on the same side of the count is still the post-world one.
-std::atomic<uint32_t> gClearN{0}, gPostParity{0};
-std::atomic<int64_t>  gParityAt{-100000};
+// (A try that counted the depth clears to cover frames with no sky draw at all fired the pass several times a frame on
+//  a Hive map - 70 FPS and a flash with every step. Back to: a clear after this frame's sky draw, once.)
 bool fxFallbackWanted(size_t dsv) {
     if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
-    bool const     sky  = gSkySinceClear.exchange(false);
-    bool const     done = gFxSinceClear.exchange(false);
-    uint32_t const n    = gClearN.fetch_add(1);
-    int64_t const  now  = steadyMs();
-    if (sky) { gPostParity = n & 1u; gParityAt = now; return !done; }
-    if (done) { gPostParity = n & 1u; gParityAt = now; return false; }   // the pass ran since the last clear: this one is post-world too
-    return (n & 1u) == gPostParity.load() && now - gParityAt.load() < 3000;
+    bool const sky  = gSkySinceClear.exchange(false);
+    bool const done = gFxSinceClear.exchange(false);
+    return sky && !done;
 }
 bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     size_t rt0 = 0, dsv = 0;

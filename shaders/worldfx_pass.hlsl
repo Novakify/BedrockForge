@@ -1577,7 +1577,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // FPS line changed the step count every few frames and the shadows flashed while standing still). The full
     // schedule is fixed; lower quality walks every other step of it.
     int   shStride = 1;
-    if (NG_IS) { nSh = z < 25.0 ? 20 : (z < 60.0 ? 12 : 8); shStride = c9.z < 0.5 ? 2 : 1; }
+    if (NG_IS) nSh = z < 25.0 ? 12 : (z < 60.0 ? 8 : 5);   // (cheap and fixed: 70 FPS seen with the full schedule)
     float tMax = z < 25.0 ? 30.0 : (z < 60.0 ? 26.0 : 18.0);   // the low sun throws long shadows: ~1 block steps
     [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 140.0) {
         [loop] for (int k = 0; k < nSh; k += shStride) {
@@ -1600,7 +1600,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float3 tA = normalize(abs(n.y) > 0.5 ? cross(n, float3(1, 0, 0)) : cross(n, float3(0, 1, 0)));
     float3 tB = cross(n, tA);
     int   nAo = (c6.x <= 0.0 || c9.z < 0.2) ? 0 : (z < 30.0 ? (c9.z > 0.5 ? 6 : 4) : (z < 70.0 ? 3 : 0));
-    if (NG_IS) nAo = c6.x <= 0.0 ? 0 : (z < 30.0 ? 5 : (z < 70.0 ? 3 : 0));   // (fixed: see the shadow steps)
+    if (NG_IS) nAo = c6.x <= 0.0 ? 0 : (z < 30.0 ? 4 : (z < 70.0 ? 2 : 0));   // (fixed: see the shadow steps)
     [loop] for (int k2 = 0; k2 < nAo; k2++) {
         float a = (float(k2) + j) * 2.39996;
         float r = sqrt((float(k2) + j2) / float(nAo));
