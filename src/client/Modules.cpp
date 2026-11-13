@@ -221,7 +221,7 @@ void noteScreen(std::string const& name) {
 void write() {
     std::ostringstream out; // [BF] built here, written off the game thread (asyncfile)
     out << "light hook " << lightHook.load() << " (brightened " << lightBrightened.load() << ", image " << lightImage.load() << ")\n"
-        << "overlay hook " << overlayHook.load() << "\nbob hook " << bobHook.load() << "\ntime hook " << timeHook.load()
+        << "overlay hook " << overlayHook.load() << "\nbob hook " << bobHook.load() << "\ntime hook " << timeHook.load() << " (match time: render " << timeRender.load() << ", client level " << timeClient.load() << ", refused " << timeOther.load() << ")"
         << "\nfov hook " << fovHook.load() << "\nattack hook " << attackHook.load() << "\nchat hook " << chatHook.load()
         << "\nmenu opens " << menuOpens.load() << "\ntessellator light " << tessLight.load() << " (relights " << fbRelights.load()
         << ")\npack shaders cached " << packShaders.load() << "\nmodules on:";

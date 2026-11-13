@@ -25,6 +25,7 @@
 #include "mc/deps/core/image/Image.h"
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/actor/Actor.h"
+#include "mc/world/level/ILevel.h"
 #include "mc/world/level/dimension/Dimension.h"
 #include "mc/client/gui/screens/ScreenContext.h"
 #include "mc/deps/minecraft_renderer/constantbuffers/PerFrameConstants.h"
@@ -183,7 +184,14 @@ LL_TYPE_INSTANCE_HOOK(BfTimeHook, ll::memory::HookPriority::Normal, Dimension, &
     ++diag::timeHook;
     if (Registry::get().on("time_changer") && std::this_thread::get_id() == gRenderThread.load())
         return Registry::get().find("time_changer")->num("time", 0.0f);
-    if (float t; std::this_thread::get_id() == gRenderThread.load() && bedrock_forge::client::matchfx::timeOverride(t)) return t;
+    if (float t; bedrock_forge::client::matchfx::timeOverride(t)) {
+        // On a server (the Hive) the game works out the sky's darkness in its own tick, off the render thread: seen in
+        // a real match, the blocks' daylight followed the server's clock while the sky followed the match. A
+        // client-side level has no integrated server sharing it, so every thread may get the match's time there.
+        if (std::this_thread::get_id() == gRenderThread.load()) { ++diag::timeRender; return t; }
+        if (this->mLevel.isClientSide()) { ++diag::timeClient; return t; }
+        ++diag::timeOther;
+    }
     return origin(a);
 }
 
