@@ -1037,14 +1037,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     if (nowMs() - gConsumerMs.load() <= 500) {
         auto& lv = lp->getLevel();
         if (lv.isClientSide()) {
-            // vanilla: timeOfDay = f + ((1 - (cos(f*pi) + 1) / 2) - f) / 3 with f = frac(time / 24000 - 0.25); solved for f
-            float lo = 0.0f, hi = 1.0f;
-            for (int i = 0; i < 20; ++i) {
-                float const f = 0.5f * (lo + hi);
-                float const g = f + ((1.0f - (std::cos(f * 3.14159265f) + 1.0f) * 0.5f) - f) / 3.0f;
-                (g < gFx.timeOfDay ? lo : hi) = f;
-            }
-            int const tick = int((0.5f * (lo + hi) + 0.25f) * 24000.0f) % 24000;
+            // the ticks the shaders' daylight scale was measured at (CloudSea/common.hlsli csPhaseFromDaylight):
+            // 10920 golden hour, 12480 dusk, 14400 night
+            int const tick = int(6000.0f + gFx.timeOfDay * 24000.0f) % 24000;
             if (lv.getTime() != tick) lv.setTime(tick);
         }
     }
