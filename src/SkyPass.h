@@ -45,7 +45,8 @@ void learnMaterialFile(std::filesystem::path const& file, std::wstring_view file
 /// A game pipeline with a sky pixel shader was created (desc = the game's, root signature kept for our pipelines).
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& desc);
 int  kindOf(ID3D12PipelineState* pso); // any thread
-void noteTerrainDraw();                // a block draw went into the world (lock-free)
+void noteTerrainDraw();
+float novakMatchK();   // Novak Glass on: how far the match is (0 the start .. 1 the endgame, from the living sky); -1 off                // a block draw went into the world (lock-free)
 bool wanted();                         // a LyricsFlow sky is active: UiCapture tracks list state + calls us
 bool wantRoot();                       // "My picture" is on: also track the graphics root state
 bool hideClouds();

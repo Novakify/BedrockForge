@@ -336,12 +336,22 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
         }
     }
 #endif
+    // Novak Glass: the armor follows the match like the weapons (pad3: 0 the start .. 1 the endgame; pad4: Novak on).
+    // Every material: at the start clear Future Aero glass - the body a pale aqua-white with a breath of the material's
+    // colour, the outline a soft clean white-aqua; by the endgame neon - the material's colour turned up and glowing.
+    float ngK = pad4 > 0.5 ? smoothstep(0.30, 0.95, pad3) : -1.0;
+    if (ngK >= 0.0) baseTint = lerp(lerp(float3(0.86, 0.95, 1.00), baseTint, 0.35), saturate(baseTint * 1.25), ngK);
     float3 edgeB = lerp(baseEdge, acc, cMix * 0.85 * (1.0 - 0.6 * dyeK)); // team colour stays readable over the cover
     edgeB = lerp(edgeB, wordCol * 1.2, saturate(wordColK * boot) * 0.85); // colour words flash the outline
     // beat-pulse: brighter on every kick, a big flare on the drop
     float kick  = mus * beat * beatK;
     float flare = drop * boot * react;
     float3 edgeC = edgeB * (1.0 + ench * 1.2 + kick * 0.9 + flare * 1.4 + ignite * 1.2);
+    if (ngK >= 0.0) {
+        float3 aeroE = lerp(float3(0.90, 0.97, 1.00), edgeC, 0.35) * 0.80;
+        float3 neonE = saturate(edgeC * 1.35) * (1.45 + 0.30 * sin(time * 2.2));
+        edgeC = lerp(aeroE, neonE, ngK);
+    }
     float3 palC  = lerp(float3(1, 1, 1), pal, saturate(palAmount * mus));
     palC = lerp(palC, skyC, saturate(skyK * boot * react) * 0.75); // the rim reflects the LyricsForge sky above you
 
@@ -428,7 +438,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     c += lerp(edgeC, edgeC * palC, 0.5) * (0.24 + 0.30 * ench + 0.25 * kick + 0.4 * flare) * edgeLv * lerp(0.45, 1.0, saturate(sat * 1.5)) * pow(saturate(1.0 + d / max(bevel, 1.0)), 3.0);
     c += edgeC * 0.015 * edgeLv;
     float aa = max(fwidth(dIn), 1e-4) * 1.1;
-    float lw = 0.19 + 0.07 * kick + 0.10 * min(flare, 1.0);  // a touch thicker on the kick, thicker still on the drop
+    float lw = 0.19 + 0.07 * kick + 0.10 * min(flare, 1.0) + 0.06 * max(ngK, 0.0);  // a touch thicker on the kick, thicker still on the drop (and at the Novak endgame)
     float ln = 1.0 - smoothstep(lw - aa, lw + aa, dIn);
     c = lerp(c, edgeC * 1.25, ln * saturate(edgeLv));
     return float4(saturate(c), 1.0);
