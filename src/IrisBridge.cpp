@@ -31,6 +31,7 @@
 #include "IrisShaders.h"
 #include "LyricsCamera.h"
 #include "WorldFx.h"
+#include "LLShim.h"
 
 namespace rf::iris {
 namespace {
@@ -215,7 +216,10 @@ struct FrameU {
     int    frameCounter = 0;
 } gU;
 
-void setStatus(std::string s) { gStatus = std::move(s); }
+void setStatus(std::string s) {
+    if (s != gStatus) ll_shim::info("[RF] IrisBridge: " + s);
+    gStatus = std::move(s);
+}
 
 std::vector<uint8_t> readFile(fs::path const& p) {
     std::ifstream in(p, std::ios::binary);
@@ -521,7 +525,13 @@ bool ensureTargets(ID3D12GraphicsCommandList* list, UINT w, UINT h, DXGI_FORMAT 
     gGpu.w = w; gGpu.h = h; gGpu.sceneFmt = sceneFmt;
     // pipelines (formats are known now)
     int ok = 0;
-    for (auto& pg : gGpu.passes) { pg.usable = false; pg.pso.Reset(); pg.root.Reset(); pg.error.clear(); ok += buildPass(pg, typedOf(sceneFmt)) ? 1 : 0; }
+    for (auto& pg : gGpu.passes) {
+        pg.usable = false; pg.pso.Reset(); pg.root.Reset(); pg.error.clear();
+        if (buildPass(pg, typedOf(sceneFmt))) ++ok;
+        else ll_shim::info("[RF] IrisBridge: pass " + pg.pass->program + " skipped: " + pg.error);
+    }
+    ll_shim::info("[RF] IrisBridge: " + std::to_string(ok) + "/" + std::to_string(gGpu.passes.size()) + " passes ready at " +
+                  std::to_string(w) + "x" + std::to_string(h));
     if (!buildImport(gGpu.ct[0][0].fmt)) { setStatus("import pipeline failed"); return false; }
     (void)list;
     return ok > 0;
@@ -654,9 +664,11 @@ D3D12_GPU_VIRTUAL_ADDRESS writeGlobals(Stage const& st, UINT64& cbOff, UINT ring
         std::string const& t = g.type;
         uint8_t* p = base + g.offset;
         bool const isInt = t.rfind("int", 0) == 0, isUint = t.rfind("uint", 0) == 0 || t.rfind("bool", 0) == 0;
-        if (t == "float4x4") { std::memcpy(p, v.data(), 64); continue; }
-        if (t == "float3x3") { for (int col = 0; col < 3; ++col) std::memcpy(p + col * 16, v.data() + col * 3, 12); continue; }
-        if (t == "float2x2") { for (int col = 0; col < 2; ++col) std::memcpy(p + col * 16, v.data() + col * 2, 8); continue; }
+        // SPIRV-Cross keeps GL's "M * v" as HLSL "mul(v, M)": the HLSL matrix is the GL one transposed, so each 16-byte
+        // register holds a GL ROW (v is GL column-major: v[c * n + r]).
+        if (t == "float4x4") { for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) std::memcpy(p + r * 16 + c * 4, &v[size_t(c * 4 + r)], 4); continue; }
+        if (t == "float3x3") { for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) std::memcpy(p + r * 16 + c * 4, &v[size_t(c * 3 + r)], 4); continue; }
+        if (t == "float2x2") { for (int r = 0; r < 2; ++r) for (int c = 0; c < 2; ++c) std::memcpy(p + r * 16 + c * 4, &v[size_t(c * 2 + r)], 4); continue; }
         int n = 1;
         if (!t.empty() && std::isdigit(static_cast<unsigned char>(t.back()))) n = t.back() - '0';
         for (int i = 0; i < n && i < 4; ++i) {
