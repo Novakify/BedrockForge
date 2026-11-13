@@ -1795,6 +1795,7 @@ static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
 }
 
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
+void followLoadedAtmosphere();
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldSky(list, st, calls);
     if (!st.nVb || !st.vb || !st.haveTopo) { ++gSkipped; setStage2("skipped a sky draw (list state not tracked yet)"); return false; }
@@ -2004,6 +2005,7 @@ bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 void noteHidden() { ++gHidden; }
 
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    followLoadedAtmosphere();
     GamePso g;
     {
         std::lock_guard l(gPsoMutex);
@@ -2489,8 +2491,40 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
 // One switch for the whole look: the Renderer Foundation side (sky, void, light, rim: the glass strength) and Bedrock
 // Forge's block shaders (its config/shaderpack.txt names the pack: BF picks the change up while the game runs; the
 // blocks follow when a world is next joined). Returns false if that pack is not installed (the RF side still switches).
+// Bedrock Forge says which block shader the game really loaded (it takes new ones only when a world loads); the sky
+// follows that, so the two never show different atmospheres (seen in game: Ctrl+F6 switched the sky at once and the
+// blocks kept the other look - both at once).
+using LoadedAtmos_t = int (*)();
+LoadedAtmos_t bfLoadedAtmos() {
+    static LoadedAtmos_t f = nullptr;
+    static int64_t       tried = -100000;
+    if (!f && steadyMs() - tried > 4000) {
+        tried = steadyMs();
+        if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll")) f = reinterpret_cast<LoadedAtmos_t>(reinterpret_cast<void*>(GetProcAddress(m, "BF_LoadedAtmosphere")));
+    }
+    return f;
+}
+std::atomic<int64_t> gAtmosNoteAt{-100000};
+std::atomic<int>     gAtmosWanted{-1};                        // Ctrl+F6 asked for this one (-1: none pending)
+std::atomic<int>     gAtmosNoteWhich{0}, gAtmosNoteKind{0};   // kind 0: switched now, 1: queued for the next world, 2: pack missing
+void followLoadedAtmosphere() {
+    static int64_t at = 0;
+    int64_t const  now = steadyMs();
+    if (now - at < 250) return;
+    at = now;
+    auto f = bfLoadedAtmos();
+    if (!f) return;
+    int const a = f();
+    if (a != 0 && a != 1) return;
+    bool const novak = gLook.glass > 0.0f;
+    if (novak == (a == 1)) return;
+    gLook.glass = a == 1 ? 1.0f : 0.0f;
+    saveWorldFxSettings();
+    if (gAtmosWanted.load() == a) gAtmosWanted = -1;
+    gAtmosNoteWhich = a, gAtmosNoteKind = 0, gAtmosNoteAt = now;
+}
 bool setAtmosphere(int which) {
-    gLook.glass = which == 1 ? (gLook.glass > 0.0f ? gLook.glass : 1.0f) : 0.0f;
+    if (!bfLoadedAtmos()) gLook.glass = which == 1 ? (gLook.glass > 0.0f ? gLook.glass : 1.0f) : 0.0f;   // no Bedrock Forge: the sky alone
     saveWorldFxSettings();
     if (gWfxConfig.empty()) return false;
     std::error_code ec;
@@ -2500,21 +2534,22 @@ bool setAtmosphere(int which) {
     std::ofstream(bf / "config" / "shaderpack.txt") << name << "\n";
     return true;
 }
-std::atomic<int64_t> gAtmosNoteAt{-100000};
-std::atomic<int>     gAtmosNoteWhich{0};
-std::atomic<bool>    gAtmosNotePack{true};
 void toggleAtmosphere() {
-    int const to = gLook.glass > 0.0f ? 0 : 1;
-    gAtmosNotePack  = setAtmosphere(to);
+    int const cur = gAtmosWanted.load() >= 0 ? gAtmosWanted.load() : (gLook.glass > 0.0f ? 1 : 0);
+    int const to  = 1 - cur;
+    bool const ok = setAtmosphere(to);
+    gAtmosWanted    = to;
     gAtmosNoteWhich = to;
+    gAtmosNoteKind  = !ok ? 2 : (bfLoadedAtmos() && (gLook.glass > 0.0f ? 1 : 0) != to ? 1 : 0);
     gAtmosNoteAt    = steadyMs();
 }
 bool atmosphereNote(std::string& text, float& alpha) {
     int64_t const age = steadyMs() - gAtmosNoteAt.load();
     if (age < 0 || age > 3500) return false;
     alpha = age < 3000 ? 1.0f : 1.0f - float(age - 3000) / 500.0f;
-    text  = std::string(gAtmosNoteWhich.load() ? "Novak Glass" : "Cloud Sea") +
-            (gAtmosNotePack.load() ? "" : "  -  (that block pack is not installed)");
+    int const k = gAtmosNoteKind.load();
+    text = std::string(gAtmosNoteWhich.load() ? "Novak Glass" : "Cloud Sea") +
+           (k == 1 ? "  -  next world you join (next game or lobby)" : k == 2 ? "  -  (that block pack is not installed)" : "");
     return true;
 }
 void saveWorldFxSettings() {
