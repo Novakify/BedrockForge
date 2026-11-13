@@ -35,6 +35,8 @@
 #include "mc/util/ThreadOwner.h"
 #include "mc/deps/core/image/Image.h"
 #include "mc/world/level/Level.h"
+#include "mc/world/level/Weather.h"
+#include "mc/world/level/dimension/Dimension.h"
 #include "mc/deps/core/math/Color.h"
 #include "mc/world/level/BlockPos.h"
 #include "mc/world/level/BlockSource.h"
@@ -1036,11 +1038,21 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     // on a client-side level (a server we joined): it is this player's picture, nothing is sent.
     if (nowMs() - gConsumerMs.load() <= 500) {
         auto& lv = lp->getLevel();
+        auto& dim = lp->getDimension();
+        Weather* w = dim.mWeather.get();
+        static int64_t lastClock = 0;
+        if (now - lastClock > 10000) {   // what the server's world is doing to the daylight (before it is set below)
+            lastClock = now;
+            note("daylight: clock {} (client level {}), rain {:.2f} lightning {:.2f}, sky darken {}", lv.getTime(), lv.isClientSide(),
+                 w ? float(w->mRainLevel) : -1.0f, w ? float(w->mLightningLevel) : -1.0f, int(reinterpret_cast<unsigned char const&>(dim.mSkyDarken)));
+        }
         if (lv.isClientSide()) {
             // the ticks the shaders' daylight scale was measured at (CloudSea/common.hlsli csPhaseFromDaylight):
             // 10920 golden hour, 12480 dusk, 14400 night
             int const tick = int(6000.0f + gFx.timeOfDay * 24000.0f) % 24000;
             if (lv.getTime() != tick) lv.setTime(tick);
+            // rain darkens the sky's light too (seen in Hive matches: the blocks sat in dusk light at noon)
+            if (w) w->mOldRainLevel = 0.0f, w->mRainLevel = 0.0f, w->mTargetRainLevel = 0.0f, w->mOldLightningLevel = 0.0f, w->mLightningLevel = 0.0f, w->mTargetLightningLevel = 0.0f;
         }
     }
 }
