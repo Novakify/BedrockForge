@@ -218,10 +218,14 @@ float4 main(PSIn i) : SV_Target {
             // green and blue swell by different amounts, so toward the rim its pixels split into colour. Whole texels
             // still: it stays pixel art.
             float2 pc = (q / S - 0.5) * 2.0;
-            float  r2 = saturate(dot(pc, pc) * 0.5);
-            float3 lens = lerp(float3(0.80, 0.84, 0.88), float3(1.04, 1.02, 1.00), r2 * r2) ;
+            // (seen in game: a 20% swell was invisible from fighting distance. Now ~1.5x at the heart of the face, a
+            //  square lens so the squeeze follows the block's rim, and the heart of the lens leans with your view - the
+            //  block's face visibly rolls under the glass as you move past it.)
+            float  rr = max(abs(pc.x), abs(pc.y));
+            float3 lens = lerp(float3(0.62, 0.66, 0.70), float3(1.03, 1.00, 0.97), pow(rr, 2.5));
             lens = lerp(float3(1, 1, 1), lens, nearN);
             ngPc = pc; ngVxy = vt.xy;
+            pc -= vt.xy * 0.22 * (1.0 - rr * rr) * nearN;
             float2 qR = floor((pc * lens.r * 0.5 + 0.5) * S + dirV * tanG.r) + 0.5, qG = floor((pc * lens.g * 0.5 + 0.5) * S + dirV * tanG.g) + 0.5, qB = floor((pc * lens.b * 0.5 + 0.5) * S + dirV * tanG.b) + 0.5;
             // the joint between two blocks is 2 texels on a 32x pack, 1 on a 16x one (a whole texel is the least there
             // is: there the core is set in on its low sides only). Seen in game: a 1/8-block joint read as bathroom grout.
@@ -434,9 +438,13 @@ float4 main(PSIn i) : SV_Target {
             float3 gl = lerp(float3(0.85, 0.93, 1.0), CS_SUNC, 0.4) * lerp(0.25, 1.0, skyK);
             lit *= 1.0 - 0.16 * inner * ngOn;
             lit += gl * bevel * (0.10 + 0.34 * lightSide) * ngOn * (1.0 - 0.5 * CS_NIGHT);
-            float2 hp = ngPc - (float2(-0.38, 0.42) - ngVxy * 0.9);             // the highlight leans away as you look across
-            float  hl = exp(-dot(hp * float2(1.0, 2.6), hp * float2(1.0, 2.6)) * 5.0);
-            lit += gl * hl * 0.30 * ngOn * (1.0 - 0.6 * CS_NIGHT);
+            // the glint: two crisp diagonal bars (a wide one and a hairline), sliding across the face as you move
+            // (seen in game: a soft blob read as a smudge)
+            float  dg = (ngPc.x + ngPc.y) * 0.7071 + 0.55 + dot(ngVxy, float2(0.9, 0.9));
+            float  aw2 = max(fwidth(dg), 0.004);
+            float  bar = smoothstep(-aw2, aw2, 0.085 - abs(dg)) + 0.8 * smoothstep(-aw2, aw2, 0.022 - abs(dg - 0.17));
+            float  inF = smoothstep(0.10, 0.14, e);                              // inside the bevel only
+            lit += gl * bar * inF * 0.20 * ngOn * (1.0 - 0.5 * CS_NIGHT);
         }
     }
 #endif
@@ -556,14 +564,15 @@ float4 main(PSIn i) : SV_Target {
         bool  keep = team || mid == MAT_LAMP || mid == MAT_FLOWER || mid == MAT_GEM || blk > 0.55;   // (anything giving light keeps its colour: seen in game, glowstone went lavender)
         [branch] if (NK > 0.001) {
             float  L = csLuma(lit);
-            if (!keep) lit = lerp(lit, L * float3(0.72, 0.78, 1.02) + lit * 0.30, 0.45 * NK);   // cool steel (seen in game: a stronger shift made every block the same lavender)
+            lit = lit * (1.0 + 0.9 * NK) + alb * float3(0.08, 0.09, 0.15) * NK * skyK;   // the city lights the islands: its night is not dark (seen in game: blocks sank into one dark mass)
+            if (!keep) lit = lerp(lit, L * float3(0.78, 0.84, 1.04) + lit * 0.30, 0.32 * NK);   // cool steel (seen in game: a stronger shift made every block the same lavender)
             if (team) lit += alb * 0.16 * NK;                                                // team colours hold up in the dark: you must read them
             float  azS = atan2(n.z, n.x);
             float3 street = lerp(float3(1.00, 0.10, 0.62), float3(0.08, 0.72, 1.00), 0.5 + 0.5 * sin(azS * 1.0 + 2.0));
             float  side = 1.0 - abs(n.y);
             float  Fs = pow(1.0 - saturate(dot(n, V)), 2.0);
             float3 albK = keep ? alb : lerp(alb, csLuma(alb).xxx, 0.6);
-            lit += street * (albK * 0.55 + 0.03) * side * (0.35 + 0.65 * Fs) * 0.55 * NK;      // street light on the sides
+            lit += street * (albK * 0.55 + 0.03) * side * (0.35 + 0.65 * Fs) * 1.0 * NK;      // street light on the sides
 #if defined(PASS_OPAQUE)
             {   // the rim of every block's glass carries a neon line that glows into the glass (the armor's outline)
                 float2 ap = abs(ngPc); float e = 1.0 - max(ap.x, ap.y);
@@ -578,7 +587,7 @@ float4 main(PSIn i) : SV_Target {
                 float  Fw = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, V)), 5.0);
                 float  wet = 0.55 + 0.45 * csVN(wp.xz * 0.9 + float2(CS_TIME * 0.05, 0.0));          // puddles: patchy
                 float  streak = 0.6 + 0.4 * csVN(float2(azR * 30.0, (1.0 - r.y) * 6.0));            // the lights drag into streaks
-                lit = lerp(lit, lit * 0.80, 0.30 * NK * wet * (keep ? 0.3 : 1.0));                    // wet = darker
+                lit = lerp(lit, lit * 0.88, 0.25 * NK * wet * (keep ? 0.3 : 1.0));                    // wet = darker
                 lit += cityC * Fw * streak * wet * 0.55 * NK * lerp(0.4, 1.0, skyK);
             }
         }
