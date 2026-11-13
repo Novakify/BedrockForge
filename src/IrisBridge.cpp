@@ -735,6 +735,9 @@ D3D12_GPU_VIRTUAL_ADDRESS writeGlobals(Stage const& st, UINT64& cbOff, UINT ring
     uint8_t* base = gGpu.cbMap[ring] + cbOff;
     std::memset(base, 0, size_t(size));
     for (auto const& g : st.globals) {
+        // older bundles listed the game's BfGameVS members (b8, "_<id>_bf_*") as $Globals: writing them zeroed the pack's
+        // matrices at the same offsets (the empty shadow map). They belong to the game's own cbuffer: never write them.
+        if (g.name.size() > 1 && g.name[0] == '_' && g.name.find("_bf_") != std::string::npos) continue;
         std::array<float, 16> v{};
         std::array<float, 16> const* found = nullptr;
         if (over) if (auto o = over->find(g.name); o != over->end()) found = &o->second; // per-pass values (terrain matrices...)
