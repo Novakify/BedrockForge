@@ -158,7 +158,10 @@ struct Settings {
     float farBlocks = 256.0f;       // render distance in blocks (Iris "far")
     bool  decodeGamma = true; // the game's colour is display gamma; packs expect linear light in colortex0
     float exposure = 1.0f;
+    bool  shadows = true;     // M3 shadow map
+    int   debugView = -1;     // >= 0: show colortex N (100 + k: shadowcolor k, 200: shadow depth, 201: gbuffer depth) instead of the pack's final
 } gSet;
+fs::file_time_type gSettingsTime{};
 std::mutex                    gMutex;   // everything below
 std::vector<std::string>      gPacks;   // folders under <mod>/irisbridge with a runtime.txt
 fs::path                      gRoot;
@@ -199,6 +202,7 @@ struct Gpu {
     std::map<std::string, std::vector<uint8_t>> blobs;
     ComPtr<ID3D12RootSignature>  importRoot;
     ComPtr<ID3D12PipelineState>  importPso;
+    ComPtr<ID3D12PipelineState>  debugPso;   // the import shader straight into the game's target (debug views)
     ComPtr<ID3D12DescriptorHeap> srvHeap;   // shader visible, kRing * kSrvPerFrame
     ComPtr<ID3D12DescriptorHeap> cpuHeap;   // staging SRVs (not shader visible)
     ComPtr<ID3D12DescriptorHeap> rtvHeap;
@@ -435,7 +439,10 @@ bool buildImport(DXGI_FORMAT ct0) {
     d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     d.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     d.SampleMask = UINT_MAX; d.SampleDesc.Count = 1; d.NumRenderTargets = 1; d.RTVFormats[0] = ct0;
-    return SUCCEEDED(gGpu.dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&gGpu.importPso)));
+    if (FAILED(gGpu.dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&gGpu.importPso)))) return false;
+    d.RTVFormats[0] = typedOf(gGpu.sceneFmt);
+    gGpu.dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&gGpu.debugPso));
+    return true;
 }
 
 // ---------------------------------------------------------------- device + bundle setup
@@ -606,6 +613,7 @@ bool ensureTargets(ID3D12GraphicsCommandList* list, UINT w, UINT h, DXGI_FORMAT 
     }
     ll_shim::info("[RF] IrisBridge: " + std::to_string(ok) + "/" + std::to_string(gGpu.passes.size()) + " passes ready at " +
                   std::to_string(w) + "x" + std::to_string(h));
+    gGpu.sceneFmt = sceneFmt;
     if (!buildImport(gGpu.ct[0][0].fmt)) { setStatus("import pipeline failed"); return false; }
     (void)list;
     return ok > 0;
@@ -978,7 +986,7 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
     };
     int total = 0;
     // ---- shadow map (M3)
-    if (gGpu.shadowProg.pass && gGpu.shadowRes && gGpu.shadowMap.r) {
+    if (gGpu.shadowProg.pass && gGpu.shadowRes && gGpu.shadowMap.r && gSet.shadows) {
         UniformMap over;
         auto const smv = gU.v["shadowModelView"];
         auto sp = gU.v["shadowProjection"];
@@ -1043,12 +1051,21 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
 } // namespace
 
 // ---------------------------------------------------------------- public
+void readSettings();
 void init(fs::path const& modDir) {
     std::lock_guard l(gMutex);
     gRoot = modDir / "irisbridge";
     std::error_code ec;
     fs::create_directories(gRoot, ec);
     scanPacks();
+    readSettings();
+    gOn = gSet.on && !gPacks.empty();
+    if (gOn) rf::worldfx::setTargetsWanted(true);
+}
+
+void readSettings() {
+    std::error_code ec;
+    gSettingsTime = fs::last_write_time(gRoot / "settings.txt", ec);
     std::ifstream in(gRoot / "settings.txt");
     std::string k; float v;
     while (in >> k >> v) {
@@ -1060,9 +1077,10 @@ void init(fs::path const& modDir) {
         else if (k == "far") gSet.farBlocks = std::clamp(v, 32.f, 2048.f);
         else if (k == "gamma") gSet.decodeGamma = v != 0;
         else if (k == "exposure") gSet.exposure = std::clamp(v, 0.1f, 8.f);
+        else if (k == "terrain") gTerrainOn = v != 0;
+        else if (k == "shadows") gSet.shadows = v != 0;
+        else if (k == "debug") gSet.debugView = int(v);
     }
-    gOn = gSet.on && !gPacks.empty();
-    if (gOn) rf::worldfx::setTargetsWanted(true);
 }
 
 bool enabled() { return gOn.load(std::memory_order_relaxed); }
@@ -1152,6 +1170,11 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
         gGpu.noiseUp = true;
     } else if (gUploadKeep.size() && gGpu.frame > 8) gUploadKeep.clear();
 
+    if ((gGpu.frame & 63) == 0) { // live settings (remote testing): settings.txt changed -> re-read
+        std::error_code ec;
+        auto const t = fs::last_write_time(gRoot / "settings.txt", ec);
+        if (!ec && t != gSettingsTime) { readSettings(); ll_shim::info("[RF] IrisBridge: settings reloaded (debug view " + std::to_string(gSet.debugView) + ")"); }
+    }
     UINT const ring = UINT(gGpu.frame++ % kRing);
     UINT64 cbOff = 0;
     UINT   srvNext = ring * kSrvPerFrame;
@@ -1212,6 +1235,7 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     bool finalDone = false;
     for (auto& pg : gGpu.passes) {
         if (!pg.usable) continue;
+        if (gSet.debugView >= 0 && pg.pass->kind == "final") break; // debug view replaces final
         if (srvNext + kSlots > (ring + 1) * kSrvPerFrame) break;
         Pass const& p = *pg.pass;
         // descriptor table: every fixed slot (reads see the CURRENT buffers: a pass writing colortexN reads the old one)
@@ -1258,6 +1282,28 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
             gGpu.dev->CreateRenderTargetView(gGpu.ct[1][size_t(o)].r.Get(), nullptr, rtvAt(UINT(o * 2 + 1)));
         }
         if (toGame) { finalDone = true; break; }
+    }
+    if (gSet.debugView >= 0 && gGpu.debugPso) {
+        int const dv = gSet.debugView;
+        UINT src = Gpu::kCpuNull;
+        if (dv >= 0 && dv < kColortex && gGpu.used[size_t(dv)]) src = gGpu.cpuCt(dv, 0);
+        else if (dv == 100) src = Gpu::kCpuShadowColor;
+        else if (dv == 101) src = Gpu::kCpuShadowColor1;
+        else if (dv == 200) src = Gpu::kCpuShadowDepth;
+        else if (dv == 201) src = Gpu::kCpuDepth;
+        auto rtv = rtvAt(Gpu::kRtvGame);
+        list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        list->RSSetViewports(1, &vp); list->RSSetScissorRects(1, &sc);
+        gGpu.dev->CopyDescriptorsSimple(1, cpuRingAt(srvNext), cpuAt(src), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        calls.setRootSig(list, gGpu.importRoot.Get());
+        float const c0[4] = {0.0f, 1.0f, 0, 0};
+        calls.setConsts(list, 0, 4, c0, 0);
+        calls.setTable(list, 1, gpuAt(srvNext).ptr);
+        srvNext += 1;
+        calls.setPso(list, gGpu.debugPso.Get());
+        calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        calls.draw(list, 3, 1, 0, 0);
+        finalDone = true;
     }
     if (!finalDone && drawn) {
         // no final program: Iris shows colortex0 - copy it back through the import pipeline's inverse is not here yet
