@@ -1,0 +1,29 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "LyricsFlow Glass Hotbar",
+    "description": "See-through glass hotbar (LyricsFlow 2.1 port, personal build)",
+    "uuid": "c5ad7d5a-83bd-42a0-9465-bf4669ac1d74",
+    "version": [
+      1,
+      0,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "cdc03a57-c187-4b8d-b4a4-9eba4a1aed6e",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ]
+}
