@@ -66,6 +66,10 @@ bool tryCandidate(std::wstring const& cand, wchar_t* out, unsigned long outLen) 
 }
 
 std::atomic<bool> gYield{false}; // Renderer Foundation is loaded: it owns material redirection
+// which atmosphere's block shader the game really has: the pack that served the last RenderChunk.material.bin open
+// (0 Cloud Sea, 1 Novak Glass, 2 another pack / vanilla, -1 not seen yet). Renderer Foundation's sky follows it, so
+// sky and blocks never show two atmospheres at once (the game takes new block shaders only when it loads a world).
+std::atomic<int> gLoadedAtmos{-1};
 
 bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) {
     if (gYield.load(std::memory_order_relaxed)) return false;
@@ -88,6 +92,9 @@ bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) 
     if (!hit && !st->packDir.empty())
         hit = tryCandidate(st->packDir + L"\\renderer\\materials\\" + name, out, outLen)
            || tryCandidate(st->packDir + L"\\" + name, out, outLen);
+    if (endsWithI(name, L"RenderChunk.material.bin"))
+        gLoadedAtmos = !hit || fromRp ? 2 : endsWithI(st->packDir, L"\\NovakGlass") || endsWithI(st->packDir, L"/NovakGlass") ? 1
+                     : endsWithI(st->packDir, L"\\CloudSea") || endsWithI(st->packDir, L"/CloudSea") ? 0 : 2;
     if (!hit) return false;
     ++gRedirects;
     if (fromRp) ++gRpRedirects;
@@ -112,6 +119,7 @@ std::vector<std::string> listPacks() {
 }
 
 std::string activePack() { return gActiveName; }
+int         loadedAtmosphere() { return gLoadedAtmos.load(); }
 
 // E-024: with Renderer Foundation loaded, BF stopped redirecting and RF's own loader served nothing (vanilla terrain on
 // Fancy). BF's loader is the proven one, so it keeps serving; it only yields if config/yield_to_rf exists.
@@ -246,3 +254,5 @@ void uninstall() {
 }
 
 } // namespace bedrock_forge::client::shaderpacks
+
+extern "C" __declspec(dllexport) int BF_LoadedAtmosphere() { return bedrock_forge::client::shaderpacks::loadedAtmosphere(); }
