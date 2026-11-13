@@ -1040,6 +1040,8 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     //  list with the clock being set while the world was still arriving. No weather: it was never the cause.)
     static int64_t inWorldSince = 0;
     if (!last || now - last > 1000) inWorldSince = now;
+    static int64_t lastGateNote = 0;
+    if (now - lastGateNote > 10000) { lastGateNote = now; note("clock gate: consumer {} ms ago, in world {} ms", nowMs() - gConsumerMs.load(), now - inWorldSince); }
     if (nowMs() - gConsumerMs.load() <= 500 && now - inWorldSince > 5000) {
         auto& lv = lp->getLevel();
         if (lv.isClientSide()) {
@@ -1049,6 +1051,8 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             // (restored: the flash every step that was blamed on this was the footstep ripples; set only after 5 s in
             //  the world - a lobby load was bounced while the clock was set mid-load)
             if (lv.getTime() != tick) lv.setTime(tick);
+            static int64_t lastClockNote = 0;
+            if (now - lastClockNote > 10000) { lastClockNote = now; note("clock: level {} (target {}), time of day {:.3f}", lv.getTime(), tick, gFx.timeOfDay); }
         }
     }
 }
