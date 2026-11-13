@@ -4,10 +4,20 @@
 // iron as polished steel, gold as warm metal, netherite as dark metal with a violet sheen, handles stay matte.
 // The rig lives in view space on purpose: a held item is lit like a first-person view model, so it always reads.
 // @uniform u_view mat4
+#if defined(CS_NOVAK)
+// @uniform FogColor vec4
+// @uniform ViewPositionAndTime vec4
+#if defined(FLAG_MULTICOLORTINT_ON)
+cbuffer FragmentUniforms : register(b1) { float4 ChangeColor; float4 OverlayColor; float4 ColorBased; float4 MultiplicativeTintColor; column_major float4x4 u_view; float4 FogColor; float4 ViewPositionAndTime; };
+#else
+cbuffer FragmentUniforms : register(b1) { float4 ChangeColor; float4 OverlayColor; float4 ColorBased; column_major float4x4 u_view; float4 FogColor; float4 ViewPositionAndTime; };
+#endif
+#else
 #if defined(FLAG_MULTICOLORTINT_ON)
 cbuffer FragmentUniforms : register(b1) { float4 ChangeColor; float4 OverlayColor; float4 ColorBased; float4 MultiplicativeTintColor; column_major float4x4 u_view; };
 #else
 cbuffer FragmentUniforms : register(b1) { float4 ChangeColor; float4 OverlayColor; float4 ColorBased; column_major float4x4 u_view; };
+#endif
 #endif
 
 float3 envView(float3 r) { // what a polished surface "sees": violet above, the orange band, pink cloud below
@@ -77,26 +87,41 @@ float4 main(PSIn i) : SV_Target {
     // in the dark (caves, night) the item follows the game's light level instead of glowing
     col *= lerp(0.25, 1.0, lv);
 #if defined(CS_NOVAK)
-    // ---- Novak Glass: held items are cast glass, like the armor. A deep body in the item's own colour that shows a
-    //      bent picture of the sky through each facet (red, green and blue bend by different amounts, so the facets'
-    //      edges split into colour), a crisp reflection on top, and a neon line round the rim. Handles (dark wood)
-    //      stay a darker, smokier glass so the blade reads first.
+    // ---- Novak Glass: held items are glass that follows the match. At the start it is Future Aero glass - clear, airy,
+    //      a breath of the item's colour, a glossy top and a clean white rim, the bright bay-city day in it. As beds fall
+    //      it warms through rose and violet, and by the endgame it is neon glass that lights itself: deep saturated
+    //      colour, an inner glow that breathes, fine lines of light running up the blade, a cyan / magenta rim, and the
+    //      facets splitting the light harder. (The match is read from the game's fog, like the players' shader.)
     {
-        float  day  = smoothstep(0.35, 0.80, lv);                    // the light where you stand: day or night city
+        float  k    = saturate(csActorPhase(FogColor.rgb) * 0.5);      // 0 the match's start .. 1 its night / endgame
+        float  neonK = smoothstep(0.30, 0.95, k);
+        float  T    = ViewPositionAndTime.w;
         float3 hue  = alb / max(csMax3(alb), 1e-3);
-        float  grey = 1.0 - smoothstep(0.05, 0.18, chroma);          // steel, stone, netherite: no colour of their own
-        float3 body = lerp(hue, lerp(float3(0.78, 0.90, 1.00), float3(0.70, 0.62, 1.00), 1.0 - day), grey);
-        float  dens = lerp(0.62, 0.30, gem) * lerp(1.0, 1.35, nether);
-        float3 Tr = refract(-V, nv, 0.64), Tg = refract(-V, nv, 0.67), Tb = refract(-V, nv, 0.70);
-        float3 thru = float3(ngEnv(Tr, day).r, ngEnv(Tg, day).g, ngEnv(Tb, day).b);
-        float3 g = thru * lerp(float3(1, 1, 1), body, dens) * lerp(0.55, 1.0, luma) * 1.1;
-        float  Fg = 0.05 + 0.95 * pow(1.0 - saturate(dot(nv, V)), 4.0);
-        g = lerp(g, ngEnv(R, day), Fg * 0.55);
-        g += lerp(float3(1.0, 0.95, 0.9), float3(0.75, 0.85, 1.0), 1.0 - day) * pow(saturate(dot(nv, normalize(Lk + V))), 220.0) * 2.2;   // the hard glint
-        g *= lerp(0.45, 1.0, lv);
-        float3 neon = grey > 0.5 ? lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(vp.y * 9.0 + vp.x * 5.0)) : saturate(hue * 1.15);
-        g += neon * pow(1.0 - saturate(dot(nv, V)), 2.5) * lerp(0.35, 0.75, 1.0 - day);   // the rim line (it glows at night)
-        col = g;
+        float  grey = 1.0 - smoothstep(0.05, 0.18, chroma);           // steel, stone, netherite: no colour of their own
+        float  Fg   = 0.05 + 0.95 * pow(1.0 - saturate(dot(nv, V)), 4.0);
+        float  glint = pow(saturate(dot(nv, normalize(Lk + V))), 220.0);
+        // Future Aero: clear glass, the item's colour as a tint, the day sky bent through it
+        float  sp   = lerp(0.010, 0.030, neonK);                       // the colour split grows toward the end
+        float3 Tr = refract(-V, nv, 0.67 - sp), Tg = refract(-V, nv, 0.67), Tb = refract(-V, nv, 0.67 + sp);
+        float3 aeroTint = lerp(lerp(float3(0.86, 0.95, 1.00), hue, 0.30 + 0.35 * gem), float3(0.80, 0.92, 1.00), grey);
+        float3 thruA = float3(ngEnv(Tr, 1.0).r, ngEnv(Tg, 1.0).g, ngEnv(Tb, 1.0).b);
+        float3 aero = thruA * aeroTint * lerp(0.75, 1.05, luma);
+        aero = lerp(aero, ngEnv(reflect(-V, nv), 1.0), Fg * 0.50);
+        aero += float3(1.0, 1.0, 1.0) * smoothstep(0.25, 0.95, nv.y) * 0.18;                 // the glossy top (Aero's bubble shine)
+        aero += float3(1.0, 0.98, 0.95) * glint * 2.4;
+        aero += float3(0.90, 0.97, 1.00) * pow(1.0 - saturate(dot(nv, V)), 3.0) * 0.30;      // the clean white rim
+        aero = lerp(aero, aero * float3(1.05, 0.78, 0.88), smoothstep(0.15, 0.55, k) * (1.0 - neonK));   // dusk: rose / violet
+        aero *= lerp(0.45, 1.0, lv);
+        // neon: the colour turns up and lights itself
+        float3 nHue = grey > 0.5 ? lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.18, 0.80), 0.5 + 0.5 * sin(vp.y * 7.0 + T * 0.8)) : saturate(hue * hue * 1.3);
+        float3 thruN = float3(ngEnv(Tr, 0.0).r, ngEnv(Tg, 0.0).g, ngEnv(Tb, 0.0).b);
+        float  breathe = 0.80 + 0.20 * sin(T * 2.2 + vp.y * 3.0);
+        float  lines = pow(saturate(1.0 - abs(frac(vp.y * 26.0 - T * 1.6) - 0.5) * 2.0), 24.0); // fine light running up the blade
+        float3 neon = thruN * nHue * 0.6 + nHue * (0.42 * breathe + 0.55 * lines * (1.0 - grey * 0.4));
+        neon += lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(T * 0.9 + vp.x * 9.0)) * pow(1.0 - saturate(dot(nv, V)), 2.2) * 1.1;
+        neon += float3(1.0, 0.95, 1.0) * glint * 2.8;
+        neon += ngEnv(reflect(-V, nv), 0.0) * Fg * 0.6;
+        col = lerp(aero, neon, neonK);
     }
 #endif
     float3 o = csEnc(col);
