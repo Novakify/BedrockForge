@@ -442,6 +442,10 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     if (ngK >= 0.0) {   // Novak night / endgame: the glass lights itself (seen in game: very dim, hard to read at night)
         // the body stays see-through glass (no milky fill): the outline lights up and its light spills a little way in
         c += edgeC * 0.16 * ngK * pow(saturate(1.0 + d / max(bevel, 1.0)), 2.0);
+        // the whole piece glows softly in its material's colour (vivid hue, low strength): still clear glass you see
+        // through, a brighter tint - never the flat vanilla colour
+        float3 hueV = baseEdge / max(max(max(baseEdge.r, baseEdge.g), baseEdge.b), 1e-3);
+        c = lerp(c, c * lerp(float3(1, 1, 1), hueV, 0.35), 0.6 * ngK) + hueV * (0.07 + 0.05 * e) * ngK;
         edgeLv = max(edgeLv, ngK);                       // the outline at full strength however dark it is
     }
     c = lerp(c, edgeC * 1.25, ln * saturate(edgeLv));
