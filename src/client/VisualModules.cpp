@@ -180,19 +180,32 @@ LL_TYPE_INSTANCE_HOOK(BfBobHook, ll::memory::HookPriority::Normal, LevelRenderer
 }
 
 // Dimension is shared with the integrated server in single-player: only answer differently on the render thread.
-LL_TYPE_INSTANCE_HOOK(BfTimeHook, ll::memory::HookPriority::Normal, Dimension, &Dimension::getTimeOfDay, float, float a) {
+namespace {
+// The match's time of day for this Dimension, if it may have it.
+// On a server (the Hive) the game works out the sky's darkness in its own tick, off the render thread: seen in a real
+// match, the blocks' daylight followed the server's clock while the sky followed the match. A client-side level has no
+// integrated server sharing it, so every thread may get the match's time there.
+bool matchTime(Dimension const& d, float& t) {
     ++diag::timeHook;
-    if (Registry::get().on("time_changer") && std::this_thread::get_id() == gRenderThread.load())
-        return Registry::get().find("time_changer")->num("time", 0.0f);
-    if (float t; bedrock_forge::client::matchfx::timeOverride(t)) {
-        // On a server (the Hive) the game works out the sky's darkness in its own tick, off the render thread: seen in
-        // a real match, the blocks' daylight followed the server's clock while the sky followed the match. A
-        // client-side level has no integrated server sharing it, so every thread may get the match's time there.
-        if (std::this_thread::get_id() == gRenderThread.load()) { ++diag::timeRender; return t; }
-        if (this->mLevel.isClientSide()) { ++diag::timeClient; return t; }
-        ++diag::timeOther;
+    if (Registry::get().on("time_changer") && std::this_thread::get_id() == gRenderThread.load()) {
+        t = Registry::get().find("time_changer")->num("time", 0.0f);
+        return true;
     }
+    if (!bedrock_forge::client::matchfx::timeOverride(t)) return false;
+    if (std::this_thread::get_id() == gRenderThread.load()) { ++diag::timeRender; return true; }
+    if (d.mLevel.isClientSide()) { ++diag::timeClient; return true; }
+    ++diag::timeOther;
+    return false;
+}
+} // namespace
+LL_TYPE_INSTANCE_HOOK(BfTimeHook, ll::memory::HookPriority::Normal, Dimension, &Dimension::getTimeOfDay, float, float a) {
+    if (float t; matchTime(*this, t)) return t;
     return origin(a);
+}
+// (seen in a real match: the one-argument form above is never called in 1.26.51 - the game goes through this one)
+LL_TYPE_INSTANCE_HOOK(BfTimeHook2, ll::memory::HookPriority::Normal, Dimension, &Dimension::$getTimeOfDay, float, int time, float a) {
+    if (float t; matchTime(*this, t)) return t;
+    return origin(time, a);
 }
 
 LL_TYPE_INSTANCE_HOOK(BfLightImageHook, ll::memory::HookPriority::Normal, BaseLightTextureImageBuilder,
@@ -295,6 +308,7 @@ void installVisualHooks() {
     BfHurtCamHook::hook();
     BfBobHook::hook();
     BfTimeHook::hook();
+    BfTimeHook2::hook();
 }
 void uninstallVisualHooks() {
     BfViewDiagHook::unhook();
@@ -308,6 +322,7 @@ void uninstallVisualHooks() {
     BfHurtCamHook::unhook();
     BfBobHook::unhook();
     BfTimeHook::unhook();
+    BfTimeHook2::unhook();
 }
 
 } // namespace bedrock_forge::client
