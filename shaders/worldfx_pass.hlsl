@@ -1333,7 +1333,31 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
     }
     return o;
 }
+// Novak Glass: the match effects were made for the Cloud Sea's sunset - embers, gold, amber. In the neon city their
+// warm light is recoloured as it lands: orange turns hot magenta, gold electric cyan, with the same strength. Only the
+// warm band (hue ~10..50 degrees) moves, so team colours (red, blue, green, yellow, aqua, pink, white) stay exact,
+// and white stays white (glass). Darkening effects are left as they are.
+float3 ngNeonWarm(float3 d) {
+    float mx = max(d.r, max(d.g, d.b)), mn = min(d.r, min(d.g, d.b));
+    if (mx <= 1e-5 || !(d.r >= d.g && d.g >= d.b)) return d;
+    float sat = (mx - mn) / mx;
+    float h   = 60.0 * (d.g - d.b) / max(d.r - d.b, 1e-5);
+    float w   = smoothstep(8.0, 16.0, h) * (1.0 - smoothstep(46.0, 53.0, h)) * smoothstep(0.15, 0.40, sat);
+    float3 neon = lerp(float3(1.00, 0.22, 0.78), float3(0.15, 0.88, 1.00), saturate((h - 16.0) / 28.0));
+    float  L = dot(d, float3(0.2126, 0.7152, 0.0722));
+    return lerp(d, neon * (L / dot(neon, float3(0.2126, 0.7152, 0.0722))), w);
+}
+float3 ngNeonDelta(float3 before, float3 after) {   // linear light
+    float3 dd = after - before;
+    return before + ngNeonWarm(max(dd, 0.0)) + min(dd, 0.0);
+}
+float3 matchOverRaw(float3 o, float3 rd, float sceneT);
 float3 matchOver(float3 o, float3 rd, float sceneT) {
+    float3 r = matchOverRaw(o, rd, sceneT);
+    [branch] if (NG_IS) r = pow(ngNeonDelta(pow(max(o, 0.0), 2.2), pow(max(r, 0.0), 2.2)), 1.0 / 2.2);
+    return r;
+}
+float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
         if (m2.z > 0.5) {
             float3 halo = 0.0;
@@ -1719,12 +1743,14 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         }
     }
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
+    float3 linFx0 = lin;   // (Novak: the effects below are recoloured as they land - team light above stays exact)
     [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
     // (killGlow is gone: the death scenes light their own ground)
     [branch] if (m1.z > 0.5) lin = hitOn(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = genPulse(CAM + P, lin, n);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
+    [branch] if (NG_IS) lin = ngNeonDelta(linFx0, lin);
 #if NG_RIM
     [branch] if (c3.z > 0.0 && z < 90.0) lin = ngRim(lin, P, n, px, z, L, c3.z);
 #endif

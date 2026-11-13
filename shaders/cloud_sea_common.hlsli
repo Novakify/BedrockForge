@@ -1056,15 +1056,16 @@ float3 ngBackground(float3 rd) {
     col += lineC * (D.edge + D.edgeC * 0.35);
     // the neon night (teams going out): the dome's lattice lights up in cyan and magenta, light running along its lines,
     // faster and fuller toward the finale. (Strongest at night, which the match brings on as beds break.)
+    float3 lat = float3(0.0, 0.0, 0.0);   // the finale's neon lattice: added after the OLED night, so it glows over the black
     [branch] if (NG_NEON > 0.01) {
         float  hueN = 0.5 + 0.5 * sin(D.fam * 2.1 + D.lineId * 0.7 + TIME * 0.3);
         float3 neonC = lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), hueN);
         float  run = abs(frac(D.along * 0.12 - TIME * lerp(0.10, 0.28, NG_NEON) + D.lineId * 0.37) - 0.5) * 2.0;
         float  pulse = pow(saturate(run), 48.0);   // short bursts of light, not laser lines (seen in game)
         float  k = NG_NEON * lerp(0.45, 1.0, NIGHT);
-        col += neonC * k * (D.lnM * (0.035 + 0.75 * pulse) + D.lnC * 0.20 * pulse);
+        lat += neonC * k * (D.lnM * (0.035 + 0.75 * pulse) + D.lnC * 0.20 * pulse);
         float  az = atan2(rd.z, rd.x);
-        col += lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), 0.5 + 0.5 * sin(az * 3.0 + TIME * 0.2)) * exp(-pow(e * 60.0 - 0.6, 2.0)) * 0.16 * k;   // the base ring goes neon
+        lat += lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), 0.5 + 0.5 * sin(az * 3.0 + TIME * 0.2)) * exp(-pow(e * 60.0 - 0.6, 2.0)) * 0.16 * k;   // the base ring goes neon
     }
     [branch] if (NIGHT > 0.001) {
         float azN = atan2(rd.z, rd.x);
@@ -1073,8 +1074,25 @@ float3 ngBackground(float3 rd) {
         col *= 1.0 - NIGHT;
         float hz = max(rd.y, 0.0);
         col += cityHaze(azN) * (exp(-hz * 11.0) * 0.12 + exp(-hz * 3.5) * 0.020) * NIGHT;
+        // searchlights: thin beams thrown up from the city into the black, leaning and sweeping slowly - the night's
+        // only movement in the sky, and the city's light reaching up into it
+        [unroll] for (int b = 0; b < 6; b++) {
+            float  hb  = frac(sin(float(b) * 12.9898 + 4.1) * 43758.5453);
+            float  az0 = float(b) * 1.0472 + hb * 0.8;
+            float  tilt = 0.35 * sin(TIME * (0.05 + 0.04 * hb) + hb * 6.0);
+            float  elT = 1.05 + 0.30 * hb;                                  // how high the beam reaches (rad)
+            float  el  = asin(clamp(rd.y, -1.0, 1.0));
+            float  sb  = el / elT;
+            if (sb <= 0.0 || sb >= 1.0) continue;
+            float  da  = azN - (az0 + tilt * sb);
+            da = da - 6.2832 * floor(da / 6.2832 + 0.5);
+            float  dist = abs(da) * cos(el);
+            float  wdt = 0.0035 + 0.012 * sb;
+            float3 bc  = lerp(float3(0.20, 0.85, 1.00), float3(1.00, 0.30, 0.85), step(0.5, hb));
+            col += bc * exp(-pow(dist / wdt, 2.0)) * pow(1.0 - sb, 1.6) * 0.10 * NIGHT;
+        }
     }
-    col += cityGlow;
+    col += lat + cityGlow;
     return col;
 }
 float3 csBackground(float3 rd, bool withSea) {
