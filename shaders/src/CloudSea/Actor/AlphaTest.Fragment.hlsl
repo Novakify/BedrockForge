@@ -51,6 +51,12 @@ float4 main(PSIn i) : SV_Target {
     // ---- Novak Glass: every item (its own 16/32 px texture - seen in game: not an atlas) (the sword in your hand, tools, the bow, wool,
     //      pearls, fireballs - held or dropped) is glass that follows the match: Future Aero at the start, neon by the
     //      endgame (ngItemGlass). Mob and player skins are small textures and stay as they are.
+    // the city lights people at night in neutral white light, so skins keep their own colours (seen on Hive: every
+    // player went the same smudged blue-grey under the moon)
+    [branch] if (CS_NIGHT > 0.0 && !(tw <= 32 && th <= 32)) {
+        float dif = 0.60 + 0.40 * saturate(dot(n, normalize(float3(0.3, 0.8, 0.5))));
+        lit = lerp(lit, csLin(c) * dif * 0.90, CS_NIGHT);
+    }
     [branch] if (tw <= 32 && th <= 32) lit = ngItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);
     // glassy players: a thin glass rim on skins (64 / 128 px) - clean white-aqua at the start, cyan / magenta neon by
     // the endgame (never on your own arm in first person)
