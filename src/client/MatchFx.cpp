@@ -1046,7 +1046,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             // the ticks the shaders' daylight scale was measured at (CloudSea/common.hlsli csPhaseFromDaylight):
             // 10920 golden hour, 12480 dusk, 14400 night
             int const tick = int(6000.0f + gFx.timeOfDay * 24000.0f) % 24000;
-            if (lv.getTime() != tick) lv.setTime(tick);
+            (void)tick;   // NOT set: seen on Hive, the server's own time packets fought it every few frames - the light
+                          // flipped between the two clocks (a pink flash with every step) and the chunk relights
+                          // swung the FPS. The blocks' daylight follows the server clock again until a cleaner way.
         }
     }
 }
