@@ -115,7 +115,7 @@ float4 main(PSIn i) : SV_Target {
         float3 cA = float3(1.00, 0.78, 0.42), cB = float3(1.00, 0.42, 0.62), cDeep = float3(0.16, 0.08, 0.20);
 #endif
         // the far end: the sky, bent toward the face's axis (a lens), dimmed so the tunnel reads in front of it
-        float3 col = csSkyMoving(normalize(lerp(r, -pn, 0.45))) * 0.55 + cDeep;
+        float3 col = csSkyMoving(normalize(lerp(r, -pn, 0.45))) * 0.30 + cDeep * 0.7;   // (seen on Hive: more sky read as a washed lavender - deeper now)
         float  flow = frac(T * 0.12);
         [loop] for (int k = 3; k >= 0; k--) {                 // far to near: nearer layers draw over farther ones
             float  lk = float(k) + 1.0 - flow;                 // each layer drifts toward you, then is reborn far away
@@ -128,7 +128,7 @@ float4 main(PSIn i) : SV_Target {
             float  wv = csVN(uv * 0.45 + float2(T * 0.06, -T * 0.09) + li * 3.7);
             float  bnd = exp(-pow((frac(wv * 2.5 + uv.y * 0.08 + T * 0.04) - 0.5) * 6.0, 2.0));
             float3 rc = lerp(cA, cB, csVN(uv * 0.2 + li));
-            col += rc * bnd * 0.16 * wk;
+            col += rc * bnd * 0.27 * wk;
             // sparks
             float2 g  = uv * 2.2;
             float2 ce = floor(g);
@@ -137,7 +137,7 @@ float4 main(PSIn i) : SV_Target {
             float  dd = length(frac(g) - 0.5 - o * 0.7);
             float  rad = max(0.045, 1.2 * length(fwidth(g)));
             float  tw = 0.55 + 0.45 * sin(T * (1.7 + h * 3.0) + h * 40.0);
-            col += lerp(cA, cB, frac(h * 5.3)) * exp(-dd * dd / (rad * rad)) * step(0.55, h) * tw * 1.6 * wk;
+            col += lerp(cA, cB, frac(h * 5.3)) * exp(-dd * dd / (rad * rad)) * step(0.55, h) * tw * 2.3 * wk;
         }
         // the surface: thin glass with a trace of the vanilla swirl, and the sky's sheen at grazing angles
         float  Fp = 0.04 + 0.96 * pow(1.0 - saturate(dot(pn, V)), 5.0);
