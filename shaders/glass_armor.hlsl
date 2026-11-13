@@ -340,7 +340,6 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     // Every material: at the start clear Future Aero glass - the body a pale aqua-white with a breath of the material's
     // colour, the outline a soft clean white-aqua; by the endgame neon - the material's colour turned up and glowing.
     float ngK = pad4 > 0.5 ? smoothstep(0.30, 0.95, pad3) : -1.0;
-    if (ngK >= 0.0) baseTint = lerp(float3(0.86, 0.95, 1.00), baseTint, 0.35);   // the same glass all match (night lights it, it does not recolour it)
     float3 edgeB = lerp(baseEdge, acc, cMix * 0.85 * (1.0 - 0.6 * dyeK)); // team colour stays readable over the cover
     edgeB = lerp(edgeB, wordCol * 1.2, saturate(wordColK * boot) * 0.85); // colour words flash the outline
     // beat-pulse: brighter on every kick, a big flare on the drop
@@ -441,7 +440,8 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float lw = 0.19 + 0.07 * kick + 0.10 * min(flare, 1.0) + 0.06 * max(ngK, 0.0);  // a touch thicker on the kick, thicker still on the drop (and at the Novak endgame)
     float ln = 1.0 - smoothstep(lw - aa, lw + aa, dIn);
     if (ngK >= 0.0) {   // Novak night / endgame: the glass lights itself (seen in game: very dim, hard to read at night)
-        c += baseTint * 0.24 * ngK + edgeC * 0.12 * ngK;
+        // the body stays see-through glass (no milky fill): the outline lights up and its light spills a little way in
+        c += edgeC * 0.16 * ngK * pow(saturate(1.0 + d / max(bevel, 1.0)), 2.0);
         edgeLv = max(edgeLv, ngK);                       // the outline at full strength however dark it is
     }
     c = lerp(c, edgeC * 1.25, ln * saturate(edgeLv));

@@ -122,7 +122,7 @@ float                              gShowBeat = 0;
 int                                gDyeRow = 5, gDyeRowGlint = 5; // M3: ChangeColor = row 5 of b1 (1.26.51: found with debug view 8; same uniform order in ActorGlint)
 int                                gDbgRow = 0;
 std::atomic_bool                   gEnchFlow{true};
-std::atomic<float>                 gFusedK{1.0f}, gFilmK{1.0f}; // fused glass (F6)
+std::atomic<float>                 gFusedK{0.0f}, gFilmK{1.0f}; // fused glass (F6) - off: the approved look is clear warped glass, the material read only as tint + neon outline
 float                              gIdleEdge = 0.3f;  // M2.5: outline strength with no music (Awaken boots it to 1)
 float                              gBeatK    = 1.0f;  // M2.5: how hard the outline breathes with the kick
 std::atomic_bool                   gWordSweep{true};  // M2.5: a light sweep per sung word
