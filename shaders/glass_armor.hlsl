@@ -440,6 +440,10 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float aa = max(fwidth(dIn), 1e-4) * 1.1;
     float lw = 0.19 + 0.07 * kick + 0.10 * min(flare, 1.0) + 0.06 * max(ngK, 0.0);  // a touch thicker on the kick, thicker still on the drop (and at the Novak endgame)
     float ln = 1.0 - smoothstep(lw - aa, lw + aa, dIn);
+    if (ngK >= 0.0) {   // Novak night / endgame: the glass lights itself (seen in game: very dim, hard to read at night)
+        c += baseTint * 0.24 * ngK + edgeC * 0.12 * ngK;
+        edgeLv = max(edgeLv, ngK);                       // the outline at full strength however dark it is
+    }
     c = lerp(c, edgeC * 1.25, ln * saturate(edgeLv));
     return float4(saturate(c), 1.0);
 }
