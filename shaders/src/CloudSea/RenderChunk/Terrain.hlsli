@@ -186,6 +186,7 @@ float4 main(PSIn i) : SV_Target {
     //      the side you look past. Works on any pack (the tile size comes from the texel's size in the world).
     float3 ngIn = float3(1, 1, 1);   // per channel: 1 = the core shows here, 0 = the glass shell
     float  ngOn = 0.0, ngLine = 0.0, ngDbg = 0.0;
+    float2 ngPc = float2(0, 0), ngVxy = float2(0, 0);         // the pixel on the face (-1..1), the view across it
     [branch] if (mid != MAT_GEM && mid != MAT_QUARTZ && mid != MAT_ICE && mid != MAT_LAMP && mid != MAT_CARVED) {
         float  tppN = max(fwidth(tx.x), fwidth(tx.y));
         float  nearN = 1.0 - smoothstep(0.45, 1.0, tppN);
@@ -212,7 +213,16 @@ float4 main(PSIn i) : SV_Target {
             float2 dirV = -vt.xy / max(sinV, 1e-4);
             float3 sinG = sinV / float3(1.36, 1.50, 1.68);
             float3 tanG = sinG / sqrt(1.0 - sinG * sinG) * (1.3 * u) * nearN;   // the core sits 1.3/16 behind the face
-            float2 qR = floor(q + dirV * tanG.r) + 0.5, qG = floor(q + dirV * tanG.g) + 0.5, qB = floor(q + dirV * tanG.b) + 0.5;
+            // the glass over the block is a thick lens (Fernando: like the glass armor's warp - the block must pop, not
+            // sit under a dull flat pane). The core swells toward the middle of the face and squeezes at the rim; red,
+            // green and blue swell by different amounts, so toward the rim its pixels split into colour. Whole texels
+            // still: it stays pixel art.
+            float2 pc = (q / S - 0.5) * 2.0;
+            float  r2 = saturate(dot(pc, pc) * 0.5);
+            float3 lens = lerp(float3(0.80, 0.84, 0.88), float3(1.04, 1.02, 1.00), r2 * r2) ;
+            lens = lerp(float3(1, 1, 1), lens, nearN);
+            ngPc = pc; ngVxy = vt.xy;
+            float2 qR = floor((pc * lens.r * 0.5 + 0.5) * S + dirV * tanG.r) + 0.5, qG = floor((pc * lens.g * 0.5 + 0.5) * S + dirV * tanG.g) + 0.5, qB = floor((pc * lens.b * 0.5 + 0.5) * S + dirV * tanG.b) + 0.5;
             // the joint between two blocks is 2 texels on a 32x pack, 1 on a 16x one (a whole texel is the least there
             // is: there the core is set in on its low sides only). Seen in game: a 1/8-block joint read as bathroom grout.
             float  wLo = max(1.0, S / 32.0), wHi = S >= 32.0 ? S / 32.0 : 0.0;
@@ -225,10 +235,13 @@ float4 main(PSIn i) : SV_Target {
                 // a shell pixel sees the core's side wall. Not the core's edge texel repeated across the gap (a pack's
                 // darker border row smeared into a dark strip beside every joint): the block's own average colour.
                 c = s_MatTextureTexture.SampleLevel(s_MatTextureSampler, (float2(org) + S * 0.5) / float2(aw, ah), 4.0).rgb * tint;
-            } else if (any(tn != ti)) {
+            } else {
                 float4 tN = s_MatTextureTexture.Load(int3(tn, 0));
-                c = tN.rgb * tint;
-                ti = tn; t0 = float4(tN.rgb, t0.a);
+                // red and blue from their own bent texels: the colour split of the lens
+                float rr = s_MatTextureTexture.Load(int3(int2(org) + int2(floor(clamp(qR, wLo + 0.5, S - wHi - 0.5))), 0)).r;
+                float bb = s_MatTextureTexture.Load(int3(int2(org) + int2(floor(clamp(qB, wLo + 0.5, S - wHi - 0.5))), 0)).b;
+                c = float3(rr, tN.g, bb) * tint;
+                ti = tn; t0 = float4(c / max(tint, 1e-3), t0.a);
                 ngDbg = 1.0;
             }
             ngOn = nearN;
@@ -408,6 +421,23 @@ float4 main(PSIn i) : SV_Target {
         float  Fg = 0.02 + 0.98 * pow(1.0 - saturate(dot(n, V)), 5.0);
         float  kG = saturate(Fg * 0.60) * ngOn;
         lit = lit * (1.0 - kG) + csReflect(reflect(-V, n)) * lerp(0.30, 1.0, skyK) * kG;
+        // thick glass: a bright bevel right at the rim (brightest on the side the light comes from), a soft dark
+        // band just inside it (the glass is deep there), and a highlight that slides over the face as you move
+        {
+            float2 ap = abs(ngPc);
+            float  e = 1.0 - max(ap.x, ap.y);                                   // 0 at the rim .. 1 at the centre
+            float3 Tl = float3(0, 0, 0);
+            float2 sunF = normalize(float2(dot(CS_SUN, cross(n, float3(0.0, 1.0, 0.0)) + float3(1e-3, 0, 0)), CS_SUN.y) + 1e-3);
+            float  lightSide = saturate(dot(normalize(ngPc + 1e-3), sunF) * 0.5 + 0.5);
+            float  bevel = smoothstep(0.14, 0.03, e);
+            float  inner = smoothstep(0.10, 0.20, e) * smoothstep(0.42, 0.20, e);
+            float3 gl = lerp(float3(0.85, 0.93, 1.0), CS_SUNC, 0.4) * lerp(0.25, 1.0, skyK);
+            lit *= 1.0 - 0.16 * inner * ngOn;
+            lit += gl * bevel * (0.10 + 0.34 * lightSide) * ngOn * (1.0 - 0.5 * CS_NIGHT);
+            float2 hp = ngPc - (float2(-0.38, 0.42) - ngVxy * 0.9);             // the highlight leans away as you look across
+            float  hl = exp(-dot(hp * float2(1.0, 2.6), hp * float2(1.0, 2.6)) * 5.0);
+            lit += gl * hl * 0.30 * ngOn * (1.0 - 0.6 * CS_NIGHT);
+        }
     }
 #endif
 #if defined(CS_NOVAK) && !defined(PASS_TRANSPARENT)
@@ -523,16 +553,24 @@ float4 main(PSIn i) : SV_Target {
     {
         float NK = smoothstep(0.45, 1.20, CS_PHASE) * lerp(0.35, 1.0, skyK);
         bool  team = mid == MAT_WOOL || mid == MAT_CONCRETE || mid == MAT_POWDER || mid == MAT_TERRACOTTA || mid == MAT_GLAZED;
-        bool  keep = team || mid == MAT_LAMP || mid == MAT_FLOWER || mid == MAT_GEM;
+        bool  keep = team || mid == MAT_LAMP || mid == MAT_FLOWER || mid == MAT_GEM || blk > 0.55;   // (anything giving light keeps its colour: seen in game, glowstone went lavender)
         [branch] if (NK > 0.001) {
             float  L = csLuma(lit);
-            if (!keep) lit = lerp(lit, L * float3(0.62, 0.68, 1.10) + lit * 0.25, 0.70 * NK);   // steel / indigo
+            if (!keep) lit = lerp(lit, L * float3(0.72, 0.78, 1.02) + lit * 0.30, 0.45 * NK);   // cool steel (seen in game: a stronger shift made every block the same lavender)
+            if (team) lit += alb * 0.16 * NK;                                                // team colours hold up in the dark: you must read them
             float  azS = atan2(n.z, n.x);
             float3 street = lerp(float3(1.00, 0.10, 0.62), float3(0.08, 0.72, 1.00), 0.5 + 0.5 * sin(azS * 1.0 + 2.0));
             float  side = 1.0 - abs(n.y);
             float  Fs = pow(1.0 - saturate(dot(n, V)), 2.0);
             float3 albK = keep ? alb : lerp(alb, csLuma(alb).xxx, 0.6);
             lit += street * (albK * 0.55 + 0.03) * side * (0.35 + 0.65 * Fs) * 0.55 * NK;      // street light on the sides
+#if defined(PASS_OPAQUE)
+            {   // the rim of every block's glass carries a neon line that glows into the glass (the armor's outline)
+                float2 ap = abs(ngPc); float e = 1.0 - max(ap.x, ap.y);
+                float3 neon = team ? alb / max(csMax3(alb), 1e-3) : street;
+                lit += neon * (smoothstep(0.10, 0.0, e) * 0.85 + exp(-e * 7.0) * 0.16) * NK * ngOn;
+            }
+#endif
             [branch] if (n.y > 0.5) {                                                               // rain-slick tops
                 float3 r  = reflect(-V, n);
                 float  azR = atan2(r.z, r.x);
