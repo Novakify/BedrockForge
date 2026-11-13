@@ -560,7 +560,7 @@ static float SEA_D = 175.0;                                      // the city's s
 float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
   float3 bg=signCol(frac(hp*7.31)), a2=signCol(frac(hp*7.31+0.31+0.3*frac(hp*3.)));
   float gw=min(sz.x,sz.y), gn=gw>9.0?2.0:1.0;
-  float res=1.-smoothstep(0.5,1.5,pxm/(gw/gn/7.));
+  float res=(1.-smoothstep(0.5,1.5,pxm/(gw/gn/7.)))*step(0.30,QUALITY);   // (low quality: boards keep their colour, no script)
   float lum=lerp(0.85,1.20,frac(hp*3.7))*(0.93+0.07*sin(TIME*(2.+6.*frac(hp*13.))+hp*50.));
   float dE=min(min(pn.x,1.-pn.x)*sz.x,min(pn.y,1.-pn.y)*sz.y);
   float tube=lerp(1.0,smoothstep(0.0,1.1,dE),res);
@@ -809,17 +809,19 @@ float3 layerGlow(float3 rd, float L){
 }
 float3 cityAt(float3 rd, float3 bg){
   float3 col=bg; float3 glow=((float3)(0.0));
-  [loop] for(int L=0;L<5;L++){
+  int nL = QUALITY > 0.55 ? 5 : (QUALITY > 0.25 ? 4 : 3);     // the far rings go first when the frame rate needs it
+  [loop] for(int L=0;L<nL;L++){
     float4 b=cityLayer(rd,float(L));
     if(b.a>0.5){ col=b.rgb; break; }
-    if(L<3) glow+=layerGlow(rd,float(L))*LIT;
+    if(L<3 && QUALITY>0.30) glow+=layerGlow(rd,float(L))*LIT;
   }
   return col+glow;
 }
 float3 cityMirror(float3 rd, float elv){
   float az=atan2(rd.z,rd.x)+(vnoise(float2(rd.x*500.0+rd.z*310.0,elv*260.0+TIME*1.2))-0.5)*0.004;
   float3 col=((float3)(0.0)); float t=SEA_D/elv;
-  for(int L=0;L<5;L++){ float R=420.0*pow(1.6,float(L));
+  [branch] if (QUALITY < 0.20) return col;
+  [loop] for(int L=0;L<4;L++){ float R=420.0*pow(1.6,float(L));
     if(R<t) continue;
     float ymr=(R-t)*elv;
     float4 b=cityLayer(float3(cos(az),(ymr*1.3-SEA_D)/R,sin(az)),float(L));
@@ -880,7 +882,8 @@ float4 cityBelow(float3 ro, float3 rd){
   float2 p=ro.xz+d.xz*t; float2 id=floor(p/CELL);
   float2 stp=sign(d.xz);
   float2 tMax=t+((id+max(stp,0.0))*CELL-p)/d.xz, tDel=CELL/abs(d.xz);
-  for(int i=0;i<44;i++){
+  int nSteps = QUALITY > 0.55 ? 44 : 26;
+  [loop] for(int i=0;i<nSteps;i++){
     if(length((id+0.5)*CELL-ro.xz)>RIN) return ((float4)(0));        // past the inner city: the far rings take over
     float tExit=min(tMax.x,tMax.y), H=bldH(id);
     float2 bmin=id*CELL+STREET, bmax=(id+1.0)*CELL-STREET;
