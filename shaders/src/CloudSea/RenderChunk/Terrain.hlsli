@@ -97,6 +97,56 @@ float4 main(PSIn i) : SV_Target {
     float3 wp  = i.texcoord3;
     float3 cam = ViewPositionAndTime.xyz;
     float3 V   = normalize(cam - wp);
+#if defined(PASS_TRANSPARENT)
+    // ---- portals (the nether-portal texture: Hive's lobby portals): a window into somewhere else. Behind the face a
+    //      tunnel of light falls away at real depth - sparks and ribbons on layers 0.4 .. 10 blocks deep that slide
+    //      apart as you move (parallax: it reads as a hole, not a sticker) and stream toward the far end, where the
+    //      atmosphere's own sky moves. A breath of the vanilla swirl stays on the glassy surface so it is still a portal.
+    [branch] if (d.a > 0.55 && d.a < 0.97 && d.b > 0.42 && d.b > d.g * 1.7 && d.r > d.g * 1.25) {
+        float3 pn = csNormal(wp, V, true);
+        float3 r  = -V;
+        float  cosI = max(dot(r, -pn), 0.10);
+        float3 ta = normalize(abs(pn.y) > 0.5 ? cross(pn, float3(1, 0, 0)) : cross(pn, float3(0, 1, 0)));
+        float3 tb = cross(pn, ta);
+        float  T  = CS_TIME;
+#if defined(CS_NOVAK)
+        float3 cA = float3(0.10, 0.85, 1.00), cB = float3(1.00, 0.18, 0.80), cDeep = float3(0.05, 0.02, 0.14);
+#else
+        float3 cA = float3(1.00, 0.78, 0.42), cB = float3(1.00, 0.42, 0.62), cDeep = float3(0.16, 0.08, 0.20);
+#endif
+        // the far end: the sky, bent toward the face's axis (a lens), dimmed so the tunnel reads in front of it
+        float3 col = csSkyMoving(normalize(lerp(r, -pn, 0.45))) * 0.55 + cDeep;
+        float  flow = frac(T * 0.12);
+        [loop] for (int k = 3; k >= 0; k--) {                 // far to near: nearer layers draw over farther ones
+            float  lk = float(k) + 1.0 - flow;                 // each layer drifts toward you, then is reborn far away
+            float  D  = 0.35 * pow(2.4, lk);
+            float  wk = sin(3.14159 * saturate(lk / 4.0));     // fade in far, out near
+            float3 q  = wp + r * (D / cosI);
+            float2 uv = float2(dot(q, ta), dot(q, tb));
+            float  li = floor(float(k) - flow + 8.0);          // the layer's identity (keeps its pattern as it moves)
+            // ribbons: warped bands of light
+            float  wv = csVN(uv * 0.45 + float2(T * 0.06, -T * 0.09) + li * 3.7);
+            float  bnd = exp(-pow((frac(wv * 2.5 + uv.y * 0.08 + T * 0.04) - 0.5) * 6.0, 2.0));
+            float3 rc = lerp(cA, cB, csVN(uv * 0.2 + li));
+            col += rc * bnd * 0.16 * wk;
+            // sparks
+            float2 g  = uv * 2.2;
+            float2 ce = floor(g);
+            float  h  = csHash(ce + li * 17.0);
+            float2 o  = float2(csHash(ce + 3.1 + li), csHash(ce + 7.7 + li)) - 0.5;
+            float  dd = length(frac(g) - 0.5 - o * 0.7);
+            float  rad = max(0.045, 1.2 * length(fwidth(g)));
+            float  tw = 0.55 + 0.45 * sin(T * (1.7 + h * 3.0) + h * 40.0);
+            col += lerp(cA, cB, frac(h * 5.3)) * exp(-dd * dd / (rad * rad)) * step(0.55, h) * tw * 1.6 * wk;
+        }
+        // the surface: thin glass with a trace of the vanilla swirl, and the sky's sheen at grazing angles
+        float  Fp = 0.04 + 0.96 * pow(1.0 - saturate(dot(pn, V)), 5.0);
+        col = lerp(col, csReflect(reflect(-V, pn)), Fp * 0.6);
+        col += csLin(d.rgb) * cB * 0.10;
+        col = csHaze(col, wp, cam, 0.0);
+        return float4(csEnc(col), 0.94);
+    }
+#endif
 #if defined(PASS_OPAQUE)
     float3 n   = csNormal(wp, V, true);
 #else
