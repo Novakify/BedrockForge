@@ -1024,6 +1024,24 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
         for (int k = 0; k < 2; ++k) if (gGpu.shadowCol[k].r) barrier(list, gGpu.shadowCol[k], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         barrier(list, gGpu.shadowMap, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     }
+    // shadows off: the map must read "lit" (depth 1, white colour), not keep the last frame's casters
+    else if (gGpu.shadowMap.r && !gSet.shadows) {
+        static uint64_t clearedAt = ~0ull;
+        if (clearedAt != gGpu.frame) {
+            clearedAt = gGpu.frame;
+            barrier(list, gGpu.shadowMap, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+            auto dsv = gGpu.dsvHeap->GetCPUDescriptorHandleForHeapStart();
+            dsv.ptr += gGpu.dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+            list->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+            barrier(list, gGpu.shadowMap, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            float const white[4] = {1, 1, 1, 1};
+            for (int k = 0; k < 2; ++k) if (gGpu.shadowCol[k].r) {
+                barrier(list, gGpu.shadowCol[k], D3D12_RESOURCE_STATE_RENDER_TARGET);
+                list->ClearRenderTargetView(rtvAt(Gpu::kRtvShadow0 + UINT(k)), white, 0, nullptr);
+                barrier(list, gGpu.shadowCol[k], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            }
+        }
+    }
     // ---- terrain gbuffers (M2)
     if (gGpu.terrain.pass) {
         UniformMap over;
