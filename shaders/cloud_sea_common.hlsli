@@ -963,8 +963,8 @@ float3 voidCity(float3 ro, float3 rd){
 
 float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float  dn = saturate(-rd.y);
-    float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z)));
-    float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0030, 0.0022, 0.012), NIGHT);
+    float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z))) * (1.0 - NIGHT);   // (OLED night: black)
+    float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0, 0.0, 0.0), NIGHT);
     float3 col = lerp(hor, deep, smoothstep(0.0, 0.07, dn));
     // the void is the city: its wet glass ground holds the city's lights (long streaks at night), its towers stand all
     // round, and right under the islands its blocks and streets
@@ -974,7 +974,7 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float4 cb = cityBelow(float3(ro.x, SEA_D, ro.z), rd);          // under the islands: the city itself
     [branch] if (cb.a > 0.5) col = cb.rgb;
     else {
-        float3 base = lerp(dayAir(atan2(rd.z, rd.x)) * 0.35, float3(0.006, 0.008, 0.022) + voidCity(ro, rd) * 0.35, LIT);
+        float3 base = lerp(dayAir(atan2(rd.z, rd.x)) * 0.35, float3(0.006, 0.008, 0.022) * (1.0 - NIGHT) + voidCity(ro, rd) * 0.35, LIT);
         float  elv = dn / max(length(rd.xz), 1e-3);
         float3 refl = cityMirror(rd, elv);
         float  rip = 0.60 + 0.40 * vnoise(float2(rd.x * 240.0 + rd.z * 130.0, elv * 900.0 - TIME * 2.0));
@@ -1068,12 +1068,11 @@ float3 ngBackground(float3 rd) {
     }
     [branch] if (NIGHT > 0.001) {
         float azN = atan2(rd.z, rd.x);
-        col *= lerp(1.0, 0.26, NIGHT);                                // a deep navy night: the colour lives in the lights
-        col += (cityHaze(azN) * (exp(-max(rd.y, 0.0) * 9.0) * 0.09 + exp(-max(rd.y, 0.0) * 2.5) * 0.015) + float3(0.012, 0.02, 0.07) * exp(-max(rd.y, 0.0) * 3.0)) * NIGHT;
-        col += (csStars(rd) * 0.45 * (1.0 - ac.a) + csMoon(rd) * (1.0 - ac.a * 0.85)) * NIGHT;   // the city's light drowns most stars
-        col += ngVeil(rd) * NIGHT;
-        float am = acos(clamp(dot(rd, SUN), -1.0, 1.0)), x2 = (am - 0.384) / 0.0175;
-        col += float3(0.62, 0.66, 0.95) * (x2 < 0.0 ? exp(-x2 * x2 * 2.0) : exp(-x2 * 0.6)) * 0.035 * NIGHT * smoothstep(-0.02, 0.05, rd.y);   // the moon's ring
+        // OLED night (asked for): the sky itself goes true black - no dome, clouds, stars, aurora or moon. All that is
+        // left is the city: its towers and signs, and the light they throw up into the air over the horizon.
+        col *= 1.0 - NIGHT;
+        float hz = max(rd.y, 0.0);
+        col += cityHaze(azN) * (exp(-hz * 11.0) * 0.12 + exp(-hz * 3.5) * 0.020) * NIGHT;
     }
     col += cityGlow;
     return col;
