@@ -79,6 +79,7 @@ inline int kindFor(std::string_view name, Shader const& s) {
     if (name == "Sky") return s.pass == "Opaque" || s.pass.empty() ? 1 : 0;
     if (name == "Stars" || name == "SunMoon") return 2;
     if (name == "Clouds") return 3;
+    if (name == "RenderChunk") return 5;   // the world's blocks: World FX knows when the world has been drawn
     if (s.pass != "ForwardPBRTransparent") return 0; // SkyProbe (reflections), depth-only, motion: stay vanilla
     if (name == "StarsForwardPBR" || name == "SunMoonForwardPBR") return 4;
     if (name == "CloudsForwardPBR") return 3;
@@ -87,6 +88,6 @@ inline int kindFor(std::string_view name, Shader const& s) {
 
 /// The sky materials RF learns from (file names without ".material.bin").
 inline constexpr std::string_view kMaterials[] = {"Sky", "Stars", "SunMoon", "Clouds", "StarsForwardPBR", "SunMoonForwardPBR",
-                                                  "CloudsForwardPBR"};
+                                                  "CloudsForwardPBR", "RenderChunk"};
 
 } // namespace rf::skyscan

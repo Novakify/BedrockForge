@@ -31,7 +31,8 @@ void drawUi(); // F6 section
 // Bedrock 1.26.51 sky materials, by the FNV-1a 64 of their D3D12 pixel shaders (SM60 + SM65, from the game's
 // Sky / Stars / SunMoon / Clouds .material.bin; see Bedrock Forge docs/lyricsflow/KICKOFF.md).
 enum Kind : int { None = 0, Dome = 1, Hide = 2, Clouds = 3,
-                  VvSky = 4 }; // Vibrant Visuals: StarsForwardPBR / SunMoonForwardPBR main-view draws (sky drawn there)
+                  VvSky = 4,
+                  Terrain = 5 }; // RenderChunk (vanilla or a Bedrock Forge pack): marks that the world is being drawn // Vibrant Visuals: StarsForwardPBR / SunMoonForwardPBR main-view draws (sky drawn there)
 /// Vibrant Visuals has no sky draw to follow (DeferredShading lights the sky pixels): RF draws the live sky at the
 /// first vanilla star / sun / moon draw of the frame, depth-tested so only pixels with nothing in front change.
 bool claimVvFrame(); // true once per Present (the first VvSky draw of the frame gets our dome)
@@ -44,6 +45,7 @@ void learnMaterialFile(std::filesystem::path const& file, std::wstring_view file
 /// A game pipeline with a sky pixel shader was created (desc = the game's, root signature kept for our pipelines).
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& desc);
 int  kindOf(ID3D12PipelineState* pso); // any thread
+void noteTerrainDraw();                // a block draw went into the world (lock-free)
 bool wanted();                         // a LyricsFlow sky is active: UiCapture tracks list state + calls us
 bool wantRoot();                       // "My picture" is on: also track the graphics root state
 bool hideClouds();

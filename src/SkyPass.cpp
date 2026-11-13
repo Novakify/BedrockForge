@@ -82,9 +82,9 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list);
 // sky shaders learned from the game's own materials (learnGameMaterials / learnMaterialFile)
 std::mutex                        gLearnMutex;
 std::unordered_map<uint64_t, int> gLearned;            // pixel-shader hash -> Kind
-int                               gLearnKind[5]{};     // learned shaders per Kind
+int                               gLearnKind[6]{};     // learned shaders per Kind
 int                               gLearnFiles = 0, gLearnMissing = 0, gLearnPack = 0;
-std::atomic<long>                 gTagged[5]{};        // game pipelines tagged per Kind
+std::atomic<long>                 gTagged[6]{};        // game pipelines tagged per Kind
 std::atomic<long>                 gTaggedBuiltin{0};   // ... found only by the built-in 1.26.51 table
 
 BF_CopySkyFrame_t bfCopy() {
@@ -1212,7 +1212,7 @@ void learnMaterialFile(std::filesystem::path const& file, std::wstring_view file
     ++gLearnFiles;
     if (source && *source) ++gLearnPack;
     for (auto& s : shaders)
-        if (int k = rf::skyscan::kindFor(name, s); k > 0 && k < 5)
+        if (int k = rf::skyscan::kindFor(name, s); k > 0 && k < 6)
             if (gLearned.emplace(s.hash, k).second) ++gLearnKind[k];
 }
 
@@ -1222,6 +1222,14 @@ void learnGameMaterials(std::filesystem::path const& dir) {
         fn += L".material.bin";
         learnMaterialFile(dir / fn, fn, nullptr);
     }
+    // Bedrock Forge serves its packs' RenderChunk by redirecting the file open (RF never sees those bytes): learn
+    // every pack's block shader too, so its draws mark the world as drawn
+    std::error_code ec;
+    auto const packs = dir.parent_path().parent_path().parent_path() / "mods" / "BedrockForgeCore" / "shaderpacks";
+    for (auto const& e : std::filesystem::directory_iterator(packs, ec))
+        if (e.is_directory(ec)) learnMaterialFile(e.path() / "renderer" / "materials" / "RenderChunk.material.bin", L"RenderChunk.material.bin", nullptr);
+    std::lock_guard l(gLearnMutex);
+    ll_shim::info("[RF] World FX: block shaders learned (" + std::to_string(gLearnKind[Terrain]) + "): the pass knows when the world was drawn");
 }
 
 int kindOfHash(uint64_t h) {
@@ -1247,7 +1255,7 @@ void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_D
     g.vv     = kind == VvSky;
     g.farZ   = (d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_GREATER || d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_GREATER_EQUAL)
                    ? 0.0f : 1.0f;
-    if (kind > 0 && kind < 5) ++gTagged[kind];
+    if (kind > 0 && kind < 6) ++gTagged[kind];
     std::lock_guard l(gPsoMutex);
     gGame[pso] = std::move(g);
 }
@@ -2233,14 +2241,18 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // The fallback anchor: a depth clear of the world's depth buffer that comes AFTER this frame's sky was drawn into it
 // (the game clears once at the start of the frame, and again after the world - before the hand). If the cloud draw
 // (and so the pass) has not come by then, the pass runs right before that clear, while the world's depth is still there.
-// Looking steeply down with no sky draw at all is left alone for now: two tries at covering it from the depth clears
-// (even/odd counting, then a learned position) both fired the pass at wrong clears on a Hive map - pink flashes with
-// every step and wild FPS. Only the proven case stays: a clear after this frame's sky draw, once.
+// The post-world depth clear: the first clear of the world's depth buffer after this frame's sky draw - or, looking
+// steeply down (no sky draw at all), after the world's block draws. (Two earlier tries guessed it from counting the
+// clears - the Hive HUD clears the buffer many times a frame - and fired at wrong clears: pink flashes, wild FPS.
+// Block draws only happen in the world itself, so the HUD / hand clears never see them.)
+std::atomic<bool> gTerrainSinceClear{false};
+void noteTerrainDraw() { if (!gTerrainSinceClear.load(std::memory_order_relaxed)) gTerrainSinceClear.store(true, std::memory_order_relaxed); }
 bool fxFallbackWanted(size_t dsv) {
     if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
-    return sky && !done;
+    bool const terr = gTerrainSinceClear.exchange(false);
+    return (sky || terr) && !done;
 }
 bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     size_t rt0 = 0, dsv = 0;
