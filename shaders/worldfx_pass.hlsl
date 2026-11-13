@@ -1689,7 +1689,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float  cs  = (c8.w > 0.5 && c9.y > 0.0 && !NG_IS) ? (c9.z > 0.25 ? cloudShadow(CAM + P) : cloudShadowLite(CAM + P)) * c9.y : 0.0;
     float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55 * (1.0 - NIGHT)) * min(LIGHTK, 1.0);
     float3 shadeCol = lerp(float3(0.46, 0.44, 0.62), float3(0.48, 0.54, 0.76), NIGHT);
-    if (NG_IS) shadeCol = lerp(lerp(float3(0.50, 0.57, 0.76), float3(0.48, 0.42, 0.72), DUSK), float3(0.52, 0.50, 0.70), NIGHT);   // Novak Glass: cold, clean shade // without the key light: violet sky / blue night (light enough to fight in)
+    if (NG_IS) shadeCol = lerp(lerp(float3(0.50, 0.57, 0.76), float3(0.48, 0.42, 0.72), DUSK), float3(0.80, 0.80, 0.84), NIGHT);   // Novak Glass (night shade near-neutral: midnight city): cold, clean shade // without the key light: violet sky / blue night (light enough to fight in)
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
     lin *= lerp(1.0, ao, c6.x);
     // cel light: the shadow terminator gets a thin painted band of warm light on the lit side
@@ -1710,7 +1710,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         lin += (NG_IS ? lerp(float3(1.15, 1.08, 0.98), float3(0.70, 0.66, 1.10), NIGHT) : lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT)) * open * near * c6.y * 0.55 * LIGHTK;
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
-    lin *= NG_IS ? lerp(lerp(float3(1, 1, 1), float3(0.90, 0.78, 0.92), DUSK), float3(0.62, 0.60, 0.74), NIGHT)
+    lin *= NG_IS ? lerp(lerp(float3(1, 1, 1), float3(0.90, 0.78, 0.92), DUSK), float3(1.0, 1.0, 1.0), NIGHT)   /* midnight city (Nov 13): the world keeps its own colours and brightness at night - no dimming filter */
                  : lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
     // ---- sea light: the cloud sea under the map glows with the hour, and everything is lit by it from below - the
     //      undersides of bridges and islands most, walls a little. It moves, slowly, like light off water. When the
