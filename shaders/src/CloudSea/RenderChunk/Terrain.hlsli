@@ -622,9 +622,9 @@ float4 main(PSIn i) : SV_Target {
         bool  keep = team || mid == MAT_LAMP || mid == MAT_FLOWER || mid == MAT_GEM || blk > 0.55;   // (anything giving light keeps its colour: seen in game, glowstone went lavender)
         [branch] if (NK > 0.001) {
             float  L = csLuma(lit);
-            lit = lit * (1.0 + 0.3 * NK) + alb * float3(0.07, 0.07, 0.09) * NK * skyK;   // the city lights the islands: its night is not dark (seen in game: blocks sank into one dark mass)
+            lit = lit * (1.0 + 0.55 * NK) + alb * float3(0.12, 0.12, 0.15) * NK * skyK;   // the city lights the islands: its night is not dark (seen in game: blocks sank into one dark mass)
             if (!keep) lit = lerp(lit, L * float3(0.88, 0.90, 1.00) + lit * 0.30, 0.25 * NK);   // cool steel (seen in game: a stronger shift made every block the same lavender)
-            if (team) lit += alb * 0.16 * NK;                                                // team colours hold up in the dark: you must read them
+            if (team) lit += alb * 0.26 * NK;                                                // team colours hold up in the dark: you must read them
             float  azS = atan2(n.z, n.x);
             float3 street = lerp(float3(1.00, 0.10, 0.62), float3(0.08, 0.72, 1.00), 0.5 + 0.5 * sin(azS * 1.0 + 2.0));
             float  side = 1.0 - abs(n.y);
@@ -635,7 +635,7 @@ float4 main(PSIn i) : SV_Target {
             {   // the rim of every block's glass carries a neon line that glows into the glass (the armor's outline)
                 float2 ap = abs(ngPc); float e = 1.0 - max(ap.x, ap.y);
                 float3 neon = team ? alb / max(csMax3(alb), 1e-3) : street;
-                lit += neon * (smoothstep(0.05, 0.0, e) * 0.50 + exp(-e * 9.0) * 0.08) * NK * ngOn * lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));   // (a hairline, near you: see the bevel)
+                lit += neon * (smoothstep(0.05, 0.0, e) * 0.80 + exp(-e * 9.0) * 0.15) * NK * ngOn * lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));   // (a hairline, near you: see the bevel)
             }
 #endif
             [branch] if (n.y > 0.5) {                                                               // rain-slick tops

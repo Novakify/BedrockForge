@@ -463,6 +463,6 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     float3 neon = float3(ngEnv(Tr, 0.0).r, ngEnv(Tg, 0.0).g, ngEnv(Tb, 0.0).b) * nHue * 0.6 + nHue * (0.62 * breathe + 0.95 * lines * (1.0 - grey * 0.3));
     neon += lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(T * 0.9 + wp.x * 9.0)) * pow(1.0 - NV, 1.8) * 1.6;
     neon += float3(1.0, 0.95, 1.0) * glint * 2.6 + ngEnv(R, 0.0) * Fg * 0.6;
-    return lerp(aero, neon, neonK);
+    return lerp(aero, neon * 1.35, neonK);   // (night: brighter - seen in game: hard to see)
 }
 #endif

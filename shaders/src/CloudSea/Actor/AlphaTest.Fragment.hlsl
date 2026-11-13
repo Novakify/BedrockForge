@@ -57,7 +57,7 @@ float4 main(PSIn i) : SV_Target {
     [branch] if (tw >= 64 && tw <= 128 && th >= 64 && th <= 128) {
         float  pk = smoothstep(0.30, 0.95, saturate(CS_PHASE * 0.5));
         float  rimP = pow(1.0 - saturate(dot(n, V)), 3.0);
-        float3 rc = lerp(float3(0.85, 0.95, 1.00) * 0.30, lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(ViewPositionAndTime.w * 0.7 + wp.y * 2.0)) * 0.85, pk);
+        float3 rc = lerp(float3(0.85, 0.95, 1.00) * 0.30, lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(ViewPositionAndTime.w * 0.7 + wp.y * 2.0)) * 1.3, pk);
         lit += rc * rimP * (1.0 - fp);
     }
 #if defined(NG_DBG_TEX)

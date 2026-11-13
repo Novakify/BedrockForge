@@ -9,7 +9,7 @@ float3 ngNeonWarmP(float3 d, out float w) {
     if (mx <= 1e-5 || !(d.r >= d.g && d.g >= d.b)) return d;
     float sat = (mx - mn) / mx;
     float h   = 60.0 * (d.g - d.b) / max(d.r - d.b, 1e-5);
-    w = smoothstep(8.0, 16.0, h) * (1.0 - smoothstep(46.0, 53.0, h)) * smoothstep(0.15, 0.40, sat);
+    w = smoothstep(-1.0, 4.0, h) * (1.0 - smoothstep(46.0, 53.0, h)) * smoothstep(0.15, 0.40, sat);   // (fire deep reds too: seen half orange)
     float3 neon = lerp(float3(1.00, 0.22, 0.78), float3(0.15, 0.88, 1.00), saturate((h - 16.0) / 28.0));
     float  L = dot(d, float3(0.2126, 0.7152, 0.0722));
     return lerp(d, neon * (L / dot(neon, float3(0.2126, 0.7152, 0.0722))), w);
