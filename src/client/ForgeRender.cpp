@@ -242,7 +242,6 @@ void tick() {
                 if (!first && want != shaderpacks::activePack() && (want == "off" || packIndex(want) || !(gPacks = shaderpacks::listPacks()).empty() && packIndex(want))) {
                     shaderpacks::setActivePack(want);
                     seen = fs::last_write_time(cfg, ec);   // our own rewrite of the file is not a new switch
-                    requestReload("atmosphere switch");
                 }
             }
         }
@@ -295,7 +294,10 @@ void tick() {
         if (!first || shaderpacks::activePack() != name) {
             shaderpacks::setActivePack(name);
             setStatus("shaderpack -> " + name + (m->flag("auto_reload") ? "" : " (Reload or restart to apply)"));
-            if (!first && (m->flag("auto_reload") || gFileSwitch)) requestReload(gFileSwitch ? "shaderpack.txt changed" : "shaderpack switched");
+            // (a file switch - the atmosphere hotkey - does not reload: the world keeps its block shaders until it loads
+            //  again anyway, and a reload re-reads the new pack's files, so Renderer Foundation's sky would follow a
+            //  look the world is not showing)
+            if (!first && m->flag("auto_reload") && !gFileSwitch) requestReload("shaderpack switched");
             gFileSwitch = false;
         }
     }
