@@ -621,32 +621,26 @@ float4 main(PSIn i) : SV_Target {
         bool  team = mid == MAT_WOOL || mid == MAT_CONCRETE || mid == MAT_POWDER || mid == MAT_TERRACOTTA || mid == MAT_GLAZED;
         bool  keep = team || mid == MAT_LAMP || mid == MAT_FLOWER || mid == MAT_GEM || blk > 0.55;   // (anything giving light keeps its colour: seen in game, glowstone went lavender)
         [branch] if (NK > 0.001) {
-            float  L = csLuma(lit);
-            lit = lit * (1.0 + 0.55 * NK) + alb * float3(0.12, 0.12, 0.15) * NK * skyK;   // the city lights the islands: its night is not dark (seen in game: blocks sank into one dark mass)
-            if (!keep) lit = lerp(lit, L * float3(0.88, 0.90, 1.00) + lit * 0.30, 0.25 * NK);   // cool steel (seen in game: a stronger shift made every block the same lavender)
-            if (team) lit += alb * 0.26 * NK;                                                // team colours hold up in the dark: you must read them
-            float  azS = atan2(n.z, n.x);
-            float3 street = lerp(float3(1.00, 0.10, 0.62), float3(0.08, 0.72, 1.00), 0.5 + 0.5 * sin(azS * 1.0 + 2.0));
-            float  side = 1.0 - abs(n.y);
-            float  Fs = pow(1.0 - saturate(dot(n, V)), 2.0);
-            float3 albK = keep ? alb : lerp(alb, csLuma(alb).xxx, 0.6);
-            lit += street * (albK * 0.55 + 0.03) * side * (0.35 + 0.65 * Fs) * 1.0 * NK;      // street light on the sides
+            // Midnight city (Fernando, Nov 13): the sky is pitch black, and the islands shine like the lit city around
+            // them - in their OWN colours (no steel shift, no tinted street light: seen in game, that read as a filter).
+            // Every block is lit as if by the city's countless lights: bright, even, vibrant, the texture's own colour.
+            float  dif = 0.70 + 0.30 * saturate(dot(n, normalize(float3(0.3, 0.8, 0.5))));
+            float3 cityLit = alb * dif * (team ? 1.05 : 0.92);
+            lit = lerp(lit, max(lit, cityLit), NK);
+            if (team) lit += alb * 0.10 * NK;                                                 // team colours read first
 #if defined(PASS_OPAQUE)
-            {   // the rim of every block's glass carries a neon line that glows into the glass (the armor's outline)
+            {   // the glass rim of every block glows in the block's own colour (near you; a hairline)
                 float2 ap = abs(ngPc); float e = 1.0 - max(ap.x, ap.y);
-                float3 neon = team ? alb / max(csMax3(alb), 1e-3) : street;
-                lit += neon * (smoothstep(0.05, 0.0, e) * 0.80 + exp(-e * 9.0) * 0.15) * NK * ngOn * lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));   // (a hairline, near you: see the bevel)
+                float3 own = alb / max(csMax3(alb), 1e-3);
+                lit += lerp(float3(1.0, 1.0, 1.0), own, 0.6) * (smoothstep(0.05, 0.0, e) * 0.55 + exp(-e * 9.0) * 0.10) * NK * ngOn * lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));
             }
 #endif
-            [branch] if (n.y > 0.5) {                                                               // rain-slick tops
+            [branch] if (n.y > 0.5) {                                                         // tops: a light sheen of the city's light
                 float3 r  = reflect(-V, n);
                 float  azR = atan2(r.z, r.x);
-                float3 cityC = lerp(float3(1.00, 0.12, 0.60), float3(0.10, 0.48, 1.00), 0.5 + 0.5 * sin(azR * 1.3 + 2.0));
+                float3 cityC = lerp(float3(1.00, 0.30, 0.75), float3(0.30, 0.70, 1.00), 0.5 + 0.5 * sin(azR * 1.3 + 2.0));
                 float  Fw = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, V)), 5.0);
-                float  wet = 0.55 + 0.45 * csVN(wp.xz * 0.9 + float2(CS_TIME * 0.05, 0.0));          // puddles: patchy
-                float  streak = 0.6 + 0.4 * csVN(float2(azR * 30.0, (1.0 - r.y) * 6.0));            // the lights drag into streaks
-                lit = lerp(lit, lit * 0.88, 0.25 * NK * wet * (keep ? 0.3 : 1.0));                    // wet = darker
-                lit += cityC * Fw * streak * wet * 0.55 * NK * lerp(0.4, 1.0, skyK);
+                lit += cityC * Fw * 0.30 * NK * lerp(0.4, 1.0, skyK);
             }
         }
     }
