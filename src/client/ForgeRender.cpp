@@ -224,6 +224,28 @@ void tick() {
     if (!m) return;
     if (shaderpacks::yieldToRendererFoundation()) {
         m->description = "Shaders are handled by Renderer Foundation (press F6 for its overlay).";
+        // Renderer Foundation's atmosphere switch (Ctrl+F6) rewrites shaderpack.txt: the block pack follows right away.
+        // (Seen in game: without this the sky switched but the blocks kept the other atmosphere - both looks at once -
+        //  and not even a rejoin fixed it, only a restart.)
+        static fs::file_time_type seen{};
+        static bool               init = false;
+        static unsigned long long next = 0;
+        if (unsigned long long t = GetTickCount64(); t >= next) {
+            next = t + 400;
+            std::error_code ec;
+            auto cfg = shaderpacks::configFile();
+            auto mt  = fs::last_write_time(cfg, ec);
+            if (!ec && (!init || mt != seen)) {
+                bool const first = !init;
+                init = true, seen = mt;
+                std::string want = readTrim(cfg);
+                if (!first && want != shaderpacks::activePack() && (want == "off" || packIndex(want) || !(gPacks = shaderpacks::listPacks()).empty() && packIndex(want))) {
+                    shaderpacks::setActivePack(want);
+                    seen = fs::last_write_time(cfg, ec);   // our own rewrite of the file is not a new switch
+                    requestReload("atmosphere switch");
+                }
+            }
+        }
         return;
     }
     // file switch: shaderpack.txt is authoritative at startup (the slider stores a position, which shifts when packs are
