@@ -18,6 +18,18 @@ float3 envView(float3 r) { // what a polished surface "sees": violet above, the 
     return c + float3(1.2, 0.7, 0.3) * pow(saturate(1.0 - abs(y - 0.05) * 6.0), 3.0) * 0.6;
 }
 
+#if defined(CS_NOVAK)
+// what Novak glass sees (view space, y up): the day sky's aqua-to-ultramarine, or the night city - deep violet above,
+// a band of neon light along the horizon
+float3 ngEnv(float3 r, float day) {
+    float  y = r.y;
+    float3 dayC   = lerp(float3(0.62, 0.86, 1.00), float3(0.12, 0.32, 0.88), smoothstep(-0.10, 0.60, y)) + float3(1.0, 0.95, 0.85) * pow(saturate(1.0 - abs(y - 0.30) * 3.0), 6.0) * 0.4;
+    float3 nightC = lerp(float3(0.34, 0.06, 0.40), float3(0.02, 0.02, 0.09), smoothstep(-0.20, 0.50, y))
+                  + float3(0.10, 0.80, 1.00) * pow(saturate(1.0 - abs(y - 0.04) * 5.0), 3.0) * 0.55
+                  + float3(1.00, 0.20, 0.75) * pow(saturate(1.0 - abs(y + 0.12) * 6.0), 3.0) * 0.45;
+    return lerp(nightC, dayC, day);
+}
+#endif
 float4 main(PSIn i) : SV_Target {
     float3 base = (i.color0.rgb - 1.0) * ColorBased.x + 1.0;
     float3 c = lerp(base, base * ChangeColor.rgb, i.color0.a);
@@ -64,6 +76,29 @@ float4 main(PSIn i) : SV_Target {
     col += float3(0.22, 0.10, 0.45) * pow(1.0 - saturate(dot(nv, V)), 3.0) * nether * 0.8;   // netherite's violet sheen
     // in the dark (caves, night) the item follows the game's light level instead of glowing
     col *= lerp(0.25, 1.0, lv);
+#if defined(CS_NOVAK)
+    // ---- Novak Glass: held items are cast glass, like the armor. A deep body in the item's own colour that shows a
+    //      bent picture of the sky through each facet (red, green and blue bend by different amounts, so the facets'
+    //      edges split into colour), a crisp reflection on top, and a neon line round the rim. Handles (dark wood)
+    //      stay a darker, smokier glass so the blade reads first.
+    {
+        float  day  = smoothstep(0.35, 0.80, lv);                    // the light where you stand: day or night city
+        float3 hue  = alb / max(csMax3(alb), 1e-3);
+        float  grey = 1.0 - smoothstep(0.05, 0.18, chroma);          // steel, stone, netherite: no colour of their own
+        float3 body = lerp(hue, lerp(float3(0.78, 0.90, 1.00), float3(0.70, 0.62, 1.00), 1.0 - day), grey);
+        float  dens = lerp(0.62, 0.30, gem) * lerp(1.0, 1.35, nether);
+        float3 Tr = refract(-V, nv, 0.64), Tg = refract(-V, nv, 0.67), Tb = refract(-V, nv, 0.70);
+        float3 thru = float3(ngEnv(Tr, day).r, ngEnv(Tg, day).g, ngEnv(Tb, day).b);
+        float3 g = thru * lerp(float3(1, 1, 1), body, dens) * lerp(0.55, 1.0, luma) * 1.1;
+        float  Fg = 0.05 + 0.95 * pow(1.0 - saturate(dot(nv, V)), 4.0);
+        g = lerp(g, ngEnv(R, day), Fg * 0.55);
+        g += lerp(float3(1.0, 0.95, 0.9), float3(0.75, 0.85, 1.0), 1.0 - day) * pow(saturate(dot(nv, normalize(Lk + V))), 220.0) * 2.2;   // the hard glint
+        g *= lerp(0.45, 1.0, lv);
+        float3 neon = grey > 0.5 ? lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(vp.y * 9.0 + vp.x * 5.0)) : saturate(hue * 1.15);
+        g += neon * pow(1.0 - saturate(dot(nv, V)), 2.5) * lerp(0.35, 0.75, 1.0 - day);   // the rim line (it glows at night)
+        col = g;
+    }
+#endif
     float3 o = csEnc(col);
     o = lerp(o, i.color2.rgb, i.color2.a);
     return float4(o, 1.0);
