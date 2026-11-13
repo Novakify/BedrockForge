@@ -47,7 +47,25 @@ float4 main(PSIn i) : SV_Target {
     float rim = pow(1.0 - saturate(dot(n, V)), 1.6);
     float bright = smoothstep(0.35, 0.9, csLuma(csLin(c)));
     float k  = g * (0.35 + 0.65 * max(rim, bright)) * saturate(csLuma(GlintColor.rgb) * 3.0 + 0.4);
+#if defined(CS_NOVAK)
+    // ---- Novak Glass: enchanted items are glass too, and the enchantment is a hologram on the glass - thin-film
+    //      rainbow light that shifts with the angle you see it from, a band of spectral light sweeping along it, and
+    //      tiny glitter sparks, all living inside the vanilla enchant pattern. It burns brighter toward the endgame.
+    [branch] if (tw <= 32 && th <= 32) lit = ngItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);
+    {
+        float  T    = ViewPositionAndTime.w;
+        float  hueA = frac((1.0 - saturate(dot(n, V))) * 1.4 + T * 0.05 + g * 0.35);
+        float3 film = 0.5 + 0.5 * cos(6.2832 * (hueA + float3(0.0, 0.33, 0.67)));
+        float  sw   = frac(dot(wp, float3(0.6, 1.0, 0.3)) * 0.9 - T * 0.35);
+        float  band = exp(-pow((sw - 0.5) * 14.0, 2.0));
+        float  hs   = csHash(float2(tx) + floor(T * 6.0) * 7.31);
+        float  spark = step(0.985, hs) * (0.6 + 0.4 * sin(T * 30.0 + hs * 50.0));
+        float  hk   = lerp(0.8, 1.5, smoothstep(0.30, 0.95, saturate(CS_PHASE * 0.5)));
+        lit += film * (k * 0.9 + band * g * 0.9 * (0.4 + 0.6 * rim)) * hk + float3(1.0, 1.0, 1.0) * spark * g * 1.6;
+    }
+#else
     lit += lerp(float3(1.00, 0.84, 0.62), float3(0.75, 0.85, 1.10), CS_NIGHT) * k * 0.9;
+#endif
     lit = csHaze(lit, wp, cam, i.color2.a * (1.0 - fp));
     return float4(csEnc(lit), 1.0);
 }

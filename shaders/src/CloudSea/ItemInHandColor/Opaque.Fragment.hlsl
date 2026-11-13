@@ -28,18 +28,6 @@ float3 envView(float3 r) { // what a polished surface "sees": violet above, the 
     return c + float3(1.2, 0.7, 0.3) * pow(saturate(1.0 - abs(y - 0.05) * 6.0), 3.0) * 0.6;
 }
 
-#if defined(CS_NOVAK)
-// what Novak glass sees (view space, y up): the day sky's aqua-to-ultramarine, or the night city - deep violet above,
-// a band of neon light along the horizon
-float3 ngEnv(float3 r, float day) {
-    float  y = r.y;
-    float3 dayC   = lerp(float3(0.62, 0.86, 1.00), float3(0.12, 0.32, 0.88), smoothstep(-0.10, 0.60, y)) + float3(1.0, 0.95, 0.85) * pow(saturate(1.0 - abs(y - 0.30) * 3.0), 6.0) * 0.4;
-    float3 nightC = lerp(float3(0.34, 0.06, 0.40), float3(0.02, 0.02, 0.09), smoothstep(-0.20, 0.50, y))
-                  + float3(0.10, 0.80, 1.00) * pow(saturate(1.0 - abs(y - 0.04) * 5.0), 3.0) * 0.55
-                  + float3(1.00, 0.20, 0.75) * pow(saturate(1.0 - abs(y + 0.12) * 6.0), 3.0) * 0.45;
-    return lerp(nightC, dayC, day);
-}
-#endif
 float4 main(PSIn i) : SV_Target {
     float3 base = (i.color0.rgb - 1.0) * ColorBased.x + 1.0;
     float3 c = lerp(base, base * ChangeColor.rgb, i.color0.a);
