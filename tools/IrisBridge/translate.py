@@ -96,6 +96,7 @@ void main() {
 @@ATTR_DEFAULTS@@
     bf_viewPos = (iris_ModelViewMat * iris_Position).xyz;
     bf_pack_main();
+    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);                 // GL clip depth (-w..w) -> D3D (0..w): matches Bedrock's depth
 }
 """
 
