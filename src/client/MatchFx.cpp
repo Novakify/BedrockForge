@@ -1030,6 +1030,24 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     // the game's own time of day follows: golden hour, sunset, moonlit night (vanilla: 0 noon, 0.25 sunset, 0.5 midnight)
     float const k = gPreview.load() >= 0.0f ? std::min(gPreview.load(), 2.0f) : gPhase;
     gFx.timeOfDay = k < 1.0f ? 0.205f + 0.065f * k : 0.27f + 0.08f * (k - 1.0f);
+    // The blocks' daylight (the light map) does not ask for the time of day: it follows the level's clock. Measured in
+    // Hive matches: with only getTimeOfDay answered, the sky followed the match and the blocks followed the server's
+    // clock (Novak Glass lit its dusk colours in broad day). So the client's own copy of the clock is set too - only
+    // on a client-side level (a server we joined): it is this player's picture, nothing is sent.
+    if (nowMs() - gConsumerMs.load() <= 500) {
+        auto& lv = lp->getLevel();
+        if (lv.isClientSide()) {
+            // vanilla: timeOfDay = f + ((1 - (cos(f*pi) + 1) / 2) - f) / 3 with f = frac(time / 24000 - 0.25); solved for f
+            float lo = 0.0f, hi = 1.0f;
+            for (int i = 0; i < 20; ++i) {
+                float const f = 0.5f * (lo + hi);
+                float const g = f + ((1.0f - (std::cos(f * 3.14159265f) + 1.0f) * 0.5f) - f) / 3.0f;
+                (g < gFx.timeOfDay ? lo : hi) = f;
+            }
+            int const tick = int((0.5f * (lo + hi) + 0.25f) * 24000.0f) % 24000;
+            if (lv.getTime() != tick) lv.setTime(tick);
+        }
+    }
 }
 
 void onText(std::string const& m) {
