@@ -2123,6 +2123,8 @@ bool setField(WorldFxLook& l, std::string const& k, float v) {
     if (k == "glass") l.glass = v; else if (k == "shadow") { l.shadow = v; l.shadows = true; } else if (k == "shadows") l.shadows = v != 0;
     else if (k == "ao") l.ao = v; else if (k == "rim") l.rim = v; else if (k == "rays") l.rays = v; else if (k == "clouds") l.clouds = v;
     else if (k == "ink") l.ink = v; else if (k == "air") l.air = v; else if (k == "living") l.living = v != 0;
+    else if (k == "teams") l.teams = v; else if (k == "shards") l.shards = v; else if (k == "waves") l.waves = v; else if (k == "trails") l.trails = v;
+    else if (k == "beds") l.beds = v != 0; else if (k == "kills") l.kills = v != 0; else if (k == "vitals") l.vitals = v != 0;
     else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v; else if (k == "skyrate") l.skyRate = v;
     else return false;
     return true;
