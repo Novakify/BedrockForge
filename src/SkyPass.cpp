@@ -1245,6 +1245,7 @@ int kindOfHash(uint64_t h) {
 
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d) {
     if (!pso || !kind) return;
+    if (kind == Terrain) rf::iris::noteTerrainPso(pso, d); // input layout + root signature for the IrisBridge terrain replay
     GamePso g;
     g.kind  = kind;
     g.root  = d.pRootSignature;

@@ -14,6 +14,8 @@
 #include <string>
 
 struct ID3D12Device;
+struct D3D12_INDEX_BUFFER_VIEW;
+struct D3D12_VERTEX_BUFFER_VIEW;
 struct ID3D12CommandQueue;
 struct ID3D12Resource;
 struct ID3D12PipelineState;
@@ -94,5 +96,7 @@ bool isUiPipeline(ID3D12PipelineState* pso);
 bool haveUiShaderList();
 /// RTV descriptor -> resource (seen at creation, copied, or guessed from barriers); null if unknown. Not owned.
 ID3D12Resource* rtvResourceOf(size_t handle);
+/// The list's current index buffer + vertex buffers (tracked while Glass Armor or IrisBridge needs them)
+bool currentIa(void* list, D3D12_INDEX_BUFFER_VIEW& ib, unsigned& nVb, D3D12_VERTEX_BUFFER_VIEW* vb);
 
 } // namespace rf::uicapture

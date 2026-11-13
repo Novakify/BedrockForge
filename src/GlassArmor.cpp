@@ -1,5 +1,6 @@
 // Renderer Foundation - Glass Armor M0 probe (see GlassArmor.h). Original code for Renderer Foundation.
 #include "GlassArmor.h"
+#include "IrisBridge.h"
 #include "SkyPass.h"
 
 #include <algorithm>
@@ -451,7 +452,7 @@ void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
 }
 
 bool wantRoot() { return tracking(); }
-bool wantSrvs() { return tracking(); }
+bool wantSrvs() { return tracking() || rf::iris::wantsTerrain(); } // IrisBridge finds the block atlas behind the game's descriptors
 
 void noteSrv(size_t cpu, ID3D12Resource* r) {
     SrvInfo i;

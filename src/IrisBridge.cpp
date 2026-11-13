@@ -31,6 +31,8 @@
 #include "IrisShaders.h"
 #include "LyricsCamera.h"
 #include "WorldFx.h"
+#include "GlassArmor.h"
+#include "UiCapture.h"
 #include "LLShim.h"
 
 namespace rf::iris {
@@ -180,6 +182,14 @@ struct Gpu {
     std::unique_ptr<Bundle>      bundle;
     std::string                  loadedName, loadedWorld;
     std::vector<PassGpu>         passes;    // deferred*, composite*, final of the chosen world, in order
+    Pass const*                  terrain = nullptr;  // gbuffers_terrain (Bedrock variant) of the chosen world
+    ComPtr<ID3D12RootSignature>  terrainRoot;
+    std::vector<int>             terrainOuts;
+    std::map<std::string, ComPtr<ID3D12PipelineState>> terrainPsos; // by the game's input layout
+    std::string                  terrainError;
+    ComPtr<ID3D12DescriptorHeap> dsvHeap;
+    std::map<ID3D12Resource*, UINT> atlasSlot;                       // block atlas resources -> staging SRV slot
+    int                          lastTerrainDraws = 0;
     std::map<std::string, std::vector<uint8_t>> blobs;
     ComPtr<ID3D12RootSignature>  importRoot;
     ComPtr<ID3D12PipelineState>  importPso;
@@ -201,7 +211,7 @@ struct Gpu {
     // CPU staging slots: per colortex [0]/[1], depth, shadow depth, shadow colour, noise, white, null, scene, game rt
     UINT cpuCt(int i, int k) const { return UINT(i * 2 + k); }
     static constexpr UINT kCpuDepth = 32, kCpuShadowDepth = 33, kCpuShadowColor = 34, kCpuNoise = 35, kCpuWhite = 36,
-                          kCpuNull = 37, kCpuScene = 38, kCpuCount = 40;
+                          kCpuNull = 37, kCpuScene = 38, kCpuAtlas0 = 40, kCpuCount = 72;
     static constexpr UINT kRtvGame = 32, kRtvCount = 34;
 } gGpu;
 
@@ -215,6 +225,16 @@ struct FrameU {
     double timeCounter = 0;
     int    frameCounter = 0;
 } gU;
+
+// ---- M2 terrain recording (UiCapture threads) / replay (the hook)
+struct TerrainPso { std::vector<D3D12_INPUT_ELEMENT_DESC> il; std::vector<std::string> names; };
+struct RootInfo { int vsCbv = -1; int psTable = -1; UINT psOffset = 0; std::string desc; };
+std::mutex                                                              gRecMutex;
+std::unordered_map<ID3D12PipelineState*, std::shared_ptr<TerrainPso>>   gTerrainPsos;
+std::unordered_map<ID3D12RootSignature*, RootInfo>                      gRoots;
+std::unordered_map<ID3D12GraphicsCommandList*, std::vector<TerrainDraw>> gRec;
+std::atomic_bool                                                        gWantTerrain{false};
+std::atomic_bool                                                        gTerrainOn{true}; // F6
 
 void setStatus(std::string s) {
     if (s != gStatus) ll_shim::info("[RF] IrisBridge: " + s);
@@ -279,9 +299,10 @@ void srv(ID3D12Resource* r, DXGI_FORMAT f, UINT slot) {
 }
 
 // ---------------------------------------------------------------- pipelines
-ComPtr<ID3D12RootSignature> makeRoot(std::vector<Resource> const& res, std::string& err) {
+ComPtr<ID3D12RootSignature> makeRoot(std::vector<Resource> const& res, std::string& err, bool gameCbv = false) {
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kSlots, 0, 0, 0};
-    D3D12_ROOT_PARAMETER p[3]{};
+    D3D12_ROOT_PARAMETER p[4]{};
+    p[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; p[3].Descriptor = {8, 0}; p[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX; // the game's RenderChunk cbuffer
     p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; p[0].Descriptor = {0, 0}; p[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
     p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; p[1].Descriptor = {0, 0}; p[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     p[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[2].DescriptorTable = {1, &range}; p[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -291,13 +312,15 @@ ComPtr<ID3D12RootSignature> makeRoot(std::vector<Resource> const& res, std::stri
     for (UINT i = 0; i < kSlots; ++i) {
         auto& s = ss[i];
         bool const point = (i >= 16 && i <= 22); // depth + shadow maps: no filtering (Iris shadowtexNearest default for depth)
-        s.Filter = cmp[i] ? D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT : point ? D3D12_FILTER_MIN_MAG_MIP_POINT : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        bool const atlas = (i >= 24 && i <= 26); // block atlas / normals / specular: crisp pixels, mips between
+        s.Filter = cmp[i] ? D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT : point ? D3D12_FILTER_MIN_MAG_MIP_POINT
+                 : atlas ? D3D12_FILTER_MIN_MAG_POINT_MIP_LINEAR : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
         s.AddressU = s.AddressV = s.AddressW = (i == 23) ? D3D12_TEXTURE_ADDRESS_MODE_WRAP : D3D12_TEXTURE_ADDRESS_MODE_CLAMP; // noisetex repeats
         s.ComparisonFunc = cmp[i] ? D3D12_COMPARISON_FUNC_LESS_EQUAL : D3D12_COMPARISON_FUNC_NEVER;
         s.MaxLOD = D3D12_FLOAT32_MAX; s.ShaderRegister = i; s.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         s.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
     }
-    D3D12_ROOT_SIGNATURE_DESC rs{3, p, kSlots, ss, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT};
+    D3D12_ROOT_SIGNATURE_DESC rs{gameCbv ? 4u : 3u, p, kSlots, ss, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT};
     ComPtr<ID3DBlob> blob, e;
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &e))) {
         err = e ? std::string(static_cast<char const*>(e->GetBufferPointer()), e->GetBufferSize()) : "root signature";
@@ -420,6 +443,8 @@ bool ensureDevice(ID3D12Device* dev) {
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gGpu.cpuHeap)))) return false;
     hd = {D3D12_DESCRIPTOR_HEAP_TYPE_RTV, Gpu::kRtvCount, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gGpu.rtvHeap)))) return false;
+    hd = {D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+    if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gGpu.dsvHeap)))) return false;
     gGpu.srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     gGpu.rtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     D3D12_HEAP_PROPERTIES up{D3D12_HEAP_TYPE_UPLOAD};
@@ -473,6 +498,12 @@ bool loadBundle(std::string const& name, std::string const& world) {
             for (auto const& [sn, st] : p->stages)
                 for (auto const& r : st.resources) { int c = colortexOf(r.name); if (c >= 0) gGpu.used[size_t(c)] = true; }
         }
+    gGpu.terrain = nullptr; gGpu.terrainPsos.clear(); gGpu.terrainRoot.Reset(); gGpu.terrainError.clear(); gGpu.atlasSlot.clear();
+    for (Pass const* p : gGpu.bundle->chain(world, "terrain")) {
+        gGpu.terrain = p;
+        for (int t : p->targets) if (t >= 0 && t < kColortex) gGpu.used[size_t(t)] = true;
+    }
+    gWantTerrain = gGpu.terrain != nullptr;
     gU = FrameU{};
     if (gGpu.passes.empty()) { setStatus("no deferred / composite / final programs for " + world); return false; }
     return true;
@@ -503,9 +534,15 @@ bool ensureTargets(ID3D12GraphicsCommandList* list, UINT w, UINT h, DXGI_FORMAT 
     d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; d.Width = w; d.Height = h; d.DepthOrArraySize = 1; d.MipLevels = 1;
     d.Format = DXGI_FORMAT_R24G8_TYPELESS; d.SampleDesc.Count = 1;
     gGpu.depth = Tex{};
+    d.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL; // the terrain pass depth-tests against (a copy of) Bedrock's depth
     if (FAILED(gGpu.dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&gGpu.depth.r)))) return false;
+    d.Flags = D3D12_RESOURCE_FLAG_NONE;
     gGpu.depth.state = D3D12_RESOURCE_STATE_COPY_DEST; gGpu.depth.fmt = d.Format;
     srv(gGpu.depth.r.Get(), DXGI_FORMAT_R24_UNORM_X8_TYPELESS, Gpu::kCpuDepth);
+    {
+        D3D12_DEPTH_STENCIL_VIEW_DESC dv{}; dv.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; dv.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        gGpu.dev->CreateDepthStencilView(gGpu.depth.r.Get(), &dv, gGpu.dsvHeap->GetCPUDescriptorHandleForHeapStart());
+    }
     auto const sd = gameRt->GetDesc();
     d.Format = sd.Format;
     gGpu.scene = Tex{};
@@ -646,15 +683,18 @@ void frameUniforms(rf::lyrics::CameraSnap const& cam) {
 }
 
 /// Fill one stage's $Globals from the uniform table (types from DXC's reflection), returns the GPU address.
-D3D12_GPU_VIRTUAL_ADDRESS writeGlobals(Stage const& st, UINT64& cbOff, UINT ring) {
+using UniformMap = std::unordered_map<std::string, std::array<float, 16>>;
+D3D12_GPU_VIRTUAL_ADDRESS writeGlobals(Stage const& st, UINT64& cbOff, UINT ring, UniformMap const* over = nullptr) {
     UINT64 const size = (std::max<UINT64>(st.globalsSize, 16) + 255) & ~UINT64(255);
     if (cbOff + size > kCbPerFrame) return 0;
     uint8_t* base = gGpu.cbMap[ring] + cbOff;
     std::memset(base, 0, size_t(size));
     for (auto const& g : st.globals) {
         std::array<float, 16> v{};
-        auto it = gU.v.find(g.name);
-        if (it != gU.v.end()) v = it->second;
+        std::array<float, 16> const* found = nullptr;
+        if (over) if (auto o = over->find(g.name); o != over->end()) found = &o->second; // per-pass values (terrain matrices...)
+        if (!found) if (auto it = gU.v.find(g.name); it != gU.v.end()) found = &it->second;
+        if (found) v = *found;
         else if (auto d = st.defaults.find(g.name); d != st.defaults.end()) {
             std::string s = d->second; // "192.0f" / "float3(1.0f,2.0f,3.0f)"
             for (char& ch : s) if (ch == '(' || ch == ')' || ch == ',' || ch == 'f') ch = ' ';
@@ -694,6 +734,200 @@ UINT cpuSlotFor(UINT slot) {
     }
 }
 
+
+// ---------------------------------------------------------------- M2 terrain replay
+/// The game's input element -> the Bedrock variant's TEXCOORD26..29 (tools/IrisBridge BEDROCK_VS_HEAD)
+int bedrockSlot(std::string const& sem, UINT idx) {
+    if (sem == "POSITION" && idx == 0) return 26;
+    if (sem == "COLOR" && idx == 0) return 27;
+    if (sem == "TEXCOORD" && idx == 0) return 28;
+    if (sem == "TEXCOORD" && idx == 1) return 29;
+    return -1;
+}
+
+ID3D12PipelineState* terrainPso(TerrainPso const& tp) {
+    std::string key;
+    std::vector<D3D12_INPUT_ELEMENT_DESC> il;
+    int have = 0;
+    for (size_t k = 0; k < tp.il.size(); ++k) {
+        auto e = tp.il[k];
+        int const slot = bedrockSlot(tp.names[k], e.SemanticIndex);
+        if (slot < 0) continue;
+        have |= 1 << (slot - 26);
+        e.SemanticName = "TEXCOORD"; e.SemanticIndex = UINT(slot);
+        il.push_back(e);
+        key += std::to_string(slot) + ":" + std::to_string(e.Format) + "@" + std::to_string(e.InputSlot) + "+" + std::to_string(e.AlignedByteOffset) + " ";
+    }
+    if (have != 15) { gGpu.terrainError = "the game's terrain input layout is not POSITION0/COLOR0/TEXCOORD0/TEXCOORD1"; return nullptr; }
+    if (auto it = gGpu.terrainPsos.find(key); it != gGpu.terrainPsos.end()) return it->second.Get();
+    Pass const& p = *gGpu.terrain;
+    auto vs = p.stages.find("vert"), ps = p.stages.find("frag");
+    if (vs == p.stages.end() || ps == p.stages.end()) { gGpu.terrainError = "terrain program needs vertex + fragment"; return nullptr; }
+    if (!gGpu.terrainRoot) {
+        std::vector<Resource> all = vs->second.resources;
+        all.insert(all.end(), ps->second.resources.begin(), ps->second.resources.end());
+        for (auto const& r : all) if (r.kind == "UAV") { gGpu.terrainError = "terrain program uses images / storage buffers"; return nullptr; }
+        gGpu.terrainRoot = makeRoot(all, gGpu.terrainError, true);
+        if (!gGpu.terrainRoot) return nullptr;
+        gGpu.terrainOuts.clear();
+        for (int t : p.targets) if (t >= 0 && t < kColortex && gGpu.terrainOuts.size() < 8) gGpu.terrainOuts.push_back(t);
+        if (gGpu.terrainOuts.empty()) gGpu.terrainOuts = {0};
+    }
+    auto& vb = gGpu.blobs[vs->second.dxil];
+    auto& pb = gGpu.blobs[ps->second.dxil];
+    if (vb.empty()) vb = readFile(gRoot / gGpu.loadedName / vs->second.dxil);
+    if (pb.empty()) pb = readFile(gRoot / gGpu.loadedName / ps->second.dxil);
+    if (vb.empty() || pb.empty()) { gGpu.terrainError = "missing terrain DXIL"; return nullptr; }
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
+    d.pRootSignature = gGpu.terrainRoot.Get();
+    d.VS = {vb.data(), vb.size()};
+    d.PS = {pb.data(), pb.size()};
+    d.InputLayout = {il.data(), UINT(il.size())};
+    d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    d.RasterizerState.DepthClipEnable = TRUE;
+    d.RasterizerState.DepthBias = -64; d.RasterizerState.SlopeScaledDepthBias = -2.0f; // win the tie with Bedrock's own depth
+    d.DepthStencilState.DepthEnable = TRUE; d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    d.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    d.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    d.SampleMask = UINT_MAX; d.SampleDesc.Count = 1;
+    d.NumRenderTargets = UINT(gGpu.terrainOuts.size());
+    for (size_t i = 0; i < gGpu.terrainOuts.size(); ++i) {
+        d.RTVFormats[i] = gGpu.ct[0][size_t(gGpu.terrainOuts[i])].fmt;
+        d.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    }
+    ComPtr<ID3D12PipelineState> pso;
+    if (FAILED(gGpu.dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) { gGpu.terrainError = "terrain CreateGraphicsPipelineState failed"; return nullptr; }
+    ll_shim::info("[RF] IrisBridge: terrain pipeline built for layout " + key);
+    gGpu.terrainPsos[key] = pso;
+    return pso.Get();
+}
+
+/// Staging SRV for the block atlas behind a game descriptor (by resource; Glass Armor tracks the descriptors).
+UINT atlasStaging(size_t gameCpu) {
+    rf::glassarmor::SrvView v;
+    if (!rf::glassarmor::srvView(gameCpu, v) || !v.res) return Gpu::kCpuWhite;
+    if (auto it = gGpu.atlasSlot.find(v.res); it != gGpu.atlasSlot.end()) return it->second;
+    UINT const slot = Gpu::kCpuAtlas0 + UINT(gGpu.atlasSlot.size());
+    if (slot >= Gpu::kCpuCount) return Gpu::kCpuWhite;
+    auto const rd = v.res->GetDesc();
+    D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
+    sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sd.Format = typedOf(rd.Format);
+    sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; sd.Texture2D.MipLevels = UINT(-1);
+    gGpu.dev->CreateShaderResourceView(v.res, &sd, cpuAt(slot));
+    gGpu.atlasSlot[v.res] = slot;
+    ll_shim::info("[RF] IrisBridge: block atlas " + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) + " fmt " +
+                  std::to_string(int(rd.Format)) + " mips " + std::to_string(rd.MipLevels));
+    return slot;
+}
+
+/// Replay the frame's recorded RenderChunk draws (this list) through the pack's terrain program.
+int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, UINT ring, UINT& srvNext, UINT64& cbOff,
+                  D3D12_VIEWPORT const& vp, D3D12_RECT const& sc) {
+    std::vector<TerrainDraw> draws;
+    {
+        std::lock_guard l(gRecMutex);
+        if (auto it = gRec.find(list); it != gRec.end()) draws.swap(it->second);
+        for (auto& [k, v] : gRec) v.clear(); // other lists' draws are another frame's / view's
+    }
+    if (!gGpu.terrain || draws.empty() || !gTerrainOn) return 0;
+    // the terrain program's matrices (Iris gives gbuffers the camera, composite / final an ortho quad)
+    UniformMap over;
+    auto const view = gU.v["gbufferModelView"], proj = gU.v["gbufferProjection"];
+    over["iris_ModelViewMat"] = view; over["modelViewMatrix"] = view;
+    over["iris_ProjMat"] = proj; over["projectionMatrix"] = proj;
+    std::array<float, 16> nm{};
+    for (int c = 0; c < 3; ++c) for (int r = 0; r < 3; ++r) nm[size_t(c * 3 + r)] = view[size_t(c * 4 + r)];
+    over["iris_NormalMat"] = nm; over["normalMatrix"] = nm;
+    std::array<float, 16> lmMat{}; lmMat[0] = lmMat[5] = 1.0f / 256.0f; lmMat[10] = lmMat[15] = 1.0f; lmMat[12] = lmMat[13] = 1.0f / 32.0f;
+    over["iris_TextureMat1"] = lmMat;
+    std::array<float, 16> stage{}; stage[0] = 8; over["renderStage"] = stage; // MC_RENDER_STAGE_TERRAIN_SOLID
+    Pass const& p = *gGpu.terrain;
+    // the first usable pipeline also builds the root signature + outputs
+    std::shared_ptr<TerrainPso> firstTp;
+    {
+        std::lock_guard l(gRecMutex);
+        for (auto const& d : draws) if (auto it = gTerrainPsos.find(d.pso); it != gTerrainPsos.end()) { firstTp = it->second; break; }
+    }
+    if (!firstTp || !terrainPso(*firstTp)) { if (gGpu.terrainError.empty()) gGpu.terrainError = "no RenderChunk pipeline seen yet"; return 0; }
+    D3D12_GPU_VIRTUAL_ADDRESS const vcb = writeGlobals(p.stages.at("vert"), cbOff, ring, &over);
+    D3D12_GPU_VIRTUAL_ADDRESS const pcb = writeGlobals(p.stages.at("frag"), cbOff, ring, &over);
+    if (!vcb || !pcb) return 0;
+    D3D12_INDEX_BUFFER_VIEW  gameIb{};
+    D3D12_VERTEX_BUFFER_VIEW gameVb[8]{};
+    unsigned                 gameNVb = 0;
+    bool const haveIa = rf::uicapture::currentIa(list, gameIb, gameNVb, gameVb);
+    // targets: the pack's gbuffers write the CURRENT buffers (no flip) + depth-test against Bedrock's depth
+    barrier(list, gGpu.depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[8]{};
+    for (size_t i = 0; i < gGpu.terrainOuts.size(); ++i) {
+        int const o = gGpu.terrainOuts[i];
+        barrier(list, gGpu.ct[0][size_t(o)], D3D12_RESOURCE_STATE_RENDER_TARGET);
+        rtvs[i] = rtvAt(UINT(o * 2));
+    }
+    auto dsv = gGpu.dsvHeap->GetCPUDescriptorHandleForHeapStart();
+    list->OMSetRenderTargets(UINT(gGpu.terrainOuts.size()), rtvs, FALSE, &dsv);
+    list->RSSetViewports(1, &vp); list->RSSetScissorRects(1, &sc);
+    calls.setRootSig(list, gGpu.terrainRoot.Get());
+    list->SetGraphicsRootConstantBufferView(0, vcb);
+    list->SetGraphicsRootConstantBufferView(1, pcb);
+    calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    auto gpuAt = [&](UINT i) { auto h = gGpu.srvHeap->GetGPUDescriptorHandleForHeapStart(); h.ptr += UINT64(i) * gGpu.srvInc; return h; };
+    auto cpuRingAt = [&](UINT i) { auto h = gGpu.srvHeap->GetCPUDescriptorHandleForHeapStart(); h.ptr += size_t(i) * gGpu.srvInc; return h; };
+    std::map<UINT, UINT> tableFor; // atlas staging slot -> ring table start
+    ID3D12PipelineState* curPso = nullptr;
+    UINT curTable = UINT(-1);
+    int drawn = 0, noPso = 0, noCbv = 0;
+    for (auto const& d : draws) {
+        std::shared_ptr<TerrainPso> tp;
+        RootInfo ri;
+        {
+            std::lock_guard l(gRecMutex);
+            if (auto it = gTerrainPsos.find(d.pso); it != gTerrainPsos.end()) tp = it->second;
+            if (auto it = gRoots.find(d.sig); it != gRoots.end()) ri = it->second;
+        }
+        if (!tp) { ++noPso; continue; }
+        static std::atomic_bool logged{false};
+        if (!logged.exchange(true))
+            ll_shim::info("[RF] IrisBridge: terrain root signature" + ri.desc + " -> vertex b0 = param " + std::to_string(ri.vsCbv) +
+                          ", pixel t0 = param " + std::to_string(ri.psTable) + " +" + std::to_string(ri.psOffset));
+        ID3D12PipelineState* pso = terrainPso(*tp);
+        if (!pso) { ++noPso; continue; }
+        unsigned long long cbv = 0, table = 0;
+        for (auto const& [i, v] : d.cbvs) if (int(i) == ri.vsCbv) cbv = v;
+        for (auto const& [i, v] : d.tables) if (int(i) == ri.psTable) table = v;
+        if (!cbv) { ++noCbv; continue; }
+        UINT atlas = Gpu::kCpuWhite;
+        if (table) {
+            size_t cpu = 0; unsigned inc = 0;
+            if (rf::uicapture::gpuDescToCpu(table, cpu, inc)) atlas = atlasStaging(cpu + size_t(ri.psOffset) * inc);
+        }
+        auto tf = tableFor.find(atlas);
+        if (tf == tableFor.end()) {
+            if (srvNext + kSlots > (ring + 1) * kSrvPerFrame) break;
+            for (UINT sl = 0; sl < kSlots; ++sl)
+                gGpu.dev->CopyDescriptorsSimple(1, cpuRingAt(srvNext + sl), cpuAt(sl == 24 ? atlas : cpuSlotFor(sl)), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            tf = tableFor.emplace(atlas, srvNext).first;
+            srvNext += kSlots;
+        }
+        if (pso != curPso) { calls.setPso(list, pso); curPso = pso; }
+        if (tf->second != curTable) { calls.setTable(list, 2, gpuAt(tf->second).ptr); curTable = tf->second; }
+        list->SetGraphicsRootConstantBufferView(3, cbv);
+        calls.setVb(list, 0, d.nVb, d.vb);
+        list->IASetIndexBuffer(&d.ib);
+        list->DrawIndexedInstanced(d.idxCount, d.inst, d.firstIdx, d.baseVtx, d.firstInst);
+        ++drawn;
+    }
+    for (int o : gGpu.terrainOuts) barrier(list, gGpu.ct[0][size_t(o)], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    barrier(list, gGpu.depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (haveIa) list->IASetIndexBuffer(&gameIb);
+    if (gGpu.lastTerrainDraws != drawn || (gGpu.frame & 255) == 2)
+        ll_shim::info("[RF] IrisBridge: terrain " + std::to_string(drawn) + "/" + std::to_string(draws.size()) + " draws (no pipeline " +
+                      std::to_string(noPso) + ", no cbuffer " + std::to_string(noCbv) + ")" + (gGpu.terrainError.empty() ? "" : " - " + gGpu.terrainError));
+    gGpu.lastTerrainDraws = drawn;
+    return drawn;
+}
 } // namespace
 
 // ---------------------------------------------------------------- public
@@ -720,6 +954,62 @@ void init(fs::path const& modDir) {
 }
 
 bool enabled() { return gOn.load(std::memory_order_relaxed); }
+
+bool wantsTerrain() { return gOn.load(std::memory_order_relaxed) && gWantTerrain.load(std::memory_order_relaxed) && gTerrainOn.load(std::memory_order_relaxed); }
+
+void recordTerrain(ID3D12GraphicsCommandList* list, TerrainDraw&& d) {
+    std::lock_guard l(gRecMutex);
+    auto& v = gRec[list];
+    if (v.size() < 40000) v.push_back(std::move(d));
+}
+
+void noteTerrainPso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d) {
+    auto tp = std::make_shared<TerrainPso>();
+    for (UINT k = 0; k < d.InputLayout.NumElements; ++k) {
+        auto const& e = d.InputLayout.pInputElementDescs[k];
+        tp->names.emplace_back(e.SemanticName ? e.SemanticName : "");
+        tp->il.push_back(e);
+    }
+    std::lock_guard l(gRecMutex);
+    gTerrainPsos[pso] = std::move(tp);
+}
+
+void noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size) {
+    using Fn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, REFIID, void**);
+    static Fn fn = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleW(L"d3d12.dll"), "D3D12CreateVersionedRootSignatureDeserializer"));
+    if (!fn || !rs || !blob) return;
+    ComPtr<ID3D12VersionedRootSignatureDeserializer> des;
+    if (FAILED(fn(blob, size, IID_PPV_ARGS(&des)))) return;
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC const* vd = nullptr;
+    if (FAILED(des->GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_0, &vd)) || !vd) return;
+    auto const& d = vd->Desc_1_0;
+    RootInfo ri;
+    for (UINT i = 0; i < d.NumParameters; ++i) {
+        auto const& p = d.pParameters[i];
+        bool const vsVis = p.ShaderVisibility == D3D12_SHADER_VISIBILITY_VERTEX || p.ShaderVisibility == D3D12_SHADER_VISIBILITY_ALL;
+        bool const psVis = p.ShaderVisibility == D3D12_SHADER_VISIBILITY_PIXEL || p.ShaderVisibility == D3D12_SHADER_VISIBILITY_ALL;
+        char buf[96];
+        if (p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_CBV) {
+            std::snprintf(buf, sizeof buf, " %u:cbv b%u s%u v%d", i, p.Descriptor.ShaderRegister, p.Descriptor.RegisterSpace, int(p.ShaderVisibility));
+            if (vsVis && p.Descriptor.ShaderRegister == 0 && p.Descriptor.RegisterSpace == 0 && (ri.vsCbv < 0 || p.ShaderVisibility == D3D12_SHADER_VISIBILITY_VERTEX))
+                ri.vsCbv = int(i);
+        } else if (p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE) {
+            std::snprintf(buf, sizeof buf, " %u:table(%u) v%d", i, p.DescriptorTable.NumDescriptorRanges, int(p.ShaderVisibility));
+            UINT off = 0;
+            for (UINT r = 0; r < p.DescriptorTable.NumDescriptorRanges; ++r) {
+                auto const& rg = p.DescriptorTable.pDescriptorRanges[r];
+                if (rg.OffsetInDescriptorsFromTableStart != D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND) off = rg.OffsetInDescriptorsFromTableStart;
+                if (psVis && ri.psTable < 0 && rg.RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV && rg.RegisterSpace == 0 &&
+                    rg.BaseShaderRegister == 0 && rg.NumDescriptors > 0) { ri.psTable = int(i); ri.psOffset = off; }
+                off += rg.NumDescriptors == UINT(-1) ? 0 : rg.NumDescriptors;
+            }
+        } else std::snprintf(buf, sizeof buf, " %u:type%d", i, int(p.ParameterType));
+        ri.desc += buf;
+    }
+    std::lock_guard l(gRecMutex);
+    gRoots[rs] = std::move(ri);
+}
+
 
 bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky::Calls const& calls, FrameTargets const& t) {
     std::lock_guard l(gMutex);
@@ -794,6 +1084,9 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
         calls.draw(list, 3, 1, 0, 0);
         barrier(list, gGpu.ct[0][0], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     }
+
+    // 2b) M2: the frame's terrain through the pack's gbuffers_terrain (normals, materials, lightmap for its lighting)
+    replayTerrain(list, calls, ring, srvNext, cbOff, vp, sc);
 
     // 3) the pack's chain
     D3D12_VERTEX_BUFFER_VIEW vbv{gGpu.vb->GetGPUVirtualAddress(), UINT(sizeof(QuadVert) * 6), UINT(sizeof(QuadVert))};
@@ -886,6 +1179,11 @@ void drawUi() {
     changed |= ImGui::SliderFloat("Time of day (ticks)", &gSet.timeOfDay, 0, 24000, "%.0f");
     changed |= ImGui::Checkbox("Let time run", &gSet.cycle);
     changed |= ImGui::SliderFloat("Render distance (far)", &gSet.farBlocks, 32, 1024, "%.0f blocks");
+    {
+        bool t = gTerrainOn.load();
+        if (ImGui::Checkbox("Terrain through the pack (gbuffers_terrain)", &t)) gTerrainOn = t;
+        ImGui::Text("Terrain: %d draws%s%s", gGpu.lastTerrainDraws, gGpu.terrainError.empty() ? "" : " - ", gGpu.terrainError.c_str());
+    }
     changed |= ImGui::Checkbox("Decode game gamma into colortex0", &gSet.decodeGamma);
     changed |= ImGui::SliderFloat("Import exposure", &gSet.exposure, 0.25f, 4.0f, "%.2f");
     ImGui::Text("Status: %s", gStatus.c_str());
