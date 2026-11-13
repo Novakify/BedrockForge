@@ -119,3 +119,63 @@ implicit core uniforms, `gl_Fog`. Pack attributes (`mc_Entity`, `at_tangent`, `a
 - M2: gbuffers via ShaderForge material remap (normals + material IDs from Bedrock's terrain), mc_Entity block IDs from
   block.properties mapped to Bedrock blocks. M3: the shadow pass (re-draw terrain from the sun). M4: time/weather/biome bridge
   from Bedrock Forge, packs' options in the glass menu, Vibrant Visuals.
+
+## Progress 2026-11-13: M2 terrain + M3 shadows
+
+- M2 (gbuffers_terrain) verified in game: 66/66 RenderChunk draws replayed every frame through the pack's own
+  gbuffers_terrain, correct block atlas, rebuilt face normals, depth-tested against Bedrock's depth.
+- M3 (shadow) root cause found: the bundle listed the game's `BfGameVS` cbuffer members (b8) as `$Globals`, so RF
+  wrote zeros over the pack's matrices at the same offsets (row 0 of `shadowModelViewInverse` -> every vertex on one
+  plane -> nothing rasterised). Fixed in `bundle.py` (reflect only `$Globals`) and RF (skip `_<id>_bf_*`).
+  After the fix the shadow map fills with depth (debug 200). Terrain shared the bug (its `iris_ProjMat` row 0 was
+  being zeroed too), so M2 should also be re-checked for subtle offsets.
+- Known gap: we replay what the *camera* drew, so Bedrock has already frustum-culled the chunks; casters behind or
+  above the camera are missing from the shadow map. Fix = record the uncull'd chunk list (or keep a per-chunk
+  draw cache keyed by vertex buffer and replay every cached chunk inside shadowDistance).
+- Arke's closed binary: not decompiled (no license / author permission). Public behaviour only, as a feature list.
+
+## Feasibility assessment (answers to the 2026-11-13 research brief)
+
+Legend: **E** established (done / documented APIs) · **F** feasible engineering · **X** experimental · **U** unsupported now.
+
+1. **How close are we?** Closer than any doc implied: a real Iris pack (Spooklementary, 180/180 stages) compiles
+   offline to signed DXIL and runs in game: full post chain (composite/deferred/final, 9 passes), the pack's own
+   gbuffers_terrain over Bedrock's chunk geometry, and the shadow pass writing a shadow map. ~85 fps at 4K.
+2. **What we already have that carries it:** RF's D3D12 hooks (UiCapture draw recording, Glass Armor root-signature
+   + descriptor tracking, SkyPass hook points), the F6 glass UI, ShaderForge's HLSL tooling, the LyricsForge sky
+   dome (proves we can draw our own passes inside Bedrock's frame), and the IrisBridge translator + runtime.
+3. **Missing:** entities / hand / water (translucent phase) / particles / weather / block entities (all need their
+   draws classified the way RenderChunk is), block IDs (`mc_Entity` = 0 today), uncull'd shadow casters, real
+   weather/biome/eyeBrightness uniforms, a cloud-independent trigger (worlds without clouds skip IrisBridge),
+   compute/image programs (packs using SSBOs/images are rejected), and the Arke-style pack UI.
+4. **Realistic first targets (E/F):** composite/deferred/final (E, done), gbuffers_terrain (E, done), shadow (F,
+   working, needs uncull'd casters), gbuffers_water (F: same RenderChunk path, translucent PSO), gbuffers_entities +
+   hand (F: need vertex-format adapters per Bedrock material), block.properties IDs (F, below).
+5. **GLSL->HLSL:** keep the current chain: pack preprocessor -> glslang (SPIR-V) -> spirv-opt -> SPIRV-Cross (HLSL
+   SM6) -> DXC (signed DXIL), all offline, cached per option set. Compiling is not correctness: every program gets a
+   golden-frame check in game (the debug views exist for this).
+6. **Inputs + passes:** matrices/camera/time from RF's camera snapshot (E); Iris uniforms + custom-uniform VM with
+   Iris-parity smoothing (E, 66 tests); colortex ping-pong + shadow targets (E). Passes Bedrock never runs are
+   *replays* of recorded draws with our pipelines (E for terrain; F for other geometry classes).
+7. **Biggest Bedrock obstacles:** (a) no vertex normals/tangents/block IDs in Bedrock's chunk format, so they must
+   be rebuilt or side-loaded; (b) culling happens before we see draws; (c) Bedrock's material variants differ per
+   update, so the vertex-format adapter must be data-driven; (d) Hive & other servers: client-only rendering is
+   fine, but no auth/anti-cheat/VPN bypass, ever; (e) GPU cost of rendering the world twice (once vanilla, once
+   ours). Long-term fix for (e): stop vanilla terrain from drawing when IrisBridge owns it (X).
+8. **Architecture:** yes, a compatibility layer, but not a separate product: IrisBridge = translator (BF tools, also
+   wired into `tools/JavaPort/port.py` so a Java mod's recommended shaderpack converts with it) + runtime module in
+   RF. Shared pieces: one shader compile cache, one render-pass graph, one material registry used by IrisBridge,
+   ShaderForge and our own effects.
+9. **With our skies + gameplay FX:** yes: IrisBridge runs at the cloud hook, our sky dome and LyricsForge layers
+   already composite there. Plan: a pass graph with ordered slots (pack gbuffers -> our material FX -> pack
+   deferred/composite -> our cinematic/PvP overlays -> pack final) so BF effects get the pack's lighting for free.
+10. **Tools/original systems to add:** block-ID side channel (atlas UV -> block name -> block.properties ID table,
+    built from the resource pack: F, and it's the key to waving plants, emissive ores, glass/water materials);
+    per-chunk geometry cache (shadows + uncull'd casters); a compatibility report per pack (which programs ran,
+    which fell back); a frame-capture/compare tool for regression tests; the in-game pack browser (task #88).
+
+### Block-specific + PvP visuals (from the brief)
+All of these become *material rules* once block IDs exist: wool/concrete (subtle fabric/micro-normal), glass
+(refraction + tinted shadowcolor, already supported by the shadow path), planks/stone/ores (POM + emissive ore
+veins), obsidian/netherite (PBR specular). Items/armor/projectiles/hit FX need the entity + hand passes first; they
+stay visual-only (no mechanic change, readable, no unfair info like seeing through walls).
