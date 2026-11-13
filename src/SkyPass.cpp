@@ -2230,13 +2230,32 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // The fallback anchor: a depth clear of the world's depth buffer that comes AFTER this frame's sky was drawn into it
 // (the game clears once at the start of the frame, and again after the world - before the hand). If the cloud draw
 // (and so the pass) has not come by then, the pass runs right before that clear, while the world's depth is still there.
-// (A try that counted the depth clears to cover frames with no sky draw at all fired the pass several times a frame on
-//  a Hive map - 70 FPS and a flash with every step. Back to: a clear after this frame's sky draw, once.)
+// Which clear is the post-world one is learned from frames that do have a sky draw: its position among the world
+// buffer's clears since the last Present (the Hive HUD clears it many times a frame - a first try that only counted
+// even/odd clears fired the pass several times a frame: 70 FPS and a flash with every step). A frame with no sky draw
+// at all (looking steeply down) gets the pass at that position, at most once per Present, and only while the position
+// has held still for 30 frames in a row - if the game's clears do not line up with Present, it never fires.
+std::atomic<uint64_t> gClrPresent{~0ull};
+std::atomic<int>      gClrIdx{0}, gClrLearned{-1}, gClrStable{0};
+std::atomic<bool>     gClrFired{false};
+std::atomic<int64_t>  gClrLearnedAt{-100000};
 bool fxFallbackWanted(size_t dsv) {
     if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
+    uint64_t const pres = gPresentNo.load();
+    int idx = 0;
+    if (gClrPresent.exchange(pres) != pres) gClrIdx = 0, gClrFired = false;
+    else idx = ++gClrIdx;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
-    return sky && !done;
+    int64_t const now = steadyMs();
+    if (sky || done) {   // this frame drew its sky: this clear is the post-world one
+        gClrStable = gClrLearned.exchange(idx) == idx ? std::min(gClrStable.load() + 1, 1000) : 0;
+        gClrLearnedAt = now;
+        return sky && !done;
+    }
+    if (gClrFired.load() || gClrStable.load() < 30 || idx != gClrLearned.load() || now - gClrLearnedAt.load() > 4000) return false;
+    gClrFired = true;
+    return true;
 }
 bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     size_t rt0 = 0, dsv = 0;
@@ -2495,7 +2514,7 @@ bool atmosphereNote(std::string& text, float& alpha) {
     if (age < 0 || age > 3500) return false;
     alpha = age < 3000 ? 1.0f : 1.0f - float(age - 3000) / 500.0f;
     text  = std::string(gAtmosNoteWhich.load() ? "Novak Glass" : "Cloud Sea") +
-            (gAtmosNotePack.load() ? "  -  blocks switch when you next join a world or server" : "  -  (that block pack is not installed)");
+            (gAtmosNotePack.load() ? "" : "  -  (that block pack is not installed)");
     return true;
 }
 void saveWorldFxSettings() {
