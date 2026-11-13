@@ -1502,10 +1502,17 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
         float  js = hash12(float2(px));
         float3 rays = sunShafts(px, js) * 0.55 * LIGHTK;                  // over open sky the beams are subtler (it is already bright)
-        float4 sea = (!NG_IS && rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
         // the full sky (high clouds, stars, moon) is drawn here, on pixels that are really sky - the sky pass only lays a
         // cheap gradient under the whole screen (most of it is covered by the world afterwards)
-        float3 base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));
+        float4 sea = float4(0, 0, 0, 0);
+        float3 base;
+        [branch] if (NG_IS) {                                  // Novak: one call does sky or void (a ?: here worked BOTH out for every pixel)
+            base = toDisplay(csBackground(rd, false));
+            sea.a = rd.y < 0.0 ? 1.0 : 0.0;
+        } else {
+            sea = (rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
+            base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));   // (Cloud Sea: exactly as signed off)
+        }
         float3 lb = pow(max(base, 0.0), 2.2) + rays * (sea.a > 0.0 ? 1.0 : 0.6);
         float3 o = pow(max(lb, 0.0), 1.0 / 2.2);
         o = matchOver(o, rd, 1e9) + (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;

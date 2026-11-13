@@ -807,15 +807,22 @@ float3 layerGlow(float3 rd, float L){
   float u=az*R/260.0+L*7.0; float i=floor(u), f=frac(u); f=f*f*(3.-2.*f);
   return lerp(signCol(hb(i,L+3.)),signCol(hb(i+1.,L+3.)),f)*exp(-ym/150.0)*0.030;
 }
-float3 cityAt(float3 rd, float3 bg){
-  float3 col=bg; float3 glow=((float3)(0.0));
+// the first building along the ray (a = 1) and the glow of the rings in front of it
+float4 cityHit(float3 rd, out float3 glow){
+  glow=((float3)(0.0));
+  float elr=rd.y/max(length(rd.xz),1e-3);
+  [branch] if(elr>2.7) return ((float4)(0.0));                 // above the tallest spire of the nearest ring
   int nL = QUALITY > 0.55 ? 5 : (QUALITY > 0.25 ? 4 : 3);     // the far rings go first when the frame rate needs it
   [loop] for(int L=0;L<nL;L++){
     float4 b=cityLayer(rd,float(L));
-    if(b.a>0.5){ col=b.rgb; break; }
+    if(b.a>0.5) return b;
     if(L<3 && QUALITY>0.30) glow+=layerGlow(rd,float(L))*LIT;
   }
-  return col+glow;
+  return ((float4)(0.0));
+}
+float3 cityAt(float3 rd, float3 bg){
+  float3 glow; float4 h=cityHit(rd,glow);
+  return (h.a>0.5?h.rgb:bg)+glow;
 }
 float3 cityMirror(float3 rd, float elv){
   float az=atan2(rd.z,rd.x)+(vnoise(float2(rd.x*500.0+rd.z*310.0,elv*260.0+TIME*1.2))-0.5)*0.004;
@@ -1010,6 +1017,11 @@ float3 ngBackground(float3 rd) {
     SEA_D = clamp(CAM.y - (SEA_Y - 120.0), 60.0, 420.0);           // the city's streets lie ~175 under the islands
     float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
     [branch] if (rd.y < 0.0) return ngVoid(CAM, rd, Ld);
+    // the city first: where a building covers this pixel none of the sky behind it is worked out (seen in game: the
+    // whole sky - dome, clouds, halo, aurora - was being drawn and then painted over; ~a third of the sky's pixels)
+    float3 cityGlow;
+    float4 cityH = cityHit(rd, cityGlow);
+    [branch] if (cityH.a > 0.5) return cityH.rgb + cityGlow;
     NgDome D  = ngDome(rd);
     float3 rf = D.rdF;
     float3 col = ngSkyBase(rf) * (0.965 + 0.07 * D.hcell.x);          // each pane a breath brighter or darker
@@ -1063,7 +1075,7 @@ float3 ngBackground(float3 rd) {
         float am = acos(clamp(dot(rd, SUN), -1.0, 1.0)), x2 = (am - 0.384) / 0.0175;
         col += float3(0.62, 0.66, 0.95) * (x2 < 0.0 ? exp(-x2 * x2 * 2.0) : exp(-x2 * 0.6)) * 0.035 * NIGHT * smoothstep(-0.02, 0.05, rd.y);   // the moon's ring
     }
-    col = cityAt(rd, col);                                            // the city all round, day and night
+    col += cityGlow;
     return col;
 }
 float3 csBackground(float3 rd, bool withSea) {
