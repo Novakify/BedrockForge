@@ -77,7 +77,8 @@ void captureGpuName(IDXGISwapChain* sc) {
 // ---------------------------------------------------------------- input
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_KEYDOWN && !(lp & (1 << 30))) {
-        if (int(wp) == RfOptions::uiKey.get()) RfOptions::showImGui = !RfOptions::showImGui;
+        if (int(wp) == RfOptions::uiKey.get() && (GetKeyState(VK_CONTROL) & 0x8000)) ::rf::sky::toggleAtmosphere();   // Ctrl+F6: Cloud Sea <-> Novak Glass
+        else if (int(wp) == RfOptions::uiKey.get()) RfOptions::showImGui = !RfOptions::showImGui;
         else if (int(wp) == VK_F7 && RfOptions::showImGui) ::rf::sky::testKill(); // F6 panel open: F7 plays a test kill
         else if (RfOptions::reloadShadersKey.get() != 0 && int(wp) == RfOptions::reloadShadersKey.get()) RfOptions::reloadShaders = true;
         else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiCaptureKey.get()) rf::uicapture::request();

@@ -103,6 +103,8 @@ float        worldFxGpuMs();        // GPU time of the World FX pass (smoothed),
 bool         worldFxBenchRunning(); // the A/B bench (config/wfxbench.txt) is running
 void         loadWorldFxSettings(std::filesystem::path const& configDir);
 void         saveWorldFxSettings();
-bool         setAtmosphere(int which);   // 0 Cloud Sea, 1 Novak Glass: RF look + Bedrock Forge's block shaderpack
+bool         setAtmosphere(int which);
+void         toggleAtmosphere();         // Ctrl+F6: flips the atmosphere and shows a note on screen for a few seconds
+bool         atmosphereNote(std::string& text, float& alpha);   // that note, while it shows   // 0 Cloud Sea, 1 Novak Glass: RF look + Bedrock Forge's block shaderpack
 
 } // namespace rf::sky

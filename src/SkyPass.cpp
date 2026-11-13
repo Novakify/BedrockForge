@@ -2489,6 +2489,23 @@ bool setAtmosphere(int which) {
     std::ofstream(bf / "config" / "shaderpack.txt") << name << "\n";
     return true;
 }
+std::atomic<int64_t> gAtmosNoteAt{-100000};
+std::atomic<int>     gAtmosNoteWhich{0};
+std::atomic<bool>    gAtmosNotePack{true};
+void toggleAtmosphere() {
+    int const to = gLook.glass > 0.0f ? 0 : 1;
+    gAtmosNotePack  = setAtmosphere(to);
+    gAtmosNoteWhich = to;
+    gAtmosNoteAt    = steadyMs();
+}
+bool atmosphereNote(std::string& text, float& alpha) {
+    int64_t const age = steadyMs() - gAtmosNoteAt.load();
+    if (age < 0 || age > 3500) return false;
+    alpha = age < 3000 ? 1.0f : 1.0f - float(age - 3000) / 500.0f;
+    text  = std::string(gAtmosNoteWhich.load() ? "Novak Glass" : "Cloud Sea") +
+            (gAtmosNotePack.load() ? "  -  blocks switch when you next join a world or server" : "  -  (that block pack is not installed)");
+    return true;
+}
 void saveWorldFxSettings() {
     if (gWfxConfig.empty()) return;
     std::ofstream out(gWfxConfig);
