@@ -441,12 +441,15 @@ float4 main(PSIn i) : SV_Target {
             // the glint: two crisp diagonal bars (a wide one and a hairline), sliding across the face as you move
             // (seen in game: a soft blob read as a smudge)
             // (each block its own: where the bars sit, which way they lean, some blocks none - a wall of blocks must not look stamped)
-            float  gFlip = bh > 0.5 ? 1.0 : -1.0;
-            float  dg = (ngPc.x * gFlip + ngPc.y) * 0.7071 + (frac(bh * 7.3) - 0.5) * 1.3 + dot(ngVxy, float2(0.9 * gFlip, 0.9));
+            // (the id must not change inside a face: seen in game, the shared per-block hash runs in 16 bands up a wall and broke the bars into blotches)
+            float  gx = floor(i.color2.y - n.x * 0.5), gz = abs(n.y) > 0.5 ? floor(i.color2.z - 8.0 * n.y) : 0.0;
+            float  gh = csHash(float2(gx * 1.31 + dot(n, float3(1.0, 2.0, 3.0)) * 5.0, gz * 0.73 + 11.0 + dot(float2(tile), float2(0.013, 0.027))));
+            float  gFlip = gh > 0.5 ? 1.0 : -1.0;
+            float  dg = (ngPc.x * gFlip + ngPc.y) * 0.7071 + (frac(gh * 7.3) - 0.5) * 1.3 + dot(ngVxy, float2(0.9 * gFlip, 0.9));
             float  aw2 = max(fwidth(dg), 0.004);
             float  bar = smoothstep(-aw2, aw2, 0.085 - abs(dg)) + 0.8 * smoothstep(-aw2, aw2, 0.022 - abs(dg - 0.17));
             float  inF = smoothstep(0.10, 0.14, e);                              // inside the bevel only
-            lit += gl * bar * inF * 0.20 * step(0.25, frac(bh * 3.1)) * ngOn * (1.0 - 0.5 * CS_NIGHT);
+            lit += gl * bar * inF * 0.20 * step(0.25, frac(gh * 3.1)) * ngOn * (1.0 - 0.5 * CS_NIGHT);
         }
     }
 #endif
