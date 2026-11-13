@@ -502,7 +502,7 @@ float4 main(PSIn i) : SV_Target {
             float  aw2 = max(fwidth(dg), 0.004);
             float  bar = smoothstep(-aw2, aw2, 0.085 - abs(dg)) + 0.8 * smoothstep(-aw2, aw2, 0.022 - abs(dg - 0.17));
             float  inF = smoothstep(0.07, 0.11, e);                              // inside the bevel only
-            lit += gl * bar * inF * 0.14 * step(0.25, frac(gh * 3.1)) * ngOn * (1.0 - 0.5 * CS_NIGHT);
+            // the glint bars are off: seen in game, a painted-on light streak on every block read as fake
         }
     }
 #endif
