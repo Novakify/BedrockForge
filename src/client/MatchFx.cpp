@@ -1036,23 +1036,17 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     // Hive matches: with only getTimeOfDay answered, the sky followed the match and the blocks followed the server's
     // clock (Novak Glass lit its dusk colours in broad day). So the client's own copy of the clock is set too - only
     // on a client-side level (a server we joined): it is this player's picture, nothing is sent.
-    if (nowMs() - gConsumerMs.load() <= 500) {
+    // (only once you have been in the world a few seconds: a lobby load right after a /hub was bounced to the server
+    //  list with the clock being set while the world was still arriving. No weather: it was never the cause.)
+    static int64_t inWorldSince = 0;
+    if (!last || now - last > 1000) inWorldSince = now;
+    if (nowMs() - gConsumerMs.load() <= 500 && now - inWorldSince > 5000) {
         auto& lv = lp->getLevel();
-        auto& dim = lp->getDimension();
-        Weather* w = dim.mWeather.get();
-        static int64_t lastClock = 0;
-        if (now - lastClock > 10000) {   // what the server's world is doing to the daylight (before it is set below)
-            lastClock = now;
-            note("daylight: clock {} (client level {}), rain {:.2f} lightning {:.2f}, sky darken {}", lv.getTime(), lv.isClientSide(),
-                 w ? float(w->mRainLevel) : -1.0f, w ? float(w->mLightningLevel) : -1.0f, int(reinterpret_cast<unsigned char const&>(dim.mSkyDarken)));
-        }
         if (lv.isClientSide()) {
             // the ticks the shaders' daylight scale was measured at (CloudSea/common.hlsli csPhaseFromDaylight):
             // 10920 golden hour, 12480 dusk, 14400 night
             int const tick = int(6000.0f + gFx.timeOfDay * 24000.0f) % 24000;
             if (lv.getTime() != tick) lv.setTime(tick);
-            // rain darkens the sky's light too (seen in Hive matches: the blocks sat in dusk light at noon)
-            if (w) w->mOldRainLevel = 0.0f, w->mRainLevel = 0.0f, w->mTargetRainLevel = 0.0f, w->mOldLightningLevel = 0.0f, w->mLightningLevel = 0.0f, w->mTargetLightningLevel = 0.0f;
         }
     }
 }
