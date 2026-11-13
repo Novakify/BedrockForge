@@ -678,6 +678,12 @@ void frameUniforms(rf::lyrics::CameraSnap const& cam) {
     float const W = float(gGpu.w), H = float(gGpu.h), n = 0.025f, farB = gSet.farBlocks;
     Mat const view = viewFromBasis({cam.forward[0], cam.forward[1], cam.forward[2]}, {cam.up[0], cam.up[1], cam.up[2]});
     Mat const proj = projInfinite(std::fabs(cam.proj[0]), std::fabs(cam.proj[5]), n);
+    if (static int logged = 0; logged++ % 3000 == 0) {
+        char buf[160];
+        std::snprintf(buf, sizeof buf, "[RF] IrisBridge: game projection [10] %.6f [11] %.6f [14] %.6f [15] %.6f (assumed near %.3f)",
+                      cam.proj[10], cam.proj[11], cam.proj[14], cam.proj[15], n);
+        ll_shim::info(buf);
+    }
     if (!gU.havePrev) { gU.prevView = view; gU.prevProj = proj; std::copy(cam.pos, cam.pos + 3, gU.prevCam); gU.havePrev = true; }
     put("viewWidth", {W}); put("viewHeight", {H}); put("aspectRatio", {W / std::max(H, 1.0f)});
     put("near", {n}); put("far", {farB});
@@ -1007,7 +1013,13 @@ std::array<float, 16> mat3Of(std::array<float, 16> const& m) {
 /// gbuffers_terrain's per-pass values: the camera's matrices, lightmap texture matrix, render stage
 UniformMap terrainOver() {
     UniformMap over;
-    auto const view = gU.v["gbufferModelView"], proj = gU.v["gbufferProjection"];
+    auto const view = gU.v["gbufferModelView"];
+    // gbufferProjection is Y-flipped so uv <-> NDC reconstruction works on our top-down buffers; but the D3D rasterizer
+    // maps clip Y the other way round, so geometry drawn with it lands mirrored (it failed the depth test against the
+    // game everywhere except where the mirror image hit sky). The matrix the pack RASTERISES with (ftransform /
+    // gl_ProjectionMatrix) is therefore the unflipped one; everything it reconstructs with stays flipped.
+    auto proj = gU.v["gbufferProjection"];
+    for (int c = 0; c < 4; ++c) proj[size_t(c * 4 + 1)] = -proj[size_t(c * 4 + 1)];
     over["iris_ModelViewMat"] = view; over["modelViewMatrix"] = view;
     over["iris_ProjMat"] = proj; over["projectionMatrix"] = proj;
     over["iris_NormalMat"] = mat3Of(view); over["normalMatrix"] = mat3Of(view);
