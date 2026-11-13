@@ -24,6 +24,7 @@
 #include <windows.h>
 #include <intrin.h>
 #include <d3d12.h>
+#include "IrisRecord.h"
 #include <wrl/client.h>
 
 #include <deque>
@@ -340,6 +341,7 @@ HRESULT STDMETHODCALLTYPE createRsHook(ID3D12Device* d, UINT mask, void const* b
         ID3D12RootSignature* rs = nullptr;
         if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&rs))) && rs) {
             noteRootSig(rs, blob, size);
+            rf::iris::noteRootSig(rs, blob, size); // IrisBridge: where RenderChunk's vertex cbuffer / atlas table live
             rs->Release();
         }
     }

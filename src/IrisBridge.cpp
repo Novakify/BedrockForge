@@ -895,6 +895,25 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
                           ", pixel t0 = param " + std::to_string(ri.psTable) + " +" + std::to_string(ri.psOffset));
         ID3D12PipelineState* pso = terrainPso(*tp);
         if (!pso) { ++noPso; continue; }
+        if (ri.vsCbv < 0 && !d.cbvs.empty()) { // root signature unseen: lowest-index root CBV = the vertex cbuffer (bgfx order)
+            unsigned lo = ~0u;
+            for (auto const& [i, v] : d.cbvs) lo = std::min(lo, i);
+            ri.vsCbv = int(lo);
+        }
+        if (ri.psTable < 0 && !d.tables.empty()) {
+            unsigned lo = ~0u;
+            for (auto const& [i, v] : d.tables) lo = std::min(lo, i);
+            ri.psTable = int(lo);
+        }
+        static std::atomic_bool argsLogged{false};
+        if (!argsLogged.exchange(true)) {
+            std::string a = "[RF] IrisBridge: first terrain draw args - cbvs:";
+            for (auto const& [i, v] : d.cbvs) a += " " + std::to_string(i);
+            a += " tables:";
+            for (auto const& [i, v] : d.tables) a += " " + std::to_string(i);
+            a += " -> using cbv " + std::to_string(ri.vsCbv) + ", table " + std::to_string(ri.psTable);
+            ll_shim::info(a);
+        }
         unsigned long long cbv = 0, table = 0;
         for (auto const& [i, v] : d.cbvs) if (int(i) == ri.vsCbv) cbv = v;
         for (auto const& [i, v] : d.tables) if (int(i) == ri.psTable) table = v;
@@ -978,11 +997,17 @@ void noteTerrainPso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC
 void noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size) {
     using Fn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, REFIID, void**);
     static Fn fn = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleW(L"d3d12.dll"), "D3D12CreateVersionedRootSignatureDeserializer"));
-    if (!fn || !rs || !blob) return;
+    static std::atomic<int> seen{0}, failed{0};
+    ++seen;
+    auto fail = [&](char const* why) {
+        if (failed++ < 3) ll_shim::info(std::string("[RF] IrisBridge: root signature not parsed: ") + why);
+    };
+    if (!fn) { fail("no D3D12CreateVersionedRootSignatureDeserializer"); return; }
+    if (!rs || !blob) return;
     ComPtr<ID3D12VersionedRootSignatureDeserializer> des;
-    if (FAILED(fn(blob, size, IID_PPV_ARGS(&des)))) return;
+    if (FAILED(fn(blob, size, IID_PPV_ARGS(&des)))) { fail("deserializer failed"); return; }
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC const* vd = nullptr;
-    if (FAILED(des->GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_0, &vd)) || !vd) return;
+    if (FAILED(des->GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_0, &vd)) || !vd) { fail("desc 1.0 failed"); return; }
     auto const& d = vd->Desc_1_0;
     RootInfo ri;
     for (UINT i = 0; i < d.NumParameters; ++i) {
