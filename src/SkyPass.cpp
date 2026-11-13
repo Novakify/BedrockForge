@@ -997,7 +997,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (gWfxRoot) return true;
     D3D12_ROOT_PARAMETER prm[5]{};
     prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    prm[0].Constants        = {0, 0, 40};
+    prm[0].Constants        = {0, 0, 44};
     prm[4].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_CBV; // b1: the match (team lights, beacons, shards)
     prm[4].Descriptor       = {1, 0};
     prm[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1022,7 +1022,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
@@ -1049,6 +1049,11 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     for (UINT i = 0; i < g.numRt; ++i) d.RTVFormats[i] = g.rtv[i];
     d.DSVFormat  = g.dsv;
     d.SampleDesc = g.sample;
+    if (depthMode) {   // the pass split in two by the depth buffer: 1 = sky pixels only (drawn at depth 1), 2 = everything else
+        d.DepthStencilState.DepthEnable    = TRUE;
+        d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        d.DepthStencilState.DepthFunc      = depthMode == 1 ? D3D12_COMPARISON_FUNC_LESS_EQUAL : D3D12_COMPARISON_FUNC_GREATER;
+    }
     HRESULT hr   = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&out));
     if (FAILED(hr)) {
         char b[16];
@@ -1107,7 +1112,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 0), ok ? work.dome : nullptr});
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
-            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which == 6) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
+            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which >= 6, which == 7 ? 1 : which == 8 ? 2 : 0) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -2118,7 +2123,7 @@ bool setField(WorldFxLook& l, std::string const& k, float v) {
     if (k == "glass") l.glass = v; else if (k == "shadow") { l.shadow = v; l.shadows = true; } else if (k == "shadows") l.shadows = v != 0;
     else if (k == "ao") l.ao = v; else if (k == "rim") l.rim = v; else if (k == "rays") l.rays = v; else if (k == "clouds") l.clouds = v;
     else if (k == "ink") l.ink = v; else if (k == "air") l.air = v; else if (k == "living") l.living = v != 0;
-    else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v;
+    else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v; else if (k == "skyrate") l.skyRate = v;
     else return false;
     return true;
 }
@@ -2311,7 +2316,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-    float c[40]{};
+    float c[44]{};
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
@@ -2374,14 +2379,45 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
-    calls.setConsts(list, 0, 40, c, 0);
+    calls.setConsts(list, 0, 44, c, 0);
     calls.setTable(list, 3, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
     list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
     list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
     list->SetGraphicsRootConstantBufferView(4, mcb);
-    calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    calls.draw(list, 3, 1, 0, 0);
+    // Novak Glass: the sky and its city are the dear part of the pass (measured 5.6 - 6.9 ms at 4K, most of it sky and
+    // void pixels). Split the pass by the depth buffer: sky pixels in one draw shaded at a coarse rate (variable rate
+    // shading: one shader run per 2x2 pixels), blocks and players in a second draw at full rate - they stay sharp.
+    ComPtr<ID3D12GraphicsCommandList5> l5;
+    ID3D12PipelineState* psoSky = nullptr; ID3D12PipelineState* psoTer = nullptr;
+    int const rate = look.glass > 0.0f ? int(look.skyRate + 0.5f) : 0;
+    if (rate > 0 && SUCCEEDED(list->QueryInterface(IID_PPV_ARGS(&l5)))) {
+        static int vrs = -1;
+        if (vrs < 0) {
+            D3D12_FEATURE_DATA_D3D12_OPTIONS6 o6{};
+            vrs = SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &o6, sizeof o6)) && o6.VariableShadingRateTier != D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED ? 1 : 0;
+        }
+        if (vrs == 1) { psoSky = derived(dev.Get(), g, 7); psoTer = derived(dev.Get(), g, 8); }
+    }
+    if (psoSky && psoTer) {
+        D3D12_VIEWPORT vp{0.0f, 0.0f, float(rd.Width), float(rd.Height), 1.0f, 1.0f};   // every pixel at depth 1: the sky's depth
+        list->RSSetViewports(1, &vp);
+        c[40] = 1.0f;
+        calls.setConsts(list, 0, 44, c, 0);
+        calls.setPso(list, psoSky);
+        l5->RSSetShadingRate(rate == 1 ? D3D12_SHADING_RATE_2X1 : D3D12_SHADING_RATE_2X2, nullptr);
+        calls.draw(list, 3, 1, 0, 0);
+        l5->RSSetShadingRate(D3D12_SHADING_RATE_1X1, nullptr);
+        c[40] = 0.0f;
+        calls.setConsts(list, 0, 44, c, 0);
+        calls.setPso(list, psoTer);
+        calls.draw(list, 3, 1, 0, 0);
+        vp.MinDepth = 0.0f;
+        list->RSSetViewports(1, &vp);
+    } else {
+        calls.setPso(list, pso);
+        calls.draw(list, 3, 1, 0, 0);
+    }
     if (timed) wfxperf::end(list, tsFrame);
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -2415,6 +2451,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "glass") gLook.glass = std::clamp(v, 0.f, 1.5f);
         else if (k == "air") gLook.air = std::clamp(v, 0.f, 1.5f);
         else if (k == "vitals") gLook.vitals = v != 0;
+        else if (k == "skyrate") gLook.skyRate = std::clamp(v, 0.f, 2.f);
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
@@ -2445,7 +2482,7 @@ void saveWorldFxSettings() {
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nglass " << gLook.glass << "\nbeds " << (gLook.beds ? 1 : 0)
-        << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
+        << "\nskyrate " << gLook.skyRate << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
         << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\n";
 }
 

@@ -16,6 +16,7 @@ cbuffer C : register(b0) {
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
     float4 c9; // x = god ray strength, y = cloud shadow strength, z = quality 0..1 (RF lowers it to hold the frame rate), w = ink look strength
+    float4 c10; // x = 1: this draw is the sky only (depth-tested to sky pixels, shaded at a coarse rate): take the sky path
 };
 // the match (Bedrock Forge MatchFx, filled per frame by SkyPass): team lights + bed beacons, block shards, placement pop
 cbuffer M : register(b1) {
@@ -1496,7 +1497,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
-    [branch] if (isSky(d)) {
+    [branch] if (isSky(d) || c10.x > 0.5) {
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = NG_IS ? m2.w : 0.0;
         float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
         if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
