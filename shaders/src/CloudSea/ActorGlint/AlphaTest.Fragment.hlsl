@@ -60,7 +60,7 @@ float4 main(PSIn i) : SV_Target {
         float  band = exp(-pow((sw - 0.5) * 14.0, 2.0));
         float  hs   = csHash(float2(tx) + floor(T * 6.0) * 7.31);
         float  spark = step(0.985, hs) * (0.6 + 0.4 * sin(T * 30.0 + hs * 50.0));
-        float  hk   = lerp(0.8, 1.5, smoothstep(0.30, 0.95, saturate(CS_PHASE * 0.5)));
+        float  hk   = lerp(1.0, 2.0, smoothstep(0.30, 0.95, saturate(CS_PHASE * 0.5)));
         lit += film * (k * 0.9 + band * g * 0.9 * (0.4 + 0.6 * rim)) * hk + float3(1.0, 1.0, 1.0) * spark * g * 1.6;
     }
 #else

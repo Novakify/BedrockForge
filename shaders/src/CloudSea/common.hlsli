@@ -460,8 +460,8 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     float3 nHue  = grey > 0.5 ? lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.18, 0.80), 0.5 + 0.5 * sin(dot(wp, float3(3.1, 7.0, 2.3)) + T * 0.8)) : saturate(hue * hue * 1.3);
     float  breathe = 0.80 + 0.20 * sin(T * 2.2 + wp.y * 3.0);
     float  lines = pow(saturate(1.0 - abs(frac(dot(wp, float3(4.0, 26.0, 4.0)) - T * 1.6) - 0.5) * 2.0), 24.0);
-    float3 neon = float3(ngEnv(Tr, 0.0).r, ngEnv(Tg, 0.0).g, ngEnv(Tb, 0.0).b) * nHue * 0.6 + nHue * (0.42 * breathe + 0.55 * lines * (1.0 - grey * 0.4));
-    neon += lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(T * 0.9 + wp.x * 9.0)) * pow(1.0 - NV, 2.2) * 1.1;
+    float3 neon = float3(ngEnv(Tr, 0.0).r, ngEnv(Tg, 0.0).g, ngEnv(Tb, 0.0).b) * nHue * 0.6 + nHue * (0.62 * breathe + 0.95 * lines * (1.0 - grey * 0.3));
+    neon += lerp(float3(0.10, 0.85, 1.00), float3(1.00, 0.20, 0.80), 0.5 + 0.5 * sin(T * 0.9 + wp.x * 9.0)) * pow(1.0 - NV, 1.8) * 1.6;
     neon += float3(1.0, 0.95, 1.0) * glint * 2.6 + ngEnv(R, 0.0) * Fg * 0.6;
     return lerp(aero, neon, neonK);
 }
