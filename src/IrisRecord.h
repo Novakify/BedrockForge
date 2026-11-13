@@ -21,6 +21,10 @@ struct TerrainDraw {
     std::vector<std::pair<unsigned, unsigned long long>> tables; // root index -> GPU descriptor handle
 };
 void recordTerrain(ID3D12GraphicsCommandList* list, TerrainDraw&& d);
+/// Inline terrain: draw this chunk through the pack in place of the game's draw. 0 = untouched (draw vanilla),
+/// 1 = game state changed but not drawn (restore, then draw vanilla), 2 = drawn (restore, skip vanilla).
+int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, size_t gameRtv, ID3D12Resource* gameRt, size_t gameDsv,
+                      rf::sky::Calls const& calls);
 /// A RenderChunk pipeline was created: its input layout + root signature.
 void noteTerrainPso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d);
 /// Any root signature was created: where its vertex b0 CBV and pixel t0 table are.

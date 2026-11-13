@@ -159,6 +159,7 @@ struct Settings {
     bool  decodeGamma = true; // the game's colour is display gamma; packs expect linear light in colortex0
     float exposure = 1.0f;
     bool  shadows = true;     // M3 shadow map
+    bool  inlineTerrain = false; // draw the pack's terrain IN PLACE of the game's chunk draws (world drawn once) instead of replaying
     int   debugView = -1;     // >= 0: show colortex N (100 + k: shadowcolor k, 200: shadow depth, 201: gbuffer depth) instead of the pack's final
 } gSet;
 fs::file_time_type gSettingsTime{};
@@ -497,11 +498,26 @@ bool ensureDevice(ID3D12Device* dev) {
     return true;
 }
 
+// GPU objects dropped by a pack / size switch: the GPU may still be using them for the frames in flight, so they are
+// released kRing + 2 frames later instead of at once (a switch mid-game must never pull a resource out from under it)
+std::vector<std::pair<uint64_t, ComPtr<IUnknown>>> gGrave;
+void bury(IUnknown* p) { if (p) gGrave.emplace_back(gGpu.frame, ComPtr<IUnknown>(p)); }
+void buryTex(Tex& t) { bury(t.r.Get()); t = Tex{}; }
+void buryProg(Gpu::DrawProg& dp) {
+    bury(dp.root.Get());
+    for (auto& [k, v] : dp.psos) bury(v.Get());
+    dp = Gpu::DrawProg{};
+}
+void sweepGrave() {
+    std::erase_if(gGrave, [](auto const& e) { return e.first + kRing + 2 <= gGpu.frame; });
+}
+
 bool loadBundle(std::string const& name, std::string const& world) {
     auto b = std::make_unique<Bundle>();
     if (!b->load((gRoot / name / "runtime.txt").string())) { setStatus("bundle: " + b->error); return false; }
     gGpu.bundle = std::move(b);
     gGpu.loadedName = name; gGpu.loadedWorld = world;
+    for (auto& pg : gGpu.passes) { bury(pg.pso.Get()); bury(pg.root.Get()); }
     gGpu.passes.clear(); gGpu.blobs.clear(); gGpu.w = gGpu.h = 0; gGpu.used = {};
     gGpu.used[0] = true;
     for (char const* kind : {"deferred", "composite", "final"})
@@ -511,9 +527,9 @@ bool loadBundle(std::string const& name, std::string const& world) {
             for (auto const& [sn, st] : p->stages)
                 for (auto const& r : st.resources) { int c = colortexOf(r.name); if (c >= 0) gGpu.used[size_t(c)] = true; }
         }
-    gGpu.terrain = Gpu::DrawProg{}; gGpu.shadowProg = Gpu::DrawProg{}; gGpu.atlasSlot.clear();
+    buryProg(gGpu.terrain); buryProg(gGpu.shadowProg); gGpu.atlasSlot.clear();
     gGpu.shadowProg.shadow = true;
-    gGpu.shadowMap = Tex{}; gGpu.shadowCol[0] = Tex{}; gGpu.shadowCol[1] = Tex{}; gGpu.shadowRes = 0;
+    buryTex(gGpu.shadowMap); buryTex(gGpu.shadowCol[0]); buryTex(gGpu.shadowCol[1]); gGpu.shadowRes = 0;
     for (Pass const* p : gGpu.bundle->chain(world, "terrain")) {
         gGpu.terrain.pass = p;
         for (int t : p->targets) if (t >= 0 && t < kColortex) gGpu.used[size_t(t)] = true;
@@ -534,7 +550,7 @@ bool ensureTargets(ID3D12GraphicsCommandList* list, UINT w, UINT h, DXGI_FORMAT 
     }
     Bundle const& B = *gGpu.bundle;
     for (int i = 0; i < kColortex; ++i) {
-        for (int k = 0; k < 2; ++k) gGpu.ct[k][size_t(i)] = Tex{};
+        for (int k = 0; k < 2; ++k) buryTex(gGpu.ct[k][size_t(i)]);
         if (!gGpu.used[size_t(i)]) continue;
         DXGI_FORMAT f = dxgiOf(B.constOr("colortex" + std::to_string(i) + "Format", i == 0 ? "RGBA16F" : "RGBA8"));
         for (int k = 0; k < 2; ++k) {
@@ -549,7 +565,7 @@ bool ensureTargets(ID3D12GraphicsCommandList* list, UINT w, UINT h, DXGI_FORMAT 
     D3D12_RESOURCE_DESC d{};
     d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; d.Width = w; d.Height = h; d.DepthOrArraySize = 1; d.MipLevels = 1;
     d.Format = DXGI_FORMAT_R24G8_TYPELESS; d.SampleDesc.Count = 1;
-    gGpu.depth = Tex{};
+    buryTex(gGpu.depth);
     d.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL; // the terrain pass depth-tests against (a copy of) Bedrock's depth
     if (FAILED(gGpu.dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&gGpu.depth.r)))) return false;
     d.Flags = D3D12_RESOURCE_FLAG_NONE;
@@ -561,7 +577,7 @@ bool ensureTargets(ID3D12GraphicsCommandList* list, UINT w, UINT h, DXGI_FORMAT 
     }
     auto const sd = gameRt->GetDesc();
     d.Format = sd.Format;
-    gGpu.scene = Tex{};
+    buryTex(gGpu.scene);
     if (FAILED(gGpu.dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&gGpu.scene.r)))) return false;
     gGpu.scene.state = D3D12_RESOURCE_STATE_COPY_DEST; gGpu.scene.fmt = d.Format;
     srv(gGpu.scene.r.Get(), typedOf(sceneFmt), Gpu::kCpuScene);
@@ -584,7 +600,7 @@ bool ensureTargets(ID3D12GraphicsCommandList* list, UINT w, UINT h, DXGI_FORMAT 
         sd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; sd.Width = res; sd.Height = res; sd.DepthOrArraySize = 1; sd.MipLevels = 1;
         sd.Format = DXGI_FORMAT_R32_TYPELESS; sd.SampleDesc.Count = 1; sd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
         D3D12_CLEAR_VALUE dcv{}; dcv.Format = DXGI_FORMAT_D32_FLOAT; dcv.DepthStencil.Depth = 1.0f;
-        gGpu.shadowMap = Tex{};
+        buryTex(gGpu.shadowMap);
         if (SUCCEEDED(gGpu.dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &sd, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &dcv, IID_PPV_ARGS(&gGpu.shadowMap.r)))) {
             gGpu.shadowMap.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE; gGpu.shadowMap.fmt = sd.Format;
             srv(gGpu.shadowMap.r.Get(), DXGI_FORMAT_R32_FLOAT, Gpu::kCpuShadowDepth);
@@ -794,7 +810,8 @@ int bedrockSlot(std::string const& sem, UINT idx) {
     return -1;
 }
 
-ID3D12PipelineState* drawPso(Gpu::DrawProg& dp, TerrainPso const& tp) {
+/// inl: drawn inline in place of the game's own chunk draw (writes the game's depth: no bias)
+ID3D12PipelineState* drawPso(Gpu::DrawProg& dp, TerrainPso const& tp, bool inl = false) {
     std::string key;
     std::vector<D3D12_INPUT_ELEMENT_DESC> il;
     int have = 0;
@@ -807,6 +824,7 @@ ID3D12PipelineState* drawPso(Gpu::DrawProg& dp, TerrainPso const& tp) {
         il.push_back(e);
         key += std::to_string(slot) + ":" + std::to_string(e.Format) + "@" + std::to_string(e.InputSlot) + "+" + std::to_string(e.AlignedByteOffset) + " ";
     }
+    if (inl) key += "inline";
     if (have != 15) { dp.error = "the game's terrain input layout is not POSITION0/COLOR0/TEXCOORD0/TEXCOORD1"; return nullptr; }
     if (auto it = dp.psos.find(key); it != dp.psos.end()) return it->second.Get();
     Pass const& p = *dp.pass;
@@ -835,7 +853,7 @@ ID3D12PipelineState* drawPso(Gpu::DrawProg& dp, TerrainPso const& tp) {
     d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     d.RasterizerState.DepthClipEnable = TRUE;
-    if (!dp.shadow) { d.RasterizerState.DepthBias = -64; d.RasterizerState.SlopeScaledDepthBias = -2.0f; } // win the tie with Bedrock's own depth
+    if (!dp.shadow && !inl) { d.RasterizerState.DepthBias = -64; d.RasterizerState.SlopeScaledDepthBias = -2.0f; } // win the tie with Bedrock's own depth
     d.DepthStencilState.DepthEnable = TRUE; d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     d.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
     d.DSVFormat = dp.shadow ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -871,6 +889,57 @@ UINT atlasStaging(size_t gameCpu) {
     return slot;
 }
 
+/// The block atlas a recorded chunk draw samples: the biggest texture among its tables (RenderChunk also binds the 16x16
+/// lightmap, seasons map...), as one of our staging SRVs.
+UINT atlasFor(TerrainDraw const& d) {
+    static std::unordered_map<unsigned long long, UINT> byTables;
+    unsigned long long key = 0;
+    for (auto const& [i, v] : d.tables) key = key * 1315423911ull + v;
+    if (auto it = byTables.find(key); it != byTables.end()) return it->second;
+    UINT atlas = Gpu::kCpuWhite;
+    size_t best = 0, bestArea = 0;
+    for (auto const& [i, v] : d.tables) {
+        size_t cpu = 0; unsigned inc = 0;
+        if (!rf::uicapture::gpuDescToCpu(v, cpu, inc)) continue;
+        for (int k = 0; k < 4; ++k) {
+            rf::glassarmor::SrvView sv;
+            if (!rf::glassarmor::srvView(cpu + size_t(k) * inc, sv) || !sv.res) continue;
+            size_t const area = size_t(sv.w) * sv.h;
+            if (area > bestArea) { bestArea = area; best = cpu + size_t(k) * inc; }
+        }
+    }
+    if (best) atlas = atlasStaging(best);
+    if (byTables.size() > 4096) byTables.clear();
+    byTables[key] = atlas;
+    return atlas;
+}
+/// This frame's descriptor table (all fixed slots, the draw's atlas at 24) in the ring; one per atlas. UINT(-1) = ring full.
+UINT drawTable(TerrainDraw const& d, bool shadow, UINT ring, UINT& srvNext, std::map<UINT, UINT>& tableFor) {
+    UINT const atlas = atlasFor(d);
+    if (auto tf = tableFor.find(atlas); tf != tableFor.end()) return tf->second;
+    if (srvNext + kSlots > (ring + 1) * kSrvPerFrame) return UINT(-1);
+    auto cpuRingAt = [&](UINT i) { auto h = gGpu.srvHeap->GetCPUDescriptorHandleForHeapStart(); h.ptr += size_t(i) * gGpu.srvInc; return h; };
+    for (UINT sl = 0; sl < kSlots; ++sl) {
+        UINT src = sl == 24 ? atlas : cpuSlotFor(sl);
+        if (shadow && sl >= 19 && sl <= 22) src = Gpu::kCpuWhite; // the shadow pass never reads the map it writes
+        gGpu.dev->CopyDescriptorsSimple(1, cpuRingAt(srvNext + sl), cpuAt(src), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    }
+    UINT const t = srvNext;
+    tableFor.emplace(atlas, t);
+    srvNext += kSlots;
+    return t;
+}
+/// The chunk's vertex cbuffer (b0 of the game's RenderChunk root signature)
+unsigned long long chunkCbv(TerrainDraw const& d, RootInfo ri) {
+    if (ri.vsCbv < 0 && !d.cbvs.empty()) { // root signature unseen: lowest-index root CBV = the vertex cbuffer (bgfx order)
+        unsigned lo = ~0u;
+        for (auto const& [i, v] : d.cbvs) lo = std::min(lo, i);
+        ri.vsCbv = int(lo);
+    }
+    for (auto const& [i, v] : d.cbvs) if (int(i) == ri.vsCbv) return v;
+    return 0;
+}
+
 /// One program over the recorded draws: `over` = its matrices, targets already bound by the caller.
 int replayDraws(Gpu::DrawProg& dp, std::vector<TerrainDraw> const& draws, UniformMap const& over, ID3D12GraphicsCommandList* list,
                 rf::sky::Calls const& calls, UINT ring, UINT& srvNext, UINT64& cbOff) {
@@ -889,7 +958,6 @@ int replayDraws(Gpu::DrawProg& dp, std::vector<TerrainDraw> const& draws, Unifor
     list->SetGraphicsRootConstantBufferView(1, pcb);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     auto gpuAt = [&](UINT i) { auto h = gGpu.srvHeap->GetGPUDescriptorHandleForHeapStart(); h.ptr += UINT64(i) * gGpu.srvInc; return h; };
-    auto cpuRingAt = [&](UINT i) { auto h = gGpu.srvHeap->GetCPUDescriptorHandleForHeapStart(); h.ptr += size_t(i) * gGpu.srvInc; return h; };
     std::map<UINT, UINT> tableFor; // atlas staging slot -> ring table start
     ID3D12PipelineState* curPso = nullptr;
     UINT curTable = UINT(-1);
@@ -908,51 +976,12 @@ int replayDraws(Gpu::DrawProg& dp, std::vector<TerrainDraw> const& draws, Unifor
             ll_shim::info("[RF] IrisBridge: terrain root signature" + ri.desc + " -> vertex b0 = param " + std::to_string(ri.vsCbv));
         ID3D12PipelineState* pso = drawPso(dp, *tp);
         if (!pso) { ++noPso; continue; }
-        if (ri.vsCbv < 0 && !d.cbvs.empty()) { // root signature unseen: lowest-index root CBV = the vertex cbuffer (bgfx order)
-            unsigned lo = ~0u;
-            for (auto const& [i, v] : d.cbvs) lo = std::min(lo, i);
-            ri.vsCbv = int(lo);
-        }
-        unsigned long long cbv = 0;
-        for (auto const& [i, v] : d.cbvs) if (int(i) == ri.vsCbv) cbv = v;
+        unsigned long long const cbv = chunkCbv(d, ri);
         if (!cbv) { ++noCbv; continue; }
-        // block atlas: the biggest texture among the draw's tables (RenderChunk also binds the 16x16 lightmap, seasons map...)
-        UINT atlas = Gpu::kCpuWhite;
-        {
-            static std::unordered_map<unsigned long long, UINT> byTables;
-            unsigned long long key = 0;
-            for (auto const& [i, v] : d.tables) key = key * 1315423911ull + v;
-            if (auto it = byTables.find(key); it != byTables.end()) atlas = it->second;
-            else {
-                size_t best = 0, bestArea = 0;
-                for (auto const& [i, v] : d.tables) {
-                    size_t cpu = 0; unsigned inc = 0;
-                    if (!rf::uicapture::gpuDescToCpu(v, cpu, inc)) continue;
-                    for (int k = 0; k < 4; ++k) {
-                        rf::glassarmor::SrvView sv;
-                        if (!rf::glassarmor::srvView(cpu + size_t(k) * inc, sv) || !sv.res) continue;
-                        size_t const area = size_t(sv.w) * sv.h;
-                        if (area > bestArea) { bestArea = area; best = cpu + size_t(k) * inc; }
-                    }
-                }
-                if (best) atlas = atlasStaging(best);
-                if (byTables.size() > 4096) byTables.clear();
-                byTables[key] = atlas;
-            }
-        }
-        auto tf = tableFor.find(atlas);
-        if (tf == tableFor.end()) {
-            if (srvNext + kSlots > (ring + 1) * kSrvPerFrame) break;
-            for (UINT sl = 0; sl < kSlots; ++sl) {
-                UINT src = sl == 24 ? atlas : cpuSlotFor(sl);
-                if (dp.shadow && sl >= 19 && sl <= 22) src = Gpu::kCpuWhite; // the shadow pass never reads the map it writes
-                gGpu.dev->CopyDescriptorsSimple(1, cpuRingAt(srvNext + sl), cpuAt(src), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-            }
-            tf = tableFor.emplace(atlas, srvNext).first;
-            srvNext += kSlots;
-        }
+        UINT const table = drawTable(d, dp.shadow, ring, srvNext, tableFor);
+        if (table == UINT(-1)) break;
         if (pso != curPso) { calls.setPso(list, pso); curPso = pso; }
-        if (tf->second != curTable) { calls.setTable(list, 2, gpuAt(tf->second).ptr); curTable = tf->second; }
+        if (table != curTable) { calls.setTable(list, 2, gpuAt(table).ptr); curTable = table; }
         list->SetGraphicsRootConstantBufferView(3, cbv);
         calls.setVb(list, 0, d.nVb, d.vb);
         list->IASetIndexBuffer(&d.ib);
@@ -966,10 +995,31 @@ int replayDraws(Gpu::DrawProg& dp, std::vector<TerrainDraw> const& draws, Unifor
     return drawn;
 }
 
+std::array<float, 16> lightmapMat() {
+    std::array<float, 16> m{}; m[0] = m[5] = 1.0f / 256.0f; m[10] = m[15] = 1.0f; m[12] = m[13] = 1.0f / 32.0f;
+    return m;
+}
+std::array<float, 16> mat3Of(std::array<float, 16> const& m) {
+    std::array<float, 16> n{};
+    for (int c = 0; c < 3; ++c) for (int r = 0; r < 3; ++r) n[size_t(c * 3 + r)] = m[size_t(c * 4 + r)];
+    return n;
+}
+/// gbuffers_terrain's per-pass values: the camera's matrices, lightmap texture matrix, render stage
+UniformMap terrainOver() {
+    UniformMap over;
+    auto const view = gU.v["gbufferModelView"], proj = gU.v["gbufferProjection"];
+    over["iris_ModelViewMat"] = view; over["modelViewMatrix"] = view;
+    over["iris_ProjMat"] = proj; over["projectionMatrix"] = proj;
+    over["iris_NormalMat"] = mat3Of(view); over["normalMatrix"] = mat3Of(view);
+    over["iris_TextureMat1"] = lightmapMat();
+    std::array<float, 16> stage{}; stage[0] = 8; over["renderStage"] = stage; // MC_RENDER_STAGE_TERRAIN_SOLID
+    return over;
+}
+
 /// M2 + M3: the frame's recorded RenderChunk draws (this list): first from the sun into the shadow map (the pack's shadow
 /// program), then from the camera into the pack's gbuffers (gbuffers_terrain), depth-tested against Bedrock's depth.
 int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, UINT ring, UINT& srvNext, UINT64& cbOff,
-                  D3D12_VIEWPORT const& vp, D3D12_RECT const& sc) {
+                  D3D12_VIEWPORT const& vp, D3D12_RECT const& sc, bool terrainToo) {
     std::vector<TerrainDraw> draws;
     {
         std::lock_guard l(gRecMutex);
@@ -981,12 +1031,7 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
     D3D12_VERTEX_BUFFER_VIEW gameVb[8]{};
     unsigned                 gameNVb = 0;
     bool const haveIa = rf::uicapture::currentIa(list, gameIb, gameNVb, gameVb);
-    std::array<float, 16> lmMat{}; lmMat[0] = lmMat[5] = 1.0f / 256.0f; lmMat[10] = lmMat[15] = 1.0f; lmMat[12] = lmMat[13] = 1.0f / 32.0f;
-    auto mat3Of = [](std::array<float, 16> const& m) {
-        std::array<float, 16> n{};
-        for (int c = 0; c < 3; ++c) for (int r = 0; r < 3; ++r) n[size_t(c * 3 + r)] = m[size_t(c * 4 + r)];
-        return n;
-    };
+    auto const lmMat = lightmapMat();
     int total = 0;
     // ---- shadow map (M3)
     if (gGpu.shadowProg.pass && gGpu.shadowRes && gGpu.shadowMap.r && gSet.shadows) {
@@ -1043,14 +1088,8 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
         }
     }
     // ---- terrain gbuffers (M2)
-    if (gGpu.terrain.pass) {
-        UniformMap over;
-        auto const view = gU.v["gbufferModelView"], proj = gU.v["gbufferProjection"];
-        over["iris_ModelViewMat"] = view; over["modelViewMatrix"] = view;
-        over["iris_ProjMat"] = proj; over["projectionMatrix"] = proj;
-        over["iris_NormalMat"] = mat3Of(view); over["normalMatrix"] = mat3Of(view);
-        over["iris_TextureMat1"] = lmMat;
-        std::array<float, 16> stage{}; stage[0] = 8; over["renderStage"] = stage; // MC_RENDER_STAGE_TERRAIN_SOLID
+    if (gGpu.terrain.pass && terrainToo) {
+        UniformMap const over = terrainOver();
         if (!gGpu.terrain.root) { std::shared_ptr<TerrainPso> tp; { std::lock_guard l(gRecMutex); for (auto const& d : draws) if (auto it = gTerrainPsos.find(d.pso); it != gTerrainPsos.end()) { tp = it->second; break; } } if (tp) drawPso(gGpu.terrain, *tp); }
         barrier(list, gGpu.depth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
         D3D12_CPU_DESCRIPTOR_HANDLE rtvs[8]{};
@@ -1069,6 +1108,88 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
     if (haveIa) list->IASetIndexBuffer(&gameIb);
     return total;
 }
+/// Clears (colortexNClear, Iris default true) + the game's colour into colortex0. over: only what the game drew since
+/// its target was cleared to 0 (inline terrain) goes on top of what the pack's gbuffers already wrote.
+void importScene(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, UINT& srvNext, D3D12_VIEWPORT const& vp,
+                 D3D12_RECT const& sc, bool clear, bool over) {
+    auto gpuAt = [&](UINT i) { auto h = gGpu.srvHeap->GetGPUDescriptorHandleForHeapStart(); h.ptr += UINT64(i) * gGpu.srvInc; return h; };
+    auto cpuRingAt = [&](UINT i) { auto h = gGpu.srvHeap->GetCPUDescriptorHandleForHeapStart(); h.ptr += size_t(i) * gGpu.srvInc; return h; };
+    Bundle const& B = *gGpu.bundle;
+    if (clear)
+        for (int i = 1; i < kColortex; ++i) {
+            if (!gGpu.used[size_t(i)] || B.constOr("colortex" + std::to_string(i) + "Clear", "true") == "false") continue;
+            float const cc[4] = {i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f}; // Iris: colortex1 clears to white
+            barrier(list, gGpu.ct[0][size_t(i)], D3D12_RESOURCE_STATE_RENDER_TARGET);
+            list->ClearRenderTargetView(rtvAt(UINT(i * 2)), cc, 0, nullptr);
+            barrier(list, gGpu.ct[0][size_t(i)], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+    barrier(list, gGpu.ct[0][0], D3D12_RESOURCE_STATE_RENDER_TARGET);
+    auto rtv = rtvAt(0);
+    list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    list->RSSetViewports(1, &vp); list->RSSetScissorRects(1, &sc);
+    gGpu.dev->CopyDescriptorsSimple(1, cpuRingAt(srvNext), cpuAt(Gpu::kCpuScene), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    calls.setRootSig(list, gGpu.importRoot.Get());
+    float const c0[4] = {gSet.decodeGamma ? 1.0f : 0.0f, gSet.exposure, over ? 1.0f : 0.0f, 0};
+    calls.setConsts(list, 0, 4, c0, 0);
+    calls.setTable(list, 1, gpuAt(srvNext).ptr);
+    srvNext += 1;
+    calls.setPso(list, gGpu.importPso.Get());
+    calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    calls.draw(list, 3, 1, 0, 0);
+    barrier(list, gGpu.ct[0][0], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+
+// ---------------------------------------------------------------- inline terrain (the world drawn once)
+// Instead of letting Bedrock draw its chunks and replaying them through the pack later (the world drawn twice), each
+// RenderChunk draw is swapped for the pack's gbuffers_terrain right where the game issues it: into the pack's gbuffers
+// and the game's own depth (so everything vanilla draws afterwards depth-tests against it). The first one of a frame
+// sets the frame up (uniforms, clears, the sky so far into colortex0) and clears the game's colour to an exact 0 key;
+// at the cloud hook only what vanilla drew after that (entities, items, particles) is laid back over (importScene over).
+struct InlineFrame {
+    uint64_t                   frame = ~0ull;  // gGpu.frame it belongs to (run() bumps it)
+    bool                       ok = false;
+    ID3D12GraphicsCommandList* list = nullptr;
+    int64_t                    beganMs = 0;
+    UINT                       ring = 0, srvNext = 0;
+    UINT64                     cbOff = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS  vcb = 0, pcb = 0;
+    std::map<UINT, UINT>       tables;
+    int                        drawn = 0;
+} gIn;
+bool    gLastRunOk = false;  // the chain finished last frame: only then may the game's terrain be taken over
+int64_t gLastRunMs = 0;
+
+int64_t msNow() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+bool beginInline(ID3D12GraphicsCommandList* list, ID3D12Resource* gameRt, size_t gameRtv, rf::sky::Calls const& calls) {
+    gIn = InlineFrame{};
+    gIn.frame = gGpu.frame; gIn.list = list; gIn.beganMs = msNow();
+    auto cam = rf::lyrics::camera();
+    if (!cam.valid || gIn.beganMs - cam.atMs > 250 || cam.proj[0] == 0 || cam.proj[5] == 0) return false;
+    gIn.ring = UINT(gGpu.frame % kRing);
+    gIn.srvNext = gIn.ring * kSrvPerFrame;
+    frameUniforms(cam);
+    // the sky drawn so far -> our copy; then key the game's target to 0
+    barrierRaw(list, gameRt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    barrier(list, gGpu.scene, D3D12_RESOURCE_STATE_COPY_DEST);
+    list->CopyResource(gGpu.scene.r.Get(), gameRt);
+    barrierRaw(list, gameRt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    barrier(list, gGpu.scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    float const zero[4] = {0, 0, 0, 0};
+    list->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{gameRtv}, zero, 0, nullptr);
+    ID3D12DescriptorHeap* heaps[] = {gGpu.srvHeap.Get()};
+    calls.setHeaps(list, 1, heaps);
+    D3D12_VIEWPORT const vp{0, 0, float(gGpu.w), float(gGpu.h), 0, 1};
+    D3D12_RECT const     sc{0, 0, LONG(gGpu.w), LONG(gGpu.h)};
+    importScene(list, calls, gIn.srvNext, vp, sc, true, false);
+    UniformMap const over = terrainOver();
+    gIn.vcb = writeGlobals(gGpu.terrain.pass->stages.at("vert"), gIn.cbOff, gIn.ring, &over);
+    gIn.pcb = writeGlobals(gGpu.terrain.pass->stages.at("frag"), gIn.cbOff, gIn.ring, &over);
+    for (int o : gGpu.terrain.outs) barrier(list, gGpu.ct[0][size_t(o)], D3D12_RESOURCE_STATE_RENDER_TARGET);
+    gIn.ok = gIn.vcb && gIn.pcb;
+    return gIn.ok;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------- public
@@ -1100,6 +1221,7 @@ void readSettings() {
         else if (k == "exposure") gSet.exposure = std::clamp(v, 0.1f, 8.f);
         else if (k == "terrain") gTerrainOn = v != 0;
         else if (k == "shadows") gSet.shadows = v != 0;
+        else if (k == "inline") gSet.inlineTerrain = v != 0;
         else if (k == "debug") gSet.debugView = int(v);
     }
 }
@@ -1112,6 +1234,65 @@ void recordTerrain(ID3D12GraphicsCommandList* list, TerrainDraw&& d) {
     std::lock_guard l(gRecMutex);
     auto& v = gRec[list];
     if (v.size() < 40000) v.push_back(std::move(d));
+}
+
+int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, size_t gameRtv, ID3D12Resource* gameRt, size_t gameDsv,
+                      rf::sky::Calls const& calls) {
+    if (!gSet.inlineTerrain || !gameRt || !gameRtv || !gameDsv) return 0;
+    std::lock_guard l(gMutex);
+    int64_t const now = msNow();
+    if (!gLastRunOk || now - gLastRunMs > 200 || !gGpu.terrain.pass || !gGpu.bundle || !gTerrainOn) return 0;
+    if (gPacks.empty() || gGpu.loadedName != gPacks[size_t(std::clamp(gSet.pack, 0, int(gPacks.size()) - 1))] ||
+        gGpu.loadedWorld != worldName(gSet.world)) return 0; // a pack switch is due: let run() do it on a frame of its own
+    auto const rd = gameRt->GetDesc();
+    if (rd.Width != gGpu.w || rd.Height != gGpu.h) return 0;
+    std::shared_ptr<TerrainPso> tp;
+    RootInfo ri;
+    {
+        std::lock_guard g(gRecMutex);
+        if (auto it = gTerrainPsos.find(d.pso); it != gTerrainPsos.end()) tp = it->second;
+        if (auto it = gRoots.find(d.sig); it != gRoots.end()) ri = it->second;
+    }
+    if (!tp) return 0;
+    ID3D12PipelineState* pso = drawPso(gGpu.terrain, *tp, true);
+    unsigned long long const cbv = chunkCbv(d, ri);
+    if (!pso || !cbv || gGpu.terrain.outs.empty()) return 0;
+    if (gIn.frame == gGpu.frame && gIn.ok && now - gIn.beganMs > 40) { // a new frame without run(): stop taking terrain over
+        gIn.ok = false; gLastRunOk = false;
+        ll_shim::info("[RF] IrisBridge: inline terrain paused (the chain did not run last frame)");
+        return 0;
+    }
+    int touched = 0;
+    if (gIn.frame != gGpu.frame) {
+        touched = 1;
+        if (!beginInline(list, gameRt, gameRtv, calls)) { gIn.ok = false; return touched; }
+    }
+    if (!gIn.ok || gIn.list != list) return touched;
+    UINT const table = drawTable(d, false, gIn.ring, gIn.srvNext, gIn.tables);
+    if (table == UINT(-1)) return touched;
+    auto gpu = gGpu.srvHeap->GetGPUDescriptorHandleForHeapStart(); gpu.ptr += UINT64(table) * gGpu.srvInc;
+    ID3D12DescriptorHeap* heaps[] = {gGpu.srvHeap.Get()};
+    calls.setHeaps(list, 1, heaps);
+    calls.setRootSig(list, gGpu.terrain.root.Get());
+    list->SetGraphicsRootConstantBufferView(0, gIn.vcb);
+    list->SetGraphicsRootConstantBufferView(1, gIn.pcb);
+    calls.setTable(list, 2, gpu.ptr);
+    list->SetGraphicsRootConstantBufferView(3, cbv);
+    calls.setPso(list, pso);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[8]{};
+    UINT n = 0;
+    for (int o : gGpu.terrain.outs) rtvs[n++] = rtvAt(UINT(o * 2));
+    D3D12_CPU_DESCRIPTOR_HANDLE const dsv{gameDsv};
+    list->OMSetRenderTargets(n, rtvs, FALSE, &dsv);
+    D3D12_VIEWPORT const vp{0, 0, float(gGpu.w), float(gGpu.h), 0, 1};
+    D3D12_RECT const     sc{0, 0, LONG(gGpu.w), LONG(gGpu.h)};
+    list->RSSetViewports(1, &vp); list->RSSetScissorRects(1, &sc);
+    calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    calls.setVb(list, 0, d.nVb, d.vb);
+    list->IASetIndexBuffer(&d.ib);
+    list->DrawIndexedInstanced(d.idxCount, d.inst, d.firstIdx, d.baseVtx, d.firstInst);
+    ++gIn.drawn;
+    return 2;
 }
 
 void noteTerrainPso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d) {
@@ -1170,6 +1351,7 @@ void noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size) {
 
 bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky::Calls const& calls, FrameTargets const& t) {
     std::lock_guard l(gMutex);
+    gLastRunOk = false; // set again only when the chain finishes (inline terrain depends on it)
     if (!gSet.on || gPacks.empty()) return false;
     if (!st.rootKnown) { setStatus("waiting for the game's root state"); return false; }
     auto cam = rf::lyrics::camera();
@@ -1180,9 +1362,13 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     if (dd.Format != DXGI_FORMAT_D24_UNORM_S8_UINT && dd.Format != DXGI_FORMAT_R24G8_TYPELESS) { setStatus("depth is not D24S8"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev))) || !ensureDevice(dev.Get())) { setStatus("device setup failed"); return false; }
+    sweepGrave();
     std::string const want = gPacks[size_t(std::clamp(gSet.pack, 0, int(gPacks.size()) - 1))];
-    if (!gGpu.bundle || gGpu.loadedName != want || gGpu.loadedWorld != worldName(gSet.world))
+    if (!gGpu.bundle || gGpu.loadedName != want || gGpu.loadedWorld != worldName(gSet.world)) {
+        auto const t0 = msNow();
         if (!loadBundle(want, worldName(gSet.world))) return false;
+        ll_shim::info("[RF] IrisBridge: switched to " + want + " / " + worldName(gSet.world) + " in " + std::to_string(msNow() - t0) + " ms");
+    }
     if (!ensureTargets(list, UINT(rd.Width), rd.Height, rd.Format, t.rt)) { if (gStatus.find("failed") == std::string::npos) setStatus("no usable pass"); return false; }
     if (!gGpu.noiseUp) {
         uploadPixels(list, gGpu.noise, gGpu.noisePx.data(), UINT(std::sqrt(double(gGpu.noisePx.size() / 4))), UINT(std::sqrt(double(gGpu.noisePx.size() / 4))), 4);
@@ -1196,10 +1382,11 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
         auto const t = fs::last_write_time(gRoot / "settings.txt", ec);
         if (!ec && t != gSettingsTime) { readSettings(); ll_shim::info("[RF] IrisBridge: settings reloaded (debug view " + std::to_string(gSet.debugView) + ")"); }
     }
+    bool const inl = gIn.ok && gIn.frame == gGpu.frame && gIn.drawn > 0; // this frame's terrain already went through the pack
     UINT const ring = UINT(gGpu.frame++ % kRing);
-    UINT64 cbOff = 0;
-    UINT   srvNext = ring * kSrvPerFrame;
-    frameUniforms(cam);
+    UINT64 cbOff = inl ? gIn.cbOff : 0;
+    UINT   srvNext = inl ? gIn.srvNext : ring * kSrvPerFrame;
+    if (!inl) frameUniforms(cam);
 
     // 1) copy the world: colour (for the import) + depth
     auto const rtState = D3D12_RESOURCE_STATES(t.rtState), dsState = D3D12_RESOURCE_STATES(t.dsState);
@@ -1221,34 +1408,12 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     auto gpuAt = [&](UINT i) { auto h = gGpu.srvHeap->GetGPUDescriptorHandleForHeapStart(); h.ptr += UINT64(i) * gGpu.srvInc; return h; };
     auto cpuRingAt = [&](UINT i) { auto h = gGpu.srvHeap->GetCPUDescriptorHandleForHeapStart(); h.ptr += size_t(i) * gGpu.srvInc; return h; };
 
-    // 2) clears (colortexNClear, Iris default true) + import the world into colortex0
-    Bundle const& B = *gGpu.bundle;
-    for (int i = 1; i < kColortex; ++i) {
-        if (!gGpu.used[size_t(i)] || B.constOr("colortex" + std::to_string(i) + "Clear", "true") == "false") continue;
-        float const cc[4] = {i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f}; // Iris: colortex1 clears to white
-        barrier(list, gGpu.ct[0][size_t(i)], D3D12_RESOURCE_STATE_RENDER_TARGET);
-        list->ClearRenderTargetView(rtvAt(UINT(i * 2)), cc, 0, nullptr);
-        barrier(list, gGpu.ct[0][size_t(i)], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    }
-    {
-        barrier(list, gGpu.ct[0][0], D3D12_RESOURCE_STATE_RENDER_TARGET);
-        auto rtv = rtvAt(0);
-        list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-        list->RSSetViewports(1, &vp); list->RSSetScissorRects(1, &sc);
-        gGpu.dev->CopyDescriptorsSimple(1, cpuRingAt(srvNext), cpuAt(Gpu::kCpuScene), D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        calls.setRootSig(list, gGpu.importRoot.Get());
-        float const c0[4] = {gSet.decodeGamma ? 1.0f : 0.0f, gSet.exposure, 0, 0};
-        calls.setConsts(list, 0, 4, c0, 0);
-        calls.setTable(list, 1, gpuAt(srvNext).ptr);
-        srvNext += 1;
-        calls.setPso(list, gGpu.importPso.Get());
-        calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        calls.draw(list, 3, 1, 0, 0);
-        barrier(list, gGpu.ct[0][0], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    }
+    // 2) clears + the world into colortex0 (inline: the gbuffers are written already; lay vanilla's later draws over)
+    if (inl) for (int o : gGpu.terrain.outs) barrier(list, gGpu.ct[0][size_t(o)], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    importScene(list, calls, srvNext, vp, sc, !inl, inl);
 
     // 2b) M2: the frame's terrain through the pack's gbuffers_terrain (normals, materials, lightmap for its lighting)
-    replayTerrain(list, calls, ring, srvNext, cbOff, vp, sc);
+    replayTerrain(list, calls, ring, srvNext, cbOff, vp, sc, !inl);
 
     // 3) the pack's chain
     D3D12_VERTEX_BUFFER_VIEW vbv{gGpu.vb->GetGPUVirtualAddress(), UINT(sizeof(QuadVert) * 6), UINT(sizeof(QuadVert))};
@@ -1342,6 +1507,12 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     D3D12_RECT     gsc{0, 0, LONG(rd.Width), LONG(rd.Height)};
     list->RSSetViewports(1, &gvp); list->RSSetScissorRects(1, &gsc);
     if (rtState != D3D12_RESOURCE_STATE_RENDER_TARGET) barrierRaw(list, t.rt, D3D12_RESOURCE_STATE_RENDER_TARGET, rtState);
+    gLastRunOk = finalDone && drawn > 0;
+    gLastRunMs = msNow();
+    if (inl && ((gGpu.frame & 255) == 3 || gIn.drawn != gGpu.terrain.last)) {
+        ll_shim::info("[RF] IrisBridge: inline terrain " + std::to_string(gIn.drawn) + " draws (world drawn once)");
+        gGpu.terrain.last = gIn.drawn;
+    }
     if ((gGpu.frame & 63) == 1)
         setStatus(gGpu.loadedName + " / " + gGpu.loadedWorld + ": " + std::to_string(drawn) + " passes, " + std::to_string(gGpu.w) + "x" + std::to_string(gGpu.h));
     return drawn > 0;
@@ -1366,7 +1537,9 @@ void drawUi() {
     changed |= ImGui::SliderFloat("Render distance (far)", &gSet.farBlocks, 32, 1024, "%.0f blocks");
     {
         bool t = gTerrainOn.load();
-        if (ImGui::Checkbox("Terrain through the pack (gbuffers_terrain)", &t)) gTerrainOn = t;
+        if (ImGui::Checkbox("Terrain through the pack (gbuffers_terrain)", &t)) { gTerrainOn = t; changed = true; }
+        changed |= ImGui::Checkbox("Draw the world once (pack replaces the game's terrain draws)", &gSet.inlineTerrain);
+        changed |= ImGui::Checkbox("Shadows", &gSet.shadows);
         ImGui::Text("Terrain: %d draws%s%s | shadow: %d draws (%u px)%s%s", gGpu.terrain.last, gGpu.terrain.error.empty() ? "" : " - ",
                     gGpu.terrain.error.c_str(), gGpu.shadowProg.last, gGpu.shadowRes, gGpu.shadowProg.error.empty() ? "" : " - ",
                     gGpu.shadowProg.error.c_str());
@@ -1384,7 +1557,8 @@ void drawUi() {
         if (gSet.on) rf::worldfx::setTargetsWanted(true);
         std::ofstream out(gRoot / "settings.txt");
         out << "on " << gSet.on << "\npack " << gSet.pack << "\nworld " << gSet.world << "\ntime " << gSet.timeOfDay << "\ncycle " << gSet.cycle
-            << "\nfar " << gSet.farBlocks << "\ngamma " << gSet.decodeGamma << "\nexposure " << gSet.exposure << "\n";
+            << "\nfar " << gSet.farBlocks << "\ngamma " << gSet.decodeGamma << "\nexposure " << gSet.exposure << "\nterrain " << gTerrainOn.load()
+            << "\nshadows " << gSet.shadows << "\ninline " << gSet.inlineTerrain << "\ndebug " << gSet.debugView << "\n";
     }
 }
 

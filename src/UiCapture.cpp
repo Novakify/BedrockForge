@@ -498,18 +498,17 @@ void STDMETHODCALLTYPE setPsoHook(ID3D12GraphicsCommandList* list, ID3D12Pipelin
 // Glass Armor M1b helpers (defined with the replay code below)
 bool gaOn();
 bool irisRec(); // IrisBridge records the frame's terrain draws (replayed through the pack's gbuffers / shadow)
+bool irisRecord(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e);
 void gaFlush(ID3D12GraphicsCommandList* l);
-void gaNoteRts(ID3D12GraphicsCommandList* l, SIZE_T rt0, SIZE_T dsv);
+void gaNoteRts(ID3D12GraphicsCommandList* l, SIZE_T rt0, SIZE_T dsv, UINT n = 0, D3D12_CPU_DESCRIPTOR_HANDLE const* rts = nullptr, BOOL single = FALSE);
 void gaNoteTopo(ID3D12GraphicsCommandList* l, D3D12_PRIMITIVE_TOPOLOGY t);
 void gaNoteVb(ID3D12GraphicsCommandList* l, UINT start, UINT n, D3D12_VERTEX_BUFFER_VIEW const* v);
 void gaNoteIb(ID3D12GraphicsCommandList* l, D3D12_INDEX_BUFFER_VIEW const* v);
 void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                                  D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
     if (!gInSnapshot && (rf::worldfx::tracking() || rf::worldfx::targetsWanted())) rf::worldfx::onSetRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
-    if (gaOn()) {
-        gaFlush(list); // pending armor belongs to the targets bound now
-        gaNoteRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
-    }
+    if (gaOn()) gaFlush(list); // pending armor belongs to the targets bound now
+    if (gaOn() || irisRec()) gaNoteRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0, n, rts, single);
     if (gInSnapshot || !panelActive()) { reinterpret_cast<OmSet_t>(gOrig[4])(list, n, rts, single, ds); return; }
     std::lock_guard l(gMutex);
     gListDsv[list] = ds ? ds->ptr : 0;
@@ -738,6 +737,9 @@ struct GaPending {
 struct GaList {
     GaIa                   ia;
     SIZE_T                 rt0 = 0, dsv = 0;
+    UINT                   nRt = 0;       // the full binding (IrisBridge inline terrain puts it back)
+    D3D12_CPU_DESCRIPTOR_HANDLE rts[8]{};
+    BOOL                   single = FALSE;
     std::vector<GaPending> pending;
 };
 std::mutex                                               gGaMutex;
@@ -746,35 +748,63 @@ std::atomic<long>                                        gGaFlushes{0}, gGaFallb
 
 bool gaOn() { return !gInSnapshot && rf::glassarmor::enabled(); }
 bool irisRec() { return !gInSnapshot && rf::iris::wantsTerrain(); }
-/// IrisBridge: one terrain draw with everything needed to replay it later in the frame
-void irisRecord(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
+void            gaSetIa(ID3D12GraphicsCommandList* l, GaIa const& ia);
+ID3D12Resource* rtvResource(SIZE_T h);
+/// IrisBridge: one terrain draw with everything needed to replay it later in the frame (shadow pass; terrain too unless
+/// inline). Inline terrain: the pack draws it right here instead of the game - returns true when the game's draw is
+/// replaced (skip it).
+bool irisRecord(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, UINT e) {
     rf::iris::TerrainDraw t;
     t.pso = skyLS(list)->pso;
     t.idxCount = a; t.inst = b; t.firstIdx = c; t.baseVtx = d; t.firstInst = e;
     {
         std::lock_guard g(gMutex);
         auto it = gListRoot.find(list);
-        if (it == gListRoot.end() || !it->second.sigKnown) return;
+        if (it == gListRoot.end() || !it->second.sigKnown) return false;
         t.sig = it->second.sig;
         for (auto const& [i, a2] : it->second.args) {
             if (a2.type == 3) t.cbvs.emplace_back(i, a2.v);
             else if (a2.type == 1) t.tables.emplace_back(i, a2.v);
         }
     }
+    GaList cur;
     {
         std::lock_guard g(gGaMutex);
         auto it = gGa.find(list);
-        if (it == gGa.end() || !it->second.ia.haveIb || !it->second.ia.nVb) return;
+        if (it == gGa.end() || !it->second.ia.haveIb || !it->second.ia.nVb) return false;
         t.ib = it->second.ia.ib; t.nVb = it->second.ia.nVb;
         for (UINT k = 0; k < t.nVb; ++k) t.vb[k] = it->second.ia.vb[k];
+        cur.ia = it->second.ia; cur.rt0 = it->second.rt0; cur.dsv = it->second.dsv;
+        cur.nRt = it->second.nRt; cur.single = it->second.single;
+        for (UINT k = 0; k < 8; ++k) cur.rts[k] = it->second.rts[k];
+    }
+    int r = 0;
+    if (cur.rt0 && cur.dsv && cur.nRt >= 1) {
+        rf::sky::Calls calls{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
+        gInSnapshot = true;
+        r = rf::iris::drawTerrainInline(list, t, cur.rt0, rtvResource(cur.rt0), cur.dsv, calls);
+        if (r) { // the game's state back, exactly as it was
+            restoreRoot(list);
+            gaSetIa(list, cur.ia);
+            reinterpret_cast<SetPso_t>(gOrig[3])(list, t.pso);
+            D3D12_CPU_DESCRIPTOR_HANDLE const ds{cur.dsv};
+            reinterpret_cast<OmSet_t>(gOrig[4])(list, cur.nRt, cur.rts, cur.single, &ds);
+        }
+        gInSnapshot = false;
     }
     rf::iris::recordTerrain(list, std::move(t));
+    return r == 2;
 }
-void gaNoteRts(ID3D12GraphicsCommandList* l, SIZE_T rt0, SIZE_T dsv) {
+void gaNoteRts(ID3D12GraphicsCommandList* l, SIZE_T rt0, SIZE_T dsv, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single) {
     std::lock_guard g(gGaMutex);
-    auto& gl = gGa[l];
-    gl.rt0   = rt0;
-    gl.dsv   = dsv;
+    auto& gl  = gGa[l];
+    gl.rt0    = rt0;
+    gl.dsv    = dsv;
+    gl.single = single;
+    gl.nRt    = rts && n <= 8 ? n : 0;
+    // single == TRUE: rts[0] is the first of n contiguous handles; store them expanded is not possible without the
+    // increment, so keep the form and replay it as given
+    for (UINT k = 0; k < gl.nRt && (!single || k == 0); ++k) gl.rts[k] = rts[k];
 }
 void gaNoteTopo(ID3D12GraphicsCommandList* l, D3D12_PRIMITIVE_TOPOLOGY t) {
     std::lock_guard g(gGaMutex);
@@ -958,7 +988,10 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
         if (!gInSnapshot && panelActive()) onDraw(list);
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
         if (!gInSnapshot && rf::worldfx::recording()) rf::worldfx::onDraw(list, a, b); // may copy targets first (world -> UI)
-        if (irisRec() && skyLS(list)->kind == rf::sky::Terrain) irisRecord(list, a, b, c, d, e);
+        if (irisRec() && skyLS(list)->kind == rf::sky::Terrain && irisRecord(list, a, b, c, d, e)) {
+            if (sk >= 2) afterSky(list, st, ia, sk);
+            return; // the pack drew this chunk in the game's place
+        }
         ID3D12PipelineState* gamePso = nullptr;
         ID3D12PipelineState* glass   = gaOn() ? rf::glassarmor::glassPsoFor(list, &gamePso) : nullptr;
         if (glass) { // Glass Armor: hold the game's armor draw back, replay it with our shader after the actor pass
