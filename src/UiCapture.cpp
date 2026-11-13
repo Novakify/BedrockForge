@@ -34,6 +34,7 @@
 #include "SpatialPanel.h"
 #include "GlassArmor.h"
 #include "IrisBridge.h"
+#include "IrisRecord.h"
 #include "WorldFx.h"
 
 namespace rf::uicapture {

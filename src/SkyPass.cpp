@@ -39,6 +39,7 @@
 #include "GlassArmor.h"
 #include "WorldFx.h"
 #include "IrisBridge.h"
+#include "IrisRecord.h"
 
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"

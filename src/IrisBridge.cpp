@@ -28,6 +28,7 @@
 
 #include "D3D12Api.h"
 #include "IrisBundle.h"
+#include "IrisRecord.h"
 #include "IrisShaders.h"
 #include "LyricsCamera.h"
 #include "WorldFx.h"

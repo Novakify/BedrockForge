@@ -14,12 +14,6 @@
 #pragma once
 #include <cstddef>
 #include <filesystem>
-#include <utility>
-#include <vector>
-
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <d3d12.h>
 
 #include "SkyPass.h"
 
@@ -45,25 +39,8 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
 /// F6 section.
 void drawUi();
 
-// ---- M2 terrain pass: Bedrock's RenderChunk draws are recorded during the frame (UiCapture) and replayed at the hook
-// through the pack's gbuffers_terrain (Bedrock variant, tools/IrisBridge BEDROCK_VS_HEAD) into its colortex targets.
-struct TerrainDraw {
-    ID3D12PipelineState*  pso = nullptr;
-    ID3D12RootSignature*  sig = nullptr;
-    D3D12_INDEX_BUFFER_VIEW  ib{};
-    UINT                     nVb = 0;
-    D3D12_VERTEX_BUFFER_VIEW vb[8]{};
-    UINT idxCount = 0, inst = 0, firstIdx = 0, firstInst = 0;
-    INT  baseVtx = 0;
-    std::vector<std::pair<unsigned, unsigned long long>> cbvs;   // root index -> GPU VA
-    std::vector<std::pair<unsigned, unsigned long long>> tables; // root index -> GPU descriptor handle
-};
-/// IrisBridge is on and its pack has a terrain program for the current dimension (cheap).
+/// IrisBridge is on and its pack has a terrain program for the current dimension (cheap). The recording API
+/// (D3D12 types) is in IrisRecord.h.
 bool wantsTerrain();
-void recordTerrain(ID3D12GraphicsCommandList* list, TerrainDraw&& d);
-/// A RenderChunk pipeline was created: its input layout + root signature.
-void noteTerrainPso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d);
-/// Any root signature was created: where its vertex b0 CBV and pixel t0 table are.
-void noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size);
 
 } // namespace rf::iris
