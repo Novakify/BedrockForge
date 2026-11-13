@@ -340,7 +340,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     // Every material: at the start clear Future Aero glass - the body a pale aqua-white with a breath of the material's
     // colour, the outline a soft clean white-aqua; by the endgame neon - the material's colour turned up and glowing.
     float ngK = pad4 > 0.5 ? smoothstep(0.30, 0.95, pad3) : -1.0;
-    if (ngK >= 0.0) baseTint = lerp(lerp(float3(0.86, 0.95, 1.00), baseTint, 0.35), saturate(baseTint * 1.25), ngK);
+    if (ngK >= 0.0) baseTint = lerp(float3(0.86, 0.95, 1.00), baseTint, 0.35);   // the same glass all match (night lights it, it does not recolour it)
     float3 edgeB = lerp(baseEdge, acc, cMix * 0.85 * (1.0 - 0.6 * dyeK)); // team colour stays readable over the cover
     edgeB = lerp(edgeB, wordCol * 1.2, saturate(wordColK * boot) * 0.85); // colour words flash the outline
     // beat-pulse: brighter on every kick, a big flare on the drop
