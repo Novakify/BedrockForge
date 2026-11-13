@@ -770,14 +770,6 @@ void irisRecord(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, INT d, 
     }
     rf::iris::recordTerrain(list, std::move(t));
 }
-bool currentIa(void* list, D3D12_INDEX_BUFFER_VIEW& ib, unsigned& nVb, D3D12_VERTEX_BUFFER_VIEW* vb) {
-    std::lock_guard g(gGaMutex);
-    auto it = gGa.find(static_cast<ID3D12GraphicsCommandList*>(list));
-    if (it == gGa.end() || !it->second.ia.haveIb) return false;
-    ib = it->second.ia.ib; nVb = it->second.ia.nVb;
-    for (UINT k = 0; k < nVb && k < 8; ++k) vb[k] = it->second.ia.vb[k];
-    return true;
-}
 void gaNoteRts(ID3D12GraphicsCommandList* l, SIZE_T rt0, SIZE_T dsv) {
     std::lock_guard g(gGaMutex);
     auto& gl = gGa[l];
@@ -1588,6 +1580,15 @@ bool gpuDescToCpu(unsigned long long gpu, size_t& cpu, unsigned& inc) {
             return true;
         }
     return false;
+}
+
+bool currentIa(void* list, D3D12_INDEX_BUFFER_VIEW& ib, unsigned& nVb, D3D12_VERTEX_BUFFER_VIEW* vb) {
+    std::lock_guard g(gGaMutex);
+    auto it = gGa.find(static_cast<ID3D12GraphicsCommandList*>(list));
+    if (it == gGa.end() || !it->second.ia.haveIb) return false;
+    ib = it->second.ia.ib; nVb = it->second.ia.nVb;
+    for (UINT k = 0; k < nVb && k < 8; ++k) vb[k] = it->second.ia.vb[k];
+    return true;
 }
 
 std::vector<std::pair<unsigned, unsigned long long>> rootTables(void* list) {
