@@ -514,6 +514,38 @@ float4 main(PSIn i) : SV_Target {
     lit = csHaze(lit, wp, cam, i.color2.w);
     return float4(csEnc(lit), a);
 #else
+#if defined(CS_NOVAK)
+    // ---- Novak Glass at night: the islands become part of the neon city around them (Fernando, Nov 2026). As the
+    //      city lights up (the same curve as its buildings) ordinary blocks go to cool steel and indigo, their sides
+    //      catch two-tone street light - magenta from one side of the map, cyan from the other - and their tops go
+    //      rain-slick, mirroring the city glow. Team colours (wool, concrete, terracotta, glazed) keep their colour
+    //      exactly: you must always read the teams. Lights, flowers and glass keep theirs too.
+    {
+        float NK = smoothstep(0.45, 1.20, CS_PHASE) * lerp(0.35, 1.0, skyK);
+        bool  team = mid == MAT_WOOL || mid == MAT_CONCRETE || mid == MAT_POWDER || mid == MAT_TERRACOTTA || mid == MAT_GLAZED;
+        bool  keep = team || mid == MAT_LAMP || mid == MAT_FLOWER || mid == MAT_GEM;
+        [branch] if (NK > 0.001) {
+            float  L = csLuma(lit);
+            if (!keep) lit = lerp(lit, L * float3(0.62, 0.68, 1.10) + lit * 0.25, 0.70 * NK);   // steel / indigo
+            float  azS = atan2(n.z, n.x);
+            float3 street = lerp(float3(1.00, 0.10, 0.62), float3(0.08, 0.72, 1.00), 0.5 + 0.5 * sin(azS * 1.0 + 2.0));
+            float  side = 1.0 - abs(n.y);
+            float  Fs = pow(1.0 - saturate(dot(n, V)), 2.0);
+            float3 albK = keep ? alb : lerp(alb, csLuma(alb).xxx, 0.6);
+            lit += street * (albK * 0.55 + 0.03) * side * (0.35 + 0.65 * Fs) * 0.55 * NK;      // street light on the sides
+            [branch] if (n.y > 0.5) {                                                               // rain-slick tops
+                float3 r  = reflect(-V, n);
+                float  azR = atan2(r.z, r.x);
+                float3 cityC = lerp(float3(1.00, 0.12, 0.60), float3(0.10, 0.48, 1.00), 0.5 + 0.5 * sin(azR * 1.3 + 2.0));
+                float  Fw = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, V)), 5.0);
+                float  wet = 0.55 + 0.45 * csVN(wp.xz * 0.9 + float2(CS_TIME * 0.05, 0.0));          // puddles: patchy
+                float  streak = 0.6 + 0.4 * csVN(float2(azR * 30.0, (1.0 - r.y) * 6.0));            // the lights drag into streaks
+                lit = lerp(lit, lit * 0.80, 0.30 * NK * wet * (keep ? 0.3 : 1.0));                    // wet = darker
+                lit += cityC * Fw * streak * wet * 0.55 * NK * lerp(0.4, 1.0, skyK);
+            }
+        }
+    }
+#endif
     // the game's fog is NOT painted here: its amount goes out in alpha (opaque blocks ignore alpha) and the World FX
     // pass fades the block into whatever the Cloud Sea sky shows behind it (clouds or sky), so the render edge is soft
     lit = csHaze(lit, wp, cam, 0.0);
