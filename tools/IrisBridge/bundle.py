@@ -49,7 +49,7 @@ def emit_runtime(man: dict) -> str:
         L.append(f"ucode {i} {len(u['code'][i])} " + " ".join(f"{op} {repr(float(a))}" for op, a in u["code"][i]))
     for world, progs in man["worlds"].items():
         for p in progs:
-            kind = "final" if p["program"] == "final" else "composite" if p["program"].startswith("composite") else \
+            kind = p["kind"] if p.get("kind") else "final" if p["program"] == "final" else "composite" if p["program"].startswith("composite") else \
                    "deferred" if p["program"].startswith("deferred") else "prepare" if p["program"].startswith("prepare") else \
                    "shadowcomp" if p["program"].startswith("shadowcomp") else "shadow" if p["program"].startswith("shadow") else "gbuffers"
             if not all(st["ok"] for st in p["stages"].values()): continue
@@ -66,6 +66,34 @@ def emit_runtime(man: dict) -> str:
                 for k, v in (st.get("defaults") or {}).items(): L.append(f"def {k} {v.replace(' ', '')}")
             L.append("end")
     return "\n".join(L) + "\n"
+
+
+def count(res):
+    return len(res), sum(1 for r in res.values() if r["ok"])
+
+
+def make_entry(prog, name, res, wdir, world, pk, man):
+    """One program's manifest entry from translate()'s results (files are <prog>.<stage>.*)."""
+    entry = {"program": prog, "source": name, "stages": {}, "blend": pk.blend(prog.split(".")[0]),
+             "alphaTest": pk.props.get(f"alphaTest.{prog.split('.')[0]}")}
+    for key, r in res.items():
+        stage = {"vsh": "vert", "fsh": "frag", "csh": "comp", "gsh": "geom"}[key.rsplit(".", 1)[1]]
+        st = {"ok": r["ok"]}
+        if r["ok"]:
+            dx = wdir / f"{prog}.{stage}.dxil"
+            st.update(reflect(dx)); st["dxil"] = f"{world}/{dx.name}"
+            if r.get("defaults"): st["defaults"] = r["defaults"]
+            for rr in st["resources"]:      # comparison samplers (hardware shadow filtering) need their own static sampler kind
+                if rr["kind"] == "sampler" and rr["slot"] in r.get("cmp", []): rr["kind"] = "samplercmp"
+            pre = preprocess((wdir / f"{prog}.{stage}.src").read_text(), BASE_DEFINES)
+            man["consts"].update(pipeline_consts(pre))
+            if stage == "frag":
+                tg = targets(pre)
+                entry["targets"] = tg if tg is not None else list(range(len(st["outputs"])))
+        else:
+            st["error"] = r["error"]
+        entry["stages"][stage] = st
+    return entry
 
 
 def find_program(shaders: Path, world: str, prog: str):
@@ -115,28 +143,18 @@ def main():
                 continue
             res = translate(shaders, world, prog, wdir, {}, ov, path)
             if not res: continue
-            entry = {"program": prog, "source": name, "stages": {}, "blend": pk.blend(prog),
-                     "alphaTest": pk.props.get(f"alphaTest.{prog}")}
-            for key, r in res.items():
-                total += 1
-                stage = {"vsh": "vert", "fsh": "frag", "csh": "comp", "gsh": "geom"}[key.rsplit(".", 1)[1]]
-                st = {"ok": r["ok"]}
-                if r["ok"]:
-                    ok += 1
-                    dx = wdir / f"{prog}.{stage}.dxil"
-                    st.update(reflect(dx)); st["dxil"] = f"{world}/{dx.name}"
-                    if r.get("defaults"): st["defaults"] = r["defaults"]
-                    for rr in st["resources"]:      # comparison samplers (hardware shadow filtering) need their own static sampler kind
-                        if rr["kind"] == "sampler" and rr["slot"] in r.get("cmp", []): rr["kind"] = "samplercmp"
-                    pre = preprocess((wdir / f"{prog}.{stage}.src").read_text(), BASE_DEFINES)
-                    man["consts"].update(pipeline_consts(pre))
-                    if stage == "frag":
-                        tg = targets(pre)
-                        entry["targets"] = tg if tg is not None else list(range(len(st["outputs"])))
-                else:
-                    st["error"] = r["error"]
-                entry["stages"][stage] = st
-            progs.append(entry)
+            progs.append(make_entry(prog, name, res, wdir, world, pk, man))
+            t, o = count(res); total += t; ok += o
+        # Bedrock variants: the terrain (gbuffers_terrain) and the shadow program fed from Bedrock's RenderChunk draws
+        for prog, kind in (("gbuffers_terrain", "terrain"), ("shadow", "shadowterrain")):
+            name, path = find_program(shaders, world, prog)
+            if not name or not pk.program_enabled(world, prog, defines): continue
+            res = translate(shaders, world, name, wdir, {}, ov, path, True, ".bedrock")
+            if not res: continue
+            e = make_entry(name + ".bedrock", name, res, wdir, world, pk, man)
+            e["program"], e["variant"], e["kind"] = prog, "bedrock", kind
+            progs.append(e)
+            t, o = count(res); total += t; ok += o
         man["worlds"][world] = progs
         for f in wdir.glob("*"):
             if f.suffix not in (".dxil",): f.unlink()

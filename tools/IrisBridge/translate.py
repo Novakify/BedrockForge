@@ -64,7 +64,43 @@ def resolve(path: Path, root: Path, seen: list[str], depth=0, overrides: dict | 
     return "\n".join(out)
 
 
-def patch(src: str, stage: str) -> tuple[str, list[str]]:
+# Bedrock terrain variant ("bedrock"): the pack's gbuffers / shadow vertex shader reads Bedrock's RenderChunk vertex and
+# the game's own vertex cbuffer (layout decoded by ShaderForge, shaders/src/_shared/RenderChunkWave.vertex.hlsli), and the
+# Iris inputs become globals filled by a wrapper main(). RF binds the game's vertex CBV at b8 and maps the game's input
+# elements POSITION0 / COLOR0 / TEXCOORD0 / TEXCOORD1 to TEXCOORD26..29.
+BEDROCK_VS_HEAD = """
+layout(location = 26) in vec3 bf_inPos;     // chunk-local position
+layout(location = 27) in vec4 bf_inColor;   // biome tint * ambient occlusion
+layout(location = 28) in vec2 bf_inUV0;     // packed atlas uv (unorm16)
+layout(location = 29) in vec2 bf_inUV1;     // packed lightmap nibbles + flags (unorm16)
+layout(std140, binding = 8) uniform BfGameVS {
+    mat4 bf_proj; mat4 bf_view; mat4 bf_model; vec4 bf_pad[12];
+    vec4 bf_fogCtl; vec4 bf_fogColor; vec4 bf_meshCtx; vec4 bf_chunkFog; vec4 bf_subPixel; vec4 bf_viewPosTime;
+};
+layout(location = 30) out vec3 bf_viewPos;
+"""
+BEDROCK_VS_MAIN = """
+void main() {
+    uvec2 u  = uvec2(round(bf_inUV0 * 65535.0));
+    vec2  uv = vec2((u << 1u) & 65534u) * (1.0 / 65535.0) + vec2((u >> 15u) & 1u) * (1.0 / 16384.0) - (1.0 / 32768.0);
+    uvec2 t1 = uvec2(round(bf_inUV1 * 65535.0));
+    vec2  lm = vec2((t1.y >> 4u) & 15u, t1.y & 15u) * (1.0 / 15.0);        // block light, sky light
+    vec3 world  = (bf_model * vec4(bf_inPos, 1.0)).xyz;
+    vec3 player = world - bf_viewPosTime.xyz;                              // Iris "player space" (camera at 0)
+    iris_Position = vec4(player, 1.0);
+    iris_Color    = bf_inColor;
+    iris_Normal   = vec3(0.0, 1.0, 0.0);                                   // Bedrock has no vertex normal: the fragment rebuilds it
+    iris_UV0      = vec4(uv, 0.0, 1.0);
+    iris_UV1      = vec4(lm * 240.0, 0.0, 1.0);                            // OptiFine lightmap units (0..240)
+    iris_UV2      = iris_UV1;
+@@ATTR_DEFAULTS@@
+    bf_viewPos = (iris_ModelViewMat * iris_Position).xyz;
+    bf_pack_main();
+}
+"""
+
+
+def patch(src: str, stage: str, bedrock: bool = False, normal_var: str | None = None) -> tuple[str, list[str]]:
     """Iris-style compatibility transform: legacy GLSL 1.x built-ins -> explicit GLSL 460 declarations."""
     notes = []
     src = re.sub(r"^\s*#\s*version[^\n]*", "", src, flags=re.M)
@@ -91,7 +127,10 @@ def patch(src: str, stage: str) -> tuple[str, list[str]]:
         ins = {"gl_Vertex": "vec4 iris_Position", "gl_Color": "vec4 iris_Color", "gl_Normal": "vec3 iris_Normal",
                "gl_MultiTexCoord0": "vec4 iris_UV0", "gl_MultiTexCoord1": "vec4 iris_UV1", "gl_MultiTexCoord2": "vec4 iris_UV2"}
         for loc, (k, v) in enumerate(ins.items()):   # fixed: Position 16, Color 17, Normal 18, UV0 19, UV1 20, UV2 21 (RF knows them)
-            if re.search(rf"\b{k}\b", src):
+            if bedrock:
+                head.append(f"{v};")                          # filled by the Bedrock wrapper main()
+                src = re.sub(rf"\b{k}\b", v.split()[1], src)
+            elif re.search(rf"\b{k}\b", src):
                 head.append(f"layout(location={16 + loc}) in {v};")  # the pack's own attributes auto-map from 0
                 src = re.sub(rf"\b{k}\b", v.split()[1], src)
         for i, (name, ty) in enumerate({"vaPosition": "vec3", "vaColor": "vec4", "vaUV0": "vec2", "vaUV1": "ivec2",
@@ -100,9 +139,35 @@ def patch(src: str, stage: str) -> tuple[str, list[str]]:
                 head.append(f"layout(location={24 + i}) in {ty} {name};")
         src = re.sub(r"\battribute\b", "in", src)
         src = re.sub(r"\bvarying\b", "out", src)
+        if bedrock:
+            # the pack's own attributes (mc_Entity, at_tangent, mc_midTexCoord, at_midBlock...) become globals
+            known = {"mc_Entity", "mc_midTexCoord", "at_tangent", "at_midBlock", "at_velocity", "mc_chunkFade"}
+            dflt = {"at_tangent": "vec4(1.0, 0.0, 0.0, 1.0)"}
+            attrs = []
+            def to_global(m):
+                if m[3] not in known: return m[0]
+                attrs.append(m[3])
+                return f"{m[1]}{m[2]} {m[3]} = {dflt.get(m[3], m[2] + '(0)')};"
+            src = re.sub(r"^(\s*)in\s+(\w+)\s+(\w+)\s*;", to_global, src, flags=re.M)
+            sets = ""
+            src = re.sub(r"\bvoid\s+main\s*\(\s*\)", "void bf_pack_main()", src)
+            head.append(BEDROCK_VS_HEAD)
+            src += BEDROCK_VS_MAIN.replace("@@ATTR_DEFAULTS@@", sets)
+            notes.append(f"bedrock terrain vertex ({len(attrs)} pack attributes as globals)")
     else:
         src = re.sub(r"\bvarying\b", "in", src)
         src = re.sub(r"\bgl_Color\b", "vec4(1.0)", src)
+        if bedrock:
+            # exact face normal from the view position's screen derivatives (blocks are flat), facing the camera
+            head.append("layout(location = 30) in vec3 bf_viewPos;")
+            fix = ""
+            if normal_var and re.search(rf"^\s*in\s+vec3\s+{normal_var}\s*;", src, flags=re.M):
+                src = re.sub(rf"^(\s*)in\s+vec3\s+{normal_var}\s*;", rf"\1in vec3 bf_unused_{normal_var};\n\1vec3 {normal_var};", src, flags=re.M)
+                fix = (f"    vec3 bf_n = normalize(cross(dFdx(bf_viewPos), dFdy(bf_viewPos)));\n"
+                       f"    {normal_var} = dot(bf_n, bf_viewPos) > 0.0 ? -bf_n : bf_n;\n")
+                notes.append(f"bedrock terrain fragment: '{normal_var}' rebuilt from derivatives")
+            src = re.sub(r"\bvoid\s+main\s*\(\s*\)", "void bf_pack_main()", src)
+            src += f"\nvoid main() {{\n{fix}    bf_pack_main();\n}}\n"
         # gl_FragData[n] / gl_FragColor -> explicit outputs (DRAWBUFFERS / RENDERTARGETS order)
         idx = sorted({int(x) for x in re.findall(r"\bgl_FragData\s*\[\s*(\d+)\s*\]", src)})
         if re.search(r"\bgl_FragColor\b", src): idx = sorted(set(idx) | {0}); src = re.sub(r"\bgl_FragColor\b", "gl_FragData[0]", src)
@@ -164,20 +229,28 @@ def run(cmd, log):
 
 
 def translate(shaders: Path, world: str, prog: str, out: Path, defines: dict, overrides: dict | None = None,
-              src_file: Path | None = None) -> dict:
+              src_file: Path | None = None, bedrock: bool = False, suffix: str = "") -> dict:
+    """bedrock=True: the Bedrock terrain variant (see BEDROCK_VS_HEAD); outputs are named <prog><suffix>.<stage>.*"""
     res = {}
+    normal_var = None
+    if bedrock:
+        vs = (src_file or shaders / world / prog).with_suffix(".vsh")
+        if vs.exists():
+            m = re.search(r"(\w+)\s*=\s*normalize\s*\(\s*gl_NormalMatrix\s*\*\s*gl_Normal\s*\)", resolve(vs, shaders, [], 0, overrides))
+            normal_var = m[1] if m else None
     for ext, (stage, prof) in STAGES.items():
         f = (src_file or shaders / world / prog).with_suffix(f".{ext}")
         if not f.exists(): continue
         log, seen, defaults = [], [], {}
         raw = resolve(f, shaders, seen, 0, overrides)
-        src, notes = patch(raw, stage)
-        (out / f"{prog}.{stage}.src").write_text(raw)
+        src, notes = patch(raw, stage, bedrock, normal_var)
+        name = prog + suffix
+        (out / f"{name}.{stage}.src").write_text(raw)
         dfs = {**BASE_DEFINES, **defines}
         hdr = "#version 460 core\n#extension GL_GOOGLE_include_directive : enable\n" + \
               "".join(f"#define {k} {v}\n" for k, v in dfs.items())
-        glsl = out / f"{prog}.{stage}.glsl"; glsl.write_text(hdr + src)
-        spv, opt, hlsl, dxil = (out / f"{prog}.{stage}.{e}" for e in ("spv", "opt.spv", "hlsl", "dxil"))
+        glsl = out / f"{name}.{stage}.glsl"; glsl.write_text(hdr + src)
+        spv, opt, hlsl, dxil = (out / f"{name}.{stage}.{e}" for e in ("spv", "opt.spv", "hlsl", "dxil"))
         ok = run(["glslangValidator", "-G", "--auto-map-locations", "--auto-map-bindings", "-S", stage, "-o", spv, glsl], log)
         ok = ok and run(["spirv-opt", "-O", spv, "-o", opt], log)
         ok = ok and run(["spirv-cross", "--hlsl", "--shader-model", "60", "--hlsl-enable-compat", opt, "--output", hlsl], log)
@@ -188,8 +261,8 @@ def translate(shaders: Path, world: str, prog: str, out: Path, defines: dict, ov
             defaults = dict(re.findall(r"^uniform\s+\w+\s+(\w+)\s*=\s*([^;]+);", fixed, re.M))
         ok = ok and run([DXC, "-T", prof, "-E", "main", "-Fo", dxil, hlsl], log)
         stepfail = None if ok else log[-1].splitlines()[0][2:].split()[0]
-        (out / f"{prog}.{stage}.log").write_text("\n".join(log))
-        res[f"{prog}.{ext}"] = {"defaults": defaults, "cmp": locals().get("cmp", []) if ok else [], "ok": ok, "failed_at": stepfail, "includes": len(seen), "notes": notes,
+        (out / f"{name}.{stage}.log").write_text("\n".join(log))
+        res[f"{name}.{ext}"] = {"defaults": defaults, "cmp": locals().get("cmp", []) if ok else [], "ok": ok, "failed_at": stepfail, "includes": len(seen), "notes": notes,
                                 "error": None if ok else next((l for l in log[-1].splitlines() if "ERROR" in l or "error" in l), log[-1][-300:])}
     return res
 
