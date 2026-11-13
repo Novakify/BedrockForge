@@ -1,5 +1,6 @@
 // Renderer Foundation - Glass Armor M0 probe (see GlassArmor.h). Original code for Renderer Foundation.
 #include "GlassArmor.h"
+#include "SkyPass.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -121,7 +122,7 @@ float                              gShowBeat = 0;
 int                                gDyeRow = 5, gDyeRowGlint = 5; // M3: ChangeColor = row 5 of b1 (1.26.51: found with debug view 8; same uniform order in ActorGlint)
 int                                gDbgRow = 0;
 std::atomic_bool                   gEnchFlow{true};
-std::atomic<float>                 gFusedK{1.0f}, gFilmK{1.0f}; // fused glass (F6)
+std::atomic<float>                 gFusedK{0.0f}, gFilmK{1.0f}; // fused glass (F6) - off: the approved look is clear warped glass, the material read only as tint + neon outline
 float                              gIdleEdge = 0.3f;  // M2.5: outline strength with no music (Awaken boots it to 1)
 float                              gBeatK    = 1.0f;  // M2.5: how hard the outline breathes with the kick
 std::atomic_bool                   gWordSweep{true};  // M2.5: a light sweep per sung word
@@ -1037,6 +1038,7 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.glint      = 0;
     p.dyeRow = gDyeRow, p.dyeRowGlint = gDyeRowGlint, p.dbgRow = uint32_t(std::max(gDbgRow, 0)), p.enchFlow = gEnchFlow ? 1.f : 0.f;
     p.fusedK = gFusedK.load(), p.filmK = gFilmK.load();
+    if (float const nk = rf::sky::novakMatchK(); nk >= 0.0f) p.pad3 = nk, p.pad4 = 1.0f;   // Novak: the armor follows the match
     p.scenePitch = rf.Footprint.RowPitch, p.depthPitch = df.Footprint.RowPitch;
     p.swirl = 0.9f, p.ripple = 0.09f, p.lens = 0.8f; // approved preview: Medium
     p.uiScale   = float(rd.Height) / 760.f;

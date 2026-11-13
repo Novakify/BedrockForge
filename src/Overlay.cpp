@@ -1,4 +1,5 @@
 // Renderer Foundation - ImGui overlay (see Overlay.h, Notice.h).
+#include <thread>
 #include <chrono>
 #include "D3D12Api.h"
 #include "Overlay.h"
@@ -76,8 +77,26 @@ void captureGpuName(IDXGISwapChain* sc) {
 
 // ---------------------------------------------------------------- input
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    // Exit watchdog: seen twice on Hive, closing the window left the game running with no window (still ticking, mod
+    // files locked) for 5-10 minutes. Once the window is gone, a normal exit (world saved) takes a few seconds; after
+    // 20 s the process is ended so it never lingers.
+    static std::atomic<int64_t> lastMsgMs{0};
+    auto const nowMs = [] { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    if (msg != WM_DESTROY && msg != WM_NCDESTROY) lastMsgMs = nowMs();
+    if (msg == WM_DESTROY) {
+        static std::atomic<bool> armed{false};
+        if (!armed.exchange(true))
+            std::thread([&] {
+                std::this_thread::sleep_for(std::chrono::seconds(20));
+                auto const n = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (n - lastMsgMs.load() < 5000) { armed = false; return; }   // a window is alive again (recreated): not an exit
+                ll_shim::warn("[RF] the game was still running 20 s after its window closed: ending it");
+                TerminateProcess(GetCurrentProcess(), 0);
+            }).detach();
+    }
     if (msg == WM_KEYDOWN && !(lp & (1 << 30))) {
-        if (int(wp) == RfOptions::uiKey.get()) RfOptions::showImGui = !RfOptions::showImGui;
+        if (int(wp) == RfOptions::uiKey.get() && (GetKeyState(VK_CONTROL) & 0x8000)) ::rf::sky::toggleAtmosphere();   // Ctrl+F6: Cloud Sea <-> Novak Glass
+        else if (int(wp) == RfOptions::uiKey.get()) RfOptions::showImGui = !RfOptions::showImGui;
         else if (int(wp) == VK_F7 && RfOptions::showImGui) ::rf::sky::testKill(); // F6 panel open: F7 plays a test kill
         else if (RfOptions::reloadShadersKey.get() != 0 && int(wp) == RfOptions::reloadShadersKey.get()) RfOptions::reloadShaders = true;
         else if (RfOptions::uiCaptureSpike && int(wp) == RfOptions::uiCaptureKey.get()) rf::uicapture::request();

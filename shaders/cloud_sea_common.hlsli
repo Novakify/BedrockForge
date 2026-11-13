@@ -560,7 +560,7 @@ static float SEA_D = 175.0;                                      // the city's s
 float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
   float3 bg=signCol(frac(hp*7.31)), a2=signCol(frac(hp*7.31+0.31+0.3*frac(hp*3.)));
   float gw=min(sz.x,sz.y), gn=gw>9.0?2.0:1.0;
-  float res=1.-smoothstep(0.5,1.5,pxm/(gw/gn/7.));
+  float res=(1.-smoothstep(0.5,1.5,pxm/(gw/gn/7.)))*step(0.08,QUALITY);   // (only at the very floor of the quality do boards lose their script)
   float lum=lerp(0.85,1.20,frac(hp*3.7))*(0.93+0.07*sin(TIME*(2.+6.*frac(hp*13.))+hp*50.));
   float dE=min(min(pn.x,1.-pn.x)*sz.x,min(pn.y,1.-pn.y)*sz.y);
   float tube=lerp(1.0,smoothstep(0.0,1.1,dE),res);
@@ -676,7 +676,7 @@ float3 facade(float lx, float ym, float Hr, float Wm, float pxm, float az, float
 //      bronze, violet), framed by fine mullions; the sun glints off it and splits into colour at the frames; the screens
 //      still play, dimmer against the day; the far city sinks into blue air.
 static float LIT = 0.0;                                               // how lit the city is: 0 day .. 1 night (set in setCity)
-void setCity(){ LIT=max(NIGHT,smoothstep(0.55,1.0,DUSK)*0.70); }
+void setCity(){ LIT=max(NIGHT,smoothstep(0.45,1.20,PHASE)); }   // (Fernando: by the time the sky is half way to night, every building is a night building - no blue glass left)
 float3 dayAir(float az){ return ngSkyBase(normalize(float3(cos(az),0.06,sin(az))))*1.05; }
 static const float CELL = 54.0, STREET = 7.5, RIN = 440.0;
 // ---- DAY: a Frutiger Aero / Japanese "city of the future" (reference: Fernando's bubble-era future city painting).
@@ -807,19 +807,28 @@ float3 layerGlow(float3 rd, float L){
   float u=az*R/260.0+L*7.0; float i=floor(u), f=frac(u); f=f*f*(3.-2.*f);
   return lerp(signCol(hb(i,L+3.)),signCol(hb(i+1.,L+3.)),f)*exp(-ym/150.0)*0.030;
 }
-float3 cityAt(float3 rd, float3 bg){
-  float3 col=bg; float3 glow=((float3)(0.0));
-  [loop] for(int L=0;L<5;L++){
+// the first building along the ray (a = 1) and the glow of the rings in front of it
+float4 cityHit(float3 rd, out float3 glow){
+  glow=((float3)(0.0));
+  float elr=rd.y/max(length(rd.xz),1e-3);
+  [branch] if(elr>2.7) return ((float4)(0.0));                 // above the tallest spire of the nearest ring
+  int nL = QUALITY > 0.55 ? 5 : (QUALITY > 0.25 ? 4 : 3);     // the far rings go first when the frame rate needs it
+  [loop] for(int L=0;L<nL;L++){
     float4 b=cityLayer(rd,float(L));
-    if(b.a>0.5){ col=b.rgb; break; }
-    if(L<3) glow+=layerGlow(rd,float(L))*LIT;
+    if(b.a>0.5) return b;
+    if(L<3 && QUALITY>0.30) glow+=layerGlow(rd,float(L))*LIT;
   }
-  return col+glow;
+  return ((float4)(0.0));
+}
+float3 cityAt(float3 rd, float3 bg){
+  float3 glow; float4 h=cityHit(rd,glow);
+  return (h.a>0.5?h.rgb:bg)+glow;
 }
 float3 cityMirror(float3 rd, float elv){
   float az=atan2(rd.z,rd.x)+(vnoise(float2(rd.x*500.0+rd.z*310.0,elv*260.0+TIME*1.2))-0.5)*0.004;
   float3 col=((float3)(0.0)); float t=SEA_D/elv;
-  for(int L=0;L<5;L++){ float R=420.0*pow(1.6,float(L));
+  [branch] if (QUALITY < 0.20) return col;
+  [loop] for(int L=0;L<4;L++){ float R=420.0*pow(1.6,float(L));
     if(R<t) continue;
     float ymr=(R-t)*elv;
     float4 b=cityLayer(float3(cos(az),(ymr*1.3-SEA_D)/R,sin(az)),float(L));
@@ -880,7 +889,8 @@ float4 cityBelow(float3 ro, float3 rd){
   float2 p=ro.xz+d.xz*t; float2 id=floor(p/CELL);
   float2 stp=sign(d.xz);
   float2 tMax=t+((id+max(stp,0.0))*CELL-p)/d.xz, tDel=CELL/abs(d.xz);
-  for(int i=0;i<44;i++){
+  int nSteps = QUALITY > 0.55 ? 44 : 26;
+  [loop] for(int i=0;i<nSteps;i++){
     if(length((id+0.5)*CELL-ro.xz)>RIN) return ((float4)(0));        // past the inner city: the far rings take over
     float tExit=min(tMax.x,tMax.y), H=bldH(id);
     float2 bmin=id*CELL+STREET, bmax=(id+1.0)*CELL-STREET;
@@ -953,8 +963,8 @@ float3 voidCity(float3 ro, float3 rd){
 
 float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float  dn = saturate(-rd.y);
-    float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z)));
-    float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0030, 0.0022, 0.012), NIGHT);
+    float3 hor = ngSkyBase(normalize(float3(rd.x, 0.0, rd.z))) * (1.0 - NIGHT);   // (OLED night: black)
+    float3 deep = lerp(lerp(float3(0.020, 0.034, 0.130), float3(0.030, 0.014, 0.075), DUSK), float3(0.0, 0.0, 0.0), NIGHT);
     float3 col = lerp(hor, deep, smoothstep(0.0, 0.07, dn));
     // the void is the city: its wet glass ground holds the city's lights (long streaks at night), its towers stand all
     // round, and right under the islands its blocks and streets
@@ -964,7 +974,7 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     float4 cb = cityBelow(float3(ro.x, SEA_D, ro.z), rd);          // under the islands: the city itself
     [branch] if (cb.a > 0.5) col = cb.rgb;
     else {
-        float3 base = lerp(dayAir(atan2(rd.z, rd.x)) * 0.35, float3(0.006, 0.008, 0.022) + voidCity(ro, rd) * 0.35, LIT);
+        float3 base = lerp(dayAir(atan2(rd.z, rd.x)) * 0.35, float3(0.006, 0.008, 0.022) * (1.0 - NIGHT) + voidCity(ro, rd) * 0.35, LIT);
         float  elv = dn / max(length(rd.xz), 1e-3);
         float3 refl = cityMirror(rd, elv);
         float  rip = 0.60 + 0.40 * vnoise(float2(rd.x * 240.0 + rd.z * 130.0, elv * 900.0 - TIME * 2.0));
@@ -988,16 +998,16 @@ float3 ngVeil(float3 rd) {
     if (e < 0.03) return float3(0.0, 0.0, 0.0);
     float3 acc = float3(0.0, 0.0, 0.0);
     float  t = TIME * 0.035;
-    int    nK = QUALITY > 0.5 ? 4 : 3;                              // (was 6 sheets: night cost 6.6 ms at 4K looking up)
+    int    nK = QUALITY > 0.8 ? 3 : 2;                              // (over the lit city the veil is a faint accent: 3 sheets carry it)                              // (was 6 sheets: night cost 6.6 ms at 4K looking up)
     [loop] for (int k = 0; k < nK; k++) {
         float  hk = 1.0 + float(k) * 0.24;                          // stacked sheets: the folds hang down
         float2 p = rd.xz / (e + 0.05) * (0.55 / hk);
-        float  v = p.y + 0.9 * sin(p.x * 0.55 + t * 2.0) + fbm(p * 0.45 + float2(t, 0.0), 2) * 1.6;
+        float  v = p.y + 0.9 * sin(p.x * 0.55 + t * 2.0) + vnoise(p * 0.45 + float2(t, 0.0)) * 1.6;
         float  band = exp(-pow(sin(v * 0.9) / 0.20, 2.0));
         float  rays = 0.55 + 0.45 * vnoise(float2(p.x * 9.0 + v * 2.0, t * 3.0));
         float3 c = lerp(float3(0.45, 0.30, 1.00), ngFilm(v * 0.12 + 0.35 + float(k) * 0.03) * float3(0.70, 1.00, 1.00), 0.55);
         c = lerp(c, lerp(float3(0.05, 0.95, 1.00), float3(1.00, 0.18, 0.85), 0.5 + 0.5 * sin(v * 0.35 + float(k))), NG_NEON * 0.6);   // neon night
-        acc += c * band * rays * (1.0 - float(k) / float(nK)) * 1.35;
+        acc += c * band * rays * (1.0 - float(k) / float(nK)) * 1.7;
     }
     return acc * 0.055 * (1.0 + 1.6 * NG_NEON) * smoothstep(0.03, 0.20, e) * (1.0 - smoothstep(0.55, 0.95, e));
 }
@@ -1007,6 +1017,11 @@ float3 ngBackground(float3 rd) {
     SEA_D = clamp(CAM.y - (SEA_Y - 120.0), 60.0, 420.0);           // the city's streets lie ~175 under the islands
     float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
     [branch] if (rd.y < 0.0) return ngVoid(CAM, rd, Ld);
+    // the city first: where a building covers this pixel none of the sky behind it is worked out (seen in game: the
+    // whole sky - dome, clouds, halo, aurora - was being drawn and then painted over; ~a third of the sky's pixels)
+    float3 cityGlow;
+    float4 cityH = cityHit(rd, cityGlow);
+    [branch] if (cityH.a > 0.5) return cityH.rgb + cityGlow;
     NgDome D  = ngDome(rd);
     float3 rf = D.rdF;
     float3 col = ngSkyBase(rf) * (0.965 + 0.07 * D.hcell.x);          // each pane a breath brighter or darker
@@ -1041,26 +1056,43 @@ float3 ngBackground(float3 rd) {
     col += lineC * (D.edge + D.edgeC * 0.35);
     // the neon night (teams going out): the dome's lattice lights up in cyan and magenta, light running along its lines,
     // faster and fuller toward the finale. (Strongest at night, which the match brings on as beds break.)
+    float3 lat = float3(0.0, 0.0, 0.0);   // the finale's neon lattice: added after the OLED night, so it glows over the black
     [branch] if (NG_NEON > 0.01) {
         float  hueN = 0.5 + 0.5 * sin(D.fam * 2.1 + D.lineId * 0.7 + TIME * 0.3);
         float3 neonC = lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), hueN);
         float  run = abs(frac(D.along * 0.12 - TIME * lerp(0.10, 0.28, NG_NEON) + D.lineId * 0.37) - 0.5) * 2.0;
         float  pulse = pow(saturate(run), 48.0);   // short bursts of light, not laser lines (seen in game)
         float  k = NG_NEON * lerp(0.45, 1.0, NIGHT);
-        col += neonC * k * (D.lnM * (0.035 + 0.75 * pulse) + D.lnC * 0.20 * pulse);
+        lat += neonC * k * (D.lnM * (0.035 + 0.75 * pulse) + D.lnC * 0.20 * pulse);
         float  az = atan2(rd.z, rd.x);
-        col += lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), 0.5 + 0.5 * sin(az * 3.0 + TIME * 0.2)) * exp(-pow(e * 60.0 - 0.6, 2.0)) * 0.16 * k;   // the base ring goes neon
+        lat += lerp(float3(0.10, 0.95, 1.00), float3(1.00, 0.20, 0.85), 0.5 + 0.5 * sin(az * 3.0 + TIME * 0.2)) * exp(-pow(e * 60.0 - 0.6, 2.0)) * 0.16 * k;   // the base ring goes neon
     }
     [branch] if (NIGHT > 0.001) {
         float azN = atan2(rd.z, rd.x);
-        col *= lerp(1.0, 0.26, NIGHT);                                // a deep navy night: the colour lives in the lights
-        col += (cityHaze(azN) * (exp(-max(rd.y, 0.0) * 9.0) * 0.09 + exp(-max(rd.y, 0.0) * 2.5) * 0.015) + float3(0.012, 0.02, 0.07) * exp(-max(rd.y, 0.0) * 3.0)) * NIGHT;
-        col += (csStars(rd) * 0.45 * (1.0 - ac.a) + csMoon(rd) * (1.0 - ac.a * 0.85)) * NIGHT;   // the city's light drowns most stars
-        col += ngVeil(rd) * NIGHT;
-        float am = acos(clamp(dot(rd, SUN), -1.0, 1.0)), x2 = (am - 0.384) / 0.0175;
-        col += float3(0.62, 0.66, 0.95) * (x2 < 0.0 ? exp(-x2 * x2 * 2.0) : exp(-x2 * 0.6)) * 0.035 * NIGHT * smoothstep(-0.02, 0.05, rd.y);   // the moon's ring
+        // OLED night (asked for): the sky itself goes true black - no dome, clouds, stars, aurora or moon. All that is
+        // left is the city: its towers and signs, and the light they throw up into the air over the horizon.
+        col *= 1.0 - NIGHT;
+        float hz = max(rd.y, 0.0);
+        col += cityHaze(azN) * (exp(-hz * 11.0) * 0.12 + exp(-hz * 3.5) * 0.020) * NIGHT;
+        // searchlights: thin beams thrown up from the city into the black, leaning and sweeping slowly - the night's
+        // only movement in the sky, and the city's light reaching up into it
+        [unroll] for (int b = 0; b < 6; b++) {
+            float  hb  = frac(sin(float(b) * 12.9898 + 4.1) * 43758.5453);
+            float  az0 = float(b) * 1.0472 + hb * 0.8;
+            float  tilt = 0.35 * sin(TIME * (0.05 + 0.04 * hb) + hb * 6.0);
+            float  elT = 1.05 + 0.30 * hb;                                  // how high the beam reaches (rad)
+            float  el  = asin(clamp(rd.y, -1.0, 1.0));
+            float  sb  = el / elT;
+            if (sb <= 0.0 || sb >= 1.0) continue;
+            float  da  = azN - (az0 + tilt * sb);
+            da = da - 6.2832 * floor(da / 6.2832 + 0.5);
+            float  dist = abs(da) * cos(el);
+            float  wdt = 0.0035 + 0.012 * sb;
+            float3 bc  = lerp(float3(0.20, 0.85, 1.00), float3(1.00, 0.30, 0.85), step(0.5, hb));
+            col += bc * exp(-pow(dist / wdt, 2.0)) * pow(1.0 - sb, 1.6) * 0.10 * NIGHT;
+        }
     }
-    col = cityAt(rd, col);                                            // the city all round, day and night
+    col += lat + cityGlow;
     return col;
 }
 float3 csBackground(float3 rd, bool withSea) {

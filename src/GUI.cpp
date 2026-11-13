@@ -115,6 +115,20 @@ void updateImGui() {
     ImGui::NewFrame();
     rf::panel::drawOverlay();
     rf::sgconfig::draw();
+    {   // Ctrl+F6 note: which atmosphere is on now (top centre, fades out)
+        std::string t; float a = 0.0f;
+        if (rf::sky::atmosphereNote(t, a)) {
+            auto*        dl = ImGui::GetForegroundDrawList();
+            ImVec2 const ds = ImGui::GetIO().DisplaySize;
+            float const  sc = ds.y / 1080.0f * 1.6f;
+            ImFont*      f  = ImGui::GetFont();
+            float const  fs = ImGui::GetFontSize() * sc;
+            ImVec2 const ts = f->CalcTextSizeA(fs, 1e9f, 0.0f, t.c_str());
+            ImVec2 const p{(ds.x - ts.x) * 0.5f, ds.y * 0.12f};
+            dl->AddRectFilled(ImVec2(p.x - 18 * sc, p.y - 10 * sc), ImVec2(p.x + ts.x + 18 * sc, p.y + ts.y + 10 * sc), IM_COL32(12, 10, 24, int(170 * a)), 10 * sc);
+            dl->AddText(f, fs, p, IM_COL32(235, 240, 255, int(255 * a)), t.c_str());
+        }
+    }
     if (RfOptions::showImGui) {
         auto& io = ImGui::GetIO();
         ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);

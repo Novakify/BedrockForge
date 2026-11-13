@@ -850,6 +850,7 @@ int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa&
     if (!pso) return 0;
     int k = s->kind;
     if (k < 0) { k = rf::sky::kindOf(pso); s->kind = k; } // cold path: a draw beat setPso's cache fill
+    if (k == rf::sky::Terrain) { rf::sky::noteTerrainDraw(); return 0; }
     if (k == rf::sky::Hide) { drawOrig = false; return 1; }
     if (k == rf::sky::VvSky) { // Vibrant Visuals: the first vanilla star / sun / moon draw of the frame gets our sky
         if (!rf::sky::vvWanted()) return 0;

@@ -83,9 +83,9 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list);
 // sky shaders learned from the game's own materials (learnGameMaterials / learnMaterialFile)
 std::mutex                        gLearnMutex;
 std::unordered_map<uint64_t, int> gLearned;            // pixel-shader hash -> Kind
-int                               gLearnKind[5]{};     // learned shaders per Kind
+int                               gLearnKind[6]{};     // learned shaders per Kind
 int                               gLearnFiles = 0, gLearnMissing = 0, gLearnPack = 0;
-std::atomic<long>                 gTagged[5]{};        // game pipelines tagged per Kind
+std::atomic<long>                 gTagged[6]{};        // game pipelines tagged per Kind
 std::atomic<long>                 gTaggedBuiltin{0};   // ... found only by the built-in 1.26.51 table
 
 BF_CopySkyFrame_t bfCopy() {
@@ -998,7 +998,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (gWfxRoot) return true;
     D3D12_ROOT_PARAMETER prm[5]{};
     prm[0].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    prm[0].Constants        = {0, 0, 40};
+    prm[0].Constants        = {0, 0, 44};
     prm[4].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_CBV; // b1: the match (team lights, beacons, shards)
     prm[4].Descriptor       = {1, 0};
     prm[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1023,7 +1023,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
@@ -1050,6 +1050,11 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     for (UINT i = 0; i < g.numRt; ++i) d.RTVFormats[i] = g.rtv[i];
     d.DSVFormat  = g.dsv;
     d.SampleDesc = g.sample;
+    if (depthMode) {   // the pass split in two by the depth buffer: 1 = sky pixels only (drawn at depth 1), 2 = everything else
+        d.DepthStencilState.DepthEnable    = TRUE;
+        d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        d.DepthStencilState.DepthFunc      = depthMode == 1 ? D3D12_COMPARISON_FUNC_LESS_EQUAL : D3D12_COMPARISON_FUNC_GREATER;
+    }
     HRESULT hr   = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&out));
     if (FAILED(hr)) {
         char b[16];
@@ -1108,7 +1113,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 0), ok ? work.dome : nullptr});
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
-            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which == 6) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
+            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which >= 6, which == 7 ? 1 : which == 8 ? 2 : 0) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -1208,7 +1213,7 @@ void learnMaterialFile(std::filesystem::path const& file, std::wstring_view file
     ++gLearnFiles;
     if (source && *source) ++gLearnPack;
     for (auto& s : shaders)
-        if (int k = rf::skyscan::kindFor(name, s); k > 0 && k < 5)
+        if (int k = rf::skyscan::kindFor(name, s); k > 0 && k < 6)
             if (gLearned.emplace(s.hash, k).second) ++gLearnKind[k];
 }
 
@@ -1218,6 +1223,14 @@ void learnGameMaterials(std::filesystem::path const& dir) {
         fn += L".material.bin";
         learnMaterialFile(dir / fn, fn, nullptr);
     }
+    // Bedrock Forge serves its packs' RenderChunk by redirecting the file open (RF never sees those bytes): learn
+    // every pack's block shader too, so its draws mark the world as drawn
+    std::error_code ec;
+    auto const packs = dir.parent_path().parent_path().parent_path() / "mods" / "BedrockForgeCore" / "shaderpacks";
+    for (auto const& e : std::filesystem::directory_iterator(packs, ec))
+        if (e.is_directory(ec)) learnMaterialFile(e.path() / "renderer" / "materials" / "RenderChunk.material.bin", L"RenderChunk.material.bin", nullptr);
+    std::lock_guard l(gLearnMutex);
+    ll_shim::info("[RF] World FX: block shaders learned (" + std::to_string(gLearnKind[Terrain]) + "): the pass knows when the world was drawn");
 }
 
 int kindOfHash(uint64_t h) {
@@ -1243,7 +1256,7 @@ void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_D
     g.vv     = kind == VvSky;
     g.farZ   = (d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_GREATER || d.DepthStencilState.DepthFunc == D3D12_COMPARISON_FUNC_GREATER_EQUAL)
                    ? 0.0f : 1.0f;
-    if (kind > 0 && kind < 5) ++gTagged[kind];
+    if (kind > 0 && kind < 6) ++gTagged[kind];
     std::lock_guard l(gPsoMutex);
     gGame[pso] = std::move(g);
 }
@@ -1575,7 +1588,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             if (age > 16.0f) break; // older ones are older still (a win's fireworks run 15.5 s)
             if ((e.kind == 2 && age > 0.72f) || (e.kind == 1 && age > 2.4f) || (e.kind == 3 && age > 4.8f) || (e.kind == 4 && age > 4.8f) ||
                 (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 15.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.55f) || (e.kind == 9 && age > 0.8f) || (e.kind == 10 && age > 0.9f) || e.kind > 10) continue;
-            if ((e.kind == 9 || e.kind == 10) && !look.living) continue;   // footsteps, generator drops: the living world
+            if (e.kind == 9) continue;   // footstep ripples: gone (seen on Hive: a pink flash across the ground with every step)
+            if (e.kind == 10) continue;  // generator pulses: gone too (seen on Hive: a pink flash every time a generator drops)
             if (e.kind >= 3 && e.kind <= 8 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
             auto& c = f.cb;
@@ -1791,6 +1805,7 @@ static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
 }
 
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
+void followLoadedAtmosphere();
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldSky(list, st, calls);
     if (rf::iris::enabled()) { gSkySinceClear = true; if (!gUi.replace || !gActive.load(std::memory_order_relaxed)) return true; } // IrisBridge: the pack's sky is in its composite chain
@@ -2002,7 +2017,10 @@ bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 
 void noteHidden() { ++gHidden; }
 
+std::atomic<float> gNovakPhase{-1.0f};
+float novakMatchK() { return gNovakPhase.load(std::memory_order_relaxed); }
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    followLoadedAtmosphere();
     GamePso g;
     {
         std::lock_guard l(gPsoMutex);
@@ -2030,7 +2048,8 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     c[12] = float(pos[0]); c[13] = float(pos[1]); c[14] = float(pos[2]);
     MatchFrame const mfs = matchFrame(worldFxLook());
     deckOf(mfs, c[15], c[16], c[17]);
-    c[18] = gQuality.load() + (worldFxLook().glass > 0.0f ? 2.0f : 0.0f); c[19] = mfs.phase;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
+    c[18] = gQuality.load() + (worldFxLook().glass > 0.0f ? 2.0f : 0.0f); c[19] = mfs.phase;
+    gNovakPhase = worldFxLook().glass > 0.0f ? std::clamp(mfs.phase * 0.5f, 0.0f, 1.0f) : -1.0f;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
@@ -2089,7 +2108,7 @@ float adaptQuality() {
         if (dt > 0.0f && dt < 0.25f) {
             ema = ema * 0.95f + dt * 0.05f;
             if (ema > 1.0f / 150.0f) q = std::max(0.0f, q - 0.01f);
-            else if (ema < 1.0f / 175.0f) q = std::min(1.0f, q + 0.002f);
+            else if (ema < 1.0f / 160.0f) q = std::min(1.0f, q + 0.002f);   // (was 175: at 160-170 FPS the quality sat at its floor for good)
         }
     }
     lastUs = now;
@@ -2122,7 +2141,9 @@ bool setField(WorldFxLook& l, std::string const& k, float v) {
     if (k == "glass") l.glass = v; else if (k == "shadow") { l.shadow = v; l.shadows = true; } else if (k == "shadows") l.shadows = v != 0;
     else if (k == "ao") l.ao = v; else if (k == "rim") l.rim = v; else if (k == "rays") l.rays = v; else if (k == "clouds") l.clouds = v;
     else if (k == "ink") l.ink = v; else if (k == "air") l.air = v; else if (k == "living") l.living = v != 0;
-    else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v;
+    else if (k == "teams") l.teams = v; else if (k == "shards") l.shards = v; else if (k == "waves") l.waves = v; else if (k == "trails") l.trails = v;
+    else if (k == "beds") l.beds = v != 0; else if (k == "kills") l.kills = v != 0; else if (k == "vitals") l.vitals = v != 0;
+    else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v; else if (k == "skyrate") l.skyRate = v;
     else return false;
     return true;
 }
@@ -2227,11 +2248,18 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // The fallback anchor: a depth clear of the world's depth buffer that comes AFTER this frame's sky was drawn into it
 // (the game clears once at the start of the frame, and again after the world - before the hand). If the cloud draw
 // (and so the pass) has not come by then, the pass runs right before that clear, while the world's depth is still there.
+// The post-world depth clear: the first clear of the world's depth buffer after this frame's sky draw - or, looking
+// steeply down (no sky draw at all), after the world's block draws. (Two earlier tries guessed it from counting the
+// clears - the Hive HUD clears the buffer many times a frame - and fired at wrong clears: pink flashes, wild FPS.
+// Block draws only happen in the world itself, so the HUD / hand clears never see them.)
+std::atomic<bool> gTerrainSinceClear{false};
+void noteTerrainDraw() { if (!gTerrainSinceClear.load(std::memory_order_relaxed)) gTerrainSinceClear.store(true, std::memory_order_relaxed); }
 bool fxFallbackWanted(size_t dsv) {
     if ((!gWorldSky.load(std::memory_order_relaxed) && !rf::iris::enabled()) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
-    return sky && !done;
+    bool const terr = gTerrainSinceClear.exchange(false);
+    return (sky || terr) && !done;
 }
 bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     size_t rt0 = 0, dsv = 0;
@@ -2337,7 +2365,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-    float c[40]{};
+    float c[44]{};
     std::memcpy(c + 0, snap.forward, 12); c[3] = 1.0f / std::fabs(snap.proj[0]);
     std::memcpy(c + 4, snap.right, 12);   c[7] = 1.0f / std::fabs(snap.proj[5]);
     std::memcpy(c + 8, snap.up, 12);      c[11] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 1000.0));
@@ -2400,14 +2428,45 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
-    calls.setConsts(list, 0, 40, c, 0);
+    calls.setConsts(list, 0, 44, c, 0);
     calls.setTable(list, 3, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
     list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
     list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
     list->SetGraphicsRootConstantBufferView(4, mcb);
-    calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    calls.draw(list, 3, 1, 0, 0);
+    // Novak Glass: the sky and its city are the dear part of the pass (measured 5.6 - 6.9 ms at 4K, most of it sky and
+    // void pixels). Split the pass by the depth buffer: sky pixels in one draw shaded at a coarse rate (variable rate
+    // shading: one shader run per 2x2 pixels), blocks and players in a second draw at full rate - they stay sharp.
+    ComPtr<ID3D12GraphicsCommandList5> l5;
+    ID3D12PipelineState* psoSky = nullptr; ID3D12PipelineState* psoTer = nullptr;
+    int const rate = look.glass > 0.0f ? int(look.skyRate + 0.5f) : 0;
+    if (rate > 0 && SUCCEEDED(list->QueryInterface(IID_PPV_ARGS(&l5)))) {
+        static int vrs = -1;
+        if (vrs < 0) {
+            D3D12_FEATURE_DATA_D3D12_OPTIONS6 o6{};
+            vrs = SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &o6, sizeof o6)) && o6.VariableShadingRateTier != D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED ? 1 : 0;
+        }
+        if (vrs == 1) { psoSky = derived(dev.Get(), g, 7); psoTer = derived(dev.Get(), g, 8); }
+    }
+    if (psoSky && psoTer) {
+        D3D12_VIEWPORT vp{0.0f, 0.0f, float(rd.Width), float(rd.Height), 1.0f, 1.0f};   // every pixel at depth 1: the sky's depth
+        list->RSSetViewports(1, &vp);
+        c[40] = 1.0f;
+        calls.setConsts(list, 0, 44, c, 0);
+        calls.setPso(list, psoSky);
+        l5->RSSetShadingRate(rate == 1 ? D3D12_SHADING_RATE_2X1 : D3D12_SHADING_RATE_2X2, nullptr);
+        calls.draw(list, 3, 1, 0, 0);
+        l5->RSSetShadingRate(D3D12_SHADING_RATE_1X1, nullptr);
+        c[40] = 0.0f;
+        calls.setConsts(list, 0, 44, c, 0);
+        calls.setPso(list, psoTer);
+        calls.draw(list, 3, 1, 0, 0);
+        vp.MinDepth = 0.0f;
+        list->RSSetViewports(1, &vp);
+    } else {
+        calls.setPso(list, pso);
+        calls.draw(list, 3, 1, 0, 0);
+    }
     if (timed) wfxperf::end(list, tsFrame);
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -2441,6 +2500,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "glass") gLook.glass = std::clamp(v, 0.f, 1.5f);
         else if (k == "air") gLook.air = std::clamp(v, 0.f, 1.5f);
         else if (k == "vitals") gLook.vitals = v != 0;
+        else if (k == "skyrate") gLook.skyRate = std::clamp(v, 0.f, 2.f);
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
@@ -2455,8 +2515,40 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
 // One switch for the whole look: the Renderer Foundation side (sky, void, light, rim: the glass strength) and Bedrock
 // Forge's block shaders (its config/shaderpack.txt names the pack: BF picks the change up while the game runs; the
 // blocks follow when a world is next joined). Returns false if that pack is not installed (the RF side still switches).
+// Bedrock Forge says which block shader the game really loaded (it takes new ones only when a world loads); the sky
+// follows that, so the two never show different atmospheres (seen in game: Ctrl+F6 switched the sky at once and the
+// blocks kept the other look - both at once).
+using LoadedAtmos_t = int (*)();
+LoadedAtmos_t bfLoadedAtmos() {
+    static LoadedAtmos_t f = nullptr;
+    static int64_t       tried = -100000;
+    if (!f && steadyMs() - tried > 4000) {
+        tried = steadyMs();
+        if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll")) f = reinterpret_cast<LoadedAtmos_t>(reinterpret_cast<void*>(GetProcAddress(m, "BF_LoadedAtmosphere")));
+    }
+    return f;
+}
+std::atomic<int64_t> gAtmosNoteAt{-100000};
+std::atomic<int>     gAtmosWanted{-1};                        // Ctrl+F6 asked for this one (-1: none pending)
+std::atomic<int>     gAtmosNoteWhich{0}, gAtmosNoteKind{0};   // kind 0: switched now, 1: queued for the next world, 2: pack missing
+void followLoadedAtmosphere() {
+    static int64_t at = 0;
+    int64_t const  now = steadyMs();
+    if (now - at < 250) return;
+    at = now;
+    auto f = bfLoadedAtmos();
+    if (!f) return;
+    int const a = f();
+    if (a != 0 && a != 1) return;
+    bool const novak = gLook.glass > 0.0f;
+    if (novak == (a == 1)) return;
+    gLook.glass = a == 1 ? 1.0f : 0.0f;
+    saveWorldFxSettings();
+    if (gAtmosWanted.load() == a) gAtmosWanted = -1;
+    gAtmosNoteWhich = a, gAtmosNoteKind = 0, gAtmosNoteAt = now;
+}
 bool setAtmosphere(int which) {
-    gLook.glass = which == 1 ? (gLook.glass > 0.0f ? gLook.glass : 1.0f) : 0.0f;
+    if (!bfLoadedAtmos()) gLook.glass = which == 1 ? (gLook.glass > 0.0f ? gLook.glass : 1.0f) : 0.0f;   // no Bedrock Forge: the sky alone
     saveWorldFxSettings();
     if (gWfxConfig.empty()) return false;
     std::error_code ec;
@@ -2466,12 +2558,30 @@ bool setAtmosphere(int which) {
     std::ofstream(bf / "config" / "shaderpack.txt") << name << "\n";
     return true;
 }
+void toggleAtmosphere() {
+    int const cur = gAtmosWanted.load() >= 0 ? gAtmosWanted.load() : (gLook.glass > 0.0f ? 1 : 0);
+    int const to  = 1 - cur;
+    bool const ok = setAtmosphere(to);
+    gAtmosWanted    = to;
+    gAtmosNoteWhich = to;
+    gAtmosNoteKind  = !ok ? 2 : (bfLoadedAtmos() && (gLook.glass > 0.0f ? 1 : 0) != to ? 1 : 0);
+    gAtmosNoteAt    = steadyMs();
+}
+bool atmosphereNote(std::string& text, float& alpha) {
+    int64_t const age = steadyMs() - gAtmosNoteAt.load();
+    if (age < 0 || age > 3500) return false;
+    alpha = age < 3000 ? 1.0f : 1.0f - float(age - 3000) / 500.0f;
+    int const k = gAtmosNoteKind.load();
+    text = std::string(gAtmosNoteWhich.load() ? "Novak Glass" : "Cloud Sea") +
+           (k == 1 ? "  -  next world you join (next game or lobby)" : k == 2 ? "  -  (that block pack is not installed)" : "");
+    return true;
+}
 void saveWorldFxSettings() {
     if (gWfxConfig.empty()) return;
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nglass " << gLook.glass << "\nbeds " << (gLook.beds ? 1 : 0)
-        << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
+        << "\nskyrate " << gLook.skyRate << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
         << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\n";
 }
 

@@ -31,7 +31,8 @@ void drawUi(); // F6 section
 // Bedrock 1.26.51 sky materials, by the FNV-1a 64 of their D3D12 pixel shaders (SM60 + SM65, from the game's
 // Sky / Stars / SunMoon / Clouds .material.bin; see Bedrock Forge docs/lyricsflow/KICKOFF.md).
 enum Kind : int { None = 0, Dome = 1, Hide = 2, Clouds = 3,
-                  VvSky = 4 }; // Vibrant Visuals: StarsForwardPBR / SunMoonForwardPBR main-view draws (sky drawn there)
+                  VvSky = 4,
+                  Terrain = 5 }; // RenderChunk (vanilla or a Bedrock Forge pack): marks that the world is being drawn // Vibrant Visuals: StarsForwardPBR / SunMoonForwardPBR main-view draws (sky drawn there)
 /// Vibrant Visuals has no sky draw to follow (DeferredShading lights the sky pixels): RF draws the live sky at the
 /// first vanilla star / sun / moon draw of the frame, depth-tested so only pixels with nothing in front change.
 bool claimVvFrame(); // true once per Present (the first VvSky draw of the frame gets our dome)
@@ -44,6 +45,8 @@ void learnMaterialFile(std::filesystem::path const& file, std::wstring_view file
 /// A game pipeline with a sky pixel shader was created (desc = the game's, root signature kept for our pipelines).
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& desc);
 int  kindOf(ID3D12PipelineState* pso); // any thread
+void noteTerrainDraw();
+float novakMatchK();   // Novak Glass on: how far the match is (0 the start .. 1 the endgame, from the living sky); -1 off                // a block draw went into the world (lock-free)
 bool wanted();                         // a LyricsFlow sky is active: UiCapture tracks list state + calls us
 bool wantRoot();                       // "My picture" is on: also track the graphics root state
 bool hideClouds();
@@ -88,7 +91,7 @@ std::string worldSkyStatus();
 struct WorldFxLook {
     bool shadows = true; float shadow = 0.70f; float ao = 0.55f; float rim = 1.0f; int debug = 0; float rays = 1.0f; float clouds = 1.0f; float ink = 0.0f; float glass = 0.0f; /* Novak Glass rim (0 off) */
     // the match (Bedrock Forge MatchFx): living sky, team lights + bed beacons, block shards. phase < 0 = follow the match
-    bool living = true; float teams = 1.0f; float shards = 1.0f; float phase = -1.0f; float waves = 1.0f; float trails = 1.0f; bool beds = true; bool kills = true; int bedStyle = 0; int deathScene = -1; float tension = -1.0f; float slow = 1.0f; float air = 1.0f; bool vitals = true; /* your health: heartbeat edges; your kill run: warmth */ /* living world: sea light from below, pollen / fireflies / stardust */ /* review: block / kill / win moments play this much slower (1 = real time) */ /* < 0: follow the match */ /* -1 shuffle, 0..6 one scene */ // 0 Novak bed, 1 your Figura sitting on it
+    bool living = true; float teams = 1.0f; float shards = 1.0f; float phase = -1.0f; float waves = 1.0f; float trails = 1.0f; bool beds = true; bool kills = true; int bedStyle = 0; int deathScene = -1; float tension = -1.0f; float skyRate = 2.0f; /* Novak: the sky + city are shaded coarser than the blocks: 0 full, 1 = 2x1, 2 = 2x2 */ float slow = 1.0f; float air = 1.0f; bool vitals = true; /* your health: heartbeat edges; your kill run: warmth */ /* living world: sea light from below, pollen / fireflies / stardust */ /* review: block / kill / win moments play this much slower (1 = real time) */ /* < 0: follow the match */ /* -1 shuffle, 0..6 one scene */ // 0 Novak bed, 1 your Figura sitting on it
 };
 /// what RF last read from Bedrock Forge's match bridge (for the F6 panel)
 void testKill();
@@ -103,6 +106,8 @@ float        worldFxGpuMs();        // GPU time of the World FX pass (smoothed),
 bool         worldFxBenchRunning(); // the A/B bench (config/wfxbench.txt) is running
 void         loadWorldFxSettings(std::filesystem::path const& configDir);
 void         saveWorldFxSettings();
-bool         setAtmosphere(int which);   // 0 Cloud Sea, 1 Novak Glass: RF look + Bedrock Forge's block shaderpack
+bool         setAtmosphere(int which);
+void         toggleAtmosphere();         // Ctrl+F6: flips the atmosphere and shows a note on screen for a few seconds
+bool         atmosphereNote(std::string& text, float& alpha);   // that note, while it shows   // 0 Cloud Sea, 1 Novak Glass: RF look + Bedrock Forge's block shaderpack
 
 } // namespace rf::sky

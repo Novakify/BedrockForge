@@ -16,6 +16,7 @@ cbuffer C : register(b0) {
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
     float4 c9; // x = god ray strength, y = cloud shadow strength, z = quality 0..1 (RF lowers it to hold the frame rate), w = ink look strength
+    float4 c10; // x = 1: this draw is the sky only (depth-tested to sky pixels, shaded at a coarse rate): take the sky path
 };
 // the match (Bedrock Forge MatchFx, filled per frame by SkyPass): team lights + bed beacons, block shards, placement pop
 cbuffer M : register(b1) {
@@ -1332,7 +1333,31 @@ float3 impactFrame(float3 o, float3 rd, float sceneT) {
     }
     return o;
 }
+// Novak Glass: the match effects were made for the Cloud Sea's sunset - embers, gold, amber. In the neon city their
+// warm light is recoloured as it lands: orange turns hot magenta, gold electric cyan, with the same strength. Only the
+// warm band (hue ~10..50 degrees) moves, so team colours (red, blue, green, yellow, aqua, pink, white) stay exact,
+// and white stays white (glass). Darkening effects are left as they are.
+float3 ngNeonWarm(float3 d) {
+    float mx = max(d.r, max(d.g, d.b)), mn = min(d.r, min(d.g, d.b));
+    if (mx <= 1e-5 || !(d.r >= d.g && d.g >= d.b)) return d;
+    float sat = (mx - mn) / mx;
+    float h   = 60.0 * (d.g - d.b) / max(d.r - d.b, 1e-5);
+    float w   = smoothstep(8.0, 16.0, h) * (1.0 - smoothstep(46.0, 53.0, h)) * smoothstep(0.15, 0.40, sat);
+    float3 neon = lerp(float3(1.00, 0.22, 0.78), float3(0.15, 0.88, 1.00), saturate((h - 16.0) / 28.0));
+    float  L = dot(d, float3(0.2126, 0.7152, 0.0722));
+    return lerp(d, neon * (L / dot(neon, float3(0.2126, 0.7152, 0.0722))), w);
+}
+float3 ngNeonDelta(float3 before, float3 after) {   // linear light
+    float3 dd = after - before;
+    return before + ngNeonWarm(max(dd, 0.0)) + min(dd, 0.0);
+}
+float3 matchOverRaw(float3 o, float3 rd, float sceneT);
 float3 matchOver(float3 o, float3 rd, float sceneT) {
+    float3 r = matchOverRaw(o, rd, sceneT);
+    [branch] if (NG_IS) r = pow(ngNeonDelta(pow(max(o, 0.0), 2.2), pow(max(r, 0.0), 2.2)), 1.0 / 2.2);
+    return r;
+}
+float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
     [branch] if (m1.w > 0.5 && m0.x > 0.5) {
         if (m2.z > 0.5) {
             float3 halo = 0.0;
@@ -1496,16 +1521,23 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
-    [branch] if (isSky(d)) {
+    [branch] if (isSky(d) || c10.x > 0.5) {
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = NG_IS ? m2.w : 0.0;
         float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
         if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
         float  js = hash12(float2(px));
         float3 rays = sunShafts(px, js) * 0.55 * LIGHTK;                  // over open sky the beams are subtler (it is already bright)
-        float4 sea = (!NG_IS && rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
         // the full sky (high clouds, stars, moon) is drawn here, on pixels that are really sky - the sky pass only lays a
         // cheap gradient under the whole screen (most of it is covered by the world afterwards)
-        float3 base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));
+        float4 sea = float4(0, 0, 0, 0);
+        float3 base;
+        [branch] if (NG_IS) {                                  // Novak: one call does sky or void (a ?: here worked BOTH out for every pixel)
+            base = toDisplay(csBackground(rd, false));
+            sea.a = rd.y < 0.0 ? 1.0 : 0.0;
+        } else {
+            sea = (rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
+            base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));   // (Cloud Sea: exactly as signed off)
+        }
         float3 lb = pow(max(base, 0.0), 2.2) + rays * (sea.a > 0.0 ? 1.0 : 0.6);
         float3 o = pow(max(lb, 0.0), 1.0 / 2.2);
         o = matchOver(o, rd, 1e9) + (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
@@ -1565,9 +1597,16 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // cost scales with distance: near pixels get the full walk, far ones a short one, past 140 blocks none
     float qs = lerp(0.45, 1.0, c9.z);
     int   nSh = int((z < 25.0 ? 20.0 : (z < 60.0 ? 12.0 : 7.0)) * qs);
+    // Novak: the samples never move with the adaptive quality (seen on a Hive map: the quality hovering around the
+    // FPS line changed the step count every few frames and the shadows flashed while standing still). The full
+    // schedule is fixed; lower quality walks every other step of it.
+    int   shStride = 1;
+    if (NG_IS) nSh = z < 25.0 ? 12 : (z < 60.0 ? 8 : 5);   // (cheap and fixed: 70 FPS seen with the full schedule)
     float tMax = z < 25.0 ? 30.0 : (z < 60.0 ? 26.0 : 18.0);   // the low sun throws long shadows: ~1 block steps
-    [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 140.0) {
-        [loop] for (int k = 0; k < nSh; k++) {
+    // (Novak: at full night the light is the city's neon, not the moon - the shadow walk is skipped and its ~0.8 ms
+    //  goes back to the frame rate)
+    [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 140.0 && !(NG_IS && NIGHT > 0.85)) {
+        [loop] for (int k = 0; k < nSh; k += shStride) {
             float f = (float(k) + j) / float(nSh);
             float t = 0.04 + tMax * f * sqrt(f);
             float3 q = P + n * (0.03 + 0.002 * z) + L * t;
@@ -1587,6 +1626,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float3 tA = normalize(abs(n.y) > 0.5 ? cross(n, float3(1, 0, 0)) : cross(n, float3(0, 1, 0)));
     float3 tB = cross(n, tA);
     int   nAo = (c6.x <= 0.0 || c9.z < 0.2) ? 0 : (z < 30.0 ? (c9.z > 0.5 ? 6 : 4) : (z < 70.0 ? 3 : 0));
+    if (NG_IS) nAo = c6.x <= 0.0 ? 0 : (NIGHT > 0.85 ? (z < 25.0 ? 2 : 0) : (z < 30.0 ? 3 : (z < 60.0 ? 1 : 0)));   // (measured on Hive: AO was 0.82 ms of the 3.3 ms night pass)   // (fixed: see the shadow steps)
     [loop] for (int k2 = 0; k2 < nAo; k2++) {
         float a = (float(k2) + j) * 2.39996;
         float r = sqrt((float(k2) + j2) / float(nAo));
@@ -1649,7 +1689,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float  cs  = (c8.w > 0.5 && c9.y > 0.0 && !NG_IS) ? (c9.z > 0.25 ? cloudShadow(CAM + P) : cloudShadowLite(CAM + P)) * c9.y : 0.0;
     float  sh  = max((1.0 - vis) * lit * c5.w, cs * lit * 0.55 * (1.0 - NIGHT)) * min(LIGHTK, 1.0);
     float3 shadeCol = lerp(float3(0.46, 0.44, 0.62), float3(0.48, 0.54, 0.76), NIGHT);
-    if (NG_IS) shadeCol = lerp(lerp(float3(0.50, 0.57, 0.76), float3(0.48, 0.42, 0.72), DUSK), float3(0.44, 0.46, 0.84), NIGHT);   // Novak Glass: cold, clean shade // without the key light: violet sky / blue night (light enough to fight in)
+    if (NG_IS) shadeCol = lerp(lerp(float3(0.50, 0.57, 0.76), float3(0.48, 0.42, 0.72), DUSK), float3(0.80, 0.80, 0.84), NIGHT);   // Novak Glass (night shade near-neutral: midnight city): cold, clean shade // without the key light: violet sky / blue night (light enough to fight in)
     lin *= lerp(float3(1, 1, 1), shadeCol, sh);
     lin *= lerp(1.0, ao, c6.x);
     // cel light: the shadow terminator gets a thin painted band of warm light on the lit side
@@ -1670,7 +1710,7 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         lin += (NG_IS ? lerp(float3(1.15, 1.08, 0.98), float3(0.70, 0.66, 1.10), NIGHT) : lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT)) * open * near * c6.y * 0.55 * LIGHTK;
     }
     lin += sunShafts(px, j) * (1.0 - 0.5 * exp(-z / 30.0)) * LIGHTK;   // air close to you holds less light
-    lin *= NG_IS ? lerp(lerp(float3(1, 1, 1), float3(0.90, 0.78, 0.92), DUSK), float3(0.38, 0.39, 0.78), NIGHT)
+    lin *= NG_IS ? lerp(lerp(float3(1, 1, 1), float3(0.90, 0.78, 0.92), DUSK), float3(1.0, 1.0, 1.0), NIGHT)   /* midnight city (Nov 13): the world keeps its own colours and brightness at night - no dimming filter */
                  : lerp(lerp(float3(1, 1, 1), float3(0.86, 0.78, 0.94), DUSK), float3(0.40, 0.47, 0.76), NIGHT); // the world follows the sky
     // ---- sea light: the cloud sea under the map glows with the hour, and everything is lit by it from below - the
     //      undersides of bridges and islands most, walls a little. It moves, slowly, like light off water. When the
@@ -1705,12 +1745,14 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         }
     }
     [branch] if (m0.x > 0.5 && m0.z > 0.0) lin += (lin * 2.6 + 0.045) * teamLight(CAM + P, n);
+    float3 linFx0 = lin;   // (Novak: the effects below are recoloured as they land - team light above stays exact)
     [branch] if (m0.x > 0.5 && m1.y > 0.0) lin += (lin * 2.0 + 0.03) * shockwaveOn(CAM + P);
     // (killGlow is gone: the death scenes light their own ground)
     [branch] if (m1.z > 0.5) lin = hitOn(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = genPulse(CAM + P, lin, n);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
+    [branch] if (NG_IS) lin = ngNeonDelta(linFx0, lin);
 #if NG_RIM
     [branch] if (c3.z > 0.0 && z < 90.0) lin = ngRim(lin, P, n, px, z, L, c3.z);
 #endif
