@@ -1588,7 +1588,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             if ((e.kind == 2 && age > 0.72f) || (e.kind == 1 && age > 2.4f) || (e.kind == 3 && age > 4.8f) || (e.kind == 4 && age > 4.8f) ||
                 (e.kind == 5 && age > 1.6f) || (e.kind == 6 && age > 15.5f) || (e.kind == 7 && age > 0.7f) || (e.kind == 8 && age > 0.55f) || (e.kind == 9 && age > 0.8f) || (e.kind == 10 && age > 0.9f) || e.kind > 10) continue;
             if (e.kind == 9) continue;   // footstep ripples: gone (seen on Hive: a pink flash across the ground with every step)
-            if (e.kind == 10 && !look.living) continue;   // generator drops: the living world
+            if (e.kind == 10) continue;  // generator pulses: gone too (seen on Hive: a pink flash every time a generator drops)
             if (e.kind >= 3 && e.kind <= 8 && !look.kills) continue;   // kill / respawn moments: off until redone (F6 'Kill moments')
             if (e.kind >= 3) f.cb.m1[2] = 1.0f;
             auto& c = f.cb;
