@@ -1603,7 +1603,9 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     int   shStride = 1;
     if (NG_IS) nSh = z < 25.0 ? 12 : (z < 60.0 ? 8 : 5);   // (cheap and fixed: 70 FPS seen with the full schedule)
     float tMax = z < 25.0 ? 30.0 : (z < 60.0 ? 26.0 : 18.0);   // the low sun throws long shadows: ~1 block steps
-    [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 140.0) {
+    // (Novak: at full night the light is the city's neon, not the moon - the shadow walk is skipped and its ~0.8 ms
+    //  goes back to the frame rate)
+    [branch] if (ndl > 0.02 && c5.w * LIGHTK > 0.02 && z < 140.0 && !(NG_IS && NIGHT > 0.85)) {
         [loop] for (int k = 0; k < nSh; k += shStride) {
             float f = (float(k) + j) / float(nSh);
             float t = 0.04 + tMax * f * sqrt(f);
