@@ -13,35 +13,20 @@ static const uint FN_STARTLE = 9184u, FN_STARTLE_N = 11u;
 static const uint FN_KICK = 9536u, FN_KICK_N = 25u;
 static const uint FN_PAIN = 10336u, FN_PAIN_N = 31u;
 static const uint FN_ULT = 11328u, FN_ULT_N = 52u;
-static const uint EF_GUILLOTINE = 12992u, EF_GUILLOTINE_N = 23u;
-static const uint EF_HEARTPIERCER = 13728u, EF_HEARTPIERCER_N = 23u;
-static const uint EF_EVISCERATE = 14464u, EF_EVISCERATE_N = 20u;
-static const uint EF_SWEEPING_EDGE = 15104u, EF_SWEEPING_EDGE_N = 21u;
-static const uint EF_DANCING_EDGE = 15776u, EF_DANCING_EDGE_N = 26u;
-static const uint EF_BATTOJUTSU = 16608u, EF_BATTOJUTSU_N = 31u;
-static const uint EF_BLADE_RUSH = 17600u, EF_BLADE_RUSH_N = 59u;
-static const uint EF_WRATHFUL_LIGHTNING = 19488u, EF_WRATHFUL_LIGHTNING_N = 28u;
-static const uint EF_TSUNAMI = 20384u, EF_TSUNAMI_N = 29u;
-static const uint EF_STEEL_WHIRLWIND = 21312u, EF_STEEL_WHIRLWIND_N = 65u;
-static const uint EF_DEMOLITION_LEAP = 23392u, EF_DEMOLITION_LEAP_N = 31u;
-static const uint EF_RELENTLESS_COMBO = 24384u, EF_RELENTLESS_COMBO_N = 25u;
-static const uint EF_RUSHING_TEMPO = 25184u, EF_RUSHING_TEMPO_N = 56u;
-static const uint EF_GRASPING_SPIRE = 26976u, EF_GRASPING_SPIRE_N = 28u;
-static const uint EF_SHARP_STAB = 27872u, EF_SHARP_STAB_N = 25u;
-static const uint EF_REVELATION = 28672u, EF_REVELATION_N = 15u;
-static const uint EF_GREATSWORD_SLAM = 29152u, EF_GREATSWORD_SLAM_N = 13u;
 // Epic Fight moves: (clip offset, frames, weapon, victim distance blocks) and up to 6 hit times (s)
-static const uint4 kEFClip[17] = { uint4(EF_GUILLOTINE, EF_GUILLOTINE_N, 8u, 344u), uint4(EF_HEARTPIERCER, EF_HEARTPIERCER_N, 6u, 198u), uint4(EF_EVISCERATE, EF_EVISCERATE_N, 4u, 50u), uint4(EF_SWEEPING_EDGE, EF_SWEEPING_EDGE_N, 0u, 221u), uint4(EF_DANCING_EDGE, EF_DANCING_EDGE_N, 5u, 272u), uint4(EF_BATTOJUTSU, EF_BATTOJUTSU_N, 3u, 350u), uint4(EF_BLADE_RUSH, EF_BLADE_RUSH_N, 4u, 350u), uint4(EF_WRATHFUL_LIGHTNING, EF_WRATHFUL_LIGHTNING_N, 7u, 144u), uint4(EF_TSUNAMI, EF_TSUNAMI_N, 7u, 350u), uint4(EF_STEEL_WHIRLWIND, EF_STEEL_WHIRLWIND_N, 2u, 350u), uint4(EF_DEMOLITION_LEAP, EF_DEMOLITION_LEAP_N, 2u, 115u), uint4(EF_RELENTLESS_COMBO, EF_RELENTLESS_COMBO_N, 9u, 64u), uint4(EF_RUSHING_TEMPO, EF_RUSHING_TEMPO_N, 3u, 350u), uint4(EF_GRASPING_SPIRE, EF_GRASPING_SPIRE_N, 6u, 190u), uint4(EF_SHARP_STAB, EF_SHARP_STAB_N, 1u, 256u), uint4(EF_REVELATION, EF_REVELATION_N, 1u, 95u), uint4(EF_GREATSWORD_SLAM, EF_GREATSWORD_SLAM_N, 2u, 234u) };
-static const float kEFHit[102] = { 0.200, 0.750, 99.000, 99.000, 99.000, 99.000, 0.300, 0.500, 0.700, 99.000, 99.000, 99.000, 0.050, 0.600, 99.000, 99.000, 99.000, 99.000, 0.250, 99.000, 99.000, 99.000, 99.000, 99.000, 0.350, 0.650, 99.000, 99.000, 99.000, 99.000, 0.750, 99.000, 99.000, 99.000, 99.000, 99.000, 0.700, 1.400, 1.650, 99.000, 99.000, 99.000, 0.050, 0.350, 1.050, 99.000, 99.000, 99.000, 0.400, 99.000, 99.000, 99.000, 99.000, 99.000, 0.700, 1.200, 1.800, 99.000, 99.000, 99.000, 0.600, 99.000, 99.000, 99.000, 99.000, 99.000, 0.150, 0.400, 0.650, 0.850, 99.000, 99.000, 0.200, 1.300, 1.500, 99.000, 99.000, 99.000, 0.150, 0.550, 99.000, 99.000, 99.000, 99.000, 0.150, 0.800, 99.000, 99.000, 99.000, 99.000, 0.050, 99.000, 99.000, 99.000, 99.000, 99.000, 0.250, 99.000, 99.000, 99.000, 99.000, 99.000 };
-static const uint kEFHits[17] = { 2u, 3u, 2u, 1u, 2u, 1u, 3u, 3u, 1u, 3u, 1u, 4u, 3u, 2u, 2u, 1u, 1u };
+// Epic Fight clips: per frame 13 x 4 uints (centre xyz blocks, quat xyzw): 11 skin segments, Tool_R, Tool_L
+static const uint4 kEFClip[17] = { uint4(0u, 23u, 8u, 409u), uint4(1196u, 23u, 6u, 323u), uint4(2392u, 20u, 4u, 361u), uint4(3432u, 21u, 0u, 266u), uint4(4524u, 26u, 5u, 363u), uint4(5876u, 31u, 3u, 873u), uint4(7488u, 59u, 4u, 1039u), uint4(10556u, 28u, 7u, 187u), uint4(12012u, 29u, 7u, 1400u), uint4(13520u, 65u, 2u, 349u), uint4(16900u, 31u, 2u, 225u), uint4(18512u, 25u, 9u, 118u), uint4(19812u, 56u, 3u, 531u), uint4(22724u, 28u, 6u, 240u), uint4(24180u, 25u, 1u, 390u), uint4(25480u, 15u, 1u, 209u), uint4(26260u, 13u, 2u, 1400u) };
+static const float kEFHit[102] = { 0.700, 99.000, 99.000, 99.000, 99.000, 99.000, 0.450, 0.650, 0.950, 99.000, 99.000, 99.000, 0.100, 0.500, 99.000, 99.000, 99.000, 99.000, 0.200, 99.000, 99.000, 99.000, 99.000, 99.000, 0.400, 0.500, 0.900, 99.000, 99.000, 99.000, 0.750, 99.000, 99.000, 99.000, 99.000, 99.000, 0.600, 1.400, 1.650, 99.000, 99.000, 99.000, 0.700, 99.000, 99.000, 99.000, 99.000, 99.000, 0.500, 99.000, 99.000, 99.000, 99.000, 99.000, 1.000, 1.500, 2.550, 99.000, 99.000, 99.000, 0.600, 99.000, 99.000, 99.000, 99.000, 99.000, 0.350, 0.450, 0.550, 0.700, 0.800, 1.000, 0.200, 1.500, 99.000, 99.000, 99.000, 99.000, 0.550, 99.000, 99.000, 99.000, 99.000, 99.000, 0.100, 99.000, 99.000, 99.000, 99.000, 99.000, 0.100, 99.000, 99.000, 99.000, 99.000, 99.000, 0.250, 99.000, 99.000, 99.000, 99.000, 99.000 };
+static const uint kEFHits[17] = { 1u, 3u, 2u, 1u, 3u, 1u, 3u, 1u, 1u, 3u, 1u, 6u, 2u, 1u, 1u, 1u, 1u };
 
 // ragdolls: per frame (20 Hz) 6 parts x 4 uints (centre xyz blocks from the feet, rotation quat xyzw)
 static const uint RD_MELEE = 0u, RD_MELEE_N = 97u;
 static const uint RD_SIDE = 2328u, RD_SIDE_N = 97u;
 static const uint SB_SLUMP = 4656u, SB_SLUMP_N = 97u;
 static const uint SB_ROLL = 6984u, SB_ROLL_N = 97u;
-static const uint kRagBase = 29568u;      // gClips: the clips from 0, the ragdolls from here
-static const uint kClipRows = 152u;
+static const uint kRagBase = 12992u;      // gClips: the clips from 0, the ragdolls from here
+static const uint kEFBase = 22304u;    // gClips: the Epic Fight clips from here
+static const uint kClipRows = 193u;
 // ragdoll thuds: 6 per bake, (x, y = horizontal place in bake space; z = time s, 99 = none; w = strength)
 static const float4 kRagHit[24] = {
     float4(0.437, -2.627, 0.729, 1.242),
