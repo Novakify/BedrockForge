@@ -2034,6 +2034,8 @@ bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 void noteHidden() { ++gHidden; }
 
 std::atomic<float> gNovakPhase{-1.0f};
+std::atomic<float> gWorldPhase{0.0f};
+std::atomic<bool>  gWorldNovak{false};
 float novakMatchK() { return gNovakPhase.load(std::memory_order_relaxed); }
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     followLoadedAtmosphere();
@@ -2065,7 +2067,8 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     MatchFrame const mfs = matchFrame(worldFxLook());
     deckOf(mfs, c[15], c[16], c[17]);
     c[18] = gQuality.load() + (worldFxLook().glass > 0.0f ? 2.0f : 0.0f); c[19] = mfs.phase;
-    gNovakPhase = worldFxLook().glass > 0.0f ? std::clamp(mfs.phase * 0.5f, 0.0f, 1.0f) : -1.0f;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
+    gNovakPhase = worldFxLook().glass > 0.0f ? std::clamp(mfs.phase * 0.5f, 0.0f, 1.0f) : -1.0f;
+    gWorldPhase = mfs.phase, gWorldNovak = worldFxLook().glass > 0.0f;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
@@ -2157,6 +2160,26 @@ bool seenRecently(size_t rt, size_t ds, int64_t within) {
     std::lock_guard l(gSeenMutex);
     for (auto const& e : gSeen) if (e.rt == rt && e.ds == ds && t - e.ms <= within) return true;
     return false;
+}
+bool worldClearColour(size_t rtv, float const* game, float out[4]) {
+    if (!gWorldSky.load(std::memory_order_relaxed) || !rtv) return false;
+    bool isWorld = false;
+    for (int i = 0; i < 4; ++i) if (gFxPairRt[i].load(std::memory_order_relaxed) == rtv) isWorld = true;
+    if (!isWorld) return false;
+    auto ss = [](float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); };
+    float const k = gWorldPhase.load(std::memory_order_relaxed);
+    float const night = ss(1.15f, 1.9f, k), dusk = ss(0.0f, 1.0f, k);
+    float day[3], eve[3], dark[3];
+    if (gWorldNovak.load(std::memory_order_relaxed)) {   // the glass city under the islands / the black void at night
+        float const d[3] = {0.16f, 0.30f, 0.52f}, e[3] = {0.20f, 0.16f, 0.34f}, n[3] = {0.0f, 0.0f, 0.0f};
+        std::copy(d, d + 3, day), std::copy(e, e + 3, eve), std::copy(n, n + 3, dark);
+    } else {                                             // the cloud sea's tops
+        float const d[3] = {0.84f, 0.80f, 0.76f}, e[3] = {0.86f, 0.55f, 0.38f}, n[3] = {0.05f, 0.06f, 0.11f};
+        std::copy(d, d + 3, day), std::copy(e, e + 3, eve), std::copy(n, n + 3, dark);
+    }
+    for (int i = 0; i < 3; ++i) out[i] = (day[i] + (eve[i] - day[i]) * dusk) * (1.0f - night) + dark[i] * night;
+    out[3] = game[3];
+    return true;
 }
 void noteTargetsBound(size_t rt, size_t ds) {
     if (!rt) return;

@@ -27,6 +27,7 @@ struct Targets {
     void* setPso            = nullptr; // ID3D12GraphicsCommandList::SetPipelineState (vtable 25)
     void* omSetRts          = nullptr; // ID3D12GraphicsCommandList::OMSetRenderTargets (vtable 46)
     void* clearDsv          = nullptr; // ID3D12GraphicsCommandList::ClearDepthStencilView (vtable 47): World FX fallback anchor
+    void* clearRtv          = nullptr; // ID3D12GraphicsCommandList::ClearRenderTargetView (vtable 48): the world's clear colour
     void* drawInstanced     = nullptr; // ID3D12GraphicsCommandList::DrawInstanced (vtable 12)
     void* drawIndexed       = nullptr; // ID3D12GraphicsCommandList::DrawIndexedInstanced (vtable 13)
     // M0.5: resolve RTV handles that were never seen at CreateRenderTargetView

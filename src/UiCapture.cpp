@@ -334,7 +334,7 @@ using Close_t      = HRESULT(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*);
 using CreateDsv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_DEPTH_STENCIL_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
 using CreateRs_t   = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, void const*, SIZE_T, REFIID, void**);
 using CreateSrv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_SHADER_RESOURCE_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
-constexpr int kHooks = 27; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
+constexpr int kHooks = 28; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
@@ -910,6 +910,16 @@ void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_D
     reinterpret_cast<ClearDsv_t>(gOrig[26])(list, dsv, flags, depth, stencil, n, rects);
 }
 
+// The world's colour clear: looking down there is no sky behind the void, and on the frames the World FX pass misses
+// (its anchor is hard to catch there) the clear colour is what shows - the game's bright fog blue, flashing against the
+// Novak / Cloud Sea background. The clear takes the atmosphere's own colour for what lies below instead.
+using ClearRtv_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, FLOAT const*, UINT, D3D12_RECT const*);
+void STDMETHODCALLTYPE clearRtvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE rtv, FLOAT const* color, UINT n, D3D12_RECT const* rects) {
+    float c[4];
+    if (!gInSnapshot && color && rf::sky::worldClearColour(rtv.ptr, color, c)) color = c;
+    reinterpret_cast<ClearRtv_t>(gOrig[27])(list, rtv, color, n, rects);
+}
+
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
     rf::sky::GameState st;
     ListIa             ia;
@@ -1383,7 +1393,7 @@ bool install(Targets const& t) {
                          t.iaSetTopology,     t.iaSetVb,         t.setHeaps,  t.setRootSig,     t.setTable,
                          t.setConst,          t.setConsts,       t.setCbv,    t.setSrv,          t.setUav,
                          t.createSrv,         t.iaSetIb,         t.createDsv, t.createRootSig,   t.close,
-                         t.clearDsv};
+                         t.clearDsv,          t.clearRtv};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
@@ -1397,7 +1407,7 @@ bool install(Targets const& t) {
                          reinterpret_cast<void*>(&setAddrHook<20, 5>), reinterpret_cast<void*>(&createSrvHook),
                          reinterpret_cast<void*>(&setIbHook),     reinterpret_cast<void*>(&createDsvHook),
                          reinterpret_cast<void*>(&createRsHook),  reinterpret_cast<void*>(&closeHook),
-                         reinterpret_cast<void*>(&clearDsvHook)};
+                         reinterpret_cast<void*>(&clearDsvHook),  reinterpret_cast<void*>(&clearRtvHook)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;
