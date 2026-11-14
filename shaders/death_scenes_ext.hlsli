@@ -239,31 +239,40 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         add += warm * fnFlash(rd, MID + float3(0, 1.0, 0), 0.6, h.t) * exp(-max(T - KT, 0.0) / 2.0) * step(KT, T) * 0.55;
         fnPoof(h, rd, MID + float3(0, 0.4, 0), (T - KT) / 20.0, seed + 5.0, 10, 0.06);
     } else if (sc == 8) {
-        // ============ SHIELD COUNTER: they drop; a phantom rises beside the body, walks out towards you, turns -
-        // and gives you the finger. A flash off its head, and it's gone
-        float T = t * 20.0;
-        float u = T / 20.0;
-        float tip = 1.5708 * saturate(u / 0.55) * saturate(u / 0.55);
-        fx.hurt = saturate(1.0 - u * 2.0);
+        // ============ SHIELD COUNTER (the mod's own beats): the blow lands and the victim doubles over; a phantom
+        // forms at their side and walks off across your view (no blade - the mod hides the held item), stops, turns
+        // to face you and gives you the finger - a cold flash off its head, a ring at its feet. Only then, behind it,
+        // the victim drops (the mod's kill tick, 81). Played at 1.1x so the death and its poof fit the scene.
+        float T = t * 22.0;
+        float KT = 81.0;
+        // the victim: doubled over (Finishers' pain, held), then a vanilla death at the kill tick
+        float u = max(T - KT, 0.0) / 20.0;
+        float tip = 1.5708 * saturate(u / 0.5) * saturate(u / 0.5);
+        fx.hurt = max(saturate(1.0 - T / 10.0), saturate(1.0 - u * 2.5) * step(KT, T));
+        if (T < KT + 16.0) dsClip(h, rd, feet, mul(RV, rotZ(tip * sgn)), FN_PAIN, FN_PAIN_N, min(T * 0.6, 12.0), 63, fx);
+        fnPoof(h, rd, feet + float3(0, 0.3, 0) + mul(RV, float3(sgn * 0.55, 0, 0)), (T - KT - 16.0) / 20.0, seed, 14, 0.07);
+        // the phantom: walks 3.2 blocks across the view (the mod's movement keys), then turns to face the viewer
+        float pr = T < 6.0 ? 0.08 * (T / 6.0) * (T / 6.0)
+                 : (T < 18.0 ? lerp(0.08, 0.7, smoothstep(0.0, 1.0, (T - 6.0) / 12.0)) : lerp(0.7, 1.0, easeOut(saturate((T - 18.0) / 10.0))));
+        float3 AS = feet + A * 0.75;
+        float3 AO = AS + A * 3.2 * pr;
         float3 toCam = -vf;
-        float3x3 RC = rotY(atan2(toCam.x, toCam.z));
-        if (T < 52.0) dsBody(h, rd, feet, mul(RV, rotZ(tip * sgn)), 1.0, -99.0, 99.0, fx);
-        fnPoof(h, rd, feet + float3(0, 0.3, 0) + mul(RV, float3(sgn * 0.6, 0, 0)), (T - 51.0) / 20.0, seed, 14, 0.07);
-        float3 AS = feet + A * 1.1 - toCam * 0.5;
-        float  walk = saturate((T - 4.0) / 28.0);
-        float3 AO = AS + toCam * 2.0 * walk;
-        fg.ash = max(1.0 - saturate(T / 6.0) * 1.2, ease((T - 66.0) / 12.0));
-        DRig g = dsClip(h, rd, AO, RC, FN_TAUNT, FN_TAUNT_N, max(T - 4.0, 0.0), 63, fg);
-        if (g.fing > 1.05 && fg.ash < 0.95) {   // the finger: up off the fist, two pixels to three as it extends
-            float L = 1.5 * g.fing;
+        float  yW = atan2(A.x, A.z), yC = atan2(toCam.x, toCam.z);
+        float  dy = frac((yC - yW) / 6.2832 + 0.5) * 6.2832 - 3.14159265;     // the short way round
+        float  yaw8 = yW + dy * ease(saturate((T - 28.0) / 16.0));
+        fg.ash = max(1.0 - saturate(T / 6.0) * 1.2, ease((T - 70.0) / 14.0));
+        DRig g = dsClip(h, rd, AO, rotY(yaw8), FN_TAUNT, FN_TAUNT_N, T, 63, fg);
+        fnPoof(h, rd, AS + float3(0, 0.8, 0), T / 20.0, seed + 2.0, 8, 0.05);   // where it formed
+        if (g.fing > 1.02 && fg.ash < 0.95) {   // the finger: up off the fist as the bone scales out (1 -> 2)
+            float L = 1.8 * g.fing;
             float3 ax = normalize(g.fingD);
-            dsBoxR(h, rd, g.hand + g.handD * 1.2 * DPX + ax * L * DPX, float3(0.7, L, 0.7) * DPX, basisOf(-ax, 0.0), hex3(60, 56, 72), rimC * 3.0, 1.0);   // lit, so it reads against the ink
+            dsBoxR(h, rd, g.hand + g.handD * 1.0 * DPX + ax * L * DPX, float3(0.85, L, 0.85) * DPX, basisOf(-ax, 0.0), hex3(70, 64, 86), rimC * 3.2, 1.0);
         }
-        float TF = 55.0;   // the gesture lands (tick 51 of the clip)
-        add += float3(0.86, 0.91, 1.0) * fnFlash(rd, g.head, 0.5, h.t) * exp(-max(T - TF, 0.0) / 2.5) * step(TF, T) * 0.6;
-        fnCrit(h, rd, g.head, (T - TF) / 20.0, seed + 3.0, 16, 2.0);
-        fnGround(onG, S, AO, TF / 20.0, 2.0, 0.0, 0.0, seed + 8.0, t, o, dec, decK, add, rimC * 0.8);
-        fnPoof(h, rd, AO + float3(0, 0.9, 0), (T - TF) / 20.0, seed + 4.0, 8, 0.05);
+        float TF = 51.0;   // the gesture lands: flash, burst off the head, cloud, the ring at its feet a tick later
+        add += float3(0.86, 0.91, 1.0) * fnFlash(rd, g.head, 0.55, h.t) * exp(-max(T - TF, 0.0) / 3.0) * step(TF, T) * 0.7;
+        fnCrit(h, rd, g.head, (T - TF) / 20.0, seed + 3.0, 18, 2.0);
+        fnPoof(h, rd, AO + float3(0, 0.9, 0), (T - TF) / 20.0, seed + 4.0, 10, 0.05);
+        fnGround(onG, S, AO, (TF + 1.0) / 22.0, 1.4, 0.0, 0.0, seed + 8.0, t, o, dec, decK, add, float3(0.86, 0.91, 1.0) * 0.9);
     } else if (sc == 9 || sc == 10) {
         // ============ HEADBUTT (Quick Finisher 4) / KICK (Quick Finisher 5): a phantom steps out of the air right in
         // front of them; one blow, the victim reels (startle / pain), and goes down
@@ -306,55 +315,82 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         fnGround(onG, S, MID, (HT + 1.0) / 20.0 + 0.45, 1.6, 0.0, 0.0, seed + 8.0, t, o, dec, decK, add, glow * 0.7);
         fnDebris(h, rd, AO, ut + 0.1, seed + 9.0, 0.45, floorY);
     } else if (sc == 11) {
-        // ============ ULTIMATE ATTACK: the phantom crouches, draws both hands back, and throws them forward - a
-        // blast runs along the ground, a chain of explosions, and it throws the victim, burnt, across the island
-        float T = (t - 0.4) * 20.0;
-        float3 AO = feet + A * 3.6;
-        fg.ash = max(1.0 - saturate(t / 0.4) * 1.15, ease((t - 3.2) / 0.7));
-        DRig g = dsClip(h, rd, AO, RA, FN_ULT, FN_ULT_N, max(T, 0.0), 63, fg);
+        // ============ ULTIMATE ATTACK (the mod's own beats): the phantom forms and charges for 15 ticks - sparks
+        // spiral up around it - then, as it thrusts, a RUPTURE tears the ground open in front of it at the mod's pace
+        // (44 blocks in 21 ticks; 12 here, a Hive island): a meandering trench of blast points, slabs of earth heaved
+        // up along it, blocks and dust thrown, a crack running ahead. Whatever stands in it is flung (here: the
+        // victim, a Ragdollified throw along the rupture), and comes down dead.
+        float T = (t - 0.4) * 20.0;                        // the clip's ticks
         float3 dirB = -A;
-        float  tb = 0.4 + 0.75, vb = 9.0;                 // the blast leaves the hands at the clip's 0.75 s
-        float3 hands = (g.hand + g.handL) * 0.5;
-        float  beam = saturate((t - tb) / 0.06) * (1.0 - ease((t - 2.7) / 0.3));
-        float3 B0 = AO + dirB * 0.45 + float3(0, 1.1, 0);
-        if (beam > 0.0) {   // the beam off the hands
-            float run = min((t - tb) * vb, 7.0);
-            float3 B1 = B0 + dirB * run + float3(0, -0.6 * saturate(run / 4.0), 0);
-            float  fl = 0.85 + 0.15 * sin(TIME * 60.0);
-            add += float3(1.0, 0.82, 0.42) * dsGlowSeg(rd, hands, B1, 0.16, h.t) * beam * 0.55 * fl;
-            add += float3(1.2, 1.15, 1.05) * dsGlowSeg(rd, hands, B1, 0.05, h.t) * beam * 1.0 * fl;
-            add += float3(1.0, 0.85, 0.5) * fnFlash(rd, hands, 0.35, h.t) * beam * 0.7;
+        float3 sideB = float3(-dirB.z, 0, dirB.x);
+        float3 AO = feet + A * 3.0;
+        fg.ash = max(1.0 - saturate(t / 0.4) * 1.15, ease((t - 3.1) / 0.7));
+        DRig g = dsClip(h, rd, AO, RA, FN_ULT, FN_ULT_N, max(T, 0.0), 63, fg);
+        // the charge (ticks 0-15): sparks orbiting up round it, the mod's spiral (0.42 rad a tick, widening)
+        if (T > -2.0 && T < 17.0 && nearRay(rd, AO + float3(0, 1.0, 0), 1.6)) {
+            [unroll] for (int k = 0; k < 10; k++) {
+                float a = T * 0.42 + float(k) * 0.628, r = 0.75 + 0.025 * T + 0.1 * h1(seed + float(k));
+                float3 P = AO + float3(cos(a) * r, 0.9 + 0.45 * sin(T * 0.7 + float(k)), sin(a) * r);
+                float life = saturate((T + 2.0) / 3.0) * (1.0 - saturate((T - 13.0) / 4.0));
+                add += float3(1.0, 0.93, 0.72) * fnFlash(rd, P, 0.05, h.t) * life * 2.2;
+            }
+            add += float3(1.0, 0.9, 0.7) * fnFlash(rd, (g.hand + g.handL) * 0.5, 0.25, h.t) * saturate(T / 15.0) * step(T, 15.5) * 0.9;
         }
-        // the blast points: one every half block along the line, each a short fireball, a scorch and a few stones
+        // the rupture: blast points one block apart; the line wanders sideways (the mod's random walk, clamped)
+        float tR = 0.4 + 15.0 / 20.0, vR = 44.0 / (21.0 / 20.0) * 0.55;     // a touch slower than 42 b/s, so it reads
+        float side = 0.0;
         [loop] for (int k = 0; k < 12; k++) {
-            float  d = 0.6 + 0.55 * float(k);
-            float  tk = tb + d / vb;
-            float  uk = t - tk;
-            if (uk < -0.05) break;
-            float3 Pk = AO + dirB * d + A * 0.0 + float3((h1(seed + float(k)) - 0.5) * 0.5, 0, (h1(seed + float(k) * 3.3) - 0.5) * 0.5);
-            float  rk = 0.45 + 0.6 * saturate(float(k) / 6.0);
-            if (uk < 0.6 && uk > 0.0) {
-                float f = exp(-uk * 6.0);
-                add += float3(1.0, 0.82, 0.55) * fnFlash(rd, Pk + float3(0, 0.4 + uk * 1.2, 0), rk * (0.45 + 0.6 * uk), h.t) * f * 0.8;
-                add += float3(1.0, 0.98, 0.9) * fnFlash(rd, Pk + float3(0, 0.3, 0), rk * 0.28, h.t) * f * f * 0.9;
-            }
-            if (k % 2 == 0) dsBurst(h, rd, Pk + float3(0, 0.05, 0), uk, 6, seed + float(k) * 13.0, 1.4, 3.0, 14.0, 1.0, 0.045, hex3(70, 60, 52), hex3(30, 26, 24), floorY, float3(0.6, 0.25, 0.05) * exp(-max(uk, 0.0) * 3.0));
+            float d  = 0.9 + float(k);
+            side = clamp(side + (h1(seed + float(k) * 1.37) - 0.5) * 0.9 * saturate(d / 4.0), -1.6, 1.6);
+            float3 Pk = AO + dirB * d + sideB * side;
+            Pk.y = floorY;
+            float rk = 0.55 + 0.35 * h1(seed + float(k) * 2.9) + 0.25 * saturate(d / 6.0);
+            float uk = t - (tR + d / vR);
+            if (uk < 0.0) break;
+            float fade = 1.0 - ease((t - 4.1) / 0.6);
+            // the trench: a dark broken channel with a lighter heaved rim, cracks off it
             if (onG) {
-                float2 gq = S.xz - Pk.xz;
-                float  sc2 = exp(-dot(gq, gq) / (rk * rk * 0.5)) * saturate(uk * 8.0) * (1.0 - ease((t - 4.0) / 0.6));
-                if (sc2 > 0.02) { dec = (decK > 0.0 ? dec : o) * (1.0 - 0.75 * sc2); decK = 1.0; add += float3(1.0, 0.35, 0.05) * sc2 * exp(-max(uk, 0.0) * 1.5) * 0.25; }
+                float2 gq = floor((S.xz - Pk.xz) * 16.0) / 16.0;
+                float  rr = length(gq);
+                float  open = easeOut(saturate(uk / 0.12));
+                float  n = hash12(floor(gq * 16.0) + seed + float(k));
+                float  core = smoothstep(rk * open, rk * open * 0.45, rr + (n - 0.5) * 0.12);
+                float  rim = exp(-pow((rr - rk * 1.05 * open) / 0.1, 2.0));
+                float3 cur = decK > 0.0 ? dec : o;
+                float  cr2 = fnCrack(gq, rk * 2.4, seed + float(k) * 5.0, easeOut(uk / 0.2), 6);
+                float3 c = cur * (1.0 - fade * (0.85 * core + 0.6 * cr2)) * (1.0 + 0.3 * rim * fade);
+                if (core > 0.01 || cr2 > 0.0 || rim > 0.05) { dec = c; decK = 1.0; }
+            }
+            // slabs of the ground heaved up along both edges, tilted out, settling a little
+            if (nearRay(rd, Pk, rk + 1.2)) {
+                [unroll] for (int e = 0; e < 2; e++) {
+                    float sd = e == 0 ? 1.0 : -1.0;
+                    float hh = h1(seed + float(k) * 3.7 + float(e));
+                    float rise = easeOut(saturate(uk / 0.10)) * (1.0 - 0.25 * ease((uk - 0.2) / 0.6)) * fade;
+                    float3 Q = Pk + sideB * sd * rk * 0.95 + dirB * (hh - 0.5) * 0.5 + float3(0, -0.22 + 0.32 * rise, 0);
+                    float3x3 RS = mul(rotY(yaw + hh * 0.8), rotAxis(float3(0, 0, 1), sd * (0.5 + 0.4 * hh)));
+                    if (rise > 0.01) dsBox(h, rd, Q, float3(0.30 + 0.15 * hh, 0.10, 0.26), RS, lerp(hex3(104, 98, 90), hex3(122, 98, 74), hh), 0.0);
+                }
+            }
+            // what each blast throws: chunks, dust, a quick white puff (Minecraft's explosion is grey-white, not fire)
+            dsBurst(h, rd, Pk + float3(0, 0.05, 0), uk, 5, seed + float(k) * 13.0, 1.5, 3.4, 15.0, 1.1, 0.07, hex3(104, 98, 90), hex3(122, 98, 74), floorY, 0.0);
+            if (k % 2 == 0) {
+                dsBurst(h, rd, Pk + float3(0, 0.15, 0), uk, 6, seed + float(k) * 17.0, 0.9, 1.2, -0.6, 1.0, 0.10, hex3(214, 210, 204), hex3(160, 156, 150), -1e5, 0.0);
+                add += float3(1.0, 0.97, 0.9) * fnFlash(rd, Pk + float3(0, 0.4, 0), rk * 0.55, h.t) * exp(-uk * 14.0) * 0.8;
             }
         }
-        // the victim: caught as the chain reaches them, thrown along it (Ragdollified's side throw, turned to the blast)
-        float th = tb + 3.6 / vb;
+        // the victim, caught as the rupture reaches them (their spot is 3 blocks along it): flung along it
+        float th = tR + 3.0 / vR;
         float3x3 RT = rotY(atan2(dirB.x, dirB.z) - 1.5708);
-        fx.charK = ease((t - th) / 0.5);
-        fx.ash = ease((t - 3.4) / 0.9);
-        fx.flash = step(th, t) * step(t, th + 0.06);
+        fx.flash = step(th, t) * step(t, th + 0.05);
         fx.hurt = saturate(1.0 - (t - th) * 3.0) * step(th, t);
+        float tD = th + 2.0;                              // down, a beat, then the poof
         if (t < th) dsBody(h, rd, feet, RV, 1.0, -99.0, 99.0, fx);
-        else dsRagdoll(h, rd, feet, RT, RD_SIDE, (t - th) * 20.0, false, -1, fx);
-        fnCrit(h, rd, feet + float3(0, 1.0, 0), t - th, seed + 1.0, 16, 2.5);
+        else if (t < tD) dsRagdoll(h, rd, feet, RT, RD_SIDE, (t - th) * 20.0, false, -1, fx);
+        float3 Pv; float3x3 Rv0;
+        dtRag(RD_SIDE, 2.0 * 20.0, 1, false, Pv, Rv0);
+        fnPoof(h, rd, feet + mul(RT, Pv) + float3(0, 0.15, 0), t - tD, seed + 9.0, 14, 0.07);
+        fnCrit(h, rd, feet + float3(0, 1.0, 0), t - th, seed + 1.0, 14, 2.5);
     } else if (sc == 12 || sc == 13) {
         // ============ RAGDOLLIFIED: the killing blow throws the body as a ragdoll - it flies, lands, flops, a limb
         // may tear away on a hard landing; it lies a moment and then comes apart

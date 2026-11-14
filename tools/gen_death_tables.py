@@ -252,14 +252,21 @@ SND = [("victim", "fin", "assets/finishers/sounds/finisher/victim_sound_1.ogg"),
        ("smallImpact", "sab", "assets/sable_player_ragdoll/sounds/small_impact.ogg")]
 PUNCH = -1   # Finishers' "finisher.quick_punch": one of its four, picked per kill
 # (scene, t s, sound, volume, pitch); scene times as in death_scenes_ext.hlsli; a negative volume = stop that sound
-def cues():
+def cues(hits):
     c = [(7, 0.00, "victim", 0.9, 1.0), (7, 0.10, "punchPower", 0.55, 0.55),     # the cry; the phantom lands
          (7, 3.30, "swing", 1.0, 1.0), (7, 3.60, "punchHard", 0.85, 0.85), (7, 4.00, "victim", -1, 1),
-         (8, 1.65, "swing", 0.75, 0.9), (8, 2.75, "punchPower", 0.9, 0.65),       # Shield Counter: sweep, the gesture
-         (9, 0.65, PUNCH, 1.0, 0.92), (10, 0.70, PUNCH, 1.0, 1.0),
-         (11, 0.30, "swing", 0.5, 0.6), (11, 1.15, "swing", 0.85, 0.5), (11, 1.55, "punchPower", 1.0, 0.8)]
-    tb, vb = 0.4 + 0.75, 9.0
-    for k in range(0, 12, 2): c.append((11, tb + (0.6 + 0.55 * k) / vb, "punchHard", 0.45, 0.6 + 0.03 * k))
+         # Shield Counter at 1.1x (tick / 22): the mod's sweep (tick 29) and chain hit (51) - ours from its own
+         # files - and the body landing after the kill tick
+         (8, 0.05, "punchPower", 0.7, 0.8), (8, 29 / 22, "swing", 0.75, 0.9), (8, 51 / 22, "punchPower", 0.9, 0.65),
+         (8, 91 / 22, "smallImpact", 0.7, 1.0),
+         (9, 0.65, PUNCH, 1.0, 0.92), (10, 0.70, PUNCH, 1.0, 1.0)]
+    # Ultimate: the charge's boom (tick 14), the rupture's rumbles, the hit and the landings of the throw
+    tR, vR = 0.4 + 15 / 20, 44 / (21 / 20) * 0.55
+    th = tR + 3.0 / vR
+    c += [(11, 0.4 + 14 / 20, "punchHard", 1.0, 0.5), (11, tR + 0.02, "punchPower", 0.85, 0.55),
+          (11, tR + 0.18, "punchHard", 0.6, 0.7), (11, tR + 0.36, "punchPower", 0.65, 0.6), (11, th, "punchHard", 0.9, 0.85)]
+    side = sorted([h for h in hits[6:12] if h[2] < 1.8], key=lambda h: -h[3])[:2]
+    for x, z, t, w in side: c.append((11, th + t, "impact" if w > 1.0 else "smallImpact", min(1.0, 0.45 + 0.4 * w), 1.0))
     for sc in (12, 13): c.append((sc, 0.0, "punchPower", 0.8, 1.0))                 # Ragdollified: the killing blow
     return c
 
@@ -277,7 +284,7 @@ def sounds(z, sjar, hits):
     out.append(f"inline constexpr int kPunch = -1;   // one of {names.index('punchPower')}, {names.index('punch02')}, {names.index('punch03')}, {names.index('punchHard')}")
     out.append(f"inline constexpr int kPunchSet[4] = {{ {names.index('punchPower')}, {names.index('punch02')}, {names.index('punch03')}, {names.index('punchHard')} }};")
     out.append("struct Cue { uint8_t scene; float t; int8_t sound; float vol, pitch; };   // vol < 0: stop that sound")
-    cl = list(cues())
+    cl = list(cues(hits))
     # the ragdoll thuds: scene 12/13 = Ragdollified melee / side, 14/15 = Sable slump / roll (the bakes' landings)
     for b, sc in enumerate((12, 13, 14, 15)):
         kept = []   # landings closer than 0.15 s are one thud (the loudest)
