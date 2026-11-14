@@ -1819,8 +1819,13 @@ static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
 
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void followLoadedAtmosphere();
+void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
-    if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldSky(list, st, calls);
+    if (gWorldSky.load(std::memory_order_relaxed)) {
+        bool const r = drawWorldSky(list, st, calls);
+        domeFallback(list, st, calls);
+        return r;
+    }
     if (!st.nVb || !st.vb || !st.haveTopo) { ++gSkipped; setStage2("skipped a sky draw (list state not tracked yet)"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
@@ -2167,7 +2172,8 @@ size_t fxPairRt(size_t ds) {   // 0: not a world depth buffer
     for (int i = 0; i < 4; ++i) if (gFxPairDs[i].load(std::memory_order_relaxed) == ds) return gFxPairRt[i].load(std::memory_order_relaxed);
     return 0;
 }
-std::atomic<long> gDbgClears{0}, gDbgFbOk{0}, gDbgFbNo{0}, gDbgCloud{0}, gDbgStale{0};
+std::atomic<long> gDbgClears{0}, gDbgFbOk{0}, gDbgFbNo{0}, gDbgCloud{0}, gDbgStale{0}, gDbgDome{0};
+std::atomic<int64_t> gLastCloudPassMs{0};
 std::atomic<ID3D12PipelineState*> gFxPso{nullptr};
 // ---- GPU time of the World FX pass (timestamps round the copies + the draw), for the F6 readout and the A/B bench.
 // An 8-frame ring: frame n writes slot n % 8 and reads the slot written 7 frames ago (long finished on the GPU).
@@ -2291,6 +2297,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
         gFxPso = st.pso;
         gFxSinceClear = true;
         ++gDbgCloud;
+        gLastCloudPassMs = nowMsSky();
     }
     return ok;
 }
@@ -2351,12 +2358,35 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
             last = nowMs;
             int pairs = 0; for (auto& d : gFxPairDs) pairs += d.load() != 0;
             ll_shim::info("[RF] World FX looking-down: world clears " + std::to_string(gDbgClears.exchange(0)) + ", fallback ok " + std::to_string(gDbgFbOk.exchange(0)) +
-                          ", refused " + std::to_string(gDbgFbNo.exchange(0)) + ", cloud passes " + std::to_string(gDbgCloud.exchange(0)) + ", target pairs " + std::to_string(pairs) + ", stale " + std::to_string(gDbgStale.exchange(0)));
+                          ", refused " + std::to_string(gDbgFbNo.exchange(0)) + ", cloud passes " + std::to_string(gDbgCloud.exchange(0)) + ", target pairs " + std::to_string(pairs) + ", stale " + std::to_string(gDbgStale.exchange(0)) + ", sky-draw passes " + std::to_string(gDbgDome.exchange(0)));
         }
     }
     static std::atomic<long> nFb{0};
     if ((nFb.fetch_add(1) & 255) == 0) ll_shim::info(std::string("[RF] World FX: no cloud draw this frame (looking down) - pass run at the depth clear: ") + (ok ? "ok" : "skipped"));
     return ok;
+}
+// Looking down there is no cloud draw, and the post-world depth clear the fallback waits for usually comes on a fresh
+// list where the world's targets are not bound (logged: ~60 refusals a second = the flicker; binding them ourselves
+// crashed the driver joining the Hive). So when the cloud pass has not run for a few frames, the pass also runs right
+// after the game's own sky draw - on the game's own list, its own targets bound, depth still cleared: every pixel is
+// sky there, the background (sky / city / void) goes down first and the world is drawn over it. It marks the frame done,
+// so the clear fallback does not add a second, different look on the frames it does manage.
+void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    if (!gFxPso.load(std::memory_order_relaxed) || gFxSinceClear.load()) return;
+    if (nowMsSky() - gLastCloudPassMs.load() < 60) return;      // the clouds are being drawn: the normal pass runs
+    size_t rt0 = 0, dsv = 0;
+    if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != fxPairRt(dsv)) return;   // only on the world's own targets
+    GameState s2 = st;
+    s2.pso = gFxPso.load();
+    if (drawWorldFxPassImpl(list, s2, calls)) { gFxSinceClear = true; ++gDbgDome; }
+    static std::atomic<int64_t> lastLog{0};
+    if (int64_t const t = nowMsSky(); t - lastLog.load() > 5000) {
+        lastLog = t;
+        ll_shim::info("[RF] World FX looking-down (sky draw): passes " + std::to_string(gDbgDome.exchange(0)) + ", clear-fallback ok " + std::to_string(gDbgFbOk.exchange(0)) +
+                      ", refused " + std::to_string(gDbgFbNo.exchange(0) + gDbgStale.exchange(0)));
+    }
+    if (st.pso) calls.setPso(list, st.pso);
+    if (st.haveTopo) calls.setTopo(list, st.topo);
 }
 static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     WorldFxLook const look = gLook;
