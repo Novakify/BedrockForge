@@ -2125,6 +2125,19 @@ void   rememberFxPair(size_t rt, size_t ds) {
     int const i = gFxPairNext.fetch_add(1) & 3;
     gFxPairDs[i] = ds, gFxPairRt[i] = rt;
 }
+// (colour, depth) target pairs the GAME bound lately (OMSetRenderTargets): a handle we did not see the game bind this
+// frame may point at a freed target (the world's targets are rebuilt when a server switches world - binding a remembered
+// one crashed the driver joining the Hive)
+std::mutex gSeenMutex;
+struct SeenRts { size_t rt = 0, ds = 0; int64_t ms = 0; };
+SeenRts gSeen[32];
+int64_t nowMsSky() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+bool seenRecently(size_t rt, size_t ds, int64_t within) {
+    int64_t const t = nowMsSky();
+    std::lock_guard l(gSeenMutex);
+    for (auto const& e : gSeen) if (e.rt == rt && e.ds == ds && t - e.ms <= within) return true;
+    return false;
+}
 void noteTargetsBound(size_t rt, size_t ds) {
     if (!rt) return;
     int64_t const t = nowMsSky();
@@ -2141,19 +2154,6 @@ size_t fxPairRt(size_t ds) {   // 0: not a world depth buffer
     return 0;
 }
 std::atomic<long> gDbgClears{0}, gDbgFbOk{0}, gDbgFbNo{0}, gDbgCloud{0}, gDbgStale{0};
-// (colour, depth) target pairs the GAME bound lately (OMSetRenderTargets): a handle we did not see the game bind this
-// frame may point at a freed target (the world's targets are rebuilt when a server switches world - binding a remembered
-// one crashed the driver joining the Hive)
-std::mutex gSeenMutex;
-struct SeenRts { size_t rt = 0, ds = 0; int64_t ms = 0; };
-SeenRts gSeen[32];
-int64_t nowMsSky() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-bool seenRecently(size_t rt, size_t ds, int64_t within) {
-    int64_t const t = nowMsSky();
-    std::lock_guard l(gSeenMutex);
-    for (auto const& e : gSeen) if (e.rt == rt && e.ds == ds && t - e.ms <= within) return true;
-    return false;
-}
 std::atomic<ID3D12PipelineState*> gFxPso{nullptr};
 // ---- GPU time of the World FX pass (timestamps round the copies + the draw), for the F6 readout and the A/B bench.
 // An 8-frame ring: frame n writes slot n % 8 and reads the slot written 7 frames ago (long finished on the GPU).

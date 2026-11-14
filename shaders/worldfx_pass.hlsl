@@ -1248,17 +1248,18 @@ float ifVN(float x, float per, float sd) {   // value noise over an angle, wrapp
     f = f * f * (3.0 - 2.0 * f);
     return lerp(ifH(fmod(i0, per), sd), ifH(fmod(i0 + 1.0, per), sd), f);
 }
+static const float IMPACT_SPEED = 2.0;   // Fernando: the impact frame twice as fast (0.25 s instead of 0.5 s)
 bool impactLive() {
     int ne = int(m0.y);
     for (int i = 0; i < ne; i++)
-        if (eB[i].w > 7.5 && eB[i].w < 8.5 && eC[i].z > 1.1 && eC[i].z < 1.4 && eA[i].w <= 0.5) return true;
+        if (eB[i].w > 7.5 && eB[i].w < 8.5 && eC[i].z > 1.1 && eC[i].z < 1.4 && eA[i].w * IMPACT_SPEED <= 0.5) return true;
     return false;
 }
 float3 impactFrame(float3 o, float3 rd, float sceneT) {
     int ne = int(m0.y);
     [loop] for (int i = 0; i < ne; i++) {
         if (eB[i].w < 7.5 || eB[i].w > 8.5) continue;
-        float age = eA[i].w, who = eC[i].z;
+        float age = eA[i].w * IMPACT_SPEED, who = eC[i].z;   // (the frame's own clock)
         if (who < 1.1 || who > 1.4 || age > 0.5) continue;
         float3 W = CAM + rd * min(sceneT, 4000.0);
         float3 c = eA[i].xyz + float3(0.5, 0.0, 0.5);
