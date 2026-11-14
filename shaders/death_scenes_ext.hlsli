@@ -226,11 +226,11 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         fx.flash = step(KT, T) * step(T, KT + 2.0);
         fx.hurt = max(fx.hurt, saturate(1.0 - u * 2.0) * step(KT, T));
         float3 MID = (feet + A1) * 0.5;
-        if (T < KT + 28.0) {
+        if (T < KT + 18.0) {   // a vanilla death: over, a beat on the ground, poof (inside the scene's 4.8 s)
             float3x3 Rv = mul(RV, rotZ(tip * sgn));
             dsClip(h, rd, feet, Rv, FN_STAGGER, FN_STAGGER_N, min(T, KT), 63, fx);
         }
-        fnPoof(h, rd, feet + float3(0, 0.4, 0) + A * 0.3, (T - KT - 28.0) / 20.0, seed, 14, 0.07);
+        fnPoof(h, rd, feet + float3(0, 0.3, 0) + A * 0.3 + mul(RV, float3(sgn * 0.5, 0, 0)), (T - KT - 18.0) / 20.0, seed, 14, 0.07);
         // the stroke
         fnArc(add, rd, MID + float3(0, 0.9, 0), float3(0, 1, 0), -A, 0.95, easeOut((T - 70.0) / 4.0), exp(-max(T - 74.0, 0.0) / 4.0) * step(68.0, T), lerp(glow, rimC, 0.6) * 1.6, h.t);
         fnGround(onG, S, MID, KT / 20.0 - 0.1, 4.0, 0.9, 4.0, seed + 31.0, t, o, dec, decK, add, glow);
@@ -257,7 +257,7 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         if (g.fing > 1.05 && fg.ash < 0.95) {   // the finger: up off the fist, two pixels to three as it extends
             float L = 1.5 * g.fing;
             float3 ax = normalize(g.fingD);
-            dsBox(h, rd, g.hand + g.handD * 1.2 * DPX + ax * L * DPX, float3(0.6, L, 0.6) * DPX, basisOf(-ax, 0.0), hex3(10, 10, 14), rimC * 1.4);
+            dsBoxR(h, rd, g.hand + g.handD * 1.2 * DPX + ax * L * DPX, float3(0.7, L, 0.7) * DPX, basisOf(-ax, 0.0), hex3(60, 56, 72), rimC * 3.0, 1.0);   // lit, so it reads against the ink
         }
         float TF = 55.0;   // the gesture lands (tick 51 of the clip)
         add += float3(0.86, 0.91, 1.0) * fnFlash(rd, g.head, 0.5, h.t) * exp(-max(T - TF, 0.0) / 2.5) * step(TF, T) * 0.6;
@@ -272,7 +272,9 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         float HT = hb ? 4.0 : 5.0, KT = hb ? 14.0 : 34.0;
         float gap = hb ? 0.66 : 0.76;
         float3 AO = feet + A * gap;
-        fg.ash = max(1.0 - saturate(t / 0.4) * 1.15, ease((T - KT - 8.0) / 12.0));
+        // it goes as soon as its clip is done (the kick would otherwise stand there on one leg)
+        float CE = hb ? 19.0 : 23.0;
+        fg.ash = max(1.0 - saturate(t / 0.4) * 1.15, ease((T - CE - 1.0) / 10.0));
         DRig g = dsClip(h, rd, AO, RA, hb ? FN_HEADBUTT : FN_KICK, hb ? FN_HEADBUTT_N : FN_KICK_N, max(T, 0.0), 63, fg);
         fnPoof(h, rd, AO + float3(0, 0.8, 0), t - 0.05, seed + 2.0, 8, 0.05);   // where it formed
         float u = max(T - KT, 0.0) / 20.0;
