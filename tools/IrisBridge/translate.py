@@ -78,6 +78,10 @@ layout(std140, binding = 8) uniform BfGameVS {
     vec4 bf_fogCtl; vec4 bf_fogColor; vec4 bf_meshCtx; vec4 bf_chunkFog; vec4 bf_subPixel; vec4 bf_viewPosTime;
 };
 layout(location = 30) out vec3 bf_viewPos;
+// RF sets bf_mode.x = 1 for terrain drawn in the game's place: the pack is given an identity projection (its gl_Position
+// is then a view-space position, with its own displacement / jitter) and the GAME's projection is applied here, so the
+// depth is bit-identical to vanilla's in whatever convention Bedrock uses. 0 = the pack's projection (shadow pass).
+uniform vec4 bf_mode;
 """
 BEDROCK_VS_MAIN = """
 void main() {
@@ -95,8 +99,15 @@ void main() {
     iris_UV2      = iris_UV1;
 @@ATTR_DEFAULTS@@
     bf_viewPos = (iris_ModelViewMat * iris_Position).xyz;
+    vec3 bf_base = bf_viewPos;                                             // undisplaced, before the pack runs
     bf_pack_main();
-    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);                 // GL clip depth (-w..w) -> D3D (0..w): matches Bedrock's depth
+    if (bf_mode.x > 0.5) {
+        // the game's placement (its view + projection + sub-pixel jitter, as its own RenderChunk shader does) plus only
+        // what the pack moved the vertex by (waving, offsets): untouched vertices land exactly where vanilla's do
+        vec3 disp = gl_Position.xyz / gl_Position.w - bf_base;
+        mat4 P = bf_proj; P[2][0] += bf_subPixel.x; P[2][1] -= bf_subPixel.y;
+        gl_Position = P * (bf_view * vec4(world, 1.0) + vec4(disp, 0.0));
+    } else gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);         // GL clip depth (-w..w) -> D3D (0..w)
 }
 """
 
