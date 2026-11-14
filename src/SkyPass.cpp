@@ -2116,6 +2116,20 @@ float adaptQuality() {
 // effects) would vanish. Then it runs at the frame's first UI draw instead, on the same targets (one per frame, never both)
 std::atomic<uint64_t> gFxRanNo{~0ull}, gFxFallbackNo{~0ull};
 std::atomic<size_t>   gFxRt{0}, gFxDs{0};
+// every (colour, depth) target pair the pass has run on: the game may swap between two sets of world targets frame to
+// frame - a single remembered pair let the looking-down fallback run on every other frame only (the flicker)
+std::atomic<size_t>   gFxPairRt[4]{}, gFxPairDs[4]{};
+std::atomic<int>      gFxPairNext{0};
+void   rememberFxPair(size_t rt, size_t ds) {
+    for (int i = 0; i < 4; ++i) if (gFxPairDs[i].load() == ds) { gFxPairRt[i] = rt; return; }
+    int const i = gFxPairNext.fetch_add(1) & 3;
+    gFxPairDs[i] = ds, gFxPairRt[i] = rt;
+}
+size_t fxPairRt(size_t ds) {   // 0: not a world depth buffer
+    for (int i = 0; i < 4; ++i) if (gFxPairDs[i].load(std::memory_order_relaxed) == ds) return gFxPairRt[i].load(std::memory_order_relaxed);
+    return 0;
+}
+std::atomic<long> gDbgClears{0}, gDbgFbOk{0}, gDbgFbNo{0}, gDbgCloud{0};
 std::atomic<ID3D12PipelineState*> gFxPso{nullptr};
 // ---- GPU time of the World FX pass (timestamps round the copies + the draw), for the F6 readout and the A/B bench.
 // An 8-frame ring: frame n writes slot n % 8 and reads the slot written 7 frames ago (long finished on the GPU).
@@ -2235,9 +2249,10 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     bool const ok = drawWorldFxPassImpl(list, st, calls);
     if (ok) {
         size_t rt0 = 0, dsv = 0;
-        if (rf::worldfx::listTargets(list, rt0, dsv)) gFxRt = rt0, gFxDs = dsv;
+        if (rf::worldfx::listTargets(list, rt0, dsv)) gFxRt = rt0, gFxDs = dsv, rememberFxPair(rt0, dsv);
         gFxPso = st.pso;
         gFxSinceClear = true;
+        ++gDbgCloud;
     }
     return ok;
 }
@@ -2251,7 +2266,8 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 std::atomic<bool> gTerrainSinceClear{false};
 void noteTerrainDraw() { if (!gTerrainSinceClear.load(std::memory_order_relaxed)) gTerrainSinceClear.store(true, std::memory_order_relaxed); }
 bool fxFallbackWanted(ID3D12GraphicsCommandList* /*list*/, size_t dsv) {   // (a try to only count clears over the world's target made Novak flicker everywhere - reverted)
-    if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
+    if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || !fxPairRt(dsv)) return false;
+    ++gDbgClears;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
     bool const terr = gTerrainSinceClear.exchange(false);
@@ -2259,7 +2275,7 @@ bool fxFallbackWanted(ID3D12GraphicsCommandList* /*list*/, size_t dsv) {   // (a
 }
 bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     size_t rt0 = 0, dsv = 0;
-    if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != gFxRt.load() || dsv != gFxDs.load()) return false; // not the world's targets
+    if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != fxPairRt(dsv)) { ++gDbgFbNo; return false; } // not the world's targets
     GameState s2 = st;
     s2.pso = gFxPso.load();
     // At this depth clear the game can be on a fresh command list: targets set, but no viewport or scissor yet (D3D12
@@ -2274,6 +2290,17 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     bool const ok = drawWorldFxPassImpl(list, s2, calls);
     if (st.pso) calls.setPso(list, st.pso);         // the game goes on with its own pipeline
     if (st.haveTopo) calls.setTopo(list, st.topo);
+    if (ok) ++gDbgFbOk; else ++gDbgFbNo;
+    {   // looking-down diagnostics, every ~5 s while the fallback is in use
+        static std::atomic<int64_t> last{0};
+        int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (nowMs - last.load() > 5000) {
+            last = nowMs;
+            int pairs = 0; for (auto& d : gFxPairDs) pairs += d.load() != 0;
+            ll_shim::info("[RF] World FX looking-down: world clears " + std::to_string(gDbgClears.exchange(0)) + ", fallback ok " + std::to_string(gDbgFbOk.exchange(0)) +
+                          ", refused " + std::to_string(gDbgFbNo.exchange(0)) + ", cloud passes " + std::to_string(gDbgCloud.exchange(0)) + ", target pairs " + std::to_string(pairs));
+        }
+    }
     static std::atomic<long> nFb{0};
     if ((nFb.fetch_add(1) & 255) == 0) ll_shim::info(std::string("[RF] World FX: no cloud draw this frame (looking down) - pass run at the depth clear: ") + (ok ? "ok" : "skipped"));
     return ok;
