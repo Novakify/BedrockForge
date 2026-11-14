@@ -2321,7 +2321,7 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     size_t oldRt = 0, oldDs = 0;
     bool const hadOld = rf::worldfx::listTargets(list, oldRt, oldDs);
     if (!calls.setRts) { ++gDbgFbNo; return false; }
-    if (!seenRecently(wrt, dsvClear, 250)) { ++gDbgStale; return false; }   // not bound by the game lately: may be freed
+    if (!(hadOld && oldRt == wrt && oldDs == dsvClear)) { ++gDbgStale; return false; }   // binding the world's targets ourselves crashed the driver joining the Hive (twice, even only for pairs the game bound in the last 250 ms) - off until understood
     calls.setRts(list, wrt, dsvClear);
     rf::worldfx::onSetRts(list, wrt, dsvClear);
     size_t const rt0 = wrt;
