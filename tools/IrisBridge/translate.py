@@ -179,7 +179,12 @@ def patch(src: str, stage: str, bedrock: bool = False, normal_var: str | None = 
                        f"    {normal_var} = dot(bf_n, bf_viewPos) > 0.0 ? -bf_n : bf_n;\n")
                 notes.append(f"bedrock terrain fragment: '{normal_var}' rebuilt from derivatives")
             src = re.sub(r"\bvoid\s+main\s*\(\s*\)", "void bf_pack_main()", src)
-            src += f"\nvoid main() {{\n{fix}    bf_pack_main();\n}}\n"
+            # SV_Target7: an exact-zero key RF binds to the GAME's colour target when the pack draws terrain in the
+            # game's place - what vanilla draws afterwards (sky, entities, particles) is then told apart and laid back
+            # over the pack's image, terrain pixels keep the pack's
+            key = "" if re.search(r"\bgl_FragData\s*\[\s*7\s*\]", src) else "    bf_key = vec4(0.0);\n"
+            if key: head.append("layout(location = 7) out vec4 bf_key;")
+            src += f"\nvoid main() {{\n{fix}    bf_pack_main();\n{key}}}\n"
         # gl_FragData[n] / gl_FragColor -> explicit outputs (DRAWBUFFERS / RENDERTARGETS order)
         idx = sorted({int(x) for x in re.findall(r"\bgl_FragData\s*\[\s*(\d+)\s*\]", src)})
         if re.search(r"\bgl_FragColor\b", src): idx = sorted(set(idx) | {0}); src = re.sub(r"\bgl_FragColor\b", "gl_FragData[0]", src)

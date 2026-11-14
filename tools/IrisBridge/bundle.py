@@ -44,6 +44,8 @@ def emit_runtime(man: dict) -> str:
     """Line format read by RF (src/IrisBundle.h): one record per line, space separated, no JSON parser needed in RF."""
     L = [f"irisbridge 1", f"pack {man['pack']}"]
     for k, v in man["consts"].items(): L.append(f"const {k} {v}")
+    # Bedrock terrain wrapper features RF may rely on: 3 = bf_mode (game projection) + SV_Target7 key
+    L.append("const bf_wrapper 3")
     u = man["uniforms"]
     L.append(f"funcs {' '.join(u['funcs'])}")
     L.append(f"smooth {u['smooth_states']}")
