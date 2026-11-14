@@ -1363,18 +1363,22 @@ void recordTerrain(ID3D12GraphicsCommandList* list, TerrainDraw&& d) {
 void onPresent() {
     uint64_t const p = ++gPresentIdx;
     // live settings (remote testing) are re-read here too: run() stops being called while IrisBridge is off, so
-    // "on 1" could otherwise never be picked up again
-    if ((p & 63) == 0) {
-        std::lock_guard l(gMutex);
+    // "on 1" could otherwise never be picked up again. NEVER block here: Present runs under the overlay's lock while
+    // terrain-recording threads hold gMutex (a blocking lock froze the game) - skip this round if it's busy.
+    if ((p & 63) != 0) return;
+    bool wantTargets = false;
+    {
+        std::unique_lock l(gMutex, std::try_to_lock);
+        if (!l.owns_lock()) return;
         std::error_code ec;
         auto const t = fs::last_write_time(gRoot / "settings.txt", ec);
-        if (!ec && t != gSettingsTime) {
-            readSettings();
-            gOn = gSet.on;
-            if (gSet.on) rf::worldfx::setTargetsWanted(true);
-            ll_shim::info("[RF] IrisBridge: settings reloaded at present (on " + std::to_string(gSet.on) + ")");
-        }
+        if (ec || t == gSettingsTime) return;
+        readSettings();
+        gOn = gSet.on;
+        wantTargets = gSet.on;
     }
+    if (wantTargets) rf::worldfx::setTargetsWanted(true);
+    ll_shim::info("[RF] IrisBridge: settings reloaded at present");
 }
 
 int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, size_t gameRtv, ID3D12Resource* gameRt, size_t gameDsv,
