@@ -7,6 +7,7 @@
 #include <xaudio2.h>
 
 #include <algorithm>
+#include <bitset>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -29,7 +30,7 @@ Pcm gPcm[std::size(kSounds)];
 float gLis[3]{}, gFwd[3]{0, 0, 1};
 struct Voice { IXAudio2SourceVoice* v; uint64_t key; int sound; };
 std::vector<Voice> gVoices;
-struct Kill { uint64_t key = 0; uint64_t fired = 0; int punch = 0; };
+struct Kill { uint64_t key = 0; std::bitset<512> fired; int punch = 0; };
 Kill gKills[32];
 int gNk = 0;
 
@@ -111,12 +112,12 @@ void onKill(uint64_t key, int scene, float age, float const pos[3], float volume
     for (auto& e : gKills) if (e.key == key) { k = &e; break; }
     if (!k) {
         k = &gKills[gNk++ % 32];
-        *k = Kill{key, 0, int((key * 2654435761u) >> 7) & 3};
+        *k = Kill{}; k->key = key; k->punch = int((key * 2654435761u) >> 7) & 3;
     }
-    for (size_t i = 0; i < std::size(kCues) && i < 64; ++i) {
+    for (size_t i = 0; i < std::size(kCues) && i < 512; ++i) {
         Cue const& c = kCues[i];
-        if (c.scene != scene || age < c.t || (k->fired >> i) & 1) continue;
-        k->fired |= uint64_t(1) << i;
+        if (c.scene != scene || age < c.t || k->fired[i]) continue;
+        k->fired[i] = true;
         if (age - c.t > 0.25f) continue;   // seen late: don't play it late
         int const snd = c.sound < 0 ? kPunchSet[k->punch] : c.sound;
         if (c.vol < 0.0f) stop(key, snd);

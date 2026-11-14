@@ -11,7 +11,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def compile_shaders():
     for prof, ent, out in (("ps_6_0", "PSWorldFx", "ps.spv"), ("vs_6_0", "VSWorldFx", "vs.spv")):
-        r = subprocess.run(["/opt/dxc/bin/dxc", "-spirv", "-T", prof, "-E", ent, "-O3", "-fvk-b-shift", "0", "0", "-fvk-t-shift", "10", "0",
+        defs = [x for d in os.environ.get("LAB_DEFS", "WFX_KILLS=1").split() for x in ("-D", d)]   # the kill build of the pass by default
+        r = subprocess.run(["/opt/dxc/bin/dxc", "-spirv", "-T", prof, "-E", ent, "-O3"] + defs + [ "-fvk-b-shift", "0", "0", "-fvk-t-shift", "10", "0",
                             "-fvk-s-shift", "20", "0", "-fspv-target-env=vulkan1.1", "-Fo", f"{HERE}/{out}", f"{RF}/shaders/worldfx_pass.hlsl"],
                            capture_output=True, text=True)
         if r.returncode: raise SystemExit(r.stderr[-3000:])
@@ -173,9 +174,25 @@ class Lab:
         rect(44, 29, 4, 3, skin); rect(36, 61, 4, 3, skin); rect(40, 29, 4, 3, skin); rect(48, 29, 8, 3, skin); rect(32, 61, 4, 3, skin); rect(40, 61, 8, 3, skin)
         for (u, v) in ((0, 16), (16, 48)):
             box(u, v, 4, 12, 4, jean); rect(u, v + 13, 16, 3, shoe)
+        # slot 1: a second test skin for the killer (the phantom): black hoodie with red trim, white hair, dark jeans
+        def rect(u, v, w, h, c, o=64): sk[v + o:v + o + h, u:u + w] = (*c, 255)
+        skin, hair, hood, hood2, jean, shoe = (190, 140, 105), (235, 235, 240), (32, 32, 38), (200, 30, 40), (30, 30, 36), (200, 30, 40)
+        box(0, 0, 8, 8, 8, skin); rect(8, 0, 8, 8, hair); rect(0, 8, 8, 3, hair); rect(16, 8, 8, 3, hair); rect(24, 8, 8, 8, hair); rect(8, 8, 8, 2, hair)
+        rect(9, 12, 2, 1, (255, 255, 255)); rect(13, 12, 2, 1, (255, 255, 255)); rect(10, 12, 1, 1, (200, 30, 40)); rect(13, 12, 1, 1, (200, 30, 40)); rect(10, 14, 4, 1, (90, 60, 50))
+        for (u, v, w) in ((16, 16, 8), (40, 16, 4), (32, 48, 4)):
+            box(u, v, w, 12, 4, hood)
+            sk[64 + v + 4 + 11, u:u + 2 * w + 8] = (*hood2, 255)
+        rect(44, 29, 4, 3, skin); rect(36, 61, 4, 3, skin); rect(40, 29, 4, 3, skin); rect(48, 29, 8, 3, skin); rect(32, 61, 4, 3, skin); rect(40, 61, 8, 3, skin)
+        for (u, v) in ((0, 16), (16, 48)):
+            box(u, v, 4, 12, 4, jean); rect(u, v + 13, 16, 3, shoe)
         nz = rng.randint(-10, 10, (1024, 64, 1)); sk[..., :3] = np.clip(sk[..., :3].astype(int) + nz, 0, 255)
         self.ts = dev.create_texture(size=(64, 1024, 1), format="rgba8unorm", usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
         dev.queue.write_texture({"texture": self.ts}, sk.tobytes(), {"bytes_per_row": 256}, (64, 1024, 1))
+        # t5: the death scenes' clips and ragdolls (tools/gen_death_tables.py writes them), 256 uints a row
+        clips = np.fromfile(f"{HERE}/death_clips.bin", np.uint32) if os.path.exists(f"{HERE}/death_clips.bin") else np.zeros(256, np.uint32)
+        ch = len(clips) // 256
+        self.tc = dev.create_texture(size=(256, ch, 1), format="r32uint", usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
+        dev.queue.write_texture({"texture": self.tc}, clips.tobytes(), {"bytes_per_row": 1024}, (256, ch, 1))
         self.smp = dev.create_sampler(address_mode_u="repeat", address_mode_v="repeat", mag_filter="linear", min_filter="linear", mipmap_filter="linear")
         B = wgpu.BufferUsage
         self.cb = dev.create_buffer(size=176, usage=B.UNIFORM | B.COPY_DST)
@@ -192,12 +209,14 @@ class Lab:
             {"binding": 12, "visibility": F, "texture": {"sample_type": "float"}},
             {"binding": 13, "visibility": F, "texture": {"sample_type": "float"}},
             {"binding": 14, "visibility": F, "texture": {"sample_type": "float"}},
+            {"binding": 15, "visibility": F, "texture": {"sample_type": "uint"}},
             {"binding": 20, "visibility": F, "sampler": {"type": "filtering"}}])
         self.bg = dev.create_bind_group(layout=bgl, entries=[
             {"binding": 0, "resource": {"buffer": self.cb}}, {"binding": 1, "resource": {"buffer": self.mb}},
             {"binding": 10, "resource": {"buffer": self.sb}}, {"binding": 11, "resource": {"buffer": self.db}},
             {"binding": 12, "resource": self.tn.create_view()}, {"binding": 13, "resource": self.tp.create_view()},
             {"binding": 14, "resource": self.ts.create_view()},
+            {"binding": 15, "resource": self.tc.create_view()},
             {"binding": 20, "resource": self.smp}])
         self.pipe = dev.create_render_pipeline(layout=dev.create_pipeline_layout(bind_group_layouts=[bgl]),
             vertex={"module": self.vs, "entry_point": "VSWorldFx"},

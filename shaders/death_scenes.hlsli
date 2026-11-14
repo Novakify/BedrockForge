@@ -6,12 +6,17 @@
 //      world's own resolution (1/16 block texels, face-shaded like blocks; particles are little cubes, not soft blobs).
 //      The victim's body wears their real skin when Bedrock Forge sent it (gSkins), else a mannequin in team colours.
 //      Event: eA = feet block (world, min) + age, eB = team colour + kind (3 kill, 4 final), eC.x = seed,
-//      eC.y = the camera's yaw when the kill came, eC.w = scene + 16 * (skin slot + 1).
+//      eC.y = the camera's yaw when the kill came, eC.w = scene + 128 * (skin slot + 1) (scenes 0..127).
 Texture2D<float4> gSkins : register(t4);   // 64 x (64 * 16): one classic skin per slot, top to bottom
 static const float DPX = 0.05859375;       // one skin pixel in blocks (a 32 px body is 1.875 blocks)
 
-struct DHit { float t; float3 c; bool hit; };
-struct DFx  { float3 team; float slot; float charK; float ash; float flash; float hurt; float clipY; float seed; float ghost; };
+struct DFx  { float3 team; float slot; float charK; float ash; float flash; float hurt; float clipY; float seed; float ghost;
+               float mat; float matK; float3 matC; };   // mat: a material the body turns into (dsMat), matK how far, matC its tint
+// a hit: colour (or, for a body part, what was hit - shaded once at the end by dsShadePart: every body draw used to
+// carry the whole skin + material shading inline, ~150 copies of it; now there is one)
+struct DHit { float t; float3 c; bool hit; float pt; int part; float3 q; float3 nl; float3 nw; float cut; DFx f; };
+static float3 gS3 = float3(1, 1, 1);
+static float gKillerSlot = -1.0;   // your own skin slot (eC.z - 1): the phantoms wear it; -1 = the ink figure   // a squash / stretch on the body being drawn (x, y, z of its own axes), 1 = none
 
 float3 dsLit(float3 alb, float3 nw) {
     float  ndl = saturate(dot(nw, SUN));
@@ -129,37 +134,53 @@ float3 dsSkin(int j, float3 nl, float3 q, float3 e, DFx fx) {
 }
 // one part: P = its centre (camera-relative), R = its axes, s = scale; only local y in cLo..cHi (px from the centre)
 // is kept - a slice shows a cut face
+#include "death_mats.hlsli"   // the materials a body can turn into (Finishers 2)
 void dsPart(inout DHit h, float3 rd, int j, float3 P, float3x3 R, float s, float cLo, float cHi, DFx fx) {
     float3 e = kPE[j];
     float  yl = max(-e.y, cLo), yh = min(e.y, cHi);
     if (yh - yl < 0.01 || s < 0.02) return;
-    float  cy = (yl + yh) * 0.5, k = DPX * s;
+    float  cy = (yl + yh) * 0.5;
+    float3 k = DPX * s * gS3;
     float3 eh = float3(e.x, (yh - yl) * 0.5, e.z);
     float  tN; float3 nl, lp;
-    if (!hitBox(rd, P + mul(R, float3(0, cy, 0)) * k, eh * k, R, tN, nl, lp) || tN >= h.t) return;
+    if (!hitBox(rd, P + mul(R, float3(0, cy, 0) * k), eh * k, R, tN, nl, lp) || tN >= h.t) return;
     if (rd.y * tN < fx.clipY) return;
     float3 q = clamp(lp * eh + float3(0, cy, 0), -e + 0.001, e - 0.001);
     float3 tx = floor(q + e);
     float  n = hash12(tx.xy * 1.7 + tx.z * 9.1 + float(j) * 3.3);
     float  hgt = (kPC[j].y + q.y) / 32.0;
     if (fx.ash > 0.0 && hgt + n * 0.35 > 1.35 - fx.ash * 1.4) return;        // crumbling away, from the top down
-    if (fx.ghost > 0.0) {   // the Finishers phantom: ink, a lit one-texel rim, two white eyes, a faint glitter inside
+    h.t = tN; h.hit = true; h.pt = tN; h.part = j; h.q = q; h.nl = nl; h.nw = mul(R, nl); h.f = fx;
+    h.cut = ((nl.y > 0.5 && yh < e.y - 0.01) || (nl.y < -0.5 && yl > -e.y + 0.01)) ? 1.0 : 0.0;
+}
+// the colour of a body part hit (once per pixel, after every scene has drawn)
+float3 dsShadePart(DHit h, float3 rd) {
+    int j = h.part; DFx fx = h.f;
+    float3 e = kPE[j], q = h.q, nl = h.nl, nw = h.nw;
+    float3 tx = floor(q + e);
+    float  n = hash12(tx.xy * 1.7 + tx.z * 9.1 + float(j) * 3.3);
+    float  hgt = (kPC[j].y + q.y) / 32.0;
+    if (fx.ghost > 0.0) {
         float3 ad = e - abs(q);
         float3 m = float3(abs(nl.x) > 0.5 ? 99.0 : ad.x, abs(nl.y) > 0.5 ? 99.0 : ad.y, abs(nl.z) > 0.5 ? 99.0 : ad.z);
         float  ed = min(m.x, min(m.y, m.z));
+        float  front = fx.ash > 0.0 ? saturate(1.0 - abs((1.35 - fx.ash * 1.4) - (hgt + n * 0.35)) / 0.08) : 0.0;   // the edge it forms / goes at
+        float3 rimC = float3(0.83, 0.76, 1.0);
+        if (fx.slot > -0.5) {   // the phantom wearing your skin: you, with a thin lit edge and a cold sheen
+            float3 c = dsLit(dsSkin(j, nl, q, e, fx), nw) * 1.05;
+            c += rimC * ((ed < 0.6 ? 0.45 : 0.0) + front * 2.0) + rimC * pow(1.0 - saturate(abs(dot(nw, rd))), 3.0) * 0.25;
+            return lerp(c, float3(2.6, 2.6, 2.6), fx.flash);
+        }
+        // the phantom without a skin to wear: ink, a lit one-texel rim, two white eyes, a faint glitter inside
         float  top = e.y - q.y;
         float  eyes = (j == 0 && nl.z > 0.5 && top >= 4.0 && top < 5.0 && abs(q.x) >= 1.0 && abs(q.x) < 3.0) ? 1.0 : 0.0;
         float  spark = step(0.985, hash12(tx.xy * 3.1 + tx.z * 1.7 + floor(TIME * 7.0) + float(j) * 5.0));
-        float  front = fx.ash > 0.0 ? saturate(1.0 - abs((1.35 - fx.ash * 1.4) - (hgt + n * 0.35)) / 0.08) : 0.0;   // the edge it forms / goes at
-        float3 rimC = float3(0.83, 0.76, 1.0);
-        float3 cg = dsLit(float3(0.012, 0.011, 0.016) * (0.8 + 0.4 * n), mul(R, nl)) + rimC * ((ed < 0.75 ? 0.55 : 0.0) + eyes * 3.2 + spark * 0.5 + front * 2.0);
-        h.t = tN; h.c = lerp(cg, float3(2.6, 2.6, 2.6), fx.flash); h.hit = true;
-        return;
+        float3 cg = dsLit(float3(0.012, 0.011, 0.016) * (0.8 + 0.4 * n), nw) + rimC * ((ed < 0.75 ? 0.55 : 0.0) + eyes * 3.2 + spark * 0.5 + front * 2.0);
+        return lerp(cg, float3(2.6, 2.6, 2.6), fx.flash);
     }
-    bool   cut = (nl.y > 0.5 && yh < e.y - 0.01) || (nl.y < -0.5 && yl > -e.y + 0.01);
-    float3 alb = cut ? lerp(hex3(110, 2, 2), hex3(181, 18, 18), n) * (min(e.x - abs(q.x), e.z - abs(q.z)) < 1.0 ? 0.55 : 1.0) : dsSkin(j, nl, q, e, fx);
-    float3 nw = mul(R, nl);
+    float3 alb = h.cut > 0.5 ? lerp(hex3(110, 2, 2), hex3(181, 18, 18), n) * (min(e.x - abs(q.x), e.z - abs(q.z)) < 1.0 ? 0.55 : 1.0) : dsSkin(j, nl, q, e, fx);
     float3 c = dsLit(alb, nw);
+    if (fx.matK > 0.0) c = lerp(c, dsMat(int(fx.mat + 0.5), alb, nw, rd, q, e, nl, n, j, hgt, fx.matC, fx.seed), fx.matK);
     if (fx.charK > 0.0) {
         float3 cq = floor(q + e);
         float crack = step(0.90, hash12(float2(cq.x + cq.z * 5.0, floor(cq.y * 0.34)) + float(j))) + step(0.93, hash12(float2(floor((cq.x + cq.z) * 0.34), cq.y * 3.0) + float(j) + 9.0));   // thin ember veins
@@ -167,14 +188,13 @@ void dsPart(inout DHit h, float3 rd, int j, float3 P, float3x3 R, float s, float
         c = lerp(c, dsLit(float3(0.016, 0.014, 0.014) * (0.7 + 0.6 * n), nw) + ember * saturate(1.0 - fx.ash * 1.2), fx.charK);
     }
     c = lerp(c, c * float3(1.5, 0.30, 0.26) + float3(0.20, 0.0, 0.0), fx.hurt * 0.65);
-    c = lerp(c, float3(2.6, 2.6, 2.6), fx.flash);
-    h.t = tN; h.c = c; h.hit = true;
+    return lerp(c, float3(2.6, 2.6, 2.6), fx.flash);
 }
-// the body at rest (for slices): O = feet centre, R = body axes; keeps body heights yLo..yHi (px)
+// the body at rest (for slices): O = feet centre, R = body axes; keeps body heights yLo..yHi (px). gS3 squashes it
 void dsBody(inout DHit h, float3 rd, float3 O, float3x3 R, float s, float yLo, float yHi, DFx fx) {
-    if (!nearRay(rd, O + mul(R, float3(0, 16.0 * DPX * s, 0)), 1.25 * s + 0.05)) return;
+    if (!nearRay(rd, O + mul(R, float3(0, 16.0 * DPX * s * gS3.y, 0)), 1.25 * s * max(gS3.x, max(gS3.y, gS3.z)) + 0.05)) return;
     [loop] for (int j = 0; j < 6; j++)
-        dsPart(h, rd, j, O + mul(R, kPC[j] * DPX * s), R, s, yLo - kPC[j].y, yHi - kPC[j].y, fx);
+        dsPart(h, rd, j, O + mul(R, kPC[j] * DPX * s * gS3), R, s, yLo - kPC[j].y, yHi - kPC[j].y, fx);
 }
 // the body posed: each limb turns about its joint - a = (pitch about x, roll about z). parts: bit j set = drawn
 void dsPosed(inout DHit h, float3 rd, float3 O, float3x3 R, float s, float2 hd, float2 aR, float2 aL, float2 lR, float2 lL, int parts, DFx fx) {
@@ -374,6 +394,8 @@ void dsExecutioner(inout DHit h, float3 rd, float3 O, float3x3 RY, float arm, fl
 }
 
 #include "death_scenes_ext.hlsli"
+#include "death_scenes_f2.hlsli"
+#include "death_scenes_ef.hlsli"
 
 // ------------------------------------------------------------------ the scenes
 float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
@@ -383,22 +405,24 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
         if (kind < 2.5 || kind > 4.5 || t > 4.8) continue;
         float3 feet = eA[i].xyz + float3(0.5, 0.0, 0.5) - CAM;
         float  code = eC[i].w + 0.5;
-        int    sc = int(fmod(code, 16.0));
+        int    sc = int(fmod(code, 128.0));
         // only pixels near the scene: a 4.5-block ball, or (hand, lightning) the column above it
         float2 ax = feet.xz - rd.xz * (dot(feet.xz, rd.xz) / max(dot(rd.xz, rd.xz), 1e-5));
         bool   col = (sc == 3 || sc == 4) && dot(ax, ax) < 3.5 * 3.5 && dot(feet.xz, rd.xz) > -3.5;
-        float  cr = sc == 11 ? 8.5 : ((sc == 12 || sc == 13) ? 7.0 : (sc == 7 ? 5.6 : 4.5));   // the Ultimate's beam runs 8.5 blocks   // the ragdolls and the long finishers reach further
+        // how far a scene reaches from the feet: the ragdolls, the long finishers, the Finishers 2 / Epic Fight sets
+        float  cr = sc >= 65 ? efCull(sc - 65) : (sc >= 16 ? f2Cull(sc - 16) : (sc == 11 ? 8.5 : ((sc == 12 || sc == 13) ? 7.0 : (sc == 7 ? 5.6 : 4.5))));
         if (!nearRay(rd, feet + float3(0, 1.2, 0), cr) && !col) continue;
 
         DFx fx; fx.team = pow(max(eB[i].rgb, 0.0), 2.2);
         fx.team = fx.team / max(max(fx.team.r, max(fx.team.g, fx.team.b)), 0.05);
-        fx.slot = floor(code / 16.0) - 1.0; fx.charK = 0.0; fx.ash = 0.0; fx.flash = 0.0; fx.hurt = 0.0; fx.clipY = -1e5; fx.seed = eC[i].x; fx.ghost = 0.0;
+        fx.slot = floor(code / 128.0) - 1.0; fx.charK = 0.0; fx.ash = 0.0; fx.flash = 0.0; fx.hurt = 0.0; fx.clipY = -1e5; fx.seed = eC[i].x; fx.ghost = 0.0; fx.mat = 0.0; fx.matK = 0.0; fx.matC = float3(1, 1, 1);
+        gKillerSlot = floor(eC[i].z + 0.5) - 1.0;
         float3 team = fx.team, glow = team * (1.1 + 0.9 * darkK());
         float  seed = eC[i].x;
         float  yaw = h1(seed * 0.013) * 6.2832;
         float3x3 RY = rotY(yaw);
         float3 fwd = mul(RY, float3(0, 0, 1)), side = mul(RY, float3(1, 0, 0));
-        DHit h; h.t = sceneT; h.c = 0.0; h.hit = false;
+        DHit h; h.t = sceneT; h.c = 0.0; h.hit = false; h.pt = -1.0; h.part = -1; h.q = 0.0; h.nl = 0.0; h.nw = 0.0; h.cut = 0.0; h.f = fx;
         float3 add = 0.0;                                                   // light added on top (linear)
         // the ground under the scene (this pixel, if it is the floor the victim stood on): decals are drawn into it
         float3 S = rd * sceneT;
@@ -407,6 +431,18 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
         float  gr = length(g);
         float3 dec = o; float decK = 0.0;                                   // decal colour (display) and cover
 
+#if defined(DS_GROUP) && DS_GROUP >= 2   // the lab, one group at a time: only that group's scenes get compiled
+        if (sc >= 65) {
+#if DS_GROUP == 5
+            deathScenesEF(sc - 65, t, o, rd, feet, yaw, eC[i].y, seed, team, glow, onG, S, gr, h, add, dec, decK, fx);
+#endif
+        } else if (sc >= 16) {
+#if DS_GROUP >= 2 && DS_GROUP <= 4
+            deathScenesF2(sc - 16, t, o, rd, feet, yaw, eC[i].y, seed, team, glow, onG, S, gr, h, add, dec, decK, fx);
+#endif
+        }
+        if (false) {
+#endif
         if (sc == 0) {
             // ============ CHAINS OF THE DEEP: a black pool opens, four barbed chains burst out and spear the limbs,
             // hoist the body spread-eagled, hold it a beat - then drag it under
@@ -681,6 +717,14 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
             dsBurst(h, rd, mouth + float3(0, 0.1, 0), t - 2.42, 9, seed + 21.0, 0.5, 0.7, -0.4, 0.9, 0.05, hex3(150, 190, 110), hex3(196, 220, 160), -1e5, 0.0);
             dsBurst(h, rd, cpos0 + float3(0, 0.05, 0), t - 3.25, 10, seed + 30.0, 1.3, 1.2, 10.0, 0.6, 0.045, hex3(122, 86, 52), hex3(74, 60, 48), feet.y, 0.0);
             if (onG) { float2 gc = S.xz - cpos0.xz; float sh = exp(-dot(gc, gc) / 0.35) * 0.45 * saturate(rise); dec = o * (1.0 - sh); decK = 1.0; }
+        } else if (sc >= 65) {
+#if !defined(DS_GROUP) || DS_GROUP == 5
+            deathScenesEF(sc - 65, t, o, rd, feet, yaw, eC[i].y, seed, team, glow, onG, S, gr, h, add, dec, decK, fx);
+#endif
+        } else if (sc >= 16) {
+#if !defined(DS_GROUP) || (DS_GROUP >= 2 && DS_GROUP <= 4)
+            deathScenesF2(sc - 16, t, o, rd, feet, yaw, eC[i].y, seed, team, glow, onG, S, gr, h, add, dec, decK, fx);
+#endif
         } else if (sc >= 7) {
             deathScenesExt(sc, t, o, rd, feet, yaw, eC[i].y, seed, team, glow, onG, S, gr, h, add, dec, decK, fx);
         } else {
@@ -745,8 +789,15 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
             }
             if (onG) { float2 gc = S.xz - EO.xz; float sh = (exp(-dot(gc, gc) / 0.4) * (1.0 - gone) * rise + exp(-gr * gr / 0.5) * (1.0 - out1)) * 0.4; dec = o * (1.0 - saturate(sh)); decK = 1.0; }
         }
+#if defined(DS_GROUP) && DS_GROUP >= 2
+        }
+#endif
         // compose: the ground, then the solids, then the light
-        if (onG && decK > 0.0 && !h.hit) o = lerp(o, dec, decK);
+        // decK above 1: a recolour of the world itself (any surface or the sky), cover = decK - 1 - the specials'
+        // bubbles; otherwise a decal on the ground under the scene
+        if (decK > 1.0 && !h.hit) o = lerp(o, dec, saturate(decK - 1.0));
+        else if (onG && decK > 0.0 && !h.hit) o = lerp(o, dec, decK);
+        if (h.hit && h.part >= 0 && h.t == h.pt) h.c = dsShadePart(h, rd);   // a body part was the nearest thing: shade it now
         if (h.hit) { o = pow(max(h.c, 0.0), 1.0 / 2.2); sceneT = h.t; }
         o = pow(pow(max(o, 0.0), 2.2) + add, 1.0 / 2.2);
     }

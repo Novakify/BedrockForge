@@ -75,7 +75,7 @@ Upscale CNN x2 (S / M) shaders of **Anime4K by bloc97** (https://github.com/bloc
 Copyright (c) 2019-2021 bloc97 - full text in `third_party/Anime4K-LICENSE.txt`. The network weights are Anime4K's;
 the HLSL conversion and the capture / screen code (`src/Screen*.*`, `shaders/screen.hlsl`) are original.
 
-## Death scenes 7-13 - Finishers, Ragdollified, Sable Ragdolls - personal-use ports
+## Death scenes 7-15 - Finishers, Ragdollified, Sable Ragdolls - personal-use ports
 
 Kill animations added to the World FX shuffle (shaders/death_scenes_ext.hlsli, tables baked by
 tools/gen_death_tables.py into shaders/death_tables.hlsli). Used with each author's permission as reported by Novak,
@@ -90,6 +90,21 @@ for Fernando's personal use only, not distributed; the original mods are not rel
   the same way.
 - **Sounds**: the death scenes play the mods' own .ogg files (Finishers' victim cry, sword swing and quick punches;
   Sable Ragdolls' impact / small impact), embedded in src/DeathSoundsData.h and played by src/DeathSounds.cpp.
+
+## Death scenes 16-81 - Finishers 2, Epic Fight - personal-use ports
+
+Same terms as above: used with each author's permission as reported by Novak, for Fernando's personal use only, not
+distributed; the original mods are not relicensed.
+
+- **Finishers 2.0.0 by kyryi / dulimo** (made with MCreator; All Rights Reserved): all 40 death effects and the 9
+  special finishers, rebuilt as World FX effects (shaders/death_scenes_f2.hlsli, death_scenes_f2s.hlsli,
+  death_mats.hlsli). No code or assets of the mod are copied; its specials play inside a bubble round the kill instead
+  of taking over the camera. Its sounds are vanilla Minecraft's, so these scenes are scored with the .ogg files above.
+- **Epic Fight 21.17.3.1 by Yesman, Gui, Asan, Wayfarer (squoshi), Fori and Ellet** (code GPL-3.0, assets All Rights Reserved - the animations are assets): 17 weapon-skill animations
+  (The Guillotine ... Greatsword Slam) are converted from the mod's armature animation files by
+  tools/gen_death_tables.py into the baked clip table; the phantom that performs them, the weapons, trails and the
+  finishing effects are drawn in shaders/death_scenes_ef.hlsli. The phantom wears your own skin when Bedrock Forge sends it.
+- The baked clips and ragdolls live in a texture (t5, src/DeathClipData.h) rather than shader constants.
 
 ## stb_vorbis
 

@@ -11,6 +11,8 @@
 //      screen away from the player mid-fight; their flashes are kept as light at the hit instead.
 #include "death_tables.hlsli"
 
+Texture2D<uint> gClips : register(t5);   // the baked clips and ragdolls (see death_tables.hlsli), 256 uints a row
+uint dtU(uint i) { return gClips.Load(int3(int(i & 255u), int(i >> 8), 0)); }
 float2 dtH(uint u) { return f16tof32(uint2(u & 0xffffu, u >> 16)); }
 // one bone of a Finishers clip at frame fr (20 Hz): rotation (rad, Bedrock euler), offset (px), scale
 void dtBone(uint off, uint n, float fr, int b, out float3 r, out float3 p, out float s) {
@@ -18,8 +20,8 @@ void dtBone(uint off, uint n, float fr, int b, out float3 r, out float3 p, out f
     uint  i0 = uint(fr), i1 = min(i0 + 1u, n - 1u);
     float u = fr - float(i0);
     uint  a = off + (i0 * 8u + uint(b)) * 4u, c = off + (i1 * 8u + uint(b)) * 4u;
-    float2 a0 = dtH(kClip[a]), a1 = dtH(kClip[a + 1u]), a2 = dtH(kClip[a + 2u]), a3 = dtH(kClip[a + 3u]);
-    float2 c0 = dtH(kClip[c]), c1 = dtH(kClip[c + 1u]), c2 = dtH(kClip[c + 2u]), c3 = dtH(kClip[c + 3u]);
+    float2 a0 = dtH(dtU(a)), a1 = dtH(dtU(a + 1u)), a2 = dtH(dtU(a + 2u)), a3 = dtH(dtU(a + 3u));
+    float2 c0 = dtH(dtU(c)), c1 = dtH(dtU(c + 1u)), c2 = dtH(dtU(c + 2u)), c3 = dtH(dtU(c + 3u));
     r = lerp(float3(a0, a1.x), float3(c0, c1.x), u);
     p = lerp(float3(a1.y, a2), float3(c1.y, c2), u);
     s = lerp(a3.x, c3.x, u);
@@ -76,9 +78,9 @@ void dtRag(uint off, float fr, int j, bool mirror, out float3 P, out float3x3 R)
     uint i0 = uint(fr), i1 = min(i0 + 1u, 96u);
     float u = fr - float(i0);
     uint a = off + (i0 * 6u + uint(jj)) * 4u, c = off + (i1 * 6u + uint(jj)) * 4u;
-    float3 pa = float3(dtH(kRag[a]), dtH(kRag[a + 1u]).x), pc = float3(dtH(kRag[c]), dtH(kRag[c + 1u]).x);
-    float4 qa = float4(dtH(kRag[a + 1u]).y, dtH(kRag[a + 2u]), dtH(kRag[a + 3u]).x);
-    float4 qc = float4(dtH(kRag[c + 1u]).y, dtH(kRag[c + 2u]), dtH(kRag[c + 3u]).x);
+    float3 pa = float3(dtH(dtU(kRagBase + a)), dtH(dtU(kRagBase + a + 1u)).x), pc = float3(dtH(dtU(kRagBase + c)), dtH(dtU(kRagBase + c + 1u)).x);
+    float4 qa = float4(dtH(dtU(kRagBase + a + 1u)).y, dtH(dtU(kRagBase + a + 2u)), dtH(dtU(kRagBase + a + 3u)).x);
+    float4 qc = float4(dtH(dtU(kRagBase + c + 1u)).y, dtH(dtU(kRagBase + c + 2u)), dtH(dtU(kRagBase + c + 3u)).x);
     if (dot(qa, qc) < 0.0) qc = -qc;
     P = lerp(pa, pc, u);
     float4 q = lerp(qa, qc, u);
@@ -198,7 +200,7 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
     float  yv = atan2(A.x, A.z);
     float3x3 RV = rotY(yv), RA = rotY(yv + 3.14159265);
     float3 rimC = hex3(236, 226, 255);
-    DFx fg = fx; fg.ghost = 1.0; fg.slot = -1.0; fg.hurt = 0.0;   // the phantom
+    DFx fg = fx; fg.ghost = 1.0; fg.slot = gKillerSlot; fg.hurt = 0.0;   // the phantom
     float  floorY = feet.y;
     float3 warm = float3(1.0, 0.94, 0.80);
 

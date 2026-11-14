@@ -613,7 +613,9 @@ float figSegDist(float3 ro, float3 rd, float3 a, float3 b, out float tRay) { // 
     tRay = max(dot(q - ro, rd), 0.0);
     return length(ro + rd * tRay - q);
 }
+#if WFX_KILLS   // the death scenes: only in the kill builds of the pass (PSWorldFxKills / PSWorldFxGlassKills)
 #include "death_scenes.hlsli"
+#endif
 float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
     int nt = int(m0.x);
     float best = sceneT; float3 col = 0.0; bool hit = false;
@@ -1386,9 +1388,11 @@ float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
         float4 sh = shards(o, rd, sceneT);
         if (sh.w > 0.0) { o = sh.rgb; sceneT = sh.w; }
     }
+#if WFX_KILLS
     [branch] if (m0.y > 0.5 && m1.z > 0.5) {   // a kill: its death scene
         o = deathScenes(o, rd, sceneT);
     }
+#endif
     [branch] if (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) {
         float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0)) * (1.0 + 0.6 * m2.w) + shockwaves(rd, sceneT, sceneT > 1e8);
         o = pow(lin, 1.0 / 2.2);

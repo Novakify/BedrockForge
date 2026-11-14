@@ -38,6 +38,7 @@
 #include "UiCapture.h"
 #include "GlassArmor.h"
 #include "DeathSounds.h"
+#include "DeathClipData.h"
 #include "WorldFx.h"
 
 #if __has_include("SkyShaders.h")
@@ -760,7 +761,7 @@ struct WsTexData {
 std::mutex                   gWsTexMutex;
 std::unique_ptr<WsTexData>   gWsTexReady;
 std::atomic_bool             gWsTexStarted{false}, gWsTexUp{false};
-ComPtr<ID3D12Resource>       gWsNoise, gWsPuff, gWsSkins;
+ComPtr<ID3D12Resource>       gWsNoise, gWsPuff, gWsSkins, gWsClips;
 std::deque<ComPtr<ID3D12Resource>> gSkinGrave; // replaced skin textures, kept while frames in flight may use them
 uint64_t                     gSkinGen = ~0ull;
 ComPtr<ID3D12RootSignature>  gWsRoot;
@@ -924,7 +925,7 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     for (auto& l : d->puff) lv.push_back(reinterpret_cast<uint8_t const*>(l.data()));
     gWsPuff = uploadLevels(dev, list, DXGI_FORMAT_R16_UNORM, 1024, 1024, 2, lv);
     if (!gWsNoise || !gWsPuff) { wsStatus("texture upload failed"); return; }
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 3, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gWsHeap)))) { wsStatus("descriptor heap failed"); return; }
     UINT const inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     auto       h   = gWsHeap->GetCPUDescriptorHandleForHeapStart();
@@ -944,6 +945,12 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
         h.ptr += inc;
         sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sv.Texture2D.MipLevels = 1;
         if (gWsSkins) dev->CreateShaderResourceView(gWsSkins.Get(), &sv, h);
+    }
+    {   // t5: the death scenes' baked clips and ragdolls (too big for shader constants), 256 uints a row
+        gWsClips = uploadLevels(dev, list, DXGI_FORMAT_R32_UINT, kDeathClipW, kDeathClipH, 4, {reinterpret_cast<uint8_t const*>(kDeathClipData)});
+        h.ptr += inc;
+        sv.Format = DXGI_FORMAT_R32_UINT; sv.Texture2D.MipLevels = 1;
+        dev->CreateShaderResourceView(gWsClips.Get(), &sv, h);   // a null view if the upload failed: reads 0
     }
     gWsTexUp = true;
     wsStatus("ready - waiting for the game's sky draw");
@@ -1009,7 +1016,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     prm[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
     prm[2].Descriptor       = {1, 0};
     prm[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures), t4 skins
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures), t4 skins, t5 clips
     prm[3].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     prm[3].DescriptorTable  = {1, &range};
     prm[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1023,15 +1030,19 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
     d.pRootSignature = gWfxRoot.Get();
     d.VS = {rf::worldfx::shaders::VSWorldFx, sizeof rf::worldfx::shaders::VSWorldFx};
-    // two builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it
-    if (glass) d.PS = {rf::worldfx::shaders::PSWorldFxGlass, sizeof rf::worldfx::shaders::PSWorldFxGlass};
+    // builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it - and each
+    // again with the death scenes (80-odd kill animations, the pass's biggest code by far), used only on frames where
+    // a kill is playing, so every other frame runs the lean pass
+    if (kills) d.PS = glass ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxGlassKills, sizeof rf::worldfx::shaders::PSWorldFxGlassKills}
+                            : D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxKills, sizeof rf::worldfx::shaders::PSWorldFxKills};
+    else if (glass) d.PS = {rf::worldfx::shaders::PSWorldFxGlass, sizeof rf::worldfx::shaders::PSWorldFxGlass};
     else       d.PS = {rf::worldfx::shaders::PSWorldFx, sizeof rf::worldfx::shaders::PSWorldFx};
     for (UINT i = 0; i < 8; ++i) {
         auto& rt = d.BlendState.RenderTarget[i];
@@ -1113,7 +1124,9 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 0), ok ? work.dome : nullptr});
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
-            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which >= 6, which == 7 ? 1 : which == 8 ? 2 : 0) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
+            // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
+            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+                                            : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -1486,7 +1499,9 @@ void testBed() { ++gTestBedReq; }
 // the same one twice in a row). 0-6 LyricsFlow's death animations (by 374m); 7-11 Finishers (by akeresmods): First
 // Finisher, Shield Counter, Headbutt, Kick, Ultimate Attack; 12 Ragdollified (by raiiiden); 13 Sable Ragdolls (by
 // Leonardoinc22) - all used with their authors' permission (shaders/death_scenes*.hlsli)
-constexpr int kDeathScenes = 14;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
+// 14-62 Finishers 2 (by kyryi / dulimo): its 40 death effects and 9 specials; 63-79 Epic Fight's signature skills (by
+// Yesman and team) - also used with their authors' permission
+constexpr int kDeathScenes = 80;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
 static int deathSceneFor(uint64_t key) {
     static uint64_t keys[32]{}; static int vals[32]{}; static int nk = 0;
     for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
@@ -1510,6 +1525,7 @@ static int deathSceneCode(int scene, uint64_t key) {
     uint32_t const h = uint32_t((key * 0x9E3779B97F4A7C15ull) >> 40);
     if (scene == 12) return 12 + int(h % 100u >= 55u);
     if (scene == 13) return 14 + int(h & 1u);
+    if (scene >= 14) return scene + 2;   // Finishers 2: codes 16-64, Epic Fight: 65-81
     return scene;
 }
 // where the camera looked when a kill came (the finishers lay the pair out side-on to it); kept per kill so the scene
@@ -1625,7 +1641,9 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
                 float const kp[3] = {float(e.x) + 0.5f, float(e.y), float(e.z) + 0.5f};
                 rf::deathsfx::onKill(key, sc, age, kp, look.killSfx);
                 uint32_t const slot1 = v6 && e.floorDy >= 1 && e.floorDy <= 16 && b->skins[e.floorDy - 1].ok ? e.floorDy : 0;
-                c.eC[ne][3] = float(sc) + 16.0f * float(slot1);
+                c.eC[ne][3] = float(sc) + 128.0f * float(slot1);   // scene (0..127) + the victim's skin slot
+                // the phantoms (Finishers / Epic Fight killers) wear your own skin, when Bedrock Forge sent it
+                c.eC[ne][2] = float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
             } else if (e.kind == 6) {   // the fireworks go up where you were looking when the win came, and stay there
                 static int64_t winAt = -1; static float winYaw = 0.0f;
                 if (winAt != e.atMs) { winAt = e.atMs; winYaw = gViewYaw.load(std::memory_order_relaxed); }
@@ -1643,7 +1661,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             int const tsc = deathSceneCode(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u), uint64_t(gTestKill.at) + 7u);
             float const tkp[3] = {std::floor(gTestKill.p[0]) + 0.5f, std::floor(gTestKill.p[1]), std::floor(gTestKill.p[2]) + 0.5f};
             rf::deathsfx::onKill(uint64_t(gTestKill.at) + 7u, tsc, ta, tkp, look.killSfx);
-            c.eC[ne][3] = float(tsc) + 16.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
+            c.eC[ne][3] = float(tsc) + 128.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
+            c.eC[ne][2] = float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
@@ -2455,7 +2474,15 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
-    ID3D12PipelineState* pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
+    // a kill playing this frame: the pass with the death scenes (built in the background the first time; until it is
+    // ready the lean pass draws and the kill simply has no scene yet)
+    bool const killsNow = [&] { MatchFrame const m0 = matchFrame(look); return m0.cb.m0[1] > 0.5f && m0.cb.m1[2] > 0.5f; }();
+    int const kAdd = killsNow ? 10 : 0;
+    ID3D12PipelineState* pso = nullptr;
+    if (killsNow) pso = derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + kAdd);
+    else derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + 10);   // warm it up before the first kill needs it
+    bool const killPso = pso != nullptr;
+    if (!pso) pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
     if (!pso) { wfxStatus("building the pass pipeline (in the background)"); return false; }
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
     UINT64 rTot = 0, dTot = 0;
@@ -2569,7 +2596,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             D3D12_FEATURE_DATA_D3D12_OPTIONS6 o6{};
             vrs = SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &o6, sizeof o6)) && o6.VariableShadingRateTier != D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED ? 1 : 0;
         }
-        if (vrs == 1) { psoSky = derived(dev.Get(), g, 7); psoTer = derived(dev.Get(), g, 8); }
+        if (vrs == 1) {
+            if (killPso) { psoSky = derived(dev.Get(), g, 17); psoTer = derived(dev.Get(), g, 18); }
+            if (!psoSky || !psoTer) { psoSky = derived(dev.Get(), g, 7); psoTer = derived(dev.Get(), g, 8); }
+        }
     }
     if (psoSky && psoTer) {
         D3D12_VIEWPORT vp{0.0f, 0.0f, float(rd.Width), float(rd.Height), 1.0f, 1.0f};   // every pixel at depth 1: the sky's depth
