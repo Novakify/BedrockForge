@@ -502,6 +502,7 @@ void gaNoteVb(ID3D12GraphicsCommandList* l, UINT start, UINT n, D3D12_VERTEX_BUF
 void gaNoteIb(ID3D12GraphicsCommandList* l, D3D12_INDEX_BUFFER_VIEW const* v);
 void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                                  D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
+    if (!gInSnapshot) rf::sky::noteTargetsBound(n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
     if (!gInSnapshot && (rf::worldfx::tracking() || rf::worldfx::targetsWanted())) rf::worldfx::onSetRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
     if (gaOn()) {
         gaFlush(list); // pending armor belongs to the targets bound now

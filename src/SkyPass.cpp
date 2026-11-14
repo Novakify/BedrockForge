@@ -2125,11 +2125,35 @@ void   rememberFxPair(size_t rt, size_t ds) {
     int const i = gFxPairNext.fetch_add(1) & 3;
     gFxPairDs[i] = ds, gFxPairRt[i] = rt;
 }
+void noteTargetsBound(size_t rt, size_t ds) {
+    if (!rt) return;
+    int64_t const t = nowMsSky();
+    std::lock_guard l(gSeenMutex);
+    int oldest = 0;
+    for (int i = 0; i < 32; ++i) {
+        if (gSeen[i].rt == rt && gSeen[i].ds == ds) { gSeen[i].ms = t; return; }
+        if (gSeen[i].ms < gSeen[oldest].ms) oldest = i;
+    }
+    gSeen[oldest] = {rt, ds, t};
+}
 size_t fxPairRt(size_t ds) {   // 0: not a world depth buffer
     for (int i = 0; i < 4; ++i) if (gFxPairDs[i].load(std::memory_order_relaxed) == ds) return gFxPairRt[i].load(std::memory_order_relaxed);
     return 0;
 }
-std::atomic<long> gDbgClears{0}, gDbgFbOk{0}, gDbgFbNo{0}, gDbgCloud{0};
+std::atomic<long> gDbgClears{0}, gDbgFbOk{0}, gDbgFbNo{0}, gDbgCloud{0}, gDbgStale{0};
+// (colour, depth) target pairs the GAME bound lately (OMSetRenderTargets): a handle we did not see the game bind this
+// frame may point at a freed target (the world's targets are rebuilt when a server switches world - binding a remembered
+// one crashed the driver joining the Hive)
+std::mutex gSeenMutex;
+struct SeenRts { size_t rt = 0, ds = 0; int64_t ms = 0; };
+SeenRts gSeen[32];
+int64_t nowMsSky() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+bool seenRecently(size_t rt, size_t ds, int64_t within) {
+    int64_t const t = nowMsSky();
+    std::lock_guard l(gSeenMutex);
+    for (auto const& e : gSeen) if (e.rt == rt && e.ds == ds && t - e.ms <= within) return true;
+    return false;
+}
 std::atomic<ID3D12PipelineState*> gFxPso{nullptr};
 // ---- GPU time of the World FX pass (timestamps round the copies + the draw), for the F6 readout and the A/B bench.
 // An 8-frame ring: frame n writes slot n % 8 and reads the slot written 7 frames ago (long finished on the GPU).
@@ -2283,6 +2307,7 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     size_t oldRt = 0, oldDs = 0;
     bool const hadOld = rf::worldfx::listTargets(list, oldRt, oldDs);
     if (!calls.setRts) { ++gDbgFbNo; return false; }
+    if (!seenRecently(wrt, dsvClear, 250)) { ++gDbgStale; return false; }   // not bound by the game lately: may be freed
     calls.setRts(list, wrt, dsvClear);
     rf::worldfx::onSetRts(list, wrt, dsvClear);
     size_t const rt0 = wrt;
@@ -2298,7 +2323,7 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
         list->RSSetScissorRects(1, &sc);
     }
     bool const ok = drawWorldFxPassImpl(list, s2, calls);
-    if (hadOld && (oldRt != wrt || oldDs != dsvClear)) {
+    if (hadOld && (oldRt != wrt || oldDs != dsvClear) && seenRecently(oldRt, oldDs, 250)) {   // (a stale leftover is not put back)
         calls.setRts(list, oldRt, oldDs);
         rf::worldfx::onSetRts(list, oldRt, oldDs);
     }
@@ -2312,7 +2337,7 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
             last = nowMs;
             int pairs = 0; for (auto& d : gFxPairDs) pairs += d.load() != 0;
             ll_shim::info("[RF] World FX looking-down: world clears " + std::to_string(gDbgClears.exchange(0)) + ", fallback ok " + std::to_string(gDbgFbOk.exchange(0)) +
-                          ", refused " + std::to_string(gDbgFbNo.exchange(0)) + ", cloud passes " + std::to_string(gDbgCloud.exchange(0)) + ", target pairs " + std::to_string(pairs));
+                          ", refused " + std::to_string(gDbgFbNo.exchange(0)) + ", cloud passes " + std::to_string(gDbgCloud.exchange(0)) + ", target pairs " + std::to_string(pairs) + ", stale " + std::to_string(gDbgStale.exchange(0)));
         }
     }
     static std::atomic<long> nFb{0};
