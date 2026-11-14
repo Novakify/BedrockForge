@@ -1365,7 +1365,8 @@ float3 ngNeonDelta(float3 before, float3 after) {   // linear light
 float3 matchOverRaw(float3 o, float3 rd, float sceneT);
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     float3 r = matchOverRaw(o, rd, sceneT);
-    [branch] if (NG_IS) r = pow(ngNeonDelta(pow(max(o, 0.0), 2.2), pow(max(r, 0.0), 2.2)), 1.0 / 2.2);
+    // (Novak used to recolour warm effect light here: orange -> hot pink, gold -> cyan. Off: it was the random pink
+    //  hue on Hive - any orange light (a hit, a bed going, a spark) landed pink. Effects keep their own colours.)
     return r;
 }
 float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
@@ -1785,7 +1786,6 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
     [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = genPulse(CAM + P, lin, n);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
-    [branch] if (NG_IS) lin = ngNeonDelta(linFx0, lin);
 #if NG_RIM
     [branch] if (c3.z > 0.0 && z < 90.0) lin = ngRim(lin, P, n, px, z, L, c3.z);
 #endif

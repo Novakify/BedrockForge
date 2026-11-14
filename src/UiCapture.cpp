@@ -887,7 +887,7 @@ void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa co
 using ClearDsv_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_CLEAR_FLAGS, FLOAT, UINT8, UINT, D3D12_RECT const*);
 void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE dsv, D3D12_CLEAR_FLAGS flags, FLOAT depth, UINT8 stencil,
                                     UINT n, D3D12_RECT const* rects) {
-    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::fxFallbackWanted(dsv.ptr)) {
+    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::fxFallbackWanted(list, dsv.ptr)) {
         SkyLS* s = skyLS(list);
         rf::sky::GameState st;
         st.pso       = s->pso;

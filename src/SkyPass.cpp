@@ -2250,8 +2250,13 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // Block draws only happen in the world itself, so the HUD / hand clears never see them.)
 std::atomic<bool> gTerrainSinceClear{false};
 void noteTerrainDraw() { if (!gTerrainSinceClear.load(std::memory_order_relaxed)) gTerrainSinceClear.store(true, std::memory_order_relaxed); }
-bool fxFallbackWanted(size_t dsv) {
+bool fxFallbackWanted(ID3D12GraphicsCommandList* list, size_t dsv) {
     if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
+    // Only a clear made with the world's colour target bound may use up this frame's flags. The Hive HUD clears the same
+    // depth buffer over its own target: that clear used to eat the flags, the pass then refused the wrong target, and the
+    // frame went out with the plain blue under-sky - the blue / Novak flicker looking down (both atmospheres).
+    size_t rt0 = 0, ds = 0;
+    if (!rf::worldfx::listTargets(list, rt0, ds) || rt0 != gFxRt.load(std::memory_order_relaxed)) return false;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
     bool const terr = gTerrainSinceClear.exchange(false);
