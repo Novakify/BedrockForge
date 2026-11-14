@@ -946,6 +946,12 @@ void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa co
 using ClearDsv_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_CLEAR_FLAGS, FLOAT, UINT8, UINT, D3D12_RECT const*);
 void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE dsv, D3D12_CLEAR_FLAGS flags, FLOAT depth, UINT8 stencil,
                                     UINT n, D3D12_RECT const* rects) {
+    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::iris::enabled()) { // which depth convention the game uses
+        static std::atomic<int> logged{0};
+        if (logged++ < 24)
+            ll_shim::info("[RF] IrisBridge: game depth clear " + std::to_string(depth) + " on dsv " + std::to_string(dsv.ptr) +
+                          " (flags " + std::to_string(int(flags)) + ")");
+    }
     if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::fxFallbackWanted(dsv.ptr)) {
         SkyLS* s = skyLS(list);
         rf::sky::GameState st;

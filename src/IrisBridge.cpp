@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -238,7 +239,21 @@ struct FrameU {
 } gU;
 
 // ---- M2 terrain recording (UiCapture threads) / replay (the hook)
-struct TerrainPso { std::vector<D3D12_INPUT_ELEMENT_DESC> il; std::vector<std::string> names; };
+struct TerrainPso {
+    std::vector<D3D12_INPUT_ELEMENT_DESC> il;
+    std::vector<std::string>              names;
+    D3D12_COMPARISON_FUNC                 depthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL; // the game's (mirrored when we draw in its place)
+    DXGI_FORMAT                           dsvFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+};
+/// The bundle's terrain wrapper can apply the game's own projection (bf_mode): then the pack gets an identity one and
+/// its terrain lands exactly where vanilla's does, depth included
+bool gameProjTerrain() {
+    if (!gGpu.terrain.pass) return false;
+    auto it = gGpu.terrain.pass->stages.find("vert");
+    if (it == gGpu.terrain.pass->stages.end()) return false;
+    for (auto const& g : it->second.globals) if (g.name == "bf_mode") return true;
+    return false;
+}
 struct RootInfo { int vsCbv = -1; int psTable = -1; UINT psOffset = 0; std::string desc; };
 std::mutex                                                              gRecMutex;
 std::unordered_map<ID3D12PipelineState*, std::shared_ptr<TerrainPso>>   gTerrainPsos;
@@ -830,7 +845,9 @@ ID3D12PipelineState* drawPso(Gpu::DrawProg& dp, TerrainPso const& tp, bool inl =
         il.push_back(e);
         key += std::to_string(slot) + ":" + std::to_string(e.Format) + "@" + std::to_string(e.InputSlot) + "+" + std::to_string(e.AlignedByteOffset) + " ";
     }
+    bool const gp = !dp.shadow && gameProjTerrain();
     if (inl) key += "inline";
+    if (gp) key += " gp" + std::to_string(int(tp.depthFunc)) + "/" + std::to_string(int(tp.dsvFormat));
     if (have != 15) { dp.error = "the game's terrain input layout is not POSITION0/COLOR0/TEXCOORD0/TEXCOORD1"; return nullptr; }
     if (auto it = dp.psos.find(key); it != dp.psos.end()) return it->second.Get();
     Pass const& p = *dp.pass;
@@ -859,10 +876,18 @@ ID3D12PipelineState* drawPso(Gpu::DrawProg& dp, TerrainPso const& tp, bool inl =
     d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     d.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID; d.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     d.RasterizerState.DepthClipEnable = TRUE;
-    if (!dp.shadow && !inl) { d.RasterizerState.DepthBias = -64; d.RasterizerState.SlopeScaledDepthBias = -2.0f; } // win the tie with Bedrock's own depth
+    if (!dp.shadow && !inl && !gp) { d.RasterizerState.DepthBias = -64; d.RasterizerState.SlopeScaledDepthBias = -2.0f; } // win the tie with Bedrock's own depth
     d.DepthStencilState.DepthEnable = TRUE; d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     d.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
     d.DSVFormat = dp.shadow ? DXGI_FORMAT_D32_FLOAT : DXGI_FORMAT_D24_UNORM_S8_UINT;
+    if (gp) { // same placement as vanilla: mirror its depth test (with equality, so an identical depth passes)
+        D3D12_COMPARISON_FUNC f = tp.depthFunc;
+        if (f == D3D12_COMPARISON_FUNC_LESS) f = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        else if (f == D3D12_COMPARISON_FUNC_GREATER) f = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        else if (f == D3D12_COMPARISON_FUNC_EQUAL || f == D3D12_COMPARISON_FUNC_NEVER || f == 0) f = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        d.DepthStencilState.DepthFunc = f;
+        if (inl && tp.dsvFormat != DXGI_FORMAT_UNKNOWN) d.DSVFormat = tp.dsvFormat; // the game's own depth buffer
+    }
     d.SampleMask = UINT_MAX; d.SampleDesc.Count = 1;
     d.NumRenderTargets = UINT(dp.outs.size());
     for (size_t i = 0; i < dp.outs.size(); ++i) {
@@ -1020,6 +1045,10 @@ UniformMap terrainOver() {
     // gl_ProjectionMatrix) is therefore the unflipped one; everything it reconstructs with stays flipped.
     auto proj = gU.v["gbufferProjection"];
     for (int c = 0; c < 4; ++c) proj[size_t(c * 4 + 1)] = -proj[size_t(c * 4 + 1)];
+    if (gameProjTerrain()) { // the wrapper applies the game's projection itself
+        proj = {}; proj[0] = proj[5] = proj[10] = proj[15] = 1.0f;
+        std::array<float, 16> m{}; m[0] = 1; over["bf_mode"] = m;
+    }
     over["iris_ModelViewMat"] = view; over["modelViewMatrix"] = view;
     over["iris_ProjMat"] = proj; over["projectionMatrix"] = proj;
     over["iris_NormalMat"] = mat3Of(view); over["normalMatrix"] = mat3Of(view);
@@ -1167,6 +1196,7 @@ struct InlineFrame {
     D3D12_GPU_VIRTUAL_ADDRESS  vcb = 0, pcb = 0;
     std::map<UINT, UINT>       tables;
     int                        drawn = 0;
+    size_t                     dsv = 0;        // the depth the terrain went into (vs the one the cloud hook copies)
 } gIn;
 bool    gLastRunOk = false;  // the chain finished last frame: only then may the game's terrain be taken over
 int64_t gLastRunMs = 0;
@@ -1278,6 +1308,7 @@ int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, siz
     if (gIn.frame != gGpu.frame) {
         touched = 1;
         if (!beginInline(list, gameRt, gameRtv, calls)) { gIn.ok = false; return touched; }
+        gIn.dsv = gameDsv;
     }
     if (!gIn.ok || gIn.list != list) return touched;
     UINT const table = drawTable(d, false, gIn.ring, gIn.srvNext, gIn.tables);
@@ -1309,6 +1340,17 @@ int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, siz
 
 void noteTerrainPso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d) {
     auto tp = std::make_shared<TerrainPso>();
+    tp->depthFunc = d.DepthStencilState.DepthFunc;
+    tp->dsvFormat = d.DSVFormat;
+    {
+        static std::mutex lm; static std::set<std::string> seen;
+        std::string const k = std::to_string(d.DepthStencilState.DepthEnable) + "/" + std::to_string(int(d.DepthStencilState.DepthWriteMask)) + "/" +
+                              std::to_string(int(d.DepthStencilState.DepthFunc)) + "/" + std::to_string(int(d.DSVFormat)) + "/" +
+                              std::to_string(d.NumRenderTargets) + "/" + std::to_string(int(d.RTVFormats[0]));
+        std::lock_guard g(lm);
+        if (seen.size() < 32 && seen.insert(k).second)
+            ll_shim::info("[RF] IrisBridge: game terrain pipeline depth enable/write/func/dsv fmt/RTs/rt0 fmt = " + k);
+    }
     for (UINT k = 0; k < d.InputLayout.NumElements; ++k) {
         auto const& e = d.InputLayout.pInputElementDescs[k];
         tp->names.emplace_back(e.SemanticName ? e.SemanticName : "");
@@ -1521,8 +1563,10 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     if (rtState != D3D12_RESOURCE_STATE_RENDER_TARGET) barrierRaw(list, t.rt, D3D12_RESOURCE_STATE_RENDER_TARGET, rtState);
     gLastRunOk = finalDone && drawn > 0;
     gLastRunMs = msNow();
-    if (inl && ((gGpu.frame & 255) == 3 || gIn.drawn != gGpu.terrain.last)) {
-        ll_shim::info("[RF] IrisBridge: inline terrain " + std::to_string(gIn.drawn) + " draws (world drawn once)");
+    if (inl && (gGpu.frame & 255) == 3) {
+        ll_shim::info("[RF] IrisBridge: inline terrain " + std::to_string(gIn.drawn) + " draws (world drawn once); terrain dsv " +
+                      std::to_string(gIn.dsv) + (gIn.dsv == t.dsv ? " = " : " != ") + "cloud-hook dsv " + std::to_string(t.dsv) +
+                      (gameProjTerrain() ? ", game projection" : ", pack projection"));
         gGpu.terrain.last = gIn.drawn;
     }
     if ((gGpu.frame & 63) == 1)
