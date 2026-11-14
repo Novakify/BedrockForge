@@ -456,16 +456,19 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     aero += float3(0.90, 0.97, 1.00) * pow(1.0 - NV, 3.0) * 0.30;                       // the clean white rim
     aero = lerp(aero, aero * float3(1.05, 0.78, 0.90), smoothstep(0.15, 0.55, k) * (1.0 - neonK));   // dusk
     aero *= lerp(0.50, 1.0, sky);
-    // the endgame / night: the same glass, its colours its own, lit from within like the city around it - a glow
-    // that breathes, a soft light running along it, a bright glass rim. (Seen in game: turning the colours up made
-    // diamond look like diamond, not diamond glass.)
-    float  breathe = 0.85 + 0.15 * sin(T * 2.2 + wp.y * 3.0);
-    float  lines = pow(saturate(1.0 - abs(frac(dot(wp, float3(4.0, 26.0, 4.0)) - T * 1.6) - 0.5) * 2.0), 24.0);
-    float3 night = float3(ngEnv(Tr, 0.0).r, ngEnv(Tg, 0.0).g, ngEnv(Tb, 0.0).b) * aeroTint * 0.9 + aeroTint * 0.60 * breathe;
-    night = lerp(night, ngEnv(R, 0.0), Fg * 0.35);
-    night += aeroTint * lines * 0.35;
-    night += lerp(float3(0.80, 0.95, 1.00), aeroTint, 0.30) * pow(1.0 - NV, 2.2) * 0.95;
-    night += float3(1.0, 1.0, 1.0) * glint * 2.4;
+    // the endgame / night: crystallized glass in the item's own colour - cut facets that each catch the light their own
+    // way, a soft glow from within, a rim and a sparkle. (Seen on Hive: the earlier glow made diamond a flat, far too
+    // bright cyan - not a crystal.)
+    float3 Lc   = normalize(float3(-0.35, 0.75, 0.55));
+    float  fct  = dot(normalize(gn - n * dot(gn, n) * 0.5), Lc);          // each texel's facet tilt
+    float  facet = 0.70 + 0.45 * saturate(0.5 + 0.5 * fct);
+    float  breathe = 0.90 + 0.10 * sin(T * 2.2 + wp.y * 3.0);
+    float3 own  = alb * lerp(1.0, 0.85, grey);                            // its own colour, not turned up
+    float3 night = own * 0.62 * facet;
+    night += float3(ngEnv(Tr, 0.0).r, ngEnv(Tg, 0.0).g, ngEnv(Tb, 0.0).b) * hue * 0.18;  // a little of the city through it
+    night += hue * (0.05 + 0.07 * gem) * breathe;                          // the glow from within, gentle
+    night += lerp(float3(0.85, 0.95, 1.00), hue, 0.55) * pow(1.0 - NV, 3.0) * 0.35;      // glass rim
+    night += lerp(float3(1.0, 1.0, 1.0), hue, 0.25) * glint * 1.4;        // the sparkle on a facet
     return lerp(aero, night, neonK);
 }
 #endif

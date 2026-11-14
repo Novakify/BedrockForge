@@ -1,6 +1,5 @@
 // Novak Glass particles (installed in the Novak Glass pack only; the Cloud Sea pack keeps vanilla particles).
-// Warm sparks, flames and explosion fire turn neon - orange to hot magenta, gold to electric cyan - and glow a little
-// brighter; block-break debris (the block atlas) keeps its colours with a cool glass sheen, like shards.
+// Particles keep their own colours; block-break debris (the block atlas) keeps its colours with a cool glass sheen, like shards.
 Texture2D    s_ParticleTextureTexture : register(t0);
 SamplerState s_ParticleTextureSampler : register(s0);
 float3 ngNeonWarmP(float3 d, out float w) {
@@ -22,11 +21,9 @@ float4 main(PSIn i) : SV_Target {
     uint tw, th, lv0;
     s_ParticleTextureTexture.GetDimensions(0, tw, th, lv0);
     float3 c = t.rgb;
-    [branch] if (tw <= 512) {
-        float w;
-        float3 lc = ngNeonWarmP(csLin(c), w);
-        c = csEnc(lc * (1.0 + 0.6 * w));
-    } else {
+    // (sparks / flames / fire used to turn hot pink and cyan here - seen on Hive as a random pink hue; they keep their
+    //  own colours now. ngNeonWarmP stays for reference.)
+    [branch] if (tw > 512) {
         c = lerp(c, c * float3(0.92, 1.00, 1.10) + 0.04, 0.35);   // shards
     }
     return float4(c, t.a);
