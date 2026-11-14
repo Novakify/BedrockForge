@@ -88,3 +88,10 @@ for Fernando's personal use only, not distributed; the original mods are not rel
   offline, including the torn limb, and baked.
 - **Sable Ragdolls 0.8.1 by Leonardoinc22** (NeoForge, Apache-2.0): its limp ragdoll fall and roll, simulated and baked
   the same way.
+- **Sounds**: the death scenes play the mods' own .ogg files (Finishers' victim cry, sword swing and quick punches;
+  Sable Ragdolls' impact / small impact), embedded in src/DeathSoundsData.h and played by src/DeathSounds.cpp.
+
+## stb_vorbis
+
+third_party/stb/stb_vorbis.c - Ogg Vorbis decoder by Sean Barrett, public domain (or MIT, its choice); used to decode
+the death scene sounds.

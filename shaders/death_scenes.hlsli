@@ -1,6 +1,6 @@
 // ---- death scenes: the seven kill animations of LyricsFlow's death animations (by 374m, used with the author's
 //      permission), rebuilt for Bedrock / Renderer Foundation by Novak: Chains of the Deep, Blackjack, Tentacles,
-//      Lightning Ash, Giant Hand, Hungry Chest, Executioner - and 7-13 from Finishers, Ragdollified and Sable Ragdolls
+//      Lightning Ash, Giant Hand, Hungry Chest, Executioner - and 7-15 from Finishers, Ragdollified and Sable Ragdolls
 //      (death_scenes_ext.hlsli). One per kill, dealt from a shuffle bag (SkyPass).
 //      Everything is ray-traced boxes / capsules in the World FX pass, depth-tested against the world, drawn at the
 //      world's own resolution (1/16 block texels, face-shaded like blocks; particles are little cubes, not soft blobs).
@@ -387,7 +387,7 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
         // only pixels near the scene: a 4.5-block ball, or (hand, lightning) the column above it
         float2 ax = feet.xz - rd.xz * (dot(feet.xz, rd.xz) / max(dot(rd.xz, rd.xz), 1e-5));
         bool   col = (sc == 3 || sc == 4) && dot(ax, ax) < 3.5 * 3.5 && dot(feet.xz, rd.xz) > -3.5;
-        float  cr = sc == 12 ? 7.0 : ((sc == 7 || sc == 11) ? 5.6 : 4.5);   // the ragdolls and the long finishers reach further
+        float  cr = (sc == 12 || sc == 13) ? 7.0 : ((sc == 7 || sc == 11) ? 5.6 : 4.5);   // the ragdolls and the long finishers reach further
         if (!nearRay(rd, feet + float3(0, 1.2, 0), cr) && !col) continue;
 
         DFx fx; fx.team = pow(max(eB[i].rgb, 0.0), 2.2);

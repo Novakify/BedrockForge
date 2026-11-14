@@ -2,7 +2,8 @@
 //      raiiiden) and Sable Ragdolls (by Leonardoinc22), all used with their authors' permission; Bedrock / Renderer
 //      Foundation port by Novak.
 //      7 Finisher (First Finisher)  8 Shield Counter  9 Headbutt (Quick Finisher 4)  10 Kick (Quick Finisher 5)
-//      11 Ultimate Attack  12 Ragdollified  13 Sable Ragdoll
+//      11 Ultimate Attack  12/13 Ragdollified (melee throw / side hit)  14/15 Sable Ragdoll (slump / roll)
+//      (the CPU picks the ragdoll's variant, so its sounds - DeathSounds.cpp - land with what is drawn)
 //      The finishers play the mod's own animation clips (baked at 20 Hz by tools/gen_death_tables.py, easings and all);
 //      the killer is a phantom - an ink figure with a lit rim - since the real one is already off fighting. The
 //      ragdolls are the mods' rigid-body ragdolls, simulated offline with Bullet and baked. Camera moves, cinematic
@@ -27,7 +28,7 @@ float3x3 dtEuler(float3 r) { return mul(rotZ(r.z), mul(rotY(r.y), rotX(r.x))); }
 // Bedrock's pivots (the Java biped's): every part turns about its own, the body about the neck
 static const float3 kPB[6] = { float3(0, 24, 0), float3(0, 24, 0), float3(-5, 22, 0), float3(5, 22, 0), float3(-1.9, 12, 0), float3(1.9, 12, 0) };
 
-struct DRig { float3 hand; float3x3 handR; float3 handL; float3 head; float fing; float3x3 fingR; };
+struct DRig { float3 hand; float3 handF; float3 handD; float3 handL; float3 head; float fing; float3 fingD; };   // vectors, not matrices: fewer live registers
 // a body playing a clip: O = feet, R = its facing; parts: bit j drawn
 DRig dsClip(inout DHit h, float3 rd, float3 O, float3x3 R, uint off, uint n, float fr, int parts, DFx fx) {
     DRig g;
@@ -35,19 +36,26 @@ DRig dsClip(inout DHit h, float3 rd, float3 O, float3x3 R, uint off, uint n, flo
     dtBone(off, n, fr, 6, rr, rp, rs);
     float3x3 Rr = mul(R, dtEuler(rr));
     float3 Or = O + mul(R, rp * DPX);
-    bool near = nearRay(rd, Or + mul(Rr, float3(0, 16.0 * DPX, 0)), 1.8);
-    g.hand = Or; g.handL = Or; g.head = Or; g.handR = Rr; g.fing = 0.0; g.fingR = Rr;
+    // pixels nowhere near the body (most of the scene's ball) get a rough rig and skip the bones: everything drawn
+    // off the rig (sword, finger, the flash at the head) lies within this 2.1-block ball
+    g.head = Or + mul(Rr, float3(0, 28.0 * DPX, 0)); g.hand = Or + mul(Rr, float3(-6.0, 12.0, 0) * DPX); g.handL = Or + mul(Rr, float3(6.0, 12.0, 0) * DPX);
+    g.handF = mul(Rr, float3(0, 0.15, 1)); g.handD = mul(Rr, float3(0, -1, 0)); g.fing = 0.0; g.fingD = g.handD;
+    if (!nearRay(rd, Or + mul(Rr, float3(0, 16.0 * DPX, 0)), 2.1)) return g;
+    bool near = true;
     [loop] for (int j = 0; j < 6; j++) {
         dtBone(off, n, fr, j, r, p, s);
         float3x3 Rj = mul(Rr, dtEuler(r));
         float3 P = Or + mul(Rr, (kPB[j] + p) * DPX) + mul(Rj, (kPC[j] - kPB[j]) * DPX);
         if (j == 0) g.head = P;
-        if (j == 2) { g.hand = P + mul(Rj, float3(0, -5.0, 0) * DPX); g.handR = Rj; }
+        if (j == 2) {
+            g.hand = P + mul(Rj, float3(0, -5.0, 0) * DPX); g.handF = mul(Rj, float3(0, 0.15, 1)); g.handD = mul(Rj, float3(0, -1, 0));
+            float3 fr2, fp2; float fs2;
+            dtBone(off, n, fr, 7, fr2, fp2, fs2);                   // Finishers' extra bone (the gesture's finger), on this hand
+            g.fing = fs2; g.fingD = mul(Rj, mul(dtEuler(fr2), float3(0, -1, 0)));
+        }
         if (j == 3) g.handL = P + mul(Rj, float3(0, -5.0, 0) * DPX);
         if (near && ((parts >> j) & 1) != 0) dsPart(h, rd, j, P, Rj, 1.0, -99.0, 99.0, fx);
     }
-    dtBone(off, n, fr, 7, r, p, s);                          // Finishers' extra bone (the gesture's finger)
-    g.fing = s; g.fingR = mul(g.handR, dtEuler(r));
     return g;
 }
 
@@ -82,10 +90,13 @@ void dsRagdoll(inout DHit h, float3 rd, float3 O, float3x3 RY, uint off, float f
     float3 P; float3x3 R;
     dtRag(off, fr, 1, mirror, P, R);
     float3 C = O + mul(RY, P);
+    bool nearC = nearRay(rd, C, 1.7);
+    if (!nearC && sever < 0) return;                       // the attached body lies within 1.7 of its chest
     [loop] for (int j = 0; j < 6; j++) {
+        if (j != sever && !nearC) continue;
         dtRag(off, fr, j, mirror, P, R);
         float3 W = O + mul(RY, P);
-        if (j != sever && !nearRay(rd, C, 1.7)) continue;
+        if (j == sever && !nearRay(rd, W, 0.6)) continue;
         // a severed limb shows its cut at the shoulder end
         dsPart(h, rd, j, W, mul(RY, R), 1.0, -99.0, j == sever ? 5.9 : 99.0, fx);
     }
@@ -164,7 +175,7 @@ void fnArc(inout float3 add, float3 rd, float3 C, float3 U, float3 V, float r, f
 }
 // the phantom's sword: ink blade with a white edge, from the fist along the arm's forward axis
 void fnSword(inout DHit h, float3 rd, DRig g, float glint) {
-    float3 dir = normalize(mul(g.handR, float3(0, 0.15, 1)));
+    float3 dir = normalize(g.handF);
     float3x3 RB = basisOf(dir, 0.0);
     dsBox(h, rd, g.hand + dir * 0.46, float3(0.022, 0.40, 0.05), RB, hex3(10, 10, 14), hex3(236, 226, 255) * (0.9 + 2.5 * glint));
     dsBox(h, rd, g.hand + dir * 0.02, float3(0.11, 0.025, 0.035), RB, hex3(20, 18, 26), hex3(236, 226, 255) * 0.5);   // the guard
@@ -245,8 +256,8 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         DRig g = dsClip(h, rd, AO, RC, FN_TAUNT, FN_TAUNT_N, max(T - 4.0, 0.0), 63, fg);
         if (g.fing > 1.05 && fg.ash < 0.95) {   // the finger: up off the fist, two pixels to three as it extends
             float L = 1.5 * g.fing;
-            float3 ax = mul(g.fingR, float3(0, -1, 0));
-            dsBox(h, rd, g.hand + mul(g.handR, float3(0, -1.2, 0) * DPX) + ax * L * DPX, float3(0.6, L, 0.6) * DPX, g.fingR, hex3(10, 10, 14), rimC * 1.4);
+            float3 ax = normalize(g.fingD);
+            dsBox(h, rd, g.hand + g.handD * 1.2 * DPX + ax * L * DPX, float3(0.6, L, 0.6) * DPX, basisOf(-ax, 0.0), hex3(10, 10, 14), rimC * 1.4);
         }
         float TF = 55.0;   // the gesture lands (tick 51 of the clip)
         add += float3(0.86, 0.91, 1.0) * fnFlash(rd, g.head, 0.5, h.t) * exp(-max(T - TF, 0.0) / 2.5) * step(TF, T) * 0.6;
@@ -342,10 +353,10 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         if (t < th) dsBody(h, rd, feet, RV, 1.0, -99.0, 99.0, fx);
         else dsRagdoll(h, rd, feet, RT, RD_SIDE, (t - th) * 20.0, false, -1, fx);
         fnCrit(h, rd, feet + float3(0, 1.0, 0), t - th, seed + 1.0, 16, 2.5);
-    } else if (sc == 12) {
+    } else if (sc == 12 || sc == 13) {
         // ============ RAGDOLLIFIED: the killing blow throws the body as a ragdoll - it flies, lands, flops, a limb
         // may tear away on a hard landing; it lies a moment and then comes apart
-        bool  melee = h1(seed * 0.53) < 0.55;
+        bool  melee = sc == 12;
         bool  mir = h1(seed * 0.29) < 0.5;
         uint  off = melee ? RD_MELEE : RD_SIDE;
         float3x3 RB = rotY(yaw);
@@ -373,7 +384,7 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
     } else {
         // ============ SABLE RAGDOLL: the body goes limp where it stood and falls under its own weight - knees fold,
         // it slumps; or it is knocked over and rolls (the ragdoll's own roll) and reaches out once. Then it is gone
-        bool  slump = h1(seed * 0.53) < 0.5;
+        bool  slump = sc == 14;
         bool  mir = h1(seed * 0.29) < 0.5;
         uint  off = slump ? SB_SLUMP : SB_ROLL;
         float3x3 RB = rotY(yaw);

@@ -37,6 +37,7 @@
 #include <filesystem>
 #include "UiCapture.h"
 #include "GlassArmor.h"
+#include "DeathSounds.h"
 #include "WorldFx.h"
 
 #if __has_include("SkyShaders.h")
@@ -1485,7 +1486,7 @@ void testBed() { ++gTestBedReq; }
 // the same one twice in a row). 0-6 LyricsFlow's death animations (by 374m); 7-11 Finishers (by akeresmods): First
 // Finisher, Shield Counter, Headbutt, Kick, Ultimate Attack; 12 Ragdollified (by raiiiden); 13 Sable Ragdolls (by
 // Leonardoinc22) - all used with their authors' permission (shaders/death_scenes*.hlsli)
-constexpr int kDeathScenes = 14;
+constexpr int kDeathScenes = 14;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
 static int deathSceneFor(uint64_t key) {
     static uint64_t keys[32]{}; static int vals[32]{}; static int nk = 0;
     for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
@@ -1502,6 +1503,14 @@ static int deathSceneFor(uint64_t key) {
     last = v;
     keys[nk % 32] = key; vals[nk % 32] = v; ++nk;
     return v;
+}
+// the scene code the shader draws: Ragdollified (12) and Sable Ragdolls (13) each come in two baked variants - the
+// CPU picks one, so the sounds (DeathSounds.cpp) land with what is drawn: 12 melee / 13 side, 14 slump / 15 roll
+static int deathSceneCode(int scene, uint64_t key) {
+    uint32_t const h = uint32_t((key * 0x9E3779B97F4A7C15ull) >> 40);
+    if (scene == 12) return 12 + int(h % 100u >= 55u);
+    if (scene == 13) return 14 + int(h & 1u);
+    return scene;
 }
 // where the camera looked when a kill came (the finishers lay the pair out side-on to it); kept per kill so the scene
 // doesn't swing round as you turn
@@ -1611,8 +1620,10 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eC[ne][2] = e.col[3];   // hits: 2 you were hit, 1 your hit, 0 someone else's
             if (e.kind == 3 || e.kind == 4) {
                 uint64_t const key = uint64_t(e.atMs) * 31u + uint64_t(e.seed);
-                int const sc = look.deathScene >= 0 ? look.deathScene : deathSceneFor(key);
+                int const sc = deathSceneCode(look.deathScene >= 0 ? look.deathScene : deathSceneFor(key), key);
                 c.eC[ne][1] = killYawFor(key);
+                float const kp[3] = {float(e.x) + 0.5f, float(e.y), float(e.z) + 0.5f};
+                rf::deathsfx::onKill(key, sc, age, kp, look.killSfx);
                 uint32_t const slot1 = v6 && e.floorDy >= 1 && e.floorDy <= 16 && b->skins[e.floorDy - 1].ok ? e.floorDy : 0;
                 c.eC[ne][3] = float(sc) + 16.0f * float(slot1);
             } else if (e.kind == 6) {   // the fireworks go up where you were looking when the win came, and stay there
@@ -1629,7 +1640,10 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eA[ne][0] = std::floor(gTestKill.p[0]); c.eA[ne][1] = std::floor(gTestKill.p[1]); c.eA[ne][2] = std::floor(gTestKill.p[2]); c.eA[ne][3] = ta;
             c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = float(gTestKill.kind);
             c.eC[ne][0] = 4242.0f; c.eC[ne][1] = killYawFor(uint64_t(gTestKill.at) + 7u);
-            c.eC[ne][3] = float(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u)) + 16.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
+            int const tsc = deathSceneCode(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u), uint64_t(gTestKill.at) + 7u);
+            float const tkp[3] = {std::floor(gTestKill.p[0]) + 0.5f, std::floor(gTestKill.p[1]), std::floor(gTestKill.p[2]) + 0.5f};
+            rf::deathsfx::onKill(uint64_t(gTestKill.at) + 7u, tsc, ta, tkp, look.killSfx);
+            c.eC[ne][3] = float(tsc) + 16.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
@@ -2427,6 +2441,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
     gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
+    { float const lp[3] = {float(snap.pos[0]), float(snap.pos[1]), float(snap.pos[2])}; rf::deathsfx::setListener(lp, snap.forward); }
     if (gTestBedReq.exchange(0)) {
         float fx = snap.forward[0], fz = snap.forward[2], fl = std::sqrt(fx * fx + fz * fz);
         if (fl < 1e-3f) fx = 0, fz = 1, fl = 1;
@@ -2559,6 +2574,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
         else if (k == "deathscene") gLook.deathScene = std::clamp(int(v), -1, kDeathScenes - 1);
+        else if (k == "killsfx") gLook.killSfx = std::clamp(float(v), 0.0f, 1.0f);
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
@@ -2635,7 +2651,7 @@ void saveWorldFxSettings() {
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nglass " << gLook.glass << "\nbeds " << (gLook.beds ? 1 : 0)
-        << "\nskyrate " << gLook.skyRate << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
+        << "\nskyrate " << gLook.skyRate << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene << "\nkillsfx " << gLook.killSfx
         << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\n";
 }
 
