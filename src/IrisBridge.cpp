@@ -224,7 +224,7 @@ struct Gpu {
     UINT cpuCt(int i, int k) const { return UINT(i * 2 + k); }
     static constexpr UINT kCpuDepth = 32, kCpuShadowDepth = 33, kCpuShadowColor = 34, kCpuNoise = 35, kCpuWhite = 36,
                           kCpuNull = 37, kCpuScene = 38, kCpuShadowColor1 = 39, kCpuAtlas0 = 40, kCpuCount = 72;
-    static constexpr UINT kRtvGame = 32, kRtvShadow0 = 34, kRtvCount = 36;
+    static constexpr UINT kRtvGame = 32, kRtvShadow0 = 34, kRtvNull = 36, kRtvCount = 37;
 } gGpu;
 
 // per-frame uniform state
@@ -244,6 +244,7 @@ struct TerrainPso {
     std::vector<std::string>              names;
     D3D12_COMPARISON_FUNC                 depthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL; // the game's (mirrored when we draw in its place)
     DXGI_FORMAT                           dsvFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    DXGI_FORMAT                           rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM;     // its colour target (the inline key slot)
 };
 /// The bundle's terrain wrapper can apply the game's own projection (bf_mode): then the pack gets an identity one and
 /// its terrain lands exactly where vanilla's does, depth included
@@ -476,6 +477,10 @@ bool ensureDevice(ID3D12Device* dev) {
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gGpu.dsvHeap)))) return false;
     gGpu.srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     gGpu.rtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    {   // a null render target (unused slots between the pack's targets and the inline key at 7)
+        D3D12_RENDER_TARGET_VIEW_DESC nv{}; nv.Format = DXGI_FORMAT_R8G8B8A8_UNORM; nv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+        dev->CreateRenderTargetView(nullptr, &nv, rtvAt(Gpu::kRtvNull));
+    }
     D3D12_HEAP_PROPERTIES up{D3D12_HEAP_TYPE_UPLOAD};
     D3D12_RESOURCE_DESC   bd{};
     bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1; bd.SampleDesc.Count = 1;
@@ -513,6 +518,8 @@ bool ensureDevice(ID3D12Device* dev) {
     return true;
 }
 
+bool gInlinePrepared = false; // inline terrain: the gbuffers are cleared + in RENDER_TARGET (end of the last run())
+
 // GPU objects dropped by a pack / size switch: the GPU may still be using them for the frames in flight, so they are
 // released kRing + 2 frames later instead of at once (a switch mid-game must never pull a resource out from under it)
 std::vector<std::pair<uint64_t, ComPtr<IUnknown>>> gGrave;
@@ -528,6 +535,7 @@ void sweepGrave() {
 }
 
 bool loadBundle(std::string const& name, std::string const& world) {
+    gInlinePrepared = false;
     auto b = std::make_unique<Bundle>();
     if (!b->load((gRoot / name / "runtime.txt").string())) { setStatus("bundle: " + b->error); return false; }
     gGpu.bundle = std::move(b);
@@ -564,6 +572,7 @@ bool ensureTargets(ID3D12GraphicsCommandList* list, UINT w, UINT h, DXGI_FORMAT 
         return true;
     }
     Bundle const& B = *gGpu.bundle;
+    gInlinePrepared = false; // new targets start in PIXEL_SHADER_RESOURCE
     for (int i = 0; i < kColortex; ++i) {
         for (int k = 0; k < 2; ++k) buryTex(gGpu.ct[k][size_t(i)]);
         if (!gGpu.used[size_t(i)]) continue;
@@ -847,6 +856,7 @@ ID3D12PipelineState* drawPso(Gpu::DrawProg& dp, TerrainPso const& tp, bool inl =
     }
     bool const gp = !dp.shadow && gameProjTerrain();
     if (inl) key += "inline";
+    if (inl && !dp.shadow) key += " key" + std::to_string(int(tp.rtvFormat));
     if (gp) key += " gp" + std::to_string(int(tp.depthFunc)) + "/" + std::to_string(int(tp.dsvFormat));
     if (have != 15) { dp.error = "the game's terrain input layout is not POSITION0/COLOR0/TEXCOORD0/TEXCOORD1"; return nullptr; }
     if (auto it = dp.psos.find(key); it != dp.psos.end()) return it->second.Get();
@@ -893,6 +903,13 @@ ID3D12PipelineState* drawPso(Gpu::DrawProg& dp, TerrainPso const& tp, bool inl =
     for (size_t i = 0; i < dp.outs.size(); ++i) {
         d.RTVFormats[i] = dp.shadow ? gGpu.shadowCol[size_t(dp.outs[i])].fmt : gGpu.ct[0][size_t(dp.outs[i])].fmt;
         d.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    }
+    if (inl && !dp.shadow) { // null slots, then the key into the game's colour target at 7 (see drawTerrainInline)
+        if (dp.outs.size() > 7) { dp.error = "more than 7 gbuffer outputs: no room for the inline key"; return nullptr; }
+        for (size_t i = dp.outs.size(); i < 7; ++i) d.RTVFormats[i] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        d.RTVFormats[7] = tp.rtvFormat;
+        d.BlendState.RenderTarget[7].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        d.NumRenderTargets = 8;
     }
     ComPtr<ID3D12PipelineState> pso;
     if (FAILED(gGpu.dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&pso)))) { dp.error = "CreateGraphicsPipelineState failed"; return nullptr; }
@@ -1064,8 +1081,8 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
     std::vector<TerrainDraw> draws;
     {
         std::lock_guard l(gRecMutex);
-        if (auto it = gRec.find(list); it != gRec.end()) draws.swap(it->second);
-        for (auto& [k, v] : gRec) v.clear(); // other lists' draws are another frame's / view's
+        // every list's draws: Bedrock records terrain on several lists in parallel (this one alone held ~1/10th)
+        for (auto& [k, v] : gRec) { draws.insert(draws.end(), std::make_move_iterator(v.begin()), std::make_move_iterator(v.end())); v.clear(); }
     }
     if (draws.empty() || !gTerrainOn) return 0;
     D3D12_INDEX_BUFFER_VIEW  gameIb{};
@@ -1152,13 +1169,14 @@ int replayTerrain(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, 
 /// Clears (colortexNClear, Iris default true) + the game's colour into colortex0. over: only what the game drew since
 /// its target was cleared to 0 (inline terrain) goes on top of what the pack's gbuffers already wrote.
 void importScene(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, UINT& srvNext, D3D12_VIEWPORT const& vp,
-                 D3D12_RECT const& sc, bool clear, bool over) {
+                 D3D12_RECT const& sc, bool clear, bool over, std::vector<int> const* keep = nullptr) {
     auto gpuAt = [&](UINT i) { auto h = gGpu.srvHeap->GetGPUDescriptorHandleForHeapStart(); h.ptr += UINT64(i) * gGpu.srvInc; return h; };
     auto cpuRingAt = [&](UINT i) { auto h = gGpu.srvHeap->GetCPUDescriptorHandleForHeapStart(); h.ptr += size_t(i) * gGpu.srvInc; return h; };
     Bundle const& B = *gGpu.bundle;
     if (clear)
         for (int i = 1; i < kColortex; ++i) {
             if (!gGpu.used[size_t(i)] || B.constOr("colortex" + std::to_string(i) + "Clear", "true") == "false") continue;
+            if (keep && std::find(keep->begin(), keep->end(), i) != keep->end()) continue; // holds this frame's inline terrain
             float const cc[4] = {i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f, i == 1 ? 1.0f : 0.0f}; // Iris: colortex1 clears to white
             barrier(list, gGpu.ct[0][size_t(i)], D3D12_RESOURCE_STATE_RENDER_TARGET);
             list->ClearRenderTargetView(rtvAt(UINT(i * 2)), cc, 0, nullptr);
@@ -1183,62 +1201,46 @@ void importScene(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, U
 // ---------------------------------------------------------------- inline terrain (the world drawn once)
 // Instead of letting Bedrock draw its chunks and replaying them through the pack later (the world drawn twice), each
 // RenderChunk draw is swapped for the pack's gbuffers_terrain right where the game issues it: into the pack's gbuffers
-// and the game's own depth (so everything vanilla draws afterwards depth-tests against it). The first one of a frame
-// sets the frame up (uniforms, clears, the sky so far into colortex0) and clears the game's colour to an exact 0 key;
-// at the cloud hook only what vanilla drew after that (entities, items, particles) is laid back over (importScene over).
+// and the game's own depth, placed with the game's own projection (bf_mode), so everything vanilla draws afterwards
+// depth-tests against it exactly as before. Bedrock records terrain on several command lists in parallel (and some
+// still record after the cloud hook), so nothing here may issue GPU work that has to run "first": the gbuffers are
+// cleared at the END of the previous frame's run() (always executed before this frame's terrain), every draw binds its
+// own state, and the pack's terrain fragment writes an exact-zero key into the game's colour target (SV_Target7). At
+// the cloud hook only what vanilla drew there (sky, entities, particles: anything but the key) is laid over colortex0.
 struct InlineFrame {
-    uint64_t                   frame = ~0ull;  // gGpu.frame it belongs to (run() bumps it)
+    uint64_t                   present = ~0ull;  // the Present it belongs to
     bool                       ok = false;
-    ID3D12GraphicsCommandList* list = nullptr;
-    int64_t                    beganMs = 0;
-    UINT                       ring = 0, srvNext = 0;
-    UINT64                     cbOff = 0;
     D3D12_GPU_VIRTUAL_ADDRESS  vcb = 0, pcb = 0;
     std::map<UINT, UINT>       tables;
     int                        drawn = 0;
-    size_t                     dsv = 0;        // the depth the terrain went into (vs the one the cloud hook copies)
+    size_t                     dsv = 0;          // the depth the terrain went into (vs the one the cloud hook copies)
 } gIn;
-struct InlineStats { int calls = 0, otherList = 0, notOk = 0, sizeMismatch = 0, noPso = 0; std::set<void*> lists; std::set<size_t> dsvs; } gInStats;
-// Bedrock can draw the world more than once per frame (the cloud hook - run() - then fires once per view). Inline
-// terrain takes over only the view that had the most terrain draws last frame (the main world); the others stay on
-// the replay path. Views are numbered by run() calls since the last Present.
-int              gRunInPresent = 0;   // run() calls so far this frame
-int              gTerrainCalls = 0;   // terrain draws seen since the last run()
-std::vector<int> gViewDraws;          // terrain draws per view, this frame
-int              gInlineView = -1;    // the view taken over (from last frame's counts)
-bool    gLastRunOk = false;  // the chain finished last frame: only then may the game's terrain be taken over
-int64_t gLastRunMs = 0;
+struct InlineStats { int calls = 0, notOk = 0, sizeMismatch = 0, noPso = 0, other = 0; std::set<void*> lists; std::set<size_t> dsvs; } gInStats;
+std::atomic<uint64_t> gPresentIdx{0};
+uint64_t gUniformsPresent = ~0ull;   // frameUniforms() runs once per frame (inline terrain or run(), whichever is first)
+bool     gLastRunOk = false;         // the chain finished last frame: only then may the game's terrain be taken over
+int64_t  gLastRunMs = 0;
+// this frame's slice of the ring (constants + descriptor tables), shared by inline terrain and run() on any list
+struct FrameAlloc { uint64_t present = ~0ull; UINT ring = 0; UINT64 cbOff = 0; UINT srvNext = 0; } gAlloc;
+FrameAlloc& frameAlloc() {
+    uint64_t const p = gPresentIdx.load();
+    if (gAlloc.present != p) { gAlloc.present = p; gAlloc.ring = UINT(p % kRing); gAlloc.cbOff = 0; gAlloc.srvNext = gAlloc.ring * kSrvPerFrame; }
+    return gAlloc;
+}
+bool uniformsForThisFrame(rf::lyrics::CameraSnap const& cam) {
+    uint64_t const p = gPresentIdx.load();
+    if (gUniformsPresent == p) return true;
+    gUniformsPresent = p;
+    frameUniforms(cam);
+    return true;
+}
+/// The bundle's terrain fragment writes the key at SV_Target7 (bf_wrapper >= 3) and it fits next to the pack's outputs
+bool inlineCapable() {
+    return gGpu.bundle && gameProjTerrain() && std::atoi(gGpu.bundle->constOr("bf_wrapper", "0").c_str()) >= 3 &&
+           gGpu.terrain.pass && gGpu.terrain.outs.size() <= 7;
+}
 
 int64_t msNow() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
-
-bool beginInline(ID3D12GraphicsCommandList* list, ID3D12Resource* gameRt, size_t gameRtv, rf::sky::Calls const& calls) {
-    gIn = InlineFrame{};
-    gIn.frame = gGpu.frame; gIn.list = list; gIn.beganMs = msNow();
-    auto cam = rf::lyrics::camera();
-    if (!cam.valid || gIn.beganMs - cam.atMs > 250 || cam.proj[0] == 0 || cam.proj[5] == 0) return false;
-    gIn.ring = UINT(gGpu.frame % kRing);
-    gIn.srvNext = gIn.ring * kSrvPerFrame;
-    frameUniforms(cam);
-    // the sky drawn so far -> our copy; then key the game's target to 0
-    barrierRaw(list, gameRt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    barrier(list, gGpu.scene, D3D12_RESOURCE_STATE_COPY_DEST);
-    list->CopyResource(gGpu.scene.r.Get(), gameRt);
-    barrierRaw(list, gameRt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    barrier(list, gGpu.scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    float const zero[4] = {0, 0, 0, 0};
-    list->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{gameRtv}, zero, 0, nullptr);
-    ID3D12DescriptorHeap* heaps[] = {gGpu.srvHeap.Get()};
-    calls.setHeaps(list, 1, heaps);
-    D3D12_VIEWPORT const vp{0, 0, float(gGpu.w), float(gGpu.h), 0, 1};
-    D3D12_RECT const     sc{0, 0, LONG(gGpu.w), LONG(gGpu.h)};
-    importScene(list, calls, gIn.srvNext, vp, sc, true, false);
-    UniformMap const over = terrainOver();
-    gIn.vcb = writeGlobals(gGpu.terrain.pass->stages.at("vert"), gIn.cbOff, gIn.ring, &over);
-    gIn.pcb = writeGlobals(gGpu.terrain.pass->stages.at("frag"), gIn.cbOff, gIn.ring, &over);
-    for (int o : gGpu.terrain.outs) barrier(list, gGpu.ct[0][size_t(o)], D3D12_RESOURCE_STATE_RENDER_TARGET);
-    gIn.ok = gIn.vcb && gIn.pcb;
-    return gIn.ok;
-}
 
 } // namespace
 
@@ -1286,30 +1288,17 @@ void recordTerrain(ID3D12GraphicsCommandList* list, TerrainDraw&& d) {
     if (v.size() < 40000) v.push_back(std::move(d));
 }
 
-void onPresent() {
-    std::lock_guard l(gMutex);
-    int best = -1, bestN = 0;
-    for (size_t i = 0; i < gViewDraws.size(); ++i) if (gViewDraws[i] > bestN) { bestN = gViewDraws[i]; best = int(i); }
-    if (best != gInlineView) {
-        std::string v;
-        for (int n : gViewDraws) v += " " + std::to_string(n);
-        ll_shim::info("[RF] IrisBridge: views this frame (terrain draws):" + v + " -> inline view " + std::to_string(best));
-    }
-    gInlineView = best;
-    gViewDraws.clear(); gRunInPresent = 0; gTerrainCalls = 0;
-}
+void onPresent() { ++gPresentIdx; }
 
 int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, size_t gameRtv, ID3D12Resource* gameRt, size_t gameDsv,
                       rf::sky::Calls const& calls) {
     if (!gSet.inlineTerrain || !gameRt || !gameRtv || !gameDsv) return 0;
     std::lock_guard l(gMutex);
     ++gInStats.calls; gInStats.lists.insert(list); gInStats.dsvs.insert(gameDsv);
-    ++gTerrainCalls;
-    if (gRunInPresent != gInlineView) return 0; // not the main world view
     int64_t const now = msNow();
-    if (!gLastRunOk || now - gLastRunMs > 200 || !gGpu.terrain.pass || !gGpu.bundle || !gTerrainOn) return 0;
+    if (!gInlinePrepared || !gLastRunOk || now - gLastRunMs > 200 || !gTerrainOn || !inlineCapable()) { ++gInStats.notOk; return 0; }
     if (gPacks.empty() || gGpu.loadedName != gPacks[size_t(std::clamp(gSet.pack, 0, int(gPacks.size()) - 1))] ||
-        gGpu.loadedWorld != worldName(gSet.world)) return 0; // a pack switch is due: let run() do it on a frame of its own
+        gGpu.loadedWorld != worldName(gSet.world)) { ++gInStats.notOk; return 0; } // a pack switch is due: run() does it first
     auto const rd = gameRt->GetDesc();
     if (rd.Width != gGpu.w || rd.Height != gGpu.h) { ++gInStats.sizeMismatch; return 0; }
     std::shared_ptr<TerrainPso> tp;
@@ -1322,22 +1311,27 @@ int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, siz
     if (!tp) { ++gInStats.noPso; return 0; }
     ID3D12PipelineState* pso = drawPso(gGpu.terrain, *tp, true);
     unsigned long long const cbv = chunkCbv(d, ri);
-    if (!pso || !cbv || gGpu.terrain.outs.empty()) return 0;
-    if (gIn.frame == gGpu.frame && gIn.ok && now - gIn.beganMs > 40) { // a new frame without run(): stop taking terrain over
-        gIn.ok = false; gLastRunOk = false;
-        ll_shim::info("[RF] IrisBridge: inline terrain paused (the chain did not run last frame)");
-        return 0;
+    if (!pso || !cbv) { ++gInStats.noPso; return 0; }
+    // this frame's constants (once, on whichever list gets here first)
+    uint64_t const present = gPresentIdx.load();
+    if (gIn.present != present) {
+        gIn = InlineFrame{};
+        gIn.present = present;
+        auto cam = rf::lyrics::camera();
+        if (cam.valid && now - cam.atMs <= 250 && cam.proj[0] != 0 && cam.proj[5] != 0) {
+            uniformsForThisFrame(cam);
+            FrameAlloc& fa = frameAlloc();
+            UniformMap const over = terrainOver();
+            gIn.vcb = writeGlobals(gGpu.terrain.pass->stages.at("vert"), fa.cbOff, fa.ring, &over);
+            gIn.pcb = writeGlobals(gGpu.terrain.pass->stages.at("frag"), fa.cbOff, fa.ring, &over);
+            gIn.ok = gIn.vcb && gIn.pcb;
+            gIn.dsv = gameDsv;
+        }
     }
-    int touched = 0;
-    if (gIn.frame != gGpu.frame) {
-        touched = 1;
-        if (!beginInline(list, gameRt, gameRtv, calls)) { gIn.ok = false; return touched; }
-        gIn.dsv = gameDsv;
-    }
-    if (!gIn.ok) { ++gInStats.notOk; return touched; }
-    if (gIn.list != list) { ++gInStats.otherList; return touched; }
-    UINT const table = drawTable(d, false, gIn.ring, gIn.srvNext, gIn.tables);
-    if (table == UINT(-1)) return touched;
+    if (!gIn.ok) { ++gInStats.notOk; return 0; }
+    FrameAlloc& fa = frameAlloc();
+    UINT const table = drawTable(d, false, fa.ring, fa.srvNext, gIn.tables);
+    if (table == UINT(-1)) { ++gInStats.other; return 0; }
     auto gpu = gGpu.srvHeap->GetGPUDescriptorHandleForHeapStart(); gpu.ptr += UINT64(table) * gGpu.srvInc;
     ID3D12DescriptorHeap* heaps[] = {gGpu.srvHeap.Get()};
     calls.setHeaps(list, 1, heaps);
@@ -1347,14 +1341,14 @@ int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, siz
     calls.setTable(list, 2, gpu.ptr);
     list->SetGraphicsRootConstantBufferView(3, cbv);
     calls.setPso(list, pso);
+    // the pack's targets, null slots up to 6, the game's colour at 7 (the key); the game's depth
     D3D12_CPU_DESCRIPTOR_HANDLE rtvs[8]{};
     UINT n = 0;
     for (int o : gGpu.terrain.outs) rtvs[n++] = rtvAt(UINT(o * 2));
+    while (n < 7) rtvs[n++] = rtvAt(Gpu::kRtvNull);
+    rtvs[7] = D3D12_CPU_DESCRIPTOR_HANDLE{gameRtv};
     D3D12_CPU_DESCRIPTOR_HANDLE const dsv{gameDsv};
-    list->OMSetRenderTargets(n, rtvs, FALSE, &dsv);
-    D3D12_VIEWPORT const vp{0, 0, float(gGpu.w), float(gGpu.h), 0, 1};
-    D3D12_RECT const     sc{0, 0, LONG(gGpu.w), LONG(gGpu.h)};
-    list->RSSetViewports(1, &vp); list->RSSetScissorRects(1, &sc);
+    list->OMSetRenderTargets(8, rtvs, FALSE, &dsv);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     calls.setVb(list, 0, d.nVb, d.vb);
     list->IASetIndexBuffer(&d.ib);
@@ -1367,6 +1361,7 @@ void noteTerrainPso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC
     auto tp = std::make_shared<TerrainPso>();
     tp->depthFunc = d.DepthStencilState.DepthFunc;
     tp->dsvFormat = d.DSVFormat;
+    if (d.NumRenderTargets >= 1 && d.RTVFormats[0] != DXGI_FORMAT_UNKNOWN) tp->rtvFormat = d.RTVFormats[0];
     {
         static std::mutex lm; static std::set<std::string> seen;
         std::string const k = std::to_string(d.DepthStencilState.DepthEnable) + "/" + std::to_string(int(d.DepthStencilState.DepthWriteMask)) + "/" +
@@ -1461,11 +1456,15 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
         auto const t = fs::last_write_time(gRoot / "settings.txt", ec);
         if (!ec && t != gSettingsTime) { readSettings(); ll_shim::info("[RF] IrisBridge: settings reloaded (debug view " + std::to_string(gSet.debugView) + ")"); }
     }
-    bool const inl = gIn.ok && gIn.frame == gGpu.frame && gIn.drawn > 0; // this frame's terrain already went through the pack
-    UINT const ring = UINT(gGpu.frame++ % kRing);
-    UINT64 cbOff = inl ? gIn.cbOff : 0;
-    UINT   srvNext = inl ? gIn.srvNext : ring * kSrvPerFrame;
-    if (!inl) frameUniforms(cam);
+    // inline: this frame's terrain went (or goes, on lists recorded in parallel) straight into the gbuffers prepared at
+    // the end of the last run(); only the shadow pass is replayed here
+    bool const inl = gSet.inlineTerrain && inlineCapable() && gInlinePrepared;
+    FrameAlloc& fa = frameAlloc();
+    UINT const ring = fa.ring;
+    ++gGpu.frame;
+    UINT64& cbOff = fa.cbOff;
+    UINT&   srvNext = fa.srvNext;
+    uniformsForThisFrame(cam);
 
     // 1) copy the world: colour (for the import) + depth
     auto const rtState = D3D12_RESOURCE_STATES(t.rtState), dsState = D3D12_RESOURCE_STATES(t.dsState);
@@ -1489,7 +1488,7 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
 
     // 2) clears + the world into colortex0 (inline: the gbuffers are written already; lay vanilla's later draws over)
     if (inl) for (int o : gGpu.terrain.outs) barrier(list, gGpu.ct[0][size_t(o)], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    importScene(list, calls, srvNext, vp, sc, !inl, inl);
+    importScene(list, calls, srvNext, vp, sc, true, inl, inl ? &gGpu.terrain.outs : nullptr);
 
     // 2b) M2: the frame's terrain through the pack's gbuffers_terrain (normals, materials, lightmap for its lighting)
     replayTerrain(list, calls, ring, srvNext, cbOff, vp, sc, !inl);
@@ -1575,6 +1574,20 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
         setStatus("pack has no usable final program");
     }
 
+    // 3b) inline terrain: next frame's gbuffers cleared and left in RENDER_TARGET now (this list always runs before the
+    //     next frame's terrain lists, which may be recorded in parallel and can't safely do it themselves)
+    gInlinePrepared = false;
+    if (gSet.inlineTerrain && inlineCapable()) {
+        Bundle const& B = *gGpu.bundle;
+        for (int o : gGpu.terrain.outs) {
+            barrier(list, gGpu.ct[0][size_t(o)], D3D12_RESOURCE_STATE_RENDER_TARGET);
+            if (B.constOr("colortex" + std::to_string(o) + "Clear", "true") == "false") continue;
+            float const v = o == 1 ? 1.0f : 0.0f, cc[4] = {v, v, v, v};
+            list->ClearRenderTargetView(rtvAt(UINT(o * 2)), cc, 0, nullptr);
+        }
+        gInlinePrepared = true;
+    }
+
     // 4) give the game its state back
     calls.restoreRoot(list);
     calls.setPso(list, st.pso);
@@ -1587,14 +1600,12 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     list->RSSetViewports(1, &gvp); list->RSSetScissorRects(1, &gsc);
     if (rtState != D3D12_RESOURCE_STATE_RENDER_TARGET) barrierRaw(list, t.rt, D3D12_RESOURCE_STATE_RENDER_TARGET, rtState);
     gLastRunOk = finalDone && drawn > 0;
-    gViewDraws.push_back(gTerrainCalls); gTerrainCalls = 0; ++gRunInPresent;
     gLastRunMs = msNow();
     if ((gGpu.frame & 127) == 5) {
-        ll_shim::info("[RF] IrisBridge: inline stats (last frame): calls " + std::to_string(gInStats.calls) + ", drawn " + std::to_string(gIn.drawn) +
-                      ", other list " + std::to_string(gInStats.otherList) + ", not ready " + std::to_string(gInStats.notOk) + ", size " +
-                      std::to_string(gInStats.sizeMismatch) + ", no pso " + std::to_string(gInStats.noPso) + ", lists " + std::to_string(gInStats.lists.size()) +
-                      ", dsvs " + std::to_string(gInStats.dsvs.size()) + ", run list " + std::to_string(reinterpret_cast<uintptr_t>(list)) +
-                      " inline list " + std::to_string(reinterpret_cast<uintptr_t>(gIn.list)) + ", rt " + std::to_string(t.rtv) + " ok " + std::to_string(gLastRunOk));
+        ll_shim::info("[RF] IrisBridge: inline stats (since last run): calls " + std::to_string(gInStats.calls) + ", drawn " + std::to_string(gIn.drawn) +
+                      ", not ready " + std::to_string(gInStats.notOk) + ", size " + std::to_string(gInStats.sizeMismatch) + ", no pso " +
+                      std::to_string(gInStats.noPso) + ", other " + std::to_string(gInStats.other) + ", lists " + std::to_string(gInStats.lists.size()) +
+                      ", dsvs " + std::to_string(gInStats.dsvs.size()) + (inl ? ", inline frame" : ", replay frame"));
     }
     gInStats = InlineStats{};
     if (inl && (gGpu.frame & 255) == 3) {
