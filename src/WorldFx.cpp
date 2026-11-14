@@ -1174,6 +1174,8 @@ void drawUi() {
         int ds = look.deathScene + 1;
         if (ImGui::Combo("Death scene", &ds, "Shuffle (never the same twice)\0Chains of the Deep\0Blackjack\0Tentacles\0Lightning Ash\0Giant Hand\0Hungry Chest\0Executioner\0Finisher\0Shield Counter\0Headbutt\0Kick\0Ultimate Attack\0Ragdollified\0Sable Ragdoll\0")) { look.deathScene = ds - 1; saveFx = true; }
     }
+    ImGui::SetNextItemWidth(200.0f);
+    saveFx |= ImGui::SliderFloat("Kill sounds", &look.killSfx, 0.0f, 1.0f, "%.2f");
     if (ImGui::Button("Test kill")) rf::sky::testKill();
     ImGui::SameLine();
     if (ImGui::Button("Test crit")) rf::sky::testImpact();
