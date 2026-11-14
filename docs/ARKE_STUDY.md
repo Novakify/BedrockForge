@@ -206,3 +206,18 @@ stay visual-only (no mechanic change, readable, no unfair info like seeing throu
   the post chain at 4K + the extra copies - next optimisation target. (Shadows on now cover every list.)
 - Declined: an uploaded "ArkeReference" zip of decompiled Arke functions (licence unpublished, header says reuse needs
   permission). Not read beyond the headers, not used.
+
+## ArkeReference (decompiled fragments, 2026-11-13)
+
+Novak reports the creator's permission to examine/adapt Arke (see the Arke archive's PERMISSION_NOTE.md - his
+statement, not a published licence). Used as a technical reference only; no code copied. Personal use, not distributed.
+The 9 fragments are Ghidra pseudocode (unnamed functions, no strings), so the signal is structural:
+- **InvokeDxc**: IDxcCompiler3::Compile (vtable 0x18) + IDxcResult::GetOutput (0x38) - Arke compiles shaders
+  IN-PROCESS at runtime (with glslang / SPIRV-Tools / SPIRV-Cross / a C preprocessor / miniz from its public
+  dependency list). That is how it loads a zipped pack, changes options in game and swaps packs in seconds.
+- **BuildPipeline**: QPC-timed (24 MHz / 10 MHz frequency checks) and gated on a generation counter - pipelines are
+  cached and rebuilt only when the pack / options change.
+- **SetupDevice**: one large device context (~18 KB of state); **ValidateGameBuild**: a supported-build check.
+- Our equivalent plan (original code): move the translator into RF - link glslang + SPIRV-Tools + SPIRV-Cross + DXC
+  (all MIT/Apache/BSD) and port pack.py / translate.py / bundle.py to C++, cache DXIL per (pack, options) on disk.
+  Result: drop a pack zip in irisbridge/, pick options in the F6 Shaders window, compile in game, cached loads ~ms.
