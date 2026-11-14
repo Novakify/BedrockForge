@@ -260,13 +260,14 @@ def cues(hits):
          (8, 0.05, "punchPower", 0.7, 0.8), (8, 29 / 22, "swing", 0.75, 0.9), (8, 51 / 22, "punchPower", 0.9, 0.65),
          (8, 91 / 22, "smallImpact", 0.7, 1.0),
          (9, 0.65, PUNCH, 1.0, 0.92), (10, 0.70, PUNCH, 1.0, 1.0)]
-    # Ultimate: the charge's boom (tick 14), the rupture's rumbles, the hit and the landings of the throw
-    tR, vR = 0.4 + 15 / 20, 44 / (21 / 20) * 0.55
-    th = tR + 3.0 / vR
-    c += [(11, 0.4 + 14 / 20, "punchHard", 1.0, 0.5), (11, tR + 0.02, "punchPower", 0.85, 0.55),
-          (11, tR + 0.18, "punchHard", 0.6, 0.7), (11, tR + 0.36, "punchPower", 0.65, 0.6), (11, th, "punchHard", 0.9, 0.85)]
+    # Ultimate (Kamehameha): a low whoosh as it charges, the boom as it fires, the beam's roar, the hit, the landings
+    tb, vb = 0.4 + 0.75, 12.0
+    th = tb + 2.55 / vb; tl = th + 0.15
+    c += [(11, 0.45, "swing", 0.6, 0.45), (11, tb - 0.02, "punchHard", 1.0, 0.5), (11, tb + 0.05, "punchPower", 0.8, 0.5),
+          (11, tb + 0.35, "punchPower", 0.55, 0.45), (11, tb + 0.75, "punchPower", 0.5, 0.42), (11, th, "punchHard", 0.95, 0.75),
+          (11, tb + 8.5 / vb, "punchHard", 1.0, 0.45)]   # the dome at the wave's end
     side = sorted([h for h in hits[6:12] if h[2] < 1.8], key=lambda h: -h[3])[:2]
-    for x, z, t, w in side: c.append((11, th + t, "impact" if w > 1.0 else "smallImpact", min(1.0, 0.45 + 0.4 * w), 1.0))
+    for x, z, t, w in side: c.append((11, tl + t, "impact" if w > 1.0 else "smallImpact", min(1.0, 0.45 + 0.4 * w), 1.0))
     for sc in (12, 13): c.append((sc, 0.0, "punchPower", 0.8, 1.0))                 # Ragdollified: the killing blow
     return c
 

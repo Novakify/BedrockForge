@@ -387,7 +387,7 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
         // only pixels near the scene: a 4.5-block ball, or (hand, lightning) the column above it
         float2 ax = feet.xz - rd.xz * (dot(feet.xz, rd.xz) / max(dot(rd.xz, rd.xz), 1e-5));
         bool   col = (sc == 3 || sc == 4) && dot(ax, ax) < 3.5 * 3.5 && dot(feet.xz, rd.xz) > -3.5;
-        float  cr = sc == 11 ? 10.0 : ((sc == 12 || sc == 13) ? 7.0 : (sc == 7 ? 5.6 : 4.5));   // the rupture runs 12 blocks   // the ragdolls and the long finishers reach further
+        float  cr = sc == 11 ? 8.5 : ((sc == 12 || sc == 13) ? 7.0 : (sc == 7 ? 5.6 : 4.5));   // the Ultimate's beam runs 8.5 blocks   // the ragdolls and the long finishers reach further
         if (!nearRay(rd, feet + float3(0, 1.2, 0), cr) && !col) continue;
 
         DFx fx; fx.team = pow(max(eB[i].rgb, 0.0), 2.2);
