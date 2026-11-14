@@ -1198,6 +1198,14 @@ struct InlineFrame {
     int                        drawn = 0;
     size_t                     dsv = 0;        // the depth the terrain went into (vs the one the cloud hook copies)
 } gIn;
+struct InlineStats { int calls = 0, otherList = 0, notOk = 0, sizeMismatch = 0, noPso = 0; std::set<void*> lists; std::set<size_t> dsvs; } gInStats;
+// Bedrock can draw the world more than once per frame (the cloud hook - run() - then fires once per view). Inline
+// terrain takes over only the view that had the most terrain draws last frame (the main world); the others stay on
+// the replay path. Views are numbered by run() calls since the last Present.
+int              gRunInPresent = 0;   // run() calls so far this frame
+int              gTerrainCalls = 0;   // terrain draws seen since the last run()
+std::vector<int> gViewDraws;          // terrain draws per view, this frame
+int              gInlineView = -1;    // the view taken over (from last frame's counts)
 bool    gLastRunOk = false;  // the chain finished last frame: only then may the game's terrain be taken over
 int64_t gLastRunMs = 0;
 
@@ -1278,16 +1286,32 @@ void recordTerrain(ID3D12GraphicsCommandList* list, TerrainDraw&& d) {
     if (v.size() < 40000) v.push_back(std::move(d));
 }
 
+void onPresent() {
+    std::lock_guard l(gMutex);
+    int best = -1, bestN = 0;
+    for (size_t i = 0; i < gViewDraws.size(); ++i) if (gViewDraws[i] > bestN) { bestN = gViewDraws[i]; best = int(i); }
+    if (best != gInlineView) {
+        std::string v;
+        for (int n : gViewDraws) v += " " + std::to_string(n);
+        ll_shim::info("[RF] IrisBridge: views this frame (terrain draws):" + v + " -> inline view " + std::to_string(best));
+    }
+    gInlineView = best;
+    gViewDraws.clear(); gRunInPresent = 0; gTerrainCalls = 0;
+}
+
 int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, size_t gameRtv, ID3D12Resource* gameRt, size_t gameDsv,
                       rf::sky::Calls const& calls) {
     if (!gSet.inlineTerrain || !gameRt || !gameRtv || !gameDsv) return 0;
     std::lock_guard l(gMutex);
+    ++gInStats.calls; gInStats.lists.insert(list); gInStats.dsvs.insert(gameDsv);
+    ++gTerrainCalls;
+    if (gRunInPresent != gInlineView) return 0; // not the main world view
     int64_t const now = msNow();
     if (!gLastRunOk || now - gLastRunMs > 200 || !gGpu.terrain.pass || !gGpu.bundle || !gTerrainOn) return 0;
     if (gPacks.empty() || gGpu.loadedName != gPacks[size_t(std::clamp(gSet.pack, 0, int(gPacks.size()) - 1))] ||
         gGpu.loadedWorld != worldName(gSet.world)) return 0; // a pack switch is due: let run() do it on a frame of its own
     auto const rd = gameRt->GetDesc();
-    if (rd.Width != gGpu.w || rd.Height != gGpu.h) return 0;
+    if (rd.Width != gGpu.w || rd.Height != gGpu.h) { ++gInStats.sizeMismatch; return 0; }
     std::shared_ptr<TerrainPso> tp;
     RootInfo ri;
     {
@@ -1295,7 +1319,7 @@ int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, siz
         if (auto it = gTerrainPsos.find(d.pso); it != gTerrainPsos.end()) tp = it->second;
         if (auto it = gRoots.find(d.sig); it != gRoots.end()) ri = it->second;
     }
-    if (!tp) return 0;
+    if (!tp) { ++gInStats.noPso; return 0; }
     ID3D12PipelineState* pso = drawPso(gGpu.terrain, *tp, true);
     unsigned long long const cbv = chunkCbv(d, ri);
     if (!pso || !cbv || gGpu.terrain.outs.empty()) return 0;
@@ -1310,7 +1334,8 @@ int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, siz
         if (!beginInline(list, gameRt, gameRtv, calls)) { gIn.ok = false; return touched; }
         gIn.dsv = gameDsv;
     }
-    if (!gIn.ok || gIn.list != list) return touched;
+    if (!gIn.ok) { ++gInStats.notOk; return touched; }
+    if (gIn.list != list) { ++gInStats.otherList; return touched; }
     UINT const table = drawTable(d, false, gIn.ring, gIn.srvNext, gIn.tables);
     if (table == UINT(-1)) return touched;
     auto gpu = gGpu.srvHeap->GetGPUDescriptorHandleForHeapStart(); gpu.ptr += UINT64(table) * gGpu.srvInc;
@@ -1562,7 +1587,16 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     list->RSSetViewports(1, &gvp); list->RSSetScissorRects(1, &gsc);
     if (rtState != D3D12_RESOURCE_STATE_RENDER_TARGET) barrierRaw(list, t.rt, D3D12_RESOURCE_STATE_RENDER_TARGET, rtState);
     gLastRunOk = finalDone && drawn > 0;
+    gViewDraws.push_back(gTerrainCalls); gTerrainCalls = 0; ++gRunInPresent;
     gLastRunMs = msNow();
+    if ((gGpu.frame & 127) == 5) {
+        ll_shim::info("[RF] IrisBridge: inline stats (last frame): calls " + std::to_string(gInStats.calls) + ", drawn " + std::to_string(gIn.drawn) +
+                      ", other list " + std::to_string(gInStats.otherList) + ", not ready " + std::to_string(gInStats.notOk) + ", size " +
+                      std::to_string(gInStats.sizeMismatch) + ", no pso " + std::to_string(gInStats.noPso) + ", lists " + std::to_string(gInStats.lists.size()) +
+                      ", dsvs " + std::to_string(gInStats.dsvs.size()) + ", run list " + std::to_string(reinterpret_cast<uintptr_t>(list)) +
+                      " inline list " + std::to_string(reinterpret_cast<uintptr_t>(gIn.list)) + ", rt " + std::to_string(t.rtv) + " ok " + std::to_string(gLastRunOk));
+    }
+    gInStats = InlineStats{};
     if (inl && (gGpu.frame & 255) == 3) {
         ll_shim::info("[RF] IrisBridge: inline terrain " + std::to_string(gIn.drawn) + " draws (world drawn once); terrain dsv " +
                       std::to_string(gIn.dsv) + (gIn.dsv == t.dsv ? " = " : " != ") + "cloud-hook dsv " + std::to_string(t.dsv) +

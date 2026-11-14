@@ -1530,6 +1530,7 @@ void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resour
     if (!gInstalled || !device || !queue || !bb) return;
     rf::glassarmor::onPresent(device, queue);
     rf::worldfx::onPresent(device, queue);
+    rf::iris::onPresent();
     if (gLeakFrameNow.exchange(0)) ++gLeakFrames;
     {
         long n = gPanelUiDraws.exchange(0);

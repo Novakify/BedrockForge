@@ -42,5 +42,6 @@ void drawUi();
 /// IrisBridge is on and its pack has a terrain program for the current dimension (cheap). The recording API
 /// (D3D12 types) is in IrisRecord.h.
 bool wantsTerrain();
+void onPresent(); // frame boundary: which of the frame's views gets inline terrain
 
 } // namespace rf::iris
