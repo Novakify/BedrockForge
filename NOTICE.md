@@ -74,3 +74,17 @@ code here is original; see Bedrock Forge `third_party/lyricsflow/NOTICE.md` for 
 Upscale CNN x2 (S / M) shaders of **Anime4K by bloc97** (https://github.com/bloc97/Anime4K), MIT License,
 Copyright (c) 2019-2021 bloc97 - full text in `third_party/Anime4K-LICENSE.txt`. The network weights are Anime4K's;
 the HLSL conversion and the capture / screen code (`src/Screen*.*`, `shaders/screen.hlsl`) are original.
+
+## Death scenes 7-13 - Finishers, Ragdollified, Sable Ragdolls - personal-use ports
+
+Kill animations added to the World FX shuffle (shaders/death_scenes_ext.hlsli, tables baked by
+tools/gen_death_tables.py into shaders/death_tables.hlsli). Used with each author's permission as reported by Novak,
+for Fernando's personal use only, not distributed; the original mods are not relicensed.
+
+- **Finishers 1.0.0 by akeresmods** (Fabric 1.20.1, MIT): First Finisher, Shield Counter, Quick Finisher 4 (headbutt),
+  Quick Finisher 5 (kick) and the Ultimate Attack. The mod's own animation clips are sampled into the tables; the
+  effects are rebuilt in the World FX pass.
+- **Ragdollified 1.2.2 by raiiiden** (NeoForge, custom licence): its JBullet ragdoll recreated with Bullet (pybullet)
+  offline, including the torn limb, and baked.
+- **Sable Ragdolls 0.8.1 by Leonardoinc22** (NeoForge, Apache-2.0): its limp ragdoll fall and roll, simulated and baked
+  the same way.

@@ -104,8 +104,8 @@ class Scene:
         return scene.astype(np.uint32), d24, (tx, ty)
 
 class Match:
-    """the M cbuffer (341 float4), same order as worldfx_pass.hlsl"""
-    N = 341
+    """the M cbuffer (463 float4), same order as worldfx_pass.hlsl"""
+    N = 463
     def __init__(self):
         self.a = np.zeros((self.N, 4), np.float32)
         o = 0
@@ -114,9 +114,10 @@ class Match:
         self.m0 = take(1); self.tPos = take(16); self.tCol = take(16); self.eA = take(8); self.eB = take(8); self.eC = take(8)
         self.m1 = take(1); self.tAge = take(16); self.trMin = take(1); self.trMax = take(1); self.gA = take(48); self.gB = take(48)
         self.bVis = take(16); self.fallen = take(24); self.m2 = take(1); self.fCol = take(24); self.pInfo = take(8); self.pPts = take(96)
+        self.m3 = take(1); self.m4 = take(1); self.fwS = take(120)
         assert o == self.N
         self.a[self.m0] = (0, 0, 1, 1); self.a[self.m1] = (0, 1, 0, 1)
-        self.a[self.bVis, 3] = -100; self.a[self.tAge, 0] = -1
+        self.a[self.bVis, 3] = -100; self.a[self.tAge, 0] = -1; self.a[self.m3] = (-1, 0, 0, 0)
         self.ne = 0; self.nt = 0; self.ng = 0
     def team(self, pos, col, yaw=0.0, broke=-1.0, threat=0.0, elim=0.0, mine=1.0, vis=True):
         k = self.nt; self.nt += 1
@@ -177,7 +178,7 @@ class Lab:
         dev.queue.write_texture({"texture": self.ts}, sk.tobytes(), {"bytes_per_row": 256}, (64, 1024, 1))
         self.smp = dev.create_sampler(address_mode_u="repeat", address_mode_v="repeat", mag_filter="linear", min_filter="linear", mipmap_filter="linear")
         B = wgpu.BufferUsage
-        self.cb = dev.create_buffer(size=160, usage=B.UNIFORM | B.COPY_DST)
+        self.cb = dev.create_buffer(size=176, usage=B.UNIFORM | B.COPY_DST)
         self.mb = dev.create_buffer(size=Match.N * 16, usage=B.UNIFORM | B.COPY_DST)
         self.sb = dev.create_buffer(size=W * H * 4, usage=B.STORAGE | B.COPY_DST)
         self.db = dev.create_buffer(size=W * H * 4, usage=B.STORAGE | B.COPY_DST)
@@ -206,7 +207,7 @@ class Lab:
         W, H = self.W, self.H
         sc, d24, (tx, ty) = scene.trace(cam, W, H)
         f, r, u = cam.axes()
-        c = np.zeros(40, np.float32)
+        c = np.zeros(44, np.float32)   # c0..c10 (c10.x = 0: the world pass, not the sky-only one)
         c[0:3] = f; c[3] = tx; c[4:7] = r; c[7] = ty; c[8:11] = u; c[11] = time
         c[12] = 0.025; c[13] = air; c[15] = 0.0
         c[16] = W; c[17] = H; c[18] = W * 4; c[19] = W * 4

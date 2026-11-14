@@ -1481,24 +1481,36 @@ int shells(float age, float const srgb[3], float seed, float yaw, float (*out)[3
 std::atomic<float> gViewYaw{0.0f};   // where the camera looks (atan2(forward.z, forward.x)), for the fireworks
 struct TestBed { float p[3]; float yaw = 0; int64_t at = -1000000; } gTestBed;
 void testBed() { ++gTestBedReq; }
-// death scenes (LyricsFlow's death animations, by 374m): each kill gets one, dealt from a shuffled bag of all seven
-// (a new shuffle when it runs out, never the same one twice in a row)
+// death scenes: each kill gets one, dealt from a shuffled bag of all of them (a new shuffle when it runs out, never
+// the same one twice in a row). 0-6 LyricsFlow's death animations (by 374m); 7-11 Finishers (by akeresmods): First
+// Finisher, Shield Counter, Headbutt, Kick, Ultimate Attack; 12 Ragdollified (by raiiiden); 13 Sable Ragdolls (by
+// Leonardoinc22) - all used with their authors' permission (shaders/death_scenes*.hlsli)
+constexpr int kDeathScenes = 14;
 static int deathSceneFor(uint64_t key) {
     static uint64_t keys[32]{}; static int vals[32]{}; static int nk = 0;
     for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
-    static int bag[7]; static int left = 0, last = -1;
+    static int bag[kDeathScenes]; static int left = 0, last = -1;
     static uint32_t rng = 0x9E3779B9u ^ uint32_t(steadyMs());
     auto rnd = [&] { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; };
     if (left == 0) {
-        for (int i = 0; i < 7; ++i) bag[i] = i;
-        for (int i = 6; i > 0; --i) std::swap(bag[i], bag[rnd() % uint32_t(i + 1)]);
-        if (bag[6] == last) std::swap(bag[6], bag[0]);   // the next one dealt is bag[left - 1] = bag[6]
-        left = 7;
+        for (int i = 0; i < kDeathScenes; ++i) bag[i] = i;
+        for (int i = kDeathScenes - 1; i > 0; --i) std::swap(bag[i], bag[rnd() % uint32_t(i + 1)]);
+        if (bag[kDeathScenes - 1] == last) std::swap(bag[kDeathScenes - 1], bag[0]);   // the next one dealt is bag[left - 1]
+        left = kDeathScenes;
     }
     int const v = bag[--left];
     last = v;
     keys[nk % 32] = key; vals[nk % 32] = v; ++nk;
     return v;
+}
+// where the camera looked when a kill came (the finishers lay the pair out side-on to it); kept per kill so the scene
+// doesn't swing round as you turn
+static float killYawFor(uint64_t key) {
+    static uint64_t keys[32]{}; static float vals[32]{}; static int nk = 0;
+    for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
+    float const y = gViewYaw.load(std::memory_order_relaxed);
+    keys[nk % 32] = key; vals[nk % 32] = y; ++nk;
+    return y;
 }
 static MatchFrame matchFrame(WorldFxLook const& look) {
     int64_t const now = steadyMs();
@@ -1598,7 +1610,9 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eC[ne][1] = e.kind == 8 ? float(e.floorDy) * 0.1f : (e.floorDy > 64 ? -1.0f : float(e.floorDy));   // hits: view yaw
             c.eC[ne][2] = e.col[3];   // hits: 2 you were hit, 1 your hit, 0 someone else's
             if (e.kind == 3 || e.kind == 4) {
-                int const sc = look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(e.atMs) * 31u + uint64_t(e.seed));
+                uint64_t const key = uint64_t(e.atMs) * 31u + uint64_t(e.seed);
+                int const sc = look.deathScene >= 0 ? look.deathScene : deathSceneFor(key);
+                c.eC[ne][1] = killYawFor(key);
                 uint32_t const slot1 = v6 && e.floorDy >= 1 && e.floorDy <= 16 && b->skins[e.floorDy - 1].ok ? e.floorDy : 0;
                 c.eC[ne][3] = float(sc) + 16.0f * float(slot1);
             } else if (e.kind == 6) {   // the fireworks go up where you were looking when the win came, and stay there
@@ -1614,7 +1628,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             auto& c = f.cb;
             c.eA[ne][0] = std::floor(gTestKill.p[0]); c.eA[ne][1] = std::floor(gTestKill.p[1]); c.eA[ne][2] = std::floor(gTestKill.p[2]); c.eA[ne][3] = ta;
             c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = float(gTestKill.kind);
-            c.eC[ne][0] = 4242.0f; c.eC[ne][1] = -1.0f;
+            c.eC[ne][0] = 4242.0f; c.eC[ne][1] = killYawFor(uint64_t(gTestKill.at) + 7u);
             c.eC[ne][3] = float(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u)) + 16.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
             f.cb.m1[2] = 1.0f;
             ++ne;
@@ -2544,7 +2558,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
-        else if (k == "deathscene") gLook.deathScene = std::clamp(int(v), -1, 6);
+        else if (k == "deathscene") gLook.deathScene = std::clamp(int(v), -1, kDeathScenes - 1);
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);

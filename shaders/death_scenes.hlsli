@@ -1,16 +1,17 @@
 // ---- death scenes: the seven kill animations of LyricsFlow's death animations (by 374m, used with the author's
 //      permission), rebuilt for Bedrock / Renderer Foundation by Novak: Chains of the Deep, Blackjack, Tentacles,
-//      Lightning Ash, Giant Hand, Hungry Chest, Executioner. One per kill, dealt from a shuffle bag (SkyPass).
+//      Lightning Ash, Giant Hand, Hungry Chest, Executioner - and 7-13 from Finishers, Ragdollified and Sable Ragdolls
+//      (death_scenes_ext.hlsli). One per kill, dealt from a shuffle bag (SkyPass).
 //      Everything is ray-traced boxes / capsules in the World FX pass, depth-tested against the world, drawn at the
 //      world's own resolution (1/16 block texels, face-shaded like blocks; particles are little cubes, not soft blobs).
 //      The victim's body wears their real skin when Bedrock Forge sent it (gSkins), else a mannequin in team colours.
 //      Event: eA = feet block (world, min) + age, eB = team colour + kind (3 kill, 4 final), eC.x = seed,
-//      eC.w = scene + 16 * (skin slot + 1).
+//      eC.y = the camera's yaw when the kill came, eC.w = scene + 16 * (skin slot + 1).
 Texture2D<float4> gSkins : register(t4);   // 64 x (64 * 16): one classic skin per slot, top to bottom
 static const float DPX = 0.05859375;       // one skin pixel in blocks (a 32 px body is 1.875 blocks)
 
 struct DHit { float t; float3 c; bool hit; };
-struct DFx  { float3 team; float slot; float charK; float ash; float flash; float hurt; float clipY; float seed; };
+struct DFx  { float3 team; float slot; float charK; float ash; float flash; float hurt; float clipY; float seed; float ghost; };
 
 float3 dsLit(float3 alb, float3 nw) {
     float  ndl = saturate(dot(nw, SUN));
@@ -142,6 +143,19 @@ void dsPart(inout DHit h, float3 rd, int j, float3 P, float3x3 R, float s, float
     float  n = hash12(tx.xy * 1.7 + tx.z * 9.1 + float(j) * 3.3);
     float  hgt = (kPC[j].y + q.y) / 32.0;
     if (fx.ash > 0.0 && hgt + n * 0.35 > 1.35 - fx.ash * 1.4) return;        // crumbling away, from the top down
+    if (fx.ghost > 0.0) {   // the Finishers phantom: ink, a lit one-texel rim, two white eyes, a faint glitter inside
+        float3 ad = e - abs(q);
+        float3 m = float3(abs(nl.x) > 0.5 ? 99.0 : ad.x, abs(nl.y) > 0.5 ? 99.0 : ad.y, abs(nl.z) > 0.5 ? 99.0 : ad.z);
+        float  ed = min(m.x, min(m.y, m.z));
+        float  top = e.y - q.y;
+        float  eyes = (j == 0 && nl.z > 0.5 && top >= 4.0 && top < 5.0 && abs(q.x) >= 1.0 && abs(q.x) < 3.0) ? 1.0 : 0.0;
+        float  spark = step(0.985, hash12(tx.xy * 3.1 + tx.z * 1.7 + floor(TIME * 7.0) + float(j) * 5.0));
+        float  front = fx.ash > 0.0 ? saturate(1.0 - abs((1.35 - fx.ash * 1.4) - (hgt + n * 0.35)) / 0.08) : 0.0;   // the edge it forms / goes at
+        float3 rimC = float3(0.83, 0.76, 1.0);
+        float3 cg = dsLit(float3(0.012, 0.011, 0.016) * (0.8 + 0.4 * n), mul(R, nl)) + rimC * ((ed < 0.75 ? 0.55 : 0.0) + eyes * 3.2 + spark * 0.5 + front * 2.0);
+        h.t = tN; h.c = lerp(cg, float3(2.6, 2.6, 2.6), fx.flash); h.hit = true;
+        return;
+    }
     bool   cut = (nl.y > 0.5 && yh < e.y - 0.01) || (nl.y < -0.5 && yl > -e.y + 0.01);
     float3 alb = cut ? lerp(hex3(110, 2, 2), hex3(181, 18, 18), n) * (min(e.x - abs(q.x), e.z - abs(q.z)) < 1.0 ? 0.55 : 1.0) : dsSkin(j, nl, q, e, fx);
     float3 nw = mul(R, nl);
@@ -359,6 +373,8 @@ void dsExecutioner(inout DHit h, float3 rd, float3 O, float3x3 RY, float arm, fl
     }
 }
 
+#include "death_scenes_ext.hlsli"
+
 // ------------------------------------------------------------------ the scenes
 float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
     int ne = int(m0.y);
@@ -371,11 +387,12 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
         // only pixels near the scene: a 4.5-block ball, or (hand, lightning) the column above it
         float2 ax = feet.xz - rd.xz * (dot(feet.xz, rd.xz) / max(dot(rd.xz, rd.xz), 1e-5));
         bool   col = (sc == 3 || sc == 4) && dot(ax, ax) < 3.5 * 3.5 && dot(feet.xz, rd.xz) > -3.5;
-        if (!nearRay(rd, feet + float3(0, 1.2, 0), 4.5) && !col) continue;
+        float  cr = sc == 12 ? 7.0 : ((sc == 7 || sc == 11) ? 5.6 : 4.5);   // the ragdolls and the long finishers reach further
+        if (!nearRay(rd, feet + float3(0, 1.2, 0), cr) && !col) continue;
 
         DFx fx; fx.team = pow(max(eB[i].rgb, 0.0), 2.2);
         fx.team = fx.team / max(max(fx.team.r, max(fx.team.g, fx.team.b)), 0.05);
-        fx.slot = floor(code / 16.0) - 1.0; fx.charK = 0.0; fx.ash = 0.0; fx.flash = 0.0; fx.hurt = 0.0; fx.clipY = -1e5; fx.seed = eC[i].x;
+        fx.slot = floor(code / 16.0) - 1.0; fx.charK = 0.0; fx.ash = 0.0; fx.flash = 0.0; fx.hurt = 0.0; fx.clipY = -1e5; fx.seed = eC[i].x; fx.ghost = 0.0;
         float3 team = fx.team, glow = team * (1.1 + 0.9 * darkK());
         float  seed = eC[i].x;
         float  yaw = h1(seed * 0.013) * 6.2832;
@@ -664,6 +681,8 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
             dsBurst(h, rd, mouth + float3(0, 0.1, 0), t - 2.42, 9, seed + 21.0, 0.5, 0.7, -0.4, 0.9, 0.05, hex3(150, 190, 110), hex3(196, 220, 160), -1e5, 0.0);
             dsBurst(h, rd, cpos0 + float3(0, 0.05, 0), t - 3.25, 10, seed + 30.0, 1.3, 1.2, 10.0, 0.6, 0.045, hex3(122, 86, 52), hex3(74, 60, 48), feet.y, 0.0);
             if (onG) { float2 gc = S.xz - cpos0.xz; float sh = exp(-dot(gc, gc) / 0.35) * 0.45 * saturate(rise); dec = o * (1.0 - sh); decK = 1.0; }
+        } else if (sc >= 7) {
+            deathScenesExt(sc, t, o, rd, feet, yaw, eC[i].y, seed, team, glow, onG, S, gr, h, add, dec, decK, fx);
         } else {
             // ============ EXECUTIONER: a hooded figure rises out of smoke behind them, lifts a great axe, and takes
             // the head in one stroke; the body kneels and falls; the figure blows away
