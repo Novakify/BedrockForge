@@ -447,13 +447,17 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     float  sp    = lerp(0.012, 0.035, neonK);
     float3 Tr = refract(-V, nf, 0.67 - sp), Tg = refract(-V, nf, 0.67), Tb = refract(-V, nf, 0.67 + sp);
     float3 R  = reflect(-V, nf);
-    // Future Aero
-    float3 aeroTint = lerp(lerp(float3(0.86, 0.95, 1.00), hue, 0.38 + 0.30 * gem), float3(0.82, 0.92, 1.00), grey * 0.7);
-    float3 aero = float3(ngEnv(Tr, 1.0).r, ngEnv(Tg, 1.0).g, ngEnv(Tb, 1.0).b) * aeroTint * lerp(0.70, 1.05, luma);
-    aero = lerp(aero, ngEnv(R, 1.0), Fg * 0.50);
-    aero += smoothstep(0.30, 0.95, nf.y) * 0.16;                                        // the glossy top
-    aero += float3(1.0, 0.98, 0.95) * glint * 2.2;
-    aero += float3(0.90, 0.97, 1.00) * pow(1.0 - NV, 3.0) * 0.30;                       // the clean white rim
+    // Future Aero: glass in the item's OWN colour (seen on Hive: a pale aqua tint over everything made emeralds read as
+    // diamonds, gold and iron as the same aqua glass). The colour is the item's; the glass is the light on it - the
+    // world bent through it, a fresnel reflection, the glossy top, a clean rim and a sparkle.
+    float3 aeroTint = lerp(hue, float3(0.92, 0.96, 1.00), grey * 0.6);
+    float3 envT = float3(ngEnv(Tr, 1.0).r, ngEnv(Tg, 1.0).g, ngEnv(Tb, 1.0).b);
+    float  envL = dot(envT, float3(0.2126, 0.7152, 0.0722));
+    float3 aero = alb * (0.62 + 0.45 * saturate(envL)) + envT * aeroTint * 0.16;
+    aero = lerp(aero, ngEnv(R, 1.0), Fg * 0.35);
+    aero += smoothstep(0.30, 0.95, nf.y) * 0.10 * lerp(float3(1, 1, 1), aeroTint, 0.4);   // the glossy top
+    aero += float3(1.0, 0.98, 0.95) * glint * 1.8;
+    aero += lerp(float3(0.92, 0.97, 1.00), aeroTint, 0.4) * pow(1.0 - NV, 3.0) * 0.25;   // the clean rim
     aero = lerp(aero, aero * float3(1.05, 0.78, 0.90), smoothstep(0.15, 0.55, k) * (1.0 - neonK));   // dusk
     aero *= lerp(0.50, 1.0, sky);
     // the endgame / night: crystallized glass in the item's own colour - cut facets that each catch the light their own
