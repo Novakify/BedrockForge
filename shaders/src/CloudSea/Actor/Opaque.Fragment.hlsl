@@ -14,6 +14,8 @@ float4 main(PSIn i) : SV_Target {
     float3 c = s_MatTextureTexture.Sample(s_MatTextureSampler, i.texcoord0).rgb * MatColor.rgb;
     c *= (i.color0.rgb - 1.0) * ColorBased.x + 1.0;
     c  = lerp(c, OverlayColor.rgb, OverlayColor.a);         // hurt flash etc. stay vanilla
+    // menus / dressing room (no fog): the game's own colours, plain (seen: the character as a flat light-blue silhouette)
+    [branch] if (csActorInMenu(FogColor.rgb)) return float4(c, 1.0);
     float  lv  = csLuma(i.color3.rgb);                      // the game's light level here (normal shading divided out below)
     float3 wp  = i.texcoord3;
     float3 cam = ViewPositionAndTime.xyz;

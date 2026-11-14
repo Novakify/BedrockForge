@@ -55,8 +55,8 @@ float4 main(PSIn i) : SV_Target {
     // player went the same smudged blue-grey under the moon)
     // menus (home screen / dressing room): no world, so no fog - the fog-driven phase read that as the endgame and gave
     // the character a neon pink / cyan rim and the night light (seen: washed out with a pink or light-blue tint)
-    bool const menu = csMax3(abs(FogColor.rgb)) < 1e-4;
-    [branch] if (menu) return float4(csEnc(lit), 1.0);
+    bool const menu = csActorInMenu(FogColor.rgb);
+    [branch] if (menu) return float4(c * lerp(0.80, 1.0, saturate(dot(n, normalize(float3(0.3, 0.8, 0.5))) * 0.5 + 0.5)), 1.0);   // the game's own colours, plain
     [branch] if (CS_NIGHT > 0.0 && !(tw <= 32 && th <= 32)) {
         float dif = 0.60 + 0.40 * saturate(dot(n, normalize(float3(0.3, 0.8, 0.5))));
         lit = lerp(lit, csLin(c) * dif * 0.90, CS_NIGHT);

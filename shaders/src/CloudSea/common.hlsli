@@ -47,10 +47,16 @@ float csPhaseFromDaylight(float l) {
 // 0.75 night - measured). The fog colour is the only clock there: it goes dark at night whichever way you look (at
 // sunset it depends on the view, so it is NOT used for dusk - actors keep the golden light until night).
 float csActorPhase(float3 fog) { return 2.0 * (1.0 - smoothstep(0.08, 0.40, csLuma(fog))); }
+// Is this actor drawn in a menu (home screen, dressing room, pause / inventory paperdoll)? Those pass no fog (0) or a
+// pure white one (measured in game: (1,1,1) in the pause-menu paperdoll), and a camera that has nothing to do with the
+// model - the world look must not touch them (seen: the character as a flat light-blue silhouette).
+bool csActorInMenu(float3 fog) {
+    return max(abs(fog.r), max(abs(fog.g), abs(fog.b))) < 1e-4 || min(fog.r, min(fog.g, fog.b)) > 0.995;
+}
 void csBeginActor(float4 fog, float4 viewPosTime) {
     // menus (home screen / dressing room) draw with no fog at all: that read as full night (a cold blue light, the
     // Novak endgame rim) - there it is plain midday
-    csSetPhase(max(abs(fog.r), max(abs(fog.g), abs(fog.b))) < 1e-4 ? 0.0 : csActorPhase(fog.rgb));
+    csSetPhase(csActorInMenu(fog.rgb) ? 0.0 : csActorPhase(fog.rgb));
     CS_TIME = viewPosTime.w;
 }
 void csBegin(float daylight, float4 viewPosTime) {
