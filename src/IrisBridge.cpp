@@ -36,6 +36,7 @@
 #include "GlassArmor.h"
 #include "UiCapture.h"
 #include "LLShim.h"
+#include "Overlay.h"
 
 namespace rf::iris {
 namespace {
@@ -1198,6 +1199,77 @@ void importScene(ID3D12GraphicsCommandList* list, rf::sky::Calls const& calls, U
     barrier(list, gGpu.ct[0][0], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 }
 
+
+// ---------------------------------------------------------------- GPU profile of run(): where the frame's time goes
+// Timestamps between named marks; an 8-frame ring (frame n writes slot n % 8, reads the one written 7 frames ago).
+// Averages per segment go to the log every 256 frames ("perf" lines).
+namespace perf {
+constexpr UINT kMarks = 40, kFrames = 8;
+ComPtr<ID3D12QueryHeap> heap;
+ComPtr<ID3D12Resource>  buf;
+uint64_t const*         map = nullptr;
+bool                    failed = false;
+std::array<std::array<std::string, kMarks>, kFrames> names;
+std::array<UINT, kFrames> count{};
+std::vector<std::pair<std::string, double>> sum; // in first-seen order
+int    frames = 0;
+UINT   slot = 0;
+bool   on = false;
+void mark(ID3D12GraphicsCommandList* l, std::string const& name) {
+    if (!on || count[slot] >= kMarks) return;
+    names[slot][count[slot]] = name;
+    l->EndQuery(heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * kMarks + count[slot]++);
+}
+void begin(ID3D12GraphicsCommandList* l, uint64_t frame) {
+    on = false;
+    if (failed) return;
+    if (!heap) {
+        D3D12_QUERY_HEAP_DESC qd{}; qd.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP; qd.Count = kMarks * kFrames;
+        D3D12_HEAP_PROPERTIES hp{}; hp.Type = D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC rd{}; rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER; rd.Width = kMarks * kFrames * 8; rd.Height = 1;
+        rd.DepthOrArraySize = 1; rd.MipLevels = 1; rd.SampleDesc.Count = 1; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        void* p = nullptr;
+        D3D12_RANGE r{0, SIZE_T(rd.Width)};
+        if (FAILED(gGpu.dev->CreateQueryHeap(&qd, IID_PPV_ARGS(&heap))) ||
+            FAILED(gGpu.dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&buf))) ||
+            FAILED(buf->Map(0, &r, &p))) { failed = true; heap.Reset(); buf.Reset(); return; }
+        map = static_cast<uint64_t const*>(p);
+    }
+    slot = UINT(frame % kFrames);
+    // read the slot written kFrames - 1 frames ago before it is reused
+    UINT const old = UINT((frame + 1) % kFrames);
+    uint64_t const f = rf::overlay::timestampFrequency();
+    if (frame >= kFrames && f && count[old] > 1) {
+        bool sane = true;
+        for (UINT i = 1; i < count[old]; ++i) if (map[old * kMarks + i] < map[old * kMarks + i - 1]) sane = false;
+        if (sane) {
+            for (UINT i = 1; i < count[old]; ++i) {
+                double const ms = double(map[old * kMarks + i] - map[old * kMarks + i - 1]) * 1000.0 / double(f);
+                auto it = std::find_if(sum.begin(), sum.end(), [&](auto const& e) { return e.first == names[old][i]; });
+                if (it == sum.end()) sum.emplace_back(names[old][i], ms); else it->second += ms;
+            }
+            ++frames;
+        }
+    }
+    if (frames >= 256) {
+        double total = 0;
+        std::string line;
+        for (auto const& [n, v] : sum) { char b[96]; std::snprintf(b, sizeof b, " %s %.2f", n.c_str(), v / frames); line += b; total += v / frames; }
+        char t[64]; std::snprintf(t, sizeof t, "[RF] IrisBridge perf (ms/frame, total %.2f):", total);
+        ll_shim::info(std::string(t) + line);
+        sum.clear(); frames = 0;
+    }
+    count[slot] = 0;
+    on = true;
+    mark(l, "start");
+}
+void end(ID3D12GraphicsCommandList* l) {
+    if (!on) return;
+    l->ResolveQueryData(heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, slot * kMarks, count[slot], buf.Get(), UINT64(slot) * kMarks * 8);
+    on = false;
+}
+} // namespace perf
+
 // ---------------------------------------------------------------- inline terrain (the world drawn once)
 // Instead of letting Bedrock draw its chunks and replaying them through the pack later (the world drawn twice), each
 // RenderChunk draw is swapped for the pack's gbuffers_terrain right where the game issues it: into the pack's gbuffers
@@ -1481,6 +1553,7 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     UINT&   srvNext = fa.srvNext;
     uniformsForThisFrame(cam);
 
+    perf::begin(list, gGpu.frame);
     // 1) copy the world: colour (for the import) + depth
     auto const rtState = D3D12_RESOURCE_STATES(t.rtState), dsState = D3D12_RESOURCE_STATES(t.dsState);
     barrierRaw(list, t.rt, rtState, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -1493,6 +1566,7 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     barrierRaw(list, t.rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
     barrier(list, gGpu.scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     barrier(list, gGpu.depth, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    perf::mark(list, "copies");
 
     ID3D12DescriptorHeap* heaps[] = {gGpu.srvHeap.Get()};
     calls.setHeaps(list, 1, heaps);
@@ -1504,9 +1578,11 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
     // 2) clears + the world into colortex0 (inline: the gbuffers are written already; lay vanilla's later draws over)
     if (inl) for (int o : gGpu.terrain.outs) barrier(list, gGpu.ct[0][size_t(o)], D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     importScene(list, calls, srvNext, vp, sc, true, inl, inl ? &gGpu.terrain.outs : nullptr);
+    perf::mark(list, "clears+import");
 
     // 2b) M2: the frame's terrain through the pack's gbuffers_terrain (normals, materials, lightmap for its lighting)
     replayTerrain(list, calls, ring, srvNext, cbOff, vp, sc, !inl);
+    perf::mark(list, inl ? "shadow" : "shadow+terrain");
 
     // 3) the pack's chain
     D3D12_VERTEX_BUFFER_VIEW vbv{gGpu.vb->GetGPUVirtualAddress(), UINT(sizeof(QuadVert) * 6), UINT(sizeof(QuadVert))};
@@ -1548,6 +1624,7 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
         calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         calls.setVb(list, 0, 1, &vbv);
         calls.draw(list, 6, 1, 0, 0);
+        perf::mark(list, p.program);
         ++drawn;
         // the written buffers become current (Iris "flip")
         for (int o : pg.outs) {
@@ -1602,6 +1679,9 @@ bool run(ID3D12GraphicsCommandList* list, rf::sky::GameState const& st, rf::sky:
         }
         gInlinePrepared = true;
     }
+
+    perf::mark(list, "debug+prep");
+    perf::end(list);
 
     // 4) give the game its state back
     calls.restoreRoot(list);
