@@ -62,7 +62,9 @@ std::optional<MediaSample> Smtc::poll(Source src) {
             std::string app = winrt::to_string(s.SourceAppUserModelId());
             if (!sourceMatches(src, app)) continue;
             if (!firstMatch) firstMatch = s;
-            if (s.GetPlaybackInfo().PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing) { chosen = s; break; }
+            if (!s) continue;
+            auto pi = s.GetPlaybackInfo(); // [BF] can be null while the app switches songs / pauses
+            if (pi && pi.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing) { chosen = s; break; }
         }
         if (!chosen) chosen = firstMatch;
         mImpl->current = chosen;
@@ -71,6 +73,7 @@ std::optional<MediaSample> Smtc::poll(Source src) {
             return std::nullopt;
         }
         auto        props = chosen.TryGetMediaPropertiesAsync().get();
+        if (!props) return std::nullopt; // [BF] app mid song-change: try again next poll
         MediaSample m;
         m.title  = winrt::to_string(props.Title());
         m.artist = winrt::to_string(props.Artist());
@@ -79,7 +82,10 @@ std::optional<MediaSample> Smtc::poll(Source src) {
         std::string app = winrt::to_string(chosen.SourceAppUserModelId());
         bool spotify    = text::contains(text::toLower(app), "spotify");
         bool apple      = isAppleMusicApp(app);
-        m.sourceApp     = spotify ? "Spotify" : apple ? "Apple Music" : (sourceMatches(Source::Youtube, app) ? "Browser" : app);
+        std::string const lowApp = text::toLower(app);
+        bool const ytMusic = text::contains(lowApp, "youtube music") || text::contains(lowApp, "youtube-music") ||
+                             text::contains(lowApp, "music.youtube") || text::contains(lowApp, "ytmusic"); // LyricsFlow 2.2: YT Music
+        m.sourceApp     = spotify ? "Spotify" : apple ? "Apple Music" : ytMusic ? "YT Music" : (sourceMatches(Source::Youtube, app) ? "Browser" : app);
         if (apple) cleanAppleMusic(m);
         else if (!spotify) { // browser tabs: "Artist - Song (Official Video) - YouTube" + channel name
             auto split = text::splitYoutube(m.title, m.artist);
@@ -87,12 +93,14 @@ std::optional<MediaSample> Smtc::poll(Source src) {
             m.title    = split[1];
         }
         auto info = chosen.GetPlaybackInfo();
+        if (!info) return std::nullopt; // [BF] null while Apple Music switches songs / pauses (this crashed on Nov 4)
         m.playing = info.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
         if (auto rep = info.AutoRepeatMode()) {
             auto v   = rep.Value();
             m.repeat = v == winrt::Windows::Media::MediaPlaybackAutoRepeatMode::Track ? 1 : v == winrt::Windows::Media::MediaPlaybackAutoRepeatMode::List ? 2 : 0;
         }
         auto    tl    = chosen.GetTimelineProperties();
+        if (!tl) return std::nullopt;
         int64_t start = tl.StartTime().count(), end = tl.EndTime().count(), pos = tl.Position().count(); // 100 ns ticks
         if (end > 0) m.durationMs = (end - std::max<int64_t>(0, start)) / 10000;
         m.positionMs    = pos / 10000;
@@ -129,9 +137,11 @@ std::vector<uint8_t> Smtc::thumbnail() {
     try {
         if (!mImpl->current) return {};
         auto props = mImpl->current.TryGetMediaPropertiesAsync().get();
+        if (!props) return {};
         auto ref   = props.Thumbnail();
         if (!ref) return {};
         auto     stream = ref.OpenReadAsync().get();
+        if (!stream) return {};
         uint64_t size   = stream.Size();
         if (size == 0 || size > (16ull << 20)) return {};
         winrt::Windows::Storage::Streams::DataReader reader(stream);
@@ -176,7 +186,9 @@ void Smtc::cycleRepeat() {
     try {
         if (!mImpl->current) return;
         using winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
-        auto rep = mImpl->current.GetPlaybackInfo().AutoRepeatMode();
+        auto pi  = mImpl->current.GetPlaybackInfo();
+        if (!pi) return;
+        auto rep = pi.AutoRepeatMode();
         auto cur = rep ? rep.Value() : MediaPlaybackAutoRepeatMode::None;
         auto nxt = cur == MediaPlaybackAutoRepeatMode::None ? MediaPlaybackAutoRepeatMode::List
                  : cur == MediaPlaybackAutoRepeatMode::List ? MediaPlaybackAutoRepeatMode::Track : MediaPlaybackAutoRepeatMode::None;

@@ -57,6 +57,8 @@ std::vector<Preset> const& presets() {
 
 std::vector<std::string_view> const& order() {
     static std::vector<std::string_view> const v{
+        "summer", "dawn", "dusk", "bright_night", "silver_lining", // [LyricsForge] the realistic skies, newest first
+        "rift", "supernova", "warp", "silk", "eclipse", // LyricsFlow 2.2
         "inferno",  "matrix", "prism",  "pulsar",    "aquarell",  "synthwave",   "aurora",
         "nebula",   "black_hole", "cosmos", "neon_city", "golden_hour", "cotton_candy", "sakura",
         "frost",    "midnight", "deep_sea", "blood_moon", "storm", "custom"};
@@ -79,16 +81,42 @@ std::optional<Preset> find(std::string_view id, Config const& cfg) {
     return std::nullopt;
 }
 
+// [BF] where a sky's signature sits (deg az, the shader's / dirOf convention): the dome turns this to the player
+float frontAz(Preset const& p) {
+    std::string_view const id = p.id;
+    if (id == "prism") return 200; // [LyricsForge] the rainbow (opposite the sun) is the signature
+    if (auto b = body(p)) return float(b->az);
+    struct F { char const* id; float az; };
+    static constexpr F kF[] = {{"warp", 0}, {"pulsar", 30}, {"supernova", 200}, {"eclipse", 160}, {"rift", 180}, {"polar", 0}, {"galaxy", 190},
+                               {"ocean", 180}, {"ice", 0}, {"purple", 185}, {"sunset", 30}, {"cherry", 0}, {"crimson", 0},
+                               {"thunder", 0}, {"astral", 200}, {"eclipse_heart", 160}, {"dream_ocean", 0}, {"meteor", 0}, {"event_horizon", 170}, {"deep_voyage", 180}, {"mirror_sky", 180}, {"lake_sunset", 180}, {"lupine_sunset", 182}};
+    for (auto const& f : kF) if (id == f.id) return f.az;
+    return p.painted() ? 0.0f : 180.0f;
+}
+
 std::optional<Body> body(Preset const& p) {
     std::string_view id = p.id;
-    if (id == "synthwave") return Body{180, 12, 12, 0xFFD36B, BodyKind::Synth};
+    if (id == "summer") return Body{150, 52, 2.4, 0xFFF6E0, BodyKind::Sun};
+    if (id == "dawn") return Body{110, 9, 3.0, 0xFFD8B8, BodyKind::Sun};
+    if (id == "dusk") return Body{200, 4, 3.4, 0xFFB070, BodyKind::Sun};
+    if (id == "silver_lining") return Body{160, 30, 2.6, 0xFFF0D8, BodyKind::Sun};
+    if (id == "bright_night") return Body{200, 32, 2.6, 0xEAF0FF, BodyKind::Moon};
+    if (id == "synthwave") return Body{180, 17, 10, 0xFFD36B, BodyKind::Synth}; // [BF] higher: its striped half clears the trees
     if (id == "golden_hour") return Body{200, 4, 3.6, 0xFFC27A, BodyKind::Sun};
     if (id == "cotton_candy") return Body{120, 38, 2.4, 0xFFF4E0, BodyKind::Sun};
     if (id == "sakura") return Body{60, 9, 2.6, 0xFFE2EE, BodyKind::Sun};
-    if (id == "cosmos") return Body{60, 28, 5, 0xB9A6FF, BodyKind::Moon};
+    if (id == "cosmos") return Body{60, 28, 4.2, 0xE8E4F2, BodyKind::Moon};
     if (id == "black_hole") return Body{165, 24, 5.2, 0xFFB45A, BodyKind::Eclipse};
     if (id == "blood_moon") return Body{200, 22, 4.4, 0xFF4038, BodyKind::Moon};
-    if (id == "frost") return Body{210, 30, 2.6, p.moon, BodyKind::Moon};
+    if (id == "frost") return Body{200, 18, 2.4, 0xFFF6EA, BodyKind::Sun};        // [LyricsForge] polar day: halo + sundogs
+    if (id == "prism") return Body{20, 16, 2.2, 0xFFF4E0, BodyKind::Sun};         // behind you: the rainbow is in front
+    if (id == "ocean") return Body{150, 48, 2.4, 0xFFF6E0, BodyKind::Sun};
+    if (id == "dream_ocean") return Body{120, 8, 3.0, 0xFFE0D0, BodyKind::Sun};
+    if (id == "sunset") return Body{200, 2, 4.0, 0xFFA050, BodyKind::Sun};
+    if (id == "crimson") return Body{200, 2, 4.2, 0xFF6040, BodyKind::Sun};
+    if (id == "cherry") return Body{200, 28, 2.6, 0xFFE0F0, BodyKind::Moon};
+    if (id == "ice") return Body{200, 26, 2.4, 0xEAF6FF, BodyKind::Moon};
+    if (id == "aquarell") return Body{200, -5, 2.4, 0xFFB080, BodyKind::Sun}; // just set: the clouds high up still catch it
     if (p.moon != 0) return Body{200, 26, 2.4, p.moon, BodyKind::Moon};
     return std::nullopt;
 }
@@ -104,7 +132,7 @@ uint32_t aurora2(Preset const& p, Config const& cfg) {
     return p.aurora2 != 0 ? p.aurora2 : 0xFFFFFF;
 }
 
-Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9]) {
+Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const& cfg, float const invRot[9], float domeYaw) {
     float pattern = std::clamp(cfg.skyPattern, 0.2f, 1.5f);
     float lively  = std::clamp(cfg.skyLively, 0.0f, 1.0f);
     float breath  = cfg.skyBreath <= 0.01f
@@ -123,7 +151,8 @@ Params pack(Preset const& p, uint32_t a1, uint32_t a2, double time, Config const
     o[6]   = b ? word(pair(b->az * 100.0, (b->el + 90.0) * 100.0)) : Texel{0, 0, 0, 0};
     uint32_t w7 = (b ? (pair(b->radius * 1000.0, 0) & 0xFFFF0000u) : 0u) | uint32_t(p.ordinal) << 8;
     o[7]   = word(w7);
-    float m[10] = {invRot[0], invRot[1], invRot[2], invRot[3], invRot[4], invRot[5], invRot[6], invRot[7], invRot[8], 0};
+    float const dy = float(std::remainder(double(domeYaw), 360.0)) / 360.0f; // [BF] -0.5..0.5 turns
+    float m[10] = {invRot[0], invRot[1], invRot[2], invRot[3], invRot[4], invRot[5], invRot[6], invRot[7], invRot[8], dy};
     for (int i = 0; i < 5; ++i) o[8 + i] = word(pair(enc(m[i * 2]), enc(m[i * 2 + 1])));
     return o;
 }
@@ -190,13 +219,16 @@ float nightOf(long long dayTime) {
 
 Frame Clock::tick(Preset const* p, Config const& cfg, In const& in) {
     double dt = std::min(0.1, std::max(0.0, in.dtSec));
-    mTime += dt * std::clamp(cfg.skySpeed, 0.1f, 3.0f);
+    mTime += dt * std::clamp(cfg.skySpeed, 0.1f, 3.0f) * std::clamp(in.rate, -1.5, 2.5);
     mBreath += dt * cfg.skyBreath * 1.3;
     mVisible = ease(mVisible, p ? 1.0f : 0.0f, dt, 3.0);
     mOutside = ease(mOutside, in.skyOpen ? 1.0f : 0.0f, dt, 2.0);
     mPic     = ease(mPic, in.picture ? 1.0f : 0.0f, dt, 2.5);
     std::string id = p ? p->id : "";
-    if (id != mLast) { mLast = id; mLiveFade = 0; }
+    if (id != mLast) { // [LyricsForge] sky to sky: the shader sweeps the new one in (no fade through the vanilla sky)
+        mLiveFade = (!mLast.empty() && !id.empty()) ? 1.0f : 0.0f;
+        mLast = id;
+    }
     mLiveFade = std::min(1.0f, mLiveFade + float(dt / 0.9));
 
     Frame f;
@@ -212,7 +244,9 @@ Frame Clock::tick(Preset const* p, Config const& cfg, In const& in) {
     f.picture    = mPic;
     f.picBright  = cfg.fxDayNight ? 0.45f + 0.55f * (1 - in.night) : 1.0f;
     f.alpha      = mVisible * outCubic(mLiveFade);
-    f.brightness = f.bright * (0.92f + 0.08f * mCalm) * (1 + 0.12f * f.beat);
+    // [BF] a scene change: the new sky emerges from a soft burst of light instead of popping in
+    float const burst = mLiveFade < 1 ? std::sin(3.14159265f * mLiveFade) * 0.6f : 0.0f;
+    f.brightness = f.bright * (0.92f + 0.08f * mCalm) * (1 + 0.03f * f.beat) /* [LyricsForge] was 0.12: the dome blinked on every beat */ * (1 + burst);
     f.time       = mTime;
     f.t          = float(mTime * 2.2);
     return f;

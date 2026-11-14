@@ -1,4 +1,6 @@
 #include "client/ShaderPacks.h"
+#include "client/AsyncFile.h"
+#include <sstream>
 
 #include <algorithm>
 #include <atomic>
@@ -64,6 +66,12 @@ bool tryCandidate(std::wstring const& cand, wchar_t* out, unsigned long outLen) 
 }
 
 std::atomic<bool> gYield{false}; // Renderer Foundation is loaded: it owns material redirection
+// which atmosphere's block shader the game really has: the pack that served the last RenderChunk.material.bin open
+// (0 Cloud Sea, 1 Novak Glass, 2 another pack / vanilla, -1 not seen yet). Renderer Foundation's sky follows it, so
+// sky and blocks never show two atmospheres at once (the game takes new block shaders only when it loads a world).
+std::atomic<int> gLoadedAtmos{-1};
+std::atomic<long> gRcOpens{0};   // RenderChunk.material.bin opens seen (when does the game really take block shaders?)
+int atmosOf(std::string const& pack) { return pack == "NovakGlass" ? 1 : pack == "CloudSea" ? 0 : 2; }
 
 bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) {
     if (gYield.load(std::memory_order_relaxed)) return false;
@@ -86,6 +94,7 @@ bool redirect(int api, wchar_t const* path, wchar_t* out, unsigned long outLen) 
     if (!hit && !st->packDir.empty())
         hit = tryCandidate(st->packDir + L"\\renderer\\materials\\" + name, out, outLen)
            || tryCandidate(st->packDir + L"\\" + name, out, outLen);
+    if (endsWithI(name, L"RenderChunk.material.bin")) ++gRcOpens;
     if (!hit) return false;
     ++gRedirects;
     if (fromRp) ++gRpRedirects;
@@ -110,6 +119,13 @@ std::vector<std::string> listPacks() {
 }
 
 std::string activePack() { return gActiveName; }
+int         loadedAtmosphere() { return gLoadedAtmos.load(); }
+std::string noteWorldJoined() {
+    // the game takes its block shaders when it loads (and, as far as seen, when it loads a world): the pack active now
+    // is the one the world shows
+    gLoadedAtmos = atmosOf(gActiveName);
+    return gActiveName + " (block shader opens so far: " + std::to_string(gRcOpens.load()) + ")";
+}
 
 // E-024: with Renderer Foundation loaded, BF stopped redirecting and RF's own loader served nothing (vanilla terrain on
 // Fancy). BF's loader is the proven one, so it keeps serving; it only yields if config/yield_to_rf exists.
@@ -130,6 +146,7 @@ bool setActivePack(std::string const& name) {
     std::string use = name;
     if (use.empty() || use == "off" || !fs::is_directory(gPacksDir / use, ec)) use = "off";
     gActiveName = use;
+    if (gLoadedAtmos.load() < 0) gLoadedAtmos = atmosOf(use);   // the first pack (at startup) is the one the game loads
     std::ofstream{gCfg} << use << "\n";
     if (!gCfg.empty()) std::ofstream{gCfg.parent_path() / "shaderpack.running"} << use << "\n";
     auto st = gState.load();
@@ -168,8 +185,20 @@ void install(fs::path const& modDir) {
             for (auto& e : fs::directory_iterator(fs::path(exe).parent_path() / "logs" / "crash", ec))
                 if (e.is_regular_file(ec) && e.last_write_time(ec) > since) realCrash = true;
         }
-        if (!realCrash) log.info("[BF] shaderpacks: last run ended without a clean shutdown but no crash report -> keeping '{}'", active);
+        if (!realCrash) {
+            log.info("[BF] shaderpacks: last run ended without a clean shutdown but no crash report -> keeping '{}'", active);
+            fs::remove(gCfg.parent_path() / "shaderpack.crashstreak", ec);
+        }
+        // One crash is not proof: the game also crashes on its own (a shutdown fail-fast seen 2026-11-10/11 with the
+        // pack on AND off - same stack). Only the second crash in a row with the same pack falls back.
+        int streak = 0;
         if (realCrash && !crashed.empty() && crashed == active && active != "off") {
+            if (std::ifstream in{gCfg.parent_path() / "shaderpack.crashstreak"}; in) in >> streak;
+            ++streak;
+            std::ofstream{gCfg.parent_path() / "shaderpack.crashstreak"} << streak << "\n";
+            if (streak < 2) log.warn("[BF] shaderpacks: the last run crashed while '{}' was active - keeping it (a second crash in a row turns it off)", active);
+        }
+        if (realCrash && streak >= 2 && !crashed.empty() && crashed == active && active != "off") {
             std::string fb = "off";
             if (std::ifstream in{gCfg.parent_path() / "shaderpack.fallback"}; in) std::getline(in, fb);
             while (!fb.empty() && (fb.back() == '\r' || fb.back() == ' ')) fb.pop_back();
@@ -199,11 +228,7 @@ void install(fs::path const& modDir) {
 void writeReport() {
     static char const* api[4] = {"CreateFileW", "CreateFile2", "NtCreateFile", "NtOpenFile"};
     std::lock_guard lock(gNamesMutex);
-    std::error_code ec;
-    auto dir = ll::mod::NativeMod::current()->getModDir() / "logs";
-    fs::create_directories(dir, ec);
-    std::ofstream out{dir / "shaderpacks.txt"};
-    if (!out) return;
+    std::ostringstream out; // [BF] built here, written off the game thread (asyncfile)
     for (int i = 0; i < 4; ++i) out << api[i] << ": saw " << gSeen[i].load() << " material opens, redirected " << gRedirected[i].load() << "\n";
     auto st = gState.load();
     out << "active shaderpack: " << gActiveName << "\nresource-pack shaders: " << (st->rpDir.empty() ? "off" : fs::path(st->rpDir).string())
@@ -213,6 +238,7 @@ void writeReport() {
     forgerender::writeReport(out);
     out << "all material opens (api path):\n";
     for (auto& n : gSeenPaths) out << "  " << fs::path(n).string() << "\n";
+    asyncfile::write(ll::mod::NativeMod::current()->getModDir() / "logs" / "shaderpacks.txt", out.str());
 }
 
 void reportOnce() {
@@ -227,6 +253,7 @@ void reportOnce() {
 void uninstall() {
     std::error_code ec;
     fs::remove(gCfg.parent_path() / "shaderpack.running", ec); // clean shutdown
+    fs::remove(gCfg.parent_path() / "shaderpack.crashstreak", ec);
     win32::files::setRedirect(nullptr);
     for (auto& s : gSites) ll::memory::unhook(s.target, s.detour);
     gSites.clear();
@@ -234,3 +261,5 @@ void uninstall() {
 }
 
 } // namespace bedrock_forge::client::shaderpacks
+
+extern "C" __declspec(dllexport) int BF_LoadedAtmosphere() { return bedrock_forge::client::shaderpacks::loadedAtmosphere(); }

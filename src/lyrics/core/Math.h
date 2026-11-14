@@ -66,6 +66,11 @@ struct Quat {
         double l = std::sqrt(x * x + y * y + z * z + w * w);
         return l > 1e-12 ? Quat{x / l, y / l, z / l, w / l} : Quat{};
     }
+    /// [LyricsForge] normalised lerp toward b (shortest way round), t 0..1
+    Quat nlerp(Quat b, double t) const {
+        if (x * b.x + y * b.y + z * b.z + w * b.w < 0) b = {-b.x, -b.y, -b.z, -b.w};
+        return Quat{x + (b.x - x) * t, y + (b.y - y) * t, z + (b.z - z) * t, w + (b.w - w) * t}.normalized();
+    }
 };
 
 // ---------------------------------------------------------------- Proj (LyricsFlow)

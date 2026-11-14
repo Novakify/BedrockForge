@@ -120,15 +120,25 @@ std::vector<Word> splitWords(std::string_view textIn, int64_t start, int64_t end
     if (lineRate >= rate * 0.9) sing = int64_t(double(gap) * 0.74);
     else sing = std::max(int64_t(double(total) / rate * 1000.0), int64_t(double(gap) * 0.6));
     sing = std::max(std::min<int64_t>(350, gap), std::min(sing, int64_t(double(gap) * 0.82)));
+    // [BF] a word ending in , ; : . ! ? (or a dash) is followed by a short breath: give it extra weight so the words
+    // after it start later instead of being spread evenly across the pause
+    auto pauseAfter = [&](size_t i) {
+        if (i + 1 >= parts.size() || parts[i].empty()) return 0.0;
+        char const ch = parts[i].back();
+        if (ch == ',' || ch == ';' || ch == ':') return 0.9;
+        if (ch == '.' || ch == '!' || ch == '?' || ch == '-') return 1.3;
+        return 0.0;
+    };
     double weight = 0.0;
-    for (int n : syl) weight += double(n) + 0.6;
+    for (size_t i = 0; i < parts.size(); ++i) weight += double(syl[i]) + 0.6 + pauseAfter(i);
     double t = double(start);
     for (size_t i = 0; i < parts.size(); ++i) {
         double  d    = double(sing) * ((double(syl[i]) + 0.6) / weight);
+        double  rest = double(sing) * (pauseAfter(i) / weight);
         int64_t prev = out.empty() ? start - 1000 : out.back().start;
         int64_t ws   = i == 0 ? start : std::max(prev + 130, int64_t(t) - 60);
         out.push_back(Word::of(parts[i], ws, std::max(ws + 60, int64_t(t + d) - 60)));
-        t += d;
+        t += d + rest;
     }
     return out;
 }
@@ -405,14 +415,64 @@ std::string toCacheJson(Lyrics const& l) {
     for (size_t i = 0; i < l.lines.size(); ++i) {
         auto const& ln = l.lines[i];
         o += (i ? "," : "") + std::string("{\"t\":") + jq(ln.text) + ",\"s\":" + std::to_string(ln.start) + ",\"e\":" + std::to_string(ln.end) +
-             ",\"est\":" + (ln.estimated ? "true" : "false") + ",\"w\":[";
+             ",\"est\":" + (ln.estimated ? "true" : "false") + (ln.translation.empty() ? std::string() : ",\"tr\":" + jq(ln.translation)) +
+             (ln.voice ? ",\"vo\":" + std::to_string(int(ln.voice)) : std::string()) + ",\"w\":[";
         for (size_t j = 0; j < ln.words.size(); ++j) {
             auto const& w = ln.words[j];
             o += (j ? "," : "") + std::string("[") + jq(w.text) + "," + std::to_string(w.origStart) + "," + std::to_string(w.origEnd) + "]";
         }
         o += "]}";
     }
-    return o + "]}";
+    o += "]";
+    if (!l.marks.empty()) { // [BF] manual sections
+        o += ",\"marks\":[";
+        for (size_t i = 0; i < l.marks.size(); ++i) o += (i ? "," : "") + std::string("[") + std::to_string(l.marks[i].first) + ",\"" + l.marks[i].second + "\"]";
+        o += "]";
+    }
+    return o + "}";
+}
+
+void normalizeWords(Lyrics& ly) {
+    auto fix = [](std::string& t) {
+        std::string o;
+        o.reserve(t.size());
+        for (size_t i = 0; i < t.size(); ++i) {
+            unsigned char const c = uint8_t(t[i]);
+            if (c == 0xC2 && i + 1 < t.size() && uint8_t(t[i + 1]) == 0xA0) { o += ' '; ++i; continue; }              // U+00A0
+            if (c == 0xE3 && i + 2 < t.size() && uint8_t(t[i + 1]) == 0x80 && uint8_t(t[i + 2]) == 0x80) { o += ' '; i += 2; continue; } // U+3000
+            if (c == 0xE2 && i + 2 < t.size() && uint8_t(t[i + 1]) == 0x80 &&
+                (uint8_t(t[i + 2]) == 0x89 || uint8_t(t[i + 2]) == 0xAF || uint8_t(t[i + 2]) == 0x8A)) { o += ' '; i += 2; continue; } // thin / narrow
+            o += char(c);
+        }
+        t.swap(o);
+    };
+    for (auto& l : ly.lines) {
+        fix(l.text);
+        for (auto& w : l.words) fix(w.text);
+        if (l.words.size() != 1 || l.words[0].text.find(' ') == std::string::npos) continue;
+        Word const one = l.words[0];
+        int64_t const t0 = one.start, t1 = std::max(one.end, one.start + 1);
+        size_t const n = one.text.size();
+        std::vector<Word> out;
+        for (size_t b = 0; b < n;) {
+            while (b < n && one.text[b] == ' ') ++b;
+            size_t e = b;
+            while (e < n && one.text[e] != ' ') ++e;
+            if (e == b) break;
+            Word w = one;
+            w.text  = one.text.substr(b, e - b);
+            w.start = t0 + int64_t(double(t1 - t0) * double(b) / double(n));
+            w.end   = t0 + int64_t(double(t1 - t0) * double(e) / double(n));
+            w.origStart = w.start; w.origEnd = w.end;
+            out.push_back(std::move(w));
+            b = e;
+        }
+        if (out.size() > 1) {
+            for (size_t i = 0; i + 1 < out.size(); ++i) out[i].end = out[i].origEnd = out[i + 1].start;
+            out.back().end = out.back().origEnd = t1;
+            l.words = std::move(out);
+        }
+    }
 }
 
 std::optional<Lyrics> fromCacheJson(std::string_view s) {
@@ -429,13 +489,40 @@ std::optional<Lyrics> fromCacheJson(std::string_view s) {
         ln.start     = j["s"].asInt();
         ln.end       = j["e"].asInt();
         ln.estimated = j["est"].asBool(true);
+        ln.translation = j["tr"].asString();
+        ln.voice       = uint8_t(std::clamp(int(j["vo"].asInt()), 0, 1));
         for (auto const& w : j["w"].items()) ln.words.push_back(Word::of(w[0].asString(), w[1].asInt(), w[2].asInt()));
         allReal &= !ln.estimated && !ln.words.empty();
         l.lines.push_back(std::move(ln));
     }
     l.wordSynced = allReal && !l.lines.empty();
+    if ((*d)["marks"].isArray())
+        for (auto const& m : (*d)["marks"].items()) {
+            std::string const k = m[1].asString();
+            if (!k.empty()) l.marks.push_back({m[0].asInt(), k[0]});
+        }
     if (l.lines.empty()) return std::nullopt;
+    normalizeWords(l); // [BF]
     return l;
+}
+
+int attachTranslations(Lyrics& l, std::string_view tlrc) {
+    auto t = parseLrc(tlrc, 0, "tlyric");
+    if (!t) return 0;
+    int n = 0;
+    for (auto& ln : l.lines) {
+        if (ln.index < 0 || !ln.translation.empty()) continue;
+        for (auto const& tl : t->lines) {
+            if (tl.index < 0) continue;
+            if (std::llabs(tl.start - ln.start) <= 150) {
+                std::string tx = text::trimmed(tl.text);
+                if (!tx.empty() && tx != text::trimmed(ln.text)) { ln.translation = tx; ++n; }
+                break;
+            }
+            if (tl.start > ln.start + 150) break;
+        }
+    }
+    return n;
 }
 
 std::string cacheFileName(std::string_view key) {

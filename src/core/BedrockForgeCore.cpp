@@ -76,6 +76,7 @@ bool Core::enable() {
         gTicks   = 0;
         getSelf().getLogger().info("[BF] Joined a world - event bridge is alive.");
         client::shaderpacks::reportOnce();
+        getSelf().getLogger().info("[BF] world look: " + client::shaderpacks::noteWorldJoined());
     });
     mSubs.on<ll::event::ClientExitLevelEvent>([this](ll::event::ClientExitLevelEvent&) {
         gInWorld = false;

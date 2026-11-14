@@ -2,6 +2,7 @@
 // The Bedrock implementation (LeviLamina BlockSource / Actor) lives in lyrics/win/; tests use a fake voxel world.
 // Original code for Bedrock Forge.
 #pragma once
+#include <string>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -57,6 +58,8 @@ public:
     /// Cloud layer height here, NaN when clouds are off / in a dimension without clouds.
     virtual double cloudY() { return std::numeric_limits<double>::quiet_NaN(); }
     virtual std::vector<Entity> entities() { return {}; }
+    /// [BF] block id at p ("minecraft:stone"), "" when unknown - material-aware letter impacts
+    virtual std::string blockName(BlockPos) { return {}; }
 
     // helpers with LyricsFlow's definitions
     bool empty(BlockPos p) { // no collision shape and no fluid

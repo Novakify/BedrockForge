@@ -1,0 +1,36 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:attachable": {
+  "description": {
+   "identifier": "minecraft:diamond_axe",
+   "materials": {
+    "default": "entity_alphatest",
+    "enchanted": "entity_alphatest_glint"
+   },
+   "textures": {
+    "default": "textures/worldfx/wfx_diamond_axe",
+    "enchanted": "textures/misc/enchanted_item_glint"
+   },
+   "geometry": {
+    "default": "geometry.wfx_diamond_axe"
+   },
+   "animations": {
+    "hold_first_person": "animation.wfx.hold_first_person",
+    "hold_third_person": "animation.wfx.hold_third_person"
+   },
+   "scripts": {
+    "animate": [
+     {
+      "hold_first_person": "c.is_first_person"
+     },
+     {
+      "hold_third_person": "!c.is_first_person"
+     }
+    ]
+   },
+   "render_controllers": [
+    "controller.render.item_default"
+   ]
+  }
+ }
+}

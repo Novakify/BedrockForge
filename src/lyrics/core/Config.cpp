@@ -26,7 +26,7 @@ constexpr EnumNames<Source, 4>      kSource{{"SPOTIFY", "YOUTUBE", "ANY", "APPLE
 constexpr EnumNames<LyricsStyle, 4> kStyle{{"SKY", "FLOATING", "SCREEN", "WALL"}};
 constexpr EnumNames<TextStyle, 2>   kTextStyle{{"NEON", "CLEAN"}};
 constexpr EnumNames<EnterAnim, 8>   kEnter{{"WORD", "FADE", "RISE", "NEON", "DROP", "SPIN", "ZOOM", "GLITCH"}};
-constexpr EnumNames<ExitAnim, 9>    kExit{{"FLOAT_UP", "DRIFT", "FADE", "FALL", "SHATTER", "DISSOLVE", "EXPLODE", "BURN", "GLITCH"}};
+constexpr EnumNames<ExitAnim, 10>   kExit{{"FLOAT_UP", "DRIFT", "FADE", "FALL", "SHATTER", "DISSOLVE", "EXPLODE", "BURN", "GLITCH", "VORTEX"}};
 constexpr EnumNames<TopBarStyle, 2> kTopBar{{"KARAOKE", "SIMPLE"}};
 constexpr EnumNames<LetterLand, 2>  kLand{{"FLAT", "TUMBLE"}};
 

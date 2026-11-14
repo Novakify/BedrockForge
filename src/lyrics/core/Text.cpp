@@ -363,6 +363,12 @@ std::vector<Variant> variants(std::string_view artist, std::string_view title) {
     };
     std::string ft = clean(stripFeat(t));
     cands.push_back({stripMarksKeepCase(mainArtist(a)), stripMarksKeepCase(ft)});
+    { // [LyricsForge] a mix tag glued on without brackets ("It's You CastelliMix3", "Song VIP", "Song Extended Edit")
+        static std::regex const reTail(R"(\s+[^\s]*(mix|edit|rmx|remix|version|vip|bootleg|flip)\d*\s*$)", std::regex::icase);
+        std::string bare = std::regex_replace(ft, reTail, "");
+        bare = std::regex_replace(bare, std::regex(R"(\s+(extended|radio|club|original)\s*$)", std::regex::icase), "");
+        if (!trimmed(bare).empty() && bare != ft) cands.push_back({mainArtist(a), bare});
+    }
     std::set<std::string> seen;
     std::vector<Variant>  out;
     for (auto& c : cands) {
