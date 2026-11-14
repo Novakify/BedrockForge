@@ -15,8 +15,10 @@ static const uint FN_PAIN = 10336u, FN_PAIN_N = 31u;
 static const uint FN_ULT = 11328u, FN_ULT_N = 52u;
 // Epic Fight moves: (clip offset, frames, weapon, victim distance blocks) and up to 6 hit times (s)
 // Epic Fight clips: per frame 13 x 4 uints (centre xyz blocks, quat xyzw): 11 skin segments, Tool_R, Tool_L
-static const uint4 kEFClip[17] = { uint4(0u, 23u, 8u, 409u), uint4(1196u, 23u, 6u, 323u), uint4(2392u, 20u, 4u, 361u), uint4(3432u, 21u, 0u, 266u), uint4(4524u, 26u, 5u, 363u), uint4(5876u, 31u, 3u, 873u), uint4(7488u, 59u, 4u, 1039u), uint4(10556u, 28u, 7u, 187u), uint4(12012u, 29u, 7u, 1400u), uint4(13520u, 65u, 2u, 349u), uint4(16900u, 31u, 2u, 225u), uint4(18512u, 25u, 9u, 118u), uint4(19812u, 56u, 3u, 531u), uint4(22724u, 28u, 6u, 240u), uint4(24180u, 25u, 1u, 390u), uint4(25480u, 15u, 1u, 209u), uint4(26260u, 13u, 2u, 1400u) };
-static const float kEFHit[102] = { 0.700, 99.000, 99.000, 99.000, 99.000, 99.000, 0.450, 0.650, 0.950, 99.000, 99.000, 99.000, 0.100, 0.500, 99.000, 99.000, 99.000, 99.000, 0.200, 99.000, 99.000, 99.000, 99.000, 99.000, 0.400, 0.500, 0.900, 99.000, 99.000, 99.000, 0.750, 99.000, 99.000, 99.000, 99.000, 99.000, 0.600, 1.400, 1.650, 99.000, 99.000, 99.000, 0.700, 99.000, 99.000, 99.000, 99.000, 99.000, 0.500, 99.000, 99.000, 99.000, 99.000, 99.000, 1.000, 1.500, 2.550, 99.000, 99.000, 99.000, 0.600, 99.000, 99.000, 99.000, 99.000, 99.000, 0.350, 0.450, 0.550, 0.700, 0.800, 1.000, 0.200, 1.500, 99.000, 99.000, 99.000, 99.000, 0.550, 99.000, 99.000, 99.000, 99.000, 99.000, 0.100, 99.000, 99.000, 99.000, 99.000, 99.000, 0.100, 99.000, 99.000, 99.000, 99.000, 99.000, 0.250, 99.000, 99.000, 99.000, 99.000, 99.000 };
+static const uint4 kEFClip[17] = { uint4(0u, 23u, 8u, 409u), uint4(1196u, 23u, 6u, 323u), uint4(2392u, 20u, 4u, 361u), uint4(3432u, 21u, 0u, 266u), uint4(4524u, 26u, 5u, 363u), uint4(5876u, 31u, 3u, 873u), uint4(7488u, 39u, 4u, 500u), uint4(9516u, 28u, 7u, 187u), uint4(10972u, 29u, 7u, 1400u), uint4(12480u, 65u, 2u, 349u), uint4(15860u, 37u, 2u, 670u), uint4(17784u, 25u, 9u, 118u), uint4(19084u, 56u, 3u, 531u), uint4(21996u, 28u, 6u, 240u), uint4(23452u, 25u, 1u, 390u), uint4(24752u, 15u, 1u, 209u), uint4(25532u, 13u, 2u, 1400u) };
+// a paired move's victim clip: (offset, frames, start time * 100, 0); frames 0 = none
+static const uint4 kEFVic[17] = { uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(26208u, 29u, 36u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u), uint4(0u, 0u, 0u, 0u) };
+static const float kEFHit[102] = { 0.700, 99.000, 99.000, 99.000, 99.000, 99.000, 0.450, 0.650, 0.950, 99.000, 99.000, 99.000, 0.100, 0.500, 99.000, 99.000, 99.000, 99.000, 0.200, 99.000, 99.000, 99.000, 99.000, 99.000, 0.400, 0.500, 0.900, 99.000, 99.000, 99.000, 0.750, 99.000, 99.000, 99.000, 99.000, 99.000, 0.600, 0.850, 1.200, 99.000, 99.000, 99.000, 0.700, 99.000, 99.000, 99.000, 99.000, 99.000, 0.500, 99.000, 99.000, 99.000, 99.000, 99.000, 1.000, 1.500, 2.550, 99.000, 99.000, 99.000, 1.350, 99.000, 99.000, 99.000, 99.000, 99.000, 0.350, 0.450, 0.550, 0.700, 0.800, 1.000, 0.200, 1.500, 99.000, 99.000, 99.000, 99.000, 0.550, 99.000, 99.000, 99.000, 99.000, 99.000, 0.100, 99.000, 99.000, 99.000, 99.000, 99.000, 0.100, 99.000, 99.000, 99.000, 99.000, 99.000, 0.250, 99.000, 99.000, 99.000, 99.000, 99.000 };
 static const uint kEFHits[17] = { 1u, 3u, 2u, 1u, 3u, 1u, 3u, 1u, 1u, 3u, 1u, 6u, 2u, 1u, 1u, 1u, 1u };
 
 // ragdolls: per frame (20 Hz) 6 parts x 4 uints (centre xyz blocks from the feet, rotation quat xyzw)
@@ -26,7 +28,7 @@ static const uint SB_SLUMP = 4656u, SB_SLUMP_N = 97u;
 static const uint SB_ROLL = 6984u, SB_ROLL_N = 97u;
 static const uint kRagBase = 12992u;      // gClips: the clips from 0, the ragdolls from here
 static const uint kEFBase = 22304u;    // gClips: the Epic Fight clips from here
-static const uint kClipRows = 193u;
+static const uint kClipRows = 196u;
 // ragdoll thuds: 6 per bake, (x, y = horizontal place in bake space; z = time s, 99 = none; w = strength)
 static const float4 kRagHit[24] = {
     float4(0.437, -2.627, 0.729, 1.242),

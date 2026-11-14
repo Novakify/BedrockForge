@@ -18,6 +18,17 @@ void f2World(inout float3 dec, inout float decK, float3 c, float k) {
 }
 float3 f2Lum3(float3 o) { return dot(o, float3(0.3, 0.55, 0.15)); }
 
+// the Tsunami's wave: > 0 inside the water. P = (along its travel from the crest, up, along the crest). A ridge with a
+// steep face and a long back, the crest leaning out ahead of the face, a slow swell along its length
+float f2Wave(float3 P, float HW, float t, float z0, float z1) {
+    HW *= smoothstep(z0, z0 + 3.5, P.z) * smoothstep(z1, z1 - 3.5, P.z) + 0.001;
+    float yh = P.y / HW;
+    float x = P.x + 1.5 * smoothstep(0.5, 1.0, yh) * yh;
+    return HW * (x > 0.0 ? exp(-x / 3.4) : exp(-x * x / 1.1)) * (0.93 + 0.07 * sin(P.z * 1.7 + t * 3.0)) - P.y;
+}
+// the scene at another pixel - but where that pixel is sky, this pixel's own colour: the sky is drawn by this pass,
+// not in the scene buffer
+float3 f2Scene(int2 p, float3 o) { return isSky(rawDepth(p)) ? o : sceneAt(p).rgb; }
 void f2Special(int k, float t, float3 o, float3 rd, float3 feet, float yaw, float view, float seed, float3 team, float3 glow,
                bool onG, float3 S, float gr, inout DHit h, inout float3 add, inout float3 dec, inout float decK, inout DFx fx) {
     float3x3 RY = rotY(yaw);
@@ -32,33 +43,84 @@ void f2Special(int k, float t, float3 o, float3 rd, float3 feet, float yaw, floa
     float bub = f2Bubble(rd, C, 5.0);
 
     [branch] if (k == 0) {
-        // WORLD SLASH: time stops; a colossal sword of light splits the world, and the mob with it
-        float stop = ease(t / 0.3) * (1.0 - ease((t - 3.4) / 0.4));
-        f2World(dec, decK, lerp(o, f2Lum3(o) * float3(0.80, 0.86, 1.0) * 0.8, 0.85), bub * stop);
-        float3 cutN = normalize(float3(0.0, 1.0, 0.0) + A * 0.28);       // the cut: a plane through the waist, tipped
-        float3 P0 = feet + float3(0, 0.85, 0);
-        // the sword: a blade of light high over them, then the sweep down through the world
-        float sw = ease((t - 0.5) / 0.6), cut = ease((t - 1.3) / 0.18);
-        float3 bladeDir = normalize(lerp(float3(0, 1, 0), A, cut * 0.9 + 0.1));
-        float3 hilt = P0 - A * 3.0 + float3(0, 7.0 * (1.0 - sw) + 1.0, 0);
-        if (sw > 0.0 && t < 1.9) {
-            float k2 = sw * (1.0 - ease((t - 1.6) / 0.3));
-            add += float3(1.0, 0.95, 0.8) * dsGlowSeg(rd, hilt, hilt + bladeDir * 9.0, 0.14, h.t) * 1.4 * k2;
-            add += float3(1.0, 0.85, 0.5) * dsGlowSeg(rd, hilt, hilt + bladeDir * 9.0, 0.5, h.t) * 0.35 * k2;
+        // WORLD SLASH: time stops - colour drains, dust hangs in the air. A colossal sword of light forms in the sky
+        // and comes down through everything: a white line runs across the world, the ground opens along it, and
+        // the world above the line slides off the world below, the mob with it. Time returns; the halves fall apart
+        float stop = ease(t / 0.35) * (1.0 - ease((t - 3.55) / 0.35));
+        float3 P0 = feet + float3(0, 1.05, 0);
+        float3 cutN = normalize(float3(0, 0.82, 0) + A * 0.57);              // the cut: a plane you see edge-on, a slanted line
+        float3 Ld = normalize(A * 0.82 - float3(0, 0.57, 0));                // down along it
+        float tCut = 1.55, uc = t - tCut;
+        float slide = ease((uc - 0.3) / 1.5) * 0.6 * (1.0 - ease((t - 3.6) / 0.25));
+        float3 Pn = rd * dot(P0, rd);                                        // this ray, where it passes the mob
+        float sdr = dot(Pn - P0, cutN);
+        bool sky = length(S) > 1e5;
+        float3 Sw = sky ? rd * 80.0 : S;
+        // the world in the bubble: drained, and - above the line - slid down along it
+        float3 wc = o;
+        if (uc > 0.3 && sdr > 0.0 && bub * stop > 0.0) {
+            float3 pp = toPx(Sw - Ld * slide * bub);
+            if (pp.z > 0.0) wc = f2Scene(int2(pp.xy), o);
         }
-        // the split: a line of white light where the plane meets the world, all through the bubble
-        float lit = exp(-max(t - 1.48, 0.0) * 1.2) * step(1.3, t);
-        float sd = dot(S - P0, cutN);
-        float near1 = saturate(1.0 - length(S - P0) / 6.0);
-        add += float3(1.0, 0.95, 0.85) * exp(-sd * sd / 0.0015) * lit * near1 * 2.0 * cut;
-        // the mob, cut at the line: the top slides off along it after time comes back
-        float go = ease((t - 2.2) / 0.8);
-        if (t < 3.6) {
-            dsBody(h, rd, feet, RY, 1.0, -99.0, 14.0, fx);
-            dsBody(h, rd, feet + A * go * 0.8 - float3(0, go * go * 0.6, 0), mul(RY, rotZ(go * 0.5)), 1.0, 14.0, 99.0, fx);
+        f2World(dec, decK, lerp(wc, f2Lum3(wc) * float3(0.78, 0.86, 1.0) * 0.82, 0.88), bub * stop);
+        // dust, stopped in the air
+        [loop] for (int i = 0; i < 16; i++) {
+            float hi = float(i);
+            float3 M = P0 + (float3(h1(hi + seed), h1(hi * 2.0 + seed), h1(hi * 3.0 + seed)) - 0.5) * float3(6.0, 2.6, 6.0);
+            add += float3(0.8, 0.9, 1.0) * f2Glow(rd, M, 0.028, h.t) * stop * 0.8;
         }
-        fnPoof(h, rd, C, t - 3.6, seed, 14, 0.08);
-        f2Cubes(h, rd, P0, t - 2.2, 14, seed, 1.5, 1.2, 9.0, 1.2, 0.03, hex3(110, 2, 2), hex3(181, 18, 18), floorY, 0.0);
+        // the sword of light: a blade with a guard and a ring of light at the hilt, hanging over the line, then down it
+        float form = ease((t - 0.45) / 0.5), plunge = easeOut((t - 1.42) / 0.2);
+        float swK = form * (1.0 - ease((t - 1.8) / 0.4));
+        if (swK > 0.0) {
+            float3 tip = P0 + Ld * (-2.4 - 1.0 * ease((t - 0.9) / 0.5) + 13.0 * plunge);
+            float tp = dot(tip, vf) / max(dot(rd, vf), 1e-4);
+            if (tp > 0.0 && tp < h.t + 0.5) {
+                float3 X = rd * tp - tip;
+                float a = -dot(X, Ld), b = dot(X, cutN);                     // back from the point, across the blade
+                const float BL = 7.5;
+                float hw = a < 0.0 ? -1.0 : (a < BL ? 0.5 * min(1.0, a / 1.6) : (a < BL + 0.4 ? 1.7 : (a < BL + 2.6 ? 0.16 : (a < BL + 3.1 ? 0.36 : -1.0))));
+                float e = abs(b) - hw;
+                float core = hw > 0.0 ? smoothstep(0.03, -0.03, e) : 0.0;
+                float halo = hw > 0.0 ? exp(-max(e, 0.0) * max(e, 0.0) / 0.12) : 0.0;
+                float edge = hw > 0.0 ? exp(-e * e / 0.002) : 0.0;
+                float fuller = (a > 1.6 && a < BL) ? exp(-b * b / 0.004) * 0.5 : 0.0;
+                float rr = length(float2(a - BL, b));
+                float ring = exp(-pow((rr - 2.3) / 0.035, 2.0)) * step(0.35, frac(atan2(b, a - BL) / 6.2832 * 12.0 + t * 0.4)) + exp(-pow((rr - 2.9) / 0.02, 2.0)) * 0.5;
+                add += (float3(1.0, 0.97, 0.9) * (core * (0.9 - fuller) + edge * 0.8) + float3(1.0, 0.8, 0.4) * (halo * 0.35 + ring * 0.9)) * swK * 1.5;
+            }
+        }
+        // the line: white through everything, wide for an instant as the blade passes
+        float lk = step(0.0, uc) * (0.55 + 2.2 * exp(-uc * 7.0)) * (1.0 - ease((t - 3.5) / 0.3)) * saturate(bub * 1.5);
+        float lw = 0.012 + 0.09 * exp(-max(uc, 0.0) * 9.0);
+        add += float3(1.0, 0.97, 0.9) * exp(-sdr * sdr / (lw * lw)) * lk;
+        add += float3(1, 1, 1) * bub * exp(-pow(uc / 0.04, 2.0)) * 0.22;                                            // the instant itself
+        // the ground, opened where the plane meets it: a dark split with hot edges, cooling
+        if (onG && uc > 0.0) {
+            float2 gq = floor(S.xz * 16.0) / 16.0;
+            float gd = abs(dot(float3(gq.x, feet.y, gq.y) - P0, cutN) + 0.03 * (hash12(floor(gq * 4.0)) - 0.5));
+            float along = abs(dot(S - feet, vf));
+            float wd = (0.035 + 0.05 * ease(uc / 0.6)) * saturate(1.0 - along / 7.5);
+            float crack = step(gd, wd), hot = exp(-max(gd - wd, 0.0) / 0.05) * saturate(1.0 - along / 7.5);
+            float fade = 1.0 - ease((t - 4.3) / 0.5);
+            dec = lerp(decK > 0.0 ? dec : o, float3(0.01, 0.01, 0.015), crack * fade); decK = max(decK, crack > 0.0 ? 1.0 : decK);
+            add += float3(1.0, 0.6, 0.2) * hot * (1.0 - crack) * exp(-uc * 1.3) * 0.9 * fade;
+        }
+        // the mob: cut on the line. The upper half slides with the world, then - time back - off and down
+        float back = max(t - 3.6, 0.0);
+        if (t < 4.3) {
+            if (uc < 0.3) dsBody(h, rd, feet, RY, 1.0, -99.0, 99.0, fx);
+            else {
+                float3 off = Ld * (slide + back * 1.6) + float3(0, -5.0 * back * back, 0);
+                gCut = float4(cutN, dot(P0, cutN));
+                dsBody(h, rd, feet, mul(rotZ(0.0), RY), 1.0, -99.0, 99.0, fx);
+                gCut = float4(-cutN, -dot(P0 + off, cutN));
+                dsBody(h, rd, feet + off, RY, 1.0, -99.0, 99.0, fx);
+                gCut = float4(0, 0, 0, 0);
+            }
+        }
+        f2Cubes(h, rd, P0, back - 0.02, 22, seed, 1.8, 1.4, 9.0, 1.2, 0.03, hex3(110, 2, 2), hex3(181, 18, 18), floorY, 0.0);
+        fnPoof(h, rd, C, t - 4.3, seed, 16, 0.08);
     } else if (k == 1) {
         // JUDGMENT OF TIME: time stops and leaves echoes; a colossal clock counts down, cuts the mob into twelve,
         // and it shatters like glass
@@ -136,29 +198,93 @@ void f2Special(int k, float t, float3 o, float3 rd, float3 feet, float yaw, floa
         fnDebris(h, rd, feet, u, seed, 2.0, floorY);
         f2Cubes(h, rd, feet + float3(0, 0.5, 0), u, 36, seed + 5.0, 3.5, 3.5, 4.0, 2.2, 0.025, hex3(255, 245, 200), hex3(180, 210, 255), -1e5, float3(1.2, 1.15, 1.0));
     } else if (k == 3) {
-        // VOID: the sound dies; specks of nothing gather into a pitch-black hole in front of the mob that swallows
-        // light, ground and mob; the world turns to its negative, and the hole is gone - and the mob with it
-        float3 H = C + A * 0.9;
-        float g1 = ease((t - 0.2) / 1.0);
-        [loop] for (int i = 0; i < 24; i++) {   // the specks: black motes drifting in to the hole
+        // VOID: the sound dies - the world goes grey and still. Specks of nothing wink into the air and are drawn
+        // together into a pitch-black hole that bends the world round its edge, drinks the light, eats the ground
+        // from under itself and pulls the mob in, thin as thread. Then it folds shut: the world flips to its
+        // negative for a heartbeat, and both are gone
+        float3 H = C + A * 1.15 + float3(0, 0.3, 0);
+        float quiet = ease(t / 0.4) * (1.0 - ease((t - 4.0) / 0.4));
+        float grow = ease((t - 0.95) / 0.7), coll = ease((t - 3.3) / 0.18);
+        float rH = 0.9 * grow * (1.0 + 0.035 * sin(t * 9.0)) * (1.0 - coll);
+        float tc = dot(H, rd);
+        float3 offv = rd * tc - H; float d = length(offv);
+        float3 wc = o; float lensK = 0.0;
+        if (rH > 0.01 && tc > 0.0) {
+            float RE = rH * 1.8;
+            lensK = smoothstep(RE * 3.2, RE * 1.4, d) * step(tc, length(S) + 1.0);
+            if (lensK > 0.0) {   // the world behind it, bent: light that passes near comes from further in
+                float3 src = H + offv * (1.0 - lensK * RE * RE / max(d * d, 0.01));
+                float3 pp = toPx(src);
+                if (pp.z > 0.0) wc = f2Scene(int2(pp.xy), o);
+            }
+        }
+        wc = lerp(wc, f2Lum3(wc) * 0.82, 0.75 * quiet);
+        if (rH > 0.01 && tc > 0.0) {
+            wc *= smoothstep(rH * 0.95, rH * 2.4, d) * 0.85 + 0.15;                                                 // it drinks the light
+            float3 rt = normalize(cross(rd, float3(0, 1, 0)));
+            float ang = atan2(offv.y, dot(offv, rt));
+            float wisp = smoothstep(0.35, 1.0, sin(ang * 5.0 + log(max(d / rH, 0.2)) * 8.0 - t * 5.0)) * exp(-max(d - rH, 0.0) / (rH * 1.1));
+            wc = lerp(wc, float3(0.03, 0.0, 0.07), wisp * 0.75 * step(tc, length(S) + 1.0));                        // what it has taken, circling in
+        }
+        f2World(dec, decK, wc, max(bub * quiet, lensK));
+        if (rH > 0.01) {   // the hole itself, and the thin ring of light caught at its edge
+            float d2 = d * d;
+            if (d2 < rH * rH && tc - sqrt(rH * rH - d2) < h.t && tc > 0.0) { h.t = tc - sqrt(rH * rH - d2); h.c = float3(0, 0, 0); h.hit = true; h.part = -1; }
+            float seen = step(tc, h.t + rH);
+            add += (float3(0.92, 0.88, 1.0) * exp(-pow((d - rH * 1.07) / (rH * 0.03), 2.0)) * 1.3 + float3(0.35, 0.1, 0.6) * exp(-pow((d - rH * 1.25) / (rH * 0.25), 2.0)) * 0.35) * seen;
+        }
+        // the specks of nothing: they wink in one by one, hang, then spiral in
+        [loop] for (int i = 0; i < 26; i++) {
             float hi = float(i);
-            float3 P0 = H + (float3(h1(hi + seed), h1(hi * 2.0 + seed), h1(hi * 3.0 + seed)) - 0.5) * 4.5;
-            float3 P = lerp(P0, H, g1 * g1);
-            if (g1 < 0.99) dsBox(h, rd, P, float3(0.04, 0.04, 0.04) * (1.0 - g1 * 0.5), rotY(hi + t), float3(0, 0, 0), 0.0);
+            float born = 0.12 + hi * 0.03;
+            if (t < born || grow > 0.98) continue;
+            float3 P0 = H + (float3(h1(hi + seed), h1(hi * 2.0 + seed), h1(hi * 3.0 + seed)) - 0.5) * float3(5.0, 3.0, 5.0);
+            float g2 = grow * grow;
+            float3 rel = P0 - H;
+            float3 P = H + mul(rotY(g2 * (3.0 + 2.0 * h1(hi * 7.0))), rel) * (1.0 - g2) + float3(0, sin(t * 3.0 + hi) * 0.04, 0);
+            float sz = 0.05 * backOut((t - born) / 0.15) * (1.0 - 0.5 * g2);
+            dsBox(h, rd, P, float3(sz, sz, sz), rotY(hi + t * 0.7), float3(0, 0, 0), 0.0);
+            add += float3(0.8, 0.75, 1.0) * f2Glow(rd, P, sz * 1.7, h.t) * exp(-(t - born) * 8.0) * 1.2;           // the wink as it appears
         }
-        float rH = 0.85 * ease((t - 0.9) / 0.6) * (1.0 - ease((t - 3.0) / 0.25));
-        if (rH > 0.01) {   // the hole: pure black, the light round it bent into a thin bright ring
-            float tc = dot(H, rd), d2 = dot(H, H) - tc * tc;
-            if (d2 < rH * rH && tc < h.t) { h.t = tc - sqrt(rH * rH - d2); h.c = float3(0, 0, 0); h.hit = true; }
-            float d = sqrt(d2);
-            add += float3(0.85, 0.85, 1.0) * exp(-pow((d - rH * 1.08) / (rH * 0.04), 2.0)) * step(tc, h.t + 2.0) * 0.8;
-            f2World(dec, decK, o * smoothstep(rH * 1.0, rH * 2.6, d), saturate(1.0 - d / (rH * 2.6)) * step(tc - 0.5, length(S)));   // it swallows the light round it
+        // the ground under it, eaten: a ragged black bite with a violet rim, blocks torn loose and falling up into it
+        float eat = ease((t - 1.35) / 1.5);
+        if (onG && eat > 0.0) {
+            float2 gq = floor((S.xz - H.xz) * 16.0) / 16.0;
+            float ge = length(gq) + 0.22 * (f2VN(gq * 3.0 + seed) - 0.5) - 2.1 * eat;
+            float fade = 1.0 - ease((t - 4.2) / 0.5);
+            float bite = step(ge, 0.0) * fade;
+            dec = lerp(decK > 0.0 ? dec : o, float3(0, 0, 0), bite); decK = max(decK, bite > 0.0 ? 1.0 : decK);
+            add += float3(0.5, 0.2, 0.9) * exp(-abs(ge) / 0.05) * (1.0 - coll) * 0.6 * step(0.0, ge);
         }
-        float pull = ease((t - 1.4) / 1.3);
-        if (pull < 0.99) f2Body(h, rd, lerp(feet, H - float3(0, 0.5, 0), pull), mul(RY, rotZ(pull * 2.0)), 1.0 - pull, float3(1.0 - 0.6 * pull, 1.0 + pull, 1.0 - 0.6 * pull), fx);
-        if (onG && pull > 0.01) { float eat = smoothstep(1.6 * pull, 1.2 * pull, length(S.xz - H.xz)) * (1.0 - ease((t - 3.0) / 0.2)); dec = lerp(decK > 0.0 ? dec : o, float3(0, 0, 0), eat); decK = max(decK, eat > 0.0 ? 1.0 : 0.0); }
-        float neg = ease((t - 3.0) / 0.1) * (1.0 - ease((t - 3.5) / 0.6));
-        f2World(dec, decK, 1.0 - o, bub * neg);
+        [loop] for (int j = 0; j < 14; j++) {
+            float hj = float(j);
+            float ph = frac((t - 1.4) * 0.75 + hj / 14.0);
+            if (t < 1.4 || t > 3.25) break;
+            float a = hj * 2.4 + seed, r0 = 1.0 + h1(hj * 3.0) * 1.2 * eat;
+            float3 G0 = float3(H.x + cos(a) * r0, floorY, H.z + sin(a) * r0);
+            float3 P = lerp(G0, H, ph * ph) + float3(0, sin(ph * 3.1416) * 0.5, 0);
+            float sz = 0.11 * (1.0 - ph) + 0.01;
+            dsBox(h, rd, P, float3(sz, sz, sz), mul(rotY(ph * 6.0 + hj), rotX(ph * 4.0)), hex3(70, 68, 76) * (1.0 - ph), 0.0);
+        }
+        // the mob: dragged off its feet, drawn out long and thin, and in
+        float pull = ease((t - 1.5) / 1.2);
+        if (pull < 0.99) {
+            float3 to = normalize(H - C);
+            float3x3 Rp = mul(rotAxis(normalize(cross(float3(0, 1, 0), to) + float3(0, 1e-4, 0)), pull * 1.3), RY);
+            float sc = 1.0 - pull * 0.85;
+            float3 ctr = lerp(C, H, pull * pull);
+            f2Body(h, rd, ctr - mul(Rp, float3(0, 0.95 * sc * (1.0 + 1.2 * pull), 0)), Rp, sc, float3(1.0 - 0.7 * pull, 1.0 + 1.2 * pull, 1.0 - 0.7 * pull), fx);
+        }
+        // it folds shut: a white seam of light, the world in negative, a ring running out
+        float uz = t - 3.3;
+        if (uz > 0.0) {
+            float3 rt = normalize(cross(rd, float3(0, 1, 0)));
+            float dx = dot(offv, rt), dy = offv.y;
+            add += float3(1, 1, 1) * exp(-dy * dy / 0.0015) * exp(-dx * dx / (4.0 + uz * 30.0)) * exp(-uz * 7.0) * 3.0 * step(tc, h.t + 1.0);
+            add += float3(0.85, 0.8, 1.0) * exp(-pow((d - uz * 13.0) / 0.25, 2.0)) * exp(-uz * 3.5) * 0.7;
+            float neg = ease(uz / 0.06) * (1.0 - ease((uz - 0.3) / 0.45));
+            f2World(dec, decK, 1.0 - o, bub * neg);
+        }
     } else if (k == 4) {
         // DRAGON VEIN RELEASE: veins of light run in over the ground to the mob; a jade dragon bursts from the earth,
         // spirals into the sky and dives back down, tearing the land open
@@ -196,130 +322,350 @@ void f2Special(int k, float t, float3 o, float3 rd, float3 feet, float yaw, floa
         f2Cubes(h, rd, C, t - tD, 24, seed + 3.0, 3.0, 3.0, 12.0, 1.4, 0.05, team * 0.6, hex3(40, 170, 110), floorY, jade * 0.3);
         add += jade * f2Glow(rd, feet + float3(0, 0.5, 0), 2.5, h.t) * exp(-max(t - tD, 0.0) * 4.0) * step(tD, t);
     } else if (k == 5) {
-        // TSUNAMI: the world sinks into a quiet deep sea; the mob is wrapped in a bubble while a great whale drifts
-        // past, until a towering wall of water rises and crashes down, sweeping it away
-        float sea = ease(t / 0.6) * (1.0 - ease((t - 3.8) / 0.5));
-        float caus = pow(0.5 + 0.5 * sin(S.x * 3.0 + t * 2.0) * sin(S.z * 3.3 - t * 1.7), 3.0) * step(length(S), 1e6);
-        f2World(dec, decK, f2Lum3(o) * float3(0.12, 0.38, 0.62) + float3(0.0, 0.05, 0.12) + caus * float3(0.2, 0.35, 0.4), bub * sea);
-        float3 B = C + float3(0, 0.2 + 0.1 * sin(t * 2.0), 0);
-        float rB = 1.15 * ease((t - 0.3) / 0.4);
-        if (rB > 0.01 && t < 3.0) {   // the bubble round them
-            float tc = dot(B, rd), d2 = dot(B, B) - tc * tc;
-            if (d2 < rB * rB && tc - sqrt(rB * rB - d2) < h.t) add += float3(0.7, 0.9, 1.0) * pow(saturate(sqrt(d2) / rB), 6.0) * 0.8;
+        // TSUNAMI: the world sinks into a quiet deep sea - blue dusk, light rippling on the ground, shafts of sun from
+        // far above, a great whale drifting past - and the mob hangs in a bubble of air. Then the sea draws back,
+        // and from one side comes the wave: a wall of water five blocks high, curling at the crest, foam streaming
+        // down its face. It breaks over the mob and carries it off, and leaves the ground wet and laced with foam
+        float sea = ease(t / 0.5) * (1.0 - ease((t - 1.75) / 0.45));
+        bool sky = length(S) > 1e5;
+        if (sea * bub > 0.001) {
+            float caus = sky ? 0.0 : pow(saturate(0.5 + 0.5 * sin(S.x * 2.6 + t * 1.8 + sin(S.z * 1.7 + t)) * sin(S.z * 2.9 - t * 1.5 + sin(S.x * 1.3))), 4.0);
+            float fog = sky ? 1.0 : saturate(length(S) / 22.0);
+            float3 deep = lerp(f2Lum3(o) * float3(0.14, 0.42, 0.66) + float3(0.0, 0.05, 0.12) + caus * float3(0.25, 0.42, 0.45), float3(0.02, 0.16, 0.32), fog * 0.85);
+            float shaft = pow(f2VN(float2(dot(rd, A) * 9.0 + t * 0.15, 0.5)), 3.0) * saturate(rd.y * 1.5 + 0.55);
+            deep += float3(0.35, 0.6, 0.7) * shaft * 0.35;
+            f2World(dec, decK, deep, bub * sea);
         }
-        // the whale: a long blue-grey body, a pale belly, a sweeping tail - drifting across behind them
-        float3 Wp = C + float3(0, 2.3, 0) - normalize(C * float3(1, 0, 1)) * 3.0 + A * (6.0 - t * 3.6);
-        float3x3 RW = rotY(atan2(-A.x, -A.z));
-        float sw2 = sin(t * 2.5) * 0.35;
-        if (t < 3.3) {
-            dsBox(h, rd, Wp, float3(0.55, 0.5, 1.4), RW, hex3(60, 80, 110), 0.0);
-            dsBox(h, rd, Wp + mul(RW, float3(0, -0.35, 0.1)), float3(0.5, 0.18, 1.2), RW, hex3(190, 200, 205), 0.0);
-            dsBox(h, rd, Wp + mul(RW, float3(0, 0.1, -1.7)), float3(0.25, 0.25, 0.45), mul(RW, rotY(sw2)), hex3(55, 75, 100), 0.0);
-            dsBox(h, rd, Wp + mul(RW, mul(rotY(sw2), float3(0, 0.1, -2.25))), float3(0.75, 0.06, 0.2), mul(RW, rotY(sw2)), hex3(55, 75, 100), 0.0);
-            add += float3(0.9, 0.95, 1.0) * f2Glow(rd, Wp + mul(RW, float3(0.4, 0.15, 1.1)), 0.03, h.t) * 2.0;
+        float tPopB = 2.85;
+        float3 B = C + float3(0, 0.25 + 0.1 * sin(t * 2.0), 0);
+        if (t < tPopB) {
+            f2Body(h, rd, B - float3(0, 0.95, 0) + float3(0, 0.0, 0), mul(RY, rotZ(sin(t * 1.3) * 0.12)), 1.0, one, fx);
+            add += f2Film(rd, B, 1.2 * ease((t - 0.25) / 0.4), h.t, t, 0.7) * 0.9;
         }
-        // the wall of water: rising behind, curling over, crashing through
-        float rise = ease((t - 2.2) / 0.6), crash = ease((t - 2.8) / 0.4);
-        float3 Wb = C - A * (2.5 - crash * 3.0);
-        float hw = 4.5 * rise * (1.0 - crash * 0.9);
-        if (rise > 0.0 && t < 3.6) {
-            float3x3 RA = rotY(atan2(A.x, A.z));
-            dsBox(h, rd, Wb + float3(0, hw * 0.5 - 0.95, 0), float3(3.0, hw * 0.5, 0.35), mul(RA, rotX(crash * 0.9)), hex3(30, 90, 150), float3(0.02, 0.08, 0.12));
-            dsBox(h, rd, Wb + float3(0, hw - 0.95, 0) + A * crash * 0.8, float3(3.0, 0.15, 0.4), mul(RA, rotX(crash * 0.9)), hex3(230, 240, 245), float3(0.15, 0.17, 0.18));
+        [loop] for (int i = 0; i < 12; i++) {   // air rising in threads of small bubbles
+            if (sea < 0.05) break;
+            float hi = float(i), life = frac(t * (0.25 + 0.1 * h1(hi)) + h1(hi * 3.0 + seed));
+            float3 Pb = feet + float3((h1(hi * 5.0 + seed) - 0.5) * 5.0, life * 4.5, (h1(hi * 7.0 + seed) - 0.5) * 5.0) + float3(sin(life * 12.0 + hi) * 0.07, 0, 0);
+            add += f2Film(rd, Pb, 0.03 + 0.04 * h1(hi * 9.0), h.t, t + hi, 0.0) * sea;
         }
-        float carry = ease((t - 3.0) / 0.6);
-        if (t < 3.6) f2Body(h, rd, feet + A * carry * 3.0 + float3(0, carry * 0.4, 0), mul(RY, rotX(carry * 2.0)), 1.0, one, fx);
-        f2Cubes(h, rd, C - A * 0.3, t - 2.95, 30, seed, 3.5, 2.5, 9.0, 1.4, 0.04, hex3(190, 225, 245), hex3(80, 150, 210), floorY, float3(0.1, 0.2, 0.3));
-        fnPoof(h, rd, feet + A * 3.0 + float3(0, 0.5, 0), t - 3.6, seed, 12, 0.07);
+        // the whale: far side of the mob, crossing slowly - long back, pale belly, flippers, a tail that sweeps
+        if (sea > 0.02) {
+            float3 Wp = C + float3(0, 2.2 + 0.25 * sin(t * 0.9), 0) + vf * 5.0 + A * (5.5 - t * 4.2);
+            float3x3 RW = rotY(atan2(-A.x, -A.z));
+            float sw2 = sin(t * 2.2) * 0.3;
+            float3 wb = lerp(hex3(46, 66, 98), hex3(10, 50, 90), 0.45), wl = lerp(hex3(170, 186, 196), hex3(10, 50, 90), 0.4);
+            if (nearRay(rd, Wp, 4.2)) {
+                dsBox(h, rd, Wp + mul(RW, float3(0, 0.0, 0.9)), float3(0.62, 0.55, 0.75), RW, wb, 0.0);                    // head
+                dsBox(h, rd, Wp + mul(RW, float3(0, 0.02, -0.5)), float3(0.56, 0.5, 0.8), RW, wb, 0.0);
+                dsBox(h, rd, Wp + mul(RW, float3(0, -0.4, 0.4)), float3(0.52, 0.2, 1.3), RW, wl, 0.0);                     // belly
+                dsBox(h, rd, Wp + mul(RW, float3(0, 0.08, -1.6)), float3(0.36, 0.34, 0.5), mul(RW, rotY(sw2 * 0.5)), wb, 0.0);
+                dsBox(h, rd, Wp + mul(RW, mul(rotY(sw2 * 0.5), float3(0, 0.1, -2.35)) + float3(0, 0, 0.0)), float3(0.2, 0.2, 0.4), mul(RW, rotY(sw2)), wb, 0.0);
+                dsBox(h, rd, Wp + mul(RW, mul(rotY(sw2), float3(0, 0.12, -2.95))), float3(0.85, 0.06, 0.24), mul(RW, rotY(sw2 * 1.3)), wb, 0.0);   // flukes
+                dsBox(h, rd, Wp + mul(RW, float3(0.75, -0.3, 0.5)), float3(0.4, 0.05, 0.2), mul(RW, rotZ(-0.5 + 0.2 * sin(t * 1.5))), wb, 0.0);
+                dsBox(h, rd, Wp + mul(RW, float3(-0.75, -0.3, 0.5)), float3(0.4, 0.05, 0.2), mul(RW, rotZ(0.5 - 0.2 * sin(t * 1.5))), wb, 0.0);
+                add += float3(0.9, 0.95, 1.0) * f2Glow(rd, Wp + mul(RW, float3(0.6, 0.12, 1.25)), 0.03, h.t) * 1.5 * sea;
+            }
+        }
+        // the wave. Across the view: x = how far along A from the crest (it runs towards -A), y up, z into the view
+        float tW = 1.95, vw = 9.5;
+        float a0 = 11.0 - (t - tW) * vw;
+        float HW = 5.4 * ease((t - tW) / 0.75) * (1.0 - ease((t - 3.55) / 0.9));
+        if (HW > 0.05) {
+            float zc = dot(-feet, vf);                                      // where you stand along the view
+            float z0 = max(zc + 2.6, -4.5), z1 = 9.0;
+            float3 X0 = -feet;                                              // the ray's start in wave space
+            float3 ro = float3(dot(X0, A) - a0, X0.y, dot(X0, vf)), rv = float3(dot(rd, A), rd.y, dot(rd, vf));
+            float3 lo = float3(-2.6, 0.03, z0), hi3 = float3(13.0, HW * 1.05 + 0.3, z1);
+            float3 inv = 1.0 / select(abs(rv) > 1e-5, rv, 1e-5);
+            float3 ta = (lo - ro) * inv, tb = (hi3 - ro) * inv;
+            float3 tmn = min(ta, tb), tmx = max(ta, tb);
+            float s0 = max(max(tmn.x, tmn.y), max(tmn.z, 0.05)), s1 = min(min(tmx.x, tmx.y), min(tmx.z, h.t));
+            if (z1 > z0 && s0 < s1) {
+                // inside the water: under a ridge with a steep face, a long back, and a crest that leans out ahead
+                float ds = (s1 - s0) / 28.0, sA = s0, sHit = -1.0;
+                float3 P = ro + rv * s0;
+                if (f2Wave(P, HW, t, z0, z1) > 0.0) sHit = s0;
+                else {
+                    [loop] for (int i = 1; i <= 28; i++) {
+                        float sB = s0 + ds * float(i);
+                        P = ro + rv * sB;
+                        if (f2Wave(P, HW, t, z0, z1) > 0.0) {
+                            [unroll] for (int b = 0; b < 5; b++) { float sm = (sA + sB) * 0.5; P = ro + rv * sm; if (f2Wave(P, HW, t, z0, z1) > 0.0) sB = sm; else sA = sm; }
+                            sHit = sB; break;
+                        }
+                        sA = sB;
+                    }
+                }
+                if (sHit > 0.0) {
+                    P = ro + rv * sHit;
+                    float f0 = f2Wave(P, HW, t, z0, z1);
+                    float3 Pa = P + float3(0.04, 0, 0), Pb2 = P + float3(0, 0.04, 0), Pc2 = P + float3(0, 0, 0.04);
+                    float3 gl = float3(f2Wave(Pa, HW, t, z0, z1) - f0, f2Wave(Pb2, HW, t, z0, z1) - f0, f2Wave(Pc2, HW, t, z0, z1) - f0);
+                    float3 nl3 = normalize(-gl + float3(0, 1e-5, 0));
+                    float3 nw = normalize(A * nl3.x + float3(0, nl3.y, 0) + vf * nl3.z);
+                    float hy = saturate(P.y / max(HW, 0.1));
+                    float face = step(P.x, 0.3);                               // the front
+                    float3 wcol = lerp(hex3(6, 52, 104), hex3(22, 140, 176), hy * hy);
+                    wcol = lerp(wcol, hex3(120, 220, 228), smoothstep(0.75, 1.0, hy) * 0.7);                      // thin water at the crest lets the light through
+                    float streak = smoothstep(0.55, 0.8, f2VN(float2(P.z * 2.2, P.y * 0.55 + t * 3.5 + P.x)));
+                    wcol = lerp(wcol, hex3(190, 232, 240), streak * face * 0.5 * hy);                             // foam drawn down the face
+                    float foam = smoothstep(0.82 - 0.25 * f2VN(float2(P.z * 3.0 + t, P.x * 2.0)), 0.97, hy) + step(P.y, 0.1 + 0.25 * f2VN(float2(P.z * 2.0, t * 2.0))) * face * step(-1.9, P.x);
+                    float3 c = dsLit(lerp(wcol, float3(0.93, 0.97, 1.0), saturate(foam)), nw) * 1.25;
+                    float fr = pow(1.0 - saturate(dot(-rd, nw)), 3.0);
+                    c += dsEnv(reflect(rd, nw)) * fr * 0.5 * (1.0 - saturate(foam)) + float3(1.5, 1.4, 1.2) * pow(saturate(dot(reflect(rd, nw), SUN)), 40.0) * (1.0 - saturate(foam));
+                    h.t = sHit; h.c = c; h.hit = true; h.part = -1;
+                }
+            }
+            // spray torn off the crest
+            [loop] for (int j = 0; j < 18; j++) {
+                float hj = float(j), ph = frac(t * 1.6 + hj * 0.37);
+                float3 Ps = feet + A * (a0 - 1.3 - ph * 1.6) + vf * ((h1(hj * 3.0 + floor(t * 1.6 + hj * 0.37)) - 0.5) * 9.0 + 2.0) + float3(0, HW * (0.95 + 0.35 * sin(ph * 3.1416)) - ph * ph * 1.5, 0);
+                float sz = 0.05 * (1.0 - ph);
+                if (dot(Ps - feet, vf) > z0) dsBox(h, rd, Ps, float3(sz, sz, sz), rotY(hj + t * 5.0), hex3(225, 240, 248), float3(0.15, 0.18, 0.2));
+            }
+        }
+        // behind the wave: wet ground, foam lace sliding back
+        if (onG && t > tW) {
+            float aG = dot(S - feet, A) - a0;
+            float age = aG / vw;
+            if (aG > -0.5 && abs(dot(S - feet, vf) - 2.0) < 7.5) {
+                float fade = 1.0 - ease((t - 4.2) / 0.55);
+                float lace = smoothstep(0.5, 0.62, f2VN(S.xz * 2.4 + float2(t * 0.6, 0))) * smoothstep(0.35, 0.6, f2VN(S.xz * 7.0 - float2(0, t)));
+                float3 g0 = (decK > 0.0 ? dec : o) * lerp(1.0, 0.68, fade * saturate(age * 4.0 + 0.5));
+                dec = lerp(g0, float3(0.92, 0.96, 1.0), saturate(lace * exp(-max(age, 0.0) * 1.4) * 1.3 + smoothstep(0.3, -0.4, aG)) * fade); decK = max(decK, 1.0);
+            }
+        }
+        // the mob: its bubble bursts on the face of the wave, and it is taken - tumbling in the water, gone with it
+        float ut = t - tPopB;
+        if (ut > 0.0 && t < 4.1) {
+            float3 Pm2 = feet + A * min(0.0, a0 - 1.0) + float3(0, 0.3 + HW * 0.42 * saturate(ut * 3.0), 0) - vf * 0.2;
+            f2Body(h, rd, Pm2, mul(RY, mul(rotX(ut * 7.0), rotZ(ut * 4.0))), 1.0, one, fx);
+        }
+        f2Cubes(h, rd, B, ut, 26, seed, 3.0, 2.0, 8.0, 0.9, 0.035, hex3(200, 230, 248), hex3(120, 190, 230), floorY, float3(0.1, 0.2, 0.3));
+        add += float3(0.8, 0.95, 1.0) * f2Glow(rd, B, 1.4, h.t) * exp(-max(ut, 0.0) * 9.0) * step(0.0, ut) * 0.7;
     } else if (k == 6) {
-        // THOUSAND BLADES: the sound dies and the blade slips a finger's width from its sheath. A red light settles in
-        // the mob's eye, and you are gone: afterimages race round it, every cut left hanging in the air. At a thousand
-        // you sheathe the blade with your back turned, and every cut runs at once
-        float still = ease(t / 0.3) * (1.0 - ease((t - 3.4) / 0.4));
-        f2World(dec, decK, lerp(o, f2Lum3(o) * 0.75, 0.8), bub * still);
-        add += float3(1.0, 0.05, 0.05) * f2Glow(rd, feet + mul(RY, float3(1.5, 28.5, 4.2) * DPX), 0.06, h.t) * ease((t - 0.3) / 0.2) * 4.0;   // the red eye
-        // the afterimages: phantoms flickering in at points round them, one after another
-        float race = step(0.6, t) * step(t, 2.4);
-        [unroll] for (int i = 0; i < 5; i++) {
-            float ph = floor(t * 14.0) + float(i) * 3.0;
-            float a = h1(ph + seed) * 6.2832, r = 1.2 + 0.4 * h1(ph * 1.7);
-            DFx fa = fg; fa.ash = 0.45 + 0.1 * float(i);
-            if (race > 0.0) dsBody(h, rd, feet + float3(cos(a) * r, 0.0, sin(a) * r), rotY(-a - 1.5708), 1.0, -99.0, 99.0, fa);
-        }
-        // the cuts: lines of light hanging in a cage round the body, more and more
-        [loop] for (int i = 0; i < 36; i++) {
-            float ti = 0.6 + float(i) * 0.05;
-            if (t < ti) break;
-            float3 d = normalize(float3(h1(float(i) + seed) - 0.5, h1(float(i) * 2.0 + seed) - 0.5, h1(float(i) * 3.0 + seed) - 0.5));
-            float3 c0 = C + (float3(h1(float(i) * 5.0), h1(float(i) * 7.0), h1(float(i) * 9.0)) - 0.5) * float3(0.6, 1.6, 0.6);
-            float run = step(3.0, t) * exp(-(t - 3.0) * 4.0);
-            add += lerp(float3(0.9, 0.9, 1.0), float3(1.0, 0.2, 0.2), 0.3) * dsGlowSeg(rd, c0 - d * 0.6, c0 + d * 0.6, 0.008, h.t) * (step(t, 3.3) * (0.6 + exp(-(t - ti) * 10.0) * 2.0) + run * 4.0);
-        }
-        // you: standing off with your back turned, sheathing
-        if (t > 2.4 && t < 3.6) { DFx fb = fg; fb.ash = ease((t - 3.2) / 0.4); dsBody(h, rd, feet - A * 2.2, rotY(atan2(-A.x, -A.z)), 1.0, -99.0, 99.0, fb); }
-        // every cut runs: the body falls apart in pieces
-        float br = t - 3.0;
-        if (br < 0.0) f2Body(h, rd, feet, RY, 1.0, one, fx);
-        else {
-            [loop] for (int j = 0; j < 6; j++) {
-                float3 dv = (float3(h1(float(j) + seed), 0.5, h1(float(j) * 3.0 + seed)) - 0.5) * br * 2.0 + float3(0, -4.0 * br * br, 0);
-                float3 Pj = feet + mul(RY, kPC[j] * DPX) + dv;
-                if (Pj.y > floorY - 0.2 && br < 1.0) dsPart(h, rd, j, Pj, mul(RY, rotX(br * 3.0 * (h1(float(j)) - 0.5))), 1.0, -99.0, 99.0, fx);
+        // THOUSAND BLADES: the sound dies. You stand before the mob, the blade a finger's width out of its sheath; a
+        // red light settles in the mob's eye - and you are gone. Only afterimages race round it, every cut left
+        // hanging in the air, the count climbing. At a thousand you are behind it, back turned, sliding the blade
+        // home - and at the click every cut runs at once
+        float still = ease(t / 0.3) * (1.0 - ease((t - 3.9) / 0.4));
+        f2World(dec, decK, lerp(o, f2Lum3(o) * 0.72, 0.85), bub * still);
+        float tGo = 0.8, tBack = 2.6, tClick = 3.35, ur = t - tClick;
+        float3 red = float3(1.0, 0.12, 0.1);
+        add += red * f2Glow(rd, feet + mul(RY, float3(1.5, 28.5, 4.2) * DPX), 0.055, h.t) * ease((t - 0.35) / 0.2) * step(t, tClick) * 4.0;   // the eye
+        // you, before and after: the stance, the sheath at your hip, the sliver of steel
+        float3x3 Rst = rotY(atan2(-A.x, -A.z)), Rtn = rotY(atan2(A.x, A.z));
+        bool pre = t < tGo, post = t >= tBack && t < 4.35;
+        if (pre || post) {
+            DFx fb = fg; fb.ash = pre ? 1.0 - saturate(t / 0.3) * 1.15 : ease((t - 3.95) / 0.4);
+            float3 Op = pre ? feet + A * 2.4 : feet - A * 2.4;
+            float3x3 Rp = pre ? Rst : Rst;                                    // after: past it, still facing the way you went - your back to it
+            float sh = pre ? 0.0 : ease((t - tBack - 0.15) / 0.55);            // how far the blade is home
+            dsPosed(h, rd, Op, Rp, 1.0, float2(pre ? 0.12 : 0.3, 0), float2(pre ? -0.55 : -0.35 - 0.25 * (1.0 - sh), pre ? -0.75 : -0.6), float2(-0.25, 0.25), float2(-0.35, 0), float2(0.4, 0), 63, fb);
+            float3 hip = Op + mul(Rp, float3(0.3, 0.72, 0.05));
+            float3x3 Rk = mul(Rp, rotX(0.35));
+            if (fb.ash < 0.9) {
+                dsBox(h, rd, hip + mul(Rk, float3(0, 0, -0.35)), float3(0.035, 0.045, 0.5), Rk, hex3(26, 22, 30), float3(0.02, 0.02, 0.03));          // the sheath
+                float out_ = pre ? 0.07 : 0.75 * (1.0 - sh);
+                dsBox(h, rd, hip + mul(Rk, float3(0, 0, 0.17 + out_ * 0.5)), float3(0.012, 0.03, out_ * 0.5 + 0.001), Rk, hex3(230, 232, 240), float3(0.6, 0.6, 0.7));   // steel
+                dsBox(h, rd, hip + mul(Rk, float3(0, 0, 0.18 + out_)), float3(0.06, 0.06, 0.015), Rk, hex3(190, 150, 60), float3(0.2, 0.15, 0.03));     // the guard
+                dsBox(h, rd, hip + mul(Rk, float3(0, 0, 0.33 + out_)), float3(0.025, 0.03, 0.14), Rk, hex3(40, 30, 50), 0.0);                            // the grip
+                float gl = exp(-pow((t - 0.45) / 0.07, 2.0)) + exp(-pow(ur / 0.05, 2.0));
+                float3 gp = hip + mul(Rk, float3(0, 0.03, 0.2));
+                float3 rt = normalize(cross(rd, float3(0, 1, 0)));
+                float3 gv = rd * dot(gp, rd) - gp;
+                add += float3(1, 1, 1) * gl * (exp(-dot(gv, gv) / 0.004) * 2.0 + exp(-gv.y * gv.y / 0.0006) * exp(-pow(dot(gv, rt), 2.0) / 0.5) * 1.5) * step(dot(gp, rd), h.t + 0.5);
             }
         }
-        f2Cubes(h, rd, C, br, 20, seed, 2.0, 1.0, 9.0, 1.2, 0.03, hex3(110, 2, 2), hex3(181, 18, 18), floorY, 0.0);
-        fnPoof(h, rd, C, t - 3.9, seed, 12, 0.07);
+        // gone: a streak where you were, then afterimages - whole, mid-cut - a new one twelve times a second, the last
+        // two still fading (drawn on every other pixel)
+        float3 pxv = toPx(rd * 10.0);
+        bool dith = frac((floor(pxv.x) + floor(pxv.y)) * 0.5) < 0.25;
+        if (t >= tGo && t < tBack) {
+            add += float3(0.85, 0.85, 1.0) * dsGlowSeg(rd, feet + A * 2.4 + float3(0, 0.9, 0), feet + A * 0.4 + float3(0, 0.9, 0), 0.12, h.t) * exp(-(t - tGo) * 12.0);
+            [unroll] for (int i = 0; i < 3; i++) {
+                float sl = floor((t - tGo) * 12.0) - float(i);
+                if (sl < 0.0 || (i > 0 && !dith)) continue;
+                float a = h1(sl * 1.37 + seed) * 6.2832, r = 1.25 + 0.5 * h1(sl * 2.7);
+                float3 Oa = feet + float3(cos(a) * r, 0.0, sin(a) * r);
+                float3x3 Ra = rotY(atan2(-cos(a), -sin(a)));
+                float hi2 = h1(sl * 5.1);
+                dsPosed(h, rd, Oa, mul(Ra, rotX(0.25)), 1.0, float2(0.1, 0), float2(-1.3 - hi2 * 1.2, 0.3), float2(0.5, 0.3), float2(-0.7, 0), float2(0.55, 0), 63, fg);
+                float3 hand = Oa + mul(Ra, float3(-0.32, 1.25 + hi2 * 0.4, 0.55));
+                float3 tipd = normalize(mul(Ra, float3(0.5 - hi2, 0.6 * hi2 - 0.1, 1.0)));
+                add += float3(0.95, 0.95, 1.0) * dsGlowSeg(rd, hand, hand + tipd * 1.1, 0.02, h.t) * (i == 0 ? 2.0 : 0.6);
+            }
+        }
+        // the cuts: one per afterimage, flashing as it is made, then hanging - and all of them running at the click
+        float nCut = min(floor(max(t - tGo, 0.0) * 12.0) + 1.0, 22.0) * step(tGo, t);
+        float run = ur > 0.0 ? exp(-ur * 3.5) : 0.0;
+        [loop] for (int c = 0; c < 22; c++) {
+            if (float(c) >= nCut || ur > 1.2) break;
+            float hc = float(c), ti = tGo + hc / 12.0;
+            float3 dcut = normalize(float3(h1(hc + seed) - 0.5, (h1(hc * 2.0 + seed) - 0.5) * 1.4, h1(hc * 3.0 + seed) - 0.5));
+            float3 c0 = C + (float3(h1(hc * 5.0), h1(hc * 7.0), h1(hc * 9.0)) - 0.5) * float3(0.5, 1.5, 0.5);
+            float len = 0.75 + (ur > 0.0 ? min(ur, 0.3) * 3.0 : 0.0);
+            float bright = ur > 0.0 ? run * 5.0 : 0.55 + exp(-(t - ti) * 9.0) * 3.0;
+            add += lerp(float3(0.95, 0.95, 1.0), red, ur > 0.0 ? 0.6 : 0.25) * dsGlowSeg(rd, c0 - dcut * len, c0 + dcut * len, ur > 0.0 ? 0.012 + ur * 0.03 : 0.008, h.t) * bright;
+        }
+        // the count
+        float cnt = t < tGo ? 0.0 : min(1000.0, floor(pow(saturate((t - tGo) / (tBack - tGo)), 1.6) * 1000.0));
+        if (t > tGo && t < tClick + 0.6) {
+            float2 q; float tp;
+            float3 Pn = C + float3(0, 1.75, 0);
+            if (f2Card(rd, Pn, h.t, q, tp)) {
+                float nd = cnt >= 1000.0 ? 4.0 : (cnt >= 100.0 ? 3.0 : (cnt >= 10.0 ? 2.0 : 1.0));
+                float2 g = q / 0.075 + float2(nd * 2.0 - 0.5, 2.5);
+                int ci = int(floor(g.x * 0.25));
+                if (g.x >= 0.0 && ci < int(nd)) {
+                    float dg = fmod(floor(cnt / pow(10.0, nd - 1.0 - float(ci))), 10.0);
+                    float ink = f2Text(float2(g.x - float(ci) * 4.0, g.y), TX_DIGITS + int(dg + 0.5), 1);
+                    if (ink > 0.5) { h.t = tp; h.c = cnt >= 1000.0 ? red * 3.0 : float3(1.6, 1.6, 1.8); h.hit = true; h.part = -1; }
+                }
+            }
+        }
+        // the mob: whole until the click - then every piece the cuts made comes apart
+        if (ur < 0.0) f2Body(h, rd, feet, RY, 1.0, one, fx);
+        else if (ur < 1.0) {
+            fx.clipY = floorY;
+            [loop] for (int j = 0; j < 12; j++) {
+                int pj = j / 2; bool top = (j % 2) == 1;
+                float hj = float(j);
+                float3 dv = float3(h1(hj + seed) - 0.5, 0.25 + 0.5 * h1(hj * 2.0), h1(hj * 3.0 + seed) - 0.5) * ur * 2.6 + float3(0, -5.0 * ur * ur, 0);
+                float3x3 Rj = mul(RY, mul(rotX(ur * 5.0 * (h1(hj * 5.0) - 0.5)), rotZ(ur * 5.0 * (h1(hj * 7.0) - 0.5))));
+                float3 Pj = feet + mul(RY, kPC[pj] * DPX) + dv;
+                Pj.y = max(Pj.y, floorY + 0.08);
+                dsPart(h, rd, pj, Pj, Rj, 1.0, top ? 0.0 : -99.0, top ? 99.0 : 0.0, fx);
+            }
+        }
+        f2Cubes(h, rd, C, ur, 30, seed, 2.6, 1.2, 9.0, 1.2, 0.03, hex3(110, 2, 2), hex3(181, 18, 18), floorY, 0.0);
+        add += red * f2Glow(rd, C, 1.6, h.t) * run * step(0.0, ur) * 0.5;
+        fnPoof(h, rd, feet + float3(0, 0.2, 0), ur - 1.0, seed, 14, 0.07);
     } else if (k == 7) {
-        // ANIME: a ring of light runs out from the mob and the world is redrawn as an anime cel - flat colours, ink,
-        // a painted sky - for a beating: POW! BAM! WHAM! ... UPPERCUT!! ... to be continued
-        float ring = t * 9.0;
-        float sky = step(1e6, length(S));
-        float on = max(sky * step(0.35, t), step(length(S - C), ring)) * (1.0 - ease((t - 3.8) / 0.4));   // the world turns as the ring passes
-        float3 cel = floor(pow(saturate(o), 1.0) * 3.0 + 0.5) / 3.0;
-        float lum = f2Lum3(o).x;
-        float ink = step(abs(frac(lum * 3.0) - 0.5), 0.04);
-        float3 painted = lerp(float3(0.55, 0.8, 1.0), float3(0.25, 0.55, 0.95), saturate(normalize(rd).y * 2.0));
-        float3 cc = lerp(lerp(cel * 1.1, cel * 0.15, ink), painted, sky);
-        f2World(dec, decK, cc, bub * on);
-        add += float3(1.0, 1.0, 0.9) * f2Ring(onG, S, feet, ring, 0.12) * exp(-t * 2.0) * 1.5;
-        // the beating: a hit every 0.3 s, the body jolting, an impact star where it lands; the seventh is an uppercut
-        float hitT[7] = { 0.5, 0.8, 1.1, 1.4, 1.7, 2.0, 2.4 };
-        float jolt = 0.0; float3 jd = 0.0;
-        [unroll] for (int i = 0; i < 7; i++) {
+        // ANIME: a ring of gold light runs out from the mob and the world is redrawn as an anime cel - flat bright
+        // colour, violet shadows with hatching, an ink line round every edge that boils like drawn frames, a painted
+        // sky with hard-edged clouds. EPISODE 1: THE FINISH. Then the beating: POW! BAM! WHAM! CRACK! SMASH! BOOM! -
+        // each with its impact frame - and ANIME BREAKER!!: an UPPERCUT!! that sends the mob off as a star. To be continued...
+        float R7 = t * 11.0;
+        float out7 = 1.0 - ease((t - 4.35) / 0.4);
+        bool sky = length(S) > 1e5;
+        float dist = length(S - C);
+        float bubA = f2Bubble(rd, C, 8.0);
+        float mask = (sky ? ease((t - 0.45) / 0.4) : 1.0 - smoothstep(R7 - 1.6, R7, dist)) * out7 * bubA;
+        float hitT[7] = { 1.0, 1.28, 1.56, 1.84, 2.12, 2.4, 3.1 };
+        float imp = 0.0, pulse = 0.0;
+        [unroll] for (int i0 = 0; i0 < 7; i0++) { float u0 = t - hitT[i0]; imp = max(imp, step(0.0, u0) * step(u0, i0 == 6 ? 0.1 : 0.045)); pulse = max(pulse, step(0.0, u0) * exp(-u0 * 7.0)); }
+        float3 pxv = toPx(rd * 10.0);
+        int2 px = int2(pxv.xy);
+        if (mask > 0.001) {
+            float sc7 = max(1.0, c4.y / 1080.0);
+            int so = int(1.6 * sc7 + 0.5);
+            float3 col = (o * 2.0 + f2Scene(px + int2(so, so), o) + f2Scene(px + int2(-so, so), o) + f2Scene(px + int2(so, -so), o) + f2Scene(px + int2(-so, -so), o)) / 6.0;
+            float l = dot(col, float3(0.299, 0.587, 0.114));
+            float chroma = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
+            col = lerp(float3(l, l, l), col, 2.3);
+            col = lerp(col * float3(0.80, 0.88, 1.22) + float3(0.04, 0.05, 0.12), col, smoothstep(0.02, 0.16, chroma));     // grey things get an anime background's tint
+            col = pow(saturate(col), 0.78) * 1.08;
+            l = dot(col, float3(0.299, 0.587, 0.114));
+            float lit = smoothstep(0.50, 0.53, l), shadow = 1.0 - smoothstep(0.30, 0.33, l);
+            col = lerp(col, col * float3(0.62, 0.52, 0.98), shadow);
+            col *= lerp(1.0, 1.22, lit);
+            col = floor(saturate(col) * 6.0 + 0.5) / 6.0;
+            col *= lerp(1.0, 0.78, step(0.5, frac((pxv.x + pxv.y) / (7.0 * sc7))) * shadow);                                  // hatching in the shadows
+            col += smoothstep(0.78, 1.0, l) * float3(1.0, 0.95, 0.85) * 0.14;
+            // speed lines from the mob, hard on every hit
+            float3 pc = toPx(C);
+            float2 rel = (pxv.xy - pc.xy) / c4.y;
+            float rays = step(0.62, f2VN(float2(atan2(rel.y, rel.x) * 9.0, floor(t * 10.0) * 0.37))) * smoothstep(0.05, 0.45, length(rel));
+            if (sky) {
+                float ty = saturate(rd.y * 1.8 + 0.08);
+                float banded = floor(ty * 6.0) / 6.0 + 0.16 * smoothstep(0.3, 0.7, frac(ty * 6.0));
+                float3 sk = banded < 0.5 ? lerp(float3(1.0, 0.82, 0.88), float3(0.45, 0.82, 1.0), banded * 2.0) : lerp(float3(0.45, 0.82, 1.0), float3(0.14, 0.34, 0.92), banded * 2.0 - 1.0);
+                float2 cuv = rd.xz / (rd.y * 0.9 + 0.45) * 1.7 + float2(t * 0.02, 0.0);
+                float cl = f2VN(cuv * 1.3) * 0.5 + f2VN(cuv * 2.64) * 0.25 + f2VN(cuv * 5.3) * 0.125 + f2VN(cuv * 10.7) * 0.0625;
+                float cl2 = f2VN(cuv * 1.3 + float2(0.2, -0.26)) * 0.5 + f2VN(cuv * 2.64 + 0.4) * 0.25 + f2VN(cuv * 5.3 + 0.8) * 0.125;
+                float3 cc = lerp(float3(0.86, 0.80, 1.0), float3(1.0, 0.98, 0.96), smoothstep(0.50, 0.52, cl2));
+                sk = lerp(sk, cc, smoothstep(0.50, 0.52, cl) * smoothstep(-0.02, 0.18, rd.y));
+                col = sk + rays * (0.1 + 0.3 * pulse) * float3(1.0, 0.96, 0.9);
+            } else col += rays * (0.04 + 0.22 * pulse) * float3(1.0, 0.92, 0.85);
+            // ink: a line wherever depth or tone breaks, redrawn twelve times a second
+            float boil = floor(t * 12.0);
+            int2 jit = int2((float2(hash12(float2(boil, 1.3)), hash12(float2(boil, 7.1))) - 0.5) * 3.0 * sc7);
+            int eo = int(1.7 * sc7 + 0.5);
+            int2 pj = px + jit;
+            float d0 = viewZ(rawDepth(pj)), dl = viewZ(rawDepth(pj + int2(-eo, 0))), dr = viewZ(rawDepth(pj + int2(eo, 0))), du = viewZ(rawDepth(pj + int2(0, eo))), dd = viewZ(rawDepth(pj + int2(0, -eo)));
+            float edgeD = smoothstep(0.02, 0.06, (abs(dl + dr - 2.0 * d0) + abs(du + dd - 2.0 * d0)) / max(d0, 2.0)) * step(d0, 500.0);   // where depth breaks (a flat floor seen edge-on does not)
+            float3 lw = float3(0.299, 0.587, 0.114);
+            float l0 = dot(sceneAt(pj).rgb, lw);
+            float edgeC = smoothstep(0.24, 0.6, abs(l0 - dot(sceneAt(pj + int2(-eo, 0)).rgb, lw)) + abs(l0 - dot(sceneAt(pj + int2(eo, 0)).rgb, lw)) + abs(l0 - dot(sceneAt(pj + int2(0, eo)).rgb, lw)) + abs(l0 - dot(sceneAt(pj + int2(0, -eo)).rgb, lw))) * 0.75;
+            float edge = max(edgeD, sky ? 0.0 : edgeC) * (sky ? 1.0 : 1.0 - smoothstep(R7 - 3.0, R7 - 0.5, dist));
+            col = lerp(col, float3(0.05, 0.03, 0.14), saturate(edge) * 0.96);
+            if (imp > 0.0) col = lerp(float3(step(0.5, dot(col, lw)), step(0.5, dot(col, lw)), step(0.5, dot(col, lw))), float3(1, 1, 1), rays);   // the impact frame: stark black and white
+            f2World(dec, decK, col, mask);
+        }
+        if (!sky) add += float3(1.0, 0.93, 0.65) * exp(-pow((dist - R7) / 0.9, 2.0)) * 1.2 * exp(-t * 0.7) * out7 * bubA;      // the wavefront
+        // the title card
+        f2Word(h, rd, C + float3(0, 2.3, 0), 0.26 * backOut((t - 0.4) / 0.2) * step(0.4, t) * step(t, 0.98), TX_EPISODE, TL_EPISODE, 0.0, float3(1.7, 1.7, 1.7), float3(0.01, 0.006, 0.03), 1.0);
+        // you: wading in with lefts and rights, then down - and up
+        float tU = 3.1, uU = t - tU;
+        float nh = 0.0, jolt = 0.0, arm = 0.0, which = 0.0;
+        [unroll] for (int i = 0; i < 6; i++) {
             float u = t - hitT[i];
+            float wind = exp(-pow((u + 0.02) / 0.07, 2.0));
+            if (wind > arm) { arm = wind; which = float(i % 2); }
             if (u < 0.0) continue;
-            float3 hp = C + float3((h1(float(i) + seed) - 0.5) * 0.6, (h1(float(i) * 2.0) - 0.5) * 0.8 + (i == 6 ? 0.4 : 0.0), 0) + A * 0.3;
-            float sz = exp(-u * 5.0);
-            // the star: a jagged yellow burst with a black edge, facing you
-            float3 nb = normalize(-hp);
-            float tp = dot(hp, nb) / dot(rd, nb);
-            if (sz > 0.05 && tp > 0.0 && tp < h.t) {
-                float3 P = rd * tp - hp; float3 ub = normalize(cross(float3(0, 1, 0), nb)); float3 vb = cross(nb, ub);
-                float2 q = float2(dot(P, ub), dot(P, vb)) / (0.55 * (0.6 + 0.4 * sz) * (i == 6 ? 1.6 : 1.0));
-                float r = length(q), a = atan2(q.y, q.x);
-                float edge = 0.55 + 0.35 * step(0.5, frac(a / 6.2832 * 10.0));
-                if (r < edge) { h.t = tp; h.c = r > edge - 0.12 ? float3(0, 0, 0) : (r < edge * 0.45 ? float3(1.6, 0.4, 0.2) : float3(1.6, 1.25, 0.15)); h.hit = true; }
+            nh += 1.0; jolt += exp(-u * 12.0);
+            float3 hp = C + float3(0, (h1(float(i) + seed) - 0.5) * 0.7, 0) + A * 0.3 + vf * -0.35;
+            // the burst where it lands, and the word
+            float2 q; float tp;
+            float bs = backOut(u / 0.07) * step(u, 0.26);
+            if (bs > 0.0 && f2Card(rd, hp, h.t, q, tp)) {
+                float r = length(q) / (0.42 * bs), a = atan2(q.y, q.x);
+                float ed = 0.62 + 0.38 * step(0.5, frac(a / 6.2832 * 11.0 + float(i) * 0.3));
+                if (r < ed) { h.t = tp; h.c = r > ed - 0.14 ? float3(0.01, 0.006, 0.03) : (r < ed * 0.45 ? float3(2.0, 2.0, 1.8) : hex3(255, 214, 40) * 1.5); h.hit = true; h.part = -1; }
             }
-            jolt += exp(-u * 12.0);
-            jd += (i == 6 ? float3(0, 1, 0) : -A) * exp(-u * 12.0) * 0.12;
+            int wo = i == 0 ? TX_POW : (i == 1 ? TX_BAM : (i == 2 ? TX_WHAM : (i == 3 ? TX_CRACK : (i == 4 ? TX_SMASH : TX_BOOM))));
+            int wl = i == 0 ? TL_POW : (i == 1 ? TL_BAM : (i == 2 ? TL_WHAM : (i == 3 ? TL_CRACK : (i == 4 ? TL_SMASH : TL_BOOM))));
+            float sd2 = (i % 2 == 0) ? 1.0 : -1.0;
+            if (u < 0.5) f2Word(h, rd, hp + float3(0, 0.75 + u * 0.5, 0) - A * (0.2 + 0.5 * sd2) - vf * 0.3, 0.34 * backOut(u / 0.1) * (1.0 - ease((u - 0.38) / 0.12)), wo, wl, 0.22 * sd2, (i % 2 == 0) ? hex3(255, 226, 50) * 1.6 : float3(1.9, 1.9, 1.9), (i % 2 == 0) ? float3(0.01, 0.006, 0.03) : hex3(210, 30, 40), 0.0);
         }
-        float up = ease((t - 2.4) / 0.6);
-        float3 O = feet + jd + float3(0, up * 3.0 - max(t - 3.0, 0.0) * max(t - 3.0, 0.0) * 6.0, 0);
-        if (t < 3.6) f2Body(h, rd, O, mul(RY, rotX(up * 6.0)), 1.0, one, fx);
-        fnPoof(h, rd, O + float3(0, 0.6, 0), t - 3.6, seed, 12, 0.07);
-        // to be continued: an arrow sign, hand-painted
-        float tb = ease((t - 3.4) / 0.3) * (1.0 - ease((t - 4.4) / 0.3));
-        if (tb > 0.0) {
-            float3 nA = normalize(-feet); float3 uA = normalize(cross(float3(0, 1, 0), nA));
-            float3 Ac = feet + float3(0, 0.45, 0) + uA * 0.4;
-            float tp = dot(Ac, nA) / dot(rd, nA);
-            if (tp > 0.0 && tp < h.t) {
-                float3 P = rd * tp - Ac;
-                float2 q = float2(dot(P, -uA), P.y) / (0.45 * tb);
-                float arrow = (abs(q.y) < 0.28 && q.x > -1.4 && q.x < 0.3) || (q.x >= 0.3 && q.x < 1.0 && abs(q.y) < (1.0 - q.x) * 0.85) ? 1.0 : 0.0;
-                if (arrow > 0.0) { h.t = tp; h.c = hex3(130, 90, 30) * 1.4; h.hit = true; }
+        float crouch = ease((t - 2.62) / 0.3) * (1.0 - ease(uU / 0.08));
+        float rise = easeOut(uU / 0.25) * step(0.0, uU);
+        if (t > 0.55 && t < 4.3) {
+            DFx fb = fg; fb.ash = max(1.0 - saturate((t - 0.55) / 0.3) * 1.15, ease((t - 3.9) / 0.4));
+            float3 Op = feet + A * (1.05 - 0.12 * arm) + float3(0, -0.28 * crouch + 0.7 * rise * (1.0 - ease((uU - 0.3) / 0.5)), 0);
+            float3x3 Rp = mul(rotY(atan2(-A.x, -A.z)), rotX(0.12 + 0.3 * crouch - 0.35 * rise));
+            float2 aR = float2(-0.5 - 1.1 * arm * (1.0 - which) - 2.5 * rise + 0.6 * crouch, -0.2), aL = float2(-0.5 - 1.1 * arm * which, 0.2);
+            dsPosed(h, rd, Op, Rp, 1.0, float2(0.1, 0), aR, aL, float2(-0.45 - 0.5 * crouch, 0), float2(0.35 + 0.3 * crouch, 0), 63, fb);
+        }
+        f2Word(h, rd, feet + A * 1.05 + float3(0, 2.45, 0), 0.3 * backOut((t - 2.6) / 0.15) * step(2.6, t) * step(t, tU), TX_BREAKER, TL_BREAKER, 0.0, float3(1.9, 1.9, 1.9), hex3(40, 60, 220), 0.0);
+        // the mob: rocked by every blow, then launched - up, away, turning, until it is only a glint in the painted sky
+        float3 sgo = normalize(float3(0, 1.0, 0) - A * 0.28 + vf * 0.2);
+        if (uU < 0.0) f2Body(h, rd, feet - A * 0.06 * nh - A * 0.08 * min(jolt, 1.0), mul(RY, mul(rotX(0.0), rotZ(0.0))), 1.0, one, fx);
+        else if (uU < 0.75) f2Body(h, rd, feet - A * 0.36 + sgo * (uU * 26.0), mul(RY, mul(rotX(uU * 14.0), rotZ(uU * 5.0))), 1.0, one, fx);
+        if (uU >= 0.0) {
+            float2 q; float tp;
+            float3 hp = C + float3(0, 0.5, 0) + A * 0.3 - vf * 0.35;
+            float bs = backOut(uU / 0.08) * step(uU, 0.4);
+            if (bs > 0.0 && f2Card(rd, hp, h.t, q, tp)) {
+                float r = length(q) / (0.8 * bs), a = atan2(q.y, q.x);
+                float ed = 0.6 + 0.4 * step(0.5, frac(a / 6.2832 * 13.0));
+                if (r < ed) { h.t = tp; h.c = r > ed - 0.1 ? float3(0.01, 0.006, 0.03) : (r < ed * 0.5 ? float3(2.2, 2.2, 2.0) : hex3(255, 80, 40) * 1.6); h.hit = true; h.part = -1; }
+            }
+            if (uU < 0.8) f2Word(h, rd, C + float3(0, 1.9 + uU * 0.4, 0) - vf * 0.6, 0.5 * backOut(uU / 0.12) * (1.0 - ease((uU - 0.65) / 0.15)), TX_UPPERCUT, TL_UPPERCUT, -0.12, hex3(255, 60, 40) * 1.7, float3(2.0, 1.9, 1.2), 0.0);
+            add += float3(1.0, 0.9, 0.6) * dsGlowSeg(rd, C, C + sgo * min(uU * 26.0, 30.0), 0.12, h.t) * exp(-uU * 5.0) * 1.5;      // the streak it leaves
+            // the star
+            float us = uU - 0.75;
+            if (us > 0.0 && us < 0.7) {
+                float3 sp = sgo * 60.0 + C;
+                float3 rt = normalize(cross(rd, float3(0, 1, 0)));
+                float3 sv = rd * dot(sp, rd) - sp;
+                float sx = dot(sv, rt), sy = sv.y;
+                float tw = sin(us / 0.7 * 3.1416) * (0.7 + 0.3 * sin(us * 40.0));
+                add += float3(1.0, 1.0, 0.9) * (exp(-(sx * sx + sy * sy) / 0.12) * 2.0 + exp(-sy * sy / 0.02) * exp(-sx * sx / 6.0) + exp(-sx * sx / 0.02) * exp(-sy * sy / 6.0)) * tw * 2.0 * step(0.0, dot(sp, rd));
             }
         }
+        f2Word(h, rd, C + float3(0, 2.1, 0), 0.24 * backOut((t - 3.75) / 0.2) * step(3.75, t) * step(t, 4.55), TX_TBC, TL_TBC, 0.0, float3(1.7, 1.7, 1.7), float3(0.01, 0.006, 0.03), 1.0);
     } else {
         // CHRONO FRACTURE: one snap of the fingers and the world is gone. In broken spacetime the mob's time, fate,
         // dimension and space are taken one by one, until all of it converges to a single point; the core is

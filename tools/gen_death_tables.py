@@ -227,12 +227,18 @@ def main():
         EF_META[:] = efmeta
         for name, flat, n in efc:
             eo.append((name, len(alle), n)); alle += pack(flat)
+        evo = []
+        for v in EF_VICS:
+            if v is None: evo.append((0, 0, 0)); continue
+            evo.append((len(alle), v[1], int(round(v[2] * 100)))); alle += pack(v[0])
     out.append(f"// clips: per frame (20 Hz) 8 bones x 4 uints (rot xyz rad, offset xyz px, scale, 0); bones {BONES}")
     for tag, o, n in offs: out.append(f"static const uint {tag} = {o}u, {tag}_N = {n}u;")
     if efmeta:
         out.append(f"// Epic Fight moves: (clip offset, frames, weapon, victim distance blocks) and up to 6 hit times (s)")
         out.append("// Epic Fight clips: per frame 13 x 4 uints (centre xyz blocks, quat xyzw): 11 skin segments, Tool_R, Tool_L")
         out.append(f"static const uint4 kEFClip[{len(efmeta)}] = {{ " + ", ".join(f"uint4({o}u, {n}u, {m[1]}u, {int(round(m[3] * 100))}u)" for (nm, o, n), m in zip(eo, efmeta)) + " };")
+        out.append("// a paired move's victim clip: (offset, frames, start time * 100, 0); frames 0 = none")
+        out.append(f"static const uint4 kEFVic[{len(evo)}] = {{ " + ", ".join(f"uint4({o}u, {n}u, {st}u, 0u)" for o, n, st in evo) + " };")
         out.append(f"static const float kEFHit[{len(efmeta) * 6}] = {{ " + ", ".join(", ".join(f"{(m[2][i] if i < len(m[2]) else 99.0):.3f}" for i in range(6)) for m in efmeta) + " };")
         out.append(f"static const uint kEFHits[{len(efmeta)}] = {{ " + ", ".join(f"{len(m[2])}u" for m in efmeta) + " };")
     out.append("")
@@ -277,11 +283,16 @@ EF_MOVES = [   # (name, animation files played back to back, weapon)
     ("sweeping_edge", ["skill/sweeping_edge.json"], "sword"),
     ("dancing_edge", ["skill/dancing_edge.json"], "dual"),
     ("battojutsu", ["skill/battojutsu_dash.json"], "katana"),
-    ("blade_rush", ["skill/blade_rush_try.json", "skill/blade_rush_combo1.json", "skill/blade_rush_execute.json"], "dagger"),
+    # Blade Rush on a player: the lunge, then the execution - a paired animation, the victim plays interact/blade_rush_hit
+    ("blade_rush", ["skill/blade_rush_try.json", "skill/blade_rush_execute.json"], "dagger",
+     dict(dist=5.0, victim=("interact/blade_rush_hit.json", 0.36), hits=[0.36 + 0.25, 0.36 + 0.5, 0.36 + 0.82])),
     ("wrathful_lightning", ["skill/wrathful_lighting.json"], "trident"),
     ("tsunami", ["skill/tsunami_reinforced.json"], "trident"),
     ("steel_whirlwind", ["skill/steel_whirlwind_charging.json", "skill/steel_whirlwind.json"], "greatsword"),
-    ("demolition_leap", ["skill/demolition_leap_charge.json", "skill/demolition_leap.json"], "greatsword"),
+    # Demolition Leap is a mover: gather, launch, fly (the mod's physics - here an arc), come down; the fall and the
+    # landing are Epic Fight's own living/fall and living/landing
+    ("demolition_leap", ["skill/demolition_leap_charge.json", "skill/demolition_leap.json", "living/fall.json", "living/landing.json"], "greatsword",
+     dict(lens=[0.5, 0.35, 0.5, 0.45], arc=(0.55, 1.35, 6.0, 3.6), hits=[1.35], dist=6.7)),
     ("relentless_combo", ["skill/relentless_combo.json"], "fist"),
     ("rushing_tempo", ["skill/rushing_tempo1.json", "skill/rushing_tempo3.json"], "tachi"),
     ("grasping_spire", ["skill/grasping_spire_second.json"], "spear"),
@@ -388,9 +399,12 @@ def ef_clips(jar):
     coordOf = lambda an, t: (K @ sample(an, "Coord", t) @ K)[:3, 3] if "Coord" in an else np.zeros(3)
     clips, meta = [], []
     PH = ef_phases(jar)
-    for name, files, weapon in EF_MOVES:
+    vics = []
+    for mv_ in EF_MOVES:
+        name, files, weapon = mv_[:3]; opt = mv_[3] if len(mv_) > 3 else {}
         anims = [load(f) for f in files]
         lens = [max(v[0].max() for v in a.values()) for a in anims]
+        if "lens" in opt: lens = list(opt["lens"])
         T = sum(lens); n = int(math.ceil(T * HZ)) + 1
         absC = any(np.linalg.norm(coordOf(a, 0.0)) > 1.5 for a in anims)
         wi = EF_WEAPON[weapon]; b0, b1 = (np.array(v, float) for v in EF_BLADE[wi])
@@ -415,7 +429,13 @@ def ef_clips(jar):
             frames.append(ent); mot.append(mv)
             Rt = W["Tool_R"][:3, :3]
             tipS.append(W["Tool_R"][:3, 3] + Rt @ b1); tipW.append(mv + tipS[-1])
-        mot = np.array(mot); mot[:, 1] -= min(mot[:, 1].min(), 0.0)   # never below the ground it started on
+        mot = np.array(mot)
+        if "arc" in opt:   # a jump the mod leaves to its physics: a plain arc, t0..t1, this far, this high
+            a0, a1, ad, ah = opt["arc"]
+            for f in range(n):
+                u = min(max((f / HZ - a0) / (a1 - a0), 0.0), 1.0)
+                mot[f] += np.array([0.0, 4.0 * ah * u * (1.0 - u), ad * u])
+        mot[:, 1] -= min(mot[:, 1].min(), 0.0)   # never below the ground it started on
         # keep quaternion signs continuous so the shader's nlerp never takes the long way
         for e in range(13):
             for f in range(1, n):
@@ -444,15 +464,41 @@ def ef_clips(jar):
             else: exact += [i for i in hits if t0f * HZ <= i < (t0f + lens[q]) * HZ]
             t0f += lens[q]
         if exact: hits = sorted(set(min(i, n - 1) for i in exact))[-6:]
+        if "hits" in opt: hits = [int(round(x * HZ)) for x in opt["hits"]]
         # the victim stands where the blows reach: the blade tip's farthest forward around any hit (a spin's tip can
         # point backwards at the exact frame), never closer than arm's length in front of the attacker's own body
         near = [i for h in hits for i in range(max(h - 2, 0), min(h + 3, n))] or [n - 1]
         bodyZ = max(float(mot[i][2] + frames[i][2][0][2]) for i in near)
         fwd = max(max(float(mot[i][2] + tipS[i][2]) for i in near), bodyZ + 0.75)
+        if "dist" in opt: fwd = opt["dist"]
+        # a paired animation: the victim's own clip (same 13 entries, its own frame: feet at the origin, facing +z)
+        vic = None
+        if "victim" in opt:
+            va = load(opt["victim"][0]); vl = max(v[0].max() for v in va.values()); vn = int(math.ceil(vl * HZ)) + 1
+            vfr = []
+            for f in range(vn):
+                tl = f / HZ
+                loc = lambda j: sample(va, j, tl) if j in va else bind[j]
+                W = {j: K @ worldOf(j, loc) @ K for j in order}
+                ent = []
+                for (pj, jn, lo, hi) in EF_SEGS:
+                    D = W[jn] @ np.linalg.inv(bindW[jn])
+                    c = D @ np.array([KPC[pj][0] * DPX, KPC[pj][1] * DPX, KPC[pj][2] * DPX, 1.0])
+                    ent.append((c[:3], Rot.from_matrix(orth(D[:3, :3])).as_quat()))
+                for jn in ("Tool_R", "Tool_L"): ent.append((W[jn][:3, 3], Rot.from_matrix(orth(W[jn][:3, :3])).as_quat()))
+                vfr.append(ent)
+            for e in range(13):
+                for f in range(1, vn):
+                    if np.dot(vfr[f][e][1], vfr[f - 1][e][1]) < 0: vfr[f][e] = (vfr[f][e][0], -vfr[f][e][1])
+            vflat = [x for f in range(vn) for e in range(13) for x in (*vfr[f][e][0], *vfr[f][e][1], 0.0)]
+            vic = (vflat, vn, opt["victim"][1])
+        vics.append(vic)
         clips.append((name, flat, n))
         meta.append((name, wi, [h / HZ for h in hits], min(max(fwd, 0.6), 14.0), n))
         print(f"EF {name}: {T:.2f}s, hits {[round(h / HZ, 2) for h in hits]}, victim at {fwd:.2f}, travel {np.round(mot[-1], 2).tolist()}")
+    EF_VICS[:] = vics
     return clips, meta
+EF_VICS = []
 
 # ------------------------------------------------------------------ 3. sounds
 SND = [("victim", "fin", "assets/finishers/sounds/finisher/victim_sound_1.ogg"),
@@ -507,6 +553,7 @@ def cues(hits):
           46: [(0.6 + i * 0.3, "swing", .4, 1.6) for i in range(7)] + [(3.0, "punchHard", .9, .9)],
           47: [(x, "punch02" if i % 2 else "punch03", .8, 1.0) for i, x in enumerate((0.5, 0.8, 1.1, 1.4, 1.7, 2.0))] + [(2.4, "punchHard", 1, .8)],
           48: [(0.25, "punchPower", .8, 2.0), (3.35, "punchHard", 1, .4)]}
+    F2.update({26: [(0.55, "smallImpact", .35, 1.9), (2.9, "punch02", .7, 1.9), (2.92, "smallImpact", .5, 1.8)], 32: [(0.4, "swing", .6, 1.3)] + [(0.85 + i * 0.42, "punch02" if i % 2 else "punch03", .8, 1.0) for i in range(5)] + [(2.95, "punchHard", 1, .8), (3.5, "swing", .6, .8)], 34: [(0.35, "swing", .7, .4), (0.95, "punchHard", 1, .5), (0.97, "impact", 1, .6), (2.7, "smallImpact", .9, 1.4), (2.72, "punchPower", .6, 1.6)], 35: [(0.1, "swing", .4, .6), (1.45, "smallImpact", .6, 1.9), (2.0, "smallImpact", .4, 1.7), (2.55, "smallImpact", 1, 1.6), (2.57, "impact", .6, 1.5)], 40: [(0.05, "punchPower", .4, .35), (1.42, "swing", 1, .45), (1.55, "punchHard", 1, .55), (1.57, "impact", .8, .5), (3.6, "smallImpact", .7, .9)], 43: [(0.95, "swing", .6, .3), (1.5, "swing", .5, .35), (3.3, "punchHard", .9, .4), (3.32, "impact", .7, .45)], 45: [(1.95, "swing", .7, .3), (2.85, "punch02", .5, 1.8), (3.05, "impact", 1, .45), (3.07, "punchHard", .8, .4)], 46: [(0.45, "smallImpact", .4, 2.0)] + [(0.8 + i * 0.1667, "swing", .4, 1.5 + 0.1 * (i % 3)) for i in range(11)] + [(3.35, "smallImpact", .7, 2.0), (3.37, "punchHard", .9, .9)], 47: [(x, "punch02" if i % 2 else "punch03", .8, 1.0) for i, x in enumerate((1.0, 1.28, 1.56, 1.84, 2.12, 2.4))] + [(2.62, "swing", .6, .5), (3.1, "punchHard", 1, .8), (3.12, "impact", .8, .9)]})   # the reworked scenes
     for k, lst in F2.items():
         for (tt, snd, v, pt) in lst: c.append((16 + k, tt, snd, v, pt))
     # Epic Fight (codes 65+): a whoosh just before each hit, a punch on it, the heaviest on the last

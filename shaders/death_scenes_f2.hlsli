@@ -13,8 +13,100 @@
 //      bubble round the kill instead, and no camera moves: on a server they would take the screen away mid-fight.
 //      Everything is drawn in 1/16-block texels like the rest of the pool; the body's materials are death_mats.hlsli.
 
+// ---- a 3 x 5 pixel font for the comic-book words (Manga, Anime) and the Thousand Blades count
+static const uint kF2Glyph[41] = { 0u, 11245u, 27566u, 14627u, 27502u, 31143u, 31140u, 14699u, 23533u, 29847u, 4714u, 23469u, 18727u, 24557u, 27501u, 11114u, 27556u, 11123u, 27565u, 14478u, 29842u, 23407u, 23402u, 23549u, 23213u, 23186u, 29351u, 9346u, 2u, 1040u, 448u, 31599u, 11415u, 25255u, 25230u, 23497u, 31118u, 14831u, 29330u, 31727u, 31694u };
+static const uint kF2Txt[123] = { 16u, 15u, 23u, 27u, 3u, 18u, 1u, 3u, 11u, 27u, 2u, 15u, 14u, 11u, 27u, 23u, 8u, 1u, 13u, 27u, 20u, 8u, 21u, 4u, 27u, 11u, 1u, 30u, 2u, 15u, 15u, 13u, 27u, 27u, 2u, 1u, 13u, 27u, 19u, 13u, 1u, 19u, 8u, 27u, 2u, 15u, 15u, 13u, 27u, 21u, 16u, 16u, 5u, 18u, 3u, 21u, 20u, 27u, 27u, 1u, 14u, 9u, 13u, 5u, 0u, 2u, 18u, 5u, 1u, 11u, 5u, 18u, 27u, 27u, 5u, 16u, 9u, 19u, 15u, 4u, 5u, 0u, 32u, 29u, 0u, 20u, 8u, 5u, 0u, 6u, 9u, 14u, 9u, 19u, 8u, 20u, 15u, 0u, 2u, 5u, 0u, 3u, 15u, 14u, 20u, 9u, 14u, 21u, 5u, 4u, 28u, 28u, 28u, 31u, 32u, 33u, 34u, 35u, 36u, 37u, 38u, 39u, 40u };
+#define TX_POW 0
+#define TL_POW 4
+#define TX_CRACK 4
+#define TL_CRACK 6
+#define TX_BONK 10
+#define TL_BONK 5
+#define TX_WHAM 15
+#define TL_WHAM 5
+#define TX_THUD 20
+#define TL_THUD 5
+#define TX_KABOOM 25
+#define TL_KABOOM 9
+#define TX_BAM 34
+#define TL_BAM 4
+#define TX_SMASH 38
+#define TL_SMASH 6
+#define TX_BOOM 44
+#define TL_BOOM 5
+#define TX_UPPERCUT 49
+#define TL_UPPERCUT 10
+#define TX_BREAKER 59
+#define TL_BREAKER 15
+#define TX_EPISODE 74
+#define TL_EPISODE 21
+#define TX_TBC 95
+#define TL_TBC 18
+#define TX_DIGITS 113
+#define TL_DIGITS 10
+// ink of word (off, len) at g: glyph cells, x from the word's left (4 per letter), y up from its foot (5 tall)
+float f2Text(float2 g, int off, int len) {
+    if (g.y < 0.0 || g.y >= 5.0 || g.x < 0.0) return 0.0;
+    int ci = int(g.x * 0.25);
+    float gx = g.x - float(ci) * 4.0;
+    if (ci >= len || gx >= 3.0) return 0.0;
+    uint gl = kF2Glyph[kF2Txt[off + ci]];
+    int bit = 14 - ((4 - int(g.y)) * 3 + int(gx));
+    return float((gl >> uint(bit)) & 1u);
+}
+// a card facing the camera at P: where the ray crosses it - q (x right, y up, blocks) and how far (tp)
+bool f2Card(float3 rd, float3 P, float tMax, out float2 q, out float tp) {
+    float3 n = normalize(-P);
+    tp = dot(P, n) / min(dot(rd, n), -1e-4);
+    float3 ub = normalize(cross(float3(0, 1, 0), n)), vb = cross(n, ub);
+    float3 X = rd * tp - P;
+    q = float2(dot(X, ub), dot(X, vb));
+    return tp > 0.0 && tp < tMax;
+}
+// a word on a card: hgt = letter height (blocks), tilt (rad), fill colour with an ink outline; plate > 0: a dark plate behind
+void f2Word(inout DHit h, float3 rd, float3 P, float hgt, int off, int len, float tilt, float3 col, float3 ink, float plate) {
+    float2 q; float tp;
+    if (hgt < 0.01 || !f2Card(rd, P, h.t, q, tp)) return;
+    float c = cos(tilt), s = sin(tilt);
+    q = float2(c * q.x + s * q.y, -s * q.x + c * q.y);
+    float W = float(len * 4 - 1);
+    float2 g = q / (hgt * 0.2) + float2(W * 0.5, 2.5);
+    if (g.x < -2.5 || g.x > W + 2.5 || g.y < -2.0 || g.y > 7.0) return;
+    float f = f2Text(g, off, len);
+    float ol = max(max(f2Text(g + float2(0.5, 0.5), off, len), f2Text(g + float2(-0.5, 0.5), off, len)),
+                   max(f2Text(g + float2(0.5, -0.5), off, len), f2Text(g + float2(-0.5, -0.5), off, len)));
+    if (f > 0.5) h.c = col; else if (ol > 0.5) h.c = ink; else if (plate > 0.0 && g.x > -1.5 && g.x < W + 1.5 && g.y > -1.2 && g.y < 6.2) h.c = ink; else return;
+    h.t = tp; h.hit = true; h.part = -1;
+}
+// value noise (2D), for foam, clouds, brush marks
+float f2VN(float2 p) {
+    float2 i = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash12(i), hash12(i + float2(1, 0)), f.x), lerp(hash12(i + float2(0, 1)), hash12(i + float2(1, 1)), f.x), f.y);
+}
+// a soap film: a thin sphere (centre B, radius r) - rainbow sheen that thickens to the rim, two highlights, a wobble
+float3 f2Film(float3 rd, float3 B, float r, float tMax, float tt, float wob) {
+    float tc = dot(B, rd), d2 = dot(B, B) - tc * tc;
+    if (tc < 0.0 || r < 0.004 || d2 > r * r * 1.2) return float3(0, 0, 0);
+    float3 off = rd * tc - B;
+    float3 rt = normalize(cross(rd, float3(0, 1, 0)));
+    float  ang = atan2(off.y, dot(off, rt));
+    float  rr = r * (1.0 + wob * (0.035 * sin(ang * 3.0 + tt * 6.0) + 0.02 * sin(ang * 5.0 - tt * 4.3)));
+    if (d2 > rr * rr) return float3(0, 0, 0);
+    float th = sqrt(rr * rr - d2);
+    if (tc - th > tMax) return float3(0, 0, 0);
+    float3 nrm = normalize(rd * (tc - th) - B);
+    float fres = pow(1.0 - saturate(dot(-rd, nrm)), 2.0);
+    float band = fres * 1.7 + 0.22 * sin(nrm.y * 6.0 + tt * 1.6 + nrm.x * 4.0) + 0.1 * sin(nrm.z * 9.0 - tt);
+    float3 c = hsv3(frac(band + tt * 0.12), 0.6, 1.0) * (0.04 + 0.95 * fres);
+    float3 hl = normalize(-rd * 0.62 + float3(0, 0.72, 0) - rt * 0.42);
+    c += float3(1, 1, 1) * (smoothstep(0.965, 0.985, dot(nrm, hl)) * 1.5 + smoothstep(0.985, 0.995, dot(nrm, normalize(-rd * 0.7 - float3(0, 0.6, 0) + rt * 0.45))) * 0.5);
+    c += float3(0.85, 0.95, 1.0) * smoothstep(0.93, 1.0, sqrt(d2) / rr) * 0.55;
+    return c;
+}
 float f2Cull(int k) {   // how far from the feet a scene can draw (blocks)
     if (k == 2 || k == 16 || k == 17 || k == 19 || k == 30 || k == 38) return 16.0;   // the sky ones
+    if (k == 45) return 14.0;   // the Tsunami: its wave comes from far off
     if (k >= 40) return 9.0;
     if (k == 3 || k == 20 || k == 26 || k == 34 || k == 7) return 7.0;
     return 4.8;
@@ -494,28 +586,48 @@ void f2B(int k, float t, float3 o, float3 rd, float3 feet, float yaw, float view
         }
         add += float3(1.0, 0.4, 0.08) * f2Glow(rd, feet + float3(0, 0.2, 0), 1.2, h.t) * saturate(t * 2.0) * (1.0 - ease((t - 2.5) / 1.5)) * 0.4;
     } else if (k == 26) {
-        // SOAP BUBBLE: sealed in a bubble that floats up and bursts
-        float seal = ease((t - 0.15) / 0.4);
+        // SOAP BUBBLE: a film closes round the mob from the feet up; sealed inside it drifts up, turning slowly, little
+        // bubbles trailing after it - and bursts: the film snaps to a ring of spray, and the mob goes with it as a
+        // cloud of small bubbles that float off and pop one by one
+        float seal = ease((t - 0.1) / 0.5);
         float u = max(t - 0.6, 0.0);
-        float3 B = feet + float3(sin(u * 1.7) * 0.3, 1.0 + u * 0.9 + u * u * 0.3, cos(u * 1.3) * 0.2);
-        float rB = 1.15 * seal;
-        bool popped = t > 2.7;
-        if (!popped) {
-            float s = 1.0 - 0.15 * seal;
-            f2Body(h, rd, B - float3(0, 0.95 * s, 0), mul(RY, mul(rotZ(u * 0.6), rotX(u * 0.4))), s, one, fx);
-            // the bubble: a thin film - rainbow sheen at the rim, a highlight
-            float tc = dot(B, rd), d2 = dot(B, B) - tc * tc;
-            if (d2 < rB * rB && tc - sqrt(max(rB * rB - d2, 0.0)) < h.t) {
-                float rim = pow(saturate(sqrt(d2) / max(rB, 0.01)), 5.0);
-                add += hsv3(frac(rim * 2.0 + t * 0.3 + sqrt(d2) * 2.0), 0.6, 1.0) * rim * 0.9 * seal;
-                float3 hp = normalize(rd * (tc - sqrt(max(rB * rB - d2, 0.0))) - B);
-                add += float3(1, 1, 1) * step(0.97, dot(hp, normalize(float3(-0.4, 0.7, -0.5)))) * 1.2 * seal;
+        float tPop = 2.9, up2 = t - tPop;
+        float3 B = feet + float3(sin(u * 1.7) * 0.35, 1.0 + u * 0.75 + u * u * 0.22, cos(u * 1.3) * 0.25);
+        float rB = 1.22 * seal;
+        if (up2 < 0.0) {
+            float s = 1.0 - 0.12 * seal;
+            float3x3 Rb = mul(RY, mul(rotZ(sin(u * 1.1) * 0.45), rotX(sin(u * 0.8) * 0.5 + u * 0.25)));
+            f2Body(h, rd, B - mul(Rb, float3(0, 0.95 * s, 0)), Rb, s, one, fx);
+            add += f2Film(rd, B, rB, h.t, t, 1.0) * seal * (1.0 + 2.0 * exp(-pow((t - 0.6) / 0.08, 2.0)));   // a glint as it seals
+        }
+        // the foam it rose from, and the small bubbles that follow it up
+        [loop] for (int i = 0; i < 14; i++) {
+            float hi = float(i);
+            float life = frac(t * (0.32 + 0.1 * h1(hi)) + h1(hi * 3.1 + seed));
+            if (t > tPop + 0.4 || t < 0.15) break;
+            float a = hi * 2.4 + seed;
+            float3 Pb = float3(B.x, feet.y, B.z) + float3(cos(a), 0, sin(a)) * (0.25 + 0.5 * h1(hi * 5.0)) + float3(sin(life * 9.0 + hi) * 0.08, life * (B.y - feet.y + 0.6), 0);
+            add += f2Film(rd, Pb, (0.035 + 0.05 * h1(hi * 7.0)) * sin(life * 3.1416), h.t, t + hi, 0.0) * 0.9;
+        }
+        if (up2 >= 0.0) {
+            // the pop: the film's edge runs out as a thin bright ring, spray flies, and the mob is bubbles
+            float tc = dot(B, rd); float d = sqrt(max(dot(B, B) - tc * tc, 0.0));
+            float rr = rB + up2 * 5.0;
+            add += float3(0.9, 0.97, 1.0) * exp(-pow((d - rr) / 0.035, 2.0)) * exp(-up2 * 9.0) * step(tc, h.t + 1.0) * 1.6;
+            add += float3(1, 1, 1) * f2Glow(rd, B, rB * 0.8, h.t) * exp(-up2 * 14.0) * 0.5;
+            f2Cubes(h, rd, B, up2, 30, seed, 3.2, 0.3, 7.0, 0.8, 0.018, hex3(200, 230, 255), hex3(255, 255, 255), -1e5, float3(0.35, 0.45, 0.55));
+            [loop] for (int j = 0; j < 22; j++) {
+                float hj = float(j);
+                float pop = 0.35 + 1.3 * h1(hj * 1.7 + seed);                  // when this one pops
+                if (up2 > pop + 0.12) continue;
+                float3 dv = normalize(float3(h1(hj + seed) - 0.5, h1(hj * 2.0 + seed) - 0.35, h1(hj * 3.0 + seed) - 0.5));
+                float3 P0 = B + float3((h1(hj * 5.0) - 0.5) * 0.5, (h1(hj * 7.0) - 0.5) * 1.6, (h1(hj * 9.0) - 0.5) * 0.4);
+                float3 Pj = P0 + dv * (1.0 - exp(-up2 * 3.0)) * 0.9 + float3(sin(up2 * 5.0 + hj) * 0.06, up2 * 0.5, 0);
+                float rj = (0.07 + 0.12 * h1(hj * 11.0)) * ease(up2 / 0.12);
+                if (up2 < pop) add += f2Film(rd, Pj, rj, h.t, t + hj, 0.6) * 1.1;
+                else { float dd = dot(Pj, rd); float d3 = sqrt(max(dot(Pj, Pj) - dd * dd, 0.0)); add += float3(0.9, 0.97, 1.0) * exp(-pow((d3 - rj - (up2 - pop) * 1.5) / 0.012, 2.0)) * step(dd, h.t) * 0.9; }
             }
         }
-        f2Cubes(h, rd, B, t - 2.7, 26, seed, 2.4, 0.0, 6.0, 0.9, 0.02, hex3(200, 230, 255), hex3(255, 255, 255), -1e5, float3(0.3, 0.4, 0.5));
-        add += float3(1, 1, 1) * f2Glow(rd, B, rB, h.t) * exp(-max(t - 2.7, 0.0) * 10.0) * step(2.7, t) * 0.6;
-        if (popped && t < 3.3) f2Body(h, rd, B - float3(0, 0.85, 0) - float3(0, 9.0 * (t - 2.7) * (t - 2.7), 0), RY, 0.85, one, fx);
-        fnPoof(h, rd, B - float3(0, 0.8, 0) - float3(0, 3.2, 0) * 0.0, t - 3.3, seed + 3.0, 10, 0.06);
     } else if (k == 27) {
         // SHADOW DRAG: dark hands drag the mob into its own shadow
         float pool = ease((t - 0.1) / 0.4) * (1.0 - ease((t - 3.2) / 0.5));
@@ -613,34 +725,80 @@ void f2B(int k, float t, float3 o, float3 rd, float3 feet, float yaw, float view
         }
         f2Cubes(h, rd, C, t - 2.4, 20, seed, 0.6, 0.6, -0.4, 1.5, 0.03, hex3(255, 50, 210), hex3(60, 220, 255), -1e5, float3(1.0, 0.3, 1.0));
     } else if (k == 32) {
-        // MANGA: pressed paper-thin, it jumps into a comic page and is beaten panel after panel, then the page flips
-        float flat = ease((t - 0.15) / 0.3);
-        float3 n = normalize(-feet * float3(1, 0, 1));                      // the page faces the viewer
-        float3 u = normalize(cross(float3(0, 1, 0), n));
-        float pg = ease((t - 0.4) / 0.35);
-        float flip = ease((t - 3.0) / 0.6);
-        float3 Pc = feet + float3(0, 1.1, 0) - n * 0.3;
-        // the page: white with black panel borders, hit bursts in each panel in turn
-        float tp = dot(Pc, mul(rotY(flip * 2.0), n)) / dot(rd, mul(rotY(flip * 2.0), n));
-        if (pg > 0.0 && tp > 0.0 && tp < h.t) {
-            float3 P = rd * tp - Pc;
-            float2 q = float2(dot(P, u) / cos(flip * 2.0 + 0.0001), P.y);
-            if (abs(q.x) < 1.0 * pg && abs(q.y) < 1.35 * pg) {
-                float2 cell = floor((q + float2(1.0, 1.35)) / float2(1.0, 0.9));
-                float2 f = frac((q + float2(1.0, 1.35)) / float2(1.0, 0.9));
-                float border = (f.x < 0.04 || f.x > 0.96 || f.y < 0.05 || f.y > 0.95 || abs(q.x) > 0.96 * pg || abs(q.y) > 1.31 * pg) ? 1.0 : 0.0;
-                float ci = cell.x + cell.y * 2.0;
-                float hitT = 0.8 + ci * 0.35;
-                float hit = step(hitT, t);
-                float2 bc = (f - 0.5) * float2(1.0, 0.9);
-                float star = step(length(bc) * (1.0 + 0.4 * sin(atan2(bc.y, bc.x) * 8.0)), 0.25) * hit;
-                float lines = step(0.92, frac(atan2(bc.y, bc.x) * 3.0)) * step(0.15, length(bc)) * hit;
-                float3 pc = lerp(float3(0.96, 0.95, 0.92), float3(0.02, 0.02, 0.02), max(border, lines * 0.7));
-                pc = lerp(pc, float3(1.0, 0.85, 0.1), star * (1.0 - border));
-                h.t = tp; h.c = dsLit(pow(pc, 2.2), n) * 1.3; h.hit = true;
+        // MANGA: the mob is pressed paper-thin and hops into a comic page that slaps open behind it; panel after panel
+        // it is beaten - speed lines, a burst, POW! CRACK! BONK! WHAM! THUD! - to the last, KA-BOOM!!, and the page flips away
+        float flat = ease((t - 0.1) / 0.3);
+        float3 n = normalize(-feet * float3(1, 0, 1));
+        float flip = ease((t - 3.5) / 0.65);
+        float3 n2 = mul(rotY(-flip * 1.85), n);
+        float3 u0 = normalize(cross(float3(0, 1, 0), n)), u2 = normalize(cross(float3(0, 1, 0), n2));
+        float pg = backOut((t - 0.4) / 0.35) * step(0.4, t);
+        const float PW = 1.15, PH = 1.55;
+        float3 Pc = feet + float3(0, 1.75 + flip * flip * 1.2, 0) - n * 0.25 - u0 * PW + u2 * PW;
+        float3x3 RP = float3x3(u2.x, 0, n2.x, u2.y, 1, n2.y, u2.z, 0, n2.z);       // the page's frame: x across, y up, z out of it
+        if (t < 0.62) {   // pressed flat, then the hop up into the first panel
+            float hop = ease((t - 0.42) / 0.2);
+            float3x3 R0 = float3x3(u0.x, 0, n.x, u0.y, 1, n.y, u0.z, 0, n.z);
+            f2Body(h, rd, feet + float3(0, hop * 1.5, 0) - n * hop * 0.2, mul(R0, rotZ(hop * 0.5)), lerp(1.0, 0.42, hop), float3(1, 1, 1.0 - 0.94 * flat), fx);
+        }
+        if (pg > 0.0 && t < 4.15) {
+            float tp = dot(Pc, n2) / min(dot(rd, n2), -1e-4);
+            float3 X = rd * tp - Pc;
+            float2 q = float2(dot(X, u2), X.y) / max(pg, 0.05);
+            if (tp > 0.0 && tp < h.t && abs(q.x) < PW && abs(q.y) < PH) {
+                float2 cs = float2(PW, PH * 2.0 / 3.0);                             // 2 x 3 panels, read left to right, top to bottom
+                float2 cell = floor((q + float2(PW, PH)) / cs);
+                float2 f = (q + float2(PW, PH)) / cs - cell;
+                float2 pc2 = (f - 0.5) * cs;                                        // in the panel, blocks
+                float ci = cell.x + (2.0 - cell.y) * 2.0;
+                float age = t - (0.85 + ci * 0.42);
+                float last = step(4.5, ci);
+                float2 ed = min(f, 1.0 - f) * cs;
+                float em = min(ed.x, ed.y);
+                float3 paper = float3(0.95, 0.93, 0.87) * (0.96 + 0.06 * hash12(floor(q * 40.0)));
+                float3 pcol = paper;
+                if (em > 0.05) {
+                    float2 hq = mul(float2x2(0.7071, -0.7071, 0.7071, 0.7071), q * 22.0);
+                    float tone = step(length(frac(hq) - 0.5), 0.2 + 0.12 * frac(ci * 0.37));       // screen tone
+                    pcol = lerp(paper, paper * 0.72, tone * (age < 0.0 ? 0.55 : 0.3));
+                    if (age >= 0.0) {
+                        float2 ic = float2((frac(ci * 0.61) - 0.5) * 0.3, -0.12);     // where the blow lands in this panel
+                        float2 d = pc2 - ic; float r = length(d), a = atan2(d.y, d.x);
+                        float lines = step(0.72, f2VN(float2(a * 11.0, ci * 3.7))) * smoothstep(0.2, 0.42, r);
+                        pcol = lerp(pcol, float3(0.03, 0.03, 0.04), lines);
+                        float sr = (0.27 + 0.12 * last) * (0.75 + 0.25 * step(0.5, frac(a / 6.2832 * (9.0 + 4.0 * last) + ci * 0.3))) * backOut(age / 0.12);
+                        if (r < sr) pcol = r > sr - 0.035 ? float3(0.03, 0.03, 0.04) : (last > 0.5 ? (r < sr * 0.5 ? float3(1.0, 0.92, 0.3) : float3(0.95, 0.25, 0.12)) : float3(1.0, 0.86, 0.15));
+                        // the word, lettered across the top of the panel
+                        int wo = ci < 0.5 ? TX_POW : (ci < 1.5 ? TX_CRACK : (ci < 2.5 ? TX_BONK : (ci < 3.5 ? TX_WHAM : (ci < 4.5 ? TX_THUD : TX_KABOOM))));
+                        int wl = ci < 0.5 ? TL_POW : (ci < 1.5 ? TL_CRACK : (ci < 2.5 ? TL_BONK : (ci < 3.5 ? TL_WHAM : (ci < 4.5 ? TL_THUD : TL_KABOOM))));
+                        float th = (last > 0.5 ? 0.15 : 0.17) * backOut(age / 0.15), tl = (frac(ci * 0.5) - 0.25) * 0.5;
+                        float2 tq = pc2 - float2(0.0, 0.33);
+                        tq = float2(cos(tl) * tq.x + sin(tl) * tq.y, -sin(tl) * tq.x + cos(tl) * tq.y);
+                        float2 g = tq / max(th * 0.2, 0.001) + float2(float(wl * 4 - 1) * 0.5, 2.5);
+                        float ink = f2Text(g, wo, wl);
+                        float ol = max(max(f2Text(g + float2(0.6, 0.6), wo, wl), f2Text(g + float2(-0.6, 0.6), wo, wl)), max(f2Text(g + float2(0.6, -0.6), wo, wl), f2Text(g + float2(-0.6, -0.6), wo, wl)));
+                        if (ink > 0.5) pcol = last > 0.5 ? float3(0.95, 0.15, 0.1) : float3(0.03, 0.03, 0.04); else if (ol > 0.5) pcol = float3(1.0, 0.98, 0.9);
+                        pcol = lerp(pcol, float3(1, 1, 1), exp(-age * 30.0));          // the flash as the panel is struck
+                    }
+                }
+                if (em < 0.05 && em > 0.022) pcol = float3(0.03, 0.03, 0.04);           // panel frames
+                h.t = tp; h.c = dsLit(pow(pcol, 2.2), n2) * 1.35; h.hit = true; h.part = -1;
+            }
+            // the mob itself, paper-thin, in every panel it has reached - knocked a different way in each
+            [loop] for (int i = 0; i < 6; i++) {
+                float age = t - (0.85 + float(i) * 0.42);
+                if (age < 0.0) break;
+                float2 pc0 = float2((float(i % 2) - 0.5) * PW, (1.0 - float(i / 2)) * PH * 2.0 / 3.0) + float2((frac(float(i) * 0.61) - 0.5) * 0.3, -0.12);
+                float tilt = (h1(float(i) * 3.3 + seed) - 0.5) * 2.4 * (1.0 - exp(-age * 14.0)) + (i == 5 ? age * 9.0 : 0.0);
+                float sb = (i == 5 ? 0.3 : 0.36) * pg;
+                float3x3 Rb = mul(RP, rotZ(tilt));
+                float3 kb = float3(0, 0, 0);
+                DFx fp = fx; fp.hurt = exp(-age * 7.0);
+                float3 ctr = Pc + (u2 * pc0.x + float3(0, pc0.y, 0)) * pg + n2 * 0.03 + mul(RP, float3((h1(float(i) + seed) - 0.5) * 0.25, 0.1, 0) * (1.0 - exp(-age * 10.0)));
+                f2Body(h, rd, ctr - mul(Rb, float3(0, 16.0 * DPX * sb, 0)), Rb, sb, float3(1, 1, 0.08), fp);
             }
         }
-        if (t < 0.6) f2Body(h, rd, feet, RY, 1.0, float3(1, 1, 1.0 - 0.9 * flat), fx);
+        f2Cubes(h, rd, Pc, t - 4.1, 26, seed, 2.6, 1.2, 5.0, 0.7, 0.045, hex3(240, 236, 220), hex3(200, 196, 180), floorY, 0.0);   // scraps of paper
     } else if (k == 33) {
         // CRYSTAL BURST: crystals burst out of the ground through it, turn it to crystal, then shatter into shards
         [unroll] for (int i = 0; i < 9; i++) {
@@ -657,61 +815,134 @@ void f2B(int k, float t, float3 o, float3 rd, float3 feet, float yaw, float view
         f2Cubes(h, rd, C, t - 2.0, 32, seed, 2.8, 1.8, 10.0, 1.6, 0.04, hex3(190, 110, 250), hex3(160, 230, 255), floorY, float3(0.6, 0.35, 0.9));
         add += float3(0.8, 0.5, 1.0) * f2Glow(rd, C, 1.4, h.t) * exp(-max(t - 2.0, 0.0) * 6.0) * step(2.0, t) * 0.7;
     } else if (k == 34) {
-        // GIANT SWORD: a giant sword falls from the sky and drives the mob into the ground; the earth cracks, the mob
-        // is blown apart, and the sword shatters into golden shards
-        float tI = 0.8;
-        float y = t < tI ? 1.4 + 18.0 * pow(1.0 - t / tI, 2.0) : 1.4 - 0.35 * ease((t - tI) / 0.15);
-        float3 Sw = feet + float3(0, y, 0);
-        float3x3 RS = rotY(yaw + 0.4);
-        if (t < 2.3) {   // the sword, point down: blade, guard, grip, pommel
-            dsBox(h, rd, Sw + float3(0, 1.4, 0), float3(0.18, 1.6, 0.05), RS, hex3(210, 214, 222), float3(0.1, 0.1, 0.12));
-            dsBox(h, rd, Sw + float3(0, 3.05, 0), float3(0.6, 0.1, 0.12), RS, hex3(230, 180, 50), float3(0.3, 0.2, 0.02));
-            dsBox(h, rd, Sw + float3(0, 3.6, 0), float3(0.07, 0.45, 0.07), RS, hex3(70, 40, 30), 0.0);
-            dsBox(h, rd, Sw + float3(0, 4.1, 0), float3(0.13, 0.13, 0.13), RS, hex3(230, 180, 50), float3(0.3, 0.2, 0.02));
-        }
-        float sink = t < tI ? 0.0 : ease((t - tI) / 0.2) * 0.9;
-        fx.clipY = floorY + 0.01;
-        if (t < 1.4) f2Body(h, rd, feet - float3(0, sink, 0), RY, 1.0, float3(1.0 + 0.3 * sink, 1.0 - 0.3 * sink, 1.0 + 0.3 * sink), fx);
-        fnGround(onG, S, feet, tI, 3.8, 0.9, 3.2, seed, t, o, dec, decK, add, float3(1.0, 0.85, 0.4));
-        f2Cubes(h, rd, feet + float3(0, 0.3, 0), t - 1.4, 26, seed, 3.5, 3.0, 14.0, 1.4, 0.05, team * 0.6, hex3(110, 20, 20), floorY, 0.0);
-        f2Cubes(h, rd, Sw + float3(0, 1.8, 0), t - 2.3, 30, seed + 7.0, 3.0, 1.0, 6.0, 1.8, 0.05, hex3(255, 210, 90), hex3(255, 240, 180), floorY, float3(1.2, 0.9, 0.3));
-        add += float3(1.0, 0.85, 0.4) * f2Glow(rd, Sw + float3(0, 1.8, 0), 2.0, h.t) * exp(-max(t - 2.3, 0.0) * 5.0) * step(2.3, t) * 0.8;
-    } else if (k == 35) {
-        // SHATTERED MIRROR: a pane of mirror slides in front of it and it turns to chrome; cracks spread, the pane
-        // bursts into spinning mirror shards
-        float3 n = normalize(-feet * float3(1, 0, 1));
-        float3 u = normalize(cross(float3(0, 1, 0), n));
-        float slide = ease((t - 0.1) / 0.4);
-        float3 Pm = feet + float3(0, 1.0, 0) + n * 0.55 + u * (1.0 - slide) * 2.5;
-        float br = 2.3;
-        if (t < br) {
-            float tp = dot(Pm, n) / dot(rd, n);
-            if (tp > 0.0 && tp < h.t) {
-                float3 P = rd * tp - Pm;
-                float2 q = float2(dot(P, u), P.y);
-                if (abs(q.x) < 0.7 && abs(q.y) < 1.1) {
-                    float cr = 0.0;
-                    float grow = ease((t - 1.0) / 1.0);
-                    [unroll] for (int i = 0; i < 7; i++) { float a = float(i) * 0.9 + seed; float2 d = float2(cos(a), sin(a)); float along = dot(q, d); cr = max(cr, step(abs(q.x * d.y - q.y * d.x + 0.04 * sin(along * 20.0 + float(i))), 0.012) * step(0.0, along) * step(along, grow * 1.3)); }
-                    float frame = step(0.66, abs(q.x)) + step(1.06, abs(q.y));
-                    float3 c = lerp(dsEnv(reflect(rd, -n)) * 0.9 + 0.08, float3(0.95, 0.97, 1.0), cr);
-                    h.t = tp; h.c = lerp(c, hex3(60, 50, 40), saturate(frame)); h.hit = true;
-                }
+        // GIANT SWORD: its shadow gathers under the mob, then the sword - a tower of steel, gold at the hilt - comes
+        // out of the sky and drives the mob into the ground. The earth cracks and throws stone, the mob is blown
+        // apart; the sword stands quivering while gold fire climbs its blade, and bursts into golden shards
+        float tI = 0.95, ui = t - tI, tSh = 2.7, us = t - tSh;
+        float fall = saturate(t / tI);
+        float y = ui < 0.0 ? 0.15 + 30.0 * pow(1.0 - fall, 2.4) : 0.15 - 0.6 * easeOut(ui / 0.1);
+        float3 n = normalize(-feet * float3(1, 0, 1)), u0 = normalize(cross(float3(0, 1, 0), n));
+        float qv = ui > 0.0 ? sin(ui * 42.0) * 0.035 * exp(-ui * 5.0) : 0.0;
+        float3x3 RS = mul(float3x3(u0.x, 0, n.x, 0, 1, 0, u0.z, 0, n.z), rotZ(qv));
+        float3 T0 = feet + float3(0, y, 0);
+        if (onG && ui < 0.0) { float sh = exp(-gr * gr / (0.25 + 2.5 * (1.0 - fall))) * fall * 0.65; dec = (decK > 0.0 ? dec : o) * (1.0 - sh); decK = max(decK, 1.0); }
+        if (us < 0.0) {
+            float3 steel = hex3(206, 212, 224), dark = hex3(120, 128, 146), gold = hex3(236, 184, 60);
+            float3 hot = float3(1.0, 0.75, 0.25) * ease((ui - 0.5) / 1.1) * (0.7 + 0.3 * sin(t * 30.0));        // gold fire in the steel
+            dsBox(h, rd, T0 + mul(RS, float3(0, 0.22, 0)), float3(0.09, 0.22, 0.03), RS, steel, float3(0.12, 0.12, 0.15) + hot);
+            dsBox(h, rd, T0 + mul(RS, float3(0, 0.62, 0)), float3(0.2, 0.2, 0.04), RS, steel, float3(0.12, 0.12, 0.15) + hot);
+            dsBox(h, rd, T0 + mul(RS, float3(0, 2.75, 0)), float3(0.31, 1.95, 0.05), RS, steel, float3(0.12, 0.12, 0.15) + hot);
+            dsBox(h, rd, T0 + mul(RS, float3(0, 2.75, 0)), float3(0.07, 1.8, 0.062), RS, dark, hot * 1.5);                // the fuller
+            dsBox(h, rd, T0 + mul(RS, float3(0, 4.82, 0)), float3(0.95, 0.12, 0.15), RS, gold, float3(0.3, 0.2, 0.03));   // the guard
+            dsBox(h, rd, T0 + mul(RS, float3(-0.95, 4.72, 0)), float3(0.11, 0.24, 0.17), RS, gold, float3(0.3, 0.2, 0.03));
+            dsBox(h, rd, T0 + mul(RS, float3(0.95, 4.72, 0)), float3(0.11, 0.24, 0.17), RS, gold, float3(0.3, 0.2, 0.03));
+            dsBox(h, rd, T0 + mul(RS, float3(0, 4.82, 0)), float3(0.15, 0.15, 0.19), mul(RS, rotZ(0.785)), hex3(200, 30, 40), float3(0.9, 0.1, 0.12));   // the stone in it
+            dsBox(h, rd, T0 + mul(RS, float3(0, 5.5, 0)), float3(0.09, 0.56, 0.09), RS, hex3(70, 42, 30), 0.0);           // the grip, bound in gold
+            [unroll] for (int w = 0; w < 3; w++) dsBox(h, rd, T0 + mul(RS, float3(0, 5.15 + float(w) * 0.35, 0)), float3(0.105, 0.035, 0.105), RS, gold, float3(0.2, 0.14, 0.02));
+            dsBox(h, rd, T0 + mul(RS, float3(0, 6.22, 0)), float3(0.18, 0.18, 0.18), mul(RS, rotZ(0.785)), gold, float3(0.3, 0.2, 0.03));
+            // the fall: a streak of light and torn air above it
+            add += float3(1.0, 0.95, 0.85) * (dsGlowSeg(rd, T0 + float3(0, 6.5, 0), T0 + float3(0, 6.5 + 16.0 * (1.0 - fall), 0), 0.22, h.t) * 0.7 + dsGlowSeg(rd, T0, T0 + float3(0, 5.0, 0), 0.7, h.t) * 0.25) * (1.0 - fall) * step(ui, 0.0);
+            // the cracks of gold light climbing the blade before it goes
+            float cg = ease((ui - 0.55) / 1.0);
+            float3 c0 = T0 + n * 0.07;
+            [unroll] for (int c = 0; c < 6; c++) {
+                float f0 = float(c) / 6.0, f1 = float(c + 1) / 6.0;
+                if (cg <= f0) break;
+                float3 a0 = c0 + mul(RS, float3((h1(float(c) + seed) - 0.5) * 0.4, 0.5 + f0 * 4.0, 0)), a1 = c0 + mul(RS, float3((h1(float(c + 1) + seed) - 0.5) * 0.4, 0.5 + lerp(f0, f1, saturate((cg - f0) * 6.0)) * 4.0, 0));
+                add += float3(1.0, 0.8, 0.3) * dsGlowSeg(rd, a0, a1, 0.025, h.t) * 1.6;
             }
         }
-        fx.mat = M_CHROME; fx.matC = float3(1, 1, 1); fx.matK = ease((t - 0.5) / 0.5);
-        if (t < br + 0.05) f2Body(h, rd, feet, RY, 1.0, one, fx);
-        [loop] for (int i = 0; i < 20; i++) {   // shards: spinning flat squares of mirror flying out
-            float ui = t - br;
-            if (ui < 0.0 || ui > 1.8) break;
-            float3 dv = normalize(float3(h1(seed + float(i)) - 0.5, h1(seed + float(i) * 2.0) * 0.8, h1(seed + float(i) * 3.0) - 0.5) + n * 0.6);
-            float3 P = Pm + float3((h1(float(i) * 5.0) - 0.5) * 1.2, (h1(float(i) * 7.0) - 0.5) * 2.0, 0) + dv * ui * 4.0 + float3(0, -5.0 * ui * ui, 0);
-            float3x3 Rs = mul(rotY(ui * 9.0 + float(i)), rotX(ui * 7.0));
-            float sz = 0.06 + 0.08 * h1(float(i) * 11.0);
-            float tN; float3 nl2, lp2;
-            if (hitBox(rd, P, float3(sz, sz, 0.005), Rs, tN, nl2, lp2) && tN < h.t) { h.t = tN; h.c = dsEnv(reflect(rd, mul(Rs, nl2))) + 0.1; h.hit = true; }
+        // the blow: the mob is driven down and blown apart, the ground breaks
+        fx.clipY = floorY + 0.01;
+        if (ui < 0.1) f2Body(h, rd, feet - float3(0, saturate(ui / 0.1) * 0.9, 0), RY, 1.0, float3(1.0 + 0.5 * saturate(ui / 0.1), 1.0 - 0.5 * saturate(ui / 0.1), 1.0 + 0.5 * saturate(ui / 0.1)), fx);
+        fnGround(onG, S, feet, tI, 3.8, 1.15, 4.2, seed, t, o, dec, decK, add, float3(1.0, 0.85, 0.4));
+        fnDebris(h, rd, feet, ui, seed, 2.3, floorY);
+        f2Cubes(h, rd, feet + float3(0, 0.3, 0), ui - 0.05, 30, seed, 4.2, 3.2, 14.0, 1.5, 0.055, team * 0.6, hex3(110, 20, 20), floorY, 0.0);
+        f2Cubes(h, rd, feet + float3(0, 0.1, 0), ui, 20, seed + 3.0, 5.0, 0.6, 6.0, 0.8, 0.07, hex3(150, 146, 138), hex3(96, 92, 86), floorY, 0.0);   // the ring of dust
+        add += float3(1.0, 0.9, 0.7) * f2Glow(rd, feet + float3(0, 0.4, 0), 2.6, h.t) * exp(-max(ui, 0.0) * 8.0) * step(0.0, ui) * 1.3;
+        if (onG && ui > 0.0 && ui < 0.7) { float rr = gr - ui * 9.0; add += float3(1.0, 0.92, 0.7) * exp(-rr * rr / 0.03) * (1.0 - ui / 0.7); }
+        // it shatters: golden shards, a pillar of light where it stood
+        f2Cubes(h, rd, T0 + float3(0, 1.4, 0), us, 26, seed + 7.0, 3.6, 1.4, 7.0, 1.7, 0.06, hex3(255, 210, 90), hex3(255, 240, 180), floorY, float3(1.3, 0.95, 0.3));
+        f2Cubes(h, rd, T0 + float3(0, 4.2, 0), us, 26, seed + 11.0, 3.6, 1.0, 7.0, 1.7, 0.06, hex3(255, 210, 90), hex3(255, 240, 180), floorY, float3(1.3, 0.95, 0.3));
+        if (us > 0.0) add += float3(1.0, 0.85, 0.4) * (dsGlowSeg(rd, T0, T0 + float3(0, 6.5 + us * 10.0, 0), 0.35 + us, h.t) * exp(-us * 4.0) + f2Glow(rd, T0 + float3(0, 2.8, 0), 2.6, h.t) * exp(-us * 7.0)) * 1.1;
+    } else if (k == 35) {
+        // SHATTERED MIRROR: a tall gilt mirror rises behind the mob - and there it is in the glass, turning to chrome
+        // as the mob does. A tap of light, and cracks run out across the pane, breaking the reflection into pieces;
+        // then glass and mob burst together into spinning mirror shards
+        // (it stands turned a little, off to one side, so you see the mob and its reflection side by side)
+        float3 n = mul(rotY(0.6), normalize(-feet * float3(1, 0, 1))), u0 = normalize(cross(float3(0, 1, 0), n));
+        float3x3 RM = float3x3(u0.x, 0, n.x, 0, 1, 0, u0.z, 0, n.z);
+        const float MW = 1.0, MH = 1.35, MSH = 0.5;
+        float rise = easeOut((t - 0.05) / 0.5);
+        float3 Pm = feet + float3(0, MH + 0.12 - (1.0 - rise) * (2.0 * MH + 0.6), 0) - n * 0.8 + u0 * MSH;
+        float tC = 1.45, tB = 2.55, ub = t - tB;
+        float grow = ease((t - tC) / 0.95);
+        fx.mat = M_CHROME; fx.matC = float3(1, 1, 1); fx.matK = ease((t - 0.6) / 0.6);
+        if (ub < 0.0) {
+            // the frame: gilt bars, a crest with a stone, two feet
+            float3 gold = hex3(214, 164, 58), gl = float3(0.22, 0.15, 0.03);
+            dsBox(h, rd, Pm + mul(RM, float3(-MW - 0.07, 0, 0)), float3(0.08, MH + 0.15, 0.08), RM, gold, gl);
+            dsBox(h, rd, Pm + mul(RM, float3(MW + 0.07, 0, 0)), float3(0.08, MH + 0.15, 0.08), RM, gold, gl);
+            dsBox(h, rd, Pm + mul(RM, float3(0, MH + 0.07, 0)), float3(MW + 0.15, 0.08, 0.08), RM, gold, gl);
+            dsBox(h, rd, Pm + mul(RM, float3(0, -MH - 0.07, 0)), float3(MW + 0.15, 0.08, 0.08), RM, gold, gl);
+            dsBox(h, rd, Pm + mul(RM, float3(0, MH + 0.3, 0)), float3(0.34, 0.16, 0.07), RM, gold, gl);
+            dsBox(h, rd, Pm + mul(RM, float3(0, MH + 0.32, 0.03)), float3(0.1, 0.1, 0.07), mul(RM, rotZ(0.785)), hex3(70, 150, 230), float3(0.2, 0.5, 0.9));
+            dsBox(h, rd, Pm + mul(RM, float3(0, 0, -0.06)), float3(MW + 0.02, MH + 0.02, 0.02), RM, hex3(60, 44, 30), 0.0);   // its back
+            // the glass
+            float tp = dot(Pm, n) / min(dot(rd, n), -1e-4);
+            float3 X = rd * tp - Pm;
+            float2 q = float2(dot(X, u0), X.y);
+            if (tp > 0.0 && tp < h.t && abs(q.x) < MW && abs(q.y) < MH) {
+                // the cracks: rays from where it was struck, jagged, joined by rings - each piece of glass between them
+                // tilts its reflection its own way
+                float2 d = q - float2(0.12, 0.3); float r = length(d), a = atan2(d.y, d.x);
+                float aj = a + 0.09 * sin(r * 11.0 + seed) + 0.05 * sin(r * 27.0);
+                float sec = floor(aj / 6.2832 * 11.0 + 0.5);
+                float da = abs(aj / 6.2832 * 11.0 - sec) * 6.2832 / 11.0 * r;
+                float rj = r * 2.4 + 0.35 * h1(sec * 3.7 + seed);
+                float ring = floor(rj);
+                float dr = abs(frac(rj) - 0.5) < 0.5 ? min(frac(rj), 1.0 - frac(rj)) / 2.4 : 1.0;
+                float reach = grow * 2.2;
+                float crack = (r < reach ? step(da, 0.007 + 0.004 * grow) : 0.0) + (r < reach * 0.8 && h1(sec * 5.1 + ring * 2.3 + seed) > 0.35 ? step(dr, 0.006) : 0.0);
+                float cid = (r < reach) ? h1(sec * 7.3 + ring * 1.9 + seed) : 0.5;
+                float2 skew = (float2(h1(cid * 91.0), h1(cid * 57.0)) - 0.5) * 0.09 * grow * step(r, reach);
+                // what the mirror shows: the sky, and the mob - its mirror image stands as far behind the glass
+                float3 rdm = normalize(rd + u0 * skew.x + float3(0, skew.y, 0));
+                float3 env = dsEnv(reflect(rdm, n)) * float3(0.86, 0.93, 1.0) + 0.05;
+                DHit hm = h; hm.t = 1e9; hm.hit = false; hm.part = -1; hm.pt = -1.0;
+                float3x3 HN = float3x3(1.0 - 2.0 * n.x * n.x, 0, -2.0 * n.x * n.z, 0, 1, 0, -2.0 * n.x * n.z, 0, 1.0 - 2.0 * n.z * n.z);
+                dsBody(hm, rdm, feet - n * 1.6, mul(HN, RY), 1.0, -99.0, 99.0, fx);
+                float3 mc = (hm.hit && hm.part >= 0) ? dsShadePart(hm, rdm) * 0.92 : env;
+                float sweep = exp(-pow((q.x + q.y * 0.5 - (frac(t * 0.45) * 5.0 - 2.5)) / 0.12, 2.0)) * 0.25;                // light sliding over the glass
+                mc += float3(1, 1, 1) * (sweep + exp(-pow((t - tC) / 0.07, 2.0)) * exp(-r * r / 0.02) * 4.0);                // and the tap that breaks it
+                mc = lerp(mc, float3(1.3, 1.35, 1.4), saturate(crack));
+                mc *= 1.0 - 0.25 * step(MW - 0.03, abs(q.x)) - 0.25 * step(MH - 0.03, abs(q.y));                             // the bevel
+                h.t = tp; h.c = mc; h.hit = true; h.part = -1;
+            }
+            f2Body(h, rd, feet, RY, 1.0, one, fx);
+        } else {
+            // the burst: shards of the pane and of the chrome mob, each a little mirror, spinning out toward you
+            [loop] for (int i = 0; i < 34; i++) {
+                if (ub > 1.9) break;
+                float hi = float(i);
+                bool pane = i < 22;
+                float3 P0 = pane ? Pm + mul(RM, float3((h1(hi * 5.0 + seed) - 0.5) * 2.0 * MW, (h1(hi * 7.0 + seed) - 0.5) * 2.0 * MH, 0)) : feet + float3((h1(hi * 5.0) - 0.5) * 0.5, 0.2 + h1(hi * 7.0) * 1.6, (h1(hi * 9.0) - 0.5) * 0.3);
+                float3 dv = normalize(float3(h1(seed + hi) - 0.5, h1(seed + hi * 2.0) * 0.9 - 0.15, h1(seed + hi * 3.0) - 0.5) + n * (pane ? 0.9 : 0.2));
+                float3 P = P0 + dv * ub * (2.2 + 2.6 * h1(hi * 13.0)) + float3(0, -4.5 * ub * ub, 0);
+                if (P.y < floorY + 0.02) P.y = floorY + 0.02;
+                float spin = P.y > floorY + 0.03 ? ub : 0.3;
+                float3x3 Rs = mul(rotY(spin * (6.0 + 5.0 * h1(hi)) + hi), rotX(spin * (5.0 + 4.0 * h1(hi * 3.0)) + hi * 2.0));
+                float sz = (0.07 + 0.11 * h1(hi * 11.0)) * saturate(2.0 - ub * 1.05);
+                float tN; float3 nl2, lp2;
+                if (hitBox(rd, P, float3(sz, sz * (0.5 + 0.5 * h1(hi * 17.0)), 0.006), Rs, tN, nl2, lp2) && tN < h.t) {
+                    float3 rf = reflect(rd, mul(Rs, nl2));
+                    h.t = tN; h.c = dsEnv(rf) * float3(0.9, 0.95, 1.0) + 0.08 + float3(2, 2, 2) * pow(saturate(dot(rf, SUN)), 30.0); h.hit = true; h.part = -1;
+                }
+                add += float3(1, 1, 1) * f2Glow(rd, P, 0.035, h.t) * step(0.86, frac(hi * 0.37 + t * 5.0)) * saturate(1.6 - ub) * 2.0;   // glints
+            }
+            f2Cubes(h, rd, Pm, ub, 22, seed + 5.0, 2.4, 1.4, 10.0, 1.3, 0.05, hex3(214, 164, 58), hex3(160, 120, 40), floorY, float3(0.15, 0.1, 0.02));   // the frame, in pieces
+            add += float3(0.9, 0.95, 1.0) * f2Glow(rd, Pm, 1.8, h.t) * exp(-ub * 9.0) * 1.2;
         }
-        f2Cubes(h, rd, C, t - br, 14, seed, 2.5, 1.0, 9.0, 1.2, 0.04, hex3(200, 205, 215), hex3(150, 155, 165), floorY, 0.0);
     } else if (k == 36) {
         // KALEIDOSCOPE: a mandala of coloured petals turns behind it while it cycles the rainbow, then it all bursts
         // into a spiral of coloured cubes and rings of light

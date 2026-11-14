@@ -136,6 +136,7 @@ float3 dsSkin(int j, float3 nl, float3 q, float3 e, DFx fx) {
 // is kept - a slice shows a cut face
 #include "death_mats.hlsli"   // the materials a body can turn into (Finishers 2)
 static bool gNoCut = false;   // set while drawing a body split into halves on purpose (the Epic Fight phantom): no cut flesh
+static float4 gCut = float4(0, 0, 0, 0);   // a cutting plane (camera-relative world): only dot(X, xyz) <= w is kept; xyz = 0: none
 void dsPart(inout DHit h, float3 rd, int j, float3 P, float3x3 R, float s, float cLo, float cHi, DFx fx) {
     float3 e = kPE[j];
     float  yl = max(-e.y, cLo), yh = min(e.y, cHi);
@@ -145,14 +146,23 @@ void dsPart(inout DHit h, float3 rd, int j, float3 P, float3x3 R, float s, float
     float3 eh = float3(e.x, (yh - yl) * 0.5, e.z);
     float  tN; float3 nl, lp;
     if (!hitBox(rd, P + mul(R, float3(0, cy, 0) * k), eh * k, R, tN, nl, lp) || tN >= h.t) return;
+    bool cutF = false;
+    if (dot(gCut.xyz, gCut.xyz) > 0.5 && dot(rd * tN, gCut.xyz) > gCut.w) {   // the near face is cut away: the cut face, if the ray reaches it inside the box
+        float dn = dot(rd, gCut.xyz);
+        if (dn > -1e-5) return;
+        float tp = gCut.w / dn;
+        float3 lq = mul(rd * tp - (P + mul(R, float3(0, cy, 0) * k)), R) / (eh * k);
+        if (tp >= h.t || abs(lq.x) > 1.0 || abs(lq.y) > 1.0 || abs(lq.z) > 1.0) return;
+        tN = tp; lp = lq; nl = float3(0, 1, 0); cutF = true;
+    }
     if (rd.y * tN < fx.clipY) return;
     float3 q = clamp(lp * eh + float3(0, cy, 0), -e + 0.001, e - 0.001);
     float3 tx = floor(q + e);
     float  n = hash12(tx.xy * 1.7 + tx.z * 9.1 + float(j) * 3.3);
     float  hgt = (kPC[j].y + q.y) / 32.0;
     if (fx.ash > 0.0 && hgt + n * 0.35 > 1.35 - fx.ash * 1.4) return;        // crumbling away, from the top down
-    h.t = tN; h.hit = true; h.pt = tN; h.part = j; h.q = q; h.nl = nl; h.nw = mul(R, nl); h.f = fx;
-    h.cut = !gNoCut && ((nl.y > 0.5 && yh < e.y - 0.01) || (nl.y < -0.5 && yl > -e.y + 0.01)) ? 1.0 : 0.0;
+    h.t = tN; h.hit = true; h.pt = tN; h.part = j; h.q = q; h.nl = nl; h.nw = cutF ? gCut.xyz : mul(R, nl); h.f = fx;
+    h.cut = cutF ? 1.0 : !gNoCut && ((nl.y > 0.5 && yh < e.y - 0.01) || (nl.y < -0.5 && yl > -e.y + 0.01)) ? 1.0 : 0.0;
 }
 // the colour of a body part hit (once per pixel, after every scene has drawn)
 float3 dsShadePart(DHit h, float3 rd) {

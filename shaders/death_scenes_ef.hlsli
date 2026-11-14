@@ -90,6 +90,20 @@ void efWeapon(inout DHit h, float3 rd, uint w, float3 P, float3x3 Rt, float glin
     dsBox(h, rd, B0, float3(w == EF_KATANA ? 0.05 : 0.13, 0.022, 0.03), RB, hex3(22, 20, 28), edge * 0.4);   // the guard
 }
 
+// a whole body playing an Epic Fight clip: O = where its frame sits, RA = its facing
+void efBody(inout DHit h, float3 rd, float3 O, float3x3 RA, uint off, uint n, float fr, DFx f) {
+    float3 P1; float3x3 R1;
+    efEnt(off, n, fr, 2, P1, R1);                             // the waist: the body's middle
+    if (!nearRay(rd, O + mul(RA, P1), 1.6)) return;           // nothing near the ray, nothing drawn
+    gNoCut = true;
+    [loop] for (int e = 0; e < 11; e++) {
+        float3 Ps; float3x3 Rs;
+        efEnt(off, n, fr, e, Ps, Rs);
+        float3 sg = kEFSeg[e];
+        dsPart(h, rd, int(sg.x), O + mul(RA, Ps), mul(RA, Rs), 1.0, sg.y, sg.z, f);
+    }
+    gNoCut = false;
+}
 void deathScenesEF(int k, float t, float3 o, float3 rd, float3 feet, float yaw, float view, float seed, float3 team, float3 glow,
                    bool onG, float3 S, float gr, inout DHit h, inout float3 add, inout float3 dec, inout float decK, inout DFx fx) {
     uint4  m = kEFClip[k];
@@ -109,21 +123,32 @@ void deathScenesEF(int k, float t, float3 o, float3 rd, float3 feet, float yaw, 
     DFx fg = fx; fg.ghost = 1.0; fg.slot = gKillerSlot; fg.hurt = 0.0;
     fg.ash = max(1.0 - saturate(t / t0) * 1.15, ease((T - clipEnd - 0.15) / 0.5));
     float3 O = feet + A * dist;                               // where it starts; its own root motion carries it from there
-    // the phantom: 11 skin segments, each carried by its joint (cheap to skip: nothing near the ray, nothing drawn)
     float3 P1; float3x3 R1;
-    efEnt(off, n, fr, 2, P1, R1);                             // the waist: the body's middle
+    efEnt(off, n, fr, 2, P1, R1);
     float3 Pw, PwL; float3x3 Rw, RwL;
     efEnt(off, n, fr, 11, Pw, Rw); Pw = O + mul(RA, Pw); Rw = mul(RA, Rw);
     efEnt(off, n, fr, 12, PwL, RwL); PwL = O + mul(RA, PwL); RwL = mul(RA, RwL);
-    if (fg.ash < 0.99 && nearRay(rd, O + mul(RA, P1), 1.6)) {
-        gNoCut = true;
-        [loop] for (int e = 0; e < 11; e++) {
-            float3 Ps; float3x3 Rs;
-            efEnt(off, n, fr, e, Ps, Rs);
-            float3 sg = kEFSeg[e];
-            dsPart(h, rd, int(sg.x), O + mul(RA, Ps), mul(RA, Rs), 1.0, sg.y, sg.z, fg);
+    if (fg.ash < 0.99) efBody(h, rd, O, RA, off, n, fr, fg);
+    float3 Wst = O + mul(RA, P1);                             // the phantom's waist, in the world
+    if (k == 10) {
+        // DEMOLITION LEAP: it gathers (light drawn in to it), launches off a ring of dust, flies trailing light
+        float gat = saturate(T / 0.5) * step(0.0, T) * step(T, 0.6);
+        [loop] for (int gi = 0; gi < 10; gi++) {
+            if (gat <= 0.0) break;
+            float gu = frac(T * 2.2 + float(gi) * 0.37);
+            float ga = float(gi) * 2.1 + seed;
+            float3 gp = Wst + float3(cos(ga), 0.6 * sin(ga * 1.7), sin(ga)) * (1.0 - gu) * 1.6;
+            add += acc * fnFlash(rd, gp, 0.05, h.t) * gu * 1.5;
         }
-        gNoCut = false;
+        add += acc * fnFlash(rd, Wst, 0.5 + 0.4 * gat, h.t) * gat * 0.5;
+        float lu = T - 0.55;
+        if (onG && lu > 0.0 && lu < 0.6) { float rr2 = length(S.xz - O.xz) - lu * 6.0; add += lerp(float3(1, 1, 1), acc, 0.5) * exp(-rr2 * rr2 / 0.02) * (1.0 - lu / 0.6) * 0.8; }
+        dsBurst(h, rd, O + float3(0, 0.1, 0), lu, 12, seed + 9.0, 2.2, 0.8, 5.0, 0.7, 0.05, hex3(120, 116, 110), hex3(84, 80, 76), floorY, 0.0);
+        if (lu > 0.0 && T < 1.35) {
+            float3 Pb; float3x3 Rb;
+            efEnt(off, n, max(fr - 3.0, 0.0), 2, Pb, Rb);
+            add += acc * (dsGlowSeg(rd, Wst, O + mul(RA, Pb), 0.10, h.t) * 0.9 + dsGlowSeg(rd, Wst, O + mul(RA, Pb), 0.35, h.t) * 0.25);
+        }
     }
     // the hits: each a flash on the victim and a jolt; the last kills
     uint nh = kEFHits[k];
@@ -166,7 +191,20 @@ void deathScenesEF(int k, float t, float3 o, float3 rd, float3 feet, float yaw, 
     float uD = t - lastHit;
     float3 kb = -A * min(jolt, 1.5) * 0.08;
     bool b1 = false, b2 = false; float3 bP1 = feet, bP2 = feet; float3x3 bR1 = RV, bR2 = RV; float bLo = -99.0, bHi = 99.0;
-    if (uD < 0.0) {
+    uint4 vc = kEFVic[k];
+    float vT = T - float(vc.z) * 0.01;                        // a paired move: the victim plays its own clip
+    if (vc.y > 0u && vT >= 0.0) {
+        float vEnd = float(vc.y - 1u) / 20.0;
+        float3 vp; float3x3 vr;
+        efEnt(vc.x, vc.y, float(vc.y), 1, vp, vr);                   // where the chest ends up: the poof comes from there
+        if (vT < vEnd + 0.9) efBody(h, rd, feet, RV, vc.x, vc.y, vT * 20.0, fx);
+        fnPoof(h, rd, feet + mul(RV, vp), vT - vEnd - 0.9, seed, 14, 0.07);
+        if (onG && vT > vEnd * 0.6) {   // what is left under them
+            float2 gq = floor((S.xz - (feet + mul(RV, vp)).xz) * 16.0) / 16.0;
+            float pool = step(length(gq * float2(1.0, 1.3)) + 0.12 * h1(dot(gq, float2(31.7, 17.3))), 0.55 * ease((vT - vEnd * 0.6) / 1.0)) * (1.0 - ease((t - 4.3) / 0.5));
+            dec = lerp(decK > 0.0 ? dec : o, pow(hex3(110, 2, 2), 1.0 / 2.2), pool * 0.85); decK = max(decK, pool > 0.0 ? 1.0 : 0.0);
+        }
+    } else if (uD < 0.0) {
         { b1 = true; bP1 = feet + kb; bR1 = mul(RV, rotX(-0.15 * min(jolt, 1.0))); bLo = -99.0; bHi = 99.0; }
     } else if (k == 5) {
         // BATTOJUTSU: the phantom is already past; a beat, then the cut it left opens - the top half slides off
@@ -201,8 +239,21 @@ void deathScenesEF(int k, float t, float3 o, float3 rd, float3 feet, float yaw, 
         dsBurst(h, rd, C, uD, 34, seed, 3.5, 2.6, 9.0, 1.3, 0.045, hex3(150, 220, 245), hex3(40, 140, 210), floorY, float3(0.0, 0.25, 0.3));
         add += acc * fnFlash(rd, C, 1.8, h.t) * exp(-uD * 4.0) * 0.6;
         fnPoof(h, rd, feet + sweep + float3(0, 0.5, 0), uD - 1.2, seed, 12, 0.07);
-    } else if (k == 0 || k == 10 || k == 16) {
-        // THE GUILLOTINE / DEMOLITION LEAP / GREATSWORD SLAM: the blow comes down from above - driven into the ground,
+    } else if (k == 10) {
+        // DEMOLITION LEAP: it comes down beside them - the ground breaks, the shock hurls them off
+        float3 L0 = feet + A * 0.7;
+        fnGround(onG, S, L0, lastHit, 3.4, 1.3, 3.6, seed, t, o, dec, decK, add, acc);
+        fnDebris(h, rd, L0, uD, seed, 2.0, floorY);
+        dsBurst(h, rd, L0 + float3(0, 0.1, 0), uD, 22, seed + 3.0, 4.0, 2.0, 9.0, 1.0, 0.06, hex3(120, 116, 110), hex3(84, 80, 76), floorY, 0.0);
+        add += lerp(float3(1, 1, 1), acc, 0.6) * fnFlash(rd, L0 + float3(0, 0.3, 0), 2.2, h.t) * exp(-uD * 7.0) * 1.2;
+        float3x3 RT = rotY(atan2(A.x, A.z));
+        bool mir = sgn < 0.0;
+        if (uD < 2.0) dsRagdoll(h, rd, feet, RT, RD_MELEE, uD * 20.0, mir, -1, fx);
+        float3 Pv; float3x3 Rv0;
+        dtRag(RD_MELEE, min(uD, 2.0) * 20.0, 1, mir, Pv, Rv0);
+        fnPoof(h, rd, feet + mul(RT, Pv) + float3(0, 0.15, 0), uD - 2.0, seed, 14, 0.07);
+    } else if (k == 0 || k == 16) {
+        // THE GUILLOTINE / GREATSWORD SLAM: the blow comes down from above - driven into the ground,
         // the ground cracks, stones fly
         float sq = ease(uD / 0.1);
         fx.clipY = floorY + 0.01;
