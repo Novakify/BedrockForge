@@ -392,6 +392,10 @@ float csViewModel(inout float3 lit, float3 alb, float3 n, float3 V, CsMat m, flo
 float3 csHaze(float3 c, float3 wp, float3 cam, float vanillaFog) {
     float3 v = wp - cam;
     float  dist = length(v);
+    // menus, the inventory and the dressing room draw the player with a camera far from the model (seen: the character
+    // came out a flat light blue / pink - the sky colour hazed over it): no haze there
+    if (dist > 3000.0) return c;
+    vanillaFog *= smoothstep(4.0, 8.0, dist);
     float3 d = v / max(dist, 1e-3);
     float  f = 1.0 - exp(-dist / 520.0);
     f = max(f * 0.85, vanillaFog);                                 // the game's fog still hides the chunk edge
