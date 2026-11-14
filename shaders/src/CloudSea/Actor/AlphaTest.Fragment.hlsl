@@ -53,6 +53,10 @@ float4 main(PSIn i) : SV_Target {
     //      endgame (ngItemGlass). Mob and player skins are small textures and stay as they are.
     // the city lights people at night in neutral white light, so skins keep their own colours (seen on Hive: every
     // player went the same smudged blue-grey under the moon)
+    // menus (home screen / dressing room): no world, so no fog - the fog-driven phase read that as the endgame and gave
+    // the character a neon pink / cyan rim and the night light (seen: washed out with a pink or light-blue tint)
+    bool const menu = csMax3(abs(FogColor.rgb)) < 1e-4;
+    [branch] if (menu) { lit = csHaze(lit, wp, cam, 0.0); return float4(csEnc(lit), 1.0); }
     [branch] if (CS_NIGHT > 0.0 && !(tw <= 32 && th <= 32)) {
         float dif = 0.60 + 0.40 * saturate(dot(n, normalize(float3(0.3, 0.8, 0.5))));
         lit = lerp(lit, csLin(c) * dif * 0.90, CS_NIGHT);

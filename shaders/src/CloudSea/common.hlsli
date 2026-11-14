@@ -48,7 +48,9 @@ float csPhaseFromDaylight(float l) {
 // sunset it depends on the view, so it is NOT used for dusk - actors keep the golden light until night).
 float csActorPhase(float3 fog) { return 2.0 * (1.0 - smoothstep(0.08, 0.40, csLuma(fog))); }
 void csBeginActor(float4 fog, float4 viewPosTime) {
-    csSetPhase(csActorPhase(fog.rgb));
+    // menus (home screen / dressing room) draw with no fog at all: that read as full night (a cold blue light, the
+    // Novak endgame rim) - there it is plain midday
+    csSetPhase(max(abs(fog.r), max(abs(fog.g), abs(fog.b))) < 1e-4 ? 0.0 : csActorPhase(fog.rgb));
     CS_TIME = viewPosTime.w;
 }
 void csBegin(float daylight, float4 viewPosTime) {
