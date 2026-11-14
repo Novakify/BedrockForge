@@ -201,3 +201,8 @@ stay visual-only (no mechanic change, readable, no unfair info like seeing throu
 - **Pack hot-swap verified**: switching bundles in game takes ~8-9 ms (pipelines build lazily); old GPU objects are
   kept kRing+2 frames (graveyard) so a switch never frees in-flight resources.
 - Blocked: the PC's drive is full (52 MB free of 931 GB) and Minecraft refuses to open worlds.
+- **Inline v2 verified in game (RF 050bdec)**: all ~770 chunk draws on all 7 lists go through the pack, 0 rejected.
+  4K, same view, shadows off: IrisBridge off ~203 fps, replay ~71 fps, inline ~93 fps (+30%). The remaining gap is
+  the post chain at 4K + the extra copies - next optimisation target. (Shadows on now cover every list.)
+- Declined: an uploaded "ArkeReference" zip of decompiled Arke functions (licence unpublished, header says reuse needs
+  permission). Not read beyond the headers, not used.
