@@ -1823,7 +1823,8 @@ void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (gWorldSky.load(std::memory_order_relaxed)) {
         bool const r = drawWorldSky(list, st, calls);
-        domeFallback(list, st, calls);
+        // domeFallback(list, st, calls);   // off: in game the pass ran ~120 times a second there, yet 5 of 6 frames still
+        //                                     showed the plain blue - its picture is wiped (the frame's colour clear runs after it)
         return r;
     }
     if (!st.nVb || !st.vb || !st.haveTopo) { ++gSkipped; setStage2("skipped a sky draw (list state not tracked yet)"); return false; }
