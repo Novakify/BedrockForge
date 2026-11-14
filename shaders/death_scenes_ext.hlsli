@@ -374,8 +374,8 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         // the wave: out from the palms at 12 blocks/s, low along the ground, 8.5 blocks; thins away at the end
         float run = clamp((t - tb) * vb, 0.0, LB);
         float beam = step(tb, t) * (1.0 - ease((t - 2.5) / 0.35));
-        float3 B0 = AO + dirB * 0.45 + float3(0, 1.05, 0);
-        float3 B1 = B0 + dirB * run + float3(0, -0.55 * saturate(run / 5.0), 0);
+        // dead straight and level from the palms (it used to dip towards the ground and read as a broken beam)
+        float3 B1 = hands + dirB * (0.15 + run);
         if (beam > 0.0 && run > 0.05) {
             float fl = 0.88 + 0.12 * sin(TIME * 55.0) + 0.05 * sin(TIME * 91.0);
             float wide = beam * (0.75 + 0.25 * saturate((t - tb) / 0.15));
@@ -438,13 +438,13 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         fnCrit(h, rd, feet + float3(0, 1.0, 0), t - th, seed + 1.0, 18, 2.8);
         // the end of the wave: a dome of light, a crater and stones
         float te = tb + LB / vb;
-        float3 PE = AO + dirB * (LB + 0.45);
-        PE.y = floorY;
+        float3 PT = hands + dirB * (0.15 + LB);              // the dome blooms at the wave's tip, the crater under it
+        float3 PE = float3(PT.x, floorY, PT.z);
         float ue = t - te;
         if (ue > 0.0 && ue < 0.9) {
             float rD = 1.7 * easeOut(saturate(ue / 0.35));
-            add += cBeam * fnFlash(rd, PE + float3(0, 0.3, 0), rD, h.t) * (1.0 - ease(ue / 0.9)) * 1.0;
-            add += cCore * fnFlash(rd, PE + float3(0, 0.3, 0), rD * 0.45, h.t) * exp(-ue * 5.0) * 1.4;
+            add += cBeam * fnFlash(rd, PT, rD, h.t) * (1.0 - ease(ue / 0.9)) * 1.0;
+            add += cCore * fnFlash(rd, PT, rD * 0.45, h.t) * exp(-ue * 5.0) * 1.4;
         }
         fnGround(onG, S, PE, te, 3.4, 1.15, 2.6, seed + 21.0, t, o, dec, decK, add, cBeam);
         fnDebris(h, rd, PE, ue, seed + 23.0, 1.4, floorY);
