@@ -1288,7 +1288,22 @@ void recordTerrain(ID3D12GraphicsCommandList* list, TerrainDraw&& d) {
     if (v.size() < 40000) v.push_back(std::move(d));
 }
 
-void onPresent() { ++gPresentIdx; }
+void onPresent() {
+    uint64_t const p = ++gPresentIdx;
+    // live settings (remote testing) are re-read here too: run() stops being called while IrisBridge is off, so
+    // "on 1" could otherwise never be picked up again
+    if ((p & 63) == 0) {
+        std::lock_guard l(gMutex);
+        std::error_code ec;
+        auto const t = fs::last_write_time(gRoot / "settings.txt", ec);
+        if (!ec && t != gSettingsTime) {
+            readSettings();
+            gOn = gSet.on;
+            if (gSet.on) rf::worldfx::setTargetsWanted(true);
+            ll_shim::info("[RF] IrisBridge: settings reloaded at present (on " + std::to_string(gSet.on) + ")");
+        }
+    }
+}
 
 int drawTerrainInline(ID3D12GraphicsCommandList* list, TerrainDraw const& d, size_t gameRtv, ID3D12Resource* gameRt, size_t gameDsv,
                       rf::sky::Calls const& calls) {
