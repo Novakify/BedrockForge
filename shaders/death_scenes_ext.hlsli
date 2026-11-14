@@ -36,13 +36,13 @@ DRig dsClip(inout DHit h, float3 rd, float3 O, float3x3 R, uint off, uint n, flo
     dtBone(off, n, fr, 6, rr, rp, rs);
     float3x3 Rr = mul(R, dtEuler(rr));
     float3 Or = O + mul(R, rp * DPX);
-    // pixels nowhere near the body (most of the scene's ball) get a rough rig and skip the bones: everything drawn
-    // off the rig (sword, finger, the flash at the head) lies within this 2.1-block ball
-    g.head = Or + mul(Rr, float3(0, 28.0 * DPX, 0)); g.hand = Or + mul(Rr, float3(-6.0, 12.0, 0) * DPX); g.handL = Or + mul(Rr, float3(6.0, 12.0, 0) * DPX);
+    // pixels away from the body skip drawing it, but the head and hands are always read exactly: effects hang off
+    // them far from the body (the Ultimate's wave runs 8 blocks from the palms - a rough guess there split the beam)
+    g.head = Or; g.hand = Or; g.handL = Or;
     g.handF = mul(Rr, float3(0, 0.15, 1)); g.handD = mul(Rr, float3(0, -1, 0)); g.fing = 0.0; g.fingD = g.handD;
-    if (!nearRay(rd, Or + mul(Rr, float3(0, 16.0 * DPX, 0)), 2.1)) return g;
-    bool near = true;
+    bool near = nearRay(rd, Or + mul(Rr, float3(0, 16.0 * DPX, 0)), 2.1);
     [loop] for (int j = 0; j < 6; j++) {
+        if (!near && j != 0 && j != 2 && j != 3) continue;
         dtBone(off, n, fr, j, r, p, s);
         float3x3 Rj = mul(Rr, dtEuler(r));
         float3 P = Or + mul(Rr, (kPB[j] + p) * DPX) + mul(Rj, (kPC[j] - kPB[j]) * DPX);
