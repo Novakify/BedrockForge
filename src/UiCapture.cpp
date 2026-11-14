@@ -552,6 +552,10 @@ void STDMETHODCALLTYPE setVbHook(ID3D12GraphicsCommandList* list, UINT start, UI
     std::memcpy(s.vb, v, sizeof(D3D12_VERTEX_BUFFER_VIEW) * n);
 }
 void origSetPso(ID3D12GraphicsCommandList* l, ID3D12PipelineState* p) { reinterpret_cast<SetPso_t>(gOrig[3])(l, p); }
+void origSetRts(ID3D12GraphicsCommandList* l, size_t rt, size_t ds) {
+    D3D12_CPU_DESCRIPTOR_HANDLE r{rt}, d{ds};
+    reinterpret_cast<OmSet_t>(gOrig[4])(l, 1, &r, FALSE, &d);
+}
 void origTopo(ID3D12GraphicsCommandList* l, int t) { reinterpret_cast<Topo_t>(gOrig[11])(l, D3D12_PRIMITIVE_TOPOLOGY(t)); }
 void origVb(ID3D12GraphicsCommandList* l, unsigned s, unsigned n, D3D12_VERTEX_BUFFER_VIEW const* v) { reinterpret_cast<SetVb_t>(gOrig[12])(l, s, n, v); }
 void origDraw(ID3D12GraphicsCommandList* l, unsigned a, unsigned b, unsigned c, unsigned d) { reinterpret_cast<Draw_t>(gOrig[5])(l, a, b, c, d); }
@@ -897,8 +901,9 @@ void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_D
         st.vb        = s->ia.vb;
         st.rootKnown = rootKnown(list);
         rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
+        c.setRts = &origSetRts;
         gInSnapshot = true;
-        rf::sky::fallbackWorldFx(list, st, c);
+        rf::sky::fallbackWorldFx(list, st, c, dsv.ptr);
         gInSnapshot = false;
     }
     reinterpret_cast<ClearDsv_t>(gOrig[26])(list, dsv, flags, depth, stencil, n, rects);

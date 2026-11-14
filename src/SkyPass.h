@@ -69,13 +69,14 @@ struct Calls { // the ORIGINAL list functions (no hooks, so the tracked game sta
     void (*setTable)(ID3D12GraphicsCommandList*, unsigned, unsigned long long);
     void (*setConsts)(ID3D12GraphicsCommandList*, unsigned, unsigned, void const*, unsigned);
     void (*restoreRoot)(ID3D12GraphicsCommandList*);
+    void (*setRts)(ID3D12GraphicsCommandList*, size_t rt, size_t ds) = nullptr; // OMSetRenderTargets, one target (unhooked)
 };
 /// Called right after the game drew its sky (kind Dome) on `list`: draws the live dome + sky quads over it and
 /// restores the game's pipeline / topology / vertex buffers. Returns false when it could not (state unknown etc.).
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 /// Called at Bedrock's cloud draw (after the opaque terrain, depth bound): weather particles, depth-tested.
 bool fxFallbackWanted(ID3D12GraphicsCommandList* list, size_t dsv); // looking down (no cloud draw): true at the frame's second clear of the world's depth buffer
-bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
+bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, size_t dsvClear);
 bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void noteHidden(); // a vanilla sun / moon / stars / clouds draw was skipped
 

@@ -2273,9 +2273,19 @@ bool fxFallbackWanted(ID3D12GraphicsCommandList* /*list*/, size_t dsv) {   // (a
     bool const terr = gTerrainSinceClear.exchange(false);
     return (sky || terr) && !done;
 }
-bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
-    size_t rt0 = 0, dsv = 0;
-    if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != fxPairRt(dsv)) { ++gDbgFbNo; return false; } // not the world's targets
+bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, size_t dsvClear) {
+    size_t const wrt = fxPairRt(dsvClear);
+    if (!wrt) { ++gDbgFbNo; return false; }
+    // The post-world clear is often the first call on a freshly reset command list: what we remember as "bound" there is
+    // left over from that list's last recording (seen in game: ~60 refusals a second looking down - the flicker). Bind
+    // the world's own targets for the pass, and put back what was remembered afterwards (the game binds its own before
+    // its next draw on a fresh list anyway).
+    size_t oldRt = 0, oldDs = 0;
+    bool const hadOld = rf::worldfx::listTargets(list, oldRt, oldDs);
+    if (!calls.setRts) { ++gDbgFbNo; return false; }
+    calls.setRts(list, wrt, dsvClear);
+    rf::worldfx::onSetRts(list, wrt, dsvClear);
+    size_t const rt0 = wrt;
     GameState s2 = st;
     s2.pso = gFxPso.load();
     // At this depth clear the game can be on a fresh command list: targets set, but no viewport or scissor yet (D3D12
@@ -2288,6 +2298,10 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
         list->RSSetScissorRects(1, &sc);
     }
     bool const ok = drawWorldFxPassImpl(list, s2, calls);
+    if (hadOld && (oldRt != wrt || oldDs != dsvClear)) {
+        calls.setRts(list, oldRt, oldDs);
+        rf::worldfx::onSetRts(list, oldRt, oldDs);
+    }
     if (st.pso) calls.setPso(list, st.pso);         // the game goes on with its own pipeline
     if (st.haveTopo) calls.setTopo(list, st.topo);
     if (ok) ++gDbgFbOk; else ++gDbgFbNo;
