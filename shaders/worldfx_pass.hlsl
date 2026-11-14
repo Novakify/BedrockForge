@@ -252,6 +252,11 @@ float segGlow(float3 rd, float3 a, float3 b, float w, float tMax) {   // light a
     float3 dd = rd * tr - q;
     return tr < tMax + 0.05 ? exp(-dot(dd, dd) / (w * w)) : 0.0;
 }
+#if NG_ATMOS == 1
+// Novak Glass: the background along this pixel's ray (sky / glass city / void), worked out ONCE per pixel in PSWorldFx.
+// Its four call sites each inlined the whole city: 2.5 MB of DXIL and a ~63 s driver compile on every new build.
+static float3 NGBG = float3(0.0, 0.0, 0.0);
+#endif
 float4 shards(float3 col0, float3 rd, float sceneT) {
     float  best = sceneT;
     float3 col = 0.0;
@@ -291,7 +296,13 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                     float3 inv = 1.0 / select(abs(rd) > 1e-6, rd, 1e-6);
                     float3 t1 = (corner + 1.0) * inv, t0 = corner * inv;
                     float  tF = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
-                    float3 bg = sceneT > tF + 0.02 ? pow(max(col0, 0.0), 2.2) : pow(max(toDisplay(csBackground(rd, true)), 0.0), 2.2);
+                    float3 bg = sceneT > tF + 0.02 ? pow(max(col0, 0.0), 2.2) : pow(max(
+#if NG_ATMOS == 1
+                        ngSkyBase(rd) * (1.0 - NIGHT)   // a block still materializing: the plain sky behind its cubes (the city is too heavy to inline here; at night it is black)
+#else
+                        toDisplay(csBackground(rd, true))
+#endif
+                        , 0.0), 2.2);
                     // march the 8x8x8 voxels of the block: the first one that has arrived is what you see
                     // Novak Glass: 16 x 16 x 16 micro-cubes of clear glass (4096 of them) instead of 512 solid voxels
                     const float VN = NG_IS ? 16.0 : 8.0;
@@ -1509,7 +1520,7 @@ float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float 
     return lin;
 }
 
-float4 PSWorldFx(VSOut i) : SV_Target {
+float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inout float moT, inout float3 moAdd) {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
     // an impact frame replaces the picture: skip the sky, shadows and every other effect while it is up
@@ -1519,12 +1530,24 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float3 PI = skyI ? posAt(float2(px) + 0.5, 1.0) : posPx(px);   // the same position the world pass shades
         return float4(impactFrame(sceneAt(px).rgb, normalize(PI), skyI ? 1e9 : length(PI)), 1.0);
     }
+#if NG_ATMOS == 1
+    {   // the one place the Novak background is evaluated (sky pixels and far pixels that fade into it)
+        bool   skyQ = isSky(d) || c10.x > 0.5;
+        float  zq   = skyQ ? 1e9 : viewZ(d);
+        float3 rq   = posAt(float2(px) + 0.5, 1.0);
+        bool   far  = !skyQ && sceneAt(px).a < 0.995 && (zq > 40.0 || length(rq * zq) > 40.0);
+        [branch] if (c8.w > 0.5 && (skyQ || far)) {
+            CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = m2.w;
+            NGBG = toDisplay(csBackground(normalize(rq), false));
+        }
+    }
+#endif
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
     [branch] if (isSky(d) || c10.x > 0.5) {
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = NG_IS ? m2.w : 0.0;
         float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
-        if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
+        if (c8.w < 0.5) { if (!matchActive()) discard; { MO = true; moO = sceneAt(px).rgb; moRd = rd; moT = 1e9; return float4(0, 0, 0, 1); } }
         float  js = hash12(float2(px));
         float3 rays = sunShafts(px, js) * 0.55 * LIGHTK;                  // over open sky the beams are subtler (it is already bright)
         // the full sky (high clouds, stars, moon) is drawn here, on pixels that are really sky - the sky pass only lays a
@@ -1532,7 +1555,11 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float4 sea = float4(0, 0, 0, 0);
         float3 base;
         [branch] if (NG_IS) {                                  // Novak: one call does sky or void (a ?: here worked BOTH out for every pixel)
+#if NG_ATMOS == 1
+            base = NGBG;
+#else
             base = toDisplay(csBackground(rd, false));
+#endif
             sea.a = rd.y < 0.0 ? 1.0 : 0.0;
         } else {
             sea = (rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
@@ -1540,8 +1567,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         }
         float3 lb = pow(max(base, 0.0), 2.2) + rays * (sea.a > 0.0 ? 1.0 : 0.6);
         float3 o = pow(max(lb, 0.0), 1.0 / 2.2);
-        o = matchOver(o, rd, 1e9) + (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
-        return float4(o, 1.0);
+        MO = true; moO = o; moRd = rd; moT = 1e9; moAdd = (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
+        return float4(0, 0, 0, 1);
     }
     float4 sc  = sceneAt(px);
     float3 col = sc.rgb;
@@ -1566,8 +1593,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
             float  tHit;
             float4 sea = cloudSea(CAM, rd, dist, tHit);
             if (sea.a > 0.0 && tHit < dist) {
-                float3 o = matchOver(toDisplay(sea.rgb), rd, tHit) + (hash12(float2(px)) - 0.5) / 255.0;
-                return float4(o, 1.0);
+                MO = true; moO = toDisplay(sea.rgb); moRd = rd; moT = tHit; moAdd = (hash12(float2(px)) - 0.5) / 255.0;
+                return float4(0, 0, 0, 1);
             }
         }
     }
@@ -1579,8 +1606,14 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         ) {
         if ((fogVis >= 0.995 || c8.w < 0.5) && !matchActive()) discard;
         float3 o0 = col;
-        if (fogVis < 0.995 && c8.w > 0.5 && length(P) > 40.0) o0 = lerp(toDisplay(csBackground(rdT, true)), col, smoothstep(0.0, 1.0, fogVis));
-        return float4(matchOver(o0, rdT, length(P)) + (hash12(float2(px)) - 0.5) / 255.0, 1.0);
+        if (fogVis < 0.995 && c8.w > 0.5 && length(P) > 40.0) o0 = lerp(
+#if NG_ATMOS == 1
+            NGBG,
+#else
+            toDisplay(csBackground(rdT, true)),
+#endif
+            col, smoothstep(0.0, 1.0, fogVis));
+        { MO = true; moO = o0; moRd = rdT; moT = length(P); moAdd = (hash12(float2(px)) - 0.5) / 255.0; return float4(0, 0, 0, 1); }
     }
     // normal from the depth buffer: the flatter neighbour on each axis (no halos at block edges)
     float3 pl = posPx(px - int2(1, 0)), pr = posPx(px + int2(1, 0)), pu = posPx(px - int2(0, 1)), pd = posPx(px + int2(0, 1));
@@ -1761,7 +1794,11 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
     [branch] if (fogVis < 0.995 && c8.w > 0.5 && z > 40.0) {   // only far pixels can be fogged (entities may not write the alpha)
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; NG_CLOUDS = c9.y; NG_NEON = NG_IS ? m2.w : 0.0;
+#if NG_ATMOS == 1
+        float3 bg = NGBG;
+#else
         float3 bg = toDisplay(csBackground(normalize(P), true));
+#endif
         o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
     }
 #if NG_ATMOS == 1
@@ -1781,7 +1818,16 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     }
     if (c6.z > 0.5 && c6.z < 1.5) o = lerp(float3(1, 0.85, 0.6), float3(0.2, 0.2, 0.45), sh);
     if (c6.z > 1.5) o = ao.xxx;
-    o = matchOver(o, rdT, length(P));
-    o += (j - 0.5) / 255.0;
-    return float4(o, 1.0);
+    MO = true; moO = o; moRd = rdT; moT = length(P); moAdd = (j - 0.5) / 255.0;
+    return float4(0, 0, 0, 1);
+}
+// one exit for the match overlay: each of the five places above used to inline the whole of matchOver (~200 KB of DXIL
+// apiece - most of the driver's ~1 min compile). They hand over what to draw it on and it is drawn here, once.
+float4 PSWorldFx(VSOut i) : SV_Target {
+    bool   MO = false;
+    float3 moO = 0, moRd = float3(0, 0, 1), moAdd = 0;
+    float  moT = 1e9;
+    float4 r = wfxMain(i, MO, moO, moRd, moT, moAdd);
+    [branch] if (MO) r = float4(matchOver(moO, moRd, moT) + moAdd, 1.0);
+    return r;
 }
