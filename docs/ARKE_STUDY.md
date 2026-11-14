@@ -179,3 +179,25 @@ All of these become *material rules* once block IDs exist: wool/concrete (subtle
 (refraction + tinted shadowcolor, already supported by the shadow path), planks/stone/ores (POM + emissive ore
 veins), obsidian/netherite (PBR specular). Items/armor/projectiles/hit FX need the entity + hand passes first; they
 stay visual-only (no mechanic change, readable, no unfair info like seeing through walls).
+
+## Progress 2026-11-13 (evening): world drawn once, root causes found
+
+- **Mirrored gbuffers (root cause of "dark / pack lighting does nothing")**: gbufferProjection is Y-flipped for our
+  top-down buffers, but the D3D rasteriser maps clip Y the other way, so terrain replayed with it landed mirrored and
+  failed the depth test everywhere except where the mirror image hit sky. Until today the final image was vanilla
+  colour through the pack's post chain.
+- **Bisected the transform** with debug bundles (bf_dbg 1/2/3): our view matrix is right, our projection is not usable
+  for rasterising. Fix (bf_mode, wrapper v3): the pack gets an identity projection; the wrapper applies the game's own
+  u_proj (+ SubPixelOffset jitter) to the game's view position plus the pack's displacement. Vanilla-identical
+  placement and depth. **Verified in game: replay mode now lands the pack's terrain exactly (normals view).**
+- **Bedrock depth facts (logged)**: clear 1.0, terrain LESS_EQUAL, D24S8, RGBA8 colour; near 0.025 (proj [14] = -0.05).
+- **Bedrock records terrain on ~7 command lists in parallel (~700 chunk draws per frame)**, some still recording
+  after the cloud hook. The old replay only saw the cloud-hook list (~66 draws, ~1/10 of the world) - also why
+  shadows covered so little. Shadow replay now takes every list.
+- **Inline terrain v2 (RF 050bdec, built, NOT yet verified in game)**: parallel-safe - gbuffers cleared at the end of
+  the previous run(), Present-keyed ring/uniforms, each draw binds its own state, SV_Target7 key into the game's
+  colour for compositing vanilla's later draws. v1 (first-list-only) verified that substitution works but only
+  covered one of the 7 lists.
+- **Pack hot-swap verified**: switching bundles in game takes ~8-9 ms (pipelines build lazily); old GPU objects are
+  kept kRing+2 frames (graveyard) so a switch never frees in-flight resources.
+- Blocked: the PC's drive is full (52 MB free of 931 GB) and Minecraft refuses to open worlds.
