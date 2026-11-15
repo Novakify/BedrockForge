@@ -644,9 +644,9 @@ float4 main(PSIn i) : SV_Target {
                 // colour toward the horizon (audit: the floor had no part in the city's light - it looked pasted in)
                 float  cs1 = azR * 14.0, ci1 = floor(cs1), cf1 = frac(cs1);
                 float  h1 = csHash(float2(ci1, 3.0)), h2 = csHash(float2(ci1, 7.0));
-                float  streak = smoothstep(0.5, 0.0, abs(cf1 - 0.5) / (0.16 + 0.30 * h2)) * step(0.35, h1);
+                float  streak = smoothstep(0.5, 0.0, abs(cf1 - 0.5) / (0.10 + 0.20 * h2)) * step(0.45, h1);   // (in game: a touch too many, too wide)
                 float3 sc = 0.55 + 0.45 * cos(6.2832 * (h1 * 3.0 + float3(0.0, 0.33, 0.67)));
-                lit += (cityC * 0.30 + sc * streak * 0.60) * Fw * NK * lerp(0.4, 1.0, skyK);
+                lit += (cityC * 0.30 + sc * streak * 0.42) * Fw * NK * lerp(0.4, 1.0, skyK);
             }
         }
     }
