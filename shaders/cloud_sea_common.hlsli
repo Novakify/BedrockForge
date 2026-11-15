@@ -621,8 +621,9 @@ float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
   float3 ink=(bg.r+bg.g+bg.b>2.5)?(frac(hp*41.)<0.5?float3(0.90,0.04,0.08):((float3)(0.02))):((bg.g>0.7&&bg.b<0.2)||frac(hp*43.)<0.55?((float3)(0.015)):((float3)(1.5)));
   float3 c;
   if(kind<0.22){                                              // neon tubes on a dark board
-    float g=lerp(0.20,glyph(pn*sz/gw*gn,hp*100.),res);
-    c=float3(0.010,0.008,0.020)+bg*1.5*max(g,step(dE,0.45)*res);
+    float far=step(abs(frac(pn.y*3.0)-0.5),0.17)*step(abs(pn.x-0.5),0.36+0.08*frac(hp*17.));   // at distance: three tube lines, not a flat fill
+    float g=lerp(far*0.75,glyph(pn*sz/gw*gn,hp*100.),res);
+    c=float3(0.010,0.008,0.020)+bg*1.5*max(g,max(step(dE,0.45)*res,step(dE,max(pxm*1.2,0.5))*(1.-res)*0.6));
   } else if(kind<0.50&&gw>5.0){                               // a picture ad
     float2 q=(pn-0.5)*sz/gw; float t=TIME*0.3+hp*20.;
     float shape=frac(hp*29.)<0.5?step(length(q-float2(0.,0.08)),0.30):step(0.5,frac((q.x+q.y)*2.2+t*0.2));

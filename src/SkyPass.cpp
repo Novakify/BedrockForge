@@ -2221,7 +2221,11 @@ float adaptQuality() {
         float dt = float(now - lastUs) * 1e-6f;
         if (dt > 0.0f && dt < 0.25f) {
             ema = ema * 0.95f + dt * 0.05f;
-            if (ema > 1.0f / 150.0f) q = std::max(0.0f, q - 0.01f);
+            // (audit: measured at night in a match, quality 0 saves ~7% of the pass (3.8 vs 4.1 ms) and costs the
+            //  boards their script and the far rings - and when the game itself is the limit (~140 FPS here) the
+            //  quality sat at 0 for nothing. It gives back down to 0.5; below that only under 110 FPS.)
+            float const floorQ = ema > 1.0f / 110.0f ? 0.0f : 0.5f;
+            if (ema > 1.0f / 150.0f) q = std::max(std::min(q, floorQ), q - 0.01f);
             else if (ema < 1.0f / 160.0f) q = std::min(1.0f, q + 0.002f);   // (was 175: at 160-170 FPS the quality sat at its floor for good)
         }
     }
