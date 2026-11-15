@@ -300,7 +300,9 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
             }
             // the puff: seven soft heaps round the block's heart. Per heap: how much cloud this ray passes through
             // (thinner toward the heap's ragged rim), and which way that surface faces - for the light on it
-            float  T = 0.0; float3 nAcc = float3(0.0, 0.0, 0.0);
+            float  T = 0.0, wAcc = 0.0, litAcc = 0.0;
+            float3 Lp = normalize(SUN + float3(0.0, 0.6, 0.0));
+            float  tMid = dot(bc, rd);
             [loop] for (int k = 0; k < 7; k++) {
                 float  sk = seed * 0.001 + float(k) * 3.71;
                 float3 dir = k == 0 ? float3(0.0, 0.0, 0.0) : normalize(float3(h1(sk), h1(sk + 1.0), h1(sk + 2.0)) - 0.5);
@@ -316,17 +318,20 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                 float  ta = tc - h, tb = min(tc + h, tLim);
                 if (tb <= ta) continue;
                 float  th = (tb - ta) * (1.0 - b2 / (rr * rr));
-                T += th; nAcc += normalize(pn - rd * h) * th;
+                // each heap takes the light on its own round face, and the nearer heaps count for more: the puff keeps
+                // its billows (audit: one averaged normal for all seven made it a flat cream blob)
+                float  lk = saturate(dot(normalize(pn - rd * h), Lp) * 0.5 + 0.5) * (0.82 + 0.18 * (1.0 - b2 / (rr * rr)));
+                float  wk = th * exp(-(ta - tMid) * 3.0);
+                T += th; wAcc += wk; litAcc += lk * wk;
             }
             [branch] if (T > 1e-4) {
-                float3 nC  = normalize(nAcc);
-                float  lit = saturate(dot(nC, normalize(SUN + float3(0.0, 0.6, 0.0))) * 0.5 + 0.5);
+                float  lit = litAcc / max(wAcc, 1e-5);
                 // lit like the clouds it belongs to: a warm white crest (moon silver at night), lavender shade, the
                 // block's own colour breathed into it; thin edges glow
                 // (audit: the first values clipped - the puff was a flat white blob with no form. Kept under white now)
                 float3 crest = lerp(lerp(float3(0.72, 0.65, 0.54), float3(0.72, 0.52, 0.42), DUSK), float3(0.34, 0.42, 0.62), NIGHT);
                 float3 shade = lerp(lerp(float3(0.34, 0.30, 0.47), float3(0.27, 0.20, 0.36), DUSK), float3(0.10, 0.13, 0.26), NIGHT);
-                float3 pc = lerp(shade, crest, smoothstep(0.18, 0.88, lit));
+                float3 pc = lerp(shade, crest, smoothstep(0.25, 0.80, lit));
                 pc = lerp(pc, pc * (0.45 + 0.75 * hue), 0.34);
                 pc += crest * 0.16 * (1.0 - saturate(T * 2.6));
                 float  a = min(1.0 - exp(-T * 5.5), 0.90) * dens;
