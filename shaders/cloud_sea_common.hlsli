@@ -11,6 +11,8 @@ static float  TIME, SEA_Y;
 static float2 MAP_C;
 // ---- living match sky (Bedrock Forge MatchFx): phase 0 golden hour -> 1 dusk (first bed down) -> 2 night (final fight)
 static float  PHASE = 0.0, DUSK = 0.0, NIGHT = 0.0;
+static float3 SUNL = float3(0.0, 1.0, 0.0), MOOND = float3(0.0, 1.0, 0.0), LDIR = float3(0.0, 1.0, 0.0);
+static float  SUNI = 1.0, MOONI = 0.0, TWK = 0.0, WTW = 0.0, WNI = 0.0;
 static float3 SUNDISC = float3(0.17605, 0.11247, -0.97794);
 static float  SUNUP = 1.0;  // the sun disc and its warm glow (gone once it has set)
 static float  NG_NEON = 0.0;   // Novak: the match tightening (teams out) -> the neon night; 1 = the finale
@@ -44,6 +46,19 @@ void csSetPhase(float k) {
     SUN    = normalize(lerp(sun, moon, smoothstep(1.3, 1.6, k)));     // swaps while it is darkest: no shadow jump to see
     SUNDISC = disc;
     SUNUP  = smoothstep(-0.075, 0.03, disc.y) * (1.0 - smoothstep(1.0, 1.3, k));
+    // ---- Cloud Sea's own evening and night (Nov 15 quality pass). The sky, the high clouds and the sea are lit by
+    //      LDIR: the set sun's afterglow until the blue hour, then the moon - the swap happens while neither gives any
+    //      direct light (SUNI and MOONI are both 0 round k = 1.46), so nothing is seen to jump. The moon itself rises
+    //      opposite the sunset during twilight (MOOND), amber on the horizon, silver once it is up.
+    SUNL   = sun;
+    float moonEl = lerp(-6.0, 31.0, smoothstep(1.05, 1.9, k));
+    MOOND  = dirAzEl(MOON_AZ, radians(moonEl));
+    SUNI   = 1.0 - smoothstep(1.0, 1.42, k);
+    MOONI  = smoothstep(1.5, 1.92, k);
+    LDIR   = k < 1.46 ? sun : dirAzEl(MOON_AZ, radians(max(moonEl, 8.0)));
+    TWK    = saturate((k - 1.0) / 0.8);                 // 0 at sunset .. 1 when the last ember is gone
+    WTW    = smoothstep(1.0, 1.25, k);                  // the dusk picture hands over to the twilight one
+    WNI    = smoothstep(1.45, 1.9, k);                  // ... and that to the night
     LIGHTK = lerp(lerp(1.0, 0.40, smoothstep(0.25, 1.0, k)), 0.62, NIGHT) * (1.0 - 0.75 * smoothstep(1.1, 1.45, k) * (1.0 - smoothstep(1.45, 1.8, k)));
 }
 
@@ -67,10 +82,9 @@ float fbm(float2 p, int oct) {
 
 // ---------------------------------------------------------------- sky gradient
 float3 ngSkyBase(float3 d);
-float3 skyBase(float3 d) {
-    if (NG_IS) return ngSkyBase(d);
+float3 skyDay(float3 d) {   // the golden hour (its sun sinks with DUSK)
     float  e = max(d.y, 0.0);
-    float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUN);
+    float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUNL);
     float  sunSide = mu * 0.5 + 0.5;
     float  towardSun = pow(sunSide, 5.0);
     float3 zen = float3(0.036, 0.042, 0.135);
@@ -83,8 +97,62 @@ float3 skyBase(float3 d) {
     float  kb = lerp(0.10, 0.24, towardSun);
     float3 c = lerp(hor, body, smoothstep(0.0, kb, e));
     c = lerp(c, zen, smoothstep(0.06, 0.62, e));
-    float ang = acos(clamp(dot(d, SUN), -1.0, 1.0));
+    float ang = acos(clamp(dot(d, SUNL), -1.0, 1.0));
     c += float3(1.05, 0.50, 0.10) * exp(-ang * 6.0) * exp(-e * 8.0) * 0.75;
+    return c;
+}
+
+float3 csGradeDusk(float3 c, float3 rd);
+float  csLum(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+// twilight: what is left once the sun is under the cloud sea. The glow hugs the horizon where it went - a band that
+// gets lower, narrower and redder until it is one ember line - under a thin green-gold fringe; the rest of the sky
+// deepens through the blue hour. Opposite, the Belt of Venus (rose) stands over the earth's blue-grey shadow for a
+// while. Night: navy, a little lighter along the horizon and round the moon.
+float3 skyTwilight(float3 d) {
+    float  e  = max(d.y, 0.0);
+    float3 dh = normalize(float3(d.x, e, d.z));
+    float  s  = dot(normalize(dh.xz + 1e-4), SUN_AZ) * 0.5 + 0.5;       // 1 toward where the sun went
+    float  kk = TWK;
+    float3 zen = lerp(float3(0.022, 0.028, 0.110), float3(0.0050, 0.0085, 0.030), kk);
+    float3 mid = lerp(float3(0.075, 0.072, 0.215), float3(0.0130, 0.0230, 0.070), kk);
+    float3 hor = lerp(float3(0.130, 0.105, 0.230), float3(0.0300, 0.0460, 0.105), kk);
+    // the Belt of Venus and the earth's shadow under it, away from the sunset
+    float  away = pow(1.0 - s, 2.0) * (1.0 - smoothstep(0.0, 0.55, kk));
+    float  bh   = lerp(0.075, 0.16, kk);                                // the shadow rises as the sun sinks
+    hor = lerp(hor, float3(0.070, 0.082, 0.170), away * (1.0 - smoothstep(bh * 0.55, bh, e)));
+    float3 c = lerp(hor, mid, smoothstep(0.0, 0.26, e));
+    c += float3(0.300, 0.135, 0.200) * away * exp(-pow((e - bh * 1.25) / (bh * 0.60), 2.0)) * 0.85;
+    c = lerp(c, zen, smoothstep(0.08, 0.70, e));
+    // the afterglow
+    float  die = pow(1.0 - kk, 1.35);
+    float  tow = pow(s, lerp(2.6, 7.0, kk));
+    float  hb  = lerp(0.150, 0.034, smoothstep(0.0, 0.85, kk));
+    float3 ember = lerp(float3(1.00, 0.36, 0.085), float3(0.62, 0.085, 0.045), smoothstep(0.0, 0.75, kk));
+    c += ember * tow * exp(-e / hb) * die * 0.95;
+    c += float3(0.75, 0.50, 0.16) * pow(s, 9.0) * exp(-e / (hb * 0.45)) * die * 0.55;            // its hot core
+    c += float3(0.085, 0.150, 0.150) * tow * exp(-pow((e - hb * 2.3) / (hb * 1.5), 2.0)) * die;    // green-gold fringe
+    c += float3(0.110, 0.050, 0.130) * pow(s, 1.5) * exp(-e * 3.2) * die * 0.8;                    // wide violet air round it
+    return c;
+}
+float3 skyNight(float3 d) {
+    float  e = max(d.y, 0.0);
+    float3 c = lerp(float3(0.0330, 0.0500, 0.1100), float3(0.0115, 0.0210, 0.0640), smoothstep(0.0, 0.24, e));
+    c = lerp(c, float3(0.0042, 0.0075, 0.0270), smoothstep(0.08, 0.78, e));
+    float  mUp  = smoothstep(-0.03, 0.10, MOOND.y);
+    float  angM = acos(clamp(dot(d, MOOND), -1.0, 1.0));
+    float3 mCol = lerp(float3(1.00, 0.66, 0.40), float3(0.62, 0.76, 1.00), smoothstep(0.02, 0.32, MOOND.y));
+    c += mCol * (exp(-angM * 2.3) * 0.050 + exp(-angM * 7.5) * 0.070) * mUp;                        // the air lit round the moon
+    return c;
+}
+float3 skyBase(float3 d) {
+    if (NG_IS) return ngSkyBase(d);
+    float3 c = float3(0.0, 0.0, 0.0);
+    [branch] if (WTW < 0.999) c = csGradeDusk(skyDay(d), d);
+    [branch] if (WTW > 0.001) {
+        float3 t = skyTwilight(d);
+        [branch] if (WNI > 0.001) t = lerp(t, skyNight(d), WNI);
+        c = lerp(c, t, WTW);
+    }
     return c;
 }
 
@@ -95,9 +163,11 @@ float hcDens(float2 p, int oct) {
     w += (float2(vnoiseG(p * 1.3), vnoiseG(p * 1.3 + 31.0)) - 0.5) * 1.6;
     return cover * 1.05 + fbm(w, oct) * 0.40;
 }
-float4 highClouds(float3 d, float mu) {
+float4 highClouds(float3 d, out float3 tn) {
+    tn = float3(0.0, 0.0, 0.0);
     if (d.y < 0.012) return float4(0.0, 0.0, 0.0, 0.0);
-    float2 sunXZ = normalize(SUN.xz);
+    float  mu = dot(d, SUNL);
+    float2 sunXZ = normalize(SUNL.xz);
     float2 q = CAM.xz + d.xz * ((900.0 - CAM.y) / d.y);
     float  fade = smoothstep(0.012, 0.085, d.y);
     float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
@@ -126,6 +196,27 @@ float4 highClouds(float3 d, float mu) {
     float  a = dens * (0.50 + 0.50 * smoothstep(0.0, 0.5, tau)) * fade;
     float3 cirCol = lerp(float3(0.42, 0.130, 0.20), float3(1.0, 0.36, 0.10), pow(sunSide, 3.0));
     float  ac = cir * 0.34 * fade * (1.0 - a);
+    // ---- the same clouds after sunset (tn): for a while their undersides still catch the sun from under the horizon
+    //      (they are high) - rose toward the afterglow - then they are slate silhouettes against the ember band through
+    //      the blue hour; the moon lights them silver from its side, with a bright lining where you look toward it
+    [branch] if (WTW > 0.001) {
+        float  litN = litF, muL = mu;
+        [branch] if (PHASE >= 1.46) {
+            float2 mXZ = normalize(LDIR.xz);
+            float  shM = QUALITY > 0.3 ? smoothstep(0.765, 0.93, hcDens(p + mXZ * 0.040, 3)) : 0.5;
+            muL = dot(d, LDIR);
+            float  sideM = muL * 0.5 + 0.5;
+            float  backM = exp(-2.6 * tau) * (1.0 - 0.65 * shM), frontM = 0.92 - 0.46 * tau - 0.20 * shM;
+            litN = saturate(lerp(frontM, backM, smoothstep(0.25, 0.80, sideM)) * (1.0 + 0.7 * ripple * near));
+        }
+        float3 shadeT = lerp(float3(0.046, 0.044, 0.112), float3(0.0080, 0.0125, 0.0380), smoothstep(0.0, 0.7, TWK));
+        float3 litS = lerp(float3(0.30, 0.085, 0.150), float3(1.00, 0.230, 0.095), pow(sunSide, 2.0)) * lerp(1.0, 0.55, TWK) * SUNI;
+        float  sideL = muL * 0.5 + 0.5;
+        float3 litM = (float3(0.150, 0.200, 0.330) * lerp(0.55, 1.0, sideL) + float3(0.80, 0.92, 1.20) * pow(max(muL, 0.0), 10.0) * 0.85) * MOONI;
+        float3 colT = shadeT + (litS + litM) * litN + float3(0.010, 0.016, 0.036) * MOONI;
+        float3 cirT = shadeT * 1.6 + litS * 0.55 * pow(sunSide, 2.0) + litM * 0.60;
+        tn = colT * a + cirT * ac;
+    }
     return float4(col * a + cirCol * ac, a + ac);
 }
 
@@ -193,8 +284,8 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     float  nl = lod + 1.2;
     float  hc0 = seaY(p.xz, nl);
     float3 n = normalize(float3(hc0 - seaY(p.xz + float2(e, 0.0), nl), e, hc0 - seaY(p.xz + float2(0.0, e), nl)));
-    float2 l2 = normalize(SUN.xz);
-    float  slope = SUN.y / length(SUN.xz);
+    float2 l2 = normalize(LDIR.xz);
+    float  slope = LDIR.y / length(LDIR.xz);
     float  sh = 1.0;
     int nShadow = QUALITY > 0.5 ? 3 : (QUALITY > 0.15 ? 1 : 0);
     [loop] for (int j = 0; j < nShadow; j++) {
@@ -202,30 +293,50 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
         float over = seaY(p.xz + l2 * s, lod + 1.2 + float(j) * 0.9) - (h0 + slope * s);
         sh *= 1.0 - smoothstep(-0.05 * s, 0.20 * s, over) * 0.80;
     }
-    float ndl = dot(n, SUN);
+    float ndl = dot(n, LDIR);
     float near = exp(-t / 260.0);
     float grain = 0.75;
     [branch] if (near > 0.02 && QUALITY > 0.3) grain = lerp(0.75, fbm(p.xz / 5.0 + 3.0, 3) + 0.5 * vnoiseG(p.xz / 1.3), near); // far away the grain is too small to see
     float cav = saturate((h0 - seaY(p.xz, lod + 3.4)) / (SEA_AMP * 0.13) + 0.55);
     float lit = sh * (0.30 + 0.70 * smoothstep(-0.35, 0.55, ndl)) * (0.72 + 0.38 * grain) * (0.34 + 0.66 * cav);
     float crease = smoothstep(0.05, 0.85, (h0 - SEA_Y) / SEA_AMP);
-    float mu = dot(rd, SUN);
+    float mu = dot(rd, LDIR);
     float3 amb = lerp(float3(0.020, 0.023, 0.070), float3(0.066, 0.062, 0.155), crease) * (0.60 + 0.40 * n.y) * (0.85 + 0.2 * grain);
     amb += float3(0.22, 0.075, 0.040) * max(dot(normalize(n.xz + 1e-4), l2), 0.0) * (1.0 - n.y) * 0.5 * crease;
     float  phase = lerp(0.60, 1.0, smoothstep(-1.0, 0.35, mu));
     float3 direct = lerp(float3(0.95, 0.36, 0.20), float3(1.00, 0.335, 0.105), smoothstep(-1.0, 0.35, mu)) * 1.02 * lit * phase;
     // the sun gone: tops fall into shade, only the slopes facing the afterglow keep a pink edge; moonlight after
-    float  dk = DUSK * (1.0 - NIGHT);
-    direct *= lerp(1.0, LIGHTK, DUSK) * lerp(float3(1, 1, 1), float3(0.95, 0.80, 1.55), dk); // rose afterglow light
+    float  dk = DUSK;
+    float  ld = lerp(1.0, 0.40, smoothstep(0.25, 1.0, PHASE));                                // the sun's light leaving
+    direct *= lerp(1.0, ld, DUSK) * lerp(float3(1, 1, 1), float3(0.95, 0.80, 1.55), dk); // rose afterglow light
+    float3 amb0 = amb;
     amb *= lerp(float3(1, 1, 1), float3(1.25, 1.15, 1.55), dk);
     float  crest = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
-    float3 through = float3(1.5, 0.62, 0.18) * crest * pow(max(mu, 0.0), 5.0) * sh * 0.9 * (SUNUP + NIGHT * 0.5);
-    float3 col = amb + direct + through;
+    float3 through = float3(1.5, 0.62, 0.18) * crest * pow(max(mu, 0.0), 5.0) * sh * 0.9 * SUNUP;
     float  f = saturate((1.0 - exp(-t / 1000.0)) / (1.0 - exp(-3.4)));
-    float3 hz = skyBase(normalize(float3(rd.x, max(rd.y, 0.0) + 0.030, rd.z)));
-    col = lerp(col, hz, f * f * (3.0 - 2.0 * f));
-    return float4(csGrade(col, rd), 1.0);
+    f = f * f * (3.0 - 2.0 * f);
+    float3 hd = normalize(float3(rd.x, max(rd.y, 0.0) + 0.030, rd.z));
+    float3 col = float3(0.0, 0.0, 0.0);
+    [branch] if (WTW < 0.999) col = csGradeDusk(lerp(amb + direct + through, skyDay(hd), f), rd);
+    // ---- after sunset the sea is lit by the sky: a cobalt ambient (blue hour) with a last rose on the slopes that
+    //      face the afterglow; then the moon - pearl-silver tops, blue shade, a silver edge on the crests toward it
+    [branch] if (WTW > 0.001) {
+        float3 skyAmb = lerp(lerp(float3(0.036, 0.040, 0.118), float3(0.0090, 0.0150, 0.0460), smoothstep(0.0, 0.8, TWK)),
+                             lerp(float3(0.092, 0.092, 0.225), float3(0.0250, 0.0390, 0.0980), smoothstep(0.0, 0.8, TWK)), crease);
+        float3 a2 = skyAmb * (0.60 + 0.40 * n.y) * (0.85 + 0.2 * grain) * (0.55 + 0.45 * cav);
+        float  die = pow(1.0 - TWK, 1.35);
+        float  face = saturate(dot(normalize(n.xz + 1e-4), SUN_AZ) * 0.5 + 0.5);
+        a2 += lerp(float3(0.34, 0.105, 0.085), float3(0.22, 0.045, 0.060), TWK) * pow(face, 2.0) * (1.0 - 0.75 * n.y) * (0.35 + 0.65 * crease) * die * 0.55;
+        float3 sunD = direct * SUNI;                                                              // LDIR is still the sun here
+        float3 moonC = lerp(float3(0.70, 0.52, 0.40), float3(0.40, 0.50, 0.74), smoothstep(0.10, 0.36, LDIR.y));
+        float3 moonD = moonC * 0.62 * lit * lerp(0.70, 1.0, smoothstep(-1.0, 0.35, mu)) * MOONI;
+        float3 rim   = float3(0.62, 0.78, 1.10) * crest * pow(max(mu, 0.0), 4.0) * sh * 0.85 * MOONI;
+        float3 c2 = a2 + (PHASE < 1.46 ? sunD : moonD + rim);
+        col = lerp(col, lerp(c2, skyBase(hd), f), WTW);
+    }
+    return float4(col, 1.0);
 }
+
 
 float3 toDisplay(float3 c) {
     c = max(c, 0.0);
@@ -239,64 +350,84 @@ float hash12(float2 p) { p = frac(p * float2(0.1031, 0.1030)); p += dot(p, p.yx 
 // the sky along one view ray (linear colour): gradient, sun, high clouds, and - when withSea - the cloud sea.
 // The sky pass draws it without the sea (it runs under the whole screen, before the terrain exists); the World FX pass
 // adds the sea only on pixels that are still sky after the world is drawn (csSeaPixel), so terrain never pays for it.
-float3 csGlow(float ang, float hcA) {
+float3 csGlow(float3 rd, float hcA) {
     if (NG_IS) return float3(0.0, 0.0, 0.0);   // Novak Glass has its own light round the sun (the halo)
-    float3 warm = float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * lerp(1.0, 0.45, DUSK) * (1.0 - NIGHT);
-    float3 cool = float3(0.55, 0.68, 1.0) * 0.050 * exp(-ang * 4.0) * NIGHT;   // moon haze
+    float  ang  = acos(clamp(dot(rd, SUNL), -1.0, 1.0));
+    float  angM = acos(clamp(dot(rd, MOOND), -1.0, 1.0));
+    float3 warm = float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * lerp(1.0, 0.45, DUSK) * (1.0 - smoothstep(1.0, 1.40, PHASE));
+    float3 mCol = lerp(float3(1.00, 0.62, 0.36), float3(0.55, 0.68, 1.00), smoothstep(0.02, 0.32, MOOND.y));
+    float3 cool = mCol * 0.050 * exp(-angM * 4.0) * smoothstep(-0.03, 0.10, MOOND.y) * smoothstep(1.2, 1.7, PHASE);   // moon haze
     return (warm + cool) * (1.0 - 0.5 * hcA);
 }
 
-// ---- the light leaving: dusk keeps a warm afterglow under where the sun went, the rest sinks to violet and indigo;
-//      night turns everything to moonlight (silver tops, deep blue shade). One grade for sky, clouds and sea.
-float3 csGrade(float3 c, float3 rd) {
-    if (NG_IS) return c;                        // its sky is already written per phase
-    float  dn = DUSK * (1.0 - NIGHT);
-    [branch] if (dn > 0.001) {
+// ---- the light leaving, up to sunset: a warm afterglow stays under where the sun went, the rest sinks to violet
+float3 csGradeDusk(float3 c, float3 rd) {
+    [branch] if (DUSK > 0.001) {
         float  toward = pow(saturate(dot(normalize(rd.xz + 1e-4), SUN_AZ) * 0.5 + 0.5), 6.0) * exp(-max(rd.y, 0.0) * 5.0);
         float3 dk = c * lerp(float3(0.42, 0.34, 0.86) * 0.70, float3(1.05, 0.52, 0.48), toward * 0.85);
-        c = lerp(c, dk, dn);
-    }
-    [branch] if (NIGHT > 0.001) {
-        float  lum = dot(c, float3(0.2126, 0.7152, 0.0722));
-        float  l2  = pow(lum / 0.45, 1.8) * 0.45;            // moonlight is contrasty: silver tops, deep shade
-        float3 cn  = l2 * lerp(float3(0.10, 0.18, 0.62), float3(0.82, 0.92, 1.12), smoothstep(0.05, 0.50, l2)) * 0.80;
-        cn += float3(0.003, 0.005, 0.014);
-        c = lerp(c, cn, NIGHT);
+        c = lerp(c, dk, DUSK);
     }
     return c;
 }
+float3 csGrade(float3 c, float3 rd) { return NG_IS ? c : csGradeDusk(c, rd); }
 float hash13(float3 p) { p = frac(p * 0.1031); p += dot(p, p.zyx + 31.32); return frac((p.x + p.y) * p.z); }
 // stars: one possible star per cell of a 3D grid on the unit sphere; a faint band of them (and its glow) across the sky
 float3 csStars(float3 rd) {
+    // the brightest come out first (vis rises through twilight), the faint field and the band last. Points, not
+    // blobs: a small sharp core, a soft glow only on the few bright ones; each its own colour and slow twinkle.
+    float  vis = smoothstep(1.18, 1.85, PHASE);
     float3 band = normalize(float3(0.35, 0.42, 0.84));
-    float  inBand = exp(-pow(dot(rd, band) / 0.22, 2.0));
+    float  inBand = exp(-pow(dot(rd, band) / 0.20, 2.0));
     float3 acc = float3(0.0, 0.0, 0.0);
-    [unroll] for (int layer = 0; layer < 2; layer++) {
-        float  sc = layer == 0 ? 150.0 : 330.0;
+    [unroll] for (int layer = 0; layer < 3; layer++) {
+        float  sc = layer == 0 ? 90.0 : (layer == 1 ? 210.0 : 420.0);
         float3 g = rd * sc, cell = floor(g);
         float  h = hash13(cell + 17.0 * float(layer));
-        float  thr = layer == 0 ? 0.955 : lerp(0.985, 0.90, inBand);
+        float  thr = layer == 0 ? 0.968 : (layer == 1 ? 0.930 : lerp(0.955, 0.80, inBand));
         if (h > thr) {
             float3 sp = normalize(cell + 0.5 + (float3(hash13(cell + 3.1), hash13(cell + 7.7), hash13(cell + 11.3)) - 0.5) * 0.7);
             float  a = length(rd - sp) * sc;
-            float  mag = pow((h - thr) / (1.0 - thr), 2.2) * (layer == 0 ? 2.6 : 0.9);
-            float  tw = 0.70 + 0.30 * sin(TIME * (1.3 + 3.0 * h) + h * 61.0);
-            float3 tint = lerp(float3(0.75, 0.84, 1.10), float3(1.10, 0.92, 0.78), frac(h * 37.0));
-            acc += tint * mag * tw * exp(-a * a * 28.0);
+            float  m = (h - thr) / (1.0 - thr);                                   // 0..1 within its layer
+            float  mag = layer == 0 ? 0.55 + 1.25 * m * m : (layer == 1 ? 0.10 + 0.50 * m * m : 0.035 + 0.16 * m);
+            float  rank = layer == 0 ? 0.55 + 0.45 * m : (layer == 1 ? 0.22 + 0.33 * m : 0.20 * m);   // who is seen first
+            float  on = smoothstep(1.0 - vis * 1.15, 1.0 - vis * 1.15 + 0.22, rank);
+            float  tw = 1.0 - (layer == 2 ? 0.18 : 0.34) * (0.5 + 0.5 * sin(TIME * (0.9 + 2.4 * frac(h * 91.7)) + h * 61.0));
+            float  hk = frac(h * 37.0);
+            float3 tint = hk < 0.62 ? lerp(float3(0.78, 0.86, 1.12), float3(1.0, 1.0, 1.0), hk / 0.62) : lerp(float3(1.05, 0.96, 0.80), float3(1.12, 0.80, 0.62), (hk - 0.62) / 0.38);
+            float  fall = layer == 0 ? 10.0 : (layer == 1 ? 26.0 : 60.0);
+            float  core = exp(-a * a * fall * 9.0) + (layer == 0 ? 0.16 * exp(-a * a * fall) : 0.0);
+            acc += tint * mag * tw * core * on;
         }
     }
-    float glow = inBand * (0.55 + 0.45 * fbm(rd.xz / (rd.y + 1.2) * 6.0 + 4.0, 3));
-    acc += float3(0.020, 0.022, 0.040) * glow;
-    return acc * smoothstep(0.0, 0.18, rd.y);
+    float glow = inBand * (0.45 + 0.55 * fbm(rd.xz / (rd.y + 1.2) * 6.0 + 4.0, 3)) * smoothstep(0.55, 1.0, vis);
+    float dust = 1.0 - 0.55 * smoothstep(0.52, 0.70, fbm(rd.xz / (rd.y + 1.2) * 11.0 + 9.0, 3)) * exp(-pow(dot(rd, band) / 0.07, 2.0));   // dark lanes
+    acc += lerp(float3(0.014, 0.017, 0.034), float3(0.024, 0.020, 0.030), fbm(rd.zx * 3.0 + 2.0, 2)) * glow * dust;
+    return acc * smoothstep(0.015, 0.20, rd.y);
 }
-float3 csMoon(float3 rd) { // a small cool moon with a little surface, a halo
-    float  ang = acos(clamp(dot(rd, SUN), -1.0, 1.0));
-    float3 t1 = normalize(cross(SUN, float3(0, 1, 0))), t2 = cross(t1, SUN);
-    float2 q = float2(dot(rd, t1), dot(rd, t2)) / 0.016;
-    float  disc = smoothstep(1.0, 0.86, length(q));
-    float  mare = fbm(q * 2.2 + 5.0, 3);
-    float3 m = float3(1.05, 1.07, 1.12) * (0.95 + 0.5 * smoothstep(0.35, 0.7, mare)) * 1.7 * disc;
-    return m + float3(0.55, 0.66, 1.0) * (exp(-ang * 26.0) * 0.16 + exp(-ang * 6.0) * 0.030);
+float3 csMoon(float3 rd, out float disc) { // the moon: seas and highlands, a darker limb; amber on the horizon, silver high up
+    disc = 0.0;
+    float  mUp = smoothstep(-0.045, 0.01, MOOND.y);
+    [branch] if (mUp <= 0.0) return float3(0.0, 0.0, 0.0);
+    float  ang = acos(clamp(dot(rd, MOOND), -1.0, 1.0));
+    const float R = 0.058;   // a big full moon (Fernando: much bigger than the sun, the thing you look at all night)
+    float3 warm = lerp(float3(1.00, 0.56, 0.26), float3(1.0, 1.0, 1.0), smoothstep(0.02, 0.30, MOOND.y));
+    float3 halo = lerp(float3(1.00, 0.62, 0.36), float3(0.58, 0.72, 1.00), smoothstep(0.02, 0.32, MOOND.y));
+    float3 c = halo * (exp(-ang * 16.0) * 0.26 + exp(-ang * 6.0) * 0.060);
+    [branch] if (ang < R * 1.1) {
+        float3 t1 = normalize(cross(MOOND, float3(0.0, 1.0, 0.0))), t2 = cross(t1, MOOND);
+        float2 q = float2(dot(rd, t1), dot(rd, t2)) / R;
+        float  r = length(q);
+        disc = smoothstep(1.0, 0.94, r);
+        float  seas = smoothstep(0.44, 0.62, fbm(q * 1.15 + float2(5.3, 1.7), 4));       // the maria: a few broad dark plains
+        float  fine = fbm(q * 5.5 + 9.0, 3);
+        float  ray  = smoothstep(0.80, 0.98, vnoise(q * 3.1 + 21.0));                        // a few bright young craters
+        float3 land = float3(0.93, 0.94, 0.97) * (0.84 + 0.22 * fine);
+        float3 sea  = float3(0.56, 0.59, 0.66) * (0.90 + 0.16 * fine);
+        float3 m = lerp(land, sea, seas * 0.85) + ray * 0.10 * (1.0 - seas);
+        m *= 1.0 - 0.30 * pow(r, 3.5);                                                       // limb darkening
+        c = lerp(c, m * warm * 1.02, disc);
+    }
+    return c * mUp;
 }
 // ================================================================ Novak Glass: the sky and the crystal void
 // A clear, cold, high sky - no weather in it, only light: deep cobalt overhead, pale ice at the horizon. The low sun
@@ -1171,29 +1302,32 @@ float3 ngBackground(float3 rd) {
 }
 float3 csBackground(float3 rd, bool withSea) {
     if (NG_IS) return ngBackground(rd);
-    float  mu = dot(rd, SUN);
-    float  ang = acos(clamp(mu, -1.0, 1.0));
-    float3 col = skyBase(rd);
-    float4 hc = highClouds(rd, mu);
-    float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
-    float  disc = smoothstep(0.0125, 0.0095, angD);
-    float3 sun = (float3(3.2, 2.3, 1.25) * disc + float3(1.5, 0.78, 0.30) * exp(-angD * 38.0) * 0.8) * SUNUP;
-    col += sun * (1.0 - hc.a * 0.85);
-    col = csGrade(col * (1.0 - hc.a) + hc.rgb, rd);
-    [branch] if (NIGHT > 0.001) {
-        float  e = max(rd.y, 0.0);
-        float3 nb = lerp(float3(0.040, 0.055, 0.110), float3(0.006, 0.010, 0.032), smoothstep(0.0, 0.45, e));
-        nb = lerp(nb, float3(0.020, 0.030, 0.075), smoothstep(0.0, 0.02, e) * (1.0 - smoothstep(0.02, 0.2, e)) * 0.5);
-        float3 hcN = csGrade(hc.rgb, rd);                   // clouds keep their moonlit shapes over the night gradient
-        col = lerp(col, nb * (1.0 - hc.a) + hcN, NIGHT);
+    float3 tn;
+    float4 hc = highClouds(rd, tn);
+    float3 col = float3(0.0, 0.0, 0.0);
+    [branch] if (WTW < 0.999) {
+        float3 c = skyDay(rd);
+        float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
+        float  disc = smoothstep(0.0125, 0.0095, angD);
+        c += (float3(3.2, 2.3, 1.25) * disc + float3(1.5, 0.78, 0.30) * exp(-angD * 38.0) * 0.8) * SUNUP * (1.0 - hc.a * 0.85);
+        col = csGradeDusk(c * (1.0 - hc.a) + hc.rgb, rd);
     }
-    [branch] if (NIGHT > 0.001) col += (csStars(rd) * (1.0 - hc.a) + csMoon(rd) * (1.0 - hc.a * 0.8)) * NIGHT;
+    [branch] if (WTW > 0.001) {
+        float3 sk = skyTwilight(rd);
+        [branch] if (WNI > 0.001) sk = lerp(sk, skyNight(rd), WNI);
+        float  md;
+        float3 moon = csMoon(rd, md);
+        // stars drown in whatever light the sky still holds (the afterglow, the air round the moon)
+        [branch] if (PHASE > 1.18) sk += csStars(rd) * (1.0 - md) / (1.0 + csLum(sk + moon) * 55.0);
+        float3 t = (sk + moon * (1.0 - hc.a * 0.80)) * (1.0 - hc.a) + moon * hc.a * 0.20 * (1.0 - hc.a * 0.6) + tn;
+        col = lerp(col, t, WTW);
+    }
     [branch] if (withSea) {
         float  tHit;
         float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
         if (sea.a > 0.0) col = sea.rgb;
     }
-    col += csGlow(ang, hc.a);
+    col += csGlow(rd, hc.a);
     return col;
 }
 // the cloud sea alone for a sky pixel: a = 0 where the ray misses it (keep the sky pass's colour)
@@ -1202,6 +1336,5 @@ float4 csSeaPixel(float3 rd) {
     float  tHit;
     float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
     if (sea.a <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
-    float  ang = acos(clamp(dot(rd, SUN), -1.0, 1.0));
-    return float4(sea.rgb + csGlow(ang, 0.0), 1.0);
+    return float4(sea.rgb + csGlow(rd, 0.0), 1.0);
 }
