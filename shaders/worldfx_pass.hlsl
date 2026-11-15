@@ -273,6 +273,71 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
         float3 corner = eA[i].xyz - CAM;
         float3 alb = pow(max(eB[i].rgb, 0.0), 2.2);
         float  seed = eC[i].x;
+        if (kind > 1.5 && kind < 2.5 && !NG_IS) {
+            // 16 Cloud Sea: a placed block arrives as a PUFF OF CLOUD (Fernando, Nov 15: "it starts as a small cloud that
+            // expands and turns into a fluffy cloud block - good for speed bridging"). A small cloud bursts open from
+            // the block's heart and is the block's size in 0.16 s; the block stands in it by then (you can see where
+            // you are building at once); the puff thins, and its last wisps drift up and out for another 0.4 s.
+            const float LEN = 0.60;
+            if (age > LEN) continue;
+            float3 bc = corner + 0.5;
+            if (!nearRay2(rd, bc, 1.7)) continue;
+            float  g    = 1.0 - pow(saturate(1.0 - age / 0.16), 3.0);          // the burst (fast out, easing)
+            float  away = smoothstep(0.16, LEN, age);                          // the wisps leaving
+            float  dens = 1.0 - smoothstep(0.20, LEN - 0.02, age);
+            float3 hue  = alb / max(max(alb.r, max(alb.g, alb.b)), 0.05);
+            float3 lin  = hit ? col : pow(max(col0, 0.0), 2.2);
+            float  tLim = min(sceneT, best);
+            // the block itself: hidden inside the first breath of the puff, standing there by 0.14 s
+            float  tN; float3 nl, lp;
+            bool   inCell = hitBox(rd, bc, float3(0.503, 0.503, 0.503), float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), tN, nl, lp);
+            float  blockK = smoothstep(0.03, 0.14, age);
+            [branch] if (inCell && blockK < 1.0) {
+                float3 inv = 1.0 / select(abs(rd) > 1e-6, rd, 1e-6);
+                float3 t1 = (corner + 1.0) * inv, t0 = corner * inv;
+                float  tF = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
+                if (sceneT >= tN - 0.03 && sceneT <= tF + 0.03) {              // this pixel's surface IS the new block
+                    float3 bg = pow(max(toDisplay(csBackground(rd, true)), 0.0), 2.2);
+                    lin = lerp(bg, lin, blockK);
+                    if (blockK < 0.5) tLim = 1e9;                              // (the puff's far side shows through it too)
+                }
+            }
+            // the puff: seven soft heaps round the block's heart. Per heap: how much cloud this ray passes through
+            // (thinner toward the heap's ragged rim), and which way that surface faces - for the light on it
+            float  T = 0.0; float3 nAcc = float3(0.0, 0.0, 0.0);
+            [loop] for (int k = 0; k < 7; k++) {
+                float  sk = seed * 0.001 + float(k) * 3.71;
+                float3 dir = k == 0 ? float3(0.0, 0.0, 0.0) : normalize(float3(h1(sk), h1(sk + 1.0), h1(sk + 2.0)) - 0.5);
+                float3 c  = bc + dir * (0.30 * g + 0.40 * away) + float3(0.0, 0.20 * away, 0.0);
+                float  r  = (k == 0 ? 0.60 : 0.40 + 0.14 * h1(sk + 3.0)) * g * (1.0 - 0.55 * away);
+                float  tc = dot(c, rd);
+                if (tc < 0.0 || r < 0.01) continue;
+                float3 pn = rd * tc - c;
+                float  rr = r * (0.84 + 0.30 * vnoise(pn.xy * 6.0 + pn.z * 3.7 + sk * 5.0));   // a ragged, billowy rim
+                float  b2 = dot(pn, pn);
+                if (b2 >= rr * rr) continue;
+                float  h  = sqrt(rr * rr - b2);
+                float  ta = tc - h, tb = min(tc + h, tLim);
+                if (tb <= ta) continue;
+                float  th = (tb - ta) * (1.0 - b2 / (rr * rr));
+                T += th; nAcc += normalize(pn - rd * h) * th;
+            }
+            [branch] if (T > 1e-4) {
+                float3 nC  = normalize(nAcc);
+                float  lit = saturate(dot(nC, normalize(SUN + float3(0.0, 0.6, 0.0))) * 0.5 + 0.5);
+                // lit like the clouds it belongs to: a warm white crest (moon silver at night), lavender shade, the
+                // block's own colour breathed into it; thin edges glow
+                float3 crest = lerp(lerp(float3(1.00, 0.93, 0.80), float3(1.00, 0.78, 0.66), DUSK), float3(0.60, 0.70, 0.95), NIGHT);
+                float3 shade = lerp(lerp(float3(0.52, 0.46, 0.66), float3(0.40, 0.30, 0.50), DUSK), float3(0.16, 0.20, 0.38), NIGHT);
+                float3 pc = lerp(shade, crest, smoothstep(0.18, 0.88, lit));
+                pc = lerp(pc, pc * (0.45 + 0.75 * hue), 0.34);
+                pc += crest * 0.22 * (1.0 - saturate(T * 2.6));
+                float  a = (1.0 - exp(-T * 5.5)) * dens;
+                lin = lerp(lin, pc, a);
+            }
+            col = lin; best = min(sceneT, best); hit = true;
+            continue;
+        }
         if (kind > 1.5 && kind < 2.5) {
             // placed: it MATERIALIZES. For 0.42 s the block is not there - its cell is a hologram: you see through it
             // (dark glass, scanlines, a wireframe), while the block builds itself inside out of 512 small voxels of
@@ -1875,6 +1940,38 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
             float3 rdv = normalize(P);
             rdv.y = min(rdv.y, -0.02);
             o = lerp(o, toDisplay(ngVoid(CAM, normalize(rdv), PHASE > 1.45 ? SUN : SUNDISC)), kv);
+        }
+    }
+#endif
+#if NG_ATMOS != 1
+    // ---- 16 Cloud Sea, cloud blocks: soft silhouettes (the faces were cloud, the outline was still a hard cube). Where
+    //      a block's edge has open sky right behind it, the edge is nibbled into soft scallops - the sky shows through
+    //      a ragged band at most 1/12 of a block deep. Worked out on the block's own face (how far this pixel is from
+    //      the face's nearest edge), so the scallops stay put on the block as you move; joints between blocks and
+    //      edges with anything but sky behind them are never touched.
+    [branch] if (!NG_IS && c8.w > 0.5 && z < 36.0 && max(abs(n.x), max(abs(n.y), abs(n.z))) > 0.9995) {
+        float3 W  = CAM + P;
+        float3 ax = abs(n.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0);
+        float3 ay = abs(n.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+        float2 tp = float2(dot(W, ax), dot(W, ay)), f = frac(tp);
+        float  dE = f.x; float3 dir = -ax; float along = tp.y;
+        if (1.0 - f.x < dE) { dE = 1.0 - f.x; dir = ax; }
+        if (f.y < dE)       { dE = f.y; dir = -ay; along = tp.x; }
+        if (1.0 - f.y < dE) { dE = 1.0 - f.y; dir = ay; along = tp.x; }
+        const float WMAX = 0.085;
+        [branch] if (dE < WMAX) {
+            float prof = vnoise(float2(along * 3.3 + dot(dir, float3(5.1, 9.7, 3.3)), dot(W, abs(n)) * 1.7 + 4.0));
+            float wS = WMAX * (0.25 + 0.75 * prof) * smoothstep(36.0, 22.0, z);
+            [branch] if (dE < wS) {
+                float3 q1 = toPx(P + dir * (dE + 0.045) - n * 0.02), q2 = toPx(P + dir * (dE + 0.16) - n * 0.02);
+                [branch] if (q1.z > 0.0 && q2.z > 0.0 && isSky(rawDepth(int2(q1.xy))) && isSky(rawDepth(int2(q2.xy)))) {
+                    QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = 0.0;
+                    float4 seaS = (rdT.y > 0.02 && rdT.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rdT);
+                    float3 bgS;
+                    [branch] if (seaS.a > 0.0) bgS = toDisplay(seaS.rgb); else bgS = toDisplay(csBackground(rdT, false));
+                    o = lerp(o, bgS, smoothstep(wS, wS * 0.40, dE) * 0.94);
+                }
+            }
         }
     }
 #endif
