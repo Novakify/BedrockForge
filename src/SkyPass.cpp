@@ -2242,11 +2242,11 @@ void setUnderwater(bool on) { gUnderwater.store(on, std::memory_order_relaxed); 
 std::atomic<size_t>   gFxRt{0}, gFxDs{0};
 // every (colour, depth) target pair the pass has run on: the game may swap between two sets of world targets frame to
 // frame - a single remembered pair let the looking-down fallback run on every other frame only (the flicker)
-std::atomic<size_t>   gFxPairRt[4]{}, gFxPairDs[4]{};
+std::atomic<size_t>   gFxPairRt[8]{}, gFxPairDs[8]{};
 std::atomic<int>      gFxPairNext{0};
 void   rememberFxPair(size_t rt, size_t ds) {
-    for (int i = 0; i < 4; ++i) if (gFxPairDs[i].load() == ds) { gFxPairRt[i] = rt; return; }
-    int const i = gFxPairNext.fetch_add(1) & 3;
+    for (int i = 0; i < 8; ++i) if (gFxPairDs[i].load() == ds) { gFxPairRt[i] = rt; return; }
+    int const i = gFxPairNext.fetch_add(1) & 7;
     gFxPairDs[i] = ds, gFxPairRt[i] = rt;
 }
 // (colour, depth) target pairs the GAME bound lately (OMSetRenderTargets): a handle we did not see the game bind this
@@ -2265,7 +2265,7 @@ bool seenRecently(size_t rt, size_t ds, int64_t within) {
 bool worldClearColour(size_t rtv, float const* game, float out[4]) {
     if (!gWorldSky.load(std::memory_order_relaxed) || !rtv) return false;
     bool isWorld = false;
-    for (int i = 0; i < 4; ++i) if (gFxPairRt[i].load(std::memory_order_relaxed) == rtv) isWorld = true;
+    for (int i = 0; i < 8; ++i) if (gFxPairRt[i].load(std::memory_order_relaxed) == rtv) isWorld = true;
     if (!isWorld) return false;
     auto ss = [](float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); };
     float const k = gWorldPhase.load(std::memory_order_relaxed);
@@ -2294,7 +2294,7 @@ void noteTargetsBound(size_t rt, size_t ds) {
     gSeen[oldest] = {rt, ds, t};
 }
 size_t fxPairRt(size_t ds) {   // 0: not a world depth buffer
-    for (int i = 0; i < 4; ++i) if (gFxPairDs[i].load(std::memory_order_relaxed) == ds) return gFxPairRt[i].load(std::memory_order_relaxed);
+    for (int i = 0; i < 8; ++i) if (gFxPairDs[i].load(std::memory_order_relaxed) == ds) return gFxPairRt[i].load(std::memory_order_relaxed);
     return 0;
 }
 std::atomic<long> gDbgClears{0}, gDbgFbOk{0}, gDbgFbNo{0}, gDbgCloud{0}, gDbgStale{0}, gDbgDome{0};
@@ -2520,10 +2520,30 @@ void lookDownFrameTick() {   // once per Present: did any path draw the pass thi
                   ", skipped: already done " + std::to_string(gLvDone.exchange(0)) + ", not world targets " + std::to_string(gLvPair.exchange(0)) +
                   ", clouds recent " + std::to_string(gLvCloud.exchange(0)) + ", no pso " + std::to_string(gLvNoPso.exchange(0)));
 }
+// Measured on the Hive (Nov 14): looking down, the game draws the world into OTHER colour + depth targets than the one
+// pair the cloud pass taught us (3 of 4 world lists, "not world targets") - those frames had no pass at all: the
+// flicker, both skies. A list the game itself drew blocks into, on targets of the very same size and format as the
+// known world pair, is the world too: learn it.
+bool learnWorldPair(size_t rt, size_t ds) {
+    size_t const krt = gFxRt.load(), kds = gFxDs.load();
+    if (!rt || !ds || !krt || !kds) return false;
+    ID3D12Resource* a = rf::uicapture::rtvResourceOf(rt);
+    ID3D12Resource* b = rf::uicapture::rtvResourceOf(krt);
+    ID3D12Resource* da = rf::glassarmor::dsvResource(ds);
+    ID3D12Resource* db = rf::glassarmor::dsvResource(kds);
+    if (!a || !b || !da || !db) return false;
+    auto const ra = a->GetDesc(), rb = b->GetDesc(), sa = da->GetDesc(), sb = db->GetDesc();
+    if (ra.Width != rb.Width || ra.Height != rb.Height || ra.Format != rb.Format) return false;
+    if (sa.Width != sb.Width || sa.Height != sb.Height || sa.Format != sb.Format) return false;
+    rememberFxPair(rt, ds);
+    static std::atomic<int> n{0};
+    if (n.fetch_add(1) < 8) ll_shim::info("[RF] World FX: another world target pair learned (" + std::to_string(ra.Width) + "x" + std::to_string(ra.Height) + ")");
+    return true;
+}
 bool leaveWorldWanted(size_t rt, size_t ds) {
     if (!rt || !gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed)) { ++gLvNoPso; return false; }
     if (gFxSinceClear.load()) { ++gLvDone; return false; }
-    if (fxPairRt(ds) != rt) { ++gLvPair; return false; }         // only the world's own targets
+    if (fxPairRt(ds) != rt && !learnWorldPair(rt, ds)) { ++gLvPair; return false; }   // only the world's own targets
     if (nowMsSky() - gLastCloudPassMs.load() < 60) { ++gLvCloud; return false; }   // the clouds are being drawn: the normal pass runs
     return true;
 }
