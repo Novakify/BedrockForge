@@ -2238,7 +2238,11 @@ float adaptQuality() {
 // effects) would vanish. Then it runs at the frame's first UI draw instead, on the same targets (one per frame, never both)
 std::atomic<uint64_t> gFxRanNo{~0ull}, gFxFallbackNo{~0ull};
 std::atomic<bool>     gUnderwater{false};
-void setUnderwater(bool on) { gUnderwater.store(on, std::memory_order_relaxed); }
+void setUnderwater(bool on) {
+    static std::atomic<bool> first{true};
+    if (first.exchange(false)) ll_shim::info("[RF] World FX: watching the camera for water (client thread)");
+    if (gUnderwater.exchange(on, std::memory_order_relaxed) != on) ll_shim::info(std::string("[RF] World FX: under water ") + (on ? "- the pass draws the water" : "- out of the water"));
+}
 std::atomic<size_t>   gFxRt{0}, gFxDs{0};
 // every (colour, depth) target pair the pass has run on: the game may swap between two sets of world targets frame to
 // frame - a single remembered pair let the looking-down fallback run on every other frame only (the flicker)

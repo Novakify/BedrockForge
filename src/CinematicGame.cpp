@@ -70,7 +70,12 @@ bool playerState(double feet[3], float& yaw, float& pitch, bool& alive) {
 
 bool headUnderWater() {
     Actor* a = player();
-    return a && a->isUnderLiquid(::SharedTypes::v1_26_20::MaterialType::Water);
+    if (!a) return false;
+    if (a->isUnderLiquid(::SharedTypes::v1_26_20::MaterialType::Water)) return true;
+    // the block at the eye itself (seen in game: the call above said no with the head in a pool - the water look never came)
+    Vec3 e = a->getEyePos();
+    std::string const n = a->getDimensionBlockSource().getBlock(BlockPos(int(std::floor(e.x)), int(std::floor(e.y)), int(std::floor(e.z)))).getTypeName();
+    return n.find("water") != std::string::npos;
 }
 
 bool creative() {
