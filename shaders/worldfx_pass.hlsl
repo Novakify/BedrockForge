@@ -106,7 +106,7 @@ float3 sunShafts(int2 px, float j) {
     // a quick look first: 4 taps along the line. All open (sky all the way to the sun) or all blocked is the answer
     // for most pixels; only pixels near an edge pay for the full march. (Measured: the march cost +1.6 ms at 4K with
     // the sun on screen.)
-    [branch] if (NG_IS) {                                      // (Novak only: Cloud Sea stays exactly as signed off)
+    {                                                          // (Cloud Sea too since Nov 15: with the moon on screen the full march on every pixel was +3 ms)
         int nOpen = 0;
         [unroll] for (int s4 = 0; s4 < 4; s4++) {
             float2 q = float2(px) + stepv * (float(N) * (0.12 + 0.26 * float(s4)) + j);
@@ -116,6 +116,7 @@ float3 sunShafts(int2 px, float j) {
         [branch] if (nOpen == 0 || nOpen == 4) {
             float open = nOpen == 4 ? 1.0 : 0.0;
             float beam = open * near * near * (0.6 + 0.4 * near);
+            if (!NG_IS) return lerp(float3(1.00, 0.58, 0.26), float3(0.45, 0.56, 0.85), NIGHT) * beam * c9.x;
             return lerp(lerp(float3(1.00, 0.96, 0.88) * 0.55, float3(0.95, 0.50, 0.60) * 0.6, DUSK), float3(0.50, 0.48, 0.95) * 0.8, NIGHT) * beam * c9.x;
         }
     }
