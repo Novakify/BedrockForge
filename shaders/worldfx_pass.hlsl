@@ -1561,6 +1561,27 @@ float3 ngRain(float3 rd) {
 float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inout float moT, inout float3 moAdd) {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
+    // a hairline crack between two blocks (the game's geometry leaves 1-pixel gaps; the upscale widens them): "sky" with
+    // the same surface right on both sides. Seen on flat Cloud Sea floors as broken bright dashes - the sea showing
+    // through the floor. It takes the surface's colour instead.
+    [branch] if (isSky(d)) {
+        [unroll] for (int ax = 0; ax < 2; ax++) {
+            int2  o  = ax == 0 ? int2(1, 0) : int2(0, 1);
+            float da = rawDepth(px - o), db = rawDepth(px + o);
+            int2  oa = -o, ob = o;
+            if (isSky(da)) { da = rawDepth(px - 2 * o); oa = -2 * o; }
+            if (isSky(db)) { db = rawDepth(px + 2 * o); ob = 2 * o; }
+            if (!isSky(da) && !isSky(db)) {
+                float za = viewZ(da), zb = viewZ(db);
+                if (abs(za - zb) < 0.06 * min(za, zb) + 0.3) {
+                    CAM = c7.xyz; TIME = c8.z;
+                    MO = true; moO = 0.5 * (sceneAt(px + oa).rgb + sceneAt(px + ob).rgb);
+                    moRd = normalize(posAt(float2(px) + 0.5, 1.0)); moT = 0.5 * (za + zb); moAdd = 0;
+                    return float4(0, 0, 0, 1);
+                }
+            }
+        }
+    }
     // an impact frame replaces the picture: skip the sky, shadows and every other effect while it is up
     [branch] if (m1.z > 0.5 && impactLive()) {
         CAM = c7.xyz;
