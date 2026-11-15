@@ -121,7 +121,7 @@ float3 skyTwilight(float3 d) {
     float  bh   = lerp(0.075, 0.16, kk);                                // the shadow rises as the sun sinks
     hor = lerp(hor, float3(0.070, 0.082, 0.170), away * (1.0 - smoothstep(bh * 0.55, bh, e)));
     float3 c = lerp(hor, mid, smoothstep(0.0, 0.26, e));
-    c += float3(0.300, 0.135, 0.200) * away * exp(-pow((e - bh * 1.25) / (bh * 0.60), 2.0)) * 0.85;
+    c += float3(0.300, 0.125, 0.190) * away * exp(-pow((e - bh * 1.25) / (bh * 0.60), 2.0)) * 1.25;
     c = lerp(c, zen, smoothstep(0.08, 0.70, e));
     // the afterglow
     float  die = pow(1.0 - kk, 0.80);                                   // the ember outlasts the blue hour
@@ -217,7 +217,7 @@ float4 highClouds(float3 d, out float3 tn) {
             litN = saturate(lerp(frontM, backM, smoothstep(0.25, 0.80, sideM)) * (1.0 + 0.7 * ripple * near));
         }
         float3 shadeT = lerp(float3(0.046, 0.044, 0.112), float3(0.0080, 0.0125, 0.0380), smoothstep(0.0, 0.7, TWK));
-        float3 litS = lerp(float3(0.30, 0.085, 0.150), float3(1.00, 0.230, 0.095), pow(sunSide, 2.0)) * lerp(1.0, 0.55, TWK) * SUNI;
+        float3 litS = lerp(float3(0.215, 0.090, 0.215), float3(1.00, 0.230, 0.095), pow(sunSide, 2.0)) * lerp(1.0, 0.55, TWK) * SUNI;
         float  sideL = muL * 0.5 + 0.5;
         float3 litM = (float3(0.150, 0.200, 0.330) * lerp(0.55, 1.0, sideL) + float3(0.80, 0.92, 1.20) * pow(max(muL, 0.0), 10.0) * 0.85) * MOONI;
         float3 colT = shadeT + (litS + litM) * litN + float3(0.010, 0.016, 0.036) * MOONI;
@@ -401,8 +401,8 @@ float3 csStars(float3 rd) {
             float  mag = layer == 0 ? 0.45 + 1.15 * m * m * m : (layer == 1 ? 0.07 + 0.34 * m * m : 0.030 + 0.10 * m);
             float  rank = layer == 0 ? 0.55 + 0.45 * m : (layer == 1 ? 0.22 + 0.33 * m : 0.20 * m);   // who is seen first
             float  on = smoothstep(1.0 - vis * 1.15, 1.0 - vis * 1.15 + 0.22, rank);
-            float  tw = 1.0 - (layer == 2 ? 0.18 : 0.34) * (0.5 + 0.5 * sin(TIME * (0.9 + 2.4 * frac(h * 91.7)) + h * 61.0));
-            float  hk = frac(h * 37.0);
+            float  tw = 1.0 - (layer == 2 ? 0.18 : 0.34) * (0.5 + 0.5 * sin(TIME * (0.9 + 2.4 * hk) + hk * 61.0));
+            float  hk = hash13(cell + 29.3 + 5.0 * float(layer));       // (its own hash: frac(h * 37) of a value that is always near 1 made every bright star orange)
             float3 tint = hk < 0.70 ? lerp(float3(0.84, 0.90, 1.08), float3(1.0, 1.0, 1.0), hk / 0.70) : lerp(float3(1.03, 0.98, 0.90), float3(1.08, 0.90, 0.76), (hk - 0.70) / 0.30);
             float  fall = layer == 0 ? 10.0 : (layer == 1 ? 26.0 : 60.0);
             float  core = exp(-a * a * fall * 9.0) + (layer == 0 ? 0.16 * exp(-a * a * fall) : 0.0);
@@ -419,7 +419,7 @@ float3 csMoon(float3 rd, out float disc) { // the moon: seas and highlands, a da
     float  mUp = smoothstep(-0.045, 0.01, MOOND.y);
     [branch] if (mUp <= 0.0) return float3(0.0, 0.0, 0.0);
     float  ang = acos(clamp(dot(rd, MOOND), -1.0, 1.0));
-    const float R = 0.058;   // a big full moon (Fernando: much bigger than the sun, the thing you look at all night)
+    const float R = 0.086;   // a big full moon (Fernando: much bigger than the sun, the thing you look at all night)
     float3 warm = lerp(float3(1.00, 0.56, 0.26), float3(1.0, 1.0, 1.0), smoothstep(0.02, 0.30, MOOND.y));
     float3 halo = lerp(float3(1.00, 0.62, 0.36), float3(0.58, 0.72, 1.00), smoothstep(0.02, 0.32, MOOND.y));
     float3 c = halo * (exp(-ang * 16.0) * 0.26 + exp(-ang * 6.0) * 0.060);
@@ -433,11 +433,11 @@ float3 csMoon(float3 rd, out float disc) { // the moon: seas and highlands, a da
         float  seas = smoothstep(0.44, 0.62, fbm(q * 1.15 + float2(5.3, 1.7), 4));       // the maria: a few broad dark plains
         float  fine = fbm(q * 5.5 + 9.0, 3);
         float  ray  = smoothstep(0.80, 0.98, vnoise(q * 3.1 + 21.0));                        // a few bright young craters
-        float3 land = float3(0.93, 0.94, 0.97) * (0.84 + 0.22 * fine);
-        float3 sea  = float3(0.56, 0.59, 0.66) * (0.90 + 0.16 * fine);
-        float3 m = lerp(land, sea, seas * 0.85) + ray * 0.10 * (1.0 - seas);
-        m *= 1.0 - 0.30 * pow(r, 3.5);                                                       // limb darkening
-        c = lerp(c, m * warm * 1.02, disc);
+        float3 land = float3(0.80, 0.79, 0.76) * (0.80 + 0.30 * fine);                        // highlands: a warm pearl
+        float3 sea  = float3(0.36, 0.40, 0.49) * (0.86 + 0.22 * fine);                        // the seas: blue-grey basalt
+        float3 m = lerp(land, sea, seas * 0.90) + ray * 0.16 * (1.0 - seas);
+        m *= 1.0 - 0.38 * pow(r, 3.0);                                                       // limb darkening
+        c = lerp(c, m * warm, disc);
     }
     return c * mUp;
 }
