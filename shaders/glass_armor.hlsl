@@ -377,8 +377,8 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
         float  bev  = e * (max(dot(n, Lc), 0.0) * 0.34 - max(dot(n, -Lc), 0.0) * 0.26);
         float3 body = pearl * (dome + bev) * lerp(0.98, 0.80, moonK);
         // the light under the glaze (a smooth field over the plate, in texels)
-        float2 q  = t * 0.42 + float2(float(fi) * 3.1, 0.0);
-        float2 qa = q + float2(0.0, -time * 0.16), qb = q * 2.3 + float2(time * 0.11, time * 0.21);
+        float2 q  = t * 0.17 + float2(float(fi) * 3.1, 0.0);   // (broad: one slow glow per plate - smaller patches read as marbling, not clean)
+        float2 qa = q + float2(0.0, -time * 0.07), qb = q * 2.3 + float2(time * 0.05, time * 0.09);
         float2 ia = floor(qa), fa = frac(qa); fa = fa * fa * (3.0 - 2.0 * fa);
         float2 ib = floor(qb), fb = frac(qb); fb = fb * fb * (3.0 - 2.0 * fb);
         float  na = lerp(lerp(gaHash(ia), gaHash(ia + float2(1, 0)), fa.x), lerp(gaHash(ia + float2(0, 1)), gaHash(ia + float2(1, 1)), fa.x), fa.y);
@@ -389,7 +389,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
         float  mare = smoothstep(0.42, 0.62, lerp(lerp(gaHash(im), gaHash(im + float2(1, 0)), fm.x), lerp(gaHash(im + float2(0, 1)), gaHash(im + float2(1, 1)), fm.x), fm.y));
         float  sheen = exp(-pow((frac((uvf.x * 0.6 + uvf.y) * 0.5 + float(fi) * 0.13 - time * 0.05) - 0.5) / 0.10, 2.0));
         float3 sunC = lerp(float3(1.00, 0.74, 0.30), float3(1.00, 0.44, 0.20), dusk);
-        body += (sunC * heat * heat * lerp(0.26, 0.20, dusk) + float3(1.00, 0.95, 0.80) * pow(heat, 4.0) * lerp(0.07, 0.03, dusk)) * (1.0 - moonK);
+        body += (sunC * heat * heat * lerp(0.15, 0.13, dusk) + float3(1.00, 0.95, 0.80) * pow(heat, 4.0) * lerp(0.03, 0.015, dusk)) * (1.0 - moonK);
         body  = lerp(body, body * (1.0 - 0.22 * mare) + float3(0.62, 0.76, 1.00) * (0.07 + 0.26 * sheen), moonK);
         // the trim: a fine metal line round every plate and a pinstripe inside it - gold, rose gold, moon silver
         float3 metalC = lerp(lerp(float3(1.00, 0.72, 0.30), float3(1.00, 0.56, 0.42), dusk), float3(0.80, 0.88, 1.00), moonK);
