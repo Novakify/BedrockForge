@@ -370,7 +370,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
         float3 hueV = baseEdge / max(max(max(baseEdge.r, baseEdge.g), baseEdge.b), 1e-3);
         float2 uvf = p / max(fs, 1.0);
         // the glaze: pearl with the piece's colour fired in (the team's dye reads strongest)
-        float3 pearl = lerp(lerp(float3(1.00, 0.93, 0.80), float3(0.80, 0.87, 1.00), moonK), hueV, lerp(0.30, 0.62, dyeK));
+        float3 pearl = lerp(lerp(float3(1.00, 0.93, 0.80), float3(0.80, 0.87, 1.00), moonK), hueV, lerp(lerp(0.30, 0.22, moonK), 0.62, dyeK));
         // each plate a shallow dome under a light from the upper left; its bevel catches that light on one side
         float2 Lc  = normalize(float2(-0.45, -0.89));
         float  dome = 0.80 + 0.22 * (1.0 - uvf.y) - 0.10 * abs(uvf.x - 0.42);
@@ -383,13 +383,13 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
         float2 ib = floor(qb), fb = frac(qb); fb = fb * fb * (3.0 - 2.0 * fb);
         float  na = lerp(lerp(gaHash(ia), gaHash(ia + float2(1, 0)), fa.x), lerp(gaHash(ia + float2(0, 1)), gaHash(ia + float2(1, 1)), fa.x), fa.y);
         float  nb = lerp(lerp(gaHash(ib), gaHash(ib + float2(1, 0)), fb.x), lerp(gaHash(ib + float2(0, 1)), gaHash(ib + float2(1, 1)), fb.x), fb.y);
-        float  heat = smoothstep(0.30, 0.82, na * 0.62 + nb * 0.38);
+        float  heat = smoothstep(0.18, 0.96, na * 0.62 + nb * 0.38);   // (soft: with a tighter step the light under the glaze read as blotches, like a cow's hide)
         float2 qm = t * 0.36 + float2(float(fi) * 5.7, 2.0);
         float2 im = floor(qm), fm = frac(qm); fm = fm * fm * (3.0 - 2.0 * fm);
         float  mare = smoothstep(0.42, 0.62, lerp(lerp(gaHash(im), gaHash(im + float2(1, 0)), fm.x), lerp(gaHash(im + float2(0, 1)), gaHash(im + float2(1, 1)), fm.x), fm.y));
         float  sheen = exp(-pow((frac((uvf.x * 0.6 + uvf.y) * 0.5 + float(fi) * 0.13 - time * 0.05) - 0.5) / 0.10, 2.0));
         float3 sunC = lerp(float3(1.00, 0.74, 0.30), float3(1.00, 0.44, 0.20), dusk);
-        body += (sunC * heat * heat * lerp(0.26, 0.20, dusk) + float3(1.00, 0.95, 0.80) * pow(heat, 4.0) * lerp(0.16, 0.05, dusk)) * (1.0 - moonK);
+        body += (sunC * heat * heat * lerp(0.26, 0.20, dusk) + float3(1.00, 0.95, 0.80) * pow(heat, 4.0) * lerp(0.07, 0.03, dusk)) * (1.0 - moonK);
         body  = lerp(body, body * (1.0 - 0.22 * mare) + float3(0.62, 0.76, 1.00) * (0.07 + 0.26 * sheen), moonK);
         // the trim: a fine metal line round every plate and a pinstripe inside it - gold, rose gold, moon silver
         float3 metalC = lerp(lerp(float3(1.00, 0.72, 0.30), float3(1.00, 0.56, 0.42), dusk), float3(0.80, 0.88, 1.00), moonK);
@@ -398,7 +398,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
         float  aaC = max(fwidth(dIn), 1e-4) * 1.1;
         float  trim = 1.0 - smoothstep(0.20 - aaC, 0.20 + aaC, dIn);
         float  pin  = (1.0 - smoothstep(0.07, 0.07 + aaC, abs(dIn - 0.62))) * smoothstep(3.0, 7.0, pxPerTexel);   // (only where a texel is big enough to carry it)
-        float3 metal = metalC * (0.80 + 0.45 * run + 0.9 * ench + 0.25 * max(dot(n, Lc), 0.0));
+        float3 metal = metalC * (lerp(0.80, 0.95, moonK) + 0.45 * run + 0.9 * ench + 0.25 * max(dot(n, Lc), 0.0));
         float3 cc = lerp(body, metal * 0.92, pin * 0.75);
         cc = lerp(cc, metal, trim);
         cc += flashCol * flash * mus * 0.5;
