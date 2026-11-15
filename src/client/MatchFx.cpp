@@ -30,6 +30,7 @@
 #include "mc/legacy/ActorRuntimeID.h"
 #include "mc/deps/vanilla_components/StateVectorComponent.h"
 #include "mc/world/actor/player/Player.h"
+#include "mc/world/actor/player/PlayerListEntry.h"
 #include "mc/world/actor/player/SerializedSkinRef.h"
 #include "mc/world/actor/player/SerializedSkinImpl.h"
 #include "mc/world/actor/player/SkinImage.h"
@@ -159,6 +160,82 @@ Bed* bedNear(int x, int y, int z) { // a bed is two blocks: both halves are one 
     return nullptr;
 }
 
+// ---- who is still in the match (Fernando, Nov 15: lobbies that are not full, people leaving mid-game, and SkyWars -
+//      no beds at all, nobody comes back). Beds alone can't tell any of that. The roster is everyone in the tab list
+//      when the match starts; a player is OUT once the server's kill line says so for good (any kill where nobody
+//      respawns - SkyWars and the like; a FINAL kill in Bed Wars) or once they are gone from the tab list (left).
+//      The sky follows the share of players still in it, with the clock as a floor - so every scene plays whatever
+//      the lobby's size and whoever leaves.
+std::string lower(std::string const& m);
+std::string gMyName;   // the local player's name as chat spells it (lower case)
+struct Roster {
+    std::vector<std::string> names;      // lower case, as chat spells them
+    std::vector<char>        out, left;  // per name
+    int64_t startMs = 0;                 // when the match began (arrival on the map)
+    int     kills = 0;                   // kill lines that named someone on the roster
+    bool    over = false;                // the server said the game is over
+    int     start() const { return int(names.size()); }
+    int     gone() const { int n = 0; for (size_t i = 0; i < names.size(); ++i) n += (out[i] || left[i]) ? 1 : 0; return n; }
+} gRoster;
+bool gLms = false;   // a last-one-standing game (SkyWars...): no beds here, and the server has started naming the dead
+void rosterReset() { gRoster = Roster{}; gLms = false; }
+// the tab list, once a second: the roster fills during the match's first 20 s, after that it only loses people
+void rosterPoll(LocalPlayer& lp, int64_t now) {
+    static int64_t last = 0;
+    if (now - last < 1000) return;
+    last = now;
+    std::vector<std::string> cur;
+    try { gMyName = lower(static_cast<Player&>(lp).getRealName()); } catch (...) {}
+    try {
+        for (auto const& [uuid, entry] : lp.getLevel().getPlayerList()) { (void)uuid; std::string n = lower(*entry.mName); if (n.size() >= 3) cur.push_back(std::move(n)); }
+    } catch (...) { return; }
+    if (!gRoster.startMs) gRoster.startMs = now;
+    if (now - gRoster.startMs < 20000 && gRoster.kills == 0) {
+        for (auto& n : cur)
+            if (std::find(gRoster.names.begin(), gRoster.names.end(), n) == gRoster.names.end() && gRoster.names.size() < 64) {
+                gRoster.names.push_back(n); gRoster.out.push_back(0); gRoster.left.push_back(0);
+            }
+        return;
+    }
+    if (cur.empty()) return;   // (a loading screen: nobody "left")
+    for (size_t i = 0; i < gRoster.names.size(); ++i) {
+        bool const here = std::find(cur.begin(), cur.end(), gRoster.names[i]) != cur.end();
+        if (!here && !gRoster.left[i]) { gRoster.left[i] = 1; note("roster: {} left ({} of {} still in)", gRoster.names[i], gRoster.start() - gRoster.gone(), gRoster.start()); }
+        if (here && gRoster.left[i] && !gRoster.out[i]) gRoster.left[i] = 0;   // back (a reconnect)
+    }
+}
+// a kill line: who did it take out? ("b was killed by a": the first name; "a killed b" / "a eliminated b": the last)
+void rosterKill(std::string const& s, bool fin, bool you, std::string const& me) {
+    if (gRoster.names.empty()) return;
+    size_t first = std::string::npos, lastAt = 0; int iFirst = -1, iLast = -1, n = 0;
+    for (size_t i = 0; i < gRoster.names.size(); ++i) {
+        size_t at = s.find(gRoster.names[i]);
+        if (you && gRoster.names[i] == me) at = 0;
+        if (at == std::string::npos) continue;
+        ++n;
+        if (at < first) first = at, iFirst = int(i);
+        if (at >= lastAt) lastAt = at, iLast = int(i);
+    }
+    if (n == 0) return;
+    ++gRoster.kills;
+    if (!gIsMap && gBeds.empty() && !gLms && gRoster.start() >= 3) { gLms = true; note("no beds here and the server names the dead: a last-one-standing match (SkyWars...), {} players", gRoster.start()); }
+    if (gIsMap && !fin) return;                              // Bed Wars: they respawn unless it was final
+    int const v = (s.find(" by ") != std::string::npos || you) ? iFirst : iLast;
+    if (v >= 0 && !gRoster.out[size_t(v)]) {
+        gRoster.out[size_t(v)] = 1;
+        note("roster: {} is out ({} of {} still in)", gRoster.names[size_t(v)], gRoster.start() - gRoster.gone(), gRoster.start());
+    }
+}
+// same match after a big jump? (SkyWars: dying sends you off to spectate - a teleport, with no beds to recognise the map by)
+bool rosterSameMatch(LocalPlayer& lp) {
+    if (!gLms || gRoster.over || gRoster.start() < 3) return false;
+    int here = 0;
+    try {
+        for (auto const& [uuid, entry] : lp.getLevel().getPlayerList()) { (void)uuid; if (std::find(gRoster.names.begin(), gRoster.names.end(), lower(*entry.mName)) != gRoster.names.end()) ++here; }
+    } catch (...) { return false; }
+    return here * 2 >= gRoster.start() - gRoster.gone() && here >= 2;
+}
+
 void retarget() { // living match sky: start golden, 4 beds down -> dusk, one (or no) bed left -> night
     int alive = 0;
     for (auto& b : gBeds) alive += b.alive ? 1 : 0;
@@ -168,6 +245,23 @@ void retarget() { // living match sky: start golden, 4 beds down -> dusk, one (o
     uint32_t const need = gBeds.size() >= 8 ? 4u : std::max<uint32_t>(2u, uint32_t(gBeds.size() + 1) / 2u);
     if (gBroken >= need && gIsMap) t = 1;
     if (gBroken >= 1 && gBeds.size() >= 2 && alive <= 1) t = 2;
+    // the players (any lobby size, leavers, SkyWars): dusk once 40% are out, night for the last quarter (at least the
+    // last two). Bed Wars is slower to call it - a final kill is rarer than a SkyWars death: half out, then a quarter left.
+    if ((gIsMap || gLms) && gRoster.start() >= 3 && !gRoster.over) {
+        int const   st = gRoster.start(), in = st - gRoster.gone();
+        float const frac = float(in) / float(st);
+        if (gLms) {
+            if (frac <= 0.60f) t = std::max(t, 1.0f);
+            if (in <= std::max(2, (st + 2) / 4)) t = 2;
+        } else if (gRoster.kills > 0 || gBroken > 0) {
+            if (frac <= 0.50f) t = std::max(t, 1.0f);
+            if (frac <= 0.25f) t = 2;
+        }
+        // the clock as a floor: a slow match still gets its evening and its night
+        double const min = double(nowMs() - gRoster.startMs) / 60000.0;
+        if (min >= (gLms ? 2.5 : 6.0)) t = std::max(t, 1.0f);
+        if (min >= (gLms ? 4.5 : 11.0)) t = 2;
+    }
     gTarget = std::max(gTarget, t); // never back to day inside one match
 }
 
@@ -600,6 +694,7 @@ void resetMatch(double const* pos) {
     gSpawnBed = false;
     gResetMs = nowMs();
     gTarget = gPhase = 0;
+    rosterReset();
     gScanI  = 0;
     gScanPaused = false;
     gCensus.clear(), gCensusDone = false;
@@ -793,7 +888,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
             gScanPaused = true;
         }
     }
-    if (!gAnchored || newPlace || std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0) resetMatch(pos);
+    if (newPlace && rosterSameMatch(*lp)) { newPlace = false; note("a big jump, but the same players are here: same match (spectating)"); }
+    if (!gAnchored || newPlace || (std::hypot(pos[0] - gAnchor[0], pos[2] - gAnchor[2]) > 1500.0 && !gLms)) resetMatch(pos);
+    rosterPoll(*lp, now);
     scan(lp->getDimensionBlockSource(), pos);
     if (gIsMap) {
         // the server's bed models: an entity standing on each bed (The Hive draws its bed as an entity over an invisible
@@ -1029,8 +1126,8 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
         lastNote = now;
         int alive = 0;
         for (auto& b : gBeds) alive += b.alive ? 1 : 0;
-        note("status: at {:.0f} {:.0f} {:.0f}, map {}, beds {} ({} alive), broken {}, phase {:.2f} -> {:.0f}, events {}", pos[0], pos[1], pos[2],
-             gIsMap, gBeds.size(), alive, gBroken, gPhase, gTarget, gFx.nEvents);
+        note("status: at {:.0f} {:.0f} {:.0f}, map {}, beds {} ({} alive), broken {}, phase {:.2f} -> {:.0f}, events {}, roster {} ({} out or left, lms {})", pos[0], pos[1], pos[2],
+             gIsMap, gBeds.size(), alive, gBroken, gPhase, gTarget, gFx.nEvents, gRoster.start(), gRoster.gone(), gLms);
     }
     // the game's own time of day follows: golden hour, sunset, moonlit night (vanilla: 0 noon, 0.25 sunset, 0.5 midnight)
     float const k = gPreview.load() >= 0.0f ? std::min(gPreview.load(), 2.0f) : gPhase;
@@ -1108,6 +1205,10 @@ void onText(std::string const& m) {
         bool const killy = s.find("death.") != std::string::npos || s.find("kill") != std::string::npos || s.find("slain") != std::string::npos || s.find("died") != std::string::npos ||
                            s.find("fell") != std::string::npos || s.find("void") != std::string::npos ||
                            (s.find("eliminated") != std::string::npos && s.find("team") == std::string::npos);
+        if (killy && s.find("bed") == std::string::npos && s.find("vote") == std::string::npos) {
+            bool const youR = s.find("you were") != std::string::npos || s.find("you died") != std::string::npos || s.find("you fell") != std::string::npos;
+            rosterKill(s, s.find("final") != std::string::npos, youR, gMyName);
+        }
         if (killy && s.find("bed") == std::string::npos && gIsMap) {
             bool const you = s.find("you were") != std::string::npos || s.find("you died") != std::string::npos || s.find("you fell") != std::string::npos;
             note("kill line: {}", s.substr(0, 160));
@@ -1221,6 +1322,7 @@ void onText(std::string const& m) {
             note("a team won (colour {}): {}", d, s.substr(0, 60));
         }
     }
+    if (s.find("game over") != std::string::npos) { gRoster.over = true; note("game over (the server said so)"); }
     if (s.find("all beds") != std::string::npos || s.find("bed destruction") != std::string::npos ||
         s.find("sudden death") != std::string::npos)
         gTarget = 2;
