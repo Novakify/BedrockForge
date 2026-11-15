@@ -604,20 +604,28 @@ float4 main(PSIn i) : SV_Target {
             return float4(csEnc(wc), aU);
         }
         float3 nw = n;
+        float  waterCalm = 1.0;
         if (water) {
             // ripples: wind-driven little waves (three octaves, seamless across chunks), the sun breaks into a glittering
             // path on them
             float2 p0 = i.color2.yz;
-            float  e = 0.06;
+            // (quality audit, Nov 15: far off and at a flat angle one pixel covers several ripples - the surface broke into
+            //  scratchy white dashes and streaks. Where the ripples get smaller than a pixel they calm down to a smooth
+            //  sheet with a soft sun path, as a real distant water surface does.)
+            float  ppx = max(length(fwidth(p0)), 1e-4);                   // blocks per pixel
+            float  calm = smoothstep(0.30, 0.05, ppx);
+            float  e = max(0.06, ppx * 1.5);
             float  h0 = csRipple(p0, CS_TIME), hx = csRipple(p0 + float2(e, 0), CS_TIME), hz = csRipple(p0 + float2(0, e), CS_TIME);
-            float  amp = 0.55 * lerp(0.6, 1.0, gust);
+            // (and at a flat angle a ripple's tilt throws the reflection far across the sky: the clouds in it chopped into dashes)
+            float  amp = 0.55 * lerp(0.6, 1.0, gust) * lerp(0.12, 1.0, calm) * lerp(0.10, 1.0, smoothstep(0.06, 0.50, abs(V.y)));
+            waterCalm = calm;
             nw = normalize(float3(-(hx - h0) / e * amp, 1.0, -(hz - h0) / e * amp));
         }
         float3 R    = reflect(-V, nw);
         float  ndv  = saturate(dot(nw, V));
         float  F    = (water ? 0.02 : 0.05) + (water ? 0.98 : 0.95) * pow(1.0 - ndv, 5.0);
         float3 refl = csReflect(R) * lerp(0.35, 1.0, lm.y);
-        float3 glint = float3(1.6, 1.15, 0.75) * pow(saturate(dot(R, CS_SUN)), water ? 600.0 : 400.0) * (water ? 3.0 : 3.0) * sunVis;
+        float3 glint = float3(1.6, 1.15, 0.75) * pow(saturate(dot(R, CS_SUN)), water ? lerp(120.0, 600.0, waterCalm) : 400.0) * (water ? lerp(0.9, 3.0, waterCalm) : 3.0) * sunVis;
 #if defined(CS_NOVAK)
         glint *= lerp(1.0, 0.25, CS_NIGHT);   // the moon in glass: a glint, not a white square
 #endif
