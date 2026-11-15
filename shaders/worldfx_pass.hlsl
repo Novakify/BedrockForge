@@ -288,19 +288,15 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
             float3 hue  = alb / max(max(alb.r, max(alb.g, alb.b)), 0.05);
             float3 lin  = hit ? col : pow(max(col0, 0.0), 2.2);
             float  tLim = min(sceneT, best);
-            // the block itself: hidden inside the first breath of the puff, standing there by 0.14 s
+            // the block itself comes out of the cloud: for the first 0.14 s it is cloud-white, then takes its own colour.
+            // (audit: showing the sky through it meant working the whole sky out inside this loop - the frame rate fell
+            //  to a fraction for as long as a block was arriving. Speed bridging would have stuttered on every block.)
             float  tN; float3 nl, lp;
             bool   inCell = hitBox(rd, bc, float3(0.503, 0.503, 0.503), float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), tN, nl, lp);
-            float  blockK = smoothstep(0.03, 0.14, age);
-            [branch] if (inCell && blockK < 1.0) {
-                float3 inv = 1.0 / select(abs(rd) > 1e-6, rd, 1e-6);
-                float3 t1 = (corner + 1.0) * inv, t0 = corner * inv;
-                float  tF = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
-                if (sceneT >= tN - 0.03 && sceneT <= tF + 0.03) {              // this pixel's surface IS the new block
-                    float3 bg = pow(max(toDisplay(csBackground(rd, true)), 0.0), 2.2);
-                    lin = lerp(bg, lin, blockK);
-                    if (blockK < 0.5) tLim = 1e9;                              // (the puff's far side shows through it too)
-                }
+            float  blockK = smoothstep(0.02, 0.14, age);
+            if (inCell && blockK < 1.0 && sceneT >= tN - 0.03 && sceneT <= tN + 1.80) {
+                float3 fog = lerp(lerp(float3(0.58, 0.52, 0.50), float3(0.55, 0.40, 0.40), DUSK), float3(0.24, 0.30, 0.48), NIGHT);
+                lin = lerp(lerp(fog, fog * (0.45 + 0.75 * hue), 0.34) * (0.85 + 0.25 * nl.y), lin, blockK);
             }
             // the puff: seven soft heaps round the block's heart. Per heap: how much cloud this ray passes through
             // (thinner toward the heap's ragged rim), and which way that surface faces - for the light on it
