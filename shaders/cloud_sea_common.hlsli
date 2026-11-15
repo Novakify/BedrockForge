@@ -537,8 +537,10 @@ NgDome ngDome(float3 rd) {
     float3 g = float3(dot(p, a0), dot(p, a1), dot(p, a2));
     float3 fr = frac(g), dl = min(fr, 1.0 - fr);
     D.hcell = ngHash3(floor(g) + 7.0);
-    float2 jit = (D.hcell.xy - 0.5) * 0.030;
-    D.rdF = normalize(rd + float3(jit.x, (D.hcell.z - 0.5) * 0.020, jit.y));
+    // (quality audit, Nov 15: at dusk the big dark-and-pale clouds jumped at every pane edge - with the lattice lines dim
+    //  there it read as a cut through the sky, not as glass. The panes bend less as the light goes.)
+    float2 jit = (D.hcell.xy - 0.5) * 0.030 * lerp(1.0, 0.35, DUSK);
+    D.rdF = normalize(rd + float3(jit.x, (D.hcell.z - 0.5) * 0.020 * lerp(1.0, 0.35, DUSK), jit.y));
     float  px = length(fwidth(p)) + 1e-4;
     float  d = min(dl.x, min(dl.y, dl.z));
     float  fam = dl.x <= min(dl.y, dl.z) ? 0.0 : (dl.y <= dl.z ? 1.0 : 2.0);
