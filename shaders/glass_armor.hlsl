@@ -358,6 +358,52 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     // fixed twist around the face centre + gentle fixed wave
     float  bevel = min(22.0 * S, halfPx * 0.85);
     float  e     = pow(1.0 - saturate(-d / max(bevel, 1.0)), 2.2);
+    // ---- 15 Cloud Sea: its own armor (Fernando, Nov 15: "a different set, clean, matching Cloud Sea, changing with the
+    //      time like the weapons"). Not glass: glazed porcelain plates in the piece's own colour (leather: the team's),
+    //      a fine metal trim and a pinstripe inside it, light under the glaze.
+    //        day:   warm pearl, gold trim, sun-gold light rolling slowly under the glaze
+    //        dusk:  the gold goes rose, the light burns lower
+    //        night: moon porcelain, silver trim, a still mottle like the moon's seas and a blue-white sheen drifting over it
+    if (csAtm) {
+        float  k = pad3;
+        float  dusk = smoothstep(0.15, 0.55, k), moonK = smoothstep(0.62, 0.90, k);
+        float3 hueV = baseEdge / max(max(max(baseEdge.r, baseEdge.g), baseEdge.b), 1e-3);
+        float2 uvf = p / max(fs, 1.0);
+        // the glaze: pearl with the piece's colour fired in (the team's dye reads strongest)
+        float3 pearl = lerp(lerp(float3(1.00, 0.93, 0.80), float3(0.80, 0.87, 1.00), moonK), hueV, lerp(0.30, 0.62, dyeK));
+        // each plate a shallow dome under a light from the upper left; its bevel catches that light on one side
+        float2 Lc  = normalize(float2(-0.45, -0.89));
+        float  dome = 0.80 + 0.22 * (1.0 - uvf.y) - 0.10 * abs(uvf.x - 0.42);
+        float  bev  = e * (max(dot(n, Lc), 0.0) * 0.34 - max(dot(n, -Lc), 0.0) * 0.26);
+        float3 body = pearl * (dome + bev) * lerp(0.98, 0.80, moonK);
+        // the light under the glaze (a smooth field over the plate, in texels)
+        float2 q  = t * 0.42 + float2(float(fi) * 3.1, 0.0);
+        float2 qa = q + float2(0.0, -time * 0.16), qb = q * 2.3 + float2(time * 0.11, time * 0.21);
+        float2 ia = floor(qa), fa = frac(qa); fa = fa * fa * (3.0 - 2.0 * fa);
+        float2 ib = floor(qb), fb = frac(qb); fb = fb * fb * (3.0 - 2.0 * fb);
+        float  na = lerp(lerp(gaHash(ia), gaHash(ia + float2(1, 0)), fa.x), lerp(gaHash(ia + float2(0, 1)), gaHash(ia + float2(1, 1)), fa.x), fa.y);
+        float  nb = lerp(lerp(gaHash(ib), gaHash(ib + float2(1, 0)), fb.x), lerp(gaHash(ib + float2(0, 1)), gaHash(ib + float2(1, 1)), fb.x), fb.y);
+        float  heat = smoothstep(0.30, 0.82, na * 0.62 + nb * 0.38);
+        float2 qm = t * 0.36 + float2(float(fi) * 5.7, 2.0);
+        float2 im = floor(qm), fm = frac(qm); fm = fm * fm * (3.0 - 2.0 * fm);
+        float  mare = smoothstep(0.42, 0.62, lerp(lerp(gaHash(im), gaHash(im + float2(1, 0)), fm.x), lerp(gaHash(im + float2(0, 1)), gaHash(im + float2(1, 1)), fm.x), fm.y));
+        float  sheen = exp(-pow((frac((uvf.x * 0.6 + uvf.y) * 0.5 + float(fi) * 0.13 - time * 0.05) - 0.5) / 0.10, 2.0));
+        float3 sunC = lerp(float3(1.00, 0.74, 0.30), float3(1.00, 0.44, 0.20), dusk);
+        body += (sunC * heat * heat * lerp(0.26, 0.20, dusk) + float3(1.00, 0.95, 0.80) * pow(heat, 4.0) * lerp(0.16, 0.05, dusk)) * (1.0 - moonK);
+        body  = lerp(body, body * (1.0 - 0.22 * mare) + float3(0.62, 0.76, 1.00) * (0.07 + 0.26 * sheen), moonK);
+        // the trim: a fine metal line round every plate and a pinstripe inside it - gold, rose gold, moon silver
+        float3 metalC = lerp(lerp(float3(1.00, 0.72, 0.30), float3(1.00, 0.56, 0.42), dusk), float3(0.80, 0.88, 1.00), moonK);
+        float  per = (p.x + p.y) / (fs.x + fs.y);
+        float  run = pow(0.5 + 0.5 * sin((per * 2.0 - time * 0.12) * 6.2831), 4.0);          // light travelling slowly round the trim
+        float  aaC = max(fwidth(dIn), 1e-4) * 1.1;
+        float  trim = 1.0 - smoothstep(0.20 - aaC, 0.20 + aaC, dIn);
+        float  pin  = (1.0 - smoothstep(0.07, 0.07 + aaC, abs(dIn - 0.62))) * smoothstep(3.0, 7.0, pxPerTexel);   // (only where a texel is big enough to carry it)
+        float3 metal = metalC * (0.80 + 0.45 * run + 0.9 * ench + 0.25 * max(dot(n, Lc), 0.0));
+        float3 cc = lerp(body, metal * 0.92, pin * 0.75);
+        cc = lerp(cc, metal, trim);
+        cc += flashCol * flash * mus * 0.5;
+        return float4(saturate(cc), 1.0);
+    }
     float2 rel   = p - fs * 0.5;
     float  rr    = length(rel) / max(min(fs.x, fs.y) * 0.5, 1e-3);
     float  ph    = frac(sin(dot(float2(fr.xy), float2(12.9898, 78.233))) * 43758.5);
