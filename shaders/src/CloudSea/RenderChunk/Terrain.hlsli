@@ -332,11 +332,10 @@ float4 main(PSIn i) : SV_Target {
         T = aT.x >= max(aT.y, aT.z) ? float3(sign(T.x), 0, 0) : (aT.y >= aT.z ? float3(0, sign(T.y), 0) : float3(0, 0, sign(T.z)));
         B = aB.x >= max(aB.y, aB.z) ? float3(sign(B.x), 0, 0) : (aB.y >= aB.z ? float3(0, sign(B.y), 0) : float3(0, 0, sign(B.z)));
         float2 g = float2(hR - hL, hD - hU) * 0.5;
-#if defined(CS_NOVAK)
         // no relief on a tile's outer 3 texels: the pack's darker border row read as a groove, and under the higher sun
-        // one side of every joint fell into a dark strip (seen in game on end stone floors)
+        // one side of every joint fell into a dark strip (seen in game on end stone floors). Cloud Sea too (Nov 15):
+        // under its low sun the other side of every joint caught the light - the bright broken dashes on flat floors
         { int2 ql = ti - tile; int e2 = min(min(ql.x, ql.y), min(TS - 1 - ql.x, TS - 1 - ql.y)); if (e2 < 3) g = 0.0; }
-#endif
         nS  = normalize(n - (g.x * T + g.y * B) * (3.2 * m.bump * fade));
         float mean4 = (hL + hR + hU + hD) * 0.25;
         cav = saturate(1.0 - (mean4 - hC) * 3.0);    // a texel darker than its neighbours sits in a dip
@@ -555,7 +554,38 @@ float4 main(PSIn i) : SV_Target {
 #if defined(PASS_TRANSPARENT)
     // ---- glass, ice and water: they reflect the Cloud Sea (fresnel), and catch the sun
     {
-        bool  water = n.y > 0.9 && i.color0.b > i.color0.r + 0.06 && a < 0.99;
+        // water: the biome's water tint is in the vertex colour (stained glass keeps its colour in the texture). Every
+        // face, not only the top: (Fernando, Nov 15: the side faces of a pool read as glass blocks - a bright white grid
+        // round you under water)
+        bool  waterAny = i.color0.b > i.color0.r + 0.06 && a < 0.99;
+        bool  water = n.y > 0.9 && waterAny;
+        // seen from INSIDE the water (the face points away from you): no sky in it, no glass - it is the same water you
+        // are in, as deep as it is far (the World FX pass fogs everything behind it the same way: one body of water)
+        // (the game draws a pool's faces toward you from inside as well, so the facing alone can't tell: the game's own
+        //  fog says it - under water it is thick right next to you, which it never is in the open air)
+        float  dCam = length(wp - cam);
+        bool   camWet = i.color2.w > 0.10 && dCam < 40.0;
+        [branch] if (waterAny && (dot(n, V) < 0.0 || camWet)) {
+            float  dU = dCam;
+            float  dayU = 1.0 - CS_NIGHT;
+#if defined(CS_NOVAK)
+            float3 deepU = float3(0.003, 0.020, 0.060), highU = float3(0.030, 0.150, 0.300);
+#else
+            float3 deepU = float3(0.006, 0.032, 0.045), highU = float3(0.050, 0.190, 0.230);
+#endif
+            deepU = lerp(deepU, float3(0.001, 0.004, 0.012), CS_NIGHT);
+            highU = lerp(highU, float3(0.006, 0.020, 0.050), CS_NIGHT);
+            float  upU = smoothstep(-0.6, 0.95, -V.y);
+            float3 wc  = lerp(deepU, highU, upU * upU);
+            float  aU  = 1.0 - exp(-dU * 0.080);
+            // the surface overhead: a little of the light above comes through, moving with the waves
+            [branch] if (n.y > 0.9) {
+                float  rip = csRipple(i.color2.yz, CS_TIME);
+                wc += lerp(float3(0.30, 0.42, 0.40), float3(0.05, 0.07, 0.12), CS_NIGHT) * (0.10 + 0.25 * rip) * max(dayU, 0.3) * (1.0 - aU);
+                aU = max(aU, 0.55);
+            }
+            return float4(csEnc(wc), aU);
+        }
         float3 nw = n;
         if (water) {
             // ripples: wind-driven little waves (three octaves, seamless across chunks), the sun breaks into a glittering
@@ -582,7 +612,7 @@ float4 main(PSIn i) : SV_Target {
 #if defined(CS_NOVAK)
         // Novak Glass: a glass block is a solid cube, not a film - its far inner edges show through the face (colour
         // split), on full-block faces only (panes and slabs' cut faces are skipped)
-        [branch] if (!water && csMax3(abs(n)) > 0.98 && fade > 0.0) {
+        [branch] if (!waterAny && csMax3(abs(n)) > 0.98 && fade > 0.0) {
             // texture axes in the world (from derivatives) and the tile size (1 / world size of a texel: 16x or 32x packs)
             float3 dpx = ddx(wp), dpy = ddy(wp);
             float2 dtx = ddx(tx), dty = ddy(tx);
