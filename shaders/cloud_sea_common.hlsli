@@ -433,8 +433,10 @@ float3 ngPrismBeams(float3 rd, float3 Ld) {
     float3 c;
     [unroll] for (int i = 0; i < 3; i++) {
         float sh = (float(i) - 1.0) * 0.020 * (0.4 + dist * 2.2);    // red / green / blue fan apart with distance
-        float x  = a * 7.0 / 6.2832 + sh * 7.0 + TIME * 0.004;
-        float v  = vnoise(float2(x, 3.7)) * 0.65 + vnoise(float2(x * 2.3, 9.1)) * 0.35;
+        // (the fan wraps once round the sun: noise that does not repeat there left a hard seam across the sky and the
+        //  clouds - seen in game as a vertical cut. Built from sines of whole multiples of the angle: seamless.)
+        float x  = a + sh * 6.2832 + TIME * 0.004;
+        float v  = 0.5 + 0.24 * sin(x * 3.0 + 1.3) + 0.17 * sin(x * 5.0 + 4.1) + 0.12 * sin(x * 8.0 + 0.7) + 0.08 * sin(x * 13.0 + 2.9);
         c[i] = smoothstep(0.62, 0.80, v);
     }
     return c * fall;
@@ -447,13 +449,13 @@ float4 ngCirrus(float3 rd, float3 Ld) {
     float m = fbm(q * 0.30 + 11.0, 3);
     [branch] if (m < 0.40) return float4(0.0, 0.0, 0.0, 0.0);   // no cirrus here: skip the fibres (cost)
     float2 w = float2(fbm(q * 0.8 + 1.7, 3), fbm(q * 0.8 + 8.3, 3));
-    float2 qq = q * float2(1.3, 4.0) + w * 1.6 + 3.0;
+    float2 qq = q * float2(0.9, 5.5) + w * 0.45 + 3.0;   // long, nearly straight fibres combed one way (strong warp read as scribbles in game)
     float  r = 0.0, amp = 0.55;
     [loop] for (int i = 0; i < (QUALITY > 0.3 ? 5 : 3); i++) { float v = 1.0 - abs(2.0 * vnoise(qq) - 1.0); r += amp * v * v; qq = mul(float2x2(1.6, 1.2, -1.2, 1.6), qq) * float2(1.0, 1.15); amp *= 0.5; }
     float dens = smoothstep(0.54, 0.80, r) * smoothstep(0.40, 0.62, m) * smoothstep(0.04, 0.22, e) * (1.0 - smoothstep(0.45, 0.90, e) * 0.85);   // overhead it streaked like motion blur
     float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float3 c = lerp(float3(0.92, 0.95, 1.0), ngFilm(r * 2.2 + ang * 0.8), 0.75 * exp(-ang * 2.6));
-    return float4(c, dens);
+    return float4(c, dens * 0.55);
 }
 // caustics: light through the dome falling on a floor far under the void (a two-scale moving cell net)
 float ngCaustic(float2 p) {
@@ -617,8 +619,18 @@ float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
     c=lerp(c,lerp(((float3)(0.02)),((float3)(1.5)),g),strip);
     c=c*(0.55+0.45*tube);
   } else {                                                    // a lightbox with script
-    float g=lerp(0.20,glyph(pn*sz/gw*gn,hp*100.),res);
-    c=lerp(bg*lum,ink,g)*(0.55+0.45*tube);
+    // a designed board, not a slab of colour: two tones (a header band, a side block or a roundel), a frame, and a
+    // bold bar that stands in for the script once the letters are too small to draw (seen in game: at distance every
+    // board was one flat colour)
+    float3 base=bg*lum; float lay=frac(hp*23.7);
+    float2 qd=(pn-0.5)*sz/gw;
+    if(lay<0.34) base=lerp(base,a2*lum,step(0.70,pn.y));
+    else if(lay<0.67) base=lerp(base,a2*lum,step(pn.x,0.28));
+    else base=lerp(base,a2*lum,step(length(qd-float2(-0.18*sz.x/gw,0.0)),0.30));
+    float bar=step(abs(pn.y-0.38),0.075)*step(abs(pn.x-0.56),0.27)+step(abs(pn.y-0.20),0.035)*step(abs(pn.x-0.50),0.21);
+    base=lerp(base,ink,saturate(bar)*(1.-res)*0.80);
+    float frame=smoothstep(0.0,max(1.1,pxm*1.6),dE);
+    c=lerp(base,ink,glyph(pn*sz/gw*gn,hp*100.)*res)*(0.50+0.50*frame);
   }
   return c+((float3)(1.0))*0.20*smoothstep(0.80,0.97,pn.y)*tube*res*step(0.22,kind);
 }
@@ -815,7 +827,10 @@ float4 cityLayer(float3 rd, float L){
   if(ym>Hr){
     float bbH=lerp(7.,14.,h);
     if(h4>0.40&&tall<0.3&&ym<Hr+bbH&&abs(lx-0.5)<0.44)
-      return float4(lerp(signPanel(float2((lx-0.06)/0.88,(ym-Hr)/bbH),float2(Wm*0.88,bbH),hb(sd,21.),pxm),hazeC,hzK*0.6),1.0);
+    { NG_FAZ=az;
+      float3 sp=signPanel(float2((lx-0.06)/0.88,(ym-Hr)/bbH),float2(Wm*0.88,bbH),hb(sd,21.),pxm)*ngDistrictPower(az,sd);
+      sp=lerp(sp*0.55+dayAir(az)*0.35,sp,LIT);                                 // by day: a printed board in daylight, not a lightbox
+      return float4(lerp(sp,lerp(dayAir(az)*0.9,hazeC,LIT),hzK*0.6),1.0); }   // (far ones sank into night navy at noon - seen in game as dark slabs)
     float spH=lerp(30.,110.,h)*step(0.35,tall);                // a glass spire on the tall ones (the reference's pointed crowns)
     if(spH>0.&&ym<Hr+spH&&abs(lx-0.5)<0.42*(1.0-(ym-Hr)/spH)){
       float k=(ym-Hr)/spH; float3 rr=reflect(rd,-normalize(float3(cos(az),0.,sin(az))));

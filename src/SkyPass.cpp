@@ -1806,13 +1806,15 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         // teams in a ring round the camera (the first ones' beds broken / out, timed from when the file was written)
         static int64_t readAt = -100000; static int ft[3] = {0, 0, 0}; static int64_t since = 0;
         if (now - readAt > 1000) {
-            readAt = now; ft[0] = 0;
+            readAt = now;
+            int a = 0, b2 = 0, c2 = 0;
             std::wstring const fn = wfxConfigFile(L"wfxteams.txt");
             if (std::FILE* fp = fn.empty() ? nullptr : _wfopen(fn.c_str(), L"r")) {
-                int a = 0, b2 = 0, c2 = 0;
-                if (std::fscanf(fp, "%d %d %d", &a, &b2, &c2) == 3) { if (ft[0] != a || ft[1] != b2 || ft[2] != c2) since = now; ft[0] = a, ft[1] = b2, ft[2] = c2; }
+                if (std::fscanf(fp, "%d %d %d", &a, &b2, &c2) != 3) a = 0;
                 std::fclose(fp);
             }
+            if (ft[0] != a || ft[1] != b2 || ft[2] != c2) since = now;
+            ft[0] = a, ft[1] = b2, ft[2] = c2;
         }
         if (ft[0] >= 2) {
             static float const cols[8][3] = {{1, 0.1f, 0.1f}, {0.1f, 0.3f, 1}, {0.1f, 1, 0.2f}, {1, 0.9f, 0.1f}, {0.1f, 1, 1}, {1, 0.2f, 1}, {1, 1, 1}, {0.6f, 0.6f, 0.6f}};
@@ -1826,7 +1828,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
                 bool const broken = i < ft[1], out = i < ft[2];
                 c.tPos[i][3] = broken ? 0.0f : 1.0f;
                 std::memcpy(c.tCol[i], cols[i], 12); c.tCol[i][3] = 0.0f;
-                c.tAge[i][0] = broken ? a : -1.0f; c.tAge[i][1] = 0.0f; c.tAge[i][2] = out ? std::clamp(a / 4.0f, 0.0f, 1.0f) : 0.0f; c.tAge[i][3] = i == n - 1 ? 1.0f : 0.0f;
+                c.bVis[i][3] = -100.0f; c.tAge[i][0] = broken ? a : -1.0f; c.tAge[i][1] = 0.0f; c.tAge[i][2] = out ? std::clamp(a / 4.0f, 0.0f, 1.0f) : 0.0f; c.tAge[i][3] = i == n - 1 ? 1.0f : 0.0f;
             }
             f.cb.m0[0] = float(n);
         }
