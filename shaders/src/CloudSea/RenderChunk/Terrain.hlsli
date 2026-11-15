@@ -485,13 +485,12 @@ float4 main(PSIn i) : SV_Target {
             float  lightSide = saturate(dot(normalize(ngPc + 1e-3), sunF) * 0.5 + 0.5);
             // (seen on a real Hive map: a wide bright bevel on every block turned whole builds into a white wire grid -
             //  the rim is a hairline now, and it steps back with distance so only the blocks near you carry it)
-            // (Fernando, Nov 14: still "lines over everything" - the rim is near-only now, gone by 14 blocks, a third as bright)
-            float  ngFar = 1.0 - smoothstep(4.0, 14.0, length(wp - cam));
+            float  ngFar = lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));
             float  bevel = smoothstep(0.07, 0.02, e) * ngFar;
             float  inner = smoothstep(0.10, 0.20, e) * smoothstep(0.42, 0.20, e);
             float3 gl = lerp(float3(0.85, 0.93, 1.0), CS_SUNC, 0.4) * lerp(0.25, 1.0, skyK);
             lit *= 1.0 - 0.10 * inner * ngOn;
-            lit += gl * bevel * (0.012 + 0.065 * lightSide) * ngOn * (1.0 - 0.5 * CS_NIGHT);
+            lit += gl * bevel * (0.04 + 0.20 * lightSide) * ngOn * (1.0 - 0.5 * CS_NIGHT);   // (Fernando likes this rim: leave it)
             // the glint: two crisp diagonal bars (a wide one and a hairline), sliding across the face as you move
             // (seen in game: a soft blob read as a smudge)
             // (each block its own: where the bars sit, which way they lean, some blocks none - a wall of blocks must not look stamped)
@@ -633,7 +632,7 @@ float4 main(PSIn i) : SV_Target {
             {   // the glass rim of every block glows in the block's own colour (near you; a hairline)
                 float2 ap = abs(ngPc); float e = 1.0 - max(ap.x, ap.y);
                 float3 own = alb / max(csMax3(alb), 1e-3);
-                lit += lerp(float3(1.0, 1.0, 1.0), own, 0.6) * smoothstep(0.05, 0.0, e) * 0.12 * NK * ngOn * (1.0 - smoothstep(4.0, 14.0, length(wp - cam)));   // (was 0.40 + a glow, out to the horizon: a wire grid over the whole map)
+                lit += lerp(float3(1.0, 1.0, 1.0), own, 0.6) * (smoothstep(0.05, 0.0, e) * 0.40 + exp(-e * 9.0) * 0.08) * NK * ngOn * lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));
             }
 #endif
             [branch] if (n.y > 0.5) {                                                         // tops: a light sheen of the city's light
@@ -641,7 +640,7 @@ float4 main(PSIn i) : SV_Target {
                 float  azR = atan2(r.z, r.x);
                 float3 cityC = lerp(float3(1.00, 0.30, 0.75), float3(0.30, 0.70, 1.00), 0.5 + 0.5 * sin(azR * 1.3 + 2.0));
                 float  Fw = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, V)), 5.0);
-                // (the sign streaks are gone: in game they read as lines from the buildings lying over everything)
+                // (the sign streaks are gone: in game they were vertical coloured lines down the whole floor, lining up with the towers - Fernando, Nov 14)
                 lit += cityC * 0.30 * Fw * NK * lerp(0.4, 1.0, skyK);
             }
         }
