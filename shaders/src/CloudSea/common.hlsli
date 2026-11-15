@@ -501,8 +501,11 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
 }
 #endif
 #if !defined(CS_NOVAK)
-// 15 Cloud Sea: items are glass too, in the sky's own light - a warm sunset gold through the day, deepening to amber
-// and rose with the match, a soft moonlit glow at night; the item keeps its own colour (emerald stays green)
+// 15 Cloud Sea items: SUNFORGED PORCELAIN (Fernando's pick, Nov 15: porcelain + sunstone). By day the item is pearl
+// porcelain glazed in its own colour; the sprite's dark outline texels are gold inlay catching the sunset; its bright
+// coloured texels are a stained-glass core lit through by the sky. As the match's light goes, the core turns to
+// sunstone - warm amber light from inside that shows through the porcelain's thin edges - and the gold warms to rose
+// gold. At night the porcelain is moonlit and slow embers rise inside the blade.
 float3 csSunEnv(float3 d, float k) {
     float  up = saturate(d.y * 0.5 + 0.5);
     float3 day = lerp(float3(1.00, 0.80, 0.55), float3(0.55, 0.72, 1.00), smoothstep(0.45, 0.95, up));
@@ -511,25 +514,56 @@ float3 csSunEnv(float3 d, float k) {
     return lerp(lerp(day, eve, smoothstep(0.15, 0.6, k)), nit, smoothstep(0.65, 0.95, k));
 }
 float3 csItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, float3 wp) {
+#if defined(CS_FORCE_K)
+    float  k     = CS_FORCE_K;                                            // preview builds only
+#else
     float  k     = saturate(CS_PHASE * 0.5);
+#endif
+    float  dusk  = smoothstep(0.15, 0.60, k), night = smoothstep(0.65, 0.95, k);
+    float3 lw    = float3(0.2126, 0.7152, 0.0722);
     float3 alb   = csLin(c);
+    float  L     = dot(c, lw);
     float3 hue   = alb / max(csMax3(alb), 1e-3);
     float  chroma = csMax3(c) - min(c.r, min(c.g, c.b));
     float  grey  = 1.0 - smoothstep(0.05, 0.18, chroma);
-    float3 nf    = normalize(lerp(n, gn, 0.35));
+    float  inlay = 1.0 - smoothstep(0.15, 0.24, L);                       // the sprite's dark outline: gold
+    float  core  = smoothstep(0.42, 0.72, L) * (1.0 - grey);              // its bright coloured texels: the glass core
+    float3 nf    = normalize(lerp(n, gn, 0.25));
     float  NV    = saturate(dot(nf, V));
-    float  Fg    = 0.05 + 0.95 * pow(1.0 - NV, 4.0);
-    float  glint = pow(saturate(dot(nf, normalize(normalize(float3(0.35, 0.80, 0.45)) + V))), 180.0);
+    float  F     = 0.04 + 0.96 * pow(1.0 - NV, 5.0);
     float3 R     = reflect(-V, nf), Tg = refract(-V, nf, 0.67);
-    float3 gold  = lerp(float3(1.00, 0.84, 0.52), float3(1.00, 0.56, 0.36), smoothstep(0.2, 0.8, k));
-    float3 envT  = csSunEnv(Tg, k);
-    float  facet = 0.75 + 0.40 * saturate(0.5 + 0.5 * dot(gn, normalize(float3(-0.35, 0.75, 0.55))));
-    float3 o = alb * (0.60 + 0.40 * dot(envT, float3(0.2126, 0.7152, 0.0722))) * facet + envT * lerp(hue, gold, 0.4 + 0.3 * grey) * 0.14;
-    o = lerp(o, csSunEnv(R, k), Fg * 0.30);
-    o += lerp(gold, hue, 0.35) * pow(1.0 - NV, 3.0) * lerp(0.22, 0.38, k);          // a gold glass rim, warmer with the match
-    o += lerp(float3(1.0, 0.95, 0.85), gold, 0.3) * glint * 1.6;
-    o += hue * 0.06 * smoothstep(0.65, 0.95, k) * (0.9 + 0.1 * sin(T * 2.0 + wp.y * 3.0));  // night: a soft glow from within
-    return o * lerp(0.55, 1.0, max(sky, smoothstep(0.65, 0.95, k)));
+    float3 sunD  = normalize(float3(0.35, 0.80, 0.45));
+    float3 envR  = csSunEnv(R, k), envT = csSunEnv(Tg, k), envN = csSunEnv(nf, k);
+    float  id    = frac(sin(dot(gn, float3(12.9898, 78.233, 37.719))) * 43758.5453);   // one value per texel
+
+    // porcelain: a pearl glaze with the item's colour fired into it, soft wrapped light, a clear glaze that holds the sky
+    float3 pearl = lerp(float3(0.90, 0.87, 0.82), hue * 0.80 + 0.08, lerp(0.40, 0.18, grey));
+    float  wrap  = saturate((dot(nf, sunD) + 0.45) / 1.45);
+    float3 body  = pearl * (0.30 + 0.70 * wrap) * lerp(float3(1.0, 1.0, 1.0), envN * 1.1, 0.55) * (0.96 + 0.08 * id);
+    body += lerp(float3(1.00, 0.80, 0.82), float3(0.78, 0.86, 1.00), saturate(R.y * 0.5 + 0.5)) * pow(1.0 - NV, 3.0) * 0.16;  // pearl sheen
+    body  = lerp(body, envR, F * 0.45);
+    // gold inlay: metal - its colour IS the reflection, gold by day, rose gold as the light goes
+    float3 gold  = lerp(float3(1.00, 0.76, 0.40), float3(1.00, 0.58, 0.48), dusk);
+    float3 metal = gold * (0.22 + 0.95 * envR * lerp(0.65, 1.0, F));
+    // the core: stained glass lit through by the sky by day, sunstone as the light goes
+    float3 glassC = hue * (0.30 + 0.95 * dot(envT, lw)) + hue * 0.10;
+    float3 amber  = lerp(float3(1.00, 0.52, 0.18), hue, 0.28);
+    float  breathe = 0.85 + 0.15 * sin(T * 1.7 + wp.y * 2.5);
+    float3 stoneC = amber * (0.55 + 0.60 * dusk + 0.25 * night) * breathe + amber * pow(NV, 2.0) * 0.30;
+    float3 coreC  = lerp(glassC, stoneC, max(dusk * 0.65, night));
+    float3 o = lerp(body, coreC, core);
+    // the sunstone shows through the porcelain where it is thin (its edges toward you)
+    o += amber * pow(1.0 - NV, 2.0) * 0.14 * max(dusk, night) * (1.0 - inlay) * (1.0 - core);
+    // night: the porcelain is moonlit, the core keeps its own light
+    o  = lerp(o, o * float3(0.42, 0.46, 0.62), night * (1.0 - core) * 0.65);
+    o  = lerp(o, metal * lerp(1.0, 0.75, night), inlay);
+    // embers rising inside at night (a few texels, each its own rhythm, climbing the blade)
+    float ember = pow(saturate(sin(T * 2.6 + id * 37.0 - wp.y * 14.0)), 30.0) * step(0.55, id) * (1.0 - inlay);
+    o += float3(1.00, 0.60, 0.26) * ember * night * (0.5 + 0.9 * core);
+    // a sparkle on the glaze, brighter on the gold
+    float glint = pow(saturate(dot(nf, normalize(sunD + V))), 220.0);
+    o += lerp(float3(1.00, 0.96, 0.88), gold, inlay) * glint * (1.3 + 1.3 * inlay);
+    return o * lerp(0.55, 1.0, max(sky, night));
 }
 #endif
 

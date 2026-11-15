@@ -989,7 +989,9 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     static bool    novak = false;
     static int64_t novakAt = 0;
     if (now - novakAt > 2000) { novakAt = now; novak = shaderpacks::activePack() == "NovakGlass"; }
-    float const up0 = novak ? 1.0f / 75.0f : 1.0f / 20.0f, up1 = novak ? 1.0f / 100.0f : 1.0f / 25.0f;
+    // (Cloud Sea, Nov 15: 20 s / 25 s was a sunset on fast-forward. Its evening now has a real twilight - afterglow,
+    //  blue hour, moonrise - and needs the time to be seen: ~60 s to sunset, ~90 s on to full night)
+    float const up0 = novak ? 1.0f / 75.0f : 1.0f / 60.0f, up1 = novak ? 1.0f / 100.0f : 1.0f / 90.0f;
     float const rate = gTarget > gPhase ? (gPhase < 1.0f ? up0 : up1) : 1.0f / 3.0f;
     if (gPhase < gTarget) gPhase = std::min(gTarget, gPhase + rate * dt);
     else gPhase = std::max(gTarget, gPhase - rate * dt);
