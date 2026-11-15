@@ -445,8 +445,8 @@ float3 csMoon(float3 rd, out float disc) {
     [branch] if (mUp <= 0.0) return float3(0.0, 0.0, 0.0);
     float  ang = acos(clamp(dot(rd, MOOND), -1.0, 1.0));
     const float R = 0.172;                                   // (Fernando: twice the size again - it owns the night sky)
-    float  high = smoothstep(0.02, 0.32, MOOND.y);
-    float3 warm = lerp(float3(1.00, 0.60, 0.30), float3(1.0, 1.0, 1.0), high);          // amber through the thick air low down
+    float  high = smoothstep(0.12, 0.48, MOOND.y);            // amber well up from the horizon (it went white by 18 degrees), silver only near the top of its climb
+    float3 warm = lerp(float3(1.00, 0.62, 0.30), float3(1.0, 1.0, 1.0), high);          // amber through the thick air low down
     float3 halo = lerp(float3(1.00, 0.62, 0.36), float3(0.58, 0.72, 1.00), high);
     float  dA = max(ang - R, 0.0);                                                       // from the limb outward
     float3 c = halo * (exp(-dA * 15.0) * 0.20 + exp(-dA * 4.5) * 0.055);
@@ -499,7 +499,7 @@ float3 csMoon(float3 rd, out float disc) {
                                        + csSpot(q, float2( 0.80,-0.52), 0.020, 0.50) * 0.6      // Stevinus / Furnerius
                                        + csSpot(q, float2(-0.05, 0.78), 0.020, 0.30) * 0.4);    // Anaxagoras
         m *= 1.0 - 0.14 * pow(r, 5.0);
-        c = lerp(c, m * warm, disc);
+        c = lerp(c, m * 1.12 * warm, disc);
     }
     return c * mUp;
 }
@@ -1379,6 +1379,7 @@ float3 csBackground(float3 rd, bool withSea) {
     float3 tn;
     float4 hc = highClouds(rd, tn);
     float3 col = float3(0.0, 0.0, 0.0);
+    float  md = 0.0;
     [branch] if (WTW < 0.999) {
         float3 c = skyDay(rd);
         float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
@@ -1390,11 +1391,10 @@ float3 csBackground(float3 rd, bool withSea) {
         float3 sk = float3(0.0, 0.0, 0.0);
         [branch] if (WNI < 0.999) sk = skyTwilight(rd);
         [branch] if (WNI > 0.001) sk = lerp(sk, skyNight(rd), WNI);
-        float  md;
         float3 moon = csMoon(rd, md);
         // stars drown in whatever light the sky still holds (the afterglow, the air round the moon)
         [branch] if (PHASE > 1.18) sk += csStars(rd) * (1.0 - md) / (1.0 + csLum(sk + moon) * 55.0);
-        float3 t = (sk + moon * (1.0 - hc.a * 0.80)) * (1.0 - hc.a) + moon * hc.a * 0.20 * (1.0 - hc.a * 0.6) + tn;
+        float3 t = (sk * (1.0 - md) + moon * (1.0 - hc.a * 0.80)) * (1.0 - hc.a) + moon * hc.a * 0.20 * (1.0 - hc.a * 0.6) + tn;
         col = lerp(col, t, WTW);
     }
     [branch] if (withSea) {
@@ -1402,7 +1402,7 @@ float3 csBackground(float3 rd, bool withSea) {
         float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
         if (sea.a > 0.0) col = sea.rgb;
     }
-    col += csGlow(rd, hc.a);
+    col += csGlow(rd, hc.a) * (1.0 - 0.85 * md * (1.0 - hc.a));   // (the haze round the moon is not in front of it either)
     return col;
 }
 // the cloud sea alone for a sky pixel: a = 0 where the ray misses it (keep the sky pass's colour)
