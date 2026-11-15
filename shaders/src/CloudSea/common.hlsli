@@ -448,6 +448,16 @@ float csN3(float3 p) {
     return lerp(lerp(lerp(csH3(i), csH3(i + float3(1, 0, 0)), f.x), lerp(csH3(i + float3(0, 1, 0)), csH3(i + float3(1, 1, 0)), f.x), f.y),
                 lerp(lerp(csH3(i + float3(0, 0, 1)), csH3(i + float3(1, 0, 1)), f.x), lerp(csH3(i + float3(0, 1, 1)), csH3(i + float3(1, 1, 1)), f.x), f.y), f.z);
 }
+// the same field with its slope (xyz of the result's yzw): one call gives height and the way the surface leans
+float4 csN3d(float3 x) {
+    float3 p = floor(x), w = frac(x);
+    float3 u = w * w * w * (w * (w * 6.0 - 15.0) + 10.0), du = 30.0 * w * w * (w * (w - 2.0) + 1.0);
+    float a = csH3(p), b = csH3(p + float3(1, 0, 0)), c = csH3(p + float3(0, 1, 0)), d = csH3(p + float3(1, 1, 0));
+    float e = csH3(p + float3(0, 0, 1)), f = csH3(p + float3(1, 0, 1)), g = csH3(p + float3(0, 1, 1)), h = csH3(p + float3(1, 1, 1));
+    float k0 = a, k1 = b - a, k2 = c - a, k3 = e - a, k4 = a - b - c + d, k5 = a - c - e + g, k6 = a - b - e + f, k7 = -a + b + c - d + e - f - g + h;
+    return float4(k0 + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y + k5 * u.y * u.z + k6 * u.z * u.x + k7 * u.x * u.y * u.z,
+                  du * float3(k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z, k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x, k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y));
+}
 // ---- Novak Glass: items as glass that follows the match (Actor + ActorGlint)
 #if defined(CS_NOVAK)
 // what Novak glass sees: the day sky's aqua-to-ultramarine, or the night city (OLED black, neon on the horizon)

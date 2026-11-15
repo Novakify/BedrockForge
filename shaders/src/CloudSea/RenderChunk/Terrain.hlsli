@@ -364,6 +364,78 @@ float4 main(PSIn i) : SV_Target {
     float3 mean = s_MatTextureTexture.SampleLevel(s_MatTextureSampler, meanUV, 3.0).rgb * tint;
     c = lerp(mean, c, lerp(0.78, m.detail, step(0.5, float(mid))));
 #endif
+#if defined(PASS_OPAQUE) && !defined(CS_NOVAK)
+    // ---- 16 CLOUD BLOCKS (Fernando, Nov 15: "all the blocks fluffy, dreamy and comfy like clouds; the blocks every Hive
+    //      match is built from - wool, planks, stone, end stone, concrete - in high detail, the rest dreamy but still
+    //      telling you what they are"). A cube can't be reshaped here, so the cloud is in how each face takes the light:
+    //        the pillow  - every face bulges like a cushion: its normal leans out toward the block's edges, so a wall
+    //                      or a floor reads as a quilt of soft puffs with gentle creases where they meet
+    //        the billows - a slow field through the world (no seams between blocks) heaps each puff into lobes
+    //        the colour  - the block's own colour stays (team wool is team wool); crests go toward cloud white, the
+    //                      pack's pixel detail is kept on the main blocks and melts into the puff on the others
+    //      and after the light (below): a lining where the puff is thin, the sun or the moon glowing inside the crests.
+    float  cbOn = 0.0, cbEdge = 0.0, cbBil = 0.5, cbMain = 0.0;
+    [branch] if (mid != MAT_LAMP && mid != MAT_GEM && mid != MAT_ICE && mid != MAT_OBSIDIAN && mid != MAT_METAL && csMax3(abs(n)) > 0.98 && !(i.texcoord2.y > 0.5)) {
+        bool   main = mid == MAT_WOOL || mid == MAT_PLANKS || mid == MAT_CONCRETE || mid == MAT_STONE || mid == MAT_CUTSTONE || mid == MAT_ENDSTONE || mid == MAT_TERRACOTTA;
+        float2 tanP = abs(n.x) > 0.5 ? wp.zy : (abs(n.y) > 0.5 ? wp.xz : wp.xy);
+        float3 ax = abs(n.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0);
+        float3 ay = abs(n.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+        float2 pc = frac(tanP) * 2.0 - 1.0, ap = abs(pc);
+        cbEdge = max(ap.x, ap.y);
+        // (first try, seen in game: a smooth noise through the world only stained the faces with blotches - nothing
+        //  read as a puff. A cloud is heaped from round lobes with creases between them: that is drawn now.)
+        // the pillow: the whole face one broad cushion (gentle: a hard roll-off at the rim read as bevelled tiles)
+        float  hP = (1.0 - ap.x * ap.x) * (1.0 - ap.y * ap.y);
+        float2 gP = -pc * (1.0 - ap.yx * ap.yx) * 0.9;                        // its slope (down toward the rim)
+        // the billows on it: soft round heaps that melt into each other (second try, seen in game: packed sphere caps
+        // met in sharp creases - every face looked like cracked stone). Each material heaps differently.
+        float2 lsc = mid == MAT_WOOL ? float2(2.3, 2.3) : (mid == MAT_PLANKS ? float2(0.9, 1.9) : (mid == MAT_CONCRETE ? float2(1.0, 1.0) : (main ? float2(1.6, 1.6) : float2(1.25, 1.25))));
+        if (mid == MAT_PLANKS && abs(n.y) > 0.5) lsc = lsc.yx;
+        float2 lp = tanP * lsc + dot(wp, abs(n)) * 7.31 + CS_TIME * float2(0.010, 0.004);
+        float2 li = floor(lp), lf = frac(lp);
+        float  H = 0.0; float2 gH = float2(0.0, 0.0);
+        [unroll] for (int ly = -1; ly <= 1; ly++) [unroll] for (int lx = -1; lx <= 1; lx++) {
+            float2 o = float2(lx, ly);
+            float3 h3 = csHash3(li + o);
+            float2 r = lf - (o + 0.15 + 0.70 * h3.xy);                        // from the heap's middle to here
+            float  ir = 1.0 / (0.16 + 0.20 * h3.z);                           // 1 / radius^2
+            float  w = (0.55 + 0.45 * h3.z) * exp(-dot(r, r) * ir);
+            H += w; gH += w * (-2.0 * ir) * r;
+        }
+        float  eH = exp(-1.9 * H);
+        float  hL = 1.0 - eH;                                                 // heaps run together into plateaus, soft valleys between
+        float2 gL = 1.9 * eH * gH * lsc;
+        float  lobeK = (mid == MAT_CONCRETE ? 0.35 : (main ? 0.80 : 1.0)) * fade;
+        cbBil = lerp(hP, hL, 0.5);
+        // the puff's own surface, and how the light of the hour falls over it: from above and from the sun's side
+        float2 slope = gP * 0.30 + gL * 0.22 * lobeK;
+        float3 nPuff = normalize(n - ax * slope.x - ay * slope.y);
+        float3 La = normalize(CS_SUN * 0.75 + float3(0.0, 0.75, 0.0));
+        float  t  = saturate(0.5 + (dot(nPuff, La) - dot(n, La)) * 0.95 + (lerp(0.5, hL, lobeK) - 0.5) * 0.30);
+        nS = normalize(nS + (nPuff - n) * 0.30);
+        float keep = mid == MAT_PLANKS ? 0.66 : (mid == MAT_WOOL ? 0.55 : (mid == MAT_CONCRETE ? 0.32 : (main ? 0.56 : 0.22)));
+        float3 cc = lerp(mean, c, keep);
+        // a cloud is light: every block lifts toward pastel (third try, seen in game: stone and dark planks stayed
+        // heavy and gloomy - soft cushions, not clouds). The hue stays, so team colours and materials still tell apart.
+        // (dark blocks most of all: up close dark planks and stone read as smoke)
+        cc = lerp(cc, float3(1.00, 0.97, 0.94) * (0.62 + 0.38 * csMax3(cc)), ((main ? 0.28 : 0.40) + 0.34 * (1.0 - csMax3(cc))) * lerp(1.0, 0.55, CS_NIGHT));   // (less at night: under the moon the pastel washed team colours together)
+        // three tones, like a painted cloud: a lavender shade, the block's own colour, a warm white crest
+        float3 shadeC = cc * lerp(float3(0.76, 0.74, 0.92), float3(0.72, 0.77, 0.95), CS_NIGHT);
+        float3 crestC = lerp(cc, float3(1.00, 0.97, 0.92), main ? 0.26 : 0.42) * 1.10;
+        c = lerp(shadeC, lerp(cc, crestC, smoothstep(0.48, 0.95, t)), smoothstep(0.05, 0.55, t));
+        // the scallops: each heap gets a bright arc on the side the light comes from and a soft shade under its far side -
+        // the drawn outline of a cumulus, which is what makes it read as cloud and not as a blur
+        float2 L2 = normalize(float2(dot(La, ax), dot(La, ay)) + 1e-4);
+        float2 gN = gL / max(length(gL), 1e-3);
+        float  aHi = (hL - 0.60) / 0.085, aLo = (hL - 0.48) / 0.15;
+        float  arcHi = exp(-aHi * aHi) * saturate(dot(-gN, L2) * 1.3) * lobeK;
+        float  arcLo = exp(-aLo * aLo) * saturate(dot(gN, L2) * 1.3) * lobeK;
+        c = lerp(c, shadeC, arcLo * 0.55);
+        c += (crestC * 1.04 - c) * arcHi * 0.70;
+        if (mid == MAT_WOOL) c *= 0.955 + 0.09 * csVN(tanP * 26.0) * fade;     // wool keeps a fine fuzz
+        cbOn = 1.0; cbMain = main ? 1.0 : 0.0;
+    }
+#endif
 #if !defined(PASS_TRANSPARENT)
     c *= pxShade;
 #endif
@@ -386,6 +458,24 @@ float4 main(PSIn i) : SV_Target {
     float2 bcell = floor(i.color2.yz - float2(n.x, n.z + 16.0 * n.y) * 0.5);   // this block, inside its subchunk
     float  bh = csHash(bcell * float2(1.31, 0.73) + 11.0);
     float  skyK = saturate(lm.y);
+#if defined(PASS_OPAQUE) && !defined(CS_NOVAK)
+    [branch] if (cbOn > 0.5) {
+        // the sun by day, the moon at night (the same turn the weapons take): gold, rose at dusk, silver-blue
+        float3 glowC = lerp(lerp(float3(1.00, 0.80, 0.46), float3(1.00, 0.50, 0.36), CS_DUSK), float3(0.46, 0.62, 1.00), CS_NIGHT);
+        float  open  = skyK * skyK;
+        float  toL   = saturate(dot(-V, CS_SUN) * 0.5 + 0.5);                 // looking toward the light: the puff is backlit
+        // the lining: the puff is thin at its rim, light comes through there (a soft bright band inside each block's edge)
+        float  lining = pow(cbEdge, 4.0) * (1.0 - pow(cbEdge, 9.0)) * 0.6;
+        lit += lerp(glowC, alb * 1.6, 0.35) * lining * (0.07 + 0.22 * toL) * open * lerp(1.0, 0.75, CS_NIGHT);
+        // the light inside: the crests hold a glow
+        lit += lerp(glowC, alb * 1.8, 0.45) * smoothstep(0.55, 0.95, cbBil) * 0.085 * open;
+        // night: every block keeps a breath of its own colour's light (seen in game: a wall in the moon's shade went one
+        // blue-grey - red, blue and white wool could not be told apart)
+        lit += alb * float3(0.92, 0.96, 1.10) * 0.20 * CS_NIGHT;
+        // the crease where two puffs meet: a breath of lavender shade, never a dark line
+        lit = lerp(lit, lit * lerp(float3(0.88, 0.85, 0.97), float3(0.82, 0.85, 0.99), CS_NIGHT), pow(cbEdge, 10.0) * 0.40);
+    }
+#endif
 #if !defined(PASS_TRANSPARENT)
     // The Hive's own blocks (hive:red_oak_leaves, hive:small_dried_grass...) carry no material id (their art is the
     // server's): an untagged cut-out with a natural colour outdoors is taken for foliage
