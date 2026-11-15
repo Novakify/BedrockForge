@@ -1947,6 +1947,17 @@ float4 underwaterPx(VSOut i) {
         float  ca = uwCaustic(W.xz * 1.15 + W.y * 0.35, t * 0.55);
         col += col * ca * 2.2 * saturate(n.y) * day * (1.0 - smoothstep(10.0, 26.0, dist));
     }
+    // the surface overhead (the game does not draw it from below): the light above comes through it, broken into a moving
+    // web by the waves - brightest straight up (Snell's window), a silver sheen toward its edge
+    [branch] if (sky && rd.y > 0.25) {
+        float2 sp  = rd.xz / rd.y * 3.0;
+        float  rp  = vnoise(sp * 1.3 + float2(t * 0.35, t * 0.22)) * 0.6 + vnoise(sp * 2.9 - float2(t * 0.5, -t * 0.3)) * 0.4;
+        float  web = pow(saturate(1.0 - abs(rp - 0.5) * 3.4), 4.0);
+        float  win = smoothstep(0.55, 0.95, rd.y);
+        float3 skyIn = (NG_IS ? float3(0.36, 0.60, 0.80) : float3(0.55, 0.62, 0.62)) * lerp(1.0, 0.10, NIGHT);
+        float3 surf  = lerp(high * 2.2, skyIn, win) * (0.80 + 0.40 * rp) + skyIn * web * 0.55 * win;
+        water = lerp(water, surf * max(day, 0.30), smoothstep(0.25, 0.60, rd.y));
+    }
     float3 T = exp(-dist * float3(0.20, 0.080, 0.058));   // red goes first, then green: what is far is blue
     float3 o = col * T + water * (1.0 - T);
     o += lerp(float3(0.30, 0.42, 0.40), float3(0.10, 0.14, 0.24), NIGHT) * sh * up * (1.0 - T.g) * 0.09 * max(day, 0.2);

@@ -385,7 +385,10 @@ float ngAcFieldLo(float2 q, float cov) {
 float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float e = rd.y;
     [branch] if (e < 0.015) return float4(0, 0, 0, 0);
-    float2 P = rd.xz / (e * 0.55 + 0.16) * 0.95 + TIME * float2(0.006, 0.002);   // big, clean, puffy (the Aero sky)   // (overhead a little denser: seen in game, huge soft blobs up there)
+    // a real layer in perspective: clouds get smaller and flatter toward the horizon (Fernando, Nov 15: near the horizon
+    // they were smeared into soft streaks - the old mapping held them at one size there and stretched them toward it).
+    // Same scale overhead as before.
+    float2 P = rd.xz / (e + 0.035) * 1.385 + TIME * float2(0.006, 0.002);
     float2 W = float2(0.92, 0.39);
     float2 q = float2(dot(P, W), dot(P, float2(-W.y, W.x)));
     q.y += 0.22 * sin(q.x * 1.3 + fbm(P * 0.5, 2) * 3.0);                       // the rows ripple
@@ -419,7 +422,10 @@ float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     c += float3(1.0, 0.96, 0.88) * edge * fwd * 1.6;                            // silver lining
     float3 iri = ngFilm(0.45 + (1.0 - dSoft) * 0.9 + ang * 0.5);
     c = lerp(c, c * 0.65 + iri * 0.55, saturate(edge * smoothstep(0.40, 0.08, ang) * 0.8));   // mother-of-pearl, close in only
-    float fade = smoothstep(0.015, 0.12, e) * (1.0 - 0.35 * smoothstep(0.6, 1.0, e));
+    // toward the horizon the far clouds sink into the air's own colour (aerial perspective) instead of going see-through
+    float hz = 1.0 - smoothstep(0.03, 0.22, e);
+    c = lerp(c, ngSkyBase(normalize(float3(rd.x, max(e, 0.02), rd.z))) * 1.08, hz * 0.55);
+    float fade = smoothstep(0.012, 0.05, e) * (1.0 - 0.35 * smoothstep(0.6, 1.0, e));
     return float4(c, d * fade * 0.95);
 }
 // prism beams: a few broad shafts of light fanning out from the sun, each split into colour along its edges (the
