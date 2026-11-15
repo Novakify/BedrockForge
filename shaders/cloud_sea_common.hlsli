@@ -398,7 +398,7 @@ float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float d = cheap ? ngAcFieldLo(q, cov) : ngAcField(q, cov);
     [branch] if (d <= 0.002) return float4(0, 0, 0, 0);
     float dSoft = smoothstep(0.0, 0.45, d);                // for the light
-    d = smoothstep(0.0, 0.26, d);                          // the outline: crisp (seen in game: soft edges read as smeared)
+    d = smoothstep(0.0, 0.11, d);                          // the outline: crisp (seen in game: soft edges read as smeared - still too soft at 0.26, Nov 15)
     float2 sd = normalize(float2(dot(Ld.xz, W), dot(Ld.xz, float2(-W.y, W.x))) + 1e-4);
     float occ = 0.0;
     [branch] if (!cheap) {
