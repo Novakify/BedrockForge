@@ -422,7 +422,22 @@ float3 csStars(float3 rd) {
 //      on one side, Serenitatis - Tranquillitatis - Fecunditatis down the other, Crisium alone by the limb, Nubium and
 //      Humorum below), the bright southern highlands, Tycho with its rays, Copernicus, Kepler, Aristarchus. A full
 //      moon is lit head-on: no shadows on it, almost no darker limb - its relief is all colour.
-float csMare(float2 q, float2 c, float2 r) { float2 d = (q - c) / r; return 1.0 - smoothstep(0.50, 1.0, dot(d, d)); }
+float csMare(float2 q, float2 c, float2 r) { float2 d = (q - c) / r; return 1.0 - dot(d, d); }
+float csMH(float2 c) { return frac(sin(dot(c, float2(127.1, 311.7))) * 43758.5453); }
+// (craters as a full moon shows them: no shadow, a pale rim and a slightly darker floor)
+float csCraters(float2 q, float sc, float seed) {
+    float2 x = q * sc + float2(seed, seed * 1.7), i = floor(x);
+    float o = 0.0;
+    for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+        float2 c = i + float2(dx, dy);
+        float h1 = csMH(c), h2 = csMH(c + float2(37.2, 11.9)), h3 = csMH(c + float2(5.1, 71.3));
+        float d = length(x - (c + 0.2 + 0.6 * float2(h1, h2))) / (0.12 + 0.30 * h3 * h3);
+        float e1 = (d - 1.0) / 0.22, e2 = d / 0.8;
+        o += step(0.25, h3) * (exp(-e1 * e1) * 0.9 - exp(-e2 * e2) * 0.6) * (0.4 + 0.6 * h1);
+    }
+    return o;
+}
+float csSpot(float2 q, float2 c, float s, float halo) { float d = length(q - c) / s; return exp(-d * d) + halo * exp(-d * d / 10.24); }
 float3 csMoon(float3 rd, out float disc) {
     disc = 0.0;
     float  mUp = smoothstep(-0.26, -0.20, MOOND.y);
@@ -442,33 +457,47 @@ float3 csMoon(float3 rd, out float disc) {
         float2 q = float2(0.94 * q0.x - 0.34 * q0.y, 0.34 * q0.x + 0.94 * q0.y);         // tilted, as it hangs in an evening sky
         float  r = length(q);
         disc = smoothstep(1.0, 0.985, r);
-        float2 w = q + (float2(fbm(q * 3.1 + 2.0, 3), fbm(q * 3.1 + 19.0, 3)) - 0.5) * 0.16;   // ragged shores
-        float  mare = csMare(w, float2(-0.60, 0.18), float2(0.30, 0.46));                 // Oceanus Procellarum
-        mare = max(mare, csMare(w, float2(-0.24, 0.47), float2(0.29, 0.26)));             // Mare Imbrium
-        mare = max(mare, csMare(w, float2( 0.20, 0.44), float2(0.18, 0.18)));             // Serenitatis
-        mare = max(mare, csMare(w, float2( 0.36, 0.15), float2(0.21, 0.18)));             // Tranquillitatis
-        mare = max(mare, csMare(w, float2( 0.73, 0.30), float2(0.10, 0.13)));             // Crisium
-        mare = max(mare, csMare(w, float2( 0.62,-0.07), float2(0.13, 0.18)));             // Fecunditatis
-        mare = max(mare, csMare(w, float2( 0.43,-0.27), float2(0.09, 0.09)));             // Nectaris
-        mare = max(mare, csMare(w, float2(-0.17,-0.38), float2(0.21, 0.17)));             // Nubium
-        mare = max(mare, csMare(w, float2(-0.51,-0.39), float2(0.10, 0.10)));             // Humorum
-        mare = max(mare, csMare(w, float2(-0.38,-0.08), float2(0.18, 0.14)));             // Cognitum / Insularum
-        mare = max(mare, csMare(w, float2(-0.05, 0.80), float2(0.50, 0.06)));             // Frigoris
-        mare = max(mare, csMare(w, float2( 0.05, 0.22), float2(0.07, 0.06)));             // Vaporum
+        float2 w = q + (float2(fbm(q * 2.2 + 2.0, 4), fbm(q * 2.2 + 19.0, 4)) - 0.5) * 0.30;   // the seas' own wandering outlines
+        // (one field for all of them, so neighbours run into each other the way the real ones do)
+        float  f = csMare(w, float2(-0.60, 0.22), float2(0.30, 0.50));                    // Oceanus Procellarum
+        f = max(f, csMare(w, float2(-0.25, 0.50), float2(0.31, 0.28)));                   // Mare Imbrium
+        f = max(f, csMare(w, float2( 0.22, 0.46), float2(0.20, 0.20)));                   // Serenitatis
+        f = max(f, csMare(w, float2( 0.42, 0.17), float2(0.25, 0.20)));                   // Tranquillitatis
+        f = max(f, csMare(w, float2( 0.78, 0.30), float2(0.085, 0.12)));                  // Crisium, alone by the limb
+        f = max(f, csMare(w, float2( 0.66,-0.08), float2(0.13, 0.20)));                   // Fecunditatis
+        f = max(f, csMare(w, float2( 0.56, 0.02), float2(0.12, 0.12)));
+        f = max(f, csMare(w, float2( 0.50,-0.27), float2(0.10, 0.10)));                   // Nectaris
+        f = max(f, csMare(w, float2(-0.20,-0.36), float2(0.24, 0.19)));                   // Nubium
+        f = max(f, csMare(w, float2(-0.53,-0.38), float2(0.12, 0.12)));                   // Humorum
+        f = max(f, csMare(w, float2(-0.40,-0.06), float2(0.24, 0.20)));                   // Cognitum / Insularum
+        f = max(f, csMare(w, float2(-0.70,-0.14), float2(0.14, 0.22)));
+        f = max(f, csMare(w, float2( 0.03, 0.20), float2(0.10, 0.08)));                   // Vaporum
+        float  fr = (w.y - (0.80 - 0.25 * w.x * w.x)) / 0.045;
+        f = max(f, 1.0 - fr * fr - w.x * w.x * 2.98);                                     // Frigoris, the thin arc up north
+        float  mare = smoothstep(-0.34, 0.44, f + (fbm(q * 5.0 + 5.0, 5) - 0.5) * 1.7);  // bays, capes, islands
+        mare *= 0.72 + 0.28 * smoothstep(0.3, 0.7, fbm(q * 3.3 + 31.0, 3));               // older, paler lava in places
         float  fine = fbm(q * 9.0 + 9.0, 4);
-        float  pock = vnoise(q * 34.0 + 3.0);                                             // the highlands are all craters
-        float3 land = float3(0.74, 0.725, 0.69) * (0.80 + 0.26 * fine + 0.10 * (pock - 0.5)) * (1.0 + 0.10 * smoothstep(0.1, -0.8, q.y));
-        float3 sea  = lerp(float3(0.235, 0.250, 0.285), float3(0.205, 0.235, 0.300), smoothstep(-0.2, 0.5, q.x)) * (0.84 + 0.30 * fine);
-        float3 m = lerp(land, sea, mare * 0.93);
-        // the young bright craters and Tycho's rays (long, thin, uneven - they cross half the disc)
+        float  pock = fbm(q * 26.0 + 3.0, 3);
+        float  south = smoothstep(0.2, -0.8, q.y);                                        // the crowded southern highlands
+        float  cr = csCraters(q, 9.0, 3.0) * 0.6 + csCraters(q, 19.0, 8.0) * 0.4;
+        float3 land = float3(0.60, 0.59, 0.565) * (0.74 + 0.34 * fine + 0.22 * (pock - 0.5) * (0.5 + south) + 0.22 * cr) * (1.0 + 0.10 * south);
+        float3 sea  = lerp(float3(0.185, 0.190, 0.215), float3(0.160, 0.175, 0.215), smoothstep(-0.2, 0.5, q.x)) * (0.72 + 0.50 * fine + 0.04 * cr);
+        float3 m = lerp(land, sea, mare * 0.92);
+        // Tycho and its rays: a few long uneven streaks across half the disc, not a wheel
         float2 ty = q - float2(-0.10, -0.70);
         float  tl = length(ty), ta = atan2(ty.y, ty.x);
-        float  rays = pow(0.5 + 0.5 * sin(ta * 9.0 + 2.2 * sin(ta * 3.0 + 1.0)), 6.0) * exp(-tl * 1.9) * smoothstep(0.03, 0.10, tl);
-        m += float3(0.20, 0.20, 0.19) * (rays * 0.55 + exp(-pow(tl / 0.050, 2.0)) * 0.9);
-        m += float3(0.20, 0.20, 0.19) * (exp(-pow(length(q - float2(-0.33, 0.15)) / 0.034, 2.0)) + 0.30 * exp(-pow(length(q - float2(-0.33, 0.15)) / 0.11, 2.0)));   // Copernicus
-        m += float3(0.18, 0.18, 0.17) * exp(-pow(length(q - float2(-0.62, 0.12)) / 0.024, 2.0));    // Kepler
-        m += float3(0.30, 0.30, 0.29) * exp(-pow(length(q - float2(-0.70, 0.40)) / 0.020, 2.0));    // Aristarchus
-        m *= 1.0 - 0.16 * pow(r, 5.0);
+        float  rays = pow(0.5 + 0.5 * sin(ta * 11.0 + 2.6 * sin(ta * 3.0 + 1.0)), 7.0) * exp(-tl * 1.5) * smoothstep(0.03, 0.10, tl)
+                    * (0.25 + 1.3 * smoothstep(0.35, 0.75, fbm(float2(ta * 1.9 + 4.0, 1.0), 2))) * (0.6 + 0.8 * fbm(q * 6.0 + 3.0, 2));
+        float  te = tl / 0.030, tc = (tl - 0.060) / 0.022, tj = tl / 0.16;
+        m += float3(0.20, 0.20, 0.19) * (rays * 0.50 + exp(-te * te) * 0.9 + exp(-tj * tj) * 0.10);
+        m *= 1.0 - 0.22 * exp(-tc * tc);
+        m += float3(0.20, 0.20, 0.19) * (csSpot(q, float2(-0.33, 0.15), 0.030, 0.30)            // Copernicus
+                                       + csSpot(q, float2(-0.62, 0.12), 0.022, 0.30) * 0.8      // Kepler
+                                       + csSpot(q, float2(-0.70, 0.40), 0.018, 0.15) * 1.3      // Aristarchus
+                                       + csSpot(q, float2( 0.42,-0.62), 0.020, 0.30) * 0.5
+                                       + csSpot(q, float2( 0.80,-0.52), 0.020, 0.50) * 0.6      // Stevinus / Furnerius
+                                       + csSpot(q, float2(-0.05, 0.78), 0.020, 0.30) * 0.4);    // Anaxagoras
+        m *= 1.0 - 0.14 * pow(r, 5.0);
         c = lerp(c, m * warm, disc);
     }
     return c * mUp;
