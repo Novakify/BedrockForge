@@ -63,6 +63,7 @@ float4 main(PSIn i) : SV_Target {
         float3 VW = haveView ? normalize(mul(V, R3)) : V;
         float3 gW = normalize(nW + (csHash3(floor(i.texcoord3.xy * 16.0) + floor(i.texcoord3.z * 16.0) * 7.31) - 0.5) * 0.9);
         float  skyI = smoothstep(0.30, 0.80, lv);
+        CS_ITEM_FP = 1.0;
 #if defined(CS_NOVAK)
         col = ngItemGlass(c, nW, VW, gW, skyI, ViewPositionAndTime.w, haveView ? vp : i.texcoord3);
 #else

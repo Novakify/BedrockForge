@@ -440,6 +440,7 @@ bool bfDitherKill(float3 worldPos, float3 cam, float3 fwd, float4 clip, float4 p
     return fade <= t;
 }
 
+static float CS_ITEM_FP = 0.0;   // 1: the item in your own hand (flat faces seen head-on: no fresnel, no rim - it needs its own glass cues)
 // a smooth field through an item's volume (the light inside it - both atmospheres)
 float csH3(float3 p) { p = frac(p * 0.1031); p += dot(p, p.zyx + 31.32); return frac((p.x + p.y) * p.z); }
 float csN3(float3 p) {
@@ -496,6 +497,15 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     float  flow = csN3(q + float3(T * 0.10, -T * 0.22, T * 0.06)) * 0.62 + csN3(q * 2.3 + float3(-T * 0.15, T * 0.30, 0.0)) * 0.38;
     float  caust = smoothstep(0.52, 0.88, flow);
     aero = aero * (0.82 + 0.34 * flow) + lerp(float3(1.0, 1.0, 1.0), aeroTint, 0.45) * caust * 0.30;
+    // in your own hand (Fernando, Nov 15: "still looks vanilla" - it was the sprite's own colours, lit): the body goes
+    // pale and clear like the third-person crystal, each texel a facet, the sprite's dark outline becomes the glass's
+    // bright cut edge, and a gloss slides across it now and then
+    float  fid   = frac(sin(dot(gn, float3(12.9898, 78.233, 37.719))) * 43758.5453);
+    float  edgeK = (1.0 - smoothstep(0.20, 0.38, luma)) * CS_ITEM_FP;
+    float  gloss = smoothstep(0.90, 1.0, sin((q.x + q.y) * 0.9 - T * 1.1));
+    float3 clear = lerp(float3(0.84, 0.93, 1.00), hue, 0.50) * (0.70 + 0.40 * flow) * (0.84 + 0.32 * fid);
+    aero = lerp(aero, clear + float3(1.0, 1.0, 1.0) * (caust * 0.22 + gloss * 0.30), 0.50 * CS_ITEM_FP);
+    aero = lerp(aero, lerp(float3(0.96, 0.99, 1.00), hue, 0.42) * (0.84 + 0.30 * caust + 0.25 * gloss), edgeK * 0.78);
     aero *= lerp(0.50, 1.0, sky);
     // the endgame / night: crystallized glass in the item's own colour - cut facets that each catch the light their own
     // way, a soft glow from within, a rim and a sparkle. (Seen on Hive: the earlier glow made diamond a flat, far too
@@ -511,6 +521,8 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     night += lerp(float3(0.85, 0.95, 1.00), hue, 0.55) * pow(1.0 - NV, 3.0) * 0.35;      // glass rim
     night += lerp(float3(1.0, 1.0, 1.0), hue, 0.25) * glint * 1.4;        // the sparkle on a facet
     night = night * (0.80 + 0.38 * flow) + hue * caust * 0.24 * breathe;
+    night = lerp(night, own * (0.50 + 0.40 * flow) * (0.80 + 0.40 * fid) + hue * (0.10 + 0.30 * caust) * breathe + float3(1.0, 1.0, 1.0) * gloss * 0.22, 0.60 * CS_ITEM_FP);
+    night = lerp(night, lerp(float3(0.80, 0.92, 1.00), hue, 0.50) * (0.70 + 0.45 * caust + 0.25 * gloss) * breathe, edgeK * 0.90);
     return lerp(aero, night, neonK);
 }
 #endif
