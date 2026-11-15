@@ -64,7 +64,7 @@ float4 main(PSIn i) : SV_Target {
         float3 gW = normalize(nW + (csHash3(floor(i.texcoord3.xy * 16.0) + floor(i.texcoord3.z * 16.0) * 7.31) - 0.5) * 0.9);
         float  skyI = smoothstep(0.30, 0.80, lv);
 #if defined(CS_NOVAK)
-        col = ngItemGlass(c, nW, VW, gW, skyI, ViewPositionAndTime.w, i.texcoord3);
+        col = ngItemGlass(c, nW, VW, gW, skyI, ViewPositionAndTime.w, haveView ? vp : i.texcoord3);
 #else
         col = csItemGlass(c, nW, VW, gW, skyI, ViewPositionAndTime.w, haveView ? vp : i.texcoord3);   // (view space: the light inside stays with the item as you walk)
 #endif

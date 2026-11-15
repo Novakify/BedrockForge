@@ -440,6 +440,13 @@ bool bfDitherKill(float3 worldPos, float3 cam, float3 fwd, float4 clip, float4 p
     return fade <= t;
 }
 
+// a smooth field through an item's volume (the light inside it - both atmospheres)
+float csH3(float3 p) { p = frac(p * 0.1031); p += dot(p, p.zyx + 31.32); return frac((p.x + p.y) * p.z); }
+float csN3(float3 p) {
+    float3 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(lerp(csH3(i), csH3(i + float3(1, 0, 0)), f.x), lerp(csH3(i + float3(0, 1, 0)), csH3(i + float3(1, 1, 0)), f.x), f.y),
+                lerp(lerp(csH3(i + float3(0, 0, 1)), csH3(i + float3(1, 0, 1)), f.x), lerp(csH3(i + float3(0, 1, 1)), csH3(i + float3(1, 1, 1)), f.x), f.y), f.z);
+}
 // ---- Novak Glass: items as glass that follows the match (Actor + ActorGlint)
 #if defined(CS_NOVAK)
 // what Novak glass sees: the day sky's aqua-to-ultramarine, or the night city (OLED black, neon on the horizon)
@@ -483,6 +490,12 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     aero += float3(1.0, 0.98, 0.95) * glint * 1.8;
     aero += lerp(float3(0.92, 0.97, 1.00), aeroTint, 0.4) * pow(1.0 - NV, 3.0) * 0.25;   // the clean rim
     aero = lerp(aero, aero * float3(1.05, 0.78, 0.90), smoothstep(0.15, 0.55, k) * (1.0 - neonK));   // dusk
+    // light moving THROUGH the glass (quality audit, Nov 15: with only flat face normals the item in your hand was two
+    // flat tones - card, not glass): slow bright caustics and deeper bands drift through its volume
+    float3 q    = wp * 7.0;
+    float  flow = csN3(q + float3(T * 0.10, -T * 0.22, T * 0.06)) * 0.62 + csN3(q * 2.3 + float3(-T * 0.15, T * 0.30, 0.0)) * 0.38;
+    float  caust = smoothstep(0.52, 0.88, flow);
+    aero = aero * (0.82 + 0.34 * flow) + lerp(float3(1.0, 1.0, 1.0), aeroTint, 0.45) * caust * 0.30;
     aero *= lerp(0.50, 1.0, sky);
     // the endgame / night: crystallized glass in the item's own colour - cut facets that each catch the light their own
     // way, a soft glow from within, a rim and a sparkle. (Seen on Hive: the earlier glow made diamond a flat, far too
@@ -497,6 +510,7 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     night += hue * (0.05 + 0.07 * gem) * breathe;                          // the glow from within, gentle
     night += lerp(float3(0.85, 0.95, 1.00), hue, 0.55) * pow(1.0 - NV, 3.0) * 0.35;      // glass rim
     night += lerp(float3(1.0, 1.0, 1.0), hue, 0.25) * glint * 1.4;        // the sparkle on a facet
+    night = night * (0.80 + 0.38 * flow) + hue * caust * 0.24 * breathe;
     return lerp(aero, night, neonK);
 }
 #endif
@@ -515,12 +529,6 @@ float3 csSunEnv(float3 d, float k) {
     float3 eve = lerp(float3(1.00, 0.52, 0.30), float3(0.62, 0.42, 0.78), smoothstep(0.45, 0.95, up));
     float3 nit = lerp(float3(0.07, 0.09, 0.18), float3(0.34, 0.44, 0.74), smoothstep(0.40, 0.95, up));
     return lerp(lerp(day, eve, smoothstep(0.15, 0.55, k)), nit, smoothstep(0.62, 0.90, k));
-}
-float csH3(float3 p) { p = frac(p * 0.1031); p += dot(p, p.zyx + 31.32); return frac((p.x + p.y) * p.z); }
-float csN3(float3 p) {
-    float3 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);
-    return lerp(lerp(lerp(csH3(i), csH3(i + float3(1, 0, 0)), f.x), lerp(csH3(i + float3(0, 1, 0)), csH3(i + float3(1, 1, 0)), f.x), f.y),
-                lerp(lerp(csH3(i + float3(0, 0, 1)), csH3(i + float3(1, 0, 1)), f.x), lerp(csH3(i + float3(0, 1, 1)), csH3(i + float3(1, 1, 1)), f.x), f.y), f.z);
 }
 // (wp: a position that stays with the item - view space for the one in your hand, world space for everyone else's)
 float3 csItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, float3 wp) {
