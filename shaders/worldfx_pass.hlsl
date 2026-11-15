@@ -1526,6 +1526,63 @@ float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float 
     return lin;
 }
 
+void ngTeamsSetup() {
+    NG_NT = 0; NG_NALIVE = 0; NG_FALL = 0.0;
+    int nt = min(int(m0.x), 16);
+    float yS = 0.0;
+    [loop] for (int i = 0; i < nt; i++) {
+        float2 v = tPos[i].xz - CAM.xz;
+        NG_TAZ[NG_NT]  = atan2(v.y, v.x);
+        NG_TOFF[NG_NT] = tAge[i].x >= 0.0 ? saturate(tAge[i].x / 14.0) : 0.0;   // ~14 s for a district to go dark
+        NG_TOUT[NG_NT] = tAge[i].z;
+        [branch] if (tAge[i].z < 0.5) { NG_ALIVECOL[NG_NALIVE] = max(tCol[i].rgb, 0.0); NG_NALIVE++; }
+        yS += tPos[i].y;
+        NG_NT++;
+    }
+    [branch] if (NG_NT > 0) NG_FALL = saturate((yS / float(NG_NT) - 14.0 - CAM.y) / 30.0);   // well under the islands
+}
+// 10 Neon rain: when only two teams are left (of three or more), a fine rain catches the city light - thin glowing
+// streaks in two layers, sparse enough never to hide a player
+float ngRainK() {
+    [branch] if (NG_NT < 3 || NG_NALIVE != 2) return 0.0;
+    float k = 1.0;
+    [loop] for (int i = 0; i < min(int(m0.x), 16); i++) if (tAge[i].z >= 0.5) k = min(k, tAge[i].z);   // the last team out fades it in
+    return smoothstep(0.5, 1.0, k);
+}
+float3 ngRain(float3 rd) {
+    float az = atan2(rd.z, rd.x), el = rd.y;
+    float3 acc = 0.0;
+    [unroll] for (int k = 0; k < 2; k++) {
+        float  N  = k == 0 ? 700.0 : 1300.0;
+        float  x  = az / 6.2832 * N, ci = floor(x), fx = frac(x);
+        float  h  = hb(ci, 7.0 + float(k) * 13.0);
+        if (h < 0.72) continue;
+        float  y  = el * (9.0 + 5.0 * float(k)) + TIME * (2.2 + 1.2 * frac(h * 7.3)) * (1.0 + 0.6 * float(k)) + h * 31.0;
+        float  fy = frac(y);
+        float  streak = smoothstep(0.0, 0.025, fy) * (1.0 - smoothstep(0.03, 0.22, fy));
+        float  w  = max(fwidth(x) * 0.9, 0.06);
+        float  lin = 1.0 - smoothstep(0.0, w, abs(fx - 0.5));
+        acc += lerp(cityHaze(az) * 1.3, float3(1.0, 1.0, 1.0), 0.35) * lin * streak * (k == 0 ? 1.0 : 0.55);
+    }
+    return acc * 0.11 * (0.45 + 0.55 * NIGHT);
+}
+// 13 Runway bridges: a block you just placed (within reach) flashes a light round its top edge, so a speed-bridge
+// lights up behind you block by block
+float3 runwayLights(float3 P) {
+    float3 acc = 0.0;
+    float3 tc = float3(0.55, 0.90, 1.00);
+    [loop] for (int t = 0; t < min(int(m0.x), 16); t++) if (tAge[t].w > 0.5) tc = lerp(max(tCol[t].rgb, 0.0), float3(1, 1, 1), 0.25);
+    [loop] for (int i = 0; i < min(int(m0.y), 8); i++) {
+        if (eB[i].w < 1.5 || eB[i].w > 2.5) continue;
+        float age = eA[i].w; if (age > 0.7) continue;
+        float3 L = P - eA[i].xyz;
+        if (any(L < -0.02) || any(L > 1.02) || abs(L.y - 1.0) > 0.05) continue;
+        if (length(eA[i].xyz + 0.5 - CAM) > 9.0) continue;     // yours: placed within reach
+        float e = min(min(L.x, 1.0 - L.x), min(L.z, 1.0 - L.z));
+        acc += tc * (exp(-e * 28.0) * 1.4 + 0.10) * exp(-age * 5.0);
+    }
+    return acc;
+}
 float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inout float moT, inout float3 moAdd) {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
@@ -1536,6 +1593,8 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
         float3 PI = skyI ? posAt(float2(px) + 0.5, 1.0) : posPx(px);   // the same position the world pass shades
         return float4(impactFrame(sceneAt(px).rgb, normalize(PI), skyI ? 1e9 : length(PI)), 1.0);
     }
+    CAM = c7.xyz; TIME = c8.z;
+    ngTeamsSetup();                                       // the match as the city sees it (districts, billboards, the fall)
 #if NG_ATMOS == 1
     {   // the one place the Novak background is evaluated (sky pixels and far pixels that fade into it)
         bool   skyQ = isSky(d) || c10.x > 0.5;
@@ -1833,6 +1892,17 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     float3 moO = 0, moRd = float3(0, 0, 1), moAdd = 0;
     float  moT = 1e9;
     float4 r = wfxMain(i, MO, moO, moRd, moT, moAdd);
-    [branch] if (MO) r = float4(matchOver(moO, moRd, moT) + moAdd, 1.0);
+    [branch] if (MO) {
+        float3 o = matchOver(moO, moRd, moT);
+        [branch] if (moT < 1e8) o += pow(runwayLights(CAM + moRd * moT), 1.0 / 2.2);                       // 13
+#if NG_ATMOS == 1
+        float rk = ngRainK();
+        [branch] if (rk > 0.0) o += pow(ngRain(moRd) * rk, 1.0 / 2.2) * 0.6;                             // 10
+#endif
+        // 14 the map's theme: the sky takes it fully, the world a little (m4.yzw, 1 = none)
+        float3 tn = m4.yzw / max(dot(m4.yzw, float3(0.2126, 0.7152, 0.0722)), 0.2);
+        o = lerp(o, o * tn, moT >= 1e8 ? 1.0 : 0.30);
+        r = float4(o + moAdd, 1.0);
+    }
     return r;
 }

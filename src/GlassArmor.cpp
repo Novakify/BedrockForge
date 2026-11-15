@@ -1039,6 +1039,7 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.dyeRow = gDyeRow, p.dyeRowGlint = gDyeRowGlint, p.dbgRow = uint32_t(std::max(gDbgRow, 0)), p.enchFlow = gEnchFlow ? 1.f : 0.f;
     p.fusedK = gFusedK.load(), p.filmK = gFilmK.load();
     if (float const nk = rf::sky::novakMatchK(); nk >= 0.0f) p.pad3 = nk, p.pad4 = 1.0f;   // Novak: the armor follows the match
+    else if (float const ck = rf::sky::cloudSeaMatchK(); ck >= 0.0f) p.pad3 = ck, p.pad4 = 2.0f; // Cloud Sea: the same, in sunset gold
     p.scenePitch = rf.Footprint.RowPitch, p.depthPitch = df.Footprint.RowPitch;
     p.swirl = 0.9f, p.ripple = 0.09f, p.lens = 0.8f; // approved preview: Medium
     p.uiScale   = float(rd.Height) / 760.f;

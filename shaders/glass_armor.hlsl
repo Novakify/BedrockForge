@@ -346,9 +346,10 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float kick  = mus * beat * beatK;
     float flare = drop * boot * react;
     float3 edgeC = edgeB * (1.0 + ench * 1.2 + kick * 0.9 + flare * 1.4 + ignite * 1.2);
+    bool const csAtm = pad4 > 1.5;   // 15: Cloud Sea - the same reactive glass, in sunset gold
     if (ngK >= 0.0) {
-        float3 aeroE = lerp(float3(0.90, 0.97, 1.00), edgeC, 0.35) * 0.80;
-        float3 neonE = saturate(edgeC * 1.35) * (1.45 + 0.30 * sin(time * 2.2));
+        float3 aeroE = lerp(csAtm ? float3(1.00, 0.86, 0.58) : float3(0.90, 0.97, 1.00), edgeC, 0.35) * 0.80;
+        float3 neonE = saturate(edgeC * 1.35 + (csAtm ? float3(0.30, 0.15, 0.02) : float3(0, 0, 0))) * (1.45 + 0.30 * sin(time * 2.2));
         edgeC = lerp(aeroE, neonE, ngK);
     }
     float3 palC  = lerp(float3(1, 1, 1), pal, saturate(palAmount * mus));

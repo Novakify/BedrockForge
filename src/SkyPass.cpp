@@ -1308,9 +1308,11 @@ struct BfMatchFxV1 {
     struct Skin { uint32_t gen, ok; uint8_t px[64 * 64 * 4]; } skins[16]; // v6: classic 64x64 skins (kill events: floorDy = slot + 1)
     uint32_t mySkin; // v6: your own skin's slot + 1 (0 = none)
     float hp, hpMax; uint32_t streak, pad7; int64_t beatMs, killMs; // v7: you (health, kills this life, the heartbeat BF plays)
+    float mapTint[4]; char mapName[32]; // v8: the map's theme tint (rgb, strength) and its name
 };
 constexpr size_t kMatchV5Size = offsetof(BfMatchFxV1, skins);
 constexpr size_t kMatchV6Size = offsetof(BfMatchFxV1, mySkin) + sizeof(uint32_t);
+constexpr size_t kMatchV7Size = offsetof(BfMatchFxV1, mapTint);
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
 using MatchPreview = void (*)(float);
@@ -1537,6 +1539,7 @@ static float killYawFor(uint64_t key) {
     keys[nk % 32] = key; vals[nk % 32] = y; ++nk;
     return y;
 }
+std::wstring wfxConfigFile(wchar_t const* name); // config/<name> next to the World FX logs (empty until known)
 static MatchFrame matchFrame(WorldFxLook const& look) {
     int64_t const now = steadyMs();
     std::lock_guard l(gMatchMutex);
@@ -1548,7 +1551,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     BfMatchFxV1 const* b = get ? get() : nullptr;
     bool const ok = b && b->version >= 5 && b->size >= kMatchV5Size;
     bool const v6 = ok && b->version >= 6 && b->size >= kMatchV6Size;
-    bool const v7 = ok && b->version >= 7 && b->size >= sizeof(BfMatchFxV1);
+    bool const v7 = ok && b->version >= 7 && b->size >= kMatchV7Size;
+    bool const v8 = ok && b->version >= 8 && b->size >= sizeof(BfMatchFxV1);
     gSkinSrc = v6 ? b : nullptr;
     if (use) use((look.living && ok && gWorldSky.load() != 0 ? 1 : 0) | (look.beds && ok ? 2 : 0)); // 2: we draw the beds
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
@@ -1797,6 +1801,21 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         hp = -1.0f, beat = 0.0f;   // the low-health edges are gone (Fernando didn't like them); only the kill run is drawn
         if (!look.vitals) hp = -1.0f, run = 0.0f;
         f.cb.m3[0] = hp; f.cb.m3[1] = std::min(beat, 1.0f); f.cb.m3[2] = run; f.cb.m3[3] = sinceKill;
+    }
+    {   // the map's theme tint (m4.yzw, 1 = none): from BF (the Hive vote), or config/maptint.txt "r g b strength" to try one
+        float t[4] = {1, 1, 1, 0};
+        if (v8) std::memcpy(t, b->mapTint, 16);
+        static int64_t readAt = -100000; static float ov[4] = {1, 1, 1, -1};
+        if (now - readAt > 2000) {
+            readAt = now; ov[3] = -1;
+            if (std::FILE* fp = _wfopen(wfxConfigFile(L"maptint.txt").c_str(), L"r")) {
+                if (std::fscanf(fp, "%f %f %f %f", &ov[0], &ov[1], &ov[2], &ov[3]) != 4) ov[3] = -1;
+                std::fclose(fp);
+            }
+        }
+        if (ov[3] >= 0) std::memcpy(t, ov, 16);
+        float const k = std::clamp(t[3], 0.0f, 1.0f);
+        for (int i = 0; i < 3; ++i) f.cb.m4[1 + i] = 1.0f + (std::clamp(t[i], 0.0f, 2.0f) - 1.0f) * k;
     }
     gMatch = f;
     return f;
@@ -2070,6 +2089,10 @@ std::atomic<float> gNovakPhase{-1.0f};
 std::atomic<float> gWorldPhase{0.0f};
 std::atomic<bool>  gWorldNovak{false};
 float novakMatchK() { return gNovakPhase.load(std::memory_order_relaxed); }
+float cloudSeaMatchK() {
+    if (!gWorldSky.load(std::memory_order_relaxed) || gWorldNovak.load(std::memory_order_relaxed)) return -1.0f;
+    return std::clamp(gWorldPhase.load(std::memory_order_relaxed) * 0.5f, 0.0f, 1.0f);
+}
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     followLoadedAtmosphere();
     GamePso g;
@@ -2242,6 +2265,12 @@ bool                    failed = false;
 std::atomic<float>      ms{0.0f};       // smoothed pass time
 float                   ema = 0.0f;
 std::filesystem::path   logDir;
+} // namespace wfxperf
+std::wstring wfxConfigFile(wchar_t const* name) {
+    if (wfxperf::logDir.empty()) return L"";
+    return (wfxperf::logDir.parent_path().parent_path() / "config" / name).wstring();
+}
+namespace wfxperf {
 // A/B bench: config/wfxbench.txt = "glass A B [phase P] [seconds S]" -> the pass alternates glass A / B every 2 s for
 // S seconds (default 30) and writes the average GPU ms of each to logs/worldfx/bench.txt
 struct Bench { bool on = false; std::string key = "glass"; float a = 0, b = 1, phase = -2, quality = -1; WorldFxLook saved{};
