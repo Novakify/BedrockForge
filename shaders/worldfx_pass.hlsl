@@ -340,6 +340,7 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
             col = lin; best = min(sceneT, best); hit = true;
             continue;
         }
+#if NG_ATMOS == 1   // (Cloud Sea has its puff above. Left in its build, this block's sky lookup was worked out for every pixel of the frame whenever any event was live - ~2 ms)
         if (kind > 1.5 && kind < 2.5) {
             // placed: it MATERIALIZES. For 0.42 s the block is not there - its cell is a hologram: you see through it
             // (dark glass, scanlines, a wireframe), while the block builds itself inside out of 512 small voxels of
@@ -438,6 +439,9 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
             }
             continue;
         }
+#else
+        if (kind > 1.5 && kind < 2.5) continue;
+#endif
         if (kind > 4.5) continue;   // respawn / victory: screen and sky effects, not pieces
         if (kind > 2.5 && kind < 4.5) continue;   // kills are drawn as light (killLight), not pieces
         if (kind > 2.5) { // a kill (old voxel body, unused): the player's body, in voxels of their team colour, holds for a beat, then bursts
