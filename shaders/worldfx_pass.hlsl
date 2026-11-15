@@ -521,14 +521,14 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                 float  tc = dot(c, rd);
                 if (tc < 0.0) continue;
                 float3 pn = rd * tc - c;
-                float  rr = r * (0.84 + 0.30 * vnoise(pn.xy * 6.0 + pn.z * 3.7 + sk * 5.0));
+                float  rr = r * (0.66 + 0.42 * vnoise(pn.xy * 5.0 + pn.z * 3.1 + sk * 5.0) + 0.22 * vnoise(pn.xy * 13.0 - pn.z * 7.0 + sk * 9.0));   // (audit: with a smooth rim the heaps were plain round balls)
                 float  b2 = dot(pn, pn);
                 if (b2 >= rr * rr) continue;
                 float  h  = sqrt(rr * rr - b2);
                 float  ta = tc - h, tb = min(tc + h, tLim);
                 if (tb <= ta) continue;
                 float  th = (tb - ta) * (1.0 - b2 / (rr * rr));
-                float  lk = saturate(dot(normalize(pn - rd * h), Lp) * 0.5 + 0.5) * (0.82 + 0.18 * (1.0 - b2 / (rr * rr)));
+                float  lk = saturate(dot(normalize(pn - rd * h), Lp) * 0.62 + 0.42) * (0.74 + 0.26 * (1.0 - b2 / (rr * rr)));
                 float  wk = th * exp(-(ta - tMid) * 3.0);
                 T += th; wAcc += wk; litAcc += lk * wk;
             }
@@ -536,8 +536,8 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                 float  lit = litAcc / max(wAcc, 1e-5);
                 float3 crest = lerp(lerp(float3(0.72, 0.65, 0.54), float3(0.72, 0.52, 0.42), DUSK), float3(0.34, 0.42, 0.62), NIGHT);
                 float3 shade = lerp(lerp(float3(0.34, 0.30, 0.47), float3(0.27, 0.20, 0.36), DUSK), float3(0.10, 0.13, 0.26), NIGHT);
-                float3 pc = lerp(shade, crest, smoothstep(0.25, 0.80, lit));
-                pc = lerp(pc, pc * (0.40 + 0.85 * hue), 0.50);                 // more of the block in it than in the place puff: you see WHAT broke
+                float3 pc = lerp(shade, crest * 1.08, smoothstep(0.22, 0.74, lit));
+                pc = lerp(pc, pc * (0.40 + 0.85 * hue), 0.40);                 // more of the block in it than in the place puff: you see WHAT broke
                 pc += crest * 0.16 * (1.0 - saturate(T * 2.6));
                 lin = lerp(lin, pc, min(1.0 - exp(-T * 9.0), 0.92) * dens);
                 col = lin; best = min(sceneT, best); hit = true;
