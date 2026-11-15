@@ -79,6 +79,9 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
 bool fxFallbackWanted(ID3D12GraphicsCommandList* list, size_t dsv);
 void noteTargetsBound(size_t rt0, size_t dsv);
 bool worldClearColour(size_t rtv, float const* game, float out[4]); // the world target's clear: the atmosphere's colour below the horizon // every OMSetRenderTargets the game makes (for the looking-down fallback) // looking down (no cloud draw): true at the frame's second clear of the world's depth buffer
+void setUnderwater(bool on);   // client thread: the local player's head is under water
+void noteLeave(int where);
+void lookDownFrameTick();       // once per Present (diagnostics)      // diagnostics: 0 targets changed, 1 depth clear, 2 list closed
 bool leaveWorldWanted(size_t rt, size_t ds); // looking down: the list that drew the world ends / leaves its targets, pass not run yet
 bool leaveWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, size_t dsvClear);

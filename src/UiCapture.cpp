@@ -509,7 +509,7 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
     if (!gInSnapshot && rf::sky::wanted()) {
         SkyLS* s = skyLS(list);
         size_t const nrt = n > 0 && rts ? rts[0].ptr : 0, nds = ds ? ds->ptr : 0;
-        if (s->terr && s->bound && (s->rt != nrt || s->ds != nds)) leaveWorld(list);   // the game leaves the world's targets
+        if (s->terr && s->bound && (s->rt != nrt || s->ds != nds)) { rf::sky::noteLeave(0); leaveWorld(list); }   // the game leaves the world's targets
         if (s->rt != nrt || s->ds != nds) s->terr = false;
         s->rt = nrt, s->ds = nds, s->bound = true;
     }
@@ -610,7 +610,7 @@ void STDMETHODCALLTYPE createSrvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_S
     rf::glassarmor::noteSrv(h.ptr, r); // always: textures make their SRVs once, long before a capture
 }
 HRESULT STDMETHODCALLTYPE closeHook(ID3D12GraphicsCommandList* list) {
-    if (rf::sky::wanted()) { SkyLS* s = skyLS(list); if (s->terr && s->bound) leaveWorld(list); s->terr = false; s->bound = false; }
+    if (rf::sky::wanted()) { SkyLS* s = skyLS(list); if (s->terr && s->bound) { rf::sky::noteLeave(2); leaveWorld(list); } s->terr = false; s->bound = false; }
     if (gaOn()) gaFlush(list); // the actor pass often ends the list: replay the held-back armor while its targets are bound
     return reinterpret_cast<Close_t>(gOrig[25])(list);
 }
@@ -925,6 +925,11 @@ void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa co
 using ClearDsv_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_CLEAR_FLAGS, FLOAT, UINT8, UINT, D3D12_RECT const*);
 void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE dsv, D3D12_CLEAR_FLAGS flags, FLOAT depth, UINT8 stencil,
                                     UINT n, D3D12_RECT const* rects) {
+    // the list that drew the world clears its depth (before the hand): the world is complete on it - the pass goes here
+    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::wanted()) {
+        SkyLS* s = skyLS(list);
+        if (s->terr && s->bound) { rf::sky::noteLeave(1); leaveWorld(list); }
+    }
     if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::fxFallbackWanted(list, dsv.ptr)) {
         SkyLS* s = skyLS(list);
         rf::sky::GameState st;

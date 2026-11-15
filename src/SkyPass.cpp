@@ -2237,6 +2237,8 @@ float adaptQuality() {
 // looking down, Bedrock culls its cloud draw - the draw the World FX pass rides on - so the pass (cloud sea, beds,
 // effects) would vanish. Then it runs at the frame's first UI draw instead, on the same targets (one per frame, never both)
 std::atomic<uint64_t> gFxRanNo{~0ull}, gFxFallbackNo{~0ull};
+std::atomic<bool>     gUnderwater{false};
+void setUnderwater(bool on) { gUnderwater.store(on, std::memory_order_relaxed); }
 std::atomic<size_t>   gFxRt{0}, gFxDs{0};
 // every (colour, depth) target pair the pass has run on: the game may swap between two sets of world targets frame to
 // frame - a single remembered pair let the looking-down fallback run on every other frame only (the flicker)
@@ -2500,16 +2502,36 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // after the game's own sky draw - on the game's own list, its own targets bound, depth still cleared: every pixel is
 // sky there, the background (sky / city / void) goes down first and the world is drawn over it. It marks the frame done,
 // so the clear fallback does not add a second, different look on the frames it does manage.
+// looking-down diagnostics (Nov 14: five fixes in, measure instead of guessing): why the end-of-world anchor skips
+std::atomic<long> gLvAt[3]{}, gLvNoPso{0}, gLvDone{0}, gLvPair{0}, gLvCloud{0}, gLvOk{0}, gLvFail{0}, gFrames{0}, gFramesNoPass{0};
+std::atomic<long> gPassesThisFrame{0};
+void noteLeave(int where) { if (where >= 0 && where < 3) ++gLvAt[where]; }
+void lookDownFrameTick() {   // once per Present: did any path draw the pass this frame?
+    ++gFrames;
+    if (gWorldSky.load(std::memory_order_relaxed) && gPassesThisFrame.exchange(0) == 0) ++gFramesNoPass;
+    static int64_t last = 0;
+    int64_t const t = nowMsSky();
+    if (t - last < 5000) return;
+    last = t;
+    if (!gWorldSky.load(std::memory_order_relaxed)) return;
+    ll_shim::info("[RF] WFX frames " + std::to_string(gFrames.exchange(0)) + ", frames WITHOUT the pass " + std::to_string(gFramesNoPass.exchange(0)) +
+                  " | world-list ends: targets " + std::to_string(gLvAt[0].exchange(0)) + ", depth clear " + std::to_string(gLvAt[1].exchange(0)) +
+                  ", close " + std::to_string(gLvAt[2].exchange(0)) + " -> ran " + std::to_string(gLvOk.exchange(0)) + ", failed " + std::to_string(gLvFail.exchange(0)) +
+                  ", skipped: already done " + std::to_string(gLvDone.exchange(0)) + ", not world targets " + std::to_string(gLvPair.exchange(0)) +
+                  ", clouds recent " + std::to_string(gLvCloud.exchange(0)) + ", no pso " + std::to_string(gLvNoPso.exchange(0)));
+}
 bool leaveWorldWanted(size_t rt, size_t ds) {
-    if (!rt || !gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || gFxSinceClear.load()) return false;
-    if (fxPairRt(ds) != rt) return false;                         // only the world's own targets
-    return nowMsSky() - gLastCloudPassMs.load() >= 60;            // the clouds are being drawn: the normal pass runs
+    if (!rt || !gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed)) { ++gLvNoPso; return false; }
+    if (gFxSinceClear.load()) { ++gLvDone; return false; }
+    if (fxPairRt(ds) != rt) { ++gLvPair; return false; }         // only the world's own targets
+    if (nowMsSky() - gLastCloudPassMs.load() < 60) { ++gLvCloud; return false; }   // the clouds are being drawn: the normal pass runs
+    return true;
 }
 bool leaveWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     GameState s2 = st;
     s2.pso = gFxPso.load();
     bool const ok = drawWorldFxPassImpl(list, s2, calls);
-    if (ok) { gFxSinceClear = true; ++gDbgDome; }
+    if (ok) { gFxSinceClear = true; ++gDbgDome; ++gLvOk; } else ++gLvFail;
     if (st.pso) calls.setPso(list, st.pso);
     if (st.haveTopo) calls.setTopo(list, st.topo);
     static std::atomic<int64_t> lastLog{0};
@@ -2667,6 +2689,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     c[35] = gAnchored ? 1.0f : 0.0f;
     c[36] = look.rays; c[37] = look.clouds; c[38] = adaptQuality(); c[39] = look.ink;
+    c[41] = gUnderwater.load(std::memory_order_relaxed) ? 1.0f : 0.0f;   // your head under water: the pass draws the water instead
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
@@ -2718,6 +2741,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     calls.restoreRoot(list);
     calls.setPso(list, st.pso);
     if (st.haveTopo) calls.setTopo(list, st.topo);
+    ++gPassesThisFrame;
     long const n = ++gWfxFrames;
     if ((n & 63) == 1) wfxStatus("drawing (" + std::to_string(n) + " frames, " + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) +
                                  ", quality " + std::to_string(int(gQuality.load() * 100.0f)) + "%)");

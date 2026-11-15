@@ -385,6 +385,12 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     }
     float  cgap  = sqrt(d2) - sqrt(d1);
     float  cutLn = 1.0 - smoothstep(0.0, max(fwidth(cgap) * 1.3, 0.035), cgap);
+    // far away a facet is only a few pixels across: the cut lines crowd into a dark-bright web that reads as cracks
+    // (Fernando's report). They fade out as the facets shrink on screen, the facets' own light evens out with them -
+    // at a distance the plate reads as one clean crystal.
+    float  cellPx = 1.0 / max(max(length(ddx(cg)), length(ddy(cg))), 1e-4);
+    float  facetK = smoothstep(5.0, 12.0, cellPx);
+    cutLn *= facetK;
     float  fh1 = gaHash(cid + 5.1), fh2 = gaHash(cid + 9.7);
     float2 tilt = float2(fh1, fh2) * 2.0 - 1.0;
     off += tilt * 13.0 * S * (1.0 - 0.5 * e);
@@ -409,7 +415,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     {
         float3 hueC = baseEdge / max(max(max(baseEdge.r, baseEdge.g), baseEdge.b), 1e-3);
         float  fl   = dot(tilt, normalize(float2(-0.45, -0.89)));
-        c *= 0.86 + 0.26 * (0.5 + 0.5 * fl);
+        c *= lerp(1.0, 0.86 + 0.26 * (0.5 + 0.5 * fl), 0.35 + 0.65 * facetK);
         c += hueC * 0.05 * (0.5 + 0.5 * fl);
         float  ngL  = 1.0 + max(ngK, 0.0);
         c += lerp(float3(1, 1, 1), hueC, 0.45) * cutLn * (0.16 + 0.14 * (0.5 + 0.5 * fl)) * ngL;

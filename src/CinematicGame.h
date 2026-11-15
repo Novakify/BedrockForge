@@ -8,6 +8,8 @@ namespace rf::cine::game {
 bool        playerState(double feet[3], float& yaw, float& pitch, bool& alive);
 /// the player is in creative mode (the enchanting offers then tell only their clue)
 bool        creative();
+/// the local player's head (the camera, first person) is under water
+bool        headUnderWater();
 /// The block the player's hit result points at (the block a use went to).
 bool        hitBlock(int& x, int& y, int& z, std::string& typeName);
 std::string blockName(int x, int y, int z);

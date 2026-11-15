@@ -16,7 +16,7 @@ cbuffer C : register(b0) {
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
     float4 c9; // x = god ray strength, y = cloud shadow strength, z = quality 0..1 (RF lowers it to hold the frame rate), w = ink look strength
-    float4 c10; // x = 1: this draw is the sky only (depth-tested to sky pixels, shaded at a coarse rate): take the sky path
+    float4 c10; // x = 1: this draw is the sky only (depth-tested to sky pixels, shaded at a coarse rate): take the sky path, y = 1: your head is under water
 };
 // the match (Bedrock Forge MatchFx, filled per frame by SkyPass): team lights + bed beacons, block shards, placement pop
 cbuffer M : register(b1) {
@@ -87,6 +87,10 @@ VSOut VSWorldFx(uint id : SV_VertexID) {
 
 // ---- god rays: march from the pixel toward the sun on screen; every step that sees open sky lets light through.
 //      Islands, players and trees cut real shadow wedges into the beams. Returns linear light to add.
+// open sky toward the sun: a hairline crack between two blocks reads as "sky" in the depth buffer - on a flat Cloud Sea
+// floor the beams and the rim drew broken bright dashes along every seam (Fernando, Nov 14). Real sky is wider than
+// a crack: a pixel a few over must be sky too.
+bool openSky(int2 q) { return isSky(rawDepth(q)) && isSky(rawDepth(q + int2(3, 1))); }
 float3 sunShafts(int2 px, float j) {
     float3 sp = toPx(SUN * 4000.0);
     if (sp.z <= 0.0 || c8.w < 0.5) return float3(0, 0, 0);
@@ -106,7 +110,7 @@ float3 sunShafts(int2 px, float j) {
         int nOpen = 0;
         [unroll] for (int s4 = 0; s4 < 4; s4++) {
             float2 q = float2(px) + stepv * (float(N) * (0.12 + 0.26 * float(s4)) + j);
-            bool o = (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) ? true : isSky(rawDepth(int2(q)));
+            bool o = (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) ? true : openSky(int2(q));
             nOpen += o ? 1 : 0;
         }
         [branch] if (nOpen == 0 || nOpen == 4) {
@@ -118,7 +122,7 @@ float3 sunShafts(int2 px, float j) {
     [loop] for (int k = 0; k < N; k++) {
         float2 q = float2(px) + stepv * (float(k) + j);
         if (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) { acc += w; wsum += w; w *= decay; continue; }  // off screen toward the sun: assume sky
-        acc += isSky(rawDepth(int2(q))) ? w : 0.0;
+        acc += openSky(int2(q)) ? w : 0.0;
         wsum += w;
         w *= decay;
     }
@@ -1774,6 +1778,10 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
         float2 to = normalize(sp.xy - float2(px) + 1e-3);
         float open = 0.0;
         [unroll] for (int k3 = 1; k3 <= 2; k3++) if (isSky(rawDepth(int2(float2(px) + to * (1.5 * k3))))) open += 0.5;
+        // (Cloud Sea floors showed broken bright dashes along block seams: a hairline crack between two blocks is "sky"
+        //  in the depth buffer. Real open sky is wide - it must also be there to both sides of the line)
+        float2 sd2 = float2(-to.y, to.x) * 3.0;
+        open *= (isSky(rawDepth(int2(float2(px) + to * 3.0 + sd2))) && isSky(rawDepth(int2(float2(px) + to * 3.0 - sd2)))) ? 1.0 : 0.0;
         float near = exp(-length((sp.xy - float2(px)) / c4.y) * 2.4);
         lin += (NG_IS ? lerp(float3(1.15, 1.08, 0.98), float3(0.70, 0.66, 1.10), NIGHT) : lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT)) * open * near * c6.y * 0.55 * LIGHTK;
     }
@@ -1857,7 +1865,75 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
 }
 // one exit for the match overlay: each of the five places above used to inline the whole of matchOver (~200 KB of DXIL
 // apiece - most of the driver's ~1 min compile). They hand over what to draw it on and it is drawn here, once.
+
+// ---- under water (Fernando, Nov 14: in Novak there was no water look - fish swam through the city sky). The pass only
+//      knows the camera is under water (RF reads the local player's head on the client thread). Everything then sits in
+//      water: red dies first with distance, then green; what is far is the water's own colour - deep below, lighter
+//      toward the surface, a soft glow round the sun overhead. Up-facing surfaces near you carry moving caustics, the
+//      picture swims a little, faint shafts of light hang from the surface. No sky, no city, no effects of the match.
+float uwCaustic(float2 p, float t) {   // a web of bright lines, the light focused by the surface waves (tileable, 4 steps)
+    float2 q = fmod(p, 6.2832) - 250.0;
+    float2 i = q;
+    float  c = 1.0;
+    [unroll] for (int k = 0; k < 4; k++) {
+        float tt = t * (1.0 - 3.5 / float(k + 1));
+        i = q + float2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
+        c += 1.0 / length(float2(q.x / (sin(i.x + tt) / 0.005), q.y / (cos(i.y + tt) / 0.005)));
+    }
+    c = 1.17 - pow(c / 4.0, 1.4);
+    return pow(abs(c), 8.0);
+}
+float3 uwScene(float2 p) {   // the frame, bilinear (the swim moves it by fractions of a pixel)
+    int2   a = int2(floor(p - 0.5));
+    float2 f = p - 0.5 - float2(a);
+    float3 c00 = sceneAt(a).rgb, c10 = sceneAt(a + int2(1, 0)).rgb, c01 = sceneAt(a + int2(0, 1)).rgb, c11 = sceneAt(a + int2(1, 1)).rgb;
+    return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+}
+float4 underwaterPx(VSOut i) {
+    int2   px = int2(i.pos.xy);
+    CAM = c7.xyz; TIME = c8.z; csSetPhase(c6.w);
+    float  t  = c2.w;
+    float  sc = c4.y / 1080.0;
+    float2 sw = float2(sin(float(px.y) * 0.031 / sc + t * 1.6) + 0.45 * sin(float(px.y) * 0.083 / sc - t * 2.2),
+                       sin(float(px.x) * 0.027 / sc + t * 1.3) + 0.45 * sin(float(px.x) * 0.071 / sc + t * 1.9)) * 0.9 * sc;
+    float2 p  = float2(px) + 0.5 + sw;
+    int2   q  = clampPx(int2(p));
+    float  d  = rawDepth(q);
+    bool   sky = isSky(d);
+    float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
+    float3 P  = sky ? rd * 1e4 : posAt(float2(q) + 0.5, viewZ(d));
+    float  dist = length(P);
+    float3 col = pow(max(uwScene(p), 0.0), 2.2);
+    float  day = (1.0 - NIGHT) * LIGHTK;
+    // the water's own colour: deep below, lighter toward the surface; Novak a cold glass blue, the Cloud Sea a warmer teal
+    float3 deep = NG_IS ? float3(0.003, 0.020, 0.060) : float3(0.006, 0.032, 0.045);
+    float3 high = NG_IS ? float3(0.030, 0.150, 0.300) : float3(0.050, 0.190, 0.230);
+    deep = lerp(deep, float3(0.001, 0.004, 0.012), NIGHT);
+    high = lerp(high, float3(0.006, 0.020, 0.050), NIGHT);
+    float  up = smoothstep(-0.6, 0.95, rd.y);
+    float3 water = lerp(deep, high, up * up);
+    water += lerp(float3(0.55, 0.65, 0.60), float3(0.25, 0.30, 0.45), NIGHT) * pow(saturate(dot(rd, SUN)), 6.0) * 0.35 * up * max(day, 0.25);
+    // light shafts hanging from the surface: thin, soft, swaying; they meet overhead
+    float  az = atan2(rd.z, rd.x);
+    float  sh = pow(0.5 + 0.5 * sin(az * 21.0 + 2.0 * sin(az * 5.0 + t * 0.21) + t * 0.12), 5.0) *
+                pow(0.5 + 0.5 * sin(az * 9.0 - t * 0.17 + 1.3), 2.0);
+    // caustics on what faces up, near you (the light comes through the surface)
+    [branch] if (!sky && dist < 26.0 && day > 0.02) {
+        float3 pr = posPx(q + int2(1, 0)), pd = posPx(q + int2(0, 1));
+        float3 n  = normalize(cross(pd - P, pr - P));
+        if (dot(n, -P) < 0.0) n = -n;
+        float3 W  = CAM + P;
+        float  ca = uwCaustic(W.xz * 1.15 + W.y * 0.35, t * 0.55);
+        col += col * ca * 2.2 * saturate(n.y) * day * (1.0 - smoothstep(10.0, 26.0, dist));
+    }
+    float3 T = exp(-dist * float3(0.20, 0.080, 0.058));   // red goes first, then green: what is far is blue
+    float3 o = col * T + water * (1.0 - T);
+    o += lerp(float3(0.30, 0.42, 0.40), float3(0.10, 0.14, 0.24), NIGHT) * sh * up * (1.0 - T.g) * 0.09 * max(day, 0.2);
+    o = pow(max(o, 0.0), 1.0 / 2.2) + (hash12(float2(px)) - 0.5) / 255.0;
+    return float4(o, 1.0);
+}
 float4 PSWorldFx(VSOut i) : SV_Target {
+    [branch] if (c10.y > 0.5) return underwaterPx(i);
     bool   MO = false;
     float3 moO = 0, moRd = float3(0, 0, 1), moAdd = 0;
     float  moT = 1e9;

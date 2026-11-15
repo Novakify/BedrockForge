@@ -68,6 +68,11 @@ bool playerState(double feet[3], float& yaw, float& pitch, bool& alive) {
     return true;
 }
 
+bool headUnderWater() {
+    Actor* a = player();
+    return a && a->isUnderLiquid(::SharedTypes::v1_26_20::MaterialType::Water);
+}
+
 bool creative() {
     Actor* a = player();
     return a && a->isCreative();

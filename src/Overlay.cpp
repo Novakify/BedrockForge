@@ -361,6 +361,7 @@ void onPresent(IDXGISwapChain* sc) {
 // A crash inside the overlay must never take the game down: on any SEH fault, turn the overlay off for this run.
 std::atomic_bool gFaulted{false};
 void safePresent(IDXGISwapChain* sc) {
+    rf::sky::lookDownFrameTick();
     __try {
         onPresent(sc);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
