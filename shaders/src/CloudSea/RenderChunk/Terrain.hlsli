@@ -585,10 +585,21 @@ float4 main(PSIn i) : SV_Target {
             float3 wc  = lerp(deepU, highU, upU * upU);
             float  aU  = 1.0 - exp(-dU * 0.080);
             // the surface overhead: a little of the light above comes through, moving with the waves
-            [branch] if (n.y > 0.9) {
-                float  rip = csRipple(i.color2.yz, CS_TIME);
-                wc += lerp(float3(0.30, 0.42, 0.40), float3(0.05, 0.07, 0.12), CS_NIGHT) * (0.10 + 0.25 * rip) * max(dayU, 0.3) * (1.0 - aU);
-                aU = max(aU, 0.55);
+            [branch] if (abs(n.y) > 0.9 && wp.y > cam.y) {
+                // the surface from below is the brightest thing under water: the light above comes through it, broken
+                // into a moving web by the waves, brighter where you look straight up (Snell's window), a silver
+                // mirror toward its edges (total internal reflection)
+                float2 pU = i.color2.yz;
+                float  rip = csRipple(pU, CS_TIME);
+                float  web = pow(saturate(1.0 - abs(csRipple(pU * 1.7 + 3.1, CS_TIME * 1.3) - 0.5) * 3.2), 3.0);
+                float  win = smoothstep(0.35, 0.90, -V.y);                  // inside the window: you see the sky through it
+                float3 skyIn = lerp(float3(0.42, 0.62, 0.72), float3(0.06, 0.09, 0.16), CS_NIGHT);
+                float3 mirror = highU * 1.4;
+                float3 surf = lerp(mirror, skyIn, win) * (0.85 + 0.30 * rip) + skyIn * web * 0.35 * win;
+                surf *= lerp(1.0, 0.35, CS_NIGHT) * max(dayU, 0.35);
+                float  near = exp(-dU * 0.035);
+                wc = lerp(wc, surf, near);
+                aU = max(aU, 0.85);
             }
             return float4(csEnc(wc), aU);
         }
