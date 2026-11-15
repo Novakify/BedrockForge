@@ -66,7 +66,7 @@ float4 main(PSIn i) : SV_Target {
 #if defined(CS_NOVAK)
         col = ngItemGlass(c, nW, VW, gW, skyI, ViewPositionAndTime.w, i.texcoord3);
 #else
-        col = csItemGlass(c, nW, VW, gW, skyI, ViewPositionAndTime.w, i.texcoord3);
+        col = csItemGlass(c, nW, VW, gW, skyI, ViewPositionAndTime.w, haveView ? vp : i.texcoord3);   // (view space: the light inside stays with the item as you walk)
 #endif
     }
     float3 o = csEnc(col);
