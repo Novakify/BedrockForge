@@ -625,14 +625,14 @@ float4 main(PSIn i) : SV_Target {
             // them - in their OWN colours (no steel shift, no tinted street light: seen in game, that read as a filter).
             // Every block is lit as if by the city's countless lights: bright, even, vibrant, the texture's own colour.
             float  dif = 0.70 + 0.30 * saturate(dot(n, normalize(float3(0.3, 0.8, 0.5))));
-            float3 cityLit = alb * dif * (team ? 1.05 : 0.92);
+            float3 cityLit = alb * dif * (team ? 1.05 : 0.80);   // (audit: at 0.92 a plain floor was a flat bright slab under the black sky)
             lit = lerp(lit, max(lit, cityLit), NK);
             if (team) lit += alb * 0.10 * NK;                                                 // team colours read first
 #if defined(PASS_OPAQUE)
             {   // the glass rim of every block glows in the block's own colour (near you; a hairline)
                 float2 ap = abs(ngPc); float e = 1.0 - max(ap.x, ap.y);
                 float3 own = alb / max(csMax3(alb), 1e-3);
-                lit += lerp(float3(1.0, 1.0, 1.0), own, 0.6) * (smoothstep(0.05, 0.0, e) * 0.55 + exp(-e * 9.0) * 0.10) * NK * ngOn * lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));
+                lit += lerp(float3(1.0, 1.0, 1.0), own, 0.6) * (smoothstep(0.05, 0.0, e) * 0.40 + exp(-e * 9.0) * 0.08) * NK * ngOn * lerp(1.0, 0.30, smoothstep(6.0, 22.0, length(wp - cam)));
             }
 #endif
             [branch] if (n.y > 0.5) {                                                         // tops: a light sheen of the city's light
@@ -640,7 +640,13 @@ float4 main(PSIn i) : SV_Target {
                 float  azR = atan2(r.z, r.x);
                 float3 cityC = lerp(float3(1.00, 0.30, 0.75), float3(0.30, 0.70, 1.00), 0.5 + 0.5 * sin(azR * 1.3 + 2.0));
                 float  Fw = 0.04 + 0.96 * pow(1.0 - saturate(dot(n, V)), 5.0);
-                lit += cityC * Fw * 0.30 * NK * lerp(0.4, 1.0, skyK);
+                // and, like a wet street under the signs: each sign's light lies on it as a long streak of its own
+                // colour toward the horizon (audit: the floor had no part in the city's light - it looked pasted in)
+                float  cs1 = azR * 14.0, ci1 = floor(cs1), cf1 = frac(cs1);
+                float  h1 = csHash(float2(ci1, 3.0)), h2 = csHash(float2(ci1, 7.0));
+                float  streak = smoothstep(0.5, 0.0, abs(cf1 - 0.5) / (0.16 + 0.30 * h2)) * step(0.35, h1);
+                float3 sc = 0.55 + 0.45 * cos(6.2832 * (h1 * 3.0 + float3(0.0, 0.33, 0.67)));
+                lit += (cityC * 0.30 + sc * streak * 0.60) * Fw * NK * lerp(0.4, 1.0, skyK);
             }
         }
     }
