@@ -28,12 +28,12 @@ cbuffer M : register(b1) {
     float4 eC[8];    // x = seed, y = blocks below the block the pieces land on (-1 = nothing: they fall away)
     float4 m1;       // x = trail blocks, y = shockwave strength (F6), z = 1: a kill is playing, w = 1: cosmetic beds
     float4 tAge[16]; // x = seconds since that bed broke (-1 = standing), y = enemies at the bed 0..1, z = team out 0..1 (fades in), w = 1: your team
-    float4 trMin, trMax; // bounds of the trail blocks (world)
+    float4 trMin, trMax; // bounds of the trail blocks (world); trMin.w = teams still in, trMax.w = you are falling into the void 0..1
     float4 gA[48];   // trail block corner (world, min), w = age (s)
     float4 gB[48];   // its colour (sRGB)
     float4 bVis[16]; // the server's bed model per team: xyz feet (world), w = yaw (radians), w = -100: none
     float4 fallen[24]; // one star per final kill this match: xyz = sky direction, w = age (s)
-    float4 m2;         // x = fallen stars, y = projectile trails
+    float4 m2;         // x = fallen stars, y = projectile trails, z = bed style, w = tension
     float4 fCol[24];   // their team colours
     float4 pInfo[8];   // projectile trails: rgb = shooter's team colour, w = kind + 8 * points
     float4 pPts[96];   // 8 x 12 points, newest first: xyz world, w = seconds ago
@@ -46,6 +46,7 @@ cbuffer M : register(b1) {
 #if NG_RIM
 #define NG_ATMOS 1   // the pass built with the rim is the Novak Glass atmosphere: its sky, its void, its light
 #endif
+#define NG_HAS_MATCH 1   // cbuffer M (above) is this pass's: the city reads the match from it
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
 #include "cloud_sea_common.hlsli"
@@ -1526,45 +1527,32 @@ float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float 
     return lin;
 }
 
-void ngTeamsSetup() {
-    NG_NT = 0; NG_NALIVE = 0; NG_FALL = 0.0;
-    int nt = min(int(m0.x), 16);
-    float yS = 0.0;
-    [loop] for (int i = 0; i < nt; i++) {
-        float2 v = tPos[i].xz - CAM.xz;
-        NG_TAZ[NG_NT]  = atan2(v.y, v.x);
-        NG_TOFF[NG_NT] = tAge[i].x >= 0.0 ? saturate(tAge[i].x / 14.0) : 0.0;   // ~14 s for a district to go dark
-        NG_TOUT[NG_NT] = tAge[i].z;
-        [branch] if (tAge[i].z < 0.5) { NG_ALIVECOL[NG_NALIVE] = max(tCol[i].rgb, 0.0); NG_NALIVE++; }
-        yS += tPos[i].y;
-        NG_NT++;
-    }
-    [branch] if (NG_NT > 0) NG_FALL = saturate((yS / float(NG_NT) - 14.0 - CAM.y) / 30.0);   // well under the islands
-}
-// 10 Neon rain: when only two teams are left (of three or more), a fine rain catches the city light - thin glowing
-// streaks in two layers, sparse enough never to hide a player
+// 10 Neon rain: when only two teams are left (of three or more), a fine rain falls through the city's light - long thin
+// streaks in three depths, leaning with the wind, brightest low over the city and gone overhead; sparse, never a veil
 float ngRainK() {
-    [branch] if (NG_NT < 3 || NG_NALIVE != 2) return 0.0;
+    int nt = min(int(m0.x), 16);
+    [branch] if (nt < 3 || NG_NALIVE != 2) return 0.0;
     float k = 1.0;
-    [loop] for (int i = 0; i < min(int(m0.x), 16); i++) if (tAge[i].z >= 0.5) k = min(k, tAge[i].z);   // the last team out fades it in
+    [loop] for (int i = 0; i < nt; i++) if (tAge[i].z >= 0.5) k = min(k, tAge[i].z);   // the last team out fades it in
     return smoothstep(0.5, 1.0, k);
 }
 float3 ngRain(float3 rd) {
-    float az = atan2(rd.z, rd.x), el = rd.y;
+    float el = rd.y, az = atan2(rd.z, rd.x) + el * 0.16;          // the wind leans it
     float3 acc = 0.0;
-    [unroll] for (int k = 0; k < 2; k++) {
-        float  N  = k == 0 ? 700.0 : 1300.0;
+    [unroll] for (int k = 0; k < 3; k++) {
+        float  fk = float(k);
+        float  N  = 520.0 * (1.0 + 0.8 * fk);                    // far layers: more, finer
         float  x  = az / 6.2832 * N, ci = floor(x), fx = frac(x);
-        float  h  = hb(ci, 7.0 + float(k) * 13.0);
-        if (h < 0.72) continue;
-        float  y  = el * (9.0 + 5.0 * float(k)) + TIME * (2.2 + 1.2 * frac(h * 7.3)) * (1.0 + 0.6 * float(k)) + h * 31.0;
+        float  h  = hb(ci, 7.0 + fk * 13.0);
+        if (h < 0.66) continue;
+        float  y  = el * (4.2 + 2.2 * fk) + TIME * (1.5 + 0.8 * frac(h * 7.3)) * (1.0 + 0.35 * fk) + h * 31.0;
         float  fy = frac(y);
-        float  streak = smoothstep(0.0, 0.025, fy) * (1.0 - smoothstep(0.03, 0.22, fy));
-        float  w  = max(fwidth(x) * 0.9, 0.06);
-        float  lin = 1.0 - smoothstep(0.0, w, abs(fx - 0.5));
-        acc += lerp(cityHaze(az) * 1.3, float3(1.0, 1.0, 1.0), 0.35) * lin * streak * (k == 0 ? 1.0 : 0.55);
+        float  streak = smoothstep(0.0, 0.04, fy) * (1.0 - smoothstep(0.10, 0.42, fy));   // a long tail, a bright head
+        float  w  = max(fwidth(x) * 0.7, 0.030);
+        float  ln = 1.0 - smoothstep(0.0, w, abs(fx - 0.5));
+        acc += lerp(cityHaze(az) * 1.5, float3(0.85, 0.95, 1.0), 0.30) * ln * streak * (1.0 - 0.28 * fk) * (0.5 + 0.5 * frac(h * 3.1));
     }
-    return acc * 0.11 * (0.45 + 0.55 * NIGHT);
+    return acc * 0.10 * (0.35 + 0.65 * exp(-max(el, 0.0) * 2.2)) * (0.45 + 0.55 * NIGHT);
 }
 float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inout float moT, inout float3 moAdd) {
     int2  px = int2(i.pos.xy);
@@ -1577,7 +1565,6 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
         return float4(impactFrame(sceneAt(px).rgb, normalize(PI), skyI ? 1e9 : length(PI)), 1.0);
     }
     CAM = c7.xyz; TIME = c8.z;
-    ngTeamsSetup();                                       // the match as the city sees it (districts, billboards, the fall)
 #if NG_ATMOS == 1
     {   // the one place the Novak background is evaluated (sky pixels and far pixels that fade into it)
         bool   skyQ = isSky(d) || c10.x > 0.5;

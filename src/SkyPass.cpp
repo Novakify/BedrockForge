@@ -1833,6 +1833,14 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             f.cb.m0[0] = float(n);
         }
     }
+    {   // for the city: how many teams are still in (trMin.w) and how far you have fallen under the islands (trMax.w)
+        int const nt = std::clamp(int(f.cb.m0[0]), 0, 16);
+        int alive = 0; float yS = 0;
+        for (int i = 0; i < nt; ++i) { alive += f.cb.tAge[i][2] < 0.5f; yS += f.cb.tPos[i][1]; }
+        f.cb.trMin[3] = float(alive);
+        auto const snapF = rf::lyrics::camera();
+        f.cb.trMax[3] = nt > 0 && snapF.valid ? std::clamp((yS / float(nt) - 14.0f - float(snapF.pos[1])) / 30.0f, 0.0f, 1.0f) : 0.0f;
+    }
     {   // the map's theme tint (m4.yzw, 1 = none): from BF (the Hive vote), or config/maptint.txt "r g b strength" to try one
         float t[4] = {1, 1, 1, 0};
         if (v8) std::memcpy(t, b->mapTint, 16);

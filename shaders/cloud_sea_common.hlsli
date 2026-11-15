@@ -556,27 +556,41 @@ float glyph(float2 uv, float seed){
   return max(row,colm)*step(0.30,ngH12(b+gi*13.+seed));
 }
 float3 cityHaze(float az){ return lerp(float3(0.85,0.12,0.60),float3(0.10,0.45,1.00),0.5+0.5*sin(az*1.3+2.0)); }
-// ---- the match, as the city sees it (filled per frame by the World FX pass - ngTeamsSetup; empty in the sky pass)
-static int    NG_NT = 0, NG_NALIVE = 0;
-static float  NG_TAZ[16];      // the direction of each team's island from the camera (azimuth)
-static float  NG_TOFF[16];     // its district powering down: 0 lit .. 1 dark (starts when its bed breaks)
-static float  NG_TOUT[16];     // the team is out (its ads turn to static)
-static float3 NG_ALIVECOL[16]; // the colours of the teams still in
-static float  NG_FALL = 0.0;   // you are falling into the void: the city rushes up (0..1)
-static float  NG_FAZ = 0.0;    // the azimuth of the facade being drawn (its ads read it)
-int ngTeamAt(float az) {
-  int b = -1; float bd = 9.0;
-  [loop] for (int i = 0; i < NG_NT; i++) { float d = abs(frac((az - NG_TAZ[i]) / 6.2832 + 0.5) - 0.5); if (d < bd) { bd = d; b = i; } }
-  return b;
+// ---- the match, as the city sees it (the World FX pass has the match's cbuffer M - NG_HAS_MATCH; the sky pass has not)
+static int   NG_DT = -1;        // the team whose district the facade being drawn stands in (-1: no match)
+static float NG_DOFF = 0.0;     // that district powering down: 0 lit .. 1 dark (starts when its bed breaks)
+static float NG_DOUT = 0.0;     // that team is out (its ads turn to static)
+static float NG_STATIC = 0.0;   // the pixel just drawn is a board showing static (it stays visible in a dark district)
+#ifdef NG_HAS_MATCH
+#define NG_NALIVE int(trMin.w)
+#define NG_FALLK  trMax.w
+// the district a horizontal direction looks into: the team whose island lies closest to that way (one dot per team)
+void ngDistrictAt(float2 dir) {
+  NG_DT = -1; NG_DOFF = 0.0; NG_DOUT = 0.0;
+  int nt = min(int(m0.x), 16);
+  [branch] if (nt < 2) return;
+  float best = -2.0;
+  [loop] for (int i = 0; i < nt; i++) { float2 v = tPos[i].xz - CAM.xz; float d = dot(v, dir) * rsqrt(max(dot(v, v), 1e-3)); if (d > best) { best = d; NG_DT = i; } }
+  NG_DOFF = tAge[NG_DT].x >= 0.0 ? saturate(tAge[NG_DT].x / 14.0) : 0.0;   // ~14 s for a district to go dark
+  NG_DOUT = tAge[NG_DT].z;
 }
+float3 ngAliveCol(float h) {   // the colour of one of the teams still in
+  int nt = min(int(m0.x), 16), n = NG_NALIVE, k = min(int(h * float(n)), n - 1), c = 0; float3 r = float3(1, 1, 1);
+  [loop] for (int i = 0; i < nt; i++) if (tAge[i].z < 0.5) { if (c == k) r = max(tCol[i].rgb, 0.0); c++; }
+  return r;
+}
+#else
+#define NG_NALIVE 0
+#define NG_FALLK  0.0
+void ngDistrictAt(float2 dir) {}
+float3 ngAliveCol(float h) { return float3(1, 1, 1); }
+#endif
 // 8 District blackouts: when a team's bed breaks, its side of the city switches off tower by tower (each tower at its
 // own moment, with a stutter as it goes); a few windows stay on so it reads as a dark city, not a hole
-float ngDistrictPower(float az, float sd) {
-  [branch] if (NG_NT < 2) return 1.0;
-  int t = ngTeamAt(az); if (t < 0) return 1.0;
-  float off = NG_TOFF[t]; if (off <= 0.0) return 1.0;
+float ngDistrictPower(float sd) {
+  [branch] if (NG_DT < 0 || NG_DOFF <= 0.0) return 1.0;
   float th = 0.05 + 0.90 * hb(sd, 77.0);
-  float sw = saturate((off - th) / 0.035);
+  float sw = saturate((NG_DOFF - th) / 0.035);
   float stut = (sw > 0.0 && sw < 1.0) ? step(0.5, frac(TIME * 19.0 + sd * 3.7)) * 0.6 : 0.0;
   return lerp(1.0, 0.07, max(sw, stut));
 }
@@ -586,17 +600,16 @@ static float SEA_D = 175.0;                                      // the city's s
 float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
   float3 bg=signCol(frac(hp*7.31)), a2=signCol(frac(hp*7.31+0.31+0.3*frac(hp*3.)));
   // 9 Team billboards: a share of the ads carry the colours of the teams still in; in an eliminated team's district
-  // most boards have lost signal - static and a rolling bar
-  [branch] if (NG_NT >= 2) {
-    int dt = ngTeamAt(NG_FAZ);
-    [branch] if (dt >= 0 && NG_TOUT[dt] > 0.5 && frac(hp*3.1) < 0.70) {
+  // most boards have lost signal - static and a rolling bar (those stay faintly on when the district is dark)
+  [branch] if (NG_DT >= 0) {
+    [branch] if (NG_DOUT > 0.5 && frac(hp*3.1) < 0.70) {
       float n = ngH12(floor(pn*sz*2.5) + floor(TIME*18.0)*17.0 + hp*91.0);
       float roll = 1.0 - smoothstep(0.0, 0.06, abs(frac(pn.y*1.3 - TIME*0.9) - 0.5));
-      return float3(n, n, n*1.08)*0.42*NG_TOUT[dt] + roll*0.18 + float3(0.012, 0.012, 0.02);
+      NG_STATIC = 1.0;
+      return float3(n, n, n*1.08)*0.42*NG_DOUT + roll*0.18 + float3(0.012, 0.012, 0.02);
     }
     [branch] if (NG_NALIVE > 0 && frac(hp*13.7) < 0.40) {
-      int k = min(int(frac(hp*5.3)*float(NG_NALIVE)), NG_NALIVE - 1);
-      bg = NG_ALIVECOL[k]*1.15; a2 = lerp(a2, bg, 0.5);
+      bg = ngAliveCol(frac(hp*5.3))*1.15; a2 = lerp(bg, float3(1.0, 1.0, 1.0), 0.80);   // the team's colour and white: a clear two-tone board
     }
   }
   float gw=min(sz.x,sz.y), gn=gw>9.0?2.0:1.0;
@@ -636,7 +649,7 @@ float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
 }
 // a building face. lx 0..1 across it, ym metres above the street, Hr its height, Wm its width; sd = its seed
 float3 facade(float lx, float ym, float Hr, float Wm, float pxm, float az, float sd, float tall, float nearK){
-  NG_FAZ=az;
+  ngDistrictAt(float2(cos(az),sin(az))); NG_STATIC=0.0;
   float h=hb(sd,1.), h2=hb(sd,2.), h4=hb(sd,4.), ht=hb(sd,5.);
   float yTop=Hr-ym;
   float3 face=float3(0.012,0.013,0.028)+cityHaze(az)*0.035*exp(-ym/120.0);
@@ -720,7 +733,7 @@ float3 facade(float lx, float ym, float Hr, float Wm, float pxm, float az, float
   for(int k=0;k<3;k++){ float o=(float(k)-1.)*ew*1.3;
     c[k]+=0.80*(1.-smoothstep(0.,ew*1.1,min(abs(lx-ew-o),abs(1.-lx-ew+o))))*(0.35+0.65*ym/Hr); }
   c+=cityHaze(az)*0.22*exp(-ym/45.0)+signCol(h)*0.20*exp(-ym/14.0);     // the glow of the street and its shopfronts
-  return c*ngDistrictPower(az,sd);
+  return c*lerp(ngDistrictPower(sd),0.60,NG_STATIC);
 }
 
 // ---- the city by DAY: the same glass city in sunlight. Every face is a mirror of the sky (tinted glass: teal, silver,
@@ -827,8 +840,8 @@ float4 cityLayer(float3 rd, float L){
   if(ym>Hr){
     float bbH=lerp(7.,14.,h);
     if(h4>0.40&&tall<0.3&&ym<Hr+bbH&&abs(lx-0.5)<0.44)
-    { NG_FAZ=az;
-      float3 sp=signPanel(float2((lx-0.06)/0.88,(ym-Hr)/bbH),float2(Wm*0.88,bbH),hb(sd,21.),pxm)*ngDistrictPower(az,sd);
+    { ngDistrictAt(float2(cos(az),sin(az))); NG_STATIC=0.0;
+      float3 sp=signPanel(float2((lx-0.06)/0.88,(ym-Hr)/bbH),float2(Wm*0.88,bbH),hb(sd,21.),pxm); sp*=lerp(ngDistrictPower(sd),0.60,NG_STATIC);
       sp=lerp(sp*0.55+dayAir(az)*0.35,sp,LIT);                                 // by day: a printed board in daylight, not a lightbox
       return float4(lerp(sp,lerp(dayAir(az)*0.9,hazeC,LIT),hzK*0.6),1.0); }   // (far ones sank into night navy at noon - seen in game as dark slabs)
     float spH=lerp(30.,110.,h)*step(0.35,tall);                // a glass spire on the tall ones (the reference's pointed crowns)
@@ -1024,7 +1037,7 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     // round, and right under the islands its blocks and streets
     setCity();                                                     // (the sea pass calls this directly, not via ngBackground)
     GPX = max(length(fwidth(rd)), 1e-5);
-    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), lerp(60.0, 4.0, NG_FALL), 420.0);   // 12: falling, the city rushes up to meet you
+    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), lerp(60.0, 4.0, NG_FALLK), 420.0);   // 12: falling, the city rushes up to meet you
     float4 cb = cityBelow(float3(ro.x, SEA_D, ro.z), rd);          // under the islands: the city itself
     [branch] if (cb.a > 0.5) col = cb.rgb;
     else {
@@ -1068,7 +1081,7 @@ float3 ngVeil(float3 rd) {
 float3 ngBackground(float3 rd) {
     setCity();
     GPX = max(length(fwidth(rd)), 1e-5);
-    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), lerp(60.0, 4.0, NG_FALL), 420.0);   // 12: falling, the city rushes up to meet you           // the city's streets lie ~175 under the islands
+    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), lerp(60.0, 4.0, NG_FALLK), 420.0);   // 12: falling, the city rushes up to meet you           // the city's streets lie ~175 under the islands
     float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
     [branch] if (rd.y < 0.0) return ngVoid(CAM, rd, Ld);
     // the city first: where a building covers this pixel none of the sky behind it is worked out (seen in game: the
