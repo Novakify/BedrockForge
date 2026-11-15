@@ -284,7 +284,7 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
             if (!nearRay2(rd, bc, 1.7)) continue;
             float  g    = 1.0 - pow(saturate(1.0 - age / 0.16), 3.0);          // the burst (fast out, easing)
             float  away = smoothstep(0.16, LEN, age);                          // the wisps leaving
-            float  dens = 1.0 - smoothstep(0.13, LEN - 0.02, age) * (0.55 + 0.45 * smoothstep(0.13, 0.36, age));   // (thins at once after the burst: the next block's spot must show)
+            float  dens = 1.0 - smoothstep(0.16, LEN - 0.02, age) * (0.55 + 0.45 * smoothstep(0.16, 0.38, age));   // (thins at once after the burst: the next block's spot must show)
             float3 hue  = alb / max(max(alb.r, max(alb.g, alb.b)), 0.05);
             float3 lin  = hit ? col : pow(max(col0, 0.0), 2.2);
             float  tLim = min(sceneT, best);
@@ -307,7 +307,7 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                 float  sk = seed * 0.001 + float(k) * 3.71;
                 float3 dir = k == 0 ? float3(0.0, 0.0, 0.0) : normalize(float3(h1(sk), h1(sk + 1.0), h1(sk + 2.0)) - 0.5);
                 float3 c  = bc + dir * (0.40 * g + 0.34 * away) + float3(0.0, 0.20 * away, 0.0);
-                float  r  = (k == 0 ? 0.66 : 0.40 + 0.14 * h1(sk + 3.0)) * g * (1.0 - 0.55 * away);   // (audit, seen in slow motion: at 0.30 out the puff sat inside the block - only its caps showed. It now stands ~0.2 proud of every face)
+                float  r  = (k == 0 ? 0.72 : 0.45 + 0.15 * h1(sk + 3.0)) * g * (1.0 - 0.55 * away);   // (audit, seen in slow motion: at 0.30 out the puff sat inside the block - only its caps showed. It now stands ~0.2 proud of every face)
                 float  tc = dot(c, rd);
                 if (tc < 0.0 || r < 0.01) continue;
                 float3 pn = rd * tc - c;
@@ -334,7 +334,7 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                 float3 pc = lerp(shade, crest, smoothstep(0.25, 0.80, lit));
                 pc = lerp(pc, pc * (0.45 + 0.75 * hue), 0.34);
                 pc += crest * 0.16 * (1.0 - saturate(T * 2.6));
-                float  a = min(1.0 - exp(-T * 5.5), 0.90) * dens;
+                float  a = min(1.0 - exp(-T * 9.0), 0.92) * dens;   // (audit: at 5.5 the part standing proud of the block was a faint mist - a puff has a body)
                 lin = lerp(lin, pc, a);
             }
             col = lin; best = min(sceneT, best); hit = true;
