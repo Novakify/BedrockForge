@@ -51,7 +51,7 @@ void csSetPhase(float k) {
     //      direct light (SUNI and MOONI are both 0 round k = 1.46), so nothing is seen to jump. The moon itself rises
     //      opposite the sunset during twilight (MOOND), amber on the horizon, silver once it is up.
     SUNL   = sun;
-    float moonEl = lerp(-6.0, 31.0, smoothstep(1.05, 1.9, k));
+    float moonEl = lerp(-13.0, 31.0, smoothstep(1.05, 1.9, k));   // (a big disc: it starts fully under the horizon)
     MOOND  = dirAzEl(MOON_AZ, radians(moonEl));
     SUNI   = 1.0 - smoothstep(1.0, 1.42, k);
     MOONI  = smoothstep(1.5, 1.92, k);
@@ -149,7 +149,8 @@ float3 skyBase(float3 d) {
     float3 c = float3(0.0, 0.0, 0.0);
     [branch] if (WTW < 0.999) c = csGradeDusk(skyDay(d), d);
     [branch] if (WTW > 0.001) {
-        float3 t = skyTwilight(d);
+        float3 t = float3(0.0, 0.0, 0.0);
+        [branch] if (WNI < 0.999) t = skyTwilight(d);
         [branch] if (WNI > 0.001) t = lerp(t, skyNight(d), WNI);
         c = lerp(c, t, WTW);
     }
@@ -168,6 +169,8 @@ float4 highClouds(float3 d, out float3 tn) {
     if (d.y < 0.012) return float4(0.0, 0.0, 0.0, 0.0);
     float  mu = dot(d, SUNL);
     float2 sunXZ = normalize(SUNL.xz);
+    bool   moonLit = PHASE >= 1.46;                       // (the day colours are out of the picture long before: WTW = 1 from 1.25)
+    float2 litXZ = moonLit ? normalize(LDIR.xz) : sunXZ;
     float2 q = CAM.xz + d.xz * ((900.0 - CAM.y) / d.y);
     float  fade = smoothstep(0.012, 0.085, d.y);
     float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
@@ -176,7 +179,7 @@ float4 highClouds(float3 d, out float3 tn) {
     float  near = smoothstep(0.05, 0.30, d.y);
     float  dens = smoothstep(0.765, 0.830, dn - (fine - 0.5) * 0.10 * near);
     float  tau = smoothstep(0.765, 0.965, dn);
-    float  shadeS = QUALITY > 0.3 ? smoothstep(0.765, 0.93, hcDens(p + sunXZ * 0.040, 3)) : 0.5;
+    float  shadeS = QUALITY > 0.3 ? smoothstep(0.765, 0.93, hcDens(p + litXZ * 0.040, 3)) : 0.5;
     float2 along = float2(dot(q, sunXZ), dot(q, float2(-sunXZ.y, sunXZ.x)));
     float2 pc = float2(along.x / 3400.0, along.y / 760.0) + TIME * float2(0.0015, 0.0);
     float  wq = fbm(pc * 1.7 + 9.0, 3);
@@ -197,10 +200,13 @@ float4 highClouds(float3 d, out float3 tn) {
     float3 cirCol = lerp(float3(0.42, 0.130, 0.20), float3(1.0, 0.36, 0.10), pow(sunSide, 3.0));
     // the moon stands in a ragged clearing: round it the deck thins to a veil (it is the thing to look at all night)
     [branch] if (WNI > 0.001) {
-        float angC = acos(clamp(dot(d, MOOND), -1.0, 1.0)) * (0.72 + 0.56 * fbm(p * 2.6 + 11.0, 3));
-        float open = exp(-pow(angC / 0.21, 2.0)) * WNI * smoothstep(-0.02, 0.10, MOOND.y);
-        a *= 1.0 - 0.93 * open;
-        cir *= 1.0 - 0.6 * open;
+        float angC = acos(clamp(dot(d, MOOND), -1.0, 1.0));
+        [branch] if (angC < 0.95) {
+            angC *= 0.72 + 0.56 * fbm(p * 2.6 + 11.0, 3);
+            float open = exp(-pow(angC / 0.36, 2.0)) * WNI * smoothstep(-0.02, 0.10, MOOND.y);
+            a *= 1.0 - 0.93 * open;
+            cir *= 1.0 - 0.6 * open;
+        }
     }
     float  ac = cir * 0.34 * fade * (1.0 - a);
     // ---- the same clouds after sunset (tn): for a while their undersides still catch the sun from under the horizon
@@ -208,13 +214,9 @@ float4 highClouds(float3 d, out float3 tn) {
     //      the blue hour; the moon lights them silver from its side, with a bright lining where you look toward it
     [branch] if (WTW > 0.001) {
         float  litN = litF, muL = mu;
-        [branch] if (PHASE >= 1.46) {
-            float2 mXZ = normalize(LDIR.xz);
-            float  shM = QUALITY > 0.3 ? smoothstep(0.765, 0.93, hcDens(p + mXZ * 0.040, 3)) : 0.5;
+        if (moonLit) {
             muL = dot(d, LDIR);
-            float  sideM = muL * 0.5 + 0.5;
-            float  backM = exp(-2.6 * tau) * (1.0 - 0.65 * shM), frontM = 0.92 - 0.46 * tau - 0.20 * shM;
-            litN = saturate(lerp(frontM, backM, smoothstep(0.25, 0.80, sideM)) * (1.0 + 0.7 * ripple * near));
+            litN = saturate(lerp(front, back, smoothstep(0.25, 0.80, muL * 0.5 + 0.5)) * (1.0 + 0.7 * ripple * near));
         }
         float3 shadeT = lerp(float3(0.046, 0.044, 0.112), float3(0.0080, 0.0125, 0.0380), smoothstep(0.0, 0.7, TWK));
         float3 litS = lerp(float3(0.215, 0.090, 0.215), float3(1.00, 0.230, 0.095), pow(sunSide, 2.0)) * lerp(1.0, 0.55, TWK) * SUNI;
@@ -409,34 +411,64 @@ float3 csStars(float3 rd) {
             acc += tint * mag * tw * core * on;
         }
     }
-    float glow = inBand * (0.45 + 0.55 * fbm(rd.xz / (rd.y + 1.2) * 6.0 + 4.0, 3)) * smoothstep(0.55, 1.0, vis);
-    float dust = 1.0 - 0.55 * smoothstep(0.52, 0.70, fbm(rd.xz / (rd.y + 1.2) * 11.0 + 9.0, 3)) * exp(-pow(dot(rd, band) / 0.07, 2.0));   // dark lanes
-    acc += lerp(float3(0.014, 0.017, 0.034), float3(0.024, 0.020, 0.030), fbm(rd.zx * 3.0 + 2.0, 2)) * glow * dust;
+    [branch] if (inBand > 0.03 && vis > 0.55) {
+        float glow = inBand * (0.45 + 0.55 * fbm(rd.xz / (rd.y + 1.2) * 6.0 + 4.0, 3)) * smoothstep(0.55, 1.0, vis);
+        float dust = 1.0 - 0.55 * smoothstep(0.52, 0.70, fbm(rd.xz / (rd.y + 1.2) * 11.0 + 9.0, 2)) * exp(-pow(dot(rd, band) / 0.07, 2.0));   // dark lanes
+        acc += float3(0.018, 0.019, 0.033) * glow * dust;
+    }
     return acc * smoothstep(0.015, 0.20, rd.y);
 }
-float3 csMoon(float3 rd, out float disc) { // the moon: seas and highlands, a darker limb; amber on the horizon, silver high up
+// ---- the full moon, drawn from the real one's near side: the dark basalt seas where they are (Procellarum and Imbrium
+//      on one side, Serenitatis - Tranquillitatis - Fecunditatis down the other, Crisium alone by the limb, Nubium and
+//      Humorum below), the bright southern highlands, Tycho with its rays, Copernicus, Kepler, Aristarchus. A full
+//      moon is lit head-on: no shadows on it, almost no darker limb - its relief is all colour.
+float csMare(float2 q, float2 c, float2 r) { float2 d = (q - c) / r; return 1.0 - smoothstep(0.50, 1.0, dot(d, d)); }
+float3 csMoon(float3 rd, out float disc) {
     disc = 0.0;
-    float  mUp = smoothstep(-0.045, 0.01, MOOND.y);
+    float  mUp = smoothstep(-0.26, -0.20, MOOND.y);
     [branch] if (mUp <= 0.0) return float3(0.0, 0.0, 0.0);
     float  ang = acos(clamp(dot(rd, MOOND), -1.0, 1.0));
-    const float R = 0.086;   // a big full moon (Fernando: much bigger than the sun, the thing you look at all night)
-    float3 warm = lerp(float3(1.00, 0.56, 0.26), float3(1.0, 1.0, 1.0), smoothstep(0.02, 0.30, MOOND.y));
-    float3 halo = lerp(float3(1.00, 0.62, 0.36), float3(0.58, 0.72, 1.00), smoothstep(0.02, 0.32, MOOND.y));
-    float3 c = halo * (exp(-ang * 16.0) * 0.26 + exp(-ang * 6.0) * 0.060);
+    const float R = 0.172;                                   // (Fernando: twice the size again - it owns the night sky)
+    float  high = smoothstep(0.02, 0.32, MOOND.y);
+    float3 warm = lerp(float3(1.00, 0.60, 0.30), float3(1.0, 1.0, 1.0), high);          // amber through the thick air low down
+    float3 halo = lerp(float3(1.00, 0.62, 0.36), float3(0.58, 0.72, 1.00), high);
+    float  dA = max(ang - R, 0.0);                                                       // from the limb outward
+    float3 c = halo * (exp(-dA * 15.0) * 0.20 + exp(-dA * 4.5) * 0.055);
     // its corona (thin cloud and ice in front of it): a blue-white aureole, then a faint warm ring
-    c += (float3(0.70, 0.82, 1.00) * exp(-pow(ang / (R * 1.7), 2.0)) * 0.10 + float3(1.00, 0.78, 0.50) * exp(-pow((ang - R * 2.7) / (R * 0.55), 2.0)) * 0.030) * smoothstep(0.05, 0.30, MOOND.y);
-    [branch] if (ang < R * 1.1) {
+    c += (float3(0.70, 0.82, 1.00) * exp(-pow(dA / 0.050, 2.0)) * 0.10 + float3(1.00, 0.78, 0.50) * exp(-pow((dA - 0.085) / 0.030, 2.0)) * 0.028) * high;
+    [branch] if (ang < R * 1.02) {
         float3 t1 = normalize(cross(MOOND, float3(0.0, 1.0, 0.0))), t2 = cross(t1, MOOND);
-        float2 q = float2(dot(rd, t1), dot(rd, t2)) / R;
+        float2 q0 = float2(dot(rd, t1), dot(rd, t2)) / R;
+        float2 q = float2(0.94 * q0.x - 0.34 * q0.y, 0.34 * q0.x + 0.94 * q0.y);         // tilted, as it hangs in an evening sky
         float  r = length(q);
-        disc = smoothstep(1.0, 0.94, r);
-        float  seas = smoothstep(0.42, 0.56, fbm(q * 1.15 + float2(5.3, 1.7), 4));       // the maria: a few broad dark plains
-        float  fine = fbm(q * 5.5 + 9.0, 3);
-        float  ray  = smoothstep(0.80, 0.98, vnoise(q * 3.1 + 21.0));                        // a few bright young craters
-        float3 land = float3(0.76, 0.75, 0.72) * (0.80 + 0.30 * fine);                        // highlands: a warm pearl
-        float3 sea  = float3(0.25, 0.29, 0.38) * (0.86 + 0.22 * fine);                        // the seas: blue-grey basalt
-        float3 m = lerp(land, sea, seas * 0.90) + ray * 0.16 * (1.0 - seas);
-        m *= 1.0 - 0.38 * pow(r, 3.0);                                                       // limb darkening
+        disc = smoothstep(1.0, 0.985, r);
+        float2 w = q + (float2(fbm(q * 3.1 + 2.0, 3), fbm(q * 3.1 + 19.0, 3)) - 0.5) * 0.16;   // ragged shores
+        float  mare = csMare(w, float2(-0.60, 0.18), float2(0.30, 0.46));                 // Oceanus Procellarum
+        mare = max(mare, csMare(w, float2(-0.24, 0.47), float2(0.29, 0.26)));             // Mare Imbrium
+        mare = max(mare, csMare(w, float2( 0.20, 0.44), float2(0.18, 0.18)));             // Serenitatis
+        mare = max(mare, csMare(w, float2( 0.36, 0.15), float2(0.21, 0.18)));             // Tranquillitatis
+        mare = max(mare, csMare(w, float2( 0.73, 0.30), float2(0.10, 0.13)));             // Crisium
+        mare = max(mare, csMare(w, float2( 0.62,-0.07), float2(0.13, 0.18)));             // Fecunditatis
+        mare = max(mare, csMare(w, float2( 0.43,-0.27), float2(0.09, 0.09)));             // Nectaris
+        mare = max(mare, csMare(w, float2(-0.17,-0.38), float2(0.21, 0.17)));             // Nubium
+        mare = max(mare, csMare(w, float2(-0.51,-0.39), float2(0.10, 0.10)));             // Humorum
+        mare = max(mare, csMare(w, float2(-0.38,-0.08), float2(0.18, 0.14)));             // Cognitum / Insularum
+        mare = max(mare, csMare(w, float2(-0.05, 0.80), float2(0.50, 0.06)));             // Frigoris
+        mare = max(mare, csMare(w, float2( 0.05, 0.22), float2(0.07, 0.06)));             // Vaporum
+        float  fine = fbm(q * 9.0 + 9.0, 4);
+        float  pock = vnoise(q * 34.0 + 3.0);                                             // the highlands are all craters
+        float3 land = float3(0.74, 0.725, 0.69) * (0.80 + 0.26 * fine + 0.10 * (pock - 0.5)) * (1.0 + 0.10 * smoothstep(0.1, -0.8, q.y));
+        float3 sea  = lerp(float3(0.235, 0.250, 0.285), float3(0.205, 0.235, 0.300), smoothstep(-0.2, 0.5, q.x)) * (0.84 + 0.30 * fine);
+        float3 m = lerp(land, sea, mare * 0.93);
+        // the young bright craters and Tycho's rays (long, thin, uneven - they cross half the disc)
+        float2 ty = q - float2(-0.10, -0.70);
+        float  tl = length(ty), ta = atan2(ty.y, ty.x);
+        float  rays = pow(0.5 + 0.5 * sin(ta * 9.0 + 2.2 * sin(ta * 3.0 + 1.0)), 6.0) * exp(-tl * 1.9) * smoothstep(0.03, 0.10, tl);
+        m += float3(0.20, 0.20, 0.19) * (rays * 0.55 + exp(-pow(tl / 0.050, 2.0)) * 0.9);
+        m += float3(0.20, 0.20, 0.19) * (exp(-pow(length(q - float2(-0.33, 0.15)) / 0.034, 2.0)) + 0.30 * exp(-pow(length(q - float2(-0.33, 0.15)) / 0.11, 2.0)));   // Copernicus
+        m += float3(0.18, 0.18, 0.17) * exp(-pow(length(q - float2(-0.62, 0.12)) / 0.024, 2.0));    // Kepler
+        m += float3(0.30, 0.30, 0.29) * exp(-pow(length(q - float2(-0.70, 0.40)) / 0.020, 2.0));    // Aristarchus
+        m *= 1.0 - 0.16 * pow(r, 5.0);
         c = lerp(c, m * warm, disc);
     }
     return c * mUp;
@@ -1325,7 +1357,8 @@ float3 csBackground(float3 rd, bool withSea) {
         col = csGradeDusk(c * (1.0 - hc.a) + hc.rgb, rd);
     }
     [branch] if (WTW > 0.001) {
-        float3 sk = skyTwilight(rd);
+        float3 sk = float3(0.0, 0.0, 0.0);
+        [branch] if (WNI < 0.999) sk = skyTwilight(rd);
         [branch] if (WNI > 0.001) sk = lerp(sk, skyNight(rd), WNI);
         float  md;
         float3 moon = csMoon(rd, md);

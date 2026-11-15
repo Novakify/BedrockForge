@@ -1624,7 +1624,8 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
             sea.a = rd.y < 0.0 ? 1.0 : 0.0;
         } else {
             sea = (rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
-            base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));   // (Cloud Sea: exactly as signed off)
+            // (a ?: here worked the whole sky out - clouds, stars, moon - behind every pixel of the sea as well)
+            [branch] if (sea.a > 0.0) base = toDisplay(sea.rgb); else base = toDisplay(csBackground(rd, false));
         }
         float3 lb = pow(max(base, 0.0), 2.2) + rays * (sea.a > 0.0 ? 1.0 : 0.6);
         float3 o = pow(max(lb, 0.0), 1.0 / 2.2);
