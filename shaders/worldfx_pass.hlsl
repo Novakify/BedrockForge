@@ -494,6 +494,56 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
             }
             continue;
         }
+        if (!NG_IS) {
+            // 16 Cloud Sea: a broken block BURSTS INTO CLOUD (Fernando, Nov 15: it still threw the old square shards). The
+            // block is a block-sized cloud for an instant, then it blows apart: nine heaps fly out and up, shrinking and
+            // thinning, gone in 0.7 s - short, so a fight stays readable through it. The block's own colour is in it.
+            const float LEN = 0.72;
+            if (age > LEN) continue;
+            float3 bc = corner + 0.5;
+            if (!nearRay2(rd, bc, 2.1)) continue;
+            float  outK = 1.0 - pow(saturate(1.0 - age / 0.32), 2.0);
+            float  dens = 1.0 - smoothstep(0.10, LEN - 0.02, age);
+            float3 hue  = alb / max(max(alb.r, max(alb.g, alb.b)), 0.05);
+            float3 lin  = hit ? col : pow(max(col0, 0.0), 2.2);
+            // (the game rebuilds the chunk a few frames after the break: the block can still be in the depth buffer)
+            float3 S = rd * sceneT;
+            bool   ghost = age < 0.5 && all(S > corner - 0.03) && all(S < corner + 1.03);
+            float  tLim = (ghost && best >= sceneT) ? 1e9 : min(sceneT, best);
+            float  T = 0.0, wAcc = 0.0, litAcc = 0.0;
+            float3 Lp = normalize(SUN + float3(0.0, 0.6, 0.0));
+            float  tMid = dot(bc, rd);
+            [loop] for (int k = 0; k < 9; k++) {
+                float  sk = seed * 0.001 + float(k) * 3.71;
+                float3 dir = k == 0 ? float3(0.0, 0.3, 0.0) : normalize(float3(((k & 1) ? 1.0 : -1.0), ((k & 2) ? 1.0 : -0.4), ((k & 4) ? 1.0 : -1.0)) + (float3(h1(sk), h1(sk + 1.0), h1(sk + 2.0)) - 0.5) * 1.2);
+                float3 c  = bc + dir * (0.16 + (0.70 + 0.40 * h1(sk + 4.0)) * outK) + float3(0.0, 0.45 * age, 0.0);
+                float  r  = (0.40 - 0.16 * outK) * (0.85 + 0.30 * h1(sk + 3.0)) * (1.0 - 0.5 * smoothstep(0.30, LEN, age));
+                float  tc = dot(c, rd);
+                if (tc < 0.0) continue;
+                float3 pn = rd * tc - c;
+                float  rr = r * (0.84 + 0.30 * vnoise(pn.xy * 6.0 + pn.z * 3.7 + sk * 5.0));
+                float  b2 = dot(pn, pn);
+                if (b2 >= rr * rr) continue;
+                float  h  = sqrt(rr * rr - b2);
+                float  ta = tc - h, tb = min(tc + h, tLim);
+                if (tb <= ta) continue;
+                float  th = (tb - ta) * (1.0 - b2 / (rr * rr));
+                float  lk = saturate(dot(normalize(pn - rd * h), Lp) * 0.5 + 0.5) * (0.82 + 0.18 * (1.0 - b2 / (rr * rr)));
+                float  wk = th * exp(-(ta - tMid) * 3.0);
+                T += th; wAcc += wk; litAcc += lk * wk;
+            }
+            [branch] if (T > 1e-4) {
+                float  lit = litAcc / max(wAcc, 1e-5);
+                float3 crest = lerp(lerp(float3(0.72, 0.65, 0.54), float3(0.72, 0.52, 0.42), DUSK), float3(0.34, 0.42, 0.62), NIGHT);
+                float3 shade = lerp(lerp(float3(0.34, 0.30, 0.47), float3(0.27, 0.20, 0.36), DUSK), float3(0.10, 0.13, 0.26), NIGHT);
+                float3 pc = lerp(shade, crest, smoothstep(0.25, 0.80, lit));
+                pc = lerp(pc, pc * (0.40 + 0.85 * hue), 0.50);                 // more of the block in it than in the place puff: you see WHAT broke
+                pc += crest * 0.16 * (1.0 - saturate(T * 2.6));
+                lin = lerp(lin, pc, min(1.0 - exp(-T * 9.0), 0.92) * dens);
+                col = lin; best = min(sceneT, best); hit = true;
+            }
+            continue;
+        }
         if (age > 2.4) continue;
         float  floorY = eC[i].y >= 0.0 ? corner.y - eC[i].y : -1e6;   // the top of what is under the block
         // a rough bound for the whole burst first (most pixels never see one)
