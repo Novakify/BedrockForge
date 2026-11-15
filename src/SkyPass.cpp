@@ -2500,6 +2500,26 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // after the game's own sky draw - on the game's own list, its own targets bound, depth still cleared: every pixel is
 // sky there, the background (sky / city / void) goes down first and the world is drawn over it. It marks the frame done,
 // so the clear fallback does not add a second, different look on the frames it does manage.
+bool leaveWorldWanted(size_t rt, size_t ds) {
+    if (!rt || !gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || gFxSinceClear.load()) return false;
+    if (fxPairRt(ds) != rt) return false;                         // only the world's own targets
+    return nowMsSky() - gLastCloudPassMs.load() >= 60;            // the clouds are being drawn: the normal pass runs
+}
+bool leaveWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    GameState s2 = st;
+    s2.pso = gFxPso.load();
+    bool const ok = drawWorldFxPassImpl(list, s2, calls);
+    if (ok) { gFxSinceClear = true; ++gDbgDome; }
+    if (st.pso) calls.setPso(list, st.pso);
+    if (st.haveTopo) calls.setTopo(list, st.topo);
+    static std::atomic<int64_t> lastLog{0};
+    if (int64_t const t = nowMsSky(); t - lastLog.load() > 5000) {
+        lastLog = t;
+        ll_shim::info("[RF] World FX looking-down: end-of-world passes " + std::to_string(gDbgDome.exchange(0)) + ", clear-fallback ok " + std::to_string(gDbgFbOk.exchange(0)) +
+                      ", missed " + std::to_string(gDbgFbNo.exchange(0) + gDbgStale.exchange(0)) + ", cloud passes " + std::to_string(gDbgCloud.exchange(0)));
+    }
+    return ok;
+}
 void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (!gFxPso.load(std::memory_order_relaxed) || gFxSinceClear.load()) return;
     if (nowMsSky() - gLastCloudPassMs.load() < 60) return;      // the clouds are being drawn: the normal pass runs
