@@ -2544,7 +2544,8 @@ bool leaveWorldWanted(size_t rt, size_t ds) {
     if (!rt || !gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed)) { ++gLvNoPso; return false; }
     if (gFxSinceClear.load()) { ++gLvDone; return false; }
     if (fxPairRt(ds) != rt && !learnWorldPair(rt, ds)) { ++gLvPair; return false; }   // only the world's own targets
-    if (nowMsSky() - gLastCloudPassMs.load() < 60) { ++gLvCloud; return false; }   // the clouds are being drawn: the normal pass runs
+    // (no 60 ms wait after the last cloud pass any more: measured, the cloud pass of a frame always comes before the world
+    //  list ends - "already done" - so the wait only left the frames while you turn below the horizon without the pass)
     return true;
 }
 bool leaveWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
