@@ -333,7 +333,10 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
         float3 a2 = skyAmb * (0.40 + 0.60 * n.y * n.y) * (0.85 + 0.2 * grain) * (0.45 + 0.55 * cav);   // lit by the dome overhead
         float  die = pow(1.0 - TWK, 0.80);
         float  face = saturate(dot(normalize(n.xz + 1e-4), SUN_AZ) * 0.5 + 0.5);
-        a2 += lerp(float3(0.34, 0.105, 0.085), float3(0.22, 0.045, 0.060), TWK) * pow(face, 2.0) * (1.0 - 0.75 * n.y) * (0.35 + 0.65 * crease) * die * 1.05;
+        // (a soft wash over whole swells - per-bump it speckled the sea salmon, seen in game)
+        float3 nB = normalize(float3(n.x, n.y * 2.5, n.z));
+        float  faceB = saturate(dot(normalize(nB.xz + 1e-3), SUN_AZ) * 0.5 + 0.5) * (1.0 - nB.y * 0.6);
+        a2 += lerp(float3(0.34, 0.105, 0.085), float3(0.22, 0.045, 0.060), TWK) * (0.25 + 0.75 * faceB) * (0.30 + 0.70 * crease) * (0.6 + 0.4 * face) * die * 0.36;
         float3 sunD = direct * SUNI;                                                              // LDIR is still the sun here
         float3 moonC = lerp(float3(0.70, 0.52, 0.40), float3(0.34, 0.47, 0.82), smoothstep(0.10, 0.36, LDIR.y));
         float3 moonD = moonC * 0.68 * lit * lerp(0.70, 1.0, smoothstep(-1.0, 0.35, mu)) * MOONI;
