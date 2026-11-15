@@ -364,6 +364,18 @@ float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float l
     }
     // obsidian: a cold violet sheen at grazing angles
     c += float3(0.22, 0.10, 0.42) * fres * 0.5 * m.violet * lerp(0.3, 1.0, sky);
+#if !defined(CS_NOVAK)
+    // open ground facing up takes the sky's own light (Fernando, Nov 14: big flat Cloud Sea floors read flat grey under
+    // the sunset): a warm wash from the low sun's half of the sky, and at grazing angles the sky lies faintly in the
+    // surface - far floor goes toward the sunset's colour, near floor keeps its texture
+    {
+        float  upK = saturate(n.y) * sky * sky * (1.0 - leaf);
+        float3 skyFill = lerp(lerp(float3(0.30, 0.17, 0.11), float3(0.30, 0.15, 0.20), CS_DUSK), float3(0.025, 0.035, 0.070), CS_NIGHT);
+        c += alb * skyFill * upK * 0.55;
+        float  Fg = fres * 0.20 * upK * (m.refl > 0.0 ? 0.0 : 1.0);
+        [branch] if (Fg > 0.003) c = lerp(c, csReflect(reflect(-V, n)) * 0.85, Fg);
+    }
+#endif
     // keep strongly lit warm colours from going neon: past ~70% saturation, ease back toward the luma
     float mx = csMax3(c), mn = min(c.r, min(c.g, c.b));
     float sat = mx > 1e-4 ? (mx - mn) / mx : 0.0;
