@@ -158,18 +158,15 @@ float4 main(PSIn i) : SV_Target {
     s_MatTextureTexture.GetDimensions(aw, ah);
     float2 tx   = i.texcoord0 * float2(aw, ah);
     int2   ti   = int2(floor(tx));
-#if defined(CS_NOVAK)
     // the tile's real size: 1 / the world size of one texel (16 or 32). (Seen in game: the atlas here holds 16x tiles;
     // taking every tile as 32 put half the joints mid-"tile", so relief read across into the NEXT block's texture and
-    // one side of those joints fell into a dark strip.)
+    // one side of those joints fell into a dark strip. Cloud Sea too since Nov 15: there the next tile's colour bled
+    // into the joints as broken dashes on flat floors.)
     float3 dpT = ddx(i.texcoord3), dqT = ddy(i.texcoord3);
     float2 dtT = ddx(tx), duT = ddy(tx);
     float  dtD = dtT.x * duT.y - dtT.y * duT.x;
     float3 TT  = (dpT * duT.y - dqT * dtT.y) * (dtD != 0.0 ? 1.0 / dtD : 0.0);
     int    TS  = 1.0 / max(length(TT), 1e-4) > 24.0 ? 32 : 16;
-#else
-    const int TS = 32;
-#endif
     int2   tile = (ti / TS) * TS;                  // the pack's tiles (Faithful 32x, flipbook frames too)
     float4 t0   = s_MatTextureTexture.Load(int3(ti, 0));
 #if defined(PASS_TRANSPARENT)
@@ -179,6 +176,17 @@ float4 main(PSIn i) : SV_Target {
     if (mid > MAT_LAST) mid = 0;
 #endif
     CsMat  m    = csMat(mid);
+#if defined(PASS_OPAQUE)
+    // the block's colour from its OWN tile: at grazing angles the game's filtered lookup takes a coarse mip whose texels
+    // straddle the tile's edge, and the neighbouring atlas tile bled into every joint (Cloud Sea, Nov 15: faint broken
+    // dashes along the joints of flat floors). The mip is capped at 2 and the lookup kept that far inside the tile.
+    [branch] if (!(i.texcoord2.y > 0.5)) {
+        float lodT = clamp(s_MatTextureTexture.CalculateLevelOfDetail(s_MatTextureSampler, i.texcoord0), 0.0, 2.0);
+        float padT = 0.5 * exp2(lodT);
+        float2 uvT = clamp(tx, float2(tile) + padT, float2(tile + TS) - padT) / float2(aw, ah);
+        c = s_MatTextureTexture.SampleLevel(s_MatTextureSampler, uvT, lodT).rgb * tint;
+    }
+#endif
 #if defined(CS_NOVAK)
     // Novak Glass: the sun stands higher (26 degrees, not 6.5), so the relief read from the texture's light/dark pattern
     // lights up on floors - a pack's darker border row turned into a dark strip beside every joint. Blocks sealed in
@@ -347,12 +355,10 @@ float4 main(PSIn i) : SV_Target {
             if (chroma > 0.25) { m.spec = 0.6; m.rough = 90.0; }
         }
     }
-#if defined(CS_NOVAK)
     // the far mip is sampled inside the texel's own tile: at a tile's edge it blended in the NEXT tile of the atlas
+    // (Cloud Sea too, Nov 15: the orange-tan broken dashes along block joints on flat stone floors were the neighbouring
+    //  atlas tile bleeding in)
     float2 meanUV = clamp(tx, float2(tile) + 4.0, float2(tile + TS) - 4.0) / float2(aw, ah);
-#else
-    float2 meanUV = i.texcoord0;
-#endif
     // calm the texture's pixel noise per material: pull toward the tile's average (its far mip)
 #if defined(PASS_OPAQUE)
     float3 mean = s_MatTextureTexture.SampleLevel(s_MatTextureSampler, meanUV, 3.0).rgb * tint;
