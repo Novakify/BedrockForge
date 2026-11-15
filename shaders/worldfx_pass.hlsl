@@ -1951,7 +1951,8 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
     //      a ragged band at most 1/12 of a block deep. Worked out on the block's own face (how far this pixel is from
     //      the face's nearest edge), so the scallops stay put on the block as you move; joints between blocks and
     //      edges with anything but sky behind them are never touched.
-    [branch] if (!NG_IS && c8.w > 0.5 && z < 36.0 && max(abs(n.x), max(abs(n.y), abs(n.z))) > 0.9995) {
+    // (it goes with the F6 "Rim light" slider: at 0 the edges are the plain cube's again - and the bench can time it)
+    [branch] if (!NG_IS && c6.y > 0.0 && c8.w > 0.5 && z < 36.0 && max(abs(n.x), max(abs(n.y), abs(n.z))) > 0.9995) {
         float3 W  = CAM + P;
         float3 ax = abs(n.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0);
         float3 ay = abs(n.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
