@@ -401,8 +401,8 @@ float3 csStars(float3 rd) {
             float  mag = layer == 0 ? 0.45 + 1.15 * m * m * m : (layer == 1 ? 0.07 + 0.34 * m * m : 0.030 + 0.10 * m);
             float  rank = layer == 0 ? 0.55 + 0.45 * m : (layer == 1 ? 0.22 + 0.33 * m : 0.20 * m);   // who is seen first
             float  on = smoothstep(1.0 - vis * 1.15, 1.0 - vis * 1.15 + 0.22, rank);
-            float  tw = 1.0 - (layer == 2 ? 0.18 : 0.34) * (0.5 + 0.5 * sin(TIME * (0.9 + 2.4 * hk) + hk * 61.0));
             float  hk = hash13(cell + 29.3 + 5.0 * float(layer));       // (its own hash: frac(h * 37) of a value that is always near 1 made every bright star orange)
+            float  tw = 1.0 - (layer == 2 ? 0.18 : 0.34) * (0.5 + 0.5 * sin(TIME * (0.9 + 2.4 * hk) + hk * 61.0));
             float3 tint = hk < 0.70 ? lerp(float3(0.84, 0.90, 1.08), float3(1.0, 1.0, 1.0), hk / 0.70) : lerp(float3(1.03, 0.98, 0.90), float3(1.08, 0.90, 0.76), (hk - 0.70) / 0.30);
             float  fall = layer == 0 ? 10.0 : (layer == 1 ? 26.0 : 60.0);
             float  core = exp(-a * a * fall * 9.0) + (layer == 0 ? 0.16 * exp(-a * a * fall) : 0.0);
