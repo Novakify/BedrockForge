@@ -1185,6 +1185,7 @@ float3 airLife(float3 rd, float sceneT) {
         float3 cD = float3(1.00, 0.72, 0.26) * pow(tw, 3.0) * 1.25;                                                   // fireflies: slow pulses
         float3 cN = float3(0.72, 0.84, 1.00) * (0.25 + 0.9 * pow(tw, 6.0));                                           // stardust: glints
         float3 c = (cG * wGold + cD * wDusk + cN * wNight) * I;
+        if (sceneT > 2000.0) c *= 1.0 - 0.8 * wNight;      // against the night sky the dust read as stars in front of the clouds
         best = max(best, c);
     }
     return best * K * 0.55;

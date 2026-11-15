@@ -328,8 +328,8 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     // ---- after sunset the sea is lit by the sky: a cobalt ambient (blue hour) with a last rose on the slopes that
     //      face the afterglow; then the moon - pearl-silver tops, blue shade, a silver edge on the crests toward it
     [branch] if (WTW > 0.001) {
-        float3 skyAmb = lerp(lerp(float3(0.028, 0.034, 0.112), float3(0.0070, 0.0140, 0.0500), smoothstep(0.0, 0.8, TWK)),
-                             lerp(float3(0.086, 0.088, 0.236), float3(0.0200, 0.0370, 0.1060), smoothstep(0.0, 0.8, TWK)), crease);
+        float3 skyAmb = lerp(lerp(float3(0.028, 0.034, 0.112), float3(0.0080, 0.0165, 0.0600), smoothstep(0.0, 0.8, TWK)),
+                             lerp(float3(0.086, 0.088, 0.236), float3(0.0230, 0.0440, 0.1300), smoothstep(0.0, 0.8, TWK)), crease);
         float3 a2 = skyAmb * (0.40 + 0.60 * n.y * n.y) * (0.85 + 0.2 * grain) * (0.45 + 0.55 * cav);   // lit by the dome overhead
         float  die = pow(1.0 - TWK, 0.80);
         float  face = saturate(dot(normalize(n.xz + 1e-4), SUN_AZ) * 0.5 + 0.5);
@@ -430,11 +430,11 @@ float3 csMoon(float3 rd, out float disc) { // the moon: seas and highlands, a da
         float2 q = float2(dot(rd, t1), dot(rd, t2)) / R;
         float  r = length(q);
         disc = smoothstep(1.0, 0.94, r);
-        float  seas = smoothstep(0.44, 0.62, fbm(q * 1.15 + float2(5.3, 1.7), 4));       // the maria: a few broad dark plains
+        float  seas = smoothstep(0.42, 0.56, fbm(q * 1.15 + float2(5.3, 1.7), 4));       // the maria: a few broad dark plains
         float  fine = fbm(q * 5.5 + 9.0, 3);
         float  ray  = smoothstep(0.80, 0.98, vnoise(q * 3.1 + 21.0));                        // a few bright young craters
-        float3 land = float3(0.80, 0.79, 0.76) * (0.80 + 0.30 * fine);                        // highlands: a warm pearl
-        float3 sea  = float3(0.36, 0.40, 0.49) * (0.86 + 0.22 * fine);                        // the seas: blue-grey basalt
+        float3 land = float3(0.76, 0.75, 0.72) * (0.80 + 0.30 * fine);                        // highlands: a warm pearl
+        float3 sea  = float3(0.25, 0.29, 0.38) * (0.86 + 0.22 * fine);                        // the seas: blue-grey basalt
         float3 m = lerp(land, sea, seas * 0.90) + ray * 0.16 * (1.0 - seas);
         m *= 1.0 - 0.38 * pow(r, 3.0);                                                       // limb darkening
         c = lerp(c, m * warm, disc);
