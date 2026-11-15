@@ -64,6 +64,7 @@ float4 main(PSIn i) : SV_Target {
         lit += film * (k * 0.9 + band * g * 0.9 * (0.4 + 0.6 * rim)) * hk + float3(1.0, 1.0, 1.0) * spark * g * 1.6;
     }
 #else
+    [branch] if (tw <= 32 && th <= 32 && !csActorInMenu(FogColor.rgb)) lit = csItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);   // 15
     lit += lerp(float3(1.00, 0.84, 0.62), float3(0.75, 0.85, 1.10), CS_NIGHT) * k * 0.9;
 #endif
     lit = csHaze(lit, wp, cam, i.color2.a * (1.0 - fp));

@@ -67,6 +67,9 @@ float4 main(PSIn i) : SV_Target {
 #if defined(NG_DBG_TEX)
     lit = tw >= 256 ? float3(4, 0, 4) : (tw >= 64 ? float3(0, 4, 4) : float3(4, 4, 0));
 #endif
+#else
+    [branch] if (csActorInMenu(FogColor.rgb)) return float4(c, 1.0);                   // menus: the game's own colours
+    [branch] if (tw <= 32 && th <= 32) lit = csItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);   // 15
 #endif
     lit = csHaze(lit, wp, cam, i.color2.a * (1.0 - fp));
     return float4(csEnc(lit), 1.0);

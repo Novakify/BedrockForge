@@ -70,6 +70,9 @@ struct BfMatchFxV1 {
     uint32_t pad7;
     int64_t  beatMs;     // the last heartbeat (BF's clock), 0 = none
     int64_t  killMs;     // your last kill
+    // v8: the map (Hive: "<map> won with N votes"): a theme tint for the sky and glass - rgb (1,1,1 = none), a strength
+    float    mapTint[4];
+    char     mapName[32];
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);

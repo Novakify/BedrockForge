@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <cctype>
 #include <array>
 #include <unordered_map>
@@ -677,7 +678,7 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
 
 extern "C" __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx() {
     std::lock_guard l(gMutex);
-    gFx.size = sizeof gFx, gFx.version = 7;
+    gFx.size = sizeof gFx, gFx.version = 8;
     gFx.active = nowMs() - gHudMs.load() < 250 ? 1u : 0u;
     gFx.nowMs  = nowMs();
     return &gFx;
@@ -1057,6 +1058,29 @@ void frame(IClientInstance& client, LocalPlayer* lp) {
     }
 }
 
+// the map's theme, from words in its name (Hive names its maps; anything unknown keeps the atmosphere's own look)
+static void setMapTheme(std::string const& name) {
+    struct Th { char const* words[8]; float r, g, b, k; };
+    static Th const themes[] = {
+        {{"snow", "ice", "frost", "winter", "arctic", "igloo", "frozen", "glacier"}, 0.72f, 0.88f, 1.00f, 0.45f},
+        {{"desert", "sand", "egypt", "pyramid", "mesa", "canyon", "dune", "oasis"}, 1.00f, 0.74f, 0.42f, 0.45f},
+        {{"jungle", "forest", "temple", "garden", "tree", "bamboo", "swamp", "woods"}, 0.62f, 1.00f, 0.66f, 0.38f},
+        {{"nether", "lava", "hell", "volcano", "inferno", "magma", "fire", "dragon"}, 1.00f, 0.48f, 0.34f, 0.45f},
+        {{"ocean", "coral", "beach", "reef", "atlantis", "pirate", "island", "lagoon"}, 0.48f, 0.90f, 1.00f, 0.40f},
+        {{"mushroom", "candy", "sweet", "cake", "fairy", "dream", "toy", "party"}, 1.00f, 0.62f, 0.95f, 0.38f},
+        {{"castle", "medieval", "kingdom", "village", "palace", "tower", "knight", "royal"}, 1.00f, 0.88f, 0.70f, 0.30f},
+        {{"space", "moon", "galaxy", "alien", "mars", "planet", "star", "cosmic"}, 0.72f, 0.58f, 1.00f, 0.42f},
+    };
+    float r = 1, g = 1, b = 1, k = 0;
+    for (auto const& t : themes)
+        for (auto const* w : t.words)
+            if (w && name.find(w) != std::string::npos) { r = t.r, g = t.g, b = t.b, k = t.k; goto found; }
+found:
+    gFx.mapTint[0] = r, gFx.mapTint[1] = g, gFx.mapTint[2] = b, gFx.mapTint[3] = k;
+    std::snprintf(gFx.mapName, sizeof gFx.mapName, "%s", name.c_str());
+    note("map: '{}' -> tint {:.2f} {:.2f} {:.2f} x {:.2f}", name, r, g, b, k);
+}
+
 void onText(std::string const& m) {
     std::string s;
     s.reserve(m.size());
@@ -1065,6 +1089,12 @@ void onText(std::string const& m) {
         s += char(std::tolower(uint8_t(m[i])));
     }
     std::lock_guard l(gMutex);
+    if (size_t w = s.find(" won with "); w != std::string::npos && s.find("vote") != std::string::npos) {   // Hive: "<map> won with N votes!"
+        size_t a = s.find_last_of(">!:", w);                                                               // past any "» " prefix
+        std::string name = s.substr(a == std::string::npos ? 0 : a + 1, w - (a == std::string::npos ? 0 : a + 1));
+        while (!name.empty() && (name.front() == ' ' || uint8_t(name.front()) >= 0x80)) name.erase(name.begin());
+        if (!name.empty() && name.size() < 40) setMapTheme(name);
+    }
     if (s.find("destroy your own bed") != std::string::npos) { // the server refused: the bed you hit is still standing
         Bed* best = nullptr; double bd = 1e9;
         for (auto& b : gBeds)

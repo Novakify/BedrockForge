@@ -488,3 +488,36 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     return lerp(aero, night, neonK);
 }
 #endif
+#if !defined(CS_NOVAK)
+// 15 Cloud Sea: items are glass too, in the sky's own light - a warm sunset gold through the day, deepening to amber
+// and rose with the match, a soft moonlit glow at night; the item keeps its own colour (emerald stays green)
+float3 csSunEnv(float3 d, float k) {
+    float  up = saturate(d.y * 0.5 + 0.5);
+    float3 day = lerp(float3(1.00, 0.80, 0.55), float3(0.55, 0.72, 1.00), smoothstep(0.45, 0.95, up));
+    float3 eve = lerp(float3(1.00, 0.52, 0.30), float3(0.62, 0.42, 0.78), smoothstep(0.45, 0.95, up));
+    float3 nit = lerp(float3(0.10, 0.10, 0.18), float3(0.30, 0.36, 0.60), smoothstep(0.45, 0.95, up));
+    return lerp(lerp(day, eve, smoothstep(0.15, 0.6, k)), nit, smoothstep(0.65, 0.95, k));
+}
+float3 csItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, float3 wp) {
+    float  k     = saturate(CS_PHASE * 0.5);
+    float3 alb   = csLin(c);
+    float3 hue   = alb / max(csMax3(alb), 1e-3);
+    float  chroma = csMax3(c) - min(c.r, min(c.g, c.b));
+    float  grey  = 1.0 - smoothstep(0.05, 0.18, chroma);
+    float3 nf    = normalize(lerp(n, gn, 0.35));
+    float  NV    = saturate(dot(nf, V));
+    float  Fg    = 0.05 + 0.95 * pow(1.0 - NV, 4.0);
+    float  glint = pow(saturate(dot(nf, normalize(normalize(float3(0.35, 0.80, 0.45)) + V))), 180.0);
+    float3 R     = reflect(-V, nf), Tg = refract(-V, nf, 0.67);
+    float3 gold  = lerp(float3(1.00, 0.84, 0.52), float3(1.00, 0.56, 0.36), smoothstep(0.2, 0.8, k));
+    float3 envT  = csSunEnv(Tg, k);
+    float  facet = 0.75 + 0.40 * saturate(0.5 + 0.5 * dot(gn, normalize(float3(-0.35, 0.75, 0.55))));
+    float3 o = alb * (0.60 + 0.40 * dot(envT, float3(0.2126, 0.7152, 0.0722))) * facet + envT * lerp(hue, gold, 0.4 + 0.3 * grey) * 0.14;
+    o = lerp(o, csSunEnv(R, k), Fg * 0.30);
+    o += lerp(gold, hue, 0.35) * pow(1.0 - NV, 3.0) * lerp(0.22, 0.38, k);          // a gold glass rim, warmer with the match
+    o += lerp(float3(1.0, 0.95, 0.85), gold, 0.3) * glint * 1.6;
+    o += hue * 0.06 * smoothstep(0.65, 0.95, k) * (0.9 + 0.1 * sin(T * 2.0 + wp.y * 3.0));  // night: a soft glow from within
+    return o * lerp(0.55, 1.0, max(sky, smoothstep(0.65, 0.95, k)));
+}
+#endif
+
