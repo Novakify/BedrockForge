@@ -12,7 +12,7 @@ static float2 MAP_C;
 // ---- living match sky (Bedrock Forge MatchFx): phase 0 golden hour -> 1 dusk (first bed down) -> 2 night (final fight)
 static float  PHASE = 0.0, DUSK = 0.0, NIGHT = 0.0;
 static float3 SUNL = float3(0.0, 1.0, 0.0), MOOND = float3(0.0, 1.0, 0.0), LDIR = float3(0.0, 1.0, 0.0);
-static float  SUNI = 1.0, MOONI = 0.0, TWK = 0.0, WTW = 0.0, WNI = 0.0;
+static float  SUNI = 1.0, MOONI = 0.0, TWK = 0.0, WTW = 0.0, WNI = 0.0, MOPEN = 0.0;
 static float3 SUNDISC = float3(0.17605, 0.11247, -0.97794);
 static float  SUNUP = 1.0;  // the sun disc and its warm glow (gone once it has set)
 static float  NG_NEON = 0.0;   // Novak: the match tightening (teams out) -> the neon night; 1 = the finale
@@ -58,6 +58,7 @@ void csSetPhase(float k) {
     LDIR   = k < 1.46 ? sun : dirAzEl(MOON_AZ, radians(max(moonEl, 8.0)));
     TWK    = saturate((k - 1.0) / 0.8);                 // 0 at sunset .. 1 when the last ember is gone
     WTW    = smoothstep(1.0, 1.25, k);                  // the dusk picture hands over to the twilight one
+    MOPEN  = smoothstep(1.28, 1.56, k);                 // the deck parts where the moon comes up, before it is up (seen in game: at twice the size it rose as a grey ghost behind the cloud)
     WNI    = smoothstep(1.45, 1.9, k);                  // ... and that to the night
     LIGHTK = lerp(lerp(1.0, 0.40, smoothstep(0.25, 1.0, k)), 0.62, NIGHT) * (1.0 - 0.75 * smoothstep(1.1, 1.45, k) * (1.0 - smoothstep(1.45, 1.8, k)));
 }
@@ -199,11 +200,11 @@ float4 highClouds(float3 d, out float3 tn) {
     float  a = dens * (0.50 + 0.50 * smoothstep(0.0, 0.5, tau)) * fade;
     float3 cirCol = lerp(float3(0.42, 0.130, 0.20), float3(1.0, 0.36, 0.10), pow(sunSide, 3.0));
     // the moon stands in a ragged clearing: round it the deck thins to a veil (it is the thing to look at all night)
-    [branch] if (WNI > 0.001) {
+    [branch] if (MOPEN > 0.001) {
         float angC = acos(clamp(dot(d, MOOND), -1.0, 1.0));
         [branch] if (angC < 0.95) {
             angC *= 0.72 + 0.56 * fbm(p * 2.6 + 11.0, 3);
-            float open = exp(-pow(angC / 0.36, 2.0)) * WNI * smoothstep(-0.02, 0.10, MOOND.y);
+            float open = exp(-pow(angC / 0.36, 2.0)) * MOPEN * smoothstep(-0.20, -0.02, MOOND.y);
             a *= 1.0 - 0.93 * open;
             cir *= 1.0 - 0.6 * open;
         }
@@ -481,7 +482,7 @@ float3 csMoon(float3 rd, out float disc) {
         float  south = smoothstep(0.2, -0.8, q.y);                                        // the crowded southern highlands
         float  cr = csCraters(q, 9.0, 3.0) * 0.6 + csCraters(q, 19.0, 8.0) * 0.4;
         float3 land = float3(0.60, 0.59, 0.565) * (0.74 + 0.34 * fine + 0.22 * (pock - 0.5) * (0.5 + south) + 0.22 * cr) * (1.0 + 0.10 * south);
-        float3 sea  = lerp(float3(0.185, 0.190, 0.215), float3(0.160, 0.175, 0.215), smoothstep(-0.2, 0.5, q.x)) * (0.72 + 0.50 * fine + 0.04 * cr);
+        float3 sea  = lerp(float3(0.165, 0.170, 0.195), float3(0.140, 0.155, 0.195), smoothstep(-0.2, 0.5, q.x)) * (0.72 + 0.50 * fine + 0.04 * cr);
         float3 m = lerp(land, sea, mare * 0.92);
         // Tycho and its rays: a few long uneven streaks across half the disc, not a wheel
         float2 ty = q - float2(-0.10, -0.70);
