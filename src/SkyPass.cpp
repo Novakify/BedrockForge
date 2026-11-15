@@ -1802,6 +1802,35 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         if (!look.vitals) hp = -1.0f, run = 0.0f;
         f.cb.m3[0] = hp; f.cb.m3[1] = std::min(beat, 1.0f); f.cb.m3[2] = run; f.cb.m3[3] = sinceKill;
     }
+    {   // test teams for a single-player world: config/wfxteams.txt = "<teams> <beds broken> <teams out>" puts that many
+        // teams in a ring round the camera (the first ones' beds broken / out, timed from when the file was written)
+        static int64_t readAt = -100000; static int ft[3] = {0, 0, 0}; static int64_t since = 0;
+        if (now - readAt > 1000) {
+            readAt = now; ft[0] = 0;
+            std::wstring const fn = wfxConfigFile(L"wfxteams.txt");
+            if (std::FILE* fp = fn.empty() ? nullptr : _wfopen(fn.c_str(), L"r")) {
+                int a = 0, b2 = 0, c2 = 0;
+                if (std::fscanf(fp, "%d %d %d", &a, &b2, &c2) == 3) { if (ft[0] != a || ft[1] != b2 || ft[2] != c2) since = now; ft[0] = a, ft[1] = b2, ft[2] = c2; }
+                std::fclose(fp);
+            }
+        }
+        if (ft[0] >= 2) {
+            static float const cols[8][3] = {{1, 0.1f, 0.1f}, {0.1f, 0.3f, 1}, {0.1f, 1, 0.2f}, {1, 0.9f, 0.1f}, {0.1f, 1, 1}, {1, 0.2f, 1}, {1, 1, 1}, {0.6f, 0.6f, 0.6f}};
+            auto const snapT = rf::lyrics::camera();
+            float const a = float(now - since) / 1000.0f, cam[3] = {float(snapT.pos[0]), float(snapT.pos[1]), float(snapT.pos[2])};
+            int const n = std::min(ft[0], 8);
+            for (int i = 0; i < n; ++i) {
+                float const ang = 6.2832f * float(i) / float(n);
+                auto& c = f.cb;
+                c.tPos[i][0] = cam[0] + std::cos(ang) * 45.0f; c.tPos[i][1] = cam[1] - 2.0f; c.tPos[i][2] = cam[2] + std::sin(ang) * 45.0f;
+                bool const broken = i < ft[1], out = i < ft[2];
+                c.tPos[i][3] = broken ? 0.0f : 1.0f;
+                std::memcpy(c.tCol[i], cols[i], 12); c.tCol[i][3] = 0.0f;
+                c.tAge[i][0] = broken ? a : -1.0f; c.tAge[i][1] = 0.0f; c.tAge[i][2] = out ? std::clamp(a / 4.0f, 0.0f, 1.0f) : 0.0f; c.tAge[i][3] = i == n - 1 ? 1.0f : 0.0f;
+            }
+            f.cb.m0[0] = float(n);
+        }
+    }
     {   // the map's theme tint (m4.yzw, 1 = none): from BF (the Hive vote), or config/maptint.txt "r g b strength" to try one
         float t[4] = {1, 1, 1, 0};
         if (v8) std::memcpy(t, b->mapTint, 16);
