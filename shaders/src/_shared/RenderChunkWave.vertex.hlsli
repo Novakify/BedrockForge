@@ -119,8 +119,9 @@ VSOut main(VSIn i) {
 #endif
 #ifdef HAS_OUT_COLOR2
   #ifdef WAVE_LIVING
-    o.color2    = float4(wvGust(i.position0.x, i.position0.z + 16.0 * i.position0.y, ViewPositionAndTime.w),
-                         i.position0.x, i.position0.z + 16.0 * i.position0.y, fog);
+    // (Nov 15: the fragment needs the block's own position - texcoord3 is camera-relative and slides as you walk, so
+    //  anything drawn on a block from it crawls. color2 carries the chunk-local position; the gust is worked out there.)
+    o.color2    = float4(i.position0.xyz, fog);
   #else
     o.color2    = float4(FogColor.rgb, fog);
   #endif

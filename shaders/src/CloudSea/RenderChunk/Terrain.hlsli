@@ -94,7 +94,9 @@ float4 main(PSIn i) : SV_Target {
     if (i.texcoord2.x > 0.5 && bfDitherKill(i.color3.xyz, ViewPositionAndTime.xyz, u_view[2].xyz, i.color1, DitherParams2[2], DitherParams)) a = 0.0;
 #endif
 #endif
-    float3 wp  = i.texcoord3;
+    float3 wp  = i.texcoord3;                    // camera-relative: good for light and distance, NOT for patterns
+    float3 cl  = i.color2.xyz;                   // chunk-local block position (0..16): patterns live here so they stay put
+    float2 cUV = float2(cl.x, cl.z + 16.0 * cl.y);
     float3 cam = ViewPositionAndTime.xyz;
     float3 V   = normalize(cam - wp);
 #if defined(PASS_TRANSPARENT)
@@ -374,10 +376,10 @@ float4 main(PSIn i) : SV_Target {
     //        the colour  - the block's own colour stays (team wool is team wool); crests go toward cloud white, the
     //                      pack's pixel detail is kept on the main blocks and melts into the puff on the others
     //      and after the light (below): a lining where the puff is thin, the sun or the moon glowing inside the crests.
-    float  cbOn = 0.0, cbEdge = 0.0, cbBil = 0.5, cbMain = 0.0;
+    float  cbOn = 0.0, cbNear = 0.0, cbEdge = 0.0, cbBil = 0.5, cbMain = 0.0;
     [branch] if (mid != MAT_LAMP && mid != MAT_GEM && mid != MAT_ICE && mid != MAT_OBSIDIAN && mid != MAT_METAL && csMax3(abs(n)) > 0.98 && !(i.texcoord2.y > 0.5)) {
         bool   main = mid == MAT_WOOL || mid == MAT_PLANKS || mid == MAT_CONCRETE || mid == MAT_STONE || mid == MAT_CUTSTONE || mid == MAT_ENDSTONE || mid == MAT_TERRACOTTA;
-        float2 tanP = abs(n.x) > 0.5 ? wp.zy : (abs(n.y) > 0.5 ? wp.xz : wp.xy);
+        float2 tanP = abs(n.x) > 0.5 ? cl.zy : (abs(n.y) > 0.5 ? cl.xz : cl.xy);   // on the block itself (was camera-relative: the cushions slid off the blocks as you ran)
         float3 ax = abs(n.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0);
         float3 ay = abs(n.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
         float2 pc = frac(tanP) * 2.0 - 1.0, ap = abs(pc);
@@ -389,14 +391,17 @@ float4 main(PSIn i) : SV_Target {
         float2 gP = -pc * (1.0 - ap.yx * ap.yx) * 0.9;                        // its slope (down toward the rim)
         // the billows on it: soft round heaps that melt into each other (second try, seen in game: packed sphere caps
         // met in sharp creases - every face looked like cracked stone). Each material heaps differently.
-        float2 lsc = mid == MAT_WOOL ? float2(2.3, 2.3) : (mid == MAT_PLANKS ? float2(0.9, 1.9) : (mid == MAT_CONCRETE ? float2(1.0, 1.0) : (main ? float2(1.6, 1.6) : float2(1.25, 1.25))));
+        float2 lsc = mid == MAT_WOOL ? float2(2.25, 2.25) : (mid == MAT_PLANKS ? float2(1.0, 2.0) : (mid == MAT_CONCRETE ? float2(1.0, 1.0) : (main ? float2(1.5, 1.5) : float2(1.25, 1.25))));   // 16 * lsc whole: the heaps repeat every chunk, no seam at chunk borders
         if (mid == MAT_PLANKS && abs(n.y) > 0.5) lsc = lsc.yx;
-        float2 lp = tanP * lsc + dot(wp, abs(n)) * 7.31 + CS_TIME * float2(0.010, 0.004);
+        float2 lp = tanP * lsc;
+        float2 lP = 16.0 * lsc;                                               // the lattice's period: one chunk
+        float  lD = floor(dot(cl, abs(n)) + 0.5) * 7.31;                     // each face plane its own heaps   // (Fernando, Nov 15: running around the blocks looked trippy - nothing on a block moves now)
         float2 li = floor(lp), lf = frac(lp);
         float  H = 0.0; float2 gH = float2(0.0, 0.0);
         [unroll] for (int ly = -1; ly <= 1; ly++) [unroll] for (int lx = -1; lx <= 1; lx++) {
             float2 o = float2(lx, ly);
-            float3 h3 = csHash3(li + o);
+            float2 lw = li + o; lw -= lP * floor(lw / lP);
+            float3 h3 = csHash3(lw + lD);
             float2 r = lf - (o + 0.15 + 0.70 * h3.xy);                        // from the heap's middle to here
             float  ir = 1.0 / (0.16 + 0.20 * h3.z);                           // 1 / radius^2
             float  w = (0.55 + 0.45 * h3.z) * exp(-dot(r, r) * ir);
@@ -405,10 +410,12 @@ float4 main(PSIn i) : SV_Target {
         float  eH = exp(-1.9 * H);
         float  hL = 1.0 - eH;                                                 // heaps run together into plateaus, soft valleys between
         float2 gL = 1.9 * eH * gH * lsc;
-        float  lobeK = (mid == MAT_CONCRETE ? 0.35 : (main ? 0.80 : 1.0)) * fade;
+        float  dCam = length(cam - wp);
+        float  nearK = 1.0 - smoothstep(4.0, 11.0, dCam);                     // (the crawl was here: lobes and arcs a few pixels wide, mid-distance)
+        float  lobeK = (mid == MAT_CONCRETE ? 0.35 : (main ? 0.80 : 1.0)) * fade * nearK;
         cbBil = lerp(hP, hL, 0.5);
         // the puff's own surface, and how the light of the hour falls over it: from above and from the sun's side
-        float2 slope = gP * 0.30 + gL * 0.22 * lobeK;
+        float2 slope = gP * 0.30 * lerp(0.35, 1.0, nearK) + gL * 0.22 * lobeK;   // far off: a calm face, no grid of cushions
         float3 nPuff = normalize(n - ax * slope.x - ay * slope.y);
         float3 La = normalize(CS_SUN * 0.75 + float3(0.0, 0.75, 0.0));
         float  t  = saturate(0.5 + (dot(nPuff, La) - dot(n, La)) * 0.95 + (lerp(0.5, hL, lobeK) - 0.5) * 0.30);
@@ -428,12 +435,12 @@ float4 main(PSIn i) : SV_Target {
         float2 L2 = normalize(float2(dot(La, ax), dot(La, ay)) + 1e-4);
         float2 gN = gL / max(length(gL), 1e-3);
         float  aHi = (hL - 0.60) / 0.085, aLo = (hL - 0.48) / 0.15;
-        float  arcHi = exp(-aHi * aHi) * saturate(dot(-gN, L2) * 1.3) * lobeK;
-        float  arcLo = exp(-aLo * aLo) * saturate(dot(gN, L2) * 1.3) * lobeK;
+        float  arcHi = exp(-aHi * aHi) * saturate(dot(-gN, L2) * 1.3) * lobeK * nearK;
+        float  arcLo = exp(-aLo * aLo) * saturate(dot(gN, L2) * 1.3) * lobeK * nearK;
         c = lerp(c, shadeC, arcLo * 0.55);
         c += (crestC * 1.04 - c) * arcHi * 0.70;
         if (mid == MAT_WOOL) c *= 0.955 + 0.09 * csVN(tanP * 26.0) * fade;     // wool keeps a fine fuzz
-        cbOn = 1.0; cbMain = main ? 1.0 : 0.0;
+        cbOn = 1.0; cbNear = nearK; cbMain = main ? 1.0 : 0.0;
     }
 #endif
 #if !defined(PASS_TRANSPARENT)
@@ -450,12 +457,17 @@ float4 main(PSIn i) : SV_Target {
     float3 lit = csLight(alb, nS, n, sunVis, lm.y, leaf, V, m, cav, glintN, fade);
     // torches and lamps: warm, soft, and alive (a slow flame breathing, each light its own)
     float blk = pow(saturate(lm.x), 1.7);
-    float flick = 0.90 + 0.10 * csVN(float2(CS_TIME * 2.3, dot(floor(wp * 0.25), float3(1.7, 9.1, 4.3))));
+    float flick = 0.90 + 0.10 * csVN(float2(CS_TIME * 2.3, dot(floor(cl * 0.25), float3(1.7, 9.1, 4.3))));
     lit += alb * float3(1.0, 0.62, 0.32) * blk * 1.4 * flick * (1.0 - 0.6 * saturate(lm.y));
     // ---- living blocks: the wind, light that breathes, depth (a per-block id and the gust come from the vertex
     //      shader in color2: x = gust 0..1, yz = chunk-local u, v - see _shared/RenderChunkWave.vertex.hlsli)
-    float  gust = saturate(i.color2.x);
-    float2 bcell = floor(i.color2.yz - float2(n.x, n.z + 16.0 * n.y) * 0.5);   // this block, inside its subchunk
+    float  gust;
+    {   // gust fronts, travelling waves that repeat every 16 blocks (seamless across chunks; was worked out per vertex)
+        const float kG = 6.2831853 / 16.0; float tG = CS_TIME;
+        float sG = 0.50 * sin(kG * (cUV.x + cUV.y) - tG * 2.6) + 0.30 * sin(kG * (2.0 * cUV.x + cUV.y) - tG * 3.3 + 1.7) + 0.20 * sin(kG * (cUV.x - 2.0 * cUV.y) - tG * 1.9 + 4.1);
+        gust = smoothstep(0.30, 0.95, sG * 0.5 + 0.5);
+    }
+    float2 bcell = floor(cUV - float2(n.x, n.z + 16.0 * n.y) * 0.5);   // this block, inside its subchunk
     float  bh = csHash(bcell * float2(1.31, 0.73) + 11.0);
     float  skyK = saturate(lm.y);
 #if defined(PASS_OPAQUE) && !defined(CS_NOVAK)
@@ -463,17 +475,17 @@ float4 main(PSIn i) : SV_Target {
         // the sun by day, the moon at night (the same turn the weapons take): gold, rose at dusk, silver-blue
         float3 glowC = lerp(lerp(float3(1.00, 0.80, 0.46), float3(1.00, 0.50, 0.36), CS_DUSK), float3(0.46, 0.62, 1.00), CS_NIGHT);
         float  open  = skyK * skyK;
-        float  toL   = saturate(dot(-V, CS_SUN) * 0.5 + 0.5);                 // looking toward the light: the puff is backlit
+        float  toL   = 0.35;                                                  // (was the view toward the sun: the rims flared and dimmed as you turned - trippy)
         // the lining: the puff is thin at its rim, light comes through there (a soft bright band inside each block's edge)
-        float  lining = pow(cbEdge, 4.0) * (1.0 - pow(cbEdge, 9.0)) * 0.6;
+        float  lining = pow(cbEdge, 4.0) * (1.0 - pow(cbEdge, 9.0)) * 0.6 * cbNear;
         lit += lerp(glowC, alb * 1.6, 0.35) * lining * (0.07 + 0.22 * toL) * open * lerp(1.0, 0.75, CS_NIGHT);
         // the light inside: the crests hold a glow
-        lit += lerp(glowC, alb * 1.8, 0.45) * smoothstep(0.55, 0.95, cbBil) * 0.085 * open;
+        lit += lerp(glowC, alb * 1.8, 0.45) * smoothstep(0.55, 0.95, cbBil) * 0.085 * open * cbNear;
         // night: every block keeps a breath of its own colour's light (seen in game: a wall in the moon's shade went one
         // blue-grey - red, blue and white wool could not be told apart)
         lit += alb * float3(0.92, 0.96, 1.10) * 0.20 * CS_NIGHT;
         // the crease where two puffs meet: a breath of lavender shade, never a dark line
-        lit = lerp(lit, lit * lerp(float3(0.88, 0.85, 0.97), float3(0.82, 0.85, 0.99), CS_NIGHT), pow(cbEdge, 10.0) * 0.40);
+        lit = lerp(lit, lit * lerp(float3(0.88, 0.85, 0.97), float3(0.82, 0.85, 0.99), CS_NIGHT), pow(cbEdge, 10.0) * 0.40 * cbNear);
     }
 #endif
 #if !defined(PASS_TRANSPARENT)
@@ -590,7 +602,7 @@ float4 main(PSIn i) : SV_Target {
             // (seen in game: a soft blob read as a smudge)
             // (each block its own: where the bars sit, which way they lean, some blocks none - a wall of blocks must not look stamped)
             // (the id must not change inside a face: seen in game, the shared per-block hash runs in 16 bands up a wall and broke the bars into blotches)
-            float  gx = floor(i.color2.y - n.x * 0.5), gz = abs(n.y) > 0.5 ? floor(i.color2.z - 8.0 * n.y) : 0.0;
+            float  gx = floor(cUV.x - n.x * 0.5), gz = abs(n.y) > 0.5 ? floor(cUV.y - 8.0 * n.y) : 0.0;
             float  gh = csHash(float2(gx * 1.31 + dot(n, float3(1.0, 2.0, 3.0)) * 5.0, gz * 0.73 + 11.0 + dot(float2(tile), float2(0.013, 0.027))));
             float  gFlip = gh > 0.5 ? 1.0 : -1.0;
             float  dg = (ngPc.x * gFlip + ngPc.y) * 0.7071 + (frac(gh * 7.3) - 0.5) * 1.3 + dot(ngVxy, float2(0.9 * gFlip, 0.9));
@@ -679,7 +691,7 @@ float4 main(PSIn i) : SV_Target {
                 // the surface from below is the brightest thing under water: the light above comes through it, broken
                 // into a moving web by the waves, brighter where you look straight up (Snell's window), a silver
                 // mirror toward its edges (total internal reflection)
-                float2 pU = i.color2.yz;
+                float2 pU = cUV;
                 float  rip = csRipple(pU, CS_TIME);
                 float  web = pow(saturate(1.0 - abs(csRipple(pU * 1.7 + 3.1, CS_TIME * 1.3) - 0.5) * 3.2), 3.0);
                 float  win = smoothstep(0.35, 0.90, -V.y);                  // inside the window: you see the sky through it
@@ -698,7 +710,7 @@ float4 main(PSIn i) : SV_Target {
         if (water) {
             // ripples: wind-driven little waves (three octaves, seamless across chunks), the sun breaks into a glittering
             // path on them
-            float2 p0 = i.color2.yz;
+            float2 p0 = cUV;
             // (quality audit, Nov 15: far off and at a flat angle one pixel covers several ripples - the surface broke into
             //  scratchy white dashes and streaks. Where the ripples get smaller than a pixel they calm down to a smooth
             //  sheet with a soft sun path, as a real distant water surface does.)
