@@ -61,6 +61,7 @@ float4 main(PSIn i) : SV_Target {
         float dif = 0.60 + 0.40 * saturate(dot(n, normalize(float3(0.3, 0.8, 0.5))));
         lit = lerp(lit, csLin(c) * dif * 0.90, CS_NIGHT);
     }
+    [branch] if (tw <= 32 && th <= 32 && csScreenCard(n, u_view[2].xyz, length(cam - wp))) return float4(c, 1.0);   // server markers: their own colours
     [branch] if (tw <= 32 && th <= 32) lit = ngItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);
     // (glassy players' neon rim removed: its cyan / magenta cycle read as a pink hue on every character - hub,
     //  inventory, matches. Skins keep their own colours.)
@@ -69,6 +70,7 @@ float4 main(PSIn i) : SV_Target {
 #endif
 #else
     [branch] if (csActorInMenu(FogColor.rgb)) return float4(c, 1.0);                   // menus: the game's own colours
+    [branch] if (tw <= 32 && th <= 32 && csScreenCard(n, u_view[2].xyz, length(cam - wp))) return float4(c, 1.0);   // server markers: their own colours
     [branch] if (tw <= 32 && th <= 32) lit = csItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);   // 15
 #endif
     lit = csHaze(lit, wp, cam, i.color2.a * (1.0 - fp));

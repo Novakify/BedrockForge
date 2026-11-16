@@ -442,6 +442,10 @@ bool bfDitherKill(float3 worldPos, float3 cam, float3 fwd, float4 clip, float4 p
 
 static float CS_ITEM_FP = 0.0;   // 1: the item in your own hand (flat faces seen head-on: no fresnel, no rim - it needs its own glass cues)
 // a smooth field through an item's volume (the light inside it - both atmospheres)
+// a flat card turned square to the screen, away from you: a server's floating marker (the Hive's bed / flag / letter
+// icons over each island), not an item. Its texture is item-sized, so the item looks caught it - Fernando, Nov 15: the
+// bed marker came out cream porcelain with grey blotches instead of its team colour. Markers keep their own colours.
+bool csScreenCard(float3 n, float3 fwd, float dist) { return abs(dot(n, normalize(fwd))) > 0.992 && dist > 3.0; }
 float csH3(float3 p) { p = frac(p * 0.1031); p += dot(p, p.zyx + 31.32); return frac((p.x + p.y) * p.z); }
 float csN3(float3 p) {
     float3 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);

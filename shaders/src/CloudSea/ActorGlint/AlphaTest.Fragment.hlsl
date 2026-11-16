@@ -51,6 +51,7 @@ float4 main(PSIn i) : SV_Target {
     // ---- Novak Glass: enchanted items are glass too, and the enchantment is a hologram on the glass - thin-film
     //      rainbow light that shifts with the angle you see it from, a band of spectral light sweeping along it, and
     //      tiny glitter sparks, all living inside the vanilla enchant pattern. It burns brighter toward the endgame.
+    [branch] if (tw <= 32 && th <= 32 && csScreenCard(n, u_view[2].xyz, length(cam - wp))) return float4(c, 1.0);   // server markers: their own colours
     [branch] if (tw <= 32 && th <= 32) lit = ngItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);
     {
         float  T    = ViewPositionAndTime.w;
@@ -64,6 +65,7 @@ float4 main(PSIn i) : SV_Target {
         lit += film * (k * 0.9 + band * g * 0.9 * (0.4 + 0.6 * rim)) * hk + float3(1.0, 1.0, 1.0) * spark * g * 1.6;
     }
 #else
+    [branch] if (tw <= 32 && th <= 32 && csScreenCard(n, u_view[2].xyz, length(cam - wp))) return float4(c, 1.0);   // server markers: their own colours
     [branch] if (tw <= 32 && th <= 32 && !csActorInMenu(FogColor.rgb)) lit = csItemGlass(c, n, V, gn, sky, ViewPositionAndTime.w, wp);   // 15
     lit += lerp(float3(1.00, 0.84, 0.62), float3(0.75, 0.85, 1.10), CS_NIGHT) * k * 0.9;
 #endif
