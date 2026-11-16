@@ -61,7 +61,7 @@ float4 main(PSIn i) : SV_Target {
         float3x3 R3 = (float3x3)u_view;
         float3 nW = haveView ? normalize(mul(nv, R3)) : nv;
         float3 VW = haveView ? normalize(mul(V, R3)) : V;
-        float3 gW = normalize(nW + (csHash3(floor(i.texcoord3.xy * 16.0) + floor(i.texcoord3.z * 16.0) * 7.31) - 0.5) * 0.9);
+        float3 gW = normalize(nW + (csHash3(floor(c.rg * 255.0 + 0.5) + floor(c.b * 255.0 + 0.5) * 7.31) - 0.5) * 0.5);   // (was hashed from the world grid the sword moves through: facets re-rolled every swing - the flashing)
         float  skyI = smoothstep(0.30, 0.80, lv);
         CS_ITEM_FP = 1.0;
 #if defined(CS_NOVAK)

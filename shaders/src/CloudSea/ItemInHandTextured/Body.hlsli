@@ -31,10 +31,20 @@ float4 main(PSIn i) : SV_Target {
     nv = dot(nv, nv) > 1e-20 ? normalize(nv) : float3(0, 0, 1);
     if (dot(nv, -normalize(vp)) < 0.0) nv = -nv;
     // the billows: a smooth field through the block (height + slope in one call), two sizes
-    float3 q  = vp * 5.5 + float3(0.0, T * 0.010, 0.0);
+    // (Nov 15: the field was in view space - when you swing or the hand bobs the block moves through it and the billows
+    //  raced across it. It lives on the block's texture now: atlas texels / 16 = one block face, so it stays put.)
+    uint aw, ah; s_MatTextureTexture.GetDimensions(aw, ah);
+    float2 tu = i.texcoord0 * float2(aw, ah) / 16.0;
+    float3 q  = float3(tu * 2.2, 0.0);
     float4 b1 = csN3d(q), b2 = csN3d(q * 2.4 + 7.3);
     float  hB = b1.x * 0.65 + b2.x * 0.35;
-    float3 g  = b1.yzw * 0.65 + b2.yzw * (0.35 * 2.4);
+    float2 g2 = (b1.yz * 0.65 + b2.yz * (0.35 * 2.4)) * 2.2;            // slope along the texture's u, v
+    float3 dpx = ddx(vp), dpy = ddy(vp); float2 dux = ddx(tu), duy = ddy(tu);
+    float  det = dux.x * duy.y - dux.y * duy.x;
+    float3 Tu = (dpx * duy.y - dpy * dux.y) * (abs(det) > 1e-12 ? 1.0 / det : 0.0);
+    float3 Tv = (dpy * dux.x - dpx * duy.x) * (abs(det) > 1e-12 ? 1.0 / det : 0.0);
+    Tu = dot(Tu, Tu) > 1e-12 ? normalize(Tu) : float3(1, 0, 0); Tv = dot(Tv, Tv) > 1e-12 ? normalize(Tv) : float3(0, 1, 0);
+    float3 g  = Tu * g2.x + Tv * g2.y;
     g -= nv * dot(g, nv);
     float3 nP = normalize(nv - g * 0.42);
     float3 La = normalize(float3(0.35, 0.80, 0.45));                       // the view model's key light: high, to the right

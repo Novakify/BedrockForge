@@ -485,7 +485,7 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     float  NV    = saturate(dot(nf, V));
     float  Fg    = 0.05 + 0.95 * pow(1.0 - NV, 4.0);
     float3 Lk    = normalize(float3(0.35, 0.80, 0.45));
-    float  glint = pow(saturate(dot(nf, normalize(Lk + V))), 180.0);
+    float  glint = pow(saturate(dot(nf, normalize(Lk + V))), lerp(180.0, 48.0, CS_ITEM_FP)) * lerp(1.0, 0.35, CS_ITEM_FP);   // (in the hand: one soft gleam, not texels strobing as it swings)
     float  sp    = lerp(0.012, 0.035, neonK);
     float3 Tr = refract(-V, nf, 0.67 - sp), Tg = refract(-V, nf, 0.67), Tb = refract(-V, nf, 0.67 + sp);
     float3 R  = reflect(-V, nf);
@@ -503,14 +503,17 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     aero = lerp(aero, aero * float3(1.05, 0.78, 0.90), smoothstep(0.15, 0.55, k) * (1.0 - neonK));   // dusk
     // light moving THROUGH the glass (quality audit, Nov 15: with only flat face normals the item in your hand was two
     // flat tones - card, not glass): slow bright caustics and deeper bands drift through its volume
-    float3 q    = wp * 7.0;
+    // (Nov 15, "the sword flashes / pulses sporadically": in your hand wp is view space - every swing and hand bob carried
+    //  the sword through this field, and the per-texel ids came from a hash of a ROTATING normal, so they re-rolled every
+    //  frame. In first person the field and the ids come from the texel's colour, which goes where the sword goes.)
+    float3 q    = CS_ITEM_FP > 0.5 ? c * float3(3.1, 2.7, 3.5) : wp * 7.0;
     float  flow = csN3(q + float3(T * 0.10, -T * 0.22, T * 0.06)) * 0.62 + csN3(q * 2.3 + float3(-T * 0.15, T * 0.30, 0.0)) * 0.38;
     float  caust = smoothstep(0.52, 0.88, flow);
     aero = aero * (0.82 + 0.34 * flow) + lerp(float3(1.0, 1.0, 1.0), aeroTint, 0.45) * caust * 0.30;
     // in your own hand (Fernando, Nov 15: "still looks vanilla" - it was the sprite's own colours, lit): the body goes
     // pale and clear like the third-person crystal, each texel a facet, the sprite's dark outline becomes the glass's
     // bright cut edge, and a gloss slides across it now and then
-    float  fid   = frac(sin(dot(gn, float3(12.9898, 78.233, 37.719))) * 43758.5453);
+    float  fid   = CS_ITEM_FP > 0.5 ? csH3(floor(c * 255.0 + 0.5)) : frac(sin(dot(gn, float3(12.9898, 78.233, 37.719))) * 43758.5453);
     float  edgeK = (1.0 - smoothstep(0.20, 0.38, luma)) * CS_ITEM_FP;
     float  gloss = smoothstep(0.90, 1.0, sin((q.x + q.y) * 0.9 - T * 1.1));
     float3 clear = lerp(float3(0.84, 0.93, 1.00), hue, 0.50) * (0.70 + 0.40 * flow) * (0.84 + 0.32 * fid);
@@ -523,7 +526,7 @@ float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     float3 Lc   = normalize(float3(-0.35, 0.75, 0.55));
     float  fct  = dot(normalize(gn - n * dot(gn, n) * 0.5), Lc);          // each texel's facet tilt
     float  facet = 0.70 + 0.45 * saturate(0.5 + 0.5 * fct);
-    float  breathe = 0.90 + 0.10 * sin(T * 2.2 + wp.y * 3.0);
+    float  breathe = 0.90 + 0.10 * sin(T * 2.2 + (CS_ITEM_FP > 0.5 ? 0.0 : wp.y * 3.0));
     float3 own  = alb * lerp(1.0, 0.85, grey);                            // its own colour, not turned up
     float3 night = own * 0.62 * facet;
     night += float3(ngEnv(Tr, 0.0).r, ngEnv(Tg, 0.0).g, ngEnv(Tb, 0.0).b) * hue * 0.18;  // a little of the city through it
@@ -574,12 +577,12 @@ float3 csItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     float3 R     = reflect(-V, nf);
     float3 keyD  = normalize(lerp(float3(0.35, 0.80, 0.45), float3(-0.45, 0.78, 0.42), moonK));   // the sun's side, then the moon's
     float3 envR  = csSunEnv(R, k), envN = csSunEnv(nf, k);
-    float  id    = frac(sin(dot(gn, float3(12.9898, 78.233, 37.719))) * 43758.5453);   // one value per texel
+    float  id    = CS_ITEM_FP > 0.5 ? csH3(floor(c * 255.0 + 0.5)) : frac(sin(dot(gn, float3(12.9898, 78.233, 37.719))) * 43758.5453);   // one value per texel (in the hand: from its colour - a hash of the turning normal re-rolled every frame, the flashing)
     float  shade = 0.70 + 0.55 * L;                                        // the sprite's own drawn shading stays
     // the light INSIDE the item (seen in game: with only face normals to go on, every face was one flat colour - card,
     // not something lit from within). A slow field through the item's volume: by day it rolls like the sun's surface,
     // at night it lies still like the moon's seas, with one soft sheen drifting over it.
-    float3 q     = wp * 7.0;
+    float3 q     = CS_ITEM_FP > 0.5 ? c * float3(3.1, 2.7, 3.5) : wp * 7.0;   // (in the hand: on the item, not in view space - swings raced it through the field)
     float  roll  = csN3(q + float3(0.0, -T * 0.35, T * 0.12)) * 0.62 + csN3(q * 2.3 + float3(T * 0.20, T * 0.50, 0.0)) * 0.38;
     float  heat  = smoothstep(0.28, 0.80, roll);
     float  mare  = smoothstep(0.42, 0.60, csN3(q * 0.9 + 7.0) * 0.65 + csN3(q * 2.6 + 3.0) * 0.35);
@@ -607,7 +610,7 @@ float3 csItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     // sunstone: deep amber where it is cool, gold, white-hot where the surface rolls up; lower and redder at dusk
     // sunstone: the stone in its own clear colour, and the sun in it - gold light rolling through, white-hot at the crests
     float3 sunS   = hue * (0.20 + 0.72 * shade) * lerp(1.0, 0.80, dusk) + sunC * heat * heat * lerp(0.46, 0.56, dusk) + float3(1.00, 0.95, 0.80) * pow(heat, 4.0) * lerp(0.42, 0.14, dusk);
-    float  fleck  = pow(saturate(dot(reflect(-V, normalize(lerp(n, gn, 0.85))), keyD)), 24.0) * step(0.62, id);   // its copper flecks
+    float  fleck  = pow(saturate(dot(reflect(-V, normalize(lerp(n, gn, 0.85))), keyD)), 24.0) * step(0.62, id) * lerp(1.0, 0.4, CS_ITEM_FP);   // its copper flecks
     sunS += float3(1.00, 0.86, 0.55) * fleck * 1.4;
     // moonstone: milky, its own colour, darker seas in it, and the blue-white sheen that slides through it
     float3 milk   = lerp(float3(0.62, 0.72, 0.96), hue, 0.72) * (0.62 * shade + 0.12) * (1.0 - 0.34 * mare);
@@ -619,10 +622,10 @@ float3 csItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, 
     o += through * pow(1.0 - NV, 2.0) * (1.0 - inlay) * (1.0 - core);
     o  = lerp(o, metal, inlay);
     // sparks by day (gold, quick), motes at night (silver, slow) - a few texels, each its own rhythm, climbing the item
-    float  spark = pow(saturate(sin(T * lerp(2.6, 1.1, moonK) + id * 37.0 - wp.y * 14.0)), lerp(30.0, 14.0, moonK)) * step(0.60, id) * (1.0 - inlay);
+    float  spark = pow(saturate(sin(T * lerp(2.6, 1.1, moonK) + id * 37.0 - (CS_ITEM_FP > 0.5 ? 0.0 : wp.y * 14.0))), lerp(30.0, 14.0, moonK)) * step(0.60, id) * (1.0 - inlay);
     o += lerp(float3(1.00, 0.72, 0.30) * (0.20 + 0.45 * dusk), float3(0.70, 0.84, 1.00) * 0.40, moonK) * spark * (0.4 + 0.9 * core);
     // the glint on the glaze, brighter on the metal
-    float glint = pow(saturate(dot(nf, normalize(keyD + V))), 220.0);
+    float glint = pow(saturate(dot(nf, normalize(keyD + V))), lerp(220.0, 56.0, CS_ITEM_FP)) * lerp(1.0, 0.35, CS_ITEM_FP);
     o += lerp(lerp(float3(1.00, 0.96, 0.88), float3(0.90, 0.95, 1.00), moonK), metalC, inlay) * glint * (1.3 + 1.3 * inlay);
     return o * lerp(0.55, 1.0, max(sky, moonK));
 }
