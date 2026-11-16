@@ -40,7 +40,7 @@ bool vvWanted();     // "Vibrant Visuals too" is on (F6)
 int  kindOfHash(uint64_t psHash); // learned from the game's own sky materials first, then the 1.26.51 table
 /// Learn the sky pixel-shader hashes from the materials the game really loads (SkyMaterialScan.h), so a game update
 /// or a pack / shaderpack that replaces a sky material keeps working without a new RF build.
-void learnGameMaterials(std::filesystem::path const& materialsDir);                                // at boot
+void learnGameMaterials(std::filesystem::path const& materialsDir, std::filesystem::path const& modsDir = {});                              // at boot
 void learnMaterialFile(std::filesystem::path const& file, std::wstring_view fileName, char const* source); // pack-served
 /// A game pipeline with a sky pixel shader was created (desc = the game's, root signature kept for our pipelines).
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& desc);

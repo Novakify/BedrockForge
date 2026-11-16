@@ -1230,7 +1230,7 @@ void learnMaterialFile(std::filesystem::path const& file, std::wstring_view file
             if (gLearned.emplace(s.hash, k).second) ++gLearnKind[k];
 }
 
-void learnGameMaterials(std::filesystem::path const& dir) {
+void learnGameMaterials(std::filesystem::path const& dir, std::filesystem::path const& modsDir) {
     for (auto m : rf::skyscan::kMaterials) {
         std::wstring fn(m.begin(), m.end());
         fn += L".material.bin";
@@ -1238,12 +1238,25 @@ void learnGameMaterials(std::filesystem::path const& dir) {
     }
     // Bedrock Forge serves its packs' RenderChunk by redirecting the file open (RF never sees those bytes): learn
     // every pack's block shader too, so its draws mark the world as drawn
+    // (Nov 15: the log always said "learned (20)" - the vanilla 20 only; the packs' own block shaders were never learned,
+    //  so after switching Cloud Sea <-> Novak Glass without a restart the world's block draws went unrecognised and up to
+    //  a third of frames had no sky pass: the flicker. Look for the packs next to RF's own mod folder too.)
     std::error_code ec;
-    auto const packs = dir.parent_path().parent_path().parent_path() / "mods" / "BedrockForgeCore" / "shaderpacks";
-    for (auto const& e : std::filesystem::directory_iterator(packs, ec))
-        if (e.is_directory(ec)) learnMaterialFile(e.path() / "renderer" / "materials" / "RenderChunk.material.bin", L"RenderChunk.material.bin", nullptr);
+    std::vector<std::filesystem::path> roots = {dir.parent_path().parent_path().parent_path() / "mods" / "BedrockForgeCore" / "shaderpacks"};
+    if (!modsDir.empty()) roots.push_back(modsDir / "BedrockForgeCore" / "shaderpacks");
+    int files = 0; std::string where;
+    for (auto const& packs : roots) {
+        if (!std::filesystem::is_directory(packs, ec)) continue;
+        for (auto const& e : std::filesystem::directory_iterator(packs, ec)) {
+            auto const f = e.path() / "renderer" / "materials" / "RenderChunk.material.bin";
+            if (e.is_directory(ec) && std::filesystem::is_regular_file(f, ec)) { learnMaterialFile(f, L"RenderChunk.material.bin", nullptr); ++files; }
+        }
+        where = packs.string();
+        if (files) break;
+    }
     std::lock_guard l(gLearnMutex);
-    ll_shim::info("[RF] World FX: block shaders learned (" + std::to_string(gLearnKind[Terrain]) + "): the pass knows when the world was drawn");
+    ll_shim::info("[RF] World FX: block shaders learned (" + std::to_string(gLearnKind[Terrain]) + ", " + std::to_string(files) + " shaderpack files from " +
+                  (where.empty() ? std::string("nowhere - no shaderpacks folder found") : where) + "): the pass knows when the world was drawn");
 }
 
 int kindOfHash(uint64_t h) {
