@@ -2008,7 +2008,12 @@ float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inou
     //      the face's nearest edge), so the scallops stay put on the block as you move; joints between blocks and
     //      edges with anything but sky behind them are never touched.
     // (it goes with the F6 "Rim light" slider: at 0 the edges are the plain cube's again - and the bench can time it)
-    [branch] if (!NG_IS && c6.y > 0.0 && c8.w > 0.5 && z < 36.0 && max(abs(n.x), max(abs(n.y), abs(n.z))) > 0.9995) {
+    // (OFF, Fernando Nov 15: "the block outlines don't match the actual block hit boxes" - a block's visible edge must sit
+    //  exactly on its real edge, or bridging and placing get harder. Kept for reference; CS_SOFT_EDGES 1 brings it back.)
+#ifndef CS_SOFT_EDGES
+#define CS_SOFT_EDGES 0
+#endif
+    [branch] if (CS_SOFT_EDGES && !NG_IS && c6.y > 0.0 && c8.w > 0.5 && z < 36.0 && max(abs(n.x), max(abs(n.y), abs(n.z))) > 0.9995) {
         float3 W  = CAM + P;
         float3 ax = abs(n.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0);
         float3 ay = abs(n.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
