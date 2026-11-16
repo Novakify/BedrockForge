@@ -511,7 +511,7 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
             bool   ghost = age < 0.5 && all(S > corner - 0.03) && all(S < corner + 1.03);
             float  tLim = (ghost && best >= sceneT) ? 1e9 : min(sceneT, best);
             float  T = 0.0, wAcc = 0.0, litAcc = 0.0;
-            float3 Lp = normalize(SUN + float3(0.0, 0.6, 0.0));
+            float3 Lp = normalize(SUN + float3(0.0, 0.35, 0.0));
             float  tMid = dot(bc, rd);
             [loop] for (int k = 0; k < 9; k++) {
                 float  sk = seed * 0.001 + float(k) * 3.71;
@@ -528,16 +528,18 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                 float  ta = tc - h, tb = min(tc + h, tLim);
                 if (tb <= ta) continue;
                 float  th = (tb - ta) * (1.0 - b2 / (rr * rr));
-                float  lk = saturate(dot(normalize(pn - rd * h), Lp) * 0.62 + 0.42) * (0.74 + 0.26 * (1.0 - b2 / (rr * rr)));
-                float  wk = th * exp(-(ta - tMid) * 3.0);
+                float3 nk = normalize(pn - rd * h);
+                // (audit 2: every heap came out the same flat peach - light from one side, a darker underside, billows inside)
+                float  lk = saturate(dot(nk, Lp) * 0.55 + 0.38 + 0.22 * nk.y) * (0.72 + 0.28 * (1.0 - b2 / (rr * rr))) * (0.80 + 0.40 * vnoise(pn.xy * 9.0 + pn.z * 5.0 + sk * 3.0));
+                float  wk = th * exp(-(ta - tMid) * 6.0);
                 T += th; wAcc += wk; litAcc += lk * wk;
             }
             [branch] if (T > 1e-4) {
                 float  lit = litAcc / max(wAcc, 1e-5);
                 float3 crest = lerp(lerp(float3(0.72, 0.65, 0.54), float3(0.72, 0.52, 0.42), DUSK), float3(0.34, 0.42, 0.62), NIGHT);
                 float3 shade = lerp(lerp(float3(0.34, 0.30, 0.47), float3(0.27, 0.20, 0.36), DUSK), float3(0.10, 0.13, 0.26), NIGHT);
-                float3 pc = lerp(shade, crest * 1.08, smoothstep(0.22, 0.74, lit));
-                pc = lerp(pc, pc * (0.40 + 0.85 * hue), 0.40);                 // more of the block in it than in the place puff: you see WHAT broke
+                float3 pc = lerp(shade, crest * 1.10, smoothstep(0.30, 0.78, lit));
+                pc = lerp(pc, pc * (0.35 + 0.95 * lerp(hue, 1.0, 0.25)), 0.60);                 // more of the block in it than in the place puff: you see WHAT broke
                 pc += crest * 0.16 * (1.0 - saturate(T * 2.6));
                 lin = lerp(lin, pc, min(1.0 - exp(-T * 9.0), 0.92) * dens);
                 col = lin; best = min(sceneT, best); hit = true;
