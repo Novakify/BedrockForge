@@ -3,6 +3,7 @@
 // camera motion blur). Bedrock Forge shaderpacks request them through BF_GetPostFx() (BedrockForgeCore.dll);
 // RF reads that every frame, records the passes into the overlay's command list before ImGui, and shows them in F6.
 #include <d3d12.h>
+#include <cstdint>
 
 namespace rf::postfx {
 
@@ -24,6 +25,13 @@ float motionBlurWanted();
 void  noteWorldBlur();
 /// The Bedrock Forge Motion Blur module's "moving" share (0..1.5), -1 = it does not say (F6 World FX value applies).
 float motionBlurMove();
+/// What moves by itself near you (players, mobs, dropped items), from Bedrock Forge's BF_GetBlurActors(): the world
+/// motion blur leaves these sharp. nullptr = Bedrock Forge does not send them (older build) or nothing fresh.
+struct BfBlurActorsV1 {
+    uint32_t size, version, count, frame;
+    struct A { float x, y, z; float r, h; float pad[3]; } a[32];   // feet centre (world), radius, height
+};
+BfBlurActorsV1 const* blurActors();
 bool showcasePose(float& blend, float& yaw, float& pitch, float& radius);
 
 } // namespace rf::postfx

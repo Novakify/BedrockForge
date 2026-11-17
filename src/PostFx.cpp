@@ -337,6 +337,21 @@ bool       gDirOn = false;
 bool       gLinked = false;
 } // namespace
 
+BfBlurActorsV1 const* blurActors() {
+    using Fn = BfBlurActorsV1 const* (*)();
+    static std::atomic<Fn> fn{nullptr};
+    static std::atomic<int> wait{0};
+    Fn f = fn.load(std::memory_order_relaxed);
+    if (!f) {
+        if (wait.fetch_sub(1, std::memory_order_relaxed) > 0) return nullptr;
+        wait.store(240, std::memory_order_relaxed);
+        if (HMODULE m = GetModuleHandleW(L"BedrockForgeCore.dll")) f = reinterpret_cast<Fn>(reinterpret_cast<void*>(GetProcAddress(m, "BF_GetBlurActors")));
+        if (!f) return nullptr;
+        fn.store(f, std::memory_order_relaxed);
+    }
+    BfBlurActorsV1 const* a = f();
+    return a && a->version >= 1 && a->size >= sizeof(BfBlurActorsV1) ? a : nullptr;
+}
 float motionBlurMove() { return gBlurMove.load(std::memory_order_relaxed); }
 float motionBlurWanted() { return gBlurWanted.load(std::memory_order_relaxed); }
 void  noteWorldBlur() { gWorldBlurAt.store(msNow(), std::memory_order_relaxed); }

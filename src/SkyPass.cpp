@@ -1890,7 +1890,10 @@ constexpr UINT kMcbSlots = 16, kMcbStride = 8192;
 ComPtr<ID3D12Resource> gMcb;
 uint8_t*               gMcbMap = nullptr;
 UINT                   gMcbNext = 0;
-static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& cb) {
+static D3D12_GPU_VIRTUAL_ADDRESS uploadRing(ID3D12Device* dev, void const* data, size_t size);
+static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& cb) { return uploadRing(dev, &cb, sizeof cb); }
+static D3D12_GPU_VIRTUAL_ADDRESS uploadRing(ID3D12Device* dev, void const* data, size_t size) {
+    if (size > kMcbStride) return 0;
     std::lock_guard l(gMatchMutex);
     if (!gMcb) {
         D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};
@@ -1904,7 +1907,7 @@ static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& c
         gMcbMap = static_cast<uint8_t*>(p);
     }
     UINT const slot = gMcbNext++ % kMcbSlots;
-    std::memcpy(gMcbMap + slot * kMcbStride, &cb, sizeof cb);
+    std::memcpy(gMcbMap + slot * kMcbStride, data, size);
     return gMcb->GetGPUVirtualAddress() + UINT64(slot) * kMcbStride;
 }
 
@@ -2640,54 +2643,56 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
-    // ---- camera motion blur, part 1: how the camera moved (see the draw below). Worked out before any GPU work: with no
-    //      World FX sky and a still camera the pass has nothing to do at all.
-    struct BlurCam { bool have = false; uint64_t calls = 0; double pos[3]{}; float f[3]{}, r[3]{}, u[3]{}; float w[3]{}, v[3]{};
-                     std::chrono::steady_clock::time_point at{}; };
+    // ---- camera motion blur, part 1: what the camera did since the last frame (see the draw below). Worked out before
+    //      any GPU work: with no World FX sky and a still camera the pass has nothing to do at all.
+    // (audit 2: no velocity against the clock any more - the streak is a share of the real pose-to-pose motion, so it
+    //  always fits the gap between the two frames you see; the clock only caps it on slow frames)
+    struct BlurPose { double pos[3]{}; float f[3]{}, r[3]{}, u[3]{}; };
+    struct BlurCam { bool have = false; uint64_t calls = 0; BlurPose last, before; float avgDt = 0.007f; std::chrono::steady_clock::time_point at{}; };
     static BlurCam bc;
-    auto const tNow = std::chrono::steady_clock::now();
+    BlurPose now2;
+    for (int a = 0; a < 3; ++a) { now2.pos[a] = snap.pos[a]; now2.f[a] = snap.forward[a]; now2.r[a] = snap.right[a]; now2.u[a] = snap.up[a]; }
     if (snap.calls != bc.calls || !bc.have) {
+        auto const tNow = std::chrono::steady_clock::now();
         double const dt = std::chrono::duration<double>(tNow - bc.at).count();
-        auto cross = [](float const a[3], float const b[3], float o[3]) { o[0] += a[1] * b[2] - a[2] * b[1]; o[1] += a[2] * b[0] - a[0] * b[2]; o[2] += a[0] * b[1] - a[1] * b[0]; };
-        if (bc.have && dt > 0.0005 && dt < 0.1) {
-            // the turn prev -> now as axis * angle: the sum of (old axis x new axis) over the basis is 2 sin(angle) * axis
-            float w[3]{}, v[3];
-            cross(bc.f, snap.forward, w); cross(bc.r, snap.right, w); cross(bc.u, snap.up, w);
-            for (int a = 0; a < 3; ++a) { w[a] = float(0.5 * w[a] / dt); v[a] = float((snap.pos[a] - bc.pos[a]) / dt); }
-            if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 80.0f * 80.0f) v[0] = v[1] = v[2] = 0.0f;   // a teleport / respawn, not a move
-            // a little smoothing: one uneven frame must not make the streaks jump in length (that reads as stutter)
-            for (int a = 0; a < 3; ++a) { bc.w[a] += (w[a] - bc.w[a]) * 0.65f; bc.v[a] += (v[a] - bc.v[a]) * 0.5f; }
-        } else if (dt >= 0.1) {
-            for (int a = 0; a < 3; ++a) bc.w[a] = bc.v[a] = 0.0f;
-        }
-        bc.have = true; bc.calls = snap.calls; bc.at = tNow;
-        for (int a = 0; a < 3; ++a) { bc.pos[a] = snap.pos[a]; bc.f[a] = snap.forward[a]; bc.r[a] = snap.right[a]; bc.u[a] = snap.up[a]; }
+        if (bc.have && dt < 0.1) { bc.before = bc.last; bc.avgDt += (float(std::clamp(dt, 0.002, 0.05)) - bc.avgDt) * 0.05f; }
+        else bc.before = now2;                                   // the first frame, or after a pause: no motion known
+        bc.last = now2; bc.have = true; bc.calls = snap.calls; bc.at = tNow;
     }
+    BlurPose pa = bc.before;                                    // the camera one frame ago
     float strength = rf::postfx::motionBlurWanted();
     float const blurMove = rf::postfx::motionBlurMove() >= 0.0f ? std::min(rf::postfx::motionBlurMove(), 1.5f) : look.blurMove;   // the client menu's slider wins over F6
-    float w[3] = {bc.w[0], bc.w[1], bc.w[2]}, v[3] = {bc.v[0], bc.v[1], bc.v[2]};
-    if (look.blurTest) {   // bench / review: a steady pretend motion, so a still frame shows the blur and its cost
-        if (strength <= 0.0f) strength = 1.0f;
-        w[0] = w[1] = w[2] = v[0] = v[1] = v[2] = 0.0f;
-        if (look.blurTest == 2) for (int a = 0; a < 3; ++a) v[a] = snap.right[a] * 5.6f;   // a sprint sideways
-        else w[1] = 2.1f;                                                                // 120 degrees a second
+    float blurFrac = 0.0f;
+    if (strength > 0.0f) blurFrac = std::min(0.6f * strength, 0.006f * strength / bc.avgDt);   // 60% of the gap at strength 1, never more than 6 ms of motion
+    float bT[3] = {float(now2.pos[0] - pa.pos[0]), float(now2.pos[1] - pa.pos[1]), float(now2.pos[2] - pa.pos[2])};
+    if (bT[0] * bT[0] + bT[1] * bT[1] + bT[2] * bT[2] > 9.0f) { pa = now2; bT[0] = bT[1] = bT[2] = 0.0f; }   // a teleport / respawn, not a move
+    if (look.blurTest) {   // bench / review: a steady pretend motion (as if 6 ms ago), so a still frame shows the blur and its cost
+        pa = now2; bT[0] = bT[1] = bT[2] = 0.0f; blurFrac = 1.0f;
+        if (look.blurTest == 2) for (int a = 0; a < 3; ++a) bT[a] = snap.right[a] * 5.6f * 0.006f;   // a sprint sideways
+        else {                                                                                        // 120 degrees a second
+            float const cs = std::cos(0.0126f), sn = std::sin(0.0126f);
+            for (float* b3 : {pa.f, pa.r, pa.u}) { float const x = b3[0], z = b3[2]; b3[0] = x * cs - z * sn; b3[2] = x * sn + z * cs; }
+        }
     }
+    for (int a = 0; a < 3; ++a) bT[a] *= blurMove;
     bool  blurNeed = false;
-    float blurShutter = 0.0f, blurDead = 1.0f;
+    float blurDead = 1.0f;
     ID3D12PipelineState* bp = nullptr;
-    if (strength > 0.0f) {
+    if (blurFrac > 0.0f) {
         rf::postfx::noteWorldBlur();
-        blurShutter = 0.006f * std::min(strength, 3.0f);        // seconds: strength 1 = 6 ms (a 130 degree shutter at 60 FPS)
         float const focal = float(rd.Width) * 0.5f * std::fabs(snap.proj[0]);   // pixels per radian at the middle
         blurDead = std::max(0.9f, float(rd.Width) / 2560.0f);
-        float const wl = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]) * blurShutter;
-        float const tl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) * blurShutter * blurMove;
+        float w3[3]{};
+        auto cross = [&](float const a[3], float const b[3]) { w3[0] += a[1] * b[2] - a[2] * b[1]; w3[1] += a[2] * b[0] - a[0] * b[2]; w3[2] += a[0] * b[1] - a[1] * b[0]; };
+        cross(pa.f, now2.f); cross(pa.r, now2.r); cross(pa.u, now2.u);          // 2 sin(angle) * axis
+        float const wl = 0.5f * std::sqrt(w3[0] * w3[0] + w3[1] * w3[1] + w3[2] * w3[2]) * blurFrac;
+        float const tl = std::sqrt(bT[0] * bT[0] + bT[1] * bT[1] + bT[2] * bT[2]) * blurFrac;
         bp = derived(dev.Get(), g, 9);
         // would anything move a pixel past the dead zone? (turning: everywhere; moving: a thing 0.6 blocks away)
         blurNeed = bp && (wl * focal * 1.5f > blurDead || tl * focal / 0.6f > blurDead);
     }
     if (blurOnly && !blurNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
-        if (strength > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
+        if (blurFrac > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
         ++gPassesThisFrame;
         return true;
     }
@@ -2861,14 +2866,33 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         std::memcpy(b, c, 12 * sizeof(float));                      // c0..c2: the camera, as the pass used it
         static uint32_t seed = 0;
         b[11] = float(++seed & 1023u);
-        b[12] = 0.025f; b[13] = float(rd.Width) * 0.03f; b[14] = blurDead; b[15] = c[15];
+        b[12] = blurFrac; b[13] = float(rd.Width) * 0.03f; b[14] = blurDead; b[15] = (c[15] > 0.5f ? 1.0f : 0.0f) + (look.blurTest == 3 ? 4.0f : 0.0f);
         b[16] = c[16]; b[17] = c[17]; b[18] = c[18]; b[19] = c[19];
-        for (int a = 0; a < 3; ++a) { b[20 + a] = w[a] * blurShutter; b[24 + a] = v[a] * blurShutter * blurMove; }
-        b[23] = 15.0f;
-        b[27] = look.blurTest == 3 ? 1.0f : 0.0f;
+        for (int a = 0; a < 3; ++a) { b[20 + a] = pa.f[a]; b[24 + a] = pa.r[a]; b[28 + a] = pa.u[a]; }
+        b[23] = bT[0]; b[27] = bT[1]; b[31] = bT[2];
+        // the things that move by themselves (Bedrock Forge: players, mobs, dropped items): left sharp. Yourself only in
+        // third person - in first person the camera is inside your own box.
+        struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; } acb{};
+        if (auto const* ba = rf::postfx::blurActors()) {
+            int n = 0;
+            for (uint32_t i = 0; i < ba->count && i < 32 && n < 24; ++i) {
+                auto const& e = ba->a[i];
+                float const dx = float(double(e.x) - snap.pos[0]), dy = float(double(e.y) - snap.pos[1]), dz = float(double(e.z) - snap.pos[2]);
+                if (dx * dx + dz * dz < (e.r + 0.35f) * (e.r + 0.35f) && dy < 0.3f && dy + e.h > -0.3f) continue;   // the camera is in it: you, first person
+                if (dx * dx + dy * dy + dz * dz > 70.0f * 70.0f) continue;
+                acb.pos[n][0] = dx; acb.pos[n][1] = dy; acb.pos[n][2] = dz; acb.pos[n][3] = e.r; acb.dim[n][0] = e.h;
+                ++n;
+            }
+            acb.info[0] = float(n);
+        }
+        D3D12_GPU_VIRTUAL_ADDRESS const acbVa = uploadRing(dev.Get(), &acb, sizeof acb);
+        if (!acbVa) blurNeed = false;
+        else list->SetGraphicsRootConstantBufferView(4, acbVa);
+        if (blurNeed) {
         calls.setConsts(list, 0, 44, b, 0);
         calls.setPso(list, bp);
         calls.draw(list, 3, 1, 0, 0);
+        }
     }
     if (timed) wfxperf::end(list, tsFrame);
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
