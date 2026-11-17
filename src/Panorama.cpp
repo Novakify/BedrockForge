@@ -57,7 +57,7 @@ void writeManifest(fs::path const& dir) {
     std::error_code ec;
     fs::create_directories(dir / "textures" / "ui", ec);
     if (fs::exists(dir / "manifest.json", ec)) return;
-    std::ofstream(dir / "manifest.json") << R"({
+    std::ofstream(dir / "manifest.json") << R"JSON({
   "format_version": 2,
   "header": {
     "name": "BF Menu World",
@@ -68,7 +68,7 @@ void writeManifest(fs::path const& dir) {
   },
   "modules": [{ "type": "resources", "uuid": "c2a8d6f0-1b47-4f93-8e25-7d6c4b1a9e30", "version": [1, 0, 0] }]
 }
-)";
+)JSON";
 }
 float toLin(uint8_t v) {
     float const c = float(v) / 255.f;
