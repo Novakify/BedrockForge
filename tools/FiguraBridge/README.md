@@ -42,12 +42,21 @@ Standalone (patches an existing pack, idempotent):
 
     python3 -I tools/FiguraBridge/stick_armor.py RP/models/entity/figura_stick.geo.json RP/entity/player.entity.json OUT
 
-Style (`STYLE`, default `glass`): the plates sample the game's own vanilla armor textures (64x32 layout, layer 1 for
-helmet/chest/boots, layer 2 for leggings) on face areas painted in every material, at about vanilla's texel density;
-Renderer Foundation's glass armor recognises those textures and draws its Novak Glass / Cloud Sea crystal glass on
-the stick's own plates (same facets, neon outline and match reactions as the regular glass armor; leather takes the
-item's dye through `entity_alphatest_change_color` + the controller's `color`). `STYLE = "metal"` = the earlier painted
-metal atlas. Not on the stick: the enchanted edge flow (an entity controller can't see the item's enchantment).
+Style (`STYLE`, default `glass`): the plates bind the game's own vanilla armor textures (64x32, layer 1 for
+helmet/chest/boots, layer 2 for leggings); Renderer Foundation's glass armor recognises those textures and draws its
+Novak Glass / Cloud Sea glass on the stick's plates (leather takes the item's dye through
+`entity_alphatest_change_color` + the controller's `color`). RF draws the neon outline, rim light and lens bevel along
+the edges of the vanilla texture's painted face areas, so each plate is mapped edge to edge onto one **clean island**
+(`ISLAND`: painted in every material, a real edge all round) at about one texel per model px - then its whole
+silhouette carries the outline, like a cube face of the regular glass armor. The suit (`build_suit_glass`): a crystal
+orb helmet (front unwrap, outline round its silhouette), V breastplate + back plate, pauldrons, bracers, belt
+front/back, thigh guards front/back, greaves + calf guards, foot shells; no light rails (RF draws the light; fewer
+draws, no timers). `test_stick_glass.py` checks the islands against RF's data (`glass_data.json`, from
+`glass_armor_data.hlsli`) and that every plate stays inside one island and reaches its border.
+`stick_armor_glass_preview.py` renders the stick at in-game scale over a real screenshot with a numpy port of RF's
+glass pixel shader (checked against an in-game shot of the regular glass armor) - judge changes there.
+`STYLE = "metal"` = the earlier painted metal atlas with light rails. Not on the stick: the enchanted edge flow (an
+entity controller can't see the item's enchantment); turtle helmet: RF has no turtle variant, it stays textured.
 
 ## Servers (many players)
 
