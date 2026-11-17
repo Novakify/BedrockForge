@@ -122,6 +122,40 @@ float                              gShowBeat = 0;
 int                                gDyeRow = 5, gDyeRowGlint = 5; // M3: ChangeColor = row 5 of b1 (1.26.51: found with debug view 8; same uniform order in ActorGlint)
 int                                gDbgRow = 0;
 std::atomic_bool                   gEnchFlow{true};
+// frosted glass (client menu "Glass": Frosted / Glow / Shimmer / Colour; config/GlassFrost.txt, live). Defaults keep
+// the approved look: frost 0 = clear crystal, no glow of its own, no shimmer, white
+std::atomic<float>                 gFrost{0.0f}, gGlowK{0.0f};
+std::atomic<bool>                  gShimmer{false};
+std::atomic<uint32_t>              gTintPk{0x00FFFFFFu};
+fs::path                           gFrostFile;
+fs::file_time_type                 gFrostTime{};
+void loadFrost() {
+    std::error_code ec;
+    auto const t = fs::last_write_time(gFrostFile, ec);
+    if (ec || t == gFrostTime) return;
+    gFrostTime = t;
+    std::ifstream in(gFrostFile);
+    std::string   k, v;
+    while (in >> k >> v) {
+        if (k == "frost") gFrost = std::clamp(std::strtof(v.c_str(), nullptr), 0.f, 1.f);
+        else if (k == "glow") gGlowK = std::clamp(std::strtof(v.c_str(), nullptr), 0.f, 1.f);
+        else if (k == "shimmer") gShimmer = v == "1" || v == "true";
+        else if (k == "tint") { // RRGGBB
+            if (v.size() >= 1 && v[0] == '#') v = v.substr(1);
+            uint32_t const rgb = uint32_t(std::strtoul(v.c_str(), nullptr, 16));
+            gTintPk = ((rgb >> 16) & 255u) | (((rgb >> 8) & 255u) << 8) | ((rgb & 255u) << 16); // shader reads r | g<<8 | b<<16
+        }
+    }
+}
+void saveFrost() {
+    uint32_t const pk = gTintPk.load();
+    char tint[8];
+    std::snprintf(tint, sizeof tint, "%02X%02X%02X", pk & 255u, (pk >> 8) & 255u, (pk >> 16) & 255u);
+    std::ofstream(gFrostFile) << "frost " << gFrost.load() << "\nglow " << gGlowK.load() << "\nshimmer " << (gShimmer ? 1 : 0)
+                              << "\ntint " << tint << "\n";
+    std::error_code ec;
+    gFrostTime = fs::last_write_time(gFrostFile, ec);
+}
 std::atomic<float>                 gFusedK{0.0f}, gFilmK{1.0f}; // fused glass (F6) - off: the approved look is clear warped glass, the material read only as tint + neon outline
 float                              gIdleEdge = 0.3f;  // M2.5: outline strength with no music (Awaken boots it to 1)
 float                              gBeatK    = 1.0f;  // M2.5: how hard the outline breathes with the kick
@@ -310,6 +344,8 @@ void writeReport() {
 void init(fs::path const& outDir, fs::path const& configDir) {
     gOutDir     = outDir;
     gConfigFile = configDir / "GlassArmor.txt";
+    gFrostFile  = configDir / "GlassFrost.txt";
+    loadFrost();
     std::ifstream in(gConfigFile);
     std::string   v;
     if (in >> v) gEnabled = v == "1";
@@ -908,6 +944,8 @@ struct alignas(16) GaParams { // cbuffer GA (shaders/glass_armor.hlsl), 256-byte
     uint32_t dbgRow;                      // debug view 8: which row to show
     float    enchFlow;                    // 1 = enchanted pieces get the edge flow
     float    fusedK, filmK, pad3, pad4;   // fused glass: the armour's real material inside the glass, thin-film shimmer
+    float    frost, glowK, shimmer;       // frosted glass (GlassFrost.txt)
+    uint32_t tintPk;                      // r | g << 8 | b << 16
 };
 static_assert(sizeof(GaParams) <= 256, "one 256-byte slot");
 
@@ -1038,6 +1076,12 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     p.glint      = 0;
     p.dyeRow = gDyeRow, p.dyeRowGlint = gDyeRowGlint, p.dbgRow = uint32_t(std::max(gDbgRow, 0)), p.enchFlow = gEnchFlow ? 1.f : 0.f;
     p.fusedK = gFusedK.load(), p.filmK = gFilmK.load();
+    {   // frosted glass: re-read the config about once a second (the client menu writes it)
+        static int64_t lastPoll = 0;
+        int64_t const nowMs = GetTickCount64();
+        if (nowMs - lastPoll > 1000) { lastPoll = nowMs; loadFrost(); }
+        p.frost = gFrost.load(), p.glowK = gGlowK.load(), p.shimmer = gShimmer ? 1.f : 0.f, p.tintPk = gTintPk.load();
+    }
     if (float const nk = rf::sky::novakMatchK(); nk >= 0.0f) p.pad3 = nk, p.pad4 = 1.0f;   // Novak: the armor follows the match
     else if (float const ck = rf::sky::cloudSeaMatchK(); ck >= 0.0f) p.pad3 = ck, p.pad4 = 2.0f; // Cloud Sea: the same, in sunset gold
     p.scenePitch = rf.Footprint.RowPitch, p.depthPitch = df.Footprint.RowPitch;
@@ -1222,6 +1266,22 @@ void drawUi() {
         float fk = gFusedK.load(), fl = gFilmK.load();
         if (ImGui::SliderFloat("Fused material", &fk, 0.0f, 1.0f, "%.2f")) gFusedK = fk;
         if (ImGui::SliderFloat("Thin-film shimmer", &fl, 0.0f, 2.0f, "%.2f")) gFilmK = fl;
+        ImGui::SeparatorText("Frosted glass");
+        float fr = gFrost.load(), gw = gGlowK.load();
+        bool  sh = gShimmer.load(), dirty = false;
+        uint32_t const pk = gTintPk.load();
+        float col[3]{float(pk & 255u) / 255.f, float((pk >> 8) & 255u) / 255.f, float((pk >> 16) & 255u) / 255.f};
+        if (ImGui::SliderFloat("Frosted (0 = clear crystal)", &fr, 0.0f, 1.0f, "%.2f")) { gFrost = fr; dirty = true; }
+        if (ImGui::SliderFloat("Glow", &gw, 0.0f, 1.0f, "%.2f")) { gGlowK = gw; dirty = true; }
+        if (ImGui::Checkbox("Shimmer (a soft sheen glides over now and then)", &sh)) { gShimmer = sh; dirty = true; }
+        if (ImGui::ColorEdit3("Frost colour", col)) {
+            gTintPk = uint32_t(col[0] * 255.f + .5f) | (uint32_t(col[1] * 255.f + .5f) << 8) | (uint32_t(col[2] * 255.f + .5f) << 16);
+            dirty = true;
+        }
+        if (ImGui::Button("Purxiy-style preset")) { gFrost = 0.35f; gGlowK = 0.2f; gShimmer = true; gTintPk = 0x00FFFFFFu; dirty = true; }
+        ImGui::SameLine();
+        if (ImGui::Button("Approved crystal")) { gFrost = 0.f; gGlowK = 0.f; gShimmer = false; gTintPk = 0x00FFFFFFu; dirty = true; }
+        if (dirty) saveFrost();
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
                     gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
     }

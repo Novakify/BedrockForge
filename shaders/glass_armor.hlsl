@@ -49,6 +49,10 @@ cbuffer GA : register(b0, space9) {
     float  enchFlow;
     // fused glass: how much of the real material shows (0 = pure glass), thin-film shimmer strength
     float  fusedK, filmK, pad3, pad4;
+    // frosted glass (client menu: Frosted / Glow / Shimmer / Colour). frost 0 = the approved clear crystal; up to 1 =
+    // soft milky frost: the world behind blurred and greyed a little, a milky tint filling the glass, fine grain
+    float  frost, glowK, shimmer;
+    uint   tintPk;     // RGBA8 tint of the frost (white by default)
 };
 #ifndef GA_GLINT
 #define GA_GLINT 0
@@ -446,12 +450,35 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     float  self  = 1.0 - i.pos.z;
     float  ratio = min(self / max(1.0 - depthAt(px), 1e-6), self / max(1.0 - depthAt(px + off), 1e-6));
     off *= smoothstep(1.03, 1.18, ratio);
+    float  frz  = saturate(frost);
+    float  calm = 1.0 - 0.75 * frz;   // frosted glass hardly bends or sparkles: the crystal details settle as it frosts
+    off *= lerp(1.0, 0.45, frz);
 
     float3 c;
     c.r = sceneAt(px + off).r;
     c.g = sceneAt(px + off * 1.04).g;
     c.b = sceneAt(px + off * 1.08).b;
     c   = lerp(c, lerp(float3(0.0065, 0.0032, 0.018), baseTint, 0.35 + 0.25 * dyeK), 0.10 + 0.06 * dyeK);
+    float3 tintF = float3(tintPk & 255u, (tintPk >> 8) & 255u, (tintPk >> 16) & 255u) / 255.0;
+    if (frz > 0.001) {
+        // the world behind, frosted: a rotated golden-angle disc (radius grows with the frost), nearest texels - the
+        // grain below hides the sampling noise, and real frosted glass is grainy anyway
+        float  R  = (2.0 + 30.0 * frz) * S;
+        float  a0 = gaHash(px * 0.37 + 3.1) * 6.2831853;
+        float3 bd = 0;
+        [unroll] for (int k = 0; k < 16; ++k) {
+            float  ang = a0 + float(k) * 2.3999632;
+            float  rr  = sqrt((float(k) + 0.5) / 16.0) * R;
+            bd += texel(int2(px + off + float2(cos(ang), sin(ang)) * rr));
+        }
+        bd /= 16.0;
+        float lum = dot(bd, float3(0.2126, 0.7152, 0.0722));
+        bd = lerp(bd, lum.xxx, 0.30 * frz);                          // milky glass drains a little colour
+        float milk = 0.06 + 0.46 * frz * frz;                          // premultiplied tint: more frost, more milk
+        bd = bd * (1.0 - milk) + lerp(tintF, tintF * lerp(float3(1, 1, 1), baseTint, 0.35), 0.5) * milk * 0.92;
+        bd += (gaHash(px * 0.71 + 13.0) - 0.5) * 0.045 * frz;         // fine grain
+        c = lerp(c, bd, smoothstep(0.0, 0.30, frz));
+    }
     // cover-coloured glass: a light colour cast through the glass (it stays see-through); a dark cover deepens it
     float cLum = dot(cover, float3(0.299, 0.587, 0.114));
     c *= lerp(float3(1, 1, 1), lerp(float3(1, 1, 1), acc, 0.30) * lerp(1.0, 0.72, saturate(1.0 - cLum * 1.6)), cMix);
@@ -461,9 +488,9 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
     {
         float3 hueC = baseEdge / max(max(max(baseEdge.r, baseEdge.g), baseEdge.b), 1e-3);
         float  fl   = dot(tilt, normalize(float2(-0.45, -0.89)));
-        c *= lerp(1.0, 0.86 + 0.26 * (0.5 + 0.5 * fl), 0.35 + 0.65 * facetK);
-        c += hueC * 0.05 * (0.5 + 0.5 * fl);
-        float  ngL  = 1.0 + max(ngK, 0.0);
+        c *= lerp(1.0, lerp(1.0, 0.86 + 0.26 * (0.5 + 0.5 * fl), 0.35 + 0.65 * facetK), calm);
+        c += hueC * 0.05 * (0.5 + 0.5 * fl) * calm;
+        float  ngL  = (1.0 + max(ngK, 0.0)) * calm;
         c += lerp(float3(1, 1, 1), hueC, 0.45) * cutLn * (0.16 + 0.14 * (0.5 + 0.5 * fl)) * ngL;
         float  spk  = pow(saturate(sin(fh1 * 60.0 + (px.x + px.y) / max(res.x, 1.0) * 7.0 + time * 0.5)), 40.0);
         c += lerp(float3(1, 1, 1), hueC, 0.3) * spk * smoothstep(0.30, 0.0, sqrt(d1)) * 0.55 * ngL;
@@ -476,7 +503,7 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
         c = lerp(c, fp, saturate(fusedK));
         // thin-film shimmer: the hue slides with the plate's turn and the bevel - a soap-bubble skin on the glass
         float  film = frac(e * 1.6 + (px.x / res.x) * 0.9 - (px.y / res.y) * 0.6 + time * 0.035 + float(fi) * 0.11);
-        c += gaHue(film) * (0.03 + 0.14 * e) * filmK * (gm == 1 || roleAt(b) == 0 ? 0.35 : 1.0);
+        c += gaHue(film) * (0.03 + 0.14 * e) * filmK * (gm == 1 || roleAt(b) == 0 ? 0.35 : 1.0) * calm;
     }
 
     // reflection of the last finished frame: lyrics, sky and LyricsForge effects glint across the glass, strongest at
@@ -508,6 +535,18 @@ float4 PSGlassArmor(PSIn i) : SV_Target {
             c += st * lerp(float3(1.0, 0.97, 0.9), acc, 0.25 * cMix) * 1.3;
         }
         c *= 1.0 - 0.18 * finale * (1.0 - e); // the glass darkens a little, like the night the stars sit in
+    }
+
+    // glow: the glass gives off a little light of its own (tint colour), more towards the bevel
+    c += lerp(tintF, tintF * baseTint, 0.25) * glowK * (0.10 + 0.20 * e);
+    // shimmer: now and then a soft sheen glides over each plate on a slant (each face on its own beat)
+    if (shimmer > 0.5) {
+        float  per  = 6.0;
+        float  ph2  = frac(time / per + gaHash(float2(fr.xy)) * 0.37 + float(fi) * 0.013);
+        float  pos2 = ph2 * 3.2 - 1.1;                                   // sweeps past, then rests
+        float  sp2  = (p.x / fs.x) * 0.7 + (p.y / fs.y) * 0.3;
+        float  k2   = (sp2 - pos2) / 0.09;
+        c += exp(-k2 * k2) * (0.10 + 0.10 * frz) * lerp(float3(1, 1, 1), tintF, 0.3);
     }
 
     // menu rim: white, brighter on the side facing the light (top-left, like the client menu)
