@@ -98,8 +98,14 @@ struct AtmosSet {
     float rpC[3]{0.78f, 0.42f, 1.0f}, rpGlow = 0.8f, rpDur = 0.8f;
     float swC[3]{0.78f, 0.42f, 1.0f}, swSize = 1.0f, swGlow = 0.7f;
     bool  events() const { return jc || hs || rp || sw; }
+    // cosmetics (Purxiy trail / aura / halo)
+    bool  trail = false, aura = false, halo = false, auraFp = false, haloFp = false;
+    float trC[3]{0.78f, 0.42f, 1.0f}, trDur = 1.2f, trSize = 1.0f, trGlow = 0.6f, trStyle = 0.0f;
+    float auC[3]{0.78f, 0.42f, 1.0f}, auSize = 1.0f, auSpeed = 1.0f, auGlow = 0.65f, auStyle = 0.0f;
+    float haC[3]{0.95f, 0.85f, 1.0f}, haSize = 1.0f, haGlow = 0.7f, haHeight = 1.0f, haDesign = 0.0f;
+    bool  cosmetics() const { return trail || aura || halo; }
     float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
-    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events(); }
+    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events() || cosmetics(); }
 };
 std::mutex            gAtmosMutex;
 AtmosSet              gAtmos;
@@ -148,6 +154,14 @@ void pollAtmos() {
         else if (k == "rp_crits") { int v = 1; in >> v; a.rpCrits = v != 0; } else if (k == "rp_ring") { int v = 1; in >> v; a.rpRing = v != 0; }
         else if (k == "sw") { int v = 0; in >> v; a.sw = v != 0; } else if (k == "sw_c") rd3(a.swC);
         else if (k == "sw_size") rd(a.swSize); else if (k == "sw_glow") rd(a.swGlow);
+        else if (k == "trail") { int v = 0; in >> v; a.trail = v != 0; } else if (k == "trail_c") rd3(a.trC);
+        else if (k == "trail_dur") rd(a.trDur); else if (k == "trail_size") rd(a.trSize); else if (k == "trail_glow") rd(a.trGlow); else if (k == "trail_style") rd(a.trStyle);
+        else if (k == "aura") { int v = 0; in >> v; a.aura = v != 0; } else if (k == "aura_c") rd3(a.auC);
+        else if (k == "aura_size") rd(a.auSize); else if (k == "aura_speed") rd(a.auSpeed); else if (k == "aura_glow") rd(a.auGlow); else if (k == "aura_style") rd(a.auStyle);
+        else if (k == "aura_fp") { int v = 0; in >> v; a.auraFp = v != 0; }
+        else if (k == "halo") { int v = 0; in >> v; a.halo = v != 0; } else if (k == "halo_c") rd3(a.haC);
+        else if (k == "halo_size") rd(a.haSize); else if (k == "halo_glow") rd(a.haGlow); else if (k == "halo_height") rd(a.haHeight); else if (k == "halo_design") rd(a.haDesign);
+        else if (k == "halo_fp") { int v = 0; in >> v; a.haloFp = v != 0; }
         else { std::string skip; std::getline(in, skip); }
         if (!in) break;
     }
@@ -2775,7 +2789,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     AtmosSet atm;
     { std::lock_guard l(gAtmosMutex); atm = gAtmos; }
     bool atmosNeed = gAtmosOn.load(std::memory_order_relaxed) && atm.any();
-    if (atmosNeed && !((atm.haze && atm.hStrength > 0.f) || (atm.mist && atm.mDensity > 0.f) || (atm.amb && atm.aAmount > 0.f))) {
+    if (atmosNeed && !((atm.haze && atm.hStrength > 0.f) || (atm.mist && atm.mDensity > 0.f) || (atm.amb && atm.aAmount > 0.f) || atm.cosmetics())) {
         // only the hit / jump effects are on: the pass costs a frame copy and a full-screen draw - only while one plays
         atmosNeed = false;
         if (auto const* ev = rf::postfx::fxEvents()) {
@@ -2950,7 +2964,41 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // them sharp, the haze / mist leave them their colours. Yourself only in third person - in first person the camera
     // is inside your own box.
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
-        struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4]; } acb{};   // amb / ev / fx: worldfx_atmos.hlsl
+        struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
+                       float pl[4]; float trP[32][4]; float cs[6][4]; } acb{};   // amb / ev / fx / cosmetics: worldfx_atmos.hlsl
+        acb.pl[3] = -100.f;
+        if (atm.cosmetics()) {   // you, and your path (sampled every 50 ms, kept for the trail's duration)
+            struct TrPt { double x, y, z; int64_t at; };
+            static std::deque<TrPt> path;
+            int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            auto const* ev = rf::postfx::fxEvents();
+            if (ev && ev->version >= 2 && (ev->pflags & 1u) && nowMs - ev->pAtMs < 500) {
+                acb.pl[0] = float(double(ev->px) - snap.pos[0]); acb.pl[1] = float(double(ev->py) - snap.pos[1]); acb.pl[2] = float(double(ev->pz) - snap.pos[2]);
+                acb.pl[3] = ev->pyaw * 0.01745329f;
+                if (path.empty() || nowMs - path.front().at >= 50) {
+                    if (!path.empty()) {   // a teleport is not a path
+                        double const dx = ev->px - path.front().x, dz = ev->pz - path.front().z;
+                        if (dx * dx + dz * dz > 64.0) path.clear();
+                    }
+                    path.push_front({ev->px, ev->py, ev->pz, nowMs});
+                }
+            }
+            while (!path.empty() && (path.size() > 32 || float(nowMs - path.back().at) > atm.trDur * 1000.f + 100.f)) path.pop_back();
+            int n = 0;
+            for (auto const& p : path) {
+                acb.trP[n][0] = float(p.x - snap.pos[0]); acb.trP[n][1] = float(p.y - snap.pos[1]); acb.trP[n][2] = float(p.z - snap.pos[2]);
+                acb.trP[n][3] = float(nowMs - p.at) / 1000.f;
+                if (++n == 32) break;
+            }
+            auto lin = [](float v) { return v * v; };
+            for (int k = 0; k < 3; ++k) { acb.cs[0][k] = lin(atm.trC[k]); acb.cs[2][k] = lin(atm.auC[k]); acb.cs[4][k] = lin(atm.haC[k]); }
+            acb.cs[0][3] = atm.trail ? atm.trDur : 0.f;
+            acb.cs[1][0] = atm.trSize; acb.cs[1][1] = atm.trGlow; acb.cs[1][2] = atm.trStyle; acb.cs[1][3] = float(n);
+            acb.cs[2][3] = atm.aura ? atm.auSize : 0.f;
+            acb.cs[3][0] = atm.auSpeed; acb.cs[3][1] = atm.auGlow; acb.cs[3][2] = atm.auStyle; acb.cs[3][3] = atm.auraFp ? 1.f : 0.f;
+            acb.cs[4][3] = atm.halo ? atm.haSize : 0.f;
+            acb.cs[5][0] = atm.haGlow; acb.cs[5][1] = atm.haHeight; acb.cs[5][2] = atm.haDesign; acb.cs[5][3] = atm.haloFp ? 1.f : 0.f;
+        }
         if (atm.events()) {   // hit / jump events still young enough to show
             auto lin = [](float v) { return v * v; };
             for (int k = 0; k < 3; ++k) {

@@ -1,3 +1,4 @@
+#include <cstddef>
 // Renderer Foundation - full-screen post effects (see PostFx.h, shaders/postfx.hlsl).
 #include "D3D12Api.h"
 #include "PostFx.h"
@@ -365,7 +366,7 @@ BfFxEventsV1 const* fxEvents() {
         fn.store(f, std::memory_order_relaxed);
     }
     BfFxEventsV1 const* e = f();
-    return e && e->version >= 1 && e->size >= sizeof(BfFxEventsV1) ? e : nullptr;
+    return e && e->version >= 1 && e->size >= offsetof(BfFxEventsV1, px) ? e : nullptr;   // a v1 Bedrock Forge has no player fields
 }
 float motionBlurMove() { return gBlurMove.load(std::memory_order_relaxed); }
 float motionBlurWanted() { return gBlurWanted.load(std::memory_order_relaxed); }

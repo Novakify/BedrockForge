@@ -47,6 +47,15 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 fx4;      // ripple colour, w = ripple duration
     float4 fx5;      // x = ripple ring, y = crit stars, z = shockwave size (0 = off), w = shockwave glow
     float4 fx6;      // shockwave colour, w = events
+    // cosmetics around you (Purxiy trail / aura / halo): your feet and your path, camera-relative
+    float4 pl;       // xyz = your feet, w = yaw (radians); pl.w < -50: unknown
+    float4 trP[32];  // the trail: xyz = a point of your path, w = age (s), newest first
+    float4 cs0;      // trail colour, w = duration (s) (0 = off)
+    float4 cs1;      // x = width, y = glow, z = style (0 line, 1 path, 2 helix, 3 stardust), w = points
+    float4 au0;      // aura colour, w = size (0 = off)
+    float4 au1;      // x = speed, y = glow, z = style (0 orbit, 1 fireflies, 2 spiral, 3 constellation), w = 1: you see it first person
+    float4 ha0;      // halo colour, w = size (0 = off)
+    float4 ha1;      // x = glow, y = height above the head, z = design (0 seraph, 1 sigil, 2 crown, 3 stardust, 4 eclipse, 5 fallen), w = 1: first person
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -224,6 +233,80 @@ float3 worldEvents(float3 P, bool sky, float t) {
     return L;
 }
 
+// ---- cosmetics: trail on the ground behind you, an aura of lights around you, a halo over your head
+float segDist2(float2 p, float2 a, float2 b, out float h) {
+    float2 pa = p - a, ba = b - a;
+    h = saturate(dot(pa, ba) / max(dot(ba, ba), 1e-5));
+    float2 d = pa - ba * h;
+    return dot(d, d);
+}
+float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
+    float3 L = 0;
+    if (pl.w < -50.0) return L;
+    bool const fp = length(pl.xyz + float3(0, 1.62, 0)) < 0.6;   // the camera is in your head: first person
+    // trail: a glowing ribbon painted on the ground along your path (surfaces near the path's height)
+    int n = min(int(cs1.w), 32);
+    [branch] if (cs0.w > 0.0 && n > 1 && !sky) {
+        float best = 1e9, bestAge = 0.0, bestY = 0.0;
+        [loop] for (int i = 0; i + 1 < n; ++i) {
+            float h;
+            float d2 = segDist2(P.xz, trP[i].xz, trP[i + 1].xz, h);
+            if (d2 < best) { best = d2; bestAge = lerp(trP[i].w, trP[i + 1].w, h); bestY = lerp(trP[i].y, trP[i + 1].y, h); }
+        }
+        float u = bestAge / max(cs0.w, 0.05);
+        if (u < 1.0 && abs(P.y - bestY) < 0.6) {
+            float w = 0.10 * cs1.x * (cs1.z > 0.5 && cs1.z < 1.5 ? 2.2 : 1.0), d = sqrt(best);
+            float core = exp(-pow(d / w, 2.0)), halo = cs1.y * 0.35 * exp(-d / (w * 3.0));
+            float k = (core + halo) * pow(1.0 - u, 1.3) * smoothstep(0.6, 0.15, abs(P.y - bestY));
+            if (cs1.z > 2.5) k *= step(0.7, frac(sin(dot(floor(P.xz * 9.0), float2(12.9898, 78.233))) * 43758.5453)) * 2.5;   // stardust: sparks
+            L += cs0.rgb * k * 1.4;
+        }
+    }
+    // aura / halo are lights in the air: closest approach of the view ray to each (depth-tested against the world)
+    [branch] if (au0.w > 0.0 && (!fp || au1.w > 0.5)) {
+        int style = int(au1.z + 0.5);
+        int N = style == 1 ? 9 : 6;
+        float3 c = pl.xyz + float3(0, 1.0, 0);
+        [loop] for (int i = 0; i < N; ++i) {
+            float fi = float(i), ph = fi / float(N) * 6.2831 + t * 0.9 * au1.x;
+            float r = 0.75 * au0.w, yy = 0.0;
+            if (style == 1) { ph = fi * 2.4 + t * 0.4 * au1.x * (0.6 + frac(fi * 0.37)); r *= 0.6 + 0.6 * frac(fi * 0.71); yy = 0.8 * sin(t * 0.7 * au1.x + fi * 1.7); }
+            else if (style == 2) yy = frac(fi / float(N) + t * 0.15 * au1.x) * 2.0 - 1.0;
+            else yy = 0.25 * sin(ph * 2.0);
+            float3 q = c + float3(cos(ph) * r, yy, sin(ph) * r);
+            float tp = dot(q, rd);
+            if (tp < 0.2 || tp > dist + 0.3) continue;
+            float d = length(q - rd * tp), s = 0.035 * au0.w;
+            float tw = 0.75 + 0.25 * sin(t * 3.0 + fi * 2.1);
+            L += au0.rgb * (exp(-d * d / (s * s)) * 1.8 + au1.y * 0.25 * exp(-d / (s * 5.0))) * tw;
+        }
+    }
+    [branch] if (ha0.w > 0.0 && (!fp || ha1.w > 0.5)) {
+        float3 hc = pl.xyz + float3(0, 1.9 + 0.35 * ha1.y + 0.04 * sin(t * 1.6), 0);
+        // the halo's plane (horizontal, a slight tilt); the ray meets it at one point: distance to the ring there
+        float3 nrm = normalize(float3(0.08 * sin(pl.w), 1, 0.08 * cos(pl.w)));
+        float den = dot(rd, nrm);
+        if (abs(den) > 1e-3) {
+            float tp = dot(hc, nrm) / den;
+            if (tp > 0.2 && tp < dist + 0.3) {
+                float3 hp = rd * tp - hc;
+                float R = 0.28 * ha0.w, rr = length(hp - nrm * dot(hp, nrm));
+                int dz = int(ha1.z + 0.5);
+                float wdt = 0.025 * ha0.w;
+                float k = exp(-pow((rr - R) / wdt, 2.0));
+                float an = atan2(hp.z, hp.x);
+                if (dz == 1) k += 0.7 * exp(-pow((rr - R * 0.72) / (wdt * 0.6), 2.0)) * step(0.5, frac(an * 1.9099));        // sigil: an inner broken ring
+                else if (dz == 2) k *= 0.6 + 0.8 * pow(0.5 + 0.5 * cos(an * 6.0), 6.0);                                       // crown: points
+                else if (dz == 3) k *= step(0.55, frac(sin(floor(an * 9.0) * 91.3) * 43758.5));                             // stardust: beads
+                else if (dz == 4) k = exp(-pow((rr - R) / (wdt * 2.2), 2.0)) * (0.35 + 0.65 * smoothstep(-1.0, 1.0, sin(an - t)));   // eclipse
+                else if (dz == 5) k *= 0.5 + 0.5 * step(0.15, frac(an * 0.159 + 0.1));                                       // fallen: a broken arc
+                L += ha0.rgb * (k * 2.0 + ha1.x * 0.3 * exp(-abs(rr - R) / (wdt * 6.0)));
+            }
+        }
+    }
+    return L;
+}
+
 float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float2 px   = i.pos.xy;
     uint   fl   = uint(c3.x);
@@ -298,6 +381,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float3 ambL = 0;
     [branch] if (amb0.w > 0.0) ambL = ambience(rd, sky ? 1e4 : dist, night, t, px);
     [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t);
+    [branch] if (cs0.w > 0.0 || au0.w > 0.0 || ha0.w > 0.0) ambL += cosmetics(q, rd, sky ? 1e4 : dist, sky, t);
     // ---- haze: everything the mist let through takes on the haze colour with distance (closed form)
     [branch] if ((fl & 2u) != 0u && c6.w > 0.0) {
         float H   = c7.w, clr = c8.x;
