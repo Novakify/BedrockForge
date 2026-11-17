@@ -410,7 +410,8 @@ void registerBuiltins() {
     r.plan("view_model", "View Model", Category::Camera, "Move / scale the held item");
     r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
-        .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f);
+        .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f)
+        .slider("moving", "Blur from moving (turning is always full)", 0.6f, 0.0f, 1.5f, 0.05f);
 
     // ---------------- Visual
     r.add("fullbright", "Fullbright", Category::Visual, "See in the dark: lifts the light baked into nearby terrain (client-side, relights chunks on toggle)")
