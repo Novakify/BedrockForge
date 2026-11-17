@@ -108,7 +108,8 @@ struct AtmosSet {
     bool  chroma = false, chLiving = true, rad = false, wx = false;
     float chTone[3]{0.80f, 0.74f, 0.92f}, chHint = 0.06f, chBrush = 6.0f, chMemory = 120.0f;
     float radC[3]{0.78f, 0.42f, 1.0f}, radWidth = 2.0f, radGlow = 0.6f, radFill = 0.2f, radSpeed = 1.0f;
-    float wxMode = 0.0f, wxIntensity = 1.0f, wxWind = 0.45f, wxSize = 1.0f, wxRange = 24.0f;
+    float wxMode = 0.0f, wxIntensity = 1.0f, wxWind = 0.45f, wxSize = 1.0f, wxRange = 24.0f, wxWet = 0.0f;
+    bool  wxLight = false; int64_t wxStrike = 0; float wxAz = 0.0f, wxNear = 0.5f;
     bool  bk = false, bkNear = true;
     float bkMode = 0.0f, bkDist = 24.0f, bkBand = 0.26f, bkBlur = 0.5f, bkHi = 0.6f, bkFringe = 0.45f;
     bool  post() const { return chroma || rad || wx || bk; }
@@ -184,6 +185,8 @@ void pollAtmos() {
         else if (k == "pa_dur") rd(a.paDur); else if (k == "pa_glow") rd(a.paGlow); else if (k == "pa_break") { int v = 1; in >> v; a.paBreak = v != 0; }
         else if (k == "wx") { int v = 0; in >> v; a.wx = v != 0; } else if (k == "wx_mode") rd(a.wxMode);
         else if (k == "wx_intensity") rd(a.wxIntensity); else if (k == "wx_wind") rd(a.wxWind); else if (k == "wx_size") rd(a.wxSize); else if (k == "wx_range") rd(a.wxRange);
+        else if (k == "wx_wet") rd(a.wxWet); else if (k == "wx_light") { int v = 0; in >> v; a.wxLight = v != 0; }
+        else if (k == "wx_strike") { long long ms = 0; in >> ms >> a.wxAz >> a.wxNear; a.wxStrike = ms; }
         else { std::string skip; std::getline(in, skip); }
         if (!in) break;
     }
@@ -2988,7 +2991,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
-                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; float wxL[4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3027,7 +3030,16 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             }
             if (atm.wx) {
                 acb.wx[0][0] = atm.wxMode; acb.wx[0][1] = atm.wxIntensity; acb.wx[0][2] = atm.wxWind; acb.wx[0][3] = atm.wxSize;
-                acb.wx[1][0] = atm.wxRange; acb.wx[1][3] = 1.f;
+                acb.wx[1][0] = atm.wxRange; acb.wx[1][1] = atm.wxMode < 0.5f ? atm.wxWet : 0.f; acb.wx[1][3] = 1.f;
+                acb.wxL[3] = -1.f;
+                if (atm.wxLight && atm.wxStrike > 0 && atm.wxMode < 0.5f) {   // the strike time is Bedrock Forge's (wall clock): it plays the thunder
+                    int64_t const wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                    float const age = float(wall - atm.wxStrike) / 1000.f;
+                    if (age >= 0.f && age < 1.5f) {
+                        acb.wxL[0] = std::exp(-age * 5.f) + 0.6f * std::exp(-std::pow((age - 0.18f) / 0.05f, 2.f)) + 0.35f * std::exp(-std::pow((age - 0.42f) / 0.06f, 2.f));
+                        acb.wxL[1] = atm.wxAz; acb.wxL[2] = atm.wxNear; acb.wxL[3] = age;
+                    }
+                }
             }
         }
         if (atm.cosmetics()) {   // you, and your path (sampled every 50 ms, kept for the trail's duration)

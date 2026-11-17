@@ -73,6 +73,7 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 pa0;      // rgb = colour (linear), w = duration (s) (0 = off)
     float4 pa1;      // x = glow, y = 1: broken blocks too
     float4 trB;      // the trail's bounding sphere: xyz centre (camera-relative), w = radius (0 = none)
+    float4 wxL;      // lightning: x = flash 0..1, y = bolt azimuth (rad), z = near 0..1, w = bolt age (s) (-1 = none)
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -444,6 +445,54 @@ float3 bokeh(int2 p, float z, bool sky) {
     return o + float3(0.55, 0.42, 0.95) * bk1.z * 0.04 * coc * smoothstep(0.4, 0.9, lum3(o));   // a faint lilac fringe
 }
 
+
+// ---- rain extras: wet ground (darker, a sky sheen, puddles with ripple rings) and lightning (a flash + a bolt)
+float3 posAt(int2 p) {
+    float  d = rawDepth(p);
+    float2 ndc = float2(p.x / c4.x * 2.0 - 1.0, 1.0 - p.y / c4.y * 2.0);
+    float3 ray = c0.xyz + c1.xyz * (ndc.x * c0.w) + c2.xyz * (ndc.y * c1.w);
+    return ray * viewZ(d);
+}
+float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, float night) {
+    if (dist > wx1.x * 3.0) return L;
+    float3 n = cross(posAt(px + int2(1, 0)) - P, posAt(px + int2(0, 1)) - P);
+    float nl = length(n);
+    if (nl < 1e-6) return L;
+    n /= nl; if (dot(n, rd) > 0.0) n = -n;
+    float up = smoothstep(0.80, 0.97, n.y);
+    if (up <= 0.0) return L;
+    float3 wp = c5.xyz + P;
+    float puddle = smoothstep(0.48, 0.72, vnoise2(wp.xz * 0.42 + 3.1));
+    float wetK = wx1.y * up * smoothstep(wx1.x * 3.0, wx1.x * 1.5, dist);
+    float3 skyC = lerp(float3(0.42, 0.48, 0.62), float3(0.03, 0.035, 0.06), night) + float3(0.7, 0.75, 0.95) * wxL.x * 0.6;
+    float fres = 0.04 + 0.96 * pow(1.0 - saturate(dot(-rd, n)), 5.0);
+    L *= lerp(1.0, 0.58, wetK * (0.55 + 0.45 * puddle));                      // wet things are darker
+    L = lerp(L, skyC, saturate(fres * wetK * (0.35 + 0.65 * puddle)));        // and glossy: the grey sky in them
+    // ripples in the puddles: a ring per 0.6-block cell, each on its own beat
+    float2 g = wp.xz * 1.7; float2 cl = floor(g), f = frac(g) - 0.5;
+    float h = frac(sin(dot(cl, float2(12.9898, 78.233))) * 43758.5453);
+    float ph = frac(t * (0.9 + 0.5 * h) * wx0.y + h);
+    float ring = exp(-pow((length(f - (h - 0.5) * 0.3) - ph * 0.42) / 0.03, 2.0)) * (1.0 - ph);
+    L += skyC * ring * puddle * wetK * 0.55;
+    return L;
+}
+float3 lightning(float3 L, float3 rd, bool sky) {
+    if (wxL.x <= 0.0 && (wxL.w < 0.0 || wxL.w > 0.35)) return L;
+    L += float3(0.70, 0.76, 1.0) * wxL.x * (sky ? 0.55 * saturate(rd.y + 0.35) : 0.18) * (0.5 + 0.5 * wxL.z);
+    [branch] if (sky && wxL.w >= 0.0 && wxL.w < 0.35 && rd.y > 0.0 && rd.y < 0.6) {
+        float a = atan2(rd.z, rd.x) - wxL.y;
+        a = a - 6.2831853 * floor(a / 6.2831853 + 0.5);                        // -pi..pi around the bolt
+        float hy = rd.y;
+        float jag = 0.035 * sin(hy * 41.0 + wxL.y * 7.0) + 0.018 * sin(hy * 117.0 + wxL.y * 3.0) + 0.008 * sin(hy * 301.0);
+        float d = abs(a - jag * (0.6 - hy) * 3.0);
+        float w = 0.0022 * (0.6 + wxL.z);
+        float bolt = exp(-pow(d / w, 2.0)) * 3.0 + exp(-d / (w * 8.0)) * 0.35;
+        bolt *= smoothstep(0.6, 0.45, hy) * (1.0 - wxL.w / 0.35);
+        L += float3(0.82, 0.86, 1.0) * bolt;
+    }
+    return L;
+}
+
 float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float2 px   = i.pos.xy;
     uint   fl   = uint(c3.x);
@@ -552,6 +601,10 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     if (!drew) outL = col * trans + acc;
     [branch] if (ch0.w > -0.5) outL = chroma(outL, q, sky, spareC);       // the grey world, colour where you have walked
     outL += radL;
+    [branch] if (wx1.w > 0.5 && wx0.x < 0.5) {                           // rain: wet ground, lightning
+        [branch] if (!sky && wx1.y > 0.0) outL = wetGround(outL, int2(px), q, rd, dist, t, night);
+        outL = lightning(outL, rd, sky);
+    }
     [branch] if (wx1.w > 0.5) outL += weather(rd, sky ? 1e4 : dist, t, night);
     float3 o = sqrt(max(outL + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
     return float4(o, 1.0);
