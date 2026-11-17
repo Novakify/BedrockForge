@@ -465,9 +465,33 @@ void registerBuiltins() {
         auto const& p = f.player->getPosition();
         f.infoLines.push_back(std::format("XYZ {:.0f} {:.0f} {:.0f}", std::floor(p.x), std::floor(p.y - 1.62f), std::floor(p.z)));
     };
-    r.add("direction", "Direction", Category::Hud, "Facing and yaw", true).hud = [](Frame& f) {
+    r.add("direction", "Direction", Category::Hud, "Facing and yaw, or a compass strip that glides with your view", true)
+        .toggleSetting("strip", "Compass strip (top centre)", false).slider("size", "Strip size", 1.0f, 0.5f, 2.0f, 0.05f)
+        .slider("opacity", "Strip background", 0.45f, 0.f, 1.f, 0.05f).hud = [](Frame& f) {
         if (!f.player) return;
         float yaw = f.player->getRotation().z;
+        auto* dm = Registry::get().find("direction");
+        if (dm && dm->flag("strip", false)) {
+            // [Purxiy-style] the strip: 180 degrees across, ticks every 15, letters at the 8 points, a neon caret in the middle
+            float const s = dm->num("size", 1.f), W = 180.f * s, H = 16.f * s, cx = f.width / 2, y = 3.f;
+            bf::hud::fillBox(f.ctx, cx - W / 2, y, W, H, {0.06f, 0.04f, 0.10f, dm->num("opacity", 0.45f)});
+            static constexpr char const* kPts[8] = {"S", "SW", "W", "NW", "N", "NE", "E", "SE"};
+            for (int d = -90; d <= 90; d += 5) {
+                float const ang = std::floor(yaw / 5.f) * 5.f + float(d);
+                float const px  = cx + (ang - yaw) * (W / 180.f);
+                if (px < cx - W / 2 + 2 || px > cx + W / 2 - 2) continue;
+                float const fall = 1.f - std::abs(px - cx) / (W / 2);           // fade toward the ends
+                int const   a360 = ((int(std::lround(ang)) % 360) + 360) % 360;
+                if (a360 % 45 == 0) {
+                    std::string const t = kPts[a360 / 45];
+                    bf::hud::drawLabel(f.ctx, px - textWidth(t, 0.8f * s) / 2, y + 4.f * s, t,
+                                       a360 == 180 ? Rgba{kNeon.r, kNeon.g, kNeon.b, fall} : Rgba{1, 1, 1, fall}, 0.8f * s);   // north in neon
+                } else if (a360 % 15 == 0)
+                    bf::hud::fillBox(f.ctx, px, y + H - 5.f * s, 0.6f, 4.f * s, {1, 1, 1, 0.6f * fall});
+            }
+            bf::hud::fillBox(f.ctx, cx - 0.5f, y + H, 1.f, 3.f * s, {kNeon.r, kNeon.g, kNeon.b, 1});
+            return;
+        }
         f.infoLines.push_back(std::format("Facing {} ({:.0f})", compass(yaw), yaw));
     };
     r.add("speed", "Speed Display", Category::Hud, "Horizontal speed in blocks per second").hud = [](Frame& f) {
