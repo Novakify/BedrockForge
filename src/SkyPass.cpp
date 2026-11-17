@@ -88,8 +88,11 @@ struct AtmosSet {
     bool  haze = false, mist = false, hazeSpare = true, mistSpare = true;
     float hA[3]{1.0f, 0.62f, 0.74f}, hB[3]{1.0f, 0.78f, 0.70f}, hStrength = 0.45f, hHeight = 24.0f, hClear = 8.0f, hDrift = 1.0f, hGlow = 0.6f;
     float mC[3]{1.0f, 0.86f, 0.70f}, mDensity = 0.5f, mHeight = 10.0f, mClear = 6.0f, mDrift = 1.0f, mRays = 0.6f;
+    bool  amb = false;   // Ambience: glowing particles drifting around you
+    float aA[3]{1.0f, 0.70f, 0.55f}, aB[3]{0.80f, 0.60f, 1.0f}, aAmount = 1.0f, aSize = 1.0f, aGlow = 0.6f, aSpeed = 1.0f, aTwinkle = 0.5f, aRange = 24.0f;
+    float aStyle = 0.0f, aDof = 1.0f, aReact = 1.0f, aDaylight = 0.5f;
     float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
-    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f); }
+    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f); }
 };
 std::mutex            gAtmosMutex;
 AtmosSet              gAtmos;
@@ -123,10 +126,17 @@ void pollAtmos() {
         else if (k == "mist_drift") rd(a.mDrift); else if (k == "mist_rays") rd(a.mRays);
         else if (k == "mist_creatures") { int v = 1; in >> v; a.mistSpare = v != 0; }
         else if (k == "tod") rd(a.tod);
+        else if (k == "amb") { int v = 0; in >> v; a.amb = v != 0; }
+        else if (k == "amb_a") rd3(a.aA); else if (k == "amb_b") rd3(a.aB);
+        else if (k == "amb_amount") rd(a.aAmount); else if (k == "amb_size") rd(a.aSize); else if (k == "amb_glow") rd(a.aGlow);
+        else if (k == "amb_speed") rd(a.aSpeed); else if (k == "amb_twinkle") rd(a.aTwinkle); else if (k == "amb_range") rd(a.aRange);
+        else if (k == "amb_style") rd(a.aStyle); else if (k == "amb_dof") rd(a.aDof); else if (k == "amb_react") rd(a.aReact);
+        else if (k == "amb_daylight") rd(a.aDaylight);
         else { std::string skip; std::getline(in, skip); }
         if (!in) break;
     }
     a.hStrength = std::clamp(a.hStrength, 0.f, 1.f); a.hHeight = std::clamp(a.hHeight, 2.f, 96.f); a.hClear = std::clamp(a.hClear, 0.f, 48.f);
+    a.aAmount = std::clamp(a.aAmount, 0.f, 2.f); a.aRange = std::clamp(a.aRange, 4.f, 48.f); a.aSize = std::clamp(a.aSize, 0.25f, 3.f);
     a.mDensity = std::clamp(a.mDensity, 0.f, 1.f); a.mHeight = std::clamp(a.mHeight, 2.f, 48.f); a.mClear = std::clamp(a.mClear, 0.f, 32.f);
     {
         std::lock_guard l(gAtmosMutex);
@@ -2915,7 +2925,14 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // them sharp, the haze / mist leave them their colours. Yourself only in third person - in first person the camera
     // is inside your own box.
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
-        struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; } acb{};
+        struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; } acb{};   // amb: Ambience (worldfx_atmos.hlsl)
+        if (atm.amb) {
+            auto lin = [](float v) { return v * v; };
+            for (int k = 0; k < 3; ++k) { acb.amb[0][k] = lin(atm.aA[k]); acb.amb[1][k] = lin(atm.aB[k]); }
+            acb.amb[0][3] = atm.aAmount; acb.amb[1][3] = atm.aSize;
+            acb.amb[2][0] = atm.aGlow; acb.amb[2][1] = atm.aSpeed; acb.amb[2][2] = atm.aTwinkle; acb.amb[2][3] = atm.aRange;
+            acb.amb[3][0] = atm.aStyle; acb.amb[3][1] = atm.aDof; acb.amb[3][2] = atm.aReact; acb.amb[3][3] = atm.aDaylight;
+        }
         if (auto const* ba = rf::postfx::blurActors()) {
             int n = 0;
             for (uint32_t i = 0; i < ba->count && i < 32 && n < 24; ++i) {

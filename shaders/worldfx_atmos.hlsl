@@ -32,6 +32,11 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 aInfo;
     float4 aPos[24];
     float4 aDim[24];
+    // Ambience (Purxiy "glowing particles drifting through the world around you"), appended after the blur's layout
+    float4 amb0;   // rgb = colour A (linear), w = amount 0..2 (0 = off)
+    float4 amb1;   // rgb = colour B (linear), w = size
+    float4 amb2;   // x = glow, y = speed, z = twinkle, w = range (blocks)
+    float4 amb3;   // x = style (0 motes, 1 stardust, 2 petals, 3 snow), y = 1: near ones melt into bokeh, z = 1: they swirl aside, w = daylight share
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -77,6 +82,68 @@ float hazeDepth(float camY, float3 rd, float t, float g, float H) {
     float k  = rd.y * t / H;
     float e0 = exp(-max(y0, -8.0));
     return abs(k) < 1e-4 ? e0 * t : e0 * t * (1.0 - exp(-k)) / k;
+}
+
+float3 hash33(float3 p) {
+    p = frac(p * float3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return frac((p.xxy + p.yxx) * p.zyx);
+}
+// Ambience: one light per 2-block cell (if the cell's dice say so), found by walking the view ray through the cells
+// (a 3D DDA, at most ~28 cells). Snow and petals fall: the grid itself scrolls, so they never pop at a cell edge.
+float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
+    float amount = amb0.w;
+    if (amount <= 0.0) return 0;
+    int    style = int(amb3.x + 0.5);
+    float  C     = style == 1 ? 1.5 : 2.0;
+    float  range = amb2.w;
+    float  dayK  = lerp(amb3.w, 1.0, night);                     // how many stay out by day
+    float  sp    = amb2.y;
+    float3 scroll = style == 3 ? float3(0.25, 1.1, 0.10) * t * sp       // snow: falls, a little wind
+                  : style == 2 ? float3(0.45, 0.55, 0.20) * t * sp      // petals: drift down and along
+                  : float3(0.08, -0.05, 0.06) * t * sp;                // motes / stardust: a slow drift
+    float3 o   = c5.xyz + scroll;                                  // the ray in the scrolled grid
+    float  tMax = min(dist, range);
+    float3 cell = floor(o / C);
+    float3 stp  = sign(rd);
+    float3 inv  = 1.0 / max(abs(rd), 1e-5);
+    float3 nb   = (cell + max(stp, 0.0)) * C;
+    float3 tNext = abs(nb - o) * inv;
+    float3 tDel  = C * inv;
+    float3 acc = 0;
+    float  tt  = 0;
+    [loop] for (int k = 0; k < 28 && tt < tMax; ++k) {
+        float3 h = hash33(cell + 0.37);
+        if (h.x < amount * 0.5 * dayK) {
+            float3 m  = (cell + 0.2 + 0.6 * hash33(cell * 1.71 + 4.1)) * C;
+            float  ph = h.y * 6.2831;
+            m += float3(sin(t * 0.7 * sp + ph), sin(t * 0.5 * sp + ph * 1.3) * 0.6, cos(t * 0.6 * sp + ph)) * 0.18 * C * (style >= 2 ? 0.6 : 1.0);
+            float3 rel = m - o;                                       // camera-relative
+            if (amb3.z > 0.5) {                                       // they swirl aside as you move through them
+                float r0 = length(rel);
+                rel += normalize(rel + 1e-4) * 0.9 * exp(-r0 * r0 * 0.6);
+            }
+            float tp = dot(rel, rd);
+            if (tp > 0.25 && tp < tMax) {
+                float  dd   = length(rel - rd * tp);
+                float  size = amb1.w * (style == 1 ? 0.018 : style == 3 ? 0.035 : style == 2 ? 0.05 : 0.03) * (0.6 + 0.8 * h.z);
+                float  coc  = amb3.y > 0.5 ? max(0.0, 2.2 - tp) * 0.03 : 0.0;   // near ones: a soft round bokeh
+                float  r    = size + coc;
+                float  core = exp(-dd * dd / (r * r));
+                float  halo = amb2.x * exp(-dd / (r * 4.0)) * 0.22;
+                float  tw   = 1.0 - amb2.z * (0.5 + 0.5 * sin(t * (2.0 + 3.0 * h.y) + ph * 3.0));   // twinkle / breathe
+                float  fade = smoothstep(tMax, tMax * 0.65, tp) * (r > size ? size * size / (r * r) * 1.6 + 0.12 : 1.0);
+                float3 cc   = lerp(amb0.rgb, amb1.rgb, h.z);
+                if (style == 3) cc = lerp(float3(0.85, 0.90, 1.0), cc, 0.25);   // snow stays white
+                acc += cc * (core * 1.6 + halo) * tw * fade * lerp(0.55, 1.0, night);
+            }
+        }
+        // the next cell along the ray
+        if (tNext.x < tNext.y && tNext.x < tNext.z) { tt = tNext.x; tNext.x += tDel.x; cell.x += stp.x; }
+        else if (tNext.y < tNext.z) { tt = tNext.y; tNext.y += tDel.y; cell.y += stp.y; }
+        else { tt = tNext.z; tNext.z += tDel.z; cell.z += stp.z; }
+    }
+    return acc;
 }
 
 float4 PSWorldFxAtmos(VSOut i) : SV_Target {
@@ -150,6 +217,8 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
             acc *= m; trans = lerp(1.0, trans, m);
         }
     }
+    float3 ambL = 0;
+    [branch] if (amb0.w > 0.0) ambL = ambience(rd, sky ? 1e4 : dist, night, t, px);
     // ---- haze: everything the mist let through takes on the haze colour with distance (closed form)
     [branch] if ((fl & 2u) != 0u && c6.w > 0.0) {
         float H   = c7.w, clr = c8.x;
@@ -169,11 +238,11 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         fog *= m;
         float3 behind = col * trans + acc;
         float3 tinted = behind * hc * 1.45 + hc * lerp(0.16, 0.03, night);   // the world takes on the colour, and the air holds a little of it
-        float3 o = lerp(behind, tinted, fog);
+        float3 o = lerp(behind, tinted, fog) + ambL;
         o = sqrt(max(o, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
         return float4(o, 1.0);
     }
-    if (trans > 0.998) discard;
-    float3 o = sqrt(max(col * trans + acc, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
+    if (trans > 0.998 && dot(ambL, 1.0) < 0.002) discard;
+    float3 o = sqrt(max(col * trans + acc + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
     return float4(o, 1.0);
 }
