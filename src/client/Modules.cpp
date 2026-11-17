@@ -626,6 +626,7 @@ void installRuntime() {
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
+        if (player && Registry::get().on("motion_blur")) { try { matchfx::blurActorsFrame(*player); } catch (...) {} }
         if (player) { // [BF] hitch log: health drops = you took a hit (servers send health to the client)
             static int lastHp = -1;
             int const hp = player->getHealth();

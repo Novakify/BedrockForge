@@ -771,6 +771,41 @@ void scan(BlockSource& bs, double const* pos) { // walk a box around the player 
 }
 } // namespace
 
+namespace {
+BfBlurActorsV1   gBlurActors[2]{};
+std::atomic<int> gBlurActorsCur{0};
+uint32_t         gBlurActorsFrame = 0;
+} // namespace
+extern "C" __declspec(dllexport) BfBlurActorsV1 const* BF_GetBlurActors() { return &gBlurActors[gBlurActorsCur.load(std::memory_order_acquire)]; }
+namespace bedrock_forge::client::matchfx {
+void blurActorsFrame(LocalPlayer& lp) {
+    int const w = gBlurActorsCur.load(std::memory_order_relaxed) ^ 1;
+    BfBlurActorsV1& o = gBlurActors[w];
+    o.count = 0; o.size = sizeof o; o.version = 1; o.frame = ++gBlurActorsFrame;
+    try {
+        auto const me = static_cast<Actor&>(lp).getFeetPos();
+        for (int pass = 0; pass < 2; ++pass)   // players first: they must never be the ones that do not fit
+            for (Actor* a : lp.getLevel().getRuntimeActorList()) {
+                if (!a || o.count >= 32) continue;
+                bool const player = a->isPlayer();
+                if (player != (pass == 0)) continue;
+                float dx = 0, dy = 0, dz = 0;
+                try { auto const d = a->getPosDelta(); dx = d.x; dy = d.y; dz = d.z; } catch (...) {}
+                if (!player && dx * dx + dy * dy + dz * dz < 0.004f * 0.004f) continue;   // it stands still: part of the world, it blurs with it
+                auto const& bb = a->getAABB();
+                float const cx = (bb.min.x + bb.max.x) * 0.5f, cz = (bb.min.z + bb.max.z) * 0.5f;
+                if ((cx - me.x) * (cx - me.x) + (cz - me.z) * (cz - me.z) > 64.0f * 64.0f) continue;
+                // room for arms, a held sword, a cape - and for the tick the client's position runs behind what is drawn
+                float const lagH = std::min(std::hypot(dx, dz), 0.6f), lagV = std::min(std::fabs(dy), 0.6f);
+                auto& e = o.a[o.count++];
+                e.x = cx; e.z = cz; e.y = bb.min.y - 0.1f - lagV;
+                e.r = std::max(bb.max.x - bb.min.x, bb.max.z - bb.min.z) * 0.5f + (player ? 0.45f : 0.2f) + lagH;
+                e.h = (bb.max.y - bb.min.y) + 0.45f + 2.0f * lagV;
+            }
+    } catch (...) { o.count = 0; }
+    gBlurActorsCur.store(w, std::memory_order_release);
+}
+} // namespace bedrock_forge::client::matchfx
 extern "C" __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx() {
     std::lock_guard l(gMutex);
     gFx.size = sizeof gFx, gFx.version = 8;

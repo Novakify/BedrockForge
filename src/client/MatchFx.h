@@ -75,6 +75,13 @@ struct BfMatchFxV1 {
     char     mapName[32];
 };
 __declspec(dllexport) BfMatchFxV1 const* BF_GetMatchFx();
+// What moves by itself near you (players, mobs, dropped items, arrows): Renderer Foundation's motion blur leaves these
+// sharp - the camera's motion says nothing about how THEY move on screen. Upright cylinders, world space.
+struct BfBlurActorsV1 {
+    uint32_t size, version, count, frame;
+    struct A { float x, y, z; float r, h; float pad[3]; } a[32];   // feet centre, radius, height
+};
+__declspec(dllexport) BfBlurActorsV1 const* BF_GetBlurActors();
 __declspec(dllexport) void               BF_MatchFxConsumer(int on);
 /// RF's F6 "preview sky phase": the game's time of day follows this phase instead of the match (< 0 = the match)
 __declspec(dllexport) void               BF_MatchFxPreview(float phase);
@@ -88,6 +95,8 @@ void install();   // block-change listener
 void uninstall();
 /// every HUD frame (client thread)
 void frame(IClientInstance& client, LocalPlayer* player);
+/// Once per HUD frame while a world is on screen: refresh BF_GetBlurActors().
+void blurActorsFrame(LocalPlayer& player);
 /// chat / title text (fallback for servers that remove beds without a block update we see)
 void onText(std::string const& message);
 /// the server played an actor event (2 = hurt) on runtime id `rid` (network thread)
