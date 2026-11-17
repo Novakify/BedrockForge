@@ -42,7 +42,14 @@ Standalone (patches an existing pack, idempotent):
 
     python3 -I tools/FiguraBridge/stick_armor.py RP/models/entity/figura_stick.geo.json RP/entity/player.entity.json OUT
 
-Style (`STYLE`, default `mix`): `mix` = the original light-rail armor and Novak Glass in one suit
+Style (`STYLE`, default `tiers`): `tiers` = a design per material, ranked like Hive's armor progression
+(`stick_tiers.py`: RUNNER leather, CIRCUIT copper, PHANTOM chainmail, VANGUARD iron, INFERNO gold, ECLIPSE netherite,
+PRISM diamond, REEF turtle helmet). Higher tiers get more pieces and rails (levels 1-4), tier 4 adds accents (prism
+halo + back fins, eclipse horns + spine blades), Renderer Foundation's Novak Glass panes and reactions (hurt flash and
+a low-health pulse on plates and rails, rail speed per tier and with sprinting). Lower tiers draw their own pane
+textures (512x256, never touched by RF); glowing parts use `entity_emissive_alpha` (alpha 0 = glow). One suit per
+material; each slot's controllers pick geometry / texture / material from arrays by the worn item.
+`mix`: `mix` = the original light-rail armor and Novak Glass in one suit
 (`build_suit_mix`): the original's metal plates stay the structure (enclosed helmet, layered petals, belt, knee caps,
 back and thigh-back plates, foot shells - a polished finish, leather neutral and dyed with the item like the glass),
 its main faces are crystal panes (visor over a dark backing, breastplate V, spine shard, outer shoulder petals,

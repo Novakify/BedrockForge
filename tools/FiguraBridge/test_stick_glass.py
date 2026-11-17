@@ -61,7 +61,8 @@ def check(style):
         G = json.loads((Path(td) / "models/entity/fb_armor_stick.geo.json").read_text())["minecraft:geometry"]
     used = {}
     for g in G:
-        slot = g["description"]["identifier"].split(".")[-1]
+        parts = g["description"]["identifier"].split(".")
+        slot = parts[-2] if len(parts) == 5 else parts[-1]   # tiers: ...<slot>.<material>
         if slot.endswith(("_fx", "_metal")):   # light rails / metal plates (the mix): not glass
             if style == "glass":
                 fails.append(f"[{style}] {slot}: emitted in the all-glass style")
@@ -77,7 +78,7 @@ def check(style):
                 if not home:   # (islands of the two layers overlap in texel space: only this slot's layer counts)
                     fails.append(f"[{style}] {slot}/{b['name']}: polygon outside every island of its layer {uv}")
                     continue
-                lo, hi = used.setdefault((home[0], slot), [[99, 99], [-1, -1]])
+                lo, hi = used.setdefault((home[0], slot + '.' + parts[-1]), [[99, 99], [-1, -1]])
                 for u, v in uv:
                     lo[0], lo[1], hi[0], hi[1] = min(lo[0], u), min(lo[1], v), max(hi[0], u), max(hi[1], v)
     for (n, slot), (lo, hi) in used.items():
@@ -87,6 +88,6 @@ def check(style):
     return len(used)
 
 
-n = {st: check(st) for st in dict.fromkeys(("mix", "glass"))}
+n = {st: check(st) for st in dict.fromkeys(("tiers", "mix", "glass"))}
 print("\n".join(fails) if fails else f"ok: {len(sa.ISLAND)} clean islands; islands used edge to edge: {n}")
 sys.exit(1 if fails else 0)

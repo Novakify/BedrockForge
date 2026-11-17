@@ -27,7 +27,7 @@ from stick_armor_preview import pose, tris_of   # noqa: E402
 
 DATA = json.loads((Path(__file__).parent / "glass_data.json").read_text())
 ORDER = ["leather", "chain", "iron", "copper", "gold", "diamond", "netherite"]
-MAT = {"leather": "leather", "chainmail": "chain", "iron": "iron", "copper": "copper", "golden": "gold",
+MAT = {"turtle": "leather", "leather": "leather", "chainmail": "chain", "iron": "iron", "copper": "copper", "golden": "gold",
        "diamond": "diamond", "netherite": "netherite"}
 LOOK = {"leather": ("#8b5a2b", "#ff9a3c"), "chain": ("#9aa3ad", "#c9d8ea"), "iron": ("#dfe6f0", "#eef4ff"),
         "copper": ("#e0784a", "#ff7a3d"), "gold": ("#ffc83a", "#ffd23a"), "diamond": ("#4ff3ff", "#38f2ff"),
@@ -173,7 +173,7 @@ def raster(items, az, W, H, scale, anchor, z0=None):
             U = l0 * UV[0, 0] + l1 * UV[1, 0] + l2 * UV[2, 0]
             Vv = l0 * UV[0, 1] + l1 * UV[1, 1] + l2 * UV[2, 1]
             tc = tex[np.clip((Vv * th_).astype(int), 0, th_ - 1), np.clip((U * tw_).astype(int), 0, tw_ - 1)]
-            if tex.shape[2] == 4 and not unlit:
+            if tex.shape[2] == 4 and unlit is False:
                 m &= tc[..., 3] >= 0.5
         if not m.any():
             continue
@@ -185,7 +185,9 @@ def raster(items, az, W, H, scale, anchor, z0=None):
             nn /= np.linalg.norm(nn, axis=-1, keepdims=True) + 1e-12
             nv = nn @ view
             nn = np.where((nv < 0)[..., None], -nn, nn)
-            sh = np.ones(nv.shape) if unlit else 0.50 + 0.42 * np.maximum(0, nn @ L) + 0.22 * (1 - np.abs(nv)) ** 2
+            sh = np.ones(nv.shape) if unlit is True else 0.50 + 0.42 * np.maximum(0, nn @ L) + 0.22 * (1 - np.abs(nv)) ** 2
+            if unlit == "mask":   # entity_emissive_alpha: alpha 0 = full glow, 1 = lit
+                sh = sh * tc[..., 3] + (1 - tc[..., 3])
             kind[sl][m] = 1
             col[sl][m] = np.clip(tc[..., :3][m] * sh[m][:, None], 0, 1)
         elif k == "body":
@@ -367,23 +369,39 @@ def load_items(geo_path, rp, mat, az, slots, phase=0.3):
     A = json.loads((Path(rp) / "models/entity/fb_armor_stick.geo.json").read_text())["minecraft:geometry"]
     vi = ORDER.index(MAT[mat])
     td = Path(rp) / "textures/figura/fb_armor"
+    tiers = any(geo["description"]["identifier"].count(".") == 4 for geo in A)   # stick_tiers: one suit per material
+    if tiers:
+        sys.path.insert(0, str(Path(__file__).parent))
+        import stick_tiers
+        rf = stick_tiers.TIERS[mat]["rf"]
+
+    def load(name, dye=False):
+        t = np.asarray(Image.open(td / name).convert("RGBA"), float) / 255
+        return t * np.r_[LEATHER_DYE, 1.0] if dye and mat == "leather" else t
     for geo in A:
-        ident = geo["description"]["identifier"].split(".")[-1]
+        parts = geo["description"]["identifier"].split(".")
+        if tiers and parts[-1] != mat:
+            continue
+        ident = parts[-2] if tiers else parts[-1]
         slot, _, part = ident.partition("_")
         if slot not in slots:
             continue
-        if part in ("metal", "fx"):
-            tex = np.asarray(Image.open(td / (f"{mat}.png" if part == "metal" else f"{mat}_fx.png")).convert("RGBA"), float) / 255
-            if part == "metal" and mat == "leather":   # the mix: neutral leather x the item's dye (RC color)
-                tex = tex * np.r_[LEATHER_DYE, 1.0]
+        layer = SLOT_LAYER[slot]
+        if part in ("metal", "fx") or (tiers and not rf):
+            if tiers:
+                tex = load({"metal": f"t_{mat}.png", "fx": f"t_{mat}_fx.png", "": f"t_{mat}_pane{layer}.png"}[part],
+                           dye=part != "fx")
+                emissive = "mask"
+            else:
+                tex = load(f"{mat}.png" if part == "metal" else f"{mat}_fx.png", dye=part == "metal")
+                emissive = part == "fx"
             if part == "fx":   # uv_anim: v offset (v.fbaph * 0.5)
                 tex = np.roll(tex, -int(round(phase * 0.5 * tex.shape[0])), axis=0)
             for bn in geo["bones"]:
                 if "poly_mesh" in bn:
                     for P, UV, N in tris_n(bn["poly_mesh"]):
-                        items.append((pose(P, bn["name"], az), UV, "tex", (tex, part == "fx", rot_n(N, bn["name"], az))))
+                        items.append((pose(P, bn["name"], az), UV, "tex", (tex, emissive, rot_n(N, bn["name"], az))))
             continue
-        layer = SLOT_LAYER[slot]
         for bn in geo["bones"]:
             if "poly_mesh" in bn:
                 for P, UV in tris_of(bn["poly_mesh"]):
