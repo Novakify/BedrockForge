@@ -60,7 +60,30 @@
 #include "client/MatchFx.h"
 #include "core/Win32Input.h"
 #include "lyrics/win/Win.h"
-namespace bf::lyrics::win { float cinemaFovScale(); } // LyricsForge Director "FOV breath" (1 = off)
+namespace bf::lyrics::win { float cinemaFovScale(); }
+
+// Bedrock Forge -> Renderer Foundation: little world events for the hit / jump effects (Jump Circles, Hit Splash,
+// Ripple, Shockwave). A ring of the last 32; Renderer Foundation keeps the ones still young (steady_clock ms - one
+// process, one clock). Written on the client thread; atMs is written last.
+extern "C" {
+struct BfFxEventsV1 {
+    uint32_t size, version, count, frame;
+    struct E { float x, y, z; uint32_t kind; int64_t atMs; float a, b; } e[32];   // kind: 1 jump, 2 hit, 3 crit, 4 landing (a = fall speed)
+};
+__declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents();
+}
+namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 1, 0, 0, {}}; }
+extern "C" __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents() { return &gFxEv; }
+namespace bedrock_forge::client {
+void pushFxEvent(uint32_t kind, float x, float y, float z, float a = 0.f) {
+    auto& e = gFxEv.e[gFxEv.frame % 32];
+    e.atMs = 0;
+    e.x = x; e.y = y; e.z = z; e.kind = kind; e.a = a;
+    e.atMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    ++gFxEv.frame;
+    gFxEv.count = std::min<uint32_t>(gFxEv.frame, 32);
+}
+} // namespace bedrock_forge::client // LyricsForge Director "FOV breath" (1 = off)
 
 namespace bedrock_forge::client {
 
@@ -246,6 +269,21 @@ void atmosTick() {
                            int(am->num("style", 0)), am->flag("depth_of_field", true) ? 1 : 0, am->flag("react", true) ? 1 : 0, am->num("daylight", 0.5f));
         if (out.find("tod ") == std::string::npos) out += std::format("tod {:.3f}\n", tod < 0 ? 0.f : tod);
     } else out += "amb 0\n";
+    {   // Jump Circles / Hit Splash / Ripple / Shockwave (Purxiy settings): RF draws them from BF_GetFxEvents()
+        static constexpr float kPal[3][2][3] = {{{0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}},
+                                                {{1.00f, 0.71f, 0.55f}, {0.80f, 0.62f, 1.00f}},
+                                                {{1.00f, 0.62f, 0.86f}, {0.55f, 0.82f, 1.00f}}};
+        auto pal = [&](Module* m, int which) { int const p = std::clamp(int(m->num("palette", 0)), 0, 2); return kPal[p][which]; };
+        auto* jc = r.find("jump_circles"); auto* hs = r.find("hit_splash"); auto* rp = r.find("ripple"); auto* sw = r.find("shockwave");
+        if (jc && jc->enabled) { auto c = pal(jc, 0); out += std::format("jc 1\njc_c {:.3f} {:.3f} {:.3f}\njc_size {:.2f}\njc_dur {:.2f}\njc_glow {:.2f}\n", c[0], c[1], c[2], jc->num("size", 1.2f), jc->num("duration", 1.1f), jc->num("glow", 0.6f)); }
+        else out += "jc 0\n";
+        if (hs && hs->enabled) { auto a = pal(hs, 0); auto b = pal(hs, 1); out += std::format("hs 1\nhs_a {:.3f} {:.3f} {:.3f}\nhs_b {:.3f} {:.3f} {:.3f}\nhs_size {:.2f}\nhs_dur {:.2f}\nhs_glow {:.2f}\n", a[0], a[1], a[2], b[0], b[1], b[2], hs->num("size", 1.f), hs->num("duration", 6.f), hs->num("glow", 0.7f)); }
+        else out += "hs 0\n";
+        if (rp && rp->enabled) { auto c = pal(rp, 0); out += std::format("rp 1\nrp_c {:.3f} {:.3f} {:.3f}\nrp_glow {:.2f}\nrp_dur {:.2f}\nrp_crits {}\nrp_ring {}\n", c[0], c[1], c[2], rp->num("glow", 0.8f), rp->num("duration", 0.8f), rp->flag("crits", true) ? 1 : 0, rp->flag("ring", true) ? 1 : 0); }
+        else out += "rp 0\n";
+        if (sw && sw->enabled) { auto c = pal(sw, 0); out += std::format("sw 1\nsw_c {:.3f} {:.3f} {:.3f}\nsw_size {:.2f}\nsw_glow {:.2f}\n", c[0], c[1], c[2], sw->num("size", 1.f), sw->num("glow", 0.7f)); }
+        else out += "sw 0\n";
+    }
     if (out == gAtmosLast) return;
     static int64_t at = 0;
     if (nowMs() - at < 250) return;   // dragging a slider: a few writes a second; the sun moves slowly (tod in steps of 0.001)
@@ -465,6 +503,10 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
         gTargetId = id;
         ++gTargetHits;
         gTargetAt = nowMs();
+    } catch (...) {}
+    try {   // Hit Splash / Ripple: where the hit landed (a falling hit is a critical)
+        float const vy = p.getPosDelta().y;
+        pushFxEvent(!p.isOnGround() && vy < -0.01f ? 3u : 2u, hit.x, hit.y, hit.z);
     } catch (...) {}
 }
 } // namespace
@@ -823,6 +865,21 @@ void registerBuiltins() {
             .toggleSetting("depth_of_field", "Near ones melt into soft bokeh", true).toggleSetting("react", "They swirl aside as you move", true)
             .slider("daylight", "How many stay out by day", 0.5f, 0.f, 1.f, 0.05f);
         am.onToggle = [](bool) { gAtmosLast.clear(); };
+        // Purxiy hit / jump effects (their settings; "others" needs other players' events: not yet)
+        auto& jc = r.add("jump_circles", "Jump Circles", Category::Visual, "A ring of light where you jump (Renderer Foundation)", false);
+        jc.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.2f, 0.5f, 3.f, 0.05f)
+            .slider("duration", "Duration (s)", 1.1f, 0.3f, 3.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
+        auto& hs = r.add("hit_splash", "Hit Splash", Category::Visual, "Glowing splashes where your hits land (Renderer Foundation)", false);
+        hs.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+            .slider("duration", "Duration (s)", 6.f, 1.f, 15.f, 0.5f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
+        auto& rp = r.add("ripple", "Ripple", Category::Visual, "A wave of light where every hit lands (Renderer Foundation)", false);
+        rp.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
+            .slider("duration", "Duration (s)", 0.8f, 0.3f, 2.f, 0.05f).toggleSetting("crits", "A burst of stars on critical hits", true)
+            .toggleSetting("ring", "A ring that rolls over the ground", true);
+        auto& sw = r.add("shockwave", "Shockwave", Category::Visual, "Land, and a wave of light runs through the ground (Renderer Foundation)", false);
+        sw.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+            .slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
+        for (Module* m : {&jc, &hs, &rp, &sw}) m->onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
         ms.onToggle = [](bool) { gAtmosLast.clear(); };
     }
@@ -1055,6 +1112,19 @@ void installRuntime() {
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
+        if (player) {   // Jump Circles / Shockwave: leaving the ground upward, landing from a fall
+            static bool wasGround = true;
+            static float fallV = 0.f;
+            try {
+                bool const g = player->isOnGround();
+                Vec3 const pos = player->getPosition();
+                float const vy = player->getPosDelta().y;
+                if (!g) fallV = std::min(fallV, vy);
+                if (wasGround && !g && vy > 0.15f) pushFxEvent(1u, pos.x, pos.y - 1.62f, pos.z);
+                if (!wasGround && g) { if (fallV < -0.45f) pushFxEvent(4u, pos.x, pos.y - 1.62f, pos.z, -fallV); fallV = 0.f; }
+                wasGround = g;
+            } catch (...) {}
+        }
         if (player && Registry::get().on("motion_blur")) { try { matchfx::blurActorsFrame(*player); } catch (...) {} }
         if (player) { // [BF] hitch log: health drops = you took a hit (servers send health to the client)
             static int lastHp = -1;
