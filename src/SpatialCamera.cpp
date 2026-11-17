@@ -7,6 +7,7 @@
 // learned from the game's own first-person camera (orientation = the player's yaw/pitch) while no screen is open.
 // The world camera's projection (FOV) is read in mce::Camera::updateViewMatrixDependencies. While a container screen
 // is open the game is put in third person (so the player model renders) and restored afterwards.
+#include "Panorama.h"
 #include "SpatialCamera.h"
 #include "Cinematic.h"
 #include "UiCapture.h"
@@ -450,6 +451,13 @@ void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::ve
     rf::cine::Pose  p{};
     float           fovScale = 1.0f;
     bool            on       = rf::cine::cameraPose(e, yawP, pitchP, p, fovScale);
+    {   // [Main Menu] panorama capture: the camera turns through the cube's faces with a 90 degree view
+        float pyaw = yawP, ppitch = pitchP, pfs = 1.0f;
+        if (rf::pano::pose(gCineFovRaw, pyaw, ppitch, pfs)) {
+            p.pos[0] = eye.x; p.pos[1] = eye.y; p.pos[2] = eye.z; p.yaw = pyaw; p.pitch = ppitch; p.roll = 0;
+            fovScale = pfs; on = true;
+        }
+    }
     gShowcaseNow = false;
     if (!on) { // [LyricsForge] Showcase: the camera sways behind the player, looking at their eyes
         float blend = 0, sy = 0, sp = 0, sr = 0;

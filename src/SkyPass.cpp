@@ -1,6 +1,7 @@
 // Renderer Foundation - LyricsFlow port: live sky preview pass (see SkyPass.h). Original code for Renderer Foundation.
 // STAGED, NOT RUN IN GAME YET: compile-verified by CI only. Same D3D12 patterns as LyricsPass (root constants + SRV
 // table per ring slot, premultiplied blend, PSO per back-buffer format, WIC decode on a worker thread).
+#include "Panorama.h"
 #include "D3D12Api.h"
 #include "SkyPass.h"
 
@@ -192,6 +193,7 @@ void pollAtmos() {
         else if (k == "wx_intensity") rd(a.wxIntensity); else if (k == "wx_wind") rd(a.wxWind); else if (k == "wx_size") rd(a.wxSize); else if (k == "wx_range") rd(a.wxRange);
         else if (k == "wx_wet") rd(a.wxWet); else if (k == "wx_light") { int v = 0; in >> v; a.wxLight = v != 0; }
         else if (k == "wx_strike") { long long ms = 0; in >> ms >> a.wxAz >> a.wxNear; a.wxStrike = ms; }
+        else if (k == "pano_capture") { int v = 0; in >> v; rf::pano::request(v); }
         else if (k == "wg") { int v = 0; in >> v; a.wg = v != 0; } else if (k == "wg_c") rd3(a.wgC);
         else if (k == "wg_design") rd(a.wgDesign); else if (k == "wg_size") rd(a.wgSize); else if (k == "wg_glow") rd(a.wgGlow); else if (k == "wg_flap") rd(a.wgFlap);
         else if (k == "wg_fp") { int v = 0; in >> v; a.wgFp = v != 0; }
@@ -522,7 +524,7 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         if (gWorldSky.load()) { rf::lyrics::setCameraWanted(true); worldSkyPrepare(device, list); }
         {   // motion blur without a World FX sky: the same pass, the blur draw only (it needs the world's targets + the camera)
             pollAtmos();
-            bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed));
+            bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed) || rf::pano::capturing());
             static bool was = false;
             gBlurOnly.store(bo, std::memory_order_relaxed);
             if (bo) rf::lyrics::setCameraWanted(true);
@@ -2778,6 +2780,8 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
+    // [Main Menu] the panorama capture copies the world here: before the HUD and your hand are drawn
+    if (rf::pano::capturing()) rf::pano::grab(dev.Get(), list, rt, rd, bgra, 1.0f / snap.proj[0], 1.0f / snap.proj[5]);
     // ---- camera motion blur, part 1: what the camera did since the last frame (see the draw below). Worked out before
     //      any GPU work: with no World FX sky and a still camera the pass has nothing to do at all.
     // (audit 2: no velocity against the clock any more - the streak is a share of the real pose-to-pose motion, so it

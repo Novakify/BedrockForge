@@ -1,5 +1,6 @@
 // Renderer Foundation - Spatial GUI M0 capture spike (see UiCapture.h). Original code for Renderer Foundation.
 #include <chrono>
+#include "Panorama.h"
 #include "UiCapture.h"
 
 #include <algorithm>
@@ -1517,6 +1518,7 @@ std::string leakNote() {
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb) {
     if (!gInstalled || !device || !queue || !bb) return;
     rf::glassarmor::onPresent(device, queue);
+    rf::pano::onPresent();   // [Main Menu] panorama capture
     rf::worldfx::onPresent(device, queue);
     if (gLeakFrameNow.exchange(0)) ++gLeakFrames;
     {
