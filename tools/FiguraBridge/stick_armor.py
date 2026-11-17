@@ -238,11 +238,21 @@ def density(S, isl):
 
 
 def plate(slot, bone, rod, s0, s1, ac, W, gap=0.12, bulge=0.25, flare=0.0, prof=None, twist=0.0,
-          ns=8, na=5, th=0.14, region="metal", rim=True, isl=None, mirror=False):
+          ns=8, na=5, th=0.14, region="metal", rim=True, isl=None, mirror=False, _back=False):
     """a curved plate wrapped round `rod`: centre angle ac (rad), half width W*prof(t) (rad), radius = rod clearance +
     gap, bulging `bulge` in the middle and flaring `flare` toward s0. Returns its surface S(t, k, dr), k in -1..1"""
     prof = prof or (lambda t: leaf(t))
     base = rod.clear(s0, s1) + gap
+    if region == "metal" and TIER and TIER.get("allglass") and not _back:
+        # PRISM: every plate is Novak Glass over its own liquid-chrome backing (the backing carries the prism trims;
+        # RF refracts it and draws the glass's outline round the plate)
+        plate(slot, bone, rod, s0, s1, ac, W, gap=gap - 0.07, bulge=bulge, flare=flare, prof=prof, twist=twist,
+              ns=ns, na=na, th=th, region=region, rim=False, mirror=mirror, _back=True)
+    if isl is None and region == "metal" and TIER and TIER.get("allglass") and not _back:
+        L_ = abs(s1 - s0) * rod.L
+        Wd = W * (base + bulge) * 2
+        cands = {1: ("side_r", "boot", "arm_top", "crown"), 2: ("leg_b", "back_low", "knee")}[LAYER[slot]]
+        isl = min(cands, key=lambda n: abs(math.log((ISLAND[n][3] / ISLAND[n][2]) / max(L_ / max(Wd, .1), .05))))
     glass = isl is not None   # a glass pane (vanilla texture island, RF's glass) or a metal plate (the metal atlas)
     m = M(slot, bone, "glass" if glass else "metal")
 
