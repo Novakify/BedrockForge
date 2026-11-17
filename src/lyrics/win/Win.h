@@ -108,5 +108,14 @@ bool        screenLive();
 bool lyricsShown();
 void setLyricsShown(bool on);
 
+/// [BF] Now Playing card (client HUD, Purxiy "Spotify player"): what is playing and the line being sung.
+struct NowPlaying {
+    std::string title, artist, sourceApp, line, nextLine;
+    int64_t     positionMs = 0, durationMs = 0;
+    bool        playing = false, hasTrack = false;
+    uint32_t    accent = 0; // vivid colour from the cover art (0xRRGGBB, 0 = none)
+};
+bool nowPlaying(NowPlaying& out);
+
 } // namespace bf::lyrics::win
 #endif

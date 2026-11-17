@@ -2051,6 +2051,28 @@ ClientUiAssets clientUiAssets() {
     return a;
 }
 void requestPanel() { gPanelRequest = true; }
+bool nowPlaying(NowPlaying& out) {
+    if (!gS) return false;
+    std::lock_guard l(gS->mutex);
+    if (!gS->clock.hasTrack()) return false;
+    auto const& t = gS->clock.track().s;
+    out.hasTrack   = true;
+    out.title      = t.title; out.artist = t.artist; out.sourceApp = t.sourceApp;
+    out.durationMs = t.durationMs;
+    int64_t const pos = gS->clock.position(nowNs(), gS->engine.config());
+    out.positionMs = std::max<int64_t>(0, pos);
+    out.playing    = gS->clock.playing();
+    out.accent     = gS->coverShown.empty() ? 0u : gS->coverAccent;
+    if (gS->lyrics && !gS->lyrics->empty()) {
+        if (auto const* ln = gS->lyrics->lastStartedBefore(pos)) {
+            out.line = ln->text;
+            auto const& ls = gS->lyrics->lines;
+            for (size_t i = 0; i + 1 < ls.size(); ++i)
+                if (&ls[i] == ln) { out.nextLine = ls[i + 1].text; break; }
+        } else if (!gS->lyrics->lines.empty()) out.nextLine = gS->lyrics->lines.front().text;
+    }
+    return true;
+}
 bool lyricsShown() {
     if (!gS) return false;
     std::lock_guard l(gS->mutex);

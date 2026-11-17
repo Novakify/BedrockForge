@@ -372,6 +372,59 @@ void hudHiderFrame(ScreenView& view) {
     if (!names.empty()) hideControls(rootSp, names, 0);
 }
 
+// ---------------------------------------------------------------- Now Playing (Purxiy "Spotify player": your music on screen,
+// with lyrics to sing along). Uses LyricsForge's media session + lyrics; the in-world lyrics stay LyricsForge's own.
+std::string mmss(int64_t ms) { ms = std::max<int64_t>(ms, 0) / 1000; return std::format("{}:{:02}", ms / 60, ms % 60); }
+void drawNowPlaying(Frame& f, Module& m) {
+    ::bf::lyrics::win::NowPlaying np;
+    if (!::bf::lyrics::win::nowPlaying(np) || !np.hasTrack) return;
+    int const paused = int(m.num("paused", 1));                   // Show / Dim / Hide
+    if (!np.playing && paused == 2) return;
+    float const dim = !np.playing && paused == 1 ? 0.55f : 1.f;
+    int const layout = int(m.num("layout", 0));                  // Split / Combined / Lyrics only / Player only
+    Rgba acc = kNeon;
+    if (m.num("colors", 0) > 0.5f && np.accent) acc = {float((np.accent >> 16) & 255) / 255.f, float((np.accent >> 8) & 255) / 255.f, float(np.accent & 255) / 255.f, 1};
+    auto ell = [](std::string t, size_t n) { if (t.size() > n) { t.resize(n - 1); t += "~"; } return t; };
+    // the player card
+    if (layout != 2) {
+        float const s = m.num("player_size", 1.f), W = 150.f * s, H = (layout == 1 ? 50.f : 38.f) * s;
+        float const x = std::clamp(f.width * m.num("player_x", 1.f) - (m.num("player_x", 1.f) > 0.5f ? W + 4.f : -4.f), 0.f, f.width - W);
+        float const y = std::clamp(f.height * m.num("player_y", 1.f) - (m.num("player_y", 1.f) > 0.5f ? H + 26.f : -4.f), 0.f, f.height - H);
+        if (m.flag("player_background", true)) bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m.num("player_opacity", 0.6f) * dim});
+        bf::hud::fillBox(f.ctx, x, y, 2.f * s, H, {acc.r, acc.g, acc.b, dim});
+        bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 3.f * s, ell(np.title, 24), {1, 1, 1, dim}, 0.9f * s);
+        bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 13.f * s, ell(np.artist, 28), {0.80f, 0.74f, 0.92f, 0.9f * dim}, 0.75f * s);
+        if (layout == 1 && !np.line.empty()) bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 23.f * s, ell(np.line, 30), {acc.r, acc.g, acc.b, dim}, 0.75f * s);
+        float const k = np.durationMs > 0 ? std::clamp(float(np.positionMs) / float(np.durationMs), 0.f, 1.f) : 0.f;
+        float const by = y + H - 9.f * s, bw = W - 12.f * s;
+        bf::hud::fillBox(f.ctx, x + 6.f * s, by, bw, 1.5f * s, {1, 1, 1, 0.18f * dim});
+        bf::hud::fillBox(f.ctx, x + 6.f * s, by, bw * k, 1.5f * s, {acc.r, acc.g, acc.b, dim});
+        bf::hud::drawLabel(f.ctx, x + 6.f * s, by + 2.5f * s, mmss(np.positionMs), {0.8f, 0.8f, 0.85f, 0.8f * dim}, 0.55f * s);
+        if (m.flag("visualizer", true)) {   // little bars that move with the music (LyricsForge's loopback bands)
+            auto const bf = ::bf::lyrics::win::audioLatest();
+            for (int i = 0; i < 12; ++i) {
+                float const v = bf.hasSpec ? bf.spec[i + 2] : 0.08f + 0.05f * std::sin(float(nowMs()) * 0.004f + float(i));
+                float const bh = std::clamp(v, 0.05f, 1.f) * 9.f * s;
+                bf::hud::fillBox(f.ctx, x + W - 6.f * s - float(12 - i) * 3.f * s, y + 13.f * s - bh + 9.f * s, 2.f * s, bh, {acc.r, acc.g, acc.b, 0.85f * dim});
+            }
+        }
+    }
+    // the lyrics card (top centre by default): the line being sung, the next one dimmer
+    if ((layout == 0 || layout == 2) && (!np.line.empty() || !np.nextLine.empty())) {
+        float const s = m.num("lyrics_size", 1.f);
+        int const lines = std::clamp(int(m.num("lines", 2)), 1, 3);
+        std::string const a = ell(np.line, 60), b = ell(np.nextLine, 60);
+        float const w = std::max(textWidth(a, s), lines > 1 ? textWidth(b, 0.8f * s) : 0.f) + 16.f * s;
+        float const h = (lines > 1 ? 24.f : 14.f) * s;
+        float const x = std::clamp(f.width * m.num("lyrics_x", 0.5f) - w / 2, 0.f, f.width - w);
+        float const y = std::clamp(f.height * m.num("lyrics_y", 0.f) + (m.num("lyrics_y", 0.f) < 0.5f ? 24.f : -h - 30.f), 0.f, f.height - h);
+        if (m.flag("lyrics_background", true)) bf::hud::fillBox(f.ctx, x, y, w, h, {0.06f, 0.04f, 0.10f, m.num("lyrics_opacity", 0.6f) * dim});
+        if (m.flag("glow", true) && !a.empty()) bf::hud::fillBox(f.ctx, x, y + 3.f * s, 2.f * s, 9.f * s, {acc.r, acc.g, acc.b, dim});
+        bf::hud::drawLabel(f.ctx, x + 8.f * s, y + 3.f * s, a, {1, 1, 1, dim}, s);
+        if (lines > 1 && !b.empty()) bf::hud::drawLabel(f.ctx, x + 8.f * s, y + 14.f * s, b, {0.75f, 0.70f, 0.85f, 0.75f * dim}, 0.8f * s);
+    }
+}
+
 // ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
 // Purxiy (buddies' client, used as reference only - its code is locked): "A quiet message when a keybind toggles a
 // module" and "Every module you have switched on, as a list". Same settings (size, background, opacity, x/y as a
@@ -905,6 +958,20 @@ void registerBuiltins() {
     {
         auto& hh = r.add("hud_hider", "HUD Hider", Category::Hud, "Choose which Minecraft HUD elements to hide", false);
         for (auto const& g : hideGroups()) hh.toggleSetting(g.id, g.label, false);
+    }
+    {
+        auto& np = r.add("now_playing", "Now Playing", Category::Hud, "Your music on screen, with lyrics to sing along (LyricsForge's player)", false);
+        np.choice("layout", "Layout", {"Split", "Combined", "Lyrics only", "Player only"}, 0)
+            .slider("player_size", "Player size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("player_background", "Player background", true)
+            .slider("player_opacity", "Player background opacity", 0.6f, 0.f, 1.f, 0.05f)
+            .slider("player_x", "Player X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f).slider("player_y", "Player Y (0 top .. 1 bottom)", 1.f, 0.f, 1.f, 0.01f)
+            .toggleSetting("visualizer", "Visualizer (bars that move with the music)", true).choice("colors", "Colours", {"Novak", "Album"}, 0)
+            .slider("lyrics_size", "Lyrics size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("lyrics_background", "Lyrics background", true)
+            .slider("lyrics_opacity", "Lyrics background opacity", 0.6f, 0.f, 1.f, 0.05f)
+            .slider("lyrics_x", "Lyrics X", 0.5f, 0.f, 1.f, 0.01f).slider("lyrics_y", "Lyrics Y", 0.f, 0.f, 1.f, 0.01f)
+            .slider("lines", "Lines at once", 2, 1, 3, 1).toggleSetting("glow", "Glow on the line being sung", true)
+            .choice("paused", "When paused", {"Show", "Dim", "Hide"}, 1);
+        np.hud = [](Frame& f) { if (auto* m = Registry::get().find("now_playing")) drawNowPlaying(f, *m); };
     }
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
         .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f)
