@@ -104,8 +104,14 @@ struct AtmosSet {
     float auC[3]{0.78f, 0.42f, 1.0f}, auSize = 1.0f, auSpeed = 1.0f, auGlow = 0.65f, auStyle = 0.0f;
     float haC[3]{0.95f, 0.85f, 1.0f}, haSize = 1.0f, haGlow = 0.7f, haHeight = 1.0f, haDesign = 0.0f;
     bool  cosmetics() const { return trail || aura || halo; }
+    // Chroma / Radiance / Weather (Purxiy)
+    bool  chroma = false, chLiving = true, rad = false, wx = false;
+    float chTone[3]{0.80f, 0.74f, 0.92f}, chHint = 0.06f, chBrush = 6.0f, chMemory = 120.0f;
+    float radC[3]{0.78f, 0.42f, 1.0f}, radWidth = 2.0f, radGlow = 0.6f, radFill = 0.2f, radSpeed = 1.0f;
+    float wxMode = 0.0f, wxIntensity = 1.0f, wxWind = 0.45f, wxSize = 1.0f, wxRange = 24.0f;
+    bool  post() const { return chroma || rad || wx; }
     float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
-    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events() || cosmetics(); }
+    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events() || cosmetics() || post(); }
 };
 std::mutex            gAtmosMutex;
 AtmosSet              gAtmos;
@@ -162,6 +168,13 @@ void pollAtmos() {
         else if (k == "halo") { int v = 0; in >> v; a.halo = v != 0; } else if (k == "halo_c") rd3(a.haC);
         else if (k == "halo_size") rd(a.haSize); else if (k == "halo_glow") rd(a.haGlow); else if (k == "halo_height") rd(a.haHeight); else if (k == "halo_design") rd(a.haDesign);
         else if (k == "halo_fp") { int v = 0; in >> v; a.haloFp = v != 0; }
+        else if (k == "chroma") { int v = 0; in >> v; a.chroma = v != 0; } else if (k == "ch_tone") rd3(a.chTone);
+        else if (k == "ch_hint") rd(a.chHint); else if (k == "ch_brush") rd(a.chBrush); else if (k == "ch_memory") rd(a.chMemory);
+        else if (k == "ch_living") { int v = 1; in >> v; a.chLiving = v != 0; }
+        else if (k == "rad") { int v = 0; in >> v; a.rad = v != 0; } else if (k == "rad_c") rd3(a.radC);
+        else if (k == "rad_width") rd(a.radWidth); else if (k == "rad_glow") rd(a.radGlow); else if (k == "rad_fill") rd(a.radFill); else if (k == "rad_speed") rd(a.radSpeed);
+        else if (k == "wx") { int v = 0; in >> v; a.wx = v != 0; } else if (k == "wx_mode") rd(a.wxMode);
+        else if (k == "wx_intensity") rd(a.wxIntensity); else if (k == "wx_wind") rd(a.wxWind); else if (k == "wx_size") rd(a.wxSize); else if (k == "wx_range") rd(a.wxRange);
         else { std::string skip; std::getline(in, skip); }
         if (!in) break;
     }
@@ -2789,7 +2802,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     AtmosSet atm;
     { std::lock_guard l(gAtmosMutex); atm = gAtmos; }
     bool atmosNeed = gAtmosOn.load(std::memory_order_relaxed) && atm.any();
-    if (atmosNeed && !((atm.haze && atm.hStrength > 0.f) || (atm.mist && atm.mDensity > 0.f) || (atm.amb && atm.aAmount > 0.f) || atm.cosmetics())) {
+    if (atmosNeed && !((atm.haze && atm.hStrength > 0.f) || (atm.mist && atm.mDensity > 0.f) || (atm.amb && atm.aAmount > 0.f) || atm.cosmetics() || atm.post())) {
         // only the hit / jump effects are on: the pass costs a frame copy and a full-screen draw - only while one plays
         atmosNeed = false;
         if (auto const* ev = rf::postfx::fxEvents()) {
@@ -2965,8 +2978,40 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // is inside your own box.
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
-                       float pl[4]; float trP[32][4]; float cs[6][4]; } acb{};   // amb / ev / fx / cosmetics: worldfx_atmos.hlsl
+                       float pl[4]; float trP[32][4]; float cs[6][4];
+                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
+        acb.ch[0][3] = -1.f;
+        if (atm.post()) {
+            auto lin = [](float v) { return v * v; };
+            if (atm.chroma) {   // where you have walked: a point every memory / 48 s (at most every 0.4 s)
+                struct ChPt { double x, y, z; int64_t at; };
+                static std::deque<ChPt> walked;
+                int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                int64_t const every = std::max<int64_t>(400, int64_t(atm.chMemory * 1000.f / 48.f));
+                double const fx = snap.pos[0], fy = snap.pos[1] - 1.62, fz = snap.pos[2];
+                if (walked.empty() || nowMs - walked.front().at >= every) walked.push_front({fx, fy, fz, nowMs});
+                else walked.front() = {fx, fy, fz, walked.front().at};   // the newest point follows you
+                while (walked.size() > 48 || (!walked.empty() && float(nowMs - walked.back().at) > atm.chMemory * 1000.f)) walked.pop_back();
+                int n = 0;
+                for (auto const& p : walked) {
+                    acb.chP[n][0] = float(p.x - snap.pos[0]); acb.chP[n][1] = float(p.y - snap.pos[1]); acb.chP[n][2] = float(p.z - snap.pos[2]);
+                    acb.chP[n][3] = float(nowMs - p.at) / 1000.f;
+                    if (++n == 48) break;
+                }
+                for (int k = 0; k < 3; ++k) acb.ch[0][k] = lin(atm.chTone[k]);
+                acb.ch[0][3] = atm.chHint; acb.ch[1][0] = atm.chBrush; acb.ch[1][1] = atm.chMemory; acb.ch[1][2] = atm.chLiving ? 1.f : 0.f; acb.ch[1][3] = float(n);
+            }
+            if (atm.rad) {
+                for (int k = 0; k < 3; ++k) acb.rad[0][k] = lin(atm.radC[k]);
+                acb.rad[0][3] = std::max(1.f, atm.radWidth * float(rd.Height) / 1080.f);
+                acb.rad[1][0] = atm.radGlow; acb.rad[1][1] = atm.radFill; acb.rad[1][2] = atm.radSpeed; acb.rad[1][3] = 1.f;
+            }
+            if (atm.wx) {
+                acb.wx[0][0] = atm.wxMode; acb.wx[0][1] = atm.wxIntensity; acb.wx[0][2] = atm.wxWind; acb.wx[0][3] = atm.wxSize;
+                acb.wx[1][0] = atm.wxRange; acb.wx[1][3] = 1.f;
+            }
+        }
         if (atm.cosmetics()) {   // you, and your path (sampled every 50 ms, kept for the trail's duration)
             struct TrPt { double x, y, z; int64_t at; };
             static std::deque<TrPt> path;

@@ -56,6 +56,16 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 au1;      // x = speed, y = glow, z = style (0 orbit, 1 fireflies, 2 spiral, 3 constellation), w = 1: you see it first person
     float4 ha0;      // halo colour, w = size (0 = off)
     float4 ha1;      // x = glow, y = height above the head, z = design (0 seraph, 1 sigil, 2 crown, 3 stardust, 4 eclipse, 5 fallen), w = 1: first person
+    // Chroma (Purxiy): the world waits in grey, colour blooms where you walk
+    float4 chP[48];  // where you have been: xyz camera-relative, w = age (s)
+    float4 ch0;      // rgb = the tone the world waits in (linear), w = how much colour it keeps (-1 = Chroma off)
+    float4 ch1;      // x = brush (blocks), y = memory (s), z = 1: living things keep their colour, w = points
+    // Radiance (Purxiy): glowing outlines on players / mobs / items
+    float4 rad0;     // rgb = colour (linear), w = width (px)
+    float4 rad1;     // x = glow, y = fill, z = flow speed, w = 1: on
+    // Weather (Purxiy): glassy rain, soft snow, embers
+    float4 wx0;      // x = mode (0 rain, 1 snow, 2 fire), y = intensity, z = wind, w = size
+    float4 wx1;      // x = range (blocks), w = 1: on
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -307,6 +317,74 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
     return L;
 }
 
+float lum3(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+float3 chroma(float3 c, float3 P, bool sky, float spareC) {
+    float k = sky ? 0.0 : 0.0;
+    int n = min(int(ch1.w), 48);
+    [loop] for (int i = 0; i < n; ++i) {
+        float3 d = P - chP[i].xyz;
+        float  fade = 1.0 - smoothstep(ch1.y * 0.7, ch1.y, chP[i].w);   // it forgets slowly
+        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0);
+        k = max(k, fade * smoothstep(ch1.x, ch1.x * 0.45, r));
+    }
+    k = max(k, 1.0 - spareC);                                      // living things keep their colour
+    k = max(k, ch0.w);
+    float3 grey = lum3(c) * ch0.rgb / max(lum3(ch0.rgb), 0.05);
+    return lerp(grey, c, saturate(k));
+}
+float3 radiance(int2 p, float3 P, float zc) {
+    // inside a player / mob / item box, where the depth behind jumps away: the silhouette
+    if (stillWorld(P) > 0.5) return 0;
+    float w = rad0.w;
+    float zN = 1e9;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        int2 o = k == 0 ? int2(1, 0) : k == 1 ? int2(-1, 0) : k == 2 ? int2(0, 1) : int2(0, -1);
+        float zz = viewZ(rawDepth(p + o * int(w)));
+        zN = min(zN, zz > zc + 0.6 ? 0.0 : 1e9);
+    }
+    float edge = zN < 1.0 ? 1.0 : 0.0;
+    float flow = 0.6 + 0.4 * sin(c2.w * 2.0 * rad1.z + (P.x + P.y + P.z) * 3.0);
+    return rad0.rgb * (edge * (1.2 + rad1.x) * flow + rad1.y * 0.25);
+}
+// weather: drops / flakes / embers in 1.5-block cells along the view ray (a DDA like the ambience), depth-tested
+float3 weather(float3 rd, float dist, float t, float night) {
+    int mode = int(wx0.x + 0.5);
+    float C = 1.5, range = wx1.x;
+    float fall = mode == 0 ? 14.0 : mode == 1 ? 1.4 : -1.2;          // embers rise
+    float3 wind = float3(wx0.z * (mode == 0 ? 3.0 : 1.2), 0, wx0.z * 0.6);
+    float3 o = c5.xyz + float3(0, fall * t, 0) - wind * t;
+    float tMax = min(dist, range);
+    float3 cell = floor(o / C), stp = sign(rd), inv = 1.0 / max(abs(rd), 1e-5);
+    float3 tNext = abs((cell + max(stp, 0.0)) * C - o) * inv, tDel = C * inv;
+    float3 L = 0; float tt = 0;
+    [loop] for (int k = 0; k < 20 && tt < tMax; ++k) {
+        float3 h = hash33(cell + 7.7);
+        if (h.x < 0.55 * wx0.y) {
+            float3 m = (cell + 0.15 + 0.7 * hash33(cell * 1.31 + 2.2)) * C;
+            float3 rel = m - o;
+            float tp = dot(rel, rd);
+            if (tp > 0.3 && tp < tMax) {
+                float3 pc = rel - rd * tp;
+                float d;
+                if (mode == 0) {   // rain: a short streak along the fall
+                    float3 ax = normalize(float3(-wind.x / 14.0, -1, -wind.z / 14.0));
+                    float  along = clamp(dot(pc, ax), -0.35 * wx0.w, 0.35 * wx0.w);
+                    d = length(pc - ax * along) / (0.010 * wx0.w);
+                    L += lerp(float3(0.70, 0.78, 0.90), float3(0.25, 0.30, 0.45), night) * exp(-d * d) * 0.35 * smoothstep(tMax, tMax * 0.5, tp);
+                } else {
+                    d = length(pc) / ((mode == 1 ? 0.035 : 0.022) * wx0.w);
+                    float3 cc = mode == 1 ? float3(0.95, 0.97, 1.0) * lerp(1.0, 0.35, night) : float3(1.0, 0.45, 0.12) * (1.4 + 0.6 * sin(t * 6.0 + h.y * 20.0));
+                    L += cc * (exp(-d * d) * 0.9 + (mode == 2 ? 0.15 * exp(-d * 0.6) : 0.0)) * smoothstep(tMax, tMax * 0.5, tp);
+                }
+            }
+        }
+        if (tNext.x < tNext.y && tNext.x < tNext.z) { tt = tNext.x; tNext.x += tDel.x; cell.x += stp.x; }
+        else if (tNext.y < tNext.z) { tt = tNext.y; tNext.y += tDel.y; cell.y += stp.y; }
+        else { tt = tNext.z; tNext.z += tDel.z; cell.z += stp.z; }
+    }
+    return L;
+}
+
 float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float2 px   = i.pos.xy;
     uint   fl   = uint(c3.x);
@@ -331,6 +409,9 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float3 acc = 0; float trans = 1.0;
     float  spare = 1.0;
     [branch] if (!sky && (fl & 24u) != 0u) spare = stillWorld(q);
+    float spareC = 1.0;
+    [branch] if (!sky && ch1.z > 0.5) spareC = stillWorld(q);
+    float3 outL = 0; bool drew = false;
 
     // ---- mist first (it is nearer the ground, in front of the haze behind it)
     [branch] if ((fl & 4u) != 0u && c9.w > 0.0) {
@@ -401,11 +482,15 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         fog *= m;
         float3 behind = col * trans + acc;
         float3 tinted = behind * hc * 1.45 + hc * lerp(0.16, 0.03, night);   // the world takes on the colour, and the air holds a little of it
-        float3 o = lerp(behind, tinted, fog) + ambL;
-        o = sqrt(max(o, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
-        return float4(o, 1.0);
+        outL = lerp(behind, tinted, fog);
+        drew = true;
     }
-    if (trans > 0.998 && dot(ambL, 1.0) < 0.002) discard;
-    float3 o = sqrt(max(col * trans + acc + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
+    bool const post = ch0.w > -0.5 || rad1.w > 0.5 || wx1.w > 0.5;
+    if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post) discard;
+    if (!drew) outL = col * trans + acc;
+    [branch] if (ch0.w > -0.5) outL = chroma(outL, q, sky, spareC);       // the grey world, colour where you have walked
+    [branch] if (rad1.w > 0.5 && !sky) outL += radiance(int2(px), q, zc);  // outlines on players / mobs / items
+    [branch] if (wx1.w > 0.5) outL += weather(rd, sky ? 1e4 : dist, t, night);
+    float3 o = sqrt(max(outL + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
     return float4(o, 1.0);
 }
