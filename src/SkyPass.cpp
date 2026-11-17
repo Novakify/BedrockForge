@@ -103,7 +103,12 @@ struct AtmosSet {
     float trC[3]{0.78f, 0.42f, 1.0f}, trDur = 1.2f, trSize = 1.0f, trGlow = 0.6f, trStyle = 0.0f;
     float auC[3]{0.78f, 0.42f, 1.0f}, auSize = 1.0f, auSpeed = 1.0f, auGlow = 0.65f, auStyle = 0.0f;
     float haC[3]{0.95f, 0.85f, 1.0f}, haSize = 1.0f, haGlow = 0.7f, haHeight = 1.0f, haDesign = 0.0f;
-    bool  cosmetics() const { return trail || aura || halo; }
+    // [Purxiy wings / cape / block outline] (Bedrock Forge 2026-11-17)
+    bool  wg = false, wgFp = false, cp = false, bo = false, boFace = true, boGlide = true;
+    float wgC[3]{0.78f, 0.42f, 1.0f}, wgDesign = 0.0f, wgSize = 1.0f, wgGlow = 0.6f, wgFlap = 1.0f;
+    float cpC[3]{0.78f, 0.42f, 1.0f}, cpC2[3]{0.95f, 0.92f, 1.0f}, cpDesign = 0.0f, cpGlow = 0.5f, cpSway = 1.0f;
+    float boC[3]{0.78f, 0.42f, 1.0f}, boStyle = 0.0f, boW = 2.0f, boGlow = 0.6f, boFill = 0.12f;
+    bool  cosmetics() const { return trail || aura || halo || wg || cp; }
     // Chroma / Radiance / Weather (Purxiy)
     bool  chroma = false, chLiving = true, rad = false, wx = false;
     float chTone[3]{0.80f, 0.74f, 0.92f}, chHint = 0.06f, chBrush = 6.0f, chMemory = 120.0f;
@@ -116,7 +121,7 @@ struct AtmosSet {
     bool  pa = false, paBreak = true;
     float paC[3]{0.78f, 0.42f, 1.0f}, paDur = 0.34f, paGlow = 0.6f;
     float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
-    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events() || cosmetics() || post(); }
+    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events() || cosmetics() || post() || bo; }
 };
 std::mutex            gAtmosMutex;
 AtmosSet              gAtmos;
@@ -187,6 +192,14 @@ void pollAtmos() {
         else if (k == "wx_intensity") rd(a.wxIntensity); else if (k == "wx_wind") rd(a.wxWind); else if (k == "wx_size") rd(a.wxSize); else if (k == "wx_range") rd(a.wxRange);
         else if (k == "wx_wet") rd(a.wxWet); else if (k == "wx_light") { int v = 0; in >> v; a.wxLight = v != 0; }
         else if (k == "wx_strike") { long long ms = 0; in >> ms >> a.wxAz >> a.wxNear; a.wxStrike = ms; }
+        else if (k == "wg") { int v = 0; in >> v; a.wg = v != 0; } else if (k == "wg_c") rd3(a.wgC);
+        else if (k == "wg_design") rd(a.wgDesign); else if (k == "wg_size") rd(a.wgSize); else if (k == "wg_glow") rd(a.wgGlow); else if (k == "wg_flap") rd(a.wgFlap);
+        else if (k == "wg_fp") { int v = 0; in >> v; a.wgFp = v != 0; }
+        else if (k == "cp") { int v = 0; in >> v; a.cp = v != 0; } else if (k == "cp_c") rd3(a.cpC); else if (k == "cp_c2") rd3(a.cpC2);
+        else if (k == "cp_design") rd(a.cpDesign); else if (k == "cp_glow") rd(a.cpGlow); else if (k == "cp_sway") rd(a.cpSway);
+        else if (k == "bo") { int v = 0; in >> v; a.bo = v != 0; } else if (k == "bo_c") rd3(a.boC);
+        else if (k == "bo_style") rd(a.boStyle); else if (k == "bo_w") rd(a.boW); else if (k == "bo_glow") rd(a.boGlow); else if (k == "bo_fill") rd(a.boFill);
+        else if (k == "bo_face") { int v = 1; in >> v; a.boFace = v != 0; } else if (k == "bo_glide") { int v = 1; in >> v; a.boGlide = v != 0; }
         else { std::string skip; std::getline(in, skip); }
         if (!in) break;
     }
@@ -2823,6 +2836,12 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, atm.paDur, 0.9f});
             for (auto const& e : ev->e) if (e.atMs > 0 && e.kind != 0 && float(nowMs - e.atMs) < maxAge * 1000.0f) { atmosNeed = true; break; }
+            // Block Outline: only while you aim at a block (and a moment after, while it fades)
+            if (atm.bo && ev->version >= 3 && ev->size >= sizeof(rf::postfx::BfFxEventsV1) && nowMs - ev->bAtMs < 600) {
+                static int64_t lastBlockMs = 0;
+                if (ev->bface != 255u) lastBlockMs = nowMs;
+                if (nowMs - lastBlockMs < 400) atmosNeed = true;
+            }
         }
     }
     ID3D12PipelineState* ap = atmosNeed ? derived(dev.Get(), g, 19) : nullptr;   // Haze + Mist
@@ -2993,7 +3012,8 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
-                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; float wxL[4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; float wxL[4];
+                       float bo[3][4]; float wg[2][4]; float cp[3][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3133,6 +3153,48 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 ++n;
             }
             acb.info[0] = float(n);
+        }
+        {   // [Purxiy] wings / cape / block outline (shaders/worldfx_atmos.hlsl: bo0..2, wg0..1, cp0..2)
+            auto lin = [](float v) { return v * v; };
+            int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            auto const* ev = rf::postfx::fxEvents();
+            if (atm.wg) {
+                for (int k = 0; k < 3; ++k) acb.wg[0][k] = lin(atm.wgC[k]);
+                acb.wg[0][3] = std::max(atm.wgSize, 0.05f);
+                acb.wg[1][0] = atm.wgDesign; acb.wg[1][1] = atm.wgGlow; acb.wg[1][2] = atm.wgFlap; acb.wg[1][3] = atm.wgFp ? 1.f : 0.f;
+            }
+            if (atm.cp) {   // the cape flows back with your speed (from your positions, smoothed)
+                static double lx = 0, lz = 0; static int64_t lt = 0; static float spd = 0;
+                if (ev && ev->version >= 2 && (ev->pflags & 1u)) {
+                    if (lt && nowMs > lt) {
+                        double const dx = ev->px - lx, dz = ev->pz - lz;
+                        float const v = float(std::sqrt(dx * dx + dz * dz) * 1000.0 / double(nowMs - lt));
+                        if (v < 40.f) spd += (std::min(v / 5.6f, 1.6f) - spd) * 0.12f;
+                    }
+                    lx = ev->px; lz = ev->pz; lt = nowMs;
+                }
+                for (int k = 0; k < 3; ++k) { acb.cp[0][k] = lin(atm.cpC[k]); acb.cp[1][k] = lin(atm.cpC2[k]); }
+                acb.cp[0][3] = std::max(atm.cpGlow, 0.01f); acb.cp[1][3] = atm.cpDesign;
+                acb.cp[2][0] = atm.cpSway; acb.cp[2][1] = spd; acb.cp[2][2] = ev && (ev->pflags & 2u) ? 0.f : 1.f;
+            }
+            if (atm.bo && ev && ev->version >= 3 && ev->size >= sizeof(rf::postfx::BfFxEventsV1)) {
+                static double gx = 0, gy = 0, gz = 0; static float fade = 0; static int64_t lt = 0; static bool have = false;
+                float const dt = lt ? std::clamp(float(nowMs - lt) / 1000.f, 0.f, 0.1f) : 0.f; lt = nowMs;
+                bool const on = ev->bface != 255u && nowMs - ev->bAtMs < 500;
+                if (on) {
+                    double const tx = ev->bx, ty = ev->by, tz = ev->bz;
+                    double const far2 = (tx - gx) * (tx - gx) + (ty - gy) * (ty - gy) + (tz - gz) * (tz - gz);
+                    if (!have || !atm.boGlide || far2 > 36.0) { gx = tx; gy = ty; gz = tz; }
+                    else { double const k = 1.0 - std::exp(-double(dt) * 22.0); gx += (tx - gx) * k; gy += (ty - gy) * k; gz += (tz - gz) * k; }
+                    have = true;
+                }
+                fade = std::clamp(fade + (on ? 1.f : -1.f) * dt * 8.f, 0.f, 1.f);
+                for (int k = 0; k < 3; ++k) acb.bo[0][k] = lin(atm.boC[k]);
+                acb.bo[0][3] = have ? atm.boW * fade : 0.f;
+                acb.bo[1][0] = float(gx - snap.pos[0]); acb.bo[1][1] = float(gy - snap.pos[1]); acb.bo[1][2] = float(gz - snap.pos[2]);
+                acb.bo[1][3] = atm.boGlow;
+                acb.bo[2][0] = atm.boFill * fade; acb.bo[2][1] = atm.boStyle; acb.bo[2][2] = atm.boFace && on ? float(ev->bface) : -1.f;
+            }
         }
         return uploadRing(dev.Get(), &acb, sizeof acb);
     };

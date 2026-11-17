@@ -74,6 +74,15 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 pa1;      // x = glow, y = 1: broken blocks too
     float4 trB;      // the trail's bounding sphere: xyz centre (camera-relative), w = radius (0 = none)
     float4 wxL;      // lightning: x = flash 0..1, y = bolt azimuth (rad), z = near 0..1, w = bolt age (s) (-1 = none)
+    // [Purxiy] Block Outline: the block you aim at (glided), Wings, Cape (Bedrock Forge 2026-11-17)
+    float4 bo0;      // rgb colour (linear), w = line width px (0 = off)
+    float4 bo1;      // xyz the block's low corner (camera-relative), w = glow
+    float4 bo2;      // x = fill, y = style (0 glow, 1 clean, 2 corners), z = the face you look at (0..5, -1 none)
+    float4 wg0;      // wings colour (linear), w = size (0 = off)
+    float4 wg1;      // x = design (0 seraph, 1 butterfly, 2 prism), y = glow, z = flap, w = 1: first person too
+    float4 cp0;      // cape colour (linear), w = glow (0 = off)
+    float4 cp1;      // second colour, w = design (0 silk, 1 aurora, 2 starfield)
+    float4 cp2;      // x = sway, y = your speed (0..1.6), z = 1: in the air
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -451,6 +460,194 @@ float3 bokeh(int2 p, float z, bool sky) {
 }
 
 
+
+// ---- [Purxiy] Block Outline: the 12 edges of the block you aim at, as depth-tested lines of light; the face you look at
+// lit faintly. Only pixels whose ray passes the block's sphere do any work.
+float segRayDist(float3 rd, float3 A, float3 B, out float tRay) {   // closest approach of the view ray (from the camera) to AB
+    float3 u = B - A, w0 = -A;
+    float  b = dot(rd, u), c = dot(u, u), d = dot(rd, w0), e = dot(u, w0);
+    float  D = max(c - b * b, 1e-6);
+    float  tc = saturate((e - b * d) / D);                   // a = dot(rd, rd) = 1
+    tRay = b * tc - d;
+    return length(w0 + rd * tRay - u * tc);
+}
+float3 blockOutline(float3 rd, float3 P, float dist, bool sky) {
+    if (bo0.w <= 0.0) return 0;
+    float3 lo = bo1.xyz - 0.002, hi = bo1.xyz + 1.002, cen = bo1.xyz + 0.5;
+    float  tc = dot(cen, rd);
+    float3 cp = cen - rd * tc;
+    if (dot(cp, cp) > 1.2 || tc < -1.0) return 0;
+    float  pxRad = c4.y / (2.0 * c1.w);                          // screen px per radian
+    int    style = int(bo2.y + 0.5);
+    float3 L = 0;
+    [unroll] for (int k = 0; k < 12; ++k) {
+        // edges: 4 along x, 4 along y, 4 along z
+        int ax = k / 4, j = k % 4;
+        float3 A = lo, B = lo;
+        float2 o = float2(j & 1, j >> 1);
+        if (ax == 0) { A = float3(lo.x, lerp(lo.y, hi.y, o.x), lerp(lo.z, hi.z, o.y)); B = float3(hi.x, A.y, A.z); }
+        else if (ax == 1) { A = float3(lerp(lo.x, hi.x, o.x), lo.y, lerp(lo.z, hi.z, o.y)); B = float3(A.x, hi.y, A.z); }
+        else { A = float3(lerp(lo.x, hi.x, o.x), lerp(lo.y, hi.y, o.y), lo.z); B = float3(A.x, A.y, hi.z); }
+        float t;
+        float dd = segRayDist(rd, A, B, t);
+        if (t < 0.05 || (!sky && t > dist + 0.04)) continue;       // behind the camera / hidden by the world
+        float px = dd / max(t, 1e-3) * pxRad;                      // distance from the lnK in screen px
+        float w  = bo0.w * 0.5;
+        float lnK = 1.0 - smoothstep(w - 0.6, w + 0.6, px);
+        if (style == 2) {                                          // corners: only the ends of each edge
+            float3 q = rd * t;
+            float  along = dot(q - A, normalize(B - A));
+            lnK *= step(abs(along - 0.5), 0.5) * (1.0 - step(0.2, min(along, 1.0 - along)));
+        }
+        float glowK = style == 1 ? 0.0 : bo1.w;
+        float cm = 1.0;
+        if (style == 2) {   // corners: the glow too stays at the corners
+            float3 q2 = rd * t;
+            float  al = dot(q2 - A, normalize(B - A));
+            cm = 1.0 - smoothstep(0.16, 0.24, min(al, 1.0 - al));
+        }
+        L += bo0.rgb * (lnK * 1.25 + glowK * 0.45 * exp(-px / (3.0 + 6.0 * bo1.w)) * cm);
+    }
+    // the face you look at, faintly filled (a soft inner glow toward its edges)
+    if (!sky && bo2.z >= 0.0 && bo2.x > 0.0) {
+        float3 q = P - bo1.xyz;                                    // in the block, 0..1
+        if (all(q > -0.01) && all(q < 1.01)) {
+            int f = int(bo2.z + 0.5);
+            float on = f == 0 ? step(q.y, 0.01) : f == 1 ? step(0.99, q.y) : f == 2 ? step(q.z, 0.01) : f == 3 ? step(0.99, q.z) : f == 4 ? step(q.x, 0.01) : step(0.99, q.x);
+            float2 uv = f < 2 ? q.xz : f < 4 ? q.xy : q.zy;
+            float  e  = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+            L += bo0.rgb * on * bo2.x * (0.35 + 0.65 * exp(-e * 9.0));
+        }
+    }
+    return L;
+}
+
+// ---- [Purxiy] Wings + Cape: shapes in the air behind you, traced as planes (like the halo); `over` = a translucent
+// layer they lay over the world (rgb, a), the return value is light added on top
+float3 wingsCape(float3 rd, float dist, float t, inout float4 over) {
+    float3 L = 0;
+    if (pl.w < -50.0) return L;
+    bool  fp  = length(pl.xyz + float3(0, 1.62, 0)) < 0.6;
+    float yaw = pl.w;
+    float3 fwd  = float3(-sin(yaw), 0, cos(yaw));
+    float3 side = float3(cos(yaw), 0, sin(yaw));
+    float3 up   = float3(0, 1, 0);
+    // -------- wings
+    [branch] if (wg0.w > 0.0 && (!fp || wg1.w > 0.5)) {
+        int   design = int(wg1.x + 0.5);
+        float S = wg0.w;
+        float flap = wg1.z * (0.22 + 0.25 * cp2.z) * sin(t * (2.2 + 3.0 * cp2.z));
+        float3 A0 = pl.xyz + up * 1.38 - fwd * 0.20;
+        [unroll] for (int sgn = -1; sgn <= 1; sgn += 2) {
+            float fold = 0.55 + flap;                              // how far back the wing sweeps from the side (radians)
+            float3 w = normalize(side * float(sgn) * cos(fold) - fwd * sin(fold));
+            float3 A = A0 + side * float(sgn) * 0.10;
+            float3 n = normalize(cross(w, up));
+            float den = dot(rd, n);
+            if (abs(den) < 1e-4) continue;
+            float tp = dot(A, n) / den;
+            if (tp < 0.2 || tp > dist + 0.05) continue;
+            float3 h = rd * tp - A;
+            float u = dot(h, w) / S, v = dot(h, up) / S;            // u: out along the wing, v: up
+            if (u < 0.0 || u > 1.35) continue;
+            float inside = 0.0, rim = 0.0, pat = 0.0;
+            if (design == 1) {                                     // butterfly: a big upper lobe, a smaller lower one
+                float d1 = length((float2(u, v) - float2(0.55, 0.38)) / float2(0.62, 0.48)) - 1.0;
+                float d2 = length((float2(u, v) - float2(0.42, -0.30)) / float2(0.42, 0.36)) - 1.0;
+                float d  = min(d1, d2);
+                inside = 1.0 - smoothstep(-0.02, 0.02, d);
+                rim    = exp(-abs(d) * 30.0);
+                pat    = exp(-pow(length(float2(u, v) - float2(0.72, 0.42)) / 0.11, 2.0)) + 0.5 * exp(-pow(length(float2(u, v) - float2(0.45, -0.28)) / 0.08, 2.0));
+            } else {                                               // seraph / prism: a long wing, feathered underneath
+                float top = 0.14 + 0.30 * pow(sin(3.14159 * saturate(u / 1.25)), 0.6) + 0.16 * u;      // the arm of the wing, swept up
+                float bot = top - (0.20 + 0.40 * pow(saturate(u / 1.25), 0.8)) + 0.045 * abs(sin(u * 13.0));
+                float d   = max(v - top, bot - v);
+                inside = (1.0 - smoothstep(-0.015, 0.015, d)) * step(u, 1.3);
+                rim    = exp(-abs(d) * 34.0) * step(u, 1.32);
+                if (design == 2) {   // prism: crystal facets - a skewed grid split into triangles, each its own brightness
+                    float2 g = float2(u * 6.0 + v * 3.2, v * 6.5 - u * 1.4);
+                    float2 gi = floor(g), gf = frac(g);
+                    float tri = step(gf.x, gf.y);
+                    float h = frac(sin(dot(gi + tri * 7.31, float2(12.9898, 78.233))) * 43758.5453);
+                    float edgeF = min(min(gf.x, gf.y), min(1.0 - max(gf.x, gf.y), abs(gf.x - gf.y)));
+                    pat = 0.25 + 0.75 * h + 0.9 * exp(-edgeF * 40.0);
+                } else {             // seraph: three layered rows of feathers (coverts, secondaries, primaries) - each row's tips
+                                     // a scalloped edge of light, soft shafts that follow the wing out and down
+                    float depthW = top - v;                                          // how far under the arm of the wing
+                    float span = 0.20 + 0.40 * pow(saturate(u / 1.25), 0.8);
+                    float k = saturate(depthW / span);                               // 0 at the arm, 1 at the trailing edge
+                    pat = 0;
+                    [unroll] for (int r = 1; r <= 2; ++r) {
+                        float edgeV = top - span * (0.30 * float(r)) + 0.03 * abs(sin(u * (18.0 - 4.0 * float(r))));
+                        pat += exp(-pow((v - edgeV) / 0.012, 2.0)) * 0.9;            // a row's tips
+                    }
+                    float fu = u * 16.0 - depthW * 5.0;                              // shafts lean outward as they go down
+                    pat += exp(-pow((frac(fu) - 0.5) / 0.05, 2.0)) * 0.35 * k;
+                    pat += 0.25 * (1.0 - k);                                         // the down near the arm is brighter
+                }
+            }
+            if (inside <= 0.0 && rim <= 0.01) continue;
+            float root = smoothstep(0.04, 0.22, u);                 // they grow out of the back, no hard seam on it
+            inside *= root; rim *= root;
+            float3 c = lerp(wg0.rgb, float3(1.0, 0.97, 1.0), saturate(v * 1.6 + 0.1) * 0.45);   // whiter toward the top edge
+            if (design == 2) c = lerp(wg0.rgb, float3(0.75, 0.9, 1.0), pat * 0.6) * (0.85 + 0.3 * pat);
+            float glow = wg1.y;
+            L += c * (rim * (0.9 + glow) + inside * (0.08 + 0.30 * pat) * (0.6 + glow));
+            float a = inside * (design == 2 ? 0.30 : 0.22);
+            over.rgb = lerp(over.rgb, c * 0.6 + 0.08, a * (1.0 - over.a));
+            over.a = over.a + a * (1.0 - over.a);
+        }
+    }
+    // -------- cape: hangs from the shoulders, swings back as you run, ripples
+    [branch] if (cp0.w > 0.0 && !fp) {
+        int   design = int(cp1.w + 0.5);
+        float th = 0.10 + 0.55 * saturate(cp2.y) * cp2.x + 0.35 * cp2.z * cp2.x + 0.04 * sin(t * 1.7) * cp2.x;
+        float3 C0 = pl.xyz + up * 1.42 - fwd * 0.17;
+        float3 D  = normalize(-up * cos(th) - fwd * sin(th));
+        float3 n  = normalize(cross(side, D));
+        float den = dot(rd, n);
+        if (abs(den) > 1e-4) {
+            float tp = dot(C0, n) / den;
+            if (tp > 0.2 && tp < dist + 0.03) {
+                float3 h = rd * tp - C0;
+                float s = dot(h, side), l = dot(h, D);
+                float hw = 0.31 + 0.06 * l;
+                float bottom = 1.02 + 0.05 * sin(s * 11.0 + t * 3.0);
+                float d = max(abs(s) - hw, max(-l, l - bottom));
+                float inside = 1.0 - smoothstep(-0.01, 0.01, d);
+                if (inside > 0.0) {
+                    float wave = sin(l * 7.0 - t * (3.0 + 4.0 * cp2.y)) * 0.5 + 0.5;
+                    float shade = 0.55 + 0.45 * wave;                // the folds catch the light
+                    float3 c;
+                    float3 add = 0;
+                    if (design == 1) {                               // aurora: two colours flowing down in bands
+                        float b = 0.5 + 0.5 * sin(l * 5.0 + s * 4.0 - t * 1.6 + 2.0 * sin(s * 3.0 + t * 0.7));
+                        float b2 = 0.5 + 0.5 * sin(l * 9.0 - s * 6.0 - t * 2.3);
+                        c = lerp(cp0.rgb * 0.45, float3(0.05, 0.08, 0.12), 0.35) + lerp(cp0.rgb, float3(0.35, 0.95, 0.75), b * b2) * 0.35;
+                        add = lerp(cp0.rgb, float3(0.35, 0.95, 0.75), b) * cp0.w * 0.45 * pow(b * (0.6 + 0.4 * b2), 3.0);
+                    } else if (design == 2) {                        // starfield: night cloth with stars
+                        c = lerp(float3(0.02, 0.02, 0.05), cp0.rgb * 0.15, l);
+                        float2 g = float2(s, l) * 18.0;
+                        float2 ci = floor(g), cf = frac(g) - 0.5;
+                        float hs = frac(sin(dot(ci, float2(127.1, 311.7))) * 43758.5453);
+                        float st = step(0.82, hs) * exp(-dot(cf, cf) * 40.0) * (0.6 + 0.4 * sin(t * 3.0 + hs * 30.0));
+                        add = cp1.rgb * st * 1.6;
+                    } else {                                         // silk: the colour fades darker down the cape, a sheen moves down it
+                        c = lerp(cp0.rgb, cp0.rgb * 0.35, l) * 0.8;
+                        add = cp1.rgb * 0.25 * cp0.w * exp(-pow((l - frac(t * 0.25) * 1.4 + 0.2) / 0.08, 2.0));
+                    }
+                    float edge = exp(-abs(d) * 50.0);
+                    c *= shade;
+                    over.rgb = lerp(over.rgb, c, inside * (1.0 - over.a));
+                    over.a = over.a + inside * (1.0 - over.a);
+                    L += (add + cp0.rgb * edge * cp0.w * 0.8) * inside;
+                }
+            }
+        }
+    }
+    return L;
+}
+
 // ---- rain extras: wet ground (darker, a sky sheen, puddles with ripple rings) and lightning (a flash + a bolt)
 float3 posAt(int2 p) {
     float  d = rawDepth(p);
@@ -588,6 +785,9 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     [branch] if (amb0.w > 0.0) ambL = ambience(rd, sky ? 1e4 : dist, night, t, px);
     [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t);
     [branch] if (cs0.w > 0.0 || au0.w > 0.0 || ha0.w > 0.0) ambL += cosmetics(q, rd, sky ? 1e4 : dist, sky, t);
+    float4 overC = 0;                                        // [Purxiy] wings / cape cloth over the world
+    [branch] if (wg0.w > 0.0 || cp0.w > 0.0) ambL += wingsCape(rd, sky ? 1e4 : dist, t, overC);
+    [branch] if (bo0.w > 0.0) ambL += blockOutline(rd, q, sky ? 1e4 : dist, sky);
     // ---- haze: everything the mist let through takes on the haze colour with distance (closed form)
     [branch] if ((fl & 2u) != 0u && c6.w > 0.0) {
         float H   = c7.w, clr = c8.x;
@@ -614,8 +814,9 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     bool const post = ch0.w > -0.5 || wx1.w > 0.5 || bk0.w > 0.0;
     float3 radL = 0;
     [branch] if (rad1.w > 0.5 && !sky && aInfo.x > 0.5) radL = radiance(int2(px), q, zc);   // outlines on players / mobs / items
-    if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post && dot(radL, 1.0) < 0.002) discard;
+    if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post && dot(radL, 1.0) < 0.002 && overC.a < 0.002) discard;
     if (!drew) outL = col * trans + acc;
+    outL = lerp(outL, overC.rgb, saturate(overC.a));
     [branch] if (ch0.w > -0.5) outL = chroma(outL, q, sky, spareC);       // the grey world, colour where you have walked
     outL += radL;
     [branch] if (wx1.w > 0.5 && wx0.x < 0.5) {                           // rain: wet ground, lightning

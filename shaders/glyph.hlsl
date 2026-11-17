@@ -45,6 +45,7 @@ static const uint F_BLUR     = 2048u; // [LyricsFlow player] with IMAGE: soft-bl
 static const uint F_FEATHER  = 4096u; // [LyricsForge] with IMAGE: no frame - fades out over a rounded-square edge glowW wide
 static const uint F_EYE      = 16384u; // [LyricsForge screen] pos relative to the render camera (rides with it smoothly)
 static const uint F_LIVE     = 8192u; // [LyricsForge screen] with IMAGE: sample the live video screen (t21), not an atlas
+static const uint F_PRISM    = 32768u; // [BF menu, 2026-11-17] with GLASS / BACKDROP: the Novak Prism look (see glassShade)
 static const uint kAtlases   = 16u;
 
 StructuredBuffer<Glyph> gGlyphs  : register(t0);
@@ -178,13 +179,36 @@ float4 glassShade(Glyph g, float d, float2 px, float4 tint, float k) {
     c.r = sceneAt(px + off, blur).r;
     c.g = sceneAt(px + off * 1.07, blur).g;
     c.b = sceneAt(px + off * 1.14, blur).b;          // tiny chromatic split like real glass
+    bool prism = (g.flags & F_PRISM) != 0u;
+    // Novak Prism (our glass x the Purxiy look): the world behind is partly drained of colour so the panel reads calm
+    // and the accent carries the colour; the tint then sits on top
+    if (prism) c = lerp(dot(c, float3(0.2126, 0.7152, 0.0722)).xxx, c, 0.70);
     c   = lerp(c, tint.rgb, saturate(tint.a));
     float4 rimC  = unpack(g.outline);
+    float4 inC   = unpack(g.glow);
     float  rim   = 1.0 - smoothstep(0.0, 1.6, abs(d + 0.9));
     float  light = 0.45 + 0.55 * max(dot(n, normalize(float2(-0.55, -0.85))), 0.0);
-    c += rimC.rgb * rimC.a * (rim * light * 0.75 + edge * 0.10);
-    float4 inC = unpack(g.glow);
+    float3 rimCol = rimC.rgb;
+    if (prism) {
+        // a gradient border: the accent on the top-left edges, soft white on the bottom-right; a brighter spot of the
+        // accent travels slowly round the border
+        float gdir = saturate(dot(n, normalize(float2(-0.7, -0.7))) * 0.5 + 0.5);
+        rimCol = lerp(float3(1.0, 1.0, 1.0), lerp(inC.rgb, float3(1, 1, 1), 0.25), gdir);
+        float ang  = atan2(n.y, n.x);
+        float trav = pow(saturate(cos(ang - originTime.w * 0.6)), 24.0);
+        c += inC.rgb * rim * trav * 0.55 * rimC.a;
+        light = 0.65 + 0.35 * light;
+    }
+    c += rimCol * rimC.a * (rim * light * 0.75 + edge * 0.10);
     c += inC.rgb * inC.a * pow(saturate(1.0 + d / bevel), 3.0);
+    if (prism) {
+        // the sheen: a soft slanted band of light crossing the screen every 7 s, and a fine grain like frosted glass
+        float2 sp    = screenPx();
+        float  along = (px.x + px.y * 0.55) / (sp.x + sp.y * 0.55);
+        float  kk    = (along - (frac(originTime.w / 7.0) * 1.6 - 0.3)) / 0.05;
+        c += float3(1.0, 1.0, 1.0) * exp(-kk * kk) * 0.045 * saturate(-d / 3.0);
+        c += (frac(sin(dot(floor(px), float2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.014;
+    }
     float a = saturate(0.5 - d) * k;
     return float4(c * a, a);
 }
@@ -496,7 +520,18 @@ float4 PSGlyph(V2P i) : SV_Target {
         float  r      = length((i.uv - 0.5) * 2.0 * halfPx);
         float  mask   = g.glowK > 0.0 ? smoothstep(g.glowW, g.glowW + g.glowK, r) : 1.0;
         float3 c      = sceneAt(i.pos.xy, saturate(g.pxRange) * mask);
+        if (g.flags & F_PRISM) c = lerp(dot(c, float3(0.2126, 0.7152, 0.0722)).xxx, c, lerp(1.0, 0.75, mask));
         c             = lerp(c, fillC.rgb, saturate(fillC.a) * (0.35 + 0.65 * mask));
+        float4 st = unpack(g.outline);                      // [Prism] stars over the frosted world: outline.a = how many
+        if ((g.flags & F_PRISM) && st.a > 0.0) {
+            float2 cell = floor(i.pos.xy / 26.0), f = frac(i.pos.xy / 26.0);
+            float  hs   = frac(sin(dot(cell, float2(127.1, 311.7))) * 43758.5453);
+            float2 sp   = float2(frac(hs * 13.37), frac(hs * 91.7)) * 0.8 + 0.1;
+            float  dd   = length((f - sp) * 26.0);
+            float  tw   = 0.55 + 0.45 * sin(originTime.w * (1.2 + hs * 2.5) + hs * 40.0);
+            float  on   = step(1.0 - 0.35 * st.a, hs);
+            c += st.rgb * on * tw * (exp(-dd * dd * 0.9) * 0.9 + exp(-dd * 0.45) * 0.10) * mask;
+        }
         return float4(c * k, k);
     }
     if (g.flags & F_PETAL) { // ring sector: outlineW = inner / outer radius, fill2 = centre angle | half span << 16 (1/100 deg)

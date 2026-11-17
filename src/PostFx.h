@@ -40,6 +40,10 @@ struct BfFxEventsV1 {   // = Bedrock Forge's (src/client/Modules.cpp)
     uint32_t pflags;             // 1 = known, 2 = on the ground
     uint32_t pad2;
     int64_t  pAtMs;              // when it was written
+    // version 3: the block you aim at (Block Outline)
+    int32_t  bx, by, bz;
+    uint32_t bface;              // 0..5 (Bedrock facing: 0 down, 1 up, 2 north, 3 south, 4 west, 5 east), 255 = none
+    int64_t  bAtMs;
 };
 /// Bedrock Forge's hit / jump events (Jump Circles, Hit Splash, Ripple, Shockwave), or null
 BfFxEventsV1 const* fxEvents();   // (needs size >= v1; the v2 fields only when e->version >= 2)
