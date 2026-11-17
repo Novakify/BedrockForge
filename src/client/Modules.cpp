@@ -99,6 +99,7 @@ namespace bedrock_forge::client {
 void installVisualHooks();
 void setHandHook(bool on); // VisualModules.cpp (Hand Movement)
 namespace keysounds { void press(int vk); } // KeySounds_win.cpp (Creamy Keys)
+namespace weathersounds { void rain(float level); void thunder(float volume, float near); } // WeatherSounds_win.cpp
 extern std::atomic<float> gTimeOfDay; // VisualModules.cpp
 extern std::mutex  gNickMutex;          // ChatCompact.cpp (Nick Hider)
 extern std::string gNickReal;
@@ -323,8 +324,32 @@ void atmosTick() {
         } else out += "chroma 0\n";
         if (ra && ra->enabled) { auto c = pal(ra, 0); out += std::format("rad 1\nrad_c {:.3f} {:.3f} {:.3f}\nrad_width {:.1f}\nrad_glow {:.2f}\nrad_fill {:.2f}\nrad_speed {:.2f}\n", c[0], c[1], c[2], ra->num("width", 2.f), ra->num("glow", 0.6f), ra->num("fill", 0.2f), ra->num("speed", 1.f)); }
         else out += "rad 0\n";
-        if (wx && wx->enabled) out += std::format("wx 1\nwx_mode {}\nwx_intensity {:.2f}\nwx_wind {:.2f}\nwx_size {:.2f}\nwx_range {:.0f}\n", int(wx->num("mode", 0)), wx->num("intensity", 1.f), wx->num("wind", 0.45f), wx->num("size", 1.f), wx->num("range", 24.f));
-        else out += "wx 0\n";
+        if (wx && wx->enabled) {
+            out += std::format("wx 1\nwx_mode {}\nwx_intensity {:.2f}\nwx_wind {:.2f}\nwx_size {:.2f}\nwx_range {:.0f}\n", int(wx->num("mode", 0)), wx->num("intensity", 1.f), wx->num("wind", 0.45f), wx->num("size", 1.f), wx->num("range", 24.f));
+            out += std::format("wx_wet {:.2f}\n", int(wx->num("mode", 0)) == 0 ? wx->num("wet", 0.6f) : 0.f);
+        } else out += "wx 0\n";
+        // lightning + sounds (rain only): the strike times are ours, so the flash (RF, from the wall clock) and the
+        // thunder (here, a moment later: sound is slower than light) agree
+        {
+            bool const rainOn = wx && wx->enabled && int(wx->num("mode", 0)) == 0;
+            float const vol = rainOn ? wx->num("sounds", 0.5f) : 0.f;
+            try { weathersounds::rain(rainOn ? vol * std::clamp(0.35f + 0.4f * wx->num("intensity", 1.f), 0.f, 1.f) * 0.6f : 0.f); } catch (...) {}
+            static int64_t nextStrike = 0, lastStrike = 0, thunderAt = 0;
+            static float az = 0.f, nearK = 0.5f;
+            static uint32_t rs = 0x9e3779b9u;
+            auto rnd = [] { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; return float(rs & 0xffffu) / 65535.f; };
+            int64_t const wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            if (rainOn && wx->flag("lightning", true)) {
+                if (nextStrike == 0) nextStrike = wall + 6000 + int64_t(rnd() * 10000.f);
+                if (wall >= nextStrike) {
+                    lastStrike = wall; az = rnd() * 6.2831853f; nearK = rnd();
+                    thunderAt = wall + int64_t(400.f + (1.f - nearK) * 2600.f);
+                    nextStrike = wall + int64_t((14000.f + rnd() * 26000.f) / std::max(wx->num("intensity", 1.f), 0.3f));
+                }
+                out += std::format("wx_light 1\nwx_strike {} {:.3f} {:.2f}\n", lastStrike, az, nearK);
+                if (thunderAt && wall >= thunderAt) { thunderAt = 0; try { weathersounds::thunder(vol, nearK); } catch (...) {} }
+            } else { nextStrike = 0; out += "wx_light 0\n"; }
+        }
         if (auto* bk = r.find("bokeh"); bk && bk->enabled)
             out += std::format("bk 1\nbk_mode {}\nbk_dist {:.1f}\nbk_band {:.2f}\nbk_blur {:.2f}\nbk_hi {:.2f}\nbk_near {}\nbk_fringe {:.2f}\n", int(bk->num("focus", 0)),
                                bk->num("distance", 24.f), bk->num("band", 0.26f), bk->num("blur", 0.5f), bk->num("highlights", 0.6f), bk->flag("near", true) ? 1 : 0, bk->num("fringe", 0.45f));
@@ -1156,7 +1181,9 @@ void registerBuiltins() {
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.2f, 0.f, 1.f, 0.05f).slider("speed", "Flow speed", 1.f, 0.f, 3.f, 0.05f);
         auto& wxm = r.add("weather", "Weather", Category::Visual, "Sculpt the weather: glassy rain, soft snowfall and ember showers (Renderer Foundation)", false);
         wxm.choice("mode", "Mode", {"Rain", "Snow", "Fire"}, 0).slider("intensity", "Intensity", 1.f, 0.1f, 2.f, 0.05f)
-            .slider("wind", "Wind", 0.45f, 0.f, 1.5f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("range", "Range (blocks)", 24.f, 8.f, 40.f, 1.f);
+            .slider("wind", "Wind", 0.45f, 0.f, 1.5f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("range", "Range (blocks)", 24.f, 8.f, 40.f, 1.f)
+            .slider("wet", "Wet ground (rain)", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("lightning", "Lightning (rain)", true)
+            .slider("sounds", "Sounds (rain, thunder)", 0.5f, 0.f, 1.f, 0.05f);
         auto& bkm = r.add("bokeh", "Bokeh", Category::Visual, "Sharp where you look, creamy light behind (Renderer Foundation)", false);
         bkm.choice("focus", "Focus", {"Auto", "Distance", "Tilt-shift"}, 0).slider("distance", "Sharp up to (blocks, Distance)", 24.f, 4.f, 96.f, 1.f)
             .slider("band", "How much stays sharp", 0.26f, 0.05f, 1.f, 0.01f).slider("blur", "Blur", 0.5f, 0.1f, 1.f, 0.05f)
