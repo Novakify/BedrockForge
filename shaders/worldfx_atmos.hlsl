@@ -70,7 +70,12 @@ float vnoise3(float3 p) {
     float b = lerp(lerp(hash13(i + float3(0, 0, 1)), hash13(i + float3(1, 0, 1)), f.x), lerp(hash13(i + float3(0, 1, 1)), hash13(i + float3(1, 1, 1)), f.x), f.y);
     return lerp(a, b, f.z);
 }
-float fbm2(float3 p) { return vnoise3(p) * 0.65 + vnoise3(p * 2.03 + 17.1) * 0.35; }
+float fbm2(float3 p) { return vnoise3(p); }   // (one octave: the second cost as much as the rest of the mist and was not seen)
+float hash12b(float2 p) { float3 q = frac(float3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return frac((q.x + q.y) * q.z); }
+float vnoise2(float2 p) {
+    float2 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(hash12b(i), hash12b(i + float2(1, 0)), f.x), lerp(hash12b(i + float2(0, 1)), hash12b(i + float2(1, 1)), f.x), f.y);
+}
 
 // 1 = open world, 0 = inside a player / mob / item box
 float stillWorld(float3 q) {
@@ -122,7 +127,7 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
     float3 tDel  = C * inv;
     float3 acc = 0;
     float  tt  = 0;
-    [loop] for (int k = 0; k < 28 && tt < tMax; ++k) {
+    [loop] for (int k = 0; k < 22 && tt < tMax; ++k) {
         float3 h = hash33(cell + 0.37);
         if (h.x < amount * 0.5 * dayK) {
             float3 m  = (cell + 0.2 + 0.6 * hash33(cell * 1.71 + 4.1)) * C;
@@ -258,7 +263,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         } else if (camY > yTop || camY < yBot) tB = -1.0;
         tA = max(tA, clr * 0.6);
         [branch] if (tB > tA) {
-            int   N  = int(lerp(6.0, 12.0, saturate(c3.z) * saturate((tB - tA) / 40.0)));
+            int   N  = int(lerp(4.0, 9.0, saturate(c3.z) * saturate((tB - tA) / 40.0)));
             float st = (tB - tA) / float(N);
             float tt = tA + st * jit;
             float3 wind = float3(1.0, 0.0, 0.35) * (t * 0.35 * c10.z);
@@ -302,7 +307,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         fog = saturate(fog) * smoothstep(clr * 0.5, clr * 1.5 + 1.0, dist);
         // the colour drifts across the world between the palette's two colours
         float3 wp  = (c5.xyz + rd * min(dist, 80.0)) * 0.012 + float3(t * 0.010 * c8.y, 0.0, t * 0.006 * c8.y);
-        float  mixk = smoothstep(0.25, 0.75, vnoise3(wp));
+        float  mixk = smoothstep(0.25, 0.75, vnoise2(wp.xz + wp.y * 0.37));
         float3 hc  = lerp(c6.rgb, c7.rgb, mixk);
         hc *= lerp(1.0, 0.22, night);                                // dim at night
         float  mu  = dot(rd, LIT);

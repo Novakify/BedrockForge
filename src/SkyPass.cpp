@@ -2775,6 +2775,15 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     AtmosSet atm;
     { std::lock_guard l(gAtmosMutex); atm = gAtmos; }
     bool atmosNeed = gAtmosOn.load(std::memory_order_relaxed) && atm.any();
+    if (atmosNeed && !((atm.haze && atm.hStrength > 0.f) || (atm.mist && atm.mDensity > 0.f) || (atm.amb && atm.aAmount > 0.f))) {
+        // only the hit / jump effects are on: the pass costs a frame copy and a full-screen draw - only while one plays
+        atmosNeed = false;
+        if (auto const* ev = rf::postfx::fxEvents()) {
+            int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, 0.9f});
+            for (auto const& e : ev->e) if (e.atMs > 0 && e.kind != 0 && float(nowMs - e.atMs) < maxAge * 1000.0f) { atmosNeed = true; break; }
+        }
+    }
     ID3D12PipelineState* ap = atmosNeed ? derived(dev.Get(), g, 19) : nullptr;   // Haze + Mist
     if (!ap) atmosNeed = false;
     if (blurOnly && !blurNeed && !atmosNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
