@@ -86,6 +86,8 @@ std::atomic<int64_t>  gLastNonHudFrameMs{0};
 std::deque<int64_t>   gLeftClicks, gRightClicks; // guarded by gMutex
 std::atomic<float>    gLastReach{0};
 std::atomic<int64_t>  gLastReachAt{0};
+std::atomic<int64_t>  gTargetId{0}, gTargetAt{0};
+std::atomic<int>      gTargetHits{0};
 std::atomic<int>      gCombo{0};
 std::atomic<int64_t>  gComboAt{0};
 std::atomic<float>    gZoomNow{1.0f};
@@ -338,7 +340,13 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
     ++gCombo;
     gComboAt = nowMs();
     ::bf::lyrics::win::noteCombat(); // LyricsFlow Combat Safe: dim lyrics for a moment after a hit
-    (void)target;
+    try {   // Target HUD: who we are fighting
+        int64_t const id = target.getOrCreateUniqueID().rawID;
+        if (id != gTargetId.load()) gTargetHits = 0;
+        gTargetId = id;
+        ++gTargetHits;
+        gTargetAt = nowMs();
+    } catch (...) {}
 }
 } // namespace
 
@@ -582,6 +590,39 @@ void registerBuiltins() {
     };
 
     // ---------------- Combat (display only)
+    {   // Target HUD (Purxiy "health and fight stats of whoever you aim at"): the one you last hit, for 4 s
+        auto& th = r.add("target_hud", "Target HUD", Category::Combat, "Health and fight stats of whoever you are fighting", false);
+        th.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).slider("opacity", "Background opacity", 0.6f, 0.f, 1.f, 0.05f)
+            .slider("x", "X (0 left .. 1 right)", 0.56f, 0.f, 1.f, 0.01f).slider("y", "Y (0 top .. 1 bottom)", 0.56f, 0.f, 1.f, 0.01f);
+        th.hud = [](Frame& f) {
+            auto* m = Registry::get().find("target_hud");
+            if (!m || !f.player) return;
+            int64_t const age = nowMs() - gTargetAt.load();
+            if (age > 4000 || gTargetId.load() == 0) return;
+            Actor* t = nullptr;
+            try { ActorUniqueID id; id.rawID = gTargetId.load(); t = f.player->getLevel().fetchEntity(id, false); } catch (...) { t = nullptr; }
+            if (!t) return;
+            std::string name;
+            try { name = t->getNameTag(); } catch (...) {}
+            for (size_t i; (i = name.find("\xC2\xA7")) != std::string::npos;) name.erase(i, std::min<size_t>(3, name.size() - i));   // drop colour codes
+            if (auto nl = name.find('\n'); nl != std::string::npos) name.resize(nl);
+            if (name.empty()) name = "Target";
+            int hp = 0, mx = 20;
+            try { hp = t->getHealth(); mx = std::max(1, t->getMaxHealth()); } catch (...) {}
+            auto const& a = f.player->getPosition(); auto const& b = t->getPosition();
+            float const dist = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+            float const s = m->num("size", 1.f), W = 120.f * s, H = 34.f * s;
+            float const fade = 1.f - smooth01((float(age) - 3400.f) / 600.f);
+            float const x = std::clamp(f.width * m->num("x", 0.56f), 0.f, f.width - W), y = std::clamp(f.height * m->num("y", 0.56f), 0.f, f.height - H);
+            bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.6f) * fade});
+            bf::hud::fillBox(f.ctx, x, y, 2.f * s, H, {kNeon.r, kNeon.g, kNeon.b, fade});
+            bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 3.f * s, name.substr(0, 18), {1, 1, 1, fade}, s);
+            float const k = std::clamp(float(hp) / float(mx), 0.f, 1.f), bw = W - 12.f * s;
+            bf::hud::fillBox(f.ctx, x + 6.f * s, y + 15.f * s, bw, 4.f * s, {1, 1, 1, 0.15f * fade});
+            bf::hud::fillBox(f.ctx, x + 6.f * s, y + 15.f * s, bw * k, 4.f * s, {kNeon.r + (1 - kNeon.r) * k * 0.5f, kNeon.g + (1 - kNeon.g) * k * 0.5f, 1.f, fade});
+            bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 22.f * s, std::format("{:.1f} hp  {} hits  {:.1f}m", hp / 2.0, gTargetHits.load(), dist), {0.86f, 0.80f, 0.95f, fade}, 0.75f * s);
+        };
+    }
     r.add("reach_display", "Reach Display", Category::Combat, "Distance of your last hit").hud = [](Frame& f) {
         if (nowMs() - gLastReachAt.load() > 3000) return;
         f.infoLines.push_back(std::format("Reach {:.2f}", gLastReach.load()));
