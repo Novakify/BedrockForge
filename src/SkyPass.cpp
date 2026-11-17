@@ -119,7 +119,10 @@ struct AtmosSet {
     bool  wxLight = false; int64_t wxStrike = 0; float wxAz = 0.0f, wxNear = 0.5f;
     bool  bk = false, bkNear = true;
     float bkMode = 0.0f, bkDist = 24.0f, bkBand = 0.26f, bkBlur = 0.5f, bkHi = 0.6f, bkFringe = 0.45f;
-    bool  post() const { return chroma || rad || wx || bk; }
+    bool  cy = false, cySky = true, cu = false;   // [Purxiy] Cyberspace / Cute World
+    float cyC[3]{0.2f, 0.9f, 1.0f}, cyReality = 0.85f, cyGlow = 1.0f, cyCircuits = 1.0f, cyScan = 6.0f;
+    float cuC[3]{1.0f, 0.55f, 0.75f}, cuSoft = 0.7f, cuHearts = 1.0f, cuSparkle = 1.0f, cuPastel = 1.0f;
+    bool  post() const { return chroma || rad || wx || bk || cy || cu; }
     bool  pa = false, paBreak = true;
     float paC[3]{0.78f, 0.42f, 1.0f}, paDur = 0.34f, paGlow = 0.6f;
     float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
@@ -194,6 +197,11 @@ void pollAtmos() {
         else if (k == "wx_intensity") rd(a.wxIntensity); else if (k == "wx_wind") rd(a.wxWind); else if (k == "wx_size") rd(a.wxSize); else if (k == "wx_range") rd(a.wxRange);
         else if (k == "wx_wet") rd(a.wxWet); else if (k == "wx_light") { int v = 0; in >> v; a.wxLight = v != 0; }
         else if (k == "wx_strike") { long long ms = 0; in >> ms >> a.wxAz >> a.wxNear; a.wxStrike = ms; }
+        else if (k == "cy") { int v = 0; in >> v; a.cy = v != 0; } else if (k == "cy_c") rd3(a.cyC);
+        else if (k == "cy_reality") rd(a.cyReality); else if (k == "cy_glow") rd(a.cyGlow); else if (k == "cy_circuits") rd(a.cyCircuits);
+        else if (k == "cy_scan") rd(a.cyScan); else if (k == "cy_sky") { int v = 1; in >> v; a.cySky = v != 0; }
+        else if (k == "cu") { int v = 0; in >> v; a.cu = v != 0; } else if (k == "cu_c") rd3(a.cuC);
+        else if (k == "cu_soft") rd(a.cuSoft); else if (k == "cu_hearts") rd(a.cuHearts); else if (k == "cu_sparkle") rd(a.cuSparkle); else if (k == "cu_pastel") rd(a.cuPastel);
         else if (k == "pano_capture") { int v = 0; in >> v; rf::pano::request(v); }
         else if (k == "freelook") { int key = 0, mode = 0; float dist = 4.0f; in >> key >> mode >> dist; rf::spatialcam::setFreelook(key, mode, dist); }
         else if (k == "wg") { int v = 0; in >> v; a.wg = v != 0; } else if (k == "wg_c") rd3(a.wgC);
@@ -3019,7 +3027,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
                        float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; float wxL[4];
-                       float bo[3][4]; float wg[2][4]; float cp[3][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float bo[3][4]; float wg[2][4]; float cp[3][4]; float cy[2][4]; float cu[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3182,6 +3190,15 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 for (int k = 0; k < 3; ++k) { acb.cp[0][k] = lin(atm.cpC[k]); acb.cp[1][k] = lin(atm.cpC2[k]); }
                 acb.cp[0][3] = std::max(atm.cpGlow, 0.01f); acb.cp[1][3] = atm.cpDesign;
                 acb.cp[2][0] = atm.cpSway; acb.cp[2][1] = spd; acb.cp[2][2] = ev && (ev->pflags & 2u) ? 0.f : 1.f;
+            }
+            if (atm.cy) {
+                for (int k = 0; k < 3; ++k) acb.cy[0][k] = lin(atm.cyC[k]);
+                acb.cy[0][3] = std::max(atm.cyReality, 0.01f);
+                acb.cy[1][0] = atm.cyGlow; acb.cy[1][1] = atm.cyCircuits; acb.cy[1][2] = atm.cyScan; acb.cy[1][3] = atm.cySky ? 1.f : 0.f;
+            }
+            if (atm.cu) {
+                for (int k = 0; k < 3; ++k) acb.cu[0][k] = lin(atm.cuC[k]);
+                acb.cu[0][3] = atm.cuSoft; acb.cu[1][0] = atm.cuHearts; acb.cu[1][1] = atm.cuSparkle; acb.cu[1][2] = atm.cuPastel; acb.cu[1][3] = 1.f;
             }
             if (atm.bo && ev && ev->version >= 3 && ev->size >= sizeof(rf::postfx::BfFxEventsV1)) {
                 static double gx = 0, gy = 0, gz = 0; static float fade = 0; static int64_t lt = 0; static bool have = false;

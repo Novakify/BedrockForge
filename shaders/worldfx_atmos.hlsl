@@ -83,6 +83,11 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 cp0;      // cape colour (linear), w = glow (0 = off)
     float4 cp1;      // second colour, w = design (0 silk, 1 aurora, 2 starfield)
     float4 cp2;      // x = sway, y = your speed (0..1.6), z = 1: in the air
+    // [Purxiy] Cyberspace / Cute World (Bedrock Forge 2026-11-17): whole-world looks
+    float4 cy0;      // Cyberspace: rgb accent (linear), w = reality 0..1 (how far the world turns digital; 0 = off -> -1)
+    float4 cy1;      // x = glow, y = circuits, z = scan interval (s), w = data sky 0/1
+    float4 cu0;      // Cute World: rgb blush / heart colour (linear), w = softness (-1 = off)
+    float4 cu1;      // x = hearts amount, y = sparkles, z = pastel strength, w = 1: on
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -707,6 +712,101 @@ float3 lightning(float3 L, float3 rd, bool sky) {
     return L;
 }
 
+
+// ---- [Purxiy] Cyberspace: the world as light, wires and data. Every block edge a glowing line, circuit traces with nodes
+// across the faces, a scan pulse rolling out from you, a dark data sky. Original code.
+float cyHash(float3 p) { return frac(sin(dot(p, float3(127.1, 311.7, 74.7))) * 43758.5453); }
+float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, float t) {
+    float3 acc = cy0.rgb;
+    float reality = saturate(cy0.w);
+    float lumW = dot(L, float3(0.2126, 0.7152, 0.0722));
+    if (sky) {   // the data sky: deep and dark, a faint horizon line, columns of light falling slowly
+        float3 c = lerp(acc * 0.06, float3(0.005, 0.006, 0.012), saturate(rd.y * 1.5 + 0.2));
+        c += acc * exp(-abs(rd.y) * 40.0) * 0.6;
+        if (cy1.w > 0.5) {
+            float an = atan2(rd.z, rd.x) * 110.0;
+            float col = floor(an), fc = frac(an);
+            float h = frac(sin(col * 12.9898) * 43758.5453);
+            float y = frac(rd.y * 3.0 + t * (0.15 + 0.3 * h) + h);
+            float wcol = abs(fc - 0.5) * 2.0;                       // 0 in the column's middle .. 1 at its edge
+            c += acc * step(0.72, h) * (1.0 - smoothstep(0.10, 0.25, wcol)) * pow(y, 10.0) * 1.3 * saturate(rd.y * 3.0 + 0.3);
+        }
+        return lerp(L, c, reality);
+    }
+    float3 n = cross(posAt(px + int2(1, 0)) - P, posAt(px + int2(0, 1)) - P);
+    n = normalize(n + 1e-6); if (dot(n, rd) > 0.0) n = -n;
+    float3 an = abs(n);
+    float3 wp = c5.xyz + P + n * 0.002;
+    float2 uv = an.x > an.y && an.x > an.z ? wp.zy : (an.y > an.z ? wp.xz : wp.xy);
+    float2 f = frac(uv), cell = floor(uv);
+    float2 aa = max(fwidth(uv), 1e-4);
+    // block edges
+    float2 e2 = min(f, 1.0 - f) / aa;
+    float edge = 1.0 - smoothstep(0.6, 1.8, min(e2.x, e2.y));
+    // circuit traces: each face gets a few lines at quarter steps and a node where they end
+    float3 fid = float3(cell, floor(dot(wp, an)));
+    float h1 = cyHash(fid), h2 = cyHash(fid + 7.31);
+    float lane = (floor(h1 * 3.0) + 1.0) * 0.25;
+    float2 q = f - lane;
+    float traceA = (1.0 - smoothstep(0.6, 1.6, abs(q.y) / aa.y)) * step(h2, 0.65) * step(f.x, 0.25 + 0.6 * h2);
+    float traceB = (1.0 - smoothstep(0.6, 1.6, abs(f.x - (1.0 - lane)) / aa.x)) * step(0.35, h2) * step(1.0 - 0.7 * h1, f.y);
+    float node = 1.0 - smoothstep(0.035, 0.06, length(f - float2(0.25 + 0.6 * h2, lane)));
+    float circuits = saturate(traceA + traceB + node * step(h2, 0.65)) * cy1.y;
+    // the scan: a ring rolling out from you every few seconds
+    float per = max(cy1.z, 1.0);
+    float rr = length(P.xz);
+    float front = frac(t / per) * 60.0;
+    float scan = exp(-pow((rr - front) / 1.2, 2.0)) * (1.0 - front / 60.0);
+    float pulse = 0.55 + 0.45 * sin(t * 2.0 + h1 * 6.28);
+    float fog = exp(-dist * 0.012);
+    float3 base = acc * (0.05 + 0.25 * lumW) + lumW * 0.08;               // the world, dark and tinted
+    float3 lines = acc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.4 + circuits * pulse * 0.9 * cy1.x + scan * 0.35);
+    float3 dig = base + lines * fog + acc * scan * 0.12;
+    return lerp(L, dig, reality);
+}
+
+// ---- [Purxiy] Cute World: a soft pastel world with drifting hearts and little sparkles. Original code.
+float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
+    float soft = saturate(cu0.w);
+    float lumC = dot(L, float3(0.2126, 0.7152, 0.0722));
+    // pastel: colours lifted toward a milky pink-lilac, contrast eased
+    float3 pastel = lerp(L, lumC * float3(1.0, 0.86, 0.95) + 0.10, 0.35 * cu1.z) * (0.92 + 0.08 * soft);
+    pastel = lerp(pastel, sqrt(max(pastel, 0.0)) * 0.95, 0.25 * soft);
+    float3 o = lerp(L, pastel, cu1.z > 0.0 ? 1.0 : 0.0);
+    // hearts drifting up in the air around you (a few per cell of a 3-block grid, depth-tested)
+    float3 hl = 0;
+    [unroll] for (int k = 1; k <= 3; ++k) {
+        float R = float(k) * 3.0;
+        float tp = R;
+        if (tp > dist) break;
+        float3 q = rd * tp + c5.xyz;
+        float3 cid = floor(q / 3.0);
+        float h = cyHash(cid + float(k));
+        if (h > cu1.x * 0.6) continue;
+        float3 ctr = (cid + 0.5) * 3.0 + float3(0, frac(t * 0.12 + h) * 3.0 - 1.5, 0);
+        float3 d = rd * dot(ctr - c5.xyz, rd) - (ctr - c5.xyz);
+        float dz = dot(ctr - c5.xyz, rd);
+        if (dz < 0.3 || dz > dist) continue;
+        float2 pl2 = float2(dot(d, normalize(cross(rd, float3(0, 1, 0)))), d.y) / (0.12 + 0.05 * h);
+        pl2.y = -pl2.y + 0.25;
+        float hx = abs(pl2.x);
+        float heart = pl2.y - sqrt(max(hx, 0.0)) * 0.55;                  // a classic heart curve
+        float sd = length(float2(hx, heart)) - 0.75;
+        float fill = 1.0 - smoothstep(-0.05, 0.08, sd);
+        hl += cu0.rgb * fill * (0.65 + 0.35 * sin(t * 2.0 + h * 20.0)) * 0.9;
+    }
+    // sparkles on the ground / scenery near you
+    if (!sky && cu1.y > 0.0 && dist < 24.0) {
+        float3 wp = (c5.xyz + P) * 4.0;
+        float3 ci = floor(wp);
+        float hs = cyHash(ci);
+        float tw = pow(saturate(sin(t * 3.0 + hs * 40.0)), 16.0);
+        float3 fq = frac(wp) - 0.5;
+        o += float3(1.0, 0.95, 1.0) * step(0.985 - 0.02 * cu1.y, hs) * tw * exp(-dot(fq, fq) * 30.0) * 1.5 * (1.0 - dist / 24.0);
+    }
+    return o + hl;
+}
+
 float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float2 px   = i.pos.xy;
     uint   fl   = uint(c3.x);
@@ -811,7 +911,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         drew = true;
     }
     // audit: Radiance alone only writes its outlines (it cost 0.85 ms at 4K writing every pixel with nobody near)
-    bool const post = ch0.w > -0.5 || wx1.w > 0.5 || bk0.w > 0.0;
+    bool const post = ch0.w > -0.5 || wx1.w > 0.5 || bk0.w > 0.0 || cy0.w > 0.0 || cu1.w > 0.5;
     float3 radL = 0;
     [branch] if (rad1.w > 0.5 && !sky && aInfo.x > 0.5) radL = radiance(int2(px), q, zc);   // outlines on players / mobs / items
     if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post && dot(radL, 1.0) < 0.002 && overC.a < 0.002) discard;
@@ -819,6 +919,8 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     outL = lerp(outL, overC.rgb, saturate(overC.a));
     [branch] if (ch0.w > -0.5) outL = chroma(outL, q, sky, spareC);       // the grey world, colour where you have walked
     outL += radL;
+    [branch] if (cy0.w > 0.0) outL = cyberspace(outL, int2(px), q, rd, sky ? 1e4 : dist, sky, t);
+    [branch] if (cu1.w > 0.5) outL = cuteWorld(outL, q, rd, sky ? 1e4 : dist, sky, t);
     [branch] if (wx1.w > 0.5 && wx0.x < 0.5) {                           // rain: wet ground, lightning
         [branch] if (!sky && wx1.y > 0.0) outL = wetGround(outL, int2(px), q, rd, dist, t, night);
         outL = lightning(outL, rd, sky);
