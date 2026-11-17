@@ -605,7 +605,7 @@ def write_armor_overrides(vanilla_rp: Path, rp: Path) -> int:
     return n
 
 
-def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dict:
+def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str, armor: str | None = None) -> dict:
     import re as _re
     avatar_dir = avatar_dir.resolve()
     compiled = fn.compile_avatar(avatar_dir, owner_uuid)
@@ -1164,10 +1164,14 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     for v in sorted(read_vars - assigned):
         pre.append(f"variable.{v} = {GAME_ONLY[v]};" if GAME_ONLY.get(v) else f"variable.{v} = variable.{v} ?? 0;")
     desc["animations"]["figura_drive"] = "animation.figura.drive"
-    desc["scripts"].setdefault("animate", []).append("figura_drive")
+    # one player.entity.json serves EVERY player in the world; only the avatar's own player has the runtime's
+    # variables (v.fbvan is written there). Other players (a full Hive lobby) skip the drive / item animations:
+    # each is ~9 Molang channels per bone per frame per player.
+    LOCAL = "(v.fbvan ?? 2) < 2"
+    desc["scripts"].setdefault("animate", []).append({"figura_drive": LOCAL})
     if item_pivots:
         desc["animations"]["figura_items"] = "animation.figura.items"
-        desc["scripts"]["animate"].append({"figura_items": "!variable.is_first_person"})
+        desc["scripts"]["animate"].append({"figura_items": f"{LOCAL} && !variable.is_first_person"})
     gated = []
     # vanilla model: hidden only where the runtime wrote v.fbvan = 0 (the avatar's player). Unset = every other
     # player in a multiplayer world, who must stay visible (a default of 0 made other players invisible on servers)
@@ -1185,13 +1189,21 @@ def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str) -> dic
     # otherwise evaluates its whole part_visibility list and draws its geometry every frame for nothing
     gated_files = sorted(set(rc_file.values()))
     for k in controllers:
-        cond = "variable.is_first_person" if k in fp_controllers else "!variable.is_first_person"
+        cond = LOCAL + (" && variable.is_first_person" if k in fp_controllers else " && !variable.is_first_person")
         if rc_file.get(k) in gated_files:
             cond += f" && (v.fbuse{rc_file[k]} ?? 0)"
         gated.append({k: cond})
     desc["render_controllers"] = gated
     (rp / "entity/player.entity.json").write_text(json.dumps(ent, indent=1))
     write_armor_overrides(vanilla_rp, rp)
+    if armor == "stick":   # the stick figure's own fitted armor (stick_armor.py), drawn by this entity's controllers
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("fb_stick_armor", HERE / "stick_armor.py")
+        sa = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sa)
+        geo_file = rp / f"models/entity/figura_{slug}.geo.json"
+        rcf = rp / "render_controllers/figura_player.render_controllers.json"
+        sa.build(geo_file, rp / "entity/player.entity.json", rcf if rcf.is_file() else None, rp)
 
     manifest = {"format_version": 2,
                 "header": {"name": f"FiguraBridge: {meta_name}",
@@ -1263,8 +1275,10 @@ def main(argv=None):
     ap.add_argument("--vanilla", required=True, help="bedrock-samples resource_pack folder")
     ap.add_argument("--uuid", default="00000000-0000-0000-0000-000000000000",
                     help="owner UUID written to metadata.uuid (Figura uses the player's UUID)")
+    ap.add_argument("--armor", choices=["stick"], default=None,
+                    help="add fitted armor drawn on the avatar (stick: stick_armor.py, for the Stick Figures avatar)")
     a = ap.parse_args(argv)
-    r = build(Path(a.avatar), Path(a.out).resolve(), Path(a.vanilla).resolve(), a.uuid)
+    r = build(Path(a.avatar), Path(a.out).resolve(), Path(a.vanilla).resolve(), a.uuid, a.armor)
     print(json.dumps(r, indent=1))
 
 

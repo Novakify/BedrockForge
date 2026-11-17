@@ -35,5 +35,17 @@ Per slot (head circlet + fin, chest vest/breastplate/pauldrons/bracers, belt/thi
 per material (leather, chainmail, iron, golden, diamond, netherite, copper, turtle) picked with
 `query.is_item_name_any('slot.armor.*')`. Only on the avatar's player, only while the stick is the installed avatar.
 
+    python3 -I tools/FiguraBridge/compile.py <Stick Figures avatar> OUT --vanilla <bedrock-samples>/resource_pack --armor stick
+
+`--armor stick` runs it as part of the build (don't patch an installed pack by hand: the next compile drops it).
+Standalone (patches an existing pack, idempotent):
+
     python3 -I tools/FiguraBridge/stick_armor.py RP/models/entity/figura_stick.geo.json RP/entity/player.entity.json OUT
-    # then copy OUT/* over the FiguraBridge RP (player.entity.json is patched, idempotent)
+
+## Servers (many players)
+
+One `player.entity.json` draws every player in the world, but only the avatar's own player gets the runtime's
+variables. Everything avatar-specific is gated on `(v.fbvan ?? 2) < 2` (true only there): the drive / item animations
+and, as the first term, every avatar render controller condition, so other players cost one variable lookup each.
+The runtime logs `[figurabridge] perf 10s: ...` to `config/figurabridge.log` (FiguraBridge's own time per frame vs
+the game's frame time; tuning `perfLog` 0 turns it off).

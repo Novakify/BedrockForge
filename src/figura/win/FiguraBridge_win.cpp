@@ -242,6 +242,11 @@ struct State {
     std::vector<std::pair<int, HashedString>> useNames; // v.fbuse<file> (render controller gating)
     std::vector<float>            cache;      // last value written per bone var (16 per bone); NaN = unknown
     int64_t                       frameNo = 0, dumpAtFrame = -1, wheelSeqNext = 0;
+    struct Perf {                 // FiguraBridge's own cost per frame vs the game's frame time, logged every 10 s
+        int64_t windowStart = 0, lastFrame = 0;
+        int     frames = 0, slowFrames = 0;
+        double  ours = 0, oursMax = 0, tickMs = 0, frameMs = 0, varsMs = 0, gapMax = 0;
+    } perf;
     int                           wheelSeqPos = 0;
     int64_t                       lastFullWriteMs = 0;
 };
@@ -723,6 +728,9 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         }
         texMarkDirty(*s.avatar);
     }
+    using clk = std::chrono::steady_clock;
+    auto ms = [](clk::time_point a, clk::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    auto t0 = clk::now();
     int64_t now = nowMs();
     if (s.lastTickMs == 0) s.lastTickMs = now - 50;
     int ticks = 0;
@@ -733,12 +741,45 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         ticks++;
     }
     if (now - s.lastTickMs > 500) s.lastTickMs = now;
+    auto t1 = clk::now();
     samplePlayer(s, lp, false);
     float delta = float(std::clamp(double(now - s.lastTickMs) / 50.0, 0.0, 1.0));
     s.avatar->renderMode = s.avatar->player.isFirstPerson ? "FIRST_PERSON" : "RENDER";
     s.avatar->frame(delta);
+    auto t2 = clk::now();
     writeVars(s, lp);
+    auto t3 = clk::now();
     s.frameNo++;
+    { // perf log: is the time going into FiguraBridge, or into the game (e.g. Bedrock evaluating the player entity)?
+        auto& P = s.perf;
+        double ours = ms(t0, t3);
+        if (P.windowStart == 0) P.windowStart = now;
+        if (P.lastFrame) {
+            double gap = double(now - P.lastFrame);
+            P.gapMax = std::max(P.gapMax, gap);
+            if (gap > 50) P.slowFrames++;
+        }
+        P.lastFrame = now;
+        P.frames++;
+        P.ours += ours;
+        P.oursMax = std::max(P.oursMax, ours);
+        P.tickMs += ms(t0, t1);
+        P.frameMs += ms(t1, t2);
+        P.varsMs += ms(t2, t3);
+        if (now - P.windowStart >= 10000) {
+            double secs = double(now - P.windowStart) / 1000.0, n = std::max(1, P.frames);
+            char b[400];
+            std::snprintf(b, sizeof b,
+                          "[figurabridge] perf %.0fs: %.0f fps, longest frame %.0f ms, frames over 50 ms %d | FiguraBridge avg %.2f ms max %.1f ms "
+                          "(lua tick %.2f, lua frame %.2f, vars %.2f) = %.0f%% of frame time",
+                          secs, P.frames / secs, P.gapMax, P.slowFrames, P.ours / n, P.oursMax, P.tickMs / n, P.frameMs / n, P.varsMs / n,
+                          100.0 * P.ours / std::max(1.0, secs * 1000.0));
+            if (s.avatar->tune("perfLog", 1) != 0) s.host->write(b);
+            P = {};
+            P.windowStart = now;
+            P.lastFrame = now;
+        }
+    }
     if (s.dumpAtFrame >= 0 && s.frameNo >= s.dumpAtFrame) { // after a wheel action: what Bedrock actually holds
         s.dumpAtFrame = -1;
         std::map<std::pair<int, int>, int> texCount;

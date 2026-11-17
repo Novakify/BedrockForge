@@ -207,8 +207,11 @@ def check(name: str, src: Path, out: Path, vanilla: Path) -> tuple[dict, list]:
         errs.append("drive animation bones != part bones")
     if any(f"p{b[1:]}" not in part_bones for b in fp):
         errs.append("first-person bone without a part")
-    if "figura_drive" not in ent["scripts"]["animate"]:
+    anim = [a if isinstance(a, str) else next(iter(a)) for a in ent["scripts"]["animate"]]
+    if "figura_drive" not in anim:
         errs.append("drive animation not animated")
+    elif not any(isinstance(a, dict) and "figura_drive" in a and "fbvan" in a["figura_drive"] for a in ent["scripts"]["animate"]):
+        errs.append("drive animation not limited to the avatar's player (every player would run it)")
 
     # sounds
     sd = out / "rp/sounds/sound_definitions.json"

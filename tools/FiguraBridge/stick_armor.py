@@ -552,13 +552,14 @@ def build(stick_geo: Path, player_entity, figura_rc, out: Path, fx_alpha=0):
             # seconds since this slot was equipped (0 while empty): drives the equip light-up sequence
             pre.append(f"variable.{VAR[s]}t = v.{VAR[s]} > 0 ? math.min((v.{VAR[s]}t ?? 0) + q.delta_time, 10) : 0.0;")
         r0, r1 = f"{1 / PERIOD:.4f}", f"{1 / SPRINT_PERIOD:.4f}"
-        pre.append(f"variable.fbarate = (v.fbarate ?? {r0}) + ((q.is_sprinting ? {r1} : {r0}) - (v.fbarate ?? {r0}))"
-                   f" * math.min(1, q.delta_time * 3);")
-        pre.append("variable.fbaph = math.mod((v.fbaph ?? 0) + q.delta_time * v.fbarate, 1.0);")
+        # light-rail timers: only on the avatar's player (every other player skips them: v.fbnoarmor = 0)
+        pre.append(f"variable.fbarate = v.fbnoarmor ? (v.fbarate ?? {r0}) + ((q.is_sprinting ? {r1} : {r0}) - (v.fbarate ?? {r0}))"
+                   f" * math.min(1, q.delta_time * 3) : {r0};")
+        pre.append("variable.fbaph = v.fbnoarmor ? math.mod((v.fbaph ?? 0) + q.delta_time * v.fbarate, 1.0) : 0.0;")
         rc = d["render_controllers"]
         rc[:] = [r for r in rc if not (isinstance(r, dict) and any(k.startswith("controller.render.player.fb_armor_") for k in r))]
         for s in SLOTS:
-            on = f"!variable.is_first_person && (v.fbstickarmor ?? 0) && (v.{VAR[s]} ?? 0) > 0"
+            on = f"(v.{VAR[s]} ?? 0) > 0 && !variable.is_first_person && (v.fbstickarmor ?? 0)"  # 0 on other players
             rc.append({f"controller.render.player.fb_armor_{s}": on})
             rc.append({f"controller.render.player.fb_armor_{s}_fx": f"{on} && (v.{VAR[s]}t ?? 0) > {START[s]}"})
         (out / "entity").mkdir(parents=True, exist_ok=True)
