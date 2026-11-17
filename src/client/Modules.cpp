@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "ll/api/event/entity/ActorHurtEvent.h"
+#include "ll/api/event/input/KeyInputEvent.h"
 #include "ll/api/event/input/MouseInputEvent.h"
 #include "ll/api/event/render/UIRenderEvent.h"
 #include "ll/api/memory/Hook.h"
@@ -147,6 +148,103 @@ void keycap(MinecraftUIRenderContext& ctx, float x, float y, float w, float h, s
 // (Checking "only the HUD screen drew" failed on Hive: its own overlay screens draw all the time, which silently turned
 // off Zoom, Auto Sprint and the other in-game keys.)
 bool hudInputAllowed() { return w32::gameFocused() && (w32::cursorHidden() || nowMs() - gLastNonHudFrameMs.load() > 150); }
+
+// ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
+// Purxiy (buddies' client, used as reference only - its code is locked): "A quiet message when a keybind toggles a
+// module" and "Every module you have switched on, as a list". Same settings (size, background, opacity, x/y as a
+// fraction of the screen, duration / sort, gradient, hud); drawn our way in the Novak neon purple + white.
+struct Note { std::string name; bool on; int64_t t; };
+std::deque<Note> gNotes; // guarded by gMutex
+
+void notifyToggle(Module const& m) {
+    if (!Registry::get().on("notifications")) return;
+    std::lock_guard lock(gMutex);
+    for (auto it = gNotes.begin(); it != gNotes.end(); ++it)
+        if (it->name == m.name) { gNotes.erase(it); break; } // one card per module: a re-toggle replaces it
+    gNotes.push_back({m.name, m.enabled, nowMs()});
+    while (gNotes.size() > 5) gNotes.pop_front();
+}
+
+constexpr Rgba kNeon{0.78f, 0.42f, 1.00f, 1.0f};   // the client's neon purple
+float smooth01(float t) { t = std::clamp(t, 0.f, 1.f); return t * t * (3 - 2 * t); }
+
+void drawNotifications(Frame& f, Module& m) {
+    float const s    = m.num("size", 1.0f), dur = m.num("duration", 2.5f) * 1000.f;
+    float const op   = m.flag("background", true) ? m.num("opacity", 0.6f) : 0.f;
+    float const fx   = m.num("x", 1.0f), fy = m.num("y", 1.0f);
+    float const h    = 18.f * s, gap = 3.f * s, pad = 6.f * s, margin = 6.f;
+    int64_t const now = nowMs();
+    std::vector<Note> notes;
+    {
+        std::lock_guard lock(gMutex);
+        while (!gNotes.empty() && float(now - gNotes.front().t) > dur + 300.f) gNotes.pop_front();
+        notes.assign(gNotes.begin(), gNotes.end());
+    }
+    float y = fy > 0.5f ? f.height * fy - margin - h : f.height * fy + margin;
+    for (auto it = notes.rbegin(); it != notes.rend(); ++it) {   // newest nearest the anchor
+        float const age = float(now - it->t);
+        float const in  = smooth01(age / 180.f), out = 1.f - smooth01((age - dur) / 300.f);
+        float const a   = in * out;
+        if (a <= 0.01f) continue;
+        std::string const state = it->on ? "enabled" : "disabled";
+        float const w  = pad * 2 + 4.f * s + textWidth(it->name, s) + 6.f * s + textWidth(state, s);
+        float const slide = (1.f - in) * (w * 0.6f);                  // glides in from the screen edge
+        float x = fx > 0.5f ? f.width * fx - margin - w + slide : f.width * fx + margin - slide;
+        x = std::clamp(x, -w, f.width);
+        if (op > 0) bf::hud::fillBox(f.ctx, x, y, w, h, {0.06f, 0.04f, 0.10f, op * a});
+        Rgba const bar = it->on ? kNeon : Rgba{0.55f, 0.52f, 0.60f, 1};
+        bf::hud::fillBox(f.ctx, x, y, 2.f * s, h, {bar.r, bar.g, bar.b, a});        // accent edge
+        float const ty = y + (h - 9.f * s) / 2;
+        bf::hud::drawLabel(f.ctx, x + pad + 2.f * s, ty, it->name, {1, 1, 1, a}, s);
+        bf::hud::drawLabel(f.ctx, x + pad + 2.f * s + textWidth(it->name, s) + 6.f * s, ty, state,
+                           it->on ? Rgba{0.86f, 0.70f, 1.0f, a} : Rgba{0.62f, 0.60f, 0.66f, a}, s);
+        y += fy > 0.5f ? -(h + gap) : (h + gap);
+    }
+}
+
+void drawActiveModules(Frame& f, Module& m) {
+    float const s  = m.num("size", 1.0f);
+    float const op = m.flag("background", true) ? m.num("opacity", 0.6f) : 0.f;
+    float const fx = m.num("x", 1.0f), fy = m.num("y", 0.0f);
+    bool const  grad = m.flag("gradient", true), withHud = m.flag("hud", false), alpha = m.num("sort", 0) > 0.5f;
+    std::vector<std::string> names;
+    for (auto& o : Registry::get().all()) {
+        if (!o->enabled || o->planned || o->id == "active_modules" || o->id == "notifications") continue;
+        if (!withHud && o->category == Category::Hud) continue;
+        names.push_back(o->name);
+    }
+    if (names.empty()) return;
+    if (alpha) std::sort(names.begin(), names.end());
+    else std::stable_sort(names.begin(), names.end(), [](auto const& a, auto const& b) { return a.size() > b.size(); });
+    float const h = 11.f * s, pad = 3.f * s, margin = 4.f;
+    float y = fy > 0.5f ? f.height * fy - margin - h * float(names.size()) : f.height * fy + margin;
+    float const t = float(nowMs() % 6000) / 6000.f;
+    for (size_t i = 0; i < names.size(); ++i) {
+        float const w = textWidth(names[i], s) + pad * 2 + 2.f * s;
+        float const x = fx > 0.5f ? f.width * fx - margin - w : f.width * fx + margin;
+        // gradient: neon purple -> white down the list, drifting slowly
+        float k = grad ? 0.5f + 0.5f * std::sin((float(i) / float(std::max<size_t>(names.size(), 2)) - t) * 6.2831f) : 1.f;
+        Rgba c{kNeon.r + (1 - kNeon.r) * k, kNeon.g + (1 - kNeon.g) * k, kNeon.b + (1 - kNeon.b) * k, 1};
+        if (op > 0) bf::hud::fillBox(f.ctx, x, y, w, h, {0.06f, 0.04f, 0.10f, op});
+        bf::hud::fillBox(f.ctx, fx > 0.5f ? x + w - 1.5f * s : x, y, 1.5f * s, h, c);
+        bf::hud::drawLabel(f.ctx, x + pad + (fx > 0.5f ? 0.f : 1.5f * s), y + (h - 9.f * s) / 2, names[i], c, s);
+        y += h;
+    }
+}
+
+/// Module toggle keys (Module::key, set in each module's page). Edge-triggered; not while typing or in menus.
+std::array<bool, 256> gKeyHeld{};
+void onModuleKey(int vk, bool down) {
+    if (vk <= 0 || vk > 255) return;
+    bool const was = gKeyHeld[size_t(vk)];
+    gKeyHeld[size_t(vk)] = down;
+    if (!down || was || menu::isOpen() || !hudInputAllowed()) return;
+    for (auto& m : Registry::get().all())
+        if (m->key == vk && !m->planned) {
+            Registry::get().setEnabled(*m, !m->enabled);
+            notifyToggle(*m);
+        }
+}
 } // namespace
 
 // ============================================================================ hooks
@@ -244,6 +342,20 @@ void registerBuiltins() {
     done = true;
 
     // ---------------- HUD
+    {   // [Purxiy schema] notifications on by default (they only show when a keybind toggles something)
+        auto& n = r.add("notifications", "Notifications", Category::Hud, "A quiet message when a keybind toggles a module", true);
+        n.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).toggleSetting("background", "Background", true)
+            .slider("opacity", "Background opacity", 0.6f, 0.f, 1.f, 0.05f).slider("x", "X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f)
+            .slider("y", "Y (0 top .. 1 bottom)", 1.f, 0.f, 1.f, 0.01f).slider("duration", "Duration (s)", 2.5f, 1.5f, 6.f, 0.5f);
+        n.hud = [](Frame& f) { if (auto* m = Registry::get().find("notifications")) drawNotifications(f, *m); };
+        // off by default here (Purxiy has it on): our top right already holds the player list
+        auto& am = r.add("active_modules", "Active Modules", Category::Hud, "Every module you have switched on, as a list", false);
+        am.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).toggleSetting("background", "Background", true)
+            .slider("opacity", "Background opacity", 0.6f, 0.f, 1.f, 0.05f).slider("x", "X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f)
+            .slider("y", "Y (0 top .. 1 bottom)", 0.f, 0.f, 1.f, 0.01f).choice("sort", "Order", {"Length", "Alphabetical"}, 0)
+            .toggleSetting("gradient", "Gradient", true).toggleSetting("hud", "HUD elements", false);
+        am.hud = [](Frame& f) { if (auto* m = Registry::get().find("active_modules")) drawActiveModules(f, *m); };
+    }
     r.add("fps", "FPS", Category::Hud, "Frames per second", true).hud = [](Frame& f) {
         f.infoLines.push_back(std::format("FPS {}", gFps.value));
     };
@@ -565,6 +677,9 @@ void mark(char const* what) { // [BF] a gameplay moment (you got hit), so hitche
 
 // ============================================================================ runtime
 void installRuntime() {
+    gSubs.on<ll::event::KeyInputEvent>([](ll::event::KeyInputEvent& ev) {
+        try { onModuleKey(ev.keyCode() == 0x10 ? (w32::keyDown(0xA1) ? 0xA1 : 0xA0) : ev.keyCode(), ev.isDown()); } catch (...) {}
+    });
     installVisualHooks();
     installChatHooks();
     serverauto::install();

@@ -105,6 +105,7 @@ void resetScroll() { gScroll = gScrollAt = 0; }
 void setView(View v) { gView = v; gViewAtMs = nowMs(); resetScroll(); }
 void showPage(Page p) { gPage = p; resetScroll(); if (gView != View::Window) setView(View::Window); }
 void toast(std::string s) { gToast = std::move(s); gToastMs = nowMs(); }
+std::string gBindFor; // module whose toggle key is being recorded (Keybind row), empty = none
 
 // ---------------------------------------------------------------- theme (neon purple + white)
 constexpr float kH = 760.0f; // design units: the screen is always 760 tall (the prototype's 1280 x 760 frame)
@@ -538,6 +539,17 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     pageHeader(f, x, y - 4, wd, m->name, m->planned ? m->description + " - on the roadmap." : m->description, a, m->planned ? -1 : (m->enabled ? 1 : 0),
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
     Scroller sc(f, w, a);
+    if (!m->planned) {   // [BF] Keybind (Purxiy-style): click, then press a key. Backspace clears, Esc cancels.
+        bool const listening = gBindFor == m->id;
+        if (sc.fits(50)) {
+            std::string const cur = m->key > 0 && m->key < 256 ? keyNames()[size_t(m->key)] : std::string("None");
+            row(f, x, sc.y, wd, 50, "Keybind", listening ? "Press a key...  (Backspace clears, Esc cancels)" : "Toggles this module in game", a, listening);
+            f.g.text(listening ? "..." : cur, x + wd - 16, sc.y + 25, 13, rgba(kWhite, listening ? 1.0f : 0.85f), a, true, 2, listening ? 0.6f : 0);
+            std::string id = m->id;
+            f.hits.push_back({x, sc.y, wd, 50, [id](bool) { gBindFor = gBindFor == id ? std::string() : id; }});
+        }
+        sc.y += 60;
+    }
     if (m->id == "lyricsflow") {
         if (sc.fits(50)) {
             row(f, x, sc.y, wd, 50, "Open the LyricsForge panel", "The glass settings panel in the world (also: L in game)", a);
@@ -927,6 +939,7 @@ void open(IClientInstance& client) {
     gWheel.clear();
     gHeld = false;
     gDrag.clear();
+    gBindFor.clear();
     setView(lookOn("wheel", true) ? View::Wheel : View::Window);
     if (gView == View::Window) gPage = Page::Mods;
     client.getSceneFactory().getCurrentSceneStack()->pushScreen(scene, false);
@@ -992,6 +1005,24 @@ void install() {
         std::lock_guard lock(gMutex);
         if (!gScene || !ownsTop()) return;
         int const k = ev.keyCode();
+        if (!gBindFor.empty()) {                           // recording a module's toggle key
+            ev.cancel();
+            if (!ev.isDown()) return;
+            auto* m = Registry::get().find(gBindFor);
+            int   vk = k == 0x10 ? (win32::keyDown(0xA1) ? 0xA1 : 0xA0) : k;
+            if (!m || k == 0x1B) { gBindFor.clear(); return; }
+            if (vk == 0xA1 || vk == 0x2D) { toast("Right Shift / Insert open the menu - pick another key"); return; }
+            if (k == 0x08 || k == 0x2E) { m->key = 0; toast(m->name + ": keybind cleared"); }
+            else {
+                for (auto& o : Registry::get().all())       // one key, one module
+                    if (o.get() != m && o->key == vk) o->key = 0;
+                m->key = vk;
+                toast(m->name + " bound to " + keyNames()[size_t(vk & 255)]);
+            }
+            Registry::get().save();
+            gBindFor.clear();
+            return;
+        }
         if (k == 0x1B) {                                   // Esc: clear the search, leave a sub page, then close
             ev.cancel();
             if (!ev.isDown()) return;
