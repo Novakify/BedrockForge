@@ -328,6 +328,8 @@ void atmosTick() {
             out += std::format("bk 1\nbk_mode {}\nbk_dist {:.1f}\nbk_band {:.2f}\nbk_blur {:.2f}\nbk_hi {:.2f}\nbk_near {}\nbk_fringe {:.2f}\n", int(bk->num("focus", 0)),
                                bk->num("distance", 24.f), bk->num("band", 0.26f), bk->num("blur", 0.5f), bk->num("highlights", 0.6f), bk->flag("near", true) ? 1 : 0, bk->num("fringe", 0.45f));
         else out += "bk 0\n";
+        if (auto* pm = r.find("place_animation"); pm && pm->enabled) { auto c = pal(pm, 0); out += std::format("pa 1\npa_c {:.3f} {:.3f} {:.3f}\npa_dur {:.2f}\npa_glow {:.2f}\npa_break {}\n", c[0], c[1], c[2], pm->num("duration", 0.34f) * 1.6f, pm->num("glow", 0.6f), pm->flag("breaking", true) ? 1 : 0); }
+        else out += "pa 0\n";
         if (sw && sw->enabled) { auto c = pal(sw, 0); out += std::format("sw 1\nsw_c {:.3f} {:.3f} {:.3f}\nsw_size {:.2f}\nsw_glow {:.2f}\n", c[0], c[1], c[2], sw->num("size", 1.f), sw->num("glow", 0.7f)); }
         else out += "sw 0\n";
     }
@@ -1147,7 +1149,11 @@ void registerBuiltins() {
             .slider("band", "How much stays sharp", 0.26f, 0.05f, 1.f, 0.01f).slider("blur", "Blur", 0.5f, 0.1f, 1.f, 0.05f)
             .slider("highlights", "Highlights", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("near", "Nearer than the focus blurs too", true)
             .slider("fringe", "Lilac fringe", 0.45f, 0.f, 1.f, 0.05f);
-        for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm, &bkm}) m->onToggle = [](bool) { gAtmosLast.clear(); };
+        // (the block itself cannot grow / pop: its geometry is the game's chunk mesh - only the light is ours)
+        auto& pam = r.add("place_animation", "Place Animation", Category::Visual, "A soft light on blocks as you build and break (Renderer Foundation)", false);
+        pam.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("duration", "Duration (s)", 0.34f, 0.15f, 1.f, 0.01f)
+            .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("breaking", "Blocks you break too", true);
+        for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm, &bkm, &pam}) m->onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
         ms.onToggle = [](bool) { gAtmosLast.clear(); };
     }

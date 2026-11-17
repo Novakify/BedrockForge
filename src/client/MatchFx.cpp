@@ -50,6 +50,8 @@
 #include "mc/world/level/block/actor/BlockActor.h"
 
 #include "bf/Events.h"
+#include "client/Module.h"
+namespace bedrock_forge::client { void pushFxEvent(uint32_t kind, float x, float y, float z, float a); }
 extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int vKey);
 #include "ll/api/mod/NativeMod.h"
 
@@ -303,6 +305,19 @@ void onChange(ll::event::BlockChangedEvent& ev) {
     auto const& p    = ev.pos();
     auto const& prev = ev.previousBlock();
     auto const& next = ev.newBlock();
+    try {   // [BF] Place Animation (Renderer Foundation): a soft light on a block as it appears / goes, near you
+        if (bedrock_forge::client::Registry::get().on("place_animation")) {
+            bool const placed = prev.getTypeName() == "minecraft:air" && next.getTypeName() != "minecraft:air";
+            bool const broke  = prev.getTypeName() != "minecraft:air" && next.getTypeName() == "minecraft:air";
+            static int64_t lastAt = 0; static int lx = 0, ly = 0, lz = 0;
+            int64_t const t = nowMs();
+            bool const dup = t - lastAt < 150 && lx == p.x && ly == p.y && lz == p.z;   // single-player fires twice
+            if ((placed || broke) && !dup) {
+                lastAt = t; lx = p.x; ly = p.y; lz = p.z;
+                bedrock_forge::client::pushFxEvent(placed ? 5u : 6u, float(p.x), float(p.y), float(p.z), 0.f);
+            }
+        }
+    } catch (...) {}
     std::lock_guard l(gMutex);
     if (!gAnchored) return;
     double const dx = p.x + 0.5 - gScanC[0], dy = p.y + 0.5 - gScanC[1], dz = p.z + 0.5 - gScanC[2];
