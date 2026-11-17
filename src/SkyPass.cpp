@@ -80,6 +80,7 @@ std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one 
 std::atomic<bool> gSkySinceClear{false}, gFxSinceClear{false};
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
+std::atomic<bool> gBlurOnly{false};  // no World FX sky, but motion blur is asked for: the pass runs for the blur alone (any sky: vanilla, LyricsForge)
 std::atomic<int> gWorldSky{0};     // World FX standalone sky (0 off, 1 Cloud Sea), see the World FX section below
 void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list);
 // sky shaders learned from the game's own materials (learnGameMaterials / learnMaterialFile)
@@ -388,6 +389,13 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         gActive = c && h.active && st < 30;
         if (gActive && gUi.replace) rf::lyrics::setCameraWanted(true);
         if (gWorldSky.load()) { rf::lyrics::setCameraWanted(true); worldSkyPrepare(device, list); }
+        {   // motion blur without a World FX sky: the same pass, the blur draw only (it needs the world's targets + the camera)
+            bool const bo = gWorldSky.load() == 0 && rf::postfx::motionBlurWanted() > 0.0f;
+            static bool was = false;
+            gBlurOnly.store(bo, std::memory_order_relaxed);
+            if (bo) rf::lyrics::setCameraWanted(true);
+            if (bo != was) { was = bo; rf::worldfx::setTargetsWanted(gWorldSky.load() != 0 || bo); }
+        }
         gPictureOn = gActive && h.picture;
         // stage 2 "My picture" needs the decoded panorama even with the preview off
         if (!gUi.enabled && !gBroken && gUi.replace && gPictureOn) {
@@ -1297,8 +1305,10 @@ int kindOf(ID3D12PipelineState* pso) {
     return it->second.kind;
 }
 
-bool wanted() { return (gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken) || gWorldSky.load(std::memory_order_relaxed) != 0; }
-bool wantRoot() { return wanted() && (gPictureOn.load(std::memory_order_relaxed) || gWorldSky.load(std::memory_order_relaxed) != 0); }
+bool replacing() { return (gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken) || gWorldSky.load(std::memory_order_relaxed) != 0; }   // a sky of ours takes the game's place
+bool fxOn() { return gWorldSky.load(std::memory_order_relaxed) != 0 || gBlurOnly.load(std::memory_order_relaxed); }                                  // the World FX pass has work (a look, or the blur alone)
+bool wanted() { return replacing() || gBlurOnly.load(std::memory_order_relaxed); }
+bool wantRoot() { return wanted() && (gPictureOn.load(std::memory_order_relaxed) || fxOn()); }
 bool hideClouds() { return gUi.hideClouds || gWorldSky.load(std::memory_order_relaxed) != 0; }
 
 namespace {
@@ -2080,6 +2090,7 @@ bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls con
 bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldFxPass(list, st, calls); // the World FX look rides here
+    if (gBlurOnly.load(std::memory_order_relaxed)) drawWorldFxPass(list, st, calls);        // any other sky: the pass draws the motion blur alone
     if (!st.nVb || !st.vb || !st.haveTopo) return false;
     auto copy = bfCopy();
     if (!copy) return false;
@@ -2461,7 +2472,7 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 std::atomic<bool> gTerrainSinceClear{false};
 void noteTerrainDraw() { if (!gTerrainSinceClear.load(std::memory_order_relaxed)) gTerrainSinceClear.store(true, std::memory_order_relaxed); }
 bool fxFallbackWanted(ID3D12GraphicsCommandList* /*list*/, size_t dsv) {   // (a try to only count clears over the world's target made Novak flicker everywhere - reverted)
-    if (!gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed) || !fxPairRt(dsv)) return false;
+    if (!fxOn() || !gFxPso.load(std::memory_order_relaxed) || !fxPairRt(dsv)) return false;
     ++gDbgClears;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
@@ -2560,7 +2571,7 @@ bool learnWorldPair(size_t rt, size_t ds) {
     return true;
 }
 bool leaveWorldWanted(size_t rt, size_t ds) {
-    if (!rt || !gWorldSky.load(std::memory_order_relaxed) || !gFxPso.load(std::memory_order_relaxed)) { ++gLvNoPso; return false; }
+    if (!rt || !fxOn() || !gFxPso.load(std::memory_order_relaxed)) { ++gLvNoPso; return false; }
     if (gFxSinceClear.load()) { ++gLvDone; return false; }
     if (fxPairRt(ds) != rt && !learnWorldPair(rt, ds)) { ++gLvPair; return false; }   // only the world's own targets
     // (no 60 ms wait after the last cloud pass any more: measured, the cloud pass of a frame always comes before the world
@@ -2601,9 +2612,10 @@ void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
 }
 static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     WorldFxLook const look = gLook;
+    bool const blurOnly = gWorldSky.load(std::memory_order_relaxed) == 0;   // no World FX sky: only the motion blur draw
     // the pass also carries the cloud sea (sky pixels + terrain under the deck), so it runs with the block look off too
     if (!st.rootKnown) { wfxStatus("waiting for the game's root state"); return false; }
-    if (!gWsTexUp.load() || !gWsHeap) { wfxStatus("waiting for the cloud textures"); return false; }
+    if (!blurOnly && (!gWsTexUp.load() || !gWsHeap)) { wfxStatus("waiting for the cloud textures"); return false; }
     GamePso g;
     {
         std::lock_guard l(gPsoMutex);
@@ -2628,16 +2640,66 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
+    // ---- camera motion blur, part 1: how the camera moved (see the draw below). Worked out before any GPU work: with no
+    //      World FX sky and a still camera the pass has nothing to do at all.
+    struct BlurCam { bool have = false; uint64_t calls = 0; double pos[3]{}; float f[3]{}, r[3]{}, u[3]{}; float w[3]{}, v[3]{};
+                     std::chrono::steady_clock::time_point at{}; };
+    static BlurCam bc;
+    auto const tNow = std::chrono::steady_clock::now();
+    if (snap.calls != bc.calls || !bc.have) {
+        double const dt = std::chrono::duration<double>(tNow - bc.at).count();
+        auto cross = [](float const a[3], float const b[3], float o[3]) { o[0] += a[1] * b[2] - a[2] * b[1]; o[1] += a[2] * b[0] - a[0] * b[2]; o[2] += a[0] * b[1] - a[1] * b[0]; };
+        if (bc.have && dt > 0.0005 && dt < 0.1) {
+            // the turn prev -> now as axis * angle: the sum of (old axis x new axis) over the basis is 2 sin(angle) * axis
+            float w[3]{}, v[3];
+            cross(bc.f, snap.forward, w); cross(bc.r, snap.right, w); cross(bc.u, snap.up, w);
+            for (int a = 0; a < 3; ++a) { w[a] = float(0.5 * w[a] / dt); v[a] = float((snap.pos[a] - bc.pos[a]) / dt); }
+            if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 80.0f * 80.0f) v[0] = v[1] = v[2] = 0.0f;   // a teleport / respawn, not a move
+            // a little smoothing: one uneven frame must not make the streaks jump in length (that reads as stutter)
+            for (int a = 0; a < 3; ++a) { bc.w[a] += (w[a] - bc.w[a]) * 0.65f; bc.v[a] += (v[a] - bc.v[a]) * 0.5f; }
+        } else if (dt >= 0.1) {
+            for (int a = 0; a < 3; ++a) bc.w[a] = bc.v[a] = 0.0f;
+        }
+        bc.have = true; bc.calls = snap.calls; bc.at = tNow;
+        for (int a = 0; a < 3; ++a) { bc.pos[a] = snap.pos[a]; bc.f[a] = snap.forward[a]; bc.r[a] = snap.right[a]; bc.u[a] = snap.up[a]; }
+    }
+    float strength = rf::postfx::motionBlurWanted();
+    float w[3] = {bc.w[0], bc.w[1], bc.w[2]}, v[3] = {bc.v[0], bc.v[1], bc.v[2]};
+    if (look.blurTest) {   // bench / review: a steady pretend motion, so a still frame shows the blur and its cost
+        if (strength <= 0.0f) strength = 1.0f;
+        w[0] = w[1] = w[2] = v[0] = v[1] = v[2] = 0.0f;
+        if (look.blurTest == 2) for (int a = 0; a < 3; ++a) v[a] = snap.right[a] * 5.6f;   // a sprint sideways
+        else w[1] = 2.1f;                                                                // 120 degrees a second
+    }
+    bool  blurNeed = false;
+    float blurShutter = 0.0f, blurDead = 1.0f;
+    ID3D12PipelineState* bp = nullptr;
+    if (strength > 0.0f) {
+        rf::postfx::noteWorldBlur();
+        blurShutter = 0.006f * std::min(strength, 3.0f);        // seconds: strength 1 = 6 ms (a 130 degree shutter at 60 FPS)
+        float const focal = float(rd.Width) * 0.5f * std::fabs(snap.proj[0]);   // pixels per radian at the middle
+        blurDead = std::max(0.9f, float(rd.Width) / 2560.0f);
+        float const wl = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]) * blurShutter;
+        float const tl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) * blurShutter * look.blurMove;
+        bp = derived(dev.Get(), g, 9);
+        // would anything move a pixel past the dead zone? (turning: everywhere; moving: a thing 0.6 blocks away)
+        blurNeed = bp && (wl * focal * 1.5f > blurDead || tl * focal / 0.6f > blurDead);
+    }
+    if (blurOnly && !blurNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
+        if (strength > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
+        ++gPassesThisFrame;
+        return true;
+    }
     // a kill playing this frame: the pass with the death scenes (built in the background the first time; until it is
     // ready the lean pass draws and the kill simply has no scene yet)
-    bool const killsNow = [&] { MatchFrame const m0 = matchFrame(look); return m0.cb.m0[1] > 0.5f && m0.cb.m1[2] > 0.5f; }();
+    bool const killsNow = !blurOnly && [&] { MatchFrame const m0 = matchFrame(look); return m0.cb.m0[1] > 0.5f && m0.cb.m1[2] > 0.5f; }();
     int const kAdd = killsNow ? 10 : 0;
     ID3D12PipelineState* pso = nullptr;
     if (killsNow) pso = derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + kAdd);
-    else derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + 10);   // warm it up before the first kill needs it
+    else if (!blurOnly) derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + 10);   // warm it up before the first kill needs it
     bool const killPso = pso != nullptr;
-    if (!pso) pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
-    if (!pso) { wfxStatus("building the pass pipeline (in the background)"); return false; }
+    if (!pso && !blurOnly) pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
+    if (!pso && !blurOnly) { wfxStatus("building the pass pipeline (in the background)"); return false; }
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
     UINT64 rTot = 0, dTot = 0;
     dev->GetCopyableFootprints(&rd, 0, 1, 0, &fpC, nullptr, nullptr, &rTot);
@@ -2677,6 +2739,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
     gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
     { float const lp[3] = {float(snap.pos[0]), float(snap.pos[1]), float(snap.pos[2])}; rf::deathsfx::setListener(lp, snap.forward); }
+    if (!blurOnly) {   // ---- the World FX look itself (everything down to the motion blur)
     if (gTestBedReq.exchange(0)) {
         float fx = snap.forward[0], fz = snap.forward[2], fl = std::sqrt(fx * fx + fz * fz);
         if (fl < 1e-3f) fx = 0, fz = 1, fl = 1;
@@ -2775,69 +2838,36 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         calls.setPso(list, pso);
         calls.draw(list, 3, 1, 0, 0);
     }
-    // ---- camera motion blur (shaders/worldfx_blur.hlsl): the world as the pass left it, streaked along each pixel's own
-    //      path over a shutter time. Here, not at Present: there is depth (walking and strafing blur too, near more than
-    //      far) and the hand + HUD are not drawn yet, so they stay sharp. Costs nothing while the camera is still.
-    {
-        struct BlurCam { bool have = false; uint64_t calls = 0; double pos[3]{}; float f[3]{}, r[3]{}, u[3]{}; float w[3]{}, v[3]{};
-                         std::chrono::steady_clock::time_point at{}; };
-        static BlurCam bc;
-        auto const tNow = std::chrono::steady_clock::now();
-        if (snap.calls != bc.calls || !bc.have) {
-            double const dt = std::chrono::duration<double>(tNow - bc.at).count();
-            auto cross = [](float const a[3], float const b[3], float o[3]) { o[0] += a[1] * b[2] - a[2] * b[1]; o[1] += a[2] * b[0] - a[0] * b[2]; o[2] += a[0] * b[1] - a[1] * b[0]; };
-            if (bc.have && dt > 0.0005 && dt < 0.1) {
-                // the turn prev -> now as axis * angle: the sum of (old axis x new axis) over the basis is 2 sin(angle) * axis
-                float w[3]{}, v[3];
-                cross(bc.f, snap.forward, w); cross(bc.r, snap.right, w); cross(bc.u, snap.up, w);
-                for (int a = 0; a < 3; ++a) { w[a] = float(0.5 * w[a] / dt); v[a] = float((snap.pos[a] - bc.pos[a]) / dt); }
-                if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 80.0f * 80.0f) v[0] = v[1] = v[2] = 0.0f;   // a teleport / respawn, not a move
-                // a little smoothing: one uneven frame must not make the streaks jump in length (that reads as stutter)
-                for (int a = 0; a < 3; ++a) { bc.w[a] += (w[a] - bc.w[a]) * 0.65f; bc.v[a] += (v[a] - bc.v[a]) * 0.5f; }
-            } else if (dt >= 0.1) {
-                for (int a = 0; a < 3; ++a) bc.w[a] = bc.v[a] = 0.0f;
-            }
-            bc.have = true; bc.calls = snap.calls; bc.at = tNow;
-            for (int a = 0; a < 3; ++a) { bc.pos[a] = snap.pos[a]; bc.f[a] = snap.forward[a]; bc.r[a] = snap.right[a]; bc.u[a] = snap.up[a]; }
+    } else {       // no World FX sky: only what the blur draw needs
+        calls.setRootSig(list, gWfxRoot.Get());
+        list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
+        list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
+        calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    }
+    // ---- camera motion blur, part 2 (shaders/worldfx_blur.hlsl): the world as the pass left it, streaked along each
+    //      pixel's own path over a shutter time. Here, not at Present: there is depth (walking and strafing blur too, near
+    //      more than far) and the hand + HUD are not drawn yet, so they stay sharp. Costs nothing while the camera is still.
+    if (blurNeed) {
+        if (!blurOnly) {   // the pass just drew over the scene: take it again (with no World FX sky the first copy is the scene)
+            wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+            wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            dst.pResource = sb, dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
+            list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+            wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         }
-        float strength = rf::postfx::motionBlurWanted();
-        float w[3] = {bc.w[0], bc.w[1], bc.w[2]}, v[3] = {bc.v[0], bc.v[1], bc.v[2]};
-        if (look.blurTest) {   // bench / review: a steady pretend motion, so a still frame shows the blur and its cost
-            if (strength <= 0.0f) strength = 1.0f;
-            w[0] = w[1] = w[2] = v[0] = v[1] = v[2] = 0.0f;
-            if (look.blurTest == 2) for (int a = 0; a < 3; ++a) v[a] = snap.right[a] * 5.6f;   // a sprint sideways
-            else w[1] = 2.1f;                                                                // 120 degrees a second
-        }
-        if (strength > 0.0f) {
-            rf::postfx::noteWorldBlur();
-            float const shutter = 0.006f * std::min(strength, 3.0f);        // seconds: strength 1 = 6 ms (a 130 degree shutter at 60 FPS)
-            float const focal   = float(rd.Width) * 0.5f / std::max(c[3], 0.05f);   // pixels per radian at the middle
-            float const dead    = std::max(0.9f, float(rd.Width) / 2560.0f);
-            float const wl = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]) * shutter;
-            float const tl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) * shutter * look.blurMove;
-            ID3D12PipelineState* bp = derived(dev.Get(), g, 9);
-            // nothing would move a pixel past the dead zone (turning: everywhere; moving: a thing 0.6 blocks away): skip it all
-            if (bp && (wl * focal * 1.5f > dead || tl * focal / 0.6f > dead)) {
-                wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
-                wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
-                dst.pResource = sb, dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
-                list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-                wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-                wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                float b[44]{};
-                std::memcpy(b, c, 12 * sizeof(float));                      // c0..c2: the camera, as the pass used it
-                static uint32_t seed = 0;
-                b[11] = float(++seed & 1023u);
-                b[12] = 0.025f; b[13] = float(rd.Width) * 0.03f; b[14] = dead; b[15] = c[15];
-                b[16] = c[16]; b[17] = c[17]; b[18] = c[18]; b[19] = c[19];
-                for (int a = 0; a < 3; ++a) { b[20 + a] = w[a] * shutter; b[24 + a] = v[a] * shutter * look.blurMove; }
-                b[23] = 15.0f;
-                b[27] = look.blurTest == 3 ? 1.0f : 0.0f;
-                calls.setConsts(list, 0, 44, b, 0);
-                calls.setPso(list, bp);
-                calls.draw(list, 3, 1, 0, 0);
-            }
-        }
+        float b[44]{};
+        std::memcpy(b, c, 12 * sizeof(float));                      // c0..c2: the camera, as the pass used it
+        static uint32_t seed = 0;
+        b[11] = float(++seed & 1023u);
+        b[12] = 0.025f; b[13] = float(rd.Width) * 0.03f; b[14] = blurDead; b[15] = c[15];
+        b[16] = c[16]; b[17] = c[17]; b[18] = c[18]; b[19] = c[19];
+        for (int a = 0; a < 3; ++a) { b[20 + a] = w[a] * blurShutter; b[24 + a] = v[a] * blurShutter * look.blurMove; }
+        b[23] = 15.0f;
+        b[27] = look.blurTest == 3 ? 1.0f : 0.0f;
+        calls.setConsts(list, 0, 44, b, 0);
+        calls.setPso(list, bp);
+        calls.draw(list, 3, 1, 0, 0);
     }
     if (timed) wfxperf::end(list, tsFrame);
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);

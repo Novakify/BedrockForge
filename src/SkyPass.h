@@ -49,6 +49,7 @@ void noteTerrainDraw();
 float novakMatchK();
 float cloudSeaMatchK(); // Cloud Sea on: how far the match is (0..1); -1 off   // Novak Glass on: how far the match is (0 the start .. 1 the endgame, from the living sky); -1 off                // a block draw went into the world (lock-free)
 bool wanted();                         // a LyricsFlow sky is active: UiCapture tracks list state + calls us
+bool replacing();                      // a sky of ours takes the game's place (wanted() is also true for the motion blur alone)
 bool wantRoot();                       // "My picture" is on: also track the graphics root state
 bool hideClouds();
 struct GameState {

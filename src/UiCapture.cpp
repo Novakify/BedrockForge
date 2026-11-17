@@ -889,6 +889,8 @@ int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa&
     int k = s->kind;
     if (k < 0) { k = rf::sky::kindOf(pso); s->kind = k; } // cold path: a draw beat setPso's cache fill
     if (k == rf::sky::Terrain) { rf::sky::noteTerrainDraw(); if (s->bound) s->terr = true; return 0; }
+    bool const rep = rf::sky::replacing();   // false: only the motion blur wants the pass - the game's own sky stays as it is
+    if (!rep && k != rf::sky::Clouds) return 0;
     if (k == rf::sky::Hide) { drawOrig = false; return 1; }
     if (k == rf::sky::VvSky) { // Vibrant Visuals: the first vanilla star / sun / moon draw of the frame gets our sky
         if (!rf::sky::vvWanted()) return 0;
@@ -901,7 +903,7 @@ int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa&
     if (k != rf::sky::Dome && k != rf::sky::Clouds) return 0;
     st.pso = pso;
     ia     = s->ia;
-    if (k == rf::sky::Clouds) { drawOrig = !rf::sky::hideClouds(); return 3; }
+    if (k == rf::sky::Clouds) { drawOrig = !rep || !rf::sky::hideClouds(); return 3; }
     return 2;
 }
 void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa const& ia, int kind) {
