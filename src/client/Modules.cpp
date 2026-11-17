@@ -376,7 +376,23 @@ void atmosTick() {
                 }
             }
             out += std::format("pano_capture {}\n", panoId);
+            if (auto* fl = r.find("freelook"); fl && fl->enabled) out += std::format("freelook {} {} {:.1f}\n", int(fl->num("key", 0)), int(fl->num("mode", 0)), fl->num("distance", 4.f));
+            else out += "freelook 0 0 4\n";
         }
+        // Cyberspace / Cute World (Purxiy world looks), drawn by RF's atmos pass
+        if (auto* cy = r.find("cyberspace"); cy && cy->enabled) {
+            static constexpr float kCy[4][3] = {{0.2f, 0.9f, 1.0f}, {0.78f, 0.42f, 1.0f}, {0.35f, 1.0f, 0.55f}, {1.0f, 0.3f, 0.55f}};
+            int const pi = std::clamp(int(cy->num("palette", 0)), 0, 3);
+            auto const c = pi == 1 ? std::array<float, 3>{kNeon.r, kNeon.g, kNeon.b} : std::array<float, 3>{kCy[pi][0], kCy[pi][1], kCy[pi][2]};
+            out += std::format("cy 1\ncy_c {:.3f} {:.3f} {:.3f}\ncy_reality {:.2f}\ncy_glow {:.2f}\ncy_circuits {:.2f}\ncy_scan {:.1f}\ncy_sky {}\n", c[0], c[1], c[2],
+                               cy->num("reality", 0.85f), cy->num("glow", 1.f), cy->num("circuits", 1.f), cy->num("interval", 6.f), cy->flag("sky", true) ? 1 : 0);
+        } else out += "cy 0\n";
+        if (auto* cu = r.find("cute_world"); cu && cu->enabled) {
+            static constexpr float kCu[3][3] = {{1.0f, 0.55f, 0.75f}, {0.78f, 0.62f, 1.0f}, {1.0f, 0.75f, 0.45f}};
+            int const pi = std::clamp(int(cu->num("palette", 0)), 0, 2);
+            out += std::format("cu 1\ncu_c {:.3f} {:.3f} {:.3f}\ncu_soft {:.2f}\ncu_hearts {:.2f}\ncu_sparkle {:.2f}\ncu_pastel {:.2f}\n", kCu[pi][0], kCu[pi][1], kCu[pi][2],
+                               cu->num("softness", 0.7f), cu->num("hearts", 1.f), cu->num("sparkles", 1.f), cu->num("pastel", 1.f));
+        } else out += "cu 0\n";
         if (auto* bo = r.find("block_outline"); bo && bo->enabled) { auto c = pal(bo, 0); out += std::format("bo 1\nbo_c {:.3f} {:.3f} {:.3f}\nbo_style {}\nbo_w {:.2f}\nbo_glow {:.2f}\nbo_fill {:.2f}\nbo_face {}\nbo_glide {}\n", c[0], c[1], c[2], int(bo->num("style", 0)), bo->num("width", 2.f), bo->num("glow", 0.6f), bo->num("fill", 0.12f), bo->flag("face", true) ? 1 : 0, bo->flag("glide", true) ? 1 : 0); }
         else out += "bo 0\n";
         auto* ch = r.find("chroma"); auto* ra = r.find("radiance"); auto* wx = r.find("weather");
@@ -1167,6 +1183,60 @@ void registerBuiltins() {
             }
         }
     };
+    // [Purxiy "name_tags": clean tags for players] a glass card over everyone near you: name (Nick Hider aware), health
+    // and distance, scaled by distance and faded out at the edge of its range. Projected with the camera's real FOV.
+    r.add("name_tags", "Name Tags", Category::Hud, "Clean tags over the players near you: name, health and distance", false)
+        .toggleSetting("health", "Health bar", true).toggleSetting("distance", "Distance", true)
+        .slider("size", "Size", 1.f, 0.6f, 1.6f, 0.05f).slider("opacity", "Background opacity", 0.55f, 0.f, 1.f, 0.05f)
+        .slider("range", "Range (blocks)", 48.f, 8.f, 96.f, 4.f)
+        .hud = [](Frame& f) {
+        if (!f.player || f.width <= 0 || f.height <= 0) return;
+        auto* m = Registry::get().find("name_tags");
+        BfPostFxV1 const* fx = BF_GetPostFx();
+        float const fovY = fx && fx->fov > 10.f ? fx->fov : 70.f;
+        float const ty = std::tan(fovY * 0.5f * 3.14159265f / 180.f), tx = ty * f.width / f.height;
+        Vec3 const eye = f.player->getPosition();
+        float const yw = f.player->getRotation().y * 3.14159265f / 180.f, pt = f.player->getRotation().x * 3.14159265f / 180.f;
+        float const fw[3] = {-std::sin(yw) * std::cos(pt), -std::sin(pt), std::cos(yw) * std::cos(pt)};
+        float rt[3] = {-fw[2], 0.f, fw[0]};                                       // forward x up (the game's handedness)
+        float const rl = std::max(std::hypot(rt[0], rt[2]), 1e-4f); rt[0] /= rl; rt[2] /= rl;
+        float const up[3] = {rt[1] * fw[2] - rt[2] * fw[1], rt[2] * fw[0] - rt[0] * fw[2], rt[0] * fw[1] - rt[1] * fw[0]};
+        float const S = m->num("size", 1.f), op = m->num("opacity", 0.55f), range = m->num("range", 48.f);
+        bool const hp = m->flag("health", true), dist = m->flag("distance", true);
+        Actor* self = f.player;
+        try {
+            f.player->getLevel().forEachPlayer([&](Player& p) {
+                if (static_cast<Actor*>(&p) == self) return true;
+                Vec3 const pos = p.getPosition();
+                float const d[3] = {pos.x - eye.x, pos.y + 0.95f - eye.y, pos.z - eye.z};
+                float const dz = d[0] * fw[0] + d[1] * fw[1] + d[2] * fw[2];
+                float const dl = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                if (dz < 0.3f || dl > range) return true;
+                float const sx = (d[0] * rt[0] + d[1] * rt[1] + d[2] * rt[2]) / (dz * tx), sy = (d[0] * up[0] + d[1] * up[1] + d[2] * up[2]) / (dz * ty);
+                if (std::fabs(sx) > 1.2f || std::fabs(sy) > 1.2f) return true;
+                float const X = (sx * 0.5f + 0.5f) * f.width, Y = (0.5f - sy * 0.5f) * f.height;
+                float const k = S * std::clamp(1.25f - dl / 40.f, 0.55f, 1.15f);       // nearer = a little bigger
+                float const fade = std::clamp((range - dl) / 6.f, 0.f, 1.f);
+                std::string const name = hideNick(p.getRealName());
+                std::string const ds = dist ? std::format("{:.0f}m", dl) : std::string();
+                float const nw = textWidth(name, 0.8f * k), dw = dist ? textWidth(ds, 0.65f * k) + 5.f * k : 0.f;
+                float const W = nw + dw + 10.f * k, H = (hp ? 15.f : 12.f) * k;
+                float const x0 = X - W / 2, y0 = Y - H;
+                bf::hud::fillBox(f.ctx, x0, y0, W, H, {0.06f, 0.04f, 0.10f, op * fade});
+                bf::hud::fillBox(f.ctx, x0, y0, W, 1.f * k, {kNeon.r, kNeon.g, kNeon.b, 0.9f * fade});      // the accent line on top
+                bf::hud::drawLabel(f.ctx, x0 + 5.f * k, y0 + 2.5f * k, name, {1, 1, 1, fade}, 0.8f * k);
+                if (dist) bf::hud::drawLabel(f.ctx, x0 + 5.f * k + nw + 5.f * k, y0 + 3.2f * k, ds, {0.85f, 0.8f, 0.95f, 0.8f * fade}, 0.65f * k);
+                if (hp) {
+                    float hv = 1.f;
+                    try { hv = std::clamp(float(p.getHealth()) / std::max(1.f, float(p.getMaxHealth())), 0.f, 1.f); } catch (...) {}
+                    Rgba const hc = hv > 0.5f ? Rgba{0.45f, 1.f, 0.6f, fade} : hv > 0.25f ? Rgba{1.f, 0.78f, 0.3f, fade} : Rgba{1.f, 0.35f, 0.35f, fade};
+                    bf::hud::fillBox(f.ctx, x0 + 5.f * k, y0 + H - 3.5f * k, W - 10.f * k, 1.5f * k, {1, 1, 1, 0.15f * fade});
+                    bf::hud::fillBox(f.ctx, x0 + 5.f * k, y0 + H - 3.5f * k, (W - 10.f * k) * hv, 1.5f * k, hc);
+                }
+                return true;
+            });
+        } catch (...) {}
+    };
     r.add("debug_menu", "Debug Menu", Category::Hud, "Java F3-style details").hud = [](Frame& f) {
         if (!f.player) return;
         auto const& p = f.player->getPosition();
@@ -1237,6 +1307,11 @@ void registerBuiltins() {
     r.plan("hitboxes", "Hitboxes", Category::Combat, "Entity bounding boxes (Lamium has this today)");
 
     // ---------------- Camera
+    // [Purxiy "freelook": look around without turning] Renderer Foundation turns the camera round you while the key is
+    // held (or toggled); you keep running the way you were facing. No key until you pick one (your controls stay yours).
+    r.add("freelook", "Freelook", Category::Camera, "Look around without turning: hold your key and the camera orbits you", false)
+        .slider("key", "Key (pick one: none by default)", 0, 0, 254, 1).choice("mode", "Mode", {"Hold", "Toggle"}, 0)
+        .slider("distance", "Distance (blocks, 0 = from your eyes)", 4.f, 0.f, 10.f, 0.5f);
     r.add("zoom", "Zoom", Category::Camera, "Hold C to zoom", true)
         .slider("factor", "Zoom factor", 4, 1.5f, 12, 0.5f).slider("key", "Key", 0x43, 8, 254, 1)
         .toggleSetting("smooth", "Smooth", true).toggleSetting("slow_turn", "Slower turning while zoomed", true);
@@ -1317,6 +1392,13 @@ void registerBuiltins() {
         // [Purxiy "main_menu": the world behind the menus] the title screen's panorama, captured from where you stand
         r.add("main_menu", "Main Menu", Category::Visual, "Your own world behind the title screen: stand somewhere beautiful and capture it (shows from the next start)", false)
             .toggleSetting("capture", "Capture this view now", false);
+        r.add("cyberspace", "Cyberspace", Category::Visual, "Step into a digital world of light, wires and data (Renderer Foundation)", false)
+            .choice("palette", "Colour", {"Cyan", "Accent", "Matrix", "Neon pink"}, 0).slider("reality", "Digital", 0.85f, 0.1f, 1.f, 0.05f)
+            .slider("glow", "Glow", 1.f, 0.f, 2.f, 0.05f).slider("circuits", "Circuits", 1.f, 0.f, 1.f, 0.05f)
+            .slider("interval", "Scan every (s)", 6.f, 2.f, 20.f, 1.f).toggleSetting("sky", "Data sky", true);
+        r.add("cute_world", "Cute World", Category::Visual, "A soft pastel world with drifting hearts and little sparkles (Renderer Foundation)", false)
+            .choice("palette", "Hearts", {"Rose", "Lilac", "Peach"}, 0).slider("pastel", "Pastel", 1.f, 0.f, 1.f, 0.05f)
+            .slider("softness", "Softness", 0.7f, 0.f, 1.f, 0.05f).slider("hearts", "Hearts", 1.f, 0.f, 1.5f, 0.05f).slider("sparkles", "Sparkles", 1.f, 0.f, 1.f, 0.05f);
         auto& bom = r.add("block_outline", "Block Outline", Category::Visual, "A cleaner, glowing outline on the block you aim at (Renderer Foundation)", false);
         bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
             .slider("width", "Width (px)", 2.f, 1.f, 5.f, 0.5f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.12f, 0.f, 0.6f, 0.02f)

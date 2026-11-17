@@ -397,7 +397,8 @@ constexpr char const* kTabIcon[kTabs]  = {"pin", "eye", "globe", "wand", "monito
 constexpr int         kTabHud = 4;
 int visualGroup(Module const& m) {   // 1 visual, 2 world, 3 cosmetics
     static constexpr std::string_view kWorld[] = {"haze", "mist", "ambience", "weather", "chroma", "bokeh", "radiance", "sky", "fullbright",
-                                                  "time_changer", "place_animation", "block_outline", "pvp_preset"};
+                                                  "time_changer", "place_animation", "block_outline", "pvp_preset", "cyberspace", "cute_world",
+                                                  "main_menu"};
     static constexpr std::string_view kCos[] = {"jump_circles", "hit_splash", "ripple", "shockwave", "trail", "aura", "halo", "wings", "cape",
                                                 "glass_frost", "hand_movement"};
     for (auto id : kWorld) if (m.id == id) return 2;
