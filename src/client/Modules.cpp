@@ -51,6 +51,8 @@
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/level/Level.h"
+#include "mc/world/phys/HitResult.h"
+#include "mc/world/phys/HitResultType.h"
 #include "mc/world/level/storage/LevelData.h"
 
 #include "bf/Events.h"
@@ -78,10 +80,14 @@ struct BfFxEventsV1 {
     uint32_t pflags;             // 1 = known, 2 = on the ground
     uint32_t pad2;
     int64_t  pAtMs;
+    // version 3: the block you aim at (Block Outline)
+    int32_t  bx, by, bz;         // block position (world)
+    uint32_t bface;              // 0..5 the face you look at (Bedrock facing), 255 = no block
+    int64_t  bAtMs;
 };
 __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents();
 }
-namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 2, 0, 0, {}, 0, 0, 0, 0, 0, 0, 0}; }
+namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 3, 0, 0, {}, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0}; }
 extern "C" __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents() { return &gFxEv; }
 namespace bedrock_forge::client {
 void pushFxEvent(uint32_t kind, float x, float y, float z, float a = 0.f) {
@@ -127,6 +133,7 @@ std::atomic<int64_t>  gLastNonHudFrameMs{0};
 std::deque<int64_t>   gLeftClicks, gRightClicks; // guarded by gMutex
 std::atomic<float>    gLastReach{0};
 std::atomic<int64_t>  gLastReachAt{0};
+std::atomic<bool>     gLastHitCrit{false};   // [Custom Crosshair] the last hit was a critical (gold marker)
 std::atomic<int64_t>  gTargetId{0}, gTargetAt{0};
 std::atomic<int>      gTargetHits{0};
 std::atomic<int>      gCombo{0};
@@ -270,6 +277,35 @@ constexpr Pal kHazePals[] = {
     {"Aurora", {0.36f, 1.00f, 0.66f}, {0.72f, 0.46f, 1.00f}}, {"Novak", {0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}}};
 constexpr Pal kMistPals[] = {
     {"Autumn", {1.00f, 0.86f, 0.70f}, {}}, {"Lilac", {0.86f, 0.80f, 1.00f}, {}}, {"Pearl", {0.92f, 0.94f, 1.00f}, {}}, {"Rose", {1.00f, 0.84f, 0.88f}, {}}};
+// [Main Menu] the panorama pack RF writes (development_resource_packs/BF Menu World) must be in the global pack list of
+// the profile you play on: the most recently used one. Added once (the old list is kept next to it), at the top.
+void registerMenuPack() {
+    try {
+        wchar_t const* ad = _wgetenv(L"APPDATA");
+        if (!ad) return;
+        auto const users = std::filesystem::path(ad) / L"Minecraft Bedrock" / L"Users";
+        std::filesystem::path best; std::filesystem::file_time_type bestT{};
+        std::error_code ec;
+        for (auto const& u : std::filesystem::directory_iterator(users, ec)) {
+            auto const f = u.path() / L"games" / L"com.mojang" / L"minecraftpe" / L"global_resource_packs.json";
+            if (!std::filesystem::exists(f, ec)) continue;
+            auto const t = std::filesystem::last_write_time(u.path() / L"games" / L"com.mojang" / L"minecraftpe", ec);
+            if (best.empty() || t > bestT) { best = f; bestT = t; }
+        }
+        if (best.empty()) return;
+        std::string txt;
+        { std::ifstream in(best, std::ios::binary); txt.assign(std::istreambuf_iterator<char>(in), {}); }
+        if (txt.find("b7f1e4a2-6c3d-4e58-9a71-2f0d5c8e3b14") != std::string::npos) return;
+        auto const bak = best.parent_path() / L"global_resource_packs.before-bf-menu-world.json";
+        if (!std::filesystem::exists(bak, ec)) std::filesystem::copy_file(best, bak, ec);
+        auto const at = txt.find('[');
+        if (at == std::string::npos) return;
+        bool const empty = txt.find('{', at) == std::string::npos;
+        std::string const entry = "\n\t{\n\t\t\"pack_id\" : \"b7f1e4a2-6c3d-4e58-9a71-2f0d5c8e3b14\",\n\t\t\"version\" : [ 1, 0, 0 ]\n\t}" + std::string(empty ? "" : ",");
+        txt.insert(at + 1, entry);
+        std::ofstream(best, std::ios::binary) << txt;
+    } catch (...) {}
+}
 std::string gAtmosLast;
 void atmosTick() {
     auto& r  = Registry::get();
@@ -307,7 +343,11 @@ void atmosTick() {
         static constexpr float kPal[3][2][3] = {{{0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}},
                                                 {{1.00f, 0.71f, 0.55f}, {0.80f, 0.62f, 1.00f}},
                                                 {{1.00f, 0.62f, 0.86f}, {0.55f, 0.82f, 1.00f}}};
-        auto pal = [&](Module* m, int which) { int const p = std::clamp(int(m->num("palette", 0)), 0, 2); return kPal[p][which]; };
+        auto pal = [&](Module* m, int which) {   // Accent follows the colour picked in Client UI (kNeon), not a fixed purple
+            int const p = std::clamp(int(m->num("palette", 0)), 0, 2);
+            if (p == 0 && which == 0) return std::array<float, 3>{kNeon.r, kNeon.g, kNeon.b};
+            return std::array<float, 3>{kPal[p][which][0], kPal[p][which][1], kPal[p][which][2]};
+        };
         auto* jc = r.find("jump_circles"); auto* hs = r.find("hit_splash"); auto* rp = r.find("ripple"); auto* sw = r.find("shockwave");
         if (jc && jc->enabled) { auto c = pal(jc, 0); out += std::format("jc 1\njc_c {:.3f} {:.3f} {:.3f}\njc_size {:.2f}\njc_dur {:.2f}\njc_glow {:.2f}\n", c[0], c[1], c[2], jc->num("size", 1.2f), jc->num("duration", 1.1f), jc->num("glow", 0.6f)); }
         else out += "jc 0\n";
@@ -322,6 +362,39 @@ void atmosTick() {
         else out += "aura 0\n";
         if (ha && ha->enabled) { auto c = pal(ha, 1); out += std::format("halo 1\nhalo_c {:.3f} {:.3f} {:.3f}\nhalo_size {:.2f}\nhalo_glow {:.2f}\nhalo_height {:.2f}\nhalo_design {}\nhalo_fp 0\n", c[0], c[1], c[2], ha->num("size", 1.f), ha->num("glow", 0.7f), ha->num("height", 1.f), int(ha->num("design", 0))); }
         else out += "halo 0\n";
+        // Wings / Cape (Purxiy cosmetics) and Block Outline (Purxiy render): RF draws them in the atmos pass
+        if (auto* wg = r.find("wings"); wg && wg->enabled) { auto c = pal(wg, 0); out += std::format("wg 1\nwg_c {:.3f} {:.3f} {:.3f}\nwg_design {}\nwg_size {:.2f}\nwg_glow {:.2f}\nwg_flap {:.2f}\nwg_fp {}\n", c[0], c[1], c[2], int(wg->num("design", 0)), wg->num("size", 1.f), wg->num("glow", 0.6f), wg->num("flap", 1.f), wg->flag("first_person", false) ? 1 : 0); }
+        else out += "wg 0\n";
+        if (auto* cp = r.find("cape"); cp && cp->enabled) { auto c = pal(cp, 0); auto c2 = pal(cp, 1); out += std::format("cp 1\ncp_c {:.3f} {:.3f} {:.3f}\ncp_c2 {:.3f} {:.3f} {:.3f}\ncp_design {}\ncp_glow {:.2f}\ncp_sway {:.2f}\n", c[0], c[1], c[2], c2[0], c2[1], c2[2], int(cp->num("design", 0)), cp->num("glow", 0.5f), cp->num("sway", 1.f)); }
+        else out += "cp 0\n";
+        {   // Main Menu: "Capture this view" -> RF turns the camera through the cube's faces and writes the menu's panorama
+            static int panoId = 0;
+            if (auto* mm = r.find("main_menu"); mm && mm->enabled) {
+                if (auto* cap = mm->setting("capture"); cap && cap->on) {
+                    cap->on = false; ++panoId; r.save();
+                    registerMenuPack();
+                }
+            }
+            out += std::format("pano_capture {}\n", panoId);
+            if (auto* fl = r.find("freelook"); fl && fl->enabled) out += std::format("freelook {} {} {:.1f}\n", int(fl->num("key", 0)), int(fl->num("mode", 0)), fl->num("distance", 4.f));
+            else out += "freelook 0 0 4\n";
+        }
+        // Cyberspace / Cute World (Purxiy world looks), drawn by RF's atmos pass
+        if (auto* cy = r.find("cyberspace"); cy && cy->enabled) {
+            static constexpr float kCy[4][3] = {{0.2f, 0.9f, 1.0f}, {0.78f, 0.42f, 1.0f}, {0.35f, 1.0f, 0.55f}, {1.0f, 0.3f, 0.55f}};
+            int const pi = std::clamp(int(cy->num("palette", 0)), 0, 3);
+            auto const c = pi == 1 ? std::array<float, 3>{kNeon.r, kNeon.g, kNeon.b} : std::array<float, 3>{kCy[pi][0], kCy[pi][1], kCy[pi][2]};
+            out += std::format("cy 1\ncy_c {:.3f} {:.3f} {:.3f}\ncy_reality {:.2f}\ncy_glow {:.2f}\ncy_circuits {:.2f}\ncy_scan {:.1f}\ncy_sky {}\n", c[0], c[1], c[2],
+                               cy->num("reality", 0.85f), cy->num("glow", 1.f), cy->num("circuits", 1.f), cy->num("interval", 6.f), cy->flag("sky", true) ? 1 : 0);
+        } else out += "cy 0\n";
+        if (auto* cu = r.find("cute_world"); cu && cu->enabled) {
+            static constexpr float kCu[3][3] = {{1.0f, 0.55f, 0.75f}, {0.78f, 0.62f, 1.0f}, {1.0f, 0.75f, 0.45f}};
+            int const pi = std::clamp(int(cu->num("palette", 0)), 0, 2);
+            out += std::format("cu 1\ncu_c {:.3f} {:.3f} {:.3f}\ncu_soft {:.2f}\ncu_hearts {:.2f}\ncu_sparkle {:.2f}\ncu_pastel {:.2f}\n", kCu[pi][0], kCu[pi][1], kCu[pi][2],
+                               cu->num("softness", 0.7f), cu->num("hearts", 1.f), cu->num("sparkles", 1.f), cu->num("pastel", 1.f));
+        } else out += "cu 0\n";
+        if (auto* bo = r.find("block_outline"); bo && bo->enabled) { auto c = pal(bo, 0); out += std::format("bo 1\nbo_c {:.3f} {:.3f} {:.3f}\nbo_style {}\nbo_w {:.2f}\nbo_glow {:.2f}\nbo_fill {:.2f}\nbo_face {}\nbo_glide {}\n", c[0], c[1], c[2], int(bo->num("style", 0)), bo->num("width", 2.f), bo->num("glow", 0.6f), bo->num("fill", 0.12f), bo->flag("face", true) ? 1 : 0, bo->flag("glide", true) ? 1 : 0); }
+        else out += "bo 0\n";
         auto* ch = r.find("chroma"); auto* ra = r.find("radiance"); auto* wx = r.find("weather");
         if (ch && ch->enabled) {
             static constexpr float kTone[3][3] = {{0.80f, 0.74f, 0.92f}, {0.95f, 0.90f, 0.80f}, {0.70f, 0.70f, 0.72f}};   // Lilac, Cream, Noir
@@ -702,6 +775,7 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
     } catch (...) {}
     try {   // Hit Splash / Ripple: where the hit landed (a falling hit is a critical)
         float const vy = p.getPosDelta().y;
+        gLastHitCrit = !p.isOnGround() && vy < -0.01f;
         pushFxEvent(!p.isOnGround() && vy < -0.01f ? 3u : 2u, hit.x, hit.y, hit.z);
     } catch (...) {}
 }
@@ -1036,17 +1110,134 @@ void registerBuiltins() {
         gPlayerListBottom = 4.f + 10.5f * float(lines.size()) + 4.f;   // Active Modules starts below this (top right)
         gPlayerListFrame  = nowMs();
     };
-    r.add("crosshair", "Crosshair", Category::Hud, "A custom crosshair drawn over the vanilla one")
-        .slider("size", "Size", 4, 1, 12, 1).slider("gap", "Gap", 1, 0, 6, 1).toggleSetting("dot", "Center dot", true)
+    // [Purxiy "custom_crosshair": "your aim, in Purxiy colours"] shapes, colour, outline + glow, spread while you move, a
+    // kick when you swing, a tint while you aim at someone, a hit marker (gold on a critical). Drawn over the vanilla one
+    r.add("crosshair", "Custom Crosshair", Category::Hud, "Your aim, in your colours: shapes, spread, hit markers")
+        .choice("style", "Style", {"Cross", "Plus gap", "Dot", "Circle", "Circle + dot", "T"}, 1)
+        .slider("size", "Length", 4, 1, 14, 0.5f).slider("thickness", "Thickness", 1, 0.5f, 4, 0.5f).slider("gap", "Gap", 2, 0, 8, 0.5f)
+        .toggleSetting("dot", "Centre dot", false).toggleSetting("outline", "Outline", true).slider("glow", "Glow", 0.4f, 0.f, 1.f, 0.05f)
+        .slider("opacity", "Opacity", 0.95f, 0.1f, 1.f, 0.05f)
+        .choice("color", "Colour", {"Accent", "White", "Ice", "Mint", "Rose", "Gold"}, 0)
+        .slider("spread", "Spread while moving", 0.5f, 0.f, 1.5f, 0.05f).slider("kick", "Kick on swing", 0.5f, 0.f, 1.5f, 0.05f)
+        .toggleSetting("target_tint", "Tint on a target", true).toggleSetting("hit_marker", "Hit marker", true)
+        .toggleSetting("breathing", "Breathing", false)
         .hud = [](Frame& f) {
         auto* m  = Registry::get().find("crosshair");
-        float cx = f.width / 2, cy = f.height / 2, s = m->num("size", 4), g = m->num("gap", 1);
-        Rgba  c{0.4f, 1.0f, 0.9f, 0.95f};
-        bf::hud::fillBox(f.ctx, cx - g - s, cy - 0.5f, s, 1, c);
-        bf::hud::fillBox(f.ctx, cx + g, cy - 0.5f, s, 1, c);
-        bf::hud::fillBox(f.ctx, cx - 0.5f, cy - g - s, 1, s, c);
-        bf::hud::fillBox(f.ctx, cx - 0.5f, cy + g, 1, s, c);
-        if (m->flag("dot", true)) bf::hud::fillBox(f.ctx, cx - 0.5f, cy - 0.5f, 1, 1, c);
+        if (!f.player) return;
+        int64_t const now = nowMs();
+        float cx = std::round(f.width / 2), cy = std::round(f.height / 2);
+        int const style = std::clamp(int(m->num("style", 1)), 0, 5);
+        float len = m->num("size", 4), th = m->num("thickness", 1), gap = m->num("gap", 2);
+        float const op = m->num("opacity", 0.95f);
+        static constexpr Rgba kCols[6] = {{0, 0, 0, 0}, {1, 1, 1, 1}, {0.6f, 0.9f, 1.f, 1}, {0.45f, 1.f, 0.75f, 1}, {1.f, 0.55f, 0.75f, 1}, {1.f, 0.82f, 0.35f, 1}};
+        int const ci = std::clamp(int(m->num("color", 0)), 0, 5);
+        Rgba c = ci == 0 ? kNeon : kCols[ci];
+        // aiming at someone: tint toward a warm red
+        bool onTarget = false;
+        try { auto& hr = f.player->getLevel().getHitResult(); onTarget = hr.mType == HitResultType::Entity; } catch (...) {}
+        if (onTarget && m->flag("target_tint", true)) c = Rgba{1.f, 0.38f, 0.42f, 1};
+        // spread with your speed, a kick right after a swing, breathing
+        static float sp = 0;
+        gSpeed.sample(f.player->getPosition());
+        sp += (std::clamp(gSpeed.bps / 5.6f, 0.f, 1.f) - sp) * 0.2f;
+        float const swing = std::clamp(1.f - float(now - gLastReachAt.load()) / 180.f, 0.f, 1.f);
+        gap += sp * 3.f * m->num("spread", 0.5f) + swing * 3.f * m->num("kick", 0.5f);
+        if (m->flag("breathing", false)) gap += 0.6f * (0.5f + 0.5f * std::sin(float(now % 100000) * 0.0025f));
+        c.a = op;
+        float const glow = m->num("glow", 0.4f);
+        bool const outl = m->flag("outline", true);
+        auto bar = [&](float x, float y, float w, float h) {
+            if (glow > 0) bf::hud::fillBox(f.ctx, x - 1.5f, y - 1.5f, w + 3, h + 3, {c.r, c.g, c.b, 0.18f * glow * op});
+            if (outl) bf::hud::fillBox(f.ctx, x - 0.5f, y - 0.5f, w + 1, h + 1, {0, 0, 0, 0.55f * op});
+            bf::hud::fillBox(f.ctx, x, y, w, h, c);
+        };
+        float const ht = th / 2;
+        auto ring = [&](float r) {
+            int const n = std::max(16, int(r * 6.f));
+            for (int i = 0; i < n; ++i) {
+                float const an = 6.2831853f * float(i) / float(n);
+                bar(cx + std::cos(an) * r - ht, cy + std::sin(an) * r - ht, th, th);
+            }
+        };
+        switch (style) {
+        case 0:  // cross: arms joined in the middle
+            bar(cx - len - ht, cy - ht, 2 * len + th, th); bar(cx - ht, cy - len - ht, th, 2 * len + th); break;
+        case 1:  // plus with a gap
+        case 5:  // T: no top arm
+            bar(cx - gap - len, cy - ht, len, th); bar(cx + gap, cy - ht, len, th);
+            if (style == 1) bar(cx - ht, cy - gap - len, th, len);
+            bar(cx - ht, cy + gap, th, len); break;
+        case 2: bar(cx - th, cy - th, 2 * th, 2 * th); break;
+        case 3:
+        case 4: ring(gap + len * 0.5f); if (style == 4) bar(cx - ht, cy - ht, th, th); break;
+        }
+        if (m->flag("dot", false) && style != 2 && style != 4) bar(cx - ht, cy - ht, th, th);
+        // the hit marker: four short diagonal ticks; gold on a critical
+        float const hk = std::clamp(1.f - float(now - gLastReachAt.load()) / 260.f, 0.f, 1.f);
+        if (hk > 0 && m->flag("hit_marker", true)) {
+            Rgba const hc = gLastHitCrit.load() ? Rgba{1.f, 0.82f, 0.3f, hk} : Rgba{1.f, 1.f, 1.f, hk};
+            float const r0 = gap + 3.f, r1 = r0 + 4.f;
+            for (int q = 0; q < 4; ++q) {
+                float const dx = (q & 1) ? 1.f : -1.f, dy = (q & 2) ? 1.f : -1.f;
+                for (float r = r0; r <= r1; r += 1.f) bf::hud::fillBox(f.ctx, cx + dx * r * 0.7071f - 0.75f, cy + dy * r * 0.7071f - 0.75f, 1.5f, 1.5f, hc);
+            }
+        }
+    };
+    // [Purxiy "name_tags": clean tags for players] a glass card over everyone near you: name (Nick Hider aware), health
+    // and distance, scaled by distance and faded out at the edge of its range. Projected with the camera's real FOV.
+    r.add("name_tags", "Name Tags", Category::Hud, "Clean tags over the players near you: name, health and distance", false)
+        .toggleSetting("health", "Health bar", true).toggleSetting("distance", "Distance", true)
+        .slider("size", "Size", 1.f, 0.6f, 1.6f, 0.05f).slider("opacity", "Background opacity", 0.55f, 0.f, 1.f, 0.05f)
+        .slider("range", "Range (blocks)", 48.f, 8.f, 96.f, 4.f)
+        .hud = [](Frame& f) {
+        if (!f.player || f.width <= 0 || f.height <= 0) return;
+        auto* m = Registry::get().find("name_tags");
+        BfPostFxV1 const* fx = BF_GetPostFx();
+        float const fovY = fx && fx->fov > 10.f ? fx->fov : 70.f;
+        float const ty = std::tan(fovY * 0.5f * 3.14159265f / 180.f), tx = ty * f.width / f.height;
+        Vec3 const eye = f.player->getPosition();
+        float const yw = f.player->getRotation().y * 3.14159265f / 180.f, pt = f.player->getRotation().x * 3.14159265f / 180.f;
+        float const fw[3] = {-std::sin(yw) * std::cos(pt), -std::sin(pt), std::cos(yw) * std::cos(pt)};
+        float rt[3] = {-fw[2], 0.f, fw[0]};                                       // forward x up (the game's handedness)
+        float const rl = std::max(std::hypot(rt[0], rt[2]), 1e-4f); rt[0] /= rl; rt[2] /= rl;
+        float const up[3] = {rt[1] * fw[2] - rt[2] * fw[1], rt[2] * fw[0] - rt[0] * fw[2], rt[0] * fw[1] - rt[1] * fw[0]};
+        float const S = m->num("size", 1.f), op = m->num("opacity", 0.55f), range = m->num("range", 48.f);
+        bool const hp = m->flag("health", true), dist = m->flag("distance", true);
+        Actor* self = f.player;
+        try {
+            f.player->getLevel().forEachPlayer([&](Player& p) {
+                if (static_cast<Actor*>(&p) == self) return true;
+                // vanilla parity: nobody sneaking or invisible gets a tag (no extra info over the game's own tags)
+                try { if (p.isSneaking() || p.isInvisible()) return true; } catch (...) { return true; }
+                Vec3 const pos = p.getPosition();
+                float const d[3] = {pos.x - eye.x, pos.y + 0.95f - eye.y, pos.z - eye.z};
+                float const dz = d[0] * fw[0] + d[1] * fw[1] + d[2] * fw[2];
+                float const dl = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                if (dz < 0.3f || dl > range) return true;
+                float const sx = (d[0] * rt[0] + d[1] * rt[1] + d[2] * rt[2]) / (dz * tx), sy = (d[0] * up[0] + d[1] * up[1] + d[2] * up[2]) / (dz * ty);
+                if (std::fabs(sx) > 1.2f || std::fabs(sy) > 1.2f) return true;
+                float const X = (sx * 0.5f + 0.5f) * f.width, Y = (0.5f - sy * 0.5f) * f.height;
+                float const k = S * std::clamp(1.25f - dl / 40.f, 0.55f, 1.15f);       // nearer = a little bigger
+                float const fade = std::clamp((range - dl) / 6.f, 0.f, 1.f);
+                std::string const name = hideNick(p.getRealName());
+                std::string const ds = dist ? std::format("{:.0f}m", dl) : std::string();
+                float const nw = textWidth(name, 0.8f * k), dw = dist ? textWidth(ds, 0.65f * k) + 5.f * k : 0.f;
+                float const W = nw + dw + 10.f * k, H = (hp ? 15.f : 12.f) * k;
+                float const x0 = X - W / 2, y0 = Y - H;
+                bf::hud::fillBox(f.ctx, x0, y0, W, H, {0.06f, 0.04f, 0.10f, op * fade});
+                bf::hud::fillBox(f.ctx, x0, y0, W, 1.f * k, {kNeon.r, kNeon.g, kNeon.b, 0.9f * fade});      // the accent line on top
+                bf::hud::drawLabel(f.ctx, x0 + 5.f * k, y0 + 2.5f * k, name, {1, 1, 1, fade}, 0.8f * k);
+                if (dist) bf::hud::drawLabel(f.ctx, x0 + 5.f * k + nw + 5.f * k, y0 + 3.2f * k, ds, {0.85f, 0.8f, 0.95f, 0.8f * fade}, 0.65f * k);
+                if (hp) {
+                    float hv = 1.f;
+                    try { hv = std::clamp(float(p.getHealth()) / std::max(1.f, float(p.getMaxHealth())), 0.f, 1.f); } catch (...) {}
+                    Rgba const hc = hv > 0.5f ? Rgba{0.45f, 1.f, 0.6f, fade} : hv > 0.25f ? Rgba{1.f, 0.78f, 0.3f, fade} : Rgba{1.f, 0.35f, 0.35f, fade};
+                    bf::hud::fillBox(f.ctx, x0 + 5.f * k, y0 + H - 3.5f * k, W - 10.f * k, 1.5f * k, {1, 1, 1, 0.15f * fade});
+                    bf::hud::fillBox(f.ctx, x0 + 5.f * k, y0 + H - 3.5f * k, (W - 10.f * k) * hv, 1.5f * k, hc);
+                }
+                return true;
+            });
+        } catch (...) {}
     };
     r.add("debug_menu", "Debug Menu", Category::Hud, "Java F3-style details").hud = [](Frame& f) {
         if (!f.player) return;
@@ -1118,6 +1309,11 @@ void registerBuiltins() {
     r.plan("hitboxes", "Hitboxes", Category::Combat, "Entity bounding boxes (Lamium has this today)");
 
     // ---------------- Camera
+    // [Purxiy "freelook": look around without turning] Renderer Foundation turns the camera round you while the key is
+    // held (or toggled); you keep running the way you were facing. No key until you pick one (your controls stay yours).
+    r.add("freelook", "Freelook", Category::Camera, "Look around without turning: hold your key and the camera orbits you", false)
+        .slider("key", "Key (pick one: none by default)", 0, 0, 254, 1).choice("mode", "Mode", {"Hold", "Toggle"}, 0)
+        .slider("distance", "Distance (blocks, 0 = from your eyes)", 4.f, 0.f, 10.f, 0.5f);
     r.add("zoom", "Zoom", Category::Camera, "Hold C to zoom", true)
         .slider("factor", "Zoom factor", 4, 1.5f, 12, 0.5f).slider("key", "Key", 0x43, 8, 254, 1)
         .toggleSetting("smooth", "Smooth", true).toggleSetting("slow_turn", "Slower turning while zoomed", true);
@@ -1155,7 +1351,7 @@ void registerBuiltins() {
             .slider("clear", "Clear around you", 6, 0, 24, 1).slider("drift", "Drift", 1.0f, 0.f, 3.f, 0.05f)
             .slider("rays", "Sun rays", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("creatures", "Players and mobs show clearly through it", true);
         auto& am = r.add("ambience", "Ambience", Category::Visual, "Glowing particles drifting through the world around you (Renderer Foundation)", false);
-        am.choice("style", "Style", {"Motes", "Stardust", "Petals", "Snow"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        am.choice("style", "Style", {"Motes", "Stardust", "Petals", "Snow"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("amount", "Amount", 1.0f, 0.1f, 2.0f, 0.05f).slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("speed", "Speed", 1.0f, 0.f, 3.f, 0.05f)
             .slider("twinkle", "Twinkle", 0.5f, 0.f, 1.f, 0.05f).slider("range", "Range (blocks)", 24, 8, 40, 1)
@@ -1164,35 +1360,57 @@ void registerBuiltins() {
         am.onToggle = [](bool) { gAtmosLast.clear(); };
         // Purxiy hit / jump effects (their settings; "others" needs other players' events: not yet)
         auto& jc = r.add("jump_circles", "Jump Circles", Category::Visual, "A ring of light where you jump (Renderer Foundation)", false);
-        jc.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.2f, 0.5f, 3.f, 0.05f)
+        jc.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.2f, 0.5f, 3.f, 0.05f)
             .slider("duration", "Duration (s)", 1.1f, 0.3f, 3.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
         auto& hs = r.add("hit_splash", "Hit Splash", Category::Visual, "Glowing splashes where your hits land (Renderer Foundation)", false);
-        hs.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+        hs.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
             .slider("duration", "Duration (s)", 6.f, 1.f, 15.f, 0.5f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
         auto& rp = r.add("ripple", "Ripple", Category::Visual, "A wave of light where every hit lands (Renderer Foundation)", false);
-        rp.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
+        rp.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
             .slider("duration", "Duration (s)", 0.8f, 0.3f, 2.f, 0.05f).toggleSetting("crits", "A burst of stars on critical hits", true)
             .toggleSetting("ring", "A ring that rolls over the ground", true);
         auto& sw = r.add("shockwave", "Shockwave", Category::Visual, "Land, and a wave of light runs through the ground (Renderer Foundation)", false);
-        sw.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+        sw.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
             .slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
         // cosmetics (Purxiy trail / aura / halo): seen in third person (F5), the aura first person too if you want
         auto& tr = r.add("trail", "Trail", Category::Visual, "Leave a trail of light behind you (Renderer Foundation)", false);
-        tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("duration", "Duration (s)", 1.2f, 0.3f, 3.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
         auto& au = r.add("aura", "Aura", Category::Visual, "Soft light that lives around you (Renderer Foundation)", false);
-        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("speed", "Speed", 1.f, 0.f, 3.f, 0.05f).slider("glow", "Glow", 0.65f, 0.f, 1.f, 0.05f)
             .toggleSetting("first_person", "See it from your own eyes too", false);
         auto& ha = r.add("halo", "Halo", Category::Visual, "A gently glowing halo (Renderer Foundation)", false);
-        ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f).slider("height", "Height", 1.f, 0.f, 2.f, 0.05f);
+        // [Purxiy "wings" / "cape" / "block_outline"] original looks, drawn by Renderer Foundation like the halo
+        auto& wgm = r.add("wings", "Wings", Category::Visual, "A pair of softly animated wings (Renderer Foundation)", false);
+        wgm.choice("design", "Design", {"Seraph", "Butterfly", "Prism"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+            .slider("size", "Size", 1.f, 0.5f, 1.6f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("flap", "Flap", 1.f, 0.f, 2.f, 0.05f)
+            .toggleSetting("first_person", "See them in first person", false);
+        auto& cpm = r.add("cape", "Cape", Category::Visual, "An animated glowing cape that flows as you move (Renderer Foundation)", false);
+        cpm.choice("design", "Design", {"Silk", "Aurora", "Starfield"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+            .slider("glow", "Glow", 0.5f, 0.f, 1.f, 0.05f).slider("sway", "Sway", 1.f, 0.f, 2.f, 0.05f);
+        // [Purxiy "main_menu": the world behind the menus] the title screen's panorama, captured from where you stand
+        r.add("main_menu", "Main Menu", Category::Visual, "Your own world behind the title screen: stand somewhere beautiful and capture it (shows from the next start)", false)
+            .toggleSetting("capture", "Capture this view now", false);
+        r.add("cyberspace", "Cyberspace", Category::Visual, "Step into a digital world of light, wires and data (Renderer Foundation)", false)
+            .choice("palette", "Colour", {"Cyan", "Accent", "Matrix", "Neon pink"}, 0).slider("reality", "Digital", 0.85f, 0.1f, 1.f, 0.05f)
+            .slider("glow", "Glow", 1.f, 0.f, 2.f, 0.05f).slider("circuits", "Circuits", 1.f, 0.f, 1.f, 0.05f)
+            .slider("interval", "Scan every (s)", 6.f, 2.f, 20.f, 1.f).toggleSetting("sky", "Data sky", true);
+        r.add("cute_world", "Cute World", Category::Visual, "A soft pastel world with drifting hearts and little sparkles (Renderer Foundation)", false)
+            .choice("palette", "Hearts", {"Rose", "Lilac", "Peach"}, 0).slider("pastel", "Pastel", 1.f, 0.f, 1.f, 0.05f)
+            .slider("softness", "Softness", 0.7f, 0.f, 1.f, 0.05f).slider("hearts", "Hearts", 1.f, 0.f, 1.5f, 0.05f).slider("sparkles", "Sparkles", 1.f, 0.f, 1.f, 0.05f);
+        auto& bom = r.add("block_outline", "Block Outline", Category::Visual, "A cleaner, glowing outline on the block you aim at (Renderer Foundation)", false);
+        bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+            .slider("width", "Width (px)", 2.f, 1.f, 5.f, 0.5f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.12f, 0.f, 0.6f, 0.02f)
+            .toggleSetting("face", "Light the face you look at", true).toggleSetting("glide", "Glide between blocks", true);
         auto& chm = r.add("chroma", "Chroma", Category::Visual, "The world waits in grey, and colour blooms wherever you walk (Renderer Foundation)", false);
         chm.choice("tone", "Tone", {"Lilac", "Cream", "Noir"}, 0).slider("hint", "Colour it keeps", 0.06f, 0.f, 0.5f, 0.01f)
             .toggleSetting("living", "Players, mobs and items keep their colour", true).slider("brush", "Brush (blocks)", 6.f, 2.f, 16.f, 0.5f)
             .choice("memory", "Memory", {"30 s", "2 min", "10 min", "1 hour"}, 1);
         auto& rad = r.add("radiance", "Radiance", Category::Visual, "Glowing outlines on players, mobs and items (Renderer Foundation)", false);
-        rad.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("width", "Width", 2.f, 1.f, 5.f, 0.5f)
+        rad.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("width", "Width", 2.f, 1.f, 5.f, 0.5f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.2f, 0.f, 1.f, 0.05f).slider("speed", "Flow speed", 1.f, 0.f, 3.f, 0.05f);
         auto& wxm = r.add("weather", "Weather", Category::Visual, "Sculpt the weather: glassy rain, soft snowfall and ember showers (Renderer Foundation)", false);
         wxm.choice("mode", "Mode", {"Rain", "Snow", "Fire"}, 0).slider("intensity", "Intensity", 1.f, 0.1f, 2.f, 0.05f)
@@ -1206,7 +1424,7 @@ void registerBuiltins() {
             .slider("fringe", "Lilac fringe", 0.45f, 0.f, 1.f, 0.05f);
         // (the block itself cannot grow / pop: its geometry is the game's chunk mesh - only the light is ours)
         auto& pam = r.add("place_animation", "Place Animation", Category::Visual, "A soft light on blocks as you build and break (Renderer Foundation)", false);
-        pam.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("duration", "Duration (s)", 0.34f, 0.15f, 1.f, 0.01f)
+        pam.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("duration", "Duration (s)", 0.34f, 0.15f, 1.f, 0.01f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("breaking", "Blocks you break too", true);
         for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm, &bkm, &pam}) m->onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
@@ -1234,8 +1452,8 @@ void registerBuiltins() {
             .slider("key_prev", "Previous song key", 0, 0, 254, 1);
         np.hud = [](Frame& f) { if (auto* m = Registry::get().find("now_playing")) drawNowPlaying(f, *m); };
     }
-    r.add("creamy_keys", "Creamy Keys", Category::Misc, "Your keyboard, with a sound of its own", false)
-        .choice("profile", "Sound", {"Creamy", "Thock", "Clicky"}, 0).slider("volume", "Volume", 0.6f, 0.f, 1.f, 0.05f);
+    r.add("creamy_keys", "Keyboard Sounds", Category::Misc, "Your keyboard, with a sound of its own", false)
+        .choice("profile", "Sound", {"Silk", "Stone", "Glass"}, 0).slider("volume", "Volume", 0.6f, 0.f, 1.f, 0.05f);
     r.add("nick_hider", "Nick Hider", Category::Misc, "Hide your name in screenshots and streams (chat, the player list)", false)
         .choice("alias", "Show it as", {"You", "Player", "Hidden", "Novak"}, 0);
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
@@ -1308,7 +1526,18 @@ void registerBuiltins() {
         // [Purxiy "interface" / "motion"] your colour across the menu and the HUD elements, and how fast things animate
         .choice("accent", "Accent colour", {"Novak purple", "Rose", "Ocean", "Mint", "Sunset", "Ice", "Gold", "Cherry"}, 0)
         .slider("motion", "Animation speed", 1.0f, 0.5f, 2.0f, 0.05f)
-        .choice("font", "Font", {"Outfit", "Inter"}, 0);
+        .choice("font", "Font", {"Outfit", "Inter"}, 0)
+        // [Prism] Purxiy "interface" / "motion" / "sound": the look, the world behind the menu, cascade, interface sounds
+        .choice("style", "Look", {"Prism", "Glass"}, 0)
+        .slider("scale", "Menu scale", 1.0f, 0.75f, 1.4f, 0.05f)
+        .slider("dim", "Dim the world", 0.25f, 0.f, 1.f, 0.05f)
+        .slider("stars", "Stars", 0.5f, 0.f, 1.f, 0.05f)
+        .toggleSetting("cascade", "Cascade", true)
+        .toggleSetting("reduce_motion", "Reduce motion", false)
+        .toggleSetting("sounds", "Interface sounds", true)
+        .toggleSetting("hover_sounds", "Hover sounds", true)
+        .toggleSetting("slider_ticks", "Slider ticks", true)
+        .slider("sound_volume", "Interface sound volume", 0.5f, 0.f, 1.f, 0.05f);
 }
 
 // ============================================================================ PvP preset
@@ -1484,6 +1713,16 @@ void installRuntime() {
                 gFxEv.px = pos.x; gFxEv.py = pos.y - 1.62f; gFxEv.pz = pos.z; gFxEv.pyaw = player->getRotation().z;   // Trail / Aura / Halo
                 gFxEv.pflags = 1u | (g ? 2u : 0u);
                 gFxEv.pAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            } catch (...) {}
+            try {   // Block Outline: the block you aim at (only while the module is on)
+                gFxEv.bface = 255u;
+                if (Registry::get().on("block_outline")) {
+                    auto const& hr = player->getLevel().getHitResult();
+                    if (hr.mType == HitResultType::Tile) {
+                        gFxEv.bx = hr.mBlock.x; gFxEv.by = hr.mBlock.y; gFxEv.bz = hr.mBlock.z; gFxEv.bface = hr.mFacing;
+                    }
+                }
+                gFxEv.bAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             } catch (...) {}
         }
         if (player && Registry::get().on("motion_blur")) { try { matchfx::blurActorsFrame(*player); } catch (...) {} }

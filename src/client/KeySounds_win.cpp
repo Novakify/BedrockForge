@@ -1,6 +1,6 @@
 // Bedrock Forge client - Creamy Keys (Purxiy "your keyboard, with a sound of its own"). Original code: the sounds are
 // synthesised here at start-up (no sound files), played through XAudio2 so fast typing overlaps like a real board.
-//   Creamy: a soft, deep "thock" (low body + a muted top)   Thock: deeper and rounder   Clicky: a bright tick on top
+//   Silk: a soft, deep press (low body + a muted top)   Stone: deeper and rounder   Glass: a bright tick on top (our own names + sounds)
 // Space / Enter / Backspace get their own bigger, lower voice; every press is pitched and levelled a little differently.
 #include <windows.h>
 #include <xaudio2.h>

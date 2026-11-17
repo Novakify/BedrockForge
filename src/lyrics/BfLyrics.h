@@ -45,6 +45,9 @@ enum BfGlyphFlags : uint32_t {
     BF_GLYPH_EYE      = 1u << 14, // [LyricsForge screen] pos is relative to RF's render camera, not the frame origin: things
                                   // that ride with the player (video screen Beside / Sky) move with the smooth camera
                                   // instead of BF's tick-stepped eye position (no stutter while sprinting)
+    BF_GLYPH_PRISM    = 1u << 15, // [BF menu] with GLASS / PETAL / BACKDROP: the Novak Prism look (calmer frosted backdrop,
+                                  // gradient rim with a travelling light, a slow sheen, fine grain; BACKDROP: stars, outline.a
+                                  // = how many). RF without it draws the plain glass.
 };
 
 /// One glyph quad. 112 bytes, 16-byte aligned rows (HLSL StructuredBuffer friendly). Colours are RGBA8 with R in the
