@@ -32,7 +32,7 @@ std::vector<short> synth(int profile, bool big, uint32_t seed) {
     float const body  = (profile == 1 ? 150.f : 210.f) * (big ? 0.72f : 1.f);
     float const decay = (profile == 1 ? 34.f : 46.f) * (big ? 0.8f : 1.f);   // 1/s
     int const   n     = int(kRate * (big ? 0.16f : 0.11f));
-    std::vector<short> out(size_t(n));
+    std::vector<short> out(static_cast<size_t>(n));
     float lp = 0, lp2 = 0;
     for (int i = 0; i < n; ++i) {
         float const t = float(i) / kRate;
