@@ -323,20 +323,29 @@ void dumpControls(UIControl const& c, int depth, std::ostringstream& out, int& n
     for (auto const& ch : *c.mChildren)
         if (ch) dumpControls(*ch, depth + 1, out, n);
 }
-int hideControls(UIControl& c, std::vector<std::string> const& names, int depth) {
-    if (depth > 24) return 0;
-    int hidden = 0;
+// what we switched off, so it can be switched back on (seen in game: unticking Hotbar left it hidden until a restart)
+struct HiddenCtl { std::weak_ptr<UIControl> c; ::ui::VisibilityFlag vis; float alpha; std::string name; };
+std::vector<HiddenCtl> gHidden;
+void hideControls(std::shared_ptr<UIControl> const& sp, std::vector<std::string> const& names, int depth) {
+    if (!sp || depth > 24) return;
+    UIControl& c = *sp;
     std::string const& nm = *c.mName;
     for (auto const& want : names)
-        if (nm == want) { c.mVisible = ::ui::VisibilityFlag::None; c.mAlpha = 0.0f; ++hidden; return hidden; }
-    for (auto const& ch : *c.mChildren)
-        if (ch) hidden += hideControls(*ch, names, depth + 1);
-    return hidden;
+        if (nm == want) {
+            bool known = false;
+            for (auto const& h : gHidden) if (h.c.lock() == sp) { known = true; break; }
+            if (!known) gHidden.push_back({sp, c.mVisible, c.mAlpha, nm});
+            c.mVisible = ::ui::VisibilityFlag::None;
+            c.mAlpha   = 0.0f;
+            return;
+        }
+    for (auto const& ch : *c.mChildren) hideControls(ch, names, depth + 1);
 }
 void hudHiderFrame(ScreenView& view) {
     auto const& tree = view.mVisualTree;
     if (!tree) return;
-    UIControl* root = tree->mRootControl.get();
+    auto const& rootSp = tree->mRootControl;
+    UIControl* root = rootSp.get();
     if (!root) return;
     static bool dumped = false;
     if (!dumped) {
@@ -348,11 +357,19 @@ void hudHiderFrame(ScreenView& view) {
         asyncfile::write(ll::mod::NativeMod::current()->getModDir() / "logs" / "hud_controls.txt", out.str());
     }
     auto* m = Registry::get().find("hud_hider");
-    if (!m || !m->enabled) return;
     std::vector<std::string> names;
-    for (auto const& g : hideGroups())
-        if (m->flag(g.id, false)) for (auto* n2 : g.names) names.emplace_back(n2);
-    if (!names.empty()) hideControls(*root, names, 0);
+    if (m && m->enabled)
+        for (auto const& g : hideGroups())
+            if (m->flag(g.id, false)) for (auto* n2 : g.names) names.emplace_back(n2);
+    // switch back on what is no longer wanted hidden (or gone with the tree)
+    for (auto it = gHidden.begin(); it != gHidden.end();) {
+        auto sp = it->c.lock();
+        bool const still = sp && std::find(names.begin(), names.end(), it->name) != names.end();
+        if (!sp) { it = gHidden.erase(it); continue; }
+        if (!still) { sp->mVisible = it->vis; sp->mAlpha = it->alpha; it = gHidden.erase(it); continue; }
+        ++it;
+    }
+    if (!names.empty()) hideControls(rootSp, names, 0);
 }
 
 // ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
