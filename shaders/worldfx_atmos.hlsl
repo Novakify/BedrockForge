@@ -69,6 +69,9 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     // Bokeh (Purxiy): sharp where you look, creamy light behind
     float4 bk0;      // x = focus mode (0 auto, 1 distance, 2 tilt-shift), y = focus distance, z = sharp band 0..1, w = blur (0 = off)
     float4 bk1;      // x = highlights, y = 1: nearer than the focus blurs too, z = fringe, w = -
+    // Place Animation (Purxiy): light on a block as it is placed / broken (events kind 5 / 6)
+    float4 pa0;      // rgb = colour (linear), w = duration (s) (0 = off)
+    float4 pa1;      // x = glow, y = 1: broken blocks too
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -229,6 +232,18 @@ float3 worldEvents(float3 P, bool sky, float t) {
                     }
                     if (kind == 3 && fx5.y > 0.5) k *= 1.8;          // a critical hit lands harder
                     L += fx4.rgb * k * fx3.w * 1.4;
+                }
+            }
+        } else if ((kind == 5 || (kind == 6 && pa1.y > 0.5)) && pa0.w > 0.0) {   // a block placed / broken: light on its faces
+            float u = age / pa0.w;
+            if (u < 1.0) {
+                float3 q3 = dv - 0.5;                                   // from the block's middle
+                float  box = max(max(abs(q3.x), abs(q3.y)), abs(q3.z));
+                if (box < 0.56) {
+                    float edge = smoothstep(0.38, 0.5, max(max(min(abs(q3.x), abs(q3.y)), min(abs(q3.y), abs(q3.z))), min(abs(q3.x), abs(q3.z))));
+                    float k = kind == 5 ? (1.0 - u) * (0.35 + 0.65 * edge) * (1.0 + 1.5 * exp(-age * 18.0))
+                                        : smoothstep(0.0, 0.15, u) * (1.0 - u) * edge;   // breaking: the edges flare as it goes
+                    L += pa0.rgb * k * (0.5 + pa1.x * 1.3);
                 }
             }
         } else if (kind == 4 && fx5.z > 0.0) {                    // landing: a wave runs out through the ground

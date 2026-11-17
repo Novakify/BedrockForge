@@ -97,7 +97,7 @@ struct AtmosSet {
     float hsA[3]{0.78f, 0.42f, 1.0f}, hsB[3]{0.95f, 0.92f, 1.0f}, hsSize = 1.0f, hsDur = 6.0f, hsGlow = 0.7f;
     float rpC[3]{0.78f, 0.42f, 1.0f}, rpGlow = 0.8f, rpDur = 0.8f;
     float swC[3]{0.78f, 0.42f, 1.0f}, swSize = 1.0f, swGlow = 0.7f;
-    bool  events() const { return jc || hs || rp || sw; }
+    bool  events() const { return jc || hs || rp || sw || pa; }
     // cosmetics (Purxiy trail / aura / halo)
     bool  trail = false, aura = false, halo = false, auraFp = false, haloFp = false;
     float trC[3]{0.78f, 0.42f, 1.0f}, trDur = 1.2f, trSize = 1.0f, trGlow = 0.6f, trStyle = 0.0f;
@@ -112,6 +112,8 @@ struct AtmosSet {
     bool  bk = false, bkNear = true;
     float bkMode = 0.0f, bkDist = 24.0f, bkBand = 0.26f, bkBlur = 0.5f, bkHi = 0.6f, bkFringe = 0.45f;
     bool  post() const { return chroma || rad || wx || bk; }
+    bool  pa = false, paBreak = true;
+    float paC[3]{0.78f, 0.42f, 1.0f}, paDur = 0.34f, paGlow = 0.6f;
     float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
     bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events() || cosmetics() || post(); }
 };
@@ -178,6 +180,8 @@ void pollAtmos() {
         else if (k == "bk") { int v = 0; in >> v; a.bk = v != 0; } else if (k == "bk_mode") rd(a.bkMode); else if (k == "bk_dist") rd(a.bkDist);
         else if (k == "bk_band") rd(a.bkBand); else if (k == "bk_blur") rd(a.bkBlur); else if (k == "bk_hi") rd(a.bkHi); else if (k == "bk_fringe") rd(a.bkFringe);
         else if (k == "bk_near") { int v = 1; in >> v; a.bkNear = v != 0; }
+        else if (k == "pa") { int v = 0; in >> v; a.pa = v != 0; } else if (k == "pa_c") rd3(a.paC);
+        else if (k == "pa_dur") rd(a.paDur); else if (k == "pa_glow") rd(a.paGlow); else if (k == "pa_break") { int v = 1; in >> v; a.paBreak = v != 0; }
         else if (k == "wx") { int v = 0; in >> v; a.wx = v != 0; } else if (k == "wx_mode") rd(a.wxMode);
         else if (k == "wx_intensity") rd(a.wxIntensity); else if (k == "wx_wind") rd(a.wxWind); else if (k == "wx_size") rd(a.wxSize); else if (k == "wx_range") rd(a.wxRange);
         else { std::string skip; std::getline(in, skip); }
@@ -2812,7 +2816,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         atmosNeed = false;
         if (auto const* ev = rf::postfx::fxEvents()) {
             int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-            float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, 0.9f});
+            float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, atm.paDur, 0.9f});
             for (auto const& e : ev->e) if (e.atMs > 0 && e.kind != 0 && float(nowMs - e.atMs) < maxAge * 1000.0f) { atmosNeed = true; break; }
         }
     }
@@ -2984,7 +2988,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
-                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3066,7 +3070,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             int n = 0;
             if (auto const* ev = rf::postfx::fxEvents()) {
                 int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-                float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, 0.9f});
+                float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, atm.paDur, 0.9f});
                 for (uint32_t i = 0; i < 32 && n < 16; ++i) {
                     auto const& e = ev->e[(ev->frame + 31u - i) % 32u];   // newest first
                     if (e.atMs <= 0 || e.kind == 0) continue;
@@ -3080,6 +3084,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 }
             }
             acb.fx[6][3] = float(n);
+            if (atm.pa) {
+                for (int k = 0; k < 3; ++k) acb.pa[0][k] = lin(atm.paC[k]);
+                acb.pa[0][3] = std::max(atm.paDur, 0.05f); acb.pa[1][0] = atm.paGlow; acb.pa[1][1] = atm.paBreak ? 1.f : 0.f;
+            }
         }
         if (atm.amb) {
             auto lin = [](float v) { return v * v; };
