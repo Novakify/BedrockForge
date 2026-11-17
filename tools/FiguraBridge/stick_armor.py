@@ -66,6 +66,51 @@ LIFT = 0.06                 # rail height above its plate (px)
 # atlas regions (normalized u0, u1)
 REG = {"metal": (0.0, 0.5), "visor": (0.5, 0.75), "rim": (0.75, 0.875), "recess": (0.875, 1.0)}
 
+# ---------------------------------------------------------------------- glass style (default)
+# The plates sample the game's own vanilla armor textures (64x32 layout) instead of a metal atlas. Renderer Foundation's
+# glass armor recognises a draw by the armor texture it binds and replaces it with the Novak Glass / Cloud Sea crystal
+# glass (facets, neon outline, match reactions, leather team colour) - the same pass as the regular glass armor, so
+# the stick's fitted armor wears the identical glass. Each plate maps onto a vanilla face area painted in every
+# material (holes would cut the plate) at about vanilla's density (1 texel per model px), so facet size and neon
+# width match the regular armor; plate rims land on the art's line work (the glass shader's metal trim).
+STYLE = "glass"
+# vanilla file stem per material (index order of MATERIALS); layer 1 = helmet/chestplate/boots, 2 = leggings
+VANILLA = {"leather": "cloth", "chainmail": "chain", "iron": "iron", "golden": "gold", "diamond": "diamond",
+           "netherite": "netherite", "copper": "copper", "turtle": "turtle"}
+LAYER = {"head": 1, "chest": 1, "legs": 2, "feet": 1}
+# texel rects (x, y, w, h) painted in every material (chainmail's mesh holes excepted), from bedrock-samples 1.26
+FACE = {
+    "head_top": (8, 0, 8, 8), "head_band": (0, 8, 32, 3), "head_front": (8, 8, 8, 8), "visor": (8, 8, 8, 3),
+    "body_front": (20, 23, 8, 6), "body_back": (32, 23, 8, 6), "body_right": (16, 23, 4, 6), "body_left": (28, 23, 4, 6),
+    "arm_out": (40, 20, 4, 3), "arm_front": (44, 20, 4, 3), "arm_in": (48, 20, 4, 3), "arm_back": (52, 20, 4, 3),
+    "boot_front": (4, 27, 4, 5), "boot_out": (0, 27, 4, 5), "boot_in": (8, 27, 4, 5), "boot_band": (0, 27, 16, 5),
+    "belt": (16, 28, 24, 4), "belt_front": (20, 28, 8, 4), "belt_side": (16, 28, 4, 4),
+    "leg_front": (4, 20, 4, 8), "leg_out": (0, 20, 4, 8), "leg_top": (4, 16, 4, 4),
+}
+
+
+def face_uv(face, u, v):
+    """normalized uv of point (u, v) in 0..1 across texel rect `face`, kept half a texel inside it"""
+    x, y, w, h = FACE[face]
+    return ((x + 0.5 + (w - 1) * min(1, max(0, u))) / 64.0, (y + 0.5 + (h - 1) * min(1, max(0, v))) / 32.0)
+
+
+def face_for(slot, bone, ac, long_plate=False):
+    """which vanilla face a plate samples: by slot, the rod it hugs and the direction it faces"""
+    a = (math.degrees(ac) + 180) % 360 - 180
+    front, back = abs(a) < 55, abs(a) > 125
+    if slot == "chest" and bone == "p22":
+        return "body_front" if front else "body_back" if back else ("body_left" if a > 0 else "body_right")
+    if slot == "chest":   # arms: shoulder petals on the arm faces, long forearm blades on the tall body sides
+        return ("body_left" if a > 0 else "body_right") if long_plate else ("arm_front" if front else "arm_out")
+    if slot == "legs" and bone == "p22":
+        return "belt_front" if front else "belt_side"
+    if slot == "legs":
+        return "leg_top" if not long_plate else ("leg_front" if front else "leg_out")
+    if slot == "feet":
+        return "boot_front" if front else "boot_out"
+    return "head_top"
+
 
 # ====================================================================== mesh accumulator
 class Mesh:
@@ -152,7 +197,7 @@ def leaf(t, p=0.6, top=0.0):
 
 
 def plate(slot, bone, rod, s0, s1, ac, W, gap=0.12, bulge=0.25, flare=0.0, prof=None, twist=0.0,
-          ns=8, na=5, th=0.14, region="metal", rim=True):
+          ns=8, na=5, th=0.14, region="metal", rim=True, face=None):
     """a curved plate wrapped round `rod`: centre angle ac (rad), half width W*prof(t) (rad), radius = rod clearance +
     gap, bulging `bulge` in the middle and flaring `flare` toward s0. Returns its surface S(t, k, dr), k in -1..1"""
     prof = prof or (lambda t: leaf(t))
@@ -175,13 +220,31 @@ def plate(slot, bone, rod, s0, s1, ac, W, gap=0.12, bulge=0.25, flare=0.0, prof=
         m.quad(P, uv)
 
     u0, u1 = REG[region]
+    if STYLE == "glass" and face is None:
+        length = float(np.linalg.norm(S(1, 0) - S(0, 0)))
+        face = face_for(slot, bone, ac, long_plate=length > 3.2)
     for i in range(ns):
         for j in range(na):
             t0, t1 = i / ns, (i + 1) / ns
             k0, k1 = -1 + 2 * j / na, -1 + 2 * (j + 1) / na
             P = [S(t0, k0), S(t0, k1), S(t1, k1), S(t1, k0)]
-            uv = [(u0 + (u1 - u0) * (k + 1) / 2, t) for t, k in ((t0, k0), (t0, k1), (t1, k1), (t1, k0))]
+            if STYLE == "glass":
+                uv = [face_uv(face, (k + 1) / 2, t) for t, k in ((t0, k0), (t0, k1), (t1, k1), (t1, k0))]
+            else:
+                uv = [(u0 + (u1 - u0) * (k + 1) / 2, t) for t, k in ((t0, k0), (t0, k1), (t1, k1), (t1, k0))]
             emit(P, uv)
+    if rim and STYLE == "glass":   # the bevel reads the face's outermost texel ring: the art's line work = metal trim
+        edges = [[(i / ns, -1) for i in range(ns + 1)], [(i / ns, 1) for i in range(ns + 1)],
+                 [(0, -1 + 2 * j / na) for j in range(na + 1)], [(1, -1 + 2 * j / na) for j in range(na + 1)]]
+        for e in edges:
+            for (ta, ka), (tb, kb) in zip(e, e[1:]):
+                A, B = S(ta, ka), S(tb, kb)
+                C, D = S(tb, kb, -th), S(ta, ka, -th)
+                if np.linalg.norm(B - A) < 1e-4:
+                    continue
+                uva, uvb = face_uv(face, (ka + 1) / 2, ta), face_uv(face, (kb + 1) / 2, tb)
+                m.quad([A, B, C, D], [uva, uvb, uvb, uva])
+        return S
     if rim:   # bevelled edge: a strip folding inward by th along the long edges and both ends (visible thickness)
         ru0, ru1 = REG["rim"]
         edges = [[(i / ns, -1) for i in range(ns + 1)], [(i / ns, 1) for i in range(ns + 1)],
@@ -206,6 +269,8 @@ def fx_v(t_arrive):
 def rail(slot, bone, path, arrive, width=0.36, n=14):
     """light ribbon along path(t) -> (point, outward normal), t 0..1; arrive = (t0, t1) seconds into the sweep"""
     m = M(slot, bone, "fx")
+    if STYLE == "glass":   # a fine filament over the glass, not a painted stripe
+        width *= 0.6
     pts = [path(i / n) for i in range(n + 1)]
     # keep v monotonic inside one segment: split where fx_v wraps
     for i in range(n):
@@ -286,7 +351,23 @@ def helmet(head_pts):
             u0, u1 = REG["visor" if vis else "metal"]
             corners = ((p0, a0), (p1, a0), (p1, a1), (p0, a1))
             P = [H(p, a) for p, a in corners]
-            if vis:
+            if STYLE == "glass":
+                # crown -> the helmet's top face (seen from above, like the vanilla helmet); visor -> the solid brow
+                # of its front face, one clean crystal pane (the eye slit below it punched a black notch into the
+                # visor in the preview); the sides -> the band round the helmet, whose face seams fall at the four
+                # corners like the vanilla helmet's edges
+                def tuv(p, a):
+                    if (p0 + p1) / 2 < 0.36 * math.pi:
+                        r = min(1.0, p / (0.36 * math.pi))
+                        return face_uv("head_top", 0.5 + 0.5 * r * math.sin(a), 0.5 - 0.5 * r * math.cos(a))
+                    if vis:
+                        return face_uv("visor", 0.5 + 0.5 * a / 1.2, (p - 0.36 * math.pi) / (0.5 * math.pi))
+                    # unwrapped round this facet's centre so a facet over the back seam doesn't smear the band
+                    ac0 = (a0 + a1) / 2
+                    base = ((ac0 + math.pi * 0.75) % (2 * math.pi)) / (2 * math.pi)
+                    return face_uv("head_band", base + (a - ac0) / (2 * math.pi), (p - 0.36 * math.pi) / (0.64 * math.pi))
+                uv = [tuv(p, a) for p, a in corners]
+            elif vis:
                 uv = [(u0 + (u1 - u0) * (0.5 + 0.5 * a / 1.2), min(1, max(0, (p - 0.36 * math.pi) / (0.5 * math.pi))))
                       for p, a in corners]
             else:
@@ -456,6 +537,14 @@ def metal_atlas(name, body, dark, hl, accent):
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), "RGBA")
 
 
+def glass_neon(accent):
+    """the rails in the glass style: the glass armor's neon - a near-white core carrying the material's hue
+    (diamond ice-cyan, gold warm, netherite violet...), so rails and the glass outline read as one light"""
+    a = np.array(accent, float)
+    hue = a / max(a.max(), 1.0)
+    return tuple(int(v) for v in np.clip(255 * (0.55 + 0.45 * hue), 0, 255))
+
+
 def energy_strip(accent, alpha):
     """vertical strip, pattern twice (period 0.5): dim continuous track + bright travelling packet with a tail"""
     a = np.array(accent, float)
@@ -490,8 +579,8 @@ def build(stick_geo: Path, player_entity, figura_rc, out: Path, fx_alpha=0):
                     nb["poly_mesh"] = m.json()
                 bl.append(nb)
             geos.append({"description": {"identifier": f"geometry.fb_armor.stick.{s}{suffix}",
-                                         "texture_width": TEX if layer == "metal" else FXW,
-                                         "texture_height": TEX if layer == "metal" else FXH,
+                                         "texture_width": (64 if STYLE == "glass" else TEX) if layer == "metal" else FXW,
+                                         "texture_height": (32 if STYLE == "glass" else TEX) if layer == "metal" else FXH,
                                          "visible_bounds_width": 4, "visible_bounds_height": 5,
                                          "visible_bounds_offset": [0, 2, 0]}, "bones": bl})
     out = Path(out)
@@ -501,17 +590,29 @@ def build(stick_geo: Path, player_entity, figura_rc, out: Path, fx_alpha=0):
     td = out / "textures/figura/fb_armor"
     td.mkdir(parents=True, exist_ok=True)
     for name, body, dark, hl, acc in MATERIALS:
-        metal_atlas(name, body, dark, hl, acc).save(td / f"{name}.png")
-        energy_strip(acc, fx_alpha).save(td / f"{name}_fx.png")
+        if STYLE != "glass":
+            metal_atlas(name, body, dark, hl, acc).save(td / f"{name}.png")
+        energy_strip(glass_neon(acc) if STYLE == "glass" else acc, fx_alpha).save(td / f"{name}_fx.png")
 
-    arr = [f"Texture.fbam_{m[0]}" for m in MATERIALS]
     arrfx = [f"Texture.fbamfx_{m[0]}" for m in MATERIALS]
     rcs = {}
     for s in SLOTS:
-        rcs[f"controller.render.player.fb_armor_{s}"] = {
-            "arrays": {"textures": {"Array.fbam": arr}},
-            "geometry": f"Geometry.fbarmor_{s}", "materials": [{"*": "Material.fbam"}],
-            "textures": [f"Array.fbam[v.{VAR[s]} - 1]"]}
+        if STYLE == "glass":   # the game's own armor texture of this slot's layer; leather tinted with the item's dye
+            arr = [f"Texture.fbam{LAYER[s]}_{m[0]}" for m in MATERIALS]
+            slot_i = SLOTS.index(s)
+            dye = lambda ch: f"v.{VAR[s]} == 1 ? q.armor_color_slot({slot_i}, {ch}) : 1.0"
+            rcs[f"controller.render.player.fb_armor_{s}"] = {
+                "arrays": {"textures": {"Array.fbam": arr}},
+                "geometry": f"Geometry.fbarmor_{s}",
+                "materials": [{"*": f"v.{VAR[s]} == 1 ? Material.fbaml : Material.fbam"}],
+                "textures": [f"Array.fbam[v.{VAR[s]} - 1]"],
+                "color": {"r": dye(0), "g": dye(1), "b": dye(2), "a": 1.0}}
+        else:
+            arr = [f"Texture.fbam_{m[0]}" for m in MATERIALS]
+            rcs[f"controller.render.player.fb_armor_{s}"] = {
+                "arrays": {"textures": {"Array.fbam": arr}},
+                "geometry": f"Geometry.fbarmor_{s}", "materials": [{"*": "Material.fbam"}],
+                "textures": [f"Array.fbam[v.{VAR[s]} - 1]"]}
         rcs[f"controller.render.player.fb_armor_{s}_fx"] = {
             "arrays": {"textures": {"Array.fbamfx": arrfx}},
             "geometry": f"Geometry.fbarmor_{s}_fx", "materials": [{"*": "Material.fbamfx"}],
@@ -531,10 +632,17 @@ def build(stick_geo: Path, player_entity, figura_rc, out: Path, fx_alpha=0):
         for s in SLOTS:
             d["geometry"][f"fbarmor_{s}"] = f"geometry.fb_armor.stick.{s}"
             d["geometry"][f"fbarmor_{s}_fx"] = f"geometry.fb_armor.stick.{s}_fx"
+        for k in [k for k in d["textures"] if k.startswith(("fbam_", "fbam1_", "fbam2_"))]:
+            del d["textures"][k]
         for m in MATERIALS:
-            d["textures"][f"fbam_{m[0]}"] = f"textures/figura/fb_armor/{m[0]}"
+            if STYLE == "glass":
+                for layer in (1, 2):
+                    d["textures"][f"fbam{layer}_{m[0]}"] = f"textures/models/armor/{VANILLA[m[0]]}_{layer}"
+            else:
+                d["textures"][f"fbam_{m[0]}"] = f"textures/figura/fb_armor/{m[0]}"
             d["textures"][f"fbamfx_{m[0]}"] = f"textures/figura/fb_armor/{m[0]}_fx"
         d["materials"]["fbam"] = "entity_alphatest"
+        d["materials"]["fbaml"] = "entity_alphatest_change_color"   # leather: the item's dye (RC color)
         d["materials"]["fbamfx"] = "figura_uv_emissive"
         pre = d["scripts"].setdefault("pre_animation", [])
         mine = ("variable.fbstickarmor", "variable.fbaph", "variable.fbarate",

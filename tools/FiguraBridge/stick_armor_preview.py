@@ -75,6 +75,11 @@ def render(items, az, w=420, h=820, scale=21.0):
         z = l0 * q[0, 2] + l1 * q[1, 2] + l2 * q[2, 2]
         old = depth[y0:y1 + 1, x0:x1 + 1]
         mask = (l0 >= -1e-6) & (l1 >= -1e-6) & (l2 >= -1e-6) & (z > old)
+        if isinstance(tex, np.ndarray) and tex.shape[2] == 4:   # alpha test (entity_alphatest): holes cut the plate
+            U = l0 * UV[0, 0] + l1 * UV[1, 0] + l2 * UV[2, 0]
+            V = l0 * UV[0, 1] + l1 * UV[1, 1] + l2 * UV[2, 1]
+            th, tw = tex.shape[:2]
+            mask &= tex[np.clip((V * th).astype(int), 0, th - 1), np.clip((U * tw).astype(int), 0, tw - 1), 3] >= 128
         if not mask.any():
             continue
         old[mask] = z[mask]
@@ -117,8 +122,15 @@ def main():
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
     except OSError:
         font = ImageFont.load_default()
+    stems = {"leather": "cloth", "chainmail": "chain", "golden": "gold"}
     for r, mat in enumerate(mats):
-        metal = np.array(Image.open(outd / f"textures/figura/fb_armor/{mat}.png").convert("RGB"), float)
+        own = outd / f"textures/figura/fb_armor/{mat}.png"
+        if own.is_file():
+            metal = {s: np.array(Image.open(own).convert("RGB"), float) for s in slots}
+        else:   # glass style: the vanilla armor texture of each slot's layer (option vanilla=<.../textures/models/armor>)
+            vd = Path(opts["vanilla"])
+            metal = {s: np.array(Image.open(vd / f"{stems.get(mat, mat)}_{2 if s == 'legs' else 1}.png").convert("RGBA"), float)
+                     for s in slots}
         fx = np.array(Image.open(outd / f"textures/figura/fb_armor/{mat}_fx.png").convert("RGB"), float)
         fx = np.roll(fx, -int(round(phase * 0.5 * fx.shape[0])), axis=0)  # uv offset +0.5*phase
         for c, (label, az) in enumerate(views):
@@ -127,7 +139,7 @@ def main():
                 for P, UV in T:
                     items.append((pose(P, bone, az), UV, (30, 30, 34) if bone != "p17" else (24, 24, 28), False))
             for s in slots:
-                for layer, tex, unlit in ((s, metal, False), (s + "_fx", fx, True)):
+                for layer, tex, unlit in ((s, metal[s], False), (s + "_fx", fx, True)):
                     for bone, T in armor.get(layer, {}).items():
                         for P, UV in T:
                             items.append((pose(P, bone, az), UV, tex, unlit))

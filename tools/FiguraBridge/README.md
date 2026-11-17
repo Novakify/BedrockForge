@@ -42,6 +42,13 @@ Standalone (patches an existing pack, idempotent):
 
     python3 -I tools/FiguraBridge/stick_armor.py RP/models/entity/figura_stick.geo.json RP/entity/player.entity.json OUT
 
+Style (`STYLE`, default `glass`): the plates sample the game's own vanilla armor textures (64x32 layout, layer 1 for
+helmet/chest/boots, layer 2 for leggings) on face areas painted in every material, at about vanilla's texel density;
+Renderer Foundation's glass armor recognises those textures and draws its Novak Glass / Cloud Sea crystal glass on
+the stick's own plates (same facets, neon outline and match reactions as the regular glass armor; leather takes the
+item's dye through `entity_alphatest_change_color` + the controller's `color`). `STYLE = "metal"` = the earlier painted
+metal atlas. Not on the stick: the enchanted edge flow (an entity controller can't see the item's enchantment).
+
 ## Servers (many players)
 
 One `player.entity.json` draws every player in the world, but only the avatar's own player gets the runtime's
