@@ -84,6 +84,71 @@ float stillWorld(float3 q) {
     return k;
 }
 
+// ---- audit 3 (the hard reference): McGuire, Hennessy, Bukowski, Osman, "A Reconstruction Filter for Plausible Motion
+// Blur" (I3D 2012) - the filter most engines' motion blur descends from. What it fixes over the gather above:
+//   * the blur of a NEAR thing spills over what is behind it (its silhouette is blurred too, not cut sharp), and a far
+//     thing never bleeds over a near one: every tap is weighed by which of the two is in front (soft depth compare) and
+//     by whether its own streak reaches the pixel (cone) - not by the centre pixel's streak alone
+//   * the direction comes from the largest motion around the pixel (the paper's tile "neighbour max"; here 4 probes
+//     half a streak away, since our motion is the camera's and is worked out per pixel exactly)
+//   * a pixel's own weight is 1 / its streak: a still pixel next to a moving one keeps its sharpness
+// Ours on top: things that move by themselves stay sharp (their motion is not the camera's), the shutter is a share of
+// the real frame-to-frame motion, linear light, a different jitter per frame.
+float2 velAt(float2 px, out float z, out float3 qOut) {
+    z = viewZ(rawDepth(int2(px)));
+    float2 ndc = float2(px.x / c4.x * 2.0 - 1.0, 1.0 - px.y / c4.y * 2.0);
+    float3 q   = (c0.xyz + c1.xyz * (ndc.x * c0.w) + c2.xyz * (ndc.y * c1.w)) * z;
+    qOut = q;
+    float3 pa = seenBy(q, c5, c6, c7);
+    if (pa.z <= 0.0) return float2(0, 0);
+    float2 v = (px - pa.xy) * c3.x;
+    float  l = length(v);
+    if (l < 1e-4) return float2(0, 0);
+    float use = clamp(l - c3.z * 0.5, 0.0, c3.y) * stillWorld(q);
+    return v / l * use;
+}
+float coneW(float t, float v) { return saturate(1.0 - t / max(v, 1e-3)); }
+float cylW(float t, float v) { return 1.0 - smoothstep(0.95 * v, 1.05 * v + 0.5, t); }
+float softFront(float za, float zb) { return saturate(1.0 - (za - zb) / max(0.06 * min(za, zb), 0.05)); }   // 1 when a is in front of b
+
+float4 PSWorldFxBlurM(VSOut i) : SV_Target {
+    float2 px = i.pos.xy;
+    float  zX; float3 qX;
+    float2 vX = velAt(px, zX, qX);
+    float  lX = length(vX);
+    // neighbour max: the largest streak within half a longest streak around
+    float  r  = c3.y * 0.5;
+    float2 vN = vX; float lN = lX;
+    [unroll] for (int k = 0; k < 4; ++k) {
+        float2 o = k == 0 ? float2(r, 0) : k == 1 ? float2(-r, 0) : k == 2 ? float2(0, r) : float2(0, -r);
+        float zt; float3 qt;
+        float2 vt = velAt(clamp(px + o, float2(0.5, 0.5), c4.xy - 0.5), zt, qt);
+        float lt = length(vt);
+        if (lt > lN) { vN = vt; lN = lt; }
+    }
+    if (lN <= c3.z) discard;                                     // nothing around moves: exactly as it is
+    [branch] if ((uint(c3.w) & 4u) != 0u) return float4(saturate(abs(vN) / c3.y), saturate(lX / c3.y), 1.0);
+    float2 dir = vN / lN;
+    int    n   = clamp(int(ceil(lN * 0.6)) | 1, 5, 15);
+    float  j   = ign(px + c2.w * 5.588238) - 0.5;
+    float3 cX  = sceneAt(int2(px)); cX *= cX;
+    float  w0  = 1.0 / max(lX, 1.0);
+    float3 acc = cX * w0; float ws = w0;
+    [loop] for (int k = 0; k < n; ++k) {
+        if (k == (n - 1) / 2) continue;                          // the centre is in already
+        float  tt = lerp(-1.0, 1.0, (float(k) + j + 1.0) / float(n + 1)) * lN * 0.5;
+        float2 py = px + dir * tt;
+        float  zY; float3 qY;
+        float2 vY = velAt(py, zY, qY);
+        float  lY = length(vY);
+        float  t  = abs(tt);
+        float  f  = softFront(zY, zX) * coneW(t, lY) + softFront(zX, zY) * coneW(t, lX) + cylW(t, lY) * cylW(t, lX) * 2.0;
+        float3 cY = sceneAt(int2(py)); cY *= cY;
+        acc += cY * f; ws += f;
+    }
+    return float4(sqrt(acc / max(ws, 1e-4)), 1.0);
+}
+
 float4 PSWorldFxBlur(VSOut i) : SV_Target {
     float2 px  = i.pos.xy;
     float  zc  = viewZ(rawDepth(int2(px)));

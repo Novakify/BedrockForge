@@ -1155,7 +1155,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false, bool atmos = false) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false, bool atmos = false, bool blurM = false) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
@@ -1166,6 +1166,7 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     // again with the death scenes (80-odd kill animations, the pass's biggest code by far), used only on frames where
     // a kill is playing, so every other frame runs the lean pass
     if (atmos) d.PS = {rf::worldfx::shaders::PSWorldFxAtmos, sizeof rf::worldfx::shaders::PSWorldFxAtmos};   // Haze + Mist (shaders/worldfx_atmos.hlsl)
+    else if (blur && blurM) d.PS = {rf::worldfx::shaders::PSWorldFxBlurM, sizeof rf::worldfx::shaders::PSWorldFxBlurM};   // audit 3: McGuire reconstruction
     else if (blur) d.PS = {rf::worldfx::shaders::PSWorldFxBlur, sizeof rf::worldfx::shaders::PSWorldFxBlur};   // camera motion blur (shaders/worldfx_blur.hlsl)
     else if (kills) d.PS = glass ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxGlassKills, sizeof rf::worldfx::shaders::PSWorldFxGlassKills}
                             : D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxKills, sizeof rf::worldfx::shaders::PSWorldFxKills};
@@ -1252,7 +1253,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
             // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
-            made.push_back({key, which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+            made.push_back({key, which == 29 ? makeWfxPso(d.Get(), g, false, 0, false, true, false, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
                                             : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
@@ -2804,7 +2805,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         cross(pa.f, now2.f); cross(pa.r, now2.r); cross(pa.u, now2.u);          // 2 sin(angle) * axis
         float const wl = 0.5f * std::sqrt(w3[0] * w3[0] + w3[1] * w3[1] + w3[2] * w3[2]) * blurFrac;
         float const tl = std::sqrt(bT[0] * bT[0] + bT[1] * bT[1] + bT[2] * bT[2]) * blurFrac;
-        bp = derived(dev.Get(), g, 9);
+        bp = derived(dev.Get(), g, look.blurFilter ? 29 : 9);   // 29: McGuire reconstruction (default), 9: the audit 2 gather
         // would anything move a pixel past the dead zone? (turning: everywhere; moving: a thing 0.6 blocks away)
         blurNeed = bp && (wl * focal * 1.5f > blurDead || tl * focal / 0.6f > blurDead);
     }
@@ -3216,6 +3217,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "waves") gLook.waves = std::clamp(v, 0.f, 2.f);
         else if (k == "trails") gLook.trails = std::clamp(v, 0.f, 1.f);
         else if (k == "blurmove") gLook.blurMove = std::clamp(v, 0.f, 1.5f);
+        else if (k == "blurfilter") gLook.blurFilter = int(v);
     }
 }
 // One switch for the whole look: the Renderer Foundation side (sky, void, light, rim: the glass strength) and Bedrock
