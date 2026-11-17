@@ -148,7 +148,10 @@ struct State {
     std::unique_ptr<Smtc>   smtc;
     int64_t                 lastFrameNs = 0;
     std::atomic<bool>       moduleOn{false}; // written on the game thread, read by the media thread + key callbacks
-    std::atomic<bool>       playerOnly{false}; // [BF] LyricsForge Player only: the media player and nothing else (no lyrics, sky, Director)
+    std::atomic<bool>       playerOnly{false};
+    // [BF] Sky module (Purxiy "sky": living skies): one of LyricsForge's skies, always on, with or without LyricsForge
+    struct SkyOv { bool on = false; std::string preset; float strength = 0.8f, speed = 1.0f, lively = 0.6f, breath = 1.0f; bool music = true, day = true; } skyOv;
+    bool                    skyOnly = false;   // this HUD frame comes from the Sky module (LyricsForge itself is off) // [BF] LyricsForge Player only: the media player and nothing else (no lyrics, sky, Director)
 
     // ---- settings panel (L): see the "panel" section below
     Panel                         panel;
@@ -1100,7 +1103,14 @@ void publishSkyFog() {
 }
 
 void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
-    auto const& cfg = gS->engine.config();
+    Config skyCfg;
+    if (gS->skyOv.on) {   // [BF] Sky module: its sky and its settings win
+        skyCfg = gS->engine.config();
+        skyCfg.skyPreset = gS->skyOv.preset; skyCfg.skyImage = false; skyCfg.skyShuffle = false;
+        skyCfg.skyStrength = gS->skyOv.strength; skyCfg.skySpeed = gS->skyOv.speed; skyCfg.skyLively = gS->skyOv.lively;
+        skyCfg.skyBreath = gS->skyOv.breath; skyCfg.fxSkyMusic = gS->skyOv.music; skyCfg.skyDay = gS->skyOv.day; skyCfg.enabled = true;
+    }
+    auto const& cfg = gS->skyOv.on ? skyCfg : gS->engine.config();
     int64_t     ms  = nowMsWall();
     if (cfg.skyImage && ms - gS->pictureListedMs > 3000) { // SkyImage.chosen(): folder listing cached 3 s
         gS->pictureListedMs = ms;
@@ -1352,13 +1362,13 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         gS->skyShown = eff.skyPreset;
         eff.skyStrength = std::min(1.0f, eff.skyStrength * (1.0f + 0.45f * mo.skyBoost)); // aurora burst: the sky's
         /* [LyricsForge] no speed boost: the sky only moves at key moments (sky drift) */                                         // own layers, brighter + faster
-        gS->sky.step(gS->moduleOn && cfg.enabled && !gS->playerOnly, eff, gS->engine.perf(), in);
+        gS->sky.step(gS->skyOv.on || (gS->moduleOn && cfg.enabled && !gS->playerOnly), eff, gS->engine.perf(), in);
         publishSkyFog();
 
         return;
     }
     gS->skyShown = cfg.skyPreset;
-    gS->sky.step(gS->moduleOn && cfg.enabled && !gS->playerOnly, cfg, gS->engine.perf(), in);
+    gS->sky.step(gS->skyOv.on || (gS->moduleOn && cfg.enabled && !gS->playerOnly), cfg, gS->engine.perf(), in);
     publishSkyFog();
 
 }
@@ -1689,10 +1699,11 @@ void hudFrame(bedrock_forge::client::Frame& f) {
         static int64_t lastBeatLog = 0;
         if (m.active && now - lastBeatLog > 5000000000LL) { lastBeatLog = now; stamp("."); }
     }
-    if (gS->playerOnly) {   // [BF] Player only: keep the camera for the panel, draw no lyrics
+    if (gS->playerOnly || gS->skyOnly) {   // [BF] Player only / Sky only: keep the camera for the panel, draw no lyrics
         gS->camPos = cam.pos; gS->camYaw = cam.yaw; gS->camPitch = cam.pitch; gS->haveCam = true;
         gS->lastFov = fov;
         panelStepAndPublish(now, false);
+        if (gS->skyOv.on) { GameWorld world(a); skyStep(a, cam, dt, world); }   // the Sky module's sky still lives
         return;
     }
     GameWorld world(a);
@@ -2045,6 +2056,43 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
             gS->engine.publish(false, 70.0f);
             gS->sky.step(false, gS->engine.config(), gS->engine.perf(), {});
         }
+    };
+
+    // [BF] Sky (Purxiy "sky": living skies, from cosmic light to snow clouds and fire): one of our LyricsForge skies kept
+    // up all the time - with LyricsForge on it replaces LyricsForge's sky, with it off the sky runs on its own (no lyrics)
+    static std::vector<std::string> const kSkyIds = {"galaxy", "aurora", "bright_night", "purple", "silk", "dream_ocean", "cotton_candy",
+                                                     "golden_hour", "sakura", "nebula", "mirror_sky", "storm", "frost", "inferno"};
+    auto& sk = bedrock_forge::client::Registry::get().add("sky", "Living Skies", bedrock_forge::client::Category::Visual,
+                                                           "Your sky, always: cosmic light, auroras, sunsets, snow clouds and fire (Renderer Foundation)", false);
+    sk.choice("style", "Sky", {"Galaxy", "Aether", "Nocturne", "Amethyst", "Opaline", "Dream", "Cotton Candy", "Golden Hour", "Sakura", "Nebula",
+                               "Mirror", "Rain", "Snow", "Fire"}, 0)
+        .slider("intensity", "Intensity", 0.8f, 0.1f, 1.f, 0.05f).slider("speed", "Speed", 1.f, 0.25f, 2.f, 0.05f)
+        .slider("liveliness", "Liveliness", 0.6f, 0.f, 1.f, 0.05f).slider("breathing", "Breathing", 1.f, 0.f, 2.f, 0.05f)
+        .toggleSetting("music", "Reacts to your music", true).toggleSetting("day", "Keep it up by day too", true);
+    sk.hud = [](bedrock_forge::client::Frame& f) {
+        auto& reg = bedrock_forge::client::Registry::get();
+        auto* me  = reg.find("sky");
+        if (!me || !gS) return;
+        {
+            std::lock_guard l(gS->mutex);
+            auto& o = gS->skyOv;
+            o.on = true;
+            o.preset = kSkyIds[size_t(std::clamp(int(me->num("style", 0)), 0, int(kSkyIds.size()) - 1))];
+            o.strength = me->num("intensity", 0.8f); o.speed = me->num("speed", 1.f); o.lively = me->num("liveliness", 0.6f);
+            o.breath = me->num("breathing", 1.f); o.music = me->flag("music", true); o.day = me->flag("day", true);
+        }
+        auto* lf = reg.find("lyricsflow");
+        if (lf && lf->enabled) return;            // LyricsForge's own frame draws the sky (with ours)
+        gS->skyOnly = true;
+        hudFrame(f);
+        gS->skyOnly = false;
+    };
+    sk.onToggle = [](bool on) {
+        if (!gS) return;
+        std::lock_guard l(gS->mutex);
+        gS->skyOv.on = on;
+        auto* lf = bedrock_forge::client::Registry::get().find("lyricsflow");
+        if (!on && !(lf && lf->enabled)) { gS->moduleOn = false; gS->sky.step(false, gS->engine.config(), gS->engine.perf(), {}); }
     };
 
     // Keys: LyricsFlow's K / J are taken by BF (impact frames / HUD), so only on/off + per-song offset for now.
