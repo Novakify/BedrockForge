@@ -10,11 +10,15 @@
 
 #include "ll/api/memory/Hook.h"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/renderer/ActorShaderManager.h"
 #include "mc/client/renderer/block/BlockTessellatorCache.h"
 #include "mc/client/renderer/chunks/RenderChunkCoordinator.h"
 #include "mc/client/renderer/game/LevelRenderer.h"
+#include "mc/client/renderer/game/ItemInHandRenderer.h"
+#include "mc/deps/renderer/MatrixStack.h"
+#include "mc/deps/core/math/Matrix.h"
 #include "mc/client/renderer/game/LevelRendererCamera.h"
 #include "mc/world/level/block/BrightnessPair.h"
 #include "mc/client/renderer/game/LevelRendererPlayer.h"
@@ -301,6 +305,29 @@ LL_TYPE_INSTANCE_HOOK(BfViewDiagHook, ll::memory::HookPriority::Normal, LevelRen
     origin(ctx, renderObj, ci);
 }
 
+// [BF] Hand Movement (Purxiy "place, swing and move your hand your way"): after the game places the held item, move /
+// scale it by the module's settings. Hooked only while the module is on (installed from its toggle), so a build where
+// the symbol moved costs nothing until you switch it on.
+LL_TYPE_INSTANCE_HOOK(BfHandHook, ll::memory::HookPriority::Normal, ItemInHandRenderer, &ItemInHandRenderer::_applyDefaultItemTransforms, void,
+                      ::MatrixStack::MatrixStackRef& worldMatrix, ::ItemStack const& item, bool isInHandItem, ::BlockType const* blockType,
+                      ::BlockShape blockShape, ::ItemRenderCall const* renderObjectCall, float heldItemScale, bool posAndRotSetByJSON) {
+    origin(worldMatrix, item, isInHandItem, blockType, blockShape, renderObjectCall, heldItemScale, posAndRotSetByJSON);
+    auto* m = Registry::get().find("hand_movement");
+    if (!m || !m->enabled || !isInHandItem) return;
+    ::Matrix* mat = worldMatrix.mat;
+    if (!mat) return;
+    glm::mat4& M = reinterpret_cast<glm::mat4&>(*mat);
+    float const sc = m->num("scale", 1.f);
+    M = glm::translate(M, glm::vec3(m->num("x", 0.f), m->num("y", 0.f), m->num("z", 0.f)));
+    M = glm::scale(M, glm::vec3(sc));
+}
+void setHandHook(bool on) {
+    static bool hooked = false;
+    if (on == hooked) return;
+    hooked = on;
+    if (on) BfHandHook::hook(); else BfHandHook::unhook();
+}
+
 void installVisualHooks() {
     BfViewDiagHook::hook();
     BfTessLightHook::hook();
@@ -328,6 +355,7 @@ void uninstallVisualHooks() {
     BfBobHook::unhook();
     BfTimeHook::unhook();
     BfTimeHook2::unhook();
+    setHandHook(false);
 }
 
 } // namespace bedrock_forge::client

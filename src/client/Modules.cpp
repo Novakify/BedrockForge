@@ -96,6 +96,7 @@ void pushFxEvent(uint32_t kind, float x, float y, float z, float a = 0.f) {
 namespace bedrock_forge::client {
 
 void installVisualHooks();
+void setHandHook(bool on); // VisualModules.cpp (Hand Movement)
 extern std::atomic<float> gTimeOfDay; // VisualModules.cpp
 extern std::mutex  gNickMutex;          // ChatCompact.cpp (Nick Hider)
 extern std::string gNickReal;
@@ -1070,7 +1071,12 @@ void registerBuiltins() {
     r.plan("freelook", "Freelook", Category::Camera, "Look around without turning (Lamium has this today)");
     r.plan("snap_look", "Snap Look", Category::Camera, "Hold a key for third-person front view");
     r.add("view_bobbing", "No View Bobbing", Category::Camera, "Turn off the walking camera bob");
-    r.plan("view_model", "View Model", Category::Camera, "Move / scale the held item");
+    {   // [Purxiy "hand_movement"] where your held item sits and how big it is
+        auto& hm = r.add("hand_movement", "Hand Movement", Category::Camera, "Move and scale the item in your hand", false);
+        hm.slider("x", "Left / right", 0.f, -1.f, 1.f, 0.02f).slider("y", "Down / up", 0.f, -1.f, 1.f, 0.02f)
+            .slider("z", "Back / forward", 0.f, -1.f, 1.f, 0.02f).slider("scale", "Size", 1.f, 0.4f, 1.6f, 0.02f);
+        hm.onToggle = [](bool on) { try { setHandHook(on); } catch (...) {} };
+    }
     r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
     {
         auto& gl = r.add("glass_frost", "Glass", Category::Visual, "Frosted glass armour: clear as a window, or soft and milky (Renderer Foundation)", false);
@@ -1327,6 +1333,7 @@ void mark(char const* what) { // [BF] a gameplay moment (you got hit), so hitche
 
 // ============================================================================ runtime
 void installRuntime() {
+    if (Registry::get().on("hand_movement")) { try { setHandHook(true); } catch (...) {} }   // switched on last time
     gSubs.on<ll::event::BeforeUIRenderEvent>([](ll::event::BeforeUIRenderEvent& ev) {   // HUD Hider: before the HUD draws
         if (!bf::hud::isHudScreen(ev.screenView())) return;
         try { hudHiderFrame(ev.screenView()); } catch (...) {}
