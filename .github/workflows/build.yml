@@ -148,6 +148,24 @@ jobs:
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" glass-modules-builds
 
+      - name: Publish client polish build
+        if: github.ref == 'refs/heads/client/purxiy-polish' && github.event_name == 'push'
+        shell: bash
+        run: |
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
+          mkdir -p out && cp -r bin/* out/
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
+          mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
+          cd out
+          git init -q -b client-polish-builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
+          git add -A && git commit -qm "Build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" client-polish-builds
+
       # LyricsForge cinematic work (pairs with Renderer Foundation lyricsforge-cinematic/rf)
       - name: Publish LyricsForge cinematic BF build
         if: (github.ref == 'refs/heads/lyricsforge-cinematic/bf' || github.ref == 'refs/heads/glass-armor/bf' || github.ref == 'refs/heads/worldfx-cloudsea/bf') && github.event_name == 'push'
