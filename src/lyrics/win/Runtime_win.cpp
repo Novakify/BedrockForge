@@ -148,6 +148,7 @@ struct State {
     std::unique_ptr<Smtc>   smtc;
     int64_t                 lastFrameNs = 0;
     std::atomic<bool>       moduleOn{false}; // written on the game thread, read by the media thread + key callbacks
+    std::atomic<bool>       playerOnly{false}; // [BF] LyricsForge Player only: the media player and nothing else (no lyrics, sky, Director)
 
     // ---- settings panel (L): see the "panel" section below
     Panel                         panel;
@@ -714,7 +715,7 @@ void songMemoryStep() {
         std::lock_guard l(gS->mutex);
         auto const& cfg = gS->engine.config();
         bool const  on  = gS->moduleOn && cfg.songMemory;
-        memoryWanted((on || (gS->moduleOn && cfg.director)) && gS->clock.playing()); // the Director reads the bands too
+        memoryWanted(!gS->playerOnly && (on || (gS->moduleOn && cfg.director)) && gS->clock.playing()); // the Director reads the bands too
         int64_t const seq = gS->clock.hasTrack() ? gS->clock.songSeq() : -1;
         if (seq != gS->memorySeq) {
             if (!gS->memory.key().empty()) {
@@ -1344,13 +1345,13 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         gS->skyShown = eff.skyPreset;
         eff.skyStrength = std::min(1.0f, eff.skyStrength * (1.0f + 0.45f * mo.skyBoost)); // aurora burst: the sky's
         /* [LyricsForge] no speed boost: the sky only moves at key moments (sky drift) */                                         // own layers, brighter + faster
-        gS->sky.step(gS->moduleOn && cfg.enabled, eff, gS->engine.perf(), in);
+        gS->sky.step(gS->moduleOn && cfg.enabled && !gS->playerOnly, eff, gS->engine.perf(), in);
         publishSkyFog();
 
         return;
     }
     gS->skyShown = cfg.skyPreset;
-    gS->sky.step(gS->moduleOn && cfg.enabled, cfg, gS->engine.perf(), in);
+    gS->sky.step(gS->moduleOn && cfg.enabled && !gS->playerOnly, cfg, gS->engine.perf(), in);
     publishSkyFog();
 
 }
@@ -1431,7 +1432,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
     dt              = std::clamp(dt, 0.0f, 0.1f);
     { // [BF] bass hits: only listen while something uses them
         auto const& c = gS->engine.config();
-        bassWanted(c.playerStyle == 2 || c.beatGlow || c.fxBeatShake || c.director);
+        bassWanted(!gS->playerOnly && (c.playerStyle == 2 || c.beatGlow || c.fxBeatShake || c.director));
         gS->bass = bassLevel(dt, &gS->bassLive);
         { // [LyricsForge] which output we hear (the loopback hunts across outputs when one is silent)
             static std::string sDev;
@@ -1680,6 +1681,12 @@ void hudFrame(bedrock_forge::client::Frame& f) {
           if (m.hold > 0.3f && !held) { held = true; stamp("hold"); } else if (m.hold < 0.05f) held = false; }
         static int64_t lastBeatLog = 0;
         if (m.active && now - lastBeatLog > 5000000000LL) { lastBeatLog = now; stamp("."); }
+    }
+    if (gS->playerOnly) {   // [BF] Player only: keep the camera for the panel, draw no lyrics
+        gS->camPos = cam.pos; gS->camYaw = cam.yaw; gS->camPitch = cam.pitch; gS->haveCam = true;
+        gS->lastFov = fov;
+        panelStepAndPublish(now, false);
+        return;
     }
     GameWorld world(a);
     auto const t0 = Clock::now();
@@ -2010,7 +2017,9 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
 
     auto& m = bedrock_forge::client::Registry::get().add("lyricsflow", "LyricsForge", bedrock_forge::client::Category::Visual,
                                                          "Synced song lyrics in the world (port of LyricsFlow by 374m) - PREVIEW, untested in game");
+    m.toggleSetting("player_only", "Player only (just your music: no lyrics, sky or Director)", false);
     m.hud      = [](bedrock_forge::client::Frame& f) {
+        if (auto* me = bedrock_forge::client::Registry::get().find("lyricsflow")) setPlayerOnly(me->flag("player_only", false));
         hudFrame(f);
         IClientInstance* menuOn = nullptr;
         {
@@ -2051,6 +2060,21 @@ ClientUiAssets clientUiAssets() {
     return a;
 }
 void requestPanel() { gPanelRequest = true; }
+void setPlayerOnly(bool on) {
+    if (!gS) return;
+    bool const was = gS->playerOnly.exchange(on);
+    if (on && !was) {
+        std::lock_guard l(gS->mutex);
+        gS->engine.reset();
+        gS->engine.publish(false, 70.0f);
+    }
+}
+bool playerOnly() { return gS && gS->playerOnly; }
+void mediaCommand(int which) {   // 0 play / pause, 1 next, 2 previous (the media thread does the WinRT call)
+    if (!gS) return;
+    std::lock_guard l(gS->mutex);
+    gS->mediaCmds.push_back({which == 1 ? PanelAction::Kind::Next : which == 2 ? PanelAction::Kind::Prev : PanelAction::Kind::PlayPause});
+}
 bool nowPlaying(NowPlaying& out) {
     if (!gS) return false;
     std::lock_guard l(gS->mutex);

@@ -116,6 +116,11 @@ struct NowPlaying {
     uint32_t    accent = 0; // vivid colour from the cover art (0xRRGGBB, 0 = none)
 };
 bool nowPlaying(NowPlaying& out);
+/// [BF] LyricsForge Player only: the media player (L panel, the Player HUD card, media keys) and no lyrics / sky / Director.
+void setPlayerOnly(bool on);
+bool playerOnly();
+/// [BF] media keys: 0 play / pause, 1 next, 2 previous (Apple Music, Spotify, any player that shows in Windows' media controls)
+void mediaCommand(int which);
 
 } // namespace bf::lyrics::win
 #endif

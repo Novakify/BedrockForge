@@ -519,6 +519,11 @@ void onModuleKey(int vk, bool down) {
     bool const was = gKeyHeld[size_t(vk)];
     gKeyHeld[size_t(vk)] = down;
     if (!down || was || menu::isOpen() || !hudInputAllowed()) return;
+    if (auto* np = Registry::get().find("now_playing"); np && np->enabled) {   // LyricsForge Player media keys
+        if (int(np->num("key_play", 0)) == vk) { ::bf::lyrics::win::mediaCommand(0); return; }
+        if (int(np->num("key_next", 0)) == vk) { ::bf::lyrics::win::mediaCommand(1); return; }
+        if (int(np->num("key_prev", 0)) == vk) { ::bf::lyrics::win::mediaCommand(2); return; }
+    }
     for (auto& m : Registry::get().all())
         if (m->key == vk && !m->planned) {
             Registry::get().setEnabled(*m, !m->enabled);
@@ -961,7 +966,9 @@ void registerBuiltins() {
         for (auto const& g : hideGroups()) hh.toggleSetting(g.id, g.label, false);
     }
     {
-        auto& np = r.add("now_playing", "Now Playing", Category::Hud, "Your music on screen, with lyrics to sing along (LyricsForge's player)", false);
+        // LyricsForge add-on: needs the LyricsForge module on (it reads Apple Music / Spotify / any player in Windows' media
+        // controls); with LyricsForge's "Player only" it is all of LyricsForge you get: your music, controlled in game
+        auto& np = r.add("now_playing", "LyricsForge Player", Category::Hud, "LyricsForge add-on: your music on screen with the lyrics, and media keys (Apple Music, Spotify, any player)", false);
         np.choice("layout", "Layout", {"Split", "Combined", "Lyrics only", "Player only"}, 0)
             .slider("player_size", "Player size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("player_background", "Player background", true)
             .slider("player_opacity", "Player background opacity", 0.6f, 0.f, 1.f, 0.05f)
@@ -971,7 +978,9 @@ void registerBuiltins() {
             .slider("lyrics_opacity", "Lyrics background opacity", 0.6f, 0.f, 1.f, 0.05f)
             .slider("lyrics_x", "Lyrics X", 0.5f, 0.f, 1.f, 0.01f).slider("lyrics_y", "Lyrics Y", 0.f, 0.f, 1.f, 0.01f)
             .slider("lines", "Lines at once", 2, 1, 3, 1).toggleSetting("glow", "Glow on the line being sung", true)
-            .choice("paused", "When paused", {"Show", "Dim", "Hide"}, 1);
+            .choice("paused", "When paused", {"Show", "Dim", "Hide"}, 1)
+            .slider("key_play", "Play / pause key (Unbound = 0)", 0, 0, 254, 1).slider("key_next", "Next song key", 0, 0, 254, 1)
+            .slider("key_prev", "Previous song key", 0, 0, 254, 1);
         np.hud = [](Frame& f) { if (auto* m = Registry::get().find("now_playing")) drawNowPlaying(f, *m); };
     }
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")

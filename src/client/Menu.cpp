@@ -401,6 +401,7 @@ std::vector<std::string> const& keyNames() {
         for (int k = 'A'; k <= 'Z'; ++k) n[size_t(k)] = std::string(1, char(k));
         for (int k = 0; k < 10; ++k) n[size_t(0x60 + k)] = "Numpad " + std::to_string(k);
         for (int k = 0; k < 24; ++k) n[size_t(0x70 + k)] = "F" + std::to_string(k + 1);
+        n[0] = "None";
         n[0x01] = "Left mouse"; n[0x02] = "Right mouse"; n[0x04] = "Middle mouse"; n[0x05] = "Mouse 4"; n[0x06] = "Mouse 5";
         n[0x08] = "Backspace"; n[0x09] = "Tab"; n[0x0D] = "Enter"; n[0x10] = "Shift"; n[0x11] = "Ctrl"; n[0x12] = "Alt";
         n[0x14] = "Caps Lock"; n[0x1B] = "Esc"; n[0x20] = "Space"; n[0x25] = "Left"; n[0x26] = "Up"; n[0x27] = "Right"; n[0x28] = "Down";
@@ -565,7 +566,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
             sc.y += 60;
         } else {
             if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); },
-                                    s.id == "key" ? &keyNames() : &s.choices); // [BF] key sliders show the key, not a code
+                                    s.id.rfind("key", 0) == 0 ? &keyNames() : &s.choices); // [BF] key sliders (key, key_play, ...) show the key, not a code
             sc.y += 74;
         }
     }
