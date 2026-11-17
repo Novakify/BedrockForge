@@ -81,6 +81,59 @@ std::atomic<bool> gSkySinceClear{false}, gFxSinceClear{false};
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
 std::atomic<bool> gBlurOnly{false};  // no World FX sky, but motion blur is asked for: the pass runs for the blur alone (any sky: vanilla, LyricsForge)
+
+// Haze + Mist (shaders/worldfx_atmos.hlsl): config/Atmos.txt, written by the Bedrock Forge client's Haze / Mist modules,
+// read again about once a second. Any sky: with no World FX look the pass runs for them alone (like the motion blur).
+struct AtmosSet {
+    bool  haze = false, mist = false, hazeSpare = true, mistSpare = true;
+    float hA[3]{1.0f, 0.62f, 0.74f}, hB[3]{1.0f, 0.78f, 0.70f}, hStrength = 0.45f, hHeight = 24.0f, hClear = 8.0f, hDrift = 1.0f, hGlow = 0.6f;
+    float mC[3]{1.0f, 0.86f, 0.70f}, mDensity = 0.5f, mHeight = 10.0f, mClear = 6.0f, mDrift = 1.0f, mRays = 0.6f;
+    float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
+    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f); }
+};
+std::mutex            gAtmosMutex;
+AtmosSet              gAtmos;
+std::atomic<bool>     gAtmosOn{false};
+std::filesystem::path gAtmosFile;
+void pollAtmos() {
+    static int64_t lastPoll = 0;
+    static std::filesystem::file_time_type lastT{};
+    int64_t const n = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (n - lastPoll < 1000 || gAtmosFile.empty()) return;
+    lastPoll = n;
+    std::error_code ec;
+    auto const t = std::filesystem::last_write_time(gAtmosFile, ec);
+    if (ec) { gAtmosOn = false; return; }
+    if (t == lastT) return;
+    lastT = t;
+    AtmosSet a;
+    std::ifstream in(gAtmosFile);
+    std::string   k;
+    while (in >> k) {
+        auto rd = [&](float& v) { in >> v; };
+        auto rd3 = [&](float* v) { in >> v[0] >> v[1] >> v[2]; };
+        if (k == "haze") { int v = 0; in >> v; a.haze = v != 0; }
+        else if (k == "mist") { int v = 0; in >> v; a.mist = v != 0; }
+        else if (k == "haze_a") rd3(a.hA); else if (k == "haze_b") rd3(a.hB);
+        else if (k == "haze_strength") rd(a.hStrength); else if (k == "haze_height") rd(a.hHeight); else if (k == "haze_clear") rd(a.hClear);
+        else if (k == "haze_drift") rd(a.hDrift); else if (k == "haze_glow") rd(a.hGlow);
+        else if (k == "haze_creatures") { int v = 1; in >> v; a.hazeSpare = v != 0; }
+        else if (k == "mist_color") rd3(a.mC);
+        else if (k == "mist_density") rd(a.mDensity); else if (k == "mist_height") rd(a.mHeight); else if (k == "mist_clear") rd(a.mClear);
+        else if (k == "mist_drift") rd(a.mDrift); else if (k == "mist_rays") rd(a.mRays);
+        else if (k == "mist_creatures") { int v = 1; in >> v; a.mistSpare = v != 0; }
+        else if (k == "tod") rd(a.tod);
+        else { std::string skip; std::getline(in, skip); }
+        if (!in) break;
+    }
+    a.hStrength = std::clamp(a.hStrength, 0.f, 1.f); a.hHeight = std::clamp(a.hHeight, 2.f, 96.f); a.hClear = std::clamp(a.hClear, 0.f, 48.f);
+    a.mDensity = std::clamp(a.mDensity, 0.f, 1.f); a.mHeight = std::clamp(a.mHeight, 2.f, 48.f); a.mClear = std::clamp(a.mClear, 0.f, 32.f);
+    {
+        std::lock_guard l(gAtmosMutex);
+        gAtmos = a;
+    }
+    gAtmosOn = a.any();
+}
 std::atomic<int> gWorldSky{0};     // World FX standalone sky (0 off, 1 Cloud Sea), see the World FX section below
 void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list);
 // sky shaders learned from the game's own materials (learnGameMaterials / learnMaterialFile)
@@ -390,7 +443,8 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         if (gActive && gUi.replace) rf::lyrics::setCameraWanted(true);
         if (gWorldSky.load()) { rf::lyrics::setCameraWanted(true); worldSkyPrepare(device, list); }
         {   // motion blur without a World FX sky: the same pass, the blur draw only (it needs the world's targets + the camera)
-            bool const bo = gWorldSky.load() == 0 && rf::postfx::motionBlurWanted() > 0.0f;
+            pollAtmos();
+            bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed));
             static bool was = false;
             gBlurOnly.store(bo, std::memory_order_relaxed);
             if (bo) rf::lyrics::setCameraWanted(true);
@@ -1039,7 +1093,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false, bool atmos = false) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
@@ -1049,7 +1103,8 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     // builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it - and each
     // again with the death scenes (80-odd kill animations, the pass's biggest code by far), used only on frames where
     // a kill is playing, so every other frame runs the lean pass
-    if (blur) d.PS = {rf::worldfx::shaders::PSWorldFxBlur, sizeof rf::worldfx::shaders::PSWorldFxBlur};   // camera motion blur (shaders/worldfx_blur.hlsl)
+    if (atmos) d.PS = {rf::worldfx::shaders::PSWorldFxAtmos, sizeof rf::worldfx::shaders::PSWorldFxAtmos};   // Haze + Mist (shaders/worldfx_atmos.hlsl)
+    else if (blur) d.PS = {rf::worldfx::shaders::PSWorldFxBlur, sizeof rf::worldfx::shaders::PSWorldFxBlur};   // camera motion blur (shaders/worldfx_blur.hlsl)
     else if (kills) d.PS = glass ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxGlassKills, sizeof rf::worldfx::shaders::PSWorldFxGlassKills}
                             : D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxKills, sizeof rf::worldfx::shaders::PSWorldFxKills};
     else if (glass) d.PS = {rf::worldfx::shaders::PSWorldFxGlass, sizeof rf::worldfx::shaders::PSWorldFxGlass};
@@ -1135,7 +1190,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
             // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
-            made.push_back({key, which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+            made.push_back({key, which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
                                             : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
@@ -2691,7 +2746,13 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         // would anything move a pixel past the dead zone? (turning: everywhere; moving: a thing 0.6 blocks away)
         blurNeed = bp && (wl * focal * 1.5f > blurDead || tl * focal / 0.6f > blurDead);
     }
-    if (blurOnly && !blurNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
+    AtmosSet atm;
+    { std::lock_guard l(gAtmosMutex); atm = gAtmos; }
+    bool atmosNeed = gAtmosOn.load(std::memory_order_relaxed) && atm.any();
+    ID3D12PipelineState* ap = atmosNeed ? derived(dev.Get(), g, 19) : nullptr;   // Haze + Mist
+    if (!ap) atmosNeed = false;
+    if (blurOnly && !blurNeed && !atmosNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
+        if (gAtmosOn.load(std::memory_order_relaxed) && !ap) { wfxStatus("building the haze / mist pipeline (in the background)"); return false; }
         if (blurFrac > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
         ++gPassesThisFrame;
         return true;
@@ -2850,28 +2911,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
         calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     }
-    // ---- camera motion blur, part 2 (shaders/worldfx_blur.hlsl): the world as the pass left it, streaked along each
-    //      pixel's own path over a shutter time. Here, not at Present: there is depth (walking and strafing blur too, near
-    //      more than far) and the hand + HUD are not drawn yet, so they stay sharp. Costs nothing while the camera is still.
-    if (blurNeed) {
-        if (!blurOnly) {   // the pass just drew over the scene: take it again (with no World FX sky the first copy is the scene)
-            wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
-            wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
-            dst.pResource = sb, dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
-            list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-            wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-            wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        }
-        float b[44]{};
-        std::memcpy(b, c, 12 * sizeof(float));                      // c0..c2: the camera, as the pass used it
-        static uint32_t seed = 0;
-        b[11] = float(++seed & 1023u);
-        b[12] = blurFrac; b[13] = float(rd.Width) * 0.03f; b[14] = blurDead; b[15] = (c[15] > 0.5f ? 1.0f : 0.0f) + (look.blurTest == 3 ? 4.0f : 0.0f);
-        b[16] = c[16]; b[17] = c[17]; b[18] = c[18]; b[19] = c[19];
-        for (int a = 0; a < 3; ++a) { b[20 + a] = pa.f[a]; b[24 + a] = pa.r[a]; b[28 + a] = pa.u[a]; }
-        b[23] = bT[0]; b[27] = bT[1]; b[31] = bT[2];
-        // the things that move by themselves (Bedrock Forge: players, mobs, dropped items): left sharp. Yourself only in
-        // third person - in first person the camera is inside your own box.
+    // the things that move by themselves (Bedrock Forge: players, mobs, dropped items), camera-relative: the blur leaves
+    // them sharp, the haze / mist leave them their colours. Yourself only in third person - in first person the camera
+    // is inside your own box.
+    auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; } acb{};
         if (auto const* ba = rf::postfx::blurActors()) {
             int n = 0;
@@ -2885,7 +2928,59 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             }
             acb.info[0] = float(n);
         }
-        D3D12_GPU_VIRTUAL_ADDRESS const acbVa = uploadRing(dev.Get(), &acb, sizeof acb);
+        return uploadRing(dev.Get(), &acb, sizeof acb);
+    };
+    bool sceneDirty = !blurOnly;   // the World FX look drew over the scene copy's source: take it again before reading it
+    auto recopyScene = [&] {
+        wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+        wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        dst.pResource = sb, dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
+        list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        sceneDirty = false;
+    };
+    // ---- Haze + Mist (shaders/worldfx_atmos.hlsl): over the world as the pass left it, before the blur streaks it
+    if (atmosNeed) {
+        if (sceneDirty) recopyScene();
+        D3D12_GPU_VIRTUAL_ADDRESS const va = uploadActors();
+        if (va) {
+            float a[44]{};
+            std::memcpy(a, c, 12 * sizeof(float));                  // c0..c2: the camera (c2.w = time)
+            static uint32_t aseed = 0;
+            auto lin = [](float v) { return v * v; };               // the shader works in gamma-2 light
+            a[12] = (c[15] > 0.5f ? 1.f : 0.f) + (atm.haze ? 2.f : 0.f) + (atm.mist ? 4.f : 0.f) + (atm.hazeSpare ? 8.f : 0.f) + (atm.mistSpare ? 16.f : 0.f);
+            a[13] = float(snap.pos[1]) - 1.62f;                     // the ground: your feet
+            a[14] = gQuality.load(); a[15] = float(++aseed & 1023u);
+            a[16] = c[16]; a[17] = c[17]; a[18] = c[18]; a[19] = c[19];
+            for (int k = 0; k < 3; ++k) a[20 + k] = float(std::fmod(snap.pos[k], 4096.0));   // (wrapped: the noise needs small numbers)
+            a[23] = atm.tod;
+            for (int k = 0; k < 3; ++k) { a[24 + k] = lin(atm.hA[k]); a[28 + k] = lin(atm.hB[k]); a[36 + k] = lin(atm.mC[k]); }
+            a[27] = atm.haze ? atm.hStrength : 0.f; a[31] = atm.hHeight;
+            a[32] = atm.hClear; a[33] = atm.hDrift; a[34] = atm.hGlow;
+            a[39] = atm.mist ? atm.mDensity : 0.f;
+            a[40] = atm.mHeight; a[41] = atm.mClear; a[42] = atm.mDrift; a[43] = atm.mRays;
+            list->SetGraphicsRootConstantBufferView(4, va);
+            calls.setConsts(list, 0, 44, a, 0);
+            calls.setPso(list, ap);
+            calls.draw(list, 3, 1, 0, 0);
+            sceneDirty = true;
+        }
+    }
+    // ---- camera motion blur, part 2 (shaders/worldfx_blur.hlsl): the world as the pass left it, streaked along each
+    //      pixel's own path over a shutter time. Here, not at Present: there is depth (walking and strafing blur too, near
+    //      more than far) and the hand + HUD are not drawn yet, so they stay sharp. Costs nothing while the camera is still.
+    if (blurNeed) {
+        if (sceneDirty) recopyScene();   // the pass / the haze just drew over the scene: take it again (with nothing drawn the first copy is the scene)
+        float b[44]{};
+        std::memcpy(b, c, 12 * sizeof(float));                      // c0..c2: the camera, as the pass used it
+        static uint32_t seed = 0;
+        b[11] = float(++seed & 1023u);
+        b[12] = blurFrac; b[13] = float(rd.Width) * 0.03f; b[14] = blurDead; b[15] = (c[15] > 0.5f ? 1.0f : 0.0f) + (look.blurTest == 3 ? 4.0f : 0.0f);
+        b[16] = c[16]; b[17] = c[17]; b[18] = c[18]; b[19] = c[19];
+        for (int a = 0; a < 3; ++a) { b[20 + a] = pa.f[a]; b[24 + a] = pa.r[a]; b[28 + a] = pa.u[a]; }
+        b[23] = bT[0]; b[27] = bT[1]; b[31] = bT[2];
+        D3D12_GPU_VIRTUAL_ADDRESS const acbVa = uploadActors();
         if (!acbVa) blurNeed = false;
         else list->SetGraphicsRootConstantBufferView(4, acbVa);
         if (blurNeed) {
@@ -2911,6 +3006,7 @@ WorldFxLook& worldFxLook() { return gLook; }
 std::string  worldFxStatus() { std::lock_guard l(gWfxMutex); return gWfxStatus; }
 void loadWorldFxSettings(std::filesystem::path const& configDir) {
     gWfxConfig = configDir / "WorldFx.txt";
+    gAtmosFile = configDir / "Atmos.txt";
     wfxperf::logDir = configDir.parent_path() / "logs" / "worldfx";
     std::ifstream in(gWfxConfig);
     std::string   k;
