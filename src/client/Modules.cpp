@@ -307,6 +307,18 @@ void atmosTick() {
         else out += "aura 0\n";
         if (ha && ha->enabled) { auto c = pal(ha, 1); out += std::format("halo 1\nhalo_c {:.3f} {:.3f} {:.3f}\nhalo_size {:.2f}\nhalo_glow {:.2f}\nhalo_height {:.2f}\nhalo_design {}\nhalo_fp 0\n", c[0], c[1], c[2], ha->num("size", 1.f), ha->num("glow", 0.7f), ha->num("height", 1.f), int(ha->num("design", 0))); }
         else out += "halo 0\n";
+        auto* ch = r.find("chroma"); auto* ra = r.find("radiance"); auto* wx = r.find("weather");
+        if (ch && ch->enabled) {
+            static constexpr float kTone[3][3] = {{0.80f, 0.74f, 0.92f}, {0.95f, 0.90f, 0.80f}, {0.70f, 0.70f, 0.72f}};   // Lilac, Cream, Noir
+            static constexpr float kMem[4] = {30.f, 120.f, 600.f, 3600.f};
+            auto const& tn = kTone[std::clamp(int(ch->num("tone", 0)), 0, 2)];
+            out += std::format("chroma 1\nch_tone {:.3f} {:.3f} {:.3f}\nch_hint {:.2f}\nch_brush {:.1f}\nch_memory {:.0f}\nch_living {}\n", tn[0], tn[1], tn[2],
+                               ch->num("hint", 0.06f), ch->num("brush", 6.f), kMem[std::clamp(int(ch->num("memory", 1)), 0, 3)], ch->flag("living", true) ? 1 : 0);
+        } else out += "chroma 0\n";
+        if (ra && ra->enabled) { auto c = pal(ra, 0); out += std::format("rad 1\nrad_c {:.3f} {:.3f} {:.3f}\nrad_width {:.1f}\nrad_glow {:.2f}\nrad_fill {:.2f}\nrad_speed {:.2f}\n", c[0], c[1], c[2], ra->num("width", 2.f), ra->num("glow", 0.6f), ra->num("fill", 0.2f), ra->num("speed", 1.f)); }
+        else out += "rad 0\n";
+        if (wx && wx->enabled) out += std::format("wx 1\nwx_mode {}\nwx_intensity {:.2f}\nwx_wind {:.2f}\nwx_size {:.2f}\nwx_range {:.0f}\n", int(wx->num("mode", 0)), wx->num("intensity", 1.f), wx->num("wind", 0.45f), wx->num("size", 1.f), wx->num("range", 24.f));
+        else out += "wx 0\n";
         if (sw && sw->enabled) { auto c = pal(sw, 0); out += std::format("sw 1\nsw_c {:.3f} {:.3f} {:.3f}\nsw_size {:.2f}\nsw_glow {:.2f}\n", c[0], c[1], c[2], sw->num("size", 1.f), sw->num("glow", 0.7f)); }
         else out += "sw 0\n";
     }
@@ -1105,7 +1117,17 @@ void registerBuiltins() {
         auto& ha = r.add("halo", "Halo", Category::Visual, "A gently glowing halo (Renderer Foundation)", false);
         ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f).slider("height", "Height", 1.f, 0.f, 2.f, 0.05f);
-        for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha}) m->onToggle = [](bool) { gAtmosLast.clear(); };
+        auto& chm = r.add("chroma", "Chroma", Category::Visual, "The world waits in grey, and colour blooms wherever you walk (Renderer Foundation)", false);
+        chm.choice("tone", "Tone", {"Lilac", "Cream", "Noir"}, 0).slider("hint", "Colour it keeps", 0.06f, 0.f, 0.5f, 0.01f)
+            .toggleSetting("living", "Players, mobs and items keep their colour", true).slider("brush", "Brush (blocks)", 6.f, 2.f, 16.f, 0.5f)
+            .choice("memory", "Memory", {"30 s", "2 min", "10 min", "1 hour"}, 1);
+        auto& rad = r.add("radiance", "Radiance", Category::Visual, "Glowing outlines on players, mobs and items (Renderer Foundation)", false);
+        rad.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("width", "Width", 2.f, 1.f, 5.f, 0.5f)
+            .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.2f, 0.f, 1.f, 0.05f).slider("speed", "Flow speed", 1.f, 0.f, 3.f, 0.05f);
+        auto& wxm = r.add("weather", "Weather", Category::Visual, "Sculpt the weather: glassy rain, soft snowfall and ember showers (Renderer Foundation)", false);
+        wxm.choice("mode", "Mode", {"Rain", "Snow", "Fire"}, 0).slider("intensity", "Intensity", 1.f, 0.1f, 2.f, 0.05f)
+            .slider("wind", "Wind", 0.45f, 0.f, 1.5f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("range", "Range (blocks)", 24.f, 8.f, 40.f, 1.f);
+        for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm}) m->onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
         ms.onToggle = [](bool) { gAtmosLast.clear(); };
     }
