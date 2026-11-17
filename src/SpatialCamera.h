@@ -130,6 +130,8 @@ inline int javaAutoGuiScale(int w, int h) {
 }
 
 void install();
+/// [Freelook] key (Windows virtual-key, 0 = off), mode (0 hold, 1 toggle), orbit distance in blocks (0 = first person)
+void setFreelook(int key, int mode, float dist);
 void uninstall();
 /// Client thread: a container screen opened/closed (inventory = the player inventory screen). Third person mode
 /// switches the game to third person and starts the glide; first person mode keeps the view and only turns it.

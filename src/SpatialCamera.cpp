@@ -446,11 +446,65 @@ void applyFov(MinecraftCamera::CameraComponent** comps, int nComp, bool cineOn, 
         if (i == 0) { gCineFovRaw = m->base; gCineFovScale = fovScale; }
     }
 }
+// ---- [Purxiy "freelook": look around without turning] (Bedrock Forge 2026-11-17). While the key is held (or toggled),
+// the mouse turns the camera round you instead of you: your look is put back every frame (you keep running the way you
+// were), the turning goes into an orbit at "distance" blocks. Only while the game has the mouse (cursor hidden).
+std::atomic<int>   gFlKey{0}, gFlMode{0};
+std::atomic<float> gFlDist{4.0f};
+struct FreeLook { bool on = false, toggled = false, wasDown = false; float lockYaw = 0, lockPitch = 0, offYaw = 0, offPitch = 0, blend = 0; } gFl;
+bool flKeyWanted() {
+    int const vk = gFlKey.load(std::memory_order_relaxed);
+    if (vk <= 0 || vk > 255) return false;
+    HWND fg = GetForegroundWindow();
+    DWORD pid = 0;
+    if (!fg || (GetWindowThreadProcessId(fg, &pid), pid != GetCurrentProcessId())) { gFl.toggled = false; return false; }
+    CURSORINFO ci{sizeof ci};
+    bool const captured = GetCursorInfo(&ci) && !(ci.flags & CURSOR_SHOWING);
+    bool const down = (GetAsyncKeyState(vk) & 0x8000) != 0;
+    bool const edge = down && !gFl.wasDown;
+    gFl.wasDown = down;
+    if (!captured) { gFl.toggled = false; return false; }
+    if (gFlMode.load(std::memory_order_relaxed) == 1) { if (edge) gFl.toggled = !gFl.toggled; return gFl.toggled; }
+    return down;
+}
+// runs before the camera is written: keeps your look locked and returns the orbit pose while freelook is on
+bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
+    bool const want = flKeyWanted();
+    auto rotc = actor.getEntityContext().tryGetComponent<ActorRotationComponent>();
+    auto head = actor.getEntityContext().tryGetComponent<ActorHeadRotationComponent>();
+    if (!rotc) return false;
+    Vec2& r = *rotc->mRot;
+    if (want && !gFl.on) { gFl.on = true; gFl.lockYaw = r.y; gFl.lockPitch = r.x; gFl.offYaw = 0; gFl.offPitch = 0; }
+    if (!want && gFl.on) gFl.on = false;
+    float const target = gFl.on ? 1.0f : 0.0f;
+    gFl.blend += (target - gFl.blend) * 0.25f;
+    if (gFl.blend < 0.01f && !gFl.on) { gFl.blend = 0; return false; }
+    if (gFl.on) {   // what the mouse did since the last frame goes to the camera; your look goes back
+        gFl.offYaw  += std::remainder(r.y - gFl.lockYaw, 360.0f);
+        gFl.offPitch = std::clamp(gFl.offPitch + (r.x - gFl.lockPitch), -89.0f - gFl.lockPitch, 89.0f - gFl.lockPitch);
+        r.x = gFl.lockPitch; r.y = gFl.lockYaw;
+        (*rotc->mRotPrev).x = gFl.lockPitch; (*rotc->mRotPrev).y = gFl.lockYaw;
+        if (head) { head->mYHeadRot = gFl.lockYaw; head->mYHeadRotO = gFl.lockYaw; }
+    } else {        // released: the camera swings back to your eyes
+        gFl.offYaw *= 0.75f; gFl.offPitch *= 0.75f;
+    }
+    float const e = gFl.blend * gFl.blend * (3.0f - 2.0f * gFl.blend);
+    float const yaw = gFl.lockYaw + gFl.offYaw, pitch = std::clamp(gFl.lockPitch + gFl.offPitch, -89.0f, 89.0f);
+    float const y = yaw * kDeg, pt = pitch * kDeg;
+    glm::vec3 const f(-std::sin(y) * std::cos(pt), -std::sin(pt), std::cos(y) * std::cos(pt));
+    glm::vec3 const cam = eye - f * (gFlDist.load(std::memory_order_relaxed) * e);
+    p.pos[0] = cam.x; p.pos[1] = cam.y; p.pos[2] = cam.z;
+    p.yaw = yaw; p.pitch = pitch; p.roll = 0;
+    return true;
+}
+Actor* gFlActor = nullptr;   // set by applyComponent for applyCinematic (same thread)
+
 void applyCinematic(MinecraftCamera::CameraComponent** comps, int nComp, glm::vec3 const& eye, float yawP, float pitchP) {
     float           e[3] = {eye.x, eye.y, eye.z};
     rf::cine::Pose  p{};
     float           fovScale = 1.0f;
     bool            on       = rf::cine::cameraPose(e, yawP, pitchP, p, fovScale);
+    if (!on && gFlActor) { if (flStep(*gFlActor, eye, p)) { on = true; fovScale = 1.0f; } }   // [Freelook]
     {   // [Main Menu] panorama capture: the camera turns through the cube's faces with a 90 degree view
         float pyaw = yawP, ppitch = pitchP, pfs = 1.0f;
         if (rf::pano::pose(gCineFovRaw, pyaw, ppitch, pfs)) {
@@ -551,6 +605,7 @@ void applyComponent() {
     std::lock_guard l(gMutex);
     Vec3      feetV = actor.getFeetPos();
     Vec2      rot   = actor.getRotation(); // x = pitch, y = yaw (degrees)
+    gFlActor = &actor;
     glm::vec3 feet(feetV.x, feetV.y, feetV.z);
     glm::vec3 eye  = feet + glm::vec3(0.0f, 1.62f, 0.0f);
     glm::quat& q   = *cc->mOrientation;
@@ -800,6 +855,10 @@ void applyComponent() {
     avatarApply(actor, yawP, mx, my, !fp);
 }
 } // namespace
+void setFreelook(int key, int mode, float dist) {
+    gFlKey.store(key, std::memory_order_relaxed); gFlMode.store(mode, std::memory_order_relaxed);
+    gFlDist.store(std::clamp(dist, 0.0f, 12.0f), std::memory_order_relaxed);
+}
 } // namespace rf::spatialcam
 
 namespace rf::spatialcam { void afterPreRender(Vec3* cameraPos, Vec3* targetPos); }

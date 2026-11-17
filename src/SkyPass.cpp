@@ -1,6 +1,7 @@
 // Renderer Foundation - LyricsFlow port: live sky preview pass (see SkyPass.h). Original code for Renderer Foundation.
 // STAGED, NOT RUN IN GAME YET: compile-verified by CI only. Same D3D12 patterns as LyricsPass (root constants + SRV
 // table per ring slot, premultiplied blend, PSO per back-buffer format, WIC decode on a worker thread).
+#include "SpatialCamera.h"
 #include "Panorama.h"
 #include "D3D12Api.h"
 #include "SkyPass.h"
@@ -194,6 +195,7 @@ void pollAtmos() {
         else if (k == "wx_wet") rd(a.wxWet); else if (k == "wx_light") { int v = 0; in >> v; a.wxLight = v != 0; }
         else if (k == "wx_strike") { long long ms = 0; in >> ms >> a.wxAz >> a.wxNear; a.wxStrike = ms; }
         else if (k == "pano_capture") { int v = 0; in >> v; rf::pano::request(v); }
+        else if (k == "freelook") { int key = 0, mode = 0; float dist = 4.0f; in >> key >> mode >> dist; rf::spatialcam::setFreelook(key, mode, dist); }
         else if (k == "wg") { int v = 0; in >> v; a.wg = v != 0; } else if (k == "wg_c") rd3(a.wgC);
         else if (k == "wg_design") rd(a.wgDesign); else if (k == "wg_size") rd(a.wgSize); else if (k == "wg_glow") rd(a.wgGlow); else if (k == "wg_flap") rd(a.wgFlap);
         else if (k == "wg_fp") { int v = 0; in >> v; a.wgFp = v != 0; }
