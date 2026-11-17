@@ -42,7 +42,13 @@ Standalone (patches an existing pack, idempotent):
 
     python3 -I tools/FiguraBridge/stick_armor.py RP/models/entity/figura_stick.geo.json RP/entity/player.entity.json OUT
 
-Style (`STYLE`, default `glass`): the plates bind the game's own vanilla armor textures (64x32, layer 1 for
+Style (`STYLE`, default `mix`): `mix` = the original light-rail armor and Novak Glass in one suit
+(`build_suit_mix`): the original's metal plates stay the structure (enclosed helmet, layered petals, belt, knee caps,
+back and thigh-back plates, foot shells - a polished finish, leather neutral and dyed with the item like the glass),
+its main faces are crystal panes (visor over a dark backing, breastplate V, spine shard, outer shoulder petals,
+forearm blades, thigh plates, greaves, calf guards) and its light rails run over them in the glass's neon hue.
+Per slot three draws: metal, rails, then glass (RF's glass refracts what's already drawn). The glass parts follow
+the rules below. `glass` = all-glass suit (`build_suit_glass`): the plates bind the game's own vanilla armor textures (64x32, layer 1 for
 helmet/chest/boots, layer 2 for leggings); Renderer Foundation's glass armor recognises those textures and draws its
 Novak Glass / Cloud Sea glass on the stick's plates (leather takes the item's dye through
 `entity_alphatest_change_color` + the controller's `color`). RF draws the neon outline, rim light and lens bevel along

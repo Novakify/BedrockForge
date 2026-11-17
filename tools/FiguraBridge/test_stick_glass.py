@@ -6,6 +6,7 @@ Renderer Foundation draws the glass outline along the edges of the vanilla textu
      an edge in the shader (outside it: unpainted or another face) - glass_data.json is RF's own mask / face data
   2. every plate polygon of the suit lies inside one island, on the right armor layer for its slot
   3. every island a plate uses is covered to its border (the plate's silhouette carries the outline)
+Runs on the default style (mix) and on the all-glass style.
 
 usage: test_stick_glass.py [STICK_GEO]   (default: stick_armor_handoff/stick_skeleton.json)
 """
@@ -51,38 +52,41 @@ for name, (x, y, w, h) in sa.ISLAND.items():
 
 # 2./3. the suit's plates
 geo = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "stick_armor_handoff/stick_skeleton.json"
-with tempfile.TemporaryDirectory() as td:
-    sa.build(geo, None, None, Path(td))
-    G = json.loads((Path(td) / "models/entity/fb_armor_stick.geo.json").read_text())["minecraft:geometry"]
-used = {}
-for g in G:
-    slot = g["description"]["identifier"].split(".")[-1]
-    if slot.endswith("_fx"):
-        fails.append(f"{slot}: light rails emitted in the glass style")
-        continue
-    for b in g["bones"]:
-        pm = b.get("poly_mesh")
-        if not pm:
-            continue
-        for poly in pm["polys"]:
-            uv = [(pm["uvs"][c[2]][0] * 64, pm["uvs"][c[2]][1] * 32) for c in poly]
-            home = [n for n, (x, y, w, h) in sa.ISLAND.items()
-                    if all(x - 1e-3 <= u <= x + w + 1e-3 and y - 1e-3 <= v <= y + h + 1e-3 for u, v in uv)]
-            if not home:
-                fails.append(f"{slot}/{b['name']}: polygon outside every island {uv}")
-                continue
-            mine = [n for n in home if sa.ISLAND_LAYER[n] == sa.LAYER[slot]]   # islands of different layers overlap
-            if not mine:
-                fails.append(f"{slot}/{b['name']}: island {home} is on the wrong armor layer")
-                continue
-            n = mine[0]
-            lo, hi = used.setdefault((n, slot), [[99, 99], [-1, -1]])
-            for u, v in uv:
-                lo[0], lo[1], hi[0], hi[1] = min(lo[0], u), min(lo[1], v), max(hi[0], u), max(hi[1], v)
-for (n, slot), (lo, hi) in used.items():
-    x, y, w, h = sa.ISLAND[n]
-    if lo[0] > x + 0.05 or lo[1] > y + 0.05 or hi[0] < x + w - 0.05 or hi[1] < y + h - 0.05:
-        fails.append(f"island {n}: plates don't reach its border ({lo} .. {hi})")
 
-print("\n".join(fails) if fails else f"ok: {len(sa.ISLAND)} clean islands, {len(used)} used edge to edge")
+
+def check(style):
+    sa.STYLE = style
+    with tempfile.TemporaryDirectory() as td:
+        sa.build(geo, None, None, Path(td))
+        G = json.loads((Path(td) / "models/entity/fb_armor_stick.geo.json").read_text())["minecraft:geometry"]
+    used = {}
+    for g in G:
+        slot = g["description"]["identifier"].split(".")[-1]
+        if slot.endswith(("_fx", "_metal")):   # light rails / metal plates (the mix): not glass
+            if style == "glass":
+                fails.append(f"[{style}] {slot}: emitted in the all-glass style")
+            continue
+        for b in g["bones"]:
+            pm = b.get("poly_mesh")
+            if not pm:
+                continue
+            for poly in pm["polys"]:
+                uv = [(pm["uvs"][c[2]][0] * 64, pm["uvs"][c[2]][1] * 32) for c in poly]
+                home = [n for n, (x, y, w, h) in sa.ISLAND.items() if sa.ISLAND_LAYER[n] == sa.LAYER[slot]
+                        and all(x - 1e-3 <= u <= x + w + 1e-3 and y - 1e-3 <= v <= y + h + 1e-3 for u, v in uv)]
+                if not home:   # (islands of the two layers overlap in texel space: only this slot's layer counts)
+                    fails.append(f"[{style}] {slot}/{b['name']}: polygon outside every island of its layer {uv}")
+                    continue
+                lo, hi = used.setdefault((home[0], slot), [[99, 99], [-1, -1]])
+                for u, v in uv:
+                    lo[0], lo[1], hi[0], hi[1] = min(lo[0], u), min(lo[1], v), max(hi[0], u), max(hi[1], v)
+    for (n, slot), (lo, hi) in used.items():
+        x, y, w, h = sa.ISLAND[n]
+        if lo[0] > x + 0.05 or lo[1] > y + 0.05 or hi[0] < x + w - 0.05 or hi[1] < y + h - 0.05:
+            fails.append(f"[{style}] {slot} island {n}: plates don't reach its border ({lo} .. {hi})")
+    return len(used)
+
+
+n = {st: check(st) for st in dict.fromkeys(("mix", "glass"))}
+print("\n".join(fails) if fails else f"ok: {len(sa.ISLAND)} clean islands; islands used edge to edge: {n}")
 sys.exit(1 if fails else 0)

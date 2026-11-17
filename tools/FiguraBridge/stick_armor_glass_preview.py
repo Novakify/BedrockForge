@@ -123,14 +123,14 @@ def ga_hue(h):
 
 
 # ---------------------------------------------------------------------------------------------- raster
-def raster(items, az, W, H, scale, anchor):
+def raster(items, az, W, H, scale, anchor, z0=None):
     """items: (tris world, uvs, kind, payload). kind 'body' payload rgb; kind 'armor' payload (variant, layer).
     Returns z, kind, colour, t, J (dt/dpx, dt/dpy), variant, layer, dist-to-camera buffers"""
     a = math.radians(az)
     view = np.array([math.sin(a), 0, -math.cos(a)])
     right = np.array([math.cos(a), 0, math.sin(a)])
     L = np.array([-0.4, 0.75, -0.55]) / np.linalg.norm([-0.4, 0.75, -0.55])
-    z = np.full((H, W), -1e9)
+    z = np.full((H, W), -1e9) if z0 is None else z0.copy()
     kind = np.zeros((H, W), int)
     col = np.zeros((H, W, 3))
     T = np.zeros((H, W, 2))
@@ -167,12 +167,28 @@ def raster(items, az, W, H, scale, anchor):
                 Jt = Tm @ np.linalg.inv(M)   # dt = Jt @ dpx
             except np.linalg.LinAlgError:
                 continue
+        if k == "tex":   # metal atlas (lit) / light rail strip (unlit, emissive)
+            tex, unlit, NN = pay
+            th_, tw_ = tex.shape[:2]
+            U = l0 * UV[0, 0] + l1 * UV[1, 0] + l2 * UV[2, 0]
+            Vv = l0 * UV[0, 1] + l1 * UV[1, 1] + l2 * UV[2, 1]
+            tc = tex[np.clip((Vv * th_).astype(int), 0, th_ - 1), np.clip((U * tw_).astype(int), 0, tw_ - 1)]
+            if tex.shape[2] == 4 and not unlit:
+                m &= tc[..., 3] >= 0.5
         if not m.any():
             continue
         old[m] = zz[m]
         sl = (slice(y0, y1 + 1), slice(x0, x1 + 1))
         kind[sl][m] = 1 if k == "body" else 2
-        if k == "body":
+        if k == "tex":
+            nn = l0[..., None] * NN[0] + l1[..., None] * NN[1] + l2[..., None] * NN[2]   # smooth: per-pixel normal
+            nn /= np.linalg.norm(nn, axis=-1, keepdims=True) + 1e-12
+            nv = nn @ view
+            nn = np.where((nv < 0)[..., None], -nn, nn)
+            sh = np.ones(nv.shape) if unlit else 0.50 + 0.42 * np.maximum(0, nn @ L) + 0.22 * (1 - np.abs(nv)) ** 2
+            kind[sl][m] = 1
+            col[sl][m] = np.clip(tc[..., :3][m] * sh[m][:, None], 0, 1)
+        elif k == "body":
             n = np.cross(P[1] - P[0], P[2] - P[0])
             n /= np.linalg.norm(n) + 1e-12
             if n @ view < 0:
@@ -324,7 +340,23 @@ def shade(frame, scene_dist, z, kind, T, J, var, lay, pad3, cam_d, time=0.0):
 
 
 # ---------------------------------------------------------------------------------------------- main
-def load_items(geo_path, rp, mat, az, slots):
+def tris_n(pm):
+    """triangles of a poly_mesh with their per-corner normals"""
+    pos, uv, nr = np.array(pm["positions"], float), np.array(pm["uvs"], float), np.array(pm["normals"], float)
+    out = []
+    for poly in pm["polys"]:
+        tri = [[0, 1, 2]] + ([[0, 2, 3]] if poly[2] != poly[3] else [])
+        for t in tri:
+            c = [poly[i] for i in t]
+            out.append((pos[[x[0] for x in c]], uv[[x[2] for x in c]], nr[[x[1] for x in c]]))
+    return out
+
+
+def rot_n(N, bone, az):   # normals turn with the pose (no translation)
+    return pose(N + np.array([0, 100.0, 0]), bone, az) - pose(np.array([[0, 100.0, 0]] * len(N)), bone, az)
+
+
+def load_items(geo_path, rp, mat, az, slots, phase=0.3):
     g = json.loads(Path(geo_path).read_text())["minecraft:geometry"][0]
     items = []
     for bn in g["bones"]:
@@ -334,11 +366,24 @@ def load_items(geo_path, rp, mat, az, slots):
                 items.append((pose(P, bn["name"], az), UV, "body", (0.42, 0.80, 0.16)))
     A = json.loads((Path(rp) / "models/entity/fb_armor_stick.geo.json").read_text())["minecraft:geometry"]
     vi = ORDER.index(MAT[mat])
+    td = Path(rp) / "textures/figura/fb_armor"
     for geo in A:
         ident = geo["description"]["identifier"].split(".")[-1]
-        if ident not in slots:
+        slot, _, part = ident.partition("_")
+        if slot not in slots:
             continue
-        layer = SLOT_LAYER[ident]
+        if part in ("metal", "fx"):
+            tex = np.asarray(Image.open(td / (f"{mat}.png" if part == "metal" else f"{mat}_fx.png")).convert("RGBA"), float) / 255
+            if part == "metal" and mat == "leather":   # the mix: neutral leather x the item's dye (RC color)
+                tex = tex * np.r_[LEATHER_DYE, 1.0]
+            if part == "fx":   # uv_anim: v offset (v.fbaph * 0.5)
+                tex = np.roll(tex, -int(round(phase * 0.5 * tex.shape[0])), axis=0)
+            for bn in geo["bones"]:
+                if "poly_mesh" in bn:
+                    for P, UV, N in tris_n(bn["poly_mesh"]):
+                        items.append((pose(P, bn["name"], az), UV, "tex", (tex, part == "fx", rot_n(N, bn["name"], az))))
+            continue
+        layer = SLOT_LAYER[slot]
         for bn in geo["bones"]:
             if "poly_mesh" in bn:
                 for P, UV in tris_of(bn["poly_mesh"]):
@@ -350,8 +395,8 @@ def frame_for(geo, rp, bg, mat, az, pad3, scale, anchor, slots, cam_d=64.0):
     H, W = bg.shape[:2]
     items = load_items(geo, rp, mat, az, slots)
     # the scene copy RF refracts: the world and the stick, drawn before the armor (opaque pass order)
-    zb, kb, cb, *_ = raster([i for i in items if i[2] == "body"], az, W, H, scale, anchor)
-    z, kind, col, T, J, var, lay = raster(items, az, W, H, scale, anchor)
+    zb, kb, cb, *_ = raster([i for i in items if i[2] != "armor"], az, W, H, scale, anchor)
+    z, kind, col, T, J, var, lay = raster([i for i in items if i[2] == "armor"], az, W, H, scale, anchor, z0=zb)
     frame = bg.copy()
     frame[kb == 1] = cb[kb == 1]
     dist = np.full((H, W), 320.0)                       # the world behind: blocks well behind the player
