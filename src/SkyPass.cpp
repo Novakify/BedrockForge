@@ -2481,7 +2481,17 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 std::atomic<bool> gTerrainSinceClear{false};
 void noteTerrainDraw() { if (!gTerrainSinceClear.load(std::memory_order_relaxed)) gTerrainSinceClear.store(true, std::memory_order_relaxed); }
 bool fxFallbackWanted(ID3D12GraphicsCommandList* /*list*/, size_t dsv) {   // (a try to only count clears over the world's target made Novak flicker everywhere - reverted)
-    if ((!fxOn() && !rf::iris::enabled()) || !gFxPso.load(std::memory_order_relaxed) || !fxPairRt(dsv)) return false;
+    if (rf::iris::enabled()) {
+        // IrisBridge keeps the pre-merge rule: only the world's own depth target, only when the sky drew and the pass did
+        // not. (The World FX "terrain since clear" trigger fired iris::run at depth clears on lists where the terrain was
+        // still recording - the driver fell over ~0.6 s after turning IrisBridge on, seen in game 2026-11-17.)
+        if (!gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
+        gTerrainSinceClear.store(false, std::memory_order_relaxed);
+        bool const sky  = gSkySinceClear.exchange(false);
+        bool const done = gFxSinceClear.exchange(false);
+        return sky && !done;
+    }
+    if (!fxOn() || !gFxPso.load(std::memory_order_relaxed) || !fxPairRt(dsv)) return false;
     ++gDbgClears;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
