@@ -72,10 +72,15 @@ extern "C" {
 struct BfFxEventsV1 {
     uint32_t size, version, count, frame;
     struct E { float x, y, z; uint32_t kind; int64_t atMs; float a, b; } e[32];   // kind: 1 jump, 2 hit, 3 crit, 4 landing (a = fall speed)
+    // version 2: you (Trail / Aura / Halo)
+    float    px, py, pz, pyaw;   // your feet (world), yaw (degrees)
+    uint32_t pflags;             // 1 = known, 2 = on the ground
+    uint32_t pad2;
+    int64_t  pAtMs;
 };
 __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents();
 }
-namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 1, 0, 0, {}}; }
+namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 2, 0, 0, {}, 0, 0, 0, 0, 0, 0, 0}; }
 extern "C" __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents() { return &gFxEv; }
 namespace bedrock_forge::client {
 void pushFxEvent(uint32_t kind, float x, float y, float z, float a = 0.f) {
@@ -295,6 +300,13 @@ void atmosTick() {
         else out += "hs 0\n";
         if (rp && rp->enabled) { auto c = pal(rp, 0); out += std::format("rp 1\nrp_c {:.3f} {:.3f} {:.3f}\nrp_glow {:.2f}\nrp_dur {:.2f}\nrp_crits {}\nrp_ring {}\n", c[0], c[1], c[2], rp->num("glow", 0.8f), rp->num("duration", 0.8f), rp->flag("crits", true) ? 1 : 0, rp->flag("ring", true) ? 1 : 0); }
         else out += "rp 0\n";
+        auto* tr = r.find("trail"); auto* au = r.find("aura"); auto* ha = r.find("halo");
+        if (tr && tr->enabled) { auto c = pal(tr, 0); out += std::format("trail 1\ntrail_c {:.3f} {:.3f} {:.3f}\ntrail_dur {:.2f}\ntrail_size {:.2f}\ntrail_glow {:.2f}\ntrail_style {}\n", c[0], c[1], c[2], tr->num("duration", 1.2f), tr->num("size", 1.f), tr->num("glow", 0.6f), int(tr->num("style", 0))); }
+        else out += "trail 0\n";
+        if (au && au->enabled) { auto c = pal(au, 0); out += std::format("aura 1\naura_c {:.3f} {:.3f} {:.3f}\naura_size {:.2f}\naura_speed {:.2f}\naura_glow {:.2f}\naura_style {}\naura_fp {}\n", c[0], c[1], c[2], au->num("size", 1.f), au->num("speed", 1.f), au->num("glow", 0.65f), int(au->num("style", 0)), au->flag("first_person", false) ? 1 : 0); }
+        else out += "aura 0\n";
+        if (ha && ha->enabled) { auto c = pal(ha, 1); out += std::format("halo 1\nhalo_c {:.3f} {:.3f} {:.3f}\nhalo_size {:.2f}\nhalo_glow {:.2f}\nhalo_height {:.2f}\nhalo_design {}\nhalo_fp 0\n", c[0], c[1], c[2], ha->num("size", 1.f), ha->num("glow", 0.7f), ha->num("height", 1.f), int(ha->num("design", 0))); }
+        else out += "halo 0\n";
         if (sw && sw->enabled) { auto c = pal(sw, 0); out += std::format("sw 1\nsw_c {:.3f} {:.3f} {:.3f}\nsw_size {:.2f}\nsw_glow {:.2f}\n", c[0], c[1], c[2], sw->num("size", 1.f), sw->num("glow", 0.7f)); }
         else out += "sw 0\n";
     }
@@ -1082,7 +1094,18 @@ void registerBuiltins() {
         auto& sw = r.add("shockwave", "Shockwave", Category::Visual, "Land, and a wave of light runs through the ground (Renderer Foundation)", false);
         sw.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
             .slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
-        for (Module* m : {&jc, &hs, &rp, &sw}) m->onToggle = [](bool) { gAtmosLast.clear(); };
+        // cosmetics (Purxiy trail / aura / halo): seen in third person (F5), the aura first person too if you want
+        auto& tr = r.add("trail", "Trail", Category::Visual, "Leave a trail of light behind you (Renderer Foundation)", false);
+        tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("duration", "Duration (s)", 1.2f, 0.3f, 3.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
+        auto& au = r.add("aura", "Aura", Category::Visual, "Soft light that lives around you (Renderer Foundation)", false);
+        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("speed", "Speed", 1.f, 0.f, 3.f, 0.05f).slider("glow", "Glow", 0.65f, 0.f, 1.f, 0.05f)
+            .toggleSetting("first_person", "See it from your own eyes too", false);
+        auto& ha = r.add("halo", "Halo", Category::Visual, "A gently glowing halo (Renderer Foundation)", false);
+        ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f).slider("height", "Height", 1.f, 0.f, 2.f, 0.05f);
+        for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha}) m->onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
         ms.onToggle = [](bool) { gAtmosLast.clear(); };
     }
@@ -1349,6 +1372,9 @@ void installRuntime() {
                 if (wasGround && !g && vy > 0.15f) pushFxEvent(1u, pos.x, pos.y - 1.62f, pos.z);
                 if (!wasGround && g) { if (fallV < -0.45f) pushFxEvent(4u, pos.x, pos.y - 1.62f, pos.z, -fallV); fallV = 0.f; }
                 wasGround = g;
+                gFxEv.px = pos.x; gFxEv.py = pos.y - 1.62f; gFxEv.pz = pos.z; gFxEv.pyaw = player->getRotation().z;   // Trail / Aura / Halo
+                gFxEv.pflags = 1u | (g ? 2u : 0u);
+                gFxEv.pAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             } catch (...) {}
         }
         if (player && Registry::get().on("motion_blur")) { try { matchfx::blurActorsFrame(*player); } catch (...) {} }
