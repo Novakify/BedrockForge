@@ -277,6 +277,35 @@ constexpr Pal kHazePals[] = {
     {"Aurora", {0.36f, 1.00f, 0.66f}, {0.72f, 0.46f, 1.00f}}, {"Novak", {0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}}};
 constexpr Pal kMistPals[] = {
     {"Autumn", {1.00f, 0.86f, 0.70f}, {}}, {"Lilac", {0.86f, 0.80f, 1.00f}, {}}, {"Pearl", {0.92f, 0.94f, 1.00f}, {}}, {"Rose", {1.00f, 0.84f, 0.88f}, {}}};
+// [Main Menu] the panorama pack RF writes (development_resource_packs/BF Menu World) must be in the global pack list of
+// the profile you play on: the most recently used one. Added once (the old list is kept next to it), at the top.
+void registerMenuPack() {
+    try {
+        wchar_t const* ad = _wgetenv(L"APPDATA");
+        if (!ad) return;
+        auto const users = std::filesystem::path(ad) / L"Minecraft Bedrock" / L"Users";
+        std::filesystem::path best; std::filesystem::file_time_type bestT{};
+        std::error_code ec;
+        for (auto const& u : std::filesystem::directory_iterator(users, ec)) {
+            auto const f = u.path() / L"games" / L"com.mojang" / L"minecraftpe" / L"global_resource_packs.json";
+            if (!std::filesystem::exists(f, ec)) continue;
+            auto const t = std::filesystem::last_write_time(u.path() / L"games" / L"com.mojang" / L"minecraftpe", ec);
+            if (best.empty() || t > bestT) { best = f; bestT = t; }
+        }
+        if (best.empty()) return;
+        std::string txt;
+        { std::ifstream in(best, std::ios::binary); txt.assign(std::istreambuf_iterator<char>(in), {}); }
+        if (txt.find("b7f1e4a2-6c3d-4e58-9a71-2f0d5c8e3b14") != std::string::npos) return;
+        auto const bak = best.parent_path() / L"global_resource_packs.before-bf-menu-world.json";
+        if (!std::filesystem::exists(bak, ec)) std::filesystem::copy_file(best, bak, ec);
+        auto const at = txt.find('[');
+        if (at == std::string::npos) return;
+        bool const empty = txt.find('{', at) == std::string::npos;
+        std::string const entry = "\n\t{\n\t\t\"pack_id\" : \"b7f1e4a2-6c3d-4e58-9a71-2f0d5c8e3b14\",\n\t\t\"version\" : [ 1, 0, 0 ]\n\t}" + std::string(empty ? "" : ",");
+        txt.insert(at + 1, entry);
+        std::ofstream(best, std::ios::binary) << txt;
+    } catch (...) {}
+}
 std::string gAtmosLast;
 void atmosTick() {
     auto& r  = Registry::get();
@@ -338,6 +367,16 @@ void atmosTick() {
         else out += "wg 0\n";
         if (auto* cp = r.find("cape"); cp && cp->enabled) { auto c = pal(cp, 0); auto c2 = pal(cp, 1); out += std::format("cp 1\ncp_c {:.3f} {:.3f} {:.3f}\ncp_c2 {:.3f} {:.3f} {:.3f}\ncp_design {}\ncp_glow {:.2f}\ncp_sway {:.2f}\n", c[0], c[1], c[2], c2[0], c2[1], c2[2], int(cp->num("design", 0)), cp->num("glow", 0.5f), cp->num("sway", 1.f)); }
         else out += "cp 0\n";
+        {   // Main Menu: "Capture this view" -> RF turns the camera through the cube's faces and writes the menu's panorama
+            static int panoId = 0;
+            if (auto* mm = r.find("main_menu"); mm && mm->enabled) {
+                if (auto* cap = mm->setting("capture"); cap && cap->on) {
+                    cap->on = false; ++panoId; r.save();
+                    registerMenuPack();
+                }
+            }
+            out += std::format("pano_capture {}\n", panoId);
+        }
         if (auto* bo = r.find("block_outline"); bo && bo->enabled) { auto c = pal(bo, 0); out += std::format("bo 1\nbo_c {:.3f} {:.3f} {:.3f}\nbo_style {}\nbo_w {:.2f}\nbo_glow {:.2f}\nbo_fill {:.2f}\nbo_face {}\nbo_glide {}\n", c[0], c[1], c[2], int(bo->num("style", 0)), bo->num("width", 2.f), bo->num("glow", 0.6f), bo->num("fill", 0.12f), bo->flag("face", true) ? 1 : 0, bo->flag("glide", true) ? 1 : 0); }
         else out += "bo 0\n";
         auto* ch = r.find("chroma"); auto* ra = r.find("radiance"); auto* wx = r.find("weather");
@@ -1275,6 +1314,9 @@ void registerBuiltins() {
         auto& cpm = r.add("cape", "Cape", Category::Visual, "An animated glowing cape that flows as you move (Renderer Foundation)", false);
         cpm.choice("design", "Design", {"Silk", "Aurora", "Starfield"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
             .slider("glow", "Glow", 0.5f, 0.f, 1.f, 0.05f).slider("sway", "Sway", 1.f, 0.f, 2.f, 0.05f);
+        // [Purxiy "main_menu": the world behind the menus] the title screen's panorama, captured from where you stand
+        r.add("main_menu", "Main Menu", Category::Visual, "Your own world behind the title screen: stand somewhere beautiful and capture it (shows from the next start)", false)
+            .toggleSetting("capture", "Capture this view now", false);
         auto& bom = r.add("block_outline", "Block Outline", Category::Visual, "A cleaner, glowing outline on the block you aim at (Renderer Foundation)", false);
         bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
             .slider("width", "Width (px)", 2.f, 1.f, 5.f, 0.5f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.12f, 0.f, 0.6f, 0.02f)
@@ -1326,7 +1368,7 @@ void registerBuiltins() {
             .slider("key_prev", "Previous song key", 0, 0, 254, 1);
         np.hud = [](Frame& f) { if (auto* m = Registry::get().find("now_playing")) drawNowPlaying(f, *m); };
     }
-    r.add("creamy_keys", "Creamy Keys", Category::Misc, "Your keyboard, with a sound of its own", false)
+    r.add("creamy_keys", "Keyboard Sounds", Category::Misc, "Your keyboard, with a sound of its own", false)
         .choice("profile", "Sound", {"Silk", "Stone", "Glass"}, 0).slider("volume", "Volume", 0.6f, 0.f, 1.f, 0.05f);
     r.add("nick_hider", "Nick Hider", Category::Misc, "Hide your name in screenshots and streams (chat, the player list)", false)
         .choice("alias", "Show it as", {"You", "Player", "Hidden", "Novak"}, 0);
