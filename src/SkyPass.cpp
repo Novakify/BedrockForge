@@ -1486,7 +1486,10 @@ void testBed() { ++gTestBedReq; }
 // the same one twice in a row). 0-6 LyricsFlow's death animations (by 374m); 7-11 Finishers (by akeresmods): First
 // Finisher, Shield Counter, Headbutt, Kick, Ultimate Attack; 12 Ragdollified (by raiiiden); 13 Sable Ragdolls (by
 // Leonardoinc22) - all used with their authors' permission (shaders/death_scenes*.hlsli)
-constexpr int kDeathScenes = 14;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
+constexpr int kDeathScenes = 14;   // in the bag; 12 and 13 each have two variants (scene codes 12-15)
+// preview-only (F6 list, not dealt until approved in game): 14 Afterglow, 15 Shatter, 16 Light Pillar, 17 Constellation
+// (scene codes 16-19, Bedrock Forge originals)
+constexpr int kDeathScenesPreview = 4;
 static int deathSceneFor(uint64_t key) {
     static uint64_t keys[32]{}; static int vals[32]{}; static int nk = 0;
     for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
@@ -1510,6 +1513,7 @@ static int deathSceneCode(int scene, uint64_t key) {
     uint32_t const h = uint32_t((key * 0x9E3779B97F4A7C15ull) >> 40);
     if (scene == 12) return 12 + int(h % 100u >= 55u);
     if (scene == 13) return 14 + int(h & 1u);
+    if (scene >= 14) return scene + 2;   // the preview-only originals
     return scene;
 }
 // where the camera looked when a kill came (the finishers lay the pair out side-on to it); kept per kill so the scene
@@ -1625,7 +1629,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
                 float const kp[3] = {float(e.x) + 0.5f, float(e.y), float(e.z) + 0.5f};
                 rf::deathsfx::onKill(key, sc, age, kp, look.killSfx);
                 uint32_t const slot1 = v6 && e.floorDy >= 1 && e.floorDy <= 16 && b->skins[e.floorDy - 1].ok ? e.floorDy : 0;
-                c.eC[ne][3] = float(sc) + 16.0f * float(slot1);
+                c.eC[ne][3] = float(sc) + 32.0f * float(slot1);
             } else if (e.kind == 6) {   // the fireworks go up where you were looking when the win came, and stay there
                 static int64_t winAt = -1; static float winYaw = 0.0f;
                 if (winAt != e.atMs) { winAt = e.atMs; winYaw = gViewYaw.load(std::memory_order_relaxed); }
@@ -1643,7 +1647,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             int const tsc = deathSceneCode(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u), uint64_t(gTestKill.at) + 7u);
             float const tkp[3] = {std::floor(gTestKill.p[0]) + 0.5f, std::floor(gTestKill.p[1]), std::floor(gTestKill.p[2]) + 0.5f};
             rf::deathsfx::onKill(uint64_t(gTestKill.at) + 7u, tsc, ta, tkp, look.killSfx);
-            c.eC[ne][3] = float(tsc) + 16.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
+            c.eC[ne][3] = float(tsc) + 32.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
@@ -2573,7 +2577,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
-        else if (k == "deathscene") gLook.deathScene = std::clamp(int(v), -1, kDeathScenes - 1);
+        else if (k == "deathscene") gLook.deathScene = std::clamp(int(v), -1, kDeathScenes + kDeathScenesPreview - 1);
         else if (k == "killsfx") gLook.killSfx = std::clamp(float(v), 0.0f, 1.0f);
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);

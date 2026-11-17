@@ -6,7 +6,7 @@
 //      world's own resolution (1/16 block texels, face-shaded like blocks; particles are little cubes, not soft blobs).
 //      The victim's body wears their real skin when Bedrock Forge sent it (gSkins), else a mannequin in team colours.
 //      Event: eA = feet block (world, min) + age, eB = team colour + kind (3 kill, 4 final), eC.x = seed,
-//      eC.y = the camera's yaw when the kill came, eC.w = scene + 16 * (skin slot + 1).
+//      eC.y = the camera's yaw when the kill came, eC.w = scene + 32 * (skin slot + 1).
 Texture2D<float4> gSkins : register(t4);   // 64 x (64 * 16): one classic skin per slot, top to bottom
 static const float DPX = 0.05859375;       // one skin pixel in blocks (a 32 px body is 1.875 blocks)
 
@@ -383,7 +383,7 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
         if (kind < 2.5 || kind > 4.5 || t > 4.8) continue;
         float3 feet = eA[i].xyz + float3(0.5, 0.0, 0.5) - CAM;
         float  code = eC[i].w + 0.5;
-        int    sc = int(fmod(code, 16.0));
+        int    sc = int(fmod(code, 32.0));
         // only pixels near the scene: a 4.5-block ball, or (hand, lightning) the column above it
         float2 ax = feet.xz - rd.xz * (dot(feet.xz, rd.xz) / max(dot(rd.xz, rd.xz), 1e-5));
         bool   col = (sc == 3 || sc == 4) && dot(ax, ax) < 3.5 * 3.5 && dot(feet.xz, rd.xz) > -3.5;
@@ -392,7 +392,7 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
 
         DFx fx; fx.team = pow(max(eB[i].rgb, 0.0), 2.2);
         fx.team = fx.team / max(max(fx.team.r, max(fx.team.g, fx.team.b)), 0.05);
-        fx.slot = floor(code / 16.0) - 1.0; fx.charK = 0.0; fx.ash = 0.0; fx.flash = 0.0; fx.hurt = 0.0; fx.clipY = -1e5; fx.seed = eC[i].x; fx.ghost = 0.0;
+        fx.slot = floor(code / 32.0) - 1.0; fx.charK = 0.0; fx.ash = 0.0; fx.flash = 0.0; fx.hurt = 0.0; fx.clipY = -1e5; fx.seed = eC[i].x; fx.ghost = 0.0;
         float3 team = fx.team, glow = team * (1.1 + 0.9 * darkK());
         float  seed = eC[i].x;
         float  yaw = h1(seed * 0.013) * 6.2832;
