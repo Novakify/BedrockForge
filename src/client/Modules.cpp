@@ -1327,7 +1327,7 @@ void registerBuiltins() {
         np.hud = [](Frame& f) { if (auto* m = Registry::get().find("now_playing")) drawNowPlaying(f, *m); };
     }
     r.add("creamy_keys", "Creamy Keys", Category::Misc, "Your keyboard, with a sound of its own", false)
-        .choice("profile", "Sound", {"Creamy", "Thock", "Clicky"}, 0).slider("volume", "Volume", 0.6f, 0.f, 1.f, 0.05f);
+        .choice("profile", "Sound", {"Silk", "Stone", "Glass"}, 0).slider("volume", "Volume", 0.6f, 0.f, 1.f, 0.05f);
     r.add("nick_hider", "Nick Hider", Category::Misc, "Hide your name in screenshots and streams (chat, the player list)", false)
         .choice("alias", "Show it as", {"You", "Player", "Hidden", "Novak"}, 0);
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
