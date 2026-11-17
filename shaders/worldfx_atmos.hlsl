@@ -141,7 +141,7 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
             float tp = dot(rel, rd);
             if (tp > 0.25 && tp < tMax) {
                 float  dd   = length(rel - rd * tp);
-                float  size = amb1.w * (style == 1 ? 0.018 : style == 3 ? 0.035 : style == 2 ? 0.05 : 0.03) * (0.6 + 0.8 * h.z);
+                float  size = amb1.w * (style == 1 ? 0.035 : style == 3 ? 0.07 : style == 2 ? 0.10 : 0.075) * (0.6 + 0.8 * h.z) * (1.0 + tp * 0.035);   // (seen in game at 4K: the first sizes read as dust; far ones grow a little so they stay visible)
                 float  coc  = amb3.y > 0.5 ? max(0.0, 2.2 - tp) * 0.03 : 0.0;   // near ones: a soft round bokeh
                 float  r    = size + coc;
                 float  core = exp(-dd * dd / (r * r));
@@ -150,7 +150,7 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
                 float  fade = smoothstep(tMax, tMax * 0.65, tp) * (r > size ? size * size / (r * r) * 1.6 + 0.12 : 1.0);
                 float3 cc   = lerp(amb0.rgb, amb1.rgb, h.z);
                 if (style == 3) cc = lerp(float3(0.85, 0.90, 1.0), cc, 0.25);   // snow stays white
-                acc += cc * (core * 1.6 + halo) * tw * fade * lerp(0.55, 1.0, night);
+                acc += cc * (core * 2.2 + halo * 1.6) * tw * fade * lerp(0.75, 1.0, night);
             }
         }
         // the next cell along the ray
