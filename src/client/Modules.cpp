@@ -225,6 +225,9 @@ void glassTick(Module& m) {
     writeGlassFrost(m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
 }
 
+constexpr Rgba kNeon{0.78f, 0.42f, 1.00f, 1.0f};   // the client's neon purple
+float smooth01(float t) { t = std::clamp(t, 0.f, 1.f); return t * t * (3 - 2 * t); }
+
 // ---------------------------------------------------------------- Haze + Mist (Renderer Foundation draws them)
 // Purxiy's Haze ("a soft haze of colour over the world around you") and Mist ("soft autumn mist that hangs low in the
 // world"): the same settings; Renderer Foundation reads config/Atmos.txt about once a second (shaders/worldfx_atmos.hlsl).
@@ -443,8 +446,6 @@ void notifyToggle(Module const& m) {
     while (gNotes.size() > 5) gNotes.pop_front();
 }
 
-constexpr Rgba kNeon{0.78f, 0.42f, 1.00f, 1.0f};   // the client's neon purple
-float smooth01(float t) { t = std::clamp(t, 0.f, 1.f); return t * t * (3 - 2 * t); }
 
 void drawNotifications(Frame& f, Module& m) {
     float const s    = m.num("size", 1.0f), dur = m.num("duration", 2.5f) * 1000.f;
