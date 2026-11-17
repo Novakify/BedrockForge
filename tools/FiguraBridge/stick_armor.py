@@ -317,6 +317,8 @@ def fx_v(t_arrive):
 def rail(slot, bone, path, arrive, width=0.36, n=14):
     """light ribbon along path(t) -> (point, outward normal), t 0..1; arrive = (t0, t1) seconds into the sweep"""
     m = M(slot, bone, "fx")
+    if STYLE == "tiers":   # finer light lines: a thick ribbon reads as a sticker on the small plates
+        width *= 0.70
     pts = [path(i / n) for i in range(n + 1)]
     # keep v monotonic inside one segment: split where fx_v wraps
     for i in range(n):
@@ -520,6 +522,13 @@ def helmet(head_pts):
                 uv = [(u0, i / N), (u1, i / N), (u1, (i + 1) / N), (u0, (i + 1) / N)]
                 mh.quad(Q, uv, n=np.array([0, 0, -1.0]))
                 mh.quad(Q[::-1], uv[::-1], n=np.array([0, 0, 1.0]))
+                dz = np.array([0, 0, 1.0])   # the cross ribbon (front-back): the horn reads as a blade with depth
+                Q2 = [pts[i] - dz * wid[i] * .35, pts[i] + dz * wid[i] * .35,
+                      pts[i + 1] + dz * wid[i + 1] * .35, pts[i + 1] - dz * wid[i + 1] * .35]
+                nx = np.cross(tg, dz)
+                nx = nx / np.linalg.norm(nx) * sg
+                mh.quad(Q2, uv, n=nx)
+                mh.quad(Q2[::-1], uv[::-1], n=-nx)
             rail("head", "p17", lambda t, hp=hp: (hp(0.05 + 0.8 * t) + np.array([0, 0, -0.08]), np.array([0, 0, -1.0])),
                  (0.0, 0.5), width=0.16, n=10)
     return check_inside(m, head_pts, hc)
@@ -723,7 +732,14 @@ def build_suit_mix(bones):
         for k, (y0, y1, g) in enumerate(((26.2, 24.6, 0.75), (24.4, 22.8, 0.95), (22.6, 21.2, 0.75))):
             plate("chest", "p22", T, sy(y0), sy(y1), D(180), D(14), gap=g, bulge=0.05, flare=0.55,
                   prof=lambda t: leaf(t, .4, top=.9), ns=5, na=3)
-    if "fins" in acc:     # PRISM: two crystal fins sweeping off the shoulder blades, a rail along each
+    if "shards" in acc:   # PRISM: a crystal blade sweeping back off each elbow (glass, outlined), a light line inside
+        for lo, sg in (("p32", 1), ("p39", -1)):   # (on the forearm: above the shoulder the helmet hides it)
+            F = rod[lo]
+            Sh = plate("chest", lo, F, -0.38, 0.40, sg * D(90) + sg * D(35), D(15), gap=0.62, bulge=0.40, flare=0.9,
+                       prof=lambda t: leaf(t, .45, top=.0) * (0.4 + 0.6 * (1 - t)), twist=sg * D(10), ns=10, na=4,
+                       isl="leg_end", mirror=sg < 0)
+            rail("chest", lo, surf_path(Sh, 0, 0.10, 0.85), (0.60, 0.85), width=0.20, n=8)
+    if "fins" in acc:     # (unused) two crystal fins sweeping off the shoulder blades, a rail along each
         for sg in (-1, 1):
             Fn = plate("chest", "p22", T, sy(26.8), sy(19.6), D(180) - sg * D(46), D(18), gap=1.30, bulge=0.35,
                        flare=1.6, prof=lambda t: leaf(t, .5, top=.85), twist=sg * D(14), ns=10, na=4, isl="side_r",
