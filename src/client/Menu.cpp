@@ -116,7 +116,8 @@ void toast(std::string s) { gToast = std::move(s); gToastMs = nowMs(); }
 std::string gBindFor; // module whose toggle key is being recorded (Keybind row), empty = none
 
 // ---------------------------------------------------------------- theme (neon purple + white)
-constexpr float kH = 760.0f; // design units: the screen is always 760 tall (the prototype's 1280 x 760 frame)
+constexpr float kH0 = 760.0f; // design units: the screen is 760 tall at menu scale 1 (the prototype's 1280 x 760 frame)
+float kH = kH0;                // [Prism] Client UI -> Menu scale: the design height is 760 / scale (bigger scale = bigger menu)
 struct Rgb { int r, g, b; };
 constexpr Rgb kLilacBase{233, 213, 255}, kDarkBase{19, 10, 36}, kWhite{255, 255, 255};
 Rgb kLilac = kLilacBase, kDark = kDarkBase;   // [Prism] turned to the accent's hue every menu frame (accentTurn)
@@ -389,17 +390,32 @@ void drawWheel(UiFrame& f, float t) {
 }
 
 // ---------------------------------------------------------------- window
-constexpr char const* kTabLabel[6] = {"QUICK ACCESS", "VISUAL", "HUD", "COMBAT", "CAMERA", "MISC"};
-constexpr char const* kTabIcon[6]  = {"pin", "eye", "monitor", "sword", "camera", "puzzle"};
+// [Prism] eight tabs: Visual got too long - the world's looks and your cosmetics have their own now
+constexpr int         kTabs = 8;
+constexpr char const* kTabLabel[kTabs] = {"PINNED", "VISUAL", "WORLD", "COSMETICS", "HUD", "COMBAT", "CAMERA", "MISC"};
+constexpr char const* kTabIcon[kTabs]  = {"pin", "eye", "globe", "wand", "monitor", "sword", "camera", "puzzle"};
+constexpr int         kTabHud = 4;
+int visualGroup(Module const& m) {   // 1 visual, 2 world, 3 cosmetics
+    static constexpr std::string_view kWorld[] = {"haze", "mist", "ambience", "weather", "chroma", "bokeh", "radiance", "sky", "fullbright",
+                                                  "time_changer", "place_animation", "block_outline", "pvp_preset"};
+    static constexpr std::string_view kCos[] = {"jump_circles", "hit_splash", "ripple", "shockwave", "trail", "aura", "halo", "wings", "cape",
+                                                "glass_frost", "hand_movement"};
+    for (auto id : kWorld) if (m.id == id) return 2;
+    for (auto id : kCos) if (m.id == id) return 3;
+    return 1;
+}
 bool inTab(Module const& m, int t) {
     if (m.id == "client_ui") return false;
+    bool const vis = m.category == Category::Visual || m.category == Category::World;
     switch (t) {
     case 0: return m.favorite;
-    case 1: return m.category == Category::Visual || m.category == Category::World;
-    case 2: return m.category == Category::Hud;
-    case 3: return m.category == Category::Combat;
-    case 4: return m.category == Category::Camera;
-    default: return m.category == Category::Misc || m.category == Category::Movement;
+    case 1: return vis && visualGroup(m) == 1;
+    case 2: return (vis || m.id == "hand_movement") ? visualGroup(m) == 2 : false;
+    case 3: return (vis || m.id == "hand_movement") && visualGroup(m) == 3;
+    case 4: return m.category == Category::Hud && m.id != "hand_movement";
+    case 5: return m.category == Category::Combat;
+    case 6: return m.category == Category::Camera;
+    default: return (m.category == Category::Misc || m.category == Category::Movement) && m.id != "hand_movement";
     }
 }
 std::string lower(std::string s) { for (auto& c : s) c = char(std::tolower(static_cast<unsigned char>(c))); return s; }
@@ -796,6 +812,9 @@ void drawClient(UiFrame& f, Win const& w, float a) {
     if (auto* st = m->setting("style"); st && sc.fits(64))
         slider(f, "client_ui/style", x, sc.y, wd, "Look", "Prism: our glass with Purxiy's calm frost, sheen and gradient edges. Glass: the classic", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
     sc.y += 72;
+    if (auto* st = m->setting("scale"); st && sc.fits(64))
+        slider(f, "client_ui/scale", x, sc.y, wd, "Menu scale", "Bigger or smaller menus (applies as you let go)", st->value, st->min, st->max, st->step, "x", a, save);
+    sc.y += 72;
     if (auto* st = m->setting("dim"); st && sc.fits(64))
         slider(f, "client_ui/dim", x, sc.y, wd, "Dim the world", "How dark the world gets behind the menu", st->value, st->min, st->max, st->step, "", a, save);
     sc.y += 72;
@@ -902,7 +921,7 @@ void drawWindow(UiFrame& f, float t) {
     float hy = w.y + w.h - 16 - 38;
     pillGlass(g, rx, hy, 38, 38, 11, false, a, f.over(rx, hy, 38, 38) ? 1.0f : 0.0f);
     g.icon("pencil", rx + 19, hy + 19, 18, rgba(kWhite, 0.7f), a);
-    f.hits.push_back({rx, hy, 38, 38, [](bool right) { if (right) { gTab = 2; showPage(Page::Mods); } else setView(View::HudEdit); }});   // left: HUD editor, right: HUD modules
+    f.hits.push_back({rx, hy, 38, 38, [](bool right) { if (right) { gTab = kTabHud; showPage(Page::Mods); } else setView(View::HudEdit); }});   // left: HUD editor, right: HUD modules
 
     // top row: back, tabs, search
     float ty = w.y + 18;
@@ -919,13 +938,24 @@ void drawWindow(UiFrame& f, float t) {
     float const sx = w.x + w.w - 18 - 22 - searchW;
     float tx = bx + 42;
     bool const tabsLive = gPage == Page::Mods && gSearch.empty();
-    for (int i = 0; i < 6; ++i) {
-        float tw = 13 + 15 + 7 + g.textW(kTabLabel[i], 12, true) + 13;
-        if (tx + tw > sx - 8) break; // narrow screens: the tabs that fit
+    // every tab with its label if they fit; otherwise the others shrink to their icon (the open one keeps its name)
+    float full = 0;
+    for (int i = 0; i < kTabs; ++i) full += 13 + 15 + 7 + g.textW(kTabLabel[i], 12, true) + 13 + 8;
+    bool const compact = tx + full > sx - 8;
+    for (int i = 0; i < kTabs; ++i) {
         bool on = tabsLive && gTab == i;
-        pillGlass(g, tx, ty, tw, 30, 15, on, a, f.over(tx, ty, tw, 30) ? 1.0f : 0.0f);
-        g.icon(kTabIcon[i], tx + 13 + 7.5f, ty + 15, 15, rgba(kWhite, 1), a);
-        g.text(kTabLabel[i], tx + 35, ty + 15, 12, rgba(kWhite, 1), a, true, 0, on ? 0.6f : 0.25f);
+        bool const label = !compact || on;
+        float tw = label ? 13 + 15 + 7 + g.textW(kTabLabel[i], 12, true) + 13 : 36;
+        if (tx + tw > sx - 8) break; // still too narrow: the tabs that fit
+        bool const hot = f.over(tx, ty, tw, 30);
+        pillGlass(g, tx, ty, tw, 30, 15, on, a, hot ? 1.0f : 0.0f);
+        g.icon(kTabIcon[i], label ? tx + 13 + 7.5f : tx + 18, ty + 15, 15, rgba(kWhite, 1), a);
+        if (label) g.text(kTabLabel[i], tx + 35, ty + 15, 12, rgba(kWhite, 1), a, true, 0, on ? 0.6f : 0.25f);
+        else if (hot) {   // the name as a little tag under the icon
+            float const lw = g.textW(kTabLabel[i], 10.5f, true) + 16;
+            g.glass(tx + 18 - lw / 2, ty + 36, lw, 22, 11, kDark, 0.55f, 6, 3, 0.8f, 0.7f, 0.15f, a);
+            g.text(kTabLabel[i], tx + 18, ty + 47, 10.5f, rgba(kWhite, 1), a, true, 1);
+        }
         f.hits.push_back({tx, ty, tw, 30, [i](bool) { if (gTab != i) uisound::play(6); gTab = i; gSearch.clear(); showPage(Page::Mods); }});
         tx += tw + 8;
     }
@@ -1061,6 +1091,7 @@ void render(ScreenView& view) {
     auto& g = f.g;
     float const Wg = view.mSize->x, Hg = view.mSize->y;
     if (Hg < 1 || Wg < 1) return;
+    { static float scaleNow = 1.0f; if (!gHeld) scaleNow = std::clamp(look("scale", 1.0f), 0.75f, 1.4f); kH = kH0 / scaleNow; }
     float const toD = kH / Hg; // GUI units -> design units
     g.W = Wg * toD;
     g.H = kH;

@@ -1403,6 +1403,7 @@ void registerBuiltins() {
         .choice("font", "Font", {"Outfit", "Inter"}, 0)
         // [Prism] Purxiy "interface" / "motion" / "sound": the look, the world behind the menu, cascade, interface sounds
         .choice("style", "Look", {"Prism", "Glass"}, 0)
+        .slider("scale", "Menu scale", 1.0f, 0.75f, 1.4f, 0.05f)
         .slider("dim", "Dim the world", 0.25f, 0.f, 1.f, 0.05f)
         .slider("stars", "Stars", 0.5f, 0.f, 1.f, 0.05f)
         .toggleSetting("cascade", "Cascade", true)
