@@ -288,7 +288,7 @@ int hideControls(UIControl& c, std::vector<std::string> const& names, int depth)
     int hidden = 0;
     std::string const& nm = *c.mName;
     for (auto const& want : names)
-        if (nm == want) { c.mVisible = ::ui::VisibilityFlag::None; *c.mAlpha = 0.0f; ++hidden; return hidden; }
+        if (nm == want) { c.mVisible = ::ui::VisibilityFlag::None; c.mAlpha = 0.0f; ++hidden; return hidden; }
     for (auto const& ch : *c.mChildren)
         if (ch) hidden += hideControls(*ch, names, depth + 1);
     return hidden;
@@ -296,7 +296,7 @@ int hideControls(UIControl& c, std::vector<std::string> const& names, int depth)
 void hudHiderFrame(ScreenView& view) {
     auto const& tree = view.mVisualTree;
     if (!tree) return;
-    auto& root = *tree->mRootControl;
+    UIControl* root = tree->mRootControl.get();
     if (!root) return;
     static bool dumped = false;
     if (!dumped) {
