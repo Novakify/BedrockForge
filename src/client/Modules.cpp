@@ -409,7 +409,7 @@ void registerBuiltins() {
     r.add("view_bobbing", "No View Bobbing", Category::Camera, "Turn off the walking camera bob");
     r.plan("view_model", "View Model", Category::Camera, "Move / scale the held item");
     r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
-    r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth blur when you turn the camera (drawn by Renderer Foundation)")
+    r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
         .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f);
 
     // ---------------- Visual
