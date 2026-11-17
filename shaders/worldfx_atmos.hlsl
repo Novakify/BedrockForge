@@ -72,6 +72,7 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     // Place Animation (Purxiy): light on a block as it is placed / broken (events kind 5 / 6)
     float4 pa0;      // rgb = colour (linear), w = duration (s) (0 = off)
     float4 pa1;      // x = glow, y = 1: broken blocks too
+    float4 trB;      // the trail's bounding sphere: xyz centre (camera-relative), w = radius (0 = none)
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -274,7 +275,8 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
     bool const fp = length(pl.xyz + float3(0, 1.62, 0)) < 0.6;   // the camera is in your head: first person
     // trail: a glowing ribbon painted on the ground along your path (surfaces near the path's height)
     int n = min(int(cs1.w), 32);
-    [branch] if (cs0.w > 0.0 && n > 1 && !sky) {
+    float3 tbd = P - trB.xyz;
+    [branch] if (cs0.w > 0.0 && n > 1 && !sky && dot(tbd, tbd) < trB.w * trB.w) {   // audit: only near the path
         float best = 1e9, bestAge = 0.0, bestY = 0.0;
         [loop] for (int i = 0; i + 1 < n; ++i) {
             float h;
@@ -295,6 +297,10 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
         int style = int(au1.z + 0.5);
         int N = style == 1 ? 9 : 6;
         float3 c = pl.xyz + float3(0, 1.0, 0);
+        float  rb = 0.75 * au0.w * 1.2 + 1.0 + 0.2 * au0.w;          // audit: the ray must pass the aura's sphere at all
+        float  tc = dot(c, rd);
+        float3 cp = c - rd * tc;
+        if (dot(cp, cp) > rb * rb || tc < -rb) N = 0;
         [loop] for (int i = 0; i < N; ++i) {
             float fi = float(i), ph = fi / float(N) * 6.2831 + t * 0.9 * au1.x;
             float r = 0.75 * au0.w, yy = 0.0;
@@ -310,7 +316,7 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
         }
     }
     [branch] if (ha0.w > 0.0 && (!fp || ha1.w > 0.5)) {
-        float3 hc = pl.xyz + float3(0, 1.9 + 0.35 * ha1.y + 0.04 * sin(t * 1.6), 0);
+        float3 hc = pl.xyz + float3(0, 1.95 + 0.15 * ha1.y + 0.03 * sin(t * 1.6), 0);   // audit: hugs the head (was 0.4 above it)
         // the halo's plane (horizontal, a slight tilt); the ray meets it at one point: distance to the ring there
         float3 nrm = normalize(float3(0.08 * sin(pl.w), 1, 0.08 * cos(pl.w)));
         float den = dot(rd, nrm);
@@ -405,31 +411,36 @@ float3 weather(float3 rd, float dist, float t, float night) {
 }
 
 // Bokeh: a disc gather from the scene copy, radius from how far the pixel is from the focus; bright taps weigh more
+// bokeh (audit: the blur read too weak, max 14 px at 4K, and sharp near edges bled halos into the blur behind them).
+// Now ~22 px at blur 0.5, and a nearer sample only counts if its own blur reaches this pixel (gather-as-scatter).
+float bokehCoc(float z, float zf, int mode, int2 p) {
+    if (mode == 2) return smoothstep(bk0.z * 0.5, 0.5, abs(float(p.y) / c4.y - 0.55));   // tilt-shift: a sharp band across the screen
+    float rel = (z - zf) / max(zf, 0.5);
+    if (bk1.y < 0.5 && rel < 0.0) rel = 0.0;
+    return smoothstep(bk0.z * 0.6, bk0.z * 0.6 + 0.8, abs(rel));
+}
 float3 bokeh(int2 p, float z, bool sky) {
-    float zf;
     int mode = int(bk0.x + 0.5);
-    if (mode == 1) zf = bk0.y;
-    else zf = min(viewZ(rawDepth(int2(c4.xy * 0.5))), 300.0);       // auto: what is under the crosshair
-    float coc;
-    if (mode == 2) coc = smoothstep(bk0.z * 0.5, 0.5, abs(float(p.y) / c4.y - 0.55));   // tilt-shift: a sharp band across the screen
-    else {
-        float zz = sky ? 1e4 : z;
-        float rel = (zz - zf) / max(zf, 0.5);
-        if (bk1.y < 0.5 && rel < 0.0) rel = 0.0;
-        coc = smoothstep(bk0.z * 0.6, bk0.z * 0.6 + 0.8, abs(rel));
-    }
-    float R = coc * bk0.w * 14.0 * c4.y / 1080.0;
+    float zf = mode == 1 ? bk0.y : min(viewZ(rawDepth(int2(c4.xy * 0.5))), 300.0);   // auto: what is under the crosshair
+    float zz = sky ? 1e4 : z;
+    float Rmax = bk0.w * 44.0 * c4.y / 2160.0;
+    float R = bokehCoc(zz, zf, mode, p) * Rmax;
     float3 own = sceneAt(p); own *= own;
     if (R < 0.75) return own;
     float3 acc = own; float ws = 1.0;
     float ga = ign(float2(p)) * 6.2831;
     [unroll] for (int k = 0; k < 16; ++k) {
         float r = sqrt((float(k) + 0.5) / 16.0) * R, a = ga + float(k) * 2.39996;
-        float3 c = sceneAt(p + int2(cos(a) * r, sin(a) * r)); c *= c;
+        int2  q = p + int2(cos(a) * r, sin(a) * r);
+        float3 c = sceneAt(q); c *= c;
         float w = 1.0 + bk1.x * 6.0 * smoothstep(0.55, 0.95, lum3(c));
+        float dS = rawDepth(q);
+        float zS = isSky(dS) ? 1e4 : viewZ(dS);
+        if (zS < zz - 0.5) w *= saturate(bokehCoc(zS, zf, mode, q) * Rmax - r + 1.0);   // a nearer, sharper thing does not smear back here
         acc += c * w; ws += w;
     }
     float3 o = acc / ws;
+    float coc = R / max(Rmax, 1e-3);
     return o + float3(0.55, 0.42, 0.95) * bk1.z * 0.04 * coc * smoothstep(0.4, 0.9, lum3(o));   // a faint lilac fringe
 }
 
@@ -533,11 +544,14 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         outL = lerp(behind, tinted, fog);
         drew = true;
     }
-    bool const post = ch0.w > -0.5 || rad1.w > 0.5 || wx1.w > 0.5 || bk0.w > 0.0;
-    if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post) discard;
+    // audit: Radiance alone only writes its outlines (it cost 0.85 ms at 4K writing every pixel with nobody near)
+    bool const post = ch0.w > -0.5 || wx1.w > 0.5 || bk0.w > 0.0;
+    float3 radL = 0;
+    [branch] if (rad1.w > 0.5 && !sky && aInfo.x > 0.5) radL = radiance(int2(px), q, zc);   // outlines on players / mobs / items
+    if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post && dot(radL, 1.0) < 0.002) discard;
     if (!drew) outL = col * trans + acc;
     [branch] if (ch0.w > -0.5) outL = chroma(outL, q, sky, spareC);       // the grey world, colour where you have walked
-    [branch] if (rad1.w > 0.5 && !sky) outL += radiance(int2(px), q, zc);  // outlines on players / mobs / items
+    outL += radL;
     [branch] if (wx1.w > 0.5) outL += weather(rd, sky ? 1e4 : dist, t, night);
     float3 o = sqrt(max(outL + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
     return float4(o, 1.0);

@@ -2988,7 +2988,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
-                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3052,6 +3052,13 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 acb.trP[n][0] = float(p.x - snap.pos[0]); acb.trP[n][1] = float(p.y - snap.pos[1]); acb.trP[n][2] = float(p.z - snap.pos[2]);
                 acb.trP[n][3] = float(nowMs - p.at) / 1000.f;
                 if (++n == 32) break;
+            }
+            if (n > 1) {   // the bounding sphere of the path, so the shader skips the 32 segments far from it
+                float lo[3]{1e9f, 1e9f, 1e9f}, hi[3]{-1e9f, -1e9f, -1e9f};
+                for (int i = 0; i < n; ++i) for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], acb.trP[i][k]); hi[k] = std::max(hi[k], acb.trP[i][k]); }
+                float r2 = 0.f;
+                for (int k = 0; k < 3; ++k) { acb.trB[k] = 0.5f * (lo[k] + hi[k]); r2 += 0.25f * (hi[k] - lo[k]) * (hi[k] - lo[k]); }
+                acb.trB[3] = std::sqrt(r2) + 1.0f + 0.4f * atm.trSize * (1.f + atm.trGlow);
             }
             auto lin = [](float v) { return v * v; };
             for (int k = 0; k < 3; ++k) { acb.cs[0][k] = lin(atm.trC[k]); acb.cs[2][k] = lin(atm.auC[k]); acb.cs[4][k] = lin(atm.haC[k]); }
