@@ -43,6 +43,7 @@
 #include "mc/world/actor/player/Player.h"
 #include "mc/world/item/ItemStack.h"
 
+#include "client/MatchFx.h"
 #include "client/Module.h"
 #include "figura/core/Avatar.h"
 #include "figura/core/LuaBind.h"
@@ -355,6 +356,20 @@ void writeVars(State& s, Actor& a) {
     bool vanillaShown = true;
     if (auto it = s.avatar->vanillaVisible.find("PLAYER"); it != s.avatar->vanillaVisible.end()) vanillaShown = it->second;
     if (s.van) set(*s.van, vanillaShown ? 1.0 : 0.0);
+    {   // the stick armor's match moments (MatchFx: bed broken by you, your kill, your respawn): seconds since, 99 = never
+        static HashedString const* ev[3] = {nullptr, nullptr, nullptr};
+        static int mode = -1;
+        if (mode != s.nameMode) {
+            mode = s.nameMode;
+            static std::unique_ptr<HashedString> keep[3];
+            char const* names[3] = {"fbev_bed", "fbev_kill", "fbev_resp"};
+            for (int i = 0; i < 3; ++i) keep[i] = std::make_unique<HashedString>(vn(s.nameMode, names[i])), ev[i] = keep[i].get();
+        }
+        for (int i = 0; i < 3; ++i) {
+            int64_t const t = bedrock_forge::client::matchfx::armorEventMs(i);
+            set(*ev[i], t ? std::min(99.0, double(now - t) / 1000.0) : 99.0);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- player sampling

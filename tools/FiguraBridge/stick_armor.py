@@ -1293,11 +1293,16 @@ def build_tiers(stick_geo: Path, player_entity, figura_rc, out: Path):
         var, slot_i, n = VAR[s], SLOTS.index(s), count[s]
         on = f"(v.{var} ?? 0) > 0 && !variable.is_first_person && (v.fbstickarmor ?? 0)"
         dye = {c: f"{idx(var, 'leather')} ? q.armor_color_slot({slot_i}, {i}) : 1.0" for i, c in enumerate("rgb")}
-        ov = {}
-        if react:
-            o = {m: st.react_overlay(var, m) for m in react}
-            ov = {"overlay_color": {c: pick(var, {m: o[m][c] for m in react}, "0.0" if c == "a" else "1.0")
-                                    for c in "rgba"}}
+        # match moments: the armor flashes its tier's light (bed 0.7 s, kill 0.9 s, respawn 1.2 s); tier 4 also
+        # flashes when you are hit and pulses red below 3 hearts
+        evp = ("math.max(math.max(math.clamp(1 - (v.fbev_bed ?? 99) / 0.7, 0, 1), math.clamp(1 - (v.fbev_kill ?? 99) / 0.9, 0, 1)),"
+               " math.clamp(1 - (v.fbev_resp ?? 99) / 1.2, 0, 1)) * 0.75")
+        o = {m: st.react_overlay(var, m) for m in react}
+        acc_c = {c: pick(var, {m: st.ACCENT[m][i] for m in names[:n]}, "1.0") for i, c in enumerate("rgb")}
+        hurt_a = pick(var, {m: o[m]["a"] for m in react}, "0.0")
+        hurt_c = {c: pick(var, {m: o[m][c] for m in react}, "1.0") for c in "rgb"}
+        ov = {"overlay_color": {**{c: f"(q.hurt_time ?? 0) > 0 && ({hurt_a}) > ({evp}) ? ({hurt_c[c]}) : ({acc_c[c]})" for c in "rgb"},
+                                "a": f"math.max({hurt_a}, {evp})"}}
         geo_arr = lambda suffix: {"Array.geo": [f"Geometry.fbarmor_{s}{suffix}_{m}" for m in names[:n]]}
         if has[s, "metal"]:
             rcs[f"controller.render.player.fb_armor_{s}_metal"] = {
@@ -1364,7 +1369,36 @@ def build_tiers(stick_geo: Path, player_entity, figura_rc, out: Path):
             pre.append(f"variable.{VAR[s]}t = v.{VAR[s]} > 0 ? math.min((v.{VAR[s]}t ?? 0) + q.delta_time, 10) : 0.0;")
             # each slot's rail phase runs at its tier's speed (sprinting speeds every tier up)
             k = pick(VAR[s], {m: st.TIERS[m]["speed"] for m in names[:count[s]]}, "1.0")
-            pre.append(f"variable.fbaph_{s} = v.{VAR[s]} > 0 ? math.mod((v.fbaph_{s} ?? 0) + q.delta_time * v.fbarate * {k}, 1.0) : 0.0;")
+            boost = "(1 + 3 * math.clamp(1 - math.min(math.min(v.fbev_bed ?? 99, v.fbev_kill ?? 99), v.fbev_resp ?? 99) / 1.5, 0, 1))"
+            pre.append(f"variable.fbaph_{s} = v.{VAR[s]} > 0 ? math.mod((v.fbaph_{s} ?? 0) + q.delta_time * v.fbarate * {k} * {boost}, 1.0) : 0.0;")
+        # match moments: per moment one animation controller, a state per tier, entered when the moment happens
+        # (the tier = what the chestplate is made of, else leggings / boots / helmet)
+        pre.append("variable.fbtier = v.fbac > 0 ? v.fbac : (v.fbal > 0 ? v.fbal : (v.fbaf > 0 ? v.fbaf : v.fbah));")
+        pdir = out / "particles"
+        pdir.mkdir(parents=True, exist_ok=True)
+        st.fx_atlas().save(td / "fx_particles.png")
+        ctrls = {}
+        d.setdefault("particle_effects", {})
+        for ev in st.EVENTS:
+            states = {"default": {"transitions": []}}
+            for i, m in enumerate(names):
+                pid = f"fb_armor:{ev}_{m}"
+                (pdir / f"fb_armor_{ev}_{m}.json").write_text(json.dumps(st.fx_particle(pid, m, ev), indent=1))
+                d["particle_effects"][f"fbev_{ev}_{m}"] = pid
+                states["default"]["transitions"].append({m: f"(v.fbev_{ev} ?? 99) < 0.2 && v.fbtier == {i + 1}"})
+                (pdir / f"fb_armor_flash_{m}.json").write_text(json.dumps(st.fx_flash(f"fb_armor:flash_{m}", m), indent=1))
+                d["particle_effects"][f"fbev_flash_{m}"] = f"fb_armor:flash_{m}"
+                states[m] = {"particle_effects": [{"effect": f"fbev_{ev}_{m}"}, {"effect": f"fbev_flash_{m}"}],
+                             "transitions": [{"default": f"(v.fbev_{ev} ?? 99) > 0.4"}]}
+            cid = f"controller.animation.fb_armor_ev_{ev}"
+            ctrls[cid] = {"initial_state": "default", "states": states}
+            d["animations"][f"fb_armor_ev_{ev}"] = cid
+            an = d["scripts"].setdefault("animate", [])
+            an[:] = [a_ for a_ in an if not (isinstance(a_, dict) and f"fb_armor_ev_{ev}" in a_)]
+            an.append({f"fb_armor_ev_{ev}": "v.fbnoarmor && (v.fbstickarmor ?? 0) && v.fbtier > 0"})
+        (out / "animation_controllers").mkdir(parents=True, exist_ok=True)
+        (out / "animation_controllers/fb_armor_events.animation_controllers.json").write_text(
+            json.dumps({"format_version": "1.10.0", "animation_controllers": ctrls}, indent=1))
         rc = d["render_controllers"]
         rc[:] = [r for r in rc if not (isinstance(r, dict) and any(k.startswith("controller.render.player.fb_armor_") for k in r))]
         for s in SLOTS:
@@ -1513,6 +1547,34 @@ def build(stick_geo: Path, player_entity, figura_rc, out: Path, fx_alpha=0):
             pre.append(f"variable.fbarate = v.fbnoarmor ? (v.fbarate ?? {r0}) + ((q.is_sprinting ? {r1} : {r0}) - (v.fbarate ?? {r0}))"
                        f" * math.min(1, q.delta_time * 3) : {r0};")
             pre.append("variable.fbaph = v.fbnoarmor ? math.mod((v.fbaph ?? 0) + q.delta_time * v.fbarate, 1.0) : 0.0;")
+        # match moments: per moment one animation controller, a state per tier, entered when the moment happens
+        # (the tier = what the chestplate is made of, else leggings / boots / helmet)
+        pre.append("variable.fbtier = v.fbac > 0 ? v.fbac : (v.fbal > 0 ? v.fbal : (v.fbaf > 0 ? v.fbaf : v.fbah));")
+        pdir = out / "particles"
+        pdir.mkdir(parents=True, exist_ok=True)
+        st.fx_atlas().save(td / "fx_particles.png")
+        ctrls = {}
+        d.setdefault("particle_effects", {})
+        for ev in st.EVENTS:
+            states = {"default": {"transitions": []}}
+            for i, m in enumerate(names):
+                pid = f"fb_armor:{ev}_{m}"
+                (pdir / f"fb_armor_{ev}_{m}.json").write_text(json.dumps(st.fx_particle(pid, m, ev), indent=1))
+                d["particle_effects"][f"fbev_{ev}_{m}"] = pid
+                states["default"]["transitions"].append({m: f"(v.fbev_{ev} ?? 99) < 0.2 && v.fbtier == {i + 1}"})
+                (pdir / f"fb_armor_flash_{m}.json").write_text(json.dumps(st.fx_flash(f"fb_armor:flash_{m}", m), indent=1))
+                d["particle_effects"][f"fbev_flash_{m}"] = f"fb_armor:flash_{m}"
+                states[m] = {"particle_effects": [{"effect": f"fbev_{ev}_{m}"}, {"effect": f"fbev_flash_{m}"}],
+                             "transitions": [{"default": f"(v.fbev_{ev} ?? 99) > 0.4"}]}
+            cid = f"controller.animation.fb_armor_ev_{ev}"
+            ctrls[cid] = {"initial_state": "default", "states": states}
+            d["animations"][f"fb_armor_ev_{ev}"] = cid
+            an = d["scripts"].setdefault("animate", [])
+            an[:] = [a_ for a_ in an if not (isinstance(a_, dict) and f"fb_armor_ev_{ev}" in a_)]
+            an.append({f"fb_armor_ev_{ev}": "v.fbnoarmor && (v.fbstickarmor ?? 0) && v.fbtier > 0"})
+        (out / "animation_controllers").mkdir(parents=True, exist_ok=True)
+        (out / "animation_controllers/fb_armor_events.animation_controllers.json").write_text(
+            json.dumps({"format_version": "1.10.0", "animation_controllers": ctrls}, indent=1))
         rc = d["render_controllers"]
         rc[:] = [r for r in rc if not (isinstance(r, dict) and any(k.startswith("controller.render.player.fb_armor_") for k in r))]
         for s in SLOTS:

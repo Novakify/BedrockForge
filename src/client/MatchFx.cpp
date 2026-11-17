@@ -380,6 +380,7 @@ int dyeOfTag(std::string const& t) {
     return -1;
 }
 int64_t gLocalDeadAt = 0; // when you last died (a respawn follows)
+std::atomic<int64_t> gArmorEv[3]{}; // the stick armor's moments: bed broken by you, your kill, your respawn
 float   gMe[3]{};         // your feet, last frame
 // ---- skins for RF's death scenes: each player's skin image, once, into one of 16 slots (64x64 classic layout)
 struct SkinSlot { std::string name; bool local = false; };
@@ -555,6 +556,7 @@ void trackPlayers(LocalPlayer& lp, int64_t now) {
             if (local && gLocalDeadAt && now - gLocalDeadAt > 2500 && now - gLocalDeadAt < 15000) {
                 float const at[3] = {q.x, q.y, q.z};
                 pushFx(at, 5, myDye());
+                gArmorEv[2] = nowMs();
                 gLocalDeadAt = 0;
                 note("you respawned");
             }
@@ -1258,6 +1260,14 @@ void onText(std::string const& m) {
         if (killy && s.find("bed") == std::string::npos && s.find("vote") == std::string::npos) {
             bool const youR = s.find("you were") != std::string::npos || s.find("you died") != std::string::npos || s.find("you fell") != std::string::npos;
             rosterKill(s, s.find("final") != std::string::npos, youR, gMyName);
+            // your kill: you are the killer ("b was killed by you/me", "me eliminated b", "you killed b")
+            if (!youR) {
+                size_t const by = s.find(" by "), me = gMyName.size() >= 3 ? s.find(gMyName) : std::string::npos;
+                bool const mine = (me != std::string::npos && (by != std::string::npos ? me > by : me < s.size() / 2)) ||
+                                  s.find("you killed") != std::string::npos || s.find("you eliminated") != std::string::npos ||
+                                  s.find("by you") != std::string::npos;
+                if (mine) { gArmorEv[1] = nowMs(); note("your kill: {}", s.substr(0, 100)); }
+            }
         }
         if (killy && s.find("bed") == std::string::npos && gIsMap) {
             bool const you = s.find("you were") != std::string::npos || s.find("you died") != std::string::npos || s.find("you fell") != std::string::npos;
@@ -1310,6 +1320,14 @@ void onText(std::string const& m) {
                 if (any) break;
             }
     }
+    if (bedGone && s.find("your bed") == std::string::npos) {   // a bed you broke: your name after "by" (or "you destroyed")
+        size_t const by = s.find(" by "), me = gMyName.size() >= 3 ? s.find(gMyName) : std::string::npos;
+        if ((by != std::string::npos && me != std::string::npos && me > by) || s.find("by you") != std::string::npos ||
+            s.find("you destroyed") != std::string::npos || s.find("you broke") != std::string::npos) {
+            gArmorEv[0] = nowMs();
+            note("you broke a bed");
+        }
+    }
     if (bedGone || teamOut) {
         // which team? the server names its colour (The Hive: "BLUE BED DESTROYED", "Aqua Team has been eliminated!")
         struct W { char const* w; int d[2]; };
@@ -1355,7 +1373,7 @@ void onText(std::string const& m) {
     }
     if (s.find("respawned") != std::string::npos && gIsMap) { // the server says you are back
         static int64_t lastRs = 0;
-        if (nowMs() - lastRs > 3000) { lastRs = nowMs(); gLocalDeadAt = 0; pushFx(gMe, 5, myDye()); note("you respawned (server)"); }
+        if (nowMs() - lastRs > 3000) { lastRs = nowMs(); gLocalDeadAt = 0; pushFx(gMe, 5, myDye()); gArmorEv[2] = nowMs(); note("you respawned (server)"); }
     }
     if ((s.find("champion") != std::string::npos || s.find("victory") != std::string::npos || s.find(" won") != std::string::npos ||
          s.find(" wins") != std::string::npos) && s.find("vote") == std::string::npos && gIsMap) {
@@ -1389,4 +1407,5 @@ bool timeOverride(float& t) {
     t = gFx.timeOfDay;
     return true;
 }
+int64_t armorEventMs(int kind) { return kind >= 0 && kind < 3 ? gArmorEv[kind].load() : 0; }
 } // namespace bedrock_forge::client::matchfx

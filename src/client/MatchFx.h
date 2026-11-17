@@ -104,3 +104,9 @@ void onActorEvent(uint64_t rid, int event);
 /// the time of day the game should render while a consumer is attached; false = leave the game's own
 bool timeOverride(float& t);
 } // namespace bedrock_forge::client::matchfx
+
+// ---- the local player's match moments, for the stick armor (FiguraBridge writes them as Molang timers):
+// 0 = you broke a bed, 1 = you got a kill / elimination, 2 = you respawned. Steady-clock ms of the last one, 0 = never.
+namespace bedrock_forge::client::matchfx {
+int64_t armorEventMs(int kind);
+}

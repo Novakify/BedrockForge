@@ -9,7 +9,7 @@ BedWars progression - the higher the tier, the more pieces, light and reaction t
   tier 3  golden     INFERNO      obsidian with magma veins, ember trim, flickering fire rails, flared shoulders
   tier 4  netherite  ECLIPSE      black chrome + violet Novak Glass, glowing runes, horns and a spined back;
                                   reacts to the game (hurt flash, low-health pulse, sprint)
-  tier 4+ diamond    PRISM        flagship: the head is a brilliant-cut Novak Glass diamond round a sapphire core,
+  tier 4+ diamond    PRISM        flagship: Novak Glass over liquid chrome (512px), a beam that splits into a spectrum,
                                   midnight sapphire plates cut with glowing facet lines, two floating gems with light
                                   rings; reacts to the game
           turtle     REEF         (helmet only) sea-glass teal
@@ -119,6 +119,8 @@ def hex_lines(x, y, s):
 # ====================================================================== plates (the "metal" atlas layer)
 def plate_tex(mat):
     """RGBA TEXM x TEXM: plate region (u across a plate, v along it) | visor | rim | recess. alpha 0 = glows."""
+    if mat == "diamond":
+        return chrome_tex()
     S = TEXM
     img = np.zeros((S, S, 4))
     img[..., 3] = 255
@@ -541,3 +543,227 @@ def react_overlay(var, mat):
     hurt = f"(q.hurt_time ?? 0) > 0"
     return {"r": f"{hurt} ? {flash[0]} : 1.0", "g": f"{hurt} ? {flash[1]} : 0.15", "b": f"{hurt} ? {flash[2]} : 0.2",
             "a": f"math.max({a_hurt}, {a_low})"}
+
+
+# ====================================================================== PRISM: high-res liquid chrome (512 x 512)
+def _ramp(x, stops):
+    """piecewise-linear colour ramp; x in 0..1 (wraps), stops [(pos, rgb)]"""
+    x = np.asarray(x) % 1.0
+    out = np.zeros(x.shape + (3,))
+    pos = [p for p, _ in stops] + [stops[0][0] + 1]
+    cols = [np.array(c, float) for _, c in stops] + [np.array(stops[0][1], float)]
+    for i in range(len(stops)):
+        a, b = pos[i], pos[i + 1]
+        m = (x >= a) & (x < b) if i else ((x < b) | (x >= pos[-2] + 0 if False else x < b))
+        m = (x >= a) & (x < b)
+        t = ((x - a) / (b - a))[m]
+        t = t * t * (3 - 2 * t)
+        out[m] = cols[i] * (1 - t[:, None]) + cols[i + 1] * t[:, None]
+    lo = x < pos[0]
+    out[lo] = cols[0]
+    return out
+
+
+# chrome reflects a sky: deep indigo below, a dark horizon line, a molten amber band, a hot white sky streak, violet
+CHROME = [(0.00, (14, 10, 40)), (0.20, (34, 22, 96)), (0.34, (92, 58, 196)), (0.41, (210, 200, 255)),
+          (0.43, (255, 255, 255)), (0.46, (150, 128, 245)), (0.58, (48, 30, 120)), (0.70, (8, 6, 22)),
+          (0.76, (200, 100, 40)), (0.79, (255, 196, 120)), (0.83, (110, 46, 40)), (0.92, (20, 12, 44))]
+
+
+def chrome_tex(S=512):
+    img = np.zeros((S, S, 4))
+    img[..., 3] = 255
+    W = S // 2
+    yy, xx = np.mgrid[0:S, 0:W]
+    u, v = (xx + .5) / W, (yy + .5) / S
+    edge = np.minimum(u, 1 - u)
+    k = W / 64.0                                            # px per "design px" (lines stay crisp at any size)
+    glow = np.zeros((S, W))
+    # the reflection flows: a liquid warp of u along the plate, the bands bend round the plate's curve
+    um = np.abs(u - .5) * 2                                  # mirror-symmetric: no seam where the helmet's wrap meets
+    f = 0.12 + 0.62 * um + 0.08 * v + 0.04 * np.sin(v * math.pi * 2.2 + um * 2.0) + 0.35 * um ** 2
+    col = _ramp(f, CHROME)
+    fres = np.clip(1 - edge / 0.22, 0, 1) ** 2               # rim: brighter toward the plate's edges (fresnel)
+    col = col * (1 - 0.35 * fres[..., None]) + np.array([200, 190, 255]) * (0.35 * fres)[..., None]
+    cx = .62 + 0.03 * np.sin(v * math.pi * 2.0 + 0.9)       # a hot specular thread each side, riding the liquid
+    sp = (np.exp(-((um - cx) / .018) ** 2)) * (0.6 + 0.4 * np.sin(v * math.pi))
+    col = col + 255 * (0.8 * sp)[..., None]
+    P = np.stack([(u - .5) * W, v * S], -1)
+    m = edge > .12
+    d = segs_dist(P, [((0, .04 * S), (0, .58 * S))])         # the beam...
+    col += np.array([220, 236, 255]) * (np.exp(-d / (2.0 * k)) * 0.35 * m)[..., None]
+    beam = (d < 0.6 * k) & m
+    col[beam], glow[beam] = (255, 255, 255), 1.0
+    for i in range(7):                                       # ...split by the prism
+        t = i / 6
+        tip = ((t - .5) * .66 * W, .97 * S)
+        dk = segs_dist(P, [((0, .58 * S), tip)])
+        c = hsv(0.0 + 0.80 * t, 0.70, 1.0) * 255
+        sel = m & (P[..., 1] > .58 * S)
+        col = col + c * (np.exp(-dk / (1.6 * k)) * 0.22 * sel)[..., None]
+        ln = (dk < 0.45 * k) & sel
+        col[ln], glow[ln] = c, 1.0
+    inl = (edge >= .110) & (edge < .118) & (v > .02) & (v < .98)   # a fine white light just inside the bevel
+    col[inl], glow[inl] = (250, 252, 255), 1.0
+    bev = edge < .09                                         # polished bevel: bright chrome
+    col[bev] = _ramp(f[bev] + 0.5, CHROME) * 0.6 + 255 * 0.4 * (edge[bev, None] / .09)
+    col[(edge >= .09) & (edge < .11)] = (6, 4, 16)
+    img[:, :W, :3] = np.clip(col, 0, 255)
+    img[:, :W, 3] = 255 * (1 - glow)
+    # visor | rim | recess (cape cloth: the same liquid chrome, quieter, with a white-lit hem)
+    q = S // 4
+    vv, uu = np.mgrid[0:S, 0:q]
+    vv, uu = (vv + .5) / S, (uu + .5) / q
+    img[:, W:W + q, :3] = _ramp(0.70 * uu + 0.25 * vv + 0.10, CHROME) * 0.35
+    img[:, W + q:W + q + S // 8, :3] = (240, 246, 255)
+    img[:, W + q:W + q + S // 8, 3] = 40
+    cw = S - (W + q + S // 8)
+    vv, uu = np.mgrid[0:S, 0:cw]
+    vv, uu = (vv + .5) / S, (uu + .5) / cw
+    cl = _ramp(0.45 * uu + 0.35 * vv + 0.08 * np.sin(vv * 9 + uu * 3), CHROME) * 0.75
+    ce = np.minimum(uu, 1 - uu)
+    hem = ce < 0.07
+    cl[hem] = (245, 248, 255)
+    img[:, W + q + S // 8:, :3] = cl
+    img[:, W + q + S // 8:, 3] = np.where(hem, 40, 255)
+    return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), "RGBA")
+
+
+# ====================================================================== match moments (Hive Bed Wars / SkyWars)
+# Bedrock Forge (MatchFx) writes v.fbev_bed / v.fbev_kill / v.fbev_resp = seconds since you broke a bed, got a kill /
+# elimination, respawned. Each tier answers each moment with its own particles (in its design language) and a flash of
+# its light over the armor; the rails race for a moment.
+EVENTS = ("bed", "kill", "resp")
+FX_CELLS = ("dot", "streak", "shard", "ring", "hex", "ember", "star", "pixel", "chevron")   # 16 px cells, 4 x 3 atlas
+ACCENT = {"leather": (1.0, 0.96, 0.9), "copper": (1.0, 0.64, 0.30), "chainmail": (0.78, 0.9, 1.0),
+          "iron": (0.38, 0.62, 1.0), "golden": (1.0, 0.72, 0.25), "netherite": (1.0, 0.18, 0.34),
+          "diamond": (0.92, 0.97, 1.0), "turtle": (0.5, 0.95, 0.8)}
+
+
+def fx_atlas():
+    """64 x 48: soft dot, spark streak, shard, ring, hex outline, ember, 4-point star, pixel, chevron (white, alpha)"""
+    C = 16
+    img = np.zeros((48, 64, 4))
+    yy, xx = np.mgrid[0:C, 0:C]
+    x, y = (xx + .5) / C * 2 - 1, (yy + .5) / C * 2 - 1
+    r = np.hypot(x, y)
+    hexr = np.maximum(np.abs(y), np.maximum(np.abs(.866 * x + .5 * y), np.abs(.866 * x - .5 * y)))
+    cells = {
+        "dot": np.clip(1 - r, 0, 1) ** 1.6,
+        "streak": np.clip(1 - np.abs(x) * 5, 0, 1) * np.clip(1 - np.abs(y) ** 3, 0, 1),
+        "shard": np.clip(1 - (np.abs(x) * 1.5 + np.abs(y)), 0, 1) ** 0.5,
+        "ring": np.clip(1 - np.abs(r - .72) * 7, 0, 1),
+        "hex": np.clip(1 - np.abs(hexr - .72) * 7, 0, 1),
+        "ember": np.clip(1 - r * 1.4, 0, 1) ** 0.7,
+        "star": np.clip(np.maximum(1 - np.abs(x) * 7 - np.abs(y) * .9, 1 - np.abs(y) * 7 - np.abs(x) * .9), 0, 1)
+                + np.clip(1 - r * 3, 0, 1),
+        "pixel": ((np.abs(x) < .5) & (np.abs(y) < .5)).astype(float),
+        "chevron": np.clip(1 - np.abs(y + .3 - np.abs(x) * .9) * 6, 0, 1) * (np.abs(x) < .85),
+    }
+    for i, n in enumerate(FX_CELLS):
+        cx, cy = (i % 4) * C, (i // 4) * C
+        img[cy:cy + C, cx:cx + C, :3] = 255
+        img[cy:cy + C, cx:cx + C, 3] = np.clip(cells[n], 0, 1) * 255
+    return Image.fromarray(img.astype(np.uint8), "RGBA")
+
+
+# per tier, per moment: (cell, count, shape, speed, life, gravity, size, colour mode, extra)
+#   shape: "sphere", "disc" (ring on the ground, outwards), "up" (a column upwards), "in" (converging on you)
+#   colour: "acc" (the tier's light), "white", "spectrum" (a random hue each), "dark" (smoke)
+FX = {
+    "leather": {"bed": ("dot", 26, "sphere", 3.2, 1.2, -3, .30, "white"), "kill": ("pixel", 22, "sphere", 3.8, 1.0, -6, .14, "white"),
+                "resp": ("dot", 34, "disc", 3.0, 1.0, 0, .26, "white")},
+    "copper": {"bed": ("streak", 40, "sphere", 8.0, .8, -9, .34, "acc"), "kill": ("streak", 30, "up", 9.0, .8, 0, .42, "acc"),
+               "resp": ("dot", 34, "up", 2.6, 1.5, 0, .20, "acc")},
+    "chainmail": {"bed": ("shard", 26, "sphere", 4.0, 1.3, -7, .28, "acc"), "kill": ("dot", 30, "up", 1.8, 1.8, 0.5, .38, "acc"),
+                  "resp": ("ring", 1, "point", 0, .9, 0, 3.4, "acc")},
+    "iron": {"bed": ("ring", 1, "point", 0, .8, 0, 4.2, "acc"), "kill": ("chevron", 18, "up", 8.0, .9, 0, .40, "acc"),
+             "resp": ("hex", 34, "shell", 0.5, 1.1, 0, .40, "acc")},
+    "golden": {"bed": ("ember", 50, "sphere", 6.5, 1.4, -8, .24, "acc"), "kill": ("ember", 44, "spiral", 3.5, 1.5, 1.5, .24, "acc"),
+               "resp": ("ring", 1, "point", 0, 1.0, 0, 4.0, "acc")},
+    "netherite": {"bed": ("hex", 34, "sphere", 6.5, 1.1, -6, .34, "acc"), "kill": ("hex", 36, "spiral", 3.0, 1.5, 1.0, .30, "acc"),
+                  "resp": ("hex", 40, "in", 3.6, .9, 0, .32, "acc")},
+    "diamond": {"bed": ("shard", 54, "sphere", 8.0, 1.3, -7, .34, "spectrum"), "kill": ("streak", 44, "up", 12.0, 1.1, 0, .70, "spectrum"),
+                "resp": ("shard", 54, "in", 5.0, .9, 0, .32, "spectrum")},
+}
+# and a flash at the body for every moment: (cell, size, life) - the punch that makes the moment read mid-fight
+FLASH = {"leather": ("dot", 1.4, .22), "copper": ("star", 2.2, .25), "chainmail": ("dot", 1.8, .30), "iron": ("star", 2.4, .25),
+         "golden": ("ember", 2.4, .30), "netherite": ("hex", 2.0, .30), "diamond": ("star", 3.2, .32), "turtle": ("dot", 1.4, .22)}
+FX["turtle"] = FX["leather"]
+
+
+def fx_particle(ident, mat, ev):
+    cell, n, shape, speed, life, grav, size, cmode = FX[mat][ev]
+    i = FX_CELLS.index(cell)
+    uv = [(i % 4) * 16, (i // 4) * 16]
+    a = ACCENT[mat]
+    comps = {"minecraft:emitter_rate_instant": {"num_particles": n},
+             "minecraft:emitter_lifetime_once": {"active_time": 0.05},
+             "minecraft:particle_lifetime_expression": {"max_lifetime": f"{life} * (0.75 + 0.5 * v.particle_random_2)"},
+             "minecraft:particle_initial_speed": f"{speed} * (0.6 + 0.6 * v.particle_random_3)",
+             "minecraft:particle_motion_dynamic": {"linear_acceleration": [0, grav, 0], "linear_drag_coefficient": 0.6}}
+    if shape == "sphere":
+        comps["minecraft:emitter_shape_sphere"] = {"offset": [0, 1.0, 0], "radius": 0.35, "direction": "outwards"}
+    elif shape == "disc":
+        comps["minecraft:emitter_shape_disc"] = {"offset": [0, 0.1, 0], "radius": 0.4, "plane_normal": "y",
+                                                 "surface_only": True, "direction": "outwards"}
+    elif shape == "up":
+        comps["minecraft:emitter_shape_disc"] = {"offset": [0, 0.2, 0], "radius": 0.55, "plane_normal": "y",
+                                                 "direction": [0, 1, 0]}
+    elif shape == "shell":
+        comps["minecraft:emitter_shape_sphere"] = {"offset": [0, 1.0, 0], "radius": 1.0, "surface_only": True,
+                                                   "direction": "outwards"}
+    elif shape == "in":
+        comps["minecraft:emitter_shape_sphere"] = {"offset": [0, 1.0, 0], "radius": 1.6, "surface_only": True,
+                                                   "direction": "inwards"}
+    elif shape == "spiral":
+        comps["minecraft:emitter_shape_disc"] = {"offset": [0, 0.2, 0], "radius": 0.7, "plane_normal": "y",
+                                                 "surface_only": True, "direction": [0, 1, 0]}
+        comps["minecraft:particle_motion_dynamic"]["linear_acceleration"] = [
+            "math.cos(v.particle_age * 400 + v.particle_random_1 * 360) * 6", grav,
+            "math.sin(v.particle_age * 400 + v.particle_random_1 * 360) * 6"]
+    else:   # point: one big ring on the ground, growing
+        comps["minecraft:emitter_shape_point"] = {"offset": [0, 0.08, 0]}
+    grow = shape == "point"
+    sz = f"{size} * (0.2 + 1.2 * v.particle_age / v.particle_lifetime)" if grow else \
+        f"{size} * (1 - 0.6 * v.particle_age / v.particle_lifetime) * (0.7 + 0.6 * v.particle_random_4)"
+    face = "direction_y" if cell in ("streak",) else ("emitter_transform_xz" if grow else "rotate_xyz")
+    bb = {"size": [sz if cell != "streak" else f"{size} * 0.35", sz], "facing_camera_mode": face,
+          "uv": {"texture_width": 64, "texture_height": 48, "uv": uv, "uv_size": [16, 16]}}
+    if face == "direction_y":
+        bb["direction"] = {"mode": "derive_from_velocity"}
+    comps["minecraft:particle_appearance_billboard"] = bb
+    fade = "math.clamp(2 - 2 * v.particle_age / v.particle_lifetime, 0, 1)"
+    if cmode == "spectrum":
+        h = "v.particle_random_1 * 300"
+        col = [f"0.62 + 0.38 * math.cos({h})", f"0.62 + 0.38 * math.cos({h} - 120)", f"0.62 + 0.38 * math.cos({h} - 240)", fade]
+    elif cmode == "white":
+        col = [1.0, 1.0, 1.0, f"{fade} * 0.85"]
+    else:
+        col = [a[0], a[1], a[2], fade]
+    comps["minecraft:particle_appearance_tinting"] = {"color": col}
+    return {"format_version": "1.10.0", "particle_effect": {
+        "description": {"identifier": ident, "basic_render_parameters": {
+            "material": "particles_blend" if mat in ("leather", "turtle") else "particles_add",
+            "texture": "textures/figura/fb_armor/fx_particles"}},
+        "components": comps}}
+
+
+def fx_flash(ident, mat):
+    cell, size, life = FLASH[mat]
+    i = FX_CELLS.index(cell)
+    a = ACCENT[mat]
+    return {"format_version": "1.10.0", "particle_effect": {
+        "description": {"identifier": ident, "basic_render_parameters": {
+            "material": "particles_add", "texture": "textures/figura/fb_armor/fx_particles"}},
+        "components": {
+            "minecraft:emitter_rate_instant": {"num_particles": 1},
+            "minecraft:emitter_lifetime_once": {"active_time": 0.05},
+            "minecraft:emitter_shape_point": {"offset": [0, 1.05, 0]},
+            "minecraft:particle_lifetime_expression": {"max_lifetime": life},
+            "minecraft:particle_appearance_billboard": {
+                "size": [f"{size} * (0.5 + 0.8 * v.particle_age / v.particle_lifetime)",
+                         f"{size} * (0.5 + 0.8 * v.particle_age / v.particle_lifetime)"],
+                "facing_camera_mode": "rotate_xyz",
+                "uv": {"texture_width": 64, "texture_height": 48, "uv": [(i % 4) * 16, (i // 4) * 16], "uv_size": [16, 16]}},
+            "minecraft:particle_appearance_tinting": {"color": [a[0], a[1], a[2], "1 - v.particle_age / v.particle_lifetime"]}}}}
