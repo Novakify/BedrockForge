@@ -57,7 +57,7 @@ std::vector<short> synthThunder(uint32_t seed) {
     std::mt19937 rng(seed);
     std::uniform_real_distribution<float> un(-1.f, 1.f), u01(0.f, 1.f);
     int const n = int(kRate * (4.5f + 2.f * u01(rng)));
-    std::vector<short> out(size_t(n));
+    std::vector<short> out(static_cast<size_t>(n));
     float lp = 0, lp2 = 0, lp3 = 0, crk = 0;
     float const crack = 0.25f + 0.5f * u01(rng);
     for (int i = 0; i < n; ++i) {
@@ -129,7 +129,7 @@ void rainLocked(float level) {
     }
 }
 /// A thunderclap (near = louder, brighter).
-void thunder(float volume, float near) {
+void thunder(float volume, float closeK) {
     std::lock_guard l(gMu);
     if (volume <= 0.f || !init()) return;
     gOneShots.erase(std::remove_if(gOneShots.begin(), gOneShots.end(), [](IXAudio2SourceVoice* v) {
@@ -144,8 +144,8 @@ void thunder(float volume, float near) {
     WAVEFORMATEX wf = fmt();
     IXAudio2SourceVoice* v = nullptr;
     if (FAILED(gXa->CreateSourceVoice(&v, &wf, 0, 2.0f))) return;
-    v->SetFrequencyRatio(0.8f + 0.35f * near);
-    v->SetVolume(std::clamp(volume * (0.45f + 0.55f * near), 0.f, 1.f));
+    v->SetFrequencyRatio(0.8f + 0.35f * closeK);
+    v->SetVolume(std::clamp(volume * (0.45f + 0.55f * closeK), 0.f, 1.f));
     XAUDIO2_BUFFER b{};
     b.AudioBytes = UINT32(pcm.size() * sizeof(short)); b.pAudioData = reinterpret_cast<BYTE const*>(pcm.data()); b.Flags = XAUDIO2_END_OF_STREAM;
     if (FAILED(v->SubmitSourceBuffer(&b))) { v->DestroyVoice(); return; }

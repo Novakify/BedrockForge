@@ -99,7 +99,7 @@ namespace bedrock_forge::client {
 void installVisualHooks();
 void setHandHook(bool on); // VisualModules.cpp (Hand Movement)
 namespace keysounds { void press(int vk); } // KeySounds_win.cpp (Creamy Keys)
-namespace weathersounds { void rain(float level); void thunder(float volume, float near); } // WeatherSounds_win.cpp
+namespace weathersounds { void rain(float level); void thunder(float volume, float closeK); } // WeatherSounds_win.cpp
 extern std::atomic<float> gTimeOfDay; // VisualModules.cpp
 extern std::mutex  gNickMutex;          // ChatCompact.cpp (Nick Hider)
 extern std::string gNickReal;
