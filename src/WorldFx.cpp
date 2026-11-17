@@ -1149,7 +1149,7 @@ void drawUi() {
     ImGui::SliderFloat("Motion blur: moving", &look.blurMove, 0.0f, 1.5f, "%.2f");
     saveFx |= ImGui::IsItemDeactivatedAfterEdit();
     ImGui::SameLine();
-    ImGui::TextDisabled("(how much walking / strafing blurs; turning is always full. On/off + strength: Bedrock Forge menu > Motion Blur)");
+    ImGui::TextDisabled("(used when the Bedrock Forge menu does not set it: Right Shift > Motion Blur has on/off, strength and this)");
     ImGui::SeparatorText("The match (Bedrock Forge)");
     saveFx |= ImGui::Checkbox("Living match sky", &look.living);
     ImGui::SameLine();

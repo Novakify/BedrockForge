@@ -2664,6 +2664,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         for (int a = 0; a < 3; ++a) { bc.pos[a] = snap.pos[a]; bc.f[a] = snap.forward[a]; bc.r[a] = snap.right[a]; bc.u[a] = snap.up[a]; }
     }
     float strength = rf::postfx::motionBlurWanted();
+    float const blurMove = rf::postfx::motionBlurMove() >= 0.0f ? std::min(rf::postfx::motionBlurMove(), 1.5f) : look.blurMove;   // the client menu's slider wins over F6
     float w[3] = {bc.w[0], bc.w[1], bc.w[2]}, v[3] = {bc.v[0], bc.v[1], bc.v[2]};
     if (look.blurTest) {   // bench / review: a steady pretend motion, so a still frame shows the blur and its cost
         if (strength <= 0.0f) strength = 1.0f;
@@ -2680,7 +2681,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         float const focal = float(rd.Width) * 0.5f * std::fabs(snap.proj[0]);   // pixels per radian at the middle
         blurDead = std::max(0.9f, float(rd.Width) / 2560.0f);
         float const wl = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]) * blurShutter;
-        float const tl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) * blurShutter * look.blurMove;
+        float const tl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) * blurShutter * blurMove;
         bp = derived(dev.Get(), g, 9);
         // would anything move a pixel past the dead zone? (turning: everywhere; moving: a thing 0.6 blocks away)
         blurNeed = bp && (wl * focal * 1.5f > blurDead || tl * focal / 0.6f > blurDead);
@@ -2862,7 +2863,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         b[11] = float(++seed & 1023u);
         b[12] = 0.025f; b[13] = float(rd.Width) * 0.03f; b[14] = blurDead; b[15] = c[15];
         b[16] = c[16]; b[17] = c[17]; b[18] = c[18]; b[19] = c[19];
-        for (int a = 0; a < 3; ++a) { b[20 + a] = w[a] * blurShutter; b[24 + a] = v[a] * blurShutter * look.blurMove; }
+        for (int a = 0; a < 3; ++a) { b[20 + a] = w[a] * blurShutter; b[24 + a] = v[a] * blurShutter * blurMove; }
         b[23] = 15.0f;
         b[27] = look.blurTest == 3 ? 1.0f : 0.0f;
         calls.setConsts(list, 0, 44, b, 0);

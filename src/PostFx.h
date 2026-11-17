@@ -22,6 +22,8 @@ void drawUi();
 /// Present-time blur then stays out of the way.
 float motionBlurWanted();
 void  noteWorldBlur();
+/// The Bedrock Forge Motion Blur module's "moving" share (0..1.5), -1 = it does not say (F6 World FX value applies).
+float motionBlurMove();
 bool showcasePose(float& blend, float& yaw, float& pitch, float& radius);
 
 } // namespace rf::postfx
