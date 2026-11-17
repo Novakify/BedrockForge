@@ -97,6 +97,9 @@ namespace bedrock_forge::client {
 
 void installVisualHooks();
 extern std::atomic<float> gTimeOfDay; // VisualModules.cpp
+extern std::mutex  gNickMutex;          // ChatCompact.cpp (Nick Hider)
+extern std::string gNickReal;
+std::string hideNick(std::string s);
 void installChatHooks();
 void uninstallChatHooks();
 void uninstallVisualHooks();
@@ -966,7 +969,7 @@ void registerBuiltins() {
         std::vector<std::string> lines{"Players"};
         for (auto const& [uuid, entry] : f.player->getLevel().getPlayerList()) {
             (void)uuid;
-            lines.push_back(*entry.mName);
+            lines.push_back(hideNick(*entry.mName));
             if (lines.size() > 20) break;
         }
         float w = 0;
@@ -1162,6 +1165,8 @@ void registerBuiltins() {
             .slider("key_prev", "Previous song key", 0, 0, 254, 1);
         np.hud = [](Frame& f) { if (auto* m = Registry::get().find("now_playing")) drawNowPlaying(f, *m); };
     }
+    r.add("nick_hider", "Nick Hider", Category::Misc, "Hide your name in screenshots and streams (chat, the player list)", false)
+        .choice("alias", "Show it as", {"You", "Player", "Hidden", "Novak"}, 0);
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
         .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f)
         .slider("moving", "Blur from moving (turning is always full)", 0.6f, 0.0f, 1.5f, 0.05f);
@@ -1391,6 +1396,7 @@ void installRuntime() {
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
+        if (player) { try { std::string const n = player->getRealName(); std::lock_guard l(gNickMutex); if (n != gNickReal) gNickReal = n; } catch (...) {} }
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
         if (player) {   // Jump Circles / Shockwave: leaving the ground upward, landing from a fall
             static bool wasGround = true;
