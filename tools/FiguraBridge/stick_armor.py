@@ -366,6 +366,69 @@ def surf_path(S, k, t0=0.0, t1=1.0, wob=None):
 
 
 # ====================================================================== helmet
+# ---------------------------------------------------------------------- accent primitives (tier silhouettes)
+def ribbon(slot, bone, pts, widths, side, reg="metal", layer="metal", cross=0.0, isl=None, mirror=False):
+    """a strip along pts (list of points), width per point, side(i) -> unit vector across the strip at point i.
+    Both faces are emitted (thin pieces seen from either side). reg: atlas region for u across, v along; or isl:
+    a clean island (glass, edge to edge). cross > 0: a second strip at 90 degrees (depth), that fraction wide."""
+    m = M(slot, bone, layer)
+    n = len(pts) - 1
+    u0, u1 = REG[reg] if reg else (0, 1)
+    def uv(k, i):
+        if isl:
+            return isl_uv(isl, k, i / n, mirror)
+        return (u0 + (u1 - u0) * k, i / n)
+    for i in range(n):
+        A, B = np.asarray(pts[i], float), np.asarray(pts[i + 1], float)
+        sa, sb = np.asarray(side(i), float), np.asarray(side(i + 1), float)
+        for sd, wf in ((lambda j, s_: s_, 1.0),) + (((None, cross),) if cross > 0 else ()):
+            if sd is None:   # the cross strip: across = tangent x side
+                tg = B - A
+                sa2 = np.cross(tg, sa); sa2 /= np.linalg.norm(sa2) + 1e-9
+                sb2 = np.cross(tg, sb); sb2 /= np.linalg.norm(sb2) + 1e-9
+                ca, cb = sa2, sb2
+            else:
+                ca, cb = sa, sb
+            wa, wb = widths[i] * wf / 2, widths[i + 1] * wf / 2
+            Q = [A - ca * wa, A + ca * wa, B + cb * wb, B - cb * wb]
+            U = [uv(0, i), uv(1, i), uv(1, i + 1), uv(0, i + 1)]
+            m.quad(Q, U)
+            m.quad(Q[::-1], U[::-1])
+
+
+def kite(slot, bone, base, tip, half_w, side, isl=None, reg="metal", layer=None, mirror=False, shoulder=0.38):
+    """a flat crystal / blade: base, two shoulders, tip - mapped onto an island edge to edge (glass: outlined all
+    round) or a region. Both faces."""
+    base, tip, side = (np.asarray(x, float) for x in (base, tip, side))
+    mid = base + (tip - base) * shoulder
+    P = [base, mid - side * half_w, tip, mid + side * half_w]
+    layer = layer or ("glass" if isl else "metal")
+    m = M(slot, bone, layer)
+    if isl:
+        U = [isl_uv(isl, 0, 1, mirror), isl_uv(isl, 0, 0, mirror), isl_uv(isl, 1, 0, mirror), isl_uv(isl, 1, 1, mirror)]
+    else:
+        u0, u1 = REG[reg]
+        U = [(u0, 1.0), (u0, 0.0), (u1, 0.0), (u1, 1.0)]
+    m.quad(P, U)
+    m.quad(P[::-1], U[::-1])
+
+
+def boxq(slot, bone, c, ax, ay, az, reg="metal"):
+    """a box centred at c with half-axes ax, ay, az (vectors), every face over the atlas region"""
+    c, ax, ay, az = (np.asarray(x, float) for x in (c, ax, ay, az))
+    m = M(slot, bone, "metal")
+    u0, u1 = REG[reg]
+    U = [(u0, 0), (u1, 0), (u1, 1), (u0, 1)]
+    for n_, a_, b_ in ((az, ax, ay), (-az, -ax, ay), (ax, -az, ay), (-ax, az, ay), (ay, ax, -az), (-ay, ax, az)):
+        f = c + n_
+        Q = [f - a_ + b_, f + a_ + b_, f + a_ - b_, f - a_ - b_]
+        if np.cross(Q[1] - Q[0], Q[3] - Q[0]) @ n_ > 0:
+            Q, U2 = Q[::-1], U[::-1]
+        else:
+            U2 = U
+        m.quad(Q, U2)
+
+
 def helmet(head_pts):
     """faceted enclosed helmet: convex offset shell of the real head ball, crown ridge, tapered chin, dark visor"""
     from scipy.spatial import ConvexHull
@@ -531,6 +594,62 @@ def helmet(head_pts):
                 mh.quad(Q2[::-1], uv[::-1], n=-nx)
             rail("head", "p17", lambda t, hp=hp: (hp(0.05 + 0.8 * t) + np.array([0, 0, -0.08]), np.array([0, 0, -1.0])),
                  (0.0, 0.5), width=0.16, n=10)
+    C2 = lambda a, r, z=0.0: hc + np.array([r * math.cos(a), r * math.sin(a), z])   # billboard frame, a from +x
+    radial = lambda a: np.array([math.cos(a), math.sin(a), 0.0])
+    D_ = math.radians
+    if "hood" in acc:     # RUNNER: a soft hood framing the helmet, drawstrings hanging in front
+        A = [D_(-25 + 230 * i / 24) for i in range(25)]
+        w = [0.45 + 0.75 * max(0.0, math.sin(a)) ** 1.5 for a in A]
+        pts = [C2(a, Rs * 0.96 + wi / 2, 0.9) for a, wi in zip(A, w)]
+        ribbon("head", "p17", pts, w, lambda i: radial(A[i]), reg="recess")
+        for sx in (-0.75, 0.75):
+            st = [hc + np.array([sx + 0.05 * math.sin(i), -Rs * 0.86 - 0.42 * i, -Rs * 0.55]) for i in range(7)]
+            ribbon("head", "p17", st, [0.16] * 7, lambda i: np.array([1.0, 0, 0]), reg="rim")
+    if "antennae" in acc:  # CIRCUIT: two antenna masts with glowing tips, round ear coils
+        for a0 in (D_(62), D_(118)):
+            mast = [C2(a0, Rs * 0.92 + 2.3 * i / 6, 0.2) + np.array([0, 0.25 * (i / 6) ** 2, 0]) for i in range(7)]
+            ribbon("head", "p17", mast, [0.20] * 7, lambda i, a0=a0: np.array([-math.sin(a0), math.cos(a0), 0]),
+                   reg="metal", cross=1.0)
+            tip = mast[-1]
+            kite("head", "p17", tip - np.array([0, 0.45, 0]), tip + np.array([0, 0.45, 0]), 0.42, [1.0, 0, 0], reg="rim")
+        for a0 in (0.0, math.pi):
+            ring = [C2(a0, Rs * 0.98, 0.15) + 0.85 * np.array([0, math.cos(2 * math.pi * i / 20), 0])
+                    + 0.85 * radial(a0) * math.sin(2 * math.pi * i / 20) * 0.6 for i in range(21)]
+            ribbon("head", "p17", ring, [0.30] * 21, lambda i: radial(a0), reg="rim")
+    if "cowl" in acc:     # PHANTOM: an assassin's cowl rising to a swept point
+        A = [D_(10 + 160 * i / 24) for i in range(25)]
+        w = [0.30 + 1.9 * max(0.0, 1 - abs(math.degrees(a) - 104) / 34) ** 1.4 for a in A]
+        pts = [C2(a, Rs * 0.97 + wi / 2, 0.8) for a, wi in zip(A, w)]
+        ribbon("head", "p17", pts, w, lambda i: radial(A[i]), reg="recess")
+    if "crest" in acc:    # VANGUARD: a tall crescent crest over the helmet
+        A = [D_(48 + 84 * i / 24) for i in range(25)]
+        w = [1.9 * math.sin(math.pi * i / 24) ** 0.8 + 0.05 for i in range(25)]
+        pts = [C2(a, Rs * 0.90 + wi / 2, 0.35) for a, wi in zip(A, w)]
+        ribbon("head", "p17", pts, w, lambda i: radial(A[i]), reg="recess", cross=0.12)
+    if "flamecrown" in acc:   # INFERNO: a crown of flames licking up and back
+        for k, deg in enumerate((40, 62, 90, 118, 140)):
+            a0 = D_(deg)
+            L = 1.4 + 1.5 * math.sin(D_(deg))
+            bend = (90 - deg) / 90 * 0.9
+            perp = np.array([-math.sin(a0), math.cos(a0), 0])   # a lick: an S along the flame, wider at its base
+            pts = [C2(a0, Rs * 0.90 + L * i / 8, 0.3) + np.array([bend * (i / 8) ** 2, 0, 0])
+                   + perp * 0.32 * math.sin(i / 8 * math.pi * 1.6 + k) * (i / 8) for i in range(9)]
+            ribbon("head", "p17", pts, [0.95 * (1 - i / 8) ** 0.9 + 0.03 for i in range(9)],
+                   lambda i, a0=a0: np.array([-math.sin(a0), math.cos(a0), 0]), reg="rim", cross=0.25)
+    if "crescent" in acc:  # ECLIPSE: an eclipse crescent behind the helmet
+        A = [D_(i * 360 / 48) for i in range(49)]
+        w = [max(0.0, math.cos(a - D_(125))) ** 1.3 * 1.25 + 0.02 for a in A]
+        pts = [C2(a, Rs * 1.12 + wi / 2, 1.4) for a, wi in zip(A, w)]
+        ribbon("head", "p17", pts, w, lambda i: radial(A[i]), reg="metal")
+        rail("head", "p17", lambda t: (C2(D_(360 * t), Rs * 1.12, 1.35), np.array([0, 0, -1.0])), (0.0, 1.2),
+             width=0.16, n=48)
+    if "crown" in acc:    # PRISM: a crown of Novak Glass crystals
+        for k, deg in enumerate((38, 62, 90, 118, 142)):
+            a0 = D_(deg)
+            L = 1.2 + 1.6 * math.sin(D_(deg)) ** 3
+            kite("head", "p17", C2(a0, Rs * 0.86, 0.25), C2(a0, Rs * 0.86 + L, 0.25), 0.36 + 0.10 * (k == 2),
+                 [-math.sin(a0), math.cos(a0), 0], isl=("arm_top", "leg_end", "boot", "leg_end", "arm_top")[k],
+                 mirror=k > 2)
     return check_inside(m, head_pts, hc)
 
 
@@ -689,6 +808,60 @@ def build_suit_glass(bones):
     return stats
 
 
+def body_accents(acc, rod, T, sy, D):
+    """the tiers' body silhouettes (model space: up +y, front -z, avatar's left +x)"""
+    X, Y, Z = np.eye(3)
+    nb = T.at(sy(26.6), D(180), T.clear(sy(27), sy(26)) + 0.25)     # back of the neck
+    if "scarf" in acc:    # RUNNER: a scarf round the neck, two tails flying behind
+        plate("chest", "p22", T, sy(27.3), sy(26.1), 0.0, D(180), gap=0.30, bulge=0.12, prof=lambda t: 1.0,
+              ns=2, na=14, region="recess", rim=False)
+        for sx, L in ((-0.45, 9.5), (0.50, 7.2)):
+            pts = [nb + np.array([sx + 1.6 * sx * (i / 10) ** 1.3, -L * i / 10, 0.35 + 2.2 * (i / 10) ** 1.2])
+                   for i in range(11)]
+            ribbon("chest", "p22", pts, [1.35 - 0.45 * i / 10 for i in range(11)], lambda i: X, reg="recess")
+    if "pack" in acc:     # CIRCUIT: a power cell on the back
+        boxq("chest", "p22", nb + np.array([0, -3.2, 1.05]), X * 1.55, Y * 2.4, Z * 0.75)
+        for sx in (-0.75, 0.75):   # two glowing vents on top
+            boxq("chest", "p22", nb + np.array([sx, -0.55, 1.15]), X * 0.24, Y * 0.42, Z * 0.24, reg="rim")
+        boxq("chest", "p22", nb + np.array([0, -3.2, 1.82]), X * 0.9, Y * 1.6, Z * 0.04, reg="rim")   # the cell window
+    if "strips" in acc:   # PHANTOM: a tattered cape of lamellar strips
+        for k, (sx, L) in enumerate(((-1.6, 9.0), (-0.8, 11.5), (0.0, 10.0), (0.8, 12.0), (1.6, 8.4))):
+            pts = [nb + np.array([sx * (1 + 0.45 * i / 10), -0.3 - L * i / 10, 0.35 + 1.5 * (i / 10) ** 1.3])
+                   for i in range(11)]
+            ribbon("chest", "p22", pts, [0.95 * (1 - 0.55 * i / 10) for i in range(11)], lambda i: X, reg="recess")
+    if "cape" in acc:     # VANGUARD: a knight's cape from the shoulders
+        pts = [nb + np.array([0, -0.2 - 13.0 * i / 12, 0.40 + 2.2 * (i / 12) ** 1.4]) for i in range(13)]
+        ribbon("chest", "p22", pts, [3.4 + 2.6 * (i / 12) ** 0.8 for i in range(13)], lambda i: X, reg="recess")
+    if "shoulderflames" in acc:   # INFERNO: flames off both shoulders
+        for up, sg in (("p30", 1), ("p37", -1)):
+            U = rod[up]
+            for k, (s_, L) in enumerate(((0.22, 3.0), (0.42, 2.2))):
+                base = U.at(s_, sg * D(120), U.clear(0, .5) + 0.35)
+                pts = [base + np.array([sg * 1.6 * (i / 8), L * (i / 8) ** 0.9, 0.7 * (i / 8) ** 2]) for i in range(9)]
+                def fside(i, pts=pts):
+                    tg = pts[min(i + 1, 8)] - pts[max(i - 1, 0)]
+                    v_ = np.cross(tg, Z)
+                    return v_ / np.linalg.norm(v_)
+                ribbon("chest", up, pts, [0.80 * (1 - i / 8) ** 0.9 + 0.03 for i in range(9)], fside,
+                       reg="rim", cross=0.3)
+    if "tails" in acc:    # ECLIPSE: two long blade tails from the waist
+        for sg in (-1, 1):
+            b0 = T.at(sy(17.2), D(180) - sg * D(28), T.clear(sy(18), sy(16)) + 0.35)
+            pts = [b0 + np.array([sg * 1.2 * i / 10, -9.5 * i / 10, 1.4 * (i / 10) ** 1.2]) for i in range(11)]
+            ribbon("legs", "p22", pts, [1.5 * (1 - i / 10) ** 0.7 + 0.04 for i in range(11)], lambda i: X, reg="recess")
+    if "wings" in acc:    # PRISM: crystal wings - three Novak Glass shards fanning off each shoulder blade
+        for sg in (-1, 1):
+            b0 = nb + np.array([sg * 0.45, -1.4, 0.55])
+            for k, (ang, L, hw, isl) in enumerate(((58, 5.6, 0.62, "side_r"), (22, 6.6, 0.70, "boot"), (-14, 4.6, 0.55, "arm_top"))):
+                a = math.radians(ang)
+                tip = b0 + np.array([sg * L * math.cos(a), L * math.sin(a), 0.9 + 0.25 * k])
+                d = tip - b0
+                side = np.cross(d, Z)
+                kite("chest", "p22", b0, tip, hw, side / np.linalg.norm(side), isl=isl, mirror=sg < 0, shoulder=0.30)
+            rail("chest", "p22", lambda t, b0=b0, sg=sg: (b0 + np.array([sg * 6.2 * t * math.cos(0.38), 6.2 * t * math.sin(0.38), 1.12 + 0.2 * t]), -Z),
+                 (0.05, 0.55), width=0.14, n=10)
+
+
 TIER = None   # the tier being built (stick_tiers.TIERS entry) - None: the plain mix at level 3
 
 
@@ -751,11 +924,14 @@ def build_suit_mix(bones):
     for up, lo, sg in (("p30", "p32", 1), ("p37", "p39", -1)):
         U, F = rod[up], rod[lo]
         out = sg * D(90)
-        layers = ((0.0, 0.48 + fl * 0.2, 100 + fl * 60, 0.20), (0.07, 0.40, 80, 0.44), (0.12, 0.33, 58, 0.64))
+        big = 1.0 if "pauldrons" in acc else 0.0    # VANGUARD: broad round pauldrons
+        layers = ((0.0, 0.48 + fl * 0.2 + big * 0.08, 100 + fl * 60 + big * 40, 0.20 + big * 0.22),
+                  (0.07, 0.40, 80, 0.44 + big * 0.2), (0.12, 0.33, 58, 0.64 + big * 0.2))
         for k, (s0, s1, w, g) in enumerate(layers[:1 + (L >= 2) + (L >= 3)]):
             P = plate("chest", up, U, s0, s1, out - sg * D(12 * k), D(w), gap=g, bulge=0.18,
                       flare=0.35 - 0.08 * k + fl * (1.4 if k == 0 else 0.6),
-                      prof=lambda t: leaf(t, .55, top=.8), twist=sg * D(18), ns=8 if k == 0 else 6, na=6 if k == 0 else 4,
+                      prof=(lambda t: 1.0) if "boxy" in acc else (lambda t: leaf(t, .55, top=.8)),   # CIRCUIT: square plates
+                      twist=sg * D(18), ns=8 if k == 0 else 6, na=6 if k == 0 else 4,
                       isl="arm_top" if k == 0 else None, mirror=sg < 0)
             if k == 1 and L >= 3:
                 rail("chest", up, surf_path(P, 0, 0.05, 0.95), (0.42, 0.62), n=8)
@@ -808,6 +984,7 @@ def build_suit_mix(bones):
                      arr, n=14)
         plate("feet", ft, R3, 0.0, 1.0, 0.0, D(150), gap=0.12, bulge=0.12,
               prof=lambda t: 0.6 + 0.4 * math.sin(math.pi * t), ns=5, na=6)
+    body_accents(acc, rod, T, sy, D)
     stats["texels_per_px"] = {f"{s}/{b}/{i}": d for s, b, i, d in DENS}
     return stats
 

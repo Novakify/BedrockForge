@@ -25,13 +25,15 @@ from PIL import Image
 
 # level, motif, glass (RF), reactive, rail speed, accents, palette
 TIERS = {
-    "leather":   dict(level=1, name="RUNNER", rf=False, react=False, speed=0.0, acc=()),
-    "copper":    dict(level=2, name="CIRCUIT", rf=False, react=False, speed=0.45, acc=()),
-    "chainmail": dict(level=2, name="PHANTOM", rf=False, react=False, speed=0.6, acc=()),
-    "iron":      dict(level=3, name="VANGUARD", rf=False, react=False, speed=1.0, acc=()),
-    "golden":    dict(level=3, name="INFERNO", rf=False, react=False, speed=1.35, acc=("flares",)),
-    "netherite": dict(level=4, name="ECLIPSE", rf=True, react=True, speed=1.15, acc=("horns", "spikes")),
-    "diamond":   dict(level=4, name="PRISM", rf=True, react=True, speed=1.6, acc=("shards",)),
+    # acc: the silhouette - every tier reads from across the map (hood + scarf, antennae + power cell, cowl + tattered
+    # cape, crest + knight's cape, flame crown, horns + eclipse crescent + tails, crystal crown + crystal wings)
+    "leather":   dict(level=1, name="RUNNER", rf=False, react=False, speed=0.0, acc=("hood", "scarf")),
+    "copper":    dict(level=2, name="CIRCUIT", rf=False, react=False, speed=0.45, acc=("antennae", "boxy", "pack")),
+    "chainmail": dict(level=2, name="PHANTOM", rf=False, react=False, speed=0.6, acc=("cowl", "strips")),
+    "iron":      dict(level=3, name="VANGUARD", rf=False, react=False, speed=1.0, acc=("crest", "cape", "pauldrons")),
+    "golden":    dict(level=3, name="INFERNO", rf=False, react=False, speed=1.35, acc=("flares", "flamecrown", "shoulderflames")),
+    "netherite": dict(level=4, name="ECLIPSE", rf=True, react=True, speed=1.15, acc=("horns", "spikes", "crescent", "tails")),
+    "diamond":   dict(level=4, name="PRISM", rf=True, react=True, speed=1.6, acc=("shards", "crown", "wings")),
     "turtle":    dict(level=1, name="REEF", rf=False, react=False, speed=0.0, acc=()),
 }
 TEXM = 128            # plate atlas (same layout as the metal atlas: plate | visor | rim | recess)
@@ -250,9 +252,36 @@ def plate_tex(mat):
     vv = (np.mgrid[0:S, 0:S // 4][0] + .5) / S
     streak = np.exp(-((vv - 0.22 - uu * 0.18) / 0.04) ** 2) * 0.6
     img[:, x2, :3] = pal[0] + pal[1] * streak[..., None] * 0.5
-    img[:, W + S // 4: W + 3 * S // 8, :3] = pal[1] * 0.85          # rim
+    img[:, W + S // 4: W + 3 * S // 8, :3] = pal[1] * 0.85          # rim (also the tiers' glowing accents)
     img[:, W + S // 4: W + 3 * S // 8, 3] = 255 if mat in ("leather", "turtle", "chainmail") else 90
-    img[:, W + 3 * S // 8:, :3] = pal[0] * 1.4                     # recess
+    if mat == "golden":   # flames: a white-gold core, orange flanks, deep red at the very edge; all glowing
+        rw = S // 8
+        ru = (np.arange(rw) + .5) / rw
+        cdist = np.abs(ru - .5) * 2
+        rv = (np.arange(S) + .5) / S
+        fl = np.clip(1 - cdist[None, :] - 0.35 * rv[:, None], 0, 1)
+        fc = rgb(150, 20, 6)[None, None] * (1 - fl[..., None]) + rgb(255, 120, 24) * np.clip(fl * 2, 0, 1)[..., None] \
+            + rgb(0, 110, 110) * np.clip(fl * 2 - 1, 0, 1)[..., None]
+        img[:, W + S // 4: W + 3 * S // 8, :3] = np.clip(fc, 0, 255)
+        img[:, W + S // 4: W + 3 * S // 8, 3] = 0
+    # recess region = the tier's cloth (hood, scarf, cowl, capes, crest): u across, v along
+    xr = slice(W + 3 * S // 8, S)
+    cw = S - (W + 3 * S // 8)
+    cu = (np.mgrid[0:S, 0:cw][1] + .5) / cw
+    cv = (np.mgrid[0:S, 0:cw][0] + .5) / S
+    ce = np.minimum(cu, 1 - cu)
+    cloth = {"leather": (rgb(150, 144, 136), rgb(236, 230, 220)), "turtle": (rgb(50, 130, 110), rgb(222, 206, 160)),
+             "copper": (rgb(176, 98, 56), rgb(255, 172, 96)), "chainmail": (rgb(30, 33, 42), rgb(150, 162, 186)),
+             "iron": (rgb(30, 78, 196), rgb(236, 240, 246)), "golden": (rgb(60, 14, 10), rgb(255, 128, 40)),
+             "diamond": (rgb(232, 238, 248), rgb(70, 232, 255)), "netherite": (rgb(26, 20, 34), rgb(178, 84, 255))}[mat]
+    fold = 0.82 + 0.18 * np.cos(cu * math.pi * 3) ** 2          # soft folds along the cloth
+    cc = cloth[0] * (fold * (1.05 - 0.2 * cv))[..., None]
+    trim = ce < 0.14
+    cc[trim] = cloth[1]
+    img[:, xr, :3] = cc
+    img[:, xr, 3] = 255
+    if mat in ("golden", "netherite", "diamond", "copper"):   # their cloth trim glows
+        img[:, xr, 3] = np.where(trim, 40, 255)
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), "RGBA")
 
 
