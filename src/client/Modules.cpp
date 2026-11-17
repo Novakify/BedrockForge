@@ -51,6 +51,7 @@
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/level/Level.h"
+#include "mc/world/level/storage/LevelData.h"
 
 #include "bf/Events.h"
 #include "bf/Hud.h"
@@ -721,6 +722,18 @@ void registerBuiltins() {
     done = true;
 
     // ---------------- HUD
+    // [Purxiy "server_info"] Bedrock tells the client the server's world name and who is on, not its address; and it
+    // keeps no ping for the player list (Purxiy's Java "ping" reads the tab list's latency - Bedrock has none to read)
+    r.add("server_info", "Server Info", Category::Hud, "The world / server you are on and how many are there", false).hud = [](Frame& f) {
+        if (!f.player) return;
+        std::string name;
+        size_t n = 0;
+        try { auto& lv = f.player->getLevel(); name = *lv.getLevelData().mLevelName; n = lv.getPlayerList().size(); } catch (...) {}
+        if (name.empty()) name = "this world";
+        for (size_t i; (i = name.find("\xC2\xA7")) != std::string::npos;) name.erase(i, std::min<size_t>(3, name.size() - i));
+        if (name.size() > 28) { name.resize(27); name += "~"; }
+        f.infoLines.push_back(std::format("{} | {} online", name, n));
+    };
     r.add("memory", "Memory", Category::Hud, "How much memory the game is using", false).hud = [](Frame& f) {
         double const mb = gameMemoryMb();
         f.infoLines.push_back(mb >= 1024 ? std::format("Mem {:.2f} GB", mb / 1024.0) : std::format("Mem {:.0f} MB", mb));
