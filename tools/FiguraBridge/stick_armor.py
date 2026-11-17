@@ -262,6 +262,10 @@ def plate(slot, bone, rod, s0, s1, ac, W, gap=0.12, bulge=0.25, flare=0.0, prof=
         m.quad(P, uv)
 
     u0, u1 = REG[region]
+    vlo, vhi = 0.0, 1.0
+    if STYLE == "mix" and not glass:   # the engraving at about one texel per model px: a short plate shows a part of it
+        span = min(1.0, float(np.linalg.norm(S(1, 0) - S(0, 0))) / 6.5)
+        vlo, vhi = 0.5 - span / 2, 0.5 + span / 2
     if glass:
         assert isl and ISLAND_LAYER[isl] == LAYER[slot], (slot, isl)
         DENS.append((slot, bone, isl, density(S, isl)))
@@ -273,7 +277,7 @@ def plate(slot, bone, rod, s0, s1, ac, W, gap=0.12, bulge=0.25, flare=0.0, prof=
             if glass:
                 uv = [isl_uv(isl, (k + 1) / 2, t, mirror) for t, k in ((t0, k0), (t0, k1), (t1, k1), (t1, k0))]
             else:
-                uv = [(u0 + (u1 - u0) * (k + 1) / 2, t) for t, k in ((t0, k0), (t0, k1), (t1, k1), (t1, k0))]
+                uv = [(u0 + (u1 - u0) * (k + 1) / 2, vlo + (vhi - vlo) * t) for t, k in ((t0, k0), (t0, k1), (t1, k1), (t1, k0))]
             emit(P, uv)
     if rim and glass:   # the plate's thickness: a strip folding inward along every edge, inside the outline band
         edges = [[(i / ns, -1) for i in range(ns + 1)], [(i / ns, 1) for i in range(ns + 1)],
@@ -432,6 +436,9 @@ def helmet(head_pts):
                 uv = [orb_uv(H(p, a)) for p, a in corners]
             elif vis:
                 uv = [(u0 + (u1 - u0) * (0.5 + 0.5 * a / 1.2), min(1, max(0, (p - 0.36 * math.pi) / (0.5 * math.pi))))
+                      for p, a in corners]
+            elif STYLE == "mix":   # the keel (u = 0.5) down the back of the helmet, the wrap at the front (visor)
+                uv = [(u0 + (u1 - u0) * (0.12 + 0.76 * (a + (2 * math.pi if ac < 0 else 0)) / (2 * math.pi)), p / math.pi)
                       for p, a in corners]
             else:
                 uv = [(u0 + (u1 - u0) * (0.2 + 0.6 * (a + math.pi) / (2 * math.pi)), p / math.pi) for p, a in corners]
@@ -728,6 +735,46 @@ def build_suit_mix(bones):
 
 
 # ====================================================================== textures
+def engrave(col, name, b, d, h, neon):
+    """the mix's metal: art-directed relief on the plate region (32 texels across a plate, 64 along it), sparse
+    enough to stay readable on the small plates (no noise, no texture-wide pattern):
+      * the plate rounded across (lit in the middle, darker toward the bevel)
+      * a keel down the middle - one lit texel, its shadow beside it
+      * an inlaid line in the glass's neon hue just inside the bevel groove (leather: stitching)
+      * three engraved chevron seams pointing down the plate (groove + lit lip under it): segmented, like plate armor
+      * rivets between the seams, inside the inlay"""
+    H_, W_ = col.shape[:2]
+    yy, xx = np.mgrid[0:H_, 0:W_]
+    u, v = (xx + .5) / W_, (yy + .5) / H_
+    edge = np.minimum(u, 1 - u)
+    body = (edge >= .11)
+    col = col * np.where(body, 0.90 + 0.16 * np.cos((u - .5) * math.pi * 1.6), 1.0)[..., None]
+    lit, shadow = h * 0.80 + b * 0.20, d * 0.85 + b * 0.15
+    # chevron seams (v at the centre line; the arms rise toward the edges)
+    for v0 in (0.27, 0.52, 0.76):
+        r = np.round((v0 - 0.20 * np.abs(u - .5)) * H_ - .5).astype(int)
+        m = body & (edge >= .17)
+        col[m & (yy == r)] = shadow
+        col[m & (yy == r + 1)] = lit * 0.9 + col[m & (yy == r + 1)] * 0.1
+    # keel
+    ridge = (v > .05) & (v < .95)
+    col[ridge & (xx == W_ // 2 - 1)] = lit
+    col[ridge & (xx == W_ // 2)] = col[ridge & (xx == W_ // 2)] * 0.55 + shadow * 0.45
+    # inlay just inside the bevel groove
+    inl = (edge >= .11) & (edge < .145) & (v > .03) & (v < .97)
+    if name == "leather":
+        col[inl & (yy % 4 < 2)] = h * 0.95
+    else:
+        col[inl] = neon * 0.72 + b * 0.28
+    # rivets
+    for v0 in (0.14, 0.40, 0.64, 0.88):
+        for x0 in (6, W_ - 7):
+            y0 = int(v0 * H_)
+            col[y0, x0] = h * 0.85 + 255 * 0.15
+            col[y0 + 1, x0] = shadow
+    return np.clip(col, 0, 255)
+
+
 def metal_atlas(name, body, dark, hl, accent, polish=False):
     """polish (the mix): a clean polished finish next to the glass - the brushed rows read as stripes on the
     helmet's dome (one texel row per latitude) and the sparse glint pixels as noise"""
@@ -759,12 +806,14 @@ def metal_atlas(name, body, dark, hl, accent, polish=False):
             col[(np.abs(u - .5) < .02) & (yy[:, :W] % 4 < 2)] = a * 0.85
     elif name in ("diamond", "netherite", "iron"):   # crisp facets: diagonal light/dark bands
         fac = ((xx[:, :W] + yy[:, :W] // 2) // 6) % 2
-        col *= (0.92 + (0.16 if name != "iron" else 0.08) * fac)[..., None]
+        col *= (0.92 + (0.16 if name != "iron" else 0.08) * (0.4 if polish else 1.0) * fac)[..., None]
     edge = np.minimum(u, 1 - u)
     col = np.where((edge < .07)[..., None], (h * 0.62 + b * 0.38)[None, None] * (1.0 - edge[..., None] * 2.5), col)   # bevel (kept below the rails)
     col = np.where(((edge >= .07) & (edge < .11))[..., None], d[None, None] * 1.2, col)          # dark line
     if not polish:
         col[(n1[:, :W] > 0.996) & (edge > .12)] = h * 0.6 + 255 * 0.4                             # sparse glints
+    else:
+        col = engrave(col, name, b, d, h, np.array(RAIL_NEON[name], float))
     img[:, :W, :3] = col
     x2 = slice(W, W + TEX // 4)                                     # visor: deep tinted glass + reflection streak
     uu = (xx[:, x2] - W + .5) / (TEX // 4)
