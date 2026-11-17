@@ -337,16 +337,15 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
 
 float lum3(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 float3 chroma(float3 c, float3 P, bool sky, float spareC) {
-    float k = sky ? 0.0 : 0.0;
+    float k = max(1.0 - spareC, ch0.w);                            // living things keep their colour
     int n = min(int(ch1.w), 48);
-    [loop] for (int i = 0; i < n; ++i) {
+    float const R2 = (ch1.x + 2.5) * (ch1.x + 2.5);
+    [loop] for (int i = 0; i < n && k < 0.999; ++i) {               // chP.w = the fade (CPU), 1 fresh .. 0 forgotten
         float3 d = P - chP[i].xyz;
-        float  fade = 1.0 - smoothstep(ch1.y * 0.7, ch1.y, chP[i].w);   // it forgets slowly
+        if (dot(d, d) > R2 || chP[i].w <= k) continue;               // too far, or cannot raise k
         float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0);
-        k = max(k, fade * smoothstep(ch1.x, ch1.x * 0.45, r));
+        k = max(k, chP[i].w * smoothstep(ch1.x, ch1.x * 0.45, r));
     }
-    k = max(k, 1.0 - spareC);                                      // living things keep their colour
-    k = max(k, ch0.w);
     float3 grey = lum3(c) * ch0.rgb / max(lum3(ch0.rgb), 0.05);
     return lerp(grey, c, saturate(k));
 }
@@ -457,10 +456,9 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float3 col = sceneAt(int2(px)); col *= col;             // ~linear (gamma 2)
     [branch] if (bk0.w > 0.0) col = bokeh(int2(px), zc, sky);
     float3 acc = 0; float trans = 1.0;
-    float  spare = 1.0;
-    [branch] if (!sky && (fl & 24u) != 0u) spare = stillWorld(q);
-    float spareC = 1.0;
-    [branch] if (!sky && ch1.z > 0.5) spareC = stillWorld(q);
+    float  spare = 1.0;                                     // one actor test shared by the haze / mist and Chroma
+    [branch] if (!sky && ((fl & 24u) != 0u || (ch0.w > -0.5 && ch1.z > 0.5))) spare = stillWorld(q);
+    float spareC = ch1.z > 0.5 ? spare : 1.0;
     float3 outL = 0; bool drew = false;
 
     // ---- mist first (it is nearer the ground, in front of the haze behind it)

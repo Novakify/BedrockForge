@@ -2997,15 +2997,20 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 struct ChPt { double x, y, z; int64_t at; };
                 static std::deque<ChPt> walked;
                 int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-                int64_t const every = std::max<int64_t>(400, int64_t(atm.chMemory * 1000.f / 48.f));
+                // audit: points by distance walked, not by time. Standing still is one point (it was 48 stacked in one
+                // spot, each tested by every pixel: 1.9 ms at 4K); the one you stand on stays fresh.
                 double const fx = snap.pos[0], fy = snap.pos[1] - 1.62, fz = snap.pos[2];
-                if (walked.empty() || nowMs - walked.front().at >= every) walked.push_front({fx, fy, fz, nowMs});
-                else walked.front() = {fx, fy, fz, walked.front().at};   // the newest point follows you
+                double const step = std::max(0.75, double(atm.chBrush) * 0.4);
+                auto const far2 = [&](ChPt const& p) { double ax = fx - p.x, ay = fy - p.y, az = fz - p.z; return ax * ax + ay * ay + az * az; };
+                if (walked.empty() || far2(walked.front()) >= step * step) walked.push_front({fx, fy, fz, nowMs});
+                else walked.front().at = nowMs;
                 while (walked.size() > 48 || (!walked.empty() && float(nowMs - walked.back().at) > atm.chMemory * 1000.f)) walked.pop_back();
                 int n = 0;
                 for (auto const& p : walked) {
                     acb.chP[n][0] = float(p.x - snap.pos[0]); acb.chP[n][1] = float(p.y - snap.pos[1]); acb.chP[n][2] = float(p.z - snap.pos[2]);
-                    acb.chP[n][3] = float(nowMs - p.at) / 1000.f;
+                    float const age = float(nowMs - p.at) / 1000.f, m = std::max(atm.chMemory, 0.1f);   // the fade, here not per pixel
+                    float const u = std::clamp((age - m * 0.7f) / (m * 0.3f), 0.f, 1.f);
+                    acb.chP[n][3] = 1.f - u * u * (3.f - 2.f * u);
                     if (++n == 48) break;
                 }
                 for (int k = 0; k < 3; ++k) acb.ch[0][k] = lin(atm.chTone[k]);
