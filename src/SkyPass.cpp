@@ -1648,7 +1648,9 @@ void testBed() { ++gTestBedReq; }
 // Leonardoinc22) - all used with their authors' permission (shaders/death_scenes*.hlsli)
 // 14-62 Finishers 2 (by kyryi / dulimo): its 40 death effects and 9 specials; 63-79 Epic Fight's signature skills (by
 // Yesman and team) - also used with their authors' permission
-constexpr int kDeathScenes = 80;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
+// 80-82 Bedrock Forge originals: Shatter, Light Pillar, Constellation (scene codes 82-84; picked from the 4 previews -
+// Afterglow left out)
+constexpr int kDeathScenes = 83;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
 static int deathSceneFor(uint64_t key) {
     static uint64_t keys[32]{}; static int vals[32]{}; static int nk = 0;
     for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
@@ -1672,7 +1674,7 @@ static int deathSceneCode(int scene, uint64_t key) {
     uint32_t const h = uint32_t((key * 0x9E3779B97F4A7C15ull) >> 40);
     if (scene == 12) return 12 + int(h % 100u >= 55u);
     if (scene == 13) return 14 + int(h & 1u);
-    if (scene >= 14) return scene + 2;   // Finishers 2: codes 16-64, Epic Fight: 65-81
+    if (scene >= 14) return scene + 2;   // Finishers 2: codes 16-64, Epic Fight: 65-81, originals 82-84
     return scene;
 }
 // where the camera looked when a kill came (the finishers lay the pair out side-on to it); kept per kill so the scene

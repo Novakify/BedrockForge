@@ -478,7 +478,7 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         float3 Pc; float3x3 Rc;
         dtRag(off, 96.0, 1, mir, Pc, Rc);
         dsBurst(h, rd, feet + mul(RB, Pc), t - 2.75, 18, seed + 7.0, 1.4, 1.6, 2.5, 1.0, 0.045, team * 0.7, team * 0.35, -1e5, glow * 0.6);
-    } else {
+    } else if (sc <= 15) {
         // ============ SABLE RAGDOLL: the body goes limp where it stood and falls under its own weight - knees fold,
         // it slumps; or it is knocked over and rolls (the ragdoll's own roll) and reaches out once. Then it is gone
         bool  slump = sc == 14;
@@ -497,5 +497,71 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
         float3 Pc; float3x3 Rc;
         dtRag(off, min(t, 3.4) * 20.0, 1, mir, Pc, Rc);
         fnPoof(h, rd, feet + mul(RB, Pc) + float3(0, 0.15, 0), t - 3.4, seed, 16, 0.08);
+    } else if (sc >= 82) {
+        // ============ Bedrock Forge originals (2026-11-17, inspired by the Purxiy client's look - original code):
+        // 82 Shatter, 83 Light Pillar, 84 Constellation (Afterglow left out: too subtle). One light colour for the whole scene: the
+        // kill's glow warmed toward white, so it reads at night and in any team colour.
+        float3 lc = lerp(float3(1.0, 0.95, 0.86), glow, 0.45);
+        float3x3 RB = rotY(yaw);
+        float  hb = 1.875;                                          // body height (blocks)
+        if (sc == 82) {
+            // ============ SHATTER: the hit freezes them pale as glass, a beat - then they burst into crystal shards
+            // that clatter down and settle; the ground under them cracks
+            float TS = 0.85;
+            fx.hurt = 0.0;
+            fx.flash = 0.22 * saturate(t / 0.12) + 0.6 * exp(-pow((t - TS) / 0.04, 2.0));
+            if (t < TS) dsBody(h, rd, feet, RB, 1.0, -99.0, 99.0, fx);
+            float3 glassA = hex3(206, 232, 255), glassB = lerp(hex3(150, 196, 240), team, 0.35);
+            [unroll] for (int k = 0; k < 3; k++) {                   // head, chest, legs - each its own spray
+                float3 C = feet + float3(0, hb * (0.88 - 0.36 * float(k)), 0);
+                dsBurst(h, rd, C, t - TS, 16 - 3 * k, seed + 31.0 * float(k), 2.4 - 0.4 * float(k), 1.8, 11.0, 3.6, 0.045 - 0.008 * float(k),
+                        glassA, glassB, floorY, lc * 0.35);
+            }
+            fnCrit(h, rd, feet + float3(0, 1.1, 0), t - TS, seed, 18, 2.8);
+            fnGround(onG, S, feet, TS - 0.02, 3.8, 0.0, 1.6, seed + 7.0, t, o, dec, decK, add, lc);
+            add += float3(0.9, 0.97, 1.0) * fnFlash(rd, feet + float3(0, 1.0, 0), 0.75, h.t) * exp(-max(t - TS, 0.0) * 9.0) * step(TS, t) * 0.9;
+        } else if (sc == 83) {
+            // ============ LIGHT PILLAR: crit stars, three rings of light run out along the ground, a pillar of light
+            // comes up through them, and the body lifts into it and is taken
+            fx.hurt = saturate(1.0 - t * 3.0);
+            float lift = ease((t - 0.55) / 1.6);
+            fx.ash = ease((t - 1.2) / 1.3);
+            fx.flash = 0.35 * lift;
+            if (fx.ash < 0.999) dsBody(h, rd, feet + float3(0, 0.7 * lift, 0), mul(RB, rotX(-0.25 * lift)), 1.0, -99.0, 99.0, fx);
+            fnCrit(h, rd, feet + float3(0, 1.1, 0), t, seed, 22, 2.4);
+            [unroll] for (int k = 0; k < 3; k++) fnGround(onG, S, feet, 0.05 + 0.28 * float(k), 0.5, 0.0, 0.0, seed + float(k), t, o, dec, decK, add, lc * (1.4 - 0.3 * float(k)));
+            float up = easeOut((t - 0.35) / 0.5), fade = 1.0 - ease((t - 2.3) / 0.7);   // gone by 3 s (it hung on 0.8 s past the body)
+            float pil = dsGlowSeg(rd, feet, feet + float3(0, 1.0 + 7.0 * up, 0), 0.20 + 0.10 * up, h.t);
+            float core = dsGlowSeg(rd, feet, feet + float3(0, 1.0 + 7.0 * up, 0), 0.06, h.t);
+            add += lc * (pil * 0.55 + core * 1.1) * step(0.35, t) * fade;
+            dsBurst(h, rd, feet + float3(0, 0.2, 0), t - 0.5, 18, seed + 60.0, 0.35, 2.6, -1.2, 2.6, 0.026, lc, glow, -1e5, lc * 2.0);
+            if (onG) { float2 gq = S.xz - feet.xz; add += lc * exp(-dot(gq, gq) / 0.18) * 0.35 * up * fade; }
+        } else {
+            // ============ CONSTELLATION: they fall back, and break into stars; the stars rise, find each other and
+            // join into a constellation over the spot - it twinkles, then fades out
+            float tip = 1.5708 * ease(t / 0.55);
+            fx.hurt = saturate(1.0 - t * 3.0);
+            fx.ash = ease((t - 0.5) / 0.5);
+            if (fx.ash < 0.999) dsBody(h, rd, feet, mul(RV, rotZ(tip * sgn)), 1.0, -99.0, 99.0, fx);
+            float rise = ease((t - 0.7) / 1.1), link = ease((t - 1.6) / 0.6), gone = ease((t - 3.7) / 0.8);
+            float3 c0 = feet + float3(0, 2.4, 0);
+            float3 P[7];
+            [unroll] for (int k = 0; k < 7; k++) {
+                float a = float(k) * 0.8976 + h1(seed + float(k)) * 0.5;             // a loose figure in the plane across the view
+                float r = 0.55 + 0.45 * h1(seed * 1.3 + float(k) * 2.1);
+                float3 sky = c0 + A * (cos(a) * r * 1.3) + float3(0, sin(a) * r, 0);
+                float3 body = feet + float3(0, 0.3 + 0.22 * float(k), 0) + A * (h1(seed + float(k) * 5.0) - 0.5) * 0.5;
+                P[k] = lerp(body, sky, rise);
+            }
+            float vis = step(0.6, t) * (1.0 - gone);
+            [unroll] for (int k = 0; k < 7; k++) {
+                float tw = 0.65 + 0.35 * sin(t * (5.0 + 3.0 * h1(seed + float(k) * 9.0)) + float(k) * 2.0);
+                add += lc * fnFlash(rd, P[k], 0.07, h.t) * 2.2 * tw * vis;
+                add += lc * fnFlash(rd, P[k], 0.22, h.t) * 0.35 * vis;
+                if (k > 0) add += lc * dsGlowSeg(rd, P[k - 1], lerp(P[k - 1], P[k], link), 0.012, h.t) * 0.9 * vis;
+            }
+            add += lc * dsGlowSeg(rd, P[6], lerp(P[6], P[2], link), 0.012, h.t) * 0.7 * vis;   // close the figure
+            dsBurst(h, rd, feet + float3(0, 0.9, 0), t - 0.55, 14, seed + 80.0, 0.6, 1.1, -0.6, 1.2, 0.022, lc, glow, -1e5, lc * 1.8);
+        }
     }
 }

@@ -6850,7 +6850,14 @@ inline constexpr Sound kSounds[] = { {k_victim, sizeof(k_victim)}, {k_swing, siz
 inline constexpr int kPunch = -1;   // one of 2, 3, 4, 5
 inline constexpr int kPunchSet[4] = { 2, 3, 4, 5 };
 struct Cue { uint8_t scene; float t; int8_t sound; float vol, pitch; };   // vol < 0: stop that sound
-inline constexpr Cue kCues[229] = {
+inline constexpr Cue kCues[235] = {
+    // Bedrock Forge originals (82 Shatter, 83 Light Pillar, 84 Constellation): the glassy pair, a low whoosh, a soft tick
+    {82, 0.850f, 7, 1.000f, 1.500f},
+    {82, 0.870f, 6, 0.600f, 1.400f},
+    {83, 0.350f, 1, 0.700f, 0.550f},
+    {83, 0.600f, 6, 0.350f, 0.700f},
+    {84, 0.550f, 1, 0.450f, 1.300f},
+    {84, 1.600f, 7, 0.350f, 2.000f},
     {7, 0.000f, 0, 0.900f, 1.000f},
     {7, 0.100f, 2, 0.550f, 0.550f},
     {7, 3.300f, 1, 1.000f, 1.000f},

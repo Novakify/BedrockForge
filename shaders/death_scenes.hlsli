@@ -421,7 +421,7 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
         float2 ax = feet.xz - rd.xz * (dot(feet.xz, rd.xz) / max(dot(rd.xz, rd.xz), 1e-5));
         bool   col = (sc == 3 || sc == 4) && dot(ax, ax) < 3.5 * 3.5 && dot(feet.xz, rd.xz) > -3.5;
         // how far a scene reaches from the feet: the ragdolls, the long finishers, the Finishers 2 / Epic Fight sets
-        float  cr = sc >= 65 ? efCull(sc - 65) : (sc >= 16 ? f2Cull(sc - 16) : (sc == 11 ? 8.5 : ((sc == 12 || sc == 13) ? 7.0 : (sc == 7 ? 5.6 : 4.5))));
+        float  cr = sc >= 82 ? (sc == 83 ? 8.5 : 5.0) : sc >= 65 ? efCull(sc - 65) : (sc >= 16 ? f2Cull(sc - 16) : (sc == 11 ? 8.5 : ((sc == 12 || sc == 13) ? 7.0 : (sc == 7 ? 5.6 : 4.5))));
         if (!nearRay(rd, feet + float3(0, 1.2, 0), cr) && !col) continue;
 
         DFx fx; fx.team = pow(max(eB[i].rgb, 0.0), 2.2);
@@ -728,6 +728,10 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
             dsBurst(h, rd, mouth + float3(0, 0.1, 0), t - 2.42, 9, seed + 21.0, 0.5, 0.7, -0.4, 0.9, 0.05, hex3(150, 190, 110), hex3(196, 220, 160), -1e5, 0.0);
             dsBurst(h, rd, cpos0 + float3(0, 0.05, 0), t - 3.25, 10, seed + 30.0, 1.3, 1.2, 10.0, 0.6, 0.045, hex3(122, 86, 52), hex3(74, 60, 48), feet.y, 0.0);
             if (onG) { float2 gc = S.xz - cpos0.xz; float sh = exp(-dot(gc, gc) / 0.35) * 0.45 * saturate(rise); dec = o * (1.0 - sh); decK = 1.0; }
+        } else if (sc >= 82) {   // Bedrock Forge originals: Shatter, Light Pillar, Constellation
+#if !defined(DS_GROUP) || DS_GROUP <= 1
+            deathScenesExt(sc, t, o, rd, feet, yaw, eC[i].y, seed, team, glow, onG, S, gr, h, add, dec, decK, fx);
+#endif
         } else if (sc >= 65) {
 #if !defined(DS_GROUP) || DS_GROUP == 5
             deathScenesEF(sc - 65, t, o, rd, feet, yaw, eC[i].y, seed, team, glow, onG, S, gr, h, add, dec, decK, fx);

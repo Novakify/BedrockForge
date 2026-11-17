@@ -6,7 +6,7 @@ os.environ.setdefault("VK_ICD_FILENAMES", "/opt/lavapipe/lvp_icd.json")
 import numpy as np, wgpu
 from PIL import Image
 
-RF = "/home/claude/rf3"
+RF = os.environ.get("RF_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 def compile_shaders():
