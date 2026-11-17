@@ -49,6 +49,7 @@
 #include "lyrics/core/Text.h"
 #include "lyrics/win/Win.h"
 
+namespace bedrock_forge::client::uisound { void play(int kind); } // UiSounds_win.cpp
 namespace bedrock_forge::client::menu {
 
 namespace {
@@ -83,6 +84,8 @@ float       gScrollAt = 0;       // design px: where the list is drawn, eased to
 int64_t     gScrollMs = 0;
 std::atomic<int64_t> gCamUntilMs{0}; // BF_ClientMenuCamera: RF swings the camera round to the player until then
 int64_t     gViewAtMs = 0;       // when the current view started (open / switch animation)
+int64_t     gPageAtMs = 0;       // [Prism] when the current page / tab started (row cascade)
+std::string gHoverId;            // [Prism] the module row under the pointer (hover sound once per row)
 std::string gDrag;               // slider being dragged ("<module>/<setting>")
 std::string gToast;
 int64_t     gToastMs  = 0;
@@ -91,6 +94,7 @@ int64_t nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(C
 float   ease(float t) { t = std::clamp(t, 0.0f, 1.0f); return 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t); }
 
 void closeMenu() { // caller holds gMutex
+    if (gScene) uisound::play(5);
     if (gClient && gScene) gClient->getSceneFactory().getCurrentSceneStack()->schedulePopScreen(1);
     gScene.reset();
     gSearch.clear();
@@ -107,16 +111,46 @@ bool    lookOn(char const* id, bool fallback) { auto* m = uiModule(); return m ?
 
 void resetScroll() { gScroll = gScrollAt = 0; }
 void setView(View v) { gView = v; gViewAtMs = nowMs(); resetScroll(); }
-void showPage(Page p) { gPage = p; resetScroll(); if (gView != View::Window) setView(View::Window); }
+void showPage(Page p) { gPage = p; gPageAtMs = nowMs(); resetScroll(); if (gView != View::Window) setView(View::Window); }
 void toast(std::string s) { gToast = std::move(s); gToastMs = nowMs(); }
 std::string gBindFor; // module whose toggle key is being recorded (Keybind row), empty = none
 
 // ---------------------------------------------------------------- theme (neon purple + white)
 constexpr float kH = 760.0f; // design units: the screen is always 760 tall (the prototype's 1280 x 760 frame)
 struct Rgb { int r, g, b; };
-constexpr Rgb kLilac{233, 213, 255}, kDark{19, 10, 36}, kWhite{255, 255, 255};
+constexpr Rgb kLilacBase{233, 213, 255}, kDarkBase{19, 10, 36}, kWhite{255, 255, 255};
+Rgb kLilac = kLilacBase, kDark = kDarkBase;   // [Prism] turned to the accent's hue every menu frame (accentTurn)
 Rgb kAccent{177, 76, 255};   // [BF] Client UI -> Accent colour (set at the start of every menu frame)
 constexpr Rgb kAccents[8] = {{177, 76, 255}, {255, 92, 170}, {70, 150, 255}, {70, 230, 170}, {255, 130, 70}, {150, 220, 255}, {255, 200, 80}, {255, 70, 100}};
+// [Prism] like the Purxiy interface: colours designed around Novak purple follow the accent you pick, not only the glow.
+// In OKLab: the hue turns by the accent's hue minus Novak purple's, colourfulness scales with the accent's, lightness stays.
+struct Lab3 { float L, a, b; };
+float srgbLin(float c) { c /= 255.f; return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); }
+float linSrgb(float c) { c = std::clamp(c, 0.f, 1.f); return 255.f * (c <= 0.0031308f ? 12.92f * c : 1.055f * std::pow(c, 1.f / 2.4f) - 0.055f); }
+Lab3 toLab(Rgb c) {
+    float r = srgbLin(float(c.r)), g = srgbLin(float(c.g)), b = srgbLin(float(c.b));
+    float l = std::cbrt(0.4122214708f * r + 0.5363325363f * g + 0.0514459929f * b);
+    float m = std::cbrt(0.2119034982f * r + 0.6806995451f * g + 0.1073969566f * b);
+    float s = std::cbrt(0.0883024619f * r + 0.2817188376f * g + 0.6299787005f * b);
+    return {0.2104542553f * l + 0.7936177850f * m - 0.0040720468f * s, 1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s,
+            0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s};
+}
+Rgb fromLab(Lab3 q) {
+    float l = q.L + 0.3963377774f * q.a + 0.2158037573f * q.b, m = q.L - 0.1055613458f * q.a - 0.0638541728f * q.b,
+          s = q.L - 0.0894841775f * q.a - 1.2914855480f * q.b;
+    l = l * l * l; m = m * m * m; s = s * s * s;
+    return {int(linSrgb(4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s) + 0.5f),
+            int(linSrgb(-1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s) + 0.5f),
+            int(linSrgb(-0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s) + 0.5f)};
+}
+Rgb accentTurn(Rgb designed, Rgb from, Rgb to) {
+    Lab3 const f = toLab(from), t = toLab(to), d = toLab(designed);
+    float const cf = std::hypot(f.a, f.b), ct = std::hypot(t.a, t.b), cd = std::hypot(d.a, d.b);
+    if (cd < 0.002f || cf < 0.002f) return designed;                       // greys stay grey
+    float const turn = std::atan2(t.b, t.a) - std::atan2(f.b, f.a);
+    float const h = std::atan2(d.b, d.a) + turn, c = cd * std::clamp(ct / cf, 0.4f, 1.3f);
+    return fromLab({d.L, c * std::cos(h), c * std::sin(h)});
+}
 uint32_t rgba(Rgb c, float a) {
     return uint32_t(c.r) | uint32_t(c.g) << 8 | uint32_t(c.b) << 16 | uint32_t(std::clamp(a, 0.0f, 1.0f) * 255.0f + 0.5f) << 24;
 }
@@ -126,6 +160,8 @@ struct Gfx {
     float W = 1280, H = kH;  // design units
     float px = 1;            // real screen px per design unit
     float blurK = 1, refrK = 1, tintK = 1;
+    bool  prism = true;      // [Prism] Client UI -> Look
+    float stars = 0.5f, dimK = 0.25f;
     lyr::win::ClientUiAssets a;
     std::vector<BfGlyphV1> shapes, top; // top = icons + text, drawn after every shape
     float clipTop = 0, clipBot = 0;     // design px; clipBot > clipTop = everything placed now is cut to that band (RF fades the edges)
@@ -143,12 +179,13 @@ struct Gfx {
         BfGlyphV1 q{};
         float     hw = std::max(cx, W - cx) + 2, hh = std::max(cy, H - cy) + 2; // centred on (cx, cy), covers the screen
         place(q, cx, cy, hw, hh);
-        q.fill    = rgba({0, 0, 0}, dark);
+        q.fill    = rgba(prism ? Rgb{kDark.r / 2, kDark.g / 2, kDark.b / 2} : Rgb{0, 0, 0}, std::clamp(dark + dimK * 0.45f, 0.f, 0.9f));
+        if (prism) q.outline = rgba(kLilac, stars);                     // twinkling stars over the frosted world
         q.pxRange = std::clamp(blur * blurK, 0.0f, 1.0f);
         q.glowW   = clearR * px;
         q.glowK   = feather * px;
         q.alpha   = alpha;
-        q.flags  |= BF_GLYPH_BACKDROP;
+        q.flags  |= BF_GLYPH_BACKDROP | (prism ? BF_GLYPH_PRISM : 0u);
         shapes.push_back(q);
     }
     void glass(float x, float y, float w, float h, float r, Rgb tint, float tintA, float bevel, float refr, float blur, float rimA,
@@ -165,7 +202,7 @@ struct Gfx {
         q.outline  = rgba(kWhite, rimA);
         q.glow     = rgba(kAccent, innerA);
         q.alpha    = alpha;
-        q.flags   |= BF_GLYPH_SOLID | BF_GLYPH_GLASS;
+        q.flags   |= BF_GLYPH_SOLID | BF_GLYPH_GLASS | (prism ? BF_GLYPH_PRISM : 0u);
         shapes.push_back(q);
     }
     void petal(float cx, float cy, float r1, float r2, float angDeg, float halfDeg, Rgb tint, float tintA, float innerA, float alpha) {
@@ -181,7 +218,7 @@ struct Gfx {
         q.outline  = rgba(kWhite, 1.0f);
         q.glow     = rgba(kAccent, innerA);
         q.alpha    = alpha;
-        q.flags   |= BF_GLYPH_PETAL | BF_GLYPH_GLASS;
+        q.flags   |= BF_GLYPH_PETAL | BF_GLYPH_GLASS | (prism ? BF_GLYPH_PRISM : 0u);
         shapes.push_back(q);
     }
     void solid(float x, float y, float w, float h, float r, uint32_t c, float alpha, float softD = 0, bool onTop = false) {
@@ -324,6 +361,7 @@ int petalAt(Gfx const& g, float x, float y) {
     return -1;
 }
 void openPetal(int i) {
+    uisound::play(1);
     if (i == 0) { gTab = 0; showPage(Page::Mods); }
     if (i == 1) setView(View::HudEdit);                     // [BF] the HUD editor (Purxiy-style: drag, snap, scroll to resize)
     if (i == 2) showPage(Page::Shaders);
@@ -437,7 +475,9 @@ void slider(UiFrame& f, std::string const& id, float x, float y, float w, std::s
     auto   set = [vp, bx, bw, mn, mx, step, changed](float px) {
         float v = mn + std::clamp((px - bx) / bw, 0.0f, 1.0f) * (mx - mn);
         if (step > 0) v = std::round(v / step) * step;
-        *vp = std::clamp(v, mn, mx);
+        v = std::clamp(v, mn, mx);
+        if (v != *vp) uisound::play(7);
+        *vp = v;
         changed();
     };
     f.hits.push_back({bx - 8, by - 12, bw + 16, 24, [set](bool) { set(gActionX); }, id});
@@ -447,7 +487,7 @@ void slider(UiFrame& f, std::string const& id, float x, float y, float w, std::s
 void toggleRow(UiFrame& f, float x, float y, float w, std::string const& title, std::string const& desc, bool on, float a, std::function<void()> flip) {
     row(f, x, y, w, 50, title, desc, a);
     toggleSwitch(f, x + w - 14 - 34, y + 15.5f, on, false, a);
-    f.hits.push_back({x, y, w, 50, [flip](bool) { flip(); }});
+    f.hits.push_back({x, y, w, 50, [flip, on](bool) { flip(); uisound::play(on ? 3 : 2); }});
 }
 
 void pageHeader(UiFrame& f, float x, float y, float w, std::string const& title, std::string const& crumb, float a, int toggle = -1,
@@ -472,7 +512,8 @@ void scrollBar(Gfx& g, Win const& w, float top, float bot, float content, float 
     g.solid(x, top + (view - h) * p, 3, h, 1.5f, rgba(kLilac, 1), 0.55f * a);
 }
 
-void drawMods(UiFrame& f, Win const& w, float a) {
+void drawMods(UiFrame& f, Win const& w, float a0) {
+    float a = a0;
     auto& g = f.g;
     auto& reg = Registry::get();
     std::vector<Module*> list;
@@ -495,9 +536,17 @@ void drawMods(UiFrame& f, Win const& w, float a) {
     for (size_t i = 0; i < list.size(); ++i) {
         Module* m = list[i];
         float   x = w.mainX + 2 + float(i % 2) * (colW + 12), y = w.bodyY + 2 + float(i / 2) * (rowH + gap) - gScrollAt;
+        {   // [Prism] cascade (Purxiy "motion" -> cascade): rows fade and rise in one after another when a page opens
+            float ck = 1.0f;
+            if (lookOn("cascade", true) && !lookOn("reduce_motion", false))
+                ck = ease(float(nowMs() - std::max(gViewAtMs, gPageAtMs) - 18 * int64_t(i)) / 220.0f);
+            a = a0 * ck;
+            y += (1.0f - ck) * 14.0f;
+        }
         if (y + rowH < w.bodyY - 10 || y > w.bodyY + w.bodyH + 10) continue; // rows partly in view are cut by the clip band
         bool const on  = m->enabled && !m->planned;
         float const hv = f.over(x, y, colW, rowH) ? 1.0f : 0.0f;
+        if (hv > 0 && gHoverId != m->id) { gHoverId = m->id; uisound::play(0); }
         pillGlass(g, x, y, colW, rowH, 12, on, a, hv);
         float tx = x + 14;
         if (m->favorite) { g.icon("pin", tx + 7, y + rowH / 2, 15, rgba(on ? kWhite : kAccent, 1), a); tx += 25; }
@@ -512,6 +561,7 @@ void drawMods(UiFrame& f, Win const& w, float a) {
             f.hits.push_back({x, y, colW, rowH, [m](bool right) {
                 if (right) { gModPage = m->id; showPage(Page::ModSettings); return; }
                 Registry::get().setEnabled(*m, !m->enabled);
+                uisound::play(m->enabled ? 2 : 3);
             }, "", m->id});
             f.hits.push_back({gx, y + 6, 26, 30, [m](bool) { gModPage = m->id; showPage(Page::ModSettings); }});
         }
@@ -742,6 +792,28 @@ void drawClient(UiFrame& f, Win const& w, float a) {
     if (auto* st = m->setting("font"); st && sc.fits(64))
         slider(f, "client_ui/font", x, sc.y, wd, "Font", "The menu's letters: Outfit, or Inter (Purxiy's)", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
     sc.y += 72;
+    // [Prism] the look (Novak Prism = our glass x the Purxiy interface), the world behind the menu, motion and sound
+    if (auto* st = m->setting("style"); st && sc.fits(64))
+        slider(f, "client_ui/style", x, sc.y, wd, "Look", "Prism: our glass with Purxiy's calm frost, sheen and gradient edges. Glass: the classic", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
+    sc.y += 72;
+    if (auto* st = m->setting("dim"); st && sc.fits(64))
+        slider(f, "client_ui/dim", x, sc.y, wd, "Dim the world", "How dark the world gets behind the menu", st->value, st->min, st->max, st->step, "", a, save);
+    sc.y += 72;
+    if (auto* st = m->setting("stars"); st && sc.fits(64))
+        slider(f, "client_ui/stars", x, sc.y, wd, "Stars", "Twinkling stars over the frosted world (Prism)", st->value, st->min, st->max, st->step, "", a, save);
+    sc.y += 72;
+    struct Tg2 { char const* id; char const* t; char const* d; bool def; };
+    for (Tg2 const tg : {Tg2{"cascade", "Cascade", "Rows rise in one after another when a page opens", true},
+                         Tg2{"reduce_motion", "Reduce motion", "Everything appears at once, no cascade", false},
+                         Tg2{"sounds", "Interface sounds", "Soft glassy clicks, toggles and ticks", true},
+                         Tg2{"hover_sounds", "Hover sounds", "A tiny tick as the pointer crosses a module", true},
+                         Tg2{"slider_ticks", "Slider ticks", "A tick for every step a slider moves", true}}) {
+        if (auto* s2 = m->setting(tg.id); s2 && sc.fits(50)) toggleRow(f, x, sc.y, wd, tg.t, tg.d, s2->on, a, [s2] { s2->on = !s2->on; Registry::get().save(); });
+        sc.y += 58;
+    }
+    if (auto* st = m->setting("sound_volume"); st && sc.fits(64))
+        slider(f, "client_ui/sound_volume", x, sc.y, wd, "Interface sound volume", "", st->value, st->min, st->max, st->step, "", a, save);
+    sc.y += 72;
     // [BF] Keybinds (Purxiy "every key you have bound, in one place"): click a row to rebind, right click opens the module
     sectionLabel(f, sc, x, "KEYBINDS", a);
     int bound = 0;
@@ -854,7 +926,7 @@ void drawWindow(UiFrame& f, float t) {
         pillGlass(g, tx, ty, tw, 30, 15, on, a, f.over(tx, ty, tw, 30) ? 1.0f : 0.0f);
         g.icon(kTabIcon[i], tx + 13 + 7.5f, ty + 15, 15, rgba(kWhite, 1), a);
         g.text(kTabLabel[i], tx + 35, ty + 15, 12, rgba(kWhite, 1), a, true, 0, on ? 0.6f : 0.25f);
-        f.hits.push_back({tx, ty, tw, 30, [i](bool) { gTab = i; gSearch.clear(); showPage(Page::Mods); }});
+        f.hits.push_back({tx, ty, tw, 30, [i](bool) { if (gTab != i) uisound::play(6); gTab = i; gSearch.clear(); showPage(Page::Mods); }});
         tx += tw + 8;
     }
     g.glass(sx, ty, searchW, 30, 15, kDark, 0.40f, 9, 5, 0.85f, 0.6f, 0.1f, a);
@@ -1003,7 +1075,13 @@ void render(ScreenView& view) {
     f.my = (gPtrY >= 0 ? gPtrY : ptr.y) * toD;
 
     kAccent = kAccents[std::clamp(int(look("accent", 0)), 0, 7)];
-    float const motion = std::clamp(look("motion", 1.0f), 0.25f, 3.0f);   // Client UI -> Animation speed
+    kLilac = accentTurn(kLilacBase, kAccents[0], kAccent);   // [Prism] the whole palette follows the accent
+    kDark  = accentTurn(kDarkBase, kAccents[0], kAccent);
+    g.prism = look("style", 0) < 0.5f;
+    g.stars = std::clamp(look("stars", 0.5f), 0.f, 1.f);
+    g.dimK  = std::clamp(look("dim", 0.25f), 0.f, 1.f);
+    bool const calm = lookOn("reduce_motion", false);
+    float const motion = calm ? 3.0f : std::clamp(look("motion", 1.0f), 0.25f, 3.0f);   // Client UI -> Animation speed
     int64_t const now = nowMs();
     float const   t   = ease(float(now - gViewAtMs) * motion / 240.0f);
     { // smooth scroll: ease the drawn position towards the target (~90 ms time constant, frame-rate independent)
@@ -1075,6 +1153,7 @@ void open(IClientInstance& client) {
     auto scene = client.getSceneFactory().createCommonDialogInfoScreen("Bedrock Forge", "");
     if (!scene) return;
     gScene      = scene;
+    uisound::play(4);
     gClient     = &client;
     gOpenedAt   = Clock::now();
     gDialogSeen = {};

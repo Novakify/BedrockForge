@@ -51,6 +51,8 @@
 #include "mc/world/item/ItemStack.h"
 #include "mc/world/item/Item.h"
 #include "mc/world/level/Level.h"
+#include "mc/world/phys/HitResult.h"
+#include "mc/world/phys/HitResultType.h"
 #include "mc/world/level/storage/LevelData.h"
 
 #include "bf/Events.h"
@@ -78,10 +80,14 @@ struct BfFxEventsV1 {
     uint32_t pflags;             // 1 = known, 2 = on the ground
     uint32_t pad2;
     int64_t  pAtMs;
+    // version 3: the block you aim at (Block Outline)
+    int32_t  bx, by, bz;         // block position (world)
+    uint32_t bface;              // 0..5 the face you look at (Bedrock facing), 255 = no block
+    int64_t  bAtMs;
 };
 __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents();
 }
-namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 2, 0, 0, {}, 0, 0, 0, 0, 0, 0, 0}; }
+namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 3, 0, 0, {}, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0}; }
 extern "C" __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents() { return &gFxEv; }
 namespace bedrock_forge::client {
 void pushFxEvent(uint32_t kind, float x, float y, float z, float a = 0.f) {
@@ -127,6 +133,7 @@ std::atomic<int64_t>  gLastNonHudFrameMs{0};
 std::deque<int64_t>   gLeftClicks, gRightClicks; // guarded by gMutex
 std::atomic<float>    gLastReach{0};
 std::atomic<int64_t>  gLastReachAt{0};
+std::atomic<bool>     gLastHitCrit{false};   // [Custom Crosshair] the last hit was a critical (gold marker)
 std::atomic<int64_t>  gTargetId{0}, gTargetAt{0};
 std::atomic<int>      gTargetHits{0};
 std::atomic<int>      gCombo{0};
@@ -307,7 +314,11 @@ void atmosTick() {
         static constexpr float kPal[3][2][3] = {{{0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}},
                                                 {{1.00f, 0.71f, 0.55f}, {0.80f, 0.62f, 1.00f}},
                                                 {{1.00f, 0.62f, 0.86f}, {0.55f, 0.82f, 1.00f}}};
-        auto pal = [&](Module* m, int which) { int const p = std::clamp(int(m->num("palette", 0)), 0, 2); return kPal[p][which]; };
+        auto pal = [&](Module* m, int which) {   // Accent follows the colour picked in Client UI (kNeon), not a fixed purple
+            int const p = std::clamp(int(m->num("palette", 0)), 0, 2);
+            if (p == 0 && which == 0) return std::array<float, 3>{kNeon.r, kNeon.g, kNeon.b};
+            return std::array<float, 3>{kPal[p][which][0], kPal[p][which][1], kPal[p][which][2]};
+        };
         auto* jc = r.find("jump_circles"); auto* hs = r.find("hit_splash"); auto* rp = r.find("ripple"); auto* sw = r.find("shockwave");
         if (jc && jc->enabled) { auto c = pal(jc, 0); out += std::format("jc 1\njc_c {:.3f} {:.3f} {:.3f}\njc_size {:.2f}\njc_dur {:.2f}\njc_glow {:.2f}\n", c[0], c[1], c[2], jc->num("size", 1.2f), jc->num("duration", 1.1f), jc->num("glow", 0.6f)); }
         else out += "jc 0\n";
@@ -322,6 +333,13 @@ void atmosTick() {
         else out += "aura 0\n";
         if (ha && ha->enabled) { auto c = pal(ha, 1); out += std::format("halo 1\nhalo_c {:.3f} {:.3f} {:.3f}\nhalo_size {:.2f}\nhalo_glow {:.2f}\nhalo_height {:.2f}\nhalo_design {}\nhalo_fp 0\n", c[0], c[1], c[2], ha->num("size", 1.f), ha->num("glow", 0.7f), ha->num("height", 1.f), int(ha->num("design", 0))); }
         else out += "halo 0\n";
+        // Wings / Cape (Purxiy cosmetics) and Block Outline (Purxiy render): RF draws them in the atmos pass
+        if (auto* wg = r.find("wings"); wg && wg->enabled) { auto c = pal(wg, 0); out += std::format("wg 1\nwg_c {:.3f} {:.3f} {:.3f}\nwg_design {}\nwg_size {:.2f}\nwg_glow {:.2f}\nwg_flap {:.2f}\nwg_fp {}\n", c[0], c[1], c[2], int(wg->num("design", 0)), wg->num("size", 1.f), wg->num("glow", 0.6f), wg->num("flap", 1.f), wg->flag("first_person", false) ? 1 : 0); }
+        else out += "wg 0\n";
+        if (auto* cp = r.find("cape"); cp && cp->enabled) { auto c = pal(cp, 0); auto c2 = pal(cp, 1); out += std::format("cp 1\ncp_c {:.3f} {:.3f} {:.3f}\ncp_c2 {:.3f} {:.3f} {:.3f}\ncp_design {}\ncp_glow {:.2f}\ncp_sway {:.2f}\n", c[0], c[1], c[2], c2[0], c2[1], c2[2], int(cp->num("design", 0)), cp->num("glow", 0.5f), cp->num("sway", 1.f)); }
+        else out += "cp 0\n";
+        if (auto* bo = r.find("block_outline"); bo && bo->enabled) { auto c = pal(bo, 0); out += std::format("bo 1\nbo_c {:.3f} {:.3f} {:.3f}\nbo_style {}\nbo_w {:.2f}\nbo_glow {:.2f}\nbo_fill {:.2f}\nbo_face {}\nbo_glide {}\n", c[0], c[1], c[2], int(bo->num("style", 0)), bo->num("width", 2.f), bo->num("glow", 0.6f), bo->num("fill", 0.12f), bo->flag("face", true) ? 1 : 0, bo->flag("glide", true) ? 1 : 0); }
+        else out += "bo 0\n";
         auto* ch = r.find("chroma"); auto* ra = r.find("radiance"); auto* wx = r.find("weather");
         if (ch && ch->enabled) {
             static constexpr float kTone[3][3] = {{0.80f, 0.74f, 0.92f}, {0.95f, 0.90f, 0.80f}, {0.70f, 0.70f, 0.72f}};   // Lilac, Cream, Noir
@@ -702,6 +720,7 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
     } catch (...) {}
     try {   // Hit Splash / Ripple: where the hit landed (a falling hit is a critical)
         float const vy = p.getPosDelta().y;
+        gLastHitCrit = !p.isOnGround() && vy < -0.01f;
         pushFxEvent(!p.isOnGround() && vy < -0.01f ? 3u : 2u, hit.x, hit.y, hit.z);
     } catch (...) {}
 }
@@ -1036,17 +1055,78 @@ void registerBuiltins() {
         gPlayerListBottom = 4.f + 10.5f * float(lines.size()) + 4.f;   // Active Modules starts below this (top right)
         gPlayerListFrame  = nowMs();
     };
-    r.add("crosshair", "Crosshair", Category::Hud, "A custom crosshair drawn over the vanilla one")
-        .slider("size", "Size", 4, 1, 12, 1).slider("gap", "Gap", 1, 0, 6, 1).toggleSetting("dot", "Center dot", true)
+    // [Purxiy "custom_crosshair": "your aim, in Purxiy colours"] shapes, colour, outline + glow, spread while you move, a
+    // kick when you swing, a tint while you aim at someone, a hit marker (gold on a critical). Drawn over the vanilla one
+    r.add("crosshair", "Custom Crosshair", Category::Hud, "Your aim, in your colours: shapes, spread, hit markers")
+        .choice("style", "Style", {"Cross", "Plus gap", "Dot", "Circle", "Circle + dot", "T"}, 1)
+        .slider("size", "Length", 4, 1, 14, 0.5f).slider("thickness", "Thickness", 1, 0.5f, 4, 0.5f).slider("gap", "Gap", 2, 0, 8, 0.5f)
+        .toggleSetting("dot", "Centre dot", false).toggleSetting("outline", "Outline", true).slider("glow", "Glow", 0.4f, 0.f, 1.f, 0.05f)
+        .slider("opacity", "Opacity", 0.95f, 0.1f, 1.f, 0.05f)
+        .choice("color", "Colour", {"Accent", "White", "Ice", "Mint", "Rose", "Gold"}, 0)
+        .slider("spread", "Spread while moving", 0.5f, 0.f, 1.5f, 0.05f).slider("kick", "Kick on swing", 0.5f, 0.f, 1.5f, 0.05f)
+        .toggleSetting("target_tint", "Tint on a target", true).toggleSetting("hit_marker", "Hit marker", true)
+        .toggleSetting("breathing", "Breathing", false)
         .hud = [](Frame& f) {
         auto* m  = Registry::get().find("crosshair");
-        float cx = f.width / 2, cy = f.height / 2, s = m->num("size", 4), g = m->num("gap", 1);
-        Rgba  c{0.4f, 1.0f, 0.9f, 0.95f};
-        bf::hud::fillBox(f.ctx, cx - g - s, cy - 0.5f, s, 1, c);
-        bf::hud::fillBox(f.ctx, cx + g, cy - 0.5f, s, 1, c);
-        bf::hud::fillBox(f.ctx, cx - 0.5f, cy - g - s, 1, s, c);
-        bf::hud::fillBox(f.ctx, cx - 0.5f, cy + g, 1, s, c);
-        if (m->flag("dot", true)) bf::hud::fillBox(f.ctx, cx - 0.5f, cy - 0.5f, 1, 1, c);
+        if (!f.player) return;
+        int64_t const now = nowMs();
+        float cx = std::round(f.width / 2), cy = std::round(f.height / 2);
+        int const style = std::clamp(int(m->num("style", 1)), 0, 5);
+        float len = m->num("size", 4), th = m->num("thickness", 1), gap = m->num("gap", 2);
+        float const op = m->num("opacity", 0.95f);
+        static constexpr Rgba kCols[6] = {{0, 0, 0, 0}, {1, 1, 1, 1}, {0.6f, 0.9f, 1.f, 1}, {0.45f, 1.f, 0.75f, 1}, {1.f, 0.55f, 0.75f, 1}, {1.f, 0.82f, 0.35f, 1}};
+        int const ci = std::clamp(int(m->num("color", 0)), 0, 5);
+        Rgba c = ci == 0 ? kNeon : kCols[ci];
+        // aiming at someone: tint toward a warm red
+        bool onTarget = false;
+        try { auto& hr = f.player->getLevel().getHitResult(); onTarget = hr.mType == HitResultType::Entity; } catch (...) {}
+        if (onTarget && m->flag("target_tint", true)) c = Rgba{1.f, 0.38f, 0.42f, 1};
+        // spread with your speed, a kick right after a swing, breathing
+        static float sp = 0;
+        gSpeed.sample(f.player->getPosition());
+        sp += (std::clamp(gSpeed.bps / 5.6f, 0.f, 1.f) - sp) * 0.2f;
+        float const swing = std::clamp(1.f - float(now - gLastReachAt.load()) / 180.f, 0.f, 1.f);
+        gap += sp * 3.f * m->num("spread", 0.5f) + swing * 3.f * m->num("kick", 0.5f);
+        if (m->flag("breathing", false)) gap += 0.6f * (0.5f + 0.5f * std::sin(float(now % 100000) * 0.0025f));
+        c.a = op;
+        float const glow = m->num("glow", 0.4f);
+        bool const outl = m->flag("outline", true);
+        auto bar = [&](float x, float y, float w, float h) {
+            if (glow > 0) bf::hud::fillBox(f.ctx, x - 1.5f, y - 1.5f, w + 3, h + 3, {c.r, c.g, c.b, 0.18f * glow * op});
+            if (outl) bf::hud::fillBox(f.ctx, x - 0.5f, y - 0.5f, w + 1, h + 1, {0, 0, 0, 0.55f * op});
+            bf::hud::fillBox(f.ctx, x, y, w, h, c);
+        };
+        float const ht = th / 2;
+        auto ring = [&](float r) {
+            int const n = std::max(16, int(r * 6.f));
+            for (int i = 0; i < n; ++i) {
+                float const an = 6.2831853f * float(i) / float(n);
+                bar(cx + std::cos(an) * r - ht, cy + std::sin(an) * r - ht, th, th);
+            }
+        };
+        switch (style) {
+        case 0:  // cross: arms joined in the middle
+            bar(cx - len - ht, cy - ht, 2 * len + th, th); bar(cx - ht, cy - len - ht, th, 2 * len + th); break;
+        case 1:  // plus with a gap
+        case 5:  // T: no top arm
+            bar(cx - gap - len, cy - ht, len, th); bar(cx + gap, cy - ht, len, th);
+            if (style == 1) bar(cx - ht, cy - gap - len, th, len);
+            bar(cx - ht, cy + gap, th, len); break;
+        case 2: bar(cx - th, cy - th, 2 * th, 2 * th); break;
+        case 3:
+        case 4: ring(gap + len * 0.5f); if (style == 4) bar(cx - ht, cy - ht, th, th); break;
+        }
+        if (m->flag("dot", false) && style != 2 && style != 4) bar(cx - ht, cy - ht, th, th);
+        // the hit marker: four short diagonal ticks; gold on a critical
+        float const hk = std::clamp(1.f - float(now - gLastReachAt.load()) / 260.f, 0.f, 1.f);
+        if (hk > 0 && m->flag("hit_marker", true)) {
+            Rgba const hc = gLastHitCrit.load() ? Rgba{1.f, 0.82f, 0.3f, hk} : Rgba{1.f, 1.f, 1.f, hk};
+            float const r0 = gap + 3.f, r1 = r0 + 4.f;
+            for (int q = 0; q < 4; ++q) {
+                float const dx = (q & 1) ? 1.f : -1.f, dy = (q & 2) ? 1.f : -1.f;
+                for (float r = r0; r <= r1; r += 1.f) bf::hud::fillBox(f.ctx, cx + dx * r * 0.7071f - 0.75f, cy + dy * r * 0.7071f - 0.75f, 1.5f, 1.5f, hc);
+            }
+        }
     };
     r.add("debug_menu", "Debug Menu", Category::Hud, "Java F3-style details").hud = [](Frame& f) {
         if (!f.player) return;
@@ -1187,6 +1267,18 @@ void registerBuiltins() {
         auto& ha = r.add("halo", "Halo", Category::Visual, "A gently glowing halo (Renderer Foundation)", false);
         ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f).slider("height", "Height", 1.f, 0.f, 2.f, 0.05f);
+        // [Purxiy "wings" / "cape" / "block_outline"] original looks, drawn by Renderer Foundation like the halo
+        auto& wgm = r.add("wings", "Wings", Category::Visual, "A pair of softly animated wings (Renderer Foundation)", false);
+        wgm.choice("design", "Design", {"Seraph", "Butterfly", "Prism"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("size", "Size", 1.f, 0.5f, 1.6f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("flap", "Flap", 1.f, 0.f, 2.f, 0.05f)
+            .toggleSetting("first_person", "See them in first person", false);
+        auto& cpm = r.add("cape", "Cape", Category::Visual, "An animated glowing cape that flows as you move (Renderer Foundation)", false);
+        cpm.choice("design", "Design", {"Silk", "Aurora", "Starfield"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("glow", "Glow", 0.5f, 0.f, 1.f, 0.05f).slider("sway", "Sway", 1.f, 0.f, 2.f, 0.05f);
+        auto& bom = r.add("block_outline", "Block Outline", Category::Visual, "A cleaner, glowing outline on the block you aim at (Renderer Foundation)", false);
+        bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("width", "Width (px)", 2.f, 1.f, 5.f, 0.5f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.12f, 0.f, 0.6f, 0.02f)
+            .toggleSetting("face", "Light the face you look at", true).toggleSetting("glide", "Glide between blocks", true);
         auto& chm = r.add("chroma", "Chroma", Category::Visual, "The world waits in grey, and colour blooms wherever you walk (Renderer Foundation)", false);
         chm.choice("tone", "Tone", {"Lilac", "Cream", "Noir"}, 0).slider("hint", "Colour it keeps", 0.06f, 0.f, 0.5f, 0.01f)
             .toggleSetting("living", "Players, mobs and items keep their colour", true).slider("brush", "Brush (blocks)", 6.f, 2.f, 16.f, 0.5f)
@@ -1308,7 +1400,17 @@ void registerBuiltins() {
         // [Purxiy "interface" / "motion"] your colour across the menu and the HUD elements, and how fast things animate
         .choice("accent", "Accent colour", {"Novak purple", "Rose", "Ocean", "Mint", "Sunset", "Ice", "Gold", "Cherry"}, 0)
         .slider("motion", "Animation speed", 1.0f, 0.5f, 2.0f, 0.05f)
-        .choice("font", "Font", {"Outfit", "Inter"}, 0);
+        .choice("font", "Font", {"Outfit", "Inter"}, 0)
+        // [Prism] Purxiy "interface" / "motion" / "sound": the look, the world behind the menu, cascade, interface sounds
+        .choice("style", "Look", {"Prism", "Glass"}, 0)
+        .slider("dim", "Dim the world", 0.25f, 0.f, 1.f, 0.05f)
+        .slider("stars", "Stars", 0.5f, 0.f, 1.f, 0.05f)
+        .toggleSetting("cascade", "Cascade", true)
+        .toggleSetting("reduce_motion", "Reduce motion", false)
+        .toggleSetting("sounds", "Interface sounds", true)
+        .toggleSetting("hover_sounds", "Hover sounds", true)
+        .toggleSetting("slider_ticks", "Slider ticks", true)
+        .slider("sound_volume", "Interface sound volume", 0.5f, 0.f, 1.f, 0.05f);
 }
 
 // ============================================================================ PvP preset
@@ -1484,6 +1586,16 @@ void installRuntime() {
                 gFxEv.px = pos.x; gFxEv.py = pos.y - 1.62f; gFxEv.pz = pos.z; gFxEv.pyaw = player->getRotation().z;   // Trail / Aura / Halo
                 gFxEv.pflags = 1u | (g ? 2u : 0u);
                 gFxEv.pAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            } catch (...) {}
+            try {   // Block Outline: the block you aim at (only while the module is on)
+                gFxEv.bface = 255u;
+                if (Registry::get().on("block_outline")) {
+                    auto const& hr = player->getLevel().getHitResult();
+                    if (hr.mType == HitResultType::Tile) {
+                        gFxEv.bx = hr.mBlock.x; gFxEv.by = hr.mBlock.y; gFxEv.bz = hr.mBlock.z; gFxEv.bface = hr.mFacing;
+                    }
+                }
+                gFxEv.bAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             } catch (...) {}
         }
         if (player && Registry::get().on("motion_blur")) { try { matchfx::blurActorsFrame(*player); } catch (...) {} }
