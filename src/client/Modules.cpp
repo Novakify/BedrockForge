@@ -303,14 +303,16 @@ void atmosTick() {
 struct HideGroup { char const* id; char const* label; std::vector<char const*> names; };
 std::vector<HideGroup> const& hideGroups() {
     static std::vector<HideGroup> const g = {
-        {"hotbar", "Hotbar", {"hotbar_panel", "hotbar_grid", "hotbar"}},
-        {"hearts", "Hearts", {"heart_rend", "hearts", "health_panel"}},
-        {"hunger", "Hunger", {"hunger_rend", "hunger", "food"}},
-        {"armor", "Armor bar", {"armor_rend", "armor_panel"}},
-        {"xp", "XP bar", {"exp_progress_bar", "experience", "xp_bar", "exp_progress"}},
-        {"bubbles", "Air bubbles", {"bubbles_rend", "bubbles"}},
-        {"item_name", "Held item name", {"item_name_text", "item_text_factory", "item_text"}},
-        {"boss", "Boss bar", {"boss_health_panel", "boss_bars"}},
+        // names from the real 1.26.51 HUD (logs/hud_controls.txt). The XP bar is left out: on desktop the hotbar sits
+        // INSIDE exp_rend / its progress bars, so hiding the bar hid the hotbar with it.
+        {"hotbar", "Hotbar", {"hotbar"}},
+        {"hearts", "Hearts", {"heart_rend", "horse_heart_rend_0", "horse_heart_rend_1"}},
+        {"hunger", "Hunger", {"hunger_rend"}},
+        {"armor", "Armor bar", {"armor_rend"}},
+        {"bubbles", "Air bubbles", {"bubbles_rend_0", "bubbles_rend_1"}},
+        {"item_name", "Held item name", {"item_text_factory"}},
+        {"boss", "Boss bar", {"boss_health_panel"}},
+        {"tips", "Action bar / tips", {"hud_actionbar_text_area", "hud_tip_text_factory"}},
     };
     return g;
 }
