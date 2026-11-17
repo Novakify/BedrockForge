@@ -172,6 +172,31 @@ double gameMemoryMb() {
     return mb;
 }
 
+// ---------------------------------------------------------------- Glass (Purxiy "glass": Frosted / Glow / Shimmer / Colour)
+// Renderer Foundation's Glass Armor reads mods/RendererFoundation/config/GlassFrost.txt about once a second; this
+// module is its menu. Off = the approved clear crystal (frost 0, no glow, no shimmer, white).
+constexpr char const* kGlassTints[] = {"FFFFFF", "E6D9FF", "C77BFF", "BFE8FF", "FFC9E3", "FFE2A8"};
+void writeGlassFrost(float frost, float glow, bool shimmer, int tint) {
+    try {
+        auto const path = ll::mod::NativeMod::current()->getModDir().parent_path() / "RendererFoundation" / "config" / "GlassFrost.txt";
+        std::error_code ec;
+        if (!std::filesystem::exists(path.parent_path(), ec)) return;   // no Renderer Foundation here
+        std::ofstream(path) << std::format("frost {:.2f}\nglow {:.2f}\nshimmer {}\ntint {}\n", frost, glow, shimmer ? 1 : 0,
+                                           kGlassTints[std::clamp(tint, 0, int(std::size(kGlassTints)) - 1)]);
+    } catch (...) {}
+}
+std::string gGlassLast; // last written settings ("" = write on the next frame)
+void glassTick(Module& m) {
+    std::string& last = gGlassLast;
+    std::string const now = std::format("{:.2f}/{:.2f}/{}/{}", m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
+    if (now == last) return;
+    static int64_t at = 0;
+    if (nowMs() - at < 150) return;   // dragging a slider: a few writes a second at most
+    at = nowMs();
+    last = now;
+    writeGlassFrost(m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
+}
+
 // ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
 // Purxiy (buddies' client, used as reference only - its code is locked): "A quiet message when a keybind toggles a
 // module" and "Every module you have switched on, as a list". Same settings (size, background, opacity, x/y as a
@@ -585,6 +610,14 @@ void registerBuiltins() {
     r.add("view_bobbing", "No View Bobbing", Category::Camera, "Turn off the walking camera bob");
     r.plan("view_model", "View Model", Category::Camera, "Move / scale the held item");
     r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
+    {
+        auto& gl = r.add("glass_frost", "Glass", Category::Visual, "Frosted glass armour: clear as a window, or soft and milky (Renderer Foundation)", false);
+        gl.slider("frost", "Frosted (0 clear .. 1 milky)", 0.35f, 0.f, 1.f, 0.05f).slider("glow", "Glow", 0.2f, 0.f, 1.f, 0.05f)
+            .toggleSetting("shimmer", "Shimmer (a soft sheen now and then)", true)
+            .choice("tint", "Colour", {"White", "Lilac", "Neon purple", "Ice blue", "Rose", "Gold"}, 0);
+        gl.hud      = [](Frame&) { if (auto* m = Registry::get().find("glass_frost")) glassTick(*m); };
+        gl.onToggle = [](bool on) { gGlassLast.clear(); if (!on) writeGlassFrost(0.f, 0.f, false, 0); };
+    }
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
         .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f)
         .slider("moving", "Blur from moving (turning is always full)", 0.6f, 0.0f, 1.5f, 0.05f);
