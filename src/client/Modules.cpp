@@ -219,7 +219,7 @@ void atmosTick() {
     bool const h = hz && hz->enabled, m = ms && ms->enabled;
     float const tod = gTimeOfDay.load(std::memory_order_relaxed);
     std::string out;
-    if (h || m) {
+    if (h || m || (r.find("ambience") && r.find("ambience")->enabled)) {
         auto const& hp = kHazePals[std::clamp(int(hz ? hz->num("palette", 0) : 0), 0, int(std::size(kHazePals)) - 1)];
         auto const& mp = kMistPals[std::clamp(int(ms ? ms->num("palette", 0) : 0), 0, int(std::size(kMistPals)) - 1)];
         out = std::format("haze {}\nhaze_a {:.3f} {:.3f} {:.3f}\nhaze_b {:.3f} {:.3f} {:.3f}\nhaze_strength {:.2f}\nhaze_height {:.0f}\nhaze_clear {:.0f}\n"
@@ -231,6 +231,19 @@ void atmosTick() {
                            m ? 1 : 0, mp.a[0], mp.a[1], mp.a[2], ms ? ms->num("density", 0.5f) : 0.f, ms ? ms->num("height", 10) : 10.f, ms ? ms->num("clear", 6) : 6.f,
                            ms ? ms->num("drift", 1) : 1.f, ms ? ms->num("rays", 0.6f) : 0.6f, ms && ms->flag("creatures", true) ? 1 : 0, tod < 0 ? 0.f : tod);
     } else out = "haze 0\nmist 0\n";
+    if (auto* am = r.find("ambience"); am && am->enabled) {
+        // palettes: Accent = the client's neon purple + white, Purxiy = their warm peach + lilac, Dream = pink + sky blue
+        static constexpr float kAmb[3][2][3] = {{{0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}},
+                                                {{1.00f, 0.71f, 0.55f}, {0.80f, 0.62f, 1.00f}},
+                                                {{1.00f, 0.62f, 0.86f}, {0.55f, 0.82f, 1.00f}}};
+        int const p = std::clamp(int(am->num("palette", 0)), 0, 2);
+        out += std::format("amb 1\namb_a {:.3f} {:.3f} {:.3f}\namb_b {:.3f} {:.3f} {:.3f}\namb_amount {:.2f}\namb_size {:.2f}\namb_glow {:.2f}\n"
+                           "amb_speed {:.2f}\namb_twinkle {:.2f}\namb_range {:.0f}\namb_style {}\namb_dof {}\namb_react {}\namb_daylight {:.2f}\n",
+                           kAmb[p][0][0], kAmb[p][0][1], kAmb[p][0][2], kAmb[p][1][0], kAmb[p][1][1], kAmb[p][1][2], am->num("amount", 1.f),
+                           am->num("size", 1.f), am->num("glow", 0.6f), am->num("speed", 1.f), am->num("twinkle", 0.5f), am->num("range", 24.f),
+                           int(am->num("style", 0)), am->flag("depth_of_field", true) ? 1 : 0, am->flag("react", true) ? 1 : 0, am->num("daylight", 0.5f));
+        if (out.find("tod ") == std::string::npos) out += std::format("tod {:.3f}\n", tod < 0 ? 0.f : tod);
+    } else out += "amb 0\n";
     if (out == gAtmosLast) return;
     static int64_t at = 0;
     if (nowMs() - at < 250) return;   // dragging a slider: a few writes a second; the sun moves slowly (tod in steps of 0.001)
@@ -743,6 +756,14 @@ void registerBuiltins() {
             .slider("density", "Density", 0.5f, 0.1f, 1.0f, 0.05f).slider("height", "Height (blocks above the ground)", 10, 3, 32, 1)
             .slider("clear", "Clear around you", 6, 0, 24, 1).slider("drift", "Drift", 1.0f, 0.f, 3.f, 0.05f)
             .slider("rays", "Sun rays", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("creatures", "Players and mobs show clearly through it", true);
+        auto& am = r.add("ambience", "Ambience", Category::Visual, "Glowing particles drifting through the world around you (Renderer Foundation)", false);
+        am.choice("style", "Style", {"Motes", "Stardust", "Petals", "Snow"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("amount", "Amount", 1.0f, 0.1f, 2.0f, 0.05f).slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f)
+            .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("speed", "Speed", 1.0f, 0.f, 3.f, 0.05f)
+            .slider("twinkle", "Twinkle", 0.5f, 0.f, 1.f, 0.05f).slider("range", "Range (blocks)", 24, 8, 40, 1)
+            .toggleSetting("depth_of_field", "Near ones melt into soft bokeh", true).toggleSetting("react", "They swirl aside as you move", true)
+            .slider("daylight", "How many stay out by day", 0.5f, 0.f, 1.f, 0.05f);
+        am.onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
         ms.onToggle = [](bool) { gAtmosLast.clear(); };
     }
