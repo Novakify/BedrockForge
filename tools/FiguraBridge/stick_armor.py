@@ -928,6 +928,19 @@ def body_accents(acc, rod, T, sy, D):
             pts = [nb + np.array([sx * (1 + 0.45 * i / 10), -0.3 - L * i / 10, 0.35 + 1.5 * (i / 10) ** 1.3])
                    for i in range(11)]
             ribbon("chest", "p22", pts, [0.95 * (1 - 0.55 * i / 10) for i in range(11)], lambda i: X, reg="recess")
+    if "halfcape" in acc:  # SOLAR: a crimson half-cape off the left shoulder, swept across the back
+        b0 = nb + np.array([1.1, -0.1, 0.1])
+        pts = [b0 + np.array([-1.0 * (i / 12) ** 1.2, -11.5 * i / 12, 0.40 + 2.0 * (i / 12) ** 1.4]) for i in range(13)]
+        ribbon("chest", "p22", pts, [2.0 + 1.8 * (i / 12) ** 0.8 for i in range(13)], lambda i: X, reg="recess")
+        boxq("chest", "p22", b0 + np.array([0.2, 0.0, -0.1]), X * 0.5, Y * 0.5, Z * 0.3, reg="rim")   # the clasp
+    if "splitcape" in acc:  # PRISM: a white mantle split in two long panels, cyan light along the hems
+        for sg in (-1, 1):
+            pts = [nb + np.array([sg * (1.15 + 1.3 * (i / 12) ** 1.2), -0.2 - 13.5 * i / 12, 0.45 + 2.2 * (i / 12) ** 1.4])
+                   for i in range(13)]
+            ribbon("chest", "p22", pts, [2.3 + 1.2 * (i / 12) ** 0.8 for i in range(13)], lambda i: X, reg="recess")
+    if "collar" in acc:   # ECLIPSE: a high standing collar round the back of the helmet
+        plate("chest", "p22", T, sy(28.6), sy(26.4), D(180), D(200), gap=0.55, bulge=0.10, flare=0.9,
+              prof=lambda t: 1.0 - 0.2 * t, ns=3, na=16, region="recess")
     if "cape" in acc:     # VANGUARD: a knight's cape from the shoulders
         pts = [nb + np.array([0, -0.2 - 13.0 * i / 12, 0.40 + 2.2 * (i / 12) ** 1.4]) for i in range(13)]
         ribbon("chest", "p22", pts, [3.4 + 2.6 * (i / 12) ** 0.8 for i in range(13)], lambda i: X, reg="recess")
@@ -1240,8 +1253,17 @@ def build_tiers(stick_geo: Path, player_entity, figura_rc, out: Path):
     td = out / "textures/figura/fb_armor"
     td.mkdir(parents=True, exist_ok=True)
     for mat in names:
-        st.plate_tex(mat).save(td / f"t_{mat}.png")
-        st.rail_tex(mat).save(td / f"t_{mat}_fx.png")
+        if st.TIERS[mat].get("mix"):   # the approved mix finish: engraved polished metal, rails in the glass's neon
+            _, body, dark, hl, acc_ = next(m for m in MATERIALS if m[0] == mat)
+            im = metal_atlas(mat, body, dark, hl, acc_, polish=True).resize((st.TEXM, st.TEXM), Image.NEAREST)
+            cl = st.plate_tex(mat)   # the tier's cloth lives in the recess region (capes, collar)
+            x0 = int(REG["recess"][0] * st.TEXM)
+            im.paste(cl.crop((x0, 0, st.TEXM, st.TEXM)), (x0, 0))
+            im.save(td / f"t_{mat}.png")
+            energy_strip(RAIL_NEON[mat], 0, base=0.78).save(td / f"t_{mat}_fx.png")
+        else:
+            st.plate_tex(mat).save(td / f"t_{mat}.png")
+            st.rail_tex(mat).save(td / f"t_{mat}_fx.png")
         if not st.TIERS[mat]["rf"]:
             for layer in (1, 2):
                 st.pane_tex(mat, layer, ISLAND, ISLAND_LAYER).save(td / f"t_{mat}_pane{layer}.png")
