@@ -2,7 +2,7 @@
 """Stick armor tiers: every armor material gets its own design (not its material's look), ranked like the Hive
 BedWars progression - the higher the tier, the more pieces, light and reaction to the game.
 
-  tier 1  leather    RUNNER       team-dyed padded fabric, stitched; no light. The base kit.
+  tier 1  leather    RUNNER       team-dyed livery with stitching, soft white rails, a scarf. The base kit.
   tier 2  copper     CIRCUIT      verdigris plates, copper trim, glowing copper circuit traces; slow amber rails
   tier 2  chainmail  PHANTOM      graphite hex weave, silver trim, faint ice glow; one soft pulse
   tier 3  iron       VANGUARD     arctic white ceramic, twin cobalt stripes, cobalt light rails
@@ -26,15 +26,15 @@ from PIL import Image
 
 # level, motif, glass (RF), reactive, rail speed, accents, palette
 TIERS = {
-    # acc: the silhouette - every tier reads from across the map (hood + scarf, antennae + power cell, cowl + tattered
-    # cape, crest + knight's cape, flame crown, horns + eclipse crescent + tails, crystal crown + crystal wings)
-    "leather":   dict(level=1, name="RUNNER", rf=False, react=False, speed=0.0, acc=("hood", "scarf")),
-    "copper":    dict(level=2, name="CIRCUIT", rf=False, react=False, speed=0.45, acc=("antennae", "boxy", "pack")),
+    # every tier = the mix (the original light-rail stick armor + glass faces) in its own livery, one tasteful extra.
+    # tier 4 wears the approved mix finish itself (engraved metal + Renderer Foundation Novak Glass)
+    "leather":   dict(level=1, name="RUNNER", rf=False, react=False, speed=0.5, acc=("scarf",)),
+    "copper":    dict(level=2, name="VERDANT", rf=False, react=False, speed=0.7, acc=("pauldrons",)),
     "chainmail": dict(level=2, name="PHANTOM", rf=False, react=False, speed=0.6, acc=("cowl", "strips")),
     "iron":      dict(level=3, name="VANGUARD", rf=False, react=False, speed=1.0, acc=("crest", "cape", "pauldrons")),
-    "golden":    dict(level=3, name="SOLAR", rf=False, react=False, speed=1.35, acc=("flares", "nemes")),
-    "netherite": dict(level=4, name="ECLIPSE", rf=True, react=True, speed=1.15, acc=("horns", "crescent", "tails")),
-    "diamond":   dict(level=4, name="PRISM", rf=True, react=True, speed=1.6, acc=("gemhead", "gems")),
+    "golden":    dict(level=3, name="SOLAR", rf=False, react=False, speed=1.25, acc=("halfcape",)),
+    "netherite": dict(level=4, name="ECLIPSE", rf=True, react=True, speed=1.15, acc=("collar", "tails")),
+    "diamond":   dict(level=4, name="PRISM", rf=True, react=True, speed=1.5, acc=("pauldrons", "splitcape"), allglass=True),
     "turtle":    dict(level=1, name="REEF", rf=False, react=False, speed=0.0, acc=()),
 }
 TEXM = 128            # plate atlas (same layout as the metal atlas: plate | visor | rim | recess)
@@ -43,6 +43,12 @@ PANE = 8              # pane texture = 8x the 64x32 island layout
 
 def rgb(*c):
     return np.array(c, float)
+
+
+# livery (iron's recipe in each tier's colours): base, stripe, inlay light, trim, glows?
+LIVERY = {
+    "leather": (rgb(232, 226, 216), rgb(120, 112, 104), rgb(255, 255, 255), rgb(70, 64, 58), False),
+}
 
 
 def smooth_noise(shape, cells, seed):
@@ -121,7 +127,7 @@ def plate_tex(mat):
     u, v = (xx + .5) / W, (yy + .5) / S
     edge = np.minimum(u, 1 - u)
     glow = np.zeros((S, W))          # 0..1 emissive
-    if mat in ("leather", "turtle"):
+    if mat == "turtle":
         if mat == "leather":   # neutral; the item's dye colours it
             base, dark, hi, trim = rgb(222, 216, 206), rgb(92, 86, 80), rgb(252, 250, 246), rgb(176, 170, 160)
         else:
@@ -136,28 +142,6 @@ def plate_tex(mat):
         stitch = (np.abs(edge - .15) < .012) & (yy % 6 < 3)
         col[stitch] = hi
         col[(edge < .1)] = (trim * (0.75 + 2.2 * edge[edge < .1, None]))
-    elif mat == "copper":   # PCB: two mirrored traces along the plate, necking in at the middle, pads at the ends
-        base, dark, trim, gl = rgb(58, 128, 116), rgb(18, 52, 48), rgb(206, 116, 66), rgb(255, 172, 96)
-        blot = smooth_noise((S, W), (4, 2), 7)
-        col = base[None, None] * (0.90 + 0.14 * blot)[..., None] * (1.06 - 0.16 * v)[..., None]
-        segs = []
-        for sd in (-1, 1):
-            xo, xi = .5 + sd * .24, .5 + sd * .13
-            segs += [((xo, .16), (xo, .40)), ((xo, .40), (xi, .48)), ((xi, .48), (xi, .56)), ((xi, .56), (xo, .64)),
-                     ((xo, .64), (xo, .86))]
-        P = np.stack([u * W, v * S], -1)
-        d = segs_dist(P, [((a_[0] * W, a_[1] * S), (b_[0] * W, b_[1] * S)) for a_, b_ in segs])
-        tr = d < 0.9
-        col[(d >= 0.9) & (d < 2.2)] = col[(d >= 0.9) & (d < 2.2)] * 0.55
-        col[tr], glow[tr] = gl, 1.0
-        for sd in (-1, 1):
-            for vy in (.16, .86):
-                dd = np.hypot(xx + .5 - (.5 + sd * .24) * W, yy + .5 - vy * S)
-                ring = (dd > 1.6) & (dd < 3.2)
-                col[ring], glow[ring] = gl, 1.0
-                col[dd <= 1.6] = dark
-        col[edge < .09] = trim * (0.8 + 2 * edge[edge < .09, None])
-        col[(edge >= .09) & (edge < .11)] = dark * 0.6
     elif mat == "chainmail":   # lamellar: stacked graphite bands, an ice seam down the keel
         base, dark, hi, trim, gl = rgb(48, 52, 62), rgb(14, 16, 22), rgb(150, 162, 186), rgb(196, 206, 224), rgb(205, 232, 255)
         band = np.floor(v * 10)
@@ -170,6 +154,117 @@ def plate_tex(mat):
         col[keel], glow[keel] = gl, 0.75
         col[edge < .09] = trim * (0.7 + 2.5 * edge[edge < .09, None])
         col[(edge >= .09) & (edge < .11)] = dark
+    elif mat == "copper":   # CIRCUIT (ref: black suit, green Y-lines + node circles): a keel trace forking into a Y
+        base, trim, gl = rgb(30, 44, 42), rgb(190, 112, 64), rgb(255, 170, 90)
+        col = base[None, None] * (1.10 - 0.25 * v)[..., None] * (0.90 + 0.12 * np.cos((u - .5) * 3))[..., None]
+        P = np.stack([(u - .5) * W, v * S], -1)
+        segs = [((0, .30 * S), (0, .92 * S)), ((0, .30 * S), (-.30 * W, .10 * S)), ((0, .30 * S), (.30 * W, .10 * S))]
+        d = segs_dist(P, segs)
+        col[(d < 2.4) & (d >= .9)] *= 0.55
+        line = d < .9
+        col[line], glow[line] = gl, 1.0
+        for (x0, y0) in ((0, .30), (-.30, .10), (.30, .10), (0, .92)):
+            dd = np.hypot(P[..., 0] - x0 * W, P[..., 1] - y0 * S)
+            ring = (dd > 1.7) & (dd < 3.1)
+            col[ring], glow[ring] = gl, 1.0
+            col[dd <= 1.7] = base * 0.5
+        col[edge < .09] = trim * (0.75 + 2.2 * edge[edge < .09, None])
+        col[(edge >= .09) & (edge < .11)] = base * 0.4
+    elif mat == "golden":   # SOLAR (ref: black suit, orange lines flowing over the form): two swept lines + a branch
+        base, trim, gl, hot = rgb(22, 18, 22), rgb(150, 104, 36), rgb(255, 150, 40), rgb(255, 222, 140)
+        col = base[None, None] * (1.15 - 0.35 * v)[..., None]
+        col += rgb(80, 70, 80) * (np.exp(-((u - .28) / .06) ** 2) * (1 - 0.6 * v) * 0.55)[..., None]   # gloss
+        P = np.stack([u * W, v * S], -1)
+        def flow(off, amp, ph, v0=0.04, v1=0.96):
+            pts = [((.5 + off + amp * math.sin(t * math.pi * 1.3 + ph)) * W, t * S) for t in np.linspace(v0, v1, 24)]
+            return segs_dist(P, list(zip(pts, pts[1:])))
+        d = np.minimum(flow(-0.12, 0.16, 0.0), flow(0.06, 0.16, 0.0, 0.18, 0.96))
+        d = np.minimum(d, segs_dist(P, [((.5 * W + .16 * W * math.sin(.55 * math.pi * 1.3 - 0.0) - .06 * W, .55 * S),
+                                          (.84 * W, .70 * S))]))
+        m = edge > .12
+        halo = np.exp(-d / 2.0) * m
+        col = col * (1 - 0.6 * halo[..., None]) + gl * (0.6 * halo)[..., None]
+        glow = np.maximum(glow, 0.55 * halo)
+        line = (d < .8) & m
+        col[line], glow[line] = hot, 1.0
+        col[edge < .09] = trim * (0.75 + 2.4 * edge[edge < .09, None])
+        col[(edge >= .09) & (edge < .11)] = base * 0.3
+    elif mat == "netherite":   # ECLIPSE (ref: hex-tiled armor, red trim, glowing hex core)
+        base, trim, gl = rgb(40, 40, 48), rgb(70, 22, 30), rgb(255, 46, 86)
+        hs = 7.0
+        X_, Y_ = xx + .5, yy + .5
+        def hexsd(px, py):   # flat-top hexagon "radius" of a local point
+            return np.maximum(np.abs(py), np.maximum(np.abs(.866 * px + .5 * py), np.abs(.866 * px - .5 * py)))
+        qx = (2 / 3 * X_) / hs
+        qy = (-X_ / 3 + math.sqrt(3) / 3 * Y_) / hs
+        rz_ = -qx - qy
+        rx, ry, rz = np.round(qx), np.round(qy), np.round(rz_)
+        dx_, dy_, dz_ = np.abs(rx - qx), np.abs(ry - qy), np.abs(rz - rz_)
+        a1 = (dx_ > dy_) & (dx_ > dz_)
+        rx = np.where(a1, -ry - rz, rx)
+        a2 = ~a1 & (dy_ > dz_)
+        ry = np.where(a2, -rx - rz, ry)
+        cx, cy = hs * 1.5 * rx, hs * math.sqrt(3) * (ry + rx / 2)
+        de = hs * .866 - hexsd(X_ - cx, Y_ - cy)              # px to this tile's edge
+        h = np.modf(np.abs(np.sin(rx * 12.9898 + ry * 78.233)) * 43758.5)[0]
+        col = base[None, None] * (0.78 + 0.45 * h)[..., None] * (1.12 - 0.28 * v)[..., None]
+        col[de < 1.6] *= 1.35                                 # tile bevel
+        col[de < 0.8] = rgb(12, 10, 16)                       # seams
+        lit = (h < 0.14) & (v > .30) & (de < 1.1) & (de > 0.1)
+        col[lit], glow[lit] = gl, 1.0                          # a few tiles outlined in crimson, a lit spine
+        dc = hexsd(X_ - W / 2, Y_ - .17 * S)                  # the core: a white hex ring
+        core = np.abs(dc - 6.0) < 1.0
+        col[core], glow[core] = rgb(255, 238, 244), 1.0
+        col[dc < 5.0] = rgb(60, 14, 26)
+        glow[dc < 5.0] = 0.5
+        inl = (edge >= .11) & (edge < .135) & (v > .03) & (v < .97)
+        col[inl], glow[inl] = gl, 1.0
+        col[edge < .09] = rgb(110, 108, 120) * (0.55 + 2.6 * edge[edge < .09, None])
+        col[(edge >= .09) & (edge < .11)] = trim * 0.5
+    elif mat == "diamond":   # PRISM (refs: liquid glass + a prism): liquid navy chrome, white light that splits into
+        base = rgb(12, 20, 44)                               # a spectrum at its end
+        col = base[None, None] * (1.25 - 0.4 * v)[..., None]
+        for ph, a, w_ in ((0.0, 0.18, 0.045), (1.9, 0.12, 0.03)):   # liquid highlights: soft white bands that flow
+            cx = .5 + a * np.sin(v * math.pi * 2.2 + ph) - 0.2
+            band = np.exp(-((u - cx) / w_) ** 2) * (0.55 + 0.45 * np.sin(v * math.pi * 3 + ph))
+            col += rgb(170, 200, 255) * (band * 0.75)[..., None]
+        col += rgb(60, 90, 160) * (np.exp(-((u - .80) / .08) ** 2) * 0.35)[..., None]   # cool rim reflection
+        P = np.stack([(u - .5) * W, v * S], -1)
+        d = segs_dist(P, [((0, .04 * S), (0, .60 * S))])     # the beam down the keel
+        m = edge > .12
+        beam = (d < 1.0) & m
+        col = col + rgb(200, 230, 255) * (np.exp(-d / 2.2) * 0.45 * m)[..., None]
+        col[beam], glow[beam] = rgb(255, 255, 255), 1.0
+        for k in range(6):                                   # ...and its dispersion
+            t = k / 5
+            tip = ((t - .5) * .62 * W, .97 * S)
+            dk = segs_dist(P, [((0, .60 * S), tip)])
+            c = hsv(0.0 + 0.78 * t, 0.85, 1.0) * 255
+            ln = (dk < 0.75) & m & (P[..., 1] > .60 * S)
+            col[ln], glow[ln] = c, 1.0
+        inl = (edge >= .115) & (edge < .135) & (v > .03) & (v < .97)
+        col[inl], glow[inl] = rgb(235, 245, 255), 1.0
+        col[edge < .09] = rgb(190, 210, 245) * (0.65 + 2.8 * edge[edge < .09, None])
+        col[(edge >= .09) & (edge < .11)] = rgb(4, 8, 18)
+    elif mat in LIVERY:
+        base, cob, gl, trim, glows = LIVERY[mat]
+        dark, hi = trim * 0.6, np.minimum(base * 1.25 + 30, 255)
+        col = base[None, None] * (1.04 - 0.12 * v)[..., None] * (0.93 + 0.08 * np.cos((u - .5) * 3))[..., None]
+        if mat == "golden":   # obsidian gloss
+            col += rgb(90, 80, 84) * (np.exp(-((u - .30) / .06) ** 2) * (1 - 0.6 * v) * 0.5)[..., None]
+        stripe = (np.abs(u - .5) > .035) & (np.abs(u - .5) < .10)
+        col[stripe] = cob
+        for v0 in (0.30, 0.56, 0.80):
+            r = np.round((v0 - 0.22 * np.abs(u - .5)) * S).astype(int)
+            col[(yy == r) & (edge > .14)] = trim
+            col[(yy == r + 1) & (edge > .14)] = hi
+        inl = (edge >= .11) & (edge < .135) & (v > .03) & (v < .97)
+        if glows:
+            col[inl], glow[inl] = gl, 1.0
+        else:   # stitching
+            col[inl & (yy % 6 < 3)] = gl
+        col[edge < .09] = trim * (0.9 + 2 * edge[edge < .09, None])
+        col[(edge >= .09) & (edge < .11)] = dark * 0.6
     elif mat == "iron":
         base, dark, hi, trim, cob, gl = rgb(226, 231, 238), rgb(58, 64, 80), rgb(255, 255, 255), rgb(50, 56, 70), rgb(36, 98, 235), rgb(96, 160, 255)
         col = base[None, None] * (1.04 - 0.12 * v)[..., None] * (0.93 + 0.08 * np.cos((u - .5) * 3))[..., None]
@@ -281,9 +376,9 @@ def plate_tex(mat):
     cv = (np.mgrid[0:S, 0:cw][0] + .5) / S
     ce = np.minimum(cu, 1 - cu)
     cloth = {"leather": (rgb(150, 144, 136), rgb(236, 230, 220)), "turtle": (rgb(50, 130, 110), rgb(222, 206, 160)),
-             "copper": (rgb(176, 98, 56), rgb(255, 172, 96)), "chainmail": (rgb(30, 33, 42), rgb(150, 162, 186)),
-             "iron": (rgb(30, 78, 196), rgb(236, 240, 246)), "golden": (rgb(60, 14, 10), rgb(255, 128, 40)),
-             "diamond": (rgb(16, 28, 58), rgb(90, 236, 255)), "netherite": (rgb(26, 20, 34), rgb(178, 84, 255))}[mat]
+             "copper": (rgb(30, 44, 42), rgb(255, 170, 90)), "chainmail": (rgb(30, 33, 42), rgb(150, 162, 186)),
+             "iron": (rgb(30, 78, 196), rgb(236, 240, 246)), "golden": (rgb(118, 18, 22), rgb(250, 190, 80)),
+             "diamond": (rgb(14, 22, 48), rgb(240, 248, 255)), "netherite": (rgb(26, 24, 30), rgb(255, 46, 86))}[mat]
     fold = 0.82 + 0.18 * np.cos(cu * math.pi * 3) ** 2          # soft folds along the cloth
     cc = cloth[0] * (fold * (1.05 - 0.2 * cv))[..., None]
     trim = ce < 0.14
@@ -292,13 +387,6 @@ def plate_tex(mat):
     img[:, xr, 3] = 255
     if mat in ("golden", "netherite", "diamond", "copper"):   # their cloth trim glows
         img[:, xr, 3] = np.where(trim, 40, 255)
-    if mat == "golden":   # the headdress: obsidian and molten-gold stripes, the gold glowing
-        band = ((cv * 14) % 1.0) < 0.42
-        gold = rgb(255, 176, 60) * (0.85 + 0.15 * np.cos((cu - .5) * 3))[..., None]
-        cc = np.where(band[..., None], gold, rgb(26, 16, 18) * (fold * 1.2)[..., None])
-        cc[trim] = rgb(255, 210, 120)
-        img[:, xr, :3] = cc
-        img[:, xr, 3] = np.where(band | trim, 30, 255)
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), "RGBA")
 
 
@@ -319,7 +407,7 @@ def pane_tex(mat, layer, islands, island_layer):
         glow = np.zeros((H, W))
         visor = name == "crown"
         seed = sum(map(ord, name)) + len(mat)
-        if mat in ("leather", "turtle"):
+        if mat == "turtle":
             base = rgb(226, 220, 210) if mat == "leather" else rgb(80, 178, 156)
             q = ((xx + yy) % 14 < 1) | ((xx - yy) % 14 < 1)        # quilted diamonds
             col = base * (0.80 + 0.22 * np.sin(v * math.pi) * np.sin(u * math.pi))[..., None]
@@ -331,17 +419,14 @@ def pane_tex(mat, layer, islands, island_layer):
                 col = rgb(26, 24, 22) * (1 + 0.8 * np.exp(-((v - .25 - u * .2) / .05) ** 2))[..., None]
                 col[e < 2.2] = rgb(240, 236, 228)
         elif mat == "copper":
-            col = rgb(16, 40, 40) * (1.25 - 0.45 * v)[..., None]
+            col = rgb(24, 36, 34) * (1.25 - 0.45 * v)[..., None]
             P = np.stack([u * W, v * H], -1)
-            segs = []
-            for sd in (-1, 1):
-                xo, xi = .5 + sd * .22, .5 + sd * .10
-                segs += [((xo, .14), (xo, .42)), ((xo, .42), (xi, .50)), ((xi, .50), (xi, .86))]
+            segs = [((.5, .40), (.5, .88)), ((.5, .40), (.24, .14)), ((.5, .40), (.76, .14))]
             d = segs_dist(P, [((a_[0] * W, a_[1] * H), (b_[0] * W, b_[1] * H)) for a_, b_ in segs])
             col[(d >= 1.0) & (d < 2.4)] *= 0.5
             col[d < 1.0], glow[d < 1.0] = rgb(255, 172, 96), 1.0
-            for sd in (-1, 1):
-                dd = np.hypot(u * W - (.5 + sd * .22) * W, v * H - .14 * H)
+            for (x0, y0) in ((.5, .40), (.24, .14), (.76, .14), (.5, .88)):
+                dd = np.hypot(u * W - x0 * W, v * H - y0 * H)
                 col[(dd > 1.8) & (dd < 3.3)], glow[(dd > 1.8) & (dd < 3.3)] = rgb(255, 172, 96), 1.0
             col[e < 3] = rgb(206, 116, 66) * (0.8 + 0.07 * e[e < 3, None])
         elif mat == "chainmail":
@@ -352,6 +437,17 @@ def pane_tex(mat, layer, islands, island_layer):
             cs = (np.abs(xx + .5 - W / 2) < 1.0) & (v > .08) & (v < .92)
             col[cs], glow[cs] = rgb(205, 232, 255), 0.8
             col[e < 3] = rgb(196, 206, 224) * (0.7 + 0.1 * e[e < 3, None])
+        elif mat in LIVERY:
+            base, cob, gl, trim, glows = LIVERY[mat]
+            col = base * (1.03 - 0.12 * v)[..., None] * (0.94 + 0.07 * np.sin(u * math.pi))[..., None]
+            stripe = np.abs(u - .5) * W < 2.2
+            col[stripe & (e > 4)] = cob
+            inner = (e >= 2.5) & (e < 3.6)
+            col[e < 2.5] = trim
+            if glows:
+                col[inner], glow[inner] = gl, 1.0
+            else:
+                col[inner & ((xx + yy) % 6 < 3)] = gl
         elif mat == "iron":
             col = rgb(236, 240, 246) * (1.03 - 0.12 * v)[..., None] * (0.94 + 0.07 * np.sin(u * math.pi))[..., None]
             stripe = np.abs(u - .5) * W < 2.2
@@ -360,25 +456,19 @@ def pane_tex(mat, layer, islands, island_layer):
             col[e < 2.5] = rgb(50, 56, 70)
             col[inner], glow[inner] = rgb(110, 170, 255), 1.0
         elif mat == "golden":
-            col = rgb(22, 12, 14) * (1.4 - 0.6 * v)[..., None]
-            P = np.stack([(u - .5) * W, v * H], -1)
-            def taper(a_, b_, w0, w1):
-                a_, b_ = np.array(a_, float), np.array(b_, float)
-                ab = b_ - a_
-                t = np.clip(((P - a_) @ ab) / (ab @ ab), 0, 1)
-                return np.linalg.norm(P - (a_ + t[..., None] * ab), axis=-1) - (w0 + (w1 - w0) * t)
-            core = taper((0, .08 * H), (0, .92 * H), 1.0, 1.0)
-            for vy in (.3, .62):
-                for sd in (-1, 1):
-                    core = np.minimum(core, taper((0, vy * H), (sd * .36 * W, (vy + .2) * H), 1.6, 0.2))
-            halo = np.exp(-np.maximum(core, 0) / 3.0)
+            col = rgb(20, 16, 20) * (1.3 - 0.5 * v)[..., None]
+            P = np.stack([u * W, v * H], -1)
+            def flow(off, amp, v0, v1):
+                pts = [((.5 + off + amp * math.sin(t * math.pi * 1.3)) * W, t * H) for t in np.linspace(v0, v1, 20)]
+                return segs_dist(P, list(zip(pts, pts[1:])))
+            d = np.minimum(flow(-.14, .18, .06, .94), flow(.10, .18, .25, .94))
             m = e > 3
-            col[m] = col[m] * (1 - 0.85 * halo[m, None]) + rgb(255, 92, 18) * (0.85 * halo[m, None])
-            glow[m] = 0.75 * halo[m]
-            hot = (core < 0) & m
-            col[hot], glow[hot] = rgb(255, 228, 140), 1.0
-            col[e < 3] = rgb(232, 104, 34) * (0.75 + 0.08 * e[e < 3, None])
-            glow[e < 1.5] = 0.7
+            halo = np.exp(-d / 2.6) * m
+            col = col * (1 - 0.6 * halo[..., None]) + rgb(255, 150, 40) * (0.6 * halo)[..., None]
+            glow = np.maximum(glow, 0.55 * halo)
+            hot = (d < 1.0) & m
+            col[hot], glow[hot] = rgb(255, 222, 140), 1.0
+            col[e < 3] = rgb(150, 104, 36) * (0.75 + 0.08 * e[e < 3, None])
         else:
             continue
         if visor:   # smoked visor glass: darker at the brow, one soft reflection, a fine rim in the tier's light
@@ -410,6 +500,9 @@ def rail_tex(mat):
         dash = ((v * 16) % 1.0) < 0.55
         g = np.where(dash, 0.45, 0.12) + 1.0 * np.exp(-(dpk / 0.06) ** 2) * dash
         col = rgb(255, 160, 80)[None] * np.clip(g, 0, 1)[:, None] + 255 * np.clip(g - 1, 0, 1)[:, None] * 0.5
+    elif mat == "leather":    # soft white track (the dye can't reach the rails: neutral)
+        g = 0.35 + 0.8 * np.exp(-(dpk / 0.08) ** 2)
+        col = rgb(255, 244, 228)[None] * np.clip(g, 0, 1)[:, None]
     elif mat == "chainmail":  # dim ice track, one soft wide pulse
         g = 0.30 + 0.9 * np.exp(-(dpk / 0.10) ** 2)
         col = rgb(205, 232, 255)[None] * np.clip(g, 0, 1)[:, None]
@@ -417,23 +510,21 @@ def rail_tex(mat):
         tail = np.where(x < 0.25, np.exp(-(x / 0.10)) * 0.5, 0)
         g = 0.55 + 1.2 * np.exp(-(dpk / 0.05) ** 2) + tail
         col = rgb(70, 140, 255)[None] * np.clip(g, 0, 1)[:, None] + 255 * np.clip(g - 0.9, 0, 1)[:, None] * 0.9
-    elif mat == "golden":     # fire: flickering segments, a hot core
-        rng = np.random.default_rng(5)
-        fl = np.repeat(rng.random(32), H // 32)
-        fl = np.convolve(fl, np.ones(5) / 5, "same")
-        g = 0.45 + 0.55 * fl + 0.8 * np.exp(-(dpk / 0.05) ** 2)
-        col = rgb(255, 92, 18)[None] * np.clip(g, 0, 1)[:, None] + rgb(255, 210, 110)[None] * np.clip(g - .8, 0, 1)[:, None]
+    elif mat == "golden":     # warm gold packet with a tail
+        tail = np.where(x < 0.25, np.exp(-(x / 0.10)) * 0.5, 0)
+        g = 0.55 + 1.2 * np.exp(-(dpk / 0.05) ** 2) + tail
+        col = rgb(255, 196, 80)[None] * np.clip(g, 0, 1)[:, None] + 255 * np.clip(g - 0.9, 0, 1)[:, None] * 0.9
     elif mat == "netherite":  # violet track, twin packets
         x2 = (v * 2 - 0.25) % 0.5
         d2 = np.minimum(x2, 0.5 - x2)
         g = 0.35 + 1.1 * np.exp(-(d2 / 0.045) ** 2)
-        col = rgb(178, 84, 255)[None] * np.clip(g, 0, 1)[:, None] + rgb(255, 200, 255)[None] * np.clip(g - 1, 0, 1)[:, None] * 2
-    elif mat == "diamond":    # ice-white light; the prism shows only as a faint spectral fringe in the packet's tail
-        tail = np.where(x < 0.22, np.exp(-(x / 0.08)), 0)
-        g = 0.62 + 1.4 * np.exp(-(dpk / 0.035) ** 2)
-        fringe = hsv(0.45 + x * 3.0, np.full(H, 0.45), np.full(H, 1.0)) * 255
-        col = rgb(150, 236, 255)[None] * np.clip(g, 0, 1)[:, None] + 255 * np.clip(g - 1, 0, 1)[:, None]
-        col = col * (1 - 0.5 * tail[:, None]) + fringe * (0.5 * tail[:, None])
+        col = rgb(255, 46, 86)[None] * np.clip(g, 0, 1)[:, None] + rgb(255, 210, 220)[None] * np.clip(g - 1, 0, 1)[:, None] * 2
+    elif mat == "diamond":    # a white beam; behind the packet it splits into the spectrum (the prism)
+        tail = np.where(x < 0.30, 1 - x / 0.30, 0)
+        g = 0.70 + 1.4 * np.exp(-(dpk / 0.035) ** 2)
+        spec = hsv(np.clip(x / 0.30, 0, 1) * 0.78, np.full(H, 0.85), np.full(H, 1.0)) * 255
+        col = rgb(240, 248, 255)[None] * np.clip(g, 0, 1)[:, None] + 255 * np.clip(g - 1, 0, 1)[:, None]
+        col = col * (1 - 0.75 * tail[:, None]) + spec * (0.75 * tail[:, None])
     else:
         col = np.full((H, 3), 200.0)
     img[:, :, :3] = np.clip(col, 0, 255)[:, None, :]
@@ -444,8 +535,8 @@ def rail_tex(mat):
 # ====================================================================== reactions (tier 4): RC overlay colour
 def react_overlay(var, mat):
     """hurt: a flash in the tier's light that fades over the hurt time; below 3 hearts: a slow red pulse"""
-    flash = {"diamond": (0.85, 0.97, 1.0), "netherite": (0.86, 0.55, 1.0)}[mat]
-    a_hurt = "math.clamp((q.hurt_time ?? 0) / 10, 0, 1) * 0.85"
+    flash = {"diamond": (1.0, 1.0, 1.0), "netherite": (1.0, 0.25, 0.4)}[mat]
+    a_hurt = "math.clamp((q.hurt_time ?? 0) / 10, 0, 1) * 0.95"
     a_low = "(q.health < 6 ? (0.5 + 0.5 * math.sin(q.life_time * 240)) * 0.55 : 0)"
     hurt = f"(q.hurt_time ?? 0) > 0"
     return {"r": f"{hurt} ? {flash[0]} : 1.0", "g": f"{hurt} ? {flash[1]} : 0.15", "b": f"{hurt} ? {flash[2]} : 0.2",
