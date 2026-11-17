@@ -11,7 +11,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def compile_shaders():
     for prof, ent, out in (("ps_6_0", "PSWorldFx", "ps.spv"), ("vs_6_0", "VSWorldFx", "vs.spv")):
-        r = subprocess.run(["/opt/dxc/bin/dxc", "-spirv", "-T", prof, "-E", ent, "-O3", "-fvk-b-shift", "0", "0", "-fvk-t-shift", "10", "0",
+        defs = [x for d in os.environ.get("LAB_DEFS", "WFX_KILLS=1").split() for x in ("-D", d)]   # the kill build of the pass by default
+        r = subprocess.run(["/opt/dxc/bin/dxc", "-spirv", "-T", prof, "-E", ent, "-O3"] + defs + [ "-fvk-b-shift", "0", "0", "-fvk-t-shift", "10", "0",
                             "-fvk-s-shift", "20", "0", "-fspv-target-env=vulkan1.1", "-Fo", f"{HERE}/{out}", f"{RF}/shaders/worldfx_pass.hlsl"],
                            capture_output=True, text=True)
         if r.returncode: raise SystemExit(r.stderr[-3000:])
@@ -104,8 +105,8 @@ class Scene:
         return scene.astype(np.uint32), d24, (tx, ty)
 
 class Match:
-    """the M cbuffer (341 float4), same order as worldfx_pass.hlsl"""
-    N = 341
+    """the M cbuffer (463 float4), same order as worldfx_pass.hlsl"""
+    N = 463
     def __init__(self):
         self.a = np.zeros((self.N, 4), np.float32)
         o = 0
@@ -114,9 +115,10 @@ class Match:
         self.m0 = take(1); self.tPos = take(16); self.tCol = take(16); self.eA = take(8); self.eB = take(8); self.eC = take(8)
         self.m1 = take(1); self.tAge = take(16); self.trMin = take(1); self.trMax = take(1); self.gA = take(48); self.gB = take(48)
         self.bVis = take(16); self.fallen = take(24); self.m2 = take(1); self.fCol = take(24); self.pInfo = take(8); self.pPts = take(96)
+        self.m3 = take(1); self.m4 = take(1); self.fwS = take(120)
         assert o == self.N
         self.a[self.m0] = (0, 0, 1, 1); self.a[self.m1] = (0, 1, 0, 1)
-        self.a[self.bVis, 3] = -100; self.a[self.tAge, 0] = -1
+        self.a[self.bVis, 3] = -100; self.a[self.tAge, 0] = -1; self.a[self.m3] = (-1, 0, 0, 0)
         self.ne = 0; self.nt = 0; self.ng = 0
     def team(self, pos, col, yaw=0.0, broke=-1.0, threat=0.0, elim=0.0, mine=1.0, vis=True):
         k = self.nt; self.nt += 1
@@ -172,12 +174,28 @@ class Lab:
         rect(44, 29, 4, 3, skin); rect(36, 61, 4, 3, skin); rect(40, 29, 4, 3, skin); rect(48, 29, 8, 3, skin); rect(32, 61, 4, 3, skin); rect(40, 61, 8, 3, skin)
         for (u, v) in ((0, 16), (16, 48)):
             box(u, v, 4, 12, 4, jean); rect(u, v + 13, 16, 3, shoe)
+        # slot 1: a second test skin for the killer (the phantom): black hoodie with red trim, white hair, dark jeans
+        def rect(u, v, w, h, c, o=64): sk[v + o:v + o + h, u:u + w] = (*c, 255)
+        skin, hair, hood, hood2, jean, shoe = (190, 140, 105), (235, 235, 240), (32, 32, 38), (200, 30, 40), (30, 30, 36), (200, 30, 40)
+        box(0, 0, 8, 8, 8, skin); rect(8, 0, 8, 8, hair); rect(0, 8, 8, 3, hair); rect(16, 8, 8, 3, hair); rect(24, 8, 8, 8, hair); rect(8, 8, 8, 2, hair)
+        rect(9, 12, 2, 1, (255, 255, 255)); rect(13, 12, 2, 1, (255, 255, 255)); rect(10, 12, 1, 1, (200, 30, 40)); rect(13, 12, 1, 1, (200, 30, 40)); rect(10, 14, 4, 1, (90, 60, 50))
+        for (u, v, w) in ((16, 16, 8), (40, 16, 4), (32, 48, 4)):
+            box(u, v, w, 12, 4, hood)
+            sk[64 + v + 4 + 11, u:u + 2 * w + 8] = (*hood2, 255)
+        rect(44, 29, 4, 3, skin); rect(36, 61, 4, 3, skin); rect(40, 29, 4, 3, skin); rect(48, 29, 8, 3, skin); rect(32, 61, 4, 3, skin); rect(40, 61, 8, 3, skin)
+        for (u, v) in ((0, 16), (16, 48)):
+            box(u, v, 4, 12, 4, jean); rect(u, v + 13, 16, 3, shoe)
         nz = rng.randint(-10, 10, (1024, 64, 1)); sk[..., :3] = np.clip(sk[..., :3].astype(int) + nz, 0, 255)
         self.ts = dev.create_texture(size=(64, 1024, 1), format="rgba8unorm", usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
         dev.queue.write_texture({"texture": self.ts}, sk.tobytes(), {"bytes_per_row": 256}, (64, 1024, 1))
+        # t5: the death scenes' clips and ragdolls (tools/gen_death_tables.py writes them), 256 uints a row
+        clips = np.fromfile(f"{HERE}/death_clips.bin", np.uint32) if os.path.exists(f"{HERE}/death_clips.bin") else np.zeros(256, np.uint32)
+        ch = len(clips) // 256
+        self.tc = dev.create_texture(size=(256, ch, 1), format="r32uint", usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
+        dev.queue.write_texture({"texture": self.tc}, clips.tobytes(), {"bytes_per_row": 1024}, (256, ch, 1))
         self.smp = dev.create_sampler(address_mode_u="repeat", address_mode_v="repeat", mag_filter="linear", min_filter="linear", mipmap_filter="linear")
         B = wgpu.BufferUsage
-        self.cb = dev.create_buffer(size=160, usage=B.UNIFORM | B.COPY_DST)
+        self.cb = dev.create_buffer(size=176, usage=B.UNIFORM | B.COPY_DST)
         self.mb = dev.create_buffer(size=Match.N * 16, usage=B.UNIFORM | B.COPY_DST)
         self.sb = dev.create_buffer(size=W * H * 4, usage=B.STORAGE | B.COPY_DST)
         self.db = dev.create_buffer(size=W * H * 4, usage=B.STORAGE | B.COPY_DST)
@@ -191,12 +209,14 @@ class Lab:
             {"binding": 12, "visibility": F, "texture": {"sample_type": "float"}},
             {"binding": 13, "visibility": F, "texture": {"sample_type": "float"}},
             {"binding": 14, "visibility": F, "texture": {"sample_type": "float"}},
+            {"binding": 15, "visibility": F, "texture": {"sample_type": "uint"}},
             {"binding": 20, "visibility": F, "sampler": {"type": "filtering"}}])
         self.bg = dev.create_bind_group(layout=bgl, entries=[
             {"binding": 0, "resource": {"buffer": self.cb}}, {"binding": 1, "resource": {"buffer": self.mb}},
             {"binding": 10, "resource": {"buffer": self.sb}}, {"binding": 11, "resource": {"buffer": self.db}},
             {"binding": 12, "resource": self.tn.create_view()}, {"binding": 13, "resource": self.tp.create_view()},
             {"binding": 14, "resource": self.ts.create_view()},
+            {"binding": 15, "resource": self.tc.create_view()},
             {"binding": 20, "resource": self.smp}])
         self.pipe = dev.create_render_pipeline(layout=dev.create_pipeline_layout(bind_group_layouts=[bgl]),
             vertex={"module": self.vs, "entry_point": "VSWorldFx"},
@@ -206,7 +226,7 @@ class Lab:
         W, H = self.W, self.H
         sc, d24, (tx, ty) = scene.trace(cam, W, H)
         f, r, u = cam.axes()
-        c = np.zeros(40, np.float32)
+        c = np.zeros(44, np.float32)   # c0..c10 (c10.x = 0: the world pass, not the sky-only one)
         c[0:3] = f; c[3] = tx; c[4:7] = r; c[7] = ty; c[8:11] = u; c[11] = time
         c[12] = 0.025; c[13] = air; c[15] = 0.0
         c[16] = W; c[17] = H; c[18] = W * 4; c[19] = W * 4

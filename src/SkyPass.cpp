@@ -37,9 +37,12 @@
 #include <filesystem>
 #include "UiCapture.h"
 #include "GlassArmor.h"
+#include "DeathSounds.h"
+#include "DeathClipData.h"
 #include "WorldFx.h"
 #include "IrisBridge.h"
 #include "IrisRecord.h"
+#include "PostFx.h"
 
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"
@@ -79,6 +82,7 @@ std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one 
 std::atomic<bool> gSkySinceClear{false}, gFxSinceClear{false};
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
+std::atomic<bool> gBlurOnly{false};  // no World FX sky, but motion blur is asked for: the pass runs for the blur alone (any sky: vanilla, LyricsForge)
 std::atomic<int> gWorldSky{0};     // World FX standalone sky (0 off, 1 Cloud Sea), see the World FX section below
 void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list);
 // sky shaders learned from the game's own materials (learnGameMaterials / learnMaterialFile)
@@ -387,6 +391,13 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         gActive = c && h.active && st < 30;
         if (gActive && gUi.replace) rf::lyrics::setCameraWanted(true);
         if (gWorldSky.load()) { rf::lyrics::setCameraWanted(true); worldSkyPrepare(device, list); }
+        {   // motion blur without a World FX sky: the same pass, the blur draw only (it needs the world's targets + the camera)
+            bool const bo = gWorldSky.load() == 0 && rf::postfx::motionBlurWanted() > 0.0f;
+            static bool was = false;
+            gBlurOnly.store(bo, std::memory_order_relaxed);
+            if (bo) rf::lyrics::setCameraWanted(true);
+            if (bo != was) { was = bo; rf::worldfx::setTargetsWanted(gWorldSky.load() != 0 || bo); }
+        }
         gPictureOn = gActive && h.picture;
         // stage 2 "My picture" needs the decoded panorama even with the preview off
         if (!gUi.enabled && !gBroken && gUi.replace && gPictureOn) {
@@ -761,7 +772,7 @@ struct WsTexData {
 std::mutex                   gWsTexMutex;
 std::unique_ptr<WsTexData>   gWsTexReady;
 std::atomic_bool             gWsTexStarted{false}, gWsTexUp{false};
-ComPtr<ID3D12Resource>       gWsNoise, gWsPuff, gWsSkins;
+ComPtr<ID3D12Resource>       gWsNoise, gWsPuff, gWsSkins, gWsClips;
 std::deque<ComPtr<ID3D12Resource>> gSkinGrave; // replaced skin textures, kept while frames in flight may use them
 uint64_t                     gSkinGen = ~0ull;
 ComPtr<ID3D12RootSignature>  gWsRoot;
@@ -925,7 +936,7 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
     for (auto& l : d->puff) lv.push_back(reinterpret_cast<uint8_t const*>(l.data()));
     gWsPuff = uploadLevels(dev, list, DXGI_FORMAT_R16_UNORM, 1024, 1024, 2, lv);
     if (!gWsNoise || !gWsPuff) { wsStatus("texture upload failed"); return; }
-    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 3, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&gWsHeap)))) { wsStatus("descriptor heap failed"); return; }
     UINT const inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     auto       h   = gWsHeap->GetCPUDescriptorHandleForHeapStart();
@@ -945,6 +956,12 @@ void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list) {
         h.ptr += inc;
         sv.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sv.Texture2D.MipLevels = 1;
         if (gWsSkins) dev->CreateShaderResourceView(gWsSkins.Get(), &sv, h);
+    }
+    {   // t5: the death scenes' baked clips and ragdolls (too big for shader constants), 256 uints a row
+        gWsClips = uploadLevels(dev, list, DXGI_FORMAT_R32_UINT, kDeathClipW, kDeathClipH, 4, {reinterpret_cast<uint8_t const*>(kDeathClipData)});
+        h.ptr += inc;
+        sv.Format = DXGI_FORMAT_R32_UINT; sv.Texture2D.MipLevels = 1;
+        dev->CreateShaderResourceView(gWsClips.Get(), &sv, h);   // a null view if the upload failed: reads 0
     }
     gWsTexUp = true;
     wsStatus("ready - waiting for the game's sky draw");
@@ -1010,7 +1027,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     prm[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_SRV;
     prm[2].Descriptor       = {1, 0};
     prm[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures), t4 skins
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 2, 0, 0}; // t2 noise, t3 cloud tops (the sky's textures), t4 skins, t5 clips
     prm[3].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     prm[3].DescriptorTable  = {1, &range};
     prm[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -1024,15 +1041,20 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d{};
     d.pRootSignature = gWfxRoot.Get();
     d.VS = {rf::worldfx::shaders::VSWorldFx, sizeof rf::worldfx::shaders::VSWorldFx};
-    // two builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it
-    if (glass) d.PS = {rf::worldfx::shaders::PSWorldFxGlass, sizeof rf::worldfx::shaders::PSWorldFxGlass};
+    // builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it - and each
+    // again with the death scenes (80-odd kill animations, the pass's biggest code by far), used only on frames where
+    // a kill is playing, so every other frame runs the lean pass
+    if (blur) d.PS = {rf::worldfx::shaders::PSWorldFxBlur, sizeof rf::worldfx::shaders::PSWorldFxBlur};   // camera motion blur (shaders/worldfx_blur.hlsl)
+    else if (kills) d.PS = glass ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxGlassKills, sizeof rf::worldfx::shaders::PSWorldFxGlassKills}
+                            : D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxKills, sizeof rf::worldfx::shaders::PSWorldFxKills};
+    else if (glass) d.PS = {rf::worldfx::shaders::PSWorldFxGlass, sizeof rf::worldfx::shaders::PSWorldFxGlass};
     else       d.PS = {rf::worldfx::shaders::PSWorldFx, sizeof rf::worldfx::shaders::PSWorldFx};
     for (UINT i = 0; i < 8; ++i) {
         auto& rt = d.BlendState.RenderTarget[i];
@@ -1114,7 +1136,9 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 0), ok ? work.dome : nullptr});
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
-            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which >= 6, which == 7 ? 1 : which == 8 ? 2 : 0) : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
+            // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
+            made.push_back({key, which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+                                            : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
             std::lock_guard l(gDerMutex);
@@ -1218,7 +1242,7 @@ void learnMaterialFile(std::filesystem::path const& file, std::wstring_view file
             if (gLearned.emplace(s.hash, k).second) ++gLearnKind[k];
 }
 
-void learnGameMaterials(std::filesystem::path const& dir) {
+void learnGameMaterials(std::filesystem::path const& dir, std::filesystem::path const& modsDir) {
     for (auto m : rf::skyscan::kMaterials) {
         std::wstring fn(m.begin(), m.end());
         fn += L".material.bin";
@@ -1226,12 +1250,25 @@ void learnGameMaterials(std::filesystem::path const& dir) {
     }
     // Bedrock Forge serves its packs' RenderChunk by redirecting the file open (RF never sees those bytes): learn
     // every pack's block shader too, so its draws mark the world as drawn
+    // (Nov 15: the log always said "learned (20)" - the vanilla 20 only; the packs' own block shaders were never learned,
+    //  so after switching Cloud Sea <-> Novak Glass without a restart the world's block draws went unrecognised and up to
+    //  a third of frames had no sky pass: the flicker. Look for the packs next to RF's own mod folder too.)
     std::error_code ec;
-    auto const packs = dir.parent_path().parent_path().parent_path() / "mods" / "BedrockForgeCore" / "shaderpacks";
-    for (auto const& e : std::filesystem::directory_iterator(packs, ec))
-        if (e.is_directory(ec)) learnMaterialFile(e.path() / "renderer" / "materials" / "RenderChunk.material.bin", L"RenderChunk.material.bin", nullptr);
+    std::vector<std::filesystem::path> roots = {dir.parent_path().parent_path().parent_path() / "mods" / "BedrockForgeCore" / "shaderpacks"};
+    if (!modsDir.empty()) roots.push_back(modsDir / "BedrockForgeCore" / "shaderpacks");
+    int files = 0; std::string where;
+    for (auto const& packs : roots) {
+        if (!std::filesystem::is_directory(packs, ec)) continue;
+        for (auto const& e : std::filesystem::directory_iterator(packs, ec)) {
+            auto const f = e.path() / "renderer" / "materials" / "RenderChunk.material.bin";
+            if (e.is_directory(ec) && std::filesystem::is_regular_file(f, ec)) { learnMaterialFile(f, L"RenderChunk.material.bin", nullptr); ++files; }
+        }
+        where = packs.string();
+        if (files) break;
+    }
     std::lock_guard l(gLearnMutex);
-    ll_shim::info("[RF] World FX: block shaders learned (" + std::to_string(gLearnKind[Terrain]) + "): the pass knows when the world was drawn");
+    ll_shim::info("[RF] World FX: block shaders learned (" + std::to_string(gLearnKind[Terrain]) + ", " + std::to_string(files) + " shaderpack files from " +
+                  (where.empty() ? std::string("nowhere - no shaderpacks folder found") : where) + "): the pass knows when the world was drawn");
 }
 
 int kindOfHash(uint64_t h) {
@@ -1271,8 +1308,10 @@ int kindOf(ID3D12PipelineState* pso) {
     return it->second.kind;
 }
 
-bool wanted() { return (gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken) || gWorldSky.load(std::memory_order_relaxed) != 0 || rf::iris::enabled(); }
-bool wantRoot() { return wanted() && (gPictureOn.load(std::memory_order_relaxed) || gWorldSky.load(std::memory_order_relaxed) != 0 || rf::iris::enabled()); }
+bool replacing() { return (gUi.replace && gActive.load(std::memory_order_relaxed) && !gBroken) || gWorldSky.load(std::memory_order_relaxed) != 0; }   // a sky of ours takes the game's place
+bool fxOn() { return gWorldSky.load(std::memory_order_relaxed) != 0 || gBlurOnly.load(std::memory_order_relaxed); }                                  // the World FX pass has work (a look, or the blur alone)
+bool wanted() { return replacing() || gBlurOnly.load(std::memory_order_relaxed) || rf::iris::enabled(); }
+bool wantRoot() { return wanted() && (gPictureOn.load(std::memory_order_relaxed) || fxOn() || rf::iris::enabled()); }
 bool hideClouds() { return gUi.hideClouds || gWorldSky.load(std::memory_order_relaxed) != 0 || rf::iris::enabled(); } // an Iris pack draws its own
 
 namespace {
@@ -1297,9 +1336,11 @@ struct BfMatchFxV1 {
     struct Skin { uint32_t gen, ok; uint8_t px[64 * 64 * 4]; } skins[16]; // v6: classic 64x64 skins (kill events: floorDy = slot + 1)
     uint32_t mySkin; // v6: your own skin's slot + 1 (0 = none)
     float hp, hpMax; uint32_t streak, pad7; int64_t beatMs, killMs; // v7: you (health, kills this life, the heartbeat BF plays)
+    float mapTint[4]; char mapName[32]; // v8: the map's theme tint (rgb, strength) and its name
 };
 constexpr size_t kMatchV5Size = offsetof(BfMatchFxV1, skins);
 constexpr size_t kMatchV6Size = offsetof(BfMatchFxV1, mySkin) + sizeof(uint32_t);
+constexpr size_t kMatchV7Size = offsetof(BfMatchFxV1, mapTint);
 using MatchGet = BfMatchFxV1 const* (*)();
 using MatchUse = void (*)(int);
 using MatchPreview = void (*)(float);
@@ -1484,25 +1525,49 @@ int shells(float age, float const srgb[3], float seed, float yaw, float (*out)[3
 std::atomic<float> gViewYaw{0.0f};   // where the camera looks (atan2(forward.z, forward.x)), for the fireworks
 struct TestBed { float p[3]; float yaw = 0; int64_t at = -1000000; } gTestBed;
 void testBed() { ++gTestBedReq; }
-// death scenes (LyricsFlow's death animations, by 374m): each kill gets one, dealt from a shuffled bag of all seven
-// (a new shuffle when it runs out, never the same one twice in a row)
+// death scenes: each kill gets one, dealt from a shuffled bag of all of them (a new shuffle when it runs out, never
+// the same one twice in a row). 0-6 LyricsFlow's death animations (by 374m); 7-11 Finishers (by akeresmods): First
+// Finisher, Shield Counter, Headbutt, Kick, Ultimate Attack; 12 Ragdollified (by raiiiden); 13 Sable Ragdolls (by
+// Leonardoinc22) - all used with their authors' permission (shaders/death_scenes*.hlsli)
+// 14-62 Finishers 2 (by kyryi / dulimo): its 40 death effects and 9 specials; 63-79 Epic Fight's signature skills (by
+// Yesman and team) - also used with their authors' permission
+constexpr int kDeathScenes = 80;   // in the bag / the F6 list; 12 and 13 each have two variants (scene codes 12-15)
 static int deathSceneFor(uint64_t key) {
     static uint64_t keys[32]{}; static int vals[32]{}; static int nk = 0;
     for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
-    static int bag[7]; static int left = 0, last = -1;
+    static int bag[kDeathScenes]; static int left = 0, last = -1;
     static uint32_t rng = 0x9E3779B9u ^ uint32_t(steadyMs());
     auto rnd = [&] { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; };
     if (left == 0) {
-        for (int i = 0; i < 7; ++i) bag[i] = i;
-        for (int i = 6; i > 0; --i) std::swap(bag[i], bag[rnd() % uint32_t(i + 1)]);
-        if (bag[6] == last) std::swap(bag[6], bag[0]);   // the next one dealt is bag[left - 1] = bag[6]
-        left = 7;
+        for (int i = 0; i < kDeathScenes; ++i) bag[i] = i;
+        for (int i = kDeathScenes - 1; i > 0; --i) std::swap(bag[i], bag[rnd() % uint32_t(i + 1)]);
+        if (bag[kDeathScenes - 1] == last) std::swap(bag[kDeathScenes - 1], bag[0]);   // the next one dealt is bag[left - 1]
+        left = kDeathScenes;
     }
     int const v = bag[--left];
     last = v;
     keys[nk % 32] = key; vals[nk % 32] = v; ++nk;
     return v;
 }
+// the scene code the shader draws: Ragdollified (12) and Sable Ragdolls (13) each come in two baked variants - the
+// CPU picks one, so the sounds (DeathSounds.cpp) land with what is drawn: 12 melee / 13 side, 14 slump / 15 roll
+static int deathSceneCode(int scene, uint64_t key) {
+    uint32_t const h = uint32_t((key * 0x9E3779B97F4A7C15ull) >> 40);
+    if (scene == 12) return 12 + int(h % 100u >= 55u);
+    if (scene == 13) return 14 + int(h & 1u);
+    if (scene >= 14) return scene + 2;   // Finishers 2: codes 16-64, Epic Fight: 65-81
+    return scene;
+}
+// where the camera looked when a kill came (the finishers lay the pair out side-on to it); kept per kill so the scene
+// doesn't swing round as you turn
+static float killYawFor(uint64_t key) {
+    static uint64_t keys[32]{}; static float vals[32]{}; static int nk = 0;
+    for (int i = 0; i < 32; ++i) if (keys[i] == key && key) return vals[i];
+    float const y = gViewYaw.load(std::memory_order_relaxed);
+    keys[nk % 32] = key; vals[nk % 32] = y; ++nk;
+    return y;
+}
+std::wstring wfxConfigFile(wchar_t const* name); // config/<name> next to the World FX logs (empty until known)
 static MatchFrame matchFrame(WorldFxLook const& look) {
     int64_t const now = steadyMs();
     std::lock_guard l(gMatchMutex);
@@ -1514,7 +1579,8 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     BfMatchFxV1 const* b = get ? get() : nullptr;
     bool const ok = b && b->version >= 5 && b->size >= kMatchV5Size;
     bool const v6 = ok && b->version >= 6 && b->size >= kMatchV6Size;
-    bool const v7 = ok && b->version >= 7 && b->size >= sizeof(BfMatchFxV1);
+    bool const v7 = ok && b->version >= 7 && b->size >= kMatchV7Size;
+    bool const v8 = ok && b->version >= 8 && b->size >= sizeof(BfMatchFxV1);
     gSkinSrc = v6 ? b : nullptr;
     if (use) use((look.living && ok && gWorldSky.load() != 0 ? 1 : 0) | (look.beds && ok ? 2 : 0)); // 2: we draw the beds
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
@@ -1601,9 +1667,15 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             c.eC[ne][1] = e.kind == 8 ? float(e.floorDy) * 0.1f : (e.floorDy > 64 ? -1.0f : float(e.floorDy));   // hits: view yaw
             c.eC[ne][2] = e.col[3];   // hits: 2 you were hit, 1 your hit, 0 someone else's
             if (e.kind == 3 || e.kind == 4) {
-                int const sc = look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(e.atMs) * 31u + uint64_t(e.seed));
+                uint64_t const key = uint64_t(e.atMs) * 31u + uint64_t(e.seed);
+                int const sc = deathSceneCode(look.deathScene >= 0 ? look.deathScene : deathSceneFor(key), key);
+                c.eC[ne][1] = killYawFor(key);
+                float const kp[3] = {float(e.x) + 0.5f, float(e.y), float(e.z) + 0.5f};
+                rf::deathsfx::onKill(key, sc, age, kp, look.killSfx);
                 uint32_t const slot1 = v6 && e.floorDy >= 1 && e.floorDy <= 16 && b->skins[e.floorDy - 1].ok ? e.floorDy : 0;
-                c.eC[ne][3] = float(sc) + 16.0f * float(slot1);
+                c.eC[ne][3] = float(sc) + 128.0f * float(slot1);   // scene (0..127) + the victim's skin slot
+                // the phantoms (Finishers / Epic Fight killers) wear your own skin, when Bedrock Forge sent it
+                c.eC[ne][2] = float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
             } else if (e.kind == 6) {   // the fireworks go up where you were looking when the win came, and stay there
                 static int64_t winAt = -1; static float winYaw = 0.0f;
                 if (winAt != e.atMs) { winAt = e.atMs; winYaw = gViewYaw.load(std::memory_order_relaxed); }
@@ -1617,8 +1689,12 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
             auto& c = f.cb;
             c.eA[ne][0] = std::floor(gTestKill.p[0]); c.eA[ne][1] = std::floor(gTestKill.p[1]); c.eA[ne][2] = std::floor(gTestKill.p[2]); c.eA[ne][3] = ta;
             c.eB[ne][0] = 0.30f; c.eB[ne][1] = 0.62f; c.eB[ne][2] = 1.0f; c.eB[ne][3] = float(gTestKill.kind);
-            c.eC[ne][0] = 4242.0f; c.eC[ne][1] = -1.0f;
-            c.eC[ne][3] = float(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u)) + 16.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
+            c.eC[ne][0] = 4242.0f; c.eC[ne][1] = killYawFor(uint64_t(gTestKill.at) + 7u);
+            int const tsc = deathSceneCode(look.deathScene >= 0 ? look.deathScene : deathSceneFor(uint64_t(gTestKill.at) + 7u), uint64_t(gTestKill.at) + 7u);
+            float const tkp[3] = {std::floor(gTestKill.p[0]) + 0.5f, std::floor(gTestKill.p[1]), std::floor(gTestKill.p[2]) + 0.5f};
+            rf::deathsfx::onKill(uint64_t(gTestKill.at) + 7u, tsc, ta, tkp, look.killSfx);
+            c.eC[ne][3] = float(tsc) + 128.0f * float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
+            c.eC[ne][2] = float(v6 && b->mySkin >= 1 && b->mySkin <= 16 && b->skins[b->mySkin - 1].ok ? b->mySkin : 0);
             f.cb.m1[2] = 1.0f;
             ++ne;
         }
@@ -1754,6 +1830,60 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
         if (!look.vitals) hp = -1.0f, run = 0.0f;
         f.cb.m3[0] = hp; f.cb.m3[1] = std::min(beat, 1.0f); f.cb.m3[2] = run; f.cb.m3[3] = sinceKill;
     }
+    {   // test teams for a single-player world: config/wfxteams.txt = "<teams> <beds broken> <teams out>" puts that many
+        // teams in a ring round the camera (the first ones' beds broken / out, timed from when the file was written)
+        static int64_t readAt = -100000; static int ft[3] = {0, 0, 0}; static int64_t since = 0;
+        if (now - readAt > 1000) {
+            readAt = now;
+            int a = 0, b2 = 0, c2 = 0;
+            std::wstring const fn = wfxConfigFile(L"wfxteams.txt");
+            if (std::FILE* fp = fn.empty() ? nullptr : _wfopen(fn.c_str(), L"r")) {
+                if (std::fscanf(fp, "%d %d %d", &a, &b2, &c2) != 3) a = 0;
+                std::fclose(fp);
+            }
+            if (ft[0] != a || ft[1] != b2 || ft[2] != c2) since = now;
+            ft[0] = a, ft[1] = b2, ft[2] = c2;
+        }
+        if (ft[0] >= 2) {
+            static float const cols[8][3] = {{1, 0.1f, 0.1f}, {0.1f, 0.3f, 1}, {0.1f, 1, 0.2f}, {1, 0.9f, 0.1f}, {0.1f, 1, 1}, {1, 0.2f, 1}, {1, 1, 1}, {0.6f, 0.6f, 0.6f}};
+            auto const snapT = rf::lyrics::camera();
+            float const a = float(now - since) / 1000.0f, cam[3] = {float(snapT.pos[0]), float(snapT.pos[1]), float(snapT.pos[2])};
+            int const n = std::min(ft[0], 8);
+            for (int i = 0; i < n; ++i) {
+                float const ang = 6.2832f * float(i) / float(n);
+                auto& c = f.cb;
+                c.tPos[i][0] = cam[0] + std::cos(ang) * 45.0f; c.tPos[i][1] = cam[1] - 2.0f; c.tPos[i][2] = cam[2] + std::sin(ang) * 45.0f;
+                bool const broken = i < ft[1], out = i < ft[2];
+                c.tPos[i][3] = broken ? 0.0f : 1.0f;
+                std::memcpy(c.tCol[i], cols[i], 12); c.tCol[i][3] = 0.0f;
+                c.bVis[i][3] = -100.0f; c.tAge[i][0] = broken ? a : -1.0f; c.tAge[i][1] = 0.0f; c.tAge[i][2] = out ? std::clamp(a / 4.0f, 0.0f, 1.0f) : 0.0f; c.tAge[i][3] = i == n - 1 ? 1.0f : 0.0f;
+            }
+            f.cb.m0[0] = float(n);
+        }
+    }
+    {   // for the city: how many teams are still in (trMin.w) and how far you have fallen under the islands (trMax.w)
+        int const nt = std::clamp(int(f.cb.m0[0]), 0, 16);
+        int alive = 0; float yS = 0;
+        for (int i = 0; i < nt; ++i) { alive += f.cb.tAge[i][2] < 0.5f; yS += f.cb.tPos[i][1]; }
+        f.cb.trMin[3] = float(alive);
+        auto const snapF = rf::lyrics::camera();
+        f.cb.trMax[3] = nt > 0 && snapF.valid ? std::clamp((yS / float(nt) - 14.0f - float(snapF.pos[1])) / 30.0f, 0.0f, 1.0f) : 0.0f;
+    }
+    {   // the map's theme tint (m4.yzw, 1 = none): from BF (the Hive vote), or config/maptint.txt "r g b strength" to try one
+        float t[4] = {1, 1, 1, 0};
+        if (v8) std::memcpy(t, b->mapTint, 16);
+        static int64_t readAt = -100000; static float ov[4] = {1, 1, 1, -1};
+        if (now - readAt > 2000) {
+            readAt = now; ov[3] = -1;
+            if (std::FILE* fp = _wfopen(wfxConfigFile(L"maptint.txt").c_str(), L"r")) {
+                if (std::fscanf(fp, "%f %f %f %f", &ov[0], &ov[1], &ov[2], &ov[3]) != 4) ov[3] = -1;
+                std::fclose(fp);
+            }
+        }
+        if (ov[3] >= 0) std::memcpy(t, ov, 16);
+        float const k = std::clamp(t[3], 0.0f, 1.0f);
+        for (int i = 0; i < 3; ++i) f.cb.m4[1 + i] = 1.0f + (std::clamp(t[i], 0.0f, 2.0f) - 1.0f) * k;
+    }
     gMatch = f;
     return f;
 }
@@ -1763,7 +1893,10 @@ constexpr UINT kMcbSlots = 16, kMcbStride = 8192;
 ComPtr<ID3D12Resource> gMcb;
 uint8_t*               gMcbMap = nullptr;
 UINT                   gMcbNext = 0;
-static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& cb) {
+static D3D12_GPU_VIRTUAL_ADDRESS uploadRing(ID3D12Device* dev, void const* data, size_t size);
+static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& cb) { return uploadRing(dev, &cb, sizeof cb); }
+static D3D12_GPU_VIRTUAL_ADDRESS uploadRing(ID3D12Device* dev, void const* data, size_t size) {
+    if (size > kMcbStride) return 0;
     std::lock_guard l(gMatchMutex);
     if (!gMcb) {
         D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};
@@ -1777,7 +1910,7 @@ static D3D12_GPU_VIRTUAL_ADDRESS uploadMatch(ID3D12Device* dev, MatchCb const& c
         gMcbMap = static_cast<uint8_t*>(p);
     }
     UINT const slot = gMcbNext++ % kMcbSlots;
-    std::memcpy(gMcbMap + slot * kMcbStride, &cb, sizeof cb);
+    std::memcpy(gMcbMap + slot * kMcbStride, data, size);
     return gMcb->GetGPUVirtualAddress() + UINT64(slot) * kMcbStride;
 }
 
@@ -1808,8 +1941,14 @@ static void deckOf(MatchFrame const& m, float& y, float& cx, float& cz) {
 
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void followLoadedAtmosphere();
+void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
-    if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldSky(list, st, calls);
+    if (gWorldSky.load(std::memory_order_relaxed)) {
+        bool const r = drawWorldSky(list, st, calls);
+        // domeFallback(list, st, calls);   // off: in game the pass ran ~120 times a second there, yet 5 of 6 frames still
+        //                                     showed the plain blue - its picture is wiped (the frame's colour clear runs after it)
+        return r;
+    }
     if (rf::iris::enabled()) { gSkySinceClear = true; if (!gUi.replace || !gActive.load(std::memory_order_relaxed)) return true; } // IrisBridge: the pack's sky is in its composite chain
     if (!st.nVb || !st.vb || !st.haveTopo) { ++gSkipped; setStage2("skipped a sky draw (list state not tracked yet)"); return false; }
     ComPtr<ID3D12Device> dev;
@@ -1960,6 +2099,7 @@ static bool drawIrisPass(ID3D12GraphicsCommandList* list, GameState const& st, C
 bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     if (rf::iris::enabled()) return drawIrisPass(list, st, calls);                         // IrisBridge (Java shaderpack) wins
     if (gWorldSky.load(std::memory_order_relaxed)) return drawWorldFxPass(list, st, calls); // the World FX look rides here
+    if (gBlurOnly.load(std::memory_order_relaxed)) drawWorldFxPass(list, st, calls);        // any other sky: the pass draws the motion blur alone
     if (!st.nVb || !st.vb || !st.haveTopo) return false;
     auto copy = bfCopy();
     if (!copy) return false;
@@ -2020,7 +2160,13 @@ bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 void noteHidden() { ++gHidden; }
 
 std::atomic<float> gNovakPhase{-1.0f};
+std::atomic<float> gWorldPhase{0.0f};
+std::atomic<bool>  gWorldNovak{false};
 float novakMatchK() { return gNovakPhase.load(std::memory_order_relaxed); }
+float cloudSeaMatchK() {
+    if (!gWorldSky.load(std::memory_order_relaxed) || gWorldNovak.load(std::memory_order_relaxed)) return -1.0f;
+    return std::clamp(gWorldPhase.load(std::memory_order_relaxed) * 0.5f, 0.0f, 1.0f);
+}
 bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     followLoadedAtmosphere();
     GamePso g;
@@ -2051,7 +2197,8 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     MatchFrame const mfs = matchFrame(worldFxLook());
     deckOf(mfs, c[15], c[16], c[17]);
     c[18] = gQuality.load() + (worldFxLook().glass > 0.0f ? 2.0f : 0.0f); c[19] = mfs.phase;
-    gNovakPhase = worldFxLook().glass > 0.0f ? std::clamp(mfs.phase * 0.5f, 0.0f, 1.0f) : -1.0f;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
+    gNovakPhase = worldFxLook().glass > 0.0f ? std::clamp(mfs.phase * 0.5f, 0.0f, 1.0f) : -1.0f;
+    gWorldPhase = mfs.phase, gWorldNovak = worldFxLook().glass > 0.0f;   // + 2: the Novak Glass atmosphere (cloud_sea.hlsl)
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWsRoot.Get());
@@ -2109,7 +2256,11 @@ float adaptQuality() {
         float dt = float(now - lastUs) * 1e-6f;
         if (dt > 0.0f && dt < 0.25f) {
             ema = ema * 0.95f + dt * 0.05f;
-            if (ema > 1.0f / 150.0f) q = std::max(0.0f, q - 0.01f);
+            // (audit: measured at night in a match, quality 0 saves ~7% of the pass (3.8 vs 4.1 ms) and costs the
+            //  boards their script and the far rings - and when the game itself is the limit (~140 FPS here) the
+            //  quality sat at 0 for nothing. It gives back down to 0.5; below that only under 110 FPS.)
+            float const floorQ = ema > 1.0f / 110.0f ? 0.0f : 0.5f;
+            if (ema > 1.0f / 150.0f) q = std::max(std::min(q, floorQ), q - 0.01f);
             else if (ema < 1.0f / 160.0f) q = std::min(1.0f, q + 0.002f);   // (was 175: at 160-170 FPS the quality sat at its floor for good)
         }
     }
@@ -2121,7 +2272,72 @@ float adaptQuality() {
 // looking down, Bedrock culls its cloud draw - the draw the World FX pass rides on - so the pass (cloud sea, beds,
 // effects) would vanish. Then it runs at the frame's first UI draw instead, on the same targets (one per frame, never both)
 std::atomic<uint64_t> gFxRanNo{~0ull}, gFxFallbackNo{~0ull};
+std::atomic<bool>     gUnderwater{false};
+void setUnderwater(bool on) {
+    static std::atomic<bool> first{true};
+    if (first.exchange(false)) ll_shim::info("[RF] World FX: watching the camera for water (client thread)");
+    if (gUnderwater.exchange(on, std::memory_order_relaxed) != on) ll_shim::info(std::string("[RF] World FX: under water ") + (on ? "- the pass draws the water" : "- out of the water"));
+}
 std::atomic<size_t>   gFxRt{0}, gFxDs{0};
+// every (colour, depth) target pair the pass has run on: the game may swap between two sets of world targets frame to
+// frame - a single remembered pair let the looking-down fallback run on every other frame only (the flicker)
+std::atomic<size_t>   gFxPairRt[8]{}, gFxPairDs[8]{};
+std::atomic<int>      gFxPairNext{0};
+void   rememberFxPair(size_t rt, size_t ds) {
+    for (int i = 0; i < 8; ++i) if (gFxPairDs[i].load() == ds) { gFxPairRt[i] = rt; return; }
+    int const i = gFxPairNext.fetch_add(1) & 7;
+    gFxPairDs[i] = ds, gFxPairRt[i] = rt;
+}
+// (colour, depth) target pairs the GAME bound lately (OMSetRenderTargets): a handle we did not see the game bind this
+// frame may point at a freed target (the world's targets are rebuilt when a server switches world - binding a remembered
+// one crashed the driver joining the Hive)
+std::mutex gSeenMutex;
+struct SeenRts { size_t rt = 0, ds = 0; int64_t ms = 0; };
+SeenRts gSeen[32];
+int64_t nowMsSky() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+bool seenRecently(size_t rt, size_t ds, int64_t within) {
+    int64_t const t = nowMsSky();
+    std::lock_guard l(gSeenMutex);
+    for (auto const& e : gSeen) if (e.rt == rt && e.ds == ds && t - e.ms <= within) return true;
+    return false;
+}
+bool worldClearColour(size_t rtv, float const* game, float out[4]) {
+    if (!gWorldSky.load(std::memory_order_relaxed) || !rtv) return false;
+    bool isWorld = false;
+    for (int i = 0; i < 8; ++i) if (gFxPairRt[i].load(std::memory_order_relaxed) == rtv) isWorld = true;
+    if (!isWorld) return false;
+    auto ss = [](float a, float b, float x) { float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); };
+    float const k = gWorldPhase.load(std::memory_order_relaxed);
+    float const night = ss(1.15f, 1.9f, k), dusk = ss(0.0f, 1.0f, k);
+    float day[3], eve[3], dark[3];
+    if (gWorldNovak.load(std::memory_order_relaxed)) {   // the glass city under the islands / the black void at night
+        float const d[3] = {0.16f, 0.30f, 0.52f}, e[3] = {0.20f, 0.16f, 0.34f}, n[3] = {0.0f, 0.0f, 0.0f};
+        std::copy(d, d + 3, day), std::copy(e, e + 3, eve), std::copy(n, n + 3, dark);
+    } else {                                             // the cloud sea's tops
+        float const d[3] = {0.84f, 0.80f, 0.76f}, e[3] = {0.86f, 0.55f, 0.38f}, n[3] = {0.05f, 0.06f, 0.11f};
+        std::copy(d, d + 3, day), std::copy(e, e + 3, eve), std::copy(n, n + 3, dark);
+    }
+    for (int i = 0; i < 3; ++i) out[i] = (day[i] + (eve[i] - day[i]) * dusk) * (1.0f - night) + dark[i] * night;
+    out[3] = game[3];
+    return true;
+}
+void noteTargetsBound(size_t rt, size_t ds) {
+    if (!rt) return;
+    int64_t const t = nowMsSky();
+    std::lock_guard l(gSeenMutex);
+    int oldest = 0;
+    for (int i = 0; i < 32; ++i) {
+        if (gSeen[i].rt == rt && gSeen[i].ds == ds) { gSeen[i].ms = t; return; }
+        if (gSeen[i].ms < gSeen[oldest].ms) oldest = i;
+    }
+    gSeen[oldest] = {rt, ds, t};
+}
+size_t fxPairRt(size_t ds) {   // 0: not a world depth buffer
+    for (int i = 0; i < 8; ++i) if (gFxPairDs[i].load(std::memory_order_relaxed) == ds) return gFxPairRt[i].load(std::memory_order_relaxed);
+    return 0;
+}
+std::atomic<long> gDbgClears{0}, gDbgFbOk{0}, gDbgFbNo{0}, gDbgCloud{0}, gDbgStale{0}, gDbgDome{0};
+std::atomic<int64_t> gLastCloudPassMs{0};
 std::atomic<ID3D12PipelineState*> gFxPso{nullptr};
 // ---- GPU time of the World FX pass (timestamps round the copies + the draw), for the F6 readout and the A/B bench.
 // An 8-frame ring: frame n writes slot n % 8 and reads the slot written 7 frames ago (long finished on the GPU).
@@ -2133,6 +2349,12 @@ bool                    failed = false;
 std::atomic<float>      ms{0.0f};       // smoothed pass time
 float                   ema = 0.0f;
 std::filesystem::path   logDir;
+} // namespace wfxperf
+std::wstring wfxConfigFile(wchar_t const* name) {
+    if (wfxperf::logDir.empty()) return L"";
+    return (wfxperf::logDir.parent_path().parent_path() / "config" / name).wstring();
+}
+namespace wfxperf {
 // A/B bench: config/wfxbench.txt = "glass A B [phase P] [seconds S]" -> the pass alternates glass A / B every 2 s for
 // S seconds (default 30) and writes the average GPU ms of each to logs/worldfx/bench.txt
 struct Bench { bool on = false; std::string key = "glass"; float a = 0, b = 1, phase = -2, quality = -1; WorldFxLook saved{};
@@ -2145,7 +2367,7 @@ bool setField(WorldFxLook& l, std::string const& k, float v) {
     else if (k == "ink") l.ink = v; else if (k == "air") l.air = v; else if (k == "living") l.living = v != 0;
     else if (k == "teams") l.teams = v; else if (k == "shards") l.shards = v; else if (k == "waves") l.waves = v; else if (k == "trails") l.trails = v;
     else if (k == "beds") l.beds = v != 0; else if (k == "kills") l.kills = v != 0; else if (k == "vitals") l.vitals = v != 0;
-    else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v; else if (k == "skyrate") l.skyRate = v;
+    else if (k == "blurtest") l.blurTest = int(v); else if (k == "blurmove") l.blurMove = v; else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v; else if (k == "skyrate") l.skyRate = v;
     else return false;
     return true;
 }
@@ -2241,9 +2463,11 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     bool const ok = drawWorldFxPassImpl(list, st, calls);
     if (ok) {
         size_t rt0 = 0, dsv = 0;
-        if (rf::worldfx::listTargets(list, rt0, dsv)) gFxRt = rt0, gFxDs = dsv;
+        if (rf::worldfx::listTargets(list, rt0, dsv)) gFxRt = rt0, gFxDs = dsv, rememberFxPair(rt0, dsv);
         gFxPso = st.pso;
         gFxSinceClear = true;
+        ++gDbgCloud;
+        gLastCloudPassMs = nowMsSky();
     }
     return ok;
 }
@@ -2256,16 +2480,28 @@ bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 // Block draws only happen in the world itself, so the HUD / hand clears never see them.)
 std::atomic<bool> gTerrainSinceClear{false};
 void noteTerrainDraw() { if (!gTerrainSinceClear.load(std::memory_order_relaxed)) gTerrainSinceClear.store(true, std::memory_order_relaxed); }
-bool fxFallbackWanted(size_t dsv) {
-    if ((!gWorldSky.load(std::memory_order_relaxed) && !rf::iris::enabled()) || !gFxPso.load(std::memory_order_relaxed) || dsv != gFxDs.load(std::memory_order_relaxed)) return false;
+bool fxFallbackWanted(ID3D12GraphicsCommandList* /*list*/, size_t dsv) {   // (a try to only count clears over the world's target made Novak flicker everywhere - reverted)
+    if ((!fxOn() && !rf::iris::enabled()) || !gFxPso.load(std::memory_order_relaxed) || !fxPairRt(dsv)) return false;
+    ++gDbgClears;
     bool const sky  = gSkySinceClear.exchange(false);
     bool const done = gFxSinceClear.exchange(false);
     bool const terr = gTerrainSinceClear.exchange(false);
     return (sky || terr) && !done;
 }
-bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
-    size_t rt0 = 0, dsv = 0;
-    if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != gFxRt.load() || dsv != gFxDs.load()) return false; // not the world's targets
+bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, size_t dsvClear) {
+    size_t const wrt = fxPairRt(dsvClear);
+    if (!wrt) { ++gDbgFbNo; return false; }
+    // The post-world clear is often the first call on a freshly reset command list: what we remember as "bound" there is
+    // left over from that list's last recording (seen in game: ~60 refusals a second looking down - the flicker). Bind
+    // the world's own targets for the pass, and put back what was remembered afterwards (the game binds its own before
+    // its next draw on a fresh list anyway).
+    size_t oldRt = 0, oldDs = 0;
+    bool const hadOld = rf::worldfx::listTargets(list, oldRt, oldDs);
+    if (!calls.setRts) { ++gDbgFbNo; return false; }
+    if (!(hadOld && oldRt == wrt && oldDs == dsvClear)) { ++gDbgStale; return false; }   // binding the world's targets ourselves crashed the driver joining the Hive (twice, even only for pairs the game bound in the last 250 ms) - off until understood
+    calls.setRts(list, wrt, dsvClear);
+    rf::worldfx::onSetRts(list, wrt, dsvClear);
+    size_t const rt0 = wrt;
     GameState s2 = st;
     s2.pso = gFxPso.load();
     // At this depth clear the game can be on a fresh command list: targets set, but no viewport or scissor yet (D3D12
@@ -2278,8 +2514,23 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
         list->RSSetScissorRects(1, &sc);
     }
     bool const ok = rf::iris::enabled() ? drawIrisPass(list, s2, calls) : drawWorldFxPassImpl(list, s2, calls);
+    if (hadOld && (oldRt != wrt || oldDs != dsvClear) && seenRecently(oldRt, oldDs, 250)) {   // (a stale leftover is not put back)
+        calls.setRts(list, oldRt, oldDs);
+        rf::worldfx::onSetRts(list, oldRt, oldDs);
+    }
     if (st.pso) calls.setPso(list, st.pso);         // the game goes on with its own pipeline
     if (st.haveTopo) calls.setTopo(list, st.topo);
+    if (ok) ++gDbgFbOk; else ++gDbgFbNo;
+    {   // looking-down diagnostics, every ~5 s while the fallback is in use
+        static std::atomic<int64_t> last{0};
+        int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (nowMs - last.load() > 5000) {
+            last = nowMs;
+            int pairs = 0; for (auto& d : gFxPairDs) pairs += d.load() != 0;
+            ll_shim::info("[RF] World FX looking-down: world clears " + std::to_string(gDbgClears.exchange(0)) + ", fallback ok " + std::to_string(gDbgFbOk.exchange(0)) +
+                          ", refused " + std::to_string(gDbgFbNo.exchange(0)) + ", cloud passes " + std::to_string(gDbgCloud.exchange(0)) + ", target pairs " + std::to_string(pairs) + ", stale " + std::to_string(gDbgStale.exchange(0)) + ", sky-draw passes " + std::to_string(gDbgDome.exchange(0)));
+        }
+    }
     static std::atomic<long> nFb{0};
     if ((nFb.fetch_add(1) & 255) == 0) ll_shim::info(std::string("[RF] World FX: no cloud draw this frame (looking down) - pass run at the depth clear: ") + (ok ? "ok" : "skipped"));
     return ok;
@@ -2306,11 +2557,96 @@ static bool drawIrisPass(ID3D12GraphicsCommandList* list, GameState const& st, C
     return ok;
 }
 
+// Looking down there is no cloud draw, and the post-world depth clear the fallback waits for usually comes on a fresh
+// list where the world's targets are not bound (logged: ~60 refusals a second = the flicker; binding them ourselves
+// crashed the driver joining the Hive). So when the cloud pass has not run for a few frames, the pass also runs right
+// after the game's own sky draw - on the game's own list, its own targets bound, depth still cleared: every pixel is
+// sky there, the background (sky / city / void) goes down first and the world is drawn over it. It marks the frame done,
+// so the clear fallback does not add a second, different look on the frames it does manage.
+// looking-down diagnostics (Nov 14: five fixes in, measure instead of guessing): why the end-of-world anchor skips
+std::atomic<long> gLvAt[3]{}, gLvNoPso{0}, gLvDone{0}, gLvPair{0}, gLvCloud{0}, gLvOk{0}, gLvFail{0}, gFrames{0}, gFramesNoPass{0};
+std::atomic<long> gPassesThisFrame{0};
+void noteLeave(int where) { if (where >= 0 && where < 3) ++gLvAt[where]; }
+void lookDownFrameTick() {   // once per Present: did any path draw the pass this frame?
+    ++gFrames;
+    if (gWorldSky.load(std::memory_order_relaxed) && gPassesThisFrame.exchange(0) == 0) ++gFramesNoPass;
+    static int64_t last = 0;
+    int64_t const t = nowMsSky();
+    if (t - last < 5000) return;
+    last = t;
+    if (!gWorldSky.load(std::memory_order_relaxed)) return;
+    ll_shim::info("[RF] WFX frames " + std::to_string(gFrames.exchange(0)) + ", frames WITHOUT the pass " + std::to_string(gFramesNoPass.exchange(0)) +
+                  " | world-list ends: targets " + std::to_string(gLvAt[0].exchange(0)) + ", depth clear " + std::to_string(gLvAt[1].exchange(0)) +
+                  ", close " + std::to_string(gLvAt[2].exchange(0)) + " -> ran " + std::to_string(gLvOk.exchange(0)) + ", failed " + std::to_string(gLvFail.exchange(0)) +
+                  ", skipped: already done " + std::to_string(gLvDone.exchange(0)) + ", not world targets " + std::to_string(gLvPair.exchange(0)) +
+                  ", clouds recent " + std::to_string(gLvCloud.exchange(0)) + ", no pso " + std::to_string(gLvNoPso.exchange(0)));
+}
+// Measured on the Hive (Nov 14): looking down, the game draws the world into OTHER colour + depth targets than the one
+// pair the cloud pass taught us (3 of 4 world lists, "not world targets") - those frames had no pass at all: the
+// flicker, both skies. A list the game itself drew blocks into, on targets of the very same size and format as the
+// known world pair, is the world too: learn it.
+bool learnWorldPair(size_t rt, size_t ds) {
+    size_t const krt = gFxRt.load(), kds = gFxDs.load();
+    if (!rt || !ds || !krt || !kds) return false;
+    ID3D12Resource* a = rf::uicapture::rtvResourceOf(rt);
+    ID3D12Resource* b = rf::uicapture::rtvResourceOf(krt);
+    ID3D12Resource* da = rf::glassarmor::dsvResource(ds);
+    ID3D12Resource* db = rf::glassarmor::dsvResource(kds);
+    if (!a || !b || !da || !db) return false;
+    auto const ra = a->GetDesc(), rb = b->GetDesc(), sa = da->GetDesc(), sb = db->GetDesc();
+    if (ra.Width != rb.Width || ra.Height != rb.Height || ra.Format != rb.Format) return false;
+    if (sa.Width != sb.Width || sa.Height != sb.Height || sa.Format != sb.Format) return false;
+    rememberFxPair(rt, ds);
+    static std::atomic<int> n{0};
+    if (n.fetch_add(1) < 8) ll_shim::info("[RF] World FX: another world target pair learned (" + std::to_string(ra.Width) + "x" + std::to_string(ra.Height) + ")");
+    return true;
+}
+bool leaveWorldWanted(size_t rt, size_t ds) {
+    if (!rt || !fxOn() || !gFxPso.load(std::memory_order_relaxed)) { ++gLvNoPso; return false; }
+    if (gFxSinceClear.load()) { ++gLvDone; return false; }
+    if (fxPairRt(ds) != rt && !learnWorldPair(rt, ds)) { ++gLvPair; return false; }   // only the world's own targets
+    // (no 60 ms wait after the last cloud pass any more: measured, the cloud pass of a frame always comes before the world
+    //  list ends - "already done" - so the wait only left the frames while you turn below the horizon without the pass)
+    return true;
+}
+bool leaveWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    GameState s2 = st;
+    s2.pso = gFxPso.load();
+    bool const ok = drawWorldFxPassImpl(list, s2, calls);
+    if (ok) { gFxSinceClear = true; ++gDbgDome; ++gLvOk; } else ++gLvFail;
+    if (st.pso) calls.setPso(list, st.pso);
+    if (st.haveTopo) calls.setTopo(list, st.topo);
+    static std::atomic<int64_t> lastLog{0};
+    if (int64_t const t = nowMsSky(); t - lastLog.load() > 5000) {
+        lastLog = t;
+        ll_shim::info("[RF] World FX looking-down: end-of-world passes " + std::to_string(gDbgDome.exchange(0)) + ", clear-fallback ok " + std::to_string(gDbgFbOk.exchange(0)) +
+                      ", missed " + std::to_string(gDbgFbNo.exchange(0) + gDbgStale.exchange(0)) + ", cloud passes " + std::to_string(gDbgCloud.exchange(0)));
+    }
+    return ok;
+}
+void domeFallback(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
+    if (!gFxPso.load(std::memory_order_relaxed) || gFxSinceClear.load()) return;
+    if (nowMsSky() - gLastCloudPassMs.load() < 60) return;      // the clouds are being drawn: the normal pass runs
+    size_t rt0 = 0, dsv = 0;
+    if (!rf::worldfx::listTargets(list, rt0, dsv) || rt0 != fxPairRt(dsv)) return;   // only on the world's own targets
+    GameState s2 = st;
+    s2.pso = gFxPso.load();
+    if (drawWorldFxPassImpl(list, s2, calls)) { gFxSinceClear = true; ++gDbgDome; }
+    static std::atomic<int64_t> lastLog{0};
+    if (int64_t const t = nowMsSky(); t - lastLog.load() > 5000) {
+        lastLog = t;
+        ll_shim::info("[RF] World FX looking-down (sky draw): passes " + std::to_string(gDbgDome.exchange(0)) + ", clear-fallback ok " + std::to_string(gDbgFbOk.exchange(0)) +
+                      ", refused " + std::to_string(gDbgFbNo.exchange(0) + gDbgStale.exchange(0)));
+    }
+    if (st.pso) calls.setPso(list, st.pso);
+    if (st.haveTopo) calls.setTopo(list, st.topo);
+}
 static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
     WorldFxLook const look = gLook;
+    bool const blurOnly = gWorldSky.load(std::memory_order_relaxed) == 0;   // no World FX sky: only the motion blur draw
     // the pass also carries the cloud sea (sky pixels + terrain under the deck), so it runs with the block look off too
     if (!st.rootKnown) { wfxStatus("waiting for the game's root state"); return false; }
-    if (!gWsTexUp.load() || !gWsHeap) { wfxStatus("waiting for the cloud textures"); return false; }
+    if (!blurOnly && (!gWsTexUp.load() || !gWsHeap)) { wfxStatus("waiting for the cloud textures"); return false; }
     GamePso g;
     {
         std::lock_guard l(gPsoMutex);
@@ -2335,8 +2671,69 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
-    ID3D12PipelineState* pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
-    if (!pso) { wfxStatus("building the pass pipeline (in the background)"); return false; }
+    // ---- camera motion blur, part 1: what the camera did since the last frame (see the draw below). Worked out before
+    //      any GPU work: with no World FX sky and a still camera the pass has nothing to do at all.
+    // (audit 2: no velocity against the clock any more - the streak is a share of the real pose-to-pose motion, so it
+    //  always fits the gap between the two frames you see; the clock only caps it on slow frames)
+    struct BlurPose { double pos[3]{}; float f[3]{}, r[3]{}, u[3]{}; };
+    struct BlurCam { bool have = false; uint64_t calls = 0; BlurPose last, before; float avgDt = 0.007f; std::chrono::steady_clock::time_point at{}; };
+    static BlurCam bc;
+    BlurPose now2;
+    for (int a = 0; a < 3; ++a) { now2.pos[a] = snap.pos[a]; now2.f[a] = snap.forward[a]; now2.r[a] = snap.right[a]; now2.u[a] = snap.up[a]; }
+    if (snap.calls != bc.calls || !bc.have) {
+        auto const tNow = std::chrono::steady_clock::now();
+        double const dt = std::chrono::duration<double>(tNow - bc.at).count();
+        if (bc.have && dt < 0.1) { bc.before = bc.last; bc.avgDt += (float(std::clamp(dt, 0.002, 0.05)) - bc.avgDt) * 0.05f; }
+        else bc.before = now2;                                   // the first frame, or after a pause: no motion known
+        bc.last = now2; bc.have = true; bc.calls = snap.calls; bc.at = tNow;
+    }
+    BlurPose pa = bc.before;                                    // the camera one frame ago
+    float strength = rf::postfx::motionBlurWanted();
+    float const blurMove = rf::postfx::motionBlurMove() >= 0.0f ? std::min(rf::postfx::motionBlurMove(), 1.5f) : look.blurMove;   // the client menu's slider wins over F6
+    float blurFrac = 0.0f;
+    if (strength > 0.0f) blurFrac = std::min(0.6f * strength, 0.006f * strength / bc.avgDt);   // 60% of the gap at strength 1, never more than 6 ms of motion
+    float bT[3] = {float(now2.pos[0] - pa.pos[0]), float(now2.pos[1] - pa.pos[1]), float(now2.pos[2] - pa.pos[2])};
+    if (bT[0] * bT[0] + bT[1] * bT[1] + bT[2] * bT[2] > 9.0f) { pa = now2; bT[0] = bT[1] = bT[2] = 0.0f; }   // a teleport / respawn, not a move
+    if (look.blurTest) {   // bench / review: a steady pretend motion (as if 6 ms ago), so a still frame shows the blur and its cost
+        pa = now2; bT[0] = bT[1] = bT[2] = 0.0f; blurFrac = 1.0f;
+        if (look.blurTest == 2) for (int a = 0; a < 3; ++a) bT[a] = snap.right[a] * 5.6f * 0.006f;   // a sprint sideways
+        else {                                                                                        // 120 degrees a second
+            float const cs = std::cos(0.0126f), sn = std::sin(0.0126f);
+            for (float* b3 : {pa.f, pa.r, pa.u}) { float const x = b3[0], z = b3[2]; b3[0] = x * cs - z * sn; b3[2] = x * sn + z * cs; }
+        }
+    }
+    for (int a = 0; a < 3; ++a) bT[a] *= blurMove;
+    bool  blurNeed = false;
+    float blurDead = 1.0f;
+    ID3D12PipelineState* bp = nullptr;
+    if (blurFrac > 0.0f) {
+        rf::postfx::noteWorldBlur();
+        float const focal = float(rd.Width) * 0.5f * std::fabs(snap.proj[0]);   // pixels per radian at the middle
+        blurDead = std::max(0.9f, float(rd.Width) / 2560.0f);
+        float w3[3]{};
+        auto cross = [&](float const a[3], float const b[3]) { w3[0] += a[1] * b[2] - a[2] * b[1]; w3[1] += a[2] * b[0] - a[0] * b[2]; w3[2] += a[0] * b[1] - a[1] * b[0]; };
+        cross(pa.f, now2.f); cross(pa.r, now2.r); cross(pa.u, now2.u);          // 2 sin(angle) * axis
+        float const wl = 0.5f * std::sqrt(w3[0] * w3[0] + w3[1] * w3[1] + w3[2] * w3[2]) * blurFrac;
+        float const tl = std::sqrt(bT[0] * bT[0] + bT[1] * bT[1] + bT[2] * bT[2]) * blurFrac;
+        bp = derived(dev.Get(), g, 9);
+        // would anything move a pixel past the dead zone? (turning: everywhere; moving: a thing 0.6 blocks away)
+        blurNeed = bp && (wl * focal * 1.5f > blurDead || tl * focal / 0.6f > blurDead);
+    }
+    if (blurOnly && !blurNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
+        if (blurFrac > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
+        ++gPassesThisFrame;
+        return true;
+    }
+    // a kill playing this frame: the pass with the death scenes (built in the background the first time; until it is
+    // ready the lean pass draws and the kill simply has no scene yet)
+    bool const killsNow = !blurOnly && [&] { MatchFrame const m0 = matchFrame(look); return m0.cb.m0[1] > 0.5f && m0.cb.m1[2] > 0.5f; }();
+    int const kAdd = killsNow ? 10 : 0;
+    ID3D12PipelineState* pso = nullptr;
+    if (killsNow) pso = derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + kAdd);
+    else if (!blurOnly) derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + 10);   // warm it up before the first kill needs it
+    bool const killPso = pso != nullptr;
+    if (!pso && !blurOnly) pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
+    if (!pso && !blurOnly) { wfxStatus("building the pass pipeline (in the background)"); return false; }
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
     UINT64 rTot = 0, dTot = 0;
     dev->GetCopyableFootprints(&rd, 0, 1, 0, &fpC, nullptr, nullptr, &rTot);
@@ -2375,6 +2772,8 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     c[16] = float(rd.Width); c[17] = float(rd.Height); c[18] = float(fpC.Footprint.RowPitch); c[19] = float(df.Footprint.RowPitch);
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
     gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
+    { float const lp[3] = {float(snap.pos[0]), float(snap.pos[1]), float(snap.pos[2])}; rf::deathsfx::setListener(lp, snap.forward); }
+    if (!blurOnly) {   // ---- the World FX look itself (everything down to the motion blur)
     if (gTestBedReq.exchange(0)) {
         float fx = snap.forward[0], fz = snap.forward[2], fl = std::sqrt(fx * fx + fz * fz);
         if (fl < 1e-3f) fx = 0, fz = 1, fl = 1;
@@ -2427,6 +2826,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     c[35] = gAnchored ? 1.0f : 0.0f;
     c[36] = look.rays; c[37] = look.clouds; c[38] = adaptQuality(); c[39] = look.ink;
+    c[41] = gUnderwater.load(std::memory_order_relaxed) ? 1.0f : 0.0f;   // your head under water: the pass draws the water instead
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
@@ -2448,7 +2848,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             D3D12_FEATURE_DATA_D3D12_OPTIONS6 o6{};
             vrs = SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &o6, sizeof o6)) && o6.VariableShadingRateTier != D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED ? 1 : 0;
         }
-        if (vrs == 1) { psoSky = derived(dev.Get(), g, 7); psoTer = derived(dev.Get(), g, 8); }
+        if (vrs == 1) {
+            if (killPso) { psoSky = derived(dev.Get(), g, 17); psoTer = derived(dev.Get(), g, 18); }
+            if (!psoSky || !psoTer) { psoSky = derived(dev.Get(), g, 7); psoTer = derived(dev.Get(), g, 8); }
+        }
     }
     if (psoSky && psoTer) {
         D3D12_VIEWPORT vp{0.0f, 0.0f, float(rd.Width), float(rd.Height), 1.0f, 1.0f};   // every pixel at depth 1: the sky's depth
@@ -2469,12 +2872,63 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         calls.setPso(list, pso);
         calls.draw(list, 3, 1, 0, 0);
     }
+    } else {       // no World FX sky: only what the blur draw needs
+        calls.setRootSig(list, gWfxRoot.Get());
+        list->SetGraphicsRootShaderResourceView(1, sb->GetGPUVirtualAddress());
+        list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
+        calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    }
+    // ---- camera motion blur, part 2 (shaders/worldfx_blur.hlsl): the world as the pass left it, streaked along each
+    //      pixel's own path over a shutter time. Here, not at Present: there is depth (walking and strafing blur too, near
+    //      more than far) and the hand + HUD are not drawn yet, so they stay sharp. Costs nothing while the camera is still.
+    if (blurNeed) {
+        if (!blurOnly) {   // the pass just drew over the scene: take it again (with no World FX sky the first copy is the scene)
+            wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+            wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            dst.pResource = sb, dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
+            list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+            wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+        float b[44]{};
+        std::memcpy(b, c, 12 * sizeof(float));                      // c0..c2: the camera, as the pass used it
+        static uint32_t seed = 0;
+        b[11] = float(++seed & 1023u);
+        b[12] = blurFrac; b[13] = float(rd.Width) * 0.03f; b[14] = blurDead; b[15] = (c[15] > 0.5f ? 1.0f : 0.0f) + (look.blurTest == 3 ? 4.0f : 0.0f);
+        b[16] = c[16]; b[17] = c[17]; b[18] = c[18]; b[19] = c[19];
+        for (int a = 0; a < 3; ++a) { b[20 + a] = pa.f[a]; b[24 + a] = pa.r[a]; b[28 + a] = pa.u[a]; }
+        b[23] = bT[0]; b[27] = bT[1]; b[31] = bT[2];
+        // the things that move by themselves (Bedrock Forge: players, mobs, dropped items): left sharp. Yourself only in
+        // third person - in first person the camera is inside your own box.
+        struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; } acb{};
+        if (auto const* ba = rf::postfx::blurActors()) {
+            int n = 0;
+            for (uint32_t i = 0; i < ba->count && i < 32 && n < 24; ++i) {
+                auto const& e = ba->a[i];
+                float const dx = float(double(e.x) - snap.pos[0]), dy = float(double(e.y) - snap.pos[1]), dz = float(double(e.z) - snap.pos[2]);
+                if (dx * dx + dz * dz < (e.r + 0.35f) * (e.r + 0.35f) && dy < 0.3f && dy + e.h > -0.3f) continue;   // the camera is in it: you, first person
+                if (dx * dx + dy * dy + dz * dz > 70.0f * 70.0f) continue;
+                acb.pos[n][0] = dx; acb.pos[n][1] = dy; acb.pos[n][2] = dz; acb.pos[n][3] = e.r; acb.dim[n][0] = e.h;
+                ++n;
+            }
+            acb.info[0] = float(n);
+        }
+        D3D12_GPU_VIRTUAL_ADDRESS const acbVa = uploadRing(dev.Get(), &acb, sizeof acb);
+        if (!acbVa) blurNeed = false;
+        else list->SetGraphicsRootConstantBufferView(4, acbVa);
+        if (blurNeed) {
+        calls.setConsts(list, 0, 44, b, 0);
+        calls.setPso(list, bp);
+        calls.draw(list, 3, 1, 0, 0);
+        }
+    }
     if (timed) wfxperf::end(list, tsFrame);
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     calls.restoreRoot(list);
     calls.setPso(list, st.pso);
     if (st.haveTopo) calls.setTopo(list, st.topo);
+    ++gPassesThisFrame;
     long const n = ++gWfxFrames;
     if ((n & 63) == 1) wfxStatus("drawing (" + std::to_string(n) + " frames, " + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) +
                                  ", quality " + std::to_string(int(gQuality.load() * 100.0f)) + "%)");
@@ -2506,12 +2960,14 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "beds") gLook.beds = v != 0;
         else if (k == "kills") gLook.kills = v != 0;
         else if (k == "bedstyle") gLook.bedStyle = std::clamp(int(v), 0, 1);
-        else if (k == "deathscene") gLook.deathScene = std::clamp(int(v), -1, 6);
+        else if (k == "deathscene") gLook.deathScene = std::clamp(int(v), -1, kDeathScenes - 1);
+        else if (k == "killsfx") gLook.killSfx = std::clamp(float(v), 0.0f, 1.0f);
         else if (k == "living") gLook.living = v != 0;
         else if (k == "teams") gLook.teams = std::clamp(v, 0.f, 2.f);
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
         else if (k == "waves") gLook.waves = std::clamp(v, 0.f, 2.f);
         else if (k == "trails") gLook.trails = std::clamp(v, 0.f, 1.f);
+        else if (k == "blurmove") gLook.blurMove = std::clamp(v, 0.f, 1.5f);
     }
 }
 // One switch for the whole look: the Renderer Foundation side (sky, void, light, rim: the glass strength) and Bedrock
@@ -2583,8 +3039,8 @@ void saveWorldFxSettings() {
     std::ofstream out(gWfxConfig);
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nglass " << gLook.glass << "\nbeds " << (gLook.beds ? 1 : 0)
-        << "\nskyrate " << gLook.skyRate << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene
-        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\n";
+        << "\nskyrate " << gLook.skyRate << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene << "\nkillsfx " << gLook.killSfx
+        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\nblurmove " << gLook.blurMove << "\n";
 }
 
 void setWorldSky(int kind) {

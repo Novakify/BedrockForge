@@ -556,3 +556,7 @@ fabric.properties
 **/build/*BP/
 *.mcaddon
 deps/
+
+# lab build artifacts
+tools/worldfx_lab/*.spv
+tools/worldfx_lab/tex.npz

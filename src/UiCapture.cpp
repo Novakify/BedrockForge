@@ -336,7 +336,7 @@ using Close_t      = HRESULT(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*);
 using CreateDsv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_DEPTH_STENCIL_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
 using CreateRs_t   = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, UINT, void const*, SIZE_T, REFIID, void**);
 using CreateSrv_t  = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, D3D12_SHADER_RESOURCE_VIEW_DESC const*, D3D12_CPU_DESCRIPTOR_HANDLE);
-constexpr int kHooks = 27; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
+constexpr int kHooks = 28; // 13..20: graphics root state (LyricsFlow "My picture" in place of the sky)
 void*         gTgt[kHooks]{};
 void*         gDet[kHooks]{};
 void*         gOrig[kHooks]{};
@@ -450,6 +450,9 @@ struct SkyLS {
     ID3D12PipelineState* pso  = nullptr;
     int                  kind = -1; // cached rf::sky::kindOf(pso); -1 = not yet computed for pso
     ListIa               ia;
+    size_t               rt = 0, ds = 0; // the targets the game bound on this list in this recording
+    bool                 bound = false;  // ... and that it did (a reset list keeps nothing)
+    bool                 terr  = false;  // blocks were drawn on this list since its targets / last depth clear
 };
 std::mutex                                                        gSkyMutex; // only on a thread-local cache miss
 std::unordered_map<ID3D12GraphicsCommandList*, std::unique_ptr<SkyLS>> gSkyReg;
@@ -504,8 +507,17 @@ void gaNoteRts(ID3D12GraphicsCommandList* l, SIZE_T rt0, SIZE_T dsv, UINT n = 0,
 void gaNoteTopo(ID3D12GraphicsCommandList* l, D3D12_PRIMITIVE_TOPOLOGY t);
 void gaNoteVb(ID3D12GraphicsCommandList* l, UINT start, UINT n, D3D12_VERTEX_BUFFER_VIEW const* v);
 void gaNoteIb(ID3D12GraphicsCommandList* l, D3D12_INDEX_BUFFER_VIEW const* v);
+void leaveWorld(ID3D12GraphicsCommandList* list);
 void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HANDLE const* rts, BOOL single,
                                  D3D12_CPU_DESCRIPTOR_HANDLE const* ds) {
+    if (!gInSnapshot && rf::sky::wanted()) {
+        SkyLS* s = skyLS(list);
+        size_t const nrt = n > 0 && rts ? rts[0].ptr : 0, nds = ds ? ds->ptr : 0;
+        if (s->terr && s->bound && (s->rt != nrt || s->ds != nds)) { rf::sky::noteLeave(0); leaveWorld(list); }   // the game leaves the world's targets
+        if (s->rt != nrt || s->ds != nds) s->terr = false;
+        s->rt = nrt, s->ds = nds, s->bound = true;
+    }
+    if (!gInSnapshot) rf::sky::noteTargetsBound(n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
     if (!gInSnapshot && (rf::worldfx::tracking() || rf::worldfx::targetsWanted())) rf::worldfx::onSetRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0);
     if (gaOn()) gaFlush(list); // pending armor belongs to the targets bound now
     if (gaOn() || irisRec()) gaNoteRts(list, n > 0 && rts ? rts[0].ptr : 0, ds ? ds->ptr : 0, n, rts, single);
@@ -554,6 +566,10 @@ void STDMETHODCALLTYPE setVbHook(ID3D12GraphicsCommandList* list, UINT start, UI
     std::memcpy(s.vb, v, sizeof(D3D12_VERTEX_BUFFER_VIEW) * n);
 }
 void origSetPso(ID3D12GraphicsCommandList* l, ID3D12PipelineState* p) { reinterpret_cast<SetPso_t>(gOrig[3])(l, p); }
+void origSetRts(ID3D12GraphicsCommandList* l, size_t rt, size_t ds) {
+    D3D12_CPU_DESCRIPTOR_HANDLE r{rt}, d{ds};
+    reinterpret_cast<OmSet_t>(gOrig[4])(l, 1, &r, FALSE, &d);
+}
 void origTopo(ID3D12GraphicsCommandList* l, int t) { reinterpret_cast<Topo_t>(gOrig[11])(l, D3D12_PRIMITIVE_TOPOLOGY(t)); }
 void origVb(ID3D12GraphicsCommandList* l, unsigned s, unsigned n, D3D12_VERTEX_BUFFER_VIEW const* v) { reinterpret_cast<SetVb_t>(gOrig[12])(l, s, n, v); }
 void origDraw(ID3D12GraphicsCommandList* l, unsigned a, unsigned b, unsigned c, unsigned d) { reinterpret_cast<Draw_t>(gOrig[5])(l, a, b, c, d); }
@@ -597,6 +613,7 @@ void STDMETHODCALLTYPE createSrvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_S
     rf::glassarmor::noteSrv(h.ptr, r); // always: textures make their SRVs once, long before a capture
 }
 HRESULT STDMETHODCALLTYPE closeHook(ID3D12GraphicsCommandList* list) {
+    if (rf::sky::wanted()) { SkyLS* s = skyLS(list); if (s->terr && s->bound) { rf::sky::noteLeave(2); leaveWorld(list); } s->terr = false; s->bound = false; }
     if (gaOn()) gaFlush(list); // the actor pass often ends the list: replay the held-back armor while its targets are bound
     return reinterpret_cast<Close_t>(gOrig[25])(list);
 }
@@ -899,6 +916,27 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
     if (auto* pso = rf::glassarmor::listPso(l)) reinterpret_cast<SetPso_t>(gOrig[3])(l, pso);
 }
 
+// Looking down there is no cloud draw, and the post-world depth clear usually comes on ANOTHER command list (logged on
+// the Hive: 2 of 3 frames) - the pass missed those frames and the game's plain fog blue flashed through. The sure
+// anchor is this list itself: blocks were drawn on it into the world's targets, and now the game ends it (or binds
+// other targets) without the pass having run - run it here, the world's targets still bound by the game itself.
+void leaveWorld(ID3D12GraphicsCommandList* list) {
+    SkyLS* s = skyLS(list);
+    s->terr = false;
+    if (gInSnapshot || !rf::sky::leaveWorldWanted(s->rt, s->ds)) return;
+    rf::sky::GameState st;
+    st.pso       = s->pso;
+    st.haveTopo  = s->ia.haveTopo;
+    st.topo      = int(s->ia.topo);
+    st.nVb       = s->ia.nVb;
+    st.vb        = s->ia.vb;
+    st.rootKnown = rootKnown(list);
+    rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
+    gInSnapshot = true;
+    rf::sky::leaveWorldFx(list, st, c);
+    gInSnapshot = false;
+}
+
 /// 0 = normal draw, 1 = skip it (vanilla sun / moon / stars), 2 = draw it, then our dome,
 /// 3 = clouds: draw them (unless hidden), then our weather particles (depth-tested against the terrain there)
 int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa& ia, bool& drawOrig) {
@@ -909,7 +947,9 @@ int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa&
     if (!pso) return 0;
     int k = s->kind;
     if (k < 0) { k = rf::sky::kindOf(pso); s->kind = k; } // cold path: a draw beat setPso's cache fill
-    if (k == rf::sky::Terrain) { rf::sky::noteTerrainDraw(); return 0; }
+    if (k == rf::sky::Terrain) { rf::sky::noteTerrainDraw(); if (s->bound) s->terr = true; return 0; }
+    bool const rep = rf::sky::replacing();   // false: only the motion blur wants the pass - the game's own sky stays as it is
+    if (!rep && k != rf::sky::Clouds) return 0;
     if (k == rf::sky::Hide) { drawOrig = false; return 1; }
     if (k == rf::sky::VvSky) { // Vibrant Visuals: the first vanilla star / sun / moon draw of the frame gets our sky
         if (!rf::sky::vvWanted()) return 0;
@@ -922,7 +962,7 @@ int skyDrawKind(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa&
     if (k != rf::sky::Dome && k != rf::sky::Clouds) return 0;
     st.pso = pso;
     ia     = s->ia;
-    if (k == rf::sky::Clouds) { drawOrig = !rf::sky::hideClouds(); return 3; }
+    if (k == rf::sky::Clouds) { drawOrig = !rep || !rf::sky::hideClouds(); return 3; }
     return 2;
 }
 void afterSky(ID3D12GraphicsCommandList* list, rf::sky::GameState& st, ListIa const& ia, int kind) {
@@ -952,7 +992,12 @@ void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_D
             ll_shim::info("[RF] IrisBridge: game depth clear " + std::to_string(depth) + " on dsv " + std::to_string(dsv.ptr) +
                           " (flags " + std::to_string(int(flags)) + ")");
     }
-    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::fxFallbackWanted(dsv.ptr)) {
+    // the list that drew the world clears its depth (before the hand): the world is complete on it - the pass goes here
+    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::wanted()) {
+        SkyLS* s = skyLS(list);
+        if (s->terr && s->bound) { rf::sky::noteLeave(1); leaveWorld(list); }
+    }
+    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::fxFallbackWanted(list, dsv.ptr)) {
         SkyLS* s = skyLS(list);
         rf::sky::GameState st;
         st.pso       = s->pso;
@@ -962,11 +1007,23 @@ void STDMETHODCALLTYPE clearDsvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_D
         st.vb        = s->ia.vb;
         st.rootKnown = rootKnown(list);
         rf::sky::Calls c{&origSetPso, &origTopo, &origVb, &origDraw, &origSetHeaps, &origSetRootSig, &origSetTable, &origSetConsts, &restoreRoot};
+        c.setRts = &origSetRts;
         gInSnapshot = true;
-        rf::sky::fallbackWorldFx(list, st, c);
+        rf::sky::fallbackWorldFx(list, st, c, dsv.ptr);
         gInSnapshot = false;
     }
+    if (!gInSnapshot && (flags & D3D12_CLEAR_FLAG_DEPTH) && rf::sky::wanted()) skyLS(list)->terr = false;   // the world's depth is gone
     reinterpret_cast<ClearDsv_t>(gOrig[26])(list, dsv, flags, depth, stencil, n, rects);
+}
+
+// The world's colour clear: looking down there is no sky behind the void, and on the frames the World FX pass misses
+// (its anchor is hard to catch there) the clear colour is what shows - the game's bright fog blue, flashing against the
+// Novak / Cloud Sea background. The clear takes the atmosphere's own colour for what lies below instead.
+using ClearRtv_t = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, FLOAT const*, UINT, D3D12_RECT const*);
+void STDMETHODCALLTYPE clearRtvHook(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE rtv, FLOAT const* color, UINT n, D3D12_RECT const* rects) {
+    float c[4];
+    if (!gInSnapshot && color && rf::sky::worldClearColour(rtv.ptr, color, c)) color = c;
+    reinterpret_cast<ClearRtv_t>(gOrig[27])(list, rtv, color, n, rects);
 }
 
 void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b, UINT c, UINT d) {
@@ -1446,7 +1503,7 @@ bool install(Targets const& t) {
                          t.iaSetTopology,     t.iaSetVb,         t.setHeaps,  t.setRootSig,     t.setTable,
                          t.setConst,          t.setConsts,       t.setCbv,    t.setSrv,          t.setUav,
                          t.createSrv,         t.iaSetIb,         t.createDsv, t.createRootSig,   t.close,
-                         t.clearDsv};
+                         t.clearDsv,          t.clearRtv};
     void* det[kHooks] = {reinterpret_cast<void*>(&createGpsHook), reinterpret_cast<void*>(&createStreamPsoHook),
                          reinterpret_cast<void*>(&createRtvHook), reinterpret_cast<void*>(&setPsoHook),
                          reinterpret_cast<void*>(&omSetHook),     reinterpret_cast<void*>(&drawHook),
@@ -1460,7 +1517,7 @@ bool install(Targets const& t) {
                          reinterpret_cast<void*>(&setAddrHook<20, 5>), reinterpret_cast<void*>(&createSrvHook),
                          reinterpret_cast<void*>(&setIbHook),     reinterpret_cast<void*>(&createDsvHook),
                          reinterpret_cast<void*>(&createRsHook),  reinterpret_cast<void*>(&closeHook),
-                         reinterpret_cast<void*>(&clearDsvHook)};
+                         reinterpret_cast<void*>(&clearDsvHook),  reinterpret_cast<void*>(&clearRtvHook)};
     int ok = 0;
     for (int i = 0; i < kHooks; ++i) {
         if (!tg[i]) continue;

@@ -40,14 +40,16 @@ bool vvWanted();     // "Vibrant Visuals too" is on (F6)
 int  kindOfHash(uint64_t psHash); // learned from the game's own sky materials first, then the 1.26.51 table
 /// Learn the sky pixel-shader hashes from the materials the game really loads (SkyMaterialScan.h), so a game update
 /// or a pack / shaderpack that replaces a sky material keeps working without a new RF build.
-void learnGameMaterials(std::filesystem::path const& materialsDir);                                // at boot
+void learnGameMaterials(std::filesystem::path const& materialsDir, std::filesystem::path const& modsDir = {});                              // at boot
 void learnMaterialFile(std::filesystem::path const& file, std::wstring_view fileName, char const* source); // pack-served
 /// A game pipeline with a sky pixel shader was created (desc = the game's, root signature kept for our pipelines).
 void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& desc);
 int  kindOf(ID3D12PipelineState* pso); // any thread
 void noteTerrainDraw();
-float novakMatchK();   // Novak Glass on: how far the match is (0 the start .. 1 the endgame, from the living sky); -1 off                // a block draw went into the world (lock-free)
+float novakMatchK();
+float cloudSeaMatchK(); // Cloud Sea on: how far the match is (0..1); -1 off   // Novak Glass on: how far the match is (0 the start .. 1 the endgame, from the living sky); -1 off                // a block draw went into the world (lock-free)
 bool wanted();                         // a LyricsFlow sky is active: UiCapture tracks list state + calls us
+bool replacing();                      // a sky of ours takes the game's place (wanted() is also true for the motion blur alone)
 bool wantRoot();                       // "My picture" is on: also track the graphics root state
 bool hideClouds();
 struct GameState {
@@ -69,13 +71,21 @@ struct Calls { // the ORIGINAL list functions (no hooks, so the tracked game sta
     void (*setTable)(ID3D12GraphicsCommandList*, unsigned, unsigned long long);
     void (*setConsts)(ID3D12GraphicsCommandList*, unsigned, unsigned, void const*, unsigned);
     void (*restoreRoot)(ID3D12GraphicsCommandList*);
+    void (*setRts)(ID3D12GraphicsCommandList*, size_t rt, size_t ds) = nullptr; // OMSetRenderTargets, one target (unhooked)
 };
 /// Called right after the game drew its sky (kind Dome) on `list`: draws the live dome + sky quads over it and
 /// restores the game's pipeline / topology / vertex buffers. Returns false when it could not (state unknown etc.).
 bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 /// Called at Bedrock's cloud draw (after the opaque terrain, depth bound): weather particles, depth-tested.
-bool fxFallbackWanted(size_t dsv); // looking down (no cloud draw): true at the frame's second clear of the world's depth buffer
-bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
+bool fxFallbackWanted(ID3D12GraphicsCommandList* list, size_t dsv);
+void noteTargetsBound(size_t rt0, size_t dsv);
+bool worldClearColour(size_t rtv, float const* game, float out[4]); // the world target's clear: the atmosphere's colour below the horizon // every OMSetRenderTargets the game makes (for the looking-down fallback) // looking down (no cloud draw): true at the frame's second clear of the world's depth buffer
+void setUnderwater(bool on);   // client thread: the local player's head is under water
+void noteLeave(int where);
+void lookDownFrameTick();       // once per Present (diagnostics)      // diagnostics: 0 targets changed, 1 depth clear, 2 list closed
+bool leaveWorldWanted(size_t rt, size_t ds); // looking down: the list that drew the world ends / leaves its targets, pass not run yet
+bool leaveWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
+bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls, size_t dsvClear);
 bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 void noteHidden(); // a vanilla sun / moon / stars / clouds draw was skipped
 
@@ -91,7 +101,7 @@ std::string worldSkyStatus();
 struct WorldFxLook {
     bool shadows = true; float shadow = 0.70f; float ao = 0.55f; float rim = 1.0f; int debug = 0; float rays = 1.0f; float clouds = 1.0f; float ink = 0.0f; float glass = 0.0f; /* Novak Glass rim (0 off) */
     // the match (Bedrock Forge MatchFx): living sky, team lights + bed beacons, block shards. phase < 0 = follow the match
-    bool living = true; float teams = 1.0f; float shards = 1.0f; float phase = -1.0f; float waves = 1.0f; float trails = 1.0f; bool beds = true; bool kills = true; int bedStyle = 0; int deathScene = -1; float tension = -1.0f; float skyRate = 2.0f; /* Novak: the sky + city are shaded coarser than the blocks: 0 full, 1 = 2x1, 2 = 2x2 */ float slow = 1.0f; float air = 1.0f; bool vitals = true; /* your health: heartbeat edges; your kill run: warmth */ /* living world: sea light from below, pollen / fireflies / stardust */ /* review: block / kill / win moments play this much slower (1 = real time) */ /* < 0: follow the match */ /* -1 shuffle, 0..6 one scene */ // 0 Novak bed, 1 your Figura sitting on it
+    bool living = true; float teams = 1.0f; float shards = 1.0f; float phase = -1.0f; float waves = 1.0f; float trails = 1.0f; bool beds = true; bool kills = true; int bedStyle = 0; int deathScene = -1; float killSfx = 0.8f; /* death scene sounds (Finishers / Sable Ragdolls oggs) 0..1 */ float tension = -1.0f; float skyRate = 2.0f; /* Novak: the sky + city are shaded coarser than the blocks: 0 full, 1 = 2x1, 2 = 2x2 */ float slow = 1.0f; float air = 1.0f; bool vitals = true; float blurMove = 0.6f; /* motion blur: how much of it walking / strafing adds (turning is always full) */ int blurTest = 0; /* bench: 1 pretend to turn, 2 pretend to strafe, 3 show the velocity */ /* your health: heartbeat edges; your kill run: warmth */ /* living world: sea light from below, pollen / fireflies / stardust */ /* review: block / kill / win moments play this much slower (1 = real time) */ /* < 0: follow the match */ /* -1 shuffle, 0..13 one scene */ // 0 Novak bed, 1 your Figura sitting on it
 };
 /// what RF last read from Bedrock Forge's match bridge (for the F6 panel)
 void testKill();

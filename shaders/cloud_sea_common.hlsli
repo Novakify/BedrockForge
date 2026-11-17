@@ -11,6 +11,8 @@ static float  TIME, SEA_Y;
 static float2 MAP_C;
 // ---- living match sky (Bedrock Forge MatchFx): phase 0 golden hour -> 1 dusk (first bed down) -> 2 night (final fight)
 static float  PHASE = 0.0, DUSK = 0.0, NIGHT = 0.0;
+static float3 SUNL = float3(0.0, 1.0, 0.0), MOOND = float3(0.0, 1.0, 0.0), LDIR = float3(0.0, 1.0, 0.0);
+static float  SUNI = 1.0, MOONI = 0.0, TWK = 0.0, WTW = 0.0, WNI = 0.0, MOPEN = 0.0;
 static float3 SUNDISC = float3(0.17605, 0.11247, -0.97794);
 static float  SUNUP = 1.0;  // the sun disc and its warm glow (gone once it has set)
 static float  NG_NEON = 0.0;   // Novak: the match tightening (teams out) -> the neon night; 1 = the finale
@@ -44,6 +46,20 @@ void csSetPhase(float k) {
     SUN    = normalize(lerp(sun, moon, smoothstep(1.3, 1.6, k)));     // swaps while it is darkest: no shadow jump to see
     SUNDISC = disc;
     SUNUP  = smoothstep(-0.075, 0.03, disc.y) * (1.0 - smoothstep(1.0, 1.3, k));
+    // ---- Cloud Sea's own evening and night (Nov 15 quality pass). The sky, the high clouds and the sea are lit by
+    //      LDIR: the set sun's afterglow until the blue hour, then the moon - the swap happens while neither gives any
+    //      direct light (SUNI and MOONI are both 0 round k = 1.46), so nothing is seen to jump. The moon itself rises
+    //      opposite the sunset during twilight (MOOND), amber on the horizon, silver once it is up.
+    SUNL   = sun;
+    float moonEl = lerp(-13.0, 31.0, smoothstep(1.05, 1.9, k));   // (a big disc: it starts fully under the horizon)
+    MOOND  = dirAzEl(MOON_AZ, radians(moonEl));
+    SUNI   = 1.0 - smoothstep(1.0, 1.42, k);
+    MOONI  = smoothstep(1.5, 1.92, k);
+    LDIR   = k < 1.46 ? sun : dirAzEl(MOON_AZ, radians(max(moonEl, 8.0)));
+    TWK    = saturate((k - 1.0) / 0.8);                 // 0 at sunset .. 1 when the last ember is gone
+    WTW    = smoothstep(1.0, 1.25, k);                  // the dusk picture hands over to the twilight one
+    MOPEN  = smoothstep(1.28, 1.56, k);                 // the deck parts where the moon comes up, before it is up (seen in game: at twice the size it rose as a grey ghost behind the cloud)
+    WNI    = smoothstep(1.45, 1.9, k);                  // ... and that to the night
     LIGHTK = lerp(lerp(1.0, 0.40, smoothstep(0.25, 1.0, k)), 0.62, NIGHT) * (1.0 - 0.75 * smoothstep(1.1, 1.45, k) * (1.0 - smoothstep(1.45, 1.8, k)));
 }
 
@@ -67,10 +83,9 @@ float fbm(float2 p, int oct) {
 
 // ---------------------------------------------------------------- sky gradient
 float3 ngSkyBase(float3 d);
-float3 skyBase(float3 d) {
-    if (NG_IS) return ngSkyBase(d);
+float3 skyDay(float3 d) {   // the golden hour (its sun sinks with DUSK)
     float  e = max(d.y, 0.0);
-    float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUN);
+    float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), SUNL);
     float  sunSide = mu * 0.5 + 0.5;
     float  towardSun = pow(sunSide, 5.0);
     float3 zen = float3(0.036, 0.042, 0.135);
@@ -83,8 +98,63 @@ float3 skyBase(float3 d) {
     float  kb = lerp(0.10, 0.24, towardSun);
     float3 c = lerp(hor, body, smoothstep(0.0, kb, e));
     c = lerp(c, zen, smoothstep(0.06, 0.62, e));
-    float ang = acos(clamp(dot(d, SUN), -1.0, 1.0));
+    float ang = acos(clamp(dot(d, SUNL), -1.0, 1.0));
     c += float3(1.05, 0.50, 0.10) * exp(-ang * 6.0) * exp(-e * 8.0) * 0.75;
+    return c;
+}
+
+float3 csGradeDusk(float3 c, float3 rd);
+float  csLum(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+// twilight: what is left once the sun is under the cloud sea. The glow hugs the horizon where it went - a band that
+// gets lower, narrower and redder until it is one ember line - under a thin green-gold fringe; the rest of the sky
+// deepens through the blue hour. Opposite, the Belt of Venus (rose) stands over the earth's blue-grey shadow for a
+// while. Night: navy, a little lighter along the horizon and round the moon.
+float3 skyTwilight(float3 d) {
+    float  e  = max(d.y, 0.0);
+    float3 dh = normalize(float3(d.x, e, d.z));
+    float  s  = dot(normalize(dh.xz + 1e-4), SUN_AZ) * 0.5 + 0.5;       // 1 toward where the sun went
+    float  kk = TWK;
+    float3 zen = lerp(float3(0.022, 0.028, 0.110), float3(0.0050, 0.0085, 0.030), kk);
+    float3 mid = lerp(float3(0.075, 0.072, 0.215), float3(0.0130, 0.0230, 0.070), kk);
+    float3 hor = lerp(float3(0.100, 0.092, 0.235), float3(0.0300, 0.0460, 0.105), kk);
+    // the Belt of Venus and the earth's shadow under it, away from the sunset
+    float  away = pow(1.0 - s, 2.0) * (1.0 - smoothstep(0.0, 0.55, kk));
+    float  bh   = lerp(0.075, 0.16, kk);                                // the shadow rises as the sun sinks
+    hor = lerp(hor, float3(0.070, 0.082, 0.170), away * (1.0 - smoothstep(bh * 0.55, bh, e)));
+    float3 c = lerp(hor, mid, smoothstep(0.0, 0.26, e));
+    c += float3(0.300, 0.125, 0.190) * away * exp(-pow((e - bh * 1.25) / (bh * 0.60), 2.0)) * 1.25;
+    c = lerp(c, zen, smoothstep(0.08, 0.70, e));
+    // the afterglow
+    float  die = pow(1.0 - kk, 0.80);                                   // the ember outlasts the blue hour
+    float  tow = pow(s, lerp(2.6, 7.0, kk));
+    float  hb  = lerp(0.150, 0.034, smoothstep(0.0, 0.85, kk));
+    float3 ember = lerp(float3(1.00, 0.36, 0.085), float3(0.62, 0.085, 0.045), smoothstep(0.0, 0.75, kk));
+    c += ember * tow * exp(-e / hb) * die * 1.45;
+    c += float3(0.75, 0.50, 0.16) * pow(s, 9.0) * exp(-e / (hb * 0.45)) * die * 0.80;            // its hot core
+    c += float3(0.085, 0.150, 0.150) * tow * exp(-pow((e - hb * 2.3) / (hb * 1.5), 2.0)) * die;    // green-gold fringe
+    c += float3(0.090, 0.036, 0.100) * pow(s, 1.5) * exp(-e * 3.2) * die * 0.7;                    // wide violet air round it
+    return c;
+}
+float3 skyNight(float3 d) {
+    float  e = max(d.y, 0.0);
+    float3 c = lerp(float3(0.0330, 0.0500, 0.1100), float3(0.0115, 0.0210, 0.0640), smoothstep(0.0, 0.24, e));
+    c = lerp(c, float3(0.0042, 0.0075, 0.0270), smoothstep(0.08, 0.78, e));
+    float  mUp  = smoothstep(-0.03, 0.10, MOOND.y);
+    float  angM = acos(clamp(dot(d, MOOND), -1.0, 1.0));
+    float3 mCol = lerp(float3(1.00, 0.66, 0.40), float3(0.62, 0.76, 1.00), smoothstep(0.02, 0.32, MOOND.y));
+    c += mCol * (exp(-angM * 2.3) * 0.050 + exp(-angM * 7.5) * 0.070) * mUp;                        // the air lit round the moon
+    return c;
+}
+float3 skyBase(float3 d) {
+    if (NG_IS) return ngSkyBase(d);
+    float3 c = float3(0.0, 0.0, 0.0);
+    [branch] if (WTW < 0.999) c = csGradeDusk(skyDay(d), d);
+    [branch] if (WTW > 0.001) {
+        float3 t = float3(0.0, 0.0, 0.0);
+        [branch] if (WNI < 0.999) t = skyTwilight(d);
+        [branch] if (WNI > 0.001) t = lerp(t, skyNight(d), WNI);
+        c = lerp(c, t, WTW);
+    }
     return c;
 }
 
@@ -95,9 +165,13 @@ float hcDens(float2 p, int oct) {
     w += (float2(vnoiseG(p * 1.3), vnoiseG(p * 1.3 + 31.0)) - 0.5) * 1.6;
     return cover * 1.05 + fbm(w, oct) * 0.40;
 }
-float4 highClouds(float3 d, float mu) {
+float4 highClouds(float3 d, out float3 tn) {
+    tn = float3(0.0, 0.0, 0.0);
     if (d.y < 0.012) return float4(0.0, 0.0, 0.0, 0.0);
-    float2 sunXZ = normalize(SUN.xz);
+    float  mu = dot(d, SUNL);
+    float2 sunXZ = normalize(SUNL.xz);
+    bool   moonLit = PHASE >= 1.46;                       // (the day colours are out of the picture long before: WTW = 1 from 1.25)
+    float2 litXZ = moonLit ? normalize(LDIR.xz) : sunXZ;
     float2 q = CAM.xz + d.xz * ((900.0 - CAM.y) / d.y);
     float  fade = smoothstep(0.012, 0.085, d.y);
     float2 p = q / 520.0 + TIME * float2(0.0030, 0.0011);
@@ -106,7 +180,7 @@ float4 highClouds(float3 d, float mu) {
     float  near = smoothstep(0.05, 0.30, d.y);
     float  dens = smoothstep(0.765, 0.830, dn - (fine - 0.5) * 0.10 * near);
     float  tau = smoothstep(0.765, 0.965, dn);
-    float  shadeS = QUALITY > 0.3 ? smoothstep(0.765, 0.93, hcDens(p + sunXZ * 0.040, 3)) : 0.5;
+    float  shadeS = QUALITY > 0.3 ? smoothstep(0.765, 0.93, hcDens(p + litXZ * 0.040, 3)) : 0.5;
     float2 along = float2(dot(q, sunXZ), dot(q, float2(-sunXZ.y, sunXZ.x)));
     float2 pc = float2(along.x / 3400.0, along.y / 760.0) + TIME * float2(0.0015, 0.0);
     float  wq = fbm(pc * 1.7 + 9.0, 3);
@@ -125,7 +199,34 @@ float4 highClouds(float3 d, float mu) {
     float3 col = lerp(shade, lit, litF);
     float  a = dens * (0.50 + 0.50 * smoothstep(0.0, 0.5, tau)) * fade;
     float3 cirCol = lerp(float3(0.42, 0.130, 0.20), float3(1.0, 0.36, 0.10), pow(sunSide, 3.0));
+    // the moon stands in a ragged clearing: round it the deck thins to a veil (it is the thing to look at all night)
+    [branch] if (MOPEN > 0.001) {
+        float angC = acos(clamp(dot(d, MOOND), -1.0, 1.0));
+        [branch] if (angC < 0.95) {
+            angC *= 0.72 + 0.56 * fbm(p * 2.6 + 11.0, 3);
+            float open = exp(-pow(angC / 0.36, 2.0)) * MOPEN * smoothstep(-0.20, -0.02, MOOND.y);
+            a *= 1.0 - 0.93 * open;
+            cir *= 1.0 - 0.6 * open;
+        }
+    }
     float  ac = cir * 0.34 * fade * (1.0 - a);
+    // ---- the same clouds after sunset (tn): for a while their undersides still catch the sun from under the horizon
+    //      (they are high) - rose toward the afterglow - then they are slate silhouettes against the ember band through
+    //      the blue hour; the moon lights them silver from its side, with a bright lining where you look toward it
+    [branch] if (WTW > 0.001) {
+        float  litN = litF, muL = mu;
+        if (moonLit) {
+            muL = dot(d, LDIR);
+            litN = saturate(lerp(front, back, smoothstep(0.25, 0.80, muL * 0.5 + 0.5)) * (1.0 + 0.7 * ripple * near));
+        }
+        float3 shadeT = lerp(float3(0.046, 0.044, 0.112), float3(0.0080, 0.0125, 0.0380), smoothstep(0.0, 0.7, TWK));
+        float3 litS = lerp(float3(0.215, 0.090, 0.215), float3(1.00, 0.230, 0.095), pow(sunSide, 2.0)) * lerp(1.0, 0.55, TWK) * SUNI;
+        float  sideL = muL * 0.5 + 0.5;
+        float3 litM = (float3(0.150, 0.200, 0.330) * lerp(0.55, 1.0, sideL) + float3(0.80, 0.92, 1.20) * pow(max(muL, 0.0), 10.0) * 0.85) * MOONI;
+        float3 colT = shadeT + (litS + litM) * litN + float3(0.010, 0.016, 0.036) * MOONI;
+        float3 cirT = shadeT * 1.6 + litS * 0.55 * pow(sunSide, 2.0) + litM * 0.60;
+        tn = colT * a + cirT * ac;
+    }
     return float4(col * a + cirCol * ac, a + ac);
 }
 
@@ -193,8 +294,8 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
     float  nl = lod + 1.2;
     float  hc0 = seaY(p.xz, nl);
     float3 n = normalize(float3(hc0 - seaY(p.xz + float2(e, 0.0), nl), e, hc0 - seaY(p.xz + float2(0.0, e), nl)));
-    float2 l2 = normalize(SUN.xz);
-    float  slope = SUN.y / length(SUN.xz);
+    float2 l2 = normalize(LDIR.xz);
+    float  slope = LDIR.y / length(LDIR.xz);
     float  sh = 1.0;
     int nShadow = QUALITY > 0.5 ? 3 : (QUALITY > 0.15 ? 1 : 0);
     [loop] for (int j = 0; j < nShadow; j++) {
@@ -202,30 +303,53 @@ float4 cloudSea(float3 ro, float3 rd, float tLimit, out float tHit) {
         float over = seaY(p.xz + l2 * s, lod + 1.2 + float(j) * 0.9) - (h0 + slope * s);
         sh *= 1.0 - smoothstep(-0.05 * s, 0.20 * s, over) * 0.80;
     }
-    float ndl = dot(n, SUN);
+    float ndl = dot(n, LDIR);
     float near = exp(-t / 260.0);
     float grain = 0.75;
     [branch] if (near > 0.02 && QUALITY > 0.3) grain = lerp(0.75, fbm(p.xz / 5.0 + 3.0, 3) + 0.5 * vnoiseG(p.xz / 1.3), near); // far away the grain is too small to see
     float cav = saturate((h0 - seaY(p.xz, lod + 3.4)) / (SEA_AMP * 0.13) + 0.55);
     float lit = sh * (0.30 + 0.70 * smoothstep(-0.35, 0.55, ndl)) * (0.72 + 0.38 * grain) * (0.34 + 0.66 * cav);
     float crease = smoothstep(0.05, 0.85, (h0 - SEA_Y) / SEA_AMP);
-    float mu = dot(rd, SUN);
+    float mu = dot(rd, LDIR);
     float3 amb = lerp(float3(0.020, 0.023, 0.070), float3(0.066, 0.062, 0.155), crease) * (0.60 + 0.40 * n.y) * (0.85 + 0.2 * grain);
     amb += float3(0.22, 0.075, 0.040) * max(dot(normalize(n.xz + 1e-4), l2), 0.0) * (1.0 - n.y) * 0.5 * crease;
     float  phase = lerp(0.60, 1.0, smoothstep(-1.0, 0.35, mu));
     float3 direct = lerp(float3(0.95, 0.36, 0.20), float3(1.00, 0.335, 0.105), smoothstep(-1.0, 0.35, mu)) * 1.02 * lit * phase;
     // the sun gone: tops fall into shade, only the slopes facing the afterglow keep a pink edge; moonlight after
-    float  dk = DUSK * (1.0 - NIGHT);
-    direct *= lerp(1.0, LIGHTK, DUSK) * lerp(float3(1, 1, 1), float3(0.95, 0.80, 1.55), dk); // rose afterglow light
+    float  dk = DUSK;
+    float  ld = lerp(1.0, 0.40, smoothstep(0.25, 1.0, PHASE));                                // the sun's light leaving
+    direct *= lerp(1.0, ld, DUSK) * lerp(float3(1, 1, 1), float3(0.95, 0.80, 1.55), dk); // rose afterglow light
+    float3 amb0 = amb;
     amb *= lerp(float3(1, 1, 1), float3(1.25, 1.15, 1.55), dk);
     float  crest = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
-    float3 through = float3(1.5, 0.62, 0.18) * crest * pow(max(mu, 0.0), 5.0) * sh * 0.9 * (SUNUP + NIGHT * 0.5);
-    float3 col = amb + direct + through;
+    float3 through = float3(1.5, 0.62, 0.18) * crest * pow(max(mu, 0.0), 5.0) * sh * 0.9 * SUNUP;
     float  f = saturate((1.0 - exp(-t / 1000.0)) / (1.0 - exp(-3.4)));
-    float3 hz = skyBase(normalize(float3(rd.x, max(rd.y, 0.0) + 0.030, rd.z)));
-    col = lerp(col, hz, f * f * (3.0 - 2.0 * f));
-    return float4(csGrade(col, rd), 1.0);
+    f = f * f * (3.0 - 2.0 * f);
+    float3 hd = normalize(float3(rd.x, max(rd.y, 0.0) + 0.030, rd.z));
+    float3 col = float3(0.0, 0.0, 0.0);
+    [branch] if (WTW < 0.999) col = csGradeDusk(lerp(amb + direct + through, skyDay(hd), f), rd);
+    // ---- after sunset the sea is lit by the sky: a cobalt ambient (blue hour) with a last rose on the slopes that
+    //      face the afterglow; then the moon - pearl-silver tops, blue shade, a silver edge on the crests toward it
+    [branch] if (WTW > 0.001) {
+        float3 skyAmb = lerp(lerp(float3(0.028, 0.034, 0.112), float3(0.0080, 0.0165, 0.0600), smoothstep(0.0, 0.8, TWK)),
+                             lerp(float3(0.086, 0.088, 0.236), float3(0.0230, 0.0440, 0.1300), smoothstep(0.0, 0.8, TWK)), crease);
+        float3 a2 = skyAmb * (0.40 + 0.60 * n.y * n.y) * (0.85 + 0.2 * grain) * (0.45 + 0.55 * cav);   // lit by the dome overhead
+        float  die = pow(1.0 - TWK, 0.80);
+        float  face = saturate(dot(normalize(n.xz + 1e-4), SUN_AZ) * 0.5 + 0.5);
+        // (a soft wash over whole swells - per-bump it speckled the sea salmon, seen in game)
+        float3 nB = normalize(float3(n.x, n.y * 2.5, n.z));
+        float  faceB = saturate(dot(normalize(nB.xz + 1e-3), SUN_AZ) * 0.5 + 0.5) * (1.0 - nB.y * 0.6);
+        a2 += lerp(float3(0.34, 0.105, 0.085), float3(0.22, 0.045, 0.060), TWK) * (0.25 + 0.75 * faceB) * (0.30 + 0.70 * crease) * (0.6 + 0.4 * face) * die * 0.36;
+        float3 sunD = direct * SUNI;                                                              // LDIR is still the sun here
+        float3 moonC = lerp(float3(0.70, 0.52, 0.40), float3(0.34, 0.47, 0.82), smoothstep(0.10, 0.36, LDIR.y));
+        float3 moonD = moonC * 0.68 * lit * lerp(0.70, 1.0, smoothstep(-1.0, 0.35, mu)) * MOONI;
+        float3 rim   = float3(0.62, 0.78, 1.10) * crest * pow(max(mu, 0.0), 4.0) * sh * 0.85 * MOONI;
+        float3 c2 = a2 + (PHASE < 1.46 ? sunD : moonD + rim);
+        col = lerp(col, lerp(c2, skyBase(hd), f), WTW);
+    }
+    return float4(col, 1.0);
 }
+
 
 float3 toDisplay(float3 c) {
     c = max(c, 0.0);
@@ -239,64 +363,145 @@ float hash12(float2 p) { p = frac(p * float2(0.1031, 0.1030)); p += dot(p, p.yx 
 // the sky along one view ray (linear colour): gradient, sun, high clouds, and - when withSea - the cloud sea.
 // The sky pass draws it without the sea (it runs under the whole screen, before the terrain exists); the World FX pass
 // adds the sea only on pixels that are still sky after the world is drawn (csSeaPixel), so terrain never pays for it.
-float3 csGlow(float ang, float hcA) {
+float3 csGlow(float3 rd, float hcA) {
     if (NG_IS) return float3(0.0, 0.0, 0.0);   // Novak Glass has its own light round the sun (the halo)
-    float3 warm = float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * lerp(1.0, 0.45, DUSK) * (1.0 - NIGHT);
-    float3 cool = float3(0.55, 0.68, 1.0) * 0.050 * exp(-ang * 4.0) * NIGHT;   // moon haze
+    float  ang  = acos(clamp(dot(rd, SUNL), -1.0, 1.0));
+    float  angM = acos(clamp(dot(rd, MOOND), -1.0, 1.0));
+    float3 warm = float3(1.0, 0.47, 0.17) * 0.42 * exp(-ang * 3.4) * lerp(1.0, 0.45, DUSK) * (1.0 - smoothstep(1.0, 1.40, PHASE));
+    float3 mCol = lerp(float3(1.00, 0.62, 0.36), float3(0.55, 0.68, 1.00), smoothstep(0.02, 0.32, MOOND.y));
+    float3 cool = mCol * 0.050 * exp(-angM * 4.0) * smoothstep(-0.03, 0.10, MOOND.y) * smoothstep(1.2, 1.7, PHASE);   // moon haze
     return (warm + cool) * (1.0 - 0.5 * hcA);
 }
 
-// ---- the light leaving: dusk keeps a warm afterglow under where the sun went, the rest sinks to violet and indigo;
-//      night turns everything to moonlight (silver tops, deep blue shade). One grade for sky, clouds and sea.
-float3 csGrade(float3 c, float3 rd) {
-    if (NG_IS) return c;                        // its sky is already written per phase
-    float  dn = DUSK * (1.0 - NIGHT);
-    [branch] if (dn > 0.001) {
+// ---- the light leaving, up to sunset: a warm afterglow stays under where the sun went, the rest sinks to violet
+float3 csGradeDusk(float3 c, float3 rd) {
+    [branch] if (DUSK > 0.001) {
         float  toward = pow(saturate(dot(normalize(rd.xz + 1e-4), SUN_AZ) * 0.5 + 0.5), 6.0) * exp(-max(rd.y, 0.0) * 5.0);
         float3 dk = c * lerp(float3(0.42, 0.34, 0.86) * 0.70, float3(1.05, 0.52, 0.48), toward * 0.85);
-        c = lerp(c, dk, dn);
-    }
-    [branch] if (NIGHT > 0.001) {
-        float  lum = dot(c, float3(0.2126, 0.7152, 0.0722));
-        float  l2  = pow(lum / 0.45, 1.8) * 0.45;            // moonlight is contrasty: silver tops, deep shade
-        float3 cn  = l2 * lerp(float3(0.10, 0.18, 0.62), float3(0.82, 0.92, 1.12), smoothstep(0.05, 0.50, l2)) * 0.80;
-        cn += float3(0.003, 0.005, 0.014);
-        c = lerp(c, cn, NIGHT);
+        c = lerp(c, dk, DUSK);
     }
     return c;
 }
+float3 csGrade(float3 c, float3 rd) { return NG_IS ? c : csGradeDusk(c, rd); }
 float hash13(float3 p) { p = frac(p * 0.1031); p += dot(p, p.zyx + 31.32); return frac((p.x + p.y) * p.z); }
 // stars: one possible star per cell of a 3D grid on the unit sphere; a faint band of them (and its glow) across the sky
 float3 csStars(float3 rd) {
+    // the brightest come out first (vis rises through twilight), the faint field and the band last. Points, not
+    // blobs: a small sharp core, a soft glow only on the few bright ones; each its own colour and slow twinkle.
+    float  vis = smoothstep(1.18, 1.85, PHASE);
     float3 band = normalize(float3(0.35, 0.42, 0.84));
-    float  inBand = exp(-pow(dot(rd, band) / 0.22, 2.0));
+    float  inBand = exp(-pow(dot(rd, band) / 0.20, 2.0));
     float3 acc = float3(0.0, 0.0, 0.0);
-    [unroll] for (int layer = 0; layer < 2; layer++) {
-        float  sc = layer == 0 ? 150.0 : 330.0;
+    [unroll] for (int layer = 0; layer < 3; layer++) {
+        float  sc = layer == 0 ? 90.0 : (layer == 1 ? 210.0 : 420.0);
         float3 g = rd * sc, cell = floor(g);
         float  h = hash13(cell + 17.0 * float(layer));
-        float  thr = layer == 0 ? 0.955 : lerp(0.985, 0.90, inBand);
+        float  thr = layer == 0 ? 0.985 : (layer == 1 ? 0.945 : lerp(0.935, 0.78, inBand));
         if (h > thr) {
             float3 sp = normalize(cell + 0.5 + (float3(hash13(cell + 3.1), hash13(cell + 7.7), hash13(cell + 11.3)) - 0.5) * 0.7);
             float  a = length(rd - sp) * sc;
-            float  mag = pow((h - thr) / (1.0 - thr), 2.2) * (layer == 0 ? 2.6 : 0.9);
-            float  tw = 0.70 + 0.30 * sin(TIME * (1.3 + 3.0 * h) + h * 61.0);
-            float3 tint = lerp(float3(0.75, 0.84, 1.10), float3(1.10, 0.92, 0.78), frac(h * 37.0));
-            acc += tint * mag * tw * exp(-a * a * 28.0);
+            float  m = (h - thr) / (1.0 - thr);                                   // 0..1 within its layer
+            float  mag = layer == 0 ? 0.45 + 1.15 * m * m * m : (layer == 1 ? 0.07 + 0.34 * m * m : 0.030 + 0.10 * m);
+            float  rank = layer == 0 ? 0.55 + 0.45 * m : (layer == 1 ? 0.22 + 0.33 * m : 0.20 * m);   // who is seen first
+            float  on = smoothstep(1.0 - vis * 1.15, 1.0 - vis * 1.15 + 0.22, rank);
+            float  hk = hash13(cell + 29.3 + 5.0 * float(layer));       // (its own hash: frac(h * 37) of a value that is always near 1 made every bright star orange)
+            float  tw = 1.0 - (layer == 2 ? 0.18 : 0.34) * (0.5 + 0.5 * sin(TIME * (0.9 + 2.4 * hk) + hk * 61.0));
+            float3 tint = hk < 0.70 ? lerp(float3(0.84, 0.90, 1.08), float3(1.0, 1.0, 1.0), hk / 0.70) : lerp(float3(1.03, 0.98, 0.90), float3(1.08, 0.90, 0.76), (hk - 0.70) / 0.30);
+            float  fall = layer == 0 ? 10.0 : (layer == 1 ? 26.0 : 60.0);
+            float  core = exp(-a * a * fall * 9.0) + (layer == 0 ? 0.16 * exp(-a * a * fall) : 0.0);
+            acc += tint * mag * tw * core * on;
         }
     }
-    float glow = inBand * (0.55 + 0.45 * fbm(rd.xz / (rd.y + 1.2) * 6.0 + 4.0, 3));
-    acc += float3(0.020, 0.022, 0.040) * glow;
-    return acc * smoothstep(0.0, 0.18, rd.y);
+    [branch] if (inBand > 0.03 && vis > 0.55) {
+        float glow = inBand * (0.45 + 0.55 * fbm(rd.xz / (rd.y + 1.2) * 6.0 + 4.0, 3)) * smoothstep(0.55, 1.0, vis);
+        float dust = 1.0 - 0.55 * smoothstep(0.52, 0.70, fbm(rd.xz / (rd.y + 1.2) * 11.0 + 9.0, 2)) * exp(-pow(dot(rd, band) / 0.07, 2.0));   // dark lanes
+        acc += float3(0.018, 0.019, 0.033) * glow * dust;
+    }
+    return acc * smoothstep(0.015, 0.20, rd.y);
 }
-float3 csMoon(float3 rd) { // a small cool moon with a little surface, a halo
-    float  ang = acos(clamp(dot(rd, SUN), -1.0, 1.0));
-    float3 t1 = normalize(cross(SUN, float3(0, 1, 0))), t2 = cross(t1, SUN);
-    float2 q = float2(dot(rd, t1), dot(rd, t2)) / 0.016;
-    float  disc = smoothstep(1.0, 0.86, length(q));
-    float  mare = fbm(q * 2.2 + 5.0, 3);
-    float3 m = float3(1.05, 1.07, 1.12) * (0.95 + 0.5 * smoothstep(0.35, 0.7, mare)) * 1.7 * disc;
-    return m + float3(0.55, 0.66, 1.0) * (exp(-ang * 26.0) * 0.16 + exp(-ang * 6.0) * 0.030);
+// ---- the full moon, drawn from the real one's near side: the dark basalt seas where they are (Procellarum and Imbrium
+//      on one side, Serenitatis - Tranquillitatis - Fecunditatis down the other, Crisium alone by the limb, Nubium and
+//      Humorum below), the bright southern highlands, Tycho with its rays, Copernicus, Kepler, Aristarchus. A full
+//      moon is lit head-on: no shadows on it, almost no darker limb - its relief is all colour.
+float csMare(float2 q, float2 c, float2 r) { float2 d = (q - c) / r; return 1.0 - dot(d, d); }
+float csMH(float2 c) { return frac(sin(dot(c, float2(127.1, 311.7))) * 43758.5453); }
+// (craters as a full moon shows them: no shadow, a pale rim and a slightly darker floor)
+float csCraters(float2 q, float sc, float seed) {
+    float2 x = q * sc + float2(seed, seed * 1.7), i = floor(x);
+    float o = 0.0;
+    for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+        float2 c = i + float2(dx, dy);
+        float h1 = csMH(c), h2 = csMH(c + float2(37.2, 11.9)), h3 = csMH(c + float2(5.1, 71.3));
+        float d = length(x - (c + 0.2 + 0.6 * float2(h1, h2))) / (0.12 + 0.30 * h3 * h3);
+        float e1 = (d - 1.0) / 0.22, e2 = d / 0.8;
+        o += step(0.25, h3) * (exp(-e1 * e1) * 0.9 - exp(-e2 * e2) * 0.6) * (0.4 + 0.6 * h1);
+    }
+    return o;
+}
+float csSpot(float2 q, float2 c, float s, float halo) { float d = length(q - c) / s; return exp(-d * d) + halo * exp(-d * d / 10.24); }
+float3 csMoon(float3 rd, out float disc) {
+    disc = 0.0;
+    float  mUp = smoothstep(-0.26, -0.20, MOOND.y);
+    [branch] if (mUp <= 0.0) return float3(0.0, 0.0, 0.0);
+    float  ang = acos(clamp(dot(rd, MOOND), -1.0, 1.0));
+    const float R = 0.172;                                   // (Fernando: twice the size again - it owns the night sky)
+    float  high = smoothstep(0.12, 0.48, MOOND.y);            // amber well up from the horizon (it went white by 18 degrees), silver only near the top of its climb
+    float3 warm = lerp(float3(1.00, 0.62, 0.30), float3(1.0, 1.0, 1.0), high);          // amber through the thick air low down
+    float3 halo = lerp(float3(1.00, 0.62, 0.36), float3(0.58, 0.72, 1.00), high);
+    float  dA = max(ang - R, 0.0);                                                       // from the limb outward
+    float3 c = halo * (exp(-dA * 15.0) * 0.20 + exp(-dA * 4.5) * 0.055);
+    // its corona (thin cloud and ice in front of it): a blue-white aureole, then a faint warm ring
+    c += (float3(0.70, 0.82, 1.00) * exp(-pow(dA / 0.050, 2.0)) * 0.10 + float3(1.00, 0.78, 0.50) * exp(-pow((dA - 0.085) / 0.030, 2.0)) * 0.028) * high;
+    [branch] if (ang < R * 1.02) {
+        float3 t1 = normalize(cross(MOOND, float3(0.0, 1.0, 0.0))), t2 = cross(t1, MOOND);
+        float2 q0 = float2(dot(rd, t1), dot(rd, t2)) / R;
+        float2 q = float2(0.94 * q0.x - 0.34 * q0.y, 0.34 * q0.x + 0.94 * q0.y);         // tilted, as it hangs in an evening sky
+        float  r = length(q);
+        disc = smoothstep(1.0, 0.985, r);
+        float2 w = q + (float2(fbm(q * 2.2 + 2.0, 4), fbm(q * 2.2 + 19.0, 4)) - 0.5) * 0.30;   // the seas' own wandering outlines
+        // (one field for all of them, so neighbours run into each other the way the real ones do)
+        float  f = csMare(w, float2(-0.60, 0.22), float2(0.30, 0.50));                    // Oceanus Procellarum
+        f = max(f, csMare(w, float2(-0.25, 0.50), float2(0.31, 0.28)));                   // Mare Imbrium
+        f = max(f, csMare(w, float2( 0.22, 0.46), float2(0.20, 0.20)));                   // Serenitatis
+        f = max(f, csMare(w, float2( 0.42, 0.17), float2(0.25, 0.20)));                   // Tranquillitatis
+        f = max(f, csMare(w, float2( 0.78, 0.30), float2(0.085, 0.12)));                  // Crisium, alone by the limb
+        f = max(f, csMare(w, float2( 0.66,-0.08), float2(0.13, 0.20)));                   // Fecunditatis
+        f = max(f, csMare(w, float2( 0.56, 0.02), float2(0.12, 0.12)));
+        f = max(f, csMare(w, float2( 0.50,-0.27), float2(0.10, 0.10)));                   // Nectaris
+        f = max(f, csMare(w, float2(-0.20,-0.36), float2(0.24, 0.19)));                   // Nubium
+        f = max(f, csMare(w, float2(-0.53,-0.38), float2(0.12, 0.12)));                   // Humorum
+        f = max(f, csMare(w, float2(-0.40,-0.06), float2(0.24, 0.20)));                   // Cognitum / Insularum
+        f = max(f, csMare(w, float2(-0.70,-0.14), float2(0.14, 0.22)));
+        f = max(f, csMare(w, float2( 0.03, 0.20), float2(0.10, 0.08)));                   // Vaporum
+        float  fr = (w.y - (0.80 - 0.25 * w.x * w.x)) / 0.045;
+        f = max(f, 1.0 - fr * fr - w.x * w.x * 2.98);                                     // Frigoris, the thin arc up north
+        float  mare = smoothstep(-0.34, 0.44, f + (fbm(q * 5.0 + 5.0, 5) - 0.5) * 1.7);  // bays, capes, islands
+        mare *= 0.72 + 0.28 * smoothstep(0.3, 0.7, fbm(q * 3.3 + 31.0, 3));               // older, paler lava in places
+        float  fine = fbm(q * 9.0 + 9.0, 4);
+        float  pock = fbm(q * 26.0 + 3.0, 3);
+        float  south = smoothstep(0.2, -0.8, q.y);                                        // the crowded southern highlands
+        float  cr = csCraters(q, 9.0, 3.0) * 0.6 + csCraters(q, 19.0, 8.0) * 0.4;
+        float3 land = float3(0.60, 0.59, 0.565) * (0.74 + 0.34 * fine + 0.22 * (pock - 0.5) * (0.5 + south) + 0.22 * cr) * (1.0 + 0.10 * south);
+        float3 sea  = lerp(float3(0.165, 0.170, 0.195), float3(0.140, 0.155, 0.195), smoothstep(-0.2, 0.5, q.x)) * (0.72 + 0.50 * fine + 0.04 * cr);
+        float3 m = lerp(land, sea, mare * 0.92);
+        // Tycho and its rays: a few long uneven streaks across half the disc, not a wheel
+        float2 ty = q - float2(-0.10, -0.70);
+        float  tl = length(ty), ta = atan2(ty.y, ty.x);
+        float  rays = pow(0.5 + 0.5 * sin(ta * 11.0 + 2.6 * sin(ta * 3.0 + 1.0)), 7.0) * exp(-tl * 1.5) * smoothstep(0.03, 0.10, tl)
+                    * (0.25 + 1.3 * smoothstep(0.35, 0.75, fbm(float2(ta * 1.9 + 4.0, 1.0), 2))) * (0.6 + 0.8 * fbm(q * 6.0 + 3.0, 2));
+        float  te = tl / 0.030, tc = (tl - 0.060) / 0.022, tj = tl / 0.16;
+        m += float3(0.20, 0.20, 0.19) * (rays * 0.50 + exp(-te * te) * 0.9 + exp(-tj * tj) * 0.10);
+        m *= 1.0 - 0.22 * exp(-tc * tc);
+        m += float3(0.20, 0.20, 0.19) * (csSpot(q, float2(-0.33, 0.15), 0.030, 0.30)            // Copernicus
+                                       + csSpot(q, float2(-0.62, 0.12), 0.022, 0.30) * 0.8      // Kepler
+                                       + csSpot(q, float2(-0.70, 0.40), 0.018, 0.15) * 1.3      // Aristarchus
+                                       + csSpot(q, float2( 0.42,-0.62), 0.020, 0.30) * 0.5
+                                       + csSpot(q, float2( 0.80,-0.52), 0.020, 0.50) * 0.6      // Stevinus / Furnerius
+                                       + csSpot(q, float2(-0.05, 0.78), 0.020, 0.30) * 0.4);    // Anaxagoras
+        m *= 1.0 - 0.14 * pow(r, 5.0);
+        c = lerp(c, m * 1.12 * warm, disc);
+    }
+    return c * mUp;
 }
 // ================================================================ Novak Glass: the sky and the crystal void
 // A clear, cold, high sky - no weather in it, only light: deep cobalt overhead, pale ice at the horizon. The low sun
@@ -332,8 +537,10 @@ NgDome ngDome(float3 rd) {
     float3 g = float3(dot(p, a0), dot(p, a1), dot(p, a2));
     float3 fr = frac(g), dl = min(fr, 1.0 - fr);
     D.hcell = ngHash3(floor(g) + 7.0);
-    float2 jit = (D.hcell.xy - 0.5) * 0.030;
-    D.rdF = normalize(rd + float3(jit.x, (D.hcell.z - 0.5) * 0.020, jit.y));
+    // (quality audit, Nov 15: at dusk the big dark-and-pale clouds jumped at every pane edge - with the lattice lines dim
+    //  there it read as a cut through the sky, not as glass. The panes bend less as the light goes.)
+    float2 jit = (D.hcell.xy - 0.5) * 0.030 * lerp(1.0, 0.35, DUSK);
+    D.rdF = normalize(rd + float3(jit.x, (D.hcell.z - 0.5) * 0.020 * lerp(1.0, 0.35, DUSK), jit.y));
     float  px = length(fwidth(p)) + 1e-4;
     float  d = min(dl.x, min(dl.y, dl.z));
     float  fam = dl.x <= min(dl.y, dl.z) ? 0.0 : (dl.y <= dl.z ? 1.0 : 2.0);
@@ -385,7 +592,10 @@ float ngAcFieldLo(float2 q, float cov) {
 float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float e = rd.y;
     [branch] if (e < 0.015) return float4(0, 0, 0, 0);
-    float2 P = rd.xz / (e * 0.55 + 0.16) * 0.95 + TIME * float2(0.006, 0.002);   // big, clean, puffy (the Aero sky)   // (overhead a little denser: seen in game, huge soft blobs up there)
+    // a real layer in perspective: clouds get smaller and flatter toward the horizon (Fernando, Nov 15: near the horizon
+    // they were smeared into soft streaks - the old mapping held them at one size there and stretched them toward it).
+    // Same scale overhead as before.
+    float2 P = rd.xz / (e + 0.035) * 1.385 + TIME * float2(0.006, 0.002);
     float2 W = float2(0.92, 0.39);
     float2 q = float2(dot(P, W), dot(P, float2(-W.y, W.x)));
     q.y += 0.22 * sin(q.x * 1.3 + fbm(P * 0.5, 2) * 3.0);                       // the rows ripple
@@ -395,7 +605,7 @@ float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     float d = cheap ? ngAcFieldLo(q, cov) : ngAcField(q, cov);
     [branch] if (d <= 0.002) return float4(0, 0, 0, 0);
     float dSoft = smoothstep(0.0, 0.45, d);                // for the light
-    d = smoothstep(0.0, 0.26, d);                          // the outline: crisp (seen in game: soft edges read as smeared)
+    d = smoothstep(0.0, 0.11, d);                          // the outline: crisp (seen in game: soft edges read as smeared - still too soft at 0.26, Nov 15)
     float2 sd = normalize(float2(dot(Ld.xz, W), dot(Ld.xz, float2(-W.y, W.x))) + 1e-4);
     float occ = 0.0;
     [branch] if (!cheap) {
@@ -419,7 +629,10 @@ float4 ngAlto(float3 rd, float3 Ld, bool cheap) {
     c += float3(1.0, 0.96, 0.88) * edge * fwd * 1.6;                            // silver lining
     float3 iri = ngFilm(0.45 + (1.0 - dSoft) * 0.9 + ang * 0.5);
     c = lerp(c, c * 0.65 + iri * 0.55, saturate(edge * smoothstep(0.40, 0.08, ang) * 0.8));   // mother-of-pearl, close in only
-    float fade = smoothstep(0.015, 0.12, e) * (1.0 - 0.35 * smoothstep(0.6, 1.0, e));
+    // toward the horizon the far clouds sink into the air's own colour (aerial perspective) instead of going see-through
+    float hz = 1.0 - smoothstep(0.03, 0.22, e);
+    c = lerp(c, ngSkyBase(normalize(float3(rd.x, max(e, 0.02), rd.z))) * 1.08, hz * 0.55);
+    float fade = smoothstep(0.012, 0.05, e) * (1.0 - 0.35 * smoothstep(0.6, 1.0, e));
     return float4(c, d * fade * 0.95);
 }
 // prism beams: a few broad shafts of light fanning out from the sun, each split into colour along its edges (the
@@ -433,8 +646,10 @@ float3 ngPrismBeams(float3 rd, float3 Ld) {
     float3 c;
     [unroll] for (int i = 0; i < 3; i++) {
         float sh = (float(i) - 1.0) * 0.020 * (0.4 + dist * 2.2);    // red / green / blue fan apart with distance
-        float x  = a * 7.0 / 6.2832 + sh * 7.0 + TIME * 0.004;
-        float v  = vnoise(float2(x, 3.7)) * 0.65 + vnoise(float2(x * 2.3, 9.1)) * 0.35;
+        // (the fan wraps once round the sun: noise that does not repeat there left a hard seam across the sky and the
+        //  clouds - seen in game as a vertical cut. Built from sines of whole multiples of the angle: seamless.)
+        float x  = a + sh * 6.2832 + TIME * 0.004;
+        float v  = 0.5 + 0.24 * sin(x * 3.0 + 1.3) + 0.17 * sin(x * 5.0 + 4.1) + 0.12 * sin(x * 8.0 + 0.7) + 0.08 * sin(x * 13.0 + 2.9);
         c[i] = smoothstep(0.62, 0.80, v);
     }
     return c * fall;
@@ -447,13 +662,13 @@ float4 ngCirrus(float3 rd, float3 Ld) {
     float m = fbm(q * 0.30 + 11.0, 3);
     [branch] if (m < 0.40) return float4(0.0, 0.0, 0.0, 0.0);   // no cirrus here: skip the fibres (cost)
     float2 w = float2(fbm(q * 0.8 + 1.7, 3), fbm(q * 0.8 + 8.3, 3));
-    float2 qq = q * float2(1.3, 4.0) + w * 1.6 + 3.0;
+    float2 qq = q * float2(0.9, 5.5) + w * 0.45 + 3.0;   // long, nearly straight fibres combed one way (strong warp read as scribbles in game)
     float  r = 0.0, amp = 0.55;
     [loop] for (int i = 0; i < (QUALITY > 0.3 ? 5 : 3); i++) { float v = 1.0 - abs(2.0 * vnoise(qq) - 1.0); r += amp * v * v; qq = mul(float2x2(1.6, 1.2, -1.2, 1.6), qq) * float2(1.0, 1.15); amp *= 0.5; }
     float dens = smoothstep(0.54, 0.80, r) * smoothstep(0.40, 0.62, m) * smoothstep(0.04, 0.22, e) * (1.0 - smoothstep(0.45, 0.90, e) * 0.85);   // overhead it streaked like motion blur
     float ang = acos(clamp(dot(rd, Ld), -1.0, 1.0));
     float3 c = lerp(float3(0.92, 0.95, 1.0), ngFilm(r * 2.2 + ang * 0.8), 0.75 * exp(-ang * 2.6));
-    return float4(c, dens);
+    return float4(c, dens * 0.55);
 }
 // caustics: light through the dome falling on a floor far under the void (a two-scale moving cell net)
 float ngCaustic(float2 p) {
@@ -554,11 +769,62 @@ float glyph(float2 uv, float seed){
   return max(row,colm)*step(0.30,ngH12(b+gi*13.+seed));
 }
 float3 cityHaze(float az){ return lerp(float3(0.85,0.12,0.60),float3(0.10,0.45,1.00),0.5+0.5*sin(az*1.3+2.0)); }
+// ---- the match, as the city sees it (the World FX pass has the match's cbuffer M - NG_HAS_MATCH; the sky pass has not)
+static int   NG_DT = -1;        // the team whose district the facade being drawn stands in (-1: no match)
+static float NG_DOFF = 0.0;     // that district powering down: 0 lit .. 1 dark (starts when its bed breaks)
+static float NG_DOUT = 0.0;     // that team is out (its ads turn to static)
+static float NG_STATIC = 0.0;   // the pixel just drawn is a board showing static (it stays visible in a dark district)
+#ifdef NG_HAS_MATCH
+#define NG_NALIVE int(trMin.w)
+#define NG_FALLK  trMax.w
+// the district a horizontal direction looks into: the team whose island lies closest to that way (one dot per team)
+void ngDistrictAt(float2 dir) {
+  NG_DT = -1; NG_DOFF = 0.0; NG_DOUT = 0.0;
+  int nt = min(int(m0.x), 16);
+  [branch] if (nt < 2) return;
+  float best = -2.0;
+  [loop] for (int i = 0; i < nt; i++) { float2 v = tPos[i].xz - CAM.xz; float d = dot(v, dir) * rsqrt(max(dot(v, v), 1e-3)); if (d > best) { best = d; NG_DT = i; } }
+  NG_DOFF = tAge[NG_DT].x >= 0.0 ? saturate(tAge[NG_DT].x / 14.0) : 0.0;   // ~14 s for a district to go dark
+  NG_DOUT = tAge[NG_DT].z;
+}
+float3 ngAliveCol(float h) {   // the colour of one of the teams still in
+  int nt = min(int(m0.x), 16), n = NG_NALIVE, k = min(int(h * float(n)), n - 1), c = 0; float3 r = float3(1, 1, 1);
+  [loop] for (int i = 0; i < nt; i++) if (tAge[i].z < 0.5) { if (c == k) r = max(tCol[i].rgb, 0.0); c++; }
+  return r;
+}
+#else
+#define NG_NALIVE 0
+#define NG_FALLK  0.0
+void ngDistrictAt(float2 dir) {}
+float3 ngAliveCol(float h) { return float3(1, 1, 1); }
+#endif
+// 8 District blackouts: when a team's bed breaks, its side of the city switches off tower by tower (each tower at its
+// own moment, with a stutter as it goes); a few windows stay on so it reads as a dark city, not a hole
+float ngDistrictPower(float sd) {
+  [branch] if (NG_DT < 0 || NG_DOFF <= 0.0) return 1.0;
+  float th = 0.05 + 0.90 * hb(sd, 77.0);
+  float sw = saturate((NG_DOFF - th) / 0.035);
+  float stut = (sw > 0.0 && sw < 1.0) ? step(0.5, frac(TIME * 19.0 + sd * 3.7)) * 0.6 : 0.0;
+  return lerp(1.0, 0.07, max(sw, stut));
+}
 static float SEA_D = 175.0;                                      // the city's streets lie this far under the islands
 // one advertisement: pn = 0..1 across the panel, sz = its size in metres. A lightbox behind glass (rounded, brightest
 // at its heart, a highlight along the top), neon tubes on a dark board, or a picture ad (shapes, a line of script)
 float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
   float3 bg=signCol(frac(hp*7.31)), a2=signCol(frac(hp*7.31+0.31+0.3*frac(hp*3.)));
+  // 9 Team billboards: a share of the ads carry the colours of the teams still in; in an eliminated team's district
+  // most boards have lost signal - static and a rolling bar (those stay faintly on when the district is dark)
+  [branch] if (NG_DT >= 0) {
+    [branch] if (NG_DOUT > 0.5 && frac(hp*3.1) < 0.70) {
+      float n = ngH12(floor(pn*sz*2.5) + floor(TIME*18.0)*17.0 + hp*91.0);
+      float roll = 1.0 - smoothstep(0.0, 0.06, abs(frac(pn.y*1.3 - TIME*0.9) - 0.5));
+      NG_STATIC = 1.0;
+      return float3(n, n, n*1.08)*0.42*NG_DOUT + roll*0.18 + float3(0.012, 0.012, 0.02);
+    }
+    [branch] if (NG_NALIVE > 0 && frac(hp*13.7) < 0.40) {
+      bg = ngAliveCol(frac(hp*5.3))*1.15; a2 = lerp(bg, float3(1.0, 1.0, 1.0), 0.80);   // the team's colour and white: a clear two-tone board
+    }
+  }
   float gw=min(sz.x,sz.y), gn=gw>9.0?2.0:1.0;
   float res=(1.-smoothstep(0.5,1.5,pxm/(gw/gn/7.)))*step(0.08,QUALITY);   // (only at the very floor of the quality do boards lose their script)
   float lum=lerp(0.85,1.20,frac(hp*3.7))*(0.93+0.07*sin(TIME*(2.+6.*frac(hp*13.))+hp*50.));
@@ -568,8 +834,9 @@ float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
   float3 ink=(bg.r+bg.g+bg.b>2.5)?(frac(hp*41.)<0.5?float3(0.90,0.04,0.08):((float3)(0.02))):((bg.g>0.7&&bg.b<0.2)||frac(hp*43.)<0.55?((float3)(0.015)):((float3)(1.5)));
   float3 c;
   if(kind<0.22){                                              // neon tubes on a dark board
-    float g=lerp(0.20,glyph(pn*sz/gw*gn,hp*100.),res);
-    c=float3(0.010,0.008,0.020)+bg*1.5*max(g,step(dE,0.45)*res);
+    float far=step(abs(frac(pn.y*3.0)-0.5),0.17)*step(abs(pn.x-0.5),0.36+0.08*frac(hp*17.));   // at distance: three tube lines, not a flat fill
+    float g=lerp(far*0.75,glyph(pn*sz/gw*gn,hp*100.),res);
+    c=float3(0.010,0.008,0.020)+bg*1.5*max(g,max(step(dE,0.45)*res,step(dE,max(pxm*1.2,0.5))*(1.-res)*0.6));
   } else if(kind<0.50&&gw>5.0){                               // a picture ad
     float2 q=(pn-0.5)*sz/gw; float t=TIME*0.3+hp*20.;
     float shape=frac(hp*29.)<0.5?step(length(q-float2(0.,0.08)),0.30):step(0.5,frac((q.x+q.y)*2.2+t*0.2));
@@ -579,13 +846,24 @@ float3 signPanel(float2 pn, float2 sz, float hp, float pxm){
     c=lerp(c,lerp(((float3)(0.02)),((float3)(1.5)),g),strip);
     c=c*(0.55+0.45*tube);
   } else {                                                    // a lightbox with script
-    float g=lerp(0.20,glyph(pn*sz/gw*gn,hp*100.),res);
-    c=lerp(bg*lum,ink,g)*(0.55+0.45*tube);
+    // a designed board, not a slab of colour: two tones (a header band, a side block or a roundel), a frame, and a
+    // bold bar that stands in for the script once the letters are too small to draw (seen in game: at distance every
+    // board was one flat colour)
+    float3 base=bg*lum; float lay=frac(hp*23.7);
+    float2 qd=(pn-0.5)*sz/gw;
+    if(lay<0.34) base=lerp(base,a2*lum,step(0.70,pn.y));
+    else if(lay<0.67) base=lerp(base,a2*lum,step(pn.x,0.28));
+    else base=lerp(base,a2*lum,step(length(qd-float2(-0.18*sz.x/gw,0.0)),0.30));
+    float bar=step(abs(pn.y-0.38),0.075)*step(abs(pn.x-0.56),0.27)+step(abs(pn.y-0.20),0.035)*step(abs(pn.x-0.50),0.21);
+    base=lerp(base,ink,saturate(bar)*(1.-res)*0.80);
+    float frame=smoothstep(0.0,max(1.1,pxm*1.6),dE);
+    c=lerp(base,ink,glyph(pn*sz/gw*gn,hp*100.)*res)*(0.50+0.50*frame);
   }
   return c+((float3)(1.0))*0.20*smoothstep(0.80,0.97,pn.y)*tube*res*step(0.22,kind);
 }
 // a building face. lx 0..1 across it, ym metres above the street, Hr its height, Wm its width; sd = its seed
 float3 facade(float lx, float ym, float Hr, float Wm, float pxm, float az, float sd, float tall, float nearK){
+  ngDistrictAt(float2(cos(az),sin(az))); NG_STATIC=0.0;
   float h=hb(sd,1.), h2=hb(sd,2.), h4=hb(sd,4.), ht=hb(sd,5.);
   float yTop=Hr-ym;
   float3 face=float3(0.012,0.013,0.028)+cityHaze(az)*0.035*exp(-ym/120.0);
@@ -669,7 +947,7 @@ float3 facade(float lx, float ym, float Hr, float Wm, float pxm, float az, float
   for(int k=0;k<3;k++){ float o=(float(k)-1.)*ew*1.3;
     c[k]+=0.80*(1.-smoothstep(0.,ew*1.1,min(abs(lx-ew-o),abs(1.-lx-ew+o))))*(0.35+0.65*ym/Hr); }
   c+=cityHaze(az)*0.22*exp(-ym/45.0)+signCol(h)*0.20*exp(-ym/14.0);     // the glow of the street and its shopfronts
-  return c;
+  return c*lerp(ngDistrictPower(sd),0.60,NG_STATIC);
 }
 
 // ---- the city by DAY: the same glass city in sunlight. Every face is a mirror of the sky (tinted glass: teal, silver,
@@ -776,7 +1054,10 @@ float4 cityLayer(float3 rd, float L){
   if(ym>Hr){
     float bbH=lerp(7.,14.,h);
     if(h4>0.40&&tall<0.3&&ym<Hr+bbH&&abs(lx-0.5)<0.44)
-      return float4(lerp(signPanel(float2((lx-0.06)/0.88,(ym-Hr)/bbH),float2(Wm*0.88,bbH),hb(sd,21.),pxm),hazeC,hzK*0.6),1.0);
+    { ngDistrictAt(float2(cos(az),sin(az))); NG_STATIC=0.0;
+      float3 sp=signPanel(float2((lx-0.06)/0.88,(ym-Hr)/bbH),float2(Wm*0.88,bbH),hb(sd,21.),pxm); sp*=lerp(ngDistrictPower(sd),0.60,NG_STATIC);
+      sp=lerp(sp*0.55+dayAir(az)*0.35,sp,LIT);                                 // by day: a printed board in daylight, not a lightbox
+      return float4(lerp(sp,lerp(dayAir(az)*0.9,hazeC,LIT),hzK*0.6),1.0); }   // (far ones sank into night navy at noon - seen in game as dark slabs)
     float spH=lerp(30.,110.,h)*step(0.35,tall);                // a glass spire on the tall ones (the reference's pointed crowns)
     if(spH>0.&&ym<Hr+spH&&abs(lx-0.5)<0.42*(1.0-(ym-Hr)/spH)){
       float k=(ym-Hr)/spH; float3 rr=reflect(rd,-normalize(float3(cos(az),0.,sin(az))));
@@ -970,7 +1251,7 @@ float3 ngVoid(float3 ro, float3 rd, float3 Ld) {
     // round, and right under the islands its blocks and streets
     setCity();                                                     // (the sea pass calls this directly, not via ngBackground)
     GPX = max(length(fwidth(rd)), 1e-5);
-    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), 60.0, 420.0);
+    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), lerp(60.0, 4.0, NG_FALLK), 420.0);   // 12: falling, the city rushes up to meet you
     float4 cb = cityBelow(float3(ro.x, SEA_D, ro.z), rd);          // under the islands: the city itself
     [branch] if (cb.a > 0.5) col = cb.rgb;
     else {
@@ -1014,7 +1295,7 @@ float3 ngVeil(float3 rd) {
 float3 ngBackground(float3 rd) {
     setCity();
     GPX = max(length(fwidth(rd)), 1e-5);
-    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), 60.0, 420.0);           // the city's streets lie ~175 under the islands
+    SEA_D = clamp(CAM.y - (SEA_Y - 120.0), lerp(60.0, 4.0, NG_FALLK), 420.0);   // 12: falling, the city rushes up to meet you           // the city's streets lie ~175 under the islands
     float3 Ld = PHASE > 1.45 ? SUN : SUNDISC;                         // the sun by day, the moon at night
     [branch] if (rd.y < 0.0) return ngVoid(CAM, rd, Ld);
     // the city first: where a building covers this pixel none of the sky behind it is worked out (seen in game: the
@@ -1097,29 +1378,33 @@ float3 ngBackground(float3 rd) {
 }
 float3 csBackground(float3 rd, bool withSea) {
     if (NG_IS) return ngBackground(rd);
-    float  mu = dot(rd, SUN);
-    float  ang = acos(clamp(mu, -1.0, 1.0));
-    float3 col = skyBase(rd);
-    float4 hc = highClouds(rd, mu);
-    float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
-    float  disc = smoothstep(0.0125, 0.0095, angD);
-    float3 sun = (float3(3.2, 2.3, 1.25) * disc + float3(1.5, 0.78, 0.30) * exp(-angD * 38.0) * 0.8) * SUNUP;
-    col += sun * (1.0 - hc.a * 0.85);
-    col = csGrade(col * (1.0 - hc.a) + hc.rgb, rd);
-    [branch] if (NIGHT > 0.001) {
-        float  e = max(rd.y, 0.0);
-        float3 nb = lerp(float3(0.040, 0.055, 0.110), float3(0.006, 0.010, 0.032), smoothstep(0.0, 0.45, e));
-        nb = lerp(nb, float3(0.020, 0.030, 0.075), smoothstep(0.0, 0.02, e) * (1.0 - smoothstep(0.02, 0.2, e)) * 0.5);
-        float3 hcN = csGrade(hc.rgb, rd);                   // clouds keep their moonlit shapes over the night gradient
-        col = lerp(col, nb * (1.0 - hc.a) + hcN, NIGHT);
+    float3 tn;
+    float4 hc = highClouds(rd, tn);
+    float3 col = float3(0.0, 0.0, 0.0);
+    float  md = 0.0;
+    [branch] if (WTW < 0.999) {
+        float3 c = skyDay(rd);
+        float  angD = acos(clamp(dot(rd, SUNDISC), -1.0, 1.0));
+        float  disc = smoothstep(0.0125, 0.0095, angD);
+        c += (float3(3.2, 2.3, 1.25) * disc + float3(1.5, 0.78, 0.30) * exp(-angD * 38.0) * 0.8) * SUNUP * (1.0 - hc.a * 0.85);
+        col = csGradeDusk(c * (1.0 - hc.a) + hc.rgb, rd);
     }
-    [branch] if (NIGHT > 0.001) col += (csStars(rd) * (1.0 - hc.a) + csMoon(rd) * (1.0 - hc.a * 0.8)) * NIGHT;
+    [branch] if (WTW > 0.001) {
+        float3 sk = float3(0.0, 0.0, 0.0);
+        [branch] if (WNI < 0.999) sk = skyTwilight(rd);
+        [branch] if (WNI > 0.001) sk = lerp(sk, skyNight(rd), WNI);
+        float3 moon = csMoon(rd, md);
+        // stars drown in whatever light the sky still holds (the afterglow, the air round the moon)
+        [branch] if (PHASE > 1.18) sk += csStars(rd) * (1.0 - md) / (1.0 + csLum(sk + moon) * 55.0);
+        float3 t = (sk * (1.0 - md) + moon * (1.0 - hc.a * 0.80)) * (1.0 - hc.a) + moon * hc.a * 0.20 * (1.0 - hc.a * 0.6) + tn;
+        col = lerp(col, t, WTW);
+    }
     [branch] if (withSea) {
         float  tHit;
         float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
         if (sea.a > 0.0) col = sea.rgb;
     }
-    col += csGlow(ang, hc.a);
+    col += csGlow(rd, hc.a) * (1.0 - 0.85 * md * (1.0 - hc.a));   // (the haze round the moon is not in front of it either)
     return col;
 }
 // the cloud sea alone for a sky pixel: a = 0 where the ray misses it (keep the sky pass's colour)
@@ -1128,6 +1413,5 @@ float4 csSeaPixel(float3 rd) {
     float  tHit;
     float4 sea = cloudSea(CAM, rd, 3400.0, tHit);
     if (sea.a <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
-    float  ang = acos(clamp(dot(rd, SUN), -1.0, 1.0));
-    return float4(sea.rgb + csGlow(ang, 0.0), 1.0);
+    return float4(sea.rgb + csGlow(rd, 0.0), 1.0);
 }

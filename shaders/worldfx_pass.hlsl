@@ -16,7 +16,7 @@ cbuffer C : register(b0) {
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
     float4 c9; // x = god ray strength, y = cloud shadow strength, z = quality 0..1 (RF lowers it to hold the frame rate), w = ink look strength
-    float4 c10; // x = 1: this draw is the sky only (depth-tested to sky pixels, shaded at a coarse rate): take the sky path
+    float4 c10; // x = 1: this draw is the sky only (depth-tested to sky pixels, shaded at a coarse rate): take the sky path, y = 1: your head is under water
 };
 // the match (Bedrock Forge MatchFx, filled per frame by SkyPass): team lights + bed beacons, block shards, placement pop
 cbuffer M : register(b1) {
@@ -28,12 +28,12 @@ cbuffer M : register(b1) {
     float4 eC[8];    // x = seed, y = blocks below the block the pieces land on (-1 = nothing: they fall away)
     float4 m1;       // x = trail blocks, y = shockwave strength (F6), z = 1: a kill is playing, w = 1: cosmetic beds
     float4 tAge[16]; // x = seconds since that bed broke (-1 = standing), y = enemies at the bed 0..1, z = team out 0..1 (fades in), w = 1: your team
-    float4 trMin, trMax; // bounds of the trail blocks (world)
+    float4 trMin, trMax; // bounds of the trail blocks (world); trMin.w = teams still in, trMax.w = you are falling into the void 0..1
     float4 gA[48];   // trail block corner (world, min), w = age (s)
     float4 gB[48];   // its colour (sRGB)
     float4 bVis[16]; // the server's bed model per team: xyz feet (world), w = yaw (radians), w = -100: none
     float4 fallen[24]; // one star per final kill this match: xyz = sky direction, w = age (s)
-    float4 m2;         // x = fallen stars, y = projectile trails
+    float4 m2;         // x = fallen stars, y = projectile trails, z = bed style, w = tension
     float4 fCol[24];   // their team colours
     float4 pInfo[8];   // projectile trails: rgb = shooter's team colour, w = kind + 8 * points
     float4 pPts[96];   // 8 x 12 points, newest first: xyz world, w = seconds ago
@@ -46,6 +46,7 @@ cbuffer M : register(b1) {
 #if NG_RIM
 #define NG_ATMOS 1   // the pass built with the rim is the Novak Glass atmosphere: its sky, its void, its light
 #endif
+#define NG_HAS_MATCH 1   // cbuffer M (above) is this pass's: the city reads the match from it
 #define CS_NOISE_REG t2
 #define CS_PUFF_REG t3
 #include "cloud_sea_common.hlsli"
@@ -86,6 +87,10 @@ VSOut VSWorldFx(uint id : SV_VertexID) {
 
 // ---- god rays: march from the pixel toward the sun on screen; every step that sees open sky lets light through.
 //      Islands, players and trees cut real shadow wedges into the beams. Returns linear light to add.
+// open sky toward the sun: a hairline crack between two blocks reads as "sky" in the depth buffer - on a flat Cloud Sea
+// floor the beams and the rim drew broken bright dashes along every seam (Fernando, Nov 14). Real sky is wider than
+// a crack: a pixel a few over must be sky too.
+bool openSky(int2 q) { return isSky(rawDepth(q)) && isSky(rawDepth(q + int2(3, 1))); }
 float3 sunShafts(int2 px, float j) {
     float3 sp = toPx(SUN * 4000.0);
     if (sp.z <= 0.0 || c8.w < 0.5) return float3(0, 0, 0);
@@ -101,23 +106,24 @@ float3 sunShafts(int2 px, float j) {
     // a quick look first: 4 taps along the line. All open (sky all the way to the sun) or all blocked is the answer
     // for most pixels; only pixels near an edge pay for the full march. (Measured: the march cost +1.6 ms at 4K with
     // the sun on screen.)
-    [branch] if (NG_IS) {                                      // (Novak only: Cloud Sea stays exactly as signed off)
+    {                                                          // (Cloud Sea too since Nov 15: with the moon on screen the full march on every pixel was +3 ms)
         int nOpen = 0;
         [unroll] for (int s4 = 0; s4 < 4; s4++) {
             float2 q = float2(px) + stepv * (float(N) * (0.12 + 0.26 * float(s4)) + j);
-            bool o = (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) ? true : isSky(rawDepth(int2(q)));
+            bool o = (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) ? true : openSky(int2(q));
             nOpen += o ? 1 : 0;
         }
         [branch] if (nOpen == 0 || nOpen == 4) {
             float open = nOpen == 4 ? 1.0 : 0.0;
             float beam = open * near * near * (0.6 + 0.4 * near);
+            if (!NG_IS) return lerp(float3(1.00, 0.58, 0.26), float3(0.45, 0.56, 0.85), NIGHT) * beam * c9.x;
             return lerp(lerp(float3(1.00, 0.96, 0.88) * 0.55, float3(0.95, 0.50, 0.60) * 0.6, DUSK), float3(0.50, 0.48, 0.95) * 0.8, NIGHT) * beam * c9.x;
         }
     }
     [loop] for (int k = 0; k < N; k++) {
         float2 q = float2(px) + stepv * (float(k) + j);
         if (q.x < 0 || q.y < 0 || q.x >= c4.x || q.y >= c4.y) { acc += w; wsum += w; w *= decay; continue; }  // off screen toward the sun: assume sky
-        acc += isSky(rawDepth(int2(q))) ? w : 0.0;
+        acc += openSky(int2(q)) ? w : 0.0;
         wsum += w;
         w *= decay;
     }
@@ -252,6 +258,11 @@ float segGlow(float3 rd, float3 a, float3 b, float w, float tMax) {   // light a
     float3 dd = rd * tr - q;
     return tr < tMax + 0.05 ? exp(-dot(dd, dd) / (w * w)) : 0.0;
 }
+#if NG_ATMOS == 1
+// Novak Glass: the background along this pixel's ray (sky / glass city / void), worked out ONCE per pixel in PSWorldFx.
+// Its four call sites each inlined the whole city: 2.5 MB of DXIL and a ~63 s driver compile on every new build.
+static float3 NGBG = float3(0.0, 0.0, 0.0);
+#endif
 float4 shards(float3 col0, float3 rd, float sceneT) {
     float  best = sceneT;
     float3 col = 0.0;
@@ -262,6 +273,74 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
         float3 corner = eA[i].xyz - CAM;
         float3 alb = pow(max(eB[i].rgb, 0.0), 2.2);
         float  seed = eC[i].x;
+        if (kind > 1.5 && kind < 2.5 && !NG_IS) {
+            // 16 Cloud Sea: a placed block arrives as a PUFF OF CLOUD (Fernando, Nov 15: "it starts as a small cloud that
+            // expands and turns into a fluffy cloud block - good for speed bridging"). A small cloud bursts open from
+            // the block's heart and is the block's size in 0.16 s; the block stands in it by then (you can see where
+            // you are building at once); the puff thins, and its last wisps drift up and out for another 0.4 s.
+            const float LEN = 0.60;
+            if (age > LEN) continue;
+            float3 bc = corner + 0.5;
+            if (!nearRay2(rd, bc, 1.7)) continue;
+            float  g    = 1.0 - pow(saturate(1.0 - age / 0.16), 3.0);          // the burst (fast out, easing)
+            float  away = smoothstep(0.16, LEN, age);                          // the wisps leaving
+            float  dens = 1.0 - smoothstep(0.16, LEN - 0.02, age) * (0.55 + 0.45 * smoothstep(0.16, 0.38, age));   // (thins at once after the burst: the next block's spot must show)
+            float3 hue  = alb / max(max(alb.r, max(alb.g, alb.b)), 0.05);
+            float3 lin  = hit ? col : pow(max(col0, 0.0), 2.2);
+            float  tLim = min(sceneT, best);
+            // the block itself comes out of the cloud: for the first 0.14 s it is cloud-white, then takes its own colour.
+            // (audit: showing the sky through it meant working the whole sky out inside this loop - the frame rate fell
+            //  to a fraction for as long as a block was arriving. Speed bridging would have stuttered on every block.)
+            float  tN; float3 nl, lp;
+            bool   inCell = hitBox(rd, bc, float3(0.503, 0.503, 0.503), float3x3(1, 0, 0, 0, 1, 0, 0, 0, 1), tN, nl, lp);
+            float  blockK = smoothstep(0.02, 0.14, age);
+            if (inCell && blockK < 1.0 && sceneT >= tN - 0.03 && sceneT <= tN + 1.80) {
+                float3 fog = lerp(lerp(float3(0.58, 0.52, 0.50), float3(0.55, 0.40, 0.40), DUSK), float3(0.24, 0.30, 0.48), NIGHT);
+                lin = lerp(lerp(fog, fog * (0.45 + 0.75 * hue), 0.34) * (0.85 + 0.25 * nl.y), lin, blockK);
+            }
+            // the puff: seven soft heaps round the block's heart. Per heap: how much cloud this ray passes through
+            // (thinner toward the heap's ragged rim), and which way that surface faces - for the light on it
+            float  T = 0.0, wAcc = 0.0, litAcc = 0.0;
+            float3 Lp = normalize(SUN + float3(0.0, 0.6, 0.0));
+            float  tMid = dot(bc, rd);
+            [loop] for (int k = 0; k < 7; k++) {
+                float  sk = seed * 0.001 + float(k) * 3.71;
+                float3 dir = k == 0 ? float3(0.0, 0.0, 0.0) : normalize(float3(h1(sk), h1(sk + 1.0), h1(sk + 2.0)) - 0.5);
+                float3 c  = bc + dir * (0.40 * g + 0.34 * away) + float3(0.0, 0.20 * away, 0.0);
+                float  r  = (k == 0 ? 0.72 : 0.45 + 0.15 * h1(sk + 3.0)) * g * (1.0 - 0.55 * away);   // (audit, seen in slow motion: at 0.30 out the puff sat inside the block - only its caps showed. It now stands ~0.2 proud of every face)
+                float  tc = dot(c, rd);
+                if (tc < 0.0 || r < 0.01) continue;
+                float3 pn = rd * tc - c;
+                float  rr = r * (0.84 + 0.30 * vnoise(pn.xy * 6.0 + pn.z * 3.7 + sk * 5.0));   // a ragged, billowy rim
+                float  b2 = dot(pn, pn);
+                if (b2 >= rr * rr) continue;
+                float  h  = sqrt(rr * rr - b2);
+                float  ta = tc - h, tb = min(tc + h, tLim);
+                if (tb <= ta) continue;
+                float  th = (tb - ta) * (1.0 - b2 / (rr * rr));
+                // each heap takes the light on its own round face, and the nearer heaps count for more: the puff keeps
+                // its billows (audit: one averaged normal for all seven made it a flat cream blob)
+                float  lk = saturate(dot(normalize(pn - rd * h), Lp) * 0.5 + 0.5) * (0.82 + 0.18 * (1.0 - b2 / (rr * rr)));
+                float  wk = th * exp(-(ta - tMid) * 3.0);
+                T += th; wAcc += wk; litAcc += lk * wk;
+            }
+            [branch] if (T > 1e-4) {
+                float  lit = litAcc / max(wAcc, 1e-5);
+                // lit like the clouds it belongs to: a warm white crest (moon silver at night), lavender shade, the
+                // block's own colour breathed into it; thin edges glow
+                // (audit: the first values clipped - the puff was a flat white blob with no form. Kept under white now)
+                float3 crest = lerp(lerp(float3(0.72, 0.65, 0.54), float3(0.72, 0.52, 0.42), DUSK), float3(0.34, 0.42, 0.62), NIGHT);
+                float3 shade = lerp(lerp(float3(0.34, 0.30, 0.47), float3(0.27, 0.20, 0.36), DUSK), float3(0.10, 0.13, 0.26), NIGHT);
+                float3 pc = lerp(shade, crest, smoothstep(0.25, 0.80, lit));
+                pc = lerp(pc, pc * (0.45 + 0.75 * hue), 0.34);
+                pc += crest * 0.16 * (1.0 - saturate(T * 2.6));
+                float  a = min(1.0 - exp(-T * 9.0), 0.92) * dens;   // (audit: at 5.5 the part standing proud of the block was a faint mist - a puff has a body)
+                lin = lerp(lin, pc, a);
+            }
+            col = lin; best = min(sceneT, best); hit = true;
+            continue;
+        }
+#if NG_ATMOS == 1   // (Cloud Sea has its puff above. Left in its build, this block's sky lookup was worked out for every pixel of the frame whenever any event was live - ~2 ms)
         if (kind > 1.5 && kind < 2.5) {
             // placed: it MATERIALIZES. For 0.42 s the block is not there - its cell is a hologram: you see through it
             // (dark glass, scanlines, a wireframe), while the block builds itself inside out of 512 small voxels of
@@ -291,7 +370,13 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                     float3 inv = 1.0 / select(abs(rd) > 1e-6, rd, 1e-6);
                     float3 t1 = (corner + 1.0) * inv, t0 = corner * inv;
                     float  tF = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
-                    float3 bg = sceneT > tF + 0.02 ? pow(max(col0, 0.0), 2.2) : pow(max(toDisplay(csBackground(rd, true)), 0.0), 2.2);
+                    float3 bg = sceneT > tF + 0.02 ? pow(max(col0, 0.0), 2.2) : pow(max(
+#if NG_ATMOS == 1
+                        ngSkyBase(rd) * (1.0 - NIGHT)   // a block still materializing: the plain sky behind its cubes (the city is too heavy to inline here; at night it is black)
+#else
+                        toDisplay(csBackground(rd, true))
+#endif
+                        , 0.0), 2.2);
                     // march the 8x8x8 voxels of the block: the first one that has arrived is what you see
                     // Novak Glass: 16 x 16 x 16 micro-cubes of clear glass (4096 of them) instead of 512 solid voxels
                     const float VN = NG_IS ? 16.0 : 8.0;
@@ -354,6 +439,9 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
             }
             continue;
         }
+#else
+        if (kind > 1.5 && kind < 2.5) continue;
+#endif
         if (kind > 4.5) continue;   // respawn / victory: screen and sky effects, not pieces
         if (kind > 2.5 && kind < 4.5) continue;   // kills are drawn as light (killLight), not pieces
         if (kind > 2.5) { // a kill (old voxel body, unused): the player's body, in voxels of their team colour, holds for a beat, then bursts
@@ -403,6 +491,58 @@ float4 shards(float3 col0, float3 rd, float sceneT) {
                 float3 body = team * (0.30 + 0.45 * saturate(dot(nw, SUN)) * LIGHTK + 0.12 * nw.y);
                 float3 c = lerp(body, float3(1.7, 1.6, 1.5), heat * 0.9) + team * edge * (1.1 + 1.6 * heat + 1.2 * rise);
                 best = tN, col = c, hit = true;
+            }
+            continue;
+        }
+        if (!NG_IS) {
+            // 16 Cloud Sea: a broken block BURSTS INTO CLOUD (Fernando, Nov 15: it still threw the old square shards). The
+            // block is a block-sized cloud for an instant, then it blows apart: nine heaps fly out and up, shrinking and
+            // thinning, gone in 0.7 s - short, so a fight stays readable through it. The block's own colour is in it.
+            const float LEN = 0.72;
+            if (age > LEN) continue;
+            float3 bc = corner + 0.5;
+            if (!nearRay2(rd, bc, 2.1)) continue;
+            float  outK = 1.0 - pow(saturate(1.0 - age / 0.32), 2.0);
+            float  dens = 1.0 - smoothstep(0.10, LEN - 0.02, age);
+            float3 hue  = alb / max(max(alb.r, max(alb.g, alb.b)), 0.05);
+            float3 lin  = hit ? col : pow(max(col0, 0.0), 2.2);
+            // (the game rebuilds the chunk a few frames after the break: the block can still be in the depth buffer)
+            float3 S = rd * sceneT;
+            bool   ghost = age < 0.5 && all(S > corner - 0.03) && all(S < corner + 1.03);
+            float  tLim = (ghost && best >= sceneT) ? 1e9 : min(sceneT, best);
+            float  T = 0.0, wAcc = 0.0, litAcc = 0.0;
+            float3 Lp = normalize(SUN + float3(0.0, 0.35, 0.0));
+            float  tMid = dot(bc, rd);
+            [loop] for (int k = 0; k < 9; k++) {
+                float  sk = seed * 0.001 + float(k) * 3.71;
+                float3 dir = k == 0 ? float3(0.0, 0.3, 0.0) : normalize(float3(((k & 1) ? 1.0 : -1.0), ((k & 2) ? 1.0 : -0.4), ((k & 4) ? 1.0 : -1.0)) + (float3(h1(sk), h1(sk + 1.0), h1(sk + 2.0)) - 0.5) * 1.2);
+                float3 c  = bc + dir * (0.16 + (0.70 + 0.40 * h1(sk + 4.0)) * outK) + float3(0.0, 0.45 * age, 0.0);
+                float  r  = (0.40 - 0.16 * outK) * (0.85 + 0.30 * h1(sk + 3.0)) * (1.0 - 0.5 * smoothstep(0.30, LEN, age));
+                float  tc = dot(c, rd);
+                if (tc < 0.0) continue;
+                float3 pn = rd * tc - c;
+                float  rr = r * (0.66 + 0.42 * vnoise(pn.xy * 5.0 + pn.z * 3.1 + sk * 5.0) + 0.22 * vnoise(pn.xy * 13.0 - pn.z * 7.0 + sk * 9.0));   // (audit: with a smooth rim the heaps were plain round balls)
+                float  b2 = dot(pn, pn);
+                if (b2 >= rr * rr) continue;
+                float  h  = sqrt(rr * rr - b2);
+                float  ta = tc - h, tb = min(tc + h, tLim);
+                if (tb <= ta) continue;
+                float  th = (tb - ta) * (1.0 - b2 / (rr * rr));
+                float3 nk = normalize(pn - rd * h);
+                // (audit 2: every heap came out the same flat peach - light from one side, a darker underside, billows inside)
+                float  lk = saturate(dot(nk, Lp) * 0.55 + 0.38 + 0.22 * nk.y) * (0.72 + 0.28 * (1.0 - b2 / (rr * rr))) * (0.80 + 0.40 * vnoise(pn.xy * 9.0 + pn.z * 5.0 + sk * 3.0));
+                float  wk = th * exp(-(ta - tMid) * 6.0);
+                T += th; wAcc += wk; litAcc += lk * wk;
+            }
+            [branch] if (T > 1e-4) {
+                float  lit = litAcc / max(wAcc, 1e-5);
+                float3 crest = lerp(lerp(float3(0.72, 0.65, 0.54), float3(0.72, 0.52, 0.42), DUSK), float3(0.34, 0.42, 0.62), NIGHT);
+                float3 shade = lerp(lerp(float3(0.34, 0.30, 0.47), float3(0.27, 0.20, 0.36), DUSK), float3(0.10, 0.13, 0.26), NIGHT);
+                float3 pc = lerp(shade, crest * 1.10, smoothstep(0.30, 0.78, lit));
+                pc = lerp(pc, pc * (0.35 + 0.95 * lerp(hue, 1.0, 0.25)), 0.60);                 // more of the block in it than in the place puff: you see WHAT broke
+                pc += crest * 0.16 * (1.0 - saturate(T * 2.6));
+                lin = lerp(lin, pc, min(1.0 - exp(-T * 9.0), 0.92) * dens);
+                col = lin; best = min(sceneT, best); hit = true;
             }
             continue;
         }
@@ -602,7 +742,9 @@ float figSegDist(float3 ro, float3 rd, float3 a, float3 b, out float tRay) { // 
     tRay = max(dot(q - ro, rd), 0.0);
     return length(ro + rd * tRay - q);
 }
+#if WFX_KILLS   // the death scenes: only in the kill builds of the pass (PSWorldFxKills / PSWorldFxGlassKills)
 #include "death_scenes.hlsli"
+#endif
 float4 figuraBeds(float3 rd, float sceneT, inout float3 halo) {
     int nt = int(m0.x);
     float best = sceneT; float3 col = 0.0; bool hit = false;
@@ -1167,6 +1309,7 @@ float3 airLife(float3 rd, float sceneT) {
         float3 cD = float3(1.00, 0.72, 0.26) * pow(tw, 3.0) * 1.25;                                                   // fireflies: slow pulses
         float3 cN = float3(0.72, 0.84, 1.00) * (0.25 + 0.9 * pow(tw, 6.0));                                           // stardust: glints
         float3 c = (cG * wGold + cD * wDusk + cN * wNight) * I;
+        if (sceneT > 2000.0) c *= 1.0 - 0.8 * wNight;      // against the night sky the dust read as stars in front of the clouds
         best = max(best, c);
     }
     return best * K * 0.55;
@@ -1237,17 +1380,18 @@ float ifVN(float x, float per, float sd) {   // value noise over an angle, wrapp
     f = f * f * (3.0 - 2.0 * f);
     return lerp(ifH(fmod(i0, per), sd), ifH(fmod(i0 + 1.0, per), sd), f);
 }
+static const float IMPACT_SPEED = 2.0;   // Fernando: the impact frame twice as fast (0.25 s instead of 0.5 s)
 bool impactLive() {
     int ne = int(m0.y);
     for (int i = 0; i < ne; i++)
-        if (eB[i].w > 7.5 && eB[i].w < 8.5 && eC[i].z > 1.1 && eC[i].z < 1.4 && eA[i].w <= 0.5) return true;
+        if (eB[i].w > 7.5 && eB[i].w < 8.5 && eC[i].z > 1.1 && eC[i].z < 1.4 && eA[i].w * IMPACT_SPEED <= 0.5) return true;
     return false;
 }
 float3 impactFrame(float3 o, float3 rd, float sceneT) {
     int ne = int(m0.y);
     [loop] for (int i = 0; i < ne; i++) {
         if (eB[i].w < 7.5 || eB[i].w > 8.5) continue;
-        float age = eA[i].w, who = eC[i].z;
+        float age = eA[i].w * IMPACT_SPEED, who = eC[i].z;   // (the frame's own clock)
         if (who < 1.1 || who > 1.4 || age > 0.5) continue;
         float3 W = CAM + rd * min(sceneT, 4000.0);
         float3 c = eA[i].xyz + float3(0.5, 0.0, 0.5);
@@ -1354,7 +1498,8 @@ float3 ngNeonDelta(float3 before, float3 after) {   // linear light
 float3 matchOverRaw(float3 o, float3 rd, float sceneT);
 float3 matchOver(float3 o, float3 rd, float sceneT) {
     float3 r = matchOverRaw(o, rd, sceneT);
-    [branch] if (NG_IS) r = pow(ngNeonDelta(pow(max(o, 0.0), 2.2), pow(max(r, 0.0), 2.2)), 1.0 / 2.2);
+    // (Novak used to recolour warm effect light here: orange -> hot pink, gold -> cyan. Off: it was the random pink
+    //  hue on Hive - any orange light (a hit, a bed going, a spark) landed pink. Effects keep their own colours.)
     return r;
 }
 float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
@@ -1373,9 +1518,11 @@ float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
         float4 sh = shards(o, rd, sceneT);
         if (sh.w > 0.0) { o = sh.rgb; sceneT = sh.w; }
     }
+#if WFX_KILLS
     [branch] if (m0.y > 0.5 && m1.z > 0.5) {   // a kill: its death scene
         o = deathScenes(o, rd, sceneT);
     }
+#endif
     [branch] if (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) {
         float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0)) * (1.0 + 0.6 * m2.w) + shockwaves(rd, sceneT, sceneT > 1e8);
         o = pow(lin, 1.0 / 2.2);
@@ -1509,9 +1656,57 @@ float3 ngRim(float3 lin, float3 P, float3 nr, int2 px, float z, float3 L, float 
     return lin;
 }
 
-float4 PSWorldFx(VSOut i) : SV_Target {
+// 10 Neon rain: when only two teams are left (of three or more), a fine rain falls through the city's light - long thin
+// streaks in three depths, leaning with the wind, brightest low over the city and gone overhead; sparse, never a veil
+float ngRainK() {
+    int nt = min(int(m0.x), 16);
+    [branch] if (nt < 3 || NG_NALIVE != 2) return 0.0;
+    float k = 1.0;
+    [loop] for (int i = 0; i < nt; i++) if (tAge[i].z >= 0.5) k = min(k, tAge[i].z);   // the last team out fades it in
+    return smoothstep(0.5, 1.0, k);
+}
+float3 ngRain(float3 rd) {
+    float el = rd.y, az = atan2(rd.z, rd.x) + el * 0.16;          // the wind leans it
+    float3 acc = 0.0;
+    [unroll] for (int k = 0; k < 3; k++) {
+        float  fk = float(k);
+        float  N  = 520.0 * (1.0 + 0.8 * fk);                    // far layers: more, finer
+        float  x  = az / 6.2832 * N, ci = floor(x), fx = frac(x);
+        float  h  = hb(ci, 7.0 + fk * 13.0);
+        if (h < 0.66) continue;
+        float  y  = el * (4.2 + 2.2 * fk) + TIME * (1.5 + 0.8 * frac(h * 7.3)) * (1.0 + 0.35 * fk) + h * 31.0;
+        float  fy = frac(y);
+        float  streak = smoothstep(0.0, 0.04, fy) * (1.0 - smoothstep(0.10, 0.42, fy));   // a long tail, a bright head
+        float  w  = max(fwidth(x) * 0.7, 0.030);
+        float  ln = 1.0 - smoothstep(0.0, w, abs(fx - 0.5));
+        acc += lerp(cityHaze(az) * 1.5, float3(0.85, 0.95, 1.0), 0.30) * ln * streak * (1.0 - 0.28 * fk) * (0.5 + 0.5 * frac(h * 3.1));
+    }
+    return acc * 0.10 * (0.35 + 0.65 * exp(-max(el, 0.0) * 2.2)) * (0.45 + 0.55 * NIGHT);
+}
+float4 wfxMain(VSOut i, inout bool MO, inout float3 moO, inout float3 moRd, inout float moT, inout float3 moAdd) {
     int2  px = int2(i.pos.xy);
     float d  = rawDepth(px);
+    // a hairline crack between two blocks (the game's geometry leaves 1-pixel gaps; the upscale widens them): "sky" with
+    // the same surface right on both sides. Seen on flat Cloud Sea floors as broken bright dashes - the sea showing
+    // through the floor. It takes the surface's colour instead.
+    [branch] if (isSky(d)) {
+        [unroll] for (int ax = 0; ax < 2; ax++) {
+            int2  o  = ax == 0 ? int2(1, 0) : int2(0, 1);
+            float da = rawDepth(px - o), db = rawDepth(px + o);
+            int2  oa = -o, ob = o;
+            if (isSky(da)) { da = rawDepth(px - 2 * o); oa = -2 * o; }
+            if (isSky(db)) { db = rawDepth(px + 2 * o); ob = 2 * o; }
+            if (!isSky(da) && !isSky(db)) {
+                float za = viewZ(da), zb = viewZ(db);
+                if (abs(za - zb) < 0.06 * min(za, zb) + 0.3) {
+                    CAM = c7.xyz; TIME = c8.z;
+                    MO = true; moO = 0.5 * (sceneAt(px + oa).rgb + sceneAt(px + ob).rgb);
+                    moRd = normalize(posAt(float2(px) + 0.5, 1.0)); moT = 0.5 * (za + zb); moAdd = 0;
+                    return float4(0, 0, 0, 1);
+                }
+            }
+        }
+    }
     // an impact frame replaces the picture: skip the sky, shadows and every other effect while it is up
     [branch] if (m1.z > 0.5 && impactLive()) {
         CAM = c7.xyz;
@@ -1519,12 +1714,25 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float3 PI = skyI ? posAt(float2(px) + 0.5, 1.0) : posPx(px);   // the same position the world pass shades
         return float4(impactFrame(sceneAt(px).rgb, normalize(PI), skyI ? 1e9 : length(PI)), 1.0);
     }
+    CAM = c7.xyz; TIME = c8.z;
+#if NG_ATMOS == 1
+    {   // the one place the Novak background is evaluated (sky pixels and far pixels that fade into it)
+        bool   skyQ = isSky(d) || c10.x > 0.5;
+        float  zq   = skyQ ? 1e9 : viewZ(d);
+        float3 rq   = posAt(float2(px) + 0.5, 1.0);
+        bool   far  = !skyQ && sceneAt(px).a < 0.995 && (zq > 40.0 || length(rq * zq) > 40.0);
+        [branch] if (c8.w > 0.5 && (skyQ || far)) {
+            CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = m2.w;
+            NGBG = toDisplay(csBackground(normalize(rq), false));
+        }
+    }
+#endif
     // sky pixels: the sky pass drew the gradient + high clouds; the cloud sea goes in here, where only pixels that are
     // still sky after the world is drawn pay for its ray march
     [branch] if (isSky(d) || c10.x > 0.5) {
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; csSetPhase(c6.w); QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = NG_IS ? m2.w : 0.0;
         float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
-        if (c8.w < 0.5) { if (!matchActive()) discard; return float4(matchOver(sceneAt(px).rgb, rd, 1e9), 1.0); }
+        if (c8.w < 0.5) { if (!matchActive()) discard; { MO = true; moO = sceneAt(px).rgb; moRd = rd; moT = 1e9; return float4(0, 0, 0, 1); } }
         float  js = hash12(float2(px));
         float3 rays = sunShafts(px, js) * 0.55 * LIGHTK;                  // over open sky the beams are subtler (it is already bright)
         // the full sky (high clouds, stars, moon) is drawn here, on pixels that are really sky - the sky pass only lays a
@@ -1532,16 +1740,21 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float4 sea = float4(0, 0, 0, 0);
         float3 base;
         [branch] if (NG_IS) {                                  // Novak: one call does sky or void (a ?: here worked BOTH out for every pixel)
+#if NG_ATMOS == 1
+            base = NGBG;
+#else
             base = toDisplay(csBackground(rd, false));
+#endif
             sea.a = rd.y < 0.0 ? 1.0 : 0.0;
         } else {
             sea = (rd.y > 0.02 && rd.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rd);
-            base = toDisplay(sea.a > 0.0 ? sea.rgb : csBackground(rd, false));   // (Cloud Sea: exactly as signed off)
+            // (a ?: here worked the whole sky out - clouds, stars, moon - behind every pixel of the sea as well)
+            [branch] if (sea.a > 0.0) base = toDisplay(sea.rgb); else base = toDisplay(csBackground(rd, false));
         }
         float3 lb = pow(max(base, 0.0), 2.2) + rays * (sea.a > 0.0 ? 1.0 : 0.6);
         float3 o = pow(max(lb, 0.0), 1.0 / 2.2);
-        o = matchOver(o, rd, 1e9) + (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
-        return float4(o, 1.0);
+        MO = true; moO = o; moRd = rd; moT = 1e9; moAdd = (js - 0.5) / 255.0 + (hash12(float2(px.yx) + 7.0) - 0.5) / 255.0;
+        return float4(0, 0, 0, 1);
     }
     float4 sc  = sceneAt(px);
     float3 col = sc.rgb;
@@ -1566,8 +1779,8 @@ float4 PSWorldFx(VSOut i) : SV_Target {
             float  tHit;
             float4 sea = cloudSea(CAM, rd, dist, tHit);
             if (sea.a > 0.0 && tHit < dist) {
-                float3 o = matchOver(toDisplay(sea.rgb), rd, tHit) + (hash12(float2(px)) - 0.5) / 255.0;
-                return float4(o, 1.0);
+                MO = true; moO = toDisplay(sea.rgb); moRd = rd; moT = tHit; moAdd = (hash12(float2(px)) - 0.5) / 255.0;
+                return float4(0, 0, 0, 1);
             }
         }
     }
@@ -1579,8 +1792,14 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         ) {
         if ((fogVis >= 0.995 || c8.w < 0.5) && !matchActive()) discard;
         float3 o0 = col;
-        if (fogVis < 0.995 && c8.w > 0.5 && length(P) > 40.0) o0 = lerp(toDisplay(csBackground(rdT, true)), col, smoothstep(0.0, 1.0, fogVis));
-        return float4(matchOver(o0, rdT, length(P)) + (hash12(float2(px)) - 0.5) / 255.0, 1.0);
+        if (fogVis < 0.995 && c8.w > 0.5 && length(P) > 40.0) o0 = lerp(
+#if NG_ATMOS == 1
+            NGBG,
+#else
+            toDisplay(csBackground(rdT, true)),
+#endif
+            col, smoothstep(0.0, 1.0, fogVis));
+        { MO = true; moO = o0; moRd = rdT; moT = length(P); moAdd = (hash12(float2(px)) - 0.5) / 255.0; return float4(0, 0, 0, 1); }
     }
     // normal from the depth buffer: the flatter neighbour on each axis (no halos at block edges)
     float3 pl = posPx(px - int2(1, 0)), pr = posPx(px + int2(1, 0)), pu = posPx(px - int2(0, 1)), pd = posPx(px + int2(0, 1));
@@ -1706,6 +1925,10 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         float2 to = normalize(sp.xy - float2(px) + 1e-3);
         float open = 0.0;
         [unroll] for (int k3 = 1; k3 <= 2; k3++) if (isSky(rawDepth(int2(float2(px) + to * (1.5 * k3))))) open += 0.5;
+        // (Cloud Sea floors showed broken bright dashes along block seams: a hairline crack between two blocks is "sky"
+        //  in the depth buffer. Real open sky is wide - it must also be there to both sides of the line)
+        float2 sd2 = float2(-to.y, to.x) * 3.0;
+        open *= (isSky(rawDepth(int2(float2(px) + to * 3.0 + sd2))) && isSky(rawDepth(int2(float2(px) + to * 3.0 - sd2)))) ? 1.0 : 0.0;
         float near = exp(-length((sp.xy - float2(px)) / c4.y) * 2.4);
         lin += (NG_IS ? lerp(float3(1.15, 1.08, 0.98), float3(0.70, 0.66, 1.10), NIGHT) : lerp(float3(1.5, 0.74, 0.30), float3(0.62, 0.74, 1.05), NIGHT)) * open * near * c6.y * 0.55 * LIGHTK;
     }
@@ -1752,7 +1975,6 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     [branch] if (m1.z > 0.5) lin = stepRings(CAM + P, lin);
     [branch] if (m1.z > 0.5) lin = genPulse(CAM + P, lin, n);
     [branch] if (m1.x > 0.5) lin += trails(CAM + P) * (0.85 + 0.6 * darkK());
-    [branch] if (NG_IS) lin = ngNeonDelta(linFx0, lin);
 #if NG_RIM
     [branch] if (c3.z > 0.0 && z < 90.0) lin = ngRim(lin, P, n, px, z, L, c3.z);
 #endif
@@ -1761,7 +1983,11 @@ float4 PSWorldFx(VSOut i) : SV_Target {
     // one flat colour - that flat fog against the cloud sea is what made the loaded area look like a square
     [branch] if (fogVis < 0.995 && c8.w > 0.5 && z > 40.0) {   // only far pixels can be fogged (entities may not write the alpha)
         CAM = c7.xyz; TIME = c8.z; SEA_Y = c7.w; MAP_C = c8.xy; NG_CLOUDS = c9.y; NG_NEON = NG_IS ? m2.w : 0.0;
+#if NG_ATMOS == 1
+        float3 bg = NGBG;
+#else
         float3 bg = toDisplay(csBackground(normalize(P), true));
+#endif
         o = lerp(bg, o, smoothstep(0.0, 1.0, fogVis));
     }
 #if NG_ATMOS == 1
@@ -1775,13 +2001,158 @@ float4 PSWorldFx(VSOut i) : SV_Target {
         }
     }
 #endif
+#if NG_ATMOS != 1
+    // ---- 16 Cloud Sea, cloud blocks: soft silhouettes (the faces were cloud, the outline was still a hard cube). Where
+    //      a block's edge has open sky right behind it, the edge is nibbled into soft scallops - the sky shows through
+    //      a ragged band at most 1/12 of a block deep. Worked out on the block's own face (how far this pixel is from
+    //      the face's nearest edge), so the scallops stay put on the block as you move; joints between blocks and
+    //      edges with anything but sky behind them are never touched.
+    // (it goes with the F6 "Rim light" slider: at 0 the edges are the plain cube's again - and the bench can time it)
+    // (OFF, Fernando Nov 15: "the block outlines don't match the actual block hit boxes" - a block's visible edge must sit
+    //  exactly on its real edge, or bridging and placing get harder. Kept for reference; CS_SOFT_EDGES 1 brings it back.)
+#ifndef CS_SOFT_EDGES
+#define CS_SOFT_EDGES 0
+#endif
+    [branch] if (CS_SOFT_EDGES && !NG_IS && c6.y > 0.0 && c8.w > 0.5 && z < 36.0 && max(abs(n.x), max(abs(n.y), abs(n.z))) > 0.9995) {
+        float3 W  = CAM + P;
+        float3 ax = abs(n.x) > 0.5 ? float3(0, 0, 1) : float3(1, 0, 0);
+        float3 ay = abs(n.y) > 0.5 ? float3(0, 0, 1) : float3(0, 1, 0);
+        float2 tp = float2(dot(W, ax), dot(W, ay)), f = frac(tp);
+        const float WMAX = 0.085;
+        float2 dA = min(f, 1.0 - f);                                   // to the nearest edge along each of the face's two axes
+        float  eat = 0.0;
+        // (audit: taking only the single nearest edge left a spike at every block joint - near a joint the joint was
+        //  "nearest" and the open edge beside it was never looked at. Both axes are checked now.)
+        [branch] if (min(dA.x, dA.y) < WMAX) {
+            [unroll] for (int ea = 0; ea < 2; ea++) {
+                float  dE = ea == 0 ? dA.x : dA.y;
+                [branch] if (dE < WMAX) {
+                    float3 dir = ea == 0 ? (f.x < 0.5 ? -ax : ax) : (f.y < 0.5 ? -ay : ay);
+                    float  along = ea == 0 ? tp.y : tp.x;
+                    float  prof = vnoise(float2(along * 3.3 + dot(dir, float3(5.1, 9.7, 3.3)), dot(W, abs(n)) * 1.7 + 4.0));
+                    float  wS = WMAX * (0.25 + 0.75 * prof) * smoothstep(36.0, 22.0, z);
+                    [branch] if (dE < wS) {
+                        float3 q1 = toPx(P + dir * (dE + 0.045) - n * 0.02), q2 = toPx(P + dir * (dE + 0.16) - n * 0.02);
+                        if (q1.z > 0.0 && q2.z > 0.0 && isSky(rawDepth(int2(q1.xy))) && isSky(rawDepth(int2(q2.xy)))) eat = max(eat, smoothstep(wS, wS * 0.40, dE));
+                    }
+                }
+            }
+        }
+        [branch] if (eat > 0.0) {
+            QUALITY = c9.z; NG_CLOUDS = c9.y; NG_NEON = 0.0;
+            float4 seaS = (rdT.y > 0.02 && rdT.y > (SEA_Y + SEA_AMP * 7.6 - CAM.y) / 180.0) ? float4(0, 0, 0, 0) : csSeaPixel(rdT);
+            float3 bgS;
+            [branch] if (seaS.a > 0.0) bgS = toDisplay(seaS.rgb); else bgS = toDisplay(csBackground(rdT, false));
+            o = lerp(o, bgS, eat * 0.94);
+            ink *= 1.0 - eat;                                          // (the drawn outline stayed behind on the old hard edge)
+        }
+    }
+#endif
     // the ink: deep, coloured (the darkest tone of the frame, not black), drawn over everything near
     [branch] if (ink > 0.0) {   // the line is the surface's own colour, deepened (never a flat black stroke)
         o = lerp(o, o * float3(0.42, 0.40, 0.48), saturate(ink) * 0.85);
     }
     if (c6.z > 0.5 && c6.z < 1.5) o = lerp(float3(1, 0.85, 0.6), float3(0.2, 0.2, 0.45), sh);
     if (c6.z > 1.5) o = ao.xxx;
-    o = matchOver(o, rdT, length(P));
-    o += (j - 0.5) / 255.0;
+    MO = true; moO = o; moRd = rdT; moT = length(P); moAdd = (j - 0.5) / 255.0;
+    return float4(0, 0, 0, 1);
+}
+// one exit for the match overlay: each of the five places above used to inline the whole of matchOver (~200 KB of DXIL
+// apiece - most of the driver's ~1 min compile). They hand over what to draw it on and it is drawn here, once.
+
+// ---- under water (Fernando, Nov 14: in Novak there was no water look - fish swam through the city sky). The pass only
+//      knows the camera is under water (RF reads the local player's head on the client thread). Everything then sits in
+//      water: red dies first with distance, then green; what is far is the water's own colour - deep below, lighter
+//      toward the surface, a soft glow round the sun overhead. Up-facing surfaces near you carry moving caustics, the
+//      picture swims a little, faint shafts of light hang from the surface. No sky, no city, no effects of the match.
+float uwCaustic(float2 p, float t) {   // a web of bright lines, the light focused by the surface waves (tileable, 4 steps)
+    float2 q = fmod(p, 6.2832) - 250.0;
+    float2 i = q;
+    float  c = 1.0;
+    [unroll] for (int k = 0; k < 4; k++) {
+        float tt = t * (1.0 - 3.5 / float(k + 1));
+        i = q + float2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
+        c += 1.0 / length(float2(q.x / (sin(i.x + tt) / 0.005), q.y / (cos(i.y + tt) / 0.005)));
+    }
+    c = 1.17 - pow(c / 4.0, 1.4);
+    return pow(abs(c), 8.0);
+}
+float3 uwScene(float2 p) {   // the frame, bilinear (the swim moves it by fractions of a pixel)
+    int2   a = int2(floor(p - 0.5));
+    float2 f = p - 0.5 - float2(a);
+    float3 c00 = sceneAt(a).rgb, c10 = sceneAt(a + int2(1, 0)).rgb, c01 = sceneAt(a + int2(0, 1)).rgb, c11 = sceneAt(a + int2(1, 1)).rgb;
+    return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+}
+float4 underwaterPx(VSOut i) {
+    int2   px = int2(i.pos.xy);
+    CAM = c7.xyz; TIME = c8.z; csSetPhase(c6.w);
+    float  t  = c2.w;
+    float  sc = c4.y / 1080.0;
+    float2 sw = float2(sin(float(px.y) * 0.031 / sc + t * 1.6) + 0.45 * sin(float(px.y) * 0.083 / sc - t * 2.2),
+                       sin(float(px.x) * 0.027 / sc + t * 1.3) + 0.45 * sin(float(px.x) * 0.071 / sc + t * 1.9)) * 0.9 * sc;
+    float2 p  = float2(px) + 0.5 + sw;
+    int2   q  = clampPx(int2(p));
+    float  d  = rawDepth(q);
+    bool   sky = isSky(d);
+    float3 rd = normalize(posAt(float2(px) + 0.5, 1.0));
+    float3 P  = sky ? rd * 1e4 : posAt(float2(q) + 0.5, viewZ(d));
+    float  dist = length(P);
+    float3 col = pow(max(uwScene(p), 0.0), 2.2);
+    float  day = (1.0 - NIGHT) * LIGHTK;
+    // the water's own colour: deep below, lighter toward the surface; Novak a cold glass blue, the Cloud Sea a warmer teal
+    float3 deep = NG_IS ? float3(0.003, 0.020, 0.060) : float3(0.006, 0.032, 0.045);
+    float3 high = NG_IS ? float3(0.030, 0.150, 0.300) : float3(0.050, 0.190, 0.230);
+    deep = lerp(deep, float3(0.001, 0.004, 0.012), NIGHT);
+    high = lerp(high, float3(0.006, 0.020, 0.050), NIGHT);
+    float  up = smoothstep(-0.6, 0.95, rd.y);
+    float3 water = lerp(deep, high, up * up);
+    water += lerp(float3(0.55, 0.65, 0.60), float3(0.25, 0.30, 0.45), NIGHT) * pow(saturate(dot(rd, SUN)), 6.0) * 0.35 * up * max(day, 0.25);
+    // light shafts hanging from the surface: thin, soft, swaying; they meet overhead
+    float  az = atan2(rd.z, rd.x);
+    float  sh = pow(0.5 + 0.5 * sin(az * 21.0 + 2.0 * sin(az * 5.0 + t * 0.21) + t * 0.12), 5.0) *
+                pow(0.5 + 0.5 * sin(az * 9.0 - t * 0.17 + 1.3), 2.0);
+    // caustics on what faces up, near you (the light comes through the surface)
+    [branch] if (!sky && dist < 26.0 && day > 0.02) {
+        float3 pr = posPx(q + int2(1, 0)), pd = posPx(q + int2(0, 1));
+        float3 n  = normalize(cross(pd - P, pr - P));
+        if (dot(n, -P) < 0.0) n = -n;
+        float3 W  = CAM + P;
+        float  ca = uwCaustic(W.xz * 1.15 + W.y * 0.35, t * 0.55);
+        col += col * ca * 2.2 * saturate(n.y) * day * (1.0 - smoothstep(10.0, 26.0, dist));
+    }
+    // the surface overhead (the game does not draw it from below): the light above comes through it, broken into a moving
+    // web by the waves - brightest straight up (Snell's window), a silver sheen toward its edge
+    [branch] if (sky && rd.y > 0.25) {
+        float2 sp  = rd.xz / rd.y * 3.0;
+        float  rp  = vnoise(sp * 1.3 + float2(t * 0.35, t * 0.22)) * 0.6 + vnoise(sp * 2.9 - float2(t * 0.5, -t * 0.3)) * 0.4;
+        float  web = pow(saturate(1.0 - abs(rp - 0.5) * 3.4), 4.0);
+        float  win = smoothstep(0.55, 0.95, rd.y);
+        float3 skyIn = (NG_IS ? float3(0.36, 0.60, 0.80) : float3(0.55, 0.62, 0.62)) * lerp(1.0, 0.10, NIGHT);
+        float3 surf  = lerp(high * 2.2, skyIn, win) * (0.80 + 0.40 * rp) + skyIn * web * 0.55 * win;
+        water = lerp(water, surf * max(day, 0.30), smoothstep(0.25, 0.60, rd.y));
+    }
+    float3 T = exp(-dist * float3(0.20, 0.080, 0.058));   // red goes first, then green: what is far is blue
+    float3 o = col * T + water * (1.0 - T);
+    o += lerp(float3(0.30, 0.42, 0.40), float3(0.10, 0.14, 0.24), NIGHT) * sh * up * (1.0 - T.g) * 0.09 * max(day, 0.2);
+    o = pow(max(o, 0.0), 1.0 / 2.2) + (hash12(float2(px)) - 0.5) / 255.0;
     return float4(o, 1.0);
+}
+float4 PSWorldFx(VSOut i) : SV_Target {
+    [branch] if (c10.y > 0.5) return underwaterPx(i);
+    bool   MO = false;
+    float3 moO = 0, moRd = float3(0, 0, 1), moAdd = 0;
+    float  moT = 1e9;
+    float4 r = wfxMain(i, MO, moO, moRd, moT, moAdd);
+    [branch] if (MO) {
+        float3 o = matchOver(moO, moRd, moT);
+#if NG_ATMOS == 1
+        float rk = ngRainK();
+        [branch] if (rk > 0.0) o += pow(ngRain(moRd) * rk, 1.0 / 2.2) * 0.6;                             // 10
+#endif
+        // 14 the map's theme: the sky takes it fully, the world a little (m4.yzw, 1 = none)
+        float3 tn = m4.yzw / max(dot(m4.yzw, float3(0.2126, 0.7152, 0.0722)), 0.2);
+        o = lerp(o, o * tn, moT >= 1e8 ? 1.0 : 0.30);
+        r = float4(o + moAdd, 1.0);
+    }
+    return r;
 }

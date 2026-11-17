@@ -2,6 +2,8 @@
 // SceneStack::update runs every client tick; its top screen name decides whether the 3D panel should be up
 // (inventory, chest, crafting table and other container screens) or the UI stays flat (HUD, pause, settings, chat).
 #include "ScreenWatch.h"
+#include "SkyPass.h"
+#include "CinematicGame.h"
 
 #include <atomic>
 #include <string>
@@ -48,6 +50,7 @@ LL_TYPE_INSTANCE_HOOK(RfSceneStackUpdateHook, ll::memory::HookPriority::Normal, 
         this->forEachScreenConst([&](AbstractScene const& sc) { if (!top) top = &sc; return false; }, true);
         if (top) gHudScene = static_cast<void const*>(top);
     }
+    if (name.find("hud_screen") != std::string::npos) rf::sky::setUnderwater(rf::cine::game::headUnderWater());   // the World FX pass draws the water
     rf::panel::noteScreen(this, name);
     // Spatial GUI: where the container screen draws, so everything else of the UI (the HUD, mods' HUD text) stays flat
     if (rf::panel::keepHud() && name.find("hud_screen") == std::string::npos && name.find("_screen") != std::string::npos &&

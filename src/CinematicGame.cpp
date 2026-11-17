@@ -2,7 +2,9 @@
 // itself lives in Cinematic.cpp, which includes d3d12.h and so must not include LeviLamina headers). Original code.
 #include "CinematicGame.h"
 #include "Cinematic.h"
+#include "LLShim.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -66,6 +68,25 @@ bool playerState(double feet[3], float& yaw, float& pitch, bool& alive) {
     yaw      = r.y;
     alive    = a->isAlive();
     return true;
+}
+
+bool headUnderWater() {
+    Actor* a = player();
+    if (!a) return false;
+    if (a->isUnderLiquid(::SharedTypes::v1_26_20::MaterialType::Water)) return true;
+    // the block at the eye itself (seen in game: the call above said no with the head in a pool - the water look never came)
+    Vec3 e = a->getEyePos();
+    Vec3 f = a->getFeetPos();
+    // the eye, and (in case getEyePos is off) the feet + 1.62
+    std::string const n  = a->getDimensionBlockSource().getBlock(BlockPos(int(std::floor(e.x)), int(std::floor(e.y)), int(std::floor(e.z)))).getTypeName();
+    std::string const n2 = a->getDimensionBlockSource().getBlock(BlockPos(int(std::floor(f.x)), int(std::floor(f.y + 1.62f)), int(std::floor(f.z)))).getTypeName();
+    bool const wet = n.find("water") != std::string::npos || n2.find("water") != std::string::npos;
+    static auto last = std::chrono::steady_clock::time_point{};
+    if (std::chrono::steady_clock::now() - last > std::chrono::seconds(5)) {
+        last = std::chrono::steady_clock::now();
+        ll_shim::info("[RF] water check: eye " + std::to_string(e.y) + " '" + n + "', feet+1.62 " + std::to_string(f.y + 1.62f) + " '" + n2 + "' -> " + (wet ? "wet" : "dry"));
+    }
+    return wet;
 }
 
 bool creative() {
