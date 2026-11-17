@@ -181,6 +181,14 @@ std::string roman(int n) {
 }
 float textWidth(std::string const& s, float scale = 1.0f) { return 6.0f * scale * static_cast<float>(s.size()); }
 
+// the info panel's box last frame (x, y, w, h): elements that sit near it step below it instead of covering its lines
+float gInfoRect[4]{0, 0, 0, 0};
+void avoidInfo(float x, float& y, float w, float h) {
+    float const* r = gInfoRect;
+    if (r[2] <= 0) return;
+    bool const hit = x < r[0] + r[2] && x + w > r[0] && y < r[1] + r[3] && y + h > r[1];
+    if (hit) y = r[1] + r[3] + 3.f;
+}
 void panel(MinecraftUIRenderContext& ctx, float x, float y, std::vector<std::string> const& lines, float opacity, Rgba color) {
     if (lines.empty()) return;
     float w = 0;
@@ -808,6 +816,7 @@ void registerBuiltins() {
         float const s = m->num("size", 1.0f), W = 120.f * s, H = 28.f * s;
         float x, y;
         hudedit::place(m->num("x", 0.0f), m->num("y", 0.3f), W + 4.f, H + 14.f * s, f.width, f.height, x, y);
+        avoidInfo(x, y, W + 4.f, H + 14.f * s);   // audit: Server Info / Session lines grew the info panel under it
         x += 2.f; y += 2.f;
         hudedit::note("fps", "Frame graph", "x", "y", "size", x - 2.f, y - 2.f, W + 4.f, H + 4.f + 10.f * s, f.width, f.height);
         bf::hud::fillBox(f.ctx, x - 2, y - 2, W + 4, H + 4 + 10.f * s, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.55f)});
@@ -901,13 +910,16 @@ void registerBuiltins() {
         f.infoLines.push_back(std::format("{} x{}", held.getName(), count));
     };
     r.add("keystrokes", "Keystrokes", Category::Hud, "W A S D, Space and mouse buttons", true)
-        .slider("x", "X (negative = from right)", 4, -400, 400, 2)
-        .slider("y", "Y (negative = from bottom)", -76, -400, 400, 2)
+        .slider("x", "X (negative = from right)", 4, -2000, 2000, 2)
+        .slider("y", "Y (negative = from bottom)", -76, -2000, 2000, 2)
         .hud = [](Frame& f) {
         auto* m  = Registry::get().find("keystrokes");
         float k  = 18, g = 2, wTot = 3 * k + 2 * g;
         float sx = m->num("x"), sy = m->num("y");
         float bx = sx >= 0 ? sx : f.width + sx - wTot, by = sy >= 0 ? sy : f.height + sy;
+        bx = std::clamp(bx, 0.f, std::max(f.width - wTot, 0.f)); by = std::clamp(by, 0.f, std::max(f.height - (3 * (k + g) + 8), 0.f));
+        // the HUD editor box (pixels mode: it writes the top-left back, + the 3 / 2 px it takes off here)
+        hudedit::note("keystrokes", "Keystrokes", "x", "y", "", bx - 3, by - 2, wTot, 3 * (k + g) + 8, f.width, f.height, true);
         bool  ok = w32::gameFocused();
         auto  d  = [&](int vk) { return ok && w32::keyDown(vk); };
         int   l = 0, rr = 0;
@@ -945,7 +957,10 @@ void registerBuiltins() {
         for (Slot sl : {Slot::Head, Slot::Torso, Slot::Legs, Slot::Feet}) add(f.player->getArmor(sl));
         if (m->flag("held", true)) add(f.player->getSelectedItem());
         if (rows.empty()) return;
-        float const s = m->num("size", 1.f), rh = 14.f * s, W = 110.f * s, H = rh * float(rows.size()) + 4.f * s;
+        float const s = m->num("size", 1.f), rh = 14.f * s;
+        float nameW = 0;   // audit: sized to the longest name ("Netherite Chestplate" was cut to "Netherite Chest~")
+        for (auto& r2 : rows) nameW = std::max(nameW, textWidth(r2.name.size() > 26 ? r2.name.substr(0, 25) + "~" : r2.name, 0.75f * s));
+        float const W = std::max(110.f * s, nameW + (m->flag("percent", true) ? textWidth("100%", 0.7f * s) + 6.f * s : 0.f) + 10.f * s), H = rh * float(rows.size()) + 4.f * s;
         float x, y;
         hudedit::place(m->num("x", 1.f), m->num("y", 0.55f), W, H, f.width, f.height, x, y);
         hudedit::note("armor_hud", "Armor Status", "x", "y", "size", x, y, W, H, f.width, f.height);
@@ -956,7 +971,7 @@ void registerBuiltins() {
             float const k = r2.max > 0 ? std::clamp(1.f - float(r2.dmg) / float(r2.max), 0.f, 1.f) : 1.f;
             // green -> amber -> red as it wears; the accent while it is near full
             Rgba const c = k > 0.85f ? kNeon : k > 0.5f ? Rgba{0.55f, 1.f, 0.6f, 1} : k > 0.25f ? Rgba{1.f, 0.78f, 0.3f, 1} : Rgba{1.f, 0.35f, 0.35f, 1};
-            std::string nm = r2.name.size() > 16 ? r2.name.substr(0, 15) + "~" : r2.name;
+            std::string nm = r2.name.size() > 26 ? r2.name.substr(0, 25) + "~" : r2.name;
             bf::hud::drawLabel(f.ctx, x + 4.f * s, ry + 1.f, nm, {1, 1, 1, 0.95f}, 0.75f * s);
             if (r2.max > 0) {
                 float const bw = W - 8.f * s;
@@ -1507,7 +1522,8 @@ void installRuntime() {
             float w = 0;
             for (auto& l : info) w = std::max(w, textWidth(l));
             hudedit::note("hud_layout", "Info panel", "x", "y", "", ix - 3, iy - 2, w + 4, 10.5f * float(info.size()) + 3, view.mSize->x, view.mSize->y, true);
-        }
+            gInfoRect[0] = ix - 3; gInfoRect[1] = iy - 2; gInfoRect[2] = w + 4; gInfoRect[3] = 10.5f * float(info.size()) + 3;
+        } else gInfoRect[2] = 0;
         hitch::gCur.panel = hitch::since(tSec);
     });
 }

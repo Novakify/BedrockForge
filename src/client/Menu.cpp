@@ -65,6 +65,9 @@ std::vector<Click> gClicks;      // GUI units
 std::vector<int>   gWheel;
 std::string        gSearch;
 bool               gHeld = false; // left button held (slider drag)
+// the pointer from the absolute mouse-move events (GUI units). The screen's own pointer location stops following the
+// mouse while a button is held down (we cancel the press), so drags (HUD editor, sliders) went the wrong way.
+float              gPtrX = -1, gPtrY = -1;
 bf::events::Subscriptions     gSubs;
 std::atomic<IClientInstance*> gLastClient{nullptr};
 
@@ -92,7 +95,7 @@ void closeMenu() { // caller holds gMutex
     gScene.reset();
     gSearch.clear();
     gDrag.clear();
-    gHeld = false;
+    gHeld = false; gPtrX = gPtrY = -1;
     lyr::FrameStore::get().setOverlay({});
     gCamUntilMs = 0;
 }
@@ -996,8 +999,8 @@ void render(ScreenView& view) {
     g.tintK   = look("frost", 1);
     g.a       = lyr::win::clientUiAssets();
     glm::vec2 const ptr = *view.mPointerLocationPrevious;
-    f.mx = ptr.x * toD;
-    f.my = ptr.y * toD;
+    f.mx = (gPtrX >= 0 ? gPtrX : ptr.x) * toD;
+    f.my = (gPtrY >= 0 ? gPtrY : ptr.y) * toD;
 
     kAccent = kAccents[std::clamp(int(look("accent", 0)), 0, 7)];
     float const motion = std::clamp(look("motion", 1.0f), 0.25f, 3.0f);   // Client UI -> Animation speed
@@ -1078,7 +1081,7 @@ void open(IClientInstance& client) {
     ++diag::menuOpens;
     gClicks.clear();
     gWheel.clear();
-    gHeld = false;
+    gHeld = false; gPtrX = gPtrY = -1;
     gDrag.clear();
     gBindFor.clear();
     setView(lookOn("wheel", true) ? View::Wheel : View::Window);
@@ -1187,8 +1190,9 @@ void install() {
         if (!gScene || !ownsTop()) return;
         char const  a = ev.actionButtonId();
         schar const d = ev.buttonData();
-        if (a == MouseAction::ActionMove || a == MouseAction::ActionMoveRelative) return;
         float inv = gClient->getGuiData()->mInvGuiScale;
+        if (a == MouseAction::ActionMove) { gPtrX = float(ev.x()) * inv; gPtrY = float(ev.y()) * inv; return; }
+        if (a == MouseAction::ActionMoveRelative) return;
         if (a == MouseAction::ActionWheel) {
             if (d != 0) gWheel.push_back(d > 0 ? -1 : 1);
             ev.cancel();
