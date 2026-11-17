@@ -1,6 +1,8 @@
 // Bedrock Forge client - Chat Compact: an identical message arriving again within 60 s replaces the previous line,
 // which gets a counter: "hello (x3)". The older copy is expired (still in chat history), not deleted.
+#include <algorithm>
 #include <chrono>
+#include <mutex>
 #include <string>
 
 #include "ll/api/memory/Hook.h"
@@ -13,6 +15,24 @@
 
 namespace bedrock_forge::client {
 
+// [BF] Nick Hider (Purxiy "hide your name in screenshots and streams"): your name in chat, swapped for the alias
+std::mutex  gNickMutex;
+std::string gNickReal;   // your name (set every HUD frame, Modules.cpp)
+std::string nickAlias() {
+    auto* m = Registry::get().find("nick_hider");
+    if (!m || !m->enabled) return {};
+    static char const* const kAlias[] = {"You", "Player", "Hidden", "Novak"};
+    return kAlias[std::clamp(int(m->num("alias", 0)), 0, 3)];
+}
+std::string hideNick(std::string s) {
+    std::string real;
+    { std::lock_guard l(gNickMutex); real = gNickReal; }
+    std::string const alias = nickAlias();
+    if (alias.empty() || real.size() < 3) return s;
+    for (size_t i = 0; (i = s.find(real, i)) != std::string::npos; i += alias.size()) s.replace(i, real.size(), alias);
+    return s;
+}
+
 namespace {
 std::string gLastKey, gLastShown;
 int         gCount = 0;
@@ -22,6 +42,7 @@ std::chrono::steady_clock::time_point gLastAt{};
 LL_TYPE_INSTANCE_HOOK(BfChatHook, ll::memory::HookPriority::Normal, GuiData, &GuiData::_addMessage, void,
                       GuiData::MessageConfig config, ProfanityFilterContext context) {
     ++diag::chatHook;
+    if (Registry::get().on("nick_hider")) { *config.username = hideNick(*config.username); *config.message = hideNick(*config.message); }
     if (!Registry::get().on("chat_compact")) return origin(std::move(config), context);
     std::string key = *config.username + "\x1f" + *config.message;
     auto        now = std::chrono::steady_clock::now();

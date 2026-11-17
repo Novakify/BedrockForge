@@ -11,6 +11,7 @@
 // overlay; RF copies the frame, blurs it and draws the glass at Present. Without RF the menu is invisible, so the
 // old flat menu is kept as a fallback (BF_NO_RF below / when the glyph store is never read).
 #include "client/Menu.h"
+#include "client/HudEdit.h"
 #include "client/Diag.h"
 
 #include <algorithm>
@@ -64,10 +65,13 @@ std::vector<Click> gClicks;      // GUI units
 std::vector<int>   gWheel;
 std::string        gSearch;
 bool               gHeld = false; // left button held (slider drag)
+// the pointer from the absolute mouse-move events (GUI units). The screen's own pointer location stops following the
+// mouse while a button is held down (we cancel the press), so drags (HUD editor, sliders) went the wrong way.
+float              gPtrX = -1, gPtrY = -1;
 bf::events::Subscriptions     gSubs;
 std::atomic<IClientInstance*> gLastClient{nullptr};
 
-enum class View { Wheel, Window };
+enum class View { Wheel, Window, HudEdit };
 enum class Page { Mods, ModSettings, Shaders, Loadout, Client, Lyrics };
 View        gView     = View::Wheel;
 Page        gPage     = Page::Mods;
@@ -91,7 +95,7 @@ void closeMenu() { // caller holds gMutex
     gScene.reset();
     gSearch.clear();
     gDrag.clear();
-    gHeld = false;
+    gHeld = false; gPtrX = gPtrY = -1;
     lyr::FrameStore::get().setOverlay({});
     gCamUntilMs = 0;
 }
@@ -105,11 +109,14 @@ void resetScroll() { gScroll = gScrollAt = 0; }
 void setView(View v) { gView = v; gViewAtMs = nowMs(); resetScroll(); }
 void showPage(Page p) { gPage = p; resetScroll(); if (gView != View::Window) setView(View::Window); }
 void toast(std::string s) { gToast = std::move(s); gToastMs = nowMs(); }
+std::string gBindFor; // module whose toggle key is being recorded (Keybind row), empty = none
 
 // ---------------------------------------------------------------- theme (neon purple + white)
 constexpr float kH = 760.0f; // design units: the screen is always 760 tall (the prototype's 1280 x 760 frame)
 struct Rgb { int r, g, b; };
-constexpr Rgb kAccent{177, 76, 255}, kLilac{233, 213, 255}, kDark{19, 10, 36}, kWhite{255, 255, 255};
+constexpr Rgb kLilac{233, 213, 255}, kDark{19, 10, 36}, kWhite{255, 255, 255};
+Rgb kAccent{177, 76, 255};   // [BF] Client UI -> Accent colour (set at the start of every menu frame)
+constexpr Rgb kAccents[8] = {{177, 76, 255}, {255, 92, 170}, {70, 150, 255}, {70, 230, 170}, {255, 130, 70}, {150, 220, 255}, {255, 200, 80}, {255, 70, 100}};
 uint32_t rgba(Rgb c, float a) {
     return uint32_t(c.r) | uint32_t(c.g) << 8 | uint32_t(c.b) << 16 | uint32_t(std::clamp(a, 0.0f, 1.0f) * 255.0f + 0.5f) << 24;
 }
@@ -318,7 +325,7 @@ int petalAt(Gfx const& g, float x, float y) {
 }
 void openPetal(int i) {
     if (i == 0) { gTab = 0; showPage(Page::Mods); }
-    if (i == 1) { gTab = 2; showPage(Page::Mods); }         // HUD modules + HUD Layout
+    if (i == 1) setView(View::HudEdit);                     // [BF] the HUD editor (Purxiy-style: drag, snap, scroll to resize)
     if (i == 2) showPage(Page::Shaders);
     if (i == 3) showPage(Page::Client);
 }
@@ -400,6 +407,7 @@ std::vector<std::string> const& keyNames() {
         for (int k = 'A'; k <= 'Z'; ++k) n[size_t(k)] = std::string(1, char(k));
         for (int k = 0; k < 10; ++k) n[size_t(0x60 + k)] = "Numpad " + std::to_string(k);
         for (int k = 0; k < 24; ++k) n[size_t(0x70 + k)] = "F" + std::to_string(k + 1);
+        n[0] = "None";
         n[0x01] = "Left mouse"; n[0x02] = "Right mouse"; n[0x04] = "Middle mouse"; n[0x05] = "Mouse 4"; n[0x06] = "Mouse 5";
         n[0x08] = "Backspace"; n[0x09] = "Tab"; n[0x0D] = "Enter"; n[0x10] = "Shift"; n[0x11] = "Ctrl"; n[0x12] = "Alt";
         n[0x14] = "Caps Lock"; n[0x1B] = "Esc"; n[0x20] = "Space"; n[0x25] = "Left"; n[0x26] = "Up"; n[0x27] = "Right"; n[0x28] = "Down";
@@ -538,6 +546,17 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     pageHeader(f, x, y - 4, wd, m->name, m->planned ? m->description + " - on the roadmap." : m->description, a, m->planned ? -1 : (m->enabled ? 1 : 0),
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
     Scroller sc(f, w, a);
+    if (!m->planned) {   // [BF] Keybind (Purxiy-style): click, then press a key. Backspace clears, Esc cancels.
+        bool const listening = gBindFor == m->id;
+        if (sc.fits(50)) {
+            std::string const cur = m->key > 0 && m->key < 256 ? keyNames()[size_t(m->key)] : std::string("None");
+            row(f, x, sc.y, wd, 50, "Keybind", listening ? "Press a key...  (Backspace clears, Esc cancels)" : "Toggles this module in game", a, listening);
+            f.g.text(listening ? "..." : cur, x + wd - 16, sc.y + 25, 13, rgba(kWhite, listening ? 1.0f : 0.85f), a, true, 2, listening ? 0.6f : 0);
+            std::string id = m->id;
+            f.hits.push_back({x, sc.y, wd, 50, [id](bool) { gBindFor = gBindFor == id ? std::string() : id; }});
+        }
+        sc.y += 60;
+    }
     if (m->id == "lyricsflow") {
         if (sc.fits(50)) {
             row(f, x, sc.y, wd, 50, "Open the LyricsForge panel", "The glass settings panel in the world (also: L in game)", a);
@@ -553,7 +572,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
             sc.y += 60;
         } else {
             if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); },
-                                    s.id == "key" ? &keyNames() : &s.choices); // [BF] key sliders show the key, not a code
+                                    s.id.rfind("key", 0) == 0 ? &keyNames() : &s.choices); // [BF] key sliders (key, key_play, ...) show the key, not a code
             sc.y += 74;
         }
     }
@@ -712,6 +731,40 @@ void drawClient(UiFrame& f, Win const& w, float a) {
         if (auto* s = m->setting(tg.id); s && sc.fits(50)) toggleRow(f, x, sc.y, wd, tg.t, tg.d, s->on, a, [s] { s->on = !s->on; Registry::get().save(); });
         sc.y += 58;
     }
+    // [BF] Interface (Purxiy "interface" / "motion"): your accent colour, animation speed
+    sectionLabel(f, sc, x, "INTERFACE", a);
+    if (auto* st = m->setting("accent"); st && sc.fits(64))
+        slider(f, "client_ui/accent", x, sc.y, wd, "Accent colour", "The glow of the menu and your HUD elements", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
+    sc.y += 72;
+    if (auto* st = m->setting("motion"); st && sc.fits(64))
+        slider(f, "client_ui/motion", x, sc.y, wd, "Animation speed", "How fast the menu opens, slides and scrolls", st->value, st->min, st->max, st->step, "x", a, save);
+    sc.y += 72;
+    if (auto* st = m->setting("font"); st && sc.fits(64))
+        slider(f, "client_ui/font", x, sc.y, wd, "Font", "The menu's letters: Outfit, or Inter (Purxiy's)", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
+    sc.y += 72;
+    // [BF] Keybinds (Purxiy "every key you have bound, in one place"): click a row to rebind, right click opens the module
+    sectionLabel(f, sc, x, "KEYBINDS", a);
+    int bound = 0;
+    for (auto& mp : Registry::get().all()) {
+        Module* mm = mp.get();
+        if (mm->planned || mm->key <= 0 || mm->key > 255) continue;
+        ++bound;
+        if (sc.fits(46)) {
+            bool const listening = gBindFor == mm->id;
+            row(f, x, sc.y, wd, 46, mm->name, listening ? "Press a key...  (Backspace clears, Esc cancels)" : (mm->enabled ? "On" : "Off"), a, mm->enabled);
+            f.g.text(listening ? "..." : keyNames()[size_t(mm->key)], x + wd - 16, sc.y + 23, 13, rgba(kWhite, 0.9f), a, true, 2);
+            std::string id = mm->id;
+            f.hits.push_back({x, sc.y, wd, 46, [id](bool right) {
+                if (right) { gModPage = id; showPage(Page::ModSettings); return; }
+                gBindFor = gBindFor == id ? std::string() : id;
+            }});
+        }
+        sc.y += 52;
+    }
+    if (!bound) {
+        if (sc.fits(20)) f.g.text("No keys bound yet - open any module (right click) and use its Keybind row.", x + 2, sc.y + 10, 12, rgba(kLilac, 0.62f), a);
+        sc.y += 30;
+    }
     sc.end();
 }
 
@@ -777,7 +830,7 @@ void drawWindow(UiFrame& f, float t) {
     float hy = w.y + w.h - 16 - 38;
     pillGlass(g, rx, hy, 38, 38, 11, false, a, f.over(rx, hy, 38, 38) ? 1.0f : 0.0f);
     g.icon("pencil", rx + 19, hy + 19, 18, rgba(kWhite, 0.7f), a);
-    f.hits.push_back({rx, hy, 38, 38, [](bool) { gTab = 2; showPage(Page::Mods); }});
+    f.hits.push_back({rx, hy, 38, 38, [](bool right) { if (right) { gTab = 2; showPage(Page::Mods); } else setView(View::HudEdit); }});   // left: HUD editor, right: HUD modules
 
     // top row: back, tabs, search
     float ty = w.y + 18;
@@ -831,6 +884,105 @@ void drawToast(UiFrame& f) {
     g.text(gToast, g.W / 2, y + 19, 13, rgba(kWhite, 1), a, false, 1, 0.3f);
 }
 
+// ---------------------------------------------------------------- HUD editor
+// Every movable element as a glass box where it drew last; drag to move (snaps to the screen's edges and middle, with
+// guide lines), scroll on one to resize it, right click opens its module page. Positions are written to the module's
+// x / y settings as they move (the HUD itself is not drawn while the menu is open: the boxes follow the pointer).
+struct EdBox { hudedit::Elem e; float x, y, w, h; };
+std::vector<EdBox> gEd;          // this editor session's boxes (design units)
+int                gEdDrag = -1; // box being dragged
+float              gEdOffX = 0, gEdOffY = 0;
+int64_t            gEdOpenMs = 0;
+float              gEdGuideX = -1, gEdGuideY = -1;
+void edSync(Gfx const& g) {      // (re)build the boxes from what the HUD drew
+    gEd.clear();
+    for (auto const& e : hudedit::elems()) gEd.push_back({e, e.x * g.W, e.y * g.H, e.w * g.W, e.h * g.H});
+}
+void edWrite(EdBox& b, Gfx const& g, float toD) {   // the box's place -> the module's settings
+    auto* m = Registry::get().find(b.e.mod);
+    if (!m) return;
+    Setting* sx = m->setting(b.e.xKey);
+    Setting* sy = m->setting(b.e.yKey);
+    if (!sx || !sy) return;
+    if (b.e.pixels) {                                // the info panel: GUI pixels from the top-left (+ its 3 / 2 px border)
+        sx->value = std::clamp(std::round(b.x / toD + 3.f), sx->min, sx->max);
+        sy->value = std::clamp(std::round(b.y / toD + 2.f), sy->min, sy->max);
+        return;
+    }
+    float const md = 4.f * toD;
+    float const fx = (b.x - md) / std::max(g.W - b.w - 2 * md, 1.f), fy = (b.y - md) / std::max(g.H - b.h - 2 * md, 1.f);
+    sx->value = std::clamp(fx, 0.f, 1.f);
+    sy->value = std::clamp(fy, 0.f, 1.f);
+}
+void drawHudEdit(UiFrame& f, float t, float toD, std::vector<int> const& wheel) {
+    auto& g = f.g;
+    if (gEdOpenMs != gViewAtMs) { gEdOpenMs = gViewAtMs; edSync(g); gEdDrag = -1; }
+    float const a = std::min(1.0f, t * 2);
+    // guides: the screen's middle lines, faint; a snapped guide lights up
+    g.solid(g.W / 2 - 0.5f, 0, 1, g.H, 0, rgba(kWhite, 1), 0.10f * a);
+    g.solid(0, g.H / 2 - 0.5f, g.W, 1, 0, rgba(kWhite, 1), 0.10f * a);
+    // dragging
+    if (gEdDrag >= 0 && gEdDrag < int(gEd.size())) {
+        auto& b = gEd[size_t(gEdDrag)];
+        if (gHeld) {
+            float nx = f.mx - gEdOffX, ny = f.my - gEdOffY;
+            float const md = 4.f * toD, snap = 9.f;
+            gEdGuideX = gEdGuideY = -1;
+            float const cx[3] = {md, (g.W - b.w) / 2, g.W - b.w - md};
+            float const gx[3] = {md, g.W / 2, g.W - md};
+            for (int k = 0; k < 3; ++k) if (std::abs(nx - cx[k]) < snap) { nx = cx[k]; gEdGuideX = gx[k]; }
+            float const cy[3] = {md, (g.H - b.h) / 2, g.H - b.h - md};
+            float const gy[3] = {md, g.H / 2, g.H - md};
+            for (int k = 0; k < 3; ++k) if (std::abs(ny - cy[k]) < snap) { ny = cy[k]; gEdGuideY = gy[k]; }
+            for (auto const& o : gEd) {                // line up with the other elements' edges too
+                if (&o == &b) continue;
+                for (float ox : {o.x, o.x + o.w - b.w}) if (gEdGuideX < 0 && std::abs(nx - ox) < snap * 0.7f) { nx = ox; gEdGuideX = ox == o.x ? ox : ox + b.w; }
+                for (float oy : {o.y, o.y + o.h}) if (gEdGuideY < 0 && std::abs(ny - oy) < snap * 0.7f) { ny = oy; gEdGuideY = oy; }
+            }
+            b.x = std::clamp(nx, 0.f, g.W - b.w);
+            b.y = std::clamp(ny, 0.f, g.H - b.h);
+            edWrite(b, g, toD);
+        } else { gEdDrag = -1; gEdGuideX = gEdGuideY = -1; Registry::get().save(); }
+    }
+    if (gEdGuideX >= 0) g.solid(gEdGuideX - 0.75f, 0, 1.5f, g.H, 0, rgba(kAccent, 1), 0.85f * a, 0, true);
+    if (gEdGuideY >= 0) g.solid(0, gEdGuideY - 0.75f, g.W, 1.5f, 0, rgba(kAccent, 1), 0.85f * a, 0, true);
+    // scroll on a box = its size
+    int hot = -1;
+    for (int i = int(gEd.size()) - 1; i >= 0; --i) if (f.over(gEd[size_t(i)].x, gEd[size_t(i)].y, gEd[size_t(i)].w, gEd[size_t(i)].h)) { hot = i; break; }
+    if (hot >= 0 && !wheel.empty())
+        if (auto* m = Registry::get().find(gEd[size_t(hot)].e.mod); m && !gEd[size_t(hot)].e.sizeKey.empty())
+            if (Setting* ss = m->setting(gEd[size_t(hot)].e.sizeKey)) {
+                float const old = ss->value;
+                for (int d : wheel) ss->value = std::clamp(ss->value + (d > 0 ? 0.05f : -0.05f), ss->min, ss->max);
+                if (ss->value != old) {   // grow / shrink the box around its centre until the HUD draws it again
+                    auto& b = gEd[size_t(hot)];
+                    float const k = ss->value / std::max(old, 0.05f), cxm = b.x + b.w / 2, cym = b.y + b.h / 2;
+                    b.w *= k; b.h *= k; b.x = cxm - b.w / 2; b.y = cym - b.h / 2;
+                    edWrite(b, g, toD);
+                    Registry::get().save();
+                }
+            }
+    // the boxes
+    for (int i = 0; i < int(gEd.size()); ++i) {
+        auto& b = gEd[size_t(i)];
+        bool const on = i == hot || i == gEdDrag;
+        g.glass(b.x, b.y, b.w, b.h, 6, kAccent, on ? 0.30f : 0.16f, 3, 2, 0.4f, on ? 0.9f : 0.5f, on ? 0.5f : 0.2f, a);
+        g.text(b.e.label, b.x + b.w / 2, b.y + b.h / 2, std::clamp(b.h * 0.35f, 9.f, 14.f), rgba(kWhite, 1), a, true, 1, on ? 0.6f : 0.2f);
+        int const idx = i;
+        f.hits.push_back({b.x, b.y, b.w, b.h, [idx, &f](bool right) {
+            if (idx >= int(gEd.size())) return;
+            if (right) { gModPage = gEd[size_t(idx)].e.mod; showPage(Page::ModSettings); return; }
+            gEdDrag = idx; gEdOffX = f.mx - gEd[size_t(idx)].x; gEdOffY = f.my - gEd[size_t(idx)].y;
+        }});
+    }
+    // the hint
+    std::string const hint = gEd.empty() ? "Nothing to move yet - switch a HUD element on and close the menu once so it draws"
+                                          : "Drag to move  -  scroll to resize  -  right click for settings  -  Esc when done";
+    float const tw = g.textW(hint, 13) + 36;
+    g.glass(g.W / 2 - tw / 2, g.H - 64, tw, 38, 14, kDark, 0.45f, 9, 5, 1, 0.8f, 0.2f, a);
+    g.text(hint, g.W / 2, g.H - 45, 13, rgba(kWhite, 1), a, false, 1, 0.3f);
+}
+
 // ---------------------------------------------------------------- one frame
 void render(ScreenView& view) {
     UiFrame f;
@@ -847,22 +999,26 @@ void render(ScreenView& view) {
     g.tintK   = look("frost", 1);
     g.a       = lyr::win::clientUiAssets();
     glm::vec2 const ptr = *view.mPointerLocationPrevious;
-    f.mx = ptr.x * toD;
-    f.my = ptr.y * toD;
+    f.mx = (gPtrX >= 0 ? gPtrX : ptr.x) * toD;
+    f.my = (gPtrY >= 0 ? gPtrY : ptr.y) * toD;
 
+    kAccent = kAccents[std::clamp(int(look("accent", 0)), 0, 7)];
+    float const motion = std::clamp(look("motion", 1.0f), 0.25f, 3.0f);   // Client UI -> Animation speed
     int64_t const now = nowMs();
-    float const   t   = ease(float(now - gViewAtMs) / 240.0f);
+    float const   t   = ease(float(now - gViewAtMs) * motion / 240.0f);
     { // smooth scroll: ease the drawn position towards the target (~90 ms time constant, frame-rate independent)
         float dt = gScrollMs ? std::clamp(float(now - gScrollMs) / 1000.0f, 0.0f, 0.1f) : 0.0f;
         gScrollMs = now;
-        gScrollAt += (gScroll - gScrollAt) * (1.0f - std::exp(-dt / 0.09f));
+        gScrollAt += (gScroll - gScrollAt) * (1.0f - std::exp(-dt * motion / 0.09f));
         if (std::abs(gScroll - gScrollAt) < 0.25f) gScrollAt = gScroll;
     }
     // mouse wheel since the last frame: moves the target before the page draws (and clamps it), so the eased list
     // never chases a target past the ends
-    for (int d : gWheel) gScroll += float(d) * 52.0f;
+    std::vector<int> wheelNow = gWheel;
+    if (gView != View::HudEdit) for (int d : gWheel) gScroll += float(d) * 52.0f;
     gWheel.clear();
     if (gView == View::Wheel) drawWheel(f, t);
+    else if (gView == View::HudEdit) drawHudEdit(f, t, toD, wheelNow);
     else drawWindow(f, t);
     drawToast(f);
 
@@ -925,8 +1081,9 @@ void open(IClientInstance& client) {
     ++diag::menuOpens;
     gClicks.clear();
     gWheel.clear();
-    gHeld = false;
+    gHeld = false; gPtrX = gPtrY = -1;
     gDrag.clear();
+    gBindFor.clear();
     setView(lookOn("wheel", true) ? View::Wheel : View::Window);
     if (gView == View::Window) gPage = Page::Mods;
     client.getSceneFactory().getCurrentSceneStack()->pushScreen(scene, false);
@@ -992,6 +1149,24 @@ void install() {
         std::lock_guard lock(gMutex);
         if (!gScene || !ownsTop()) return;
         int const k = ev.keyCode();
+        if (!gBindFor.empty()) {                           // recording a module's toggle key
+            ev.cancel();
+            if (!ev.isDown()) return;
+            auto* m = Registry::get().find(gBindFor);
+            int   vk = k == 0x10 ? (win32::keyDown(0xA1) ? 0xA1 : 0xA0) : k;
+            if (!m || k == 0x1B) { gBindFor.clear(); return; }
+            if (vk == 0xA1 || vk == 0x2D) { toast("Right Shift / Insert open the menu - pick another key"); return; }
+            if (k == 0x08 || k == 0x2E) { m->key = 0; toast(m->name + ": keybind cleared"); }
+            else {
+                for (auto& o : Registry::get().all())       // one key, one module
+                    if (o.get() != m && o->key == vk) o->key = 0;
+                m->key = vk;
+                toast(m->name + " bound to " + keyNames()[size_t(vk & 255)]);
+            }
+            Registry::get().save();
+            gBindFor.clear();
+            return;
+        }
         if (k == 0x1B) {                                   // Esc: clear the search, leave a sub page, then close
             ev.cancel();
             if (!ev.isDown()) return;
@@ -1015,8 +1190,9 @@ void install() {
         if (!gScene || !ownsTop()) return;
         char const  a = ev.actionButtonId();
         schar const d = ev.buttonData();
-        if (a == MouseAction::ActionMove || a == MouseAction::ActionMoveRelative) return;
         float inv = gClient->getGuiData()->mInvGuiScale;
+        if (a == MouseAction::ActionMove) { gPtrX = float(ev.x()) * inv; gPtrY = float(ev.y()) * inv; return; }
+        if (a == MouseAction::ActionMoveRelative) return;
         if (a == MouseAction::ActionWheel) {
             if (d != 0) gWheel.push_back(d > 0 ? -1 : 1);
             ev.cancel();

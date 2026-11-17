@@ -19,16 +19,20 @@
 #include <ctime>
 #include <deque>
 #include <format>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include "ll/api/event/entity/ActorHurtEvent.h"
+#include "ll/api/event/input/KeyInputEvent.h"
 #include "ll/api/event/input/MouseInputEvent.h"
 #include "ll/api/event/render/UIRenderEvent.h"
 #include "ll/api/memory/Hook.h"
 
 #include "mc/client/game/IClientInstance.h"
+#include "mc/client/gui/controls/UIControl.h"
+#include "mc/client/gui/controls/VisualTree.h"
 #include "mc/client/options/IOptionRegistry.h"
 #include "mc/options/option_types/BoolOption.h"
 #include "mc/options/option_types/OptionID.h"
@@ -45,11 +49,14 @@
 #include "mc/world/gamemode/GameMode.h"
 #include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/item/ItemStack.h"
+#include "mc/world/item/Item.h"
 #include "mc/world/level/Level.h"
+#include "mc/world/level/storage/LevelData.h"
 
 #include "bf/Events.h"
 #include "bf/Hud.h"
 #include "client/Menu.h"
+#include "client/HudEdit.h"
 #include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
 #include "client/PostFx.h"
@@ -57,11 +64,46 @@
 #include "client/MatchFx.h"
 #include "core/Win32Input.h"
 #include "lyrics/win/Win.h"
-namespace bf::lyrics::win { float cinemaFovScale(); } // LyricsForge Director "FOV breath" (1 = off)
+namespace bf::lyrics::win { float cinemaFovScale(); }
+
+// Bedrock Forge -> Renderer Foundation: little world events for the hit / jump effects (Jump Circles, Hit Splash,
+// Ripple, Shockwave). A ring of the last 32; Renderer Foundation keeps the ones still young (steady_clock ms - one
+// process, one clock). Written on the client thread; atMs is written last.
+extern "C" {
+struct BfFxEventsV1 {
+    uint32_t size, version, count, frame;
+    struct E { float x, y, z; uint32_t kind; int64_t atMs; float a, b; } e[32];   // kind: 1 jump, 2 hit, 3 crit, 4 landing (a = fall speed)
+    // version 2: you (Trail / Aura / Halo)
+    float    px, py, pz, pyaw;   // your feet (world), yaw (degrees)
+    uint32_t pflags;             // 1 = known, 2 = on the ground
+    uint32_t pad2;
+    int64_t  pAtMs;
+};
+__declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents();
+}
+namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 2, 0, 0, {}, 0, 0, 0, 0, 0, 0, 0}; }
+extern "C" __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents() { return &gFxEv; }
+namespace bedrock_forge::client {
+void pushFxEvent(uint32_t kind, float x, float y, float z, float a = 0.f) {
+    auto& e = gFxEv.e[gFxEv.frame % 32];
+    e.atMs = 0;
+    e.x = x; e.y = y; e.z = z; e.kind = kind; e.a = a;
+    e.atMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    ++gFxEv.frame;
+    gFxEv.count = std::min<uint32_t>(gFxEv.frame, 32);
+}
+} // namespace bedrock_forge::client // LyricsForge Director "FOV breath" (1 = off)
 
 namespace bedrock_forge::client {
 
 void installVisualHooks();
+void setHandHook(bool on); // VisualModules.cpp (Hand Movement)
+namespace keysounds { void press(int vk); } // KeySounds_win.cpp (Creamy Keys)
+namespace weathersounds { void rain(float level); void thunder(float volume, float closeK); } // WeatherSounds_win.cpp
+extern std::atomic<float> gTimeOfDay; // VisualModules.cpp
+extern std::mutex  gNickMutex;          // ChatCompact.cpp (Nick Hider)
+extern std::string gNickReal;
+std::string hideNick(std::string s);
 void installChatHooks();
 void uninstallChatHooks();
 void uninstallVisualHooks();
@@ -85,6 +127,8 @@ std::atomic<int64_t>  gLastNonHudFrameMs{0};
 std::deque<int64_t>   gLeftClicks, gRightClicks; // guarded by gMutex
 std::atomic<float>    gLastReach{0};
 std::atomic<int64_t>  gLastReachAt{0};
+std::atomic<int64_t>  gTargetId{0}, gTargetAt{0};
+std::atomic<int>      gTargetHits{0};
 std::atomic<int>      gCombo{0};
 std::atomic<int64_t>  gComboAt{0};
 std::atomic<float>    gZoomNow{1.0f};
@@ -93,8 +137,15 @@ int64_t               gSessionStart = nowMs();
 struct Fps {
     int64_t start = nowMs();
     int     frames = 0, value = 0;
+    // frame times for the graph (ms), a ring of the last 120 HUD frames
+    std::array<float, 120> ms{};
+    size_t                 head = 0;
+    Clock::time_point      lastT{};
     void    frame() {
         ++frames;
+        auto const t = Clock::now();
+        if (lastT.time_since_epoch().count()) ms[head++ % ms.size()] = std::chrono::duration<float, std::milli>(t - lastT).count();
+        lastT = t;
         if (auto n = nowMs(); n - start >= 1000) { value = frames; frames = 0; start = n; }
     }
 } gFps;
@@ -130,6 +181,14 @@ std::string roman(int n) {
 }
 float textWidth(std::string const& s, float scale = 1.0f) { return 6.0f * scale * static_cast<float>(s.size()); }
 
+// the info panel's box last frame (x, y, w, h): elements that sit near it step below it instead of covering its lines
+float gInfoRect[4]{0, 0, 0, 0};
+void avoidInfo(float x, float& y, float w, float h) {
+    float const* r = gInfoRect;
+    if (r[2] <= 0) return;
+    bool const hit = x < r[0] + r[2] && x + w > r[0] && y < r[1] + r[3] && y + h > r[1];
+    if (hit) y = r[1] + r[3] + 3.f;
+}
 void panel(MinecraftUIRenderContext& ctx, float x, float y, std::vector<std::string> const& lines, float opacity, Rgba color) {
     if (lines.empty()) return;
     float w = 0;
@@ -147,6 +206,448 @@ void keycap(MinecraftUIRenderContext& ctx, float x, float y, float w, float h, s
 // (Checking "only the HUD screen drew" failed on Hive: its own overlay screens draw all the time, which silently turned
 // off Zoom, Auto Sprint and the other in-game keys.)
 bool hudInputAllowed() { return w32::gameFocused() && (w32::cursorHidden() || nowMs() - gLastNonHudFrameMs.load() > 150); }
+
+// ---------------------------------------------------------------- Memory (no <windows.h> here: declared by hand)
+struct BfPmc { unsigned long cb, pageFaults; size_t peakWs, ws, qPeakPaged, qPaged, qPeakNonPaged, qNonPaged, pagefile, peakPagefile; };
+extern "C" __declspec(dllimport) int __stdcall K32GetProcessMemoryInfo(void* process, BfPmc* pmc, unsigned long cb);
+extern "C" __declspec(dllimport) void* __stdcall GetCurrentProcess();
+double gameMemoryMb() {
+    static int64_t at = 0;
+    static double  mb = 0;
+    if (int64_t n = nowMs(); n - at > 1000) {   // once a second is plenty
+        at = n;
+        BfPmc pmc{};
+        pmc.cb = sizeof pmc;
+        if (K32GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc)) mb = double(pmc.ws) / (1024.0 * 1024.0);
+    }
+    return mb;
+}
+
+// ---------------------------------------------------------------- Glass (Purxiy "glass": Frosted / Glow / Shimmer / Colour)
+// Renderer Foundation's Glass Armor reads mods/RendererFoundation/config/GlassFrost.txt about once a second; this
+// module is its menu. Off = the approved clear crystal (frost 0, no glow, no shimmer, white).
+constexpr char const* kGlassTints[] = {"FFFFFF", "E6D9FF", "C77BFF", "BFE8FF", "FFC9E3", "FFE2A8"};
+void writeGlassFrost(float frost, float glow, bool shimmer, int tint) {
+    try {
+        auto const path = ll::mod::NativeMod::current()->getModDir().parent_path() / "RendererFoundation" / "config" / "GlassFrost.txt";
+        std::error_code ec;
+        if (!std::filesystem::exists(path.parent_path(), ec)) return;   // no Renderer Foundation here
+        std::ofstream(path) << std::format("frost {:.2f}\nglow {:.2f}\nshimmer {}\ntint {}\n", frost, glow, shimmer ? 1 : 0,
+                                           kGlassTints[std::clamp(tint, 0, int(std::size(kGlassTints)) - 1)]);
+    } catch (...) {}
+}
+std::string gGlassLast; // last written settings ("" = write on the next frame)
+void glassTick(Module& m) {
+    std::string& last = gGlassLast;
+    std::string const now = std::format("{:.2f}/{:.2f}/{}/{}", m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
+    if (now == last) return;
+    static int64_t at = 0;
+    if (nowMs() - at < 150) return;   // dragging a slider: a few writes a second at most
+    at = nowMs();
+    last = now;
+    writeGlassFrost(m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
+}
+
+// the client's accent (Client UI -> Accent colour; Novak purple by default), refreshed every HUD frame
+Rgba kNeon{0.78f, 0.42f, 1.00f, 1.0f};
+void refreshAccent() {
+    static constexpr float kAcc[8][3] = {{0.78f, 0.42f, 1.00f}, {1.00f, 0.45f, 0.70f}, {0.30f, 0.65f, 1.00f}, {0.35f, 1.00f, 0.72f},
+                                         {1.00f, 0.55f, 0.30f}, {0.70f, 0.92f, 1.00f}, {1.00f, 0.80f, 0.35f}, {1.00f, 0.30f, 0.42f}};
+    auto* m = Registry::get().find("client_ui");
+    int const i = std::clamp(m ? int(m->num("accent", 0)) : 0, 0, 7);
+    kNeon = {kAcc[i][0], kAcc[i][1], kAcc[i][2], 1.0f};
+}
+float smooth01(float t) { t = std::clamp(t, 0.f, 1.f); return t * t * (3 - 2 * t); }
+
+// ---------------------------------------------------------------- Haze + Mist (Renderer Foundation draws them)
+// Purxiy's Haze ("a soft haze of colour over the world around you") and Mist ("soft autumn mist that hangs low in the
+// world"): the same settings; Renderer Foundation reads config/Atmos.txt about once a second (shaders/worldfx_atmos.hlsl).
+struct Pal { char const* name; float a[3], b[3]; };
+constexpr Pal kHazePals[] = {
+    {"Rose", {1.00f, 0.60f, 0.72f}, {1.00f, 0.78f, 0.70f}},   {"Lilac", {0.78f, 0.64f, 1.00f}, {0.93f, 0.80f, 1.00f}},
+    {"Peach", {1.00f, 0.72f, 0.55f}, {1.00f, 0.86f, 0.72f}},  {"Sunset", {1.00f, 0.55f, 0.36f}, {0.86f, 0.46f, 0.78f}},
+    {"Mint", {0.58f, 1.00f, 0.82f}, {0.70f, 0.92f, 1.00f}},   {"Ocean", {0.38f, 0.68f, 1.00f}, {0.34f, 0.94f, 0.96f}},
+    {"Aurora", {0.36f, 1.00f, 0.66f}, {0.72f, 0.46f, 1.00f}}, {"Novak", {0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}}};
+constexpr Pal kMistPals[] = {
+    {"Autumn", {1.00f, 0.86f, 0.70f}, {}}, {"Lilac", {0.86f, 0.80f, 1.00f}, {}}, {"Pearl", {0.92f, 0.94f, 1.00f}, {}}, {"Rose", {1.00f, 0.84f, 0.88f}, {}}};
+std::string gAtmosLast;
+void atmosTick() {
+    auto& r  = Registry::get();
+    auto* hz = r.find("haze");
+    auto* ms = r.find("mist");
+    bool const h = hz && hz->enabled, m = ms && ms->enabled;
+    float const tod = gTimeOfDay.load(std::memory_order_relaxed);
+    std::string out;
+    if (h || m || (r.find("ambience") && r.find("ambience")->enabled)) {
+        auto const& hp = kHazePals[std::clamp(int(hz ? hz->num("palette", 0) : 0), 0, int(std::size(kHazePals)) - 1)];
+        auto const& mp = kMistPals[std::clamp(int(ms ? ms->num("palette", 0) : 0), 0, int(std::size(kMistPals)) - 1)];
+        out = std::format("haze {}\nhaze_a {:.3f} {:.3f} {:.3f}\nhaze_b {:.3f} {:.3f} {:.3f}\nhaze_strength {:.2f}\nhaze_height {:.0f}\nhaze_clear {:.0f}\n"
+                          "haze_drift {:.2f}\nhaze_glow {:.2f}\nhaze_creatures {}\n",
+                          h ? 1 : 0, hp.a[0], hp.a[1], hp.a[2], hp.b[0], hp.b[1], hp.b[2], hz ? hz->num("strength", 0.45f) : 0.f, hz ? hz->num("height", 24) : 24.f,
+                          hz ? hz->num("clear", 8) : 8.f, hz ? hz->num("drift", 1) : 1.f, hz ? hz->num("glow", 0.6f) : 0.6f, hz && hz->flag("creatures", true) ? 1 : 0);
+        out += std::format("mist {}\nmist_color {:.3f} {:.3f} {:.3f}\nmist_density {:.2f}\nmist_height {:.0f}\nmist_clear {:.0f}\nmist_drift {:.2f}\n"
+                           "mist_rays {:.2f}\nmist_creatures {}\ntod {:.3f}\n",
+                           m ? 1 : 0, mp.a[0], mp.a[1], mp.a[2], ms ? ms->num("density", 0.5f) : 0.f, ms ? ms->num("height", 10) : 10.f, ms ? ms->num("clear", 6) : 6.f,
+                           ms ? ms->num("drift", 1) : 1.f, ms ? ms->num("rays", 0.6f) : 0.6f, ms && ms->flag("creatures", true) ? 1 : 0, tod < 0 ? 0.f : tod);
+    } else out = "haze 0\nmist 0\n";
+    if (auto* am = r.find("ambience"); am && am->enabled) {
+        // palettes: Accent = the client's neon purple + white, Purxiy = their warm peach + lilac, Dream = pink + sky blue
+        static constexpr float kAmb[3][2][3] = {{{0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}},
+                                                {{1.00f, 0.71f, 0.55f}, {0.80f, 0.62f, 1.00f}},
+                                                {{1.00f, 0.62f, 0.86f}, {0.55f, 0.82f, 1.00f}}};
+        int const p = std::clamp(int(am->num("palette", 0)), 0, 2);
+        out += std::format("amb 1\namb_a {:.3f} {:.3f} {:.3f}\namb_b {:.3f} {:.3f} {:.3f}\namb_amount {:.2f}\namb_size {:.2f}\namb_glow {:.2f}\n"
+                           "amb_speed {:.2f}\namb_twinkle {:.2f}\namb_range {:.0f}\namb_style {}\namb_dof {}\namb_react {}\namb_daylight {:.2f}\n",
+                           kAmb[p][0][0], kAmb[p][0][1], kAmb[p][0][2], kAmb[p][1][0], kAmb[p][1][1], kAmb[p][1][2], am->num("amount", 1.f),
+                           am->num("size", 1.f), am->num("glow", 0.6f), am->num("speed", 1.f), am->num("twinkle", 0.5f), am->num("range", 24.f),
+                           int(am->num("style", 0)), am->flag("depth_of_field", true) ? 1 : 0, am->flag("react", true) ? 1 : 0, am->num("daylight", 0.5f));
+        if (out.find("tod ") == std::string::npos) out += std::format("tod {:.3f}\n", tod < 0 ? 0.f : tod);
+    } else out += "amb 0\n";
+    {   // Jump Circles / Hit Splash / Ripple / Shockwave (Purxiy settings): RF draws them from BF_GetFxEvents()
+        static constexpr float kPal[3][2][3] = {{{0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}},
+                                                {{1.00f, 0.71f, 0.55f}, {0.80f, 0.62f, 1.00f}},
+                                                {{1.00f, 0.62f, 0.86f}, {0.55f, 0.82f, 1.00f}}};
+        auto pal = [&](Module* m, int which) { int const p = std::clamp(int(m->num("palette", 0)), 0, 2); return kPal[p][which]; };
+        auto* jc = r.find("jump_circles"); auto* hs = r.find("hit_splash"); auto* rp = r.find("ripple"); auto* sw = r.find("shockwave");
+        if (jc && jc->enabled) { auto c = pal(jc, 0); out += std::format("jc 1\njc_c {:.3f} {:.3f} {:.3f}\njc_size {:.2f}\njc_dur {:.2f}\njc_glow {:.2f}\n", c[0], c[1], c[2], jc->num("size", 1.2f), jc->num("duration", 1.1f), jc->num("glow", 0.6f)); }
+        else out += "jc 0\n";
+        if (hs && hs->enabled) { auto a = pal(hs, 0); auto b = pal(hs, 1); out += std::format("hs 1\nhs_a {:.3f} {:.3f} {:.3f}\nhs_b {:.3f} {:.3f} {:.3f}\nhs_size {:.2f}\nhs_dur {:.2f}\nhs_glow {:.2f}\n", a[0], a[1], a[2], b[0], b[1], b[2], hs->num("size", 1.f), hs->num("duration", 6.f), hs->num("glow", 0.7f)); }
+        else out += "hs 0\n";
+        if (rp && rp->enabled) { auto c = pal(rp, 0); out += std::format("rp 1\nrp_c {:.3f} {:.3f} {:.3f}\nrp_glow {:.2f}\nrp_dur {:.2f}\nrp_crits {}\nrp_ring {}\n", c[0], c[1], c[2], rp->num("glow", 0.8f), rp->num("duration", 0.8f), rp->flag("crits", true) ? 1 : 0, rp->flag("ring", true) ? 1 : 0); }
+        else out += "rp 0\n";
+        auto* tr = r.find("trail"); auto* au = r.find("aura"); auto* ha = r.find("halo");
+        if (tr && tr->enabled) { auto c = pal(tr, 0); out += std::format("trail 1\ntrail_c {:.3f} {:.3f} {:.3f}\ntrail_dur {:.2f}\ntrail_size {:.2f}\ntrail_glow {:.2f}\ntrail_style {}\n", c[0], c[1], c[2], tr->num("duration", 1.2f), tr->num("size", 1.f), tr->num("glow", 0.6f), int(tr->num("style", 0))); }
+        else out += "trail 0\n";
+        if (au && au->enabled) { auto c = pal(au, 0); out += std::format("aura 1\naura_c {:.3f} {:.3f} {:.3f}\naura_size {:.2f}\naura_speed {:.2f}\naura_glow {:.2f}\naura_style {}\naura_fp {}\n", c[0], c[1], c[2], au->num("size", 1.f), au->num("speed", 1.f), au->num("glow", 0.65f), int(au->num("style", 0)), au->flag("first_person", false) ? 1 : 0); }
+        else out += "aura 0\n";
+        if (ha && ha->enabled) { auto c = pal(ha, 1); out += std::format("halo 1\nhalo_c {:.3f} {:.3f} {:.3f}\nhalo_size {:.2f}\nhalo_glow {:.2f}\nhalo_height {:.2f}\nhalo_design {}\nhalo_fp 0\n", c[0], c[1], c[2], ha->num("size", 1.f), ha->num("glow", 0.7f), ha->num("height", 1.f), int(ha->num("design", 0))); }
+        else out += "halo 0\n";
+        auto* ch = r.find("chroma"); auto* ra = r.find("radiance"); auto* wx = r.find("weather");
+        if (ch && ch->enabled) {
+            static constexpr float kTone[3][3] = {{0.80f, 0.74f, 0.92f}, {0.95f, 0.90f, 0.80f}, {0.70f, 0.70f, 0.72f}};   // Lilac, Cream, Noir
+            static constexpr float kMem[4] = {30.f, 120.f, 600.f, 3600.f};
+            auto const& tn = kTone[std::clamp(int(ch->num("tone", 0)), 0, 2)];
+            out += std::format("chroma 1\nch_tone {:.3f} {:.3f} {:.3f}\nch_hint {:.2f}\nch_brush {:.1f}\nch_memory {:.0f}\nch_living {}\n", tn[0], tn[1], tn[2],
+                               ch->num("hint", 0.06f), ch->num("brush", 6.f), kMem[std::clamp(int(ch->num("memory", 1)), 0, 3)], ch->flag("living", true) ? 1 : 0);
+        } else out += "chroma 0\n";
+        if (ra && ra->enabled) { auto c = pal(ra, 0); out += std::format("rad 1\nrad_c {:.3f} {:.3f} {:.3f}\nrad_width {:.1f}\nrad_glow {:.2f}\nrad_fill {:.2f}\nrad_speed {:.2f}\n", c[0], c[1], c[2], ra->num("width", 2.f), ra->num("glow", 0.6f), ra->num("fill", 0.2f), ra->num("speed", 1.f)); }
+        else out += "rad 0\n";
+        if (wx && wx->enabled) {
+            out += std::format("wx 1\nwx_mode {}\nwx_intensity {:.2f}\nwx_wind {:.2f}\nwx_size {:.2f}\nwx_range {:.0f}\n", int(wx->num("mode", 0)), wx->num("intensity", 1.f), wx->num("wind", 0.45f), wx->num("size", 1.f), wx->num("range", 24.f));
+            out += std::format("wx_wet {:.2f}\n", int(wx->num("mode", 0)) == 0 ? wx->num("wet", 0.6f) : 0.f);
+        } else out += "wx 0\n";
+        // lightning + sounds (rain only): the strike times are ours, so the flash (RF, from the wall clock) and the
+        // thunder (here, a moment later: sound is slower than light) agree
+        {
+            bool const rainOn = wx && wx->enabled && int(wx->num("mode", 0)) == 0;
+            float const vol = rainOn ? wx->num("sounds", 0.5f) : 0.f;
+            try { weathersounds::rain(rainOn ? vol * std::clamp(0.35f + 0.4f * wx->num("intensity", 1.f), 0.f, 1.f) * 0.6f : 0.f); } catch (...) {}
+            static int64_t nextStrike = 0, lastStrike = 0, thunderAt = 0;
+            static float az = 0.f, nearK = 0.5f;
+            static uint32_t rs = 0x9e3779b9u;
+            auto rnd = [] { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; return float(rs & 0xffffu) / 65535.f; };
+            int64_t const wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            if (rainOn && wx->flag("lightning", true)) {
+                if (nextStrike == 0) nextStrike = wall + 6000 + int64_t(rnd() * 10000.f);
+                if (wall >= nextStrike) {
+                    lastStrike = wall; az = rnd() * 6.2831853f; nearK = rnd();
+                    thunderAt = wall + int64_t(400.f + (1.f - nearK) * 2600.f);
+                    nextStrike = wall + int64_t((14000.f + rnd() * 26000.f) / std::max(wx->num("intensity", 1.f), 0.3f));
+                }
+                out += std::format("wx_light 1\nwx_strike {} {:.3f} {:.2f}\n", lastStrike, az, nearK);
+                if (thunderAt && wall >= thunderAt) { thunderAt = 0; try { weathersounds::thunder(vol, nearK); } catch (...) {} }
+            } else { nextStrike = 0; out += "wx_light 0\n"; }
+        }
+        if (auto* bk = r.find("bokeh"); bk && bk->enabled)
+            out += std::format("bk 1\nbk_mode {}\nbk_dist {:.1f}\nbk_band {:.2f}\nbk_blur {:.2f}\nbk_hi {:.2f}\nbk_near {}\nbk_fringe {:.2f}\n", int(bk->num("focus", 0)),
+                               bk->num("distance", 24.f), bk->num("band", 0.26f), bk->num("blur", 0.5f), bk->num("highlights", 0.6f), bk->flag("near", true) ? 1 : 0, bk->num("fringe", 0.45f));
+        else out += "bk 0\n";
+        if (auto* pm = r.find("place_animation"); pm && pm->enabled) { auto c = pal(pm, 0); out += std::format("pa 1\npa_c {:.3f} {:.3f} {:.3f}\npa_dur {:.2f}\npa_glow {:.2f}\npa_break {}\n", c[0], c[1], c[2], pm->num("duration", 0.34f) * 1.6f, pm->num("glow", 0.6f), pm->flag("breaking", true) ? 1 : 0); }
+        else out += "pa 0\n";
+        if (sw && sw->enabled) { auto c = pal(sw, 0); out += std::format("sw 1\nsw_c {:.3f} {:.3f} {:.3f}\nsw_size {:.2f}\nsw_glow {:.2f}\n", c[0], c[1], c[2], sw->num("size", 1.f), sw->num("glow", 0.7f)); }
+        else out += "sw 0\n";
+    }
+    if (out == gAtmosLast) return;
+    static int64_t at = 0;
+    if (nowMs() - at < 250) return;   // dragging a slider: a few writes a second; the sun moves slowly (tod in steps of 0.001)
+    at = nowMs();
+    gAtmosLast = out;
+    try {
+        auto const path = ll::mod::NativeMod::current()->getModDir().parent_path() / "RendererFoundation" / "config" / "Atmos.txt";
+        std::error_code ec;
+        if (std::filesystem::exists(path.parent_path(), ec)) std::ofstream(path) << out;
+    } catch (...) {}
+}
+
+// ---------------------------------------------------------------- HUD hider (Purxiy "choose which Minecraft HUD elements to hide")
+// Walks the HUD screen's control tree and switches the matching controls invisible every frame (the game's bindings
+// may switch them back on). v1 also writes the tree's control names once to logs/hud_controls.txt, so the name lists
+// below can be checked against the real 1.26.51 HUD.
+struct HideGroup { char const* id; char const* label; std::vector<char const*> names; };
+std::vector<HideGroup> const& hideGroups() {
+    static std::vector<HideGroup> const g = {
+        // names from the real 1.26.51 HUD (logs/hud_controls.txt). The XP bar is left out: on desktop the hotbar sits
+        // INSIDE exp_rend / its progress bars, so hiding the bar hid the hotbar with it.
+        {"hotbar", "Hotbar", {"hotbar"}},
+        {"hearts", "Hearts", {"heart_rend", "horse_heart_rend_0", "horse_heart_rend_1"}},
+        {"hunger", "Hunger", {"hunger_rend"}},
+        {"armor", "Armor bar", {"armor_rend"}},
+        {"bubbles", "Air bubbles", {"bubbles_rend_0", "bubbles_rend_1"}},
+        {"item_name", "Held item name", {"item_text_factory"}},
+        {"boss", "Boss bar", {"boss_health_panel"}},
+        {"tips", "Action bar / tips", {"hud_actionbar_text_area", "hud_tip_text_factory"}},
+    };
+    return g;
+}
+void dumpControls(UIControl const& c, int depth, std::ostringstream& out, int& n) {
+    if (n > 4000 || depth > 24) return;
+    ++n;
+    out << std::string(size_t(depth) * 2, ' ') << *c.mName << "\n";
+    for (auto const& ch : *c.mChildren)
+        if (ch) dumpControls(*ch, depth + 1, out, n);
+}
+// what we switched off, so it can be switched back on (seen in game: unticking Hotbar left it hidden until a restart)
+struct HiddenCtl { std::weak_ptr<UIControl> c; ::ui::VisibilityFlag vis; float alpha; std::string name; };
+std::vector<HiddenCtl> gHidden;
+void hideControls(std::shared_ptr<UIControl> const& sp, std::vector<std::string> const& names, int depth) {
+    if (!sp || depth > 24) return;
+    UIControl& c = *sp;
+    std::string const& nm = *c.mName;
+    for (auto const& want : names)
+        if (nm == want) {
+            bool known = false;
+            for (auto const& h : gHidden) if (h.c.lock() == sp) { known = true; break; }
+            if (!known) gHidden.push_back({sp, c.mVisible, c.mAlpha, nm});
+            c.mVisible = ::ui::VisibilityFlag::None;
+            c.mAlpha   = 0.0f;
+            return;
+        }
+    for (auto const& ch : *c.mChildren) hideControls(ch, names, depth + 1);
+}
+void hudHiderFrame(ScreenView& view) {
+    auto const& tree = view.mVisualTree;
+    if (!tree) return;
+    auto const& rootSp = tree->mRootControl;
+    UIControl* root = rootSp.get();
+    if (!root) return;
+    static bool dumped = false;
+    if (!dumped) {
+        dumped = true;
+        std::ostringstream out;
+        int n = 0;
+        out << "HUD control tree (" << *tree->mRootControlName << ")\n";
+        dumpControls(*root, 0, out, n);
+        asyncfile::write(ll::mod::NativeMod::current()->getModDir() / "logs" / "hud_controls.txt", out.str());
+    }
+    auto* m = Registry::get().find("hud_hider");
+    std::vector<std::string> names;
+    if (m && m->enabled)
+        for (auto const& g : hideGroups())
+            if (m->flag(g.id, false)) for (auto* n2 : g.names) names.emplace_back(n2);
+    // switch back on what is no longer wanted hidden (or gone with the tree)
+    for (auto it = gHidden.begin(); it != gHidden.end();) {
+        auto sp = it->c.lock();
+        bool const still = sp && std::find(names.begin(), names.end(), it->name) != names.end();
+        if (!sp) { it = gHidden.erase(it); continue; }
+        if (!still) { sp->mVisible = it->vis; sp->mAlpha = it->alpha; it = gHidden.erase(it); continue; }
+        ++it;
+    }
+    if (!names.empty()) hideControls(rootSp, names, 0);
+}
+
+// ---------------------------------------------------------------- Now Playing (Purxiy "Spotify player": your music on screen,
+// with lyrics to sing along). Uses LyricsForge's media session + lyrics; the in-world lyrics stay LyricsForge's own.
+std::string mmss(int64_t ms) { ms = std::max<int64_t>(ms, 0) / 1000; return std::format("{}:{:02}", ms / 60, ms % 60); }
+void drawNowPlaying(Frame& f, Module& m) {
+    ::bf::lyrics::win::NowPlaying np;
+    if (!::bf::lyrics::win::nowPlaying(np) || !np.hasTrack) return;
+    int const paused = int(m.num("paused", 1));                   // Show / Dim / Hide
+    if (!np.playing && paused == 2) return;
+    float const dim = !np.playing && paused == 1 ? 0.55f : 1.f;
+    int const layout = int(m.num("layout", 0));                  // Split / Combined / Lyrics only / Player only
+    Rgba acc = kNeon;
+    if (m.num("colors", 0) > 0.5f && np.accent) acc = {float((np.accent >> 16) & 255) / 255.f, float((np.accent >> 8) & 255) / 255.f, float(np.accent & 255) / 255.f, 1};
+    auto ell = [](std::string t, size_t n) { if (t.size() > n) { t.resize(n - 1); t += "~"; } return t; };
+    // the player card
+    if (layout != 2) {
+        float const s = m.num("player_size", 1.f), W = 150.f * s, H = (layout == 1 ? 50.f : 38.f) * s;
+        float x, y;
+        hudedit::place(m.num("player_x", 1.f), m.num("player_y", 0.92f), W, H, f.width, f.height, x, y);
+        hudedit::note("now_playing", "Player", "player_x", "player_y", "player_size", x, y, W, H, f.width, f.height);
+        if (m.flag("player_background", true)) bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m.num("player_opacity", 0.6f) * dim});
+        bf::hud::fillBox(f.ctx, x, y, 2.f * s, H, {acc.r, acc.g, acc.b, dim});
+        bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 3.f * s, ell(np.title, 24), {1, 1, 1, dim}, 0.9f * s);
+        bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 13.f * s, ell(np.artist, 28), {0.80f, 0.74f, 0.92f, 0.9f * dim}, 0.75f * s);
+        if (layout == 1 && !np.line.empty()) bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 23.f * s, ell(np.line, 30), {acc.r, acc.g, acc.b, dim}, 0.75f * s);
+        float const k = np.durationMs > 0 ? std::clamp(float(np.positionMs) / float(np.durationMs), 0.f, 1.f) : 0.f;
+        float const by = y + H - 9.f * s, bw = W - 12.f * s;
+        bf::hud::fillBox(f.ctx, x + 6.f * s, by, bw, 1.5f * s, {1, 1, 1, 0.18f * dim});
+        bf::hud::fillBox(f.ctx, x + 6.f * s, by, bw * k, 1.5f * s, {acc.r, acc.g, acc.b, dim});
+        bf::hud::drawLabel(f.ctx, x + 6.f * s, by + 2.5f * s, mmss(np.positionMs), {0.8f, 0.8f, 0.85f, 0.8f * dim}, 0.55f * s);
+        if (m.flag("visualizer", true)) {   // little bars that move with the music (LyricsForge's loopback bands)
+            auto const band = ::bf::lyrics::win::audioLatest();
+            for (int i = 0; i < 12; ++i) {
+                float const v = band.hasSpec ? band.spec[i + 2] : 0.08f + 0.05f * std::sin(float(nowMs()) * 0.004f + float(i));
+                float const bh = std::clamp(v, 0.05f, 1.f) * 9.f * s;
+                bf::hud::fillBox(f.ctx, x + W - 6.f * s - float(12 - i) * 3.f * s, y + 13.f * s - bh + 9.f * s, 2.f * s, bh, {acc.r, acc.g, acc.b, 0.85f * dim});
+            }
+        }
+    }
+    // the lyrics card (top centre by default): the line being sung, the next one dimmer
+    if ((layout == 0 || layout == 2) && (!np.line.empty() || !np.nextLine.empty())) {
+        float const s = m.num("lyrics_size", 1.f);
+        int const lines = std::clamp(int(m.num("lines", 2)), 1, 3);
+        std::string const a = ell(np.line, 60), b = ell(np.nextLine, 60);
+        float const w = std::max(textWidth(a, s), lines > 1 ? textWidth(b, 0.8f * s) : 0.f) + 16.f * s;
+        float const h = (lines > 1 ? 24.f : 14.f) * s;
+        float x, y;
+        hudedit::place(m.num("lyrics_x", 0.5f), m.num("lyrics_y", 0.06f), w, h, f.width, f.height, x, y);
+        hudedit::note("now_playing", "Lyrics", "lyrics_x", "lyrics_y", "lyrics_size", x, y, w, h, f.width, f.height);
+        if (m.flag("lyrics_background", true)) bf::hud::fillBox(f.ctx, x, y, w, h, {0.06f, 0.04f, 0.10f, m.num("lyrics_opacity", 0.6f) * dim});
+        if (m.flag("glow", true) && !a.empty()) bf::hud::fillBox(f.ctx, x, y + 3.f * s, 2.f * s, 9.f * s, {acc.r, acc.g, acc.b, dim});
+        bf::hud::drawLabel(f.ctx, x + 8.f * s, y + 3.f * s, a, {1, 1, 1, dim}, s);
+        if (lines > 1 && !b.empty()) bf::hud::drawLabel(f.ctx, x + 8.f * s, y + 14.f * s, b, {0.75f, 0.70f, 0.85f, 0.75f * dim}, 0.8f * s);
+    }
+}
+
+} // namespace
+namespace hudedit {
+namespace {
+std::mutex                    gEdMutex;
+std::vector<std::pair<Elem, int64_t>> gEd;
+}
+void note(char const* mod, char const* label, char const* xKey, char const* yKey, char const* sizeKey, float x, float y, float w, float h,
+          float W, float H, bool pixels) {
+    if (W <= 0 || H <= 0) return;
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard l(gEdMutex);
+    for (auto& [e, at] : gEd)
+        if (e.mod == mod && e.xKey == xKey) { e.x = x / W; e.y = y / H; e.w = w / W; e.h = h / H; at = now; return; }
+    gEd.push_back({Elem{mod, label, xKey, yKey, sizeKey ? sizeKey : "", x / W, y / H, w / W, h / H, pixels}, now});
+}
+std::vector<Elem> elems() {
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard l(gEdMutex);
+    std::vector<Elem> out;
+    for (auto const& [e, at] : gEd) if (now - at < 120000) out.push_back(e);   // drawn in the last two minutes
+    return out;
+}
+} // namespace hudedit
+namespace {
+
+// ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
+// Purxiy (buddies' client, used as reference only - its code is locked): "A quiet message when a keybind toggles a
+// module" and "Every module you have switched on, as a list". Same settings (size, background, opacity, x/y as a
+// fraction of the screen, duration / sort, gradient, hud); drawn our way in the Novak neon purple + white.
+struct Note { std::string name; bool on; int64_t t; };
+float   gPlayerListBottom = 0; // set by List Players each frame (top right)
+int64_t gPlayerListFrame  = 0;
+std::deque<Note> gNotes; // guarded by gMutex
+
+void notifyToggle(Module const& m) {
+    if (!Registry::get().on("notifications")) return;
+    std::lock_guard lock(gMutex);
+    for (auto it = gNotes.begin(); it != gNotes.end(); ++it)
+        if (it->name == m.name) { gNotes.erase(it); break; } // one card per module: a re-toggle replaces it
+    gNotes.push_back({m.name, m.enabled, nowMs()});
+    while (gNotes.size() > 5) gNotes.pop_front();
+}
+
+
+void drawNotifications(Frame& f, Module& m) {
+    float const s    = m.num("size", 1.0f), dur = m.num("duration", 2.5f) * 1000.f;
+    float const op   = m.flag("background", true) ? m.num("opacity", 0.6f) : 0.f;
+    float const fx   = m.num("x", 1.0f), fy = m.num("y", 1.0f);
+    float const h    = 18.f * s, gap = 3.f * s, pad = 6.f * s;
+    int64_t const now = nowMs();
+    std::vector<Note> notes;
+    {
+        std::lock_guard lock(gMutex);
+        while (!gNotes.empty() && float(now - gNotes.front().t) > dur + 300.f) gNotes.pop_front();
+        notes.assign(gNotes.begin(), gNotes.end());
+    }
+    // the stack's box: room for five cards, anchored by x / y like every element (cards hug its outer side)
+    float const boxW = 160.f * s, boxH = 5.f * (h + gap);
+    float bx, by;
+    hudedit::place(fx, fy, boxW, boxH, f.width, f.height, bx, by);
+    hudedit::note("notifications", "Notifications", "x", "y", "size", bx, by, boxW, boxH, f.width, f.height);
+    float y = fy > 0.5f ? by + boxH - h : by;
+    for (auto it = notes.rbegin(); it != notes.rend(); ++it) {   // newest nearest the anchor
+        float const age = float(now - it->t);
+        float const in  = smooth01(age / 180.f), out = 1.f - smooth01((age - dur) / 300.f);
+        float const a   = in * out;
+        if (a <= 0.01f) continue;
+        std::string const state = it->on ? "enabled" : "disabled";
+        float const w  = pad * 2 + 4.f * s + textWidth(it->name, s) + 6.f * s + textWidth(state, s);
+        float const slide = (1.f - in) * (w * 0.6f);                  // glides in from the screen edge
+        float x = fx > 0.5f ? bx + boxW - w + slide : bx - slide;
+        x = std::clamp(x, -w, f.width);
+        if (op > 0) bf::hud::fillBox(f.ctx, x, y, w, h, {0.06f, 0.04f, 0.10f, op * a});
+        Rgba const bar = it->on ? kNeon : Rgba{0.55f, 0.52f, 0.60f, 1};
+        bf::hud::fillBox(f.ctx, x, y, 2.f * s, h, {bar.r, bar.g, bar.b, a});        // accent edge
+        float const ty = y + (h - 9.f * s) / 2;
+        bf::hud::drawLabel(f.ctx, x + pad + 2.f * s, ty, it->name, {1, 1, 1, a}, s);
+        bf::hud::drawLabel(f.ctx, x + pad + 2.f * s + textWidth(it->name, s) + 6.f * s, ty, state,
+                           it->on ? Rgba{0.86f, 0.70f, 1.0f, a} : Rgba{0.62f, 0.60f, 0.66f, a}, s);
+        y += fy > 0.5f ? -(h + gap) : (h + gap);
+    }
+}
+
+void drawActiveModules(Frame& f, Module& m) {
+    float const s  = m.num("size", 1.0f);
+    float const op = m.flag("background", true) ? m.num("opacity", 0.6f) : 0.f;
+    float const fx = m.num("x", 1.0f), fy = m.num("y", 0.0f);
+    bool const  grad = m.flag("gradient", true), withHud = m.flag("hud", false), alpha = m.num("sort", 0) > 0.5f;
+    std::vector<std::string> names;
+    for (auto& o : Registry::get().all()) {
+        if (!o->enabled || o->planned || o->id == "active_modules" || o->id == "notifications") continue;
+        if (!withHud && o->category == Category::Hud) continue;
+        names.push_back(o->name);
+    }
+    if (names.empty()) return;
+    if (alpha) std::sort(names.begin(), names.end());
+    else std::stable_sort(names.begin(), names.end(), [](auto const& a, auto const& b) { return a.size() > b.size(); });
+    float const h = 11.f * s, pad = 3.f * s;
+    float boxW = 0;
+    for (auto const& n : names) boxW = std::max(boxW, textWidth(n, s) + pad * 2 + 2.f * s);
+    float const boxH = h * float(names.size());
+    float bx, y;
+    hudedit::place(fx, fy, boxW, boxH, f.width, f.height, bx, y);
+    if (fx > 0.5f && y < gPlayerListBottom + 2.f && nowMs() - gPlayerListFrame < 500) y = gPlayerListBottom + 2.f;   // don't sit on the player list
+    hudedit::note("active_modules", "Active Modules", "x", "y", "size", bx, y, boxW, boxH, f.width, f.height);
+    float const t = float(nowMs() % 6000) / 6000.f;
+    for (size_t i = 0; i < names.size(); ++i) {
+        float const w = textWidth(names[i], s) + pad * 2 + 2.f * s;
+        float const x = fx > 0.5f ? bx + boxW - w : bx;
+        // gradient: neon purple -> white down the list, drifting slowly
+        float k = grad ? 0.5f + 0.5f * std::sin((float(i) / float(std::max<size_t>(names.size(), 2)) - t) * 6.2831f) : 1.f;
+        Rgba c{kNeon.r + (1 - kNeon.r) * k, kNeon.g + (1 - kNeon.g) * k, kNeon.b + (1 - kNeon.b) * k, 1};
+        if (op > 0) bf::hud::fillBox(f.ctx, x, y, w, h, {0.06f, 0.04f, 0.10f, op});
+        bf::hud::fillBox(f.ctx, fx > 0.5f ? x + w - 1.5f * s : x, y, 1.5f * s, h, c);
+        bf::hud::drawLabel(f.ctx, x + pad + (fx > 0.5f ? 0.f : 1.5f * s), y + (h - 9.f * s) / 2, names[i], c, s);
+        y += h;
+    }
+}
+
+/// Module toggle keys (Module::key, set in each module's page). Edge-triggered; not while typing or in menus.
+std::array<bool, 256> gKeyHeld{};
+void onModuleKey(int vk, bool down) {
+    if (vk <= 0 || vk > 255) return;
+    bool const was = gKeyHeld[size_t(vk)];
+    gKeyHeld[size_t(vk)] = down;
+    if (down && !was) { try { keysounds::press(vk); } catch (...) {} }   // Creamy Keys: every press, menus too
+    if (!down || was || menu::isOpen() || !hudInputAllowed()) return;
+    if (auto* np = Registry::get().find("now_playing"); np && np->enabled) {   // LyricsForge Player media keys
+        if (int(np->num("key_play", 0)) == vk) { ::bf::lyrics::win::mediaCommand(0); return; }
+        if (int(np->num("key_next", 0)) == vk) { ::bf::lyrics::win::mediaCommand(1); return; }
+        if (int(np->num("key_prev", 0)) == vk) { ::bf::lyrics::win::mediaCommand(2); return; }
+    }
+    for (auto& m : Registry::get().all())
+        if (m->key == vk && !m->planned) {
+            Registry::get().setEnabled(*m, !m->enabled);
+            notifyToggle(*m);
+        }
+}
 } // namespace
 
 // ============================================================================ hooks
@@ -192,7 +693,17 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
     ++gCombo;
     gComboAt = nowMs();
     ::bf::lyrics::win::noteCombat(); // LyricsFlow Combat Safe: dim lyrics for a moment after a hit
-    (void)target;
+    try {   // Target HUD: who we are fighting
+        int64_t const id = target.getOrCreateUniqueID().rawID;
+        if (id != gTargetId.load()) gTargetHits = 0;
+        gTargetId = id;
+        ++gTargetHits;
+        gTargetAt = nowMs();
+    } catch (...) {}
+    try {   // Hit Splash / Ripple: where the hit landed (a falling hit is a critical)
+        float const vy = p.getPosDelta().y;
+        pushFxEvent(!p.isOnGround() && vy < -0.01f ? 3u : 2u, hit.x, hit.y, hit.z);
+    } catch (...) {}
 }
 } // namespace
 
@@ -244,8 +755,82 @@ void registerBuiltins() {
     done = true;
 
     // ---------------- HUD
-    r.add("fps", "FPS", Category::Hud, "Frames per second", true).hud = [](Frame& f) {
+    // [Purxiy "server_info"] Bedrock tells the client the server's world name and who is on, not its address; and it
+    // keeps no ping for the player list (Purxiy's Java "ping" reads the tab list's latency - Bedrock has none to read)
+    r.add("server_info", "Server Info", Category::Hud, "The world / server you are on and how many are there", false).hud = [](Frame& f) {
+        if (!f.player) return;
+        std::string name;
+        size_t n = 0;
+        try { auto& lv = f.player->getLevel(); name = *lv.getLevelData().mLevelName; n = lv.getPlayerList().size(); } catch (...) {}
+        if (name.empty()) name = "this world";
+        for (size_t i; (i = name.find("\xC2\xA7")) != std::string::npos;) name.erase(i, std::min<size_t>(3, name.size() - i));
+        if (name.size() > 28) { name.resize(27); name += "~"; }
+        f.infoLines.push_back(std::format("{} | {} online", name, n));
+    };
+    r.add("memory", "Memory", Category::Hud, "How much memory the game is using", false).hud = [](Frame& f) {
+        double const mb = gameMemoryMb();
+        f.infoLines.push_back(mb >= 1024 ? std::format("Mem {:.2f} GB", mb / 1024.0) : std::format("Mem {:.0f} MB", mb));
+    };
+    {   // Watermark: the Bedrock Forge mark in a corner, drifting neon purple -> white
+        auto& wm = r.add("watermark", "Watermark", Category::Hud, "The Bedrock Forge mark in your corner", false);
+        wm.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).slider("x", "X (0 left .. 1 right)", 0.f, 0.f, 1.f, 0.01f)
+            .slider("y", "Y (0 top .. 1 bottom)", 0.f, 0.f, 1.f, 0.01f).toggleSetting("fps", "Show FPS", true);
+        wm.hud = [](Frame& f) {
+            auto* m = Registry::get().find("watermark");
+            if (!m) return;
+            float const s = m->num("size", 1.f) * 1.3f;
+            std::string const t1 = "BEDROCK FORGE", t2 = m->flag("fps", true) ? std::format("  {} fps", gFps.value) : std::string();
+            float const w = textWidth(t1, s) + textWidth(t2, s * 0.75f) + 10.f;
+            float x, y;
+            hudedit::place(m->num("x", 0.f), m->num("y", 0.f), w, 10.f * s + 2.f, f.width, f.height, x, y);
+            x += 3.f; y += 3.f;
+            hudedit::note("watermark", "Watermark", "x", "y", "size", x - 3.f, y - 3.f, w + 2.f, 10.f * s + 5.f, f.width, f.height);
+            bf::hud::fillBox(f.ctx, x - 3, y - 3, w + 2, 10.f * s + 5, {0.06f, 0.04f, 0.10f, 0.5f});
+            float const k = 0.5f + 0.5f * std::sin(float(nowMs() % 4000) / 4000.f * 6.2831f);
+            bf::hud::drawLabel(f.ctx, x, y, t1, {0.78f + 0.22f * k, 0.42f + 0.58f * k, 1.0f, 1.0f}, s);
+            if (!t2.empty()) bf::hud::drawLabel(f.ctx, x + textWidth(t1, s), y + 2.f * s, t2, {1, 1, 1, 0.75f}, s * 0.75f);
+        };
+    }
+    {   // [Purxiy schema] notifications on by default (they only show when a keybind toggles something)
+        auto& n = r.add("notifications", "Notifications", Category::Hud, "A quiet message when a keybind toggles a module", true);
+        n.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).toggleSetting("background", "Background", true)
+            .slider("opacity", "Background opacity", 0.6f, 0.f, 1.f, 0.05f).slider("x", "X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f)
+            .slider("y", "Y (0 top .. 1 bottom)", 1.f, 0.f, 1.f, 0.01f).slider("duration", "Duration (s)", 2.5f, 1.5f, 6.f, 0.5f);
+        n.hud = [](Frame& f) { if (auto* m = Registry::get().find("notifications")) drawNotifications(f, *m); };
+        // off by default here (Purxiy has it on): our top right already holds the player list
+        auto& am = r.add("active_modules", "Active Modules", Category::Hud, "Every module you have switched on, as a list", false);
+        am.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).toggleSetting("background", "Background", true)
+            .slider("opacity", "Background opacity", 0.6f, 0.f, 1.f, 0.05f).slider("x", "X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f)
+            .slider("y", "Y (0 top .. 1 bottom)", 0.f, 0.f, 1.f, 0.01f).choice("sort", "Order", {"Length", "Alphabetical"}, 0)
+            .toggleSetting("gradient", "Gradient", true).toggleSetting("hud", "HUD elements", false);
+        am.hud = [](Frame& f) { if (auto* m = Registry::get().find("active_modules")) drawActiveModules(f, *m); };
+    }
+    r.add("fps", "FPS", Category::Hud, "Frames per second, with a live frame graph", true)
+        .toggleSetting("graph", "Frame graph", false).slider("size", "Graph size", 1.0f, 0.5f, 2.0f, 0.05f)
+        .slider("opacity", "Background opacity", 0.55f, 0.f, 1.f, 0.05f).slider("x", "X (0 left .. 1 right)", 0.f, 0.f, 1.f, 0.01f)
+        .slider("y", "Y (0 top .. 1 bottom)", 0.3f, 0.f, 1.f, 0.01f).hud = [](Frame& f) {
         f.infoLines.push_back(std::format("FPS {}", gFps.value));
+        auto* m = Registry::get().find("fps");
+        if (!m || !m->flag("graph", false)) return;
+        // [Purxiy-style] live frame graph: one bar per frame, height = frame time (16.7 ms = half), spikes go purple
+        float const s = m->num("size", 1.0f), W = 120.f * s, H = 28.f * s;
+        float x, y;
+        hudedit::place(m->num("x", 0.0f), m->num("y", 0.3f), W + 4.f, H + 14.f * s, f.width, f.height, x, y);
+        avoidInfo(x, y, W + 4.f, H + 14.f * s);   // audit: Server Info / Session lines grew the info panel under it
+        x += 2.f; y += 2.f;
+        hudedit::note("fps", "Frame graph", "x", "y", "size", x - 2.f, y - 2.f, W + 4.f, H + 4.f + 10.f * s, f.width, f.height);
+        bf::hud::fillBox(f.ctx, x - 2, y - 2, W + 4, H + 4 + 10.f * s, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.55f)});
+        float worst = 0;
+        for (size_t i = 0; i < gFps.ms.size(); ++i) {
+            float const v  = gFps.ms[(gFps.head + i) % gFps.ms.size()];
+            worst = std::max(worst, v);
+            float const bh = std::clamp(v / 33.3f, 0.02f, 1.f) * H;
+            bool const spike = v > 25.f;
+            bf::hud::fillBox(f.ctx, x + float(i) * (W / float(gFps.ms.size())), y + H - bh, std::max(W / float(gFps.ms.size()) - 0.2f, 0.4f), bh,
+                             spike ? Rgba{0.78f, 0.42f, 1.0f, 0.95f} : Rgba{1, 1, 1, 0.55f});
+        }
+        bf::hud::fillBox(f.ctx, x, y + H * 0.5f, W, 0.5f, {1, 1, 1, 0.25f});   // the 60 fps line
+        bf::hud::drawLabel(f.ctx, x, y + H + 2.f, std::format("{} fps  worst {:.1f} ms", gFps.value, worst), {1, 1, 1, 0.9f}, 0.75f * s);
     };
     r.add("cps", "CPS", Category::Hud, "Left | right clicks per second", true).hud = [](Frame& f) {
         std::lock_guard lock(gMutex);
@@ -256,9 +841,33 @@ void registerBuiltins() {
         auto const& p = f.player->getPosition();
         f.infoLines.push_back(std::format("XYZ {:.0f} {:.0f} {:.0f}", std::floor(p.x), std::floor(p.y - 1.62f), std::floor(p.z)));
     };
-    r.add("direction", "Direction", Category::Hud, "Facing and yaw", true).hud = [](Frame& f) {
+    r.add("direction", "Direction", Category::Hud, "Facing and yaw, or a compass strip that glides with your view", true)
+        .toggleSetting("strip", "Compass strip (top centre)", false).slider("size", "Strip size", 1.0f, 0.5f, 2.0f, 0.05f)
+        .slider("opacity", "Strip background", 0.45f, 0.f, 1.f, 0.05f).hud = [](Frame& f) {
         if (!f.player) return;
         float yaw = f.player->getRotation().z;
+        auto* dm = Registry::get().find("direction");
+        if (dm && dm->flag("strip", false)) {
+            // [Purxiy-style] the strip: 180 degrees across, ticks every 15, letters at the 8 points, a neon caret in the middle
+            float const s = dm->num("size", 1.f), W = 180.f * s, H = 16.f * s, cx = f.width / 2, y = 3.f;
+            bf::hud::fillBox(f.ctx, cx - W / 2, y, W, H, {0.06f, 0.04f, 0.10f, dm->num("opacity", 0.45f)});
+            static constexpr char const* kPts[8] = {"S", "SW", "W", "NW", "N", "NE", "E", "SE"};
+            for (int d = -90; d <= 90; d += 5) {
+                float const ang = std::floor(yaw / 5.f) * 5.f + float(d);
+                float const px  = cx + (ang - yaw) * (W / 180.f);
+                if (px < cx - W / 2 + 2 || px > cx + W / 2 - 2) continue;
+                float const fall = 1.f - std::abs(px - cx) / (W / 2);           // fade toward the ends
+                int const   a360 = ((int(std::lround(ang)) % 360) + 360) % 360;
+                if (a360 % 45 == 0) {
+                    std::string const t = kPts[a360 / 45];
+                    bf::hud::drawLabel(f.ctx, px - textWidth(t, 0.8f * s) / 2, y + 4.f * s, t,
+                                       a360 == 180 ? Rgba{kNeon.r, kNeon.g, kNeon.b, fall} : Rgba{1, 1, 1, fall}, 0.8f * s);   // north in neon
+                } else if (a360 % 15 == 0)
+                    bf::hud::fillBox(f.ctx, px, y + H - 5.f * s, 0.6f, 4.f * s, {1, 1, 1, 0.6f * fall});
+            }
+            bf::hud::fillBox(f.ctx, cx - 0.5f, y + H, 1.f, 3.f * s, {kNeon.r, kNeon.g, kNeon.b, 1});
+            return;
+        }
         f.infoLines.push_back(std::format("Facing {} ({:.0f})", compass(yaw), yaw));
     };
     r.add("speed", "Speed Display", Category::Hud, "Horizontal speed in blocks per second").hud = [](Frame& f) {
@@ -271,9 +880,18 @@ void registerBuiltins() {
         w32::localTime(h, m);
         f.infoLines.push_back(std::format("Time {:02}:{:02}", h, m));
     };
-    r.add("session", "Session Timer", Category::Hud, "Time since the game started").hud = [](Frame& f) {
+    r.add("session", "Session Timer", Category::Hud, "How long you have been playing (and in this world)")
+        .toggleSetting("world", "Time in this world too", true).hud = [](Frame& f) {
+        static int64_t worldStart = 0;
+        static void*   worldOf    = nullptr;
+        void* const lp = f.player ? static_cast<void*>(f.player) : nullptr;
+        if (lp != worldOf) { worldOf = lp; worldStart = nowMs(); }   // a new world / server joined
         int64_t s = (nowMs() - gSessionStart) / 1000;
-        f.infoLines.push_back(std::format("Session {}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60));
+        auto* m = Registry::get().find("session");
+        if (m && m->flag("world", true) && f.player) {
+            int64_t const w = (nowMs() - worldStart) / 1000;
+            f.infoLines.push_back(std::format("Session {}:{:02}:{:02} | here {}:{:02}", s / 3600, (s / 60) % 60, s % 60, w / 60, w % 60));
+        } else f.infoLines.push_back(std::format("Session {}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60));
     };
     r.add("xp_info", "XP Info", Category::Hud, "XP earned / needed for the next level").hud = [](Frame& f) {
         if (!f.player) return;
@@ -292,13 +910,16 @@ void registerBuiltins() {
         f.infoLines.push_back(std::format("{} x{}", held.getName(), count));
     };
     r.add("keystrokes", "Keystrokes", Category::Hud, "W A S D, Space and mouse buttons", true)
-        .slider("x", "X (negative = from right)", 4, -400, 400, 2)
-        .slider("y", "Y (negative = from bottom)", -76, -400, 400, 2)
+        .slider("x", "X (negative = from right)", 4, -2000, 2000, 2)
+        .slider("y", "Y (negative = from bottom)", -76, -2000, 2000, 2)
         .hud = [](Frame& f) {
         auto* m  = Registry::get().find("keystrokes");
         float k  = 18, g = 2, wTot = 3 * k + 2 * g;
         float sx = m->num("x"), sy = m->num("y");
         float bx = sx >= 0 ? sx : f.width + sx - wTot, by = sy >= 0 ? sy : f.height + sy;
+        bx = std::clamp(bx, 0.f, std::max(f.width - wTot, 0.f)); by = std::clamp(by, 0.f, std::max(f.height - (3 * (k + g) + 8), 0.f));
+        // the HUD editor box (pixels mode: it writes the top-left back, + the 3 / 2 px it takes off here)
+        hudedit::note("keystrokes", "Keystrokes", "x", "y", "", bx - 3, by - 2, wTot, 3 * (k + g) + 8, f.width, f.height, true);
         bool  ok = w32::gameFocused();
         auto  d  = [&](int vk) { return ok && w32::keyDown(vk); };
         int   l = 0, rr = 0;
@@ -316,39 +937,104 @@ void registerBuiltins() {
         keycap(f.ctx, bx + half + g, by + 2 * (k + g), half, k, std::format("R {}", rr), d(w32::vk::RButton));
         keycap(f.ctx, bx, by + 3 * (k + g), wTot, 8, "", d(w32::vk::Space));
     };
-    r.add("armor_hud", "Armor HUD", Category::Hud, "Worn armor and held item with durability used").hud = [](Frame& f) {
+    // [Purxiy "armor_status" / "potion_effects"] glass cards with durability / time bars; placed by the HUD editor
+    r.add("armor_hud", "Armor Status", Category::Hud, "Durability of everything you wear (and hold)")
+        .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("opacity", "Background opacity", 0.55f, 0.f, 1.f, 0.05f)
+        .slider("x", "X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f).slider("y", "Y (0 top .. 1 bottom)", 0.55f, 0.f, 1.f, 0.01f)
+        .toggleSetting("percent", "Show percent", true).toggleSetting("held", "Held item too", true)
+        .hud = [](Frame& f) {
         if (!f.player) return;
-        std::vector<std::string> lines;
+        auto* m = Registry::get().find("armor_hud");
+        struct Row { std::string name; int dmg = 0, max = 0; };
+        std::vector<Row> rows;
+        auto add = [&](ItemStack const& st) {
+            if (st.isNull()) return;
+            Row r2{st.getName()};
+            try { if (st.isDamageableItem()) { r2.dmg = st.getDamageValue(); if (auto* it = st.mItem.get()) r2.max = it->getMaxDamage(); } } catch (...) {}
+            rows.push_back(std::move(r2));
+        };
         using Slot = SharedTypes::Legacy::ArmorSlot;
-        for (Slot s : {Slot::Head, Slot::Torso, Slot::Legs, Slot::Feet}) {
-            auto const& st = f.player->getArmor(s);
-            if (st.isNull()) continue;
-            lines.push_back(st.isDamageableItem() ? std::format("{} (-{})", st.getName(), st.getDamageValue()) : st.getName());
+        for (Slot sl : {Slot::Head, Slot::Torso, Slot::Legs, Slot::Feet}) add(f.player->getArmor(sl));
+        if (m->flag("held", true)) add(f.player->getSelectedItem());
+        if (rows.empty()) return;
+        float const s = m->num("size", 1.f), rh = 14.f * s;
+        float nameW = 0;   // audit: sized to the longest name ("Netherite Chestplate" was cut to "Netherite Chest~")
+        for (auto& r2 : rows) nameW = std::max(nameW, textWidth(r2.name.size() > 26 ? r2.name.substr(0, 25) + "~" : r2.name, 0.75f * s));
+        float const W = std::max(110.f * s, nameW + (m->flag("percent", true) ? textWidth("100%", 0.7f * s) + 6.f * s : 0.f) + 10.f * s), H = rh * float(rows.size()) + 4.f * s;
+        float x, y;
+        hudedit::place(m->num("x", 1.f), m->num("y", 0.55f), W, H, f.width, f.height, x, y);
+        hudedit::note("armor_hud", "Armor Status", "x", "y", "size", x, y, W, H, f.width, f.height);
+        bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.55f)});
+        for (size_t i = 0; i < rows.size(); ++i) {
+            auto const& r2 = rows[i];
+            float const ry = y + 2.f * s + rh * float(i);
+            float const k = r2.max > 0 ? std::clamp(1.f - float(r2.dmg) / float(r2.max), 0.f, 1.f) : 1.f;
+            // green -> amber -> red as it wears; the accent while it is near full
+            Rgba const c = k > 0.85f ? kNeon : k > 0.5f ? Rgba{0.55f, 1.f, 0.6f, 1} : k > 0.25f ? Rgba{1.f, 0.78f, 0.3f, 1} : Rgba{1.f, 0.35f, 0.35f, 1};
+            std::string nm = r2.name.size() > 26 ? r2.name.substr(0, 25) + "~" : r2.name;
+            bf::hud::drawLabel(f.ctx, x + 4.f * s, ry + 1.f, nm, {1, 1, 1, 0.95f}, 0.75f * s);
+            if (r2.max > 0) {
+                float const bw = W - 8.f * s;
+                bf::hud::fillBox(f.ctx, x + 4.f * s, ry + rh - 4.f * s, bw, 1.5f * s, {1, 1, 1, 0.15f});
+                bf::hud::fillBox(f.ctx, x + 4.f * s, ry + rh - 4.f * s, bw * k, 1.5f * s, c);
+                if (m->flag("percent", true)) {
+                    std::string const pc = std::format("{}%", int(std::round(k * 100.f)));
+                    bf::hud::drawLabel(f.ctx, x + W - 4.f * s - textWidth(pc, 0.7f * s), ry + 1.f, pc, {c.r, c.g, c.b, 1}, 0.7f * s);
+                }
+            }
         }
-        auto const& held = f.player->getSelectedItem();
-        if (!held.isNull()) lines.push_back(std::format("> {}", held.getName()));
-        panel(f.ctx, f.width - 4 - [&] { float w = 0; for (auto& l : lines) w = std::max(w, textWidth(l)); return w; }(), f.height / 2 - 20, lines, 0.35f, {1, 1, 1, 1});
     };
-    r.add("potion_hud", "Potion HUD", Category::Hud, "Active effects, level and time left").hud = [](Frame& f) {
+    r.add("potion_hud", "Potion Effects", Category::Hud, "Active effects and their timers")
+        .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("opacity", "Background opacity", 0.55f, 0.f, 1.f, 0.05f)
+        .slider("x", "X (0 left .. 1 right)", 0.f, 0.f, 1.f, 0.01f).slider("y", "Y (0 top .. 1 bottom)", 0.55f, 0.f, 1.f, 0.01f)
+        .hud = [](Frame& f) {
         if (!f.player) return;
-        std::vector<std::string> lines;
+        auto* m = Registry::get().find("potion_hud");
+        static std::map<uint32_t, int> longest;   // the longest time seen per effect = the full bar
+        struct Row { std::string t; int ticks; uint32_t id; };
+        std::vector<Row> rows;
         for (auto const& e : f.player->getAllEffects()) {
-            int ticks = e.mDuration->mValue, secs = ticks / 20;
-            lines.push_back(std::format("{} {} {}:{:02}", e.getDisplayName(), roman(e.mAmplifier + 1), secs / 60, secs % 60));
+            int const ticks = e.mDuration->mValue;
+            uint32_t const id = e.mId;
+            int& lg = longest[id];
+            if (ticks > lg || ticks <= 0) lg = std::max(ticks, 1);
+            rows.push_back({std::format("{} {}", e.getDisplayName(), roman(e.mAmplifier + 1)), ticks, id});
         }
-        panel(f.ctx, 4, f.height / 2 - 10, lines, 0.35f, {0.85f, 0.9f, 1, 1});
+        if (rows.empty()) { longest.clear(); return; }
+        float const s = m->num("size", 1.f), rh = 14.f * s, W = 120.f * s, H = rh * float(rows.size()) + 4.f * s;
+        float x, y;
+        hudedit::place(m->num("x", 0.f), m->num("y", 0.55f), W, H, f.width, f.height, x, y);
+        hudedit::note("potion_hud", "Potion Effects", "x", "y", "size", x, y, W, H, f.width, f.height);
+        bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.55f)});
+        for (size_t i = 0; i < rows.size(); ++i) {
+            auto const& r2 = rows[i];
+            float const ry = y + 2.f * s + rh * float(i);
+            int const secs = r2.ticks / 20;
+            bool const inf = r2.ticks > 20 * 60 * 60 * 2 || r2.ticks < 0;
+            std::string const tm = inf ? std::string("**") : std::format("{}:{:02}", secs / 60, secs % 60);
+            bool const ending = !inf && secs <= 10;
+            float const blink = ending ? 0.55f + 0.45f * std::sin(float(nowMs()) * 0.012f) : 1.f;
+            bf::hud::drawLabel(f.ctx, x + 4.f * s, ry + 1.f, r2.t.substr(0, 20), {1, 1, 1, 0.95f * blink}, 0.75f * s);
+            bf::hud::drawLabel(f.ctx, x + W - 4.f * s - textWidth(tm, 0.7f * s), ry + 1.f, tm, ending ? Rgba{1.f, 0.55f, 0.45f, blink} : Rgba{0.85f, 0.8f, 1.f, 1}, 0.7f * s);
+            float const k = inf ? 1.f : std::clamp(float(r2.ticks) / float(std::max(longest[r2.id], 1)), 0.f, 1.f);
+            float const bw = W - 8.f * s;
+            bf::hud::fillBox(f.ctx, x + 4.f * s, ry + rh - 4.f * s, bw, 1.5f * s, {1, 1, 1, 0.15f});
+            bf::hud::fillBox(f.ctx, x + 4.f * s, ry + rh - 4.f * s, bw * k, 1.5f * s, kNeon);
+        }
     };
     r.add("player_list", "List Players", Category::Hud, "Everyone on the server (top right)").hud = [](Frame& f) {
         if (!f.player) return;
         std::vector<std::string> lines{"Players"};
         for (auto const& [uuid, entry] : f.player->getLevel().getPlayerList()) {
             (void)uuid;
-            lines.push_back(*entry.mName);
+            lines.push_back(hideNick(*entry.mName));
             if (lines.size() > 20) break;
         }
         float w = 0;
         for (auto& l : lines) w = std::max(w, textWidth(l));
         panel(f.ctx, f.width - w - 4, 4, lines, 0.35f, {1, 1, 1, 1});
+        gPlayerListBottom = 4.f + 10.5f * float(lines.size()) + 4.f;   // Active Modules starts below this (top right)
+        gPlayerListFrame  = nowMs();
     };
     r.add("crosshair", "Crosshair", Category::Hud, "A custom crosshair drawn over the vanilla one")
         .slider("size", "Size", 4, 1, 12, 1).slider("gap", "Gap", 1, 0, 6, 1).toggleSetting("dot", "Center dot", true)
@@ -381,6 +1067,41 @@ void registerBuiltins() {
     };
 
     // ---------------- Combat (display only)
+    {   // Target HUD (Purxiy "health and fight stats of whoever you aim at"): the one you last hit, for 4 s
+        auto& th = r.add("target_hud", "Target HUD", Category::Combat, "Health and fight stats of whoever you are fighting", false);
+        th.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).slider("opacity", "Background opacity", 0.6f, 0.f, 1.f, 0.05f)
+            .slider("x", "X (0 left .. 1 right)", 0.56f, 0.f, 1.f, 0.01f).slider("y", "Y (0 top .. 1 bottom)", 0.56f, 0.f, 1.f, 0.01f);
+        th.hud = [](Frame& f) {
+            auto* m = Registry::get().find("target_hud");
+            if (!m || !f.player) return;
+            int64_t const age = nowMs() - gTargetAt.load();
+            if (age > 4000 || gTargetId.load() == 0) return;
+            Actor* t = nullptr;
+            try { ActorUniqueID id; id.rawID = gTargetId.load(); t = f.player->getLevel().fetchEntity(id, false); } catch (...) { t = nullptr; }
+            if (!t) return;
+            std::string name;
+            try { name = t->getNameTag(); } catch (...) {}
+            for (size_t i; (i = name.find("\xC2\xA7")) != std::string::npos;) name.erase(i, std::min<size_t>(3, name.size() - i));   // drop colour codes
+            if (auto nl = name.find('\n'); nl != std::string::npos) name.resize(nl);
+            if (name.empty()) name = "Target";
+            int hp = 0, mx = 20;
+            try { hp = t->getHealth(); mx = std::max(1, t->getMaxHealth()); } catch (...) {}
+            auto const& a = f.player->getPosition(); auto const& b = t->getPosition();
+            float const dist = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+            float const s = m->num("size", 1.f), W = 120.f * s, H = 34.f * s;
+            float const fade = 1.f - smooth01((float(age) - 3400.f) / 600.f);
+            float x, y;
+            hudedit::place(m->num("x", 0.56f), m->num("y", 0.56f), W, H, f.width, f.height, x, y);
+            hudedit::note("target_hud", "Target HUD", "x", "y", "size", x, y, W, H, f.width, f.height);
+            bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.6f) * fade});
+            bf::hud::fillBox(f.ctx, x, y, 2.f * s, H, {kNeon.r, kNeon.g, kNeon.b, fade});
+            bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 3.f * s, name.substr(0, 18), {1, 1, 1, fade}, s);
+            float const k = std::clamp(float(hp) / float(mx), 0.f, 1.f), bw = W - 12.f * s;
+            bf::hud::fillBox(f.ctx, x + 6.f * s, y + 15.f * s, bw, 4.f * s, {1, 1, 1, 0.15f * fade});
+            bf::hud::fillBox(f.ctx, x + 6.f * s, y + 15.f * s, bw * k, 4.f * s, {kNeon.r + (1 - kNeon.r) * k * 0.5f, kNeon.g + (1 - kNeon.g) * k * 0.5f, 1.f, fade});
+            bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 22.f * s, std::format("{:.1f} hp  {} hits  {:.1f}m", hp / 2.0, gTargetHits.load(), dist), {0.86f, 0.80f, 0.95f, fade}, 0.75f * s);
+        };
+    }
     r.add("reach_display", "Reach Display", Category::Combat, "Distance of your last hit").hud = [](Frame& f) {
         if (nowMs() - gLastReachAt.load() > 3000) return;
         f.infoLines.push_back(std::format("Reach {:.2f}", gLastReach.load()));
@@ -407,8 +1128,116 @@ void registerBuiltins() {
     r.plan("freelook", "Freelook", Category::Camera, "Look around without turning (Lamium has this today)");
     r.plan("snap_look", "Snap Look", Category::Camera, "Hold a key for third-person front view");
     r.add("view_bobbing", "No View Bobbing", Category::Camera, "Turn off the walking camera bob");
-    r.plan("view_model", "View Model", Category::Camera, "Move / scale the held item");
+    {   // [Purxiy "hand_movement"] where your held item sits and how big it is
+        auto& hm = r.add("hand_movement", "Hand Movement", Category::Camera, "Move and scale the item in your hand", false);
+        hm.slider("x", "Left / right", 0.f, -1.f, 1.f, 0.02f).slider("y", "Down / up", 0.f, -1.f, 1.f, 0.02f)
+            .slider("z", "Back / forward", 0.f, -1.f, 1.f, 0.02f).slider("scale", "Size", 1.f, 0.4f, 1.6f, 0.02f);
+        hm.onToggle = [](bool on) { try { setHandHook(on); } catch (...) {} };
+    }
     r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
+    {
+        auto& gl = r.add("glass_frost", "Glass", Category::Visual, "Frosted glass armour: clear as a window, or soft and milky (Renderer Foundation)", false);
+        gl.slider("frost", "Frosted (0 clear .. 1 milky)", 0.35f, 0.f, 1.f, 0.05f).slider("glow", "Glow", 0.2f, 0.f, 1.f, 0.05f)
+            .toggleSetting("shimmer", "Shimmer (a soft sheen now and then)", true)
+            .choice("tint", "Colour", {"White", "Lilac", "Neon purple", "Ice blue", "Rose", "Gold"}, 0);
+        gl.hud      = [](Frame&) { if (auto* m = Registry::get().find("glass_frost")) glassTick(*m); };
+        gl.onToggle = [](bool on) { gGlassLast.clear(); if (!on) writeGlassFrost(0.f, 0.f, false, 0); };
+    }
+    {
+        auto& hz = r.add("haze", "Haze", Category::Visual, "A soft haze of colour over the world around you (Renderer Foundation)", false);
+        hz.choice("palette", "Colour", {"Rose", "Lilac", "Peach", "Sunset", "Mint", "Ocean", "Aurora", "Novak"}, 0)
+            .slider("strength", "Strength", 0.45f, 0.1f, 1.0f, 0.05f).slider("height", "Height (blocks above the ground)", 24, 6, 64, 1)
+            .slider("clear", "Clear around you", 8, 0, 32, 1).slider("drift", "Drift", 1.0f, 0.f, 3.f, 0.05f)
+            .slider("glow", "Glow toward the sun and moon", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("creatures", "Players and mobs keep their colours", true);
+        auto& ms = r.add("mist", "Mist", Category::Visual, "Soft autumn mist that hangs low in the world (Renderer Foundation)", false);
+        ms.choice("palette", "Colour", {"Autumn", "Lilac", "Pearl", "Rose"}, 0)
+            .slider("density", "Density", 0.5f, 0.1f, 1.0f, 0.05f).slider("height", "Height (blocks above the ground)", 10, 3, 32, 1)
+            .slider("clear", "Clear around you", 6, 0, 24, 1).slider("drift", "Drift", 1.0f, 0.f, 3.f, 0.05f)
+            .slider("rays", "Sun rays", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("creatures", "Players and mobs show clearly through it", true);
+        auto& am = r.add("ambience", "Ambience", Category::Visual, "Glowing particles drifting through the world around you (Renderer Foundation)", false);
+        am.choice("style", "Style", {"Motes", "Stardust", "Petals", "Snow"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("amount", "Amount", 1.0f, 0.1f, 2.0f, 0.05f).slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f)
+            .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("speed", "Speed", 1.0f, 0.f, 3.f, 0.05f)
+            .slider("twinkle", "Twinkle", 0.5f, 0.f, 1.f, 0.05f).slider("range", "Range (blocks)", 24, 8, 40, 1)
+            .toggleSetting("depth_of_field", "Near ones melt into soft bokeh", true).toggleSetting("react", "They swirl aside as you move", true)
+            .slider("daylight", "How many stay out by day", 0.5f, 0.f, 1.f, 0.05f);
+        am.onToggle = [](bool) { gAtmosLast.clear(); };
+        // Purxiy hit / jump effects (their settings; "others" needs other players' events: not yet)
+        auto& jc = r.add("jump_circles", "Jump Circles", Category::Visual, "A ring of light where you jump (Renderer Foundation)", false);
+        jc.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.2f, 0.5f, 3.f, 0.05f)
+            .slider("duration", "Duration (s)", 1.1f, 0.3f, 3.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
+        auto& hs = r.add("hit_splash", "Hit Splash", Category::Visual, "Glowing splashes where your hits land (Renderer Foundation)", false);
+        hs.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+            .slider("duration", "Duration (s)", 6.f, 1.f, 15.f, 0.5f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
+        auto& rp = r.add("ripple", "Ripple", Category::Visual, "A wave of light where every hit lands (Renderer Foundation)", false);
+        rp.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
+            .slider("duration", "Duration (s)", 0.8f, 0.3f, 2.f, 0.05f).toggleSetting("crits", "A burst of stars on critical hits", true)
+            .toggleSetting("ring", "A ring that rolls over the ground", true);
+        auto& sw = r.add("shockwave", "Shockwave", Category::Visual, "Land, and a wave of light runs through the ground (Renderer Foundation)", false);
+        sw.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+            .slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
+        // cosmetics (Purxiy trail / aura / halo): seen in third person (F5), the aura first person too if you want
+        auto& tr = r.add("trail", "Trail", Category::Visual, "Leave a trail of light behind you (Renderer Foundation)", false);
+        tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("duration", "Duration (s)", 1.2f, 0.3f, 3.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
+        auto& au = r.add("aura", "Aura", Category::Visual, "Soft light that lives around you (Renderer Foundation)", false);
+        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("speed", "Speed", 1.f, 0.f, 3.f, 0.05f).slider("glow", "Glow", 0.65f, 0.f, 1.f, 0.05f)
+            .toggleSetting("first_person", "See it from your own eyes too", false);
+        auto& ha = r.add("halo", "Halo", Category::Visual, "A gently glowing halo (Renderer Foundation)", false);
+        ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+            .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f).slider("height", "Height", 1.f, 0.f, 2.f, 0.05f);
+        auto& chm = r.add("chroma", "Chroma", Category::Visual, "The world waits in grey, and colour blooms wherever you walk (Renderer Foundation)", false);
+        chm.choice("tone", "Tone", {"Lilac", "Cream", "Noir"}, 0).slider("hint", "Colour it keeps", 0.06f, 0.f, 0.5f, 0.01f)
+            .toggleSetting("living", "Players, mobs and items keep their colour", true).slider("brush", "Brush (blocks)", 6.f, 2.f, 16.f, 0.5f)
+            .choice("memory", "Memory", {"30 s", "2 min", "10 min", "1 hour"}, 1);
+        auto& rad = r.add("radiance", "Radiance", Category::Visual, "Glowing outlines on players, mobs and items (Renderer Foundation)", false);
+        rad.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("width", "Width", 2.f, 1.f, 5.f, 0.5f)
+            .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.2f, 0.f, 1.f, 0.05f).slider("speed", "Flow speed", 1.f, 0.f, 3.f, 0.05f);
+        auto& wxm = r.add("weather", "Weather", Category::Visual, "Sculpt the weather: glassy rain, soft snowfall and ember showers (Renderer Foundation)", false);
+        wxm.choice("mode", "Mode", {"Rain", "Snow", "Fire"}, 0).slider("intensity", "Intensity", 1.f, 0.1f, 2.f, 0.05f)
+            .slider("wind", "Wind", 0.45f, 0.f, 1.5f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("range", "Range (blocks)", 24.f, 8.f, 40.f, 1.f)
+            .slider("wet", "Wet ground (rain)", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("lightning", "Lightning (rain)", true)
+            .slider("sounds", "Sounds (rain, thunder)", 0.5f, 0.f, 1.f, 0.05f);
+        auto& bkm = r.add("bokeh", "Bokeh", Category::Visual, "Sharp where you look, creamy light behind (Renderer Foundation)", false);
+        bkm.choice("focus", "Focus", {"Auto", "Distance", "Tilt-shift"}, 0).slider("distance", "Sharp up to (blocks, Distance)", 24.f, 4.f, 96.f, 1.f)
+            .slider("band", "How much stays sharp", 0.26f, 0.05f, 1.f, 0.01f).slider("blur", "Blur", 0.5f, 0.1f, 1.f, 0.05f)
+            .slider("highlights", "Highlights", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("near", "Nearer than the focus blurs too", true)
+            .slider("fringe", "Lilac fringe", 0.45f, 0.f, 1.f, 0.05f);
+        // (the block itself cannot grow / pop: its geometry is the game's chunk mesh - only the light is ours)
+        auto& pam = r.add("place_animation", "Place Animation", Category::Visual, "A soft light on blocks as you build and break (Renderer Foundation)", false);
+        pam.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("duration", "Duration (s)", 0.34f, 0.15f, 1.f, 0.01f)
+            .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("breaking", "Blocks you break too", true);
+        for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm, &bkm, &pam}) m->onToggle = [](bool) { gAtmosLast.clear(); };
+        hz.onToggle = [](bool) { gAtmosLast.clear(); };
+        ms.onToggle = [](bool) { gAtmosLast.clear(); };
+    }
+    {
+        auto& hh = r.add("hud_hider", "HUD Hider", Category::Hud, "Choose which Minecraft HUD elements to hide", false);
+        for (auto const& g : hideGroups()) hh.toggleSetting(g.id, g.label, false);
+    }
+    {
+        // LyricsForge add-on: needs the LyricsForge module on (it reads Apple Music / Spotify / any player in Windows' media
+        // controls); with LyricsForge's "Player only" it is all of LyricsForge you get: your music, controlled in game
+        auto& np = r.add("now_playing", "LyricsForge Player", Category::Hud, "LyricsForge add-on: your music on screen with the lyrics, and media keys (Apple Music, Spotify, any player)", false);
+        np.choice("layout", "Layout", {"Split", "Combined", "Lyrics only", "Player only"}, 0)
+            .slider("player_size", "Player size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("player_background", "Player background", true)
+            .slider("player_opacity", "Player background opacity", 0.6f, 0.f, 1.f, 0.05f)
+            .slider("player_x", "Player X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f).slider("player_y", "Player Y (0 top .. 1 bottom)", 0.92f, 0.f, 1.f, 0.01f)
+            .toggleSetting("visualizer", "Visualizer (bars that move with the music)", true).choice("colors", "Colours", {"Novak", "Album"}, 0)
+            .slider("lyrics_size", "Lyrics size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("lyrics_background", "Lyrics background", true)
+            .slider("lyrics_opacity", "Lyrics background opacity", 0.6f, 0.f, 1.f, 0.05f)
+            .slider("lyrics_x", "Lyrics X", 0.5f, 0.f, 1.f, 0.01f).slider("lyrics_y", "Lyrics Y", 0.06f, 0.f, 1.f, 0.01f)
+            .slider("lines", "Lines at once", 2, 1, 3, 1).toggleSetting("glow", "Glow on the line being sung", true)
+            .choice("paused", "When paused", {"Show", "Dim", "Hide"}, 1)
+            .slider("key_play", "Play / pause key (Unbound = 0)", 0, 0, 254, 1).slider("key_next", "Next song key", 0, 0, 254, 1)
+            .slider("key_prev", "Previous song key", 0, 0, 254, 1);
+        np.hud = [](Frame& f) { if (auto* m = Registry::get().find("now_playing")) drawNowPlaying(f, *m); };
+    }
+    r.add("creamy_keys", "Creamy Keys", Category::Misc, "Your keyboard, with a sound of its own", false)
+        .choice("profile", "Sound", {"Creamy", "Thock", "Clicky"}, 0).slider("volume", "Volume", 0.6f, 0.f, 1.f, 0.05f);
+    r.add("nick_hider", "Nick Hider", Category::Misc, "Hide your name in screenshots and streams (chat, the player list)", false)
+        .choice("alias", "Show it as", {"You", "Player", "Hidden", "Novak"}, 0);
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
         .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f)
         .slider("moving", "Blur from moving (turning is always full)", 0.6f, 0.0f, 1.5f, 0.05f);
@@ -475,7 +1304,11 @@ void registerBuiltins() {
         .slider("frost", "Frost tint", 1, 0, 2, 0.05f)
         .toggleSetting("wheel", "Open with the wheel", true)
         .toggleSetting("worldblur", "Blur the world", true)
-        .toggleSetting("camswing", "Camera swing", true);
+        .toggleSetting("camswing", "Camera swing", true)
+        // [Purxiy "interface" / "motion"] your colour across the menu and the HUD elements, and how fast things animate
+        .choice("accent", "Accent colour", {"Novak purple", "Rose", "Ocean", "Mint", "Sunset", "Ice", "Gold", "Cherry"}, 0)
+        .slider("motion", "Animation speed", 1.0f, 0.5f, 2.0f, 0.05f)
+        .choice("font", "Font", {"Outfit", "Inter"}, 0);
 }
 
 // ============================================================================ PvP preset
@@ -565,6 +1398,14 @@ void mark(char const* what) { // [BF] a gameplay moment (you got hit), so hitche
 
 // ============================================================================ runtime
 void installRuntime() {
+    if (Registry::get().on("hand_movement")) { try { setHandHook(true); } catch (...) {} }   // switched on last time
+    gSubs.on<ll::event::BeforeUIRenderEvent>([](ll::event::BeforeUIRenderEvent& ev) {   // HUD Hider: before the HUD draws
+        if (!bf::hud::isHudScreen(ev.screenView())) return;
+        try { hudHiderFrame(ev.screenView()); } catch (...) {}
+    });
+    gSubs.on<ll::event::KeyInputEvent>([](ll::event::KeyInputEvent& ev) {
+        try { onModuleKey(ev.keyCode() == 0x10 ? (w32::keyDown(0xA1) ? 0xA1 : 0xA0) : ev.keyCode(), ev.isDown()); } catch (...) {}
+    });
     installVisualHooks();
     installChatHooks();
     serverauto::install();
@@ -621,11 +1462,30 @@ void installRuntime() {
         try { pvppreset::tick(ctx.mClient); } catch (...) {}
         hitch::gCur.fb = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         forgerender::tick();
+        try { atmosTick(); } catch (...) {}
+        refreshAccent();
         hitch::gCur.fr = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
         if (player) gLocalId = player->getOrCreateUniqueID().rawID;
+        if (player) { try { std::string const n = player->getRealName(); std::lock_guard l(gNickMutex); if (n != gNickReal) gNickReal = n; } catch (...) {} }
         if (player) postfx::hudFrame(player->getRotation().x, player->getRotation().z);
+        if (player) {   // Jump Circles / Shockwave: leaving the ground upward, landing from a fall
+            static bool wasGround = true;
+            static float fallV = 0.f;
+            try {
+                bool const g = player->isOnGround();
+                Vec3 const pos = player->getPosition();
+                float const vy = player->getPosDelta().y;
+                if (!g) fallV = std::min(fallV, vy);
+                if (wasGround && !g && vy > 0.15f) pushFxEvent(1u, pos.x, pos.y - 1.62f, pos.z);
+                if (!wasGround && g) { if (fallV < -0.45f) pushFxEvent(4u, pos.x, pos.y - 1.62f, pos.z, -fallV); fallV = 0.f; }
+                wasGround = g;
+                gFxEv.px = pos.x; gFxEv.py = pos.y - 1.62f; gFxEv.pz = pos.z; gFxEv.pyaw = player->getRotation().z;   // Trail / Aura / Halo
+                gFxEv.pflags = 1u | (g ? 2u : 0u);
+                gFxEv.pAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            } catch (...) {}
+        }
         if (player && Registry::get().on("motion_blur")) { try { matchfx::blurActorsFrame(*player); } catch (...) {} }
         if (player) { // [BF] hitch log: health drops = you took a hit (servers send health to the client)
             static int lastHp = -1;
@@ -658,6 +1518,12 @@ void installRuntime() {
         if (ix < 0) ix += view.mSize->x - 100;
         if (iy < 0) iy += view.mSize->y;
         panel(ctx, ix, iy, info, lay ? lay->num("opacity", 0.42f) : 0.42f, {1, 1, 1, 1});
+        if (!info.empty()) {   // the info panel's box for the HUD editor (its x / y are pixels, negative = from the right / bottom)
+            float w = 0;
+            for (auto& l : info) w = std::max(w, textWidth(l));
+            hudedit::note("hud_layout", "Info panel", "x", "y", "", ix - 3, iy - 2, w + 4, 10.5f * float(info.size()) + 3, view.mSize->x, view.mSize->y, true);
+            gInfoRect[0] = ix - 3; gInfoRect[1] = iy - 2; gInfoRect[2] = w + 4; gInfoRect[3] = 10.5f * float(info.size()) + 3;
+        } else gInfoRect[2] = 0;
         hitch::gCur.panel = hitch::since(tSec);
     });
 }
