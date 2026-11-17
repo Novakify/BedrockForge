@@ -53,7 +53,7 @@ void build() {
     gBank[2] = render(0.20f, [](float t) { return 0.45f * (glassNote(880.f, t, 30.f) + (t > 0.06f ? glassNote(1318.5f, t - 0.06f, 28.f) : 0.f)); });   // on
     gBank[3] = render(0.20f, [](float t) { return 0.40f * (glassNote(1318.5f, t, 30.f) + (t > 0.06f ? glassNote(880.f, t - 0.06f, 28.f) : 0.f)); });   // off
     float lp = 0;
-    std::vector<float> noise(size_t(kRate));
+    std::vector<float> noise(static_cast<size_t>(kRate));
     for (auto& v : noise) v = un(rng);
     gBank[4] = render(0.32f, [&, i = 0](float t) mutable {                                                      // open: airy swell up
         lp += 0.08f * (noise[size_t(i++ % kRate)] - lp);
