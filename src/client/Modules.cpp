@@ -53,6 +53,7 @@
 #include "bf/Events.h"
 #include "bf/Hud.h"
 #include "client/Menu.h"
+#include "client/HudEdit.h"
 #include "client/ForgeRender.h"
 #include "client/ShaderPacks.h"
 #include "client/PostFx.h"
@@ -391,8 +392,9 @@ void drawNowPlaying(Frame& f, Module& m) {
     // the player card
     if (layout != 2) {
         float const s = m.num("player_size", 1.f), W = 150.f * s, H = (layout == 1 ? 50.f : 38.f) * s;
-        float const x = std::clamp(f.width * m.num("player_x", 1.f) - (m.num("player_x", 1.f) > 0.5f ? W + 4.f : -4.f), 0.f, f.width - W);
-        float const y = std::clamp(f.height * m.num("player_y", 1.f) - (m.num("player_y", 1.f) > 0.5f ? H + 26.f : -4.f), 0.f, f.height - H);
+        float x, y;
+        hudedit::place(m.num("player_x", 1.f), m.num("player_y", 0.92f), W, H, f.width, f.height, x, y);
+        hudedit::note("now_playing", "Player", "player_x", "player_y", "player_size", x, y, W, H, f.width, f.height);
         if (m.flag("player_background", true)) bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m.num("player_opacity", 0.6f) * dim});
         bf::hud::fillBox(f.ctx, x, y, 2.f * s, H, {acc.r, acc.g, acc.b, dim});
         bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 3.f * s, ell(np.title, 24), {1, 1, 1, dim}, 0.9f * s);
@@ -419,14 +421,40 @@ void drawNowPlaying(Frame& f, Module& m) {
         std::string const a = ell(np.line, 60), b = ell(np.nextLine, 60);
         float const w = std::max(textWidth(a, s), lines > 1 ? textWidth(b, 0.8f * s) : 0.f) + 16.f * s;
         float const h = (lines > 1 ? 24.f : 14.f) * s;
-        float const x = std::clamp(f.width * m.num("lyrics_x", 0.5f) - w / 2, 0.f, f.width - w);
-        float const y = std::clamp(f.height * m.num("lyrics_y", 0.f) + (m.num("lyrics_y", 0.f) < 0.5f ? 24.f : -h - 30.f), 0.f, f.height - h);
+        float x, y;
+        hudedit::place(m.num("lyrics_x", 0.5f), m.num("lyrics_y", 0.06f), w, h, f.width, f.height, x, y);
+        hudedit::note("now_playing", "Lyrics", "lyrics_x", "lyrics_y", "lyrics_size", x, y, w, h, f.width, f.height);
         if (m.flag("lyrics_background", true)) bf::hud::fillBox(f.ctx, x, y, w, h, {0.06f, 0.04f, 0.10f, m.num("lyrics_opacity", 0.6f) * dim});
         if (m.flag("glow", true) && !a.empty()) bf::hud::fillBox(f.ctx, x, y + 3.f * s, 2.f * s, 9.f * s, {acc.r, acc.g, acc.b, dim});
         bf::hud::drawLabel(f.ctx, x + 8.f * s, y + 3.f * s, a, {1, 1, 1, dim}, s);
         if (lines > 1 && !b.empty()) bf::hud::drawLabel(f.ctx, x + 8.f * s, y + 14.f * s, b, {0.75f, 0.70f, 0.85f, 0.75f * dim}, 0.8f * s);
     }
 }
+
+} // namespace
+namespace hudedit {
+namespace {
+std::mutex                    gEdMutex;
+std::vector<std::pair<Elem, int64_t>> gEd;
+}
+void note(char const* mod, char const* label, char const* xKey, char const* yKey, char const* sizeKey, float x, float y, float w, float h,
+          float W, float H, bool pixels) {
+    if (W <= 0 || H <= 0) return;
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard l(gEdMutex);
+    for (auto& [e, at] : gEd)
+        if (e.mod == mod && e.xKey == xKey) { e.x = x / W; e.y = y / H; e.w = w / W; e.h = h / H; at = now; return; }
+    gEd.push_back({Elem{mod, label, xKey, yKey, sizeKey ? sizeKey : "", x / W, y / H, w / W, h / H, pixels}, now});
+}
+std::vector<Elem> elems() {
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    std::lock_guard l(gEdMutex);
+    std::vector<Elem> out;
+    for (auto const& [e, at] : gEd) if (now - at < 120000) out.push_back(e);   // drawn in the last two minutes
+    return out;
+}
+} // namespace hudedit
+namespace {
 
 // ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
 // Purxiy (buddies' client, used as reference only - its code is locked): "A quiet message when a keybind toggles a
@@ -451,7 +479,7 @@ void drawNotifications(Frame& f, Module& m) {
     float const s    = m.num("size", 1.0f), dur = m.num("duration", 2.5f) * 1000.f;
     float const op   = m.flag("background", true) ? m.num("opacity", 0.6f) : 0.f;
     float const fx   = m.num("x", 1.0f), fy = m.num("y", 1.0f);
-    float const h    = 18.f * s, gap = 3.f * s, pad = 6.f * s, margin = 6.f;
+    float const h    = 18.f * s, gap = 3.f * s, pad = 6.f * s;
     int64_t const now = nowMs();
     std::vector<Note> notes;
     {
@@ -459,7 +487,12 @@ void drawNotifications(Frame& f, Module& m) {
         while (!gNotes.empty() && float(now - gNotes.front().t) > dur + 300.f) gNotes.pop_front();
         notes.assign(gNotes.begin(), gNotes.end());
     }
-    float y = fy > 0.5f ? f.height * fy - margin - h : f.height * fy + margin;
+    // the stack's box: room for five cards, anchored by x / y like every element (cards hug its outer side)
+    float const boxW = 160.f * s, boxH = 5.f * (h + gap);
+    float bx, by;
+    hudedit::place(fx, fy, boxW, boxH, f.width, f.height, bx, by);
+    hudedit::note("notifications", "Notifications", "x", "y", "size", bx, by, boxW, boxH, f.width, f.height);
+    float y = fy > 0.5f ? by + boxH - h : by;
     for (auto it = notes.rbegin(); it != notes.rend(); ++it) {   // newest nearest the anchor
         float const age = float(now - it->t);
         float const in  = smooth01(age / 180.f), out = 1.f - smooth01((age - dur) / 300.f);
@@ -468,7 +501,7 @@ void drawNotifications(Frame& f, Module& m) {
         std::string const state = it->on ? "enabled" : "disabled";
         float const w  = pad * 2 + 4.f * s + textWidth(it->name, s) + 6.f * s + textWidth(state, s);
         float const slide = (1.f - in) * (w * 0.6f);                  // glides in from the screen edge
-        float x = fx > 0.5f ? f.width * fx - margin - w + slide : f.width * fx + margin - slide;
+        float x = fx > 0.5f ? bx + boxW - w + slide : bx - slide;
         x = std::clamp(x, -w, f.width);
         if (op > 0) bf::hud::fillBox(f.ctx, x, y, w, h, {0.06f, 0.04f, 0.10f, op * a});
         Rgba const bar = it->on ? kNeon : Rgba{0.55f, 0.52f, 0.60f, 1};
@@ -495,13 +528,18 @@ void drawActiveModules(Frame& f, Module& m) {
     if (names.empty()) return;
     if (alpha) std::sort(names.begin(), names.end());
     else std::stable_sort(names.begin(), names.end(), [](auto const& a, auto const& b) { return a.size() > b.size(); });
-    float const h = 11.f * s, pad = 3.f * s, margin = 4.f;
-    float y = fy > 0.5f ? f.height * fy - margin - h * float(names.size()) : f.height * fy + margin;
-    if (fx > 0.5f && fy < 0.5f && nowMs() - gPlayerListFrame < 500) y = std::max(y, gPlayerListBottom + 2.f);   // don't sit on the player list
+    float const h = 11.f * s, pad = 3.f * s;
+    float boxW = 0;
+    for (auto const& n : names) boxW = std::max(boxW, textWidth(n, s) + pad * 2 + 2.f * s);
+    float const boxH = h * float(names.size());
+    float bx, y;
+    hudedit::place(fx, fy, boxW, boxH, f.width, f.height, bx, y);
+    if (fx > 0.5f && y < gPlayerListBottom + 2.f && nowMs() - gPlayerListFrame < 500) y = gPlayerListBottom + 2.f;   // don't sit on the player list
+    hudedit::note("active_modules", "Active Modules", "x", "y", "size", bx, y, boxW, boxH, f.width, f.height);
     float const t = float(nowMs() % 6000) / 6000.f;
     for (size_t i = 0; i < names.size(); ++i) {
         float const w = textWidth(names[i], s) + pad * 2 + 2.f * s;
-        float const x = fx > 0.5f ? f.width * fx - margin - w : f.width * fx + margin;
+        float const x = fx > 0.5f ? bx + boxW - w : bx;
         // gradient: neon purple -> white down the list, drifting slowly
         float k = grad ? 0.5f + 0.5f * std::sin((float(i) / float(std::max<size_t>(names.size(), 2)) - t) * 6.2831f) : 1.f;
         Rgba c{kNeon.r + (1 - kNeon.r) * k, kNeon.g + (1 - kNeon.g) * k, kNeon.b + (1 - kNeon.b) * k, 1};
@@ -651,7 +689,10 @@ void registerBuiltins() {
             float const s = m->num("size", 1.f) * 1.3f;
             std::string const t1 = "BEDROCK FORGE", t2 = m->flag("fps", true) ? std::format("  {} fps", gFps.value) : std::string();
             float const w = textWidth(t1, s) + textWidth(t2, s * 0.75f) + 10.f;
-            float const x = std::clamp(f.width * m->num("x", 0.f) + 4.f, 0.f, f.width - w), y = std::clamp(f.height * m->num("y", 0.f) + 4.f, 0.f, f.height - 12.f * s);
+            float x, y;
+            hudedit::place(m->num("x", 0.f), m->num("y", 0.f), w, 10.f * s + 2.f, f.width, f.height, x, y);
+            x += 3.f; y += 3.f;
+            hudedit::note("watermark", "Watermark", "x", "y", "size", x - 3.f, y - 3.f, w + 2.f, 10.f * s + 5.f, f.width, f.height);
             bf::hud::fillBox(f.ctx, x - 3, y - 3, w + 2, 10.f * s + 5, {0.06f, 0.04f, 0.10f, 0.5f});
             float const k = 0.5f + 0.5f * std::sin(float(nowMs() % 4000) / 4000.f * 6.2831f);
             bf::hud::drawLabel(f.ctx, x, y, t1, {0.78f + 0.22f * k, 0.42f + 0.58f * k, 1.0f, 1.0f}, s);
@@ -681,7 +722,10 @@ void registerBuiltins() {
         if (!m || !m->flag("graph", false)) return;
         // [Purxiy-style] live frame graph: one bar per frame, height = frame time (16.7 ms = half), spikes go purple
         float const s = m->num("size", 1.0f), W = 120.f * s, H = 28.f * s;
-        float const x = std::clamp(f.width * m->num("x", 0.0f) + 4.f, 0.f, f.width - W), y = std::clamp(f.height * m->num("y", 0.3f), 0.f, f.height - H - 10.f * s);
+        float x, y;
+        hudedit::place(m->num("x", 0.0f), m->num("y", 0.3f), W + 4.f, H + 14.f * s, f.width, f.height, x, y);
+        x += 2.f; y += 2.f;
+        hudedit::note("fps", "Frame graph", "x", "y", "size", x - 2.f, y - 2.f, W + 4.f, H + 4.f + 10.f * s, f.width, f.height);
         bf::hud::fillBox(f.ctx, x - 2, y - 2, W + 4, H + 4 + 10.f * s, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.55f)});
         float worst = 0;
         for (size_t i = 0; i < gFps.ms.size(); ++i) {
@@ -878,7 +922,9 @@ void registerBuiltins() {
             float const dist = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
             float const s = m->num("size", 1.f), W = 120.f * s, H = 34.f * s;
             float const fade = 1.f - smooth01((float(age) - 3400.f) / 600.f);
-            float const x = std::clamp(f.width * m->num("x", 0.56f), 0.f, f.width - W), y = std::clamp(f.height * m->num("y", 0.56f), 0.f, f.height - H);
+            float x, y;
+            hudedit::place(m->num("x", 0.56f), m->num("y", 0.56f), W, H, f.width, f.height, x, y);
+            hudedit::note("target_hud", "Target HUD", "x", "y", "size", x, y, W, H, f.width, f.height);
             bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.6f) * fade});
             bf::hud::fillBox(f.ctx, x, y, 2.f * s, H, {kNeon.r, kNeon.g, kNeon.b, fade});
             bf::hud::drawLabel(f.ctx, x + 6.f * s, y + 3.f * s, name.substr(0, 18), {1, 1, 1, fade}, s);
@@ -972,11 +1018,11 @@ void registerBuiltins() {
         np.choice("layout", "Layout", {"Split", "Combined", "Lyrics only", "Player only"}, 0)
             .slider("player_size", "Player size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("player_background", "Player background", true)
             .slider("player_opacity", "Player background opacity", 0.6f, 0.f, 1.f, 0.05f)
-            .slider("player_x", "Player X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f).slider("player_y", "Player Y (0 top .. 1 bottom)", 1.f, 0.f, 1.f, 0.01f)
+            .slider("player_x", "Player X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f).slider("player_y", "Player Y (0 top .. 1 bottom)", 0.92f, 0.f, 1.f, 0.01f)
             .toggleSetting("visualizer", "Visualizer (bars that move with the music)", true).choice("colors", "Colours", {"Novak", "Album"}, 0)
             .slider("lyrics_size", "Lyrics size", 1.f, 0.5f, 2.f, 0.05f).toggleSetting("lyrics_background", "Lyrics background", true)
             .slider("lyrics_opacity", "Lyrics background opacity", 0.6f, 0.f, 1.f, 0.05f)
-            .slider("lyrics_x", "Lyrics X", 0.5f, 0.f, 1.f, 0.01f).slider("lyrics_y", "Lyrics Y", 0.f, 0.f, 1.f, 0.01f)
+            .slider("lyrics_x", "Lyrics X", 0.5f, 0.f, 1.f, 0.01f).slider("lyrics_y", "Lyrics Y", 0.06f, 0.f, 1.f, 0.01f)
             .slider("lines", "Lines at once", 2, 1, 3, 1).toggleSetting("glow", "Glow on the line being sung", true)
             .choice("paused", "When paused", {"Show", "Dim", "Hide"}, 1)
             .slider("key_play", "Play / pause key (Unbound = 0)", 0, 0, 254, 1).slider("key_next", "Next song key", 0, 0, 254, 1)
@@ -1253,6 +1299,11 @@ void installRuntime() {
         if (ix < 0) ix += view.mSize->x - 100;
         if (iy < 0) iy += view.mSize->y;
         panel(ctx, ix, iy, info, lay ? lay->num("opacity", 0.42f) : 0.42f, {1, 1, 1, 1});
+        if (!info.empty()) {   // the info panel's box for the HUD editor (its x / y are pixels, negative = from the right / bottom)
+            float w = 0;
+            for (auto& l : info) w = std::max(w, textWidth(l));
+            hudedit::note("hud_layout", "Info panel", "x", "y", "", ix - 3, iy - 2, w + 4, 10.5f * float(info.size()) + 3, view.mSize->x, view.mSize->y, true);
+        }
         hitch::gCur.panel = hitch::since(tSec);
     });
 }
