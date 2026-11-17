@@ -401,9 +401,9 @@ void drawNowPlaying(Frame& f, Module& m) {
         bf::hud::fillBox(f.ctx, x + 6.f * s, by, bw * k, 1.5f * s, {acc.r, acc.g, acc.b, dim});
         bf::hud::drawLabel(f.ctx, x + 6.f * s, by + 2.5f * s, mmss(np.positionMs), {0.8f, 0.8f, 0.85f, 0.8f * dim}, 0.55f * s);
         if (m.flag("visualizer", true)) {   // little bars that move with the music (LyricsForge's loopback bands)
-            auto const bf = ::bf::lyrics::win::audioLatest();
+            auto const band = ::bf::lyrics::win::audioLatest();
             for (int i = 0; i < 12; ++i) {
-                float const v = bf.hasSpec ? bf.spec[i + 2] : 0.08f + 0.05f * std::sin(float(nowMs()) * 0.004f + float(i));
+                float const v = band.hasSpec ? band.spec[i + 2] : 0.08f + 0.05f * std::sin(float(nowMs()) * 0.004f + float(i));
                 float const bh = std::clamp(v, 0.05f, 1.f) * 9.f * s;
                 bf::hud::fillBox(f.ctx, x + W - 6.f * s - float(12 - i) * 3.f * s, y + 13.f * s - bh + 9.f * s, 2.f * s, bh, {acc.r, acc.g, acc.b, 0.85f * dim});
             }
