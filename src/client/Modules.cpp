@@ -19,6 +19,7 @@
 #include <ctime>
 #include <deque>
 #include <format>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -48,6 +49,7 @@
 #include "mc/world/gamemode/GameMode.h"
 #include "mc/world/gamemode/SurvivalMode.h"
 #include "mc/world/item/ItemStack.h"
+#include "mc/world/item/Item.h"
 #include "mc/world/level/Level.h"
 
 #include "bf/Events.h"
@@ -795,9 +797,18 @@ void registerBuiltins() {
         w32::localTime(h, m);
         f.infoLines.push_back(std::format("Time {:02}:{:02}", h, m));
     };
-    r.add("session", "Session Timer", Category::Hud, "Time since the game started").hud = [](Frame& f) {
+    r.add("session", "Session Timer", Category::Hud, "How long you have been playing (and in this world)")
+        .toggleSetting("world", "Time in this world too", true).hud = [](Frame& f) {
+        static int64_t worldStart = 0;
+        static void*   worldOf    = nullptr;
+        void* const lp = f.player ? static_cast<void*>(f.player) : nullptr;
+        if (lp != worldOf) { worldOf = lp; worldStart = nowMs(); }   // a new world / server joined
         int64_t s = (nowMs() - gSessionStart) / 1000;
-        f.infoLines.push_back(std::format("Session {}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60));
+        auto* m = Registry::get().find("session");
+        if (m && m->flag("world", true) && f.player) {
+            int64_t const w = (nowMs() - worldStart) / 1000;
+            f.infoLines.push_back(std::format("Session {}:{:02}:{:02} | here {}:{:02}", s / 3600, (s / 60) % 60, s % 60, w / 60, w % 60));
+        } else f.infoLines.push_back(std::format("Session {}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60));
     };
     r.add("xp_info", "XP Info", Category::Hud, "XP earned / needed for the next level").hud = [](Frame& f) {
         if (!f.player) return;
@@ -840,27 +851,87 @@ void registerBuiltins() {
         keycap(f.ctx, bx + half + g, by + 2 * (k + g), half, k, std::format("R {}", rr), d(w32::vk::RButton));
         keycap(f.ctx, bx, by + 3 * (k + g), wTot, 8, "", d(w32::vk::Space));
     };
-    r.add("armor_hud", "Armor HUD", Category::Hud, "Worn armor and held item with durability used").hud = [](Frame& f) {
+    // [Purxiy "armor_status" / "potion_effects"] glass cards with durability / time bars; placed by the HUD editor
+    r.add("armor_hud", "Armor Status", Category::Hud, "Durability of everything you wear (and hold)")
+        .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("opacity", "Background opacity", 0.55f, 0.f, 1.f, 0.05f)
+        .slider("x", "X (0 left .. 1 right)", 1.f, 0.f, 1.f, 0.01f).slider("y", "Y (0 top .. 1 bottom)", 0.55f, 0.f, 1.f, 0.01f)
+        .toggleSetting("percent", "Show percent", true).toggleSetting("held", "Held item too", true)
+        .hud = [](Frame& f) {
         if (!f.player) return;
-        std::vector<std::string> lines;
+        auto* m = Registry::get().find("armor_hud");
+        struct Row { std::string name; int dmg = 0, max = 0; };
+        std::vector<Row> rows;
+        auto add = [&](ItemStack const& st) {
+            if (st.isNull()) return;
+            Row r2{st.getName()};
+            try { if (st.isDamageableItem()) { r2.dmg = st.getDamageValue(); if (auto* it = st.mItem.get()) r2.max = it->getMaxDamage(); } } catch (...) {}
+            rows.push_back(std::move(r2));
+        };
         using Slot = SharedTypes::Legacy::ArmorSlot;
-        for (Slot s : {Slot::Head, Slot::Torso, Slot::Legs, Slot::Feet}) {
-            auto const& st = f.player->getArmor(s);
-            if (st.isNull()) continue;
-            lines.push_back(st.isDamageableItem() ? std::format("{} (-{})", st.getName(), st.getDamageValue()) : st.getName());
+        for (Slot sl : {Slot::Head, Slot::Torso, Slot::Legs, Slot::Feet}) add(f.player->getArmor(sl));
+        if (m->flag("held", true)) add(f.player->getSelectedItem());
+        if (rows.empty()) return;
+        float const s = m->num("size", 1.f), rh = 14.f * s, W = 110.f * s, H = rh * float(rows.size()) + 4.f * s;
+        float x, y;
+        hudedit::place(m->num("x", 1.f), m->num("y", 0.55f), W, H, f.width, f.height, x, y);
+        hudedit::note("armor_hud", "Armor Status", "x", "y", "size", x, y, W, H, f.width, f.height);
+        bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.55f)});
+        for (size_t i = 0; i < rows.size(); ++i) {
+            auto const& r2 = rows[i];
+            float const ry = y + 2.f * s + rh * float(i);
+            float const k = r2.max > 0 ? std::clamp(1.f - float(r2.dmg) / float(r2.max), 0.f, 1.f) : 1.f;
+            // green -> amber -> red as it wears; the accent while it is near full
+            Rgba const c = k > 0.85f ? kNeon : k > 0.5f ? Rgba{0.55f, 1.f, 0.6f, 1} : k > 0.25f ? Rgba{1.f, 0.78f, 0.3f, 1} : Rgba{1.f, 0.35f, 0.35f, 1};
+            std::string nm = r2.name.size() > 16 ? r2.name.substr(0, 15) + "~" : r2.name;
+            bf::hud::drawLabel(f.ctx, x + 4.f * s, ry + 1.f, nm, {1, 1, 1, 0.95f}, 0.75f * s);
+            if (r2.max > 0) {
+                float const bw = W - 8.f * s;
+                bf::hud::fillBox(f.ctx, x + 4.f * s, ry + rh - 4.f * s, bw, 1.5f * s, {1, 1, 1, 0.15f});
+                bf::hud::fillBox(f.ctx, x + 4.f * s, ry + rh - 4.f * s, bw * k, 1.5f * s, c);
+                if (m->flag("percent", true)) {
+                    std::string const pc = std::format("{}%", int(std::round(k * 100.f)));
+                    bf::hud::drawLabel(f.ctx, x + W - 4.f * s - textWidth(pc, 0.7f * s), ry + 1.f, pc, {c.r, c.g, c.b, 1}, 0.7f * s);
+                }
+            }
         }
-        auto const& held = f.player->getSelectedItem();
-        if (!held.isNull()) lines.push_back(std::format("> {}", held.getName()));
-        panel(f.ctx, f.width - 4 - [&] { float w = 0; for (auto& l : lines) w = std::max(w, textWidth(l)); return w; }(), f.height / 2 - 20, lines, 0.35f, {1, 1, 1, 1});
     };
-    r.add("potion_hud", "Potion HUD", Category::Hud, "Active effects, level and time left").hud = [](Frame& f) {
+    r.add("potion_hud", "Potion Effects", Category::Hud, "Active effects and their timers")
+        .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("opacity", "Background opacity", 0.55f, 0.f, 1.f, 0.05f)
+        .slider("x", "X (0 left .. 1 right)", 0.f, 0.f, 1.f, 0.01f).slider("y", "Y (0 top .. 1 bottom)", 0.55f, 0.f, 1.f, 0.01f)
+        .hud = [](Frame& f) {
         if (!f.player) return;
-        std::vector<std::string> lines;
+        auto* m = Registry::get().find("potion_hud");
+        static std::map<uint32_t, int> longest;   // the longest time seen per effect = the full bar
+        struct Row { std::string t; int ticks; uint32_t id; };
+        std::vector<Row> rows;
         for (auto const& e : f.player->getAllEffects()) {
-            int ticks = e.mDuration->mValue, secs = ticks / 20;
-            lines.push_back(std::format("{} {} {}:{:02}", e.getDisplayName(), roman(e.mAmplifier + 1), secs / 60, secs % 60));
+            int const ticks = e.mDuration->mValue;
+            uint32_t const id = e.mId;
+            int& lg = longest[id];
+            if (ticks > lg || ticks <= 0) lg = std::max(ticks, 1);
+            rows.push_back({std::format("{} {}", e.getDisplayName(), roman(e.mAmplifier + 1)), ticks, id});
         }
-        panel(f.ctx, 4, f.height / 2 - 10, lines, 0.35f, {0.85f, 0.9f, 1, 1});
+        if (rows.empty()) { longest.clear(); return; }
+        float const s = m->num("size", 1.f), rh = 14.f * s, W = 120.f * s, H = rh * float(rows.size()) + 4.f * s;
+        float x, y;
+        hudedit::place(m->num("x", 0.f), m->num("y", 0.55f), W, H, f.width, f.height, x, y);
+        hudedit::note("potion_hud", "Potion Effects", "x", "y", "size", x, y, W, H, f.width, f.height);
+        bf::hud::fillBox(f.ctx, x, y, W, H, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.55f)});
+        for (size_t i = 0; i < rows.size(); ++i) {
+            auto const& r2 = rows[i];
+            float const ry = y + 2.f * s + rh * float(i);
+            int const secs = r2.ticks / 20;
+            bool const inf = r2.ticks > 20 * 60 * 60 * 2 || r2.ticks < 0;
+            std::string const tm = inf ? std::string("**") : std::format("{}:{:02}", secs / 60, secs % 60);
+            bool const ending = !inf && secs <= 10;
+            float const blink = ending ? 0.55f + 0.45f * std::sin(float(nowMs()) * 0.012f) : 1.f;
+            bf::hud::drawLabel(f.ctx, x + 4.f * s, ry + 1.f, r2.t.substr(0, 20), {1, 1, 1, 0.95f * blink}, 0.75f * s);
+            bf::hud::drawLabel(f.ctx, x + W - 4.f * s - textWidth(tm, 0.7f * s), ry + 1.f, tm, ending ? Rgba{1.f, 0.55f, 0.45f, blink} : Rgba{0.85f, 0.8f, 1.f, 1}, 0.7f * s);
+            float const k = inf ? 1.f : std::clamp(float(r2.ticks) / float(std::max(longest[r2.id], 1)), 0.f, 1.f);
+            float const bw = W - 8.f * s;
+            bf::hud::fillBox(f.ctx, x + 4.f * s, ry + rh - 4.f * s, bw, 1.5f * s, {1, 1, 1, 0.15f});
+            bf::hud::fillBox(f.ctx, x + 4.f * s, ry + rh - 4.f * s, bw * k, 1.5f * s, kNeon);
+        }
     };
     r.add("player_list", "List Players", Category::Hud, "Everyone on the server (top right)").hud = [](Frame& f) {
         if (!f.player) return;
