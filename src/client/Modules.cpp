@@ -319,6 +319,10 @@ void atmosTick() {
         else out += "rad 0\n";
         if (wx && wx->enabled) out += std::format("wx 1\nwx_mode {}\nwx_intensity {:.2f}\nwx_wind {:.2f}\nwx_size {:.2f}\nwx_range {:.0f}\n", int(wx->num("mode", 0)), wx->num("intensity", 1.f), wx->num("wind", 0.45f), wx->num("size", 1.f), wx->num("range", 24.f));
         else out += "wx 0\n";
+        if (auto* bk = r.find("bokeh"); bk && bk->enabled)
+            out += std::format("bk 1\nbk_mode {}\nbk_dist {:.1f}\nbk_band {:.2f}\nbk_blur {:.2f}\nbk_hi {:.2f}\nbk_near {}\nbk_fringe {:.2f}\n", int(bk->num("focus", 0)),
+                               bk->num("distance", 24.f), bk->num("band", 0.26f), bk->num("blur", 0.5f), bk->num("highlights", 0.6f), bk->flag("near", true) ? 1 : 0, bk->num("fringe", 0.45f));
+        else out += "bk 0\n";
         if (sw && sw->enabled) { auto c = pal(sw, 0); out += std::format("sw 1\nsw_c {:.3f} {:.3f} {:.3f}\nsw_size {:.2f}\nsw_glow {:.2f}\n", c[0], c[1], c[2], sw->num("size", 1.f), sw->num("glow", 0.7f)); }
         else out += "sw 0\n";
     }
@@ -1127,7 +1131,12 @@ void registerBuiltins() {
         auto& wxm = r.add("weather", "Weather", Category::Visual, "Sculpt the weather: glassy rain, soft snowfall and ember showers (Renderer Foundation)", false);
         wxm.choice("mode", "Mode", {"Rain", "Snow", "Fire"}, 0).slider("intensity", "Intensity", 1.f, 0.1f, 2.f, 0.05f)
             .slider("wind", "Wind", 0.45f, 0.f, 1.5f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("range", "Range (blocks)", 24.f, 8.f, 40.f, 1.f);
-        for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm}) m->onToggle = [](bool) { gAtmosLast.clear(); };
+        auto& bkm = r.add("bokeh", "Bokeh", Category::Visual, "Sharp where you look, creamy light behind (Renderer Foundation)", false);
+        bkm.choice("focus", "Focus", {"Auto", "Distance", "Tilt-shift"}, 0).slider("distance", "Sharp up to (blocks, Distance)", 24.f, 4.f, 96.f, 1.f)
+            .slider("band", "How much stays sharp", 0.26f, 0.05f, 1.f, 0.01f).slider("blur", "Blur", 0.5f, 0.1f, 1.f, 0.05f)
+            .slider("highlights", "Highlights", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("near", "Nearer than the focus blurs too", true)
+            .slider("fringe", "Lilac fringe", 0.45f, 0.f, 1.f, 0.05f);
+        for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm, &bkm}) m->onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
         ms.onToggle = [](bool) { gAtmosLast.clear(); };
     }
