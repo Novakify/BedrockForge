@@ -111,7 +111,9 @@ std::string gBindFor; // module whose toggle key is being recorded (Keybind row)
 // ---------------------------------------------------------------- theme (neon purple + white)
 constexpr float kH = 760.0f; // design units: the screen is always 760 tall (the prototype's 1280 x 760 frame)
 struct Rgb { int r, g, b; };
-constexpr Rgb kAccent{177, 76, 255}, kLilac{233, 213, 255}, kDark{19, 10, 36}, kWhite{255, 255, 255};
+constexpr Rgb kLilac{233, 213, 255}, kDark{19, 10, 36}, kWhite{255, 255, 255};
+Rgb kAccent{177, 76, 255};   // [BF] Client UI -> Accent colour (set at the start of every menu frame)
+constexpr Rgb kAccents[8] = {{177, 76, 255}, {255, 92, 170}, {70, 150, 255}, {70, 230, 170}, {255, 130, 70}, {150, 220, 255}, {255, 200, 80}, {255, 70, 100}};
 uint32_t rgba(Rgb c, float a) {
     return uint32_t(c.r) | uint32_t(c.g) << 8 | uint32_t(c.b) << 16 | uint32_t(std::clamp(a, 0.0f, 1.0f) * 255.0f + 0.5f) << 24;
 }
@@ -726,6 +728,14 @@ void drawClient(UiFrame& f, Win const& w, float a) {
         if (auto* s = m->setting(tg.id); s && sc.fits(50)) toggleRow(f, x, sc.y, wd, tg.t, tg.d, s->on, a, [s] { s->on = !s->on; Registry::get().save(); });
         sc.y += 58;
     }
+    // [BF] Interface (Purxiy "interface" / "motion"): your accent colour, animation speed
+    sectionLabel(f, sc, x, "INTERFACE", a);
+    if (auto* st = m->setting("accent"); st && sc.fits(64))
+        slider(f, "client_ui/accent", x, sc.y, wd, "Accent colour", "The glow of the menu and your HUD elements", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
+    sc.y += 72;
+    if (auto* st = m->setting("motion"); st && sc.fits(64))
+        slider(f, "client_ui/motion", x, sc.y, wd, "Animation speed", "How fast the menu opens, slides and scrolls", st->value, st->min, st->max, st->step, "x", a, save);
+    sc.y += 72;
     // [BF] Keybinds (Purxiy "every key you have bound, in one place"): click a row to rebind, right click opens the module
     sectionLabel(f, sc, x, "KEYBINDS", a);
     int bound = 0;
@@ -986,12 +996,14 @@ void render(ScreenView& view) {
     f.mx = ptr.x * toD;
     f.my = ptr.y * toD;
 
+    kAccent = kAccents[std::clamp(int(look("accent", 0)), 0, 7)];
+    float const motion = std::clamp(look("motion", 1.0f), 0.25f, 3.0f);   // Client UI -> Animation speed
     int64_t const now = nowMs();
-    float const   t   = ease(float(now - gViewAtMs) / 240.0f);
+    float const   t   = ease(float(now - gViewAtMs) * motion / 240.0f);
     { // smooth scroll: ease the drawn position towards the target (~90 ms time constant, frame-rate independent)
         float dt = gScrollMs ? std::clamp(float(now - gScrollMs) / 1000.0f, 0.0f, 0.1f) : 0.0f;
         gScrollMs = now;
-        gScrollAt += (gScroll - gScrollAt) * (1.0f - std::exp(-dt / 0.09f));
+        gScrollAt += (gScroll - gScrollAt) * (1.0f - std::exp(-dt * motion / 0.09f));
         if (std::abs(gScroll - gScrollAt) < 0.25f) gScrollAt = gScroll;
     }
     // mouse wheel since the last frame: moves the target before the page draws (and clamps it), so the eased list

@@ -226,7 +226,15 @@ void glassTick(Module& m) {
     writeGlassFrost(m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
 }
 
-constexpr Rgba kNeon{0.78f, 0.42f, 1.00f, 1.0f};   // the client's neon purple
+// the client's accent (Client UI -> Accent colour; Novak purple by default), refreshed every HUD frame
+Rgba kNeon{0.78f, 0.42f, 1.00f, 1.0f};
+void refreshAccent() {
+    static constexpr float kAcc[8][3] = {{0.78f, 0.42f, 1.00f}, {1.00f, 0.45f, 0.70f}, {0.30f, 0.65f, 1.00f}, {0.35f, 1.00f, 0.72f},
+                                         {1.00f, 0.55f, 0.30f}, {0.70f, 0.92f, 1.00f}, {1.00f, 0.80f, 0.35f}, {1.00f, 0.30f, 0.42f}};
+    auto* m = Registry::get().find("client_ui");
+    int const i = std::clamp(m ? int(m->num("accent", 0)) : 0, 0, 7);
+    kNeon = {kAcc[i][0], kAcc[i][1], kAcc[i][2], 1.0f};
+}
 float smooth01(float t) { t = std::clamp(t, 0.f, 1.f); return t * t * (3 - 2 * t); }
 
 // ---------------------------------------------------------------- Haze + Mist (Renderer Foundation draws them)
@@ -1095,7 +1103,10 @@ void registerBuiltins() {
         .slider("frost", "Frost tint", 1, 0, 2, 0.05f)
         .toggleSetting("wheel", "Open with the wheel", true)
         .toggleSetting("worldblur", "Blur the world", true)
-        .toggleSetting("camswing", "Camera swing", true);
+        .toggleSetting("camswing", "Camera swing", true)
+        // [Purxiy "interface" / "motion"] your colour across the menu and the HUD elements, and how fast things animate
+        .choice("accent", "Accent colour", {"Novak purple", "Rose", "Ocean", "Mint", "Sunset", "Ice", "Gold", "Cherry"}, 0)
+        .slider("motion", "Animation speed", 1.0f, 0.5f, 2.0f, 0.05f);
 }
 
 // ============================================================================ PvP preset
@@ -1249,6 +1260,7 @@ void installRuntime() {
         hitch::gCur.fb = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         forgerender::tick();
         try { atmosTick(); } catch (...) {}
+        refreshAccent();
         hitch::gCur.fr = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));
