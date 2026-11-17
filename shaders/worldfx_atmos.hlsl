@@ -424,20 +424,25 @@ float3 bokeh(int2 p, float z, bool sky) {
     int mode = int(bk0.x + 0.5);
     float zf = mode == 1 ? bk0.y : min(viewZ(rawDepth(int2(c4.xy * 0.5))), 300.0);   // auto: what is under the crosshair
     float zz = sky ? 1e4 : z;
-    float Rmax = bk0.w * 44.0 * c4.y / 2160.0;
+    float Rmax = bk0.w * 34.0 * c4.y / 2160.0;   // audit 2: 44 px + 16 taps cost 3-4.7 ms at 4K
     float R = bokehCoc(zz, zf, mode, p) * Rmax;
     float3 own = sceneAt(p); own *= own;
     if (R < 0.75) return own;
     float3 acc = own; float ws = 1.0;
     float ga = ign(float2(p)) * 6.2831;
-    [unroll] for (int k = 0; k < 16; ++k) {
-        float r = sqrt((float(k) + 0.5) / 16.0) * R, a = ga + float(k) * 2.39996;
+    // the sky is smooth already: a light 5-tap blur there; the world 10 taps with the depth test
+    int   N  = sky ? 5 : 10;
+    float iN = 1.0 / float(N);
+    [loop] for (int k = 0; k < N; ++k) {
+        float r = sqrt((float(k) + 0.5) * iN) * R, a = ga + float(k) * 2.39996;
         int2  q = p + int2(cos(a) * r, sin(a) * r);
         float3 c = sceneAt(q); c *= c;
         float w = 1.0 + bk1.x * 6.0 * smoothstep(0.55, 0.95, lum3(c));
-        float dS = rawDepth(q);
-        float zS = isSky(dS) ? 1e4 : viewZ(dS);
-        if (zS < zz - 0.5) w *= saturate(bokehCoc(zS, zf, mode, q) * Rmax - r + 1.0);   // a nearer, sharper thing does not smear back here
+        [branch] if (!sky) {
+            float dS = rawDepth(q);
+            float zS = isSky(dS) ? 1e4 : viewZ(dS);
+            if (zS < zz - 0.5) w *= saturate(bokehCoc(zS, zf, mode, q) * Rmax - r + 1.0);   // a nearer, sharper thing does not smear back here
+        }
         acc += c * w; ws += w;
     }
     float3 o = acc / ws;
@@ -464,16 +469,28 @@ float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, fl
     float3 wp = c5.xyz + P;
     float puddle = smoothstep(0.48, 0.72, vnoise2(wp.xz * 0.42 + 3.1));
     float wetK = wx1.y * up * smoothstep(wx1.x * 3.0, wx1.x * 1.5, dist);
-    float3 skyC = lerp(float3(0.42, 0.48, 0.62), float3(0.03, 0.035, 0.06), night) + float3(0.7, 0.75, 0.95) * wxL.x * 0.6;
+    float3 skyC = lerp(float3(0.42, 0.48, 0.62), float3(0.03, 0.035, 0.06), night);
+    // audit: the reflection is the real scene - where the mirrored ray points far away, looked up on screen (the sky,
+    // distant hills); a fixed grey-blue read milky at sunset. Off screen: the grey-blue.
+    float3 r = reflect(rd, n);
+    float3 fp = P + r * 220.0;
+    float  fz = dot(fp, c0.xyz);
+    if (fz > 0.5) {
+        float2 nd = float2(dot(fp, c1.xyz) / (fz * c0.w), dot(fp, c2.xyz) / (fz * c1.w));
+        float2 sp = float2((nd.x * 0.5 + 0.5) * c4.x, (0.5 - nd.y * 0.5) * c4.y);
+        float  edge = smoothstep(0.0, 0.08, min(min(sp.x / c4.x, 1.0 - sp.x / c4.x), min(sp.y / c4.y, 1.0 - sp.y / c4.y)));
+        if (edge > 0.0) { float3 sc = sceneAt(int2(sp)); skyC = lerp(skyC, sc * sc, edge); }
+    }
+    skyC += float3(0.7, 0.75, 0.95) * wxL.x * 0.6;
     float fres = 0.04 + 0.96 * pow(1.0 - saturate(dot(-rd, n)), 5.0);
-    L *= lerp(1.0, 0.58, wetK * (0.55 + 0.45 * puddle));                      // wet things are darker
-    L = lerp(L, skyC, saturate(fres * wetK * (0.35 + 0.65 * puddle)));        // and glossy: the grey sky in them
+    L *= lerp(1.0, 0.55, wetK * (0.55 + 0.45 * puddle));                      // wet things are darker
+    L = lerp(L, skyC, saturate(wetK * (fres * (0.4 + 0.6 * puddle) + 0.38 * puddle)));   // and glossy; puddles mirror
     // ripples in the puddles: a ring per 0.6-block cell, each on its own beat
     float2 g = wp.xz * 1.7; float2 cl = floor(g), f = frac(g) - 0.5;
     float h = frac(sin(dot(cl, float2(12.9898, 78.233))) * 43758.5453);
     float ph = frac(t * (0.9 + 0.5 * h) * wx0.y + h);
     float ring = exp(-pow((length(f - (h - 0.5) * 0.3) - ph * 0.42) / 0.03, 2.0)) * (1.0 - ph);
-    L += skyC * ring * puddle * wetK * 0.55;
+    L += (skyC + 0.04) * ring * puddle * wetK * 0.9;
     return L;
 }
 float3 lightning(float3 L, float3 rd, bool sky) {
