@@ -315,10 +315,17 @@ void loadFonts(std::filesystem::path const& dir) {
     }
 }
 
+/// [BF] the client menu's font (Client UI -> Font): "outfit" or "inter"
+std::string menuFont() {
+    auto* m = bedrock_forge::client::Registry::get().find("client_ui");
+    return m && m->num("font", 0) > 0.5f ? std::string("inter") : std::string("outfit");
+}
 /// Make sure the fonts in use have atlas slots. Returns true when the atlas list changed. Caller holds gS->mutex.
 bool syncFontSlots() {
     auto const& cfg = gS->engine.config();
+    std::string const mf = menuFont();
     std::vector<std::string> want = {cfg.font, cfg.topBarFont, gS->panelAssets.pixelFont, "minecraft", "outfit", "outfit_bold"}; // [BF] Outfit = client menu + player card
+    if (mf != "outfit") { want.push_back(mf); want.push_back(mf + "_bold"); }   // [BF] Client UI -> Font
     { // [LyricsForge] a song with Japanese (etc.) lines: the script fallback atlas gets a slot too
         static Lyrics const* seen = nullptr;
         static bool          foreign = false;
@@ -2051,10 +2058,12 @@ ClientUiAssets clientUiAssets() {
     if (!gS) return a;
     std::lock_guard l(gS->mutex);
     syncFontSlots(); // the menu needs Outfit even while the lyricsflow module is off
-    auto const* r = gS->engine.fonts().get("outfit");
-    auto const* b = gS->engine.fonts().get("outfit_bold");
-    a.regular     = r && r->atlasIndex != FontSet::kNoAtlas && r->id == "outfit" ? r : nullptr;
-    a.bold        = b && b->atlasIndex != FontSet::kNoAtlas && b->id == "outfit_bold" ? b : a.regular;
+    std::string const mf = menuFont();
+    auto const* r = gS->engine.fonts().get(mf);
+    auto const* b = gS->engine.fonts().get(mf + "_bold");
+    if (!r || r->atlasIndex == FontSet::kNoAtlas || r->id != mf) { r = gS->engine.fonts().get("outfit"); b = gS->engine.fonts().get("outfit_bold"); }
+    a.regular     = r && r->atlasIndex != FontSet::kNoAtlas ? r : nullptr;
+    a.bold        = b && b->atlasIndex != FontSet::kNoAtlas ? b : a.regular;
     a.icons       = gS->iconAtlasIndex;
     a.iconRects   = gS->iconRects;
     return a;

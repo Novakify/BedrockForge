@@ -1106,7 +1106,8 @@ void registerBuiltins() {
         .toggleSetting("camswing", "Camera swing", true)
         // [Purxiy "interface" / "motion"] your colour across the menu and the HUD elements, and how fast things animate
         .choice("accent", "Accent colour", {"Novak purple", "Rose", "Ocean", "Mint", "Sunset", "Ice", "Gold", "Cherry"}, 0)
-        .slider("motion", "Animation speed", 1.0f, 0.5f, 2.0f, 0.05f);
+        .slider("motion", "Animation speed", 1.0f, 0.5f, 2.0f, 0.05f)
+        .choice("font", "Font", {"Outfit", "Inter"}, 0);
 }
 
 // ============================================================================ PvP preset

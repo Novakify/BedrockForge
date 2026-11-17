@@ -736,6 +736,9 @@ void drawClient(UiFrame& f, Win const& w, float a) {
     if (auto* st = m->setting("motion"); st && sc.fits(64))
         slider(f, "client_ui/motion", x, sc.y, wd, "Animation speed", "How fast the menu opens, slides and scrolls", st->value, st->min, st->max, st->step, "x", a, save);
     sc.y += 72;
+    if (auto* st = m->setting("font"); st && sc.fits(64))
+        slider(f, "client_ui/font", x, sc.y, wd, "Font", "The menu's letters: Outfit, or Inter (Purxiy's)", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
+    sc.y += 72;
     // [BF] Keybinds (Purxiy "every key you have bound, in one place"): click a row to rebind, right click opens the module
     sectionLabel(f, sc, x, "KEYBINDS", a);
     int bound = 0;
