@@ -807,11 +807,11 @@ void drawClient(UiFrame& f, Win const& w, float a) {
         slider(f, "client_ui/motion", x, sc.y, wd, "Animation speed", "How fast the menu opens, slides and scrolls", st->value, st->min, st->max, st->step, "x", a, save);
     sc.y += 72;
     if (auto* st = m->setting("font"); st && sc.fits(64))
-        slider(f, "client_ui/font", x, sc.y, wd, "Font", "The menu's letters: Outfit, or Inter (Purxiy's)", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
+        slider(f, "client_ui/font", x, sc.y, wd, "Font", "The menu's letters: Outfit or Inter", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
     sc.y += 72;
     // [Prism] the look (Novak Prism = our glass x the Purxiy interface), the world behind the menu, motion and sound
     if (auto* st = m->setting("style"); st && sc.fits(64))
-        slider(f, "client_ui/style", x, sc.y, wd, "Look", "Prism: our glass with Purxiy's calm frost, sheen and gradient edges. Glass: the classic", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
+        slider(f, "client_ui/style", x, sc.y, wd, "Look", "Prism: frosted glass with a soft sheen and gradient edges. Glass: the classic", st->value, st->min, st->max, st->step, "", a, save, &st->choices);
     sc.y += 72;
     if (auto* st = m->setting("scale"); st && sc.fits(64))
         slider(f, "client_ui/scale", x, sc.y, wd, "Menu scale", "Bigger or smaller menus (applies as you let go)", st->value, st->min, st->max, st->step, "x", a, save);

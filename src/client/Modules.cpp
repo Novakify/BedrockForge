@@ -1207,6 +1207,8 @@ void registerBuiltins() {
         try {
             f.player->getLevel().forEachPlayer([&](Player& p) {
                 if (static_cast<Actor*>(&p) == self) return true;
+                // vanilla parity: nobody sneaking or invisible gets a tag (no extra info over the game's own tags)
+                try { if (p.isSneaking() || p.isInvisible()) return true; } catch (...) { return true; }
                 Vec3 const pos = p.getPosition();
                 float const d[3] = {pos.x - eye.x, pos.y + 0.95f - eye.y, pos.z - eye.z};
                 float const dz = d[0] * fw[0] + d[1] * fw[1] + d[2] * fw[2];
@@ -1349,7 +1351,7 @@ void registerBuiltins() {
             .slider("clear", "Clear around you", 6, 0, 24, 1).slider("drift", "Drift", 1.0f, 0.f, 3.f, 0.05f)
             .slider("rays", "Sun rays", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("creatures", "Players and mobs show clearly through it", true);
         auto& am = r.add("ambience", "Ambience", Category::Visual, "Glowing particles drifting through the world around you (Renderer Foundation)", false);
-        am.choice("style", "Style", {"Motes", "Stardust", "Petals", "Snow"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        am.choice("style", "Style", {"Motes", "Stardust", "Petals", "Snow"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("amount", "Amount", 1.0f, 0.1f, 2.0f, 0.05f).slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("speed", "Speed", 1.0f, 0.f, 3.f, 0.05f)
             .slider("twinkle", "Twinkle", 0.5f, 0.f, 1.f, 0.05f).slider("range", "Range (blocks)", 24, 8, 40, 1)
@@ -1358,36 +1360,36 @@ void registerBuiltins() {
         am.onToggle = [](bool) { gAtmosLast.clear(); };
         // Purxiy hit / jump effects (their settings; "others" needs other players' events: not yet)
         auto& jc = r.add("jump_circles", "Jump Circles", Category::Visual, "A ring of light where you jump (Renderer Foundation)", false);
-        jc.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.2f, 0.5f, 3.f, 0.05f)
+        jc.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.2f, 0.5f, 3.f, 0.05f)
             .slider("duration", "Duration (s)", 1.1f, 0.3f, 3.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
         auto& hs = r.add("hit_splash", "Hit Splash", Category::Visual, "Glowing splashes where your hits land (Renderer Foundation)", false);
-        hs.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+        hs.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
             .slider("duration", "Duration (s)", 6.f, 1.f, 15.f, 0.5f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
         auto& rp = r.add("ripple", "Ripple", Category::Visual, "A wave of light where every hit lands (Renderer Foundation)", false);
-        rp.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
+        rp.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
             .slider("duration", "Duration (s)", 0.8f, 0.3f, 2.f, 0.05f).toggleSetting("crits", "A burst of stars on critical hits", true)
             .toggleSetting("ring", "A ring that rolls over the ground", true);
         auto& sw = r.add("shockwave", "Shockwave", Category::Visual, "Land, and a wave of light runs through the ground (Renderer Foundation)", false);
-        sw.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+        sw.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
             .slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
         // cosmetics (Purxiy trail / aura / halo): seen in third person (F5), the aura first person too if you want
         auto& tr = r.add("trail", "Trail", Category::Visual, "Leave a trail of light behind you (Renderer Foundation)", false);
-        tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("duration", "Duration (s)", 1.2f, 0.3f, 3.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
         auto& au = r.add("aura", "Aura", Category::Visual, "Soft light that lives around you (Renderer Foundation)", false);
-        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("speed", "Speed", 1.f, 0.f, 3.f, 0.05f).slider("glow", "Glow", 0.65f, 0.f, 1.f, 0.05f)
             .toggleSetting("first_person", "See it from your own eyes too", false);
         auto& ha = r.add("halo", "Halo", Category::Visual, "A gently glowing halo (Renderer Foundation)", false);
-        ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f).slider("height", "Height", 1.f, 0.f, 2.f, 0.05f);
         // [Purxiy "wings" / "cape" / "block_outline"] original looks, drawn by Renderer Foundation like the halo
         auto& wgm = r.add("wings", "Wings", Category::Visual, "A pair of softly animated wings (Renderer Foundation)", false);
-        wgm.choice("design", "Design", {"Seraph", "Butterfly", "Prism"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        wgm.choice("design", "Design", {"Seraph", "Butterfly", "Prism"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("size", "Size", 1.f, 0.5f, 1.6f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("flap", "Flap", 1.f, 0.f, 2.f, 0.05f)
             .toggleSetting("first_person", "See them in first person", false);
         auto& cpm = r.add("cape", "Cape", Category::Visual, "An animated glowing cape that flows as you move (Renderer Foundation)", false);
-        cpm.choice("design", "Design", {"Silk", "Aurora", "Starfield"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        cpm.choice("design", "Design", {"Silk", "Aurora", "Starfield"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("glow", "Glow", 0.5f, 0.f, 1.f, 0.05f).slider("sway", "Sway", 1.f, 0.f, 2.f, 0.05f);
         // [Purxiy "main_menu": the world behind the menus] the title screen's panorama, captured from where you stand
         r.add("main_menu", "Main Menu", Category::Visual, "Your own world behind the title screen: stand somewhere beautiful and capture it (shows from the next start)", false)
@@ -1400,7 +1402,7 @@ void registerBuiltins() {
             .choice("palette", "Hearts", {"Rose", "Lilac", "Peach"}, 0).slider("pastel", "Pastel", 1.f, 0.f, 1.f, 0.05f)
             .slider("softness", "Softness", 0.7f, 0.f, 1.f, 0.05f).slider("hearts", "Hearts", 1.f, 0.f, 1.5f, 0.05f).slider("sparkles", "Sparkles", 1.f, 0.f, 1.f, 0.05f);
         auto& bom = r.add("block_outline", "Block Outline", Category::Visual, "A cleaner, glowing outline on the block you aim at (Renderer Foundation)", false);
-        bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0)
+        bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("width", "Width (px)", 2.f, 1.f, 5.f, 0.5f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.12f, 0.f, 0.6f, 0.02f)
             .toggleSetting("face", "Light the face you look at", true).toggleSetting("glide", "Glide between blocks", true);
         auto& chm = r.add("chroma", "Chroma", Category::Visual, "The world waits in grey, and colour blooms wherever you walk (Renderer Foundation)", false);
@@ -1408,7 +1410,7 @@ void registerBuiltins() {
             .toggleSetting("living", "Players, mobs and items keep their colour", true).slider("brush", "Brush (blocks)", 6.f, 2.f, 16.f, 0.5f)
             .choice("memory", "Memory", {"30 s", "2 min", "10 min", "1 hour"}, 1);
         auto& rad = r.add("radiance", "Radiance", Category::Visual, "Glowing outlines on players, mobs and items (Renderer Foundation)", false);
-        rad.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("width", "Width", 2.f, 1.f, 5.f, 0.5f)
+        rad.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("width", "Width", 2.f, 1.f, 5.f, 0.5f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.2f, 0.f, 1.f, 0.05f).slider("speed", "Flow speed", 1.f, 0.f, 3.f, 0.05f);
         auto& wxm = r.add("weather", "Weather", Category::Visual, "Sculpt the weather: glassy rain, soft snowfall and ember showers (Renderer Foundation)", false);
         wxm.choice("mode", "Mode", {"Rain", "Snow", "Fire"}, 0).slider("intensity", "Intensity", 1.f, 0.1f, 2.f, 0.05f)
@@ -1422,7 +1424,7 @@ void registerBuiltins() {
             .slider("fringe", "Lilac fringe", 0.45f, 0.f, 1.f, 0.05f);
         // (the block itself cannot grow / pop: its geometry is the game's chunk mesh - only the light is ours)
         auto& pam = r.add("place_animation", "Place Animation", Category::Visual, "A soft light on blocks as you build and break (Renderer Foundation)", false);
-        pam.choice("palette", "Palette", {"Accent", "Purxiy", "Dream"}, 0).slider("duration", "Duration (s)", 0.34f, 0.15f, 1.f, 0.01f)
+        pam.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("duration", "Duration (s)", 0.34f, 0.15f, 1.f, 0.01f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("breaking", "Blocks you break too", true);
         for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm, &bkm, &pam}) m->onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
