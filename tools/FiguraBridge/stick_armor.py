@@ -429,6 +429,81 @@ def boxq(slot, bone, c, ax, ay, az, reg="metal"):
         m.quad(Q, U2)
 
 
+def crystal(slot, bone, base, axis, length, r, isl_side="leg_end", isl_tip="arm_top", tip=0.38, sides=6, twist=0.0):
+    """a real crystal: a hexagonal prism with a pointed tip (3D), every face a Novak Glass pane mapped edge to edge
+    onto a clean island - RF outlines each facet, so it reads cut, not flat"""
+    base, axis = np.asarray(base, float), np.asarray(axis, float)
+    axis = axis / np.linalg.norm(axis)
+    a = np.cross(axis, [0, 0, 1.0]) if abs(axis[2]) < 0.9 else np.cross(axis, [1.0, 0, 0])
+    a /= np.linalg.norm(a)
+    b = np.cross(axis, a)
+    top = base + axis * length * (1 - tip)
+    apex = base + axis * length
+    ring = lambda c, k, rr: c + rr * (math.cos(2 * math.pi * k / sides + twist) * a + math.sin(2 * math.pi * k / sides + twist) * b)
+    m = M(slot, bone, "glass")
+    for k in range(sides):
+        B0, B1 = ring(base, k, r * 0.92), ring(base, k + 1, r * 0.92)
+        T0, T1 = ring(top, k, r), ring(top, k + 1, r)
+        mir = k % 2 == 1
+        P = [B0, B1, T1, T0]
+        U = [isl_uv(isl_side, 0, 1, mir), isl_uv(isl_side, 1, 1, mir), isl_uv(isl_side, 1, 0, mir), isl_uv(isl_side, 0, 0, mir)]
+        if np.cross(P[1] - P[0], P[3] - P[0]) @ ((B0 + T1) / 2 - (base + top) / 2) < 0:
+            P, U = P[::-1], U[::-1]
+        m.quad(P, U)
+        P = [T0, T1, apex]
+        U = [isl_uv(isl_tip, 0, 1), isl_uv(isl_tip, 1, 1), isl_uv(isl_tip, 0.5, 0)]
+        if np.cross(P[1] - P[0], P[2] - P[0]) @ ((T0 + T1 + apex) / 3 - (top + apex) / 2) < 0:
+            P, U = P[::-1], U[::-1]
+        m.quad(P, U)
+
+
+def gem(slot, bone, c, R, facets=8):
+    """a brilliant-cut diamond around c (girdle radius R): table, crown facets, girdle, long pavilion to a point.
+    Every facet a Novak Glass pane on a clean island, so RF outlines each cut edge."""
+    up = np.array([0, 1.0, 0])
+    prof = [(0.52, 0.86), (0.84, 0.50), (1.00, 0.14), (1.00, 0.02), (0.62, -0.70), (0.0, -1.62)]   # (radius, height) x R
+    rings = []
+    for k, (rr, hh) in enumerate(prof):
+        tw = (math.pi / facets) * (k % 2)          # alternate rings turn half a facet: kite / star facets
+        rings.append([c + up * hh * R + R * rr * np.array([math.cos(2 * math.pi * j / facets + tw), 0,
+                                                            math.sin(2 * math.pi * j / facets + tw)]) for j in range(facets)])
+    m = M(slot, bone, "glass")
+    isls = ("arm_top", "leg_end", "boot", "side_r", "leg_end", "arm_top")
+    top = c + up * 0.86 * R
+    for j in range(facets):                        # the table (an octagon: triangles to its centre)
+        P = [rings[0][j], rings[0][(j + 1) % facets], top]
+        m.quad(P[::-1] if np.cross(P[1] - P[0], P[2] - P[0])[1] < 0 else P,
+               [isl_uv("crown", 0, 1), isl_uv("crown", 1, 1), isl_uv("crown", .5, 0)])
+    for k in range(len(rings) - 1):
+        A, B = rings[k], rings[k + 1]
+        isl = isls[k]
+        for j in range(facets):
+            P = [A[j], A[(j + 1) % facets], B[(j + 1) % facets], B[j]]
+            U = [isl_uv(isl, 0, 0), isl_uv(isl, 1, 0), isl_uv(isl, 1, 1), isl_uv(isl, 0, 1)]
+            if np.linalg.norm(P[2] - P[3]) < 1e-6:   # the point
+                P, U = P[:3], U[:3]
+            cen = np.mean(P, 0)
+            n = np.cross(P[1] - P[0], P[2] - P[0])
+            if n @ (cen - (c + up * (prof[k][1] + prof[k + 1][1]) / 2 * R)) < 0:
+                P, U = P[::-1], U[::-1]
+            m.quad(P, U)
+
+
+def octa(slot, bone, c, r, h=1.5, isl="arm_top"):
+    """a small floating octahedral gem (a diamond's rough form), every face a glass pane"""
+    c = np.asarray(c, float)
+    eq = [c + r * np.array([math.cos(a), 0, math.sin(a)]) for a in np.linspace(0, 2 * math.pi, 5)[:4] + math.pi / 4]
+    tips = [c + np.array([0, r * h, 0]), c - np.array([0, r * h, 0])]
+    m = M(slot, bone, "glass")
+    for tip in tips:
+        for j in range(4):
+            P = [eq[j], eq[(j + 1) % 4], tip]
+            U = [isl_uv(isl, 0, 1), isl_uv(isl, 1, 1), isl_uv(isl, .5, 0)]
+            if np.cross(P[1] - P[0], P[2] - P[0]) @ (np.mean(P, 0) - c) < 0:
+                P, U = P[::-1], U[::-1]
+            m.quad(P, U)
+
+
 def helmet(head_pts):
     """faceted enclosed helmet: convex offset shell of the real head ball, crown ridge, tapered chin, dark visor"""
     from scipy.spatial import ConvexHull
@@ -557,6 +632,11 @@ def helmet(head_pts):
     acc = TIER["acc"] if TIER else ()
     if acc:   # the head faces the camera (billboard): accents are built in that frame (front = -z, up = +y)
         Rs = max(math.hypot(*(H(ph, th) - hc)[:2]) for ph in np.linspace(.05, 3.1, 40) for th in np.linspace(-3.1, 3.1, 60))
+    if "gemhead" in acc:  # PRISM: the head is a cut diamond - the helmet, visor and cheek lines give way to a gem
+        for k_ in [k_ for k_ in MESH if k_[0] == "head" and k_[1] != "metal"]:   # keep the shell: a sapphire core
+            del MESH[k_]
+        gem("head", "p17", hc + np.array([0, 0.35, 0.0]), Rs * 1.06)
+        Rs = max(math.hypot(*(H(ph, th) - hc)[:2]) for ph in np.linspace(.05, 3.1, 40) for th in np.linspace(-3.1, 3.1, 60))
     if "halo" in acc:     # PRISM: a light ring behind the helmet, the spectrum running round it
         c0 = hc + np.array([0.0, 0.35, 1.6])
         def ring(t):
@@ -626,16 +706,17 @@ def helmet(head_pts):
         w = [1.9 * math.sin(math.pi * i / 24) ** 0.8 + 0.05 for i in range(25)]
         pts = [C2(a, Rs * 0.90 + wi / 2, 0.35) for a, wi in zip(A, w)]
         ribbon("head", "p17", pts, w, lambda i: radial(A[i]), reg="recess", cross=0.12)
-    if "flamecrown" in acc:   # INFERNO: a crown of flames licking up and back
-        for k, deg in enumerate((40, 62, 90, 118, 140)):
+    if "flamecrown" in acc:   # INFERNO: one fire behind the helmet - wide overlapping licks, not separate spikes
+        for k, (deg, L, w0, z) in enumerate(((90, 3.0, 2.4, 0.9), (60, 2.2, 1.9, 0.7), (120, 2.2, 1.9, 0.7),
+                                               (38, 1.3, 1.4, 0.5), (142, 1.3, 1.4, 0.5), (78, 2.0, 1.3, 0.35),
+                                               (104, 2.3, 1.2, 0.35))):
             a0 = D_(deg)
-            L = 1.4 + 1.5 * math.sin(D_(deg))
-            bend = (90 - deg) / 90 * 0.9
-            perp = np.array([-math.sin(a0), math.cos(a0), 0])   # a lick: an S along the flame, wider at its base
-            pts = [C2(a0, Rs * 0.90 + L * i / 8, 0.3) + np.array([bend * (i / 8) ** 2, 0, 0])
-                   + perp * 0.32 * math.sin(i / 8 * math.pi * 1.6 + k) * (i / 8) for i in range(9)]
-            ribbon("head", "p17", pts, [0.95 * (1 - i / 8) ** 0.9 + 0.03 for i in range(9)],
-                   lambda i, a0=a0: np.array([-math.sin(a0), math.cos(a0), 0]), reg="rim", cross=0.25)
+            bend = (90 - deg) / 90 * 0.7
+            perp = np.array([-math.sin(a0), math.cos(a0), 0])
+            pts = [C2(a0, Rs * 0.72 + L * i / 10, z) + np.array([bend * (i / 10) ** 2, 0, 0])
+                   + perp * 0.30 * math.sin(i / 10 * math.pi * 1.5 + k * 1.7) * (i / 10) for i in range(11)]
+            ribbon("head", "p17", pts, [w0 * (1 - i / 10) ** 1.25 + 0.02 for i in range(11)],
+                   lambda i, a0=a0: np.array([-math.sin(a0), math.cos(a0), 0]), reg="rim")
     if "crescent" in acc:  # ECLIPSE: an eclipse crescent behind the helmet
         A = [D_(i * 360 / 48) for i in range(49)]
         w = [max(0.0, math.cos(a - D_(125))) ** 1.3 * 1.25 + 0.02 for a in A]
@@ -643,13 +724,31 @@ def helmet(head_pts):
         ribbon("head", "p17", pts, w, lambda i: radial(A[i]), reg="metal")
         rail("head", "p17", lambda t: (C2(D_(360 * t), Rs * 1.12, 1.35), np.array([0, 0, -1.0])), (0.0, 1.2),
              width=0.16, n=48)
-    if "crown" in acc:    # PRISM: a crown of Novak Glass crystals
-        for k, deg in enumerate((38, 62, 90, 118, 142)):
+    if "tiara" in acc:    # PRISM: cut crystals rising from the crown of the helmet (above it: the head hides little)
+        for deg, L, rr, z in ((90, 3.6, 0.55, 0.10), (68, 2.4, 0.42, 0.35), (112, 2.4, 0.42, 0.35),
+                              (50, 1.3, 0.30, 0.5), (130, 1.3, 0.30, 0.5)):
             a0 = D_(deg)
-            L = 1.2 + 1.6 * math.sin(D_(deg)) ** 3
-            kite("head", "p17", C2(a0, Rs * 0.86, 0.25), C2(a0, Rs * 0.86 + L, 0.25), 0.36 + 0.10 * (k == 2),
-                 [-math.sin(a0), math.cos(a0), 0], isl=("arm_top", "leg_end", "boot", "leg_end", "arm_top")[k],
-                 mirror=k > 2)
+            crystal("head", "p17", C2(a0, Rs * 0.78, z), radial(a0) + np.array([0, 0, 0.12]), L, rr,
+                    twist=0.3 * (deg != 90))
+    if "nemes" in acc:    # SOLAR (gold): a striped royal headdress - flaps framing the helmet down past the shoulders
+        for sg in (-1, 1):
+            pts, w = [], []
+            for i in range(15):
+                t = i / 14
+                if t < 0.5:   # round the top of the helmet to its side
+                    a = D_(90 - sg * 0 + sg * (-90) * (t / 0.5) * -1)
+                    a = D_(90 + sg * 90 * (t / 0.5) * -1) if sg > 0 else D_(90 + 90 * (t / 0.5))
+                    p_ = C2(a, Rs * 1.02 + 0.35, 0.9)
+                else:         # then down, flaring out
+                    q = (t - 0.5) / 0.5
+                    p_ = C2(D_(0 if sg > 0 else 180), Rs * 1.02 + 0.35 + 1.1 * q, 0.9) + np.array([0, -4.2 * q, 0])
+                pts.append(p_)
+                w.append(0.9 + 1.5 * t ** 1.4)
+            def nside(i, pts=pts, sg=sg):
+                tg = pts[min(i + 1, 14)] - pts[max(i - 1, 0)]
+                v_ = np.cross(tg, [0, 0, 1.0]) * sg
+                return v_ / np.linalg.norm(v_)
+            ribbon("head", "p17", pts, w, nside, reg="recess")
     return check_inside(m, head_pts, hc)
 
 
@@ -849,17 +948,14 @@ def body_accents(acc, rod, T, sy, D):
             b0 = T.at(sy(17.2), D(180) - sg * D(28), T.clear(sy(18), sy(16)) + 0.35)
             pts = [b0 + np.array([sg * 1.2 * i / 10, -9.5 * i / 10, 1.4 * (i / 10) ** 1.2]) for i in range(11)]
             ribbon("legs", "p22", pts, [1.5 * (1 - i / 10) ** 0.7 + 0.04 for i in range(11)], lambda i: X, reg="recess")
-    if "wings" in acc:    # PRISM: crystal wings - three Novak Glass shards fanning off each shoulder blade
+    if "gems" in acc:      # PRISM: two gems floating beside the head, a ring of light round each
         for sg in (-1, 1):
-            b0 = nb + np.array([sg * 0.45, -1.4, 0.55])
-            for k, (ang, L, hw, isl) in enumerate(((58, 5.6, 0.62, "side_r"), (22, 6.6, 0.70, "boot"), (-14, 4.6, 0.55, "arm_top"))):
-                a = math.radians(ang)
-                tip = b0 + np.array([sg * L * math.cos(a), L * math.sin(a), 0.9 + 0.25 * k])
-                d = tip - b0
-                side = np.cross(d, Z)
-                kite("chest", "p22", b0, tip, hw, side / np.linalg.norm(side), isl=isl, mirror=sg < 0, shoulder=0.30)
-            rail("chest", "p22", lambda t, b0=b0, sg=sg: (b0 + np.array([sg * 6.2 * t * math.cos(0.38), 6.2 * t * math.sin(0.38), 1.12 + 0.2 * t]), -Z),
-                 (0.05, 0.55), width=0.14, n=10)
+            c = nb + np.array([sg * 5.2, 0.6, 0.0])
+            octa("chest", "p22", c, 1.15, h=1.6, isl="arm_top")
+            rail("chest", "p22", lambda t, c=c: (c + 1.75 * np.array([math.cos(2 * math.pi * t), 0.25 * math.sin(4 * math.pi * t),
+                                                                      math.sin(2 * math.pi * t)]),
+                                                 np.array([math.cos(2 * math.pi * t), 0, math.sin(2 * math.pi * t)])),
+                 (0.0, 1.0), width=0.14, n=24)
 
 
 TIER = None   # the tier being built (stick_tiers.TIERS entry) - None: the plain mix at level 3

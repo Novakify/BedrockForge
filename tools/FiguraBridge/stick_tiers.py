@@ -9,8 +9,9 @@ BedWars progression - the higher the tier, the more pieces, light and reaction t
   tier 3  golden     INFERNO      obsidian with magma veins, ember trim, flickering fire rails, flared shoulders
   tier 4  netherite  ECLIPSE      black chrome + violet Novak Glass, glowing runes, horns and a spined back;
                                   reacts to the game (hurt flash, low-health pulse, sprint)
-  tier 4+ diamond    PRISM        flagship: Novak Glass (Renderer Foundation) panes, iridescent pearl plates, prism
-                                  rails that run the spectrum, back fins and a halo; reacts to the game
+  tier 4+ diamond    PRISM        flagship: the head is a brilliant-cut Novak Glass diamond round a sapphire core,
+                                  midnight sapphire plates cut with glowing facet lines, two floating gems with light
+                                  rings; reacts to the game
           turtle     REEF         (helmet only) sea-glass teal
 
 Pieces per tier (stick_armor.build_suit_mix reads TIERS): level 1 = the base set, 2 adds the layered leaves and
@@ -31,9 +32,9 @@ TIERS = {
     "copper":    dict(level=2, name="CIRCUIT", rf=False, react=False, speed=0.45, acc=("antennae", "boxy", "pack")),
     "chainmail": dict(level=2, name="PHANTOM", rf=False, react=False, speed=0.6, acc=("cowl", "strips")),
     "iron":      dict(level=3, name="VANGUARD", rf=False, react=False, speed=1.0, acc=("crest", "cape", "pauldrons")),
-    "golden":    dict(level=3, name="INFERNO", rf=False, react=False, speed=1.35, acc=("flares", "flamecrown", "shoulderflames")),
-    "netherite": dict(level=4, name="ECLIPSE", rf=True, react=True, speed=1.15, acc=("horns", "spikes", "crescent", "tails")),
-    "diamond":   dict(level=4, name="PRISM", rf=True, react=True, speed=1.6, acc=("shards", "crown", "wings")),
+    "golden":    dict(level=3, name="SOLAR", rf=False, react=False, speed=1.35, acc=("flares", "nemes")),
+    "netherite": dict(level=4, name="ECLIPSE", rf=True, react=True, speed=1.15, acc=("horns", "crescent", "tails")),
+    "diamond":   dict(level=4, name="PRISM", rf=True, react=True, speed=1.6, acc=("gemhead", "gems")),
     "turtle":    dict(level=1, name="REEF", rf=False, react=False, speed=0.0, acc=()),
 }
 TEXM = 128            # plate atlas (same layout as the metal atlas: plate | visor | rim | recess)
@@ -211,18 +212,27 @@ def plate_tex(mat):
         col[hot], glow[hot] = gB, 1.0
         col[edge < .09] = trim * (0.75 + 2.5 * edge[edge < .09, None])
         col[(edge >= .09) & (edge < .11)] = dark
-    elif mat == "diamond":   # clean pearl; the prism lives only in the bevel (a thin iridescent edge) and the light
-        pearl = rgb(236, 240, 248)
-        col = pearl[None, None] * (1.02 - 0.10 * v)[..., None] * (0.90 + 0.12 * np.cos((u - .5) * 3))[..., None]
-        cy = rgb(70, 232, 255)
+    elif mat == "diamond":   # midnight sapphire, cut like a gem: glowing facet lines fan from the keel
+        base = rgb(14, 26, 54)
+        col = base[None, None] * (1.25 - 0.45 * v)[..., None] * (0.85 + 0.25 * np.cos((u - .5) * 3))[..., None]
+        col += rgb(40, 90, 150) * (np.exp(-((u - .30) / .06) ** 2) * (1 - v) * 0.6)[..., None]   # gloss
+        cy = rgb(90, 236, 255)
+        P = np.stack([(u - .5) * W, v * S], -1)
+        segs = [((0, .04 * S), (0, .96 * S))]
+        for vy in np.linspace(.10, .90, 6):
+            for sd in (-1, 1):
+                segs.append(((0, vy * S), (sd * .36 * W, (vy + .07) * S)))
+        d = segs_dist(P, segs)
+        m = edge > .13
+        halo = np.exp(-d / 1.6) * m
+        col += cy * (0.35 * halo)[..., None]
+        line = (d < 0.55) & m
+        col[line], glow[line] = cy, 1.0
+        glow[m & ~line] = np.maximum(glow[m & ~line], 0.3 * halo[m & ~line])
         inl = (edge >= .115) & (edge < .135) & (v > .03) & (v < .97)
-        keel = (np.abs(xx + .5 - W / 2) < 0.7) & (v > .05) & (v < .95)
-        col[inl | keel] = cy
-        glow[inl | keel] = 1.0
-        bev = edge < .09
-        irid = hsv(0.52 + 0.9 * v[bev] + 2.0 * edge[bev], np.full(bev.sum(), 0.22), np.full(bev.sum(), 1.0)) * 255
-        col[bev] = irid * (0.80 + 2.0 * edge[bev, None])
-        col[(edge >= .09) & (edge < .11)] = rgb(120, 136, 170)
+        col[inl], glow[inl] = cy * 0.9, 1.0
+        col[edge < .09] = rgb(170, 200, 235) * (0.70 + 2.6 * edge[edge < .09, None])
+        col[(edge >= .09) & (edge < .11)] = rgb(6, 10, 22)
     elif mat == "netherite":
         base, dark, hi, vi = rgb(22, 20, 28), rgb(5, 4, 8), rgb(150, 132, 182), rgb(178, 84, 255)
         chrome = np.exp(-((u - .30) / .05) ** 2) * 0.9 + np.exp(-((u - .74) / .10) ** 2) * 0.25
@@ -273,7 +283,7 @@ def plate_tex(mat):
     cloth = {"leather": (rgb(150, 144, 136), rgb(236, 230, 220)), "turtle": (rgb(50, 130, 110), rgb(222, 206, 160)),
              "copper": (rgb(176, 98, 56), rgb(255, 172, 96)), "chainmail": (rgb(30, 33, 42), rgb(150, 162, 186)),
              "iron": (rgb(30, 78, 196), rgb(236, 240, 246)), "golden": (rgb(60, 14, 10), rgb(255, 128, 40)),
-             "diamond": (rgb(232, 238, 248), rgb(70, 232, 255)), "netherite": (rgb(26, 20, 34), rgb(178, 84, 255))}[mat]
+             "diamond": (rgb(16, 28, 58), rgb(90, 236, 255)), "netherite": (rgb(26, 20, 34), rgb(178, 84, 255))}[mat]
     fold = 0.82 + 0.18 * np.cos(cu * math.pi * 3) ** 2          # soft folds along the cloth
     cc = cloth[0] * (fold * (1.05 - 0.2 * cv))[..., None]
     trim = ce < 0.14
@@ -282,6 +292,13 @@ def plate_tex(mat):
     img[:, xr, 3] = 255
     if mat in ("golden", "netherite", "diamond", "copper"):   # their cloth trim glows
         img[:, xr, 3] = np.where(trim, 40, 255)
+    if mat == "golden":   # the headdress: obsidian and molten-gold stripes, the gold glowing
+        band = ((cv * 14) % 1.0) < 0.42
+        gold = rgb(255, 176, 60) * (0.85 + 0.15 * np.cos((cu - .5) * 3))[..., None]
+        cc = np.where(band[..., None], gold, rgb(26, 16, 18) * (fold * 1.2)[..., None])
+        cc[trim] = rgb(255, 210, 120)
+        img[:, xr, :3] = cc
+        img[:, xr, 3] = np.where(band | trim, 30, 255)
     return Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), "RGBA")
 
 
