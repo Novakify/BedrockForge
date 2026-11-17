@@ -66,6 +66,9 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     // Weather (Purxiy): glassy rain, soft snow, embers
     float4 wx0;      // x = mode (0 rain, 1 snow, 2 fire), y = intensity, z = wind, w = size
     float4 wx1;      // x = range (blocks), w = 1: on
+    // Bokeh (Purxiy): sharp where you look, creamy light behind
+    float4 bk0;      // x = focus mode (0 auto, 1 distance, 2 tilt-shift), y = focus distance, z = sharp band 0..1, w = blur (0 = off)
+    float4 bk1;      // x = highlights, y = 1: nearer than the focus blurs too, z = fringe, w = -
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -385,6 +388,35 @@ float3 weather(float3 rd, float dist, float t, float night) {
     return L;
 }
 
+// Bokeh: a disc gather from the scene copy, radius from how far the pixel is from the focus; bright taps weigh more
+float3 bokeh(int2 p, float z, bool sky) {
+    float zf;
+    int mode = int(bk0.x + 0.5);
+    if (mode == 1) zf = bk0.y;
+    else zf = min(viewZ(rawDepth(int2(c4.xy * 0.5))), 300.0);       // auto: what is under the crosshair
+    float coc;
+    if (mode == 2) coc = smoothstep(bk0.z * 0.5, 0.5, abs(float(p.y) / c4.y - 0.55));   // tilt-shift: a sharp band across the screen
+    else {
+        float zz = sky ? 1e4 : z;
+        float rel = (zz - zf) / max(zf, 0.5);
+        if (bk1.y < 0.5 && rel < 0.0) rel = 0.0;
+        coc = smoothstep(bk0.z * 0.6, bk0.z * 0.6 + 0.8, abs(rel));
+    }
+    float R = coc * bk0.w * 14.0 * c4.y / 1080.0;
+    float3 own = sceneAt(p); own *= own;
+    if (R < 0.75) return own;
+    float3 acc = own; float ws = 1.0;
+    float ga = ign(float2(p)) * 6.2831;
+    [unroll] for (int k = 0; k < 16; ++k) {
+        float r = sqrt((float(k) + 0.5) / 16.0) * R, a = ga + float(k) * 2.39996;
+        float3 c = sceneAt(p + int2(cos(a) * r, sin(a) * r)); c *= c;
+        float w = 1.0 + bk1.x * 6.0 * smoothstep(0.55, 0.95, lum3(c));
+        acc += c * w; ws += w;
+    }
+    float3 o = acc / ws;
+    return o + float3(0.55, 0.42, 0.95) * bk1.z * 0.04 * coc * smoothstep(0.4, 0.9, lum3(o));   // a faint lilac fringe
+}
+
 float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float2 px   = i.pos.xy;
     uint   fl   = uint(c3.x);
@@ -406,6 +438,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float  litK = SUN.y > -0.1 ? 1.0 : 0.35;
 
     float3 col = sceneAt(int2(px)); col *= col;             // ~linear (gamma 2)
+    [branch] if (bk0.w > 0.0) col = bokeh(int2(px), zc, sky);
     float3 acc = 0; float trans = 1.0;
     float  spare = 1.0;
     [branch] if (!sky && (fl & 24u) != 0u) spare = stillWorld(q);
@@ -485,7 +518,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         outL = lerp(behind, tinted, fog);
         drew = true;
     }
-    bool const post = ch0.w > -0.5 || rad1.w > 0.5 || wx1.w > 0.5;
+    bool const post = ch0.w > -0.5 || rad1.w > 0.5 || wx1.w > 0.5 || bk0.w > 0.0;
     if (!drew && trans > 0.998 && dot(ambL, 1.0) < 0.002 && !post) discard;
     if (!drew) outL = col * trans + acc;
     [branch] if (ch0.w > -0.5) outL = chroma(outL, q, sky, spareC);       // the grey world, colour where you have walked

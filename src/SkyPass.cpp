@@ -109,7 +109,9 @@ struct AtmosSet {
     float chTone[3]{0.80f, 0.74f, 0.92f}, chHint = 0.06f, chBrush = 6.0f, chMemory = 120.0f;
     float radC[3]{0.78f, 0.42f, 1.0f}, radWidth = 2.0f, radGlow = 0.6f, radFill = 0.2f, radSpeed = 1.0f;
     float wxMode = 0.0f, wxIntensity = 1.0f, wxWind = 0.45f, wxSize = 1.0f, wxRange = 24.0f;
-    bool  post() const { return chroma || rad || wx; }
+    bool  bk = false, bkNear = true;
+    float bkMode = 0.0f, bkDist = 24.0f, bkBand = 0.26f, bkBlur = 0.5f, bkHi = 0.6f, bkFringe = 0.45f;
+    bool  post() const { return chroma || rad || wx || bk; }
     float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
     bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events() || cosmetics() || post(); }
 };
@@ -173,6 +175,9 @@ void pollAtmos() {
         else if (k == "ch_living") { int v = 1; in >> v; a.chLiving = v != 0; }
         else if (k == "rad") { int v = 0; in >> v; a.rad = v != 0; } else if (k == "rad_c") rd3(a.radC);
         else if (k == "rad_width") rd(a.radWidth); else if (k == "rad_glow") rd(a.radGlow); else if (k == "rad_fill") rd(a.radFill); else if (k == "rad_speed") rd(a.radSpeed);
+        else if (k == "bk") { int v = 0; in >> v; a.bk = v != 0; } else if (k == "bk_mode") rd(a.bkMode); else if (k == "bk_dist") rd(a.bkDist);
+        else if (k == "bk_band") rd(a.bkBand); else if (k == "bk_blur") rd(a.bkBlur); else if (k == "bk_hi") rd(a.bkHi); else if (k == "bk_fringe") rd(a.bkFringe);
+        else if (k == "bk_near") { int v = 1; in >> v; a.bkNear = v != 0; }
         else if (k == "wx") { int v = 0; in >> v; a.wx = v != 0; } else if (k == "wx_mode") rd(a.wxMode);
         else if (k == "wx_intensity") rd(a.wxIntensity); else if (k == "wx_wind") rd(a.wxWind); else if (k == "wx_size") rd(a.wxSize); else if (k == "wx_range") rd(a.wxRange);
         else { std::string skip; std::getline(in, skip); }
@@ -2979,7 +2984,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
-                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3006,6 +3011,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 for (int k = 0; k < 3; ++k) acb.rad[0][k] = lin(atm.radC[k]);
                 acb.rad[0][3] = std::max(1.f, atm.radWidth * float(rd.Height) / 1080.f);
                 acb.rad[1][0] = atm.radGlow; acb.rad[1][1] = atm.radFill; acb.rad[1][2] = atm.radSpeed; acb.rad[1][3] = 1.f;
+            }
+            if (atm.bk) {
+                acb.bk[0][0] = atm.bkMode; acb.bk[0][1] = atm.bkDist; acb.bk[0][2] = atm.bkBand; acb.bk[0][3] = std::max(atm.bkBlur, 0.01f);
+                acb.bk[1][0] = atm.bkHi; acb.bk[1][1] = atm.bkNear ? 1.f : 0.f; acb.bk[1][2] = atm.bkFringe;
             }
             if (atm.wx) {
                 acb.wx[0][0] = atm.wxMode; acb.wx[0][1] = atm.wxIntensity; acb.wx[0][2] = atm.wxWind; acb.wx[0][3] = atm.wxSize;
