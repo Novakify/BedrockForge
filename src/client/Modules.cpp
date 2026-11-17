@@ -63,6 +63,7 @@ namespace bf::lyrics::win { float cinemaFovScale(); } // LyricsForge Director "F
 namespace bedrock_forge::client {
 
 void installVisualHooks();
+extern std::atomic<float> gTimeOfDay; // VisualModules.cpp
 void installChatHooks();
 void uninstallChatHooks();
 void uninstallVisualHooks();
@@ -197,6 +198,49 @@ void glassTick(Module& m) {
     at = nowMs();
     last = now;
     writeGlassFrost(m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
+}
+
+// ---------------------------------------------------------------- Haze + Mist (Renderer Foundation draws them)
+// Purxiy's Haze ("a soft haze of colour over the world around you") and Mist ("soft autumn mist that hangs low in the
+// world"): the same settings; Renderer Foundation reads config/Atmos.txt about once a second (shaders/worldfx_atmos.hlsl).
+struct Pal { char const* name; float a[3], b[3]; };
+constexpr Pal kHazePals[] = {
+    {"Rose", {1.00f, 0.60f, 0.72f}, {1.00f, 0.78f, 0.70f}},   {"Lilac", {0.78f, 0.64f, 1.00f}, {0.93f, 0.80f, 1.00f}},
+    {"Peach", {1.00f, 0.72f, 0.55f}, {1.00f, 0.86f, 0.72f}},  {"Sunset", {1.00f, 0.55f, 0.36f}, {0.86f, 0.46f, 0.78f}},
+    {"Mint", {0.58f, 1.00f, 0.82f}, {0.70f, 0.92f, 1.00f}},   {"Ocean", {0.38f, 0.68f, 1.00f}, {0.34f, 0.94f, 0.96f}},
+    {"Aurora", {0.36f, 1.00f, 0.66f}, {0.72f, 0.46f, 1.00f}}, {"Novak", {0.78f, 0.42f, 1.00f}, {0.95f, 0.92f, 1.00f}}};
+constexpr Pal kMistPals[] = {
+    {"Autumn", {1.00f, 0.86f, 0.70f}, {}}, {"Lilac", {0.86f, 0.80f, 1.00f}, {}}, {"Pearl", {0.92f, 0.94f, 1.00f}, {}}, {"Rose", {1.00f, 0.84f, 0.88f}, {}}};
+std::string gAtmosLast;
+void atmosTick() {
+    auto& r  = Registry::get();
+    auto* hz = r.find("haze");
+    auto* ms = r.find("mist");
+    bool const h = hz && hz->enabled, m = ms && ms->enabled;
+    float const tod = gTimeOfDay.load(std::memory_order_relaxed);
+    std::string out;
+    if (h || m) {
+        auto const& hp = kHazePals[std::clamp(int(hz ? hz->num("palette", 0) : 0), 0, int(std::size(kHazePals)) - 1)];
+        auto const& mp = kMistPals[std::clamp(int(ms ? ms->num("palette", 0) : 0), 0, int(std::size(kMistPals)) - 1)];
+        out = std::format("haze {}\nhaze_a {:.3f} {:.3f} {:.3f}\nhaze_b {:.3f} {:.3f} {:.3f}\nhaze_strength {:.2f}\nhaze_height {:.0f}\nhaze_clear {:.0f}\n"
+                          "haze_drift {:.2f}\nhaze_glow {:.2f}\nhaze_creatures {}\n",
+                          h ? 1 : 0, hp.a[0], hp.a[1], hp.a[2], hp.b[0], hp.b[1], hp.b[2], hz ? hz->num("strength", 0.45f) : 0.f, hz ? hz->num("height", 24) : 24.f,
+                          hz ? hz->num("clear", 8) : 8.f, hz ? hz->num("drift", 1) : 1.f, hz ? hz->num("glow", 0.6f) : 0.6f, hz && hz->flag("creatures", true) ? 1 : 0);
+        out += std::format("mist {}\nmist_color {:.3f} {:.3f} {:.3f}\nmist_density {:.2f}\nmist_height {:.0f}\nmist_clear {:.0f}\nmist_drift {:.2f}\n"
+                           "mist_rays {:.2f}\nmist_creatures {}\ntod {:.3f}\n",
+                           m ? 1 : 0, mp.a[0], mp.a[1], mp.a[2], ms ? ms->num("density", 0.5f) : 0.f, ms ? ms->num("height", 10) : 10.f, ms ? ms->num("clear", 6) : 6.f,
+                           ms ? ms->num("drift", 1) : 1.f, ms ? ms->num("rays", 0.6f) : 0.6f, ms && ms->flag("creatures", true) ? 1 : 0, tod < 0 ? 0.f : tod);
+    } else out = "haze 0\nmist 0\n";
+    if (out == gAtmosLast) return;
+    static int64_t at = 0;
+    if (nowMs() - at < 250) return;   // dragging a slider: a few writes a second; the sun moves slowly (tod in steps of 0.001)
+    at = nowMs();
+    gAtmosLast = out;
+    try {
+        auto const path = ll::mod::NativeMod::current()->getModDir().parent_path() / "RendererFoundation" / "config" / "Atmos.txt";
+        std::error_code ec;
+        if (std::filesystem::exists(path.parent_path(), ec)) std::ofstream(path) << out;
+    } catch (...) {}
 }
 
 // ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
@@ -688,6 +732,20 @@ void registerBuiltins() {
         gl.hud      = [](Frame&) { if (auto* m = Registry::get().find("glass_frost")) glassTick(*m); };
         gl.onToggle = [](bool on) { gGlassLast.clear(); if (!on) writeGlassFrost(0.f, 0.f, false, 0); };
     }
+    {
+        auto& hz = r.add("haze", "Haze", Category::Visual, "A soft haze of colour over the world around you (Renderer Foundation)", false);
+        hz.choice("palette", "Colour", {"Rose", "Lilac", "Peach", "Sunset", "Mint", "Ocean", "Aurora", "Novak"}, 0)
+            .slider("strength", "Strength", 0.45f, 0.1f, 1.0f, 0.05f).slider("height", "Height (blocks above the ground)", 24, 6, 64, 1)
+            .slider("clear", "Clear around you", 8, 0, 32, 1).slider("drift", "Drift", 1.0f, 0.f, 3.f, 0.05f)
+            .slider("glow", "Glow toward the sun and moon", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("creatures", "Players and mobs keep their colours", true);
+        auto& ms = r.add("mist", "Mist", Category::Visual, "Soft autumn mist that hangs low in the world (Renderer Foundation)", false);
+        ms.choice("palette", "Colour", {"Autumn", "Lilac", "Pearl", "Rose"}, 0)
+            .slider("density", "Density", 0.5f, 0.1f, 1.0f, 0.05f).slider("height", "Height (blocks above the ground)", 10, 3, 32, 1)
+            .slider("clear", "Clear around you", 6, 0, 24, 1).slider("drift", "Drift", 1.0f, 0.f, 3.f, 0.05f)
+            .slider("rays", "Sun rays", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("creatures", "Players and mobs show clearly through it", true);
+        hz.onToggle = [](bool) { gAtmosLast.clear(); };
+        ms.onToggle = [](bool) { gAtmosLast.clear(); };
+    }
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
         .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f)
         .slider("moving", "Blur from moving (turning is always full)", 0.6f, 0.0f, 1.5f, 0.05f);
@@ -903,6 +961,7 @@ void installRuntime() {
         try { pvppreset::tick(ctx.mClient); } catch (...) {}
         hitch::gCur.fb = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         forgerender::tick();
+        try { atmosTick(); } catch (...) {}
         hitch::gCur.fr = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto* player = ctx.mClient.getLocalPlayer();
         gLocalPlayer = static_cast<void*>(static_cast<Player*>(player));

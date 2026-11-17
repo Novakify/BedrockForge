@@ -45,6 +45,7 @@
 namespace bf::lyrics::win { bool skyFog(float rgb[3], float& weight); } // LyricsForge sky fog (Runtime_win.cpp)
 
 namespace bedrock_forge::client {
+std::atomic<float> gTimeOfDay{-1.0f}; // last time of day the game asked for (0 noon .. 1), -1 = none yet
 
 namespace {
 std::atomic<std::thread::id> gRenderThread{};
@@ -199,13 +200,17 @@ bool matchTime(Dimension const& d, float& t) {
 }
 } // namespace
 LL_TYPE_INSTANCE_HOOK(BfTimeHook, ll::memory::HookPriority::Normal, Dimension, &Dimension::getTimeOfDay, float, float a) {
-    if (float t; matchTime(*this, t)) return t;
-    return origin(a);
+    if (float t; matchTime(*this, t)) { bedrock_forge::client::gTimeOfDay.store(t, std::memory_order_relaxed); return t; }
+    float const t = origin(a);
+    bedrock_forge::client::gTimeOfDay.store(t, std::memory_order_relaxed);
+    return t;
 }
 // (seen in a real match: the one-argument form above is never called in 1.26.51 - the game goes through this one)
 LL_TYPE_INSTANCE_HOOK(BfTimeHook2, ll::memory::HookPriority::Normal, Dimension, &Dimension::$getTimeOfDay, float, int time, float a) {
-    if (float t; matchTime(*this, t)) return t;
-    return origin(time, a);
+    if (float t; matchTime(*this, t)) { bedrock_forge::client::gTimeOfDay.store(t, std::memory_order_relaxed); return t; }
+    float const t = origin(time, a);
+    bedrock_forge::client::gTimeOfDay.store(t, std::memory_order_relaxed);   // (Haze / Mist: the sun's glow and rays)
+    return t;
 }
 
 LL_TYPE_INSTANCE_HOOK(BfLightImageHook, ll::memory::HookPriority::Normal, BaseLightTextureImageBuilder,
