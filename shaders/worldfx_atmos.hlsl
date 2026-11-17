@@ -365,40 +365,42 @@ float3 radiance(int2 p, float3 P, float zc) {
     return rad0.rgb * (edge * (1.2 + rad1.x) * flow + rad1.y * 0.25);
 }
 // weather: drops / flakes / embers in 1.5-block cells along the view ray (a DDA like the ambience), depth-tested
+// weather (audit 2: the 3D cell walk cost 1.9 ms and still read as a few stray streaks): rain / snow / embers on
+// cylinders around you at four distances. Each cylinder is cut into thin columns; each column carries drops that fall
+// (or rise) through it. A drop is drawn only if that cylinder is nearer than the world at this pixel, so it is
+// depth-correct. Four layers make the depth; the near layer is sparse and big, the far ones dense and fine. ~0.3 ms.
 float3 weather(float3 rd, float dist, float t, float night) {
-    int mode = int(wx0.x + 0.5);
-    float C = 1.5, range = wx1.x;
-    float fall = mode == 0 ? 14.0 : mode == 1 ? 1.4 : -1.2;          // embers rise
-    float3 wind = float3(wx0.z * (mode == 0 ? 3.0 : 1.2), 0, wx0.z * 0.6);
-    float3 o = c5.xyz + float3(0, fall * t, 0) - wind * t;
-    float tMax = min(dist, range);
-    float3 cell = floor(o / C), stp = sign(rd), inv = 1.0 / max(abs(rd), 1e-5);
-    float3 tNext = abs((cell + max(stp, 0.0)) * C - o) * inv, tDel = C * inv;
-    float3 L = 0; float tt = 0;
-    [loop] for (int k = 0; k < 20 && tt < tMax; ++k) {
-        float3 h = hash33(cell + 7.7);
-        if (h.x < 0.55 * wx0.y) {
-            float3 m = (cell + 0.15 + 0.7 * hash33(cell * 1.31 + 2.2)) * C;
-            float3 rel = m - o;
-            float tp = dot(rel, rd);
-            if (tp > 0.3 && tp < tMax) {
-                float3 pc = rel - rd * tp;
-                float d;
-                if (mode == 0) {   // rain: a short streak along the fall
-                    float3 ax = normalize(float3(-wind.x / 14.0, -1, -wind.z / 14.0));
-                    float  along = clamp(dot(pc, ax), -0.35 * wx0.w, 0.35 * wx0.w);
-                    d = length(pc - ax * along) / (0.010 * wx0.w);
-                    L += lerp(float3(0.70, 0.78, 0.90), float3(0.25, 0.30, 0.45), night) * exp(-d * d) * 0.35 * smoothstep(tMax, tMax * 0.5, tp);
-                } else {
-                    d = length(pc) / ((mode == 1 ? 0.035 : 0.022) * wx0.w);
-                    float3 cc = mode == 1 ? float3(0.95, 0.97, 1.0) * lerp(1.0, 0.35, night) : float3(1.0, 0.45, 0.12) * (1.4 + 0.6 * sin(t * 6.0 + h.y * 20.0));
-                    L += cc * (exp(-d * d) * 0.9 + (mode == 2 ? 0.15 * exp(-d * 0.6) : 0.0)) * smoothstep(tMax, tMax * 0.5, tp);
-                }
-            }
-        }
-        if (tNext.x < tNext.y && tNext.x < tNext.z) { tt = tNext.x; tNext.x += tDel.x; cell.x += stp.x; }
-        else if (tNext.y < tNext.z) { tt = tNext.y; tNext.y += tDel.y; cell.y += stp.y; }
-        else { tt = tNext.z; tNext.z += tDel.z; cell.z += stp.z; }
+    int   mode = int(wx0.x + 0.5);
+    float lh   = length(rd.xz);
+    if (lh < 1e-3) return 0;
+    float3 L = 0;
+    float  ang = atan2(rd.z, rd.x);
+    float  slope = rd.y / lh;                                    // height per block of horizontal distance
+    [unroll] for (int k = 0; k < 4; ++k) {
+        float R = float(k == 0 ? 2.5 : k == 1 ? 5.0 : k == 2 ? 10.0 : 20.0) * (wx1.x / 24.0);
+        if (R / lh > dist) break;                                // the world is nearer: this layer (and the farther ones) is hidden
+        float y = slope * R;                                     // the height of the ray where it meets this cylinder
+        float cols = (mode == 0 ? 520.0 : 300.0) * (0.45 + 0.55 * float(k)) * wx0.y;
+        float wa = ang + wx0.z * (mode == 0 ? 0.12 : 0.05) * y / R; // wind leans them
+        float u  = wa / 6.2831853 * cols;
+        float c  = floor(u), fu = frac(u) - 0.5;
+        float h  = frac(sin(c * 12.9898 + float(k) * 78.233) * 43758.5453);
+        float h2 = frac(h * 91.17 + 0.31);
+        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : -1.4;
+        float per = mode == 0 ? 9.0 : 5.0;
+        float yy = y + t * sp * (0.85 + 0.3 * h2) + h * per;
+        float ph = frac(yy / per) * per;                          // where in its drop period this ray is
+        float width = (mode == 0 ? 0.08 : 0.30) * wx0.w / (1.0 + float(k) * 0.4);
+        float len   = (mode == 0 ? 0.9 : 0.12) * wx0.w * (1.2 - 0.15 * float(k));
+        float across = exp(-pow(fu / width, 2.0));
+        float along  = mode == 0 ? smoothstep(0.0, 0.25, ph) * smoothstep(len, len * 0.6, ph)
+                                 : exp(-pow((ph - len) / max(len * 0.7, 0.02), 2.0));
+        if (h2 > 0.55 * wx0.y + 0.15) along = 0;                   // not every column carries one
+        float fade = 1.0 - float(k) * 0.18;
+        float3 cc = mode == 0 ? lerp(float3(0.62, 0.70, 0.84), float3(0.20, 0.24, 0.36), night)
+                  : mode == 1 ? float3(0.92, 0.95, 1.0) * lerp(1.0, 0.35, night)
+                              : float3(1.0, 0.42, 0.10) * (1.3 + 0.7 * sin(t * 7.0 + h * 40.0));
+        L += cc * across * along * fade * (mode == 0 ? 0.30 : mode == 1 ? 0.75 : 1.1);
     }
     return L;
 }
