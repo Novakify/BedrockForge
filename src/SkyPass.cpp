@@ -91,8 +91,15 @@ struct AtmosSet {
     bool  amb = false;   // Ambience: glowing particles drifting around you
     float aA[3]{1.0f, 0.70f, 0.55f}, aB[3]{0.80f, 0.60f, 1.0f}, aAmount = 1.0f, aSize = 1.0f, aGlow = 0.6f, aSpeed = 1.0f, aTwinkle = 0.5f, aRange = 24.0f;
     float aStyle = 0.0f, aDof = 1.0f, aReact = 1.0f, aDaylight = 0.5f;
+    // hit / jump effects (events from Bedrock Forge)
+    bool  jc = false, hs = false, rp = false, sw = false, rpRing = true, rpCrits = true;
+    float jcC[3]{0.78f, 0.42f, 1.0f}, jcSize = 1.2f, jcDur = 1.1f, jcGlow = 0.6f;
+    float hsA[3]{0.78f, 0.42f, 1.0f}, hsB[3]{0.95f, 0.92f, 1.0f}, hsSize = 1.0f, hsDur = 6.0f, hsGlow = 0.7f;
+    float rpC[3]{0.78f, 0.42f, 1.0f}, rpGlow = 0.8f, rpDur = 0.8f;
+    float swC[3]{0.78f, 0.42f, 1.0f}, swSize = 1.0f, swGlow = 0.7f;
+    bool  events() const { return jc || hs || rp || sw; }
     float tod = 0.0f;   // the game's time of day (0 noon), for the sun's glow and the rays
-    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f); }
+    bool  any() const { return (haze && hStrength > 0.0f) || (mist && mDensity > 0.0f) || (amb && aAmount > 0.0f) || events(); }
 };
 std::mutex            gAtmosMutex;
 AtmosSet              gAtmos;
@@ -132,6 +139,15 @@ void pollAtmos() {
         else if (k == "amb_speed") rd(a.aSpeed); else if (k == "amb_twinkle") rd(a.aTwinkle); else if (k == "amb_range") rd(a.aRange);
         else if (k == "amb_style") rd(a.aStyle); else if (k == "amb_dof") rd(a.aDof); else if (k == "amb_react") rd(a.aReact);
         else if (k == "amb_daylight") rd(a.aDaylight);
+        else if (k == "jc") { int v = 0; in >> v; a.jc = v != 0; } else if (k == "jc_c") rd3(a.jcC);
+        else if (k == "jc_size") rd(a.jcSize); else if (k == "jc_dur") rd(a.jcDur); else if (k == "jc_glow") rd(a.jcGlow);
+        else if (k == "hs") { int v = 0; in >> v; a.hs = v != 0; } else if (k == "hs_a") rd3(a.hsA); else if (k == "hs_b") rd3(a.hsB);
+        else if (k == "hs_size") rd(a.hsSize); else if (k == "hs_dur") rd(a.hsDur); else if (k == "hs_glow") rd(a.hsGlow);
+        else if (k == "rp") { int v = 0; in >> v; a.rp = v != 0; } else if (k == "rp_c") rd3(a.rpC);
+        else if (k == "rp_glow") rd(a.rpGlow); else if (k == "rp_dur") rd(a.rpDur);
+        else if (k == "rp_crits") { int v = 1; in >> v; a.rpCrits = v != 0; } else if (k == "rp_ring") { int v = 1; in >> v; a.rpRing = v != 0; }
+        else if (k == "sw") { int v = 0; in >> v; a.sw = v != 0; } else if (k == "sw_c") rd3(a.swC);
+        else if (k == "sw_size") rd(a.swSize); else if (k == "sw_glow") rd(a.swGlow);
         else { std::string skip; std::getline(in, skip); }
         if (!in) break;
     }
@@ -2925,7 +2941,35 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // them sharp, the haze / mist leave them their colours. Yourself only in third person - in first person the camera
     // is inside your own box.
     auto uploadActors = [&]() -> D3D12_GPU_VIRTUAL_ADDRESS {
-        struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; } acb{};   // amb: Ambience (worldfx_atmos.hlsl)
+        struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4]; } acb{};   // amb / ev / fx: worldfx_atmos.hlsl
+        if (atm.events()) {   // hit / jump events still young enough to show
+            auto lin = [](float v) { return v * v; };
+            for (int k = 0; k < 3; ++k) {
+                acb.fx[0][k] = lin(atm.jcC[k]); acb.fx[2][k] = lin(atm.hsA[k]); acb.fx[3][k] = lin(atm.hsB[k]);
+                acb.fx[4][k] = lin(atm.rpC[k]); acb.fx[6][k] = lin(atm.swC[k]);
+            }
+            acb.fx[0][3] = atm.jc ? atm.jcSize : 0.f; acb.fx[1][0] = atm.jcDur; acb.fx[1][1] = atm.jcGlow;
+            acb.fx[1][2] = atm.hs ? atm.hsSize : 0.f; acb.fx[1][3] = atm.hsDur; acb.fx[2][3] = atm.hsGlow;
+            acb.fx[3][3] = atm.rp ? std::max(atm.rpGlow, 0.01f) : 0.f; acb.fx[4][3] = atm.rpDur;
+            acb.fx[5][0] = atm.rpRing ? 1.f : 0.f; acb.fx[5][1] = atm.rpCrits ? 1.f : 0.f; acb.fx[5][2] = atm.sw ? atm.swSize : 0.f; acb.fx[5][3] = atm.swGlow;
+            int n = 0;
+            if (auto const* ev = rf::postfx::fxEvents()) {
+                int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, 0.9f});
+                for (uint32_t i = 0; i < 32 && n < 16; ++i) {
+                    auto const& e = ev->e[(ev->frame + 31u - i) % 32u];   // newest first
+                    if (e.atMs <= 0 || e.kind == 0) continue;
+                    float const age = float(nowMs - e.atMs) / 1000.0f;
+                    if (age < 0.f || age > maxAge) continue;
+                    float const dx = float(double(e.x) - snap.pos[0]), dy = float(double(e.y) - snap.pos[1]), dz = float(double(e.z) - snap.pos[2]);
+                    if (dx * dx + dy * dy + dz * dz > 80.0f * 80.0f) continue;
+                    acb.evP[n][0] = dx; acb.evP[n][1] = dy; acb.evP[n][2] = dz; acb.evP[n][3] = age;
+                    acb.evK[n][0] = float(e.kind); acb.evK[n][1] = e.a; acb.evK[n][2] = float((e.atMs * 2654435761ull) % 1000ull) / 1000.0f;
+                    ++n;
+                }
+            }
+            acb.fx[6][3] = float(n);
+        }
         if (atm.amb) {
             auto lin = [](float v) { return v * v; };
             for (int k = 0; k < 3; ++k) { acb.amb[0][k] = lin(atm.aA[k]); acb.amb[1][k] = lin(atm.aB[k]); }

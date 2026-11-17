@@ -32,6 +32,12 @@ struct BfBlurActorsV1 {
     struct A { float x, y, z; float r, h; float pad[3]; } a[32];   // feet centre (world), radius, height
 };
 BfBlurActorsV1 const* blurActors();
+struct BfFxEventsV1 {   // = Bedrock Forge's (src/client/Modules.cpp)
+    uint32_t size, version, count, frame;
+    struct E { float x, y, z; uint32_t kind; int64_t atMs; float a, b; } e[32];   // kind: 1 jump, 2 hit, 3 crit, 4 landing (a = fall speed); atMs = steady_clock ms
+};
+/// Bedrock Forge's hit / jump events (Jump Circles, Hit Splash, Ripple, Shockwave), or null
+BfFxEventsV1 const* fxEvents();
 bool showcasePose(float& blend, float& yaw, float& pitch, float& radius);
 
 } // namespace rf::postfx

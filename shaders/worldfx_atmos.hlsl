@@ -37,6 +37,16 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 amb1;   // rgb = colour B (linear), w = size
     float4 amb2;   // x = glow, y = speed, z = twinkle, w = range (blocks)
     float4 amb3;   // x = style (0 motes, 1 stardust, 2 petals, 3 snow), y = 1: near ones melt into bokeh, z = 1: they swirl aside, w = daylight share
+    // hit / jump effects (Bedrock Forge BF_GetFxEvents): camera-relative position, w = age (s)
+    float4 evP[16];
+    float4 evK[16];  // x = kind (1 jump, 2 hit, 3 crit, 4 landing), y = a (landing: fall speed), z = seed
+    float4 fx0;      // jump circles: rgb, w = size (0 = off)
+    float4 fx1;      // x = jump duration, y = jump glow, z = splash size (0 = off), w = splash duration
+    float4 fx2;      // splash colour A, w = splash glow
+    float4 fx3;      // splash colour B, w = ripple glow (0 = off)
+    float4 fx4;      // ripple colour, w = ripple duration
+    float4 fx5;      // x = ripple ring, y = crit stars, z = shockwave size (0 = off), w = shockwave glow
+    float4 fx6;      // shockwave colour, w = events
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -146,6 +156,69 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
     return acc;
 }
 
+// Jump Circles, Hit Splash, Ripple, Shockwave: light painted onto whatever surface is there (the pixel's own world
+// point from the depth buffer), so rings follow steps and slopes instead of floating on a flat disc.
+float3 worldEvents(float3 P, bool sky, float t) {
+    int n = min(int(fx6.w), 16);
+    if (n <= 0 || sky) return 0;
+    float3 L = 0;
+    [loop] for (int i = 0; i < n; ++i) {
+        float3 c = evP[i].xyz; float age = evP[i].w; int kind = int(evK[i].x + 0.5); float seed = evK[i].z;
+        float3 dv = P - c;
+        if (kind == 1 && fx0.w > 0.0) {                        // jump: one ring spreading from your feet
+            float u = age / max(fx1.x, 0.05);
+            if (u < 1.0 && abs(dv.y) < 0.6) {
+                float r = length(dv.xz), R = fx0.w * 1.4 * (1.0 - pow(1.0 - u, 3.0)), w = 0.07 + 0.10 * u;
+                float k = exp(-pow((r - R) / w, 2.0)) + fx1.y * 0.35 * exp(-abs(r - R) / (w * 3.0));
+                L += fx0.rgb * k * pow(1.0 - u, 1.4) * 1.6 * smoothstep(0.6, 0.2, abs(dv.y));
+            }
+        } else if ((kind == 2 || kind == 3) && (fx1.z > 0.0 || fx3.w > 0.0)) {
+            if (fx1.z > 0.0 && dv.y < 0.3 && dv.y > -2.6) {       // splash: ink on the ground under the hit, fading slowly
+                float u = age / max(fx1.w, 0.1);
+                if (u < 1.0) {
+                    float2 q = dv.xz;
+                    float  r = length(q), an = atan2(q.y, q.x);
+                    float  rad = 0.55 * fx1.z * (0.72 + 0.20 * sin(an * 3.0 + seed * 6.3) + 0.12 * sin(an * 7.0 + seed * 11.0)) * (0.55 + 0.45 * smoothstep(0.0, 0.08, u));
+                    float  blob = smoothstep(rad, rad * 0.82, r);
+                    float  drops = 0.0;
+                    [unroll] for (int d = 0; d < 5; ++d) {           // droplets thrown out round it
+                        float a2 = seed * 17.0 + float(d) * 1.9, dr = rad * (1.25 + 0.5 * frac(seed * 7.3 + float(d) * 0.37));
+                        float2 dp = float2(cos(a2), sin(a2)) * dr;
+                        drops = max(drops, smoothstep(0.075 * fx1.z, 0.045 * fx1.z, length(q - dp)));
+                    }
+                    float ink = max(blob, drops) * smoothstep(1.0, 0.6, u) * smoothstep(0.0, 1.1, 2.6 + dv.y) ;
+                    float3 cc = lerp(fx2.rgb, fx3.rgb, 0.5 + 0.5 * sin(an * 2.0 + seed * 5.0));
+                    L += cc * ink * (0.25 + 0.9 * fx2.w * (1.0 - u * 0.7)) * (1.0 + 2.0 * exp(-age * 6.0));
+                }
+            }
+            if (fx3.w > 0.0) {                                   // ripple: a flash, and a wave of light over what is near
+                float u = age / max(fx4.w, 0.05);
+                if (u < 1.0) {
+                    float d3 = length(dv), R = 2.6 * (1.0 - pow(1.0 - u, 2.0));
+                    float k = exp(-pow((d3 - R) / 0.16, 2.0)) * (1.0 - u) + exp(-d3 * 2.2) * exp(-age * 9.0) * 1.5;
+                    if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4) {   // the ring rolling over the ground
+                        float r = length(dv.xz), R2 = 3.2 * (1.0 - pow(1.0 - u, 2.5));
+                        k += exp(-pow((r - R2) / 0.10, 2.0)) * (1.0 - u) * 0.8;
+                    }
+                    if (kind == 3 && fx5.y > 0.5) k *= 1.8;          // a critical hit lands harder
+                    L += fx4.rgb * k * fx3.w * 1.4;
+                }
+            }
+        } else if (kind == 4 && fx5.z > 0.0) {                    // landing: a wave runs out through the ground
+            float u = age / 0.9;
+            if (u < 1.0 && abs(dv.y) < 0.8) {
+                float s = saturate(evK[i].y / 1.2);
+                float r = length(dv.xz);
+                float R1 = fx5.z * (1.8 + 2.5 * s) * (1.0 - pow(1.0 - u, 2.2)), R2 = R1 * 0.62;
+                float k = exp(-pow((r - R1) / 0.14, 2.0)) + 0.55 * exp(-pow((r - R2) / 0.10, 2.0));
+                k += fx5.w * 0.3 * exp(-abs(r - R1) / 0.5);
+                L += fx6.rgb * k * pow(1.0 - u, 1.6) * (0.6 + 0.8 * s) * smoothstep(0.8, 0.3, abs(dv.y));
+            }
+        }
+    }
+    return L;
+}
+
 float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float2 px   = i.pos.xy;
     uint   fl   = uint(c3.x);
@@ -219,6 +292,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     }
     float3 ambL = 0;
     [branch] if (amb0.w > 0.0) ambL = ambience(rd, sky ? 1e4 : dist, night, t, px);
+    [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t);
     // ---- haze: everything the mist let through takes on the haze colour with distance (closed form)
     [branch] if ((fl & 2u) != 0u && c6.w > 0.0) {
         float H   = c7.w, clr = c8.x;
