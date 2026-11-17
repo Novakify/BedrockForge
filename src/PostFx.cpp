@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -109,6 +110,10 @@ struct Ui {
     float bloom = 0.12f, tiles = 6.f, ca = 0.0f, caStyle = 0.f, cas = 0.0f, motionBlur = 0.0f;
     bool  director = true;  // apply the LyricsForge Director's look
 } gUi;
+
+std::atomic<float>   gBlurWanted{0.0f};
+std::atomic<int64_t> gWorldBlurAt{0};
+int64_t msNow() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 struct Params {
     float bloom, tiles, ca, caStyle, cas, motionBlur, yaw, pitch, fov;
@@ -332,6 +337,8 @@ bool       gDirOn = false;
 bool       gLinked = false;
 } // namespace
 
+float motionBlurWanted() { return gBlurWanted.load(std::memory_order_relaxed); }
+void  noteWorldBlur() { gWorldBlurAt.store(msNow(), std::memory_order_relaxed); }
 bool showcasePose(float& blend, float& yaw, float& pitch, float& radius) {
     if (!gUi.enabled || !gUi.director) return false;
     // render path + client tick both call this: fresh = BF published within the last ~0.4 s (wall clock, no shared
@@ -366,6 +373,7 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     BfPostFxV1 const* bf = fn ? fn() : nullptr;
     gLinked = bf && bf->version >= 1;
     if (gLinked) gLast = *bf;
+    gBlurWanted.store(!gUi.enabled ? 0.0f : gUi.custom ? gUi.motionBlur : (gLinked && bf->active ? bf->motionBlur : 0.0f), std::memory_order_relaxed);
     if (!gLinked) { gStatus = "waiting for Bedrock Forge"; gHavePrev = false; return false; }
     Dir const dir = readDirector(gUi.director);
     gDirOn = dir.on;
@@ -373,6 +381,8 @@ bool record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
     if (gUi.custom && !bf->active && bf->frame == 0) { gHavePrev = false; return false; }
     Params p = gUi.custom ? Params{gUi.bloom, gUi.tiles, gUi.ca, gUi.caStyle, gUi.cas, gUi.motionBlur, bf->yaw, bf->pitch, bf->fov}
                           : Params{bf->bloom, bf->bloomTiles, bf->ca, bf->caStyle, bf->cas, bf->motionBlur, bf->yaw, bf->pitch, bf->fov};
+    bool const worldBlur = msNow() - gWorldBlurAt.load(std::memory_order_relaxed) < 150;
+    if (worldBlur) p.motionBlur = 0;   // World FX drew it on the world (with depth, under the HUD): not twice
     if (dir.on) { // the Director's kicks ride on top of the pack's values
         p.bloom += dir.bloom;
         p.ca += dir.ca;
@@ -505,7 +515,8 @@ void drawUi() {
         ImGui::SliderFloat("Sharpen (CAS)", &gUi.cas, 0.0f, 1.0f, "%.2f");
         ImGui::SliderFloat("Motion blur", &gUi.motionBlur, 0.0f, 2.0f, "%.2f");
     }
-    ImGui::TextDisabled("Motion blur follows camera turning only (Bedrock gives no depth buffer at this point).");
+    ImGui::TextDisabled("Motion blur: with a World FX sky on it is drawn on the world itself (turning + moving, HUD and hand stay sharp);\n"
+                        "without one it follows camera turning only and covers the whole screen.");
     ImGui::Unindent();
 }
 

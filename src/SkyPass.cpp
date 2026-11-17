@@ -40,6 +40,7 @@
 #include "DeathSounds.h"
 #include "DeathClipData.h"
 #include "WorldFx.h"
+#include "PostFx.h"
 
 #if __has_include("SkyShaders.h")
 #include "SkyShaders.h"
@@ -1030,7 +1031,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
@@ -1040,7 +1041,8 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     // builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it - and each
     // again with the death scenes (80-odd kill animations, the pass's biggest code by far), used only on frames where
     // a kill is playing, so every other frame runs the lean pass
-    if (kills) d.PS = glass ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxGlassKills, sizeof rf::worldfx::shaders::PSWorldFxGlassKills}
+    if (blur) d.PS = {rf::worldfx::shaders::PSWorldFxBlur, sizeof rf::worldfx::shaders::PSWorldFxBlur};   // camera motion blur (shaders/worldfx_blur.hlsl)
+    else if (kills) d.PS = glass ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxGlassKills, sizeof rf::worldfx::shaders::PSWorldFxGlassKills}
                             : D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxKills, sizeof rf::worldfx::shaders::PSWorldFxKills};
     else if (glass) d.PS = {rf::worldfx::shaders::PSWorldFxGlass, sizeof rf::worldfx::shaders::PSWorldFxGlass};
     else       d.PS = {rf::worldfx::shaders::PSWorldFx, sizeof rf::worldfx::shaders::PSWorldFx};
@@ -1125,7 +1127,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
             // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
-            made.push_back({key, which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+            made.push_back({key, which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
                                             : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
@@ -2345,7 +2347,7 @@ bool setField(WorldFxLook& l, std::string const& k, float v) {
     else if (k == "ink") l.ink = v; else if (k == "air") l.air = v; else if (k == "living") l.living = v != 0;
     else if (k == "teams") l.teams = v; else if (k == "shards") l.shards = v; else if (k == "waves") l.waves = v; else if (k == "trails") l.trails = v;
     else if (k == "beds") l.beds = v != 0; else if (k == "kills") l.kills = v != 0; else if (k == "vitals") l.vitals = v != 0;
-    else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v; else if (k == "skyrate") l.skyRate = v;
+    else if (k == "blurtest") l.blurTest = int(v); else if (k == "blurmove") l.blurMove = v; else if (k == "quality") qualityPin = v; else if (k == "tension") l.tension = v; else if (k == "skyrate") l.skyRate = v;
     else return false;
     return true;
 }
@@ -2773,6 +2775,70 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         calls.setPso(list, pso);
         calls.draw(list, 3, 1, 0, 0);
     }
+    // ---- camera motion blur (shaders/worldfx_blur.hlsl): the world as the pass left it, streaked along each pixel's own
+    //      path over a shutter time. Here, not at Present: there is depth (walking and strafing blur too, near more than
+    //      far) and the hand + HUD are not drawn yet, so they stay sharp. Costs nothing while the camera is still.
+    {
+        struct BlurCam { bool have = false; uint64_t calls = 0; double pos[3]{}; float f[3]{}, r[3]{}, u[3]{}; float w[3]{}, v[3]{};
+                         std::chrono::steady_clock::time_point at{}; };
+        static BlurCam bc;
+        auto const tNow = std::chrono::steady_clock::now();
+        if (snap.calls != bc.calls || !bc.have) {
+            double const dt = std::chrono::duration<double>(tNow - bc.at).count();
+            auto cross = [](float const a[3], float const b[3], float o[3]) { o[0] += a[1] * b[2] - a[2] * b[1]; o[1] += a[2] * b[0] - a[0] * b[2]; o[2] += a[0] * b[1] - a[1] * b[0]; };
+            if (bc.have && dt > 0.0005 && dt < 0.1) {
+                // the turn prev -> now as axis * angle: the sum of (old axis x new axis) over the basis is 2 sin(angle) * axis
+                float w[3]{}, v[3];
+                cross(bc.f, snap.forward, w); cross(bc.r, snap.right, w); cross(bc.u, snap.up, w);
+                for (int a = 0; a < 3; ++a) { w[a] = float(0.5 * w[a] / dt); v[a] = float((snap.pos[a] - bc.pos[a]) / dt); }
+                if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 80.0f * 80.0f) v[0] = v[1] = v[2] = 0.0f;   // a teleport / respawn, not a move
+                // a little smoothing: one uneven frame must not make the streaks jump in length (that reads as stutter)
+                for (int a = 0; a < 3; ++a) { bc.w[a] += (w[a] - bc.w[a]) * 0.65f; bc.v[a] += (v[a] - bc.v[a]) * 0.5f; }
+            } else if (dt >= 0.1) {
+                for (int a = 0; a < 3; ++a) bc.w[a] = bc.v[a] = 0.0f;
+            }
+            bc.have = true; bc.calls = snap.calls; bc.at = tNow;
+            for (int a = 0; a < 3; ++a) { bc.pos[a] = snap.pos[a]; bc.f[a] = snap.forward[a]; bc.r[a] = snap.right[a]; bc.u[a] = snap.up[a]; }
+        }
+        float strength = rf::postfx::motionBlurWanted();
+        float w[3] = {bc.w[0], bc.w[1], bc.w[2]}, v[3] = {bc.v[0], bc.v[1], bc.v[2]};
+        if (look.blurTest) {   // bench / review: a steady pretend motion, so a still frame shows the blur and its cost
+            if (strength <= 0.0f) strength = 1.0f;
+            w[0] = w[1] = w[2] = v[0] = v[1] = v[2] = 0.0f;
+            if (look.blurTest == 2) for (int a = 0; a < 3; ++a) v[a] = snap.right[a] * 5.6f;   // a sprint sideways
+            else w[1] = 2.1f;                                                                // 120 degrees a second
+        }
+        if (strength > 0.0f) {
+            rf::postfx::noteWorldBlur();
+            float const shutter = 0.006f * std::min(strength, 3.0f);        // seconds: strength 1 = 6 ms (a 130 degree shutter at 60 FPS)
+            float const focal   = float(rd.Width) * 0.5f / std::max(c[3], 0.05f);   // pixels per radian at the middle
+            float const dead    = std::max(0.9f, float(rd.Width) / 2560.0f);
+            float const wl = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]) * shutter;
+            float const tl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) * shutter * look.blurMove;
+            ID3D12PipelineState* bp = derived(dev.Get(), g, 9);
+            // nothing would move a pixel past the dead zone (turning: everywhere; moving: a thing 0.6 blocks away): skip it all
+            if (bp && (wl * focal * 1.5f > dead || tl * focal / 0.6f > dead)) {
+                wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+                wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                dst.pResource = sb, dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
+                list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+                wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                wfxBarrier(list, sb, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                float b[44]{};
+                std::memcpy(b, c, 12 * sizeof(float));                      // c0..c2: the camera, as the pass used it
+                static uint32_t seed = 0;
+                b[11] = float(++seed & 1023u);
+                b[12] = 0.025f; b[13] = float(rd.Width) * 0.03f; b[14] = dead; b[15] = c[15];
+                b[16] = c[16]; b[17] = c[17]; b[18] = c[18]; b[19] = c[19];
+                for (int a = 0; a < 3; ++a) { b[20 + a] = w[a] * shutter; b[24 + a] = v[a] * shutter * look.blurMove; }
+                b[23] = 15.0f;
+                b[27] = look.blurTest == 3 ? 1.0f : 0.0f;
+                calls.setConsts(list, 0, 44, b, 0);
+                calls.setPso(list, bp);
+                calls.draw(list, 3, 1, 0, 0);
+            }
+        }
+    }
     if (timed) wfxperf::end(list, tsFrame);
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -2818,6 +2884,7 @@ void loadWorldFxSettings(std::filesystem::path const& configDir) {
         else if (k == "shards") gLook.shards = std::clamp(v, 0.f, 1.f);
         else if (k == "waves") gLook.waves = std::clamp(v, 0.f, 2.f);
         else if (k == "trails") gLook.trails = std::clamp(v, 0.f, 1.f);
+        else if (k == "blurmove") gLook.blurMove = std::clamp(v, 0.f, 1.5f);
     }
 }
 // One switch for the whole look: the Renderer Foundation side (sky, void, light, rim: the glass strength) and Bedrock
@@ -2890,7 +2957,7 @@ void saveWorldFxSettings() {
     out << "cloudsea " << gWorldSky.load() << "\nshadows " << (gLook.shadows ? 1 : 0) << "\nshadow " << gLook.shadow << "\nao " << gLook.ao
         << "\nrim " << gLook.rim << "\ndeck " << gDeckOffset.load() << "\nrays " << gLook.rays << "\nclouds " << gLook.clouds << "\nink " << gLook.ink << "\nglass " << gLook.glass << "\nbeds " << (gLook.beds ? 1 : 0)
         << "\nskyrate " << gLook.skyRate << "\nkills " << (gLook.kills ? 1 : 0) << "\nbedstyle " << gLook.bedStyle << "\ndeathscene " << gLook.deathScene << "\nkillsfx " << gLook.killSfx
-        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\n";
+        << "\nliving " << (gLook.living ? 1 : 0) << "\nteams " << gLook.teams << "\nshards " << gLook.shards << "\nwaves " << gLook.waves << "\ntrails " << gLook.trails << "\nair " << gLook.air << "\nvitals " << (gLook.vitals ? 1 : 0) << "\nblurmove " << gLook.blurMove << "\n";
 }
 
 void setWorldSky(int kind) {

@@ -17,6 +17,11 @@ void release();
 void drawUi();
 /// [LyricsForge] Showcase camera from BF_GetDirector(): blend 0..1 and the sway pose (Minecraft yaw / pitch, degrees;
 /// radius in blocks behind the eyes). false = not active.
+/// Motion blur asked for right now (the Bedrock Forge Motion Blur module, a pack's postfx.json, or the F6 slider); 0 = off.
+/// World FX draws it on the world's targets when its pass runs (depth, no HUD) and says so with noteWorldBlur(): the
+/// Present-time blur then stays out of the way.
+float motionBlurWanted();
+void  noteWorldBlur();
 bool showcasePose(float& blend, float& yaw, float& pitch, float& radius);
 
 } // namespace rf::postfx
