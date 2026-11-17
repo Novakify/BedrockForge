@@ -204,6 +204,8 @@ void glassTick(Module& m) {
 // module" and "Every module you have switched on, as a list". Same settings (size, background, opacity, x/y as a
 // fraction of the screen, duration / sort, gradient, hud); drawn our way in the Novak neon purple + white.
 struct Note { std::string name; bool on; int64_t t; };
+float   gPlayerListBottom = 0; // set by List Players each frame (top right)
+int64_t gPlayerListFrame  = 0;
 std::deque<Note> gNotes; // guarded by gMutex
 
 void notifyToggle(Module const& m) {
@@ -268,6 +270,7 @@ void drawActiveModules(Frame& f, Module& m) {
     else std::stable_sort(names.begin(), names.end(), [](auto const& a, auto const& b) { return a.size() > b.size(); });
     float const h = 11.f * s, pad = 3.f * s, margin = 4.f;
     float y = fy > 0.5f ? f.height * fy - margin - h * float(names.size()) : f.height * fy + margin;
+    if (fx > 0.5f && fy < 0.5f && nowMs() - gPlayerListFrame < 500) y = std::max(y, gPlayerListBottom + 2.f);   // don't sit on the player list
     float const t = float(nowMs() % 6000) / 6000.f;
     for (size_t i = 0; i < names.size(); ++i) {
         float const w = textWidth(names[i], s) + pad * 2 + 2.f * s;
@@ -582,6 +585,8 @@ void registerBuiltins() {
         float w = 0;
         for (auto& l : lines) w = std::max(w, textWidth(l));
         panel(f.ctx, f.width - w - 4, 4, lines, 0.35f, {1, 1, 1, 1});
+        gPlayerListBottom = 4.f + 10.5f * float(lines.size()) + 4.f;   // Active Modules starts below this (top right)
+        gPlayerListFrame  = nowMs();
     };
     r.add("crosshair", "Crosshair", Category::Hud, "A custom crosshair drawn over the vanilla one")
         .slider("size", "Size", 4, 1, 12, 1).slider("gap", "Gap", 1, 0, 6, 1).toggleSetting("dot", "Center dot", true)
