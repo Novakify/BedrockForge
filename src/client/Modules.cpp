@@ -30,6 +30,8 @@
 #include "ll/api/memory/Hook.h"
 
 #include "mc/client/game/IClientInstance.h"
+#include "mc/client/gui/controls/UIControl.h"
+#include "mc/client/gui/controls/VisualTree.h"
 #include "mc/client/options/IOptionRegistry.h"
 #include "mc/options/option_types/BoolOption.h"
 #include "mc/options/option_types/OptionID.h"
@@ -254,6 +256,63 @@ void atmosTick() {
         std::error_code ec;
         if (std::filesystem::exists(path.parent_path(), ec)) std::ofstream(path) << out;
     } catch (...) {}
+}
+
+// ---------------------------------------------------------------- HUD hider (Purxiy "choose which Minecraft HUD elements to hide")
+// Walks the HUD screen's control tree and switches the matching controls invisible every frame (the game's bindings
+// may switch them back on). v1 also writes the tree's control names once to logs/hud_controls.txt, so the name lists
+// below can be checked against the real 1.26.51 HUD.
+struct HideGroup { char const* id; char const* label; std::vector<char const*> names; };
+std::vector<HideGroup> const& hideGroups() {
+    static std::vector<HideGroup> const g = {
+        {"hotbar", "Hotbar", {"hotbar_panel", "hotbar_grid", "hotbar"}},
+        {"hearts", "Hearts", {"heart_rend", "hearts", "health_panel"}},
+        {"hunger", "Hunger", {"hunger_rend", "hunger", "food"}},
+        {"armor", "Armor bar", {"armor_rend", "armor_panel"}},
+        {"xp", "XP bar", {"exp_progress_bar", "experience", "xp_bar", "exp_progress"}},
+        {"bubbles", "Air bubbles", {"bubbles_rend", "bubbles"}},
+        {"item_name", "Held item name", {"item_name_text", "item_text_factory", "item_text"}},
+        {"boss", "Boss bar", {"boss_health_panel", "boss_bars"}},
+    };
+    return g;
+}
+void dumpControls(UIControl const& c, int depth, std::ostringstream& out, int& n) {
+    if (n > 4000 || depth > 24) return;
+    ++n;
+    out << std::string(size_t(depth) * 2, ' ') << *c.mName << "\n";
+    for (auto const& ch : *c.mChildren)
+        if (ch) dumpControls(*ch, depth + 1, out, n);
+}
+int hideControls(UIControl& c, std::vector<std::string> const& names, int depth) {
+    if (depth > 24) return 0;
+    int hidden = 0;
+    std::string const& nm = *c.mName;
+    for (auto const& want : names)
+        if (nm == want) { c.mVisible = ::ui::VisibilityFlag::None; *c.mAlpha = 0.0f; ++hidden; return hidden; }
+    for (auto const& ch : *c.mChildren)
+        if (ch) hidden += hideControls(*ch, names, depth + 1);
+    return hidden;
+}
+void hudHiderFrame(ScreenView& view) {
+    auto const& tree = view.mVisualTree;
+    if (!tree) return;
+    auto& root = *tree->mRootControl;
+    if (!root) return;
+    static bool dumped = false;
+    if (!dumped) {
+        dumped = true;
+        std::ostringstream out;
+        int n = 0;
+        out << "HUD control tree (" << *tree->mRootControlName << ")\n";
+        dumpControls(*root, 0, out, n);
+        asyncfile::write(ll::mod::NativeMod::current()->getModDir() / "logs" / "hud_controls.txt", out.str());
+    }
+    auto* m = Registry::get().find("hud_hider");
+    if (!m || !m->enabled) return;
+    std::vector<std::string> names;
+    for (auto const& g : hideGroups())
+        if (m->flag(g.id, false)) for (auto* n2 : g.names) names.emplace_back(n2);
+    if (!names.empty()) hideControls(*root, names, 0);
 }
 
 // ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
@@ -767,6 +826,10 @@ void registerBuiltins() {
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
         ms.onToggle = [](bool) { gAtmosLast.clear(); };
     }
+    {
+        auto& hh = r.add("hud_hider", "HUD Hider", Category::Hud, "Choose which Minecraft HUD elements to hide", false);
+        for (auto const& g : hideGroups()) hh.toggleSetting(g.id, g.label, false);
+    }
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
         .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f)
         .slider("moving", "Blur from moving (turning is always full)", 0.6f, 0.0f, 1.5f, 0.05f);
@@ -923,6 +986,10 @@ void mark(char const* what) { // [BF] a gameplay moment (you got hit), so hitche
 
 // ============================================================================ runtime
 void installRuntime() {
+    gSubs.on<ll::event::BeforeUIRenderEvent>([](ll::event::BeforeUIRenderEvent& ev) {   // HUD Hider: before the HUD draws
+        if (!bf::hud::isHudScreen(ev.screenView())) return;
+        try { hudHiderFrame(ev.screenView()); } catch (...) {}
+    });
     gSubs.on<ll::event::KeyInputEvent>([](ll::event::KeyInputEvent& ev) {
         try { onModuleKey(ev.keyCode() == 0x10 ? (w32::keyDown(0xA1) ? 0xA1 : 0xA0) : ev.keyCode(), ev.isDown()); } catch (...) {}
     });
