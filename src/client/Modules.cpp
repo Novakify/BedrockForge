@@ -94,8 +94,15 @@ int64_t               gSessionStart = nowMs();
 struct Fps {
     int64_t start = nowMs();
     int     frames = 0, value = 0;
+    // frame times for the graph (ms), a ring of the last 120 HUD frames
+    std::array<float, 120> ms{};
+    size_t                 head = 0;
+    Clock::time_point      lastT{};
     void    frame() {
         ++frames;
+        auto const t = Clock::now();
+        if (lastT.time_since_epoch().count()) ms[head++ % ms.size()] = std::chrono::duration<float, std::milli>(t - lastT).count();
+        lastT = t;
         if (auto n = nowMs(); n - start >= 1000) { value = frames; frames = 0; start = n; }
     }
 } gFps;
@@ -148,6 +155,22 @@ void keycap(MinecraftUIRenderContext& ctx, float x, float y, float w, float h, s
 // (Checking "only the HUD screen drew" failed on Hive: its own overlay screens draw all the time, which silently turned
 // off Zoom, Auto Sprint and the other in-game keys.)
 bool hudInputAllowed() { return w32::gameFocused() && (w32::cursorHidden() || nowMs() - gLastNonHudFrameMs.load() > 150); }
+
+// ---------------------------------------------------------------- Memory (no <windows.h> here: declared by hand)
+struct BfPmc { unsigned long cb, pageFaults; size_t peakWs, ws, qPeakPaged, qPaged, qPeakNonPaged, qNonPaged, pagefile, peakPagefile; };
+extern "C" __declspec(dllimport) int __stdcall K32GetProcessMemoryInfo(void* process, BfPmc* pmc, unsigned long cb);
+extern "C" __declspec(dllimport) void* __stdcall GetCurrentProcess();
+double gameMemoryMb() {
+    static int64_t at = 0;
+    static double  mb = 0;
+    if (int64_t n = nowMs(); n - at > 1000) {   // once a second is plenty
+        at = n;
+        BfPmc pmc{};
+        pmc.cb = sizeof pmc;
+        if (K32GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc)) mb = double(pmc.ws) / (1024.0 * 1024.0);
+    }
+    return mb;
+}
 
 // ---------------------------------------------------------------- Notifications + Active Modules (Purxiy schema)
 // Purxiy (buddies' client, used as reference only - its code is locked): "A quiet message when a keybind toggles a
@@ -342,6 +365,27 @@ void registerBuiltins() {
     done = true;
 
     // ---------------- HUD
+    r.add("memory", "Memory", Category::Hud, "How much memory the game is using", false).hud = [](Frame& f) {
+        double const mb = gameMemoryMb();
+        f.infoLines.push_back(mb >= 1024 ? std::format("Mem {:.2f} GB", mb / 1024.0) : std::format("Mem {:.0f} MB", mb));
+    };
+    {   // Watermark: the Bedrock Forge mark in a corner, drifting neon purple -> white
+        auto& wm = r.add("watermark", "Watermark", Category::Hud, "The Bedrock Forge mark in your corner", false);
+        wm.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).slider("x", "X (0 left .. 1 right)", 0.f, 0.f, 1.f, 0.01f)
+            .slider("y", "Y (0 top .. 1 bottom)", 0.f, 0.f, 1.f, 0.01f).toggleSetting("fps", "Show FPS", true);
+        wm.hud = [](Frame& f) {
+            auto* m = Registry::get().find("watermark");
+            if (!m) return;
+            float const s = m->num("size", 1.f) * 1.3f;
+            std::string const t1 = "BEDROCK FORGE", t2 = m->flag("fps", true) ? std::format("  {} fps", gFps.value) : std::string();
+            float const w = textWidth(t1, s) + textWidth(t2, s * 0.75f) + 10.f;
+            float const x = std::clamp(f.width * m->num("x", 0.f) + 4.f, 0.f, f.width - w), y = std::clamp(f.height * m->num("y", 0.f) + 4.f, 0.f, f.height - 12.f * s);
+            bf::hud::fillBox(f.ctx, x - 3, y - 3, w + 2, 10.f * s + 5, {0.06f, 0.04f, 0.10f, 0.5f});
+            float const k = 0.5f + 0.5f * std::sin(float(nowMs() % 4000) / 4000.f * 6.2831f);
+            bf::hud::drawLabel(f.ctx, x, y, t1, {0.78f + 0.22f * k, 0.42f + 0.58f * k, 1.0f, 1.0f}, s);
+            if (!t2.empty()) bf::hud::drawLabel(f.ctx, x + textWidth(t1, s), y + 2.f * s, t2, {1, 1, 1, 0.75f}, s * 0.75f);
+        };
+    }
     {   // [Purxiy schema] notifications on by default (they only show when a keybind toggles something)
         auto& n = r.add("notifications", "Notifications", Category::Hud, "A quiet message when a keybind toggles a module", true);
         n.slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f).toggleSetting("background", "Background", true)
@@ -356,8 +400,28 @@ void registerBuiltins() {
             .toggleSetting("gradient", "Gradient", true).toggleSetting("hud", "HUD elements", false);
         am.hud = [](Frame& f) { if (auto* m = Registry::get().find("active_modules")) drawActiveModules(f, *m); };
     }
-    r.add("fps", "FPS", Category::Hud, "Frames per second", true).hud = [](Frame& f) {
+    r.add("fps", "FPS", Category::Hud, "Frames per second, with a live frame graph", true)
+        .toggleSetting("graph", "Frame graph", false).slider("size", "Graph size", 1.0f, 0.5f, 2.0f, 0.05f)
+        .slider("opacity", "Background opacity", 0.55f, 0.f, 1.f, 0.05f).slider("x", "X (0 left .. 1 right)", 0.f, 0.f, 1.f, 0.01f)
+        .slider("y", "Y (0 top .. 1 bottom)", 0.3f, 0.f, 1.f, 0.01f).hud = [](Frame& f) {
         f.infoLines.push_back(std::format("FPS {}", gFps.value));
+        auto* m = Registry::get().find("fps");
+        if (!m || !m->flag("graph", false)) return;
+        // [Purxiy-style] live frame graph: one bar per frame, height = frame time (16.7 ms = half), spikes go purple
+        float const s = m->num("size", 1.0f), W = 120.f * s, H = 28.f * s;
+        float const x = std::clamp(f.width * m->num("x", 0.0f) + 4.f, 0.f, f.width - W), y = std::clamp(f.height * m->num("y", 0.3f), 0.f, f.height - H - 10.f * s);
+        bf::hud::fillBox(f.ctx, x - 2, y - 2, W + 4, H + 4 + 10.f * s, {0.06f, 0.04f, 0.10f, m->num("opacity", 0.55f)});
+        float worst = 0;
+        for (size_t i = 0; i < gFps.ms.size(); ++i) {
+            float const v  = gFps.ms[(gFps.head + i) % gFps.ms.size()];
+            worst = std::max(worst, v);
+            float const bh = std::clamp(v / 33.3f, 0.02f, 1.f) * H;
+            bool const spike = v > 25.f;
+            bf::hud::fillBox(f.ctx, x + float(i) * (W / float(gFps.ms.size())), y + H - bh, std::max(W / float(gFps.ms.size()) - 0.2f, 0.4f), bh,
+                             spike ? Rgba{0.78f, 0.42f, 1.0f, 0.95f} : Rgba{1, 1, 1, 0.55f});
+        }
+        bf::hud::fillBox(f.ctx, x, y + H * 0.5f, W, 0.5f, {1, 1, 1, 0.25f});   // the 60 fps line
+        bf::hud::drawLabel(f.ctx, x, y + H + 2.f, std::format("{} fps  worst {:.1f} ms", gFps.value, worst), {1, 1, 1, 0.9f}, 0.75f * s);
     };
     r.add("cps", "CPS", Category::Hud, "Left | right clicks per second", true).hud = [](Frame& f) {
         std::lock_guard lock(gMutex);

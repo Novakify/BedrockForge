@@ -724,6 +724,29 @@ void drawClient(UiFrame& f, Win const& w, float a) {
         if (auto* s = m->setting(tg.id); s && sc.fits(50)) toggleRow(f, x, sc.y, wd, tg.t, tg.d, s->on, a, [s] { s->on = !s->on; Registry::get().save(); });
         sc.y += 58;
     }
+    // [BF] Keybinds (Purxiy "every key you have bound, in one place"): click a row to rebind, right click opens the module
+    sectionLabel(f, sc, x, "KEYBINDS", a);
+    int bound = 0;
+    for (auto& mp : Registry::get().all()) {
+        Module* mm = mp.get();
+        if (mm->planned || mm->key <= 0 || mm->key > 255) continue;
+        ++bound;
+        if (sc.fits(46)) {
+            bool const listening = gBindFor == mm->id;
+            row(f, x, sc.y, wd, 46, mm->name, listening ? "Press a key...  (Backspace clears, Esc cancels)" : (mm->enabled ? "On" : "Off"), a, mm->enabled);
+            f.g.text(listening ? "..." : keyNames()[size_t(mm->key)], x + wd - 16, sc.y + 23, 13, rgba(kWhite, 0.9f), a, true, 2);
+            std::string id = mm->id;
+            f.hits.push_back({x, sc.y, wd, 46, [id](bool right) {
+                if (right) { gModPage = id; showPage(Page::ModSettings); return; }
+                gBindFor = gBindFor == id ? std::string() : id;
+            }});
+        }
+        sc.y += 52;
+    }
+    if (!bound) {
+        if (sc.fits(20)) f.g.text("No keys bound yet - open any module (right click) and use its Keybind row.", x + 2, sc.y + 10, 12, rgba(kLilac, 0.62f), a);
+        sc.y += 30;
+    }
     sc.end();
 }
 
