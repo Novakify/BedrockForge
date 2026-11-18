@@ -1,3 +1,22 @@
+# Next session handoff (updated 2026-11-18 ~11:10 local, glass/cosmetics round 2) - READ FIRST
+- INSTALLED: RF 88bb983 (worldfx-rf-builds), BF 911e498. Game left running at the menu, Cloud Sea pack on, ink 1.
+- Verified IN GAME today (Fancy, Cloud Sea): no crash on join or /tp; wings, cape (centred on the back), glass body,
+  halo, Ascension aura (golden shell, crown tongues, blue-white arcs) - the gold beam above the crown is fixed (28a7202).
+  World FX pass ~3.0 ms at 3840x2054 with wings + cape + aura (Ascension adds no measurable cost).
+- Glass Items STILL does not change the held item. Facts: the first-person sword is ItemInHandColor, S0 (item) vertex
+  output, 1140 indices, atlas 1024x512 at t0+t1, same pipeline as the first-person arm (probe
+  mods/RendererFoundation/logs/glassarmor/20261118-104943.txt). glass_ms.txt shows "glassed 1-2" per frame, but turning
+  Items off changes nothing on screen (with or without the pack) -> the glassed draw is not the visible sword. Next:
+  log which draw is glassed (index count, bound texture sizes) and whether the sword's draw reaches drawIdxHook /
+  glassPsoFor at all (maybe another list/queue, or drawn twice). The cream sword with Cloud Sea is the PACK's own
+  ItemInHand material, not glass.
+- 88bb983 also routes ItemInHand draws on Actor-layout pipelines to an Actor-order item shader (kGlassItemActorPs) -
+  harmless; keep or drop once the real path is found.
+- CI quirk: a worldfx/rf push run is often cancelled within seconds after a REST PR merge; rerun it with
+  gh api -X POST repos/Novakify/BedrockForge/actions/runs/<id>/rerun.
+- Computer use: "Minecraft.windows" must resolve to ...\levilauncher.exe\versions\1.26.51.01\minecraft.windows.exe;
+  "Minecraft for Windows" is the Store copy (no mods).
+
 # Next session handoff (updated 2026-11-18 ~09:50 local, GLASS BODY / ITEMS + COSMETICS crash hunt) - READ FIRST
 - INSTALLED on the PC: RF bbe1bb5 (worldfx-rf-builds), BF 911e498 (builds). bbe1bb5 is NOT yet seen in game (Task
   Manager sat always-on-top over LeviLauncher's Launch button; "Minecraft.windows"/"Minecraft for Windows" via
