@@ -158,6 +158,29 @@ float4 PSGlassBody(PSIn i) : SV_Target {
     float2 off = abs(dj) > 1e-8 ? float2(ty.y * fo.x - ty.x * fo.y, -tx.y * fo.x + tx.x * fo.y) / dj : float2(0, 0);
     off  = clamp(off, -36.0 * S, 36.0 * S);
     off += -n * 12.0 * lens * S * e;
+    // crystal, like the approved armor (Fernando 2026-11-13: crystallised glass, not flat sheets): each face is cut into
+    // facets (static Voronoi in texel space); each bends the world its own way and catches the light on its own, the
+    // cut lines glint. They fade out where a facet is only a few pixels across (far away: one clean crystal).
+    float2 cg = p / 2.4 + float2(float(fi) * 3.7, float(fi) * 1.3);
+    float2 ci = floor(cg), cf = frac(cg);
+    float  d1 = 9.0, d2 = 9.0;
+    float2 cid = ci;
+    [unroll] for (int yy = -1; yy <= 1; ++yy)
+    [unroll] for (int xx = -1; xx <= 1; ++xx) {
+        float2 o  = float2(xx, yy);
+        float2 hh = float2(gaHash(ci + o), gaHash(ci + o + 17.3));
+        float2 r  = o + 0.15 + 0.7 * hh - cf;
+        float  dd = dot(r, r);
+        if (dd < d1) { d2 = d1; d1 = dd; cid = ci + o; } else if (dd < d2) d2 = dd;
+    }
+    float  cgap   = sqrt(d2) - sqrt(d1);
+    float  cutLn  = 1.0 - smoothstep(0.0, max(fwidth(cgap) * 1.3, 0.035), cgap);
+    float  cellPx = 1.0 / max(max(length(ddx(cg)), length(ddy(cg))), 1e-4);
+    float  facetK = smoothstep(5.0, 12.0, cellPx);
+    cutLn *= facetK;
+    float  fh1 = gaHash(cid + 5.1), fh2 = gaHash(cid + 9.7);
+    float2 tilt = float2(fh1, fh2) * 2.0 - 1.0;
+    off += tilt * 11.0 * S * (1.0 - 0.5 * e);
     // only bend what is well behind you (the ground at your feet, a wall you lean on stay put)
     float2 px    = i.pos.xy;
     float  self  = 1.0 - i.pos.z;
@@ -174,7 +197,9 @@ float4 PSGlassBody(PSIn i) : SV_Target {
     // the skin in the glass: its colour soaks the glass and a share of it stays its own, so the face, hair and clothes
     // read at a glance; the second layer is a thicker pane
     float3 skc  = sk.rgb;
-    float  soak = over ? 0.55 : 0.45, own = over ? 0.34 : 0.24;
+    float  skL  = dot(skc, float3(0.299, 0.587, 0.114));
+    // bright parts (a white stripe, shoes) stay clear glass instead of going milky; dark parts (hair) keep their colour
+    float  soak = (over ? 0.55 : 0.45) * lerp(1.0, 0.65, skL), own = (over ? 0.34 : 0.24) * lerp(1.0, 0.45, skL);
     c = lerp(c, c * skc * 1.25 + skc * 0.08, soak);
     c = lerp(c, skc, own);
     float3 tintF = float3(tintPk & 255u, (tintPk >> 8) & 255u, (tintPk >> 16) & 255u) / 255.0;
@@ -196,6 +221,16 @@ float4 PSGlassBody(PSIn i) : SV_Target {
         c = lerp(c, bd, smoothstep(0.0, 0.30, frz));
     }
 
+    // the facets: each its own light, the cut lines glint, the odd facet flares as you turn (calmer when frosted)
+    {
+        float calm = 1.0 - 0.75 * frz;
+        float fl   = dot(tilt, normalize(float2(-0.45, -0.89)));
+        float3 hueC = vivid(skc);
+        c *= lerp(1.0, lerp(1.0, 0.88 + 0.22 * (0.5 + 0.5 * fl), 0.35 + 0.65 * facetK), calm);
+        c += lerp(float3(1, 1, 1), hueC, 0.45) * cutLn * (0.14 + 0.12 * (0.5 + 0.5 * fl)) * calm;
+        float spk = pow(saturate(sin(fh1 * 60.0 + (px.x + px.y) / max(res.x, 1.0) * 7.0 + time * 0.5)), 40.0);
+        c += lerp(float3(1, 1, 1), hueC, 0.3) * spk * smoothstep(0.30, 0.0, sqrt(d1)) * 0.45 * calm;
+    }
     // reflection of the last finished frame (lyrics, sky, effects) at the rims, like the armor
     if (havePrev) {
         float2 rp   = px - off * 1.6 + n * (20.0 * S);
