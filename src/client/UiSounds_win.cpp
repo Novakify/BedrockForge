@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <mutex>
 #include <random>
+#include <thread>
 #include <vector>
 
 #include "client/Module.h"
@@ -86,6 +87,18 @@ bool init() {
 
 /// kind: 0 hover, 1 click, 2 toggle on, 3 toggle off, 4 open, 5 close, 6 tab, 7 slider step. Client UI settings
 /// "sounds" (on / off), "sound_volume", "hover_sounds", "slider_ticks".
+std::atomic<int64_t> gLastPlay{0};
+std::atomic<bool>    gReaper{false};
+/// Lets XAudio2 go a few seconds after the last interface sound (the next one brings it back): nothing of ours is alive
+/// in the audio engine when the game closes.
+void releaseIdleLocked() {
+    if (!gXa) return;
+    for (auto* v : gVoices) { XAUDIO2_VOICE_STATE st{}; v->GetState(&st, XAUDIO2_VOICE_NOSAMPLESPLAYED); if (st.BuffersQueued) return; }
+    for (auto* v : gVoices) v->DestroyVoice();
+    gVoices.clear();
+    if (gMaster) { gMaster->DestroyVoice(); gMaster = nullptr; }
+    gXa->Release(); gXa = nullptr; gTried = false;
+}
 void play(int kind) {
     if (kind < 0 || kind > 7) return;
     auto* m = Registry::get().find("client_ui");
@@ -119,6 +132,17 @@ void play(int kind) {
     if (FAILED(v->SubmitSourceBuffer(&b))) { v->DestroyVoice(); return; }
     v->Start();
     gVoices.push_back(v);
+    gLastPlay = now;
+    if (!gReaper.exchange(true))
+        std::thread([] {
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                if (nowMs() - gLastPlay.load() < 4000) continue;
+                std::lock_guard l(gMu);
+                releaseIdleLocked();
+                if (!gXa) { gReaper = false; return; }
+            }
+        }).detach();
 }
 
 } // namespace bedrock_forge::client::uisound

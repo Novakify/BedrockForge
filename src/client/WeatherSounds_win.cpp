@@ -96,17 +96,23 @@ WAVEFORMATEX fmt() {
 void rainLocked(float level);
 /// Every atmos tick (in-world HUD frames): the rain loop's target level (0 = off), 0..1. Fades toward it. Leaving the
 /// world stops the ticks; a watchdog then fades the loop out so it never keeps playing on the menus.
+void releaseIdleLocked();
+std::atomic<bool> gWatching{false};
 void rain(float level) {
     gLastCall = nowMs();
-    static std::once_flag once;
-    if (level > 0.f) std::call_once(once, [] {
+    // the watchdog: fades the loop out once you leave the world, then lets XAudio2 go entirely (nothing of ours is
+    // alive in the audio engine when the game closes - a live engine at exit is a classic shutdown hang)
+    if (level > 0.f && !gWatching.exchange(true)) {
         std::thread([] {
             for (;;) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                if (nowMs() - gLastCall.load() > 600) { std::lock_guard l(gMu); if (gRainV) rainLocked(0.f); }
+                if (nowMs() - gLastCall.load() <= 600) continue;
+                std::lock_guard l(gMu);
+                if (gRainV) { rainLocked(0.f); continue; }
+                if (nowMs() - gLastCall.load() > 3000) { releaseIdleLocked(); if (!gXa) { gWatching = false; return; } }
             }
         }).detach();
-    });
+    }
     std::lock_guard l(gMu);
     rainLocked(level);
 }
@@ -127,6 +133,15 @@ void rainLocked(float level) {
         gRainV->SetVolume(gRainVol);
         if (gRainVol <= 0.001f && level <= 0.f) { gRainV->Stop(); gRainV->DestroyVoice(); gRainV = nullptr; }
     }
+}
+/// Lets XAudio2 go once nothing plays (the next sound brings it back).
+void releaseIdleLocked() {
+    if (!gXa || gRainV) return;
+    for (auto* v : gOneShots) { XAUDIO2_VOICE_STATE st{}; v->GetState(&st, XAUDIO2_VOICE_NOSAMPLESPLAYED); if (st.BuffersQueued) return; }
+    for (auto* v : gOneShots) v->DestroyVoice();
+    gOneShots.clear();
+    if (gMaster) { gMaster->DestroyVoice(); gMaster = nullptr; }
+    gXa->Release(); gXa = nullptr; gTried = false;
 }
 /// A thunderclap (near = louder, brighter).
 void thunder(float volume, float closeK) {
