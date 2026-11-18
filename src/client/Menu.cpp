@@ -111,7 +111,7 @@ bool    lookOn(char const* id, bool fallback) { auto* m = uiModule(); return m ?
 
 void resetScroll() { gScroll = gScrollAt = 0; }
 void setView(View v) { gView = v; gViewAtMs = nowMs(); resetScroll(); }
-void showPage(Page p) { gPage = p; gPageAtMs = nowMs(); resetScroll(); if (gView != View::Window) setView(View::Window); }
+void showPage(Page p) { if (p != Page::Mods) gSearch.clear(); gPage = p; gPageAtMs = nowMs(); resetScroll(); if (gView != View::Window) setView(View::Window); }
 void toast(std::string s) { gToast = std::move(s); gToastMs = nowMs(); }
 std::string gBindFor; // module whose toggle key is being recorded (Keybind row), empty = none
 
