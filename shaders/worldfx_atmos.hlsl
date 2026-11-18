@@ -746,7 +746,9 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
             float wcol = abs(fc - 0.5) * 2.0;                       // 0 in the column's middle .. 1 at its edge
             c += acc * step(0.72, h) * (1.0 - smoothstep(0.10, 0.25, wcol)) * pow(y, 10.0) * 1.3 * saturate(rd.y * 3.0 + 0.3);
         }
-        return lerp(L, c, reality);
+        float3 ghost = acc * lumW * 0.55 + lumW * 0.06;          // what shows through: the clouds as faint accent ghosts, never their own hue
+        c += ghost * 0.35;
+        return lerp(ghost, c, reality);
     }
     float3 n = cross(posAt(px + int2(1, 0)) - P, posAt(px + int2(0, 1)) - P);
     n = normalize(n + 1e-6); if (dot(n, rd) > 0.0) n = -n;
