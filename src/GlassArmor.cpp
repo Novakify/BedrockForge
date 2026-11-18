@@ -2005,10 +2005,12 @@ void pumpTiming(ID3D12Device* dev, ID3D12CommandQueue* q) {
         gShowFlushes = float(double(gFlushes) / double(frames));
         std::error_code ec;
         fs::create_directories(gOutDir, ec);
-        char line[256];
-        std::snprintf(line, sizeof line, "%lld glass cpu %.3f ms/frame | gpu %s ms/frame | replays %.2f/frame | armor %s body %s (you %d, others %d) items %d\n",
+        char line[384];
+        std::snprintf(line, sizeof line, "%lld glass cpu %.3f ms/frame | gpu %s ms/frame | replays %.2f/frame | armor %s body %s (you %d, others %d) items %d"
+                      " (item pipelines %zu, glassed %ld, pso fails %ld, skipped: other material %ld, names pending %ld)\n",
                       static_cast<long long>(now / 1000), gShowCpuMs, gShowGpuMs < 0 ? "-" : std::to_string(gShowGpuMs).substr(0, 6).c_str(),
-                      gShowFlushes, armorOn() ? "on" : "off", bodyOn() ? "on" : "off", gSelf ? 1 : 0, gOthers ? 1 : 0, gItems ? 1 : 0);
+                      gShowFlushes, armorOn() ? "on" : "off", bodyOn() ? "on" : "off", gSelf ? 1 : 0, gOthers ? 1 : 0, gItems ? 1 : 0,
+                      gItemPso.size(), gItemDrawsShown.load(), gItemPsoFail.load(), gItemWhy[0].exchange(0), gItemWhy[1].exchange(0));
         std::ofstream(gOutDir / "glass_ms.txt", std::ios::app) << line;
     }
     gCpuMs = gGpuMs = 0, gFlushes = gGpuPairs = 0, frames = 0, lastLog = now;
