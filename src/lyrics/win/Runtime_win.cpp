@@ -2094,7 +2094,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
             if (idx >= n) {   // Shuffle: a different sky from the pool every few minutes (the sky system sweeps from one to the next)
                 static int     cur = -1;
                 static int64_t next = 0;
-                int64_t const  now = GetTickCount64();
+                int64_t const  now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
                 if (cur < 0 || now >= next) {
                     static uint32_t seed = uint32_t(now);
                     int pick = cur;
