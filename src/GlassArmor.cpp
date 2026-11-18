@@ -381,12 +381,28 @@ void learnNames() {
                 names.emplace(s.hash, e.path().filename().string() + (s.pass.empty() ? "" : " " + s.pass) + " " + s.stage + " " + s.platform);
             ++files;
         }
+        // Bedrock Forge serves its shaderpacks' materials by redirecting the file open (RF never sees those bytes), so
+        // an item / entity material a pack replaces has a pipeline hash no vanilla file names - learn the packs too
+        // (Glass Items waits for "ItemInHand" names: with the Cloud Sea pack on it found none - 2026-11-18)
+        long packFiles = 0;
+        for (auto const& pk : fs::directory_iterator(fs::path(exe).parent_path() / "mods" / "BedrockForgeCore" / "shaderpacks", ec)) {
+            std::error_code ec2;
+            if (!pk.is_directory(ec2)) continue;
+            for (auto const& e : fs::directory_iterator(pk.path() / "renderer" / "materials", ec2)) {
+                if (!e.is_regular_file() || e.path().extension() != ".bin") continue;
+                std::ifstream in(e.path(), std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), {});
+                for (auto const& s : rf::skyscan::scan(bytes.data(), bytes.size()))
+                    names.emplace(s.hash, e.path().filename().string() + (s.pass.empty() ? "" : " " + s.pass) + " " + s.stage + " " + s.platform + " [" + pk.path().filename().string() + "]");
+                ++packFiles;
+            }
+        }
         {
             std::lock_guard l(gMutex);
             gShaderNames.swap(names);
         }
         gNamesLearned = true;
-        ll_shim::info("[RF] glass armor probe: named shaders from " + std::to_string(files) + " material files in " + dir.string());
+        ll_shim::info("[RF] glass armor probe: named shaders from " + std::to_string(files) + " material files in " + dir.string() + " + " + std::to_string(packFiles) + " shaderpack files");
     }).detach();
 }
 
