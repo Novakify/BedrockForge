@@ -118,6 +118,50 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return CallWindowProcW(gOrigProc, hwnd, msg, wp, lp);
 }
 
+// ---------------------------------------------------------------- freeze watchdog (Fernando 2026-11-18: "force close
+// Minecraft whenever it freezes"). A frozen game (no frame for 20 s, or its window not answering for 20 s) is ended so
+// it never sits there holding the mod files - minimized windows are left alone. Off with config/Watchdog.txt = "0".
+std::atomic<int64_t> gLastPresentMs{0};
+int64_t wdNowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+bool watchdogWanted() {
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring p(exe);
+    p = p.substr(0, p.find_last_of(L"\\/") + 1) + L"mods\\RendererFoundation\\config\\Watchdog.txt";
+    FILE* f = _wfopen(p.c_str(), L"rb");
+    if (!f) return true;
+    int c = fgetc(f);
+    fclose(f);
+    return c != '0';
+}
+void startWatchdog(HWND hwnd) {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true) || !watchdogWanted()) return;
+    std::thread([hwnd] {
+        constexpr int64_t kLimitMs = 20000;
+        int64_t hungSince = 0;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            if (!IsWindow(hwnd)) return;   // (the exit watchdog in wndProc handles a closed window)
+            if (IsIconic(hwnd)) { hungSince = 0; continue; }
+            int64_t const now = wdNowMs();
+            DWORD_PTR r = 0;
+            bool const answers = SendMessageTimeoutW(hwnd, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 3000, &r) != 0;
+            if (answers) hungSince = 0;
+            else if (!hungSince) hungSince = now;
+            int64_t const lastPresent = gLastPresentMs.load();
+            bool const noFrames = lastPresent && now - lastPresent > kLimitMs;
+            bool const hung     = hungSince && now - hungSince > kLimitMs;
+            if (noFrames || hung) {
+                ll_shim::warn(std::string("[RF] watchdog: the game froze (") + (noFrames ? "no frame for 20 s" : "window not answering for 20 s") +
+                              ") - ending it so it doesn't hang");
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));   // let the log line reach the file
+                TerminateProcess(GetCurrentProcess(), 0xF2EE);
+            }
+        }
+    }).detach();
+}
+
 void attachWindow(IDXGISwapChain* sc) {
     if (gWindow) return;
     DXGI_SWAP_CHAIN_DESC d{};
@@ -128,6 +172,7 @@ void attachWindow(IDXGISwapChain* sc) {
     if (!hwnd) return;
     gWindow   = hwnd;
     gOrigProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&wndProc)));
+    startWatchdog(hwnd);
 }
 
 void createContext() {
@@ -385,6 +430,7 @@ rf::uicapture::Targets gUiTargets; // device / command-list functions for the Sp
 
 std::atomic<long> gPresentCalls{0}, gPresent1Calls{0};
 void notePresent(char const* which, std::atomic<long>& n, IDXGISwapChain* sc) {
+    gLastPresentMs.store(wdNowMs(), std::memory_order_relaxed);
     long c = ++n;
     if (c == 1 || c == 600) {
         ComPtr<ID3D12Device> q;
