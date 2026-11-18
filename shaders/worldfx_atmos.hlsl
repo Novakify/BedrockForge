@@ -171,13 +171,19 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
     [loop] for (int k = 0; k < 22 && tt < tMax; ++k) {
         float3 h = hash33(cell + 0.37);
         if (h.x < amount * 0.5 * dayK) {
-            float3 m  = (cell + 0.2 + 0.6 * hash33(cell * 1.71 + 4.1)) * C;
+            float3 m  = (cell + 0.32 + 0.36 * hash33(cell * 1.71 + 4.1)) * C;
             float  ph = h.y * 6.2831;
-            m += float3(sin(t * 0.7 * sp + ph), sin(t * 0.5 * sp + ph * 1.3) * 0.6, cos(t * 0.6 * sp + ph)) * 0.18 * C * (style >= 2 ? 0.6 : 1.0);
+            m += float3(sin(t * 0.7 * sp + ph), sin(t * 0.5 * sp + ph * 1.3) * 0.6, cos(t * 0.6 * sp + ph)) * 0.12 * C * (style >= 2 ? 0.6 : 1.0);
+            // a particle is only seen by rays that pass through its cell: its glow must be gone before the cell wall,
+            // or every particle sits in a faint see-through box (seen in game)
+            float3 lo = m - cell * C, hi = (cell + 1.0) * C - m;
+            float  margin = min(min(min(lo.x, hi.x), min(lo.y, hi.y)), min(min(lo.z, hi.z), 1e3));
             float3 rel = m - o;                                       // camera-relative
             if (amb3.z > 0.5) {                                       // they swirl aside as you move through them
                 float r0 = length(rel);
-                rel += normalize(rel + 1e-4) * 0.9 * exp(-r0 * r0 * 0.6);
+                float push = min(0.9 * exp(-r0 * r0 * 0.6), 0.5 * margin);
+                rel += normalize(rel + 1e-4) * push;
+                margin -= push;
             }
             float tp = dot(rel, rd);
             if (tp > 0.25 && tp < tMax) {
@@ -191,7 +197,8 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
                 float  fade = smoothstep(tMax, tMax * 0.65, tp) * (r > size ? size * size / (r * r) * 1.6 + 0.12 : 1.0);
                 float3 cc   = lerp(amb0.rgb, amb1.rgb, h.z);
                 if (style == 3) cc = lerp(float3(0.85, 0.90, 1.0), cc, 0.25);   // snow stays white
-                acc += cc * (core * 2.2 + halo * 1.6) * tw * fade * lerp(0.75, 1.0, night);
+                float  win  = smoothstep(margin, margin * 0.45, dd);          // zero at the cell wall: no box
+                acc += cc * (core * 2.2 + halo * 1.6) * tw * fade * win * lerp(0.75, 1.0, night);
             }
         }
         // the next cell along the ray
@@ -515,7 +522,7 @@ float3 weather(float3 rd, float dist, float t, float night) {
         float ph = frac(yy / per) * per;                          // where in its drop period this ray is
         float width = (mode == 0 ? 0.08 : 0.30) * wx0.w / (1.0 + float(k) * 0.4);
         float len   = (mode == 0 ? 0.9 : 0.12) * wx0.w * (1.2 - 0.15 * float(k));
-        float across = exp(-pow(fu / width, 2.0));
+        float across = exp(-pow(fu / width, 2.0)) * smoothstep(0.5, 0.36, abs(fu));   // zero at the column edge (no seams)
         float along  = mode == 0 ? smoothstep(0.0, 0.25, ph) * smoothstep(len, len * 0.6, ph)
                                  : exp(-pow((ph - len) / max(len * 0.7, 0.02), 2.0));
         if (h2 > 0.55 * wx0.y + 0.15) along = 0;                   // not every column carries one
@@ -906,7 +913,7 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
         float3 cid = floor(q / 3.0);
         float h = cyHash(cid + float(k));
         if (h > cu1.x * 0.6) continue;
-        float3 ctr = (cid + 0.5) * 3.0 + float3(0, frac(t * 0.12 + h) * 3.0 - 1.5, 0);
+        float3 ctr = (cid + 0.5) * 3.0 + float3(0, frac(t * 0.12 + h) * 1.6 - 0.8, 0);   // drifts inside its own cell
         float3 d = rd * dot(ctr - c5.xyz, rd) - (ctr - c5.xyz);
         float dz = dot(ctr - c5.xyz, rd);
         if (dz < 0.3 || dz > dist) continue;
@@ -921,7 +928,8 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
         float hi = exp(-dot(hp, hp) * 9.0) * fill;                          // a candy highlight, top-left lobe
         float edge = smoothstep(-0.32, 0.0, sd) * fill;                     // a deeper tone toward the outline
         float3 hc = lerp(cu0.rgb * (1.0 - 0.35 * edge), float3(1.0, 0.96, 0.98), 0.45 * hi);
-        hl += (hc * fill + cu0.rgb * halo) * (0.7 + 0.3 * sin(t * 2.0 + h * 20.0)) * 0.9;
+        float win = smoothstep(0.6, 0.35, length(d));                      // the glow ends well inside the cell: no box
+        hl += (hc * fill + cu0.rgb * halo) * win * (0.7 + 0.3 * sin(t * 2.0 + h * 20.0)) * 0.9;
     }
     // sparkles on the ground / scenery near you
     if (!sky && cu1.y > 0.0 && dist < 24.0) {
