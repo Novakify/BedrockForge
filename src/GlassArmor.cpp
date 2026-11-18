@@ -255,6 +255,8 @@ struct Atlas {
     int64_t                drawn = 0;
 };
 Atlas                             gAtlas[kAtlasSlots];
+std::atomic<long>                 gItemWhy[4]{};   // item pipeline draws not glassed: not ItemInHand / names pending / no atlas bound / atlas not copied yet
+std::string                       gItemSeen;       // the last item draw's first textures (w x h, mips), for the panel
 ComPtr<ID3D12CommandAllocator>    gItemAlloc;
 ComPtr<ID3D12GraphicsCommandList> gItemList;
 ComPtr<ID3D12Fence>               gItemFence;
@@ -859,6 +861,17 @@ ID3D12Resource* boundItemAtlas(ID3D12GraphicsCommandList* list, SrvInfo* info) {
             if (k == 1 && v.w >= 256 && v.h >= 256 && v.mips > 1) best = v;
         }
         if (!any) continue;   // the sampler table (p0): no textures there
+        {
+            std::string seen;
+            for (int k = 0; k < 4; ++k) {
+                auto it = gSrvs.find(cpu + size_t(k) * inc);
+                char b[64];
+                if (it == gSrvs.end() || !it->second.res) std::snprintf(b, sizeof b, "t%d -  ", k);
+                else std::snprintf(b, sizeof b, "t%d %ux%u m%u f%u  ", k, it->second.w, it->second.h, it->second.mips, it->second.fmt);
+                seen += b;
+            }
+            gItemSeen = seen;
+        }
         if (!best.res) return nullptr;
         *info = best;
         return best.res;
@@ -1487,7 +1500,7 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
     if (!out || !itemShaderBuilt()) return nullptr;
     SrvInfo         si;
     ID3D12Resource* tex = boundItemAtlas(list, &si);
-    if (!tex) return nullptr;
+    if (!tex) { ++gItemWhy[2]; return nullptr; }
     int64_t const now = int64_t(GetTickCount64());
     int           slot = -1;
     {
@@ -1508,7 +1521,7 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
         }
         auto& A = gAtlas[slot];
         A.drawn = now;
-        if (!A.ready || !A.buf) return nullptr;
+        if (!A.ready || !A.buf) { ++gItemWhy[3]; return nullptr; }
         if (auto g = gGlass.find({pso, kBodyKind + 1}); g != gGlass.end()) {
             if (!g->second) return nullptr;
             *game = pso;
@@ -1550,7 +1563,8 @@ ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12Pipeline
             // only the game's item materials (ItemInHand*): other pipelines with the same vertex output - particles, it
             // seems - must never turn to glass (a glass quad round a particle reads as a box). Names not learned yet: wait.
             auto pi = gPsos.find(pso);
-            if (!gNamesLearned || pi == gPsos.end() || nameOf(pi->second.ps).find("ItemInHand") == std::string::npos) return nullptr;
+            if (!gNamesLearned) { ++gItemWhy[1]; return nullptr; }
+            if (pi == gPsos.end() || nameOf(pi->second.ps).find("ItemInHand") == std::string::npos) { ++gItemWhy[0]; return nullptr; }
             ad = t->second;
         } else ad = a->second;
     }
@@ -2179,6 +2193,11 @@ void drawUi() {
         ImGui::Text("Body glass draws last frame: %ld   pipeline failures: %ld", gBodyDrawsShown.load(), gBodyPsoFail.load());
         ImGui::Text("Items: atlases copied %ld   item pipelines %zu   glass draws last frame %ld   failures %ld", gItemsKnown.load(), gItemPso.size(),
                     gItemDrawsShown.load(), gItemPsoFail.load());
+        {
+            std::lock_guard l(gMutex);
+            ImGui::TextDisabled("Item draws not glassed: other material %ld, names pending %ld, no atlas bound %ld, atlas copying %ld | last item textures: %s",
+                                gItemWhy[0].load(), gItemWhy[1].load(), gItemWhy[2].load(), gItemWhy[3].load(), gItemSeen.empty() ? "-" : gItemSeen.c_str());
+        }
         if (!itemShaderBuilt()) ImGui::TextDisabled("glass item shader missing from this build");
         bool mg = gMeasureGpu.load();
         if (ImGui::Checkbox("Measure glass cost on the GPU (logs/glassarmor/glass_ms.txt)", &mg)) gMeasureGpu = mg;
