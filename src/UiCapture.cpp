@@ -982,6 +982,7 @@ void STDMETHODCALLTYPE drawHook(ID3D12GraphicsCommandList* list, UINT a, UINT b,
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
         if (!gInSnapshot && rf::worldfx::recording()) rf::worldfx::onDraw(list, a, b); // may copy targets first (world -> UI)
         if (gaOn() && gaHasPending(list) && !rf::glassarmor::isActorPso(rf::glassarmor::listPso(list))) gaFlush(list);
+        if (gaOn()) rf::glassarmor::traceItemDraw(list, 1000000u + a, false);   // non-indexed (vertex count + 1000000)
         reinterpret_cast<Draw_t>(gOrig[5])(list, a, b, c, d);
     }
     if (sk >= 2) afterSky(list, st, ia, sk);
