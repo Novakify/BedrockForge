@@ -110,6 +110,10 @@ void testVictory(); // F6: the fireworks show
 void testVitals();  // F6: 10 s of falling health and a kill run (the look only - the heartbeat sound is Bedrock Forge's)
 void testBed();  // F6: a test bed in front of you that stands, is attacked and breaks (26 s)
 std::string matchStatus();
+/// Bedrock Forge's grabbed player skins (64x64 RGBA8, classic layout; BF_GetMatchFx v6). Returns your own slot + 1
+/// (0 = none yet), -1 when BF is missing or too old. The views point into BF's memory: read them, don't keep them.
+struct BfSkinView { uint8_t const* px = nullptr; uint32_t gen = 0; };
+int bfSkins(BfSkinView out[16]);
 WorldFxLook& worldFxLook();
 std::string  worldFxStatus();
 float        worldFxGpuMs();        // GPU time of the World FX pass (smoothed), 0 until measured

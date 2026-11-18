@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fstream>
@@ -168,6 +169,22 @@ int                                gDumped = 0;
 // server those can be the server pack's textures, so this stays off there (The Hive bans "asset downloaders").
 std::atomic_bool                   gDumpReadbacks{false};
 std::string gLastReport;
+// ---- Glass Body / Glass Items probe (M0 extension; only while a capture records, nothing at all otherwise). For the
+// player / item glass (Purxiy "Glass": You / Other players / Items / Armour) it answers: which pipelines and vertex
+// outputs draw players, hands and items; what root signature they bind (where the game's own texture sits, so our
+// shader can read its alpha); and whether a skin-sized texture is really a player's skin - compared with the skins
+// Bedrock Forge grabbed (rf::sky::bfSkins), your own marked. Nothing is saved but the report's numbers.
+std::vector<std::string>                          gSigs;     // distinct vertex output signatures of actor-family draws
+std::map<ID3D12Resource*, ComPtr<ID3D12Resource>> gProbeTex; // skin-sized textures bound by actor-family draws (kept alive)
+std::map<void*, int>                              gProbeRoots; // root signatures of actor-family draws -> draws
+struct ProbeRb { ComPtr<ID3D12Resource> tex, buf; unsigned w = 0, h = 0, pitch = 0; bool bgra = false; };
+std::vector<ProbeRb>              gProbeRb;
+int                               gProbeStage = 0; // 0 idle, 1 both frames captured: read the textures back, 2 waiting
+ComPtr<ID3D12CommandAllocator>    gProbeAlloc;
+ComPtr<ID3D12GraphicsCommandList> gProbeList;
+ComPtr<ID3D12Fence>               gProbeFence;
+UINT64                            gProbeFenceVal = 0;
+bool skinSized(unsigned w, unsigned h) { return (w == 64 && (h == 64 || h == 32)) || (w == 128 && h == 128); }
 
 char const* fmtName(DXGI_FORMAT f) {
     switch (f) {
@@ -289,7 +306,7 @@ std::string hex(uint64_t h) {
     return b;
 }
 
-void writeReport() {
+void writeReport(std::string const& extra = {}) {
     std::ostringstream s;
     std::time_t now = std::time(nullptr);
     char        ts[32];
@@ -322,6 +339,7 @@ void writeReport() {
         for (auto const& line : gDetail[w]) s << line << "\n";
     }
     s << "\n";
+    if (!extra.empty()) s << extra << "\n";
     long cand = 0;
     for (auto const& [p, d] : gFrame[0])
         if (!gFrame[1].count(p)) { line(p, d, "ARMOR?"); ++cand; }
@@ -512,13 +530,16 @@ void copySrv(size_t dst, size_t src) {
 
 bool actorFamily(std::string const& n) {
     return n.find("Actor") != std::string::npos || n.find("Entity") != std::string::npos ||
-           n.find("Armor") != std::string::npos || n.find("ItemInHand") != std::string::npos;
+           n.find("Armor") != std::string::npos || n.find("Item") != std::string::npos || n.find("Hand") != std::string::npos ||
+           n.find("Player") != std::string::npos;   // (Item / Hand / Player: the Glass Body / Items probe)
 }
 
 void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
     ID3D12PipelineState* pso = nullptr;
     uint64_t             ps  = 0;
     bool                 detail = false;
+    std::string          sig = "?";
+    void*                root = nullptr;
     {
         std::lock_guard l(gMutex);
         auto it = gListPso.find(list);
@@ -533,6 +554,18 @@ void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
             ++b.draws;
             b.prims += static_cast<unsigned long long>(count / 3) * std::max(1u, inst);
             detail = actorFamily(nameOf(ps)) && gDetail[gWhich].size() < 600;
+            if (detail) {   // Glass Body probe: which vertex output + root signature this draw uses
+                auto const& vo = p->second.vsOut;
+                if (vo == kActorVsOut) sig = "ACTOR";
+                else if (vo == kGlintVsOut) sig = "GLINT";
+                else {
+                    auto s = std::find(gSigs.begin(), gSigs.end(), vo);
+                    if (s == gSigs.end() && gSigs.size() < 64) s = gSigs.insert(gSigs.end(), vo);
+                    sig = s == gSigs.end() ? "?" : "S" + std::to_string(s - gSigs.begin());
+                }
+                root = p->second.root;
+                ++gProbeRoots[root];
+            }
         }
     }
     if (!detail) return;
@@ -551,13 +584,15 @@ void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
         dbg += tb;
     }
     std::ostringstream s;
-    s << hex(ps) << " " << nameOf(ps) << " | idx " << count << " inst " << inst << " | tex:";
+    s << hex(ps) << " " << nameOf(ps) << " | idx " << count << " inst " << inst << " | pso " << pso << " sig " << sig << " root " << root
+      << " | tex:";
     std::lock_guard l(gMutex);
     for (auto const& [ri, k, cpu] : cpus) {
         auto it = gSrvs.find(cpu);
         if (it == gSrvs.end()) continue;
         auto const& v = it->second;
         s << " [r" << ri << "." << k << " " << v.w << "x" << v.h << " " << fmt(DXGI_FORMAT(v.fmt)) << " m" << v.mips << " " << v.res << "]";
+        if (v.res && skinSized(v.w, v.h) && gProbeTex.size() < 48) gProbeTex.emplace(v.res, v.res);   // checked against BF's skins later
     }
     if (tables.empty()) s << " (no root tables tracked)";
     s << " | tables" << dbg << " | srvs known " << gSrvs.size();
@@ -1207,6 +1242,207 @@ ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12Pipeline
     return slot.Get();
 }
 
+namespace {
+// ---- Glass Body / Items probe, after both capture frames (onPresent)
+char const* rangeName(D3D12_DESCRIPTOR_RANGE_TYPE t) {
+    return t == D3D12_DESCRIPTOR_RANGE_TYPE_SRV ? "t" : t == D3D12_DESCRIPTOR_RANGE_TYPE_UAV ? "u" : t == D3D12_DESCRIPTOR_RANGE_TYPE_CBV ? "b" : "s";
+}
+char const* visName(D3D12_SHADER_VISIBILITY v) {
+    return v == D3D12_SHADER_VISIBILITY_ALL ? "all" : v == D3D12_SHADER_VISIBILITY_VERTEX ? "vs" : v == D3D12_SHADER_VISIBILITY_PIXEL ? "ps" : "other";
+}
+/// "p0 table[t0..t3 sp0 | s0 sp0] ps; p1 CBV b1 sp0 ps; ..." - where the game's own texture + sampler sit
+std::string rootLayout(void* rs) {
+    std::vector<uint8_t> blob;
+    {
+        std::lock_guard l(gMutex);
+        if (auto b = gRsBlob.find(static_cast<ID3D12RootSignature*>(rs)); b != gRsBlob.end()) blob = b->second;
+        else
+            for (auto const& [p, ad] : gActor)
+                if (ad->root.Get() == rs && rts0(ad->vs, blob)) break;
+    }
+    if (blob.empty()) return "(blob not seen)";
+    ComPtr<ID3D12VersionedRootSignatureDeserializer> des;
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC const*       vd = nullptr;
+    if (FAILED(rf::d3d12api::CreateVersionedRootSignatureDeserializer(blob.data(), blob.size(), IID_PPV_ARGS(&des))) ||
+        FAILED(des->GetRootSignatureDescAtVersion(D3D_ROOT_SIGNATURE_VERSION_1_1, &vd)) || !vd)
+        return "(unreadable)";
+    auto const&        g = vd->Desc_1_1;
+    std::ostringstream s;
+    for (UINT i = 0; i < g.NumParameters; ++i) {
+        auto const& p = g.pParameters[i];
+        s << "\n      p" << i << " ";
+        switch (p.ParameterType) {
+        case D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE:
+            s << "table[";
+            for (UINT r = 0; r < p.DescriptorTable.NumDescriptorRanges; ++r) {
+                auto const& q = p.DescriptorTable.pDescriptorRanges[r];
+                s << (r ? " | " : "") << rangeName(q.RangeType) << q.BaseShaderRegister;
+                if (q.NumDescriptors != 1) s << ".." << (q.NumDescriptors == UINT(-1) ? std::string("unbounded") : std::to_string(q.BaseShaderRegister + q.NumDescriptors - 1));
+                s << " sp" << q.RegisterSpace << " @" << int(q.OffsetInDescriptorsFromTableStart);
+            }
+            s << "]";
+            break;
+        case D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS: s << "consts b" << p.Constants.ShaderRegister << " sp" << p.Constants.RegisterSpace << " x" << p.Constants.Num32BitValues; break;
+        case D3D12_ROOT_PARAMETER_TYPE_CBV: s << "CBV b" << p.Descriptor.ShaderRegister << " sp" << p.Descriptor.RegisterSpace; break;
+        case D3D12_ROOT_PARAMETER_TYPE_SRV: s << "SRV t" << p.Descriptor.ShaderRegister << " sp" << p.Descriptor.RegisterSpace; break;
+        default: s << "UAV u" << p.Descriptor.ShaderRegister << " sp" << p.Descriptor.RegisterSpace; break;
+        }
+        s << " " << visName(p.ShaderVisibility);
+    }
+    for (UINT i = 0; i < g.NumStaticSamplers; ++i)
+        s << "\n      static sampler s" << g.pStaticSamplers[i].ShaderRegister << " sp" << g.pStaticSamplers[i].RegisterSpace << " filter "
+          << int(g.pStaticSamplers[i].Filter) << " " << visName(g.pStaticSamplers[i].ShaderVisibility);
+    return s.str();
+}
+/// A read-back skin-sized texture against BF's grabbed skins: alpha texels that disagree + mean colour difference.
+std::string skinMatch(uint8_t const* px, ProbeRb const& r, rf::sky::BfSkinView const* skins, int mine) {
+    unsigned const sc = r.w / 64, rows = r.h / sc;   // 64x64, 64x32 (legacy), 128x128 (read every second texel)
+    long painted = 0, sum[3]{};
+    for (unsigned y = 0; y < rows; ++y)
+        for (unsigned x = 0; x < 64; ++x) {
+            uint8_t const* p = px + size_t(y * sc) * r.pitch + size_t(x * sc) * 4;
+            if (!p[3]) continue;
+            ++painted;
+            for (int c = 0; c < 3; ++c) sum[c] += p[r.bgra ? 2 - c : c];
+        }
+    int  best = -1;
+    long bestA = 1 << 30;
+    double bestD = 1e9;
+    for (int i = 0; i < 16; ++i) {
+        if (!skins[i].px) continue;
+        long a = 0, n = 0;
+        double d = 0;
+        for (unsigned y = 0; y < rows; ++y)
+            for (unsigned x = 0; x < 64; ++x) {
+                uint8_t const* p = px + size_t(y * sc) * r.pitch + size_t(x * sc) * 4;
+                uint8_t const* q = skins[i].px + (y * 64 + x) * 4;
+                if ((p[3] != 0) != (q[3] != 0)) { ++a; continue; }
+                if (!p[3]) continue;
+                for (int c = 0; c < 3; ++c) d += std::abs(int(p[r.bgra ? 2 - c : c]) - int(q[c]));
+                ++n;
+            }
+        d = n ? d / (3.0 * double(n)) : 255.0;
+        if (a < bestA || (a == bestA && d < bestD)) best = i, bestA = a, bestD = d;
+    }
+    char b[256];
+    if (best < 0)
+        std::snprintf(b, sizeof b, "%ld painted, mean %ld,%ld,%ld | no BF skins to compare", painted, painted ? sum[0] / painted : 0,
+                      painted ? sum[1] / painted : 0, painted ? sum[2] / painted : 0);
+    else {
+        bool const match = bestA <= 24 && bestD <= 8.0;
+        std::snprintf(b, sizeof b, "%ld painted, mean %ld,%ld,%ld | nearest BF slot %d%s: %ld alpha texels off, colour off %.1f -> %s", painted,
+                      painted ? sum[0] / painted : 0, painted ? sum[1] / painted : 0, painted ? sum[2] / painted : 0, best,
+                      best + 1 == mine ? " (YOU)" : "", bestA, bestD, match ? (best + 1 == mine ? "MATCH: your skin" : "MATCH: another player") : "no match");
+    }
+    return b;
+}
+void probeFinish() {   // the report, with whatever the readbacks gave (none = the skin lines say so)
+    std::ostringstream s;
+    s << "# Glass Body / Items probe\n# vertex output signatures (ACTOR = the armor's, GLINT = enchanted armor's)\n";
+    s << "  ACTOR " << kActorVsOut << "\n  GLINT " << kGlintVsOut << "\n";
+    std::map<void*, int> roots;
+    {
+        std::lock_guard l(gMutex);
+        for (size_t i = 0; i < gSigs.size(); ++i) s << "  S" << i << " " << gSigs[i] << "\n";
+        roots = gProbeRoots;
+    }
+    s << "# root signatures of actor-family draws (both frames)\n";
+    for (auto const& [rs, n] : roots) s << "  root " << rs << " (" << n << " draws)" << rootLayout(rs) << "\n";
+    rf::sky::BfSkinView skins[16];
+    int const mine = rf::sky::bfSkins(skins);
+    s << "# skin-sized textures (64x64 / 64x32 / 128x128) bound by actor-family draws, against Bedrock Forge's skins\n";
+    if (mine < 0) s << "  Bedrock Forge skins: not available (BF missing or older than MatchFx v6)\n";
+    else {
+        int ok = 0;
+        for (auto const& k : skins) ok += k.px != nullptr;
+        s << "  Bedrock Forge skins: " << ok << " grabbed, yours " << (mine ? "slot " + std::to_string(mine - 1) : std::string("not yet")) << "\n";
+    }
+    for (auto& r : gProbeRb) {
+        s << "  " << r.tex.Get() << " " << r.w << "x" << r.h << ": ";
+        void*       m = nullptr;
+        D3D12_RANGE rr{0, size_t(r.pitch) * r.h};
+        if (r.buf && mine >= 0 && SUCCEEDED(r.buf->Map(0, &rr, &m)) && m) {
+            s << skinMatch(static_cast<uint8_t const*>(m), r, skins, mine);
+            D3D12_RANGE none{0, 0};
+            r.buf->Unmap(0, &none);
+        } else s << (r.buf ? "not compared (no BF skins)" : "not read back (format)");
+        s << "\n";
+    }
+    gProbeRb.clear();
+    {
+        std::lock_guard l(gMutex);
+        gProbeTex.clear();
+        gProbeRoots.clear();
+        gSigs.clear();
+    }
+    writeReport(s.str());
+}
+/// Both frames are in: copy the skin-sized textures to readback buffers (one submit), then probeFinish once done.
+void probePump(ID3D12Device* dev, ID3D12CommandQueue* q) {
+    if (gProbeStage == 2) {
+        if (gProbeFence && gProbeFence->GetCompletedValue() < gProbeFenceVal) return;
+        gProbeStage = 0;
+        probeFinish();
+        return;
+    }
+    gProbeStage = 0;
+    std::vector<ComPtr<ID3D12Resource>> texs;
+    {
+        std::lock_guard l(gMutex);
+        for (auto const& [p, t] : gProbeTex) texs.push_back(t);
+    }
+    if (texs.empty() || !dev || !q) { probeFinish(); return; }
+    if ((!gProbeFence && FAILED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gProbeFence)))) ||
+        (!gProbeAlloc && FAILED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&gProbeAlloc))))) {
+        probeFinish();
+        return;
+    }
+    if (!gProbeList) {
+        if (FAILED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, gProbeAlloc.Get(), nullptr, IID_PPV_ARGS(&gProbeList)))) { probeFinish(); return; }
+    } else {
+        gProbeAlloc->Reset();
+        gProbeList->Reset(gProbeAlloc.Get(), nullptr);
+    }
+    for (auto& tex : texs) {
+        auto const td = tex->GetDesc();
+        ProbeRb    r;
+        r.tex = tex, r.w = unsigned(td.Width), r.h = td.Height;
+        r.bgra = td.Format == DXGI_FORMAT_B8G8R8A8_UNORM || td.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || td.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
+        bool const rgba = td.Format == DXGI_FORMAT_R8G8B8A8_UNORM || td.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || td.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
+        if (td.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || (!rgba && !r.bgra) || !skinSized(r.w, r.h) || td.SampleDesc.Count > 1) {
+            gProbeRb.push_back(r);   // listed, not read
+            continue;
+        }
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT64                             tot = 0;
+        dev->GetCopyableFootprints(&td, 0, 1, 0, &fp, nullptr, nullptr, &tot);
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
+        D3D12_RESOURCE_DESC   bd{};
+        bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, bd.Width = tot, bd.Height = 1, bd.DepthOrArraySize = 1, bd.MipLevels = 1;
+        bd.SampleDesc.Count = 1, bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (!tot || FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&r.buf)))) {
+            gProbeRb.push_back(r);
+            continue;
+        }
+        r.pitch = fp.Footprint.RowPitch;
+        auto const st = knownState(tex.Get(), D3D12_RESOURCE_STATE_COMMON);   // unknown: COMMON (promotes to COPY_SOURCE)
+        bool const bar = st != D3D12_RESOURCE_STATE_COMMON && st != D3D12_RESOURCE_STATE_COPY_SOURCE;
+        if (bar) barrier(gProbeList.Get(), tex.Get(), st, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+        dst.pResource = r.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
+        src.pResource = tex.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        gProbeList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        if (bar) barrier(gProbeList.Get(), tex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
+        gProbeRb.push_back(r);
+    }
+    gProbeList->Close();
+    ID3D12CommandList* lists[] = {gProbeList.Get()};
+    q->ExecuteCommandLists(1, lists);
+    q->Signal(gProbeFence.Get(), ++gProbeFenceVal);
+    gProbeStage = 2;
+}
+} // namespace
+
 void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
     if (enabled() && device && queue) {
         pumpReadbacks(device, queue);
@@ -1224,8 +1460,9 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
         gCap       = 0;
         gHave[gWhich] = true;
         gStatus    = gWhich == 0 ? "ON frame captured - now take the armor off and capture OFF" : "OFF frame captured";
-        if (gHave[0] && gHave[1]) writeReport();
+        if (gHave[0] && gHave[1]) { gProbeStage = 1; gStatus = "checking skin textures..."; }   // the report follows the readbacks
     }
+    if (gProbeStage != 0) probePump(device, queue);
 }
 
 void drawUi() {
