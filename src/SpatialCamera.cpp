@@ -451,7 +451,7 @@ void applyFov(MinecraftCamera::CameraComponent** comps, int nComp, bool cineOn, 
 // were), the turning goes into an orbit at "distance" blocks. Only while the game has the mouse (cursor hidden).
 std::atomic<int>   gFlKey{0}, gFlMode{0};
 std::atomic<float> gFlDist{4.0f};
-struct FreeLook { bool on = false, toggled = false, wasDown = false; float lockYaw = 0, lockPitch = 0, offYaw = 0, offPitch = 0, blend = 0; } gFl;
+struct FreeLook { bool on = false, toggled = false, wasDown = false; float lockYaw = 0, lockPitch = 0, offYaw = 0, offPitch = 0, blend = 0, reach = -1; } gFl;
 bool flKeyWanted() {
     int const vk = gFlKey.load(std::memory_order_relaxed);
     if (vk <= 0 || vk > 255) return false;
@@ -478,7 +478,7 @@ bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
     if (!want && gFl.on) gFl.on = false;
     float const target = gFl.on ? 1.0f : 0.0f;
     gFl.blend += (target - gFl.blend) * 0.25f;
-    if (gFl.blend < 0.01f && !gFl.on) { gFl.blend = 0; return false; }
+    if (gFl.blend < 0.01f && !gFl.on) { gFl.blend = 0; gFl.reach = -1; return false; }
     if (gFl.on) {   // what the mouse did since the last frame goes to the camera; your look goes back
         gFl.offYaw  += std::remainder(r.y - gFl.lockYaw, 360.0f);
         gFl.offPitch = std::clamp(gFl.offPitch + (r.x - gFl.lockPitch), -89.0f - gFl.lockPitch, 89.0f - gFl.lockPitch);
@@ -492,7 +492,16 @@ bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
     float const yaw = gFl.lockYaw + gFl.offYaw, pitch = std::clamp(gFl.lockPitch + gFl.offPitch, -89.0f, 89.0f);
     float const y = yaw * kDeg, pt = pitch * kDeg;
     glm::vec3 const f(-std::sin(y) * std::cos(pt), -std::sin(pt), std::cos(y) * std::cos(pt));
-    glm::vec3 const cam = eye - f * (gFlDist.load(std::memory_order_relaxed) * e);
+    float const want = gFlDist.load(std::memory_order_relaxed) * e;
+    // walls: like the game's own third-person camera, the orbit stops in front of the first solid block (eight rays from
+    // around your eyes, the same test the cinematic camera uses) - no looking through walls. In at once, out gently.
+    float reach = want;
+    if (want > 0.05f) {
+        glm::vec3 const hit = collideCamera(actor, eye, eye - f * want);
+        reach = std::max(0.0f, glm::length(hit - eye) - 0.1f);
+    }
+    gFl.reach = gFl.reach < 0 || reach < gFl.reach ? reach : gFl.reach + (reach - gFl.reach) * 0.2f;
+    glm::vec3 const cam = eye - f * gFl.reach;
     p.pos[0] = cam.x; p.pos[1] = cam.y; p.pos[2] = cam.z;
     p.yaw = yaw; p.pitch = pitch; p.roll = 0;
     return true;
