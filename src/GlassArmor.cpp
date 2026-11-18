@@ -812,7 +812,8 @@ ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad,
 
 bool bodyShaderBuilt() { return sizeof(shaders::kGlassBodyPs) > 64; }
 bool itemShaderBuilt() { return sizeof(shaders::kGlassItemPs) > 64; }
-/// Glass Items: the item's sprite = the first descriptor of the draw's first table (probe: r1.0), square 16..128.
+/// Glass Items: the item's sprite = the first descriptor of the first TEXTURE table (probe: r1.0), square 16..128.
+/// (In game 2026-11-17: stopping at the first table - the samplers - found no sprite at all.)
 ID3D12Resource* boundItemTexture(ID3D12GraphicsCommandList* list, SrvInfo* info) {
     auto tables = rf::uicapture::rootTables(list);
     for (auto const& [ri, gpu] : tables) {
@@ -821,7 +822,7 @@ ID3D12Resource* boundItemTexture(ID3D12GraphicsCommandList* list, SrvInfo* info)
         if (!rf::uicapture::gpuDescToCpu(gpu, cpu, inc)) continue;
         std::lock_guard l(gMutex);
         auto it = gSrvs.find(cpu);
-        if (it == gSrvs.end() || !it->second.res) return nullptr;
+        if (it == gSrvs.end() || !it->second.res) continue;   // the sampler table (p0) comes first: no texture there
         auto const& v = it->second;
         bool const pow2 = v.w == 16 || v.w == 32 || v.w == 64 || v.w == 128;
         if (v.w != v.h || !pow2) return nullptr;
