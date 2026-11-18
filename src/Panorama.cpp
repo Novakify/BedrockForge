@@ -53,9 +53,20 @@ constexpr int   kSettle      = 12;  // presents to hold a face before copying it
 constexpr int64_t kSettleMs  = 700; // and at least this long: chunks behind you are only built once they come into view
 
 fs::path packDir() {
-    wchar_t const* ad = _wgetenv(L"APPDATA");
-    if (!ad) return {};
-    return fs::path(ad) / L"Minecraft Bedrock" / L"Users" / L"Shared" / L"games" / L"com.mojang" / L"development_resource_packs" / L"BF Menu World";
+    // the game's own data folder: LeviLauncher keeps each instance's beside its exe; the Store install uses %APPDATA%
+    fs::path root;
+    std::error_code ec;
+    wchar_t exe[1024]{};
+    if (GetModuleFileNameW(nullptr, exe, 1024)) {
+        auto const local = fs::path(exe).parent_path() / L"Minecraft Bedrock";
+        if (fs::exists(local / L"Users", ec)) root = local;
+    }
+    if (root.empty()) {
+        wchar_t const* ad = _wgetenv(L"APPDATA");
+        if (!ad) return {};
+        root = fs::path(ad) / L"Minecraft Bedrock";
+    }
+    return root / L"Users" / L"Shared" / L"games" / L"com.mojang" / L"development_resource_packs" / L"BF Menu World";
 }
 void writeManifest(fs::path const& dir) {
     std::error_code ec;
@@ -158,7 +169,7 @@ std::vector<float> cropFace(Face const& f, uint8_t const* px, int S) {
 }
 void writeAll() {
     fs::path const dir = packDir();
-    if (dir.empty()) { std::snprintf(gStatus, sizeof gStatus, "no APPDATA: can't find the game's packs"); return; }
+    if (dir.empty()) { std::snprintf(gStatus, sizeof gStatus, "can't find the game's data folder"); return; }
     writeManifest(dir);
     int done = 0;
     for (int i = 0; i < 6; ++i) {
