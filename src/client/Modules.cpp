@@ -77,7 +77,9 @@ extern "C" {
 struct BfFxEventsV1 {
     uint32_t size, version, count, frame;
     struct E { float x, y, z; uint32_t kind; int64_t atMs; float a, b; } e[32];   // kind: 1 jump, 2 hit, 3 crit, 4 landing (a = fall speed)
-    // version 2: you (Trail / Aura / Halo)
+    // version 2: you (Trail / Aura / Halo / Wings / Cape). Since version 4 these are where the game DRAWS you this frame
+    // (between the last two ticks, like its own interpolation) and pyaw is your BODY's yaw - not the 20 Hz tick
+    // position and head yaw, which made the wings and cape shake when running, jumping and turning (2026-11-17)
     float    px, py, pz, pyaw;   // your feet (world), yaw (degrees)
     uint32_t pflags;             // 1 = known, 2 = on the ground
     uint32_t pad2;
@@ -86,10 +88,12 @@ struct BfFxEventsV1 {
     int32_t  bx, by, bz;         // block position (world)
     uint32_t bface;              // 0..5 the face you look at (Bedrock facing), 255 = no block
     int64_t  bAtMs;
+    // version 4: how fast you move (blocks / s, world) - RF moves px..pz on by the few ms between this write and its pass
+    float    pvx, pvy, pvz, pyawRate;   // pyawRate: degrees / s of the body
 };
 __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents();
 }
-namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 3, 0, 0, {}, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0}; }
+namespace { BfFxEventsV1 gFxEv{sizeof(BfFxEventsV1), 4, 0, 0, {}, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0}; }
 extern "C" __declspec(dllexport) BfFxEventsV1 const* BF_GetFxEvents() { return &gFxEv; }
 namespace bedrock_forge::client {
 void pushFxEvent(uint32_t kind, float x, float y, float z, float a = 0.f) {
@@ -1414,7 +1418,7 @@ void registerBuiltins() {
         tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("duration", "Duration (s)", 1.2f, 0.3f, 3.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
         auto& au = r.add("aura", "Aura", Category::Visual, "Soft light that lives around you (Renderer Foundation)", false);
-        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation", "Ascension"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("speed", "Speed", 1.f, 0.f, 3.f, 0.05f).slider("glow", "Glow", 0.65f, 0.f, 1.f, 0.05f)
             .toggleSetting("first_person", "See it from your own eyes too", false);
         auto& ha = r.add("halo", "Halo", Category::Visual, "A gently glowing halo (Renderer Foundation)", false);
@@ -1747,7 +1751,32 @@ void installRuntime() {
                 if (wasGround && !g && vy > 0.15f) pushFxEvent(1u, pos.x, pos.y - 1.62f, pos.z);
                 if (!wasGround && g) { if (fallV < -0.45f) pushFxEvent(4u, pos.x, pos.y - 1.62f, pos.z, -fallV); fallV = 0.f; }
                 wasGround = g;
-                gFxEv.px = pos.x; gFxEv.py = pos.y - 1.62f; gFxEv.pz = pos.z; gFxEv.pyaw = player->getRotation().z;   // Trail / Aura / Halo
+                // where the game draws you this frame: it blends the last two tick states by the frame's place between
+                // ticks. The ticks are timed here (a new tick = a new position or body yaw), the blend follows them.
+                static Vec3    tPrev = pos, tCur = pos;
+                static float   yPrev = 0.f, yCur = 0.f, tickMs = 50.f;
+                static double  tAt = 0.0;
+                static bool    init = false;
+                double const   nowD = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                float const    body = player->getYBodyRotation();
+                if (!init) { tPrev = tCur = pos; yPrev = yCur = body; tAt = nowD; init = true; }
+                if (pos.x != tCur.x || pos.y != tCur.y || pos.z != tCur.z || body != yCur) {
+                    double const dt = nowD - tAt;
+                    if (dt > 25.0 && dt < 120.0) tickMs += (float(dt) - tickMs) * 0.2f;   // the tick length as measured
+                    bool const jump = (pos.x - tCur.x) * (pos.x - tCur.x) + (pos.y - tCur.y) * (pos.y - tCur.y) + (pos.z - tCur.z) * (pos.z - tCur.z) > 64.f;
+                    tPrev = jump ? pos : tCur, yPrev = jump ? body : yCur;   // teleported: no glide across the map
+                    tCur = pos, yCur = body, tAt = nowD;
+                }
+                float const a = std::clamp(float((nowD - tAt) / std::max(tickMs, 1.f)), 0.f, 1.f);
+                float dy = std::fmod(yCur - yPrev + 540.f, 360.f) - 180.f;   // the short way round
+                gFxEv.px = tPrev.x + (tCur.x - tPrev.x) * a;
+                gFxEv.py = tPrev.y + (tCur.y - tPrev.y) * a - 1.62f;
+                gFxEv.pz = tPrev.z + (tCur.z - tPrev.z) * a;
+                gFxEv.pyaw = yPrev + dy * a;
+                float const perS = 1000.f / std::max(tickMs, 1.f);
+                gFxEv.pvx = (tCur.x - tPrev.x) * perS, gFxEv.pvy = (tCur.y - tPrev.y) * perS, gFxEv.pvz = (tCur.z - tPrev.z) * perS;
+                gFxEv.pyawRate = a < 1.f ? dy * perS : 0.f;   // (past the last tick: holding still)
+                if (a >= 1.f) gFxEv.pvx = gFxEv.pvy = gFxEv.pvz = 0.f;
                 gFxEv.pflags = 1u | (g ? 2u : 0u);
                 gFxEv.pAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             } catch (...) {}
