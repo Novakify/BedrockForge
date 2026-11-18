@@ -2157,10 +2157,8 @@ void drawUi() {
         ImGui::Text("Body glass draws last frame: %ld   pipeline failures: %ld", gBodyDrawsShown.load(), gBodyPsoFail.load());
         ImGui::Text("Items: atlases copied %ld   item pipelines %zu   glass draws last frame %ld   failures %ld", gItemsKnown.load(), gItemPso.size(),
                     gItemDrawsShown.load(), gItemPsoFail.load());
-        {
-            std::lock_guard l(gMutex);
-            ImGui::TextDisabled("Item draws not glassed: other material %ld, names pending %ld", gItemWhy[0].load(), gItemWhy[1].load());
-        }
+        // (this whole section already runs under gMutex - a second lock here froze the game: 2026-11-18)
+        ImGui::TextDisabled("Item draws not glassed: other material %ld, names pending %ld", gItemWhy[0].load(), gItemWhy[1].load());
         if (!itemShaderBuilt()) ImGui::TextDisabled("glass item shader missing from this build");
         bool mg = gMeasureGpu.load();
         if (ImGui::Checkbox("Measure glass cost on the GPU (logs/glassarmor/glass_ms.txt)", &mg)) gMeasureGpu = mg;
