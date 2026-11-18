@@ -2867,7 +2867,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, atm.paDur, 0.9f});
             for (auto const& e : ev->e) if (e.atMs > 0 && e.kind != 0 && float(nowMs - e.atMs) < maxAge * 1000.0f) { atmosNeed = true; break; }
             // Block Outline: only while you aim at a block (and a moment after, while it fades)
-            if (atm.bo && ev->version >= 3 && ev->size >= sizeof(rf::postfx::BfFxEventsV1) && nowMs - ev->bAtMs < 600) {
+            if (atm.bo && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx) && nowMs - ev->bAtMs < 600) {
                 static int64_t lastBlockMs = 0;
                 if (ev->bface != 255u) lastBlockMs = nowMs;
                 if (nowMs - lastBlockMs < 400) atmosNeed = true;
@@ -3104,8 +3104,18 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             auto const* ev = rf::postfx::fxEvents();
             if (ev && ev->version >= 2 && (ev->pflags & 1u) && nowMs - ev->pAtMs < 500) {
-                acb.pl[0] = float(double(ev->px) - snap.pos[0]); acb.pl[1] = float(double(ev->py) - snap.pos[1]); acb.pl[2] = float(double(ev->pz) - snap.pos[2]);
-                acb.pl[3] = ev->pyaw * 0.01745329f;
+                // BF (v4) writes where the game draws you + how fast that moves; carry it over the time since it wrote, so
+                // the wings / cape / halo sit on the body this frame, not on last frame's (shook when sprinting, jumping
+                // and turning - Fernando 2026-11-17). Older BF: as written.
+                double ax = ev->px, ay = ev->py, az = ev->pz, ayaw = ev->pyaw;
+                if (auto const yp = rf::lyrics::you(); yp.valid && nowMs - yp.atMs <= 100) {   // best: this frame's own pose
+                    ax = yp.feet[0], ay = yp.feet[1], az = yp.feet[2], ayaw = yp.bodyYawDeg;
+                } else if (ev->version >= 4 && ev->size >= sizeof(rf::postfx::BfFxEventsV1)) {
+                    double const lead = std::clamp(double(nowMs - ev->pAtMs), 0.0, 40.0) / 1000.0;
+                    ax += ev->pvx * lead, ay += ev->pvy * lead, az += ev->pvz * lead, ayaw += ev->pyawRate * lead;
+                }
+                acb.pl[0] = float(ax - snap.pos[0]); acb.pl[1] = float(ay - snap.pos[1]); acb.pl[2] = float(az - snap.pos[2]);
+                acb.pl[3] = float(ayaw) * 0.01745329f;
                 if (path.empty() || nowMs - path.front().at >= 50) {
                     if (!path.empty()) {   // a teleport is not a path
                         double const dx = ev->px - path.front().x, dz = ev->pz - path.front().z;
@@ -3199,7 +3209,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             }
             if (atm.cp) {   // the cape flows back with your speed (from your positions, smoothed)
                 static double lx = 0, lz = 0; static int64_t lt = 0; static float spd = 0;
-                if (ev && ev->version >= 2 && (ev->pflags & 1u)) {
+                if (ev && ev->version >= 4 && ev->size >= sizeof(rf::postfx::BfFxEventsV1) && (ev->pflags & 1u)) {   // v4: the speed itself
+                    float const v = std::sqrt(ev->pvx * ev->pvx + ev->pvz * ev->pvz);
+                    if (v < 40.f) spd += (std::min(v / 5.6f, 1.6f) - spd) * 0.12f;
+                } else if (ev && ev->version >= 2 && (ev->pflags & 1u)) {
                     if (lt && nowMs > lt) {
                         double const dx = ev->px - lx, dz = ev->pz - lz;
                         float const v = float(std::sqrt(dx * dx + dz * dz) * 1000.0 / double(nowMs - lt));
@@ -3220,7 +3233,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 for (int k = 0; k < 3; ++k) acb.cu[0][k] = lin(atm.cuC[k]);
                 acb.cu[0][3] = atm.cuSoft; acb.cu[1][0] = atm.cuHearts; acb.cu[1][1] = atm.cuSparkle; acb.cu[1][2] = atm.cuPastel; acb.cu[1][3] = 1.f;
             }
-            if (atm.bo && ev && ev->version >= 3 && ev->size >= sizeof(rf::postfx::BfFxEventsV1)) {
+            if (atm.bo && ev && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx)) {
                 static double gx = 0, gy = 0, gz = 0; static float fade = 0; static int64_t lt = 0; static bool have = false;
                 float const dt = lt ? std::clamp(float(nowMs - lt) / 1000.f, 0.f, 0.1f) : 0.f; lt = nowMs;
                 bool const on = ev->bface != 255u && nowMs - ev->bAtMs < 500;

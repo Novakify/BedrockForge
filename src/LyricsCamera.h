@@ -18,6 +18,15 @@ struct CameraSnap {
     uint64_t calls = 0, chosen = 0;         // diagnostics
 };
 
+/// The local player as the game draws it this frame (captured with the camera, so only while the camera is wanted).
+struct YouPose {
+    bool    valid = false;
+    double  feet[3]{};        // world
+    float   bodyYawDeg = 0;   // the body's yaw (degrees), interpolated like the model
+    float   alpha = 0;        // the frame's place between ticks (diagnostics)
+    int64_t atMs = 0;
+};
+YouPose    you();
 void       installCamera();
 /// The hook stays installed but does nothing (no game reads at all) until this is on. LyricsPass sets it each Present:
 /// on only while BF actually publishes an active lyrics frame and "Draw lyrics" is checked.

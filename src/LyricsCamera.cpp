@@ -26,6 +26,7 @@ namespace rf::lyrics {
 namespace {
 std::mutex gMutex;
 CameraSnap gSnap, gWorldSnap;   // the camera at the eye; the world's own (origin) camera as a stand-in
+YouPose    gYou;                // where the game draws the local player this frame (wings / cape / halo anchor)
 bool       gHooked = false;
 
 int64_t nowMs() {
@@ -45,6 +46,17 @@ void onCamera(mce::Camera& cam) {
     auto* lp = ci->getLocalPlayer();
     if (!lp) return;
     Actor&    actor = *lp;
+    {   // the pose the game draws you with THIS frame: its own blend between the last two ticks (frame alpha) and your
+        // BODY's yaw - the anchor for wings / cape / halo, which shook on the 20 Hz tick values (Fernando 2026-11-17)
+        float const a  = ci->getFrameAlpha();
+        Vec3 const  ip = actor.getInterpolatedPosition(a);   // players: at the eyes
+        float const by = actor.getInterpolatedBodyRot(a);
+        YouPose y;
+        y.valid = std::isfinite(ip.x) && std::isfinite(ip.y) && std::isfinite(ip.z) && std::isfinite(by);
+        y.feet[0] = ip.x, y.feet[1] = double(ip.y) - 1.62, y.feet[2] = ip.z, y.bodyYawDeg = by, y.alpha = a, y.atMs = nowMs();
+        std::lock_guard l(gMutex);
+        gYou = y;
+    }
     Vec3      feet  = actor.getFeetPos();
     glm::vec3 eye(feet.x, feet.y + 1.62f, feet.z);
     glm::vec3 pos = *cam.mPosition;
@@ -88,6 +100,10 @@ void onCamera(mce::Camera& cam) {
 }
 } // namespace
 
+YouPose you() {
+    std::lock_guard l(gMutex);
+    return gYou;
+}
 CameraSnap camera() {
     std::lock_guard l(gMutex);
     int64_t const now = nowMs();

@@ -44,6 +44,9 @@ struct BfFxEventsV1 {   // = Bedrock Forge's (src/client/Modules.cpp)
     int32_t  bx, by, bz;
     uint32_t bface;              // 0..5 (Bedrock facing: 0 down, 1 up, 2 north, 3 south, 4 west, 5 east), 255 = none
     int64_t  bAtMs;
+    // version 4: px..pz / pyaw are where the game DRAWS you (between ticks, body yaw); how fast they move, so RF can
+    // carry them over the few ms between BF's write and this pass (blocks / s, degrees / s)
+    float    pvx, pvy, pvz, pyawRate;
 };
 /// Bedrock Forge's hit / jump events (Jump Circles, Hit Splash, Ripple, Shockwave), or null
 BfFxEventsV1 const* fxEvents();   // (needs size >= v1; the v2 fields only when e->version >= 2)
