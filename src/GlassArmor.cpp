@@ -841,7 +841,7 @@ ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad,
 }
 
 bool bodyShaderBuilt() { return sizeof(shaders::kGlassBodyPs) > 64; }
-bool itemShaderBuilt() { return sizeof(shaders::kGlassItemPs) > 64; }
+bool itemShaderBuilt() { return sizeof(shaders::kGlassItemPs) > 64 && sizeof(shaders::kGlassItemActorPs) > 64; }
 /// Glass Items: the atlas this item draw samples = the biggest mip-mapped texture among the first descriptors of its
 /// first texture table (probe: r1.0 16x16 lightmap, r1.1 1024x1024 m4 the item atlas).
 /// Glass Body's pipeline: the game's Actor pipeline with our body pixel shader and the body root signature; the same
@@ -873,13 +873,14 @@ ComPtr<ID3D12PipelineState> makeBodyPso(ID3D12Device* dev, ActorDesc const& ad) 
 }
 
 /// Glass Items' pipeline: the game's ItemInHand pipeline with our item pixel shader (same root as the body: + t3).
-ComPtr<ID3D12PipelineState> makeItemPso(ID3D12Device* dev, ActorDesc const& ad) {
+ComPtr<ID3D12PipelineState> makeItemPso(ID3D12Device* dev, ActorDesc const& ad, bool actorOrder) {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC d = ad.d;
     unsigned base = 0;
     ID3D12RootSignature* ext = extendedRootBody(ad.root.Get(), &base);
     if (!ext) { ++gItemPsoFail; return nullptr; }
     d.pRootSignature = ext;
-    d.PS             = {shaders::kGlassItemPs, sizeof(shaders::kGlassItemPs)};
+    d.PS             = actorOrder ? D3D12_SHADER_BYTECODE{shaders::kGlassItemActorPs, sizeof(shaders::kGlassItemActorPs)}
+                                  : D3D12_SHADER_BYTECODE{shaders::kGlassItemPs, sizeof(shaders::kGlassItemPs)};
     auto& rt = d.BlendState.RenderTarget[0];
     rt.BlendEnable = FALSE, rt.LogicOpEnable = FALSE, rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
@@ -1463,7 +1464,8 @@ ID3D12PipelineState* bodyPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
 }
 /// Glass Items: our pipeline for an ItemInHand draw whose sprite we hold a copy of.
 ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso, std::shared_ptr<ActorDesc> const& ad,
-                                ID3D12PipelineState** game, GlassDraw* out) {
+                                ID3D12PipelineState** game, GlassDraw* out, bool actorOrder = false) {
+    int const key = kBodyKind + (actorOrder ? 2 : 1);
     // The glass item shader samples the atlas from the game's own table (t1), bound again by the replay - nothing to
     // copy, no texture pointer of ours (2026-11-18: the copy through a tracked pointer crashed the game after a teleport).
     // The body root signature's extra slot (t3 space9) gets a small buffer of ours so it is never left empty.
@@ -1483,7 +1485,7 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
     if (!dummy) return nullptr;
     {
         std::lock_guard l(gMutex);
-        if (auto g = gGlass.find({pso, kBodyKind + 1}); g != gGlass.end()) {
+        if (auto g = gGlass.find({pso, key}); g != gGlass.end()) {
             if (!g->second) return nullptr;
             *game = pso;
             out->body = true, out->skin = dummy->GetGPUVirtualAddress();
@@ -1491,9 +1493,9 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
             return g->second.Get();
         }
     }
-    ComPtr<ID3D12PipelineState> made = makeItemPso(dev.Get(), *ad);
+    ComPtr<ID3D12PipelineState> made = makeItemPso(dev.Get(), *ad, actorOrder);
     std::lock_guard l(gMutex);
-    auto& g = gGlass[{pso, kBodyKind + 1}];
+    auto& g = gGlass[{pso, key}];
     if (!g) g = made;
     if (!g) return nullptr;   // (makeItemPso counted it)
     *game = pso;
@@ -1530,7 +1532,23 @@ ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12Pipeline
     if (isItem) return itemPsoFor(list, pso, ad, game, out);   // (an item pipeline: only reached with Items on)
     // Glass Armor: unchanged (armour textures are 64x32 / 128x64 - never a skin)
     ID3D12Resource* tex = armorOn() ? boundArmorTexture(list) : nullptr;
-    if (!tex) return bodyOn() ? bodyPsoFor(list, pso, ad, game, out) : nullptr;
+    if (!tex) {
+        if (bodyOn())
+            if (auto* p = bodyPsoFor(list, pso, ad, game, out)) return p;
+        // a held item drawn by an ItemInHand pipeline with the ACTOR vertex output (2026-11-18 probe: the first-person
+        // sword and your arm share one ItemInHandColor pipeline - the arm binds your skin, the sword the item atlas)
+        if (itemsOn()) {
+            SrvInfo si;
+            bool named = false;
+            {
+                std::lock_guard l(gMutex);
+                auto pi = gPsos.find(pso);
+                named = gNamesLearned && pi != gPsos.end() && nameOf(pi->second.ps).find("ItemInHand") != std::string::npos;
+            }
+            if (named && !boundSkinTexture(list, &si)) return itemPsoFor(list, pso, ad, game, out, true);
+        }
+        return nullptr;
+    }
     int kind;
     {
         std::lock_guard l(gMutex);
