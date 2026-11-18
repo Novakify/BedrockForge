@@ -638,6 +638,19 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
             if (sc.fits(50)) toggleRow(f, x, sc.y, wd, s.label, "", s.on, a, [sp] { sp->on = !sp->on; Registry::get().save(); });
             sc.y += 60;
         } else {
+            if (s.id.rfind("key", 0) == 0 && s.max >= 200) {   // [Prism] a key setting: click, then press the key (no code slider)
+                std::string const bid = m->id + "/" + s.id;
+                bool const listening = gBindFor == bid;
+                if (sc.fits(50)) {
+                    int const vk = int(s.value + 0.5f);
+                    row(f, x, sc.y, wd, 50, s.label, listening ? "Press a key...  (Backspace clears, Esc cancels)" : "Click, then press the key you want", a, listening);
+                    f.g.text(listening ? "..." : (vk > 0 && vk < 256 ? keyNames()[size_t(vk)] : std::string("None")), x + wd - 16, sc.y + 25, 13,
+                             rgba(kWhite, listening ? 1.0f : 0.85f), a, true, 2, listening ? 0.6f : 0);
+                    f.hits.push_back({x, sc.y, wd, 50, [bid](bool) { gBindFor = gBindFor == bid ? std::string() : bid; }});
+                }
+                sc.y += 60;
+                continue;
+            }
             if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); },
                                     s.id.rfind("key", 0) == 0 ? &keyNames() : &s.choices); // [BF] key sliders (key, key_play, ...) show the key, not a code
             sc.y += 74;
@@ -1263,10 +1276,21 @@ void install() {
         if (!gBindFor.empty()) {                           // recording a module's toggle key
             ev.cancel();
             if (!ev.isDown()) return;
-            auto* m = Registry::get().find(gBindFor);
+            auto const slash = gBindFor.find('/');            // "module/setting": a key setting (Freelook's key...)
+            auto* m = Registry::get().find(gBindFor.substr(0, slash));
             int   vk = k == 0x10 ? (win32::keyDown(0xA1) ? 0xA1 : 0xA0) : k;
             if (!m || k == 0x1B) { gBindFor.clear(); return; }
             if (vk == 0xA1 || vk == 0x2D) { toast("Right Shift / Insert open the menu - pick another key"); return; }
+            if (slash != std::string::npos) {
+                if (auto* st = m->setting(gBindFor.substr(slash + 1))) {
+                    bool const clear = k == 0x08 || k == 0x2E;
+                    st->value = clear ? 0.f : float(vk & 255);
+                    toast(clear ? m->name + ": key cleared" : m->name + " key: " + keyNames()[size_t(vk & 255)]);
+                    Registry::get().save();
+                }
+                gBindFor.clear();
+                return;
+            }
             if (k == 0x08 || k == 0x2E) { m->key = 0; toast(m->name + ": keybind cleared"); }
             else {
                 for (auto& o : Registry::get().all())       // one key, one module

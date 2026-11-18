@@ -1312,7 +1312,7 @@ void registerBuiltins() {
     // [Purxiy "freelook": look around without turning] Renderer Foundation turns the camera round you while the key is
     // held (or toggled); you keep running the way you were facing. No key until you pick one (your controls stay yours).
     r.add("freelook", "Freelook", Category::Camera, "Look around without turning: hold your key and the camera orbits you", false)
-        .slider("key", "Key (pick one: none by default)", 0, 0, 254, 1).choice("mode", "Mode", {"Hold", "Toggle"}, 0)
+        .slider("key", "Freelook key", 0, 0, 254, 1).choice("mode", "Mode", {"Hold", "Toggle"}, 0)
         .slider("distance", "Distance (blocks, 0 = from your eyes)", 4.f, 0.f, 10.f, 0.5f);
     r.add("zoom", "Zoom", Category::Camera, "Hold C to zoom", true)
         .slider("factor", "Zoom factor", 4, 1.5f, 12, 0.5f).slider("key", "Key", 0x43, 8, 254, 1)
