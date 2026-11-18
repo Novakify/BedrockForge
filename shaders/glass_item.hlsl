@@ -57,6 +57,17 @@ cbuffer GA : register(b0, space9) {
 };
 
 // the ItemInHandColor vertex shader's output signature (probe 2026-11-17): COLOR3 and COLOR1 swapped vs Actor
+#if ITEM_ACTOR_VSOUT
+struct PSIn {   // the Actor vertex output order (some ItemInHand pipelines use it: the held sword)
+    float4 pos : SV_Position;
+    float4 c1  : COLOR1;
+    float4 c0  : COLOR0;
+    float4 c2  : COLOR2;
+    float4 c3  : COLOR3;
+    float2 uv  : TEXCOORD0;
+    float3 t3  : TEXCOORD3;
+};
+#else
 struct PSIn {
     float4 pos : SV_Position;
     float4 c3  : COLOR3;
@@ -66,6 +77,7 @@ struct PSIn {
     float2 uv  : TEXCOORD0;
     float3 t3  : TEXCOORD3;
 };
+#endif
 
 bool atlasIs0() { uint w0, h0, w1, h1; gTex0.GetDimensions(w0, h0); gTex1.GetDimensions(w1, h1); return w0 * h0 > w1 * h1; }
 uint2 itemSize() { uint w, h; if (atlasIs0()) gTex0.GetDimensions(w, h); else gTex1.GetDimensions(w, h); return uint2(w, h); }

@@ -9,4 +9,7 @@ inline constexpr uint8_t kGlassBodyPs[1] = {
 inline constexpr uint8_t kGlassItemPs[1] = {
     0x00
 };
+inline constexpr uint8_t kGlassItemActorPs[1] = {
+    0x00
+};
 } // namespace rf::glassarmor::shaders
