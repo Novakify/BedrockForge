@@ -1012,11 +1012,17 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
             p.item  = gd.item;
             p.skin  = gd.skin;
             p.a = a, p.b = b, p.c = c, p.d = d, p.e = e;
-            std::lock_guard g(gGaMutex);
-            auto& gl = gGa[list];
-            p.ia     = gl.ia;
-            if (p.root.sig && gl.ia.haveIb) gl.pending.push_back(std::move(p));
-            else if (p.item) rf::glassarmor::traceItemReplay(2);
+            bool const item = p.item;
+            {
+                std::lock_guard g(gGaMutex);
+                auto& gl = gGa[list];
+                p.ia     = gl.ia;
+                if (p.root.sig && gl.ia.haveIb) gl.pending.push_back(std::move(p));
+                else if (item) rf::glassarmor::traceItemReplay(2);
+            }
+            // Glass Items: replay right here, in the game's own state (2026-11-18: held back to the end of the pass, the
+            // replayed sword never showed - the hand is drawn with its own viewport / depth state, gone by the flush)
+            if (item) gaFlush(list);
         } else {
             if (gaOn() && gaHasPending(list) && !rf::glassarmor::isActorPso(rf::glassarmor::listPso(list))) gaFlush(list);
             reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
