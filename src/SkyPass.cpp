@@ -57,6 +57,7 @@
 #include <memory>
 
 namespace rf::sky {
+void applySkyMode(int mode);   // [Sky] Bedrock Forge's Sky module: whose sky owns the screen (defined below)
 namespace {
 using Microsoft::WRL::ComPtr;
 
@@ -145,12 +146,14 @@ void pollAtmos() {
     if (t == lastT) return;
     lastT = t;
     AtmosSet a;
+    int skyMode = -1;
     std::ifstream in(gAtmosFile);
     std::string   k;
     while (in >> k) {
         auto rd = [&](float& v) { in >> v; };
         auto rd3 = [&](float* v) { in >> v[0] >> v[1] >> v[2]; };
-        if (k == "haze") { int v = 0; in >> v; a.haze = v != 0; }
+        if (k == "skymode") { int v = -1; in >> v; skyMode = v; }
+        else if (k == "haze") { int v = 0; in >> v; a.haze = v != 0; }
         else if (k == "mist") { int v = 0; in >> v; a.mist = v != 0; }
         else if (k == "haze_a") rd3(a.hA); else if (k == "haze_b") rd3(a.hB);
         else if (k == "haze_strength") rd(a.hStrength); else if (k == "haze_height") rd(a.hHeight); else if (k == "haze_clear") rd(a.hClear);
@@ -224,6 +227,9 @@ void pollAtmos() {
         gAtmos = a;
     }
     gAtmosOn = a.any();
+    static int lastSky = -1;   // applied only when it changes: Ctrl+F6 / F6 keep working between changes
+    if (skyMode >= 0 && skyMode != lastSky) applySkyMode(skyMode);
+    lastSky = skyMode;
 }
 std::atomic<int> gWorldSky{0};     // World FX standalone sky (0 off, 1 Cloud Sea), see the World FX section below
 void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list);
@@ -3440,6 +3446,18 @@ void toggleAtmosphere() {
     gAtmosNoteWhich = to;
     gAtmosNoteKind  = !ok ? 2 : (bfLoadedAtmos() && (gLook.glass > 0.0f ? 1 : 0) != to ? 1 : 0);
     gAtmosNoteAt    = steadyMs();
+}
+// [Sky] 0 vanilla, 1 Cloud Sea, 2 Novak Glass, 3 Living Skies (Bedrock Forge's own sky layer: the World FX sky steps aside)
+void applySkyMode(int mode) {
+    if (mode == 1 || mode == 2) {
+        int const want = mode == 2 ? 1 : 0;
+        int const cur  = gAtmosWanted.load() >= 0 ? gAtmosWanted.load() : (gLook.glass > 0.0f ? 1 : 0);
+        if (cur != want) toggleAtmosphere();   // the same switch as Ctrl+F6 (block pack + look; shows its note)
+        setWorldSky(1);
+    } else {
+        setWorldSky(0);
+    }
+    saveWorldFxSettings();
 }
 bool atmosphereNote(std::string& text, float& alpha) {
     int64_t const age = steadyMs() - gAtmosNoteAt.load();
