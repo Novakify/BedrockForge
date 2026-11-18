@@ -16,7 +16,10 @@ ByteAddressBuffer gPrev  : register(t2, space9);
 // which the replay binds exactly as the game did. (2026-11-18: the first version copied the atlas into our own buffer
 // through a texture pointer RF tracked from descriptor writes - after a teleport that pointer could name a texture the
 // game had already freed, and the copy removed the device: the game died in the driver. No copy, no pointer now.)
-Texture2D<float4> gAtlas : register(t1);
+// (2026-11-18, in game: the held sword's material binds them the other way round - atlas t0, lightmap t1 - and the
+// sword came out the lightmap's cream. Both are declared; the bigger one is the atlas.)
+Texture2D<float4> gTex0 : register(t0);
+Texture2D<float4> gTex1 : register(t1);
 // must match GaParams (src/GlassArmor.cpp) and cbuffer GA in glass_armor.hlsl
 cbuffer GA : register(b0, space9) {
     float2 res;
@@ -64,10 +67,12 @@ struct PSIn {
     float3 t3  : TEXCOORD3;
 };
 
-uint2 itemSize() { uint w, h; gAtlas.GetDimensions(w, h); return uint2(w, h); }
+bool atlasIs0() { uint w0, h0, w1, h1; gTex0.GetDimensions(w0, h0); gTex1.GetDimensions(w1, h1); return w0 * h0 > w1 * h1; }
+uint2 itemSize() { uint w, h; if (atlasIs0()) gTex0.GetDimensions(w, h); else gTex1.GetDimensions(w, h); return uint2(w, h); }
 float4 itemAt(int2 t, int2 sz) {
     if (t.x < 0 || t.y < 0 || t.x >= sz.x || t.y >= sz.y) return float4(0, 0, 0, 0);
-    return gAtlas.Load(int3(t, 0));   // the view's own format: RGBA / BGRA come out in order
+    if (atlasIs0()) return gTex0.Load(int3(t, 0));
+return gTex1.Load(int3(t, 0));   // the view's own format: RGBA / BGRA come out in order
 }
 float3 texel(int2 p) {
     p      = clamp(p, int2(0, 0), int2(res) - 1);
