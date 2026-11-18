@@ -95,12 +95,16 @@ void frame(LocalPlayer* lp) {
             gS.keyWas = down;
             if (gS.inspectAt) insp = std::min(99.f, float(now - gS.inspectAt) / 1000.f);
         }
-        setPublic(self, "bfknife", design);
-        setPublic(self, "bfkdraw", draw);
-        setPublic(self, "bfkinsp", insp);
+        static bool wasOn = false;
+        if (on || wasOn) {   // off: one last write of 0 so the knife turns back into the sword, then hands off
+            setPublic(self, "bfknife", design);
+            setPublic(self, "bfkdraw", draw);
+            setPublic(self, "bfkinsp", insp);
+        }
+        wasOn = on;
     } catch (...) {}
     // everyone else: the same variables at 0, so their swords stay vanilla and the pack never reads a missing one
-    if (now - gS.othersAt > 500) {
+    if (on && now - gS.othersAt > 500) {   // only while Knives is on: otherwise nobody's variables are touched
         gS.othersAt = now;
         try {
             lp->getLevel().forEachPlayer([&](Player& p) {
