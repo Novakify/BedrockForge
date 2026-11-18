@@ -85,7 +85,7 @@ void registerModules(Registry& r) {
     r.add("knives", "Knives", Category::Visual,
           "Your sword becomes a real 3D knife with its own tricks, swings and sounds (only you see it; nothing changes in the fight)", false)
         .choice("model", "Knife", {"Karambit", "Balisong", "Dagger"}, 0)
-        .slider("inspect_key", "Inspect key (0 = none; press again to chain the next trick)", 0, 0, 254, 1)
+        .slider("inspect_vk", "Inspect key (Windows key code: 73 = I, 0 = none; press again to chain the next trick)", 73, 0, 254, 1)
         .toggleSetting("auto_inspect", "Idle tricks (plays with the blade while you stand still)", true)
         .slider("interval", "Trick interval (s of idle time)", 12.f, 5.f, 30.f, 1.f)
         .slider("speed", "Animation speed", 1.f, 0.65f, 1.5f, 0.05f)
@@ -117,7 +117,7 @@ void frame(LocalPlayer* lp) {
             bool const input = w32::gameFocused() && !menu::isOpen() && w32::cursorHidden();
             if (m->flag("draw", true)) draw = secs(gS.drawAt);
             // inspect: the key (each press chains the next trick), or idle tricks after `interval` s standing still
-            int const key = int(m->num("inspect_key", 0));
+            int const key = int(m->num("inspect_vk", 73));
             bool const down = key > 0 && input && w32::keyDown(key);
             if (down && !gS.keyWas && sword) { gS.inspectAt = now; ++gS.inspectN; }
             gS.keyWas = down;

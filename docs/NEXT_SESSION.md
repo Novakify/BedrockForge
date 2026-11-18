@@ -9,8 +9,8 @@
 - First person: `bfk_fix` bone (scale 0.75, +7 y) via `animation.bfk.knife_fp`.
 - BF: vars always written (rest values when off - swords no longer vanish), draw also on sword->sword slot change.
   Needs the new DLL installed (game closed).
-- Open: strong blue tint in that world (world grading / shader, not the textures); inspect key not bound (ask
-  Fernando - Purxiy default I); Knives gear button in the menu did not open settings via computer-use clicks.
+- Open: strong blue tint in that world (world grading / shader, not the textures); inspect key = I (Fernando's pick, setting
+  inspect_vk = 73; renamed from inspect_key so the old saved 0 doesn't override it); Knives gear button in the menu did not open settings via computer-use clicks.
 - Device commit gotcha: re-committing to the same device path kept the old bytes; use a new file name.
 
 - Knives module + BF Cosmetics pack are on main (docs/COSMETICS.md). DLL from main 07ad8a1 is INSTALLED in
