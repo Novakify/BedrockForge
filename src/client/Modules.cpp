@@ -32,6 +32,7 @@
 
 #include "mc/client/game/IClientInstance.h"
 #include "mc/client/gui/controls/UIControl.h"
+#include "mc/client/gui/controls/renderers/HudCursorRenderer.h"
 #include "mc/client/gui/controls/VisualTree.h"
 #include "mc/client/options/IOptionRegistry.h"
 #include "mc/options/option_types/BoolOption.h"
@@ -134,6 +135,7 @@ std::deque<int64_t>   gLeftClicks, gRightClicks; // guarded by gMutex
 std::atomic<float>    gLastReach{0};
 std::atomic<int64_t>  gLastReachAt{0};
 std::atomic<bool>     gLastHitCrit{false};   // [Custom Crosshair] the last hit was a critical (gold marker)
+std::atomic<int64_t>  gVanillaCrossMs{0};     // [Custom Crosshair] the last frame the game wanted its crosshair (first person, GUI shown)
 std::atomic<int64_t>  gTargetId{0}, gTargetAt{0};
 std::atomic<int>      gTargetHits{0};
 std::atomic<int>      gCombo{0};
@@ -743,6 +745,14 @@ LL_TYPE_INSTANCE_HOOK(BfFovHook, ll::memory::HookPriority::Normal, LevelRenderer
     return fov / now;
 }
 
+// [Custom Crosshair] the vanilla crosshair steps aside while ours is on (otherwise both draw on top of each other)
+LL_TYPE_INSTANCE_HOOK(BfCrosshairHook, ll::memory::HookPriority::Normal, HudCursorRenderer, &HudCursorRenderer::$render, void,
+                      MinecraftUIRenderContext& ctx, IClientInstance& ci, UIControl& owner, int pass) {
+    gVanillaCrossMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (Registry::get().on("crosshair")) return;
+    origin(ctx, ci, owner, pass);
+}
+
 LL_TYPE_INSTANCE_HOOK(BfTurnHook, ll::memory::HookPriority::Normal, LocalPlayer, &LocalPlayer::_applyTurnDelta, void,
                       Vec2 const& delta) {
     float scale = 1.0f;
@@ -1125,6 +1135,11 @@ void registerBuiltins() {
         auto* m  = Registry::get().find("crosshair");
         if (!f.player) return;
         int64_t const now = nowMs();
+        {   // only where the game would draw its own (not in third person, not with the GUI hidden); no hook seen yet = always
+            int64_t const v = gVanillaCrossMs.load();
+            int64_t const st = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            if (v > 0 && st - v > 250) return;
+        }
         float cx = std::round(f.width / 2), cy = std::round(f.height / 2);
         int const style = std::clamp(int(m->num("style", 1)), 0, 5);
         float len = m->num("size", 4), th = m->num("thickness", 1), gap = m->num("gap", 2);
@@ -1210,7 +1225,7 @@ void registerBuiltins() {
                 // vanilla parity: nobody sneaking or invisible gets a tag (no extra info over the game's own tags)
                 try { if (p.isSneaking() || p.isInvisible()) return true; } catch (...) { return true; }
                 Vec3 const pos = p.getPosition();
-                float const d[3] = {pos.x - eye.x, pos.y + 0.95f - eye.y, pos.z - eye.z};
+                float const d[3] = {pos.x - eye.x, pos.y + 0.62f - eye.y, pos.z - eye.z};   // a little over the head (getPosition is the eye)
                 float const dz = d[0] * fw[0] + d[1] * fw[1] + d[2] * fw[2];
                 float const dl = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
                 if (dz < 0.3f || dl > range) return true;
@@ -1639,6 +1654,7 @@ void installRuntime() {
     matchfx::install();
     BfFovHook::hook();
     BfTurnHook::hook();
+    BfCrosshairHook::hook();
     BfAttackHook::hook();
     BfSurvivalAttackHook::hook();
 
@@ -1772,6 +1788,7 @@ void uninstallRuntime() {
     gSubs.clear();
     BfFovHook::unhook();
     BfTurnHook::unhook();
+    BfCrosshairHook::unhook();
     BfAttackHook::unhook();
     BfSurvivalAttackHook::unhook();
 }

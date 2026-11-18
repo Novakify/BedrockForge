@@ -1709,6 +1709,22 @@ TEST(awaken) { // [LyricsForge] no music = the vanilla world; a song starts = ~5
     CHECK_EQ(h.active, 0u);
 }
 
+TEST(living_skies_without_music) { // [BF] the Sky module ("Living Skies") turns Awaken off: its sky is up with no song at all
+    using namespace bf::lyrics::sky;
+    Config cfg; cfg.skyPreset = "galaxy"; cfg.awaken = false; cfg.enabled = true;
+    AutoPerf perf;
+    System sys;
+    SystemIn in; in.dtSec = 0.05; in.pitch = -10; in.playing = false;
+    for (int i = 0; i < 20; ++i) { in.nowMs += 50; sys.step(true, cfg, perf, in); }
+    BfSkyFrameV1 h{}; h.size = sizeof h; BF_CopySkyFrame(&h, nullptr, 0);
+    CHECK_EQ(h.active, 1u);
+    CHECK(sys.awaken() == 1.0f);
+    cfg.awaken = true;                                        // the same with Awaken on (LyricsForge's own sky) stays vanilla
+    System s2;
+    for (int i = 0; i < 20; ++i) { in.nowMs += 50; s2.step(true, cfg, perf, in); }
+    CHECK(s2.awaken() == 0.0f);
+}
+
 TEST(sky_system_store) {
     using namespace bf::lyrics::sky;
     Config   cfg;
