@@ -68,7 +68,7 @@ def blade_finish(rgb, v, single=True, polish_bevel=True):
 
 
 # ------------------------------------------------------------------ blade faces
-def damascus(w, h, seed=5, layers=13):
+def damascus(w, h, seed=5, layers=13, blade=True):
     """pattern-welded "random" Damascus, acid etched. Real Damascus is forged WITH the blade, so its layers run along
     the blade and flow like water or smoke (never a repeating stamp): here the layers follow the blade face (v across,
     u along), folded by a low-frequency domain warp plus a finer second warp for the tight ripples. Etch: the
@@ -90,6 +90,8 @@ def damascus(w, h, seed=5, layers=13):
     dark, bright = np.array([62, 63, 70.0]), np.array([182, 184, 190.0])
     rgb = dark + (bright - dark) * f[..., None]
     rgb += (fbm(h, w, seed + 7, 2, 40)[..., None] - 0.5) * 8            # fine etch grain
+    if not blade:                                                      # tang / ricasso / ring: same billet, no grinds
+        return rgba(rgb, ID_METAL)
     bevel = np.clip((v - EDGE_V) / (1 - EDGE_V) * 4, 0, 1) * np.ones((h, w))
     pol = 150 + (rgb - 150) * 0.35 + 45
     rgb = rgb * (1 - bevel[..., None]) + pol * bevel[..., None]
@@ -122,22 +124,25 @@ def stonewash(w, h, seed=11):
     return rgba(blade_finish(rgb, v), ID_METAL)
 
 
-def mirror(w, h, seed=17, double=True):
+def mirror(w, h, seed=17, double=True, symmetric=False):
     """mirror polish: it reflects the room - a dark band, a bright window band, soft floor - along the blade, with
     faint polishing streaks; a double edge has the ridge bright and both bevels clean"""
     v = np.linspace(0, 1, h)
+    if symmetric:                                       # edge (v=0) - ridge (v=0.5) - edge (v=1): fold to ridge->edge
+        v = np.abs(2 * v - 1)[::-1] if False else 1 - np.abs(2 * v - 1)
+        v = 1 - v
     k = np.interp(v, [0.0, 0.10, 0.34, 0.345, 0.55, 0.78, 1.0], [0.95, 0.62, 0.26, 0.90, 0.72, 0.38, 0.62])
     rgb = mix(np.zeros((h, w, 3)) + [44, 46, 54.0], [232, 234, 240], k[:, None] * np.ones((h, w)))
     rgb += np.stack([np.sin(np.arange(w) * 0.21 + j * 1.7) for j in range(h)])[..., None] * 3
     return rgba(blade_finish(rgb, v, single=not double), ID_METAL)
 
 
-def spine_steel(w, h, tone=(96, 96, 104), jimp_to=0.2):
+def spine_steel(w, h, tone=(96, 96, 104), jimp_to=0.2, jimp_from=0.0):
     rgb = np.zeros((h, w, 3)) + np.array(tone, float)
     v = np.linspace(-1, 1, h)[:, None]
     rgb += (1 - np.abs(v))[..., None] ** 2 * 40
     u = np.arange(w)
-    j = (u < w * jimp_to) & (u % 2 == 1)
+    j = (u >= w * jimp_from) & (u < w * jimp_to) & (u % 2 == 1)
     rgb[:, j] *= 0.45
     return rgba(rgb, ID_METAL)
 
@@ -163,10 +168,13 @@ def cocobolo(w, h, seed=23):
     rgb = mix(rgb, [52, 22, 20], streak)
     pores = (np.random.default_rng(seed).random((h, w)) < 0.008)
     rgb[pores] *= 0.75
-    for c in (0.0, 0.5):
-        d = np.minimum(np.abs(v - c), np.abs(v - c - 1))
-        rgb[d < 0.028, :] = [140, 142, 148]
-        rgb[(d >= 0.028) & (d < 0.05), :] = [128, 20, 24]
+    return rgba(rgb, 255)
+
+
+def g10_liner(w, h):
+    """red G10 liner: fine layered fibreglass, a slightly lighter line at mid-thickness"""
+    rgb = np.zeros((h, w, 3)) + [132, 22, 26.0]
+    rgb += (np.random.default_rng(71).random((h, w)) - 0.5)[..., None] * 8
     return rgba(rgb, 255)
 
 
