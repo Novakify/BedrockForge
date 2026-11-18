@@ -848,12 +848,15 @@ ID3D12Resource* boundItemAtlas(ID3D12GraphicsCommandList* list, SrvInfo* info) {
         std::lock_guard l(gMutex);
         bool    any  = false;
         SrvInfo best;
-        for (int k = 0; k < 4; ++k) {
+        // ONLY the two textures the item shader binds (probe: t0 = 16x16 lightmap, t1 = the atlas). The heap slots after
+        // them can still describe textures the game has freed - the first version looked at 4, picked a dead texture as
+        // "the atlas" and copied from it: the game crashed in the driver ~3 s after joining a world (2026-11-18)
+        for (int k = 0; k < 2; ++k) {
             auto it = gSrvs.find(cpu + size_t(k) * inc);
             if (it == gSrvs.end() || !it->second.res) continue;
             any = true;
             auto const& v = it->second;
-            if (v.w >= 256 && v.h >= 256 && v.mips > 1 && uint64_t(v.w) * v.h > uint64_t(best.w) * best.h) best = v;
+            if (k == 1 && v.w >= 256 && v.h >= 256 && v.mips > 1) best = v;
         }
         if (!any) continue;   // the sampler table (p0): no textures there
         if (!best.res) return nullptr;
