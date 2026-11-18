@@ -26,13 +26,19 @@ def keys(points):
 
 
 def anim(length, bones, sounds=None, particles=None):
-    a = {"animation_length": length, "anim_time_update": SPEED, "bones": {}}
-    for bone, ch in bones.items():
-        a["bones"][bone] = {k: keys(v) for k, v in ch.items()}
+    # NB: no empty "bones": {} - in game one such clip made Bedrock drop its whole animation file (2026-11-18)
+    a = {"animation_length": length, "anim_time_update": SPEED}
+    if bones:
+        a["bones"] = {bone: {k: keys(v) for k, v in ch.items()} for bone, ch in bones.items()}
+    def timeline(events, make):
+        out = {}
+        for t, e in events:
+            out.setdefault(f"{t:.3f}", []).append(make(e))
+        return {t: v[0] if len(v) == 1 else v for t, v in out.items()}
     if sounds:
-        a["sound_effects"] = {f"{t:.3f}": {"effect": e} for t, e in sounds}
+        a["sound_effects"] = timeline(sounds, lambda e: {"effect": e})
     if particles:
-        a["particle_effects"] = {f"{t:.3f}": {"effect": e, "locator": "tip"} for t, e in particles}
+        a["particle_effects"] = timeline(particles, lambda e: {"effect": e, "locator": "tip"})
     return a
 
 
@@ -147,9 +153,13 @@ DURATION = {}
 
 
 def build():
-    """-> (animations json, controllers json, description fields for every sword attachable)"""
+    """-> (animations json, controllers json, animation map, animate list, sounds, particles)
+
+    No animation controllers: on the PC they never ran. Every clip is a plain animation whose time IS Bedrock Forge's
+    clock for its event (seconds since the draw / inspect / click / hit x speed), switched on by a condition. The click
+    parity picks swing1 or swing2 (and insp1 / insp2, hit a / b), so a new click restarts the other clip at 0."""
     anims = {}
-    for i, k in enumerate(KNIVES):
+    for k in KNIVES:
         for name, (length, bones, snd, prt) in DEFS[k]().items():
             DURATION[(k, name)] = length
             anims[f"animation.bfk.{k}.{name}"] = anim(length, bones)
@@ -157,57 +167,56 @@ def build():
                 anims[f"animation.bfk.{k}.{name}.snd"] = anim(length, {}, sounds=snd)
             if prt:
                 anims[f"animation.bfk.{k}.{name}.fx"] = anim(length, {}, particles=prt)
-    # first person: a knife is held a little bigger than the sword's 0.55 (it is shorter)
-    anims["animation.bfk.knife_fp"] = {"loop": True, "bones": {"bfk_pose": {"scale": 1.25}}}
+    # first person: bfk_fix (between the World FX hold bone and the pose) sizes and places the knife in view;
+    # tuned on real frames (Knives Test world, 2026-11-17)
+    anims["animation.bfk.knife_fp"] = {"loop": True, "bones": {"bfk_fix": {"scale": 0.75, "position": [0, 7, 0]}}}
+    # confirmed hits: sparks + cut flash off the tip, and the cut sound
+    for ab in ("a", "b"):
+        anims[f"animation.bfk.hit_{ab}.fx"] = anim(0.3, {}, particles=[(0.0, "spark"), (0.0, "cutflash")])
+        anims[f"animation.bfk.hit_{ab}.snd"] = anim(0.3, {}, sounds=[(0.0, "cut")])
 
-    def state(kind, longest):
-        """animations of one state for every knife, each gated on the selected knife (+ its sound / fx tracks)"""
-        lst = []
-        for i, k in enumerate(KNIVES):
-            n = i + 1
-            lst.append({f"{k}_{kind}": f"v.bfk == {n}"})
-            if (k, kind) in DURATION and f"animation.bfk.{k}.{kind}.snd" in anims:
-                lst.append({f"{k}_{kind}_snd": f"v.bfk == {n} && v.bfk_snd"})
-            if f"animation.bfk.{k}.{kind}.fx" in anims:
-                lst.append({f"{k}_{kind}_fx": f"v.bfk == {n} && v.bfk_arcs"})
-        return lst
-
-    dmax = {kind: max(DURATION[(k, kind)] for k in KNIVES) for kind in ("draw", "insp1", "insp2", "swing1", "swing2")}
-    go_attack = [{"swing1": "v.bfk_a < 0.1 && v.bfk_an == 1"}, {"swing2": "v.bfk_a < 0.1 && v.bfk_an == 0"}]
-    go_inspect = [{"insp1": "v.bfk_i < 0.1 && v.bfk_in == 1"}, {"insp2": "v.bfk_i < 0.1 && v.bfk_in == 0"}]
-    # the state ends by Bedrock Forge's clock (seconds since the event x speed), the same for every knife
-    end = lambda var, kind: {"idle": f"{var} * v.bfk_spd > {dmax[kind]:.2f}"}
-    ctrl = {"initial_state": "idle", "states": {
-        "idle": {"transitions": [{"draw": "v.bfk_d < 0.1"}] + go_attack + go_inspect},
-        "draw": {"animations": state("draw", dmax["draw"]), "transitions": go_attack + [end("v.bfk_d", "draw")], "blend_transition": 0.08},
-        "insp1": {"animations": state("insp1", 0), "transitions": go_attack + [{"insp2": "v.bfk_i < 0.1 && v.bfk_in == 0"}, end("v.bfk_i", "insp1")], "blend_transition": 0.12},
-        "insp2": {"animations": state("insp2", 0), "transitions": go_attack + [{"insp1": "v.bfk_i < 0.1 && v.bfk_in == 1"}, end("v.bfk_i", "insp2")], "blend_transition": 0.12},
-        "swing1": {"animations": state("swing1", 0), "transitions": [{"swing2": "v.bfk_a < 0.1 && v.bfk_an == 0"}, end("v.bfk_a", "swing1")], "blend_transition": 0.05},
-        "swing2": {"animations": state("swing2", 0), "transitions": [{"swing1": "v.bfk_a < 0.1 && v.bfk_an == 1"}, end("v.bfk_a", "swing2")], "blend_transition": 0.05},
-    }}
-    # confirmed hits: sparks off the tip + the cut (each its own controller so the setting can switch it off)
-    hit_t = [{"hit_a": "v.bfk_h < 0.1 && v.bfk_hn == 1"}, {"hit_b": "v.bfk_h < 0.1 && v.bfk_hn == 0"}]
-    def hit_ctrl(entry):
-        return {"initial_state": "idle", "states": {
-            "idle": {"transitions": hit_t},
-            "hit_a": dict(entry, transitions=[{"hit_b": "v.bfk_h < 0.1 && v.bfk_hn == 0"}, {"idle": "v.bfk_h > 0.25"}]),
-            "hit_b": dict(entry, transitions=[{"hit_a": "v.bfk_h < 0.1 && v.bfk_hn == 1"}, {"idle": "v.bfk_h > 0.25"}])}}
-    ctrls = {"format_version": "1.10.0", "animation_controllers": {
-        "controller.animation.bfk.tricks": ctrl,
-        "controller.animation.bfk.hit_fx": hit_ctrl({"particle_effects": [{"effect": "spark", "locator": "tip"}, {"effect": "cutflash", "locator": "tip"}]}),
-        "controller.animation.bfk.hit_snd": hit_ctrl({"sound_effects": [{"effect": "cut"}]}),
-    }}
-    amap = {"bfk_tricks": "controller.animation.bfk.tricks", "bfk_hit_fx": "controller.animation.bfk.hit_fx",
-            "bfk_hit_snd": "controller.animation.bfk.hit_snd", "bfk_fp": "animation.bfk.knife_fp"}
-    for name in anims:
-        if name.startswith("animation.bfk.") and name.count(".") >= 3:
-            short = name[len("animation.bfk."):].replace(".", "_")
-            amap[short] = name
-    animate = [{"bfk_tricks": "v.bfk > 0"}, {"bfk_hit_fx": "v.bfk > 0 && v.bfk_hfx"}, {"bfk_hit_snd": "v.bfk > 0 && v.bfk_snd"},
-               {"bfk_fp": "v.bfk > 0 && c.is_first_person"}]
+    clock = {"draw": ("v.bfk_d", None), "insp1": ("v.bfk_i", "v.bfk_in == 1"), "insp2": ("v.bfk_i", "v.bfk_in == 0"),
+             "swing1": ("v.bfk_a", "v.bfk_an == 1"), "swing2": ("v.bfk_a", "v.bfk_an == 0")}
+    amap = {"bfk_fp": "animation.bfk.knife_fp"}
+    animate = [{"bfk_fp": "v.bfk > 0 && c.is_first_person"}]
+    for i, k in enumerate(KNIVES):
+        n = i + 1
+        for kind, (var, parity) in clock.items():
+            if (k, kind) not in DURATION:
+                continue
+            L = DURATION[(k, kind)]
+            on = f"v.bfk == {n} && {var} * v.bfk_spd < {L:.3f}"
+            if parity:
+                on += f" && {parity}"
+            if kind in ("draw", "insp1", "insp2"):
+                on += " && !v.bfk_swinging"       # a click cuts a trick short instead of stacking on it
+            for suffix, extra in (("", ""), (".snd", " && v.bfk_snd"), (".fx", " && v.bfk_arcs")):
+                full = f"animation.bfk.{k}.{kind}{suffix}"
+                if full not in anims:
+                    continue
+                short = f"{k}_{kind}{suffix.replace('.', '_')}"
+                anims[full]["anim_time_update"] = f"{var} * v.bfk_spd"
+                amap[short] = full
+                animate.append({short: on + extra})
+    for ab, par in (("a", 1), ("b", 0)):
+        on = f"v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == {par}"
+        for suffix, extra in (("fx", " && v.bfk_hfx"), ("snd", " && v.bfk_snd")):
+            full = f"animation.bfk.hit_{ab}.{suffix}"
+            anims[full]["anim_time_update"] = "v.bfk_h"
+            amap[f"hit_{ab}_{suffix}"] = full
+            animate.append({f"hit_{ab}_{suffix}": on + extra})
     sounds = {e: f"bfk.{e}" for e in ("swish", "cut", "click", "ring_spin", "clack", "latch", "draw", "dagger_catch")}
     particles = {"arc": "bfk:arc", "spark": "bfk:spark", "cutflash": "bfk:cutflash"}
-    return {"format_version": "1.10.0", "animations": anims}, ctrls, amap, animate, sounds, particles
+    return {"format_version": "1.10.0", "animations": anims}, None, amap, animate, sounds, particles
+
+
+def swinging_expr():
+    """v.bfk_swinging for PRE: a swing clip of the selected knife is still running"""
+    parts = []
+    for i, k in enumerate(KNIVES):
+        L = max(DURATION.get((k, "swing1"), 0), DURATION.get((k, "swing2"), 0))
+        parts.append(f"(v.bfk == {i + 1} && v.bfk_a * v.bfk_spd < {L:.3f})")
+    return "v.bfk_swinging = " + " || ".join(parts) + ";"
 
 
 PRE = ("v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;"

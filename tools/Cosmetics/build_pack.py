@@ -47,7 +47,7 @@ HOLD = {
 }
 ANIMS, CTRLS, AMAP, ANIMATE, SOUND_FX, PARTICLE_FX = kn_anims.build()
 ANIMS["animations"].update(HOLD)
-PRE = kn_anims.PRE
+PRE = kn_anims.PRE + kn_anims.swinging_expr()
 
 RC = {"format_version": "1.8.0", "render_controllers": {"controller.render.bfk_knife": {
     "arrays": {"geometries": {"Array.kgeo": [f"Geometry.{n}" for n, _ in KNIVES]},
@@ -98,9 +98,19 @@ def write_shared(pack: Path):
         geo = export_poly_mesh(mesh, atlas, knives.bones(n), f"geometry.bfk_{n}")
         (pack / "models" / "entity" / f"bfk_{n}.geo.json").write_text(json.dumps(geo, separators=(",", ":")))
         Image.fromarray(atlas.img, "RGBA").save(pack / "textures" / "bf_cosmetics" / f"{n}.png")
-    (pack / "animations" / "bfk.animation.json").write_text(json.dumps(ANIMS, indent=1))
-    (pack / "animation_controllers").mkdir(parents=True, exist_ok=True)
-    (pack / "animation_controllers" / "bfk.animation_controllers.json").write_text(json.dumps(CTRLS, indent=1))
+    # one file per knife (+ the shared holds / hits): a bad clip then only costs its own knife, not every knife
+    groups = {}
+    for name, a in ANIMS["animations"].items():
+        k = name.split(".")[2]
+        groups.setdefault(k if k in kn_anims.KNIVES else "hits" if k.startswith("hit_") else "hold", {})[name] = a
+    for old in (pack / "animations").glob("bfk*.animation.json"):
+        old.unlink()
+    for g, al in groups.items():
+        (pack / "animations" / f"bfk_{g}.animation.json").write_text(
+            json.dumps({"format_version": "1.10.0", "animations": al}, indent=1))
+    stale = pack / "animation_controllers" / "bfk.animation_controllers.json"
+    if stale.exists():
+        stale.unlink()
     (pack / "render_controllers" / "bfk.render_controllers.json").write_text(json.dumps(RC, indent=1))
     (pack / "particles").mkdir(parents=True, exist_ok=True)
     for fn, js in kn_anims.particle_files().items():
