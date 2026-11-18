@@ -308,13 +308,17 @@ float3 ascension(float3 P, float3 rd, float dist, bool sky, float t, bool fp) {
     float  b = dot(rd, v), c = dot(v, v), d = dot(rd, -A), e = dot(v, -A);
     float  den = c - b * b;
     if (den < 1e-5) return L;
-    float  h  = saturate((e - b * d) / den);           // along the axis 0..1
+    float  hu = (e - b * d) / den;                     // along the axis (unclamped)
+    // (in game 2026-11-18: a thin gold beam ran from the crown up into the sky - rays passing above your head were
+    //  clamped onto the top of the axis, so the crown drew along a line forever. Above the crown / below the feet: none)
+    if (hu > 1.06 || hu < -0.04) return L;
+    float  h  = saturate(hu);
     float  sc = max(b * h - d, 0.0);                   // along the ray
     float3 Q  = A + v * h, Pr = rd * sc;
     float3 right = cross(float3(0, 1, 0), rd);
     right = dot(right, right) > 1e-4 ? normalize(right) : float3(1, 0, 0);
     float  x  = dot(Pr - Q, right);                    // across (signed), in blocks
-    float  y  = h * 3.4 - 0.1;                         // height above your feet
+    float  y  = hu * 3.4 - 0.1;                        // height above your feet (the crown fades out past the top)
     float  ax = abs(x);
     if (ax > 1.6 * S + 0.4 || sc < 0.2) return L;      // nowhere near: done
     // depth: a wall in front hides it; your own body in front lets the front sheet of flame show (fainter)
