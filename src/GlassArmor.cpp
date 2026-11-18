@@ -844,43 +844,6 @@ bool bodyShaderBuilt() { return sizeof(shaders::kGlassBodyPs) > 64; }
 bool itemShaderBuilt() { return sizeof(shaders::kGlassItemPs) > 64; }
 /// Glass Items: the atlas this item draw samples = the biggest mip-mapped texture among the first descriptors of its
 /// first texture table (probe: r1.0 16x16 lightmap, r1.1 1024x1024 m4 the item atlas).
-ID3D12Resource* boundItemAtlas(ID3D12GraphicsCommandList* list, SrvInfo* info) {
-    auto tables = rf::uicapture::rootTables(list);
-    for (auto const& [ri, gpu] : tables) {
-        size_t   cpu = 0;
-        unsigned inc = 0;
-        if (!rf::uicapture::gpuDescToCpu(gpu, cpu, inc)) continue;
-        std::lock_guard l(gMutex);
-        bool    any  = false;
-        SrvInfo best;
-        // ONLY the two textures the item shader binds (probe: t0 = 16x16 lightmap, t1 = the atlas). The heap slots after
-        // them can still describe textures the game has freed - the first version looked at 4, picked a dead texture as
-        // "the atlas" and copied from it: the game crashed in the driver ~3 s after joining a world (2026-11-18)
-        for (int k = 0; k < 2; ++k) {
-            auto it = gSrvs.find(cpu + size_t(k) * inc);
-            if (it == gSrvs.end() || !it->second.res) continue;
-            any = true;
-            auto const& v = it->second;
-            if (k == 1 && v.w >= 256 && v.h >= 256 && v.mips > 1) best = v;
-        }
-        if (!any) continue;   // the sampler table (p0): no textures there
-        {
-            std::string seen;
-            for (int k = 0; k < 4; ++k) {
-                auto it = gSrvs.find(cpu + size_t(k) * inc);
-                char b[64];
-                if (it == gSrvs.end() || !it->second.res) std::snprintf(b, sizeof b, "t%d -  ", k);
-                else std::snprintf(b, sizeof b, "t%d %ux%u m%u f%u  ", k, it->second.w, it->second.h, it->second.mips, it->second.fmt);
-                seen += b;
-            }
-            gItemSeen = seen;
-        }
-        if (!best.res) return nullptr;
-        *info = best;
-        return best.res;
-    }
-    return nullptr;
-}
 /// Glass Body's pipeline: the game's Actor pipeline with our body pixel shader and the body root signature; the same
 /// state changes as the armor's (opaque, depth written, replayed after the actor pass).
 ComPtr<ID3D12PipelineState> makeBodyPso(ID3D12Device* dev, ActorDesc const& ad) {
@@ -1501,48 +1464,40 @@ ID3D12PipelineState* bodyPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
 /// Glass Items: our pipeline for an ItemInHand draw whose sprite we hold a copy of.
 ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso, std::shared_ptr<ActorDesc> const& ad,
                                 ID3D12PipelineState** game, GlassDraw* out) {
+    // The glass item shader samples the atlas from the game's own table (t1), bound again by the replay - nothing to
+    // copy, no texture pointer of ours (2026-11-18: the copy through a tracked pointer crashed the game after a teleport).
+    // The body root signature's extra slot (t3 space9) gets a small buffer of ours so it is never left empty.
     if (!out || !itemShaderBuilt()) return nullptr;
-    SrvInfo         si;
-    ID3D12Resource* tex = boundItemAtlas(list, &si);
-    if (!tex) { ++gItemWhy[2]; return nullptr; }
-    int64_t const now = int64_t(GetTickCount64());
-    int           slot = -1;
+    ComPtr<ID3D12Device> dev;
+    if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return nullptr;
+    static ComPtr<ID3D12Resource> dummy;
+    static std::once_flag         once;
+    std::call_once(once, [&] {
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC   d{};
+        d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, d.Width = 256, d.Height = 1, d.DepthOrArraySize = 1, d.MipLevels = 1;
+        d.SampleDesc.Count = 1, d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (SUCCEEDED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&dummy))))
+            dummy->SetName(L"RF Glass Items slot");
+    });
+    if (!dummy) return nullptr;
     {
         std::lock_guard l(gMutex);
-        for (int k = 0; k < kAtlasSlots; ++k)
-            if (gAtlas[k].tex == tex && gAtlas[k].w == si.w && gAtlas[k].h == si.h && gAtlas[k].fmt == si.fmt) { slot = k; break; }
-        if (slot < 0) {   // a new atlas: take a free slot (or the one drawn longest ago that isn't being copied)
-            int pick = -1;
-            for (int k = 0; k < kAtlasSlots && pick < 0; ++k)
-                if (!gAtlas[k].tex) pick = k;                           // an empty slot
-            if (pick < 0)   // only a slot no item has drawn with for 3 s (no flip-flopping between atlases every frame)
-                for (int k = 0; k < kAtlasSlots; ++k)
-                    if (!gAtlas[k].pending && now - gAtlas[k].drawn > 3000 && (pick < 0 || gAtlas[k].drawn < gAtlas[pick].drawn)) pick = k;
-            if (pick < 0) return nullptr;
-            auto& A = gAtlas[pick];
-            A.tex = tex, A.keep = tex, A.w = si.w, A.h = si.h, A.fmt = si.fmt, A.ready = false, A.failed = false, A.pending = true, A.drawn = now;
-            return nullptr;
-        }
-        auto& A = gAtlas[slot];
-        A.drawn = now;
-        if (!A.ready || !A.buf) { ++gItemWhy[3]; return nullptr; }
         if (auto g = gGlass.find({pso, kBodyKind + 1}); g != gGlass.end()) {
             if (!g->second) return nullptr;
             *game = pso;
-            out->body = true, out->skin = A.buf->GetGPUVirtualAddress();
+            out->body = true, out->skin = dummy->GetGPUVirtualAddress();
             ++gGlassDraws, ++gItemDraws;
             return g->second.Get();
         }
     }
-    ComPtr<ID3D12Device> dev;
-    if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return nullptr;
     ComPtr<ID3D12PipelineState> made = makeItemPso(dev.Get(), *ad);
     std::lock_guard l(gMutex);
     auto& g = gGlass[{pso, kBodyKind + 1}];
     if (!g) g = made;
-    if (!g || !gAtlas[slot].ready || !gAtlas[slot].buf) return nullptr;
+    if (!g) return nullptr;   // (makeItemPso counted it)
     *game = pso;
-    out->body = true, out->skin = gAtlas[slot].buf->GetGPUVirtualAddress();
+    out->body = true, out->skin = dummy->GetGPUVirtualAddress();
     ++gGlassDraws, ++gItemDraws;
     return g.Get();
 }
@@ -2202,8 +2157,7 @@ void drawUi() {
                     gItemDrawsShown.load(), gItemPsoFail.load());
         {
             std::lock_guard l(gMutex);
-            ImGui::TextDisabled("Item draws not glassed: other material %ld, names pending %ld, no atlas bound %ld, atlas copying %ld | last item textures: %s",
-                                gItemWhy[0].load(), gItemWhy[1].load(), gItemWhy[2].load(), gItemWhy[3].load(), gItemSeen.empty() ? "-" : gItemSeen.c_str());
+            ImGui::TextDisabled("Item draws not glassed: other material %ld, names pending %ld", gItemWhy[0].load(), gItemWhy[1].load());
         }
         if (!itemShaderBuilt()) ImGui::TextDisabled("glass item shader missing from this build");
         bool mg = gMeasureGpu.load();

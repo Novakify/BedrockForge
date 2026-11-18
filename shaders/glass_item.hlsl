@@ -6,14 +6,17 @@
 //   * its own colours fill the glass, so a diamond sword is aqua glass with a warm handle, a golden apple amber
 //   * a neon line round the sprite's shape in a vivid version of the colour right there
 //   * Frosted / Glow / Shimmer / Colour from the client's Glass module, LyricsForge beat, Novak night glow
-// The item comes from OUR copy of the item ATLAS the draw samples (t3 space9: header uint w, h, rowPitch, bgra; rows from
-// byte 512), copied GPU-side once; the draw's UVs point into it. (The draw's first texture, 16x16, is the lightmap - the
+// The item comes from the item ATLAS the draw itself samples (the game's t1); the draw's UVs point into it. (The draw's first texture, 16x16, is the lightmap - the
 // first version read that and every item became a solid glass box.)
 
 ByteAddressBuffer gScene : register(t0, space9);
 ByteAddressBuffer gDepth : register(t1, space9);
 ByteAddressBuffer gPrev  : register(t2, space9);
-ByteAddressBuffer gItem  : register(t3, space9);
+// the item ATLAS straight from the game's own texture table (root parameter 1: t0 = the 16x16 lightmap, t1 = the atlas),
+// which the replay binds exactly as the game did. (2026-11-18: the first version copied the atlas into our own buffer
+// through a texture pointer RF tracked from descriptor writes - after a teleport that pointer could name a texture the
+// game had already freed, and the copy removed the device: the game died in the driver. No copy, no pointer now.)
+Texture2D<float4> gAtlas : register(t1);
 // must match GaParams (src/GlassArmor.cpp) and cbuffer GA in glass_armor.hlsl
 cbuffer GA : register(b0, space9) {
     float2 res;
@@ -61,12 +64,10 @@ struct PSIn {
     float3 t3  : TEXCOORD3;
 };
 
-uint2 itemSize() { return uint2(gItem.Load(0), gItem.Load(4)); }
+uint2 itemSize() { uint w, h; gAtlas.GetDimensions(w, h); return uint2(w, h); }
 float4 itemAt(int2 t, int2 sz) {
     if (t.x < 0 || t.y < 0 || t.x >= sz.x || t.y >= sz.y) return float4(0, 0, 0, 0);
-    uint v = gItem.Load(512u + uint(t.y) * gItem.Load(8) + uint(t.x) * 4u);
-    float4 c = float4(v & 255u, (v >> 8) & 255u, (v >> 16) & 255u, v >> 24) / 255.0;
-    return gItem.Load(12) != 0u ? c.bgra : c;
+    return gAtlas.Load(int3(t, 0));   // the view's own format: RGBA / BGRA come out in order
 }
 float3 texel(int2 p) {
     p      = clamp(p, int2(0, 0), int2(res) - 1);
