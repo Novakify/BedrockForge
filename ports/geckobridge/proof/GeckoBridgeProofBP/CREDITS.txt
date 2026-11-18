@@ -1,0 +1,2 @@
+Sculk Enderman model, textures and animations: Sculk Horde by TeamPeril (Bob_Bobertson & contributors), Apache License 2.0, https://github.com/TeamPeril/sculkhorde . Changes: geometry renamed, GeckoLib easings baked to linear keyframes, packaged as a Bedrock pack.
+Converted by GeckoBridge (Bedrock Forge). Private test build, do not redistribute.

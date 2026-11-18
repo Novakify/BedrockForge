@@ -1,0 +1,33 @@
+{
+ "format_version": "1.8.0",
+ "render_controllers": {
+  "controller.render.bfk_knife": {
+   "arrays": {
+    "geometries": {
+     "Array.kgeo": [
+      "Geometry.karambit",
+      "Geometry.balisong",
+      "Geometry.dagger"
+     ]
+    },
+    "textures": {
+     "Array.ktex": [
+      "Texture.karambit",
+      "Texture.balisong",
+      "Texture.dagger"
+     ]
+    }
+   },
+   "geometry": "Array.kgeo[v.bfk - 1]",
+   "materials": [
+    {
+     "*": "v.is_enchanted ? Material.enchanted : Material.default"
+    }
+   ],
+   "textures": [
+    "Array.ktex[v.bfk - 1]",
+    "Texture.enchanted"
+   ]
+  }
+ }
+}

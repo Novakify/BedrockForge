@@ -1,0 +1,17 @@
+{
+ "format_version": "1.8.0",
+ "render_controllers": {
+  "controller.render.ice_bear_2026.eyes": {
+   "geometry": "Geometry.default",
+   "materials": [
+    {
+     "*": "Material.eyes"
+    }
+   ],
+   "textures": [
+    "Texture.eyes"
+   ],
+   "ignore_lighting": true
+  }
+ }
+}

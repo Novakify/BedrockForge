@@ -1,0 +1,33 @@
+{
+  "about": "Sculk Horde (TeamPeril, Apache-2.0): GeckoBridge visuals + the ModPorter 'sculkhorde' overlay (our own horde AI). The overlay's projectiles get the mod's converted GeckoLib models; the overlay's abilities fire the mod's triggered animations.",
+  "visual_alias": {"acid_blob": "acid_blob_projectile", "soul_fire_bolt": "soul_fire_projectile", "soul_ice_bolt": "soul_ice_projectile",
+                   "soul_poison_bolt": "soul_poison_projectile_attack", "soul_breeze_bolt": "soul_breeze_projectile",
+                   "spine_spike": "sculk_spine_spike_attack"},
+  "vars": {
+    "v.gb_m_60713_7226": {"const": 1, "java": "getBlockState().is(SCULK_SUMMONER)"},
+    "v.gb_vibration_cooldown": {"kind": "after_trigger", "ticks": 100},
+    "v.gb_m_7702_present": {"const": 1, "java": "getLevel() != null"},
+    "v.gb_m_58903_2fe5": {"const": 0}, "v.gb_get": {"const": 0},
+    "v.gb_is_active": {"kind": "near_player", "dist": 6}, "v.gb_is_prepared": {"kind": "off"},
+    "v.gb_m_32310": {"kind": "near_player", "dist": 3, "java": "Creeper.getSwellDir() > 0 (overlay fuses within 3 blocks)"},
+    "v.gb_m_32320": {"const": 0, "java": "swell ticks (< 28 = swelling)"},
+    "v.gb_m_76178_fa28": {"molang": "(!q.is_in_water)", "java": "level.getFluidState(pos).isEmpty()"},
+    "v.gb_isshootingelementals_cbf5": {"kind": "after_trigger", "ticks": 40}
+  },
+  "ability_hooked": ["angel_of_reaping", "sculk_spitter", "sculk_enderman", "sculk_witch"],
+  "hook_anims": {
+    "angel_of_reaping": {"@soul_fire_bolt": "attack.elemental_projectiles.shoot", "@soul_poison_bolt": "attack.elemental_projectiles.shoot",
+                         "@soul_ice_bolt": "attack.elemental_projectiles.shoot", "@soul_breeze_bolt": "attack.elemental_projectiles.shoot",
+                         "@floor_soul_spears": "attack.floor_spears", "@living_armor": "attack.spell_use"},
+    "sculk_spitter": {"@acid_blob": "attack_animation"},
+    "sculk_enderman": {"@spine_spike": "spike_radial_animation", "teleport": "rifts_summon_animation"},
+    "sculk_witch": {"effect": "throwpotion"}
+  },
+  "patch": [
+    {"find": "function shoot(from, id, start, target, speed = 1.2, spread = 0) {", "append": " globalThis.gbTrigger?.(from, \"@\" + id.split(\":\")[1]);"},
+    {"find": "function groundAttack(src, id, loc, delay, dmg, snd) {", "append": " globalThis.gbTrigger?.(src, \"@\" + id.split(\":\")[1]);"},
+    {"find": "for (let i = 0; i < 2; i++) spawn(e.dimension, `${NS}:living_armor`", "prepend": "globalThis.gbTrigger?.(e, \"@living_armor\"); "},
+    {"find": "st.cd = 80; try { p.addEffect(", "prepend": "globalThis.gbTrigger?.(e, \"effect\"); "},
+    {"find": "st.cd = 160; particle(e.dimension, \"minecraft:portal_reverse_particle\"", "prepend": "globalThis.gbTrigger?.(e, \"teleport\"); "}
+  ]
+}

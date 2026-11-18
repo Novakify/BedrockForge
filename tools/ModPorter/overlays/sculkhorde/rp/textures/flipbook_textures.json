@@ -1,0 +1,8 @@
+[
+ {
+  "flipbook_texture": "textures/blocks/sculkhorde/sculk_ancient_node",
+  "atlas_tile": "sculkhorde_sculk_ancient_node",
+  "ticks_per_frame": 2,
+  "blend_frames": true
+ }
+]

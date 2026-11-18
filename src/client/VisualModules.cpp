@@ -1,0 +1,361 @@
+// Bedrock Forge client - visual modules that need engine hooks (fullbright, hit colour, hurt cam, view bob,
+// time changer). Every hook falls through to vanilla when its module is off.
+
+#include <algorithm>
+#include <atomic>
+#include <memory>
+#include <thread>
+
+#include "client/Diag.h"
+
+#include "ll/api/memory/Hook.h"
+
+#include <glm/gtc/matrix_transform.hpp>
+#include "mc/client/game/IClientInstance.h"
+#include "mc/client/renderer/ActorShaderManager.h"
+#include "mc/client/renderer/block/BlockTessellatorCache.h"
+#include "mc/client/renderer/chunks/RenderChunkCoordinator.h"
+#include "mc/client/renderer/game/LevelRenderer.h"
+#include "mc/client/renderer/game/ItemInHandRenderer.h"
+#include "mc/deps/renderer/MatrixStack.h"
+#include "mc/deps/core/math/Matrix.h"
+#include "mc/client/renderer/game/LevelRendererCamera.h"
+#include "mc/world/level/block/BrightnessPair.h"
+#include "mc/client/renderer/game/LevelRendererPlayer.h"
+#include "mc/client/renderer/ptexture/BaseLightData.h"
+#include "mc/client/renderer/ptexture/BaseLightTextureImageBuilder.h"
+#include "mc/client/world/level/dimension/NetherLightTextureImageBuilder.h"
+#include "mc/deps/core/container/Blob.h"
+#include "mc/deps/core/image/Image.h"
+#include "mc/deps/core/math/Color.h"
+#include "mc/world/actor/Actor.h"
+#include "mc/world/level/ILevel.h"
+#include "mc/world/level/dimension/Dimension.h"
+#include "mc/client/gui/screens/ScreenContext.h"
+#include "mc/deps/minecraft_renderer/constantbuffers/PerFrameConstants.h"
+#include "mc/deps/minecraft_renderer/objects/ViewRenderObject.h"
+#include "mc/deps/minecraft_renderer/constantbuffers/GlobalConstantBuffers.h"
+#include "mc/deps/minecraft_renderer/renderer/MeshContext.h"
+#include "mc/client/gui/screens/ScreenContext.h"
+#include "ll/api/mod/NativeMod.h"
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+#include "client/Module.h"
+#include "client/MatchFx.h"
+
+namespace bf::lyrics::win { bool skyFog(float rgb[3], float& weight); } // LyricsForge sky fog (Runtime_win.cpp)
+
+namespace bedrock_forge::client {
+std::atomic<float> gTimeOfDay{-1.0f}; // last time of day the game asked for (0 noon .. 1), -1 = none yet
+
+namespace {
+std::atomic<std::thread::id> gRenderThread{};
+
+void brighten(std::unique_ptr<BaseLightData>& data) {
+    auto* m = Registry::get().find("fullbright");
+    ++diag::lightHook;
+    if (!data || !m || !m->enabled) return;
+    ++diag::lightBrightened;
+    float k = m->num("strength", 1.0f);
+    data->mNightvisionActive = true;
+    data->mNightvisionScale  = std::max(data->mNightvisionScale, k);
+    data->mDarknessFactor    = 0.0f;
+    data->mDarkenWorldAmount = data->mDarkenWorldAmount * (1.0f - k);
+    if (data->mGamma < k) data->mGamma = k;
+}
+} // namespace
+
+// The finished light texture: in 1.26 the BaseLightData night-vision fields don't reach the image, so fullbright
+// also lifts the built pixels toward white. Blob's members are private; mirror them (same types -> same layout).
+struct BlobMirror {
+    std::unique_ptr<mce::Blob::value_type[], mce::Blob::Deleter> blob;
+    std::size_t                                                  size;
+};
+static_assert(sizeof(BlobMirror) == sizeof(mce::Blob));
+void brightenImage(mce::Image* img) {
+    auto* m = Registry::get().find("fullbright");
+    if (!img || !m || !m->enabled) return;
+    int bpp = img->imageFormat == mce::ImageFormat::RGBA8Unorm ? 4 : img->imageFormat == mce::ImageFormat::RGB8Unorm ? 3 : 0;
+    if (!bpp) return;
+    auto&       b    = reinterpret_cast<BlobMirror&>(img->mImageBytes);
+    std::size_t need = std::size_t(img->mWidth) * img->mHeight * std::max<uint32_t>(img->mDepth, 1) * bpp;
+    if (!b.blob || need == 0 || need > b.size || need > (1u << 20)) return;
+    float k = std::clamp(m->num("strength", 1.0f), 0.0f, 1.0f);
+    auto* px = b.blob.get();
+    for (std::size_t i = 0; i < need; i += bpp)
+        for (int c = 0; c < 3; ++c) px[i + c] = (unsigned char)(px[i + c] + (255 - px[i + c]) * k);
+    ++diag::lightImage;
+}
+
+void noteRenderThread() { gRenderThread = std::this_thread::get_id(); }
+
+// ---- Fullbright v3: light baked into terrain vertices -------------------------------------------------------------
+// E-019 showed the 1.26 light texture ignores BaseLightData + pixel edits, so v3 lifts the per-vertex light the chunk
+// tessellator bakes (BlockTessellatorCache::getLightColor -> lightmap UV) and asks every RenderChunkCoordinator to
+// relight its geometry when fullbright changes. Client-only path: the integrated server never touches it.
+namespace {
+std::atomic<int>  gFbLevel{-1};       // 0..15 block/sky light floor while on, -1 = off (read on chunk-build workers)
+std::atomic<int>  gFbApplied{-1};     // level the loaded chunks were last lit with
+std::atomic<long> gFbRelights{0};
+int fullbrightLevel() {
+    auto* m = Registry::get().find("fullbright");
+    if (!m || !m->enabled) return -1;
+    return std::clamp(int(m->num("strength", 1.0f) * 15.0f + 0.5f), 0, 15);
+}
+} // namespace
+
+LL_TYPE_INSTANCE_HOOK(BfTessLightHook, ll::memory::HookPriority::Normal, BlockTessellatorCache, &BlockTessellatorCache::getLightColor,
+                      BrightnessPair, BlockPos const& p, Block const* blockHint) {
+    // counted in batches of 4096 per chunk-build thread: one shared atomic per vertex had every worker fighting over a
+    // single cache line (137 M calls in a few minutes of building)
+    thread_local uint32_t n = 0;
+    if ((++n & 4095u) == 0) diag::tessLight.fetch_add(4096, std::memory_order_relaxed);
+    BrightnessPair r = origin(p, blockHint);
+    int lv = gFbLevel.load(std::memory_order_relaxed);
+    if (lv >= 0) {
+        if (r.sky->mValue < lv) r.sky->mValue = uchar(lv);
+        if (r.block->mValue < lv) r.block->mValue = uchar(lv);
+    }
+    return r;
+}
+
+LL_TYPE_INSTANCE_HOOK(BfAmbientHook, ll::memory::HookPriority::Normal, LevelRendererCamera, &LevelRendererCamera::$getAmbientBrightness,
+                      float) {
+    float v = origin();
+    return gFbLevel.load(std::memory_order_relaxed) >= 0 ? std::max(v, 1.0f) : v;
+}
+
+// Called every HUD frame (client thread). Relights loaded chunks when the module or its strength changed.
+void fullbrightTick(IClientInstance& client) {
+    int want = fullbrightLevel();
+    gFbLevel = want;
+    if (want == gFbApplied.load()) return;
+    auto* lr = client.getLevelRenderer();
+    if (!lr) return;
+    gFbApplied = want;
+    for (auto& [dim, coord] : lr->mRenderChunkCoordinators.get()) {
+        (void)dim;
+        if (coord) { coord->relightAllRenderChunkGeometry(); ++gFbRelights; }
+    }
+    diag::fbRelights = gFbRelights.load();
+}
+
+LL_TYPE_INSTANCE_HOOK(BfLightHook, ll::memory::HookPriority::Normal, BaseLightTextureImageBuilder,
+                      &BaseLightTextureImageBuilder::$createBaseLightTextureData, std::unique_ptr<BaseLightData>,
+                      IClientInstance* client, BaseLightData const& current) {
+    auto data = origin(client, current);
+    brighten(data);
+    return data;
+}
+LL_TYPE_INSTANCE_HOOK(BfNetherLightHook, ll::memory::HookPriority::Normal, NetherLightTextureImageBuilder,
+                      &NetherLightTextureImageBuilder::$createBaseLightTextureData, std::unique_ptr<BaseLightData>,
+                      IClientInstance* client, BaseLightData const& current) {
+    auto data = origin(client, current);
+    brighten(data);
+    return data;
+}
+
+LL_TYPE_INSTANCE_HOOK(BfOverlayHook, ll::memory::HookPriority::Normal, ActorShaderManager, &ActorShaderManager::$_getOverlayColor,
+                      mce::Color, Actor& actor, float a) {
+    ++diag::overlayHook;
+    mce::Color c = origin(actor, a);
+    auto*      m = Registry::get().find("hit_color");
+    // vanilla hurt overlay is a translucent red; recolour it and keep its strength
+    if (m && m->enabled && c.a > 0.01f && c.r > c.g + 0.2f && c.r > c.b + 0.2f) {
+        c.r = m->num("r", 0.2f);
+        c.g = m->num("g", 0.6f);
+        c.b = m->num("b", 1.0f);
+    }
+    return c;
+}
+
+LL_TYPE_INSTANCE_HOOK(BfHurtCamHook, ll::memory::HookPriority::Normal, LevelRendererPlayer, &LevelRendererPlayer::bobHurt, void,
+                      Matrix& mv, float a) {
+    if (Registry::get().on("no_hurt_cam")) return;
+    origin(mv, a);
+}
+LL_TYPE_INSTANCE_HOOK(BfBobHook, ll::memory::HookPriority::Normal, LevelRendererPlayer, &LevelRendererPlayer::bobView, void,
+                      Matrix& mv, float a) {
+    ++diag::bobHook;
+    if (Registry::get().on("view_bobbing")) return;
+    origin(mv, a);
+}
+
+// Dimension is shared with the integrated server in single-player: only answer differently on the render thread.
+namespace {
+// The match's time of day for this Dimension, if it may have it.
+// On a server (the Hive) the game works out the sky's darkness in its own tick, off the render thread: seen in a real
+// match, the blocks' daylight followed the server's clock while the sky followed the match. A client-side level has no
+// integrated server sharing it, so every thread may get the match's time there.
+bool matchTime(Dimension const& d, float& t) {
+    ++diag::timeHook;
+    if (Registry::get().on("time_changer") && std::this_thread::get_id() == gRenderThread.load()) {
+        t = Registry::get().find("time_changer")->num("time", 0.0f);
+        return true;
+    }
+    if (!bedrock_forge::client::matchfx::timeOverride(t)) return false;
+    if (std::this_thread::get_id() == gRenderThread.load()) { ++diag::timeRender; return true; }
+    if (d.mLevel.isClientSide()) { ++diag::timeClient; return true; }
+    ++diag::timeOther;
+    return false;
+}
+} // namespace
+LL_TYPE_INSTANCE_HOOK(BfTimeHook, ll::memory::HookPriority::Normal, Dimension, &Dimension::getTimeOfDay, float, float a) {
+    if (float t; matchTime(*this, t)) { bedrock_forge::client::gTimeOfDay.store(t, std::memory_order_relaxed); return t; }
+    float const t = origin(a);
+    bedrock_forge::client::gTimeOfDay.store(t, std::memory_order_relaxed);
+    return t;
+}
+// (seen in a real match: the one-argument form above is never called in 1.26.51 - the game goes through this one)
+LL_TYPE_INSTANCE_HOOK(BfTimeHook2, ll::memory::HookPriority::Normal, Dimension, &Dimension::$getTimeOfDay, float, int time, float a) {
+    if (float t; matchTime(*this, t)) { bedrock_forge::client::gTimeOfDay.store(t, std::memory_order_relaxed); return t; }
+    float const t = origin(time, a);
+    bedrock_forge::client::gTimeOfDay.store(t, std::memory_order_relaxed);   // (Haze / Mist: the sun's glow and rays)
+    return t;
+}
+
+LL_TYPE_INSTANCE_HOOK(BfLightImageHook, ll::memory::HookPriority::Normal, BaseLightTextureImageBuilder,
+                      &BaseLightTextureImageBuilder::$buildImage, bool, BaseLightData const& lightData, mce::Image* targetImage,
+                      uint imageLength, float a, float ambientBoost, bool clampToMinimum) {
+    bool r = origin(lightData, targetImage, imageLength, a, ambientBoost, clampToMinimum);
+    brightenImage(targetImage);
+    return r;
+}
+LL_TYPE_INSTANCE_HOOK(BfLightImageSplitHook, ll::memory::HookPriority::Normal, BaseLightTextureImageBuilder,
+                      &BaseLightTextureImageBuilder::$buildImageSplit, bool, BaseLightData const& lightData,
+                      mce::Image* targetImage, uint imageLength, float a, bool clampToMinimum) {
+    bool r = origin(lightData, targetImage, imageLength, a, clampToMinimum);
+    brightenImage(targetImage);
+    return r;
+}
+
+// ---- [LyricsForge] sky fog, step 1 (read-only diagnostic): find the game's per-frame FOG_COLOR constant and log what
+// it holds right after setupFog, so the next build can write the sky's horizon colour into it at a verified offset.
+namespace {
+std::atomic<mce::PerFrameConstants*> gPerFrame{nullptr};
+std::atomic<int>                     gFogDiag{0};
+std::atomic<int64_t>                 gFogDiagMs{0};
+auto& fogLog() { return ll::mod::NativeMod::current()->getLogger(); }
+} // namespace
+LL_TYPE_INSTANCE_HOOK(BfPerFrameInitHook, ll::memory::HookPriority::Normal, mce::PerFrameConstants, &mce::PerFrameConstants::$init, void) {
+    origin();
+    gPerFrame = this;
+    fogLog().info("[BF] fog diag: PerFrameConstants::init captured {}", (void*)this);
+}
+LL_TYPE_INSTANCE_HOOK(BfSetupFogHook, ll::memory::HookPriority::Normal, LevelRendererPlayer, &LevelRendererPlayer::$setupFog, void,
+                      ScreenContext& screenContext, float const skyIntensityOverride) {
+    origin(screenContext, skyIntensityOverride);
+    auto* pf = gPerFrame.load();
+    if (!pf) { // $init runs before mods enable, so take it from the screen's GlobalConstantBuffers instead
+        mce::MeshContext& mc = screenContext;
+        mce::GlobalConstantBuffers* gcb = nullptr;
+        std::memcpy(&gcb, &mc.constantBuffers, sizeof gcb);
+        if (gcb) { pf = reinterpret_cast<mce::PerFrameConstants*>(&gcb->perFrameConstantBuffer); gPerFrame = pf; }
+    }
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (gFogDiag.load() >= 6 || now - gFogDiagMs.load() < 4000) return;
+    gFogDiagMs = now;
+    ++gFogDiag;
+    if (!pf) { fogLog().info("[BF] fog diag: setupFog runs, no PerFrameConstants captured"); return; }
+    auto dump = [&](char const* what, void const* obj) {
+        if (!obj) { fogLog().info("[BF] fog diag: {} null", what); return; }
+        // raw bytes only (no pointer is followed): 24 words as hex + float, plus the 16 bytes of a small std::string
+        uint32_t const* w = reinterpret_cast<uint32_t const*>(obj);
+        char b[1400];
+        int n = std::snprintf(b, sizeof b, "[BF] fog diag: %s @%p |", what, obj);
+        for (int i = 0; i < 24 && n < 1350; ++i) {
+            float fv; std::memcpy(&fv, &w[i], 4);
+            n += std::snprintf(b + n, sizeof b - size_t(n), " %02d:%08x(%.3g)", i * 4, w[i], double(fv));
+        }
+        fogLog().info("{}", b);
+        char txt[17]{};
+        std::memcpy(txt, reinterpret_cast<char const*>(obj) + 8, 16);
+        for (char& c : txt) if (c != 0 && (c < 32 || c > 126)) c = '.';
+        fogLog().info("[BF] fog diag: {} text at +8: '{}'", what, txt);
+    };
+    void const* fcp = nullptr; void const* fctl = nullptr; // the stored pointers, read as bytes (TypedStorage)
+    std::memcpy(&fcp, &pf->FOG_COLOR, sizeof fcp);
+    std::memcpy(&fctl, &pf->FOG_CONTROL, sizeof fctl);
+    dump("FOG_COLOR", fcp);
+    dump("FOG_CONTROL", fctl);
+}
+
+// ---- [LyricsForge] sky -> world colours, step 1 (read-only): dump the game's ViewRenderData (camera pos, fog/sky/
+// zenith/horizon/sunrise colours) as floats so the layout can be checked before anything is written into it.
+namespace { std::atomic<int> gViewDiag{0}; std::atomic<int64_t> gViewDiagMs{0}; }
+LL_TYPE_INSTANCE_HOOK(BfViewDiagHook, ll::memory::HookPriority::Normal, LevelRendererCamera,
+                      &LevelRendererCamera::$render, void, BaseActorRenderContext& ctx,
+                      ViewRenderObject const& renderObj, IClientInstance& ci) {
+    // [LyricsForge] sky fog: writing mFogColor here lands in the game's memory but the shaders never see it (proven with
+    // the LyricsLight debug pack), and the in-place blend could stack if this runs twice a frame - so nothing is written;
+    // the sky colour reaches the world through Renderer Foundation's world light instead. Read-only diag below.
+    int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (gViewDiag.load() < 8 && now - gViewDiagMs.load() >= 4000) {
+        gViewDiagMs = now;
+        ++gViewDiag;
+        float f[14], sky[3], w = 0;
+        std::memcpy(f, &renderObj.mViewData, sizeof f);
+        if (!::bf::lyrics::win::skyFog(sky, w)) w = 0;
+        fogLog().info("[BF] view: cam {:.1f} {:.1f} {:.1f} fog {:.3f} {:.3f} {:.3f} (sky w {:.2f}) skycol {:.3f} {:.3f} {:.3f}",
+                      f[0], f[1], f[2], f[6], f[7], f[8], w, f[10], f[11], f[12]);
+    }
+    origin(ctx, renderObj, ci);
+}
+
+// [BF] Hand Movement (Purxiy "place, swing and move your hand your way"): after the game places the held item, move /
+// scale it by the module's settings. Hooked only while the module is on (installed from its toggle), so a build where
+// the symbol moved costs nothing until you switch it on.
+LL_TYPE_INSTANCE_HOOK(BfHandHook, ll::memory::HookPriority::Normal, ItemInHandRenderer, &ItemInHandRenderer::_applyDefaultItemTransforms, void,
+                      ::MatrixStack::MatrixStackRef& worldMatrix, ::ItemStack const& item, bool isInHandItem, ::BlockType const* blockType,
+                      ::BlockShape blockShape, ::ItemRenderCall const* renderObjectCall, float heldItemScale, bool posAndRotSetByJSON) {
+    origin(worldMatrix, item, isInHandItem, blockType, blockShape, renderObjectCall, heldItemScale, posAndRotSetByJSON);
+    auto* m = Registry::get().find("hand_movement");
+    if (!m || !m->enabled || !isInHandItem) return;
+    ::Matrix* mat = worldMatrix.mat;
+    if (!mat) return;
+    glm::mat4& M = reinterpret_cast<glm::mat4&>(*mat);
+    float const sc = m->num("scale", 1.f);
+    M = glm::translate(M, glm::vec3(m->num("x", 0.f), m->num("y", 0.f), m->num("z", 0.f)));
+    M = glm::scale(M, glm::vec3(sc));
+}
+void setHandHook(bool on) {
+    static bool hooked = false;
+    if (on == hooked) return;
+    hooked = on;
+    if (on) BfHandHook::hook(); else BfHandHook::unhook();
+}
+
+void installVisualHooks() {
+    BfViewDiagHook::hook();
+    BfTessLightHook::hook();
+    BfAmbientHook::hook();
+    BfLightImageHook::hook();
+    BfLightImageSplitHook::hook();
+    BfLightHook::hook();
+    BfNetherLightHook::hook();
+    BfOverlayHook::hook();
+    BfHurtCamHook::hook();
+    BfBobHook::hook();
+    BfTimeHook::hook();
+    BfTimeHook2::hook();
+}
+void uninstallVisualHooks() {
+    BfViewDiagHook::unhook();
+    BfTessLightHook::unhook();
+    BfAmbientHook::unhook();
+    BfLightImageHook::unhook();
+    BfLightImageSplitHook::unhook();
+    BfLightHook::unhook();
+    BfNetherLightHook::unhook();
+    BfOverlayHook::unhook();
+    BfHurtCamHook::unhook();
+    BfBobHook::unhook();
+    BfTimeHook::unhook();
+    BfTimeHook2::unhook();
+    setHandHook(false);
+}
+
+} // namespace bedrock_forge::client

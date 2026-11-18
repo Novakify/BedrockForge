@@ -1,0 +1,74 @@
+{
+ "_doc": "Broken-animatronic humanoid: breathing servos, random head/jaw twitches, heavy lumbering walk, head tracking, overhead claw slam on melee (variable.attack_time). Bone names follow the common SFM/FNAF rig (Head, Jaw, UpperArm_L ...) after bone_split.py; bones a model lacks are skipped. Signs: front of the model is -z (vanilla), +x pitch tips a bone's front down / swings a hanging limb back.",
+ "pre_animation": [
+  "v.stride = q.modified_distance_moved * 120.0;",
+  "v.walk = math.clamp(q.modified_move_speed * 2.5, 0.0, 1.0);",
+  "v.atk = math.sin(math.clamp(v.attack_time, 0.0, 1.0) * 180.0);",
+  "v.twitch = (math.sin(q.life_time * 23.0) > 0.965) * (1.0 - v.walk);",
+  "v.chatter = (math.sin(q.life_time * 29.0 + 40.0) > 0.95);"
+ ],
+ "animate": [
+  "idle",
+  "look_at_target",
+  {"walk": "v.walk"},
+  "attack"
+ ],
+ "animations": {
+  "idle": {
+   "loop": true,
+   "bones": {
+    "UpperTorso": {"rotation": ["math.sin(q.life_time * 80.0) * 1.5", 0, 0]},
+    "Head": {"rotation": [
+     "math.sin(q.life_time * 900.0) * 7.0 * v.twitch",
+     "math.sin(q.life_time * 17.0) * 4.0",
+     "12.0 * v.twitch + math.sin(q.life_time * 11.0) * 3.0"]},
+    "Jaw": {"rotation": ["(math.sin(q.life_time * 1500.0) * 5.0 + 5.0) * v.chatter", 0, 0]},
+    "EarT_L": {"rotation": ["math.sin(q.life_time * 50.0) * 4.0", 0, "math.sin(q.life_time * 35.0) * 3.0"]},
+    "EarT_R": {"rotation": ["math.sin(q.life_time * 47.0 + 60.0) * 4.0", 0, "math.sin(q.life_time * 33.0) * -3.0"]},
+    "Index1_L": {"rotation": ["math.sin(q.life_time * 85.0) * 7.0 + 6.0", 0, 0]},
+    "Middle1_L": {"rotation": ["math.sin(q.life_time * 85.0 + 40.0) * 7.0 + 8.0", 0, 0]},
+    "Pinky1_L": {"rotation": ["math.sin(q.life_time * 85.0 + 80.0) * 7.0 + 10.0", 0, 0]},
+    "Index1_R": {"rotation": ["math.sin(q.life_time * 79.0) * 7.0 + 6.0", 0, 0]},
+    "Middle1_R": {"rotation": ["math.sin(q.life_time * 79.0 + 40.0) * 7.0 + 8.0", 0, 0]},
+    "Pinky1_R": {"rotation": ["math.sin(q.life_time * 79.0 + 80.0) * 7.0 + 10.0", 0, 0]}
+   }
+  },
+  "look_at_target": {
+   "loop": true,
+   "bones": {
+    "Neck": {"rotation": ["q.target_x_rotation * 0.3", "q.target_y_rotation * 0.35", 0]},
+    "Head": {"rotation": ["q.target_x_rotation * 0.6", "q.target_y_rotation * 0.6", 0]}
+   }
+  },
+  "walk": {
+   "loop": true,
+   "bones": {
+    "ORIGIN": {"position": [0, "-math.abs(math.sin(v.stride)) * 3.0", 0]},
+    "UpperTorso": {"rotation": ["6.0", "math.sin(v.stride) * 7.0", "math.sin(v.stride) * 3.0"]},
+    "Head": {"rotation": ["math.abs(math.sin(v.stride)) * 5.0", "-math.sin(v.stride) * 6.0", 0]},
+    "UpperLeg_L": {"rotation": ["math.sin(v.stride) * 26.0", 0, 0]},
+    "UpperLeg_R": {"rotation": ["-math.sin(v.stride) * 26.0", 0, 0]},
+    "LowerLeg_L": {"rotation": ["math.max(0.0, math.cos(v.stride)) * 32.0", 0, 0]},
+    "LowerLeg_R": {"rotation": ["math.max(0.0, -math.cos(v.stride)) * 32.0", 0, 0]},
+    "UpperArm_L": {"rotation": ["-math.sin(v.stride) * 14.0", 0, 0]},
+    "UpperArm_R": {"rotation": ["math.sin(v.stride) * 14.0", 0, 0]},
+    "LowerArm_L": {"rotation": ["-math.sin(v.stride - 50.0) * 9.0", 0, 0]},
+    "LowerArm_R": {"rotation": ["math.sin(v.stride - 50.0) * 9.0", 0, 0]}
+   }
+  },
+  "attack": {
+   "loop": true,
+   "bones": {
+    "UpperTorso": {"rotation": ["v.atk * 14.0", "v.atk * -10.0", 0]},
+    "Head": {"rotation": ["v.atk * -12.0", 0, 0]},
+    "Jaw": {"rotation": ["v.atk * 26.0", 0, 0]},
+    "UpperArm_R": {"rotation": ["v.atk * -125.0", 0, "v.atk * 10.0"]},
+    "LowerArm_R": {"rotation": ["v.atk * -35.0", 0, 0]},
+    "Index1_R": {"rotation": ["v.atk * -25.0", 0, 0]},
+    "Middle1_R": {"rotation": ["v.atk * -25.0", 0, 0]},
+    "Pinky1_R": {"rotation": ["v.atk * -25.0", 0, 0]},
+    "Thumb1_R": {"rotation": [0, "v.atk * 20.0", 0]}
+   }
+  }
+ }
+}

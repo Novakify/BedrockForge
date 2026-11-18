@@ -1,0 +1,28 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:client_entity": {
+  "description": {
+   "identifier": "sculkhorde:spine_spike",
+   "materials": {
+    "default": "entity_alphatest"
+   },
+   "textures": {
+    "default": "textures/entity/sculkhorde/sculk_spine_spike_attack"
+   },
+   "geometry": {
+    "default": "geometry.sculkhorde.sculk_spine_spike_attack"
+   },
+   "render_controllers": [
+    "controller.render.default"
+   ],
+   "animations": {
+    "emerge": "animation.sculkhorde.sculk_spine_spike_attack.emerge"
+   },
+   "scripts": {
+    "animate": [
+     "emerge"
+    ]
+   }
+  }
+ }
+}

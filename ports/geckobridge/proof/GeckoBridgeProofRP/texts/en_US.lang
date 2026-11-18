@@ -1,0 +1,4 @@
+entity.gb:sculk_enderman.name=Sculk Enderman (GeckoBridge)
+item.spawn_egg.entity.gb:sculk_enderman.name=Spawn Sculk Enderman (GeckoBridge)
+entity.gb:sculk_enderman_alphaglow.name=Sculk Enderman alpha-glow (GeckoBridge)
+item.spawn_egg.entity.gb:sculk_enderman_alphaglow.name=Spawn Sculk Enderman alpha-glow (GeckoBridge)

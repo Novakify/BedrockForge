@@ -1,0 +1,28 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:client_entity": {
+  "description": {
+   "identifier": "sculkhorde:acid_blob",
+   "materials": {
+    "default": "entity_alphatest"
+   },
+   "textures": {
+    "default": "textures/entity/sculkhorde/acid_blob_projectile"
+   },
+   "geometry": {
+    "default": "geometry.sculkhorde.acid_blob_projectile"
+   },
+   "render_controllers": [
+    "controller.render.default"
+   ],
+   "animations": {
+    "living": "animation.sculkhorde.acid_blob_projectile.living"
+   },
+   "scripts": {
+    "animate": [
+     "living"
+    ]
+   }
+  }
+ }
+}

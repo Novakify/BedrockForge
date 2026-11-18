@@ -1,0 +1,642 @@
+// Cloud Sea by Novak - World FX block lighting for the Cloud Sea sky (Renderer Foundation F6 > World FX > Cloud Sea).
+// Same light as the Cloud Sea lab (tools/WorldFx/lab/cloudsea.glsl): a low golden sun in the north, violet sky light
+// in the shade, a rose bounce off the cloud sea from below, glowing leaves, and warm air toward the sun.
+// Maths runs in linear light: textures are decoded, lit, then encoded back for the game's target.
+
+// The key light follows the living match sky (Renderer Foundation's cloud_sea_common.hlsli csSetPhase - same numbers):
+// golden hour -> dusk (first bed down) -> moonlit night (last fight). The block shader can't see Renderer Foundation,
+// but Bedrock Forge moves the game's time of day with the match, and the game's fog colour follows it: that is the
+// phase here (csPhaseFromFog). Call csBegin(FogColor, time) first thing in main().
+static float3 CS_SUN   = float3(0.17605, 0.11247, -0.97794);   // toward the sun (the moon at night)
+static float3 CS_SUNC  = float3(1.00, 0.72, 0.50) * 1.85;      // its light on the world
+static float  CS_DUSK  = 0.0, CS_NIGHT = 0.0, CS_PHASE = 0.0, CS_TIME = 0.0, CS_LIGHTK = 1.0;
+static float  CS_CLOUDREFL = 1.0;   // how sharp the clouds are in a reflection (matte surfaces: none - they smear into streaks)
+static const float2 CS_SUN_AZ  = float2(0.17717, -0.98418);
+static const float2 CS_MOON_AZ = float2(-0.85671, 0.51580);
+float3 csDirAzEl(float2 az, float el) { return float3(az.x * cos(el), sin(el), az.y * cos(el)); }
+float  csLuma(float3 c);
+void csSetPhase(float k) {
+    CS_PHASE = k;
+    CS_DUSK  = smoothstep(0.0, 1.0, k);
+    CS_NIGHT = smoothstep(1.15, 1.9, k);
+#if defined(CS_NOVAK)
+    float3 sun  = csDirAzEl(CS_SUN_AZ, radians(lerp(26.0, 1.5, CS_DUSK)));   // Novak Glass: a higher sun (Renderer Foundation csSetPhase: same)
+#else
+    float3 sun  = csDirAzEl(CS_SUN_AZ, radians(lerp(6.5, 1.5, CS_DUSK)));
+#endif
+    float3 moon = csDirAzEl(CS_MOON_AZ, radians(31.0));
+    CS_SUN = normalize(lerp(sun, moon, smoothstep(1.3, 1.6, k)));
+    CS_LIGHTK = lerp(lerp(1.0, 0.40, smoothstep(0.25, 1.0, k)), 0.62, CS_NIGHT) * (1.0 - 0.75 * smoothstep(1.1, 1.45, k) * (1.0 - smoothstep(1.45, 1.8, k)));
+#if defined(CS_NOVAK)
+    // Novak Glass: clean light. A white sun with only a breath of warmth, rose at dusk, a violet-white moon
+    float3 gold = float3(1.00, 0.95, 0.87), dusk = float3(1.00, 0.58, 0.62), moonC = float3(0.66, 0.63, 1.00);
+    CS_SUNC = lerp(lerp(gold, dusk, CS_DUSK), moonC, smoothstep(1.3, 1.6, k)) * 1.62 * CS_LIGHTK;
+#else
+    float3 gold = float3(1.00, 0.72, 0.50), dusk = float3(1.00, 0.50, 0.40), moonC = float3(0.58, 0.70, 1.00);
+    CS_SUNC = lerp(lerp(gold, dusk, CS_DUSK), moonC, smoothstep(1.3, 1.6, k)) * 1.85 * CS_LIGHTK;
+#endif
+}
+// The phase from the game's daylight: the light map's full-sky texel (no block light) - measured in game 2026-11-11:
+// 1.0 at noon and at Bedrock Forge's golden hour (tick 10920), ~0.85 at its dusk (12480), ~0.55 later, ~0.3 at night
+// (14400). (The fog colour was tried first: it changes with where you look at sunset, so the world would relight as
+// you turn - no.)
+float csPhaseFromDaylight(float l) {
+    return (1.0 - smoothstep(0.86, 0.97, l)) + (1.0 - smoothstep(0.34, 0.62, l));
+}
+// Mobs and players have no light map in their pass, and their light level barely moves with the hour (0.88 noon,
+// 0.75 night - measured). The fog colour is the only clock there: it goes dark at night whichever way you look (at
+// sunset it depends on the view, so it is NOT used for dusk - actors keep the golden light until night).
+float csActorPhase(float3 fog) { return 2.0 * (1.0 - smoothstep(0.08, 0.40, csLuma(fog))); }
+// Is this actor drawn in a menu (home screen, dressing room, pause / inventory paperdoll)? Those pass no fog (0) or a
+// pure white one (measured in game: (1,1,1) in the pause-menu paperdoll), and a camera that has nothing to do with the
+// model - the world look must not touch them (seen: the character as a flat light-blue silhouette).
+bool csActorInMenu(float3 fog) {
+    return max(abs(fog.r), max(abs(fog.g), abs(fog.b))) < 1e-4 || min(fog.r, min(fog.g, fog.b)) > 0.995;
+}
+void csBeginActor(float4 fog, float4 viewPosTime) {
+    // menus (home screen / dressing room) draw with no fog at all: that read as full night (a cold blue light, the
+    // Novak endgame rim) - there it is plain midday
+    csSetPhase(csActorInMenu(fog.rgb) ? 0.0 : csActorPhase(fog.rgb));
+    CS_TIME = viewPosTime.w;
+}
+void csBegin(float daylight, float4 viewPosTime) {
+    csSetPhase(csPhaseFromDaylight(daylight));
+    CS_TIME = viewPosTime.w;
+}
+
+float  csLuma(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
+float  csMax3(float3 c) { return max(c.r, max(c.g, c.b)); }
+float3 csLin(float3 c) { return pow(max(c, 0.0), 2.2); }
+float3 csEnc(float3 c) {
+    c = max(c, 0.0);
+    float3 k = max(c - 0.55, 0.0);
+    c = min(c, 0.55) + k / (1.0 + k * 1.9); // linear up to 0.55, then a soft shoulder
+    return pow(c, 1.0 / 2.2);
+}
+
+// face normal from the world position; blocks snap to their axis (no edge noise), plants/mobs keep the true one
+float3 csNormal(float3 wp, float3 V, bool snap) {
+    float3 c = cross(ddx(wp), ddy(wp));
+    float  l = dot(c, c);
+    float3 n = l > 1e-20 ? c * rsqrt(l) : float3(0.0, 1.0, 0.0);
+    if (dot(n, V) < 0.0) n = -n;
+    if (snap) {
+        float3 a = abs(n);
+        float  m = csMax3(a);
+        if (m > 0.92) n = a.x == m ? float3(sign(n.x), 0.0, 0.0) : (a.y == m ? float3(0.0, sign(n.y), 0.0) : float3(0.0, 0.0, sign(n.z)));
+    }
+    return n;
+}
+// the game bakes a fixed shade per face into the vertex colour (top 1, z sides 0.8, x sides 0.6, bottom 0.5);
+// our sun replaces it, so it comes back out (smooth-lighting corner shade stays in)
+float csVanillaShade(float3 n) {
+    float3 a = abs(n);
+    if (a.y > 0.9) return n.y > 0.0 ? 1.0 : 0.5;
+    if (a.x > 0.9) return 0.6;
+    if (a.z > 0.9) return 0.8;
+    return 1.0;
+}
+
+// the sky (same gradient the Cloud Sea sky draws), used for the haze on far blocks
+float3 csSky(float3 d) {
+#if defined(CS_NOVAK)
+    {   // the Novak Glass sky (Renderer Foundation cloud_sea_common.hlsli ngSkyBase - same numbers)
+        float  e = max(d.y, 0.0);
+        float  sunSide = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), CS_SUN) * 0.5 + 0.5;
+        float3 cD = lerp(lerp(float3(0.26, 0.52, 0.72), float3(0.80, 0.78, 0.74), pow(sunSide, 6.0)), float3(0.060, 0.230, 0.560), smoothstep(0.0, 0.09, e));
+        cD = lerp(cD, float3(0.030, 0.036, 0.205), smoothstep(0.18, 0.90, e));
+        float3 cK = lerp(lerp(float3(0.19, 0.115, 0.33), float3(1.00, 0.45, 0.36), pow(sunSide, 3.0)), float3(0.072, 0.040, 0.180), smoothstep(0.0, 0.15, e));
+        cK = lerp(cK, float3(0.014, 0.012, 0.074), smoothstep(0.10, 0.70, e));
+        float3 cN = lerp(float3(0.044, 0.027, 0.112), float3(0.015, 0.012, 0.062), smoothstep(0.0, 0.14, e));
+        cN = lerp(cN, float3(0.0035, 0.0035, 0.018), smoothstep(0.08, 0.60, e));
+        return lerp(lerp(cD, cK, CS_DUSK), cN, CS_NIGHT);
+    }
+#endif
+    float  e = max(d.y, 0.0);
+    float  mu = dot(normalize(float3(d.x, max(d.y, 0.0), d.z)), CS_SUN);
+    float  sunSide = mu * 0.5 + 0.5;
+    float  towardSun = pow(sunSide, 5.0);
+    float3 zen = float3(0.036, 0.042, 0.135);
+    float3 body = lerp(float3(0.085, 0.080, 0.215), float3(0.235, 0.120, 0.235), pow(sunSide, 1.6));
+    float3 hor = lerp(lerp(float3(0.250, 0.170, 0.245), float3(0.290, 0.150, 0.225), smoothstep(0.0, 0.08, e)),
+                      lerp(float3(0.62, 0.185, 0.085), float3(1.02, 0.300, 0.040), towardSun), smoothstep(0.30, 0.92, sunSide));
+    float3 c = lerp(hor, body, smoothstep(0.0, lerp(0.10, 0.24, towardSun), e));
+    c = lerp(c, zen, smoothstep(0.06, 0.62, e));
+    float ang = acos(clamp(dot(d, CS_SUN), -1.0, 1.0));
+    c += float3(1.05, 0.50, 0.10) * exp(-ang * 6.0) * exp(-e * 8.0) * 0.75 * (1.0 - CS_NIGHT);
+    // dusk: the sun is down, the gold drains to rose and violet; night: deep blue, a pale glow round the moon
+    c *= lerp(float3(1.0, 1.0, 1.0), float3(0.62, 0.44, 0.72), CS_DUSK);
+    float3 night = lerp(float3(0.040, 0.050, 0.110), float3(0.010, 0.014, 0.040), smoothstep(0.0, 0.5, e))
+                 + float3(0.22, 0.28, 0.45) * exp(-ang * 9.0) * 0.5;
+    return lerp(c, night, CS_NIGHT);
+}
+
+// ---------------------------------------------------------------- materials
+// Material ids come from the World FX Materials pack (tools/WorldFx/make_material_pack.py): alpha = 255 - 4 * id.
+// Keep this table in step with CLASSES there.
+#define MAT_NONE 0
+#define MAT_WOOL 1
+#define MAT_CONCRETE 2
+#define MAT_POWDER 3
+#define MAT_PLANKS 4
+#define MAT_LOG 5
+#define MAT_STONE 6
+#define MAT_CUTSTONE 7
+#define MAT_ENDSTONE 8
+#define MAT_OBSIDIAN 9
+#define MAT_TERRACOTTA 10
+#define MAT_GLAZED 11
+#define MAT_METAL 12
+#define MAT_GEM 13
+#define MAT_ORE 14
+#define MAT_SAND 15
+#define MAT_SOIL 16
+#define MAT_BRICKS 17
+#define MAT_QUARTZ 18
+#define MAT_SNOW 19
+#define MAT_ICE 20      // packed ice, blue ice: depth inside
+#define MAT_GRASS 21    // grass block tops, moss: the wind rolls over them
+#define MAT_LAMP 22     // glowstone, sea lanterns, lanterns, torches: they breathe
+#define MAT_LEAVES 23   // leaves: gusts, fluttering glints
+#define MAT_PLANT 24    // tall grass, ferns, vines
+#define MAT_FLOWER 25   // flowers: petals hold the light, glow softly after dusk
+#define MAT_CARVED 26   // chiseled / carved blocks: parallax depth (the only ordinary blocks that get it)
+#define MAT_LAST 26
+struct CsMat {
+    float bump;    // relief from the texture's own light/dark pattern (0 = flat)
+    float detail;  // 1 = full texture detail, lower = softer / calmer
+    float spec;    // sun highlight strength
+    float rough;   // highlight tightness (bigger = smaller, sharper)
+    float refl;    // sky reflection at grazing angles
+    float metal;   // reflection and highlight take the surface colour
+    float wrap;    // light wraps round the surface (fabric)
+    float velvet;  // fabric rim glow at grazing angles
+    float sparkle; // texel glints (gems, sand grains, snow)
+    float sat;     // colour richness
+    float violet;  // obsidian's cold sheen
+};
+CsMat csMat(int id) {
+    CsMat m;
+    m.bump = 0.35; m.detail = 0.95; m.spec = 0.03; m.rough = 20.0; m.refl = 0.0; m.metal = 0.0;
+    m.wrap = 0.0; m.velvet = 0.0; m.sparkle = 0.0; m.sat = 1.0; m.violet = 0.0;
+    switch (id) {
+    case MAT_WOOL:       m.bump = 0.22; m.detail = 0.92; m.spec = 0.0;  m.wrap = 0.45; m.velvet = 0.32; m.sat = 1.06; break;
+    case MAT_CONCRETE:   m.bump = 0.06; m.detail = 0.82; m.spec = 0.10; m.rough = 36.0; m.refl = 0.06; m.sat = 1.12; break;
+    case MAT_POWDER:     m.bump = 0.30; m.detail = 0.95; m.spec = 0.0;  m.wrap = 0.12; m.sparkle = 0.10; break;
+    case MAT_PLANKS:     m.bump = 0.55; m.detail = 1.0;  m.spec = 0.05; m.rough = 18.0; break;
+    case MAT_LOG:        m.bump = 0.85; m.detail = 1.0;  m.spec = 0.02; break;
+    case MAT_STONE:      m.bump = 0.95; m.detail = 1.0;  m.spec = 0.04; m.rough = 14.0; break;
+    case MAT_CUTSTONE:   m.bump = 0.70; m.detail = 0.95; m.spec = 0.07; m.rough = 30.0; m.refl = 0.03; break;
+    case MAT_ENDSTONE:   m.bump = 0.80; m.detail = 1.0;  m.spec = 0.04; break;
+    case MAT_OBSIDIAN:   m.bump = 0.30; m.detail = 1.0;  m.spec = 0.55; m.rough = 110.0; m.refl = 0.30; m.sparkle = 0.35; m.violet = 1.0; break;
+    case MAT_TERRACOTTA: m.bump = 0.30; m.detail = 0.94; m.spec = 0.02; m.sat = 1.05; break;
+    case MAT_GLAZED:     m.bump = 0.22; m.detail = 1.0;  m.spec = 0.45; m.rough = 140.0; m.refl = 0.24; break;
+    case MAT_METAL:      m.bump = 0.35; m.detail = 0.9;  m.spec = 0.85; m.rough = 60.0; m.refl = 0.60; m.metal = 1.0; break;
+    case MAT_GEM:        m.bump = 0.40; m.detail = 1.0;  m.spec = 0.60; m.rough = 90.0; m.refl = 0.30; m.sparkle = 1.0; m.sat = 1.08; break;
+    case MAT_ORE:        m.bump = 0.90; m.detail = 1.0;  m.spec = 0.04; m.rough = 14.0; m.sparkle = 0.8; break;
+    case MAT_SAND:       m.bump = 0.38; m.detail = 0.9;  m.spec = 0.02; m.sparkle = 0.18; break;
+    case MAT_SOIL:       m.bump = 0.60; m.detail = 1.0;  m.spec = 0.0;  break;
+    case MAT_BRICKS:     m.bump = 0.90; m.detail = 1.0;  m.spec = 0.04; m.rough = 16.0; break;
+    case MAT_QUARTZ:     m.bump = 0.25; m.detail = 0.92;  m.spec = 0.32; m.rough = 70.0; m.refl = 0.14; break;
+    case MAT_SNOW:       m.bump = 0.45; m.detail = 0.95; m.spec = 0.10; m.rough = 24.0; m.wrap = 0.30; m.sparkle = 0.9; break;
+    case MAT_ICE:        m.bump = 0.18; m.detail = 1.0;  m.spec = 0.70; m.rough = 160.0; m.refl = 0.26; m.sparkle = 0.5; break;
+    case MAT_GRASS:      m.bump = 0.55; m.detail = 1.0;  m.spec = 0.03; m.wrap = 0.10; break;
+    case MAT_LAMP:       m.bump = 0.20; m.detail = 1.0;  m.spec = 0.10; m.rough = 40.0; break;
+    case MAT_LEAVES:     m.bump = 0.30; m.detail = 1.0;  m.spec = 0.06; m.rough = 30.0; break;
+    case MAT_PLANT:      m.bump = 0.0;  m.detail = 1.0;  m.spec = 0.04; break;
+    case MAT_CARVED:     m.bump = 0.55; m.detail = 1.0;  m.spec = 0.06; m.rough = 24.0; break;
+    case MAT_FLOWER:     m.bump = 0.0;  m.detail = 1.0;  m.spec = 0.05; m.sat = 1.05; break;
+    }
+    return m;
+}
+float csHash(float2 p) { p = frac(p * float2(0.1031, 0.1030)); p += dot(p, p.yx + 33.33); return frac((p.x + p.y) * p.x); }
+float3 csHash3(float2 p) { return float3(csHash(p), csHash(p + 17.13), csHash(p + 41.71)); }
+
+float csVN(float2 p) {   // value noise (no texture in these materials)
+    float2 i = floor(p), f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(csHash(i), csHash(i + float2(1, 0)), f.x), lerp(csHash(i + float2(0, 1)), csHash(i + float2(1, 1)), f.x), f.y);
+}
+// ---- wind: gust fronts roll across the map from the south-west (~12 blocks a second). The block vertex shader sways
+//      leaves and plants harder inside a gust (same field: _shared/RenderChunkWave.vertex.hlsli csGustV); here the
+//      gust turns leaves and grass a little silver (their undersides, flipped up), so you SEE the wind cross an island.
+#if defined(CS_NOVAK)
+// ---- Novak Glass: a block of cast glass. Looking into a face, the ray bends in and leaves through a side wall or the
+//      back wall of the cube: xyz = where it leaves (face u, v, depth 0..1 going in), w = how far it went through glass.
+float4 ngExit(float2 f, float3 vt, float bend) {
+    float3 rd = normalize(float3(-vt.xy * bend, -max(vt.z, 0.05)));
+    float2 sd = float2(abs(rd.x) > 1e-4 ? rd.x : 1e-4, abs(rd.y) > 1e-4 ? rd.y : 1e-4);
+    float2 ts = (step(0.0, sd) - f) / sd;
+    float  t  = min(min(ts.x, ts.y), 1.0 / -rd.z);
+    return float4(f + rd.xy * t, -rd.z * t, t);
+}
+// 1 on the outer texel ring of the inner wall the ray leaves through: the cube's far edges, seen through the glass
+// (whole 1/16 texels, so they stay pixel art and slide as you move)
+float ngInnerEdge(float3 h) {
+    float3 q = (floor(saturate(h) * 15.999) + 0.5) / 16.0;
+    float3 e = min(q, 1.0 - q);
+    float  mid = e.x + e.y + e.z - min(e.x, min(e.y, e.z)) - max(e.x, max(e.y, e.z));
+    return step(mid, 0.04);
+}
+#endif
+float csGust(float2 xz, float t) {
+    float2 p = xz * 0.045 - float2(0.8660254, 0.5) * t * 0.55;
+    float  g = csVN(p) * 0.65 + csVN(p * 2.1 + 5.3) * 0.35;
+    return smoothstep(0.42, 0.86, g);
+}
+// the high clouds as a polished surface sees them: they drift with the wind and take the hour's light (sun side lit,
+// the rest in shade), so every reflection in the world moves with the sky
+float3 csSkyMoving(float3 r) {
+    float3 c = csSky(r);
+    float  e = max(r.y, 0.0);
+    float2 p = r.xz / max(r.y, 0.07) * 0.85 + CS_TIME * float2(0.016, 0.006);
+    float  n = csVN(p) * 0.55 + csVN(p * 2.3 + 7.1) * 0.30 + csVN(p * 5.3 + 3.3) * 0.15;
+    float  cl = smoothstep(0.52, 0.78, n) * smoothstep(0.06, 0.26, e) * (1.0 - smoothstep(0.55, 0.95, e) * 0.6) * CS_CLOUDREFL;   // low clouds stretch into streaks: fade them
+    float  toSun = pow(saturate(dot(normalize(float3(r.x, 0.0, r.z)), normalize(float3(CS_SUN.x, 0.0, CS_SUN.z))) * 0.5 + 0.5), 2.0);
+    float3 lit = lerp(lerp(float3(1.25, 0.66, 0.48), float3(0.95, 0.42, 0.48), CS_DUSK), float3(0.20, 0.24, 0.36), CS_NIGHT);
+    float3 shd = lerp(lerp(float3(0.42, 0.28, 0.42), float3(0.24, 0.16, 0.30), CS_DUSK), float3(0.05, 0.06, 0.11), CS_NIGHT);
+#if defined(CS_NOVAK)
+    c = lerp(c, lerp(lerp(float3(0.80, 0.86, 0.95), float3(0.70, 0.36, 0.50), CS_DUSK), float3(0.06, 0.06, 0.15), CS_NIGHT), cl * 0.28);   // thin ice cirrus
+#else
+    c = lerp(c, lerp(shd, lit, toSun), cl * 0.85);
+#endif
+    // stars between the clouds at night (one direction cell each, they don't crawl)
+    if (CS_NIGHT > 0.01) {
+        float3 a = abs(r);
+        float2 g = (a.x > a.z ? r.zy / a.x : r.xy / max(a.z, 1e-3)) * 90.0;
+        float  h = csHash(floor(g));
+        float  st = step(0.985, h) * smoothstep(0.35, 0.0, length(frac(g) - 0.5)) * (0.6 + 0.4 * sin(CS_TIME * (1.0 + h * 3.0) + h * 50.0));
+        c += float3(0.85, 0.90, 1.0) * st * CS_NIGHT * (1.0 - cl) * smoothstep(0.05, 0.3, e) * 1.6;
+    }
+    return c;
+}
+
+// what a reflective surface sees: the Cloud Sea sky above, the lit cloud tops below
+float3 csReflect(float3 r) {
+    if (r.y >= 0.0) return csSkyMoving(r);
+    float3 sea = lerp(float3(0.62, 0.34, 0.36), float3(0.95, 0.42, 0.18), pow(saturate(dot(normalize(float3(r.x, 0.0, r.z)), CS_SUN) * 0.5 + 0.5), 3.0));
+    sea = lerp(lerp(sea, float3(0.55, 0.30, 0.46), CS_DUSK), float3(0.10, 0.14, 0.30), CS_NIGHT);
+#if defined(CS_NOVAK)
+    sea = lerp(lerp(float3(0.045, 0.075, 0.230), float3(0.060, 0.030, 0.150), CS_DUSK), float3(0.010, 0.008, 0.034), CS_NIGHT);   // the void under the map
+#endif
+    return lerp(csSky(normalize(float3(r.x, 0.02, r.z))), sea, smoothstep(0.0, -0.12, r.y));
+}
+
+// alb linear (corner shade already in it), n = shading normal (relief), ng = face normal, sunVis = open sky toward
+// the sun, sky = sky light 0..1, leaf = foliage (light passes through), V = toward the eye, cav = texture cavity 0..1,
+// glintN = per-texel tilted normal (sparkle), fade = 1 near, 0 where texels get smaller than pixels
+float3 csLight(float3 alb, float3 n, float3 ng, float sunVis, float sky, float leaf, float3 V, CsMat m, float cav, float3 glintN, float fade) {
+    float green = saturate((alb.g - max(alb.r, alb.b)) * 5.0);   // pure greens refuse to sit in a sunset: toward olive
+#if !defined(CS_NOVAK)
+    alb = lerp(alb, csLuma(alb) * float3(1.22, 0.98, 0.42), green * 0.42);
+#endif
+    alb = max(lerp(csLuma(alb).xxx, alb, m.sat), 0.0);
+    float3 sunC = CS_SUNC;                                       // soft gold (the hour's key light): lit faces glow, never orange paint
+    float  ndlRaw = dot(n, CS_SUN);
+    float  ndl = saturate((ndlRaw + m.wrap) / (1.0 + m.wrap)) * step(-0.02, dot(ng, CS_SUN) + m.wrap); // relief never lights a face turned away
+    float3 amb  = lerp(float3(0.255, 0.140, 0.150), float3(0.200, 0.190, 0.330), smoothstep(-1.0, 1.0, n.y));
+    float  toSun = dot(n.xz, normalize(CS_SUN.xz));
+    float  side  = 1.0 - abs(n.y);
+#if defined(CS_NOVAK)
+    // Novak Glass: the sky's own cold light from above, the void's from below; a little bounce toward the sun
+    amb  = lerp(float3(0.150, 0.165, 0.250), float3(0.230, 0.285, 0.430), smoothstep(-1.0, 1.0, n.y));
+    amb += float3(0.200, 0.180, 0.150) * max(toSun, 0.0) * side * (1.0 - 0.55 * CS_DUSK);
+    amb += float3(0.070, 0.090, 0.160) * max(-toSun, 0.0) * side;
+#else
+    amb += float3(0.40, 0.165, 0.070) * max(toSun, 0.0) * side * (1.0 - 0.55 * CS_DUSK);
+    amb += float3(0.105, 0.085, 0.150) * max(-toSun, 0.0) * side;
+#endif
+    // dusk: the light goes rose and violet; night: a cool blue sky light, bright enough to fight in
+    amb *= lerp(float3(1.0, 1.0, 1.0), float3(0.92, 0.78, 1.05), CS_DUSK);
+#if defined(CS_NOVAK)
+    amb *= lerp(float3(1.0, 1.0, 1.0), float3(0.98, 0.86, 1.00), CS_DUSK);
+    amb  = lerp(amb, lerp(float3(0.115, 0.105, 0.210), float3(0.185, 0.175, 0.340), smoothstep(-1.0, 1.0, n.y)), CS_NIGHT);   // indigo night
+#else
+    amb  = lerp(amb, lerp(float3(0.12, 0.13, 0.20), float3(0.19, 0.21, 0.31), smoothstep(-1.0, 1.0, n.y)), CS_NIGHT);   // RF tints the night blue on top
+#endif
+    amb *= lerp(0.08, 1.0, sky * sky);                             // caves and covered spots lose the sky
+    amb *= lerp(1.0, cav, m.bump * 0.55 * fade);                   // texture cavities hold a little shade
+    float3 dir = sunC * (ndl + 0.035 * max(n.y, 0.0)) * sunVis;
+    if (leaf > 0.5) {
+        float mu    = max(dot(-V, CS_SUN), 0.0);
+        float trans = pow(mu, 4.0) * 0.9 + 0.12;
+        float wrap  = max(dot(n, CS_SUN) * 0.5 + 0.5, 0.0);
+#if defined(CS_NOVAK)
+        dir = (sunC * wrap * 0.55 + float3(0.92, 1.00, 0.50) * 1.7 * trans) * sunVis;   // leaves glow green-gold, not sunset orange
+#else
+        dir = (sunC * wrap * 0.55 + float3(1.15, 0.80, 0.32) * 2.1 * trans) * sunVis;
+#endif
+        amb *= 1.7;
+    }
+    float3 c = alb * (amb + dir) * (1.0 - 0.72 * m.metal);         // metals have almost no diffuse: their reflections carry them
+    float  ndv = saturate(dot(n, V));
+    float  fres = pow(1.0 - ndv, 5.0);
+    // fabric: a soft glow where the surface turns away from you (light caught in the fibres)
+    c += alb * (amb * 0.8 + dir * 0.6) * m.velvet * pow(1.0 - ndv, 3.0);
+    // sun highlight (normalised Blinn-Phong); metals tint it with their own colour
+    float3 H = normalize(CS_SUN + V);
+    float3 tintS = lerp(float3(1.0, 1.0, 1.0), sqrt(alb / max(csMax3(alb), 1e-3)), m.metal);   // sqrt: gold stays gold, not neon
+    float  spec = pow(saturate(dot(n, H)), m.rough) * (m.rough + 8.0) / 25.0;
+    c += sunC * tintS * spec * m.spec * (0.04 + 0.96 * pow(1.0 - saturate(dot(H, V)), 5.0) + m.metal * 0.5) * sunVis * step(0.0, ndlRaw);
+    // sky reflection: the Cloud Sea on polished surfaces
+    if (m.refl > 0.0) {
+        float3 R = reflect(-V, n);
+        float  f0 = lerp(0.04, 0.6, m.metal);
+        float  F  = f0 + (1.0 - f0) * fres;
+        CS_CLOUDREFL = smoothstep(0.12, 0.30, m.refl);
+        float3 rc = csReflect(R);
+        rc = lerp(rc, csLuma(rc).xxx, 0.45 * m.metal);   // brushed metal scatters the sky's colour: steel, not pink chrome
+        rc *= lerp(float3(1.0, 1.0, 1.0), sqrt(alb / max(csMax3(alb), 1e-3)), m.metal);
+        rc *= lerp(float3(1.0, 1.0, 1.0), float3(0.55, 0.45, 0.80), m.violet);   // obsidian: dark violet glass mirrors the sky darker
+        CS_CLOUDREFL = 1.0;
+        rc *= lerp(1.0, 0.45 + 1.1 * smoothstep(-0.05, 0.25, R.y) * (1.0 - 0.5 * smoothstep(0.25, 0.8, R.y)), m.metal); // contrast: dark below the horizon line, bright band, dimmer zenith
+        c = lerp(c, rc * lerp(0.35, 1.0, sky), saturate(F * m.refl * 1.6)) + rc * m.metal * m.refl * 0.55 * sky;
+    }
+    // sparkle: single texels catch the sun as you move (texel-locked, so it never crawls or flickers on its own)
+    if (m.sparkle > 0.0) {
+        float3 Rg = reflect(-V, glintN);
+        float g = pow(saturate(dot(Rg, CS_SUN)), 260.0);
+        // a crystal splits the light: each glint has its own hue (a texel-locked rainbow 'fire', strongest on gems)
+        float  hue = frac(dot(glintN, float3(7.13, 3.71, 5.29)) * 3.0);
+        float3 fire = saturate(abs(frac(hue + float3(0.0, 0.333, 0.667)) * 6.0 - 3.0) - 1.0);
+        float3 gc = lerp(lerp(float3(1.6, 1.25, 0.95), float3(0.9, 1.05, 1.5), CS_NIGHT), 0.5 + fire * 1.6, saturate(m.sparkle - 0.55) * 0.9);
+        c += gc * g * m.sparkle * sunVis * fade * 3.0 * max(CS_LIGHTK, 0.35);
+    }
+    // obsidian: a cold violet sheen at grazing angles
+    c += float3(0.22, 0.10, 0.42) * fres * 0.5 * m.violet * lerp(0.3, 1.0, sky);
+#if !defined(CS_NOVAK)
+    // open ground facing up takes the sky's own light (Fernando, Nov 14: big flat Cloud Sea floors read flat grey under
+    // the sunset): a warm wash from the low sun's half of the sky, and at grazing angles the sky lies faintly in the
+    // surface - far floor goes toward the sunset's colour, near floor keeps its texture
+    {
+        float  upK = saturate(n.y) * sky * sky * (1.0 - leaf);
+        float3 skyFill = lerp(lerp(float3(0.30, 0.17, 0.11), float3(0.30, 0.15, 0.20), CS_DUSK), float3(0.025, 0.035, 0.070), CS_NIGHT);
+        c += alb * skyFill * upK * 0.55;
+        float  Fg = fres * 0.20 * upK * (m.refl > 0.0 ? 0.0 : 1.0);
+        [branch] if (Fg > 0.003) c = lerp(c, csReflect(reflect(-V, n)) * 0.85, Fg);
+    }
+#endif
+    // keep strongly lit warm colours from going neon: past ~70% saturation, ease back toward the luma
+    float mx = csMax3(c), mn = min(c.r, min(c.g, c.b));
+    float sat = mx > 1e-4 ? (mx - mn) / mx : 0.0;
+    return lerp(csLuma(c).xxx, c, 1.0 - 0.28 * smoothstep(0.62, 0.95, sat) * (1.0 - m.metal));
+}
+
+// ---- the item in your own hand: lit like a film's view model, not by where the sun happens to be. A key light high
+//      over your right shoulder in the hour's colour, and the real sun (or moon) as a rim when it is behind the blade -
+//      so the sword always reads, and still belongs to the scene. Returns how much of the rig was used (0 far away).
+float csViewModel(inout float3 lit, float3 alb, float3 n, float3 V, CsMat m, float3 gn, float sky, float dEye, float3 rt, float3 up) {
+    float fp = 1.0 - smoothstep(1.3, 2.1, dEye);
+    [branch] if (fp > 0.0) {
+        // (the hand pass's u_view is not the camera's - seen in game - so the rig is built from the eye direction and
+        //  world up: key above and a little to the side of your eye, mostly from the front)
+        up = float3(0, 1, 0);
+        rt = cross(up, V);
+        rt = dot(rt, rt) > 1e-6 ? normalize(rt) : float3(1, 0, 0);
+        float3 keep = CS_SUN, keepC = CS_SUNC;
+        CS_SUN  = normalize(V * 0.75 + up * 0.55 + rt * 0.35);
+        CS_SUNC = lerp(lerp(float3(1.00, 0.76, 0.56), float3(1.00, 0.62, 0.55), CS_DUSK), float3(0.62, 0.74, 1.00), CS_NIGHT) * 1.55;
+        float3 rig = csLight(alb, n, n, 1.0, max(sky, 0.55), 0.0, V, m, 1.0, gn, 1.0);
+        CS_SUN = keep; CS_SUNC = keepC;
+        float rim = pow(1.0 - saturate(dot(n, V)), 2.5) * pow(saturate(dot(-V, CS_SUN) * 0.5 + 0.5), 3.0);
+        rig += alb * CS_SUNC * rim * 0.9 + CS_SUNC * rim * 0.25 * m.metal;
+        rig *= lerp(0.35, 1.0, sky);                       // in a cave or under a roof it still follows the light there
+        lit = lerp(lit, rig, fp);
+    }
+    return fp;
+}
+
+// air: far blocks drift into the sky behind them; toward the sun the air glows warm
+float3 csHaze(float3 c, float3 wp, float3 cam, float vanillaFog) {
+    float3 v = wp - cam;
+    float  dist = length(v);
+    // menus, the inventory and the dressing room draw the player with a camera far from the model (seen: the character
+    // came out a flat light blue / pink - the sky colour hazed over it): no haze there
+    if (dist > 3000.0) return c;
+    vanillaFog *= smoothstep(4.0, 8.0, dist);
+    float3 d = v / max(dist, 1e-3);
+    float  f = 1.0 - exp(-dist / 520.0);
+    f = max(f * 0.85, vanillaFog);                                 // the game's fog still hides the chunk edge
+    float3 hz = csSky(normalize(float3(d.x, max(d.y, 0.0) * 0.5 + 0.03, d.z)));
+    c = lerp(c, hz, f);
+    float mu = max(dot(d, CS_SUN), 0.0);
+#if defined(CS_NOVAK)
+    return c + lerp(float3(0.55, 0.55, 0.52), float3(0.18, 0.17, 0.36), CS_NIGHT) * (pow(mu, 6.0) * 0.22 + pow(mu, 40.0) * 0.35) * (1.0 - exp(-dist / 160.0)) * (1.0 - 0.6 * CS_DUSK);
+#endif
+    c += lerp(float3(1.0, 0.45, 0.16), float3(0.20, 0.26, 0.42), CS_NIGHT) * (pow(mu, 6.0) * 0.36 + pow(mu, 40.0) * 0.5) * (1.0 - exp(-dist / 160.0)) * (1.0 - 0.6 * CS_DUSK);
+    return c;
+}
+
+// Vanilla distance-dither fade (RenderDragon's Actor/RenderChunk alpha-test code): true = discard this pixel.
+float bfDitherHash(float2 q) { return frac(q.x * 0.5 + q.y * q.y * 0.75); }
+bool bfDitherKill(float3 worldPos, float3 cam, float3 fwd, float4 clip, float4 p2, float4 p) {
+    float3 n    = -normalize(fwd);
+    float  f    = saturate((dot(n, worldPos - cam) - p2.x) / (p2.y - p2.x));
+    float  fade = f * f * (3.0 - 2.0 * f);
+    float2 sp   = (clip.xy / clip.w) * 0.5 + 0.5;
+    float2 px   = floor(sp * p.xy / p2.z) * p2.z;
+    float  t    = (bfDitherHash(floor(px * 0.25)) * 0.25 + bfDitherHash(floor(px * 0.5))) * 0.25 + 0.0078125
+                + bfDitherHash(floor(px));
+    return fade <= t;
+}
+
+static float CS_ITEM_FP = 0.0;   // 1: the item in your own hand (flat faces seen head-on: no fresnel, no rim - it needs its own glass cues)
+// a smooth field through an item's volume (the light inside it - both atmospheres)
+// a flat card turned square to the screen, away from you: a server's floating marker (the Hive's bed / flag / letter
+// icons over each island), not an item. Its texture is item-sized, so the item looks caught it - Fernando, Nov 15: the
+// bed marker came out cream porcelain with grey blotches instead of its team colour. Markers keep their own colours.
+bool csScreenCard(float3 n, float3 fwd, float dist) { return abs(dot(n, normalize(fwd))) > 0.992 && dist > 3.0; }
+float csH3(float3 p) { p = frac(p * 0.1031); p += dot(p, p.zyx + 31.32); return frac((p.x + p.y) * p.z); }
+float csN3(float3 p) {
+    float3 i = floor(p), f = frac(p); f = f * f * (3.0 - 2.0 * f);
+    return lerp(lerp(lerp(csH3(i), csH3(i + float3(1, 0, 0)), f.x), lerp(csH3(i + float3(0, 1, 0)), csH3(i + float3(1, 1, 0)), f.x), f.y),
+                lerp(lerp(csH3(i + float3(0, 0, 1)), csH3(i + float3(1, 0, 1)), f.x), lerp(csH3(i + float3(0, 1, 1)), csH3(i + float3(1, 1, 1)), f.x), f.y), f.z);
+}
+// the same field with its slope (xyz of the result's yzw): one call gives height and the way the surface leans
+float4 csN3d(float3 x) {
+    float3 p = floor(x), w = frac(x);
+    float3 u = w * w * w * (w * (w * 6.0 - 15.0) + 10.0), du = 30.0 * w * w * (w * (w - 2.0) + 1.0);
+    float a = csH3(p), b = csH3(p + float3(1, 0, 0)), c = csH3(p + float3(0, 1, 0)), d = csH3(p + float3(1, 1, 0));
+    float e = csH3(p + float3(0, 0, 1)), f = csH3(p + float3(1, 0, 1)), g = csH3(p + float3(0, 1, 1)), h = csH3(p + float3(1, 1, 1));
+    float k0 = a, k1 = b - a, k2 = c - a, k3 = e - a, k4 = a - b - c + d, k5 = a - c - e + g, k6 = a - b - e + f, k7 = -a + b + c - d + e - f - g + h;
+    return float4(k0 + k1 * u.x + k2 * u.y + k3 * u.z + k4 * u.x * u.y + k5 * u.y * u.z + k6 * u.z * u.x + k7 * u.x * u.y * u.z,
+                  du * float3(k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z, k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x, k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y));
+}
+// ---- Novak Glass: items as glass that follows the match (Actor + ActorGlint)
+#if defined(CS_NOVAK)
+// what Novak glass sees: the day sky's aqua-to-ultramarine, or the night city (OLED black, neon on the horizon)
+float3 ngEnv(float3 r, float day) {
+    float  y = r.y;
+    float3 dayC   = lerp(float3(0.62, 0.86, 1.00), float3(0.12, 0.32, 0.88), smoothstep(-0.10, 0.60, y)) + float3(1.0, 0.95, 0.85) * pow(saturate(1.0 - abs(y - 0.30) * 3.0), 6.0) * 0.4;
+    float3 nightC = float3(0.004, 0.004, 0.010)
+                  + float3(0.10, 0.80, 1.00) * pow(saturate(1.0 - abs(y - 0.04) * 5.0), 3.0) * 0.55
+                  + float3(1.00, 0.20, 0.75) * pow(saturate(1.0 - abs(y + 0.10) * 6.0), 3.0) * 0.50;
+    return lerp(nightC, dayC, day);
+}
+// Items as glass that follows the match (k: 0 the start .. 1 the endgame, from the match phase). Start: Future Aero -
+// clear glass with the item's colour as a tint, the bright day bent through it, a glossy top and a clean white rim.
+// Dusk: rose / violet. Endgame: neon glass that lights itself - deep colour, an inner glow that breathes, light running
+// along the item in fine lines, a cyan / magenta rim, and the facets splitting light harder.
+float3 ngItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, float3 wp) {
+    float  k     = saturate(CS_PHASE * 0.5);
+    float  neonK = smoothstep(0.30, 0.95, k);
+    float3 alb   = csLin(c);
+    float  luma  = csLuma(c), chroma = csMax3(c) - min(c.r, min(c.g, c.b));
+    float3 hue   = alb / max(csMax3(alb), 1e-3);
+    float  grey  = 1.0 - smoothstep(0.05, 0.18, chroma);
+    float  gem   = smoothstep(0.10, 0.25, c.g - c.r) * smoothstep(0.05, 0.20, c.b - c.r);
+    float3 nf    = normalize(lerp(n, gn, 0.35));                     // each texel a slightly different facet
+    float  NV    = saturate(dot(nf, V));
+    float  Fg    = 0.05 + 0.95 * pow(1.0 - NV, 4.0);
+    float3 Lk    = normalize(float3(0.35, 0.80, 0.45));
+    float  glint = pow(saturate(dot(nf, normalize(Lk + V))), lerp(180.0, 48.0, CS_ITEM_FP)) * lerp(1.0, 0.35, CS_ITEM_FP);   // (in the hand: one soft gleam, not texels strobing as it swings)
+    float  sp    = lerp(0.012, 0.035, neonK);
+    float3 Tr = refract(-V, nf, 0.67 - sp), Tg = refract(-V, nf, 0.67), Tb = refract(-V, nf, 0.67 + sp);
+    float3 R  = reflect(-V, nf);
+    // Future Aero: glass in the item's OWN colour (seen on Hive: a pale aqua tint over everything made emeralds read as
+    // diamonds, gold and iron as the same aqua glass). The colour is the item's; the glass is the light on it - the
+    // world bent through it, a fresnel reflection, the glossy top, a clean rim and a sparkle.
+    float3 aeroTint = lerp(hue, float3(0.92, 0.96, 1.00), grey * 0.6);
+    float3 envT = float3(ngEnv(Tr, 1.0).r, ngEnv(Tg, 1.0).g, ngEnv(Tb, 1.0).b);
+    envT = lerp(envT, ngEnv(float3(0.0, 0.3, 1.0), 1.0), 0.75 * CS_ITEM_FP);   // in the hand: the city through it barely moves (swings swept bright windows across the blade)
+    float  envL = dot(envT, float3(0.2126, 0.7152, 0.0722));
+    float3 aero = alb * (0.62 + 0.45 * saturate(envL)) + envT * aeroTint * 0.16;
+    aero = lerp(aero, ngEnv(R, 1.0), Fg * 0.35 * (1.0 - 0.7 * CS_ITEM_FP));
+    aero += smoothstep(0.30, 0.95, nf.y) * 0.10 * lerp(float3(1, 1, 1), aeroTint, 0.4);   // the glossy top
+    aero += float3(1.0, 0.98, 0.95) * glint * 1.8;
+    aero += lerp(float3(0.92, 0.97, 1.00), aeroTint, 0.4) * pow(1.0 - NV, 3.0) * 0.25;   // the clean rim
+    aero = lerp(aero, aero * float3(1.05, 0.78, 0.90), smoothstep(0.15, 0.55, k) * (1.0 - neonK));   // dusk
+    // light moving THROUGH the glass (quality audit, Nov 15: with only flat face normals the item in your hand was two
+    // flat tones - card, not glass): slow bright caustics and deeper bands drift through its volume
+    // (Nov 15, "the sword flashes / pulses sporadically": in your hand wp is view space - every swing and hand bob carried
+    //  the sword through this field, and the per-texel ids came from a hash of a ROTATING normal, so they re-rolled every
+    //  frame. In first person the field and the ids come from the texel's colour, which goes where the sword goes.)
+    float3 q    = CS_ITEM_FP > 0.5 ? c * float3(3.1, 2.7, 3.5) : wp * 7.0;
+    // (Nov 15 b, "still flickers": with the field keyed to colour, every texel of one shade shares one value - any drift
+    //  in time made whole patches brighten and dim together, the pulsing. In the hand the light inside holds still.)
+    T *= 1.0 - CS_ITEM_FP;
+    float  flow = csN3(q + float3(T * 0.10, -T * 0.22, T * 0.06)) * 0.62 + csN3(q * 2.3 + float3(-T * 0.15, T * 0.30, 0.0)) * 0.38;
+    float  caust = smoothstep(0.52, 0.88, flow);
+    aero = aero * (0.82 + 0.34 * flow) + lerp(float3(1.0, 1.0, 1.0), aeroTint, 0.45) * caust * 0.30;
+    // in your own hand (Fernando, Nov 15: "still looks vanilla" - it was the sprite's own colours, lit): the body goes
+    // pale and clear like the third-person crystal, each texel a facet, the sprite's dark outline becomes the glass's
+    // bright cut edge, and a gloss slides across it now and then
+    float  fid   = CS_ITEM_FP > 0.5 ? csH3(floor(c * 255.0 + 0.5)) : frac(sin(dot(gn, float3(12.9898, 78.233, 37.719))) * 43758.5453);
+    float  edgeK = (1.0 - smoothstep(0.20, 0.38, luma)) * CS_ITEM_FP;
+    float  gloss = smoothstep(0.90, 1.0, sin((q.x + q.y) * 0.9 - T * 1.1));
+    float3 clear = lerp(float3(0.84, 0.93, 1.00), hue, 0.50) * (0.70 + 0.40 * flow) * (0.84 + 0.32 * fid);
+    aero = lerp(aero, clear + float3(1.0, 1.0, 1.0) * (caust * 0.22 + gloss * 0.30), 0.50 * CS_ITEM_FP);
+    aero = lerp(aero, lerp(float3(0.96, 0.99, 1.00), hue, 0.42) * (0.84 + 0.30 * caust + 0.25 * gloss), edgeK * 0.78);
+    aero *= lerp(0.50, 1.0, sky);
+    // the endgame / night: crystallized glass in the item's own colour - cut facets that each catch the light their own
+    // way, a soft glow from within, a rim and a sparkle. (Seen on Hive: the earlier glow made diamond a flat, far too
+    // bright cyan - not a crystal.)
+    float3 Lc   = normalize(float3(-0.35, 0.75, 0.55));
+    float  fct  = dot(normalize(gn - n * dot(gn, n) * 0.5), Lc);          // each texel's facet tilt
+    float  facet = 0.70 + 0.45 * saturate(0.5 + 0.5 * fct);
+    float  breathe = 0.90 + 0.10 * sin(T * 2.2 + (CS_ITEM_FP > 0.5 ? 0.0 : wp.y * 3.0));
+    float3 own  = alb * lerp(1.0, 0.85, grey);                            // its own colour, not turned up
+    float3 night = own * 0.62 * facet;
+    night += float3(ngEnv(Tr, 0.0).r, ngEnv(Tg, 0.0).g, ngEnv(Tb, 0.0).b) * hue * 0.18 * (1.0 - 0.7 * CS_ITEM_FP);  // a little of the city through it
+    night += hue * (0.05 + 0.07 * gem) * breathe;                          // the glow from within, gentle
+    night += lerp(float3(0.85, 0.95, 1.00), hue, 0.55) * pow(1.0 - NV, 3.0) * 0.35;      // glass rim
+    night += lerp(float3(1.0, 1.0, 1.0), hue, 0.25) * glint * 1.4;        // the sparkle on a facet
+    night = night * (0.80 + 0.38 * flow) + hue * caust * 0.24 * breathe;
+    night = lerp(night, own * (0.50 + 0.40 * flow) * (0.80 + 0.40 * fid) + hue * (0.10 + 0.30 * caust) * breathe + float3(1.0, 1.0, 1.0) * gloss * 0.22, 0.60 * CS_ITEM_FP);
+    night = lerp(night, lerp(float3(0.80, 0.92, 1.00), hue, 0.50) * (0.70 + 0.45 * caust + 0.25 * gloss) * breathe, edgeK * 0.90);
+    return lerp(aero, night, neonK);
+}
+#endif
+#if !defined(CS_NOVAK)
+// 15 Cloud Sea items: SUN BY DAY, MOON BY NIGHT (Fernando, Nov 15: porcelain + sunstone, "every tool and weapon glows
+// like the sun by day and like the moon at night"). The item is glazed porcelain in its OWN colour (an emerald stays
+// green, iron stays grey - Novak's lesson); the sprite's dark outline texels are metal inlay; its bright coloured
+// texels are the stone set in it.
+//   day:   pearl porcelain, gold inlay, SUNSTONE - warm light from inside, copper flecks that flash as it turns
+//   dusk:  the gold goes rose, the sunstone burns lower and redder (the bridge - the sun is going)
+//   night: moon porcelain (cool, quietly luminous), silver inlay, MOONSTONE - a milky stone with a blue-white sheen
+//          that floats over it and moves as you move (adularescence), slow silver motes instead of sparks
+float3 csSunEnv(float3 d, float k) {
+    float  up = saturate(d.y * 0.5 + 0.5);
+    float3 day = lerp(float3(1.00, 0.80, 0.55), float3(0.55, 0.72, 1.00), smoothstep(0.45, 0.95, up));
+    float3 eve = lerp(float3(1.00, 0.52, 0.30), float3(0.62, 0.42, 0.78), smoothstep(0.45, 0.95, up));
+    float3 nit = lerp(float3(0.07, 0.09, 0.18), float3(0.34, 0.44, 0.74), smoothstep(0.40, 0.95, up));
+    return lerp(lerp(day, eve, smoothstep(0.15, 0.55, k)), nit, smoothstep(0.62, 0.90, k));
+}
+// (wp: a position that stays with the item - view space for the one in your hand, world space for everyone else's)
+float3 csItemGlass(float3 c, float3 n, float3 V, float3 gn, float sky, float T, float3 wp) {
+#if defined(CS_FORCE_K)
+    float  k     = CS_FORCE_K;                                            // preview builds only
+#else
+    float  k     = saturate(CS_PHASE * 0.5);
+#endif
+    float  dusk  = smoothstep(0.15, 0.55, k), moonK = smoothstep(0.62, 0.90, k);
+    float3 lw    = float3(0.2126, 0.7152, 0.0722);
+    float3 alb   = csLin(c);
+    float  L     = dot(c, lw);
+    float3 hue   = alb / max(csMax3(alb), 1e-3);
+    float  chroma = csMax3(c) - min(c.r, min(c.g, c.b));
+    float  grey  = 1.0 - smoothstep(0.05, 0.18, chroma);
+    float  inlay = 1.0 - smoothstep(0.15, 0.24, L);                       // the sprite's dark outline: metal, and the item's halo
+    float  core  = smoothstep(0.42, 0.72, L) * (1.0 - grey);              // its bright coloured texels: the stone
+    float3 nf    = normalize(lerp(n, gn, 0.25));
+    float  NV    = saturate(dot(nf, V));
+    float  F     = 0.04 + 0.96 * pow(1.0 - NV, 5.0);
+    float3 R     = reflect(-V, nf);
+    float3 keyD  = normalize(lerp(float3(0.35, 0.80, 0.45), float3(-0.45, 0.78, 0.42), moonK));   // the sun's side, then the moon's
+    float3 envR  = csSunEnv(R, k), envN = csSunEnv(nf, k);
+    float  id    = CS_ITEM_FP > 0.5 ? csH3(floor(c * 255.0 + 0.5)) : frac(sin(dot(gn, float3(12.9898, 78.233, 37.719))) * 43758.5453);   // one value per texel (in the hand: from its colour - a hash of the turning normal re-rolled every frame, the flashing)
+    float  shade = 0.70 + 0.55 * L;                                        // the sprite's own drawn shading stays
+    // the light INSIDE the item (seen in game: with only face normals to go on, every face was one flat colour - card,
+    // not something lit from within). A slow field through the item's volume: by day it rolls like the sun's surface,
+    // at night it lies still like the moon's seas, with one soft sheen drifting over it.
+    float3 q     = CS_ITEM_FP > 0.5 ? c * float3(3.1, 2.7, 3.5) : wp * 7.0;   // (in the hand: on the item, not in view space - swings raced it through the field)
+    float  Tq    = T * (1.0 - CS_ITEM_FP);   // (and it holds still there: keyed to colour, a drift made whole patches pulse together)
+    float  roll  = csN3(q + float3(0.0, -Tq * 0.35, Tq * 0.12)) * 0.62 + csN3(q * 2.3 + float3(Tq * 0.20, Tq * 0.50, 0.0)) * 0.38;
+    float  heat  = smoothstep(0.28, 0.80, roll);
+    float  mare  = smoothstep(0.42, 0.60, csN3(q * 0.9 + 7.0) * 0.65 + csN3(q * 2.6 + 3.0) * 0.35);
+    float  sheen = smoothstep(0.50, 0.92, csN3(q * 0.7 + float3(Tq * 0.22, 0.0, Tq * 0.16)));
+
+    // ---- porcelain: a pearl glaze with the item's colour fired into it; at night it cools and gives a little light back
+    // (seen in game: the item's colour MIXED with amber went olive - a diamond sword was sage green. The colour stays the
+    //  item's own, clean; the sun and the moon are the LIGHT on it and in it, added, never mixed in.)
+    float3 pearlD = lerp(float3(1.00, 0.91, 0.74), hue * 0.85 + 0.10, lerp(0.34, 0.12, grey));
+    float3 pearlN = lerp(float3(0.80, 0.87, 1.00), hue * 0.80 + float3(0.06, 0.09, 0.16), lerp(0.34, 0.10, grey));
+    float3 pearl  = lerp(pearlD, pearlN, moonK);
+    float  wrap  = saturate((dot(nf, keyD) + 0.45) / 1.45);
+    float3 body  = pearl * (0.46 + 0.56 * wrap) * lerp(float3(1.0, 1.0, 1.0), envN * 1.1, 0.22) * (0.96 + 0.08 * id) * (0.80 + 0.30 * L);
+    float3 sunC   = lerp(float3(1.00, 0.74, 0.30), float3(1.00, 0.42, 0.16), dusk);
+    float3 moonC  = float3(0.62, 0.76, 1.00);
+    // lit through from inside: sun-gold patches that roll by day; by night a still, mottled moon glow and the sheen
+    body += (sunC * heat * heat * 0.50 + float3(1.00, 0.95, 0.80) * pow(heat, 4.0) * lerp(0.30, 0.10, dusk)) * (1.0 - moonK);
+    body  = lerp(body, body * (0.94 - 0.40 * mare) + moonC * (0.10 + 0.36 * sheen), moonK);
+    body += lerp(lerp(float3(1.00, 0.80, 0.82), float3(0.78, 0.86, 1.00), saturate(R.y * 0.5 + 0.5)), float3(0.62, 0.78, 1.00), moonK) * pow(1.0 - NV, 3.0) * lerp(0.16, 0.30, moonK);   // glaze sheen
+    body  = lerp(body, envR, F * 0.45);
+    // ---- the outline: metal that carries the item's halo - gold with the sun's flicker, rose gold, then moon silver
+    float3 metalC = lerp(lerp(float3(1.00, 0.70, 0.28), float3(1.00, 0.54, 0.40), dusk), float3(0.78, 0.86, 1.00), moonK);
+    float3 metal  = metalC * (0.34 + 0.55 * dot(envR, lw) * lerp(0.65, 1.0, F)) + metalC * lerp(0.26 + 0.60 * heat, 0.26 + 0.36 * sheen, moonK);
+    // ---- the stone
+    // sunstone: deep amber where it is cool, gold, white-hot where the surface rolls up; lower and redder at dusk
+    // sunstone: the stone in its own clear colour, and the sun in it - gold light rolling through, white-hot at the crests
+    float3 sunS   = hue * (0.20 + 0.72 * shade) * lerp(1.0, 0.80, dusk) + sunC * heat * heat * lerp(0.46, 0.56, dusk) + float3(1.00, 0.95, 0.80) * pow(heat, 4.0) * lerp(0.42, 0.14, dusk);
+    float  fleck  = pow(saturate(dot(reflect(-V, normalize(lerp(n, gn, 0.85))), keyD)), 24.0) * step(0.62, id) * lerp(1.0, 0.4, CS_ITEM_FP);   // its copper flecks
+    sunS += float3(1.00, 0.86, 0.55) * fleck * 1.4;
+    // moonstone: milky, its own colour, darker seas in it, and the blue-white sheen that slides through it
+    float3 milk   = lerp(float3(0.62, 0.72, 0.96), hue, 0.72) * (0.62 * shade + 0.12) * (1.0 - 0.34 * mare);
+    float3 moonS  = milk + lerp(float3(0.42, 0.62, 1.00), float3(0.92, 0.97, 1.00), sheen) * (0.08 + 0.62 * sheen);
+    float3 stone  = lerp(sunS, moonS, moonK);
+    float3 o = lerp(body, stone, core);
+    // the stone's light shows through the porcelain where it is thin (its edges toward you): sun-gold, then moon-blue
+    float3 through = lerp(sunC * lerp(0.20, 0.26, dusk), float3(0.40, 0.58, 1.00) * 0.26, moonK);
+    o += through * pow(1.0 - NV, 2.0) * (1.0 - inlay) * (1.0 - core);
+    o  = lerp(o, metal, inlay);
+    // sparks by day (gold, quick), motes at night (silver, slow) - a few texels, each its own rhythm, climbing the item
+    float  spark = pow(saturate(sin(T * lerp(2.6, 1.1, moonK) + id * 37.0 - (CS_ITEM_FP > 0.5 ? 0.0 : wp.y * 14.0))), lerp(30.0, 14.0, moonK)) * step(0.60, id) * (1.0 - inlay) * (1.0 - CS_ITEM_FP);   // (no sparks in the hand: same-shade texels blinked together)
+    o += lerp(float3(1.00, 0.72, 0.30) * (0.20 + 0.45 * dusk), float3(0.70, 0.84, 1.00) * 0.40, moonK) * spark * (0.4 + 0.9 * core);
+    // the glint on the glaze, brighter on the metal
+    float glint = pow(saturate(dot(nf, normalize(keyD + V))), lerp(220.0, 56.0, CS_ITEM_FP)) * lerp(1.0, 0.35, CS_ITEM_FP);
+    o += lerp(lerp(float3(1.00, 0.96, 0.88), float3(0.90, 0.95, 1.00), moonK), metalC, inlay) * glint * (1.3 + 1.3 * inlay);
+    return o * lerp(0.55, 1.0, max(sky, moonK));
+}
+#endif
+

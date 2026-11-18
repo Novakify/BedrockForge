@@ -1,0 +1,55 @@
+{
+ "source_jar": "sculkhorde-1.20.1-0.12.7.jar",
+ "entities": {
+  "sculk_enderman": {
+   "geometry_renamed": {
+    "sculk_enderman": [
+     "geometry.enderman.v1.8",
+     "geometry.gb.sculkhorde.sculk_enderman"
+    ]
+   },
+   "glowmask": "overlay",
+   "baked_segments": {
+    "easeinoutsine": 343,
+    "step": 50,
+    "easeinsine": 125,
+    "easeoutsine": 121,
+    "easeoutback": 9,
+    "easeinelastic": 22,
+    "easeinoutback": 1
+   },
+   "bake_error_max": {
+    "rotation": 0.0508,
+    "position": 0.0051,
+    "scale": 0.001
+   },
+   "animations": 21
+  },
+  "sculk_enderman_alphaglow": {
+   "geometry_renamed": {
+    "sculk_enderman_alphaglow": [
+     "geometry.enderman.v1.8",
+     "geometry.gb.sculkhorde.sculk_enderman_alphaglow"
+    ]
+   },
+   "glowmask": "alpha",
+   "baked_segments": {
+    "easeinoutsine": 343,
+    "step": 50,
+    "easeinsine": 125,
+    "easeoutsine": 121,
+    "easeoutback": 9,
+    "easeinelastic": 22,
+    "easeinoutback": 1
+   },
+   "bake_error_max": {
+    "rotation": 0.0508,
+    "position": 0.0051,
+    "scale": 0.001
+   },
+   "animations": 21
+  }
+ },
+ "rp_uuid": "8d3ce820-a432-509c-82a9-d9172cd943ff",
+ "bp_uuid": "7420b6e1-f446-58cd-a51e-ccee7dbf1438"
+}

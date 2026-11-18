@@ -1,0 +1,478 @@
+// JavaBridge hooks (original Bedrock Forge code): call the translated Java methods from Bedrock events.
+import { world, system, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
+import { M, R, JEntity, JLevel, V, bp, Stack, BLOCK, MODFX, DIR, MOVES, LASTHURT, FAKESLEEP } from "./runtime.js";
+
+const CFG = globalThis.__JB_CFG, H = CFG.hooks, NS = CFG.ns;
+const errs = new Map();
+function run(id, args) {
+  try { return M.call(id, args); }
+  catch (e) { const n = (errs.get(id) ?? 0) + 1; errs.set(id, n); if (n <= 2) console.warn(`[JavaBridge] ${id.split("/").pop()}: ${e}${e?.stack ? " " + String(e.stack).split("\n")[1] : ""}`); return null; }
+}
+// ---- performance: every per-tick job reports its ms here. `/scriptevent gb:perf` (again to stop) prints, every 5 s,
+// the real server speed (ticks per second, 20 = full speed) and each job's average / worst ms per tick, to chat and
+// the content log, so a stutter can be pinned on what causes it instead of guessed.
+const PERF = globalThis.__GB_PERF ??= (() => {
+  const P = { on: false, sec: new Map(), t0: Date.now(), tick0: 0,
+    add(name, ms) { if (!P.on) return; const s = P.sec.get(name) ?? { sum: 0, max: 0, n: 0 }; s.sum += ms; s.n++; if (ms > s.max) s.max = ms; P.sec.set(name, s); } };
+  return P;
+})();
+function timed(name, fn) { const t0 = Date.now(); try { fn(); } finally { PERF.add(name, Date.now() - t0); } }
+// `/scriptevent gb:perf deep`: also time every runtime helper (R.*, JEntity / JLevel methods), reported as "#name"
+// (inclusive ms per tick; nested helpers count in both). Costs a little itself; reload the scripts to remove it.
+let deepOn = false;
+function deepProfile() {
+  if (deepOn) return; deepOn = true;
+  const wrap = (obj, label) => {
+    for (const k of Object.getOwnPropertyNames(obj)) {
+      if (k === "constructor") continue;
+      const d = Object.getOwnPropertyDescriptor(obj, k); if (!d || typeof d.value !== "function") continue;
+      const f = d.value, name = "#" + label + k; let depth = 0;
+      obj[k] = function (...a) { if (depth++) { try { return f.apply(this, a); } finally { depth--; } } const t0 = Date.now(); try { return f.apply(this, a); } finally { depth--; PERF.add(name, Date.now() - t0); } };
+    }
+  };
+  wrap(R, "R."); wrap(JEntity.prototype, "E."); wrap(JLevel.prototype, "L.");
+}
+system.afterEvents.scriptEventReceive?.subscribe?.((ev) => {
+  if (ev.id !== "gb:perf") return;
+  if (ev.message.trim() === "deep") { deepProfile(); PERF.on = true; }
+  else PERF.on = ev.message.trim() === "off" ? false : ev.message.trim() === "on" ? true : !PERF.on;
+  PERF.sec.clear(); PERF.t0 = Date.now(); PERF.tick0 = system.currentTick;
+  const m = `[GBPerf] ${PERF.on ? "on: report every 5 s" : "off"}`; console.warn(m); try { ev.sourceEntity?.sendMessage?.(m); } catch {}
+});
+system.runInterval(() => {
+  if (!PERF.on) return;
+  const ticks = system.currentTick - PERF.tick0, secs = (Date.now() - PERF.t0) / 1000;
+  const parts = [...PERF.sec.entries()].sort((a, b) => b[1].sum - a[1].sum)
+    .slice(0, 16).map(([k, v]) => `${k} ${(v.sum / Math.max(1, ticks)).toFixed(1)}/${v.max}${k[0] === "#" ? " x" + Math.round(v.n / Math.max(1, ticks)) : ""}`);
+  const m = `[GBPerf] TPS ${(ticks / secs).toFixed(1)} | ms per tick avg/max: ${parts.join(", ") || "-"} | mobs ${modEntities().length}`;
+  console.warn(m); for (const p of world.getAllPlayers()) { try { p.sendMessage(`§7${m}`); } catch {} }
+  PERF.sec.clear(); PERF.t0 = Date.now(); PERF.tick0 = system.currentTick;
+}, 100);
+const DS = (cause, attacker) => ({ cause: cause ?? "entityAttack", attacker: attacker ? JEntity.of(attacker) : null, key: cause,
+  getEntity() { return this.attacker; }, getDirectEntity() { return this.attacker; }, is() { return false; }, getMsgId() { return cause; } });
+const HAND = { key: "MAIN_HAND", hand: "mainhand" };
+const blockClass = new Map(), itemClass = new Map(), effectClass = new Map();   // bedrock id -> java class with hooks
+for (const [id, cls] of Object.entries(CFG.blockClasses ?? {})) if (H.block[cls]) blockClass.set(id, cls);
+for (const [id, cls] of Object.entries(CFG.itemClasses ?? {})) if (H.item[cls]) itemClass.set(id, cls);
+for (const [id, cls] of Object.entries(CFG.effectClasses ?? {})) if (H.effect[cls]) effectClass.set(id, H.effect[cls]);
+
+// ---- clinit of the mod's config/static data, once the world is up
+let ready = false;
+world.afterEvents.worldLoad?.subscribe?.(() => { ready = true; });
+system.runTimeout(() => { ready = true; }, 40);
+
+// ---- entities: Java ticks every mod mob 20x a second; here each loaded mod mob is ticked round-robin within a
+// per-tick time budget (BUDGET ms), so a crowd of mobs slows their logic down instead of the game.
+const ETICK = new Set(Object.keys(H.entity).filter((t) => H.entity[t].tick));
+const BUDGET = 4;   // ms of the 50 ms server tick; past it the rest of the mobs tick next tick (game TPS comes first)
+// All loaded mod entities, ONE native query per dimension that has a player, cached for the tick. (The old loop asked
+// every dimension - 3 vanilla + every mod dimension - for every mob type separately: ~6000 getEntities calls per
+// refill for Wonderland, which dragged the server to ~1/3 speed: slow mobs, slow days, eating/hits lagging.)
+let entCacheTick = -1, entCache = [];
+function modEntities() {
+  if (entCacheTick === system.currentTick) return entCache;
+  entCacheTick = system.currentTick; entCache = [];
+  const seen = new Set();
+  for (const p of world.getAllPlayers()) {
+    let d; try { d = p.dimension; } catch { continue; } if (seen.has(d.id)) continue; seen.add(d.id);
+    try { for (const e of d.getEntities({ families: [NS] })) entCache.push(e); } catch {}
+  }
+  return entCache;
+}
+// Distance LOD: mobs more than FAR blocks from every player run their Java logic every 4th pass (nothing near a
+// player can see or reach them; Java's own entity ticking stops at the simulation distance anyway).
+const FAR = 64;
+let lodCache = { tick: -1, near: new Set() };
+function isNear(e) {
+  if (lodCache.tick !== system.currentTick) {
+    lodCache = { tick: system.currentTick, near: new Set() };
+    const ps = []; for (const p of world.getAllPlayers()) { try { ps.push({ d: p.dimension.id, l: p.location }); } catch {} }
+    for (const e2 of modEntities()) {
+      let l, d; try { l = e2.location; d = e2.dimension.id; } catch { continue; }
+      for (const p of ps) if (p.d === d && (p.l.x - l.x) ** 2 + (p.l.z - l.z) ** 2 < FAR * FAR) { lodCache.near.add(e2.id); break; }
+    }
+  }
+  return lodCache.near.has(e.id);
+}
+let queue = [], tickN = 0, pass = 0;
+system.runInterval(() => {
+  if (!ready) return; tickN++;
+  const t0 = Date.now();
+  if (!queue.length) { pass++; for (const e of modEntities()) if (ETICK.has(e.typeId) && (pass % 4 === 0 || isNear(e))) queue.push(e); }
+  while (queue.length && Date.now() - t0 < BUDGET) {
+    const e = queue.shift(); let ok = false; try { ok = e.isValid; } catch {} if (!ok) continue;
+    const t1 = PERF.on ? Date.now() : 0;
+    const w = JEntity.of(e); for (const id of H.entity[e.typeId].tick) run(id, [w]);
+    if (PERF.on) PERF.add("  " + e.typeId.split(":")[1], Date.now() - t1);
+  }
+  PERF.add("mobTick", Date.now() - t0);
+}, 1);
+// ---- MobAI GoalRunner (docs/PORT_MOBAI.md). Java's GoalSelector runs the mod's goal objects every tick; here:
+//  * "gate" goals (MCreator anonymous goals overriding canUse/canContinueToUse): the Bedrock behaviour does the
+//    vanilla part, the translated Java condition switches it on/off (entity events gb:g<i>_on / _off).
+//  * "custom" goals (written from scratch): canUse -> start -> tick ... canContinueToUse false -> stop, as in Java.
+//  * MoveControl wanted positions (setWantedPosition, navigation.moveTo) are steered one step per tick.
+const GOALS = H.goals ?? {}, GTYPES = Object.keys(GOALS), GSTATE = new Map();
+// gate state for the runtime's getTarget (gated NearestAttackableTargetGoal): gate group index -> current Java canUse
+globalThis.__GB_GATE = (id, gi) => { const st = GSTATE.get(id); if (!st) return false; const t = st.type; const specs = GOALS[t] ?? []; const i = specs.findIndex((g) => g.index === gi); return i >= 0 && !!st.on[i]; };
+world.afterEvents.entityHurt.subscribe(({ hurtEntity, damageSource }) => { try { const by = damageSource.damagingEntity; if (by && hurtEntity.typeId.startsWith(NS + ":")) LASTHURT.set(hurtEntity.id, { by, t: system.currentTick }); } catch {} });
+let gtick = 0;
+function goalObj(cls, w) { const o = R.newObj(cls); o.__goal = true; o["this$0"] = w; return o; }
+function runGoals(e, specs) {
+  const w = JEntity.of(e); let st = GSTATE.get(e.id);
+  if (!st) { st = { type: e.typeId, objs: specs.map((g) => goalObj(g.cls, w)), on: specs.map(() => null), active: specs.map(() => false) }; GSTATE.set(e.id, st); }
+  st.n = (st.n ?? 0) + 1;
+  for (let i = 0; i < specs.length; i++) {
+    const g = specs[i], o = st.objs[i], fn = g.fn;
+    if (g.mode === "gate") {
+      if ((st.n + i) % 2) continue;
+      const f = st.on[i] ? (fn.canContinueToUse ?? fn.canUse) : (fn.canUse ?? fn.canContinueToUse);
+      const v = !!run(f, [o]);
+      if (v !== st.on[i]) { st.on[i] = v; try { e.triggerEvent(`gb:g${g.index}_${v ? "on" : "off"}`); } catch {} }
+    } else if (!st.active[i]) {
+      if (fn.canUse && run(fn.canUse, [o])) { st.active[i] = true; if (fn.start) run(fn.start, [o]); }
+    } else if (!run(fn.canContinueToUse ?? fn.canUse, [o])) { st.active[i] = false; if (fn.stop) run(fn.stop, [o]); }
+    else if (fn.tick) run(fn.tick, [o]);
+  }
+}
+// Goals run round-robin inside GBUDGET ms too: a crowd of mobs gets its goals checked a little less often instead of
+// stretching every server tick (which slows the whole game: mob movement, day length, hits, eating).
+const GBUDGET = 3;
+let gqueue = [], gpass = 0;
+system.runInterval(() => {
+  if (!ready) return; gtick++;
+  const t0 = Date.now();
+  if (GTYPES.length) {
+    if (!gqueue.length) { gpass++; for (const e of modEntities()) if (GOALS[e.typeId] && (gpass % 4 === 0 || isNear(e))) gqueue.push(e); }
+    while (gqueue.length && Date.now() - t0 < GBUDGET) {
+      const e = gqueue.shift(); let ok = false; try { ok = e.isValid; } catch {} if (!ok) continue;
+      runGoals(e, GOALS[e.typeId]);
+    }
+  }
+  const t1 = Date.now(); PERF.add("goals", t1 - t0);
+  R.navTick();
+  for (const [id, c] of MOVES) { let ok = false; try { ok = c.w.e.isValid; } catch {} if (!ok) { MOVES.delete(id); continue; } c.step(); }
+  PERF.add("steer", Date.now() - t1);
+}, 1);
+// ---- `/scriptevent gb:tpdebug`: say in chat which translated Java method teleports an entity (where it goes and the
+// calling procedure) - for tracking dimension travel / exits.
+system.afterEvents.scriptEventReceive?.subscribe?.((ev) => {
+  if (ev.id !== "gb:tpdebug" || JEntity.prototype.__tpdbg) return;
+  const orig = JEntity.prototype.teleportTo; JEntity.prototype.__tpdbg = true;
+  JEntity.prototype.teleportTo = function (...a) {
+    const st = String(new Error().stack ?? "").split("\n").slice(2, 5).map((l) => l.trim()).join(" < ");
+    const where = a[0] instanceof JLevel ? `${a[0].d.id} ${a.slice(1, 4).map((v) => Math.round(v)).join(",")}` : a.slice(0, 3).map((v) => Math.round(v)).join(",");
+    const m = `[TP] ${this.e?.typeId} -> ${where} | ${st}`; console.warn(m); for (const p of world.getAllPlayers()) { try { p.sendMessage(m.slice(0, 400)); } catch {} }
+    return orig.apply(this, a);
+  };
+  const oc = R.command; R.command = function (src, c, ...r) {
+    if (/\b(tp|teleport|execute in)\b/.test(String(c))) { const m = `[TP] command: ${c}`; console.warn(m); for (const p of world.getAllPlayers()) { try { p.sendMessage(m.slice(0, 300)); } catch {} } }
+    return oc.call(this, src, c, ...r);
+  };
+  try { ev.sourceEntity?.sendMessage?.("[TP] debug on"); } catch {}
+});
+// ---- MobAI parity trace (docs/PORT_MOBAI.md W4): `/tag @s add gb_trace` (or `/scriptevent gb:trace on|off`). One JSON line per tick per mod mob
+// (and player) within 48 blocks, to the content log as "[MobAITrace] {...}"; same fields as the Java recorder mod.
+let TRACE = false;
+system.afterEvents.scriptEventReceive?.subscribe?.((ev) => { if (ev.id === "gb:trace") { TRACE = ev.message.trim() !== "off"; console.warn(`[MobAITrace] ${TRACE ? "on" : "off"}`); } });
+const r2 = (v) => Math.round(v * 100) / 100;
+system.runInterval(() => {
+  const players = world.getAllPlayers().filter((p) => TRACE || p.hasTag("gb_trace"));
+  if (!players.length) return;
+  for (const p of players) {
+    let list = []; try { list = p.dimension.getEntities({ location: p.location, maxDistance: 48 }); } catch {}
+    for (const e of list) {
+      if (e.typeId !== "minecraft:player" && !e.typeId.startsWith(NS + ":")) continue;
+      if (e.typeId === NS + ":gb_nav_point") continue;
+      let v = { x: 0, z: 0 }, hp = 0, tg = null; try { v = e.getVelocity(); } catch {} try { hp = e.getComponent("health")?.currentValue ?? 0; } catch {}
+      try { const j = JEntity.of(e).getTarget(); tg = j ? `${j.e.typeId}#${j.e.id}` : null; } catch {}
+      const st = GSTATE.get(e.id), specs = GOALS[e.typeId] ?? [];
+      const goals = specs.map((g, i) => (g.mode === "gate" ? st?.on?.[i] : st?.active?.[i]) ? `${g.priority}:${g.cls.split("/").pop()}` : null).filter(Boolean);
+      const l = e.location;
+      console.warn("[MobAITrace] " + JSON.stringify({ t: system.currentTick, id: e.id, type: e.typeId, x: r2(l.x), y: r2(l.y), z: r2(l.z), vx: r2(v.x), vz: r2(v.z), hp: r2(hp), target: tg, goals, nav: R.navBusy({ e }) || !!MOVES.get(e.id)?.want }));
+    }
+  }
+}, 1);
+world.beforeEvents.entityRemove?.subscribe?.(({ removedEntity }) => { try { GSTATE.delete(removedEntity.id); MOVES.delete(removedEntity.id); } catch {} });
+function dims() { const out = ["minecraft:overworld", "minecraft:nether", "minecraft:the_end"]; for (const k of Object.keys(globalThis.__WG_DIMS ?? {})) out.push(k); return out; }
+world.afterEvents.entitySpawn.subscribe(({ entity, cause }) => {
+  if (!ready || cause === "Loaded") return;
+  const hk = H.entity[entity?.typeId]; if (!hk?.spawn) return;
+  const w = JEntity.of(entity);
+  for (const id of hk.spawn) run(id, [w, w.level(), { key: "NORMAL" }, { key: "MOB_SUMMONED" }, null, null]);
+});
+world.afterEvents.entityHurt.subscribe(({ hurtEntity, damage, damageSource }) => {
+  const hk = H.entity[hurtEntity?.typeId]; if (!hk?.hurt) return;
+  const w = JEntity.of(hurtEntity);
+  for (const id of hk.hurt) {
+    const ok = run(id, [w, DS(damageSource.cause, damageSource.damagingEntity), damage]);
+    if (ok === false || ok === 0) { try { const h = hurtEntity.getComponent("health"); h.setCurrentValue(Math.min(h.effectiveMax, h.currentValue + damage)); } catch {} }
+  }
+});
+world.afterEvents.entityDie.subscribe(({ deadEntity, damageSource }) => {
+  const hk = H.entity[deadEntity?.typeId];
+  if (hk?.die) for (const id of hk.die) run(id, [JEntity.of(deadEntity), DS(damageSource.cause, damageSource.damagingEntity)]);
+  for (const ev of H.events) if (ev.kind === "death") run(ev.fn, [{ __ev: true, entity: JEntity.of(deadEntity), source: DS(damageSource.cause, damageSource.damagingEntity) }]);
+});
+world.afterEvents.playerInteractWithEntity.subscribe(({ player, target }) => {
+  const hk = H.entity[target?.typeId]; if (!hk?.interact) return;
+  for (const id of hk.interact) run(id, [JEntity.of(target), JEntity.of(player), HAND]);
+});
+world.afterEvents.entityHitEntity.subscribe(({ damagingEntity, hitEntity }) => {
+  const hk = H.entity[damagingEntity?.typeId];
+  if (hk?.attack) for (const id of hk.attack) run(id, [JEntity.of(damagingEntity), JEntity.of(hitEntity)]);
+  if (damagingEntity?.typeId === "minecraft:player") {   // item hurtEnemy
+    let it; try { it = damagingEntity.getComponent("equippable").getEquipment("Mainhand"); } catch {}
+    const cls = it && itemClass.get(it.typeId);
+    if (cls && H.item[cls].hurtEnemy) run(H.item[cls].hurtEnemy, [M.inst?.(cls) ?? { __cls: cls }, R.handItem(JEntity.of(damagingEntity), "mainhand"), JEntity.of(hitEntity), JEntity.of(damagingEntity)]);
+  }
+});
+for (const ev of H.events) if (ev.kind === "attack") {
+  world.afterEvents.entityHurt.subscribe(({ hurtEntity, damage, damageSource }) => {
+    run(ev.fn, [{ __ev: true, entity: JEntity.of(hurtEntity), source: DS(damageSource.cause, damageSource.damagingEntity), amount: damage }]);
+  });
+}
+
+// ---- the mod's Brigadier commands (RegisterCommandsEvent) -> one Bedrock custom command per root literal:
+//      /<ns>:<root> [word] [word] [word] [word]  walks the same literal/argument path and runs the Command lambda
+const CMDS = H.commands ?? [];
+if (CMDS.length) system.beforeEvents.startup.subscribe((ev) => {
+  const roots = [...new Set(CMDS.map((c) => c.path[0]))];
+  for (const root of roots) {
+    const mine = CMDS.filter((c) => c.path[0] === root);
+    const depth = Math.max(...mine.map((c) => c.path.length)) - 1;
+    const params = Array.from({ length: Math.min(depth, 6) }, (_, i) => ({ name: `arg${i + 1}`, type: CustomCommandParamType.String }));
+    const usage = mine.map((c) => c.path.slice(1).join(" ")).slice(0, 12).join(" | ");
+    try {
+      ev.customCommandRegistry.registerCommand({ name: `${NS}:${root}`, description: `${root} (mod command): ${usage}`.slice(0, 250),
+        permissionLevel: CommandPermissionLevel.GameDirectors, optionalParameters: params }, (origin, ...words) => {
+        words = words.filter((w) => w !== undefined && w !== "");
+        const hit = mine.find((c) => c.path.length - 1 === words.length && c.path.slice(1).every((seg, i) => seg.startsWith("<") || seg === words[i]));
+        if (!hit) return { status: CustomCommandStatus.Failure, message: `usage: /${NS}:${root} ${usage}` };
+        const args = {}; hit.path.slice(1).forEach((seg, i) => { const m = /^<(\w+):(\w+)>$/.exec(seg); if (m) args[m[1]] = m[2] === "int" ? parseInt(words[i]) : m[2] === "float" ? parseFloat(words[i]) : m[2] === "bool" ? words[i] === "true" : words[i]; });
+        const src = origin.sourceEntity;
+        system.run(() => {
+          const w = src ? JEntity.of(src) : null, lv = JLevel.of(src?.dimension ?? world.getDimension("minecraft:overworld"));
+          const l = src?.location ?? { x: 0, y: 64, z: 0 };
+          const source = { __src: true, pos: V(l.x, l.y, l.z), level: lv, entity: w, getEntity: () => w, getPlayer: () => w, getLevel: () => lv, getUnsidedLevel: () => lv,
+            getPosition: () => V(l.x, l.y, l.z), getServer: () => null, sendSuccess() {}, sendFailure() {}, hasPermission: () => true };
+          run(hit.fn, [{ __ctx: true, getSource: () => source, getArgument: (n) => args[n] ?? null, getInput: () => [root, ...words].join(" ") }]);
+        });
+        return { status: CustomCommandStatus.Success };
+      });
+    } catch (e) { console.warn(`[JavaBridge] command ${root}: ${e}`); }
+  }
+});
+
+// ---- MCreator delayed work: queueServerWork(ticks, runnable) -> system.runTimeout (the mod's ServerTickEvent queue
+// would also work, but the scheduler costs nothing while idle)
+for (const id of CFG.workQueue ?? []) M.def(id, (ticks, r) => {
+  system.runTimeout(() => { try { R.lam(r); } catch (e) { console.warn(`[JavaBridge] queued work: ${e}`); } }, Math.max(1, ticks | 0));
+});
+if (H.events.some((ev) => ev.kind === "serverTick") && !(CFG.workQueue ?? []).length) system.runInterval(() => { const t0 = Date.now(); try {
+  if (!ready) return;
+  for (const ev of H.events) if (ev.kind === "serverTick") run(ev.fn, [{ __ev: true, phase: { key: "END" }, side: { key: "SERVER" }, getServer: () => R.server?.() ?? null }]);
+  } finally { PERF.add("serverTick", Date.now() - t0); }
+}, 1);
+
+// ---- players: tick events, living tick, chat, sleep
+system.runInterval(() => { const t0 = Date.now(); try {
+  if (!ready) return;
+  for (const p of world.getAllPlayers()) {
+    const w = JEntity.of(p);
+    for (const ev of H.events) {
+      const t1 = PERF.on ? Date.now() : 0;
+      if (ev.kind === "playerTick") run(ev.fn, [{ __ev: true, player: w, phase: { key: "END" }, side: { key: "SERVER" } }]);
+      else if (ev.kind === "livingTick") run(ev.fn, [{ __ev: true, entity: w }]);
+      else continue;
+      if (PERF.on) PERF.add("  " + ev.fn.split("(")[0].split("/").pop().replace(/Procedure|\.on\w+Tick/g, ""), Date.now() - t1);
+    }
+    // held items / armour: inventoryTick
+    for (const slot of ["Mainhand", "Offhand", "Head", "Chest", "Legs", "Feet"]) {
+      let it; try { it = p.getComponent("equippable").getEquipment(slot); } catch {}
+      const cls = it && itemClass.get(it.typeId);
+      if (cls && H.item[cls].invTick) run(H.item[cls].invTick, [{ __cls: cls }, R.handItem(w, slot.toLowerCase()), w.level(), w, 0, slot === "Mainhand"]);
+    }
+    // the mod's own effects: tick procedures
+    for (const [id, st] of R.modEffectsOf(w)) { const fn = effectClass.get(id); if (fn) run(fn, [{ __cls: "effect" }, w, st.amp]); }
+    // sleeping
+    const sl = w.isSleeping();   // real bed sleep, or a mod-dimension bed (FAKESLEEP)
+    if (sl !== (w.__wasSleeping ?? false)) {
+      w.__wasSleeping = sl;
+      for (const ev of H.events) if ((sl && ev.kind === "sleep") || (!sl && ev.kind === "wake")) run(ev.fn, [{ __ev: true, entity: w, player: w, pos: w.blockPosition(), level: w.level() }]);
+    }
+  }
+  } finally { PERF.add("playerTick", Date.now() - t0); }
+}, 1);
+// the mod's effects on mobs too (their tick procedures), within a budget
+system.runInterval(() => {
+  const t0 = Date.now();
+  for (const [eid, m] of MODFX) {
+    if (Date.now() - t0 > 2) break;
+    let e; try { e = world.getEntity(eid); } catch {} if (!e || e.typeId === "minecraft:player") continue;
+    const w = JEntity.of(e);
+    for (const [id, st] of Object.entries(m)) if (st.until > system.currentTick) { const fn = effectClass.get(id); if (fn) run(fn, [{ __cls: "effect" }, w, st.amp]); }
+  }
+  PERF.add("effects", Date.now() - t0);
+}, 1);
+// dimension changes, login / respawn
+const lastDim = new Map();
+system.runInterval(() => {
+  for (const p of world.getAllPlayers()) {
+    const d = p.dimension.id, prev = lastDim.get(p.id); lastDim.set(p.id, d);
+    if (prev && prev !== d) for (const ev of H.events) if (ev.kind === "changedDim") run(ev.fn, [{ __ev: true, entity: JEntity.of(p), player: JEntity.of(p), from: prev, to: d }]);
+  }
+}, 5);
+world.afterEvents.playerSpawn.subscribe(({ player, initialSpawn }) => {
+  for (const ev of H.events) if ((initialSpawn && ev.kind === "login") || (!initialSpawn && ev.kind === "respawn")) run(ev.fn, [{ __ev: true, entity: JEntity.of(player), player: JEntity.of(player) }]);
+});
+world.beforeEvents.chatSend?.subscribe?.((ev) => {
+  const evs = H.events.filter((x) => x.kind === "chat"); if (!evs.length) return;
+  const p = ev.sender, msg = ev.message;
+  system.run(() => { for (const e of evs) run(e.fn, [{ __ev: true, player: JEntity.of(p), text: msg, getRawText: () => msg, getMessage: () => ({ __text: msg }) }]); });
+});
+
+// Beds outside the overworld: Bedrock blows them up (nether rules), Java only fires PlayerSleepInBedEvent and lets
+// the mod decide (Wonderland: sleeping in a Wonderland bed is how you move on to the next dream / wake up). In a mod
+// dimension the bed use is taken over: no explosion, the mod's sleep handlers run.
+const SLEEPS = H.events.filter((ev) => ev.kind === "sleep");
+function useBed(p, loc) {
+  system.run(() => {
+    // lie down: the player is moved onto the bed and counts as asleep (isSleeping) for 5 s unless they walk off
+    try { p.teleport({ x: loc.x + 0.5, y: loc.y + 0.6, z: loc.z + 0.5 }); p.runCommand("camera @s fade time 1 3 1 color 0 0 0"); } catch {}
+    FAKESLEEP.set(p.id, { until: system.currentTick + 100, x: loc.x + 0.5, z: loc.z + 0.5 });
+    const w = JEntity.of(p), lv = w.level(), pos = V(loc.x, loc.y, loc.z);
+    for (const e of SLEEPS) run(e.fn, [{ __ev: true, entity: w, player: w, pos, level: lv, getPos: () => pos, getOptionalPos: () => ({ isPresent: () => true, get: () => pos }) }]);
+  });
+}
+if (SLEEPS.length) world.beforeEvents.playerInteractWithBlock?.subscribe?.((ev) => {
+  const b = ev.block; let id, d; try { id = b.typeId; d = ev.player.dimension.id; } catch { return; }
+  if (id !== "minecraft:bed" || d === "minecraft:overworld" || !(globalThis.__WG_DIMS ?? {})[d]) return;
+  ev.cancel = true;
+  if (ev.isFirstEvent === false) return;
+  useBed(ev.player, b.location);
+});
+// dev: `/scriptevent gb:bed` = use a bed where you stand
+system.afterEvents.scriptEventReceive?.subscribe?.((ev) => { if (ev.id === "gb:bed" && ev.sourceEntity) { const l = ev.sourceEntity.location; useBed(ev.sourceEntity, { x: Math.floor(l.x), y: Math.floor(l.y), z: Math.floor(l.z) }); } });
+// ---- blocks
+world.afterEvents.playerPlaceBlock.subscribe(({ block, player }) => {
+  const cls = blockClass.get(block.typeId); const lv = JLevel.of(block.dimension), pos = V(block.location.x, block.location.y, block.location.z);
+  if (cls && H.block[cls].place) run(H.block[cls].place, [{ __cls: cls }, BLOCK(block.typeId), lv, pos, BLOCK("minecraft:air"), false]);
+  for (const ev of H.events) if (ev.kind === "placeBlock") run(ev.fn, [{ __ev: true, entity: JEntity.of(player), pos, level: lv, state: BLOCK(block.typeId) }]);
+});
+world.afterEvents.playerBreakBlock.subscribe(({ block, player, brokenBlockPermutation }) => {
+  const id = brokenBlockPermutation.type.id; const cls = blockClass.get(id); const lv = JLevel.of(block.dimension), pos = V(block.location.x, block.location.y, block.location.z);
+  if (cls && H.block[cls].destroy) run(H.block[cls].destroy, [{ __cls: cls }, lv, pos, BLOCK(id), JEntity.of(player)]);
+  for (const ev of H.events) if (ev.kind === "breakBlock") run(ev.fn, [{ __ev: true, player: JEntity.of(player), entity: JEntity.of(player), pos, level: lv, state: BLOCK(id) }]);
+});
+world.afterEvents.playerInteractWithBlock.subscribe(({ block, player, blockFace, faceLocation }) => {
+  const cls = blockClass.get(block.typeId); const lv = JLevel.of(block.dimension), pos = V(block.location.x, block.location.y, block.location.z);
+  if (cls && H.block[cls].use) run(H.block[cls].use, [{ __cls: cls }, BLOCK(block.typeId), lv, pos, JEntity.of(player), HAND, { getBlockPos: () => pos, getLocation: () => (faceLocation ? V(pos.x_ + faceLocation.x, pos.y_ + faceLocation.y, pos.z_ + faceLocation.z) : V(pos.x_ + 0.5, pos.y_ + 0.5, pos.z_ + 0.5)), getDirection: () => DIR[String(blockFace ?? "Up").toUpperCase()] ?? DIR.UP, isInside: () => false }]);
+  for (const ev of H.events) if (ev.kind === "rightClickBlock") run(ev.fn, [{ __ev: true, entity: JEntity.of(player), player: JEntity.of(player), pos, level: lv, getPos: () => pos }]);
+});
+// standing in / on mod blocks
+system.runInterval(() => {
+  for (const p of world.getAllPlayers()) {
+    for (const dy of [0, -1]) {
+      let b; try { b = p.dimension.getBlock({ x: Math.floor(p.location.x), y: Math.floor(p.location.y + 0.01) + dy, z: Math.floor(p.location.z) }); } catch { continue; }
+      const cls = b && blockClass.get(b.typeId); if (!cls) continue;
+      const lv = JLevel.of(b.dimension), pos = V(b.location.x, b.location.y, b.location.z), w = JEntity.of(p);
+      if (dy === 0 && H.block[cls].inside) run(H.block[cls].inside, [{ __cls: cls }, BLOCK(b.typeId), lv, pos, w]);
+      if (dy === -1 && H.block[cls].stepOn) run(H.block[cls].stepOn, [{ __cls: cls }, lv, pos, BLOCK(b.typeId), w]);
+    }
+  }
+}, 4);
+
+// ---- items
+world.afterEvents.itemUse.subscribe(({ source, itemStack }) => {
+  const cls = itemClass.get(itemStack?.typeId); if (!cls || !H.item[cls].use) return;
+  const w = JEntity.of(source); run(H.item[cls].use, [{ __cls: cls }, w.level(), w, HAND]);
+});
+world.afterEvents.itemCompleteUse.subscribe(({ source, itemStack }) => {
+  const cls = itemClass.get(itemStack?.typeId); if (!cls || !H.item[cls].finish) return;
+  const w = JEntity.of(source); run(H.item[cls].finish, [{ __cls: cls }, new Stack(itemStack.typeId, 1), w.level(), w]);
+});
+world.afterEvents.itemUseOn?.subscribe?.(({ source, itemStack, block }) => {
+  const cls = itemClass.get(itemStack?.typeId); if (!cls || !H.item[cls].useOn) return;
+  const w = JEntity.of(source), pos = V(block.location.x, block.location.y, block.location.z);
+  run(H.item[cls].useOn, [{ __cls: cls }, { getLevel: () => w.level(), getClickedPos: () => pos, getPlayer: () => w, getItemInHand: () => R.handItem(w, "mainhand"), getHand: () => HAND }]);
+});
+// ---- client overlays (jumpscares, eye overlays): the mod's display procedure decides, the HUD shows the image
+// (resource pack ui/hud_screen.json binds each image to a title made only of formatting codes, so no text shows)
+const OVS = H.overlays ?? [];
+const shown = new Map();
+if (OVS.length) system.runInterval(() => {
+  for (const p of world.getAllPlayers()) {
+    const w = JEntity.of(p), lv = w.level(), l = p.location; let on = null;
+    for (const o of OVS) {
+      const desc = o.proc.slice(o.proc.indexOf("("));
+      const args = []; const types = desc.slice(1, desc.indexOf(")")).match(/\[*(L[^;]+;|[A-Z])/g) ?? [];
+      let d = 0;
+      for (const t of types) {
+        if (t === "D") args.push([l.x, l.y, l.z][d++] ?? 0);
+        else if (t.includes("LevelAccessor") || t.includes("Level;")) args.push(lv);
+        else if (t.includes("Entity") || t.includes("Player")) args.push(w);
+        else args.push(null);
+      }
+      const r = run(o.proc, args);
+      if (r === true || r === 1) { on = o; break; }
+    }
+    const prev = shown.get(p.id) ?? null;
+    if (on) { try { p.onScreenDisplay.setTitle(on.key, { fadeInDuration: 0, stayDuration: 6, fadeOutDuration: 0 }); } catch {} }
+    else if (prev) { try { p.onScreenDisplay.setTitle("§r", { fadeInDuration: 0, stayDuration: 1, fadeOutDuration: 0 }); } catch {} }
+    shown.set(p.id, on);
+  }
+}, 3);
+// ---- dev: `/scriptevent gb:proc <ProcedureName>` runs one of the mod's procedures as if for you, where you stand
+// (LevelAccessor / x y z / Entity arguments filled from you) - to test scripted events and spawn mechanics on demand.
+system.afterEvents.scriptEventReceive.subscribe(({ id, sourceEntity: p, message }) => {
+  if (id !== "gb:proc" || !p) return;
+  const name = message.trim(); if (!name) return;
+  const fid = M.lookup(new RegExp(`/${name.replace("!", "").replace(/[^\w$]/g, "")}(Procedure)?\\.execute\\(`));
+  if (!fid) { p.sendMessage(`[gb:proc] no procedure ${name}`); return; }
+  const w = JEntity.of(p), lv = w.level(), l = p.location;
+  const types = fid.slice(fid.indexOf("(") + 1, fid.indexOf(")")).match(/\[*(L[^;]+;|[A-Z])/g) ?? [];
+  const nd = types.filter((t) => t === "D").length, xyz = nd === 2 ? [l.x, l.z] : [l.x, l.y, l.z];   // (x, z) procedures take no y
+  let d = 0; const args = types.map((t) => t === "D" ? xyz[d++] ?? 0 : /LevelAccessor|Level;/.test(t) ? lv : /Entity|Player/.test(t) ? w : null);
+  const cw = console.warn, said = []; console.warn = (m) => { said.push(String(m)); cw(m); };
+  // `/scriptevent gb:proc Name!` (trailing !) also logs every heightmap / block read and identity test it makes
+  const verbose = message.trim().endsWith("!"), undo = [];
+  if (verbose) {
+    const wrap = (obj, k, fmt) => { const f = obj[k]; undo.push(() => { obj[k] = f; }); obj[k] = function (...a) { const r = f.apply(this, a); if (said.length < 40) said.push(fmt(a, r)); return r; }; };
+    const pv = (v) => (v?.x_ != null ? `${Math.round(v.x_)},${Math.round(v.y_)},${Math.round(v.z_)}` : String(v));
+    wrap(JLevel.prototype, "getHeight", (a, r) => `h(${Math.round(a[1])},${Math.round(a[2])})=${r}`);
+    wrap(JLevel.prototype, "getBlockState", (a, r) => `b(${pv(a[0])})=${r?.id ?? r}`);
+    wrap(R, "same", (a, r) => `same(${a[0]?.id ?? a[0]?.key ?? typeof a[0]},${a[1]?.id ?? a[1]?.key ?? typeof a[1]})=${r}`);
+  }
+  let r; try { r = M.call(fid, args); } catch (e) { said.push(`threw ${e} ${String(e?.stack ?? "").split("\n")[1] ?? ""}`); } finally { console.warn = cw; for (const u of undo) u(); }
+  p.sendMessage(`[gb:proc] ran ${fid.split("/").pop().split("(")[0]} -> ${r}${said.length ? " | " + said.slice(0, verbose ? 40 : 4).join(" | ").slice(0, verbose ? 2000 : 300) : ""}`);
+});
+// ---- dev: `/scriptevent gb:ground` - what the mod's spawn code sees around you (heightmap + surface blocks at 8 spots
+// out to 128 blocks): shows whether far terrain is loaded / generated for spawn mechanics.
+system.afterEvents.scriptEventReceive.subscribe(({ id, sourceEntity: p }) => {
+  if (id !== "gb:ground" || !p) return;
+  const lv = JLevel.of(p.dimension), l = p.location, out = [];
+  for (const [dx, dz] of [[16, 0], [48, 0], [96, 0], [128, 0], [0, -32], [0, -64], [-100, 40], [60, 110]]) {
+    const x = Math.floor(l.x + dx), z = Math.floor(l.z + dz);
+    let top = "?", b = "?"; try { top = p.dimension.getTopmostBlock({ x, z })?.typeId?.split(":")[1] ?? "none"; } catch (e) { top = "unloaded"; }
+    const h = lv.getHeight({ key: "MOTION_BLOCKING_NO_LEAVES" }, x, z);
+    try { b = p.dimension.getBlock({ x, y: h - 1, z })?.typeId?.split(":")[1] ?? "none"; } catch { b = "unloaded"; }
+    out.push(`${dx},${dz}:${top}/${h}/${b}`);
+  }
+  p.sendMessage("[gb:ground] " + out.join("  "));
+});
+// ---- dev diagnostics: /scriptevent jb:fx (list mod effects + active overlay), /scriptevent jb:fxclear (Java's /effect clear for mod effects)
+system.afterEvents.scriptEventReceive.subscribe(({ id, sourceEntity: p }) => {
+  if (!p || (id !== "jb:fx" && id !== "jb:fxclear")) return;
+  if (id === "jb:fxclear") {
+    MODFX.delete(p.id);
+    for (const k of p.getDynamicPropertyIds()) if (k.startsWith("fx:")) p.setDynamicProperty(k, undefined);
+    try { p.runCommand("effect @s clear"); } catch {}
+    p.sendMessage("[JavaBridge] mod effects cleared"); return;
+  }
+  const fx = p.getDynamicPropertyIds().filter(k => k.startsWith("fx:")).map(k => `${k.slice(3)}=${(p.getDynamicProperty(k) ?? 0) - system.currentTick}t`);
+  const on = shown.get(p.id);
+  const msg = `[JavaBridge] effects: ${fx.join(", ") || "none"} | overlay: ${on ? on.tex : "none"} | title key: ${JSON.stringify(on?.key ?? null)}`;
+  p.sendMessage(msg); console.warn(msg);
+});
+console.warn(`[JavaBridge] ${NS}: ${Object.keys(H.entity).length} mobs, ${blockClass.size} blocks, ${itemClass.size} items, ${effectClass.size} effects, ${H.events.length} event hooks`);

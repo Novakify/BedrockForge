@@ -32,43 +32,6 @@ jobs:
         with:
           llvm-version: 22
 
-      # GameInput API v2 header (the game uses GameInput v2); Microsoft.GameInput 2.2.26100.6114 from nuget.org,
-      # not vendored in the repo. deps/ is git-ignored.
-      - name: Fetch GameInput v2 header
-        shell: pwsh
-        run: |
-          $u = "https://api.nuget.org/v3-flatcontainer/microsoft.gameinput/2.2.26100.6114/microsoft.gameinput.2.2.26100.6114.nupkg"
-          Invoke-WebRequest -Uri $u -OutFile gameinput.zip
-          Expand-Archive gameinput.zip -DestinationPath gameinput-pkg -Force
-          New-Item -ItemType Directory -Force deps/gameinput-v2 | Out-Null
-          Copy-Item gameinput-pkg/native/include/GameInput.h deps/gameinput-v2/GameInput.h
-          Select-String -Path deps/gameinput-v2/GameInput.h -Pattern 'GAMEINPUT_API_VERSION 2' | Select-Object -First 1
-
-      # LyricsFlow port: compile shaders/glyph.hlsl with the Windows SDK's dxc (signs via dxil.dll) -> src/GlyphShaders.h
-      - name: Compile glyph shader (dxc)
-        shell: pwsh
-        run: |
-          $dxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter dxc.exe -ErrorAction SilentlyContinue |
-                 Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $dxc) { Write-Output "::error::dxc.exe not found in the Windows SDK"; exit 1 }
-          Write-Output "dxc: $($dxc.FullName)"
-          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter fxc.exe -ErrorAction SilentlyContinue |
-                 Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $fxc) { Write-Output "::error::fxc.exe not found in the Windows SDK"; exit 1 }
-          Write-Output "fxc: $($fxc.FullName)"
-          python tools/gen_glyph.py "$($dxc.FullName)" "$($fxc.FullName)"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/gen_postfx.py "$($dxc.FullName)"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/gen_glassarmor.py "$($dxc.FullName)"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/gen_glassbody.py "$($dxc.FullName)"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/gen_screen.py "$($dxc.FullName)" "$($fxc.FullName)"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tools/gen_worldfx.py "$($dxc.FullName)"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
       - run: xmake repo -u
       - run: xmake f -a x64 -m release -p windows -v -y --target_type=client
       - name: Build
@@ -86,131 +49,154 @@ jobs:
             exit $code
           }
 
+      - name: LyricsFlow core unit tests (clang-cl)
+        shell: pwsh
+        run: |
+          xmake build -v -y LyricsCoreTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          xmake run LyricsCoreTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Syntax-check PowerShell scripts
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem -Recurse -Include *.ps1 tools, docs) {
+            $errs = $null; [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs) | Out-Null
+            if ($errs) { $bad++; $errs | ForEach-Object { Write-Host "$($f.Name): $($_.Message) (line $($_.Extent.StartLineNumber))" } }
+          }
+          if ($bad) { exit 1 } else { Write-Host "PowerShell scripts OK" }
+
       - uses: actions/upload-artifact@v4
         with:
-          name: RendererFoundation-client-windows-x64-${{ github.sha }}
+          name: BedrockForgeCore-client-windows-x64-${{ github.sha }}
           path: bin/
 
       - name: Publish build to the builds branch
-        if: github.ref == 'refs/heads/renderer-foundation' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         shell: bash
         run: |
-          grep -q '"platform": "client"' bin/RendererFoundation/manifest.json || { echo 'manifest platform not client'; cat bin/RendererFoundation/manifest.json; exit 1; }
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; cat bin/BedrockForgeCore/manifest.json; exit 1; }
+          mkdir -p out && cp -r bin/* out/ && cp -r packs out/packs && cp tools/Install-BedrockForge.ps1 out/
+          # same payload as lyricsflow-builds / clientui-builds: lyrics resources, glass menu icons, licences
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
           cd out
-          git init -q -b rf-builds
+          git init -q -b builds
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" rf-builds
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" builds
 
-      # Spatial GUI M0 spike: publish to its own branch (artifact downloads are blocked from the PC's network;
-      # git works). rf-builds stays the installed RF.
-      - name: Publish spike build to spatialgui-m0-builds
-        if: github.ref == 'refs/heads/spatialgui-m0' && github.event_name == 'push'
+      # LyricsFlow prep branch: publish the BF DLL + lyrics resources to `lyricsflow-builds` (artifact downloads are
+      # blocked on the PC's network; git works). `builds` (main) is untouched.
+      - name: Publish LyricsFlow build to lyricsflow-builds
+        if: github.ref == 'refs/heads/lyricsflow/scaffold' && github.event_name == 'push'
         shell: bash
         run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
+          mkdir -p out && cp -r bin/* out/
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
+          mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
           cd out
-          git init -q -b spatialgui-m0-builds
+          git init -q -b lyricsflow-builds
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" spatialgui-m0-builds
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" lyricsflow-builds
 
-      # Cinematic Interactions (merged into the Spatial GUI mod): its own builds branch
-      - name: Publish cinematic build to cinematic-builds
-        if: github.ref == 'refs/heads/cinematic' && github.event_name == 'push'
+      # Glass client menu branch: same payload as lyricsflow-builds + resources/client (icon atlas)
+      - name: Publish client UI build to clientui-builds
+        if: github.ref == 'refs/heads/clientui/bf' && github.event_name == 'push'
         shell: bash
         run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
+          mkdir -p out && cp -r bin/* out/
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
+          mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
           cd out
-          git init -q -b cinematic-builds
+          git init -q -b clientui-builds
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" cinematic-builds
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" clientui-builds
 
-      # LyricsFlow prep (cinematic + lyrics pass): own branch so cinematic-builds / rf-builds stay untouched
-      - name: Publish client UI RF build to clientui-rf-builds
-        if: github.ref == 'refs/heads/clientui/rf' && github.event_name == 'push'
+      # Glass menu modules branch (Auto Sprint / GG / Re-queue / post-fx): same payload as glass-modules-builds
+      - name: Publish glass-modules build
+        if: github.ref == 'refs/heads/client/glass-modules' && github.event_name == 'push'
         shell: bash
         run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
+          mkdir -p out && cp -r bin/* out/
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
+          mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
           cd out
-          git init -q -b clientui-rf-builds
+          git init -q -b glass-modules-builds
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" clientui-rf-builds
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" glass-modules-builds
 
-      - name: Publish LyricsFlow RF build to lyricsflow-rf-builds
-        if: startsWith(github.ref, 'refs/heads/lyricsflow/rf-on-cinematic') && github.event_name == 'push'
+      - name: Publish client polish build
+        if: github.ref == 'refs/heads/client/purxiy-polish' && github.event_name == 'push'
         shell: bash
         run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/ && (cp src/SkyShaders.h out/ || true)
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
+          mkdir -p out && cp -r bin/* out/
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
+          mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
           cd out
-          git init -q -b lyricsflow-rf-builds
+          git init -q -b client-polish-builds
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" lyricsflow-rf-builds
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" client-polish-builds
 
-      # LyricsFlow on Direct3D 11 (Blueberry compatibility): own builds branch so lyricsflow-rf-builds stays untouched
-      - name: Publish D3D11 RF build to lyricsflow-rf-d3d11-builds
-        if: github.ref == 'refs/heads/lyricsflow/rf-d3d11' && github.event_name == 'push'
+      # LyricsForge cinematic work (pairs with Renderer Foundation lyricsforge-cinematic/rf)
+      - name: Publish LyricsForge cinematic BF build
+        if: (github.ref == 'refs/heads/lyricsforge-cinematic/bf' || github.ref == 'refs/heads/glass-armor/bf' || github.ref == 'refs/heads/worldfx-cloudsea/bf') && github.event_name == 'push'
         shell: bash
         run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/
+          grep -q '"platform": "client"' bin/BedrockForgeCore/manifest.json || { echo 'manifest platform not client'; exit 1; }
+          mkdir -p out && cp -r bin/* out/
+          mkdir -p out/BedrockForgeCore/resources && cp -r resources/lyricsflow out/BedrockForgeCore/resources/lyricsflow
+          cp -r resources/client out/BedrockForgeCore/resources/client
+          cp -r third_party/lyricsflow out/BedrockForgeCore/resources/lyricsflow/licenses
+          mkdir -p out/packs && cp -r packs/LyricsFlowGlassHotbar out/packs/
           cd out
-          git init -q -b lyricsflow-rf-d3d11-builds
+          DEST=lyricsforge-cinematic-bf-builds; [ "${GITHUB_REF}" = refs/heads/glass-armor/bf ] && DEST=glass-armor-bf-builds
+          [ "${GITHUB_REF}" = refs/heads/worldfx-cloudsea/bf ] && DEST=worldfx-bf-builds
+          git init -q -b "$DEST"
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
           git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" lyricsflow-rf-d3d11-builds
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" "$DEST"
 
-      # Cinematic LyricsForge work (pairs with Bedrock Forge lyricsforge-cinematic/bf): own builds branch
-      - name: Publish cinematic RF build to lyricsforge-cinematic-rf-builds
-        if: github.ref == 'refs/heads/lyricsforge-cinematic/rf' && github.event_name == 'push'
-        shell: bash
+  # LyricsFlow port: the pure core (src/lyrics/core) + its tests also build and run on Linux (gcc), so parser/placement
+  # regressions show up even when the Windows/LeviLamina build is busy or broken for unrelated reasons.
+  lyrics-core-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: xmake-io/github-action-setup-xmake@v1
+      - name: Build + run LyricsCoreTests
         run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/
-          cd out
-          git init -q -b lyricsforge-cinematic-rf-builds
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
-          git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" lyricsforge-cinematic-rf-builds
-      # Glass Armor (M0 probe on top of the live RF line): own builds branch, installed RF stays untouched
-      - name: Publish glass armor RF build to glass-armor-rf-builds
-        if: github.ref == 'refs/heads/glass-armor/rf' && github.event_name == 'push'
-        shell: bash
-        run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/
-          cd out
-          git init -q -b glass-armor-rf-builds
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
-          git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" glass-armor-rf-builds
-      # World FX (M0 world probe on top of the live RF line): own builds branch, installed RF stays untouched
-      - name: Publish World FX RF build to worldfx-rf-builds
-        if: github.ref == 'refs/heads/worldfx/rf' && github.event_name == 'push'
-        shell: bash
-        run: |
-          mkdir -p out && cp -r bin/* out/ && cp LICENSE NOTICE.md README.md out/ && cp src/GlyphShaders.h out/
-          cd out
-          git init -q -b worldfx-rf-builds
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          echo "Built from ${GITHUB_SHA} on $(date -u +%F)" > BUILD_INFO.txt
-          git add -A && git commit -qm "Build ${GITHUB_SHA}"
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" worldfx-rf-builds
+          xmake f -p linux -m debug -y
+          xmake build -v -y LyricsCoreTests
+          xmake run LyricsCoreTests
+

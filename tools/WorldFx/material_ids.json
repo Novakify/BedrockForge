@@ -1,0 +1,359 @@
+{
+ "step": 4,
+ "encode": "alpha = 255 - step * id",
+ "classes": {
+  "1": {
+   "name": "wool",
+   "textures": [
+    "wool_colored_black",
+    "wool_colored_blue",
+    "wool_colored_brown",
+    "wool_colored_cyan",
+    "wool_colored_gray",
+    "wool_colored_green",
+    "wool_colored_light_blue",
+    "wool_colored_lime",
+    "wool_colored_magenta",
+    "wool_colored_orange",
+    "wool_colored_pink",
+    "wool_colored_purple",
+    "wool_colored_red",
+    "wool_colored_silver",
+    "wool_colored_white",
+    "wool_colored_yellow"
+   ]
+  },
+  "2": {
+   "name": "concrete",
+   "textures": [
+    "concrete_black",
+    "concrete_blue",
+    "concrete_brown",
+    "concrete_cyan",
+    "concrete_gray",
+    "concrete_green",
+    "concrete_light_blue",
+    "concrete_lime",
+    "concrete_magenta",
+    "concrete_orange",
+    "concrete_pink",
+    "concrete_purple",
+    "concrete_red",
+    "concrete_silver",
+    "concrete_white",
+    "concrete_yellow"
+   ]
+  },
+  "3": {
+   "name": "concrete_powder",
+   "textures": [
+    "concrete_powder_black",
+    "concrete_powder_blue",
+    "concrete_powder_brown",
+    "concrete_powder_cyan",
+    "concrete_powder_gray",
+    "concrete_powder_green",
+    "concrete_powder_light_blue",
+    "concrete_powder_lime",
+    "concrete_powder_magenta",
+    "concrete_powder_orange",
+    "concrete_powder_pink",
+    "concrete_powder_purple",
+    "concrete_powder_red",
+    "concrete_powder_silver",
+    "concrete_powder_white",
+    "concrete_powder_yellow"
+   ]
+  },
+  "4": {
+   "name": "planks",
+   "textures": [
+    "bamboo_planks",
+    "cherry_planks",
+    "mangrove_planks",
+    "pale_oak_planks",
+    "planks_acacia",
+    "planks_big_oak",
+    "planks_birch",
+    "planks_jungle",
+    "planks_oak",
+    "planks_spruce",
+    "poplar_planks"
+   ]
+  },
+  "5": {
+   "name": "log",
+   "textures": [
+    "bamboo_block",
+    "bamboo_stem",
+    "huge_fungus/stripped_crimson_stem_side",
+    "huge_fungus/stripped_crimson_stem_top",
+    "huge_fungus/stripped_warped_stem_side",
+    "huge_fungus/stripped_warped_stem_top",
+    "huge_fungus/warped_stem_side",
+    "huge_fungus/warped_stem_top",
+    "log_acacia",
+    "log_big_oak",
+    "log_birch",
+    "log_jungle",
+    "log_oak",
+    "log_spruce",
+    "mushroom_block_skin_stem",
+    "stripped_acacia_log",
+    "stripped_birch_log",
+    "stripped_dark_oak_log",
+    "stripped_jungle_log",
+    "stripped_oak_log",
+    "stripped_poplar_side_log",
+    "stripped_spruce_log"
+   ]
+  },
+  "6": {
+   "name": "stone",
+   "textures": [
+    "basalt_side",
+    "basalt_top",
+    "blackstone",
+    "blackstone_top",
+    "calcite",
+    "cobblestone",
+    "cobblestone_mossy",
+    "deepslate/cobbled_deepslate",
+    "deepslate/deepslate",
+    "deepslate/deepslate_top",
+    "dripstone_block",
+    "gilded_blackstone",
+    "moss_block",
+    "netherrack",
+    "pale_moss_block",
+    "prismarine_rough",
+    "smooth_basalt",
+    "soul_sand",
+    "soul_soil",
+    "stone",
+    "stone_andesite",
+    "stone_diorite",
+    "stone_granite",
+    "stone_slab_side",
+    "stone_slab_top",
+    "tuff"
+   ]
+  },
+  "7": {
+   "name": "cut_stone",
+   "textures": [
+    "chiseled_nether_bricks",
+    "chiseled_polished_blackstone",
+    "chiseled_tuff",
+    "chiseled_tuff_bricks",
+    "chiseled_tuff_bricks_top",
+    "chiseled_tuff_top",
+    "cinnabar_bricks",
+    "cracked_nether_bricks",
+    "cracked_polished_blackstone_bricks",
+    "deepslate/chiseled_deepslate",
+    "deepslate/cracked_deepslate_bricks",
+    "deepslate/cracked_deepslate_tiles",
+    "deepslate/deepslate_bricks",
+    "deepslate/deepslate_tiles",
+    "deepslate/polished_deepslate",
+    "end_bricks",
+    "polished_basalt_side",
+    "polished_basalt_top",
+    "polished_blackstone",
+    "polished_blackstone_bricks",
+    "polished_cinnabar",
+    "polished_sulfur",
+    "polished_tuff",
+    "prismarine_bricks",
+    "prismarine_dark",
+    "purpur_block",
+    "purpur_pillar",
+    "purpur_pillar_top",
+    "quartz_bricks",
+    "resin_bricks",
+    "stone_andesite_smooth",
+    "stone_diorite_smooth",
+    "stone_granite_smooth",
+    "stonebrick",
+    "stonebrick_carved",
+    "stonebrick_cracked",
+    "stonebrick_mossy",
+    "tuff_bricks"
+   ]
+  },
+  "8": {
+   "name": "end_stone",
+   "textures": [
+    "end_stone"
+   ]
+  },
+  "9": {
+   "name": "obsidian",
+   "textures": [
+    "crying_obsidian",
+    "obsidian"
+   ]
+  },
+  "10": {
+   "name": "terracotta",
+   "textures": [
+    "hardened_clay",
+    "hardened_clay_stained_black",
+    "hardened_clay_stained_blue",
+    "hardened_clay_stained_brown",
+    "hardened_clay_stained_cyan",
+    "hardened_clay_stained_gray",
+    "hardened_clay_stained_green",
+    "hardened_clay_stained_light_blue",
+    "hardened_clay_stained_lime",
+    "hardened_clay_stained_magenta",
+    "hardened_clay_stained_orange",
+    "hardened_clay_stained_pink",
+    "hardened_clay_stained_purple",
+    "hardened_clay_stained_red",
+    "hardened_clay_stained_silver",
+    "hardened_clay_stained_white",
+    "hardened_clay_stained_yellow"
+   ]
+  },
+  "11": {
+   "name": "glazed",
+   "textures": [
+    "glazed_terracotta_black",
+    "glazed_terracotta_blue",
+    "glazed_terracotta_brown",
+    "glazed_terracotta_cyan",
+    "glazed_terracotta_gray",
+    "glazed_terracotta_green",
+    "glazed_terracotta_light_blue",
+    "glazed_terracotta_lime",
+    "glazed_terracotta_magenta",
+    "glazed_terracotta_orange",
+    "glazed_terracotta_pink",
+    "glazed_terracotta_purple",
+    "glazed_terracotta_red",
+    "glazed_terracotta_silver",
+    "glazed_terracotta_white",
+    "glazed_terracotta_yellow"
+   ]
+  },
+  "12": {
+   "name": "metal",
+   "textures": [
+    "chiseled_copper",
+    "copper_block",
+    "cut_copper",
+    "exposed_chiseled_copper",
+    "exposed_cut_copper",
+    "gold_block",
+    "iron_block",
+    "netherite_block",
+    "oxidized_chiseled_copper",
+    "oxidized_cut_copper",
+    "raw_copper_block",
+    "raw_gold_block",
+    "raw_iron_block",
+    "weathered_chiseled_copper",
+    "weathered_cut_copper"
+   ]
+  },
+  "13": {
+   "name": "gem",
+   "textures": [
+    "amethyst_block",
+    "coal_block",
+    "diamond_block",
+    "emerald_block",
+    "lapis_block",
+    "redstone_block"
+   ]
+  },
+  "14": {
+   "name": "ore",
+   "textures": [
+    "coal_ore",
+    "copper_ore",
+    "deepslate/deepslate_coal_ore",
+    "deepslate/deepslate_copper_ore",
+    "deepslate/deepslate_diamond_ore",
+    "deepslate/deepslate_emerald_ore",
+    "deepslate/deepslate_gold_ore",
+    "deepslate/deepslate_iron_ore",
+    "deepslate/deepslate_lapis_ore",
+    "deepslate/deepslate_redstone_ore",
+    "diamond_ore",
+    "emerald_ore",
+    "gold_ore",
+    "iron_ore",
+    "lapis_ore",
+    "nether_gold_ore",
+    "quartz_ore",
+    "redstone_ore"
+   ]
+  },
+  "15": {
+   "name": "sand",
+   "textures": [
+    "red_sand",
+    "red_sandstone_bottom",
+    "red_sandstone_carved",
+    "red_sandstone_normal",
+    "red_sandstone_smooth",
+    "red_sandstone_top",
+    "sand",
+    "sandstone_bottom",
+    "sandstone_carved",
+    "sandstone_normal",
+    "sandstone_smooth",
+    "sandstone_top"
+   ]
+  },
+  "16": {
+   "name": "soil",
+   "textures": [
+    "clay",
+    "coarse_dirt",
+    "dirt",
+    "dirt_podzol_top",
+    "dirt_with_roots",
+    "farmland_dry",
+    "gravel",
+    "mud",
+    "muddy_mangrove_roots_side",
+    "muddy_mangrove_roots_top",
+    "packed_mud"
+   ]
+  },
+  "17": {
+   "name": "bricks",
+   "textures": [
+    "brick",
+    "mud_bricks",
+    "nether_brick",
+    "red_nether_brick"
+   ]
+  },
+  "18": {
+   "name": "quartz",
+   "textures": [
+    "quartz_block_bottom",
+    "quartz_block_chiseled",
+    "quartz_block_chiseled_top",
+    "quartz_block_lines",
+    "quartz_block_lines_top",
+    "quartz_block_side",
+    "quartz_block_top"
+   ]
+  },
+  "19": {
+   "name": "snow",
+   "textures": [
+    "blue_ice",
+    "ice_packed",
+    "powder_snow",
+    "snow"
+   ]
+  }
+ }
+}

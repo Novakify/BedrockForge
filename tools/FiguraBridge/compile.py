@@ -1,0 +1,1286 @@
+#!/usr/bin/env python3
+"""FiguraBridge compiler: Figura avatar folder -> Figura avatar NBT (as JSON) + rig contract + Bedrock resource pack.
+
+    python3 -I tools/FiguraBridge/compile.py AVATAR_DIR OUT_DIR --vanilla BEDROCK_SAMPLES/resource_pack [--uuid U]
+
+Outputs
+    OUT_DIR/avatar/figura_avatar.json   the avatar NBT exactly as Figura 0.1.6 builds it (figura_nbt.py), byte
+                                        arrays as {"__file": relpath} next to it (textures/, sounds/, resources/)
+    OUT_DIR/rig.json                    bridge contract read by the native runtime (parts, textures, sounds, vars)
+    OUT_DIR/rp/                         Bedrock resource pack replacing the player model; every Figura part is a
+                                        bone driven by Molang variables v.fb<i>* (see VARS_DOC)
+
+Bedrock conventions used (Blockbench's Bedrock exporter, mirrored on X):
+    bone pivot = [-piv.x, piv.y, piv.z]; NO bind rotation anywhere (rotation comes from the drive animation)
+    cube origin = [-to.x, from.y, from.z], size = to - from, inflate as is
+    face uv (n/e/s/w) = [u1, v1] + [u2-u1, v2-v1]; up/down = [u2, v2] + [u1-u2, v1-v2]
+    mesh = poly_mesh, positions unrotated (Figura already stores origin + vertex), x negated, winding reversed
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import math
+import shutil
+import sys
+import uuid
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import figura_nbt as fn  # noqa: E402
+from avatar_pack import SKELETON  # noqa: E402
+
+GEO_FORMAT = "1.21.0"
+FACE_NAMES = {"n": "north", "s": "south", "w": "west", "e": "east", "u": "up", "d": "down"}
+TEX_TYPES = ("d", "e", "n", "s")
+PACK_NS = uuid.UUID("6f1b0e1e-4c1a-4f0b-9d1e-f16a00b1d6e0")  # same namespace as avatar_pack.py
+
+VARS_DOC = {
+    "v.fb<i>rx / ry / rz": "bone rotation of part i, Bedrock bone convention (degrees). Default = static Figura rot "
+                           "converted to [-rx, -ry, rz]. Native code writes the final value (Figura rot + anim + Lua).",
+    "v.fb<i>px / py / pz": "bone position offset of part i (Bedrock pixels, Bedrock axis signs). Default 0.",
+    "v.fb<i>sx / sy / sz": "bone scale of part i. Default 1.",
+    "v.fb<i>v": "EFFECTIVE visibility of part i (1/0) = own visible AND all ancestors. Default from the NBT 'vsb' chain.",
+    "v.fb<i>t": "primary texture override of part i: index into rig.json textureFiles; < 0 (default -1) = the part's "
+                "own Figura texture set ('d' file of each face's set).",
+    "v.fb<i>e": "secondary (emissive) texture override of part i: textureFiles index; < 0 (default -1) = own set's 'e'.",
+    "v.fbvan": "1 = also render the vanilla player (Mojang render controllers). The runtime writes it on the avatar's player only; "
+               "unset (every other player) = vanilla model.",
+    "render controllers": "controller.render.player.figura_p<f> (primary, Material.fbd = entity_alphablend) and "
+                          "figura_s<f> (secondary, Material.fbe = entity_emissive_alpha) for every d/e texture file f, "
+                          "texture key fbt<f>; third person only (!variable.is_first_person).",
+}
+
+
+def num(x) -> float:
+    x = float(x)
+    if x == 0 or abs(x) < 1e-9:
+        return 0.0
+    return float(fn.f32_repr(fn.f32(x))) if math.isfinite(x) else x
+
+
+def molang_num(x) -> str:
+    s = repr(num(x))
+    return s[:-2] if s.endswith(".0") else s
+
+
+def read_vec(tag: dict, key: str, default=(0.0, 0.0, 0.0)):
+    v = tag.get(key)
+    return tuple(float(c) for c in v[:3]) if isinstance(v, list) and len(v) >= 3 else default
+
+
+def read_vec4(tag: dict, key: str):
+    v = tag.get(key)
+    return tuple(float(c) for c in v[:4]) if isinstance(v, list) and len(v) >= 4 else (0.0, 0.0, 0.0, 0.0)
+
+
+def slugify(s: str) -> str:
+    return "".join(c.lower() if c.isalnum() else "_" for c in s).strip("_") or "avatar"
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# textures
+# ----------------------------------------------------------------------------------------------------------------
+
+COMPOSITE_LIMIT = 400  # max primary x emissive pre-blended textures per avatar
+
+
+def composite_png(d: bytes, e: bytes) -> bytes | None:
+    """Figura draws the secondary (emissive) texture over the primary with additive blending (RenderType.eyes):
+    primary + emissive. Bedrock's separate emissive pass is not reliably drawn on top of the primary at the same
+    depth (in game: the stick figure's green emissive body never showed, so its colour options did nothing), so the
+    sum is baked into one texture the primary pass draws. Emissive pixels over transparent primary pixels show the
+    emissive colour."""
+    try:
+        import io
+        from PIL import Image
+        di = Image.open(io.BytesIO(d)).convert("RGBA")
+        ei = Image.open(io.BytesIO(e)).convert("RGBA")
+        if ei.size != di.size:
+            ei = ei.resize(di.size, Image.NEAREST)
+        flat = lambda im: list(im.get_flattened_data() if hasattr(im, "get_flattened_data") else im.getdata())  # noqa: E731
+        dp, ep = flat(di), flat(ei)
+        out = []
+        for (dr, dg, db, da), (er, eg, eb, ea) in zip(dp, ep):
+            if ea == 0:
+                out.append((dr, dg, db, da))
+            elif da == 0:
+                out.append((er, eg, eb, ea))
+            else:
+                k = ea / 255
+                out.append((min(255, round(dr + er * k)), min(255, round(dg + eg * k)), min(255, round(db + eb * k)), max(da, ea)))
+        ci = Image.new("RGBA", di.size)
+        ci.putdata(out)
+        buf = io.BytesIO()
+        ci.save(buf, "PNG")
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001 - Pillow missing / unreadable image: no composite, the overlay pass stays
+        return None
+
+
+def add_emissive_composites(files: list, sets: list) -> list:
+    """Every (primary of a texture set) x (emissive texture) pair as a pre-blended texture file ("comp": [d, e]);
+    the runtime draws it in the primary pass for parts showing that pair. Pairs are limited to COMPOSITE_LIMIT
+    (default pairs first, then swap targets)."""
+    d_files = sorted({st["d"] for st in sets if st["d"] is not None and files[st["d"]]["_data"] is not None})
+    e_files = [f["i"] for f in files if f["type"] == "e" and f["_data"] is not None]
+    pairs = [(st["d"], st["e"]) for st in sets if st["d"] in d_files and st["e"] in e_files]
+    pairs += [(dd, ee) for dd in d_files for ee in e_files if (dd, ee) not in pairs]
+    out = []
+    for dd, ee in pairs[:COMPOSITE_LIMIT]:
+        data = composite_png(files[dd]["_data"], files[ee]["_data"])
+        if data is None:
+            continue
+        f = {"i": len(files), "figuraName": f"__comp{dd}_{ee}", "set": -1, "type": "d", "file": None,
+             "w": files[dd]["w"], "h": files[dd]["h"], "_data": data, "comp": [dd, ee]}
+        files.append(f)
+        out.append(f)
+    return out
+
+
+def build_textures(nbt: dict):
+    """textureFiles (one per d/e/n/s image) + textureSets (Figura's textures.data order = global texture ids)."""
+    tex = nbt.get("textures", {"src": {}, "data": []})
+    src, data = tex.get("src", {}), tex.get("data", [])
+    files, by_path, sets = [], {}, []
+    for si, entry in enumerate(data):
+        s = {"i": si, "name": "", "d": None, "e": None, "n": None, "s": None, "uvW": -1, "uvH": -1}
+        for t in TEX_TYPES:
+            path = entry.get(t)
+            if path is None:
+                continue
+            if path not in by_path:
+                rep = src.get(path)
+                if isinstance(rep, fn.FileRef):
+                    w, h = fn.png_dimensions(rep.data)
+                    f = {"i": len(files), "figuraName": path, "set": si, "type": t, "file": "avatar/" + rep.relpath,
+                         "w": w, "h": h, "_data": rep.data}
+                elif isinstance(rep, list):  # ignoredTextures: Figura makes a blank texture of this size
+                    f = {"i": len(files), "figuraName": path, "set": si, "type": t, "file": None,
+                         "w": rep[0], "h": rep[1], "_data": None}
+                else:
+                    raise fn.FiguraCompileError(f"texture {path} has no source")
+                by_path[path] = f["i"]
+                files.append(f)
+            s[t] = by_path[path]
+        # AvatarRenderer.getTextureName
+        for t in TEX_TYPES:
+            p = entry.get(t)
+            if p:
+                s["name"] = p if t == "d" else p[:-2]
+                break
+        # FiguraTextureSet.getWidth/Height: first non-null texture of (d, e, s, n) - used to normalise UVs
+        for t in ("d", "e", "s", "n"):
+            if s[t] is not None:
+                s["uvW"], s["uvH"] = files[s[t]]["w"], files[s[t]]["h"]
+                break
+        sets.append(s)
+    return files, sets
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# parts
+# ----------------------------------------------------------------------------------------------------------------
+
+class Part:
+    def __init__(self, i, tag, parent, path, vis_eff, smooth):
+        self.i, self.tag, self.parent, self.path = i, tag, parent, path
+        self.name = tag.get("name", "")
+        self.vis_eff = vis_eff
+        self.smooth = smooth
+        cd, md = tag.get("cube_data"), tag.get("mesh_data")
+        # FiguraModelPartReader.hasCubeData / hasMeshData: present AND non-empty compound
+        self.type = "CUBE" if isinstance(cd, dict) and cd else "MESH" if isinstance(md, dict) and md else "GROUP"
+        self.piv = read_vec(tag, "piv")
+        self.rot = read_vec(tag, "rot")
+        pt = tag.get("pt", "None")
+        self.pt = pt if pt in fn.PARENT_TYPE_NAMES else "None"  # ParentType.valueOf, invalid ignored
+        self.vsb = tag.get("vsb", True) is not False
+        self.bone = f"p{i}"
+        self.geo: dict[int, dict] = {}  # texture set -> {"cubes": [...]} or {"poly_mesh": {...}}
+        self.children: list[Part] = []
+
+
+def rgba_png(data: bytes) -> bytes:
+    """Bedrock ignores a palette PNG's tRNS chunk (transparent texels render with their palette colour), so every
+    texture goes into the pack as 8-bit RGBA. Figura (Java NativeImage) reads all PNG types, so this changes nothing."""
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(data))
+        if im.mode == "RGBA" and im.info.get("transparency") is None:
+            return data
+        buf = io.BytesIO()
+        im.convert("RGBA").save(buf, "PNG")
+        return buf.getvalue()
+    except ImportError:
+        print("[FiguraBridge] Pillow missing: textures copied as is (palette PNG transparency breaks on Bedrock)", file=sys.stderr)
+        return data
+
+
+DYN_SLOTS = 4      # runtime texture slots (see build)
+DYN_SIZE = 64      # their placeholder size (same-size uploads are updated in place)
+DUPS = 1           # spare geometry copies per part for ModelPart:copy() of a part the compiler can't name (see build)
+NAMED_DUPS = 8     # spare copies of a subtree a script copies by path (models.a.b:copy(...)), e.g. particle-like effects
+DUP_BONE_BUDGET = 400  # max bones spent on named copies
+QUAD_SLOTS = 8     # text / sprite render tasks drawn at once (each a quad bone + a runtime texture)
+QUAD_SIZE = 256    # their runtime texture size (text / sprite pixels, cropped by uv_anim)
+BONE_LIMIT = 250   # per geometry; Bedrock breaks somewhere past 255 (see chunk_bones)
+
+
+def chunk_bones(bones: list[dict], skeleton: set[str], limit: int = BONE_LIMIT) -> list[list[dict]]:
+    """Split one bone list (parents before children) into geometries of <= limit bones. Each chunk = vanilla skeleton +
+    whole ancestor chains of the geometry bones it holds; bones with no geometry below them are dropped."""
+    by = {b["name"]: b for b in bones}
+    has_geo = {n: bool(b.get("cubes") or b.get("poly_mesh")) for n, b in by.items()}
+    for b in reversed(bones):  # children come after parents: propagate "has geometry below" upwards
+        par = b.get("parent")
+        if par in has_geo and has_geo[b["name"]]:
+            has_geo[par] = True
+    def chain(n):
+        out = []
+        while n is not None and n not in skeleton:
+            out.append(n)
+            n = by[n].get("parent")
+        return out
+    base = [b["name"] for b in bones if b["name"] in skeleton]
+    chunks, cur = [], set()
+    for b in bones:
+        n = b["name"]
+        if n in skeleton or not has_geo[n] or not (b.get("cubes") or b.get("poly_mesh")):
+            continue
+        need = set(chain(n)) - cur
+        if cur and len(base) + len(cur) + len(need) > limit:
+            chunks.append(cur)
+            cur = set()
+            need = set(chain(n))
+        if len(base) + len(need) > limit:
+            raise fn.FiguraCompileError(f"bone {n} is nested deeper than one geometry allows ({len(need)} ancestors)")
+        cur |= need
+    if cur or not chunks:
+        chunks.append(cur)
+    keep = set(base)
+    return [[b for b in bones if b["name"] in keep or b["name"] in c] for c in chunks]
+
+
+def primary_material(f: dict) -> str:
+    """Bedrock's entity_alphablend draws without depth writes, so a whole avatar on it sorts wrong (verified in game:
+    CatMaid's head and body cubes vanished behind their own layers); entity_alphatest (cutout) is right for every
+    texture whose alpha is only 0 or 255. Textures with real partial alpha keep blending."""
+    try:
+        import io
+        from PIL import Image
+        a = Image.open(io.BytesIO(f["_data"])).convert("RGBA").getchannel("A")
+        partial = sum(a.histogram()[1:255]) > 0
+        return "Material.fbb" if partial else "Material.fbd"
+    except Exception:  # noqa: BLE001
+        return "Material.fbd"
+
+
+UV_METHODS = r"(?:setUV|uv|setUVPixels|uvPixels|setUVMatrix|uvMatrix)"
+
+
+def uv_dynamic_paths(script_text: str) -> set[str]:
+    """Model part paths a script moves the UVs of (ModelPart:setUV / setUVPixels / setUVMatrix and their aliases).
+    Catches `models.a.b:setUV(...)` and `X = models.a.b ... X:setUV(...)` (also `X.Y = models...`)."""
+    import re
+    found = set(re.findall(r"\b(models(?:\.[A-Za-z_]\w*)+)\s*:\s*" + UV_METHODS + r"\s*\(", script_text))
+    alias = {}
+    for name, path in re.findall(r"([A-Za-z_][\w.]*)\s*=\s*(models(?:\.[A-Za-z_]\w*)+)\b(?!\s*[:(])", script_text):
+        alias.setdefault(name, set()).add(path)
+    for name in re.findall(r"([A-Za-z_][\w.]*)\s*:\s*" + UV_METHODS + r"\s*\(", script_text):
+        found |= alias.get(name, set())
+    return found
+
+
+def blank_png(w: int, h: int) -> bytes:
+    """fully transparent RGBA PNG (stdlib only)"""
+    import struct
+    import zlib
+    raw = b"".join(b"\x00" + b"\x00\x00\x00\x00" * w for _ in range(h))
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def kinds_for(f: dict):
+    """render controller kinds for a texture file: a primary ('d') file only ever shows as a primary texture, an
+    emissive ('e') file as a secondary one - one full geometry pass per controller, so no unused pairs"""
+    if f["type"] == "e":
+        return (("s", "e", "Material.fbe", "e"),)
+    return (("p", "t", primary_material(f), "d"),)
+
+
+def tex_ref(f: dict) -> str:
+    return "Texture.default" if f.get("skin") else "Texture.cape" if f.get("cape") else f"Texture.fbt{f['i']}"
+
+
+_VANILLA_MAP = None
+
+
+def bedrock_vanilla_texture(res: str) -> str | None:
+    """Java resource texture ("minecraft:textures/block/spruce_planks.png") -> Bedrock vanilla texture path, via the
+    GeyserMC PackConverter mapping (MIT, optional: tools/FiguraBridge/data/textures.json) for blocks/items, a fixed
+    rule for armor layers, else the same path (most entity textures match)."""
+    global _VANILLA_MAP
+    import os
+    p = res.split(":", 1)[-1]
+    if not p.startswith("textures/"):
+        return None
+    p = p[len("textures/"):-len(".png")]
+    cat, _, name = p.rpartition("/")
+    if _VANILLA_MAP is None:
+        _VANILLA_MAP = {}
+        for cand in (os.environ.get("PACKCONVERTER_TEXTURES", ""), str(HERE / "data/textures.json")):
+            if cand and Path(cand).is_file():
+                _VANILLA_MAP = json.loads(Path(cand).read_text(encoding="utf-8"))
+                break
+    folder = {"block": "blocks", "item": "items"}.get(cat, cat)
+    m = (_VANILLA_MAP.get(cat) or {}).get(name)
+    if isinstance(m, list):
+        m = m[0]
+    if isinstance(m, str):
+        return f"textures/{folder}/{m}"
+    import re as _r
+    a = _r.fullmatch(r"(\w+)_layer_([12])", name)
+    if cat == "models/armor" and a:
+        return f"textures/models/armor/{a.group(1)}_{a.group(2)}"
+    return f"textures/{folder}/{name}"
+
+
+_ENTITIES = None
+_GEOS = None
+
+
+def _json_loose(path: Path):
+    import re as _r
+    t = path.read_text(encoding="utf-8", errors="replace")
+    t = _r.sub(r"(?m)^\s*//.*$", "", t)
+    t = _r.sub(r"/\*.*?\*/", "", t, flags=_r.S)
+    try:
+        return json.loads(t)
+    except ValueError:
+        return None
+
+
+def vanilla_entity(rp: Path, eid: str) -> dict | None:
+    """Bedrock vanilla client entity -> {"bones", "tw", "th", "texture"} (default geometry + texture), from the
+    bedrock-samples resource pack given with --vanilla (entity/ + models/entity/); None when it isn't there."""
+    global _ENTITIES, _GEOS
+    if _ENTITIES is None:
+        _ENTITIES, _GEOS = {}, {}
+        for f in sorted((rp / "entity").glob("*.json")) if (rp / "entity").is_dir() else []:
+            d = _json_loose(f)
+            try:
+                desc = d["minecraft:client_entity"]["description"]
+            except (TypeError, KeyError):
+                continue
+            ident = desc.get("identifier")
+            geos, texs = desc.get("geometry") or {}, desc.get("textures") or {}
+            if ident and geos and texs and ident not in _ENTITIES:
+                g = geos.get("default") or next(iter(geos.values()))
+                t = texs.get("default") or next(iter(texs.values()))
+                _ENTITIES[ident] = (g, t)
+        raw = {}
+        for f in sorted((rp / "models").rglob("*.json")) if (rp / "models").is_dir() else []:
+            d = _json_loose(f)
+            if not isinstance(d, dict):
+                continue
+            for g in d.get("minecraft:geometry") or []:
+                desc = g.get("description") or {}
+                if desc.get("identifier"):
+                    raw[desc["identifier"]] = (None, g.get("bones") or [], desc.get("texture_width", 64), desc.get("texture_height", 64))
+            for k, v in d.items():
+                if k.startswith("geometry.") and isinstance(v, dict):
+                    ident, _, parent = k.partition(":")
+                    raw[ident] = (parent or None, v.get("bones"), v.get("texturewidth"), v.get("textureheight"))
+        def resolve(ident, depth=0):
+            if ident not in raw or depth > 8:
+                return None
+            parent, bones, tw, th = raw[ident]
+            base = resolve(parent, depth + 1) if parent else None
+            if base:
+                merged = {b["name"]: b for b in base[0]}
+                for b in bones or []:
+                    merged[b["name"]] = {**merged.get(b["name"], {}), **b}
+                bones = list(merged.values())
+                tw, th = tw or base[1], th or base[2]
+            return (bones or [], tw or 64, th or 64)
+        _GEOS = resolve
+    e = _ENTITIES.get(eid)
+    if not e:
+        return None
+    g = _GEOS(e[0])
+    if not g or not g[0]:
+        return None
+    bones = []
+    for b in g[0]:
+        if not isinstance(b, dict) or not b.get("name") or b.get("neverRender"):
+            continue
+        bones.append(b)
+    names = {b["name"] for b in bones}
+    for b in bones:  # parents the geometry doesn't define (inherited skeletons) are dropped -> attach to the root
+        if b.get("parent") and b["parent"] not in names:
+            b = b.pop("parent")
+    return {"bones": bones, "tw": g[1], "th": g[2], "texture": e[1]}
+
+
+def vanilla_item_or_block_texture(kind: str, mid: str) -> str | None:
+    """Bedrock vanilla texture for an item / block id (PackConverter mapping; blocks fall back to the *_side /
+    *_front texture or the planks of a wood stair/slab)."""
+    bedrock_vanilla_texture("minecraft:textures/block/stone.png")  # loads the mapping
+    m = _VANILLA_MAP.get("item" if kind == "item" else "block") or {}
+    cands = [mid] if kind == "item" else [mid, mid + "_side", mid + "_front", mid + "_top",
+                                           mid.replace("_stairs", "_planks").replace("_slab", "_planks")]
+    for c in cands:
+        v = m.get(c)
+        if isinstance(v, list):
+            v = v[0]
+        if isinstance(v, str):
+            return f"textures/{'items' if kind == 'item' else 'blocks'}/{v}"
+    return f"textures/items/{mid}" if kind == "item" else None
+
+
+def collect_parts(models: dict) -> list[Part]:
+    parts: list[Part] = []
+
+    def visit(tag, parent: Part | None, prefix: str, vis_parent: bool, smooth: bool):
+        path = (prefix + "." if prefix else "") + tag.get("name", "")
+        if "smo" in tag:  # FiguraModelPartReader: 'smo' overrides the inherited smoothNormals
+            smooth = bool(tag["smo"])
+        vsb = tag.get("vsb", True) is not False
+        p = Part(len(parts), tag, parent, path, vis_parent and vsb, smooth)
+        parts.append(p)
+        if parent:
+            parent.children.append(p)
+        for c in tag.get("chld", []) or []:
+            visit(c, p, path, p.vis_eff, smooth)
+
+    visit(models, None, "", True, False)
+    return parts
+
+
+def cube_geometry(p: Part, sets, geo_w, geo_h):
+    tag = p.tag
+    frm, to = read_vec(tag, "f"), read_vec(tag, "t")
+    inf = float(tag.get("inf", 0.0))
+    for key in ("n", "s", "w", "e", "u", "d"):
+        face = tag["cube_data"].get(key)
+        if face is None:
+            continue
+        sid = int(face["tex"])
+        u1, v1, u2, v2 = read_vec4(face, "uv")
+        s = sets[sid] if 0 <= sid < len(sets) else None
+        # Figura's NBT uv is in texels of the set's real image; Bedrock per-face uv is in geometry texture units
+        kx = geo_w / s["uvW"] if s and s["uvW"] > 0 else 1.0
+        ky = geo_h / s["uvH"] if s and s["uvH"] > 0 else 1.0
+        u1, u2, v1, v2 = u1 * kx, u2 * kx, v1 * ky, v2 * ky
+        if key in ("u", "d"):
+            fo = {"uv": [num(u2), num(v2)], "uv_size": [num(u1 - u2), num(v1 - v2)]}
+        else:
+            fo = {"uv": [num(u1), num(v1)], "uv_size": [num(u2 - u1), num(v2 - v1)]}
+        rot = int(float(face.get("rot", 0.0)) / 90) % 4  # FiguraModelPartReader: (int)(rot / 90f)
+        if rot:
+            fo["uv_rotation"] = rot * 90
+        g = p.geo.setdefault(sid, {"cubes": [{"origin": [num(-to[0]), num(frm[1]), num(frm[2])],
+                                               "size": [num(to[0] - frm[0]), num(to[1] - frm[1]), num(to[2] - frm[2])],
+                                               "uv": {}}]})
+        if inf:
+            g["cubes"][0]["inflate"] = num(inf)
+        g["cubes"][0]["uv"][FACE_NAMES[key]] = fo
+
+
+def mesh_geometry(p: Part, sets):
+    md = p.tag["mesh_data"]
+    verts, uvs, tex, fac = md.get("vtx", []), md.get("uvs", []), md.get("tex", []), md.get("fac", [])
+    best = 2 if len(verts) > 32767 * 3 else 1 if len(verts) > 255 * 3 else 0  # FiguraModelPartReader.readMesh
+
+    def vid(k):
+        v = int(fac[k])
+        return v & 0xFF if best == 0 else v & 0xFFFF if best == 1 else v
+
+    faces = []  # (set, [(pos, uv)], normal)
+    vi = uvi = 0
+    for packed in tex:
+        packed = int(packed)
+        sid, n = packed >> 4, packed & 0xF
+        pts = []
+        for j in range(n):
+            k = vid(vi + j)
+            pts.append(((float(verts[3 * k]), float(verts[3 * k + 1]), float(verts[3 * k + 2])),
+                        (float(uvs[uvi + 2 * j]), float(uvs[uvi + 2 * j + 1]))))
+        # Figura normal: (p3 - p2) x (p1 - p2), normalised
+        a, b, c = pts[0][0], pts[1][0], pts[2][0]
+        nrm = fn._cross(fn._sub(c, b), fn._sub(a, b))
+        ln = math.sqrt(fn._dot(nrm, nrm)) or 1.0
+        faces.append((sid, pts, tuple(x / ln for x in nrm)))
+        vi += n
+        uvi += 2 * n
+
+    smooth = {}
+    if p.smooth:  # FiguraModelPartReader.smoothfy: average normals of vertices sharing a position (per part)
+        for _, pts, nrm in faces:
+            for pos, _ in pts + ([pts[2]] if len(pts) == 3 else []):
+                acc = smooth.setdefault(pos, [0.0, 0.0, 0.0])
+                for q in range(3):
+                    acc[q] += nrm[q]
+
+    for sid, pts, nrm in faces:
+        s = sets[sid] if 0 <= sid < len(sets) else None
+        uw = s["uvW"] if s and s["uvW"] > 0 else 1
+        uh = s["uvH"] if s and s["uvH"] > 0 else 1
+        g = p.geo.setdefault(sid, {"poly_mesh": {"normalized_uvs": True, "positions": [], "normals": [], "uvs": [],
+                                                  "polys": []}})["poly_mesh"]
+        poly = []
+        for pos, uv in reversed(pts):  # x mirror -> reverse winding to keep faces outward
+            g["positions"].append([num(-pos[0]), num(pos[1]), num(pos[2])])
+            nn = nrm
+            if p.smooth:
+                acc = smooth[pos]
+                l2 = math.sqrt(sum(x * x for x in acc)) or 1.0
+                nn = tuple(x / l2 for x in acc)
+            g["normals"].append([num(-nn[0]), num(nn[1]), num(nn[2])])
+            g["uvs"].append([num(uv[0] / uw), num(1 - uv[1] / uh)])
+            k = len(g["positions"]) - 1
+            poly.append([k, k, k])
+        if len(poly) == 3:
+            poly.append(list(poly[2]))  # quads only: triangles repeat the last vertex
+        g["polys"].append(poly)
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# main build
+# ----------------------------------------------------------------------------------------------------------------
+
+def write_armor_overrides(vanilla_rp: Path, rp: Path) -> int:
+    """Vanilla armor and elytra attachables, drawn only when the wearer is not shown as an avatar (v.fbnoarmor on the
+    owner, set in player.entity.json). Other players and mobs keep their armor. Figura places armor only on avatars
+    with ArmorHead/ArmorBody/... parts; for the rest (most avatars) it would float on the hidden vanilla bones."""
+    import re as _re
+    src = vanilla_rp / "attachables"
+    if not src.is_dir():
+        return 0
+    # players wear the ".player" variants (minecraft:diamond_helmet.player, item-matched on the owner): both kinds
+    armor = _re.compile(r"_(helmet|chestplate|leggings|boots)(\.player)?$|^elytra(\.player)?$")
+    out_dir = rp / "attachables/fb_armor"
+    n = 0
+    for f in sorted(src.glob("*.json")):
+        try:
+            j = json.loads(f.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        desc = j.get("minecraft:attachable", {}).get("description", {})
+        ident = desc.get("identifier", "")
+        name = ident.split(":")[-1]
+        if not ident.startswith("minecraft:") or not armor.search(name):
+            continue
+        j["format_version"] = "1.10.0"
+        sc = desc.setdefault("scripts", {})
+        pre = sc.get("pre_animation", [])
+        pre = pre if isinstance(pre, list) else [pre]
+        # only a player has the (public) variable; reading it through another owner logs an error every frame
+        hide = ("c.owning_entity->v.fbnoarmor" if name.endswith(".player") else
+                "q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.fbnoarmor : 0.0")
+        sc["pre_animation"] = [f"variable.fbhide = {hide};"] + [l for l in pre if "fbhide" not in l]
+        rcs = []
+        for r in desc.get("render_controllers", []):
+            if isinstance(r, str):
+                rcs.append({r: "!(v.fbhide ?? 0)"})
+            else:
+                rcs.append({k: f"({v}) && !(v.fbhide ?? 0)" for k, v in r.items()})
+        desc["render_controllers"] = rcs
+        # hidden armor must not run its offset animations either: they read owner variables the avatar's
+        # player.entity.json may not define (in game: ~200 Molang errors a second in the content log)
+        if sc.get("animate"):
+            sc["animate"] = [{a: "!(v.fbhide ?? 0)"} if isinstance(a, str) else
+                             {k: v if "fbhide" in v else f"({v}) && !(v.fbhide ?? 0)" for k, v in a.items()}
+                             for a in sc["animate"]]
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"{name}.json").write_text(json.dumps(j, indent=1))
+        n += 1
+    return n
+
+
+def build(avatar_dir: Path, out: Path, vanilla_rp: Path, owner_uuid: str, armor: str | None = None) -> dict:
+    import re as _re
+    avatar_dir = avatar_dir.resolve()
+    compiled = fn.compile_avatar(avatar_dir, owner_uuid)
+    nbt = compiled.nbt
+    meta_name = nbt["metadata"]["name"]
+    slug = slugify(avatar_dir.name)
+
+    if out.exists():
+        shutil.rmtree(out)
+    (out / "avatar").mkdir(parents=True)
+
+    # 1. avatar NBT
+    text, side = fn.nbt_to_json(nbt)
+    (out / "avatar/figura_avatar.json").write_text(text, encoding="utf-8")
+    for rel, data in side.items():
+        dst = out / "avatar" / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
+
+    # 2. rig
+    files, sets = build_textures(nbt)
+    composites = add_emissive_composites(files, sets)
+    parts = collect_parts(nbt["models"])
+    # geometry texture size = size of the set used by most cube faces (its per-face uvs then need no rescale);
+    # meshes use normalized uvs so they don't care
+    face_count = {}
+    for p in parts:
+        if p.type == "CUBE":
+            for face in p.tag["cube_data"].values():
+                face_count[int(face["tex"])] = face_count.get(int(face["tex"]), 0) + 1
+    geo_w, geo_h = 16, 16
+    for s in sorted(sets, key=lambda s: -face_count.get(s["i"], 0)):
+        if s["uvW"] > 0:
+            geo_w, geo_h = s["uvW"], s["uvH"]
+            break
+    for p in parts:
+        if p.type == "CUBE":
+            cube_geometry(p, sets, geo_w, geo_h)
+        elif p.type == "MESH":
+            mesh_geometry(p, sets)
+
+    # dup bones: Bedrock can't create bones at runtime, so every part with geometry gets DUPS spare free-floating
+    # copies of its geometry (driven in model space by the runtime's bone solve) for parts scripts create with
+    # ModelPart:copy(). Only when a script calls copy().
+    script_text = "\n".join(v if isinstance(v, str) else v.decode("utf-8", "replace") if isinstance(v, bytes) else ""
+                            for v in (nbt.get("scripts") or {}).values())
+    # ModelPart:copy(name) always takes a name (Vector/Matrix :copy() take none, TextureAPI copy is textures:copy):
+    # a copy of a part the script names by path gets NAMED_DUPS spares of that subtree; a copy through a variable
+    # the compiler can't resolve gets DUPS spares of every part
+    by_path = {p.path: p for p in parts}
+    named_roots, unnamed = [], False
+    for obj, _arg in _re.findall(r"([A-Za-z_][\w.\[\]\"']*)\s*:\s*copy\s*\(\s*([^)\s])", script_text):
+        if obj == "textures" or obj.endswith(".textures"):
+            continue
+        if obj.startswith("models.") and obj in by_path:
+            if by_path[obj] not in named_roots:
+                named_roots.append(by_path[obj])
+        else:
+            unnamed = True
+    dups = []
+    def add_dup(src):
+        d = Part(len(parts) + len(dups), src.tag, None, src.path + "#dup", False, src.smooth)
+        d.geo = copy.deepcopy(src.geo)
+        d.rot = [0.0, 0.0, 0.0]
+        d.source = src
+        dups.append(d)
+    def subtree(p):
+        out, st = [], [p]
+        while st:
+            q = st.pop()
+            out.append(q)
+            st.extend(reversed(q.children))
+        return out
+    for _ in range(DUPS if unnamed else 0):
+        for src in [p for p in parts if p.geo]:
+            add_dup(src)
+    for r in named_roots:
+        geo_parts = [q for q in subtree(r) if q.geo]
+        n = max(1, min(NAMED_DUPS, DUP_BONE_BUDGET // max(1, len(geo_parts) * 2)))
+        if unnamed:
+            n = max(0, n - DUPS)
+        for _ in range(n):
+            for src in geo_parts:
+                add_dup(src)
+
+    # parts whose UVs scripts move (eyes, mouths, blink frames): drawn by their own render controllers with a Molang
+    # uv_anim offset/scale (v.fb<i>uu/uv/usu/usv); a UV matrix also applies to the part's descendants
+    uv_roots = uv_dynamic_paths(script_text)
+    uv_parts = set()
+    for p in parts:
+        q = p
+        while q is not None:
+            if q.path in uv_roots:
+                uv_parts.add(p.i)
+                break
+            q = q.parent
+    for d in dups:
+        if d.source.i in uv_parts:
+            uv_parts.add(d.i)
+
+    # render tasks: ItemTask / BlockTask ids the scripts name (item quads / block cubes with the vanilla texture, one
+    # free-floating bone each, placed by the runtime bone solve)
+    task_specs = []   # (kind, id, bedrock texture)
+    seen_tasks = set()
+    for line in script_text.splitlines():
+        # only lines that create a task or resolve an id for one (Action:setItem wheel icons are not tasks)
+        kinds = (["item"] if _re.search(r"(?:newItem\s*\(|checkItem\s*\()", line) else []) + \
+                (["block"] if _re.search(r"(?:newBlock\s*\(|checkBlock\s*\()", line) else [])
+        for kind in kinds:
+            for mid in _re.findall(r"[\"']minecraft:([a-z0-9_]+)(?:[\[{][^\"']*)?[\"']", line):
+                full = "minecraft:" + mid
+                tex = vanilla_item_or_block_texture(kind, mid)
+                if tex and (kind, full) not in seen_tasks:
+                    seen_tasks.add((kind, full))
+                    task_specs.append((kind, full, tex))
+    # EntityTask: the vanilla Bedrock geometry + default texture of every entity id a newEntity / setNbt line names,
+    # posed at bind (one free-floating bone holding the entity's bones, in its own geometry: own texture size)
+    for line in script_text.splitlines():
+        if not _re.search(r"(?:newEntity\s*\(|setNbt\s*\()", line):
+            continue
+        for mid in _re.findall(r"minecraft:([a-z0-9_]+)", line):
+            full = "minecraft:" + mid
+            ent = vanilla_entity(vanilla_rp, full)
+            if ent and ("entity", full) not in seen_tasks:
+                seen_tasks.add(("entity", full))
+                task_specs.append(("entity", full, ent))
+    task_parts = []
+    # TextTask / SpriteTask: QUAD_SLOTS quad bones, each with its own runtime texture the native side paints the
+    # text / sprite pixels into (uv_anim crops the used area)
+    if _re.search(r"\bnew(?:Text|Sprite)\s*\(", script_text):
+        for k in range(QUAD_SLOTS):
+            task_specs.append(("quad", str(k), None))
+    for kind, full, tex in task_specs:
+        t = Part(len(parts) + len(dups) + len(task_parts), {"name": f"task_{kind}_{full}"}, None, f"#task:{kind}:{full}",
+                 False, False)
+        t.task = (kind, full, tex)
+        if kind == "quad":
+            t.file = {"i": len(files), "figuraName": f"__quad{full}", "set": -1, "type": "d", "file": None,
+                      "w": QUAD_SIZE, "h": QUAD_SIZE, "_data": blank_png(QUAD_SIZE, QUAD_SIZE), "task": True,
+                      "quad": int(full)}
+        else:
+            t.file = {"i": len(files), "figuraName": f"task:{kind}:{full}", "set": -1, "type": "d", "file": None,
+                      "w": 16, "h": 16, "_data": None, "vanilla": tex["texture"] if kind == "entity" else tex,
+                      "task": True}
+        files.append(t.file)
+        task_parts.append(t)
+
+    # vanilla textures scripts name literally ("minecraft:textures/....png"): their pixels ship in the bundle so
+    # SpriteTask:setTexture(path) and textures:fromVanilla(name, path) work (Bedrock's files, mapped from Java paths)
+    vanilla_res = {}
+    for res in sorted(set(_re.findall(r"[\"']((?:minecraft:)?textures/[\w/.-]+?\.png)[\"']", script_text))):
+        bed = bedrock_vanilla_texture(res)
+        src = None
+        for ext in (".png", ".tga"):
+            if bed and (vanilla_rp / (bed + ext)).is_file():
+                src = vanilla_rp / (bed + ext)
+                break
+        if src is None:
+            continue
+        key = res if ":" in res else "minecraft:" + res
+        rel = "vanilla/" + key.split(":", 1)[1]
+        dst = out / "avatar" / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            from PIL import Image
+            Image.open(src).convert("RGBA").save(dst, "PNG")
+        except Exception:  # noqa: BLE001
+            if src.suffix != ".png":
+                continue
+            shutil.copy(src, dst)
+        vanilla_res[key] = rel
+
+    # bones: vanilla skeleton (no cubes) + one bone per part (+ per-texture-set sub-bones)
+    bones = [{"name": n, **({"parent": par} if par else {}), "pivot": [float(c) for c in pv]} for n, par, pv in SKELETON]
+    geo_bones = {}  # bone name -> (part, set or None)
+    for p in parts + dups:
+        b = {"name": p.bone, "pivot": [num(-p.piv[0]), num(p.piv[1]), num(p.piv[2])]}
+        if p.parent:
+            b["parent"] = p.parent.bone
+        bones.append(b)
+        geo_bones[p.bone] = (p, None)
+        if not p.geo:
+            continue
+        split = len(p.geo) > 1 or bool(p.children)  # geometry bones stay leaves (see report: part_visibility)
+        p.subs = []
+        for sid in sorted(p.geo):
+            if split:
+                sb = {"name": f"{p.bone}s{sid}", "parent": p.bone, "pivot": list(b["pivot"]), **p.geo[sid]}
+                bones.append(sb)
+                geo_bones[sb["name"]] = (p, sid)
+                p.subs.append({"bone": sb["name"], "set": sid})
+            else:
+                b.update(p.geo[sid])
+                geo_bones[p.bone] = (p, sid)
+                p.subs.append({"bone": p.bone, "set": sid})
+
+    ent_geos = []          # (identifier, geometry) of entity tasks
+    for t in task_parts:   # unit geometry in Bedrock space; texture = the vanilla file added below (full UV)
+        kind, full, tex = t.task
+        u = {"uv": [0, 0], "uv_size": [geo_w, geo_h]}
+        if kind == "entity":
+            ebones = [{"name": t.bone, "pivot": [0, 0, 0]}]
+            for b in tex["bones"]:
+                nb = {k: copy.deepcopy(v) for k, v in b.items() if k in ("pivot", "rotation", "cubes", "mirror", "inflate")}
+                nb["name"] = f"{t.bone}_{b['name']}"
+                nb["parent"] = f"{t.bone}_{b['parent']}" if b.get("parent") else t.bone
+                nb.setdefault("pivot", [0, 0, 0])
+                ebones.append(nb)
+            gid = f"geometry.figura.{slug}.ent{len(ent_geos)}"
+            ent_geos.append((gid, {"description": {"identifier": gid, "texture_width": tex["tw"], "texture_height": tex["th"],
+                                                   "visible_bounds_width": 4, "visible_bounds_height": 4,
+                                                   "visible_bounds_offset": [0, 1, 0]}, "bones": ebones}))
+            t.ent_geo = len(ent_geos) - 1
+            geo_bones[t.bone] = (t, -1)
+            continue
+        if kind == "quad":   # Figura text / sprite space: x to -x, y down (pixel units); Bedrock = mirrored X
+            q = {"uv": [geo_w, 0], "uv_size": [-geo_w, geo_h]}
+            cube = {"origin": [0, -1, 0], "size": [1, 1, 0], "uv": {"north": q, "south": u}}
+            bones.append({"name": t.bone, "pivot": [0, 0, 0], "cubes": [cube]})
+            geo_bones[t.bone] = (t, -1)
+            uv_parts.add(t.i)
+            continue
+        if kind == "item":   # 16x16 quad centred on the task origin (Figura item task, display NONE)
+            cube = {"origin": [-8, -8, 0], "size": [16, 16, 0], "uv": {"north": u, "south": u}}
+        else:                # 16^3 block from the task origin (mirrored on X like every bone)
+            cube = {"origin": [-16, 0, 0], "size": [16, 16, 16], "uv": {k: u for k in ("north", "south", "east", "west", "up", "down")}}
+        bones.append({"name": t.bone, "pivot": [0, 0, 0], "cubes": [cube]})
+        geo_bones[t.bone] = (t, -1)
+
+    # First person (Figura renderMode FIRST_PERSON): Bedrock only draws first-person arms from bones under its vanilla
+    # rightArm / leftArm (animated by the first-person animations). Every subtree rooted at an arm-typed part (no
+    # arm-typed ancestor) gets a copy "f<i>" parented to that vanilla bone, driven by the SAME v.fb<i>* variables
+    # (the runtime computes them in FIRST_PERSON mode, where arm parts get no vanilla offsets).
+    fp_bones = {}   # bone name -> (part, set or None)
+    fp_roots = []   # (part, 'rightArm'|'leftArm')
+    def arm_root(p):
+        q = p.parent
+        while q is not None:
+            if q.pt in ("RightArm", "LeftArm"):
+                return False
+            q = q.parent
+        return p.pt in ("RightArm", "LeftArm")
+    def copy_subtree(p, parent_bone):
+        b = {"name": f"f{p.i}", "parent": parent_bone, "pivot": [num(-p.piv[0]), num(p.piv[1]), num(p.piv[2])]}
+        bones.append(b)
+        fp_bones[b["name"]] = (p, None)
+        if p.geo:
+            split = len(p.geo) > 1 or bool(p.children)
+            for sid in sorted(p.geo):
+                if split:
+                    sb = {"name": f"f{p.i}s{sid}", "parent": b["name"], "pivot": list(b["pivot"]), **json.loads(json.dumps(p.geo[sid]))}
+                    bones.append(sb)
+                    fp_bones[sb["name"]] = (p, sid)
+                else:
+                    b.update(json.loads(json.dumps(p.geo[sid])))
+                    fp_bones[b["name"]] = (p, sid)
+        for c in p.children:
+            copy_subtree(c, b["name"])
+    for p in parts:
+        if arm_root(p):
+            van = "rightArm" if p.pt == "RightArm" else "leftArm"
+            fp_roots.append((p, van))
+            copy_subtree(p, van)
+
+    names = [b["name"] for b in bones]
+    if len(set(names)) != len(names):
+        raise fn.FiguraCompileError("duplicate bone names")
+
+    # Bedrock stops applying animations / part_visibility to a geometry with more than ~255 bones (verified in game:
+    # CatMaid at 326 bones froze in its bind pose with every part shown; trimmed to 230 it posed correctly). Big avatars
+    # are split into several geometries ("chunks", each <= BONE_LIMIT bones) rendered together. A chunk carries the
+    # full ancestor chain of its geometry bones; ancestors repeated in several chunks keep the same names, so the one
+    # drive animation moves them identically. Bones whose subtree has no geometry are dropped.
+    chunks = chunk_bones(bones, {n for n, _, _ in SKELETON})
+    geo_ids = [f"geometry.figura.{slug}" + (f".c{k}" if k else "") for k in range(len(chunks))]
+    geometry = {"format_version": GEO_FORMAT, "minecraft:geometry": [{
+        "description": {"identifier": geo_ids[k], "texture_width": geo_w, "texture_height": geo_h,
+                        "visible_bounds_width": 4, "visible_bounds_height": 5, "visible_bounds_offset": [0, 2, 0]},
+        "bones": ch} for k, ch in enumerate(chunks)]}
+    chunk_names = [{b["name"] for b in ch} for ch in chunks]
+    # Figura WORLD parts are drawn at world coordinates through the player's bones: Bedrock culls an entity by its
+    # visible bounds, so they are widened when the avatar has world parts
+    uses_world = any(p.pt == "World" for p in parts) or bool(_re.search(r"[\"']WORLD[\"']", script_text, _re.I))
+    if uses_world:
+        for g in geometry["minecraft:geometry"]:
+            g["description"].update({"visible_bounds_width": 96, "visible_bounds_height": 96, "visible_bounds_offset": [0, 0, 0]})
+    for gid, g in ent_geos:
+        geometry["minecraft:geometry"].append(g)
+
+    # drive animation
+    anim_bones = {}
+    for p in parts + dups + task_parts:
+        i = p.bone[1:]
+        d = (-p.rot[0], -p.rot[1], p.rot[2])
+        anim_bones[p.bone] = {
+            "rotation": [f"v.fb{i}r{a} ?? {molang_num(d[k])}" for k, a in enumerate("xyz")],
+            "position": [f"v.fb{i}p{a} ?? 0" for a in "xyz"],
+            "scale": [f"v.fb{i}s{a} ?? 1" for a in "xyz"],
+        }
+    for bname, (p, sid) in fp_bones.items():
+        if sid is None:
+            anim_bones[bname] = anim_bones[p.bone]
+    animation = {"format_version": "1.8.0", "animations": {"animation.figura.drive": {"loop": True, "bones": anim_bones}}}
+
+    # held items follow Figura's RightItemPivot / LeftItemPivot parts: Bedrock draws held items on the skeleton bones
+    # rightItem / leftItem. In third person this animation (played after the vanilla ones, override_previous_animation)
+    # puts the vanilla skeleton back at rest and drives the item bones from v.fbir* / v.fbil* (model space, solved by
+    # the runtime). First person keeps Bedrock's own arms and items.
+    item_pivots = {}
+    for side, pt, bone in (("right", "RightItemPivot", "rightItem"), ("left", "LeftItemPivot", "leftItem")):
+        if any(p.pt == pt for p in parts):
+            bpiv = next(pv for n, _, pv in SKELETON if n == bone)
+            # "hand": where the held item sits at rest, in Figura space = Figura's default item pivot (AvatarWizard:
+            # (+-6, 12, -2), the point vanilla Java's ItemInHandLayer translates to); the pivot part's point replaces it
+            item_pivots[side] = {"bone": bone, "pivot": [num(-bpiv[0]), num(bpiv[1]), num(bpiv[2])],
+                                 "hand": [6.0 if side == "right" else -6.0, 12.0, -2.0]}
+    if item_pivots:
+        ib = {n: {"rotation": [0, 0, 0], "position": [0, 0, 0]} for n in ("root", "waist", "body", "rightArm", "leftArm")}
+        for side, d in item_pivots.items():
+            v = "fbir" if side == "right" else "fbil"
+            ib[d["bone"]] = {"rotation": [f"v.{v}r{a} ?? 0" for a in "xyz"], "position": [f"v.{v}p{a} ?? 0" for a in "xyz"],
+                             "scale": [f"v.{v}s{a} ?? 1" for a in "xyz"]}
+        animation["animations"]["animation.figura.items"] = {"loop": True, "override_previous_animation": True, "bones": ib}
+
+    # render controllers: one primary + one secondary per d/e texture file
+    # dynamic texture slots: textures scripts create (textures:newTexture / copy / read / fromVanilla) and show with
+    # setPrimaryTexture("CUSTOM", tex) are uploaded at runtime (native TextureGroup upload) over a placeholder PNG the
+    # pack ships, so the render controllers already hold a handle to that path
+    if _re.search(r"textures\s*[:.]\s*(?:newTexture|copy|read|fromVanilla)\s*\(", script_text):
+        blank = blank_png(DYN_SIZE, DYN_SIZE)
+        for k in range(DYN_SLOTS):
+            files.append({"i": len(files), "figuraName": f"__dyn{k}", "set": -1, "type": "d", "file": None,
+                          "w": DYN_SIZE, "h": DYN_SIZE, "_data": blank, "dyn": k})
+    # textures Bedrock already has: the player's own skin (setPrimaryTexture("SKIN")) and vanilla textures scripts
+    # name with setPrimaryTexture("RESOURCE", "minecraft:textures/...") - mapped to the Bedrock vanilla paths
+    if _re.search(r"set(?:Primary|Secondary)Texture\s*\(\s*[\"']SKIN[\"']", script_text, _re.I):
+        files.append({"i": len(files), "figuraName": "__skin", "set": -1, "type": "d", "file": None, "w": 64, "h": 64,
+                      "_data": None, "skin": True})
+    # setPrimaryTexture("CAPE"): the player's own cape (Bedrock's player entity already has Texture.cape);
+    # "ELYTRA": the vanilla elytra texture
+    if _re.search(r"set(?:Primary|Secondary)Texture\s*\(\s*[\"']CAPE[\"']", script_text, _re.I):
+        files.append({"i": len(files), "figuraName": "__cape", "set": -1, "type": "d", "file": None, "w": 64, "h": 32,
+                      "_data": None, "cape": True})
+    if _re.search(r"set(?:Primary|Secondary)Texture\s*\(\s*[\"']ELYTRA[\"']", script_text, _re.I):
+        files.append({"i": len(files), "figuraName": "__elytra", "set": -1, "type": "d", "file": None, "w": 64,
+                      "h": 32, "_data": None, "vanilla": "textures/models/armor/elytra"})
+    for res in sorted(set(_re.findall(r"[\"']((?:minecraft:)?textures/[\w/.-]+?\.png)[\"']", script_text))):
+        bed = bedrock_vanilla_texture(res)
+        if bed:
+            files.append({"i": len(files), "figuraName": "resource:" + res, "set": -1, "type": "d", "file": None,
+                          "w": 0, "h": 0, "_data": None, "vanilla": bed})
+    rc_files = [f for f in files if f["type"] in ("d", "e") and (f["_data"] is not None or f.get("skin") or f.get("cape") or f.get("vanilla"))]
+    all_tex_files = rc_files
+    rc_files = [f for f in rc_files if not f.get("task")]
+    controllers = {}
+    rc_file = {}   # controller -> the texture file it draws
+
+    def vis_expr(p: Part):
+        return f"(v.fb{p.i}v ?? {1 if p.vis_eff else 0})"
+
+    # which texture files each chunk's parts use by default; a file nobody uses by default (swap targets like
+    # Blue_e, runtime slots) may be put on any part by a script, so it gets a controller in every chunk
+    chunk_files = [set() for _ in chunk_names]
+    default_files = set()
+    for bname, (p, sid) in geo_bones.items():
+        if sid is None or not (0 <= sid < len(sets)):
+            continue
+        for key in ("d", "e"):
+            if sets[sid][key] is not None:
+                default_files.add(sets[sid][key])
+                for k, c in enumerate(chunk_names):
+                    if bname in c:
+                        chunk_files[k].add(sets[sid][key])
+    for f, (k, cnames) in ((f, kc) for f in rc_files for kc in enumerate(chunk_names)):
+        if f["i"] in default_files and f["i"] not in chunk_files[k]:
+            continue
+        for kind, var, mat, key in kinds_for(f):
+            pv = [{"*": False}]
+            for bname, (p, sid) in geo_bones.items():
+                if bname not in cnames or getattr(p, "task", None):
+                    continue
+                if sid is None:
+                    # bone without geometry (group, or a split part's own bone): only matters if Bedrock's
+                    # part_visibility were hierarchical; keep it on with the part's visibility so it is safe both ways
+                    pv.append({bname: vis_expr(p)})
+                    continue
+                if p.i in uv_parts:
+                    continue
+                own = sets[sid][key] if 0 <= sid < len(sets) else None
+                dflt = 1 if own == f["i"] else 0
+                pv.append({bname: f"{vis_expr(p)} && ((v.fb{p.i}{var} ?? -1) < 0 ? {dflt} : (v.fb{p.i}{var} == {f['i']}))"})
+            if len(pv) == 1:
+                continue
+            rc_file[f"controller.render.player.figura_{kind}{f['i']}" + (f"c{k}" if k else "")] = f["i"]
+            controllers[f"controller.render.player.figura_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
+                "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
+                "part_visibility": pv}
+
+    # render task bones: one controller each, their own vanilla texture, shown only while the runtime claims them
+    for t in task_parts:
+        kind = t.task[0]
+        if kind == "entity":
+            rc_file[f"controller.render.player.figura_task_{t.bone}"] = t.file["i"]
+            controllers[f"controller.render.player.figura_task_{t.bone}"] = {
+                "geometry": f"Geometry.figura_ent{t.ent_geo}", "materials": [{"*": "Material.fbd"}],
+                "textures": [tex_ref(t.file)], "part_visibility": [{"*": False}, {"*": f"v.fb{t.i}v ?? 0"}]}
+            continue
+        k = next(n for n, c in enumerate(chunk_names) if t.bone in c)
+        rc = {"geometry": f"Geometry.figura{k or ''}", "materials": [{"*": "Material.fbd"}], "textures": [tex_ref(t.file)],
+              "part_visibility": [{"*": False}, {t.bone: f"v.fb{t.i}v ?? 0"}]}
+        if kind == "quad":   # text / sprite pixels: blended, cropped to the painted area by uv_anim
+            rc["materials"] = [{"*": "Material.fbub"}]
+            rc["uv_anim"] = {"offset": [f"v.fb{t.i}uu ?? 0", f"v.fb{t.i}uv ?? 0"],
+                             "scale": [f"v.fb{t.i}usu ?? 1", f"v.fb{t.i}usv ?? 1"]}
+        rc_file[f"controller.render.player.figura_task_{t.bone}"] = t.file["i"]
+        controllers[f"controller.render.player.figura_task_{t.bone}"] = rc
+
+    # UV-animated parts: one controller per (part, texture file it can show), restricted to that part's bones
+    files_by_i = {f["i"]: f for f in rc_files}
+    for bname, (p, sid) in geo_bones.items():
+        if sid is None or p.i not in uv_parts:
+            continue
+        k = next(n for n, c in enumerate(chunk_names) if bname in c)
+        uv = {"offset": [f"v.fb{p.i}uu ?? 0", f"v.fb{p.i}uv ?? 0"], "scale": [f"v.fb{p.i}usu ?? 1", f"v.fb{p.i}usv ?? 1"]}
+        for kind, var, key in (("p", "t", "d"), ("s", "e", "e")):
+            own = sets[sid][key] if 0 <= sid < len(sets) else None
+            if own not in files_by_i:
+                continue
+            f = files_by_i[own]
+            # uv_anim only works on materials built with USE_UV_ANIM (materials/entity.material, verified in game)
+            mat = {"Material.fbd": "Material.fbu", "Material.fbb": "Material.fbub"}[primary_material(f)] if kind == "p" else "Material.fbue"
+            rc_file[f"controller.render.player.figura_uv_{bname}_{kind}{f['i']}"] = f["i"]
+            controllers[f"controller.render.player.figura_uv_{bname}_{kind}{f['i']}"] = {
+                "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
+                "uv_anim": uv,
+                "part_visibility": [{"*": False}, {bname: f"{vis_expr(p)} && ((v.fb{p.i}{var} ?? -1) < 0 ? 1 : (v.fb{p.i}{var} == {f['i']}))"}]}
+
+    # held items are positioned from the vanilla geometry's rightItem/leftItem, and Bedrock only poses a geometry some
+    # active render controller uses (verified in game): keep Geometry.default in an all-hidden controller
+    if item_pivots:
+        controllers["controller.render.player.figura_itembones"] = {
+            "geometry": "Geometry.default", "materials": [{"*": "Material.default"}], "textures": ["Texture.default"],
+            "part_visibility": [{"*": False}]}
+
+    # first-person controllers: same rules over the f-bones, plus Bedrock's own empty-hand conditions
+    FP_RIGHT = "(query.get_equipped_item_name(0, 1) == '' || query.get_equipped_item_name(0, 1) == 'filled_map')"
+    FP_LEFT = ("((query.get_equipped_item_name(0, 1) == 'filled_map' && query.get_equipped_item_name('off_hand') != 'shield') || "
+               "(query.get_equipped_item_name('off_hand') == 'filled_map' && !query.item_is_charged) || "
+               "(!query.item_is_charged && (variable.item_use_normalized > 0 && variable.item_use_normalized < 1.0)))")
+    root_of = {}
+    for rp_, van in fp_roots:
+        stack = [rp_]
+        while stack:
+            q = stack.pop()
+            root_of[q.i] = van
+            stack.extend(q.children)
+    fp_controllers = {}
+    if fp_bones:
+        for f, (k, cnames) in ((f, kc) for f in rc_files for kc in enumerate(chunk_names)):
+            for kind, var, mat, key in kinds_for(f):
+                pv = [{"*": False}]
+                for bname, (p, sid) in fp_bones.items():
+                    if bname not in cnames:
+                        continue
+                    hand = FP_RIGHT if root_of.get(p.i) == "rightArm" else FP_LEFT
+                    if sid is None:
+                        pv.append({bname: f"{vis_expr(p)} && {hand}"})
+                        continue
+                    own = sets[sid][key] if 0 <= sid < len(sets) else None
+                    dflt = 1 if own == f["i"] else 0
+                    pv.append({bname: f"{vis_expr(p)} && {hand} && ((v.fb{p.i}{var} ?? -1) < 0 ? {dflt} : (v.fb{p.i}{var} == {f['i']}))"})
+                if len(pv) == 1:
+                    continue
+                rc_file[f"controller.render.player.figura_fp_{kind}{f['i']}" + (f"c{k}" if k else "")] = f["i"]
+                fp_controllers[f"controller.render.player.figura_fp_{kind}{f['i']}" + (f"c{k}" if k else "")] = {
+                    "geometry": f"Geometry.figura{k or ''}", "materials": [{"*": mat}], "textures": [tex_ref(f)],
+                    "part_visibility": pv}
+        controllers.update(fp_controllers)
+
+    # sounds
+    sound_map, sound_defs, sound_files = {}, {}, {}
+    for sname, ref in (nbt.get("sounds") or {}).items():
+        low = sname.lower()
+        ev = f"figura.{slug}.{low}"
+        fname = "".join(c if c.isalnum() or c in "_-" else "_" for c in low)
+        sound_map[sname] = ev
+        sound_defs[ev] = {"category": "player", "sounds": [{"name": f"sounds/figura/{slug}/{fname}"}]}
+        sound_files[f"sounds/figura/{slug}/{fname}.ogg"] = ref.data
+
+    # 3. resource pack
+    rp = out / "rp"
+    for d in ("models/entity", f"textures/figura/{slug}", "entity", "render_controllers", "animations", "sounds"):
+        (rp / d).mkdir(parents=True, exist_ok=True)
+    (rp / f"models/entity/figura_{slug}.geo.json").write_text(json.dumps(geometry, indent=1))
+    (rp / "animations/figura_drive.animation.json").write_text(json.dumps(animation, indent=1))
+    (rp / "render_controllers/figura_player.render_controllers.json").write_text(
+        json.dumps({"format_version": "1.10.0", "render_controllers": controllers}, indent=1))
+    for f in all_tex_files:
+        if f.get("skin") or f.get("cape"):
+            f["bedrockKey"] = "default" if f.get("skin") else "cape"
+            continue
+        f["bedrockKey"] = f"fbt{f['i']}"
+        if f.get("vanilla"):
+            f["rpTexture"] = f["vanilla"]
+            continue
+        f["rpTexture"] = f"textures/figura/{slug}/t{f['i']}"
+        (rp / (f["rpTexture"] + ".png")).write_bytes(rgba_png(f["_data"]))
+    for rel, data in sound_files.items():
+        (rp / rel).parent.mkdir(parents=True, exist_ok=True)
+        (rp / rel).write_bytes(data)
+    if sound_defs:
+        (rp / "sounds/sound_definitions.json").write_text(
+            json.dumps({"format_version": "1.14.0", "sound_definitions": sound_defs}, indent=1))
+
+    ent = json.loads((vanilla_rp / "entity/player.entity.json").read_text(encoding="utf-8"))
+    desc = ent["minecraft:client_entity"]["description"]
+    for k, gid in enumerate(geo_ids):
+        desc["geometry"][f"figura{k or ''}"] = gid
+    for k, (gid, _) in enumerate(ent_geos):
+        desc["geometry"][f"figura_ent{k}"] = gid
+    desc["materials"]["fbd"] = "entity_alphatest"    # cutout: what nearly every Figura texture is
+    desc["materials"]["fbb"] = "entity_alphablend"   # textures with partial alpha (blush, glass...); depth write is off
+    desc["materials"]["fbe"] = "entity_emissive_alpha"
+    if uv_parts or any(t.task[0] == "quad" for t in task_parts):
+        desc["materials"]["fbu"] = "figura_uv"
+        desc["materials"]["fbub"] = "figura_uv_blend"
+        desc["materials"]["fbue"] = "figura_uv_emissive"
+        (rp / "materials").mkdir(parents=True, exist_ok=True)
+        (rp / "materials/entity.material").write_text(json.dumps({"materials": {
+            "version": "1.0.0",
+            "figura_uv:entity_alphatest": {"+defines": ["USE_UV_ANIM"]},
+            "figura_uv_blend:entity_alphablend": {"+defines": ["USE_UV_ANIM"]},
+            "figura_uv_emissive:entity_emissive_alpha": {"+defines": ["USE_UV_ANIM"]}}}, indent=1))
+    for f in all_tex_files:
+        if not (f.get("skin") or f.get("cape")):
+            desc["textures"][f["bedrockKey"]] = f["rpTexture"]
+    # the game's built-in player entity sets variables its controllers read that bedrock-samples' copy may not
+    # (game 1.26: variable.melee_spear_equipped -> ~180 Molang errors a second in the content log): every variable
+    # the vanilla player controllers read and this entity never assigns gets a keep-or-0 default
+    import re as _r2
+    ctl = vanilla_rp / "animation_controllers/player.animation_controllers.json"
+    read_vars = set(_r2.findall(r"variable\.([a-z0-9_]+)", ctl.read_text(encoding="utf-8", errors="replace"), _r2.I)) \
+        if ctl.is_file() else set()
+    # ...and the vanilla player animations read some too (game 1.26's player_firstperson.animation.json reads
+    # variable.first_person_item_rotation_factor every frame: ~64000 Molang errors per 6 minutes, written to the
+    # content log one by one = constant frame stutter). Variables only the game's newer copy uses get their real value.
+    for af in ("animations/player.animation.json", "animations/player_firstperson.animation.json"):
+        f = vanilla_rp / af
+        if f.is_file():
+            read_vars |= set(_r2.findall(r"variable\.([a-z0-9_]+)", f.read_text(encoding="utf-8", errors="replace"), _r2.I))
+    GAME_ONLY = {"melee_spear_equipped": None,
+                 "first_person_item_rotation_factor": "math.sin((1 - variable.attack_time) * 180.0)"}
+    read_vars |= set(GAME_ONLY)
+    pre = desc["scripts"].setdefault("pre_animation", [])
+    assigned = set(_r2.findall(r"variable\.([a-z0-9_]+)\s*=", " ".join(pre + desc["scripts"].get("initialize", [])), _r2.I))
+    for v in sorted(read_vars - assigned):
+        pre.append(f"variable.{v} = {GAME_ONLY[v]};" if GAME_ONLY.get(v) else f"variable.{v} = variable.{v} ?? 0;")
+    desc["animations"]["figura_drive"] = "animation.figura.drive"
+    # one player.entity.json serves EVERY player in the world; only the avatar's own player has the runtime's
+    # variables (v.fbvan is written there). Other players (a full Hive lobby) skip the drive / item animations:
+    # each is ~9 Molang channels per bone per frame per player.
+    LOCAL = "(v.fbvan ?? 2) < 2"
+    desc["scripts"].setdefault("animate", []).append({"figura_drive": LOCAL})
+    if item_pivots:
+        desc["animations"]["figura_items"] = "animation.figura.items"
+        desc["scripts"]["animate"].append({"figura_items": f"{LOCAL} && !variable.is_first_person"})
+    gated = []
+    # vanilla model: hidden only where the runtime wrote v.fbvan = 0 (the avatar's player). Unset = every other
+    # player in a multiplayer world, who must stay visible (a default of 0 made other players invisible on servers)
+    for r in desc.get("render_controllers", []):
+        if isinstance(r, str):
+            gated.append({r: "(v.fbvan ?? 1)"})
+        else:
+            k, cond = next(iter(r.items()))
+            gated.append({k: f"({cond}) && (v.fbvan ?? 1)"})
+    # worn armor / elytra are attachables on the vanilla bones: on an avatar they float in the wrong places
+    pre.append("variable.fbnoarmor = (v.fbvan ?? 1) ? 0.0 : 1.0;")
+    desc["scripts"].setdefault("variables", {})["variable.fbnoarmor"] = "public"  # read by the armor attachables
+    # a controller whose texture no part shows by default (swap targets, runtime slots, render tasks, skin/cape...)
+    # is skipped by Bedrock unless the runtime says some bone uses that texture this frame (v.fbuse<i>): Bedrock
+    # otherwise evaluates its whole part_visibility list and draws its geometry every frame for nothing
+    gated_files = sorted(set(rc_file.values()))
+    for k in controllers:
+        cond = LOCAL + (" && variable.is_first_person" if k in fp_controllers else " && !variable.is_first_person")
+        if rc_file.get(k) in gated_files:
+            cond += f" && (v.fbuse{rc_file[k]} ?? 0)"
+        gated.append({k: cond})
+    desc["render_controllers"] = gated
+    (rp / "entity/player.entity.json").write_text(json.dumps(ent, indent=1))
+    write_armor_overrides(vanilla_rp, rp)
+    if armor == "stick":   # the stick figure's own fitted armor (stick_armor.py), drawn by this entity's controllers
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("fb_stick_armor", HERE / "stick_armor.py")
+        sa = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sa)
+        geo_file = rp / f"models/entity/figura_{slug}.geo.json"
+        rcf = rp / "render_controllers/figura_player.render_controllers.json"
+        sa.build(geo_file, rp / "entity/player.entity.json", rcf if rcf.is_file() else None, rp)
+
+    manifest = {"format_version": 2,
+                "header": {"name": f"FiguraBridge: {meta_name}",
+                           "description": "Figura avatar as the player model (FiguraBridge, private use)",
+                           "uuid": str(uuid.uuid5(PACK_NS, slug + ":header")), "version": [0, 2, 0],
+                           "min_engine_version": [1, 21, 0]},
+                "modules": [{"type": "resources", "uuid": str(uuid.uuid5(PACK_NS, slug + ":module")),
+                             "version": [0, 2, 0]}]}
+    (rp / "manifest.json").write_text(json.dumps(manifest, indent=1))
+    lic = avatar_dir / "LICENSE"
+    if lic.is_file():
+        shutil.copy(lic, rp / "AVATAR_LICENSE.txt")
+
+    rig = {
+        "avatar": meta_name, "slug": slug, "figuraVersion": fn.FIGURA_VERSION,
+        "nbt": "avatar/figura_avatar.json",
+        "geometry": {"identifier": geo_ids[0], "chunks": geo_ids, "textureWidth": geo_w, "textureHeight": geo_h},
+        "skeleton": [n for n, _, _ in SKELETON],
+        "parts": [],
+        "textureFiles": [{k: v for k, v in f.items() if k != "_data"} for f in files],
+        "textureSets": sets,
+        "sounds": sound_map,
+        "vars": VARS_DOC,
+        "warnings": compiled.warnings,
+    }
+    for p in parts:
+        e = {"i": p.i, "parent": p.parent.i if p.parent else -1, "path": p.path, "name": p.name, "type": p.type,
+             "piv": [num(c) for c in p.piv], "rot": [num(c) for c in p.rot], "pt": p.pt, "vsb": p.vsb,
+             "vsbEffective": p.vis_eff, "bone": p.bone}
+        if getattr(p, "subs", None):
+            if len(p.subs) > 1 or p.subs[0]["bone"] != p.bone:
+                e["subs"] = [{**s, "emissive": sets[s["set"]]["e"] is not None} for s in p.subs]
+            else:
+                e["set"] = p.subs[0]["set"]
+        rig["parts"].append(e)
+    rig["dups"] = [{"i": d.i, "source": d.source.i} for d in dups]
+    rig["uvParts"] = sorted(uv_parts)
+    rig["taskBones"] = [{"i": t.i, "kind": t.task[0], "id": t.task[1], "texture": t.file.get("vanilla"), "file": t.file["i"]}
+                        for t in task_parts]
+    rig["vanillaTextures"] = vanilla_res
+    rig["gatedFiles"] = gated_files
+    rig["composites"] = [[f["comp"][0], f["comp"][1], f["i"]] for f in composites]
+    # per bone (parts, dups, tasks): the texture files it draws with by default (primary, emissive) - the runtime
+    # marks a file in use when a visible bone draws with it
+    bone_files = {}
+    for bname, (p, sid) in geo_bones.items():
+        if sid is None:
+            continue
+        fl = bone_files.setdefault(p.i, [])
+        if getattr(p, "task", None):
+            fl.append(p.file["i"])
+        elif 0 <= sid < len(sets):
+            for key in ("d", "e"):
+                if sets[sid][key] is not None and sets[sid][key] not in fl:
+                    fl.append(sets[sid][key])
+    rig["boneFiles"] = {str(k): v for k, v in sorted(bone_files.items())}
+    rig["itemPivots"] = item_pivots
+    (out / "rig.json").write_text(json.dumps(rig, indent=1), encoding="utf-8")
+    return {"out": str(out), "parts": len(parts), "bones": len(bones), "textureFiles": len(files),
+            "textureSets": len(sets), "renderControllers": len(controllers), "sounds": len(sound_map),
+            "animations": len(nbt.get("animations", [])), "scripts": len(nbt.get("scripts", {})),
+            "warnings": compiled.warnings}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("avatar")
+    ap.add_argument("out")
+    ap.add_argument("--vanilla", required=True, help="bedrock-samples resource_pack folder")
+    ap.add_argument("--uuid", default="00000000-0000-0000-0000-000000000000",
+                    help="owner UUID written to metadata.uuid (Figura uses the player's UUID)")
+    ap.add_argument("--armor", choices=["stick"], default=None,
+                    help="add fitted armor drawn on the avatar (stick: stick_armor.py, for the Stick Figures avatar)")
+    a = ap.parse_args(argv)
+    r = build(Path(a.avatar), Path(a.out).resolve(), Path(a.vanilla).resolve(), a.uuid, a.armor)
+    print(json.dumps(r, indent=1))
+
+
+if __name__ == "__main__":
+    main()

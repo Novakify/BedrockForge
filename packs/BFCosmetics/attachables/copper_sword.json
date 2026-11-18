@@ -1,0 +1,237 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:attachable": {
+  "description": {
+   "identifier": "minecraft:copper_sword",
+   "materials": {
+    "default": "entity_alphatest",
+    "enchanted": "entity_alphatest_glint"
+   },
+   "textures": {
+    "default": "textures/items/copper_sword",
+    "enchanted": "textures/misc/enchanted_item_glint",
+    "karambit": "textures/bf_cosmetics/karambit",
+    "balisong": "textures/bf_cosmetics/balisong",
+    "dagger": "textures/bf_cosmetics/dagger"
+   },
+   "geometry": {
+    "default": "geometry.bfk_copper_sword",
+    "karambit": "geometry.bfk_karambit",
+    "balisong": "geometry.bfk_balisong",
+    "dagger": "geometry.bfk_dagger"
+   },
+   "animations": {
+    "hold_first_person": "animation.bfk.hold_first_person",
+    "hold_third_person": "animation.bfk.hold_third_person",
+    "bfk_fp_karambit": "animation.bfk.karambit.fp",
+    "bfk_fp_balisong": "animation.bfk.balisong.fp",
+    "bfk_fp_dagger": "animation.bfk.dagger.fp",
+    "karambit_draw": "animation.bfk.karambit.draw",
+    "karambit_draw_snd": "animation.bfk.karambit.draw.snd",
+    "karambit_insp1": "animation.bfk.karambit.insp1",
+    "karambit_insp1_snd": "animation.bfk.karambit.insp1.snd",
+    "karambit_insp2": "animation.bfk.karambit.insp2",
+    "karambit_insp2_snd": "animation.bfk.karambit.insp2.snd",
+    "karambit_swing1": "animation.bfk.karambit.swing1",
+    "karambit_swing1_snd": "animation.bfk.karambit.swing1.snd",
+    "karambit_swing1_fx": "animation.bfk.karambit.swing1.fx",
+    "karambit_swing2": "animation.bfk.karambit.swing2",
+    "karambit_swing2_snd": "animation.bfk.karambit.swing2.snd",
+    "karambit_swing2_fx": "animation.bfk.karambit.swing2.fx",
+    "balisong_draw": "animation.bfk.balisong.draw",
+    "balisong_draw_snd": "animation.bfk.balisong.draw.snd",
+    "balisong_insp1": "animation.bfk.balisong.insp1",
+    "balisong_insp1_snd": "animation.bfk.balisong.insp1.snd",
+    "balisong_insp2": "animation.bfk.balisong.insp2",
+    "balisong_insp2_snd": "animation.bfk.balisong.insp2.snd",
+    "balisong_swing1": "animation.bfk.balisong.swing1",
+    "balisong_swing1_snd": "animation.bfk.balisong.swing1.snd",
+    "balisong_swing1_fx": "animation.bfk.balisong.swing1.fx",
+    "balisong_swing2": "animation.bfk.balisong.swing2",
+    "balisong_swing2_snd": "animation.bfk.balisong.swing2.snd",
+    "balisong_swing2_fx": "animation.bfk.balisong.swing2.fx",
+    "dagger_draw": "animation.bfk.dagger.draw",
+    "dagger_draw_snd": "animation.bfk.dagger.draw.snd",
+    "dagger_insp1": "animation.bfk.dagger.insp1",
+    "dagger_insp1_snd": "animation.bfk.dagger.insp1.snd",
+    "dagger_insp2": "animation.bfk.dagger.insp2",
+    "dagger_insp2_snd": "animation.bfk.dagger.insp2.snd",
+    "dagger_swing1": "animation.bfk.dagger.swing1",
+    "dagger_swing1_snd": "animation.bfk.dagger.swing1.snd",
+    "dagger_swing1_fx": "animation.bfk.dagger.swing1.fx",
+    "dagger_swing2": "animation.bfk.dagger.swing2",
+    "dagger_swing2_snd": "animation.bfk.dagger.swing2.snd",
+    "dagger_swing2_fx": "animation.bfk.dagger.swing2.fx",
+    "hit_a_fx": "animation.bfk.hit_a.fx",
+    "hit_a_snd": "animation.bfk.hit_a.snd",
+    "hit_b_fx": "animation.bfk.hit_b.fx",
+    "hit_b_snd": "animation.bfk.hit_b.snd"
+   },
+   "scripts": {
+    "animate": [
+     {
+      "hold_first_person": "c.is_first_person"
+     },
+     {
+      "hold_third_person": "!c.is_first_person"
+     },
+     {
+      "bfk_fp_karambit": "v.bfk == 1 && c.is_first_person"
+     },
+     {
+      "bfk_fp_balisong": "v.bfk == 2 && c.is_first_person"
+     },
+     {
+      "bfk_fp_dagger": "v.bfk == 3 && c.is_first_person"
+     },
+     {
+      "karambit_draw": "v.bfk == 1 && v.bfk_d * v.bfk_spd < 0.750 && !v.bfk_swinging"
+     },
+     {
+      "karambit_draw_snd": "v.bfk == 1 && v.bfk_d * v.bfk_spd < 0.750 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "karambit_insp1": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_snd": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "karambit_insp2": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_snd": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "karambit_swing1": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing1_snd": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_snd"
+     },
+     {
+      "karambit_swing1_fx": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_arcs"
+     },
+     {
+      "karambit_swing2": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing2_snd": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_snd"
+     },
+     {
+      "karambit_swing2_fx": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_arcs"
+     },
+     {
+      "balisong_draw": "v.bfk == 2 && v.bfk_d * v.bfk_spd < 0.950 && !v.bfk_swinging"
+     },
+     {
+      "balisong_draw_snd": "v.bfk == 2 && v.bfk_d * v.bfk_spd < 0.950 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "balisong_insp1": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_snd": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "balisong_insp2": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_snd": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "balisong_swing1": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing1_snd": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_snd"
+     },
+     {
+      "balisong_swing1_fx": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_arcs"
+     },
+     {
+      "balisong_swing2": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing2_snd": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_snd"
+     },
+     {
+      "balisong_swing2_fx": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_arcs"
+     },
+     {
+      "dagger_draw": "v.bfk == 3 && v.bfk_d * v.bfk_spd < 0.800 && !v.bfk_swinging"
+     },
+     {
+      "dagger_draw_snd": "v.bfk == 3 && v.bfk_d * v.bfk_spd < 0.800 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "dagger_insp1": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_snd": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "dagger_insp2": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 1.900 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_snd": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 1.900 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd"
+     },
+     {
+      "dagger_swing1": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing1_snd": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_snd"
+     },
+     {
+      "dagger_swing1_fx": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_arcs"
+     },
+     {
+      "dagger_swing2": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing2_snd": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_snd"
+     },
+     {
+      "dagger_swing2_fx": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_arcs"
+     },
+     {
+      "hit_a_fx": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 1 && v.bfk_hfx"
+     },
+     {
+      "hit_a_snd": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 1 && v.bfk_snd"
+     },
+     {
+      "hit_b_fx": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 0 && v.bfk_hfx"
+     },
+     {
+      "hit_b_snd": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 0 && v.bfk_snd"
+     }
+    ],
+    "pre_animation": [
+     "v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;v.bfk_in = v.bfk > 0 ? c.owning_entity->v.bfkinsn : 0;v.bfk_a = v.bfk > 0 ? c.owning_entity->v.bfkatk : 99;v.bfk_an = v.bfk > 0 ? c.owning_entity->v.bfkatn : 0;v.bfk_h = v.bfk > 0 ? c.owning_entity->v.bfkhit : 99;v.bfk_hn = v.bfk > 0 ? c.owning_entity->v.bfkhitn : 0;v.bfk_spd = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspd, 0.5, 2.0) : 1;t.o = v.bfk > 0 ? c.owning_entity->v.bfkopt : 0;v.bfk_arcs = math.mod(t.o, 2) >= 1;v.bfk_hfx = math.mod(math.floor(t.o / 2), 2) >= 1;v.bfk_snd = math.floor(t.o / 4) >= 1;v.bfk_swinging = (v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360) || (v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320) || (v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340);"
+    ]
+   },
+   "render_controllers": [
+    {
+     "controller.render.item_default": "v.bfk == 0"
+    },
+    {
+     "controller.render.bfk_knife": "v.bfk > 0"
+    }
+   ],
+   "sound_effects": {
+    "swish": "bfk.swish",
+    "cut": "bfk.cut",
+    "click": "bfk.click",
+    "ring_spin": "bfk.ring_spin",
+    "clack": "bfk.clack",
+    "latch": "bfk.latch",
+    "draw": "bfk.draw",
+    "dagger_catch": "bfk.dagger_catch"
+   },
+   "particle_effects": {
+    "arc": "bfk:arc",
+    "spark": "bfk:spark",
+    "cutflash": "bfk:cutflash"
+   }
+  }
+ }
+}

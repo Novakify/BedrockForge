@@ -1,0 +1,14 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="Private dev tool (BedrockForge)"
+[[mods]]
+modId="mobaitrace"
+version="1.0.0"
+displayName="MobAI Trace (BedrockForge dev tool)"
+description="Records mob AI each tick to logs/mobai_trace.jsonl for Java-vs-Bedrock parity checks."
+[[dependencies.mobaitrace]]
+modId="forge"
+mandatory=true
+versionRange="[47,)"
+ordering="NONE"
+side="BOTH"

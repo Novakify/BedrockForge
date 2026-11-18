@@ -1,0 +1,38 @@
+#pragma once
+// Bedrock Forge shaderpacks - Iris-style "shaderpacks folder" for RenderDragon.
+//
+//   mods/BedrockForgeCore/shaderpacks/<Pack>/renderer/materials/<Name>.material.bin   (or <Pack>/<Name>.material.bin)
+//   mods/BedrockForgeCore/config/shaderpack.txt   -> the active pack's folder name ("off" = vanilla)
+//
+// When the game opens data/renderer/materials/<Name>.material.bin and the active pack has a file with that name,
+// the open is redirected to the pack's copy (CreateFileW / CreateFile2 hooks). Materials load at startup, so a
+// pack change applies on the next launch. Packs are built with tools/ShaderForge (lazurite + dxc).
+
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace bedrock_forge::client::shaderpacks {
+
+/// Install the file hooks (call from Core::load so it's in place before the renderer loads materials).
+void install(std::filesystem::path const& modDir);
+void uninstall();
+/// Folder names under mods/BedrockForgeCore/shaderpacks (sorted).
+std::vector<std::string> listPacks();
+std::string              activePack(); // "off" when none
+std::string              noteWorldJoined();   // a world was joined: its block look is the active pack (returns a log line)
+int                      loadedAtmosphere(); // the block shader the game really loaded: 0 Cloud Sea, 1 Novak Glass, 2 other, -1 not yet
+/// Switch the active pack (writes config/shaderpack.txt). Takes effect for every material opened afterwards.
+bool setActivePack(std::string const& name);
+/// Folder with material.bin files extracted from the active resource packs; they win over the shaderpack. "" = off.
+void setResourcePackCache(std::filesystem::path const& dir);
+/// If the Renderer Foundation mod is loaded, stop redirecting materials (it owns that job). Returns true when yielding.
+bool yieldToRendererFoundation();
+/// config/shaderpack.txt (the file switch: write a pack name into it and ForgeRender switches + reloads).
+std::filesystem::path configFile();
+/// Log what the hooks saw so far (once; call from a normal thread after startup, e.g. on joining a world).
+void reportOnce();
+/// Rewrite mods/BedrockForgeCore/logs/shaderpacks.txt (counts + every material path seen).
+void writeReport();
+
+} // namespace bedrock_forge::client::shaderpacks

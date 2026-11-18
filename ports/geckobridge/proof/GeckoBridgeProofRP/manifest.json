@@ -1,0 +1,29 @@
+{
+ "format_version": 2,
+ "header": {
+  "name": "GeckoBridge Proof RP",
+  "description": "GeckoBridge conversion (private test). Assets: see CREDITS.txt",
+  "uuid": "8d3ce820-a432-509c-82a9-d9172cd943ff",
+  "version": [
+   0,
+   1,
+   0
+  ],
+  "min_engine_version": [
+   1,
+   21,
+   0
+  ]
+ },
+ "modules": [
+  {
+   "type": "resources",
+   "uuid": "a234123b-51be-5ed9-af5f-44133c78cb26",
+   "version": [
+    0,
+    1,
+    0
+   ]
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:client_entity": {
+  "description": {
+   "identifier": "gb:sculk_enderman",
+   "materials": {
+    "default": "entity_alphatest",
+    "glow": "gb_glow"
+   },
+   "textures": {
+    "default": "textures/entity/gb/sculkhorde/sculk_enderman",
+    "glow": "textures/entity/gb/sculkhorde/sculk_enderman_glowmask"
+   },
+   "geometry": {
+    "default": "geometry.gb.sculkhorde.sculk_enderman"
+   },
+   "animations": {
+    "idle": "animation.gb.sculkhorde.sculk_enderman.idle",
+    "idle_aggro": "animation.gb.sculkhorde.sculk_enderman.idle.aggro",
+    "idle_twitch": "animation.gb.sculkhorde.sculk_enderman.idle.twitch",
+    "idle_tendrils": "animation.gb.sculkhorde.sculk_enderman.idle.tendrils",
+    "move_walk": "animation.gb.sculkhorde.sculk_enderman.move.walk",
+    "move_run": "animation.gb.sculkhorde.sculk_enderman.move.run",
+    "combat_attack1": "animation.gb.sculkhorde.sculk_enderman.combat.attack1",
+    "combat_attack2": "animation.gb.sculkhorde.sculk_enderman.combat.attack2",
+    "combat_attack3": "animation.gb.sculkhorde.sculk_enderman.combat.attack3",
+    "combat_fireball_face": "animation.gb.sculkhorde.sculk_enderman.combat.fireball.face",
+    "combat_fireball_sky_summon": "animation.gb.sculkhorde.sculk_enderman.combat.fireball.sky.summon",
+    "combat_fireball_sky_twitch": "animation.gb.sculkhorde.sculk_enderman.combat.fireball.sky.twitch",
+    "combat_summon": "animation.gb.sculkhorde.sculk_enderman.combat.summon",
+    "combat_summon_twitch": "animation.gb.sculkhorde.sculk_enderman.combat.summon.twitch",
+    "combat_rifts_summon": "animation.gb.sculkhorde.sculk_enderman.combat.rifts.summon",
+    "combat_spike_line": "animation.gb.sculkhorde.sculk_enderman.combat.spike.line",
+    "combat_spike_line_twitch": "animation.gb.sculkhorde.sculk_enderman.combat.spike.line.twitch",
+    "combat_spike_around": "animation.gb.sculkhorde.sculk_enderman.combat.spike.around",
+    "combat_spike_around_twitch": "animation.gb.sculkhorde.sculk_enderman.combat.spike.around.twitch",
+    "combat_forcefieldbubble_activate": "animation.gb.sculkhorde.sculk_enderman.combat.forcefieldbubble.activate",
+    "combat_forcefieldbubble_twitch": "animation.gb.sculkhorde.sculk_enderman.combat.forcefieldbubble.twitch"
+   },
+   "scripts": {
+    "animate": [
+     "idle",
+     "idle_tendrils"
+    ]
+   },
+   "render_controllers": [
+    "controller.render.default",
+    "controller.render.gb.glow"
+   ],
+   "spawn_egg": {
+    "base_color": "#0d1a2e",
+    "overlay_color": "#29dfeb"
+   }
+  }
+ }
+}

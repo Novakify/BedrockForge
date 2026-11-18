@@ -1,0 +1,73 @@
+#pragma once
+// Prototype 3 - Cinematic Impact Frames (v0.2)
+//
+// Behaviour reference: "Impact frames" Fabric mod by TheFoxThatHates (ARR licence:
+// NO code, shaders, textures or sounds reused - concept only, see docs/LICENSE_AUDIT.md).
+//
+// When the LOCAL player hits an entity in a single-player / locally hosted world:
+// Trigger: critical hits only by default (Settings::critOnly); otherwise any hit that passes the rules.
+//   [0, lengthMs)            `frameCount` full-screen frames, alternating bg/fg colour (manga flash)
+//                            with speed lines in the opposite colour. Frames are opaque, so they
+//                            also cover the HUD ("cinematic" by default).
+//   [lengthMs, +fadeMs)      vignette + speed lines fade out
+// plus an impact sound. Trigger rules: min damage, chance with decay + recovery, cooldown.
+//
+// VISUAL ONLY: the game simulation is never paused. Not possible yet (needs RenderingAPI /
+// shader hook): colour inversion of the world, solid black/white mob silhouettes, true view
+// freeze, real camera shake.
+
+#include <string>
+
+#include "ll/api/mod/NativeMod.h"
+
+#include "bf/Events.h"
+
+namespace bedrock_forge::impact {
+
+struct Rgb {
+    float r = 0, g = 0, b = 0;
+};
+
+struct Settings {
+    bool        enabled          = true;
+    // Only critical hits trigger (the game's own crit: falling + not on ground etc.). Detected by hooking
+    // Player/LocalPlayer::emitCriticalHitParticles, so it also works on servers (crit animate packet).
+    bool        critOnly         = true;
+    // --- trigger rules ---
+    float       minDamage        = 1.0f;   // ignore tiny hits (proxy for "full hit")
+    float       chance           = 1.0f;   // 0..1 chance per qualifying hit
+    float       chanceDecay      = 0.0f;   // chance lost per trigger (0 = off)
+    int         chanceRecoverMs  = 2000;   // no hits for this long -> chance resets
+    int         cooldownMs       = 0;      // minimum gap between impact frames
+    // --- the frames ---
+    int         lengthMs         = 150;    // whole frame sequence (BP posterize runs 3 ticks = 150ms)
+    int         frameCount       = 2;
+    bool        alternate        = true;   // swap bg/fg on odd frames
+    Rgb         background       = {0, 0, 0};
+    Rgb         foreground       = {1, 1, 1};
+    float       backgroundAlpha  = 0.0f;   // 0 = keep the (posterized) world visible behind the mask
+    // Animated burst frames from a resource pack (ships as packs/BedrockForgeImpact).
+    // Swap in any pack that provides <framePath>0..N-1 to change the look.
+    bool        useFrameTextures = true;
+    // Built-in masks (tools/gen_impact_v2.py): impact/ = sparkle (6 frames), impact_lines/ = focus lines (3 frames)
+    std::string framePath        = "textures/bedrock_forge/impact/frame_";
+    int         frameTextures    = 6;
+    bool        speedLines       = false;   // off by default: clean frames read better
+    int         lines            = 28;
+    int         fadeMs           = 60;    // after-glow (vignette + fading lines); 0 = hard cut
+    float       intensity        = 1.0f;   // 0..1 opacity multiplier for everything
+    // --- sound: the behavior pack plays "bf.impact" + camera shake, so the native mod stays quiet by default.
+    // Set pitch > 0 to play `sound` from here instead (e.g. when running without the behavior pack).
+    std::string sound            = "bf.impact";
+    float       volume           = 1.0f;
+    float       pitch            = 0.0f;   // 0 = no sound from the native side
+};
+
+/// Wire listeners into `subs`. `settings` must outlive the subscriptions.
+void install(bf::events::Subscriptions& subs, ll::mod::NativeMod& mod, Settings const& settings);
+void uninstall();
+
+/// Remember who the local player is (called on ClientJoinLevelEvent; 0 on exit).
+void setLocalPlayerId(long long rawId);
+
+} // namespace bedrock_forge::impact

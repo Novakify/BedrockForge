@@ -1,0 +1,5 @@
+{
+  "about": "The Wonderland 3.0.3 (MCreator + GeckoLib; creators per its mods.toml; MIT working copy with permission reported by the user). Full port: GeckoBridge visuals, ModPorter content/structures/dimensions, JavaBridge for the mod's procedures.",
+  "pack_uuids": {"bp": "7420b6e1-f446-58cd-a51e-ccee7dbf1438", "rp": "8d3ce820-a432-509c-82a9-d9172cd943ff"},
+  "pack_uuids_note": "test-world only: reuses the GeckoBridge Proof pack ids so the running game picks the pack up without a restart; remove for a normal install"
+}

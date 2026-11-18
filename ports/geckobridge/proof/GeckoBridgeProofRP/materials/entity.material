@@ -1,0 +1,10 @@
+{
+ "materials": {
+  "version": "1.0.0",
+  "gb_glow:entity_alphablend": {
+   "+states": [
+    "DisableCulling"
+   ]
+  }
+ }
+}

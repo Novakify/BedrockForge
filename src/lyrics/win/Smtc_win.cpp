@@ -1,0 +1,204 @@
+// LyricsFlow port - Windows media session via C++/WinRT. Behaviour follows LyricsFlow v2.0's SmtcBackend (374m, MIT:
+// session choice, source filter, timeline extrapolation, YouTube title split); the code is original (LyricsFlow calls
+// the same WinRT interfaces through JNA vtables, C++/WinRT does it natively).
+// No LeviLamina headers in this file on purpose (keeps the WinRT projection away from the game headers).
+#ifdef _WIN32
+#include "lyrics/win/Win.h"
+
+#include <algorithm>
+#include <mutex>
+
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Media.Control.h>
+#include <winrt/Windows.Media.h>
+#include <winrt/Windows.Graphics.Imaging.h>
+#include <winrt/Windows.Storage.Streams.h>
+
+#include "lyrics/core/Text.h"
+
+#pragma comment(lib, "windowsapp.lib")
+
+namespace bf::lyrics::win {
+
+using namespace winrt::Windows::Media::Control;
+using Manager = GlobalSystemMediaTransportControlsSessionManager;
+using Session = GlobalSystemMediaTransportControlsSession;
+
+struct Smtc::Impl {
+    std::mutex  mutex;
+    Manager     mgr{nullptr};
+    Session     current{nullptr};
+    bool        failed = false;
+    std::string status = "nothing";
+
+    bool ensure() {
+        if (mgr) return true;
+        if (failed) return false;
+        try {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        } catch (...) { /* already initialised on this thread */ }
+        try {
+            mgr = Manager::RequestAsync().get();
+        } catch (...) {
+            failed = true;
+            status = "unsupported";
+        }
+        return bool(mgr);
+    }
+};
+
+Smtc::Smtc() : mImpl(std::make_unique<Impl>()) {}
+Smtc::~Smtc() = default;
+bool        Smtc::available() const { return !mImpl->failed; }
+std::string Smtc::status() const { return mImpl->status; }
+
+std::optional<MediaSample> Smtc::poll(Source src) {
+    std::lock_guard l(mImpl->mutex);
+    if (!mImpl->ensure()) return std::nullopt;
+    try {
+        Session chosen{nullptr}, firstMatch{nullptr};
+        for (auto const& s : mImpl->mgr.GetSessions()) {
+            std::string app = winrt::to_string(s.SourceAppUserModelId());
+            if (!sourceMatches(src, app)) continue;
+            if (!firstMatch) firstMatch = s;
+            if (!s) continue;
+            auto pi = s.GetPlaybackInfo(); // [BF] can be null while the app switches songs / pauses
+            if (pi && pi.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing) { chosen = s; break; }
+        }
+        if (!chosen) chosen = firstMatch;
+        mImpl->current = chosen;
+        if (!chosen) {
+            mImpl->status = src == Source::Spotify ? "open_spotify" : src == Source::AppleMusic ? "open_apple_music" : "nothing";
+            return std::nullopt;
+        }
+        auto        props = chosen.TryGetMediaPropertiesAsync().get();
+        if (!props) return std::nullopt; // [BF] app mid song-change: try again next poll
+        MediaSample m;
+        m.title  = winrt::to_string(props.Title());
+        m.artist = winrt::to_string(props.Artist());
+        if (m.artist.empty()) m.artist = winrt::to_string(props.AlbumArtist());
+        m.album     = winrt::to_string(props.AlbumTitle());
+        std::string app = winrt::to_string(chosen.SourceAppUserModelId());
+        bool spotify    = text::contains(text::toLower(app), "spotify");
+        bool apple      = isAppleMusicApp(app);
+        std::string const lowApp = text::toLower(app);
+        bool const ytMusic = text::contains(lowApp, "youtube music") || text::contains(lowApp, "youtube-music") ||
+                             text::contains(lowApp, "music.youtube") || text::contains(lowApp, "ytmusic"); // LyricsFlow 2.2: YT Music
+        m.sourceApp     = spotify ? "Spotify" : apple ? "Apple Music" : ytMusic ? "YT Music" : (sourceMatches(Source::Youtube, app) ? "Browser" : app);
+        if (apple) cleanAppleMusic(m);
+        else if (!spotify) { // browser tabs: "Artist - Song (Official Video) - YouTube" + channel name
+            auto split = text::splitYoutube(m.title, m.artist);
+            m.artist   = split[0];
+            m.title    = split[1];
+        }
+        auto info = chosen.GetPlaybackInfo();
+        if (!info) return std::nullopt; // [BF] null while Apple Music switches songs / pauses (this crashed on Nov 4)
+        m.playing = info.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+        if (auto rep = info.AutoRepeatMode()) {
+            auto v   = rep.Value();
+            m.repeat = v == winrt::Windows::Media::MediaPlaybackAutoRepeatMode::Track ? 1 : v == winrt::Windows::Media::MediaPlaybackAutoRepeatMode::List ? 2 : 0;
+        }
+        auto    tl    = chosen.GetTimelineProperties();
+        if (!tl) return std::nullopt;
+        int64_t start = tl.StartTime().count(), end = tl.EndTime().count(), pos = tl.Position().count(); // 100 ns ticks
+        if (end > 0) m.durationMs = (end - std::max<int64_t>(0, start)) / 10000;
+        m.positionMs    = pos / 10000;
+        m.rawPositionMs = m.positionMs;
+        m.updatedFt     = tl.LastUpdatedTime().time_since_epoch().count(); // FILETIME ticks (1601 epoch)
+        if (m.playing && m.updatedFt > 0) {
+            int64_t nowFt = winrt::clock::now().time_since_epoch().count();
+            int64_t delta = (nowFt - m.updatedFt) / 10000;
+            if (delta > 0 && delta < 6LL * 3600 * 1000) m.positionMs += delta;
+        }
+        mImpl->status = m.title.empty() ? "nothing" : (m.playing ? "playing" : "paused");
+        if (m.title.empty()) return std::nullopt;
+        return m;
+    } catch (...) {
+        mImpl->current = nullptr;
+        return std::nullopt;
+    }
+}
+
+void Smtc::playPause() {
+    std::lock_guard l(mImpl->mutex);
+    try { if (mImpl->current) mImpl->current.TryTogglePlayPauseAsync().get(); } catch (...) {}
+}
+void Smtc::next() {
+    std::lock_guard l(mImpl->mutex);
+    try { if (mImpl->current) mImpl->current.TrySkipNextAsync().get(); } catch (...) {}
+}
+void Smtc::previous() {
+    std::lock_guard l(mImpl->mutex);
+    try { if (mImpl->current) mImpl->current.TrySkipPreviousAsync().get(); } catch (...) {}
+}
+std::vector<uint8_t> Smtc::thumbnail() {
+    std::lock_guard l(mImpl->mutex);
+    try {
+        if (!mImpl->current) return {};
+        auto props = mImpl->current.TryGetMediaPropertiesAsync().get();
+        if (!props) return {};
+        auto ref   = props.Thumbnail();
+        if (!ref) return {};
+        auto     stream = ref.OpenReadAsync().get();
+        if (!stream) return {};
+        uint64_t size   = stream.Size();
+        if (size == 0 || size > (16ull << 20)) return {};
+        winrt::Windows::Storage::Streams::DataReader reader(stream);
+        uint32_t got = reader.LoadAsync(uint32_t(size)).get();
+        std::vector<uint8_t> bytes(got);
+        reader.ReadBytes(bytes);
+        return bytes;
+    } catch (...) {
+        return {};
+    }
+}
+std::vector<uint8_t> decodeSmallRgba(std::vector<uint8_t> const& bytes, uint32_t size) {
+    using namespace winrt::Windows::Graphics::Imaging;
+    using namespace winrt::Windows::Storage::Streams;
+    try {
+        InMemoryRandomAccessStream mem;
+        {
+            DataWriter w(mem);
+            w.WriteBytes(bytes);
+            w.StoreAsync().get();
+            w.DetachStream();
+        }
+        mem.Seek(0);
+        auto           dec = BitmapDecoder::CreateAsync(mem).get();
+        BitmapTransform tr;
+        tr.ScaledWidth(size);
+        tr.ScaledHeight(size);
+        tr.InterpolationMode(BitmapInterpolationMode::Linear);
+        auto px = dec.GetPixelDataAsync(BitmapPixelFormat::Rgba8, BitmapAlphaMode::Straight, tr, ExifOrientationMode::IgnoreExifOrientation,
+                                         ColorManagementMode::DoNotColorManage)
+                      .get();
+        auto data = px.DetachPixelData();
+        if (data.size() < size_t(size) * size * 4) return {};
+        return std::vector<uint8_t>(data.begin(), data.begin() + size_t(size) * size * 4);
+    } catch (...) {
+        return {};
+    }
+}
+
+void Smtc::cycleRepeat() {
+    std::lock_guard l(mImpl->mutex);
+    try {
+        if (!mImpl->current) return;
+        using winrt::Windows::Media::MediaPlaybackAutoRepeatMode;
+        auto pi  = mImpl->current.GetPlaybackInfo();
+        if (!pi) return;
+        auto rep = pi.AutoRepeatMode();
+        auto cur = rep ? rep.Value() : MediaPlaybackAutoRepeatMode::None;
+        auto nxt = cur == MediaPlaybackAutoRepeatMode::None ? MediaPlaybackAutoRepeatMode::List
+                 : cur == MediaPlaybackAutoRepeatMode::List ? MediaPlaybackAutoRepeatMode::Track : MediaPlaybackAutoRepeatMode::None;
+        mImpl->current.TryChangeAutoRepeatModeAsync(nxt).get();
+    } catch (...) {}
+}
+void Smtc::seek(int64_t ms) {
+    std::lock_guard l(mImpl->mutex);
+    try { if (mImpl->current) mImpl->current.TryChangePlaybackPositionAsync(ms * 10000).get(); } catch (...) {}
+}
+
+} // namespace bf::lyrics::win
+#endif

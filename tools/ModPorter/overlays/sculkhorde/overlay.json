@@ -1,0 +1,151 @@
+{
+  "about": "Bedrock Forge behaviour overlay for Sculk Horde (Apache-2.0, by TeamPeril). Original Script API re-implementation of the horde's core loop.",
+  "pack_name": "Sculk Horde",
+  "credits": "Original mod: Sculk Horde by TeamPeril (Apache-2.0, github.com/TeamPeril/Sculk-Horde). Bedrock port: Bedrock Forge ModPorter.",
+  "license_file": "LICENSE_original_mod.txt",
+  "script_deps": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.3.0"
+    }
+  ],
+  "entity_overrides": {
+    "*sculk": {
+      "set": {
+        "minecraft:type_family": {
+          "family": [
+            "monster",
+            "mob",
+            "sculkhorde"
+          ]
+        }
+      }
+    },
+    "*sculk#target": {
+      "if_has": "minecraft:behavior.nearest_attackable_target",
+      "set": {
+        "minecraft:behavior.nearest_attackable_target": {
+          "priority": 2,
+          "must_see": false,
+          "reselect_targets": true,
+          "within_radius": 32,
+          "entity_types": [
+            {
+              "filters": {
+                "all_of": [
+                  {
+                    "test": "is_family",
+                    "subject": "other",
+                    "operator": "!=",
+                    "value": "sculkhorde"
+                  },
+                  {
+                    "any_of": [
+                      {
+                        "test": "is_family",
+                        "subject": "other",
+                        "value": "player"
+                      },
+                      {
+                        "test": "is_family",
+                        "subject": "other",
+                        "value": "mob"
+                      },
+                      {
+                        "test": "is_family",
+                        "subject": "other",
+                        "value": "villager"
+                      },
+                      {
+                        "test": "is_family",
+                        "subject": "other",
+                        "value": "irongolem"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "max_dist": 32
+            }
+          ]
+        }
+      }
+    },
+    "angel_of_reaping": {
+      "set": {
+        "minecraft:type_family": {
+          "family": [
+            "monster",
+            "mob",
+            "boss_reaper"
+          ]
+        },
+        "minecraft:boss": {
+          "should_darken_sky": true,
+          "hud_range": 48,
+          "name": "Angel of Reaping"
+        }
+      }
+    },
+    "golem_of_wrath": {
+      "set": {
+        "minecraft:type_family": {
+          "family": [
+            "mob",
+            "golem_of_wrath",
+            "irongolem"
+          ]
+        },
+        "minecraft:behavior.nearest_attackable_target": {
+          "priority": 2,
+          "must_see": false,
+          "reselect_targets": true,
+          "within_radius": 32,
+          "entity_types": [
+            {
+              "filters": {
+                "test": "is_family",
+                "subject": "other",
+                "value": "sculkhorde"
+              },
+              "max_dist": 32
+            }
+          ]
+        }
+      }
+    },
+    "infestation_purifier": {
+      "set": {
+        "minecraft:type_family": {
+          "family": [
+            "purifier",
+            "inanimate"
+          ]
+        },
+        "minecraft:despawn": {
+          "filters": {
+            "test": "is_family",
+            "subject": "self",
+            "value": "never"
+          }
+        }
+      }
+    },
+    "sculk_enderman": {
+      "set": {
+        "minecraft:boss": {
+          "should_darken_sky": true,
+          "hud_range": 48,
+          "name": "Sculk Enderman"
+        }
+      }
+    }
+  },
+  "lang": {
+    "tile.sculkhorde:sculk_mass.name": "Sculk Mass",
+    "tile.sculkhorde:sculk_node.name": "Sculk Node",
+    "tile.sculkhorde:sculk_ancient_node.name": "Sculk Ancient Node",
+    "entity.sculkhorde:sculk_zombie.name": "Sculk Zombie",
+    "entity.sculkhorde:sculk_mite.name": "Sculk Mite"
+  }
+}

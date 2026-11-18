@@ -1,0 +1,19 @@
+{
+  "about": "Bedrock Forge behaviour overlay for From The Caves. Original Script API code re-implementing the mod's mechanics (timers, chances, spawn rules); no code or assets from the mod are included here.",
+  "script_deps": [{ "module_name": "@minecraft/server", "version": "2.3.0" }],
+  "entity_overrides": {
+    "fromthecavesbehind": {
+      "remove": ["minecraft:behavior.melee_attack", "minecraft:behavior.nearest_attackable_target", "minecraft:behavior.random_stroll",
+                 "minecraft:behavior.hurt_by_target", "minecraft:behavior.random_look_around", "minecraft:navigation.walk"],
+      "set": { "minecraft:movement": { "value": 0 }, "minecraft:behavior.look_at_player": { "priority": 0, "look_distance": 64, "probability": 1 },
+               "minecraft:knockback_resistance": { "value": 1 } }
+    },
+    "fromthecavesfront": { "set": { "minecraft:attack": { "damage": 1 }, "minecraft:movement": { "value": 0.35 },
+                                    "minecraft:follow_range": { "value": 42, "max": 42 } } },
+    "*possessed_": { "set": { "minecraft:attack": { "damage": 1 } } }
+  },
+  "items": [
+    { "id": "wooden_cross", "name": "Wooden Cross", "texture": "assets/from_the_caves/textures/item/woodencross0.png", "durability": 5,
+      "recipe": { "pattern": ["aba", " a ", " a "], "key": { "a": "minecraft:stick", "b": "minecraft:redstone" } } }
+  ]
+}

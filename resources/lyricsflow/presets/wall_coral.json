@@ -1,0 +1,24 @@
+{
+  "name": "Wall Coral",
+  "video": "D (@kangetsuvisuals, words on walls)",
+  "description": "Video D (@kangetsuvisuals): WALL mode, Minecraft pixel font in coral/salmon with a dark drop shadow, lying flat on nearby walls in perspective, a line at a time. Added 2026-10-30 (Wall Gold is the gold variant).",
+  "settings": {
+    "lyricsStyle": "WALL",
+    "font": "minecraft",
+    "theme": "minecraft",
+    "textStyle": "CLEAN",
+    "singleColor": "#FFF2836B",
+    "textShadow": 1,
+    "shadowColor": "#FF3A1610",
+    "twoColor": false,
+    "gradient": false,
+    "outlineWidth": 0,
+    "glow": false,
+    "varySizes": false,
+    "arcLayout": false,
+    "maxLines": 2,
+    "enterAnim": "WORD",
+    "exitAnim": "FADE",
+    "lyricsScale": 1.0
+  }
+}
