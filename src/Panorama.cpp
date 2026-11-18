@@ -171,23 +171,53 @@ void writeAll() {
     fs::path const dir = packDir();
     if (dir.empty()) { std::snprintf(gStatus, sizeof gStatus, "can't find the game's data folder"); return; }
     writeManifest(dir);
-    int done = 0;
-    for (int i = 0; i < 6; ++i) {
+    auto save = [&](int i, std::vector<float> const& img, int S) {
+        bool ok = writeHdr(dir / "textures" / "ui" / ("panoramahdr_" + std::to_string(i) + ".hdr"), img, S);
+        ok = writeHdr(dir / "textures" / "ui" / ("panoramahdr_alternate_" + std::to_string(i) + ".hdr"), img, S) && ok;
+        ok = writeTga(dir / "textures" / "ui" / ("panorama_" + std::to_string(i) + ".tga"), img, S) && ok;
+        return ok;
+    };
+    int done = 0, S = 0;
+    float top[3] = {}, bot[3] = {};   // the sides' top and bottom edges: the sky and the ground the up / down faces are made of
+    int   nEdge = 0;
+    for (int i = 0; i < 4; ++i) {
         Face& f = gFaces[i];
         if (!f.ok || !f.buf) continue;
         void* m = nullptr;
         D3D12_RANGE rr{0, size_t(f.pitch) * f.h};
         if (FAILED(f.buf->Map(0, &rr, &m)) || !m) continue;
-        int const S = int(std::min<UINT>(1536u, std::min(f.w, f.h)));
-        auto const img = cropFace(f, static_cast<uint8_t const*>(m), S);
+        int const Si = int(std::min<UINT>(1536u, std::min(f.w, f.h)));
+        auto const img = cropFace(f, static_cast<uint8_t const*>(m), Si);
         D3D12_RANGE none{0, 0};
         f.buf->Unmap(0, &none);
-        bool ok = writeHdr(dir / "textures" / "ui" / ("panoramahdr_" + std::to_string(i) + ".hdr"), img, S);
-        ok = writeHdr(dir / "textures" / "ui" / ("panoramahdr_alternate_" + std::to_string(i) + ".hdr"), img, S) && ok;
-        ok = writeTga(dir / "textures" / "ui" / ("panorama_" + std::to_string(i) + ".tga"), img, S) && ok;
-        done += ok;
+        S = Si;
+        int const band = std::max(2, Si / 40);
+        for (int y = 0; y < band; ++y)
+            for (int x = 0; x < Si; ++x)
+                for (int c = 0; c < 3; ++c) {
+                    top[c] += img[(size_t(y) * Si + x) * 3 + c];
+                    bot[c] += img[(size_t(Si - 1 - y) * Si + x) * 3 + c];
+                }
+        nEdge += band * Si;
+        done += save(i, img, Si);
         f.buf.Reset();
         f.ok = false;
+    }
+    if (S > 0 && nEdge > 0) {   // up / down: a soft dome in the sides' own edge colours, a touch deeper toward the pole (no seams)
+        for (int c = 0; c < 3; ++c) { top[c] /= float(nEdge); bot[c] /= float(nEdge); }
+        for (int k = 0; k < 2; ++k) {
+            float const* e = k == 0 ? top : bot;
+            float const  deep = k == 0 ? 0.82f : 0.9f;
+            std::vector<float> img(size_t(S) * S * 3);
+            for (int y = 0; y < S; ++y)
+                for (int x = 0; x < S; ++x) {
+                    float const u = (float(x) + 0.5f) / float(S) * 2.f - 1.f, v = (float(y) + 0.5f) / float(S) * 2.f - 1.f;
+                    float const r = std::min(1.f, std::max(std::abs(u), std::abs(v)));   // 1 at every edge, so all four edges match
+                    float const t = 1.f - r * r;
+                    for (int c = 0; c < 3; ++c) img[(size_t(y) * S + x) * 3 + c] = e[c] * (1.f - (1.f - deep) * t);
+                }
+            done += save(4 + k, img, S);
+        }
     }
     std::snprintf(gStatus, sizeof gStatus, done == 6 ? "menu world saved: it shows from the next start" : "menu world: only %d of 6 faces saved", done);
 }
@@ -257,7 +287,7 @@ void grab(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resource* rt
     f.buf = buf; f.w = UINT(rd.Width); f.h = rd.Height; f.pitch = fp.Footprint.RowPitch; f.bgra = bgra; f.tanX = tanX; f.tanY = tanY; f.ok = true;
     // next face (or done)
     gHeld = 0; gFaceAt = msNow();
-    if (++gFace >= 6) { gPhase = 2; gWait = 0; }
+    if (++gFace >= 4) { gPhase = 2; gWait = 0; }   // the four sides; up and down are made from them (writeAll)
 }
 
 void onPresent() {
