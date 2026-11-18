@@ -475,6 +475,12 @@ void atmosTick() {
         if (sw && sw->enabled) { auto c = pal(sw, 0); out += std::format("sw 1\nsw_c {:.3f} {:.3f} {:.3f}\nsw_size {:.2f}\nsw_glow {:.2f}\n", c[0], c[1], c[2], sw->num("size", 1.f), sw->num("glow", 0.7f)); }
         else out += "sw 0\n";
     }
+    {   // [Sky] the Sky module picks whose sky owns the screen: Renderer Foundation applies it when it changes (Ctrl+F6 still works)
+        auto* sk = r.find("sky");
+        int const mode = sk && sk->enabled ? int(sk->num("mode", 0) + 0.5f) : -1;
+        static int const kRf[4] = {3, 1, 2, 0};   // Living Skies, Cloud Sea, Novak Glass, Vanilla -> RF's skymode
+        out += std::format("skymode {}\n", mode < 0 ? -1 : kRf[std::clamp(mode, 0, 3)]);
+    }
     if (out == gAtmosLast) return;
     static int64_t at = 0;
     if (nowMs() - at < 250) return;   // dragging a slider: a few writes a second; the sun moves slowly (tod in steps of 0.001)
