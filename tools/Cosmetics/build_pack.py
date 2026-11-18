@@ -33,7 +33,7 @@ VERSION = [0, 1, 0]
 SWORDS = {"wooden_sword": "wood_sword", "stone_sword": "stone_sword", "copper_sword": "copper_sword",
           "iron_sword": "iron_sword", "golden_sword": "gold_sword", "diamond_sword": "diamond_sword",
           "netherite_sword": "netherite_sword"}
-KNIVES = [("karambit", knives.karambit)]          # index + 1 = v.bfknife (Knives module "Knife" choice)
+KNIVES = [("karambit", knives.karambit), ("balisong", knives.balisong), ("dagger", knives.dagger)]   # index + 1 = v.bfknife
 
 # Molang: knife state from the holder (only players carry the variables), flip / inspect motion
 PRE = ("v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;"
@@ -67,15 +67,14 @@ RC = {"format_version": "1.8.0", "render_controllers": {"controller.render.bfk_k
     "arrays": {"geometries": {"Array.kgeo": [f"Geometry.{n}" for n, _ in KNIVES]},
                "textures": {"Array.ktex": [f"Texture.{n}" for n, _ in KNIVES]}},
     "geometry": "Array.kgeo[v.bfk - 1]",
-    "materials": [{"*": "v.is_enchanted ? Material.enchanted : Material.default"}, {"bfk_neon": "Material.neon"}],
+    "materials": [{"*": "v.is_enchanted ? Material.enchanted : Material.default"}],
     "textures": ["Array.ktex[v.bfk - 1]", "Texture.enchanted"]}}}
 
 
 def add_knives(desc):
     """patch a sword attachable description (dict) so it shows our knife while v.bfk > 0"""
     desc.setdefault("materials", {}).update({"default": desc["materials"].get("default", "entity_alphatest"),
-                                             "enchanted": desc["materials"].get("enchanted", "entity_alphatest_glint"),
-                                             "neon": "entity_emissive_alpha"})
+                                             "enchanted": desc["materials"].get("enchanted", "entity_alphatest_glint")})
     desc.setdefault("textures", {}).setdefault("enchanted", "textures/misc/enchanted_item_glint")
     for n, _ in KNIVES:
         desc["textures"][n] = f"textures/bf_cosmetics/{n}"
@@ -105,9 +104,9 @@ def write_shared(pack: Path):
     """the knife models, textures, animations and render controller (every pack that calls add_knives needs them)"""
     for d in ("models/entity", "textures/bf_cosmetics", "animations", "render_controllers"):
         (pack / d).mkdir(parents=True, exist_ok=True)
-    atlas = knives.atlas()
     for n, fn in KNIVES:
-        geo = export_poly_mesh(fn(), atlas, knives.bones(), f"geometry.bfk_{n}")
+        mesh, atlas = fn()                       # every knife has its own model AND its own finishes / atlas
+        geo = export_poly_mesh(mesh, atlas, knives.bones(n), f"geometry.bfk_{n}")
         (pack / "models" / "entity" / f"bfk_{n}.geo.json").write_text(json.dumps(geo, separators=(",", ":")))
         Image.fromarray(atlas.img, "RGBA").save(pack / "textures" / "bf_cosmetics" / f"{n}.png")
     (pack / "animations" / "bfk.animation.json").write_text(json.dumps(ANIMS, indent=1))

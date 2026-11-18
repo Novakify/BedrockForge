@@ -1,3 +1,17 @@
+# Next session handoff (updated 2026-11-17 ~22:10 local, COSMETICS / KNIVES) - READ FIRST
+- Knives module + BF Cosmetics pack are on main (docs/COSMETICS.md). DLL from main 07ad8a1 is INSTALLED in
+  `<instance>\mods\BedrockForgeCore\BedrockForgeCore.dll`; the previous one is `BedrockForgeCore.pre-knives.orig.dll`
+  (rollback = rename back). Caveat: the game was on the title screen and would not close (window X ignored, Alt+F4
+  not granted); the DLL was swapped by rename, so the running game still had the old one loaded. Restart needed.
+- Pack "BF Cosmetics" copied to development_resource_packs; test world "Knives Test" (folder BFKnivesTest, copy of
+  the "test" world, only BF Cosmetics active, no behaviour packs). Fernando is away: NO in-game test yet.
+- To test: launch, open Knives Test, Right Shift -> COSMETICS -> Knives ON, hold a sword: first + third person,
+  draw flip, ContentLog for Molang errors (c.owning_entity->v.bfknife), neon (entity_emissive_alpha alpha 0).
+  Inspect key is unbound: ASK Fernando which key before binding.
+- Newer main (v4 realistic Karambit/Balisong/Dagger, design choice 0-2, Cosmetics.cpp only touches other players
+  while Knives is on) is NOT installed as a DLL yet; the dev pack copy on the PC is refreshed to v4.
+- Animation/effects proposal waiting for Fernando: docs/COSMETICS_REFERENCE.md.
+
 # Next session handoff (updated 2026-10-31 ~12:30 local, cloud + PC computer use) - GLASS CLIENT MENU - READ FIRST
 - 10-31 later: wheel camera swing (front view of the player, render origin moved too) + smooth clipped scrolling,
   verified in game. See docs/CLIENT_UI.md "Camera swing" / "Smooth scrolling".
