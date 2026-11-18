@@ -62,6 +62,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/gen_glassarmor.py "$($dxc.FullName)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/gen_glassbody.py "$($dxc.FullName)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/gen_screen.py "$($dxc.FullName)" "$($fxc.FullName)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/gen_worldfx.py "$($dxc.FullName)"
