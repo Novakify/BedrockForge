@@ -1155,7 +1155,7 @@ std::mutex                  gWfxMutex;
 std::string                 gWfxStatus = "off";
 std::map<std::string, long> gWfxWhy;   // why the pass did not draw, counted (logged with the WFX frames line)
 std::atomic<long>           gWfxCalls{0};
-void wfxStatus(std::string s) { std::lock_guard l(gWfxMutex); ++gWfxWhy[s]; gWfxStatus = std::move(s); }
+void wfxStatus(std::string s) { std::lock_guard l(gWfxMutex); if (s.rfind("drawing", 0) != 0) ++gWfxWhy[s]; gWfxStatus = std::move(s); }   // (a pass that drew is no "why not")
 void wfxStatusQuiet(char const* s) { std::lock_guard l(gWfxMutex); ++gWfxWhy[s]; }   // counted only (not shown as the status)
 bool makeWfxRoot(ID3D12Device* dev) {
     std::lock_guard l(gWfxMutex);
