@@ -258,7 +258,8 @@ struct Atlas {
 Atlas                             gAtlas[kAtlasSlots];
 std::atomic<long>                 gItemWhy[4]{};   // item pipeline draws not glassed: not ItemInHand / names pending / no atlas bound / atlas not copied yet
 std::string                       gItemSeen;
-std::map<std::tuple<unsigned, int, std::string>, long> gItemTrace;   // (index count, glassed, material) -> draws, per 5 s       // the last item draw's first textures (w x h, mips), for the panel
+std::map<std::tuple<unsigned, int, std::string>, long> gItemTrace;
+std::atomic<long>                 gItemReplay[4]{};   // (index count, glassed, material) -> draws, per 5 s       // the last item draw's first textures (w x h, mips), for the panel
 ComPtr<ID3D12CommandAllocator>    gItemAlloc;
 ComPtr<ID3D12GraphicsCommandList> gItemList;
 ComPtr<ID3D12Fence>               gItemFence;
@@ -1036,6 +1037,7 @@ bool isActorPso(ID3D12PipelineState* pso) {
     std::lock_guard l(gMutex);
     return gActor.count(pso) != 0;
 }
+void traceItemReplay(int what) { if (what >= 0 && what < 4) ++gItemReplay[what]; }
 void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed) {
     if (!itemsOn()) return;
     std::lock_guard l(gMutex);
@@ -1502,7 +1504,7 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
         if (auto g = gGlass.find({pso, key}); g != gGlass.end()) {
             if (!g->second) return nullptr;
             *game = pso;
-            out->body = true, out->skin = dummy->GetGPUVirtualAddress();
+            out->body = true, out->item = true, out->skin = dummy->GetGPUVirtualAddress();
             ++gGlassDraws, ++gItemDraws;
             return g->second.Get();
         }
@@ -1513,7 +1515,7 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
     if (!g) g = made;
     if (!g) return nullptr;   // (makeItemPso counted it)
     *game = pso;
-    out->body = true, out->skin = dummy->GetGPUVirtualAddress();
+    out->body = true, out->item = true, out->skin = dummy->GetGPUVirtualAddress();
     ++gGlassDraws, ++gItemDraws;
     return g.Get();
 }
@@ -2050,6 +2052,8 @@ void pumpTiming(ID3D12Device* dev, ID3D12CommandQueue* q) {
                 tr += " [" + std::get<2>(k) + " idx " + std::to_string(std::get<0>(k)) + (std::get<1>(k) ? " GLASS" : " plain") + " x" + std::to_string(v) + "]";
             gItemTrace.clear();
         }
+        tr += " | item replays: glass " + std::to_string(gItemReplay[0].exchange(0)) + ", fell back " + std::to_string(gItemReplay[1].exchange(0)) +
+              ", dropped (no root/IB) " + std::to_string(gItemReplay[2].exchange(0));
         if (!tr.empty()) { std::string s2 = line; if (!s2.empty() && s2.back() == '\n') s2.pop_back(); s2 += " | item draws:" + tr + "\n"; std::ofstream(gOutDir / "glass_ms.txt", std::ios::app) << s2; }
         else std::ofstream(gOutDir / "glass_ms.txt", std::ios::app) << line;
     }

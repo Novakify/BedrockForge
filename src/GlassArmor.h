@@ -44,7 +44,7 @@ bool bodyOn();  // You or Other players
 bool itemsOn(); // Items (held, dropped, item frames)
 /// What a replayed draw needs besides its pipeline: body and item draws bind one more root SRV (t3 space9): our copy
 /// of the skin / the item's sprite. (`body` = that extra SRV is bound.)
-struct GlassDraw { bool body = false; unsigned long long skin = 0; };
+struct GlassDraw { bool body = false; bool item = false; unsigned long long skin = 0; };
 /// Called before every indexed draw while enabled: our glass PSO if this is an armor / player draw (game PSO in *game),
 /// else null.
 ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState** game, GlassDraw* out = nullptr);
@@ -71,6 +71,9 @@ bool                 isActorPso(ID3D12PipelineState* pso);
 ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list);
 /// Glass Items trace: every indexed draw on an ItemInHand pipeline (index count, glassed or not) -> glass_ms.txt
 void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed);
+/// Glass Items trace: what became of a held-back item draw (0 replayed with glass, 1 fell back to the game's draw,
+/// 2 dropped: no root / index buffer known, 3 dropped: list closed with it pending)
+void traceItemReplay(int what);
 void                 noteDsv(size_t handle, ID3D12Resource* res);
 ID3D12Resource*      dsvResource(size_t handle);
 void                 noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size);
