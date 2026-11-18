@@ -1183,7 +1183,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false, bool atmos = false) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false, bool atmos = false, bool atmosDepth = false) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
@@ -1193,7 +1193,8 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     // builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it - and each
     // again with the death scenes (80-odd kill animations, the pass's biggest code by far), used only on frames where
     // a kill is playing, so every other frame runs the lean pass
-    if (atmos) d.PS = {rf::worldfx::shaders::PSWorldFxAtmos, sizeof rf::worldfx::shaders::PSWorldFxAtmos};   // Haze + Mist (shaders/worldfx_atmos.hlsl)
+    if (atmosDepth) d.PS = {rf::worldfx::shaders::PSWorldFxAtmosDepth, sizeof rf::worldfx::shaders::PSWorldFxAtmosDepth};   // + the cape's depth
+    else if (atmos) d.PS = {rf::worldfx::shaders::PSWorldFxAtmos, sizeof rf::worldfx::shaders::PSWorldFxAtmos};   // Haze + Mist (shaders/worldfx_atmos.hlsl)
     else if (blur) d.PS = {rf::worldfx::shaders::PSWorldFxBlur, sizeof rf::worldfx::shaders::PSWorldFxBlur};   // camera motion blur (shaders/worldfx_blur.hlsl)
     else if (kills) d.PS = glass ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxGlassKills, sizeof rf::worldfx::shaders::PSWorldFxGlassKills}
                             : D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxKills, sizeof rf::worldfx::shaders::PSWorldFxKills};
@@ -1216,6 +1217,11 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     for (UINT i = 0; i < g.numRt; ++i) d.RTVFormats[i] = g.rtv[i];
     d.DSVFormat  = g.dsv;
     d.SampleDesc = g.sample;
+    if (atmosDepth && g.dsv != DXGI_FORMAT_UNKNOWN) {   // [Cape] the pass writes depth: the scene's own back, the cloth's where it hangs in front
+        d.DepthStencilState.DepthEnable    = TRUE;
+        d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        d.DepthStencilState.DepthFunc      = D3D12_COMPARISON_FUNC_ALWAYS;
+    }
     if (depthMode) {   // the pass split in two by the depth buffer: 1 = sky pixels only (drawn at depth 1), 2 = everything else
         d.DepthStencilState.DepthEnable    = TRUE;
         d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
@@ -1280,7 +1286,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
             // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
-            made.push_back({key, which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+            made.push_back({key, which == 20 ? makeWfxPso(d.Get(), g, false, 0, false, false, true, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
                                             : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
@@ -2859,7 +2865,10 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             }
         }
     }
-    ID3D12PipelineState* ap = atmosNeed ? derived(dev.Get(), g, 19) : nullptr;   // Haze + Mist
+    // [Cape] with the cape on, the pass also writes depth (where the cloth hangs) so later draws - Glass Armor - go behind
+    // it; only while the world's depth is writable here
+    bool const capeDepth = atmosNeed && atm.cp && rf::glassarmor::stateOf(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE) == D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    ID3D12PipelineState* ap = atmosNeed ? derived(dev.Get(), g, capeDepth ? 20 : 19) : nullptr;   // Haze + Mist
     if (!ap) atmosNeed = false;
     if (blurOnly && !blurNeed && !atmosNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
         if (gAtmosOn.load(std::memory_order_relaxed) && !ap) { wfxStatus("building the haze / mist pipeline (in the background)"); return false; }

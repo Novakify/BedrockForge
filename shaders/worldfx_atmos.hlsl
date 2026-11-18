@@ -529,7 +529,7 @@ float3 blockOutline(float3 rd, float3 P, float dist, bool sky) {
 
 // ---- [Purxiy] Wings + Cape: shapes in the air behind you, traced as planes (like the halo); `over` = a translucent
 // layer they lay over the world (rgb, a), the return value is light added on top
-float3 wingsCape(float3 rd, float dist, float t, inout float4 over) {
+float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float capeT) {
     float3 L = 0;
     if (pl.w < -50.0) return L;
     bool  fp  = length(pl.xyz + float3(0, 1.62, 0)) < 0.6;
@@ -620,6 +620,7 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over) {
                 float bottom = 1.02 + 0.05 * sin(s * 11.0 + t * 3.0);
                 float d = max(abs(s) - hw, max(-l, l - bottom));
                 float inside = 1.0 - smoothstep(-0.01, 0.01, d);
+                if (inside > 0.5) capeT = min(capeT, tp);   // [ATMOS_DEPTH] the cloth is solid: later draws (glass armour) go behind it
                 if (inside > 0.0) {
                     float wave = sin(l * 7.0 - t * (3.0 + 4.0 * cp2.y)) * 0.5 + 0.5;
                     float shade = 0.55 + 0.45 * wave;                // the folds catch the light
@@ -807,7 +808,12 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
     return o + hl;
 }
 
+#if ATMOS_DEPTH
+struct AtmosOut { float4 c : SV_Target; float dep : SV_Depth; };
+AtmosOut PSWorldFxAtmos(VSOut i) {
+#else
 float4 PSWorldFxAtmos(VSOut i) : SV_Target {
+#endif
     float2 px   = i.pos.xy;
     uint   fl   = uint(c3.x);
     float  d    = rawDepth(int2(px));
@@ -886,7 +892,8 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t);
     [branch] if (cs0.w > 0.0 || au0.w > 0.0 || ha0.w > 0.0) ambL += cosmetics(q, rd, sky ? 1e4 : dist, sky, t);
     float4 overC = 0;                                        // [Purxiy] wings / cape cloth over the world
-    [branch] if (wg0.w > 0.0 || cp0.w > 0.0) ambL += wingsCape(rd, sky ? 1e4 : dist, t, overC);
+    float capeT = 1e9;
+    [branch] if (wg0.w > 0.0 || cp0.w > 0.0) ambL += wingsCape(rd, sky ? 1e4 : dist, t, overC, capeT);
     [branch] if (bo0.w > 0.0) ambL += blockOutline(rd, q, sky ? 1e4 : dist, sky);
     // ---- haze: everything the mist let through takes on the haze colour with distance (closed form)
     [branch] if ((fl & 2u) != 0u && c6.w > 0.0) {
@@ -927,5 +934,13 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     }
     [branch] if (wx1.w > 0.5) outL += weather(rd, sky ? 1e4 : dist, t, night);
     float3 o = sqrt(max(outL + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
+#if ATMOS_DEPTH
+    AtmosOut r;
+    r.c = float4(o, 1.0);
+    // the depth stays the scene's, except where the cape's cloth is in front: there it is the cloth's (viewZ inverted)
+    r.dep = capeT < 1e8 ? saturate(1.0 - 0.025 * length(ray) / max(capeT, 0.05)) : d;
+    return r;
+#else
     return float4(o, 1.0);
+#endif
 }
