@@ -2,6 +2,7 @@
 // STAGED, UNVERIFIED IN GAME. Same world-camera test as SpatialCamera::onCamera (perspective projection, camera within
 // 8 blocks of the local player's eyes) so the UI / item cameras are ignored.
 #include "LyricsCamera.h"
+#include "Panorama.h"
 #include "LLShim.h"
 
 #include <chrono>
@@ -100,7 +101,23 @@ YouPose you() {
 CameraSnap camera() {
     std::lock_guard l(gMutex);
     int64_t const now = nowMs();
-    if (gSnap.valid && now - gSnap.atMs <= 120) return gSnap;
+    if (gSnap.valid && now - gSnap.atMs <= 120) {
+        // [Main Menu] the capture turns the view through the cube faces (with a 90 degree view) without turning the
+        // player, and only the world's origin camera carries that: the sky and the World FX pass drawn from the eye
+        // camera came out the same on every face of the menu panorama. While capturing, use the origin camera's axes
+        // and projection. (Only then: other origin cameras - item previews - must never steer the sky in play.)
+        if (rf::pano::capturing() && gWorldSnap.valid && now - gWorldSnap.atMs <= 120) {
+            CameraSnap s = gSnap;
+            std::memcpy(s.right, gWorldSnap.right, sizeof s.right);
+            std::memcpy(s.up, gWorldSnap.up, sizeof s.up);
+            std::memcpy(s.forward, gWorldSnap.forward, sizeof s.forward);
+            std::memcpy(s.proj, gWorldSnap.proj, sizeof s.proj);
+            s.fovYDeg = gWorldSnap.fovYDeg;
+            s.aspect  = gWorldSnap.aspect;
+            return s;
+        }
+        return gSnap;
+    }
     if (gWorldSnap.valid && now - gWorldSnap.atMs <= 250) {   // the eye camera is stale: the HUD is hidden
         CameraSnap w = gWorldSnap;
         w.calls = gSnap.calls; w.chosen = gSnap.chosen;
