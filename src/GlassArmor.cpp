@@ -257,7 +257,8 @@ struct Atlas {
 };
 Atlas                             gAtlas[kAtlasSlots];
 std::atomic<long>                 gItemWhy[4]{};   // item pipeline draws not glassed: not ItemInHand / names pending / no atlas bound / atlas not copied yet
-std::string                       gItemSeen;       // the last item draw's first textures (w x h, mips), for the panel
+std::string                       gItemSeen;
+std::map<std::tuple<unsigned, int, std::string>, long> gItemTrace;   // (index count, glassed, material) -> draws, per 5 s       // the last item draw's first textures (w x h, mips), for the panel
 ComPtr<ID3D12CommandAllocator>    gItemAlloc;
 ComPtr<ID3D12GraphicsCommandList> gItemList;
 ComPtr<ID3D12Fence>               gItemFence;
@@ -1034,6 +1035,19 @@ bool isActorPso(ID3D12PipelineState* pso) {
     if (!pso) return false;
     std::lock_guard l(gMutex);
     return gActor.count(pso) != 0;
+}
+void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed) {
+    if (!itemsOn()) return;
+    std::lock_guard l(gMutex);
+    auto it = gListPso.find(list);
+    if (it == gListPso.end()) return;
+    auto pi = gPsos.find(it->second);
+    if (pi == gPsos.end()) return;
+    std::string n = nameOf(pi->second.ps);
+    if (n.find("ItemInHand") == std::string::npos) return;
+    n = n.substr(0, n.find(".material"));
+    bool const itemVs = gItemPso.count(it->second) != 0, actorVs = gActor.count(it->second) != 0;
+    if (gItemTrace.size() < 64) ++gItemTrace[{indexCount, glassed ? 1 : 0, n + (itemVs ? "/item" : actorVs ? "/actor" : "/other")}];
 }
 ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list) {
     std::lock_guard l(gMutex);
@@ -2029,7 +2043,15 @@ void pumpTiming(ID3D12Device* dev, ID3D12CommandQueue* q) {
                       static_cast<long long>(now / 1000), gShowCpuMs, gShowGpuMs < 0 ? "-" : std::to_string(gShowGpuMs).substr(0, 6).c_str(),
                       gShowFlushes, armorOn() ? "on" : "off", bodyOn() ? "on" : "off", gSelf ? 1 : 0, gOthers ? 1 : 0, gItems ? 1 : 0,
                       gItemPso.size(), gItemDrawsShown.load(), gItemPsoFail.load(), gItemWhy[0].exchange(0), gItemWhy[1].exchange(0));
-        std::ofstream(gOutDir / "glass_ms.txt", std::ios::app) << line;
+        std::string tr;
+        {
+            std::lock_guard l(gMutex);
+            for (auto const& [k, v] : gItemTrace)
+                tr += " [" + std::get<2>(k) + " idx " + std::to_string(std::get<0>(k)) + (std::get<1>(k) ? " GLASS" : " plain") + " x" + std::to_string(v) + "]";
+            gItemTrace.clear();
+        }
+        if (!tr.empty()) { std::string s2 = line; if (!s2.empty() && s2.back() == '\n') s2.pop_back(); s2 += " | item draws:" + tr + "\n"; std::ofstream(gOutDir / "glass_ms.txt", std::ios::app) << s2; }
+        else std::ofstream(gOutDir / "glass_ms.txt", std::ios::app) << line;
     }
     gCpuMs = gGpuMs = 0, gFlushes = gGpuPairs = 0, frames = 0, lastLog = now;
 }
