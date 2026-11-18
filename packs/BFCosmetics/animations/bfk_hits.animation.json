@@ -1,0 +1,55 @@
+{
+ "format_version": "1.10.0",
+ "animations": {
+  "animation.bfk.hit_a.fx": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "particle_effects": {
+    "0.000": [
+     {
+      "effect": "spark",
+      "locator": "tip"
+     },
+     {
+      "effect": "cutflash",
+      "locator": "tip"
+     }
+    ]
+   }
+  },
+  "animation.bfk.hit_a.snd": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "sound_effects": {
+    "0.000": {
+     "effect": "cut"
+    }
+   }
+  },
+  "animation.bfk.hit_b.fx": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "particle_effects": {
+    "0.000": [
+     {
+      "effect": "spark",
+      "locator": "tip"
+     },
+     {
+      "effect": "cutflash",
+      "locator": "tip"
+     }
+    ]
+   }
+  },
+  "animation.bfk.hit_b.snd": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "sound_effects": {
+    "0.000": {
+     "effect": "cut"
+    }
+   }
+  }
+ }
+}

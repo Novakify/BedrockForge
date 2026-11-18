@@ -338,7 +338,8 @@ def bones(kind="karambit"):
     handles are their own bones on their pivot pins for the flip"""
     out = [
         {"name": "wfx_item", "pivot": [0, 24, 0], "binding": "q.item_slot_to_bone_name(c.item_slot)"},
-        {"name": "bfk_pose", "parent": "wfx_item", "pivot": [0, 24, 0]},
+        {"name": "bfk_fix", "parent": "wfx_item", "pivot": [0, 24, 0]},   # first-person size / place (anims.knife_fp)
+        {"name": "bfk_pose", "parent": "bfk_fix", "pivot": [0, 24, 0]},
         {"name": "bfk_spin", "parent": "bfk_pose", "pivot": list(SPIN_PIVOT[kind])},
         {"name": "bfk_blade", "parent": "bfk_spin", "pivot": [0, 24, 0], "locators": {"tip": list(TIP[kind])}},
         {"name": "bfk_body", "parent": "bfk_spin", "pivot": [0, 24, 0]},

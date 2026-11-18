@@ -63,6 +63,7 @@ bool isSword(ItemStack const& st) {
 
 struct State {
     bool    heldSword = false;
+    void const* heldSlot = nullptr;
     int64_t drawAt = 0, inspectAt = 0, othersAt = 0, attackAt = 0, hitAt = 0, stillSince = 0;
     int     inspectN = 0, attackN = 0, hitN = 0;
     bool    keyWas = false, lmbWas = false;
@@ -102,9 +103,13 @@ void frame(LocalPlayer* lp) {
     Actor& self = *lp;
     auto secs = [&](int64_t at) { return at ? std::min(99.f, float(now - at) / 1000.f) : 99.f; };
     try {
-        bool const sword = isSword(lp->getSelectedItem());
-        if (sword && !gS.heldSword) gS.drawAt = now;
+        ItemStack const& held = lp->getSelectedItem();
+        bool const sword = isSword(held);
+        // draw on equipping a sword: from a non-sword, or from one sword slot to another (the slot's stack moved)
+        void const* slot = &held;
+        if (sword && (!gS.heldSword || slot != gS.heldSlot)) gS.drawAt = now;
         gS.heldSword = sword;
+        gS.heldSlot = slot;
         float design = 0.f, draw = 99.f, insp = 99.f, atk = 99.f, hit = 99.f, spd = 1.f, opt = 0.f;
         if (on) {
             design = float(std::clamp(int(m->num("model", 0)), 0, 2) + 1);
@@ -135,8 +140,11 @@ void frame(LocalPlayer* lp) {
             hit = secs(gS.hitAt);
             opt = float((m->flag("slash_arcs", true) ? 1 : 0) | (m->flag("hit_effects", true) ? 2 : 0) | (m->flag("sounds", true) ? 4 : 0));
         }
-        static bool wasOn = false;
-        if (on || wasOn) {   // off: one last write of 0 so the knife turns back into the sword, then hands off
+        // always written (rest values while off, once a second): the pack reads them every frame, and a variable
+        // that was never set made the sword vanish in game
+        static int64_t restAt = 0;
+        if (on || now - restAt > 1000) {
+            restAt = now;
             setPublic(self, "bfknife", design);
             setPublic(self, "bfkdraw", draw);
             setPublic(self, "bfkinsp", insp);
@@ -148,10 +156,9 @@ void frame(LocalPlayer* lp) {
             setPublic(self, "bfkspd", spd);
             setPublic(self, "bfkopt", opt);
         }
-        wasOn = on;
     } catch (...) {}
     // everyone else: the same variables at rest, so their swords stay vanilla and the pack never reads a missing one
-    if (on && now - gS.othersAt > 500) {   // only while Knives is on: otherwise nobody's variables are touched
+    if (now - gS.othersAt > (on ? 500 : 2000)) {   // local and visual only: no packet, nobody else sees it
         gS.othersAt = now;
         try {
             lp->getLevel().forEachPlayer([&](Player& p) {
