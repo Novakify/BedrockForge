@@ -92,6 +92,11 @@ struct ActorDesc {
     bool                                  glint = false; // ActorGlint pipeline = enchanted armor
 };
 std::unordered_map<ID3D12PipelineState*, std::shared_ptr<ActorDesc>> gActor;   // game Actor pipelines
+// Glass Items: the game's ItemInHandColor pipelines (held in first + third person, dropped, item frames - probe
+// 2026-11-17: all one material). Their vertex shader hands COLOR3 / COLOR1 over in swapped places. Kept apart from
+// gActor so the armor's replay trigger (isActorPso) is exactly as before.
+constexpr char const* kItemVsOut = "SV_Position0.xyzw@o0 COLOR3.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR1.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6";
+std::unordered_map<ID3D12PipelineState*, std::shared_ptr<ActorDesc>> gItemPso;
 std::map<std::pair<ID3D12PipelineState*, int>, ComPtr<ID3D12PipelineState>> gGlass; // (game PSO, variant) -> ours
 std::unordered_map<ID3D12Resource*, unsigned>                    gResState; // last barrier StateAfter
 // armor texture recognition: -1 not armor, -2 queued for readback, >= 0 shaders::kVariant index
@@ -191,7 +196,7 @@ bool skinSized(unsigned w, unsigned h) { return (w == 64 && (h == 64 || h == 32)
 // ---------------------------------------------------------------- Glass Body (Purxiy "Glass": You / Other players / Armour)
 // BF's Glass module writes config/GlassBody.txt ("self 1", "players 0", "armour 1"); read about once a second. All off
 // (Armour on) = exactly the Glass Armor of before: none of the code below runs.
-std::atomic_bool   gSelf{false}, gOthers{false}, gArmour{true};
+std::atomic_bool   gSelf{false}, gOthers{false}, gArmour{true}, gItems{false};
 fs::path           gBodyFile;
 fs::file_time_type gBodyTime{};
 void loadBody() {
@@ -206,6 +211,7 @@ void loadBody() {
         if (k == "self") gSelf = on;
         else if (k == "players") gOthers = on;
         else if (k == "armour") gArmour = on;
+        else if (k == "items") gItems = on;
     }
 }
 constexpr int kBodyKind = 1000; // gGlass key for the body pipeline (armor variants are 0..kVariants-1)
@@ -234,6 +240,23 @@ bool                   gSkinUpOk[16]{};
 std::atomic<int>       gMine{-1}; // your own BF slot + 1 (0 none yet, -1 BF missing)
 std::atomic<long>      gSkinsSelf{0}, gSkinsOther{0}, gSkinsNone{0}, gBodyDraws{0}, gBodyDrawsShown{0}, gBodyPsoFail{0};
 std::string            gSkinLast;   // the last comparison, for F6
+// ---- Glass Items: each item's own sprite (the 16x16 - 128x128 texture its ItemInHand draw binds first), read back
+// once into one of 64 slots of our item buffer (header: w, h; then rows of 256 bytes, at most 64x64 - a bigger
+// sprite is read every 2nd / 4th texel). The item shader reads its shape and colours from there.
+constexpr int    kItemSlots = 64, kItemSlotBytes = 32768;
+struct ItemKind  { int slot = -2; unsigned w = 0, h = 0, fmt = 0; int64_t drawn = 0; };   // -2 being read, -1 unusable
+std::unordered_map<ID3D12Resource*, ItemKind> gItemKind;
+std::vector<ComPtr<ID3D12Resource>>           gItemPending;
+std::vector<SkinRb>                           gItemInFlight;
+ComPtr<ID3D12CommandAllocator>                gItemAlloc;
+ComPtr<ID3D12GraphicsCommandList>             gItemList;
+ComPtr<ID3D12Fence>                           gItemFence;
+UINT64                                        gItemFenceVal = 0;
+ComPtr<ID3D12Resource>                        gItemBuf;
+uint8_t*                                      gItemMap = nullptr;
+ID3D12Resource*                               gItemSlotOf[kItemSlots]{};   // which texture each slot holds (ring)
+int                                           gItemNext = 0;
+std::atomic<long>                             gItemDraws{0}, gItemDrawsShown{0}, gItemsKnown{0}, gItemPsoFail{0};
 // ---- glass cost (logs/glassarmor/glass_ms.txt every 5 s while any glass is on)
 std::atomic_bool gMeasureGpu{false};
 std::mutex       gTimeMx;
@@ -510,7 +533,8 @@ namespace {
 bool armorOn() { return gEnabled.load(std::memory_order_relaxed) && gArmour.load(std::memory_order_relaxed); }
 }
 bool bodyOn() { return gSelf.load(std::memory_order_relaxed) || gOthers.load(std::memory_order_relaxed); }
-bool enabled() { return armorOn() || bodyOn(); }
+bool itemsOn() { return gItems.load(std::memory_order_relaxed); }
+bool enabled() { return armorOn() || bodyOn() || itemsOn(); }
 bool tracking() {
     return enabled() || gCap.load(std::memory_order_relaxed) != 0 || rf::worldfx::tracking();
 }
@@ -545,7 +569,8 @@ void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const&
     i.root    = d.pRootSignature;
     std::shared_ptr<ActorDesc> ad;
     bool const glintVs = i.vsOut == kGlintVsOut;
-    if ((i.vsOut == kActorVsOut || glintVs) && d.VS.pShaderBytecode && d.InputLayout.NumElements) {
+    bool const itemVs  = i.vsOut == kItemVsOut;
+    if ((i.vsOut == kActorVsOut || glintVs || itemVs) && d.VS.pShaderBytecode && d.InputLayout.NumElements) {
         ad        = std::make_shared<ActorDesc>();
         ad->d     = d;
         ad->glint = glintVs;
@@ -566,7 +591,8 @@ void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const&
     }
     std::lock_guard l(gMutex);
     gPsos[pso] = std::move(i);
-    if (ad) gActor[pso] = std::move(ad);
+    if (ad && itemVs) gItemPso[pso] = std::move(ad);
+    else if (ad) gActor[pso] = std::move(ad);
 }
 
 bool capturing() { return gCap.load(std::memory_order_relaxed) == 2; }
@@ -785,6 +811,25 @@ ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad,
 }
 
 bool bodyShaderBuilt() { return sizeof(shaders::kGlassBodyPs) > 64; }
+bool itemShaderBuilt() { return sizeof(shaders::kGlassItemPs) > 64; }
+/// Glass Items: the item's sprite = the first descriptor of the draw's first table (probe: r1.0), square 16..128.
+ID3D12Resource* boundItemTexture(ID3D12GraphicsCommandList* list, SrvInfo* info) {
+    auto tables = rf::uicapture::rootTables(list);
+    for (auto const& [ri, gpu] : tables) {
+        size_t   cpu = 0;
+        unsigned inc = 0;
+        if (!rf::uicapture::gpuDescToCpu(gpu, cpu, inc)) continue;
+        std::lock_guard l(gMutex);
+        auto it = gSrvs.find(cpu);
+        if (it == gSrvs.end() || !it->second.res) return nullptr;
+        auto const& v = it->second;
+        bool const pow2 = v.w == 16 || v.w == 32 || v.w == 64 || v.w == 128;
+        if (v.w != v.h || !pow2) return nullptr;
+        *info = v;
+        return v.res;
+    }
+    return nullptr;
+}
 /// Glass Body's pipeline: the game's Actor pipeline with our body pixel shader and the body root signature; the same
 /// state changes as the armor's (opaque, depth written, replayed after the actor pass).
 ComPtr<ID3D12PipelineState> makeBodyPso(ID3D12Device* dev, ActorDesc const& ad) {
@@ -808,6 +853,31 @@ ComPtr<ID3D12PipelineState> makeBodyPso(ID3D12Device* dev, ActorDesc const& ad) 
         char b[16];
         std::snprintf(b, sizeof b, "%08lx", static_cast<unsigned long>(hr));
         ll_shim::warn(std::string("[RF] glass body: pipeline failed 0x") + b);
+        return nullptr;
+    }
+    return p;
+}
+
+/// Glass Items' pipeline: the game's ItemInHand pipeline with our item pixel shader (same root as the body: + t3).
+ComPtr<ID3D12PipelineState> makeItemPso(ID3D12Device* dev, ActorDesc const& ad) {
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC d = ad.d;
+    unsigned base = 0;
+    ID3D12RootSignature* ext = extendedRootBody(ad.root.Get(), &base);
+    if (!ext) { ++gItemPsoFail; return nullptr; }
+    d.pRootSignature = ext;
+    d.PS             = {shaders::kGlassItemPs, sizeof(shaders::kGlassItemPs)};
+    auto& rt = d.BlendState.RenderTarget[0];
+    rt.BlendEnable = FALSE, rt.LogicOpEnable = FALSE, rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    d.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    d.DepthStencilState.StencilEnable  = FALSE;
+    d.RasterizerState.CullMode         = D3D12_CULL_MODE_NONE;
+    ComPtr<ID3D12PipelineState> p;
+    HRESULT hr = dev->CreateGraphicsPipelineState(&d, IID_PPV_ARGS(&p));
+    if (FAILED(hr)) {
+        ++gItemPsoFail;
+        char b[16];
+        std::snprintf(b, sizeof b, "%08lx", static_cast<unsigned long>(hr));
+        ll_shim::warn(std::string("[RF] glass items: pipeline failed 0x") + b);
         return nullptr;
     }
     return p;
@@ -1374,21 +1444,71 @@ ID3D12PipelineState* bodyPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
     ++gGlassDraws, ++gBodyDraws;
     return g.Get();
 }
+/// Glass Items: our pipeline for an ItemInHand draw whose sprite we hold a copy of.
+ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso, std::shared_ptr<ActorDesc> const& ad,
+                                ID3D12PipelineState** game, GlassDraw* out) {
+    if (!out || !itemShaderBuilt()) return nullptr;
+    SrvInfo         si;
+    ID3D12Resource* tex = boundItemTexture(list, &si);
+    if (!tex) return nullptr;
+    int64_t const now = int64_t(GetTickCount64());
+    int           slot;
+    {
+        std::lock_guard l(gMutex);
+        auto it = gItemKind.find(tex);
+        if (it == gItemKind.end() || it->second.w != si.w || it->second.fmt != si.fmt ||
+            (it->second.slot >= 0 && gItemSlotOf[it->second.slot] != tex)) {   // new, changed, or its slot was reused
+            ItemKind k;
+            k.w = si.w, k.h = si.h, k.fmt = si.fmt, k.drawn = now;
+            gItemKind[tex] = k;
+            gItemPending.emplace_back(tex);
+            return nullptr;
+        }
+        it->second.drawn = now;
+        if (it->second.slot < 0 || !gItemBuf) return nullptr;
+        slot = it->second.slot;
+        if (auto g = gGlass.find({pso, kBodyKind + 1}); g != gGlass.end()) {
+            if (!g->second) return nullptr;
+            *game = pso;
+            out->body = true, out->skin = gItemBuf->GetGPUVirtualAddress() + UINT64(slot) * kItemSlotBytes;
+            ++gGlassDraws, ++gItemDraws;
+            return g->second.Get();
+        }
+    }
+    ComPtr<ID3D12Device> dev;
+    if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return nullptr;
+    ComPtr<ID3D12PipelineState> made = makeItemPso(dev.Get(), *ad);
+    std::lock_guard l(gMutex);
+    auto& g = gGlass[{pso, kBodyKind + 1}];
+    if (!g) g = made;
+    if (!g || !gItemBuf) return nullptr;
+    *game = pso;
+    out->body = true, out->skin = gItemBuf->GetGPUVirtualAddress() + UINT64(slot) * kItemSlotBytes;
+    ++gGlassDraws, ++gItemDraws;
+    return g.Get();
+}
 } // namespace
 
 ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineState** game, GlassDraw* out) {
     if (!shadersBuilt()) return nullptr;
     ID3D12PipelineState*       pso = nullptr;
     std::shared_ptr<ActorDesc> ad;
+    bool                       isItem = false;
     {
         std::lock_guard l(gMutex);
         auto it = gListPso.find(list);
         if (it == gListPso.end()) return nullptr;
         pso    = it->second;
         auto a = gActor.find(pso);
-        if (a == gActor.end()) return nullptr;
-        ad = a->second;
+        if (a == gActor.end()) {
+            isItem = true;
+            if (!itemsOn()) return nullptr;
+            auto t = gItemPso.find(pso);
+            if (t == gItemPso.end()) return nullptr;
+            ad = t->second;
+        } else ad = a->second;
     }
+    if (isItem) return itemPsoFor(list, pso, ad, game, out);   // (an item pipeline: only reached with Items on)
     // Glass Armor: unchanged (armour textures are 64x32 / 128x64 - never a skin)
     ID3D12Resource* tex = armorOn() ? boundArmorTexture(list) : nullptr;
     if (!tex) return bodyOn() ? bodyPsoFor(list, pso, ad, game, out) : nullptr;
@@ -1748,6 +1868,107 @@ void pumpSkins(ID3D12Device* dev, ID3D12CommandQueue* q) {
     q->Signal(gSkinFence.Get(), ++gSkinFenceVal);
 }
 
+/// Glass Items, once per Present while Items is on: copy finished sprite readbacks into slots, queue new ones.
+void pumpItems(ID3D12Device* dev, ID3D12CommandQueue* q) {
+    if (!gItemBuf) {
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC   d{};
+        d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, d.Width = UINT64(kItemSlots) * kItemSlotBytes, d.Height = 1, d.DepthOrArraySize = 1;
+        d.MipLevels = 1, d.SampleDesc.Count = 1, d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> b;
+        uint8_t*               m = nullptr;
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&b))) ||
+            FAILED(b->Map(0, nullptr, reinterpret_cast<void**>(&m))) || !m)
+            return;
+        std::lock_guard l(gMutex);
+        gItemBuf = b, gItemMap = m;
+    }
+    if (!gItemFence && FAILED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gItemFence)))) return;
+    if (!gItemInFlight.empty()) {
+        if (gItemFence->GetCompletedValue() < gItemFenceVal) return;
+        for (auto& r : gItemInFlight) {
+            void*       m = nullptr;
+            D3D12_RANGE rr{0, size_t(r.pitch) * r.h};
+            int         slot = -1;
+            if (r.buf && SUCCEEDED(r.buf->Map(0, &rr, &m)) && m) {
+                auto const*    px   = static_cast<uint8_t const*>(m);
+                unsigned const step = r.w > 64 ? r.w / 64 : 1, w = r.w / step, h = r.h / step;
+                long           painted = 0;
+                std::lock_guard l(gMutex);
+                slot = gItemNext++ % kItemSlots;
+                uint8_t* dst = gItemMap + size_t(slot) * kItemSlotBytes;
+                uint32_t hdr[4]{w, h, 0, 0};
+                std::memcpy(dst, hdr, sizeof hdr);
+                for (unsigned y = 0; y < h; ++y)
+                    for (unsigned x = 0; x < w; ++x) {
+                        uint8_t const* s = px + size_t(y * step) * r.pitch + size_t(x * step) * 4;
+                        uint8_t*       o = dst + 256 + y * 256 + x * 4;
+                        o[0] = s[r.bgra ? 2 : 0], o[1] = s[1], o[2] = s[r.bgra ? 0 : 2], o[3] = s[3];
+                        painted += s[3] != 0;
+                    }
+                if (painted < 4) slot = -1;   // an empty / blank texture: leave it vanilla
+                else gItemSlotOf[slot] = r.tex.Get(), ++gItemsKnown;
+                D3D12_RANGE none{0, 0};
+                r.buf->Unmap(0, &none);
+            }
+            std::lock_guard l(gMutex);
+            gItemKind[r.tex.Get()].slot = slot;
+        }
+        gItemInFlight.clear();
+        int64_t const now = int64_t(GetTickCount64());
+        std::lock_guard l(gMutex);
+        for (auto it = gItemKind.begin(); it != gItemKind.end();)
+            it = now - it->second.drawn > 60000 && it->second.slot != -2 ? gItemKind.erase(it) : std::next(it);
+    }
+    std::vector<ComPtr<ID3D12Resource>> todo;
+    {
+        std::lock_guard l(gMutex);
+        while (!gItemPending.empty() && todo.size() < 8) { todo.push_back(gItemPending.back()); gItemPending.pop_back(); }
+    }
+    if (todo.empty()) return;
+    if (!gItemAlloc && FAILED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&gItemAlloc)))) return;
+    if (!gItemList) {
+        if (FAILED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, gItemAlloc.Get(), nullptr, IID_PPV_ARGS(&gItemList)))) return;
+    } else {
+        gItemAlloc->Reset();
+        gItemList->Reset(gItemAlloc.Get(), nullptr);
+    }
+    for (auto& tex : todo) {
+        auto const td = tex->GetDesc();
+        SkinRb     r;
+        r.tex = tex, r.w = unsigned(td.Width), r.h = td.Height;
+        r.bgra = td.Format == DXGI_FORMAT_B8G8R8A8_UNORM || td.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || td.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
+        bool const rgba = td.Format == DXGI_FORMAT_R8G8B8A8_UNORM || td.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || td.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT64                             tot = 0;
+        if (td.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && (rgba || r.bgra) && td.SampleDesc.Count == 1 && r.w == r.h && r.w >= 16 && r.w <= 128)
+            dev->GetCopyableFootprints(&td, 0, 1, 0, &fp, nullptr, nullptr, &tot);
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
+        D3D12_RESOURCE_DESC   bd{};
+        bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, bd.Width = tot, bd.Height = 1, bd.DepthOrArraySize = 1, bd.MipLevels = 1;
+        bd.SampleDesc.Count = 1, bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (!tot || FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&r.buf)))) {
+            r.buf.Reset();
+            gItemInFlight.push_back(r);
+            continue;
+        }
+        r.pitch = fp.Footprint.RowPitch;
+        auto const st  = knownState(tex.Get(), D3D12_RESOURCE_STATE_COMMON);
+        bool const bar = st != D3D12_RESOURCE_STATE_COMMON && st != D3D12_RESOURCE_STATE_COPY_SOURCE;
+        if (bar) barrier(gItemList.Get(), tex.Get(), st, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
+        dst.pResource = r.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
+        src.pResource = tex.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        gItemList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        if (bar) barrier(gItemList.Get(), tex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
+        gItemInFlight.push_back(r);
+    }
+    gItemList->Close();
+    ID3D12CommandList* lists[] = {gItemList.Get()};
+    q->ExecuteCommandLists(1, lists);
+    q->Signal(gItemFence.Get(), ++gItemFenceVal);
+}
+
 /// The glass cost, once per Present: GPU pairs from 4+ frames ago, a log line every 5 s.
 void pumpTiming(ID3D12Device* dev, ID3D12CommandQueue* q) {
     static int64_t lastLog = 0;
@@ -1784,9 +2005,9 @@ void pumpTiming(ID3D12Device* dev, ID3D12CommandQueue* q) {
         std::error_code ec;
         fs::create_directories(gOutDir, ec);
         char line[256];
-        std::snprintf(line, sizeof line, "%lld glass cpu %.3f ms/frame | gpu %s ms/frame | replays %.2f/frame | armor %s body %s (you %d, others %d)\n",
+        std::snprintf(line, sizeof line, "%lld glass cpu %.3f ms/frame | gpu %s ms/frame | replays %.2f/frame | armor %s body %s (you %d, others %d) items %d\n",
                       static_cast<long long>(now / 1000), gShowCpuMs, gShowGpuMs < 0 ? "-" : std::to_string(gShowGpuMs).substr(0, 6).c_str(),
-                      gShowFlushes, armorOn() ? "on" : "off", bodyOn() ? "on" : "off", gSelf ? 1 : 0, gOthers ? 1 : 0);
+                      gShowFlushes, armorOn() ? "on" : "off", bodyOn() ? "on" : "off", gSelf ? 1 : 0, gOthers ? 1 : 0, gItems ? 1 : 0);
         std::ofstream(gOutDir / "glass_ms.txt", std::ios::app) << line;
     }
     gCpuMs = gGpuMs = 0, gFlushes = gGpuPairs = 0, frames = 0, lastLog = now;
@@ -1831,6 +2052,10 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
     if (bodyOn() && device && queue) {
         pumpSkins(device, queue);
         gBodyDrawsShown = gBodyDraws.exchange(0);
+    }
+    if (itemsOn() && device && queue) {
+        pumpItems(device, queue);
+        gItemDrawsShown = gItemDraws.exchange(0);
     }
     if (enabled()) pumpTiming(device, queue);
     if (enabled() && device && queue) {
@@ -1911,15 +2136,19 @@ void drawUi() {
         ImGui::Text("Glass draws last frame: %ld   actor pipelines: %zu   glass pipelines: %zu   failed: %ld",
                     gGlassDrawsShown.load(), gActor.size(), gGlass.size(), gPsoFail.load());
         ImGui::SeparatorText("Glass Body (client: Cosmetics > Glass > You / Other players / Armour)");
-        ImGui::Text("You: %s   Other players: %s   Armour: %s%s", gSelf ? "on" : "off", gOthers ? "on" : "off", gArmour ? "on" : "off",
-                    gArmour ? "" : " (armour keeps its own look)");
+        ImGui::Text("You: %s   Other players: %s   Items: %s   Armour: %s%s", gSelf ? "on" : "off", gOthers ? "on" : "off", gItems ? "on" : "off",
+                    gArmour ? "on" : "off", gArmour ? "" : " (armour keeps its own look)");
         if (!bodyShaderBuilt()) ImGui::TextDisabled("glass body shader missing from this build");
         int const mine = gMine.load();
-        ImGui::Text("Bedrock Forge skins: %s", mine < 0 ? "not available (BF missing / too old)" : mine == 0 ? "yours not grabbed yet" : "yours grabbed");
+        if (!bodyOn()) ImGui::TextDisabled("Bedrock Forge skins: looked at once You or Other players is on");
+        else ImGui::Text("Bedrock Forge skins: %s", mine < 0 ? "not available (BF missing / too old)" : mine == 0 ? "yours not grabbed yet" : "yours grabbed");
         ImGui::Text("Skin textures: yours %ld   other players %ld   not players %ld   being read %zu", gSkinsSelf.load(), gSkinsOther.load(),
                     gSkinsNone.load(), gSkinPending.size() + gSkinInFlight.size());
         ImGui::TextWrapped("Last: %s", gSkinLast.empty() ? "-" : gSkinLast.c_str());
         ImGui::Text("Body glass draws last frame: %ld   pipeline failures: %ld", gBodyDrawsShown.load(), gBodyPsoFail.load());
+        ImGui::Text("Items: sprites held %ld   item pipelines %zu   glass draws last frame %ld   failures %ld", gItemsKnown.load(), gItemPso.size(),
+                    gItemDrawsShown.load(), gItemPsoFail.load());
+        if (!itemShaderBuilt()) ImGui::TextDisabled("glass item shader missing from this build");
         bool mg = gMeasureGpu.load();
         if (ImGui::Checkbox("Measure glass cost on the GPU (logs/glassarmor/glass_ms.txt)", &mg)) gMeasureGpu = mg;
         if (gShowGpuMs < 0) ImGui::Text("Glass cost: CPU %.3f ms/frame, %.2f replays/frame", gShowCpuMs, gShowFlushes);

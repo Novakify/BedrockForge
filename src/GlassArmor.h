@@ -40,8 +40,10 @@ bool enabled();
 bool tracking();
 void noteBarriers(unsigned n, D3D12_RESOURCE_BARRIER const* b);
 // ---- Glass Body (Purxiy "Glass": You / Other players / Armour; config/GlassBody.txt, written by BF's Glass module)
-bool bodyOn(); // You or Other players
-/// What a replayed draw needs besides its pipeline: body draws bind one more root SRV, our copy of the skin (t3 space9).
+bool bodyOn();  // You or Other players
+bool itemsOn(); // Items (held, dropped, item frames)
+/// What a replayed draw needs besides its pipeline: body and item draws bind one more root SRV (t3 space9): our copy
+/// of the skin / the item's sprite. (`body` = that extra SRV is bound.)
 struct GlassDraw { bool body = false; unsigned long long skin = 0; };
 /// Called before every indexed draw while enabled: our glass PSO if this is an armor / player draw (game PSO in *game),
 /// else null.
