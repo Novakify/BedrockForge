@@ -492,12 +492,12 @@ bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
     float const yaw = gFl.lockYaw + gFl.offYaw, pitch = std::clamp(gFl.lockPitch + gFl.offPitch, -89.0f, 89.0f);
     float const y = yaw * kDeg, pt = pitch * kDeg;
     glm::vec3 const f(-std::sin(y) * std::cos(pt), -std::sin(pt), std::cos(y) * std::cos(pt));
-    float const want = gFlDist.load(std::memory_order_relaxed) * e;
+    float const wantD = gFlDist.load(std::memory_order_relaxed) * e;
     // walls: like the game's own third-person camera, the orbit stops in front of the first solid block (eight rays from
     // around your eyes, the same test the cinematic camera uses) - no looking through walls. In at once, out gently.
-    float reach = want;
-    if (want > 0.05f) {
-        glm::vec3 const hit = collideCamera(actor, eye, eye - f * want);
+    float reach = wantD;
+    if (wantD > 0.05f) {
+        glm::vec3 const hit = collideCamera(actor, eye, eye - f * wantD);
         reach = std::max(0.0f, glm::length(hit - eye) - 0.1f);
     }
     gFl.reach = gFl.reach < 0 || reach < gFl.reach ? reach : gFl.reach + (reach - gFl.reach) * 0.2f;
