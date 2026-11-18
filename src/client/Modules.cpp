@@ -248,26 +248,27 @@ void writeGlassFrost(float frost, float glow, bool shimmer, int tint) {
 }
 // Purxiy's Glass also says WHAT is glass (You / Other players / Items / Armour): Renderer Foundation reads
 // config/GlassBody.txt about once a second. You / Other players off and Armour on = the Glass Armor of before.
-void writeGlassBody(bool self, bool players, bool armour) {
+void writeGlassBody(bool self, bool players, bool armour, bool items) {
     try {
         auto const path = ll::mod::NativeMod::current()->getModDir().parent_path() / "RendererFoundation" / "config" / "GlassBody.txt";
         std::error_code ec;
         if (!std::filesystem::exists(path.parent_path(), ec)) return;
-        std::ofstream(path) << std::format("self {}\nplayers {}\narmour {}\n", self ? 1 : 0, players ? 1 : 0, armour ? 1 : 0);
+        std::ofstream(path) << std::format("self {}\nplayers {}\narmour {}\nitems {}\n", self ? 1 : 0, players ? 1 : 0, armour ? 1 : 0, items ? 1 : 0);
     } catch (...) {}
 }
 std::string gGlassLast; // last written settings ("" = write on the next frame)
 void glassTick(Module& m) {
     std::string& last = gGlassLast;
-    std::string const now = std::format("{:.2f}/{:.2f}/{}/{}/{}/{}/{}", m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true),
-                                        int(m.num("tint", 0)), m.flag("self", false), m.flag("players", false), m.flag("armour", true));
+    std::string const now = std::format("{:.2f}/{:.2f}/{}/{}/{}/{}/{}/{}", m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true),
+                                        int(m.num("tint", 0)), m.flag("self", false), m.flag("players", false), m.flag("armour", true),
+                                        m.flag("items", false));
     if (now == last) return;
     static int64_t at = 0;
     if (nowMs() - at < 150) return;   // dragging a slider: a few writes a second at most
     at = nowMs();
     last = now;
     writeGlassFrost(m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
-    writeGlassBody(m.flag("self", false), m.flag("players", false), m.flag("armour", true));
+    writeGlassBody(m.flag("self", false), m.flag("players", false), m.flag("armour", true), m.flag("items", false));
 }
 
 // the client's accent (Client UI -> Accent colour; Novak purple by default), refreshed every HUD frame
@@ -1361,17 +1362,18 @@ void registerBuiltins() {
     }
     r.add("no_hurt_cam", "No Hurt Cam", Category::Camera, "No camera tilt when you take damage");
     {
-        auto& gl = r.add("glass_frost", "Glass", Category::Visual, "Players and armour made of glass: clear as a window, or soft and milky (Renderer Foundation)", false);
+        auto& gl = r.add("glass_frost", "Glass", Category::Visual, "Players, items and armour made of glass: clear as a window, or soft and milky (Renderer Foundation)", false);
         gl.slider("frost", "Frosted (0 clear .. 1 milky)", 0.35f, 0.f, 1.f, 0.05f).slider("glow", "Glow", 0.2f, 0.f, 1.f, 0.05f)
             .toggleSetting("shimmer", "Shimmer (a soft sheen now and then)", true)
             .choice("tint", "Colour", {"White", "Lilac", "Neon purple", "Ice blue", "Rose", "Gold"}, 0)
             .toggleSetting("self", "You (your body in third person, your arm in first person)", false)
             .toggleSetting("players", "Other players", false)
+            .toggleSetting("items", "Items (held, dropped and in item frames)", false)
             .toggleSetting("armour", "Armour (off: it keeps its own look)", true);
         gl.hud      = [](Frame&) { if (auto* m = Registry::get().find("glass_frost")) glassTick(*m); };
         gl.onToggle = [](bool on) {
             gGlassLast.clear();
-            if (!on) { writeGlassFrost(0.f, 0.f, false, 0); writeGlassBody(false, false, true); }   // off: the glass armour as before, no glass body
+            if (!on) { writeGlassFrost(0.f, 0.f, false, 0); writeGlassBody(false, false, true, false); }   // off: the glass armour as before, no glass body
         };
     }
     {
