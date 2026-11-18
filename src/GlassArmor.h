@@ -69,6 +69,8 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue);
 // ---- M1b: deferred armor draws (UiCapture replays them after the actor pass) ----
 bool                 isActorPso(ID3D12PipelineState* pso);
 ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list);
+/// Glass Items trace: every indexed draw on an ItemInHand pipeline (index count, glassed or not) -> glass_ms.txt
+void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed);
 void                 noteDsv(size_t handle, ID3D12Resource* res);
 ID3D12Resource*      dsvResource(size_t handle);
 void                 noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size);
