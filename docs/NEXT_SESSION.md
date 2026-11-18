@@ -8,7 +8,9 @@
 - To test: launch, open Knives Test, Right Shift -> COSMETICS -> Knives ON, hold a sword: first + third person,
   draw flip, ContentLog for Molang errors (c.owning_entity->v.bfknife), neon (entity_emissive_alpha alpha 0).
   Inspect key is unbound: ASK Fernando which key before binding.
-- Newer main (Cosmetics.cpp only touches other players while Knives is on, karambit proportions v3) is NOT installed.
+- Newer main (v4 realistic Karambit/Balisong/Dagger, design choice 0-2, Cosmetics.cpp only touches other players
+  while Knives is on) is NOT installed as a DLL yet; the dev pack copy on the PC is refreshed to v4.
+- Animation/effects proposal waiting for Fernando: docs/COSMETICS_REFERENCE.md.
 
 # Next session handoff (updated 2026-10-31 ~12:30 local, cloud + PC computer use) - GLASS CLIENT MENU - READ FIRST
 - 10-31 later: wheel camera swing (front view of the player, render origin moved too) + smooth clipped scrolling,

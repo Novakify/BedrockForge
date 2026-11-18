@@ -5,17 +5,20 @@
    "identifier": "minecraft:golden_sword",
    "materials": {
     "default": "entity_alphatest",
-    "enchanted": "entity_alphatest_glint",
-    "neon": "entity_emissive_alpha"
+    "enchanted": "entity_alphatest_glint"
    },
    "textures": {
     "default": "textures/items/gold_sword",
     "enchanted": "textures/misc/enchanted_item_glint",
-    "karambit": "textures/bf_cosmetics/karambit"
+    "karambit": "textures/bf_cosmetics/karambit",
+    "balisong": "textures/bf_cosmetics/balisong",
+    "dagger": "textures/bf_cosmetics/dagger"
    },
    "geometry": {
     "default": "geometry.bfk_golden_sword",
-    "karambit": "geometry.bfk_karambit"
+    "karambit": "geometry.bfk_karambit",
+    "balisong": "geometry.bfk_balisong",
+    "dagger": "geometry.bfk_dagger"
    },
    "animations": {
     "hold_first_person": "animation.bfk.hold_first_person",

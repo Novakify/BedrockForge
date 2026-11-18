@@ -5,12 +5,16 @@
    "arrays": {
     "geometries": {
      "Array.kgeo": [
-      "Geometry.karambit"
+      "Geometry.karambit",
+      "Geometry.balisong",
+      "Geometry.dagger"
      ]
     },
     "textures": {
      "Array.ktex": [
-      "Texture.karambit"
+      "Texture.karambit",
+      "Texture.balisong",
+      "Texture.dagger"
      ]
     }
    },
@@ -18,9 +22,6 @@
    "materials": [
     {
      "*": "v.is_enchanted ? Material.enchanted : Material.default"
-    },
-    {
-     "bfk_neon": "Material.neon"
     }
    ],
    "textures": [

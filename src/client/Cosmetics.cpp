@@ -70,7 +70,7 @@ struct State {
 void registerModules(Registry& r) {
     r.add("knives", "Knives", Category::Visual,
           "Your sword becomes a 3D knife of our own design, with a flip when you draw it (only you see it; nothing changes in the fight)", false)
-        .choice("design", "Knife", {"Novak Karambit"}, 0)
+        .choice("design", "Knife", {"Karambit", "Balisong", "Dagger"}, 0)
         .toggleSetting("draw_flip", "Flip it when you draw it", true)
         .slider("inspect_key", "Inspect key (0 = none)", 0, 0, 254, 1);
 }
@@ -87,7 +87,7 @@ void frame(LocalPlayer* lp) {
         if (sword && !gS.heldSword) gS.drawAt = now;
         gS.heldSword = sword;
         if (on) {
-            design = float(std::clamp(int(m->num("design", 0)), 0, 0) + 1);
+            design = float(std::clamp(int(m->num("design", 0)), 0, 2) + 1);
             if (m->flag("draw_flip", true) && gS.drawAt) draw = std::min(99.f, float(now - gS.drawAt) / 1000.f);
             int const key = int(m->num("inspect_key", 0));
             bool const down = key > 0 && w32::gameFocused() && !menu::isOpen() && w32::keyDown(key);
