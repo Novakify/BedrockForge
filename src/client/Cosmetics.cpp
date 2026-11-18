@@ -45,7 +45,7 @@ void setPublic(Actor& a, char const* shortName, float value) {
         MolangScriptArg const arg(value);
         var->mValue = arg;
         var->mSettings.get().mAccessSpecifier = MolangVariableSetting_AccessSpecifier::Public;
-        auto& pub = var->mPublicValue.get();
+        std::unique_ptr<MolangScriptArg>& pub = var->mPublicValue;   // TypedStorage -> T&
         if (pub) *pub = arg;
         else pub = std::make_unique<MolangScriptArg>(arg);
     }
