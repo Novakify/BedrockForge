@@ -1,3 +1,28 @@
+# Next session handoff (updated 2026-11-18 ~09:50 local, GLASS BODY / ITEMS + COSMETICS crash hunt) - READ FIRST
+- INSTALLED on the PC: RF bbe1bb5 (worldfx-rf-builds), BF 911e498 (builds). bbe1bb5 is NOT yet seen in game (Task
+  Manager sat always-on-top over LeviLauncher's Launch button; "Minecraft.windows"/"Minecraft for Windows" via
+  computer use now opens the plain Store copy - Steve skin, no mods - closed again). RF backups in
+  mods/RendererFoundation: RendererFoundation.<hash>.dll for de01230, 3c354ae, b6ccc87, fd01052, cf0cf48.
+- Game graphics mode was switched Vibrant Visuals -> Fancy: in VV the world target is R11G11B10 at 68% scale and the
+  World FX pass (sky + EVERY cosmetic: wings, cape, aura, halo, trail...) cannot draw ("colour target is not 8-bit").
+  Hive doesn't allow VV anyway. Tell Fernando; switch back only if he wants VV in single-player.
+- Crash hunt (nvoglv64.dll, same game call +23C6, also seen 11-13/11-14/11-17): the driver falls over a GPU fault from
+  earlier. Today's cause = Glass Items' atlas GPU copy through a texture pointer tracked from descriptor writes
+  (stale after texture reloads/teleport): DRED said device removed DXGI_ERROR_INVALID_CALL. Fixed in cf0cf48: the item
+  glass shader samples the atlas from the game's own t1 (no copy, no pointer). With cf0cf48: join + /tp no crash.
+- Also fixed: F6 > Glass Armor froze the game's input (nested gMutex lock, bbe1bb5); World FX log lists why the pass
+  didn't draw; items name filter knows BF shaderpack materials; opt-in GPU crash report: create
+  mods/RendererFoundation/config/Dred.txt -> logs/rf_gpu_crash.txt (currently renamed Dred.txt.off).
+- Removed the camera-hook per-frame pose (getFrameAlpha / getInterpolatedBodyRot, virtual): cosmetics use BF v4 pose.
+  In game (cf0cf48): wings + cape + glass body draw; cape looked shifted toward the left shoulder - check from a
+  clean side/back view whether it's perspective or a yaw offset.
+- Glass Items still NOT glassing in game (sword stays normal). bbe1bb5 logs per 5 s in
+  mods/RendererFoundation/logs/glassarmor/glass_ms.txt: item pipelines / glassed / pso fails / skipped (other material,
+  names pending) -> start there.
+- BF's shaderpack crash-safety set 'off' after the crashes; restored CloudSea (backup shaderpack.txt.bak-auto-off).
+- Still to test in game: Ascension aura (style 4), other auras, halo, trail, jump circles, hit splash, ripple,
+  shockwave, motion blur, block outline; glass_ms / pass_ms audit with toggles off vs on.
+
 # Next session handoff (updated 2026-11-17 ~22:10 local, COSMETICS / KNIVES) - READ FIRST
 
 ## Cosmetics / Knives - in-game status (2026-11-18)
