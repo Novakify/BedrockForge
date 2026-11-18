@@ -748,6 +748,8 @@ struct GaPending {
     ID3D12PipelineState* game  = nullptr;
     UINT                 a = 0, b = 0, c = 0, e = 0;
     INT                  d = 0;
+    bool                 body = false; // Glass Body: the body root signature + our skin copy (root SRV t3 space9)
+    UINT64               skin = 0;
 };
 struct GaList {
     GaIa                   ia;
@@ -829,11 +831,13 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
         cur.dsv = it->second.dsv;
     }
     ++gGaFlushes;
+    rf::glassarmor::flushTimer(l, true);
     rf::glassarmor::FlushRes fr;
     bool ok = rf::glassarmor::beginFlush(l, rtvResource(cur.rt0), rf::glassarmor::dsvResource(cur.dsv), fr);
     for (auto const& p : pend) {
         unsigned             base = 0;
-        ID3D12RootSignature* ext  = ok ? rf::glassarmor::extendedRoot(p.root.sig, &base) : nullptr;
+        ID3D12RootSignature* ext  = !ok ? nullptr : p.body ? rf::glassarmor::extendedRootBody(p.root.sig, &base)
+                                                           : rf::glassarmor::extendedRoot(p.root.sig, &base);
         if (!ext) { // can't draw glass this time: draw the vanilla armor instead (never invisible)
             ++gGaFallback;
             gaSetRoot(l, p.root, p.root.sig);
@@ -847,11 +851,13 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
         reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 1, fr.depth);
         reinterpret_cast<SetAddr_t>(gOrig[18])(l, base + 2, fr.params);
         reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 3, fr.prev);
+        if (p.body) reinterpret_cast<SetAddr_t>(gOrig[19])(l, base + 4, p.skin);
         gaSetIa(l, p.ia);
         reinterpret_cast<SetPso_t>(gOrig[3])(l, p.glass);
         reinterpret_cast<DrawIdx_t>(gOrig[6])(l, p.a, p.b, p.c, p.d, p.e);
     }
     if (ok) rf::glassarmor::endFlush(l, fr);
+    rf::glassarmor::flushTimer(l, false);
     // put the game's state back exactly as it was before the trigger
     restoreRoot(l);
     gaSetIa(l, cur.ia);
@@ -988,7 +994,8 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
         if (!gInSnapshot && rf::glassarmor::capturing()) rf::glassarmor::onDraw(list, a, b);
         if (!gInSnapshot && rf::worldfx::recording()) rf::worldfx::onDraw(list, a, b); // may copy targets first (world -> UI)
         ID3D12PipelineState* gamePso = nullptr;
-        ID3D12PipelineState* glass   = gaOn() ? rf::glassarmor::glassPsoFor(list, &gamePso) : nullptr;
+        rf::glassarmor::GlassDraw gd;
+        ID3D12PipelineState* glass   = gaOn() ? rf::glassarmor::glassPsoFor(list, &gamePso, &gd) : nullptr;
         if (glass) { // Glass Armor: hold the game's armor draw back, replay it with our shader after the actor pass
             GaPending p;
             {
@@ -997,6 +1004,8 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
             }
             p.glass = glass;
             p.game  = gamePso;
+            p.body  = gd.body;
+            p.skin  = gd.skin;
             p.a = a, p.b = b, p.c = c, p.d = d, p.e = e;
             std::lock_guard g(gGaMutex);
             auto& gl = gGa[list];
