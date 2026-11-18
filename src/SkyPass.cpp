@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <map>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -1152,7 +1153,10 @@ ComPtr<ID3D12PipelineState> makeWsPso(ID3D12Device* dev, GamePso const& g) {
 ComPtr<ID3D12RootSignature> gWfxRoot;
 std::mutex                  gWfxMutex;
 std::string                 gWfxStatus = "off";
-void wfxStatus(std::string s) { std::lock_guard l(gWfxMutex); gWfxStatus = std::move(s); }
+std::map<std::string, long> gWfxWhy;   // why the pass did not draw, counted (logged with the WFX frames line)
+std::atomic<long>           gWfxCalls{0};
+void wfxStatus(std::string s) { std::lock_guard l(gWfxMutex); ++gWfxWhy[s]; gWfxStatus = std::move(s); }
+void wfxStatusQuiet(char const* s) { std::lock_guard l(gWfxMutex); ++gWfxWhy[s]; }   // counted only (not shown as the status)
 bool makeWfxRoot(ID3D12Device* dev) {
     std::lock_guard l(gWfxMutex);
     if (gWfxRoot) return true;
@@ -2615,7 +2619,8 @@ bool  worldFxBenchRunning() { return wfxperf::bench.on; }
 
 static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls);
 bool drawWorldFxPass(ID3D12GraphicsCommandList* list, GameState const& st, Calls const& calls) {
-    if (gFxSinceClear.load()) return false; // once per world
+    ++gWfxCalls;
+    if (gFxSinceClear.load()) { wfxStatusQuiet("already drawn since the world's clear"); return false; } // once per world
     bool const ok = drawWorldFxPassImpl(list, st, calls);
     if (ok) {
         size_t rt0 = 0, dsv = 0;
@@ -2713,7 +2718,14 @@ void lookDownFrameTick() {   // once per Present: did any path draw the pass thi
                   " | world-list ends: targets " + std::to_string(gLvAt[0].exchange(0)) + ", depth clear " + std::to_string(gLvAt[1].exchange(0)) +
                   ", close " + std::to_string(gLvAt[2].exchange(0)) + " -> ran " + std::to_string(gLvOk.exchange(0)) + ", failed " + std::to_string(gLvFail.exchange(0)) +
                   ", skipped: already done " + std::to_string(gLvDone.exchange(0)) + ", not world targets " + std::to_string(gLvPair.exchange(0)) +
-                  ", clouds recent " + std::to_string(gLvCloud.exchange(0)) + ", no pso " + std::to_string(gLvNoPso.exchange(0)));
+                  ", clouds recent " + std::to_string(gLvCloud.exchange(0)) + ", no pso " + std::to_string(gLvNoPso.exchange(0)) +
+                  " | cloud-draw calls " + std::to_string(gWfxCalls.exchange(0)) + [] {
+                      std::lock_guard l(gWfxMutex);
+                      std::string w;
+                      for (auto const& [k, v] : gWfxWhy) w += ", '" + k + "' x" + std::to_string(v);
+                      gWfxWhy.clear();
+                      return w.empty() ? std::string() : " | not drawn:" + w.substr(1);
+                  }());
 }
 // Measured on the Hive (Nov 14): looking down, the game draws the world into OTHER colour + depth targets than the one
 // pair the cloud pass taught us (3 of 4 world lists, "not world targets") - those frames had no pass at all: the
@@ -2785,7 +2797,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     {
         std::lock_guard l(gPsoMutex);
         auto it = gGame.find(st.pso);
-        if (it == gGame.end()) return false;
+        if (it == gGame.end()) { wfxStatus("not a tagged game pipeline"); return false; }
         g = it->second;
     }
     if (g.vv) { wfxStatus("Vibrant Visuals: not yet (classic renderer only)"); return false; }
@@ -2798,8 +2810,8 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (rd.SampleDesc.Count > 1 || dd.SampleDesc.Count > 1) { wfxStatus("MSAA target: not supported"); return false; }
     bool const bgra = rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM || rd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS || rd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
     bool const rgba = rd.Format == DXGI_FORMAT_R8G8B8A8_UNORM || rd.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS || rd.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    if (!bgra && !rgba) { wfxStatus("colour target is not 8-bit RGBA"); return false; }
-    if (dd.Format != DXGI_FORMAT_D24_UNORM_S8_UINT && dd.Format != DXGI_FORMAT_R24G8_TYPELESS) { wfxStatus("depth is not D24S8"); return false; }
+    if (!bgra && !rgba) { wfxStatus("colour target is not 8-bit RGBA (format " + std::to_string(int(rd.Format)) + ", " + std::to_string(rd.Width) + "x" + std::to_string(rd.Height) + ")"); return false; }
+    if (dd.Format != DXGI_FORMAT_D24_UNORM_S8_UINT && dd.Format != DXGI_FORMAT_R24G8_TYPELESS) { wfxStatus("depth is not D24S8 (format " + std::to_string(int(dd.Format)) + ")"); return false; }
     auto    snap = rf::lyrics::camera();
     int64_t now  = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (!snap.valid || now - snap.atMs > 250 || snap.proj[0] == 0 || snap.proj[5] == 0) { wfxStatus("waiting for the game camera"); return false; }
