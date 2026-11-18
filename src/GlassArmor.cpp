@@ -1420,7 +1420,9 @@ ID3D12PipelineState* bodyPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
         auto& k = it->second;
         k.drawn = now;
         if (k.slot == -2) return nullptr;                                              // being read
-        if (now - k.at > 4000 && !k.requeued) { k.requeued = true; gSkinPending.emplace_back(tex); }   // look again soon
+        // look again: a player's skin every 4 s (a mob must never stay glass), anything else every 15 s (perf audit
+        // 2026-11-17: re-reading every mob texture every 4 s was ~4 readbacks a second for nothing)
+        if (now - k.at > (k.slot >= 0 ? 4000 : 15000) && !k.requeued) { k.requeued = true; gSkinPending.emplace_back(tex); }
         if (k.slot < 0 || k.slot > 15) return nullptr;                                  // a mob, an NPC we have no skin of
         if (!gSkinUpOk[k.slot] || gSkinUpGen[k.slot] != k.gen || !gSkinBuf) return nullptr;   // that slot holds someone else now
         if (k.self ? !gSelf.load() : !gOthers.load()) return nullptr;
@@ -2143,8 +2145,12 @@ void drawUi() {
         int const mine = gMine.load();
         if (!bodyOn()) ImGui::TextDisabled("Bedrock Forge skins: looked at once You or Other players is on");
         else ImGui::Text("Bedrock Forge skins: %s", mine < 0 ? "not available (BF missing / too old)" : mine == 0 ? "yours not grabbed yet" : "yours grabbed");
-        ImGui::Text("Skin textures: yours %ld   other players %ld   not players %ld   being read %zu", gSkinsSelf.load(), gSkinsOther.load(),
-                    gSkinsNone.load(), gSkinPending.size() + gSkinInFlight.size());
+        {   // what is recognised right now (the totals below count every check)
+            int self = 0, other = 0, none = 0;
+            for (auto const& [t, k] : gSkinKind) (k.slot < 0 ? none : k.self ? self : other) += k.slot == -2 ? 0 : 1;
+            ImGui::Text("Skin textures now: yours %d   other players %d   not players %d   being read %zu   (checks: %ld / %ld / %ld)", self, other,
+                        none, gSkinPending.size() + gSkinInFlight.size(), gSkinsSelf.load(), gSkinsOther.load(), gSkinsNone.load());
+        }
         ImGui::TextWrapped("Last: %s", gSkinLast.empty() ? "-" : gSkinLast.c_str());
         ImGui::Text("Body glass draws last frame: %ld   pipeline failures: %ld", gBodyDrawsShown.load(), gBodyPsoFail.load());
         ImGui::Text("Items: sprites held %ld   item pipelines %zu   glass draws last frame %ld   failures %ld", gItemsKnown.load(), gItemPso.size(),
