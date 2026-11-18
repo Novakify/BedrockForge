@@ -161,7 +161,10 @@ float4 PSGlassBody(PSIn i) : SV_Target {
     // crystal, like the approved armor (Fernando 2026-11-13: crystallised glass, not flat sheets): each face is cut into
     // facets (static Voronoi in texel space); each bends the world its own way and catches the light on its own, the
     // cut lines glint. They fade out where a facet is only a few pixels across (far away: one clean crystal).
-    float2 cg = p / 2.4 + float2(float(fi) * 3.7, float(fi) * 1.3);
+    // (in game 2026-11-17: at 2.4 texels the web of cut lines read as a cracked mask - bigger facets on a body, and the
+    // face - head + hat front - stays one clean polished pane so the eyes and the expression read)
+    bool const face = fi == 3 || fi == 9;
+    float2 cg = p / 3.4 + float2(float(fi) * 3.7, float(fi) * 1.3);
     float2 ci = floor(cg), cf = frac(cg);
     float  d1 = 9.0, d2 = 9.0;
     float2 cid = ci;
@@ -177,10 +180,10 @@ float4 PSGlassBody(PSIn i) : SV_Target {
     float  cutLn  = 1.0 - smoothstep(0.0, max(fwidth(cgap) * 1.3, 0.035), cgap);
     float  cellPx = 1.0 / max(max(length(ddx(cg)), length(ddy(cg))), 1e-4);
     float  facetK = smoothstep(5.0, 12.0, cellPx);
-    cutLn *= facetK;
+    cutLn *= facetK * (face ? 0.0 : 0.6);
     float  fh1 = gaHash(cid + 5.1), fh2 = gaHash(cid + 9.7);
     float2 tilt = float2(fh1, fh2) * 2.0 - 1.0;
-    off += tilt * 11.0 * S * (1.0 - 0.5 * e);
+    off += tilt * 11.0 * S * (1.0 - 0.5 * e) * (face ? 0.35 : 1.0);
     // only bend what is well behind you (the ground at your feet, a wall you lean on stay put)
     float2 px    = i.pos.xy;
     float  self  = 1.0 - i.pos.z;
@@ -263,6 +266,8 @@ float4 PSGlassBody(PSIn i) : SV_Target {
     c = lerp(c, c * lerp(float3(1, 1, 1), vivid(skc), 0.3), 0.5 * ngK) + vivid(skc) * 0.06 * ngK;
     float aa = max(fwidth(dIn), 1e-4) * 1.1;
     float lw = (over ? 0.15 : 0.19) + 0.07 * kick + 0.10 * min(flare, 1.0);
+    // the line is a line, however close the limb is (first-person arm: a texel is ~40 px - 0.19 texel was a fat bar)
+    lw = clamp(lw, 0.9 * S / max(pxPerTexel, 1e-3), 2.2 * S / max(pxPerTexel, 1e-3));
     float ln = 1.0 - smoothstep(lw - aa, lw + aa, dIn);
     c = lerp(c, edgeC * 1.2, ln * lerp(0.85, 1.0, ngK));
     return float4(saturate(c), 1.0);
