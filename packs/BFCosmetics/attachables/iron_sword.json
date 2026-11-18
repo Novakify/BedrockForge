@@ -1,0 +1,55 @@
+{
+ "format_version": "1.10.0",
+ "minecraft:attachable": {
+  "description": {
+   "identifier": "minecraft:iron_sword",
+   "materials": {
+    "default": "entity_alphatest",
+    "enchanted": "entity_alphatest_glint",
+    "neon": "entity_emissive_alpha"
+   },
+   "textures": {
+    "default": "textures/items/iron_sword",
+    "enchanted": "textures/misc/enchanted_item_glint",
+    "karambit": "textures/bf_cosmetics/karambit"
+   },
+   "geometry": {
+    "default": "geometry.bfk_iron_sword",
+    "karambit": "geometry.bfk_karambit"
+   },
+   "animations": {
+    "hold_first_person": "animation.bfk.hold_first_person",
+    "hold_third_person": "animation.bfk.hold_third_person",
+    "bfk_knife": "animation.bfk.knife",
+    "bfk_fp": "animation.bfk.knife_fp"
+   },
+   "scripts": {
+    "animate": [
+     {
+      "hold_first_person": "c.is_first_person"
+     },
+     {
+      "hold_third_person": "!c.is_first_person"
+     },
+     {
+      "bfk_knife": "v.bfk > 0"
+     },
+     {
+      "bfk_fp": "v.bfk > 0 && c.is_first_person"
+     }
+    ],
+    "pre_animation": [
+     "v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;t.d = math.clamp(v.bfk_d / 0.6, 0, 1);v.bfk_spin = t.d < 1 ? -360 * (1 - math.pow(1 - t.d, 3)) : 0;t.up = math.clamp(v.bfk_i / 0.35, 0, 1) * math.clamp((2.3 - v.bfk_i) / 0.45, 0, 1);v.bfk_il = v.bfk_i < 2.3 ? t.up * t.up * (3 - 2 * t.up) : 0;t.s = math.clamp((v.bfk_i - 0.4) / 1.25, 0, 1);v.bfk_spin = v.bfk_spin + (v.bfk_i < 2.3 ? -720 * t.s * t.s * (3 - 2 * t.s) : 0);"
+    ]
+   },
+   "render_controllers": [
+    {
+     "controller.render.item_default": "v.bfk == 0"
+    },
+    {
+     "controller.render.bfk_knife": "v.bfk > 0"
+    }
+   ]
+  }
+ }
+}

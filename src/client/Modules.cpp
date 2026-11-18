@@ -65,6 +65,7 @@
 #include "client/PostFx.h"
 #include "client/ServerAuto.h"
 #include "client/MatchFx.h"
+#include "client/Cosmetics.h"
 #include "core/Win32Input.h"
 #include "lyrics/win/Win.h"
 namespace bf::lyrics::win { float cinemaFovScale(); }
@@ -1406,6 +1407,7 @@ void registerBuiltins() {
         auto& cpm = r.add("cape", "Cape", Category::Visual, "An animated glowing cape that flows as you move (Renderer Foundation)", false);
         cpm.choice("design", "Design", {"Silk", "Aurora", "Starfield"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
             .slider("glow", "Glow", 0.5f, 0.f, 1.f, 0.05f).slider("sway", "Sway", 1.f, 0.f, 2.f, 0.05f);
+        cosmetics::registerModules(r);   // 3D model cosmetics (Knives), Cosmetics tab
         // [Purxiy "main_menu": the world behind the menus] the title screen's panorama, captured from where you stand
         r.add("main_menu", "Main Menu", Category::Visual, "Your own world behind the title screen: stand somewhere beautiful and capture it (shows from the next start)", false)
             .toggleSetting("capture", "Capture this view now", false);
@@ -1752,6 +1754,7 @@ void installRuntime() {
         }
         tSec = std::chrono::steady_clock::now();
         try { matchfx::frame(ctx.mClient, player); } catch (...) {}
+        try { cosmetics::frame(player); } catch (...) {}
         try { serverauto::frame(ctx.mClient, player, hudInputAllowed() && !menu::isOpen(), w32::gameFocused() && !menu::isOpen()); } catch (...) {}
         hitch::gCur.sa = hitch::since(tSec);
 

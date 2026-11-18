@@ -1,0 +1,72 @@
+{
+ "format_version": "1.10.0",
+ "animations": {
+  "animation.bfk.hold_first_person": {
+   "loop": true,
+   "bones": {
+    "wfx_item": {
+     "position": [
+      -4.65,
+      0.8,
+      -1.0
+     ],
+     "rotation": [
+      150.0,
+      0.0,
+      -12.0
+     ],
+     "scale": 0.55
+    }
+   }
+  },
+  "animation.bfk.hold_third_person": {
+   "loop": true,
+   "bones": {
+    "wfx_item": {
+     "position": [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     "rotation": [
+      90.0,
+      15.0,
+      90.0
+     ]
+    }
+   }
+  },
+  "animation.bfk.knife": {
+   "loop": true,
+   "bones": {
+    "bfk_pose": {
+     "rotation": [
+      "v.bfk_il * -28",
+      "v.bfk_il * 38",
+      "v.bfk_il * 22"
+     ],
+     "position": [
+      "v.bfk_il * 1.2",
+      "v.bfk_il * 2.0",
+      "v.bfk_il * -0.8"
+     ]
+    },
+    "bfk_spin": {
+     "rotation": [
+      0,
+      0,
+      "v.bfk_spin"
+     ]
+    }
+   }
+  },
+  "animation.bfk.knife_fp": {
+   "loop": true,
+   "bones": {
+    "bfk_pose": {
+     "scale": 1.25
+    }
+   }
+  }
+ }
+}
