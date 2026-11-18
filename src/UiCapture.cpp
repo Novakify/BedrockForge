@@ -749,6 +749,7 @@ struct GaPending {
     UINT                 a = 0, b = 0, c = 0, e = 0;
     INT                  d = 0;
     bool                 body = false; // Glass Body: the body root signature + our skin copy (root SRV t3 space9)
+    bool                 item = false; // Glass Items (trace only)
     UINT64               skin = 0;
 };
 struct GaList {
@@ -840,6 +841,7 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
                                                            : rf::glassarmor::extendedRoot(p.root.sig, &base);
         if (!ext) { // can't draw glass this time: draw the vanilla armor instead (never invisible)
             ++gGaFallback;
+            if (p.item) rf::glassarmor::traceItemReplay(1);
             gaSetRoot(l, p.root, p.root.sig);
             gaSetIa(l, p.ia);
             reinterpret_cast<SetPso_t>(gOrig[3])(l, p.game);
@@ -855,6 +857,7 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
         gaSetIa(l, p.ia);
         reinterpret_cast<SetPso_t>(gOrig[3])(l, p.glass);
         reinterpret_cast<DrawIdx_t>(gOrig[6])(l, p.a, p.b, p.c, p.d, p.e);
+        if (p.item) rf::glassarmor::traceItemReplay(0);
     }
     if (ok) rf::glassarmor::endFlush(l, fr);
     rf::glassarmor::flushTimer(l, false);
@@ -1006,12 +1009,14 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
             p.glass = glass;
             p.game  = gamePso;
             p.body  = gd.body;
+            p.item  = gd.item;
             p.skin  = gd.skin;
             p.a = a, p.b = b, p.c = c, p.d = d, p.e = e;
             std::lock_guard g(gGaMutex);
             auto& gl = gGa[list];
             p.ia     = gl.ia;
             if (p.root.sig && gl.ia.haveIb) gl.pending.push_back(std::move(p));
+            else if (p.item) rf::glassarmor::traceItemReplay(2);
         } else {
             if (gaOn() && gaHasPending(list) && !rf::glassarmor::isActorPso(rf::glassarmor::listPso(list))) gaFlush(list);
             reinterpret_cast<DrawIdx_t>(gOrig[6])(list, a, b, c, d, e);
