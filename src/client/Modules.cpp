@@ -1470,8 +1470,6 @@ void registerBuiltins() {
         .slider("time", "Time of day (0-1)", 0.0f, 0, 1, 0.01f);
     r.plan("fog", "Fog", Category::Visual, "Remove or recolour fog");
     r.plan("low_fire", "Low Fire", Category::Visual, "Smaller first-person fire overlay");
-    r.plan("block_outline", "Block Outline", Category::Visual, "Custom selection outline colour / width");
-    r.plan("better_nametags", "Better Nametags", Category::Visual, "Health and distance under names");
     r.plan("chunk_borders", "Chunk Borders", Category::Visual, "Chunk edges (Lamium has this today)");
     r.add("post_processing", "Post Processing", Category::Visual, "Bloom, colour fringe and sharpening on the whole frame (overrides the shaderpack's)")
         .slider("bloom", "Bloom", 0.12f, 0.0f, 0.5f, 0.01f)

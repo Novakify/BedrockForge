@@ -1109,6 +1109,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
         skyCfg.skyPreset = gS->skyOv.preset; skyCfg.skyImage = false; skyCfg.skyShuffle = false;
         skyCfg.skyStrength = gS->skyOv.strength; skyCfg.skySpeed = gS->skyOv.speed; skyCfg.skyLively = gS->skyOv.lively;
         skyCfg.skyBreath = gS->skyOv.breath; skyCfg.fxSkyMusic = gS->skyOv.music; skyCfg.skyDay = gS->skyOv.day; skyCfg.enabled = true;
+        skyCfg.awaken = false;   // always up: Awaken (the sky waits for music) is a LyricsForge thing, not the Sky module's
     }
     auto const& cfg = gS->skyOv.on ? skyCfg : gS->engine.config();
     int64_t     ms  = nowMsWall();
