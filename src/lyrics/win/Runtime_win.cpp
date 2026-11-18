@@ -2063,10 +2063,12 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
     // up all the time - with LyricsForge on it replaces LyricsForge's sky, with it off the sky runs on its own (no lyrics)
     static std::vector<std::string> const kSkyIds = {"galaxy", "aurora", "bright_night", "purple", "silk", "dream_ocean", "cotton_candy",
                                                      "golden_hour", "sakura", "nebula", "mirror_sky", "storm", "frost", "inferno"};
-    auto& sk = bedrock_forge::client::Registry::get().add("sky", "Living Skies", bedrock_forge::client::Category::Visual,
-                                                           "Your sky, always: cosmic light, auroras, sunsets, snow clouds and fire (Renderer Foundation)", false);
-    sk.choice("style", "Sky", {"Galaxy", "Aether", "Nocturne", "Amethyst", "Opaline", "Dream", "Cotton Candy", "Golden Hour", "Sakura", "Nebula",
-                               "Mirror", "Rain", "Snow", "Fire"}, 0)
+    auto& sk = bedrock_forge::client::Registry::get().add("sky", "Sky", bedrock_forge::client::Category::Visual,
+                                                           "Pick your sky: Living Skies, Cloud Sea, Novak Glass or vanilla (Renderer Foundation)", false);
+    sk.choice("mode", "Sky", {"Living Skies", "Cloud Sea", "Novak Glass", "Vanilla"}, 0)
+        .choice("style", "Living Sky", {"Galaxy", "Aether", "Nocturne", "Amethyst", "Opaline", "Dream", "Cotton Candy", "Golden Hour", "Sakura", "Nebula",
+                               "Mirror", "Rain", "Snow", "Fire", "Shuffle"}, 14)
+        .slider("every", "Shuffle every (minutes)", 4.f, 1.f, 15.f, 1.f)
         .slider("intensity", "Intensity", 0.8f, 0.1f, 1.f, 0.05f).slider("speed", "Speed", 1.f, 0.25f, 2.f, 0.05f)
         .slider("liveliness", "Liveliness", 0.6f, 0.f, 1.f, 0.05f).slider("breathing", "Breathing", 1.f, 0.f, 2.f, 0.05f)
         .toggleSetting("music", "Reacts to your music", true).toggleSetting("day", "Keep it up by day too", true);
@@ -2074,11 +2076,35 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
         auto& reg = bedrock_forge::client::Registry::get();
         auto* me  = reg.find("sky");
         if (!me || !gS) return;
+        if (int(me->num("mode", 0) + 0.5f) != 0) {   // Cloud Sea / Novak Glass / Vanilla: Renderer Foundation's sky (or none) - ours steps aside
+            std::lock_guard l(gS->mutex);
+            if (gS->skyOv.on) {
+                gS->skyOv.on = false;
+                auto* lf = reg.find("lyricsflow");
+                if (!(lf && lf->enabled)) gS->sky.step(false, gS->engine.config(), gS->engine.perf(), {});
+            }
+            return;
+        }
         {
             std::lock_guard l(gS->mutex);
             auto& o = gS->skyOv;
             o.on = true;
-            o.preset = kSkyIds[size_t(std::clamp(int(me->num("style", 0)), 0, int(kSkyIds.size()) - 1))];
+            int const n = int(kSkyIds.size());
+            int idx = int(me->num("style", 14) + 0.5f);
+            if (idx >= n) {   // Shuffle: a different sky from the pool every few minutes (the sky system sweeps from one to the next)
+                static int     cur = -1;
+                static int64_t next = 0;
+                int64_t const  now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (cur < 0 || now >= next) {
+                    static uint32_t seed = uint32_t(now);
+                    int pick = cur;
+                    while (pick == cur) { seed = seed * 1664525u + 1013904223u; pick = int((seed >> 8) % uint32_t(n)); }
+                    cur = pick;
+                    next = now + int64_t(std::max(1.f, me->num("every", 4.f)) * 60000.f);
+                }
+                idx = cur;
+            }
+            o.preset = kSkyIds[size_t(std::clamp(idx, 0, n - 1))];
             o.strength = me->num("intensity", 0.8f); o.speed = me->num("speed", 1.f); o.lively = me->num("liveliness", 0.6f);
             o.breath = me->num("breathing", 1.f); o.music = me->flag("music", true); o.day = me->flag("day", true);
         }
