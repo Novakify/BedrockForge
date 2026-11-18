@@ -50,6 +50,10 @@
 #include "lyrics/win/Win.h"
 
 namespace bedrock_forge::client::uisound { void play(int kind); } // UiSounds_win.cpp
+namespace bedrock_forge::client {   // Descriptions.cpp
+std::string const& moduleAbout(std::string const& id);
+std::string const& settingHelp(std::string const& mod, std::string const& setting);
+}
 namespace bedrock_forge::client::menu {
 
 namespace {
@@ -484,6 +488,13 @@ void slider(UiFrame& f, std::string const& id, float x, float y, float w, std::s
     g.text(v, x + w - 14, y + 17, 12.5f, rgba(kWhite, 1), a, true, 2);
     float bx = x + 14, bw = w - 28, by = y + 49;
     float t  = std::clamp((value - mn) / std::max(1e-4f, mx - mn), 0.0f, 1.0f);
+    {   // [Prism] the handle glides to its value (steps no longer teleport it)
+        static std::unordered_map<std::string, float> shown;
+        auto [it, fresh] = shown.try_emplace(id, t);
+        if (!fresh) it->second += (t - it->second) * (gDrag == id && gHeld ? 0.6f : 0.3f);
+        if (std::abs(it->second - t) < 0.002f) it->second = t;
+        t = it->second;
+    }
     g.solid(bx, by - 2.5f, bw, 5, 2.5f, rgba(kWhite, 0.22f), a, 0, true);
     g.solid(bx, by - 2.5f, bw * t, 5, 2.5f, rgba(kAccent, 1), a, 0, true);
     g.solid(bx - 4, by - 6.5f, bw * t + 8, 13, 6.5f, rgba(kAccent, 1), 0.35f * a, 9, false); // neon under the fill
@@ -497,8 +508,27 @@ void slider(UiFrame& f, std::string const& id, float x, float y, float w, std::s
         *vp = v;
         changed();
     };
-    f.hits.push_back({bx - 8, by - 12, bw + 16, 24, [set](bool) { set(gActionX); }, id});
+    f.hits.push_back({x, y, w, h, [set](bool) { set(gActionX); }, id});   // the whole row grabs (not only the thin bar)
     if (gDrag == id && gHeld) set(f.mx); // dragging
+}
+
+// [Prism] a choice (style, palette, design...) as tap-to-pick pills, not a slider that snaps between options
+void segmented(UiFrame& f, float x, float y, float w, std::string const& title, std::string const& desc, float& value,
+               std::vector<std::string> const& names, float a, std::function<void()> const& changed) {
+    auto& g = f.g;
+    float const h = 76;
+    row(f, x, y, w, h, title, desc, a);
+    int const n = int(names.size()), cur = std::clamp(int(value + 0.5f), 0, n - 1);
+    float const gap = 6, px = x + 12, pw = (w - 24 - gap * float(n - 1)) / float(n), py = y + 44, ph = 26;
+    for (int i = 0; i < n; ++i) {
+        float const bx = px + float(i) * (pw + gap);
+        bool const on = i == cur, hov = f.mx >= bx && f.mx <= bx + pw && f.my >= py && f.my <= py + ph;
+        g.solid(bx, py, pw, ph, 13, rgba(on ? kAccent : kWhite, on ? 0.95f : hov ? 0.16f : 0.08f), a, 0, true);
+        if (on) g.solid(bx - 3, py - 3, pw + 6, ph + 6, 16, rgba(kAccent, 1), 0.30f * a, 9, false);
+        g.text(names[size_t(i)], bx + pw / 2, py + ph / 2, 11.5f, rgba(kWhite, on ? 1.0f : 0.78f), a, true, 1);
+        float* vp = &value;
+        f.hits.push_back({bx, py, pw, ph, [vp, i, changed](bool) { if (int(*vp + 0.5f) != i) uisound::play(7); *vp = float(i); changed(); }});
+    }
 }
 
 void toggleRow(UiFrame& f, float x, float y, float w, std::string const& title, std::string const& desc, bool on, float a, std::function<void()> flip) {
@@ -613,6 +643,26 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     pageHeader(f, x, y - 4, wd, m->name, m->planned ? m->description + " - on the roadmap." : m->description, a, m->planned ? -1 : (m->enabled ? 1 : 0),
                [m] { Registry::get().setEnabled(*m, !m->enabled); });
     Scroller sc(f, w, a);
+    if (auto const& about = moduleAbout(m->id); !about.empty()) {   // [Prism] what it does, in plain words
+        std::vector<std::string> lines;
+        {
+            std::string cur, word;
+            float const maxW = wd - 32;
+            auto flush = [&] { if (!word.empty()) { std::string t = cur.empty() ? word : cur + " " + word;
+                                   if (!cur.empty() && f.g.textW(t, 12.5f, false) > maxW) { lines.push_back(cur); cur = word; } else cur = t; word.clear(); } };
+            for (char ch : about) { if (ch == ' ') flush(); else word += ch; }
+            flush();
+            if (!cur.empty()) lines.push_back(cur);
+        }
+        float const h = 18 + 18.0f * float(lines.size());
+        if (sc.fits(h)) {
+            pillGlass(f.g, x, sc.y, wd, h, 12, false, a, 0);
+            f.g.solid(x + 10, sc.y + 10, 3, h - 20, 1.5f, rgba(kAccent, 1), a, 0, true);   // accent bar: this is help, not a setting
+            for (size_t i = 0; i < lines.size(); ++i)
+                f.g.text(lines[i], x + 22, sc.y + 18 + 18.0f * float(i), 12.5f, rgba(kWhite, 0.86f), a);
+        }
+        sc.y += h + 10;
+    }
     if (!m->planned) {   // [BF] Keybind (Purxiy-style): click, then press a key. Backspace clears, Esc cancels.
         bool const listening = gBindFor == m->id;
         if (sc.fits(50)) {
@@ -635,7 +685,7 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
     for (auto& s : m->settings) {
         Setting* sp = &s;
         if (s.kind == Setting::Kind::Toggle) {
-            if (sc.fits(50)) toggleRow(f, x, sc.y, wd, s.label, "", s.on, a, [sp] { sp->on = !sp->on; Registry::get().save(); });
+            if (sc.fits(50)) toggleRow(f, x, sc.y, wd, s.label, settingHelp(m->id, s.id), s.on, a, [sp] { sp->on = !sp->on; Registry::get().save(); });
             sc.y += 60;
         } else {
             if (s.id.rfind("key", 0) == 0 && s.max >= 200) {   // [Prism] a key setting: click, then press the key (no code slider)
@@ -651,7 +701,12 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
                 sc.y += 60;
                 continue;
             }
-            if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, "", s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); },
+            if (!s.choices.empty() && s.choices.size() <= 6 && s.id.rfind("key", 0) != 0) {   // a choice: pills
+                if (sc.fits(76)) segmented(f, x, sc.y, wd, s.label, settingHelp(m->id, s.id), s.value, s.choices, a, [] { Registry::get().save(); });
+                sc.y += 86;
+                continue;
+            }
+            if (sc.fits(64)) slider(f, m->id + "/" + s.id, x, sc.y, wd, s.label, settingHelp(m->id, s.id), s.value, s.min, s.max, s.step, "", a, [] { Registry::get().save(); },
                                     s.id.rfind("key", 0) == 0 ? &keyNames() : &s.choices); // [BF] key sliders (key, key_play, ...) show the key, not a code
             sc.y += 74;
         }

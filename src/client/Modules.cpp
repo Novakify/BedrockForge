@@ -225,6 +225,7 @@ bool hudInputAllowed() { return w32::gameFocused() && (w32::cursorHidden() || no
 struct BfPmc { unsigned long cb, pageFaults; size_t peakWs, ws, qPeakPaged, qPaged, qPeakNonPaged, qNonPaged, pagefile, peakPagefile; };
 extern "C" __declspec(dllimport) int __stdcall K32GetProcessMemoryInfo(void* process, BfPmc* pmc, unsigned long cb);
 extern "C" __declspec(dllimport) void* __stdcall GetCurrentProcess();
+extern "C" __declspec(dllimport) unsigned long __stdcall GetModuleFileNameW(void* module, wchar_t* name, unsigned long size);
 double gameMemoryMb() {
     static int64_t at = 0;
     static double  mb = 0;
@@ -299,25 +300,39 @@ constexpr Pal kMistPals[] = {
     {"Autumn", {1.00f, 0.86f, 0.70f}, {}}, {"Lilac", {0.86f, 0.80f, 1.00f}, {}}, {"Pearl", {0.92f, 0.94f, 1.00f}, {}}, {"Rose", {1.00f, 0.84f, 0.88f}, {}}};
 // [Main Menu] the panorama pack RF writes (development_resource_packs/BF Menu World) must be in the global pack list of
 // the profile you play on: the most recently used one. Added once (the old list is kept next to it), at the top.
+// The game's own data folder: LeviLauncher keeps each instance's next to its exe (<exe dir>\Minecraft Bedrock); the Store
+// install uses %APPDATA%\Minecraft Bedrock. (Writing to the wrong one is why the menu world never showed.)
+std::filesystem::path gameDataRoot() {
+    std::error_code ec;
+    wchar_t exe[1024]{};
+    if (GetModuleFileNameW(nullptr, exe, 1024)) {
+        auto const local = std::filesystem::path(exe).parent_path() / L"Minecraft Bedrock";
+        if (std::filesystem::exists(local / L"Users", ec)) return local;
+    }
+    wchar_t const* ad = _wgetenv(L"APPDATA");
+    return ad ? std::filesystem::path(ad) / L"Minecraft Bedrock" : std::filesystem::path();
+}
 void registerMenuPack() {
     try {
-        wchar_t const* ad = _wgetenv(L"APPDATA");
-        if (!ad) return;
-        auto const users = std::filesystem::path(ad) / L"Minecraft Bedrock" / L"Users";
+        auto const root = gameDataRoot();
+        if (root.empty()) return;
+        auto const users = root / L"Users";
         std::filesystem::path best; std::filesystem::file_time_type bestT{};
         std::error_code ec;
-        for (auto const& u : std::filesystem::directory_iterator(users, ec)) {
-            auto const f = u.path() / L"games" / L"com.mojang" / L"minecraftpe" / L"global_resource_packs.json";
-            if (!std::filesystem::exists(f, ec)) continue;
-            auto const t = std::filesystem::last_write_time(u.path() / L"games" / L"com.mojang" / L"minecraftpe", ec);
-            if (best.empty() || t > bestT) { best = f; bestT = t; }
+        for (auto const& u : std::filesystem::directory_iterator(users, ec)) {   // the profile played most recently
+            if (u.path().filename() == L"Shared") continue;
+            auto const pe = u.path() / L"games" / L"com.mojang" / L"minecraftpe";
+            if (!std::filesystem::exists(pe / L"options.txt", ec)) continue;
+            auto const t = std::filesystem::last_write_time(pe / L"options.txt", ec);
+            if (best.empty() || t > bestT) { best = pe / L"global_resource_packs.json"; bestT = t; }
         }
         if (best.empty()) return;
         std::string txt;
-        { std::ifstream in(best, std::ios::binary); txt.assign(std::istreambuf_iterator<char>(in), {}); }
+        if (std::filesystem::exists(best, ec)) { std::ifstream in(best, std::ios::binary); txt.assign(std::istreambuf_iterator<char>(in), {}); }
+        else txt = "[\n]\n";                               // no global packs yet: start the list
         if (txt.find("b7f1e4a2-6c3d-4e58-9a71-2f0d5c8e3b14") != std::string::npos) return;
         auto const bak = best.parent_path() / L"global_resource_packs.before-bf-menu-world.json";
-        if (!std::filesystem::exists(bak, ec)) std::filesystem::copy_file(best, bak, ec);
+        if (std::filesystem::exists(best, ec) && !std::filesystem::exists(bak, ec)) std::filesystem::copy_file(best, bak, ec);
         auto const at = txt.find('[');
         if (at == std::string::npos) return;
         bool const empty = txt.find('{', at) == std::string::npos;
