@@ -68,6 +68,31 @@ def pin(m, bone, centre, r, depth, axis_z_sign, region, n=10):
         m.tri(bone, [top, a, b] if axis_z_sign > 0 else [top, b, a], [nrm(top - c)] * 3, [(region, 0.5, 0.0), (region, 0.4, 0.5), (region, 0.6, 0.5)])
 
 
+def stadium(m, bone, xc, y0, y1, r, z, side, region, inner=False, ring_of=None):
+    """a pocket outline with round ends (a stadium) lying on a face at height z: filled (inner) or as a band from
+    radius ring_of out to r (the chamfer round a milled pocket)"""
+    pts = []
+    for a in np.linspace(0, math.pi, 9):
+        pts.append((xc + r * math.cos(a), y1 + r * math.sin(a) - r))
+    for a in np.linspace(math.pi, 2 * math.pi, 9):
+        pts.append((xc + r * math.cos(a), y0 - r * math.sin(a) * -1 + r))
+    n = np.array([0, 0, float(side)])
+    if ring_of is None:
+        c = P(xc, (y0 + y1) / 2, z)
+        for k in range(len(pts)):
+            a_, b_ = P(*pts[k], z), P(*pts[(k + 1) % len(pts)], z)
+            tri = [c, a_, b_] if side > 0 else [c, b_, a_]
+            m.tri(bone, tri, [n] * 3, [(region, 0.5, 0.5), (region, 0.1, 0.1), (region, 0.9, 0.1)])
+        return
+    k_ = ring_of / r
+    for k in range(len(pts)):
+        a_, b_ = pts[k], pts[(k + 1) % len(pts)]
+        ai = (xc + (a_[0] - xc) * k_, (y0 + y1) / 2 + (a_[1] - (y0 + y1) / 2) * (1 - (r - ring_of) / max(y1 - y0, 1e-3) * 2))
+        bi = (xc + (b_[0] - xc) * k_, (y0 + y1) / 2 + (b_[1] - (y0 + y1) / 2) * (1 - (r - ring_of) / max(y1 - y0, 1e-3) * 2))
+        q = [P(*a_, z), P(*b_, z), P(*bi, z), P(*ai, z)]
+        m.quad(bone, q if side > 0 else q[::-1], [n] * 4, [(region, 0, 0), (region, 1, 0), (region, 1, 1), (region, 0, 1)])
+
+
 def rrect(cx, y, a_pos, a_neg, b, n=12, e=3.0, cz=0.0):
     out = []
     for k in range(n):
@@ -299,7 +324,12 @@ def karambit():
 
 RING_CENTRE = (K_RING[0], GRIP_Y + K_RING[1], 0.0)   # karambit spin pivot (the finger in the ring)
 SPIN_PIVOT = {"karambit": RING_CENTRE, "balisong": (0.0, GRIP_Y, 0.0), "dagger": (0.0, GRIP_Y - 2.0, 0.0)}
-EXTRA_BONES = {"balisong": [("bfb_safe", (0.0, GRIP_Y + 3.85, 0.33)), ("bfb_bite", (0.0, GRIP_Y + 3.85, -0.33))]}
+# the blade's point (slash arcs and hit sparks come off it)
+_kt = math.radians(100)
+TIP = {"karambit": (0.72 - 4.6 + 4.6 * math.cos(_kt), GRIP_Y + 3.2 + 4.6 * math.sin(_kt), 0.0),
+       "balisong": (0.4, GRIP_Y + 5.55 + 0.4 + 7.0, 0.0),
+       "dagger": (0.0, GRIP_Y + 1.5 + 8.6, 0.0)}
+EXTRA_BONES = {"balisong": [("bfb_safe", (0.0, GRIP_Y + 4.25, 0.33)), ("bfb_bite", (0.0, GRIP_Y + 4.25, -0.33))]}
 
 
 def bones(kind="karambit"):
@@ -310,7 +340,7 @@ def bones(kind="karambit"):
         {"name": "wfx_item", "pivot": [0, 24, 0], "binding": "q.item_slot_to_bone_name(c.item_slot)"},
         {"name": "bfk_pose", "parent": "wfx_item", "pivot": [0, 24, 0]},
         {"name": "bfk_spin", "parent": "bfk_pose", "pivot": list(SPIN_PIVOT[kind])},
-        {"name": "bfk_blade", "parent": "bfk_spin", "pivot": [0, 24, 0]},
+        {"name": "bfk_blade", "parent": "bfk_spin", "pivot": [0, 24, 0], "locators": {"tip": list(TIP[kind])}},
         {"name": "bfk_body", "parent": "bfk_spin", "pivot": [0, 24, 0]},
     ]
     for n, pv in EXTRA_BONES.get(kind, []):
@@ -333,13 +363,15 @@ def straight_sections(N, y0, length, spine_fn, edge_fn, thick_fn, prof):
 
 def balisong_atlas():
     a = Atlas(512)
-    a.add("face", 256, 64, lambda w, h: mt.makers_mark(mt.stonewash(w, h, 11), 0.16, 0.6, 13))
-    a.add("plate", 256, 64, lambda w, h: mt.stonewash(w, h, 11)[..., :] if False else mt.rgba(mt.stonewash(w, h, 11)[..., :3].astype(float), mt.ID_METAL))
-    a.add("spine", 256, 8, lambda w, h: mt.spine_steel(w, h, (126, 128, 134), 0.0))
-    a.add("rim", 64, 8, lambda w, h: mt.spine_steel(w, h, (126, 128, 134), 0.0))
-    a.add("ti", 192, 64, lambda w, h: mt.titanium(w, h, 31))
+    a.add("face", 256, 64, lambda w, h: mt.makers_mark(mt.two_tone(w, h, 13), 0.16, 0.22, 13))
+    a.add("plate", 256, 64, lambda w, h: mt.stonewash(w, h, 13))
+    a.add("spine", 256, 8, lambda w, h: mt.spine_steel(w, h, (134, 136, 142), 0.0))
+    a.add("rim", 64, 8, lambda w, h: mt.spine_steel(w, h, (134, 136, 142), 0.0))
+    a.add("ti", 192, 64, lambda w, h: mt.black_ti(w, h))
     a.add("slot", 32, 128, lambda w, h: mt.slot_floor(w, h))
+    a.add("chamfer", 16, 8, lambda w, h: mt.chamfer_ti(w, h))
     a.add("bronze", 32, 16, lambda w, h: mt.bronze_ano(w, h))
+    a.add("steel", 16, 16, lambda w, h: mt.polished_steel(w, h))
     return a
 
 
@@ -380,26 +412,28 @@ def balisong():
         for j in range(NH + 1):
             t_ = j / NH
             y = hy0 + (hand_top - hy0) * t_
-            ax = 0.66 + 0.10 * t_ + 0.05 * math.sin(math.pi * t_ * 2.0) ** 2
+            ax = 0.64 + 0.08 * t_ - 0.05 * math.sin(math.pi * t_) + 0.07 * math.exp(-(t_ / 0.12) ** 2)   # hourglass, butt flare
             e_top = min(1.0, (hand_top - y) / 0.75)                    # domed round the pivot
             e_bot = min(1.0, (y - hy0) / 0.35)
             k_ = math.sqrt(max(0.0, 1 - (1 - e_top) ** 2)) * math.sqrt(max(0.0, 1 - (1 - e_bot) ** 2))
             secs_h.append(rrect(0.0, y, max(ax * k_, 0.05), max(ax * k_, 0.05), 0.30 * (0.55 + 0.45 * k_), 16, 7, cz=cz))
         loft(m, bone, secs_h, "ti", flat=False, outward=lambda p, cz=cz: np.array([p[0], 0, p[2] - cz]))
         zf = cz + side * 0.302
-        for x0, x1 in ((-0.42, -0.07), (0.07, 0.42)):
-            g0, g1 = hy0 + 1.1, hand_top - 1.55
-            zz = zf + side * 0.012
-            fl = [P(x0, g0, zz), P(x1, g0, zz), P(x1, g1, zz), P(x0, g1, zz)]
-            m.quad(bone, fl if side > 0 else fl[::-1], [np.array([0, 0, float(side)])] * 4,
-                   [("slot", 0, 1), ("slot", 1, 1), ("slot", 1, 0), ("slot", 0, 0)] if side > 0 else
-                   [("slot", 0, 0), ("slot", 1, 0), ("slot", 1, 1), ("slot", 0, 1)])
+        for xc in (-0.245, 0.245):                                  # two milled pockets: stadium shape, chamfered
+            g0, g1 = hy0 + 1.15, hand_top - 1.6
+            stadium(m, bone, xc, g0, g1, 0.15, zf + side * 0.012, side, "slot", inner=True)
+            stadium(m, bone, xc, g0 - 0.06, g1 + 0.06, 0.21, zf + side * 0.008, side, "chamfer", ring_of=0.15)
         pin(m, bone, P(0.0, pivot_y, zf - side * 0.01), 0.26, 0.05, side, "bronze", 12)     # pivot
         pin(m, bone, P(0.0, pivot_y - 0.62, zf), 0.11, 0.035, side, "bronze", 8)            # zen pin
         pin(m, bone, P(0.0, hy0 + 0.55, zf), 0.13, 0.035, side, "bronze", 8)                # butt screw
-    latch = [rrect(0.0, y, 0.6, 0.6, 0.5, 12, 5) for y in (hy0 - 0.30, hy0 + 0.05)]
+    # the latch: a flat bronze bar pinned to the bite handle's butt, swung across under the safe handle, T-shaped end
+    latch = [rrect(0.0, y, 0.22, 0.22, 0.62, 10, 4) for y in (hy0 - 0.16, hy0 + 0.02)]
     loft(m, "bfb_bite", latch, "bronze", flat=False, outward=lambda p: np.array([p[0], 0, p[2]]))
     cap(m, "bfb_bite", latch[0], -1, "bronze")
+    tee = [rrect(0.0, y, 0.42, 0.42, 0.16, 10, 4, cz=0.55) for y in (hy0 - 0.17, hy0 + 0.03)]
+    loft(m, "bfb_bite", tee, "bronze", flat=False, outward=lambda p: np.array([p[0], 0, p[2] - 0.55]))
+    for side in (1, -1):                                        # tang pins: they stop the handles in the open position
+        pin(m, "bfk_blade", P(0.0, hand_top + 0.22, side * 0.22), 0.09, 0.07, side, "steel", 8)
     return m, balisong_atlas()
 
 
@@ -413,8 +447,9 @@ def dagger_atlas():
     a.add("steel", 32, 16, lambda w, h: mt.polished_steel(w, h))
     a.add("shadow", 4, 4, lambda w, h: mt.black_parts(w, h))
     a.add("blued", 96, 32, lambda w, h: mt.blued_steel(w, h))
-    a.add("grip", 240, 64, lambda w, h: mt.brass_rings(w, h, 15))
+    a.add("grip", 320, 64, lambda w, h: mt.worn_black_brass(w, h, 20))
     a.add("brass", 64, 24, lambda w, h: mt.brass_plain(w, h))
+    a.add("knurl", 64, 24, lambda w, h: mt.brass_rings(w, h, 10))
     return a
 
 
@@ -443,31 +478,56 @@ def dagger():
         prof = [(0.0, 0.0), (0.07, 0.05 * t), (0.5, 0.5 * t), (0.93, 0.05 * t), (1.0, 0.0)]
         sections.append((np.array([w / 2, y]), np.array([-w / 2, y]), prof))
     steel_loft(m, sections, 1.1)
-    # guard: a flat oval plate with a slight boss round the blade, and the slot's shadow on its top face
-    guard = [rrect(0.0, y, ax, ax, az, 20, 2.4) for y, ax, az in ((0.05, 1.40, 0.36), (0.12, 1.5, 0.42), (0.86, 1.5, 0.42), (0.95, 1.40, 0.36))]
-    loft(m, "bfk_body", guard, "blued", flat=False, outward=lambda p: np.array([p[0], 0, p[2]]))
-    cap(m, "bfk_body", guard[0], -1, "blued")
-    cap(m, "bfk_body", guard[-1], 1, "blued")
-    boss = [rrect(0.0, y, 0.8, 0.8, 0.40, 14, 3) for y in (0.95, 1.08)]
+    # guard: the 1st-pattern S-guard - an oval bar that sweeps up on one side and down on the other, rounded ends,
+    # a boss round the blade with the slot's shadow on top
+    GX = 1.55
+    gsecs = []
+    for i in range(25):
+        x = -GX + 2 * GX * i / 24
+        yc = 0.62 + 0.22 * math.sin(math.pi * x / GX) * min(1.0, abs(x) / 0.6)
+        endk = math.sqrt(max(0.0, 1 - max(0.0, (abs(x) - (GX - 0.22)) / 0.22) ** 2))
+        hy, hz = 0.21 * (0.45 + 0.55 * endk), 0.34 * (0.45 + 0.55 * endk)
+        sec = []
+        for k in range(12):
+            a_ = 2 * math.pi * k / 12 + math.pi / 12
+            c_, s_ = math.cos(a_), math.sin(a_)
+            sec.append(P(x, yc + hy * math.copysign(abs(c_) ** (2 / 3), c_), hz * math.copysign(abs(s_) ** (2 / 3), s_)))
+        gsecs.append(sec)
+    for i in range(24):                                             # loft along x (sections are y-z rings)
+        for k in range(12):
+            k2 = (k + 1) % 12
+            ps = [gsecs[i][k], gsecs[i + 1][k], gsecs[i + 1][k2], gsecs[i][k2]]
+            n = face_normal(ps)
+            ctr_ = (gsecs[i][0] + gsecs[i][6]) / 2
+            if np.dot(n, np.mean(ps, 0) - ctr_) < 0:
+                n = -n
+            m.quad("bfk_body", ps, [n] * 4, [("blued", i / 24, k / 12), ("blued", (i + 1) / 24, k / 12), ("blued", (i + 1) / 24, (k + 1) / 12), ("blued", i / 24, (k + 1) / 12)])
+    for i_, sgn in ((0, -1), (24, 1)):
+        c_ = np.mean(gsecs[i_], 0)
+        for k in range(12):
+            tri = [c_, gsecs[i_][k], gsecs[i_][(k + 1) % 12]]
+            if sgn < 0:
+                tri = [c_, gsecs[i_][(k + 1) % 12], gsecs[i_][k]]
+            m.tri("bfk_body", tri, [np.array([float(sgn), 0, 0])] * 3, [("blued", 0.5, 0.5)] * 3)
+    boss = [rrect(0.0, y, 0.6, 0.6, 0.31, 14, 3) for y in (0.30, 0.86, 1.0)]
     loft(m, "bfk_body", boss, "blued", flat=False, outward=lambda p: np.array([p[0], 0, p[2]]))
-    sh = [P(-0.62, 1.085, -0.20), P(0.62, 1.085, -0.20), P(0.62, 1.085, 0.20), P(-0.62, 1.085, 0.20)]
+    sh = [P(-0.54, 1.005, -0.17), P(0.54, 1.005, -0.17), P(0.54, 1.005, 0.17), P(-0.54, 1.005, 0.17)]
     m.quad("bfk_body", sh, [np.array([0, 1.0, 0])] * 4, [("shadow", 0.5, 0.5)] * 4)
     # ferrule (steel collar) between guard and grip
     fer = [[P(r * math.cos(a), y, r * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 16, endpoint=False)] for y, r in ((0.05, 0.46), (-0.18, 0.44), (-0.26, 0.40))]
     loft(m, "bfk_body", fer, "steel", flat=False, outward=lambda p: np.array([p[0], 0, p[2]]))
     rings = []
-    G = 30
+    G = 20 * 5
     for i in range(G + 1):
         s = i / G
         y = -0.26 - 5.75 * s
-        r = 0.40 + 0.20 * math.sin(math.pi * min(1.0, s / 0.85)) ** 0.8 + 0.035 * math.cos(s * G * math.pi)
+        ridge = 0.045 * max(-1.0, min(1.0, 2.4 * math.cos(s * 20 * 2 * math.pi)))      # flat crests, V grooves
+        r = 0.40 + 0.20 * math.sin(math.pi * min(1.0, s / 0.85)) ** 0.8 + ridge
         rings.append([P(r * math.cos(a), y, r * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 16, endpoint=False)])
     loft(m, "bfk_body", rings, "grip", flat=False, outward=lambda p: np.array([p[0], 0, p[2]]))
     # nut: a hexagonal brass nut with a chamfer, the tang's threaded end showing at its bottom
-    nut = [[P(r * math.cos(a), y, r * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 6, endpoint=False)] for y, r in ((-6.0, 0.36), (-6.08, 0.46), (-6.42, 0.46), (-6.5, 0.36))]
-    loft(m, "bfk_body", nut, "brass", flat=True, outward=lambda p: np.array([p[0], 0, p[2]]))
-    cap(m, "bfk_body", nut[-1], -1, "brass")
-    stub = [[P(0.13 * math.cos(a), y, 0.13 * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 8, endpoint=False)] for y in (-6.49, -6.58)]
-    loft(m, "bfk_body", stub, "steel", flat=False, outward=lambda p: np.array([p[0], 0, p[2]]))
-    cap(m, "bfk_body", stub[-1], -1, "steel")
+    prof = [(-6.0, 0.34), (-6.06, 0.44), (-6.30, 0.47), (-6.42, 0.44), (-6.52, 0.36), (-6.6, 0.24), (-6.65, 0.10)]
+    nut = [[P(r * math.cos(a), y, r * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 20, endpoint=False)] for y, r in prof]
+    loft(m, "bfk_body", nut, "knurl", flat=False, outward=lambda p: np.array([p[0], 0, p[2]]))
+    cap(m, "bfk_body", nut[-1], -1, "steel")
     return m, dagger_atlas()

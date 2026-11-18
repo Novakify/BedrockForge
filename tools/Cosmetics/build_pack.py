@@ -35,33 +35,19 @@ SWORDS = {"wooden_sword": "wood_sword", "stone_sword": "stone_sword", "copper_sw
           "netherite_sword": "netherite_sword"}
 KNIVES = [("karambit", knives.karambit), ("balisong", knives.balisong), ("dagger", knives.dagger)]   # index + 1 = v.bfknife
 
-# Molang: knife state from the holder (only players carry the variables), flip / inspect motion
-PRE = ("v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;"
-       "v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;"
-       "v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;"
-       # draw: one quick spin round the finger ring, fast out of the hand, easing into the grip (0.6 s)
-       "t.d = math.clamp(v.bfk_d / 0.6, 0, 1);"
-       "v.bfk_spin = t.d < 1 ? -360 * (1 - math.pow(1 - t.d, 3)) : 0;"
-       # inspect (2.3 s): lift it towards you and turn the flat to the light, two spins, settle back
-       "t.up = math.clamp(v.bfk_i / 0.35, 0, 1) * math.clamp((2.3 - v.bfk_i) / 0.45, 0, 1);"
-       "v.bfk_il = v.bfk_i < 2.3 ? t.up * t.up * (3 - 2 * t.up) : 0;"
-       "t.s = math.clamp((v.bfk_i - 0.4) / 1.25, 0, 1);"
-       "v.bfk_spin = v.bfk_spin + (v.bfk_i < 2.3 ? -720 * t.s * t.s * (3 - 2 * t.s) : 0);")
+import anims as kn_anims   # noqa: E402
+import sounds as kn_sounds  # noqa: E402
 
-ANIMS = {"format_version": "1.10.0", "animations": {
+HOLD = {
     # same holds as the World FX weapons (tools/WorldFx/atmos/equip.py HOLD_ANIM: picked in game 2026-11-11)
     "animation.bfk.hold_first_person": {"loop": True, "bones": {"wfx_item": {
         "position": [-4.65, 0.8, -1.0], "rotation": [150.0, 0.0, -12.0], "scale": 0.55}}},
     "animation.bfk.hold_third_person": {"loop": True, "bones": {"wfx_item": {
         "position": [0.0, -1.0, 0.0], "rotation": [90.0, 15.0, 90.0]}}},
-    # the knife's own motion: inspect lift/turn about the grip, spins about the finger ring
-    "animation.bfk.knife": {"loop": True, "bones": {
-        "bfk_pose": {"rotation": ["v.bfk_il * -28", "v.bfk_il * 38", "v.bfk_il * 22"],
-                     "position": ["v.bfk_il * 1.2", "v.bfk_il * 2.0", "v.bfk_il * -0.8"]},
-        "bfk_spin": {"rotation": [0, 0, "v.bfk_spin"]}}},
-    # first person: a knife is held a little bigger than the sword's 0.55 (it is shorter)
-    "animation.bfk.knife_fp": {"loop": True, "bones": {"bfk_pose": {"scale": 1.25}}},
-}}
+}
+ANIMS, CTRLS, AMAP, ANIMATE, SOUND_FX, PARTICLE_FX = kn_anims.build()
+ANIMS["animations"].update(HOLD)
+PRE = kn_anims.PRE
 
 RC = {"format_version": "1.8.0", "render_controllers": {"controller.render.bfk_knife": {
     "arrays": {"geometries": {"Array.kgeo": [f"Geometry.{n}" for n, _ in KNIVES]},
@@ -72,20 +58,23 @@ RC = {"format_version": "1.8.0", "render_controllers": {"controller.render.bfk_k
 
 
 def add_knives(desc):
-    """patch a sword attachable description (dict) so it shows our knife while v.bfk > 0"""
+    """patch a sword attachable description (dict) so it shows our knife (with its tricks, swings, fx and sounds)
+    while v.bfk > 0"""
     desc.setdefault("materials", {}).update({"default": desc["materials"].get("default", "entity_alphatest"),
                                              "enchanted": desc["materials"].get("enchanted", "entity_alphatest_glint")})
     desc.setdefault("textures", {}).setdefault("enchanted", "textures/misc/enchanted_item_glint")
     for n, _ in KNIVES:
         desc["textures"][n] = f"textures/bf_cosmetics/{n}"
         desc["geometry"][n] = f"geometry.bfk_{n}"
-    desc.setdefault("animations", {}).update({"bfk_knife": "animation.bfk.knife", "bfk_fp": "animation.bfk.knife_fp"})
+    desc.setdefault("animations", {}).update(AMAP)
+    desc["sound_effects"] = dict(desc.get("sound_effects", {}), **SOUND_FX)
+    desc["particle_effects"] = dict(desc.get("particle_effects", {}), **PARTICLE_FX)
     sc = desc.setdefault("scripts", {})
     pre = sc.get("pre_animation", [])
     pre = pre if isinstance(pre, list) else [pre]
-    sc["pre_animation"] = [PRE] + [l for l in pre if "v.bfk " not in l]
+    sc["pre_animation"] = [PRE] + [l for l in pre if "v.bfk " not in l and "v.bfk =" not in l]
     an = [a for a in sc.get("animate", []) if not (isinstance(a, dict) and any(k.startswith("bfk_") for k in a))]
-    sc["animate"] = an + [{"bfk_knife": "v.bfk > 0"}, {"bfk_fp": "v.bfk > 0 && c.is_first_person"}]
+    sc["animate"] = an + ANIMATE
     rcs = []
     for r in desc.get("render_controllers", []):
         if isinstance(r, str):
@@ -110,7 +99,15 @@ def write_shared(pack: Path):
         (pack / "models" / "entity" / f"bfk_{n}.geo.json").write_text(json.dumps(geo, separators=(",", ":")))
         Image.fromarray(atlas.img, "RGBA").save(pack / "textures" / "bf_cosmetics" / f"{n}.png")
     (pack / "animations" / "bfk.animation.json").write_text(json.dumps(ANIMS, indent=1))
+    (pack / "animation_controllers").mkdir(parents=True, exist_ok=True)
+    (pack / "animation_controllers" / "bfk.animation_controllers.json").write_text(json.dumps(CTRLS, indent=1))
     (pack / "render_controllers" / "bfk.render_controllers.json").write_text(json.dumps(RC, indent=1))
+    (pack / "particles").mkdir(parents=True, exist_ok=True)
+    for fn, js in kn_anims.particle_files().items():
+        (pack / "particles" / fn).write_text(json.dumps(js, indent=1))
+    Image.fromarray(kn_anims.fx_texture(), "RGBA").save(pack / "textures" / "bf_cosmetics" / "fx.png")
+    kn_sounds.write(pack / "sounds" / "bf_cosmetics")
+    (pack / "sounds" / "sound_definitions.json").write_text(json.dumps(kn_sounds.definitions(), indent=1))
 
 
 def build(vanilla_items: Path, out: Path):

@@ -296,3 +296,50 @@ def makers_mark(img, u0, v0, size_px, frosted=True):
     rgb[mark] = etched[mark]
     img[..., :3] = np.clip(rgb, 0, 255).astype(np.uint8)
     return img
+
+
+def two_tone(w, h, seed=13):
+    """premium two-tone blade: stonewashed flats above the grind line, a hand-rubbed satin primary grind below it
+    (fine parallel lines along the blade, brighter), a crisp line where they meet, then the sharpened bevel"""
+    v = np.linspace(0, 1, h)
+    sw = stonewash(w, h, seed)[..., :3].astype(float)
+    sat = np.zeros((h, w, 3)) + [178, 180, 188.0]
+    r = np.random.default_rng(seed)
+    sat += np.stack([np.full(w, (r.random() - 0.5) * 12) for _ in range(h)])[..., None]
+    sat += (fbm(h, w, seed + 1, 2, 3)[..., None] - 0.5) * 12
+    grind = (v >= GRIND_V)[:, None] * np.ones((h, w), bool)
+    rgb = np.where(grind[..., None], sat, sw)
+    return rgba(blade_finish(rgb, v), ID_METAL)
+
+
+def black_ti(w, h, seed=81):
+    """black DLC titanium, tumbled: charcoal with a soft stonewash mottle; v ends = the machined chamfers cut through
+    the coating to bright raw titanium (the two-tone edge of a premium balisong handle)"""
+    v = np.linspace(0, 1, h)[:, None]
+    rgb = np.zeros((h, w, 3)) + [40, 41, 45.0]
+    rgb += (fbm(h, w, seed, 3, 6)[..., None] - 0.5) * 14
+    rgb += (np.random.default_rng(seed).random((h, w)) - 0.5)[..., None] * 5
+    ch = (np.minimum(v, 1 - v) < 0.07) * np.ones((h, w))
+    rgb = mix(rgb, [176, 178, 184], ch)
+    return rgba(rgb, ID_METAL)
+
+
+def chamfer_ti(w, h):
+    """bright machined titanium chamfer (round a milled pocket)"""
+    v = np.linspace(0, 1, h)[:, None]
+    rgb = np.zeros((h, w, 3)) + [150, 152, 158.0] + 40 * (1 - v)[..., None]
+    return rgba(rgb, ID_METAL)
+
+
+def worn_black_brass(w, h, rings=26, seed=91):
+    """the Fairbairn-Sykes ring grip as issued: black-painted brass, the paint worn off the ring crests so warm
+    brass shows on every high spot; grooves keep the black, a little grime"""
+    u = (np.arange(w) + 0.5) / w
+    crest = np.clip((np.cos(u * 2 * math.pi * rings) - 0.35) / 0.65, 0, 1) ** 0.7
+    patchy = np.clip((fbm(h, w, seed, 3, 4) - 0.35) * 2.2, 0, 1)        # wear where hands rub: patchy, not every ring
+    wear = crest[None, :] * patchy
+    rgb = mix(np.zeros((h, w, 3)) + [26, 25, 27.0], [196, 158, 90], np.clip(wear * 1.3, 0, 1))
+    y, x = np.mgrid[0:h, 0:w]
+    knurl = (((x + y) % 4 == 0) | ((x - y) % 4 == 0)) & (wear > 0.3)
+    rgb[knurl] *= 0.8
+    return rgba(rgb, ID_METAL)

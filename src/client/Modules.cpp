@@ -801,6 +801,7 @@ void onLocalAttack(Player& p, Actor& target, Vec3 const& hit) {
         gLastHitCrit = !p.isOnGround() && vy < -0.01f;
         pushFxEvent(!p.isOnGround() && vy < -0.01f ? 3u : 2u, hit.x, hit.y, hit.z);
     } catch (...) {}
+    try { cosmetics::noteLocalHit(gLastHitCrit); } catch (...) {}   // Knives: sparks + cut on your hit
 }
 } // namespace
 

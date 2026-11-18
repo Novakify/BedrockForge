@@ -2,6 +2,8 @@
 #include "client/Cosmetics.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cmath>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -61,18 +63,35 @@ bool isSword(ItemStack const& st) {
 
 struct State {
     bool    heldSword = false;
-    int64_t drawAt = 0, inspectAt = 0, othersAt = 0;
-    bool    keyWas = false;
+    int64_t drawAt = 0, inspectAt = 0, othersAt = 0, attackAt = 0, hitAt = 0, stillSince = 0;
+    int     inspectN = 0, attackN = 0, hitN = 0;
+    bool    keyWas = false, lmbWas = false;
+    float   lastX = 0, lastZ = 0, lastYaw = 0;
 } gS;
+
+std::atomic<int64_t> gHitMs{0};     // your confirmed hits (GameMode::attack hook in Modules.cpp)
+std::atomic<int>     gHitCount{0};
 
 } // namespace
 
+void noteLocalHit(bool /*crit*/) {
+    gHitMs = nowMs();
+    ++gHitCount;
+}
+
+// Settings mirror Purxiy's Knives module (docs/PURXIY_MODULES.md) where we build the same thing; our own designs.
 void registerModules(Registry& r) {
     r.add("knives", "Knives", Category::Visual,
-          "Your sword becomes a 3D knife of our own design, with a flip when you draw it (only you see it; nothing changes in the fight)", false)
-        .choice("design", "Knife", {"Karambit", "Balisong", "Dagger"}, 0)
-        .toggleSetting("draw_flip", "Flip it when you draw it", true)
-        .slider("inspect_key", "Inspect key (0 = none)", 0, 0, 254, 1);
+          "Your sword becomes a real 3D knife with its own tricks, swings and sounds (only you see it; nothing changes in the fight)", false)
+        .choice("model", "Knife", {"Karambit", "Balisong", "Dagger"}, 0)
+        .slider("inspect_key", "Inspect key (0 = none; press again to chain the next trick)", 0, 0, 254, 1)
+        .toggleSetting("auto_inspect", "Idle tricks (plays with the blade while you stand still)", true)
+        .slider("interval", "Trick interval (s of idle time)", 12.f, 5.f, 30.f, 1.f)
+        .slider("speed", "Animation speed", 1.f, 0.65f, 1.5f, 0.05f)
+        .toggleSetting("draw", "Draw animation (a flourish when you equip a sword)", true)
+        .toggleSetting("sounds", "Trick and attack sounds (clean steel, our own)", true)
+        .toggleSetting("slash_arcs", "Slash arcs (the blade leaves an arc of light as it swings)", true)
+        .toggleSetting("hit_effects", "Hit effects (sparks and a cut on every confirmed hit)", true);
 }
 
 void frame(LocalPlayer* lp) {
@@ -81,35 +100,68 @@ void frame(LocalPlayer* lp) {
     bool const on = m && m->enabled && !m->planned;
     int64_t const now = nowMs();
     Actor& self = *lp;
-    float design = 0.f, draw = 99.f, insp = 99.f;
+    auto secs = [&](int64_t at) { return at ? std::min(99.f, float(now - at) / 1000.f) : 99.f; };
     try {
         bool const sword = isSword(lp->getSelectedItem());
         if (sword && !gS.heldSword) gS.drawAt = now;
         gS.heldSword = sword;
+        float design = 0.f, draw = 99.f, insp = 99.f, atk = 99.f, hit = 99.f, spd = 1.f, opt = 0.f;
         if (on) {
-            design = float(std::clamp(int(m->num("design", 0)), 0, 2) + 1);
-            if (m->flag("draw_flip", true) && gS.drawAt) draw = std::min(99.f, float(now - gS.drawAt) / 1000.f);
+            design = float(std::clamp(int(m->num("model", 0)), 0, 2) + 1);
+            spd = m->num("speed", 1.f);
+            bool const input = w32::gameFocused() && !menu::isOpen() && w32::cursorHidden();
+            if (m->flag("draw", true)) draw = secs(gS.drawAt);
+            // inspect: the key (each press chains the next trick), or idle tricks after `interval` s standing still
             int const key = int(m->num("inspect_key", 0));
-            bool const down = key > 0 && w32::gameFocused() && !menu::isOpen() && w32::keyDown(key);
-            if (down && !gS.keyWas && sword) gS.inspectAt = now;
+            bool const down = key > 0 && input && w32::keyDown(key);
+            if (down && !gS.keyWas && sword) { gS.inspectAt = now; ++gS.inspectN; }
             gS.keyWas = down;
-            if (gS.inspectAt) insp = std::min(99.f, float(now - gS.inspectAt) / 1000.f);
+            Vec3 const pos = self.getPosition();
+            float const yaw = self.getRotation().z;
+            bool const still = std::abs(pos.x - gS.lastX) < 0.01f && std::abs(pos.z - gS.lastZ) < 0.01f && std::abs(yaw - gS.lastYaw) < 0.5f;
+            gS.lastX = pos.x; gS.lastZ = pos.z; gS.lastYaw = yaw;
+            if (!still || !sword) gS.stillSince = now;
+            int64_t const idleMs = int64_t(m->num("interval", 12.f) * 1000.f);
+            if (m->flag("auto_inspect", true) && sword && now - gS.stillSince > idleMs && now - gS.inspectAt > idleMs) {
+                gS.inspectAt = now; ++gS.inspectN;
+            }
+            insp = secs(gS.inspectAt);
+            // attack: every left click while holding the knife (hits and misses), confirmed hits from the attack hook
+            bool const lmb = input && w32::keyDown(0x01);
+            if (lmb && !gS.lmbWas && sword) { gS.attackAt = now; ++gS.attackN; }
+            gS.lmbWas = lmb;
+            atk = secs(gS.attackAt);
+            if (int const n = gHitCount.load(); n != gS.hitN) { gS.hitN = n; gS.hitAt = gHitMs.load(); }
+            hit = secs(gS.hitAt);
+            opt = float((m->flag("slash_arcs", true) ? 1 : 0) | (m->flag("hit_effects", true) ? 2 : 0) | (m->flag("sounds", true) ? 4 : 0));
         }
         static bool wasOn = false;
         if (on || wasOn) {   // off: one last write of 0 so the knife turns back into the sword, then hands off
             setPublic(self, "bfknife", design);
             setPublic(self, "bfkdraw", draw);
             setPublic(self, "bfkinsp", insp);
+            setPublic(self, "bfkinsn", float(gS.inspectN & 1));
+            setPublic(self, "bfkatk", atk);
+            setPublic(self, "bfkatn", float(gS.attackN & 1));
+            setPublic(self, "bfkhit", hit);
+            setPublic(self, "bfkhitn", float(gS.hitN & 1));
+            setPublic(self, "bfkspd", spd);
+            setPublic(self, "bfkopt", opt);
         }
         wasOn = on;
     } catch (...) {}
-    // everyone else: the same variables at 0, so their swords stay vanilla and the pack never reads a missing one
+    // everyone else: the same variables at rest, so their swords stay vanilla and the pack never reads a missing one
     if (on && now - gS.othersAt > 500) {   // only while Knives is on: otherwise nobody's variables are touched
         gS.othersAt = now;
         try {
             lp->getLevel().forEachPlayer([&](Player& p) {
                 if (static_cast<Actor*>(&p) == &self) return true;
-                try { setPublic(p, "bfknife", 0.f); setPublic(p, "bfkdraw", 99.f); setPublic(p, "bfkinsp", 99.f); } catch (...) {}
+                try {
+                    setPublic(p, "bfknife", 0.f);
+                    for (char const* n : {"bfkdraw", "bfkinsp", "bfkatk", "bfkhit"}) setPublic(p, n, 99.f);
+                    for (char const* n : {"bfkinsn", "bfkatn", "bfkhitn", "bfkopt"}) setPublic(p, n, 0.f);
+                    setPublic(p, "bfkspd", 1.f);
+                } catch (...) {}
                 return true;
             });
         } catch (...) {}

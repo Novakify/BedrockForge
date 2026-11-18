@@ -14,5 +14,6 @@ class Registry;
 namespace cosmetics {
 void registerModules(Registry& r);
 void frame(LocalPlayer* player);   // HUD frame
+void noteLocalHit(bool crit);      // your confirmed hit (GameMode::attack hook)
 } // namespace cosmetics
 } // namespace bedrock_forge::client
