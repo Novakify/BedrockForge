@@ -284,6 +284,104 @@ float segDist2(float2 p, float2 a, float2 b, out float h) {
     float2 d = pa - ba * h;
     return dot(d, d);
 }
+// ---- Aura "Ascension" (Fernando 2026-11-17: an ascended-warrior aura - original, no characters / names / assets): a
+// golden flame shell hugging your silhouette that licks upward to a pointed crown above the head, a hot rim at its
+// edge, blue-white arcs of electricity snapping on and off around the body, golden motes rising through it, and its
+// light on the ground at your feet. Traced in the plane facing the camera through your body's axis (like the halo),
+// depth-tested against the world. au0.w = size, au1.x = speed, au1.y = glow.
+float ascFbm(float2 p) { return vnoise2(p) * 0.6 + vnoise2(p * 2.07 + 13.1) * 0.3 + vnoise2(p * 4.13 + 7.7) * 0.1; }
+float3 ascension(float3 P, float3 rd, float dist, bool sky, float t, bool fp) {
+    float3 L = 0;
+    float  S = au0.w, spd = max(au1.x, 0.05), glow = au1.y;
+    float3 gold = float3(1.00, 0.72, 0.08), hot = float3(1.00, 0.90, 0.45), ember = float3(1.00, 0.55, 0.10);
+    float3 volt = float3(0.62, 0.84, 1.00);
+    // its light on the ground round your feet (pulses with the flames)
+    if (!sky) {
+        float2 g = P.xz - pl.xz;
+        float  gy = abs(P.y - pl.y);
+        float  fl = 0.85 + 0.15 * sin(t * 9.0 * spd) * sin(t * 13.7 * spd + 1.3);
+        L += gold * 0.32 * (0.4 + glow) * exp(-dot(g, g) / (1.6 * S * S)) * smoothstep(0.5, 0.0, gy) * fl;
+    }
+    if (fp) return L;   // from your own eyes: only its light on the ground (the shell would fill the screen)
+    // the closest approach of the view ray to your axis (feet - 0.1 .. 3.3 above them)
+    float3 A = pl.xyz + float3(0, -0.1, 0), v = float3(0, 3.4, 0);
+    float  b = dot(rd, v), c = dot(v, v), d = dot(rd, -A), e = dot(v, -A);
+    float  den = c - b * b;
+    if (den < 1e-5) return L;
+    float  h  = saturate((e - b * d) / den);           // along the axis 0..1
+    float  sc = max(b * h - d, 0.0);                   // along the ray
+    float3 Q  = A + v * h, Pr = rd * sc;
+    float3 right = cross(float3(0, 1, 0), rd);
+    right = dot(right, right) > 1e-4 ? normalize(right) : float3(1, 0, 0);
+    float  x  = dot(Pr - Q, right);                    // across (signed), in blocks
+    float  y  = h * 3.4 - 0.1;                         // height above your feet
+    float  ax = abs(x);
+    if (ax > 1.6 * S + 0.4 || sc < 0.2) return L;      // nowhere near: done
+    // depth: a wall in front hides it; your own body in front lets the front sheet of flame show (fainter)
+    if (dist < sc - 1.2) return L;
+    float front = dist < sc - 0.25 ? 0.45 : 1.0;
+    // ---- the flame shell (tuned on an offline preview, 6 passes: no hairline rims, no hard bands, no box at the crown).
+    //      f = how far inside the flame (in body widths, > 0 inside): the body's outline grown out, a dome tapering to
+    //      a crown, its edge torn into tongues that stream upward (mirrored left / right: no seam down the middle)
+    float body = 0.30 + 0.26 * S, top = 2.05 + 0.85 * S;
+    float prof = y < 1.7 ? body * (0.82 + 0.18 * saturate((y + 0.1) / 0.9)) : body * pow(saturate((top - y) / (top - 1.7)), 0.75);
+    float up   = saturate((y - 0.6) / 1.6);
+    float n1   = ascFbm(float2(ax * 2.2 + 3.0 + 0.15 * sin(y * 1.3), y * 1.6 - t * 3.4 * spd));
+    float spike = pow(saturate(n1 - 0.45), 1.5) * (0.9 + 1.6 * up);
+    float env  = saturate((top + 0.25 - y) / 0.55);
+    float R    = (prof + body * (0.35 * (n1 - 0.5) + spike * 1.1)) * env;
+    float f    = (R - ax) / body - (1.0 - env);                                // above the crown: well outside
+    float ct   = saturate(1.0 - ax / (body * 1.1)) * saturate((y - 1.7) / 0.4) * saturate((top + 0.55 - y) / 0.55);
+    float cn   = saturate(ascFbm(float2(x * 5.0, y * 1.1 - t * 4.2 * spd)) - 0.48) * 2.6;
+    f = max(f, cn * ct * 2.6 - 0.45);                                            // crown tongues shooting up
+    float lowF = saturate((y + 0.15) / 0.45);                                    // it rises from your feet
+    if (f > -1.0) {
+        float streak = pow(saturate(ascFbm(float2(x * 6.5, y * 0.75 - t * 5.0 * spd)) * 1.4 - 0.35), 2.0);   // licks streaming up
+        float dens   = pow(saturate((f + 0.10) / 0.45), 1.2) * (0.30 + 0.70 * streak);
+        float edge   = exp(-pow((f - 0.02) / 0.14, 2.0));
+        float halo   = f < 0.0 ? exp(f / 0.14) : 0.0;
+        float core   = saturate((f - 0.35) / 0.6);
+        float flick  = 0.85 + 0.15 * sin(t * 23.0 * spd + y * 4.0) * sin(t * 17.0 * spd + x * 7.0);
+        float3 col   = gold * (dens * 1.05 + edge * 0.55) + hot * (edge * 0.45 + core * dens * 0.35) + lerp(gold, ember, 0.5) * halo * 0.22 * (0.3 + glow);
+        L += col * flick * lowF * front * (0.8 + 0.5 * glow);
+    }
+    // ---- rising golden motes
+    {
+        float2 m  = float2(x, y + t * 1.1 * spd) * float2(5.0, 3.0);
+        float2 mi = floor(m), mf = frac(m) - 0.5;
+        float  hs = hash12b(mi);
+        if (hs > 0.86 && ax < body * 1.6 && y > 0.0 && y < top) {
+            float2 o = (float2(hash12b(mi + 3.1), hash12b(mi + 7.3)) - 0.5) * 0.6;
+            float  k = exp(-dot(mf - o, mf - o) * 160.0) * (0.6 + 0.4 * sin(t * 8.0 + hs * 40.0));
+            L += hot * k * 1.3 * front;
+        }
+    }
+    // ---- electricity: up to three arcs snap on and off round the body, each a jagged bolt along the flame's edge
+    [unroll] for (int k = 0; k < 3; ++k) {
+        float ep   = t * (2.3 + 0.9 * float(k)) * spd + float(k) * 0.37;
+        float ei   = floor(ep), life = frac(ep);
+        float sd   = hash12b(float2(ei, float(k) * 7.1));
+        if (life > 0.45 || sd < 0.15) continue;                               // off much of the time: a crackle, not a light
+        float on   = step(0.35, frac(sin(t * 61.0 + sd * 90.0) * 43758.5));    // it flickers while it lives
+        float sgn  = hash12b(float2(sd, 2.2)) > 0.5 ? 1.0 : -1.0;
+        float y0   = 0.25 + 1.6 * hash12b(float2(sd, 5.5));
+        float len  = 0.55 + 0.6 * hash12b(float2(sd, 9.9));
+        float best = 1e9;
+        float2 pa  = float2(sgn * body * (0.75 + 0.35 * hash12b(float2(sd, 1.3))), y0);
+        [unroll] for (int j = 1; j <= 6; ++j) {
+            float  fj = float(j) / 6.0;
+            float2 pb = float2(sgn * body * (0.65 + 0.55 * hash12b(float2(sd + fj, 3.7))), y0 + len * fj + 0.12 * (hash12b(float2(sd, fj * 9.0)) - 0.5));
+            pb.x += (hash12b(float2(fj * 13.0, sd)) - 0.5) * 0.22;
+            float hh;
+            best = min(best, segDist2(float2(x, y), pa, pb, hh));
+            pa = pb;
+        }
+        float dd = sqrt(best), w = 0.014 + 0.007 * S;
+        float fade = 1.0 - life / 0.45;
+        L += (hot * exp(-dd * dd / (w * w)) * 2.6 + volt * exp(-dd / (w * 5.0)) * 0.9 * (0.4 + glow)) * on * fade * front;
+    }
+    return L;
+}
 float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
     float3 L = 0;
     if (pl.w < -50.0) return L;
@@ -308,7 +406,8 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
         }
     }
     // aura / halo are lights in the air: closest approach of the view ray to each (depth-tested against the world)
-    [branch] if (au0.w > 0.0 && (!fp || au1.w > 0.5)) {
+    [branch] if (au0.w > 0.0 && int(au1.z + 0.5) == 4) L += ascension(P, rd, dist, sky, t, fp && au1.w < 0.5);   // Ascension
+    else [branch] if (au0.w > 0.0 && (!fp || au1.w > 0.5)) {
         int style = int(au1.z + 0.5);
         int N = style == 1 ? 9 : 6;
         float3 c = pl.xyz + float3(0, 1.0, 0);
@@ -620,8 +719,11 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
     // -------- cape: hangs from the shoulders, swings back as you run, ripples
     [branch] if (cp0.w > 0.0 && !fp) {
         int   design = int(cp1.w + 0.5);
-        float th = 0.10 + 0.55 * saturate(cp2.y) * cp2.x + 0.35 * cp2.z * cp2.x + 0.04 * sin(t * 1.7) * cp2.x;
-        float3 C0 = pl.xyz + up * 1.42 - fwd * 0.17;
+        // (in game 2026-11-17: it clipped through the armour and the body. A chestplate stands ~0.19 out from the body's
+        // centre, the cape hung from 0.17 at ~6 degrees - so it now hangs from behind the armour and always clears the
+        // legs; turning (cp2.w: how fast the body turns, 0..1) lifts it out like real cloth instead of cutting through)
+        float th = 0.17 + 0.55 * saturate(cp2.y) * cp2.x + 0.35 * cp2.z * cp2.x + 0.30 * saturate(cp2.w) * cp2.x + 0.04 * sin(t * 1.7) * cp2.x;
+        float3 C0 = pl.xyz + up * 1.42 - fwd * 0.235;
         float3 D  = normalize(-up * cos(th) - fwd * sin(th));
         float3 n  = normalize(cross(side, D));
         float den = dot(rd, n);

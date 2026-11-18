@@ -240,23 +240,29 @@ bool                   gSkinUpOk[16]{};
 std::atomic<int>       gMine{-1}; // your own BF slot + 1 (0 none yet, -1 BF missing)
 std::atomic<long>      gSkinsSelf{0}, gSkinsOther{0}, gSkinsNone{0}, gBodyDraws{0}, gBodyDrawsShown{0}, gBodyPsoFail{0};
 std::string            gSkinLast;   // the last comparison, for F6
-// ---- Glass Items: each item's own sprite (the 16x16 - 128x128 texture its ItemInHand draw binds first), read back
-// once into one of 64 slots of our item buffer (header: w, h; then rows of 256 bytes, at most 64x64 - a bigger
-// sprite is read every 2nd / 4th texel). The item shader reads its shape and colours from there.
-constexpr int    kItemSlots = 64, kItemSlotBytes = 32768;
-struct ItemKind  { int slot = -2; unsigned w = 0, h = 0, fmt = 0; int64_t drawn = 0; };   // -2 being read, -1 unusable
-std::unordered_map<ID3D12Resource*, ItemKind> gItemKind;
-std::vector<ComPtr<ID3D12Resource>>           gItemPending;
-std::vector<SkinRb>                           gItemInFlight;
-ComPtr<ID3D12CommandAllocator>                gItemAlloc;
-ComPtr<ID3D12GraphicsCommandList>             gItemList;
-ComPtr<ID3D12Fence>                           gItemFence;
-UINT64                                        gItemFenceVal = 0;
-ComPtr<ID3D12Resource>                        gItemBuf;
-uint8_t*                                      gItemMap = nullptr;
-ID3D12Resource*                               gItemSlotOf[kItemSlots]{};   // which texture each slot holds (ring)
-int                                           gItemNext = 0;
-std::atomic<long>                             gItemDraws{0}, gItemDrawsShown{0}, gItemsKnown{0}, gItemPsoFail{0};
+// ---- Glass Items: the item ATLAS the ItemInHand draw samples. (In game 2026-11-17 the first version read the draw's
+// first texture - 16x16, which is the LIGHTMAP: glass made from it was a solid box, swords "vanished" and particles got
+// boxes.) The atlas's mip 0 is copied GPU-side, once, into a buffer the item shader reads: a 512-byte header (w, h,
+// row pitch, bgra) and then the rows. Up to 4 atlases (items, blocks, a pack's) of at most 2048x2048.
+constexpr int    kAtlasSlots = 4;
+constexpr UINT64 kAtlasMaxBytes = 2048ull * 2048ull * 4ull;
+struct Atlas {
+    ID3D12Resource*        tex = nullptr;   // identity (kept alive by `keep` while the slot holds it)
+    ComPtr<ID3D12Resource> keep, buf;
+    UINT64                 bufBytes = 0;
+    unsigned               w = 0, h = 0, fmt = 0;
+    bool                   pending = false, ready = false, failed = false, bufInSrv = false;
+    int64_t                drawn = 0;
+};
+Atlas                             gAtlas[kAtlasSlots];
+ComPtr<ID3D12CommandAllocator>    gItemAlloc;
+ComPtr<ID3D12GraphicsCommandList> gItemList;
+ComPtr<ID3D12Fence>               gItemFence;
+UINT64                            gItemFenceVal = 0;
+ComPtr<ID3D12Resource>            gAtlasHdr;   // upload: kAtlasSlots x 512-byte headers
+uint8_t*                          gAtlasHdrMap = nullptr;
+std::vector<int>                  gAtlasInFlight;
+std::atomic<long>                 gItemDraws{0}, gItemDrawsShown{0}, gItemsKnown{0}, gItemPsoFail{0};
 // ---- glass cost (logs/glassarmor/glass_ms.txt every 5 s while any glass is on)
 std::atomic_bool gMeasureGpu{false};
 std::mutex       gTimeMx;
@@ -812,21 +818,28 @@ ComPtr<ID3D12PipelineState> makeGlassPso(ID3D12Device* dev, ActorDesc const& ad,
 
 bool bodyShaderBuilt() { return sizeof(shaders::kGlassBodyPs) > 64; }
 bool itemShaderBuilt() { return sizeof(shaders::kGlassItemPs) > 64; }
-/// Glass Items: the item's sprite = the first descriptor of the draw's first table (probe: r1.0), square 16..128.
-ID3D12Resource* boundItemTexture(ID3D12GraphicsCommandList* list, SrvInfo* info) {
+/// Glass Items: the atlas this item draw samples = the biggest mip-mapped texture among the first descriptors of its
+/// first texture table (probe: r1.0 16x16 lightmap, r1.1 1024x1024 m4 the item atlas).
+ID3D12Resource* boundItemAtlas(ID3D12GraphicsCommandList* list, SrvInfo* info) {
     auto tables = rf::uicapture::rootTables(list);
     for (auto const& [ri, gpu] : tables) {
         size_t   cpu = 0;
         unsigned inc = 0;
         if (!rf::uicapture::gpuDescToCpu(gpu, cpu, inc)) continue;
         std::lock_guard l(gMutex);
-        auto it = gSrvs.find(cpu);
-        if (it == gSrvs.end() || !it->second.res) return nullptr;
-        auto const& v = it->second;
-        bool const pow2 = v.w == 16 || v.w == 32 || v.w == 64 || v.w == 128;
-        if (v.w != v.h || !pow2) return nullptr;
-        *info = v;
-        return v.res;
+        bool    any  = false;
+        SrvInfo best;
+        for (int k = 0; k < 4; ++k) {
+            auto it = gSrvs.find(cpu + size_t(k) * inc);
+            if (it == gSrvs.end() || !it->second.res) continue;
+            any = true;
+            auto const& v = it->second;
+            if (v.w >= 256 && v.h >= 256 && v.mips > 1 && uint64_t(v.w) * v.h > uint64_t(best.w) * best.h) best = v;
+        }
+        if (!any) continue;   // the sampler table (p0): no textures there
+        if (!best.res) return nullptr;
+        *info = best;
+        return best.res;
     }
     return nullptr;
 }
@@ -1419,7 +1432,9 @@ ID3D12PipelineState* bodyPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
         auto& k = it->second;
         k.drawn = now;
         if (k.slot == -2) return nullptr;                                              // being read
-        if (now - k.at > 4000 && !k.requeued) { k.requeued = true; gSkinPending.emplace_back(tex); }   // look again soon
+        // look again: a player's skin every 4 s (a mob must never stay glass), anything else every 15 s (perf audit
+        // 2026-11-17: re-reading every mob texture every 4 s was ~4 readbacks a second for nothing)
+        if (now - k.at > (k.slot >= 0 ? 4000 : 15000) && !k.requeued) { k.requeued = true; gSkinPending.emplace_back(tex); }
         if (k.slot < 0 || k.slot > 15) return nullptr;                                  // a mob, an NPC we have no skin of
         if (!gSkinUpOk[k.slot] || gSkinUpGen[k.slot] != k.gen || !gSkinBuf) return nullptr;   // that slot holds someone else now
         if (k.self ? !gSelf.load() : !gOthers.load()) return nullptr;
@@ -1449,28 +1464,33 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
                                 ID3D12PipelineState** game, GlassDraw* out) {
     if (!out || !itemShaderBuilt()) return nullptr;
     SrvInfo         si;
-    ID3D12Resource* tex = boundItemTexture(list, &si);
+    ID3D12Resource* tex = boundItemAtlas(list, &si);
     if (!tex) return nullptr;
     int64_t const now = int64_t(GetTickCount64());
-    int           slot;
+    int           slot = -1;
     {
         std::lock_guard l(gMutex);
-        auto it = gItemKind.find(tex);
-        if (it == gItemKind.end() || it->second.w != si.w || it->second.fmt != si.fmt ||
-            (it->second.slot >= 0 && gItemSlotOf[it->second.slot] != tex)) {   // new, changed, or its slot was reused
-            ItemKind k;
-            k.w = si.w, k.h = si.h, k.fmt = si.fmt, k.drawn = now;
-            gItemKind[tex] = k;
-            gItemPending.emplace_back(tex);
+        for (int k = 0; k < kAtlasSlots; ++k)
+            if (gAtlas[k].tex == tex && gAtlas[k].w == si.w && gAtlas[k].h == si.h && gAtlas[k].fmt == si.fmt) { slot = k; break; }
+        if (slot < 0) {   // a new atlas: take a free slot (or the one drawn longest ago that isn't being copied)
+            int pick = -1;
+            for (int k = 0; k < kAtlasSlots && pick < 0; ++k)
+                if (!gAtlas[k].tex) pick = k;                           // an empty slot
+            if (pick < 0)
+                for (int k = 0; k < kAtlasSlots; ++k)
+                    if (!gAtlas[k].pending && (pick < 0 || gAtlas[k].drawn < gAtlas[pick].drawn)) pick = k;
+            if (pick < 0) return nullptr;
+            auto& A = gAtlas[pick];
+            A.tex = tex, A.keep = tex, A.w = si.w, A.h = si.h, A.fmt = si.fmt, A.ready = false, A.failed = false, A.pending = true, A.drawn = now;
             return nullptr;
         }
-        it->second.drawn = now;
-        if (it->second.slot < 0 || !gItemBuf) return nullptr;
-        slot = it->second.slot;
+        auto& A = gAtlas[slot];
+        A.drawn = now;
+        if (!A.ready || !A.buf) return nullptr;
         if (auto g = gGlass.find({pso, kBodyKind + 1}); g != gGlass.end()) {
             if (!g->second) return nullptr;
             *game = pso;
-            out->body = true, out->skin = gItemBuf->GetGPUVirtualAddress() + UINT64(slot) * kItemSlotBytes;
+            out->body = true, out->skin = A.buf->GetGPUVirtualAddress();
             ++gGlassDraws, ++gItemDraws;
             return g->second.Get();
         }
@@ -1481,9 +1501,9 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
     std::lock_guard l(gMutex);
     auto& g = gGlass[{pso, kBodyKind + 1}];
     if (!g) g = made;
-    if (!g || !gItemBuf) return nullptr;
+    if (!g || !gAtlas[slot].ready || !gAtlas[slot].buf) return nullptr;
     *game = pso;
-    out->body = true, out->skin = gItemBuf->GetGPUVirtualAddress() + UINT64(slot) * kItemSlotBytes;
+    out->body = true, out->skin = gAtlas[slot].buf->GetGPUVirtualAddress();
     ++gGlassDraws, ++gItemDraws;
     return g.Get();
 }
@@ -1505,6 +1525,10 @@ ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12Pipeline
             if (!itemsOn()) return nullptr;
             auto t = gItemPso.find(pso);
             if (t == gItemPso.end()) return nullptr;
+            // only the game's item materials (ItemInHand*): other pipelines with the same vertex output - particles, it
+            // seems - must never turn to glass (a glass quad round a particle reads as a box). Names not learned yet: wait.
+            auto pi = gPsos.find(pso);
+            if (!gNamesLearned || pi == gPsos.end() || nameOf(pi->second.ps).find("ItemInHand") == std::string::npos) return nullptr;
             ad = t->second;
         } else ad = a->second;
     }
@@ -1868,64 +1892,31 @@ void pumpSkins(ID3D12Device* dev, ID3D12CommandQueue* q) {
     q->Signal(gSkinFence.Get(), ++gSkinFenceVal);
 }
 
-/// Glass Items, once per Present while Items is on: copy finished sprite readbacks into slots, queue new ones.
+/// Glass Items, once per Present while Items is on: copy newly seen atlases (GPU to GPU, mip 0) into our buffers.
 void pumpItems(ID3D12Device* dev, ID3D12CommandQueue* q) {
-    if (!gItemBuf) {
-        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};
-        D3D12_RESOURCE_DESC   d{};
-        d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, d.Width = UINT64(kItemSlots) * kItemSlotBytes, d.Height = 1, d.DepthOrArraySize = 1;
-        d.MipLevels = 1, d.SampleDesc.Count = 1, d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        ComPtr<ID3D12Resource> b;
-        uint8_t*               m = nullptr;
-        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&b))) ||
-            FAILED(b->Map(0, nullptr, reinterpret_cast<void**>(&m))) || !m)
-            return;
-        std::lock_guard l(gMutex);
-        gItemBuf = b, gItemMap = m;
-    }
     if (!gItemFence && FAILED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gItemFence)))) return;
-    if (!gItemInFlight.empty()) {
+    if (!gAtlasInFlight.empty()) {
         if (gItemFence->GetCompletedValue() < gItemFenceVal) return;
-        for (auto& r : gItemInFlight) {
-            void*       m = nullptr;
-            D3D12_RANGE rr{0, size_t(r.pitch) * r.h};
-            int         slot = -1;
-            if (r.buf && SUCCEEDED(r.buf->Map(0, &rr, &m)) && m) {
-                auto const*    px   = static_cast<uint8_t const*>(m);
-                unsigned const step = r.w > 64 ? r.w / 64 : 1, w = r.w / step, h = r.h / step;
-                long           painted = 0;
-                std::lock_guard l(gMutex);
-                slot = gItemNext++ % kItemSlots;
-                uint8_t* dst = gItemMap + size_t(slot) * kItemSlotBytes;
-                uint32_t hdr[4]{w, h, 0, 0};
-                std::memcpy(dst, hdr, sizeof hdr);
-                for (unsigned y = 0; y < h; ++y)
-                    for (unsigned x = 0; x < w; ++x) {
-                        uint8_t const* s = px + size_t(y * step) * r.pitch + size_t(x * step) * 4;
-                        uint8_t*       o = dst + 256 + y * 256 + x * 4;
-                        o[0] = s[r.bgra ? 2 : 0], o[1] = s[1], o[2] = s[r.bgra ? 0 : 2], o[3] = s[3];
-                        painted += s[3] != 0;
-                    }
-                if (painted < 4) slot = -1;   // an empty / blank texture: leave it vanilla
-                else gItemSlotOf[slot] = r.tex.Get(), ++gItemsKnown;
-                D3D12_RANGE none{0, 0};
-                r.buf->Unmap(0, &none);
-            }
-            std::lock_guard l(gMutex);
-            gItemKind[r.tex.Get()].slot = slot;
-        }
-        gItemInFlight.clear();
-        int64_t const now = int64_t(GetTickCount64());
         std::lock_guard l(gMutex);
-        for (auto it = gItemKind.begin(); it != gItemKind.end();)
-            it = now - it->second.drawn > 60000 && it->second.slot != -2 ? gItemKind.erase(it) : std::next(it);
+        for (int k : gAtlasInFlight) { gAtlas[k].pending = false; if (!gAtlas[k].failed) gAtlas[k].ready = true, ++gItemsKnown; }
+        gAtlasInFlight.clear();
     }
-    std::vector<ComPtr<ID3D12Resource>> todo;
+    std::vector<int> todo;
     {
         std::lock_guard l(gMutex);
-        while (!gItemPending.empty() && todo.size() < 8) { todo.push_back(gItemPending.back()); gItemPending.pop_back(); }
+        for (int k = 0; k < kAtlasSlots; ++k)
+            if (gAtlas[k].pending && !gAtlas[k].ready) todo.push_back(k);
     }
     if (todo.empty()) return;
+    if (!gAtlasHdr) {
+        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_UPLOAD};
+        D3D12_RESOURCE_DESC   d{};
+        d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, d.Width = kAtlasSlots * 512, d.Height = 1, d.DepthOrArraySize = 1, d.MipLevels = 1;
+        d.SampleDesc.Count = 1, d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&gAtlasHdr))) ||
+            FAILED(gAtlasHdr->Map(0, nullptr, reinterpret_cast<void**>(&gAtlasHdrMap))))
+            return;
+    }
     if (!gItemAlloc && FAILED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&gItemAlloc)))) return;
     if (!gItemList) {
         if (FAILED(dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, gItemAlloc.Get(), nullptr, IID_PPV_ARGS(&gItemList)))) return;
@@ -1933,35 +1924,43 @@ void pumpItems(ID3D12Device* dev, ID3D12CommandQueue* q) {
         gItemAlloc->Reset();
         gItemList->Reset(gItemAlloc.Get(), nullptr);
     }
-    for (auto& tex : todo) {
-        auto const td = tex->GetDesc();
-        SkinRb     r;
-        r.tex = tex, r.w = unsigned(td.Width), r.h = td.Height;
-        r.bgra = td.Format == DXGI_FORMAT_B8G8R8A8_UNORM || td.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || td.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    for (int k : todo) {
+        auto& A = gAtlas[k];
+        auto const td = A.keep->GetDesc();
+        bool const bgra = td.Format == DXGI_FORMAT_B8G8R8A8_UNORM || td.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB || td.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
         bool const rgba = td.Format == DXGI_FORMAT_R8G8B8A8_UNORM || td.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || td.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS;
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
         UINT64                             tot = 0;
-        if (td.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && (rgba || r.bgra) && td.SampleDesc.Count == 1 && r.w == r.h && r.w >= 16 && r.w <= 128)
-            dev->GetCopyableFootprints(&td, 0, 1, 0, &fp, nullptr, nullptr, &tot);
-        D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
-        D3D12_RESOURCE_DESC   bd{};
-        bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, bd.Width = tot, bd.Height = 1, bd.DepthOrArraySize = 1, bd.MipLevels = 1;
-        bd.SampleDesc.Count = 1, bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-        if (!tot || FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&r.buf)))) {
-            r.buf.Reset();
-            gItemInFlight.push_back(r);
-            continue;
+        if (td.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && (rgba || bgra) && td.SampleDesc.Count == 1)
+            dev->GetCopyableFootprints(&td, 0, 1, 512, &fp, nullptr, nullptr, &tot);   // rows start at byte 512
+        if (!tot || tot > kAtlasMaxBytes + 512) { std::lock_guard l(gMutex); A.failed = true; gAtlasInFlight.push_back(k); continue; }
+        if (!A.buf || A.bufBytes < tot) {
+            D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+            D3D12_RESOURCE_DESC   d{};
+            d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER, d.Width = tot, d.Height = 1, d.DepthOrArraySize = 1, d.MipLevels = 1;
+            d.SampleDesc.Count = 1, d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            ComPtr<ID3D12Resource> b;
+            if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&b)))) {
+                std::lock_guard l(gMutex); A.failed = true; gAtlasInFlight.push_back(k); continue;
+            }
+            std::lock_guard l(gMutex);
+            A.buf = b, A.bufBytes = tot, A.bufInSrv = false;
         }
-        r.pitch = fp.Footprint.RowPitch;
-        auto const st  = knownState(tex.Get(), D3D12_RESOURCE_STATE_COMMON);
+        if (A.bufInSrv) barrier(gItemList.Get(), A.buf.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+        uint32_t const hdr[4]{uint32_t(td.Width), td.Height, fp.Footprint.RowPitch, bgra ? 1u : 0u};
+        std::memcpy(gAtlasHdrMap + size_t(k) * 512, hdr, sizeof hdr);
+        gItemList->CopyBufferRegion(A.buf.Get(), 0, gAtlasHdr.Get(), UINT64(k) * 512, 512);
+        auto const st  = knownState(A.keep.Get(), D3D12_RESOURCE_STATE_COMMON);
         bool const bar = st != D3D12_RESOURCE_STATE_COMMON && st != D3D12_RESOURCE_STATE_COPY_SOURCE;
-        if (bar) barrier(gItemList.Get(), tex.Get(), st, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        if (bar) barrier(gItemList.Get(), A.keep.Get(), st, D3D12_RESOURCE_STATE_COPY_SOURCE);
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
-        dst.pResource = r.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
-        src.pResource = tex.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        dst.pResource = A.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
+        src.pResource = A.keep.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
         gItemList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-        if (bar) barrier(gItemList.Get(), tex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
-        gItemInFlight.push_back(r);
+        if (bar) barrier(gItemList.Get(), A.keep.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
+        barrier(gItemList.Get(), A.buf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        A.bufInSrv = true;
+        gAtlasInFlight.push_back(k);
     }
     gItemList->Close();
     ID3D12CommandList* lists[] = {gItemList.Get()};
@@ -2053,6 +2052,7 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
         pumpSkins(device, queue);
         gBodyDrawsShown = gBodyDraws.exchange(0);
     }
+    if (itemsOn() && !gNamesLearned && !gLearning) learnNames();   // the item filter goes by material name
     if (itemsOn() && device && queue) {
         pumpItems(device, queue);
         gItemDrawsShown = gItemDraws.exchange(0);
@@ -2142,11 +2142,15 @@ void drawUi() {
         int const mine = gMine.load();
         if (!bodyOn()) ImGui::TextDisabled("Bedrock Forge skins: looked at once You or Other players is on");
         else ImGui::Text("Bedrock Forge skins: %s", mine < 0 ? "not available (BF missing / too old)" : mine == 0 ? "yours not grabbed yet" : "yours grabbed");
-        ImGui::Text("Skin textures: yours %ld   other players %ld   not players %ld   being read %zu", gSkinsSelf.load(), gSkinsOther.load(),
-                    gSkinsNone.load(), gSkinPending.size() + gSkinInFlight.size());
+        {   // what is recognised right now (the totals below count every check)
+            int self = 0, other = 0, none = 0;
+            for (auto const& [t, k] : gSkinKind) (k.slot < 0 ? none : k.self ? self : other) += k.slot == -2 ? 0 : 1;
+            ImGui::Text("Skin textures now: yours %d   other players %d   not players %d   being read %zu   (checks: %ld / %ld / %ld)", self, other,
+                        none, gSkinPending.size() + gSkinInFlight.size(), gSkinsSelf.load(), gSkinsOther.load(), gSkinsNone.load());
+        }
         ImGui::TextWrapped("Last: %s", gSkinLast.empty() ? "-" : gSkinLast.c_str());
         ImGui::Text("Body glass draws last frame: %ld   pipeline failures: %ld", gBodyDrawsShown.load(), gBodyPsoFail.load());
-        ImGui::Text("Items: sprites held %ld   item pipelines %zu   glass draws last frame %ld   failures %ld", gItemsKnown.load(), gItemPso.size(),
+        ImGui::Text("Items: atlases copied %ld   item pipelines %zu   glass draws last frame %ld   failures %ld", gItemsKnown.load(), gItemPso.size(),
                     gItemDrawsShown.load(), gItemPsoFail.load());
         if (!itemShaderBuilt()) ImGui::TextDisabled("glass item shader missing from this build");
         bool mg = gMeasureGpu.load();

@@ -6,8 +6,9 @@
 //   * its own colours fill the glass, so a diamond sword is aqua glass with a warm handle, a golden apple amber
 //   * a neon line round the sprite's shape in a vivid version of the colour right there
 //   * Frosted / Glow / Shimmer / Colour from the client's Glass module, LyricsForge beat, Novak night glow
-// The sprite comes from OUR copy (t3 space9: uint w, h at 0, then rows of 256 bytes from byte 256), read back once from
-// the texture the draw binds (probe: r1.0, the item's own 16x16).
+// The item comes from OUR copy of the item ATLAS the draw samples (t3 space9: header uint w, h, rowPitch, bgra; rows from
+// byte 512), copied GPU-side once; the draw's UVs point into it. (The draw's first texture, 16x16, is the lightmap - the
+// first version read that and every item became a solid glass box.)
 
 ByteAddressBuffer gScene : register(t0, space9);
 ByteAddressBuffer gDepth : register(t1, space9);
@@ -63,8 +64,9 @@ struct PSIn {
 uint2 itemSize() { return uint2(gItem.Load(0), gItem.Load(4)); }
 float4 itemAt(int2 t, int2 sz) {
     if (t.x < 0 || t.y < 0 || t.x >= sz.x || t.y >= sz.y) return float4(0, 0, 0, 0);
-    uint v = gItem.Load(256u + uint(t.y) * 256u + uint(t.x) * 4u);
-    return float4(v & 255u, (v >> 8) & 255u, (v >> 16) & 255u, v >> 24) / 255.0;
+    uint v = gItem.Load(512u + uint(t.y) * gItem.Load(8) + uint(t.x) * 4u);
+    float4 c = float4(v & 255u, (v >> 8) & 255u, (v >> 16) & 255u, v >> 24) / 255.0;
+    return gItem.Load(12) != 0u ? c.bgra : c;
 }
 float3 texel(int2 p) {
     p      = clamp(p, int2(0, 0), int2(res) - 1);
@@ -98,7 +100,7 @@ float4 PSGlassItem(PSIn i) : SV_Target {
     int2   sz = int2(itemSize());
     if (pad == 1u) return float4(1.0, 0.0, 1.0, 1.0);   // debug: does the replayed draw land?
     if (sz.x < 1 || sz.y < 1) discard;
-    float2 t  = frac(i.uv) * float2(sz);                 // sprite texel space (the item's own texture: uv 0..1)
+    float2 t  = saturate(i.uv) * float2(sz);              // atlas texel space (the draw's UVs point into the atlas)
     int2   b  = int2(floor(t));
     float4 it = itemAt(b, sz);
     if (it.a <= 0.1) discard;                            // the item's own shape
@@ -120,12 +122,15 @@ float4 PSGlassItem(PSIn i) : SV_Target {
     float  d  = -dIn * pxPerTexel;
     float2 gr = float2(ddx(-dIn), ddy(-dIn));
     float2 n  = gr / max(length(gr), 1e-6);
-    float  bevel = min(10.0 * S, float(min(sz.x, sz.y)) * 0.25 * pxPerTexel);
+    // the item's own cell in the atlas (16 texels in a 1024 atlas, scaled with packs): the twist turns about its centre
+    float  cell  = max(16.0, 16.0 * float(sz.x) / 1024.0);
+    float2 cc    = (floor(t / cell) + 0.5) * cell;
+    float  bevel = min(10.0 * S, cell * 0.25 * pxPerTexel);
     float  e     = pow(1.0 - saturate(-d / max(bevel, 1.0)), 2.2);
 
     // the bend: a lens toward the outline + a fixed twist about the sprite's centre (static)
-    float2 rel = t - float2(sz) * 0.5;
-    float  rr  = length(rel) / max(float(min(sz.x, sz.y)) * 0.5, 1e-3);
+    float2 rel = t - cc;
+    float  rr  = length(rel) / (cell * 0.5);
     float  ang = swirl * 0.6 * smoothstep(1.2, 0.0, rr);
     float  cs = cos(ang), sn = sin(ang);
     float2 fo = float2(cs * rel.x - sn * rel.y, sn * rel.x + cs * rel.y) - rel;
@@ -169,12 +174,13 @@ float4 PSGlassItem(PSIn i) : SV_Target {
         c = 1.0 - (1.0 - c) * (1.0 - refl * w);
     }
     // a polished sheen across the item, fixed to it (turns with it, doesn't crawl)
-    float sheen = exp(-pow((frac((t.x - t.y) / float(sz.x + sz.y) + 0.35) - 0.5) / 0.08, 2.0));
+    float2 tc    = (t - cc) / cell + 0.5;                // 0..1 across the item's cell
+    float sheen = exp(-pow((frac((tc.x - tc.y) * 0.5 + 0.35) - 0.5) / 0.08, 2.0));
     c += sheen * 0.10 * (1.0 - 0.6 * frz) * lerp(float3(1, 1, 1), vivid(ic), 0.3);
     c += lerp(tintF, tintF * ic, 0.25) * glowK * (0.10 + 0.20 * e);
     if (shimmer > 0.5) {
         float ph2 = frac(time / 6.0 + 0.37);
-        float sp2 = (t.x / float(sz.x)) * 0.7 + (t.y / float(sz.y)) * 0.3;
+        float sp2 = tc.x * 0.7 + tc.y * 0.3;
         float k2  = (sp2 - (ph2 * 3.2 - 1.1)) / 0.09;
         c += exp(-k2 * k2) * (0.10 + 0.10 * frz) * lerp(float3(1, 1, 1), tintF, 0.3);
     }
