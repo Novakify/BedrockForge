@@ -109,6 +109,29 @@ bool writeHdr(fs::path const& file, std::vector<float> const& rgb, int S) {
     }
     return bool(o);
 }
+// the classic title screen (no Vibrant Visuals) reads textures/ui/panorama_N: 24-bit TGA, sRGB, top row first
+bool writeTga(fs::path const& file, std::vector<float> const& rgb, int S) {
+    std::ofstream o(file, std::ios::binary);
+    if (!o) return false;
+    uint8_t h[18]{};
+    h[2] = 2; h[12] = uint8_t(S & 255); h[13] = uint8_t(S >> 8); h[14] = uint8_t(S & 255); h[15] = uint8_t(S >> 8);
+    h[16] = 24; h[17] = 0x20;   // top-left origin
+    o.write(reinterpret_cast<char const*>(h), 18);
+    auto enc = [](float v) {
+        v = std::clamp(v, 0.f, 1.f);
+        float const c = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.f / 2.4f) - 0.055f;
+        return char(uint8_t(std::clamp(c * 255.f + 0.5f, 0.f, 255.f)));
+    };
+    std::vector<char> row(size_t(S) * 3);
+    for (int y = 0; y < S; ++y) {
+        for (int x = 0; x < S; ++x) {
+            float const* p = &rgb[(size_t(y) * S + x) * 3];
+            row[size_t(x) * 3 + 0] = enc(p[2]); row[size_t(x) * 3 + 1] = enc(p[1]); row[size_t(x) * 3 + 2] = enc(p[0]);
+        }
+        o.write(row.data(), std::streamsize(row.size()));
+    }
+    return bool(o);
+}
 // one face: the centre of the copy that spans exactly 90 degrees, resampled to S x S, linear light
 std::vector<float> cropFace(Face const& f, uint8_t const* px, int S) {
     std::vector<float> out(size_t(S) * S * 3);
@@ -150,6 +173,7 @@ void writeAll() {
         f.buf->Unmap(0, &none);
         bool ok = writeHdr(dir / "textures" / "ui" / ("panoramahdr_" + std::to_string(i) + ".hdr"), img, S);
         ok = writeHdr(dir / "textures" / "ui" / ("panoramahdr_alternate_" + std::to_string(i) + ".hdr"), img, S) && ok;
+        ok = writeTga(dir / "textures" / "ui" / ("panorama_" + std::to_string(i) + ".tga"), img, S) && ok;
         done += ok;
         f.buf.Reset();
         f.ok = false;
