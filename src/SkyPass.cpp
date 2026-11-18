@@ -1529,6 +1529,15 @@ void matchFns(MatchGet& g, MatchUse& u) {
 }
 int64_t steadyMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 } // namespace
+// Glass Body (GlassArmor.cpp): the players' skins BF has grabbed (read-only views of BF's own memory; null = empty slot)
+int bfSkins(BfSkinView out[16]) {
+    MatchGet get; MatchUse use;
+    matchFns(get, use);
+    BfMatchFxV1 const* b = get ? get() : nullptr;
+    if (!b || b->version < 6 || b->size < kMatchV6Size) return -1;
+    for (int i = 0; i < 16; ++i) out[i] = {b->skins[i].ok ? b->skins[i].px : nullptr, b->skins[i].gen};
+    return b->mySkin <= 16 ? int(b->mySkin) : 0;
+}
 // once per frame (cheap after the first call): the match as the World FX shaders want it
 // F6 "Test kill": a fake kill 6 blocks in front of you (normal / final kill alternate)
 std::atomic<int> gTestKillReq{0};
