@@ -803,12 +803,17 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
         float dz = dot(ctr - c5.xyz, rd);
         if (dz < 0.3 || dz > dist) continue;
         float2 pl2 = float2(dot(d, normalize(cross(rd, float3(0, 1, 0)))), d.y) / (0.12 + 0.05 * h);
-        pl2.y = -pl2.y + 0.25;
+        pl2.y = pl2.y + 0.25;                                               // (was flipped: the hearts hung upside down)
         float hx = abs(pl2.x);
         float heart = pl2.y - sqrt(max(hx, 0.0)) * 0.55;                  // a classic heart curve
         float sd = length(float2(hx, heart)) - 0.75;
         float fill = 1.0 - smoothstep(-0.05, 0.08, sd);
-        hl += cu0.rgb * fill * (0.65 + 0.35 * sin(t * 2.0 + h * 20.0)) * 0.9;
+        float halo = exp(-max(sd, 0.0) * 5.0) * (1.0 - fill) * 0.45;      // a soft glow around it
+        float2 hp = pl2 - float2(-0.32, 0.62);
+        float hi = exp(-dot(hp, hp) * 9.0) * fill;                          // a candy highlight, top-left lobe
+        float edge = smoothstep(-0.32, 0.0, sd) * fill;                     // a deeper tone toward the outline
+        float3 hc = lerp(cu0.rgb * (1.0 - 0.35 * edge), float3(1.0, 0.96, 0.98), 0.45 * hi);
+        hl += (hc * fill + cu0.rgb * halo) * (0.7 + 0.3 * sin(t * 2.0 + h * 20.0)) * 0.9;
     }
     // sparkles on the ground / scenery near you
     if (!sky && cu1.y > 0.0 && dist < 24.0) {
