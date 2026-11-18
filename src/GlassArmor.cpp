@@ -1037,8 +1037,9 @@ bool isActorPso(ID3D12PipelineState* pso) {
     std::lock_guard l(gMutex);
     return gActor.count(pso) != 0;
 }
+bool itemsTracing() { return itemsOn(); }
 void traceItemReplay(int what) { if (what >= 0 && what < 4) ++gItemReplay[what]; }
-void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed) {
+void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed, unsigned rtW, unsigned rtH) {
     if (!itemsOn()) return;
     std::lock_guard l(gMutex);
     auto it = gListPso.find(list);
@@ -1049,7 +1050,7 @@ void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool gl
     if (n.find("ItemInHand") == std::string::npos) return;
     n = n.substr(0, n.find(".material"));
     bool const itemVs = gItemPso.count(it->second) != 0, actorVs = gActor.count(it->second) != 0;
-    if (gItemTrace.size() < 64) ++gItemTrace[{indexCount, glassed ? 1 : 0, n + (itemVs ? "/item" : actorVs ? "/actor" : "/other")}];
+    if (gItemTrace.size() < 64) ++gItemTrace[{indexCount, glassed ? 1 : 0, n + (itemVs ? "/item" : actorVs ? "/actor" : "/other") + " rt " + std::to_string(rtW) + "x" + std::to_string(rtH)}];
 }
 ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list) {
     std::lock_guard l(gMutex);

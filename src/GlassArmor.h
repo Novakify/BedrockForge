@@ -70,10 +70,11 @@ void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue);
 bool                 isActorPso(ID3D12PipelineState* pso);
 ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list);
 /// Glass Items trace: every indexed draw on an ItemInHand pipeline (index count, glassed or not) -> glass_ms.txt
-void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed);
+void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool glassed, unsigned rtW = 0, unsigned rtH = 0);
 /// Glass Items trace: what became of a held-back item draw (0 replayed with glass, 1 fell back to the game's draw,
 /// 2 dropped: no root / index buffer known, 3 dropped: list closed with it pending)
 void traceItemReplay(int what);
+bool itemsTracing();   // Items on (the trace runs only then)
 void                 noteDsv(size_t handle, ID3D12Resource* res);
 ID3D12Resource*      dsvResource(size_t handle);
 void                 noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size);

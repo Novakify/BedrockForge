@@ -1000,7 +1000,16 @@ void STDMETHODCALLTYPE drawIdxHook(ID3D12GraphicsCommandList* list, UINT a, UINT
         ID3D12PipelineState* gamePso = nullptr;
         rf::glassarmor::GlassDraw gd;
         ID3D12PipelineState* glass   = gaOn() ? rf::glassarmor::glassPsoFor(list, &gamePso, &gd) : nullptr;
-        if (gaOn()) rf::glassarmor::traceItemDraw(list, a, glass != nullptr);
+        if (gaOn() && rf::glassarmor::itemsTracing()) {
+            unsigned rw = 0, rh = 0;
+            SIZE_T rt0 = 0;
+            {
+                std::lock_guard g(gGaMutex);
+                if (auto it = gGa.find(list); it != gGa.end()) rt0 = it->second.rt0;
+            }
+            if (ID3D12Resource* r = rt0 ? rtvResource(rt0) : nullptr) { auto d = r->GetDesc(); rw = unsigned(d.Width), rh = d.Height; }
+            rf::glassarmor::traceItemDraw(list, a, glass != nullptr, rw, rh);
+        }
         if (glass) { // Glass Armor: hold the game's armor draw back, replay it with our shader after the actor pass
             GaPending p;
             {
