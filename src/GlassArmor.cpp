@@ -262,6 +262,9 @@ UINT64                            gItemFenceVal = 0;
 ComPtr<ID3D12Resource>            gAtlasHdr;   // upload: kAtlasSlots x 512-byte headers
 uint8_t*                          gAtlasHdrMap = nullptr;
 std::vector<int>                  gAtlasInFlight;
+// a buffer a slot outgrew may still be read by frames the GPU hasn't finished: it is released only after the copy that
+// replaced it has completed plus a few frames (never under the GPU's feet)
+std::vector<std::pair<ComPtr<ID3D12Resource>, UINT64>> gAtlasRetired;
 std::atomic<long>                 gItemDraws{0}, gItemDrawsShown{0}, gItemsKnown{0}, gItemPsoFail{0};
 // ---- glass cost (logs/glassarmor/glass_ms.txt every 5 s while any glass is on)
 std::atomic_bool gMeasureGpu{false};
@@ -1492,9 +1495,9 @@ ID3D12PipelineState* itemPsoFor(ID3D12GraphicsCommandList* list, ID3D12PipelineS
             int pick = -1;
             for (int k = 0; k < kAtlasSlots && pick < 0; ++k)
                 if (!gAtlas[k].tex) pick = k;                           // an empty slot
-            if (pick < 0)
+            if (pick < 0)   // only a slot no item has drawn with for 3 s (no flip-flopping between atlases every frame)
                 for (int k = 0; k < kAtlasSlots; ++k)
-                    if (!gAtlas[k].pending && (pick < 0 || gAtlas[k].drawn < gAtlas[pick].drawn)) pick = k;
+                    if (!gAtlas[k].pending && now - gAtlas[k].drawn > 3000 && (pick < 0 || gAtlas[k].drawn < gAtlas[pick].drawn)) pick = k;
             if (pick < 0) return nullptr;
             auto& A = gAtlas[pick];
             A.tex = tex, A.keep = tex, A.w = si.w, A.h = si.h, A.fmt = si.fmt, A.ready = false, A.failed = false, A.pending = true, A.drawn = now;
@@ -1911,6 +1914,10 @@ void pumpSkins(ID3D12Device* dev, ID3D12CommandQueue* q) {
 /// Glass Items, once per Present while Items is on: copy newly seen atlases (GPU to GPU, mip 0) into our buffers.
 void pumpItems(ID3D12Device* dev, ID3D12CommandQueue* q) {
     if (!gItemFence && FAILED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gItemFence)))) return;
+    if (!gAtlasRetired.empty()) {   // the fence advances once per copy; "+4" keeps it a few copies past its last use
+        UINT64 const done = gItemFence->GetCompletedValue();
+        std::erase_if(gAtlasRetired, [&](auto const& r) { return r.second <= done; });
+    }
     if (!gAtlasInFlight.empty()) {
         if (gItemFence->GetCompletedValue() < gItemFenceVal) return;
         std::lock_guard l(gMutex);
@@ -1960,6 +1967,7 @@ void pumpItems(ID3D12Device* dev, ID3D12CommandQueue* q) {
                 std::lock_guard l(gMutex); A.failed = true; gAtlasInFlight.push_back(k); continue;
             }
             std::lock_guard l(gMutex);
+            if (A.buf) gAtlasRetired.emplace_back(std::move(A.buf), gItemFenceVal + 4);   // frames may still read it
             A.buf = b, A.bufBytes = tot, A.bufInSrv = false;
         }
         if (A.bufInSrv) barrier(gItemList.Get(), A.buf.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
