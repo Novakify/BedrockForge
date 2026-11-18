@@ -3223,6 +3223,17 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 for (int k = 0; k < 3; ++k) { acb.cp[0][k] = lin(atm.cpC[k]); acb.cp[1][k] = lin(atm.cpC2[k]); }
                 acb.cp[0][3] = std::max(atm.cpGlow, 0.01f); acb.cp[1][3] = atm.cpDesign;
                 acb.cp[2][0] = atm.cpSway; acb.cp[2][1] = spd; acb.cp[2][2] = ev && (ev->pflags & 2u) ? 0.f : 1.f;
+                {   // how fast your body turns (from the anchor yaw, frame to frame, eased): the cape lifts out as you turn
+                    static float lastYaw = 0.f, turn = 0.f; static int64_t lt2 = 0;
+                    float const yaw = acb.pl[3];
+                    if (lt2 && nowMs > lt2) {
+                        float dyw = std::fmod(yaw - lastYaw + 9.42477796f, 6.28318531f) - 3.14159265f;
+                        float const rate = std::fabs(dyw) * 1000.f / float(nowMs - lt2);   // rad / s
+                        turn += (std::min(rate / 6.0f, 1.f) - turn) * (rate / 6.0f > turn ? 0.35f : 0.06f);   // quick up, slow settle
+                    }
+                    lastYaw = yaw; lt2 = nowMs;
+                    acb.cp[2][3] = turn;
+                }
             }
             if (atm.cy) {
                 for (int k = 0; k < 3; ++k) acb.cy[0][k] = lin(atm.cyC[k]);

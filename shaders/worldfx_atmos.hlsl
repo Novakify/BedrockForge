@@ -620,8 +620,11 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
     // -------- cape: hangs from the shoulders, swings back as you run, ripples
     [branch] if (cp0.w > 0.0 && !fp) {
         int   design = int(cp1.w + 0.5);
-        float th = 0.10 + 0.55 * saturate(cp2.y) * cp2.x + 0.35 * cp2.z * cp2.x + 0.04 * sin(t * 1.7) * cp2.x;
-        float3 C0 = pl.xyz + up * 1.42 - fwd * 0.17;
+        // (in game 2026-11-17: it clipped through the armour and the body. A chestplate stands ~0.19 out from the body's
+        // centre, the cape hung from 0.17 at ~6 degrees - so it now hangs from behind the armour and always clears the
+        // legs; turning (cp2.w: how fast the body turns, 0..1) lifts it out like real cloth instead of cutting through)
+        float th = 0.17 + 0.55 * saturate(cp2.y) * cp2.x + 0.35 * cp2.z * cp2.x + 0.30 * saturate(cp2.w) * cp2.x + 0.04 * sin(t * 1.7) * cp2.x;
+        float3 C0 = pl.xyz + up * 1.42 - fwd * 0.235;
         float3 D  = normalize(-up * cos(th) - fwd * sin(th));
         float3 n  = normalize(cross(side, D));
         float den = dot(rd, n);
