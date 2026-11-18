@@ -326,8 +326,12 @@ def black_ti(w, h, seed=81):
 
 def chamfer_ti(w, h):
     """bright machined titanium chamfer (round a milled pocket)"""
+    # toned down after the close-up audit: a flat near-white band read as a drawn outline, not a cut edge.
+    # Raw ti is grey, brightest only where the cut catches light (one side), with fine tool marks along it.
     v = np.linspace(0, 1, h)[:, None]
-    rgb = np.zeros((h, w, 3)) + [150, 152, 158.0] + 40 * (1 - v)[..., None]
+    u = np.linspace(0, 1, w)[None, :]
+    rgb = np.zeros((h, w, 3)) + [104, 106, 112.0] + (30 * (1 - v) ** 2)[..., None]
+    rgb += (6 * np.sin(u * w * 2.1) * (0.5 + 0.5 * v))[..., None]
     return rgba(rgb, ID_METAL)
 
 

@@ -14,6 +14,7 @@ pivot pins (180 = folded over the blade). Rotations in degrees. Poses are first 
 from __future__ import annotations
 
 KNIVES = ("karambit", "balisong", "dagger")
+FP_SCALE = {"karambit": 0.75, "balisong": 0.68, "dagger": 0.75}   # first-person size (bfk_fix)
 SPEED = "q.anim_time + q.delta_time * v.bfk_spd"
 
 
@@ -71,14 +72,15 @@ def karambit():
         [(0.3, "click"), (1.7, "click")], [])
     # attacks: hook slash (the claw leads, the ring rolls into it) / backhand rip
     A["swing1"] = (0.36, {
-        "bfk_pose": {"rotation": [(0, Z), (0.035, [6, 0, -10]), (0.09, [-22, 0, 56]), (0.19, [10, 0, -18]), (0.27, [-2, 0, 4]), (0.36, Z)]},
-        "bfk_spin": {"rotation": [(0, Z), (0.05, [0, 0, 8]), (0.11, [0, 0, -42]), (0.22, [0, 0, 7]), (0.36, Z)]}},
+        "bfk_pose": {"rotation": [(0, Z), (0.035, [8, 0, -16]), (0.09, [-30, 0, 78]), (0.19, [12, 0, -24]), (0.27, [-3, 0, 6]), (0.36, Z)],
+                     "position": [(0, Z), (0.09, [-1.2, 1.0, -1.0]), (0.36, Z)]},
+        "bfk_spin": {"rotation": [(0, Z), (0.05, [0, 0, -6]), (0.11, [0, 0, 24]), (0.22, [0, 0, -5]), (0.36, Z)]}},
         [(0.0, "swish")], arc_trail(0.05, 0.17))
     A["swish2_"] = None
     A["swing2"] = (0.36, {
-        "bfk_pose": {"rotation": [(0, Z), (0.035, [-6, 0, 10]), (0.1, [28, 0, -50]), (0.2, [-8, 0, 16]), (0.28, [2, 0, -3]), (0.36, Z)],
-                     "position": [(0, Z), (0.1, [0.8, 0.6, 0]), (0.36, Z)]},
-        "bfk_spin": {"rotation": [(0, Z), (0.11, [0, 0, 34]), (0.22, [0, 0, -5]), (0.36, Z)]}},
+        "bfk_pose": {"rotation": [(0, Z), (0.035, [-8, 0, 14]), (0.1, [36, 0, -70]), (0.2, [-10, 0, 20]), (0.28, [2, 0, -4]), (0.36, Z)],
+                     "position": [(0, Z), (0.1, [1.6, 1.0, -0.8]), (0.36, Z)]},
+        "bfk_spin": {"rotation": [(0, Z), (0.11, [0, 0, -22]), (0.22, [0, 0, 4]), (0.36, Z)]}},
         [(0.0, "swish")], arc_trail(0.05, 0.18))
     del A["swish2_"]
     return A
@@ -108,13 +110,14 @@ def balisong():
         [(0.8, "clack"), (1.36, "clack"), (1.62, "clack")], [])
     # attacks: flick slash (handles rattle) / straight thrust
     A["swing1"] = (0.32, {
-        "bfk_pose": {"rotation": [(0, Z), (0.035, [0, 0, 10]), (0.09, [-6, 0, -58]), (0.18, [3, 0, 14]), (0.25, [0, 0, -3]), (0.32, Z)]},
+        "bfk_pose": {"rotation": [(0, Z), (0.035, [4, 0, 14]), (0.09, [-14, 0, -78]), (0.18, [5, 0, 18]), (0.25, [0, 0, -4]), (0.32, Z)],
+                     "position": [(0, Z), (0.09, [1.4, 0.8, -0.8]), (0.32, Z)]},
         "bfb_safe": {"rotation": [(0, Z), (0.08, [0, 0, 7]), (0.16, [0, 0, -4]), (0.3, Z)]},
         "bfb_bite": {"rotation": [(0, Z), (0.08, [0, 0, -7]), (0.16, [0, 0, 4]), (0.3, Z)]}},
         [(0.0, "swish")], arc_trail(0.04, 0.16))
     A["swing2"] = (0.3, {
-        "bfk_pose": {"position": [(0, Z), (0.04, [0, -0.8, 0]), (0.1, [0, 3.6, 0]), (0.18, [0, -0.3, 0]), (0.3, Z)],
-                     "rotation": [(0, Z), (0.1, [-10, 0, 5]), (0.3, Z)]}},
+        "bfk_pose": {"position": [(0, Z), (0.04, [0, -1.6, 0.4]), (0.1, [0, 7.5, -1.2]), (0.18, [0, -0.6, 0]), (0.3, Z)],
+                     "rotation": [(0, Z), (0.04, [6, 0, -4]), (0.1, [-18, 0, 8]), (0.2, [3, 0, -2]), (0.3, Z)]}},
         [(0.0, "swish")], arc_trail(0.05, 0.12, 4))
     return A
 
@@ -139,11 +142,12 @@ def dagger():
         [(0.32, "dagger_catch"), (1.62, "click")], [])
     # attacks: stab / slash
     A["swing1"] = (0.3, {
-        "bfk_pose": {"position": [(0, Z), (0.04, [0, -1.0, 0]), (0.11, [0, 4.6, 0]), (0.19, [0, -0.4, 0]), (0.3, Z)],
-                     "rotation": [(0, Z), (0.11, [-12, 0, 0]), (0.3, Z)]}},
+        "bfk_pose": {"position": [(0, Z), (0.04, [0, -2.0, 0.6]), (0.11, [0, 9.0, -1.5]), (0.19, [0, -0.8, 0]), (0.3, Z)],
+                     "rotation": [(0, Z), (0.04, [8, 0, 0]), (0.11, [-20, 0, 0]), (0.21, [4, 0, 0]), (0.3, Z)]}},
         [(0.0, "swish")], arc_trail(0.06, 0.13, 4))
     A["swing2"] = (0.34, {
-        "bfk_pose": {"rotation": [(0, Z), (0.035, [0, 0, -10]), (0.1, [-6, 0, 58]), (0.2, [2, 0, -15]), (0.27, [0, 0, 3]), (0.34, Z)]}},
+        "bfk_pose": {"rotation": [(0, Z), (0.035, [4, 0, -14]), (0.1, [-14, 0, 76]), (0.2, [4, 0, -18]), (0.27, [0, 0, 4]), (0.34, Z)],
+                     "position": [(0, Z), (0.1, [-1.2, 0.8, -0.8]), (0.34, Z)]}},
         [(0.0, "swish")], arc_trail(0.05, 0.17))
     return A
 
@@ -169,7 +173,9 @@ def build():
                 anims[f"animation.bfk.{k}.{name}.fx"] = anim(length, {}, particles=prt)
     # first person: bfk_fix (between the World FX hold bone and the pose) sizes and places the knife in view;
     # tuned on real frames (Knives Test world, 2026-11-17)
-    anims["animation.bfk.knife_fp"] = {"loop": True, "bones": {"bfk_fix": {"scale": 0.75, "position": [0, 7, 0]}}}
+    # (karambit verified; the balisong read ~10% long on screen, so it is held a little smaller)
+    for k in KNIVES:
+        anims[f"animation.bfk.{k}.fp"] = {"loop": True, "bones": {"bfk_fix": {"scale": FP_SCALE[k], "position": [0, 7, 0]}}}
     # confirmed hits: sparks + cut flash off the tip, and the cut sound
     for ab in ("a", "b"):
         anims[f"animation.bfk.hit_{ab}.fx"] = anim(0.3, {}, particles=[(0.0, "spark"), (0.0, "cutflash")])
@@ -177,8 +183,8 @@ def build():
 
     clock = {"draw": ("v.bfk_d", None), "insp1": ("v.bfk_i", "v.bfk_in == 1"), "insp2": ("v.bfk_i", "v.bfk_in == 0"),
              "swing1": ("v.bfk_a", "v.bfk_an == 1"), "swing2": ("v.bfk_a", "v.bfk_an == 0")}
-    amap = {"bfk_fp": "animation.bfk.knife_fp"}
-    animate = [{"bfk_fp": "v.bfk > 0 && c.is_first_person"}]
+    amap = {f"bfk_fp_{k}": f"animation.bfk.{k}.fp" for k in KNIVES}
+    animate = [{f"bfk_fp_{k}": f"v.bfk == {i + 1} && c.is_first_person"} for i, k in enumerate(KNIVES)]
     for i, k in enumerate(KNIVES):
         n = i + 1
         for kind, (var, parity) in clock.items():

@@ -346,23 +346,23 @@
       "0.040": {
        "post": [
         0,
-        -1.0,
-        0
+        -2.0,
+        0.6
        ],
        "lerp_mode": "catmullrom"
       },
       "0.110": {
        "post": [
         0,
-        4.6,
-        0
+        9.0,
+        -1.5
        ],
        "lerp_mode": "catmullrom"
       },
       "0.190": {
        "post": [
         0,
-        -0.4,
+        -0.8,
         0
        ],
        "lerp_mode": "catmullrom"
@@ -385,9 +385,25 @@
        ],
        "lerp_mode": "catmullrom"
       },
+      "0.040": {
+       "post": [
+        8,
+        0,
+        0
+       ],
+       "lerp_mode": "catmullrom"
+      },
       "0.110": {
        "post": [
-        -12,
+        -20,
+        0,
+        0
+       ],
+       "lerp_mode": "catmullrom"
+      },
+      "0.210": {
+       "post": [
+        4,
         0,
         0
        ],
@@ -452,25 +468,25 @@
       },
       "0.035": {
        "post": [
+        4,
         0,
-        0,
-        -10
+        -14
        ],
        "lerp_mode": "catmullrom"
       },
       "0.100": {
        "post": [
-        -6,
+        -14,
         0,
-        58
+        76
        ],
        "lerp_mode": "catmullrom"
       },
       "0.200": {
        "post": [
-        2,
+        4,
         0,
-        -15
+        -18
        ],
        "lerp_mode": "catmullrom"
       },
@@ -478,7 +494,33 @@
        "post": [
         0,
         0,
-        3
+        4
+       ],
+       "lerp_mode": "catmullrom"
+      },
+      "0.340": {
+       "post": [
+        0,
+        0,
+        0
+       ],
+       "lerp_mode": "catmullrom"
+      }
+     },
+     "position": {
+      "0.000": {
+       "post": [
+        0,
+        0,
+        0
+       ],
+       "lerp_mode": "catmullrom"
+      },
+      "0.100": {
+       "post": [
+        -1.2,
+        0.8,
+        -0.8
        ],
        "lerp_mode": "catmullrom"
       },
@@ -530,6 +572,19 @@
     "0.170": {
      "effect": "arc",
      "locator": "tip"
+    }
+   }
+  },
+  "animation.bfk.dagger.fp": {
+   "loop": true,
+   "bones": {
+    "bfk_fix": {
+     "scale": 0.75,
+     "position": [
+      0,
+      7,
+      0
+     ]
     }
    }
   }

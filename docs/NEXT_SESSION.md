@@ -11,6 +11,9 @@
   Needs the new DLL installed (game closed).
 - Open: strong blue tint in that world (world grading / shader, not the textures); inspect key = I (Fernando's pick, setting
   inspect_vk = 73; renamed from inspect_key so the old saved 0 doesn't override it); Knives gear button in the menu did not open settings via computer-use clicks.
+- Offline polish (2026-11-18, not yet seen in game): swings bigger (karambit slashes no longer cancel against the
+  ring roll; balisong/dagger thrusts ~2x reach with a wrist snap), balisong held 10% smaller in first person
+  (FP_SCALE), balisong pocket chamfers toned down (read as a drawn outline in the close-up audit).
 - Device commit gotcha: re-committing to the same device path kept the old bytes; use a new file name.
 
 - Knives module + BF Cosmetics pack are on main (docs/COSMETICS.md). DLL from main 07ad8a1 is INSTALLED in

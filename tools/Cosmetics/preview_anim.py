@@ -67,7 +67,8 @@ def posed(kind, anim, t):
     return out, atlas
 
 
-def sheet(kind, name, path, frames=8, size=220, anim_file="packs/BFCosmetics/animations/bfk.animation.json"):
+def sheet(kind, name, path, frames=8, size=220, anim_file=None):
+    anim_file = anim_file or f"packs/BFCosmetics/animations/bfk_{kind}.animation.json"
     anims = json.load(open(anim_file))["animations"]
     a = anims[f"animation.bfk.{kind}.{name}"]
     L = a["animation_length"]
