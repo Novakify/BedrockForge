@@ -364,6 +364,7 @@ float3 ascension(float3 P, float3 rd, float dist, bool sky, float t, bool fp) {
         if (hs > 0.86 && ax < body * 1.6 && y > 0.0 && y < top) {
             float2 o = (float2(hash12b(mi + 3.1), hash12b(mi + 7.3)) - 0.5) * 0.6;
             float  k = exp(-dot(mf - o, mf - o) * 160.0) * (0.6 + 0.4 * sin(t * 8.0 + hs * 40.0));
+            k *= smoothstep(top, top * 0.75, y) * smoothstep(0.0, 0.15, y);  // they fade out as they rise (no flat cut at the top)
             L += hot * k * 1.3 * front;
         }
     }
@@ -913,7 +914,8 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
         float3 cid = floor(q / 3.0);
         float h = cyHash(cid + float(k));
         if (h > cu1.x * 0.6) continue;
-        float3 ctr = (cid + 0.5) * 3.0 + float3(0, frac(t * 0.12 + h) * 1.6 - 0.8, 0);   // drifts inside its own cell
+        float life = frac(t * 0.12 + h);                                  // 0..1 as it rises; it fades in and out (no pop at the top)
+        float3 ctr = (cid + 0.5) * 3.0 + float3(0, life * 1.6 - 0.8, 0);   // drifts inside its own cell
         float3 d = rd * dot(ctr - c5.xyz, rd) - (ctr - c5.xyz);
         float dz = dot(ctr - c5.xyz, rd);
         if (dz < 0.3 || dz > dist) continue;
@@ -929,6 +931,8 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
         float edge = smoothstep(-0.32, 0.0, sd) * fill;                     // a deeper tone toward the outline
         float3 hc = lerp(cu0.rgb * (1.0 - 0.35 * edge), float3(1.0, 0.96, 0.98), 0.45 * hi);
         float win = smoothstep(0.6, 0.35, length(d));                      // the glow ends well inside the cell: no box
+        win *= smoothstep(0.0, 0.18, life) * smoothstep(1.0, 0.72, life);  // born and gone softly
+        win *= smoothstep(1.35, 0.7, abs(dz - R));                         // as you move it fades instead of blinking out
         hl += (hc * fill + cu0.rgb * halo) * win * (0.7 + 0.3 * sin(t * 2.0 + h * 20.0)) * 0.9;
     }
     // sparkles on the ground / scenery near you
