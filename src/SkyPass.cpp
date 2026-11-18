@@ -2791,7 +2791,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     ComPtr<ID3D12Device> dev;
     if (FAILED(list->GetDevice(IID_PPV_ARGS(&dev)))) return false;
     // [Main Menu] the panorama capture copies the world here: before the HUD and your hand are drawn
-    if (rf::pano::capturing()) rf::pano::grab(dev.Get(), list, rt, rd, bgra, 1.0f / snap.proj[0], 1.0f / snap.proj[5]);
+    auto const panoGrab = [&] { if (rf::pano::capturing()) rf::pano::grab(dev.Get(), list, rt, rd, bgra, 1.0f / snap.proj[0], 1.0f / snap.proj[5]); };
     // ---- camera motion blur, part 1: what the camera did since the last frame (see the draw below). Worked out before
     //      any GPU work: with no World FX sky and a still camera the pass has nothing to do at all.
     // (audit 2: no velocity against the clock any more - the streak is a share of the real pose-to-pose motion, so it
@@ -2812,7 +2812,8 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     float strength = rf::postfx::motionBlurWanted();
     float const blurMove = rf::postfx::motionBlurMove() >= 0.0f ? std::min(rf::postfx::motionBlurMove(), 1.5f) : look.blurMove;   // the client menu's slider wins over F6
     float blurFrac = 0.0f;
-    if (strength > 0.0f) blurFrac = std::min(0.6f * strength, 0.006f * strength / bc.avgDt);   // 60% of the gap at strength 1, never more than 6 ms of motion
+    if (strength > 0.0f) blurFrac = std::min(0.6f * strength, 0.006f * strength / bc.avgDt);
+    if (rf::pano::capturing()) blurFrac = 0.0f;   // [Main Menu] the camera jumps 90 degrees per face: no smear in the panorama   // 60% of the gap at strength 1, never more than 6 ms of motion
     float bT[3] = {float(now2.pos[0] - pa.pos[0]), float(now2.pos[1] - pa.pos[1]), float(now2.pos[2] - pa.pos[2])};
     if (bT[0] * bT[0] + bT[1] * bT[1] + bT[2] * bT[2] > 9.0f) { pa = now2; bT[0] = bT[1] = bT[2] = 0.0f; }   // a teleport / respawn, not a move
     if (look.blurTest) {   // bench / review: a steady pretend motion (as if 6 ms ago), so a still frame shows the blur and its cost
@@ -2863,6 +2864,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     if (blurOnly && !blurNeed && !atmosNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
         if (gAtmosOn.load(std::memory_order_relaxed) && !ap) { wfxStatus("building the haze / mist pipeline (in the background)"); return false; }
         if (blurFrac > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
+        panoGrab();
         ++gPassesThisFrame;
         return true;
     }
@@ -3281,6 +3283,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         }
     }
     if (timed) wfxperf::end(list, tsFrame);
+    panoGrab();   // [Main Menu] after the clouds, sky and world looks: the panorama is the world as you see it
     wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     wfxBarrier(list, db, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
     calls.restoreRoot(list);

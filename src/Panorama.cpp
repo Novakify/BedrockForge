@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -27,6 +28,8 @@ int        gLastId = -1;
 int        gPhase  = 0;        // 0 idle, 1 holding faces, 2 waiting for the copies, 3 writing
 int        gFace   = 0;        // the face being held
 int        gHeld   = 0;        // presents this face has been held
+int64_t    gFaceAt = 0;        // when this face started (ms)
+int64_t    msNow() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 bool       gDue    = false;    // grab the current face in the next world pass
 int        gWait   = 0;        // presents since the last copy (phase 2)
 float      gYaw0   = 0;        // your yaw when the capture began: the panorama's front
@@ -45,8 +48,9 @@ std::atomic<bool> gCapturing{false};
 
 // face order of the title screen's cube: front, right, back, left, up, down (yaw + = turning right)
 constexpr float kYawOff[6]   = {0.f, 90.f, 180.f, 270.f, 0.f, 0.f};
-constexpr float kPitch[6]    = {0.f, 0.f, 0.f, 0.f, -90.f, 90.f};
-constexpr int   kSettle      = 5;   // presents to hold a face before copying it (the camera write lands a frame late)
+constexpr float kPitch[6]    = {0.f, 0.f, 0.f, 0.f, -89.5f, 89.5f};   // (exactly 90 makes the view matrix degenerate)
+constexpr int   kSettle      = 12;  // presents to hold a face before copying it (the camera write lands a frame late)
+constexpr int64_t kSettleMs  = 700; // and at least this long: chunks behind you are only built once they come into view
 
 fs::path packDir() {
     wchar_t const* ad = _wgetenv(L"APPDATA");
@@ -159,7 +163,7 @@ void request(int id) {
     if (gLastId < 0) { gLastId = id; return; }   // the first value read is the old one, not a request
     if (id == gLastId || gPhase != 0) return;
     gLastId = id;
-    gPhase = 1; gFace = 0; gHeld = 0; gDue = false; gHaveYaw = false; gBoost = 1.0f;
+    gPhase = 1; gFace = 0; gHeld = 0; gFaceAt = msNow(); gDue = false; gHaveYaw = false; gBoost = 1.0f;
     for (auto& f : gFaces) { f.buf.Reset(); f.ok = false; }
     gCapturing = true;
     std::snprintf(gStatus, sizeof gStatus, "capturing the menu world...");
@@ -217,14 +221,14 @@ void grab(ID3D12Device* dev, ID3D12GraphicsCommandList* list, ID3D12Resource* rt
     Face& f = gFaces[face];
     f.buf = buf; f.w = UINT(rd.Width); f.h = rd.Height; f.pitch = fp.Footprint.RowPitch; f.bgra = bgra; f.tanX = tanX; f.tanY = tanY; f.ok = true;
     // next face (or done)
-    gHeld = 0;
+    gHeld = 0; gFaceAt = msNow();
     if (++gFace >= 6) { gPhase = 2; gWait = 0; }
 }
 
 void onPresent() {
     std::lock_guard l(gM);
     if (gPhase == 1) {
-        if (++gHeld >= kSettle) gDue = true;
+        if (++gHeld >= kSettle && msNow() - gFaceAt >= kSettleMs) gDue = true;
     } else if (gPhase == 2) {
         if (++gWait >= 8) {   // the copies have long finished on the GPU
             gPhase = 3;
