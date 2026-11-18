@@ -1,5 +1,6 @@
 // Renderer Foundation - Glass Armor M0 probe (see GlassArmor.h). Original code for Renderer Foundation.
 #include "GlassArmor.h"
+#include "Dred.h"
 #include "SkyPass.h"
 
 #include <algorithm>
@@ -519,12 +520,14 @@ HRESULT STDMETHODCALLTYPE createRsHook(ID3D12Device* d, UINT mask, void const* b
 std::atomic<ID3D12Device*> gGameDev{nullptr};   // the game's own device (kept alive): hook targets are read from IT, not a probe
 thread_local bool          gProbing = false;      // RF's own probe device is not the game's
 HRESULT WINAPI createDeviceHook(IUnknown* adapter, D3D_FEATURE_LEVEL level, REFIID riid, void** out) {
+    if (!gProbing && !gGameDev.load()) rf::dred::beforeDevice();   // GPU crash report (opt-in): must be on before the device exists
     HRESULT hr = reinterpret_cast<CreateDevice_t>(gOrigCreateDevice)(adapter, level, riid, out);
     if (SUCCEEDED(hr) && out && *out && !gProbing && !gGameDev.load()) {
         ID3D12Device* d = nullptr;
         if (SUCCEEDED(static_cast<IUnknown*>(*out)->QueryInterface(IID_PPV_ARGS(&d))) && d) {
             ID3D12Device* none = nullptr;
             if (!gGameDev.compare_exchange_strong(none, d)) d->Release();   // keep the first one (with our reference)
+            else rf::dred::watch(d);
         }
     }
     if (SUCCEEDED(hr) && out && *out && !gRsHooked.load()) {
@@ -1196,6 +1199,7 @@ bool ensureBuffer(ID3D12Device* dev, ComPtr<ID3D12Resource>& b, UINT64& have, UI
     d.SampleDesc.Count = 1;
     d.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&b)))) return false;
+    b->SetName(L"RF Glass frame copy");
     have = need;
     return true;
 }
@@ -1820,6 +1824,7 @@ void pumpSkins(ID3D12Device* dev, ID3D12CommandQueue* q) {
             uint8_t*               m = nullptr;
             if (SUCCEEDED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&b))) &&
                 SUCCEEDED(b->Map(0, nullptr, reinterpret_cast<void**>(&m))) && m) {
+                b->SetName(L"RF Glass Body skins");
                 std::lock_guard l(gMutex);
                 gSkinBuf = b, gSkinMap = m;
             }
@@ -1983,6 +1988,7 @@ void pumpItems(ID3D12Device* dev, ID3D12CommandQueue* q) {
             if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&b)))) {
                 std::lock_guard l(gMutex); A.failed = true; gAtlasInFlight.push_back(k); continue;
             }
+            b->SetName(L"RF Glass Items atlas copy");
             std::lock_guard l(gMutex);
             if (A.buf) gAtlasRetired.emplace_back(std::move(A.buf), gItemFenceVal + 4);   // frames may still read it
             A.buf = b, A.bufBytes = tot, A.bufInSrv = false;
@@ -2084,6 +2090,7 @@ void flushTimer(ID3D12GraphicsCommandList* list, bool begin) {
 }
 
 void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
+    rf::dred::check();
     {   // the client's Glass module (You / Other players / Armour): about once a second
         static int64_t lastPoll = 0;
         int64_t const  nowMs    = int64_t(GetTickCount64());
