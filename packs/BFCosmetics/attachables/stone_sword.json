@@ -23,7 +23,9 @@
    "animations": {
     "hold_first_person": "animation.bfk.hold_first_person",
     "hold_third_person": "animation.bfk.hold_third_person",
-    "bfk_fp": "animation.bfk.knife_fp",
+    "bfk_fp_karambit": "animation.bfk.karambit.fp",
+    "bfk_fp_balisong": "animation.bfk.balisong.fp",
+    "bfk_fp_dagger": "animation.bfk.dagger.fp",
     "karambit_draw": "animation.bfk.karambit.draw",
     "karambit_draw_snd": "animation.bfk.karambit.draw.snd",
     "karambit_insp1": "animation.bfk.karambit.insp1",
@@ -74,7 +76,13 @@
       "hold_third_person": "!c.is_first_person"
      },
      {
-      "bfk_fp": "v.bfk > 0 && c.is_first_person"
+      "bfk_fp_karambit": "v.bfk == 1 && c.is_first_person"
+     },
+     {
+      "bfk_fp_balisong": "v.bfk == 2 && c.is_first_person"
+     },
+     {
+      "bfk_fp_dagger": "v.bfk == 3 && c.is_first_person"
      },
      {
       "karambit_draw": "v.bfk == 1 && v.bfk_d * v.bfk_spd < 0.750 && !v.bfk_swinging"
