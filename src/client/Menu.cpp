@@ -400,7 +400,7 @@ int visualGroup(Module const& m) {   // 1 visual, 2 world, 3 cosmetics
                                                   "time_changer", "place_animation", "block_outline", "pvp_preset", "cyberspace", "cute_world",
                                                   "main_menu"};
     static constexpr std::string_view kCos[] = {"jump_circles", "hit_splash", "ripple", "shockwave", "trail", "aura", "halo", "wings", "cape",
-                                                "glass_frost", "hand_movement"};
+                                                "glass_frost", "hand_movement", "knives"};
     for (auto id : kWorld) if (m.id == id) return 2;
     for (auto id : kCos) if (m.id == id) return 3;
     return 1;
