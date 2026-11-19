@@ -135,7 +135,13 @@ float4 PSGlassItem(PSIn i) : SV_Target {
     }
     float2 tx = ddx(t), ty = ddy(t);
     float  dj = tx.x * ty.y - ty.x * tx.y;
-    float  pxPerTexel = rsqrt(max(abs(dj), 1e-8));
+    // An item is a sprite pushed out into a thin slab: on its SIDES (and seen edge-on: a dropped item turning, a held one
+    // in third person) the texture runs along one direction only. There the area measure is ~0, the "pixels per texel"
+    // exploded and the bend was thrown to its clamp: torn, glitching faces on everything that is not seen flat on
+    // (Fernando 2026-11-19). Measure along the direction that does move, and let the bend fade out as a face thins.
+    float  gmax = max(max(dot(tx, tx), dot(ty, ty)), 1e-10);
+    float  flat = saturate(abs(dj) / gmax * 4.0);            // 1 seen flat on .. 0 edge-on / a side face
+    float  pxPerTexel = min(rsqrt(max(abs(dj), 1e-8)), 2.0 * rsqrt(gmax));
     float  S  = uiScale;
     float  d  = -dIn * pxPerTexel;
     float2 gr = float2(ddx(-dIn), ddy(-dIn));
@@ -153,8 +159,8 @@ float4 PSGlassItem(PSIn i) : SV_Target {
     float  cs = cos(ang), sn = sin(ang);
     float2 fo = float2(cs * rel.x - sn * rel.y, sn * rel.x + cs * rel.y) - rel;
     float2 off = abs(dj) > 1e-8 ? float2(ty.y * fo.x - ty.x * fo.y, -tx.y * fo.x + tx.x * fo.y) / dj : float2(0, 0);
-    off  = clamp(off, -28.0 * S, 28.0 * S);
-    off += -n * 10.0 * lens * S * e;
+    off  = clamp(off, -28.0 * S, 28.0 * S) * flat;
+    off += -n * 10.0 * lens * S * e * flat;
     float frz = saturate(frost);
     off *= lerp(1.0, 0.45, frz);
     float2 px = i.pos.xy;
