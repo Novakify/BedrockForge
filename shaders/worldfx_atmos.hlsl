@@ -1624,6 +1624,33 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float  litK = SUN.y > -0.1 ? 1.0 : 0.35;
 
     float3 col = sceneAt(int2(px)); col *= col;             // ~linear (gamma 2)
+    // (Fernando 2026-11-19: "make the blocks look a little higher or lower, like an actual ripple shockwave".) The
+    // landing wave lifts each ground block it passes - one height per block, up as the front arrives, a dip behind it,
+    // then settling - drawn by moving that block's picture up / down on screen by the projected height.
+    [branch] if (!sky && fx5.z > 0.0 && fx6.w > 0.5) {
+        float hgt = 0.0;
+        int nE = min(int(fx6.w), 16);
+        [loop] for (int e = 0; e < nE; ++e) {
+            if (int(evK[e].x + 0.5) != 4) continue;
+            float u = evP[e].w / 0.75;
+            if (u >= 1.0) continue;
+            float3 dv = q - evP[e].xyz;
+            if (abs(dv.y) > 1.2) continue;
+            float2 bc = floor(c5.xz + q.xz + float2(0.0, 0.0)) + 0.5 - (c5.xz + evP[e].xz);
+            float rb = length(bc), s = saturate(evK[e].y / 1.2);
+            float R1 = fx5.z * (4.0 + 4.0 * s) * (1.0 - pow(1.0 - u, 1.6));
+            float bump = exp(-pow((rb - R1) / 0.75, 2.0)) - 0.45 * exp(-pow((rb - R1 + 1.4) / 0.8, 2.0));
+            hgt += bump * 0.30 * fx5.z * (0.6 + 0.6 * s) * pow(1.0 - u, 1.2) * step(rb, R1 + 1.5);
+        }
+        if (abs(hgt) > 1e-3) {
+            float dyPx = hgt / max(zc * c1.w, 1e-3) * c4.y * 0.5 * dot(float3(0, 1, 0), c2.xyz);   // projected height, in pixels
+            int2   sp = int2(px) + int2(0, int(round(dyPx)));
+            float3 cs = sceneAt(sp); cs *= cs;
+            col = cs * (1.0 + hgt * 1.6);                                    // raised catches the light, sunk falls in shade
+            if (!isSky(rawDepth(sp))) q = posAt(sp);                          // the wave's outlines ride with the block
+
+        }
+    }
     [branch] if (bk0.w > 0.0) col = bokeh(int2(px), zc, sky);
     float3 acc = 0; float trans = 1.0;
     float  spare = 1.0;                                     // one actor test shared by the haze / mist and Chroma
