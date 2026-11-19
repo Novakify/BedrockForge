@@ -1033,11 +1033,13 @@ float3 posAt(int2 p) {
 }
 float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, float night) {
     if (dist > wx1.x * 3.0) return L;
-    float3 n = cross(posAt(px + int2(1, 0)) - P, posAt(px + int2(0, 1)) - P);
+    // (centred 3 px differences: the 1 px step on 24-bit depth gave noisy normals - most of the ground did not count
+    //  as facing up, so it never got wet)
+    float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
     float nl = length(n);
     if (nl < 1e-6) return L;
     n /= nl; if (dot(n, rd) > 0.0) n = -n;
-    float up = smoothstep(0.80, 0.97, n.y);
+    float up = smoothstep(0.75, 0.93, n.y);
     if (up <= 0.0) return L;
     float3 wp = c5.xyz + P;
     float puddle = smoothstep(0.48, 0.72, vnoise2(wp.xz * 0.42 + 3.1));
@@ -1046,6 +1048,30 @@ float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, fl
     // audit: the reflection is the real scene - where the mirrored ray points far away, looked up on screen (the sky,
     // distant hills); a fixed grey-blue read milky at sunset. Off screen: the grey-blue.
     float3 r = reflect(rd, n);
+    // (Purxiy reference, videos 1 / 3: rain turns the ground into a dark mirror that shows the player, flowers and blocks
+    //  standing on it - not just the sky.) March the mirrored ray across the screen (16 steps, growing): the first
+    //  place it passes behind what is drawn there is what the puddle shows.
+    bool   hitNear = false; float3 nearC = 0;
+    [branch] if (wetK > 0.02) {
+        float s = 0.15;
+        [loop] for (int k = 0; k < 16; ++k) {
+            float3 q = P + n * 0.02 + r * s;
+            float  qz = dot(q, c0.xyz);
+            if (qz < 0.3) break;
+            float2 nd = float2(dot(q, c1.xyz) / (qz * c0.w), dot(q, c2.xyz) / (qz * c1.w));
+            if (abs(nd.x) > 1.0 || abs(nd.y) > 1.0) break;
+            int2   sp = int2((nd.x * 0.5 + 0.5) * c4.x, (0.5 - nd.y * 0.5) * c4.y);
+            float  sz = viewZ(rawDepth(sp));
+            if (qz > sz + 0.02 && qz < sz + 0.6 + s * 0.15) {           // passed behind a surface (not far behind it)
+                float3 sc = sceneAt(sp); nearC = sc * sc;
+                float  e = min(min(nd.x + 1.0, 1.0 - nd.x), min(nd.y + 1.0, 1.0 - nd.y));
+                nearC *= smoothstep(0.0, 0.12, e);
+                hitNear = true;
+                break;
+            }
+            s *= 1.32;
+        }
+    }
     float3 fp = P + r * 220.0;
     float  fz = dot(fp, c0.xyz);
     if (fz > 0.5) {
@@ -1054,10 +1080,11 @@ float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, fl
         float  edge = smoothstep(0.0, 0.08, min(min(sp.x / c4.x, 1.0 - sp.x / c4.x), min(sp.y / c4.y, 1.0 - sp.y / c4.y)));
         if (edge > 0.0) { float3 sc = sceneAt(int2(sp)); skyC = lerp(skyC, sc * sc, edge); }
     }
+    if (hitNear) skyC = nearC;
     skyC += float3(0.7, 0.75, 0.95) * wxL.x * 0.6;
     float fres = 0.04 + 0.96 * pow(1.0 - saturate(dot(-rd, n)), 5.0);
     L *= lerp(1.0, 0.55, wetK * (0.55 + 0.45 * puddle));                      // wet things are darker
-    L = lerp(L, skyC, saturate(wetK * (fres * (0.4 + 0.6 * puddle) + 0.38 * puddle)));   // and glossy; puddles mirror
+    L = lerp(L, skyC, saturate(wetK * (fres * (0.5 + 0.5 * puddle) + 0.62 * puddle)));   // and glossy; puddles mirror (glass-clear)
     // ripples in the puddles: a ring per 0.6-block cell, each on its own beat
     float2 g = wp.xz * 1.7; float2 cl = floor(g), f = frac(g) - 0.5;
     float h = frac(sin(dot(cl, float2(12.9898, 78.233))) * 43758.5453);
