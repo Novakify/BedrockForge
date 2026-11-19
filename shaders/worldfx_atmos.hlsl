@@ -211,7 +211,7 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
 
 // Jump Circles, Hit Splash, Ripple, Shockwave: light painted onto whatever surface is there (the pixel's own world
 // point from the depth buffer), so rings follow steps and slopes instead of floating on a flat disc.
-float3 worldEvents(float3 P, bool sky, float t) {
+float3 worldEvents(float3 P, bool sky, float t, float upN) {   // upN: how much the surface here faces up (1 = floor)
     int n = min(int(fx6.w), 16);
     if (n <= 0 || sky) return 0;
     float3 L = 0;
@@ -226,7 +226,9 @@ float3 worldEvents(float3 P, bool sky, float t) {
                 L += fx0.rgb * k * pow(1.0 - u, 1.4) * 1.6 * smoothstep(0.6, 0.2, abs(dv.y));
             }
         } else if ((kind == 2 || kind == 3) && (fx1.z > 0.0 || fx3.w > 0.0)) {
-            if (fx1.z > 0.0 && dv.y < 0.3 && dv.y > -2.6) {       // splash: ink on the ground under the hit, fading slowly
+            // (in game 2026-11-19: the ink was painted on everything standing in its column - the player you hit, walls,
+            //  fences - and read as a bug. It lies on floors only now: surfaces that face up.)
+            if (fx1.z > 0.0 && dv.y < 0.3 && dv.y > -2.6 && upN > 0.6) {       // splash: ink on the ground under the hit, fading slowly
                 float u = age / max(fx1.w, 0.1);
                 if (u < 1.0) {
                     float2 q = dv.xz;
@@ -239,7 +241,7 @@ float3 worldEvents(float3 P, bool sky, float t) {
                         float2 dp = float2(cos(a2), sin(a2)) * dr;
                         drops = max(drops, smoothstep(0.075 * fx1.z, 0.045 * fx1.z, length(q - dp)));
                     }
-                    float ink = max(blob, drops) * smoothstep(1.0, 0.6, u) * smoothstep(0.0, 1.1, 2.6 + dv.y) ;
+                    float ink = max(blob, drops) * smoothstep(1.0, 0.6, u) * smoothstep(0.0, 1.1, 2.6 + dv.y) * smoothstep(0.6, 0.8, upN);
                     float3 cc = lerp(fx2.rgb, fx3.rgb, 0.5 + 0.5 * sin(an * 2.0 + seed * 5.0));
                     L += cc * ink * (0.25 + 0.9 * fx2.w * (1.0 - u * 0.7)) * (1.0 + 2.0 * exp(-age * 6.0));
                 }
@@ -444,23 +446,55 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
     [branch] if (ha0.w > 0.0 && (!fp || ha1.w > 0.5)) {
         float3 hc = pl.xyz + float3(0, 1.95 + 0.15 * ha1.y + 0.03 * sin(t * 1.6), 0);   // audit: hugs the head (was 0.4 above it)
         // the halo's plane (horizontal, a slight tilt); the ray meets it at one point: distance to the ring there
-        float3 nrm = normalize(float3(0.08 * sin(pl.w), 1, 0.08 * cos(pl.w)));
+        int   dz   = int(ha1.z + 0.5);
+        float tilt = dz == 5 ? 0.38 : 0.08;                            // fallen: knocked askew
+        float3 nrm = normalize(float3(tilt * sin(pl.w), 1, tilt * cos(pl.w)));
         float den = dot(rd, nrm);
         if (abs(den) > 1e-3) {
             float tp = dot(hc, nrm) / den;
             if (tp > 0.2 && tp < dist + 0.3) {
                 float3 hp = rd * tp - hc;
                 float R = 0.28 * ha0.w, rr = length(hp - nrm * dot(hp, nrm));
-                int dz = int(ha1.z + 0.5);
                 float wdt = 0.025 * ha0.w;
                 float k = exp(-pow((rr - R) / wdt, 2.0));
                 float an = atan2(hp.z, hp.x);
-                if (dz == 1) k += 0.7 * exp(-pow((rr - R * 0.72) / (wdt * 0.6), 2.0)) * step(0.5, frac(an * 1.9099));        // sigil: an inner broken ring
-                else if (dz == 2) k *= 0.6 + 0.8 * pow(0.5 + 0.5 * cos(an * 6.0), 6.0);                                       // crown: points
-                else if (dz == 3) k *= step(0.55, frac(sin(floor(an * 9.0) * 91.3) * 43758.5));                             // stardust: beads
-                else if (dz == 4) k = exp(-pow((rr - R) / (wdt * 2.2), 2.0)) * (0.35 + 0.65 * smoothstep(-1.0, 1.0, sin(an - t)));   // eclipse
-                else if (dz == 5) k *= 0.5 + 0.5 * step(0.15, frac(an * 0.159 + 0.1));                                       // fallen: a broken arc
-                L += ha0.rgb * (k * 2.0 + ha1.x * 0.3 * exp(-abs(rr - R) / (wdt * 6.0)));
+                // (in game 2026-11-19: only Seraph read as a design - the others were the same thin ring a touch dimmer.
+                //  Each is its own shape now; Crown also gets a real band of points, below.)
+                if (dz == 1) {                                             // sigil: three rings, the inner and outer broken and turning against each other
+                    k += 0.9 * exp(-pow((rr - R * 0.68) / (wdt * 0.8), 2.0)) * step(0.5, frac((an + t * 0.5) * 1.9099));
+                    k += 0.7 * exp(-pow((rr - R * 1.24) / (wdt * 0.7), 2.0)) * step(0.7, frac((an - t * 0.35) * 3.8197));
+                } else if (dz == 2) k *= 0.9;                              // crown: the ring is its base
+                else if (dz == 3) {                                        // stardust: ten beads of light running round, no ring
+                    float bead = pow(0.5 + 0.5 * cos((an + t * 0.4) * 10.0), 26.0);
+                    k = exp(-pow((rr - R) / (wdt * 1.7), 2.0)) * bead * 2.2 + 0.10 * k;
+                } else if (dz == 4) k = exp(-pow((rr - R) / (wdt * 2.2), 2.0)) * (0.30 + 0.70 * smoothstep(-1.0, 1.0, sin(an - t)));   // eclipse: a wide ring, light sweeping round it
+                else if (dz == 5) k *= step(0.24, frac(an * 0.15915 + 0.1)) * (0.75 + 0.25 * sin(t * 9.0 + an * 3.0));       // fallen: askew, a piece missing, guttering
+                // the soft glow dies out within a hand's width of the ring (it used to reach a block out across the
+                // halo's plane at full Glow: a faint see-through sheet over your head in third person)
+                float gl = (rr - R) / (wdt * 5.0);
+                L += ha0.rgb * (k * 2.0 + ha1.x * 0.3 * exp(-gl * gl));
+            }
+        }
+        [branch] if (dz == 2) {   // crown: an upright band on the ring, rising to five points (the ray against its cylinder, near and far wall)
+            float  R = 0.28 * ha0.w;
+            float2 o = -hc.xz, dv2 = rd.xz;
+            float  qa = dot(dv2, dv2), qb = dot(o, dv2), qc = dot(o, o) - R * R;
+            float  disc = qb * qb - qa * qc;
+            if (qa > 1e-6 && disc > 0.0) {
+                float sq = sqrt(disc);
+                [unroll] for (int w = 0; w < 2; ++w) {
+                    float s = (-qb + (w == 0 ? -sq : sq)) / qa;
+                    if (s < 0.2 || s > dist + 0.3) continue;
+                    float3 h3 = rd * s - hc;
+                    float  a5 = atan2(h3.z, h3.x) + pl.w;                 // turns with you
+                    float  pk = pow(0.5 + 0.5 * cos(a5 * 5.0), 1.6);
+                    float  H  = ha0.w * (0.045 + 0.125 * pk);             // the band's height here
+                    if (h3.y < -0.004 || h3.y > H) continue;
+                    float edge = exp(-pow((H - h3.y) / (0.012 * ha0.w), 2.0));
+                    float gem  = exp(-pow(h3.y - ha0.w * 0.165, 2.0) / (0.0006 * ha0.w * ha0.w)) * pow(pk, 12.0);
+                    L += ha0.rgb * ((0.22 + 0.25 * ha1.x) * (0.55 + 0.45 * h3.y / max(H, 1e-3)) + 1.5 * edge) * (w == 0 ? 1.0 : 0.55)
+                       + float3(1.0, 0.97, 0.9) * gem * 1.6;
+                }
             }
         }
     }
@@ -666,12 +700,16 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
             if (tp < 0.2 || tp > dist + 0.05) continue;
             float3 h = rd * tp - A;
             float u = dot(h, w) / S, v = dot(h, up) / S;            // u: out along the wing, v: up
-            if (u < 0.0 || u > (design == 0 ? 2.1 : 1.35) || (design == 0 && (v > 0.8 || v < -1.3))) continue;
+            if (u < 0.0 || u > (design == 0 ? 2.1 : 1.45) || (design == 0 && (v > 0.8 || v < -1.3))) continue;
             float inside = 0.0, rim = 0.0, pat = 0.0;
             if (design == 1) {                                     // butterfly: a big upper lobe, a smaller lower one
-                float d1 = length((float2(u, v) - float2(0.55, 0.38)) / float2(0.62, 0.48)) - 1.0;
-                float d2 = length((float2(u, v) - float2(0.42, -0.30)) / float2(0.42, 0.36)) - 1.0;
-                float d  = min(d1, d2);
+                // (in game 2026-11-19: both lobes ended on a straight vertical line at the back - "cut off". They now
+                //  narrow into the shoulder: the height is squeezed toward the root, so each lobe is a teardrop)
+                float pin = lerp(0.16, 1.0, smoothstep(0.0, 0.42, u));
+                float2 pv = float2(u, v / pin);
+                float d1 = length((pv - float2(0.55, 0.38)) / float2(0.62, 0.48)) - 1.0;
+                float d2 = length((pv - float2(0.42, -0.30)) / float2(0.42, 0.36)) - 1.0;
+                float d  = min(d1, d2) * pin;
                 inside = 1.0 - smoothstep(-0.02, 0.02, d);
                 rim    = exp(-abs(d) * 30.0);
                 pat    = exp(-pow(length(float2(u, v) - float2(0.72, 0.42)) / 0.11, 2.0)) + 0.5 * exp(-pow(length(float2(u, v) - float2(0.45, -0.28)) / 0.08, 2.0));
@@ -701,10 +739,13 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
                 pat = 0.55 + 0.45 * saturate(1.0 - (0.44 - v) * 0.9) - 0.55 * sep + 0.35 * shaft + 0.25 * step(dArm, d1);
             } else {                                               // prism: a long wing, cut into crystal facets
                 float top = 0.14 + 0.30 * pow(sin(3.14159 * saturate(u / 1.25)), 0.6) + 0.16 * u;      // the arm of the wing, swept up
-                float bot = top - (0.20 + 0.40 * pow(saturate(u / 1.25), 0.8)) + 0.045 * abs(sin(u * 13.0));
-                float d   = max(v - top, bot - v);
-                inside = (1.0 - smoothstep(-0.015, 0.015, d)) * step(u, 1.3);
-                rim    = exp(-abs(d) * 34.0) * step(u, 1.32);
+                // (in game 2026-11-19: the wing was widest at its tip and ended on a straight cut. It now swells to
+                //  two thirds of its length and closes to a point at the tip)
+                float span = (0.20 + 0.40 * pow(saturate(u / 0.85), 0.8)) * (1.0 - smoothstep(0.80, 1.30, u));
+                float bot = top - span + 0.045 * abs(sin(u * 13.0)) * saturate(span * 6.0);
+                float d   = max(max(v - top, bot - v), u - 1.30);
+                inside = 1.0 - smoothstep(-0.015, 0.015, d);
+                rim    = exp(-abs(d) * 34.0);
                 float2 g = float2(u * 6.0 + v * 3.2, v * 6.5 - u * 1.4);
                 float2 gi = floor(g), gf = frac(g);
                 float tri = step(gf.x, gf.y);
@@ -1028,7 +1069,9 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     }
     float3 ambL = 0;
     [branch] if (amb0.w > 0.0) ambL = ambience(rd, sky ? 1e4 : dist, night, t, px);
-    [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t);
+    float3 nq  = cross(ddx(q), ddy(q));                       // the surface's facing, from the depth around this pixel
+    float  upN = abs(nq.y) / max(length(nq), 1e-9);
+    [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t, upN);
     [branch] if (cs0.w > 0.0 || au0.w > 0.0 || ha0.w > 0.0) ambL += cosmetics(q, rd, sky ? 1e4 : dist, sky, t);
     float4 overC = 0;                                        // [Purxiy] wings / cape cloth over the world
     float capeT = 1e9;

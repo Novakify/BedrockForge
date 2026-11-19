@@ -1664,7 +1664,9 @@ ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12Pipeline
             // seems - must never turn to glass (a glass quad round a particle reads as a box). Names not learned yet: wait.
             auto pi = gPsos.find(pso);
             if (!gNamesLearned) { ++gItemWhy[1]; return nullptr; }
-            if (pi == gPsos.end() || nameOf(pi->second.ps).find("ItemInHand") == std::string::npos) { ++gItemWhy[0]; return nullptr; }
+            // ...and only the flat sprite items (ItemInHandColor*). ItemInHandTextured is the BLOCK you hold (36 indices, the
+            // terrain atlas): as glass it was a see-through box in your hand - Fernando 2026-11-19, seen in third person.
+            if (pi == gPsos.end() || nameOf(pi->second.ps).find("ItemInHandColor") == std::string::npos) { ++gItemWhy[0]; return nullptr; }
             ad = t->second;
         } else ad = a->second;
     }
@@ -1682,7 +1684,7 @@ ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12Pipeline
             {
                 std::lock_guard l(gMutex);
                 auto pi = gPsos.find(pso);
-                named = gNamesLearned && pi != gPsos.end() && nameOf(pi->second.ps).find("ItemInHand") != std::string::npos;
+                named = gNamesLearned && pi != gPsos.end() && nameOf(pi->second.ps).find("ItemInHandColor") != std::string::npos;
             }
             if (named && !boundSkinTexture(list, &si)) return itemPsoFor(list, pso, ad, game, out, true);
         }
