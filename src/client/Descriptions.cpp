@@ -142,6 +142,7 @@ Map const kHelp = {
     {"sky/every", "On Shuffle: minutes before the next sky sweeps in"},
     {"sky/music", "Pulses with the music when something is playing"},
     {"sky/day", "Keeps the sky up in daytime too (off: it comes out at night)"},
+    {"sky/pool_lyricsforge", "Shuffle also draws from every LyricsForge sky (nebula, black hole, pulsar, synthwave, blood moon...)"},
     {"sky/pool_worldfx", "Shuffle also lands on Cloud Sea and Novak Glass: 16 skies in one random pool"},
     {"sky/quality", "Fast shades the Living Sky once per 2x2 pixels (big FPS win, looks the same); Sharp is full detail"},
     {"sky/moments", "Hive matches play the sky: beds, teams out and kill streaks fire meteors, aurora bursts, lightning"},

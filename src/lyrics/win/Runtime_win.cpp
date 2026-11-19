@@ -2174,6 +2174,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
         .choice("style", "Living Sky", {"Galaxy", "Aether", "Nocturne", "Amethyst", "Opaline", "Dream", "Cotton Candy", "Golden Hour", "Sakura", "Nebula",
                                "Mirror", "Rain", "Snow", "Fire", "Shuffle"}, 14)
         .slider("every", "Shuffle every (minutes)", 4.f, 1.f, 15.f, 1.f)
+        .toggleSetting("pool_lyricsforge", "Shuffle includes every LyricsForge sky", true)
         .toggleSetting("pool_worldfx", "Shuffle includes Cloud Sea + Novak Glass", true)
         .choice("quality", "Living Sky quality", {"Fast", "Balanced", "Sharp"}, 0)
         .toggleSetting("moments", "Big match moments", true)
@@ -2209,10 +2210,20 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
             bool const     bigNow = gBigSkyAtMs.load() != bigSeen;   // Big Moments: the last one standing - a new sky now
             if (bigNow) bigSeen = gBigSkyAtMs.load();
             int worldPick = 0;
+            std::string lfPick;   // a LyricsForge sky from the merged Shuffle pool
             if (idx >= n) {   // Shuffle: a different sky from the pool every few minutes (the sky system sweeps from one to the next)
                 // the pool: the 14 Living Skies, plus Renderer Foundation's Cloud Sea and Novak Glass when asked (16 in one draw)
+                // ...and every other LyricsForge sky (nebula, black hole, pulsar, synthwave, blood moon, Event Horizon...) when asked:
+                // one random pool of all of them
+                static std::vector<std::string> const lfIds = [] {
+                    std::vector<std::string> v;
+                    for (auto const& p : sky::presets())
+                        if (std::string_view id = p.id; id != "custom" && std::find(kSkyIds.begin(), kSkyIds.end(), id) == kSkyIds.end()) v.push_back(std::string(id));
+                    return v;
+                }();
                 bool const    worldFx = me->flag("pool_worldfx", true);
-                int const     pool = n + (worldFx ? 2 : 0);
+                int const     lfN  = me->flag("pool_lyricsforge", true) ? int(lfIds.size()) : 0;
+                int const     pool = n + lfN + (worldFx ? 2 : 0);
                 static int     cur = -1;
                 static int64_t next = 0;
                 if (cur < 0 || now >= next || bigNow || cur >= pool) {
@@ -2222,7 +2233,8 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
                     cur = pick;
                     next = now + int64_t(std::max(1.f, me->num("every", 4.f)) * 60000.f);
                 }
-                if (cur >= n) worldPick = cur - n + 1;   // 1 Cloud Sea, 2 Novak Glass
+                if (cur >= n + lfN) worldPick = cur - n - lfN + 1;   // 1 Cloud Sea, 2 Novak Glass
+                else if (cur >= n) lfPick = lfIds[size_t(cur - n)];
                 idx = cur < n ? cur : 0;
             } else if (bigNow) {   // one fixed sky: the biggest moment shows another one for a minute, then yours comes back
                 static uint32_t seed2 = uint32_t(now) ^ 0x51ED27u;
@@ -2242,7 +2254,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
                 return;
             }
             aside = false;
-            o.preset = kSkyIds[size_t(std::clamp(idx, 0, n - 1))];
+            o.preset = !lfPick.empty() ? lfPick : kSkyIds[size_t(std::clamp(idx, 0, n - 1))];
             o.strength = me->num("intensity", 0.8f); o.speed = me->num("speed", 1.f); o.lively = me->num("liveliness", 0.6f);
             o.breath = me->num("breathing", 1.f); o.music = me->flag("music", true); o.day = me->flag("day", true);
         }
