@@ -73,7 +73,8 @@ bool playerState(double feet[3], float& yaw, float& pitch, bool& alive) {
 bool headUnderWater() {
     Actor* a = player();
     if (!a) return false;
-    if (a->isUnderLiquid(::SharedTypes::v1_26_20::MaterialType::Water)) return true;
+    // (2026-11-19 in game: isUnderLiquid stayed true for a minute after a teleport out of the sea into open sky - the
+    //  water look over the whole world. The block at the eye is the truth, both ways.)
     // the block at the eye itself (seen in game: the call above said no with the head in a pool - the water look never came)
     Vec3 e = a->getEyePos();
     Vec3 f = a->getFeetPos();
