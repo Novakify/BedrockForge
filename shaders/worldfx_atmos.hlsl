@@ -778,23 +778,38 @@ float3 weather(float3 rd, float dist, float t, float night) {
         float R = float(k == 0 ? 2.5 : k == 1 ? 5.0 : k == 2 ? 10.0 : 20.0) * (wx1.x / 24.0);
         if (R / lh > dist) break;                                // the world is nearer: this layer (and the farther ones) is hidden
         float y = slope * R;                                     // the height of the ray where it meets this cylinder
-        float cols = (mode == 0 ? 520.0 : 300.0) * (0.45 + 0.55 * float(k)) * wx0.y;
+        float cols = (mode == 0 ? 520.0 : mode == 1 ? 300.0 : 170.0) * (0.45 + 0.55 * float(k)) * wx0.y;
         float wa = ang + wx0.z * (mode == 0 ? 0.12 : 0.05) * y / R; // wind leans them
         float u  = wa / 6.2831853 * cols;
         float c  = floor(u), fu = frac(u) - 0.5;
         float h  = frac(sin(c * 12.9898 + float(k) * 78.233) * 43758.5453);
         float h2 = frac(h * 91.17 + 0.31);
-        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : -1.4;
-        float per = mode == 0 ? 9.0 : 5.0;
+        // (Purxiy reference, weather Fire: falling ember STREAKS - motion-blurred orange lines of mixed length with a hot
+        //  head - plus faint sparks, not rising dots)
+        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : 3.2;
+        float per = mode == 0 ? 9.0 : mode == 1 ? 5.0 : 7.0;
         float yy = y + t * sp * (0.85 + 0.3 * h2) + h * per;
         float ph = frac(yy / per) * per;                          // where in its drop period this ray is
-        float width = (mode == 0 ? 0.08 : 0.30) * wx0.w / (1.0 + float(k) * 0.4);
-        float len   = (mode == 0 ? 0.9 : 0.12) * wx0.w * (1.2 - 0.15 * float(k));
+        float width = (mode == 0 ? 0.08 : mode == 1 ? 0.30 : 0.11) * wx0.w / (1.0 + float(k) * 0.4);
+        float len   = (mode == 0 ? 0.9 : mode == 1 ? 0.12 : 0.35 + 1.1 * h2 * h2) * wx0.w * (1.2 - 0.15 * float(k));
         float across = exp(-pow(fu / width, 2.0)) * smoothstep(0.5, 0.36, abs(fu));   // zero at the column edge (no seams)
         float along  = mode == 0 ? smoothstep(0.0, 0.25, ph) * smoothstep(len, len * 0.6, ph)
-                                 : exp(-pow((ph - len) / max(len * 0.7, 0.02), 2.0));
-        if (h2 > 0.55 * wx0.y + 0.15) along = 0;                   // not every column carries one
+                     : mode == 1 ? exp(-pow((ph - len) / max(len * 0.7, 0.02), 2.0))
+                                 : smoothstep(len, len * 0.9, ph) * pow(saturate(1.0 - ph / len), 1.4) * smoothstep(0.0, 0.03, ph);   // head at the bottom, tail fading up
+        float head   = mode == 2 ? exp(-pow((ph - len * 0.05) / (len * 0.07), 2.0)) : 0.0;
+        if (h2 > 0.55 * wx0.y + 0.15) { along = 0; head = 0; }       // not every column carries one
         float fade = 1.0 - float(k) * 0.18;
+        [branch] if (mode == 2) {
+            float fl = 0.75 + 0.25 * sin(t * 9.0 + h * 40.0);
+            float3 ec = lerp(float3(0.85, 0.12, 0.02), float3(1.0, 0.55, 0.12), pow(saturate(1.0 - ph / len), 2.0));
+            float  glow = exp(-pow(fu / (width * 3.5), 2.0)) * smoothstep(0.5, 0.3, abs(fu));
+            L += (ec * (across * along * 1.4 + glow * along * 0.25) + float3(1.0, 0.85, 0.55) * across * head * 1.6) * fade * fl;
+            // sparks: tiny dim dots in the empty columns, drifting slower
+            float sph = frac((y + t * 1.3 + h * 13.0) / 3.0) * 3.0;
+            float spk = exp(-pow(fu / (width * 0.6), 2.0)) * exp(-pow((sph - 1.5) / 0.035, 2.0)) * step(0.75, h);
+            L += float3(1.0, 0.45, 0.12) * spk * fade * 0.8 * (0.5 + 0.5 * sin(t * 13.0 + h * 70.0));
+            continue;
+        }
         float3 cc = mode == 0 ? lerp(float3(0.62, 0.70, 0.84), float3(0.20, 0.24, 0.36), night)
                   : mode == 1 ? float3(0.92, 0.95, 1.0) * lerp(1.0, 0.35, night)
                               : float3(1.0, 0.42, 0.10) * (1.3 + 0.7 * sin(t * 7.0 + h * 40.0));
@@ -1085,6 +1100,45 @@ float3 posAt(int2 p) {
     float2 ndc = float2(p.x / c4.x * 2.0 - 1.0, 1.0 - p.y / c4.y * 2.0);
     float3 ray = c0.xyz + c1.xyz * (ndc.x * c0.w) + c2.xyz * (ndc.y * c1.w);
     return ray * viewZ(d);
+}
+// Fire weather ground (Purxiy reference, weather Fire): the ground turns to cracked cooling lava - dark crust plates
+// split by glowing orange-yellow veins that throb, with molten pools where the crust is thin.
+float2 lavaCell(float2 p) {                                  // x = distance to the nearest cell edge, y = the cell's random
+    float2 ip = floor(p), fp = frac(p);
+    float d1 = 9.0, d2 = 9.0, id = 0.0;
+    [unroll] for (int j = -1; j <= 1; ++j) [unroll] for (int i = -1; i <= 1; ++i) {
+        float2 g = float2(i, j);
+        float  h = hash12b(ip + g);
+        float2 o = float2(h, frac(h * 47.13 + 0.37)) * 0.8 + 0.1;
+        float  d = length(g + o - fp);
+        if (d < d1) { d2 = d1; d1 = d; id = h; } else if (d < d2) d2 = d;
+    }
+    return float2(d2 - d1, id);
+}
+float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
+    if (dist > wx1.x * 3.0) return L;
+    float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
+    float nl = length(n);
+    if (nl < 1e-6) return L;
+    n /= nl; if (dot(n, rd) > 0.0) n = -n;
+    float up = smoothstep(0.75, 0.93, n.y);
+    if (up <= 0.0) return L;
+    float3 wp = c5.xyz + P;
+    float  k  = wx1.y * up * smoothstep(wx1.x * 3.0, wx1.x * 1.5, dist);
+    float2 uv = wp.xz * 2.1 + float2(vnoise2(wp.xz * 0.7), vnoise2(wp.xz * 0.7 + 5.3)) * 0.45;   // wobbly plates
+    float2 c  = lavaCell(uv);
+    float2 c2 = lavaCell(uv * 2.3 + 7.1);                        // finer cracks inside the plates
+    float  heat = 0.65 + 0.35 * sin(t * 1.7 + c.y * 25.0 + vnoise2(wp.xz * 0.5 + t * 0.2) * 6.0);
+    float  aa = 0.004 * dist + 0.01;
+    float  vein  = 1.0 - smoothstep(0.0, 0.05 + aa, c.x);
+    float  vein2 = (1.0 - smoothstep(0.0, 0.025 + aa, c2.x)) * 0.45;
+    float  pool  = smoothstep(0.70, 0.86, vnoise2(wp.xz * 0.45 + 11.0)) * 0.6;   // thin crust: molten
+    float  hot   = saturate(max(vein, vein2) + pool) * heat;
+    float  lum   = dot(L, float3(0.3, 0.55, 0.15));
+    float3 crust = float3(0.30, 0.25, 0.24) * lum * 0.45 + float3(0.035, 0.012, 0.008);   // the ground's light, charred grey
+    float3 lava  = lerp(float3(0.75, 0.10, 0.01), float3(1.0, 0.50, 0.10), saturate(hot * 1.3 - 0.4)) * (0.9 + 0.8 * hot);
+    float3 glowRim = float3(0.45, 0.07, 0.01) * (1.0 - smoothstep(0.0, 0.18, c.x)) * heat * 0.35;   // the crust glows near a vein
+    return lerp(L, crust + glowRim + lava * hot, k);
 }
 float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, float night) {
     if (dist > wx1.x * 3.0) return L;
@@ -1406,6 +1460,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
         [branch] if (!sky && wx1.y > 0.0) outL = wetGround(outL, int2(px), q, rd, dist, t, night);
         outL = lightning(outL, rd, sky);
     }
+    [branch] if (wx1.w > 0.5 && wx0.x > 1.5 && !sky && wx1.y > 0.0) outL = lavaGround(outL, int2(px), q, rd, dist, t);
     [branch] if (wx1.w > 0.5) outL += weather(rd, sky ? 1e4 : dist, t, night);
     float3 o = sqrt(max(outL + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
 #if ATMOS_DEPTH
