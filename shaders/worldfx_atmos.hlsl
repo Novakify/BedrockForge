@@ -1259,24 +1259,27 @@ float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
     // (looked again at the reference zoomed in: lava lies in big RAGGED PATCHES over the street, the plain ground dark
     //  between them; inside a patch it is a fine granular magma - small bright orange-red flecks, each its own shade,
     //  split by thin dark cracks; a few flecks crusted black)
-    float  big  = vnoise2(wp.xz * 0.32 + 4.0) * 0.65 + vnoise2(wp.xz * 0.9 + 9.0) * 0.35;
-    float  rag  = vnoise2(wp.xz * 5.0) - 0.5;
-    float  cover = smoothstep(0.40, 0.47, big + rag * 0.12);
-    float2 w2 = float2(vnoise2(wp.xz * 2.1), vnoise2(wp.xz * 2.1 + 5.3));
-    float2 uv = wp.xz * 6.5 + w2 * 0.8;
+    // (round 3, Fernando: "too clumpy, all over the place - theirs is spread out well, not cluttered but noticeable".
+    //  More, smaller patches covering about half the street, each edge dissolving into specks; the magma creeps slowly;
+    //  no black holes punched in it.)
+    float2 flow = float2(vnoise2(wp.xz * 0.25 + 1.7), vnoise2(wp.xz * 0.25 + 8.3)) - 0.5;
+    float  big  = vnoise2(wp.xz * 0.55 + 4.0) * 0.6 + vnoise2(wp.xz * 1.3 + 9.0) * 0.4;
+    float  rag  = vnoise2(wp.xz * 6.0 + 2.0) - 0.5;
+    float  cov  = big + rag * 0.30;
+    float  cover = smoothstep(0.50, 0.60, cov);                       // the body of a patch
+    float  edgeZ = smoothstep(0.40, 0.52, cov) * (1.0 - cover);       // its rim: specks only
+    float2 uv = wp.xz * 6.0 + flow * 1.2 + flow * t * 0.35;           // creeping magma
     float  aa = 0.004 * dist + 0.012;
-    float  n1 = vnoise2(uv * 0.9) * 0.55 + vnoise2(uv * 2.1 + 3.0) * 0.30 + vnoise2(uv * 4.7 + 7.0) * 0.15;   // organic blobs, not cells
-    float  fleck = smoothstep(0.36, 0.46 + aa * 2.0, n1);
+    float  n1 = vnoise2(uv * 0.9) * 0.55 + vnoise2(uv * 2.1 + 3.0) * 0.30 + vnoise2(uv * 4.7 + 7.0) * 0.15;
+    float  thr = lerp(0.62, 0.36, cover);                              // inside: solid magma; at the rim: only its brightest specks
+    float  fleck = smoothstep(thr, thr + 0.08 + aa * 2.0, n1) * saturate(cover + edgeZ);
     float  heat = 0.75 + 0.25 * sin(t * 1.6 + vnoise2(wp.xz * 1.1 + t * 0.2) * 7.0);
-    float  crustN = vnoise2(uv * 0.35 + 11.0);
-    float  dark = smoothstep(0.62, 0.72, crustN + 0.25 * smoothstep(0.47, 0.40, big + rag * 0.12));   // crusted, more at patch edges
     float  v = saturate((n1 - 0.40) * 2.6);
     float3 fc = lerp(float3(0.62, 0.07, 0.01), float3(1.0, 0.38, 0.04), v);
-    fc = lerp(fc, float3(1.0, 0.68, 0.24), smoothstep(0.72, 0.9, n1) * 0.85);   // white-hot peaks
-    float3 magma = fc * fleck * (1.0 - dark) * (0.8 + 0.7 * heat) + float3(0.04, 0.012, 0.008) * max(dark, 1.0 - fleck);
-    magma += float3(0.20, 0.03, 0.0) * (1.0 - fleck) * (1.0 - dark) * heat;   // the gaps glow faintly
-    float3 groundD = o * 0.55;                                          // the street between patches, in shadow
-    float3 g = lerp(groundD, magma, cover);
+    fc = lerp(fc, float3(1.0, 0.68, 0.24), smoothstep(0.72, 0.9, n1) * 0.85);
+    float3 magma = fc * fleck * (0.8 + 0.7 * heat) + float3(0.20, 0.03, 0.0) * (1.0 - fleck) * cover * heat;   // gaps inside a patch glow faintly
+    float3 groundD = o * 0.62;
+    float3 g = lerp(groundD, magma, saturate(fleck + cover));
     return lerp(L, lerp(o, g, up), kd);
 }
 float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, float night) {
@@ -1368,7 +1371,7 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float lumW = dot(L, float3(0.2126, 0.7152, 0.0722));
     if (sky) {   // the data sky: deep and dark, a faint horizon line, columns of light falling slowly
         float3 c = lerp(acc * 0.06, float3(0.005, 0.006, 0.012), saturate(rd.y * 1.5 + 0.2));
-        c += acc * exp(-abs(rd.y) * 40.0) * 0.6;
+        c += acc * exp(-abs(rd.y) * 40.0) * 0.3;
         if (cy1.w > 0.0) {
             float an = atan2(rd.z, rd.x) * 110.0;
             float col = floor(an), fc = frac(an);
@@ -1382,12 +1385,12 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
         float2 sd = abs(frac(sg) - 0.5);
         float2 saa2 = max(fwidth(sg), 1e-4);
         float dome = max(1.0 - smoothstep(0.5, 1.6, (0.5 - sd.x) / saa2.x), 1.0 - smoothstep(0.5, 1.6, (0.5 - sd.y) / saa2.y));
-        float domeG = exp(-min(0.5 - sd.x, 0.5 - sd.y) * 9.0) * 0.25;
+        float domeG = exp(-min(0.5 - sd.x, 0.5 - sd.y) * 14.0) * 0.08;
         c += (acc * 0.9 + 0.15) * (dome * 0.8 + domeG) * saturate(rd.y * 4.0 + 0.2) * cy1.x;
         float3 ghost = acc * lumW * 0.55 + lumW * 0.06;          // what shows through: the clouds as faint accent ghosts, never their own hue
-        c += ghost * 0.35;
+        c += ghost * 0.08;
         float ageS = abs(cy1.w) - 1.0;
-        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 0.35) * 5.0));   // the sky turns once the front has passed
+        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 0.65) * 5.0));   // the sky turns once the front has passed
     }
     // (audit vs Purxiy: 1 px depth normals were noisy - blocks crawled with dots. Centred 3 px differences.)
     float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
@@ -1406,26 +1409,34 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float far = smoothstep(1.4, 0.25, max(aa.x, aa.y) * 4.0);                   // 1 near .. 0 where a block is a few px
     float edgeGlow = exp(-min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * 22.0) * 0.18 * far;
     edge *= 0.45 + 0.55 * far;
-    // circuit board (Purxiy reference: a dense PCB maze on every face - traces that run, turn and end in hollow ring pads).
-    // Each face is a 4x4 grid of tiles; each tile carries a straight run, a turn, a pad ending or nothing.
+    // circuit board, round 3 (Fernando: "right direction, not there yet" - looked at all the footage: video 3 at
+    //  123-125 s and video 4. Their faces are NOT a dense maze: a few traces per face, each a straight run that turns
+    //  one right angle and ends in a hollow via ring, a dimmer gold than the edges; floors mostly plain.)
     float3 fid = float3(cell, floor(dot(wp, an)));
     float h1 = cyHash(fid);
-    float2 g = f * 4.0, sc = floor(g), sf = frac(g) - 0.5;
-    float  th = cyHash(fid + float3(sc, 3.7));
-    float  rot = floor(cyHash(fid + float3(sc, 9.1)) * 4.0);
-    float2 r2 = rot < 1.0 ? sf : rot < 2.0 ? float2(-sf.y, sf.x) : rot < 3.0 ? -sf : float2(sf.y, -sf.x);
-    float  w  = 0.065, saa = max(aa.x, aa.y) * 4.0;
-    // (round 2, Fernando: "needs drastic improvements" - the reference maze is DENSE and CONNECTED with rounded bends.
-    //  Truchet tiles: two quarter arcs per tile, mirrored at random - the arcs join tile to tile into endless winding
-    //  traces; a few tiles carry a ring pad or a straight bus instead.)
-    float2 tf = th < 0.5 ? sf : float2(-sf.x, sf.y);
-    float2 ta = abs(tf - 0.5), tb = abs(tf + 0.5); ta *= ta; ta *= ta; tb *= tb; tb *= tb;
-    float  dT = min(abs(sqrt(sqrt(ta.x + ta.y)) - 0.5), abs(sqrt(sqrt(tb.x + tb.y)) - 0.5));   // squarish arcs: runs with rounded corners
-    float  pick = cyHash(fid + float3(sc, 5.3));
-    if (pick > 0.86)      dT = min(abs(length(sf) - 0.16), r2.x <= 0.0 ? abs(r2.y) : 9.0);   // a pad with its lead
-    else if (pick > 0.78) dT = abs(r2.y);                                                  // a straight bus
-    float circuits = (1.0 - smoothstep(w * 0.5, w * 0.5 + saa, dT)) * cy1.y;
-    circuits *= smoothstep(1.2, 0.35, saa);                                                 // far away the maze would shimmer: fade it
+    float  px1 = max(aa.x, aa.y);                                          // a pixel, in block units
+    float  lw = 0.006 + px1 * 0.45;                                         // trace half width
+    int    nT = an.y > 0.7 ? (h1 < 0.55 ? 0 : 1) : 1 + int(h1 * 2.99);     // floors: sparse
+    float  dT = 9.0, dV = 9.0;
+    [loop] for (int k = 0; k < nT; ++k) {
+        float hk = cyHash(fid + float3(k * 7.1, 1.3, k * 3.7)), hk2 = cyHash(fid + float3(2.9, k * 5.3, 4.1));
+        float rot = floor(frac(hk * 13.7) * 4.0);
+        float2 q = f - 0.5;
+        q = rot < 1.0 ? q : rot < 2.0 ? float2(-q.y, q.x) : rot < 3.0 ? -q : float2(q.y, -q.x);
+        q += 0.5;
+        float y0 = 0.2 + 0.2 * floor(hk * 4.0);                            // lanes at 0.2 .. 0.8
+        float x1 = 0.30 + 0.45 * hk2;
+        float y1 = clamp(y0 + (hk2 > 0.5 ? 1.0 : -1.0) * (0.15 + 0.2 * frac(hk2 * 7.0)), 0.1, 0.9);
+        float x0 = frac(hk * 31.0) < 0.35 ? 0.12 : -0.01;                   // from the edge, or from a via of its own
+        float dA = length(q - float2(clamp(q.x, x0, x1), y0));
+        float dB = length(q - float2(x1, clamp(q.y, min(y0, y1), max(y0, y1))));
+        dT = min(dT, min(dA, dB));
+        dV = min(dV, abs(length(q - float2(x1, y1)) - 0.055));
+        if (x0 > 0.0) dV = min(dV, abs(length(q - float2(x0, y0)) - 0.055));
+        dT = max(dT, -(length(q - float2(x1, y1)) - 0.055));                // the via is hollow: the trace stops at its ring
+    }
+    float circuits = max(1.0 - smoothstep(lw, lw + px1, dT), 1.0 - smoothstep(lw, lw + px1, dV)) * cy1.y;
+    circuits *= smoothstep(0.08, 0.03, px1);                                // too far to resolve: leave the face plain
     // light packets: bright comets with short tails running along the block edges of the ground
     float packets = 0.0;
     [branch] if (an.y > 0.7 && cy1.x > 0.0) {
@@ -1449,7 +1460,7 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float fog = exp(-dist * 0.012);
     float3 base = acc * (0.012 + 0.06 * lumW) + lumW * 0.025;            // the world, near black (Purxiy: #1a1020-ish)
     float3 lc = lerp(acc, float3(1.0, 1.0, 1.0), 0.45);                    // white-hot line cores, the accent in the glow
-    float3 lines = lc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.5 + circuits * pulse * 0.75 * cy1.x) + acc * (edgeGlow * cy1.x + circuits * 0.25 * cy1.x + scan * 0.35)
+    float3 lines = lc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.5) + acc * (edgeGlow * cy1.x + circuits * pulse * 0.65 * cy1.x + scan * 0.35)
                  + (float3(1.0, 1.0, 1.0) * 0.6 + acc) * packets * cy1.x;
     float3 dig = base + lines * fog + acc * scan * 0.12;
     // you become a hologram (Purxiy reference: the player goes dark with bright lavender scanlines drifting up)
@@ -1461,13 +1472,79 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     }
     // (Purxiy reference, video 3: switching on, a bright wavefront dome sweeps out from you and the world turns digital
     //  behind it - ~250 ms to the horizon, a white-hot front with the accent glowing behind it)
-    float age = abs(cy1.w) - 1.0;
+    float age = abs(cy1.w) - 1.0 - 0.30;                                  // (after the RGB glitch, CRT line and flash)
+    if (age < -0.20) {   // the first 0.1 s: the circuit world flashes in with an RGB split (red / cyan copies of its lines)
+        float sh = 8.0 * fp * (1.0 - (age + 0.30) / 0.10);
+        float3 rgt = c1.xyz;
+        float2 uR = an.x > an.y && an.x > an.z ? (wp + rgt * sh).zy : (an.y > an.z ? (wp + rgt * sh).xz : (wp + rgt * sh).xy);
+        float2 uB = an.x > an.y && an.x > an.z ? (wp - rgt * sh).zy : (an.y > an.z ? (wp - rgt * sh).xz : (wp - rgt * sh).xy);
+        float2 fR = frac(uR), fB = frac(uB);
+        float eR = 1.0 - smoothstep(0.5, 1.6, min(min(fR.x, 1.0 - fR.x), min(fR.y, 1.0 - fR.y)) / fp);
+        float eB = 1.0 - smoothstep(0.5, 1.6, min(min(fB.x, 1.0 - fB.x), min(fB.y, 1.0 - fB.y)) / fp);
+        return dig + float3(1.0, 0.1, 0.1) * eR * 1.2 + float3(0.1, 0.9, 1.0) * eB * 1.2;
+    }
+    if (age < 0.0) return L;
     float R = age * 260.0;                                                // blocks: past the view in ~0.4 s
     float d3 = length(P);
     float inside = smoothstep(R + 1.5, R - 1.5, d3);
     float frontW = exp(-pow((d3 - R) / (0.7 + 0.012 * R), 2.0)) * exp(-age * 2.5);
     float3 o = lerp(L, dig, reality * inside);
     return o + (float3(1.0, 0.98, 0.95) * 0.7 + acc * 1.1) * frontW * step(age, 1.5);
+}
+
+// Cyberspace extras (round 3, from video 3 at 121.5-125 s): data packets - small glowing cubes flying in straight
+// lines through the air with comet tails - and the switch-on sequence: an RGB split glitch, a CRT collapse to one bright
+// line, a white flash, then the wavefront dome (in cyberspace()).
+float3 cyPackets(float3 rd, float dist, float t) {
+    float3 acc = cy0.rgb, hot = lerp(acc, float3(1.0, 1.0, 1.0), 0.7);
+    float3 L = 0;
+    float3 cam = c5.xyz;
+    float2 base = floor(cam.xz / 12.0);
+    [loop] for (int k = 0; k < 25; ++k) {
+        float2 cid = base + float2(k % 5 - 2, k / 5 - 2);
+        float  h1 = frac(sin(dot(cid, float2(127.1, 311.7))) * 43758.5453);
+        float  h2 = frac(h1 * 71.3 + 0.17), h3 = frac(h1 * 13.9 + 0.71);
+        if (h3 > 0.8 * cy1.x + 0.2) continue;
+        bool   axX = h2 > 0.5;
+        float  sp = (7.0 + 6.0 * h1) * (frac(h1 * 5.0) > 0.5 ? 1.0 : -1.0);
+        float  s = frac(t * sp / 12.0 + h2) * 12.0;                         // where along its cell
+        float  y = cam.y + pl.y + 0.5 + floor(h3 * 5.0) * 0.9;            // heights above your feet
+        float3 head = float3((cid.x + (axX ? s / 12.0 : h1)) * 12.0, y, (cid.y + (axX ? h2 : s / 12.0)) * 12.0) - cam;
+        float3 dir = axX ? float3(sign(sp), 0, 0) : float3(0, 0, sign(sp));
+        float  fade = smoothstep(0.0, 1.0, s) * smoothstep(12.0, 11.0, s);  // no pop at the cell's ends
+        // the tail: a segment behind the head; the head: a little glowing cube (a soft box)
+        float3 a = head, b = head - dir * 1.4;
+        float3 ab = b - a;
+        // closest points between the view ray and the segment
+        float d1 = dot(rd, ab), d2 = dot(ab, ab), e1 = dot(rd, a), e2 = dot(ab, a);
+        float den = d2 - d1 * d1;
+        float u = den > 1e-5 ? saturate((d1 * e1 - e2) / den) : 0.0;
+        float tz = dot(a + ab * u, rd);
+        if (tz < 0.3 || tz > dist + 0.05) continue;
+        float dd = length(rd * tz - (a + ab * u));
+        float tail = exp(-pow(dd / 0.022, 2.0)) * (1.0 - u) * (1.0 - u) + exp(-dd / 0.08) * 0.25 * (1.0 - u);
+        float th = dot(head, rd);
+        float3 hq = abs(rd * th - head);
+        float box = max(max(hq.x, hq.y), hq.z);
+        float cube = (1.0 - smoothstep(0.06, 0.075, box)) * step(0.3, th) * step(th, dist + 0.05);
+        float bloom = exp(-length(rd * th - head) / 0.12) * 0.5 * step(0.3, th) * step(th, dist + 0.05);
+        L += (hot * (tail * 1.4 + cube * 1.6) + acc * bloom) * fade;
+    }
+    return L;
+}
+float3 cyIntro(float3 L, int2 px, float age) {
+    // 0 - 0.10 s: RGB split; 0.10 - 0.23: CRT collapse to a line; 0.23 - 0.30: a white flash; then the dome takes over
+    if (age < 0.10) return L;                                              // (the RGB split is drawn by cyberspace())
+    if (age < 0.23) {
+        float u = (age - 0.10) / 0.13;
+        float dy = abs(float(px.y) - c4.y * 0.5) / c4.y;
+        float hw = lerp(0.006, 0.0005, u);
+        float crt = exp(-pow(dy / hw, 2.0)) * (1.0 - u) * 2.5 + exp(-dy / (hw * 8.0)) * (1.0 - u) * 0.4;
+        crt *= smoothstep(0.5, 0.35 * (1.0 - u), abs(float(px.x) / c4.x - 0.5));
+        return (float3(1.0, 0.97, 0.9) + cy0.rgb) * 0.5 * crt;
+    }
+    if (age < 0.30) return lerp(float3(1.0, 0.97, 0.92), L, (age - 0.23) / 0.07);
+    return L;
 }
 
 // ---- [Purxiy] Cute World: a soft pastel world with drifting hearts and little sparkles. Original code.
@@ -1641,7 +1718,12 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     outL = lerp(outL, overC.rgb, saturate(overC.a));
     [branch] if (ch0.w > -0.5) outL = chroma(outL, q, sky, spareC);       // the grey world, colour where you have walked
     outL += radL;
-    [branch] if (cy0.w > 0.0) outL = cyberspace(outL, int2(px), q, rd, sky ? 1e4 : dist, sky, t);
+    [branch] if (cy0.w > 0.0) {
+        float cyAge = abs(cy1.w) - 1.0;
+        outL = cyberspace(outL, int2(px), q, rd, sky ? 1e4 : dist, sky, t);
+        if (cyAge > 0.45) outL += cyPackets(rd, sky ? 1e4 : dist, t) * smoothstep(0.45, 0.9, cyAge);
+        [branch] if (cyAge < 0.30) outL = cyIntro(outL, int2(px), cyAge);
+    }
     [branch] if (cu1.w > 0.5) outL = cuteWorld(outL, q, rd, sky ? 1e4 : dist, sky, t);
     [branch] if (wx1.w > 0.5 && wx0.x < 0.5) {                           // rain: wet ground, lightning
         [branch] if (!sky && wx1.y > 0.0) outL = wetGround(outL, int2(px), q, rd, dist, t, night);
