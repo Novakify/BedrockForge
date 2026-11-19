@@ -92,6 +92,10 @@ int64_t     gViewAtMs = 0;       // when the current view started (open / switch
 int64_t     gPageAtMs = 0;       // [Prism] when the current page / tab started (row cascade)
 std::string gHoverId;            // [Prism] the module row under the pointer (hover sound once per row)
 std::string gDrag;               // slider being dragged ("<module>/<setting>")
+float       gFromX = -1, gFromY = -1;   // [Hybrid] where the open window / settings page grows from (design px; -1 = the centre)
+float       gRipX = 0, gRipY = 0;       // [Hybrid] the click ripple: a ring of accent light running out from where you picked
+int64_t     gRipAtMs = 0;
+void ripple(float x, float y);
 std::string gToast;
 int64_t     gToastMs  = 0;
 
@@ -118,6 +122,7 @@ void resetScroll() { gScroll = gScrollAt = 0; }
 void setView(View v) { gView = v; gViewAtMs = nowMs(); resetScroll(); }
 void showPage(Page p) { if (p != Page::Mods) gSearch.clear(); gPage = p; gPageAtMs = nowMs(); resetScroll(); if (gView != View::Window) setView(View::Window); }
 void toast(std::string s) { gToast = std::move(s); gToastMs = nowMs(); }
+void ripple(float x, float y) { gRipX = x; gRipY = y; gRipAtMs = nowMs(); gFromX = x; gFromY = y; }
 std::string gBindFor; // module whose toggle key is being recorded (Keybind row), empty = none
 
 // ---------------------------------------------------------------- theme (neon purple + white)
@@ -171,8 +176,10 @@ struct Gfx {
     lyr::win::ClientUiAssets a;
     std::vector<BfGlyphV1> shapes, top; // top = icons + text, drawn after every shape
     float clipTop = 0, clipBot = 0;     // design px; clipBot > clipTop = everything placed now is cut to that band (RF fades the edges)
+    float zx = 0, zy = 0, zs = 1;       // [Hybrid] zoom about (zx, zy): a window / page grows out of what you clicked
 
     void place(BfGlyphV1& q, float cx, float cy, float hw, float hh) const {
+        if (zs != 1.0f) { cx = zx + (cx - zx) * zs; cy = zy + (cy - zy) * zs; hw *= zs; hh *= zs; }
         q.pos[0]   = cx / kH;
         q.pos[1]   = cy / kH;
         q.right[0] = hw / kH;
@@ -391,6 +398,17 @@ void drawWheel(UiFrame& f, float t) {
         g.icon(p.icon, lx, ly - 13 * s, 30 * s, rgba(kWhite, 1), t);
         g.text(p.label, lx, ly + 16 * s, 15 * s, rgba(kWhite, 1), t, false, 1, 0.55f + 0.4f * h);
     }
+    {   // [Hybrid] an orbit ring round the wheel, a glint of light travelling it and a node at each section
+        float const ro = r2 + 22.0f, ang = float(nowMs() % 100000) * 0.00045f;
+        g.petal(cx, cy, ro - 0.8f, ro + 0.8f, 0, 179.9f, kWhite, 0.10f, 0.25f, 0.55f * t);
+        for (int i = 0; i < 4; ++i) {
+            float const ar = kPetals[i].ang * 3.14159265f / 180.0f;
+            g.solid(cx + std::cos(ar) * ro - 3.5f, cy + std::sin(ar) * ro - 3.5f, 7, 7, 3.5f, rgba(i == hot ? kAccent : kWhite, 1), (i == hot ? 1.0f : 0.55f) * t, 0, true);
+        }
+        float const gx = cx + std::cos(ang) * ro, gy = cy + std::sin(ang) * ro;
+        g.solid(gx - 9, gy - 9, 18, 18, 9, rgba(kAccent, 1), 0.55f * t, 9, true);
+        g.solid(gx - 2.5f, gy - 2.5f, 5, 5, 2.5f, rgba(kWhite, 1), t, 0, true);
+    }
     g.text("CLICK A SECTION  -  ESC TO CLOSE", cx, g.H - 28, 11.5f, rgba(kWhite, 0.9f), t, false, 1, 0.3f);
 }
 
@@ -597,6 +615,15 @@ void drawMods(UiFrame& f, Win const& w, float a0) {
         if (hv > 0 && gHoverId != m->id) { gHoverId = m->id; uisound::play(0); }
         pillGlass(g, x, y, colW, rowH, 12, on, a, hv);
         float tx = x + 14;
+        {   // [Hybrid] an icon tile for every module (its section's icon): accent when it's on, glass when it's off
+            int sec = 7;
+            for (int ti = 1; ti < kTabs; ++ti) if (inTab(*m, ti)) { sec = ti; break; }
+            float const ts = 26, tyy = y + (rowH - ts) / 2;
+            if (on) { g.solid(x + 9, tyy, ts, ts, 8, rgba(kAccent, 1), a * 0.95f, 0, true); g.solid(x + 9, tyy, ts, ts * 0.5f, 8, rgba(kWhite, 0.18f), a, 4, true); }
+            else g.glass(x + 9, tyy, ts, ts, 8, kDark, 0.55f, 5, 3, 0.8f, 0.5f, 0.10f, a);
+            g.icon(kTabIcon[sec], x + 9 + ts / 2, tyy + ts / 2, 15, rgba(kWhite, on ? 1.0f : 0.8f), a);
+            tx = x + 9 + ts + 10;
+        }
         if (m->favorite) { g.icon("pin", tx + 7, y + rowH / 2, 15, rgba(on ? kWhite : kAccent, 1), a); tx += 25; }
         float right = x + colW - 10;
         if (m->planned) {
@@ -606,12 +633,14 @@ void drawMods(UiFrame& f, Win const& w, float a0) {
             float gx = right - 34 - 10 - 26;
             bool  gh = f.over(gx, y + 8, 26, 26);
             g.icon("gear", gx + 13, y + rowH / 2, 16, rgba(kWhite, on ? 0.9f : (gh ? 1.0f : 0.6f)), a);
-            f.hits.push_back({x, y, colW, rowH, [m](bool right) {
-                if (right) { gModPage = m->id; showPage(Page::ModSettings); return; }
+            float const rcx = x + colW / 2, rcy = y + rowH / 2;
+            f.hits.push_back({x, y, colW, rowH, [m, rcx, rcy, right](bool rt) {
+                if (rt) { ripple(rcx, rcy); gModPage = m->id; showPage(Page::ModSettings); return; }
+                ripple(right - 17, rcy);
                 Registry::get().setEnabled(*m, !m->enabled);
                 uisound::play(m->enabled ? 2 : 3);
             }, "", m->id});
-            f.hits.push_back({gx, y + 6, 26, 30, [m](bool) { gModPage = m->id; showPage(Page::ModSettings); }});
+            f.hits.push_back({gx, y + 6, 26, 30, [m, rcx, rcy](bool) { ripple(rcx, rcy); gModPage = m->id; showPage(Page::ModSettings); }});
         }
         g.text(g.ellip(m->name, right - 80 - tx, 14), tx, y + rowH / 2, 14, rgba(m->planned ? kLilac : kWhite, m->planned ? 0.6f : 1), a, false, 0,
                on ? 0.55f : 0);
@@ -1223,7 +1252,19 @@ void render(ScreenView& view) {
     gWheel.clear();
     if (gView == View::Wheel) drawWheel(f, t);
     else if (gView == View::HudEdit) drawHudEdit(f, t, toD, wheelNow);
-    else drawWindow(f, t);
+    else {
+        // [Hybrid] the window (or a module's settings page) grows out of what you clicked instead of just fading in
+        int64_t const since = now - std::max(gViewAtMs, gPage == Page::ModSettings ? gPageAtMs : gViewAtMs);
+        float const k = calm ? 1.0f : ease(float(since) * motion / 260.0f);
+        if (k < 1.0f && gFromX >= 0) { g.zx = gFromX; g.zy = gFromY; g.zs = 0.72f + 0.28f * k; }
+        drawWindow(f, t);
+        g.zs = 1.0f;
+    }
+    if (!calm && now - gRipAtMs < 420) {   // [Hybrid] the click ripple
+        float const u = float(now - gRipAtMs) / 420.0f, R = 12.0f + 150.0f * (1.0f - (1.0f - u) * (1.0f - u));
+        g.petal(gRipX, gRipY, R - 1.2f, R + 1.2f, 0, 179.9f, kAccent, 0.5f, 0.6f, (1.0f - u) * 0.9f);
+        g.solid(gRipX - R * 0.35f, gRipY - R * 0.35f, R * 0.7f, R * 0.7f, R * 0.35f, rgba(kAccent, 1), (1.0f - u) * (1.0f - u) * 0.25f, R * 0.35f, true);
+    }
     drawToast(f);
 
     // input collected since the last frame (GUI units -> design units)
@@ -1233,7 +1274,13 @@ void render(ScreenView& view) {
         float cx = c.x * toD, cy = c.y * toD;
         if (gView == View::Wheel) {
             int p = petalAt(g, cx, cy);
-            if (p >= 0) openPetal(p);
+            if (p >= 0) {
+                float wx, wy, r1, r2;
+                petalGeo(g, wx, wy, r1, r2);
+                float const ar = kPetals[p].ang * 3.14159265f / 180.0f, rm = (r1 + r2) / 2;
+                ripple(wx + std::cos(ar) * rm, wy + std::sin(ar) * rm);
+                openPetal(p);
+            }
             else {
                 float wx, wy, r1, r2;
                 petalGeo(g, wx, wy, r1, r2);
