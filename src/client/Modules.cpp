@@ -1780,20 +1780,44 @@ void installRuntime() {
                 // where the game draws you this frame: it blends the last two tick states by the frame's place between
                 // ticks. The ticks are timed here (a new tick = a new position or body yaw), the blend follows them.
                 static Vec3    tPrev = pos, tCur = pos;
-                static float   yPrev = 0.f, yCur = 0.f, tickMs = 50.f;
-                static double  tAt = 0.0;
+                static float   yPrev = 0.f, yCur = 0.f;
                 static bool    init = false;
+                // The game ticks every 50 ms on its own clock and draws you at prev + (cur - prev) * (time since that tick
+                // / 50 ms). We only SEE a tick at the first frame after it - up to a whole frame late, a different
+                // lateness every tick - and timing the blend from that sighting made the wings / cape / halo / trail
+                // shake against the body (Fernando 2026-11-19: "still stutter while moving"). The ticks' true phase is
+                // the EARLIEST sighting within the 50 ms cycle over the last couple of seconds: lock to that.
+                constexpr double kTick = 50.0;
+                static double  phase = 0.0;            // tick boundaries are at times == phase (mod 50 ms)
+                static double  late[40];               // how far after `phase` each recent sighting came (ms, -25..25)
+                static int     lateN = 0;
                 double const   nowD = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
                 float const    body = player->getYBodyRotation();
-                if (!init) { tPrev = tCur = pos; yPrev = yCur = body; tAt = nowD; init = true; }
-                if (pos.x != tCur.x || pos.y != tCur.y || pos.z != tCur.z || body != yCur) {
-                    double const dt = nowD - tAt;
-                    if (dt > 25.0 && dt < 120.0) tickMs += (float(dt) - tickMs) * 0.2f;   // the tick length as measured
+                if (!init) { tPrev = tCur = pos; yPrev = yCur = body; phase = std::fmod(nowD, kTick); init = true; }
+                bool const moved = pos.x != tCur.x || pos.y != tCur.y || pos.z != tCur.z || body != yCur;
+                if (moved) {
                     bool const jump = (pos.x - tCur.x) * (pos.x - tCur.x) + (pos.y - tCur.y) * (pos.y - tCur.y) + (pos.z - tCur.z) * (pos.z - tCur.z) > 64.f;
                     tPrev = jump ? pos : tCur, yPrev = jump ? body : yCur;   // teleported: no glide across the map
-                    tCur = pos, yCur = body, tAt = nowD;
+                    tCur = pos, yCur = body;
+                    double d = std::fmod(nowD - phase, kTick);               // this sighting, relative to the phase we hold
+                    if (d < 0) d += kTick;
+                    if (d > kTick * 0.5) d -= kTick;
+                    late[lateN++ % 40] = d;
+                    double lo = 1e9;
+                    for (int i = 0; i < std::min(lateN, 40); ++i) lo = std::min(lo, late[i]);
+                    if (lateN >= 4 && std::fabs(lo) > 0.25) {                // slide the phase onto the earliest sighting
+                        phase += lo;
+                        for (int i = 0; i < std::min(lateN, 40); ++i) late[i] -= lo;
+                    }
                 }
-                float const a = std::clamp(float((nowD - tAt) / std::max(tickMs, 1.f)), 0.f, 1.f);
+                static long long seenTick = 0;         // the tick (counted on the locked clock) we last saw you move in
+                long long const  tickNow = (long long)std::floor((nowD - phase) / kTick);
+                if (moved) seenTick = tickNow;
+                else if (tickNow > seenTick) { tPrev = tCur; yPrev = yCur; }   // a tick went by and you did not move: you stand there
+                double sinceTick = std::fmod(nowD - phase, kTick);
+                if (sinceTick < 0) sinceTick += kTick;
+                float const tickMs = float(kTick);
+                float const a = std::clamp(float(sinceTick / kTick), 0.f, 1.f);
                 float dy = std::fmod(yCur - yPrev + 540.f, 360.f) - 180.f;   // the short way round
                 gFxEv.px = tPrev.x + (tCur.x - tPrev.x) * a;
                 gFxEv.py = tPrev.y + (tCur.y - tPrev.y) * a - 1.62f;
@@ -1801,8 +1825,7 @@ void installRuntime() {
                 gFxEv.pyaw = yPrev + dy * a;
                 float const perS = 1000.f / std::max(tickMs, 1.f);
                 gFxEv.pvx = (tCur.x - tPrev.x) * perS, gFxEv.pvy = (tCur.y - tPrev.y) * perS, gFxEv.pvz = (tCur.z - tPrev.z) * perS;
-                gFxEv.pyawRate = a < 1.f ? dy * perS : 0.f;   // (past the last tick: holding still)
-                if (a >= 1.f) gFxEv.pvx = gFxEv.pvy = gFxEv.pvz = 0.f;
+                gFxEv.pyawRate = dy * perS;
                 gFxEv.pflags = 1u | (g ? 2u : 0u);
                 gFxEv.pAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             } catch (...) {}
