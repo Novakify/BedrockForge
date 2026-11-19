@@ -14,7 +14,10 @@ pivot pins (180 = folded over the blade). Rotations in degrees. Poses are first 
 from __future__ import annotations
 
 KNIVES = ("karambit", "balisong", "dagger")
-FP_SCALE = {"karambit": 0.75, "balisong": 0.68, "dagger": 0.75}   # first-person size (bfk_fix)
+FP_SCALE = {"karambit": 0.98, "balisong": 0.72, "dagger": 0.78}   # first-person size (bfk_fix)
+# third person: the knives were ~70% of a vanilla sword in the hand (Fernando: "karambit way too small"); the karambit
+# is short and curled (14 px tip to ring vs 17-18 for the others), so it gets the biggest boost to read the same size
+TP_SCALE = {"karambit": 1.30, "balisong": 1.10, "dagger": 1.10}
 # the effect colour Bedrock Forge picked (random per swing, or the fixed one) handed to the particle emitter
 FX_SCRIPT = "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
 # slash styles (Cosmetics.cpp kMatchedSlash: karambit crescent, balisong trail, dagger thrust streak)
@@ -203,8 +206,12 @@ def build():
 
     clock = {"draw": ("v.bfk_d", None), "insp1": ("v.bfk_i", "v.bfk_in == 1"), "insp2": ("v.bfk_i", "v.bfk_in == 0"),
              "swing1": ("v.bfk_a", "v.bfk_an == 1"), "swing2": ("v.bfk_a", "v.bfk_an == 0")}
+    for k in KNIVES:   # third person: same bone, own size
+        anims[f"animation.bfk.{k}.tp"] = {"loop": True, "bones": {"bfk_fix": {"scale": f"{TP_SCALE[k]} * v.bfk_scl"}}}
     amap = {f"bfk_fp_{k}": f"animation.bfk.{k}.fp" for k in KNIVES}
+    amap.update({f"bfk_tp_{k}": f"animation.bfk.{k}.tp" for k in KNIVES})
     animate = [{f"bfk_fp_{k}": f"v.bfk == {i + 1} && c.is_first_person"} for i, k in enumerate(KNIVES)]
+    animate += [{f"bfk_tp_{k}": f"v.bfk == {i + 1} && !c.is_first_person"} for i, k in enumerate(KNIVES)]
     for i, k in enumerate(KNIVES):
         n = i + 1
         for kind, (var, parity) in clock.items():
@@ -268,7 +275,7 @@ PRE = ("v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bf
        "v.bfk_tp = math.mod(math.floor(t.o / 32), 2) < 1;"
        "v.bfk_fin = v.bfk > 0 ? math.clamp(math.floor(c.owning_entity->v.bfkfin), 0, 3) : 0;"
        "v.bfk_sl = v.bfk > 0 ? c.owning_entity->v.bfkslash : 0;"
-       "v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.5, 1.5) : 1;"
+       "v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.4, 2.0) : 1;"
        "v.bfk_ox = v.bfk > 0 ? c.owning_entity->v.bfkox : 0;"
        "v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;"
        "v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;"

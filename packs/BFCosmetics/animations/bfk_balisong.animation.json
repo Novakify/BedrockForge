@@ -979,12 +979,20 @@
    "loop": true,
    "bones": {
     "bfk_fix": {
-     "scale": "0.68 * v.bfk_scl",
+     "scale": "0.72 * v.bfk_scl",
      "position": [
       "v.bfk_ox",
       "7 + v.bfk_oy",
       0
      ]
+    }
+   }
+  },
+  "animation.bfk.balisong.tp": {
+   "loop": true,
+   "bones": {
+    "bfk_fix": {
+     "scale": "1.1 * v.bfk_scl"
     }
    }
   }

@@ -35,6 +35,9 @@
     "bfk_fp_karambit": "animation.bfk.karambit.fp",
     "bfk_fp_balisong": "animation.bfk.balisong.fp",
     "bfk_fp_dagger": "animation.bfk.dagger.fp",
+    "bfk_tp_karambit": "animation.bfk.karambit.tp",
+    "bfk_tp_balisong": "animation.bfk.balisong.tp",
+    "bfk_tp_dagger": "animation.bfk.dagger.tp",
     "karambit_draw": "animation.bfk.karambit.draw",
     "karambit_draw_snd": "animation.bfk.karambit.draw.snd",
     "karambit_draw_sndq": "animation.bfk.karambit.draw.sndq",
@@ -121,6 +124,15 @@
      },
      {
       "bfk_fp_dagger": "v.bfk == 3 && c.is_first_person"
+     },
+     {
+      "bfk_tp_karambit": "v.bfk == 1 && !c.is_first_person"
+     },
+     {
+      "bfk_tp_balisong": "v.bfk == 2 && !c.is_first_person"
+     },
+     {
+      "bfk_tp_dagger": "v.bfk == 3 && !c.is_first_person"
      },
      {
       "karambit_draw": "v.bfk == 1 && v.bfk_d * v.bfk_spd < 0.750 && !v.bfk_swinging"
@@ -331,7 +343,7 @@
      }
     ],
     "pre_animation": [
-     "v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;v.bfk_in = v.bfk > 0 ? c.owning_entity->v.bfkinsn : 0;v.bfk_a = v.bfk > 0 ? c.owning_entity->v.bfkatk : 99;v.bfk_an = v.bfk > 0 ? c.owning_entity->v.bfkatn : 0;v.bfk_h = v.bfk > 0 ? c.owning_entity->v.bfkhit : 99;v.bfk_hn = v.bfk > 0 ? c.owning_entity->v.bfkhitn : 0;v.bfk_spd = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspd, 0.5, 2.0) : 1;t.o = v.bfk > 0 ? c.owning_entity->v.bfkopt : 0;v.bfk_arcs = math.mod(t.o, 2) >= 1;v.bfk_hfx = math.mod(math.floor(t.o / 2), 2) >= 1;v.bfk_snd = math.mod(math.floor(t.o / 4), 2) >= 1;v.bfk_quiet = math.mod(math.floor(t.o / 8), 2) >= 1;v.bfk_glint = math.mod(math.floor(t.o / 16), 2) < 1;v.bfk_tp = math.mod(math.floor(t.o / 32), 2) < 1;v.bfk_fin = v.bfk > 0 ? math.clamp(math.floor(c.owning_entity->v.bfkfin), 0, 3) : 0;v.bfk_sl = v.bfk > 0 ? c.owning_entity->v.bfkslash : 0;v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.5, 1.5) : 1;v.bfk_ox = v.bfk > 0 ? c.owning_entity->v.bfkox : 0;v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;v.bfk_cg = v.bfk > 0 ? c.owning_entity->v.bfkcg : 0.95;v.bfk_cb = v.bfk > 0 ? c.owning_entity->v.bfkcb : 0.97;v.bfk = (v.bfk > 0 && !v.bfk_tp && !c.is_first_person) ? 0 : v.bfk;v.bfk_swinging = (v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360) || (v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320) || (v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340);"
+     "v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;v.bfk_in = v.bfk > 0 ? c.owning_entity->v.bfkinsn : 0;v.bfk_a = v.bfk > 0 ? c.owning_entity->v.bfkatk : 99;v.bfk_an = v.bfk > 0 ? c.owning_entity->v.bfkatn : 0;v.bfk_h = v.bfk > 0 ? c.owning_entity->v.bfkhit : 99;v.bfk_hn = v.bfk > 0 ? c.owning_entity->v.bfkhitn : 0;v.bfk_spd = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspd, 0.5, 2.0) : 1;t.o = v.bfk > 0 ? c.owning_entity->v.bfkopt : 0;v.bfk_arcs = math.mod(t.o, 2) >= 1;v.bfk_hfx = math.mod(math.floor(t.o / 2), 2) >= 1;v.bfk_snd = math.mod(math.floor(t.o / 4), 2) >= 1;v.bfk_quiet = math.mod(math.floor(t.o / 8), 2) >= 1;v.bfk_glint = math.mod(math.floor(t.o / 16), 2) < 1;v.bfk_tp = math.mod(math.floor(t.o / 32), 2) < 1;v.bfk_fin = v.bfk > 0 ? math.clamp(math.floor(c.owning_entity->v.bfkfin), 0, 3) : 0;v.bfk_sl = v.bfk > 0 ? c.owning_entity->v.bfkslash : 0;v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.4, 2.0) : 1;v.bfk_ox = v.bfk > 0 ? c.owning_entity->v.bfkox : 0;v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;v.bfk_cg = v.bfk > 0 ? c.owning_entity->v.bfkcg : 0.95;v.bfk_cb = v.bfk > 0 ? c.owning_entity->v.bfkcb : 0.97;v.bfk = (v.bfk > 0 && !v.bfk_tp && !c.is_first_person) ? 0 : v.bfk;v.bfk_swinging = (v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360) || (v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320) || (v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340);"
     ]
    },
    "render_controllers": [
