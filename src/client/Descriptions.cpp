@@ -107,6 +107,7 @@ Map const kHelp = {
     {"zoom/factor", "How far you zoom in"},
     {"zoom/smooth", "Eases in and out instead of snapping"},
     {"cps_cap/limit", "Clicks above this per second are dropped"},
+    {"motion_blur/style", "Smooth: frames melt into each other like Blueberry's (nearly free). Streak: each pixel streaks along its own motion"},
     {"motion_blur/strength", "How long the blur trails"},
     {"motion_blur/moving", "Blur when you move as well as when you turn"},
     {"aura/style", "The look of the light around you (see About above)"},
