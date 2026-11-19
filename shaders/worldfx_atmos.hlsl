@@ -85,7 +85,7 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 cp2;      // x = sway, y = your speed (0..1.6), z = 1: in the air
     // [Purxiy] Cyberspace / Cute World (Bedrock Forge 2026-11-17): whole-world looks
     float4 cy0;      // Cyberspace: rgb accent (linear), w = reality 0..1 (how far the world turns digital; 0 = off -> -1)
-    float4 cy1;      // x = glow, y = circuits, z = scan interval (s), w = data sky 0/1
+    float4 cy1;      // x = glow, y = circuits, z = scan interval (s), w = sign: data sky on / off, |w| - 1 = seconds since Cyberspace came on
     float4 cu0;      // Cute World: rgb blush / heart colour (linear), w = softness (-1 = off)
     float4 cu1;      // x = hearts amount, y = sparkles, z = pastel strength, w = 1: on
 };
@@ -1094,7 +1094,7 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     if (sky) {   // the data sky: deep and dark, a faint horizon line, columns of light falling slowly
         float3 c = lerp(acc * 0.06, float3(0.005, 0.006, 0.012), saturate(rd.y * 1.5 + 0.2));
         c += acc * exp(-abs(rd.y) * 40.0) * 0.6;
-        if (cy1.w > 0.5) {
+        if (cy1.w > 0.0) {
             float an = atan2(rd.z, rd.x) * 110.0;
             float col = floor(an), fc = frac(an);
             float h = frac(sin(col * 12.9898) * 43758.5453);
@@ -1104,7 +1104,8 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
         }
         float3 ghost = acc * lumW * 0.55 + lumW * 0.06;          // what shows through: the clouds as faint accent ghosts, never their own hue
         c += ghost * 0.35;
-        return lerp(ghost, c, reality);
+        float ageS = abs(cy1.w) - 1.0;
+        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 0.35) * 5.0));   // the sky turns once the front has passed
     }
     float3 n = cross(posAt(px + int2(1, 0)) - P, posAt(px + int2(0, 1)) - P);
     n = normalize(n + 1e-6); if (dot(n, rd) > 0.0) n = -n;
@@ -1135,7 +1136,15 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float3 base = acc * (0.05 + 0.25 * lumW) + lumW * 0.08;               // the world, dark and tinted
     float3 lines = acc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.4 + circuits * pulse * 0.9 * cy1.x + scan * 0.35);
     float3 dig = base + lines * fog + acc * scan * 0.12;
-    return lerp(L, dig, reality);
+    // (Purxiy reference, video 3: switching on, a bright wavefront dome sweeps out from you and the world turns digital
+    //  behind it - ~250 ms to the horizon, a white-hot front with the accent glowing behind it)
+    float age = abs(cy1.w) - 1.0;
+    float R = age * 260.0;                                                // blocks: past the view in ~0.4 s
+    float d3 = length(P);
+    float inside = smoothstep(R + 1.5, R - 1.5, d3);
+    float frontW = exp(-pow((d3 - R) / (0.7 + 0.012 * R), 2.0)) * exp(-age * 2.5);
+    float3 o = lerp(L, dig, reality * inside);
+    return o + (float3(1.0, 0.98, 0.95) * 0.7 + acc * 1.1) * frontW * step(age, 1.5);
 }
 
 // ---- [Purxiy] Cute World: a soft pastel world with drifting hearts and little sparkles. Original code.
