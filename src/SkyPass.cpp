@@ -2104,12 +2104,6 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     gMatch = f;
     return f;
 }
-bool matchFxLive() {
-    WorldFxLook const look = gLook;
-    if (!look.kills) return false;
-    MatchFrame const m = matchFrame(look);
-    return m.cb.m1[2] > 0.5f || (m.cb.m0[1] > 0.5f && m.cb.m0[3] > 0.0f);
-}
 std::string matchStatus() { std::lock_guard l(gMatchMutex); return gMatchStatus; }
 // per-frame constant buffer ring (upload heap) for cbuffer M
 constexpr UINT kMcbSlots = 16, kMcbStride = 8192;
@@ -2458,6 +2452,12 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
 
 namespace {
 WorldFxLook           gLook;
+bool matchFxLive() {
+    WorldFxLook const look = gLook;
+    if (!look.kills) return false;
+    MatchFrame const m = matchFrame(look);
+    return m.cb.m1[2] > 0.5f || (m.cb.m0[1] > 0.5f && m.cb.m0[3] > 0.0f);
+}
 std::filesystem::path gWfxConfig;
 struct WfxBufs { ComPtr<ID3D12Resource> scene, depth; UINT64 sceneSize = 0, depthSize = 0; } gWfxBufs;
 std::atomic<long>     gWfxFrames{0};
