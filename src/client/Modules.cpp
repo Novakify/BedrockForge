@@ -1194,7 +1194,7 @@ void registerBuiltins() {
         Rgba c = ci == 0 ? kNeon : kCols[ci];
         // aiming at someone: tint toward a warm red
         bool onTarget = false;
-        try { auto& hr = f.player->getLevel().getHitResult(); onTarget = hr.mType == HitResultType::Entity; } catch (...) {}
+        try { auto& hr = f.player->getLevel().$getHitResult(); onTarget = hr.mType == HitResultType::Entity; } catch (...) {}
         if (onTarget && m->flag("target_tint", true)) c = Rgba{1.f, 0.38f, 0.42f, 1};
         // spread with your speed, a kick right after a swing, breathing
         static float sp = 0;
@@ -1810,7 +1810,7 @@ void installRuntime() {
             try {   // Block Outline: the block you aim at (only while the module is on)
                 gFxEv.bface = 255u;
                 if (Registry::get().on("block_outline")) {
-                    auto const& hr = player->getLevel().getHitResult();
+                    auto const& hr = player->getLevel().$getHitResult();   // the symbol, not the vtable slot (slots differ on 1.26.51)
                     if (hr.mType == HitResultType::Tile) {
                         gFxEv.bx = hr.mBlock.x; gFxEv.by = hr.mBlock.y; gFxEv.bz = hr.mBlock.z; gFxEv.bface = hr.mFacing;
                     }
