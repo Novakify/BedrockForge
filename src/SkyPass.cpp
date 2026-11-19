@@ -3380,10 +3380,13 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                     acb.cp[2][3] = turn;
                 }
             }
+            static int64_t cyOnAt = 0; static bool cyWas = false;   // when Cyberspace came on: the sweep-in wavefront
+            if (atm.cy && !cyWas) cyOnAt = nowMs;
+            cyWas = atm.cy;
             if (atm.cy) {
                 for (int k = 0; k < 3; ++k) acb.cy[0][k] = lin(atm.cyC[k]);
                 acb.cy[0][3] = std::max(atm.cyReality, 0.01f);
-                acb.cy[1][0] = atm.cyGlow; acb.cy[1][1] = atm.cyCircuits; acb.cy[1][2] = atm.cyScan; acb.cy[1][3] = atm.cySky ? 1.f : 0.f;
+                acb.cy[1][0] = atm.cyGlow; acb.cy[1][1] = atm.cyCircuits; acb.cy[1][2] = atm.cyScan; acb.cy[1][3] = (atm.cySky ? 1.f : -1.f) * (1.f + std::min(float(nowMs - cyOnAt) / 1000.f, 60.f));   // sign: data sky, size: 1 + s since on
             }
             if (atm.cu) {
                 for (int k = 0; k < 3; ++k) acb.cu[0][k] = lin(atm.cuC[k]);
