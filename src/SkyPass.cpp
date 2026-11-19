@@ -77,7 +77,12 @@ struct Ui {
     bool  vv         = true;  // Vibrant Visuals: replace the deferred sky too
     float vvGain     = 1.0f;  // Vibrant Visuals: brightness of our (sRGB -> linear) sky in the game's HDR target
     int   liveRate   = 2;     // Living Skies dome shading rate: 0 full, 1 = 2x1, 2 = 2x2 (Atmos.txt "livesky_rate")
+    bool  skyFade    = true;  // [Sky] crossfade when the Sky module switches skies (Atmos.txt "sky_fade")
 } gUi;
+// [Sky] crossfade: 1 = keep the next frame (the old sky), 2 = kept -> switch now, 3 = the old sky fading out
+std::atomic<int>     gFadeStage{0}, gFadePending{-1};
+std::atomic<int64_t> gFadeAt{0};
+constexpr float      kFadeMs = 1300.0f;
 std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one dome per frame
 // World FX fallback bookkeeping, per depth clear of the world's depth buffer (not per Present: the game records a
 // frame's lists out of step with Present, so counting clears per present number fired the fallback at the wrong clear -
@@ -155,6 +160,7 @@ void pollAtmos() {
         auto rd3 = [&](float* v) { in >> v[0] >> v[1] >> v[2]; };
         if (k == "skymode") { int v = -1; in >> v; skyMode = v; }
         else if (k == "livesky_rate") { int v = 2; in >> v; gUi.liveRate = std::clamp(v, 0, 2); }
+        else if (k == "sky_fade") { int v = 1; in >> v; gUi.skyFade = v != 0; }
         else if (k == "haze") { int v = 0; in >> v; a.haze = v != 0; }
         else if (k == "mist") { int v = 0; in >> v; a.mist = v != 0; }
         else if (k == "haze_a") rd3(a.hA); else if (k == "haze_b") rd3(a.hB);
@@ -230,7 +236,13 @@ void pollAtmos() {
     }
     gAtmosOn = a.any();
     static int lastSky = -1;   // applied only when it changes: Ctrl+F6 / F6 keep working between changes
-    if (skyMode >= 0 && skyMode != lastSky) applySkyMode(skyMode);
+    if (skyMode >= 0 && skyMode != lastSky) {
+        if (lastSky >= 0 && gUi.skyFade && gFadeStage.load() == 0) {   // keep a frame of the old sky first, then switch (fadeTick)
+            gFadePending = skyMode;
+            gFadeAt      = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            gFadeStage   = 1;
+        } else applySkyMode(skyMode);
+    }
     lastSky = skyMode;
 }
 std::atomic<int> gWorldSky{0};     // World FX standalone sky (0 off, 1 Cloud Sea), see the World FX section below
@@ -543,7 +555,14 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         if (gWorldSky.load()) { rf::lyrics::setCameraWanted(true); worldSkyPrepare(device, list); }
         {   // motion blur without a World FX sky: the same pass, the blur draw only (it needs the world's targets + the camera)
             pollAtmos();
-            bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed) || rf::pano::capturing());
+            {   // [Sky] crossfade steps
+                int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                int const     fs  = gFadeStage.load();
+                if (fs == 1 && now - gFadeAt.load() > 400) { applySkyMode(gFadePending.load()); gFadeStage = 0; }   // no pass ran to keep a frame: just switch
+                else if (fs == 2) { applySkyMode(gFadePending.load()); gFadeAt = now; gFadeStage = 3; }
+                else if (fs == 3 && float(now - gFadeAt.load()) > kFadeMs) gFadeStage = 0;
+            }
+            bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed) || rf::pano::capturing() || gFadeStage.load() != 0);
             static bool was = false;
             gBlurOnly.store(bo, std::memory_order_relaxed);
             if (bo) rf::lyrics::setCameraWanted(true);
@@ -1196,7 +1215,7 @@ bool makeWfxRoot(ID3D12Device* dev) {
     if (FAILED(rf::d3d12api::SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err))) return false;
     return SUCCEEDED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&gWfxRoot)));
 }
-ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false, bool atmos = false, bool atmosDepth = false) {
+ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool glass, int depthMode = 0, bool kills = false, bool blur = false, bool atmos = false, bool atmosDepth = false, bool fade = false) {
     ComPtr<ID3D12PipelineState> out;
 #if RF_HAVE_WORLDFX_SHADERS
     if (!makeWfxRoot(dev)) { wfxStatus("root signature failed"); return out; }
@@ -1206,7 +1225,8 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
     // builds of the pass: without the Novak Glass rim (Cloud Sea never pays for its registers) and with it - and each
     // again with the death scenes (80-odd kill animations, the pass's biggest code by far), used only on frames where
     // a kill is playing, so every other frame runs the lean pass
-    if (atmosDepth) d.PS = {rf::worldfx::shaders::PSWorldFxAtmosDepth, sizeof rf::worldfx::shaders::PSWorldFxAtmosDepth};   // + the cape's depth
+    if (fade) d.PS = {rf::worldfx::shaders::PSWorldFxFade, sizeof rf::worldfx::shaders::PSWorldFxFade};   // [Sky] crossfade (shaders/worldfx_fade.hlsl)
+    else if (atmosDepth) d.PS = {rf::worldfx::shaders::PSWorldFxAtmosDepth, sizeof rf::worldfx::shaders::PSWorldFxAtmosDepth};   // + the cape's depth
     else if (atmos) d.PS = {rf::worldfx::shaders::PSWorldFxAtmos, sizeof rf::worldfx::shaders::PSWorldFxAtmos};   // Haze + Mist (shaders/worldfx_atmos.hlsl)
     else if (blur) d.PS = {rf::worldfx::shaders::PSWorldFxBlur, sizeof rf::worldfx::shaders::PSWorldFxBlur};   // camera motion blur (shaders/worldfx_blur.hlsl)
     else if (kills) d.PS = glass ? D3D12_SHADER_BYTECODE{rf::worldfx::shaders::PSWorldFxGlassKills, sizeof rf::worldfx::shaders::PSWorldFxGlassKills}
@@ -1219,6 +1239,10 @@ ComPtr<ID3D12PipelineState> makeWfxPso(ID3D12Device* dev, GamePso const& g, bool
         rt.SrcBlend = D3D12_BLEND_ONE; rt.DestBlend = D3D12_BLEND_ZERO; rt.BlendOp = D3D12_BLEND_OP_ADD;
         rt.SrcBlendAlpha = D3D12_BLEND_ONE; rt.DestBlendAlpha = D3D12_BLEND_ZERO; rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
         rt.LogicOp = D3D12_LOGIC_OP_NOOP;
+    }
+    if (fade) {   // [Sky] the old frame over the new one
+        auto& r0 = d.BlendState.RenderTarget[0];
+        r0.BlendEnable = TRUE, r0.SrcBlend = D3D12_BLEND_SRC_ALPHA, r0.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
     }
     d.BlendState.IndependentBlendEnable = g.numRt > 1;
     d.SampleMask                        = UINT_MAX;
@@ -1299,7 +1323,7 @@ ID3D12PipelineState* derived(ID3D12Device* dev, GamePso const& g, int which) { /
             made.push_back({psoKey(g, 1), ok ? work.quads : nullptr});
         } else
             // World FX: 5 Cloud Sea, 6 glass, 7 / 8 glass sky / terrain halves; +10 the same with the death scenes
-            made.push_back({key, which == 20 ? makeWfxPso(d.Get(), g, false, 0, false, false, true, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
+            made.push_back({key, which == 22 ? makeWfxPso(d.Get(), g, false, 0, false, false, false, false, true) : which == 20 ? makeWfxPso(d.Get(), g, false, 0, false, false, true, true) : which == 19 ? makeWfxPso(d.Get(), g, false, 0, false, false, true) : which == 9 ? makeWfxPso(d.Get(), g, false, 0, false, true) : which >= 5 ? makeWfxPso(d.Get(), g, which % 10 >= 6, which % 10 == 7 ? 1 : which % 10 == 8 ? 2 : 0, which >= 15)
                                             : which == 4 ? makeWsPso(d.Get(), g) : makeExtraPso(d.Get(), g, which)});
         int const ms = int(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
         {
@@ -2919,7 +2943,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // there the moment it's switched on instead of popping in a couple of seconds late
     if (atmosNeed && !capeDepth) (void)derived(dev.Get(), g, 20);
     if (!ap) atmosNeed = false;
-    if (blurOnly && !blurNeed && !atmosNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
+    if (blurOnly && !blurNeed && !atmosNeed && gFadeStage.load() == 0) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
         if (gAtmosOn.load(std::memory_order_relaxed) && !ap) { wfxStatus("building the haze / mist pipeline (in the background)"); return false; }
         if (blurFrac > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
         panoGrab();
@@ -3363,6 +3387,52 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         calls.setPso(list, bp);
         calls.draw(list, 3, 1, 0, 0);
         }
+    }
+    {   // ---- [Sky] crossfade: keep the frame before a switch, then let it dissolve into the new sky
+        static ComPtr<ID3D12Resource> fadeBuf;
+        static UINT64                 fadeSize = 0;
+        static UINT                   fadeW = 0, fadeH = 0, fadePitch = 0;
+        static bool                   fadeBgra = false, fadeInSrv = false;
+        static float                  fadeF[3]{}, fadeP[3]{};
+        int const fs = gFadeStage.load();
+        if (fs == 1) {
+            bool ok;
+            {
+                std::lock_guard l(gWfxMutex);
+                ID3D12Resource* const before = fadeBuf.Get();
+                ok = wfxBuffer(dev.Get(), fadeBuf, fadeSize, rTot);   // (made in COPY_DEST)
+                if (fadeBuf.Get() != before) fadeInSrv = false;       // a new buffer starts in COPY_DEST: no barrier from SRV
+            }
+            if (ok) {
+                if (fadeInSrv) wfxBarrier(list, fadeBuf.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+                wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                dst.pResource = fadeBuf.Get(), dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
+                list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+                wfxBarrier(list, rt, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                wfxBarrier(list, fadeBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                fadeInSrv = true;
+                fadeW = UINT(rd.Width), fadeH = rd.Height, fadePitch = fpC.Footprint.RowPitch, fadeBgra = bgra;
+                for (int k = 0; k < 3; ++k) fadeF[k] = snap.forward[k], fadeP[k] = float(snap.pos[k]);
+                gFadeStage = 2;
+            }
+        } else if (fs == 3 && fadeBuf && fadeInSrv && fadeW == UINT(rd.Width) && fadeH == rd.Height) {
+            if (ID3D12PipelineState* fp = derived(dev.Get(), g, 22)) {
+                float const t  = std::clamp(float(steadyMs() - gFadeAt.load()) / kFadeMs, 0.0f, 1.0f);
+                float const a  = 1.0f - t * t * (3.0f - 2.0f * t);
+                float const dF = snap.forward[0] * fadeF[0] + snap.forward[1] * fadeF[1] + snap.forward[2] * fadeF[2];
+                float const dP = std::hypot(float(snap.pos[0]) - fadeP[0], std::hypot(float(snap.pos[1]) - fadeP[1], float(snap.pos[2]) - fadeP[2]));
+                float const still = std::clamp((dF - 0.9990f) / 0.0008f, 0.0f, 1.0f) * std::clamp(1.0f - dP / 0.5f, 0.0f, 1.0f);
+                float f[44]{};
+                f[12] = a; f[13] = 0.7f * a * still; f[15] = fadeBgra ? 1.0f : 0.0f;
+                f[16] = float(rd.Width); f[17] = float(rd.Height); f[18] = float(fadePitch); f[19] = float(df.Footprint.RowPitch);
+                calls.setConsts(list, 0, 44, f, 0);
+                list->SetGraphicsRootShaderResourceView(1, fadeBuf->GetGPUVirtualAddress());
+                list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
+                calls.setPso(list, fp);
+                calls.draw(list, 3, 1, 0, 0);
+            }
+        } else if (fs == 3) (void)derived(dev.Get(), g, 22);   // (warm-up)
+        if (fs == 0) (void)derived(dev.Get(), g, 22);           // keep the fade pipeline ready for the first switch
     }
     if (timed) wfxperf::end(list, tsFrame);
     panoGrab();   // [Main Menu] after the clouds, sky and world looks: the panorama is the world as you see it
