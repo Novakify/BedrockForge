@@ -35,6 +35,7 @@ int64_t nowMs() {
 }
 
 std::atomic<bool> gWanted{false};
+std::atomic<bool> gUnderwaterCam{false};
 
 void onCamera(mce::Camera& cam) {
     if (!gWanted.load(std::memory_order_relaxed)) return; // lyrics not drawing: touch nothing
@@ -106,7 +107,9 @@ CameraSnap camera() {
         // player, and only the world's origin camera carries that: the sky and the World FX pass drawn from the eye
         // camera came out the same on every face of the menu panorama. While capturing, use the origin camera's axes
         // and projection. (Only then: other origin cameras - item previews - must never steer the sky in play.)
-        if (rf::pano::capturing() && gWorldSnap.valid && now - gWorldSnap.atMs <= 120) {
+        // Under water the game narrows the view on the world's camera only: the glowing block outline and the other
+        // World FX shapes were drawn a size too big and off the block. Same cure there.
+        if ((rf::pano::capturing() || gUnderwaterCam.load(std::memory_order_relaxed)) && gWorldSnap.valid && now - gWorldSnap.atMs <= 120) {
             CameraSnap s = gSnap;
             std::memcpy(s.right, gWorldSnap.right, sizeof s.right);
             std::memcpy(s.up, gWorldSnap.up, sizeof s.up);
@@ -139,6 +142,7 @@ void installCamera() {
     gHooked = true;
 }
 void setCameraWanted(bool on) { gWanted.store(on, std::memory_order_relaxed); }
+void setCameraUnderwater(bool on) { gUnderwaterCam.store(on, std::memory_order_relaxed); }
 void uninstallCamera() {
     if (!gHooked) return;
     RfLyricsCameraHook::unhook();

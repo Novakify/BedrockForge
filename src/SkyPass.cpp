@@ -241,7 +241,11 @@ void pollAtmos() {
             gFadePending = skyMode;
             gFadeAt      = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             gFadeStage   = 1;
-        } else applySkyMode(skyMode);
+            ll_shim::info("[RF] sky fade: switch to " + std::to_string(skyMode) + " asked - keeping a frame of the old sky first");
+        } else {
+            if (lastSky >= 0) ll_shim::info("[RF] sky fade: switch to " + std::to_string(skyMode) + " without a fade (" + (gUi.skyFade ? "a fade is still running" : "fade off") + ")");
+            applySkyMode(skyMode);
+        }
     }
     lastSky = skyMode;
 }
@@ -558,8 +562,8 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             {   // [Sky] crossfade steps
                 int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
                 int const     fs  = gFadeStage.load();
-                if (fs == 1 && now - gFadeAt.load() > 400) { applySkyMode(gFadePending.load()); gFadeStage = 0; }   // no pass ran to keep a frame: just switch
-                else if (fs == 2) { applySkyMode(gFadePending.load()); gFadeAt = now; gFadeStage = 3; }
+                if (fs == 1 && now - gFadeAt.load() > 400) { applySkyMode(gFadePending.load()); gFadeStage = 0; ll_shim::info("[RF] sky fade: no World FX pass ran in 400 ms to keep a frame - switched without a fade"); }   // no pass ran to keep a frame: just switch
+                else if (fs == 2) { applySkyMode(gFadePending.load()); gFadeAt = now; gFadeStage = 3; ll_shim::info("[RF] sky fade: old frame kept - switched, fading"); }
                 else if (fs == 3 && float(now - gFadeAt.load()) > kFadeMs) gFadeStage = 0;
             }
             bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed) || rf::pano::capturing() || gFadeStage.load() != 0);
@@ -2485,6 +2489,7 @@ std::atomic<bool>     gUnderwater{false};
 void setUnderwater(bool on) {
     static std::atomic<bool> first{true};
     if (first.exchange(false)) ll_shim::info("[RF] World FX: watching the camera for water (client thread)");
+    rf::lyrics::setCameraUnderwater(on);
     if (gUnderwater.exchange(on, std::memory_order_relaxed) != on) ll_shim::info(std::string("[RF] World FX: under water ") + (on ? "- the pass draws the water" : "- out of the water"));
 }
 std::atomic<size_t>   gFxRt{0}, gFxDs{0};
@@ -3308,7 +3313,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 for (int k = 0; k < 3; ++k) acb.cu[0][k] = lin(atm.cuC[k]);
                 acb.cu[0][3] = atm.cuSoft; acb.cu[1][0] = atm.cuHearts; acb.cu[1][1] = atm.cuSparkle; acb.cu[1][2] = atm.cuPastel; acb.cu[1][3] = 1.f;
             }
-            if (atm.bo && ev && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx)) {
+            if (atm.bo && ev && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx) && !rf::pano::capturing()) {   // (not baked into the title-screen capture)
                 static double gx = 0, gy = 0, gz = 0; static float fade = 0; static int64_t lt = 0; static bool have = false;
                 float const dt = lt ? std::clamp(float(nowMs - lt) / 1000.f, 0.f, 0.1f) : 0.f; lt = nowMs;
                 bool const on = ev->bface != 255u && nowMs - ev->bAtMs < 500;
@@ -3415,8 +3420,13 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 for (int k = 0; k < 3; ++k) fadeF[k] = snap.forward[k], fadeP[k] = float(snap.pos[k]);
                 gFadeStage = 2;
             }
-        } else if (fs == 3 && fadeBuf && fadeInSrv && fadeW == UINT(rd.Width) && fadeH == rd.Height) {
-            if (ID3D12PipelineState* fp = derived(dev.Get(), g, 22)) {
+        } else if (fs == 3 && fadeBuf && fadeInSrv && fadeW > 0 && fadeH > 0) {   // (the world may draw at another size now: the shader scales)
+            ID3D12PipelineState* fp = derived(dev.Get(), g, 22);
+            {
+                static int64_t lastNote = 0;
+                if (steadyMs() - lastNote > 2000) { lastNote = steadyMs(); ll_shim::info(std::string("[RF] sky fade: drawing (pipeline ") + (fp ? "ready" : "not built yet") + ")"); }
+            }
+            if (fp) {
                 float const t  = std::clamp(float(steadyMs() - gFadeAt.load()) / kFadeMs, 0.0f, 1.0f);
                 float const a  = 1.0f - t * t * (3.0f - 2.0f * t);
                 float const dF = snap.forward[0] * fadeF[0] + snap.forward[1] * fadeF[1] + snap.forward[2] * fadeF[2];
@@ -3425,6 +3435,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 float f[44]{};
                 f[12] = a; f[13] = 0.7f * a * still; f[15] = fadeBgra ? 1.0f : 0.0f;
                 f[16] = float(rd.Width); f[17] = float(rd.Height); f[18] = float(fadePitch); f[19] = float(df.Footprint.RowPitch);
+                f[20] = float(fadeW); f[21] = float(fadeH);   // the kept frame's own size
                 calls.setConsts(list, 0, 44, f, 0);
                 list->SetGraphicsRootShaderResourceView(1, fadeBuf->GetGPUVirtualAddress());
                 list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
