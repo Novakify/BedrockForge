@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include "client/CostProbe.h"
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -110,6 +111,7 @@ namespace bedrock_forge::client {
 
 void installVisualHooks();
 void setHandHook(bool on); // VisualModules.cpp (Hand Movement)
+extern std::atomic<int> gSkyWorldPick;   // Runtime_win.cpp (Sky module Shuffle: Cloud Sea / Novak Glass turn)
 namespace keysounds { void press(int vk); } // KeySounds_win.cpp (Creamy Keys)
 namespace weathersounds { void rain(float level); void thunder(float volume, float closeK); } // WeatherSounds_win.cpp
 extern std::atomic<float> gTimeOfDay; // VisualModules.cpp
@@ -479,7 +481,10 @@ void atmosTick() {
         auto* sk = r.find("sky");
         int const mode = sk && sk->enabled ? int(sk->num("mode", 0) + 0.5f) : -1;
         static int const kRf[4] = {3, 1, 2, 0};   // Living Skies, Cloud Sea, Novak Glass, Vanilla -> RF's skymode
-        out += std::format("skymode {}\n", mode < 0 ? -1 : kRf[std::clamp(mode, 0, 3)]);
+        int const pick = gSkyWorldPick.load();   // Shuffle landed on Cloud Sea (1) / Novak Glass (2)
+        out += std::format("skymode {}\n", mode < 0 ? -1 : mode == 0 && pick ? pick : kRf[std::clamp(mode, 0, 3)]);
+        int const q = sk ? int(sk->num("quality", 0) + 0.5f) : 0;   // Fast = 2x2, Balanced = 2x1, Sharp = full (RF's VRS on the dome)
+        out += std::format("livesky_rate {}\n", q <= 0 ? 2 : q == 1 ? 1 : 0);
     }
     if (out == gAtmosLast) return;
     static int64_t at = 0;
@@ -1754,6 +1759,7 @@ void installRuntime() {
         hitch::gCur.fb = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         forgerender::tick();
         try { atmosTick(); } catch (...) {}
+        try { cost::tick(); } catch (...) {}   // [BF] FPS cost badge measurements
         refreshAccent();
         hitch::gCur.fr = hitch::since(tSec); tSec = std::chrono::steady_clock::now();
         auto* player = ctx.mClient.getLocalPlayer();

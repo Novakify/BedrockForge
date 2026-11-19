@@ -11,6 +11,7 @@
 // overlay; RF copies the frame, blurs it and draws the glass at Present. Without RF the menu is invisible, so the
 // old flat menu is kept as a fallback (BF_NO_RF below / when the glyph store is never read).
 #include "client/Menu.h"
+#include "client/CostProbe.h"
 #include "client/HudEdit.h"
 #include "client/Diag.h"
 
@@ -614,6 +615,10 @@ void drawMods(UiFrame& f, Win const& w, float a0) {
         }
         g.text(g.ellip(m->name, right - 80 - tx, 14), tx, y + rowH / 2, 14, rgba(m->planned ? kLilac : kWhite, m->planned ? 0.6f : 1), a, false, 0,
                on ? 0.55f : 0);
+        if (cost::Result r; cost::result(m->id, r)) {   // [BF] FPS cost badge (measured on this PC)
+            float const d = r.fpsOff - r.fpsOn;
+            g.text(d < 1.5f ? std::string("free") : std::format("-{:.0f} FPS", d), right - 80, y + rowH / 2, 10.5f, rgba(d < 1.5f ? kWhite : kLilac, 0.75f), a, true, 2);
+        }
         if (m->planned) f.hits.push_back({x, y, colW, rowH, [m](bool) { gModPage = m->id; showPage(Page::ModSettings); }, "", m->id});
     }
 }
@@ -671,6 +676,27 @@ void drawModSettings(UiFrame& f, Win const& w, float a) {
             f.g.text(listening ? "..." : cur, x + wd - 16, sc.y + 25, 13, rgba(kWhite, listening ? 1.0f : 0.85f), a, true, 2, listening ? 0.6f : 0);
             std::string id = m->id;
             f.hits.push_back({x, sc.y, wd, 50, [id](bool) { gBindFor = gBindFor == id ? std::string() : id; }});
+        }
+        sc.y += 60;
+        // [BF] FPS cost badge: measured on this PC (on vs off), the menu closes for ~8 s while it runs
+        if (sc.fits(50)) {
+            cost::Result r;
+            std::string runId;
+            bool const busy = cost::running(&runId);
+            bool const have = cost::result(m->id, r);
+            std::string sub = busy ? (runId == m->id ? "Measuring..." : "Measuring " + runId + "...")
+                            : have ? std::format("{:.0f} FPS with it, {:.0f} without ({:+.2f} ms a frame) - tap to measure again", r.fpsOn, r.fpsOff, r.msOn - r.msOff)
+                                   : "Tap to measure what it costs on this PC (about 8 s, the menu closes)";
+            row(f, x, sc.y, wd, 50, "FPS cost", sub, a);
+            if (have && !busy) {
+                float const d = r.fpsOff - r.fpsOn;
+                std::string const badge = d < 1.5f ? "free" : std::format("-{:.0f} FPS", d);
+                f.g.text(badge, x + wd - 16, sc.y + 25, 13, rgba(d < 1.5f ? kWhite : kLilac, 0.95f), a, true, 2);
+            }
+            std::string id = m->id;
+            f.hits.push_back({x, sc.y, wd, 50, [id](bool) {
+                if (cost::start(id)) { toast("Measuring the FPS cost... keep still for 8 s"); closeMenu(); }
+            }});
         }
         sc.y += 60;
     }
