@@ -90,6 +90,29 @@ def karambit():
         "bfk_spin": {"rotation": [(0, Z), (0.11, [0, 0, -22]), (0.22, [0, 0, 4]), (0.36, Z)]}},
         [(0.0, "swish")], arc_trail(0.05, 0.18))
     del A["swish2_"]
+    # inspect 3 - ring spinner: dropped round the finger ring, three fast turns, caught back into the grip
+    A["insp3"] = (1.9, {
+        "bfk_pose": {"position": [(0, Z), (0.2, [0, -1.2, 0]), (1.25, [0, -1.2, 0]), (1.5, [0, 0.4, 0]), (1.9, Z)],
+                     "rotation": [(0, Z), (0.2, [10, 0, -8]), (1.3, [10, 0, -8]), (1.9, Z)]},
+        "bfk_spin": {"rotation": [(0, Z), (0.22, Z), (0.55, [0, 0, -400]), (0.9, [0, 0, -820]), (1.2, [0, 0, -1080]), (1.3, [0, 0, -1088]), (1.42, [0, 0, -1080]), (1.9, [0, 0, -1080])]}},
+        [(0.25, "ring_spin"), (0.6, "ring_spin"), (0.95, "ring_spin"), (1.28, "click")], [])
+    # inspect 4 - look at it: brought close and turned slowly under the light so the Damascus catches it, both flats
+    A["insp4"] = (2.6, {
+        "bfk_pose": {"rotation": [(0, Z), (0.45, [-28, 50, 14]), (1.25, [-30, -20, 10]), (1.95, [-24, 55, 16]), (2.35, [3, -4, -2]), (2.6, Z)],
+                     "position": [(0, Z), (0.45, [1.6, 2.2, -2.4]), (1.95, [1.4, 2.3, -2.4]), (2.6, Z)]}},
+        [(0.1, "swish"), (2.3, "click")], [])
+    # swing 3 (combo) - rising hook: low, then up through the target, the ring rolling with it
+    A["swing3"] = (0.36, {
+        "bfk_pose": {"rotation": [(0, Z), (0.04, [22, 0, 10]), (0.11, [-58, 0, -18]), (0.21, [10, 0, 6]), (0.29, [-2, 0, -1]), (0.36, Z)],
+                     "position": [(0, Z), (0.04, [0, -1.4, 0.6]), (0.11, [0.4, 2.4, -1.4]), (0.36, Z)]},
+        "bfk_spin": {"rotation": [(0, Z), (0.11, [0, 0, 30]), (0.24, [0, 0, -4]), (0.36, Z)]}},
+        [(0.0, "swish")], arc_trail(0.05, 0.16))
+    # swing 4 (combo finisher) - reverse-hook rip: a full turn round the ring into reverse grip and a wide backhand
+    A["swing4"] = (0.5, {
+        "bfk_spin": {"rotation": [(0, Z), (0.1, [0, 0, -360]), (0.4, [0, 0, -360]), (0.5, [0, 0, -360])]},
+        "bfk_pose": {"rotation": [(0, Z), (0.1, [-6, 0, 30]), (0.22, [34, 0, -96]), (0.34, [-8, 0, 16]), (0.42, [2, 0, -3]), (0.5, Z)],
+                     "position": [(0, Z), (0.1, [-1.4, 0.6, 0]), (0.22, [2.2, 1.4, -1.6]), (0.5, Z)]}},
+        [(0.0, "ring_spin"), (0.14, "swish")], arc_trail(0.13, 0.27, 8))
     return A
 
 
@@ -126,6 +149,35 @@ def balisong():
         "bfk_pose": {"position": [(0, Z), (0.04, [0, -1.6, 0.4]), (0.1, [0, 7.5, -1.2]), (0.18, [0, -0.6, 0]), (0.3, Z)],
                      "rotation": [(0, Z), (0.04, [6, 0, -4]), (0.1, [-18, 0, 8]), (0.2, [3, 0, -2]), (0.3, Z)]}},
         [(0.0, "swish")], arc_trail(0.05, 0.12, 4))
+    # inspect 3 - chaplin: the knife spins on the safe handle's pin, the blade and bite handle swinging round together
+    A["insp3"] = (2.2, {
+        "bfb_safe": {"rotation": [(0, Z), (0.25, [0, 0, 180]), (0.5, [0, 0, 180]), (1.5, [0, 0, 180]), (1.75, Z), (2.2, Z)]},
+        "bfk_spin": {"rotation": [(0, Z), (0.5, Z), (0.95, [0, 0, 360]), (1.4, [0, 0, 720]), (2.2, [0, 0, 720])]},
+        "bfk_pose": {"rotation": [(0, Z), (0.3, [-12, 20, 8]), (1.8, [-12, 20, 8]), (2.2, Z)],
+                     "position": [(0, Z), (0.3, [0.4, 1.2, -0.4]), (1.8, [0.4, 1.2, -0.4]), (2.2, Z)]}},
+        [(0.26, "clack"), (0.96, "clack"), (1.41, "clack"), (1.76, "clack"), (1.82, "latch")], [])
+    # inspect 4 - zen rollover: both handles roll over the hand one after the other, twice, with a slow look at the bite
+    A["insp4"] = (2.4, {
+        "bfb_bite": {"rotation": [(0, Z), (0.3, [0, 0, -180]), (0.55, Z), (1.1, [0, 0, -180]), (1.35, Z), (2.4, Z)]},
+        "bfb_safe": {"rotation": [(0, Z), (0.55, Z), (0.8, [0, 0, 180]), (1.05, Z), (1.35, Z), (1.6, [0, 0, 180]), (1.85, Z), (2.4, Z)]},
+        "bfk_pose": {"rotation": [(0, Z), (0.25, [-18, 30, 12]), (1.95, [-22, -25, 10]), (2.4, Z)],
+                     "position": [(0, Z), (0.25, [0.6, 1.6, -1.0]), (1.95, [0.6, 1.6, -1.0]), (2.4, Z)]}},
+        [(0.3, "clack"), (0.56, "clack"), (0.8, "clack"), (1.05, "clack"), (1.1, "clack"), (1.35, "clack"), (1.6, "clack"), (1.86, "latch")], [])
+    # swing 3 (combo) - backhand flick
+    A["swing3"] = (0.32, {
+        "bfk_pose": {"rotation": [(0, Z), (0.035, [-4, 0, -14]), (0.09, [16, 0, 74]), (0.18, [-5, 0, -16]), (0.25, [0, 0, 3]), (0.32, Z)],
+                     "position": [(0, Z), (0.09, [-1.6, 0.8, -0.8]), (0.32, Z)]},
+        "bfb_safe": {"rotation": [(0, Z), (0.08, [0, 0, -7]), (0.16, [0, 0, 4]), (0.3, Z)]},
+        "bfb_bite": {"rotation": [(0, Z), (0.08, [0, 0, 7]), (0.16, [0, 0, -4]), (0.3, Z)]}},
+        [(0.0, "swish")], arc_trail(0.04, 0.16))
+    # swing 4 (combo finisher) - flip-stab: the handles fan open, a full twirl, and a hard thrust that latches shut
+    A["swing4"] = (0.5, {
+        "bfb_safe": {"rotation": [(0, Z), (0.06, [0, 0, 120]), (0.16, Z), (0.5, Z)]},
+        "bfb_bite": {"rotation": [(0, Z), (0.06, [0, 0, -120]), (0.16, Z), (0.5, Z)]},
+        "bfk_spin": {"rotation": [(0, Z), (0.16, [0, 0, 360]), (0.5, [0, 0, 360])]},
+        "bfk_pose": {"position": [(0, Z), (0.16, [0, -1.8, 0.6]), (0.25, [0, 9.0, -1.6]), (0.34, [0, -0.6, 0]), (0.5, Z)],
+                     "rotation": [(0, Z), (0.16, [8, 0, -6]), (0.25, [-22, 0, 10]), (0.36, [3, 0, -2]), (0.5, Z)]}},
+        [(0.02, "clack"), (0.15, "latch"), (0.18, "swish")], arc_trail(0.18, 0.26, 5))
     return A
 
 
@@ -156,6 +208,26 @@ def dagger():
         "bfk_pose": {"rotation": [(0, Z), (0.035, [4, 0, -14]), (0.1, [-14, 0, 76]), (0.2, [4, 0, -18]), (0.27, [0, 0, 4]), (0.34, Z)],
                      "position": [(0, Z), (0.1, [-1.2, 0.8, -0.8]), (0.34, Z)]}},
         [(0.0, "swish")], arc_trail(0.05, 0.17))
+    # inspect 3 - flip-and-catch by the blade: tossed, a turn and a half, caught by the blade, flipped back to the grip
+    A["insp3"] = (2.2, {
+        "bfk_pose": {"position": [(0, Z), (0.3, [0, 4.6, 0]), (0.62, Z), (0.7, [0, -0.3, 0]), (0.8, Z), (1.5, Z), (1.7, [0, 2.4, 0]), (1.92, Z), (2.2, Z)]},
+        "bfk_spin": {"rotation": [(0, Z), (0.62, [-540, 0, 0]), (1.5, [-540, 0, 0]), (1.92, [-720, 0, 0]), (2.2, [-720, 0, 0])]}},
+        [(0.0, "swish"), (0.62, "dagger_catch"), (1.52, "swish"), (1.92, "dagger_catch")], [])
+    # inspect 4 - look at it: held up close and turned slowly so the mirror blade sweeps the light across
+    A["insp4"] = (2.5, {
+        "bfk_pose": {"rotation": [(0, Z), (0.45, [-30, 55, 10]), (1.3, [-32, -35, 8]), (2.0, [-28, 50, 12]), (2.5, Z)],
+                     "position": [(0, Z), (0.45, [1.2, 2.0, -2.2]), (2.0, [1.2, 2.0, -2.2]), (2.5, Z)]}},
+        [(0.1, "swish"), (2.2, "click")], [])
+    # swing 3 (combo) - reverse slash back across
+    A["swing3"] = (0.32, {
+        "bfk_pose": {"rotation": [(0, Z), (0.035, [-4, 0, 14]), (0.1, [14, 0, -74]), (0.2, [-4, 0, 16]), (0.27, [0, 0, -3]), (0.32, Z)],
+                     "position": [(0, Z), (0.1, [1.4, 0.8, -0.8]), (0.32, Z)]}},
+        [(0.0, "swish")], arc_trail(0.05, 0.17))
+    # swing 4 (combo finisher) - double stab: two fast thrusts, the second deeper
+    A["swing4"] = (0.48, {
+        "bfk_pose": {"position": [(0, Z), (0.04, [0, -1.6, 0.5]), (0.1, [0, 7.0, -1.2]), (0.17, [0, -1.2, 0.4]), (0.25, [0, 10.0, -1.8]), (0.34, [0, -0.6, 0]), (0.48, Z)],
+                     "rotation": [(0, Z), (0.1, [-16, 0, 0]), (0.17, [8, 0, 0]), (0.25, [-24, 0, 0]), (0.36, [4, 0, 0]), (0.48, Z)]}},
+        [(0.0, "swish"), (0.16, "swish")], [(0.1, "streak"), (0.25, "streak"), (0.26, "spark")])
     return A
 
 
@@ -175,7 +247,7 @@ def slash_style(trail, style):
     return [(ts[-1], "streak")]
 
 
-GLINT_AT = {"draw": 0.8, "insp1": 0.6, "insp2": 0.6}   # share of the clip where the edge catches the light
+GLINT_AT = {"draw": 0.8, "insp1": 0.6, "insp2": 0.6, "insp3": 0.66, "insp4": 0.5}   # share of the clip where the edge catches the light
 
 
 def build():
@@ -211,14 +283,25 @@ def build():
         anims[f"animation.bfk.hit_{ab}.snd"] = anim(0.3, {}, sounds=[(0.0, "cut")])
         anims[f"animation.bfk.hit_{ab}.sndq"] = anim(0.3, {}, sounds=[(0.0, "cut_q")])
 
+    # bfkinsn = trick 0..3, bfkatn = combo step 0..3 (Cosmetics.cpp); 1 / 0 kept for the original two of each
     clock = {"draw": ("v.bfk_d", None), "insp1": ("v.bfk_i", "v.bfk_in == 1"), "insp2": ("v.bfk_i", "v.bfk_in == 0"),
-             "swing1": ("v.bfk_a", "v.bfk_an == 1"), "swing2": ("v.bfk_a", "v.bfk_an == 0")}
+             "insp3": ("v.bfk_i", "v.bfk_in == 2"), "insp4": ("v.bfk_i", "v.bfk_in == 3"),
+             "swing1": ("v.bfk_a", "v.bfk_an == 1"), "swing2": ("v.bfk_a", "v.bfk_an == 0"),
+             "swing3": ("v.bfk_a", "v.bfk_an == 2"), "swing4": ("v.bfk_a", "v.bfk_an == 3")}
+    # sprint carry (first person): the knife turns round and lies back along the forearm, eased by Bedrock Forge
+    # (v.bfk_spr 0..1, smoothstepped here so the flip starts and lands soft)
+    for k in KNIVES:
+        anims[f"animation.bfk.{k}.carry"] = {"loop": True, "bones": {"bfk_pose": {
+            "rotation": ["v.bfk_spe * -28", "v.bfk_spe * 12", "v.bfk_spe * 168"],
+            "position": ["v.bfk_spe * 0.6", "v.bfk_spe * -3.2", "v.bfk_spe * 1.2"]}}}
     for k in KNIVES:   # third person: same bone, own size
         anims[f"animation.bfk.{k}.tp"] = {"loop": True, "bones": {"bfk_fix": {"scale": f"{TP_SCALE[k]} * v.bfk_scl"}}}
     amap = {f"bfk_fp_{k}": f"animation.bfk.{k}.fp" for k in KNIVES}
     amap.update({f"bfk_tp_{k}": f"animation.bfk.{k}.tp" for k in KNIVES})
     animate = [{f"bfk_fp_{k}": f"v.bfk == {i + 1} && c.is_first_person"} for i, k in enumerate(KNIVES)]
     animate += [{f"bfk_tp_{k}": f"v.bfk == {i + 1} && !c.is_first_person"} for i, k in enumerate(KNIVES)]
+    amap.update({f"bfk_carry_{k}": f"animation.bfk.{k}.carry" for k in KNIVES})
+    animate += [{f"bfk_carry_{k}": f"v.bfk == {i + 1} && c.is_first_person && v.bfk_spr > 0.002"} for i, k in enumerate(KNIVES)]
     for i, k in enumerate(KNIVES):
         n = i + 1
         for kind, (var, parity) in clock.items():
@@ -228,7 +311,7 @@ def build():
             on = f"v.bfk == {n} && {var} * v.bfk_spd < {L:.3f}"
             if parity:
                 on += f" && {parity}"
-            if kind in ("draw", "insp1", "insp2"):
+            if kind in ("draw", "insp1", "insp2", "insp3", "insp4"):
                 on += " && !v.bfk_swinging"       # a click cuts a trick short instead of stacking on it
             variants = [("", ""), (".snd", " && v.bfk_snd && !v.bfk_quiet"), (".sndq", " && v.bfk_snd && v.bfk_quiet")]
             variants += [(f".fx{si}", f" && v.bfk_arcs && v.bfk_sl == {si}") for si in range(len(SLASH_STYLES))]
@@ -260,7 +343,7 @@ def swinging_expr():
     """v.bfk_swinging for PRE: a swing clip of the selected knife is still running"""
     parts = []
     for i, k in enumerate(KNIVES):
-        L = max(DURATION.get((k, "swing1"), 0), DURATION.get((k, "swing2"), 0))
+        L = max(DURATION.get((k, f"swing{j}"), 0) for j in (1, 2, 3, 4))
         parts.append(f"(v.bfk == {i + 1} && v.bfk_a * v.bfk_spd < {L:.3f})")
     return "v.bfk_swinging = " + " || ".join(parts) + ";"
 
@@ -287,6 +370,8 @@ PRE = ("v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bf
        "v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.4, 2.0) : 1;"
        "v.bfk_ox = v.bfk > 0 ? c.owning_entity->v.bfkox : 0;"
        "v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;"
+       "v.bfk_spr = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspr, 0, 1) : 0;"
+       "v.bfk_spe = v.bfk_spr * v.bfk_spr * (3 - 2 * v.bfk_spr);"
        "v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;"
        "v.bfk_cg = v.bfk > 0 ? c.owning_entity->v.bfkcg : 0.95;"
        "v.bfk_cb = v.bfk > 0 ? c.owning_entity->v.bfkcb : 0.97;"
