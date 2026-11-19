@@ -263,16 +263,28 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                 }
             }
             if (fx3.w > 0.0) {                                   // ripple: a flash, and a wave of light over what is near
+                // (Fernando 2026-11-19: "ripple doesn't look that good, not shiny". Now a prismatic wave: the ring splits
+                //  into its colour and white like light through glass, a second fainter echo follows it, the ground
+                //  ring gets the same, and a burst of glints rides the front.)
                 float u = age / max(fx4.w, 0.05);
                 if (u < 1.0) {
-                    float d3 = length(dv), R = 2.6 * (1.0 - pow(1.0 - u, 2.0));
-                    float k = exp(-pow((d3 - R) / 0.16, 2.0)) * (1.0 - u) + exp(-d3 * 2.2) * exp(-age * 9.0) * 1.5;
-                    if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4) {   // the ring rolling over the ground
-                        float r = length(dv.xz), R2 = 3.2 * (1.0 - pow(1.0 - u, 2.5));
-                        k += exp(-pow((r - R2) / 0.10, 2.0)) * (1.0 - u) * 0.8;
+                    float d3 = length(dv), ease = 1.0 - pow(1.0 - u, 2.0), fade = pow(1.0 - u, 1.3);
+                    float R = 2.6 * ease, W = 0.12 + 0.06 * u;
+                    float3 cA = fx4.rgb, cW = float3(1.0, 0.98, 0.96);
+                    float3 cB = float3(fx4.b, fx4.r, fx4.g) * 0.8 + 0.2;     // a shifted hue for the outer fringe
+                    float3 ring = cA * exp(-pow((d3 - R) / W, 2.0)) + cW * 1.3 * exp(-pow((d3 - R + 0.04) / (W * 0.35), 2.0))
+                                + cB * 0.7 * exp(-pow((d3 - R - W * 1.2) / (W * 0.7), 2.0))
+                                + cA * 0.45 * exp(-pow((d3 - R * 0.62) / (W * 0.8), 2.0));   // the echo
+                    float3 flash = (cW * 0.9 + cA * 0.7) * exp(-d3 * 3.4) * exp(-age * 14.0);   // a quick pop, not a white-out
+                    float3 Lr = ring * fade + flash;
+                    if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4) {   // the rings rolling over the ground
+                        float r = length(dv.xz), R2 = 3.2 * (1.0 - pow(1.0 - u, 2.5)), an = atan2(dv.z, dv.x);
+                        float gl = pow(0.5 + 0.5 * cos(an * 9.0 + seed * 30.0 + u * 4.0), 24.0);   // glints on the front
+                        Lr += (cA * exp(-pow((r - R2) / 0.09, 2.0)) + cW * 0.9 * exp(-pow((r - R2 + 0.02) / 0.03, 2.0))
+                               + cA * 0.4 * exp(-pow((r - R2 * 0.6) / 0.07, 2.0)) + cW * gl * 2.0 * exp(-pow((r - R2) / 0.12, 2.0))) * fade;
                     }
-                    if (kind == 3 && fx5.y > 0.5) k *= 1.8;          // a critical hit lands harder
-                    L += fx4.rgb * k * fx3.w * 1.4;
+                    if (kind == 3 && fx5.y > 0.5) Lr *= 1.8;          // a critical hit lands harder
+                    L += Lr * fx3.w * 1.4;
                 }
             }
         } else if ((kind == 5 || (kind == 6 && pa1.y > 0.5)) && pa0.w > 0.0) {   // a block placed / broken: light on its faces
@@ -420,19 +432,57 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
     int n = min(int(cs1.w), 32);
     float3 tbd = P - trB.xyz;
     [branch] if (cs0.w > 0.0 && n > 1 && !sky && dot(tbd, tbd) < trB.w * trB.w) {   // audit: only near the path
-        float best = 1e9, bestAge = 0.0, bestY = 0.0;
+        float best = 1e9, bestAge = 0.0, bestY = 0.0, side = 0.0;
         [loop] for (int i = 0; i + 1 < n; ++i) {
             float h;
             float d2 = segDist2(P.xz, trP[i].xz, trP[i + 1].xz, h);
-            if (d2 < best) { best = d2; bestAge = lerp(trP[i].w, trP[i + 1].w, h); bestY = lerp(trP[i].y, trP[i + 1].y, h); }
+            if (d2 < best) {
+                best = d2; bestAge = lerp(trP[i].w, trP[i + 1].w, h); bestY = lerp(trP[i].y, trP[i + 1].y, h);
+                float2 dir = trP[i].xz - trP[i + 1].xz;              // which side of the path this point is on (signed)
+                side = (dir.x * (P.z - trP[i].z) - dir.y * (P.x - trP[i].x)) / max(length(dir), 1e-4);
+            }
         }
         float u = bestAge / max(cs0.w, 0.05);
         if (u < 1.0 && abs(P.y - bestY) < 0.6) {
-            float w = 0.10 * cs1.x * (cs1.z > 0.5 && cs1.z < 1.5 ? 2.2 : 1.0), d = sqrt(best);
-            float core = exp(-pow(d / w, 2.0)), halo = cs1.y * 0.35 * exp(-d / (w * 3.0));
-            float k = (core + halo) * pow(1.0 - u, 1.3) * smoothstep(0.6, 0.15, abs(P.y - bestY));
-            if (cs1.z > 2.5) k *= step(0.7, frac(sin(dot(floor(P.xz * 9.0), float2(12.9898, 78.233))) * 43758.5453)) * 2.5;   // stardust: sparks
-            L += cs0.rgb * k * 1.4;
+            // (Fernando 2026-11-19: next to Purxiy the trail "pales". It was one soft line. Now: a white-hot core over the
+            //  colour, light flowing back along it, a soft taper at the tail - and each style its own shape.)
+            int    st   = int(cs1.z + 0.5);
+            float  w    = 0.10 * cs1.x, d = sqrt(best);
+            float  life = pow(1.0 - u, 1.2) * smoothstep(0.0, 0.04, bestAge + 0.01);
+            float  flow = 0.75 + 0.25 * sin(bestAge * 18.0 - t * 6.0);   // light running back along the path
+            float3 col  = lerp(cs0.rgb, float3(1.0, 0.97, 0.94), 0.35 * exp(-bestAge * 3.0));   // fresh end burns whiter
+            float  k = 0.0, coreW = 0.0;
+            if (st == 1) {                                                // path: a wide glowing band with lit edges
+                float W2 = w * 2.4;
+                float band = smoothstep(W2, W2 * 0.7, d);
+                float edge = exp(-pow((d - W2 * 0.82) / (w * 0.22), 2.0));
+                float chev = 0.5 + 0.5 * sin(bestAge * 30.0 - t * 9.0 + abs(side) * 8.0);   // chevrons rolling back
+                k = band * (0.25 + 0.25 * chev) + edge * 1.2;
+                coreW = exp(-pow(d / (w * 0.35), 2.0)) * 0.5;
+            } else if (st == 2) {                                         // helix: two strands twisting round the path
+                float ph = bestAge * 14.0 - t * 2.0;
+                float o1 = sin(ph) * w * 1.6, o2 = -o1;
+                float s1 = exp(-pow((side - o1) / (w * 0.32), 2.0)), s2 = exp(-pow((side - o2) / (w * 0.32), 2.0));
+                float front = 0.6 + 0.4 * cos(ph);                         // the strand passing over glows brighter
+                float near = smoothstep(w * 2.6, w * 1.9, d);             // only beside the path (not on past its ends)
+                s1 *= near; s2 *= near;
+                k = s1 * front + s2 * (1.6 - front) * 0.8 + cs1.y * 0.15 * exp(-d / (w * 2.5));
+                coreW = (s1 * front + s2 * (1.6 - front) * 0.8) * 0.45;
+            } else if (st == 3) {                                         // stardust: twinkling sparks in a faint line
+                float2 cell = floor(P.xz * 9.0);
+                float  rnd  = frac(sin(dot(cell, float2(12.9898, 78.233))) * 43758.5453);
+                float  tw   = pow(saturate(sin(t * 5.0 + rnd * 40.0)), 4.0);
+                float2 sp   = (cell + 0.5 + (float2(frac(rnd * 13.7), frac(rnd * 71.3)) - 0.5) * 0.5) / 9.0;   // a round spark in its cell
+                float  rr   = length(P.xz - sp) * 9.0;
+                float  spark = step(0.72, rnd) * smoothstep(w * 2.2, w * 0.6, d) * exp(-rr * rr * 18.0) * (0.8 + 2.6 * tw);
+                k = spark * 1.6 + exp(-pow(d / w, 2.0)) * 0.25;
+                coreW = spark * tw * 0.8;
+            } else {                                                      // line: a bright ribbon
+                k = exp(-pow(d / w, 2.0)) + cs1.y * 0.35 * exp(-d / (w * 3.0));
+                coreW = exp(-pow(d / (w * 0.35), 2.0));
+            }
+            float keep = life * flow * smoothstep(0.6, 0.15, abs(P.y - bestY));
+            L += (col * k * 1.5 + float3(1.0, 0.98, 0.95) * coreW * 1.2) * keep;
         }
     }
     // aura / halo are lights in the air: closest approach of the view ray to each (depth-tested against the world)
