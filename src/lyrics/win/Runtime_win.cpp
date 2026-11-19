@@ -2318,6 +2318,13 @@ void setPlayerOnly(bool on) {
         gS->engine.reset();
         gS->engine.publish(false, 70.0f);
     }
+    // (2026-11-19, Fernando: "turned Player only off and the lyrics never came back". With Player only on, Show lyrics
+    //  (O / the menu row right under it) also got switched off - and stayed off, saved. Leaving Player only means you
+    //  want your lyrics back: switch them on.)
+    if (!on && was) {
+        std::lock_guard l(gS->mutex);
+        if (!gS->engine.config().enabled) { gS->engine.config().enabled = true; gS->engine.reset(); saveConfig(); }
+    }
 }
 bool playerOnly() { return gS && gS->playerOnly; }
 void mediaCommand(int which) {   // 0 play / pause, 1 next, 2 previous (the media thread does the WinRT call)
