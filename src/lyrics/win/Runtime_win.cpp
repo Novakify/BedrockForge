@@ -1180,7 +1180,21 @@ void bigMomentsStep(float dt, std::string_view skyId) {
     gameAudioWant(gS->skyOv.on && gS->skyOv.gameAudio);
     if (gS->skyOv.on && gS->skyOv.gameAudio) {
         GameAudio const ga = gameAudio();
+        {   // the log can say whether it hears the game (status: 1 listening, -1 this Windows has no process loopback)
+            static int64_t lastLog = 0;
+            if (now - lastLog > 10000) {
+                lastLog = now;
+                char t[160];
+                std::snprintf(t, sizeof t, "   sound  game audio: status %d, level %.2f, rumble %.2f, booms %d", ga.status, ga.level, ga.low, ga.booms);
+                gS->directorLines.emplace_back(t);
+            }
+        }
         if (ga.booms != b.booms) {
+            {
+                char t[96];
+                std::snprintf(t, sizeof t, "   sound  boom %.2f (kick)", ga.boom);
+                gS->directorLines.emplace_back(t);
+            }
             b.booms = ga.booms;
             b.kick = std::max(b.kick, 0.4f + 0.6f * ga.boom);
             if (ga.boom > 0.7f && now - b.lastBoomMs > 5000) { b.lastBoomMs = now; fire(0, 0.6f, 2.5f, "explosion"); }
