@@ -250,6 +250,65 @@ def slash_style(trail, style):
 GLINT_AT = {"draw": 0.8, "insp1": 0.6, "insp2": 0.6, "insp3": 0.66, "insp4": 0.5}   # share of the clip where the edge catches the light
 
 
+GHOSTS = 8            # afterimage copies per knife
+GHOST_DT = 0.02       # seconds between copies (8 x 20 ms: the trail covers the last 160 ms of motion)
+
+
+def ghost_bone(bone, g):
+    """bfk_pose -> bfg3_pose, bfb_safe -> bfg3_safe (the ghost tree's names)"""
+    return f"bfg{g}_" + bone.split("_", 1)[1]
+
+
+def _sample(track, t):
+    ks = sorted((float(kk), v["post"] if isinstance(v, dict) else v) for kk, v in track.items())
+    ts = [a for a, _ in ks]; vs = [list(map(float, b if isinstance(b, list) else [b] * 3)) for _, b in ks]
+    if t <= ts[0]: return vs[0]
+    if t >= ts[-1]: return vs[-1]
+    j = max(x for x in range(len(ts)) if ts[x] <= t)
+    u = (t - ts[j]) / (ts[j + 1] - ts[j])
+    p0, p1, p2, p3 = vs[max(j - 1, 0)], vs[j], vs[j + 1], vs[min(j + 2, len(vs) - 1)]
+    return [0.5 * ((2 * b) + (-a + c) * u + (2 * a - 5 * b + 4 * c - d) * u * u + (-a + 3 * b - 3 * c + d) * u ** 3) for a, b, c, d in zip(p0, p1, p2, p3)]
+
+
+def ghost_visibility(bones, L, lag):
+    """position keys for the ghost root over the ghost's own clip time: +1000 (shown) where the knife has moved
+    enough since this ghost's moment (rotation > 6 deg or position > 0.5 px on any bone), 0 (hidden) elsewhere"""
+    step = 1 / 60
+    ts, ons = [], []
+    t = 0.0
+    while t <= L + 1e-6:
+        moved = 0.0
+        for ch in bones.values():
+            for kind, tr in ch.items():
+                a, b = _sample(tr, t), _sample(tr, min(t + lag, L))
+                d = max(abs(x - y) for x, y in zip(a, b))
+                moved = max(moved, d / 6.0 if kind == "rotation" else d / 0.5 if kind == "position" else 0.0)
+        ts.append(t); ons.append(moved > 1.0)
+        t += step
+    # no flicker: close gaps under 80 ms, drop blips under 40 ms
+    def runs(v):
+        out, i = [], 0
+        while i < len(v):
+            j = i
+            while j < len(v) and v[j] == v[i]: j += 1
+            out.append((v[i], i, j)); i = j
+        return out
+    for val, i, j in runs(ons):
+        if not val and 0 < i and j < len(ons) and (j - i) * step < 0.08: ons[i:j] = [True] * (j - i)
+    for val, i, j in runs(ons):
+        if val and (j - i) * step < 0.04: ons[i:j] = [False] * (j - i)
+    keys, last = {}, None
+    for t, on in zip(ts, ons):
+        if on != last:
+            v = [0, 1000, 0] if on else [0, 0, 0]
+            prev = [0, 0, 0] if on else [0, 1000, 0]
+            keys[f"{t:.3f}"] = {"pre": prev if last is not None else v, "post": v}
+            last = on
+    if not any(k["post"][1] for k in keys.values()):
+        return None
+    return keys
+
+
 def build():
     """-> (animations json, controllers json, animation map, animate list, sounds, particles)
 
@@ -324,6 +383,40 @@ def build():
                 anims[full]["anim_time_update"] = f"{var} * v.bfk_spd"
                 amap[short] = full
                 animate.append({short: on + extra})
+    # ---- afterimage (Purxiy reference, video 2 at 161 s / video 4 at 33 s): GHOST copies of the whole knife fan out
+    # along every swing / flip - flat see-through lavender, the newest strongest. Ghost k is its own copy of the bone
+    # tree (bfg{k}_*, in the ghost geometry) playing the SAME clip k * GHOST_DT behind the knife. It only shows where
+    # the knife has really moved since (a still knife has no trail): its root bone sits 1000 px away (hidden, the
+    # ghost_hide clip) and each clip lifts it back (+1000) only over the moving stretches, worked out here.
+    anims["animation.bfk.ghost_hide"] = {"loop": True, "bones": {f"bfg{g}": {"position": [0, -1000, 0]} for g in range(1, GHOSTS + 1)}}
+    amap["bfk_ghost_hide"] = "animation.bfk.ghost_hide"
+    animate.append({"bfk_ghost_hide": "v.bfk > 0"})
+    for i, k in enumerate(KNIVES):
+        n = i + 1
+        for kind, (var, parity) in clock.items():
+            if (k, kind) not in DURATION:
+                continue
+            L = DURATION[(k, kind)]
+            base = anims[f"animation.bfk.{k}.{kind}"]
+            for g in range(1, GHOSTS + 1):
+                lag = g * GHOST_DT
+                bones = {}
+                for bone, ch in base.get("bones", {}).items():
+                    bones[ghost_bone(bone, g)] = ch
+                show = ghost_visibility(base.get("bones", {}), L, lag)
+                if not show:
+                    continue
+                bones[f"bfg{g}"] = {"position": show}
+                full = f"animation.bfk.{k}.{kind}.g{g}"
+                anims[full] = {"animation_length": L, "anim_time_update": f"math.max(0, {var} * v.bfk_spd - {lag:.3f})", "bones": bones}
+                short = f"{k}_{kind}_g{g}"
+                amap[short] = full
+                on = f"v.bfk == {n} && v.bfk_ghost && {var} * v.bfk_spd < {L + lag:.3f} && {var} * v.bfk_spd > {lag:.3f}"
+                if parity:
+                    on += f" && {parity}"
+                if kind in ("draw", "insp1", "insp2", "insp3", "insp4"):
+                    on += " && !v.bfk_swinging"
+                animate.append({short: on})
     for ab, par in (("a", 1), ("b", 0)):
         on = f"v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == {par}"
         for suffix, extra in (("fx", " && v.bfk_hfx"), ("fxc", " && v.bfk_hfx && v.bfk_crit"), ("snd", " && v.bfk_snd && !v.bfk_quiet"), ("sndq", " && v.bfk_snd && v.bfk_quiet")):
@@ -372,6 +465,7 @@ PRE = ("v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bf
        "v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;"
        "v.bfk_spr = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspr, 0, 1) : 0;"
        "v.bfk_spe = v.bfk_spr * v.bfk_spr * (3 - 2 * v.bfk_spr);"
+       "v.bfk_ghost = math.mod(math.floor(t.o / 128), 2) < 1;"
        "v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;"
        "v.bfk_cg = v.bfk > 0 ? c.owning_entity->v.bfkcg : 0.95;"
        "v.bfk_cb = v.bfk > 0 ? c.owning_entity->v.bfkcb : 0.97;"

@@ -37,6 +37,26 @@
     "Array.ktex[(v.bfk - 1) * 4 + v.bfk_fin]",
     "Texture.enchanted"
    ]
+  },
+  "controller.render.bfk_ghost": {
+   "arrays": {
+    "geometries": {
+     "Array.ggeo": [
+      "Geometry.karambit_ghost",
+      "Geometry.balisong_ghost",
+      "Geometry.dagger_ghost"
+     ]
+    }
+   },
+   "geometry": "Array.ggeo[v.bfk - 1]",
+   "materials": [
+    {
+     "*": "Material.ghost"
+    }
+   ],
+   "textures": [
+    "Texture.bfk_ghost"
+   ]
   }
  }
 }

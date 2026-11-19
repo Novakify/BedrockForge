@@ -5,7 +5,8 @@
    "identifier": "minecraft:copper_sword",
    "materials": {
     "default": "entity_alphatest",
-    "enchanted": "entity_alphatest_glint"
+    "enchanted": "entity_alphatest_glint",
+    "ghost": "entity_alphablend"
    },
    "textures": {
     "default": "textures/items/copper_sword",
@@ -21,13 +22,17 @@
     "dagger": "textures/bf_cosmetics/dagger",
     "dagger_blackout": "textures/bf_cosmetics/dagger_blackout",
     "dagger_gold": "textures/bf_cosmetics/dagger_gold",
-    "dagger_fade": "textures/bf_cosmetics/dagger_fade"
+    "dagger_fade": "textures/bf_cosmetics/dagger_fade",
+    "bfk_ghost": "textures/bf_cosmetics/ghost"
    },
    "geometry": {
     "default": "geometry.bfk_copper_sword",
     "karambit": "geometry.bfk_karambit",
+    "karambit_ghost": "geometry.bfk_karambit_ghost",
     "balisong": "geometry.bfk_balisong",
-    "dagger": "geometry.bfk_dagger"
+    "balisong_ghost": "geometry.bfk_balisong_ghost",
+    "dagger": "geometry.bfk_dagger",
+    "dagger_ghost": "geometry.bfk_dagger_ghost"
    },
    "animations": {
     "hold_first_person": "animation.bfk.hold_first_person",
@@ -173,6 +178,221 @@
     "dagger_swing4_fx0": "animation.bfk.dagger.swing4.fx0",
     "dagger_swing4_fx1": "animation.bfk.dagger.swing4.fx1",
     "dagger_swing4_fx2": "animation.bfk.dagger.swing4.fx2",
+    "bfk_ghost_hide": "animation.bfk.ghost_hide",
+    "karambit_draw_g1": "animation.bfk.karambit.draw.g1",
+    "karambit_draw_g2": "animation.bfk.karambit.draw.g2",
+    "karambit_draw_g3": "animation.bfk.karambit.draw.g3",
+    "karambit_draw_g4": "animation.bfk.karambit.draw.g4",
+    "karambit_draw_g5": "animation.bfk.karambit.draw.g5",
+    "karambit_draw_g6": "animation.bfk.karambit.draw.g6",
+    "karambit_draw_g7": "animation.bfk.karambit.draw.g7",
+    "karambit_draw_g8": "animation.bfk.karambit.draw.g8",
+    "karambit_insp1_g1": "animation.bfk.karambit.insp1.g1",
+    "karambit_insp1_g2": "animation.bfk.karambit.insp1.g2",
+    "karambit_insp1_g3": "animation.bfk.karambit.insp1.g3",
+    "karambit_insp1_g4": "animation.bfk.karambit.insp1.g4",
+    "karambit_insp1_g5": "animation.bfk.karambit.insp1.g5",
+    "karambit_insp1_g6": "animation.bfk.karambit.insp1.g6",
+    "karambit_insp1_g7": "animation.bfk.karambit.insp1.g7",
+    "karambit_insp1_g8": "animation.bfk.karambit.insp1.g8",
+    "karambit_insp2_g1": "animation.bfk.karambit.insp2.g1",
+    "karambit_insp2_g2": "animation.bfk.karambit.insp2.g2",
+    "karambit_insp2_g3": "animation.bfk.karambit.insp2.g3",
+    "karambit_insp2_g4": "animation.bfk.karambit.insp2.g4",
+    "karambit_insp2_g5": "animation.bfk.karambit.insp2.g5",
+    "karambit_insp2_g6": "animation.bfk.karambit.insp2.g6",
+    "karambit_insp2_g7": "animation.bfk.karambit.insp2.g7",
+    "karambit_insp2_g8": "animation.bfk.karambit.insp2.g8",
+    "karambit_insp3_g1": "animation.bfk.karambit.insp3.g1",
+    "karambit_insp3_g2": "animation.bfk.karambit.insp3.g2",
+    "karambit_insp3_g3": "animation.bfk.karambit.insp3.g3",
+    "karambit_insp3_g4": "animation.bfk.karambit.insp3.g4",
+    "karambit_insp3_g5": "animation.bfk.karambit.insp3.g5",
+    "karambit_insp3_g6": "animation.bfk.karambit.insp3.g6",
+    "karambit_insp3_g7": "animation.bfk.karambit.insp3.g7",
+    "karambit_insp3_g8": "animation.bfk.karambit.insp3.g8",
+    "karambit_insp4_g2": "animation.bfk.karambit.insp4.g2",
+    "karambit_insp4_g3": "animation.bfk.karambit.insp4.g3",
+    "karambit_insp4_g4": "animation.bfk.karambit.insp4.g4",
+    "karambit_insp4_g5": "animation.bfk.karambit.insp4.g5",
+    "karambit_insp4_g6": "animation.bfk.karambit.insp4.g6",
+    "karambit_insp4_g7": "animation.bfk.karambit.insp4.g7",
+    "karambit_insp4_g8": "animation.bfk.karambit.insp4.g8",
+    "karambit_swing1_g1": "animation.bfk.karambit.swing1.g1",
+    "karambit_swing1_g2": "animation.bfk.karambit.swing1.g2",
+    "karambit_swing1_g3": "animation.bfk.karambit.swing1.g3",
+    "karambit_swing1_g4": "animation.bfk.karambit.swing1.g4",
+    "karambit_swing1_g5": "animation.bfk.karambit.swing1.g5",
+    "karambit_swing1_g6": "animation.bfk.karambit.swing1.g6",
+    "karambit_swing1_g7": "animation.bfk.karambit.swing1.g7",
+    "karambit_swing1_g8": "animation.bfk.karambit.swing1.g8",
+    "karambit_swing2_g1": "animation.bfk.karambit.swing2.g1",
+    "karambit_swing2_g2": "animation.bfk.karambit.swing2.g2",
+    "karambit_swing2_g3": "animation.bfk.karambit.swing2.g3",
+    "karambit_swing2_g4": "animation.bfk.karambit.swing2.g4",
+    "karambit_swing2_g5": "animation.bfk.karambit.swing2.g5",
+    "karambit_swing2_g6": "animation.bfk.karambit.swing2.g6",
+    "karambit_swing2_g7": "animation.bfk.karambit.swing2.g7",
+    "karambit_swing2_g8": "animation.bfk.karambit.swing2.g8",
+    "karambit_swing3_g1": "animation.bfk.karambit.swing3.g1",
+    "karambit_swing3_g2": "animation.bfk.karambit.swing3.g2",
+    "karambit_swing3_g3": "animation.bfk.karambit.swing3.g3",
+    "karambit_swing3_g4": "animation.bfk.karambit.swing3.g4",
+    "karambit_swing3_g5": "animation.bfk.karambit.swing3.g5",
+    "karambit_swing3_g6": "animation.bfk.karambit.swing3.g6",
+    "karambit_swing3_g7": "animation.bfk.karambit.swing3.g7",
+    "karambit_swing3_g8": "animation.bfk.karambit.swing3.g8",
+    "karambit_swing4_g1": "animation.bfk.karambit.swing4.g1",
+    "karambit_swing4_g2": "animation.bfk.karambit.swing4.g2",
+    "karambit_swing4_g3": "animation.bfk.karambit.swing4.g3",
+    "karambit_swing4_g4": "animation.bfk.karambit.swing4.g4",
+    "karambit_swing4_g5": "animation.bfk.karambit.swing4.g5",
+    "karambit_swing4_g6": "animation.bfk.karambit.swing4.g6",
+    "karambit_swing4_g7": "animation.bfk.karambit.swing4.g7",
+    "karambit_swing4_g8": "animation.bfk.karambit.swing4.g8",
+    "balisong_draw_g1": "animation.bfk.balisong.draw.g1",
+    "balisong_draw_g2": "animation.bfk.balisong.draw.g2",
+    "balisong_draw_g3": "animation.bfk.balisong.draw.g3",
+    "balisong_draw_g4": "animation.bfk.balisong.draw.g4",
+    "balisong_draw_g5": "animation.bfk.balisong.draw.g5",
+    "balisong_draw_g6": "animation.bfk.balisong.draw.g6",
+    "balisong_draw_g7": "animation.bfk.balisong.draw.g7",
+    "balisong_draw_g8": "animation.bfk.balisong.draw.g8",
+    "balisong_insp1_g1": "animation.bfk.balisong.insp1.g1",
+    "balisong_insp1_g2": "animation.bfk.balisong.insp1.g2",
+    "balisong_insp1_g3": "animation.bfk.balisong.insp1.g3",
+    "balisong_insp1_g4": "animation.bfk.balisong.insp1.g4",
+    "balisong_insp1_g5": "animation.bfk.balisong.insp1.g5",
+    "balisong_insp1_g6": "animation.bfk.balisong.insp1.g6",
+    "balisong_insp1_g7": "animation.bfk.balisong.insp1.g7",
+    "balisong_insp1_g8": "animation.bfk.balisong.insp1.g8",
+    "balisong_insp2_g1": "animation.bfk.balisong.insp2.g1",
+    "balisong_insp2_g2": "animation.bfk.balisong.insp2.g2",
+    "balisong_insp2_g3": "animation.bfk.balisong.insp2.g3",
+    "balisong_insp2_g4": "animation.bfk.balisong.insp2.g4",
+    "balisong_insp2_g5": "animation.bfk.balisong.insp2.g5",
+    "balisong_insp2_g6": "animation.bfk.balisong.insp2.g6",
+    "balisong_insp2_g7": "animation.bfk.balisong.insp2.g7",
+    "balisong_insp2_g8": "animation.bfk.balisong.insp2.g8",
+    "balisong_insp3_g1": "animation.bfk.balisong.insp3.g1",
+    "balisong_insp3_g2": "animation.bfk.balisong.insp3.g2",
+    "balisong_insp3_g3": "animation.bfk.balisong.insp3.g3",
+    "balisong_insp3_g4": "animation.bfk.balisong.insp3.g4",
+    "balisong_insp3_g5": "animation.bfk.balisong.insp3.g5",
+    "balisong_insp3_g6": "animation.bfk.balisong.insp3.g6",
+    "balisong_insp3_g7": "animation.bfk.balisong.insp3.g7",
+    "balisong_insp3_g8": "animation.bfk.balisong.insp3.g8",
+    "balisong_insp4_g1": "animation.bfk.balisong.insp4.g1",
+    "balisong_insp4_g2": "animation.bfk.balisong.insp4.g2",
+    "balisong_insp4_g3": "animation.bfk.balisong.insp4.g3",
+    "balisong_insp4_g4": "animation.bfk.balisong.insp4.g4",
+    "balisong_insp4_g5": "animation.bfk.balisong.insp4.g5",
+    "balisong_insp4_g6": "animation.bfk.balisong.insp4.g6",
+    "balisong_insp4_g7": "animation.bfk.balisong.insp4.g7",
+    "balisong_insp4_g8": "animation.bfk.balisong.insp4.g8",
+    "balisong_swing1_g1": "animation.bfk.balisong.swing1.g1",
+    "balisong_swing1_g2": "animation.bfk.balisong.swing1.g2",
+    "balisong_swing1_g3": "animation.bfk.balisong.swing1.g3",
+    "balisong_swing1_g4": "animation.bfk.balisong.swing1.g4",
+    "balisong_swing1_g5": "animation.bfk.balisong.swing1.g5",
+    "balisong_swing1_g6": "animation.bfk.balisong.swing1.g6",
+    "balisong_swing1_g7": "animation.bfk.balisong.swing1.g7",
+    "balisong_swing1_g8": "animation.bfk.balisong.swing1.g8",
+    "balisong_swing2_g1": "animation.bfk.balisong.swing2.g1",
+    "balisong_swing2_g2": "animation.bfk.balisong.swing2.g2",
+    "balisong_swing2_g3": "animation.bfk.balisong.swing2.g3",
+    "balisong_swing2_g4": "animation.bfk.balisong.swing2.g4",
+    "balisong_swing2_g5": "animation.bfk.balisong.swing2.g5",
+    "balisong_swing2_g6": "animation.bfk.balisong.swing2.g6",
+    "balisong_swing2_g7": "animation.bfk.balisong.swing2.g7",
+    "balisong_swing2_g8": "animation.bfk.balisong.swing2.g8",
+    "balisong_swing3_g1": "animation.bfk.balisong.swing3.g1",
+    "balisong_swing3_g2": "animation.bfk.balisong.swing3.g2",
+    "balisong_swing3_g3": "animation.bfk.balisong.swing3.g3",
+    "balisong_swing3_g4": "animation.bfk.balisong.swing3.g4",
+    "balisong_swing3_g5": "animation.bfk.balisong.swing3.g5",
+    "balisong_swing3_g6": "animation.bfk.balisong.swing3.g6",
+    "balisong_swing3_g7": "animation.bfk.balisong.swing3.g7",
+    "balisong_swing3_g8": "animation.bfk.balisong.swing3.g8",
+    "balisong_swing4_g1": "animation.bfk.balisong.swing4.g1",
+    "balisong_swing4_g2": "animation.bfk.balisong.swing4.g2",
+    "balisong_swing4_g3": "animation.bfk.balisong.swing4.g3",
+    "balisong_swing4_g4": "animation.bfk.balisong.swing4.g4",
+    "balisong_swing4_g5": "animation.bfk.balisong.swing4.g5",
+    "balisong_swing4_g6": "animation.bfk.balisong.swing4.g6",
+    "balisong_swing4_g7": "animation.bfk.balisong.swing4.g7",
+    "balisong_swing4_g8": "animation.bfk.balisong.swing4.g8",
+    "dagger_draw_g1": "animation.bfk.dagger.draw.g1",
+    "dagger_draw_g2": "animation.bfk.dagger.draw.g2",
+    "dagger_draw_g3": "animation.bfk.dagger.draw.g3",
+    "dagger_draw_g4": "animation.bfk.dagger.draw.g4",
+    "dagger_draw_g5": "animation.bfk.dagger.draw.g5",
+    "dagger_draw_g6": "animation.bfk.dagger.draw.g6",
+    "dagger_draw_g7": "animation.bfk.dagger.draw.g7",
+    "dagger_draw_g8": "animation.bfk.dagger.draw.g8",
+    "dagger_insp1_g1": "animation.bfk.dagger.insp1.g1",
+    "dagger_insp1_g2": "animation.bfk.dagger.insp1.g2",
+    "dagger_insp1_g3": "animation.bfk.dagger.insp1.g3",
+    "dagger_insp1_g4": "animation.bfk.dagger.insp1.g4",
+    "dagger_insp1_g5": "animation.bfk.dagger.insp1.g5",
+    "dagger_insp1_g6": "animation.bfk.dagger.insp1.g6",
+    "dagger_insp1_g7": "animation.bfk.dagger.insp1.g7",
+    "dagger_insp1_g8": "animation.bfk.dagger.insp1.g8",
+    "dagger_insp2_g1": "animation.bfk.dagger.insp2.g1",
+    "dagger_insp2_g2": "animation.bfk.dagger.insp2.g2",
+    "dagger_insp2_g3": "animation.bfk.dagger.insp2.g3",
+    "dagger_insp2_g4": "animation.bfk.dagger.insp2.g4",
+    "dagger_insp2_g5": "animation.bfk.dagger.insp2.g5",
+    "dagger_insp2_g6": "animation.bfk.dagger.insp2.g6",
+    "dagger_insp2_g7": "animation.bfk.dagger.insp2.g7",
+    "dagger_insp2_g8": "animation.bfk.dagger.insp2.g8",
+    "dagger_insp3_g1": "animation.bfk.dagger.insp3.g1",
+    "dagger_insp3_g2": "animation.bfk.dagger.insp3.g2",
+    "dagger_insp3_g3": "animation.bfk.dagger.insp3.g3",
+    "dagger_insp3_g4": "animation.bfk.dagger.insp3.g4",
+    "dagger_insp3_g5": "animation.bfk.dagger.insp3.g5",
+    "dagger_insp3_g6": "animation.bfk.dagger.insp3.g6",
+    "dagger_insp3_g7": "animation.bfk.dagger.insp3.g7",
+    "dagger_insp3_g8": "animation.bfk.dagger.insp3.g8",
+    "dagger_insp4_g2": "animation.bfk.dagger.insp4.g2",
+    "dagger_insp4_g3": "animation.bfk.dagger.insp4.g3",
+    "dagger_insp4_g4": "animation.bfk.dagger.insp4.g4",
+    "dagger_insp4_g5": "animation.bfk.dagger.insp4.g5",
+    "dagger_insp4_g6": "animation.bfk.dagger.insp4.g6",
+    "dagger_insp4_g7": "animation.bfk.dagger.insp4.g7",
+    "dagger_insp4_g8": "animation.bfk.dagger.insp4.g8",
+    "dagger_swing1_g1": "animation.bfk.dagger.swing1.g1",
+    "dagger_swing1_g2": "animation.bfk.dagger.swing1.g2",
+    "dagger_swing1_g3": "animation.bfk.dagger.swing1.g3",
+    "dagger_swing1_g4": "animation.bfk.dagger.swing1.g4",
+    "dagger_swing1_g5": "animation.bfk.dagger.swing1.g5",
+    "dagger_swing1_g6": "animation.bfk.dagger.swing1.g6",
+    "dagger_swing1_g7": "animation.bfk.dagger.swing1.g7",
+    "dagger_swing1_g8": "animation.bfk.dagger.swing1.g8",
+    "dagger_swing2_g1": "animation.bfk.dagger.swing2.g1",
+    "dagger_swing2_g2": "animation.bfk.dagger.swing2.g2",
+    "dagger_swing2_g3": "animation.bfk.dagger.swing2.g3",
+    "dagger_swing2_g4": "animation.bfk.dagger.swing2.g4",
+    "dagger_swing2_g5": "animation.bfk.dagger.swing2.g5",
+    "dagger_swing2_g6": "animation.bfk.dagger.swing2.g6",
+    "dagger_swing2_g7": "animation.bfk.dagger.swing2.g7",
+    "dagger_swing2_g8": "animation.bfk.dagger.swing2.g8",
+    "dagger_swing3_g1": "animation.bfk.dagger.swing3.g1",
+    "dagger_swing3_g2": "animation.bfk.dagger.swing3.g2",
+    "dagger_swing3_g3": "animation.bfk.dagger.swing3.g3",
+    "dagger_swing3_g4": "animation.bfk.dagger.swing3.g4",
+    "dagger_swing3_g5": "animation.bfk.dagger.swing3.g5",
+    "dagger_swing3_g6": "animation.bfk.dagger.swing3.g6",
+    "dagger_swing3_g7": "animation.bfk.dagger.swing3.g7",
+    "dagger_swing3_g8": "animation.bfk.dagger.swing3.g8",
+    "dagger_swing4_g1": "animation.bfk.dagger.swing4.g1",
+    "dagger_swing4_g2": "animation.bfk.dagger.swing4.g2",
+    "dagger_swing4_g3": "animation.bfk.dagger.swing4.g3",
+    "dagger_swing4_g4": "animation.bfk.dagger.swing4.g4",
+    "dagger_swing4_g5": "animation.bfk.dagger.swing4.g5",
+    "dagger_swing4_g6": "animation.bfk.dagger.swing4.g6",
+    "dagger_swing4_g7": "animation.bfk.dagger.swing4.g7",
+    "dagger_swing4_g8": "animation.bfk.dagger.swing4.g8",
     "hit_a_fx": "animation.bfk.hit_a.fx",
     "hit_a_fxc": "animation.bfk.hit_a.fxc",
     "hit_a_snd": "animation.bfk.hit_a.snd",
@@ -614,6 +834,651 @@
       "dagger_swing4_fx2": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.480 && v.bfk_an == 3 && v.bfk_arcs && v.bfk_sl == 2"
      },
      {
+      "bfk_ghost_hide": "v.bfk > 0"
+     },
+     {
+      "karambit_draw_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.770 && v.bfk_d * v.bfk_spd > 0.020 && !v.bfk_swinging"
+     },
+     {
+      "karambit_draw_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.790 && v.bfk_d * v.bfk_spd > 0.040 && !v.bfk_swinging"
+     },
+     {
+      "karambit_draw_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.810 && v.bfk_d * v.bfk_spd > 0.060 && !v.bfk_swinging"
+     },
+     {
+      "karambit_draw_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.830 && v.bfk_d * v.bfk_spd > 0.080 && !v.bfk_swinging"
+     },
+     {
+      "karambit_draw_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.850 && v.bfk_d * v.bfk_spd > 0.100 && !v.bfk_swinging"
+     },
+     {
+      "karambit_draw_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.870 && v.bfk_d * v.bfk_spd > 0.120 && !v.bfk_swinging"
+     },
+     {
+      "karambit_draw_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.890 && v.bfk_d * v.bfk_spd > 0.140 && !v.bfk_swinging"
+     },
+     {
+      "karambit_draw_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.910 && v.bfk_d * v.bfk_spd > 0.160 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.220 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.240 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.260 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.280 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.320 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.340 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp1_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.360 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.020 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.040 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.060 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.080 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.120 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.140 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp2_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.160 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp3_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.920 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp3_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.940 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp3_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.960 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp3_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.980 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp3_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp3_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.020 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp3_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.040 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp3_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.060 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp4_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.640 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp4_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.660 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp4_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.680 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp4_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.700 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp4_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.720 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp4_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.740 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "karambit_insp4_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.760 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "karambit_swing1_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing1_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing1_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing1_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing1_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing1_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.480 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing1_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.500 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing1_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 1"
+     },
+     {
+      "karambit_swing2_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing2_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing2_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing2_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing2_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing2_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.480 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing2_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.500 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing2_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 0"
+     },
+     {
+      "karambit_swing3_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 2"
+     },
+     {
+      "karambit_swing3_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 2"
+     },
+     {
+      "karambit_swing3_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 2"
+     },
+     {
+      "karambit_swing3_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 2"
+     },
+     {
+      "karambit_swing3_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 2"
+     },
+     {
+      "karambit_swing3_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.480 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 2"
+     },
+     {
+      "karambit_swing3_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.500 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 2"
+     },
+     {
+      "karambit_swing3_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 2"
+     },
+     {
+      "karambit_swing4_g1": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 3"
+     },
+     {
+      "karambit_swing4_g2": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.540 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 3"
+     },
+     {
+      "karambit_swing4_g3": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.560 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 3"
+     },
+     {
+      "karambit_swing4_g4": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.580 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 3"
+     },
+     {
+      "karambit_swing4_g5": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.600 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 3"
+     },
+     {
+      "karambit_swing4_g6": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.620 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 3"
+     },
+     {
+      "karambit_swing4_g7": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.640 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 3"
+     },
+     {
+      "karambit_swing4_g8": "v.bfk == 1 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.660 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 3"
+     },
+     {
+      "balisong_draw_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.970 && v.bfk_d * v.bfk_spd > 0.020 && !v.bfk_swinging"
+     },
+     {
+      "balisong_draw_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.990 && v.bfk_d * v.bfk_spd > 0.040 && !v.bfk_swinging"
+     },
+     {
+      "balisong_draw_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.010 && v.bfk_d * v.bfk_spd > 0.060 && !v.bfk_swinging"
+     },
+     {
+      "balisong_draw_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.030 && v.bfk_d * v.bfk_spd > 0.080 && !v.bfk_swinging"
+     },
+     {
+      "balisong_draw_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.050 && v.bfk_d * v.bfk_spd > 0.100 && !v.bfk_swinging"
+     },
+     {
+      "balisong_draw_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.070 && v.bfk_d * v.bfk_spd > 0.120 && !v.bfk_swinging"
+     },
+     {
+      "balisong_draw_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.090 && v.bfk_d * v.bfk_spd > 0.140 && !v.bfk_swinging"
+     },
+     {
+      "balisong_draw_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 1.110 && v.bfk_d * v.bfk_spd > 0.160 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.220 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.240 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.260 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.280 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.320 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.340 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp1_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.360 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.020 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.040 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.060 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.080 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.120 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.140 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp2_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.160 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp3_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.220 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp3_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.240 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp3_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.260 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp3_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.280 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp3_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp3_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.320 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp3_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.340 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp3_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.360 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp4_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.420 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp4_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.440 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp4_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.460 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp4_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.480 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp4_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.500 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp4_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.520 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp4_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.540 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "balisong_insp4_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.560 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "balisong_swing1_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing1_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing1_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing1_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing1_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing1_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing1_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing1_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.480 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 1"
+     },
+     {
+      "balisong_swing2_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing2_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing2_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing2_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing2_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing2_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing2_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing2_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 0"
+     },
+     {
+      "balisong_swing3_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 2"
+     },
+     {
+      "balisong_swing3_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 2"
+     },
+     {
+      "balisong_swing3_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 2"
+     },
+     {
+      "balisong_swing3_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 2"
+     },
+     {
+      "balisong_swing3_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 2"
+     },
+     {
+      "balisong_swing3_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 2"
+     },
+     {
+      "balisong_swing3_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 2"
+     },
+     {
+      "balisong_swing3_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.480 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 2"
+     },
+     {
+      "balisong_swing4_g1": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 3"
+     },
+     {
+      "balisong_swing4_g2": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.540 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 3"
+     },
+     {
+      "balisong_swing4_g3": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.560 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 3"
+     },
+     {
+      "balisong_swing4_g4": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.580 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 3"
+     },
+     {
+      "balisong_swing4_g5": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.600 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 3"
+     },
+     {
+      "balisong_swing4_g6": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.620 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 3"
+     },
+     {
+      "balisong_swing4_g7": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.640 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 3"
+     },
+     {
+      "balisong_swing4_g8": "v.bfk == 2 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.660 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 3"
+     },
+     {
+      "dagger_draw_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.820 && v.bfk_d * v.bfk_spd > 0.020 && !v.bfk_swinging"
+     },
+     {
+      "dagger_draw_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.840 && v.bfk_d * v.bfk_spd > 0.040 && !v.bfk_swinging"
+     },
+     {
+      "dagger_draw_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.860 && v.bfk_d * v.bfk_spd > 0.060 && !v.bfk_swinging"
+     },
+     {
+      "dagger_draw_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.880 && v.bfk_d * v.bfk_spd > 0.080 && !v.bfk_swinging"
+     },
+     {
+      "dagger_draw_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.900 && v.bfk_d * v.bfk_spd > 0.100 && !v.bfk_swinging"
+     },
+     {
+      "dagger_draw_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.920 && v.bfk_d * v.bfk_spd > 0.120 && !v.bfk_swinging"
+     },
+     {
+      "dagger_draw_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.940 && v.bfk_d * v.bfk_spd > 0.140 && !v.bfk_swinging"
+     },
+     {
+      "dagger_draw_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_d * v.bfk_spd < 0.960 && v.bfk_d * v.bfk_spd > 0.160 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.120 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.140 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.160 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.180 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.220 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.240 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp1_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.260 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 1 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.920 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.940 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.960 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 1.980 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.020 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.040 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp2_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.060 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 0 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp3_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.220 && v.bfk_i * v.bfk_spd > 0.020 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp3_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.240 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp3_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.260 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp3_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.280 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp3_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.300 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp3_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.320 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp3_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.340 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp3_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.360 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 2 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp4_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.540 && v.bfk_i * v.bfk_spd > 0.040 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp4_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.560 && v.bfk_i * v.bfk_spd > 0.060 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp4_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.580 && v.bfk_i * v.bfk_spd > 0.080 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp4_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.600 && v.bfk_i * v.bfk_spd > 0.100 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp4_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.620 && v.bfk_i * v.bfk_spd > 0.120 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp4_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.640 && v.bfk_i * v.bfk_spd > 0.140 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "dagger_insp4_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_i * v.bfk_spd < 2.660 && v.bfk_i * v.bfk_spd > 0.160 && v.bfk_in == 3 && !v.bfk_swinging"
+     },
+     {
+      "dagger_swing1_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing1_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing1_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing1_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing1_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing1_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing1_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing1_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 1"
+     },
+     {
+      "dagger_swing2_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing2_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing2_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing2_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing2_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing2_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing2_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.480 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing2_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.500 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 0"
+     },
+     {
+      "dagger_swing3_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 2"
+     },
+     {
+      "dagger_swing3_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 2"
+     },
+     {
+      "dagger_swing3_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.380 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 2"
+     },
+     {
+      "dagger_swing3_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.400 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 2"
+     },
+     {
+      "dagger_swing3_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.420 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 2"
+     },
+     {
+      "dagger_swing3_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.440 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 2"
+     },
+     {
+      "dagger_swing3_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.460 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 2"
+     },
+     {
+      "dagger_swing3_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.480 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 2"
+     },
+     {
+      "dagger_swing4_g1": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.500 && v.bfk_a * v.bfk_spd > 0.020 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g2": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.520 && v.bfk_a * v.bfk_spd > 0.040 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g3": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.540 && v.bfk_a * v.bfk_spd > 0.060 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g4": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.560 && v.bfk_a * v.bfk_spd > 0.080 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g5": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.580 && v.bfk_a * v.bfk_spd > 0.100 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g6": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.600 && v.bfk_a * v.bfk_spd > 0.120 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g7": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.620 && v.bfk_a * v.bfk_spd > 0.140 && v.bfk_an == 3"
+     },
+     {
+      "dagger_swing4_g8": "v.bfk == 3 && v.bfk_ghost && v.bfk_a * v.bfk_spd < 0.640 && v.bfk_a * v.bfk_spd > 0.160 && v.bfk_an == 3"
+     },
+     {
       "hit_a_fx": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 1 && v.bfk_hfx"
      },
      {
@@ -639,7 +1504,7 @@
      }
     ],
     "pre_animation": [
-     "v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;v.bfk_in = v.bfk > 0 ? c.owning_entity->v.bfkinsn : 0;v.bfk_a = v.bfk > 0 ? c.owning_entity->v.bfkatk : 99;v.bfk_an = v.bfk > 0 ? c.owning_entity->v.bfkatn : 0;v.bfk_h = v.bfk > 0 ? c.owning_entity->v.bfkhit : 99;v.bfk_hn = v.bfk > 0 ? c.owning_entity->v.bfkhitn : 0;v.bfk_spd = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspd, 0.5, 2.0) : 1;t.o = v.bfk > 0 ? c.owning_entity->v.bfkopt : 0;v.bfk_arcs = math.mod(t.o, 2) >= 1;v.bfk_hfx = math.mod(math.floor(t.o / 2), 2) >= 1;v.bfk_snd = math.mod(math.floor(t.o / 4), 2) >= 1;v.bfk_quiet = math.mod(math.floor(t.o / 8), 2) >= 1;v.bfk_glint = math.mod(math.floor(t.o / 16), 2) < 1;v.bfk_crit = math.mod(math.floor(t.o / 64), 2) >= 1;v.bfk_tp = math.mod(math.floor(t.o / 32), 2) < 1;v.bfk_fin = v.bfk > 0 ? math.clamp(math.floor(c.owning_entity->v.bfkfin), 0, 3) : 0;v.bfk_sl = v.bfk > 0 ? c.owning_entity->v.bfkslash : 0;v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.4, 2.0) : 1;v.bfk_ox = v.bfk > 0 ? c.owning_entity->v.bfkox : 0;v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;v.bfk_spr = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspr, 0, 1) : 0;v.bfk_spe = v.bfk_spr * v.bfk_spr * (3 - 2 * v.bfk_spr);v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;v.bfk_cg = v.bfk > 0 ? c.owning_entity->v.bfkcg : 0.95;v.bfk_cb = v.bfk > 0 ? c.owning_entity->v.bfkcb : 0.97;v.bfk = (v.bfk > 0 && !v.bfk_tp && !c.is_first_person) ? 0 : v.bfk;v.bfk_swinging = (v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.500) || (v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.500) || (v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.480);"
+     "v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;v.bfk_in = v.bfk > 0 ? c.owning_entity->v.bfkinsn : 0;v.bfk_a = v.bfk > 0 ? c.owning_entity->v.bfkatk : 99;v.bfk_an = v.bfk > 0 ? c.owning_entity->v.bfkatn : 0;v.bfk_h = v.bfk > 0 ? c.owning_entity->v.bfkhit : 99;v.bfk_hn = v.bfk > 0 ? c.owning_entity->v.bfkhitn : 0;v.bfk_spd = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspd, 0.5, 2.0) : 1;t.o = v.bfk > 0 ? c.owning_entity->v.bfkopt : 0;v.bfk_arcs = math.mod(t.o, 2) >= 1;v.bfk_hfx = math.mod(math.floor(t.o / 2), 2) >= 1;v.bfk_snd = math.mod(math.floor(t.o / 4), 2) >= 1;v.bfk_quiet = math.mod(math.floor(t.o / 8), 2) >= 1;v.bfk_glint = math.mod(math.floor(t.o / 16), 2) < 1;v.bfk_crit = math.mod(math.floor(t.o / 64), 2) >= 1;v.bfk_tp = math.mod(math.floor(t.o / 32), 2) < 1;v.bfk_fin = v.bfk > 0 ? math.clamp(math.floor(c.owning_entity->v.bfkfin), 0, 3) : 0;v.bfk_sl = v.bfk > 0 ? c.owning_entity->v.bfkslash : 0;v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.4, 2.0) : 1;v.bfk_ox = v.bfk > 0 ? c.owning_entity->v.bfkox : 0;v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;v.bfk_spr = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspr, 0, 1) : 0;v.bfk_spe = v.bfk_spr * v.bfk_spr * (3 - 2 * v.bfk_spr);v.bfk_ghost = math.mod(math.floor(t.o / 128), 2) < 1;v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;v.bfk_cg = v.bfk > 0 ? c.owning_entity->v.bfkcg : 0.95;v.bfk_cb = v.bfk > 0 ? c.owning_entity->v.bfkcb : 0.97;v.bfk = (v.bfk > 0 && !v.bfk_tp && !c.is_first_person) ? 0 : v.bfk;v.bfk_swinging = (v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.500) || (v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.500) || (v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.480);"
     ]
    },
    "render_controllers": [
@@ -648,6 +1513,9 @@
     },
     {
      "controller.render.bfk_knife": "v.bfk > 0"
+    },
+    {
+     "controller.render.bfk_ghost": "v.bfk > 0 && v.bfk_ghost && (v.bfk_swinging || v.bfk_d * v.bfk_spd < 1.2 || v.bfk_i * v.bfk_spd < 2.8)"
     }
    ],
    "sound_effects": {

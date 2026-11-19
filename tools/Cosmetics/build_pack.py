@@ -63,6 +63,52 @@ RC = {"format_version": "1.8.0", "render_controllers": {"controller.render.bfk_k
     "textures": [f"Array.ktex[(v.bfk - 1) * {len(finishes.NAMES)} + v.bfk_fin]", "Texture.enchanted"]}}}
 
 
+# afterimage: the ghost copies of the knife (anims.GHOSTS, see anims.build), drawn see-through over the knife
+RC["render_controllers"]["controller.render.bfk_ghost"] = {
+    "arrays": {"geometries": {"Array.ggeo": [f"Geometry.{n}_ghost" for n, _ in KNIVES]}},
+    "geometry": "Array.ggeo[v.bfk - 1]",
+    "materials": [{"*": "Material.ghost"}],
+    "textures": ["Texture.bfk_ghost"]}
+GHOST_ON = ("v.bfk > 0 && v.bfk_ghost && (v.bfk_swinging || v.bfk_d * v.bfk_spd < 1.2 || v.bfk_i * v.bfk_spd < 2.8)")
+
+
+def ghost_geo(geo, ident):
+    """the knife's geometry -> GHOSTS copies of its bone tree (bfg{k}, bfg{k}_pose, ...) under bfk_fix, every face on
+    copy k's one pixel of the ghost strip (flat colour, its own opacity)"""
+    g0 = geo["minecraft:geometry"][0]
+    src = g0["bones"]
+    bones = [b for b in src if b["name"] in ("wfx_item", "bfk_fix")]
+    for k in range(1, kn_anims.GHOSTS + 1):
+        bones.append({"name": f"bfg{k}", "parent": "bfk_fix", "pivot": [0, 24, 0]})
+        u = [(k - 0.5) / kn_anims.GHOSTS, 0.5]
+        for b in src:
+            if b["name"] in ("wfx_item", "bfk_fix"):
+                continue
+            nb = {kk: v for kk, v in b.items() if kk not in ("poly_mesh", "locators")}
+            nb["name"] = kn_anims.ghost_bone(b["name"], k)
+            nb["parent"] = f"bfg{k}" if b.get("parent") == "bfk_fix" else kn_anims.ghost_bone(b["parent"], k)
+            if "poly_mesh" in b:
+                pm = b["poly_mesh"]
+                nb["poly_mesh"] = {"normalized_uvs": True, "positions": pm["positions"], "normals": pm["normals"], "uvs": [u],
+                                   "polys": [[[v[0], v[1], 0] for v in f] for f in pm["polys"]]}
+            bones.append(nb)
+    d = dict(g0["description"], identifier=ident, texture_width=kn_anims.GHOSTS, texture_height=1)
+    return {"format_version": "1.16.0", "minecraft:geometry": [{"description": d, "bones": bones}]}
+
+
+def ghost_strip():
+    """GHOSTS x 1: flat lavender, copy 1 (newest) whitest and most solid, fading to the oldest (Purxiy: ~30-45 %%)"""
+    N = kn_anims.GHOSTS
+    img = np.zeros((1, N, 4), np.uint8)
+    for k in range(N):
+        a = 0.42 * (1 - k / N) ** 1.2
+        w = 1 - k / (N - 1)                                  # newest -> pinkish white, oldest -> lavender-blue
+        c = np.array([0.93, 0.90, 0.98]) * w + np.array([0.70, 0.72, 0.92]) * (1 - w)
+        img[0, k, :3] = (c * 255).astype(np.uint8)
+        img[0, k, 3] = int(a * 255)
+    return img
+
+
 def add_knives(desc):
     """patch a sword attachable description (dict) so it shows our knife (with its tricks, swings, fx and sounds)
     while v.bfk > 0"""
@@ -73,6 +119,9 @@ def add_knives(desc):
         for f in finishes.NAMES:
             desc["textures"][tex_name(n, f)] = f"textures/bf_cosmetics/{tex_name(n, f)}"
         desc["geometry"][n] = f"geometry.bfk_{n}"
+        desc["geometry"][f"{n}_ghost"] = f"geometry.bfk_{n}_ghost"
+    desc["textures"]["bfk_ghost"] = "textures/bf_cosmetics/ghost"
+    desc["materials"]["ghost"] = "entity_alphablend"
     desc.setdefault("animations", {}).update(AMAP)
     desc["sound_effects"] = dict(desc.get("sound_effects", {}), **SOUND_FX)
     desc["particle_effects"] = dict(desc.get("particle_effects", {}), **PARTICLE_FX)
@@ -85,14 +134,14 @@ def add_knives(desc):
     rcs = []
     for r in desc.get("render_controllers", []):
         if isinstance(r, str):
-            if r == "controller.render.bfk_knife":
+            if r in ("controller.render.bfk_knife", "controller.render.bfk_ghost"):
                 continue
             rcs.append({r: "v.bfk == 0"})
         else:
             k, cond = next(iter(r.items()))
-            if k != "controller.render.bfk_knife":
+            if k not in ("controller.render.bfk_knife", "controller.render.bfk_ghost"):
                 rcs.append({k: f"({cond}) && v.bfk == 0"})
-    desc["render_controllers"] = rcs + [{"controller.render.bfk_knife": "v.bfk > 0"}]
+    desc["render_controllers"] = rcs + [{"controller.render.bfk_knife": "v.bfk > 0"}, {"controller.render.bfk_ghost": GHOST_ON}]
     return desc
 
 
@@ -104,6 +153,8 @@ def write_shared(pack: Path):
         mesh, atlas = fn()                       # every knife has its own model AND its own finishes / atlas
         geo = export_poly_mesh(mesh, atlas, knives.bones(n), f"geometry.bfk_{n}")
         (pack / "models" / "entity" / f"bfk_{n}.geo.json").write_text(json.dumps(geo, separators=(",", ":")))
+        (pack / "models" / "entity" / f"bfk_{n}_ghost.geo.json").write_text(
+            json.dumps(ghost_geo(geo, f"geometry.bfk_{n}_ghost"), separators=(",", ":")))
         for f in finishes.NAMES:
             img = finishes.apply(n, atlas.img, atlas.rect, f)
             Image.fromarray(img, "RGBA").save(pack / "textures" / "bf_cosmetics" / f"{tex_name(n, f)}.png")
@@ -125,6 +176,7 @@ def write_shared(pack: Path):
     for fn, js in kn_anims.particle_files().items():
         (pack / "particles" / fn).write_text(json.dumps(js, indent=1))
     Image.fromarray(kn_anims.fx_texture(), "RGBA").save(pack / "textures" / "bf_cosmetics" / "fx.png")
+    Image.fromarray(ghost_strip(), "RGBA").save(pack / "textures" / "bf_cosmetics" / "ghost.png")
     kn_sounds.write(pack / "sounds" / "bf_cosmetics")
     (pack / "sounds" / "sound_definitions.json").write_text(json.dumps(kn_sounds.definitions(), indent=1))
 
