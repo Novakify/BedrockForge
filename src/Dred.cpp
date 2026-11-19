@@ -42,9 +42,11 @@ std::string narrow(wchar_t const* w) {
 std::string narrow(char const* c) { return c ? std::string(c) : std::string("-"); }
 
 struct Crumb { void const* list; char const* what; unsigned long long a, b, c; long long ms; };
-constexpr int kCrumbs = 512;
-Crumb         gCrumbs[kCrumbs]{};
-unsigned      gCrumbN = 0;
+// per kind (the label's address): its last few, its count and when it last ran - so a kind that runs twice a frame cannot
+// push the rare ones (a sky switch, a panel bind, a readback) out of the trail
+struct Kind { char const* what = nullptr; Crumb last[6]{}; unsigned long long n = 0; };
+constexpr int kKinds = 48;
+Kind          gKinds[kKinds]{};
 std::mutex    gCrumbMx;
 std::atomic<int> gCloseNotes{0};
 long long nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
@@ -55,21 +57,23 @@ std::string stamp() {
     std::snprintf(b, sizeof b, "%02d:%02d:%02d.%03d", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
     return b;
 }
-void trail(std::ostringstream& o, void const* list, int max) {   // newest last; list = nullptr: every list
+void trail(std::ostringstream& o, void const* list, int) {   // every kind of RF GPU work: how often, how long ago, its last few
     std::lock_guard l(gCrumbMx);
     long long const now = nowMs();
-    unsigned const n = std::min<unsigned>(gCrumbN, kCrumbs);
-    std::vector<Crumb const*> v;
-    for (unsigned i = 0; i < n && int(v.size()) < max; ++i) {
-        Crumb const& c = gCrumbs[(gCrumbN - 1 - i) % kCrumbs];
-        if (list && c.list != list) continue;
-        if (now - c.ms > 3000) break;
-        v.push_back(&c);
+    std::vector<Kind const*> v;
+    for (auto const& k : gKinds) if (k.what) v.push_back(&k);
+    std::sort(v.begin(), v.end(), [](Kind const* x, Kind const* y) { return x->last[(x->n - 1) % 6].ms < y->last[(y->n - 1) % 6].ms; });
+    if (v.empty()) o << "  (RF recorded nothing yet)\n";
+    for (Kind const* k : v) {
+        o << "  " << k->what << ": " << k->n << " times, last " << (now - k->last[(k->n - 1) % 6].ms) << " ms ago\n";
+        unsigned const m = unsigned(std::min<unsigned long long>(k->n, 6));
+        for (unsigned i = 0; i < m; ++i) {
+            Crumb const& c = k->last[(k->n - m + i) % 6];
+            if (list && c.list != list && i + 1 < m) continue;
+            o << "      -" << (now - c.ms) << " ms  list " << c.list << (c.list == list && list ? " (THIS list)" : "") << "  0x" << std::hex << c.a << " 0x" << c.b
+              << " 0x" << c.c << std::dec << "\n";
+        }
     }
-    if (v.empty()) o << "  (nothing recorded by RF " << (list ? "into this list" : "in the last 3 s") << ")\n";
-    for (auto it = v.rbegin(); it != v.rend(); ++it)
-        o << "  -" << (now - (*it)->ms) << " ms  list " << (*it)->list << "  " << (*it)->what << "  0x" << std::hex << (*it)->a << " 0x" << (*it)->b << " 0x"
-          << (*it)->c << std::dec << "\n";
 }
 void write(std::string const& s) {
     std::error_code ec;
@@ -90,16 +94,17 @@ void report(char const* why) {
         if (SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&dred))) && dred) {
             D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 bc{};
             if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&bc))) {
-                int n = 0;
+                int n = 0, finished = 0;
                 for (auto const* node = bc.pHeadAutoBreadcrumbNode; node && n < 64; node = node->pNext, ++n) {
                     UINT const done  = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
                     UINT const total = node->BreadcrumbCount;
-                    if (done >= total) continue;   // finished lists say nothing
+                    if (done >= total) { ++finished; continue; }   // finished lists say nothing
                     o << "list '" << narrow(node->pCommandListDebugNameW) << "' queue '" << narrow(node->pCommandQueueDebugNameW) << "': " << done
                       << " of " << total << " ops done; next ops:";
                     for (UINT i = done; i < total && i < done + 12; ++i) o << " " << int(node->pCommandHistory[i]);
                     o << "\n";
                 }
+                o << "DRED breadcrumbs: " << n << " lists seen, " << finished << " of them finished\n";
             }
             D3D12_DRED_PAGE_FAULT_OUTPUT1 pf{};
             if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&pf))) {
@@ -114,8 +119,8 @@ void report(char const* why) {
             dred->Release();
         } else o << "DRED not available (was it on before the device was made?)\n";
     }
-    o << "what RF recorded in the last 3 s (all lists, oldest first):\n";
-    trail(o, nullptr, 120);
+    o << "RF's GPU work, by kind (least recent first):\n";
+    trail(o, nullptr, 0);
     write(o.str());
 }
 
@@ -150,16 +155,20 @@ void beforeDevice() {
 }
 void crumb(void const* list, char const* what, unsigned long long a, unsigned long long b, unsigned long long c) {
     std::lock_guard l(gCrumbMx);
-    gCrumbs[gCrumbN++ % kCrumbs] = {list, what, a, b, c, nowMs()};
+    for (auto& k : gKinds) {
+        if (k.what && k.what != what) continue;
+        k.what = what;
+        k.last[k.n++ % 6] = {list, what, a, b, c, nowMs()};
+        return;
+    }
 }
 void closeFailed(void const* list, long hr) {
     if (gCloseNotes.fetch_add(1) >= 12) return;   // the first few say it all
     std::ostringstream o;
     o << stamp() << " a command list FAILED to Close (hr 0x" << std::hex << unsigned(hr) << std::dec << ", list " << list
-      << "): an invalid call was recorded into it. What RF recorded into this list:\n";
-    trail(o, list, 40);
-    o << "and into any list in the last 3 s:\n";
-    trail(o, nullptr, 60);
+      << "): an invalid call was recorded into it. RF's GPU work so far (THIS list marked):\n";
+    trail(o, list, 0);
+    if (ID3D12Device* dev = gDev.load()) o << "device removed reason now: 0x" << std::hex << unsigned(dev->GetDeviceRemovedReason()) << std::dec << "\n";
     write(o.str());
 }
 void watch(ID3D12Device* dev) {
