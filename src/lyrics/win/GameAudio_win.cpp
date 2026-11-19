@@ -69,8 +69,8 @@ void loop() {
     ComPtr<IAudioClient> client;
     ComPtr<IAudioCaptureClient> cap;
     auto teardown = [&] { if (client) client->Stop(); cap.Reset(); client.Reset(); };
-    float avg = 0, avgLo = 0, lowState = 0;
-    int   quiet = 0;   // 10 ms blocks since the last boom: one blast is one boom (its tail must not count again)   // slow loudness (the room tone) and a one-pole low pass (rumble)
+    float avg = 0, avgLo = 0, lowState = 0;   // slow loudness (the room tone) and a one-pole low pass (rumble)
+    int   quiet = 1000;   // 10 ms blocks since the last boom: one blast is one boom (its tail must not count again)
     int   fails = 0;
     while (s.running.load()) {
         if (!s.want.load()) {
