@@ -31,6 +31,8 @@ void       installCamera();
 /// The hook stays installed but does nothing (no game reads at all) until this is on. LyricsPass sets it each Present:
 /// on only while BF actually publishes an active lyrics frame and "Draw lyrics" is checked.
 void       setCameraWanted(bool on);
+/// [RF] the head is under water (the game changes the view there): effects take the world camera (see camera())
+void setCameraUnderwater(bool on);
 void       uninstallCamera();
 CameraSnap camera();
 

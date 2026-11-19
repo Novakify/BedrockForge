@@ -2485,6 +2485,7 @@ std::atomic<bool>     gUnderwater{false};
 void setUnderwater(bool on) {
     static std::atomic<bool> first{true};
     if (first.exchange(false)) ll_shim::info("[RF] World FX: watching the camera for water (client thread)");
+    rf::lyrics::setCameraUnderwater(on);
     if (gUnderwater.exchange(on, std::memory_order_relaxed) != on) ll_shim::info(std::string("[RF] World FX: under water ") + (on ? "- the pass draws the water" : "- out of the water"));
 }
 std::atomic<size_t>   gFxRt{0}, gFxDs{0};
@@ -3308,7 +3309,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 for (int k = 0; k < 3; ++k) acb.cu[0][k] = lin(atm.cuC[k]);
                 acb.cu[0][3] = atm.cuSoft; acb.cu[1][0] = atm.cuHearts; acb.cu[1][1] = atm.cuSparkle; acb.cu[1][2] = atm.cuPastel; acb.cu[1][3] = 1.f;
             }
-            if (atm.bo && ev && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx)) {
+            if (atm.bo && ev && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx) && !rf::pano::capturing()) {   // (not baked into the title-screen capture)
                 static double gx = 0, gy = 0, gz = 0; static float fade = 0; static int64_t lt = 0; static bool have = false;
                 float const dt = lt ? std::clamp(float(nowMs - lt) / 1000.f, 0.f, 0.1f) : 0.f; lt = nowMs;
                 bool const on = ev->bface != 255u && nowMs - ev->bAtMs < 500;
