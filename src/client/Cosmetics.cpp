@@ -182,6 +182,7 @@ void registerModules(Registry& r) {
         .slider("inspect_vk", "Inspect key (Windows key code: 73 = I, 0 = none; press again to chain the next trick)", 73, 0, 254, 1)
         .toggleSetting("auto_inspect", "Idle tricks (plays with the blade while you stand still)", true)
         .slider("interval", "Trick interval (s of idle time)", 12.f, 5.f, 30.f, 1.f)
+        .toggleSetting("afterimage", "Afterimage (ghost copies fan out behind every swing and flip)", true)
         .toggleSetting("sprint_carry", "Sprint carry (knife flips along your arm while sprinting)", true)
         .slider("speed", "Animation speed", 1.f, 0.65f, 1.5f, 0.05f)
         .toggleSetting("draw", "Draw animation (a flourish when you equip a sword)", true)
@@ -267,7 +268,7 @@ void frame(LocalPlayer* lp) {
             if (int const n = gHitCount.load(); n != gS.hitN) { gS.hitN = n; gS.hitAt = gHitMs.load(); }
             hit = secs(gS.hitAt);
             opt = float((m->flag("slash_arcs", true) ? 1 : 0) | (m->flag("hit_effects", true) ? 2 : 0) | (m->flag("sounds", true) ? 4 : 0)
-                        | (m->flag("quiet", false) ? 8 : 0) | (m->flag("glint", true) ? 0 : 16) | (m->flag("third_person", true) ? 0 : 32) | (gHitCrit.load() ? 64 : 0));
+                        | (m->flag("quiet", false) ? 8 : 0) | (m->flag("glint", true) ? 0 : 16) | (m->flag("third_person", true) ? 0 : 32) | (gHitCrit.load() ? 64 : 0) | (m->flag("afterimage", true) ? 0 : 128));
         }
         // always written (rest values while off): the pack reads them every frame, and a variable that was never set
         // made the sword vanish in game. Unchanged values are skipped (setCached).

@@ -217,6 +217,7 @@ Map const kHelp = {
     {"sky/game_audio", "Explosions, thunder and the game's music kick the sky - only Minecraft's own sound, not Spotify"},
     {"knives/model", "Which knife your sword becomes"},
     {"knives/auto_inspect", "Plays tricks with the blade when you stand still"},
+    {"knives/afterimage", "Every swing, flip and trick leaves a fan of see-through ghost copies of the knife behind it"},
     {"knives/sprint_carry", "While you sprint the knife flips round and rides along your forearm, then flips back when you stop"},
     {"knives/applies", "All swords, each sword type its own knife, only one hotbar slot, or only swords you renamed (karambit / balisong / dagger / knife in the name)"},
     {"knives/size_k1", "How big the karambit is in your hand (first and third person), kept just for the karambit"},
