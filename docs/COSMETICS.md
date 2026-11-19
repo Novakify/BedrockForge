@@ -37,6 +37,36 @@ No Bedrock Forge = nothing written = vanilla look.
 See docs/COSMETICS_REFERENCE.md (v4: Karambit / Balisong / Dagger, each a real-world design with its own
 materials; v1-v3 shared a neon scheme and were dropped on Fernando's review).
 
+## Knives customization (2026-11-18)
+Settings (Right Shift > Mods > Cosmetics > Knives, gear or right-click the row):
+- **Knife** Karambit / Balisong / Dagger, and **Applies to**: All swords; By sword type (wooden ... netherite each
+  Main knife / Karambit / Balisong / Dagger / Vanilla); One hotbar slot (1-9); Renamed swords (anvil name containing
+  karambit, balisong/butterfly, dagger, or knife = main knife). Only your client reads the name or slot.
+- **Finish** Random (default: a new one on every draw) / Factory / Blackout (black DLC, raw edge) / Gold (TiN) /
+  Fade (anodised straw -> violet -> blue). Made from each knife's own atlas (tools/Cosmetics/finishes.py), so the
+  Damascus, stonewash and wear stay under the coating.
+- **Effect colour** Random (default: a new one every swing) / Steel / Violet / Ember / Gold / Crimson. BF writes the
+  colour (v.bfkcr/cg/cb); each particle event hands it to the emitter with pre_effect_script and the particle tints
+  white-hot -> colour -> out. If the game doesn't pass it, particles fall back to steel white.
+- **Slash style** Matched to the knife (default: karambit crescent, balisong trail, dagger thrust streak) / Trail /
+  Crescent / Thrust streak - same swing timing, different light.
+- Size, left/right, up/down (first person), third person on/off, enchantment glint on/off, quiet sounds, plus the
+  earlier inspect key (I), idle tricks + interval, speed, draw, sounds, slash effects, hit effects.
+
+### Quality + performance audit (offline, 2026-11-18)
+- Finishes judged on studio renders (docs/img/cosmetics/finishes.png): fixed a seam where the karambit's fade
+  wrapped round the ring (ring + rim now take the handle-end colour), darkened Blackout so the stonewash doesn't
+  read grey. Crescent sprite redrawn as a real crescent (outer minus offset inner circle, 4x supersampled) after the
+  first 16 px band looked pixelated.
+- BF: Molang variables are written only when they change (or a 1 s refresh) instead of 18 x 2 hashed writes every
+  frame; timers stop changing once they reach 99 s. Other players: rest values every 0.5 s (on) / 2 s (off).
+- Pack: 74 animate entries per sword attachable, every one starts with `v.bfk == n` / `v.bfk > 0`, so other
+  players' swords cost ~74 failed compares a frame; clips only exist while their event runs. Particles per event:
+  trail 6, crescent 1, streak 9, hit ~10 sparks + 1 cut - all additive, 0.1-0.3 s. Textures: 12 knife atlases
+  512x512 (~17 MB VRAM with mips) + fx 64x64; sounds 14 short oggs.
+- Open risk (Mojang MCPE-160960): particle locators on attachables may spawn at the entity origin instead of the
+  tip. Check in game; fallback is particles without a locator, placed by the swing (or BF-drawn World FX trails).
+
 ## 3D Skins (plan, not started)
 Outer skin layer as voxels, own player first. A pack geometry with one small cube per outer-layer texel (64x64
 skin: all outer-layer positions, ~3k cubes, one draw) UV-mapped 1:1, textured by a runtime texture that Bedrock

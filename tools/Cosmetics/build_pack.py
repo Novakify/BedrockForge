@@ -26,6 +26,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "WorldFx" / "atmos"))
 
 import knives                      # noqa: E402
+import finishes                    # noqa: E402
 from mesh import export_poly_mesh  # noqa: E402
 
 PACK_UUID = ("5e7b1c2a-9d4f-4a61-8c3e-b0f2d6a9e471", "5e7b1c2a-9d4f-4a61-8c3e-b0f2d6a9e472")
@@ -49,12 +50,17 @@ ANIMS, CTRLS, AMAP, ANIMATE, SOUND_FX, PARTICLE_FX = kn_anims.build()
 ANIMS["animations"].update(HOLD)
 PRE = kn_anims.PRE + kn_anims.swinging_expr()
 
+def tex_name(knife, finish):
+    return knife if finish == "factory" else f"{knife}_{finish}"
+
+
 RC = {"format_version": "1.8.0", "render_controllers": {"controller.render.bfk_knife": {
     "arrays": {"geometries": {"Array.kgeo": [f"Geometry.{n}" for n, _ in KNIVES]},
-               "textures": {"Array.ktex": [f"Texture.{n}" for n, _ in KNIVES]}},
+               # knife-major: (knife - 1) * 4 + finish (finishes.NAMES; Cosmetics.cpp picks / randomises v.bfkfin)
+               "textures": {"Array.ktex": [f"Texture.{tex_name(n, f)}" for n, _ in KNIVES for f in finishes.NAMES]}},
     "geometry": "Array.kgeo[v.bfk - 1]",
-    "materials": [{"*": "v.is_enchanted ? Material.enchanted : Material.default"}],
-    "textures": ["Array.ktex[v.bfk - 1]", "Texture.enchanted"]}}}
+    "materials": [{"*": "(v.is_enchanted && v.bfk_glint) ? Material.enchanted : Material.default"}],
+    "textures": [f"Array.ktex[(v.bfk - 1) * {len(finishes.NAMES)} + v.bfk_fin]", "Texture.enchanted"]}}}
 
 
 def add_knives(desc):
@@ -64,7 +70,8 @@ def add_knives(desc):
                                              "enchanted": desc["materials"].get("enchanted", "entity_alphatest_glint")})
     desc.setdefault("textures", {}).setdefault("enchanted", "textures/misc/enchanted_item_glint")
     for n, _ in KNIVES:
-        desc["textures"][n] = f"textures/bf_cosmetics/{n}"
+        for f in finishes.NAMES:
+            desc["textures"][tex_name(n, f)] = f"textures/bf_cosmetics/{tex_name(n, f)}"
         desc["geometry"][n] = f"geometry.bfk_{n}"
     desc.setdefault("animations", {}).update(AMAP)
     desc["sound_effects"] = dict(desc.get("sound_effects", {}), **SOUND_FX)
@@ -97,7 +104,9 @@ def write_shared(pack: Path):
         mesh, atlas = fn()                       # every knife has its own model AND its own finishes / atlas
         geo = export_poly_mesh(mesh, atlas, knives.bones(n), f"geometry.bfk_{n}")
         (pack / "models" / "entity" / f"bfk_{n}.geo.json").write_text(json.dumps(geo, separators=(",", ":")))
-        Image.fromarray(atlas.img, "RGBA").save(pack / "textures" / "bf_cosmetics" / f"{n}.png")
+        for f in finishes.NAMES:
+            img = finishes.apply(n, atlas.img, atlas.rect, f)
+            Image.fromarray(img, "RGBA").save(pack / "textures" / "bf_cosmetics" / f"{tex_name(n, f)}.png")
     # one file per knife (+ the shared holds / hits): a bad clip then only costs its own knife, not every knife
     groups = {}
     for name, a in ANIMS["animations"].items():

@@ -13,19 +13,28 @@
     "textures": {
      "Array.ktex": [
       "Texture.karambit",
+      "Texture.karambit_blackout",
+      "Texture.karambit_gold",
+      "Texture.karambit_fade",
       "Texture.balisong",
-      "Texture.dagger"
+      "Texture.balisong_blackout",
+      "Texture.balisong_gold",
+      "Texture.balisong_fade",
+      "Texture.dagger",
+      "Texture.dagger_blackout",
+      "Texture.dagger_gold",
+      "Texture.dagger_fade"
      ]
     }
    },
    "geometry": "Array.kgeo[v.bfk - 1]",
    "materials": [
     {
-     "*": "v.is_enchanted ? Material.enchanted : Material.default"
+     "*": "(v.is_enchanted && v.bfk_glint) ? Material.enchanted : Material.default"
     }
    ],
    "textures": [
-    "Array.ktex[v.bfk - 1]",
+    "Array.ktex[(v.bfk - 1) * 4 + v.bfk_fin]",
     "Texture.enchanted"
    ]
   }

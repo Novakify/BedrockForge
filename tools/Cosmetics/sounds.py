@@ -201,11 +201,16 @@ def write(out: Path):
         wav.unlink()
 
 
+QUIET = 0.45   # the Knives "Quiet sounds" setting plays the ".q" events (same files, under half the level)
+
+
 def definitions(prefix="sounds/bf_cosmetics"):
-    return {"format_version": "1.14.0", "sound_definitions": {
-        ev: {"category": "player", "min_distance": 1.0, "max_distance": 12.0,
-             "sounds": [{"name": f"{prefix}/{f}", "volume": vol, "pitch": 1.0} for f in files]}
-        for ev, (files, vol) in EVENTS.items()}}
+    defs = {}
+    for ev, (files, vol) in EVENTS.items():
+        for name, v in ((ev, vol), (ev + ".q", vol * QUIET)):
+            defs[name] = {"category": "player", "min_distance": 1.0, "max_distance": 12.0,
+                          "sounds": [{"name": f"{prefix}/{f}", "volume": round(v, 3), "pitch": 1.0} for f in files]}
+    return {"format_version": "1.14.0", "sound_definitions": defs}
 
 
 if __name__ == "__main__":

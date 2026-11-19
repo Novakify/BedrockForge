@@ -54,14 +54,12 @@
     }
    },
    "minecraft:particle_appearance_tinting": {
-    "color": {
-     "gradient": {
-      "0.0": "#FFFFF6DE",
-      "0.35": "#FFFFC46A",
-      "1.0": "#00FF7A28"
-     },
-     "interpolant": "v.particle_age / v.particle_lifetime"
-    }
+    "color": [
+     "math.lerp(1.0, (v.cr ?? 0.8), math.min(1, v.particle_age / v.particle_lifetime * 3))",
+     "math.lerp(1.0, (v.cg ?? 0.95), math.min(1, v.particle_age / v.particle_lifetime * 3))",
+     "math.lerp(1.0, (v.cb ?? 0.97), math.min(1, v.particle_age / v.particle_lifetime * 3))",
+     "1 - v.particle_age / v.particle_lifetime"
+    ]
    }
   }
  }

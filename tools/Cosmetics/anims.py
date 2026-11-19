@@ -15,6 +15,10 @@ from __future__ import annotations
 
 KNIVES = ("karambit", "balisong", "dagger")
 FP_SCALE = {"karambit": 0.75, "balisong": 0.68, "dagger": 0.75}   # first-person size (bfk_fix)
+# the effect colour Bedrock Forge picked (random per swing, or the fixed one) handed to the particle emitter
+FX_SCRIPT = "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+# slash styles (Cosmetics.cpp kMatchedSlash: karambit crescent, balisong trail, dagger thrust streak)
+SLASH_STYLES = ("trail", "crescent", "streak")
 SPEED = "q.anim_time + q.delta_time * v.bfk_spd"
 
 
@@ -39,7 +43,7 @@ def anim(length, bones, sounds=None, particles=None):
     if sounds:
         a["sound_effects"] = timeline(sounds, lambda e: {"effect": e})
     if particles:
-        a["particle_effects"] = timeline(particles, lambda e: {"effect": e, "locator": "tip"})
+        a["particle_effects"] = timeline(particles, lambda e: {"effect": e, "locator": "tip", "pre_effect_script": FX_SCRIPT})
     return a
 
 
@@ -156,6 +160,18 @@ DEFS = {"karambit": karambit, "balisong": balisong, "dagger": dagger}
 DURATION = {}
 
 
+def slash_style(trail, style):
+    """the knife's tip-trail timing (arc_trail) -> the same slash in another style. Trail: the light dots along the
+    tip's path. Crescent: one curved blade of light at the middle of the cut. Streak: a thrust burst where the
+    stab reaches furthest (the end of the trail window)."""
+    if style == "trail":
+        return trail
+    ts = [t for t, _ in trail]
+    if style == "crescent":
+        return [(ts[len(ts) // 2], "crescent")]
+    return [(ts[-1], "streak")]
+
+
 def build():
     """-> (animations json, controllers json, animation map, animate list, sounds, particles)
 
@@ -169,17 +185,21 @@ def build():
             anims[f"animation.bfk.{k}.{name}"] = anim(length, bones)
             if snd:
                 anims[f"animation.bfk.{k}.{name}.snd"] = anim(length, {}, sounds=snd)
+                anims[f"animation.bfk.{k}.{name}.sndq"] = anim(length, {}, sounds=[(t, e + "_q") for t, e in snd])
             if prt:
-                anims[f"animation.bfk.{k}.{name}.fx"] = anim(length, {}, particles=prt)
+                for si, style in enumerate(SLASH_STYLES):
+                    anims[f"animation.bfk.{k}.{name}.fx{si}"] = anim(length, {}, particles=slash_style(prt, style))
     # first person: bfk_fix (between the World FX hold bone and the pose) sizes and places the knife in view;
     # tuned on real frames (Knives Test world, 2026-11-17)
     # (karambit verified; the balisong read ~10% long on screen, so it is held a little smaller)
     for k in KNIVES:
-        anims[f"animation.bfk.{k}.fp"] = {"loop": True, "bones": {"bfk_fix": {"scale": FP_SCALE[k], "position": [0, 7, 0]}}}
+        anims[f"animation.bfk.{k}.fp"] = {"loop": True, "bones": {"bfk_fix": {
+            "scale": f"{FP_SCALE[k]} * v.bfk_scl", "position": ["v.bfk_ox", "7 + v.bfk_oy", 0]}}}
     # confirmed hits: sparks + cut flash off the tip, and the cut sound
     for ab in ("a", "b"):
         anims[f"animation.bfk.hit_{ab}.fx"] = anim(0.3, {}, particles=[(0.0, "spark"), (0.0, "cutflash")])
         anims[f"animation.bfk.hit_{ab}.snd"] = anim(0.3, {}, sounds=[(0.0, "cut")])
+        anims[f"animation.bfk.hit_{ab}.sndq"] = anim(0.3, {}, sounds=[(0.0, "cut_q")])
 
     clock = {"draw": ("v.bfk_d", None), "insp1": ("v.bfk_i", "v.bfk_in == 1"), "insp2": ("v.bfk_i", "v.bfk_in == 0"),
              "swing1": ("v.bfk_a", "v.bfk_an == 1"), "swing2": ("v.bfk_a", "v.bfk_an == 0")}
@@ -196,7 +216,9 @@ def build():
                 on += f" && {parity}"
             if kind in ("draw", "insp1", "insp2"):
                 on += " && !v.bfk_swinging"       # a click cuts a trick short instead of stacking on it
-            for suffix, extra in (("", ""), (".snd", " && v.bfk_snd"), (".fx", " && v.bfk_arcs")):
+            variants = [("", ""), (".snd", " && v.bfk_snd && !v.bfk_quiet"), (".sndq", " && v.bfk_snd && v.bfk_quiet")]
+            variants += [(f".fx{si}", f" && v.bfk_arcs && v.bfk_sl == {si}") for si in range(len(SLASH_STYLES))]
+            for suffix, extra in variants:
                 full = f"animation.bfk.{k}.{kind}{suffix}"
                 if full not in anims:
                     continue
@@ -206,13 +228,16 @@ def build():
                 animate.append({short: on + extra})
     for ab, par in (("a", 1), ("b", 0)):
         on = f"v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == {par}"
-        for suffix, extra in (("fx", " && v.bfk_hfx"), ("snd", " && v.bfk_snd")):
+        for suffix, extra in (("fx", " && v.bfk_hfx"), ("snd", " && v.bfk_snd && !v.bfk_quiet"), ("sndq", " && v.bfk_snd && v.bfk_quiet")):
             full = f"animation.bfk.hit_{ab}.{suffix}"
             anims[full]["anim_time_update"] = "v.bfk_h"
             amap[f"hit_{ab}_{suffix}"] = full
             animate.append({f"hit_{ab}_{suffix}": on + extra})
-    sounds = {e: f"bfk.{e}" for e in ("swish", "cut", "click", "ring_spin", "clack", "latch", "draw", "dagger_catch")}
-    particles = {"arc": "bfk:arc", "spark": "bfk:spark", "cutflash": "bfk:cutflash"}
+    sounds = {}
+    for e in ("swish", "cut", "click", "ring_spin", "clack", "latch", "draw", "dagger_catch"):
+        sounds[e] = f"bfk.{e}"
+        sounds[e + "_q"] = f"bfk.{e}.q"
+    particles = {n: f"bfk:{n}" for n in ("arc", "crescent", "streak", "spark", "cutflash")}
     return {"format_version": "1.10.0", "animations": anims}, None, amap, animate, sounds, particles
 
 
@@ -237,54 +262,96 @@ PRE = ("v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bf
        "t.o = v.bfk > 0 ? c.owning_entity->v.bfkopt : 0;"
        "v.bfk_arcs = math.mod(t.o, 2) >= 1;"
        "v.bfk_hfx = math.mod(math.floor(t.o / 2), 2) >= 1;"
-       "v.bfk_snd = math.floor(t.o / 4) >= 1;")
+       "v.bfk_snd = math.mod(math.floor(t.o / 4), 2) >= 1;"
+       "v.bfk_quiet = math.mod(math.floor(t.o / 8), 2) >= 1;"
+       "v.bfk_glint = math.mod(math.floor(t.o / 16), 2) < 1;"
+       "v.bfk_tp = math.mod(math.floor(t.o / 32), 2) < 1;"
+       "v.bfk_fin = v.bfk > 0 ? math.clamp(math.floor(c.owning_entity->v.bfkfin), 0, 3) : 0;"
+       "v.bfk_sl = v.bfk > 0 ? c.owning_entity->v.bfkslash : 0;"
+       "v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.5, 1.5) : 1;"
+       "v.bfk_ox = v.bfk > 0 ? c.owning_entity->v.bfkox : 0;"
+       "v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;"
+       "v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;"
+       "v.bfk_cg = v.bfk > 0 ? c.owning_entity->v.bfkcg : 0.95;"
+       "v.bfk_cb = v.bfk > 0 ? c.owning_entity->v.bfkcb : 0.97;"
+       # the knife only shows in first person when "third person" is off (other views keep the vanilla sword)
+       "v.bfk = (v.bfk > 0 && !v.bfk_tp && !c.is_first_person) ? 0 : v.bfk;")
 
 
 # ------------------------------------------------------------------ particles (our own textures: particles_fx.png)
 def particle_files():
+    """our own particles (fx.png); every one takes its colour from the emitter (v.cr/cg/cb, set by FX_SCRIPT from
+    Bedrock Forge's pick) and falls back to steel white if the game doesn't pass it. Additive, small, short-lived:
+    a whole swing is at most 6 particles (trail), 1 (crescent) or 9 (streak); a hit is ~10 sparks + 1 cut."""
     tex = "textures/bf_cosmetics/fx"
     def base(ident, comps):
         return {"format_version": "1.10.0", "particle_effect": {
             "description": {"identifier": ident, "basic_render_parameters": {"material": "particles_add", "texture": tex}},
             "components": comps}}
     uv = lambda x, y: {"texture_width": 64, "texture_height": 64, "uv": [x, y], "uv_size": [16, 16]}
-    arc = base("bfk:arc", {
-        # one soft streak of light left in the air where the tip passed; a run of them draws the slash arc
+    age = "v.particle_age / v.particle_lifetime"
+    def tint(hot=2.5, white=1.0, fade="1 - {a}"):
+        """starts white-hot, settles into the picked colour, fades out"""
+        k = f"math.min(1, {age} * {hot})"
+        ch = lambda c, d: f"math.lerp({white}, (v.{c} ?? {d}), {k})"
+        return {"color": [ch("cr", 0.8), ch("cg", 0.95), ch("cb", 0.97), fade.format(a=age)]}
+    once = {"minecraft:emitter_lifetime_once": {"active_time": 0.01}}
+    arc = base("bfk:arc", dict(once, **{
+        # trail: one soft streak of light where the tip passed; a run of them draws the slash
         "minecraft:emitter_rate_instant": {"num_particles": 1},
-        "minecraft:emitter_lifetime_once": {"active_time": 0.01},
         "minecraft:emitter_shape_point": {},
         "minecraft:particle_lifetime_expression": {"max_lifetime": 0.16},
         "minecraft:particle_initial_speed": 0,
         "minecraft:particle_motion_dynamic": {},
-        "minecraft:particle_appearance_billboard": {"size": ["0.09 * (1 - v.particle_age / v.particle_lifetime * 0.5)", "0.09 * (1 - v.particle_age / v.particle_lifetime * 0.5)"],
+        "minecraft:particle_appearance_billboard": {"size": [f"0.09 * (1 - {age} * 0.5)", f"0.09 * (1 - {age} * 0.5)"],
                                                     "facing_camera_mode": "rotate_xyz", "uv": uv(0, 0)},
-        "minecraft:particle_appearance_tinting": {"color": {"gradient": {"0.0": "#CCF4F6FF", "0.4": "#88DCE4FF", "1.0": "#00B8C4FF"},
-                                                            "interpolant": "v.particle_age / v.particle_lifetime"}}})
+        "minecraft:particle_appearance_tinting": tint()}))
+    crescent = base("bfk:crescent", dict(once, **{
+        # crescent: one curved blade of light that opens along the cut and thins out (the karambit's hook)
+        "minecraft:emitter_rate_instant": {"num_particles": 1},
+        "minecraft:emitter_shape_point": {},
+        "minecraft:particle_lifetime_expression": {"max_lifetime": 0.2},
+        "minecraft:particle_initial_speed": 0,
+        "minecraft:particle_initial_spin": {"rotation": "math.random(-25, 25)"},
+        "minecraft:particle_motion_dynamic": {},
+        "minecraft:particle_appearance_billboard": {"size": [f"0.42 + 0.18 * {age}", f"0.42 + 0.18 * {age}"],
+                                                    "facing_camera_mode": "rotate_xyz",
+                                                    "uv": {"texture_width": 64, "texture_height": 64, "uv": [0, 16], "uv_size": [32, 32]}},
+        "minecraft:particle_appearance_tinting": tint(4, 1.0, "math.pow(1 - {a}, 1.5)")}))
+    streak = base("bfk:streak", dict(once, **{
+        # thrust streak: a hard point of light at full reach with fine lines kicked out round it (the dagger's stab)
+        "minecraft:emitter_rate_instant": {"num_particles": 9},
+        "minecraft:emitter_shape_sphere": {"radius": 0.01, "direction": "outwards"},
+        "minecraft:particle_lifetime_expression": {"max_lifetime": "math.random(0.08, 0.14)"},
+        "minecraft:particle_initial_speed": "math.random(3, 6)",
+        "minecraft:particle_motion_dynamic": {"linear_drag_coefficient": 9.0},
+        "minecraft:particle_appearance_billboard": {"size": [0.008, f"0.07 * (1 - {age})"],
+                                                    "facing_camera_mode": "lookat_direction",
+                                                    "direction": {"mode": "derive_from_velocity"}, "uv": uv(16, 0)},
+        "minecraft:particle_appearance_tinting": tint(5)}))
     spark = base("bfk:spark", {
-        # steel sparks off the edge: a quick spray of hot streaks that arc down and fade amber
+        # steel sparks off the edge on a hit: hot streaks that arc down, fading from white through the colour
         "minecraft:emitter_rate_instant": {"num_particles": "math.random_integer(7, 11)"},
         "minecraft:emitter_lifetime_once": {"active_time": 0.02},
         "minecraft:emitter_shape_sphere": {"radius": 0.03, "direction": "outwards"},
         "minecraft:particle_lifetime_expression": {"max_lifetime": "math.random(0.12, 0.3)"},
         "minecraft:particle_initial_speed": "math.random(2.5, 5.5)",
         "minecraft:particle_motion_dynamic": {"linear_acceleration": [0, -12, 0], "linear_drag_coefficient": 3.0},
-        "minecraft:particle_appearance_billboard": {"size": [0.012, "0.06 * (1 - v.particle_age / v.particle_lifetime)"],
+        "minecraft:particle_appearance_billboard": {"size": [0.012, f"0.06 * (1 - {age})"],
                                                     "facing_camera_mode": "lookat_direction", "direction": {"mode": "derive_from_velocity"}, "uv": uv(16, 0)},
-        "minecraft:particle_appearance_tinting": {"color": {"gradient": {"0.0": "#FFFFF6DE", "0.35": "#FFFFC46A", "1.0": "#00FF7A28"},
-                                                            "interpolant": "v.particle_age / v.particle_lifetime"}}})
-    cut = base("bfk:cutflash", {
+        "minecraft:particle_appearance_tinting": tint(3)})
+    cut = base("bfk:cutflash", dict(once, **{
         # the cut itself: a thin bright line that opens and fades in a tenth of a second
         "minecraft:emitter_rate_instant": {"num_particles": 1},
-        "minecraft:emitter_lifetime_once": {"active_time": 0.01},
         "minecraft:emitter_shape_point": {},
         "minecraft:particle_lifetime_expression": {"max_lifetime": 0.11},
         "minecraft:particle_initial_speed": 0,
         "minecraft:particle_motion_dynamic": {},
-        "minecraft:particle_appearance_billboard": {"size": ["0.5 * (0.4 + v.particle_age / v.particle_lifetime)", 0.035],
+        "minecraft:particle_appearance_billboard": {"size": [f"0.5 * (0.4 + {age})", 0.035],
                                                     "facing_camera_mode": "rotate_xyz", "uv": uv(32, 0)},
-        "minecraft:particle_appearance_tinting": {"color": {"gradient": {"0.0": "#FFFFFFFF", "1.0": "#00FFFFFF"},
-                                                            "interpolant": "v.particle_age / v.particle_lifetime"}}})
-    return {"bfk_arc.particle.json": arc, "bfk_spark.particle.json": spark, "bfk_cutflash.particle.json": cut}
+        "minecraft:particle_appearance_tinting": tint(6, 1.0)}))
+    return {f"bfk_{n}.particle.json": js for n, js in
+            (("arc", arc), ("crescent", crescent), ("streak", streak), ("spark", spark), ("cutflash", cut))}
 
 
 def fx_texture():
@@ -296,6 +363,19 @@ def fx_texture():
     soft = np.clip(1 - r, 0, 1) ** 2.2
     streak = np.clip(1 - np.abs(x - 8) / 2.2, 0, 1) * np.clip(1 - np.abs(y - 8) / 8, 0, 1) ** 0.6
     line = np.clip(1 - np.abs(y - 8) / 1.6, 0, 1) * np.clip(1 - np.abs(x - 8) / 8, 0, 1) ** 0.5
+    # crescent (32x32 at 0,16, drawn 4x supersampled): a moon-shaped blade of light - the outer circle minus an
+    # offset inner one gives the real crescent taper (sharp horns, full belly) - plus a faint inner glow
+    S = 128
+    yy, xx = (np.mgrid[0:S, 0:S] + 0.5) / S
+    outer = np.hypot(xx - 0.5, yy - 0.62) - 0.40
+    inner = np.hypot(xx - 0.5, yy - 0.74) - 0.40
+    aa = 1.5 / S
+    body = np.clip(0.5 - outer / aa, 0, 1) * np.clip(0.5 + inner / aa, 0, 1)
+    glow = np.exp(-np.maximum(outer, 0) ** 2 / 0.0025) * np.clip(0.5 + inner / 0.05, 0, 1) * 0.25
+    big = np.clip(body + glow, 0, 1)
+    crescent = big.reshape(32, 4, 32, 4).mean(axis=(1, 3))
+    img[16:48, 0:32, :3] = 255
+    img[16:48, 0:32, 3] = (crescent * 255).astype(np.uint8)
     for i, a in enumerate((soft, streak, line)):
         img[0:16, i * 16:(i + 1) * 16, :3] = 255
         img[0:16, i * 16:(i + 1) * 16, 3] = (a * 255).astype(np.uint8)

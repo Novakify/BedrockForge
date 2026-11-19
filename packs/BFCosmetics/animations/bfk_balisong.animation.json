@@ -182,6 +182,21 @@
     }
    }
   },
+  "animation.bfk.balisong.draw.sndq": {
+   "animation_length": 0.95,
+   "anim_time_update": "v.bfk_d * v.bfk_spd",
+   "sound_effects": {
+    "0.270": {
+     "effect": "clack_q"
+    },
+    "0.740": {
+     "effect": "clack_q"
+    },
+    "0.800": {
+     "effect": "latch_q"
+    }
+   }
+  },
   "animation.bfk.balisong.insp1": {
    "animation_length": 2.2,
    "anim_time_update": "v.bfk_i * v.bfk_spd",
@@ -378,6 +393,30 @@
     }
    }
   },
+  "animation.bfk.balisong.insp1.sndq": {
+   "animation_length": 2.2,
+   "anim_time_update": "v.bfk_i * v.bfk_spd",
+   "sound_effects": {
+    "0.300": {
+     "effect": "clack_q"
+    },
+    "0.600": {
+     "effect": "clack_q"
+    },
+    "0.860": {
+     "effect": "clack_q"
+    },
+    "1.050": {
+     "effect": "clack_q"
+    },
+    "1.100": {
+     "effect": "clack_q"
+    },
+    "1.400": {
+     "effect": "latch_q"
+    }
+   }
+  },
   "animation.bfk.balisong.insp2": {
    "animation_length": 2.0,
    "anim_time_update": "v.bfk_i * v.bfk_spd",
@@ -528,6 +567,21 @@
     },
     "1.620": {
      "effect": "clack"
+    }
+   }
+  },
+  "animation.bfk.balisong.insp2.sndq": {
+   "animation_length": 2.0,
+   "anim_time_update": "v.bfk_i * v.bfk_spd",
+   "sound_effects": {
+    "0.800": {
+     "effect": "clack_q"
+    },
+    "1.360": {
+     "effect": "clack_q"
+    },
+    "1.620": {
+     "effect": "clack_q"
     }
    }
   },
@@ -696,33 +750,70 @@
     }
    }
   },
-  "animation.bfk.balisong.swing1.fx": {
+  "animation.bfk.balisong.swing1.sndq": {
+   "animation_length": 0.32,
+   "anim_time_update": "v.bfk_a * v.bfk_spd",
+   "sound_effects": {
+    "0.000": {
+     "effect": "swish_q"
+    }
+   }
+  },
+  "animation.bfk.balisong.swing1.fx0": {
    "animation_length": 0.32,
    "anim_time_update": "v.bfk_a * v.bfk_spd",
    "particle_effects": {
     "0.040": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     },
     "0.064": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     },
     "0.088": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     },
     "0.112": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     },
     "0.136": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     },
     "0.160": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    }
+   }
+  },
+  "animation.bfk.balisong.swing1.fx1": {
+   "animation_length": 0.32,
+   "anim_time_update": "v.bfk_a * v.bfk_spd",
+   "particle_effects": {
+    "0.112": {
+     "effect": "crescent",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    }
+   }
+  },
+  "animation.bfk.balisong.swing1.fx2": {
+   "animation_length": 0.32,
+   "anim_time_update": "v.bfk_a * v.bfk_spd",
+   "particle_effects": {
+    "0.160": {
+     "effect": "streak",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     }
    }
   },
@@ -827,25 +918,60 @@
     }
    }
   },
-  "animation.bfk.balisong.swing2.fx": {
+  "animation.bfk.balisong.swing2.sndq": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_a * v.bfk_spd",
+   "sound_effects": {
+    "0.000": {
+     "effect": "swish_q"
+    }
+   }
+  },
+  "animation.bfk.balisong.swing2.fx0": {
    "animation_length": 0.3,
    "anim_time_update": "v.bfk_a * v.bfk_spd",
    "particle_effects": {
     "0.050": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     },
     "0.073": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     },
     "0.097": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     },
     "0.120": {
      "effect": "arc",
-     "locator": "tip"
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    }
+   }
+  },
+  "animation.bfk.balisong.swing2.fx1": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_a * v.bfk_spd",
+   "particle_effects": {
+    "0.097": {
+     "effect": "crescent",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    }
+   }
+  },
+  "animation.bfk.balisong.swing2.fx2": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_a * v.bfk_spd",
+   "particle_effects": {
+    "0.120": {
+     "effect": "streak",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     }
    }
   },
@@ -853,10 +979,10 @@
    "loop": true,
    "bones": {
     "bfk_fix": {
-     "scale": 0.68,
+     "scale": "0.68 * v.bfk_scl",
      "position": [
-      0,
-      7,
+      "v.bfk_ox",
+      "7 + v.bfk_oy",
       0
      ]
     }
