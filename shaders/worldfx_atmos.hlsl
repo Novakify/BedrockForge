@@ -79,7 +79,7 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 bo1;      // xyz the block's low corner (camera-relative), w = glow
     float4 bo2;      // x = fill, y = style (0 glow, 1 clean, 2 corners), z = the face you look at (0..5, -1 none)
     float4 wg0;      // wings colour (linear), w = size (0 = off)
-    float4 wg1;      // x = design (0 seraph, 1 butterfly, 2 prism), y = glow, z = flap, w = 1: first person too
+    float4 wg1;      // x = design (0 seraph, 1 butterfly, 2 prism), y = glow, z = flap, w = sign: first person too, |w| - 1 = s since they came on
     float4 cp0;      // cape colour (linear), w = glow (0 = off)
     float4 cp1;      // second colour, w = design (0 silk, 1 aurora, 2 starfield)
     float4 cp2;      // x = sway, y = your speed (0..1.6), z = 1: in the air
@@ -917,22 +917,33 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
     float3 side = float3(cos(yaw), 0, sin(yaw));
     float3 up   = float3(0, 1, 0);
     // -------- wings
-    [branch] if (wg0.w > 0.0 && (!fp || wg1.w > 0.5)) {
+    [branch] if (wg0.w > 0.0 && (!fp || wg1.w > 0.0)) {
         int   design = int(wg1.x + 0.5);
         float S = wg0.w;
-        float flap = wg1.z * (0.22 + 0.25 * cp2.z) * sin(t * (2.2 + 3.0 * cp2.z));
+        // (Purxiy reference, video 1: the wings pop in folded down the back, then sweep up and out with an overshoot in
+        //  ~0.45 s; after that a slow flap - spread, a raised V, spread - about one beat a second and a bit)
+        float age  = abs(wg1.w) - 1.0;
+        float open = 1.0 - exp(-age * 7.0) * cos(age * 11.0);   // 0 folded .. 1 open, overshooting a little past it
+        float beat = sin(t * 4.8 * (0.85 + 0.6 * cp2.z));
+        float flap = wg1.z * (0.10 + 0.12 * cp2.z) * beat;
+        float elev = wg1.z * (0.16 + 0.10 * cp2.z) * (0.5 + 0.5 * beat);       // the raised V on the up-beat
         float3 A0 = pl.xyz + up * 1.38 - fwd * 0.20;
         [unroll] for (int sgn = -1; sgn <= 1; sgn += 2) {
-            float fold = 0.55 + flap;                              // how far back the wing sweeps from the side (radians)
-            float3 w = normalize(side * float(sgn) * cos(fold) - fwd * sin(fold));
+            float fold = 0.45 + flap;                              // how far back the wing sweeps from the side (radians)
+            float3 wOpen = normalize(side * float(sgn) * cos(fold) * cos(elev) - fwd * sin(fold) * cos(elev) + up * sin(elev));
+            float3 wShut = normalize(-up * 0.85 + side * float(sgn) * 0.25 - fwd * 0.45);   // folded: hanging down the back
+            float3 w = normalize(lerp(wShut, wOpen, open));
             float3 A = A0 + side * float(sgn) * 0.10;
-            float3 n = normalize(cross(w, up));
+            float3 X = normalize(lerp(side * float(sgn), up, saturate(open)));   // the wing plane's second axis (up when open)
+            float3 n = normalize(cross(w, X));
+            float3 vax = normalize(cross(n, w));
+            if (dot(vax, X) < 0.0) vax = -vax;
             float den = dot(rd, n);
             if (abs(den) < 1e-4) continue;
             float tp = dot(A, n) / den;
             if (tp < 0.2 || tp > dist + 0.05) continue;
             float3 h = rd * tp - A;
-            float u = dot(h, w) / S, v = dot(h, up) / S;            // u: out along the wing, v: up
+            float u = dot(h, w) / S, v = dot(h, vax) / S;           // u: out along the wing, v: up (in the wing's own plane)
             if (u < 0.0 || u > (design == 0 ? 2.1 : 1.45) || (design == 0 && (v > 0.8 || v < -1.3))) continue;
             float inside = 0.0, rim = 0.0, pat = 0.0;
             if (design == 1) {                                     // butterfly: a big upper lobe, a smaller lower one
@@ -946,30 +957,42 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
                 inside = 1.0 - smoothstep(-0.02, 0.02, d);
                 rim    = exp(-abs(d) * 30.0);
                 pat    = exp(-pow(length(float2(u, v) - float2(0.72, 0.42)) / 0.11, 2.0)) + 0.5 * exp(-pow(length(float2(u, v) - float2(0.45, -0.28)) / 0.08, 2.0));
-            } else if (design == 0) {                              // seraph: a covert arm and twelve overlapping rounded flight feathers, longer
-                                                                   // toward the tip, fanning from straight down to out and back
+            } else if (design == 0) {                              // seraph: three tiers of layered feathers (Purxiy reference)
+                // primaries (long, at the outer half), secondaries under the arm, small coverts on top: the topmost
+                // tier that covers this point is the one drawn; each feather is lighter at its root, a touch of lilac
+                // toward the tip, with a dark line where it overlaps the next one
                 float2 p = float2(u, v);
-                float2 a0 = float2(0.0, 0.02), a1 = float2(0.38, 0.46), a2 = float2(1.0, 0.42);
-                float dArm = min(sdSeg(p, a0, a1) - 0.14, sdSeg(p, a1, a2) - 0.11);
-                float d1 = 9.0, d2 = 9.0, ax = 9.0;                // nearest / second nearest feather, its shaft
-                [unroll] for (int k = 0; k < 12; ++k) {
-                    float tk = float(k) / 11.0;
-                    float2 B = tk < 0.35 ? lerp(a0, a1, tk / 0.35) : lerp(a1, a2, (tk - 0.35) / 0.65);
-                    float an = radians(lerp(-100.0, -42.0, tk * tk));
-                    float L = lerp(0.36, 0.78, pow(tk, 0.7)) * (1.0 + 0.04 * sin(t * 1.3 + tk * 9.0));
-                    float2 E = B + float2(cos(an), sin(an)) * L;
-                    float r = lerp(0.135, 0.105, tk);
-                    float2 pa = p - B, ba = E - B;
-                    float h = saturate(dot(pa, ba) / dot(ba, ba));
-                    float dk = length(pa - ba * h) - r * (1.0 - 0.35 * h * h);   // tapers a little to a round tip
-                    if (dk < d1) { d2 = d1; d1 = dk; ax = length(pa - ba * h) / max(r, 1e-3); } else d2 = min(d2, dk);
+                float2 a0 = float2(0.0, 0.02), a1 = float2(0.42, 0.44), a2 = float2(1.08, 0.40);
+                float dArm = min(sdSeg(p, a0, a1) - 0.10, sdSeg(p, a1, a2) - 0.075);
+                float best = 9.0, sepK = 0.0, shaftK = 0.0, alongK = 0.0, tierK = 0.0;
+                [unroll] for (int tier = 2; tier >= 0; --tier) {      // primaries first, so higher tiers win
+                    int   N  = tier == 2 ? 11 : tier == 1 ? 13 : 15;
+                    float d1 = 9.0, d2 = 9.0, axq = 9.0, hq = 0.0;
+                    [loop] for (int k = 0; k < N; ++k) {
+                        float tk = float(k) / float(N - 1);
+                        float tt = tier == 2 ? lerp(0.40, 1.0, tk) : tier == 1 ? lerp(0.04, 0.80, tk) : lerp(0.06, 0.92, tk);
+                        float2 B = tt < 0.39 ? lerp(a0, a1, tt / 0.39) : lerp(a1, a2, (tt - 0.39) / 0.61);
+                        float an = radians(tier == 2 ? lerp(-95.0, -28.0, tk * tk) : tier == 1 ? lerp(-100.0, -55.0, tk) : lerp(-105.0, -70.0, tk));
+                        float Ln = tier == 2 ? lerp(0.55, 0.98, pow(tk, 0.6)) : tier == 1 ? lerp(0.30, 0.50, tk) : lerp(0.13, 0.24, tk);
+                        Ln *= 1.0 + 0.03 * sin(t * 1.3 + tt * 9.0 + float(tier));
+                        float2 E = B + float2(cos(an), sin(an)) * Ln;
+                        float r = (tier == 2 ? 0.075 : tier == 1 ? 0.065 : 0.055);
+                        float2 pa = p - B, ba = E - B;
+                        float hh = saturate(dot(pa, ba) / dot(ba, ba));
+                        float dk = length(pa - ba * hh) - r * (1.0 - 0.75 * pow(hh, 3.0));   // a pointed, rounded tip
+                        if (dk < d1) { d2 = d1; d1 = dk; axq = length(pa - ba * hh) / max(r, 1e-3); hq = hh; } else d2 = min(d2, dk);
+                    }
+                    if (d1 < 0.0) {                                      // a higher tier covers this point: it is the one seen
+                        best = d1; tierK = float(tier);
+                        sepK = exp(-pow((d2 - d1) / 0.008, 2.0)); shaftK = exp(-pow(axq / 0.12, 2.0)); alongK = hq;
+                    } else if (best > 0.0) best = min(best, d1);
+                    else sepK = max(sepK, exp(-pow(d1 / 0.010, 2.0)) * 0.8);   // a higher tier's edge lying over this feather
                 }
-                float d = min(dArm, d1);
-                inside = 1.0 - smoothstep(-0.012, 0.012, d);
-                rim    = exp(-abs(d) * 40.0);
-                float sep  = exp(-pow((d2 - d1) / 0.010, 2.0)) * step(d1, dArm);        // the line between two feathers
-                float shaft = exp(-pow(ax / 0.10, 2.0)) * step(d1, dArm) * 0.6;           // each feather's quill
-                pat = 0.55 + 0.45 * saturate(1.0 - (0.44 - v) * 0.9) - 0.55 * sep + 0.35 * shaft + 0.25 * step(dArm, d1);
+                float d = min(dArm, best);
+                inside = 1.0 - smoothstep(-0.010, 0.010, d);
+                rim    = exp(-abs(d) * 60.0) * 0.5;
+                // matte feathers: lighter toward the root and on the upper tiers, soft lilac at the tips
+                pat = (0.62 + 0.18 * tierK - 0.30 * alongK * alongK) - 0.45 * sepK + 0.18 * shaftK + 0.3 * step(dArm, best);
             } else {                                               // prism: a long wing, cut into crystal facets
                 float top = 0.14 + 0.30 * pow(sin(3.14159 * saturate(u / 1.25)), 0.6) + 0.16 * u;      // the arm of the wing, swept up
                 // (in game 2026-11-19: the wing was widest at its tip and ended on a straight cut. It now swells to
@@ -992,12 +1015,12 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
             float3 c = lerp(wg0.rgb, float3(1.0, 0.97, 1.0), saturate(v * 1.6 + 0.1) * 0.45);   // whiter toward the top edge
             if (design == 2) c = lerp(wg0.rgb, float3(0.75, 0.9, 1.0), pat * 0.6) * (0.85 + 0.3 * pat);
             float glow = wg1.y;
-            if (design == 0) {                                     // seraph: soft lit feathers, the rim only a gentle edge light
-                c = lerp(wg0.rgb, float3(1.0, 0.97, 1.0), saturate(pat - 0.35) * 0.75);
-                L += c * (rim * (0.25 + 0.45 * glow) + inside * pat * (0.10 + 0.22 * glow));
+            if (design == 0) {                                     // seraph: matte feathers (no glow in the reference), a faint edge light
+                c = lerp(wg0.rgb, float3(1.0, 0.97, 1.0), saturate(pat - 0.30) * 0.85);
+                L += c * (rim * (0.10 + 0.30 * glow) + inside * pat * (0.04 + 0.10 * glow));
             } else
                 L += c * (rim * (0.9 + glow) + inside * (0.08 + 0.30 * pat) * (0.6 + glow));
-            float a = inside * (design == 2 ? 0.30 : design == 0 ? 0.55 * saturate(pat) : 0.22);
+            float a = inside * (design == 2 ? 0.30 : design == 0 ? 0.85 * saturate(0.35 + pat) : 0.22);   // seraph: nearly solid feathers
             over.rgb = lerp(over.rgb, c * 0.6 + 0.08, a * (1.0 - over.a));
             over.a = over.a + a * (1.0 - over.a);
         }

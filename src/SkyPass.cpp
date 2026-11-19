@@ -3347,10 +3347,13 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             auto lin = [](float v) { return v * v; };
             int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             auto const* ev = rf::postfx::fxEvents();
+            static int64_t gWingsOnAt = 0; static bool gWingsWas = false;   // when the wings came on: they unfold
+            if (atm.wg && !gWingsWas) gWingsOnAt = nowMs;
+            gWingsWas = atm.wg;
             if (atm.wg) {
                 for (int k = 0; k < 3; ++k) acb.wg[0][k] = lin(atm.wgC[k]);
                 acb.wg[0][3] = std::max(atm.wgSize, 0.05f);
-                acb.wg[1][0] = atm.wgDesign; acb.wg[1][1] = atm.wgGlow; acb.wg[1][2] = atm.wgFlap; acb.wg[1][3] = atm.wgFp ? 1.f : 0.f;
+                acb.wg[1][0] = atm.wgDesign; acb.wg[1][1] = atm.wgGlow; acb.wg[1][2] = atm.wgFlap; acb.wg[1][3] = (atm.wgFp ? 1.f : -1.f) * (1.f + std::min(float(nowMs - gWingsOnAt) / 1000.f, 60.f));   // sign: first person, size: 1 + s since on (the unfold)
             }
             if (atm.cp) {   // the cape flows back with your speed (from your positions, smoothed)
                 static double lx = 0, lz = 0; static int64_t lt = 0; static float spd = 0;
