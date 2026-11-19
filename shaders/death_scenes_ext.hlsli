@@ -530,12 +530,33 @@ void deathScenesExt(int sc, float t, float3 o, float3 rd, float3 feet, float yaw
             if (fx.ash < 0.999) dsBody(h, rd, feet + float3(0, 0.7 * lift, 0), mul(RB, rotX(-0.25 * lift)), 1.0, -99.0, 99.0, fx);
             fnCrit(h, rd, feet + float3(0, 1.1, 0), t, seed, 22, 2.4);
             [unroll] for (int k = 0; k < 3; k++) fnGround(onG, S, feet, 0.05 + 0.28 * float(k), 0.5, 0.0, 0.0, seed + float(k), t, o, dec, decK, add, lc * (1.4 - 0.3 * float(k)));
-            float up = easeOut((t - 0.35) / 0.5), fade = 1.0 - ease((t - 2.3) / 0.7);   // gone by 3 s (it hung on 0.8 s past the body)
-            float pil = dsGlowSeg(rd, feet, feet + float3(0, 1.0 + 7.0 * up, 0), 0.20 + 0.10 * up, h.t);
-            float core = dsGlowSeg(rd, feet, feet + float3(0, 1.0 + 7.0 * up, 0), 0.06, h.t);
-            add += lc * (pil * 0.55 + core * 1.1) * step(0.35, t) * fade;
+            // (Purxiy reference, video 5: a lavender-white flash, then a NARROW beam - white core, blue-cyan halo - shoots
+            //  from the spot up out of view and lingers, while big white-cyan arcs swirl round the spot like a vortex)
+            float up = easeOut((t - 0.30) / 0.35), fade = 1.0 - ease((t - 2.1) / 0.8);
+            fx.flash = max(fx.flash, 0.8 * exp(-pow((t - 0.32) / 0.05, 2.0)));
+            float3 cHalo = lerp(hex3(160, 200, 255), lc, 0.25), cCore = float3(1.25, 1.28, 1.35);
+            float3 top = feet + float3(0, 1.0 + 40.0 * up, 0);
+            float pil  = dsGlowSeg(rd, feet, top, 0.30, h.t);
+            float core = dsGlowSeg(rd, feet, top, 0.05, h.t);
+            add += (cHalo * pil * 0.6 + cCore * core * 1.5) * step(0.30, t) * fade * (0.85 + 0.15 * sin(t * 30.0));
+            // the vortex: four arcs of light spiralling round the spot, rising a little, motion-blurred
+            float vt = t - 0.30;
+            if (vt > 0.0 && vt < 0.9) {
+                float vk = (1.0 - vt / 0.9);
+                [unroll] for (int a = 0; a < 4; a++) {
+                    float a0 = float(a) * 1.5708 + vt * 9.0 + seed;
+                    float rr = 0.6 + 1.6 * easeOut(vt / 0.5);
+                    float yy = 0.15 + 0.5 * vt + 0.12 * float(a);
+                    [unroll] for (int l = 0; l < 6; l++) {
+                        float b0 = a0 - float(l) * 0.22, b1 = a0 - float(l + 1) * 0.22;
+                        float3 q0 = feet + float3(cos(b0) * rr, yy, sin(b0) * rr), q1 = feet + float3(cos(b1) * rr, yy, sin(b1) * rr);
+                        float tail = 1.0 - float(l) / 6.0;
+                        add += lerp(cHalo, cCore, 0.5 * tail) * dsGlowSeg(rd, q0, q1, 0.03 + 0.02 * tail, h.t) * tail * vk * 1.4;
+                    }
+                }
+            }
             dsBurst(h, rd, feet + float3(0, 0.2, 0), t - 0.5, 18, seed + 60.0, 0.35, 2.6, -1.2, 2.6, 0.026, lc, glow, -1e5, lc * 2.0);
-            if (onG) { float2 gq = S.xz - feet.xz; add += lc * exp(-dot(gq, gq) / 0.18) * 0.35 * up * fade; }
+            if (onG) { float2 gq = S.xz - feet.xz; add += cHalo * exp(-dot(gq, gq) / 0.18) * 0.45 * up * fade; }
         } else {
             // ============ CONSTELLATION: they fall back, and break into stars; the stars rise, find each other and
             // join into a constellation over the spot - it twinkles, then fades out
