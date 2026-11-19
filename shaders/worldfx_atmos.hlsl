@@ -192,13 +192,34 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
                 float  coc  = amb3.y > 0.5 ? max(0.0, 2.2 - tp) * 0.03 : 0.0;   // near ones: a soft round bokeh
                 float  r    = size + coc;
                 float  core = exp(-dd * dd / (r * r));
-                float  halo = amb2.x * exp(-dd / (r * 4.0)) * 0.22;
+                float  halo = amb2.x * exp(-dd / (r * 4.0)) * 0.22 * smoothstep(0.8, 3.5, tp);   // close ones: no big fog ball
                 float  tw   = 1.0 - amb2.z * (0.5 + 0.5 * sin(t * (2.0 + 3.0 * h.y) + ph * 3.0));   // twinkle / breathe
                 float  fade = smoothstep(tMax, tMax * 0.65, tp) * (r > size ? size * size / (r * r) * 1.6 + 0.12 : 1.0);
                 float3 cc   = lerp(amb0.rgb, amb1.rgb, h.z);
                 if (style == 3) cc = lerp(float3(0.85, 0.90, 1.0), cc, 0.25);   // snow stays white
                 float  win  = smoothstep(margin, margin * 0.45, dd);          // zero at the cell wall: no box
-                acc += cc * (core * 2.2 + halo * 1.6) * tw * fade * win * lerp(0.75, 1.0, night);
+                win *= smoothstep(0.3, 1.3, tp);                              // one brushing the lens fades instead of filling the view
+                // (2026-11-19, "the particles aren't as shiny"): a white-hot heart in every light, and each style its own
+                // shape - stardust flashes four-point stars, petals are turning ovals with a lit edge, snow catches glints
+                float3 v   = rel - rd * tp;
+                float3 ax  = normalize(cross(rd, float3(0, 1, 0)) + float3(1e-4, 0, 0)), ay = cross(ax, rd);
+                float  x   = dot(v, ax) / r, y = dot(v, ay) / r;
+                float  hotC = exp(-dd * dd / (r * r * 0.16));
+                float  shape = core;
+                if (style == 1) {                                             // stardust: star spikes, flashing in turn
+                    float fl = pow(saturate(sin(t * (1.3 + h.y) + ph * 5.0)), 5.0);
+                    shape += (exp(-abs(x) * 0.5 - y * y * 9.0) + exp(-abs(y) * 0.5 - x * x * 9.0)) * (0.25 + 1.2 * fl);
+                } else if (style == 2) {                                      // petals: a turning oval, lit along one side
+                    float  ang = t * (0.8 + h.x) * sp + ph;
+                    float2 q   = float2(cos(ang) * x + sin(ang) * y, -sin(ang) * x + cos(ang) * y) * float2(0.75, 1.5 + 0.8 * abs(sin(ang * 0.7)));
+                    float  e   = dot(q, q);
+                    shape = smoothstep(1.3, 0.7, e) * (0.75 + 0.5 * saturate(q.x)) + exp(-e * 0.8) * 0.2;
+                    hotC *= 0.4;
+                } else if (style == 3) {                                      // snow: a soft flake that catches glints
+                    float g = pow(saturate(sin(t * 4.0 + ph * 7.0)), 12.0);
+                    shape += g * (exp(-abs(x) * 0.8 - y * y * 12.0) + exp(-abs(y) * 0.8 - x * x * 12.0)) * 0.8;
+                }
+                acc += (cc * (shape * 2.2 + halo * 1.6) + float3(1.0, 0.98, 0.95) * hotC * 1.6) * tw * fade * win * lerp(0.75, 1.0, night);
             }
         }
         // the next cell along the ray
@@ -219,11 +240,21 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
         float3 c = evP[i].xyz; float age = evP[i].w; int kind = int(evK[i].x + 0.5); float seed = evK[i].z;
         float3 dv = P - c;
         if (kind == 1 && fx0.w > 0.0) {                        // jump: one ring spreading from your feet
+            // (Purxiy reference, videos 1 / 5: a THIN neon ring flat on the ground where you took off - creamy white
+            //  core, the colour glowing out from it, the hue drifting round the ring (cooler on one side, warmer on
+            //  the other), shooting out with a hard ease-out to ~1.3 blocks, then fading.)
             float u = age / max(fx1.x, 0.05);
             if (u < 1.0 && abs(dv.y) < 0.6) {
-                float r = length(dv.xz), R = fx0.w * 1.4 * (1.0 - pow(1.0 - u, 3.0)), w = 0.07 + 0.10 * u;
-                float k = exp(-pow((r - R) / w, 2.0)) + fx1.y * 0.35 * exp(-abs(r - R) / (w * 3.0));
-                L += fx0.rgb * k * pow(1.0 - u, 1.4) * 1.6 * smoothstep(0.6, 0.2, abs(dv.y));
+                float r = length(dv.xz), an = atan2(dv.z, dv.x);
+                float R = fx0.w * 1.3 * (1.0 - pow(1.0 - saturate(u * 1.6), 4.0));
+                float w = 0.022 + 0.02 * u;
+                float core = exp(-pow((r - R) / (w * 0.45), 2.0));
+                float glow = exp(-pow((r - R) / (w * 2.2), 2.0)) * 0.55 + fx1.y * 0.18 * exp(-abs(r - R) / (w * 6.0));
+                float3 warm = lerp(fx0.rgb, float3(1.0, 0.72, 0.62), 0.35), cool = lerp(fx0.rgb, float3(0.70, 0.72, 1.0), 0.35);
+                float3 cc = lerp(cool, warm, 0.5 + 0.5 * sin(an + seed * 6.3 + age * 1.5));
+                cc = lerp(cc, r > R ? warm : cool, 0.3);                  // a warmer outer edge, a lavender inner one
+                float fade = pow(1.0 - u, 1.1) * smoothstep(0.6, 0.2, abs(dv.y));
+                L += (float3(1.0, 0.96, 0.93) * core * 1.6 + cc * glow * 2.0) * fade;
             }
         } else if ((kind == 2 || kind == 3) && (fx1.z > 0.0 || fx3.w > 0.0)) {
             // (in game 2026-11-19: the ink was painted on everything standing in its column - the player you hit, walls,
@@ -263,16 +294,28 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                 }
             }
             if (fx3.w > 0.0) {                                   // ripple: a flash, and a wave of light over what is near
+                // (Fernando 2026-11-19: "ripple doesn't look that good, not shiny". Now a prismatic wave: the ring splits
+                //  into its colour and white like light through glass, a second fainter echo follows it, the ground
+                //  ring gets the same, and a burst of glints rides the front.)
                 float u = age / max(fx4.w, 0.05);
                 if (u < 1.0) {
-                    float d3 = length(dv), R = 2.6 * (1.0 - pow(1.0 - u, 2.0));
-                    float k = exp(-pow((d3 - R) / 0.16, 2.0)) * (1.0 - u) + exp(-d3 * 2.2) * exp(-age * 9.0) * 1.5;
-                    if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4) {   // the ring rolling over the ground
-                        float r = length(dv.xz), R2 = 3.2 * (1.0 - pow(1.0 - u, 2.5));
-                        k += exp(-pow((r - R2) / 0.10, 2.0)) * (1.0 - u) * 0.8;
+                    float d3 = length(dv), ease = 1.0 - pow(1.0 - u, 2.0), fade = pow(1.0 - u, 1.3);
+                    float R = 2.6 * ease, W = 0.12 + 0.06 * u;
+                    float3 cA = fx4.rgb, cW = float3(1.0, 0.98, 0.96);
+                    float3 cB = float3(fx4.b, fx4.r, fx4.g) * 0.8 + 0.2;     // a shifted hue for the outer fringe
+                    float3 ring = cA * exp(-pow((d3 - R) / W, 2.0)) + cW * 1.3 * exp(-pow((d3 - R + 0.04) / (W * 0.35), 2.0))
+                                + cB * 0.7 * exp(-pow((d3 - R - W * 1.2) / (W * 0.7), 2.0))
+                                + cA * 0.45 * exp(-pow((d3 - R * 0.62) / (W * 0.8), 2.0));   // the echo
+                    float3 flash = (cW * 0.9 + cA * 0.7) * exp(-d3 * 3.4) * exp(-age * 14.0);   // a quick pop, not a white-out
+                    float3 Lr = ring * fade + flash;
+                    if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4) {   // the rings rolling over the ground
+                        float r = length(dv.xz), R2 = 3.2 * (1.0 - pow(1.0 - u, 2.5)), an = atan2(dv.z, dv.x);
+                        float gl = pow(0.5 + 0.5 * cos(an * 9.0 + seed * 30.0 + u * 4.0), 24.0);   // glints on the front
+                        Lr += (cA * exp(-pow((r - R2) / 0.09, 2.0)) + cW * 0.9 * exp(-pow((r - R2 + 0.02) / 0.03, 2.0))
+                               + cA * 0.4 * exp(-pow((r - R2 * 0.6) / 0.07, 2.0)) + cW * gl * 2.0 * exp(-pow((r - R2) / 0.12, 2.0))) * fade;
                     }
-                    if (kind == 3 && fx5.y > 0.5) k *= 1.8;          // a critical hit lands harder
-                    L += fx4.rgb * k * fx3.w * 1.4;
+                    if (kind == 3 && fx5.y > 0.5) Lr *= 1.8;          // a critical hit lands harder
+                    L += Lr * fx3.w * 1.4;
                 }
             }
         } else if ((kind == 5 || (kind == 6 && pa1.y > 0.5)) && pa0.w > 0.0) {   // a block placed / broken: light on its faces
@@ -420,43 +463,147 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
     int n = min(int(cs1.w), 32);
     float3 tbd = P - trB.xyz;
     [branch] if (cs0.w > 0.0 && n > 1 && !sky && dot(tbd, tbd) < trB.w * trB.w) {   // audit: only near the path
-        float best = 1e9, bestAge = 0.0, bestY = 0.0;
+        float best = 1e9, bestAge = 0.0, bestY = 0.0, side = 0.0;
         [loop] for (int i = 0; i + 1 < n; ++i) {
             float h;
             float d2 = segDist2(P.xz, trP[i].xz, trP[i + 1].xz, h);
-            if (d2 < best) { best = d2; bestAge = lerp(trP[i].w, trP[i + 1].w, h); bestY = lerp(trP[i].y, trP[i + 1].y, h); }
+            if (d2 < best) {
+                best = d2; bestAge = lerp(trP[i].w, trP[i + 1].w, h); bestY = lerp(trP[i].y, trP[i + 1].y, h);
+                float2 dir = trP[i].xz - trP[i + 1].xz;              // which side of the path this point is on (signed)
+                side = (dir.x * (P.z - trP[i].z) - dir.y * (P.x - trP[i].x)) / max(length(dir), 1e-4);
+            }
         }
         float u = bestAge / max(cs0.w, 0.05);
         if (u < 1.0 && abs(P.y - bestY) < 0.6) {
-            float w = 0.10 * cs1.x * (cs1.z > 0.5 && cs1.z < 1.5 ? 2.2 : 1.0), d = sqrt(best);
-            float core = exp(-pow(d / w, 2.0)), halo = cs1.y * 0.35 * exp(-d / (w * 3.0));
-            float k = (core + halo) * pow(1.0 - u, 1.3) * smoothstep(0.6, 0.15, abs(P.y - bestY));
-            if (cs1.z > 2.5) k *= step(0.7, frac(sin(dot(floor(P.xz * 9.0), float2(12.9898, 78.233))) * 43758.5453)) * 2.5;   // stardust: sparks
-            L += cs0.rgb * k * 1.4;
+            // (Fernando 2026-11-19: next to Purxiy the trail "pales". It was one soft line. Now: a white-hot core over the
+            //  colour, light flowing back along it, a soft taper at the tail - and each style its own shape.)
+            int    st   = int(cs1.z + 0.5);
+            float  w    = 0.10 * cs1.x, d = sqrt(best);
+            float  life = pow(1.0 - u, 1.2) * smoothstep(0.0, 0.04, bestAge + 0.01);
+            float  flow = 0.75 + 0.25 * sin(bestAge * 18.0 - t * 6.0);   // light running back along the path
+            float3 col  = lerp(cs0.rgb, float3(1.0, 0.97, 0.94), 0.35 * exp(-bestAge * 3.0));   // fresh end burns whiter
+            float  k = 0.0, coreW = 0.0;
+            if (st == 1) {                                                // path: a wide glowing band with lit edges
+                float W2 = w * 2.4;
+                float band = smoothstep(W2, W2 * 0.7, d);
+                float edge = exp(-pow((d - W2 * 0.82) / (w * 0.22), 2.0));
+                float chev = 0.5 + 0.5 * sin(bestAge * 30.0 - t * 9.0 + abs(side) * 8.0);   // chevrons rolling back
+                k = band * (0.25 + 0.25 * chev) + edge * 1.2;
+                coreW = exp(-pow(d / (w * 0.35), 2.0)) * 0.5;
+            } else if (st == 2) {                                         // helix: two strands twisting round the path
+                float ph = bestAge * 14.0 - t * 2.0;
+                float o1 = sin(ph) * w * 1.6, o2 = -o1;
+                float s1 = exp(-pow((side - o1) / (w * 0.32), 2.0)), s2 = exp(-pow((side - o2) / (w * 0.32), 2.0));
+                float front = 0.6 + 0.4 * cos(ph);                         // the strand passing over glows brighter
+                float near = smoothstep(w * 2.6, w * 1.9, d);             // only beside the path (not on past its ends)
+                s1 *= near; s2 *= near;
+                k = s1 * front + s2 * (1.6 - front) * 0.8 + cs1.y * 0.15 * exp(-d / (w * 2.5));
+                coreW = (s1 * front + s2 * (1.6 - front) * 0.8) * 0.45;
+            } else if (st == 3) {                                         // stardust: twinkling sparks in a faint line
+                float2 cell = floor(P.xz * 9.0);
+                float  rnd  = frac(sin(dot(cell, float2(12.9898, 78.233))) * 43758.5453);
+                float  tw   = pow(saturate(sin(t * 5.0 + rnd * 40.0)), 4.0);
+                float2 sp   = (cell + 0.5 + (float2(frac(rnd * 13.7), frac(rnd * 71.3)) - 0.5) * 0.5) / 9.0;   // a round spark in its cell
+                float  rr   = length(P.xz - sp) * 9.0;
+                float  spark = step(0.72, rnd) * smoothstep(w * 2.2, w * 0.6, d) * exp(-rr * rr * 18.0) * (0.8 + 2.6 * tw);
+                k = spark * 1.6 + exp(-pow(d / w, 2.0)) * 0.25;
+                coreW = spark * tw * 0.8;
+            } else {                                                      // line: a bright ribbon
+                k = exp(-pow(d / w, 2.0)) + cs1.y * 0.35 * exp(-d / (w * 3.0));
+                coreW = exp(-pow(d / (w * 0.35), 2.0));
+            }
+            float keep = life * flow * smoothstep(0.6, 0.15, abs(P.y - bestY));
+            L += (col * k * 1.5 + float3(1.0, 0.98, 0.95) * coreW * 1.2) * keep;
         }
     }
     // aura / halo are lights in the air: closest approach of the view ray to each (depth-tested against the world)
     [branch] if (au0.w > 0.0 && int(au1.z + 0.5) == 4) L += ascension(P, rd, dist, sky, t, fp && au1.w < 0.5);   // Ascension
     else [branch] if (au0.w > 0.0 && (!fp || au1.w > 0.5)) {
-        int style = int(au1.z + 0.5);
-        int N = style == 1 ? 9 : 6;
-        float3 c = pl.xyz + float3(0, 1.0, 0);
-        float  rb = 0.75 * au0.w * 1.2 + 1.0 + 0.2 * au0.w;          // audit: the ray must pass the aura's sphere at all
-        float  tc = dot(c, rd);
-        float3 cp = c - rd * tc;
+        // (Fernando 2026-11-19: next to Purxiy the auras "pale" - Orbit / Fireflies / Spiral / Constellation were the same
+        //  few soft dots. Now every light is a white-hot core in a coloured glow with a comet tail along its path, and
+        //  each style has its own structure: Orbit rides a faint ring, Spiral is a double helix, Constellation's stars
+        //  are joined by thin lines and flash a four-point spike.)
+        int   style = int(au1.z + 0.5);
+        int   N     = style == 1 ? 9 : style == 2 ? 2 : style == 3 ? 7 : 6;
+        float sz    = au0.w;
+        float3 c    = pl.xyz + float3(0, 1.0, 0);
+        float  rb   = 0.75 * sz * 1.2 + 1.0 + 0.2 * sz;              // audit: the ray must pass the aura's sphere at all
+        float  tc   = dot(c, rd);
+        float3 cp   = c - rd * tc;
         if (dot(cp, cp) > rb * rb || tc < -rb) N = 0;
+        float3 white = float3(1.0, 0.98, 0.95);
+        float3 prevStar = 0; float3 firstStar = 0;
         [loop] for (int i = 0; i < N; ++i) {
-            float fi = float(i), ph = fi / float(N) * 6.2831 + t * 0.9 * au1.x;
-            float r = 0.75 * au0.w, yy = 0.0;
-            if (style == 1) { ph = fi * 2.4 + t * 0.4 * au1.x * (0.6 + frac(fi * 0.37)); r *= 0.6 + 0.6 * frac(fi * 0.71); yy = 0.8 * sin(t * 0.7 * au1.x + fi * 1.7); }
-            else if (style == 2) yy = frac(fi / float(N) + t * 0.15 * au1.x) * 2.0 - 1.0;
-            else yy = 0.25 * sin(ph * 2.0);
-            float3 q = c + float3(cos(ph) * r, yy, sin(ph) * r);
-            float tp = dot(q, rd);
-            if (tp < 0.2 || tp > dist + 0.3) continue;
-            float d = length(q - rd * tp), s = 0.035 * au0.w;
-            float tw = 0.75 + 0.25 * sin(t * 3.0 + fi * 2.1);
-            L += au0.rgb * (exp(-d * d / (s * s)) * 1.8 + au1.y * 0.25 * exp(-d / (s * 5.0))) * tw;
+            float fi = float(i);
+            float tw = 0.78 + 0.22 * sin(t * 3.0 + fi * 2.1);
+            float3 head = 0;
+            [loop] for (int k = 0; k < (style == 2 ? 22 : 8); ++k) {                      // k = 0: the light; 1..7: its comet tail, back along its path
+                float tk = t - float(k) * (style == 2 ? 0.018 : 0.075) / max(au1.x, 0.3);   // the spiral's tail packs tighter: a ribbon, not beads
+                float ph = fi / float(N) * 6.2831 + tk * 0.9 * au1.x;
+                float r = 0.75 * sz, yy = 0.0;
+                if (style == 1) {                                       // fireflies: wander, blink
+                    ph = fi * 2.4 + tk * 0.4 * au1.x * (0.6 + frac(fi * 0.37));
+                    r *= 0.6 + 0.6 * frac(fi * 0.71);
+                    yy = 0.8 * sin(tk * 0.7 * au1.x + fi * 1.7);
+                } else if (style == 2) {                                // spiral (Purxiy ref, video 3): comets on a rising helix
+                    float cid = fmod(fi, 2.0);                           // two comets, half a turn apart
+                    float u = frac(tk * 0.22 * au1.x + cid * 0.5);
+                    ph = tk * 6.2831 * 0.55 * au1.x + cid * 3.1416;
+                    yy = u * 2.2 - 1.1;
+                    r *= 0.85 + 0.15 * sin(u * 3.1416);
+                } else if (style == 3) {                                // constellation: fixed stars, the sky slowly turning
+                    ph = fi * 2.399 + tk * 0.12 * au1.x;
+                    r *= 0.75 + 0.35 * frac(fi * 0.618);
+                    yy = (frac(fi * 0.381) - 0.5) * 1.6;
+                } else yy = 0.18 * sin(ph * 2.0) + 0.1 * sin(pl.w + ph); // orbit: a tilted ring
+                float3 q = c + float3(cos(ph) * r, yy, sin(ph) * r);
+                if (k == 0) head = q;
+                if (style == 3 && k > 0) break;                          // stars don't streak
+                float tp = dot(q, rd);
+                if (tp < 0.2 || tp > dist + 0.3) continue;
+                float d = length(q - rd * tp);
+                float kn = float(k) / (style == 2 ? 22.0 : 8.0);           // 0 head .. 1 end of the tail
+                float s = 0.048 * sz * (k == 0 ? 1.0 : 0.85 - 0.64 * kn);   // tapers, never below ~0.2
+                float fade = k == 0 ? 1.0 : 0.7 * pow(1.0 - float(k) / (style == 2 ? 22.0 : 8.0), 1.3);
+                float blink = style == 1 ? smoothstep(-0.2, 0.6, sin(t * 1.7 + fi * 4.1)) : 1.0;
+                float core = exp(-d * d / (s * s * 0.25));               // white-hot centre
+                float glow = exp(-d * d / (s * s)) * 1.6 + au1.y * 0.30 * exp(-d / (s * 4.0));
+                L += (white * core * 2.4 * (k == 0 ? 1.0 : 0.35) + au0.rgb * glow * 1.4) * fade * tw * blink;
+                if (style == 3 && k == 0) {                              // a four-point spike on each star, flashing in turn
+                    float3 v = q - rd * tp;
+                    float3 ax = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), ay = cross(ax, rd);
+                    float  x = dot(v, ax) / s, y = dot(v, ay) / s;   // spikes ~6 radii long
+                    float  flash = pow(saturate(sin(t * 0.9 + fi * 1.3)), 6.0);
+                    L += (white + au0.rgb) * (exp(-abs(x) * 0.35 - y * y * 6.0) + exp(-abs(y) * 0.35 - x * x * 6.0)) * 0.6 * (0.35 + flash) * tw;
+                }
+            }
+            if (style == 3 && i > 0) {                                   // the lines of the constellation (star to star)
+                float3 a = prevStar, b = head, ab = b - a;
+                float3 w0 = -a;                                          // ray from the eye (origin) along rd vs segment a..b
+                float  bb = dot(rd, ab), cc2 = dot(ab, ab), dd = dot(rd, w0), ee = dot(ab, w0);
+                float  den = cc2 - bb * bb;
+                float  sc = den > 1e-6 ? saturate((ee - bb * dd) / den) : 0.0;   // (Sunday: the segment's parameter)
+                float3 pS = a + ab * sc;
+                float  tp = dot(pS, rd);
+                if (tp > 0.2 && tp < dist + 0.3) {
+                    float d = length(pS - rd * tp), lw = 0.011 * sz;
+                    L += (au0.rgb * 1.4 + white * 0.25) * exp(-d * d / (lw * lw)) * (0.6 + 0.4 * sin(t * 1.3 + fi));
+                }
+            }
+            if (i == 0) firstStar = head;
+            prevStar = head;
+        }
+        [branch] if (style == 0 && N > 0) {                              // orbit: the faint ring the lights ride on
+            float3 nrm = normalize(float3(0.1 * cos(pl.w), 1, 0.1 * sin(pl.w)));
+            float  den = dot(rd, nrm);
+            if (abs(den) > 1e-3) {
+                float tp = dot(c, nrm) / den;
+                if (tp > 0.2 && tp < dist + 0.3) {
+                    float3 hp = rd * tp - c;
+                    float rr = length(hp - nrm * dot(hp, nrm)), R = 0.75 * sz, w = 0.008 * sz;
+                    L += au0.rgb * (exp(-pow((rr - R) / w, 2.0)) * 0.6 + 0.12 * exp(-abs(rr - R) / (w * 6.0)));
+                }
+            }
         }
     }
     [branch] if (ha0.w > 0.0 && (!fp || ha1.w > 0.5)) {
@@ -475,7 +622,7 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
             if (tp > 0.2 && tp < dist + 0.3) {
                 float3 hp = rd * tp - hc;
                 float R = (crown ? 0.31 : 0.28) * ha0.w, rr = length(hp - nrm * dot(hp, nrm));
-                float wdt = 0.025 * ha0.w;
+                float wdt = 0.032 * ha0.w;   // (2026-11-19: thicker - they read as a thread next to Purxiy)
                 float k = exp(-pow((rr - R) / wdt, 2.0));
                 float an = atan2(hp.z, hp.x);
                 // (in game 2026-11-19: only Seraph read as a design - the others were the same thin ring a touch dimmer.
@@ -491,8 +638,13 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                 else if (dz == 5) k *= step(0.24, frac(an * 0.15915 + 0.1)) * (0.75 + 0.25 * sin(t * 9.0 + an * 3.0));       // fallen: askew, a piece missing, guttering
                 // the soft glow dies out within a hand's width of the ring (it used to reach a block out across the
                 // halo's plane at full Glow: a faint see-through sheet over your head in third person)
-                float gl = (rr - R) / (wdt * 5.0);
-                L += ha0.rgb * (k * (crown ? 0.55 : 2.0) + ha1.x * (crown ? 0.08 : 0.3) * exp(-gl * gl));   // a crown's base is its rim, not a glowing ring
+                float gl = (rr - R) / (wdt * 6.0);
+                // shine: a white-hot line along the ring's middle and a glint of light running round it
+                float coreL = exp(-pow((rr - R) / (wdt * 0.32), 2.0)) * saturate(k * 1.5);
+                float glint = pow(0.5 + 0.5 * cos(an - t * 1.4), 48.0) * saturate(k * 2.0) + pow(0.5 + 0.5 * cos(an + 2.6 - t * 0.9), 64.0) * saturate(k * 2.0) * 0.6;
+                float3 hot = float3(1.0, 0.98, 0.94);
+                L += crown ? ha0.rgb * (k * 0.55 + ha1.x * 0.08 * exp(-gl * gl))     // a crown's base is its rim, not a glowing ring
+                           : ha0.rgb * (k * 2.0 + ha1.x * 0.45 * exp(-gl * gl)) + hot * (coreL * 1.4 + glint * 2.4);
             }
         }
         [branch] if (dz == 2) {   // crown: an upright band on the ring, rising to five points (the ray against its cylinder, near and far wall)
@@ -512,16 +664,17 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                     float  ph  = frac(a5 * 0.795775) * 2.0 - 1.0;          // -1..1 across one of the five
                     float  tri = saturate(1.0 - abs(ph) * 1.15);
                     float  pk  = tri * tri * (3.0 - 2.0 * tri);
-                    float  H  = ha0.w * (0.040 + 0.120 * pk);             // the band's height here
+                    float  H  = ha0.w * (0.060 + 0.150 * pk);             // the band's height here (taller: it read as a ribbon)
                     if (h3.y < -0.004 || h3.y > H + 0.02 * ha0.w) continue;
                     float  inB  = step(h3.y, H);
                     float  edge = exp(-pow((H - h3.y) / (0.008 * ha0.w), 2.0));          // the lit cut edge along the top
                     float  rimB = exp(-pow((h3.y - 0.006 * ha0.w) / (0.010 * ha0.w), 2.0)); // the rim along the bottom
-                    float  body = (0.30 + 0.20 * ha1.x) * lerp(1.0, 0.55, h3.y / max(H, 1e-3));   // metal: brighter at the base
-                    float2 tipP = float2(ph * 0.11 * ha0.w, h3.y - ha0.w * 0.168);
-                    float  gem  = exp(-dot(tipP, tipP) / (0.00018 * ha0.w * ha0.w)) * step(abs(ph), 0.35);
-                    L += ha0.rgb * (inB * body + 1.4 * edge * inB + 1.1 * rimB) * (w == 0 ? 1.0 : 0.45)
-                       + float3(1.0, 0.97, 0.92) * gem * 2.2;
+                    float  body = (0.75 + 0.25 * ha1.x) * lerp(1.0, 0.65, h3.y / max(H, 1e-3));    // metal: brighter at the base
+                    float  sweep = pow(saturate(1.0 - abs(frac(a5 * 0.159 - t * 0.12) - 0.5) * 8.0), 2.0);   // a shine travelling round the band
+                    float2 tipP = float2(ph * 0.11 * ha0.w, h3.y - ha0.w * 0.208);
+                    float  gem  = exp(-dot(tipP, tipP) / (0.00030 * ha0.w * ha0.w)) * step(abs(ph), 0.35);
+                    L += (ha0.rgb * (inB * body + 1.6 * edge * inB + 1.2 * rimB) + float3(1.0, 0.96, 0.88) * inB * sweep * 0.9) * (w == 0 ? 1.0 : 0.45)
+                       + float3(1.0, 0.97, 0.92) * gem * 3.0;
                 }
             }
         }
@@ -531,17 +684,30 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
 
 float lum3(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 float3 chroma(float3 c, float3 P, bool sky, float spareC) {
+    // (Fernando 2026-11-19: next to Purxiy it "pales". The colour now bleeds in like wet paint: a ragged, flowing edge
+    //  (no clean circles), a bright saturated rim where it is spreading, and fresh colour a little richer than life
+    //  before it settles; the waiting world is a cool, slightly deeper grey so the colour pops against it.)
     float k = max(1.0 - spareC, ch0.w);                            // living things keep their colour
+    float rim = 0.0;
     int n = min(int(ch1.w), 48);
-    float const R2 = (ch1.x + 2.5) * (ch1.x + 2.5);
+    float const R2 = (ch1.x + 3.0) * (ch1.x + 3.0);
+    float3 wq = P + c5.xyz;                                        // world position: the edge pattern stays put as you move
+    float  wob = 0.55 * sin(wq.x * 1.7 + sin(wq.z * 1.3) * 1.5) + 0.45 * sin(wq.z * 2.3 + sin(wq.x * 0.9 + wq.y) * 1.2);
     [loop] for (int i = 0; i < n && k < 0.999; ++i) {               // chP.w = the fade (CPU), 1 fresh .. 0 forgotten
         float3 d = P - chP[i].xyz;
         if (dot(d, d) > R2 || chP[i].w <= k) continue;               // too far, or cannot raise k
-        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0);
-        k = max(k, chP[i].w * smoothstep(ch1.x, ch1.x * 0.45, r));
+        float  r = length(float2(d.x, d.z)) + max(abs(d.y) - 2.5, 0.0) + wob * 0.45 * ch1.x * 0.3;
+        float  e = smoothstep(ch1.x, ch1.x * 0.45, r);
+        rim = max(rim, chP[i].w * exp(-pow((r - ch1.x * 0.78) / (0.16 * ch1.x + 0.15), 2.0)) * (1.0 - e * 0.6));
+        k = max(k, chP[i].w * e);
     }
-    float3 grey = lum3(c) * ch0.rgb / max(lum3(ch0.rgb), 0.05);
-    return lerp(grey, c, saturate(k));
+    float  lc   = lum3(c);
+    float3 grey = (lc * lc * 0.25 + lc * 0.75) * ch0.rgb / max(lum3(ch0.rgb), 0.05);   // a touch deeper than flat grey
+    float3 rich = lerp(lc.xxx, c, 1.25);                                               // fresh colour: a little richer
+    float3 col  = lerp(c, max(rich, 0.0), saturate(k) * 0.6);
+    float3 o    = lerp(grey, col, saturate(k));
+    float3 vivid = max(lerp(lc.xxx, c, 2.2), 0.0) * 1.15 + 0.02;                      // the spreading edge, saturated and lit
+    return lerp(o, vivid, saturate(rim) * 0.55);
 }
 float3 radiance(int2 p, float3 P, float zc) {
     // inside a player / mob / item box, where the depth behind jumps away: the silhouette
@@ -970,39 +1136,39 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
     float soft = saturate(cu0.w);
     float lumC = dot(L, float3(0.2126, 0.7152, 0.0722));
     // pastel: colours lifted toward a milky pink-lilac, contrast eased
-    float3 pastel = lerp(L, lumC * float3(1.0, 0.86, 0.95) + 0.10, 0.35 * cu1.z) * (0.92 + 0.08 * soft);
+    float3 pastel = lerp(L, lumC * float3(1.0, 0.84, 0.95) + 0.12, 0.42 * cu1.z) * (0.94 + 0.08 * soft);
     pastel = lerp(pastel, sqrt(max(pastel, 0.0)) * 0.95, 0.25 * soft);
     float3 o = lerp(L, pastel, cu1.z > 0.0 ? 1.0 : 0.0);
     // hearts drifting up in the air around you (a few per cell of a 3-block grid, depth-tested)
     float3 hl = 0;
-    [unroll] for (int k = 1; k <= 3; ++k) {
-        float R = float(k) * 3.0;
+    [unroll] for (int k = 1; k <= 4; ++k) {   // (2026-11-19: bigger, glossier, more of them - they were specks)
+        float R = float(k) * 2.5;
         float tp = R;
         if (tp > dist) break;
         float3 q = rd * tp + c5.xyz;
         float3 cid = floor(q / 3.0);
         float h = cyHash(cid + float(k));
-        if (h > cu1.x * 0.6) continue;
+        if (h > cu1.x * 0.85) continue;
         float life = frac(t * 0.12 + h);                                  // 0..1 as it rises; it fades in and out (no pop at the top)
         float3 ctr = (cid + 0.5) * 3.0 + float3(0, life * 1.6 - 0.8, 0);   // drifts inside its own cell
         float3 d = rd * dot(ctr - c5.xyz, rd) - (ctr - c5.xyz);
         float dz = dot(ctr - c5.xyz, rd);
         if (dz < 0.3 || dz > dist) continue;
-        float2 pl2 = float2(dot(d, normalize(cross(rd, float3(0, 1, 0)))), d.y) / (0.12 + 0.05 * h);
+        float2 pl2 = float2(dot(d, normalize(cross(rd, float3(0, 1, 0)))), d.y) / (0.20 + 0.08 * h);
         pl2.y = pl2.y + 0.25;                                               // (was flipped: the hearts hung upside down)
         float hx = abs(pl2.x);
         float heart = pl2.y - sqrt(max(hx, 0.0)) * 0.55;                  // a classic heart curve
         float sd = length(float2(hx, heart)) - 0.75;
         float fill = 1.0 - smoothstep(-0.05, 0.08, sd);
-        float halo = exp(-max(sd, 0.0) * 5.0) * (1.0 - fill) * 0.45;      // a soft glow around it
+        float halo = exp(-max(sd, 0.0) * 3.5) * (1.0 - fill) * 0.7;       // a soft glow around it
         float2 hp = pl2 - float2(-0.32, 0.62);
-        float hi = exp(-dot(hp, hp) * 9.0) * fill;                          // a candy highlight, top-left lobe
+        float hi = exp(-dot(hp, hp) * 9.0) * fill + exp(-dot(hp - float2(0.12, -0.1), hp - float2(0.12, -0.1)) * 60.0) * fill * 1.5;   // candy gloss + a hard glint
         float edge = smoothstep(-0.32, 0.0, sd) * fill;                     // a deeper tone toward the outline
-        float3 hc = lerp(cu0.rgb * (1.0 - 0.35 * edge), float3(1.0, 0.96, 0.98), 0.45 * hi);
-        float win = smoothstep(0.6, 0.35, length(d));                      // the glow ends well inside the cell: no box
+        float3 hc = lerp(cu0.rgb * (1.15 - 0.4 * edge), float3(1.0, 0.97, 0.99), saturate(0.4 * hi));
+        float win = smoothstep(0.85, 0.55, length(d));                      // the glow ends well inside the cell: no box
         win *= smoothstep(0.0, 0.18, life) * smoothstep(1.0, 0.72, life);  // born and gone softly
         win *= smoothstep(1.35, 0.7, abs(dz - R));                         // as you move it fades instead of blinking out
-        hl += (hc * fill + cu0.rgb * halo) * win * (0.7 + 0.3 * sin(t * 2.0 + h * 20.0)) * 0.9;
+        hl += (hc * fill * 1.0 + cu0.rgb * halo * 0.8) * win * (0.8 + 0.2 * sin(t * 2.0 + h * 20.0));
     }
     // sparkles on the ground / scenery near you
     if (!sky && cu1.y > 0.0 && dist < 24.0) {
@@ -1011,7 +1177,7 @@ float3 cuteWorld(float3 L, float3 P, float3 rd, float dist, bool sky, float t) {
         float hs = cyHash(ci);
         float tw = pow(saturate(sin(t * 3.0 + hs * 40.0)), 16.0);
         float3 fq = frac(wp) - 0.5;
-        o += float3(1.0, 0.95, 1.0) * step(0.985 - 0.02 * cu1.y, hs) * tw * exp(-dot(fq, fq) * 30.0) * 1.5 * (1.0 - dist / 24.0);
+        o += float3(1.0, 0.95, 1.0) * step(0.975 - 0.03 * cu1.y, hs) * tw * exp(-dot(fq, fq) * 22.0) * 2.2 * (1.0 - dist / 24.0);
     }
     return o + hl;
 }
