@@ -262,19 +262,62 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
             if (fx1.z > 0.0 && dv.y < 0.3 && dv.y > -2.6 && upN > 0.6) {       // splash: ink on the ground under the hit, fading slowly
                 float u = age / max(fx1.w, 0.1);
                 if (u < 1.0) {
+                    // GOLD INK, round 2 (video 3, 147.05-147.52 s top-down): a chain of 3-4 merged glossy puddles, cream
+                    // at the heart, an orange-gold rim, a spiky edge, satellite droplets and gold flakes strewn ~3 blocks;
+                    // full size at once, a flash of heat at the start, then it slowly dims away
                     float2 q = dv.xz;
-                    float  r = length(q), an = atan2(q.y, q.x);
-                    float  rad = 0.55 * fx1.z * (0.72 + 0.20 * sin(an * 3.0 + seed * 6.3) + 0.12 * sin(an * 7.0 + seed * 11.0)) * (0.55 + 0.45 * smoothstep(0.0, 0.08, u));
-                    float  blob = smoothstep(rad, rad * 0.82, r);
-                    float  drops = 0.0;
-                    [unroll] for (int d = 0; d < 5; ++d) {           // droplets thrown out round it
-                        float a2 = seed * 17.0 + float(d) * 1.9, dr = rad * (1.25 + 0.5 * frac(seed * 7.3 + float(d) * 0.37));
-                        float2 dp = float2(cos(a2), sin(a2)) * dr;
-                        drops = max(drops, smoothstep(0.075 * fx1.z, 0.045 * fx1.z, length(q - dp)));
+                    float  Sz = fx1.z;
+                    float  sa = seed * 37.0;
+                    float2 ax2 = float2(cos(sa), sin(sa));
+                    float  dm = 9.0;
+                    [unroll] for (int bI = 0; bI < 4; ++bI) {                       // the puddles: a smooth union of discs
+                        float fb = float(bI);
+                        float2 pc = ax2 * (fb - 1.2) * 0.62 * Sz + float2(-ax2.y, ax2.x) * 0.18 * Sz * sin(seed * 9.0 + fb * 2.3);
+                        float  rr = (0.46 - 0.06 * abs(fb - 1.2)) * Sz * (0.85 + 0.3 * frac(seed * 5.1 + fb * 0.37));
+                        float  db = length(q - pc) - rr;
+                        float  hh = saturate(0.5 + 0.5 * (dm - db) / 0.12);
+                        dm = lerp(dm, db, hh) - 0.12 * hh * (1.0 - hh);
                     }
-                    float ink = max(blob, drops) * smoothstep(1.0, 0.6, u) * smoothstep(0.0, 1.1, 2.6 + dv.y) * smoothstep(0.6, 0.8, upN);
-                    float3 cc = lerp(fx2.rgb, fx3.rgb, 0.5 + 0.5 * sin(an * 2.0 + seed * 5.0));
-                    L += cc * ink * (0.25 + 0.9 * fx2.w * (1.0 - u * 0.7)) * (1.0 + 2.0 * exp(-age * 6.0));
+                    float an = atan2(q.y, q.x);
+                    dm += 0.035 * Sz * (sin(an * 13.0 + seed * 20.0) + 0.6 * sin(an * 29.0 + seed * 7.0));   // spiky edge
+                    float blob = 1.0 - smoothstep(-0.01, 0.015, dm);
+                    float drops = 0.0;
+                    [unroll] for (int d = 0; d < 12; ++d) {                         // satellite droplets
+                        float a2 = seed * 17.0 + float(d) * 2.4, dr = Sz * (1.1 + 1.2 * frac(seed * 7.3 + float(d) * 0.37));
+                        float2 dp = float2(cos(a2), sin(a2)) * dr;
+                        float  rs = Sz * (0.05 + 0.06 * frac(seed * 3.1 + float(d) * 0.71));
+                        drops = max(drops, 1.0 - smoothstep(rs * 0.8, rs, length(q - dp)));
+                    }
+                    // flakes: tiny gold chips strewn around (fixed to the ground, a hash per small cell)
+                    float2 fq = (c.xz + c5.xz + q) * 7.0;
+                    float2 fi = floor(fq), ff = frac(fq) - 0.5;
+                    float  fh = frac(sin(dot(fi + seed, float2(127.1, 311.7))) * 43758.5453);
+                    float  rq = length(q) / (3.0 * Sz);
+                    float  flake = step(0.86 + 0.1 * rq, fh) * (1.0 - smoothstep(0.10, 0.22, length(ff))) * smoothstep(1.0, 0.3, rq);
+                    float ground = smoothstep(0.0, 1.1, 2.6 + dv.y) * smoothstep(0.6, 0.8, upN);
+                    float ink = max(blob, drops);
+                    float inner = saturate(-dm / (0.16 * Sz));                        // 0 at the rim .. 1 deep inside
+                    float3 cream = lerp(fx2.rgb, float3(1.0, 0.97, 0.86), 0.65), rimC = lerp(fx3.rgb, fx2.rgb, 0.3);
+                    float3 cc = lerp(rimC * 1.3, cream, smoothstep(0.15, 0.75, inner));
+                    float  gloss = exp(-pow((dot(q, normalize(float2(1.0, 0.6))) - 0.1 * Sz) / (0.10 * Sz), 2.0)) * inner * 0.35;   // a glossy sheen
+                    float  life = smoothstep(1.0, 0.55, u);
+                    float  heat = 1.0 + 0.5 * exp(-age * 7.0);
+                    L += (cc * ink * (0.32 + 0.28 * fx2.w) * (0.8 + 1.0 * inner) * heat + float3(1.0, 1.0, 0.95) * gloss * blob * heat
+                          + lerp(fx2.rgb, fx3.rgb, 0.5) * flake * 1.2 + rimC * exp(-max(dm, 0.0) / (0.10 * Sz)) * (1.0 - ink) * 0.35 * heat) * life * ground;
+                }
+            }
+            if (fx1.z > 0.0 && age < 0.6) {                                   // gold flakes flying out of the blow
+                float dist0 = length(P);
+                [unroll] for (int k = 0; k < 14; ++k) {
+                    float fk = float(k), h1 = frac(seed * 13.7 + fk * 0.618), h2 = frac(seed * 7.1 + fk * 0.371);
+                    float a = h1 * 6.2831853, v = 2.5 + 3.0 * h2;
+                    float3 v0 = float3(cos(a) * v, 2.0 + 3.0 * frac(h1 * 9.3), sin(a) * v);
+                    float3 fp = c + v0 * age - float3(0, 9.0 * age * age, 0);
+                    float tz = dot(fp, rd);
+                    if (tz < 0.2 || tz > dist0 + 0.05) continue;
+                    float dd = length(rd * tz - fp), sz = 0.03 * fx1.z;
+                    float tw = 0.6 + 0.4 * sin(age * 50.0 + fk * 3.0);
+                    L += lerp(fx2.rgb, float3(1.0, 0.95, 0.8), 0.4) * (exp(-pow(dd / sz, 2.0)) * 1.8 + exp(-dd / (sz * 3.0)) * 0.3) * tw * (1.0 - age / 0.6);
                 }
             }
             // on the one you hit (Fernando 2026-11-19: "hit the player too, just look better"): no ink smeared on them -
@@ -300,30 +343,65 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                     L += float3(1.0, 0.85, 1.0) * wash * 0.9 * (0.5 + fx2.w) * (kind == 3 ? 1.3 : 1.0);
                 }
             }
-            if (fx3.w > 0.0) {                                   // ripple: a flash, and a wave of light over what is near
-                // (Fernando 2026-11-19: "ripple doesn't look that good, not shiny". Now a prismatic wave: the ring splits
-                //  into its colour and white like light through glass, a second fainter echo follows it, the ground
-                //  ring gets the same, and a burst of glints rides the front.)
+            if (fx3.w > 0.0) {
+                // RIPPLE, round 2 (Fernando: "should look more like the reference" - video 3, 142.9-144.9 s @30 fps):
+                //  0-60 ms   a white-hot impact ORB at the blow with a fresnel rim and a gold bloom
+                //  30-250 ms it opens into a CRESCENT SHELL - the half of a sphere facing away from you, a thick bright
+                //            leading rim, a translucent gold inside - growing to ~1.6 blocks and sweeping over the body
+                //  to 450 ms the body glows in the colour, a shimmer running over it, then clears
                 float u = age / max(fx4.w, 0.05);
-                if (u < 1.0) {
-                    float d3 = length(dv), ease = 1.0 - pow(1.0 - u, 2.0), fade = pow(1.0 - u, 1.3);
-                    float R = 2.6 * ease, W = 0.12 + 0.06 * u;
-                    float3 cA = fx4.rgb, cW = float3(1.0, 0.98, 0.96);
-                    float3 cB = float3(fx4.b, fx4.r, fx4.g) * 0.8 + 0.2;     // a shifted hue for the outer fringe
-                    float3 ring = cA * exp(-pow((d3 - R) / W, 2.0)) + cW * 1.3 * exp(-pow((d3 - R + 0.04) / (W * 0.35), 2.0))
-                                + cB * 0.7 * exp(-pow((d3 - R - W * 1.2) / (W * 0.7), 2.0))
-                                + cA * 0.45 * exp(-pow((d3 - R * 0.62) / (W * 0.8), 2.0));   // the echo
-                    float3 flash = (cW * 0.9 + cA * 0.7) * exp(-d3 * 3.4) * exp(-age * 14.0);   // a quick pop, not a white-out
-                    float3 Lr = ring * fade + flash;
-                    if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4) {   // the rings rolling over the ground
-                        float r = length(dv.xz), R2 = 3.2 * (1.0 - pow(1.0 - u, 2.5)), an = atan2(dv.z, dv.x);
-                        float gl = pow(0.5 + 0.5 * cos(an * 9.0 + seed * 30.0 + u * 4.0), 24.0);   // glints on the front
-                        Lr += (cA * exp(-pow((r - R2) / 0.09, 2.0)) + cW * 0.9 * exp(-pow((r - R2 + 0.02) / 0.03, 2.0))
-                               + cA * 0.4 * exp(-pow((r - R2 * 0.6) / 0.07, 2.0)) + cW * gl * 2.0 * exp(-pow((r - R2) / 0.12, 2.0))) * fade;
+                float3 cA = fx4.rgb, cW = float3(1.0, 0.98, 0.94);
+                float3 cIn = lerp(cA, cW, 0.45);
+                float3 away = c - pl.xyz; away.y = 0.0; away = length(away) > 1e-3 ? normalize(away) : rd;
+                float3 Lr = 0;
+                float  dist0 = length(P);
+                // the orb
+                if (age < 0.12) {
+                    float ro = 0.17 * (1.0 + age * 3.0);
+                    float b0 = dot(c, rd), dd = length(rd * b0 - c);
+                    if (b0 - ro < dist0 + 0.05) {
+                        float fr = dd / ro;
+                        float body = saturate(1.0 - fr * fr) , rim = exp(-pow((fr - 0.92) / 0.10, 2.0));
+                        float k = (1.0 - smoothstep(0.06, 0.12, age));
+                        Lr += (cW * (body * 2.2 + rim * 2.6) + cA * exp(-fr * 1.6) * 1.2) * k * step(fr, 3.0);
                     }
-                    if (kind == 3 && fx5.y > 0.5) Lr *= 1.8;          // a critical hit lands harder
-                    L += Lr * fx3.w * 1.4;
                 }
+                // the crescent shell
+                float us = saturate((age - 0.03) / 0.22);
+                if (age > 0.03 && us < 1.0) {
+                    float R = 0.20 + 1.45 * (1.0 - pow(1.0 - us, 2.4));
+                    float b0 = dot(c, rd), disc = b0 * b0 - dot(c, c) + R * R;
+                    if (disc > 0.0) {
+                        float sq = sqrt(disc);
+                        [unroll] for (int sd = 0; sd < 2; ++sd) {
+                            float tt = sd == 0 ? b0 - sq : b0 + sq;
+                            if (tt < 0.2 || tt > dist0 + 0.05) continue;
+                            float3 n = (rd * tt - c) / R;
+                            float fwdK = dot(n, away);
+                            if (fwdK < -0.05) continue;                                   // only the half facing away from you
+                            float fres = pow(1.0 - abs(dot(n, rd)), 2.5);
+                            float lip  = exp(-pow(fwdK / 0.10, 2.0));                    // the crescent's edge
+                            float lead = smoothstep(0.2, 1.0, fwdK);                       // its leading face
+                            float fade = pow(1.0 - us, 1.4);
+                            Lr += (cW * (fres * 2.0 + lip * 1.6) + cIn * (0.55 + 0.7 * lead) + cA * (fres * 2.2 + 0.4)) * fade * (sd == 0 ? 1.0 : 0.45);
+                        }
+                    }
+                }
+                // the body glows (the box round the blow), a shimmer running over it
+                if (upN < 0.6) {
+                    float2 bxz = dv.xz;
+                    if (length(bxz) < 0.55 && dv.y > -1.5 && dv.y < 0.8) {
+                        float g = smoothstep(0.03, 0.10, age) * (1.0 - smoothstep(0.18, 0.45, age));
+                        float sh = 0.75 + 0.25 * sin(dv.y * 18.0 - age * 40.0);
+                        Lr += lerp(cA, cW, 0.35) * g * sh * 0.9;
+                    }
+                }
+                if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4 && upN > 0.6 && u < 1.0) {   // a ring rolling over the ground
+                    float r = length(dv.xz), R2 = 2.4 * (1.0 - pow(1.0 - u, 2.5));
+                    Lr += (cA * exp(-pow((r - R2) / 0.08, 2.0)) + cW * 0.8 * exp(-pow((r - R2) / 0.025, 2.0))) * pow(1.0 - u, 1.5);
+                }
+                if (kind == 3 && fx5.y > 0.5) Lr *= 1.5;
+                L += Lr * fx3.w * 1.2;
             }
         } else if ((kind == 5 || (kind == 6 && pa1.y > 0.5)) && pa0.w > 0.0) {   // a block placed / broken: light on its faces
             float u = age / pa0.w;
