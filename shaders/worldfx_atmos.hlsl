@@ -1238,30 +1238,62 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
             float wcol = abs(fc - 0.5) * 2.0;                       // 0 in the column's middle .. 1 at its edge
             c += acc * step(0.72, h) * (1.0 - smoothstep(0.10, 0.25, wcol)) * pow(y, 10.0) * 1.3 * saturate(rd.y * 3.0 + 0.3);
         }
+        // the grid dome (Purxiy reference: big glowing lines of latitude and longitude over the sky)
+        float2 sg = float2(atan2(rd.z, rd.x), asin(clamp(rd.y, -1.0, 1.0))) * (12.0 / 3.14159);
+        float2 sd = abs(frac(sg) - 0.5);
+        float2 saa2 = max(fwidth(sg), 1e-4);
+        float dome = max(1.0 - smoothstep(0.5, 1.6, (0.5 - sd.x) / saa2.x), 1.0 - smoothstep(0.5, 1.6, (0.5 - sd.y) / saa2.y));
+        float domeG = exp(-min(0.5 - sd.x, 0.5 - sd.y) * 9.0) * 0.25;
+        c += (acc * 0.9 + 0.15) * (dome * 0.8 + domeG) * saturate(rd.y * 4.0 + 0.2) * cy1.x;
         float3 ghost = acc * lumW * 0.55 + lumW * 0.06;          // what shows through: the clouds as faint accent ghosts, never their own hue
         c += ghost * 0.35;
         float ageS = abs(cy1.w) - 1.0;
         return lerp(L, lerp(ghost, c, reality), saturate((ageS - 0.35) * 5.0));   // the sky turns once the front has passed
     }
-    float3 n = cross(posAt(px + int2(1, 0)) - P, posAt(px + int2(0, 1)) - P);
+    // (audit vs Purxiy: 1 px depth normals were noisy - blocks crawled with dots. Centred 3 px differences.)
+    float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
     n = normalize(n + 1e-6); if (dot(n, rd) > 0.0) n = -n;
     float3 an = abs(n);
     float3 wp = c5.xyz + P + n * 0.002;
     float2 uv = an.x > an.y && an.x > an.z ? wp.zy : (an.y > an.z ? wp.xz : wp.xy);
     float2 f = frac(uv), cell = floor(uv);
-    float2 aa = max(fwidth(uv), 1e-4);
-    // block edges
+    float2 aa = clamp(fwidth(uv), 1e-4, 0.2);
+    // block edges: a crisp line with a soft glow
     float2 e2 = min(f, 1.0 - f) / aa;
     float edge = 1.0 - smoothstep(0.6, 1.8, min(e2.x, e2.y));
-    // circuit traces: each face gets a few lines at quarter steps and a node where they end
+    float far = smoothstep(1.4, 0.25, max(aa.x, aa.y) * 4.0);                   // 1 near .. 0 where a block is a few px
+    float edgeGlow = exp(-min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * 22.0) * 0.18 * far;
+    edge *= 0.45 + 0.55 * far;
+    // circuit board (Purxiy reference: a dense PCB maze on every face - traces that run, turn and end in hollow ring pads).
+    // Each face is a 4x4 grid of tiles; each tile carries a straight run, a turn, a pad ending or nothing.
     float3 fid = float3(cell, floor(dot(wp, an)));
-    float h1 = cyHash(fid), h2 = cyHash(fid + 7.31);
-    float lane = (floor(h1 * 3.0) + 1.0) * 0.25;
-    float2 q = f - lane;
-    float traceA = (1.0 - smoothstep(0.6, 1.6, abs(q.y) / aa.y)) * step(h2, 0.65) * step(f.x, 0.25 + 0.6 * h2);
-    float traceB = (1.0 - smoothstep(0.6, 1.6, abs(f.x - (1.0 - lane)) / aa.x)) * step(0.35, h2) * step(1.0 - 0.7 * h1, f.y);
-    float node = 1.0 - smoothstep(0.035, 0.06, length(f - float2(0.25 + 0.6 * h2, lane)));
-    float circuits = saturate(traceA + traceB + node * step(h2, 0.65)) * cy1.y;
+    float h1 = cyHash(fid);
+    float2 g = f * 4.0, sc = floor(g), sf = frac(g) - 0.5;
+    float  th = cyHash(fid + float3(sc, 3.7));
+    float  rot = floor(cyHash(fid + float3(sc, 9.1)) * 4.0);
+    float2 r2 = rot < 1.0 ? sf : rot < 2.0 ? float2(-sf.y, sf.x) : rot < 3.0 ? -sf : float2(sf.y, -sf.x);
+    float  w  = 0.07, saa = max(aa.x, aa.y) * 4.0;
+    float  dT = 9.0;
+    if      (th < 0.30) dT = abs(r2.y);                                                    // straight run
+    else if (th < 0.52) dT = min(r2.x <= 0.0 ? abs(r2.y) : 9.0, r2.y >= 0.0 ? abs(r2.x) : 9.0);   // turn
+    else if (th < 0.70) dT = min(r2.x <= 0.0 ? abs(r2.y) : 9.0, abs(length(r2) - 0.20));   // ends in a ring pad
+    else if (th < 0.78) dT = abs(length(r2) - 0.17);                                       // a lone via
+    float circuits = (1.0 - smoothstep(w * 0.5, w * 0.5 + saa, dT)) * cy1.y;
+    circuits *= smoothstep(1.2, 0.35, saa);                                                 // far away the maze would shimmer: fade it
+    // light packets: bright comets with short tails running along the block edges of the ground
+    float packets = 0.0;
+    [branch] if (an.y > 0.7 && cy1.x > 0.0) {
+        [unroll] for (int ax = 0; ax < 2; ++ax) {
+            float lineC = ax == 0 ? wp.z : wp.x, run = ax == 0 ? wp.x : wp.z;
+            float ln = floor(lineC + 0.5);
+            float hl = frac(sin(ln * 91.7 + float(ax) * 13.1) * 43758.5453);
+            float dl = abs(lineC - ln);
+            float sp = (6.0 + 8.0 * hl) * (hl > 0.5 ? 1.0 : -1.0);
+            float ph = frac((run - t * sp) / 40.0 + hl) * 40.0;                         // one packet per 40 blocks of line
+            float tail = ph < 6.0 ? exp(-ph * 0.6) : 0.0;
+            packets += step(0.45, hl) * tail * exp(-dl * 40.0) * (1.0 + 3.0 * exp(-ph * 6.0));
+        }
+    }
     // the scan: a ring rolling out from you every few seconds
     float per = max(cy1.z, 1.0);
     float rr = length(P.xz);
@@ -1269,9 +1301,17 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float scan = exp(-pow((rr - front) / 1.2, 2.0)) * (1.0 - front / 60.0);
     float pulse = 0.55 + 0.45 * sin(t * 2.0 + h1 * 6.28);
     float fog = exp(-dist * 0.012);
-    float3 base = acc * (0.05 + 0.25 * lumW) + lumW * 0.08;               // the world, dark and tinted
-    float3 lines = acc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.4 + circuits * pulse * 0.9 * cy1.x + scan * 0.35);
+    float3 base = acc * (0.012 + 0.06 * lumW) + lumW * 0.025;            // the world, near black (Purxiy: #1a1020-ish)
+    float3 lines = acc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.4 + edgeGlow * cy1.x + circuits * pulse * 0.75 * cy1.x + scan * 0.35)
+                 + (float3(1.0, 1.0, 1.0) * 0.6 + acc) * packets * cy1.x;
     float3 dig = base + lines * fog + acc * scan * 0.12;
+    // you become a hologram (Purxiy reference: the player goes dark with bright lavender scanlines drifting up)
+    float3 rp = P - pl.xyz;
+    [branch] if (length(rp.xz) < 0.62 && rp.y > (an.y > 0.7 ? 0.12 : -0.05) && rp.y < 2.0) {   // (not the ground under your feet)
+        float sl = frac(rp.y * 9.0 - t * 0.6);
+        float stripe = smoothstep(0.0, 0.12, sl) * smoothstep(0.42, 0.25, sl);
+        dig = L * 0.18 + acc * 0.05 + (acc * 0.6 + 0.35) * stripe * (0.6 + 0.4 * lumW);
+    }
     // (Purxiy reference, video 3: switching on, a bright wavefront dome sweeps out from you and the world turns digital
     //  behind it - ~250 ms to the horizon, a white-hot front with the accent glowing behind it)
     float age = abs(cy1.w) - 1.0;
