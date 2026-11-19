@@ -1066,6 +1066,7 @@ void drawWindow(UiFrame& f, float t) {
     float full = 0;
     for (int i = 0; i < kTabs; ++i) full += 13 + 15 + 7 + g.textW(kTabLabel[i], 12, true) + 13 + 8;
     bool const compact = tx + full > sx - 8;
+    float selX = -1, selW = 0;
     for (int i = 0; i < kTabs; ++i) {
         bool on = tabsLive && gTab == i;
         bool const label = !compact || on;
@@ -1080,8 +1081,23 @@ void drawWindow(UiFrame& f, float t) {
             g.glass(tx + 18 - lw / 2, ty + 36, lw, 22, 11, kDark, 0.55f, 6, 3, 0.8f, 0.7f, 0.15f, a);
             g.text(kTabLabel[i], tx + 18, ty + 47, 10.5f, rgba(kWhite, 1), a, true, 1);
         }
+        if (on) selX = tx, selW = tw;
         f.hits.push_back({tx, ty, tw, 30, [i](bool) { if (gTab != i) uisound::play(6); gTab = i; gSearch.clear(); showPage(Page::Mods); }});
         tx += tw + 8;
+    }
+    {   // [Hybrid] a glowing accent bar under the open tab that glides to the next one (Purxiy's segmented pill, ours)
+        static float px = -1, pw = 0; static int64_t lastMs = 0;
+        int64_t const nowT = nowMs();
+        float const dt = lastMs ? std::min(float(nowT - lastMs) / 1000.0f, 0.1f) : 1.0f; lastMs = nowT;
+        if (selX >= 0) {
+            bool const still = lookOn("reduce_motion", false);
+            if (px < 0 || still) px = selX, pw = selW;
+            float const k = 1.0f - std::exp(-dt / 0.06f);
+            px += (selX - px) * k; pw += (selW - pw) * k;
+            float const bw = std::max(pw - 26, 10.0f), bx2 = px + (pw - bw) / 2;
+            g.solid(bx2 - 6, ty + 30, bw + 12, 7, 3.5f, rgba(kAccent, 1), a * 0.30f, 6, true);   // its glow
+            g.solid(bx2, ty + 32, bw, 3, 1.5f, rgba(kAccent, 1), a, 0, true);
+        } else px = -1;
     }
     g.glass(sx, ty, searchW, 30, 15, kDark, 0.40f, 9, 5, 0.85f, 0.6f, 0.1f, a);
     g.icon("search", sx + 16, ty + 15, 14, rgba(kWhite, 0.62f), a);
