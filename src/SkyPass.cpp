@@ -91,7 +91,13 @@ std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one 
 std::atomic<bool> gSkySinceClear{false}, gFxSinceClear{false};
 std::atomic_bool gActive{false};  // BF publishes an active sky (updated every Present)
 std::atomic_bool gPictureOn{false}; // ... and it is "My picture"
-std::atomic<bool> gBlurOnly{false};  // no World FX sky, but motion blur is asked for: the pass runs for the blur alone (any sky: vanilla, LyricsForge)
+std::atomic<bool> gBlurOnly{false};
+// [Purxiy] Gold Ink puddles (Fernando 2026-11-19: "every hit adds a puddle that stays a while, different colours,
+// stacking where you keep hitting - a trail of ink after a fight"). RF keeps its own list of puddles (the event ring
+// is shared with jumps and swings and forgets them in a second or two): one per hit, up to 24, each with its seed.
+struct InkPuddle { double x = 0, y = 0, z = 0; int64_t at = 0; float seed = 0; };
+static InkPuddle gInk[24]; static int gInkNext = 0; static int64_t gInkSeen[48]{}; static int gInkSeenN = 0;
+static bool inkAlive(int64_t nowMs, float life) { for (auto const& p : gInk) if (p.at > 0 && float(nowMs - p.at) < life * 1000.f) return true; return false; }  // no World FX sky, but motion blur is asked for: the pass runs for the blur alone (any sky: vanilla, LyricsForge)
 
 // Haze + Mist (shaders/worldfx_atmos.hlsl): config/Atmos.txt, written by the Bedrock Forge client's Haze / Mist modules,
 // read again about once a second. Any sky: with no World FX look the pass runs for them alone (like the motion blur).
@@ -3002,6 +3008,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             float const maxAge = std::max({atm.jcDur, atm.hsDur, atm.rpDur, atm.paDur, 0.9f});
             for (auto const& e : ev->e) if (e.atMs > 0 && e.kind != 0 && float(nowMs - e.atMs) < maxAge * 1000.0f) { atmosNeed = true; break; }
+            if (atm.hs && inkAlive(nowMs, std::max(atm.hsDur, 8.0f))) atmosNeed = true;   // puddles still on the ground
             // Block Outline: only while you aim at a block (and a moment after, while it fades)
             if (atm.bo && ev->version >= 3 && ev->size >= offsetof(rf::postfx::BfFxEventsV1, pvx) && nowMs - ev->bAtMs < 600) {
                 static int64_t lastBlockMs = 0;
@@ -3192,7 +3199,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         struct ActCb { float info[4]; float pos[24][4]; float dim[24][4]; float amb[4][4]; float evP[16][4]; float evK[16][4]; float fx[7][4];
                        float pl[4]; float trP[32][4]; float cs[6][4];
                        float chP[48][4]; float ch[2][4]; float rad[2][4]; float wx[2][4]; float bk[2][4]; float pa[2][4]; float trB[4]; float wxL[4];
-                       float bo[3][4]; float wg[2][4]; float cp[3][4]; float cy[2][4]; float cu[2][4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
+                       float bo[3][4]; float wg[2][4]; float cp[3][4]; float cy[2][4]; float cu[2][4]; float ink[24][4]; float inkInfo[4]; } acb{};   // amb / ev / fx / cosmetics / post: worldfx_atmos.hlsl
         acb.pl[3] = -100.f;
         acb.ch[0][3] = -1.f;
         if (atm.post()) {
@@ -3343,6 +3350,33 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 }
             }
             acb.fx[6][3] = float(n);
+            if (atm.hs) {   // new hits become puddles; live puddles go to the shader
+                int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                if (auto const* ev = rf::postfx::fxEvents()) {
+                    for (uint32_t i = 0; i < 32; ++i) {
+                        auto const& e = ev->e[i];
+                        if (e.atMs <= 0 || (e.kind != 2 && e.kind != 3) || nowMs - e.atMs > 1500) continue;
+                        bool seen = false;
+                        for (int k = 0; k < 48; ++k) if (gInkSeen[k] == e.atMs) { seen = true; break; }
+                        if (seen) continue;
+                        gInkSeen[gInkSeenN++ % 48] = e.atMs;
+                        InkPuddle& p = gInk[gInkNext++ % 24];
+                        p.x = e.x; p.y = e.y; p.z = e.z; p.at = e.atMs;
+                        p.seed = float((uint64_t(e.atMs) * 2654435761ull) % 1000ull) / 1000.0f;
+                    }
+                }
+                float const life = std::max(atm.hsDur, 8.0f);
+                int m = 0;
+                for (auto const& p : gInk) {
+                    if (p.at <= 0) continue;
+                    float const age = float(nowMs - p.at) / 1000.0f;
+                    if (age < 0.f || age > life) continue;
+                    acb.ink[m][0] = float(p.x - snap.pos[0]); acb.ink[m][1] = float(p.y - snap.pos[1]); acb.ink[m][2] = float(p.z - snap.pos[2]);
+                    acb.ink[m][3] = age + std::floor(p.seed * 1000.f) * 100.f;   // age + seed packed (age < 100 s)
+                    ++m;
+                }
+                acb.inkInfo[0] = float(m); acb.inkInfo[1] = life;
+            }
             if (atm.pa) {
                 for (int k = 0; k < 3; ++k) acb.pa[0][k] = lin(atm.paC[k]);
                 acb.pa[0][3] = std::max(atm.paDur, 0.05f); acb.pa[1][0] = atm.paGlow; acb.pa[1][1] = atm.paBreak ? 1.f : 0.f;

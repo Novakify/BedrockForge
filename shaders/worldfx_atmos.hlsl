@@ -88,6 +88,8 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 cy1;      // x = glow, y = circuits, z = scan interval (s), w = sign: data sky on / off, |w| - 1 = seconds since Cyberspace came on
     float4 cu0;      // Cute World: rgb blush / heart colour (linear), w = softness (-1 = off)
     float4 cu1;      // x = hearts amount, y = sparkles, z = pastel strength, w = 1: on
+    float4 ink[24];  // Gold Ink puddles: xyz the hit (camera-relative), w = age + seed * 100000 (seed 0..999)
+    float4 inkInfo;  // x = how many, y = how long they stay (s)
 };
 ByteAddressBuffer gScene : register(t0);
 ByteAddressBuffer gDepth : register(t1);
@@ -232,6 +234,88 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
 
 // Jump Circles, Hit Splash, Ripple, Shockwave: light painted onto whatever surface is there (the pixel's own world
 // point from the depth buffer), so rings follow steps and slopes instead of floating on a flat disc.
+// Gold Ink puddles (round 3, Fernando: "every hit leaves its own puddle, they stack and stay, different colours, very
+// vibrant, glowing neon"). One per hit from RF's own list; each picks a neon colour from its seed (the module's two
+// colours are two of them), lands a little off the hit point so repeated hits spread out, and glows - a hot core, a
+// bright rim, a halo on the ground round it - fading only at the very end of its life.
+float3 inkNeon(float s) {
+    int i = int(frac(sin(s * 91.7 + 3.1) * 43758.5453) * 7.0);
+    return i == 0 ? fx2.rgb : i == 1 ? fx3.rgb : i == 2 ? float3(1.0, 0.10, 0.62) : i == 3 ? float3(0.05, 0.85, 1.0)
+         : i == 4 ? float3(0.45, 1.0, 0.10) : i == 5 ? float3(0.62, 0.20, 1.0) : float3(1.0, 0.45, 0.02);
+}
+float3 inkPuddles(float3 P, float upN, float t) {
+    int n = min(int(inkInfo.x + 0.5), 24);
+    if (n <= 0 || fx1.z <= 0.0 || upN < 0.6) return 0;
+    float3 L = 0;
+    float life = max(inkInfo.y, 1.0);
+    [loop] for (int i = 0; i < n; ++i) {
+        float age = frac(ink[i].w / 100.0) * 100.0, seed = floor(ink[i].w / 100.0) / 1000.0;
+        float3 c = ink[i].xyz;
+        float3 dv = P - c;
+        if (dv.y > 0.3 || dv.y < -2.6) continue;
+        float Sz = fx1.z * (0.75 + 0.5 * frac(seed * 3.7));
+        float sa = seed * 37.0;
+        float2 off = float2(cos(seed * 91.0), sin(seed * 91.0)) * (0.25 + 0.6 * frac(seed * 13.0)) * fx1.z;   // spread
+        float2 q = dv.xz - off;
+        if (dot(q, q) > 9.0 * Sz * Sz) continue;
+        float2 ax2 = float2(cos(sa), sin(sa));
+        float dm = 9.0;
+        [unroll] for (int bI = 0; bI < 3; ++bI) {
+            float fb = float(bI);
+            float2 pc = ax2 * (fb - 1.0) * 0.55 * Sz + float2(-ax2.y, ax2.x) * 0.16 * Sz * sin(seed * 9.0 + fb * 2.3);
+            float  rr = (0.40 - 0.06 * abs(fb - 1.0)) * Sz * (0.8 + 0.4 * frac(seed * 5.1 + fb * 0.37));
+            float  db = length(q - pc) - rr;
+            float  hh = saturate(0.5 + 0.5 * (dm - db) / 0.12);
+            dm = lerp(dm, db, hh) - 0.12 * hh * (1.0 - hh);
+        }
+        float an = atan2(q.y, q.x);
+        dm += 0.035 * Sz * (sin(an * 13.0 + seed * 20.0) + 0.6 * sin(an * 29.0 + seed * 7.0));
+        float blob = 1.0 - smoothstep(-0.01, 0.015, dm);
+        float drops = 0.0;
+        [unroll] for (int d = 0; d < 9; ++d) {
+            float a2 = seed * 17.0 + float(d) * 2.4, dr = Sz * (0.95 + 1.0 * frac(seed * 7.3 + float(d) * 0.37));
+            float rs = Sz * (0.045 + 0.05 * frac(seed * 3.1 + float(d) * 0.71));
+            drops = max(drops, 1.0 - smoothstep(rs * 0.8, rs, length(q - float2(cos(a2), sin(a2)) * dr)));
+        }
+        float ink = max(blob, drops);
+        float inner = saturate(-dm / (0.16 * Sz));
+        float3 col = inkNeon(seed);
+        float3 hot = lerp(col, float3(1.0, 1.0, 1.0), 0.55);
+        float  fade = smoothstep(life, life * 0.8, age);
+        float  pop  = 1.0 + 1.2 * exp(-age * 6.0);
+        float  pulse = 0.9 + 0.1 * sin(t * 2.2 + seed * 40.0);
+        float  rim = exp(-pow(dm / (0.05 * Sz), 2.0));                 // the neon edge
+        float  halo = exp(-max(dm, 0.0) / (0.22 * Sz)) * (1.0 - ink);   // its light on the ground round it
+        float  gloss = exp(-pow((dot(q, float2(0.86, 0.5)) - 0.12 * Sz) / (0.09 * Sz), 2.0)) * inner;
+        float3 o = col * ink * (0.6 + 0.6 * inner) * (0.7 + 0.6 * fx2.w) + hot * (rim * 0.9 + gloss * 0.5) * blob + col * halo * 0.45 * (0.6 + 0.6 * fx2.w);
+        L = max(L, o * pop * pulse * fade * smoothstep(0.0, 1.1, 2.6 + dv.y));   // stacked puddles keep their colours (no white-out)
+    }
+    return L;
+}
+// the ripple's neon outline: where the body's edge meets what is behind it (a depth jump), near a fresh hit
+float3 rippleEdge(int2 px, float3 P, float zc) {
+    int n = min(int(fx6.w), 16);
+    float3 L = 0;
+    [loop] for (int i = 0; i < n; ++i) {
+        int kind = int(evK[i].x + 0.5);
+        if (kind != 2 && kind != 3) continue;
+        float age = evP[i].w;
+        if (age > 0.45) continue;
+        float3 dv = P - evP[i].xyz;
+        if (length(dv.xz) > 0.8 || dv.y < -1.7 || dv.y > 1.0) continue;
+        float w = max(2.0, 3.0 * c4.y / 1080.0);
+        float edge = 0.0;
+        [unroll] for (int k = 0; k < 4; ++k) {
+            int2 o = k == 0 ? int2(1, 0) : k == 1 ? int2(-1, 0) : k == 2 ? int2(0, 1) : int2(0, -1);
+            float zz = viewZ(rawDepth(px + o * int(w)));
+            edge = max(edge, zz > zc + 0.5 ? 1.0 : 0.0);
+        }
+        float env = smoothstep(0.0, 0.04, age) * (1.0 - smoothstep(0.25, 0.45, age));
+        float flick = 0.8 + 0.2 * sin(age * 70.0 + dv.y * 20.0);
+        L += lerp(fx4.rgb, float3(1.0, 1.0, 1.0), 0.35) * edge * env * flick * 1.6 * fx3.w;
+    }
+    return L;
+}
 float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN: how much the surface here faces up (1 = floor)
     int n = min(int(fx6.w), 16);
     if (n <= 0 || sky) return 0;
@@ -259,53 +343,7 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
         } else if ((kind == 2 || kind == 3) && (fx1.z > 0.0 || fx3.w > 0.0)) {
             // (in game 2026-11-19: the ink was painted on everything standing in its column - the player you hit, walls,
             //  fences - and read as a bug. It lies on floors only now: surfaces that face up.)
-            if (fx1.z > 0.0 && dv.y < 0.3 && dv.y > -2.6 && upN > 0.6) {       // splash: ink on the ground under the hit, fading slowly
-                float u = age / max(fx1.w, 0.1);
-                if (u < 1.0) {
-                    // GOLD INK, round 2 (video 3, 147.05-147.52 s top-down): a chain of 3-4 merged glossy puddles, cream
-                    // at the heart, an orange-gold rim, a spiky edge, satellite droplets and gold flakes strewn ~3 blocks;
-                    // full size at once, a flash of heat at the start, then it slowly dims away
-                    float2 q = dv.xz;
-                    float  Sz = fx1.z;
-                    float  sa = seed * 37.0;
-                    float2 ax2 = float2(cos(sa), sin(sa));
-                    float  dm = 9.0;
-                    [unroll] for (int bI = 0; bI < 4; ++bI) {                       // the puddles: a smooth union of discs
-                        float fb = float(bI);
-                        float2 pc = ax2 * (fb - 1.2) * 0.62 * Sz + float2(-ax2.y, ax2.x) * 0.18 * Sz * sin(seed * 9.0 + fb * 2.3);
-                        float  rr = (0.46 - 0.06 * abs(fb - 1.2)) * Sz * (0.85 + 0.3 * frac(seed * 5.1 + fb * 0.37));
-                        float  db = length(q - pc) - rr;
-                        float  hh = saturate(0.5 + 0.5 * (dm - db) / 0.12);
-                        dm = lerp(dm, db, hh) - 0.12 * hh * (1.0 - hh);
-                    }
-                    float an = atan2(q.y, q.x);
-                    dm += 0.035 * Sz * (sin(an * 13.0 + seed * 20.0) + 0.6 * sin(an * 29.0 + seed * 7.0));   // spiky edge
-                    float blob = 1.0 - smoothstep(-0.01, 0.015, dm);
-                    float drops = 0.0;
-                    [unroll] for (int d = 0; d < 12; ++d) {                         // satellite droplets
-                        float a2 = seed * 17.0 + float(d) * 2.4, dr = Sz * (1.1 + 1.2 * frac(seed * 7.3 + float(d) * 0.37));
-                        float2 dp = float2(cos(a2), sin(a2)) * dr;
-                        float  rs = Sz * (0.05 + 0.06 * frac(seed * 3.1 + float(d) * 0.71));
-                        drops = max(drops, 1.0 - smoothstep(rs * 0.8, rs, length(q - dp)));
-                    }
-                    // flakes: tiny gold chips strewn around (fixed to the ground, a hash per small cell)
-                    float2 fq = (c.xz + c5.xz + q) * 7.0;
-                    float2 fi = floor(fq), ff = frac(fq) - 0.5;
-                    float  fh = frac(sin(dot(fi + seed, float2(127.1, 311.7))) * 43758.5453);
-                    float  rq = length(q) / (3.0 * Sz);
-                    float  flake = step(0.86 + 0.1 * rq, fh) * (1.0 - smoothstep(0.10, 0.22, length(ff))) * smoothstep(1.0, 0.3, rq);
-                    float ground = smoothstep(0.0, 1.1, 2.6 + dv.y) * smoothstep(0.6, 0.8, upN);
-                    float ink = max(blob, drops);
-                    float inner = saturate(-dm / (0.16 * Sz));                        // 0 at the rim .. 1 deep inside
-                    float3 cream = lerp(fx2.rgb, float3(1.0, 0.97, 0.86), 0.65), rimC = lerp(fx3.rgb, fx2.rgb, 0.3);
-                    float3 cc = lerp(rimC * 1.3, cream, smoothstep(0.15, 0.75, inner));
-                    float  gloss = exp(-pow((dot(q, normalize(float2(1.0, 0.6))) - 0.1 * Sz) / (0.10 * Sz), 2.0)) * inner * 0.35;   // a glossy sheen
-                    float  life = smoothstep(1.0, 0.55, u);
-                    float  heat = 1.0 + 0.5 * exp(-age * 7.0);
-                    L += (cc * ink * (0.32 + 0.28 * fx2.w) * (0.8 + 1.0 * inner) * heat + float3(1.0, 1.0, 0.95) * gloss * blob * heat
-                          + lerp(fx2.rgb, fx3.rgb, 0.5) * flake * 1.2 + rimC * exp(-max(dm, 0.0) / (0.10 * Sz)) * (1.0 - ink) * 0.35 * heat) * life * ground;
-                }
-            }
+            // (the ink on the ground is its own list now: inkPuddles(), drawn for as long as a puddle stays)
             if (fx1.z > 0.0 && age < 0.6) {                                   // gold flakes flying out of the blow
                 float dist0 = length(P);
                 [unroll] for (int k = 0; k < 14; ++k) {
@@ -357,44 +395,41 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                 float  dist0 = length(P);
                 // the orb
                 if (age < 0.12) {
-                    float ro = 0.17 * (1.0 + age * 3.0);
+                    float ro = 0.11 * (1.0 + age * 3.0);
                     float b0 = dot(c, rd), dd = length(rd * b0 - c);
                     if (b0 - ro < dist0 + 0.05) {
                         float fr = dd / ro;
                         float body = saturate(1.0 - fr * fr) , rim = exp(-pow((fr - 0.92) / 0.10, 2.0));
                         float k = (1.0 - smoothstep(0.06, 0.12, age));
-                        Lr += (cW * (body * 2.2 + rim * 2.6) + cA * exp(-fr * 1.6) * 1.2) * k * step(fr, 3.0);
+                        Lr += (cW * (body * 2.2 + rim * 2.6) + cA * exp(-fr * 2.2) * 0.8) * k * step(fr, 2.2);
                     }
                 }
-                // the crescent shell
-                float us = saturate((age - 0.03) / 0.22);
-                if (age > 0.03 && us < 1.0) {
-                    float R = 0.20 + 1.45 * (1.0 - pow(1.0 - us, 2.4));
-                    float b0 = dot(c, rd), disc = b0 * b0 - dot(c, c) + R * R;
-                    if (disc > 0.0) {
-                        float sq = sqrt(disc);
-                        [unroll] for (int sd = 0; sd < 2; ++sd) {
-                            float tt = sd == 0 ? b0 - sq : b0 + sq;
-                            if (tt < 0.2 || tt > dist0 + 0.05) continue;
-                            float3 n = (rd * tt - c) / R;
-                            float fwdK = dot(n, away);
-                            if (fwdK < -0.05) continue;                                   // only the half facing away from you
-                            float fres = pow(1.0 - abs(dot(n, rd)), 2.5);
-                            float lip  = exp(-pow(fwdK / 0.10, 2.0));                    // the crescent's edge
-                            float lead = smoothstep(0.2, 1.0, fwdK);                       // its leading face
-                            float fade = pow(1.0 - us, 1.4);
-                            Lr += (cW * (fres * 2.0 + lip * 1.6) + cIn * (0.55 + 0.7 * lead) + cA * (fres * 2.2 + 0.4)) * fade * (sd == 0 ? 1.0 : 0.45);
-                        }
-                    }
-                }
-                // the body glows (the box round the blow), a shimmer running over it
-                if (upN < 0.6) {
-                    float2 bxz = dv.xz;
-                    if (length(bxz) < 0.55 && dv.y > -1.5 && dv.y < 0.8) {
-                        float g = smoothstep(0.03, 0.10, age) * (1.0 - smoothstep(0.18, 0.45, age));
-                        float sh = 0.75 + 0.25 * sin(dv.y * 18.0 - age * 40.0);
-                        Lr += lerp(cA, cW, 0.35) * g * sh * 0.9;
-                    }
+                // (round 3, Fernando: "bland - keep it ON the body's silhouette, nothing that hides the fight".) No shell
+                // in the air any more. On the body: an energy front crawls out over the surface from the blow, a hex
+                // lattice lights up behind it and dies away cell by cell, thin arcs crackle across it; the outline of
+                // the body glows (drawn in the pass, rippleEdge()).
+                if (upN < 0.6 && length(dv.xz) < 0.75 && dv.y > -1.6 && dv.y < 0.9) {
+                    float ub = saturate(age / 0.38);
+                    float r3 = length(dv);
+                    float Rf = 1.7 * (1.0 - pow(1.0 - ub, 2.2));
+                    float fadeB = 1.0 - smoothstep(0.55, 1.0, ub);
+                    float front = exp(-pow((r3 - Rf) / 0.045, 2.0)) + 0.5 * exp(-pow((r3 - Rf) / 0.14, 2.0));
+                    // hex lattice, in the plane facing you (so it reads the same from any side)
+                    float3 rgt = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), upv = cross(rgt, rd);
+                    float2 hp = float2(dot(dv, rgt), dot(dv, upv)) / 0.06;
+                    float2 hq = float2(hp.x * 1.1547, hp.y + hp.x * 0.57735);
+                    float2 hi = floor(hq), hf = frac(hq);
+                    float  he = min(min(hf.x, hf.y), min(1.0 - hf.x, 1.0 - hf.y));
+                    he = min(he, abs(hf.x - hf.y));
+                    float  cellH = frac(sin(dot(hi, float2(127.1, 311.7))) * 43758.5453);
+                    float  behind = smoothstep(Rf, Rf - 0.08, r3) * exp(-(Rf - r3) * 3.0);
+                    float  cellOn = step(cellH, 0.55 + 0.4 * (1.0 - ub)) * behind;
+                    float  lattice = (1.0 - smoothstep(0.03, 0.10, he)) * cellOn * 1.8 + (0.45 * cellOn) * step(0.75, cellH);
+                    // arcs: thin crackling threads
+                    float nA = sin(dv.y * 23.0 + sin(dot(dv.xz, float2(17.0, 11.0)) + age * 40.0) * 2.0 + seed * 30.0);
+                    float arcs = exp(-pow(nA / 0.06, 2.0)) * exp(-r3 * 2.5) * (1.0 - smoothstep(0.0, 0.3, age)) * step(0.5, frac(age * 24.0 + seed));
+                    float wash = (1.0 - smoothstep(0.08, 0.45, age)) * smoothstep(0.0, 0.05, age) * 0.18;
+                    Lr += (cW * (front * 1.6 + arcs * 1.4) + cA * (front * 1.4 + lattice * 1.5 + arcs * 0.8 + wash)) * fadeB;
                 }
                 if (fx5.x > 0.5 && dv.y < 0.2 && dv.y > -2.4 && upN > 0.6 && u < 1.0) {   // a ring rolling over the ground
                     float r = length(dv.xz), R2 = 2.4 * (1.0 - pow(1.0 - u, 2.5));
@@ -1128,7 +1163,7 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
         float elev = wg1.z * (0.16 + 0.10 * cp2.z) * (0.5 + 0.5 * beat);       // the raised V on the up-beat
         float3 A0 = pl.xyz + up * 1.38 - fwd * 0.20;
         [unroll] for (int sgn = -1; sgn <= 1; sgn += 2) {
-            float fold = 0.45 + flap;                              // how far back the wing sweeps from the side (radians)
+            float fold = 0.22 + flap;                              // how far back the wing sweeps from the side (radians)
             float3 wOpen = normalize(side * float(sgn) * cos(fold) * cos(elev) - fwd * sin(fold) * cos(elev) + up * sin(elev));
             float3 wShut = normalize(-up * 0.85 + side * float(sgn) * 0.25 - fwd * 0.45);   // folded: hanging down the back
             float3 w = normalize(lerp(wShut, wOpen, open));
@@ -1787,6 +1822,8 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float3 nq  = cross(ddx(q), ddy(q));                       // the surface's facing, from the depth around this pixel
     float  upN = abs(nq.y) / max(length(nq), 1e-9);
     [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t, upN, rd);
+    [branch] if (fx6.w > 0.5 && fx3.w > 0.0 && !sky) ambL += rippleEdge(int2(px), q, zc);
+    [branch] if (inkInfo.x > 0.5 && !sky) ambL += inkPuddles(q, upN, t);
     [branch] if (cs0.w > 0.0 || au0.w > 0.0 || ha0.w > 0.0) ambL += cosmetics(q, rd, sky ? 1e4 : dist, sky, t);
     float4 overC = 0;                                        // [Purxiy] wings / cape cloth over the world
     float capeT = 1e9;
