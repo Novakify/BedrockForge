@@ -2245,6 +2245,7 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
         if (vrs != 1 || gUi.liveRate <= 0 || FAILED(list->QueryInterface(IID_PPV_ARGS(&l5)))) l5.Reset();
     }
     if (l5) l5->RSSetShadingRate(gUi.liveRate == 1 ? D3D12_SHADING_RATE_2X1 : D3D12_SHADING_RATE_2X2, nullptr);
+    rf::dred::crumb(list, "sky: Living Sky dome after the game's sky (game pso)", size_t(st.pso));
     calls.draw(list, 3, 1, 0, 0);
     if (l5) l5->RSSetShadingRate(D3D12_SHADING_RATE_1X1, nullptr);
     if (nq) {
@@ -2310,6 +2311,7 @@ bool drawPicture(ID3D12GraphicsCommandList* list, GameState const& st, Calls con
     calls.setTable(list, 1, gpuH.ptr);
     calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    rf::dred::crumb(list, "sky: picture / second dome after the game's sky (game pso)", size_t(st.pso));
     calls.draw(list, 3, 1, 0, 0);
     calls.restoreRoot(list);
     calls.setPso(list, st.pso);
@@ -2373,6 +2375,7 @@ bool afterGameClouds(ID3D12GraphicsCommandList* list, GameState const& st, Calls
     calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     calls.setVb(list, 0, 1, &vw);
+    rf::dred::crumb(list, "sky: weather after the game's clouds (game pso)", size_t(st.pso));
     calls.draw(list, nv, 1, 0, 0);
     calls.setPso(list, st.pso);
     calls.setTopo(list, st.topo);
@@ -2430,6 +2433,7 @@ bool drawWorldSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     calls.setTable(list, 1, gWsHeap->GetGPUDescriptorHandleForHeapStart().ptr);
     calls.setPso(list, pso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    rf::dred::crumb(list, "sky: World FX sky draw (game pso)", size_t(st.pso));
     calls.draw(list, 3, 1, 0, 0);
     calls.restoreRoot(list);
     calls.setPso(list, st.pso);

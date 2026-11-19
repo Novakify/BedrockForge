@@ -93,6 +93,8 @@ thread_local bool                gInSnapshot   = false; // our own barriers/copi
 std::vector<std::string>         gLearnLog;
 // M1 panel redirect
 std::unordered_set<SIZE_T>                                   gBbHandles;   // RTV handles known to be swap-chain buffers
+std::unordered_set<ID3D12Resource*>                          gBbRes;       // the swap chain's buffers, as seen at Present
+std::atomic<long>                                            gBbForgot{0};
 std::unordered_map<ID3D12GraphicsCommandList*, SIZE_T>       gListDsv;     // list -> bound DSV (0 = none)
 std::unordered_set<ID3D12GraphicsCommandList*>               gListOnPanel; // lists currently bound to the panel target
 std::unordered_set<ID3D12GraphicsCommandList*>               gListUi;      // lists that drew UI this frame (their re-binds of a back buffer stay on the panel)
@@ -449,6 +451,9 @@ void STDMETHODCALLTYPE createRtvHook(ID3D12Device* d, ID3D12Resource* res, D3D12
     if (res) gRtvRes[h.ptr] = res;
     else gRtvRes.erase(h.ptr);
     gRtvGuess.erase(h.ptr);
+    // a view of something else was made at a handle we learned as "the back buffer" (the game reuses its RTV slots
+    // when it rebuilds its targets - a resource-pack reload on joining / leaving a server): it is not the screen any more
+    if (gBbHandles.count(h.ptr) && !gBbRes.count(res)) { gBbHandles.erase(h.ptr); ++gBbForgot; }
 }
 // ---------------------------------------------------------------- lock-free per-list sky state
 // The VV sky injection runs on RenderDragon's recording threads tens of thousands of times a
@@ -551,6 +556,7 @@ void STDMETHODCALLTYPE omSetHook(ID3D12GraphicsCommandList* list, UINT n, D3D12_
     bool toPanel = bbBind && gListUi.count(list);
     if (bbBind && !toPanel) ++gSparedBinds;
     if (toPanel) {
+        rf::dred::crumb(list, "UI panel: a back-buffer bind sent to the panel target (rtv handle / dsv handle)", rts[0].ptr, ds ? ds->ptr : 0);
         D3D12_CPU_DESCRIPTOR_HANDLE h{redirectRtv()};
         reinterpret_cast<OmSet_t>(gOrig[4])(list, 1, &h, FALSE, ds);
         gListOnPanel.insert(list);
@@ -635,7 +641,8 @@ HRESULT STDMETHODCALLTYPE closeHook(ID3D12GraphicsCommandList* list) {
     if (rf::sky::wanted()) { SkyLS* s = skyLS(list); if (s->terr && s->bound) { rf::sky::noteLeave(2); leaveWorld(list); } s->terr = false; s->bound = false; }
     if (gaOn()) gaFlush(list); // the actor pass often ends the list: replay the held-back armor while its targets are bound
     HRESULT const hr = reinterpret_cast<Close_t>(gOrig[25])(list);
-    if (FAILED(hr)) rf::dred::closeFailed(list, hr);   // crash-safe note: which of our work went into the bad list
+    if (FAILED(hr)) rf::dred::closeFailed(list, hr);
+    rf::dred::check();   // the moment the device is seen removed (not only at the next Present, which may never come)   // crash-safe note: which of our work went into the bad list
     return hr;
 }
 void STDMETHODCALLTYPE setIbHook(ID3D12GraphicsCommandList* list, D3D12_INDEX_BUFFER_VIEW const* v) {
@@ -1101,9 +1108,11 @@ HRESULT STDMETHODCALLTYPE createHeapHook(ID3D12Device* d, D3D12_DESCRIPTOR_HEAP_
 
 // copy dst[i] <- src[i] in the handle -> resource maps (caller holds gMutex)
 void propagate(SIZE_T dst, SIZE_T src) {
-    if (auto r = gRtvRes.find(src); r != gRtvRes.end()) { gRtvRes[dst] = r->second; ++gRtvCopied; }
+    ID3D12Resource* now = nullptr;
+    if (auto r = gRtvRes.find(src); r != gRtvRes.end()) { gRtvRes[dst] = now = r->second; ++gRtvCopied; }
     else gRtvRes.erase(dst);
     gRtvGuess.erase(dst);
+    if (gBbHandles.count(dst) && !gBbRes.count(now)) { gBbHandles.erase(dst); ++gBbForgot; }   // (see createRtvHook)
 }
 UINT rtvInc(ID3D12Device* d) {
     UINT v = gRtvInc.load(std::memory_order_relaxed);
@@ -1380,9 +1389,10 @@ void finish(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
         if (haveA) copyToReadback(list.Get(), gRes.snapA.Get(), ra);
         std::swap(br[0].Transition.StateBefore, br[0].Transition.StateAfter);
         list->ResourceBarrier(1, br);
-        list->Close();
+        bool const closed = SUCCEEDED(list->Close());
+        rf::dred::crumb(list.Get(), "UI capture: snapshot readback list (closed ok)", closed);
         ID3D12CommandList* lists[] = {list.Get()};
-        q->ExecuteCommandLists(1, lists);
+        if (closed) q->ExecuteCommandLists(1, lists);
         HANDLE ev = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         q->Signal(fence.Get(), 1);
         bool done = fence->GetCompletedValue() >= 1;
@@ -1582,6 +1592,11 @@ std::string leakNote() {
 }
 void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resource* bb) {
     if (!gInstalled || !device || !queue || !bb) return;
+    {
+        std::lock_guard l(gMutex);
+        if (gBbRes.size() > 16) gBbRes.clear();   // a resized swap chain: start again
+        gBbRes.insert(bb);
+    }
     rf::glassarmor::onPresent(device, queue);
     rf::pano::onPresent();   // [Main Menu] panorama capture
     rf::worldfx::onPresent(device, queue);
@@ -1615,6 +1630,7 @@ void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resour
             rf::glassarmor::tagAlive(bb);
             gRtvRes[h] = bb;
             gBbHandles.insert(h);
+            rf::dred::crumb(nullptr, "UI panel: learned a back-buffer rtv handle", h, 0, gBbHandles.size());
             ++gLearned;
             line += " -> learned 0x" + hex64(h) + " = back buffer " + descStr(bb->GetDesc());
         }

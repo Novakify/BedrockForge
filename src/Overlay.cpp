@@ -1,6 +1,7 @@
 // Renderer Foundation - ImGui overlay (see Overlay.h, Notice.h).
 #include <thread>
 #include <chrono>
+#include "Dred.h"
 #include "D3D12Api.h"
 #include "Overlay.h"
 #include "SpatialConfigScreen.h"
@@ -316,9 +317,10 @@ void render(IDXGISwapChain3* sc) {
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), bb.list.Get());
     std::swap(barrier.Transition.StateBefore, barrier.Transition.StateAfter);
     bb.list->ResourceBarrier(1, &barrier);
-    bb.list->Close();
+    bool const closed = SUCCEEDED(bb.list->Close());   // never execute a list that did not close (device removed)
+    rf::dred::crumb(bb.list.Get(), "overlay / post effects list at Present (closed ok)", closed);
     ID3D12CommandList* lists[] = {bb.list.Get()};
-    q->ExecuteCommandLists(1, lists);
+    if (closed) q->ExecuteCommandLists(1, lists);
     rf::postfx::submitted(q);
 }
 } // namespace d3d12
