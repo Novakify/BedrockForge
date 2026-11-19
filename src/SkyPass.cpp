@@ -142,6 +142,24 @@ AtmosSet              gAtmos;
 std::atomic<bool>     gAtmosOn{false};
 std::filesystem::path gAtmosFile;
 void pollAtmos() {
+    {   // [test] config/Test.txt: kill | impact | win | bed - run once (then renamed Test.done.txt): checks without the F6 panel
+        static int64_t lastTest = 0;
+        int64_t const nt = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (nt - lastTest > 500 && !gAtmosFile.empty()) {
+            lastTest = nt;
+            std::error_code ec;
+            auto const tf = gAtmosFile.parent_path() / "Test.txt";
+            if (std::filesystem::exists(tf, ec)) {
+                std::string c;
+                { std::ifstream in(tf); std::getline(in, c); }
+                std::filesystem::remove(gAtmosFile.parent_path() / "Test.done.txt", ec);
+                std::filesystem::rename(tf, gAtmosFile.parent_path() / "Test.done.txt", ec);
+                while (!c.empty() && (c.back() == '\r' || c.back() == ' ')) c.pop_back();
+                if (c == "kill") testKill(); else if (c == "impact") testImpact(); else if (c == "win") testVictory(); else if (c == "bed") testBed();
+                ll_shim::info("[RF] test: " + c);
+            }
+        }
+    }
     static int64_t lastPoll = 0;
     static std::filesystem::file_time_type lastT{};
     int64_t const n = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -1600,10 +1618,23 @@ int bfSkins(BfSkinView out[16]) {
 // F6 "Test kill": a fake kill 6 blocks in front of you (normal / final kill alternate)
 std::atomic<int> gTestKillReq{0};
 struct TestKill { float p[3]; int64_t at = -100000; int kind = 3; } gTestKill;
-void testKill() { ++gTestKillReq; }
+void testKill() {   // set right here from the latest camera (the pass may not run at all until a moment is live: Living Skies)
+    auto const snap = rf::lyrics::camera();
+    if (!snap.valid) { ++gTestKillReq; return; }
+    for (int a = 0; a < 3; ++a) gTestKill.p[a] = float(snap.pos[a]) + snap.forward[a] * 6.0f;
+    gTestKill.p[1] = float(snap.pos[1]) - 1.62f;
+    gTestKill.kind = gTestKill.kind == 3 ? 4 : 3;
+    gTestKill.at = steadyMs();
+}
 std::atomic<int> gTestImpactReq{0};
 struct TestImpact { float p[3]; int64_t at = -100000; } gTestImpact;
-void testImpact() { ++gTestImpactReq; }
+void testImpact() {
+    auto const snap = rf::lyrics::camera();
+    if (!snap.valid) { ++gTestImpactReq; return; }
+    for (int a = 0; a < 3; ++a) gTestImpact.p[a] = float(snap.pos[a]) + snap.forward[a] * 3.0f;
+    gTestImpact.p[1] = float(snap.pos[1]) - 1.62f;
+    gTestImpact.at = steadyMs();
+}
 std::atomic<int64_t> gTestWinAt{-1000000};
 void testVictory() { gTestWinAt = steadyMs(); }
 std::atomic<int64_t> gTestVitalsAt{-1000000};
