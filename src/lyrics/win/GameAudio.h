@@ -10,4 +10,5 @@ struct GameAudio {
 };
 void      gameAudioWant(bool on);   // start / pause listening (cheap to call every frame)
 GameAudio gameAudio();
+void      gameAudioPeaks(float& level, float& low);   // loudest raw block since the last call (resets)
 } // namespace bf::lyrics

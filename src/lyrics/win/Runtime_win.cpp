@@ -1184,8 +1184,10 @@ void bigMomentsStep(float dt, std::string_view skyId) {
             static int64_t lastLog = 0;
             if (now - lastLog > 10000) {
                 lastLog = now;
-                char t[160];
-                std::snprintf(t, sizeof t, "   sound  game audio: status %d, level %.2f, rumble %.2f, booms %d", ga.status, ga.level, ga.low, ga.booms);
+                float pl = 0, po = 0;
+                gameAudioPeaks(pl, po);
+                char t[200];
+                std::snprintf(t, sizeof t, "   sound  game audio: status %d, level %.2f, rumble %.2f, booms %d (loudest in 10 s: level %.2f, rumble %.2f)", ga.status, ga.level, ga.low, ga.booms, pl, po);
                 gS->directorLines.emplace_back(t);
             }
         }
