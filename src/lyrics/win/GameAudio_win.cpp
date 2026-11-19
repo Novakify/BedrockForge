@@ -69,7 +69,8 @@ void loop() {
     ComPtr<IAudioClient> client;
     ComPtr<IAudioCaptureClient> cap;
     auto teardown = [&] { if (client) client->Stop(); cap.Reset(); client.Reset(); };
-    float avg = 0, avgLo = 0, lowState = 0;   // slow loudness (the room tone) and a one-pole low pass (rumble)
+    float avg = 0, avgLo = 0, lowState = 0;
+    int   quiet = 0;   // 10 ms blocks since the last boom: one blast is one boom (its tail must not count again)   // slow loudness (the room tone) and a one-pole low pass (rumble)
     int   fails = 0;
     while (s.running.load()) {
         if (!s.want.load()) {
@@ -130,9 +131,11 @@ void loop() {
         // a boom: a sudden low hit well above the room tone (TNT, a creeper, thunder, an end crystal) - not footsteps.
         // Relative to the room tone (game volume and distance change how loud a boom is in the capture), with a small floor.
         float b = s.boom.load() * 0.94f;
-        if (lo > 0.06f && lo > avgLo * 4.0f + 0.03f && lv > avg * 2.0f + 0.03f && b < 0.3f) {
+        ++quiet;
+        if (lo > 0.06f && lo > avgLo * 4.0f + 0.03f && lv > avg * 2.0f + 0.03f && quiet > 60) {   // 600 ms apart
             b = std::clamp(lo * 3.0f, 0.3f, 1.0f);
             ++s.booms;
+            quiet = 0;
         }
         s.boom = b;
     }
