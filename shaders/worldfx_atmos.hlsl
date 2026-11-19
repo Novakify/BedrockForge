@@ -240,11 +240,21 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
         float3 c = evP[i].xyz; float age = evP[i].w; int kind = int(evK[i].x + 0.5); float seed = evK[i].z;
         float3 dv = P - c;
         if (kind == 1 && fx0.w > 0.0) {                        // jump: one ring spreading from your feet
+            // (Purxiy reference, videos 1 / 5: a THIN neon ring flat on the ground where you took off - creamy white
+            //  core, the colour glowing out from it, the hue drifting round the ring (cooler on one side, warmer on
+            //  the other), shooting out with a hard ease-out to ~1.3 blocks, then fading.)
             float u = age / max(fx1.x, 0.05);
             if (u < 1.0 && abs(dv.y) < 0.6) {
-                float r = length(dv.xz), R = fx0.w * 1.4 * (1.0 - pow(1.0 - u, 3.0)), w = 0.07 + 0.10 * u;
-                float k = exp(-pow((r - R) / w, 2.0)) + fx1.y * 0.35 * exp(-abs(r - R) / (w * 3.0));
-                L += fx0.rgb * k * pow(1.0 - u, 1.4) * 1.6 * smoothstep(0.6, 0.2, abs(dv.y));
+                float r = length(dv.xz), an = atan2(dv.z, dv.x);
+                float R = fx0.w * 1.3 * (1.0 - pow(1.0 - saturate(u * 1.6), 4.0));
+                float w = 0.022 + 0.02 * u;
+                float core = exp(-pow((r - R) / (w * 0.45), 2.0));
+                float glow = exp(-pow((r - R) / (w * 2.2), 2.0)) * 0.55 + fx1.y * 0.18 * exp(-abs(r - R) / (w * 6.0));
+                float3 warm = lerp(fx0.rgb, float3(1.0, 0.72, 0.62), 0.35), cool = lerp(fx0.rgb, float3(0.70, 0.72, 1.0), 0.35);
+                float3 cc = lerp(cool, warm, 0.5 + 0.5 * sin(an + seed * 6.3 + age * 1.5));
+                cc = lerp(cc, r > R ? warm : cool, 0.3);                  // a warmer outer edge, a lavender inner one
+                float fade = pow(1.0 - u, 1.1) * smoothstep(0.6, 0.2, abs(dv.y));
+                L += (float3(1.0, 0.96, 0.93) * core * 1.6 + cc * glow * 2.0) * fade;
             }
         } else if ((kind == 2 || kind == 3) && (fx1.z > 0.0 || fx3.w > 0.0)) {
             // (in game 2026-11-19: the ink was painted on everything standing in its column - the player you hit, walls,
@@ -514,7 +524,7 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
         //  each style has its own structure: Orbit rides a faint ring, Spiral is a double helix, Constellation's stars
         //  are joined by thin lines and flash a four-point spike.)
         int   style = int(au1.z + 0.5);
-        int   N     = style == 1 ? 9 : style == 2 ? 10 : style == 3 ? 7 : 6;
+        int   N     = style == 1 ? 9 : style == 2 ? 2 : style == 3 ? 7 : 6;
         float sz    = au0.w;
         float3 c    = pl.xyz + float3(0, 1.0, 0);
         float  rb   = 0.75 * sz * 1.2 + 1.0 + 0.2 * sz;              // audit: the ray must pass the aura's sphere at all
@@ -527,19 +537,20 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
             float fi = float(i);
             float tw = 0.78 + 0.22 * sin(t * 3.0 + fi * 2.1);
             float3 head = 0;
-            [loop] for (int k = 0; k < 8; ++k) {                      // k = 0: the light; 1..7: its comet tail, back along its path
-                float tk = t - float(k) * (style == 2 ? 0.035 : 0.075) / max(au1.x, 0.3);   // the spiral's tail packs tighter: a ribbon, not beads
+            [loop] for (int k = 0; k < (style == 2 ? 22 : 8); ++k) {                      // k = 0: the light; 1..7: its comet tail, back along its path
+                float tk = t - float(k) * (style == 2 ? 0.018 : 0.075) / max(au1.x, 0.3);   // the spiral's tail packs tighter: a ribbon, not beads
                 float ph = fi / float(N) * 6.2831 + tk * 0.9 * au1.x;
                 float r = 0.75 * sz, yy = 0.0;
                 if (style == 1) {                                       // fireflies: wander, blink
                     ph = fi * 2.4 + tk * 0.4 * au1.x * (0.6 + frac(fi * 0.37));
                     r *= 0.6 + 0.6 * frac(fi * 0.71);
                     yy = 0.8 * sin(tk * 0.7 * au1.x + fi * 1.7);
-                } else if (style == 2) {                                // spiral: two strands climbing round you
-                    float u = frac(floor(fi * 0.5) / float(N / 2) + tk * 0.15 * au1.x);
-                    ph = u * 12.566 + (fmod(fi, 2.0) > 0.5 ? 3.1416 : 0.0) + tk * 0.4;
+                } else if (style == 2) {                                // spiral (Purxiy ref, video 3): comets on a rising helix
+                    float cid = fmod(fi, 2.0);                           // two comets, half a turn apart
+                    float u = frac(tk * 0.22 * au1.x + cid * 0.5);
+                    ph = tk * 6.2831 * 0.55 * au1.x + cid * 3.1416;
                     yy = u * 2.2 - 1.1;
-                    r *= 0.75 + 0.25 * sin(u * 3.1416);
+                    r *= 0.85 + 0.15 * sin(u * 3.1416);
                 } else if (style == 3) {                                // constellation: fixed stars, the sky slowly turning
                     ph = fi * 2.399 + tk * 0.12 * au1.x;
                     r *= 0.75 + 0.35 * frac(fi * 0.618);
@@ -551,8 +562,9 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                 float tp = dot(q, rd);
                 if (tp < 0.2 || tp > dist + 0.3) continue;
                 float d = length(q - rd * tp);
-                float s = 0.048 * sz * (k == 0 ? 1.0 : 0.85 - 0.08 * float(k));
-                float fade = k == 0 ? 1.0 : 0.7 * pow(1.0 - float(k) / 8.0, 1.3);
+                float kn = float(k) / (style == 2 ? 22.0 : 8.0);           // 0 head .. 1 end of the tail
+                float s = 0.048 * sz * (k == 0 ? 1.0 : 0.85 - 0.64 * kn);   // tapers, never below ~0.2
+                float fade = k == 0 ? 1.0 : 0.7 * pow(1.0 - float(k) / (style == 2 ? 22.0 : 8.0), 1.3);
                 float blink = style == 1 ? smoothstep(-0.2, 0.6, sin(t * 1.7 + fi * 4.1)) : 1.0;
                 float core = exp(-d * d / (s * s * 0.25));               // white-hot centre
                 float glow = exp(-d * d / (s * s)) * 1.6 + au1.y * 0.30 * exp(-d / (s * 4.0));
