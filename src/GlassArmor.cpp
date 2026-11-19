@@ -1076,6 +1076,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
         src.pResource                          = tex.Get();
         src.Type                               = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
         src.SubresourceIndex                   = 0;
+        rf::dred::crumb(gList.Get(), "armor texture readback: state / w<<32|h / format", st, (UINT64(td.Width) << 32) | td.Height, td.Format);
         gList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         if (barrier) {
             std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
@@ -1083,7 +1084,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
         }
         gInFlight.push_back({tex, buf, sc});
     }
-    gList->Close();
+    if (FAILED(gList->Close())) { gInFlight.clear(); return; }   // never execute a list that did not close (device removed)
     if (gInFlight.empty()) return;
     ID3D12CommandList* lists[] = {gList.Get()};
     q->ExecuteCommandLists(1, lists);
@@ -1407,6 +1408,8 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     if (!ensureBuffer(dev.Get(), S.scene, S.sceneSize, rTot) || !ensureBuffer(dev.Get(), S.depth, S.depthSize, dTot)) return fail("scene buffers");
     auto const rtState = knownState(rt, D3D12_RESOURCE_STATE_RENDER_TARGET);
     auto const dsState = knownState(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    rf::dred::crumb(l, "glass scene copy: colour state / depth state / w<<32|h (colour fmt<<48, depth fmt<<56)", rtState, dsState,
+                    (rd.Width << 32) | rd.Height | (UINT64(rd.Format) << 48) | (UINT64(dd.Format) << 56));
     barrier(l, rt, rtState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     barrier(l, ds, dsState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
@@ -1871,13 +1874,15 @@ void probePump(ID3D12Device* dev, ID3D12CommandQueue* q) {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         dst.pResource = r.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
         src.pResource = tex.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        rf::dred::crumb(gProbeList.Get(), "probe readback: state / w<<32|h / format", st, (UINT64(td.Width) << 32) | td.Height, td.Format);
         gProbeList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         if (bar) barrier(gProbeList.Get(), tex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
         gProbeRb.push_back(r);
     }
-    gProbeList->Close();
+    bool const closed = SUCCEEDED(gProbeList->Close());
+    if (!closed) gProbeRb.clear();   // never execute a list that did not close (device removed)
     ID3D12CommandList* lists[] = {gProbeList.Get()};
-    q->ExecuteCommandLists(1, lists);
+    if (closed) q->ExecuteCommandLists(1, lists);
     q->Signal(gProbeFence.Get(), ++gProbeFenceVal);
     gProbeStage = 2;
 }
@@ -1998,13 +2003,15 @@ void pumpSkins(ID3D12Device* dev, ID3D12CommandQueue* q) {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         dst.pResource = r.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
         src.pResource = tex.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        rf::dred::crumb(gSkinList.Get(), "skin readback: state / w<<32|h / format", st, (UINT64(r.w) << 32) | r.h, td.Format);
         gSkinList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         if (bar) barrier(gSkinList.Get(), tex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
         gSkinInFlight.push_back(r);
     }
-    gSkinList->Close();
+    bool const closed = SUCCEEDED(gSkinList->Close());
+    if (!closed) gSkinInFlight.clear();   // never execute a list that did not close (device removed)
     ID3D12CommandList* lists[] = {gSkinList.Get()};
-    q->ExecuteCommandLists(1, lists);
+    if (closed) q->ExecuteCommandLists(1, lists);
     q->Signal(gSkinFence.Get(), ++gSkinFenceVal);
 }
 
@@ -2078,15 +2085,17 @@ void pumpItems(ID3D12Device* dev, ID3D12CommandQueue* q) {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         dst.pResource = A.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
         src.pResource = A.keep.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        rf::dred::crumb(gItemList.Get(), "item atlas copy: state / w<<32|h / format", st, (UINT64(td.Width) << 32) | td.Height, td.Format);
         gItemList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         if (bar) barrier(gItemList.Get(), A.keep.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
         barrier(gItemList.Get(), A.buf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         A.bufInSrv = true;
         gAtlasInFlight.push_back(k);
     }
-    gItemList->Close();
+    bool const closed = SUCCEEDED(gItemList->Close());
+    if (!closed) { std::lock_guard l(gMutex); for (int k : gAtlasInFlight) gAtlas[k].failed = true; }   // never execute a list that did not close
     ID3D12CommandList* lists[] = {gItemList.Get()};
-    q->ExecuteCommandLists(1, lists);
+    if (closed) q->ExecuteCommandLists(1, lists);
     q->Signal(gItemFence.Get(), ++gItemFenceVal);
 }
 

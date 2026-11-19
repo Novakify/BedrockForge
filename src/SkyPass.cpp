@@ -1,6 +1,7 @@
 // Renderer Foundation - LyricsFlow port: live sky preview pass (see SkyPass.h). Original code for Renderer Foundation.
 // STAGED, NOT RUN IN GAME YET: compile-verified by CI only. Same D3D12 patterns as LyricsPass (root constants + SRV
 // table per ring slot, premultiplied blend, PSO per back-buffer format, WIC decode on a worker thread).
+#include "Dred.h"
 #include "SpatialCamera.h"
 #include "Panorama.h"
 #include "D3D12Api.h"
@@ -2982,6 +2983,8 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     wfxperf::pollBench();
     uint64_t const tsFrame = uint64_t(gWfxFrames.load());
     bool const timed = wfxperf::begin(dev.Get(), list, tsFrame);
+    rf::dred::crumb(list, "World FX pass copy: colour state / depth state / w<<32|h (colour fmt<<48, depth fmt<<56)", rtState, dsState,
+                    (rd.Width << 32) | rd.Height | (UINT64(rd.Format) << 48) | (UINT64(dd.Format) << 56));
     wfxBarrier(list, rt, rtState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     wfxBarrier(list, ds, dsState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
@@ -3409,6 +3412,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 if (fadeBuf.Get() != before) fadeInSrv = false;       // a new buffer starts in COPY_DEST: no barrier from SRV
             }
             if (ok) {
+                rf::dred::crumb(list, "sky fade: keep a frame: buffer was SRV / w<<32|h / bytes", fadeInSrv, (rd.Width << 32) | rd.Height, rTot);
                 if (fadeInSrv) wfxBarrier(list, fadeBuf.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
                 wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
                 dst.pResource = fadeBuf.Get(), dst.PlacedFootprint = fpC, src.pResource = rt, src.SubresourceIndex = 0;
@@ -3427,6 +3431,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 if (steadyMs() - lastNote > 2000) { lastNote = steadyMs(); ll_shim::info(std::string("[RF] sky fade: drawing (pipeline ") + (fp ? "ready" : "not built yet") + ")"); }
             }
             if (fp) {
+                rf::dred::crumb(list, "sky fade: draw: kept w<<32|h / now w<<32|h", (UINT64(fadeW) << 32) | fadeH, (rd.Width << 32) | rd.Height);
                 float const t  = std::clamp(float(steadyMs() - gFadeAt.load()) / kFadeMs, 0.0f, 1.0f);
                 float const a  = 1.0f - t * t * (3.0f - 2.0f * t);
                 float const dF = snap.forward[0] * fadeF[0] + snap.forward[1] * fadeF[1] + snap.forward[2] * fadeF[2];

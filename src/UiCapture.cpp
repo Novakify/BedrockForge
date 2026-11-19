@@ -2,6 +2,7 @@
 #include <chrono>
 #include "Panorama.h"
 #include "UiCapture.h"
+#include "Dred.h"
 
 #include <algorithm>
 #include <atomic>
@@ -614,7 +615,9 @@ void STDMETHODCALLTYPE createSrvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_S
 HRESULT STDMETHODCALLTYPE closeHook(ID3D12GraphicsCommandList* list) {
     if (rf::sky::wanted()) { SkyLS* s = skyLS(list); if (s->terr && s->bound) { rf::sky::noteLeave(2); leaveWorld(list); } s->terr = false; s->bound = false; }
     if (gaOn()) gaFlush(list); // the actor pass often ends the list: replay the held-back armor while its targets are bound
-    return reinterpret_cast<Close_t>(gOrig[25])(list);
+    HRESULT const hr = reinterpret_cast<Close_t>(gOrig[25])(list);
+    if (FAILED(hr)) rf::dred::closeFailed(list, hr);   // crash-safe note: which of our work went into the bad list
+    return hr;
 }
 void STDMETHODCALLTYPE setIbHook(ID3D12GraphicsCommandList* list, D3D12_INDEX_BUFFER_VIEW const* v) {
     reinterpret_cast<SetIb_t>(gOrig[22])(list, v);
@@ -843,6 +846,7 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
         std::lock_guard g(gMutex);
         if (rtA && gRtvRes.find(SIZE_T(cur.rt0)) == gRtvRes.end()) rtA = nullptr;   // a guessed target: never copy it
     }
+    rf::dred::crumb(l, "glass replay: draws / rtv handle / dsv handle", pend.size(), cur.rt0, cur.dsv);
     bool ok = rf::glassarmor::beginFlush(l, rtA, rf::glassarmor::dsvResource(cur.dsv), fr);
     for (auto const& p : pend) {
         unsigned             base = 0;
