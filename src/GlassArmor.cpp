@@ -19,6 +19,7 @@
 #include <thread>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #define WIN32_LEAN_AND_MEAN
@@ -637,10 +638,67 @@ void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso) {
 bool wantRoot() { return tracking(); }
 bool wantSrvs() { return tracking(); }
 
+// ---- texture liveness (crash fix 2026-11-18)
+// gSrvs remembers which texture each descriptor slot described when it was written. A slot can outlive its texture
+// (the game frees the texture and leaves the old descriptor, writes a CBV / UAV over it, or frees a whole heap whose
+// addresses come back for a new one), and then the remembered pointer is a freed object. Glass Body / Armour / the
+// probe AddRef'd and GPU-copied such pointers: device removed (DXGI_ERROR_INVALID_CALL), Minecraft fell back to its
+// OpenGL renderer and died in nvoglv64.dll - 13 crashes since 2026-11-13, nearly all in the GeckoBridge test world,
+// whose many 64x64 mob textures all look skin-sized (Glass Body reads every one). Every texture we learn about gets a
+// private-data sentinel: D3D12 releases it when the texture is destroyed, so we know for certain it is gone.
+// {6F1D1C2B-5B4E-4D2A-9C7E-2E5B0A9F4D11}
+constexpr GUID kRfAliveTag = {0x6f1d1c2b, 0x5b4e, 0x4d2a, {0x9c, 0x7e, 0x2e, 0x5b, 0x0a, 0x9f, 0x4d, 0x11}};
+std::mutex                          gAliveMx;   // leaf lock: never take another lock while holding it
+std::unordered_set<ID3D12Resource*> gAlive;
+std::atomic<long>                   gDeadSeen{0};
+struct AliveTag final : IUnknown {
+    ID3D12Resource*      res;
+    std::atomic<ULONG>   refs{1};
+    explicit AliveTag(ID3D12Resource* r) : res(r) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void** out) override {
+        if (!out) return E_POINTER;
+        if (id == __uuidof(IUnknown)) { *out = static_cast<IUnknown*>(this); AddRef(); return S_OK; }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG const n = --refs;
+        if (n == 0) {
+            {
+                std::lock_guard l(gAliveMx);
+                gAlive.erase(res);
+            }
+            ++gDeadSeen;
+            delete this;
+        }
+        return n;
+    }
+};
+void tagAlive(ID3D12Resource* r) {
+    if (!r) return;
+    {
+        std::lock_guard l(gAliveMx);
+        if (!gAlive.insert(r).second) return;   // already tagged (and still alive)
+    }
+    auto* t = new AliveTag(r);
+    if (FAILED(r->SetPrivateDataInterface(kRfAliveTag, t))) {   // can't watch it: never trust it
+        std::lock_guard l(gAliveMx);
+        gAlive.erase(r);
+    }
+    t->Release();   // the resource holds the only reference now
+}
+bool isAlive(ID3D12Resource* r) {
+    if (!r) return false;
+    std::lock_guard l(gAliveMx);
+    return gAlive.count(r) != 0;
+}
+
 void noteSrv(size_t cpu, ID3D12Resource* r) {
     SrvInfo i;
     i.res = r;
     if (r) {
+        tagAlive(r);   // the game is making a view of it right now: it is alive
         auto d = r->GetDesc();
         i.w    = unsigned(d.Width);
         i.h    = d.Height;
@@ -722,7 +780,7 @@ void onDraw(ID3D12GraphicsCommandList* list, unsigned count, unsigned inst) {
         if (it == gSrvs.end()) continue;
         auto const& v = it->second;
         s << " [r" << ri << "." << k << " " << v.w << "x" << v.h << " " << fmt(DXGI_FORMAT(v.fmt)) << " m" << v.mips << " " << v.res << "]";
-        if (v.res && skinSized(v.w, v.h) && gProbeTex.size() < 48) gProbeTex.emplace(v.res, v.res);   // checked against BF's skins later
+        if (v.res && skinSized(v.w, v.h) && gProbeTex.size() < 48 && isAlive(v.res)) gProbeTex.emplace(v.res, v.res);   // checked against BF's skins later
     }
     if (tables.empty()) s << " (no root tables tracked)";
     s << " | tables" << dbg << " | srvs known " << gSrvs.size();
@@ -744,7 +802,7 @@ ID3D12Resource* boundArmorTexture(ID3D12GraphicsCommandList* list) {
     std::lock_guard l(gMutex);
     for (size_t cpu : cpus) {
         auto it = gSrvs.find(cpu);
-        if (it != gSrvs.end() && it->second.res && ((it->second.w == 64 && it->second.h == 32) || (it->second.w == 128 && it->second.h == 64)))
+        if (it != gSrvs.end() && it->second.res && ((it->second.w == 64 && it->second.h == 32) || (it->second.w == 128 && it->second.h == 64)) && isAlive(it->second.res))
             return it->second.res;   // 128x64: a 32x pack's armour (Cloud Sea's leather is one)
     }
     return nullptr;
@@ -762,7 +820,7 @@ ID3D12Resource* boundSkinTexture(ID3D12GraphicsCommandList* list, SrvInfo* info)
     std::lock_guard l(gMutex);
     for (size_t cpu : cpus) {
         auto it = gSrvs.find(cpu);
-        if (it != gSrvs.end() && it->second.res && it->second.w == it->second.h && (it->second.w == 64 || it->second.w == 128)) {
+        if (it != gSrvs.end() && it->second.res && it->second.w == it->second.h && (it->second.w == 64 || it->second.w == 128) && isAlive(it->second.res)) {
             *info = it->second;
             return it->second.res;
         }
@@ -2262,7 +2320,7 @@ bool shaderNamesReady() { return gNamesLearned.load(); }
 bool srvView(size_t cpu, SrvView& out) {
     std::lock_guard l(gMutex);
     auto it = gSrvs.find(cpu);
-    if (it == gSrvs.end() || !it->second.res) return false;
+    if (it == gSrvs.end() || !it->second.res || !isAlive(it->second.res)) return false;
     out.res = it->second.res, out.w = it->second.w, out.h = it->second.h, out.fmt = it->second.fmt, out.mips = it->second.mips;
     return true;
 }
@@ -2273,6 +2331,7 @@ std::vector<SrvView> largestTextures(size_t n) {
         for (auto const& [cpu, i] : gSrvs)
             if (i.res && i.w >= 16 && i.h >= 16) by[i.res] = SrvView{i.res, i.w, i.h, i.fmt, i.mips};
     }
+    std::erase_if(by, [](auto const& kv) { return !isAlive(kv.first); });
     std::vector<SrvView> v;
     v.reserve(by.size());
     for (auto const& [r, s] : by) v.push_back(s);
