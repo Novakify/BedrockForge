@@ -244,13 +244,24 @@ double gameMemoryMb() {
 // Renderer Foundation's Glass Armor reads mods/RendererFoundation/config/GlassFrost.txt about once a second; this
 // module is its menu. Off = the approved clear crystal (frost 0, no glow, no shimmer, white).
 constexpr char const* kGlassTints[] = {"FFFFFF", "E6D9FF", "C77BFF", "BFE8FF", "FFC9E3", "FFE2A8"};
-void writeGlassFrost(float frost, float glow, bool shimmer, int tint) {
+/// "Custom" in a Palette / Colour list: any colour from three sliders (the hue wheel 0..360, how strong, how bright).
+/// which = 1: the lighter companion colour some effects use as their second one.
+std::array<float, 3> customColour(Module& m, int which) {
+    float const h = std::fmod(std::max(m.num("custom_hue", 280.f), 0.f), 360.f) / 60.f, sat = std::clamp(m.num("custom_sat", 0.8f), 0.f, 1.f),
+                v = std::clamp(m.num("custom_bright", 1.f), 0.f, 1.f);
+    float const c = v * sat, x = c * (1.f - std::fabs(std::fmod(h, 2.f) - 1.f)), lo = v - c;
+    std::array<float, 3> o = h < 1 ? std::array<float, 3>{c, x, 0} : h < 2 ? std::array<float, 3>{x, c, 0} : h < 3 ? std::array<float, 3>{0, c, x}
+                           : h < 4 ? std::array<float, 3>{0, x, c} : h < 5 ? std::array<float, 3>{x, 0, c} : std::array<float, 3>{c, 0, x};
+    for (auto& k : o) { k += lo; if (which == 1) k += (1.f - k) * 0.45f; }
+    return o;
+}
+void writeGlassFrost(float frost, float glow, bool shimmer, int tint, std::string const& custom = {}) {
     try {
         auto const path = ll::mod::NativeMod::current()->getModDir().parent_path() / "RendererFoundation" / "config" / "GlassFrost.txt";
         std::error_code ec;
         if (!std::filesystem::exists(path.parent_path(), ec)) return;   // no Renderer Foundation here
         std::ofstream(path) << std::format("frost {:.2f}\nglow {:.2f}\nshimmer {}\ntint {}\n", frost, glow, shimmer ? 1 : 0,
-                                           kGlassTints[std::clamp(tint, 0, int(std::size(kGlassTints)) - 1)]);
+                                           !custom.empty() ? custom.c_str() : kGlassTints[std::clamp(tint, 0, int(std::size(kGlassTints)) - 1)]);
     } catch (...) {}
 }
 // Purxiy's Glass also says WHAT is glass (You / Other players / Items / Armour): Renderer Foundation reads
@@ -266,15 +277,17 @@ void writeGlassBody(bool self, bool players, bool armour, bool items) {
 std::string gGlassLast; // last written settings ("" = write on the next frame)
 void glassTick(Module& m) {
     std::string& last = gGlassLast;
-    std::string const now = std::format("{:.2f}/{:.2f}/{}/{}/{}/{}/{}/{}", m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true),
+    std::string const now = std::format("{:.2f}/{:.2f}/{}/{}/{}/{}/{}/{}/{:.0f}/{:.2f}/{:.2f}", m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true),
                                         int(m.num("tint", 0)), m.flag("self", false), m.flag("players", false), m.flag("armour", true),
-                                        m.flag("items", false));
+                                        m.flag("items", false), m.num("custom_hue", 280.f), m.num("custom_sat", 0.5f), m.num("custom_bright", 1.f));
     if (now == last) return;
     static int64_t at = 0;
     if (nowMs() - at < 150) return;   // dragging a slider: a few writes a second at most
     at = nowMs();
     last = now;
-    writeGlassFrost(m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)));
+    std::string custom;
+    if (int(m.num("tint", 0)) == 6) { auto const c = customColour(m, 0); custom = std::format("{:02X}{:02X}{:02X}", int(c[0] * 255.f + 0.5f), int(c[1] * 255.f + 0.5f), int(c[2] * 255.f + 0.5f)); }
+    writeGlassFrost(m.num("frost", 0.35f), m.num("glow", 0.2f), m.flag("shimmer", true), int(m.num("tint", 0)), custom);
     writeGlassBody(m.flag("self", false), m.flag("players", false), m.flag("armour", true), m.flag("items", false));
 }
 
@@ -369,9 +382,12 @@ void atmosTick() {
                                                 {{1.00f, 0.71f, 0.55f}, {0.80f, 0.62f, 1.00f}},
                                                 {{1.00f, 0.62f, 0.86f}, {0.55f, 0.82f, 1.00f}}};
         int const p = std::clamp(int(am->num("palette", 0)), 0, 2);
+        bool const amCustom = int(am->num("palette", 0)) == 3;
+        auto const ca = amCustom ? customColour(*am, 0) : std::array<float, 3>{kAmb[p][0][0], kAmb[p][0][1], kAmb[p][0][2]};
+        auto const cb = amCustom ? customColour(*am, 1) : std::array<float, 3>{kAmb[p][1][0], kAmb[p][1][1], kAmb[p][1][2]};
         out += std::format("amb 1\namb_a {:.3f} {:.3f} {:.3f}\namb_b {:.3f} {:.3f} {:.3f}\namb_amount {:.2f}\namb_size {:.2f}\namb_glow {:.2f}\n"
                            "amb_speed {:.2f}\namb_twinkle {:.2f}\namb_range {:.0f}\namb_style {}\namb_dof {}\namb_react {}\namb_daylight {:.2f}\n",
-                           kAmb[p][0][0], kAmb[p][0][1], kAmb[p][0][2], kAmb[p][1][0], kAmb[p][1][1], kAmb[p][1][2], am->num("amount", 1.f),
+                           ca[0], ca[1], ca[2], cb[0], cb[1], cb[2], am->num("amount", 1.f),
                            am->num("size", 1.f), am->num("glow", 0.6f), am->num("speed", 1.f), am->num("twinkle", 0.5f), am->num("range", 24.f),
                            int(am->num("style", 0)), am->flag("depth_of_field", true) ? 1 : 0, am->flag("react", true) ? 1 : 0, am->num("daylight", 0.5f));
         if (out.find("tod ") == std::string::npos) out += std::format("tod {:.3f}\n", tod < 0 ? 0.f : tod);
@@ -381,6 +397,7 @@ void atmosTick() {
                                                 {{1.00f, 0.71f, 0.55f}, {0.80f, 0.62f, 1.00f}},
                                                 {{1.00f, 0.62f, 0.86f}, {0.55f, 0.82f, 1.00f}}};
         auto pal = [&](Module* m, int which) {   // Accent follows the colour picked in Client UI (kNeon), not a fixed purple
+            if (int(m->num("palette", 0)) == 3) return customColour(*m, which);   // Custom: any colour
             int const p = std::clamp(int(m->num("palette", 0)), 0, 2);
             if (p == 0 && which == 0) return std::array<float, 3>{kNeon.r, kNeon.g, kNeon.b};
             return std::array<float, 3>{kPal[p][which][0], kPal[p][which][1], kPal[p][which][2]};
@@ -397,7 +414,7 @@ void atmosTick() {
         else out += "trail 0\n";
         if (au && au->enabled) { auto c = pal(au, 0); out += std::format("aura 1\naura_c {:.3f} {:.3f} {:.3f}\naura_size {:.2f}\naura_speed {:.2f}\naura_glow {:.2f}\naura_style {}\naura_fp {}\n", c[0], c[1], c[2], au->num("size", 1.f), au->num("speed", 1.f), au->num("glow", 0.65f), int(au->num("style", 0)), au->flag("first_person", false) ? 1 : 0); }
         else out += "aura 0\n";
-        if (ha && ha->enabled) { auto c = pal(ha, 1); out += std::format("halo 1\nhalo_c {:.3f} {:.3f} {:.3f}\nhalo_size {:.2f}\nhalo_glow {:.2f}\nhalo_height {:.2f}\nhalo_design {}\nhalo_fp 0\n", c[0], c[1], c[2], ha->num("size", 1.f), ha->num("glow", 0.7f), ha->num("height", 1.f), int(ha->num("design", 0))); }
+        if (ha && ha->enabled) { auto c = pal(ha, int(ha->num("palette", 0)) == 3 ? 0 : 1); out += std::format("halo 1\nhalo_c {:.3f} {:.3f} {:.3f}\nhalo_size {:.2f}\nhalo_glow {:.2f}\nhalo_height {:.2f}\nhalo_design {}\nhalo_fp 0\n", c[0], c[1], c[2], ha->num("size", 1.f), ha->num("glow", 0.7f), ha->num("height", 1.f), int(ha->num("design", 0))); }
         else out += "halo 0\n";
         // Wings / Cape (Purxiy cosmetics) and Block Outline (Purxiy render): RF draws them in the atmos pass
         if (auto* wg = r.find("wings"); wg && wg->enabled) { auto c = pal(wg, 0); out += std::format("wg 1\nwg_c {:.3f} {:.3f} {:.3f}\nwg_design {}\nwg_size {:.2f}\nwg_glow {:.2f}\nwg_flap {:.2f}\nwg_fp {}\n", c[0], c[1], c[2], int(wg->num("design", 0)), wg->num("size", 1.f), wg->num("glow", 0.6f), wg->num("flap", 1.f), wg->flag("first_person", false) ? 1 : 0); }
@@ -1394,7 +1411,9 @@ void registerBuiltins() {
         auto& gl = r.add("glass_frost", "Glass", Category::Visual, "Players, items and armour made of glass: clear as a window, or soft and milky (Renderer Foundation)", false);
         gl.slider("frost", "Frosted (0 clear .. 1 milky)", 0.35f, 0.f, 1.f, 0.05f).slider("glow", "Glow", 0.2f, 0.f, 1.f, 0.05f)
             .toggleSetting("shimmer", "Shimmer (a soft sheen now and then)", true)
-            .choice("tint", "Colour", {"White", "Lilac", "Neon purple", "Ice blue", "Rose", "Gold"}, 0)
+            .choice("tint", "Colour", {"White", "Lilac", "Neon purple", "Ice blue", "Rose", "Gold", "Custom"}, 0)
+            .slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.5f, 0.f, 1.f, 0.05f)
+            .slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .toggleSetting("self", "You (your body in third person, your arm in first person)", false)
             .toggleSetting("players", "Other players", false)
             .toggleSetting("items", "Items (held, dropped and in item frames)", false)
@@ -1417,7 +1436,7 @@ void registerBuiltins() {
             .slider("clear", "Clear around you", 6, 0, 24, 1).slider("drift", "Drift", 1.0f, 0.f, 3.f, 0.05f)
             .slider("rays", "Sun rays", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("creatures", "Players and mobs show clearly through it", true);
         auto& am = r.add("ambience", "Ambience", Category::Visual, "Glowing particles drifting through the world around you (Renderer Foundation)", false);
-        am.choice("style", "Style", {"Motes", "Stardust", "Petals", "Snow"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+        am.choice("style", "Style", {"Motes", "Stardust", "Petals", "Snow"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .slider("amount", "Amount", 1.0f, 0.1f, 2.0f, 0.05f).slider("size", "Size", 1.0f, 0.5f, 2.0f, 0.05f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("speed", "Speed", 1.0f, 0.f, 3.f, 0.05f)
             .slider("twinkle", "Twinkle", 0.5f, 0.f, 1.f, 0.05f).slider("range", "Range (blocks)", 24, 8, 40, 1)
@@ -1426,36 +1445,36 @@ void registerBuiltins() {
         am.onToggle = [](bool) { gAtmosLast.clear(); };
         // Purxiy hit / jump effects (their settings; "others" needs other players' events: not yet)
         auto& jc = r.add("jump_circles", "Jump Circles", Category::Visual, "A ring of light where you jump (Renderer Foundation)", false);
-        jc.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.2f, 0.5f, 3.f, 0.05f)
+        jc.choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f).slider("size", "Size", 1.2f, 0.5f, 3.f, 0.05f)
             .slider("duration", "Duration (s)", 1.1f, 0.3f, 3.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
         auto& hs = r.add("hit_splash", "Hit Splash", Category::Visual, "Glowing splashes where your hits land (Renderer Foundation)", false);
-        hs.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+        hs.choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
             .slider("duration", "Duration (s)", 6.f, 1.f, 15.f, 0.5f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
         auto& rp = r.add("ripple", "Ripple", Category::Visual, "A wave of light where every hit lands (Renderer Foundation)", false);
-        rp.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
+        rp.choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f).slider("glow", "Glow", 0.8f, 0.f, 1.f, 0.05f)
             .slider("duration", "Duration (s)", 0.8f, 0.3f, 2.f, 0.05f).toggleSetting("crits", "A burst of stars on critical hits", true)
             .toggleSetting("ring", "A ring that rolls over the ground", true);
         auto& sw = r.add("shockwave", "Shockwave", Category::Visual, "Land, and a wave of light runs through the ground (Renderer Foundation)", false);
-        sw.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
+        sw.choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f)
             .slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f);
         // cosmetics (Purxiy trail / aura / halo): seen in third person (F5), the aura first person too if you want
         auto& tr = r.add("trail", "Trail", Category::Visual, "Leave a trail of light behind you (Renderer Foundation)", false);
-        tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+        tr.choice("style", "Style", {"Line", "Path", "Helix", "Stardust"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .slider("duration", "Duration (s)", 1.2f, 0.3f, 3.f, 0.05f).slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f);
         auto& au = r.add("aura", "Aura", Category::Visual, "Soft light that lives around you (Renderer Foundation)", false);
-        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation", "Ascension"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+        au.choice("style", "Style", {"Orbit", "Fireflies", "Spiral", "Constellation", "Ascension"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("speed", "Speed", 1.f, 0.f, 3.f, 0.05f).slider("glow", "Glow", 0.65f, 0.f, 1.f, 0.05f)
             .toggleSetting("first_person", "See it from your own eyes too", false);
         auto& ha = r.add("halo", "Halo", Category::Visual, "A gently glowing halo (Renderer Foundation)", false);
-        ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+        ha.choice("design", "Design", {"Seraph", "Sigil", "Crown", "Stardust", "Eclipse", "Fallen"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .slider("size", "Size", 1.f, 0.5f, 2.f, 0.05f).slider("glow", "Glow", 0.7f, 0.f, 1.f, 0.05f).slider("height", "Height", 1.f, 0.f, 2.f, 0.05f);
         // [Purxiy "wings" / "cape" / "block_outline"] original looks, drawn by Renderer Foundation like the halo
         auto& wgm = r.add("wings", "Wings", Category::Visual, "A pair of softly animated wings (Renderer Foundation)", false);
-        wgm.choice("design", "Design", {"Seraph", "Butterfly", "Prism"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+        wgm.choice("design", "Design", {"Seraph", "Butterfly", "Prism"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .slider("size", "Size", 1.f, 0.5f, 1.6f, 0.05f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("flap", "Flap", 1.f, 0.f, 2.f, 0.05f)
             .toggleSetting("first_person", "See them in first person", false);
         auto& cpm = r.add("cape", "Cape", Category::Visual, "An animated glowing cape that flows as you move (Renderer Foundation)", false);
-        cpm.choice("design", "Design", {"Silk", "Aurora", "Starfield"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+        cpm.choice("design", "Design", {"Silk", "Aurora", "Starfield"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .slider("glow", "Glow", 0.5f, 0.f, 1.f, 0.05f).slider("sway", "Sway", 1.f, 0.f, 2.f, 0.05f);
         cosmetics::registerModules(r);   // 3D model cosmetics (Knives), Cosmetics tab
         // [Purxiy "main_menu": the world behind the menus] the title screen's panorama, captured from where you stand
@@ -1469,7 +1488,7 @@ void registerBuiltins() {
             .choice("palette", "Hearts", {"Rose", "Lilac", "Peach"}, 0).slider("pastel", "Pastel", 1.f, 0.f, 1.f, 0.05f)
             .slider("softness", "Softness", 0.7f, 0.f, 1.f, 0.05f).slider("hearts", "Hearts", 1.f, 0.f, 1.5f, 0.05f).slider("sparkles", "Sparkles", 1.f, 0.f, 1.f, 0.05f);
         auto& bom = r.add("block_outline", "Block Outline", Category::Visual, "A cleaner, glowing outline on the block you aim at (Renderer Foundation)", false);
-        bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0)
+        bom.choice("style", "Style", {"Glow", "Clean", "Corners"}, 0).choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f)
             .slider("width", "Width (px)", 2.f, 1.f, 5.f, 0.5f).slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.12f, 0.f, 0.6f, 0.02f)
             .toggleSetting("face", "Light the face you look at", true).toggleSetting("glide", "Glide between blocks", true);
         auto& chm = r.add("chroma", "Chroma", Category::Visual, "The world waits in grey, and colour blooms wherever you walk (Renderer Foundation)", false);
@@ -1477,7 +1496,7 @@ void registerBuiltins() {
             .toggleSetting("living", "Players, mobs and items keep their colour", true).slider("brush", "Brush (blocks)", 6.f, 2.f, 16.f, 0.5f)
             .choice("memory", "Memory", {"30 s", "2 min", "10 min", "1 hour"}, 1);
         auto& rad = r.add("radiance", "Radiance", Category::Visual, "Glowing outlines on players, mobs and items (Renderer Foundation)", false);
-        rad.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("width", "Width", 2.f, 1.f, 5.f, 0.5f)
+        rad.choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f).slider("width", "Width", 2.f, 1.f, 5.f, 0.5f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).slider("fill", "Fill", 0.2f, 0.f, 1.f, 0.05f).slider("speed", "Flow speed", 1.f, 0.f, 3.f, 0.05f);
         auto& wxm = r.add("weather", "Weather", Category::Visual, "Sculpt the weather: glassy rain, soft snowfall and ember showers (Renderer Foundation)", false);
         wxm.choice("mode", "Mode", {"Rain", "Snow", "Fire"}, 0).slider("intensity", "Intensity", 1.f, 0.1f, 2.f, 0.05f)
@@ -1491,7 +1510,7 @@ void registerBuiltins() {
             .slider("fringe", "Lilac fringe", 0.45f, 0.f, 1.f, 0.05f);
         // (the block itself cannot grow / pop: its geometry is the game's chunk mesh - only the light is ours)
         auto& pam = r.add("place_animation", "Place Animation", Category::Visual, "A soft light on blocks as you build and break (Renderer Foundation)", false);
-        pam.choice("palette", "Palette", {"Accent", "Orchid", "Dream"}, 0).slider("duration", "Duration (s)", 0.34f, 0.15f, 1.f, 0.01f)
+        pam.choice("palette", "Palette", {"Accent", "Orchid", "Dream", "Custom"}, 0).slider("custom_hue", "Custom colour", 280.f, 0.f, 360.f, 5.f).slider("custom_sat", "Custom: how strong", 0.8f, 0.f, 1.f, 0.05f).slider("custom_bright", "Custom: brightness", 1.f, 0.2f, 1.f, 0.05f).slider("duration", "Duration (s)", 0.34f, 0.15f, 1.f, 0.01f)
             .slider("glow", "Glow", 0.6f, 0.f, 1.f, 0.05f).toggleSetting("breaking", "Blocks you break too", true);
         for (Module* m : {&jc, &hs, &rp, &sw, &tr, &au, &ha, &chm, &rad, &wxm, &bkm, &pam}) m->onToggle = [](bool) { gAtmosLast.clear(); };
         hz.onToggle = [](bool) { gAtmosLast.clear(); };
