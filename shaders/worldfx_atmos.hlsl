@@ -1306,10 +1306,13 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float3 wp = c5.xyz + P + n * 0.002;
     float2 uv = an.x > an.y && an.x > an.z ? wp.zy : (an.y > an.z ? wp.xz : wp.xy);
     float2 f = frac(uv), cell = floor(uv);
-    float2 aa = clamp(fwidth(uv), 1e-4, 0.2);
+    // (pixel footprint from the distance and the angle, not fwidth: screen derivatives jumped between faces and the
+    //  ground shimmered with dotted rows)
+    float  fp = dist * 2.0 * c1.w / c4.y / sqrt(max(abs(dot(n, rd)), 0.12));
+    float2 aa = float2(fp, fp);
     // block edges: a crisp line with a soft glow
     float2 e2 = min(f, 1.0 - f) / aa;
-    float edge = 1.0 - smoothstep(0.6, 1.8, min(e2.x, e2.y));
+    float edge = 1.0 - smoothstep(0.5, 1.3, min(e2.x, e2.y));
     float far = smoothstep(1.4, 0.25, max(aa.x, aa.y) * 4.0);                   // 1 near .. 0 where a block is a few px
     float edgeGlow = exp(-min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * 22.0) * 0.18 * far;
     edge *= 0.45 + 0.55 * far;
@@ -1321,12 +1324,16 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float  th = cyHash(fid + float3(sc, 3.7));
     float  rot = floor(cyHash(fid + float3(sc, 9.1)) * 4.0);
     float2 r2 = rot < 1.0 ? sf : rot < 2.0 ? float2(-sf.y, sf.x) : rot < 3.0 ? -sf : float2(sf.y, -sf.x);
-    float  w  = 0.07, saa = max(aa.x, aa.y) * 4.0;
-    float  dT = 9.0;
-    if      (th < 0.30) dT = abs(r2.y);                                                    // straight run
-    else if (th < 0.52) dT = min(r2.x <= 0.0 ? abs(r2.y) : 9.0, r2.y >= 0.0 ? abs(r2.x) : 9.0);   // turn
-    else if (th < 0.70) dT = min(r2.x <= 0.0 ? abs(r2.y) : 9.0, abs(length(r2) - 0.20));   // ends in a ring pad
-    else if (th < 0.78) dT = abs(length(r2) - 0.17);                                       // a lone via
+    float  w  = 0.065, saa = max(aa.x, aa.y) * 4.0;
+    // (round 2, Fernando: "needs drastic improvements" - the reference maze is DENSE and CONNECTED with rounded bends.
+    //  Truchet tiles: two quarter arcs per tile, mirrored at random - the arcs join tile to tile into endless winding
+    //  traces; a few tiles carry a ring pad or a straight bus instead.)
+    float2 tf = th < 0.5 ? sf : float2(-sf.x, sf.y);
+    float2 ta = abs(tf - 0.5), tb = abs(tf + 0.5); ta *= ta; ta *= ta; tb *= tb; tb *= tb;
+    float  dT = min(abs(sqrt(sqrt(ta.x + ta.y)) - 0.5), abs(sqrt(sqrt(tb.x + tb.y)) - 0.5));   // squarish arcs: runs with rounded corners
+    float  pick = cyHash(fid + float3(sc, 5.3));
+    if (pick > 0.86)      dT = min(abs(length(sf) - 0.16), r2.x <= 0.0 ? abs(r2.y) : 9.0);   // a pad with its lead
+    else if (pick > 0.78) dT = abs(r2.y);                                                  // a straight bus
     float circuits = (1.0 - smoothstep(w * 0.5, w * 0.5 + saa, dT)) * cy1.y;
     circuits *= smoothstep(1.2, 0.35, saa);                                                 // far away the maze would shimmer: fade it
     // light packets: bright comets with short tails running along the block edges of the ground
@@ -1351,7 +1358,8 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float pulse = 0.55 + 0.45 * sin(t * 2.0 + h1 * 6.28);
     float fog = exp(-dist * 0.012);
     float3 base = acc * (0.012 + 0.06 * lumW) + lumW * 0.025;            // the world, near black (Purxiy: #1a1020-ish)
-    float3 lines = acc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.4 + edgeGlow * cy1.x + circuits * pulse * 0.75 * cy1.x + scan * 0.35)
+    float3 lc = lerp(acc, float3(1.0, 1.0, 1.0), 0.45);                    // white-hot line cores, the accent in the glow
+    float3 lines = lc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.5 + circuits * pulse * 0.75 * cy1.x) + acc * (edgeGlow * cy1.x + circuits * 0.25 * cy1.x + scan * 0.35)
                  + (float3(1.0, 1.0, 1.0) * 0.6 + acc) * packets * cy1.x;
     float3 dig = base + lines * fog + acc * scan * 0.12;
     // you become a hologram (Purxiy reference: the player goes dark with bright lavender scanlines drifting up)
