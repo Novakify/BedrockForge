@@ -53,6 +53,11 @@ ID3D12PipelineState* glassPsoFor(ID3D12GraphicsCommandList* list, ID3D12Pipeline
 void flushTimer(ID3D12GraphicsCommandList* list, bool begin);
 /// UiCapture's CreateGraphicsPipelineState hook, after a successful create.
 void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d, uint64_t psHash);
+/// A pipeline was just created at this address: whatever we knew about that address belonged to a pipeline the game has
+/// destroyed (a resource-pack reload - joining / leaving a server - rebuilds them all, and addresses come back).
+void forgetPso(ID3D12PipelineState* pso);
+/// Keep one of our GPU objects alive a few more frames (lists already recorded may still use it), then release it.
+void bury(IUnknown* u);
 /// true while a frame is being recorded (cheap, lock-free) - the command list hooks only call in then.
 bool capturing();
 /// M0b: while a capture is armed/recording, UiCapture tracks root tables + SRV creation for us.

@@ -24,6 +24,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <climits>
 #include <intrin.h>
 #include <d3d12.h>
 #include <wrl/client.h>
@@ -123,6 +124,7 @@ std::unordered_map<size_t, ID3D12Resource*>                         gDsvRes;  //
 std::unordered_map<ID3D12RootSignature*, std::vector<uint8_t>>      gRsBlob;  // game root signature blobs
 struct ExtRoot { ComPtr<ID3D12RootSignature> rs; unsigned base = 0; bool failed = false; };
 std::unordered_map<ID3D12RootSignature*, ExtRoot>                   gExt;
+std::unordered_map<ID3D12RootSignature*, ExtRoot>                   gExtBody; // Glass Body: the same + t3 space9 (the skin)
 struct FlushSlot { ComPtr<ID3D12Resource> scene, depth; UINT64 sceneSize = 0, depthSize = 0; };
 constexpr int                      kSlots = 8;
 FlushSlot                          gSlots[kSlots];
@@ -1150,14 +1152,46 @@ ID3D12Resource* dsvResource(size_t h) {
     }
     return isAlive(r) ? r : nullptr;   // a depth the game already freed (world reload, leaving a server): never touch it
 }
+namespace {
+std::mutex                                       gBuryMx;   // leaf lock
+std::deque<std::pair<ComPtr<IUnknown>, long>>    gBuried;
+long                                             gBuryFrame = 0;
+void buryTick() {   // once per Present
+    std::vector<ComPtr<IUnknown>> drop;   // released outside the lock
+    std::lock_guard l(gBuryMx);
+    ++gBuryFrame;
+    while (!gBuried.empty() && gBuried.front().second + 300 < gBuryFrame) { drop.push_back(std::move(gBuried.front().first)); gBuried.pop_front(); }
+}
+} // namespace
+void bury(IUnknown* u) {
+    if (!u) return;
+    std::lock_guard l(gBuryMx);
+    gBuried.emplace_back(u, gBuryFrame);
+}
+void forgetPso(ID3D12PipelineState* pso) {
+    if (!pso) return;
+    std::lock_guard l(gMutex);
+    gPsos.erase(pso);
+    gActor.erase(pso);     // (2026-11-18 crash: a non-actor pipeline at a dead Actor pipeline's address was replayed as glass,
+    gItemPso.erase(pso);   //  and a new Actor pipeline got the glass pipeline built for the dead one's root signature)
+    for (auto it = gGlass.lower_bound({pso, INT_MIN}); it != gGlass.end() && it->first.first == pso;) {
+        bury(it->second.Get());
+        it = gGlass.erase(it);
+    }
+}
 void noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size) {
     if (!rs || !blob || !size || size > 65536) return;
     std::lock_guard l(gMutex);
-    gRsBlob[rs].assign(static_cast<uint8_t const*>(blob), static_cast<uint8_t const*>(blob) + size);
+    auto& b = gRsBlob[rs];
+    bool const same = b.size() == size && std::memcmp(b.data(), blob, size) == 0;
+    if (!same) {   // another root signature lives at this address now: the extended ones made for the old one are wrong
+        if (auto e = gExt.find(rs); e != gExt.end()) { bury(e->second.rs.Get()); gExt.erase(e); }
+        if (auto e = gExtBody.find(rs); e != gExtBody.end()) { bury(e->second.rs.Get()); gExtBody.erase(e); }
+        b.assign(static_cast<uint8_t const*>(blob), static_cast<uint8_t const*>(blob) + size);
+    }
 }
 
 namespace {
-std::unordered_map<ID3D12RootSignature*, ExtRoot> gExtBody; // Glass Body: the same + t3 space9 (the skin)
 /// body = false: exactly the armor's signature (game's + 4); true: + 5 (the skin as root SRV t3 space9)
 ID3D12RootSignature* extendedRootImpl(ID3D12RootSignature* game, unsigned* base, bool body) {
     if (!game) return nullptr;
@@ -2187,6 +2221,7 @@ void flushTimer(ID3D12GraphicsCommandList* list, bool begin) {
 
 void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
     rf::dred::check();
+    buryTick();
     {   // the client's Glass module (You / Other players / Armour): about once a second
         static int64_t lastPoll = 0;
         int64_t const  nowMs    = int64_t(GetTickCount64());

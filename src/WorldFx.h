@@ -32,6 +32,7 @@ bool tracking();
 /// The probe frame is being recorded (cheap, lock-free).
 bool recording();
 void onSetPso(ID3D12GraphicsCommandList* list, ID3D12PipelineState* pso);
+void forgetPso(ID3D12PipelineState* pso);   // a pipeline was just created at this address: drop what the dead one was classified as
 void onSetRts(ID3D12GraphicsCommandList* list, size_t rt0, size_t dsv);
 /// The World FX screen pass wants every list's colour / depth target handles (cheap: one map write per bind).
 void setTargetsWanted(bool on);

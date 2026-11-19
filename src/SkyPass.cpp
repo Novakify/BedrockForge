@@ -1490,6 +1490,16 @@ void notePso(ID3D12PipelineState* pso, int kind, D3D12_GRAPHICS_PIPELINE_STATE_D
     gGame[pso] = std::move(g);
 }
 
+void forgetPso(ID3D12PipelineState* pso) {
+    // (2026-11-18 crash: only sky-kind pipelines were ever written here, so any other pipeline the game later created at a
+    //  dead sky / cloud pipeline's address was treated as the sky: our dome and the World FX pass were drawn on its draws)
+    static std::vector<GamePso> old;   // kept: their root signatures stay alive (keys of the derived-pipeline cache)
+    std::lock_guard l(gPsoMutex);
+    auto it = gGame.find(pso);
+    if (it == gGame.end()) return;
+    old.push_back(std::move(it->second));
+    gGame.erase(it);
+}
 int kindOf(ID3D12PipelineState* pso) {
     if (!pso) return None;
     std::lock_guard l(gPsoMutex);
