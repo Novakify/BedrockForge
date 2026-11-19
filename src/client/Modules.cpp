@@ -1543,8 +1543,9 @@ void registerBuiltins() {
     r.add("nick_hider", "Nick Hider", Category::Misc, "Hide your name in screenshots and streams (chat, the player list)", false)
         .choice("alias", "Show it as", {"You", "Player", "Hidden", "Novak"}, 0);
     r.add("motion_blur", "Motion Blur", Category::Camera, "Smooth camera blur when you turn and move. With a World FX sky on, your hand and the HUD stay sharp (drawn by Renderer Foundation)")
+        .choice("style", "Style", {"Smooth", "Streak"}, 0)
         .slider("strength", "Strength", 1.0f, 0.1f, 3.0f, 0.05f)
-        .slider("moving", "Blur from moving (turning is always full)", 0.6f, 0.0f, 1.5f, 0.05f);
+        .slider("moving", "Blur from moving (Streak; turning is always full)", 0.6f, 0.0f, 1.5f, 0.05f);
 
     // ---------------- Visual
     r.add("fullbright", "Fullbright", Category::Visual, "See in the dark: lifts the light baked into nearby terrain (client-side, relights chunks on toggle)")

@@ -23,7 +23,7 @@ struct BfPostFxV1 {
     float    motionBlur; // Cursed Fog MOTION_BLURRING_STRENGTH (0 = off)
     float    yaw, pitch; // camera rotation, degrees
     float    fov;      // vertical field of view, degrees
-    float    reserved[5]; // [0] = 1 + motion blur "moving" share 0..1.5 (0 = not given)
+    float    reserved[5]; // [0] = 1 + motion blur "moving" share 0..1.5 (0 = not given); [1] = 1 + motion blur style (0 Smooth, 1 Streak)
 };
 __declspec(dllexport) BfPostFxV1 const* BF_GetPostFx();
 }

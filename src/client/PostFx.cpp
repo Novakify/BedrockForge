@@ -71,10 +71,11 @@ void applyModules() {
         gFx.caStyle    = m->num("ca_style", 0.0f);
         gFx.cas        = m->num("sharpen", 0.5f);
     }
-    gFx.reserved[0] = 0.0f;
+    gFx.reserved[0] = 0.0f; gFx.reserved[1] = 0.0f;
     if (r.on("motion_blur")) {
         gFx.motionBlur  = r.find("motion_blur")->num("strength", 1.0f);
         gFx.reserved[0] = 1.0f + r.find("motion_blur")->num("moving", 0.6f);   // 1 + how much walking / strafing blurs (0 = not said: RF uses its own F6 value)
+        gFx.reserved[1] = 1.0f + r.find("motion_blur")->num("style", 0.0f);     // 1 + style: 0 Smooth (frame blend, Blueberry-like), 1 Streak
     }
     gAny = gFx.bloom > 0 || gFx.ca > 0 || gFx.cas > 0 || gFx.motionBlur > 0;
 }
