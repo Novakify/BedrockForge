@@ -423,6 +423,7 @@ HRESULT STDMETHODCALLTYPE createStreamPsoHook(ID3D12Device* d, void const* desc,
 void STDMETHODCALLTYPE createRtvHook(ID3D12Device* d, ID3D12Resource* res, D3D12_RENDER_TARGET_VIEW_DESC const* desc,
                                      D3D12_CPU_DESCRIPTOR_HANDLE h) {
     reinterpret_cast<CreateRtv_t>(gOrig[2])(d, res, desc, h);
+    rf::glassarmor::tagAlive(res);   // watched: World FX checks it is still alive before using it
     std::lock_guard l(gMutex);
     ++gRtvCreated;
     if (res) gRtvRes[h.ptr] = res;
@@ -1532,7 +1533,10 @@ bool haveUiShaderList() {
     std::lock_guard l(gMutex);
     return !gUiHashes.empty();
 }
-ID3D12Resource* rtvResourceOf(size_t handle) { return rtvResource(SIZE_T(handle)); }
+ID3D12Resource* rtvResourceOf(size_t handle) {   // for World FX: only a target that is still alive (never a freed one)
+    ID3D12Resource* const r = rtvResource(SIZE_T(handle));
+    return rf::glassarmor::isAlive(r) ? r : nullptr;
+}
 long lastFrameUiDraws() { return gLastFrameUiDraws.load(); }
 std::string leakNote() {
     char b[400];
@@ -1577,6 +1581,7 @@ void beforeOverlay(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12Resour
                            std::to_string(gFrameUnknownUi.size());
         if (gFrameUnknownUi.size() == 1) {
             SIZE_T h   = gFrameUnknownUi.begin()->first;
+            rf::glassarmor::tagAlive(bb);
             gRtvRes[h] = bb;
             gBbHandles.insert(h);
             ++gLearned;
@@ -1623,6 +1628,7 @@ void drawUi() {
 }
 
 void noteRtv(size_t h, void* res) {
+    rf::glassarmor::tagAlive(static_cast<ID3D12Resource*>(res));
     std::lock_guard l(gMutex);
     ++gRtvCreated;
     if (res) gRtvRes[h] = static_cast<ID3D12Resource*>(res);

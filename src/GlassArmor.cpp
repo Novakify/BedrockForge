@@ -1116,14 +1116,19 @@ ID3D12PipelineState* listPso(ID3D12GraphicsCommandList* list) {
     return it == gListPso.end() ? nullptr : it->second;
 }
 void noteDsv(size_t h, ID3D12Resource* r) {
+    tagAlive(r);   // the game is making a view of it right now: it is alive (World FX checks this before using it)
     std::lock_guard l(gMutex);
     if (r) gDsvRes[h] = r;
     else gDsvRes.erase(h);
 }
 ID3D12Resource* dsvResource(size_t h) {
-    std::lock_guard l(gMutex);
-    auto it = gDsvRes.find(h);
-    return it == gDsvRes.end() ? nullptr : it->second;
+    ID3D12Resource* r = nullptr;
+    {
+        std::lock_guard l(gMutex);
+        auto it = gDsvRes.find(h);
+        if (it != gDsvRes.end()) r = it->second;
+    }
+    return isAlive(r) ? r : nullptr;   // a depth the game already freed (world reload, leaving a server): never touch it
 }
 void noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size) {
     if (!rs || !blob || !size || size > 65536) return;
