@@ -451,7 +451,21 @@ void applyFov(MinecraftCamera::CameraComponent** comps, int nComp, bool cineOn, 
 // were), the turning goes into an orbit at "distance" blocks. Only while the game has the mouse (cursor hidden).
 std::atomic<int>   gFlKey{0}, gFlMode{0};
 std::atomic<float> gFlDist{4.0f};
-struct FreeLook { bool on = false, toggled = false, wasDown = false; float lockYaw = 0, lockPitch = 0, offYaw = 0, offPitch = 0, blend = 0, reach = -1; } gFl;
+struct FreeLook {
+    bool on = false, toggled = false, wasDown = false; float lockYaw = 0, lockPitch = 0, offYaw = 0, offPitch = 0, blend = 0, reach = -1;
+    // the player's eyes glide between game ticks like the game draws the body (prev -> now over one 50 ms tick):
+    // the tick position alone moves 20 times a second, so the orbit stepped and the player looked like they shook
+    glm::vec3 tick{}, from{}, shown{}; Clock::time_point t0{}, last{}; bool haveEye = false;
+} gFl;
+std::atomic_bool gFlActive{false};   // freelook on or still swinging back: clientTick shows the player model (third person)
+glm::vec3 flEye(glm::vec3 const& eye) {
+    auto const now = Clock::now();
+    if (!gFl.haveEye || glm::length(eye - gFl.tick) > 6.0f) { gFl.tick = gFl.from = gFl.shown = eye; gFl.t0 = now; gFl.haveEye = true; }
+    else if (eye != gFl.tick) { gFl.from = gFl.shown; gFl.tick = eye; gFl.t0 = now; }
+    float const a = std::clamp(std::chrono::duration<float>(now - gFl.t0).count() / 0.05f, 0.0f, 1.0f);
+    gFl.shown = gFl.from + (gFl.tick - gFl.from) * a;
+    return gFl.shown;
+}
 bool flKeyWanted() {
     int const vk = gFlKey.load(std::memory_order_relaxed);
     if (vk <= 0 || vk > 255) return false;
@@ -477,8 +491,13 @@ bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
     if (want && !gFl.on) { gFl.on = true; gFl.lockYaw = r.y; gFl.lockPitch = r.x; gFl.offYaw = 0; gFl.offPitch = 0; }
     if (!want && gFl.on) gFl.on = false;
     float const target = gFl.on ? 1.0f : 0.0f;
-    gFl.blend += (target - gFl.blend) * 0.25f;
-    if (gFl.blend < 0.01f && !gFl.on) { gFl.blend = 0; gFl.reach = -1; return false; }
+    auto const  nowT = Clock::now();   // frame-rate independent: the same ~0.1 s swing at 60 or 400 FPS
+    float const dt = gFl.last.time_since_epoch().count() ? std::clamp(std::chrono::duration<float>(nowT - gFl.last).count(), 0.0f, 0.1f) : 0.0f;
+    gFl.last = nowT;
+    float const k = 1.0f - std::exp(-dt / 0.045f);
+    gFl.blend += (target - gFl.blend) * k;
+    if (gFl.blend < 0.01f && !gFl.on) { gFl.blend = 0; gFl.reach = -1; gFl.haveEye = false; gFlActive = false; return false; }
+    gFlActive = true;
     if (gFl.on) {   // what the mouse did since the last frame goes to the camera; your look goes back
         gFl.offYaw  += std::remainder(r.y - gFl.lockYaw, 360.0f);
         gFl.offPitch = std::clamp(gFl.offPitch + (r.x - gFl.lockPitch), -89.0f - gFl.lockPitch, 89.0f - gFl.lockPitch);
@@ -486,8 +505,9 @@ bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
         (*rotc->mRotPrev).x = gFl.lockPitch; (*rotc->mRotPrev).y = gFl.lockYaw;
         if (head) { head->mYHeadRot = gFl.lockYaw; head->mYHeadRotO = gFl.lockYaw; }
     } else {        // released: the camera swings back to your eyes
-        gFl.offYaw *= 0.75f; gFl.offPitch *= 0.75f;
+        gFl.offYaw *= 1.0f - k; gFl.offPitch *= 1.0f - k;
     }
+    glm::vec3 const eyeS = flEye(eye);
     float const e = gFl.blend * gFl.blend * (3.0f - 2.0f * gFl.blend);
     float const yaw = gFl.lockYaw + gFl.offYaw, pitch = std::clamp(gFl.lockPitch + gFl.offPitch, -89.0f, 89.0f);
     float const y = yaw * kDeg, pt = pitch * kDeg;
@@ -497,11 +517,11 @@ bool flStep(Actor& actor, glm::vec3 const& eye, rf::cine::Pose& p) {
     // around your eyes, the same test the cinematic camera uses) - no looking through walls. In at once, out gently.
     float reach = wantD;
     if (wantD > 0.05f) {
-        glm::vec3 const hit = collideCamera(actor, eye, eye - f * wantD);
-        reach = std::max(0.0f, glm::length(hit - eye) - 0.1f);
+        glm::vec3 const hit = collideCamera(actor, eyeS, eyeS - f * wantD);
+        reach = std::max(0.0f, glm::length(hit - eyeS) - 0.1f);
     }
-    gFl.reach = gFl.reach < 0 || reach < gFl.reach ? reach : gFl.reach + (reach - gFl.reach) * 0.2f;
-    glm::vec3 const cam = eye - f * gFl.reach;
+    gFl.reach = gFl.reach < 0 || reach < gFl.reach ? reach : gFl.reach + (reach - gFl.reach) * k;
+    glm::vec3 const cam = eyeS - f * gFl.reach;
     p.pos[0] = cam.x; p.pos[1] = cam.y; p.pos[2] = cam.z;
     p.yaw = yaw; p.pitch = pitch; p.roll = 0;
     return true;
@@ -1213,6 +1233,16 @@ void clientTick() {
             ci->getOptions().setPlayerViewPerspective(saved);
             saved = -1;
         }
+    }
+    {   // [Freelook] in first person the game doesn't draw your player (only the arm, which hung in the air in front of
+        // the orbit camera): third person while the camera is round you, your own perspective back after the swing home
+        static int saved = -1;
+        auto       ci    = ll::service::getClientInstance();
+        bool const world = ci && ci->getLocalPlayer();
+        bool const want  = world && gFlActive.load() && !gActive.load() && gMenuSavedPersp < 0;
+        if (!world) { if (ci && saved >= 0) ci->getOptions().setPlayerViewPerspective(saved); saved = -1; }
+        else if (want && saved < 0) { auto& o = ci->getOptions(); saved = o.getPlayerViewPerspective(); if (saved == 0) o.setPlayerViewPerspective(1); }
+        else if (!want && saved >= 0) { ci->getOptions().setPlayerViewPerspective(saved); saved = -1; }
     }
     if (gSwingReq.exchange(false)) {
         if (auto ci = ll::service::getClientInstance())
