@@ -292,6 +292,13 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                     float3 cc  = lerp(fx2.rgb, fx3.rgb, saturate(r3 / (0.8 * Sz)));
                     L += (cc * (wave * 1.4 + rays * 1.2) + float3(1.0, 0.97, 0.92) * core * 2.5) * (0.5 + fx2.w) * (kind == 3 ? 1.6 : 1.0);
                 }
+                // (Purxiy reference, video 5: ~100-150 ms after the blow the whole target washes pink-white, then
+                //  clears) - the body's box round the hit point
+                float2 bxz = dv.xz;
+                if (length(bxz) < 0.5 * Sz && dv.y > -1.45 && dv.y < 0.75) {
+                    float wash = exp(-pow((age - 0.12) / 0.07, 2.0));
+                    L += float3(1.0, 0.85, 1.0) * wash * 0.9 * (0.5 + fx2.w) * (kind == 3 ? 1.3 : 1.0);
+                }
             }
             if (fx3.w > 0.0) {                                   // ripple: a flash, and a wave of light over what is near
                 // (Fernando 2026-11-19: "ripple doesn't look that good, not shiny". Now a prismatic wave: the ring splits
@@ -661,7 +668,7 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                     float  a5 = atan2(h3.z, h3.x) + pl.w;                 // turns with you
                     // five crisp points (a triangle wave, not a soft swell - in the lab the sine read as jelly), each rising
                     // from a low band; a jewel of light on every tip
-                    float  ph  = frac(a5 * 0.795775) * 2.0 - 1.0;          // -1..1 across one of the five
+                    float  ph  = frac(a5 * 1.273240) * 2.0 - 1.0;          // -1..1 across one of the eight (Purxiy ref: 6-8 spikes)
                     float  tri = saturate(1.0 - abs(ph) * 1.15);
                     float  pk  = tri * tri * (3.0 - 2.0 * tri);
                     float  H  = ha0.w * (0.060 + 0.150 * pk);             // the band's height here (taller: it read as a ribbon)
@@ -671,10 +678,10 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                     float  rimB = exp(-pow((h3.y - 0.006 * ha0.w) / (0.010 * ha0.w), 2.0)); // the rim along the bottom
                     float  body = (0.75 + 0.25 * ha1.x) * lerp(1.0, 0.65, h3.y / max(H, 1e-3));    // metal: brighter at the base
                     float  sweep = pow(saturate(1.0 - abs(frac(a5 * 0.159 - t * 0.12) - 0.5) * 8.0), 2.0);   // a shine travelling round the band
-                    float2 tipP = float2(ph * 0.11 * ha0.w, h3.y - ha0.w * 0.208);
+                    float2 tipP = float2(ph * 0.075 * ha0.w, h3.y - ha0.w * 0.212);
                     float  gem  = exp(-dot(tipP, tipP) / (0.00030 * ha0.w * ha0.w)) * step(abs(ph), 0.35);
                     L += (ha0.rgb * (inB * body + 1.6 * edge * inB + 1.2 * rimB) + float3(1.0, 0.96, 0.88) * inB * sweep * 0.9) * (w == 0 ? 1.0 : 0.45)
-                       + float3(1.0, 0.97, 0.92) * gem * 3.0;
+                       + float3(1.0, 0.99, 0.95) * gem * 3.4;   // pearl tips
                 }
             }
         }
