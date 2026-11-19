@@ -461,16 +461,20 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
     }
     [branch] if (ha0.w > 0.0 && (!fp || ha1.w > 0.5)) {
         float3 hc = pl.xyz + float3(0, 1.95 + 0.15 * ha1.y + 0.03 * sin(t * 1.6), 0);   // audit: hugs the head (was 0.4 above it)
+        bool const crown = int(ha1.z + 0.5) == 2;
+        // a crown is WORN (in game 2026-11-19 it floated over the head like a halo): its rim sits on the head, just under
+        // the top, no bob; the Height slider only nudges it
+        if (crown) hc = pl.xyz + float3(0, 1.80 + 0.06 * (ha1.y - 1.0), 0);
         // the halo's plane (horizontal, a slight tilt); the ray meets it at one point: distance to the ring there
         int   dz   = int(ha1.z + 0.5);
-        float tilt = dz == 5 ? 0.38 : 0.08;                            // fallen: knocked askew
+        float tilt = dz == 5 ? 0.38 : dz == 2 ? 0.0 : 0.08;            // fallen: knocked askew; a crown sits level
         float3 nrm = normalize(float3(tilt * sin(pl.w), 1, tilt * cos(pl.w)));
         float den = dot(rd, nrm);
         if (abs(den) > 1e-3) {
             float tp = dot(hc, nrm) / den;
             if (tp > 0.2 && tp < dist + 0.3) {
                 float3 hp = rd * tp - hc;
-                float R = 0.28 * ha0.w, rr = length(hp - nrm * dot(hp, nrm));
+                float R = (crown ? 0.31 : 0.28) * ha0.w, rr = length(hp - nrm * dot(hp, nrm));
                 float wdt = 0.025 * ha0.w;
                 float k = exp(-pow((rr - R) / wdt, 2.0));
                 float an = atan2(hp.z, hp.x);
@@ -488,11 +492,11 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                 // the soft glow dies out within a hand's width of the ring (it used to reach a block out across the
                 // halo's plane at full Glow: a faint see-through sheet over your head in third person)
                 float gl = (rr - R) / (wdt * 5.0);
-                L += ha0.rgb * (k * 2.0 + ha1.x * 0.3 * exp(-gl * gl));
+                L += ha0.rgb * (k * (crown ? 0.55 : 2.0) + ha1.x * (crown ? 0.08 : 0.3) * exp(-gl * gl));   // a crown's base is its rim, not a glowing ring
             }
         }
         [branch] if (dz == 2) {   // crown: an upright band on the ring, rising to five points (the ray against its cylinder, near and far wall)
-            float  R = 0.28 * ha0.w;
+            float  R = 0.31 * ha0.w;
             float2 o = -hc.xz, dv2 = rd.xz;
             float  qa = dot(dv2, dv2), qb = dot(o, dv2), qc = dot(o, o) - R * R;
             float  disc = qb * qb - qa * qc;
@@ -503,13 +507,21 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                     if (s < 0.2 || s > dist + 0.3) continue;
                     float3 h3 = rd * s - hc;
                     float  a5 = atan2(h3.z, h3.x) + pl.w;                 // turns with you
-                    float  pk = pow(0.5 + 0.5 * cos(a5 * 5.0), 1.6);
-                    float  H  = ha0.w * (0.045 + 0.125 * pk);             // the band's height here
-                    if (h3.y < -0.004 || h3.y > H) continue;
-                    float edge = exp(-pow((H - h3.y) / (0.012 * ha0.w), 2.0));
-                    float gem  = exp(-pow(h3.y - ha0.w * 0.165, 2.0) / (0.0006 * ha0.w * ha0.w)) * pow(pk, 12.0);
-                    L += ha0.rgb * ((0.22 + 0.25 * ha1.x) * (0.55 + 0.45 * h3.y / max(H, 1e-3)) + 1.5 * edge) * (w == 0 ? 1.0 : 0.55)
-                       + float3(1.0, 0.97, 0.9) * gem * 1.6;
+                    // five crisp points (a triangle wave, not a soft swell - in the lab the sine read as jelly), each rising
+                    // from a low band; a jewel of light on every tip
+                    float  ph  = frac(a5 * 0.795775) * 2.0 - 1.0;          // -1..1 across one of the five
+                    float  tri = saturate(1.0 - abs(ph) * 1.15);
+                    float  pk  = tri * tri * (3.0 - 2.0 * tri);
+                    float  H  = ha0.w * (0.040 + 0.120 * pk);             // the band's height here
+                    if (h3.y < -0.004 || h3.y > H + 0.02 * ha0.w) continue;
+                    float  inB  = step(h3.y, H);
+                    float  edge = exp(-pow((H - h3.y) / (0.008 * ha0.w), 2.0));          // the lit cut edge along the top
+                    float  rimB = exp(-pow((h3.y - 0.006 * ha0.w) / (0.010 * ha0.w), 2.0)); // the rim along the bottom
+                    float  body = (0.30 + 0.20 * ha1.x) * lerp(1.0, 0.55, h3.y / max(H, 1e-3));   // metal: brighter at the base
+                    float2 tipP = float2(ph * 0.11 * ha0.w, h3.y - ha0.w * 0.168);
+                    float  gem  = exp(-dot(tipP, tipP) / (0.00018 * ha0.w * ha0.w)) * step(abs(ph), 0.35);
+                    L += ha0.rgb * (inB * body + 1.4 * edge * inB + 1.1 * rimB) * (w == 0 ? 1.0 : 0.45)
+                       + float3(1.0, 0.97, 0.92) * gem * 2.2;
                 }
             }
         }
