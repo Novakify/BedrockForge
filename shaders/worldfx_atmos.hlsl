@@ -438,25 +438,89 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
     // aura / halo are lights in the air: closest approach of the view ray to each (depth-tested against the world)
     [branch] if (au0.w > 0.0 && int(au1.z + 0.5) == 4) L += ascension(P, rd, dist, sky, t, fp && au1.w < 0.5);   // Ascension
     else [branch] if (au0.w > 0.0 && (!fp || au1.w > 0.5)) {
-        int style = int(au1.z + 0.5);
-        int N = style == 1 ? 9 : 6;
-        float3 c = pl.xyz + float3(0, 1.0, 0);
-        float  rb = 0.75 * au0.w * 1.2 + 1.0 + 0.2 * au0.w;          // audit: the ray must pass the aura's sphere at all
-        float  tc = dot(c, rd);
-        float3 cp = c - rd * tc;
+        // (Fernando 2026-11-19: next to Purxiy the auras "pale" - Orbit / Fireflies / Spiral / Constellation were the same
+        //  few soft dots. Now every light is a white-hot core in a coloured glow with a comet tail along its path, and
+        //  each style has its own structure: Orbit rides a faint ring, Spiral is a double helix, Constellation's stars
+        //  are joined by thin lines and flash a four-point spike.)
+        int   style = int(au1.z + 0.5);
+        int   N     = style == 1 ? 9 : style == 2 ? 10 : style == 3 ? 7 : 6;
+        float sz    = au0.w;
+        float3 c    = pl.xyz + float3(0, 1.0, 0);
+        float  rb   = 0.75 * sz * 1.2 + 1.0 + 0.2 * sz;              // audit: the ray must pass the aura's sphere at all
+        float  tc   = dot(c, rd);
+        float3 cp   = c - rd * tc;
         if (dot(cp, cp) > rb * rb || tc < -rb) N = 0;
+        float3 white = float3(1.0, 0.98, 0.95);
+        float3 prevStar = 0; float3 firstStar = 0;
         [loop] for (int i = 0; i < N; ++i) {
-            float fi = float(i), ph = fi / float(N) * 6.2831 + t * 0.9 * au1.x;
-            float r = 0.75 * au0.w, yy = 0.0;
-            if (style == 1) { ph = fi * 2.4 + t * 0.4 * au1.x * (0.6 + frac(fi * 0.37)); r *= 0.6 + 0.6 * frac(fi * 0.71); yy = 0.8 * sin(t * 0.7 * au1.x + fi * 1.7); }
-            else if (style == 2) yy = frac(fi / float(N) + t * 0.15 * au1.x) * 2.0 - 1.0;
-            else yy = 0.25 * sin(ph * 2.0);
-            float3 q = c + float3(cos(ph) * r, yy, sin(ph) * r);
-            float tp = dot(q, rd);
-            if (tp < 0.2 || tp > dist + 0.3) continue;
-            float d = length(q - rd * tp), s = 0.035 * au0.w;
-            float tw = 0.75 + 0.25 * sin(t * 3.0 + fi * 2.1);
-            L += au0.rgb * (exp(-d * d / (s * s)) * 1.8 + au1.y * 0.25 * exp(-d / (s * 5.0))) * tw;
+            float fi = float(i);
+            float tw = 0.78 + 0.22 * sin(t * 3.0 + fi * 2.1);
+            float3 head = 0;
+            [loop] for (int k = 0; k < 8; ++k) {                      // k = 0: the light; 1..7: its comet tail, back along its path
+                float tk = t - float(k) * (style == 2 ? 0.035 : 0.075) / max(au1.x, 0.3);   // the spiral's tail packs tighter: a ribbon, not beads
+                float ph = fi / float(N) * 6.2831 + tk * 0.9 * au1.x;
+                float r = 0.75 * sz, yy = 0.0;
+                if (style == 1) {                                       // fireflies: wander, blink
+                    ph = fi * 2.4 + tk * 0.4 * au1.x * (0.6 + frac(fi * 0.37));
+                    r *= 0.6 + 0.6 * frac(fi * 0.71);
+                    yy = 0.8 * sin(tk * 0.7 * au1.x + fi * 1.7);
+                } else if (style == 2) {                                // spiral: two strands climbing round you
+                    float u = frac(floor(fi * 0.5) / float(N / 2) + tk * 0.15 * au1.x);
+                    ph = u * 12.566 + (fmod(fi, 2.0) > 0.5 ? 3.1416 : 0.0) + tk * 0.4;
+                    yy = u * 2.2 - 1.1;
+                    r *= 0.75 + 0.25 * sin(u * 3.1416);
+                } else if (style == 3) {                                // constellation: fixed stars, the sky slowly turning
+                    ph = fi * 2.399 + tk * 0.12 * au1.x;
+                    r *= 0.75 + 0.35 * frac(fi * 0.618);
+                    yy = (frac(fi * 0.381) - 0.5) * 1.6;
+                } else yy = 0.18 * sin(ph * 2.0) + 0.1 * sin(pl.w + ph); // orbit: a tilted ring
+                float3 q = c + float3(cos(ph) * r, yy, sin(ph) * r);
+                if (k == 0) head = q;
+                if (style == 3 && k > 0) break;                          // stars don't streak
+                float tp = dot(q, rd);
+                if (tp < 0.2 || tp > dist + 0.3) continue;
+                float d = length(q - rd * tp);
+                float s = 0.048 * sz * (k == 0 ? 1.0 : 0.85 - 0.08 * float(k));
+                float fade = k == 0 ? 1.0 : 0.7 * pow(1.0 - float(k) / 8.0, 1.3);
+                float blink = style == 1 ? smoothstep(-0.2, 0.6, sin(t * 1.7 + fi * 4.1)) : 1.0;
+                float core = exp(-d * d / (s * s * 0.25));               // white-hot centre
+                float glow = exp(-d * d / (s * s)) * 1.6 + au1.y * 0.30 * exp(-d / (s * 4.0));
+                L += (white * core * 2.4 * (k == 0 ? 1.0 : 0.35) + au0.rgb * glow * 1.4) * fade * tw * blink;
+                if (style == 3 && k == 0) {                              // a four-point spike on each star, flashing in turn
+                    float3 v = q - rd * tp;
+                    float3 ax = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), ay = cross(ax, rd);
+                    float  x = dot(v, ax) / s, y = dot(v, ay) / s;   // spikes ~6 radii long
+                    float  flash = pow(saturate(sin(t * 0.9 + fi * 1.3)), 6.0);
+                    L += (white + au0.rgb) * (exp(-abs(x) * 0.35 - y * y * 6.0) + exp(-abs(y) * 0.35 - x * x * 6.0)) * 0.6 * (0.35 + flash) * tw;
+                }
+            }
+            if (style == 3 && i > 0) {                                   // the lines of the constellation (star to star)
+                float3 a = prevStar, b = head, ab = b - a;
+                float3 w0 = -a;                                          // ray from the eye (origin) along rd vs segment a..b
+                float  bb = dot(rd, ab), cc2 = dot(ab, ab), dd = dot(rd, w0), ee = dot(ab, w0);
+                float  den = cc2 - bb * bb;
+                float  sc = den > 1e-6 ? saturate((ee - bb * dd) / den) : 0.0;   // (Sunday: the segment's parameter)
+                float3 pS = a + ab * sc;
+                float  tp = dot(pS, rd);
+                if (tp > 0.2 && tp < dist + 0.3) {
+                    float d = length(pS - rd * tp), lw = 0.011 * sz;
+                    L += (au0.rgb * 1.4 + white * 0.25) * exp(-d * d / (lw * lw)) * (0.6 + 0.4 * sin(t * 1.3 + fi));
+                }
+            }
+            if (i == 0) firstStar = head;
+            prevStar = head;
+        }
+        [branch] if (style == 0 && N > 0) {                              // orbit: the faint ring the lights ride on
+            float3 nrm = normalize(float3(0.1 * cos(pl.w), 1, 0.1 * sin(pl.w)));
+            float  den = dot(rd, nrm);
+            if (abs(den) > 1e-3) {
+                float tp = dot(c, nrm) / den;
+                if (tp > 0.2 && tp < dist + 0.3) {
+                    float3 hp = rd * tp - c;
+                    float rr = length(hp - nrm * dot(hp, nrm)), R = 0.75 * sz, w = 0.008 * sz;
+                    L += au0.rgb * (exp(-pow((rr - R) / w, 2.0)) * 0.6 + 0.12 * exp(-abs(rr - R) / (w * 6.0)));
+                }
+            }
         }
     }
     [branch] if (ha0.w > 0.0 && (!fp || ha1.w > 0.5)) {
