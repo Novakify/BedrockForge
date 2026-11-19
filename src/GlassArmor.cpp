@@ -100,7 +100,13 @@ std::unordered_map<ID3D12PipelineState*, std::shared_ptr<ActorDesc>> gActor;   /
 constexpr char const* kItemVsOut = "SV_Position0.xyzw@o0 COLOR3.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR1.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6";
 std::unordered_map<ID3D12PipelineState*, std::shared_ptr<ActorDesc>> gItemPso;
 std::map<std::pair<ID3D12PipelineState*, int>, ComPtr<ID3D12PipelineState>> gGlass; // (game PSO, variant) -> ours
-std::unordered_map<ID3D12Resource*, unsigned>                    gResState; // last barrier StateAfter
+struct ResState { unsigned state = 0; uint64_t life = 0; };
+// last barrier StateAfter, with the life (aliveSerial) of the resource it was recorded for: a NEW resource the game
+// creates at a freed one's address must not inherit the old one's state (crash 2026-11-18: after leaving a server the
+// next world's targets came back at reused addresses, the World FX pass / Glass replay used the dead resource's last
+// state as StateBefore of their barriers -> device removed -> nvoglv64)
+std::unordered_map<ID3D12Resource*, ResState>                    gResState;
+D3D12_RESOURCE_STATES knownState(ID3D12Resource* r, D3D12_RESOURCE_STATES fallback);
 // armor texture recognition: -1 not armor, -2 queued for readback, >= 0 shaders::kVariant index
 std::unordered_map<ID3D12Resource*, int>                         gTexKind;
 std::vector<ComPtr<ID3D12Resource>>                               gPending;
@@ -572,11 +578,21 @@ bool tracking() {
     return enabled() || gCap.load(std::memory_order_relaxed) != 0 || rf::worldfx::tracking();
 }
 
+uint64_t aliveSerial(ID3D12Resource* r);
 void noteBarriers(unsigned n, D3D12_RESOURCE_BARRIER const* b) {
+    uint64_t life[16]{};
+    unsigned const m = std::min(n, 16u);
+    for (unsigned i = 0; i < m; ++i)   // (before gMutex) the game is using it right now: watch it, and get its life
+        if (b[i].Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && b[i].Transition.pResource) {
+            tagAlive(b[i].Transition.pResource);
+            life[i] = aliveSerial(b[i].Transition.pResource);
+        }
     std::lock_guard l(gMutex);
     for (unsigned i = 0; i < n; ++i)
-        if (b[i].Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && b[i].Transition.pResource)
-            gResState[b[i].Transition.pResource] = unsigned(b[i].Transition.StateAfter);
+        if (b[i].Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && b[i].Transition.pResource) {
+            if (i < m && life[i]) gResState[b[i].Transition.pResource] = {unsigned(b[i].Transition.StateAfter), life[i]};
+            else gResState.erase(b[i].Transition.pResource);   // can't vouch for it: unknown beats wrong
+        }
 }
 
 void notePso(ID3D12PipelineState* pso, D3D12_GRAPHICS_PIPELINE_STATE_DESC const& d, uint64_t psHash) {
@@ -649,7 +665,8 @@ bool wantSrvs() { return tracking(); }
 // {6F1D1C2B-5B4E-4D2A-9C7E-2E5B0A9F4D11}
 constexpr GUID kRfAliveTag = {0x6f1d1c2b, 0x5b4e, 0x4d2a, {0x9c, 0x7e, 0x2e, 0x5b, 0x0a, 0x9f, 0x4d, 0x11}};
 std::mutex                          gAliveMx;   // leaf lock: never take another lock while holding it
-std::unordered_set<ID3D12Resource*> gAlive;
+std::unordered_map<ID3D12Resource*, uint64_t> gAlive;   // -> its life number (a new resource at the same address gets a new one)
+uint64_t                            gAliveNext = 0;
 std::atomic<long>                   gDeadSeen{0};
 struct AliveTag final : IUnknown {
     ID3D12Resource*      res;
@@ -679,7 +696,8 @@ void tagAlive(ID3D12Resource* r) {
     if (!r) return;
     {
         std::lock_guard l(gAliveMx);
-        if (!gAlive.insert(r).second) return;   // already tagged (and still alive)
+        if (!gAlive.emplace(r, gAliveNext + 1).second) return;   // already tagged (and still alive)
+        ++gAliveNext;
     }
     auto* t = new AliveTag(r);
     if (FAILED(r->SetPrivateDataInterface(kRfAliveTag, t))) {   // can't watch it: never trust it
@@ -692,6 +710,12 @@ bool isAlive(ID3D12Resource* r) {
     if (!r) return false;
     std::lock_guard l(gAliveMx);
     return gAlive.count(r) != 0;
+}
+uint64_t aliveSerial(ID3D12Resource* r) {   // 0 = not watched / dead
+    if (!r) return 0;
+    std::lock_guard l(gAliveMx);
+    auto it = gAlive.find(r);
+    return it == gAlive.end() ? 0 : it->second;
 }
 
 void noteSrv(size_t cpu, ID3D12Resource* r) {
@@ -1032,12 +1056,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
         bd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         ComPtr<ID3D12Resource> buf;
         if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&buf)))) continue;
-        unsigned st = 0;
-        {
-            std::lock_guard l(gMutex);
-            auto it = gResState.find(tex.Get());
-            st      = it == gResState.end() ? 0u : it->second; // unknown: COMMON (implicit promotion to COPY_SOURCE)
-        }
+        unsigned st = unsigned(knownState(tex.Get(), D3D12_RESOURCE_STATE_COMMON)); // unknown: COMMON (implicit promotion to COPY_SOURCE)
         bool const barrier = st != 0 && st != unsigned(D3D12_RESOURCE_STATE_COPY_SOURCE);
         D3D12_RESOURCE_BARRIER b{};
         b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1226,9 +1245,12 @@ void barrier(ID3D12GraphicsCommandList* l, ID3D12Resource* r, D3D12_RESOURCE_STA
     l->ResourceBarrier(1, &x);
 }
 D3D12_RESOURCE_STATES knownState(ID3D12Resource* r, D3D12_RESOURCE_STATES fallback) {
+    uint64_t const life = aliveSerial(r);
     std::lock_guard l(gMutex);
     auto it = gResState.find(r);
-    return it == gResState.end() ? fallback : D3D12_RESOURCE_STATES(it->second);
+    if (it == gResState.end()) return fallback;
+    if (!life || it->second.life != life) { gResState.erase(it); return fallback; }   // recorded for a resource that is gone
+    return D3D12_RESOURCE_STATES(it->second.state);
 }
 bool ensureBuffer(ID3D12Device* dev, ComPtr<ID3D12Resource>& b, UINT64& have, UINT64 need) {
     if (b && have >= need) return true;
