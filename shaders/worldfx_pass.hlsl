@@ -16,7 +16,8 @@ cbuffer C : register(b0) {
     float4 c7; // xyz = camera position (world), w = cloud deck base (world y)
     float4 c8; // xy = map centre (world xz), z = sky time (same clock as the sky pass), w = 1: cloud sea in front of terrain
     float4 c9; // x = god ray strength, y = cloud shadow strength, z = quality 0..1 (RF lowers it to hold the frame rate), w = ink look strength
-    float4 c10; // x = 1: this draw is the sky only (depth-tested to sky pixels, shaded at a coarse rate): take the sky path, y = 1: your head is under water
+    float4 c10; // x = 1: this draw is the sky only (depth-tested to sky pixels, shaded at a coarse rate): take the sky path, y = 1: your head is under water,
+                // z = 1: no World FX sky (Living Skies / vanilla) - only the match's moments over the frame (finishers, impact frames, fireworks, shards)
 };
 // the match (Bedrock Forge MatchFx, filled per frame by SkyPass): team lights + bed beacons, block shards, placement pop
 cbuffer M : register(b1) {
@@ -1503,7 +1504,7 @@ float3 matchOver(float3 o, float3 rd, float sceneT) {
     return r;
 }
 float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
-    [branch] if (m1.w > 0.5 && m0.x > 0.5) {
+    [branch] if (m1.w > 0.5 && m0.x > 0.5 && c10.z < 0.5) {
         if (m2.z > 0.5) {
             float3 halo = 0.0;
             float4 bd = figuraBeds(rd, sceneT, halo);
@@ -1523,7 +1524,7 @@ float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
         o = deathScenes(o, rd, sceneT);
     }
 #endif
-    [branch] if (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0)) {
+    [branch] if (m0.x > 0.5 && (m0.z > 0.0 || m1.y > 0.0) && c10.z < 0.5) {
         float3 lin = pow(max(o, 0.0), 2.2) + beacons(rd, min(sceneT, 900.0)) * (1.0 + 0.6 * m2.w) + shockwaves(rd, sceneT, sceneT > 1e8);
         o = pow(lin, 1.0 / 2.2);
     }
@@ -1581,7 +1582,7 @@ float3 matchOverRaw(float3 o, float3 rd, float sceneT) {
             }
         }
     }
-    o = tensionOver(o, rd, sceneT);
+    if (c10.z < 0.5) o = tensionOver(o, rd, sceneT);
     // (slashFx: off - Fernando: it gets in the way in PvP)
     [branch] if (m1.z > 0.5) o = impactFrame(o, rd, sceneT);
     [branch] if (c3.y > 0.0) o = pow(pow(max(o, 0.0), 2.2) + airLife(rd, sceneT), 1.0 / 2.2);
@@ -2138,6 +2139,14 @@ float4 underwaterPx(VSOut i) {
     return float4(o, 1.0);
 }
 float4 PSWorldFx(VSOut i) : SV_Target {
+    [branch] if (c10.z > 0.5) {   // no World FX sky: the frame as it is, with the match's moments over it
+        int2   px = int2(i.pos.xy);
+        float  d  = rawDepth(px);
+        bool   sk = isSky(d);
+        CAM = c7.xyz; TIME = c8.z;
+        float3 P = sk ? posAt(float2(px) + 0.5, 1.0) : posPx(px);
+        return float4(matchOver(sceneAt(px).rgb, normalize(P), sk ? 1e9 : length(P)), 1.0);
+    }
     [branch] if (c10.y > 0.5) return underwaterPx(i);
     bool   MO = false;
     float3 moO = 0, moRd = float3(0, 0, 1), moAdd = 0;

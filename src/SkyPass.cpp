@@ -252,6 +252,7 @@ void pollAtmos() {
 }
 std::atomic<int> gWorldSky{0};     // World FX standalone sky (0 off, 1 Cloud Sea), see the World FX section below
 void worldSkyPrepare(ID3D12Device* dev, ID3D12GraphicsCommandList* list);
+bool matchFxLive();   // a kill / impact frame / fireworks / shards are playing (any sky): defined with matchFrame
 // sky shaders learned from the game's own materials (learnGameMaterials / learnMaterialFile)
 std::mutex                        gLearnMutex;
 std::unordered_map<uint64_t, int> gLearned;            // pixel-shader hash -> Kind
@@ -558,6 +559,11 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
         gActive = c && h.active && st < 30;
         if (gActive && gUi.replace) rf::lyrics::setCameraWanted(true);
         if (gWorldSky.load()) { rf::lyrics::setCameraWanted(true); worldSkyPrepare(device, list); }
+        // [Match FX on any sky] the finishers, impact frames, fireworks and block shards ride the World FX pass. With
+        // Living Skies / Vanilla (no World FX sky) the pass runs them alone, over the frame (Fernando 2026-11-19: they
+        // only played on Novak Glass and Cloud Sea). Its textures (the skins the finishers wear) are made once.
+        bool const matchLive = gWorldSky.load() == 0 && matchFxLive();
+        if (matchLive) worldSkyPrepare(device, list);
         {   // motion blur without a World FX sky: the same pass, the blur draw only (it needs the world's targets + the camera)
             pollAtmos();
             {   // [Sky] crossfade steps
@@ -567,7 +573,7 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
                 else if (fs == 2) { applySkyMode(gFadePending.load()); gFadeAt = now; gFadeStage = 3; ll_shim::info("[RF] sky fade: old frame kept - switched, fading"); }
                 else if (fs == 3 && float(now - gFadeAt.load()) > kFadeMs) gFadeStage = 0;
             }
-            bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed) || rf::pano::capturing() || gFadeStage.load() != 0);
+            bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed) || rf::pano::capturing() || gFadeStage.load() != 0 || matchLive);
             static bool was = false;
             gBlurOnly.store(bo, std::memory_order_relaxed);
             if (bo) rf::lyrics::setCameraWanted(true);
@@ -1793,7 +1799,7 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     bool const v7 = ok && b->version >= 7 && b->size >= kMatchV7Size;
     bool const v8 = ok && b->version >= 8 && b->size >= sizeof(BfMatchFxV1);
     gSkinSrc = v6 ? b : nullptr;
-    if (use) use((look.living && ok && gWorldSky.load() != 0 ? 1 : 0) | (look.beds && ok ? 2 : 0)); // 2: we draw the beds
+    if (use) use((look.living && ok && gWorldSky.load() != 0 ? 1 : 0) | (look.beds && ok && gWorldSky.load() != 0 ? 2 : 0)); // 2: we draw the beds (only with a World FX sky: the match-only pass draws none)
     if (gMatchPreview) gMatchPreview(look.phase); // the game's time of day follows the preview too
     if (ok) {
         f.phase = look.living ? std::clamp(b->phase, 0.0f, 2.0f) : 0.0f;
@@ -2097,6 +2103,12 @@ static MatchFrame matchFrame(WorldFxLook const& look) {
     }
     gMatch = f;
     return f;
+}
+bool matchFxLive() {
+    WorldFxLook const look = gLook;
+    if (!look.kills) return false;
+    MatchFrame const m = matchFrame(look);
+    return m.cb.m1[2] > 0.5f || (m.cb.m0[1] > 0.5f && m.cb.m0[3] > 0.0f);
 }
 std::string matchStatus() { std::lock_guard l(gMatchMutex); return gMatchStatus; }
 // per-frame constant buffer ring (upload heap) for cbuffer M
@@ -2963,7 +2975,9 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // there the moment it's switched on instead of popping in a couple of seconds late
     if (atmosNeed && !capeDepth) (void)derived(dev.Get(), g, 20);
     if (!ap) atmosNeed = false;
-    if (blurOnly && !blurNeed && !atmosNeed && gFadeStage.load() == 0) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
+    // [Match FX on any sky] no World FX sky, but a kill / impact frame / fireworks / shards are playing: the pass draws them alone
+    bool const matchOnly = blurOnly && look.kills && gWsTexUp.load() && gWsHeap && matchFxLive();
+    if (blurOnly && !blurNeed && !atmosNeed && !matchOnly && gFadeStage.load() == 0) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
         if (gAtmosOn.load(std::memory_order_relaxed) && !ap) { wfxStatus("building the haze / mist pipeline (in the background)"); return false; }
         if (blurFrac > 0.0f && !bp) { wfxStatus("building the motion blur pipeline (in the background)"); return false; }
         panoGrab();
@@ -2972,14 +2986,15 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     }
     // a kill playing this frame: the pass with the death scenes (built in the background the first time; until it is
     // ready the lean pass draws and the kill simply has no scene yet)
-    bool const killsNow = !blurOnly && [&] { MatchFrame const m0 = matchFrame(look); return m0.cb.m0[1] > 0.5f && m0.cb.m1[2] > 0.5f; }();
+    bool const killsNow = (!blurOnly || matchOnly) && [&] { MatchFrame const m0 = matchFrame(look); return m0.cb.m0[1] > 0.5f && m0.cb.m1[2] > 0.5f; }();
     int const kAdd = killsNow ? 10 : 0;
     ID3D12PipelineState* pso = nullptr;
-    if (killsNow) pso = derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + kAdd);
-    else if (!blurOnly) derived(dev.Get(), g, (look.glass > 0.0f ? 6 : 5) + 10);   // warm it up before the first kill needs it
+    if (killsNow) pso = derived(dev.Get(), g, (look.glass > 0.0f && !matchOnly ? 6 : 5) + kAdd);
+    else if (!blurOnly || matchOnly) derived(dev.Get(), g, (look.glass > 0.0f && !matchOnly ? 6 : 5) + 10);   // warm it up before the first kill needs it
     bool const killPso = pso != nullptr;
-    if (!pso && !blurOnly) pso = derived(dev.Get(), g, look.glass > 0.0f ? 6 : 5);
+    if (!pso && (!blurOnly || matchOnly)) pso = derived(dev.Get(), g, look.glass > 0.0f && !matchOnly ? 6 : 5);
     if (!pso && !blurOnly) { wfxStatus("building the pass pipeline (in the background)"); return false; }
+    bool const matchDraw = matchOnly && pso;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fpC{}, df{};
     UINT64 rTot = 0, dTot = 0;
     dev->GetCopyableFootprints(&rd, 0, 1, 0, &fpC, nullptr, nullptr, &rTot);
@@ -3021,7 +3036,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     c[20] = 0.17605f; c[21] = 0.11247f; c[22] = -0.97794f; c[23] = look.shadows ? look.shadow : 0.0f;
     gViewYaw.store(std::atan2(snap.forward[2], snap.forward[0]), std::memory_order_relaxed);
     { float const lp[3] = {float(snap.pos[0]), float(snap.pos[1]), float(snap.pos[2])}; rf::deathsfx::setListener(lp, snap.forward); }
-    if (!blurOnly) {   // ---- the World FX look itself (everything down to the motion blur)
+    if (!blurOnly || matchDraw) {   // ---- the World FX look itself (everything down to the motion blur); or, with no World FX sky, the match's moments alone
     if (gTestBedReq.exchange(0)) {
         float fx = snap.forward[0], fz = snap.forward[2], fl = std::sqrt(fx * fx + fz * fz);
         if (fl < 1e-3f) fx = 0, fz = 1, fl = 1;
@@ -3074,7 +3089,8 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     c[34] = float(std::fmod(std::chrono::duration<double>(std::chrono::steady_clock::now() - gWsT0).count(), 20000.0));
     c[35] = gAnchored ? 1.0f : 0.0f;
     c[36] = look.rays; c[37] = look.clouds; c[38] = adaptQuality(); c[39] = look.ink;
-    c[41] = gUnderwater.load(std::memory_order_relaxed) ? 1.0f : 0.0f;   // your head under water: the pass draws the water instead
+    c[41] = gUnderwater.load(std::memory_order_relaxed) && !matchDraw ? 1.0f : 0.0f;   // your head under water: the pass draws the water instead
+    if (matchDraw) { c[13] = 0.0f; c[14] = 0.0f; c[42] = 1.0f; }   // the match's moments only: no living air, no glass rim, no look
     ID3D12DescriptorHeap* heaps[] = {gWsHeap.Get()};
     calls.setHeaps(list, 1, heaps);
     calls.setRootSig(list, gWfxRoot.Get());
@@ -3089,7 +3105,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // shading: one shader run per 2x2 pixels), blocks and players in a second draw at full rate - they stay sharp.
     ComPtr<ID3D12GraphicsCommandList5> l5;
     ID3D12PipelineState* psoSky = nullptr; ID3D12PipelineState* psoTer = nullptr;
-    int const rate = look.glass > 0.0f ? int(look.skyRate + 0.5f) : 0;
+    int const rate = look.glass > 0.0f && !matchDraw ? int(look.skyRate + 0.5f) : 0;
     if (rate > 0 && SUCCEEDED(list->QueryInterface(IID_PPV_ARGS(&l5)))) {
         static int vrs = -1;
         if (vrs < 0) {
@@ -3351,7 +3367,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
         }
         return uploadRing(dev.Get(), &acb, sizeof acb);
     };
-    bool sceneDirty = !blurOnly;   // the World FX look drew over the scene copy's source: take it again before reading it
+    bool sceneDirty = !blurOnly || matchDraw;   // the World FX look drew over the scene copy's source: take it again before reading it
     auto recopyScene = [&] {
         wfxBarrier(list, sb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
         wfxBarrier(list, rt, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);

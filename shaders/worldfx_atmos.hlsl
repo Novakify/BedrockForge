@@ -211,7 +211,7 @@ float3 ambience(float3 rd, float dist, float night, float t, float2 px) {
 
 // Jump Circles, Hit Splash, Ripple, Shockwave: light painted onto whatever surface is there (the pixel's own world
 // point from the depth buffer), so rings follow steps and slopes instead of floating on a flat disc.
-float3 worldEvents(float3 P, bool sky, float t, float upN) {   // upN: how much the surface here faces up (1 = floor)
+float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN: how much the surface here faces up (1 = floor)
     int n = min(int(fx6.w), 16);
     if (n <= 0 || sky) return 0;
     float3 L = 0;
@@ -244,6 +244,22 @@ float3 worldEvents(float3 P, bool sky, float t, float upN) {   // upN: how much 
                     float ink = max(blob, drops) * smoothstep(1.0, 0.6, u) * smoothstep(0.0, 1.1, 2.6 + dv.y) * smoothstep(0.6, 0.8, upN);
                     float3 cc = lerp(fx2.rgb, fx3.rgb, 0.5 + 0.5 * sin(an * 2.0 + seed * 5.0));
                     L += cc * ink * (0.25 + 0.9 * fx2.w * (1.0 - u * 0.7)) * (1.0 + 2.0 * exp(-age * 6.0));
+                }
+            }
+            // on the one you hit (Fernando 2026-11-19: "hit the player too, just look better"): no ink smeared on them -
+            // a white-hot point where the blow lands, a wave of the splash colours running over the body from it, and a
+            // few short rays fanning out across it. Gone in under half a second; a critical lands harder.
+            if (fx1.z > 0.0 && upN < 0.6) {
+                float u2 = age / 0.42;
+                float r3 = length(dv), Sz = fx1.z;
+                if (u2 < 1.0 && r3 < 1.1 * Sz) {
+                    float R    = 0.85 * Sz * (1.0 - pow(1.0 - u2, 3.0));
+                    float wave = exp(-pow((r3 - R) / (0.07 * Sz), 2.0)) * (1.0 - u2);
+                    float core = exp(-r3 * r3 / (0.02 * Sz * Sz)) * exp(-age * 18.0);
+                    float an   = atan2(dv.y, dot(dv.xz, normalize(float2(-rd.z, rd.x) + 1e-5)));   // round the blow, as you see it
+                    float rays = pow(0.5 + 0.5 * cos(an * 7.0 + seed * 40.0), 18.0) * exp(-r3 / (0.45 * Sz)) * exp(-age * 9.0);
+                    float3 cc  = lerp(fx2.rgb, fx3.rgb, saturate(r3 / (0.8 * Sz)));
+                    L += (cc * (wave * 1.4 + rays * 1.2) + float3(1.0, 0.97, 0.92) * core * 2.5) * (0.5 + fx2.w) * (kind == 3 ? 1.6 : 1.0);
                 }
             }
             if (fx3.w > 0.0) {                                   // ripple: a flash, and a wave of light over what is near
@@ -1071,7 +1087,7 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     [branch] if (amb0.w > 0.0) ambL = ambience(rd, sky ? 1e4 : dist, night, t, px);
     float3 nq  = cross(ddx(q), ddy(q));                       // the surface's facing, from the depth around this pixel
     float  upN = abs(nq.y) / max(length(nq), 1e-9);
-    [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t, upN);
+    [branch] if (fx6.w > 0.5) ambL += worldEvents(q, sky, t, upN, rd);
     [branch] if (cs0.w > 0.0 || au0.w > 0.0 || ha0.w > 0.0) ambL += cosmetics(q, rd, sky ? 1e4 : dist, sky, t);
     float4 overC = 0;                                        // [Purxiy] wings / cape cloth over the world
     float capeT = 1e9;
