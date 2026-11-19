@@ -76,7 +76,9 @@ void traceItemDraw(ID3D12GraphicsCommandList* list, unsigned indexCount, bool gl
 void traceItemReplay(int what);
 bool itemsTracing();   // Items on (the trace runs only then)
 void                 noteDsv(size_t handle, ID3D12Resource* res);
-ID3D12Resource*      dsvResource(size_t handle);
+ID3D12Resource*      dsvResource(size_t handle);   // nullptr once the game freed it
+void                 tagAlive(ID3D12Resource* r);   // watch a resource (private data): isAlive turns false when it is freed
+bool                 isAlive(ID3D12Resource* r);
 void                 noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size);
 /// The game's root signature + root SRVs scene/depth (t0/t1 space9) + root CBV (b0 space9) + root SRV last frame (t2), cached.
 ID3D12RootSignature* extendedRoot(ID3D12RootSignature* game, unsigned* firstExtra);
