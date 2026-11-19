@@ -241,7 +241,11 @@ void pollAtmos() {
             gFadePending = skyMode;
             gFadeAt      = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             gFadeStage   = 1;
-        } else applySkyMode(skyMode);
+            ll_shim::info("[RF] sky fade: switch to " + std::to_string(skyMode) + " asked - keeping a frame of the old sky first");
+        } else {
+            if (lastSky >= 0) ll_shim::info("[RF] sky fade: switch to " + std::to_string(skyMode) + " without a fade (" + (gUi.skyFade ? "a fade is still running" : "fade off") + ")");
+            applySkyMode(skyMode);
+        }
     }
     lastSky = skyMode;
 }
@@ -558,8 +562,8 @@ void record(ID3D12Device* device, ID3D12GraphicsCommandList* list, ID3D12Resourc
             {   // [Sky] crossfade steps
                 int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
                 int const     fs  = gFadeStage.load();
-                if (fs == 1 && now - gFadeAt.load() > 400) { applySkyMode(gFadePending.load()); gFadeStage = 0; }   // no pass ran to keep a frame: just switch
-                else if (fs == 2) { applySkyMode(gFadePending.load()); gFadeAt = now; gFadeStage = 3; }
+                if (fs == 1 && now - gFadeAt.load() > 400) { applySkyMode(gFadePending.load()); gFadeStage = 0; ll_shim::info("[RF] sky fade: no World FX pass ran in 400 ms to keep a frame - switched without a fade"); }   // no pass ran to keep a frame: just switch
+                else if (fs == 2) { applySkyMode(gFadePending.load()); gFadeAt = now; gFadeStage = 3; ll_shim::info("[RF] sky fade: old frame kept - switched, fading"); }
                 else if (fs == 3 && float(now - gFadeAt.load()) > kFadeMs) gFadeStage = 0;
             }
             bool const bo = gWorldSky.load() == 0 && (rf::postfx::motionBlurWanted() > 0.0f || gAtmosOn.load(std::memory_order_relaxed) || rf::pano::capturing() || gFadeStage.load() != 0);
@@ -3417,7 +3421,12 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 gFadeStage = 2;
             }
         } else if (fs == 3 && fadeBuf && fadeInSrv && fadeW == UINT(rd.Width) && fadeH == rd.Height) {
-            if (ID3D12PipelineState* fp = derived(dev.Get(), g, 22)) {
+            ID3D12PipelineState* fp = derived(dev.Get(), g, 22);
+            {
+                static int64_t lastNote = 0;
+                if (steadyMs() - lastNote > 2000) { lastNote = steadyMs(); ll_shim::info(std::string("[RF] sky fade: drawing (pipeline ") + (fp ? "ready" : "not built yet") + ")"); }
+            }
+            if (fp) {
                 float const t  = std::clamp(float(steadyMs() - gFadeAt.load()) / kFadeMs, 0.0f, 1.0f);
                 float const a  = 1.0f - t * t * (3.0f - 2.0f * t);
                 float const dF = snap.forward[0] * fadeF[0] + snap.forward[1] * fadeF[1] + snap.forward[2] * fadeF[2];
