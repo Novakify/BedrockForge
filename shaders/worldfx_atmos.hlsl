@@ -589,7 +589,7 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
             if (tp > 0.2 && tp < dist + 0.3) {
                 float3 hp = rd * tp - hc;
                 float R = (crown ? 0.31 : 0.28) * ha0.w, rr = length(hp - nrm * dot(hp, nrm));
-                float wdt = 0.025 * ha0.w;
+                float wdt = 0.032 * ha0.w;   // (2026-11-19: thicker - they read as a thread next to Purxiy)
                 float k = exp(-pow((rr - R) / wdt, 2.0));
                 float an = atan2(hp.z, hp.x);
                 // (in game 2026-11-19: only Seraph read as a design - the others were the same thin ring a touch dimmer.
@@ -605,8 +605,13 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                 else if (dz == 5) k *= step(0.24, frac(an * 0.15915 + 0.1)) * (0.75 + 0.25 * sin(t * 9.0 + an * 3.0));       // fallen: askew, a piece missing, guttering
                 // the soft glow dies out within a hand's width of the ring (it used to reach a block out across the
                 // halo's plane at full Glow: a faint see-through sheet over your head in third person)
-                float gl = (rr - R) / (wdt * 5.0);
-                L += ha0.rgb * (k * (crown ? 0.55 : 2.0) + ha1.x * (crown ? 0.08 : 0.3) * exp(-gl * gl));   // a crown's base is its rim, not a glowing ring
+                float gl = (rr - R) / (wdt * 6.0);
+                // shine: a white-hot line along the ring's middle and a glint of light running round it
+                float coreL = exp(-pow((rr - R) / (wdt * 0.32), 2.0)) * saturate(k * 1.5);
+                float glint = pow(0.5 + 0.5 * cos(an - t * 1.4), 48.0) * saturate(k * 2.0) + pow(0.5 + 0.5 * cos(an + 2.6 - t * 0.9), 64.0) * saturate(k * 2.0) * 0.6;
+                float3 hot = float3(1.0, 0.98, 0.94);
+                L += crown ? ha0.rgb * (k * 0.55 + ha1.x * 0.08 * exp(-gl * gl))     // a crown's base is its rim, not a glowing ring
+                           : ha0.rgb * (k * 2.0 + ha1.x * 0.45 * exp(-gl * gl)) + hot * (coreL * 1.4 + glint * 2.4);
             }
         }
         [branch] if (dz == 2) {   // crown: an upright band on the ring, rising to five points (the ray against its cylinder, near and far wall)
@@ -626,16 +631,17 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                     float  ph  = frac(a5 * 0.795775) * 2.0 - 1.0;          // -1..1 across one of the five
                     float  tri = saturate(1.0 - abs(ph) * 1.15);
                     float  pk  = tri * tri * (3.0 - 2.0 * tri);
-                    float  H  = ha0.w * (0.040 + 0.120 * pk);             // the band's height here
+                    float  H  = ha0.w * (0.060 + 0.150 * pk);             // the band's height here (taller: it read as a ribbon)
                     if (h3.y < -0.004 || h3.y > H + 0.02 * ha0.w) continue;
                     float  inB  = step(h3.y, H);
                     float  edge = exp(-pow((H - h3.y) / (0.008 * ha0.w), 2.0));          // the lit cut edge along the top
                     float  rimB = exp(-pow((h3.y - 0.006 * ha0.w) / (0.010 * ha0.w), 2.0)); // the rim along the bottom
-                    float  body = (0.30 + 0.20 * ha1.x) * lerp(1.0, 0.55, h3.y / max(H, 1e-3));   // metal: brighter at the base
-                    float2 tipP = float2(ph * 0.11 * ha0.w, h3.y - ha0.w * 0.168);
-                    float  gem  = exp(-dot(tipP, tipP) / (0.00018 * ha0.w * ha0.w)) * step(abs(ph), 0.35);
-                    L += ha0.rgb * (inB * body + 1.4 * edge * inB + 1.1 * rimB) * (w == 0 ? 1.0 : 0.45)
-                       + float3(1.0, 0.97, 0.92) * gem * 2.2;
+                    float  body = (0.75 + 0.25 * ha1.x) * lerp(1.0, 0.65, h3.y / max(H, 1e-3));    // metal: brighter at the base
+                    float  sweep = pow(saturate(1.0 - abs(frac(a5 * 0.159 - t * 0.12) - 0.5) * 8.0), 2.0);   // a shine travelling round the band
+                    float2 tipP = float2(ph * 0.11 * ha0.w, h3.y - ha0.w * 0.208);
+                    float  gem  = exp(-dot(tipP, tipP) / (0.00030 * ha0.w * ha0.w)) * step(abs(ph), 0.35);
+                    L += (ha0.rgb * (inB * body + 1.6 * edge * inB + 1.2 * rimB) + float3(1.0, 0.96, 0.88) * inB * sweep * 0.9) * (w == 0 ? 1.0 : 0.45)
+                       + float3(1.0, 0.97, 0.92) * gem * 3.0;
                 }
             }
         }
