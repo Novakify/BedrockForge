@@ -101,7 +101,8 @@ std::unordered_map<ID3D12PipelineState*, std::shared_ptr<ActorDesc>> gActor;   /
 constexpr char const* kItemVsOut = "SV_Position0.xyzw@o0 COLOR3.xyzw@o1 COLOR0.xyzw@o2 COLOR2.xyzw@o3 COLOR1.xyzw@o4 TEXCOORD0.xy@o5 TEXCOORD3.xyz@o6";
 std::unordered_map<ID3D12PipelineState*, std::shared_ptr<ActorDesc>> gItemPso;
 std::map<std::pair<ID3D12PipelineState*, int>, ComPtr<ID3D12PipelineState>> gGlass; // (game PSO, variant) -> ours
-struct ResState { unsigned state = 0; uint64_t life = 0; };
+struct ResState { unsigned state = 0; uint64_t life = 0; long frame = 0; };   // frame: the Present count when the game recorded it
+std::atomic<long> gPresentNo{0};
 // last barrier StateAfter, with the life (aliveSerial) of the resource it was recorded for: a NEW resource the game
 // creates at a freed one's address must not inherit the old one's state (crash 2026-11-18: after leaving a server the
 // next world's targets came back at reused addresses, the World FX pass / Glass replay used the dead resource's last
@@ -111,6 +112,16 @@ D3D12_RESOURCE_STATES knownState(ID3D12Resource* r, D3D12_RESOURCE_STATES fallba
 // armor texture recognition: -1 not armor, -2 queued for readback, >= 0 shaders::kVariant index
 std::unordered_map<ID3D12Resource*, int>                         gTexKind;
 std::vector<ComPtr<ID3D12Resource>>                               gPending;
+// ---- a texture is only read back once it has SETTLED (crash 2026-11-19, the Hive hub: 15 skin readbacks in the first
+// 30 ms after joining, the GPU hung within the second). We learn of a texture when a draw that binds it is RECORDED,
+// and the state we know is the last barrier the game RECORDED - but our readback list is executed at once, ahead of
+// the game's own lists that are still being recorded this frame. A skin that has just arrived is still being uploaded
+// in one of those: our copy then read a texture the GPU has in another state than we claimed (badly formed commands ->
+// device hung -> the driver crash). So: first seen at least kSettle Presents ago, and no barrier recorded on it for as
+// long - by then every list that touched it has run and the state we know is the state it is in.
+constexpr long                                                    kSettle = 12;
+std::unordered_map<ID3D12Resource*, long>                         gSeenAt;   // queued textures: the Present they were first looked at
+void takeSettled(std::vector<ComPtr<ID3D12Resource>>& q, std::vector<ComPtr<ID3D12Resource>>& todo, size_t max);   // (gMutex held)
 struct Readback { ComPtr<ID3D12Resource> tex, buf; int scale = 1; }; // scale 2: a 128x64 (32x pack) texture, read at full size
 std::vector<Readback>              gInFlight;
 ComPtr<ID3D12CommandAllocator>     gAlloc;
@@ -592,7 +603,7 @@ void noteBarriers(unsigned n, D3D12_RESOURCE_BARRIER const* b) {
     std::lock_guard l(gMutex);
     for (unsigned i = 0; i < n; ++i)
         if (b[i].Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && b[i].Transition.pResource) {
-            if (i < m && life[i]) gResState[b[i].Transition.pResource] = {unsigned(b[i].Transition.StateAfter), life[i]};
+            if (i < m && life[i]) gResState[b[i].Transition.pResource] = {unsigned(b[i].Transition.StateAfter), life[i], gPresentNo.load(std::memory_order_relaxed)};
             else gResState.erase(b[i].Transition.pResource);   // can't vouch for it: unknown beats wrong
         }
 }
@@ -1025,10 +1036,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
     std::vector<ComPtr<ID3D12Resource>> todo;
     {
         std::lock_guard l(gMutex);
-        while (!gPending.empty() && todo.size() < 8) {
-            todo.push_back(gPending.back());
-            gPending.pop_back();
-        }
+        takeSettled(gPending, todo, 8);
     }
     if (todo.empty()) return;
     if (!gAlloc && FAILED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&gAlloc)))) return;
@@ -1286,6 +1294,21 @@ D3D12_RESOURCE_STATES knownState(ID3D12Resource* r, D3D12_RESOURCE_STATES fallba
     if (it == gResState.end()) return fallback;
     if (!life || it->second.life != life) { gResState.erase(it); return fallback; }   // recorded for a resource that is gone
     return D3D12_RESOURCE_STATES(it->second.state);
+}
+void takeSettled(std::vector<ComPtr<ID3D12Resource>>& q, std::vector<ComPtr<ID3D12Resource>>& todo, size_t max) {
+    long const now = gPresentNo.load(std::memory_order_relaxed);
+    if (gSeenAt.size() > 4096) gSeenAt.clear();
+    for (size_t i = q.size(); i-- > 0 && todo.size() < max;) {
+        ID3D12Resource* const r = q[i].Get();
+        auto [it, fresh] = gSeenAt.try_emplace(r, now);
+        bool ok = !fresh && now - it->second >= kSettle;
+        if (ok)
+            if (auto st = gResState.find(r); st != gResState.end() && now - st->second.frame < kSettle) ok = false;   // the game is still working on it
+        if (!ok) continue;
+        gSeenAt.erase(it);
+        todo.push_back(std::move(q[i]));
+        q.erase(q.begin() + std::ptrdiff_t(i));
+    }
 }
 bool ensureBuffer(ID3D12Device* dev, ComPtr<ID3D12Resource>& b, UINT64& have, UINT64 need) {
     if (b && have >= need) return true;
@@ -2000,10 +2023,7 @@ void pumpSkins(ID3D12Device* dev, ID3D12CommandQueue* q) {
     std::vector<ComPtr<ID3D12Resource>> todo;
     {
         std::lock_guard l(gMutex);
-        while (!gSkinPending.empty() && todo.size() < 8) {
-            todo.push_back(gSkinPending.back());
-            gSkinPending.pop_back();
-        }
+        takeSettled(gSkinPending, todo, 8);
     }
     if (todo.empty()) return;
     if (!gSkinAlloc && FAILED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&gSkinAlloc)))) return;
@@ -2222,6 +2242,7 @@ void flushTimer(ID3D12GraphicsCommandList* list, bool begin) {
 }
 
 void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
+    ++gPresentNo;
     rf::dred::check();
     buryTick();
     {   // the client's Glass module (You / Other players / Armour): about once a second
