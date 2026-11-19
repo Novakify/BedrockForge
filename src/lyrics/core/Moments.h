@@ -68,6 +68,8 @@ public:
     int               active() const { return int(mFx.size()); }
     /// [BF] visual audit (demo file "moments"): play one moment now, as a chorus would
     void              force(Moment m, float amount = 1.0f) { start(m, amount, 6.0f, false, "audit"); }
+    /// [BF] Big Moments: the match (a bed, a team out, the last one standing) plays a moment in the sky's language
+    void              fire(Moment m, float amount, float life, std::string const& why) { start(m, amount, life, false, why); }
 
     static constexpr float kKeyLife = 4.0f, kKeyCooldown = 14.0f, kKeyGap = 4.0f;
 

@@ -58,12 +58,18 @@
 #include "lyrics/core/TempoGuess.h"
 #include "lyrics/core/Clip.h"
 #include "lyrics/core/Moments.h"
+#include "lyrics/win/GameAudio.h"
+#include "client/MatchFx.h"
 #include "lyrics/core/VideoScreen.h"
 #include "lyrics/win/World_win.h"
 
 // [BF] the Director's full-screen look for RF (game thread writes, RF's render thread reads; floats only, a torn
 // frame is harmless). RF treats it as inactive when `frame` stops moving (no world on screen).
 static BfDirectorV1 gBfDirector{sizeof(BfDirectorV1), 1};
+
+namespace bedrock_forge::client {
+std::atomic<int> gSkyWorldPick{0};   // [BF] Sky Shuffle landed on Cloud Sea (1) / Novak Glass (2): Atmos.txt skymode follows
+}
 
 namespace bf::lyrics::win {
 
@@ -150,7 +156,17 @@ struct State {
     std::atomic<bool>       moduleOn{false}; // written on the game thread, read by the media thread + key callbacks
     std::atomic<bool>       playerOnly{false};
     // [BF] Sky module (Purxiy "sky": living skies): one of LyricsForge's skies, always on, with or without LyricsForge
-    struct SkyOv { bool on = false; std::string preset; float strength = 0.8f, speed = 1.0f, lively = 0.6f, breath = 1.0f; bool music = true, day = true; } skyOv;
+    struct SkyOv { bool on = false; std::string preset; float strength = 0.8f, speed = 1.0f, lively = 0.6f, breath = 1.0f; bool music = true, day = true;
+                   bool bigMoments = true, momentSky = true, gameAudio = true; } skyOv;
+    // [BF] Big Moments (the match plays the sky) + the game's own sound
+    struct Big {
+        uint32_t beds = 0, elimMask = 0, frame = 0;
+        int64_t  killMs = 0, lastBedMs = 0, lastElimMs = 0, lastKillMs = 0, lastBoomMs = 0;
+        int      alive = -1, booms = 0;
+        float    kick = 0;
+        bool     seeded = false;
+    } big;
+    int64_t                 momentsStepNs = 0;   // the song path stepped Moments this recently (else the sky steps them)
     bool                    skyOnly = false;   // this HUD frame comes from the Sky module (LyricsForge itself is off) // [BF] LyricsForge Player only: the media player and nothing else (no lyrics, sky, Director)
 
     // ---- settings panel (L): see the "panel" section below
@@ -1102,6 +1118,86 @@ void publishSkyFog() {
     gSkyFogAtNs.store(nowNs(), std::memory_order_relaxed);
 }
 
+std::atomic<int64_t> gBigSkyAtMs{0};  // [BF] Big Moments: the biggest moment asks the Sky module for a new sky now
+
+// [BF] Big Moments: the match plays the sky. Hive (any BedWars-like match Bedrock Forge reads): a bed broken, a team out,
+// a run of kills and - the big one - the last team standing fire LyricsForge moments in the language of the sky
+// showing now (a space sky gets meteors and a starfall, a storm sky lightning...). Only the last-one-standing moment
+// changes the sky itself, at most every 2 minutes, so the sky never flickers between skies.
+// Plus Minecraft's own sound (Sky module "Reacts to the game's sounds"): explosions and thunder kick the sky.
+void bigMomentsStep(float dt, std::string_view skyId) {
+    auto& b = gS->big;
+    int64_t const now = nowNs() / 1000000;
+    auto const fam = skyFamily(skyId);
+    auto const& deck = chorusDeck(fam);
+    auto fire = [&](size_t at, float amt, float life, char const* why) {
+        if (deck.empty()) return;
+        gS->moments.fire(deck[std::min(at, deck.size() - 1)], amt, life, why);
+        gS->directorLines.push_back(std::string("   match  ") + why + " -> " + momentName(deck[std::min(at, deck.size() - 1)]) + " [" + familyName(fam) + " sky]");
+    };
+    if (gS->skyOv.bigMoments) {
+        BfMatchFxV1 const* mf = BF_GetMatchFx();
+        if (mf && mf->active && mf->nTeams >= 2) {
+            uint32_t elim = 0, mineBit = 0;
+            int      alive = 0;
+            for (uint32_t i = 0; i < mf->nTeams && i < 16; ++i) {
+                if (mf->teamEx[i].elim) elim |= 1u << i;
+                else ++alive;
+                if (mf->teamEx[i].mine) mineBit = 1u << i;
+            }
+            if (!b.seeded || mf->bedsBroken < b.beds) {   // a new match (or first look): no fireworks for what already happened
+                b.seeded = true, b.beds = mf->bedsBroken, b.elimMask = elim, b.alive = alive, b.killMs = mf->killMs;
+            } else {
+                if (mf->bedsBroken > b.beds && now - b.lastBedMs > 6000) {   // a bed broken
+                    b.lastBedMs = now;
+                    bool mine = false;
+                    for (uint32_t i = 0; i < mf->nTeams && i < 16; ++i)
+                        if (mf->teamEx[i].mine && !mf->teams[i].alive && mf->nowMs - mf->teams[i].changedMs < 4000) mine = true;
+                    if (mine) { gS->moments.fire(Moment::Heartbeat, 1.0f, 5.0f, "your bed broke"); gS->moments.fire(Moment::Dim, 0.6f, 5.0f, "your bed broke"); }
+                    else { fire(deck.size() / 2, 0.9f, 7.0f, "bed broken"); b.kick = std::max(b.kick, 0.7f); }
+                }
+                uint32_t const newOut = elim & ~b.elimMask;
+                if (newOut && now - b.lastElimMs > 6000) {                     // a team out
+                    b.lastElimMs = now;
+                    if (newOut & mineBit) gS->moments.fire(Moment::Dim, 0.8f, 8.0f, "your team is out");
+                    else { fire(deck.size() - 1, 1.0f, 8.0f, "team eliminated"); gS->meteors = std::max(gS->meteors, 6); gS->waveT = 0; b.kick = 1.0f; }
+                }
+                if (alive == 1 && b.alive > 1 && !(elim & mineBit) && mineBit) {   // the last ones standing: you
+                    for (size_t k = 0; k < deck.size(); ++k) fire(k, 1.3f, 20.0f, "last standing");
+                    gS->meteors = 12, gS->waveT = 0, gS->warpT = 0, b.kick = 1.0f;
+                    if (gS->skyOv.momentSky && now - gBigSkyAtMs.load() > 120000) gBigSkyAtMs = now;   // the one moment that changes the sky
+                }
+                if (mf->killMs != b.killMs && mf->killMs != 0 && now - b.lastKillMs > 2000) {   // your kill
+                    b.lastKillMs = now;
+                    if (mf->streak >= 3) { fire(0, 0.8f, 4.0f, "kill streak"); gS->meteors = std::max(gS->meteors, 3); b.kick = std::max(b.kick, 0.6f); }
+                    else b.kick = std::max(b.kick, 0.35f);
+                }
+                b.beds = mf->bedsBroken, b.elimMask = elim, b.alive = alive, b.killMs = mf->killMs;
+            }
+        } else if (!mf || !mf->active) b.seeded = false;
+    }
+    // the game's own sound: a boom (TNT, creeper, thunder, end crystal) kicks the sky; a big one plays a small moment
+    gameAudioWant(gS->skyOv.on && gS->skyOv.gameAudio);
+    if (gS->skyOv.on && gS->skyOv.gameAudio) {
+        GameAudio const ga = gameAudio();
+        if (ga.booms != b.booms) {
+            b.booms = ga.booms;
+            b.kick = std::max(b.kick, 0.4f + 0.6f * ga.boom);
+            if (ga.boom > 0.7f && now - b.lastBoomMs > 5000) { b.lastBoomMs = now; fire(0, 0.6f, 2.5f, "explosion"); }
+        }
+    }
+    b.kick *= std::exp(-std::clamp(dt, 0.0f, 0.1f) / 1.2f);
+    if (nowNs() - gS->momentsStepNs > 100000000LL) {   // no song is stepping Moments: the sky does (match + sound moments)
+        MomentsIn mi;
+        mi.sky = skyId, mi.dt = dt, mi.songSeq = gS->clock.songSeq(), mi.chorusVariety = false, mi.keywords = false;
+        gS->moments.step(mi);
+        auto const& mo = gS->moments.out();
+        if (mo.wave) gS->waveT = 0;
+        gS->meteors = std::max(gS->meteors, mo.meteors);
+        gS->cinema.setPulse(mo.heartbeat);
+    }
+}
+
 void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     Config skyCfg;
     if (gS->skyOv.on) {   // [BF] Sky module: its sky and its settings win
@@ -1157,6 +1253,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.songSeq   = gS->clock.songSeq(); // [LyricsForge] chapter transitions
     in.beat      = gS->bassLive ? std::max(gS->bass, gS->conductor.state().impact) : 0.0f; // [BF] sky breathes with the music
     in.beat      = std::min(1.0f, in.beat * (1.0f + 1.5f * inst));                             // ...harder when nobody sings
+    if (gS->skyOv.on && gS->skyOv.gameAudio) in.beat = std::max(in.beat, 0.6f * gameAudio().low);   // [BF] ...and with the game's rumble
     in.spritesFile = gS->spritesFile;
     in.pictureFile = gS->pictureFile;
     // [BF] chorus transformation: the sky blends into the scene's chorus sky, a wave of light rolls over, meteors
@@ -1179,6 +1276,7 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
     in.wave = gS->waveT;
     in.meteors = std::exchange(gS->meteors, 0);
     in.dim = cfg.songOutro && cfg.director ? m.outro : 0.0f;
+    bigMomentsStep(dt, gS->skyShown.empty() ? std::string_view(cfg.skyPreset) : std::string_view(gS->skyShown));   // [BF] Big Moments + game sound
     // [BF] Moments (chorus deck, final chorus, lyric keywords) and the bridge
     auto const& mo = gS->moments.out();
     float const bridge = cfg.songArc && cfg.director ? m.bridge : 0.0f;
@@ -1203,6 +1301,12 @@ void skyStep(Actor& a, CameraState const& cam, float dt, GameWorld& world) {
             }
         }
         in.kick  = cfg.director ? sKick : 0.0f;
+        in.pulse = std::min(1.5f, in.pulse + gS->big.kick);        // [BF] Big Moments / a boom in the game
+        in.kick  = std::max(in.kick, gS->big.kick);
+        if (gS->skyOv.on && gS->skyOv.gameAudio) {                  // [BF] the sky breathes with the game's own sound
+            GameAudio const ga = gameAudio();
+            in.pulse = std::min(1.5f, in.pulse + 0.35f * ga.level);
+        }
     }
     { auto const& pu = gS->engine.pulse(); // [BF] the horizon equaliser is drawn by the sky (behind the terrain)
       if (!pu.barEl().empty()) { in.eq = &pu.barEl(); in.eqAlpha = pu.barAlpha(); in.eqColor = pu.barColor(); } }
@@ -1610,6 +1714,7 @@ void hudFrame(bedrock_forge::client::Frame& f) {
             mi.sky = skyNow; mi.variant = songVariant(song);
             mi.chorusVariety = variety; mi.keywords = c.lyricMoments && c.director;
             gS->moments.step(mi);
+            gS->momentsStepNs = nowNs();
             if (auto& d = gS->demo; d.on && !d.momentTour.empty()) { // [BF] visual audit: each moment in turn
                 int const i = int(double(nowNs() - d.startNs) / 1e9 / d.tourSec) % int(d.momentTour.size());
                 if (i != d.momentAt) {
@@ -2069,6 +2174,11 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
         .choice("style", "Living Sky", {"Galaxy", "Aether", "Nocturne", "Amethyst", "Opaline", "Dream", "Cotton Candy", "Golden Hour", "Sakura", "Nebula",
                                "Mirror", "Rain", "Snow", "Fire", "Shuffle"}, 14)
         .slider("every", "Shuffle every (minutes)", 4.f, 1.f, 15.f, 1.f)
+        .toggleSetting("pool_worldfx", "Shuffle includes Cloud Sea + Novak Glass", true)
+        .choice("quality", "Living Sky quality", {"Fast", "Balanced", "Sharp"}, 0)
+        .toggleSetting("moments", "Big match moments", true)
+        .toggleSetting("moment_sky", "The biggest moment changes the sky", true)
+        .toggleSetting("game_audio", "Reacts to the game's sounds", true)
         .slider("intensity", "Intensity", 0.8f, 0.1f, 1.f, 0.05f).slider("speed", "Speed", 1.f, 0.25f, 2.f, 0.05f)
         .slider("liveliness", "Liveliness", 0.6f, 0.f, 1.f, 0.05f).slider("breathing", "Breathing", 1.f, 0.f, 2.f, 0.05f)
         .toggleSetting("music", "Reacts to your music", true).toggleSetting("day", "Keep it up by day too", true);
@@ -2077,6 +2187,7 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
         auto* me  = reg.find("sky");
         if (!me || !gS) return;
         if (int(me->num("mode", 0) + 0.5f) != 0) {   // Cloud Sea / Novak Glass / Vanilla: Renderer Foundation's sky (or none) - ours steps aside
+            bedrock_forge::client::gSkyWorldPick = 0;
             std::lock_guard l(gS->mutex);
             if (gS->skyOv.on) {
                 gS->skyOv.on = false;
@@ -2091,19 +2202,46 @@ void install(std::filesystem::path const& modDir, std::filesystem::path const& c
             o.on = true;
             int const n = int(kSkyIds.size());
             int idx = int(me->num("style", 14) + 0.5f);
+            o.bigMoments = me->flag("moments", true); o.momentSky = me->flag("moment_sky", true); o.gameAudio = me->flag("game_audio", true);
+            int64_t const now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            static int64_t bigSeen = 0, bigUntil = 0;
+            static int     bigIdx = -1;
+            bool const     bigNow = gBigSkyAtMs.load() != bigSeen;   // Big Moments: the last one standing - a new sky now
+            if (bigNow) bigSeen = gBigSkyAtMs.load();
+            int worldPick = 0;
             if (idx >= n) {   // Shuffle: a different sky from the pool every few minutes (the sky system sweeps from one to the next)
+                // the pool: the 14 Living Skies, plus Renderer Foundation's Cloud Sea and Novak Glass when asked (16 in one draw)
+                bool const    worldFx = me->flag("pool_worldfx", true);
+                int const     pool = n + (worldFx ? 2 : 0);
                 static int     cur = -1;
                 static int64_t next = 0;
-                int64_t const  now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-                if (cur < 0 || now >= next) {
+                if (cur < 0 || now >= next || bigNow || cur >= pool) {
                     static uint32_t seed = uint32_t(now);
                     int pick = cur;
-                    while (pick == cur) { seed = seed * 1664525u + 1013904223u; pick = int((seed >> 8) % uint32_t(n)); }
+                    while (pick == cur) { seed = seed * 1664525u + 1013904223u; pick = int((seed >> 8) % uint32_t(pool)); }
                     cur = pick;
                     next = now + int64_t(std::max(1.f, me->num("every", 4.f)) * 60000.f);
                 }
-                idx = cur;
+                if (cur >= n) worldPick = cur - n + 1;   // 1 Cloud Sea, 2 Novak Glass
+                idx = cur < n ? cur : 0;
+            } else if (bigNow) {   // one fixed sky: the biggest moment shows another one for a minute, then yours comes back
+                static uint32_t seed2 = uint32_t(now) ^ 0x51ED27u;
+                do { seed2 = seed2 * 1664525u + 1013904223u; bigIdx = int((seed2 >> 8) % uint32_t(n)); } while (bigIdx == idx);
+                bigUntil = now + 60000;
             }
+            if (idx < n && now < bigUntil && bigIdx >= 0) idx = bigIdx;
+            bedrock_forge::client::gSkyWorldPick = worldPick;
+            static bool aside = false;
+            if (worldPick) {   // Renderer Foundation's sky owns the screen for this turn of the shuffle: ours steps aside
+                o.on = false;
+                if (!aside) {
+                    aside = true;
+                    auto* lf = reg.find("lyricsflow");
+                    if (!(lf && lf->enabled)) gS->sky.step(false, gS->engine.config(), gS->engine.perf(), {});
+                }
+                return;
+            }
+            aside = false;
             o.preset = kSkyIds[size_t(std::clamp(idx, 0, n - 1))];
             o.strength = me->num("intensity", 0.8f); o.speed = me->num("speed", 1.f); o.lively = me->num("liveliness", 0.6f);
             o.breath = me->num("breathing", 1.f); o.music = me->flag("music", true); o.day = me->flag("day", true);
