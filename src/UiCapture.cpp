@@ -2,6 +2,7 @@
 #include <chrono>
 #include "Panorama.h"
 #include "UiCapture.h"
+#include "Dred.h"
 
 #include <algorithm>
 #include <atomic>
@@ -352,6 +353,22 @@ void callOmSet(ID3D12GraphicsCommandList* list, UINT n, D3D12_CPU_DESCRIPTOR_HAN
 // (ONE / INV_SRC_ALPHA) so the target holds proper premultiplied colour + coverage. The swap chain ignores alpha,
 // so the flat UI looks the same.
 std::atomic<long> gUiAlphaFixed{0};
+// Every cache keyed by a pipeline's address (UI tag, sky kind, Actor / item description, our glass pipelines, the World FX
+// class) must forget the address when the game creates a pipeline there: the old pipeline is gone. A resource-pack
+// reload (joining or leaving a server) destroys and rebuilds all of them, and the new ones land on old addresses -
+// 2026-11-18: the driver hung ("badly formed commands") on the world load after the Hive, and on some Hive joins.
+void forgetPsoAt(void* created) {
+    ID3D12PipelineState* pso = nullptr;
+    if (FAILED(static_cast<IUnknown*>(created)->QueryInterface(IID_PPV_ARGS(&pso))) || !pso) return;
+    rf::glassarmor::forgetPso(pso);
+    rf::sky::forgetPso(pso);
+    rf::worldfx::forgetPso(pso);
+    {
+        std::lock_guard l(gMutex);
+        gUiPso.erase(pso);
+    }
+    pso->Release();   // only used as a key
+}
 HRESULT STDMETHODCALLTYPE createGpsHook(ID3D12Device* d, D3D12_GRAPHICS_PIPELINE_STATE_DESC const* desc, REFIID riid, void** out) {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC patched;
     if (desc && desc->PS.pShaderBytecode && desc->PS.BytecodeLength) {
@@ -384,6 +401,7 @@ HRESULT STDMETHODCALLTYPE createGpsHook(ID3D12Device* d, D3D12_GRAPHICS_PIPELINE
     HRESULT hr = reinterpret_cast<CreateGps_t>(gOrig[0])(d, desc, riid, out);
     if (auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - tPso).count(); ms > 60)
         ll_shim::warn("[RF] slow pipeline build (" + std::to_string(ms) + " ms) on thread " + std::to_string(GetCurrentThreadId()));
+    if (SUCCEEDED(hr) && out && *out) forgetPsoAt(*out);   // before anything is noted about the new pipeline
     if (SUCCEEDED(hr) && desc && out && *out && desc->PS.pShaderBytecode && desc->PS.BytecodeLength) {
         ++gPsoCreated;
         uint64_t h = fnv1a(desc->PS.pShaderBytecode, desc->PS.BytecodeLength);
@@ -418,7 +436,9 @@ HRESULT STDMETHODCALLTYPE createGpsHook(ID3D12Device* d, D3D12_GRAPHICS_PIPELINE
 }
 HRESULT STDMETHODCALLTYPE createStreamPsoHook(ID3D12Device* d, void const* desc, REFIID riid, void** out) {
     ++gPsoStream; // pipeline-state streams aren't parsed in M0; a non-zero count means UI PSOs may be missed
-    return reinterpret_cast<CreatePs_t>(gOrig[1])(d, desc, riid, out);
+    HRESULT const hr = reinterpret_cast<CreatePs_t>(gOrig[1])(d, desc, riid, out);
+    if (SUCCEEDED(hr) && out && *out) forgetPsoAt(*out);
+    return hr;
 }
 void STDMETHODCALLTYPE createRtvHook(ID3D12Device* d, ID3D12Resource* res, D3D12_RENDER_TARGET_VIEW_DESC const* desc,
                                      D3D12_CPU_DESCRIPTOR_HANDLE h) {
@@ -614,7 +634,9 @@ void STDMETHODCALLTYPE createSrvHook(ID3D12Device* d, ID3D12Resource* r, D3D12_S
 HRESULT STDMETHODCALLTYPE closeHook(ID3D12GraphicsCommandList* list) {
     if (rf::sky::wanted()) { SkyLS* s = skyLS(list); if (s->terr && s->bound) { rf::sky::noteLeave(2); leaveWorld(list); } s->terr = false; s->bound = false; }
     if (gaOn()) gaFlush(list); // the actor pass often ends the list: replay the held-back armor while its targets are bound
-    return reinterpret_cast<Close_t>(gOrig[25])(list);
+    HRESULT const hr = reinterpret_cast<Close_t>(gOrig[25])(list);
+    if (FAILED(hr)) rf::dred::closeFailed(list, hr);   // crash-safe note: which of our work went into the bad list
+    return hr;
 }
 void STDMETHODCALLTYPE setIbHook(ID3D12GraphicsCommandList* list, D3D12_INDEX_BUFFER_VIEW const* v) {
     reinterpret_cast<SetIb_t>(gOrig[22])(list, v);
@@ -843,6 +865,7 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
         std::lock_guard g(gMutex);
         if (rtA && gRtvRes.find(SIZE_T(cur.rt0)) == gRtvRes.end()) rtA = nullptr;   // a guessed target: never copy it
     }
+    rf::dred::crumb(l, "glass replay: draws / rtv handle / dsv handle", pend.size(), cur.rt0, cur.dsv);
     bool ok = rf::glassarmor::beginFlush(l, rtA, rf::glassarmor::dsvResource(cur.dsv), fr);
     for (auto const& p : pend) {
         unsigned             base = 0;

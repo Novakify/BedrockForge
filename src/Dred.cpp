@@ -15,6 +15,11 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
+#include <algorithm>
+#include <cstdio>
+#include <mutex>
+#include <chrono>
 
 namespace rf::dred {
 namespace {
@@ -36,11 +41,47 @@ std::string narrow(wchar_t const* w) {
 }
 std::string narrow(char const* c) { return c ? std::string(c) : std::string("-"); }
 
+struct Crumb { void const* list; char const* what; unsigned long long a, b, c; long long ms; };
+constexpr int kCrumbs = 512;
+Crumb         gCrumbs[kCrumbs]{};
+unsigned      gCrumbN = 0;
+std::mutex    gCrumbMx;
+std::atomic<int> gCloseNotes{0};
+long long nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+std::string stamp() {
+    SYSTEMTIME t{};
+    GetLocalTime(&t);
+    char b[40];
+    std::snprintf(b, sizeof b, "%02d:%02d:%02d.%03d", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds);
+    return b;
+}
+void trail(std::ostringstream& o, void const* list, int max) {   // newest last; list = nullptr: every list
+    std::lock_guard l(gCrumbMx);
+    long long const now = nowMs();
+    unsigned const n = std::min<unsigned>(gCrumbN, kCrumbs);
+    std::vector<Crumb const*> v;
+    for (unsigned i = 0; i < n && int(v.size()) < max; ++i) {
+        Crumb const& c = gCrumbs[(gCrumbN - 1 - i) % kCrumbs];
+        if (list && c.list != list) continue;
+        if (now - c.ms > 3000) break;
+        v.push_back(&c);
+    }
+    if (v.empty()) o << "  (nothing recorded by RF " << (list ? "into this list" : "in the last 3 s") << ")\n";
+    for (auto it = v.rbegin(); it != v.rend(); ++it)
+        o << "  -" << (now - (*it)->ms) << " ms  list " << (*it)->list << "  " << (*it)->what << "  0x" << std::hex << (*it)->a << " 0x" << (*it)->b << " 0x"
+          << (*it)->c << std::dec << "\n";
+}
+void write(std::string const& s) {
+    std::error_code ec;
+    fs::create_directories(versionDir() / "logs", ec);
+    std::ofstream(versionDir() / "logs" / "rf_gpu_crash.txt", std::ios::app) << s << "\n";
+}
+
 void report(char const* why) {
     if (gReported.exchange(true)) return;
     ID3D12Device* dev = gDev.load();
     std::ostringstream o;
-    o << "Renderer Foundation GPU crash report (" << why << ")\n";
+    o << stamp() << " Renderer Foundation GPU crash report (" << why << ")\n";
     if (!dev) { o << "no device\n"; }
     else {
         HRESULT const r = dev->GetDeviceRemovedReason();
@@ -73,9 +114,9 @@ void report(char const* why) {
             dred->Release();
         } else o << "DRED not available (was it on before the device was made?)\n";
     }
-    std::error_code ec;
-    fs::create_directories(versionDir() / "logs", ec);
-    std::ofstream(versionDir() / "logs" / "rf_gpu_crash.txt", std::ios::app) << o.str() << "\n";
+    o << "what RF recorded in the last 3 s (all lists, oldest first):\n";
+    trail(o, nullptr, 120);
+    write(o.str());
 }
 
 LONG CALLBACK onException(EXCEPTION_POINTERS* e) {
@@ -107,14 +148,28 @@ void beforeDevice() {
     gOn = true;
     ll_shim::info("[RF] GPU crash report on (config/Dred.txt): a driver crash writes logs/rf_gpu_crash.txt");
 }
+void crumb(void const* list, char const* what, unsigned long long a, unsigned long long b, unsigned long long c) {
+    std::lock_guard l(gCrumbMx);
+    gCrumbs[gCrumbN++ % kCrumbs] = {list, what, a, b, c, nowMs()};
+}
+void closeFailed(void const* list, long hr) {
+    if (gCloseNotes.fetch_add(1) >= 12) return;   // the first few say it all
+    std::ostringstream o;
+    o << stamp() << " a command list FAILED to Close (hr 0x" << std::hex << unsigned(hr) << std::dec << ", list " << list
+      << "): an invalid call was recorded into it. What RF recorded into this list:\n";
+    trail(o, list, 40);
+    o << "and into any list in the last 3 s:\n";
+    trail(o, nullptr, 60);
+    write(o.str());
+}
 void watch(ID3D12Device* dev) {
-    if (!gOn.load() || !dev) return;
+    if (!dev) return;
     ID3D12Device* none = nullptr;
     if (gDev.compare_exchange_strong(none, dev)) dev->AddRef();
     if (!gVeh) gVeh = AddVectoredExceptionHandler(1, &onException);
 }
 void check() {
-    if (!gOn.load() || gReported.load()) return;
+    if (gReported.load()) return;
     ID3D12Device* dev = gDev.load();
     if (dev && dev->GetDeviceRemovedReason() != S_OK) report("device removed, seen at Present");
 }

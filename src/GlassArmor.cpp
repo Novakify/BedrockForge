@@ -24,6 +24,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <climits>
 #include <intrin.h>
 #include <d3d12.h>
 #include <wrl/client.h>
@@ -123,6 +124,7 @@ std::unordered_map<size_t, ID3D12Resource*>                         gDsvRes;  //
 std::unordered_map<ID3D12RootSignature*, std::vector<uint8_t>>      gRsBlob;  // game root signature blobs
 struct ExtRoot { ComPtr<ID3D12RootSignature> rs; unsigned base = 0; bool failed = false; };
 std::unordered_map<ID3D12RootSignature*, ExtRoot>                   gExt;
+std::unordered_map<ID3D12RootSignature*, ExtRoot>                   gExtBody; // Glass Body: the same + t3 space9 (the skin)
 struct FlushSlot { ComPtr<ID3D12Resource> scene, depth; UINT64 sceneSize = 0, depthSize = 0; };
 constexpr int                      kSlots = 8;
 FlushSlot                          gSlots[kSlots];
@@ -1076,6 +1078,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
         src.pResource                          = tex.Get();
         src.Type                               = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
         src.SubresourceIndex                   = 0;
+        rf::dred::crumb(gList.Get(), "armor texture readback: state / w<<32|h / format", st, (UINT64(td.Width) << 32) | td.Height, td.Format);
         gList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         if (barrier) {
             std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
@@ -1083,7 +1086,7 @@ void pumpReadbacks(ID3D12Device* dev, ID3D12CommandQueue* q) {
         }
         gInFlight.push_back({tex, buf, sc});
     }
-    gList->Close();
+    if (FAILED(gList->Close())) { gInFlight.clear(); return; }   // never execute a list that did not close (device removed)
     if (gInFlight.empty()) return;
     ID3D12CommandList* lists[] = {gList.Get()};
     q->ExecuteCommandLists(1, lists);
@@ -1149,14 +1152,46 @@ ID3D12Resource* dsvResource(size_t h) {
     }
     return isAlive(r) ? r : nullptr;   // a depth the game already freed (world reload, leaving a server): never touch it
 }
+namespace {
+std::mutex                                       gBuryMx;   // leaf lock
+std::deque<std::pair<ComPtr<IUnknown>, long>>    gBuried;
+long                                             gBuryFrame = 0;
+void buryTick() {   // once per Present
+    std::vector<ComPtr<IUnknown>> drop;   // released outside the lock
+    std::lock_guard l(gBuryMx);
+    ++gBuryFrame;
+    while (!gBuried.empty() && gBuried.front().second + 300 < gBuryFrame) { drop.push_back(std::move(gBuried.front().first)); gBuried.pop_front(); }
+}
+} // namespace
+void bury(IUnknown* u) {
+    if (!u) return;
+    std::lock_guard l(gBuryMx);
+    gBuried.emplace_back(u, gBuryFrame);
+}
+void forgetPso(ID3D12PipelineState* pso) {
+    if (!pso) return;
+    std::lock_guard l(gMutex);
+    gPsos.erase(pso);
+    gActor.erase(pso);     // (2026-11-18 crash: a non-actor pipeline at a dead Actor pipeline's address was replayed as glass,
+    gItemPso.erase(pso);   //  and a new Actor pipeline got the glass pipeline built for the dead one's root signature)
+    for (auto it = gGlass.lower_bound({pso, INT_MIN}); it != gGlass.end() && it->first.first == pso;) {
+        bury(it->second.Get());
+        it = gGlass.erase(it);
+    }
+}
 void noteRootSig(ID3D12RootSignature* rs, void const* blob, size_t size) {
     if (!rs || !blob || !size || size > 65536) return;
     std::lock_guard l(gMutex);
-    gRsBlob[rs].assign(static_cast<uint8_t const*>(blob), static_cast<uint8_t const*>(blob) + size);
+    auto& b = gRsBlob[rs];
+    bool const same = b.size() == size && std::memcmp(b.data(), blob, size) == 0;
+    if (!same) {   // another root signature lives at this address now: the extended ones made for the old one are wrong
+        if (auto e = gExt.find(rs); e != gExt.end()) { bury(e->second.rs.Get()); gExt.erase(e); }
+        if (auto e = gExtBody.find(rs); e != gExtBody.end()) { bury(e->second.rs.Get()); gExtBody.erase(e); }
+        b.assign(static_cast<uint8_t const*>(blob), static_cast<uint8_t const*>(blob) + size);
+    }
 }
 
 namespace {
-std::unordered_map<ID3D12RootSignature*, ExtRoot> gExtBody; // Glass Body: the same + t3 space9 (the skin)
 /// body = false: exactly the armor's signature (game's + 4); true: + 5 (the skin as root SRV t3 space9)
 ID3D12RootSignature* extendedRootImpl(ID3D12RootSignature* game, unsigned* base, bool body) {
     if (!game) return nullptr;
@@ -1407,6 +1442,8 @@ bool beginFlush(ID3D12GraphicsCommandList* l, ID3D12Resource* rt, ID3D12Resource
     if (!ensureBuffer(dev.Get(), S.scene, S.sceneSize, rTot) || !ensureBuffer(dev.Get(), S.depth, S.depthSize, dTot)) return fail("scene buffers");
     auto const rtState = knownState(rt, D3D12_RESOURCE_STATE_RENDER_TARGET);
     auto const dsState = knownState(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    rf::dred::crumb(l, "glass scene copy: colour state / depth state / w<<32|h (colour fmt<<48, depth fmt<<56)", rtState, dsState,
+                    (rd.Width << 32) | rd.Height | (UINT64(rd.Format) << 48) | (UINT64(dd.Format) << 56));
     barrier(l, rt, rtState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     barrier(l, ds, dsState, D3D12_RESOURCE_STATE_COPY_SOURCE);
     D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
@@ -1871,13 +1908,15 @@ void probePump(ID3D12Device* dev, ID3D12CommandQueue* q) {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         dst.pResource = r.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
         src.pResource = tex.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        rf::dred::crumb(gProbeList.Get(), "probe readback: state / w<<32|h / format", st, (UINT64(td.Width) << 32) | td.Height, td.Format);
         gProbeList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         if (bar) barrier(gProbeList.Get(), tex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
         gProbeRb.push_back(r);
     }
-    gProbeList->Close();
+    bool const closed = SUCCEEDED(gProbeList->Close());
+    if (!closed) gProbeRb.clear();   // never execute a list that did not close (device removed)
     ID3D12CommandList* lists[] = {gProbeList.Get()};
-    q->ExecuteCommandLists(1, lists);
+    if (closed) q->ExecuteCommandLists(1, lists);
     q->Signal(gProbeFence.Get(), ++gProbeFenceVal);
     gProbeStage = 2;
 }
@@ -1998,13 +2037,15 @@ void pumpSkins(ID3D12Device* dev, ID3D12CommandQueue* q) {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         dst.pResource = r.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
         src.pResource = tex.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        rf::dred::crumb(gSkinList.Get(), "skin readback: state / w<<32|h / format", st, (UINT64(r.w) << 32) | r.h, td.Format);
         gSkinList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         if (bar) barrier(gSkinList.Get(), tex.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
         gSkinInFlight.push_back(r);
     }
-    gSkinList->Close();
+    bool const closed = SUCCEEDED(gSkinList->Close());
+    if (!closed) gSkinInFlight.clear();   // never execute a list that did not close (device removed)
     ID3D12CommandList* lists[] = {gSkinList.Get()};
-    q->ExecuteCommandLists(1, lists);
+    if (closed) q->ExecuteCommandLists(1, lists);
     q->Signal(gSkinFence.Get(), ++gSkinFenceVal);
 }
 
@@ -2078,15 +2119,17 @@ void pumpItems(ID3D12Device* dev, ID3D12CommandQueue* q) {
         D3D12_TEXTURE_COPY_LOCATION dst{}, src{};
         dst.pResource = A.buf.Get(), dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, dst.PlacedFootprint = fp;
         src.pResource = A.keep.Get(), src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, src.SubresourceIndex = 0;
+        rf::dred::crumb(gItemList.Get(), "item atlas copy: state / w<<32|h / format", st, (UINT64(td.Width) << 32) | td.Height, td.Format);
         gItemList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         if (bar) barrier(gItemList.Get(), A.keep.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, st);
         barrier(gItemList.Get(), A.buf.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         A.bufInSrv = true;
         gAtlasInFlight.push_back(k);
     }
-    gItemList->Close();
+    bool const closed = SUCCEEDED(gItemList->Close());
+    if (!closed) { std::lock_guard l(gMutex); for (int k : gAtlasInFlight) gAtlas[k].failed = true; }   // never execute a list that did not close
     ID3D12CommandList* lists[] = {gItemList.Get()};
-    q->ExecuteCommandLists(1, lists);
+    if (closed) q->ExecuteCommandLists(1, lists);
     q->Signal(gItemFence.Get(), ++gItemFenceVal);
 }
 
@@ -2178,6 +2221,7 @@ void flushTimer(ID3D12GraphicsCommandList* list, bool begin) {
 
 void onPresent(ID3D12Device* device, ID3D12CommandQueue* queue) {
     rf::dred::check();
+    buryTick();
     {   // the client's Glass module (You / Other players / Armour): about once a second
         static int64_t lastPoll = 0;
         int64_t const  nowMs    = int64_t(GetTickCount64());

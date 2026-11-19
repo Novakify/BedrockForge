@@ -1209,4 +1209,9 @@ void drawUi() {
     ImGui::Unindent();
 }
 
+void forgetPso(ID3D12PipelineState* pso) {
+    std::lock_guard l(gMutex);
+    gCls.erase(pso);
+    gPsoStat.erase(pso);
+}
 } // namespace rf::worldfx
