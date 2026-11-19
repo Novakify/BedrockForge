@@ -1,3 +1,26 @@
+# Next session handoff (2026-11-19 overnight, Fernando asleep) - READ FIRST
+- BUILT, STAGED, NOT INSTALLED (the game was left running and computer use had no grant, so the DLLs stayed locked):
+  RF 3436278 (worldfx-rf-builds) + BF ff11b78 (builds) are in mods/BedrockForgeCore/_stage_1118. With the game CLOSED,
+  run INSTALL_OVERNIGHT.bat in the version folder (backs both DLLs up to _backups, then copies). The BF Cosmetics dev
+  pack IS already updated (old copy in _bfk_off/pre_overnight_1119).
+- In those builds (all untested in game):
+  - #72 RF config/Test.txt (kill | impact | win | bed) / #71 BF config/test.txt (hit | crit | swing | hitswing | jump).
+  - #73 crown seated on the head with points + jewels (lab-checked).
+  - #74 motion blur: "one frame ago" steps once per Present (it pulsed when the camera hook ran twice a frame) and a
+    fixed dither (a per-frame one shimmered with no TAA).
+  - #75 Freelook: third person while orbiting (first person showed only a floating arm), the orbit follows a
+    tick-interpolated eye (it shook at 20 Hz), frame-rate independent swing. Still ships with NO key: Freelook's key
+    and the knife inspect key are both I (73) if he sets it to I - pick another.
+  - #77 flicker: gFxSinceClear also clears at every Present. Log 01:32 showed 123/591 frames with NO World FX pass
+    (end-of-world path skipped as "already done" by a flag left from the previous frame) = sky/fog/cosmetics blinking.
+    Check rf log "WFX frames ..., frames WITHOUT the pass" is ~0 in world now.
+  - #78 glass item trace only with config/GlassTrace.txt (it locked twice per indexed draw).
+  - #76 knives: karambit bigger (FP 0.98, TP 1.30), every knife scaled in third person, per-knife size sliders
+    (size_k1..3) x "Size (all knives)" 0.5-1.8, edge glint star at the end of the draw / middle of inspects, crit hits
+    add a star + second spark burst (bfkopt bit 64).
+- Test order: install -> flicker (look at buildings, log) -> knives size/glint/crit (BF test.txt crit/hitswing) ->
+  Test.txt kill/impact on Living Skies -> freelook (bind a key with his OK) -> motion blur feel -> glass items look.
+
 # Next session handoff (updated 2026-11-18 ~11:10 local, glass/cosmetics round 2) - READ FIRST
 - INSTALLED: RF 88bb983 (worldfx-rf-builds), BF 911e498. Game left running at the menu, Cloud Sea pack on, ink 1.
 - Verified IN GAME today (Fancy, Cloud Sea): no crash on join or /tp; wings, cape (centred on the back), glass body,
