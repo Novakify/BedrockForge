@@ -3420,7 +3420,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 for (int k = 0; k < 3; ++k) fadeF[k] = snap.forward[k], fadeP[k] = float(snap.pos[k]);
                 gFadeStage = 2;
             }
-        } else if (fs == 3 && fadeBuf && fadeInSrv && fadeW == UINT(rd.Width) && fadeH == rd.Height) {
+        } else if (fs == 3 && fadeBuf && fadeInSrv && fadeW > 0 && fadeH > 0) {   // (the world may draw at another size now: the shader scales)
             ID3D12PipelineState* fp = derived(dev.Get(), g, 22);
             {
                 static int64_t lastNote = 0;
@@ -3435,6 +3435,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
                 float f[44]{};
                 f[12] = a; f[13] = 0.7f * a * still; f[15] = fadeBgra ? 1.0f : 0.0f;
                 f[16] = float(rd.Width); f[17] = float(rd.Height); f[18] = float(fadePitch); f[19] = float(df.Footprint.RowPitch);
+                f[20] = float(fadeW); f[21] = float(fadeH);   // the kept frame's own size
                 calls.setConsts(list, 0, 44, f, 0);
                 list->SetGraphicsRootShaderResourceView(1, fadeBuf->GetGPUVirtualAddress());
                 list->SetGraphicsRootShaderResourceView(2, db->GetGPUVirtualAddress());
