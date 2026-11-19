@@ -835,7 +835,15 @@ void gaFlush(ID3D12GraphicsCommandList* l) {
     ++gGaFlushes;
     rf::glassarmor::flushTimer(l, true);
     rf::glassarmor::FlushRes fr;
-    bool ok = rf::glassarmor::beginFlush(l, rtvResource(cur.rt0), rf::glassarmor::dsvResource(cur.dsv), fr);
+    // only targets still alive: a handle can outlive its texture, and the guess table can name the wrong one (2026-11-18:
+    // the Hive lobby puts an item in your hand, Glass Items replays it, and the copy of a freed / wrong target crashed
+    // the driver on every join)
+    ID3D12Resource* rtA = rtvResourceOf(cur.rt0);
+    {
+        std::lock_guard g(gMutex);
+        if (rtA && gRtvRes.find(SIZE_T(cur.rt0)) == gRtvRes.end()) rtA = nullptr;   // a guessed target: never copy it
+    }
+    bool ok = rf::glassarmor::beginFlush(l, rtA, rf::glassarmor::dsvResource(cur.dsv), fr);
     for (auto const& p : pend) {
         unsigned             base = 0;
         ID3D12RootSignature* ext  = !ok ? nullptr : p.body ? rf::glassarmor::extendedRootBody(p.root.sig, &base)
