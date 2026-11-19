@@ -76,6 +76,7 @@ struct Ui {
     bool  hideClouds = true;  // WorldSky hides vanilla clouds by default
     bool  vv         = true;  // Vibrant Visuals: replace the deferred sky too
     float vvGain     = 1.0f;  // Vibrant Visuals: brightness of our (sRGB -> linear) sky in the game's HDR target
+    int   liveRate   = 2;     // Living Skies dome shading rate: 0 full, 1 = 2x1, 2 = 2x2 (Atmos.txt "livesky_rate")
 } gUi;
 std::atomic<uint64_t> gPresentNo{0}, gVvClaimed{~0ull}; // Vibrant Visuals: one dome per frame
 // World FX fallback bookkeeping, per depth clear of the world's depth buffer (not per Present: the game records a
@@ -153,6 +154,7 @@ void pollAtmos() {
         auto rd = [&](float& v) { in >> v; };
         auto rd3 = [&](float* v) { in >> v[0] >> v[1] >> v[2]; };
         if (k == "skymode") { int v = -1; in >> v; skyMode = v; }
+        else if (k == "livesky_rate") { int v = 2; in >> v; gUi.liveRate = std::clamp(v, 0, 2); }
         else if (k == "haze") { int v = 0; in >> v; a.haze = v != 0; }
         else if (k == "mist") { int v = 0; in >> v; a.mist = v != 0; }
         else if (k == "haze_a") rd3(a.hA); else if (k == "haze_b") rd3(a.hB);
@@ -643,6 +645,7 @@ void drawUi() {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(160);
     ImGui::SliderFloat("VV sky brightness", &gUi.vvGain, 0.01f, 1000.0f, "%.3g", ImGuiSliderFlags_Logarithmic);
+    ImGui::SliderInt("Living Sky shading (0 full, 1 2x1, 2 2x2)", &gUi.liveRate, 0, 2);
     ImGui::Text("Stage 2: %s", stage2().c_str());
     {
         std::lock_guard l(gLearnMutex);
@@ -2188,7 +2191,23 @@ bool afterGameSky(ID3D12GraphicsCommandList* list, GameState const& st, Calls co
     calls.setPso(list, domePso);
     calls.setTopo(list, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     calls.setVb(list, 0, 1, &vd);
+    // [Living Skies] perf: the dome is LyricsFlow's whole sky shader (dozens of noise steps per pixel) run on every
+    // pixel of the screen before the world is drawn over it - measured ~6 ms on a hilly map, ~10 ms on a flat one at
+    // 1440p. The sky is soft: one shader run per 2x2 pixels (variable rate shading) looks the same and costs a quarter.
+    // Stars, constellations and lightning (the quads below) stay at full rate, so they stay sharp.
+    ComPtr<ID3D12GraphicsCommandList5> l5;
+    {
+        static int vrs = -1;
+        if (vrs < 0) {
+            D3D12_FEATURE_DATA_D3D12_OPTIONS6 o6{};
+            vrs = SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS6, &o6, sizeof o6)) &&
+                          o6.VariableShadingRateTier != D3D12_VARIABLE_SHADING_RATE_TIER_NOT_SUPPORTED ? 1 : 0;
+        }
+        if (vrs != 1 || gUi.liveRate <= 0 || FAILED(list->QueryInterface(IID_PPV_ARGS(&l5)))) l5.Reset();
+    }
+    if (l5) l5->RSSetShadingRate(gUi.liveRate == 1 ? D3D12_SHADING_RATE_2X1 : D3D12_SHADING_RATE_2X2, nullptr);
     calls.draw(list, 3, 1, 0, 0);
+    if (l5) l5->RSSetShadingRate(D3D12_SHADING_RATE_1X1, nullptr);
     if (nq) {
         D3D12_VERTEX_BUFFER_VIEW vq{gpu + 3 * sizeof(DomeVert), UINT(nq * sizeof(QuadVert)), UINT(sizeof(QuadVert))};
         calls.setPso(list, quadPso);
@@ -2896,6 +2915,9 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // it; only while the world's depth is writable here
     bool const capeDepth = atmosNeed && atm.cp && rf::glassarmor::stateOf(ds, D3D12_RESOURCE_STATE_DEPTH_WRITE) == D3D12_RESOURCE_STATE_DEPTH_WRITE;
     ID3D12PipelineState* ap = atmosNeed ? derived(dev.Get(), g, capeDepth ? 20 : 19) : nullptr;   // Haze + Mist
+    // prewarm: the cape's depth variant takes ~2 s to build (worker) - start it with the plain one, so the cape is
+    // there the moment it's switched on instead of popping in a couple of seconds late
+    if (atmosNeed && !capeDepth) (void)derived(dev.Get(), g, 20);
     if (!ap) atmosNeed = false;
     if (blurOnly && !blurNeed && !atmosNeed) {   // nothing to draw: the frame counts as done (and the pass's anchors learn from it)
         if (gAtmosOn.load(std::memory_order_relaxed) && !ap) { wfxStatus("building the haze / mist pipeline (in the background)"); return false; }
