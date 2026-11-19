@@ -132,6 +132,9 @@ struct State {
     void const* heldSlot = nullptr;
     int64_t drawAt = 0, inspectAt = 0, othersAt = 0, attackAt = 0, hitAt = 0, stillSince = 0;
     int     inspectN = 0, attackN = 0, hitN = 0;
+    int     trick = 1, combo = 0;   // idle trick 0..3 (insp1..4, never the same twice), combo step 0..3 (swing 1..4)
+    float   sprint = 0.f;           // sprint carry blend 0..1 (eased, so the flip reads as a move)
+    int64_t sprintAt = 0;
     bool    keyWas = false, lmbWas = false;
     float   lastX = 0, lastZ = 0, lastYaw = 0;
 } gS;
@@ -179,6 +182,7 @@ void registerModules(Registry& r) {
         .slider("inspect_vk", "Inspect key (Windows key code: 73 = I, 0 = none; press again to chain the next trick)", 73, 0, 254, 1)
         .toggleSetting("auto_inspect", "Idle tricks (plays with the blade while you stand still)", true)
         .slider("interval", "Trick interval (s of idle time)", 12.f, 5.f, 30.f, 1.f)
+        .toggleSetting("sprint_carry", "Sprint carry (knife flips along your arm while sprinting)", true)
         .slider("speed", "Animation speed", 1.f, 0.65f, 1.5f, 0.05f)
         .toggleSetting("draw", "Draw animation (a flourish when you equip a sword)", true)
         .toggleSetting("sounds", "Trick and attack sounds (clean steel, our own)", true)
@@ -223,7 +227,8 @@ void frame(LocalPlayer* lp) {
             // inspect: the key (each press chains the next trick), or idle tricks after `interval` s standing still
             int const key = int(m->num("inspect_vk", 73));
             bool const down = key > 0 && input && w32::keyDown(key);
-            if (down && !gS.keyWas && sword) { gS.inspectAt = now; ++gS.inspectN; }
+            // the key steps through the knife's four tricks in order; idle tricks pick one at random, never the last one
+            if (down && !gS.keyWas && sword) { gS.inspectAt = now; ++gS.inspectN; gS.trick = (gS.trick + 1) & 3; }
             gS.keyWas = down;
             Vec3 const pos = self.getPosition();
             float const yaw = self.getRotation().z;
@@ -233,18 +238,32 @@ void frame(LocalPlayer* lp) {
             int64_t const idleMs = int64_t(m->num("interval", 12.f) * 1000.f);
             if (m->flag("auto_inspect", true) && sword && now - gS.stillSince > idleMs && now - gS.inspectAt > idleMs) {
                 gS.inspectAt = now; ++gS.inspectN;
+                gS.trick = rerollNot(4, gS.trick);
             }
             insp = secs(gS.inspectAt);
             // attack: every left click while holding the knife (hits and misses), confirmed hits from the attack hook
             int const cset = int(m->num("fx_color", 0));   // 0 = random: a new colour every swing
             bool const lmb = input && w32::keyDown(0x01);
             if (((lmb && !gS.lmbWas) || gTestSwing.exchange(0) > 0) && sword) {
+                // combo chain: clicks inside 0.5 s of the last one run swing 1 -> 2 -> 3 -> 4 (the finisher), then start
+                // over; slower clicks just alternate 1 / 2 like before
+                bool const fast = gS.attackAt != 0 && now - gS.attackAt < 500;
+                gS.combo = fast ? (gS.combo + 1) & 3 : (gS.combo == 0 ? 1 : 0);
                 gS.attackAt = now; ++gS.attackN;
                 if (cset == 0) gS.fxColor = rerollNot(5, gS.fxColor);
             }
             if (cset > 0) gS.fxColor = cset - 1;
             gS.lmbWas = lmb;
             atk = secs(gS.attackAt);
+            {   // sprint carry: reversed along the forearm while sprinting (first person), flips back when you stop
+                bool sprinting = false;
+                try { sprinting = sword && lp->isSprinting(); } catch (...) {}
+                float const dt = gS.sprintAt ? std::clamp(float(now - gS.sprintAt) / 1000.f, 0.f, 0.1f) : 0.f;
+                gS.sprintAt = now;
+                float const target = sprinting && m->flag("sprint_carry", true) && now - gS.attackAt > 450 && now - gS.inspectAt > 2500 ? 1.f : 0.f;   // swings / tricks take the knife back first
+                gS.sprint += (target - gS.sprint) * (1.f - std::exp(-dt / 0.07f));
+                if (std::abs(target - gS.sprint) < 0.002f) gS.sprint = target;
+            }
             if (int const n = gHitCount.load(); n != gS.hitN) { gS.hitN = n; gS.hitAt = gHitMs.load(); }
             hit = secs(gS.hitAt);
             opt = float((m->flag("slash_arcs", true) ? 1 : 0) | (m->flag("hit_effects", true) ? 2 : 0) | (m->flag("sounds", true) ? 4 : 0)
@@ -254,10 +273,10 @@ void frame(LocalPlayer* lp) {
         // made the sword vanish in game. Unchanged values are skipped (setCached).
         float const* col = kFx[std::clamp(gS.fxColor, 0, 4)];
         std::pair<char const*, float> const vars[] = {
-            {"bfknife", design}, {"bfkdraw", draw}, {"bfkinsp", insp}, {"bfkinsn", float(gS.inspectN & 1)},
-            {"bfkatk", atk}, {"bfkatn", float(gS.attackN & 1)}, {"bfkhit", hit}, {"bfkhitn", float(gS.hitN & 1)},
+            {"bfknife", design}, {"bfkdraw", draw}, {"bfkinsp", insp}, {"bfkinsn", float(gS.trick)},
+            {"bfkatk", atk}, {"bfkatn", float(gS.combo)}, {"bfkhit", hit}, {"bfkhitn", float(gS.hitN & 1)},
             {"bfkspd", spd}, {"bfkopt", opt}, {"bfkfin", fin}, {"bfkslash", slash}, {"bfkscl", scl}, {"bfkox", ox},
-            {"bfkoy", oy}, {"bfkcr", col[0]}, {"bfkcg", col[1]}, {"bfkcb", col[2]}};
+            {"bfkoy", oy}, {"bfkcr", col[0]}, {"bfkcg", col[1]}, {"bfkcb", col[2]}, {"bfkspr", on ? gS.sprint : 0.f}};
         static_assert(std::size(vars) <= 20, "State::c holds 20");
         for (size_t i = 0; i < std::size(vars); ++i) setCached(self, vars[i].first, vars[i].second, gS.c[i], now);
     } catch (...) {}
@@ -270,7 +289,7 @@ void frame(LocalPlayer* lp) {
                 try {
                     setPublic(p, "bfknife", 0.f);
                     for (char const* n : {"bfkdraw", "bfkinsp", "bfkatk", "bfkhit"}) setPublic(p, n, 99.f);
-                    for (char const* n : {"bfkinsn", "bfkatn", "bfkhitn", "bfkopt", "bfkfin", "bfkslash", "bfkox", "bfkoy"}) setPublic(p, n, 0.f);
+                    for (char const* n : {"bfkinsn", "bfkatn", "bfkhitn", "bfkopt", "bfkfin", "bfkslash", "bfkox", "bfkoy", "bfkspr"}) setPublic(p, n, 0.f);
                     for (char const* n : {"bfkspd", "bfkscl", "bfkcr", "bfkcg", "bfkcb"}) setPublic(p, n, 1.f);
                 } catch (...) {}
                 return true;
