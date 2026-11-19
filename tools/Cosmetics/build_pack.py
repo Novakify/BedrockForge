@@ -101,9 +101,9 @@ def ghost_strip():
     N = kn_anims.GHOSTS
     img = np.zeros((1, N, 4), np.uint8)
     for k in range(N):
-        a = 0.42 * (1 - k / N) ** 1.2
+        a = 0.58 * (1 - k / N) ** 1.1          # (in game 2026-11-19: 0.42 read faint over bright ground)
         w = 1 - k / (N - 1)                                  # newest -> pinkish white, oldest -> lavender-blue
-        c = np.array([0.93, 0.90, 0.98]) * w + np.array([0.70, 0.72, 0.92]) * (1 - w)
+        c = np.array([0.98, 0.95, 1.0]) * w + np.array([0.78, 0.78, 1.0]) * (1 - w)
         img[0, k, :3] = (c * 255).astype(np.uint8)
         img[0, k, 3] = int(a * 255)
     return img
