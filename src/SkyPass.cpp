@@ -2822,6 +2822,12 @@ std::atomic<uint64_t> gPresentSeq{0};   // displayed frames (the motion blur ste
 void lookDownFrameTick() {   // once per Present: did any path draw the pass this frame?
     ++gPresentSeq;
     ++gFrames;
+    // (flicker, 2026-11-19: "skies / buildings flicker when I look at them". The once-a-frame flag was only cleared at
+    //  the world's depth clear; on frames without that clear (no clouds in view: looking at buildings / down) it stayed
+    //  set from the last frame, so the cloud pass AND the end-of-world pass both thought they had already run - logged
+    //  in game: 123 of 591 frames with no pass at all = the sky look, fog and cosmetics blinking off. A new frame is a
+    //  new frame: clear it at every Present too.)
+    gFxSinceClear.store(false);
     if (gWorldSky.load(std::memory_order_relaxed) && gPassesThisFrame.exchange(0) == 0) ++gFramesNoPass;
     static int64_t last = 0;
     int64_t const t = nowMsSky();
