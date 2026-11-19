@@ -2818,7 +2818,9 @@ bool fallbackWorldFx(ID3D12GraphicsCommandList* list, GameState const& st, Calls
 std::atomic<long> gLvAt[3]{}, gLvNoPso{0}, gLvDone{0}, gLvPair{0}, gLvCloud{0}, gLvOk{0}, gLvFail{0}, gFrames{0}, gFramesNoPass{0};
 std::atomic<long> gPassesThisFrame{0};
 void noteLeave(int where) { if (where >= 0 && where < 3) ++gLvAt[where]; }
+std::atomic<uint64_t> gPresentSeq{0};   // displayed frames (the motion blur steps its "one frame ago" pose once per frame)
 void lookDownFrameTick() {   // once per Present: did any path draw the pass this frame?
+    ++gPresentSeq;
     ++gFrames;
     if (gWorldSky.load(std::memory_order_relaxed) && gPassesThisFrame.exchange(0) == 0) ++gFramesNoPass;
     static int64_t last = 0;
@@ -2936,17 +2938,21 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
     // (audit 2: no velocity against the clock any more - the streak is a share of the real pose-to-pose motion, so it
     //  always fits the gap between the two frames you see; the clock only caps it on slow frames)
     struct BlurPose { double pos[3]{}; float f[3]{}, r[3]{}, u[3]{}; };
-    struct BlurCam { bool have = false; uint64_t calls = 0; BlurPose last, before; float avgDt = 0.007f; std::chrono::steady_clock::time_point at{}; };
+    struct BlurCam { bool have = false; uint64_t frame = ~0ull; BlurPose last, before; float avgDt = 0.007f; std::chrono::steady_clock::time_point at{}; };
     static BlurCam bc;
     BlurPose now2;
     for (int a = 0; a < 3; ++a) { now2.pos[a] = snap.pos[a]; now2.f[a] = snap.forward[a]; now2.r[a] = snap.right[a]; now2.u[a] = snap.up[a]; }
-    if (snap.calls != bc.calls || !bc.have) {
+    // (audit 3, 2026-11-19 - "laggy": the step used to follow the camera hook's call count, which can tick twice in one
+    //  frame; then that frame measured no motion at all and the blur pulsed on / off frame to frame. It steps once per
+    //  displayed frame now: "one frame ago" is the pose of the frame you last saw.)
+    uint64_t const frameNo = gPresentSeq.load(std::memory_order_relaxed);
+    if (frameNo != bc.frame || !bc.have) {
         auto const tNow = std::chrono::steady_clock::now();
         double const dt = std::chrono::duration<double>(tNow - bc.at).count();
         if (bc.have && dt < 0.1) { bc.before = bc.last; bc.avgDt += (float(std::clamp(dt, 0.002, 0.05)) - bc.avgDt) * 0.05f; }
         else bc.before = now2;                                   // the first frame, or after a pause: no motion known
-        bc.last = now2; bc.have = true; bc.calls = snap.calls; bc.at = tNow;
-    }
+        bc.last = now2; bc.have = true; bc.frame = frameNo; bc.at = tNow;
+    } else bc.last = now2;   // a second pass in the same frame: the newest pose, the same "before"
     BlurPose pa = bc.before;                                    // the camera one frame ago
     float strength = rf::postfx::motionBlurWanted();
     float const blurMove = rf::postfx::motionBlurMove() >= 0.0f ? std::min(rf::postfx::motionBlurMove(), 1.5f) : look.blurMove;   // the client menu's slider wins over F6

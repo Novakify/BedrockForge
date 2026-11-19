@@ -17,7 +17,7 @@
 //   * what stands in front of a pixel is not gathered into it: no ghost of a player or a near block in the world behind
 //   * centred on the pixel (half back, half ahead): the picture does not lag behind the camera
 //   * under ~1 px of motion nothing is touched (discard): slow pans and standing still stay pin sharp and cost nothing
-//   * averaged in linear light, a different dither every frame
+//   * averaged in linear light, a fixed per-pixel dither (a moving one shimmered)
 cbuffer C : register(b0) {
     float4 c0; // xyz = camera forward, w = tan(fovx/2)
     float4 c1; // xyz = camera right,   w = tan(fovy/2)
@@ -100,7 +100,7 @@ float4 PSWorldFxBlur(VSOut i) : SV_Target {
     float2 dir = v / len;
     [branch] if ((uint(c3.w) & 4u) != 0u) return float4(saturate(abs(dir) * use / c3.y), saturate(use / c3.y) * 0.5, 1.0);
     int    n   = clamp(int(ceil(use * 0.75)) | 1, 3, 15);
-    float  j   = ign(px + c2.w * 5.588238) - 0.5;
+    float  j   = ign(px) - 0.5;   // (audit 3: the same dither every frame - a new one each frame shimmered while moving: no TAA in Bedrock to settle it)
     float2 st  = dir * (use / float(n));
     float2 p   = px - dir * (use * 0.5) + st * (0.5 + j);
     float2 da  = abs(dir);
