@@ -1870,6 +1870,19 @@ void installRuntime() {
                         }
                         if (c == "swing" || c == "hitswing") cosmetics::testSwing();
                         if (c == "jump") pushFxEvent(1u, pos.x, pos.y - 1.62f, pos.z);
+                        {   // set <module> <setting> <value> | on <module> | off <module>: flip settings for a remote check
+                            std::istringstream ss(c);
+                            std::string verb, mid, sid; float v = 0;
+                            ss >> verb >> mid;
+                            if (auto* md = Registry::get().find(mid)) {
+                                if (verb == "on" || verb == "off") {
+                                    bool const want = verb == "on";
+                                    if (md->enabled != want) { md->enabled = want; if (md->onToggle) md->onToggle(want); }
+                                } else if (verb == "set" && (ss >> sid >> v)) {
+                                    if (auto* st = md->setting(sid)) { if (st->kind == Setting::Kind::Toggle) st->on = v != 0; else st->value = v; }
+                                }
+                            }
+                        }
                         ll::mod::NativeMod::current()->getLogger().info("[BF] test command: {}", c);
                     }
                 }
