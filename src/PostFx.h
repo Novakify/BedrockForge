@@ -25,6 +25,7 @@ float motionBlurWanted();
 void  noteWorldBlur();
 /// The Bedrock Forge Motion Blur module's "moving" share (0..1.5), -1 = it does not say (F6 World FX value applies).
 float motionBlurMove();
+float motionBlurStyle();   // BF Motion Blur style: 0 Smooth (frame blend), 1 Streak; -1 not said (F6 'blurstyle')
 /// What moves by itself near you (players, mobs, dropped items), from Bedrock Forge's BF_GetBlurActors(): the world
 /// motion blur leaves these sharp. nullptr = Bedrock Forge does not send them (older build) or nothing fresh.
 struct BfBlurActorsV1 {
