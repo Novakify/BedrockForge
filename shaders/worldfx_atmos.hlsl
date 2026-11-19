@@ -1612,9 +1612,9 @@ float3 cyPackets(float3 rd, float dist, float t) {
     float3 acc = cy0.rgb, hot = lerp(acc, float3(1.0, 1.0, 1.0), 0.7);
     float3 L = 0;
     float3 cam = c5.xyz;
-    float2 base = floor(cam.xz / 12.0);
-    [loop] for (int k = 0; k < 25; ++k) {
-        float2 cid = base + float2(k % 5 - 2, k / 5 - 2);
+    float2 base = floor(cam.xz / 12.0 - 0.5);                        // the 4x4 cells round you
+    [loop] for (int k = 0; k < 16; ++k) {
+        float2 cid = base + float2(k % 4 - 1, k / 4 - 1);
         float  h1 = frac(sin(dot(cid, float2(127.1, 311.7))) * 43758.5453);
         float  h2 = frac(h1 * 71.3 + 0.17), h3 = frac(h1 * 13.9 + 0.71);
         if (h3 > 0.8 * cy1.x + 0.2) continue;
@@ -1625,6 +1625,9 @@ float3 cyPackets(float3 rd, float dist, float t) {
         float3 head = float3((cid.x + (axX ? s / 12.0 : h1)) * 12.0, y, (cid.y + (axX ? h2 : s / 12.0)) * 12.0) - cam;
         float3 dir = axX ? float3(sign(sp), 0, 0) : float3(0, 0, sign(sp));
         float  fade = smoothstep(0.0, 1.0, s) * smoothstep(12.0, 11.0, s);  // no pop at the cell's ends
+        float3 mid = head - dir * 0.7;                                      // (perf: a cheap reject before the segment maths)
+        float  tm = dot(mid, rd);
+        if (tm < 0.0 || dot(rd * tm - mid, rd * tm - mid) > 1.2) continue;
         // the tail: a segment behind the head; the head: a little glowing cube (a soft box)
         float3 a = head, b = head - dir * 1.4;
         float3 ab = b - a;
