@@ -3244,7 +3244,7 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             }
             if (atm.wx) {
                 acb.wx[0][0] = atm.wxMode; acb.wx[0][1] = atm.wxIntensity; acb.wx[0][2] = atm.wxWind; acb.wx[0][3] = atm.wxSize;
-                acb.wx[1][0] = atm.wxRange; acb.wx[1][1] = atm.wxMode < 0.5f ? atm.wxWet : 0.f; acb.wx[1][3] = 1.f;
+                acb.wx[1][0] = atm.wxRange; acb.wx[1][1] = (atm.wxMode < 0.5f || atm.wxMode > 1.5f) ? atm.wxWet : 0.f;   // rain: wet ground; fire: lava ground acb.wx[1][3] = 1.f;
                 acb.wxL[3] = -1.f;
                 if (atm.wxLight && atm.wxStrike > 0 && atm.wxMode < 0.5f) {   // the strike time is Bedrock Forge's (wall clock): it plays the thunder
                     int64_t const wall = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -3261,19 +3261,43 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             static std::deque<TrPt> path;
             int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             auto const* ev = rf::postfx::fxEvents();
+            // (Fernando 2026-11-19: "the cape flashes when moving a lot or sprinting". Two causes: a frame with no fresh
+            //  pose left pl unknown, so the cape / wings / halo skipped that frame - a blink; and the anchor hopped between
+            //  this-frame's pose and the extrapolated BF pose (they differ by a few cm at sprint speed), yanking the cloth.
+            //  Now the last good pose is held (carried on with its speed) for up to 0.4 s, and a switch of source eases
+            //  over ~80 ms instead of jumping.)
+            static double hx = 0, hy = 0, hz = 0, hyaw = 0, hvx = 0, hvy = 0, hvz = 0; static int64_t hAt = 0;
+            static int lastSrc = -1; static double ox = 0, oy = 0, oz = 0, oyaw = 0; static int64_t lastOut = 0;
+            bool fresh = false; int src = 0; double ax = 0, ay = 0, az = 0, ayaw = 0;
             if (ev && ev->version >= 2 && (ev->pflags & 1u) && nowMs - ev->pAtMs < 500) {
                 // BF (v4) writes where the game draws you + how fast that moves; carry it over the time since it wrote, so
                 // the wings / cape / halo sit on the body this frame, not on last frame's (shook when sprinting, jumping
                 // and turning - Fernando 2026-11-17). Older BF: as written.
-                double ax = ev->px, ay = ev->py, az = ev->pz, ayaw = ev->pyaw;
+                ax = ev->px, ay = ev->py, az = ev->pz, ayaw = ev->pyaw; src = 1;
                 if (auto const yp = rf::lyrics::you(); yp.valid && nowMs - yp.atMs <= 100) {   // best: this frame's own pose
-                    ax = yp.feet[0], ay = yp.feet[1], az = yp.feet[2], ayaw = yp.bodyYawDeg;
+                    ax = yp.feet[0], ay = yp.feet[1], az = yp.feet[2], ayaw = yp.bodyYawDeg; src = 2;
                 } else if (ev->version >= 4 && ev->size >= sizeof(rf::postfx::BfFxEventsV1)) {
                     double const lead = std::clamp(double(nowMs - ev->pAtMs), 0.0, 40.0) / 1000.0;
                     ax += ev->pvx * lead, ay += ev->pvy * lead, az += ev->pvz * lead, ayaw += ev->pyawRate * lead;
                 }
+                if (ev->version >= 4 && ev->size >= sizeof(rf::postfx::BfFxEventsV1)) hvx = ev->pvx, hvy = ev->pvy, hvz = ev->pvz;
+                hx = ax, hy = ay, hz = az, hyaw = ayaw, hAt = nowMs; fresh = true;
+            } else if (hAt && nowMs - hAt < 400) {   // a gap: hold the last pose, carried on with its speed
+                double const g = double(nowMs - hAt) / 1000.0;
+                ax = hx + hvx * g, ay = hy + hvy * g, az = hz + hvz * g, ayaw = hyaw; src = lastSrc;
+            }
+            if (src != 0) {
+                static double px0 = 0, py0 = 0, pz0 = 0, pyaw0 = 0;
+                if (lastSrc > 0 && src != lastSrc) { ox = px0 - ax; oy = py0 - ay; oz = pz0 - az; oyaw = std::remainder(pyaw0 - ayaw, 360.0); }
+                double const dk = lastOut ? std::exp(-double(std::max<int64_t>(nowMs - lastOut, 0)) / 80.0) : 0.0;
+                ox *= dk, oy *= dk, oz *= dk, oyaw *= dk;
+                if (std::fabs(ox) + std::fabs(oy) + std::fabs(oz) > 3.0) ox = oy = oz = 0;   // a teleport: no easing
+                ax += ox, ay += oy, az += oz, ayaw += oyaw;
+                px0 = ax, py0 = ay, pz0 = az, pyaw0 = ayaw; lastSrc = src; lastOut = nowMs;
                 acb.pl[0] = float(ax - snap.pos[0]); acb.pl[1] = float(ay - snap.pos[1]); acb.pl[2] = float(az - snap.pos[2]);
                 acb.pl[3] = float(ayaw) * 0.01745329f;
+            }
+            if (fresh) {
                 if (path.empty() || nowMs - path.front().at >= 50) {
                     if (!path.empty()) {   // a teleport is not a path
                         double const dx = ev->px - path.front().x, dz = ev->pz - path.front().z;
@@ -3360,10 +3384,13 @@ static bool drawWorldFxPassImpl(ID3D12GraphicsCommandList* list, GameState const
             auto lin = [](float v) { return v * v; };
             int64_t const nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             auto const* ev = rf::postfx::fxEvents();
+            static int64_t gWingsOnAt = 0; static bool gWingsWas = false;   // when the wings came on: they unfold
+            if (atm.wg && !gWingsWas) gWingsOnAt = nowMs;
+            gWingsWas = atm.wg;
             if (atm.wg) {
                 for (int k = 0; k < 3; ++k) acb.wg[0][k] = lin(atm.wgC[k]);
                 acb.wg[0][3] = std::max(atm.wgSize, 0.05f);
-                acb.wg[1][0] = atm.wgDesign; acb.wg[1][1] = atm.wgGlow; acb.wg[1][2] = atm.wgFlap; acb.wg[1][3] = atm.wgFp ? 1.f : 0.f;
+                acb.wg[1][0] = atm.wgDesign; acb.wg[1][1] = atm.wgGlow; acb.wg[1][2] = atm.wgFlap; acb.wg[1][3] = (atm.wgFp ? 1.f : -1.f) * (1.f + std::min(float(nowMs - gWingsOnAt) / 1000.f, 60.f));   // sign: first person, size: 1 + s since on (the unfold)
             }
             if (atm.cp) {   // the cape flows back with your speed (from your positions, smoothed)
                 static double lx = 0, lz = 0; static int64_t lt = 0; static float spd = 0;

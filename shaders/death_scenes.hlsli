@@ -419,7 +419,7 @@ float3 deathScenes(float3 o, float3 rd, inout float sceneT) {
         int    sc = int(fmod(code, 128.0));
         // only pixels near the scene: a 4.5-block ball, or (hand, lightning) the column above it
         float2 ax = feet.xz - rd.xz * (dot(feet.xz, rd.xz) / max(dot(rd.xz, rd.xz), 1e-5));
-        bool   col = (sc == 3 || sc == 4) && dot(ax, ax) < 3.5 * 3.5 && dot(feet.xz, rd.xz) > -3.5;
+        bool   col = (sc == 3 || sc == 4 || sc == 83) && dot(ax, ax) < 3.5 * 3.5 && dot(feet.xz, rd.xz) > -3.5;
         // how far a scene reaches from the feet: the ragdolls, the long finishers, the Finishers 2 / Epic Fight sets
         float  cr = sc >= 82 ? (sc == 83 ? 8.5 : 5.0) : sc >= 65 ? efCull(sc - 65) : (sc >= 16 ? f2Cull(sc - 16) : (sc == 11 ? 8.5 : ((sc == 12 || sc == 13) ? 7.0 : (sc == 7 ? 5.6 : 4.5))));
         if (!nearRay(rd, feet + float3(0, 1.2, 0), cr) && !col) continue;

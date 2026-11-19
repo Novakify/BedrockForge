@@ -79,7 +79,7 @@ cbuffer A : register(b1) {   // the things that move by themselves (from Bedrock
     float4 bo1;      // xyz the block's low corner (camera-relative), w = glow
     float4 bo2;      // x = fill, y = style (0 glow, 1 clean, 2 corners), z = the face you look at (0..5, -1 none)
     float4 wg0;      // wings colour (linear), w = size (0 = off)
-    float4 wg1;      // x = design (0 seraph, 1 butterfly, 2 prism), y = glow, z = flap, w = 1: first person too
+    float4 wg1;      // x = design (0 seraph, 1 butterfly, 2 prism), y = glow, z = flap, w = sign: first person too, |w| - 1 = s since they came on
     float4 cp0;      // cape colour (linear), w = glow (0 = off)
     float4 cp1;      // second colour, w = design (0 silk, 1 aurora, 2 starfield)
     float4 cp2;      // x = sway, y = your speed (0..1.6), z = 1: in the air
@@ -338,14 +338,48 @@ float3 worldEvents(float3 P, bool sky, float t, float upN, float3 rd) {   // upN
                 }
             }
         } else if (kind == 4 && fx5.z > 0.0) {                    // landing: a wave runs out through the ground
-            float u = age / 0.9;
-            if (u < 1.0 && abs(dv.y) < 0.8) {
-                float s = saturate(evK[i].y / 1.2);
-                float r = length(dv.xz);
-                float R1 = fx5.z * (1.8 + 2.5 * s) * (1.0 - pow(1.0 - u, 2.2)), R2 = R1 * 0.62;
-                float k = exp(-pow((r - R1) / 0.14, 2.0)) + 0.55 * exp(-pow((r - R2) / 0.10, 2.0));
-                k += fx5.w * 0.3 * exp(-abs(r - R1) / 0.5);
-                L += fx6.rgb * k * pow(1.0 - u, 1.6) * (0.6 + 0.8 * s) * smoothstep(0.8, 0.3, abs(dv.y));
+            // (Purxiy reference, videos 0 / 5: the wave follows the VOXEL GRID - the top face of each ground block the front
+            //  passes gets a faint fill and its four edges light up as glowing outlines, a jagged ring of lit blocks
+            //  racing out at ~12 blocks/s and fading behind, ~0.55 s.)
+            float u = age / 0.6;
+            if (u < 1.0 && abs(dv.y) < 0.8 && upN > 0.6) {
+                float s  = saturate(evK[i].y / 1.2);
+                float3 wp = c5.xyz + P;
+                float2 f  = frac(wp.xz);
+                float2 bc = floor(wp.xz) + 0.5 - (c5.xz + c.xz);       // this block's centre, from the landing
+                float  rb = length(bc);
+                float  Rmax = fx5.z * (4.0 + 4.0 * s);
+                float  R1 = Rmax * (1.0 - pow(1.0 - u, 1.6));
+                float  lit  = exp(-pow((rb - R1) / 0.65, 2.0)) + 0.35 * exp(-pow((rb - R1 * 0.55) / 0.7, 2.0));   // the front + an echo
+                lit *= step(rb, Rmax + 0.5);
+                float  e  = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+                float  aa = 0.006 * length(P) + 0.004;
+                float  core = 1.0 - smoothstep(0.012, 0.012 + aa, e);
+                float  glow = exp(-e / 0.06);
+                float3 cW = lerp(fx6.rgb, float3(1.0, 0.97, 0.94), 0.65);
+                float  fade = pow(1.0 - u, 1.3) * (0.6 + 0.8 * s) * smoothstep(0.8, 0.3, abs(dv.y));
+                L += (fx6.rgb * (0.22 + glow * (0.9 + fx5.w * 0.8)) + cW * core * 1.8) * lit * fade;
+            }
+        }
+        // critical hits: 4-point stars burst out from the blow and twinkle away (Purxiy crit stars), drawn in the air
+        // along your view ray, hidden behind what is nearer
+        if (kind == 3 && fx5.y > 0.5 && age < 0.55) {
+            float  dist = length(P);
+            float3 rgt = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), upv = cross(rgt, rd);
+            float  u = age / 0.55;
+            [unroll] for (int k = 0; k < 6; ++k) {
+                float  a  = seed * 37.0 + float(k) * 1.047 + 0.4 * sin(seed * 9.0 + float(k) * 3.0);
+                float  rr = (0.35 + 0.25 * frac(seed * 13.0 + float(k) * 0.71)) * (1.0 - pow(1.0 - u, 2.5)) * 1.4;
+                float3 sp = c + float3(0, 0.15, 0) + (rgt * cos(a) + upv * sin(a)) * rr;
+                float  tz = dot(sp, rd);
+                if (tz < 0.2 || tz > dist + 0.05) continue;
+                float3 off = rd * tz - sp;
+                float  sx = dot(off, rgt), sy = dot(off, upv);
+                float  sz = (0.20 + 0.10 * frac(seed * 5.0 + float(k))) * (1.0 - u * 0.5);
+                float  st = exp(-abs(sx) / (sz * 0.08)) * exp(-abs(sy) / sz) + exp(-abs(sy) / (sz * 0.08)) * exp(-abs(sx) / sz);
+                st += exp(-(sx * sx + sy * sy) / (sz * sz * 0.03)) * 1.5 + exp(-(sx * sx + sy * sy) / (sz * sz * 0.5)) * 0.35;
+                float  tw = 0.6 + 0.4 * sin(age * 40.0 + float(k) * 2.0);
+                L += lerp(fx2.rgb, float3(1.0, 0.98, 0.9), 0.55) * st * tw * pow(1.0 - u, 1.2) * 2.2;
             }
         }
     }
@@ -623,7 +657,7 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
         bool  crown = dz == 2;
         float S    = ha0.w;
         float bob  = 0.025 * sin(t * 1.6) * S;
-        float3 hc  = pl.xyz + float3(0, (crown ? 2.18 : 2.02) + 0.15 * (ha1.y - 1.0) + bob, 0);
+        float3 hc  = pl.xyz + float3(0, (crown ? 2.18 : 2.20) + 0.15 * (ha1.y - 1.0) + bob, 0);
         float R    = (crown ? 0.40 : 0.33) * S;                         // ring radius
         float rt   = (crown ? 0.042 : dz == 0 ? 0.034 : 0.024) * S;     // tube radius
         float tilt = dz == 5 ? 0.38 : dz == 2 ? 0.04 : 0.10;
@@ -715,6 +749,78 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                     }
                 }
             }
+            // (audit 2026-11-19, Fernando: "all the other halos need a major quality audit" - Sigil, Stardust, Eclipse and
+            //  Fallen were the same plain ring with a different dash. Each now has its own piece, in the ring's plane.)
+            [branch] if (dz == 1 || dz == 3 || dz == 4 || dz == 5) {
+                float den = dot(rd, nrm);
+                if (abs(den) > 1e-3) {
+                    float tp = dot(hc, nrm) / den;
+                    if (tp > 0.2 && tp < dist + 0.3) {
+                        float3 pq = rd * tp - hc;
+                        float  rho = length(pq - nrm * dot(pq, nrm)) / R, th = atan2(dot(pq, az), dot(pq, ax));
+                        float  pxs = 0.004 * tp / R + 0.004;                    // a pixel, in ring units
+                        if (dz == 1) {          // SIGIL: an inner rune ring turning the other way, glyphs, a dashed outer ring
+                            float th2 = th + t * 0.6, seg = frac(th2 * 1.909859), su = (seg - 0.5) * 6.2831853 / 12.0 * 0.78;
+                            float ring2 = exp(-pow((rho - 0.70) / (0.010 + pxs), 2.0)) + exp(-pow((rho - 0.92) / (0.008 + pxs), 2.0));
+                            float tick = exp(-pow(su / (0.012 + pxs), 2.0)) * smoothstep(0.035, 0.0, abs(rho - 0.81) - 0.06);
+                            float dia  = 1.0 - smoothstep(0.035, 0.035 + pxs * 2.0, abs(su - 0.11) * 1.4 + abs(rho - 0.81));
+                            float seg3 = frac((th - t * 0.25) * 4.7746);       // 30 dashes outside
+                            float outer = exp(-pow((rho - 1.18) / (0.010 + pxs), 2.0)) * step(0.35, seg3);
+                            Lh += (hot * 0.6 + col * 1.1) * saturate(ring2 * 0.8 + tick + dia * 0.9 + outer * 0.7) * (0.8 + 0.2 * sin(t * 3.0 + th * 2.0));
+                            Lh += col * 0.12 * smoothstep(0.95, 0.6, rho);
+                        } else if (dz == 3) {   // STARDUST: a band of fine dust glittering round the ring
+                            float2 g = float2(th * 9.5493 * 2.0, rho * 14.0);
+                            float2 gi = floor(g), gf = frac(g) - 0.5;
+                            float  hs = frac(sin(dot(gi, float2(127.1, 311.7))) * 43758.5453);
+                            float  tw = pow(saturate(sin(t * 3.0 + hs * 40.0)), 6.0);
+                            float  dust = step(0.6, hs) * exp(-dot(gf, gf) / 0.02) * tw;
+                            float  band = exp(-pow((rho - 1.0) / 0.22, 2.0));
+                            Lh += (hot * 0.8 + col) * dust * band * 1.4 + col * band * 0.10;
+                        } else if (dz == 4) {   // ECLIPSE: corona rays streaming off the ring, a diamond-ring flare going round
+                            float rays = pow(0.5 + 0.5 * sin(th * 23.0 + 2.0 * sin(th * 7.0 + t * 0.3)), 4.0) * (0.6 + 0.4 * sin(th * 11.0 - t * 0.5));
+                            float out1 = step(1.0, rho) * exp(-(rho - 1.0) * (3.5 - 1.5 * rays));
+                            float dm = atan2(sin(th - t * 0.8), cos(th - t * 0.8));
+                            float flare = exp(-(dm * dm) / 0.01) * exp(-pow((rho - 1.0) / 0.06, 2.0)) * 2.5
+                                        + exp(-(dm * dm) / 0.0008) * exp(-abs(rho - 1.0) / 0.5) * 0.8 + exp(-pow((rho - 1.0) / 0.5, 2.0) - dm * dm / 0.3) * 0.25 * step(abs(dm), 0.6);
+                            Lh += col * out1 * (0.35 + 0.9 * rays) + hot * flare;
+                        } else {                // FALLEN: cracked, shards drifting off the breaks, embers dripping
+                            float brk = frac(th * 0.15915 + 0.1);                // the gap is at brk < 0.24
+                            float near = exp(-pow((brk - 0.24) / 0.03, 2.0)) + exp(-pow((brk - 0.0) / 0.03, 2.0)) + exp(-pow((brk - 1.0) / 0.03, 2.0));
+                            Lh += col * near * exp(-pow((rho - 1.0) / 0.15, 2.0)) * 0.5;   // the broken ends smoulder
+                        }
+                    }
+                }
+                if (dz == 5) {   // shards hanging in the gap, embers falling from the broken ends (billboards)
+                    [unroll] for (int j = 0; j < 7; ++j) {
+                        float fj = float(j);
+                        float a  = (-0.1 + (j < 3 ? 0.04 + 0.07 * fj : (fj < 5.0 ? 0.0 : 0.24))) * 6.2831853;
+                        float3 P0 = hc + (ax * cos(a) + az * sin(a)) * R;
+                        float3 pp;
+                        float  sz2, br;
+                        if (j < 3) { pp = P0 - float3(0, 0.05 + 0.04 * fj, 0) * S + nrm * (0.03 * sin(t * 1.3 + fj * 2.0)) + (ax * cos(a) + az * sin(a)) * 0.05 * sin(t * 0.9 + fj); sz2 = 0.028; br = 2.0; }
+                        else { float u = frac(t * 0.55 + fj * 0.37); pp = P0 - float3(0, u * 0.9 * S, 0); sz2 = 0.016 * (1.0 - 0.6 * u); br = 2.4 * (1.0 - u); }
+                        float tz = dot(pp, rd);
+                        if (tz < 0.2 || tz > dist + 0.05) continue;
+                        float dd = length(rd * tz - pp);
+                        Lh += (j < 3 ? (hot * 0.5 + col) : lerp(col, float3(1.0, 0.45, 0.25), 0.5)) * (exp(-pow(dd / (sz2 * S), 2.0)) * br + exp(-dd / (sz2 * S * 3.0)) * 0.25 * br);
+                    }
+                }
+                if (dz == 3) {   // four-point stars orbiting the ring, twinkling
+                    [unroll] for (int j = 0; j < 6; ++j) {
+                        float fj = float(j), a = fj * 1.0472 + t * (0.5 + 0.12 * fj);
+                        float3 pp = hc + (ax * cos(a) + az * sin(a)) * R * (1.08 + 0.12 * sin(t * 0.7 + fj * 2.0)) + nrm * 0.06 * S * sin(t * 1.1 + fj * 1.7);
+                        float tz = dot(pp, rd);
+                        if (tz < 0.2 || tz > dist + 0.05) continue;
+                        float3 off = rd * tz - pp;
+                        float3 rg = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), uv2 = cross(rg, rd);
+                        float sx = dot(off, rg), sy = dot(off, uv2), sz3 = 0.06 * S;
+                        float tw = 0.4 + 0.6 * pow(saturate(sin(t * 2.6 + fj * 1.9)), 3.0);
+                        float st = exp(-abs(sx) / (sz3 * 0.07)) * exp(-abs(sy) / sz3) + exp(-abs(sy) / (sz3 * 0.07)) * exp(-abs(sx) / sz3)
+                                 + exp(-(sx * sx + sy * sy) / (sz3 * sz3 * 0.03)) * 1.5;
+                        Lh += (hot * 0.7 + col * 0.6) * st * tw * 1.2;
+                    }
+                }
+            }
             L += Lh;
         }
     }
@@ -778,23 +884,38 @@ float3 weather(float3 rd, float dist, float t, float night) {
         float R = float(k == 0 ? 2.5 : k == 1 ? 5.0 : k == 2 ? 10.0 : 20.0) * (wx1.x / 24.0);
         if (R / lh > dist) break;                                // the world is nearer: this layer (and the farther ones) is hidden
         float y = slope * R;                                     // the height of the ray where it meets this cylinder
-        float cols = (mode == 0 ? 520.0 : 300.0) * (0.45 + 0.55 * float(k)) * wx0.y;
+        float cols = (mode == 0 ? 520.0 : mode == 1 ? 300.0 : 170.0) * (0.45 + 0.55 * float(k)) * wx0.y;
         float wa = ang + wx0.z * (mode == 0 ? 0.12 : 0.05) * y / R; // wind leans them
         float u  = wa / 6.2831853 * cols;
         float c  = floor(u), fu = frac(u) - 0.5;
         float h  = frac(sin(c * 12.9898 + float(k) * 78.233) * 43758.5453);
         float h2 = frac(h * 91.17 + 0.31);
-        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : -1.4;
-        float per = mode == 0 ? 9.0 : 5.0;
+        // (Purxiy reference, weather Fire: falling ember STREAKS - motion-blurred orange lines of mixed length with a hot
+        //  head - plus faint sparks, not rising dots)
+        float sp = mode == 0 ? 13.0 : mode == 1 ? 1.1 : 3.2;
+        float per = mode == 0 ? 9.0 : mode == 1 ? 5.0 : 7.0;
         float yy = y + t * sp * (0.85 + 0.3 * h2) + h * per;
         float ph = frac(yy / per) * per;                          // where in its drop period this ray is
-        float width = (mode == 0 ? 0.08 : 0.30) * wx0.w / (1.0 + float(k) * 0.4);
-        float len   = (mode == 0 ? 0.9 : 0.12) * wx0.w * (1.2 - 0.15 * float(k));
+        float width = (mode == 0 ? 0.08 : mode == 1 ? 0.30 : 0.15) * wx0.w / (1.0 + float(k) * 0.4);
+        float len   = (mode == 0 ? 0.9 : mode == 1 ? 0.12 : 0.35 + 1.1 * h2 * h2) * wx0.w * (1.2 - 0.15 * float(k));
         float across = exp(-pow(fu / width, 2.0)) * smoothstep(0.5, 0.36, abs(fu));   // zero at the column edge (no seams)
         float along  = mode == 0 ? smoothstep(0.0, 0.25, ph) * smoothstep(len, len * 0.6, ph)
-                                 : exp(-pow((ph - len) / max(len * 0.7, 0.02), 2.0));
-        if (h2 > 0.55 * wx0.y + 0.15) along = 0;                   // not every column carries one
+                     : mode == 1 ? exp(-pow((ph - len) / max(len * 0.7, 0.02), 2.0))
+                                 : smoothstep(len, len * 0.9, ph) * pow(saturate(1.0 - ph / len), 1.4) * smoothstep(0.0, 0.03, ph);   // head at the bottom, tail fading up
+        float head   = mode == 2 ? exp(-pow((ph - len * 0.05) / (len * 0.07), 2.0)) : 0.0;
+        if (h2 > 0.55 * wx0.y + 0.15) { along = 0; head = 0; }       // not every column carries one
         float fade = 1.0 - float(k) * 0.18;
+        [branch] if (mode == 2) {
+            float fl = 0.75 + 0.25 * sin(t * 9.0 + h * 40.0);
+            float3 ec = lerp(float3(0.85, 0.12, 0.02), float3(1.0, 0.55, 0.12), pow(saturate(1.0 - ph / len), 2.0));
+            float  glow = exp(-pow(fu / (width * 3.5), 2.0)) * smoothstep(0.5, 0.3, abs(fu));
+            L += (ec * (across * along * 1.6 + glow * along * 0.45) + float3(1.0, 0.85, 0.55) * across * head * 1.6) * fade * fl;
+            // sparks: tiny dim dots in the empty columns, drifting slower
+            float sph = frac((y + t * 1.3 + h * 13.0) / 3.0) * 3.0;
+            float spk = exp(-pow(fu / (width * 0.6), 2.0)) * exp(-pow((sph - 1.5) / 0.035, 2.0)) * step(0.75, h);
+            L += float3(1.0, 0.45, 0.12) * spk * fade * 0.8 * (0.5 + 0.5 * sin(t * 13.0 + h * 70.0));
+            continue;
+        }
         float3 cc = mode == 0 ? lerp(float3(0.62, 0.70, 0.84), float3(0.20, 0.24, 0.36), night)
                   : mode == 1 ? float3(0.92, 0.95, 1.0) * lerp(1.0, 0.35, night)
                               : float3(1.0, 0.42, 0.10) * (1.3 + 0.7 * sin(t * 7.0 + h * 40.0));
@@ -917,24 +1038,36 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
     float3 side = float3(cos(yaw), 0, sin(yaw));
     float3 up   = float3(0, 1, 0);
     // -------- wings
-    [branch] if (wg0.w > 0.0 && (!fp || wg1.w > 0.5)) {
+    [branch] if (wg0.w > 0.0 && (!fp || wg1.w > 0.0)) {
         int   design = int(wg1.x + 0.5);
         float S = wg0.w;
-        float flap = wg1.z * (0.22 + 0.25 * cp2.z) * sin(t * (2.2 + 3.0 * cp2.z));
+        // (Purxiy reference, video 1: the wings pop in folded down the back, then sweep up and out with an overshoot in
+        //  ~0.45 s; after that a slow flap - spread, a raised V, spread - about one beat a second and a bit)
+        float age  = abs(wg1.w) - 1.0;
+        float open = 1.0 - exp(-age * 7.0) * cos(age * 11.0);   // 0 folded .. 1 open, overshooting a little past it
+        float beat = sin(t * 4.8 * (0.85 + 0.6 * cp2.z));
+        float flap = wg1.z * (0.10 + 0.12 * cp2.z) * beat;
+        float elev = wg1.z * (0.16 + 0.10 * cp2.z) * (0.5 + 0.5 * beat);       // the raised V on the up-beat
         float3 A0 = pl.xyz + up * 1.38 - fwd * 0.20;
         [unroll] for (int sgn = -1; sgn <= 1; sgn += 2) {
-            float fold = 0.55 + flap;                              // how far back the wing sweeps from the side (radians)
-            float3 w = normalize(side * float(sgn) * cos(fold) - fwd * sin(fold));
+            float fold = 0.45 + flap;                              // how far back the wing sweeps from the side (radians)
+            float3 wOpen = normalize(side * float(sgn) * cos(fold) * cos(elev) - fwd * sin(fold) * cos(elev) + up * sin(elev));
+            float3 wShut = normalize(-up * 0.85 + side * float(sgn) * 0.25 - fwd * 0.45);   // folded: hanging down the back
+            float3 w = normalize(lerp(wShut, wOpen, open));
             float3 A = A0 + side * float(sgn) * 0.10;
-            float3 n = normalize(cross(w, up));
+            float3 X = normalize(lerp(side * float(sgn), up, saturate(open)));   // the wing plane's second axis (up when open)
+            float3 n = normalize(cross(w, X));
+            float3 vax = normalize(cross(n, w));
+            if (dot(vax, X) < 0.0) vax = -vax;
             float den = dot(rd, n);
             if (abs(den) < 1e-4) continue;
             float tp = dot(A, n) / den;
             if (tp < 0.2 || tp > dist + 0.05) continue;
             float3 h = rd * tp - A;
-            float u = dot(h, w) / S, v = dot(h, up) / S;            // u: out along the wing, v: up
+            float u = dot(h, w) / S, v = dot(h, vax) / S;           // u: out along the wing, v: up (in the wing's own plane)
             if (u < 0.0 || u > (design == 0 ? 2.1 : 1.45) || (design == 0 && (v > 0.8 || v < -1.3))) continue;
             float inside = 0.0, rim = 0.0, pat = 0.0;
+            float4 bfly = 0;
             if (design == 1) {                                     // butterfly: a big upper lobe, a smaller lower one
                 // (in game 2026-11-19: both lobes ended on a straight vertical line at the back - "cut off". They now
                 //  narrow into the shoulder: the height is squeezed toward the root, so each lobe is a teardrop)
@@ -942,34 +1075,54 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
                 float2 pv = float2(u, v / pin);
                 float d1 = length((pv - float2(0.55, 0.38)) / float2(0.62, 0.48)) - 1.0;
                 float d2 = length((pv - float2(0.42, -0.30)) / float2(0.42, 0.36)) - 1.0;
-                float d  = min(d1, d2) * pin;
+                float ang = atan2(v, u);
+                float d  = min(d1, d2) * pin + 0.012 * (0.5 + 0.5 * sin(ang * 22.0));     // (audit: scalloped edge, not a bubble)
                 inside = 1.0 - smoothstep(-0.02, 0.02, d);
                 rim    = exp(-abs(d) * 30.0);
-                pat    = exp(-pow(length(float2(u, v) - float2(0.72, 0.42)) / 0.11, 2.0)) + 0.5 * exp(-pow(length(float2(u, v) - float2(0.45, -0.28)) / 0.08, 2.0));
-            } else if (design == 0) {                              // seraph: a covert arm and twelve overlapping rounded flight feathers, longer
-                                                                   // toward the tip, fanning from straight down to out and back
+                // wing anatomy: veins fanning from the root, a dark margin band with white spots, cells between the veins
+                float vf   = frac(ang * 2.8648 + 0.5 * u);                                   // ~9 veins across the fan
+                float vein = exp(-pow((vf - 0.5) / (0.035 + 0.02 * u), 2.0)) * smoothstep(0.1, 0.3, u);
+                float band = smoothstep(-0.16, -0.06, d);                                     // the margin
+                float spf  = frac(ang * 5.73);
+                float spot = exp(-pow((spf - 0.5) / 0.16, 2.0) - pow((d + 0.09) / 0.025, 2.0));
+                bfly = float4(vein, band, spot, 1.0);
+                pat = 0.5 + 0.5 * smoothstep(0.1, 0.9, u);
+            } else if (design == 0) {                              // seraph: three tiers of layered feathers (Purxiy reference)
+                // primaries (long, at the outer half), secondaries under the arm, small coverts on top: the topmost
+                // tier that covers this point is the one drawn; each feather is lighter at its root, a touch of lilac
+                // toward the tip, with a dark line where it overlaps the next one
                 float2 p = float2(u, v);
-                float2 a0 = float2(0.0, 0.02), a1 = float2(0.38, 0.46), a2 = float2(1.0, 0.42);
-                float dArm = min(sdSeg(p, a0, a1) - 0.14, sdSeg(p, a1, a2) - 0.11);
-                float d1 = 9.0, d2 = 9.0, ax = 9.0;                // nearest / second nearest feather, its shaft
-                [unroll] for (int k = 0; k < 12; ++k) {
-                    float tk = float(k) / 11.0;
-                    float2 B = tk < 0.35 ? lerp(a0, a1, tk / 0.35) : lerp(a1, a2, (tk - 0.35) / 0.65);
-                    float an = radians(lerp(-100.0, -42.0, tk * tk));
-                    float L = lerp(0.36, 0.78, pow(tk, 0.7)) * (1.0 + 0.04 * sin(t * 1.3 + tk * 9.0));
-                    float2 E = B + float2(cos(an), sin(an)) * L;
-                    float r = lerp(0.135, 0.105, tk);
-                    float2 pa = p - B, ba = E - B;
-                    float h = saturate(dot(pa, ba) / dot(ba, ba));
-                    float dk = length(pa - ba * h) - r * (1.0 - 0.35 * h * h);   // tapers a little to a round tip
-                    if (dk < d1) { d2 = d1; d1 = dk; ax = length(pa - ba * h) / max(r, 1e-3); } else d2 = min(d2, dk);
+                float2 a0 = float2(0.0, 0.02), a1 = float2(0.42, 0.44), a2 = float2(1.08, 0.40);
+                float dArm = min(sdSeg(p, a0, a1) - 0.10, sdSeg(p, a1, a2) - 0.075);
+                float best = 9.0, sepK = 0.0, shaftK = 0.0, alongK = 0.0, tierK = 0.0;
+                [unroll] for (int tier = 2; tier >= 0; --tier) {      // primaries first, so higher tiers win
+                    int   N  = tier == 2 ? 11 : tier == 1 ? 13 : 15;
+                    float d1 = 9.0, d2 = 9.0, axq = 9.0, hq = 0.0;
+                    [loop] for (int k = 0; k < N; ++k) {
+                        float tk = float(k) / float(N - 1);
+                        float tt = tier == 2 ? lerp(0.40, 1.0, tk) : tier == 1 ? lerp(0.04, 0.80, tk) : lerp(0.06, 0.92, tk);
+                        float2 B = tt < 0.39 ? lerp(a0, a1, tt / 0.39) : lerp(a1, a2, (tt - 0.39) / 0.61);
+                        float an = radians(tier == 2 ? lerp(-95.0, -28.0, tk * tk) : tier == 1 ? lerp(-100.0, -55.0, tk) : lerp(-105.0, -70.0, tk));
+                        float Ln = tier == 2 ? lerp(0.55, 0.98, pow(tk, 0.6)) : tier == 1 ? lerp(0.30, 0.50, tk) : lerp(0.13, 0.24, tk);
+                        Ln *= 1.0 + 0.03 * sin(t * 1.3 + tt * 9.0 + float(tier));
+                        float2 E = B + float2(cos(an), sin(an)) * Ln;
+                        float r = (tier == 2 ? 0.075 : tier == 1 ? 0.065 : 0.055);
+                        float2 pa = p - B, ba = E - B;
+                        float hh = saturate(dot(pa, ba) / dot(ba, ba));
+                        float dk = length(pa - ba * hh) - r * (1.0 - 0.75 * pow(hh, 3.0));   // a pointed, rounded tip
+                        if (dk < d1) { d2 = d1; d1 = dk; axq = length(pa - ba * hh) / max(r, 1e-3); hq = hh; } else d2 = min(d2, dk);
+                    }
+                    if (d1 < 0.0) {                                      // a higher tier covers this point: it is the one seen
+                        best = d1; tierK = float(tier);
+                        sepK = exp(-pow((d2 - d1) / 0.008, 2.0)); shaftK = exp(-pow(axq / 0.12, 2.0)); alongK = hq;
+                    } else if (best > 0.0) best = min(best, d1);
+                    else sepK = max(sepK, exp(-pow(d1 / 0.010, 2.0)) * 0.8);   // a higher tier's edge lying over this feather
                 }
-                float d = min(dArm, d1);
-                inside = 1.0 - smoothstep(-0.012, 0.012, d);
-                rim    = exp(-abs(d) * 40.0);
-                float sep  = exp(-pow((d2 - d1) / 0.010, 2.0)) * step(d1, dArm);        // the line between two feathers
-                float shaft = exp(-pow(ax / 0.10, 2.0)) * step(d1, dArm) * 0.6;           // each feather's quill
-                pat = 0.55 + 0.45 * saturate(1.0 - (0.44 - v) * 0.9) - 0.55 * sep + 0.35 * shaft + 0.25 * step(dArm, d1);
+                float d = min(dArm, best);
+                inside = 1.0 - smoothstep(-0.010, 0.010, d);
+                rim    = exp(-abs(d) * 60.0) * 0.5;
+                // matte feathers: lighter toward the root and on the upper tiers, soft lilac at the tips
+                pat = (0.62 + 0.18 * tierK - 0.30 * alongK * alongK) - 0.45 * sepK + 0.18 * shaftK + 0.3 * step(dArm, best);
             } else {                                               // prism: a long wing, cut into crystal facets
                 float top = 0.14 + 0.30 * pow(sin(3.14159 * saturate(u / 1.25)), 0.6) + 0.16 * u;      // the arm of the wing, swept up
                 // (in game 2026-11-19: the wing was widest at its tip and ended on a straight cut. It now swells to
@@ -992,12 +1145,21 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
             float3 c = lerp(wg0.rgb, float3(1.0, 0.97, 1.0), saturate(v * 1.6 + 0.1) * 0.45);   // whiter toward the top edge
             if (design == 2) c = lerp(wg0.rgb, float3(0.75, 0.9, 1.0), pat * 0.6) * (0.85 + 0.3 * pat);
             float glow = wg1.y;
-            if (design == 0) {                                     // seraph: soft lit feathers, the rim only a gentle edge light
-                c = lerp(wg0.rgb, float3(1.0, 0.97, 1.0), saturate(pat - 0.35) * 0.75);
-                L += c * (rim * (0.25 + 0.45 * glow) + inside * pat * (0.10 + 0.22 * glow));
+            if (design == 0) {                                     // seraph: matte feathers (no glow in the reference), a faint edge light
+                c = lerp(wg0.rgb, float3(1.0, 0.97, 1.0), saturate(pat - 0.30) * 0.85);
+                L += c * (rim * (0.10 + 0.30 * glow) + inside * pat * (0.04 + 0.10 * glow));
+            } else if (design == 1) {                              // butterfly: iridescent membrane, veins, dark spotted margin
+                float irid = 0.5 + 0.5 * sin(u * 5.0 + v * 3.0 + t * 0.9 + dot(rd, n) * 7.0);
+                float3 mem = lerp(wg0.rgb, lerp(float3(0.45, 0.85, 1.0), float3(1.0, 0.55, 0.95), irid), 0.45);
+                mem *= 0.55 + 0.6 * pat;
+                float3 marg = wg0.rgb * 0.12 + float3(0.02, 0.015, 0.04);
+                c = lerp(mem, marg, bfly.y * 0.85);
+                c = lerp(c, wg0.rgb * 0.25, bfly.x * (1.0 - bfly.y) * 0.6);                 // veins: darker lines
+                c += float3(1.0, 0.98, 1.0) * bfly.z * 0.9;                                    // white spots in the margin
+                L += c * inside * (0.25 + 0.35 * glow) + wg0.rgb * rim * (0.35 + 0.5 * glow) + mem * irid * inside * 0.15 * glow;
             } else
                 L += c * (rim * (0.9 + glow) + inside * (0.08 + 0.30 * pat) * (0.6 + glow));
-            float a = inside * (design == 2 ? 0.30 : design == 0 ? 0.55 * saturate(pat) : 0.22);
+            float a = inside * (design == 2 ? 0.30 : design == 0 ? 0.85 * saturate(0.35 + pat) : 0.62);   // seraph: nearly solid feathers; butterfly: a real membrane
             over.rgb = lerp(over.rgb, c * 0.6 + 0.08, a * (1.0 - over.a));
             over.a = over.a + a * (1.0 - over.a);
         }
@@ -1062,6 +1224,63 @@ float3 posAt(int2 p) {
     float2 ndc = float2(p.x / c4.x * 2.0 - 1.0, 1.0 - p.y / c4.y * 2.0);
     float3 ray = c0.xyz + c1.xyz * (ndc.x * c0.w) + c2.xyz * (ndc.y * c1.w);
     return ray * viewZ(d);
+}
+// Fire weather ground (Purxiy reference, weather Fire): the ground turns to cracked cooling lava - dark crust plates
+// split by glowing orange-yellow veins that throb, with molten pools where the crust is thin.
+float2 lavaCell(float2 p) {                                  // x = distance to the nearest cell edge, y = the cell's random
+    float2 ip = floor(p), fp = frac(p);
+    float d1 = 9.0, d2 = 9.0, id = 0.0;
+    [unroll] for (int j = -1; j <= 1; ++j) [unroll] for (int i = -1; i <= 1; ++i) {
+        float2 g = float2(i, j);
+        float  h = hash12b(ip + g);
+        float2 o = float2(h, frac(h * 47.13 + 0.37)) * 0.8 + 0.1;
+        float  d = length(g + o - fp);
+        if (d < d1) { d2 = d1; d1 = d; id = h; } else if (d < d2) d2 = d;
+    }
+    return float2(d2 - d1, id);
+}
+float3 lavaGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t) {
+    // (Fernando 2026-11-19: v1 "super ugly, pale" - a regular turtle-shell web of big plates and thin veins. The
+    //  reference is the other way round: the ground is mostly GLOWING orange magma, broken by small irregular black
+    //  crust flakes, hot yellow where it is thinnest, and the light of it climbs the walls.)
+    if (dist > wx1.x * 3.0) return L;
+    float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
+    float nl = length(n);
+    if (nl < 1e-6) return L;
+    n /= nl; if (dot(n, rd) > 0.0) n = -n;
+    float3 wp = c5.xyz + P;
+    float  kd = wx1.y * smoothstep(wx1.x * 3.0, wx1.x * 1.5, dist);
+    float up = smoothstep(0.75, 0.93, n.y);
+    // the glow of the ground on walls / bodies near it (height above your feet)
+    float hgt = max(wp.y - (c5.y + pl.y), 0.0);
+    float3 bounce = float3(1.0, 0.38, 0.08) * exp(-hgt * 0.55) * (1.0 - up);
+    float3 o = L * (0.78 + bounce * 1.6) * float3(1.0, 0.86, 0.80);      // the scene warms and darkens a touch
+    if (up <= 0.0) return lerp(L, o, kd);
+    // (looked again at the reference zoomed in: lava lies in big RAGGED PATCHES over the street, the plain ground dark
+    //  between them; inside a patch it is a fine granular magma - small bright orange-red flecks, each its own shade,
+    //  split by thin dark cracks; a few flecks crusted black)
+    // (round 3, Fernando: "too clumpy, all over the place - theirs is spread out well, not cluttered but noticeable".
+    //  More, smaller patches covering about half the street, each edge dissolving into specks; the magma creeps slowly;
+    //  no black holes punched in it.)
+    float2 flow = float2(vnoise2(wp.xz * 0.25 + 1.7), vnoise2(wp.xz * 0.25 + 8.3)) - 0.5;
+    float  big  = vnoise2(wp.xz * 0.55 + 4.0) * 0.6 + vnoise2(wp.xz * 1.3 + 9.0) * 0.4;
+    float  rag  = vnoise2(wp.xz * 6.0 + 2.0) - 0.5;
+    float  cov  = big + rag * 0.30;
+    float  cover = smoothstep(0.50, 0.60, cov);                       // the body of a patch
+    float  edgeZ = smoothstep(0.40, 0.52, cov) * (1.0 - cover);       // its rim: specks only
+    float2 uv = wp.xz * 6.0 + flow * 1.2 + flow * t * 0.35;           // creeping magma
+    float  aa = 0.004 * dist + 0.012;
+    float  n1 = vnoise2(uv * 0.9) * 0.55 + vnoise2(uv * 2.1 + 3.0) * 0.30 + vnoise2(uv * 4.7 + 7.0) * 0.15;
+    float  thr = lerp(0.62, 0.36, cover);                              // inside: solid magma; at the rim: only its brightest specks
+    float  fleck = smoothstep(thr, thr + 0.08 + aa * 2.0, n1) * saturate(cover + edgeZ);
+    float  heat = 0.75 + 0.25 * sin(t * 1.6 + vnoise2(wp.xz * 1.1 + t * 0.2) * 7.0);
+    float  v = saturate((n1 - 0.40) * 2.6);
+    float3 fc = lerp(float3(0.62, 0.07, 0.01), float3(1.0, 0.38, 0.04), v);
+    fc = lerp(fc, float3(1.0, 0.68, 0.24), smoothstep(0.72, 0.9, n1) * 0.85);
+    float3 magma = fc * fleck * (0.8 + 0.7 * heat) + float3(0.20, 0.03, 0.0) * (1.0 - fleck) * cover * heat;   // gaps inside a patch glow faintly
+    float3 groundD = o * 0.62;
+    float3 g = lerp(groundD, magma, saturate(fleck + cover));
+    return lerp(L, lerp(o, g, up), kd);
 }
 float3 wetGround(float3 L, int2 px, float3 P, float3 rd, float dist, float t, float night) {
     if (dist > wx1.x * 3.0) return L;
@@ -1152,7 +1371,7 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float lumW = dot(L, float3(0.2126, 0.7152, 0.0722));
     if (sky) {   // the data sky: deep and dark, a faint horizon line, columns of light falling slowly
         float3 c = lerp(acc * 0.06, float3(0.005, 0.006, 0.012), saturate(rd.y * 1.5 + 0.2));
-        c += acc * exp(-abs(rd.y) * 40.0) * 0.6;
+        c += acc * exp(-abs(rd.y) * 40.0) * 0.3;
         if (cy1.w > 0.0) {
             float an = atan2(rd.z, rd.x) * 110.0;
             float col = floor(an), fc = frac(an);
@@ -1161,30 +1380,77 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
             float wcol = abs(fc - 0.5) * 2.0;                       // 0 in the column's middle .. 1 at its edge
             c += acc * step(0.72, h) * (1.0 - smoothstep(0.10, 0.25, wcol)) * pow(y, 10.0) * 1.3 * saturate(rd.y * 3.0 + 0.3);
         }
+        // the grid dome (Purxiy reference: big glowing lines of latitude and longitude over the sky)
+        float2 sg = float2(atan2(rd.z, rd.x), asin(clamp(rd.y, -1.0, 1.0))) * (12.0 / 3.14159);
+        float2 sd = abs(frac(sg) - 0.5);
+        float2 saa2 = max(fwidth(sg), 1e-4);
+        float dome = max(1.0 - smoothstep(0.5, 1.6, (0.5 - sd.x) / saa2.x), 1.0 - smoothstep(0.5, 1.6, (0.5 - sd.y) / saa2.y));
+        float domeG = exp(-min(0.5 - sd.x, 0.5 - sd.y) * 14.0) * 0.08;
+        c += (acc * 0.9 + 0.15) * (dome * 0.8 + domeG) * saturate(rd.y * 4.0 + 0.2) * cy1.x;
         float3 ghost = acc * lumW * 0.55 + lumW * 0.06;          // what shows through: the clouds as faint accent ghosts, never their own hue
-        c += ghost * 0.35;
+        c += ghost * 0.08;
         float ageS = abs(cy1.w) - 1.0;
-        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 0.35) * 5.0));   // the sky turns once the front has passed
+        return lerp(L, lerp(ghost, c, reality), saturate((ageS - 0.65) * 5.0));   // the sky turns once the front has passed
     }
-    float3 n = cross(posAt(px + int2(1, 0)) - P, posAt(px + int2(0, 1)) - P);
+    // (audit vs Purxiy: 1 px depth normals were noisy - blocks crawled with dots. Centred 3 px differences.)
+    float3 n = cross(posAt(px + int2(3, 0)) - posAt(px - int2(3, 0)), posAt(px + int2(0, 3)) - posAt(px - int2(0, 3)));
     n = normalize(n + 1e-6); if (dot(n, rd) > 0.0) n = -n;
     float3 an = abs(n);
     float3 wp = c5.xyz + P + n * 0.002;
     float2 uv = an.x > an.y && an.x > an.z ? wp.zy : (an.y > an.z ? wp.xz : wp.xy);
     float2 f = frac(uv), cell = floor(uv);
-    float2 aa = max(fwidth(uv), 1e-4);
-    // block edges
+    // (pixel footprint from the distance and the angle, not fwidth: screen derivatives jumped between faces and the
+    //  ground shimmered with dotted rows)
+    float  fp = dist * 2.0 * c1.w / c4.y / sqrt(max(abs(dot(n, rd)), 0.12));
+    float2 aa = float2(fp, fp);
+    // block edges: a crisp line with a soft glow
     float2 e2 = min(f, 1.0 - f) / aa;
-    float edge = 1.0 - smoothstep(0.6, 1.8, min(e2.x, e2.y));
-    // circuit traces: each face gets a few lines at quarter steps and a node where they end
+    float edge = 1.0 - smoothstep(0.5, 1.3, min(e2.x, e2.y));
+    float far = smoothstep(1.4, 0.25, max(aa.x, aa.y) * 4.0);                   // 1 near .. 0 where a block is a few px
+    float edgeGlow = exp(-min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) * 22.0) * 0.18 * far;
+    edge *= 0.45 + 0.55 * far;
+    // circuit board, round 3 (Fernando: "right direction, not there yet" - looked at all the footage: video 3 at
+    //  123-125 s and video 4. Their faces are NOT a dense maze: a few traces per face, each a straight run that turns
+    //  one right angle and ends in a hollow via ring, a dimmer gold than the edges; floors mostly plain.)
     float3 fid = float3(cell, floor(dot(wp, an)));
-    float h1 = cyHash(fid), h2 = cyHash(fid + 7.31);
-    float lane = (floor(h1 * 3.0) + 1.0) * 0.25;
-    float2 q = f - lane;
-    float traceA = (1.0 - smoothstep(0.6, 1.6, abs(q.y) / aa.y)) * step(h2, 0.65) * step(f.x, 0.25 + 0.6 * h2);
-    float traceB = (1.0 - smoothstep(0.6, 1.6, abs(f.x - (1.0 - lane)) / aa.x)) * step(0.35, h2) * step(1.0 - 0.7 * h1, f.y);
-    float node = 1.0 - smoothstep(0.035, 0.06, length(f - float2(0.25 + 0.6 * h2, lane)));
-    float circuits = saturate(traceA + traceB + node * step(h2, 0.65)) * cy1.y;
+    float h1 = cyHash(fid);
+    float  px1 = max(aa.x, aa.y);                                          // a pixel, in block units
+    float  lw = 0.006 + px1 * 0.45;                                         // trace half width
+    int    nT = an.y > 0.7 ? (h1 < 0.55 ? 0 : 1) : 1 + int(h1 * 2.99);     // floors: sparse
+    float  dT = 9.0, dV = 9.0;
+    [loop] for (int k = 0; k < nT; ++k) {
+        float hk = cyHash(fid + float3(k * 7.1, 1.3, k * 3.7)), hk2 = cyHash(fid + float3(2.9, k * 5.3, 4.1));
+        float rot = floor(frac(hk * 13.7) * 4.0);
+        float2 q = f - 0.5;
+        q = rot < 1.0 ? q : rot < 2.0 ? float2(-q.y, q.x) : rot < 3.0 ? -q : float2(q.y, -q.x);
+        q += 0.5;
+        float y0 = 0.2 + 0.2 * floor(hk * 4.0);                            // lanes at 0.2 .. 0.8
+        float x1 = 0.30 + 0.45 * hk2;
+        float y1 = clamp(y0 + (hk2 > 0.5 ? 1.0 : -1.0) * (0.15 + 0.2 * frac(hk2 * 7.0)), 0.1, 0.9);
+        float x0 = frac(hk * 31.0) < 0.35 ? 0.12 : -0.01;                   // from the edge, or from a via of its own
+        float dA = length(q - float2(clamp(q.x, x0, x1), y0));
+        float dB = length(q - float2(x1, clamp(q.y, min(y0, y1), max(y0, y1))));
+        dT = min(dT, min(dA, dB));
+        dV = min(dV, abs(length(q - float2(x1, y1)) - 0.055));
+        if (x0 > 0.0) dV = min(dV, abs(length(q - float2(x0, y0)) - 0.055));
+        dT = max(dT, -(length(q - float2(x1, y1)) - 0.055));                // the via is hollow: the trace stops at its ring
+    }
+    float circuits = max(1.0 - smoothstep(lw, lw + px1, dT), 1.0 - smoothstep(lw, lw + px1, dV)) * cy1.y;
+    circuits *= smoothstep(0.08, 0.03, px1);                                // too far to resolve: leave the face plain
+    // light packets: bright comets with short tails running along the block edges of the ground
+    float packets = 0.0;
+    [branch] if (an.y > 0.7 && cy1.x > 0.0) {
+        [unroll] for (int ax = 0; ax < 2; ++ax) {
+            float lineC = ax == 0 ? wp.z : wp.x, run = ax == 0 ? wp.x : wp.z;
+            float ln = floor(lineC + 0.5);
+            float hl = frac(sin(ln * 91.7 + float(ax) * 13.1) * 43758.5453);
+            float dl = abs(lineC - ln);
+            float sp = (6.0 + 8.0 * hl) * (hl > 0.5 ? 1.0 : -1.0);
+            float ph = frac((run - t * sp) / 40.0 + hl) * 40.0;                         // one packet per 40 blocks of line
+            float tail = ph < 6.0 ? exp(-ph * 0.6) : 0.0;
+            packets += step(0.45, hl) * tail * exp(-dl * 40.0) * (1.0 + 3.0 * exp(-ph * 6.0));
+        }
+    }
     // the scan: a ring rolling out from you every few seconds
     float per = max(cy1.z, 1.0);
     float rr = length(P.xz);
@@ -1192,18 +1458,93 @@ float3 cyberspace(float3 L, int2 px, float3 P, float3 rd, float dist, bool sky, 
     float scan = exp(-pow((rr - front) / 1.2, 2.0)) * (1.0 - front / 60.0);
     float pulse = 0.55 + 0.45 * sin(t * 2.0 + h1 * 6.28);
     float fog = exp(-dist * 0.012);
-    float3 base = acc * (0.05 + 0.25 * lumW) + lumW * 0.08;               // the world, dark and tinted
-    float3 lines = acc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.4 + circuits * pulse * 0.9 * cy1.x + scan * 0.35);
+    float3 base = acc * (0.012 + 0.06 * lumW) + lumW * 0.025;            // the world, near black (Purxiy: #1a1020-ish)
+    float3 lc = lerp(acc, float3(1.0, 1.0, 1.0), 0.45);                    // white-hot line cores, the accent in the glow
+    float3 lines = lc * (edge * (0.9 + 1.5 * scan) * cy1.x * 1.5) + acc * (edgeGlow * cy1.x + circuits * pulse * 0.65 * cy1.x + scan * 0.35)
+                 + (float3(1.0, 1.0, 1.0) * 0.6 + acc) * packets * cy1.x;
     float3 dig = base + lines * fog + acc * scan * 0.12;
+    // you become a hologram (Purxiy reference: the player goes dark with bright lavender scanlines drifting up)
+    float3 rp = P - pl.xyz;
+    [branch] if (length(rp.xz) < 0.62 && rp.y > (an.y > 0.7 ? 0.12 : -0.05) && rp.y < 2.0) {   // (not the ground under your feet)
+        float sl = frac(rp.y * 9.0 - t * 0.6);
+        float stripe = smoothstep(0.0, 0.12, sl) * smoothstep(0.42, 0.25, sl);
+        dig = L * 0.18 + acc * 0.05 + (acc * 0.6 + 0.35) * stripe * (0.6 + 0.4 * lumW);
+    }
     // (Purxiy reference, video 3: switching on, a bright wavefront dome sweeps out from you and the world turns digital
     //  behind it - ~250 ms to the horizon, a white-hot front with the accent glowing behind it)
-    float age = abs(cy1.w) - 1.0;
+    float age = abs(cy1.w) - 1.0 - 0.30;                                  // (after the RGB glitch, CRT line and flash)
+    if (age < -0.20) {   // the first 0.1 s: the circuit world flashes in with an RGB split (red / cyan copies of its lines)
+        float sh = 8.0 * fp * (1.0 - (age + 0.30) / 0.10);
+        float3 rgt = c1.xyz;
+        float2 uR = an.x > an.y && an.x > an.z ? (wp + rgt * sh).zy : (an.y > an.z ? (wp + rgt * sh).xz : (wp + rgt * sh).xy);
+        float2 uB = an.x > an.y && an.x > an.z ? (wp - rgt * sh).zy : (an.y > an.z ? (wp - rgt * sh).xz : (wp - rgt * sh).xy);
+        float2 fR = frac(uR), fB = frac(uB);
+        float eR = 1.0 - smoothstep(0.5, 1.6, min(min(fR.x, 1.0 - fR.x), min(fR.y, 1.0 - fR.y)) / fp);
+        float eB = 1.0 - smoothstep(0.5, 1.6, min(min(fB.x, 1.0 - fB.x), min(fB.y, 1.0 - fB.y)) / fp);
+        return dig + float3(1.0, 0.1, 0.1) * eR * 1.2 + float3(0.1, 0.9, 1.0) * eB * 1.2;
+    }
+    if (age < 0.0) return L;
     float R = age * 260.0;                                                // blocks: past the view in ~0.4 s
     float d3 = length(P);
     float inside = smoothstep(R + 1.5, R - 1.5, d3);
     float frontW = exp(-pow((d3 - R) / (0.7 + 0.012 * R), 2.0)) * exp(-age * 2.5);
     float3 o = lerp(L, dig, reality * inside);
     return o + (float3(1.0, 0.98, 0.95) * 0.7 + acc * 1.1) * frontW * step(age, 1.5);
+}
+
+// Cyberspace extras (round 3, from video 3 at 121.5-125 s): data packets - small glowing cubes flying in straight
+// lines through the air with comet tails - and the switch-on sequence: an RGB split glitch, a CRT collapse to one bright
+// line, a white flash, then the wavefront dome (in cyberspace()).
+float3 cyPackets(float3 rd, float dist, float t) {
+    float3 acc = cy0.rgb, hot = lerp(acc, float3(1.0, 1.0, 1.0), 0.7);
+    float3 L = 0;
+    float3 cam = c5.xyz;
+    float2 base = floor(cam.xz / 12.0);
+    [loop] for (int k = 0; k < 25; ++k) {
+        float2 cid = base + float2(k % 5 - 2, k / 5 - 2);
+        float  h1 = frac(sin(dot(cid, float2(127.1, 311.7))) * 43758.5453);
+        float  h2 = frac(h1 * 71.3 + 0.17), h3 = frac(h1 * 13.9 + 0.71);
+        if (h3 > 0.8 * cy1.x + 0.2) continue;
+        bool   axX = h2 > 0.5;
+        float  sp = (7.0 + 6.0 * h1) * (frac(h1 * 5.0) > 0.5 ? 1.0 : -1.0);
+        float  s = frac(t * sp / 12.0 + h2) * 12.0;                         // where along its cell
+        float  y = cam.y + pl.y + 0.5 + floor(h3 * 5.0) * 0.9;            // heights above your feet
+        float3 head = float3((cid.x + (axX ? s / 12.0 : h1)) * 12.0, y, (cid.y + (axX ? h2 : s / 12.0)) * 12.0) - cam;
+        float3 dir = axX ? float3(sign(sp), 0, 0) : float3(0, 0, sign(sp));
+        float  fade = smoothstep(0.0, 1.0, s) * smoothstep(12.0, 11.0, s);  // no pop at the cell's ends
+        // the tail: a segment behind the head; the head: a little glowing cube (a soft box)
+        float3 a = head, b = head - dir * 1.4;
+        float3 ab = b - a;
+        // closest points between the view ray and the segment
+        float d1 = dot(rd, ab), d2 = dot(ab, ab), e1 = dot(rd, a), e2 = dot(ab, a);
+        float den = d2 - d1 * d1;
+        float u = den > 1e-5 ? saturate((d1 * e1 - e2) / den) : 0.0;
+        float tz = dot(a + ab * u, rd);
+        if (tz < 0.3 || tz > dist + 0.05) continue;
+        float dd = length(rd * tz - (a + ab * u));
+        float tail = exp(-pow(dd / 0.022, 2.0)) * (1.0 - u) * (1.0 - u) + exp(-dd / 0.08) * 0.25 * (1.0 - u);
+        float th = dot(head, rd);
+        float3 hq = abs(rd * th - head);
+        float box = max(max(hq.x, hq.y), hq.z);
+        float cube = (1.0 - smoothstep(0.06, 0.075, box)) * step(0.3, th) * step(th, dist + 0.05);
+        float bloom = exp(-length(rd * th - head) / 0.12) * 0.5 * step(0.3, th) * step(th, dist + 0.05);
+        L += (hot * (tail * 1.4 + cube * 1.6) + acc * bloom) * fade;
+    }
+    return L;
+}
+float3 cyIntro(float3 L, int2 px, float age) {
+    // 0 - 0.10 s: RGB split; 0.10 - 0.23: CRT collapse to a line; 0.23 - 0.30: a white flash; then the dome takes over
+    if (age < 0.10) return L;                                              // (the RGB split is drawn by cyberspace())
+    if (age < 0.23) {
+        float u = (age - 0.10) / 0.13;
+        float dy = abs(float(px.y) - c4.y * 0.5) / c4.y;
+        float hw = lerp(0.006, 0.0005, u);
+        float crt = exp(-pow(dy / hw, 2.0)) * (1.0 - u) * 2.5 + exp(-dy / (hw * 8.0)) * (1.0 - u) * 0.4;
+        crt *= smoothstep(0.5, 0.35 * (1.0 - u), abs(float(px.x) / c4.x - 0.5));
+        return (float3(1.0, 0.97, 0.9) + cy0.rgb) * 0.5 * crt;
+    }
+    if (age < 0.30) return lerp(float3(1.0, 0.97, 0.92), L, (age - 0.23) / 0.07);
+    return L;
 }
 
 // ---- [Purxiy] Cute World: a soft pastel world with drifting hearts and little sparkles. Original code.
@@ -1283,6 +1624,33 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     float  litK = SUN.y > -0.1 ? 1.0 : 0.35;
 
     float3 col = sceneAt(int2(px)); col *= col;             // ~linear (gamma 2)
+    // (Fernando 2026-11-19: "make the blocks look a little higher or lower, like an actual ripple shockwave".) The
+    // landing wave lifts each ground block it passes - one height per block, up as the front arrives, a dip behind it,
+    // then settling - drawn by moving that block's picture up / down on screen by the projected height.
+    [branch] if (!sky && fx5.z > 0.0 && fx6.w > 0.5) {
+        float hgt = 0.0;
+        int nE = min(int(fx6.w), 16);
+        [loop] for (int e = 0; e < nE; ++e) {
+            if (int(evK[e].x + 0.5) != 4) continue;
+            float u = evP[e].w / 0.75;
+            if (u >= 1.0) continue;
+            float3 dv = q - evP[e].xyz;
+            if (abs(dv.y) > 1.2) continue;
+            float2 bc = floor(c5.xz + q.xz + float2(0.0, 0.0)) + 0.5 - (c5.xz + evP[e].xz);
+            float rb = length(bc), s = saturate(evK[e].y / 1.2);
+            float R1 = fx5.z * (4.0 + 4.0 * s) * (1.0 - pow(1.0 - u, 1.6));
+            float bump = exp(-pow((rb - R1) / 0.75, 2.0)) - 0.45 * exp(-pow((rb - R1 + 1.4) / 0.8, 2.0));
+            hgt += bump * 0.30 * fx5.z * (0.6 + 0.6 * s) * pow(1.0 - u, 1.2) * step(rb, R1 + 1.5);
+        }
+        if (abs(hgt) > 1e-3) {
+            float dyPx = hgt / max(zc * c1.w, 1e-3) * c4.y * 0.5 * dot(float3(0, 1, 0), c2.xyz);   // projected height, in pixels
+            int2   sp = int2(px) + int2(0, int(round(dyPx)));
+            float3 cs = sceneAt(sp); cs *= cs;
+            col = cs * (1.0 + hgt * 1.6);                                    // raised catches the light, sunk falls in shade
+            if (!isSky(rawDepth(sp))) q = posAt(sp);                          // the wave's outlines ride with the block
+
+        }
+    }
     [branch] if (bk0.w > 0.0) col = bokeh(int2(px), zc, sky);
     float3 acc = 0; float trans = 1.0;
     float  spare = 1.0;                                     // one actor test shared by the haze / mist and Chroma
@@ -1377,11 +1745,20 @@ float4 PSWorldFxAtmos(VSOut i) : SV_Target {
     outL = lerp(outL, overC.rgb, saturate(overC.a));
     [branch] if (ch0.w > -0.5) outL = chroma(outL, q, sky, spareC);       // the grey world, colour where you have walked
     outL += radL;
-    [branch] if (cy0.w > 0.0) outL = cyberspace(outL, int2(px), q, rd, sky ? 1e4 : dist, sky, t);
+    [branch] if (cy0.w > 0.0) {
+        float cyAge = abs(cy1.w) - 1.0;
+        outL = cyberspace(outL, int2(px), q, rd, sky ? 1e4 : dist, sky, t);
+        if (cyAge > 0.45) outL += cyPackets(rd, sky ? 1e4 : dist, t) * smoothstep(0.45, 0.9, cyAge);
+        [branch] if (cyAge < 0.30) outL = cyIntro(outL, int2(px), cyAge);
+    }
     [branch] if (cu1.w > 0.5) outL = cuteWorld(outL, q, rd, sky ? 1e4 : dist, sky, t);
     [branch] if (wx1.w > 0.5 && wx0.x < 0.5) {                           // rain: wet ground, lightning
         [branch] if (!sky && wx1.y > 0.0) outL = wetGround(outL, int2(px), q, rd, dist, t, night);
         outL = lightning(outL, rd, sky);
+    }
+    [branch] if (wx1.w > 0.5 && wx0.x > 1.5 && wx1.y > 0.0) {
+        if (!sky) outL = lavaGround(outL, int2(px), q, rd, dist, t);
+        else outL = outL * float3(0.8, 0.7, 0.75) + float3(0.35, 0.07, 0.01) * exp(-max(rd.y, 0.0) * 9.0) * wx1.y;   // the sky glows red low down
     }
     [branch] if (wx1.w > 0.5) outL += weather(rd, sky ? 1e4 : dist, t, night);
     float3 o = sqrt(max(outL + ambL, 0.0)) + (ign(px.yx + 13.7) - 0.5) / 255.0;
