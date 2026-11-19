@@ -657,7 +657,7 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
         bool  crown = dz == 2;
         float S    = ha0.w;
         float bob  = 0.025 * sin(t * 1.6) * S;
-        float3 hc  = pl.xyz + float3(0, (crown ? 2.18 : 2.02) + 0.15 * (ha1.y - 1.0) + bob, 0);
+        float3 hc  = pl.xyz + float3(0, (crown ? 2.18 : 2.20) + 0.15 * (ha1.y - 1.0) + bob, 0);
         float R    = (crown ? 0.40 : 0.33) * S;                         // ring radius
         float rt   = (crown ? 0.042 : dz == 0 ? 0.034 : 0.024) * S;     // tube radius
         float tilt = dz == 5 ? 0.38 : dz == 2 ? 0.04 : 0.10;
@@ -746,6 +746,78 @@ float3 cosmetics(float3 P, float3 rd, float dist, bool sky, float t) {
                         float outA = exp(-pow((rho - 1.0 - 0.35 * (0.5 + 0.5 * sin(th * 2.0 + t * 1.7))) / 0.02, 2.0))
                                    * smoothstep(0.75, 1.0, sin(th * 3.0 - t * 1.1)) * step(1.0, rho);   // arcs leaving the ring
                         Lh += (hot * 0.45 + col * 1.2) * saturate(tend + outA) * smoothstep(1.6, 1.2, rho) + col * 0.18 * smoothstep(1.0, 0.2, rho);   // + the violet haze filling the ring
+                    }
+                }
+            }
+            // (audit 2026-11-19, Fernando: "all the other halos need a major quality audit" - Sigil, Stardust, Eclipse and
+            //  Fallen were the same plain ring with a different dash. Each now has its own piece, in the ring's plane.)
+            [branch] if (dz == 1 || dz == 3 || dz == 4 || dz == 5) {
+                float den = dot(rd, nrm);
+                if (abs(den) > 1e-3) {
+                    float tp = dot(hc, nrm) / den;
+                    if (tp > 0.2 && tp < dist + 0.3) {
+                        float3 pq = rd * tp - hc;
+                        float  rho = length(pq - nrm * dot(pq, nrm)) / R, th = atan2(dot(pq, az), dot(pq, ax));
+                        float  pxs = 0.004 * tp / R + 0.004;                    // a pixel, in ring units
+                        if (dz == 1) {          // SIGIL: an inner rune ring turning the other way, glyphs, a dashed outer ring
+                            float th2 = th + t * 0.6, seg = frac(th2 * 1.909859), su = (seg - 0.5) * 6.2831853 / 12.0 * 0.78;
+                            float ring2 = exp(-pow((rho - 0.70) / (0.010 + pxs), 2.0)) + exp(-pow((rho - 0.92) / (0.008 + pxs), 2.0));
+                            float tick = exp(-pow(su / (0.012 + pxs), 2.0)) * smoothstep(0.035, 0.0, abs(rho - 0.81) - 0.06);
+                            float dia  = 1.0 - smoothstep(0.035, 0.035 + pxs * 2.0, abs(su - 0.11) * 1.4 + abs(rho - 0.81));
+                            float seg3 = frac((th - t * 0.25) * 4.7746);       // 30 dashes outside
+                            float outer = exp(-pow((rho - 1.18) / (0.010 + pxs), 2.0)) * step(0.35, seg3);
+                            Lh += (hot * 0.6 + col * 1.1) * saturate(ring2 * 0.8 + tick + dia * 0.9 + outer * 0.7) * (0.8 + 0.2 * sin(t * 3.0 + th * 2.0));
+                            Lh += col * 0.12 * smoothstep(0.95, 0.6, rho);
+                        } else if (dz == 3) {   // STARDUST: a band of fine dust glittering round the ring
+                            float2 g = float2(th * 9.5493 * 2.0, rho * 14.0);
+                            float2 gi = floor(g), gf = frac(g) - 0.5;
+                            float  hs = frac(sin(dot(gi, float2(127.1, 311.7))) * 43758.5453);
+                            float  tw = pow(saturate(sin(t * 3.0 + hs * 40.0)), 6.0);
+                            float  dust = step(0.6, hs) * exp(-dot(gf, gf) / 0.02) * tw;
+                            float  band = exp(-pow((rho - 1.0) / 0.22, 2.0));
+                            Lh += (hot * 0.8 + col) * dust * band * 1.4 + col * band * 0.10;
+                        } else if (dz == 4) {   // ECLIPSE: corona rays streaming off the ring, a diamond-ring flare going round
+                            float rays = pow(0.5 + 0.5 * sin(th * 23.0 + 2.0 * sin(th * 7.0 + t * 0.3)), 4.0) * (0.6 + 0.4 * sin(th * 11.0 - t * 0.5));
+                            float out1 = step(1.0, rho) * exp(-(rho - 1.0) * (3.5 - 1.5 * rays));
+                            float dm = atan2(sin(th - t * 0.8), cos(th - t * 0.8));
+                            float flare = exp(-(dm * dm) / 0.01) * exp(-pow((rho - 1.0) / 0.06, 2.0)) * 2.5
+                                        + exp(-(dm * dm) / 0.0008) * exp(-abs(rho - 1.0) / 0.5) * 0.8 + exp(-pow((rho - 1.0) / 0.5, 2.0) - dm * dm / 0.3) * 0.25 * step(abs(dm), 0.6);
+                            Lh += col * out1 * (0.35 + 0.9 * rays) + hot * flare;
+                        } else {                // FALLEN: cracked, shards drifting off the breaks, embers dripping
+                            float brk = frac(th * 0.15915 + 0.1);                // the gap is at brk < 0.24
+                            float near = exp(-pow((brk - 0.24) / 0.03, 2.0)) + exp(-pow((brk - 0.0) / 0.03, 2.0)) + exp(-pow((brk - 1.0) / 0.03, 2.0));
+                            Lh += col * near * exp(-pow((rho - 1.0) / 0.15, 2.0)) * 0.5;   // the broken ends smoulder
+                        }
+                    }
+                }
+                if (dz == 5) {   // shards hanging in the gap, embers falling from the broken ends (billboards)
+                    [unroll] for (int j = 0; j < 7; ++j) {
+                        float fj = float(j);
+                        float a  = (-0.1 + (j < 3 ? 0.04 + 0.07 * fj : (fj < 5.0 ? 0.0 : 0.24))) * 6.2831853;
+                        float3 P0 = hc + (ax * cos(a) + az * sin(a)) * R;
+                        float3 pp;
+                        float  sz2, br;
+                        if (j < 3) { pp = P0 - float3(0, 0.05 + 0.04 * fj, 0) * S + nrm * (0.03 * sin(t * 1.3 + fj * 2.0)) + (ax * cos(a) + az * sin(a)) * 0.05 * sin(t * 0.9 + fj); sz2 = 0.028; br = 2.0; }
+                        else { float u = frac(t * 0.55 + fj * 0.37); pp = P0 - float3(0, u * 0.9 * S, 0); sz2 = 0.016 * (1.0 - 0.6 * u); br = 2.4 * (1.0 - u); }
+                        float tz = dot(pp, rd);
+                        if (tz < 0.2 || tz > dist + 0.05) continue;
+                        float dd = length(rd * tz - pp);
+                        Lh += (j < 3 ? (hot * 0.5 + col) : lerp(col, float3(1.0, 0.45, 0.25), 0.5)) * (exp(-pow(dd / (sz2 * S), 2.0)) * br + exp(-dd / (sz2 * S * 3.0)) * 0.25 * br);
+                    }
+                }
+                if (dz == 3) {   // four-point stars orbiting the ring, twinkling
+                    [unroll] for (int j = 0; j < 6; ++j) {
+                        float fj = float(j), a = fj * 1.0472 + t * (0.5 + 0.12 * fj);
+                        float3 pp = hc + (ax * cos(a) + az * sin(a)) * R * (1.08 + 0.12 * sin(t * 0.7 + fj * 2.0)) + nrm * 0.06 * S * sin(t * 1.1 + fj * 1.7);
+                        float tz = dot(pp, rd);
+                        if (tz < 0.2 || tz > dist + 0.05) continue;
+                        float3 off = rd * tz - pp;
+                        float3 rg = normalize(cross(rd, float3(0, 1, 0)) + 1e-5), uv2 = cross(rg, rd);
+                        float sx = dot(off, rg), sy = dot(off, uv2), sz3 = 0.06 * S;
+                        float tw = 0.4 + 0.6 * pow(saturate(sin(t * 2.6 + fj * 1.9)), 3.0);
+                        float st = exp(-abs(sx) / (sz3 * 0.07)) * exp(-abs(sy) / sz3) + exp(-abs(sy) / (sz3 * 0.07)) * exp(-abs(sx) / sz3)
+                                 + exp(-(sx * sx + sy * sy) / (sz3 * sz3 * 0.03)) * 1.5;
+                        Lh += (hot * 0.7 + col * 0.6) * st * tw * 1.2;
                     }
                 }
             }
@@ -995,6 +1067,7 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
             float u = dot(h, w) / S, v = dot(h, vax) / S;           // u: out along the wing, v: up (in the wing's own plane)
             if (u < 0.0 || u > (design == 0 ? 2.1 : 1.45) || (design == 0 && (v > 0.8 || v < -1.3))) continue;
             float inside = 0.0, rim = 0.0, pat = 0.0;
+            float4 bfly = 0;
             if (design == 1) {                                     // butterfly: a big upper lobe, a smaller lower one
                 // (in game 2026-11-19: both lobes ended on a straight vertical line at the back - "cut off". They now
                 //  narrow into the shoulder: the height is squeezed toward the root, so each lobe is a teardrop)
@@ -1002,10 +1075,18 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
                 float2 pv = float2(u, v / pin);
                 float d1 = length((pv - float2(0.55, 0.38)) / float2(0.62, 0.48)) - 1.0;
                 float d2 = length((pv - float2(0.42, -0.30)) / float2(0.42, 0.36)) - 1.0;
-                float d  = min(d1, d2) * pin;
+                float ang = atan2(v, u);
+                float d  = min(d1, d2) * pin + 0.012 * (0.5 + 0.5 * sin(ang * 22.0));     // (audit: scalloped edge, not a bubble)
                 inside = 1.0 - smoothstep(-0.02, 0.02, d);
                 rim    = exp(-abs(d) * 30.0);
-                pat    = exp(-pow(length(float2(u, v) - float2(0.72, 0.42)) / 0.11, 2.0)) + 0.5 * exp(-pow(length(float2(u, v) - float2(0.45, -0.28)) / 0.08, 2.0));
+                // wing anatomy: veins fanning from the root, a dark margin band with white spots, cells between the veins
+                float vf   = frac(ang * 2.8648 + 0.5 * u);                                   // ~9 veins across the fan
+                float vein = exp(-pow((vf - 0.5) / (0.035 + 0.02 * u), 2.0)) * smoothstep(0.1, 0.3, u);
+                float band = smoothstep(-0.16, -0.06, d);                                     // the margin
+                float spf  = frac(ang * 5.73);
+                float spot = exp(-pow((spf - 0.5) / 0.16, 2.0) - pow((d + 0.09) / 0.025, 2.0));
+                bfly = float4(vein, band, spot, 1.0);
+                pat = 0.5 + 0.5 * smoothstep(0.1, 0.9, u);
             } else if (design == 0) {                              // seraph: three tiers of layered feathers (Purxiy reference)
                 // primaries (long, at the outer half), secondaries under the arm, small coverts on top: the topmost
                 // tier that covers this point is the one drawn; each feather is lighter at its root, a touch of lilac
@@ -1067,9 +1148,18 @@ float3 wingsCape(float3 rd, float dist, float t, inout float4 over, inout float 
             if (design == 0) {                                     // seraph: matte feathers (no glow in the reference), a faint edge light
                 c = lerp(wg0.rgb, float3(1.0, 0.97, 1.0), saturate(pat - 0.30) * 0.85);
                 L += c * (rim * (0.10 + 0.30 * glow) + inside * pat * (0.04 + 0.10 * glow));
+            } else if (design == 1) {                              // butterfly: iridescent membrane, veins, dark spotted margin
+                float irid = 0.5 + 0.5 * sin(u * 5.0 + v * 3.0 + t * 0.9 + dot(rd, n) * 7.0);
+                float3 mem = lerp(wg0.rgb, lerp(float3(0.45, 0.85, 1.0), float3(1.0, 0.55, 0.95), irid), 0.45);
+                mem *= 0.55 + 0.6 * pat;
+                float3 marg = wg0.rgb * 0.12 + float3(0.02, 0.015, 0.04);
+                c = lerp(mem, marg, bfly.y * 0.85);
+                c = lerp(c, wg0.rgb * 0.25, bfly.x * (1.0 - bfly.y) * 0.6);                 // veins: darker lines
+                c += float3(1.0, 0.98, 1.0) * bfly.z * 0.9;                                    // white spots in the margin
+                L += c * inside * (0.25 + 0.35 * glow) + wg0.rgb * rim * (0.35 + 0.5 * glow) + mem * irid * inside * 0.15 * glow;
             } else
                 L += c * (rim * (0.9 + glow) + inside * (0.08 + 0.30 * pat) * (0.6 + glow));
-            float a = inside * (design == 2 ? 0.30 : design == 0 ? 0.85 * saturate(0.35 + pat) : 0.22);   // seraph: nearly solid feathers
+            float a = inside * (design == 2 ? 0.30 : design == 0 ? 0.85 * saturate(0.35 + pat) : 0.62);   // seraph: nearly solid feathers; butterfly: a real membrane
             over.rgb = lerp(over.rgb, c * 0.6 + 0.08, a * (1.0 - over.a));
             over.a = over.a + a * (1.0 - over.a);
         }
