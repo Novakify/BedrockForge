@@ -175,6 +175,9 @@ def slash_style(trail, style):
     return [(ts[-1], "streak")]
 
 
+GLINT_AT = {"draw": 0.8, "insp1": 0.6, "insp2": 0.6}   # share of the clip where the edge catches the light
+
+
 def build():
     """-> (animations json, controllers json, animation map, animate list, sounds, particles)
 
@@ -192,6 +195,8 @@ def build():
             if prt:
                 for si, style in enumerate(SLASH_STYLES):
                     anims[f"animation.bfk.{k}.{name}.fx{si}"] = anim(length, {}, particles=slash_style(prt, style))
+            if name in GLINT_AT:   # edge glint: a star of light on the tip as the knife settles / is shown off
+                anims[f"animation.bfk.{k}.{name}.gl"] = anim(length, {}, particles=[(round(length * GLINT_AT[name], 3), "glint")])
     # first person: bfk_fix (between the World FX hold bone and the pose) sizes and places the knife in view;
     # tuned on real frames (Knives Test world, 2026-11-17)
     # (karambit verified; the balisong read ~10% long on screen, so it is held a little smaller)
@@ -201,6 +206,8 @@ def build():
     # confirmed hits: sparks + cut flash off the tip, and the cut sound
     for ab in ("a", "b"):
         anims[f"animation.bfk.hit_{ab}.fx"] = anim(0.3, {}, particles=[(0.0, "spark"), (0.0, "cutflash")])
+        # a critical hit: a second burst of sparks a beat later and a star on the edge (heavier, still under 0.3 s)
+        anims[f"animation.bfk.hit_{ab}.fxc"] = anim(0.3, {}, particles=[(0.0, "glint"), (0.04, "spark")])
         anims[f"animation.bfk.hit_{ab}.snd"] = anim(0.3, {}, sounds=[(0.0, "cut")])
         anims[f"animation.bfk.hit_{ab}.sndq"] = anim(0.3, {}, sounds=[(0.0, "cut_q")])
 
@@ -225,6 +232,7 @@ def build():
                 on += " && !v.bfk_swinging"       # a click cuts a trick short instead of stacking on it
             variants = [("", ""), (".snd", " && v.bfk_snd && !v.bfk_quiet"), (".sndq", " && v.bfk_snd && v.bfk_quiet")]
             variants += [(f".fx{si}", f" && v.bfk_arcs && v.bfk_sl == {si}") for si in range(len(SLASH_STYLES))]
+            variants += [(".gl", " && v.bfk_arcs")]
             for suffix, extra in variants:
                 full = f"animation.bfk.{k}.{kind}{suffix}"
                 if full not in anims:
@@ -235,7 +243,7 @@ def build():
                 animate.append({short: on + extra})
     for ab, par in (("a", 1), ("b", 0)):
         on = f"v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == {par}"
-        for suffix, extra in (("fx", " && v.bfk_hfx"), ("snd", " && v.bfk_snd && !v.bfk_quiet"), ("sndq", " && v.bfk_snd && v.bfk_quiet")):
+        for suffix, extra in (("fx", " && v.bfk_hfx"), ("fxc", " && v.bfk_hfx && v.bfk_crit"), ("snd", " && v.bfk_snd && !v.bfk_quiet"), ("sndq", " && v.bfk_snd && v.bfk_quiet")):
             full = f"animation.bfk.hit_{ab}.{suffix}"
             anims[full]["anim_time_update"] = "v.bfk_h"
             amap[f"hit_{ab}_{suffix}"] = full
@@ -244,7 +252,7 @@ def build():
     for e in ("swish", "cut", "click", "ring_spin", "clack", "latch", "draw", "dagger_catch"):
         sounds[e] = f"bfk.{e}"
         sounds[e + "_q"] = f"bfk.{e}.q"
-    particles = {n: f"bfk:{n}" for n in ("arc", "crescent", "streak", "spark", "cutflash")}
+    particles = {n: f"bfk:{n}" for n in ("arc", "crescent", "streak", "spark", "cutflash", "glint")}
     return {"format_version": "1.10.0", "animations": anims}, None, amap, animate, sounds, particles
 
 
@@ -272,6 +280,7 @@ PRE = ("v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bf
        "v.bfk_snd = math.mod(math.floor(t.o / 4), 2) >= 1;"
        "v.bfk_quiet = math.mod(math.floor(t.o / 8), 2) >= 1;"
        "v.bfk_glint = math.mod(math.floor(t.o / 16), 2) < 1;"
+       "v.bfk_crit = math.mod(math.floor(t.o / 64), 2) >= 1;"
        "v.bfk_tp = math.mod(math.floor(t.o / 32), 2) < 1;"
        "v.bfk_fin = v.bfk > 0 ? math.clamp(math.floor(c.owning_entity->v.bfkfin), 0, 3) : 0;"
        "v.bfk_sl = v.bfk > 0 ? c.owning_entity->v.bfkslash : 0;"
@@ -357,8 +366,19 @@ def particle_files():
         "minecraft:particle_appearance_billboard": {"size": [f"0.5 * (0.4 + {age})", 0.035],
                                                     "facing_camera_mode": "rotate_xyz", "uv": uv(32, 0)},
         "minecraft:particle_appearance_tinting": tint(6, 1.0)}))
+    glint = base("bfk:glint", dict(once, **{
+        # edge glint: a four-point star that blooms on the tip and closes again in a quarter second, turning a little
+        "minecraft:emitter_rate_instant": {"num_particles": 1},
+        "minecraft:emitter_shape_point": {},
+        "minecraft:particle_lifetime_expression": {"max_lifetime": 0.26},
+        "minecraft:particle_initial_speed": 0,
+        "minecraft:particle_initial_spin": {"rotation": "math.random(0, 45)", "rotation_rate": 140},
+        "minecraft:particle_motion_dynamic": {},
+        "minecraft:particle_appearance_billboard": {"size": [f"0.16 * math.sin({age} * 180)", f"0.16 * math.sin({age} * 180)"],
+                                                    "facing_camera_mode": "rotate_xyz", "uv": uv(48, 0)},
+        "minecraft:particle_appearance_tinting": tint(1.2, 1.0, "1")}))
     return {f"bfk_{n}.particle.json": js for n, js in
-            (("arc", arc), ("crescent", crescent), ("streak", streak), ("spark", spark), ("cutflash", cut))}
+            (("arc", arc), ("crescent", crescent), ("streak", streak), ("spark", spark), ("cutflash", cut), ("glint", glint))}
 
 
 def fx_texture():
@@ -383,6 +403,15 @@ def fx_texture():
     crescent = big.reshape(32, 4, 32, 4).mean(axis=(1, 3))
     img[16:48, 0:32, :3] = 255
     img[16:48, 0:32, 3] = (crescent * 255).astype(np.uint8)
+    # glint (48,0): a four-point star - two thin crossed spikes over a small hot core, drawn 8x supersampled
+    G = 128
+    gy, gx = (np.mgrid[0:G, 0:G] + 0.5) / G * 2 - 1
+    ax, ay = np.abs(gx), np.abs(gy)
+    spikes = np.clip(1 - ax / (0.16 * (1 - ay) + 1e-3), 0, 1) * (1 - ay) ** 1.1 + np.clip(1 - ay / (0.16 * (1 - ax) + 1e-3), 0, 1) * (1 - ax) ** 1.1
+    core = np.exp(-(gx ** 2 + gy ** 2) / 0.03)
+    star = np.clip(spikes + core, 0, 1).reshape(16, 8, 16, 8).mean(axis=(1, 3)) ** 0.6   # lifted: thin spikes average out at 16 px
+    img[0:16, 48:64, :3] = 255
+    img[0:16, 48:64, 3] = (star * 255).astype(np.uint8)
     for i, a in enumerate((soft, streak, line)):
         img[0:16, i * 16:(i + 1) * 16, :3] = 255
         img[0:16, i * 16:(i + 1) * 16, 3] = (a * 255).astype(np.uint8)

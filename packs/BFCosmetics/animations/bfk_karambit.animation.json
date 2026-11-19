@@ -143,6 +143,17 @@
     }
    }
   },
+  "animation.bfk.karambit.draw.gl": {
+   "animation_length": 0.75,
+   "anim_time_update": "v.bfk_d * v.bfk_spd",
+   "particle_effects": {
+    "0.600": {
+     "effect": "glint",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    }
+   }
+  },
   "animation.bfk.karambit.insp1": {
    "animation_length": 2.2,
    "anim_time_update": "v.bfk_i * v.bfk_spd",
@@ -317,6 +328,17 @@
     }
    }
   },
+  "animation.bfk.karambit.insp1.gl": {
+   "animation_length": 2.2,
+   "anim_time_update": "v.bfk_i * v.bfk_spd",
+   "particle_effects": {
+    "1.320": {
+     "effect": "glint",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
+    }
+   }
+  },
   "animation.bfk.karambit.insp2": {
    "animation_length": 2.0,
    "anim_time_update": "v.bfk_i * v.bfk_spd",
@@ -448,6 +470,17 @@
     },
     "1.700": {
      "effect": "click_q"
+    }
+   }
+  },
+  "animation.bfk.karambit.insp2.gl": {
+   "animation_length": 2.0,
+   "anim_time_update": "v.bfk_i * v.bfk_spd",
+   "particle_effects": {
+    "1.200": {
+     "effect": "glint",
+     "locator": "tip",
+     "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
     }
    }
   },

@@ -136,14 +136,16 @@ struct State {
     float   lastX = 0, lastZ = 0, lastYaw = 0;
 } gS;
 
-std::atomic<int64_t> gHitMs{0};     // your confirmed hits (GameMode::attack hook in Modules.cpp)
+std::atomic<int64_t> gHitMs{0};
+std::atomic<bool>    gHitCrit{false};   // the last confirmed hit was a critical one
 std::atomic<int>     gHitCount{0};
 std::atomic<int>     gTestSwing{0};
 
 } // namespace
 
 void testSwing() { ++gTestSwing; }
-void noteLocalHit(bool /*crit*/) {
+void noteLocalHit(bool crit) {
+    gHitCrit = crit;
     gHitMs = nowMs();
     ++gHitCount;
 }
@@ -246,7 +248,7 @@ void frame(LocalPlayer* lp) {
             if (int const n = gHitCount.load(); n != gS.hitN) { gS.hitN = n; gS.hitAt = gHitMs.load(); }
             hit = secs(gS.hitAt);
             opt = float((m->flag("slash_arcs", true) ? 1 : 0) | (m->flag("hit_effects", true) ? 2 : 0) | (m->flag("sounds", true) ? 4 : 0)
-                        | (m->flag("quiet", false) ? 8 : 0) | (m->flag("glint", true) ? 0 : 16) | (m->flag("third_person", true) ? 0 : 32));
+                        | (m->flag("quiet", false) ? 8 : 0) | (m->flag("glint", true) ? 0 : 16) | (m->flag("third_person", true) ? 0 : 32) | (gHitCrit.load() ? 64 : 0));
         }
         // always written (rest values while off): the pack reads them every frame, and a variable that was never set
         // made the sword vanish in game. Unchanged values are skipped (setCached).
