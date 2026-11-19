@@ -11,8 +11,17 @@
     "default": "textures/items/iron_sword",
     "enchanted": "textures/misc/enchanted_item_glint",
     "karambit": "textures/bf_cosmetics/karambit",
+    "karambit_blackout": "textures/bf_cosmetics/karambit_blackout",
+    "karambit_gold": "textures/bf_cosmetics/karambit_gold",
+    "karambit_fade": "textures/bf_cosmetics/karambit_fade",
     "balisong": "textures/bf_cosmetics/balisong",
-    "dagger": "textures/bf_cosmetics/dagger"
+    "balisong_blackout": "textures/bf_cosmetics/balisong_blackout",
+    "balisong_gold": "textures/bf_cosmetics/balisong_gold",
+    "balisong_fade": "textures/bf_cosmetics/balisong_fade",
+    "dagger": "textures/bf_cosmetics/dagger",
+    "dagger_blackout": "textures/bf_cosmetics/dagger_blackout",
+    "dagger_gold": "textures/bf_cosmetics/dagger_gold",
+    "dagger_fade": "textures/bf_cosmetics/dagger_fade"
    },
    "geometry": {
     "default": "geometry.bfk_iron_sword",
@@ -28,44 +37,73 @@
     "bfk_fp_dagger": "animation.bfk.dagger.fp",
     "karambit_draw": "animation.bfk.karambit.draw",
     "karambit_draw_snd": "animation.bfk.karambit.draw.snd",
+    "karambit_draw_sndq": "animation.bfk.karambit.draw.sndq",
     "karambit_insp1": "animation.bfk.karambit.insp1",
     "karambit_insp1_snd": "animation.bfk.karambit.insp1.snd",
+    "karambit_insp1_sndq": "animation.bfk.karambit.insp1.sndq",
     "karambit_insp2": "animation.bfk.karambit.insp2",
     "karambit_insp2_snd": "animation.bfk.karambit.insp2.snd",
+    "karambit_insp2_sndq": "animation.bfk.karambit.insp2.sndq",
     "karambit_swing1": "animation.bfk.karambit.swing1",
     "karambit_swing1_snd": "animation.bfk.karambit.swing1.snd",
-    "karambit_swing1_fx": "animation.bfk.karambit.swing1.fx",
+    "karambit_swing1_sndq": "animation.bfk.karambit.swing1.sndq",
+    "karambit_swing1_fx0": "animation.bfk.karambit.swing1.fx0",
+    "karambit_swing1_fx1": "animation.bfk.karambit.swing1.fx1",
+    "karambit_swing1_fx2": "animation.bfk.karambit.swing1.fx2",
     "karambit_swing2": "animation.bfk.karambit.swing2",
     "karambit_swing2_snd": "animation.bfk.karambit.swing2.snd",
-    "karambit_swing2_fx": "animation.bfk.karambit.swing2.fx",
+    "karambit_swing2_sndq": "animation.bfk.karambit.swing2.sndq",
+    "karambit_swing2_fx0": "animation.bfk.karambit.swing2.fx0",
+    "karambit_swing2_fx1": "animation.bfk.karambit.swing2.fx1",
+    "karambit_swing2_fx2": "animation.bfk.karambit.swing2.fx2",
     "balisong_draw": "animation.bfk.balisong.draw",
     "balisong_draw_snd": "animation.bfk.balisong.draw.snd",
+    "balisong_draw_sndq": "animation.bfk.balisong.draw.sndq",
     "balisong_insp1": "animation.bfk.balisong.insp1",
     "balisong_insp1_snd": "animation.bfk.balisong.insp1.snd",
+    "balisong_insp1_sndq": "animation.bfk.balisong.insp1.sndq",
     "balisong_insp2": "animation.bfk.balisong.insp2",
     "balisong_insp2_snd": "animation.bfk.balisong.insp2.snd",
+    "balisong_insp2_sndq": "animation.bfk.balisong.insp2.sndq",
     "balisong_swing1": "animation.bfk.balisong.swing1",
     "balisong_swing1_snd": "animation.bfk.balisong.swing1.snd",
-    "balisong_swing1_fx": "animation.bfk.balisong.swing1.fx",
+    "balisong_swing1_sndq": "animation.bfk.balisong.swing1.sndq",
+    "balisong_swing1_fx0": "animation.bfk.balisong.swing1.fx0",
+    "balisong_swing1_fx1": "animation.bfk.balisong.swing1.fx1",
+    "balisong_swing1_fx2": "animation.bfk.balisong.swing1.fx2",
     "balisong_swing2": "animation.bfk.balisong.swing2",
     "balisong_swing2_snd": "animation.bfk.balisong.swing2.snd",
-    "balisong_swing2_fx": "animation.bfk.balisong.swing2.fx",
+    "balisong_swing2_sndq": "animation.bfk.balisong.swing2.sndq",
+    "balisong_swing2_fx0": "animation.bfk.balisong.swing2.fx0",
+    "balisong_swing2_fx1": "animation.bfk.balisong.swing2.fx1",
+    "balisong_swing2_fx2": "animation.bfk.balisong.swing2.fx2",
     "dagger_draw": "animation.bfk.dagger.draw",
     "dagger_draw_snd": "animation.bfk.dagger.draw.snd",
+    "dagger_draw_sndq": "animation.bfk.dagger.draw.sndq",
     "dagger_insp1": "animation.bfk.dagger.insp1",
     "dagger_insp1_snd": "animation.bfk.dagger.insp1.snd",
+    "dagger_insp1_sndq": "animation.bfk.dagger.insp1.sndq",
     "dagger_insp2": "animation.bfk.dagger.insp2",
     "dagger_insp2_snd": "animation.bfk.dagger.insp2.snd",
+    "dagger_insp2_sndq": "animation.bfk.dagger.insp2.sndq",
     "dagger_swing1": "animation.bfk.dagger.swing1",
     "dagger_swing1_snd": "animation.bfk.dagger.swing1.snd",
-    "dagger_swing1_fx": "animation.bfk.dagger.swing1.fx",
+    "dagger_swing1_sndq": "animation.bfk.dagger.swing1.sndq",
+    "dagger_swing1_fx0": "animation.bfk.dagger.swing1.fx0",
+    "dagger_swing1_fx1": "animation.bfk.dagger.swing1.fx1",
+    "dagger_swing1_fx2": "animation.bfk.dagger.swing1.fx2",
     "dagger_swing2": "animation.bfk.dagger.swing2",
     "dagger_swing2_snd": "animation.bfk.dagger.swing2.snd",
-    "dagger_swing2_fx": "animation.bfk.dagger.swing2.fx",
+    "dagger_swing2_sndq": "animation.bfk.dagger.swing2.sndq",
+    "dagger_swing2_fx0": "animation.bfk.dagger.swing2.fx0",
+    "dagger_swing2_fx1": "animation.bfk.dagger.swing2.fx1",
+    "dagger_swing2_fx2": "animation.bfk.dagger.swing2.fx2",
     "hit_a_fx": "animation.bfk.hit_a.fx",
     "hit_a_snd": "animation.bfk.hit_a.snd",
+    "hit_a_sndq": "animation.bfk.hit_a.sndq",
     "hit_b_fx": "animation.bfk.hit_b.fx",
-    "hit_b_snd": "animation.bfk.hit_b.snd"
+    "hit_b_snd": "animation.bfk.hit_b.snd",
+    "hit_b_sndq": "animation.bfk.hit_b.sndq"
    },
    "scripts": {
     "animate": [
@@ -88,125 +126,212 @@
       "karambit_draw": "v.bfk == 1 && v.bfk_d * v.bfk_spd < 0.750 && !v.bfk_swinging"
      },
      {
-      "karambit_draw_snd": "v.bfk == 1 && v.bfk_d * v.bfk_spd < 0.750 && !v.bfk_swinging && v.bfk_snd"
+      "karambit_draw_snd": "v.bfk == 1 && v.bfk_d * v.bfk_spd < 0.750 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "karambit_draw_sndq": "v.bfk == 1 && v.bfk_d * v.bfk_spd < 0.750 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "karambit_insp1": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "karambit_insp1_snd": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd"
+      "karambit_insp1_snd": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "karambit_insp1_sndq": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "karambit_insp2": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "karambit_insp2_snd": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd"
+      "karambit_insp2_snd": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "karambit_insp2_sndq": "v.bfk == 1 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "karambit_swing1": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1"
      },
      {
-      "karambit_swing1_snd": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_snd"
+      "karambit_swing1_snd": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_snd && !v.bfk_quiet"
      },
      {
-      "karambit_swing1_fx": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_arcs"
+      "karambit_swing1_sndq": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_snd && v.bfk_quiet"
+     },
+     {
+      "karambit_swing1_fx0": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 0"
+     },
+     {
+      "karambit_swing1_fx1": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 1"
+     },
+     {
+      "karambit_swing1_fx2": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 2"
      },
      {
       "karambit_swing2": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0"
      },
      {
-      "karambit_swing2_snd": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_snd"
+      "karambit_swing2_snd": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_snd && !v.bfk_quiet"
      },
      {
-      "karambit_swing2_fx": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_arcs"
+      "karambit_swing2_sndq": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_snd && v.bfk_quiet"
+     },
+     {
+      "karambit_swing2_fx0": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 0"
+     },
+     {
+      "karambit_swing2_fx1": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 1"
+     },
+     {
+      "karambit_swing2_fx2": "v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 2"
      },
      {
       "balisong_draw": "v.bfk == 2 && v.bfk_d * v.bfk_spd < 0.950 && !v.bfk_swinging"
      },
      {
-      "balisong_draw_snd": "v.bfk == 2 && v.bfk_d * v.bfk_spd < 0.950 && !v.bfk_swinging && v.bfk_snd"
+      "balisong_draw_snd": "v.bfk == 2 && v.bfk_d * v.bfk_spd < 0.950 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "balisong_draw_sndq": "v.bfk == 2 && v.bfk_d * v.bfk_spd < 0.950 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "balisong_insp1": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "balisong_insp1_snd": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd"
+      "balisong_insp1_snd": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "balisong_insp1_sndq": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.200 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "balisong_insp2": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "balisong_insp2_snd": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd"
+      "balisong_insp2_snd": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "balisong_insp2_sndq": "v.bfk == 2 && v.bfk_i * v.bfk_spd < 2.000 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "balisong_swing1": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1"
      },
      {
-      "balisong_swing1_snd": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_snd"
+      "balisong_swing1_snd": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_snd && !v.bfk_quiet"
      },
      {
-      "balisong_swing1_fx": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_arcs"
+      "balisong_swing1_sndq": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_snd && v.bfk_quiet"
+     },
+     {
+      "balisong_swing1_fx0": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 0"
+     },
+     {
+      "balisong_swing1_fx1": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 1"
+     },
+     {
+      "balisong_swing1_fx2": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 2"
      },
      {
       "balisong_swing2": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0"
      },
      {
-      "balisong_swing2_snd": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_snd"
+      "balisong_swing2_snd": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_snd && !v.bfk_quiet"
      },
      {
-      "balisong_swing2_fx": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_arcs"
+      "balisong_swing2_sndq": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_snd && v.bfk_quiet"
+     },
+     {
+      "balisong_swing2_fx0": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 0"
+     },
+     {
+      "balisong_swing2_fx1": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 1"
+     },
+     {
+      "balisong_swing2_fx2": "v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 2"
      },
      {
       "dagger_draw": "v.bfk == 3 && v.bfk_d * v.bfk_spd < 0.800 && !v.bfk_swinging"
      },
      {
-      "dagger_draw_snd": "v.bfk == 3 && v.bfk_d * v.bfk_spd < 0.800 && !v.bfk_swinging && v.bfk_snd"
+      "dagger_draw_snd": "v.bfk == 3 && v.bfk_d * v.bfk_spd < 0.800 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "dagger_draw_sndq": "v.bfk == 3 && v.bfk_d * v.bfk_spd < 0.800 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "dagger_insp1": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_in == 1 && !v.bfk_swinging"
      },
      {
-      "dagger_insp1_snd": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd"
+      "dagger_insp1_snd": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "dagger_insp1_sndq": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 2.100 && v.bfk_in == 1 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "dagger_insp2": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 1.900 && v.bfk_in == 0 && !v.bfk_swinging"
      },
      {
-      "dagger_insp2_snd": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 1.900 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd"
+      "dagger_insp2_snd": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 1.900 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "dagger_insp2_sndq": "v.bfk == 3 && v.bfk_i * v.bfk_spd < 1.900 && v.bfk_in == 0 && !v.bfk_swinging && v.bfk_snd && v.bfk_quiet"
      },
      {
       "dagger_swing1": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1"
      },
      {
-      "dagger_swing1_snd": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_snd"
+      "dagger_swing1_snd": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_snd && !v.bfk_quiet"
      },
      {
-      "dagger_swing1_fx": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_arcs"
+      "dagger_swing1_sndq": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_snd && v.bfk_quiet"
+     },
+     {
+      "dagger_swing1_fx0": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 0"
+     },
+     {
+      "dagger_swing1_fx1": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 1"
+     },
+     {
+      "dagger_swing1_fx2": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.300 && v.bfk_an == 1 && v.bfk_arcs && v.bfk_sl == 2"
      },
      {
       "dagger_swing2": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0"
      },
      {
-      "dagger_swing2_snd": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_snd"
+      "dagger_swing2_snd": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_snd && !v.bfk_quiet"
      },
      {
-      "dagger_swing2_fx": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_arcs"
+      "dagger_swing2_sndq": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_snd && v.bfk_quiet"
+     },
+     {
+      "dagger_swing2_fx0": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 0"
+     },
+     {
+      "dagger_swing2_fx1": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 1"
+     },
+     {
+      "dagger_swing2_fx2": "v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340 && v.bfk_an == 0 && v.bfk_arcs && v.bfk_sl == 2"
      },
      {
       "hit_a_fx": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 1 && v.bfk_hfx"
      },
      {
-      "hit_a_snd": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 1 && v.bfk_snd"
+      "hit_a_snd": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 1 && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "hit_a_sndq": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 1 && v.bfk_snd && v.bfk_quiet"
      },
      {
       "hit_b_fx": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 0 && v.bfk_hfx"
      },
      {
-      "hit_b_snd": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 0 && v.bfk_snd"
+      "hit_b_snd": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 0 && v.bfk_snd && !v.bfk_quiet"
+     },
+     {
+      "hit_b_sndq": "v.bfk > 0 && v.bfk_h < 0.3 && v.bfk_hn == 0 && v.bfk_snd && v.bfk_quiet"
      }
     ],
     "pre_animation": [
-     "v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;v.bfk_in = v.bfk > 0 ? c.owning_entity->v.bfkinsn : 0;v.bfk_a = v.bfk > 0 ? c.owning_entity->v.bfkatk : 99;v.bfk_an = v.bfk > 0 ? c.owning_entity->v.bfkatn : 0;v.bfk_h = v.bfk > 0 ? c.owning_entity->v.bfkhit : 99;v.bfk_hn = v.bfk > 0 ? c.owning_entity->v.bfkhitn : 0;v.bfk_spd = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspd, 0.5, 2.0) : 1;t.o = v.bfk > 0 ? c.owning_entity->v.bfkopt : 0;v.bfk_arcs = math.mod(t.o, 2) >= 1;v.bfk_hfx = math.mod(math.floor(t.o / 2), 2) >= 1;v.bfk_snd = math.floor(t.o / 4) >= 1;v.bfk_swinging = (v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360) || (v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320) || (v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340);"
+     "v.bfk = q.owner_identifier == 'minecraft:player' ? c.owning_entity->v.bfknife : 0;v.bfk_d = v.bfk > 0 ? c.owning_entity->v.bfkdraw : 99;v.bfk_i = v.bfk > 0 ? c.owning_entity->v.bfkinsp : 99;v.bfk_in = v.bfk > 0 ? c.owning_entity->v.bfkinsn : 0;v.bfk_a = v.bfk > 0 ? c.owning_entity->v.bfkatk : 99;v.bfk_an = v.bfk > 0 ? c.owning_entity->v.bfkatn : 0;v.bfk_h = v.bfk > 0 ? c.owning_entity->v.bfkhit : 99;v.bfk_hn = v.bfk > 0 ? c.owning_entity->v.bfkhitn : 0;v.bfk_spd = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkspd, 0.5, 2.0) : 1;t.o = v.bfk > 0 ? c.owning_entity->v.bfkopt : 0;v.bfk_arcs = math.mod(t.o, 2) >= 1;v.bfk_hfx = math.mod(math.floor(t.o / 2), 2) >= 1;v.bfk_snd = math.mod(math.floor(t.o / 4), 2) >= 1;v.bfk_quiet = math.mod(math.floor(t.o / 8), 2) >= 1;v.bfk_glint = math.mod(math.floor(t.o / 16), 2) < 1;v.bfk_tp = math.mod(math.floor(t.o / 32), 2) < 1;v.bfk_fin = v.bfk > 0 ? math.clamp(math.floor(c.owning_entity->v.bfkfin), 0, 3) : 0;v.bfk_sl = v.bfk > 0 ? c.owning_entity->v.bfkslash : 0;v.bfk_scl = v.bfk > 0 ? math.clamp(c.owning_entity->v.bfkscl, 0.5, 1.5) : 1;v.bfk_ox = v.bfk > 0 ? c.owning_entity->v.bfkox : 0;v.bfk_oy = v.bfk > 0 ? c.owning_entity->v.bfkoy : 0;v.bfk_cr = v.bfk > 0 ? c.owning_entity->v.bfkcr : 0.8;v.bfk_cg = v.bfk > 0 ? c.owning_entity->v.bfkcg : 0.95;v.bfk_cb = v.bfk > 0 ? c.owning_entity->v.bfkcb : 0.97;v.bfk = (v.bfk > 0 && !v.bfk_tp && !c.is_first_person) ? 0 : v.bfk;v.bfk_swinging = (v.bfk == 1 && v.bfk_a * v.bfk_spd < 0.360) || (v.bfk == 2 && v.bfk_a * v.bfk_spd < 0.320) || (v.bfk == 3 && v.bfk_a * v.bfk_spd < 0.340);"
     ]
    },
    "render_controllers": [
@@ -219,16 +344,26 @@
    ],
    "sound_effects": {
     "swish": "bfk.swish",
+    "swish_q": "bfk.swish.q",
     "cut": "bfk.cut",
+    "cut_q": "bfk.cut.q",
     "click": "bfk.click",
+    "click_q": "bfk.click.q",
     "ring_spin": "bfk.ring_spin",
+    "ring_spin_q": "bfk.ring_spin.q",
     "clack": "bfk.clack",
+    "clack_q": "bfk.clack.q",
     "latch": "bfk.latch",
+    "latch_q": "bfk.latch.q",
     "draw": "bfk.draw",
-    "dagger_catch": "bfk.dagger_catch"
+    "draw_q": "bfk.draw.q",
+    "dagger_catch": "bfk.dagger_catch",
+    "dagger_catch_q": "bfk.dagger_catch.q"
    },
    "particle_effects": {
     "arc": "bfk:arc",
+    "crescent": "bfk:crescent",
+    "streak": "bfk:streak",
     "spark": "bfk:spark",
     "cutflash": "bfk:cutflash"
    }

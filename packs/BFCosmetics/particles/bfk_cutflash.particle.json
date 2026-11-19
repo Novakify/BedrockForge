@@ -9,11 +9,11 @@
    }
   },
   "components": {
-   "minecraft:emitter_rate_instant": {
-    "num_particles": 1
-   },
    "minecraft:emitter_lifetime_once": {
     "active_time": 0.01
+   },
+   "minecraft:emitter_rate_instant": {
+    "num_particles": 1
    },
    "minecraft:emitter_shape_point": {},
    "minecraft:particle_lifetime_expression": {
@@ -41,13 +41,12 @@
     }
    },
    "minecraft:particle_appearance_tinting": {
-    "color": {
-     "gradient": {
-      "0.0": "#FFFFFFFF",
-      "1.0": "#00FFFFFF"
-     },
-     "interpolant": "v.particle_age / v.particle_lifetime"
-    }
+    "color": [
+     "math.lerp(1.0, (v.cr ?? 0.8), math.min(1, v.particle_age / v.particle_lifetime * 6))",
+     "math.lerp(1.0, (v.cg ?? 0.95), math.min(1, v.particle_age / v.particle_lifetime * 6))",
+     "math.lerp(1.0, (v.cb ?? 0.97), math.min(1, v.particle_age / v.particle_lifetime * 6))",
+     "1 - v.particle_age / v.particle_lifetime"
+    ]
    }
   }
  }

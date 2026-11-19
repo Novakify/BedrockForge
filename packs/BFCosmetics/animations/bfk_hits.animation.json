@@ -8,11 +8,13 @@
     "0.000": [
      {
       "effect": "spark",
-      "locator": "tip"
+      "locator": "tip",
+      "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
      },
      {
       "effect": "cutflash",
-      "locator": "tip"
+      "locator": "tip",
+      "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
      }
     ]
    }
@@ -26,6 +28,15 @@
     }
    }
   },
+  "animation.bfk.hit_a.sndq": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "sound_effects": {
+    "0.000": {
+     "effect": "cut_q"
+    }
+   }
+  },
   "animation.bfk.hit_b.fx": {
    "animation_length": 0.3,
    "anim_time_update": "v.bfk_h",
@@ -33,11 +44,13 @@
     "0.000": [
      {
       "effect": "spark",
-      "locator": "tip"
+      "locator": "tip",
+      "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
      },
      {
       "effect": "cutflash",
-      "locator": "tip"
+      "locator": "tip",
+      "pre_effect_script": "v.cr = v.bfk_cr; v.cg = v.bfk_cg; v.cb = v.bfk_cb;"
      }
     ]
    }
@@ -48,6 +61,15 @@
    "sound_effects": {
     "0.000": {
      "effect": "cut"
+    }
+   }
+  },
+  "animation.bfk.hit_b.sndq": {
+   "animation_length": 0.3,
+   "anim_time_update": "v.bfk_h",
+   "sound_effects": {
+    "0.000": {
+     "effect": "cut_q"
     }
    }
   }
