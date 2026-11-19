@@ -15,5 +15,6 @@ namespace cosmetics {
 void registerModules(Registry& r);
 void frame(LocalPlayer* player);   // HUD frame
 void noteLocalHit(bool crit);      // your confirmed hit (GameMode::attack hook)
+void testSwing();                  // config/test.txt "swing": the next frame plays a swing as if you clicked
 } // namespace cosmetics
 } // namespace bedrock_forge::client

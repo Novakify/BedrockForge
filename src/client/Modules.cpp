@@ -1848,6 +1848,32 @@ void installRuntime() {
                 gFxEv.pflags = 1u | (g ? 2u : 0u);
                 gFxEv.pAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             } catch (...) {}
+            try {   // [test] config/test.txt: one command, run once, then renamed test.done.txt - so effects can be checked
+                    // remotely without a mouse: hit | crit | swing | hitswing | jump
+                static int64_t lastCheck = 0;
+                if (nowMs() - lastCheck > 500) {
+                    lastCheck = nowMs();
+                    auto const dir = ll::mod::NativeMod::current()->getModDir() / "config";
+                    std::error_code ec;
+                    if (std::filesystem::exists(dir / "test.txt", ec)) {
+                        std::string c;
+                        { std::ifstream in(dir / "test.txt"); std::getline(in, c); }
+                        std::filesystem::remove(dir / "test.done.txt", ec);
+                        std::filesystem::rename(dir / "test.txt", dir / "test.done.txt", ec);
+                        while (!c.empty() && (c.back() == '\r' || c.back() == ' ')) c.pop_back();
+                        Vec3 const pos = player->getPosition();
+                        float const yw = player->getRotation().y * 3.14159265f / 180.f;
+                        float const hx = pos.x - std::sin(yw) * 2.f, hz = pos.z + std::cos(yw) * 2.f;   // 2 blocks ahead, chest high
+                        if (c == "hit" || c == "crit" || c == "hitswing") {
+                            pushFxEvent(c == "crit" ? 3u : 2u, hx, pos.y - 0.5f, hz);
+                            cosmetics::noteLocalHit(c == "crit");
+                        }
+                        if (c == "swing" || c == "hitswing") cosmetics::testSwing();
+                        if (c == "jump") pushFxEvent(1u, pos.x, pos.y - 1.62f, pos.z);
+                        ll::mod::NativeMod::current()->getLogger().info("[BF] test command: {}", c);
+                    }
+                }
+            } catch (...) {}
             try {   // Block Outline: the block you aim at (only while the module is on)
                 gFxEv.bface = 255u;
                 if (Registry::get().on("block_outline")) {

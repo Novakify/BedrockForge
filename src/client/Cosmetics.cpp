@@ -138,9 +138,11 @@ struct State {
 
 std::atomic<int64_t> gHitMs{0};     // your confirmed hits (GameMode::attack hook in Modules.cpp)
 std::atomic<int>     gHitCount{0};
+std::atomic<int>     gTestSwing{0};
 
 } // namespace
 
+void testSwing() { ++gTestSwing; }
 void noteLocalHit(bool /*crit*/) {
     gHitMs = nowMs();
     ++gHitCount;
@@ -229,7 +231,7 @@ void frame(LocalPlayer* lp) {
             // attack: every left click while holding the knife (hits and misses), confirmed hits from the attack hook
             int const cset = int(m->num("fx_color", 0));   // 0 = random: a new colour every swing
             bool const lmb = input && w32::keyDown(0x01);
-            if (lmb && !gS.lmbWas && sword) {
+            if (((lmb && !gS.lmbWas) || gTestSwing.exchange(0) > 0) && sword) {
                 gS.attackAt = now; ++gS.attackN;
                 if (cset == 0) gS.fxColor = rerollNot(5, gS.fxColor);
             }
